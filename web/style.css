@@ -602,7 +602,6 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 .m:is(:has(:focus-visible),.menu-open,.peek)>.who :is(.when,.who-btn),.who-btn.done{opacity:1}
 /* 触れるのはホバーのある端末だけ。タッチでは押した後に :hover が残るので、時刻は .peek の 4 秒だけにする */
 @media (hover:hover){.m:hover>.who :is(.when,.who-btn){opacity:1}}
-.m.editing>.who .who-btn{visibility:hidden}
 /* タッチは薄く常に（押す領域は 36×32）。コピーは発言を押した 4 秒に時刻と一緒に出る */
 @media (hover:none){
   .who-more{opacity:.6}
@@ -769,6 +768,24 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 .message-edit-input{display:block;width:100%;min-height:80px;max-height:50vh;resize:vertical;background:transparent;color:var(--ink);font:inherit;border-radius:var(--r-s)}
 .message-edit-controls{display:flex;justify-content:flex-end;gap:var(--sp-2);margin-top:var(--sp-2)}
 .message-edit-attachments{font-size:var(--fs-s);color:var(--ink-weak);overflow-wrap:anywhere}
+/* 送り直す・分岐して送る（web/resend-band.mjs。ADR 0091）。送り直すと消える範囲は薄く見せ、畳むときは高さと不透明度を 240ms で */
+.mw.doomed{opacity:.42;transition-duration:var(--dur-fast)}
+.m.editing>.outbox-status{display:none}
+.mw.leaving{grid-template-rows:0fr;opacity:0;pointer-events:none;transition-duration:var(--dur)}
+/* 送り方の帯。編集欄（再送信は発言）の直下。主は右端の［送り直す］ */
+.resend-band{max-width:680px;margin:var(--sp-2) 0 0;font-size:var(--fs-s);color:var(--ink)}
+.rb-t::before{content:"";display:inline-block;width:18px;height:1px;margin-right:8px;vertical-align:middle;background:repeating-linear-gradient(90deg,var(--line-strong) 0 4px,transparent 4px 7px)}
+.rb-sub{margin:2px 0 0 26px;font-size:var(--fs-xs);color:var(--ink-weak)}
+.rb-acts{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:var(--sp-2);margin-top:var(--sp-2)}
+.rb-acts .btn{min-height:34px}
+.rb-acts .btn svg.i{width:14px;height:14px}
+.rb-acts .run{display:inline-flex;margin-right:2px}
+@media (hover:none){.rb-acts .btn,.message-editor .btn{min-height:40px}}
+/* 狭い画面: ［取り消し］と［分岐して送る］を上の段、主の［送り直す］を下の段の全幅に */
+@media (max-width:480px){
+  .rb-acts .rb-send{flex:1 0 100%}
+  .rb-sub{margin-left:0}
+}
 /* 出来事の一行（送信の失敗・状態やタイトルの変更）。筋の節は持たない */
 .m.sys{margin-bottom:8px;font-size:var(--fs-xs);color:var(--ink-weak)}
 .m.sys b{color:var(--ink);font-weight:500}
@@ -925,6 +942,21 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 .present-tools .visualize-open-browser{display:none}
 body.inapp-links .present-tools .visualize-open-browser{display:inline-flex}
 body.inapp-links .present-tools .visualize-expand{display:none}
+/* 承認済みの会話内の可視化（ADR 0091）。折り畳み中の .mw-body からも左右の 4px を見せる。 */
+.mw-body:has(.present-visualization.visualize-seamless){overflow:clip;overflow-clip-margin:5px}
+.present-visualization.visualize-seamless{position:relative;margin:20px -4px;max-width:none;min-width:0;background:transparent;overflow:visible;border-radius:var(--r-m);box-shadow:0 0 0 1px transparent;transition:box-shadow var(--dur-fast) var(--ease-out)}
+.visualize-seamless .present-body{padding:0;max-width:none}
+.visualize-seamless .present-body>.visualize-frame{display:block;width:100%;border-radius:var(--r-m);background:transparent}
+.visualize-seamless .present-tools{position:absolute;top:-14px;right:12px;z-index:3;display:flex;align-items:center;gap:2px;padding:2px;background:var(--surface-paper);border-radius:var(--r-pill);box-shadow:0 0 0 1px var(--line),0 2px 8px var(--shadow);opacity:0;pointer-events:none;transition:opacity var(--dur-fast) var(--ease-out)}
+.visualize-seamless:is(:hover,:focus-within){box-shadow:0 0 0 1px var(--line)}
+.visualize-seamless:is(:hover,:focus-within) .present-tools{opacity:1;pointer-events:auto}
+.visualize-seamless .present-tools .h-icon:hover{background:var(--surface-1);color:var(--ink)}
+.visualize-seamless .visualize-title{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+@media (hover:none){
+  .present-visualization.visualize-seamless:is(:hover,:focus-within){box-shadow:none}
+  .visualize-seamless .present-tools{position:static;margin:2px 4px 0;padding:0;background:transparent;box-shadow:none;opacity:1;pointer-events:auto}
+  .visualize-seamless .visualize-title{position:static;width:auto;height:auto;clip:auto;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;font-size:var(--fs-xs);color:var(--ink-weak)}
+}
 
 /* ---- thinking ---- */
 .think{background:var(--surface-1);border-radius:var(--r-m);margin:0 0 10px;max-width:100%;min-width:0}

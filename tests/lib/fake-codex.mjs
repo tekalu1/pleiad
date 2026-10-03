@@ -14,6 +14,9 @@ import path from "node:path";
 import { lines as rl, jsonl, policyRejection, spawnRejection } from "./codex-rollout.mjs";
 
 const NL = String.fromCharCode(10);
+const UNIQUE_IDS = process.env.FAKE_CODEX_UNIQUE_IDS === "1";
+// FAKE_CODEX_LEGACY=1: 以前に作った legacy のスレッドのふり（thread/revert を断る。codex-cli 0.156.1 の実測）
+const LEGACY = process.env.FAKE_CODEX_LEGACY === "1";
 
 const send = (frame) => process.stdout.write(JSON.stringify(frame) + NL);
 const notify = (method, params) => send({ jsonrpc: "2.0", method, params });
@@ -220,10 +223,11 @@ async function runTurn(t, turnId, text) {
     startedAt: secs(),
     completedAt: secs(),
     items: [
-      { id: "it_u1", type: "userMessage", content: [{ type: "text", text }] },
+      // FAKE_CODEX_UNIQUE_IDS=1: 履歴の item id をターンごとに変える（本物はそう。巻き戻しは item id からターンを引く）
+      { id: UNIQUE_IDS ? `it_u_${turnId}` : "it_u1", type: "userMessage", content: [{ type: "text", text }] },
       { id: "it_r1", type: "reasoning", summary: ["考えている"], content: [] },
       done,
-      { id: "it_m1", type: "agentMessage", text: body },
+      { id: UNIQUE_IDS ? `it_m_${turnId}` : "it_m1", type: "agentMessage", text: body },
       // A boundary created outside Pleiad has no notification or sidecar entry.
       ...(text === 'compact-history' ? [{ id: `history_${turnId}`, type: 'contextCompaction' }] : []),
     ],
@@ -728,14 +732,32 @@ async function handle(method, params) {
       return {};
     }
 
+    // ある 1 ターンの手前までで履歴を置き換える（codex-cli 0.156.1 の thread/revert。paginated のスレッドだけ）
+    case "thread/revert": {
+      const t = threads.get(params?.threadId);
+      if (!t) throw new Error(`知らない threadId: ${params?.threadId}`);
+      record({ method, threadId: t.id, beforeTurnId: params?.beforeTurnId ?? null, ...(LEGACY ? { refused: true } : {}) });
+      if (LEGACY) throw new RpcError("thread/revert only supports paginated threads", -32600);
+      const at = t.turns.findIndex((turn) => turn.id === params?.beforeTurnId);
+      if (at < 0) throw new RpcError(`turn not found: ${params?.beforeTurnId}`, -32600);
+      t.turns = t.turns.slice(0, at);
+      t.updatedAt = secs();
+      notify("thread/reverted", { threadId: t.id });
+      return {};
+    }
+
     case "thread/fork": {
       const src = threads.get(params?.threadId);
       if (!src) throw new Error(`知らない threadId: ${params?.threadId}`);
+      // beforeTurnId: そのターンの手前までで切る（0.156.1。legacy のスレッドでも効く）
+      const cut = params?.beforeTurnId ? src.turns.findIndex((turn) => turn.id === params.beforeTurnId) : -1;
+      if (params?.beforeTurnId && cut < 0) throw new RpcError(`turn not found: ${params.beforeTurnId}`, -32600);
       const child = makeThread({
         cwd: src.cwd,
         forkedFromId: src.id,
-        turns: src.turns.map((t) => ({ ...t })),
+        turns: (cut >= 0 ? src.turns.slice(0, cut) : src.turns).map((t) => ({ ...t })),
       });
+      record({ method, threadId: src.id, childId: child.id, beforeTurnId: params?.beforeTurnId ?? null });
       child.name = src.name ? `${src.name} (fork)` : null;
       return {
         thread: wire(child, false),

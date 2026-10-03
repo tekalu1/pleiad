@@ -406,7 +406,7 @@ export const dataDir = DIR;
 
 /** Host-only data; durable before acknowledging the client. Roll back a failed write. */
 export async function setSessionData(sessionId, field, value) {
-  if (!sessionId || !["draft", "nextSettings", "outbox", "effort", "contextSession", "delegation", "taskNotices", "ungrouped", "claudeAccount", "compatEndpoint", "agentLocale", "routing", "compactions", "contextWindow", "autoCompactionOff", "compacted", "hookRuns", "shellPending", "shellExits", "shellKept", "computerApps", "browserProfile", "bot", "proxySends"].includes(field)) throw new Error(t("store.invalidSessionField"));
+  if (!sessionId || !["draft", "nextSettings", "outbox", "effort", "contextSession", "delegation", "taskNotices", "ungrouped", "claudeAccount", "compatEndpoint", "agentLocale", "routing", "compactions", "contextWindow", "autoCompactionOff", "compacted", "hookRuns", "shellPending", "shellExits", "shellKept", "computerApps", "browserProfile", "rewind", "bot", "proxySends"].includes(field)) throw new Error(t("store.invalidSessionField"));
   return exclusive(async () => {
     const all = await load();
     const before = all[sessionId];
@@ -533,6 +533,19 @@ export async function takeStops(sessionId, keys, { dropped = false } = {}) {
     entry.stops = Object.keys(next).length ? next : null;
     await flush();
     return entry.stops;
+  });
+}
+
+/** 中断で止めたもの（stops）を全部捨てる。巻き戻しで、止めた出来事そのものが消えるとき（core/server.mjs の rewindConversation） */
+export async function clearStops(sessionId) {
+  if (!sessionId) return null;
+  return exclusive(async () => {
+    const all = await load();
+    const entry = all[sessionId];
+    if (!entry?.stops) return null;
+    entry.stops = null;
+    await flush();
+    return null;
   });
 }
 

@@ -70,4 +70,5 @@ AI が Pleiad の機能と設定（セッションの検索・一覧・名前・
 - `setPref` は段階的に設定の一覧からの生成へ置き換える。
 - 配信の無かった設定（context・hooks・Pleiad の MCP）は `settingsChanged` で配る。
 - 移行の段階: 0 で枠とテスト（`app.status` だけ）、1 で読むこと中心と検索、2 で設定を書くことと承認、3 で host・ply_browser・ply_agents の移行。
+- 段階 3 の既存ツールの互換と操作の危険度は [ADR 0091](0091-control-surface-host-delegation-browser.md) に定める。
 - セッションの検索は `sessions.search` 1 つとして定義し、索引は `core/session-search.mjs` が持つ。画面・MCP・CLI は同じ操作を呼ぶ。

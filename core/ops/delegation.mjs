@@ -1,5 +1,5 @@
-// delegation.*: 委譲の子のタスク（ply_delegate が作ったもの）を読む。段階 1 は読むだけ（作る・止める・送るは ply_agents の口のまま。移行は段階 3）。
-// 本体はサーバーが ctx.delegation で渡す（core/agent-tasks.mjs の list・get）。依頼の本文・結果の全文は返さず、結果は offset で読む。
+// delegation.*: ply_agents と ply_control が同じ関門を通る。既存の ply_agents の名前と返り値は橋が保つ。
+// 本体はサーバーが ctx.delegation で渡す。汎用の tasks/status は本文を一覧に載せず、結果は offset で読む。
 import { z } from 'zod';
 import { agentT } from '../i18n.mjs';
 import { defineOp, OpError } from './registry.mjs';
@@ -54,4 +54,38 @@ export const delegationOps = [
       return { ...taskRow(r), result: r.result ?? '', resultOffset: r.resultOffset ?? 0, resultLength: r.resultLength ?? 0, nextOffset: r.nextOffset ?? null };
     },
   }),
+
+  ...[
+    { id: 'delegate', tool: 'ply_delegate', risk: 'write', input: z.object({
+      kind: z.string().optional().describe(D('delegate', 'kind')),
+      task: z.string().min(1).max(60000).describe(D('delegate', 'task')),
+      title: z.string().max(200).optional().describe(D('delegate', 'title')),
+      backend: z.string().optional().describe(D('delegate', 'backend')),
+      context: z.string().max(60000).optional().describe(D('delegate', 'context')),
+      cwd: z.string().optional().describe(D('delegate', 'cwd')),
+      model: z.string().optional().describe(D('delegate', 'model')),
+      effort: z.string().optional().describe(D('delegate', 'effort')),
+      isolate: z.boolean().optional().describe(D('delegate', 'isolate')),
+    }) },
+    { id: 'taskStatus', tool: 'ply_task_status', risk: 'read', input: z.object({ taskId: z.string().min(1).describe(D('taskStatus', 'taskId')),
+      offset: z.number().int().min(0).optional().describe(D('taskStatus', 'offset')) }) },
+    { id: 'taskWait', tool: 'ply_task_wait', risk: 'read', input: z.object({ taskId: z.string().min(1).describe(D('taskWait', 'taskId')),
+      seconds: z.number().int().min(1).max(30).optional().describe(D('taskWait', 'seconds')) }) },
+    { id: 'taskSend', tool: 'ply_task_send', risk: 'write', input: z.object({ taskId: z.string().min(1).describe(D('taskSend', 'taskId')),
+      message: z.string().min(1).describe(D('taskSend', 'message')) }) },
+    { id: 'taskCancel', tool: 'ply_task_cancel', risk: 'write', modeGate: false, input: z.object({ taskId: z.string().min(1).describe(D('taskCancel', 'taskId')) }) },
+    { id: 'taskList', tool: 'ply_task_list', risk: 'read', input: z.object({}) },
+    { id: 'usage', tool: 'ply_usage', risk: 'read', input: z.object({ backend: z.string().optional().describe(D('usage', 'backend')) }) },
+  ].map(({ id, tool, risk, input, modeGate }) => defineOp({
+    id: `delegation.${id}`, summary: D(id, 'summary'), risk,
+    ...(risk === 'read' ? { output: z.unknown() } : { riskReason: id === 'taskCancel'
+      ? 'Cancellation stops only a child owned by this conversation; it is allowed in read-only mode to let an agent stop its child.'
+      : 'The owner can start or instruct only its own child, and the existing delegation checks still enforce mode inheritance and escalation approval.' }),
+    ...(modeGate === false ? { modeGate: false } : {}),
+    input, surfaces: { ui: false, mcp: 'catalog', cli: true },
+    handler: (ctx, args) => {
+      if (!ctx.actor.sessionId) throw new OpError('NEEDS_UI', agentT(ctx.locale, 'ops.errors.NEEDS_UI'));
+      return ctx.delegation.call(ctx.actor.sessionId, tool, args, ctx.locale);
+    },
+  })),
 ];

@@ -170,6 +170,23 @@ export async function anchorAttachments(sessionId, turnKey, messageId) {
   });
 }
 
+/**
+ * 巻き戻しで、切り口より後の提示を捨てる。keep は readPresents（strict）が返す並びの添字のうち残すもの。
+ * 読み取りと同じ並びで数えるので、呼ぶ前に別の present を足さないこと（巻き戻しの間は会話を排他で押さえている）
+ */
+export async function keepPresents(sessionId, keep) {
+  const file = presentFile(sessionId);
+  await serialize(file, async () => {
+    let raw;
+    try { raw = await fs.readFile(file, "utf8"); }
+    catch (e) { if (e.code === "ENOENT") return; throw e; }
+    const rows = raw.split("\n").filter(line => line.trim()).map(line => JSON.parse(line));
+    const kept = rows.filter((_, i) => keep.has(i));
+    if (kept.length === rows.length) return;
+    await writeAtomic(file, kept.map(row => JSON.stringify(row)).join("\n") + (kept.length ? "\n" : ""));
+  });
+}
+
 // ----------------------------------------------------------------- statuses
 
 /**

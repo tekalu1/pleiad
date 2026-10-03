@@ -19,7 +19,9 @@
 | 状態（見出し） | status |
 | グループ | group |
 | 枝 / 分岐 | branch |
-| 分岐して送信 | Send as branch |
+| 分岐して送信 / 分岐して送る | Send as branch |
+| 送り直す / 止めて送り直す（同じ会話で巻き戻して送る） | Resend / Stop and resend |
+| この後のやり取り（あなたの発言 N 件と返答。送り直しの帯） | What follows (N messages from you and the replies) |
 | エージェント | agent |
 | エージェント設定 | Agents |
 | 委譲 / 委譲先 | delegate / delegated task |

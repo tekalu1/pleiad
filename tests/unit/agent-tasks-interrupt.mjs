@@ -62,6 +62,20 @@ export default async function(t) {
     t.ok('親が空いても、止めたタスクの通知は送らない', !delivered.flat().some(id => [finished.taskId, running.taskId].includes(id)), JSON.stringify(delivered));
     t.ok('もう一度止めても何も返らない（止め終えたもの）', (await manager.cancelOwner('p1')).length === 0);
 
+    // ---- cancelOwner の since: 巻き戻して送り直す（ADR 0091）ときに、切り口より後に作ったタスクだけを止める
+    parentReady = false;
+    const older = await delegate('p3', 'slow-older', { title: 'Older' });
+    await sleep(30);
+    const cutAt = Date.now();
+    await sleep(30);
+    const newer = await delegate('p3', 'slow-newer', { title: 'Newer' });
+    await until(() => manager.get(older.taskId).status === 'running' && manager.get(newer.taskId).status === 'running');
+    const limited = await manager.cancelOwner('p3', { since: cutAt });
+    t.ok('since より後に作ったタスクだけを止めて返す', limited.length === 1 && limited[0].taskId === newer.taskId, JSON.stringify(limited.map(x => x.taskId)));
+    await until(() => manager.get(newer.taskId).status === 'cancelled');
+    t.ok('since より前に作ったタスクは走ったまま（結果も後で届く）', ['running', 'queued'].includes(manager.get(older.taskId).status), manager.get(older.taskId).status);
+    await manager.cancelOwner('p3');
+
     // ---- cancel: 終わったタスクには止めるものが無い。届いていない完了通知はそのまま届ける
     parentReady = false;
     const lone = await delegate('p2', 'done-b', { title: 'Done B' });

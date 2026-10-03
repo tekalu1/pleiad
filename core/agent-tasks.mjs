@@ -649,7 +649,8 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
     // その結果は捨てずに返す（unread: true。ply_task_status で読める）。走っていた・待っていたタスクは止めた時点の状態で返す。
     // 返すのは [{ taskId, parentSessionId, title, status, unread }]。server が依頼元の会話ごとに「止めたもの」に残し、
     // 次のターンでエージェントへ伝える（docs/design.md「中断と再開」）
-    async cancelOwner(owner) {
+    // since（ミリ秒）を渡すと、その時刻以後に作ったタスクだけを対象にする（巻き戻しで消える範囲で生まれた子。core/server.mjs の rewindConversation）
+    async cancelOwner(owner, { since } = {}) {
       const targets = [], seen = new Set();
       const visit = r => {
         if (seen.has(r.taskId)) return;
@@ -657,7 +658,7 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
         for (const child of Object.values(records).filter(c => c.parentSessionId === r.sessionId)) visit(child);
         targets.push(r);
       };
-      for (const r of Object.values(records).filter(r => !owner || r.parentSessionId === owner)) visit(r);
+      for (const r of Object.values(records).filter(r => (!owner || r.parentSessionId === owner) && (!Number.isFinite(since) || r.createdAt >= since))) visit(r);
       const settled = r => !ACTIVE.has(r.status) && !r.queue.length && r.notification === 'suppressed' && !live.has(r.taskId);
       const change = targets.filter(r => !settled(r));
       if (!change.length) return [];

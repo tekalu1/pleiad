@@ -6,6 +6,7 @@ import { sessionOps } from './sessions.mjs';
 import { statusOps } from './statuses.mjs';
 import { settingOps, settings } from './settings.mjs';
 import { delegationOps } from './delegation.mjs';
+import { browserOps } from './browser.mjs';
 import { probeOps } from './probe.mjs';
 import { channelOps } from './channels.mjs';
 import { botOps } from './bots.mjs';
@@ -16,7 +17,7 @@ import { routineOps } from './routines.mjs';
 const withProbe = String(process.env.AGENT_HOST_BACKENDS ?? '').split(',').map((s) => s.trim()).includes('fake');
 
 export const registry = createRegistry({
-  ops: [...appOps, ...sessionOps, ...statusOps, ...settingOps, ...delegationOps, ...channelOps, ...botOps, ...memoryOps, ...routineOps, ...(withProbe ? probeOps : [])],
+  ops: [...appOps, ...sessionOps, ...statusOps, ...settingOps, ...delegationOps, ...browserOps, ...channelOps, ...botOps, ...memoryOps, ...routineOps, ...(withProbe ? probeOps : [])],
   settings: [...settings],
 });
 
