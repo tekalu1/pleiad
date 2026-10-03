@@ -60,6 +60,9 @@
 | 添付 | attachment |
 | 送信 / 中断 | Send / Stop |
 | 再開 / 中断しました | Resume / Stopped |
+| 使用量の上限 / 上限のため中断 | usage limit / Stopped at usage limit |
+| 解除後に自動で再開 / 自動で再開しない | Resume automatically after reset / Do not resume automatically |
+| 再開の順番 / 同時に動かす | Resume order / Run concurrently |
 | 未送信 | Unsent |
 | 次のターンから適用 | Applies from the next turn |
 | 考えた（N 文字） | Thought (N chars) |

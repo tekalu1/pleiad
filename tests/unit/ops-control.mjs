@@ -339,7 +339,7 @@ export default async function (t) {
       const required = o.input.required ?? [];
       const inputs = o.id === 'settings.get' || o.id === 'settings.schema'
         ? (await api(cli, 'POST', '/api/ops/settings.list', {})).body.result.settings.map((s) => ({ key: s.key }))
-        : o.id === 'sessions.get' || o.id === 'sessions.read' ? [{ sessionId: ask.sessionId }] : ['delegation.status', 'delegation.taskStatus', 'delegation.taskWait'].includes(o.id) ? [{ taskId: 'none' }] : o.id === 'sessions.search' ? [{ query: 'control' }, { query: MARKER }]
+        : ['sessions.get', 'sessions.read', 'sessions.listMessages'].includes(o.id) ? [{ sessionId: ask.sessionId }] : ['delegation.status', 'delegation.taskStatus', 'delegation.taskWait'].includes(o.id) ? [{ taskId: 'none' }] : o.id === 'sessions.search' ? [{ query: 'control' }, { query: MARKER }]
         : o.id === 'hooks.readPly' ? [{ id: 'none' }] : o.id === 'hooks.read' ? [{ agent: 'claude', scope: 'project', base: scratch, loc: { event: 'PreToolUse', group: 0, handler: 0 } }] : required.length ? null : [{}];
       if (!inputs) { t.ok(`T6 ${o.id}: 必須の引数の例がある`, false); continue; }
       for (const args of inputs) everything.push([o.id, args, JSON.stringify((await api(cli, 'POST', `/api/ops/${o.id}`, args)).body)]);

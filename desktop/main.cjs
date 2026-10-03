@@ -1,4 +1,4 @@
-const { app, BrowserWindow, WebContentsView, utilityProcess, shell, dialog, ipcMain, Notification, nativeTheme, safeStorage, session, nativeImage, Menu, screen } = require('electron');
+const { app, BrowserWindow, WebContentsView, utilityProcess, shell, dialog, ipcMain, Notification, nativeTheme, safeStorage, session, nativeImage, Menu, screen, powerMonitor } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
 const { Updates } = require('./updates.cjs');
@@ -155,6 +155,7 @@ async function boot() {
     env: { ...process.env, PATH: `${agentBrowserBin}${path.delimiter}${process.env.PATH || ''}`, AGENT_HOST_BIND: '127.0.0.1', AGENT_HOST_PORT: String(savedPort(portFile)), AGENT_HOST_SYSTEM_LOCALE: systemLanguage() },
     stdio: 'pipe', serviceName: 'Pleiad server',
   });
+  powerMonitor.on('resume', () => worker?.postMessage({ type: 'wake' }));
   // Consume logs without exposing the private authentication URL.
   worker.stdout.on('data', () => {});
   // 外部 MCP の秘密は safeStorage で暗号化する。safeStorage は main でしか使えないので、サーバーの依頼をここで受ける
