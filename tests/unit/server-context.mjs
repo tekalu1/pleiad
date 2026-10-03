@@ -3,6 +3,7 @@
 //   - 「この会話では外す」: 次のターンから接続しない・ツールを出さない。戻すとまたつなぐ
 //   - 開始後に変わった指示の検出（更新時刻つき）・差分・「新しい内容で会話を続ける」
 //   - エージェント任せの MCP の見比べ（各エージェントの登録を読むだけ）
+import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -170,6 +171,19 @@ export default async function (t) {
     const nativeFork = await client.cmd('fork', { sessionId: nativeTurn.sessionId, upToMessageId: (await client.cmd('loadSession', { sessionId: nativeTurn.sessionId })).messages.at(-1).uuid });
     text = await fetchSub(nativeFork);
     t.ok('履歴そのものを写す分岐は控えを引き継ぐ', said(nativeTurn).includes('DEDUP_SUB') && isShort(text), text);
+    // 同じ会話で巻き戻して送り直す（sendMessage の rewind。ADR 0091）も控えを捨てる。巻き戻した先のモデルは、捨てたターンで渡された本文を持っていない
+    const rw = await client.cmd('newSession', { cwd: dedup, backend: 'fake' });
+    await fetchSub(rw);
+    t.ok('巻き戻す前は渡し済みを覚えている', isShort(await fetchSub(rw)));
+    const rwUsers = (await client.cmd('loadSession', rw)).messages.filter(m => m.role === 'user');
+    const rewindMark = client.mark();
+    const rewindId = crypto.randomUUID();
+    await client.cmd('sendMessage', { ...rw, messageId: rewindId, prompt: ask(), rewind: { beforeMessageId: rwUsers[1].uuid } });
+    await client.waitFor(e => e.type === 'userMessage' && e.messageId === rewindId, { from: rewindMark });
+    const rewindStart = client.events.findIndex((e, i) => i >= rewindMark && e.type === 'userMessage' && e.messageId === rewindId);
+    await client.waitFor(e => e.type === 'turnEnd' && e.sessionId === rw.sessionId, { from: rewindStart });
+    t.ok('同じ会話で巻き戻して送り直すと、渡し済みの控えを捨てて本文を渡し直す', said({ events: client.since(rewindStart) }).includes('DEDUP_SUB'), said({ events: client.since(rewindStart) }));
+    t.ok('巻き戻し直したあとはまた短い一行', isShort(await fetchSub(rw)));
   } finally {
     client?.close(); await host?.stop();
     await fs.rm(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });

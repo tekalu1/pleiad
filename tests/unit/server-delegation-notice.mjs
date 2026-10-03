@@ -72,8 +72,10 @@ export default async function(t) {
       const running3 = c.runTurn({ sessionId: p3, prompt: 'bg 1 12' });
       await c.waitFor(e => e.type === 'turnResult' || e.type === 'phase', { from: mark3, ms: 20000 });
       await c.cmd('setTurnSettings', { sessionId: p3, backend: 'fake', model: 'fast' });
-      rows = await awaitTasks(p3, rows => rows.length === 2 && rows.every(r => r.status === 'completed'));
+      // 通知を試みた直後は delivering のことがある。予約により pending に戻るまで待つ。
+      rows = await awaitTasks(p3, rows => rows.length === 2 && rows.every(r => r.status === 'completed' && r.notification === 'pending'));
       await sleep(1200);
+      rows = await tasksOf(p3);
       t.ok('途中送信を止めている間は、走っているターンへ通知しない', rows.every(r => r.notification === 'pending') && noticesOf(p3, mark3).length === 0
         && turnEnds(p3, mark3).length === 0);
       await running3;
