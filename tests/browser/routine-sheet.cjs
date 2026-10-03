@@ -101,7 +101,8 @@ async page => {
   await page.waitForSelector('.ch-routines');
   check(await page.locator('.ch-routines .rt-n').textContent() === '', '見出しにルーティンの入口がある（無い間は数を付けない）');
   check(await page.locator('#channelsSide .cs-sec[data-sec="routines"] .cs-empty').count() === 1, '脇のルーティンの節は、無い間は空の状態');
-  check((await calls('routines.list')).length >= 1, 'ルーティンの一覧は routines.list で読む');
+  await page.waitForFunction(() => window.__rcalls.some(c => c.op === 'routines.list'));   // 接続の前に読めなかったときは、少し待って読み直す
+  check(true, 'ルーティンの一覧は routines.list で読む');
 
   // ---- 入口 → シート（名前に入る。種類は毎日、bot は先頭、チャンネルは今開いているもの）
   await page.locator('.ch-routines').click();

@@ -7,7 +7,7 @@ const stores = new WeakMap();
 const RELOAD_WAIT_MS = 250;      // 出来事が続けて来たら 1 回にまとめて読み直す（nextAt は読み直しで新しくなる）
 const TICK_MS = 60_000;          // 「今日 23:00」「明日 9:00」の言い回しが日をまたいで古くならないように
 // 読めなかったときの待ち（ms）。操作が無い版・まだつながっていない間に、出来事のたびに呼び続けないため。使い切ったら最後の長さの間は出来事でも読み直さない
-const BACKOFF_MS = Object.freeze([1000, 2000, 4000, 8000, 16000, 30000]);
+const BACKOFF_MS = Object.freeze([300, 1000, 2000, 4000, 8000, 16000, 30000]);
 
 export function getRoutineStore(host) {
   let store = stores.get(host);
