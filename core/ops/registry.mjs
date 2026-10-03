@@ -10,7 +10,7 @@
 // i18n-dynamic: agent:settings.
 import crypto from 'node:crypto';
 import { z } from 'zod';
-import { agentT } from '../i18n.mjs';
+import { agentT, i18n, agentLocaleOf, FALLBACK } from '../i18n.mjs';
 import { RISKS, decide, maxRisk } from './policy.mjs';
 
 const ID_RX = /^[a-z][a-zA-Z0-9]*\.[a-z][a-zA-Z0-9]*$/;
@@ -197,8 +197,19 @@ function pendingResult(locale, opId, key, requestId) {
   return { ok: true, pending: true, decision: 'ask', result: { status: 'pending', code: 'PENDING_APPROVAL', requestId, message } };
 }
 
-/** エージェントへの文に入れる、変更の対象（設定ならその名前、ほかは操作の id） */
-export const targetText = (locale, opId, key) => (key ? agentT(locale, 'ops.settingTarget', { key }) : agentT(locale, 'ops.opTarget', { id: opId }));
+/**
+ * エージェントへの文に入れる、変更の対象。設定なら画面でのラベルとキー（ラベルの辞書 agent:ops.settingLabel.<key> にある設定。
+ * 無ければキーだけ）、ほかは操作の id
+ */
+export function targetText(locale, opId, key) {
+  if (!key) return agentT(locale, 'ops.opTarget', { id: opId });
+  // i18n-dynamic: agent:ops.settingLabel.
+  const path = `ops.settingLabel.${key}`;
+  const label = [agentLocaleOf(locale), FALLBACK].map((lng) => lng && i18n.getResource(lng, 'agent', path)).find((x) => typeof x === 'string');
+  return label
+    ? agentT(locale, 'ops.settingTargetLabeled', { label, key })
+    : agentT(locale, 'ops.settingTarget', { key });
+}
 
 const issuesOf = (error) => error.issues.map((i) => ({ path: i.path.join('.'), code: i.code, message: i.message }));
 
