@@ -218,6 +218,18 @@ export default async function (t) {
     const callCode = async (op, args = {}) => JSON.parse((await api(bound(bypass), 'POST', '/mcp/control', { jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'call_op', arguments: { op, args } } })).body.result.content[0].text).code;
     t.ok('5 つのコマンドの名前で call_op を呼んでも NOT_FOUND（setMode・resolvePermission・claudeAccounts・remoteDevices・compatEndpointDefault・setRemoteSettings・compatEndpointSave）',
       (await Promise.all(['setMode', 'resolvePermission', 'claudeAccounts', 'remoteDevices', 'compatEndpointDefault', 'setRemoteSettings', 'compatEndpointSave'].map((n) => callCode(n)))).every((code) => code === 'NOT_FOUND'));
+    // ---- 画面の中だけ（ui-internal）から移した操作（ADR 0105）
+    const { MOVED: UI_MOVED, KEPT: UI_KEPT } = await import('./ops-session-work.mjs');
+    t.ok('画面の中だけから移した 24 の操作は ply_control の list_ops に出て、残した ui-internal の 11 はどの操作にも当たらない',
+      Object.values(UI_MOVED).every((id) => listedOps.some((o) => o.id === id)) && !listedOps.some((o) => UI_KEPT.includes(registry.get(o.id)?.legacyCommand)),
+      Object.values(UI_MOVED).filter((id) => !listedOps.some((o) => o.id === id)).join(' '));
+    const shellRun = await api(bound(bypass), 'POST', '/mcp/control', { jsonrpc: '2.0', id: 4, method: 'tools/call', params: { name: 'call_op', arguments: { op: 'shell.run', args: { command: 'echo ops-shell-ok', reason: '確かめる' } } } });
+    const shellResult = JSON.parse(shellRun.body.result.content[0].text);
+    t.ok('bypass の会話から call_op の shell.run: 確認なしで自分の会話のシェルで動き、終わるまで待った出力を返す', shellResult.status === 'done' && shellResult.exitCode === 0 && shellResult.stdout.includes('ops-shell-ok'), JSON.stringify(shellResult));
+    const shellRows = (await c.cmd('loadSession', { sessionId: bypass.sessionId })).messages.filter((m) => m.kind === 'shell');
+    const shellLog = (await c.cmd('sessionChanges', { sessionId: bypass.sessionId })).changes;
+    t.ok('shell.run の行は人の `!` と同じく会話に残り、会話の記録に呼んだ操作（shell.run）が agent として残る', shellRows.some((m) => String(m.text ?? m.command ?? JSON.stringify(m)).includes('ops-shell-ok'))
+      && shellLog.some((x) => x.field === 'op' && x.to === 'shell.run' && x.by === 'agent'), JSON.stringify({ shellRows, shellLog: shellLog.slice(-3) }));
     const agentSettings = (await api(bound(bypass), 'POST', '/api/ops/settings.list', {})).body.result.settings.map((x) => x.key);
     t.ok('agent の settings.list に、承認モードの既定（mode）と既定のアカウント（claudeAccount）は無い', [...HUMAN_ONLY_SETTINGS].every((k) => !agentSettings.includes(k)) && agentSettings.includes('model'));
     t.ok('agent が設定 mode を get しても SETTING_NOT_FOUND（ply_control の call_op）', (await callCode('settings.get', { key: 'mode' })) === 'SETTING_NOT_FOUND');
@@ -384,6 +396,10 @@ export default async function (t) {
         : o.id === 'hooks.readPly' ? [{ id: 'none' }] : o.id === 'hooks.read' ? [{ agent: 'claude', scope: 'project', base: scratch, loc: { event: 'PreToolUse', group: 0, handler: 0 } }]
         : o.id === 'mcp.nativeList' ? [{ format: 'claude', scope: 'user', cwd: home }] : o.id === 'mcp.nativeRead' ? [{ format: 'claude', scope: 'user', cwd: home, name: 'leak' }, { format: 'claude', scope: 'user', cwd: home, name: 'web' }]
         : o.id === 'mcp.read' ? [{ name: 'x' }] : o.id === 'hooks.scan' ? [{}, { cwd: home }] : o.id === 'hooks.session' ? [{ sessionId: ask.sessionId, cwd: home, backend: 'claude' }]
+        // 中身を読む操作（ADR 0105）: 目印の入った home を探す・並べる
+        : ['context.scan', 'context.agentMcp', 'context.skills', 'hooks.unifyPreview'].includes(o.id) ? [{}, { cwd: home }] : o.id === 'context.nativeInstructions' ? [{ cwd: home, backend: 'claude' }]
+        : o.id === 'files.listDirs' ? [{ path: home, files: true }] : o.id === 'git.diff' ? [{ sessionId: ask.sessionId, path: 'a.txt' }]
+        : o.id === 'sessions.readSubagent' ? [{ sessionId: ask.sessionId, agentId: 'none' }]
         : required.length ? null : [{}];
       if (!inputs) { t.ok(`T6 ${o.id}: 必須の引数の例がある`, false); continue; }
       for (const args of inputs) everything.push([o.id, args, JSON.stringify((await api(cli, 'POST', `/api/ops/${o.id}`, args)).body)]);

@@ -7,6 +7,23 @@ import { defineOp } from './registry.mjs';
 const D = (id, key) => `agent:ops.notify.${id}.${key}`;
 
 export const notifyOps = [
+  // 通知の状態（ADR 0105）。画面（設定 › 通知）にはスマホの一覧ごと返し、AI・CLI には端末を数だけで返す（一覧は human-only の「リモートのペアリング」）
+  defineOp({
+    id: 'notify.status',
+    summary: 'agent:ops.notify.status.summary',
+    risk: 'read',
+    input: z.object({}),
+    output: z.object({ pc: z.object({ done: z.boolean(), reply: z.boolean(), failed: z.boolean() }).passthrough(), relayConnected: z.boolean(),
+      devices: z.object({ count: z.number().int(), muted: z.number().int() }) }),
+    surfaces: { ui: true, mcp: 'catalog', cli: { path: ['notify', 'status'] } },
+    legacyCommand: 'notifyStatus',
+    uiHandler: (ctx) => ctx.notify.status(),
+    handler: async (ctx) => {
+      const { pc, relayConnected, devices = [] } = await ctx.notify.status();
+      return { pc, relayConnected: relayConnected === true, devices: { count: devices.length, muted: devices.filter((d) => d?.notify?.muted === true || d?.muted === true).length } };
+    },
+  }),
+
   defineOp({
     id: 'notify.setPc',
     summary: 'agent:ops.notify.setPc.summary',

@@ -537,7 +537,13 @@
         "model": "The model id. An empty string means the agent's default.",
         "reason": "Why the model is changed (kept in the change log).",
         "reasonKey": "A predefined reason key from the UI.", "reasonParams": "Values for the predefined reason.", "backend": "Conversation agent."
-      }
+      },
+      "switchBackend": { "summary": "Switches the agent of a conversation now (only one that is not running). The approval mode becomes the first mode of the new agent; a switch that would loosen it is refused (a person switches on the screen). Needs the user's approval.", "sessionId": "The conversation id. Omit for this conversation.", "backend": "The id of the agent to switch to.", "reason": "Why it switches (shown on the approval card and kept in the log)." },
+      "setGrouped": { "summary": "Takes a conversation out of its group in the list, or puts it back.", "sessionId": "The conversation id. Omit for this conversation.", "ungrouped": "true takes it out, false puts it back." },
+      "background": { "summary": "Background tasks of a conversation (terminals, background agents). Without taskId, the list; with it, that task's detail and output (the end is kept).", "sessionId": "The conversation id. Omit for this conversation.", "taskId": "The task id (from the list).", "maxChars": "The most characters of output (default 8000, at most 20000). The end is kept." },
+      "stopBackground": { "summary": "Stops one background task of a conversation. The conversation and its turns stay.", "sessionId": "The conversation id. Omit for this conversation.", "taskId": "The id of the task to stop." },
+      "subagents": { "summary": "The subagents of a conversation (children started by a delegation tool) and their state. With toolId, only the child that tool call started.", "sessionId": "The conversation id. Omit for this conversation.", "toolId": "The id of the delegation tool call.", "limit": "How many to return (default 30, at most 100).", "cursor": "The next value of the previous result. Continues from there." },
+      "readSubagent": { "summary": "Reads a subagent's conversation (the request and the messages). Messages are paged and bodies are cut.", "sessionId": "The parent conversation id. Omit for this conversation.", "agentId": "The subagent id (agentId from sessions.subagents).", "limit": "How many to return (default 30, at most 100).", "cursor": "The next value of the previous result. Continues from there.", "maxChars": "The most characters of one message (default 2000, at most 20000)." }
     },
     "statuses": {
       "setIcon": {
@@ -714,11 +720,14 @@
       "keep": { "summary": "Keep a separate worktree out of the automatic cleanup (kept: false clears it).", "id": "The worktree id.", "kept": "Whether to keep it (default true)." },
       "archive": { "summary": "Archive and remove a separate worktree. The whole working tree is saved to a hidden ref first and can be brought back with worktrees.restore for 90 days. Not removed while a conversation uses it.", "id": "The worktree id." },
       "restore": { "summary": "Recreate an archived worktree as a new separate worktree.", "ref": "The archive ref (starts with refs/pleiad/archive/; returned by worktrees.archive).", "sessionId": "The conversation whose repository to use. Omit both sessionId and cwd for this conversation.", "cwd": "The repository place (only places a conversation has used)." },
-      "setSettings": { "summary": "Turn \"always split\" on or off (split without asking when another conversation is writing to the same repository).", "always": "Whether to always split." }
+      "setSettings": { "summary": "Turn \"always split\" on or off (split without asking when another conversation is writing to the same repository).", "always": "Whether to always split." },
+      "check": { "summary": "The worktree state of a conversation's working folder (where it is now, other conversations writing to the same repository, whether it can split, \"always split\").", "sessionId": "The conversation id. Omit both sessionId and cwd for this conversation.", "cwd": "The place to check (only a place some conversation has used).", "backend": "The agent used to judge whether it writes (default: the conversation's).", "mode": "The approval mode used to judge whether it writes (default: the conversation's)." },
+      "settings": { "summary": "The current value of \"always split\"." }
     },
     "notify": {
       "setPc": { "summary": "Turn this PC's notifications on or off per kind. Only the given fields change.", "done": "When work is done.", "reply": "When a reply (approval or question) is needed.", "failed": "When work failed." },
-      "setDevice": { "summary": "Mute or unmute notifications to one paired phone. The device list is not shown (ask the user for the id).", "id": "The device id.", "muted": "Whether to mute." }
+      "setDevice": { "summary": "Mute or unmute notifications to one paired phone. The device list is not shown (ask the user for the id).", "id": "The device id.", "muted": "Whether to mute." },
+      "status": { "summary": "The notification state (on or off per kind on this PC, the relay connection, how many paired phones there are and how many are muted). The device list is not returned." }
     },
     "compatEndpoints": {
       "recheck": { "summary": "Check a saved compatible endpoint again with its saved URL and key, and record the result and the model list (no key is entered or returned).", "id": "The endpoint id." },
@@ -844,13 +853,18 @@
       },
       "repair": {
         "summary": "Back up a broken Pleiad hooks registration file and rewrite it with the parts that could be read. The user must approve."
-      }
+      },
+      "unifyPreview": { "summary": "What changing the owner of hooks would do (definitions to import and to stop, and the imports and revision to pass to hooks.setOwner). Nothing is written.", "direction": "ply (gather into Pleiad, the default) or native (back to the agents' config files)." }
     },
     "context": {
       "arg": {
         "cwd": "The working directory. From a conversation, omit it to use that conversation's working directory.",
         "sessionId": "The conversation id. From a conversation, omit it for that conversation.",
-        "reason": "Why it is changed (shown on the approval card and kept in the change log)."
+        "reason": "Why it is changed (shown on the approval card and kept in the change log).",
+        "limit": "How many to return (default 30, at most 100).",
+        "cursor": "The next value of the previous result. Continues from there.",
+        "maxChars": "The most characters of one body (default 2000, at most 20000). Longer text is cut and marked truncated.",
+        "backend": "The agent id (claude, codex and so on). From a conversation, omit it to use that conversation's agent."
       },
       "settings": {
         "summary": "Context settings (where instructions, Skills and external MCP are read from, and who owns them): the default and the per-place overrides."
@@ -885,7 +899,14 @@
         "summary": "Remove an external MCP server from a conversation or put it back (from the next turn). Putting it back needs the user's approval.",
         "name": "The MCP server name.",
         "removed": "true removes it (default), false puts it back."
-      }
+      },
+      "session": { "summary": "The context of a conversation (the instructions, Skills and external MCP pinned at its start and who owns them, removed MCP, differences from the current files). entries are paged and bodies are cut.", "compare": "Whether to compare a pinned conversation with the current files (default true)." },
+      "diff": { "summary": "The differences between the instructions and Skills pinned at the start of a conversation and the current files (before and after for each changed file)." },
+      "scan": { "summary": "What was found when searching the working folder for instructions, Skills and external MCP (where, status, body). Can be narrowed by kind; bodies are cut.", "place": "default searches with the defaults only, without the per-place overrides.", "scope": "user searches the user scope only (home and the added folders); directory searches the working folder scope only (from the Git root to the working folder).", "kind": "Narrow by kind (instruction, skill, mcp)." },
+      "skills": { "summary": "The Skills available in the working folder (name, description, argument hint, where they come from). The same as the \"/\" suggestions in the composer." },
+      "agentMcp": { "summary": "The external MCP servers registered in each agent's settings (Claude, Codex). Nothing is connected. Secrets in commands and URLs are masked." },
+      "nativeInstructions": { "summary": "The instruction files an agent reads by itself (CLAUDE.md and rules for Claude, AGENTS.md for Codex) with estimated tokens." },
+      "findings": { "summary": "Things worth a look in the conversation's instruction files (duplicates, references that are not found)." }
     },
     "remote": {
       "status": {
@@ -902,6 +923,20 @@
         "summary": "Compatible endpoints (URL, models, defaults, check results). API keys are not returned (only hasKey).",
         "agent": "Filter by agent id."
       }
+    },
+    "git": {
+      "arg": { "sessionId": "The conversation id. Omit both sessionId and cwd for this conversation.", "cwd": "The working folder (only a place some conversation has used).", "range": "uncommitted (changes not committed, the default) or session (changes during this conversation).", "limit": "How many to return (default 30, at most 100).", "cursor": "The next value of the previous result. Continues from there.", "maxChars": "The most characters of the diff (default 20000, at most 100000)." },
+      "status": { "summary": "The git state of a conversation's working folder (branch, HEAD, how much changed). git: null when there is no git or the folder is not tracked.", "brief": "true also returns the number of files and commits during this conversation.", "fresh": "true reads again (no short-lived cache)." },
+      "changes": { "summary": "The changes in a conversation's working folder (lines added and removed per file), its worktrees and this conversation's git events." },
+      "diff": { "summary": "The diff of one file (unified diff).", "path": "The path from the repository root (path from git.changes)." }
+    },
+    "shell": {
+      "run": { "summary": "Runs a command in a conversation's shell (the same as ! in the composer; the line and its result stay in the conversation and go to its agent with the next message). Waits for it to finish and returns the result. Needs the user's approval.", "sessionId": "The conversation id. Omit for this conversation.", "command": "The command to run.", "cwd": "The working folder for a conversation not sent yet (a sent conversation uses its own).", "runId": "The line id (8 to 80 letters, digits and hyphens). Made when omitted.", "waitMs": "How long to wait for it to finish in milliseconds (default 30000, at most 120000, 0 does not wait). status: running if it does not finish in time.", "reason": "Why it runs (shown on the approval card and kept in the log)." },
+      "stop": { "summary": "Stops a running shell line. The stopped line stays in the conversation with the output so far.", "runId": "The line id (from shell.run)." },
+      "skip": { "summary": "Whether a shell line goes to the agent with the next message (only conversations that run it on the host).", "sessionId": "The conversation id. Omit for this conversation.", "runId": "The line id.", "skip": "true does not hand it over, false does." }
+    },
+    "files": {
+      "listDirs": { "summary": "What a folder on this host contains (folder names, and with files: true the names, sizes and modified times of files). File contents are not read.", "path": "The folder path. From a conversation, omit it for that conversation's working folder.", "files": "true also returns files.", "limit": "How many to return (default 30, at most 100).", "cursor": "The next value of the previous result. Continues from there." }
     },
     "probe": {
       "guarded": {
