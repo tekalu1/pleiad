@@ -8,7 +8,7 @@
 // 認証済みで、案内を閉じた fake の会話（新しいセッション）から始める。サーバーは prefs.json に confirmAgentSites: true を入れておく
 // （AGENT_HOST_BACKENDS=fake AGENT_HOST_DATA=<一時ディレクトリ> AGENT_HOST_PORT=<空きポート> AGENT_HOST_LOCALE=ja node core/server.mjs）。
 async page => {
-  const later = page.getByRole('button', { name: 'あとで', exact: true });
+  const later = page.locator('#closeOnboarding');
   if (await later.isVisible()) await later.click();
   await page.addInitScript(() => {
     if (window.__spWrapped) return;
@@ -43,6 +43,11 @@ async page => {
   const say = async (prompt) => {
     await page.locator('#prompt').fill(prompt);
     await page.locator('#prompt').press('Control+Enter');
+    // 切り替え直後にキーが届かなければ、入力が残っていることを確かめて送信ボタンで送る
+    await page.waitForFunction(() => !document.querySelector('#prompt')?.textContent?.trim(), null, { timeout: 1500 }).catch(async () => {
+      await page.locator('#send').click();
+      await page.waitForFunction(() => !document.querySelector('#prompt')?.textContent?.trim(), null, { timeout: 5000 });
+    });
   };
   const send = async (prompt) => {
     await page.evaluate(() => document.getElementById('newSession').click());
@@ -54,12 +59,70 @@ async page => {
   const current = (title) => page.waitForFunction((tt) => [...document.querySelectorAll('[data-session]')].find((r) => r.textContent.includes(tt))?.dataset.session, title).then((h) => h.jsonValue());
   // ターンが終わる（送信欄が「送信」に戻り、稼働表示が消える）まで待つ
   const idle = () => page.waitForFunction(() => !document.querySelector('.m.activity'), null, { timeout: 15000 });
+  const locale = await page.evaluate(() => document.documentElement.lang);
+  const shot = async (name) => { if (process.env.APPROVAL_SCREENSHOT_DIR) await page.screenshot({ path: `${process.env.APPROVAL_SCREENSHOT_DIR}/approval-operation-${name}-${locale}.png`, fullPage: true, animations: 'allow' }); };
+  const pendingText = async (must, absent) => {
+    const text = await page.locator('.m.ai').last().textContent();
+    if (!text.includes(must) || (absent && text.includes(absent))) throw Error('pending wording: ' + text);
+  };
+  const noticeText = async (must) => {
+    await page.waitForFunction((wanted) => [...document.querySelectorAll('.m.sys summary')].some((s) => s.textContent.includes(wanted)), must, { timeout: 15000 });
+    const summary = page.locator('.m.sys summary').filter({ hasText: must }).last();
+    await summary.click();
+    const full = await summary.locator('..').textContent();
+    if (!full.includes(must)) throw Error('notice wording: ' + full);
+  };
+
+
+  if (locale === 'en') {
+    const waitCard = async () => { await page.locator('.mw.card .cu-ap').waitFor(); await idle(); };
+    const check = async (label, question, button, pending, oldId) => {
+      await waitCard();
+      const body = await page.locator('.mw.card').last().textContent();
+      if (!body.includes(label) || !body.includes(question) || !body.includes(button)) throw Error('English card: ' + body);
+      await pendingText(pending, oldId);
+    };
+    await send(call({ key: 'confirmAgentSites', value: false, reason: 'Verify wording' }));
+    await check('Setting', 'wants to change a setting', 'Allow change', 'The change to the setting', 'The change to the operation');
+    if (!await page.locator('.mw.card .ap-was').count() || !await page.locator('.mw.card .ap-arrow').count()) throw Error('setting diff missing');
+    await shot('setting-pending');
+    await page.getByRole('button', { name: 'Allow change', exact: true }).click();
+    await noticeText('Setting change result (changed)');
+    await shot('setting-allowed');
+    await send('echo:receiving conversation');
+    await idle();
+    const receiver = await current('echo:receiving conversation');
+    await send('echo:sending conversation');
+    await idle();
+    await page.evaluate(async (id) => { await window.__cmd('setMode', { sessionId: id, mode: 'auto', reasonKey: 'manual' }); await window.__cmd('setPref', { key: 'mode', value: 'default', backend: 'fake' }); }, receiver);
+    await say(callOp('sessions.send', { sessionId: receiver, text: 'echo:approved message' }));
+    await check('Send', 'wants to send a message to another conversation', 'Allow sending', 'sending to another conversation is waiting', 'sessions.send');
+    if (await page.locator('.mw.card .ap-arrow').count()) throw Error('send diff shown');
+    await shot('send-pending');
+    await page.getByRole('button', { name: 'Allow sending', exact: true }).click();
+    await noticeText('Operation result (sent)');
+    await shot('send-allowed');
+    await send('echo:shell conversation');
+    await idle();
+    const own = await current('echo:shell conversation');
+    await say(callOp('shell.run', { sessionId: own, command: 'echo approval-card', waitMs: 0 }));
+    await check('Command', 'wants to run a command', 'Allow running', 'running the command is waiting', 'shell.run');
+    const command = await page.locator('.mw.card .cu-ap code').textContent();
+    if (command !== 'echo approval-card' || await page.locator('.mw.card .ap-arrow, .mw.card .ap-was, .mw.card .ap-key').count()) throw Error('shell command row: ' + command);
+    await shot('shell-pending');
+    await page.getByRole('button', { name: 'Allow running', exact: true }).click();
+    await noticeText('Operation result (ran)');
+    await shot('shell-allowed');
+    return;
+  }
 
   // ============ 1. 許可: 確認を切る（関所を緩める）
   await send(call({ key: 'confirmAgentSites', value: false, reason: '確認のたびに止まってしまうため' }));
   await page.locator('.mw.card .cu-ap').waitFor();
   await page.waitForFunction(() => /"status":\s*"pending"/.test(document.body.textContent), null, { timeout: 15000 });
   await idle();
+  await pendingText('設定「エージェントがサイトを使う前に確認」', '操作「settings.set」');
+  await shot('setting-pending');
   const card = await page.evaluate(() => {
     const m = document.querySelector('.mw.card');
     const q = (s) => m.querySelector(s);
@@ -96,8 +159,9 @@ async page => {
   const answered = await page.evaluate(() => window.__sent.filter((x) => x.command === 'resolvePermission').at(-1));
   if (answered.args.allow !== true || !/^[a-f0-9]{32}$/.test(answered.args.receipt || '') || answered.args.always) throw Error('resolvePermission: ' + JSON.stringify(answered));
   // 結果の通知が会話に届き、開ける 1 行になる（エージェントに渡した全文は開くと読める）
-  await page.waitForFunction(() => [...document.querySelectorAll('.m.sys summary')].some((s) => /設定の変更の結果（変更した）/.test(s.textContent)), null, { timeout: 15000 });
+  await noticeText('設定の変更の結果（変更した）');
   await idle();
+  await shot('setting-allowed');
 
   // ============ 2. 拒否: 確認をつけ直し（狭める向きはカードなし）、もう一度切らせる
   await send(call({ key: 'confirmAgentSites', value: true }));
@@ -133,13 +197,17 @@ async page => {
   await say(callOp('sessions.send', { sessionId: strong, text: 'echo:テストを流してください', reason: 'テストの実行を頼む' }));
   await page.locator('.mw.card .cu-ap').waitFor();
   await idle();
+  await pendingText('別の会話への送信は', 'sessions.send');
+  await shot('send-pending');
   const sendCard = await opCard();
   if (!sendCard.mark.includes('承認を待っている') || !/が別の会話にメッセージを送ろうとしています$/.test(sendCard.q) || sendCard.label !== '送信'
       || sendCard.buttons.join() !== '拒否,送信を許可' || sendCard.warn !== '⚠ 送り先の会話は、この会話より確認の少ない承認モードで動きます。')
     throw Error('send approval card: ' + JSON.stringify(sendCard));
   await page.getByRole('button', { name: '送信を許可', exact: true }).click();
   await allowed('送信を許可した');
+  await noticeText('操作の結果（送信した）');
   await idle();
+  await shot('send-allowed');
   // 会話のシェルでコマンドを動かす（自分の会話）
   await send('echo:シェルの会話');
   await idle();
@@ -147,13 +215,19 @@ async page => {
   await say(callOp('shell.run', { sessionId: own, command: 'echo approval-card', waitMs: 0, reason: '動作の確認' }));
   await page.locator('.mw.card .cu-ap').waitFor();
   await idle();
+  await pendingText('コマンドの実行は', 'shell.run');
+  const command = await page.locator('.mw.card .cu-ap code').textContent();
+  if (command !== 'echo approval-card' || await page.locator('.mw.card .ap-arrow, .mw.card .ap-was, .mw.card .ap-key').count()) throw Error('shell command row: ' + command);
+  await shot('shell-pending');
   const shellCard = await opCard();
   if (!/がコマンドを実行しようとしています$/.test(shellCard.q) || shellCard.label !== 'コマンド' || shellCard.buttons.join() !== '拒否,実行を許可'
       || shellCard.warn !== '⚠ コマンドは確認なしで、あなたと同じ権限で動きます。')
     throw Error('shell approval card: ' + JSON.stringify(shellCard));
   await page.getByRole('button', { name: '実行を許可', exact: true }).click();
   await allowed('実行を許可した');
+  await noticeText('操作の結果（実行した）');
   await idle();
+  await shot('shell-allowed');
 
   // 狭い幅でも待機中の面・ボタンと、決着後の一行が会話の列から出ない。
   await page.setViewportSize({ width: 360, height: 760 });

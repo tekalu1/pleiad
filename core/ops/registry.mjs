@@ -191,20 +191,29 @@ async function approval(ctx, op, args, failure, run) {
     const answer = await ctx.approve({ op: op.id, change: { ...change, op: op.id, ...(op.approvalWords ? { words: op.approvalWords } : {}) }, receipt, reason, actor: ctx.actor, ...(requestId ? { requestId } : {}), proceed });
     if (!answer?.pending) return failure(answer?.code ?? 'DENIED', { id: op.id }, { decision: 'ask' });
     id = answer.requestId;
-    return pendingResult(ctx.locale, op.id, change.key, id);
+    return pendingResult(ctx.locale, op.id, change.key, op.approvalWords, id);
   };
   return ask(0, null);
 }
 
 /** 承認待ちの返り値。エージェントへの文（会話の言語）と requestId。結果は後で会話に届く（ADR 0088） */
-function pendingResult(locale, opId, key, requestId) {
-  const message = agentT(locale, 'ops.pending', { target: targetText(locale, opId, key), requestId });
+function pendingResult(locale, opId, key, words, requestId) {
+  const message = opId === 'settings.set'
+    ? agentT(locale, 'ops.pending', { target: targetText(locale, opId, key), requestId })
+    : agentT(locale, 'ops.pendingOp', { ...approvalWords(locale, words), requestId });
   return { ok: true, pending: true, decision: 'ask', result: { status: 'pending', code: 'PENDING_APPROVAL', requestId, message } };
 }
 
+/** 操作の結果と承認待ちに使う言葉。未定義の組は共通の操作の言葉にする。 */
+export function approvalWords(locale, words) {
+  const lng = agentLocaleOf(locale) ?? FALLBACK;
+  const set = typeof words === 'string' && APPROVAL_WORDS_RX.test(words) && i18n.getResource(lng, 'agent', `ops.approvalWords.${words}`) ? words : 'op';
+  return Object.fromEntries(['target', 'done', 'notDone', 'failed'].map((field) => [field, agentT(locale, `ops.approvalWords.${set}.${field}`)]));
+}
+
 /**
- * エージェントへの文に入れる、変更の対象。設定なら画面でのラベルとキー（ラベルの辞書 agent:ops.settingLabel.<key> にある設定。
- * 無ければキーだけ）、ほかは操作の id
+ * エージェントへの設定の文に入れる対象。画面でのラベルとキー（ラベルの辞書 agent:ops.settingLabel.<key> にある設定。
+ * 無ければキーだけ）
  */
 export function targetText(locale, opId, key) {
   if (!key) return agentT(locale, 'ops.opTarget', { id: opId });

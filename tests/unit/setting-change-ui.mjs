@@ -5,6 +5,7 @@
 // DOM シムは tests/run.mjs が入口で入れている。
 import { approvalChange, changeBody, changeHeading, changeNotice, changeWord } from "../../web/setting-change.mjs";
 import { createCompletionNotifications } from "../../web/notifications.mjs";
+import { parseSettingNotices } from "../../web/task-notice.mjs";
 import { readFileSync } from "node:fs";
 
 export const name = "setting-change-ui";
@@ -63,10 +64,12 @@ export default async function (t) {
   t.ok("送信: 見出し・項目名・許可・畳んだ 1 行・⚠・通知が送信の言葉", text(sendBody.querySelector(".lbl")) === "送信" && text(sendBody.querySelector(".q")) === "Claude が別の会話にメッセージを送ろうとしています"
     && changeWord(send, "allow") === "送信を許可" && changeWord(send, "allowed") === "送信を許可した" && changeWord(send, "failed") === "送れなかった"
     && text(sendBody.querySelector(".warn")) === "⚠ 送り先の会話は、この会話より確認の少ない承認モードで動きます。" && changeNotice(send) === "Claude が別の会話への送信の許可を待っています", text(sendBody));
-  const shell = approvalChange({ op: "shell.run", key: "shell.run", words: "shell", agent: { label: "Codex" }, rows: [{ path: "shell.command", before: '""', after: '"npm test"' }], loosens: true });
+  const shell = approvalChange({ op: "shell.run", key: "shell.run", words: "shell", agent: { label: "Codex" }, rows: [{ path: "shell.command", after: '"npm test"' }], loosens: true });
   const shellBody = changeBody(shell);
   t.ok("シェル: 「コマンド」「コマンドを実行しようとしています」「実行を許可」と、権限の ⚠", text(shellBody.querySelector(".lbl")) === "コマンド" && changeHeading(shell) === "Codex がコマンドを実行しようとしています"
     && changeWord(shell, "allow") === "実行を許可" && changeWord(shell, "allowed") === "実行を許可した" && text(shellBody.querySelector(".warn")) === "⚠ コマンドは確認なしで、あなたと同じ権限で動きます。", text(shellBody));
+  t.ok("シェル: コマンドは単独のコード行。キー・前の値・矢印は出さない", text(shellBody.querySelector("code")) === "npm test"
+    && !shellBody.querySelector(".ap-key, .ap-was, .ap-arrow") && !text(shellBody).includes("shell.command"));
   const del = approvalChange({ op: "mcp.delete", key: "mcp.delete", words: "mcpDelete", agent: { label: "Claude" }, rows: [], note: "x", loosens: false });
   t.ok("削除: 「削除しようとしています」「削除を許可」。⚠ は出さない（できることは増えない）", changeHeading(del) === "Claude が MCP サーバーを削除しようとしています" && changeWord(del, "allow") === "削除を許可"
     && changeBody(del).querySelector(".warn") === null);
@@ -75,6 +78,11 @@ export default async function (t) {
     && changeWord(plain, "allow") === "許可" && changeWord(plain, "allowed") === "許可した" && text(changeBody(plain).querySelector(".warn")) === "⚠ 確認なしでできることが増える操作です。");
   t.ok("知らない組・形の悪い組は共通の言葉。組に無い欄も共通の言葉（送信予定の ⚠）", changeHeading(approvalChange({ ...payload, words: "nope" })) === "Claude が操作をしようとしています"
     && approvalChange({ ...payload, words: "a.b" }).words === "" && changeWord({ words: "schedule" }, "warn") === "⚠ 確認なしでできることが増える操作です。");
+
+  const settingNotice = "[Pleiad 設定の変更の結果 / setting-a]\n結果: 許可\n設定を変更しました。";
+  const opNotice = "[Pleiad 操作の結果 / setting-b]\n結果: 許可\n種類: send\n送信しました。";
+  const both = parseSettingNotices(`${settingNotice}\n\n${opNotice}`);
+  t.ok("通知: 設定と操作の印を読み分け、操作の種類を見出しに渡す", both.length === 2 && both[0].kind === "setting" && both[1].kind === "op" && both[1].words === "send" && both[1].outcome === "allowed");
 
   // 通知: 画面が見ていない会話の承認待ちを OS の通知にするとき、見出しに誰が何の許可を待っているか
   const shown = [];
@@ -89,6 +97,9 @@ export default async function (t) {
   const FIELDS = ["label", "question", "allow", "allowed", "failed", "warn", "notice"];
   t.ok("辞書: 共通の言葉（op）は全部の欄を持ち、組は欄の名前だけ（ja と en で同じ欄）", FIELDS.every((f) => typeof words("ja").op[f] === "string" && typeof words("en").op[f] === "string")
     && Object.entries(words("ja")).every(([k, v]) => Object.keys(v).every((f) => FIELDS.includes(f)) && Object.keys(v).sort().join() === Object.keys(words("en")[k] ?? {}).sort().join()));
+
+  const agentWords = (l) => JSON.parse(readFileSync(new URL(`../../web/locales/${l}/agent.json`, import.meta.url), "utf8")).ops.approvalWords;
+  t.ok("辞書: エージェント向けの操作名・完了・未実行の言葉は ja/en と全組で揃う", Object.keys(words("ja")).filter((k) => k !== "setting").every((k) => ["target", "done", "notDone", "failed"].every((f) => typeof agentWords("ja")[k]?.[f] === "string" && typeof agentWords("en")[k]?.[f] === "string")));
 
   // 定義: approvalWords は辞書にある組だけ
   const { registry } = await import("../../core/ops/index.mjs");

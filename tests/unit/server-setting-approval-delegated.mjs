@@ -40,9 +40,9 @@ export default async function (t) {
     const noticesOf = (sessionId, requestId, from) => c.since(from).filter((e) => e.type === 'taskNotice' && e.sessionId === sessionId && String(e.text).includes(requestId));
     const turnEnds = (sessionId, from) => c.since(from).filter((e) => e.type === 'turnEnd' && e.sessionId === sessionId);
     /** 依頼元が子を作り、子が set_setting で承認待ちを受けて終わるまで。子の完了通知が依頼元のターンで読まれるまで待つ */
-    const childAsks = async (label) => {
+    const childAsks = async (label, taskPrompt = control('set_setting', { key: 'confirmAgentSites', value: false, reason: 'テスト' })) => {
       const from = c.mark();
-      const parent = (await c.runTurn({ backend: 'fake', cwd: ROOT, mode: 'default', prompt: delegate(control('set_setting', { key: 'confirmAgentSites', value: false, reason: 'テスト' }), label) }, { ms: 30_000 })).sessionId;
+      const parent = (await c.runTurn({ backend: 'fake', cwd: ROOT, mode: 'default', prompt: delegate(taskPrompt, label) }, { ms: 30_000 })).sessionId;
       const card = await c.waitFor((e) => e.type === 'permission' && e.settingChange, { from, ms: 20_000 });
       const task = await awaitTask(parent, (r) => r.status === 'completed' && r.notification === 'sent');
       await c.waitFor((e) => e.type === 'turnEnd' && e.sessionId === parent, { from, ms: 20_000 });
@@ -72,6 +72,16 @@ export default async function (t) {
     const left = JSON.parse(await fs.readFile(path.join(dataDir, 'setting-approvals.json'), 'utf8'));
     t.ok('届けたら台帳は空になる', left.pending.length === 0 && left.notices.length === 0, JSON.stringify(left));
     await c.cmd('setPref', { key: 'confirmAgentSites', value: true });
+
+    // ---- 操作を求めた子が終わっていたら、依頼元へ操作の言葉で届ける
+    const opChild = await childAsks('コマンドの子', control('call_op', { op: 'shell.run', args: { command: 'echo child', waitMs: 0 } }));
+    from = c.mark();
+    await resolve(opChild.card, false);
+    const opNotice = await c.waitFor((e) => e.type === 'taskNotice' && e.sessionId === opChild.parent && String(e.text).includes(opChild.card.settingChange.requestId), { from, ms: 30_000 });
+    t.ok('終わった子のコマンドの拒否は依頼元へ「操作の結果」「実行していない」と届く', opNotice.text.includes('[Pleiad 操作の結果 /')
+      && opNotice.text.includes('コマンドの子') && opNotice.text.includes(opChild.task.taskId) && opNotice.text.includes('Pleiad は実行していません。')
+      && !opNotice.text.includes('設定は変わっていません'), opNotice.text);
+    await c.waitFor((e) => e.type === 'turnEnd' && e.sessionId === opChild.parent, { from, ms: 30_000 });
 
     // ---- 子のタスクが動いている間は、子に届く（追加の指示で動き出した子）
     const b = await childAsks('動いている子');

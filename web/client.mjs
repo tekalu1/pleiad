@@ -1217,11 +1217,20 @@ const provisionalByMessage = new Map();
  * 開くと結果の本文だけで、エージェントに渡した全文は奥の折りたたみ。読めない形（まとめ通知・古い形）や本文が無いときは、従来の「再開しました」の 1 行
  */
 function taskNoticeNode(text, at = '') {
-  // 設定の変更の結果（ADR 0088）。同じ届け方の別の通知なので、開ける 1 行にする
+  // 設定と操作の承認結果（ADR 0088）は、開ける 1 行にする
   const settings = parseSettingNotices(text);
-  if (settings.length > 1) return sysFold(t('chat.sys.settingResults', { count: settings.length }), text, at);
+  if (settings.length > 1) return sysFold(settings.every((n) => n.kind === 'setting')
+    ? t('chat.sys.settingResults', { count: settings.length }) : t('chat.sys.opResults', { count: settings.length }), text, at);
   // i18n-dynamic: chat.sys.settingState.
-  if (settings.length) return sysFold(t('chat.sys.settingResult', { state: t(`chat.sys.settingState.${settings[0].outcome}`) }), text, at);
+  // i18n-dynamic: chat.sys.opState.
+  if (settings.length) {
+    const n = settings[0];
+    const state = n.kind === 'setting' ? t(`chat.sys.settingState.${n.outcome}`)
+      : n.outcome === 'allowed' ? t(`chat.sys.opState.${n.words}.allowed`, { defaultValue: t('chat.sys.opState.op.allowed') })
+        : n.outcome === 'failed' ? t(`chat.opApproval.${n.words}.failed`, { defaultValue: t('chat.opApproval.op.failed') })
+          : t(`chat.sys.opState.${n.outcome}`);
+    return sysFold(n.kind === 'setting' ? t('chat.sys.settingResult', { state }) : t('chat.sys.opResult', { state }), text, at);
+  }
   const notice = parseTaskNotice(text);
   if (!notice) return text ? sysFold(t('chat.sys.taskResumed'), text, at) : el('div', 'm sys', t('chat.sys.taskResumed'));
   const task = (state.work.tasks ?? []).find(x => x.taskId === notice.taskId);
