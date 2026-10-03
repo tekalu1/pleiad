@@ -140,7 +140,7 @@ export default async function (t) {
     prefs: async () => ({ agentSitePermissions: [{ origin: 'o', ...secret }], locale: 'ja' }),
     compactionSettings: () => ({ enabled: true, ...secret }),
     delegation: { list: () => [{ taskId: 't', status: 'completed', ...secret }], get: () => ({ taskId: 't', status: 'completed', result: 'done', ...secret }) },
-    // MCP・Hooks・コンテキスト・リモート・接続先（ADR 0094）。秘密の値の置き場（env・ヘッダー・bearer・clientSecret・URL のクエリ）に目印を入れる
+    // MCP・Hooks・コンテキスト・リモート・接続先（ADR 0095）。秘密の値の置き場（env・ヘッダー・bearer・clientSecret・URL のクエリ）に目印を入れる
     mcp: {
       native: { list: async () => ({ path: 'p', format: 'claude', scope: 'user', revision: 'r', servers: ['a'], ...secret }),
         get: async () => ({ name: 'a', revision: 'r', value: { command: 'node', env: { PLAIN_NAME: MARKER }, headers: { X: MARKER }, http_headers: { Y: MARKER }, url: `https://u:${MARKER}@x.example/m?k=${MARKER}`, oauth: { clientSecret: MARKER } } }) },

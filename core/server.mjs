@@ -2438,7 +2438,7 @@ function opsDeps(lng = currentLocale()) {
     prefs: () => store.getPrefs(),
     compactionSettings: () => compactionSettings,
     statuses: opsStatuses,
-    // MCP・Hooks・コンテキスト・リモート・接続先の操作（core/ops/mcp.mjs・hooks.mjs・context.mjs・remote.mjs。ADR 0094）。WS の同じ名前のコマンドがしていた処理
+    // MCP・Hooks・コンテキスト・リモート・接続先の操作（core/ops/mcp.mjs・hooks.mjs・context.mjs・remote.mjs。ADR 0095）。WS の同じ名前のコマンドがしていた処理
     mcp: opsMcp,
     hooks: opsHooks,
     context: opsContext,
@@ -4254,7 +4254,7 @@ wss.on("connection", (ws, req) => {
     };
 
     // 操作の一覧（core/ops/）に移したコマンドの外側: その操作を人間（画面）として呼ぶ。引数のうち操作の入力に無い欄は今までどおり無視する
-    // （昔の呼び出しは、前の返りをそのまま重ねて渡すことがある）。返りと失敗の文は今までと同じ（ADR 0094）
+    // （昔の呼び出しは、前の返りをそのまま重ねて渡すことがある）。返りと失敗の文は今までと同じ（ADR 0095）
     const viaOp = async (id) => {
       const known = Object.keys(opsRegistry.get(id).input.shape);
       const args = msg.args && typeof msg.args === 'object' && !Array.isArray(msg.args) ? Object.fromEntries(Object.entries(msg.args).filter(([k]) => known.includes(k))) : {};

@@ -33,7 +33,7 @@ export default async function (t) {
     computerUse: { enabled: true, secret: MARKER }, delegationRouting: { enabled: false, apiKey: MARKER }, linkOpen: 'external',
   }));
 
-  // MCP・Hooks の秘密（ADR 0094）: 各エージェントの設定ファイル（使い捨ての home）の env・引数・ヘッダー・Hook のコマンドと、Pleiad の登録の引数
+  // MCP・Hooks の秘密（ADR 0095）: 各エージェントの設定ファイル（使い捨ての home）の env・引数・ヘッダー・Hook のコマンドと、Pleiad の登録の引数
   const home = path.join(scratch, 'home');
   const writeJson = async (p, v) => { await fs.mkdir(path.dirname(p), { recursive: true }); await fs.writeFile(p, JSON.stringify(v)); };
   await writeJson(path.join(home, '.claude.json'), { mcpServers: {
@@ -235,7 +235,7 @@ export default async function (t) {
       && c.events.some((e) => e.type === 'settingsChanged' && e.keys?.join() === 'context.default'));
     await c.cmd('setPref', { key: 'linkOpen', value: 'external' });
 
-    // ---- MCP・Hooks の操作（ADR 0094）: 画面の昔のコマンドは同じ操作を通り、agent には秘密を伏せ、guarded は承認カード
+    // ---- MCP・Hooks の操作（ADR 0095）: 画面の昔のコマンドは同じ操作を通り、agent には秘密を伏せ、guarded は承認カード
     const legacyList = await c.cmd('listPlyMcp', {});
     t.ok('画面の listPlyMcp（昔のコマンド）は mcp.list を通り、編集に要る引数はそのまま返る（人）', legacyList.servers.find((s) => s.name === 'x')?.args.includes(MARKER), JSON.stringify(legacyList.servers));
     const agentList = await api(bound(ask), 'POST', '/api/ops/mcp.list', {});

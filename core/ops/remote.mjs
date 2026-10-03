@@ -1,4 +1,4 @@
-// remote.*・endpoints.*: リモートの状態と常駐の設定、互換の接続先の一覧（ADR 0094）。
+// remote.*・endpoints.*: リモートの状態と常駐の設定、互換の接続先の一覧（ADR 0095）。
 // 画面の WS コマンド（remoteStatus・setRemoteResident・compatEndpoints）はこの操作を呼ぶ薄い外側。本体はサーバーが ctx.remote・ctx.endpoints で渡す。
 // ペアリング・端末の取り消し・中継の設定・接続先の保存と既定は human-only（WS の除外表）で、ここには無い。
 // 秘密（中継の登録の鍵・端末の鍵・接続先の API キー）はモジュールが返さない。agent には、ペアリングの確認の番号と URL のクエリも伏せる。

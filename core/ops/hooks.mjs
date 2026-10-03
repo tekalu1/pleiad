@@ -1,5 +1,5 @@
 // hooks.*: Hooks。各エージェントの元の設定ファイルの定義（core/hooks-config.mjs）と、Pleiad 自身の登録と担当（<data>/hooks.json。core/ply-hooks.mjs、ADR 0049）。
-// 画面の WS コマンド（scanHooks・savePlyHook など）はこの操作を呼ぶ薄い外側（ADR 0094）。本体はサーバーが ctx.hooks で渡す（core/server.mjs の opsDeps）。
+// 画面の WS コマンド（scanHooks・savePlyHook など）はこの操作を呼ぶ薄い外側（ADR 0095）。本体はサーバーが ctx.hooks で渡す（core/server.mjs の opsDeps）。
 // Hooks はエージェントの操作のたびに任意のコマンドを動かすので、書き込み（保存・写す・有効にする・担当・修復・削除）は guarded。
 // 例外: 書く前の確認（dryRun）は書かないので write、無効にする向き（togglePlyHook の enabled: false）は関所を狭めるので write（riskOf が上げる）。
 // 返りのコマンドはモジュールが形で伏せる（maskText）。agent にはさらに、会話の記録に載るコマンドも伏せる。元のコマンドを返す readHook・readPlyHook は human-only。

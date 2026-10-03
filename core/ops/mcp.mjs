@@ -1,5 +1,5 @@
 // mcp.*: 外部 MCP の登録。各エージェントの設定ファイル（~/.claude.json・.mcp.json・config.toml）と、Pleiad 自身の登録（担当が Pleiad のときに使う）。
-// 画面の WS コマンド（listMcpConfig・savePlyMcp など）はこの操作を呼ぶ薄い外側（ADR 0094）。本体はサーバーが ctx.mcp で渡す（core/server.mjs の opsDeps）。
+// 画面の WS コマンド（listMcpConfig・savePlyMcp など）はこの操作を呼ぶ薄い外側（ADR 0095）。本体はサーバーが ctx.mcp で渡す（core/server.mjs の opsDeps）。
 // 登録を保存すると、その会話の始まりに登録したコマンドが動く。だから書き込み（保存・取り込み・名前の変更・削除・全体の設定）は guarded。
 // 返りの秘密（env・ヘッダーの値・bearer・clientSecret・URL のクエリ）はモジュールが伏せ、ここでも重ねて伏せる。agent にはコマンドの引数も伏せる（core/ops/redact.mjs）。
 // OAuth のログインとログアウトは human-only（mcpAuthStart・mcpAuthLogout。秘密の値を扱う）で、ここには無い。

@@ -1,4 +1,4 @@
-// context.*: コンテキスト（指示・Skills・外部 MCP をどこから読み、誰が担当するか）の設定、Pleiad の指示、会話ごとの読み込み直しと MCP の外し方（ADR 0094）。
+// context.*: コンテキスト（指示・Skills・外部 MCP をどこから読み、誰が担当するか）の設定、Pleiad の指示、会話ごとの読み込み直しと MCP の外し方（ADR 0095）。
 // 画面の WS コマンド（contextSettings・setPlyInstructions など）はこの操作を呼ぶ薄い外側。本体はサーバーが ctx.context で渡す（core/server.mjs の opsDeps）。
 //
 // 危険度:

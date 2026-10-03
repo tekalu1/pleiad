@@ -1,4 +1,4 @@
-// MCP・Hooks・コンテキスト・リモートの操作（core/ops/mcp.mjs・hooks.mjs・context.mjs・remote.mjs。ADR 0094）を、依存を差し替えて確かめる（サーバーは立てない）。
+// MCP・Hooks・コンテキスト・リモートの操作（core/ops/mcp.mjs・hooks.mjs・context.mjs・remote.mjs。ADR 0095）を、依存を差し替えて確かめる（サーバーは立てない）。
 //   - 伏せ字: agent にはコマンドの引数の秘密・承認の URL・ペアリングの番号・URL のクエリも伏せる。人（画面）には編集欄に要るものを返す
 //   - 書き戻し: agent が読んだ（伏せた）値をそのまま保存したら、伏せ字の所は元の値を残す。合わない伏せ字は MASKED で断る
 //   - 危険度: guarded は承認が要る会話でカード（approve）へ、承認なしの会話は通る、束縛なしは NEEDS_UI、読み取りの会話は READ_ONLY_MODE。

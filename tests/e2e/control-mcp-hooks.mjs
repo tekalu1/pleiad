@@ -1,4 +1,4 @@
-// 実際の Codex 会話から、MCP の操作（ADR 0094）を ply_control の call_op で呼ぶ。
+// 実際の Codex 会話から、MCP の操作（ADR 0095）を ply_control の call_op で呼ぶ。
 //   1. mcp.nativeRead: 作業場所の .mcp.json の登録を読む。env の値・引数の --token の値は伏せ字で返り、目印はツールの返りにも答えにも出ない
 //   2. mcp.save（guarded）: 承認が要る会話（auto）では待たずに承認待ちで返り、会話に承認カードが出る。許可すると登録され、結果が会話に届いて Codex が答える
 import crypto from 'node:crypto';
