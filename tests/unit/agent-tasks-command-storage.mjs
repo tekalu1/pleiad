@@ -40,7 +40,7 @@ export default async function (t) {
     t.ok('タスクの完了は従来どおり保存する', renames > before);
   } finally {
     release?.();
-    manager?.close();
+    await manager?.close();
     await fs.rm(dir, { recursive: true, force: true });
   }
 }

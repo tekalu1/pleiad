@@ -131,17 +131,21 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
     writes = next.catch(() => {});
     return next;
   };
+  // 裏で走らせている仕事（実行・通知・保存のやり直し・障害の記録）。close() は、閉じる前に始まったこれらが書き終えるまで待つ。
+  // 渡す Promise は reject しないもの（呼ぶ側で catch 済み）に限る
+  const background = new Set();
+  const spawn = p => { background.add(p); void p.finally(() => background.delete(p)); };
   const touched = () => { changed(); for (const fn of [...listeners]) fn(); };
   // 障害の記録。秘密・依頼文・結果・パスは書かない（errno・操作・タスク ID・時刻だけ）。
   // stderr はデスクトップ版ではファイルに残らないので、データ置き場にも大きさの上限付きで残す
   const report = entry => {
     const line = JSON.stringify({ at: new Date().toISOString(), ...entry });
     log(`[agent-tasks] ${line}`);
-    void (async () => {
+    spawn((async () => {
       const size = await io.stat(logFile).then(s => s.size, () => 0);
       if (size > LOG_MAX) { const old = await io.readFile(logFile, 'utf8'); await io.writeFile(logFile, old.slice(-LOG_MAX / 2).replace(/^[^\n]*\n/, '')); }
       await io.appendFile(logFile, line + '\n');
-    })().catch(() => {});
+    })().catch(() => {}));
   };
   const write = async () => {
     const notes = new Map(Object.values(records).map(r => [r.taskId, r.notification]));
@@ -440,8 +444,8 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
   function probe() {
     if (probing || Date.now() < fault.retryAt) return;
     probing = true;
-    void serial(async () => { try { await write(); touched(); } catch (e) { failed(e, dirty ? 'flush' : 'retry'); } })
-      .finally(() => { probing = false; });
+    spawn(serial(async () => { try { await write(); touched(); } catch (e) { failed(e, dirty ? 'flush' : 'retry'); } })
+      .finally(() => { probing = false; }));
   }
   function kick() {
     if (closed || mutating) return;
@@ -452,7 +456,7 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
       for (const c of r.activeCommands ?? []) {
         if (commandMs && c.state !== 'unknown' && !waiting(r.sessionId) && !c.notified
           && commandElapsed(c, now()) >= commandMs && !commandNotices.has(c.noticeId)) {
-          void notifyCommand(r, c).catch(e => report({ event: 'unexpected', operation: 'command', taskId: r.taskId, code: e?.code ?? null }));
+          spawn(notifyCommand(r, c).catch(e => report({ event: 'unexpected', operation: 'command', taskId: r.taskId, code: e?.code ?? null })));
         }
       }
       if (r.status === 'running') {
@@ -465,12 +469,12 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
         else if (silenceWaiting.delete(r.taskId)) { r.lastActivityAt = now(); r.silenceNotifiedAt = null; }
         if (silenceMs && !isWaiting && r.lastActivityAt != null && now() - r.lastActivityAt >= silenceMs
           && r.silenceNotifiedAt !== r.lastActivityAt && !silenceNotices.has(r.taskId)) {
-          void notifySilence(r).catch(e => report({ event: 'unexpected', operation: 'silence', taskId: r.taskId, code: e?.code ?? null }));
+          spawn(notifySilence(r).catch(e => report({ event: 'unexpected', operation: 'silence', taskId: r.taskId, code: e?.code ?? null })));
         }
       } else silenceWaiting.delete(r.taskId);
       if (r.status === 'queued' && !live.has(r.taskId)) {
         const ac = new AbortController(); live.set(r.taskId, ac);
-        void run(r, ac).catch(e => { live.delete(r.taskId); report({ event: 'unexpected', operation: 'run', taskId: r.taskId, code: e?.code ?? null }); });
+        spawn(run(r, ac).catch(e => { live.delete(r.taskId); report({ event: 'unexpected', operation: 'run', taskId: r.taskId, code: e?.code ?? null }); }));
       }
       if (r.notification === 'pending' && !notices.has(r.taskId) && !waited.has(r.taskId) && !ACTIVE.has(r.status)) {
         if (!groups.has(r.parentSessionId)) groups.set(r.parentSessionId, []);
@@ -480,7 +484,7 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
     // 同じ親へ届ける完了通知は 1 つにまとめる（ADR 0057）
     for (const [owner, rows] of groups) {
       if (noticeOwners.has(owner)) continue;
-      void notify(owner, rows).catch(e => report({ event: 'unexpected', operation: 'notify', taskId: rows[0].taskId, code: e?.code ?? null }));
+      spawn(notify(owner, rows).catch(e => report({ event: 'unexpected', operation: 'notify', taskId: rows[0].taskId, code: e?.code ?? null })));
     }
   }
   const timer = setInterval(kick, 500); timer.unref();
@@ -695,7 +699,12 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
     get restored() { return structuredClone(restored); },
     /** 保存障害（無ければ null）。errno・操作・タスク ID・時刻だけ */
     get fault() { return fault && { code: fault.code, syscall: fault.syscall, operation: fault.operation, taskId: fault.taskId, since: fault.since, at: fault.at, failures: fault.failures }; },
-    // 正常終了。保存障害では閉じない
-    close() { closed = true; clearInterval(timer); for (const ac of live.values()) ac.abort(); },
+    // 正常終了。保存障害では閉じない。返す Promise は、閉じる前に始まった実行・通知・保存が書き終えると解ける
+    // （閉じた後も、走っていた分の保存は続く。データ置き場を消す前に待つ）
+    async close() {
+      closed = true; clearInterval(timer); for (const ac of live.values()) ac.abort();
+      while (background.size) await Promise.all([...background]);
+      await writes;
+    },
   };
 }

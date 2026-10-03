@@ -61,7 +61,7 @@ export default async function(t) {
     t.ok('ロック待ちが終わったら数え直す', notices.length === 3);
     clock = 400 * 60000 + 15 * 60000; manager.checkSilence(); await until(() => notices.length === 4);
     release(); await until(() => manager.get(task.taskId).status === 'completed');
-  } finally { manager.close(); await fs.rm(dir, { recursive: true, force: true }); }
+  } finally { await manager.close(); await fs.rm(dir, { recursive: true, force: true }); }
 
   const offDir = await fs.mkdtemp(path.join(os.tmpdir(), 'ply-silence-off-'));
   let offRelease, offCount = 0, offClock = 0;
@@ -74,5 +74,5 @@ export default async function(t) {
     offClock = 999 * 60000; off.checkSilence(); await sleep(20);
     t.ok('設定 0 は通知を無効にする', offCount === 0);
     offRelease(); await until(() => off.list()[0].status === 'completed');
-  } finally { off.close(); await fs.rm(offDir, { recursive: true, force: true }); }
+  } finally { await off.close(); await fs.rm(offDir, { recursive: true, force: true }); }
 }
