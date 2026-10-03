@@ -274,6 +274,17 @@ async page => {
   check((await again.locator('.thread-summary .ts-count').textContent()) === '💬 1 件の返信', 'after a reload the thread summary comes from the saved replies');
   check((await again.locator('.post-body').textContent()).includes('二行目') && await again.locator('.react-pill').count() === 1, 'after a reload the post and its reactions come back');
 
+  // ---- 別の面（bot のページ）へ移って同じチャンネルへ戻っても、見出しは「# 名前」のまま（汎用の「Channels」や空にならない）
+  const bots = (await rpc('bots.list')).bots ?? [];
+  if (bots.length) {
+    await page.evaluate((id) => document.dispatchEvent(new CustomEvent('channels:show', { detail: { kind: 'bot', id } })), bots[0].id);
+    await page.locator('#botView').waitFor({ state: 'visible' });
+    await page.evaluate((id) => document.dispatchEvent(new CustomEvent('channels:show', { detail: { kind: 'channel', id } })), ch.id);
+    await page.locator('#chFeed .post').first().waitFor();
+    const backHead = await page.evaluate(() => { const h = document.getElementById('channelsPageTitle'); return { text: h.textContent, shown: h.getBoundingClientRect().width > 20 }; });
+    check(backHead.shown && backHead.text.includes(name), 'coming back from the bot page to the same channel restores the # heading');
+  }
+
   // ---- 360 幅
   await page.setViewportSize({ width: 360, height: 760 });
   await page.waitForTimeout(150);
