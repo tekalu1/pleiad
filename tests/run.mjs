@@ -19,6 +19,8 @@ installDomStub();
 const cases = [
   await import('./unit/compaction.mjs'),
   await import('./unit/server-compaction.mjs'),
+  await import('./unit/limit-resume.mjs'),
+  await import('./unit/server-limit-resume.mjs'),
   await import('./unit/file-preview.mjs'),
   // プレビューの横のツリー: 経路の段は必ず返す・遅延読み込み・件数の枠と枠の外の経路・除外名も全部出す・roots の外は読めない
   await import('./unit/file-preview-tree.mjs'),

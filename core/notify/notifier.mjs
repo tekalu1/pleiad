@@ -101,6 +101,26 @@ export function createPushNotifier({ devices, presence, send, host, now = Date.n
       });
     },
 
+    /** 解除時刻に、確認してから再開する設定の会話を知らせる。 */
+    limitReady({ sessionId, title }) {
+      if (!sessionId) return [];
+      return toEach('limitReady', { sessionId }, device => {
+        const ok = deliver(device, { kind: 'limitReady', session: sessionId, title });
+        if (ok) slot(device.id, sessionId).seen = true;
+        return ok;
+      });
+    },
+
+    /** 新しい枠の歯止めで、再開待ち行列が確認待ちになった。 */
+    limitGuarded({ sessionId, title }) {
+      if (!sessionId) return [];
+      return toEach('limitGuarded', { sessionId }, device => {
+        const ok = deliver(device, { kind: 'limitGuarded', session: sessionId, title });
+        if (ok) slot(device.id, sessionId).seen = true;
+        return ok;
+      });
+    },
+
     /** どこかでその会話を見た（既読にした・開いた）。出ている完了・失敗の通知を消す。 */
     viewed(sessionId) {
       if (!sessionId) return [];

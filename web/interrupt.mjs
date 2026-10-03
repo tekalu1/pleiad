@@ -7,7 +7,7 @@ import { t } from "./i18n.mjs";
 // i18n-dynamic: interrupt.label.
 // i18n-dynamic: interrupt.line.
 /** 理由。user = 中断ボタン、update = 更新のため、quit = 終了のため、restart = 落ちた・強制終了、hostAway = ホスト不在の猶予切れ */
-export const REASONS = ["user", "update", "quit", "restart", "hostAway"];
+export const REASONS = ["user", "update", "quit", "restart", "hostAway", "limit"];
 /** 行の 2 行目に理由の字も出す理由（自分で押した中断ではないもの。モックの場面 5） */
 const META_REASONS = new Set(["update", "quit", "restart"]);
 
@@ -71,10 +71,21 @@ export const PLAY_PATH = "M8.5 6.2v11.6a.8.8 0 0 0 1.2.7l9-5.8a.8.8 0 0 0 0-1.4l
 export const pausedCount = (messages) => (messages ?? []).filter((m) => m?.status === "paused").length;
 
 /** 再開ボタンの字。保留があれば「保留中の N 件を送って再開」 */
-export const resumeLabel = (paused) => (paused > 0 ? t("interrupt.resumeOutbox", { count: paused }) : t("interrupt.resume"));
+export const limitTime = (at) => Number.isFinite(at) ? new Date(at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : null;
+export const resumeLabel = (paused, interrupted) => reasonOf(interrupted) === 'limit'
+  ? t('interrupt.limitResumeAt', { time: limitTime(interrupted.resetsAt) ?? t('interrupt.unknownTime') })
+  : (paused > 0 ? t("interrupt.resumeOutbox", { count: paused }) : t("interrupt.resume"));
 
 /** 入力欄の下の一行。保留があれば「送ると、保留中の N 件の後にこの指示で続けます」（サーバーが保留を先に送り直す） */
-export const resumeNoteText = (paused) => (paused > 0 ? t("interrupt.resumeNoteHeld", { count: paused }) : t("interrupt.resumeNote"));
+export const resumeNoteText = (paused, interrupted) => reasonOf(interrupted) === 'limit'
+  ? t('interrupt.limitSendNote', { time: limitTime(interrupted.resetsAt) ?? t('interrupt.unknownTime') })
+  : (paused > 0 ? t("interrupt.resumeNoteHeld", { count: paused }) : t("interrupt.resumeNote"));
+
+export function clockMark(label) {
+  const svg = svgEl('svg', { viewBox: '0 0 14 14', class: 'clock-mark', role: 'img', 'aria-label': label });
+  svg.append(svgEl('circle', { cx: 7, cy: 7, r: 5.4 }), svgEl('path', { d: 'M7 3.6v3.7l2.5 1.5' }));
+  return svg;
+}
 
 /**
  * 再開ボタンを出すか。中断状態・走っていない・承認を待っていない・入力欄が空のとき。

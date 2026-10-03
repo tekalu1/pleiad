@@ -14,6 +14,7 @@
 //      item/started で見た item を覚えておいて承認カードに載せる。
 import os from "node:os";
 import { codexQuota, createCodexMeter } from '../usage.mjs';
+import { codexLimitError } from './codex-limit.mjs';
 import { rpc } from "./codex-rpc.mjs";
 import { rpc as nativeRpc } from './codex-rpc.mjs';
 import { commandActivity } from "./codex-background.mjs";
@@ -1402,6 +1403,15 @@ export const backend = {
     };
 
     const meter = createCodexMeter();
+    const failureResult = async (error, turns = null) => {
+      const message = hide(String(error?.message ?? error?.type ?? error ?? t('codex.errors.failed')));
+      if (!codexLimitError(error)) return { type: 'turnResult', outcome: 'error', error: message, turns };
+      const usage = await rpc.request('account/rateLimits/read', {}, 15_000).then(codexQuota, () => null);
+      const next = usage?.windows?.filter(w => Date.parse(w.resetsAt) > Date.now())
+        .sort((a, b) => Date.parse(a.resetsAt) - Date.parse(b.resetsAt))[0];
+      return { type: 'turnResult', outcome: 'limited', error: message, turns,
+        resetsAt: next ? Date.parse(next.resetsAt) : null, window: next?.label ?? null };
+    };
     // 別プロセスの接続（contextRuntime）の通知は native の onNotify に来ない。サブエージェントの観測はここで足す
     const observe = rpc === nativeRpc ? () => {} : observeSubagents;
     const onNotification = (method, params) => {
@@ -1478,27 +1488,19 @@ export const backend = {
           const status = params?.turn?.status ?? "completed";
           const err = params?.turn?.error;
           if (sawText) emit({ type: "text.end" });
-          const result =
-            status === "interrupted" ? { type: "turnResult", outcome: "aborted", turns: 1 }
-            : status === "failed" ? {
-                type: "turnResult", outcome: "error", turns: 1,
-                error: hide(String(err?.message ?? err?.type ?? t("codex.errors.failed"))),
-              }
-            // costUsd は app-server が出さない（token 数だけ）。turns だけ載せる
-            : { type: "turnResult", outcome: "ok", turns: 1 };
+          const result = status === 'interrupted' ? { type: 'turnResult', outcome: 'aborted', turns: 1 }
+            : status === 'failed' ? failureResult(err, 1)
+            : { type: 'turnResult', outcome: 'ok', turns: 1 };
           // 実行前に拒否されたコマンドを rollout から拾ってから、ターンを閉じる（拾えなくても結果は変えない）
-          return void reportRejections().finally(() => { emit(result); settleTurn?.(); });
+          return void reportRejections().finally(async () => { emit(await result); settleTurn?.(); });
         }
 
         case "error": {
           // codex が再試行するなら畳まない（turn/completed がこの後に来る）。
           // 再試行しないときは turn/completed が来ないので、ここでターンを終える。
           if (params?.willRetry) return;
-          emit({
-            type: "turnResult", outcome: "error",
-            error: hide(String(params?.error?.message ?? t("codex.errors.errorReturned"))),
-          });
-          return settleTurn?.();
+          return void failureResult(params?.error ?? t('codex.errors.errorReturned')).then(emit)
+            .finally(() => settleTurn?.());
         }
 
         default:

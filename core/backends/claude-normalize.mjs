@@ -76,6 +76,20 @@ export function normalizeSdkMessage(m, { costBase = ZERO_COST, computerIds = nul
   // 子の中身は「サブエージェント N」の画面（listSubagents / getSubagentMessages）で見る
   if ((m.type === "assistant" || m.type === "user" || m.type === "stream_event") && m.parent_tool_use_id) return out;
 
+  // The SDK's live rate_limit_event and its synthetic assistant transcript row carry
+  // the same quota fields. Keep the protocol shape on this side of the boundary.
+  if (m.type === 'rate_limit_event' || (m.type === 'assistant' && m.error === 'rate_limit')) {
+    const quota = m.rate_limit_info ?? m.quotaLimits ?? m.rateLimitInfo ?? m;
+    if (m.error === 'rate_limit' || quota.status === 'rejected') {
+      const raw = quota.resetsAt ?? quota.resets_at;
+      const number = Number(raw);
+      const resetsAt = Number.isFinite(number) && number > 0 ? (number < 1e12 ? number * 1000 : number) : Date.parse(raw);
+      out.push({ type: 'limit', resetsAt: Number.isFinite(resetsAt) ? resetsAt : null,
+        window: quota.rateLimitType ?? quota.rate_limit_type ?? null });
+    }
+    if (m.type === 'rate_limit_event') return out;
+  }
+
   if (m.type === 'tool_progress') return [{ type: 'task.activity' },
     { type: 'task.command', id: m.tool_use_id, nativeTaskId: m.task_id }];
   if (m.type === 'system' && ['task_started', 'task_updated', 'task_notification'].includes(m.subtype)) {

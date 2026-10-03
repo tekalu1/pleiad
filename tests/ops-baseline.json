@@ -96,7 +96,6 @@
     "runTurn": "ui-internal",
     "sendMessage": "ui-internal",
     "messageAction": "ui-internal",
-    "listMessages": "todo",
     "compactConversation": "todo",
     "cancelCompaction": "todo",
     "setAutoCompaction": "todo",
@@ -106,7 +105,6 @@
     "skipShell": "ui-internal",
     "switchBackend": "ui-internal",
     "abort": "todo",
-    "resume": "todo",
     "listSessions": "todo",
     "loadSession": "todo",
     "watchSession": "ui-internal",
@@ -165,6 +163,6 @@
     "browserScreencastAgent": "stream",
     "computerStop": "human-only"
   },
-  "todoMax": 66,
+  "todoMax": 64,
   "setPrefAllowed": 3
 }
