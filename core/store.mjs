@@ -107,7 +107,7 @@ function scheduleFlush() {
     flushTimer = null;
     void exclusive(async () => {
       if (!dirty) return;
-      try { await sessions.write(); dirty = false; }
+      try { flushNow(); }
       catch (e) {
         console.error('sessions.json save failed:', e?.code ?? e?.message ?? e);
         scheduleFlush();
@@ -117,16 +117,21 @@ function scheduleFlush() {
   flushTimer.unref();
 }
 const flush = async () => { scheduleFlush(); };
-async function flushDurable() {
+export function flushNow() {
   if (flushTimer) { clearTimeout(flushTimer); flushTimer = null; }
-  try { await sessions.write(); dirty = false; }
+  if (!dirty) return;
+  sessions.writeSync();
+  dirty = false;
+}
+async function flushDurable() {
+  dirty = true;
+  try { flushNow(); }
   catch (e) { dirty = true; scheduleFlush(); throw e; }
 }
-// process.exit, signals, and the desktop worker shutdown all pass through exit.
+// process.exit and signals pass through exit; desktop shutdown also calls flushNow.
 process.on('exit', () => {
   if (!dirty) return;
-  if (flushTimer) clearTimeout(flushTimer);
-  try { sessions.writeSync(); dirty = false; }
+  try { flushNow(); }
   catch (e) {
     console.error('sessions.json final save failed:', e?.code ?? e?.message ?? e);
     process.exitCode = 1;
@@ -449,7 +454,7 @@ export async function inheritSettings(sourceId, childId) {
     if (source.agentLocale) entry.agentLocale = source.agentLocale;
     else delete entry.agentLocale;
     entry.contextSession = structuredClone(source.contextSession ?? null);
-    await flushDurable();
+    await flush();
   });
 }
 
@@ -461,15 +466,15 @@ export async function setParent(sessionId, parent) {
     const entry = (all[sessionId] ??= { history: [] });
     if (entry.parent === parent) return entry;
     entry.parent = parent;
-    await flushDurable();
+    await flush();
     return entry;
   });
 }
 
 export const dataDir = DIR;
 
-/** Host-only data; durable before acknowledging the client. Roll back a failed write. */
-export async function setSessionData(sessionId, field, value) {
+/** Host-only data. Callers mark restart-critical changes durable. */
+export async function setSessionData(sessionId, field, value, { durable = false } = {}) {
   if (!sessionId || !["draft", "nextSettings", "outbox", "effort", "contextSession", "delegation", "taskNotices", "relayed", "ungrouped", "claudeAccount", "compatEndpoint", "agentLocale", "routing", "compactions", "contextWindow", "autoCompactionOff", "compacted", "hookRuns", "shellPending", "shellExits", "shellKept", "computerApps", "browserProfile", "rewind", "scheduledSends"].includes(field)) throw new Error(t("store.invalidSessionField"));
   return exclusive(async () => {
     const all = await load();
@@ -477,7 +482,9 @@ export async function setSessionData(sessionId, field, value) {
     if (before && isDeepStrictEqual(before[field], value)) return before[field];
     const entry = { ...(before ?? { history: [] }), [field]: structuredClone(value) };
     all[sessionId] = entry;
-    try { await flushDurable(); } catch (e) { if (before) all[sessionId] = before; else delete all[sessionId]; throw e; }
+    if (durable) {
+      try { await flushDurable(); } catch (e) { if (before) all[sessionId] = before; else delete all[sessionId]; throw e; }
+    } else await flush();
     return entry[field];
   });
 }
@@ -492,7 +499,7 @@ export async function markRead(reads) {
   const list = Array.isArray(reads) ? reads : [];
   return exclusive(async () => {
     const all = await load();
-    const changed = new Map(), before = new Map();
+    const changed = new Map();
     for (const pair of list) {
       const [id, at] = Array.isArray(pair) ? pair : [];
       if (typeof id === "string" && Object.hasOwn(all, id) && Number.isFinite(at) && at > 0) {
@@ -500,18 +507,12 @@ export async function markRead(reads) {
         if (!Number.isFinite(entry?.completedAt)) continue;
         const next = Math.min(at, entry.completedAt);
         if (next <= (Number.isFinite(entry.readAt) ? entry.readAt : 0)) continue;
-        if (!before.has(id)) before.set(id, entry.readAt);
         entry.readAt = next;
         changed.set(id, next);
       }
     }
-    // 書けなければ元に戻す（確認済みと答えたのに再起動で戻る、を作らない）
-    if (changed.size) {
-      try { await flushDurable(); } catch (e) {
-        for (const [id, prev] of before) { if (prev === undefined) delete all[id].readAt; else all[id].readAt = prev; }
-        throw e;
-      }
-    }
+    // 保存失敗後もキャッシュの印は保ち、次のデバウンスで再試行する。
+    if (changed.size) await flush();
     return [...changed];
   });
 }

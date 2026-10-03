@@ -87,7 +87,7 @@ export function createShellRuns({ store, emit, timeoutMs = Number(process.env.AG
         run.finishing = true;
         const entry = { runId: run.runId, command: run.command, cwd: run.cwd, at: run.at, backend: run.backend, stdout, stderr, ...done, ...(run.skip ? { skip: true } : {}) };
         const list = (await store.get(run.sessionId)).shellPending ?? [];
-        await store.setSessionData(run.sessionId, 'shellPending', [...list, entry]);
+        await store.setSessionData(run.sessionId, 'shellPending', [...list, entry], { durable: true });
       }).finally(() => closing.delete(run.runId)).catch(e => console.error('shell: 結果を控えられなかった:', e?.message ?? e));
     } else if (run.mode === 'native' && !done.error) {
       if (!nativeDone.has(run.sessionId)) nativeDone.set(run.sessionId, new Set());
@@ -135,7 +135,7 @@ export function createShellRuns({ store, emit, timeoutMs = Number(process.env.AG
         if (e.runId !== runId) return e;
         const { skip: _, ...rest } = e;
         return want ? { ...rest, skip: true } : rest;
-      }));
+      }), { durable: true });
       return 'ok';
     });
     if (found === 'handing') throw Object.assign(new Error('shell handing'), { code: 'SHELL_HANDING' });
@@ -213,7 +213,7 @@ export function createShellRuns({ store, emit, timeoutMs = Number(process.env.AG
         const keys = Object.keys(exits);
         for (const key of keys.slice(0, Math.max(0, keys.length - EXITS_KEEP))) delete exits[key];
         if (gone.length) await store.setSessionData(sessionId, 'shellExits', exits);
-        await store.setSessionData(sessionId, 'shellPending', list.filter(e => !ids.includes(e.runId) && !skipped.includes(e.runId)));
+        await store.setSessionData(sessionId, 'shellPending', list.filter(e => !ids.includes(e.runId) && !skipped.includes(e.runId)), { durable: true });
       }).finally(() => claims.delete(sessionId));
     }
     const native = nativeDone.get(sessionId);
@@ -252,7 +252,7 @@ export function createShellRuns({ store, emit, timeoutMs = Number(process.env.AG
         await store.setSessionData(sessionId, 'shellKept', keepRows(sidecar.shellKept, keep));
         kept.push(...keep.map(e => e.runId));
       }
-      await store.setSessionData(sessionId, 'shellPending', []);
+      await store.setSessionData(sessionId, 'shellPending', [], { durable: true });
     });
     if (kept.length) emit({ type: 'shell.handed', sessionId, runIds: [], keptIds: kept });
   }

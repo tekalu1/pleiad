@@ -261,7 +261,7 @@ export function wrapBackend(native) {
     if (!mark) return null;
     const messages = await native.getMessages(nativeId, { fullResults: true }).catch(() => []);
     if (markIsLive(messages, mark)) return mark;
-    await store.setSessionData(id, "rewind", null).catch(() => {});
+    await store.setSessionData(id, "rewind", null, { durable: true }).catch(() => {});
     return null;
   };
   wrapped.getMessages = async (id, options) => {
@@ -495,7 +495,7 @@ export function wrapBackend(native) {
       }
       await keepFile();
       // 保留の印は最後（先に置くと、記録の写しが切れていない間は捨てた発言が表示に残って次のターンの後ろへ足される）
-      if (mode === "resume") await store.setSessionData(id, "rewind", { backend: native.id, nativeId, at: rawBefore, drops: rawTarget });
+      if (mode === "resume") await store.setSessionData(id, "rewind", { backend: native.id, nativeId, at: rawBefore, drops: rawTarget }, { durable: true });
     } catch (error) {
       if (snapshot) {
         Object.assign(existing, snapshot, { _dirty: true });
@@ -538,7 +538,7 @@ export function wrapBackend(native) {
     entry._dirty = true;
     (await all())[id] = entry;
     try { await save(); } catch (e) { if (existing) records[id] = existing; else delete records[id]; throw e; }
-    await store.setSessionData(id, "rewind", null);
+    await store.setSessionData(id, "rewind", null, { durable: true });
     if (titleReset && meta.title) await store.setMeta(id, { title: null });
     // 生きているネイティブのプロセス（antigravity は 1 会話 1 プロセスを生かしておく）は使わない
     if (nativeId) await Promise.resolve(native.releaseConversation?.(nativeId)).catch(() => {});
@@ -561,7 +561,7 @@ export function wrapBackend(native) {
     const mark = id && native.capabilities?.rewind === "resumeAt" ? await liveRewindMark(id, r ? r.nativeId : id) : null;
     // 同じ印で何度も失敗する（拒否の形が想定と違った）ときは、無限に残さずホスト管理に落とす（3 回目は渡さない）
     if (mark && (mark.tries ?? 0) >= 2) throw Object.assign(new Error("rewind kept failing"), { rewindRejected: true });
-    if (mark) await store.setSessionData(id, "rewind", { ...mark, tries: (mark.tries ?? 0) + 1 });
+    if (mark) await store.setSessionData(id, "rewind", { ...mark, tries: (mark.tries ?? 0) + 1 }, { durable: true });
     const rewind = mark ? { at: mark.at, drops: mark.drops } : undefined;
     if (!r) return native.runTurn(rewind ? { ...args, rewind } : args);
     if (r.backend !== native.id) throw new Error(t("conversations.backendMismatch"));

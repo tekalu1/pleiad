@@ -75,6 +75,7 @@ import { createMcpOAuth } from './mcp-oauth.mjs';
 import { importNativeMcp } from './mcp-import.mjs';
 import { createMcpConfig } from './mcp-config.mjs';
 import { createHooksConfig, HOOK_AGENTS, applyCodexHooks, trimHookRuns, findNodeOnPath } from './hooks-config.mjs';
+import { finishShutdown } from './shutdown.mjs';
 import { createPlyHooks } from './ply-hooks.mjs';
 import { prepareHooksTurn, unifyPreview, importCandidate } from './hooks-unify.mjs';
 import { deliverable, classifyNativeRun } from './hooks-plan.mjs';
@@ -2197,7 +2198,7 @@ async function createSession(args) {
   try {
     await store.setMeta(sessionId, { backend: backend.id, ...info, status, unsent: true });
     // 内蔵ブラウザーのプロフィール: 引き継ぎ元があればそのもの、無ければ作業フォルダーで最後に使ったもの / 既定（ADR 0078）
-    await store.setSessionData(sessionId, 'browserProfile', await browserProfiles.forNew(cwd, source));
+    await store.setSessionData(sessionId, 'browserProfile', await browserProfiles.forNew(cwd, source), { durable: true });
     // 互換の接続先（決定 2・3）: 同じエージェントの引き継ぎなら元の会話の接続先（予約中ならそれ）を継ぐ。
     // それ以外は設定で「既定にする」を押した接続先（無ければ公式）。削除済みは継がない
     let endpoint = '';
@@ -2220,7 +2221,7 @@ async function createSession(args) {
     // 引き継ぎ元が無ければ前回選んだアカウント（削除済みなら、ログイン中のアカウントのまま）
     const account = source ? source.nextSettings?.account ?? source.claudeAccount ?? '' : (await store.getPrefs()).claudeAccount ?? '';
     if (account && await claudeAccounts.has(account)) await store.setSessionData(sessionId, 'claudeAccount', account);
-    if (draft) await store.setSessionData(sessionId, "draft", { text: draft, attached: [] });
+    if (draft) await store.setSessionData(sessionId, "draft", { text: draft, attached: [] }, { durable: true });
   } catch (e) { await deleteUnsentConversation(sessionId); await store.removeSession(sessionId); releaseAgentConnection(sessionId); throw e; }
   emitGlobal({ type: "sessionsChanged", sessionId: null });
   return { sessionId };
@@ -2279,7 +2280,7 @@ async function reserveTurnSettings(args) {
     }
     const next = cancel || (source.id === target.id && (current.model ?? "") === selectedModel && (selectedMode === undefined || selectedMode === current.mode) && (current.effort ?? "") === selectedEffort && !selectedCwd && !accountChanged && !endpointChanged)
       ? null : { backend: target.id, model: selectedModel, effort: selectedEffort, ...(selectedMode !== undefined ? { mode: selectedMode } : {}), ...(selectedCwd ? { cwd: selectedCwd } : {}), ...(accountChanged ? { account: selectedAccount } : {}), ...(endpointChanged ? { endpoint: selectedEndpoint } : {}) };
-    await store.setSessionData(sessionId, "nextSettings", next);
+    await store.setSessionData(sessionId, "nextSettings", next, { durable: true });
     if (current.interrupted?.reason === 'limit'
       && ((account !== undefined && accountChanged) || (!cancel && next?.backend && next.backend !== source.id))) {
       await schedule.cancel(`resume:${sessionId}`);
@@ -3884,7 +3885,7 @@ agentTasks = await createAgentTasks({
       await store.setMeta(sessionId, { ...info, backend: backend.id, unsent: true });
       await store.setMode(sessionId, mode); await store.setModel(sessionId, model);
       await store.setSessionData(sessionId, 'effort', effort);
-      await store.setSessionData(sessionId, 'delegation', { taskId, parentSessionId: owner, manager: 'ply' });
+      await store.setSessionData(sessionId, 'delegation', { taskId, parentSessionId: owner, manager: 'ply' }, { durable: true });
       await store.setSessionData(sessionId, 'agentLocale', lng);
       if (account) await store.setSessionData(sessionId, 'claudeAccount', account);
       if (endpoint) await store.setSessionData(sessionId, 'compatEndpoint', endpoint);
@@ -4104,7 +4105,7 @@ async function runTurnInternal(args, onStarted, hooks) {
       await store.setMode(sessionId, permissionMode);
       await store.setMeta(sessionId, { cwd, unsent: false, lastModified: Date.now() });
       if (reserved) {
-        await store.setSessionData(sessionId, "nextSettings", null);
+        await store.setSessionData(sessionId, "nextSettings", null, { durable: true });
         emitGlobal({ type: "backend", sessionId, backend: backend.id, applied: true });
         emitGlobal({ type: "nextSettings", sessionId, nextSettings: null });
       }
@@ -5401,7 +5402,7 @@ wss.on("connection", (ws, req) => {
             ...(Number.isFinite(a?.size) && a.size >= 0 ? { size: a.size } : {}) }));
           if (files.some(a => a.path.length > 8192 || a.name.length > 4096)) throw new Error(t('session.attachmentInfoTooLarge'));
           // version: 2 = text が文中の添付の印（[添付] パス）を含む Markdown（位置が残る。ADR 0060）。無い下書きは印が無く、添付は文末に付く
-          await store.setSessionData(sessionId, "draft", { text, attached: files, ...(Number.isInteger(version) ? { version } : {}) });
+          await store.setSessionData(sessionId, "draft", { text, attached: files, ...(Number.isInteger(version) ? { version } : {}) }, { durable: true });
           if ((await store.get(sessionId)).unsent && typeof msg.args?.cwd === "string") {
             await store.setMeta(sessionId, { cwd: msg.args.cwd });
           }
@@ -5989,7 +5990,13 @@ process.parentPort?.on("message", async ({ data }) => {
     const result = await abortSessions({ reason: data.reason }).catch(err => ({ error: String(err?.message ?? err) }));
     process.parentPort.postMessage({ type: 'abort', id: data.id, ...result });
   }
-  if (data?.type === "shutdown" && runtime.turns.size === 0 && !agentTasks.busy) process.exit(0);
+  if (data?.type === "shutdown") {
+    try { finishShutdown(store.flushNow, () => runtime.turns.size > 0 || agentTasks.busy); }
+    catch (e) {
+      console.error('sessions.json shutdown save failed:', e?.code ?? e?.message ?? e);
+      process.exitCode = 1;
+    }
+  }
 });
 
 async function announce() {
@@ -6031,7 +6038,10 @@ await restoreCompactionSchedule().catch(err => console.error('  自動圧縮の�
 for (const [id, meta] of Object.entries(await store.getAll())) {
   if (meta.interrupted?.reason === 'limit') limitStates.set(id, interruptedOf(meta.interrupted));
 }
+// Restored sends can start a turn and use localOrigin(), which needs a bound port.
+const listening = new Promise(resolve => server.once('listening', resolve));
+server.listen(PORT, HOST, announce);
+await listening;
 await schedule.restore().catch(err => console.error('  再開の予定を戻せませんでした:', String(err?.message ?? err)));
 // 起動のときに過ぎていた送信予定の知らせは、リモートがつながってからでないと届かない。落ち着いたころにもう一度だけ確かめる
 setTimeout(() => { for (const row of schedule.list()) if (row.kind === 'send' && row.held && !row.notified) notifyScheduleMissed(row); }, 15_000).unref();
-server.listen(PORT, HOST, announce);

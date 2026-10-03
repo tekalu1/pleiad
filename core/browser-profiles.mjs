@@ -28,7 +28,7 @@ export function createBrowserProfiles({ getPrefs, getSession, setSessionData, re
       const meta = await getSession(sessionId);
       if (hasProfile(prefs, meta?.browserProfile)) return meta.browserProfile;
       const profile = profileForNew(prefs, meta?.cwd ?? null, platform);
-      if (persist && exists(meta)) await setSessionData(sessionId, 'browserProfile', profile).catch(() => {});
+      if (persist && exists(meta)) await setSessionData(sessionId, 'browserProfile', profile, { durable: true }).catch(() => {});
       return profile;
     },
     /** 新しい会話のプロフィール（元の会話があればそのプロフィールを継ぐ） */
@@ -41,7 +41,7 @@ export function createBrowserProfiles({ getPrefs, getSession, setSessionData, re
     async set(sessionId, profile, cwd) {
       const prefs = await getPrefs();
       if (!validProfileId(profile) || !hasProfile(prefs, profile)) return false;
-      if (sessionId) await setSessionData(sessionId, 'browserProfile', profile);
+      if (sessionId) await setSessionData(sessionId, 'browserProfile', profile, { durable: true });
       const key = folderKey(cwd, platform);
       if (key) await rememberLast(key, profile);
       return true;

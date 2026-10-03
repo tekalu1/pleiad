@@ -75,7 +75,7 @@ export function createWorktreeHost({ dataDir, store, turns, shellCwds = () => []
       }
       if (s?.nextSettings && insideDir(s.nextSettings.cwd, entry.path)) {
         const next = withoutReservedCwd(s.nextSettings, s);
-        await store.setSessionData(id, 'nextSettings', next);
+        await store.setSessionData(id, 'nextSettings', next, { durable: true });
         emit({ type: 'nextSettings', sessionId: id, nextSettings: next });
       }
     }
