@@ -175,6 +175,11 @@ const searchOps = [
 // ---- 会話の一覧・メタ・本文・題と状態
 const sessionId = (id) => z.string().min(1).max(200).describe(D(id, 'sessionId'));
 const optionalSessionId = (id) => z.string().min(1).max(200).optional().describe(D(id, 'sessionId'));
+const reasonFields = (id) => ({
+  reasonKey: z.string().max(80).optional().describe(D(id, 'reasonKey')),
+  reasonParams: z.record(z.string(), z.unknown()).optional().describe(D(id, 'reasonParams')),
+  backend: z.string().max(40).optional().describe(D(id, 'backend')),
+});
 
 /** AI は sessionId を省けば自分の会話。人間（画面）は省けない */
 function targetOf(ctx, given) {
@@ -263,13 +268,15 @@ export const sessionOps = [
       sessionId: optionalSessionId('setTitle'),
       title: z.string().trim().min(1).max(200).describe(D('setTitle', 'title')),
       reason: z.string().max(500).optional().describe(D('setTitle', 'reason')),
+      ...reasonFields('setTitle'),
     }),
     output: z.object({ sessionId: z.string(), title: z.string() }),
     surfaces: { ui: true, mcp: 'catalog', cli: { path: ['sessions', 'rename'], positional: ['sessionId', 'title'] } },
-    handler: async (ctx, { sessionId: given, title, reason }) => {
+    legacyCommand: 'setTitle',
+    handler: async (ctx, { sessionId: given, title, reason, reasonKey, reasonParams, backend }) => {
       const id = targetOf(ctx, given);
       if (!(await ctx.sessions.get(id))) throw missing(ctx, id);
-      await ctx.sessions.setTitle(id, title, { actor: ctx.actor, reason });
+      await ctx.sessions.setTitle(id, title, { actor: ctx.actor, reason: ctx.principal.by === 'human' ? (ctx.sessions.clientReason?.({ reason, reasonKey, reasonParams }) ?? reason) : reason, backend });
       return { sessionId: id, title };
     },
   }),
@@ -282,16 +289,20 @@ export const sessionOps = [
     scope: 'session',
     input: z.object({
       sessionId: optionalSessionId('setStatus'),
-      status: z.string().trim().min(1).max(60).describe(D('setStatus', 'status')),
+      status: z.string().trim().max(60).describe(D('setStatus', 'status')),
       reason: z.string().max(500).optional().describe(D('setStatus', 'reason')),
       alone: z.boolean().optional().describe(D('setStatus', 'alone')),
+      icon: z.string().max(16).optional().describe(D('setStatus', 'icon')),
+      ...reasonFields('setStatus'),
     }),
     output: z.object({ sessionId: z.string(), status: z.string(), moved: z.array(z.string()) }),
     surfaces: { ui: true, mcp: 'catalog', cli: { path: ['sessions', 'status'], positional: ['sessionId', 'status'] } },
-    handler: async (ctx, { sessionId: given, status, reason, alone }) => {
+    legacyCommand: 'setStatus',
+    handler: async (ctx, { sessionId: given, status, reason, alone, icon, reasonKey, reasonParams, backend }) => {
       const id = targetOf(ctx, given);
       if (!(await ctx.sessions.get(id))) throw missing(ctx, id);
-      const moved = await ctx.sessions.setStatus(id, status, { actor: ctx.actor, reason, alone });
+      const moved = await ctx.sessions.setStatus(id, status, { actor: ctx.actor, reason: ctx.principal.by === 'human' ? (ctx.sessions.clientReason?.({ reason, reasonKey, reasonParams }) ?? reason) : reason, alone, backend });
+      if (icon) await ctx.statuses.setIcon(status, icon, ctx.actor);
       return { sessionId: id, status, moved };
     },
   }),
@@ -306,15 +317,19 @@ export const sessionOps = [
     input: z.object({
       sessionId: optionalSessionId('fork'),
       upToMessageId: z.string().min(1).max(200).optional().describe(D('fork', 'upToMessageId')),
+      beforeMessageId: z.string().min(1).max(200).optional().describe(D('fork', 'beforeMessageId')),
       title: z.string().trim().min(1).max(200).optional().describe(D('fork', 'title')),
+      reason: z.string().max(500).optional().describe(D('fork', 'reason')),
+      ...reasonFields('fork'),
     }),
     output: z.object({ sessionId: z.string(), parent: z.string() }),
     surfaces: { ui: true, mcp: 'catalog', cli: { path: ['sessions', 'fork'], positional: ['sessionId'] } },
     legacyCommand: 'fork',
-    handler: async (ctx, { sessionId: given, upToMessageId, title }) => {
+    handler: async (ctx, { sessionId: given, upToMessageId, beforeMessageId, title, reason, reasonKey, reasonParams, backend }) => {
       const id = targetOf(ctx, given);
       if (!(await ctx.sessions.get(id))) throw missing(ctx, id);
-      const forked = await ctx.sessions.fork({ sessionId: id, upToMessageId, title }, { actor: ctx.actor });
+      const forked = await ctx.sessions.fork({ sessionId: id, upToMessageId, beforeMessageId, title,
+        reason: ctx.principal.by === 'human' ? (ctx.sessions.clientReason?.({ reason, reasonKey, reasonParams }).reason ?? reason) : reason, backend }, { actor: ctx.actor });
       return { sessionId: forked.sessionId, parent: id };
     },
   }),
