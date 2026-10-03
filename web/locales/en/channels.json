@@ -214,6 +214,7 @@
     "removed": "This bot was deleted"
   },
   "memory": {
+    "new": "Newly learned",
     "user": {
       "title": "About you",
       "meta": "shared by all bots · {{n}}"

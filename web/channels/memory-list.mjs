@@ -96,6 +96,8 @@ export function createMemoryList(host, { lookup, openSource }) {
     row.dataset.id = entry.id;
     const tx = el('span', 'tx');
     const acts = el('span', 'acts2');
+    const learnedToday = entry.by?.kind === 'bot' && entry.by.botId === 'b_learner' && entry.origBy?.kind !== 'human'
+      && entry.updatedAt && new Date(entry.updatedAt).toDateString() === new Date().toDateString();
     if (S.editing === entry.id) {
       row.classList.add('editing');
       const input = el('input', 'fin memedit');
@@ -123,7 +125,9 @@ export function createMemoryList(host, { lookup, openSource }) {
         queueMicrotask(() => { input.focus(); input.setSelectionRange(input.value.length, input.value.length); });
       }
     } else {
-      tx.append(el('span', 'tx-text', entry.text), sourceNode(entry));
+      tx.append(el('span', 'tx-text', entry.text));
+      if (learnedToday) tx.append(el('span', 'src-more mem-new', t('channels:memory.new')));
+      tx.append(sourceNode(entry));
       const fix = el('button', 'btn forget', t('channels:memory.edit'));
       fix.type = 'button';
       fix.dataset.act = 'edit';

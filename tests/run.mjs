@@ -455,6 +455,7 @@ const cases = [
   // ルーティンの編集 (W5): 検査・保存する欄・cron の見積もり・脇の並べ方・一覧の写し・入口の配線。画面の打鍵は tests/browser/routine-sheet.cjs
   await import("./unit/routine-sheet-model.mjs"),
   // --- memory-learn・sessions-send・webhook (L1・X1・H1、P3) ---
+  await import('./unit/memory-learn.mjs'),
 ];
 
 const selected = pick(cases, process.argv.slice(2));

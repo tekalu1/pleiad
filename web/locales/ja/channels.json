@@ -211,6 +211,7 @@
     "removed": "この bot は削除されました"
   },
   "memory": {
+    "new": "新しく覚えた",
     "user": {
       "title": "あなたについて",
       "meta": "全 bot 共通 · {{n}} 件"

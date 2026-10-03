@@ -3126,6 +3126,33 @@
       ]
     },
     {
+      "key": "memoryLearnAt",
+      "risk": "write",
+      "riskOf": false,
+      "writable": true,
+      "prefKeys": [
+        "memoryLearnAt"
+      ]
+    },
+    {
+      "key": "memoryLearnBackend",
+      "risk": "write",
+      "riskOf": false,
+      "writable": true,
+      "prefKeys": [
+        "memoryLearnBackend"
+      ]
+    },
+    {
+      "key": "memoryLearnPaused",
+      "risk": "write",
+      "riskOf": false,
+      "writable": true,
+      "prefKeys": [
+        "memoryLearnPaused"
+      ]
+    },
+    {
       "key": "mode",
       "risk": "human-only",
       "riskOf": false,
@@ -3274,6 +3301,27 @@
       "agent-bound-readonly": "write=deny:READ_ONLY_MODE"
     },
     "locale": {
+      "human": "write=allow",
+      "agent-unbound": "write=allow",
+      "agent-bound-ask": "write=allow",
+      "agent-bound-never-full": "write=allow",
+      "agent-bound-readonly": "write=deny:READ_ONLY_MODE"
+    },
+    "memoryLearnAt": {
+      "human": "write=allow",
+      "agent-unbound": "write=allow",
+      "agent-bound-ask": "write=allow",
+      "agent-bound-never-full": "write=allow",
+      "agent-bound-readonly": "write=deny:READ_ONLY_MODE"
+    },
+    "memoryLearnBackend": {
+      "human": "write=allow",
+      "agent-unbound": "write=allow",
+      "agent-bound-ask": "write=allow",
+      "agent-bound-never-full": "write=allow",
+      "agent-bound-readonly": "write=deny:READ_ONLY_MODE"
+    },
+    "memoryLearnPaused": {
       "human": "write=allow",
       "agent-unbound": "write=allow",
       "agent-bound-ask": "write=allow",

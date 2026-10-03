@@ -1073,6 +1073,7 @@
     }
   },
   "memory": {
+    "learn": { "title": "記憶の整理", "replaced": "新しい記憶で置き換わった: {{id}}" },
     "title": {
       "user": "あなたについて",
       "bot": "この bot だけ"
@@ -1138,6 +1139,9 @@
     "linkOpen": "リンクの開き先（inapp は内蔵ブラウザー、external は既定のブラウザー）。",
     "instructionBudget": "自分で書いた指示の量の目安（トークン。右パネルの「指示の量」）。null で既定。",
     "backend": "新しい会話の既定のエージェント。",
+    "memoryLearnBackend": "夜の記憶の整理に使うエージェント。空なら会話の既定に合わせる。",
+    "memoryLearnAt": "記憶の整理を始める現地時刻（HH:MM）。",
+    "memoryLearnPaused": "記憶の夜の整理を止める。",
     "model": "新しい会話の既定のモデル。",
     "effort": "新しい会話の既定の思考の深さ。",
     "mode": "承認モードの既定（人間だけが変える）。",

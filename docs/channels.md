@@ -17,7 +17,7 @@ bot（名前・人格・記憶・権限を持つ定義）と、人と bot が集
 | bot の定義 | `bots.json` |
 | 記憶（正本）・変更の記録・索引 | `memory/user.md`・`memory/bots/<botId>.md`・`memory/log.jsonl`・`memory/index.sqlite` |
 | ルーティン | `routines.json` |
-| webhook の秘密（P3）・学習の進み（P3） | `webhook-secrets.json`・`memory/learn-state.json` |
+| webhook の秘密（P3）・学習の進み | `webhook-secrets.json`・`memory/learn-state.json`（`version: 1`、会話ごとの発言 index・チャンネルごとの投稿 id、追記ログの byte offset、前回の実行時刻） |
 
 - 新しいファイルは `{ version: 1 }` を持つ。読めない版は読み込まずに画面へ出して止める。`DATA_SCHEMA` は上げない。
 - `editedAt`（画面の「（編集済み）」）は畳み込み（`foldOp`）が付ける。本文が実際に変わった `edit` だけ。同じ本文での `edit`（`mentions`・`state`・`presents` だけの更新）と、bot のターンの投稿（`turn`）の本文が埋まる更新は付けない。記録は操作の列なので、過去のデータも読み直すだけで直る。
@@ -34,6 +34,7 @@ bot（名前・人格・記憶・権限を持つ定義）と、人と bot が集
 | `core/channels/service.mjs`（`createChannelService`）・`store.mjs`・`mentions.mjs`・`threads.mjs` | チャンネル・投稿・リアクション・既読・スレッドの状態・@ の解析 | S1 |
 | `core/bots/service.mjs`（`createBotService`）・`store.mjs`・`sessions.mjs` | bot の定義・bot の会話の作り方・人格の文 | S2 |
 | `core/memory/service.mjs`（`createMemoryService`）・`store.mjs`・`index.mjs`・`tail.mjs` | 記憶・索引・ターンの末尾 | S3 |
+| `core/memory/learn.mjs`（`createMemoryLearner`） | 新しい人の発言を夜に整理。利用者のルーティン一覧には出さない | L1 |
 | `core/bots/dispatch.mjs`（`createDispatcher`） | @ から起こす・途中送信・ターンの投稿・止める・トークンの集計 | S4 |
 | `core/routines/service.mjs`（`createRoutineService`）・`cron.mjs`・`schedule.mjs`・`runner.mjs`・`events.mjs` | ルーティン | R1（P2） |
 | `core/routines/webhook.mjs`（`createWebhookReceiver`） | `/hooks/<id>` | H1（P3） |
@@ -225,6 +226,14 @@ id は `<領域>.<動詞>`（ドットは 1 つ）。human-only は承認モー�
   - DOM: `#chDeck`・`#chThread`・`.th-top`（`.th-crumb`・`.th-chan`・`.th-title`・`.th-toc`・`.th-git`・`.th-browser`・`.th-close`・`#chThreadOpenSidebar`）・`.th-log`・`.th-rdiv`・`.th-tools`・`ul.ck`・`.post-presents`・`.th-perms`・`.th-band`・`#chThreadComposer`。流れ側で開いているスレッドの根の投稿は `data-open`。
   - `host` に足した口（`web/client.mjs` の `setupChannels` の引数）: `browser`（内蔵ブラウザーの部品。使えない画面では null）。`permissionCard` は質問のカードも出す。
 - Chats の一覧は bot の会話を出さない（あなた待ちの間だけ。`client.mjs` の `renderSessions`）。右パネルの作業場所の基準は `contextForPanel`。
+
+## 夜の記憶の整理
+
+`createBotHost` は `core/memory/learn.mjs` を内部の毎日の予約として起動する。既定は現地時刻 02:00。PC が止まっていた予定は起動時に 1 回だけ実行する。利用者の `routines.list` には出ず、チャンネルにも投稿しない。`settings.set` の `memoryLearnBackend`（空なら会話の既定）、`memoryLearnAt`（HH:MM）、`memoryLearnPaused` で変更できる。いずれも AI から変更できる write の設定。
+
+`memory/learn-state.json` は `{ version: 1, cursor: { sessions: { [id]: messageIndex }, posts: { [channelId]: postId }, postOffsets: { [channelId]: byteOffset } }, lastRunAt }`。会話は更新時刻が変わったものの未読 index 以降、チャンネルは追記ログの未読 byte offset 以降だけを読む。人の通常の user 行と taint のない人の投稿を最大 5 件ずつ時刻順で学習用会話（sidecar `bot.kind: 'learner'`）へ渡す。共通層への 1 ターン 5 件の書き込み上限に合わせ、残りは次の束で読む。新しい材料がないときはエージェントを呼ばない。失敗時はカーソルを進めず、次回やり直す。
+
+学習用会話は既定の bot と同じバックエンド・モデル設定に従い、読み取りモードで候補の JSON を返す。人が直前の AI の答えを明示的に採用した発言では、その答えも文脈に含める。候補の出どころは番号から実物の人の発言（採用した場合は AI の答えも）を引き、既存の `memory.write` / `memory.edit` の出どころ検査を通して 2 層へ書く。重複は書かない。古い記憶と矛盾すれば、AI が書いた行は直し、人が書いた行は新しい行を足して古い行の理由に「新しい記憶で置き換わった」の印を残す。その日に新しく増えた行は bot のページに小さな印が出る。
 
 ## テスト
 

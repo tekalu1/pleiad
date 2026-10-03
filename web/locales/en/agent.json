@@ -1073,6 +1073,7 @@
     }
   },
   "memory": {
+    "learn": { "title": "Memory organizer", "replaced": "Replaced by newer memory: {{id}}" },
     "title": {
       "user": "About you",
       "bot": "This bot only"
@@ -1138,6 +1139,9 @@
     "linkOpen": "Where links open (inapp is the built-in browser, external is the default browser).",
     "instructionBudget": "The guideline for the amount of instructions you wrote (tokens; the right panel's \"Instruction amount\"). null means the default.",
     "backend": "The default agent for new conversations.",
+    "memoryLearnBackend": "Agent for nightly memory organization. Empty follows the conversation default.",
+    "memoryLearnAt": "Local time for nightly memory organization (HH:MM).",
+    "memoryLearnPaused": "Pause nightly memory organization.",
     "model": "The default model for new conversations.",
     "effort": "The default thinking depth for new conversations.",
     "mode": "The default approval mode (only a human changes it).",

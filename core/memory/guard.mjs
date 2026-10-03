@@ -138,6 +138,10 @@ export function sourceResolvers({ channels, sessions, botOfSession } = {}) {
       if (!channels?.read) return null;
       const id = await channelIdOf(channelId);
       if (!id) return null;
+      if (channels.getPost) {
+        const found = await channels.getPost({ channelId: id, postId }).catch(() => null);
+        return found ? { ...found, channelId: id } : null;
+      }
       let before;
       for (let page = 0; page < PAGES; page++) {
         const out = await channels.read({ channelId: id, ...(threadId ? { threadId } : {}), ...(before ? { before } : {}), limit: 100 });
