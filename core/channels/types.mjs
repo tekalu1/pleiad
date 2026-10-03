@@ -159,10 +159,11 @@ const attrs = (obj) => Object.entries(obj).filter(([, v]) => v !== null && v !==
 /**
  * 投稿 1 件の包み。`<pleiad-channel channel="#checkout-perf" thread="p_…" post="p_…" from="あなた" at="2026-10-03T10:41">本文</pleiad-channel>`
  * channel は表示名（`#名前`・DM は bot の名前）、channelId は channels.post などの操作へ渡すチャンネルの id（`channel-id` 属性。任意）、
- * from は表示名（bot は `🦉 Owl (bot)`）、at は ISO の分まで（呼び出し側が決める）
+ * from は表示名（bot は `🦉 Owl (bot)`）、at は ISO の分まで（呼び出し側が決める）。
+ * reply: `reply="true"`。呼んだ bot（@ で起こした相手）の返事（bot の会話でそのターンの終わりに返す。ADR 0108）
  */
-export function channelEnvelope({ channel, channelId, thread, post, from, at, text }) {
-  return `<${CHANNEL_TAG}${attrs({ channel, 'channel-id': channelId, thread, post, from, at })}>${escapeBody(text)}</${CHANNEL_TAG}>`;
+export function channelEnvelope({ channel, channelId, thread, post, from, at, reply, text }) {
+  return `<${CHANNEL_TAG}${attrs({ channel, 'channel-id': channelId, thread, post, from, reply, at })}>${escapeBody(text)}</${CHANNEL_TAG}>`;
 }
 /** 初回に渡す、スレッドのそれまでの投稿。posts は channelEnvelope の引数の並び */
 export function channelThreadEnvelope({ channel, channelId, thread, posts }) {

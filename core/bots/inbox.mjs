@@ -4,12 +4,13 @@
 // 起動時は delivering を unknown にして、pending だけを配り直す（recover）。
 //
 //   createInboxStore({ dir, now }) → { load, add, list, mark, remove, recover }
-//     add({ sessionId, botId, channelId, threadId, postId }): Promise<InboxItem>
+//     add({ sessionId, botId, channelId, threadId, postId, caller?, reply? }): Promise<InboxItem>
+//       caller = 起こした投稿を書いた bot の id（その会話のターンが終わったとき返事を返す相手）、reply = 呼んだ bot への返事として届ける投稿を書いた bot の id
 //     list({ sessionId?, status?, channelId?, threadId? }): Promise<InboxItem[]>      … 保存順
 //     mark(ids, status, extra?): Promise<InboxItem[]>                                  … 変わったもの
 //     remove(ids): Promise<number>
 //     recover(): Promise<{ demoted: number, sessions: string[] }>                     … delivering → unknown。pending の会話の id を返す
-// InboxItem: { id: 'i_…', sessionId, botId, channelId, threadId: string|null, postId, status, at, updatedAt, error? }
+// InboxItem: { id: 'i_…', sessionId, botId, channelId, threadId: string|null, postId, caller?, reply?, status, at, updatedAt, error? }
 // 読めない版・壊れた JSON は上書きせずに投げる（threads.json と同じ方針）。送り終えた（sent）・結果不明のものは新しい 100 件だけ残す。
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -60,9 +61,9 @@ export function createInboxStore({ dir, now = Date.now } = {}) {
   return {
     file,
     load: () => serial(async () => { await load(); }),
-    add: ({ sessionId, botId, channelId, threadId = null, postId }) => mutate((data) => {
+    add: ({ sessionId, botId, channelId, threadId = null, postId, caller, reply }) => mutate((data) => {
       const at = now();
-      const item = { id: newId('inbox', at), sessionId, botId, channelId, threadId, postId, status: 'pending', at, updatedAt: at };
+      const item = { id: newId('inbox', at), sessionId, botId, channelId, threadId, postId, ...(caller ? { caller } : {}), ...(reply ? { reply } : {}), status: 'pending', at, updatedAt: at };
       data.items.push(item);
       return clone(item);
     }),
