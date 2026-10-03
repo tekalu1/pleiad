@@ -29,6 +29,7 @@ import { insideDir, sameDir } from './worktrees.mjs';
 import { createCallTracker, timelineOf } from './git-timeline.mjs';
 import { createUpdateGate } from './update-gate.mjs';
 import { ensureDataSchema } from './data-schema.mjs';
+import { acquireDataLock } from './data-lock.mjs';
 import { localeInfo, setLocale, t, i18n, LOCALE_SETTINGS, agentT, agentLocaleOf, currentLocale } from './i18n.mjs';
 import http from "node:http";
 import crypto from "node:crypto";
@@ -107,7 +108,9 @@ import {
 
 const updateGate = createUpdateGate();
 const quotaCache = createQuotaCache();
-// 書き込みを始める前に、データ置き場の形式を確かめる。古ければここで移行する（core/schema-migration.mjs。失敗すれば起動を止める）
+// 書き込みを始める前に、データ置き場をこのプロセスだけが持つようにする（別のプロセスが持っていれば、理由を出して起動を止める。
+// 終了まで持つ。core/data-lock.mjs）。そのうえで形式を確かめ、古ければここで移行する（core/schema-migration.mjs。失敗すれば起動を止める）
+acquireDataLock(store.dataDir);
 const migrated = await ensureDataSchema(store.dataDir);
 if (migrated) console.log(`  ${t('data.migrated', { backup: migrated.backup })}`);
 const usageStore = createUsageStore(store.dataDir);

@@ -77,19 +77,46 @@ CREATE TABLE IF NOT EXISTS conversations (
 );
 `;
 
-/** 開く。新しいファイルなら表を作る。readOnly は別のプロセス（テスト・調査）から中身を読むとき */
-export function openRaw(file, { readOnly = false } = {}) {
+export const REQUIRED_TABLES = ['sessions', 'session_fields', 'context_entries', 'context_entry_refs', 'agent_tasks', 'usage_meta', 'usage_records', 'conversations'];
+
+/**
+ * 開く。既にある DB を開くだけで、無ければ投げる（形式 2 の置き場で DB が消えているときに、空の DB を作って起動しない）。
+ * 新しい DB を作るときだけ create: true（表と user_version を書く）。readOnly は別のプロセス（テスト・調査）から中身を読むとき。
+ * 書き込みの接続は WAL・synchronous=FULL（確定した書き込みは電源断でも戻らない。書く頻度は低い）。
+ * busy_timeout は数百 ms: データ置き場はプロセス単位で排他する（core/data-lock.mjs）ので、待つ相手は調査・テストの短い接続だけ
+ */
+export function openRaw(file, { readOnly = false, create = false } = {}) {
+  if (!readOnly && !create && !fs.existsSync(file)) throw new Error(`database file is missing: ${file}`);
   const { DatabaseSync } = loadSqlite();
   const db = new DatabaseSync(file, readOnly ? { readOnly: true } : {});
-  db.exec('PRAGMA busy_timeout = 5000');
+  db.exec('PRAGMA busy_timeout = 300');
   if (!readOnly) {
     db.exec('PRAGMA journal_mode = WAL');
-    // WAL ではアプリが落ちても確定済みの書き込みは残る。電源断で最後の数件が戻ることだけを許し、毎回の fsync を省く
-    db.exec('PRAGMA synchronous = NORMAL');
-    db.exec(SCHEMA_SQL);
-    db.exec(`PRAGMA user_version = ${DB_VERSION}`);
+    db.exec('PRAGMA synchronous = FULL');
+    if (create) {
+      db.exec(SCHEMA_SQL);
+      db.exec(`PRAGMA user_version = ${DB_VERSION}`);
+    }
   }
   return db;
+}
+
+/** 新しい DB を作る（表と形式番号を書く） */
+export const createDb = file => openRaw(file, { create: true });
+
+/** DB が形式 2 として使えるか確かめる（読み取り専用）。使えれば null、だめなら理由の文字列 */
+export function checkDb(file) {
+  if (!fs.existsSync(file)) return 'missing';
+  let db;
+  try {
+    db = openRaw(file, { readOnly: true });
+    const version = db.prepare('PRAGMA user_version').get().user_version;
+    if (version !== DB_VERSION) return `user_version is ${version}, expected ${DB_VERSION}`;
+    const names = new Set(db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all().map(row => row.name));
+    const missing = REQUIRED_TABLES.filter(name => !names.has(name));
+    return missing.length ? `missing tables: ${missing.join(', ')}` : null;
+  } catch (e) { return `unreadable: ${e?.message ?? e}`; }
+  finally { try { db?.close(); } catch { /* 閉じるだけ */ } }
 }
 
 /** 1 つのトランザクション。fn が投げたら戻す。外側にトランザクションがあれば、その一部として動く（移行がまとめて書くため） */
@@ -186,15 +213,20 @@ export function sessionTable(db) {
       }
       return out;
     },
-    /** 会話の行を作り（無ければ）、fields の項目を entry の今の値へ合わせる。値が undefined の項目は消す */
+    /**
+     * 既にある会話の、fields の項目を entry の今の値へ合わせる。値が undefined の項目は消す。
+     * 会話の行が無ければ何も書かず false を返す（別の手段で消された会話を、更新で欠けた形のまま作り直さない）。
+     * 新しい会話は writeAll
+     */
     write(id, entry, fields) {
-      transaction(db, () => {
-        prepared(db, 'INSERT OR IGNORE INTO sessions (session_id) VALUES (?)').run(id);
-        if (!isPlain(entry)) { writeField(id, RAW_FIELD, entry); return; }
+      return transaction(db, () => {
+        if (!prepared(db, 'SELECT 1 AS found FROM sessions WHERE session_id = ?').get(id)) return false;
+        if (!isPlain(entry)) { writeField(id, RAW_FIELD, entry); return true; }
         for (const field of fields) writeField(id, field, entry[field]);
+        return true;
       });
     },
-    /** 新しく作った会話（または 1 度に全部）。entry の全項目を書く */
+    /** 新しく作った会話（または 1 度に全部）。会話の行を作り、entry の全項目を書く */
     writeAll(id, entry) {
       transaction(db, () => {
         prepared(db, 'DELETE FROM session_fields WHERE session_id = ?').run(id);
@@ -248,11 +280,12 @@ export function usageTable(db) {
   const insert = record => prepared(db, 'INSERT INTO usage_records (id, backend, at, data) VALUES (?, ?, ?, ?)')
     .run(typeof record?.id === 'string' ? record.id : null, typeof record?.backend === 'string' ? record.backend : null, Number.isFinite(record?.at) ? record.at : null, jsonOf(record));
   return {
-    /** 記録が 1 件も無く、メタも無いなら null。あれば { version, since, migrations, records } */
+    /** 記録が 1 件も無く、メタも無いなら null。あれば { version, since, migrations, records, …そのほかの最上位の項目 } */
     snapshot() {
       const since = meta('since');
       if (since === undefined && meta('migrations') === undefined) return null;
       return {
+        ...(meta('extra') ?? {}),
         version: 1, since, migrations: meta('migrations') ?? [],
         records: prepared(db, 'SELECT data FROM usage_records ORDER BY seq').all().map(row => JSON.parse(row.data)),
       };
@@ -271,6 +304,11 @@ export function usageTable(db) {
       transaction(db, () => {
         setMeta('since', data.since);
         setMeta('migrations', data.migrations ?? []);
+        // version・since・migrations・records 以外の最上位の項目も落とさず持つ（古い版が足した項目・移行の検証が元の全体と比べる）
+        const { version, since, migrations, records, ...extra } = data;
+        void version; void since; void migrations; void records;
+        if (Object.keys(extra).length) setMeta('extra', extra);
+        else prepared(db, "DELETE FROM usage_meta WHERE key = 'extra'").run();
         const current = prepared(db, 'SELECT seq, data FROM usage_records ORDER BY seq').all();
         const next = data.records.map(record => jsonOf(record));
         if (current.length === next.length) {

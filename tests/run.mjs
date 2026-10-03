@@ -180,8 +180,8 @@ const cases = [
   await import('./unit/desktop-updates.mjs'),
   await import('./unit/desktop-exit-dialog.mjs'),
   await import('./unit/message-queue.mjs'),
-  // 送り終わった outbox は直近だけ残す: 並び・未送の項目・二重送信の判定を保つ（ADR 0106）
-  await import("./unit/outbox-prune.mjs"),
+  // 送り終わった outbox は刈らない: 古い項目でも returned・undelivered・同じ ID の再試行が見つかる（ADR 0106）
+  await import("./unit/outbox-keep.mjs"),
   await import('./unit/message-steer.mjs'),
   await import('./unit/visualize.mjs'),
   await import('./unit/server-visualize.mjs'),
@@ -269,6 +269,10 @@ const cases = [
   // 再発防止（ADR 0106）: データ置き場への丸ごと書きは許可リスト（上限と理由）に載ったものだけ・件数が増えても 1 件の更新は全体を直列化しない
   // 形式 1（記録ごとの JSON）→ 2（SQLite）の移行: 成功・失敗しても元が残る・2 回目は移行しない・整形済み/compact
   await import("./unit/schema-migration.mjs"),
+  // データ置き場のプロセス単位の排他: 生きている別プロセスがあれば止める・古いロックは取り直す・消した会話を更新で戻さない
+  await import("./unit/data-lock.mjs"),
+  // どの公開関数も、DB に書けなければ例外を返し、メモリは書く前のまま
+  await import("./unit/store-failures.mjs"),
   await import("./unit/db-tables.mjs"),
   // 実データの写しを作る道具: remote/ と秘密を写さない・DB は VACUUM INTO・委譲のタスクは既定で空
   await import("./unit/copy-data-dir.mjs"),

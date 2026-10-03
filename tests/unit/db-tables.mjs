@@ -1,18 +1,20 @@
 // 表ごとの読み書き（core/db.mjs）: 会話の記録の項目ごとの行・contextSession.report.entries の重複排除と掃除・形が崩れた入力・使用量・接続の共有と解放
 import fs from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { acquire, dbPath, openRaw, sessionTable, usageTable, conversationTable, taskTable, transaction, loadSqlite } from '../../core/db.mjs';
+import { acquire, dbPath, createDb, sessionTable, usageTable, conversationTable, taskTable, transaction, loadSqlite } from '../../core/db.mjs';
 
 export const name = 'db-tables';
 export const title = 'DB の表: 項目ごとの行・report.entries の重複排除と掃除・形が崩れた入力・使用量・接続の共有';
 
 const entry = (id, extra = {}) => ({ id, kind: 'instruction', name: id, hash: `hash-${id}`, ...extra });
-const sameJson = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+const canon = value => JSON.stringify(value, (key, v) => (v && typeof v === 'object' && !Array.isArray(v) ? Object.fromEntries(Object.keys(v).sort().map(k => [k, v[k]])) : v));
+const sameJson = (a, b) => canon(a) === canon(b);
 
 export default async function (t) {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'ply-db-tables-'));
-  const db = openRaw(dbPath(dir));
+  const db = createDb(dbPath(dir));
   try {
     const sessions = sessionTable(db);
     const count = sql => db.prepare(sql).get().n;
@@ -24,7 +26,9 @@ export default async function (t) {
     t.ok('write は指定した項目の行だけを書く（ほかの項目は元のまま）', a.title === 'y' && sameJson(a.outbox, [{ id: 1 }]) && a.draft.text === 'd');
     sessions.write('a', { history: [], title: 'y' }, ['draft', 'outbox']);
     t.ok('値が undefined の項目は行を消す', !('draft' in sessions.loadAll().a) && !('outbox' in sessions.loadAll().a));
-    sessions.write('b', {}, []);
+    sessions.writeAll('b', {});
+    t.ok('write は DB に無い会話を作らない（消された会話を、更新で欠けた形のまま戻さない）', sessions.write('ghost', { title: 'resurrected' }, ['title']) === false && !('ghost' in sessions.loadAll()) && !sessions.ids().includes('ghost'));
+    t.ok('write は会話があれば true を返す', sessions.write('a', { title: 'y' }, ['title']) === true);
     t.ok('項目が 0 の会話も、会話として残る（空の記録 {}）', sameJson(sessions.loadAll().b, {}) && sessions.ids().includes('b'));
     sessions.writeAll('n', { stops: null, mode: 'default', turnStartedAt: null });
     t.ok('null の項目は null のまま読み戻す（undefined と区別する）', sessions.loadAll().n.stops === null && 'turnStartedAt' in sessions.loadAll().n);
@@ -72,6 +76,10 @@ export default async function (t) {
     t.ok('使用量: 件数が同じ置き換えは変わった行だけを書き換える（並びを保つ）', usage.snapshot().records[0].inputTokens === 5 && sameJson(usage.snapshot().migrations, ['m', 'n']));
     usage.replace({ since: 50, migrations: ['m'], records: [{ id: 'only', backend: 'claude', at: 1 }] });
     t.ok('使用量: 件数が違う置き換えは全部を入れ替える', sameJson(usage.snapshot().records.map(r => r.id), ['only']));
+    usage.replace({ since: 50, migrations: ['m'], future: { kept: true }, note: 'x', records: [{ id: 'only', backend: 'claude', at: 1 }] });
+    t.ok('使用量: version・since・migrations・records 以外の最上位の項目も落とさず持つ', sameJson(usage.snapshot(), { version: 1, since: 50, migrations: ['m'], future: { kept: true }, note: 'x', records: [{ id: 'only', backend: 'claude', at: 1 }] }));
+    usage.replace({ since: 50, migrations: ['m'], records: [{ id: 'only', backend: 'claude', at: 1 }] });
+    t.ok('使用量: 項目が無くなれば消える', !('future' in usage.snapshot()));
 
     // ---- 委譲のタスク・会話の索引
     const tasks = taskTable(db);
@@ -85,13 +93,37 @@ export default async function (t) {
     t.ok('会話の索引: 行を足し・消す', sameJson(Object.keys(conversations.loadAll()), ['y']));
 
     // ---- WAL・接続の共有
-    t.ok('WAL で開き、形式番号を user_version に書く', db.prepare('PRAGMA journal_mode').get().journal_mode === 'wal' && db.prepare('PRAGMA user_version').get().user_version === 2);
+    t.ok('WAL・synchronous=FULL で開き、形式番号を user_version に書く', db.prepare('PRAGMA journal_mode').get().journal_mode === 'wal' && db.prepare('PRAGMA synchronous').get().synchronous === 2 && db.prepare('PRAGMA user_version').get().user_version === 2);
+    t.ok('busy_timeout は数百 ms（イベントループを長く塞がない）', db.prepare('PRAGMA busy_timeout').get().timeout <= 500);
   } finally { db.close(); }
+
+  // ---- DB が使えるかの確認（形式 2 の起動が、空の DB を作って始めない）
+  {
+    const { openRaw, checkDb, DB_VERSION } = await import('../../core/db.mjs');
+    const probe = path.join(dir, 'probe');
+    await fs.mkdir(probe);
+    const file = path.join(probe, 'pleiad.db');
+    t.ok('checkDb: DB が無ければ missing', checkDb(file) === 'missing');
+    t.ok('openRaw: 無い DB を黙って作らない（create: true のときだけ作る）', (() => { try { openRaw(file); return false; } catch (e) { return /missing/.test(e.message) && !existsSync(file); } })());
+    createDb(file).close();
+    t.ok('checkDb: 作ったばかりの DB は使える', checkDb(file) === null);
+    const { DatabaseSync } = loadSqlite();
+    const edit = sql => { const raw = new DatabaseSync(file); try { raw.exec(sql); } finally { raw.close(); } };
+    edit('PRAGMA user_version = 3');
+    t.ok('checkDb: user_version が違えば理由を返す', /user_version is 3/.test(checkDb(file) ?? ''));
+    t.ok('openRaw は既存の DB の user_version を書き換えない（新しい版の DB を壊さない）', (() => { openRaw(file).close(); const raw = new DatabaseSync(file); try { return raw.prepare('PRAGMA user_version').get().user_version === 3; } finally { raw.close(); } })());
+    edit(`PRAGMA user_version = ${DB_VERSION}`);
+    edit('DROP TABLE usage_records');
+    t.ok('checkDb: 必要な表が無ければ理由を返す', /missing tables: usage_records/.test(checkDb(file) ?? ''));
+    await fs.writeFile(file, 'not a database at all, just text');
+    t.ok('checkDb: SQLite でないファイルは読めない理由を返す', /unreadable|not a database/i.test(checkDb(file) ?? ''));
+  }
 
   // 接続は同じデータ置き場で共有し、最後の 1 つが離したら閉じる（Windows でデータ置き場を消せる）
   {
     const shared = path.join(dir, 'shared');
-    const one = acquire(shared), two = acquire(shared);
+    const create = target => createDb(dbPath(target)).close();
+    const one = acquire(shared, create), two = acquire(shared, create);
     t.ok('同じ置き場の接続は共有する', one.db === two.db);
     one.release(); one.release();
     t.ok('離す操作は何度呼んでも 1 回として数える（まだ使っている側の接続は閉じない）', (() => { try { two.db.prepare('SELECT 1').get(); return true; } catch { return false; } })());

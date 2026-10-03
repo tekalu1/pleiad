@@ -5,7 +5,7 @@ import path from 'node:path';
 import { openRaw, openReadOnly, dbPath, sessionTable, taskTable, usageTable, conversationTable, transaction } from '../../core/db.mjs';
 
 function withDb(dir, fn, { write = false } = {}) {
-  const db = write ? openRaw(dbPath(dir)) : openReadOnly(dir);
+  const db = write ? openRaw(dbPath(dir), { create: true }) : openReadOnly(dir);
   if (!db) return undefined;
   try { return fn(db); } finally { db.close(); }
 }

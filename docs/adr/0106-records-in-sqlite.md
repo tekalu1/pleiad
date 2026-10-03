@@ -19,14 +19,16 @@
 
 ## 決定
 
-- **件数・会話の長さ・時間とともに増える記録は、SQLite の行に置く。** データ置き場に DB ファイルを 1 つ（`pleiad.db`）。Node 組み込みの `node:sqlite`（`DatabaseSync`）を使い、WAL・`synchronous=NORMAL`。書くのは変わった行だけで、記録が増えても 1 回の書き込みは重くならない。
-- **JSON ファイルは、設定や台帳のように上限が決まっているものだけ。** 上限と理由は `tests/unit/data-writes.mjs` の許可リストに書く。`core/` がデータ置き場へファイルを丸ごと書く箇所は、リストに無ければテストが落ちる（`AGENTS.md`）。
+- **件数・会話の長さ・時間とともに増える記録は、SQLite の行に置く。** データ置き場に DB ファイルを 1 つ（`pleiad.db`）。Node 組み込みの `node:sqlite`（`DatabaseSync`）を使い、WAL・`synchronous=FULL`（確定した書き込みは電源断でも戻らない。書く頻度は 1 ターンに数回なので、遅さは問題にならない）。書くのは変わった行だけで、記録が増えても 1 回の書き込みは重くならない。
+- **JSON ファイルは、設定や台帳のように上限が決まっているものだけ。** 上限と理由は `tests/data-writes-allowlist.mjs` の許可リストに書く。`core/`・`desktop/`・`bin/` がファイルを書く箇所（別名・FileHandle・ストリーム・コピー・リネームを含む）は、リストに無ければテストが落ちる（`AGENTS.md`）。
 - **表**（`core/db.mjs`）:
   - `sessions`＋`session_fields`: 1 会話 1 行、項目（`backend`・`title`・`outbox`・`contextSession`・`hookRuns` …）ごとに 1 行。項目が変わったらその項目の行だけを書く。
   - `context_entries`＋`context_entry_refs`: `contextSession.report.entries` を、中身の SHA-256 で 1 つだけ持ち、会話側は並びの参照だけ持つ。読むときに元の形へ組み直すので、呼び出し側から見た値は変わらない。どの会話からも参照されなくなった行は起動時に消す。
-  - `agent_tasks`: 1 タスク 1 行。`usage_records`（1 ターン 1 行）＋`usage_meta`（`since`・済んだ移行）。`conversations`: 会話の索引 1 会話 1 行。
-- **`outbox` は、送り終わった（`sent`）・取り消した（`cancelled`）項目を会話あたり直近 20 件だけ残す。** 二重送信を防ぐ判定（同じ送信 ID の照合）は直近の再試行にしか効かず、並びの判定（`kick`）は両方を飛ばすので、捨てても送り漏れ・二重送信は起きない。
-- **形式番号（`data-schema.json`）を 1 → 2 にする。** 起動時、書き込みを始める前に、対象の JSON を `<data>/backup-schema1-<日時>/` へ写し、DB へ移し、読み戻して元と突き合わせてから番号を 2 にする。失敗したら作りかけの DB と写しを消し、元の JSON に触れず、番号も上げず、起動を止める（[desktop-releases.md](../desktop-releases.md)「適用とデータ保護」）。形式 2 を見た古い版は起動を止める（既存の検査）。
+  - `agent_tasks`: 1 タスク 1 行。`usage_records`（1 ターン 1 行）＋`usage_meta`（`since`・済んだ移行・そのほかの最上位の項目）。`conversations`: 会話の索引 1 会話 1 行。
+- **データ置き場は、起動から終了まで 1 つのプロセスだけが持つ（`core/data-lock.mjs`）。** 置き場の `pleiad.lock` に PID を書き、生きている別のプロセスが持っていれば、理由を出して起動を止める。古いロック（持ち主がもういない）は PID の生死で判断して取り直す。形式の移行より前に取る。同じ置き場を 2 つのプロセスが開くと、片方がメモリに持った会話の記録が、もう片方の削除・更新と食い違い、消した会話が欠けた形で戻る（A が読み、B が消し、A が題を更新すると、題だけの行が残る）。SQLite の `locking_mode=EXCLUSIVE` にしなかった理由: 別の接続でこの置き場を読む道具（`scripts/copy-data-dir.mjs`・テスト・調査）が、サーバーが動いている間も DB を読めるようにするため（それらは書かない）。あわせて、更新は変わった項目の行だけを書き、DB に無い会話を更新で作り直さない（消された会話は、更新では戻らない）。
+- **どの公開関数も、DB への書き込みが失敗したら例外を返し、メモリの記録を書く前のままにする。** DB を先に書き、書けたらメモリへ反映する（`core/store.mjs` の `save`）。書けなかった分をメモリに残して後で書き直す、という作りはやめた（再起動に要る項目 `completedAt`・`unsent`・`interrupted`・`turnStartedAt` などの保存の失敗が、呼び出し側に返らなかった）。`busy_timeout` は 300ms（プロセス排他があれば、待つ相手は調査・テストの短い接続だけで、イベントループを長く塞がない）。
+- **形式番号（`data-schema.json`）を 1 → 2 にする。** 起動時、書き込みを始める前に、対象の JSON を `<data>/backup-schema1-<日時>/` へ写し、DB へ移し、読み戻して元と突き合わせてから番号を 2 にする。突き合わせは元の JSON の全体と読み戻した値を比べる（`usage.json` の version・since・migrations・records 以外の最上位の項目も DB に持ち、落ちるなら移行を止める）。失敗したら作りかけの DB と写しを消し、元の JSON に触れず、番号も上げず、起動を止める（[desktop-releases.md](../desktop-releases.md)「適用とデータ保護」）。形式 2 を見た古い版は起動を止める（既存の検査）。番号を 2 にしたあとの元の JSON の削除が失敗しても（Windows の削除拒否など）起動は止めない: 形式 2 の次の起動で、DB が使えることを確かめたうえで、写しに同じ中身がある元の JSON だけを外し直す。形式 2 では元の JSON を読む経路が無い。
+- **形式 2 では、DB の存在・形式番号（`user_version`）・必要な表を確かめ、合わなければ空の DB を作らずに起動を止める。** 新しい置き場（JSON も DB も無い）だけが DB を新しく作ってよく、DB を作ってから形式番号を 2 にする。
 - **Node の下限を 22.13.0 にする**（`engines`・CI）。`node:sqlite` が実行時の旗なしで使える最初の版。同梱の Electron 44 の Node は 24 系。`node:sqlite` が読み込み時に出す ExperimentalWarning は、その 1 回の読み込みの間だけ、SQLite についての警告に限って捨てる（ほかの警告は通す）。
 
 ## ADR 0005 との関係
@@ -43,7 +45,9 @@
 ## 影響
 
 - `core/store.mjs` の公開関数の形と振る舞いは変えない（呼び出し側は触らない）。メモリのキャッシュは今までどおりで、書き込みだけが変わった行になる。書き込みはその場で行い、デバウンスは無くなった。`durable` 指定は、書けなかったときに呼び出し側へ投げるかどうかの違いだけ。
+- `outbox` は刈らない。sent の後にバックエンドから来る `returned`（受理した途中送信が読まれずに捨てられた）・`undelivered` は sent の項目を探して状態を変え、同じ ID の `accept` はその項目を見つけて二重送信を防ぐ。古い項目を捨てるとどちらも見失う。行ごとに書くので、刈らなくても 1 回の書き込みは項目 1 つぶんで済む（性能のためには要らない）。`core/message-queue.mjs` の挙動は変えていない。
+- 同じ置き場を使うプロセスは 1 つだけになる。デスクトップ版が動いている間に、同じ `~/.agent-host` で `npm start` した 2 台目は起動を止める（別の置き場・別のポートで立てるのは今までどおり）。
 - 古い版のアプリは形式 2 を見て起動を止める。移行前の写し（`backup-schema1-*`）は自動では消さない（利用者が確かめてから消す。大きさは移行前の JSON と同じ）。
 - 既知の例外（上限が決まっておらず、まだ丸ごと書くもの）は許可リストに「既知」と書き、別の作業で行へ移す: 会話の本文 `conversations/<id>.json`（変更のたびに 1 会話分を丸ごと書く。会話の長さに比例する）、`presents/*.jsonl`、`handoff-*.json`、`antigravity/<id>.json`、`schedule.json`・`setting-approvals.json`・`worktrees.json`（件数は通常小さい）。
 - データ置き場を直接読む手順は DB に合わせた。実データの写しは `scripts/copy-data-dir.mjs`（`remote/`・`*-secrets.json` を写さず、DB は読み取り専用の接続で `VACUUM INTO`）、テストは `tests/lib/data-store.mjs`。
-- 2026-10-03 の実データでの測定（開発機。写しで測った）: JSON 4 つ計 35.4MB（`sessions.json` 27.3MB・`agent-tasks.json` 5.0MB・`usage.json` 1.4MB・`conversations.json` 1.7MB）が `pleiad.db` 25.5MB になった。移行は 0.9 秒。会話 1,112 件の読み込み 0.13 秒（以前と同じメモリへの読み込み）。1 回の更新は、`sessions.json` の全体を書き直す 70〜80 ミリ秒（`JSON.stringify` と書き込み。毎回）に対して、会話の項目 0.02〜0.6 ミリ秒、タスクの状態変化 0.4 ミリ秒、使用量の記録 0.03 ミリ秒。`contextSession` は 9.4MB が 1.8MB（`report.entries` は 788 行・0.34MB に寄る）。
+- 2026-10-03 の実データでの測定（開発機。写しで測った）: JSON 4 つ計 35.4MB（`sessions.json` 27.3MB・`agent-tasks.json` 5.0MB・`usage.json` 1.4MB・`conversations.json` 1.7MB）が `pleiad.db` 25.5MB になった。移行は 0.9 秒。会話 1,112 件の読み込み 0.13 秒（以前と同じメモリへの読み込み）。1 回の更新は、`sessions.json` の全体を書き直す 70〜80 ミリ秒（`JSON.stringify` と書き込み。毎回）に対して、`synchronous=FULL` で会話の項目 0.6〜0.8 ミリ秒（`contextSession` は 1.3 ミリ秒）、タスクの状態変化 2.5 ミリ秒（1 回の操作で数回書く）、使用量の記録 0.6 ミリ秒（`NORMAL` なら 0.02〜0.08 ミリ秒だった。fsync の分）。`contextSession` は 9.4MB が 1.8MB（`report.entries` は 788 行・0.34MB に寄る）。

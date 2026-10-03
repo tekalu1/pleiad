@@ -23,7 +23,7 @@ export default async function (t) {
     writeSessions(src, { a: { history: [], title: '会話' } });
     writeAgentTasks(src, { 'ply-task-1': { taskId: 'ply-task-1', status: 'running' } });
     // サーバーが動いているのと同じ: 書き込み用の接続を開いたまま、WAL に未反映の書き込みがある
-    sessionTable(handle.db).write('live', { history: [], title: 'WAL の中だけにある' }, ['history', 'title']);
+    sessionTable(handle.db).writeAll('live', { history: [], title: 'WAL の中だけにある' });
     await fs.mkdir(path.join(src, 'remote'));
     await fs.writeFile(path.join(src, 'remote', 'devices.json'), '{"devices":[1]}');
     await fs.writeFile(path.join(src, 'remote', 'secrets.json'), 'SECRET');

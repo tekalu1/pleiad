@@ -3,6 +3,10 @@
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import fsSync from 'node:fs';
+import { execFile } from 'node:child_process';
+import { pathToFileURL } from 'node:url';
+import { ROOT } from '../lib/server.mjs';
 import { ensureDataSchema, ensureDataSchemaSync, openData } from '../../core/data-schema.mjs';
 import { dbPath, openReadOnly } from '../../core/db.mjs';
 import { readSessions, readAgentTasks, readUsage, readConversationIndex } from '../lib/data-store.mjs';
@@ -42,6 +46,14 @@ const backups = async dir => (await fs.readdir(dir)).filter(name => name.startsW
 // キーの順を問わず同じ中身か
 const canon = value => JSON.stringify(value, (key, v) => (v && typeof v === 'object' && !Array.isArray(v) ? Object.fromEntries(Object.keys(v).sort().map(k => [k, v[k]])) : v));
 const sameJson = (a, b) => canon(a) === canon(b);
+
+
+// 形式 2 の置き場を、別のプロセスで store・conversations から読む（元の JSON ではなく DB だけを読むことを確かめる）
+const CHILD_READ = `
+  const store = await import(process.env.STORE_URL); const conv = await import(process.env.CONV_URL);
+  const ids = Object.keys(await store.getAll()); const c = await conv.conversation('ghostConv');
+  console.log(JSON.stringify({ ids, conv: c })); await conv.closeConversations(); store.closeStore();
+`;
 
 export default async function (t) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ply-schema-migration-'));
@@ -144,6 +156,101 @@ export default async function (t) {
       await ensureDataSchema(migrated);
       const schema = JSON.parse(await read(path.join(migrated, 'data-schema.json'))).schema;
       t.ok('移行後の形式番号は 2。形式 1 を前提にした古い版（schema !== 1 で止まる）は起動できない', schema === 2 && schema !== 1);
+    }
+
+    // ---- 形式 2 なのに DB が使えないときは、空の DB を作って起動せず、止める
+    {
+      const missing = await tmp('v2-no-db');
+      await fs.writeFile(path.join(missing, 'data-schema.json'), '{"schema":2}\n');
+      await fs.writeFile(path.join(missing, 'sessions.json'), '{"keep":{"title":"x"}}');
+      const noDb = await ensureDataSchema(missing).then(() => null, e => e);
+      t.ok('形式 2 で pleiad.db が無ければ、DB を作らずに起動を止める（データには触れない）', /pleiad\.db/.test(noDb?.message ?? '') && /missing/.test(noDb.message) && !(await read(dbPath(missing)))
+        && (await read(path.join(missing, 'sessions.json'))) === '{"keep":{"title":"x"}}', noDb?.message);
+      const noDbOpen = (() => { try { openData(missing); return null; } catch (e) { return e; } })();
+      t.ok('openData も同じ（store・usage・agent-tasks・conversations が空の DB で始めない）', !!noDbOpen && !(await read(dbPath(missing))), noDbOpen?.message);
+
+      const version = await tmp('v2-bad-version');
+      await seed(version);
+      await ensureDataSchema(version);
+      const sqlite = (await import('../../core/db.mjs')).loadSqlite();
+      const edit = (dir, sql) => { const raw = new sqlite.DatabaseSync(dbPath(dir)); try { raw.exec(sql); } finally { raw.close(); } };
+      const userVersion = dir => { const raw = new sqlite.DatabaseSync(dbPath(dir), { readOnly: true }); try { return raw.prepare('PRAGMA user_version').get().user_version; } finally { raw.close(); } };
+      edit(version, 'PRAGMA user_version = 7');
+      const badVersion = await ensureDataSchema(version).then(() => null, e => e);
+      t.ok('user_version が違えば止める（DB の形式番号を書き換えない）', /user_version is 7/.test(badVersion?.message ?? '') && userVersion(version) === 7, badVersion?.message);
+      edit(version, 'PRAGMA user_version = 2');
+      edit(version, 'DROP TABLE agent_tasks');
+      const noTable = await ensureDataSchema(version).then(() => null, e => e);
+      t.ok('必要な表が無ければ止める（表を作り足して始めない）', /missing tables: agent_tasks/.test(noTable?.message ?? ''), noTable?.message);
+      const garbage = await tmp('v2-garbage');
+      await fs.writeFile(path.join(garbage, 'data-schema.json'), '{"schema":2}\n');
+      await fs.writeFile(dbPath(garbage), 'this is not a sqlite database');
+      t.ok('SQLite でないファイルなら止める（上書きしない）', await ensureDataSchema(garbage).then(() => false, () => true) && (await read(dbPath(garbage))) === 'this is not a sqlite database');
+
+      // 新しい置き場だけが DB を作ってよい
+      const fresh = await tmp('fresh-db');
+      await ensureDataSchema(fresh);
+      t.ok('新しい置き場（JSON も DB も無い）は DB を作り、そのうえで形式番号を 2 にする', !!(await read(dbPath(fresh))) && JSON.parse(await read(path.join(fresh, 'data-schema.json'))).schema === 2 && (await ensureDataSchema(fresh)) === null);
+      const orphan = await tmp('db-only-bad');
+      await fs.writeFile(dbPath(orphan), 'junk');
+      t.ok('形式番号が無く DB だけがあるときは、使える DB でなければ新規作成せずに止める', await ensureDataSchema(orphan).then(() => false, () => true) && !(await read(path.join(orphan, 'data-schema.json'))));
+    }
+
+    // ---- usage.json は最上位の項目も落とさない（元の JSON 全体を比べる）
+    {
+      const dir = await tmp('usage-extras');
+      await seed(dir);
+      await fs.writeFile(path.join(dir, 'usage.json'), JSON.stringify({ ...usage(), futureField: { kept: [1, 2] }, note: '新しい版が足した項目' }));
+      await ensureDataSchema(dir);
+      t.ok('version・since・migrations・records 以外の最上位の項目も、読み戻して元と同じ（落とさない）', sameJson(readUsage(dir), { ...usage(), futureField: { kept: [1, 2] }, note: '新しい版が足した項目' }));
+      const dropped = await tmp('usage-extras-dropped');
+      await seed(dropped);
+      await fs.writeFile(path.join(dropped, 'usage.json'), JSON.stringify({ ...usage(), futureField: 1 }));
+      const error = await ensureDataSchema(dropped, { afterImport: db => { db.exec("DELETE FROM usage_meta WHERE key = 'extra'"); } }).then(() => null, e => e);
+      t.ok('保存できなかった項目があれば、突き合わせで移行を止める', /usage\.json/.test(error?.message ?? '') && /read-back differs/.test(error.message) && !!(await read(path.join(dropped, 'usage.json'))) && (await backups(dropped)).length === 0);
+    }
+
+    // ---- 形式番号を 2 にしたあと、元の JSON を外せなくても、起動は止めず、次の起動で外し直す
+    {
+      const dir = await tmp('cleanup-resume');
+      await seed(dir);
+      const refuse = file => { if (/sessions\.json$|usage\.json$/.test(file)) throw Object.assign(new Error('EPERM: operation not permitted'), { code: 'EPERM' }); return fsSync.rmSync(file, { force: true }); };
+      const result = await ensureDataSchema(dir, { remove: refuse });
+      t.ok('元の JSON を外せなくても、移行は成功して起動は止めない（形式番号は 2）', result?.counts?.sessions === 6 && JSON.parse(await read(path.join(dir, 'data-schema.json'))).schema === 2
+        && !!(await read(path.join(dir, 'sessions.json'))) && !(await read(path.join(dir, 'agent-tasks.json'))), JSON.stringify(result));
+      const again = await ensureDataSchema(dir, { remove: () => { throw new Error('still locked'); } });
+      t.ok('次の起動（形式 2）でまた外そうとし、外せなくても止めない', again === null && !!(await read(path.join(dir, 'sessions.json'))));
+      await ensureDataSchema(dir);
+      t.ok('外せるようになれば、写しにあることを確かめてから外す', !(await read(path.join(dir, 'sessions.json'))) && !(await read(path.join(dir, 'usage.json'))) && sameJson(readSessions(dir), sessions()));
+      // 写しに無い（中身が違う）JSON は外さない
+      await fs.writeFile(path.join(dir, 'sessions.json'), '{"stranger":{"title":"写しに無い"}}');
+      await ensureDataSchema(dir);
+      t.ok('写しと中身が違う元の JSON は、触らずに残す（外さない・読まない）', (await read(path.join(dir, 'sessions.json'))) === '{"stranger":{"title":"写しに無い"}}' && !('stranger' in readSessions(dir)));
+    }
+
+    // ---- 形式 2 のとき、残った元の JSON を読む経路は無い（store・agent-tasks・usage・conversations は DB だけを読む）
+    {
+      const dir = await tmp('no-json-reads');
+      await seed(dir);
+      await ensureDataSchema(dir, { remove: () => { throw new Error('keep'); } });   // 元の JSON を残したまま形式 2 にする
+      await fs.writeFile(path.join(dir, 'sessions.json'), JSON.stringify({ ghost: { history: [], title: 'JSON にだけある会話' } }));
+      await fs.writeFile(path.join(dir, 'agent-tasks.json'), JSON.stringify({ 'ghost-task': task('ghost-task') }));
+      await fs.writeFile(path.join(dir, 'usage.json'), JSON.stringify({ version: 1, since: 1, migrations: [], records: [{ id: 'ghost-usage', backend: 'claude', at: 1 }] }));
+      await fs.writeFile(path.join(dir, 'conversations.json'), JSON.stringify({ ghostConv: { backend: 'fake' } }));
+      const { createAgentTasks } = await import('../../core/agent-tasks.mjs');
+      const { createUsageStore } = await import('../../core/usage.mjs');
+      const manager = await createAgentTasks({ dataDir: dir, log: () => {}, silenceMinutes: 0, commandMinutes: 0, prepare: async () => { throw new Error('unused'); }, execute: async () => ({ outcome: 'ok', text: '' }), deliver: async () => 'ok', ready: async () => false });
+      const usageStore = createUsageStore(dir);
+      try {
+        const ids = manager.list().map(r => r.taskId);
+        const snapshotNow = await usageStore.snapshot();
+        t.ok('agent-tasks・usage は、形式 2 では残った元の JSON を読まない', ids.sort().join() === 'ply-task-1,ply-task-2' && snapshotNow.records.every(r => r.id !== 'ghost-usage') && snapshotNow.records.length === 2, ids.join());
+      } finally { await manager.close(); await usageStore.close(); }
+      const child = await new Promise(resolve => execFile(process.execPath, ['--input-type=module', '-e', CHILD_READ], {
+        env: { ...process.env, AGENT_HOST_DATA: dir, AGENT_HOST_LOCALE: 'ja', STORE_URL: pathToFileURL(path.join(ROOT, 'core/store.mjs')).href, CONV_URL: pathToFileURL(path.join(ROOT, 'core/conversations.mjs')).href } },
+        (error, stdout, stderr) => resolve({ error, stdout, stderr })));
+      const got = JSON.parse(child.stdout.trim().split(/\r?\n/).pop() || '{}');
+      t.ok('store・conversations も、形式 2 では残った元の JSON を読まない', child.error === null && !got.ids?.includes('ghost') && got.ids?.includes('a') && got.conv === null, child.stderr.slice(0, 300) + child.stdout);
     }
 
     // ---- 開く（openData）は、書き込みの前に移行を済ませる

@@ -11,7 +11,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
-import { dbPath, openRaw, transaction, sessionTable, taskTable, usageTable, conversationTable } from './db.mjs';
+import { dbPath, createDb, transaction, sessionTable, taskTable, usageTable, conversationTable } from './db.mjs';
 
 export const LEGACY_FILES = ['sessions.json', 'agent-tasks.json', 'usage.json', 'conversations.json'];
 const DB_SIDE_FILES = ['-wal', '-shm', '-journal'];
@@ -60,7 +60,7 @@ export function migrateSchema1To2(dir, { now = new Date(), afterImport = null } 
       if (exists(path.join(dir, name))) fs.copyFileSync(path.join(dir, name), path.join(backup, name));
     }
     removeDb(dir);
-    db = openRaw(dbPath(dir));
+    db = createDb(dbPath(dir));
     const counts = {};
     const expected = {};
     transaction(db, () => {
@@ -76,7 +76,9 @@ export function migrateSchema1To2(dir, { now = new Date(), afterImport = null } 
         counts.tasks = Object.keys(sources.tasks).length;
       }
       if (sources.usage) {
-        const normalized = { version: 1, since: sources.usage.since ?? null, migrations: sources.usage.migrations ?? [], records: sources.usage.records };
+        // 元の JSON の全体を持つ。version・since・migrations・records 以外の最上位の項目も保存する（usage_meta の extra）。
+        // 無い since・migrations だけは既定値を補う（読む側はどちらも無いものとして扱っていた）
+        const normalized = { ...sources.usage, since: sources.usage.since ?? null, migrations: sources.usage.migrations ?? [] };
         usageTable(db).replace(normalized);
         expected.usage = normalized;
         counts.usage = normalized.records.length;
@@ -109,10 +111,32 @@ export function migrateSchema1To2(dir, { now = new Date(), afterImport = null } 
   }
 }
 
-/** 検証が済んだ後。形式番号を 2 にしてから、移行した元の JSON を消す */
-export function finishSchema1To2(dir, present) {
+const backupDirs = dir => fs.readdirSync(dir, { withFileTypes: true })
+  .filter(entry => entry.isDirectory() && entry.name.startsWith('backup-schema1-')).map(entry => path.join(dir, entry.name));
+
+/**
+ * 移行した元の JSON を外す。写し（backup-schema1-*）に同じ中身（バイトまで同じ）があるものだけを外し、
+ * 無いもの・外せなかったもの（Windows の削除拒否など）は触らずに、名前を返す。投げない: 外せなくても起動は止めず、
+ * 形式 2 の次の起動（core/data-schema.mjs）がもう一度試す。形式 2 では、残った元の JSON は読まない（読む経路が無い）
+ */
+export function removeLegacy(dir, names, { remove = file => fs.rmSync(file, { force: true }) } = {}) {
+  const left = [];
+  for (const name of names) {
+    const file = path.join(dir, name);
+    let original;
+    try { original = fs.readFileSync(file); } catch { if (exists(file)) left.push(name); continue; }
+    const backedUp = backupDirs(dir).some(backup => { try { return fs.readFileSync(path.join(backup, name)).equals(original); } catch { return false; } });
+    if (!backedUp) { left.push(name); continue; }
+    try { remove(file); } catch { /* 下で残っているかを見る */ }
+    if (exists(file)) left.push(name);
+  }
+  return left;
+}
+
+/** 検証が済んだ後。形式番号を 2 にしてから、移行した元の JSON を外す（外し切れなかった分の名前を返す） */
+export function finishSchema1To2(dir, present, options = {}) {
   writeSchemaFile(dir, 2);
-  for (const name of present) fs.rmSync(path.join(dir, name), { force: true });
+  return removeLegacy(dir, present, options);
 }
 
 /** data-schema.json を 1 回で置き換える（一時ファイルへ書いてから rename） */

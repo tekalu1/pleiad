@@ -75,17 +75,14 @@ const prefs = jsonFile(PREFS);
 const statuses = jsonFile(STATUSES);
 
 // ---- 会話の記録（SQLite。sessions / session_fields。core/db.mjs） ---------------------------------------
-// 読みは最初の 1 回で全部をメモリへ組み、以後はメモリが答える。書きは変えた項目の行だけを、変えた直後に書く
+// 読みは最初の 1 回で全部をメモリへ組み、以後はメモリが答える。書きは変えた項目の行だけを、その場で書く
 // （変更のたびに全体を書き直していた sessions.json と違い、会話の数・大きさに 1 回の重さが比例しない）。
-// 書けなかったときは、durable 指定の呼び出しには投げ、それ以外はメモリに残して後で書き直す。
+// **DB を先に書き、書けたらメモリへ反映する。** 書けなければ例外を返し、メモリは書く前のまま。公開関数はどれも同じ（ADR 0106）。
+// 置き場は 1 つのプロセスだけが持つ（core/data-lock.mjs）ので、メモリの記録（cache）と DB は食い違わない。
+// cache にある会話は、DB に行がある会話に限る。
 let handle = null;
 let table = null;
 let cache = null;
-const known = new Set();   // sessions に行がある会話
-const pending = new Map(); // 書けていない変更。sessionId -> 項目の集合、または ALL（全項目）
-const ALL = "all";
-const RETRY_MS = 1000;
-let retryTimer = null;
 
 function open() {
   if (!handle) {
@@ -97,77 +94,58 @@ const load = async () => {
   if (!cache) {
     open();
     cache = table.loadAll();
-    for (const id of Object.keys(cache)) known.add(id);
     // 記録を置き換えて、どの会話からも参照されなくなった contextSession の項目の写しを、起動のたびに片付ける
     try { table.sweepEntries(); } catch (e) { console.error("session store sweep failed:", e?.code ?? e?.message ?? e); }
   }
   return cache;
 };
 
-function drain() {
-  if (!pending.size) return;
-  const batch = [...pending];
-  transaction(handle.db, () => {
-    for (const [id, want] of batch) {
-      if (!Object.hasOwn(cache, id)) { table.remove(id); continue; }
-      if (want === ALL) table.writeAll(id, cache[id]);
-      else table.write(id, cache[id], [...want]);
-    }
-  });
-  for (const [id, want] of batch) {
-    if (pending.get(id) === want) pending.delete(id);
-    if (Object.hasOwn(cache, id)) known.add(id); else known.delete(id);
-  }
-}
-function scheduleRetry() {
-  if (retryTimer) return;
-  retryTimer = setTimeout(() => {
-    retryTimer = null;
-    try { drain(); } catch (e) { console.error("session store save failed:", e?.code ?? e?.message ?? e); scheduleRetry(); }
-  }, RETRY_MS);
-  retryTimer.unref();
-}
+/** 別の手段で消された会話を、更新で欠けた形のまま作り直さないための印 */
+class GoneError extends Error {}
+
 /**
- * 会話 id の fields を、メモリの今の値へ合わせて DB に書く。まだ DB に無い会話は全項目を書く。
- * 書けなければ、durable なら投げ、そうでなければ後で書き直す（メモリは最新のまま）
+ * changes: [[sessionId, patch]]。patch は { 項目: 新しい値 }（undefined の項目は消す）。全部を 1 つのトランザクションで DB に書き、
+ * 書けたらメモリへ反映する。書けなければ投げて、メモリは変えない。メモリに無い会話は新しい会話で、全項目を書いて行を作る。
+ * メモリにある会話の行が DB に無いとき（別の手段で消された）は、更新で作り直さず、その会話をメモリから外して投げる。
+ * 反映したあとの記録（メモリの実体）を、changes の順に返す
  */
-function persist(changes, { durable = false } = {}) {
-  for (const [id, fields] of changes) {
-    const want = fields === ALL || !known.has(id) || pending.get(id) === ALL ? ALL : new Set([...(pending.get(id) ?? []), ...fields]);
-    pending.set(id, want);
+function save(changes) {
+  const plans = changes.map(([id, patch]) => {
+    const live = Object.hasOwn(cache, id) ? cache[id] : undefined;
+    return { id, patch, live, merged: live ? null : Object.fromEntries(Object.entries({ history: [], ...patch }).filter(([, v]) => v !== undefined)) };
+  });
+  try {
+    transaction(handle.db, () => {
+      for (const p of plans) {
+        if (!p.live) table.writeAll(p.id, p.merged);
+        else if (!table.write(p.id, { ...p.live, ...p.patch }, Object.keys(p.patch))) throw new GoneError(p.id);
+      }
+    });
+  } catch (e) {
+    if (e instanceof GoneError) {
+      delete cache[e.message];
+      throw new Error(`The conversation was removed from the data store by something else, so it was not written: ${e.message}`);
+    }
+    throw e;
   }
-  try { drain(); }
-  catch (e) {
-    if (durable) throw e;
-    console.error("session store save failed:", e?.code ?? e?.message ?? e);
-    scheduleRetry();
-  }
+  return plans.map(p => {
+    if (!p.live) return (cache[p.id] = p.merged);
+    for (const [key, value] of Object.entries(p.patch)) { if (value === undefined) delete p.live[key]; else p.live[key] = value; }
+    return p.live;
+  });
 }
-/** 終了時とデスクトップの終了で呼ぶ。書けていない分を同期で書き、WAL を本体へ戻す */
+const saveOne = (id, patch) => save([[id, patch]])[0];
+
+/** デスクトップの終了で呼ぶ。WAL を本体へ戻す（書き込みはその場で済んでいる） */
 export function flushNow() {
-  if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
   if (!handle) return;
-  drain();
   try { handle.db.exec("PRAGMA wal_checkpoint(PASSIVE)"); } catch { /* 次の起動が回復する */ }
 }
-/** DB の接続を離す（データ置き場を消す前。テストの後片付け用）。書けていない分は書いてから離す。以後に呼べば開き直す */
+/** DB の接続とロックを離す（データ置き場を消す前。テストの後片付け用）。以後に呼べば開き直す */
 export function closeStore() {
-  try { if (handle) flushNow(); }
-  finally {
-    handle?.release();
-    handle = null; table = null; cache = null;
-    known.clear(); pending.clear();
-  }
+  handle?.release();
+  handle = null; table = null; cache = null;
 }
-// process.exit やシグナルは exit を通る
-process.on("exit", () => {
-  if (!handle || !pending.size) return;
-  try { drain(); }
-  catch (e) {
-    console.error("session store final save failed:", e?.code ?? e?.message ?? e);
-    process.exitCode = 1;
-  }
-});
 
 // 書き込みを直列化する。人間と AI が同時に触っても read-modify-write が交錯しない
 let chain = Promise.resolve();
@@ -380,33 +358,33 @@ async function resolveFrom(sessionId, entry, field, to, backend) {
 export async function recordChange(sessionId, { by, via, bySession, field, from, to, reason, reasonKey, reasonParams, backend }) {
   return exclusive(async () => {
     const all = await load();
-    const entry = (all[sessionId] ??= { history: [] });
-    entry.history ??= [];
+    const entry = all[sessionId] ?? { history: [] };
 
     const resolved = from ?? (await resolveFrom(sessionId, entry, field, to ?? null, backend));
     const at = new Date().toISOString();
 
-    entry.history.push({
-      at,
-      by,
-      ...(via ? { via } : {}),
-      ...(bySession ? { bySession } : {}),
-      field,
-      from: resolved ?? null,
-      to: to ?? null,
-      reason: reason ?? null,
-      // 新しい記録は理由をキーでも持つ（画面が今の言語で出す。web/saved-text.mjs）。reason は従来どおりの日本語の文
-      ...(reasonKey ? { reasonKey, ...(reasonParams ? { reasonParams } : {}) } : {}),
-    });
-    if (backend?.id) entry.backend = backend.id;
+    const patch = {
+      history: [...(entry.history ?? []), {
+        at,
+        by,
+        ...(via ? { via } : {}),
+        ...(bySession ? { bySession } : {}),
+        field,
+        from: resolved ?? null,
+        to: to ?? null,
+        reason: reason ?? null,
+        // 新しい記録は理由をキーでも持つ（画面が今の言語で出す。web/saved-text.mjs）。reason は従来どおりの日本語の文
+        ...(reasonKey ? { reasonKey, ...(reasonParams ? { reasonParams } : {}) } : {}),
+      }],
+    };
+    if (backend?.id) patch.backend = backend.id;
     // ネイティブに持てるバックエンドでも sidecar に写す。
     // 正本がどちらであれ、一覧はここだけを読んでも組めるようにしておく（§2.4）。
-    if (field === "status") { entry.status = to ?? null; entry.statusChangedAt = at; }
-    if (field === "title") entry.title = to ?? null;
-    if (field === "parent") entry.parent = to;
-    if (field === "cwd") entry.cwd = to ?? null;
-    persist([[sessionId, ["history", "backend", "status", "statusChangedAt", "title", "parent", "cwd"]]]);
-    return entry;
+    if (field === "status") { patch.status = to ?? null; patch.statusChangedAt = at; }
+    if (field === "title") patch.title = to ?? null;
+    if (field === "parent") patch.parent = to;
+    if (field === "cwd") patch.cwd = to ?? null;
+    return saveOne(sessionId, patch);
   });
 }
 
@@ -418,16 +396,15 @@ export async function setMeta(sessionId, patch) {
   if (!sessionId || !patch) return null;
   return exclusive(async () => {
     const all = await load();
-    const entry = (all[sessionId] ??= { history: [] });
-    const changed = [];
+    const entry = all[sessionId] ?? { history: [] };
+    const changes = {};
     for (const [k, v] of Object.entries(patch)) {
       if (!META_KEYS.has(k) || v === undefined) continue;
       if (entry[k] === v) continue;
-      entry[k] = v;
-      changed.push(k);
+      changes[k] = v;
     }
-    // 変えた項目がなくても、新しく作った行は書く（メモリにだけ残さない）
-    if (changed.length || !known.has(sessionId)) persist([[sessionId, changed]]);
+    // 変えた項目がなくても、新しい会話の行は作る
+    if (Object.keys(changes).length || !all[sessionId]) return saveOne(sessionId, changes);
     return entry;
   });
 }
@@ -442,11 +419,8 @@ export async function setMode(sessionId, mode) {
   if (!sessionId) return null;
   return exclusive(async () => {
     const all = await load();
-    const entry = (all[sessionId] ??= { history: [] });
-    if (entry.mode === mode) return entry;
-    entry.mode = mode;
-    persist([[sessionId, ["mode"]]], { durable: true });
-    return entry;
+    if (all[sessionId]?.mode === mode) return all[sessionId];
+    return saveOne(sessionId, { mode });
   });
 }
 
@@ -456,11 +430,8 @@ export async function setModel(sessionId, model) {
   if (!sessionId) return null;
   return exclusive(async () => {
     const all = await load();
-    const entry = (all[sessionId] ??= { history: [] });
-    if (entry.model === model) return entry;
-    entry.model = model;
-    persist([[sessionId, ["model"]]], { durable: true });
-    return entry;
+    if (all[sessionId]?.model === model) return all[sessionId];
+    return saveOne(sessionId, { model });
   });
 }
 
@@ -469,22 +440,19 @@ export async function inheritSettings(sourceId, childId) {
   return exclusive(async () => {
     const all = await load();
     const source = all[sourceId] ?? {};
-    const entry = (all[childId] ??= { history: [] });
-    entry.model = source.model ?? "";
-    entry.effort = source.effort ?? "";
-    entry.mode = source.mode ?? "default";
-    entry.nextSettings = structuredClone(source.nextSettings ?? null);
-    // Claude のアカウント（core/claude-accounts.mjs）。分岐した先も同じアカウントで続ける
-    if (source.claudeAccount) entry.claudeAccount = source.claudeAccount;
-    else delete entry.claudeAccount;
-    // 互換の接続先（core/compat-endpoints.mjs）。分岐は同じエージェントなので、同じ接続先で続ける
-    if (source.compatEndpoint) entry.compatEndpoint = source.compatEndpoint;
-    else delete entry.compatEndpoint;
-    // 会話の言語（エージェントに渡す文の言語。core/server.mjs）。分岐・切り替えた先も同じ言語で続ける（履歴と同じ言語のまま）
-    if (source.agentLocale) entry.agentLocale = source.agentLocale;
-    else delete entry.agentLocale;
-    entry.contextSession = structuredClone(source.contextSession ?? null);
-    persist([[childId, ["model", "effort", "mode", "nextSettings", "claudeAccount", "compatEndpoint", "agentLocale", "contextSession"]]]);
+    saveOne(childId, {
+      model: source.model ?? "",
+      effort: source.effort ?? "",
+      mode: source.mode ?? "default",
+      nextSettings: structuredClone(source.nextSettings ?? null),
+      // Claude のアカウント（core/claude-accounts.mjs）。分岐した先も同じアカウントで続ける
+      claudeAccount: source.claudeAccount || undefined,
+      // 互換の接続先（core/compat-endpoints.mjs）。分岐は同じエージェントなので、同じ接続先で続ける
+      compatEndpoint: source.compatEndpoint || undefined,
+      // 会話の言語（エージェントに渡す文の言語。core/server.mjs）。分岐・切り替えた先も同じ言語で続ける（履歴と同じ言語のまま）
+      agentLocale: source.agentLocale || undefined,
+      contextSession: structuredClone(source.contextSession ?? null),
+    });
   });
 }
 
@@ -493,28 +461,22 @@ export async function setParent(sessionId, parent) {
   if (!sessionId) return null;
   return exclusive(async () => {
     const all = await load();
-    const entry = (all[sessionId] ??= { history: [] });
-    if (entry.parent === parent) return entry;
-    entry.parent = parent;
-    persist([[sessionId, ["parent"]]]);
-    return entry;
+    if (all[sessionId]?.parent === parent) return all[sessionId];
+    return saveOne(sessionId, { parent });
   });
 }
 
 export const dataDir = DIR;
 
-/** Host-only data. Callers mark restart-critical changes durable. */
+/** Host-only data. 書き込みはその場で行い、書けなければ投げる（durable は互換のために残す。意味は変わらない） */
 export async function setSessionData(sessionId, field, value, { durable = false } = {}) {
+  void durable;
   if (!sessionId || !["draft", "nextSettings", "outbox", "effort", "contextSession", "delegation", "taskNotices", "relayed", "ungrouped", "claudeAccount", "compatEndpoint", "agentLocale", "routing", "compactions", "contextWindow", "autoCompactionOff", "compacted", "hookRuns", "shellPending", "shellExits", "shellKept", "computerApps", "browserProfile", "rewind", "scheduledSends"].includes(field)) throw new Error(t("store.invalidSessionField"));
   return exclusive(async () => {
     const all = await load();
     const before = all[sessionId];
     if (before && isDeepStrictEqual(before[field], value)) return before[field];
-    const entry = { ...(before ?? { history: [] }), [field]: structuredClone(value) };
-    all[sessionId] = entry;
-    try { persist([[sessionId, [field]]], { durable }); }
-    catch (e) { if (before) all[sessionId] = before; else delete all[sessionId]; throw e; }
-    return entry[field];
+    return saveOne(sessionId, { [field]: structuredClone(value) })[field];
   });
 }
 
@@ -522,7 +484,7 @@ export async function setSessionData(sessionId, field, value, { durable = false 
  * 完了を確認した印（readAt）を付ける。reads は [[sessionId, completedAt], ...]。
  * 何度送っても同じで（冪等）、巻き戻らない（大きい方だけ）。記録に無い会話・完了していない会話には付けず、
  * その会話の completedAt を超える値は completedAt に丸める（先の完了まで見たことにさせない）。
- * 変わった分だけを [[sessionId, readAt], ...] で返す。1 件でも変われば 1 回だけ書く。
+ * 変わった分だけを [[sessionId, readAt], ...] で返す。1 件でも変われば 1 回だけ書く（書けなければ投げて、どれも変わらない）。
  */
 export async function markRead(reads) {
   const list = Array.isArray(reads) ? reads : [];
@@ -535,13 +497,12 @@ export async function markRead(reads) {
         const entry = all[id];
         if (!Number.isFinite(entry?.completedAt)) continue;
         const next = Math.min(at, entry.completedAt);
-        if (next <= (Number.isFinite(entry.readAt) ? entry.readAt : 0)) continue;
-        entry.readAt = next;
+        const current = changed.get(id) ?? (Number.isFinite(entry.readAt) ? entry.readAt : 0);
+        if (next <= current) continue;
         changed.set(id, next);
       }
     }
-    // 保存失敗後もキャッシュの印は保ち、後で書き直す
-    if (changed.size) persist([...changed.keys()].map(id => [id, ["readAt"]]));
+    if (changed.size) save([...changed].map(([id, readAt]) => [id, { readAt }]));
     return [...changed];
   });
 }
@@ -556,19 +517,19 @@ export async function recoverInterruptedTurns(at = Date.now()) {
   return exclusive(async () => {
     const all = await load();
     const changed = [];
-    const writes = [];
+    const changes = [];
     for (const [id, entry] of Object.entries(all)) {
       if (!entry || entry.turnStartedAt == null) continue;
       const started = entry.turnStartedAt;
+      const patch = { turnStartedAt: null };
       if (Number.isFinite(started) && started > (Number.isFinite(entry.completedAt) ? entry.completedAt : 0)) {
-        entry.interrupted = { at, reason: "restart" };
-        entry.completedAt = at;
+        patch.interrupted = { at, reason: "restart" };
+        patch.completedAt = at;
         changed.push(id);
       }
-      entry.turnStartedAt = null;
-      writes.push([id, ["interrupted", "completedAt", "turnStartedAt"]]);
+      changes.push([id, patch]);
     }
-    if (writes.length) persist(writes, { durable: true });
+    if (changes.length) save(changes);
     return changed;
   });
 }
@@ -601,8 +562,7 @@ export async function addStops(sessionId, patch) {
     if (!touched) return entry.stops ?? null;
     // 理由は最後に止めたときのもの（伝える文の見出しに使う）
     if (patch.reason) next.reason = patch.reason;
-    entry.stops = next;
-    persist([[sessionId, ["stops"]]], { durable: true });
+    saveOne(sessionId, { stops: next });
     return structuredClone(next);
   });
 }
@@ -625,9 +585,7 @@ export async function takeStops(sessionId, keys, { dropped = false } = {}) {
     }
     if (!dropped && entry.stops.dropped) next.dropped = entry.stops.dropped;
     if (Object.keys(next).length && entry.stops.reason) next.reason = entry.stops.reason;
-    entry.stops = Object.keys(next).length ? next : null;
-    persist([[sessionId, ["stops"]]], { durable: true });
-    return entry.stops;
+    return saveOne(sessionId, { stops: Object.keys(next).length ? next : null }).stops;
   });
 }
 
@@ -636,19 +594,17 @@ export async function clearStops(sessionId) {
   if (!sessionId) return null;
   return exclusive(async () => {
     const all = await load();
-    const entry = all[sessionId];
-    if (!entry?.stops) return null;
-    entry.stops = null;
-    persist([[sessionId, ["stops"]]], { durable: true });
+    if (!all[sessionId]?.stops) return null;
+    saveOne(sessionId, { stops: null });
     return null;
   });
 }
 
 export async function removeSession(sessionId) {
   return exclusive(async () => {
-    const all = await load(), before = all[sessionId];
-    if (!before) return;
+    const all = await load();
+    if (!all[sessionId]) return;
+    table.remove(sessionId);   // DB を先に。書けなければ投げて、メモリは変えない
     delete all[sessionId];
-    try { persist([[sessionId, ALL]], { durable: true }); } catch (e) { if (before) all[sessionId] = before; throw e; }
   });
 }

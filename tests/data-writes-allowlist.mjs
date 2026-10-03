@@ -1,11 +1,11 @@
-// core/ がデータ置き場（や、その外のファイル）を丸ごと書く・置き換える箇所の許可リスト（tests/unit/data-writes.mjs が突き合わせる）。
+// core/・desktop/・bin/ がデータ置き場（や、その外のファイル）を書く・置き換える箇所の許可リスト（tests/unit/data-writes.mjs が突き合わせる）。
 //
 // 決まり（AGENTS.md「データ置き場の保存」、ADR 0106）: 記録の件数や会話の長さとともに大きくなる単一ファイルを、データ置き場に作らない。
 // 件数で増える記録は DB（pleiad.db）の行にする。JSON ファイルは上限の決まったものだけで、上限と理由をここに書く。
 // 新しく書く箇所を足したら、ここへ 1 件足す（file・sites・targets）。足せないなら、行にする。
 //
-//   file     core/ の相対パス
-//   sites    そのファイルにある書き込み呼び出しの数（tests/lib/data-writes-scan.mjs の WRITE_CALL。増減したら見直す）
+//   file     core/・desktop/・bin/ の相対パス
+//   sites    そのファイルにある書き込み呼び出しの数（tests/lib/data-writes-scan.mjs が数える。増減したら見直す）
 //   targets  書く先ごとに:
 //     name       データ置き場からの相対パス（外なら「(置き場の外)」と書く）
 //     limit      大きさを決めるもの（定数名と値、または「ユーザーが数個作る」など）。空にしない
@@ -16,15 +16,19 @@
 export const DB_ONLY = ['sessions.json', 'agent-tasks.json', 'usage.json', 'conversations.json'];
 
 export const DATA_WRITES = [
-  { file: 'core/store.mjs', sites: 5, targets: [
+  { file: 'core/store.mjs', sites: 4, targets: [
     { name: 'prefs.json', limit: '設定。computerUse.alwaysAllowed は COMPUTER_APP_LIMIT=500、browserLastProfiles は 100。agentSitePermissions だけ上限が無い（エージェント×origin×プロフィール）', reason: '設定。読むのは起動時と変更時だけで、通常は数 KB', unbounded: true },
     { name: 'statuses.json', limit: '会話の状態グループ。ユーザーが数個作る', reason: '台帳。数十行以下' },
   ] },
-  { file: 'core/atomic-file.mjs', sites: 3, targets: [
+  { file: 'core/atomic-file.mjs', sites: 2, targets: [
     { name: '(呼び出し側の書き込み先)', limit: '呼び出し側の許可に従う（writeAtomic は共通の土台）', reason: '一時ファイルに書いてから置き換える共通の部品。自分では書き先を決めない' },
   ] },
-  { file: 'core/schema-migration.mjs', sites: 2, targets: [
+  { file: 'core/schema-migration.mjs', sites: 3, targets: [
     { name: 'data-schema.json', limit: '固定（{ schema: N }）', reason: '形式番号。移行の最後に 1 回だけ書く' },
+    { name: 'backup-schema1-<日時>/（移行前の JSON と形式番号の写し）', limit: '移行 1 回につき JSON 5 つまで。移行前の大きさのまま増えない', reason: '移行前のデータの写し（docs/desktop-releases.md「適用とデータ保護」）。書き換えない。自動では消さない' },
+  ] },
+  { file: 'core/data-lock.mjs', sites: 1, targets: [
+    { name: 'pleiad.lock', limit: '固定の小ささ（PID・トークン・時刻）', reason: 'データ置き場をプロセス単位で排他するロックファイル。終了で消す' },
   ] },
   { file: 'core/agent-tasks.mjs', sites: 2, targets: [
     { name: 'agent-tasks-errors.log', limit: 'LOG_MAX=64KiB。超えたら新しい半分だけ残す', reason: '保存障害の記録。DB に書けないときの記録なので DB には置けない' },
@@ -79,7 +83,7 @@ export const DATA_WRITES = [
   { file: 'core/notify/settings.mjs', sites: 1, targets: [
     { name: 'notify.json', limit: '固定', reason: 'この PC の通知設定' },
   ] },
-  { file: 'core/secret-store.mjs', sites: 3, targets: [
+  { file: 'core/secret-store.mjs', sites: 8, targets: [
     { name: 'mcp-secrets.json・claude-account-secrets.json・compat-endpoint-secrets.json・remote/secrets.json', limit: 'MCP サーバー・アカウント・接続先・端末の数。ユーザーが数個', reason: '暗号化した秘密。1 件ごとに小さい' },
     { name: '<上の秘密ファイル>.lock', limit: '固定の小ささ（pid だけ）', reason: 'ロックファイル' },
   ] },
@@ -112,8 +116,23 @@ export const DATA_WRITES = [
   { file: 'core/hook-adapter.mjs', sites: 2, targets: [
     { name: '(置き場の外) os.tmpdir() の pleiad-hook-stop-*.json、アダプターの runs.jsonl への追記', limit: '固定の小ささ／追記', reason: 'データ置き場ではない。別プロセスで動くアダプター' },
   ] },
-  { file: 'core/folder-uploads.mjs', sites: 5, targets: [
+  { file: 'core/folder-uploads.mjs', sites: 7, targets: [
     { name: 'uploads/…（manifest.json と、利用者が選んだ作業フォルダーへの写し）', limit: '手元のフォルダーの送信 1 回につき 1 組。7 日触られなければ掃除する', reason: '成果物と送信の途中の台帳。作業フォルダーへの書き込みは置き場の外' },
+  ] },
+  { file: 'core/git-info.mjs', sites: 1, targets: [
+    { name: '(置き場の外) os.tmpdir() の pleiad-index-*', limit: 'git の索引 1 つの写し。呼び出しごとに作って消す', reason: '作業場所の git の索引を汚さずに差分を取るための一時ファイル' },
+  ] },
+  { file: 'desktop/agent-browser-bin.cjs', sites: 1, targets: [
+    { name: 'agent-browser-bin/agent-browser(.exe)', limit: '同梱の実行ファイル 1 つ。大きさが違うときだけ写し直す', reason: '開発時（未パッケージ）に実行ファイルを置き場へ写す。書き換えない成果物' },
+  ] },
+  { file: 'desktop/browser-panel.cjs', sites: 2, targets: [
+    { name: '(置き場の外) Electron の userData の、消し残したブラウザープロフィールの名前の一覧', limit: 'プロフィールの数。消せたら行が消える', reason: '削除待ちの台帳。通常は 0〜数件' },
+  ] },
+  { file: 'desktop/server-port.cjs', sites: 1, targets: [
+    { name: '(置き場の外) Electron の userData の、前回のポート', limit: '固定（{ port }）', reason: '画面の origin を保つための印' },
+  ] },
+  { file: 'desktop/updates.cjs', sites: 2, targets: [
+    { name: '(置き場の外) Electron の userData の、更新の設定', limit: '固定（チャンネル・自動確認・自動ダウンロード・最後の版）', reason: '更新の設定。一時ファイルに書いて置き換える' },
   ] },
   { file: 'core/hooks-config.mjs', sites: 2, targets: [
     { name: '(置き場の外) 利用者の ~/.claude・~/.codex・プロジェクトの hooks 設定', limit: '利用者の設定ファイル', reason: 'データ置き場ではない' },
