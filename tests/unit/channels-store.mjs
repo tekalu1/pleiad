@@ -41,6 +41,15 @@ export default async function (t) {
     t.ok('畳み込み: 無い投稿への操作・同じ id の二重の追加は何もしない', folded.posts.size === 2 && folded.skipped === 0 && p1.at === 1000);
     const p2 = folded.posts.get('p_2');
     t.ok('畳み込み: 削除は本文とリアクションを空にして deletedAt を残し、その後の編集・リアクションは効かない', p2.deletedAt === 3000 && p2.text === '' && Object.keys(p2.reactions).length === 0);
+    const noEdit = foldLines([
+      JSON.stringify(post('p_h', { text: '人の投稿' })),
+      JSON.stringify({ op: 'edit', id: 'p_h', text: '人の投稿', mentions: ['b_owl'], at: 2000 }), // 本文は同じ（付帯情報だけ）
+      JSON.stringify({ op: 'edit', id: 'p_h', state: 'done', at: 2100 }),
+      JSON.stringify(post('p_t', { author: BOT, text: '…', state: 'working', turn: { botId: 'b_owl', sessionId: 's' } })),
+      JSON.stringify({ op: 'edit', id: 'p_t', text: '返答が入る', state: 'done', at: 2200 }), // bot のターンの投稿が埋まるのは編集ではない
+    ].join('\n')).posts;
+    t.ok('畳み込み: 本文が変わっていない編集（付帯情報だけ）と bot のターンの投稿が埋まる更新は editedAt を立てない',
+      noEdit.get('p_h').editedAt === undefined && noEdit.get('p_h').mentions.join() === 'b_owl' && noEdit.get('p_t').editedAt === undefined && noEdit.get('p_t').text === '返答が入る');
     const posts = new Map();
     t.ok('foldOp: 形の違う操作・知らない op は null', foldOp(posts, null) === null && foldOp(posts, { op: 'zzz', id: 'p_1' }) === null && foldOp(posts, { op: 'post', post: {} }) === null);
 

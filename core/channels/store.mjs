@@ -37,7 +37,11 @@ export function foldOp(posts, op) {
   if (!post) return null;
   if (op.op === 'edit') {
     if (post.deletedAt) return null;
-    if (op.text !== undefined) { post.text = op.text; post.editedAt = op.at; }
+    if (op.text !== undefined) {
+      // 「編集済み」は本文が実際に変わったときだけ。同じ本文での書き直し（付帯情報だけの更新）と、bot のターンの投稿が進捗や返答で埋まるのは数えない
+      if (op.text !== post.text && !post.turn) post.editedAt = op.at;
+      post.text = op.text;
+    }
     if (op.state !== undefined) post.state = op.state;
     if (op.presents !== undefined) post.presents = op.presents;
     if (op.mentions !== undefined) post.mentions = op.mentions;
