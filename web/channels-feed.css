@@ -156,6 +156,9 @@
 .cs-member{display:inline-flex;align-items:center;gap:6px;padding:4px 10px 4px 8px;border-radius:var(--r-pill);background:var(--surface-1);cursor:pointer;font-size:var(--fs-s)}
 .cs-member:has(input:checked){background:var(--surface-3)}
 .cs-member-icon{font-size:14px;line-height:1}
+.cs-budget{display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px;font-size:var(--fs-s)}
+.cs-budget .cs-input{width:6.5em}
+.cs-budget-gap{margin-left:8px}
 .cs-error{margin:0;min-height:0;color:var(--ink-strong);font-size:var(--fs-s);font-weight:600}
 .cs-error:empty{display:none}
 .cs-actions{display:flex;align-items:center;gap:8px}

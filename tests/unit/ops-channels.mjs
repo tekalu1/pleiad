@@ -274,6 +274,20 @@ export default async function (t) {
       t.ok('S-4: 人は cwd を承認なしで変えられる。AI が cwd つきで作るのも承認、cwd なしの作成は承認なし', (await call(HUMAN, 'channels.update', { channelId: made.id, cwd: path.join(tmp, 'work') })).ok === true
         && (await call(agent('s_chat'), 'channels.create', { name: 'with-cwd', cwd: path.join(tmp, 'work') })).pending === true
         && (await call(agent('s_chat'), 'channels.create', { name: 'without-cwd' })).ok === true);
+
+      // ADR 0119: 予算は channels.get が既定を埋めて返す。AI が外す・上げるのは承認、下げるのは承認なし。人はどちらも承認なし
+      const shownBudget = await reviewChannels.get({ channelId: made.id });
+      t.ok('予算: 設定の無いチャンネルは既定（1 日 5%・1 スレッド 50%）と今日の使用（spentToday）を返す', shownBudget.budget?.daily === 5 && shownBudget.budget?.perThread === 50 && shownBudget.spentToday === 0, JSON.stringify(shownBudget));
+      const budgetMark = asked.length;
+      const lower = await call(agent('s_chat'), 'channels.update', { channelId: made.id, budget: { daily: 2 } });
+      t.ok('予算: AI が下げるのは承認なし（渡した欄だけ変わる）', lower.ok === true && asked.length === budgetMark && (await reviewChannels.get({ channelId: made.id })).budget.daily === 2 && (await reviewChannels.get({ channelId: made.id })).budget.perThread === 50);
+      const raise = await call(agent('s_chat'), 'channels.update', { channelId: made.id, budget: { daily: null } });
+      t.ok('予算: AI が外す（null）・上げるのは承認（before・after の行）。許可前は変わらない', raise.pending === true && asked.length === budgetMark + 1
+        && asked.at(-1).change.rows.some((r) => r.path === 'budget.daily' && r.before === 2 && r.after === null) && (await reviewChannels.get({ channelId: made.id })).budget.daily === 2);
+      await asked.at(-1).proceed();
+      t.ok('予算: 許可されたら変わる。人は承認なしで上げ下げできる。範囲の外は断る', (await reviewChannels.get({ channelId: made.id })).budget.daily === null
+        && (await call(HUMAN, 'channels.update', { channelId: made.id, budget: { daily: 10, perThread: 80 } })).ok === true && asked.length === budgetMark + 1
+        && (await call(HUMAN, 'channels.update', { channelId: made.id, budget: { perThread: 0 } })).ok !== true);
       await reviewChannels.close();
     }
 

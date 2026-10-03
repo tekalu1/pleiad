@@ -263,6 +263,12 @@ export function createBotPage(host) {
       parts.push(el('span', 'dot', '·'));
       if (S.bot.state === 'working') parts.push(runMark(t('channels:bot.state.working')), document.createTextNode(t('channels:bot.state.working')));
       else if (S.bot.state === 'waiting') parts.push(el('span', 'wait', t('channels:bot.state.waiting')));
+      // 使用量の上限で休んでいる（ADR 0119）。解除の時刻は見出しの title に
+      else if (Number(S.bot.restingUntil) > Date.now()) {
+        const rest = el('span', null, t('channels:bot.state.resting'));
+        rest.title = t('channels:bot.state.restingUntil', { time: new Date(S.bot.restingUntil).toLocaleString([], { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) });
+        parts.push(rest);
+      }
       else parts.push(document.createTextNode(t('channels:bot.state.idle')));
     }
     sub.replaceChildren(...parts);

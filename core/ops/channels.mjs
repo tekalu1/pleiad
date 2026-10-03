@@ -17,10 +17,13 @@ import { agentT } from '../i18n.mjs';
 import { authorKey } from '../channels/types.mjs';
 import { ChannelError, LIMITS } from '../channels/service.mjs';
 import { groupTargets, expandGroups } from '../channels/group-mentions.mjs';
+import { BUDGET_LIMITS, budgetOf, loosensBudget, normalizeBudget } from '../channels/budget.mjs';
 import { OpError, defineOp } from './registry.mjs';
 import { strongerMode } from '../bots/approval.mjs';
 
 const D = (id, key) => `agent:ops.channels.${id}.${key}`;
+/** channels.update の後の予算（不正な値は今の予算のまま。検査は service が投げる） */
+const nextBudget = (channel, input) => { try { return normalizeBudget(input, channel.budget); } catch { return budgetOf(channel); } };
 const channelId = (id) => z.string().min(1).describe(D(id, 'channelId'));
 const postId = (id, key = 'postId') => z.string().min(1).describe(D(id, key));
 
@@ -133,7 +136,7 @@ export const channelOps = [
   }),
   defineOp({
     id: 'channels.update', summary: D('update', 'summary'), risk: 'write',
-    riskReason: 'Edits a channel\'s name, purpose, default folder, members or house rules. Members only decide who is listed there; waking a bot still needs an explicit @ in a post. A human can do the same, so an agent is treated the same (ADR 0082), except that an AI changing the default folder is raised to guarded by riskOf: that folder becomes the working place of bots that have no folders of their own',
+    riskReason: 'Edits a channel\'s name, purpose, default folder, members, house rules or budget. Members only decide who is listed there; waking a bot still needs an explicit @ in a post. A human can do the same, so an agent is treated the same (ADR 0082), except two changes riskOf raises to guarded for an AI: changing the default folder (it becomes the working place of bots that have no folders of their own) and loosening the budget (removing it or raising the daily budget or the thread share), since the budget is what stops bots from calling each other (ADR 0119)',
     input: z.object({
       channelId: channelId('update'),
       name: z.string().trim().min(1).max(LIMITS.name + 1).optional().describe(D('update', 'name')),
@@ -141,16 +144,29 @@ export const channelOps = [
       cwd: z.string().max(LIMITS.cwd).nullable().optional().describe(D('update', 'cwd')),
       members: z.array(z.string().min(1)).max(LIMITS.members).optional().describe(D('update', 'members')),
       memo: z.string().max(LIMITS.memo).optional().describe(D('update', 'memo')),
+      budget: z.object({
+        daily: z.number().min(0).max(BUDGET_LIMITS.dailyMax).nullable().optional().describe(D('update', 'budgetDaily')),
+        perThread: z.number().min(BUDGET_LIMITS.perThreadMin).max(BUDGET_LIMITS.perThreadMax).optional().describe(D('update', 'budgetPerThread')),
+      }).optional().describe(D('update', 'budget')),
     }),
     output: z.unknown(),
     riskOf: async (ctx, args) => {
-      if (ctx.principal?.by !== 'agent' || args.cwd === undefined) return 'write';
+      if (ctx.principal?.by !== 'agent' || (args.cwd === undefined && args.budget === undefined)) return 'write';
       const channel = await run(ctx, () => ctx.channels.get({ channelId: args.channelId }));
-      return args.cwd && args.cwd !== (channel.cwd ?? null) ? 'guarded' : 'write';   // 外す（null）・同じ値は広げないので write
+      if (args.cwd !== undefined && args.cwd && args.cwd !== (channel.cwd ?? null)) return 'guarded';   // 外す（null）・同じ値は広げないので write
+      // 予算を外す・上げるのは、bot どうしの呼びかけの歯止めを緩める向き（ADR 0119）
+      if (args.budget !== undefined && channel.kind === 'channel' && loosensBudget(channel.budget, nextBudget(channel, args.budget))) return 'guarded';
+      return 'write';
     },
     confirm: async (ctx, args) => {
       const channel = await run(ctx, () => ctx.channels.get({ channelId: args.channelId }));
-      return { before: channel.cwd ?? null, loosens: true, rows: [{ path: 'cwd', before: channel.cwd ?? null, after: args.cwd || null }] };
+      const rows = [];
+      if (args.cwd !== undefined) rows.push({ path: 'cwd', before: channel.cwd ?? null, after: args.cwd || null });
+      if (args.budget !== undefined) {
+        const before = budgetOf(channel), after = nextBudget(channel, args.budget);
+        rows.push({ path: 'budget.daily', before: before.daily, after: after.daily }, { path: 'budget.perThread', before: before.perThread, after: after.perThread });
+      }
+      return { before: channel.cwd ?? null, loosens: true, rows };
     },
     surfaces: { ui: true, mcp: 'catalog', cli: { path: ['channels', 'update'], positional: ['channelId'] } },
     handler: async (ctx, args) => run(ctx, async () => ctx.channels.update(args, await authorOf(ctx))),

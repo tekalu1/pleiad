@@ -5,7 +5,8 @@
 //   deps（server.mjs が渡す。足りない口が見つかったらここと docs/channels.md に足す）:
 //     store, dataDir, usageStore, sessionSearch, runtime（走っているターンの表）, outbox（人の送信待ち）,
 //     createConversation, runTurn(args, onStarted, hooks), noticeTarget, noticeBlocked, abortSessions, emitGlobal,
-//     getBackend(id), listBackends(), resolveModel, resolveEffort, agentLocaleFor(sessionId), agentT, currentLocale()
+//     getBackend(id), listBackends(), resolveModel, resolveEffort, agentLocaleFor(sessionId), agentT, currentLocale(),
+//     readQuota(backendId)（使用枠。チャンネルの予算が使う。ADR 0119）
 //   各モジュールには deps をまとめた HostTools（下の host）を渡す。emit(event) は sessionId: null で全接続へ、emitSession(sessionId, event) は会話の出来事
 //
 //   BotHost（server.mjs のつなぎ目。どれも例外を外へ出さない。bot の会話でなければ何もしない）:
@@ -59,6 +60,8 @@ export function createBotHost(deps) {
   const memory = createMemoryService({ dataDir, channels, emit, localeOf: () => deps.currentLocale?.() ?? 'ja' });
   // ---- dispatch（S4）
   const dispatch = createDispatcher({ channels, bots, memory, host, emit });
+  // bots.overview の restingUntil（使用量の上限で休憩中。ADR 0119）は dispatch が持つ
+  host.restingUntil = (bot) => dispatch.restingUntil(bot);
   // ---- routines（R1）
   const routines = createRoutineService({ dataDir, channels, bots, dispatch, host, emit, clock: routinesClock });
   // ---- memory learner（L1。利用者のルーティン一覧には置かない）

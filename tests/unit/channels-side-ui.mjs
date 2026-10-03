@@ -30,6 +30,8 @@ export default function (t) {
   t.ok('あなたを待っている会話があれば、走っていてもあなた待ちが先', botState(owl, { sessions, runningIds: new Set(['s1']), waitingIds: new Set(['s2']) }) === 'waiting');
   t.ok('会話が一覧にあって動いていなければ待機（bots.list の古い state を使わない）', botState(lynx, { sessions }) === 'idle');
   t.ok('会話が一覧に 1 つも無ければ bots.list の state', botState(kit, { sessions }) === 'working' && botState({ id: 'b_x' }, {}) === 'idle');
+  t.ok('使用量の上限で休んでいれば休憩中。作業中・あなた待ちが先、解除の時刻を過ぎたら待機（ADR 0119）', botState({ ...lynx, restingUntil: 2000 }, { sessions, now: 1000 }) === 'resting'
+    && botState({ ...owl, restingUntil: 2000 }, { sessions, runningIds: new Set(['s1']), now: 1000 }) === 'working' && botState({ ...lynx, restingUntil: 2000 }, { sessions, now: 3000 }) === 'idle');
 
   // ---- タブの点（見ていない側にだけ）
   const dots = (o) => tabDots({ channels: [], botStates: [], chats: {}, ...o });

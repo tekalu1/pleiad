@@ -12,15 +12,16 @@ export function sideChannels(channels) {
 /**
  * bot の今の状態。一覧の会話（state.sessions の `bot.botId`）と、走っている・あなたを待っている会話の印から決める
  * （bots.list の state は読んだ時点の写しで、ターンの始まり・終わりでは botsChanged が来ないため）。
- * その bot の会話が一覧に 1 つも無ければ、bots.list の state を使う
- * @returns {'idle'|'working'|'waiting'}
+ * その bot の会話が一覧に 1 つも無ければ、bots.list の state を使う。
+ * 作業中・あなた待ちでなく、使用量の上限で休んでいる（bots.list の restingUntil が先）なら 'resting'（ADR 0119）
+ * @returns {'idle'|'working'|'waiting'|'resting'}
  */
-export function botState(bot, { sessions = [], runningIds = new Set(), waitingIds = new Set() } = {}) {
+export function botState(bot, { sessions = [], runningIds = new Set(), waitingIds = new Set(), now = Date.now() } = {}) {
   const mine = sessions.filter((s) => s?.bot?.botId === bot.id);
-  if (!mine.length) return bot.state ?? 'idle';
-  if (mine.some((s) => waitingIds.has(s.id))) return 'waiting';
-  if (mine.some((s) => runningIds.has(s.id))) return 'working';
-  return 'idle';
+  const state = !mine.length ? (bot.state ?? 'idle')
+    : mine.some((s) => waitingIds.has(s.id)) ? 'waiting'
+    : mine.some((s) => runningIds.has(s.id)) ? 'working' : 'idle';
+  return state === 'idle' && Number(bot.restingUntil) > now ? 'resting' : state;
 }
 
 /**
