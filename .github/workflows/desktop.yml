@@ -16,30 +16,19 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      # npm ci は runner の CPU 用だけを入れる。arm64 版にも必要な koffi と sharp のネイティブ本体を足す。
-      # --force は CPU の検査を外す。版は各本体の package.json に合わせる。
-      - name: Add Windows arm64 native binaries
+      # koffi（computer use の Win32 呼び出し）のネイティブ本体は @koromix/koffi-<os>-<cpu> という別のパッケージで、
+      # npm ci はこの runner（x64）の分しか入れない。arm64 のインストーラーにも入れるため、arm64 の本体を足す。
+      # --force は os / cpu の検査を外す（他の OS の本体は増えず、package.json とロックも変わらない）。版は koffi 本体に合わせる
+      - name: Add koffi native binary for Windows arm64
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           $koffi = (Get-Content -LiteralPath node_modules/koffi/package.json -Raw | ConvertFrom-Json).version
-          $sharp = (Get-Content -LiteralPath node_modules/sharp/package.json -Raw | ConvertFrom-Json).version
-          npm install --no-save --force "@koromix/koffi-win32-arm64@$koffi" "@img/sharp-win32-arm64@$sharp"
-          if ($LASTEXITCODE -ne 0) { throw 'Windows arm64 native binary install failed' }
+          npm install --no-save --force "@koromix/koffi-win32-arm64@$koffi"
+          if ($LASTEXITCODE -ne 0) { throw 'koffi win32-arm64 install failed' }
           foreach ($arch in 'x64', 'arm64') {
             if (!(Test-Path -LiteralPath "node_modules/@koromix/koffi-win32-$arch/win32_$arch/koffi.node")) { throw "Missing koffi binary for win32-$arch" }
-            if (!(Test-Path -LiteralPath "node_modules/@img/sharp-win32-$arch/package.json")) { throw "Missing sharp binary for win32-$arch" }
           }
-      - name: Add macOS sharp binaries for both architectures
-        if: runner.os == 'macOS'
-        run: |
-          sharp=$(node -p "require('./node_modules/sharp/package.json').version")
-          vips=$(node -p "require('./node_modules/sharp/package.json').optionalDependencies['@img/sharp-libvips-darwin-arm64']")
-          npm install --no-save --force "@img/sharp-darwin-arm64@$sharp" "@img/sharp-darwin-x64@$sharp" "@img/sharp-libvips-darwin-arm64@$vips" "@img/sharp-libvips-darwin-x64@$vips"
-          for arch in arm64 x64; do
-            test -f "node_modules/@img/sharp-darwin-$arch/package.json"
-            test -f "node_modules/@img/sharp-libvips-darwin-$arch/package.json"
-          done
       - run: npm test
       - run: npm run desktop:dist -- --publish never
         env:

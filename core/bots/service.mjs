@@ -34,7 +34,6 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import crypto from 'node:crypto';
-import sharp from 'sharp';
 import { inspectFile } from '../file-preview.mjs';
 import { newId } from '../channels/types.mjs';
 import { modePosition, scopeRank, autonomyRank } from '../modes.mjs';
@@ -45,8 +44,14 @@ import { looserThanDefault } from './approval.mjs';
 
 const WEEK_MS = 7 * 24 * 3600_000;
 const DEFAULT_ICON = '🤖';
-const ICON_INPUT_MAX = 10 * 1024 * 1024;
-const ICON_OUTPUT_MAX = 256 * 1024;
+const ICON_INPUT_MAX = 1024 * 1024;
+const PNG_MAGIC = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+const iconFormat = (bytes) => {
+  if (bytes.length >= 8 && bytes.subarray(0, 8).equals(PNG_MAGIC)) return 'png';
+  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return 'jpg';
+  if (bytes.length >= 12 && bytes.toString('ascii', 0, 4) === 'RIFF' && bytes.toString('ascii', 8, 12) === 'WEBP') return 'webp';
+  return null;
+};
 
 /** ops が OpError にする。code は INVALID（detail に理由）・BOT_NOT_FOUND・BOT_NAME_TAKEN（保存の側と同じ BotStoreError） */
 const BotError = BotStoreError;
@@ -79,17 +84,13 @@ export function createBotService({ dataDir, channels, host = null, emit = () => 
   };
   async function makeIcon(source, botId) {
     const { file, stat } = await inspectFile(source, { dataDir, uploadDir: path.join(dataDir, 'uploads') }).catch(() => { throw invalid('iconImage: file cannot be read'); });
-    if (!stat.isFile() || stat.size > ICON_INPUT_MAX) throw invalid(`iconImage: image must be at most ${ICON_INPUT_MAX} bytes`);
-    let buffer;
-    try {
-      const image = sharp(await fs.readFile(file), { limitInputPixels: 40_000_000 });
-      if (!['png', 'jpeg', 'webp'].includes((await image.metadata()).format)) throw new Error('unsupported image');
-      buffer = await image.rotate().resize(256, 256, { fit: 'cover' }).webp({ quality: 80 }).toBuffer();
-    }
-    catch { throw invalid('iconImage: PNG, JPEG or WebP image required'); }
-    if (buffer.length > ICON_OUTPUT_MAX) throw invalid(`iconImage: resized image exceeds ${ICON_OUTPUT_MAX} bytes`);
+    if (!stat.isFile() || !stat.size || stat.size > ICON_INPUT_MAX) throw invalid(`iconImage: image must be at most ${ICON_INPUT_MAX} bytes`);
+    const buffer = await fs.readFile(file).catch(() => { throw invalid('iconImage: file cannot be read'); });
+    if (!buffer.length || buffer.length > ICON_INPUT_MAX) throw invalid(`iconImage: image must be at most ${ICON_INPUT_MAX} bytes`);
+    const format = iconFormat(buffer);
+    if (!format) throw invalid('iconImage: PNG, JPEG or WebP image required');
     await fs.mkdir(iconDir, { recursive: true });
-    const target = path.join(iconDir, `${botId}-${crypto.randomUUID()}.webp`);
+    const target = path.join(iconDir, `${botId}-${crypto.randomUUID()}.${format}`);
     await fs.writeFile(target, buffer, { flag: 'wx' });
     if (path.dirname(file) === iconUploadDir) await removeFile(file);
     return target;

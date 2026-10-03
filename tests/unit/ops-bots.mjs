@@ -3,7 +3,6 @@
 import os from 'node:os';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import sharp from 'sharp';
 import { registry } from '../../core/ops/index.mjs';
 import { createBotService } from '../../core/bots/service.mjs';
 
@@ -155,28 +154,36 @@ export default async function (t) {
     const uploadDir = path.join(dir, 'uploads');
     await fs.mkdir(uploadDir);
     const source = path.join(uploadDir, 'source.png');
-    await sharp({ create: { width: 600, height: 400, channels: 4, background: '#ee8888' } }).png().toFile(source);
+    const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Zl1sAAAAASUVORK5CYII=', 'base64');
+    await fs.writeFile(source, png);
     const imageAsk = await call(asking, 'bots.update', { botId: owl, iconImage: source });
     t.ok('AI の画像アイコン変更は人格と同じ承認を要し、承認前には保存しない', imageAsk.pending === true && approvals.at(-1).change.loosens === true && !(await f.service.get({ botId: owl })).iconImage);
     approvals.pop();
     const imageSet = await call(human, 'bots.update', { botId: owl, iconImage: source });
     let iconFile = imageSet.result.iconImage;
-    const meta = await sharp(await fs.readFile(iconFile)).metadata();
-    t.ok('画像アイコンは置き場の uploads に 256×256 WebP として写し、元画像に依存しない', imageSet.ok && iconFile !== source && iconFile.startsWith(uploadDir) && meta.format === 'webp' && meta.width === 256 && meta.height === 256 && (await fs.stat(iconFile)).size <= 256 * 1024);
-    await fs.rm(source, { maxRetries: 10, retryDelay: 100 });
-    t.ok('元画像を外しても保存したアイコンは読める', (await sharp(await fs.readFile(iconFile)).metadata()).format === 'webp');
-    for (const [format, ext] of [['jpeg', 'jpg'], ['webp', 'webp']]) {
+    t.ok('画像アイコンは形式の拡張子で置き場へ縮小せずに写す', imageSet.ok && iconFile !== source && iconFile.startsWith(uploadDir) && iconFile.endsWith('.png') && (await fs.readFile(iconFile)).equals(png));
+    await fs.unlink(source);
+    t.ok('元画像を外しても保存したアイコンは読める', (await fs.readFile(iconFile)).equals(png));
+    const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46]);
+    const webp = Buffer.concat([Buffer.from('RIFF'), Buffer.alloc(4), Buffer.from('WEBPVP8 '), Buffer.alloc(8)]);
+    for (const [ext, bytes] of [['jpg', jpeg], ['webp', webp]]) {
       const nextSource = path.join(uploadDir, `source.${ext}`);
-      await sharp({ create: { width: 400, height: 600, channels: 4, background: '#6688aa' } }).toFormat(format).toFile(nextSource);
+      await fs.writeFile(nextSource, bytes);
       const previous = iconFile;
       const next = await call(human, 'bots.update', { botId: owl, iconImage: nextSource });
       iconFile = next.result.iconImage;
-      t.ok(`${format} も読み込み、古い画像の写しを消す`, next.ok && (await sharp(await fs.readFile(iconFile)).metadata()).format === 'webp' && !(await fs.stat(previous).catch(() => null)));
-      await fs.rm(nextSource, { maxRetries: 10, retryDelay: 100 });
+      t.ok(`${ext} も形式を確かめて元のバイトのまま写し、古い写しを消す`, next.ok && iconFile.endsWith(`.${ext}`) && (await fs.readFile(iconFile)).equals(bytes) && !(await fs.stat(previous).catch(() => null)));
+      await fs.unlink(nextSource);
     }
     const cleared = await call(human, 'bots.update', { botId: owl, iconImage: null });
     t.ok('画像を外すと絵文字へ戻り、古い写しは消える', cleared.ok && cleared.result.icon === '🦉' && !cleared.result.iconImage && !(await fs.stat(iconFile).catch(() => null)));
     t.ok('読めない画像パスは保存を拒む', (await call(human, 'bots.update', { botId: owl, iconImage: source })).code === 'INVALID');
+    const forged = path.join(uploadDir, 'forged.png');
+    await fs.writeFile(forged, Buffer.from('not a PNG'));
+    t.ok('拡張子だけ PNG のファイルは拒む', (await call(human, 'bots.update', { botId: owl, iconImage: forged })).code === 'INVALID');
+    const oversized = path.join(uploadDir, 'oversized.png');
+    await fs.writeFile(oversized, Buffer.concat([png, Buffer.alloc(1024 * 1024)]));
+    t.ok('1MiB を超える画像は拒む', (await call(human, 'bots.update', { botId: owl, iconImage: oversized })).code === 'INVALID');
     t.ok('名前を変えると DM のチャンネルの表示名も揃える', calls.update.some((u) => u.channelId === `c_dm_${owl}` && u.name === 'NightOwl'));
     t.ok('モデル・エフォートの変更が今ある会話に反映される', sessions[sess.sessionId].model === 'm-x' && sessions[sess.sessionId].effort === 'high');
     t.ok('ほかの bot の名前への変更は BOT_NAME_TAKEN', (await call(asking, 'bots.update', { botId: owl, name: 'fox' })).code === 'BOT_NAME_TAKEN');

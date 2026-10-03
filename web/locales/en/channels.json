@@ -159,6 +159,7 @@
     "iconLabel": "Change icon",
     "imagePick": "Choose image",
     "imageTooLarge": "Choose an image under 10 MB.",
+    "imageOutputTooLarge": "The resized image must be under 1 MB.",
     "imageType": "Choose a PNG, JPEG or WebP image.",
     "nameLabel": "Name",
     "namePlaceholder": "Name (e.g. Owl)",

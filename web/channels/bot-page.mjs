@@ -42,6 +42,20 @@ function glyph(paths, cls = 'i') {
 const caret = () => { const g = glyph(CARET); g.classList.add('caret'); return g; };
 const message = (e) => (e && typeof e === 'object' && 'message' in e ? e.message : String(e));
 const show = (node, on) => { node.hidden = !on; };
+async function resizeIcon(file) {
+  const bitmap = await createImageBitmap(file);
+  try {
+    const canvas = document.createElement('canvas');
+    canvas.width = 256; canvas.height = 256;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) throw new Error('Canvas is unavailable');
+    const side = Math.min(bitmap.width, bitmap.height);
+    ctx.drawImage(bitmap, (bitmap.width - side) / 2, (bitmap.height - side) / 2, side, side, 0, 0, 256, 256);
+    const blob = await new Promise((resolve, reject) => canvas.toBlob((result) => result ? resolve(result) : reject(new Error('WebP encoding failed')), 'image/webp', 0.8));
+    if (blob.type !== 'image/webp') throw new Error('WebP encoding failed');
+    return new File([blob], 'bot-icon.webp', { type: 'image/webp' });
+  } finally { bitmap.close(); }
+}
 
 export function createBotPage(host) {
   const body = document.getElementById('channelsBody');
@@ -598,7 +612,9 @@ export function createBotPage(host) {
     if (!/\.(png|jpe?g|webp)$/i.test(file.name)) { setError(t('channels:bot.imageType')); return; }
     imagePick.disabled = true;
     try {
-      const upload = await sendAttachment({ cmd: host.cmd, file, sessionId: 'bot-icon-upload' });
+      const iconFile = await resizeIcon(file);
+      if (iconFile.size > 1024 * 1024) { setError(t('channels:bot.imageOutputTooLarge')); return; }
+      const upload = await sendAttachment({ cmd: host.cmd, file: iconFile, sessionId: 'bot-icon-upload' });
       if (upload?.path) await update({ iconImage: upload.path });
     } catch (e) { setError(t('channels:bot.saveFailed', { error: message(e) })); }
     finally { imagePick.disabled = false; }

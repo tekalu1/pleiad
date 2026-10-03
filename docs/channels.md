@@ -14,14 +14,14 @@ bot（名前・人格・記憶・権限を持つ定義）と、人と bot が集
 | スレッドの状態 | DB（`pleiad.db` の `channel_threads`。1 スレッド 1 行。[ADR 0115](adr/0115-records-in-sqlite.md)） |
 | bot へ届ける前の出来事 | `channels/inbox.json`（状態 `pending → delivering → sent / unknown`） |
 | bot の定義 | `bots.json` |
-| bot の画像アイコン | `uploads/bot-icons/<botId>-<random>.webp`（現行の 1 枚。元の画像から縮小して写す） |
+| bot の画像アイコン | `uploads/bot-icons/<botId>-<random>.(png|jpg|webp)`（現行の 1 枚。画面で選んだ画像は送信前に縮小する） |
 | 記憶（正本）・変更の記録・索引 | `memory/user.md`・`memory/bots/<botId>.md`・`memory/log.jsonl`・`memory/index.sqlite` |
 | ルーティン | `routines.json` |
 | webhook の秘密（P3）・学習の進み | `webhook-secrets.json`・DB（`pleiad.db` の `memory_state`。会話ごとの発言 index・チャンネルごとの投稿 id・追記ログの byte offset を 1 カーソル 1 行、前回の実行時刻を 1 行、最後の結果・飛ばした回数と理由・失敗の様子を 1 行） |
 
 - 新しい JSON ファイル（`index.json`・`inbox.json`・`bots.json`・`routines.json`）は `{ version: 1 }` を持つ。読めない版は読み込まずに画面へ出して止める。`DATA_SCHEMA` は 2（形式 1 の JSON から SQLite への移行で上がる。[ADR 0115](adr/0115-records-in-sqlite.md)）。スレッドの状態と学習の進みは、スレッド・会話の数だけ増えて更新のたびに全体を書き直すことになるので、JSON ではなく DB の行にした（`version` は持たない。0.6.0 が書いた `threads.json`・`learn-state.json` は、形式 1 → 2 の移行が取り込む）。投稿の追記ログ（`<channelId>.jsonl`・`memory/log.jsonl`）は追記だけで、記憶の markdown は人が直せる正本（[ADR 0110](adr/0110-bot-memory.md)）のまま。どれも `tests/data-writes-allowlist.mjs` に上限と理由を書いてある。
 - **添付つきの投稿**（[ADR 0116](adr/0116-channel-composer-attachments.md)）: 本文に Chats と同じ印の行 `[添付] パス`（画面の言語で `[Attachment]`）を持ち、任意の欄 `Post.attachments: { path, name, kind: 'image'\|'file', mime, size, origin: 'device'\|'host' }[]`（上限 50 件。中身は載せない）が描き方の材料になる。bot へは本文のまま包みの中に入って届く（Chats で添付を渡すのと同じ形）。`@` の解析は印の行を見ない。消した投稿は `attachments` を外す（置き場のファイルは残す）。足すだけの欄なので `DATA_SCHEMA` は上げない。
-- **bot の画像**（[ADR 0124](adr/0124-bot-images.md)）: `bots.json` に任意の `iconImage` を足す。PNG・JPEG・WebP（元は 10 MiB 以下）を 256×256 の WebP（256 KiB 以下）に変え、置き場の `uploads/bot-icons/` へ写す。画像を外すと従来の `icon`（絵文字）を表示する。古い bot は読み出し時に `iconImage: ''` となる。画像の更新・削除の後、古い写しを消す。
+- **bot の画像**（[ADR 0124](adr/0124-bot-images.md)）: `bots.json` に任意の `iconImage` を足す。画面で選んだ PNG・JPEG・WebP（10 MiB 以下）はブラウザーで 256×256 の WebP にしてから送る。`bots.create`・`bots.update` で渡したパスは PNG・JPEG・WebP のマジックバイトと 1 MiB の上限を確かめ、縮小せずに置き場の `uploads/bot-icons/` へ写す。画像を外すと従来の `icon`（絵文字）を表示する。古い bot は読み出し時に `iconImage: ''` となる。画像の更新・削除の後、古い写しを消す。
 - `editedAt`（画面の「（編集済み）」）は畳み込み（`foldOp`）が付ける。本文が実際に変わった `edit` だけ。同じ本文での `edit`（`mentions`・`state`・`presents` だけの更新）と、bot のターンの投稿（`turn`）の本文が埋まる更新は付けない。記録は操作の列なので、過去のデータも読み直すだけで直る。
 - id は `core/channels/types.mjs` の `newId(kind)`（`c_` `p_` `b_` `m_` `r_` `h_` `i_`）。
 - 会話の記録（DB の `session_fields`）の新しい欄: `bot`（`SessionBot`。botId・種類・チャンネル・スレッド・記憶の進み）。代わりの送信の見分けは `sessions.send` の `relayed` を使う（[ADR 0114](adr/0114-send-on-your-behalf.md)）。使用量の記録（DB の `usage_records`）に `sessionId`（足す前の分は無い。`usage.records({ sessionIds, since })` が引く）。一覧の行（`sessionRow`）に `bot: { botId, kind, channelId, threadId } | null`。
