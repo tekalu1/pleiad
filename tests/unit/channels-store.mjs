@@ -318,6 +318,30 @@ export default async function (t) {
     console.error = origError;
     t.ok('posted が投げても投稿は保存されている', (await flaky.read({ channelId: flc.id })).posts[0].id === survived.id);
 
+    // 添付つきの投稿（ADR 0116）: 本文の印と対で保存・形をそろえる・印だけでも投稿できる・消すと外れる・開き直しで残る・@ の解析は印の行を見ない
+    const attSvc = makeService('att', { now: () => (clock += 10), listBots: async () => botList });
+    await attSvc.start();
+    const atc = await attSvc.create({ name: 'att' }, HUMAN);
+    const img = { path: 'C:\\data\\uploads\\c_x\\a.png', name: 'a.png', kind: 'image', mime: 'image/png', size: 12, origin: 'device', extra: 'x' };
+    const withAtt = await attSvc.post({ channelId: atc.id, text: '見て\n[添付] C:\\data\\uploads\\c_x\\a.png', attachments: [img, { path: '/tmp/b.txt' }] }, HUMAN);
+    t.ok('attachments は形をそろえて保存する（知らない欄は持たない・名前・種類・出どころの既定）', withAtt.attachments.length === 2 && !('extra' in withAtt.attachments[0])
+      && withAtt.attachments[1].name === 'b.txt' && withAtt.attachments[1].kind === 'file' && withAtt.attachments[1].origin === 'host' && withAtt.attachments[1].size === null, JSON.stringify(withAtt.attachments));
+    const imageOnly = await attSvc.post({ channelId: atc.id, text: '', attachments: [img] }, HUMAN);
+    t.ok('添付があれば本文が空でも投稿できる。添付も本文も無ければ INVALID', imageOnly.attachments.length === 1 && (await codeOf(() => attSvc.post({ channelId: atc.id, text: '' }, HUMAN))) === 'INVALID');
+    t.ok('添付の形が不正（配列でない・パスが無い・多すぎる）は INVALID', (await codeOf(() => attSvc.post({ channelId: atc.id, text: 'x', attachments: 'a' }, HUMAN))) === 'INVALID'
+      && (await codeOf(() => attSvc.post({ channelId: atc.id, text: 'x', attachments: [{ name: 'a' }] }, HUMAN))) === 'INVALID'
+      && (await codeOf(() => attSvc.post({ channelId: atc.id, text: 'x', attachments: Array.from({ length: 51 }, (_, i) => ({ path: `/f${i}` })) }, HUMAN))) === 'INVALID');
+    const botAtt = await attSvc.post({ channelId: atc.id, text: '@Owl これ見て\n[添付] /tmp/b.txt', attachments: [{ path: '/tmp/b.txt' }] }, HUMAN);
+    const markOnly = await attSvc.post({ channelId: atc.id, text: '[添付] C:\\Users\\x@Owl\\f.png', attachments: [{ path: 'C:\\Users\\x@Owl\\f.png' }] }, HUMAN);
+    t.ok('@ の解析は添付の印の行を見ない（パスの @Owl は呼びかけではない）。本文の @ は数える', markOnly.mentions.length === 0 && botAtt.mentions.join() === 'b_owl', `${markOnly.mentions} / ${botAtt.mentions}`);
+    await attSvc.remove({ channelId: atc.id, postId: withAtt.id }, HUMAN);
+    const afterDelete = (await attSvc.read({ channelId: atc.id })).posts.find((p) => p.id === withAtt.id);
+    t.ok('消した投稿は添付も外れる（スレッドの形だけ残る）', afterDelete.deletedAt && !('attachments' in afterDelete));
+    const attReopened = makeService('att', { listBots: async () => botList });
+    await attReopened.start();
+    t.ok('開き直しても添付が残る', (await attReopened.read({ channelId: atc.id })).posts.find((p) => p.id === imageOnly.id).attachments[0].path === img.path);
+    attSvc.stop();
+
     // 開き直し
     const reopenedSvc = makeService('s', { listBots: async () => botList });
     await reopenedSvc.start();

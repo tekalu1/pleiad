@@ -66,6 +66,26 @@ export default async function (t) {
     t.ok('post: state: checking は bot だけが付けられる（AI の agent の投稿には付かない）', sneaky.ok && sneaky.result.state === undefined
       && (await run(agent('s_bot'), 'channels.post', { channelId: cid, text: '要確認', state: 'checking', new: true })).result.state === 'checking');
 
+    // 添付（ADR 0116）: 実物の確かめは server.mjs の describeAttachments（ここでは偽）。読めないものがあれば全体を INVALID で断る
+    const described = [];
+    const attDeps = { ...deps, describeAttachments: async (list) => {
+      described.push(list.map((a) => a.path));
+      const ok = list.filter((a) => !/missing/.test(a.path));
+      return { files: ok.map((a) => ({ path: a.path, name: a.name ?? 'f', kind: 'file', mime: a.mime ?? '', size: 3, origin: 'host' })), rejected: list.filter((a) => /missing/.test(a.path)).map((a) => a.path) };
+    } };
+    const runAtt = (p, args) => registry.invoke(p, 'channels.post', { channelId: cid, ...args }, attDeps);
+    const withAttach = await runAtt(HUMAN, { text: '見て\n[添付] /tmp/a.txt', attachments: [{ path: '/tmp/a.txt', name: 'a.txt' }] });
+    t.ok('post: attachments は実物を確かめた形で保存される（本文の印と対）', withAttach.ok && withAttach.result.attachments?.[0]?.path === '/tmp/a.txt' && withAttach.result.attachments[0].origin === 'host'
+      && (await channels.getPost({ channelId: cid, postId: withAttach.result.id })).attachments.length === 1, JSON.stringify(withAttach));
+    const missing = await runAtt(HUMAN, { text: '読めない添付', attachments: [{ path: '/tmp/a.txt' }, { path: '/tmp/missing.txt' }] });
+    t.ok('post: 読めない添付が 1 つでもあれば INVALID（投稿は残らない）', !missing.ok && missing.code === 'INVALID' && /missing\.txt/.test(missing.error)
+      && !(await channels.read({ channelId: cid })).posts.some((p) => p.text === '読めない添付'), JSON.stringify(missing));
+    const noCheck = await run(HUMAN, 'channels.post', { channelId: cid, text: 'y', attachments: [{ path: '/tmp/a.txt' }] });
+    t.ok('post: 確かめる口の無い所（deps に describeAttachments が無い）では添付を断る', !noCheck.ok && noCheck.code === 'INVALID');
+    const agentAtt = await runAtt(agent('s_chat'), { text: '資料', attachments: [{ path: '/tmp/a.txt' }] });
+    t.ok('post: 会話の AI も添付を付けられる（同じ確かめを通る）', agentAtt.ok && agentAtt.result.attachments.length === 1 && described.length === 3);
+    t.ok('post: 添付の件数の上限（50）を超えると断る', !(await runAtt(HUMAN, { text: 'z', attachments: Array.from({ length: 51 }, (_, i) => ({ path: `/tmp/${i}` })) })).ok);
+
     // modeGate
     const ro = agent('s_ro');
     t.ok('読み取り専用の会話の AI も、post・react は通る（modeGate: false）', (await run(ro, 'channels.post', { channelId: cid, text: '読み取り専用でも返事はする' })).ok && (await run(ro, 'channels.react', { channelId: cid, postId: byHuman.result.id, emoji: '👀' })).ok);
@@ -258,6 +278,20 @@ export default async function (t) {
       t.ok('既読で channelRead が出る（別の端末・窓へ）', c.since(m4).some((e) => e.type === 'channelRead' && e.channelId === ch.id && e.readAt === 7));
       t.ok('定義は <data>/channels/index.json、投稿は <id>.jsonl に追記される', JSON.parse(await fs.readFile(path.join(dataDir, 'channels', 'index.json'), 'utf8')).channels.some((x) => x.id === ch.id)
         && (await fs.readFile(path.join(dataDir, 'channels', `${ch.id}.jsonl`), 'utf8')).split('\n').filter(Boolean).length === 2);
+
+      // 添付つきの投稿（ADR 0116）: 置き場に送ったファイル（device）と読んでよいホストのファイル（host）が載り、データ置き場の中・無いファイルは断る
+      const sent = await c.cmd('attachFile', { sessionId: ch.id, name: 'shot.png', mime: 'image/png', data: Buffer.from('png-bytes').toString('base64') });
+      const hostFile = path.join(tmp, 'host-note.txt');
+      await fs.writeFile(hostFile, 'host file');
+      const m6 = c.mark();
+      const withFiles = await call('channels.post', { channelId: ch.id, text: `見て\n[添付] ${sent.path}\n[添付] ${hostFile}`, attachments: [{ path: sent.path, mime: 'image/png' }, { path: hostFile }] });
+      const [a1, a2] = withFiles.attachments ?? [];
+      t.ok('画面の投稿に添付を載せられる: 置き場のファイルは device・画像、ホストのファイルは host（パスのまま）。名前・大きさも入る', a1?.origin === 'device' && a1.kind === 'image' && a1.name === 'shot.png' && a1.size === 9
+        && a2?.origin === 'host' && a2.kind === 'file' && a2.path === hostFile && a2.name === 'host-note.txt' && a2.size === 9, JSON.stringify(withFiles.attachments));
+      t.ok('添付つきの投稿が channelPost で全接続へ届く（中身は載せない）', c.since(m6).some((e) => e.type === 'channelPost' && e.post.id === withFiles.id && e.post.attachments?.length === 2 && !JSON.stringify(e.post).includes('png-bytes')));
+      const secret = await call('channels.post', { channelId: ch.id, text: 'x', attachments: [{ path: path.join(dataDir, 'channels', 'index.json') }] }).then(() => null, (e) => e.message);
+      const gone = await call('channels.post', { channelId: ch.id, text: 'x', attachments: [{ path: path.join(tmp, 'no-such-file.txt') }] }).then(() => null, (e) => e.message);
+      t.ok('データ置き場の中のファイル・無いファイルは添付できない（INVALID。会話の添付と同じ読み取りの検査）', /cannot attach/.test(secret ?? '') && /cannot attach/.test(gone ?? ''), `${secret} / ${gone}`);
 
       const env = (extra = {}) => {
         const e = { ...process.env, AGENT_HOST_DATA: dataDir, AGENT_HOST_LOCALE: 'ja', ...extra };

@@ -151,6 +151,24 @@ export default async function (t) {
           && w.started[0].args.prompt.includes('post="p_3"') && !w.started[0].args.prompt.includes('post="p_t'), w.started[0]?.args.prompt);
       }
 
+      // 添付つきの投稿（ADR 0116）: 本文の「[添付] パス」の行が、Chats で添付を渡すのと同じ形のまま包みの中に入って bot へ届く（途中送信でも新しいターンでも）
+      {
+        const w = world('plain');
+        await w.d.turnExtras(w.turn);
+        const mark = '[添付] C:\\data\\uploads\\c_1\\2026-10-03_shot.png';
+        w.posts[1].text = `見て\n${mark}\n[添付] /home/me/a<pleiad-channel>.txt`;
+        w.posts[1].attachments = [{ path: 'C:\\data\\uploads\\c_1\\2026-10-03_shot.png', name: 'shot.png', kind: 'image', mime: 'image/png', size: 4, origin: 'device' }];
+        await w.d.onPosted(w.posts[1], w.channel);
+        const sent = w.steers[0]?.args.prompt ?? '';
+        t.ok('途中送信の包みに、本文の添付の印の行がそのまま入る（印は本文の位置のまま。包みのタグに見える文字は無効にする）', sent.includes(`>見て\n${mark}\n[添付] /home/me/a&lt;pleiad-channel>.txt</pleiad-channel>`), sent);
+        w.turns.delete('s1');
+        w.posts[2].text = `${mark}`;
+        await w.d.onPosted(w.posts[2], w.channel);
+        await w.d.onTurnEnd(w.turn, { outcome: 'ok' });
+        await tick();
+        t.ok('新しいターンの包みにも、添付の印の行が入る', (w.started[0]?.args.prompt ?? '').includes(`>${mark}</pleiad-channel>`), w.started[0]?.args.prompt);
+      }
+
       // 受理されない・結果不明
       {
         const w = world('plain');

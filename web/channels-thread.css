@@ -25,7 +25,7 @@
 .deck > .ch-feed > .top{flex:none;min-height:48px}
 .deck:not([data-deck=feed]) > .ch-feed .ch-purpose{display:none}
 .deck:is([data-deck=split],[data-deck=solo],.moving) #chFeedComposer:not(:focus-within){padding-bottom:6px}
-.deck:is([data-deck=split],[data-deck=solo],.moving) #chFeedComposer:not(:focus-within) :is(.ch-row,.ch-hint){display:none}
+.deck:is([data-deck=split],[data-deck=solo],.moving) #chFeedComposer:not(:focus-within) :is(.ch-row,.ch-hint,.att-strip){display:none}
 .deck:is([data-deck=split],[data-deck=solo],.moving) #chFeedComposer:not(:focus-within) .ch-input{max-height:calc(1.6em + 12px);overflow:hidden}
 /* 開いているスレッドの根の投稿（選択中）。背景と、左の細い棒（枠線ではなく面の棒。.file-preview-resize::before と同じ作り） */
 .ch-feed .post[data-open]{background:var(--surface-hover)}

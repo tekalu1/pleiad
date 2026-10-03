@@ -467,6 +467,8 @@ const cases = [
   await import("./unit/channels-side-ui.mjs"),
   // 流れ (W2): @ の補完の判定・候補の絞り込み・リアクションの札と先取り・時刻の文言・スレッドを開く口の配線（描画とキーは tests/browser/channels.cjs）
   await import("./unit/channels-feed-ui.mjs"),
+  // 入力欄を Chats に揃えた分 (ADR 0116): 送る本文と添付の印・書きかけの保存と上限・添付つきの投稿の描き方・配線。画面の打鍵は tests/browser/channels-composer.cjs
+  await import("./unit/channels-composer-ui.mjs"),
   // bot のページの決まりごと（フォルダーを限れないモードは範囲 full だけ・承認モードの選び直し・使用量・記憶の出どころの行き先）。画面の打鍵は tests/browser/bot-page.cjs
   await import("./unit/bot-page-model.mjs"),
   // スレッドと空間モデル (W3): 窓の状態（feed・split・solo）の判定・題とトークンの文言・道具の呼び出しを引く範囲・配線。描画・動き・承認のカードは tests/browser/thread-deck.cjs

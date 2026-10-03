@@ -8,6 +8,8 @@ import { t } from './i18n.mjs';
 
 /** 1 件の添付の上限（core/server.mjs の ATTACH_MAX_BYTES と同じ） */
 export const ATTACH_MAX_BYTES = 100 * 1024 * 1024;
+/** これより大きな画像は、エージェントが画像として読めないことがある（Claude の API の画像の上限は 1 枚 5MB） */
+export const IMAGE_READ_HINT_BYTES = 5 * 1024 * 1024;
 const IN_FLIGHT = 4;
 const RETRIES = 5;
 

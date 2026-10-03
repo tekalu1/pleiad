@@ -11,6 +11,8 @@
 //   - 名前が前方で重なるとき（Owl と Owl-2）は長い方を先に見る
 //   - コードの区間（フェンス・インラインの `…`）と引用行（`> `）の中は数えない
 //   - `@あなた` / `@you` は人への呼びかけで、bot の名前より先に見る（bot にこの名前は付けられない）
+import { ATTACHMENT_LINE } from '../../web/timeline.mjs';
+
 const YOU_NAMES = ['あなた', 'you']; // i18n-ignore: 本文の @あなた は記号としての綴り（表示する文ではない）
 export const YOU = 'you';
 
@@ -27,7 +29,8 @@ export function maskNonMentionable(text) {
     const mark = /^[ \t]*(```+|~~~+)/.exec(line)?.[1];
     if (fence) { if (mark && mark[0] === fence[0] && mark.length >= fence.length) fence = null; return blank(line); }
     if (mark) { fence = mark; return blank(line); }
-    return /^[ \t]*>/.test(line) ? blank(line) : line;
+    // 引用行と、添付の印の行（`[添付] パス`。パスに `@` があっても呼びかけではない）
+    return /^[ \t]*>/.test(line) || ATTACHMENT_LINE.test(line.trim()) ? blank(line) : line;
   });
   // インラインのコード（同じ数のバッククォートで挟んだもの）
   return lines.join('\n').replace(/(`+)(?:(?!\1)[\s\S])+?\1/g, blank);

@@ -82,7 +82,11 @@
       "shortPlaceholder": "Post to #{{name}}",
       "dm": "Message {{name}}",
       "send": "Post (Ctrl+Enter)",
+      "sendKeys": "Ctrl+Enter to send",
       "failed": "Couldn't post: {{error}}"
+    },
+    "attach": {
+      "folder": "Folders can't be attached. Pick the files inside"
     },
     "mention": {
       "head": "Bots and members",

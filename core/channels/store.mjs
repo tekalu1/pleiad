@@ -54,6 +54,7 @@ export function foldOp(posts, op) {
     post.text = '';
     post.reactions = {};
     delete post.presents;
+    delete post.attachments;
     return post;
   }
   if (op.op === 'react') {
