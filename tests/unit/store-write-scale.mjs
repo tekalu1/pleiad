@@ -1,4 +1,4 @@
-// 再発防止（ADR 0106）: 会話・タスク・使用量を 2,000 件入れた状態で、1 件の更新が全体を書かない。
+// 再発防止（ADR 0115）: 会話・タスク・使用量を 2,000 件入れた状態で、1 件の更新が全体を書かない。
 // 数えるもの: 更新が書いた行の数（SQL の changes）と、文に渡した値の大きさ（文字列・バイト列の引数の長さ。tests/lib/sql-counter.mjs）。
 // どちらも件数に比例してはならない: 会話は 100 件の置き場と 2,000 件の置き場で、同じ操作の数字が同じになることも確かめる。
 // （ファイルの長さ（WAL）の差は、WAL を使い回すと実際の書き込み量を表さないので見ない）
@@ -12,6 +12,9 @@ import { writeSessions, writeAgentTasks, writeUsage } from '../lib/data-store.mj
 import { sqlCounter } from '../lib/sql-counter.mjs';
 import { createAgentTasks } from '../../core/agent-tasks.mjs';
 import { createUsageStore } from '../../core/usage.mjs';
+import { createThreadStore } from '../../core/channels/threads.mjs';
+import { createMemoryLearner } from '../../core/memory/learn.mjs';
+import { threadTable, memoryStateTable, openRaw, dbPath } from '../../core/db.mjs';
 import { hookedTaskStorage } from '../lib/task-storage.mjs';
 
 export const name = 'store-write-scale';
@@ -50,11 +53,13 @@ const STORE_SCRIPT = `
     setMeta: () => store.setMeta('s51', { title: 'changed', lastModified: 99 }),
     recordChange: () => store.recordChange('s52', { by: 'human', field: 'title', from: 'a', to: 'b', reason: null }),
     setMode: () => store.setMode('s53', 'plan'),
+    bot: () => store.setSessionData('s58', 'bot', { botId: 'b_x', kind: 'thread', channelId: 'c_1', threadId: 'p_1', memoryIndex: 3 }, { durable: true }),
     markRead: () => store.markRead([['s54', 3]]),
     outbox: () => store.setSessionData('s55', 'outbox', [{ id: 'm', status: 'queued' }], { durable: true }),
     contextSession: () => store.setSessionData('s56', 'contextSession', { ...all.s56.contextSession, at: 2 }),
     newConversation: () => store.setMeta('brand-new', { title: 'new' }),
     removeSession: () => store.removeSession('s57'),
+    botCleared: () => store.setSessionData('s58', 'bot', null),
   };
   for (const [name, op] of Object.entries(ops)) results[name] = await counter.measure(op);
   console.log(JSON.stringify({ count: Object.keys(all).length, results }));
@@ -112,6 +117,37 @@ export default async function (t) {
     t.ok('使用量: 集計は何も書かない', summarized.changes === 0 && summarized.statements === 0, JSON.stringify(summarized));
     const summary = await usage.summary('fake');
     t.ok('使用量: 集計は件数どおり（2,000 件 + 1 件）', summary.sevenDay.turns === N + 1, String(summary.sevenDay.turns));
+
+    // ---- bot・Channels・記憶（main で足された保存先。スレッドの状態は 1 スレッド 1 行、夜の整理の進みは 1 カーソル 1 行）
+    const botScale = async (dir, count) => {
+      // スレッド: count 件を入れておき、1 件を更新する
+      const raw = openRaw(dbPath(dir), { create: true });
+      const table = threadTable(raw);
+      for (let i = 0; i < count; i++) table.put(`c_1/p_${i}`, 'c_1', JSON.stringify({ channelId: 'c_1', threadId: `p_${i}`, sessions: { b_x: `s-${i}` }, state: 'idle', tokens: { input: 1, output: 1, cached: 0 }, calls: 1, stopped: null, updatedAt: 1 }));
+      raw.close();
+      const threads = createThreadStore({ dir: path.join(dir, 'channels'), now: () => 5 });
+      closers.push(() => threads.close());
+      await threads.load();
+      const thread = await counter.measure(() => threads.update('c_1', 'p_7', (cur) => ({ tokens: { input: cur.tokens.input + 10, output: 5 }, calls: cur.calls + 1 })));
+      // 夜の整理: count 件の会話のカーソルを持ち、1 件だけ増えたとき
+      let clock = 1000;
+      const rows = Array.from({ length: count }, (_, i) => ({ id: `s${i}`, backend: 'fake', lastModified: 1 }));
+      const learner = createMemoryLearner({ dataDir: dir, channels: { dir: path.join(dir, 'channels') }, bots: { get: async () => null }, memory: {}, host: {}, clock: {},
+        readPrefs: async () => ({}), listSessions: async () => rows, readMessages: async () => [], now: () => (clock += 1000) });
+      closers.push(() => learner.close());
+      await learner.runNow();
+      const rerun = await counter.measure(() => learner.runNow());
+      rows.push({ id: 'new-session', backend: 'fake', lastModified: 1 });
+      const added = await counter.measure(() => learner.runNow());
+      const cursors = openRaw(dbPath(dir)); const stored = cursors.prepare("SELECT COUNT(*) AS n FROM memory_state WHERE kind = 'cursor.sessions'").get().n; cursors.close();
+      return { thread, rerun, added, stored };
+    };
+    const botSmall = await botScale(small, SMALL), botLarge = await botScale(large, N);
+    t.ok(`スレッド: 1 件の更新（トークンの足し算）が書く行は 1 行（変わった行 ${botLarge.thread.changes}、値 ${botLarge.thread.bytes}B）。${SMALL} 件でも ${N} 件でも同じ`, botLarge.thread.changes === 1 && botLarge.thread.bytes < MAX_BYTES
+      && JSON.stringify(botSmall.thread) === JSON.stringify(botLarge.thread), `${JSON.stringify(botSmall.thread)} / ${JSON.stringify(botLarge.thread)}`);
+    t.ok(`夜の整理: ${N} 件のカーソルを持っていても、同じ内容の再実行が書くのは lastRunAt の 1 行（変わった行 ${botLarge.rerun.changes}）`, botLarge.rerun.changes === 1 && JSON.stringify(botSmall.rerun) === JSON.stringify(botLarge.rerun), `${JSON.stringify(botSmall.rerun)} / ${JSON.stringify(botLarge.rerun)}`);
+    t.ok(`夜の整理: 会話が 1 件増えたときに書くのは、そのカーソルと lastRunAt の 2 行（変わった行 ${botLarge.added.changes}）。${SMALL} 件でも ${N} 件でも同じ`, botLarge.added.changes === 2 && JSON.stringify(botSmall.added) === JSON.stringify(botLarge.added), `${JSON.stringify(botSmall.added)} / ${JSON.stringify(botLarge.added)}`);
+    t.ok(`夜の整理: カーソルは 1 会話 1 行で DB に入っている（${botLarge.stored} 行）`, botLarge.stored === N + 1 && botSmall.stored === SMALL + 1, `${botSmall.stored} / ${botLarge.stored}`);
   } finally {
     for (const close of closers.reverse()) await close();
     for (const dir of dirs) await fs.rm(dir, { recursive: true, force: true }).catch(() => {});

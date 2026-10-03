@@ -1,0 +1,323 @@
+{
+  "side": {
+    "tabs": { "label": "脇の切り替え", "chats": "Chats", "channels": "Channels" },
+    "sections": { "channels": "チャンネル", "bots": "Bots", "routines": "ルーティン" },
+    "newChannel": "チャンネルを作る",
+    "newChannelPlaceholder": "チャンネルの名前（Enter で作る）",
+    "newBot": "bot を作る",
+    "loading": "読み込んでいます…",
+    "channelsEmpty": "チャンネルはまだありません",
+    "botsEmpty": "bot はまだいません",
+    "routinesEmpty": "ルーティンはまだありません",
+    "unread": "未読あり",
+    "mentions_other": "あなた宛て {{count}} 件",
+    "archived": "アーカイブ済み",
+    "botState": { "idle": "待機", "working": "作業中", "waiting": "あなた待ち" },
+    "openDm": "DM を開く",
+    "openBot": "bot のページを開く",
+    "dm": "DM",
+    "botWaitsHead": "あなたを待っている",
+    "searchPlaceholder": "会話とチャンネルを検索",
+    "search": { "count_other": "{{count}} 件", "none": "一致する会話・チャンネルがありません" }
+  },
+  "feed": {
+    "empty": "チャンネルはまだありません。",
+    "log": "投稿",
+    "loading": "読み込んでいます…",
+    "loadFailed": "読み込めませんでした: {{error}}",
+    "retry": "もう一度読む",
+    "older": "前の投稿を読み込んでいます…",
+    "newer": "↓ 新しい投稿",
+    "day": {
+      "today": "今日",
+      "yesterday": "昨日"
+    },
+    "you": "あなた",
+    "unknownBot": "不明な bot",
+    "agent": "会話の AI",
+    "routine": "ルーティン",
+    "system": "Pleiad",
+    "edited": "（編集済み）",
+    "deleted": "削除された投稿",
+    "archived": "このチャンネルはアーカイブされています。",
+    "members": "メンバー: {{names}}",
+    "emptyChannel": "まだ投稿がありません。@ で bot を呼ぶと、ここから仕事を頼めます。",
+    "emptyDm": "{{name}} に頼みたいことを書いてください。",
+    "tools": "投稿の操作",
+    "react": "リアクションを付ける",
+    "reactPicker": "リアクション",
+    "reactFailed": "リアクションを付けられませんでした: {{error}}",
+    "reactionSep": "・",
+    "reactionOn": "（押すと付ける）",
+    "reactionOff": "（押すと外す）",
+    "quick": "{{emoji}} を付ける",
+    "reply": "スレッドで返信",
+    "more": "その他",
+    "copyText": "本文をコピー",
+    "openSession": "会話を開く",
+    "replies_other": "{{count}} 件の返信",
+    "openThread": "スレッドを開く（{{count}} 件の返信）",
+    "threadWorking": "作業中",
+    "threadWaiting": "{{name}} があなたを待っている",
+    "lastReply": "最後の返信 {{when}}",
+    "state": {
+      "working": "作業中",
+      "waiting": "あなた待ち",
+      "done": "終了",
+      "checking": "要確認",
+      "failed": "失敗",
+      "stopped": "止めました",
+      "skipped": "スキップ",
+      "missed": "Pleiad が止まっていた間の分"
+    },
+    "botState": {
+      "working": "作業中",
+      "waiting": "あなた待ち"
+    },
+    "composer": {
+      "label": "投稿の本文",
+      "placeholder": "#{{name}} へ投稿 · @ で bot を呼ぶ",
+      "shortPlaceholder": "#{{name}} へ投稿",
+      "dm": "{{name}} にメッセージ",
+      "send": "投稿（Ctrl+Enter）",
+      "failed": "投稿できませんでした: {{error}}"
+    },
+    "mention": {
+      "head": "bot とメンバー",
+      "label": "@ の候補"
+    },
+    "hint": {
+      "nobody": "誰も呼ばれていないので、bot は反応しません",
+      "call": "@{{name}} を呼ぶ"
+    },
+    "settings": {
+      "open": "メモ・設定",
+      "title": "{{name}} のメモ・設定",
+      "name": "名前",
+      "purpose": "目的",
+      "cwd": "既定の作業フォルダー",
+      "cwdHint": "空なら bot それぞれの作業フォルダーを使います。",
+      "members": "メンバー",
+      "membersHint": "メンバーは一覧に載る bot です。bot を起こすには、投稿で @ を付けます。",
+      "noBots": "bot はまだありません。",
+      "memo": "ここでの決まり（メモ）",
+      "memoHint": "このチャンネルで動く bot が毎回読む、短い決まり事を書けます。",
+      "archive": "アーカイブする",
+      "unarchive": "アーカイブをやめる",
+      "cancel": "やめる",
+      "save": "保存",
+      "failed": "保存できませんでした: {{error}}"
+    }
+  },
+  "thread": {
+    "log": "スレッドの投稿",
+    "close": "スレッドを閉じる",
+    "back": "{{name}} の流れに戻る",
+    "untitled": "スレッド",
+    "loading": "読み込んでいます…",
+    "loadFailed": "読み込めませんでした: {{error}}",
+    "replies_other": "{{count}} 件の返信",
+    "noReplies": "返信はまだありません",
+    "entry": {
+      "toc": "このスレッドの目次",
+      "browser": "内蔵ブラウザー"
+    },
+    "toc": {
+      "title": "目次",
+      "search": "スレッド内を検索",
+      "empty": "投稿がありません",
+      "noMatch": "一致する言葉がありません",
+      "present": "（提示）"
+    },
+    "composer": {
+      "placeholder": "スレッドに返信",
+      "working": "スレッドに返信 · 作業中でも {{name}} に届きます"
+    },
+    "stop": "止める",
+    "stopping": "止めています…",
+    "stopFailed": "止められませんでした: {{error}}",
+    "band": {
+      "working": "{{who}} が作業中",
+      "waiting": "{{who}} があなたを待っています",
+      "someone": "bot",
+      "calls": "呼び合い {{count}} 回",
+      "stopped": "止めました",
+      "tokens": "このスレッドで {{tokens}} トークン",
+      "tokensTitle": "入力 {{input}} · 出力 {{output}} · キャッシュ読み出し {{cached}}"
+    }
+  },
+  "bot": {
+    "iconLabel": "アイコンを変える",
+    "nameLabel": "名前",
+    "namePlaceholder": "名前（例: Owl）",
+    "openDm": "DM を開く",
+    "createButton": "作る",
+    "persona": {
+      "title": "人格",
+      "label": "人格",
+      "placeholder": "口調・受け持ち・守ってほしいこと（自由に書けます）"
+    },
+    "run": {
+      "title": "動かし方"
+    },
+    "modeHumanOnly": "承認モードは人間だけが変えられる",
+    "modeOnly": "{{backend}} では承認モードが「{{mode}}」だけです",
+    "folders": {
+      "title": "触れてよいフォルダー",
+      "add": "フォルダーを足す",
+      "none": "まだありません",
+      "rw": "読み書き",
+      "ro": "読み取り",
+      "toggle": "押すと読み書きと読み取りを切り替え",
+      "toggleAria": "{{path}}: {{access}}（押すと切り替え）",
+      "remove": "外す",
+      "removeAria": "{{path}} を外す",
+      "all": "すべてのフォルダー",
+      "unlimited": "{{mode}}ではフォルダーを限れません",
+      "placeholder": "フォルダーのパス",
+      "inputLabel": "足すフォルダーのパス（Enter で足す）"
+    },
+    "send": {
+      "label": "他の会話に送る",
+      "targets": "送れる会話",
+      "empty": "送れる会話はまだありません。",
+      "shown": "あなたが示した会話",
+      "created": "この bot が作った会話",
+      "manual": "設定で追加した会話",
+      "remove": "外す",
+      "removeLabel": "「{{title}}」を送れる会話から外す",
+      "hint": "この bot が、ほかの会話へ指示を送れます。送り先は、あなたが示した会話と、この bot が作った会話だけです。"
+    },
+    "memory": {
+      "title": "記憶",
+      "auto": "全ての会話から自動で覚える"
+    },
+    "usage": {
+      "week": "今週",
+      "tokens": "トークン",
+      "cache": "キャッシュ読み出し",
+      "low": "（低め）"
+    },
+    "state": {
+      "working": "作業中",
+      "waiting": "あなた待ち",
+      "idle": "待機"
+    },
+    "saveFailed": "保存できませんでした: {{error}}",
+    "createFailed": "作れませんでした: {{error}}",
+    "nameRequired": "名前を入れてください",
+    "notFound": "この bot は見つかりません",
+    "loadFailed": "読み込めませんでした: {{error}}",
+    "removed": "この bot は削除されました"
+  },
+  "memory": {
+    "new": "新しく覚えた",
+    "user": {
+      "title": "あなたについて",
+      "meta": "全 bot 共通 · {{n}} 件"
+    },
+    "own": {
+      "title": "{{name}} だけ",
+      "meta": "{{n}} 件"
+    },
+    "loading": "読み込んでいます…",
+    "empty": "まだ無い",
+    "loadFailed": "記憶を読み込めませんでした: {{error}}",
+    "source": {
+      "line": "{{where}} · {{when}} のあなたの発言",
+      "today": "今日",
+      "dm": "DM（{{name}}）",
+      "chat": "Chats『{{title}}』",
+      "chatGone": "Chats の会話",
+      "channelGone": "チャンネル",
+      "written": "あなたが書いた",
+      "none": "出どころの記録なし",
+      "open": "元の発言を開く",
+      "more": "ほか {{n}} 件",
+      "edited": "{{when}} に直した"
+    },
+    "edit": "直す",
+    "editAria": "「{{text}}」を直す",
+    "editLabel": "記憶を直す",
+    "editFailed": "直せませんでした: {{error}}",
+    "cancel": "やめる",
+    "save": "保存",
+    "forget": "忘れる",
+    "forgetAria": "「{{text}}」を忘れる",
+    "forgetFailed": "忘れられませんでした: {{error}}",
+    "forgotten": "「{{text}}」を忘れました",
+    "undo": "元に戻す",
+    "undoFailed": "元に戻せませんでした: {{error}}"
+  },
+  "routines": {
+    "webhook": {"hostOnly": "受け口の URL は、この Pleiad が動く PC の画面で取得してください。", "invalidates": "作り直すと古い秘密は使えなくなります。", "url": "受け口の URL", "copyUrl": "URL を写す", "rotate": "秘密を作り直す", "secret": "秘密（HMAC）", "once": "この秘密は今だけ表示します。閉じる前に写してください。", "copySecret": "秘密を写す", "copied": "写しました", "saveFirst": "保存すると受け口の URL と秘密を作るボタンが出ます。", "tunnel": "外から届かせるには、あなたのトンネル（ngrok など）が必要です。"},
+    "title": "ルーティン",
+    "heading": "ルーティン",
+    "headingTitle_other": "このチャンネルのルーティン（{{count}} 件）",
+    "headingNone": "このチャンネルのルーティンを作る",
+    "headingMenu": "#{{name}} のルーティン",
+    "paused": "一時停止",
+    "new": "ルーティンを作る",
+    "edit": "編集",
+    "openChannel": "チャンネルを開く",
+    "more_other": "ほか {{count}} 件を見る",
+    "fewer": "3 件に戻す",
+    "botEmpty": "この bot のルーティンはまだありません",
+    "cancel": "取り消す",
+    "create": "作る",
+    "save": "保存",
+    "delete": "削除",
+    "deleteConfirm": "もう一度押すと削除",
+    "deleteFailed": "削除できませんでした: {{error}}",
+    "saveFailed": "保存できませんでした: {{error}}",
+    "neverRan": "まだ動いていません",
+    "last": "前回 {{when}} · {{state}}",
+    "time": "時刻",
+    "next": "次は {{when}}",
+    "nextNone": "次の予定がありません",
+    "daySep": "・",
+    "when": { "label": "いつ", "today": "今日 {{time}}", "tomorrow": "明日 {{time}}", "date": "{{date}} {{time}}" },
+    "name": { "label": "名前", "placeholder": "例: 朝のまとめ" },
+    "state": { "label": "状態", "on": "有効", "off": "一時停止", "pause": "一時停止にする", "resume": "再開する" },
+    "kind": { "daily": "毎日", "weekly": "毎週", "interval": "間隔", "cron": "cron", "event": "イベント", "webhook": "webhook", "soon": "準備中です" },
+    "day": { "0": "日", "1": "月", "2": "火", "3": "水", "4": "木", "5": "金", "6": "土" },
+    "daily": { "label": "毎日か平日か", "everyday": "毎日", "weekdays": "平日だけ" },
+    "weekly": { "label": "曜日" },
+    "interval": { "label": "間隔", "hint": "前回から数えて、この間隔で動きます", "during": "の間", "windowLabel": "時間帯", "allDay": "終日", "window": "時間帯を指定", "from": "開始の時刻", "to": "終了の時刻" },
+    "cron": { "label": "cron の式", "hint": "5 欄（分 時 日 月 曜日）で書きます。例: 0 9 * * 1-5", "daily": "毎日 {{time}}", "weekdays": "平日の {{time}}", "weekly": "毎週 {{days}} の {{time}}" },
+    "event": {
+      "label": "イベント", "done": "会話の完了", "failed": "会話の失敗", "waiting": "あなた待ち",
+      "scope": "対象", "scopeAll": "すべての会話", "scopeSome_other": "選んだ会話 {{count}} 件",
+      "hint": { "done": "会話が完了するたびに動きます（bot とルーティンの会話は除きます）", "failed": "会話が失敗するたびに動きます（bot とルーティンの会話は除きます）", "waiting": "会話があなたを待つたびに動きます（bot とルーティンの会話は除きます）" }
+    },
+    "who": {
+      "label": "誰が・どこで", "ga": "が", "de": "で", "pickBot": "bot を選ぶ", "pickChannel": "チャンネルを選ぶ",
+      "botAria": "bot: {{name}}", "channelAria": "チャンネル: {{name}}", "noBots": "bot がいません。先に bot を作ってください"
+    },
+    "where": { "label": "どこで", "dm": "DM" },
+    "prompt": { "label": "何を", "placeholder": "例: 夜の間に失敗・中断した会話を調べて、原因と次の一手を 3 行ずつまとめて" },
+    "mode": {
+      "label": "承認モード", "hint": "強くできるのは人だけです。bot や AI は変えられません",
+      "danger": "確認なしで動きます。誰もいない間も動くので、範囲に注意してください", "only": "{{backend}} では「{{mode}}」だけです"
+    },
+    "timeout": { "label": "承認待ちで", "before": "通知して、", "after": "を過ぎたら取り消して報告" },
+    "try": { "button": "試しに動かす", "running": "試しに動いています（投稿・変更はしない）", "failed": "試せませんでした: {{error}}" },
+    "unit": { "minutes_other": "{{count}} 分", "hours_other": "{{count}} 時間", "days_other": "{{count}} 日" },
+    "text": {
+      "daily": "毎日 {{time}}", "weekdays": "平日 {{time}}", "weekly": "毎週 {{days}} {{time}}", "interval": "{{every}}ごと", "window": "（{{from}}–{{to}}）",
+      "cron": "cron {{expr}}", "webhook": "webhook", "event": { "done": "会話の完了", "failed": "会話の失敗", "waiting": "あなた待ち" }
+    },
+    "error": {
+      "name": "名前を入れてください", "bot": "bot を選んでください", "channel": "チャンネルを選んでください", "prompt": "何をするか書いてください",
+      "time": "時刻を選んでください", "days": "曜日を 1 つ以上選んでください", "minutes": "間隔を選んでください",
+      "window": "時間帯の開始と終了を、違う時刻で入れてください", "cron": "式を読めません。5 欄（分 時 日 月 曜日）で書いてください",
+      "event": "イベントを選んでください", "kind": "この種類はまだ作れません"
+    }
+  },
+  "event": {
+    "post": "{{channel}} · {{from}}",
+    "thread": "{{channel}} のこれまでの投稿を渡しました",
+    "memoryCore": "覚えていることを渡しました",
+    "turnContext": "時刻と記憶の変更を渡しました"
+  }
+}

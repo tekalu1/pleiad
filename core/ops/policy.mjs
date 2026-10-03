@@ -26,15 +26,15 @@ export const VIAS = ['mcp', 'cli', 'mcp-stdio'];
 export const DECISIONS = ['allow', 'ask', 'deny', 'hidden'];
 
 /**
- * human-only にしてよいものの全部（ADR 0094）。WS のコマンド（commands）と設定の一覧のキー（settings）。
+ * human-only にしてよいものの全部（ADR 0094）。WS のコマンド（commands）と設定の一覧のキー（settings）と、WS のコマンドを持たない操作の id（ops）。
  * ここに無いものは human-only にしない（操作の risk・tests/ops-baseline.json の human-only・設定の risk を tests/lint-ops.mjs が突き合わせる）。
  * 足すのは ADR の範囲。
  */
 export const HUMAN_ONLY = Object.freeze({
-  // 承認モード。AI が自分の関所を緩められると承認フローが意味を失う（design.md §8.5）。承認カードへの応答も同じ
-  mode: { commands: ['setMode', 'resolvePermission'], settings: ['mode'] },
+  // 承認モード。AI が自分の関所を緩められると承認フローが意味を失う（design.md §8.5）。承認カードへの応答も同じ。bot の承認モード（bots.setMode。ADR 0109）も
+  mode: { commands: ['setMode', 'resolvePermission'], settings: ['mode'], ops: ['bots.setMode'] },
   // 秘密の値を入れる・消す・認可する（委譲の判定器のキー・互換の接続先のキー・MCP の OAuth）
-  secrets: { commands: ['setDelegationRoutingKey', 'deleteDelegationRoutingKey', 'compatEndpointCheck', 'compatEndpointSave', 'mcpAuthStart', 'mcpAuthLogout'], settings: [] },
+  secrets: { commands: ['setDelegationRoutingKey', 'deleteDelegationRoutingKey', 'compatEndpointCheck', 'compatEndpointSave', 'mcpAuthStart', 'mcpAuthLogout'], settings: [], ops: ['routines.rotateSecret'] },
   // アカウント（契約・課金の主体）。一覧も含む
   accounts: { commands: ['saveClaudeAccount', 'deleteClaudeAccount', 'claudeLoginStart', 'claudeLoginCode', 'claudeLoginCancel', 'authLogin', 'authLogout', 'authSubmit', 'claudeAccounts'], settings: ['claudeAccount'] },
   // 新しい会話の接続先の既定（会話の送り先を、人が確かめていない先へ黙って替えない）
@@ -44,6 +44,7 @@ export const HUMAN_ONLY = Object.freeze({
 });
 export const HUMAN_ONLY_COMMANDS = new Set(Object.values(HUMAN_ONLY).flatMap((x) => x.commands));
 export const HUMAN_ONLY_SETTINGS = new Set(Object.values(HUMAN_ONLY).flatMap((x) => x.settings));
+export const HUMAN_ONLY_OPS = new Set(Object.values(HUMAN_ONLY).flatMap((x) => x.ops ?? []));
 
 export const riskRank = (risk) => RISKS.indexOf(risk);
 

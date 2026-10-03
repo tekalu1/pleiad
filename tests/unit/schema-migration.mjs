@@ -1,4 +1,4 @@
-// データ置き場の形式 1（記録ごとの JSON）→ 2（SQLite）の移行（core/schema-migration.mjs、ADR 0106）。
+// データ置き場の形式 1（記録ごとの JSON）→ 2（SQLite）の移行（core/schema-migration.mjs、ADR 0115）。
 // 成功・途中で失敗しても元が残る・2 回目の起動では移行しない・整形済みと 1 行（compact）の旧 JSON がどちらも読める・新しい形式は開かない
 import fs from 'node:fs/promises';
 import os from 'node:os';

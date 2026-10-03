@@ -12,7 +12,7 @@ import path from "node:path";
 import crypto from 'node:crypto';
 import * as store from "./store.mjs";
 import { writeAtomic } from "./atomic-file.mjs";
-import { splitInterruptionNotes } from "./system-messages.mjs";
+import { splitLeadingNotes } from "./system-messages.mjs";
 
 const PRESENT_DIR = path.join(store.dataDir, "presents");
 
@@ -63,12 +63,12 @@ export async function loadTranscript(sessionId, backend) {
 
 /**
  * バックエンドが返した行を、画面に出す前の形へ整える。
- * 中断の後に添えた「止めたもの」の文は、人の発言から切り分ける（どのバックエンドの行も通る。完了通知の見分けより先に）。
+ * 中断の後に添えた「止めたもの」の文・bot の会話の先頭の包み（記憶・チャンネルの出来事）は、人の発言から切り分ける（どのバックエンドの行も通る。完了通知の見分けより先に）。
  * 委譲の完了通知として送った発言には internalTaskNotice を、別の会話の AI が送った発言（sessions.send。ADR 0104）には送り手（sentBy）を付ける。
  * loadTranscript とセッション検索の写しが同じ整え方を使う。
  */
 export async function prepareMessages(sessionId, raw) {
-  const messages = splitInterruptionNotes(raw);
+  const messages = splitLeadingNotes(raw);
   const side = await store.get(sessionId);
   const notices = new Set(side.taskNotices ?? []);
   const relayed = new Map((side.relayed ?? []).map(r => [r.hash, r.sentBy]));

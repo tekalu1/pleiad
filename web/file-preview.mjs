@@ -781,7 +781,7 @@ export function setupFilePreview({ getContext, useFile, onLayout, showMenu, cmd,
   /** 会話・Markdown プレビューの中のファイル（リンク・画像・⋯）から操作の対象を作る */
   function targetOf(node) {
     const holder = node.closest('[data-file-path],[data-file-menu]');
-    if (!holder || (!holder.closest('#log') && !holder.closest('.file-preview-document') && !holder.closest('#lightbox'))) return null;
+    if (!holder || (!holder.closest('#log') && !holder.closest('#channelsView') && !holder.closest('.file-preview-document') && !holder.closest('#lightbox'))) return null;
     const path = holder.dataset.filePath ?? holder.dataset.fileMenu;
     if (!path) return null;
     return { path, line:Number(holder.dataset.fileLine) || null, element:holder, base:holder.closest('.file-preview-document') ? file?.path : undefined };
@@ -805,7 +805,7 @@ export function setupFilePreview({ getContext, useFile, onLayout, showMenu, cmd,
   });
   document.addEventListener('click', event => {
     const anchor = event.target.closest('a');
-    if (!anchor || (!anchor.closest('#log') && !anchor.closest('#workBody') && !anchor.closest('.file-preview-document'))) return;
+    if (!anchor || (!anchor.closest('#log') && !anchor.closest('#channelsView') && !anchor.closest('#workBody') && !anchor.closest('.file-preview-document'))) return;
     const ref = anchor.dataset.filePath ? { path:anchor.dataset.filePath, line:Number(anchor.dataset.fileLine) || null } : fileReference(anchor.getAttribute('href'));
     if (!ref) return;
     event.preventDefault();
@@ -821,7 +821,7 @@ export function setupFilePreview({ getContext, useFile, onLayout, showMenu, cmd,
   document.addEventListener('auxclick', event => {
     if (event.button !== 1) return;
     const anchor = event.target.closest('a');
-    if (!anchor || (!anchor.closest('#log') && !anchor.closest('#workBody') && !anchor.closest('.file-preview-document'))) return;
+    if (!anchor || (!anchor.closest('#log') && !anchor.closest('#channelsView') && !anchor.closest('#workBody') && !anchor.closest('.file-preview-document'))) return;
     const ref = anchor.dataset.filePath ? { path:anchor.dataset.filePath } : fileReference(anchor.getAttribute('href'));
     if (!ref || !isHtml(ref.path) || !cmd || !osActions()) return;
     event.preventDefault();

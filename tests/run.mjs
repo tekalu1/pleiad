@@ -92,6 +92,7 @@ const cases = [
   await import('./unit/ops-conversations.mjs'),
   // 別の会話への送信（sessions.send）・送信待ちの取り消しと送り直し・既読（ADR 0104）: 強さの比べ方・歯止め・送り手の印
   await import('./unit/ops-send.mjs'),
+  await import('./unit/sessions-send-bot.mjs'),
   await import('./unit/server-ops-send.mjs'),
   // pleiad CLI の起動口（ADR 0090）: 会話のシェルの PATH・外の AI の MCP の設定（app.cliSetup）・起動口の改行・デスクトップ版の同梱
   await import('./unit/cli-launcher.mjs'),
@@ -180,7 +181,7 @@ const cases = [
   await import('./unit/desktop-updates.mjs'),
   await import('./unit/desktop-exit-dialog.mjs'),
   await import('./unit/message-queue.mjs'),
-  // 送り終わった outbox は刈らない: 古い項目でも returned・undelivered・同じ ID の再試行が見つかる（ADR 0106）
+  // 送り終わった outbox は刈らない: 古い項目でも returned・undelivered・同じ ID の再試行が見つかる（ADR 0115）
   await import("./unit/outbox-keep.mjs"),
   await import('./unit/message-steer.mjs'),
   await import('./unit/visualize.mjs'),
@@ -266,7 +267,7 @@ const cases = [
   // 確認済み（既読）の置き場と、2 本の接続で共有されること（fake バックエンド）
   await import("./unit/read-store.mjs"),
   await import("./unit/store-flush.mjs"),
-  // 再発防止（ADR 0106）: データ置き場への丸ごと書きは許可リスト（上限と理由）に載ったものだけ・件数が増えても 1 件の更新は全体を直列化しない
+  // 再発防止（ADR 0115）: データ置き場への丸ごと書きは許可リスト（上限と理由）に載ったものだけ・件数が増えても 1 件の更新は全体を直列化しない
   // 形式 1（記録ごとの JSON）→ 2（SQLite）の移行: 成功・失敗しても元が残る・2 回目は移行しない・整形済み/compact
   await import("./unit/schema-migration.mjs"),
   // データ置き場のプロセス単位の排他: 生きている別プロセスがあれば止める・古いロックは取り直す・消した会話を更新で戻さない
@@ -312,6 +313,8 @@ const cases = [
   await import("./unit/claude-normalize.mjs"),
   // 履歴のシステム側のメッセージ: 形（transcript の印）と文面での見分け・区切りへの要約・中断・teammate・文脈のタグ・保存分（ADR 0053）
   await import("./unit/system-messages.mjs"),
+  // bot の会話の先頭の包み（記憶・チャンネルの出来事）の組み立てと剥がし・本文の閉じタグが外へ出ない・id と発言者
+  await import("./unit/system-messages-leading.mjs"),
   // 入力欄の `!`（ADR 0054）: ホストで走らせる・止める・上限・同じ runId・Claude に渡す形・Codex の userShell の履歴
   await import("./unit/shell-runs.mjs"),
   // 同じく入力欄の形: `!` を打つ・貼り付けでは入らない・Backspace で戻る・使えない会話・文として送る・入力欄に写す
@@ -426,6 +429,58 @@ const cases = [
   await import("./unit/remote-links.mjs"),
   // リモートから PC の内蔵ブラウザーを見る: フレームの間引き・止める条件・ローカルとエージェント操作中の断り・入力の変換・シートの出し分け
   await import("./unit/remote-browser-view.mjs"),
+
+  // ==== bot・Channels・ルーティン（docs/channels.md、ADR 0106〜0114）。パッケージごとの区画。各パッケージは自分の区画の下にだけ足す（並列の衝突を避ける）====
+  // つなぎ目（core/bots-host.mjs）と土台: 空のままでは何も変えない・例外を出さない・使用量の sessionId・fake の台本の包み外し
+  await import("./unit/bots-host.mjs"),
+  // --- channels (S1) ---
+  // チャンネルの保存（index.json・.jsonl の追記と畳み込み・壊れた行・threads.json・投稿とリアクションと出来事）・@ の解析・操作（主体から発言者を決める・危険度・口）
+  await import("./unit/channels-store.mjs"),
+  await import("./unit/channels-mentions.mjs"),
+  await import("./unit/ops-channels.mjs"),
+  // --- bots (S2) ---
+  // bot の定義の保存: 名前の一意・予約名・読めない bots.json は上書きしない・同時の作成の直列化
+  await import("./unit/bots-store.mjs"),
+  // bots.* の操作: 作成と DM・AI が見える操作と見えない操作・フォルダーを広げる向きは承認・承認モードは人だけ・Antigravity は yolo だけ・削除
+  await import("./unit/ops-bots.mjs"),
+  // bot の人格の文（毎ターン同じバイト列）・フォルダーの渡し方・3 つのバックエンドへの渡し方・agy の起こし直しの判定
+  await import("./unit/bot-instructions.mjs"),
+  // --- memory (S3) ---
+  // 正本（markdown・log.jsonl・手で壊した行・墓石・rev）と、索引（FTS5 と、node:sqlite を読み込めないときの走査・壊れた索引の作り直し）
+  await import("./unit/memory-store.mjs"),
+  await import("./unit/memory-index.mjs"),
+  // 出どころの検査（人の発言・taint・AI だけの根拠・墓石・長さ・注入らしい文）と、memory.* の操作（主体・層・危険度）
+  await import("./unit/memory-sources.mjs"),
+  // 末尾の文: 差分・関係する記憶・渡し済みを繰り返さない・核の写しは始まりと圧縮の後だけ・時刻は末尾だけ
+  await import("./unit/memory-tail.mjs"),
+  // --- dispatch (S4) ---
+  // bot を起こす・配る: @ で起こす・返事の @ で連鎖・［止める］・途中送信とたまった出来事・DM・暗黙では起こさない・末尾（記憶の核の写し）・再起動の戻し・inbox.json
+  await import("./unit/bot-dispatch.mjs"),
+  // bot の会話は Chats の一覧に出さず、あなた待ちのときだけ出す（一覧の行の bot・承認待ち・検索の除外・スマホ通知）
+  await import("./unit/bot-sessions-list.mjs"),
+  // --- channels-ui: 脇・流れ・スレッド・bot のページ (W1・W2・W3・W4) ---
+  // 脇 (W1): Channels の並べ方・bot の状態・タブの点・検索の横断の行と開く先・Chats の木の bot の会話の行の配線（描画は目視と session-list-keys.cjs）
+  await import("./unit/channels-side-ui.mjs"),
+  // 流れ (W2): @ の補完の判定・候補の絞り込み・リアクションの札と先取り・時刻の文言・スレッドを開く口の配線（描画とキーは tests/browser/channels.cjs）
+  await import("./unit/channels-feed-ui.mjs"),
+  // bot のページの決まりごと（フォルダーを限れないモードは範囲 full だけ・承認モードの選び直し・使用量・記憶の出どころの行き先）。画面の打鍵は tests/browser/bot-page.cjs
+  await import("./unit/bot-page-model.mjs"),
+  // スレッドと空間モデル (W3): 窓の状態（feed・split・solo）の判定・題とトークンの文言・道具の呼び出しを引く範囲・配線。描画・動き・承認のカードは tests/browser/thread-deck.cjs
+  await import("./unit/thread-deck.mjs"),
+  // --- routines (R1・R2・W5、P2) ---
+  // ルーティンの式 (R1): 5 欄の cron の解析と次の時刻・毎日/毎週/間隔（時間帯つき）の次の発火・トリガの検査・頻度の目安・イベントの選び方
+  await import("./unit/routines-cron.mjs"),
+  // ルーティンのサービス (R1): 予約と発火・取りこぼしは最新の 1 回・一時停止と再開・実行の状態・走っている間はスキップ・承認の期限・イベントのトリガ・試しの実行・広げる向き・保存
+  await import("./unit/routines-schedule.mjs"),
+  // routines.* の操作: 口の出し分け・危険度・AI が作ると承認・広げる向きの update は承認・resume / run / delete は承認・試しの実行・失敗の code
+  await import("./unit/ops-routines.mjs"),
+  // ルーティンをサーバー越しに: 毎分の実行のスレッド（テストの時計）・取りこぼしは起動時に 1 回・一時停止と再開・イベントのトリガ・承認の期限・試しの実行
+  await import("./unit/routines-server.mjs"),
+  // ルーティンの編集 (W5): 検査・保存する欄・cron の見積もり・脇の並べ方・一覧の写し・入口の配線。画面の打鍵は tests/browser/routine-sheet.cjs
+  await import("./unit/routine-sheet-model.mjs"),
+  // --- memory-learn・sessions-send・webhook (L1・X1・H1、P3) ---
+  await import("./unit/webhook.mjs"),
+  await import('./unit/memory-learn.mjs'),
 ];
 
 const selected = pick(cases, process.argv.slice(2));

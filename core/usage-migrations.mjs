@@ -5,7 +5,7 @@
 // 記録の値と transcript の cost-state（totalCostUSD と modelUsage の合計）が完全に一致するものを会話に結び付け、
 // その cost-state の 1 つ前（CLI がそのターンの開始時に読み戻した値）からの差分に置き換える。
 // 候補の会話が 2 つ以上あるもの・結び付かないものは触らない。書き直す前の記録は usage.v1-backup.json に写す
-// （ADR 0052）。済んだ移行は記録の migrations（形式 2 では DB の usage_meta。ADR 0106）に残し、二度は直さない。
+// （ADR 0052）。済んだ移行は記録の migrations（形式 2 では DB の usage_meta。ADR 0115）に残し、二度は直さない。
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { usageTotals, claudeUsageDelta, costStatesIn, ZERO_COST } from './backends/claude-cost-state.mjs';

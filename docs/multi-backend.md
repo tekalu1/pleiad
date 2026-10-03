@@ -45,7 +45,7 @@ SDK は 2 つの役割を兼ねていた（棚卸しの結論）。
 
 | | 旧（v1） | 新（v3） |
 |---|---|---|
-| セッションの存在・一覧 | `~/.claude`（SDK `listSessions`） | **各バックエンドのネイティブ一覧 ∪ sidecar**。sidecar（形式 2 では `pleiad.db`。形式 1 の `sessions.json`。[ADR 0106](adr/0106-records-in-sqlite.md)）が全バックエンド横断のインデックス |
+| セッションの存在・一覧 | `~/.claude`（SDK `listSessions`） | **各バックエンドのネイティブ一覧 ∪ sidecar**。sidecar（形式 2 では `pleiad.db`。形式 1 の `sessions.json`。[ADR 0115](adr/0115-records-in-sqlite.md)）が全バックエンド横断のインデックス |
 | タイトル / 状態 | `~/.claude`（customTitle / tag） | **バックエンドがネイティブに持てるならそれが正本**（Claude: customTitle/tag、Codex: thread name）。持てないものは sidecar が正本。書くときは両方に書く |
 | cwd / createdAt | SDK | ネイティブ優先、無ければ sidecar |
 | 変更履歴・parent・statusChangedAt・mode・model・present | sidecar | 変わらず sidecar |

@@ -1,5 +1,5 @@
 // テストが、データ置き場の記録（SQLite。core/db.mjs）を別の接続から読み書きするための道具。
-// 記録は JSON ファイルではなく pleiad.db にある（ADR 0106）。サーバーが動いている間でも読める（WAL）。
+// 記録は JSON ファイルではなく pleiad.db にある（ADR 0115）。サーバーが動いている間でも読める（WAL）。
 import fs from 'node:fs';
 import path from 'node:path';
 import { openRaw, openReadOnly, dbPath, sessionTable, taskTable, usageTable, conversationTable, transaction } from '../../core/db.mjs';

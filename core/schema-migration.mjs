@@ -1,4 +1,4 @@
-// データ置き場の形式 1 → 2 の移行（ADR 0106）。形式 1 は記録ごとの JSON ファイル、形式 2 は SQLite（pleiad.db）。
+// データ置き場の形式 1 → 2 の移行（ADR 0115）。形式 1 は記録ごとの JSON ファイル、形式 2 は SQLite（pleiad.db）。
 //
 // 手順（docs/desktop-releases.md「適用とデータ保護」）。起動時、書き込みを始める前に 1 回だけ走る:
 //   1. 対象の JSON を <data>/backup-schema1-<日時>/ へ写す

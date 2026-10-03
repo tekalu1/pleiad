@@ -1,5 +1,5 @@
 // バックエンドが持たない差分を持つ sidecar ストア。**全バックエンド横断のインデックス**でもある。
-// 置き場は SQLite（pleiad.db。形式 1 では sessions.json。ADR 0005 の索引の正本の置き場が変わっただけで、考え方は ADR 0106）。
+// 置き場は SQLite（pleiad.db。形式 1 では sessions.json。ADR 0005 の索引の正本の置き場が変わっただけで、考え方は ADR 0115）。
 //
 // v1 では正本を全部 ~/.claude（SDK ネイティブ）に置いていたが、
 // codex には等価物が無い（docs/multi-backend.md §2.1 で改訂）。
@@ -47,7 +47,7 @@ const META_KEYS = new Set(["backend", "title", "status", "cwd", "createdAt", "la
  * 設定など、上限が決まっている小さな JSON ファイル（prefs.json・statuses.json）。読みは一度きりでキャッシュ、
  * 書きは一時ファイルへ書いてから置き換える（書き込み中に落ちても既存を壊さない）。
  * 壊れている・無い・オブジェクトでないときは空から始める。
- * 件数・会話の長さで増える記録をここへ置かない（SQLite の行へ。ADR 0106）。
+ * 件数・会話の長さで増える記録をここへ置かない（SQLite の行へ。ADR 0115）。
  */
 function jsonFile(file) {
   let cache = null;
@@ -77,7 +77,7 @@ const statuses = jsonFile(STATUSES);
 // ---- 会話の記録（SQLite。sessions / session_fields。core/db.mjs） ---------------------------------------
 // 読みは最初の 1 回で全部をメモリへ組み、以後はメモリが答える。書きは変えた項目の行だけを、その場で書く
 // （変更のたびに全体を書き直していた sessions.json と違い、会話の数・大きさに 1 回の重さが比例しない）。
-// **DB を先に書き、書けたらメモリへ反映する。** 書けなければ例外を返し、メモリは書く前のまま。公開関数はどれも同じ（ADR 0106）。
+// **DB を先に書き、書けたらメモリへ反映する。** 書けなければ例外を返し、メモリは書く前のまま。公開関数はどれも同じ（ADR 0115）。
 // 置き場は 1 つのプロセスだけが持つ（core/data-lock.mjs）ので、メモリの記録（cache）と DB は食い違わない。
 // cache にある会話は、DB に行がある会話に限る。
 let handle = null;
@@ -471,7 +471,7 @@ export const dataDir = DIR;
 /** Host-only data. 書き込みはその場で行い、書けなければ投げる（durable は互換のために残す。意味は変わらない） */
 export async function setSessionData(sessionId, field, value, { durable = false } = {}) {
   void durable;
-  if (!sessionId || !["draft", "nextSettings", "outbox", "effort", "contextSession", "delegation", "taskNotices", "relayed", "ungrouped", "claudeAccount", "compatEndpoint", "agentLocale", "routing", "compactions", "contextWindow", "autoCompactionOff", "compacted", "hookRuns", "shellPending", "shellExits", "shellKept", "computerApps", "browserProfile", "rewind", "scheduledSends"].includes(field)) throw new Error(t("store.invalidSessionField"));
+  if (!sessionId || !["draft", "nextSettings", "outbox", "effort", "contextSession", "delegation", "taskNotices", "relayed", "ungrouped", "claudeAccount", "compatEndpoint", "agentLocale", "routing", "compactions", "contextWindow", "autoCompactionOff", "compacted", "hookRuns", "shellPending", "shellExits", "shellKept", "computerApps", "browserProfile", "rewind", "scheduledSends", "bot"].includes(field)) throw new Error(t("store.invalidSessionField"));
   return exclusive(async () => {
     const all = await load();
     const before = all[sessionId];

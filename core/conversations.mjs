@@ -14,7 +14,7 @@ import { conversationTable } from "./db.mjs";
 import { classifySystemMessages } from "./system-messages.mjs";
 import { promptTitle } from "./prompt-title.mjs";
 
-// 会話の索引（本文を除いたメタ情報）は SQLite の conversations（1 会話 1 行。core/db.mjs、ADR 0106）、本文は
+// 会話の索引（本文を除いたメタ情報）は SQLite の conversations（1 会話 1 行。core/db.mjs、ADR 0115）、本文は
 // conversations/<id>.json（会話ごとに 1 ファイル）。索引は変えた会話の行だけを書く。本文はまだ変更のたびに 1 会話分を丸ごと書く
 // （会話の長さに比例する。tests/unit/data-writes.mjs の許可リストに既知の例外として載せている）
 const convDir = path.join(store.dataDir, "conversations");

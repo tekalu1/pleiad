@@ -12,6 +12,7 @@ import vm from 'node:vm';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { N } from '../lib/dom-stub.mjs';
+import { enabledRoutineCount, residentSignal } from '../../core/remote/resident.mjs';
 
 const require = createRequire(import.meta.url);
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -236,6 +237,69 @@ export default async function (t) {
     await new Promise(r => setTimeout(r, 0));
     t.ok('モバイル: 添え字を押してもホスト一覧へ', subBacks === 1);
     t.ok('モバイル: タイトルの列が無ければ添え字は作らない', mobile.sub === null);
+  }
+
+  // ---------------------------------------------------------------- 常駐の配線と本体の close
+  {
+    const { keepRunning } = require('../../desktop/resident.cjs');
+    const source = fs.readFileSync(path.join(ROOT, 'desktop/main.cjs'), 'utf8');
+    const closeSource = source.match(/window\.on\('close', event => \{[\s\S]*?\n  \}\);/)[0];
+    for (const remote of [false, true]) for (const keep of [false, true]) for (const routines of [0, 1]) {
+      let close, hidden = 0, exits = 0, prevented = 0;
+      const context = vm.createContext({ quitting: false,
+        window: { on: (_, fn) => { close = fn; }, hide: () => hidden++ },
+        resident: { keepOnClose: () => keepRunning({ remote, keepRunning: keep, routines }) },
+        closeSafely: () => exits++,
+      });
+      vm.runInContext(closeSource, context);
+      close({ preventDefault: () => prevented++ });
+      const stays = (remote && keep) || routines > 0;
+      t.ok(`窓の close: remote=${remote}, keep=${keep}, routines=${routines}`,
+        prevented === 1 && hidden === Number(stays) && exits === Number(!stays));
+      context.quitting = true;
+      close({ preventDefault: () => prevented++ });
+      t.ok('終了処理中は常駐を理由に閉じる操作を妨げない', prevented === 1);
+    }
+
+    const serverSource = fs.readFileSync(path.join(ROOT, 'core/server.mjs'), 'utf8');
+    const postSource = serverSource.match(/async function postResident\([\s\S]*?\n\}/)[0];
+    const emitSource = serverSource.match(/function emitGlobal\([\s\S]*?\n\}/)[0];
+    const sent = [];
+    let rows = [{ paused: false }, { paused: true }];
+    const context = vm.createContext({
+      process: { parentPort: { postMessage: message => sent.push(message) } },
+      residentPrefs: { get: () => ({ keepRunning: false, sleep: 'working' }) },
+      botHost: { opsDeps: () => ({ routines: { list: async () => rows } }) },
+      locale: { lang: 'ja' }, enabledRoutineCount, residentSignal,
+      LIST_NEUTRAL_EVENTS: new Set(), invalidateSessionLists() {}, streamEvents: new Set(),
+      runtime: { turns: new Map() }, P: { EVENT: 'event' }, sendTo: () => true,
+    });
+    vm.runInContext(`let residentLast = '', residentStatus = null, residentWork = null, residentSeq = 0;
+${postSource}
+${emitSource}`, context);
+    await context.postResident({ status: { enabled: false } });
+    t.ok('起動時の通知はリモートが無効でも有効なルーティンの件数を届ける', sent.at(-1).state.routines === 1 && sent.at(-1).state.remote === false);
+    rows = [{ paused: true }];
+    context.emitGlobal({ type: 'routinesChanged' });
+    await new Promise(resolve => setImmediate(resolve));
+    t.ok('窓の接続が無くてもルーティンの変更を main へ届ける', sent.length === 2 && sent.at(-1).state.routines === 0);
+    await context.postResident();
+    t.ok('同じ状態は送り直さない', sent.length === 2);
+    const reads = [];
+    context.botHost = { opsDeps: () => ({ routines: { list: () => new Promise(resolve => reads.push(resolve)) } }) };
+    const older = context.postResident();
+    const newer = context.postResident();
+    reads[1]([{ paused: false }, { paused: false }]);
+    await newer;
+    reads[0]([]);
+    await older;
+    t.ok('件数の読み込みが前後しても古い状態でトレイを消さない', sent.length === 3 && sent.at(-1).state.routines === 2);
+    context.botHost = null;
+    await context.postResident();
+    t.ok('bots-host が無ければ従来どおり 0 件として送る', sent.at(-1).state.routines === 0);
+    context.process.parentPort = null;
+    await context.postResident();
+    t.ok('通常のサーバー版にはデスクトップの通知を送らない', sent.length === 4);
   }
 
   // ---------------------------------------------------------------- 本体の文言

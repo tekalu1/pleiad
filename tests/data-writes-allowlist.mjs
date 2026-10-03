@@ -1,6 +1,6 @@
 // core/・desktop/・bin/ がデータ置き場（や、その外のファイル）を書く・置き換える箇所の許可リスト（tests/unit/data-writes.mjs が突き合わせる）。
 //
-// 決まり（AGENTS.md「データ置き場の保存」、ADR 0106）: 記録の件数や会話の長さとともに大きくなる単一ファイルを、データ置き場に作らない。
+// 決まり（AGENTS.md「データ置き場の保存」、ADR 0115）: 記録の件数や会話の長さとともに大きくなる単一ファイルを、データ置き場に作らない。
 // 件数で増える記録は DB（pleiad.db）の行にする。JSON ファイルは上限の決まったものだけで、上限と理由をここに書く。
 // 新しく書く箇所を足したら、ここへ 1 件足す（file・sites・targets）。足せないなら、行にする。
 //
@@ -10,8 +10,10 @@
 //     name       データ置き場からの相対パス（外なら「(置き場の外)」と書く）
 //     limit      大きさを決めるもの（定数名と値、または「ユーザーが数個作る」など）。空にしない
 //     reason     丸ごと書いてよい理由
-//     unbounded  true: 上限が決まっていない（件数・会話の長さで増える）。既知の例外で、DB の行へ移す宿題（ADR 0106「影響」）。
+//     unbounded  true: 上限が決まっていない（件数・会話の長さで増える）うえに、変更のたびに丸ごと書く。既知の例外で、DB の行へ移す宿題（ADR 0115「影響」）。
 //                増やさない。減らすときは行へ移したとき
+//     appendOnly true: 追記だけで、丸ごとは書かない（1 回の更新が 1 行の追記。大きさは件数で増えるが、更新の重さは大きさに比例しない）。
+//                ログ・操作の記録の置き場。件数の上限は決めない
 
 export const DB_ONLY = ['sessions.json', 'agent-tasks.json', 'usage.json', 'conversations.json'];
 
@@ -84,7 +86,7 @@ export const DATA_WRITES = [
     { name: 'notify.json', limit: '固定', reason: 'この PC の通知設定' },
   ] },
   { file: 'core/secret-store.mjs', sites: 8, targets: [
-    { name: 'mcp-secrets.json・claude-account-secrets.json・compat-endpoint-secrets.json・remote/secrets.json', limit: 'MCP サーバー・アカウント・接続先・端末の数。ユーザーが数個', reason: '暗号化した秘密。1 件ごとに小さい' },
+    { name: 'mcp-secrets.json・claude-account-secrets.json・compat-endpoint-secrets.json・webhook-secrets.json・remote/secrets.json', limit: 'MCP サーバー・アカウント・接続先・端末の数。ユーザーが数個', reason: '暗号化した秘密。1 件ごとに小さい' },
     { name: '<上の秘密ファイル>.lock', limit: '固定の小ささ（pid だけ）', reason: 'ロックファイル' },
   ] },
   { file: 'core/remote/devices.mjs', sites: 2, targets: [
@@ -133,6 +135,23 @@ export const DATA_WRITES = [
   ] },
   { file: 'desktop/updates.cjs', sites: 2, targets: [
     { name: '(置き場の外) Electron の userData の、更新の設定', limit: '固定（チャンネル・自動確認・自動ダウンロード・最後の版）', reason: '更新の設定。一時ファイルに書いて置き換える' },
+  ] },
+  { file: 'core/bots/store.mjs', sites: 1, targets: [
+    { name: 'bots.json', limit: 'bot の定義。人が 1 件ずつ作る（1 件の大きさは NAME_MAX=32 字・PERSONA_MAX_CHARS=6000 字・FOLDERS_MAX=20・SEND_TARGETS_MAX=100。件数の上限はコードに無いが、通常は数個から数十）', reason: '設定の台帳。増え方は利用量ではなく利用者の操作に比例する' },
+  ] },
+  { file: 'core/routines/store.mjs', sites: 1, targets: [
+    { name: 'routines.json', limit: 'ルーティンの定義と最後に動いた時刻（last）。人が 1 件ずつ作る（1 件は NAME_MAX=80 字・PROMPT_MAX=12000 字。件数の上限はコードに無いが、通常は数個から数十）', reason: '設定の台帳。発火のたびに last を書き直すが、行は定義の数しか無い' },
+  ] },
+  { file: 'core/bots/inbox.mjs', sites: 1, targets: [
+    { name: 'channels/inbox.json', limit: '送り終えた（sent）・結果不明（unknown）は新しい KEEP_DONE=100 件だけ。pending・delivering は配り終えると sent になる一時のもの', reason: 'bot へ届ける前の出来事の保存（保存できなければ受け付けない）。件数は一時の数と 100 に収まる' },
+  ] },
+  { file: 'core/channels/store.mjs', sites: 2, targets: [
+    { name: 'channels/index.json', limit: 'チャンネル・DM の定義と既読の印（channels と reads）。チャンネルを作るのは人と AI で、件数の上限はコードに無いが、通常は数個から数十', reason: '設定の台帳。投稿は入れない（投稿は下の追記ログ）' },
+    { name: 'channels/<channelId>.jsonl', limit: '投稿・編集・削除・リアクションの操作の数（1 行 1 操作）', reason: 'チャンネルの正本（ADR 0108）。追記だけで、1 投稿の保存が 1 行の追記。読むときに畳む', appendOnly: true },
+  ] },
+  { file: 'core/memory/store.mjs', sites: 2, targets: [
+    { name: 'memory/user.md・memory/bots/<botId>.md', limit: '層ごとの記憶の件数（1 件は MEMORY_TEXT_MAX=300 字。層の件数の上限はコードに無い）', reason: '記憶の正本は人が読んで直せる markdown（ADR 0110）。変更のたびに 1 層を丸ごと書く。DB の行へ移すと、人が直せる形をやめることになるので、別の決定（ADR 0110 の置き換え）が要る', unbounded: true },
+    { name: 'memory/log.jsonl', limit: '記憶の変更（add・edit・forget・unforget）の数', reason: '変更の記録（rev・墓石）。追記だけで、1 変更が 1 行', appendOnly: true },
   ] },
   { file: 'core/hooks-config.mjs', sites: 2, targets: [
     { name: '(置き場の外) 利用者の ~/.claude・~/.codex・プロジェクトの hooks 設定', limit: '利用者の設定ファイル', reason: 'データ置き場ではない' },

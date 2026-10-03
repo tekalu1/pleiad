@@ -74,7 +74,7 @@ export function finalReply(messages) {
 // - 起きたことの記録（結果・送った通知・止めたこと）は取り消せないので、メモリはそのままにして後で書き直す（record）。
 // - 障害の間は、スケジューラーは間隔を空けて保存をやり直すだけにする。list / status はメモリの状態を障害中の印付きで返す。
 // ready は「親が完了通知を受け取れるか」。受け取れない間は delivering にせず、ファイルも書かない。
-// 記録は SQLite の agent_tasks（1 タスク 1 行。core/db.mjs、ADR 0106）。保存するのは変わった行だけで、タスクが増えても 1 回の保存は重くならない。
+// 記録は SQLite の agent_tasks（1 タスク 1 行。core/db.mjs、ADR 0115）。保存するのは変わった行だけで、タスクが増えても 1 回の保存は重くならない。
 // taskStorage・io・log・retryMax はテストで失敗を差し込み、記録を読み、待ちを縮めるためのもの（taskStorage は { loadRows(), save(rows) }、io は障害の記録のファイル）
 // ready は「親が新しいターンで完了通知を受け取れるか」、steerable は「走っている親のターンへ今すぐ渡せるか」（ADR 0057）。
 // deliver は同じ親へ届ける完了通知（1 件以上）をまとめて受け取る。無音・コマンドの通知は ready だけで決める

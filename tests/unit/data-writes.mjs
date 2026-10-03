@@ -1,4 +1,4 @@
-// 再発防止（ADR 0106）: core/・desktop/・bin/ がファイルを書く・置き換える箇所は、許可リスト（tests/data-writes-allowlist.mjs）に
+// 再発防止（ADR 0115）: core/・desktop/・bin/ がファイルを書く・置き換える箇所は、許可リスト（tests/data-writes-allowlist.mjs）に
 // 上限と理由を書いたものだけ。リストに無い書き込みを足すと落ちる。件数・会話の長さで増える記録は DB の行にする。
 // 走査（tests/lib/data-writes-scan.mjs）は fs の書き込みの API を、別名・名前付きの読み込み・FileHandle・ストリーム・
 // コピー・リネームまで広く拾う。
@@ -59,8 +59,10 @@ export default async function (t) {
   t.ok('DB の行にした記録（sessions.json・agent-tasks.json・usage.json・conversations.json）を丸ごと書く許可は無い', named.length === 0, named.map(({ target }) => target.name).join(' / '));
   const unbounded = lines.filter(({ target }) => target.unbounded);
   t.ok('上限の無い書き先は既知の例外として印が付き、理由がある', unbounded.every(({ target }) => target.reason.length >= 8));
-  // 既知の例外の数。増やさない（減らすときは、行へ移したときに数字を下げる）
-  const KNOWN_UNBOUNDED = 9;
+  const appendOnly = lines.filter(({ target }) => target.appendOnly);
+  t.ok('追記だけの書き先（ログ）は、unbounded と同時に付けない（追記だけなら更新の重さは大きさに比例しない）', appendOnly.every(({ target }) => !target.unbounded && target.reason.length >= 8));
+  // 既知の例外の数。増やさない（減らすときは、行へ移したときに数字を下げる）。10 件目は記憶の markdown（ADR 0110 の「人が直せる正本」。置き換えが要る）
+  const KNOWN_UNBOUNDED = 10;
   t.ok(`上限の無い既知の例外は ${KNOWN_UNBOUNDED} 件を超えない（増やさず、DB の行へ移して減らす）`, unbounded.length <= KNOWN_UNBOUNDED, `${unbounded.length} 件: ${unbounded.map(({ target }) => target.name).join(' / ')}`);
   t.ok('許可リストのパスは走査の対象（core・desktop・bin）の下', DATA_WRITES.every(entry => SCANNED_DIRS.some(dir => entry.file.startsWith(`${dir}/`)) && /\.(?:mjs|cjs|js)$/.test(path.posix.basename(entry.file))));
 }

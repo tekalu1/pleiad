@@ -5,7 +5,7 @@ import { acquire, checkDb, createDb, dbPath } from './db.mjs';
 import { acquireDataLock } from './data-lock.mjs';
 import { migrateSchema1To2, finishSchema1To2, legacyFiles, removeLegacy, writeSchemaFile } from './schema-migration.mjs';
 
-// 2: 件数とともに増える記録は SQLite（pleiad.db）の行（ADR 0106）。1 は記録ごとの JSON ファイル。
+// 2: 件数とともに増える記録は SQLite（pleiad.db）の行（ADR 0115）。1 は記録ごとの JSON ファイル。
 // 形式番号を上げる変更は、バックアップ → 移行 → 突き合わせ → 番号の更新を、ここと同じ形（core/schema-migration.mjs）で足す。
 export const DATA_SCHEMA = 2;
 

@@ -50,5 +50,10 @@
 - 同じ置き場を使うプロセスは 1 つだけになる。デスクトップ版が動いている間に、同じ `~/.agent-host` で `npm start` した 2 台目は起動を止める（別の置き場・別のポートで立てるのは今までどおり）。
 - 古い版のアプリは形式 2 を見て起動を止める。移行前の写し（`backup-schema1-*`）は自動では消さない（利用者が確かめてから消す。大きさは移行前の JSON と同じ）。
 - 既知の例外（上限が決まっておらず、まだ丸ごと書くもの）は許可リストに「既知」と書き、別の作業で行へ移す: 会話の本文 `conversations/<id>.json`（変更のたびに 1 会話分を丸ごと書く。会話の長さに比例する）、`presents/*.jsonl`、`handoff-*.json`、`antigravity/<id>.json`、`schedule.json`・`setting-approvals.json`・`worktrees.json`（件数は通常小さい）。
+- bot・Channels・記憶・ルーティン（[ADR 0106](0106-bots-channels-routines.md)〜0114。main の 0.6.0 の分）を取り込んだときに、新しい保存先を同じ決まりで分けた（2026-10-03）。
+  - **行にした**: スレッドの状態（`channels/threads.json` → `channel_threads`、1 スレッド 1 行。bot のターンのたびにトークンの足し算で全体を書き直していた）と、夜の整理の進み（`memory/learn-state.json` → `memory_state`、会話・チャンネルごとのカーソルを 1 件 1 行）。会話の記録の `bot` の項目は `session_fields` の 1 行、使用量の `sessionId` は `usage_records` の JSON の中に持ち、`usage.records({ sessionIds, since })` は `json_extract` の式の索引で引く。
+  - **JSON のまま、上限と理由を許可リストに書いた**: `bots.json`・`routines.json`・`channels/index.json`（人が作る定義と既読の印）、`channels/inbox.json`（送り終えたものは 100 件まで）。
+  - **追記だけのログ**（`appendOnly`。1 回の更新が 1 行の追記で、更新の重さが大きさに比例しない）: `channels/<channelId>.jsonl`（ADR 0108）・`memory/log.jsonl`。
+  - **既知の例外に足した**: 記憶の markdown（`memory/user.md`・`memory/bots/<botId>.md`。変更のたびに 1 層を丸ごと書く。件数の上限はコードに無い）。記憶の正本は人が読んで直せる markdown だと [ADR 0110](0110-bot-memory.md) が決めているので、行にするなら、その決定の置き換えが要る。
 - データ置き場を直接読む手順は DB に合わせた。実データの写しは `scripts/copy-data-dir.mjs`（`remote/`・`*-secrets.json` を写さず、DB は読み取り専用の接続で `VACUUM INTO`）、テストは `tests/lib/data-store.mjs`。
 - 2026-10-03 の実データでの測定（開発機。写しで測った）: JSON 4 つ計 35.4MB（`sessions.json` 27.3MB・`agent-tasks.json` 5.0MB・`usage.json` 1.4MB・`conversations.json` 1.7MB）が `pleiad.db` 25.5MB になった。移行は 0.9 秒。会話 1,112 件の読み込み 0.13 秒（以前と同じメモリへの読み込み）。1 回の更新は、`sessions.json` の全体を書き直す 70〜80 ミリ秒（`JSON.stringify` と書き込み。毎回）に対して、`synchronous=FULL` で会話の項目 0.6〜0.8 ミリ秒（`contextSession` は 1.3 ミリ秒）、タスクの状態変化 2.5 ミリ秒（1 回の操作で数回書く）、使用量の記録 0.6 ミリ秒（`NORMAL` なら 0.02〜0.08 ミリ秒だった。fsync の分）。`contextSession` は 9.4MB が 1.8MB（`report.entries` は 788 行・0.34MB に寄る）。

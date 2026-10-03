@@ -1,4 +1,4 @@
-// データ置き場の SQLite（pleiad.db）。件数・会話の長さとともに増える記録の置き場（ADR 0106）。
+// データ置き場の SQLite（pleiad.db）。件数・会話の長さとともに増える記録の置き場（ADR 0115）。
 //
 // 1 ファイル・WAL。書くのは変わった行だけで、記録の件数が増えても 1 回の書き込みは重くならない。
 // node:sqlite は同期 API。呼び出し側（store・usage・agent-tasks・conversations）は自分の直列化の中で呼ぶ。
@@ -70,12 +70,36 @@ CREATE TABLE IF NOT EXISTS usage_records (
 );
 CREATE INDEX IF NOT EXISTS usage_records_id ON usage_records (id);
 CREATE INDEX IF NOT EXISTS usage_records_backend_at ON usage_records (backend, at);
+CREATE INDEX IF NOT EXISTS usage_records_session ON usage_records (json_extract(data, '$.sessionId'));
 CREATE TABLE IF NOT EXISTS conversations (
   seq INTEGER PRIMARY KEY AUTOINCREMENT,
   id TEXT NOT NULL UNIQUE,
   data TEXT NOT NULL
 );
 `;
+
+// 後から足した表（bot・Channels・記憶）。REQUIRED_TABLES には入れない（無くても失った記録は無い）。
+// 新しい DB は SCHEMA_SQL と一緒に作り、既にある形式 2 の DB には、使う側が最初に開くとき足す（ensureLateTables）
+export const LATE_TABLES_SQL = `
+CREATE TABLE IF NOT EXISTS channel_threads (
+  thread_key TEXT PRIMARY KEY,
+  channel_id TEXT NOT NULL,
+  data TEXT NOT NULL
+) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS channel_threads_channel ON channel_threads (channel_id);
+CREATE TABLE IF NOT EXISTS memory_state (
+  kind TEXT NOT NULL,
+  id TEXT NOT NULL,
+  value TEXT NOT NULL,
+  PRIMARY KEY (kind, id)
+) WITHOUT ROWID;
+`;
+const lateEnsured = new WeakSet();
+function ensureLateTables(db) {
+  if (lateEnsured.has(db)) return;
+  db.exec(LATE_TABLES_SQL);
+  lateEnsured.add(db);
+}
 
 export const REQUIRED_TABLES = ['sessions', 'session_fields', 'context_entries', 'context_entry_refs', 'agent_tasks', 'usage_meta', 'usage_records', 'conversations'];
 
@@ -95,6 +119,7 @@ export function openRaw(file, { readOnly = false, create = false } = {}) {
     db.exec('PRAGMA synchronous = FULL');
     if (create) {
       db.exec(SCHEMA_SQL);
+      db.exec(LATE_TABLES_SQL);
       db.exec(`PRAGMA user_version = ${DB_VERSION}`);
     }
   }
@@ -324,8 +349,58 @@ export function usageTable(db) {
     recent(backend, since) {
       return prepared(db, 'SELECT data FROM usage_records WHERE backend = ? AND at >= ? ORDER BY seq').all(backend, since).map(row => JSON.parse(row.data));
     },
+    /** 会話ごとの記録（bot ごと・スレッドごとの合計。ADR 0109）。sessionIds の会話の、at が since 以後のもの（作った順）。sessionId を持たない古い記録は載らない */
+    forSessions(sessionIds, since = 0) {
+      const out = [];
+      for (let i = 0; i < sessionIds.length; i += 400) {
+        const chunk = sessionIds.slice(i, i + 400);
+        const marks = chunk.map(() => '?').join(',');
+        for (const row of db.prepare(`SELECT seq, data FROM usage_records WHERE json_extract(data, '$.sessionId') IN (${marks}) AND at >= ? ORDER BY seq`).iterate(...chunk, since)) out.push([row.seq, JSON.parse(row.data)]);
+      }
+      return out.sort((a, b) => a[0] - b[0]).map(([, record]) => record);
+    },
     count() { return Number(prepared(db, 'SELECT COUNT(*) AS n FROM usage_records').get().n); },
     since() { return meta('since'); },
+  };
+}
+
+// ---- スレッドの状態（channels/threads.json の後継）。1 スレッド 1 行 -----------------------------------
+// スレッドの状態は、bot のターンのたびにトークンの足し算などで書き換わり、スレッドの数だけ増える。全体を書き直さない
+export function threadTable(db) {
+  ensureLateTables(db);
+  return {
+    /** { [thread_key]: ThreadState }。作った順は問わない */
+    loadAll() {
+      const out = {};
+      for (const row of prepared(db, 'SELECT thread_key, data FROM channel_threads').iterate()) out[row.thread_key] = JSON.parse(row.data);
+      return out;
+    },
+    put(key, channelId, json) {
+      prepared(db, 'INSERT INTO channel_threads (thread_key, channel_id, data) VALUES (?, ?, ?) ON CONFLICT (thread_key) DO UPDATE SET channel_id = excluded.channel_id, data = excluded.data').run(key, channelId, json);
+    },
+  };
+}
+
+// ---- 夜の整理の進み（memory/learn-state.json の後継）。会話・チャンネルごとのカーソルを 1 件 1 行 ---------------
+// kind: 'cursor.sessions'・'cursor.posts'・'cursor.postOffsets' など（id は会話・チャンネルの id）、'meta'（lastRunAt）
+export function memoryStateTable(db) {
+  ensureLateTables(db);
+  return {
+    loadAll() {
+      const out = {};
+      for (const row of prepared(db, 'SELECT kind, id, value FROM memory_state').iterate()) (out[row.kind] ??= {})[row.id] = JSON.parse(row.value);
+      return out;
+    },
+    /** changes: [[kind, id, value]]。value が undefined なら行を消す。1 つのトランザクションで書く */
+    save(changes) {
+      if (!changes.length) return;
+      transaction(db, () => {
+        for (const [kind, id, value] of changes) {
+          if (value === undefined) prepared(db, 'DELETE FROM memory_state WHERE kind = ? AND id = ?').run(kind, id);
+          else prepared(db, 'INSERT INTO memory_state (kind, id, value) VALUES (?, ?, ?) ON CONFLICT (kind, id) DO UPDATE SET value = excluded.value').run(kind, id, jsonOf(value));
+        }
+      });
+    },
   };
 }
 
@@ -376,6 +451,9 @@ export function acquire(dir, prepare = () => {}) {
     },
   };
 }
+
+/** この置き場の共有している接続の数（0 なら閉じている。データ置き場を消す前の確認・テスト用） */
+export const openCount = dir => open.get(path.resolve(dir))?.refs ?? 0;
 
 /** 読み取り専用で開く（別のプロセスから見る・調査用）。無ければ null */
 export function openReadOnly(dir) {

@@ -131,6 +131,8 @@ const totals = value => value && typeof value === 'object' ? Object.fromEntries(
 export function usageRecord(record, at) {
   const safe = { id: record.id, backend: record.backend, at, ...Object.fromEntries(USAGE_KEYS.map(key => [key, number(record[key])])) };
   if (typeof record.nativeSessionId === 'string' && /^[\w-]{1,200}$/.test(record.nativeSessionId)) safe.nativeSessionId = record.nativeSessionId;
+  // どの会話のターンか（bot ごと・スレッドごとの合計を引くため。ADR 0109）。この欄が付く前の記録には無い
+  if (typeof record.sessionId === 'string' && /^[\w-]{1,200}$/.test(record.sessionId)) safe.sessionId = record.sessionId;
   if ('cumulativeStart' in record || 'cumulativeEnd' in record) {
     safe.cumulativeStart = totals(record.cumulativeStart); safe.cumulativeEnd = totals(record.cumulativeEnd);
   }
@@ -141,7 +143,7 @@ export const USAGE_MIGRATIONS = Object.freeze([CLAUDE_COST_DELTA]);
 
 /**
  * 使用量の記録（SQLite の usage_meta・usage_records。core/db.mjs）。1 ターン 1 行で、足すのは新しい 1 行だけ。
- * 以前の usage.json（全体を毎回書き直す）は形式 2 への移行で取り込む（ADR 0106）。dir は データ置き場
+ * 以前の usage.json（全体を毎回書き直す）は形式 2 への移行で取り込む（ADR 0115）。dir は データ置き場
  */
 export function createUsageStore(dir, { now = Date.now } = {}) {
   let handle = null, table = null;
@@ -175,6 +177,11 @@ export function createUsageStore(dir, { now = Date.now } = {}) {
     },
     /** DB の接続を離す（データ置き場を消す前。サーバーは閉じない） */
     async close() { await writes.catch(() => {}); handle?.release(); handle = null; table = null; },
+    /** 会話ごとの記録（bot ごと・スレッドごとの合計を引く。ADR 0109）。sessionIds に含まれる会話の、since（ms）以降の記録。sessionId を持たない古い記録は載らない */
+    async records({ sessionIds, since = 0 } = {}) {
+      await writes;
+      return open().forSessions([...new Set(sessionIds ?? [])], since);
+    },
     async summary(backend) {
       await writes;
       const rows = open();

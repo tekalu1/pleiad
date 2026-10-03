@@ -23,6 +23,11 @@
 <link rel="stylesheet" href="/notify-settings.css">
 <link rel="stylesheet" href="/git.css">
 <link rel="stylesheet" href="/worktree.css">
+<link rel="stylesheet" href="/channels-side.css">
+<link rel="stylesheet" href="/channels-feed.css">
+<link rel="stylesheet" href="/channels-thread.css">
+<link rel="stylesheet" href="/bot-page.css">
+<link rel="stylesheet" href="/routines.css">
 <!-- i18next はビルドしないので、裸の名前をサーバーの配信口へ向ける（core/server.mjs の /vendor/i18next.mjs）。モジュールより前に置く -->
 <script type="importmap">{ "imports": { "i18next": "/vendor/i18next.mjs" } }</script>
 <!-- 最初の描画より前に、配色・言語・窓の枠（デスクトップ版だけ）・脇の開閉を決める。client.mjs を待つと一瞬ずれて見える。
@@ -36,6 +41,7 @@
     const theme = localStorage.getItem('agent-host-theme');
     if (theme === 'light' || theme === 'dark') root.dataset.theme = theme;
     if (localStorage.getItem('agent-host-sidebar') === 'closed') root.classList.add('side-closed');
+    if (localStorage.getItem('agent-host-side-tab') === 'channels') root.classList.add('side-channels');
   } catch {}
   if (desk) root.classList.add('desktop', desk.platform === 'darwin' ? 'mac' : 'overlay');
   // リモートの窓（desktop/remote-preload.cjs の plyRemote）。帯にホスト名のバッジを置き、タイトル行を帯に上げる（web/remote-badge.mjs）
@@ -61,6 +67,11 @@
       <button type="button" class="btn btn-icon" id="settings" data-i18n-title="app.settings" data-i18n-aria-label="app.settings"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="m9.5 3-.5 2a8 8 0 0 0-1.5.9l-2-.6-2.5 4.4 1.5 1.4a8 8 0 0 0 0 1.8L3 14.3l2.5 4.4 2-.6A8 8 0 0 0 9 19l.5 2h5l.5-2a8 8 0 0 0 1.5-.9l2 .6 2.5-4.4-1.5-1.4a8 8 0 0 0 0-1.8L21 9.7l-2.5-4.4-2 .6A8 8 0 0 0 15 5l-.5-2z"/><circle cx="12" cy="12" r="3"/></svg></button>
       <button type="button" class="btn btn-icon side-toggle" id="closeSidebar" data-i18n-title="app.closeSidebarTitle" data-i18n-aria-label="app.closeSidebar" aria-controls="sidebar" aria-keyshortcuts="Control+B"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="4"/><path d="M9.5 4v16"/></svg></button>
     </header>
+    <!-- 脇の Chats / Channels の切り替え（web/channels/side-tabs.mjs、ADR 0107）。見ていない側の札に点（.tab-dot.mark = あなた待ち / .unread = 未読） -->
+    <nav class="side-tabs" id="sideTabs" role="tablist" data-i18n-aria-label="channels:side.tabs.label">
+      <button type="button" class="side-tab" id="tabChats" role="tab" aria-selected="true" aria-controls="groups"><span data-i18n="channels:side.tabs.chats"></span><i class="tab-dot" hidden aria-hidden="true"></i></button>
+      <button type="button" class="side-tab" id="tabChannels" role="tab" aria-selected="false" aria-controls="channelsSide" tabindex="-1"><span data-i18n="channels:side.tabs.channels"></span><i class="tab-dot" hidden aria-hidden="true"></i></button>
+    </nav>
     <div class="search">
       <!-- 題・状態・場所と会話の本文を探す（web/side.mjs）。語があるときは下の一覧が結果の listbox になる。Ctrl+Shift+F（macOS は ⌘⇧F）でどこからでも入れる -->
       <div class="qbox">
@@ -79,6 +90,12 @@
     </div>
     <span class="sr-live" id="resLive" role="status" aria-live="polite"></span>
     <div class="groups" id="groups"></div>
+    <!-- Channels を選んでいる間、#groups と入れ替わる（web/channels/sidebar.mjs が行を作る）。行は .cs-row[data-kind][data-id] -->
+    <div class="channels-side" id="channelsSide" role="tabpanel" aria-labelledby="tabChannels" hidden>
+      <section class="cs-sec" data-sec="channels"><h2 data-i18n="channels:side.sections.channels"></h2><div class="cs-rows"></div></section>
+      <section class="cs-sec" data-sec="bots"><h2 data-i18n="channels:side.sections.bots"></h2><div class="cs-rows"></div></section>
+      <section class="cs-sec" data-sec="routines"><h2 data-i18n="channels:side.sections.routines"></h2><div class="cs-rows"></div></section>
+    </div>
     <!-- 設定を開いている間、セッション一覧と入れ替わる。見出しと行は状態・セッションと同じ形 -->
     <nav class="settings-menu" id="settingsNav" data-i18n-aria-label="app.settings">
       <h2 data-i18n="app.settings"></h2>
@@ -372,6 +389,16 @@
         <!-- 中身は web/remote.mjs が作る -->
         <section id="remotePanel" data-i18n-aria-label="settings.nav.remote" hidden></section>
       </div>
+    </section>
+
+    <!-- ==================== Channels（脇のタブが Channels の間だけ会話を覆う。web/channels/） ==================== -->
+    <section class="channels-view" id="channelsView" aria-labelledby="channelsPageTitle" inert>
+      <header class="top">
+        <button type="button" class="btn btn-icon side-toggle" id="chOpenSidebar" data-i18n-title="app.openSidebarTitle" data-i18n-aria-label="app.openSidebarTitle" aria-controls="sidebar" aria-keyshortcuts="Control+B"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="4"/><path d="M9.5 4v16"/></svg></button>
+        <h2 id="channelsPageTitle" data-i18n="channels:side.tabs.channels"></h2>
+      </header>
+      <!-- チャンネルの流れ・スレッド・bot のページ・ルーティンの編集は、各パッケージがこの中に作る -->
+      <div class="ch-body" id="channelsBody"><p class="ch-empty" data-i18n="channels:feed.empty"></p></div>
     </section>
   </main>
 

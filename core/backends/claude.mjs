@@ -316,6 +316,18 @@ function buildToolServer(ctx) {
   });
 }
 
+/**
+ * 読み取り専用のフォルダーの deny ルール。Claude Code の `Edit(...)` は Edit・Write・NotebookEdit などファイルを書き換える道具に掛かる。
+ * パスは `//` で始めるとファイルシステムの根からの絶対パス。Windows は 'C:\a\b' を '//c/a/b' にそろえる（Claude Code の照合の形）
+ */
+export function readOnlyDenyRules(roots) {
+  return roots.map((root) => {
+    const p = String(root).replace(/[\\]/g, '/').replace(/\/+$/, '');
+    const drive = /^([A-Za-z]):(\/.*)?$/.exec(p);
+    return `Edit(/${drive ? `/${drive[1].toLowerCase()}${drive[2] ?? ''}` : p}/**)`;
+  });
+}
+
 // ---------------------------------------------------------------- 承認
 
 /**
@@ -613,7 +625,7 @@ export const backend = {
    * 1ターン回す。正規化イベントだけを emit する（生の SDK メッセージは外に出さない）。
    * 新規セッションは走り出すまで id が無いので、確定した時点で `session` イベントを出す。
    */
-  async runTurn({ prompt, sessionId, cwd, mode, model, effort, emit, onPromptDelivered, askPermission, signal, control, hostSessionId, hostBackend, hostInvoke, visualizeInstructions, browserEnv, browserInstructions, browserRuntime = null, contextRuntime, agentRuntime, computerRuntime = null, controlRuntime = null, hooksRuntime = null, oauthToken, endpoint = null, locale, compact, shellAppends = [], notes = [], rewind = null }) {
+  async runTurn({ prompt, sessionId, cwd, mode, model, effort, emit, onPromptDelivered, askPermission, signal, control, hostSessionId, hostBackend, hostInvoke, visualizeInstructions, browserEnv, browserInstructions, browserRuntime = null, contextRuntime, agentRuntime, computerRuntime = null, controlRuntime = null, hooksRuntime = null, oauthToken, endpoint = null, locale, compact, shellAppends = [], notes = [], botInstructions = null, botFolders = null, rewind = null }) {
     // locale は会話の言語（host ツールの説明と承認の deny の理由。core/server.mjs が会話ごとに決めて渡す）
     const ctx = { sessionId: sessionId ?? null, emit, hostSessionId, hostBackend, hostInvoke, locale };
     // このターンで呼んだ ply_computer の tool_use の id。tool_result に名前は載らないので、印の行を読むのはこの id の結果だけにする
@@ -682,7 +694,7 @@ export const backend = {
     // 同じ値をフラグ設定のファイルにも書く（ユーザーの settings.json の env が options.env に勝つため。オブジェクトで渡すと argv にキーが載る）。
     // Pleiad の担当の設定（claudeContextOptions の settings）も同じファイルに入れる
     // Hooks を Pleiad がそろえる会話（hooksRuntime。ADR 0049）は、ネイティブの hooks をフラグ設定の disableAllHooks で止め、登録をコールバックで渡す
-    const contextOptions = claudeContextOptions(contextRuntime, { compact: Boolean(compact), hooks: Boolean(hooksRuntime) });
+    const contextOptions = claudeContextOptions(contextRuntime, { compact: Boolean(compact), hooks: Boolean(hooksRuntime), bot: Boolean(botInstructions) });
     const compactDiagnostic = compact ? createClaudeCompactDiagnostic() : null;
     const flag = endpoint ? await writeClaudeFlagSettings(store.dataDir, endpoint, contextOptions.settings) : null;
     const hide = text => redactSecret(redactToken(text, oauthToken), endpoint?.key);
@@ -718,7 +730,13 @@ export const backend = {
         ...contextOptions,
         extraArgs: claudeQueryExtraArgs(contextOptions),
         ...(flag ? { settings: flag.file } : {}),
-        ...((visualizeInstructions || browserInstructions || contextRuntime?.prompt || agentRuntime?.instructions || computerInstructions || controlRuntime?.instructions) ? { systemPrompt: { type: 'preset', preset: 'claude_code', append: [contextRuntime?.prompt, visualizeInstructions, browserInstructions, agentRuntime?.instructions, computerInstructions, controlRuntime?.instructions].filter(Boolean).join('\n\n') } } : {}),
+        // bot の人格（core/bots/sessions.mjs の botInstructions）は並びの最後。同じ bot なら毎ターン同じバイト列（キャッシュを壊さない）。
+        // snapshot: false は bot の会話だけ。CLI は最初のターンのシステムプロンプトを記録して、後のターンで別の append を渡しても使い回す（既定）。
+        // それだと人格を直しても動いている会話に届かない（2026-10-03 の実機の確認）。毎ターン組み直せば、同じ人格のあいだは同じバイト列でキャッシュは保たれ、直したターンだけ落ちる
+        ...((visualizeInstructions || browserInstructions || contextRuntime?.prompt || agentRuntime?.instructions || computerInstructions || controlRuntime?.instructions || botInstructions) ? { systemPrompt: { type: 'preset', preset: 'claude_code', append: [contextRuntime?.prompt, visualizeInstructions, browserInstructions, agentRuntime?.instructions, computerInstructions, controlRuntime?.instructions, botInstructions].filter(Boolean).join('\n\n'), ...(botInstructions ? { snapshot: false } : {}) } } : {}),
+        // bot の触れてよいフォルダー（cwd の外の分）。読み取り専用（ro）のフォルダーは、acceptEdits が聞かずに通す編集を deny ルールで断る（シェルの書き込みは断れない。docs/channels.md）
+        ...(botFolders?.additionalDirectories?.length ? { additionalDirectories: botFolders.additionalDirectories } : {}),
+        ...(botFolders?.readOnlyRoots?.length ? { disallowedTools: readOnlyDenyRules(botFolders.readOnlyRoots) } : {}),
         // adaptive = モデルが必要な分だけ考える。
         // 注意: このモデルの thinking ブロックは署名だけで平文が入らない（2026-08 時点、
         // display の有無を問わず `thinking` は空文字）。したがって思考の中身は表示できない。

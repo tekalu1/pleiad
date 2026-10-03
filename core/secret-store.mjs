@@ -60,6 +60,7 @@ export const plainCipher = {
  */
 export function parentPortCipher(port, { timeoutMs = 10000 } = {}) {
   const waiting = new Map();
+  const instance = crypto.randomUUID(); // 同じ parentPort を使う別の秘密ストアの応答と混ざらない
   let seq = 0, cached = null;
   port.on('message', event => {
     const data = event?.data ?? event;
@@ -69,7 +70,7 @@ export function parentPortCipher(port, { timeoutMs = 10000 } = {}) {
     if (data.ok) resolve(data.value); else reject(new Error(data.error || t('secrets.cryptoFailed')));
   });
   const request = (op, value) => new Promise((resolve, reject) => {
-    const id = `s${++seq}`;
+    const id = `${instance}:s${++seq}`;
     const timer = setTimeout(() => { waiting.delete(id); reject(new Error(t('secrets.noResponse'))); }, timeoutMs);
     waiting.set(id, { resolve, reject, timer });
     port.postMessage({ type: 'secret', id, op, ...(value === undefined ? {} : { value }) });

@@ -48,16 +48,25 @@ export function createResidentPrefs({ dataDir }) {
   };
 }
 
+/** bots-host の routines の口から、有効な件数だけ読む。サービスが無い・未実装なら 0 件 */
+export async function enabledRoutineCount(botHost) {
+  try {
+    const rows = await botHost?.opsDeps?.()?.routines?.list?.();
+    return Array.isArray(rows) ? rows.filter(row => row?.paused === false).length : 0;
+  } catch { return 0; }
+}
+
 /**
  * main（desktop/resident.cjs）へ送る常駐の状態。status は RemoteStatus、work は runningWork() の結果。
  * working = ターンが走っているか承認待ちがある（サブエージェント・委譲の作業も含む。runningWork の count）
  */
-export function residentSignal({ status, prefs, work, locale }) {
+export function residentSignal({ status, prefs, work, locale, routines = 0 }) {
   const p = normalizeResident(prefs);
   const turns = work?.turns?.length ?? 0;
   const waiting = (work?.permissions ?? []).filter(x => !x.relay).length;
   return {
     remote: status?.enabled === true,
+    routines: Number.isSafeInteger(routines) && routines > 0 ? routines : 0,
     keepRunning: p.keepRunning,
     sleep: p.sleep,
     working: (work?.count ?? turns + waiting) > 0,

@@ -5,6 +5,7 @@
 // sidecar（AGENT_HOST_DATA）も使い捨ての場所へ逃がし、普段の ~/.agent-host を汚さない。
 import { spawn } from "node:child_process";
 import crypto from "node:crypto";
+import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -21,6 +22,19 @@ const LAUNCHED = /http:\/\/(localhost|[\d.]+|\[[\da-f:]+\]):(\d+)\/\?token=(\S+)
  */
 export async function startServer({ env = {}, dataDir, timeoutMs = 90_000, entry = path.join(ROOT, "core", "server.mjs") } = {}) {
   const token = crypto.randomBytes(12).toString("hex");
+  // 夜の記憶整理（core/memory/learn.mjs）は、起動のときに一度「追いつく」実行をし、そのときの会話・投稿を読んで隠れた learner 会話を作る。
+  // 負荷で起動直後の読み取りが遅れると、テストが投稿した直後や runTurn の最中にその会話が走り、その session イベントを
+  // ws-client.runTurn が自分の会話と取り違える（会話が control-info の返事でなく {"memories":[]} になる）。テストの server は止めておく。
+  // 確かめるテストは prefs.json に memoryLearnPaused: false を置いてから起動する
+  if (dataDir) {
+    const file = path.join(dataDir, "prefs.json");
+    let prefs = {};
+    try { prefs = JSON.parse(fs.readFileSync(file, "utf8")); } catch { /* 無ければ空から */ }
+    if (prefs.memoryLearnPaused === undefined) {
+      fs.mkdirSync(dataDir, { recursive: true });
+      fs.writeFileSync(file, JSON.stringify({ ...prefs, memoryLearnPaused: true }));
+    }
+  }
   const child = spawn(process.execPath, [entry], {
     cwd: ROOT,
     env: {

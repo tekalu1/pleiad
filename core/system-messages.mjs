@@ -41,6 +41,54 @@ export function splitInterruptionNotes(messages) {
   return out;
 }
 
+// bot の会話の user の行の先頭に付く包み（docs/design.md「Channels と bot」、ADR 0109・0110）。発言と同じ user の行に入る
+// （Claude は別の text ブロック、Codex は別の入力、agy は本文の前）ので、履歴で切り分ける。組み立ては core/channels/types.mjs
+export const MEMORY_CORE_TAG = "pleiad-memory-core";       // 会話の始まり・圧縮の後の最初のターンに 1 回だけ付く、核の記憶の写し
+export const TURN_CONTEXT_TAG = "pleiad-turn-context";     // 毎ターンの末尾: 時刻・記憶の差分・関係する記憶
+export const CHANNEL_THREAD_TAG = "pleiad-channel-thread"; // 初回に渡す、スレッドのそれまでの投稿（中に <pleiad-channel> が並ぶ）
+export const CHANNEL_TAG = "pleiad-channel";               // 起こした投稿・途中送信する投稿 1 件
+export const ROUTINE_PAYLOAD_TAG = "routine-payload";      // ルーティンの外から来た本文（先頭には付かない。<pleiad-channel> の中身に入る）
+const LEADING_TAGS = [INTERRUPTION_TAG, MEMORY_CORE_TAG, TURN_CONTEXT_TAG, CHANNEL_THREAD_TAG, CHANNEL_TAG];
+const LEADING = new RegExp(`^\\s*<(${LEADING_TAGS.join("|")})(?=[\\s>])([^>]*)>([\\s\\S]*?)</\\1>\\s*`);
+const unescapeAttr = (s) => s.replace(/&quot;/g, '"').replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&#10;/g, "\n").replace(/&amp;/g, "&");
+const attrsOf = (text) => Object.fromEntries([...String(text).matchAll(/([\w-]+)="([^"]*)"/g)].map((m) => [m[1], unescapeAttr(m[2])]));
+
+/** 行の先頭の包み 1 つを、システム側の 1 行の形（role: system）にする。包みの種類ごとの kind は splitLeadingNotes の説明 */
+function leadingRow(tag, attrText, body, m) {
+  const base = { role: "system", text: "", at: m.at ?? null, ...(m.backend ? { backend: m.backend } : {}) };
+  if (tag === INTERRUPTION_TAG) return { ...base, kind: "interruptionNote", body };
+  if (tag === MEMORY_CORE_TAG || tag === TURN_CONTEXT_TAG) return { ...base, kind: "contextNote", tag: tag === MEMORY_CORE_TAG ? "memory-core" : "turn-context", body };
+  const a = attrsOf(attrText);
+  return { ...base, kind: "channelEvent", history: tag === CHANNEL_THREAD_TAG, channel: a.channel ?? "", threadId: a.thread ?? null,
+    postId: a.post ?? null, from: a.from ?? "", sentAt: a.at ?? null, body };
+}
+
+/**
+ * user の行の先頭に並ぶ Pleiad の包みを、1 つずつシステム側の 1 行と、続く発言に分ける（splitInterruptionNotes を一般にしたもの）。
+ *   - `<pleiad-interruption>` … `{ kind: 'interruptionNote', body }`
+ *   - `<pleiad-memory-core>`・`<pleiad-turn-context>` … `{ kind: 'contextNote', tag: 'memory-core' | 'turn-context', body }`
+ *   - `<pleiad-channel-thread …>`・`<pleiad-channel …>` … `{ kind: 'channelEvent', history, channel, threadId, postId, from, sentAt, body }`
+ * 発言の uuid（分岐点）は続く発言に残す。続きが空なら最後の行に付ける。bot の会話では、包みだけの行は人の吹き出しにならない（ADR 0053）。何度かけても同じ
+ */
+export function splitLeadingNotes(messages) {
+  const out = [];
+  for (const m of Array.isArray(messages) ? messages : []) {
+    if (m?.role !== "user" || m.kind || typeof m.text !== "string") { out.push(m); continue; }
+    const rows = [];
+    let rest = m.text;
+    for (let hit; (hit = LEADING.exec(rest));) {
+      rows.push(leadingRow(hit[1], hit[2], hit[3].trim(), m));
+      rest = rest.slice(hit[0].length);
+    }
+    if (!rows.length) { out.push(m); continue; }
+    const keep = Boolean(rest.trim() || m.attachments?.length);
+    if (!keep) rows[rows.length - 1].uuid = m.uuid;
+    out.push(...rows);
+    if (keep) out.push({ ...m, text: rest });
+  }
+  return out;
+}
+
 const head = (text) => String(text ?? "").trimStart();
 const startsWithAny = (text, tags) => { const s = head(text); return tags.some((tag) => s.startsWith(tag)); };
 // ANSI の色の指定（/model の出力などに入る）は画面では字化けになるので外す
@@ -125,6 +173,7 @@ export function parseTeammate(text) {
  * - `{ role:'system', kind:'interrupt', text:'' }` … 中断
  * - `{ role:'system', kind:'teammate', text:'', from, body }` … agent teams の teammate の知らせ
  * - `{ role:'system', kind:'interruptionNote', text:'', body }` … 中断で止めたものを Pleiad が伝えた文（splitInterruptionNotes）
+ * - `{ role:'system', kind:'contextNote' | 'channelEvent', text:'', … }` … bot の会話の先頭の包み（記憶・チャンネルの出来事。splitLeadingNotes）
  * 落とすもの: Pleiad の `/compact` の行とその出力、待機だけの teammate の知らせ、裏の作業の完了通知、文脈だけの発言。
  * コマンド・シェルの出力は入力の行へまとめ、uuid は出力の行のものにする（分岐点。SDK は追記した行より前で分岐できない）。
  *
@@ -139,7 +188,7 @@ export function classifySystemMessages(messages, marks = null) {
   const out = [];
   // 直前のコマンド・シェルの行。続く出力の行を受け取る。raw は元の行の uuid（印の親と照らす）
   let owner = null;
-  for (const m of splitInterruptionNotes(messages)) {
+  for (const m of splitLeadingNotes(messages)) {
     if (!m || m.role !== "user" || m.kind || m.internalTaskNotice || typeof m.text !== "string") {
       out.push(m); owner = null; continue;
     }

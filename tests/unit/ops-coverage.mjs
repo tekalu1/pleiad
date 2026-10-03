@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { COMMANDS } from '../../core/protocol.mjs';
 import { registry } from '../../core/ops/index.mjs';
 import { createRegistry, defineOp, defineSetting } from '../../core/ops/registry.mjs';
-import { HUMAN_ONLY, HUMAN_ONLY_COMMANDS, HUMAN_ONLY_SETTINGS } from '../../core/ops/policy.mjs';
+import { HUMAN_ONLY, HUMAN_ONLY_COMMANDS, HUMAN_ONLY_SETTINGS, HUMAN_ONLY_OPS } from '../../core/ops/policy.mjs';
 import { KINDS, checkCoverage, formatBaseline, readBaseline, scanPrefKeys, scanSetPrefCalls, shrinkBaseline } from '../lint-ops.mjs';
 
 export const name = 'ops-coverage';
@@ -38,7 +38,8 @@ export default async function (t) {
     ['claudeAccounts', 'remoteDevices', 'setRemoteSettings', 'compatEndpointDefault', 'mcpAuthStart', 'authLogin'].every((n) => baseline.commands[n] === 'human-only'));
   t.ok('human-only の設定は承認モードの既定（mode）と既定のアカウント（claudeAccount）だけ',
     registry.settings.filter((x) => x.risk === 'human-only').map((x) => x.key).sort().join() === [...HUMAN_ONLY_SETTINGS].sort().join() && HUMAN_ONLY_SETTINGS.size === 2);
-  t.ok('実物の操作に human-only は無い（検査用の probe.* を除く）', registry.ops.every((op) => op.risk !== 'human-only' || op.id.startsWith('probe.')));
+  t.ok('実物の操作の human-only は、WS のコマンドを持たない承認モード・秘密の操作（bots.setMode・routines.rotateSecret）だけ（検査用の probe.* を除く）',
+    registry.ops.filter((op) => op.risk === 'human-only' && !op.id.startsWith('probe.')).map((op) => op.id).join() === 'bots.setMode,routines.rotateSecret' && [...HUMAN_ONLY_OPS].join() === 'bots.setMode,routines.rotateSecret' && HUMAN_ONLY.mode.ops.includes('bots.setMode'));
   const moved = { worktreeSplit: ['worktrees.split', 'write'], worktreeKeep: ['worktrees.keep', 'write'], worktreeArchive: ['worktrees.archive', 'write'], worktreeRestore: ['worktrees.restore', 'write'],
     setWorktreeSettings: ['worktrees.setSettings', 'write'], worktreeDiscard: ['worktrees.discard', 'write'], setNotifyPc: ['notify.setPc', 'write'], setNotifyDevice: ['notify.setDevice', 'write'],
     readHook: ['hooks.read', 'read'], readPlyHook: ['hooks.readPly', 'read'], compatEndpointRecheck: ['compatEndpoints.recheck', 'write'], compatEndpointDelete: ['compatEndpoints.delete', 'guarded'],
