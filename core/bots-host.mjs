@@ -49,7 +49,7 @@ export function createBotHost(deps) {
   // ---- bots（S2）
   const bots = createBotService({ dataDir, channels, emit });
   // ---- memory（S3）
-  const memory = createMemoryService({ dataDir, emit });
+  const memory = createMemoryService({ dataDir, channels, emit, localeOf: () => deps.currentLocale?.() ?? 'ja' });
   // ---- dispatch（S4）
   const dispatch = createDispatcher({ channels, bots, memory, host, emit });
   // ---- routines（R1）

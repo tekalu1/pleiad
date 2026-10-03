@@ -398,6 +398,13 @@ const cases = [
   // --- channels (S1) ---
   // --- bots (S2) ---
   // --- memory (S3) ---
+  // 正本（markdown・log.jsonl・手で壊した行・墓石・rev）と、索引（FTS5 と、node:sqlite を読み込めないときの走査・壊れた索引の作り直し）
+  await import("./unit/memory-store.mjs"),
+  await import("./unit/memory-index.mjs"),
+  // 出どころの検査（人の発言・taint・AI だけの根拠・墓石・長さ・注入らしい文）と、memory.* の操作（主体・層・危険度）
+  await import("./unit/memory-sources.mjs"),
+  // 末尾の文: 差分・関係する記憶・渡し済みを繰り返さない・核の写しは始まりと圧縮の後だけ・時刻は末尾だけ
+  await import("./unit/memory-tail.mjs"),
   // --- dispatch (S4) ---
   // --- channels-ui: 脇・流れ・スレッド・bot のページ (W1・W2・W3・W4) ---
   // --- routines (R1・R2・W5、P2) ---
