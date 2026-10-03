@@ -204,17 +204,19 @@ export function createRunner({ channels, bots, dispatch, host, clock, record, ag
       timeoutMin: Math.min(routine.approvalTimeoutMin, DRY_RUN_APPROVAL_MAX_MIN), timedOut: false, ended: false, skipNoted: false, timers: new Map(), startTimer: null, dry: true };
     bySession.set(made.sessionId, entry);
     const prompt = [agentT(locale(), 'routine.dryRunNote'), routine.prompt].join('\n\n');
-    // 走り終えるまで待つ（画面の［試しに動かす］は結果を足に出す）。上限を過ぎたら working のまま返す
+    // 走り終えるまで待つ（画面の［試しに動かす］は結果を足に出す）。上限を過ぎたら working のまま返す（会話は走り続け、終わったら記録を片付ける）
     const result = await new Promise((resolve) => {
       const cap = clock.setTimer(() => resolve({ capped: true }), DRY_RUN_WAIT_MS);
       Promise.resolve(host.runTurn({ sessionId: made.sessionId, prompt }, () => {}, { internal: true }))
         .then((outcome) => resolve({ outcome }), (error) => resolve({ error }))
-        .finally(() => clock.clearTimer(cap));
+        .finally(() => {
+          clock.clearTimer(cap);
+          entry.ended = true;
+          clearTimers(entry);
+          if (bySession.get(made.sessionId) === entry) bySession.delete(made.sessionId);
+        });
     });
     if (result.capped) return { runId, sessionId: made.sessionId, mode: plan, state: 'working', summary: agentT(locale(), 'routine.dryRunStillRunning') };
-    entry.ended = true;
-    clearTimers(entry);
-    if (bySession.get(made.sessionId) === entry) bySession.delete(made.sessionId);
     let state, summary;
     if (entry.timedOut) { state = 'failed'; summary = agentT(locale(), 'routine.approvalTimeout'); }
     else if (result.error) { state = 'failed'; summary = errText(result.error); }

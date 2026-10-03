@@ -68,8 +68,10 @@ export default async function (t) {
     t.ok('実行の会話は bot の会話（kind: routine・根の投稿のスレッド・題「🦉 Owl · #ops › …」）で、承認モードはルーティンの mode', row1?.bot?.kind === 'routine' && row1.bot.threadId === first.id && row1.bot.channelId === ops.id && row1.bot.botId === owl.id
       && row1.title.startsWith('🦉 Owl · #ops › '), JSON.stringify(row1));
     const got1 = await call('routines.get', { routineId: every.id });
+    // 保存された状態を読めるのと、出来事が画面に届くのは別のタイミング（出来事は保存の後に出る）
+    const changedEvent = await until(async () => c.events.find((e) => e.type === 'routinesChanged' && e.routine?.id === every.id && e.routine.last?.state === 'done'), { label: 'routinesChanged（done）' });
     t.ok('last は done・次の実行は次の分（nextAt）・routinesChanged で状態の変化が届く', got1.last.state === 'done' && got1.last.runId === first.routine.runId && got1.last.postId === first.id && got1.nextAt === T0 + 90_000
-      && c.events.some((e) => e.type === 'routinesChanged' && e.routine?.id === every.id && e.routine.last?.state === 'done'), JSON.stringify(got1));
+      && changedEvent.routine.nextAt === T0 + 90_000 && !changedEvent.sessionId, JSON.stringify(got1));
 
     await setClock(T0 + 90_000);
     const second = await until(async () => (await roots(every.id))[1] ?? null, { label: '2 回目の根の投稿' });
