@@ -1089,6 +1089,8 @@
     "contextSettings": "{{place}}のコンテキストの設定を変えます。全部の会話に渡る指示・Skills・外部 MCP が変わります。",
     "plyInstructions": "Pleiad の指示を変えます。会話ごとにエージェントへ足す指示が変わります。",
     "sessionMcp": "この会話の外部 MCP「{{name}}」を変えます。",
+    "shellRun": "会話「{{title}}」のシェルでコマンドを動かします（{{cwd}}）。",
+    "switchBackend": "会話「{{title}}」のエージェントを {{backend}} に切り替えます。承認モードは切り替え先の最初のモードになります。",
     "everywhere": "すべての場所"
   }
 }

@@ -93,6 +93,7 @@ const cases = [
   await import('./unit/setting-change-ui.mjs'),
   // MCP・Hooks・コンテキスト・リモートの操作（ADR 0095）: agent への伏せ字・伏せ字の書き戻し・guarded と riskOf
   await import('./unit/ops-mcp-hooks.mjs'),
+  await import('./unit/ops-session-work.mjs'),
   await import('./unit/ops-mcp.mjs'),
   await import('./unit/control-delivery.mjs'),
   await import('./unit/ops-control.mjs'),

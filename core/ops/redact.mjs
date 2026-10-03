@@ -73,3 +73,16 @@ export async function cwdFor(ctx, cwd) {
 
 /** 会話を指す操作の sessionId。agent は省けばその会話。人は省けない（今までどおり、モジュールが断る） */
 export const sessionFor = (ctx, sessionId) => sessionId ?? (byAgent(ctx) ? ctx.actor?.sessionId : undefined);
+
+const URL_KEYS = new Set(['url', 'endpoint', 'baseUrl', 'relayUrl']);
+const maskUrls = (value, key = '') => {
+  if (Array.isArray(value)) return value.map((v) => maskUrls(v));
+  if (record(value)) return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, maskUrls(v, k)]));
+  return typeof value === 'string' && URL_KEYS.has(key) ? maskUrl(value) : value;
+};
+
+/**
+ * agent に返す、探索の結果・会話の文脈・git の差分などの木（ADR 0096）。どこに秘密が混じるか形で決まらないので、
+ * Hooks の定義と同じ伏せ方（env・headers の表、秘密らしい名前のキー、コマンドの引数の秘密、形で分かる秘密）を全体に掛け、URL のクエリも伏せる
+ */
+export const maskTree = (value) => maskUrls(maskShape(value));

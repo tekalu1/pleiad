@@ -19,13 +19,18 @@ import { mcpOps } from './mcp.mjs';
 import { contextOps } from './context.mjs';
 import { remoteOps } from './remote.mjs';
 import { probeOps } from './probe.mjs';
+import { gitOps } from './git.mjs';
+import { shellOps } from './shell.mjs';
+import { sessionWorkOps } from './session-work.mjs';
+import { fileOps } from './files.mjs';
 
 // 権限の配線を確かめる検査用の操作は、fake バックエンドを有効にしたとき（テスト）だけ載せる
 const withProbe = String(process.env.AGENT_HOST_BACKENDS ?? '').split(',').map((s) => s.trim()).includes('fake');
 
 export const registry = createRegistry({
   ops: [...appOps, ...sessionOps, ...resumeOps, ...conversationOps, ...agentOps, ...statusOps, ...settingOps, ...delegationOps, ...browserOps,
-    ...worktreeOps, ...notifyOps, ...hookOps, ...compatOps, ...computerOps, ...mcpOps, ...contextOps, ...remoteOps, ...(withProbe ? probeOps : [])],
+    ...worktreeOps, ...notifyOps, ...hookOps, ...compatOps, ...computerOps, ...mcpOps, ...contextOps, ...remoteOps,
+    ...gitOps, ...shellOps, ...sessionWorkOps, ...fileOps, ...(withProbe ? probeOps : [])],
   settings: [...settings],
 });
 

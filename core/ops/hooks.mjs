@@ -212,6 +212,15 @@ export const hookOps = [
     legacyCommand: 'togglePlyHook',
     handler: (ctx, { id, enabled, cwd: dir }) => run(ctx, async () => shown(ctx, await ctx.hooks.toggle(id, enabled !== false, (await cwdFor(ctx, dir)) ?? null))),
   }),
+  // 担当を変える前の見込み（取り込む定義・止める定義と、hooks.setOwner に渡す imports の digest と revision。ADR 0096）。何も書かない
+  defineOp({
+    id: 'hooks.unifyPreview', summary: 'agent:ops.hooks.unifyPreview.summary', risk: 'read',
+    input: z.object({ cwd: z.string().max(4096).nullable().optional().describe(A('cwd')), direction: z.enum(['ply', 'native']).optional().describe(D('unifyPreview', 'direction')) }),
+    output: z.object({ revision: z.unknown() }).passthrough(),
+    surfaces: { ui: true, mcp: 'catalog', cli: { path: ['hooks', 'unify-preview'] } },
+    legacyCommand: 'hooksUnifyPreview',
+    handler: (ctx, { cwd: dir, direction }) => run(ctx, async () => shown(ctx, await ctx.hooks.unifyPreview({ cwd: dir === null ? null : (await cwdFor(ctx, dir)) ?? null, direction: direction ?? 'ply' }))),
+  }),
   defineOp({
     id: 'hooks.setOwner', summary: 'agent:ops.hooks.setOwner.summary', risk: 'guarded',
     input: z.object({
