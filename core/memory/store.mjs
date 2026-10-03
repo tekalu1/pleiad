@@ -17,7 +17,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { writeAtomic } from '../atomic-file.mjs';
-import { newId, isId, isAuthor } from '../channels/types.mjs';
+import { newId, isId, isAuthor, authorKey } from '../channels/types.mjs';
 
 export const MEMORY_TEXT_MAX = 300;
 export const USER_LAYER = 'user';
@@ -64,6 +64,7 @@ export function parseLayer(markdown, layer) {
       at: Number.isFinite(meta?.at) ? meta.at : 0,
       updatedAt: Number.isFinite(meta?.up) ? meta.up : Number.isFinite(meta?.at) ? meta.at : 0,
       by: isAuthor(meta?.by) ? meta.by : { kind: 'human' },
+      ...(isAuthor(meta?.ob) ? { origBy: meta.ob } : {}),
       hadMeta: Boolean(meta),
     });
   }
@@ -73,7 +74,7 @@ export function parseLayer(markdown, layer) {
 /** 1 層の markdown を作る。title は見出し（辞書の文。呼び出し側が言語を決める） */
 export function renderLayer(layer, entries, title) {
   const lines = entries.map((e) => `- ${oneLine(e.text)} <!-- ${metaJson({
-    id: e.id, at: e.at, up: e.updatedAt, by: e.by, ...(e.why ? { why: e.why } : {}), src: e.sources ?? [],
+    id: e.id, at: e.at, up: e.updatedAt, by: e.by, ...(e.origBy ? { ob: e.origBy } : {}), ...(e.why ? { why: e.why } : {}), src: e.sources ?? [],
   })} -->`);
   return `${HEADER(layer)}\n# ${title}\n\n${lines.join('\n')}${lines.length ? '\n' : ''}`;
 }
@@ -139,10 +140,23 @@ export function createMemoryStore({ dir, now = Date.now, titleOf = (layer) => la
     rev = records.reduce((max, r) => Math.max(max, r.rev), 0);
   }
 
+  /** 最後の 1 バイトが改行か（ファイルが無い・空なら真）。追記の途中で落ちた壊れた行の後ろに、次の行をつなげないため（channels/store.mjs と同じ） */
+  async function endsWithNewline() {
+    const st = await fs.stat(logFile).catch(() => null);
+    if (!st || st.size === 0) return true;
+    const fh = await fs.open(logFile, 'r');
+    try {
+      const buf = Buffer.alloc(1);
+      await fh.read(buf, 0, 1, st.size - 1);
+      return buf[0] === 0x0a;
+    } finally { await fh.close(); }
+  }
+
   async function appendLog(rec) {
     const full = { rev: rev + 1, at: now(), ...rec };
     await fs.mkdir(dir, { recursive: true });
-    await fs.appendFile(logFile, `${JSON.stringify(full)}\n`, 'utf8');
+    const lead = (await endsWithNewline()) ? '' : '\n';
+    await fs.appendFile(logFile, `${lead}${JSON.stringify(full)}\n`, 'utf8');
     rev = full.rev;
     records.push(full);
     apply(full);
@@ -235,6 +249,8 @@ export function createMemoryStore({ dir, now = Date.now, titleOf = (layer) => la
     rev: () => rev,
     recordsSince: (since) => records.filter((r) => r.rev > since),
     isTombstoned: (fp) => tombstones.has(fp),
+    /** 忘れた直後で、戻せる記憶（最後の操作が forget）の写し。無ければ null */
+    forgottenEntry: (id) => { const gone = forgotten.get(id); return gone?.entry && !known.has(id) ? publicEntry(gone.entry) : null; },
     /** 索引の鮮度の印（全層の entries の内容から） */
     hash: () => crypto.createHash('sha256').update(JSON.stringify([...cache.keys()].sort().map((l) => [l, cache.get(l).map((e) => [e.id, e.text, e.why ?? '', e.updatedAt])]))).digest('hex'),
 
@@ -263,11 +279,13 @@ export function createMemoryStore({ dir, now = Date.now, titleOf = (layer) => la
           sources: sources ? [...old.sources, ...sources] : old.sources,
           updatedAt: now(), by,
         };
+        // 書き手が替わったら、元の書き手を残す（人の行を AI が直したときに、元が人だったと分かるように）。by は今の本文を書いた者
+        if (authorKey(old.by) !== authorKey(by)) entry.origBy = old.origBy ?? old.by;
         if (!entry.why) delete entry.why;
         const next = [...list]; next[i] = entry;
         cache.set(layer, next);
         await writeLayer(layer);
-        const rec = await appendLog({ op: 'edit', layer, id, text: entry.text, fp: fingerprintOf(entry.text), by, ...(via ? { via } : {}) });
+        const rec = await appendLog({ op: 'edit', layer, id, text: entry.text, fp: fingerprintOf(entry.text), by, ...(entry.origBy ? { origBy: entry.origBy } : {}), ...(via ? { via } : {}) });
         return { entry: publicEntry(entry), rev: rec.rev };
       }
       return null;

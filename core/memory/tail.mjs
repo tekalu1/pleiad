@@ -58,12 +58,16 @@ export function foldDelta(records, { layers, skipVia = null } = {}) {
   return { items, skipped };
 }
 
-/** 核の写しに入れる記憶を選ぶ。新しい更新から層ごとの目安まで。返りは { user, bot, omitted, ids }（本文は時系列） */
+/**
+ * 核の写しに入れる記憶を選ぶ。層ごとの目安まで、人が書いた・人が直した記憶（by.kind === 'human'）を先に、bot・AI が書いたものを後に
+ * （それぞれ新しい更新から）。書き込みを重ねる bot が、新しさだけで人の古い記憶を押し出せないようにする。返りは { user, bot, omitted, ids }（本文は時系列）
+ */
 export function pickCore(userEntries, botEntries, { layerTokens = CORE_LAYER_TOKENS } = {}) {
+  const humanFirst = (e) => (e.by?.kind === 'human' ? 0 : 1);
   const take = (list) => {
     const picked = [];
     let used = 0;
-    for (const e of [...list].sort((a, b) => (b.updatedAt - a.updatedAt) || (b.at - a.at))) {
+    for (const e of [...list].sort((a, b) => (humanFirst(a) - humanFirst(b)) || (b.updatedAt - a.updatedAt) || (b.at - a.at))) {
       const cost = estimateTokens(e.text) + 3;
       if (used + cost > layerTokens && picked.length) break;
       picked.push(e); used += cost;

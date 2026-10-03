@@ -37,6 +37,24 @@ export default async function (t) {
     const { items, skipped } = foldDelta([rec(1, 'add', 'm_a', 'あ', { via: 's1' }), rec(2, 'forget', 'm_b', 'い', { via: 's1' })], { skipVia: 's1' });
     return items.length === 1 && items[0].kind === 'forget' && skipped.join() === 'm_a';
   })());
+  // S-8: 核の写しは、人が書いた・直した記憶を先に入れる（bot が書いたものの新しさで押し出さない）
+  t.ok('S-8: pickCore は人が書いた古い記憶を、bot が書いた新しい記憶より先に入れる（目安が足りないとき押し出されるのは bot の分）', (() => {
+    const e = (id, by, updatedAt, text = 'あ'.repeat(40)) => ({ id, layer: 'user', text, by, at: updatedAt, updatedAt, sources: [] });
+    const human = [e('m_h1', HUMAN, 10), e('m_h2', HUMAN, 20)];
+    const bots = Array.from({ length: 30 }, (_, i) => e(`m_b${i}`, { kind: 'bot', botId: OTHER }, 1000 + i));
+    const picked = pickCore([...human, ...bots], [], { layerTokens: 160 });
+    return picked.user.some((x) => x.id === 'm_h1') && picked.user.some((x) => x.id === 'm_h2') && picked.omitted > 0 && picked.user.length < 32;
+  })());
+  t.ok('S-8: 人が書いた記憶が目安を超えるときは、その中で新しい順（bot の分は入らない）', (() => {
+    const e = (id, by, updatedAt) => ({ id, layer: 'user', text: 'あ'.repeat(40), by, at: updatedAt, updatedAt, sources: [] });
+    const picked = pickCore([e('m_old', HUMAN, 1), e('m_new', HUMAN, 9), e('m_bot', { kind: 'bot', botId: OTHER }, 99)], [], { layerTokens: 1 });
+    return picked.user.map((x) => x.id).join() === 'm_new' && picked.omitted === 2;
+  })());
+  t.ok('S-8: AI が書き換えた行は by が AI になるので、人の行としては先に入らない', (() => {
+    const e = (id, by, updatedAt) => ({ id, layer: 'user', text: 'あ'.repeat(40), by, at: updatedAt, updatedAt, sources: [] });
+    const picked = pickCore([e('m_rewritten', { kind: 'bot', botId: OTHER }, 1), e('m_human', HUMAN, 2)], [], { layerTokens: 1 });
+    return picked.user.length === 1 && picked.user[0].id === 'm_human';
+  })());
   t.ok('foldDelta は層で絞る', foldDelta([rec(1, 'add', 'm_a', 'あ', { layer: OTHER })], { layers: ['user', BOT.id] }).items.length === 0);
   t.ok('pickCore は新しいものから目安のトークンまで入れ、残りは件数にする', (() => {
     const list = Array.from({ length: 30 }, (_, i) => ({ id: `m_${i}`, text: `${'長い記憶 '.repeat(20)}${i}`, at: i, updatedAt: i }));

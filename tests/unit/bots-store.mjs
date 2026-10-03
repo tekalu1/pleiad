@@ -78,6 +78,29 @@ export default async function (t) {
     t.ok('知らない版は BOTS_UNSUPPORTED_VERSION で止まり、上書きしない', (await code(() => future.load())) === 'BOTS_UNSUPPORTED_VERSION'
       && (await code(() => future.put(bot('b_1', 'Owl')))) === 'BOTS_UNSUPPORTED_VERSION' && JSON.parse(await fs.readFile(futureFile, 'utf8')).version === 2);
 
+    // ---- S-7: 一時的に読めない（ENOENT 以外の読み取りの失敗）だけで「bot が 0 件」と見なして、次の保存で消さない
+    const unreadableFile = path.join(dir, 'unreadable', 'bots.json');
+    await fs.mkdir(unreadableFile, { recursive: true });   // ファイルの位置にフォルダーがある → EISDIR（読み取りの失敗の代わり。ウイルス対策の EBUSY・EACCES の再現は難しい）
+    const unreadable = createBotStore({ file: unreadableFile });
+    t.ok('S-7: ENOENT 以外の読み取りの失敗は BOTS_UNREADABLE で止まる（broken が立つ）', (await code(() => unreadable.load())) === 'BOTS_UNREADABLE' && unreadable.problem?.code === 'BOTS_UNREADABLE');
+    t.ok('S-7: 止まっている間は書かない。bots.json の位置のものはそのまま', (await code(() => unreadable.put(bot('b_1', 'Owl')))) === 'BOTS_UNREADABLE'
+      && (await code(() => unreadable.update('b_1', (b) => b))) === 'BOTS_UNREADABLE' && (await fs.stat(unreadableFile)).isDirectory());
+    const hasBots = path.join(dir, 'hasbots');
+    await fs.mkdir(path.join(hasBots, 'bots.json'), { recursive: true });
+    const { createBotService } = await import('../../core/bots/service.mjs');
+    const svc = createBotService({ dataDir: hasBots });
+    await svc.start();
+    t.ok('S-7: bots サービスは起動で読めなくても落ちず、problem を出し、bots.create は bots.json を上書きしない', svc.problem?.code === 'BOTS_UNREADABLE'
+      && await svc.create({ name: 'Owl', backend: 'fake' }).then(() => false, (e) => e.code === 'BOTS_UNREADABLE') && (await fs.stat(path.join(hasBots, 'bots.json'))).isDirectory());
+    const dropFile = path.join(dir, 'drop', 'bots.json');
+    await fs.mkdir(path.dirname(dropFile), { recursive: true });
+    await fs.writeFile(dropFile, JSON.stringify({ version: 1, bots: [bot('b_ok', 'Ok'), { name: 'id が無い' }, { id: 'b_noname' }] }));
+    const logged = [];
+    const origError = console.error;
+    console.error = (...a) => { logged.push(a.join(' ')); };
+    try { await createBotStore({ file: dropFile }).load(); } finally { console.error = origError; }
+    t.ok('S-7: id か name が無い行は読み込まれない（次の保存で消える）ので、捨てた件数をログへ出す', logged.some((l) => /2 row\(s\)/.test(l)), logged.join('\n'));
+
     // ---- 保存に失敗したら巻き戻す（親が通常のファイルで、置き場を作れない）
     const blocker = path.join(dir, 'blocker');
     await fs.writeFile(blocker, 'x');

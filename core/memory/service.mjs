@@ -25,7 +25,7 @@
 import path from 'node:path';
 import { agentT } from '../i18n.mjs';
 import { estimateTokens } from '../../web/token-estimate.mjs';
-import { createMemoryStore, fingerprintOf, isLayer, USER_LAYER } from './store.mjs';
+import { createMemoryStore, fingerprintOf, isLayer, oneLine, USER_LAYER } from './store.mjs';
 import { createMemoryIndex } from './index.mjs';
 import { MemoryError, checkText, checkSources, sourceResolvers } from './guard.mjs';
 import { foldDelta, pickCore, coreSnapshot, turnContext as turnContextText } from './tail.mjs';
@@ -36,6 +36,8 @@ export { MemoryError };
 export const RESULT_TOKENS = 150;
 /** 渡し済みの id を覚える数（圧縮で空になるので、普段は届かない上限） */
 const DELIVERED_MAX = 400;
+/** bot が 1 ターンに user 層へ書ける件数（全 bot が読む層なので、暴走・汚染の幅を抑える。超えたら MEMORY_REJECTED:userWriteLimit） */
+export const USER_WRITES_PER_TURN = 5;
 
 /** 150 トークンに収まるまで切る（本文は 300 字までなので、普通は切らない） */
 const clip = (entry) => {
@@ -52,6 +54,7 @@ export function createMemoryService({ dataDir, channels = null, emit = () => {},
   const index = createMemoryIndex({ file: path.join(dir, 'index.sqlite'), ...(loadSqlite ? { loadSqlite } : {}), log });
   let started = false;
   let indexed = null;   // 索引に渡した正本の印（store.hash）
+  const userWrites = new Map();   // bot の会話の sessionId（会話の外なら bot:<id>）→ このターンに user 層へ書いた件数。ターンの始まり（turnContext）で 0 に戻す
 
   const announce = (layer) => emit({ type: 'memoryChanged', layer, rev: store.rev() });
 
@@ -76,12 +79,21 @@ export function createMemoryService({ dataDir, channels = null, emit = () => {},
 
   /** 出どころの検査（人でなければ必須）。返りは確かめた出どころ */
   async function verified(sources, author, ctx) {
-    const resolvers = sourceResolvers({ channels, sessions: ctx?.sessions });
+    const resolvers = sourceResolvers({ channels, sessions: ctx?.sessions, botOfSession: ctx?.botOfSession });
     const human = isHuman(author);
     if (human && !sources?.length) return [];
     const out = await checkSources(sources, resolvers, { required: !human });
     return out.sources;
   }
+
+  /** bot が user 層へ書く（本文を変える）ときの 1 ターンの上限。数えるのは書けたときだけ（ensure → bump の順） */
+  const budgetKey = (author, ctx) => (author?.kind === 'bot' && ctx?.sessionId ? ctx.sessionId : author?.kind === 'bot' ? `bot:${author.botId}` : null);
+  const ensureBudget = (layer, author, ctx) => {
+    const key = layer === USER_LAYER ? budgetKey(author, ctx) : null;
+    if (key && (userWrites.get(key) ?? 0) >= USER_WRITES_PER_TURN) throw new MemoryError('MEMORY_REJECTED', 'userWriteLimit', String(USER_WRITES_PER_TURN));
+    return key;
+  };
+  const bump = (key) => { if (key) userWrites.set(key, (userWrites.get(key) ?? 0) + 1); };
 
   return {
     dataDir, emit, now,
@@ -108,12 +120,14 @@ export function createMemoryService({ dataDir, channels = null, emit = () => {},
       needLayer(layer);
       await catchUp();
       const human = isHuman(author);
+      const budget = ensureBudget(layer, author, ctx);
       const clean = checkText(text, { human, isTombstoned: store.isTombstoned, fingerprint: fingerprintOf });
       const note = why == null || why === '' ? undefined : checkText(why, { human, isTombstoned: null }).slice(0, 300);
       const proven = await verified(sources, author, ctx);
       const fp = fingerprintOf(clean);
       if (store.entries(layer).some((e) => fingerprintOf(e.text) === fp)) throw new MemoryError('MEMORY_REJECTED', 'duplicate');
       const { entry } = await store.add({ layer, text: clean, why: note, sources: proven, by: author, via: ctx.sessionId });
+      bump(budget);
       announce(layer);
       return entry;
     },
@@ -123,6 +137,8 @@ export function createMemoryService({ dataDir, channels = null, emit = () => {},
       const old = store.get(id);
       if (!old) throw notFound(id);
       const human = isHuman(author);
+      const changing = text !== undefined && oneLine(text) !== old.text;
+      const budget = changing ? ensureBudget(old.layer, author, ctx) : null;
       const clean = text === undefined ? undefined : checkText(text, { human, isTombstoned: store.isTombstoned, fingerprint: fingerprintOf });
       const note = why === undefined ? undefined : why === '' ? '' : checkText(why, { human, isTombstoned: null }).slice(0, 300);
       // AI が本文を変えるときは、新しく書くときと同じく人の発言の根拠が要る
@@ -133,6 +149,7 @@ export function createMemoryService({ dataDir, channels = null, emit = () => {},
       }
       const done = await store.edit({ id, text: clean, why: note, sources: proven.length ? proven : undefined, by: author, via: ctx.sessionId });
       if (!done) throw notFound(id);
+      bump(budget);
       announce(done.entry.layer);
       return done.entry;
     },
@@ -143,6 +160,12 @@ export function createMemoryService({ dataDir, channels = null, emit = () => {},
       if (!done) throw notFound(id);
       announce(done.entry.layer);
       return done.entry;
+    },
+
+    /** 忘れた直後で戻せる記憶の写し（無ければ null）。unforget の前に、見える層か確かめるのに使う */
+    async forgotten({ id } = {}) {
+      await catchUp();
+      return store.forgottenEntry(id);
     },
 
     async unforget({ id } = {}, author, ctx = {}) {
@@ -157,6 +180,7 @@ export function createMemoryService({ dataDir, channels = null, emit = () => {},
 
     async turnContext({ bot, session = {}, sessionId = null, incomingText = '', now: at = now(), locale } = {}) {
       await ensureIndex();
+      if (sessionId) userWrites.delete(sessionId);   // 新しいターンの始まり: user 層への書き込みの数え直し
       const layers = bot?.id ? [USER_LAYER, bot.id] : [USER_LAYER];
       const rev = store.rev();
       const due = session.snapshotDue === true;

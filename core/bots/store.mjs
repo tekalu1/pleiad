@@ -14,8 +14,12 @@ import { writeAtomic } from '../atomic-file.mjs';
 import { EMOJI_RE } from '../../web/emoji.mjs';
 
 export const BOTS_VERSION = 1;
+// ウイルス対策などが一時的に開いている間の読み取りの失敗（再試行で通ることが多い）
+const TRANSIENT_READ = new Set(['EBUSY', 'EACCES', 'EPERM', 'EMFILE', 'ENFILE']);
+const READ_RETRIES = [60, 200, 500];
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-/** code は BOTS_CORRUPT・BOTS_UNSUPPORTED_VERSION（読めない）／ BOT_NOT_FOUND・BOT_NAME_TAKEN・BOT_INVALID・INVALID（操作の失敗。ops が OpError にする） */
+/** code は BOTS_CORRUPT・BOTS_UNSUPPORTED_VERSION・BOTS_UNREADABLE（読めない。読み取りの失敗も含む）／ BOT_NOT_FOUND・BOT_NAME_TAKEN・BOT_INVALID・INVALID（操作の失敗。ops が OpError にする） */
 export class BotStoreError extends Error {
   constructor(code, message, extra = {}) { super(message); this.name = 'BotStoreError'; this.code = code; Object.assign(this, extra); }
 }
@@ -107,8 +111,16 @@ export function createBotStore({ file } = {}) {
     get problem() { return broken; },
     async load() {
       let text;
-      try { text = await fs.readFile(file, 'utf8'); }
-      catch (e) { if (e.code === 'ENOENT') { bots = []; broken = null; return; } throw e; }
+      for (let attempt = 0; ; attempt++) {
+        try { text = await fs.readFile(file, 'utf8'); break; }
+        catch (e) {
+          if (e.code === 'ENOENT') { bots = []; broken = null; return; }
+          if (TRANSIENT_READ.has(e.code) && attempt < READ_RETRIES.length) { await wait(READ_RETRIES[attempt]); continue; }
+          // 読めなかっただけで「bot が 0 件」と見なさない（次の保存で bots.json を空の一覧で上書きしてしまう）。読み直すには再起動する
+          broken = new BotStoreError('BOTS_UNREADABLE', `bots.json could not be read (${e.code ?? e.message}); check whether another program has it open: ${file}`);
+          throw broken;
+        }
+      }
       let data;
       try { data = JSON.parse(text); }
       catch { broken = new BotStoreError('BOTS_CORRUPT', `bots.json is not valid JSON: ${file}`); throw broken; }
@@ -118,6 +130,8 @@ export function createBotStore({ file } = {}) {
       }
       broken = null;
       bots = data.bots.map((b) => normalizeBot(b)).filter(Boolean);
+      // id か name が無い行は読み込まれず、次の保存で消える。黙って消さずにログへ残す
+      if (bots.length < data.bots.length) console.error(`  bots: ${data.bots.length - bots.length} row(s) of bots.json have no id or name and were dropped: ${file}`);
     },
     list: () => bots.map(copy),
     get: (id) => { const b = bots.find((x) => x.id === id); return b ? copy(b) : null; },
