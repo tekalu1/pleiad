@@ -10,6 +10,8 @@ import { MEMORY_TEXT_MAX, oneLine } from './store.mjs';
 export const MEMORY_CODES = Object.freeze(['MEMORY_SOURCE', 'MEMORY_REJECTED', 'MEMORY_NOT_FOUND']);
 export const SOURCES_MAX = 8;
 export const QUOTE_MAX = 300;
+/** 引用の最小の長さ（空白を除いた字数）。1 字・数字の引用でどの投稿にも当たるのを断る */
+export const QUOTE_MIN = 8;
 
 /** 記憶の操作の失敗。code は ops の失敗の code（辞書 agent:ops.errors.<code>）、reason は短い理由の印（辞書 agent:memory.reason.<reason>） */
 export class MemoryError extends Error {
@@ -56,17 +58,19 @@ export function checkText(raw, { human = false, isTombstoned = null, fingerprint
   return text;
 }
 
+const fold = (s) => String(s ?? '').normalize('NFKC').toLowerCase().replace(/\s+/g, '');
 /** 空白・全角半角・大小の違いを無視して照合する（quote が本文に含まれるか。日本語は空白の有無が揺れる） */
 export const includesQuote = (body, quote) => {
-  const fold = (s) => String(s ?? '').normalize('NFKC').toLowerCase().replace(/\s+/g, '');
   const q = fold(quote);
   return q.length > 0 && fold(body).includes(q);
 };
+const quoteLength = (quote) => [...fold(quote)].length;
 
 /** 出どころの 1 件を、投稿・発言の実物と照らす。返りは { kind: 'human'|'ai', source } か { problem } */
 async function verifyOne(src, resolvers) {
   const quote = oneLine(src.quote);
   if (!quote) return { problem: 'quote' };
+  if (quoteLength(quote) < QUOTE_MIN) return { problem: 'quoteShort' };
   if (src.kind === 'post') {
     if (!src.channelId || !src.postId || !resolvers?.post) return { problem: 'unresolved' };
     const post = await resolvers.post({ channelId: src.channelId, postId: src.postId, threadId: src.threadId ?? null }).catch(() => null);
@@ -86,6 +90,8 @@ async function verifyOne(src, resolvers) {
     if (!includesQuote(msg.text, quote)) return { problem: 'quote' };
     const at = typeof msg.at === 'number' ? msg.at : Date.parse(msg.at ?? '');
     const stored = { kind: 'message', sessionId: src.sessionId, messageId: src.messageId, quote, at: Number.isFinite(at) ? at : 0 };
+    // 委譲の子・bot・ルーティンの会話の最初の user の行は、親の AI・仕組みが書いた依頼で、人の発言ではない
+    if (msg.role === 'user' && msg.origin && msg.firstUser) return { problem: 'notHuman' };
     if (msg.role === 'user' && !msg.kind && !msg.internalTaskNotice && !msg.proxyBy && !msg.proxy) return { kind: 'human', source: stored };
     if (msg.role === 'assistant' && !msg.kind) return { kind: 'ai', source: stored };
     return { problem: 'notHuman' };
@@ -112,16 +118,19 @@ export async function checkSources(sources, resolvers, { required = true } = {})
 /**
  * 出どころの実物を引く口（checkSources の resolvers）を、チャンネルのサービスと会話の読み出しから作る。
  *   channels … ChannelService（list・read。投稿は read を nextBefore でさかのぼって探す）
- *   sessions … ops の ctx.sessions（read(sessionId) → 発言の並び。uuid が messageId）
+ *   sessions … ops の ctx.sessions（read(sessionId) → 発言の並び。uuid が messageId。get(sessionId) → { row }。row.delegation が委譲の子の印）
+ *   botOfSession … ops の ctx.botOfSession（bot の会話なら sidecar の bot。kind: 'routine' がルーティンの会話）
+ * message の引き当ては、会話の種別 origin（'delegation' | 'bot' | 'routine' | null）と、最初の user の行か（firstUser）を付けて返す
  * bot の会話に渡る包みの channel は表示名（#名前）なので、channelId には表示名も使える
  */
-export function sourceResolvers({ channels, sessions } = {}) {
+export function sourceResolvers({ channels, sessions, botOfSession } = {}) {
   const PAGES = 10;
   const channelIdOf = async (ref) => {
     if (isId(ref, 'channel')) return ref;
     const name = String(ref ?? '').replace(/^#/, '');
     const list = (await channels?.list?.().catch(() => [])) ?? [];
-    return list.find((c) => c.name === name || c.id === ref)?.id ?? null;
+    const named = list.filter((c) => c.name === name || c.id === ref);
+    return (named.find((c) => !c.archivedAt) ?? named[0])?.id ?? null;   // アーカイブ済みの同名より、生きているチャンネルを先に
   };
   return {
     async post({ channelId, postId, threadId }) {
@@ -140,7 +149,12 @@ export function sourceResolvers({ channels, sessions } = {}) {
     },
     async message({ sessionId, messageId }) {
       const messages = await sessions?.read?.(sessionId);
-      return Array.isArray(messages) ? messages.find((m) => m.uuid === messageId) ?? null : null;
+      const hit = Array.isArray(messages) ? messages.find((m) => m.uuid === messageId) ?? null : null;
+      if (!hit) return null;
+      const bot = await botOfSession?.(sessionId).catch(() => null);
+      const delegated = Boolean((await sessions?.get?.(sessionId).catch(() => null))?.row?.delegation);
+      const origin = bot?.botId ? (bot.kind === 'routine' ? 'routine' : 'bot') : delegated ? 'delegation' : null;
+      return { ...hit, origin, firstUser: messages.find((m) => m.role === 'user')?.uuid === messageId };
     },
   };
 }

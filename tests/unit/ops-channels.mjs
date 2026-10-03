@@ -15,16 +15,16 @@ const BIN = path.join(ROOT, 'bin', 'pleiad.mjs');
 
 const HUMAN = { by: 'human', via: 'ui', local: true };
 const agent = (sessionId, via = 'mcp') => ({ by: 'agent', via, ...(sessionId ? { sessionId } : {}) });
-const IDS = ['list', 'get', 'read', 'search', 'create', 'update', 'archive', 'post', 'edit', 'delete', 'react', 'markRead', 'stopThread'].map((v) => `channels.${v}`);
+const IDS = ['list', 'get', 'read', 'search', 'create', 'update', 'archive', 'post', 'edit', 'delete', 'react', 'markRead', 'stopThread', 'wake'].map((v) => `channels.${v}`);
 
 export default async function (t) {
   const tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'ops-channels-'));
   try {
     // ---- 定義
-    t.ok('操作は 13 個（channels.list / get / read / search / create / update / archive / post / edit / delete / react / markRead / stopThread）', IDS.every((id) => registry.get(id)) && registry.ops.filter((o) => o.id.startsWith('channels.')).length === 13);
+    t.ok('操作は 14 個（channels.list / get / read / search / create / update / archive / post / edit / delete / react / markRead / stopThread / wake）', IDS.every((id) => registry.get(id)) && registry.ops.filter((o) => o.id.startsWith('channels.')).length === 14);
     const risk = (id) => registry.get(id).risk;
-    t.ok('危険度: 読む 4 つは read・書く 9 つは write（human-only・guarded はない。ADR 0082 の 5 つ以外は AI も使える）', ['list', 'get', 'read', 'search'].every((v) => risk(`channels.${v}`) === 'read')
-      && ['create', 'update', 'archive', 'post', 'edit', 'delete', 'react', 'markRead', 'stopThread'].every((v) => risk(`channels.${v}`) === 'write'));
+    t.ok('危険度: 読む 4 つは read・書く 9 つは write・wake は guarded（human-only はない。ADR 0082 の 5 つ以外は AI も使える）', ['list', 'get', 'read', 'search'].every((v) => risk(`channels.${v}`) === 'read')
+      && ['create', 'update', 'archive', 'post', 'edit', 'delete', 'react', 'markRead', 'stopThread'].every((v) => risk(`channels.${v}`) === 'write') && risk('channels.wake') === 'guarded');
     t.ok('modeGate: false は post・react・stopThread だけ（読み取り・計画の bot も返事・リアクション・停止はできる）', IDS.filter((id) => registry.get(id).modeGate === false).join() === 'channels.post,channels.react,channels.stopThread');
     t.ok('口: どれも画面から。MCP は catalog（直のツールは足さない）。CLI は全部（markRead も AI・CLI に出す）', IDS.every((id) => registry.get(id).surfaces.ui === true && registry.get(id).surfaces.mcp === 'catalog' && registry.get(id).surfaces.cli));
     t.ok('write の理由（riskReason）を持つ', IDS.filter((id) => risk(id) === 'write').every((id) => registry.get(id).riskReason.length > 20));
@@ -115,6 +115,127 @@ export default async function (t) {
     t.ok('未知の引数・空の本文は INVALID', (await run(HUMAN, 'channels.post', { channelId: cid, text: '' })).code === 'INVALID' && (await run(HUMAN, 'channels.post', { channelId: cid, text: 'x', bogus: 1 })).code === 'INVALID');
     t.ok('英語の文でも出る', (await registry.invoke(HUMAN, 'channels.get', { channelId: 'c_nope0000' }, { ...deps, locale: 'en' })).error.includes('was not found'));
     channels.stop();
+
+    // ================================================================ 独立レビューの指摘（S-2・S-3・S-4）: 強い bot を起こす確認・スレッドの落ち・作業場所の変更
+    {
+      const posted = [];
+      let tick = 70_000;
+      const BOTS = [{ id: 'b_owl', name: 'Owl', icon: '🦉' }, { id: 'b_fox', name: 'Fox', icon: '🦊' }, { id: 'b_lynx', name: 'Lynx', icon: '🐺' }];
+      const botModes = { b_owl: 'default', b_fox: 'auto', b_lynx: 'bypass' };            // Owl は都度確認・Fox は聞かずに進む（範囲は同じで自律が上）・Lynx は全部自動
+      const MODE_ENTRY = { default: { scope: 'workspace', autonomy: 'ask', label: '都度確認' }, auto: { scope: 'workspace', autonomy: 'judge', label: '自動判断' }, bypass: { scope: 'full', autonomy: 'never', label: '全部自動' }, plan: { scope: 'readonly', autonomy: 'ask', label: '計画' } };
+      const reviewChannels = createChannelService({ dir: path.join(tmp, 'review'), now: () => (tick += 10), listBots: async () => BOTS,
+        hooks: { posted: async (post, channel, extra) => { posted.push({ post, channel, extra }); } } });
+      await reviewChannels.start();
+      const made = await reviewChannels.create({ name: 'review' }, { kind: 'human' });
+      const root = (await reviewChannels.post({ channelId: made.id, text: '最初の投稿' }, { kind: 'human' }));
+      const otherRoot = (await reviewChannels.post({ channelId: made.id, text: '別の話' }, { kind: 'human' }));
+      const dm = await reviewChannels.createDm({ bot: { id: 'b_lynx', name: 'Lynx', dmChannelId: '' } });
+      const sidecars = {
+        s_owl: { botId: 'b_owl', kind: 'thread', channelId: made.id, threadId: root.id },
+        s_owl_dm: { botId: 'b_owl', kind: 'dm', channelId: dm.id, threadId: null },
+        s_fox: { botId: 'b_fox', kind: 'thread', channelId: made.id, threadId: root.id },
+        s_lynx: { botId: 'b_lynx', kind: 'thread', channelId: made.id, threadId: root.id },
+        s_plan: { botId: 'b_fox', kind: 'thread', channelId: made.id, threadId: root.id },
+      };
+      const sessionMode = { s_chat: 'default', s_chat_auto: 'auto', s_owl: 'default', s_owl_dm: 'default', s_fox: 'auto', s_lynx: 'bypass', s_plan: 'plan' };
+      const bots = {
+        approvalOf: async ({ botId }) => { const b = BOTS.find((x) => x.id === botId); if (!b) return null; const mode = botModes[botId]; return { ...b, mode, label: MODE_ENTRY[mode].label, entry: MODE_ENTRY[mode] }; },
+        get: async ({ botId }) => BOTS.find((b) => b.id === botId) ?? null,
+      };
+      const asked = [], woke = [];
+      const rdeps = { locale: 'ja', channels: reviewChannels, bots, botOfSession: async (id) => sidecars[id] ?? null, modeOf: async (id) => MODE_ENTRY[sessionMode[id]] ?? MODE_ENTRY.default, audit: () => {},
+        wake: async (a) => { woke.push(a); return { woken: true }; }, approve: async (req) => { asked.push(req); return { pending: true, requestId: `r${asked.length}` }; } };
+      const call = (p, id, args, d = rdeps) => registry.invoke(p, id, args, d);
+      const lastHook = () => posted.at(-1);
+      const settle = () => new Promise((r) => setTimeout(r, 30));
+
+      // S-3(a): bot の会話では threadId を省いたらその会話のスレッド。流れへの新しい投稿は threadId: null と new: true を明示したときだけ
+      const dropped = await call(agent('s_owl'), 'channels.post', { channelId: made.id, text: 'threadId を落とした投稿' });
+      t.ok('S-3(a): bot の会話が threadId を省くと、その会話のスレッドに書く（新しいスレッドを作らない）', dropped.ok && dropped.result.threadId === root.id, JSON.stringify(dropped.result ?? dropped));
+      const explicitNull = await call(agent('s_owl'), 'channels.post', { channelId: made.id, threadId: null, text: 'null だけ' });
+      t.ok('S-3(a): threadId: null だけ（new なし）は INVALID（流れへ書くつもりなら new: true も要る、と文で言う）', explicitNull.ok === false && explicitNull.code === 'INVALID' && /new: true/.test(explicitNull.error), explicitNull.error);
+      const flow = await call(agent('s_owl'), 'channels.post', { channelId: made.id, threadId: null, new: true, text: '流れへの新しい投稿' });
+      await settle();
+      t.ok('S-3(a): threadId: null と new: true を明示すればチャンネルの流れへ書ける。起こした元のスレッド（origin）が posted に渡る', flow.ok && flow.result.threadId === null
+        && lastHook().extra.origin.threadId === root.id && lastHook().extra.origin.channelId === made.id, JSON.stringify(lastHook()?.extra));
+      const other = await call(agent('s_owl'), 'channels.post', { channelId: made.id, threadId: otherRoot.id, text: '別のスレッドへ' });
+      t.ok('S-3(a): 明示した別のスレッドにはそのまま書ける', other.ok && other.result.threadId === otherRoot.id);
+      const elsewhere = await call(agent('s_owl'), 'channels.post', { channelId: dm.id, text: '会話のチャンネルでない所へ' });
+      t.ok('S-3(a): 会話のチャンネルとは別のチャンネルへは既定を補わない（流れ）', elsewhere.ok && elsewhere.result.threadId === null);
+      t.ok('S-3(a): DM の会話・bot でない AI・人は、これまでどおり省けば流れ（既定を補わない）', (await call(agent('s_owl_dm'), 'channels.post', { channelId: dm.id, text: 'DM の返事' })).result.threadId === null
+        && (await call(agent('s_chat'), 'channels.post', { channelId: made.id, text: 'Chats の AI' })).result.threadId === null
+        && (await call(HUMAN, 'channels.post', { channelId: made.id, text: '人' })).result.threadId === null);
+
+      // S-2: 動く承認モードが主体の会話より強い bot を @ すると、投稿は残るが起こさず、承認（channels.wake）を出す
+      const mark = asked.length;
+      const strong = await call(agent('s_chat'), 'channels.post', { channelId: made.id, text: '@Lynx これを書き換えて' });
+      await settle();
+      t.ok('S-2: 会話の AI（都度確認）が全部自動の bot を @ すると、投稿は保存されるが posted へは hold 付きで渡る（起こさない・確認済み）', strong.ok && strong.result.text === '@Lynx これを書き換えて'
+        && JSON.stringify(lastHook().extra.hold) === '["b_lynx"]' && lastHook().extra.checked === true, JSON.stringify(lastHook()?.extra));
+      t.ok('S-2: 承認カード「<bot> は <モード> で動きます。起こしますか」（loosens・モードの行）が出て、起こすのは許可のあと', asked.length === mark + 1 && asked.at(-1).op === 'channels.wake'
+        && asked.at(-1).change.note === '🐺 Lynx は 全部自動 で動きます。起こしますか。' && asked.at(-1).change.loosens === true && asked.at(-1).change.rows.some((r) => r.path === 'mode' && r.after === '全部自動') && woke.length === 0);
+      t.ok('S-2: 返り値に、承認待ちの bot が分かる wake の欄（status: pending・requestId）が付く', strong.result.wake?.length === 1 && strong.result.wake[0].botId === 'b_lynx' && strong.result.wake[0].status === 'pending' && /r\d+/.test(strong.result.wake[0].requestId), JSON.stringify(strong.result.wake));
+      await asked.at(-1).proceed();
+      t.ok('S-2: 人が許可すると、その投稿の @ で起こす（postId・botId を渡す）', woke.length === 1 && woke[0].botId === 'b_lynx' && woke[0].postId === strong.result.id && woke[0].channelId === made.id, JSON.stringify(woke));
+
+      const sameMark = asked.length;
+      const same = await call(agent('s_chat'), 'channels.post', { channelId: made.id, text: '@Owl 同じ強さ' });
+      await settle();
+      t.ok('S-2: 同じモードの bot への @ は確認なし（hold は空）。回数の上限も置かない', same.ok && same.result.wake === undefined && asked.length === sameMark && JSON.stringify(lastHook().extra.hold) === '[]');
+      const autoOnly = await call(agent('s_chat'), 'channels.post', { channelId: made.id, text: '@Fox 自律だけ強い' });
+      t.ok('S-2: 範囲は同じで自律だけ強い bot（Fox）も確認が要る（どちらかの軸が上なら強い）', autoOnly.result.wake?.[0].status === 'pending');
+      const weaker = await call(agent('s_chat_auto'), 'channels.post', { channelId: made.id, text: '@Owl 弱い方へ' });
+      t.ok('S-2: 自分より弱い bot への @ は確認なし', weaker.ok && weaker.result.wake === undefined);
+      const equalFull = await call(agent('s_lynx'), 'channels.post', { channelId: made.id, text: '@Fox 同じか弱い' });
+      t.ok('S-2: 全部自動の bot が、同じか弱い bot を @ するのは確認なし', equalFull.ok && equalFull.result.wake === undefined);
+      const fromBot = await call(agent('s_owl'), 'channels.post', { channelId: made.id, text: '@Lynx 強い bot へ（bot から）', new: true });
+      t.ok('S-2: bot から強い bot への @ も同じ確認（投稿の主体が agent・bot のどちらでも）', fromBot.result.wake?.[0].status === 'pending' && fromBot.result.wake[0].botId === 'b_lynx');
+      const humanPost = await call(HUMAN, 'channels.post', { channelId: made.id, text: '@Lynx 人が書く' });
+      await settle();
+      t.ok('S-2: 人の投稿は確認なし（hold も checked も付けない）', humanPost.result.wake === undefined && lastHook().extra.hold === undefined && lastHook().extra.checked === undefined);
+      const roStrong = await call(agent('s_plan'), 'channels.post', { channelId: made.id, text: '@Owl 計画モードから' });
+      t.ok('S-2: 読み取りの bot（計画）は、動くモードが上の bot を起こせない。投稿は残り、wake は READ_ONLY_MODE で断られる', roStrong.ok && roStrong.result.wake[0].status === 'denied' && roStrong.result.wake[0].code === 'READ_ONLY_MODE', JSON.stringify(roStrong.result.wake));
+      const noCard = await call(agent('s_chat'), 'channels.post', { channelId: made.id, text: '@Lynx 承認の口なし' }, { ...rdeps, approve: undefined });
+      t.ok('S-2: 承認の口が無い呼び出しは NEEDS_APPROVAL（起こさない）', noCard.result.wake[0].status === 'denied' && noCard.result.wake[0].code === 'NEEDS_APPROVAL');
+      const dmPost = await call(agent('s_chat'), 'channels.post', { channelId: dm.id, text: 'DM の bot（全部自動）へ' });
+      t.ok('S-2: DM（@ なしで bot へ届く）も、宛先の bot が強ければ確認が要る', dmPost.result.wake?.[0].status === 'pending' && dmPost.result.wake[0].botId === 'b_lynx');
+      // 進捗の置き換え（ターンの投稿）では誰も起こさない: 確認は、ターンの終わりの返事の @ で（dispatch の route）
+      const turnPost = await reviewChannels.post({ channelId: made.id, threadId: root.id, text: '…', state: 'working', turn: { botId: 'b_owl', sessionId: 's_owl' }, new: true }, { kind: 'bot', botId: 'b_owl' });
+      const progressMark = asked.length;
+      const progress = await call(agent('s_owl'), 'channels.post', { channelId: made.id, text: '進捗: @Lynx にあとで頼む' });
+      t.ok('S-2: bot がターンの中で書く進捗（ターンの投稿の置き換え）では確認を出さない。返事の @ は終わりで同じ確認を通る', progress.ok && progress.result.id === turnPost.id && progress.result.wake === undefined && asked.length === progressMark);
+
+      // channels.wake そのもの
+      const wakeMark = asked.length;
+      const direct = await call(agent('s_chat'), 'channels.wake', { channelId: made.id, postId: strong.result.id, botId: 'b_lynx' });
+      t.ok('channels.wake: AI が呼ぶと承認（guarded）。人が呼べば確認なしで起こす', direct.pending === true && asked.length === wakeMark + 1
+        && (await call(HUMAN, 'channels.wake', { channelId: made.id, postId: strong.result.id, botId: 'b_lynx' })).result.woken === true);
+      t.ok('channels.wake: 無い bot は BOT_NOT_FOUND', (await call(agent('s_chat'), 'channels.wake', { channelId: made.id, postId: strong.result.id, botId: 'b_nope' })).code === 'BOT_NOT_FOUND');
+      const reask = asked.length;
+      const first = asked.at(-1);
+      botModes.b_lynx = 'auto';                                           // 許可を待つ間に、bot のモードが変わった
+      await first.proceed();
+      botModes.b_lynx = 'bypass';
+      t.ok('channels.wake: 許可のあとに bot のモードが変わっていたら、起こさずに聞き直す（受領証の照合）', asked.length === reask + 1 && woke.length === 2, `${asked.length} ${reask} ${woke.length}`);
+
+      // markRead の at は今を超えない（未来の時刻を入れて、そのチャンネルの未読の印を殺せない）
+      const future = await call(agent('s_chat'), 'channels.markRead', { channelId: made.id, at: 9_000_000_000_000_000 });
+      t.ok('markRead: at に未来の時刻を入れても、既読の位置は今で頭打ち（AI・CLI も呼べる write なので）', future.ok && future.result.readAt <= Date.now() && future.result.readAt > 0, JSON.stringify(future.result));
+
+      // S-4: AI が作業場所（cwd）を決める・変えるのは承認
+      const cwdMark = asked.length;
+      const cwdAsk = await call(agent('s_chat'), 'channels.update', { channelId: made.id, cwd: path.join(tmp, 'work') });
+      t.ok('S-4: AI が channels.update で cwd を変えるのは承認（before・after の行・loosens）。許可前は変わらない', cwdAsk.pending === true && asked.length === cwdMark + 1 && asked.at(-1).change.rows[0].path === 'cwd'
+        && asked.at(-1).change.rows[0].after === path.join(tmp, 'work') && asked.at(-1).change.loosens === true && (await reviewChannels.get({ channelId: made.id })).cwd === null);
+      await asked.at(-1).proceed();
+      t.ok('S-4: 許可されたら変わる。同じ値・外す（null）・cwd 以外の変更は承認なし', (await reviewChannels.get({ channelId: made.id })).cwd === path.join(tmp, 'work')
+        && (await call(agent('s_chat'), 'channels.update', { channelId: made.id, cwd: path.join(tmp, 'work') })).ok === true && (await call(agent('s_chat'), 'channels.update', { channelId: made.id, purpose: '目的だけ' })).ok === true && asked.length === cwdMark + 1
+        && (await call(agent('s_chat'), 'channels.update', { channelId: made.id, cwd: null })).ok === true && asked.length === cwdMark + 1);
+      t.ok('S-4: 人は cwd を承認なしで変えられる。AI が cwd つきで作るのも承認、cwd なしの作成は承認なし', (await call(HUMAN, 'channels.update', { channelId: made.id, cwd: path.join(tmp, 'work') })).ok === true
+        && (await call(agent('s_chat'), 'channels.create', { name: 'with-cwd', cwd: path.join(tmp, 'work') })).pending === true
+        && (await call(agent('s_chat'), 'channels.create', { name: 'without-cwd' })).ok === true);
+      reviewChannels.stop();
+    }
 
     // ---- サーバー越し（fake）: 画面（WS の invoke）の出来事と、CLI（束縛なし・会話に束縛）
     const dataDir = path.join(tmp, 'data');

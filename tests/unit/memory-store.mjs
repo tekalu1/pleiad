@@ -127,6 +127,29 @@ export default async function (t) {
       return back2.length === 1 && back2[0].id === 'm_roundtrip1' && back2[0].why === '理由' && back2[0].updatedAt === 2;
     })());
     t.ok('hash は内容が変わると変わる', (() => { const h = damaged.hash(); return typeof h === 'string' && h.length === 64 && h === damaged.hash(); })());
+
+    // S-6: 壊れた最後の行の後ろに次の行をつなげない（つながると、新しい記録（たとえば forget の墓石）が 1 行として読めず失われる）
+    const afterCrash = open();
+    await afterCrash.init();
+    t.ok('書きかけの行の後ろの追記は、次の起動でも読める（rev・記憶・記録が残る）', afterCrash.rev() === damaged.rev() && afterCrash.get(next.entry.id)?.text === '落ちた後も書ける'
+      && afterCrash.recordsSince(rev).some((r) => r.rev === next.rev && r.op === 'add' && r.id === next.entry.id));
+    const gravestone = await damaged.forget({ id: next.entry.id, by: BOT_AUTHOR });
+    const afterForget = open();
+    await afterForget.init();
+    t.ok('壊れた行の後ろでも forget の墓石は 2 度目の起動で残る', afterForget.isTombstoned(gravestone.fp) && afterForget.rev() === gravestone.rev);
+    await damaged.unforget({ id: next.entry.id, by: HUMAN });
+
+    // S-1(e): 書き手が替わる直しは、元の書き手（origBy）を残す。by は今の本文を書いた者
+    const humanLine = await damaged.add({ layer: 'user', text: '人が書いた行', by: HUMAN });
+    const rewritten = await damaged.edit({ id: humanLine.entry.id, text: 'AI が書き換えた行', by: BOT_AUTHOR, via: 's9' });
+    t.ok('人の行を bot が直すと、by は bot・origBy に元の人が残る（記録にも）', rewritten.entry.by.botId === BOT && rewritten.entry.origBy.kind === 'human'
+      && damaged.recordsSince(0).findLast((r) => r.id === humanLine.entry.id && r.op === 'edit').origBy.kind === 'human');
+    const reread = open(); await reread.init();
+    t.ok('origBy は markdown のメタに残り、読み戻せる', reread.get(humanLine.entry.id).origBy.kind === 'human' && reread.get(humanLine.entry.id).by.botId === BOT);
+    const sameAgain = await damaged.edit({ id: humanLine.entry.id, text: 'AI がもう一度', by: BOT_AUTHOR });
+    t.ok('同じ書き手の直しでは origBy は変わらない（最初の人のまま）', sameAgain.entry.origBy.kind === 'human');
+    const noOrig = await damaged.add({ layer: 'user', text: 'bot の行', by: BOT_AUTHOR });
+    t.ok('書き手が替わらない直しには origBy が付かない', !('origBy' in (await damaged.edit({ id: noOrig.entry.id, text: 'bot の行 2', by: BOT_AUTHOR })).entry));
   } finally {
     await fs.rm(dir, { recursive: true, force: true });
   }

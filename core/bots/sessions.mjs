@@ -7,8 +7,9 @@
 //   createBotSessions({ host, now })      … bot の会話を作る。委譲の prepare（core/server.mjs）と同じ手順
 //
 // フォルダー: bot の `folders`（先頭が既定の作業場所）を、バックエンドごとに次のように渡す。
-//   Claude        cwd 以外の全部を Agent SDK の additionalDirectories（読み取り専用の区別は宣言にとどまり強制されない）
-//   Codex         rw のうち cwd 以外を turn/start の sandboxPolicy.workspaceWrite.writableRoots（ro は書き込みに入れないだけ）
+//   Claude        cwd 以外の全部を Agent SDK の additionalDirectories。ro は readOnlyRoots にして、Edit（Write・NotebookEdit を含む）の deny ルールで書き換えを断る
+//                 （acceptEdits は cwd と追加フォルダーの編集を聞かずに通すため）。シェルの rm・mv・sed などは断れない（acceptEdits の自動承認の対象）
+//   Codex         rw のうち cwd 以外を turn/start の sandboxPolicy.workspaceWrite.writableRoots（ro は書き込みに入れないだけ。cwd そのものは sandbox が常に書ける）
 //   Antigravity   cwd 以外の全部を --add-dir（ワークスペースに見せるだけ。書き込みは範囲を限れない）
 //   書き込みの範囲を限れないモード（modes() の scope が full。Claude の YOLO・Codex の YOLO・Antigravity の yolo）では、
 //   フォルダーの選択は無効で「すべてのフォルダー」（all: true。ADR 0096・計画 §7.2-2）。Codex の full は sandbox で書き込みを
@@ -34,8 +35,8 @@ export const unrestrictedMode = (modeEntry) => scopeRank(modePosition(modeEntry)
 
 /**
  * フォルダーの渡し方。cwd はこのターンの作業場所（無ければ先頭のフォルダー）。
- * 返り: { all, additionalDirectories, writableRoots }。all のときも additionalDirectories は返す（Antigravity が使う）。
- * writableRoots は all でないときの rw（cwd 以外）。Codex の sandbox が使う
+ * 返り: { all, additionalDirectories, writableRoots, readOnlyRoots }。all のときも additionalDirectories は返す（Antigravity が使う）。
+ * writableRoots は all でないときの rw（cwd 以外）。Codex の sandbox が使う。readOnlyRoots は all でないときの ro（cwd 自身を含む）。Claude が編集を断るのに使う
  */
 export function folderPlan(bot, modeEntry, cwd = null) {
   const folders = bot?.folders ?? [];
@@ -47,6 +48,7 @@ export function folderPlan(bot, modeEntry, cwd = null) {
     all,
     additionalDirectories: others.map((f) => f.path),
     writableRoots: all ? [] : others.filter((f) => f.access === 'rw').map((f) => f.path),
+    readOnlyRoots: all ? [] : folders.filter((f) => f.access === 'ro').map((f) => f.path),
   };
 }
 

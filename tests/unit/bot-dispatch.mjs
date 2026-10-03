@@ -71,7 +71,7 @@ export default async function (t) {
     // ================================================================ 途中送信の形ごとの扱い（身代わりのサービス・バックエンド）
     {
       let worlds = 0;
-      const world = (steerKind, { realStart = false } = {}) => {
+      const world = (steerKind, { realStart = false, more = false, modes = null } = {}) => {
         let dRef = null;
         const posts = [
           { id: 'p_root', channelId: 'c_1', threadId: null, author: { kind: 'human' }, text: '根', mentions: ['b_1'], at: 1000, reactions: {} },
@@ -94,8 +94,13 @@ export default async function (t) {
           edit: async (a) => { const post = posts.find((x) => x.id === a.postId); Object.assign(post, ...[a.text !== undefined && { text: a.text }, a.state && { state: a.state }].filter(Boolean)); return structuredClone(post); },
           remove: async () => {},
           threads: {
-            get: async (c, th) => structuredClone(threads[`${c}/${th}`] ?? null), list: async () => [],
-            update: async (c, th, patch) => { const cur = threads[`${c}/${th}`]; const next = typeof patch === 'function' ? patch(structuredClone(cur)) : patch; Object.assign(cur, next); return structuredClone(cur); },
+            get: async (c, th) => structuredClone(threads[`${c}/${th}`] ?? null), list: async (c) => structuredClone(Object.values(threads).filter((x) => !c || x.channelId === c)),
+            update: async (c, th, patch) => {
+              const cur = (threads[`${c}/${th}`] ??= { channelId: c, threadId: th, sessions: {}, state: 'idle', tokens: { input: 0, output: 0, cached: 0 }, calls: 0, stopped: null });
+              const next = typeof patch === 'function' ? patch(structuredClone(cur)) : patch;
+              Object.assign(cur, next);
+              return structuredClone(cur);
+            },
           },
         };
         const host = {
@@ -107,11 +112,16 @@ export default async function (t) {
           runTurn: async (args, _onStarted, hooks) => { started.push({ args, hooks }); if (realStart) await dRef.turnExtras({ info: { sessionId: args.sessionId }, agentLocale: 'ja', stream: {} }); return 'ok'; },
           lastReply: async () => '終わり',
         };
-        const bots = { get: async ({ botId }) => (botId === 'b_1' ? { id: 'b_1', name: 'Owl', icon: '🦉' } : null), list: async () => [{ id: 'b_1', name: 'Owl', icon: '🦉' }] };
+        const BOT_LIST = more ? [{ id: 'b_1', name: 'Owl', icon: '🦉' }, { id: 'b_2', name: 'Lynx', icon: '🐺' }, { id: 'b_3', name: 'Fox', icon: '🦊' }] : [{ id: 'b_1', name: 'Owl', icon: '🦉' }];
+        const bots = {
+          get: async ({ botId }) => BOT_LIST.find((b) => b.id === botId) ?? null, list: async () => BOT_LIST,
+          ...(modes ? { approvalOf: async ({ botId }) => { const b = BOT_LIST.find((x) => x.id === botId); const m = modes[botId]; return b && m ? { ...b, mode: m.id, label: m.label, entry: m } : null; },
+            createSession: async ({ botId, threadId }) => { const sessionId = `s_new_${botId}`; sessions[sessionId] = { bot: { botId, kind: 'thread', channelId: 'c_1', threadId, memRev: 0, snapshotDue: false, delivered: [], postCursor: null } }; return { sessionId }; } } : {}),
+        };
         const memory = { turnContext: async () => ({ notes: [], memRev: 0, delivered: [], snapshotDue: false }) };
         const d = createDispatcher({ channels, bots, memory, host });
         dRef = d;
-        return { d, posts, threads, sessions, steers, emitted, started, aborted, turn, turns, control, channel, setAccept: (f) => { accept = f; } };
+        return { d, posts, threads, sessions, steers, emitted, started, aborted, turn, turns, control, channel, host, setAccept: (f) => { accept = f; } };
       };
       const statusOf = async (w, postId) => (await w.d.inbox.list({})).find((i) => i.postId === postId)?.status;
       const tick = () => sleep(60);
@@ -211,6 +221,191 @@ export default async function (t) {
         await tick();
         t.ok('圧縮が終わると、たまった出来事を新しいターンで渡す', w.started.length === 1 && w.started[0].args.prompt.includes('post="p_2"'));
       }
+
+    // ================================================================ 独立レビューの指摘（S-2・S-3・F-1・F-2・S-10）。world は上の「途中送信の形ごとの扱い」の道具を使う
+    {
+      const ASK = { id: 'default', label: '都度確認', scope: 'workspace', autonomy: 'ask' };
+      const FULL = { id: 'bypass', label: '全部自動', scope: 'full', autonomy: 'never' };
+      const botPost = (id, mentions, over = {}) => ({ id, channelId: 'c_1', threadId: 'p_root', author: { kind: 'bot', botId: 'b_1' }, text: '@Lynx やって', mentions, state: 'done', at: 5000, reactions: {}, ...over });
+      const sysTexts = (w) => w.posts.filter((p) => p.turn === undefined && /起こしていません/.test(p.text));
+      const startedFor = (w, sessionId) => w.started.some((s) => s.args.sessionId === sessionId);
+      const tick = () => sleep(80);
+
+      // S-2: bot の返事の @ は、動くモードが自分より強い bot を起こさない（起こさなかったことをスレッドで知らせる）。同じか弱い bot は起こす
+      {
+        const w = world('plain', { more: true, modes: { b_1: ASK, b_2: FULL, b_3: ASK } });
+        w.turns.delete('s1');
+        w.posts.push(botPost('p_r1', ['b_2']));
+        await w.d.onPosted(w.posts.at(-1), w.channel);
+        await tick();
+        t.ok('S-2: bot の返事が全部自動の bot を @ しても起こさない（出来事も作らない）。スレッドに「起こしていません」の知らせが残る', (await w.d.inbox.list({})).length === 0 && !startedFor(w, 's_new_b_2') && sysTexts(w).length === 1
+          && sysTexts(w)[0].text.includes('Lynx') && sysTexts(w)[0].text.includes('全部自動') && sysTexts(w)[0].text.includes('Owl') && sysTexts(w)[0].text.includes('人が @ すると'), JSON.stringify(w.posts.map((p) => p.text)));
+        w.posts.push(botPost('p_r2', ['b_3'], { text: '@Fox やって' }));
+        await w.d.onPosted(w.posts.at(-1), w.channel);
+        await tick();
+        t.ok('S-2: 同じ強さの bot への @ は、これまでどおり起こす（呼び合いに上限は置かない）', startedFor(w, 's_new_b_3') && (await w.d.inbox.list({})).some((i) => i.botId === 'b_3' && i.postId === 'p_r2'));
+        const human = world('plain', { more: true, modes: { b_1: ASK, b_2: FULL } });
+        human.turns.delete('s1');
+        human.posts.push(botPost('p_h1', ['b_2'], { author: { kind: 'human' }, text: '@Lynx 人が書く' }));
+        await human.d.onPosted(human.posts.at(-1), human.channel);
+        await tick();
+        t.ok('S-2: 人の投稿の @ は、強い bot でも確認なしで起こす', startedFor(human, 's_new_b_2') && sysTexts(human).length === 0);
+        const checked = world('plain', { more: true, modes: { b_1: ASK, b_2: FULL } });
+        checked.turns.delete('s1');
+        checked.posts.push(botPost('p_c1', ['b_2']));
+        await checked.d.onPosted(checked.posts.at(-1), checked.channel, { hold: ['b_2'], checked: true });
+        await tick();
+        t.ok('S-2: ops が確認済み（hold・checked）の投稿は、hold の bot を起こさず、知らせの投稿も重ねない（承認のカードに回っている）', (await checked.d.inbox.list({})).length === 0 && sysTexts(checked).length === 0);
+        const passed = world('plain', { more: true, modes: { b_1: ASK, b_2: FULL } });
+        passed.turns.delete('s1');
+        passed.posts.push(botPost('p_c2', ['b_2']));
+        await passed.d.onPosted(passed.posts.at(-1), passed.channel, { hold: [], checked: true });
+        await tick();
+        t.ok('S-2: ops が確認済みで hold が空なら（強さは確かめた）、そのまま起こす', startedFor(passed, 's_new_b_2'));
+      }
+
+      // channels.wake の本体（dispatch.wakePost）: @ されている bot だけ・止めたスレッドは起こさない
+      {
+        const w = world('plain', { more: true, modes: { b_1: ASK, b_2: FULL } });
+        w.turns.delete('s1');
+        w.posts.push(botPost('p_w1', ['b_2']));
+        const woken = await w.d.wakePost({ channelId: 'c_1', postId: 'p_w1', botId: 'b_2' });
+        await tick();
+        t.ok('wakePost: その投稿が @ している bot を起こす（承認のあと）', woken.woken === true && startedFor(w, 's_new_b_2'));
+        t.ok('wakePost: @ していない bot・無い投稿は起こさない（notMentioned・notFound）', (await w.d.wakePost({ channelId: 'c_1', postId: 'p_w1', botId: 'b_3' })).reason === 'notMentioned' && (await w.d.wakePost({ channelId: 'c_1', postId: 'p_none', botId: 'b_2' })).reason === 'notFound');
+        w.threads['c_1/p_root'].stopped = { by: { kind: 'human' }, at: 1 };
+        t.ok('wakePost: 止めたスレッドは、承認されても起こさない（stopped）', (await w.d.wakePost({ channelId: 'c_1', postId: 'p_w1', botId: 'b_2' })).reason === 'stopped');
+      }
+
+      // S-3(b): 起こして新しくできたスレッドの origin。［止める］は origin で結ばれた派生のスレッド（孫も）にも届く
+      {
+        const w = world('plain', { more: true, modes: { b_1: ASK, b_2: ASK, b_3: ASK } });
+        w.turns.delete('s1');
+        const flow = botPost('p_flow', ['b_2'], { threadId: null, text: '@Lynx 流れへ' });
+        w.posts.push(flow);
+        await w.d.onPosted(flow, w.channel, { checked: true, hold: [], origin: { channelId: 'c_1', threadId: 'p_root' } });
+        await tick();
+        t.ok('S-3(b): bot が自分のスレッドから流れへ書いた @ で新しくできたスレッドに、起こした元（origin）が残る', w.threads['c_1/p_flow']?.origin?.threadId === 'p_root' && w.threads['c_1/p_flow'].origin.channelId === 'c_1' && w.threads['c_1/p_flow'].sessions.b_2 === 's_new_b_2', JSON.stringify(w.threads['c_1/p_flow']));
+        const plainFlow = botPost('p_flow2', ['b_2'], { threadId: null, author: { kind: 'human' }, text: '@Lynx 人が流れへ' });
+        w.posts.push(plainFlow);
+        await w.d.onPosted(plainFlow, w.channel);
+        await tick();
+        t.ok('S-3(b): origin が無い投稿（人の @ など）で作ったスレッドには origin を付けない', w.threads['c_1/p_flow2'] && !('origin' in w.threads['c_1/p_flow2']));
+
+        // 3 世代と無関係の 1 つ: p_root（s1）→ p_t2（s2）→ p_t3（s3）、p_other（s4）
+        const x = world('plain', { more: true, modes: { b_1: ASK, b_2: ASK, b_3: ASK } });
+        const mkThread = (id, sessionId, botId, origin) => { x.threads[`c_1/${id}`] = { channelId: 'c_1', threadId: id, sessions: { [botId]: sessionId }, state: 'working', tokens: { input: 0, output: 0, cached: 0 }, calls: 1, stopped: null, ...(origin ? { origin } : {}) }; };
+        mkThread('p_t2', 's2', 'b_2', { channelId: 'c_1', threadId: 'p_root' });
+        mkThread('p_t3', 's3', 'b_3', { channelId: 'c_1', threadId: 'p_t2' });
+        mkThread('p_other', 's4', 'b_1', null);
+        for (const [sessionId, botId, threadId] of [['s2', 'b_2', 'p_t2'], ['s3', 'b_3', 'p_t3'], ['s4', 'b_1', 'p_other']]) {
+          x.sessions[sessionId] = { bot: { botId, kind: 'thread', channelId: 'c_1', threadId, memRev: 0, snapshotDue: false, delivered: [], postCursor: null } };
+          x.posts.push({ id: threadId, channelId: 'c_1', threadId: null, author: { kind: 'human' }, text: '根', mentions: [], at: 100, reactions: {} });
+        }
+        await x.d.turnExtras(x.turn);
+        for (const sessionId of ['s2', 's3', 's4']) await x.d.turnExtras({ info: { sessionId }, agentLocale: 'ja', stream: {}, control: {}, ac: { signal: { aborted: false } }, outcome: null, usage: {} });
+        const by = { kind: 'human' };
+        await x.d.stopThread({ channelId: 'c_1', threadId: 'p_root' }, by);
+        const abortedIds = x.aborted.map((a) => a.sessionId).sort().join();
+        t.ok('S-3(b): ［止める］は元のスレッドと、origin で結ばれた派生のスレッド（孫も）の走っているターンを止める。無関係のスレッドは止めない', abortedIds === 's1,s2,s3', abortedIds);
+        t.ok('S-3(b): 派生のスレッドにも止めた主体の印（stopped）が残り、人が書くまで起こさない。無関係のスレッドには付かない', x.threads['c_1/p_t2'].stopped?.by.kind === 'human' && x.threads['c_1/p_t3'].stopped?.by.kind === 'human' && x.threads['c_1/p_other'].stopped === null);
+        t.ok('S-3(b): 派生のスレッドにも「止めました」の投稿が残る', ['p_t2', 'p_t3'].every((id) => x.posts.some((p) => p.threadId === id && /止めました|が止めました/.test(p.text))));
+      }
+
+      // F-1: 始められなかったターンの後に、その間にたまった出来事（途中送信できず pending のまま）を取り残さない
+      {
+        const w = world('plain');
+        w.turns.delete('s1');
+        let reject;
+        const calls = [];
+        w.host.runTurn = (args) => { calls.push(args); return calls.length === 1 ? new Promise((_, r) => { reject = r; }) : Promise.resolve('cancelled'); };
+        await w.d.wake({ botId: 'b_1', channel: w.channel, threadId: 'p_root', post: w.posts[1] });
+        await w.d.wake({ botId: 'b_1', channel: w.channel, threadId: 'p_root', post: w.posts[2] });   // 始めている間に 2 通目: 途中送信できず pending のまま
+        t.ok('F-1: 前提: 1 通目が始まる前に 2 通目は pending（まだ配れない）', calls.length === 1 && (await w.d.inbox.list({ status: 'pending' })).some((i) => i.postId === 'p_3'));
+        reject(new Error('cwd missing'));
+        await sleep(3600);
+        t.ok('F-1: 始められなかった後、たまっていた出来事は配り直される（次の @ まで取り残さない）。失敗した 1 通目は結果不明のまま送り直さない', calls.length === 2 && calls[1].prompt.includes('post="p_3"')
+          && (await w.d.inbox.list({})).find((i) => i.postId === 'p_2')?.status === 'unknown', JSON.stringify([calls.length, await w.d.inbox.list({})]));
+      }
+
+      // F-2: ターンの記録ができた後に始まらず戻された（requeue）とき、delivering のまま固まらず、記録を片付けて配り直す
+      {
+        const w = world('plain');
+        w.turns.delete('s1');
+        const calls = [];
+        w.host.runTurn = async (args) => {
+          calls.push(args);
+          await w.d.turnExtras({ info: { sessionId: args.sessionId }, agentLocale: 'ja', stream: {} });
+          return calls.length === 1 ? 'requeue' : 'ok';
+        };
+        await w.d.wake({ botId: 'b_1', channel: w.channel, threadId: 'p_root', post: w.posts[1] });
+        await tick();
+        const turnPosts = w.posts.filter((p) => p.turn);
+        t.ok('F-2: turnExtras の後の requeue でも、出来事は delivering のままにならず pending に戻り、作業中の記録・投稿は片付く', (await w.d.inbox.list({})).find((i) => i.postId === 'p_2')?.status === 'pending' && w.d.activeCount() === 0
+          && turnPosts.length === 1 && turnPosts[0].state === 'stopped', JSON.stringify([await w.d.inbox.list({}), w.d.activeCount(), turnPosts.map((p) => p.state)]));
+        await sleep(3500);
+        t.ok('F-2: 配り直しで新しいターンが始まり、同じ出来事を渡す', calls.length === 2 && calls[1].prompt.includes('post="p_2"'), String(calls.length));
+        // 終わりが届かなかった記録（次のターンの turnExtras が片付ける）の途中送信（渡った合図待ち）も、delivering のまま固まらず、次のターンで送り直す
+        const c = world('confirm');
+        await c.d.turnExtras(c.turn);
+        await c.d.onPosted(c.posts[1], c.channel);
+        const before = (await c.d.inbox.list({})).find((i) => i.postId === 'p_2')?.status;
+        await c.d.turnExtras(c.turn);   // 前のターンの終わりが届かないまま、新しいターンが始まった
+        t.ok('F-2: 終わりが届かなかった記録の、合図待ちの途中送信は、次のターンの始まりで pending に戻る（delivering のまま固まらない）', before === 'delivering' && (await c.d.inbox.list({})).find((i) => i.postId === 'p_2')?.status === 'pending' && c.d.activeCount() === 1);
+      }
+
+      // L-1: アーカイブされたチャンネルの出来事は配らない（ターンの投稿だけ作れずに走らない）
+      {
+        const w = world('plain');
+        w.turns.delete('s1');
+        w.channel.archivedAt = 5000;
+        await w.d.wake({ botId: 'b_1', channel: w.channel, threadId: 'p_root', post: w.posts[1] });
+        await tick();
+        t.ok('L-1: アーカイブされたチャンネルの出来事は、ターンを始めずに捨てる', w.started.length === 0 && (await w.d.inbox.list({})).length === 0);
+      }
+
+      // F-3: commit の sidecar の書き込みが終わる前に次のターンが始まっても、古い postCursor を読んで同じ文脈を渡し直さない
+      {
+        const w = world('plain', { realStart: true });
+        w.turns.delete('s1');
+        const original = w.host.store.setSessionData;
+        w.host.store.setSessionData = async (...a) => { await sleep(200); return original(...a); };   // 書き込みが遅い
+        await w.d.wake({ botId: 'b_1', channel: w.channel, threadId: 'p_root', post: w.posts[1] });
+        await tick();                                                                                  // ターンの始まり（turnExtras）まで
+        w.d.onTurnEvent({ info: { sessionId: 's1' } }, { type: 'text.delta', text: 'x' });            // 「渡った」→ commit（postCursor を p_2 に進める書き込みが走る）
+        await w.d.onTurnEnd({ info: { sessionId: 's1' }, usage: {}, agentLocale: 'ja' }, { outcome: 'ok' });
+        await w.d.wake({ botId: 'b_1', channel: w.channel, threadId: 'p_root', post: w.posts[2] });  // 書き込みの途中で次の起こし
+        await tick();
+        const second = w.started.at(-1)?.args.prompt ?? '';
+        t.ok('F-3: 次のターンは、commit が進めた postCursor の後ろだけを渡す（前の起こしの投稿を文脈として渡し直さない）', w.started.length === 2 && second.includes('post="p_3"') && !second.includes('post="p_2"'), second);
+      }
+
+      // S-10: トークンの足し算を、毎秒の書き換えのたびにしない（数秒に 1 回・ターンの終わりには必ず）
+      {
+        let clock = 1_000_000;
+        const w = world('plain');
+        w.turns.delete('s1');
+        const d = createDispatcher({ channels: w.d.channels, bots: w.d.bots, memory: w.d.memory, host: w.d.host, now: () => clock });
+        let tokenWrites = 0;
+        const base = w.d.channels.threads.update;
+        w.d.channels.threads.update = async (c, th, patch) => { if (typeof patch === 'function' && 'tokens' in patch({ tokens: { input: 0, output: 0, cached: 0 } })) tokenWrites++; return base(c, th, patch); };
+        const turn = { info: { sessionId: 's1' }, agentLocale: 'ja', stream: {}, control: {}, ac: { signal: { aborted: false } }, outcome: null, usage: {} };
+        await d.turnExtras(turn);
+        for (let i = 1; i <= 8; i++) {
+          clock += 1100;
+          d.onTurnEvent(turn, { type: 'usage', inputTokens: i * 100, outputTokens: i * 10, cachedTokens: i * 50 });
+          d.onTurnEvent(turn, { type: 'text.delta', text: `${i}` });
+          await sleep(40);
+        }
+        const during = tokenWrites;
+        t.ok('S-10: 8 秒の間に毎秒書き換えても、トークンの足し算は数秒に 1 回（8 回ではなく 2 回以下）', during >= 1 && during <= 2, String(during));
+        w.turns.delete('s1');
+        turn.usage = { inputTokens: 900, outputTokens: 90, cachedTokens: 450 };
+        await d.onTurnEnd(turn, { outcome: 'ok' });
+        const th = w.threads['c_1/p_root'];
+        t.ok('S-10: ターンの終わりには残りを必ず足す（途中の分と合わせて、使った分に一致する）', tokenWrites === during + 1 && th.tokens.input === 900 && th.tokens.output === 90 && th.tokens.cached === 450, JSON.stringify(th.tokens));
+      }
+    }
     }
 
     // ================================================================ サーバー越し
@@ -428,6 +623,57 @@ export default async function (t) {
     const rootI = await call('channels.post', { channelId: dev.id, text: '@Owl fail' });
     const i1 = await until(async () => { const r = await read(dev.id, rootI.id); return botPost(r, owl, 'failed').length && r.threads[0].state === 'failed' ? r : null; }, { label: '失敗' });
     t.ok('ターンが失敗すると、投稿は failed（理由つき）・スレッドは failed', botPost(i1, owl, 'failed')[0].text.includes('fake: failure') && i1.threads[0].state === 'failed', JSON.stringify(botPost(i1, owl)));
+
+
+    // ---- K: 独立レビューの指摘をサーバー越しに（S-3・S-2）。bot の会話の AI が ply_control から channels.post を呼ぶ
+    {
+      // 会話の AI が呼ぶ操作の台本: 本文の @ は \u0040 にして、人の投稿では誰も起こさない
+      const AT = String.fromCharCode(92) + 'u0040';   // 台本の JSON の中の「バックスラッシュ + u0040」（読んだ側が @ に戻す）
+      const viaBot = (args) => `control:${JSON.stringify({ name: 'call_op', arguments: { op: 'channels.post', args } }).replace(/@/g, AT)}`;
+      const flowPosts = async () => (await read(dev.id)).posts.filter((p) => p.author.kind === 'bot' && p.author.botId === owl.id && !p.turn);
+
+      // S-3(a): threadId を落とした channels.post は、その会話のスレッドに書かれる（チャンネルの流れの新しい投稿にならない）
+      const flowBefore = (await flowPosts()).length;
+      const rootK = await call('channels.post', { channelId: dev.id, text: `@Owl ${viaBot({ channelId: dev.id, text: 'threadId を落とした報告', new: true })}` });
+      const k1 = await until(async () => { const r = await read(dev.id, rootK.id); return botPost(r, owl, 'done')[0] && r.posts.some((p) => p.text === 'threadId を落とした報告') ? r : null; }, { label: 'K1 返事' });
+      t.ok('S-3(a): threadId を落とした channels.post が、その会話のスレッドに書かれる。チャンネルの流れに新しい投稿が増えない（新しいスレッドができない）', k1.posts.find((p) => p.text === 'threadId を落とした報告').threadId === rootK.id
+        && (await flowPosts()).length === flowBefore, JSON.stringify(k1.posts.map((p) => [p.author.kind, p.threadId, p.text.slice(0, 20)])));
+      await settled(rootK);
+
+      // S-3(b)・止める: 明示した流れへの投稿で起こした先は、起こした元のスレッドの［止める］で止まる。Lynx は流れの投稿で新しいスレッドを持つ（origin）
+      const rootL = await call('channels.post', { channelId: dev.id, text: `@Owl ${viaBot({ channelId: dev.id, threadId: null, new: true, text: '@Lynx slow' })}` });
+      const l1 = await until(async () => {
+        const r = await read(dev.id);
+        const spawned = r.posts.find((p) => p.author.kind === 'bot' && p.author.botId === owl.id && p.threadId === null && p.text === '@Lynx slow');
+        if (!spawned) return null;
+        const th = r.threads.find((x) => x.threadId === spawned.id);
+        const rr = await read(dev.id, spawned.id);
+        return th && botPost(rr, lynx, 'working').length ? { spawned, th, rr } : null;
+      }, { label: 'L 流れへの @ で新しいスレッド' });
+      t.ok('S-3(b): bot が自分のスレッドから、流れへ @ を書いて起こした先は新しいスレッド。起こした元（origin）が ThreadState に残る', l1.th.origin?.threadId === rootL.id && l1.th.origin.channelId === dev.id, JSON.stringify(l1.th));
+      const mL = c.mark();
+      await call('channels.stopThread', { channelId: dev.id, threadId: rootL.id });
+      const l2 = await until(async () => { const rr = await read(dev.id, l1.spawned.id); const l = botPost(rr, lynx)[0]; return l?.state === 'stopped' && rr.threads[0].state === 'idle' ? rr : null; }, { label: 'L 派生のスレッドが止まる' });
+      t.ok('S-3(b): 元のスレッドの［止める］が、起こして新しくできたスレッドの Lynx も止める（止めた印と止めた主体）', l2.threads[0].stopped?.by.kind === 'human' && turnEnds(l2.threads[0].sessions[lynx.id], mL).length === 1
+        && l2.posts.some((p) => p.author.kind === 'system' && p.text === 'あなた が止めました'), JSON.stringify(l2.threads[0]));
+      await settled(rootL);
+
+      // S-2: 動くモードが自分より強い bot を channels.post で @ すると、投稿は残るが起こさず、承認カード（起こしますか）。許可したら起こす
+      const wolf = await call('bots.create', { name: 'Wolf', icon: '🐕', backend: 'fake' });
+      await call('bots.setMode', { botId: wolf.id, mode: 'bypass' });
+      const mW = c.mark();
+      const rootW = await call('channels.post', { channelId: dev.id, text: `@Owl ${viaBot({ channelId: dev.id, text: '@Wolf slow', new: true })}` });
+      const card = await c.waitFor((e) => e.type === 'permission' && e.settingChange?.op === 'channels.wake', { from: mW, ms: 20_000 });
+      const w1 = await until(async () => { const r = await read(dev.id, rootW.id); return r.posts.some((p) => p.text === '@Wolf slow' && p.author.botId === owl.id) && botPost(r, owl, 'done').length ? r : null; }, { label: 'W 投稿と返事' });
+      t.ok('S-2: 強い bot（Wolf）を @ した投稿は残るが、Wolf は起きず、承認カード（起こしますか・モードの行・loosens）が Owl の会話に出る', botPost(w1, wolf).length === 0 && card.sessionId === w1.threads[0].sessions[owl.id]
+        && card.settingChange.note.includes('Wolf') && card.settingChange.note.includes('起こしますか') && card.settingChange.loosens === true && card.settingChange.rows.some((r) => r.path === 'mode'), JSON.stringify(card.settingChange));
+      t.ok('S-2: Owl の返事の @Wolf も起こさず、知らせの投稿が残る（返事の @ も同じ確認）', w1.posts.some((p) => p.author.kind === 'system' && p.text.includes('Wolf') && p.text.includes('起こしていません')) && botPost(w1, wolf).length === 0, JSON.stringify(w1.posts.map((p) => [p.author.kind, p.text.slice(0, 40)])));
+      await c.cmd('resolvePermission', { id: card.id, allow: true, receipt: card.settingChange.receipt });
+      const w2 = await until(async () => { const r = await read(dev.id, rootW.id); return botPost(r, wolf, 'working').length ? r : null; }, { label: 'W 許可のあと Wolf が起きる' });
+      t.ok('S-2: 人が許可すると、その投稿の @ で Wolf が起きる（Wolf の会話が作業中になる）', botPost(w2, wolf, 'working').length === 1 && w2.threads[0].sessions[wolf.id] !== undefined);
+      await call('channels.stopThread', { channelId: dev.id, threadId: rootW.id });
+      await settled(rootW);
+    }
 
     // ================================================================ 再起動での戻し
     // J: 承認待ちのまま落とす → 作業中の印は stopped に・たまっていた出来事は起動後に配り直される

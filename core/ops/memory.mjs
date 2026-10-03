@@ -8,8 +8,8 @@
 import { z } from 'zod';
 import { OpError, defineOp } from './registry.mjs';
 import { agentT } from '../i18n.mjs';
-import { MemoryError } from '../memory/guard.mjs';
-import { USER_LAYER } from '../memory/store.mjs';
+import { MemoryError, QUOTE_MIN } from '../memory/guard.mjs';
+import { USER_LAYER, oneLine } from '../memory/store.mjs';
 
 const D = (id, key) => `agent:ops.memory.${id}.${key}`;
 
@@ -20,12 +20,12 @@ const sourceInput = z.object({
   threadId: z.string().max(120).optional().describe(D('write', 'source.threadId')),
   sessionId: z.string().max(120).optional().describe(D('write', 'source.sessionId')),
   messageId: z.string().max(200).optional().describe(D('write', 'source.messageId')),
-  quote: z.string().min(1).max(600).describe(D('write', 'source.quote')),
+  quote: z.string().min(QUOTE_MIN).max(600).describe(D('write', 'source.quote')),
 }).strict();
 
 const entryOut = z.object({
   id: z.string(), layer: z.string(), text: z.string(), why: z.string().optional(),
-  sources: z.array(z.unknown()), at: z.number(), updatedAt: z.number(), by: z.unknown(),
+  sources: z.array(z.unknown()), at: z.number(), updatedAt: z.number(), by: z.unknown(), origBy: z.unknown().optional(),
 });
 
 /** MemoryError → OpError（会話の言語の文）。ほかの例外はそのまま */
@@ -72,7 +72,7 @@ async function visibleEntry(ctx, who, id) {
   return entry;
 }
 
-const callCtx = (ctx, who) => ({ sessions: ctx.sessions, sessionId: who.sessionId, locale: ctx.locale });
+const callCtx = (ctx, who) => ({ sessions: ctx.sessions, botOfSession: ctx.botOfSession, sessionId: who.sessionId, locale: ctx.locale });
 
 export const memoryOps = [
   defineOp({
@@ -130,7 +130,7 @@ export const memoryOps = [
     id: 'memory.edit',
     summary: 'agent:ops.memory.edit.summary',
     risk: 'write',
-    riskReason: 'Rewrites one line of memory. An AI is held to the same checks as when writing (it needs a human\'s words as grounds when the text changes), and the log keeps who changed it and the old text can be read from the log. A human can edit it the same way',
+    riskReason: 'Rewrites one line of memory. An AI is held to the same checks as when writing (it needs a human\'s words as grounds when the text changes), and the log keeps who changed it (and, when the author changes, the original author) and the old text can be read from the log. A human can edit it the same way. An AI rewriting the text of a line a person wrote is raised to guarded by riskOf, so the user approves it first',
     input: z.object({
       id: z.string().min(1).max(80).describe(D('edit', 'id')),
       text: z.string().min(1).max(2000).optional().describe(D('edit', 'text')),
@@ -138,6 +138,18 @@ export const memoryOps = [
       sources: z.array(sourceInput).max(8).optional().describe(D('edit', 'sources')),
     }),
     output: entryOut,
+    // 人が書いた行の本文を AI が書き換えるときだけ承認（自分・ほかの AI が書いた行、理由だけの直しは write）
+    riskOf: async (ctx, args) => {
+      if (ctx.principal?.by !== 'agent' || args.text === undefined) return 'write';
+      const who = await whoIs(ctx, { write: false });
+      const entry = await ctx.memory.get({ id: args.id });
+      if (!entry || (who.botId && entry.layer !== USER_LAYER && entry.layer !== who.botId)) return 'write';   // 見えない記憶は handler が MEMORY_NOT_FOUND にする
+      return entry.by?.kind === 'human' && oneLine(args.text) !== entry.text ? 'guarded' : 'write';
+    },
+    confirm: async (ctx, args) => {
+      const entry = await ctx.memory.get({ id: args.id });
+      return { note: agentT(ctx.locale, 'ops.memory.edit.confirm'), before: entry?.text ?? null, loosens: false, rows: [{ path: 'text', before: entry?.text ?? null, after: oneLine(args.text ?? '') }] };
+    },
     surfaces: { ui: true, mcp: 'catalog', cli: { path: ['memory', 'edit'], positional: ['id'] } },
     handler: async (ctx, args) => {
       const who = await whoIs(ctx);
@@ -164,18 +176,22 @@ export const memoryOps = [
     },
   }),
 
-  // 忘れた直後の「元に戻す」（画面だけ。墓石を外すので、AI には出さない）。戻すのは人だけ
+  // 忘れた直後の「元に戻す」。画面の「元に戻す」の帯と、AI・CLI の両方に出す（全機能は AI も使える）。誰が戻したかは log.jsonl の by に残る
   defineOp({
     id: 'memory.unforget',
     summary: 'agent:ops.memory.unforget.summary',
     risk: 'write',
-    riskReason: 'Brings back a line of memory that a person just forgot, with its grounds, and lifts the tombstone. Only the screen offers it (the Undo band), so an AI cannot revive what a person told it to forget',
+    riskReason: 'Brings back the line of memory that was forgotten last (with its grounds) and lifts the tombstone. It only restores what was already in memory and the log records who did it, so it is a write for an AI too. A bot sees only the user layer and its own layer',
     input: z.object({ id: z.string().min(1).max(80).describe(D('unforget', 'id')) }),
     output: entryOut,
-    surfaces: { ui: true, mcp: false, cli: false },
+    surfaces: { ui: true, mcp: 'catalog', cli: { path: ['memory', 'unforget'], positional: ['id'] } },
     handler: async (ctx, { id }) => {
-      if (ctx.principal?.by !== 'human') throw new OpError('NEEDS_UI', agentT(ctx.locale, 'ops.errors.NEEDS_UI', { id: ctx.op.id }));
-      return guarded(ctx, () => ctx.memory.unforget({ id }, { kind: 'human' }, {}));
+      const who = await whoIs(ctx);
+      const gone = await ctx.memory.forgotten({ id });
+      if (gone && who.botId && gone.layer !== USER_LAYER && gone.layer !== who.botId) {
+        throw new OpError('MEMORY_NOT_FOUND', agentT(ctx.locale, 'ops.errors.MEMORY_NOT_FOUND', { id }));
+      }
+      return guarded(ctx, () => ctx.memory.unforget({ id }, who.author, callCtx(ctx, who)));
     },
   }),
 ];
