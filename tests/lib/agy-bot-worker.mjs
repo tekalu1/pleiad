@@ -65,6 +65,13 @@ try {
   ok("bot でない会話は --agent を付けず、人格の印も無い", l4.length === 4 && !l4[3].includes("--agent") && botSessionKey(null, null) === null && !plain.text.includes("BOT-PERSONA"), JSON.stringify(l4[3]));
   ok("人格の印は人格が同じなら同じ・違えば違う", botSessionKey("a", null) === botSessionKey("a", { additionalDirectories: [] })
     && botSessionKey("a", null) !== botSessionKey("b", null) && botSessionKey("a", { additionalDirectories: ["/x"] }) !== botSessionKey("a", null));
+
+  // ---- 固定文の「覚えて」の 1 文も、ほかのバックエンドと同じく本文に届く（agy は人格の文をそのまま本文に入れる）
+  const { botInstructions: build } = await import("../../core/bots/sessions.mjs");
+  const real = build({ id: "b_1", name: "Owl", icon: "🦉", persona: "" }, "ja");
+  const withReal = await turn({ botInstructions: real });
+  ok("固定文の「覚えて」の 1 文（memory.write に書く・Claude 自身のメモリは使わない）が agy のエージェントの本文にも届く",
+    withReal.text.includes("`memory.write` に書く（Claude 自身のメモリのファイルや、作業場所の外のファイルには書かない）"), withReal.text.slice(0, 400));
 } catch (error) {
   ok("worker が最後まで走る", false, error?.stack ?? error);
 } finally {
