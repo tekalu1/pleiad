@@ -223,6 +223,22 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
     resetRemote();
     root.replaceChildren();
     itemSeq = 0;
+    const visible = last.sessions.filter(matchesFilter);
+    // あなたを待っている bot の会話（client があなた待ちの間だけ渡す。ADR 0096）。状態を持たないので利用者の状態のグループには入れず、
+    // 一覧の先頭（全グループの上）に短い見出しを付けて置く（計画 §7.2-4: いちばん上で目に入る位置）
+    const botWaits = visible.filter((s) => s.bot).sort((a, b) => (b.lastModified ?? 0) - (a.lastModified ?? 0));
+    if (botWaits.length) {
+      const sec = el("section", "grp bot-waits");
+      sec.setAttribute("role", "none");
+      const head = el("div", "grp-head bot-waits-head");
+      head.setAttribute("role", "none");
+      head.append(el("span", "wait", t("channels:side.botWaitsHead")));
+      const rowsEl = el("div", "rows");
+      rowsEl.setAttribute("role", "none");
+      for (const s of botWaits) rowsEl.append(row(s, 1));
+      sec.append(head, rowsEl);
+      root.append(sec);
+    }
     if (last.pendingNew) {
       const top = el('div', 'rows pending-new-top');
       top.setAttribute("role", "none");
@@ -234,17 +250,6 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
 
     // グループ（根とその子孫）にまとめる。器は根の状態の見出しの下に入り、枝は器の中だけに出る。
     // 親が絞り込みで消えている枝は、入れる一番近い祖先に付く。付ける先が無ければ自分が根（= ただの行）
-    const visible = last.sessions.filter(matchesFilter);
-    // bot の会話（client があなた待ちの間だけ渡す。ADR 0096）は状態を持たないので木に入れず、先頭のグループの頭に仮の行として置く（計画 §7.2-4）。
-    // 先頭のグループを畳んでいたら、見出しの無い塊として一覧の頭に置く（あなた待ちを畳みの中に隠さない）
-    const botWaits = visible.filter((s) => s.bot).sort((a, b) => (b.lastModified ?? 0) - (a.lastModified ?? 0));
-    const botsInGroup = botWaits.length > 0 && visibleGroups.length > 0 && !collapsed.has(visibleGroups[0] ?? "");
-    if (botWaits.length && !botsInGroup) {
-      const top = el("div", "rows bot-waits");
-      top.setAttribute("role", "none");
-      for (const s of botWaits) top.append(row(s, 1));
-      root.append(top);
-    }
     const byGroup = new Map();
     inFamily.clear();
     for (const fam of familiesOf(visible.filter((s) => !s.bot), last.sessions)) {
@@ -254,13 +259,12 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
       if (fam.kin.length) for (const s of members(fam)) inFamily.add(s.id);
     }
 
-    for (const [gi, st] of visibleGroups.entries()) {
+    for (const st of visibleGroups) {
       // 放置は上に浮く。それ以外は新しい順。家族は中で一番新しい行で並ぶ（枝が動けば器ごと上に来る）
       const fams = (byGroup.get(st) ?? []).sort((a, b) => (famStale(b) - famStale(a)) || (famWhen(b) - famWhen(a)));
       const rows = fams.flatMap(members);        // このグループに出る行（器の中の枝を含む）
       const draftHere = last.draft && (last.draft.status ?? null) === st;
-      const botsHere = botsInGroup && gi === 0;
-      if (!rows.length && !draftHere && !botsHere && filtering()) continue;   // 絞っているときは空のグループを出さない
+      if (!rows.length && !draftHere && filtering()) continue;   // 絞っているときは空のグループを出さない
 
       const sec = el("section", "grp");
       sec.setAttribute("role", "none");
@@ -353,10 +357,9 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
 
       const rowsEl = el("div", "rows");
       rowsEl.setAttribute("role", "group");
-      if (botsHere) for (const s of botWaits) rowsEl.append(row(s, 2));
       if (draftHere) rowsEl.append(row({ id: null, title: "", cwd: last.draft.cwd, status: last.draft.status }, 2));
       for (const fam of fams) rowsEl.append(fam.kin.length ? family(fam) : row(fam.root, 2));
-      if (!rows.length && !draftHere && !botsHere) rowsEl.append(el("div", "empty", t("sidebar.empty")));
+      if (!rows.length && !draftHere) rowsEl.append(el("div", "empty", t("sidebar.empty")));
       sec.append(rowsEl);
       root.append(sec);
     }
@@ -507,10 +510,13 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
    * bot とチャンネルは行の印（.row-ch）が示すので、題には根の投稿の頭だけを出す。頭が無ければ bot の名前
    */
   function botTitle(s) {
-    const raw = String(s.title ?? "");
-    const at = raw.indexOf(" › ");
-    if (at >= 0) return raw.slice(at + 3);
-    return directory.bots.get(s.bot.botId)?.name ?? raw.replace(/^\S+\s+/, "").replace(/ · #.*$/, "");
+    const parts = botTitleParts(s);
+    return parts.head || directory.bots.get(s.bot.botId)?.name || parts.bot;
+  }
+  /** 会話の題「🦉 Owl · #checkout-perf › 頭」を { bot, channel, head } に分ける（DM は「🦉 Owl」だけ） */
+  function botTitleParts(s) {
+    const m = /^\S+\s+(.*?)(?: · #(.*?))?(?: › (.*))?$/su.exec(String(s.title ?? ""));
+    return { bot: m?.[1] ?? "", channel: m?.[2] ?? "", head: m?.[3] ?? "" };
   }
   /** bot の会話の印: bot のアイコンと #チャンネル（DM なら「DM」）。行の時刻の前に置く */
   function botChannelMark(s) {
@@ -519,7 +525,8 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
     const mark = el("span", "row-ch");
     const av = el("span", "av xs", bot?.icon || String(s.title ?? "").split(/\s/, 1)[0] || "");
     av.setAttribute("aria-hidden", "true");
-    const where = s.bot.kind === "dm" || channel?.kind === "dm" ? t("channels:side.dm") : channel ? `#${channel.name}` : "";
+    const name = channel?.name ?? botTitleParts(s).channel;   // 一覧をまだ読めていなければ会話の題から（id は出さない）
+    const where = s.bot.kind === "dm" || channel?.kind === "dm" ? t("channels:side.dm") : name ? `#${name}` : "";
     mark.append(av, el("span", "row-ch-name", where));
     if (bot) mark.title = where ? `${bot.name} · ${where}` : bot.name;
     return mark;

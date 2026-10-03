@@ -16,6 +16,7 @@
     "openDm": "DM を開く",
     "openBot": "bot のページを開く",
     "dm": "DM",
+    "botWaitsHead": "あなたを待っている",
     "searchPlaceholder": "会話とチャンネルを検索",
     "search": { "count_other": "{{count}} 件", "none": "一致する会話・チャンネルがありません" }
   },

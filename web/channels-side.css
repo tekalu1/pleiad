@@ -56,6 +56,7 @@ html.side-channels:not(.side-searching) .channels-side:not([hidden]){display:fle
 .cs-new-err{padding:0 10px 2px;font-size:var(--fs-xs);color:var(--ink-strong)}
 
 /* Chats の一覧: あなた待ちの bot の会話の印（bot のアイコンと #チャンネル）と、検索の結果の出どころ */
+.bot-waits-head{padding-left:8px;font-weight:600}
 .row-ch{display:inline-flex;align-items:center;gap:4px;min-width:0;white-space:nowrap}
 .row-ch .av.xs{width:16px;height:16px;flex:none;display:inline-grid;place-items:center;font-size:11px;line-height:1}
 .row-ch-name{min-width:0;overflow:hidden;text-overflow:ellipsis}

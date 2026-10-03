@@ -17,6 +17,7 @@
     "openDm": "Open DM",
     "openBot": "Open bot page",
     "dm": "DM",
+    "botWaitsHead": "Waiting on you",
     "searchPlaceholder": "Search chats and channels",
     "search": { "count_one": "{{count}} result", "count_other": "{{count}} results", "none": "No matching chats or channels" }
   },
