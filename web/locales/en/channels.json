@@ -111,7 +111,46 @@
       "failed": "Couldn't save: {{error}}"
     }
   },
-  "thread": {},
+  "thread": {
+    "log": "Thread posts",
+    "close": "Close thread",
+    "back": "Back to the {{name}} feed",
+    "untitled": "Thread",
+    "loading": "Loading…",
+    "loadFailed": "Could not load: {{error}}",
+    "replies_one": "{{count}} reply",
+    "replies_other": "{{count}} replies",
+    "noReplies": "No replies yet",
+    "entry": {
+      "toc": "Outline of this thread",
+      "browser": "Built-in browser"
+    },
+    "toc": {
+      "title": "Outline",
+      "search": "Search this thread",
+      "empty": "No posts",
+      "noMatch": "No matching words",
+      "present": "(shared item)"
+    },
+    "composer": {
+      "placeholder": "Reply in thread",
+      "working": "Reply in thread · reaches {{name}} even while it works"
+    },
+    "openSession": "Open conversation →",
+    "openSessionTitle": "Open the bot's conversation that wrote this reply in Chats",
+    "stop": "Stop",
+    "stopping": "Stopping…",
+    "stopFailed": "Could not stop: {{error}}",
+    "band": {
+      "working": "{{who}} is working",
+      "waiting": "{{who}} is waiting for you",
+      "someone": "A bot",
+      "calls": "{{count}} hand-offs",
+      "stopped": "Stopped",
+      "tokens": "{{tokens}} tokens in this thread",
+      "tokensTitle": "Input {{input}} · output {{output}} · cache read {{cached}}"
+    }
+  },
   "bot": {
     "iconLabel": "Change icon",
     "nameLabel": "Name",

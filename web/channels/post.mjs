@@ -105,6 +105,48 @@ const iconButton = (cls, label, child) => {
   return b;
 };
 
+const tickMark = () => {
+  const svg = svgEl('svg', { viewBox: '0 0 14 14', 'aria-hidden': 'true' });
+  svg.append(svgEl('path', { d: 'M3.5 7.3 6 9.8l4.6-5.3' }));
+  return svg;
+};
+const ringMark = () => {
+  const svg = svgEl('svg', { viewBox: '0 0 14 14', 'aria-hidden': 'true' });
+  svg.append(svgEl('circle', { cx: 7, cy: 7, r: 4.2 }));
+  return svg;
+};
+const CHECK = /^\s*\[( |x|X)\]\s?/;
+
+/**
+ * 本文の「- [x] …」「- [ ] …」の並びを、進捗のチェックリストにする（済みは✓・いま走っているものは弧・これからは輪）。
+ * bot のターンの投稿の本文（bot が同じ投稿の編集で更新する進捗）だけが対象。全部の行が [ ] か [x] で始まる一番外の箇条書きだけで、ほかの箇条書きは触らない
+ * @param {HTMLElement} body 本文の要素（renderAssistantMarkdown の HTML が入っている）
+ * @param {boolean} working ターンが走っているか（最初の未完了の行に弧を出す）
+ */
+export function paintChecklist(body, working) {
+  for (const ul of body.querySelectorAll('ul')) {
+    if (ul.parentElement?.closest('li')) continue;
+    const items = [...ul.children].filter((li) => li.tagName === 'LI');
+    if (!items.length || !items.every((li) => CHECK.test(li.textContent))) continue;
+    ul.classList.add('ck');
+    const done = items.map((li) => CHECK.exec(li.textContent)?.[1].toLowerCase() === 'x');
+    const current = working ? done.findIndex((d) => !d) : -1;
+    items.forEach((li, i) => {
+      // 先頭の「[x] 」の印を外す（入れ子の <p> の中にあることもある）
+      const first = document.createTreeWalker(li, NodeFilter.SHOW_TEXT).nextNode();
+      if (first) first.nodeValue = first.nodeValue.replace(CHECK, '');
+      const mark = el('span', 'mk');
+      if (done[i]) mark.append(tickMark());
+      else if (i === current) mark.append(runMark(t('channels:feed.state.working')));
+      else mark.append(ringMark());
+      const text = el('span', 'ck-text');
+      text.append(...li.childNodes);
+      li.append(mark, text);
+      li.classList.add(done[i] ? 'done' : i === current ? 'cur' : 'todo');
+    });
+  }
+}
+
 /** 状態の行（bot のターンの投稿・ルーティンの実行の根）。成功を緑の ✓ で見せない（終了は文字だけ） */
 function stateLine(post) {
   const state = post.state;
@@ -189,6 +231,7 @@ export function fillPost(root, post, ctx) {
     const names = (post.mentions ?? []).map((m) => (m === 'you' ? t('channels:feed.you') : ctx.bots.get(m)?.name));
     if (post.mentions?.includes('you')) names.push('you');
     highlightMentions(body, names);
+    if (post.turn) paintChecklist(body, post.state === 'working');
   }
   main.append(body);
 

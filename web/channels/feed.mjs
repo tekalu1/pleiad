@@ -261,6 +261,8 @@ export function createFeed(host) {
     const made = await host.invoke('channels.post', { channelId: S.id, text });
     if (made?.id && !S.index.has(made.id) && !made.threadId) addPost(made);
     toBottom();
+    // bot を @ で呼んだ投稿は新しいスレッドの根になる。ここで書いた人にその返事が見えるよう、スレッドを開く（DM は流れがスレッドの代わり）
+    if (made?.id && S.channel?.kind !== 'dm' && (made.mentions ?? []).some((m) => m !== 'you')) host.openThread?.(S.id, made.id);
   }
 
   async function react(p, emoji, on, had) {

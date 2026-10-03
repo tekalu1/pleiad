@@ -440,6 +440,8 @@ const cases = [
   await import("./unit/channels-feed-ui.mjs"),
   // bot のページの決まりごと（フォルダーを限れないモードは範囲 full だけ・承認モードの選び直し・使用量・記憶の出どころの行き先）。画面の打鍵は tests/browser/bot-page.cjs
   await import("./unit/bot-page-model.mjs"),
+  // スレッドと空間モデル (W3): 窓の状態（feed・split・solo）の判定・題とトークンの文言・道具の呼び出しを引く範囲・配線。描画・動き・承認のカードは tests/browser/thread-deck.cjs
+  await import("./unit/thread-deck.mjs"),
   // --- routines (R1・R2・W5、P2) ---
   // --- memory-learn・sessions-send・webhook (L1・X1・H1、P3) ---
 ];
