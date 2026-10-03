@@ -171,3 +171,4 @@ id は `<領域>.<動詞>`（ドットは 1 つ）。human-only は承認モー�
 ## テスト
 
 `tests/run.mjs` にパッケージごとの区画のコメントがある（自分の区画の下にだけ足す）。fake バックエンドは、包みで始まる prompt の台本を、包みを外してから選び（`<pleiad-channel>` の中身は `@名前` を除いて台本）、`notes:` / `instructions:` の台本で Pleiad が足した `notes`・`botInstructions` を返し、`AGENT_HOST_FAKE_USAGE=1` で固定の `usage` を、`AGENT_HOST_FAKE_SLOW_STEER=1` で `slow` に途中送信を持たせる。`tests/unit/ops-surface.mjs` の T6 の deps に `channels`・`bots`・`memory`・`routines` の空の物がある。`tests/ops-surface.snap.json` は、パッケージの最後に取り直す（同時に直さない）。
+- bot の返事の `@` だけで次の bot を起こすテストは、人の投稿に `@` を書かない形にする（人の `@` でも起きて、返事の連鎖を確かめられない）。fake の `steps:` 台本の本文に `\\u0040Lynx slow` と書くと、台本が `@Lynx slow` に戻して返事にする。テストごとに `channels.dir` を分ける（`inbox.json` が前のケースの出来事を拾う）。
