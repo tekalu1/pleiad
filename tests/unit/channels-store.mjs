@@ -188,6 +188,9 @@ export default async function (t) {
     const progress = await svc.post({ channelId: general.id, threadId: root.id, text: '- [x] 調べる\n- [ ] 直す' }, BOT);
     t.ok('同じスレッドで bot がもう一度書くと、新しい投稿ではなくそのターンの投稿の本文を置き換える（進捗）', progress.id === turn.id && progress.text.includes('直す')
       && (await svc.read({ channelId: general.id, threadId: root.id })).posts.length === 3 && types('channelPost').every((e) => e.op === 'edit'));
+    const elsewhere = await svc.post({ channelId: general.id, threadId: root.id, text: '別会話からの返事', bySession: 's_other' }, BOT);
+    t.ok('別会話の bot は同じスレッドの作業中の投稿を置き換えない（hook の無い経路）', elsewhere.id !== turn.id
+      && (await svc.getPost({ channelId: general.id, postId: turn.id })).text === progress.text);
     const fresh = await svc.post({ channelId: general.id, threadId: root.id, text: '別の投稿', new: true }, BOT);
     t.ok('new: true なら置き換えずに新しい投稿を作る', fresh.id !== turn.id);
     await svc.edit({ channelId: general.id, postId: turn.id, state: 'done' }, BOT);
@@ -205,6 +208,9 @@ export default async function (t) {
       const croot = await claimSvc.post({ channelId: ch.id, text: '根' }, HUMAN);
       const cturn = await claimSvc.post({ channelId: ch.id, threadId: croot.id, text: '…', state: 'working', turn: { botId: 'b_owl', sessionId: 's_o' }, new: true }, BOT);
       t.ok('ADR 0117: ターンの投稿そのものを作るときは botPost に聞かない', asked.length === 0);
+      const other = await claimSvc.post({ channelId: ch.id, threadId: croot.id, text: '別会話から', bySession: 's_other' }, BOT);
+      t.ok('botPost が claim しない別会話の投稿は、同じ bot の作業中でも新しい投稿になる', other.id !== cturn.id
+        && (await claimSvc.getPost({ channelId: ch.id, postId: cturn.id })).text === '…');
       answer = { postId: cturn.id };
       await sleep(5);
       posted.length = 0;
@@ -216,6 +222,9 @@ export default async function (t) {
       answer = { postId: null };
       const second = await claimSvc.post({ channelId: ch.id, threadId: croot.id, text: '2 件目', bySession: 's_o' }, BOT);
       t.ok('ADR 0117: botPost が null を返したら、new が無くても新しい投稿（前の返事を同じ id で消さない）', second.id !== cturn.id && (await claimSvc.getPost({ channelId: ch.id, postId: cturn.id })).text === '@Lynx 返事');
+      const softened = await claimSvc.edit({ channelId: ch.id, postId: cturn.id, state: 'failed', failedWithBody: true }, BOT);
+      t.ok('本文のある failed の印は編集後も保存され、画面が区別できる', softened.failedWithBody === true
+        && (await claimSvc.getPost({ channelId: ch.id, postId: cturn.id })).failedWithBody === true);
     }
 
     // 作業中の更新は 1 秒に 1 回まで配る

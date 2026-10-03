@@ -44,6 +44,7 @@ export function foldOp(posts, op) {
     }
     if (op.taint === 'webhook') post.taint = op.taint;
     if (op.state !== undefined) post.state = op.state;
+    if (op.failedWithBody === true && post.turn) post.failedWithBody = true;
     if (op.presents !== undefined) post.presents = op.presents;
     if (op.attachments !== undefined) post.attachments = op.attachments;
     if (op.mentions !== undefined) post.mentions = op.mentions;

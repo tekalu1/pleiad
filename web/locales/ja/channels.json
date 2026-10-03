@@ -66,6 +66,7 @@
       "done": "終了",
       "checking": "要確認",
       "failed": "失敗",
+      "failedWithBody": "終わり方に問題がありました",
       "stopped": "止めました",
       "skipped": "スキップ",
       "missed": "Pleiad が止まっていた間の分"

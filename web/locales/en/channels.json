@@ -68,6 +68,7 @@
       "done": "Done",
       "checking": "Needs a look",
       "failed": "Failed",
+      "failedWithBody": "There was a problem finishing",
       "stopped": "Stopped",
       "skipped": "Skipped",
       "missed": "Missed while Pleiad was not running"

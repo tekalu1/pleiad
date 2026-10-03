@@ -91,7 +91,7 @@ export default async function (t) {
           get: async () => channel, getPost: async ({ postId }) => structuredClone(posts.find((x) => x.id === postId) ?? null),
           read: async () => ({ posts: structuredClone(posts) }),
           post: async (a) => { const post = { id: `p_t${posts.length}`, channelId: a.channelId, threadId: a.threadId, author: { kind: 'bot', botId: 'b_1' }, text: a.text, state: a.state, turn: a.turn, mentions: [], at: 4000, reactions: {} }; posts.push(post); return post; },
-          edit: async (a) => { const post = posts.find((x) => x.id === a.postId); Object.assign(post, ...[a.text !== undefined && { text: a.text }, a.state && { state: a.state }, a.presents && { presents: a.presents }].filter(Boolean)); return structuredClone(post); },
+          edit: async (a) => { const post = posts.find((x) => x.id === a.postId); Object.assign(post, ...[a.text !== undefined && { text: a.text }, a.state && { state: a.state }, a.presents && { presents: a.presents }, a.failedWithBody && { failedWithBody: true }].filter(Boolean)); return structuredClone(post); },
           remove: async () => {},
           threads: {
             get: async (c, th) => structuredClone(threads[`${c}/${th}`] ?? null), list: async (c) => structuredClone(Object.values(threads).filter((x) => !c || x.channelId === c)),
@@ -686,7 +686,7 @@ export default async function (t) {
         await f.d.channels.edit({ channelId: 'c_1', postId: claimed.postId, text: '途中までの返事' });
         await fd.onTurnEnd(fturn, { outcome: 'error' });
         const failedPost = f.posts.find((p) => p.turn);
-        t.ok('返事を書いた後に失敗したターンは、返事を残して failed にする（失敗の文で上書きしない）', failedPost.text === '途中までの返事' && failedPost.state === 'failed', JSON.stringify(failedPost));
+        t.ok('返事を書いた後に失敗したターンは、返事を残して本文ありの failed にする', failedPost.text === '途中までの返事' && failedPost.state === 'failed' && failedPost.failedWithBody === true, JSON.stringify(failedPost));
       }
 
       // E1-4: 呼ばれて答えたら、返事を呼んだ bot の会話へ「返事」として届けて起こす（暗黙のメンションではなく、呼んだ相手が答えたこと）
@@ -701,7 +701,7 @@ export default async function (t) {
           ch.threads.update = async (c, th, patch) => (patch && typeof patch === 'object'
             ? update(c, th, (cur) => ({ ...patch, ...(patch.sessions ? { sessions: { ...cur.sessions, ...patch.sessions } } : {}) })) : update(c, th, patch));
           const post = ch.post, edit = ch.edit;
-          const atOf = (text) => [...(text.includes('@Owl') ? ['b_1'] : []), ...(text.includes('@Lynx') ? ['b_2'] : [])];
+          const atOf = (text) => [...(text.includes('@Owl') ? ['b_1'] : []), ...(text.includes('@Lynx') ? ['b_2'] : []), ...(text.includes('@Fox') ? ['b_3'] : [])];
           ch.post = async (a, author) => { const made = await post(a, author); const p = w.posts.find((x) => x.id === made.id); if (author?.kind === 'bot') p.author = author; return structuredClone(p); };
           ch.edit = async (a, author) => { const saved = await edit(a, author); const p = w.posts.find((x) => x.id === a.postId); if (p) p.mentions = atOf(p.text); return structuredClone(p ?? saved); };
           return w;
@@ -740,12 +740,42 @@ export default async function (t) {
         await finish(human, 's_new_b_2', '人への返事');
         t.ok('E1-4: 人が @ で直接起こしたときは、返事を Owl の会話へ返さない', (await itemsOf(human, 's1')).length === 0 && !startedFor(human, 's1') && !(await itemsOf(human, 's_new_b_2'))[0]?.caller);
 
-        // 失敗・止めた（ok でない）ターンは「答えた」ではない
+        // 本文を書いた failed は、@ と呼び元への返事を届ける。人が止めた・上限のターンは届けない
         const failed = mkWorld();
         await callOwl(failed);
         await tick();
         await finish(failed, 's_new_b_2', '途中までです', 'error');
-        t.ok('E1-4: ターンが ok で終わらなかったら返さない', (await itemsOf(failed, 's1')).length === 0 && !startedFor(failed, 's1'));
+        t.ok('本文のある failed の返事は、呼んだ Owl に返す', (await itemsOf(failed, 's1')).some((i) => i.reply === 'b_2') && startedFor(failed, 's1')
+          && failed.posts.find((p) => p.turn?.sessionId === 's_new_b_2')?.failedWithBody === true);
+        const failedMention = mkWorld();
+        await callOwl(failedMention);
+        await tick();
+        await finish(failedMention, 's_new_b_2', '@Fox 途中までの結果', 'error');
+        t.ok('本文のある failed の @ は相手を起こし、呼び元にも返す', (await itemsOf(failedMention, 's_new_b_3')).some((i) => i.caller === 'b_2')
+          && (await itemsOf(failedMention, 's1')).some((i) => i.reply === 'b_2')
+          && failedMention.posts.find((p) => p.turn?.sessionId === 's_new_b_2')?.failedWithBody === true);
+        const editedMention = mkWorld();
+        await callOwl(editedMention);
+        await tick();
+        const editedPost = editedMention.posts.find((p) => p.turn?.sessionId === 's_new_b_2');
+        await editedMention.d.channels.edit({ postId: editedPost.id, text: '@Fox 編集した本文' });
+        await finish(editedMention, 's_new_b_2', '', 'error');
+        t.ok('直接編集した本文は failed の失敗文で上書きされず、@ と reply が届く', editedPost.text === '@Fox 編集した本文'
+          && (await itemsOf(editedMention, 's_new_b_3')).some((i) => i.caller === 'b_2')
+          && (await itemsOf(editedMention, 's1')).some((i) => i.reply === 'b_2'));
+        const failedEmpty = mkWorld();
+        await callOwl(failedEmpty);
+        await tick();
+        await finish(failedEmpty, 's_new_b_2', '', 'error');
+        t.ok('本文のない failed は失敗表示のままで、呼び元へ返さない', !(await itemsOf(failedEmpty, 's1')).length
+          && !failedEmpty.posts.find((p) => p.turn?.sessionId === 's_new_b_2')?.failedWithBody);
+        for (const outcome of ['cancelled', 'limited']) {
+          const blocked = mkWorld();
+          await callOwl(blocked);
+          await tick();
+          await finish(blocked, 's_new_b_2', '@Fox 途中までの結果', outcome);
+          t.ok(`${outcome} のターンの @ と reply は誰も起こさない`, !(await itemsOf(blocked, 's_new_b_3')).length && !(await itemsOf(blocked, 's1')).length);
+        }
 
         // Owl のスレッドが止められているとき・［止める］を押したときは返さない
         const stoppedThread = mkWorld();
