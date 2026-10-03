@@ -28,15 +28,20 @@ const limit = (id) => z.number().int().min(1).max(PAGE_MAX).optional().describe(
 const cursor = (id) => z.string().max(400).optional().describe(D(id, 'cursor'));
 const maxChars = (id) => z.number().int().min(100).max(WORK_CHARS_MAX).optional().describe(D(id, 'maxChars'));
 
+// 画面への今までの断りの文
+const sessionRequired = () => t('session.required');
+const idsRequired = () => t('background.idsRequired');
+const agentIdsRequired = () => t('background.agentIdsRequired');
+
 /** AI は sessionId を省けば自分の会話。画面は省けない（今までの文で断る） */
-function target(ctx, given, humanKey = 'session.required') {
+function target(ctx, given, humanText = sessionRequired) {
   if (given) return given;
-  if (!byAgent(ctx)) throw new OpError(FAILED, t(humanKey));
+  if (!byAgent(ctx)) throw new OpError(FAILED, humanText());
   if (!ctx.actor?.sessionId) throw new OpError('INVALID', agentT(ctx.locale, 'ops.errors.sessionRequired'));
   return ctx.actor.sessionId;
 }
 /** 画面の読み取りは id が揃っていなければ今までの文で断る */
-const need = (ok, key) => { if (!ok) throw new OpError(FAILED, t(key)); };
+const need = (ok, text) => { if (!ok) throw new OpError(FAILED, text()); };
 /** 文字列の欄を、末尾を残して切る（出力は終わりの方が大事） */
 const tailOf = (s, n) => (s.length > n ? s.slice(-n) : s);
 
@@ -103,7 +108,7 @@ export const sessionWorkOps = [
     output: z.object({ tasks: z.array(z.record(z.string(), z.unknown())).optional(), task: z.record(z.string(), z.unknown()).nullable().optional() }),
     surfaces: { ui: true, mcp: 'catalog', cli: { path: ['sessions', 'background'] } },
     legacyCommand: 'loadBackground',
-    uiHandler: (ctx, { sessionId: id, taskId }) => { need(id && taskId, 'background.idsRequired'); return ctx.sessionWork.background(id, taskId); },
+    uiHandler: (ctx, { sessionId: id, taskId }) => { need(id && taskId, idsRequired); return ctx.sessionWork.background(id, taskId); },
     handler: (ctx, { sessionId: given, taskId, maxChars: chars = WORK_OUTPUT_DEFAULT }) => run(ctx, async () => {
       const id = target(ctx, given);
       if (!taskId) return maskTree({ tasks: await ctx.sessionWork.backgroundTasks(id) });
@@ -125,7 +130,7 @@ export const sessionWorkOps = [
     output: z.object({ stopped: z.boolean() }),
     surfaces: { ui: true, mcp: 'catalog', cli: { path: ['sessions', 'stop-background'], positional: ['taskId'] } },
     legacyCommand: 'stopBackground',
-    handler: (ctx, { sessionId: given, taskId }) => run(ctx, () => ctx.sessionWork.stopBackground(target(ctx, given, 'background.idsRequired'), taskId)),
+    handler: (ctx, { sessionId: given, taskId }) => run(ctx, () => ctx.sessionWork.stopBackground(target(ctx, given, idsRequired), taskId)),
   }),
 
   // ---- サブエージェント（会話の中の委譲ツールが生んだ子）
@@ -142,9 +147,9 @@ export const sessionWorkOps = [
     output: z.object({ agentId: z.string().nullable().optional(), subagents: z.array(z.record(z.string(), z.unknown())).optional() }).passthrough(),
     surfaces: { ui: true, mcp: 'catalog', cli: { path: ['sessions', 'subagents'] } },
     legacyCommand: 'findSubagent',
-    uiHandler: (ctx, { sessionId: id, toolId }) => { need(id && toolId, 'background.agentIdsRequired'); return ctx.sessionWork.findSubagent(id, toolId); },
+    uiHandler: (ctx, { sessionId: id, toolId }) => { need(id && toolId, agentIdsRequired); return ctx.sessionWork.findSubagent(id, toolId); },
     handler: (ctx, { sessionId: given, toolId, limit: n, cursor: c }) => run(ctx, async () => {
-      const id = target(ctx, given, 'background.agentIdsRequired');
+      const id = target(ctx, given, agentIdsRequired);
       if (toolId) return ctx.sessionWork.findSubagent(id, toolId);
       const page = pageOf(ctx, await ctx.sessionWork.subagents(id), { limit: n, cursor: c });
       return { total: page.total, subagents: page.items, next: page.next };
@@ -164,9 +169,9 @@ export const sessionWorkOps = [
     output: z.object({ agentId: z.string(), sessionId: z.string(), messages: z.array(z.record(z.string(), z.unknown())) }).passthrough(),
     surfaces: { ui: true, mcp: 'catalog', cli: { path: ['sessions', 'read-subagent'], positional: ['agentId'] } },
     legacyCommand: 'loadSubagent',
-    uiHandler: (ctx, { sessionId: id, agentId }) => { need(id && agentId, 'background.agentIdsRequired'); return ctx.sessionWork.readSubagent(id, agentId); },
+    uiHandler: (ctx, { sessionId: id, agentId }) => { need(id && agentId, agentIdsRequired); return ctx.sessionWork.readSubagent(id, agentId); },
     handler: (ctx, { sessionId: given, agentId, limit: n, cursor: c, maxChars: chars = WORK_CHARS_DEFAULT }) => run(ctx, async () => {
-      const id = target(ctx, given, 'background.agentIdsRequired');
+      const id = target(ctx, given, agentIdsRequired);
       const got = await ctx.sessionWork.readSubagent(id, agentId);
       const page = pageOf(ctx, got.messages ?? [], { limit: n, cursor: c });
       const text = (s) => String(s ?? '');
