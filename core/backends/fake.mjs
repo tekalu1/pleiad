@@ -391,7 +391,17 @@ export const backend = {
         return { sessionId: id };
       }
 
-      if (text.startsWith('ply:')) {
+      if (text.startsWith('<pleiad-memory-learn>')) {
+        // L1 の学習会話。固定台本で、人の「覚えて:」だけを候補にする。
+        const line = text.split('\n').find((part) => part.startsWith('Human statements: '));
+        const statements = JSON.parse(line?.slice('Human statements: '.length) ?? '[]');
+        out.text = JSON.stringify({ memories: statements.flatMap((item) => {
+          const match = /^覚えて[:：]\s*(.{8,300})/u.exec(item.text.trim());
+          const learned = match?.[1] ?? item.aiContext?.text;
+          return learned ? [{ action: 'add', layer: 'user', text: learned, sourceIndexes: [item.index] }] : [];
+        }) });
+        await say(emit, out.text, out.uuid);
+      } else if (text.startsWith('ply:')) {
         const params = JSON.parse(text.slice(4));
         const callId = crypto.randomUUID();
         emit({ type: 'tool.start', id: callId, name: `mcp__ply_agents__${params.name}`, input: params.arguments });

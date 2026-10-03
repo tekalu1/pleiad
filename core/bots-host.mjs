@@ -27,6 +27,7 @@ import path from 'node:path';
 import { createChannelService } from './channels/service.mjs';
 import { createBotService } from './bots/service.mjs';
 import { createMemoryService } from './memory/service.mjs';
+import { createMemoryLearner } from './memory/learn.mjs';
 import { createDispatcher } from './bots/dispatch.mjs';
 import { createRoutineService } from './routines/service.mjs';
 import { clock as routinesClock } from './routines/clock.mjs';
@@ -59,10 +60,12 @@ export function createBotHost(deps) {
   const dispatch = createDispatcher({ channels, bots, memory, host, emit });
   // ---- routines（R1）
   const routines = createRoutineService({ dataDir, channels, bots, dispatch, host, emit, clock: routinesClock });
+  // ---- memory learner（L1。利用者のルーティン一覧には置かない）
+  const learner = createMemoryLearner({ dataDir, channels, bots, memory, host, clock: routinesClock });
   // ---- webhook（H1）
   const webhook = createWebhookReceiver({ dataDir, routines, host });
 
-  const services = [channels, bots, memory, dispatch, routines, webhook];
+  const services = [channels, bots, memory, dispatch, routines, webhook, learner];
   // つなぎ目は、bot の側の失敗でターン・承認・起動を巻き込まない
   const guard = (name, fn, fallback) => (...args) => {
     const fail = (err) => { console.error(`  bot host: ${name} に失敗:`, String(err?.message ?? err)); return fallback; };

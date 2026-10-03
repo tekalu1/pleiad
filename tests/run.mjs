@@ -456,6 +456,7 @@ const cases = [
   await import("./unit/routine-sheet-model.mjs"),
   // --- memory-learn・sessions-send・webhook (L1・X1・H1、P3) ---
   await import("./unit/webhook.mjs"),
+  await import('./unit/memory-learn.mjs'),
 ];
 
 const selected = pick(cases, process.argv.slice(2));
