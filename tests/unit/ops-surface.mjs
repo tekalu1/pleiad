@@ -134,6 +134,13 @@ export default async function (t) {
     prefs: async () => ({ agentSitePermissions: [{ origin: 'o', ...secret }], locale: 'ja' }),
     compactionSettings: () => ({ enabled: true, ...secret }),
     delegation: { list: () => [{ taskId: 't', status: 'completed', ...secret }], get: () => ({ taskId: 't', status: 'completed', result: 'done', ...secret }) },
+    // bot・Channels・ルーティン（docs/channels.md）。read の操作を足すパッケージが、自分の領域の返り（秘密の目印を入れたもの）をここに足し、
+    // 必須の引数がある操作は下の samples にも足す。足したパッケージの区画以外は触らない
+    channels: {},   // S1
+    bots: {},       // S2
+    memory: {},     // S3
+    routines: {},   // R1（P2）
+    botOfSession: async () => null,
   };
   // 必須の引数がある read 操作に渡す引数（設定は全部の key）
   const samples = {

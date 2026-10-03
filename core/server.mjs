@@ -143,7 +143,9 @@ import { createClaudeLogin } from './claude-login.mjs';
 import { createShellRuns, shellMode } from './shell-runs.mjs';
 import { createHostSessionSearch } from './session-search-host.mjs';
 import { taskStop, backgroundStop, approvalStop, interruptionNote } from './interrupt-stops.mjs';
-import { splitInterruptionNotes } from './system-messages.mjs';
+import { splitLeadingNotes } from './system-messages.mjs';
+import { createBotHost } from './bots-host.mjs';
+import { channelEventRows } from './channels/types.mjs';
 import { textForTitleModel } from './prompt-title.mjs';
 
 const PORT = Number(process.env.AGENT_HOST_PORT ?? 7420);
@@ -353,6 +355,8 @@ async function withCodexTrust(report, cwd, { trust = true } = {}) {
   } catch (e) { return applyCodexHooks(report, null, String(e?.message ?? e).slice(0, 200)); }
 }
 let agentTasks;
+// bot・Channels・ルーティン（core/bots-host.mjs）。つなぎ目は botHost?.xxx() で呼ぶ（生成前・失敗時は何もしない）
+let botHost;
 // 設定の変更の承認の台帳と、結果を会話へ届ける待ち行列（core/setting-approvals.mjs、ADR 0088）
 let settingApprovals;
 const agentConnections = new Map();
@@ -813,6 +817,8 @@ const server = http.createServer(async (req, res) => {
   if (url.pathname === CONTROL_MCP_PATH) return controlBridge.handle(req, res);
   // CLI の口。画面のトークンは受けず、CLI 用トークンか会話の接続のトークンだけを受ける（core/ops/surfaces/http.mjs）
   if (url.pathname === OPS_PATH || url.pathname.startsWith(`${OPS_PATH}/`)) return opsHttp(req, res, url);
+  // webhook の受け口（P3。/hooks/<id>。画面のトークンの前。ADR 0098）。自分の要求でなければ false
+  if (await botHost?.handleHttp(req, res)) return;
 
   // 静的ファイルもトークンで守る。守られているのが WebSocket だけだと、
   // リモートに出したときに UI 一式が誰でも取れてしまう。
@@ -1005,6 +1011,8 @@ function sessionRow(b, s, extra = {}) {
     // 対応を終えたエージェントの会話（core/backends/index.mjs の RETIRED）。読めるが続けられない理由
     ...(b.retired ? { retired: b.retired } : {}),
     unsent: extra.unsent ?? false,
+    // bot の会話（Chats の一覧には出さない。あなた待ちの間だけ出る。ADR 0094）。bot でなければ null
+    bot: extra.bot ? { botId: extra.bot.botId, kind: extra.bot.kind, channelId: extra.bot.channelId ?? null, threadId: extra.bot.threadId ?? null } : null,
     hasDraft: Boolean(extra.draft?.text || extra.draft?.attached?.length),
     historyCount: (extra.history ?? []).length,
     // 人が host で作業ディレクトリを変えたなら sidecar が正本（ネイティブは古い cwd を返しうる）。
@@ -1350,6 +1358,8 @@ const LIST_NEUTRAL_EVENTS = new Set([
   "contextWindow", "compaction", "compactionSchedule", "autoCompactionSettings", "conversationAutoCompaction", "settingsChanged", "settingApproval",
   // 入力欄の `!`（core/shell-runs.mjs）。一覧の行は変わらない
   "shell.start", "shell.output", "shell.done", "shell.skip", "shell.handed",
+  // チャンネル・bot・記憶・ルーティンの出来事。会話の一覧の行は変わらない（bot の会話の行の変化は sessionsChanged が伝える）
+  "channelsChanged", "channelPost", "channelReaction", "channelThread", "channelRead", "botsChanged", "memoryChanged", "routinesChanged", "channelEvent",
 ]);
 
 // 接続ごとに、いま開いている会話（loadSession の watch）。宣言した接続には、流れの出来事（streamEvents）を
@@ -1419,6 +1429,7 @@ const GIT_BEGIN_WAIT_MS = 6_000;
 const GIT_SNAPSHOTS = process.env.AGENT_HOST_GIT_SNAPSHOTS !== 'off';
 const GIT_END_WAIT_MS = 6_000;
 process.on('exit', () => shellRuns.stopAll());
+process.on('exit', () => botHost?.stop());
 process.on('exit', () => removeControlFile({ dataDir: store.dataDir }));
 // 端末の Ctrl-C・kill でも 'exit' を通し、control.json を消す
 for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => process.exit(0));
@@ -1430,6 +1441,9 @@ const completionNotices = createCompletionNotices({
   ready: ({ sessionId, outcome, completedAt, startedAt }) => {
     store.get(sessionId).then(async meta => {
       if (meta?.delegation) return;
+      botHost?.onSessionDone(sessionId, outcome);
+      // bot の会話の完了はスレッドで見える。スマホへは送らない（承認・質問・失敗は送る。ADR 0094）
+      if (meta?.bot && outcome !== 'error') return;
       pushNotifier.finished({ sessionId, outcome, completedAt, startedAt, title: await conversationTitleOf(sessionId) });
     }).catch(() => {});
   },
@@ -1571,6 +1585,8 @@ function makeEmit(turn) {
     // Internal activity and command observations do not add conversation UI events.
     if (event?.type === 'task.activity' || event?.type === 'task.command') return;
     if (event?.type === 'usage') turn.usage = { ...turn.usage, ...event };
+    // bot の会話のターンの出来事（text.end・usage・activity・present・permission・turnResult・userMessage.delivered / dropped）。bot の会話でなければ何もしない
+    botHost?.onTurnEvent(turn, event);
     if (event?.type === 'contextWindow' && Number.isFinite(event.usedTokens) && Number.isFinite(event.windowTokens)) {
       turn.contextWindow = { usedTokens: event.usedTokens, windowTokens: event.windowTokens };
     }
@@ -1587,6 +1603,8 @@ function makeEmit(turn) {
       if (phase === 'complete' && !wasComplete) {
         const kept = turn.contextRecord?.delivered?.entries;
         if (kept) for (const key of Object.keys(kept)) delete kept[key];
+        // bot の会話なら核の記憶の写しを次のターンで取り直す（snapshotDue）
+        if (turn.info.sessionId) botHost?.onCompacted(turn.info.sessionId);
       }
       for (const key of ['nativeId', 'turnId', 'beforeTokens', 'afterTokens', 'summary', 'reason'])
         if (event[key] !== undefined && event[key] !== null) entry[key] = event[key];
@@ -2160,6 +2178,8 @@ function opsDeps(lng = currentLocale()) {
     routingSettings: () => routingSettingsCache,
     plyInstructions: () => plyInstructionsCache,
     contextDefaults: () => contextSettings.get(os.homedir(), { level: 'default' }),
+    // channels・bots・memory・routines・botOfSession（ops の handler が ctx.channels などで呼ぶ）
+    ...botHost?.opsDeps(),
     modeOf: async (sessionId) => {
       try {
         const live = runtime.turns.get(sessionId);
@@ -2410,6 +2430,7 @@ const askPermission = async ({ toolName, input, sessionId, toolUseID, title, sig
       if (!found) return;
       // スマホに出ている承認・質問の通知を消す（どの端末で答えても、ターンが終わっても）
       pushNotifier.approvalResolved({ id: cards[0].id, sessionId: payload.sessionId });
+      botHost?.onPermission({ id: cards[0].id, ...payload }, 'settled');
       signal?.removeEventListener?.("abort", onAbort);
       const { messageKey, messageParams, ...rest } = localize(answer);
       resolve(rest);
@@ -2417,6 +2438,7 @@ const askPermission = async ({ toolName, input, sessionId, toolUseID, title, sig
     };
 
     for (const card of cards) runtime.waiting.set(card.id, { settle, payload: card.payload, askedAt: new Date().toISOString(), relay: card.relay, notified: false, detached });
+    botHost?.onPermission({ id: cards[0].id, ...payload }, 'open');
     signal?.addEventListener?.("abort", onAbort, { once: true });
     // 離れたスマホへ（画面が居るかによらない。委譲の子の承認・質問は子の会話の分だけ。中継の複製は送らない）
     // （会話名を読むあいだに決着していたら送らない。送ると取り消しが先に行ってしまい、通知が残る）
@@ -2863,6 +2885,13 @@ await worktreeHost.worktrees.reconcile()
   .catch(e => console.error('  分けた作業場所の整理に失敗:', String(e?.message ?? e)));
 worktreeSweepSoon();
 
+// bot・Channels・ルーティン。会話を作る・走らせる・止める・途中送信するための道具を渡す（中身は core/bots-host.mjs のモジュールが持つ）
+botHost = createBotHost({
+  store, dataDir: store.dataDir, usageStore, sessionSearch, runtime, outbox,
+  createConversation, runTurn, noticeTarget, noticeBlocked, abortSessions, emitGlobal,
+  getBackend, listBackends, resolveModel, resolveEffort, agentLocaleFor, agentT, currentLocale, lastReply,
+  sessionBusy: id => sessionBusy(id),
+});
 // ターンの外で起きたことをバックエンドから受け取る口（docs/multi-backend.md §2.7）。
 // codex（バックグラウンド端末）が使う
 for (const b of listBackends()) {
@@ -3156,8 +3185,11 @@ async function runTurnInternal(args, onStarted, hooks) {
       if (resolvedContext?.servers.length) emit({ type: 'activity', state: 'preparing' });
       if (hooks.internal) {
         await recordTaskNotice(sessionId, prompt);
-        // 本文も載せる。画面の「タスクの結果で再開」の 1 行を開くと読める（ADR 0053）
-        emit({ type: 'taskNotice', text: String(prompt ?? '') });
+        // bot の会話へ渡すチャンネルの出来事・記憶の包みは、履歴と同じ行の形で出す（splitLeadingNotes）。それ以外は、本文も載せる。
+        // 画面の「タスクの結果で再開」の 1 行を開くと読める（ADR 0053）
+        const rows = channelEventRows(prompt);
+        if (rows.length) emit({ type: 'channelEvent', rows });
+        else emit({ type: 'taskNotice', text: String(prompt ?? '') });
       }
       await saveContext();
       // agy のように会話のあいだ 1 本のプロセスを生かすバックエンドには、会話ごとの同じトークンで開く（起動時にしか渡せない）
@@ -3180,10 +3212,14 @@ async function runTurnInternal(args, onStarted, hooks) {
       }
       // 内蔵ブラウザーのプロフィール（ADR 0078）。会話の今のもの。中継の準備で main に渡す。ply_browser の切り替えはここを書き換える
       if (agentBrowser) turn.browserProfile = await (sessionId ? browserProfiles.resolve(sessionId) : browserProfiles.forNew(cwd)).catch(() => null);
+      // bot の会話なら、人格（botInstructions）と、ターンの末尾（記憶の核の写し・差分。notes）を足す。bot でなければ空
+      const botExtras = await botHost?.turnExtras(turn) ?? { botInstructions: null, notes: [] };
+      const notes = [...(interruption ? [interruption.text] : []), ...botExtras.notes];
       const runArgs = {
         prompt,
         ...(shellHandoff?.lines.length ? { shellAppends: shellHandoff.lines } : {}),
-        ...(interruption ? { notes: [interruption.text] } : {}),
+        ...(notes.length ? { notes } : {}),
+        ...(botExtras.botInstructions ? { botInstructions: botExtras.botInstructions } : {}),
         ...(hooks.compact ? { compact: hooks.compact } : {}),
         sessionId,
         cwd,
@@ -3270,7 +3306,7 @@ async function runTurnInternal(args, onStarted, hooks) {
         if (attachments.length || turn.steeredAttachments?.length) {
           await Promise.all(turn.presentWrites);
           // 中断の後に添えた文は発言から切り分けてから照らす（history.loadTranscript と同じ）
-          const messages = splitInterruptionNotes(await backend.getMessages(turn.info.sessionId));
+          const messages = splitLeadingNotes(await backend.getMessages(turn.info.sessionId));
           let cursor = baseline.messages.length;
           for (const attachment of [{ key: turn.presentKey, prompt }, ...(turn.steeredAttachments ?? [])]) {
             const index = messages.findIndex((m, i) => i >= cursor && m.role === 'user' && m.text === attachment.prompt);
@@ -3330,7 +3366,7 @@ async function endTurn(turn, emit, { record = true } = {}) {
   // 時刻は completedAt と同じ値にする（確認済みの印 readAt は completedAt で丸めるので、ずらすと未読から戻れない）
   const stopped = !requeued && (turn.outcome === "aborted" || (turn.ac.signal.aborted && turn.outcome !== "ok"));
   const interrupted = stopped ? { at: completedAt, reason: turn.abortReason ?? "user" } : null;
-  if (record && !requeued) await usageStore.record({ ...turn.usage, id: turn.presentKey, backend: turn.backend.id })
+  if (record && !requeued) await usageStore.record({ ...turn.usage, id: turn.presentKey, backend: turn.backend.id, sessionId: turn.info.sessionId })
     .catch(() => { console.error('  使用量を記録できませんでした'); });
   if (turn.info.sessionId) {
     await turn.setup?.catch(() => {});
@@ -3391,6 +3427,8 @@ async function endTurn(turn, emit, { record = true } = {}) {
   // 空いている間の自動圧縮（idle）は利用者の作業ではないので、完了として知らせない
   if (!delegated && turn.compactTrigger !== 'idle') completionNotices.finished(turn.info.sessionId, turn.outcome, completedAt, { startedAt: turn.startedAtMs });
   settingApprovals?.changed();
+  // bot の会話なら、ターンの投稿を確定し、たまった出来事を渡す（ターンを手放した後。待たない）
+  if (!requeued) void botHost?.onTurnEnd(turn, { outcome: turn.outcome, interrupted, requeued });
   // 利用者の送信でも、委譲の完了通知などで始まったターンでも予約する（ADR 0068）。圧縮のターンの後は予約し直さない
   if (record && turn.outcome === 'ok' && !turn.compactTrigger && !turn.compaction
       && !delegated && turn.info.sessionId) {
@@ -5258,4 +5296,6 @@ server.once("error", (err) => {
 // 検索の写しは、起動の混み合いが落ち着いてから裏で作る（探されたときは待たずに読めた分で答える）
 setTimeout(() => sessionSearch.start().catch(() => {}), 3000).unref();
 await restoreCompactionSchedule().catch(err => console.error('  自動圧縮の予約を戻せませんでした:', String(err?.message ?? err)));
+// 届ける前の出来事の戻し・ルーティンの取りこぼし（P0 では何もしない）
+await botHost.start();
 server.listen(PORT, HOST, announce);

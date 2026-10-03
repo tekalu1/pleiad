@@ -271,6 +271,8 @@ const cases = [
   await import("./unit/claude-normalize.mjs"),
   // 履歴のシステム側のメッセージ: 形（transcript の印）と文面での見分け・区切りへの要約・中断・teammate・文脈のタグ・保存分（ADR 0053）
   await import("./unit/system-messages.mjs"),
+  // bot の会話の先頭の包み（記憶・チャンネルの出来事）の組み立てと剥がし・本文の閉じタグが外へ出ない・id と発言者
+  await import("./unit/system-messages-leading.mjs"),
   // 入力欄の `!`（ADR 0054）: ホストで走らせる・止める・上限・同じ runId・Claude に渡す形・Codex の userShell の履歴
   await import("./unit/shell-runs.mjs"),
   // 同じく入力欄の形: `!` を打つ・貼り付けでは入らない・Backspace で戻る・使えない会話・文として送る・入力欄に写す
@@ -383,6 +385,17 @@ const cases = [
   await import("./unit/remote-links.mjs"),
   // リモートから PC の内蔵ブラウザーを見る: フレームの間引き・止める条件・ローカルとエージェント操作中の断り・入力の変換・シートの出し分け
   await import("./unit/remote-browser-view.mjs"),
+
+  // ==== bot・Channels・ルーティン（docs/channels.md、ADR 0091〜0099）。パッケージごとの区画。各パッケージは自分の区画の下にだけ足す（並列の衝突を避ける）====
+  // つなぎ目（core/bots-host.mjs）と土台: 空のままでは何も変えない・例外を出さない・使用量の sessionId・fake の台本の包み外し
+  await import("./unit/bots-host.mjs"),
+  // --- channels (S1) ---
+  // --- bots (S2) ---
+  // --- memory (S3) ---
+  // --- dispatch (S4) ---
+  // --- channels-ui: 脇・流れ・スレッド・bot のページ (W1・W2・W3・W4) ---
+  // --- routines (R1・R2・W5、P2) ---
+  // --- memory-learn・sessions-send・webhook (L1・X1・H1、P3) ---
 ];
 
 const selected = pick(cases, process.argv.slice(2));
