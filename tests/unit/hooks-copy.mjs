@@ -195,11 +195,14 @@ process.stdout.write(JSON.stringify(i.toolCall?.args?.CommandLine==='echo hi'?{d
     await fs.mkdir(path.join(tmp, '.agents'), { recursive: true });
     if (process.platform === 'win32') {
       const shellProbe = await script('shell-probe.mjs', 'process.stderr.write(JSON.stringify(process.argv.slice(2)));');
-      const codexShell = await runAdapter(['codex', 'claude', 'PreToolUse', '10', b64(`node ${shellProbe} $PWD`)], JSON.stringify({ ...CODEX_PRE, cwd: tmp }));
-      const agyShell = await runAdapter(['antigravity', 'claude', 'PreToolUse', '10', b64(`node ${shellProbe} %CD%`)], JSON.stringify({ ...CLAUDE_PRE, cwd: tmp }));
+      // CI の Windows では PowerShell の起動が 10 秒を超えることがある。
+      const codexShell = await runAdapter(['codex', 'claude', 'PreToolUse', '30', b64(`node ${shellProbe} $PWD`)], JSON.stringify({ ...CODEX_PRE, cwd: tmp }));
+      const agyShell = await runAdapter(['antigravity', 'claude', 'PreToolUse', '30', b64(`node ${shellProbe} %CD%`)], JSON.stringify({ ...CLAUDE_PRE, cwd: tmp }));
+      const argsOf = result => { try { return JSON.parse(result.stderr); } catch { return []; } };
       t.ok('Windows の元コマンドは Codex で PowerShell、agy で cmd の変数が展開される',
-        JSON.parse(codexShell.stderr)[0].toLowerCase() === tmp.toLowerCase()
-        && JSON.parse(agyShell.stderr)[0].toLowerCase() === path.join(tmp, '.agents').toLowerCase());
+        codexShell.code === 0 && agyShell.code === 0 && argsOf(codexShell)[0]?.toLowerCase() === tmp.toLowerCase()
+        && argsOf(agyShell)[0]?.toLowerCase() === path.join(tmp, '.agents').toLowerCase(),
+        JSON.stringify({ codexShell, agyShell }));
     }
     const r7 = await runAdapter(['antigravity', 'claude', 'PreToolUse', '10', b64(`node ${agyScript}`)], JSON.stringify({ ...CLAUDE_PRE, cwd: tmp }));
     t.ok('実行: Claude から呼ばれ、agy の形で渡し、deny を Claude の形で返す', JSON.parse(r7.stdout).hookSpecificOutput?.permissionDecision === 'deny', r7.stdout);

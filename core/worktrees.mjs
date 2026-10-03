@@ -153,7 +153,9 @@ export function createWorktrees({ dataDir, users = async () => ({ busy: [], atta
     const parsed = status.ok ? git.parseStatus(status.stdout) : null;
     const repoDir = path.basename(info.commonDir) === '.git' ? path.dirname(info.commonDir) : info.root;
     const parent = `${path.dirname(slash(repoDir))}/${path.basename(slash(repoDir))}.pleiad`;
-    const sub = trimEnd(path.relative(info.root, cwd) ?? '').replaceAll('\\', '/');
+    // Git returns the real path on Windows even when cwd contains an 8.3 short name.
+    const origin = slash(await io.realpath(cwd));
+    const sub = trimEnd(path.relative(info.root, origin) ?? '').replaceAll('\\', '/');
     let id = null;
     for (let i = 0; i < 30 && !id; i++) {
       const pick = `ply-${crypto.randomBytes(2).toString('hex')}`;
@@ -161,7 +163,7 @@ export function createWorktrees({ dataDir, users = async () => ({ busy: [], atta
       id = pick;
     }
     if (!id) return { ok: false, reason: 'git', error: 'no free id' };
-    const entry = { id, state: 'creating', purpose, repoDir: slash(repoDir), root: info.root, origin: slash(cwd), sub: sub.startsWith('..') ? '' : sub,
+    const entry = { id, state: 'creating', purpose, repoDir: slash(repoDir), root: info.root, origin, sub: sub.startsWith('..') ? '' : sub,
       path: `${parent}/${id}`, branch: `pleiad/${id}`, base: from?.base ?? head, baseBranch: from ? from.baseBranch ?? null : parsed?.branch ?? null,
       sessionId, parentSessionId, taskId, createdAt: now(), kept: false };
     busyIds.add(id);

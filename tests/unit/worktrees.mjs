@@ -30,6 +30,7 @@ export default async function (t) {
       sh(dir, 'commit', '-q', '-m', 'init');
     };
     await makeRepo(repo);
+    const realRepo = slash(await fs.realpath(repo));
     const dataDir = `${scratch}/data`;
     const state = { busy: [], attached: [], released: [], fail: null };
     const make = (extra = {}) => createWorktrees({ dataDir, retryMs: [1, 1], sleep: async () => {},
@@ -41,7 +42,7 @@ export default async function (t) {
     const created = await wts.create({ cwd: repo, sessionId: 's1', purpose: 'conversation' });
     const e = created.entry;
     t.ok('作成: リポジトリの隣の <名前>.pleiad/<id>・ブランチ pleiad/<id>・ベースは今の HEAD',
-      created.ok && e.path === `${scratch}/repo.pleiad/${e.id}` && /^ply-[0-9a-f]{4}$/.test(e.id) && e.branch === `pleiad/${e.id}` && e.base === sh(repo, 'rev-parse', 'HEAD').trim() && e.baseBranch === 'main' && e.state === 'ready', JSON.stringify(created));
+      created.ok && e.path === `${realRepo}.pleiad/${e.id}` && e.origin === realRepo && /^ply-[0-9a-f]{4}$/.test(e.id) && e.branch === `pleiad/${e.id}` && e.base === sh(repo, 'rev-parse', 'HEAD').trim() && e.baseBranch === 'main' && e.state === 'ready', JSON.stringify(created));
     t.ok('作成: git に登録され、ブランチ付き（detached ではない）で、依存は張らない', (await wtgit.worktreeList(repo)).some((w) => w.path === e.path && w.branch === e.branch && !w.detached) && !(await exists(`${e.path}/node_modules`)));
     t.ok('作成: 台帳に残る（worktrees.json）・ユーザーのブランチの先頭は動かない', JSON.parse(await fs.readFile(`${dataDir}/worktrees.json`, 'utf8')).entries[e.id].path === e.path && sh(repo, 'rev-parse', 'main').trim() === e.base);
     t.ok('作成: 分けた作業場所の中からは分けない（already-split）・git 管理外は not-git', (await wts.create({ cwd: e.path })).reason === 'already-split' && (await wts.create({ cwd: scratch })).reason === 'not-git');
@@ -50,7 +51,7 @@ export default async function (t) {
     t.ok('作成: コミットの無いリポジトリは no-commits（作れない）', (await wts.create({ cwd: emptyRepo })).reason === 'no-commits' && !(await exists(`${scratch}/empty.pleiad`)));
     t.ok('台帳: パスで引ける・サブフォルダーは入口の中', (await wts.byPath(`${e.path}/core`))?.id === e.id && (await wts.byPath(repo)) === null && insideDir(`${e.path}/core`, e.path) && !insideDir(`${e.path}2`, e.path) && sameDir('D:\\A\\b/', 'd:/a/b'));
     const sub = await wts.create({ cwd: `${repo}/core` });
-    t.ok('サブフォルダーから分けると、中でも同じサブフォルダーが cwd になる', sub.ok && wts.cwdOf(sub.entry) === `${sub.entry.path}/core` && (await exists(wts.cwdOf(sub.entry))), JSON.stringify(sub));
+    t.ok('サブフォルダーから分けると、中でも同じサブフォルダーが cwd になる', sub.ok && sub.entry.origin === `${realRepo}/core` && wts.cwdOf(sub.entry) === `${sub.entry.path}/core` && (await exists(wts.cwdOf(sub.entry))), JSON.stringify(sub));
     // 変更なし → 消す（片付けの判定のため先にこの 2 つを消しておく）
     const s1 = await wts.settle(sub.entry.id);
     t.ok('変更なしは自動で消える（フォルダー・登録・ブランチ・台帳）', s1.action === 'removed' && s1.kind === 'empty' && !(await exists(sub.entry.path)) && !(await wtgit.branchTip(repo, sub.entry.branch)) && !(await wts.get(sub.entry.id)), JSON.stringify(s1));
