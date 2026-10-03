@@ -4,10 +4,10 @@
 // 本体（実際に会話を動かす処理）はサーバーが ctx.conversations で渡す（core/server.mjs の opsConversations）。
 // 返り値は AI が 1 回で読める大きさに抑える（一覧は limit / cursor、本文は切る）。画面（人）には uiHandler で、画面が読む全量の形を返す（ADR 0091 追記）。
 import { z } from 'zod';
-import { agentT } from '../i18n.mjs';
+import { agentT, t } from '../i18n.mjs';
 import { familyOf } from '../lineage.mjs';
 import { defineOp, OpError } from './registry.mjs';
-import { fromHost, humanOnlyFields, pageOf, clip, PAGE_MAX } from './host.mjs';
+import { FAILED, fromHost, humanOnlyFields, pageOf, clip, PAGE_MAX } from './host.mjs';
 import { changeRow, listRowOf } from './sessions.mjs';
 
 const D = (id, key) => `agent:ops.sessions.${id}.${key}`;
@@ -25,6 +25,8 @@ function targetOf(ctx, given) {
   if (!id) throw new OpError('INVALID', agentT(ctx.locale, 'ops.errors.sessionRequired'));
   return id;
 }
+/** 画面（人）の読み取り: 会話の指定が無ければ、今までの文で断る（コマンドの code は付けない） */
+const needSession = (id) => { if (!id) throw new OpError(FAILED, t('session.required')); return id; };
 const missing = (ctx, id) => new OpError('SESSION_NOT_FOUND', agentT(ctx.locale, 'ops.errors.SESSION_NOT_FOUND', { id }));
 const mustExist = async (ctx, id) => { if (!(await ctx.sessions.get(id))) throw missing(ctx, id); };
 
@@ -250,7 +252,7 @@ export const conversationOps = [
       const { total, items, next } = pageOf(ctx, [...history].reverse(), page);
       return { total, changes: items.map(changeRow), next };
     },
-    uiHandler: async (ctx, { sessionId: id }) => ({ changes: ((await ctx.sessions.history(id)) ?? []).map(uiChange) }),
+    uiHandler: async (ctx, { sessionId: id }) => ({ changes: ((await ctx.sessions.history(needSession(id))) ?? []).map(uiChange) }),
   }),
 
   // 同じ根を持つ会話（分岐の家族）。根から幅優先、200 件まで
@@ -273,6 +275,7 @@ export const conversationOps = [
       return { rootId, total, sessions: items.map((x) => (byId.has(x) ? listRowOf(byId.get(x)) : { id: x })), next };
     },
     uiHandler: async (ctx, { sessionId: id }) => {
+      needSession(id);
       const rows = await ctx.sessions.list();
       const byId = new Map(rows.map((r) => [r.id, r]));
       const { rootId, ids } = familyOf(rows, id);

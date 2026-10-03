@@ -4966,7 +4966,7 @@ wss.on("connection", (ws, req) => {
           return reply(true, await outbox.list(sessionId));
         }
         case 'listMessages':
-          return viaOp('sessions.outbox', args);
+          return viaOp('sessions.listMessages', args);
 
         // { sessionId?, reason? }。sessionId を省略したら全部止める。reason は user|update|quit（ほかは user）。操作では reason は理由の文で、この種類は kind
         case "abort":
