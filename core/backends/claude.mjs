@@ -316,6 +316,18 @@ function buildToolServer(ctx) {
   });
 }
 
+/**
+ * 読み取り専用のフォルダーの deny ルール。Claude Code の `Edit(...)` は Edit・Write・NotebookEdit などファイルを書き換える道具に掛かる。
+ * パスは `//` で始めるとファイルシステムの根からの絶対パス。Windows は 'C:\a\b' を '//c/a/b' にそろえる（Claude Code の照合の形）
+ */
+export function readOnlyDenyRules(roots) {
+  return roots.map((root) => {
+    const p = String(root).replace(/[\\]/g, '/').replace(/\/+$/, '');
+    const drive = /^([A-Za-z]):(\/.*)?$/.exec(p);
+    return `Edit(/${drive ? `/${drive[1].toLowerCase()}${drive[2] ?? ''}` : p}/**)`;
+  });
+}
+
 // ---------------------------------------------------------------- 承認
 
 /**
@@ -720,8 +732,9 @@ export const backend = {
         ...(flag ? { settings: flag.file } : {}),
         // bot の人格（core/bots/sessions.mjs の botInstructions）は並びの最後。同じ bot なら毎ターン同じバイト列（キャッシュを壊さない）
         ...((visualizeInstructions || browserInstructions || contextRuntime?.prompt || agentRuntime?.instructions || computerInstructions || controlRuntime?.instructions || botInstructions) ? { systemPrompt: { type: 'preset', preset: 'claude_code', append: [contextRuntime?.prompt, visualizeInstructions, browserInstructions, agentRuntime?.instructions, computerInstructions, controlRuntime?.instructions, botInstructions].filter(Boolean).join('\n\n') } } : {}),
-        // bot の触れてよいフォルダー（cwd の外の分。読み取り専用の区別は宣言にとどまり強制されない）
+        // bot の触れてよいフォルダー（cwd の外の分）。読み取り専用（ro）のフォルダーは、acceptEdits が聞かずに通す編集を deny ルールで断る（シェルの書き込みは断れない。docs/channels.md）
         ...(botFolders?.additionalDirectories?.length ? { additionalDirectories: botFolders.additionalDirectories } : {}),
+        ...(botFolders?.readOnlyRoots?.length ? { disallowedTools: readOnlyDenyRules(botFolders.readOnlyRoots) } : {}),
         // adaptive = モデルが必要な分だけ考える。
         // 注意: このモデルの thinking ブロックは署名だけで平文が入らない（2026-08 時点、
         // display の有無を問わず `thinking` は空文字）。したがって思考の中身は表示できない。

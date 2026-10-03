@@ -255,8 +255,10 @@ export function createMemoryStore({ dir, now = Date.now, titleOf = (layer) => la
     hash: () => crypto.createHash('sha256').update(JSON.stringify([...cache.keys()].sort().map((l) => [l, cache.get(l).map((e) => [e.id, e.text, e.why ?? '', e.updatedAt])]))).digest('hex'),
 
     /** 追加。by は発言者、via は書いた会話。entry は id・at 以外が入った形 */
-    add: ({ layer, text, why, sources = [], by, via }) => serial(async () => {
+    add: ({ layer, text, why, sources = [], by, via, unique = false }) => serial(async () => {
       await ensureReady(); await syncNow();
+      // 同じ文を同時に 2 回書いても、直列化の中で見れば後の 1 つは弾ける（呼び出し側の事前の検査は直列化の外）
+      if (unique && (cache.get(layer) ?? []).some((e) => fingerprintOf(e.text) === fingerprintOf(text))) return { duplicate: true };
       const at = now();
       const entry = { id: newId('memory', at), layer, text: oneLine(text), ...(why ? { why } : {}), sources, at, updatedAt: at, by, hadMeta: true };
       cache.set(layer, [...(cache.get(layer) ?? []), entry]);

@@ -218,6 +218,10 @@ export default async function (t) {
       botModes.b_lynx = 'bypass';
       t.ok('channels.wake: 許可のあとに bot のモードが変わっていたら、起こさずに聞き直す（受領証の照合）', asked.length === reask + 1 && woke.length === 2, `${asked.length} ${reask} ${woke.length}`);
 
+      // markRead の at は今を超えない（未来の時刻を入れて、そのチャンネルの未読の印を殺せない）
+      const future = await call(agent('s_chat'), 'channels.markRead', { channelId: made.id, at: 9_000_000_000_000_000 });
+      t.ok('markRead: at に未来の時刻を入れても、既読の位置は今で頭打ち（AI・CLI も呼べる write なので）', future.ok && future.result.readAt <= Date.now() && future.result.readAt > 0, JSON.stringify(future.result));
+
       // S-4: AI が作業場所（cwd）を決める・変えるのは承認
       const cwdMark = asked.length;
       const cwdAsk = await call(agent('s_chat'), 'channels.update', { channelId: made.id, cwd: path.join(tmp, 'work') });

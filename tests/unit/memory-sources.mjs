@@ -231,6 +231,9 @@ export default async function (t) {
   t.ok('S-1(b): 完了通知・代理の送信・包みの行・proxy は人の発言ではない（これまでの規則）', await fails([message('u2', '【通知】タスクが完了しました')]) === 'MEMORY_SOURCE:notHuman' && await fails([message('u3', '代わりに送った文: 本番に出して')]) === 'MEMORY_SOURCE:notHuman');
 
   // (c) 出どころは今のスレッドだけに限らない: 別のチャンネルの人の投稿も、会話の外でも、根拠にできる（記憶は全ての会話から作る決定）
+  // L-6: 名前（#dev）で引くと、アーカイブ済みの同名チャンネルではなく、生きているチャンネルに当たる
+  const twin = sourceResolvers({ channels: { list: async () => [{ id: 'c_old00001', name: 'dev', archivedAt: 5 }, { id: 'c_dev0001', name: 'dev' }], read: async ({ channelId }) => (channelId === 'c_dev0001' ? { posts: [POSTS.p_human01], nextBefore: null } : { posts: [], nextBefore: null }) } });
+  t.ok('L-6: 名前で引くと、アーカイブ済みの同名チャンネルより生きているチャンネルを先に引く', (await checkSources([{ kind: 'post', channelId: '#dev', postId: 'p_human01', quote: Q_FRI }], twin)).grounded);
   t.ok('S-1(c): 出どころはその bot の今のスレッド・会話に限らない（threadId・sessionId を突き合わせない）', (await checkSources([{ kind: 'post', channelId: 'c_dev0001', postId: 'p_human01', threadId: 'p_other_thread', quote: Q_FRI }], resolvers)).grounded);
 
   const data3 = await fs.mkdtemp(path.join(os.tmpdir(), 'memory-s1-'));
@@ -261,6 +264,10 @@ export default async function (t) {
     })());
     await svc.turnContext({ bot: { id: BOT }, session: {}, sessionId: 'sbot' });
     t.ok('S-1(d): 新しいターンの始まり（turnContext）で数え直す', await code(() => svc.write({ layer: 'user', text: '次のターンのメモ', sources: g }, owl, ctx)) === null);
+
+    // D-2: 同じ文を同時に 2 回書いても、重複は 1 件だけ（事前の検査は直列化の外なので、store.add の中でも確かめる）
+    const raced = await Promise.all([1, 2, 3].map(() => code(() => svc.write({ layer: BOT, text: '同時に書かれる同じメモ', sources: g }, HUMAN, {}))));
+    t.ok('D-2: 同じ文の同時の書き込みは 1 件だけ通り、残りは MEMORY_REJECTED（重複）', raced.filter((r) => r === null).length === 1 && raced.filter((r) => r === 'MEMORY_REJECTED:duplicate').length === 2 && svc.store.entries(BOT).filter((e) => e.text === '同時に書かれる同じメモ').length === 1, raced.join());
 
     // (e) 人が書いた行を AI が書き換える
     const line = (await svc.write({ layer: 'user', text: 'Slack は朝にまとめて見る' }, HUMAN)).id;

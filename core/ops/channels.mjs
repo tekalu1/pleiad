@@ -253,7 +253,8 @@ export const channelOps = [
     input: z.object({ channelId: channelId('markRead'), at: z.number().int().min(0).optional().describe(D('markRead', 'at')) }),
     output: z.unknown(),
     surfaces: { ui: true, mcp: 'catalog', cli: { path: ['channels', 'mark-read'], positional: ['channelId'] } },
-    handler: (ctx, { channelId: id, at }) => run(ctx, () => ctx.channels.markRead({ channelId: id, at: at ?? Date.now() })),
+    // at は今を超えない（既読の位置は進める向きにしか動かないので、未来の時刻を 1 回入れられると、そのチャンネルの未読の印が二度と付かなくなる）
+    handler: (ctx, { channelId: id, at }) => run(ctx, () => ctx.channels.markRead({ channelId: id, at: Math.min(at ?? Date.now(), Date.now()) })),
   }),
   defineOp({
     id: 'channels.stopThread', summary: D('stopThread', 'summary'), risk: 'write', modeGate: false,

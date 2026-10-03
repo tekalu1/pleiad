@@ -126,7 +126,9 @@ export function createMemoryService({ dataDir, channels = null, emit = () => {},
       const proven = await verified(sources, author, ctx);
       const fp = fingerprintOf(clean);
       if (store.entries(layer).some((e) => fingerprintOf(e.text) === fp)) throw new MemoryError('MEMORY_REJECTED', 'duplicate');
-      const { entry } = await store.add({ layer, text: clean, why: note, sources: proven, by: author, via: ctx.sessionId });
+      const added = await store.add({ layer, text: clean, why: note, sources: proven, by: author, via: ctx.sessionId, unique: true });
+      if (added.duplicate) throw new MemoryError('MEMORY_REJECTED', 'duplicate');
+      const { entry } = added;
       bump(budget);
       announce(layer);
       return entry;

@@ -129,7 +129,8 @@ export function sourceResolvers({ channels, sessions, botOfSession } = {}) {
     if (isId(ref, 'channel')) return ref;
     const name = String(ref ?? '').replace(/^#/, '');
     const list = (await channels?.list?.().catch(() => [])) ?? [];
-    return list.find((c) => c.name === name || c.id === ref)?.id ?? null;
+    const named = list.filter((c) => c.name === name || c.id === ref);
+    return (named.find((c) => !c.archivedAt) ?? named[0])?.id ?? null;   // アーカイブ済みの同名より、生きているチャンネルを先に
   };
   return {
     async post({ channelId, postId, threadId }) {

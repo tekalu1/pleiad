@@ -406,7 +406,7 @@ export function createDispatcher({ channels, bots, memory, host, emit = () => {}
   async function startTurn(sessionId, items) {
     const sb = await sidecarOf(sessionId);
     const channel = sb ? await channels.get({ channelId: items[0].channelId }).catch(() => null) : null;
-    if (!channel) { await inbox.remove(items.map((i) => i.id)); return; }
+    if (!channel || channel.archivedAt) { await inbox.remove(items.map((i) => i.id)); return; }   // アーカイブされたチャンネルには、ターンの投稿も作れない
     const threadId = items[0].threadId;
     const lng = await lngOf(sessionId);
     const built = await buildPrompt({ sessionId, sb, channel, threadId, items, lng });

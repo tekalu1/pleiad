@@ -354,6 +354,16 @@ export default async function (t) {
         t.ok('F-2: 終わりが届かなかった記録の、合図待ちの途中送信は、次のターンの始まりで pending に戻る（delivering のまま固まらない）', before === 'delivering' && (await c.d.inbox.list({})).find((i) => i.postId === 'p_2')?.status === 'pending' && c.d.activeCount() === 1);
       }
 
+      // L-1: アーカイブされたチャンネルの出来事は配らない（ターンの投稿だけ作れずに走らない）
+      {
+        const w = world('plain');
+        w.turns.delete('s1');
+        w.channel.archivedAt = 5000;
+        await w.d.wake({ botId: 'b_1', channel: w.channel, threadId: 'p_root', post: w.posts[1] });
+        await tick();
+        t.ok('L-1: アーカイブされたチャンネルの出来事は、ターンを始めずに捨てる', w.started.length === 0 && (await w.d.inbox.list({})).length === 0);
+      }
+
       // F-3: commit の sidecar の書き込みが終わる前に次のターンが始まっても、古い postCursor を読んで同じ文脈を渡し直さない
       {
         const w = world('plain', { realStart: true });
