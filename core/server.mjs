@@ -2558,7 +2558,7 @@ const opsWorktrees = {
     return next;
   },
   getSettings: () => worktreeHost.worktrees.getSettings(),
-  // ぶつかりの確認（入力欄の上の 1 行・チップの元。worktrees.check。ADR 0096）
+  // ぶつかりの確認（入力欄の上の 1 行・チップの元。worktrees.check。ADR 0104）
   check: async (args) => {
     const sessionId = typeof args?.sessionId === 'string' && args.sessionId ? args.sessionId : null;
     const cwd = await worktreeCwd(args);
@@ -2571,7 +2571,7 @@ const opsWorktrees = {
 // 通知の設定（notify.*。ADR 0086）の本体。変えたら設定 › 通知の材料を全画面へ配る
 const notifyChanged = async () => emitGlobal({ type: 'notifyStatus', status: await notifyStatus(), sessionId: null });
 const opsNotify = {
-  // 設定 › 通知の材料（notify.status。ADR 0096）。スマホの一覧を含むので、AI への返りは操作が数だけにする
+  // 設定 › 通知の材料（notify.status。ADR 0104）。スマホの一覧を含むので、AI への返りは操作が数だけにする
   status: () => notifyStatus(),
   setPc: async (patch) => { const pc = await notifySettings.set(patch); await notifyChanged(); return pc; },
   setDevice: async (id, muted) => {
@@ -2711,7 +2711,7 @@ const opsHooks = {
   },
   // 壊れた hooks.json を退避して、読めた部分だけで書き直す（画面で影響を知らせてから押させる）
   repair: (cwd) => plyHooks.repair({ cwd }),
-  // 担当を変える前の見込み（hooks.unifyPreview。ADR 0096）
+  // 担当を変える前の見込み（hooks.unifyPreview。ADR 0104）
   unifyPreview: (args) => hooksUnifyPreview(args),
 };
 
@@ -2737,7 +2737,7 @@ const opsContext = {
     const live = runtime.turns.get(sessionId)?.contextRecord;
     return (live ?? (await store.get(sessionId)).contextSession)?.policy?.removedMcp ?? [];
   },
-  // ---- 中身を読む（context.session・diff・scan・skills・agentMcp・nativeInstructions・findings。ADR 0096）。WS の同じ名前のコマンドがしていた処理
+  // ---- 中身を読む（context.session・diff・scan・skills・agentMcp・nativeInstructions・findings。ADR 0104）。WS の同じ名前のコマンドがしていた処理
   // 会話の文脈。固定された会話だけ、今のファイルと突き合わせる（ネイティブの会話では探索しない）。ほかの探索が走っている間は突き合わせを飛ばす
   session: async (sessionId, { compare = true, lock = null } = {}) => {
     const saved = sessionId ? (await store.get(sessionId)).contextSession : null;
@@ -2778,7 +2778,7 @@ function scanLockOf(holder) {
 }
 const agentScanLock = scanLockOf({});
 
-// git の動き（git.*。core/ops/git.mjs、ADR 0085・0096）の本体。作業場所は会話の cwd。git が無い・git 管理外は git: null
+// git の動き（git.*。core/ops/git.mjs、ADR 0085・0104）の本体。作業場所は会話の cwd。git が無い・git 管理外は git: null
 const opsGit = {
   status: async (args) => {
     const cwd = await gitCwd(args);
@@ -2804,7 +2804,7 @@ const opsGit = {
   },
 };
 
-// 会話のシェル（shell.*。core/ops/shell.mjs、ADR 0054・0096）の本体。WS の runShell・stopShell・skipShell がしていた処理
+// 会話のシェル（shell.*。core/ops/shell.mjs、ADR 0054・0104）の本体。WS の runShell・stopShell・skipShell がしていた処理
 const opsShell = {
   // 承認カードの 1 文の材料（どの会話で・どこで動くか）
   describe: async (sessionId) => {
@@ -2847,7 +2847,7 @@ const opsShell = {
   },
 };
 
-// バックグラウンドの処理・サブエージェント・エージェントの切り替え・グループ（core/ops/session-work.mjs、ADR 0096）の本体。WS の同じ名前のコマンドがしていた処理
+// バックグラウンドの処理・サブエージェント・エージェントの切り替え・グループ（core/ops/session-work.mjs、ADR 0104）の本体。WS の同じ名前のコマンドがしていた処理
 const opsSessionWork = {
   // 切り替えの見込み: 今のエージェントと承認モード、切り替え先と、切り替えたときの承認モード（切り替え先の最初のモード。core/conversations.mjs の switchBackend）
   switchPlan: async (sessionId, targetId) => {
@@ -3167,7 +3167,7 @@ function opsDeps(lng = currentLocale()) {
     context: opsContext,
     remote: opsRemote,
     endpoints: { list: (agent) => compatEndpoints.list(agent) },
-    // git・会話のシェル・会話の裏の処理とサブエージェント・フォルダーの一覧（core/ops/git.mjs・shell.mjs・session-work.mjs・files.mjs。ADR 0096）
+    // git・会話のシェル・会話の裏の処理とサブエージェント・フォルダーの一覧（core/ops/git.mjs・shell.mjs・session-work.mjs・files.mjs。ADR 0104）
     git: opsGit,
     shell: opsShell,
     sessionWork: opsSessionWork,
@@ -5014,7 +5014,7 @@ wss.on("connection", (ws, req) => {
   // 中継越しの端末の画面（接続口が付ける x-pleiad-device）。見ている印と通知鍵の登録はこの端末のものとして扱う
   const via = local ? null : remote.deviceInfo(req.headers['x-pleiad-device']);
   if (via) connectionDevices.set(ws, via);
-  // コンテキストの探索の錠（この接続で 1 つずつ。context.scan・context.skills・context.session の突き合わせ。ADR 0096）
+  // コンテキストの探索の錠（この接続で 1 つずつ。context.scan・context.skills・context.session の突き合わせ。ADR 0104）
   const wsScanLock = scanLockOf(ws);
   // 古い接続を閉じてはいけない。クライアントは切れると自動再接続するので、
   // 「新しい方に付け替える」と互いに閉じ合って永久に落ち着かなくなる。
@@ -5116,7 +5116,7 @@ wss.on("connection", (ws, req) => {
           return await viaOp('mcp.reconnect');
         case 'contextSettings':
           return await viaOp('context.settings');
-        // 会話の文脈（context.session。ADR 0096）。突き合わせはこの接続の探索の錠の中（別のスキャンが走っていれば飛ばす）
+        // 会話の文脈（context.session。ADR 0104）。突き合わせはこの接続の探索の錠の中（別のスキャンが走っていれば飛ばす）
         case 'sessionContext':
           return await viaOp('context.session');
         case 'plyInstructions':
@@ -5200,7 +5200,7 @@ wss.on("connection", (ws, req) => {
           return await viaOp('hooks.setOwner');
         case 'repairPlyHooks':
           return await viaOp('hooks.repair');
-        // 探索は接続ごとに 1 つずつ（context.scan・context.skills。ADR 0096）。走っている間の 2 つ目は SCAN_BUSY
+        // 探索は接続ごとに 1 つずつ（context.scan・context.skills。ADR 0104）。走っている間の 2 つ目は SCAN_BUSY
         case 'scanContext':
           return await viaOp('context.scan');
         case 'slashSkills':
@@ -5325,7 +5325,7 @@ wss.on("connection", (ws, req) => {
         case "deleteUnsentSession":
           return viaOp('sessions.deleteUnsent', args, { shape: () => "deleted" });
 
-        // エージェントの切り替え（sessions.switchBackend。ADR 0096）
+        // エージェントの切り替え（sessions.switchBackend。ADR 0104）
         case "switchBackend":
           return await viaOp('sessions.switchBackend');
 

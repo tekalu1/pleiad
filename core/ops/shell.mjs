@@ -1,4 +1,4 @@
-// shell.*: 会話のシェル（入力欄の `!`。ADR 0054・0055・0096）。画面の runShell・stopShell・skipShell はこの操作を呼ぶ薄い外側（core/server.mjs の opsShell）。
+// shell.*: 会話のシェル（入力欄の `!`。ADR 0054・0055・0104）。画面の runShell・stopShell・skipShell はこの操作を呼ぶ薄い外側（core/server.mjs の opsShell）。
 // 走らせた行と結果は人が `!` で走らせたものと同じ形で会話に残り、次の発言と一緒にその会話のエージェントへ渡る（「渡さない」は shell.skip）。
 //
 // 危険度:
@@ -74,7 +74,7 @@ export const shellOps = [
     id: 'shell.stop',
     summary: 'agent:ops.shell.stop.summary',
     risk: 'write',
-    riskReason: 'Only stops a running shell line; the line stays in the conversation as stopped with the output so far. It starts nothing (ADR 0096)',
+    riskReason: 'Only stops a running shell line; the line stays in the conversation as stopped with the output so far. It starts nothing (ADR 0104)',
     scope: 'session',
     input: z.object({ runId: runId('stop') }),
     output: z.object({ stopped: z.boolean() }),
@@ -87,7 +87,7 @@ export const shellOps = [
     id: 'shell.skip',
     summary: 'agent:ops.shell.skip.summary',
     risk: 'write',
-    riskReason: 'Only marks whether a shell line is handed to the conversation\'s agent with the next message (ADR 0055); no command runs (ADR 0096)',
+    riskReason: 'Only marks whether a shell line is handed to the conversation\'s agent with the next message (ADR 0055); no command runs (ADR 0104)',
     scope: 'session',
     input: z.object({ sessionId: sessionId('skip'), runId: runId('skip'), skip: z.boolean().describe(D('skip', 'skip')) }),
     output: z.object({ runId: z.string(), skip: z.boolean() }),

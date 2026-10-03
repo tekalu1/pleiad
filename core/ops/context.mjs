@@ -7,7 +7,7 @@
 //   context.default・plyInstructions も guarded（ADR 0088）なので、こちらだけ緩めると抜け道になる。
 //   refresh は write（その会話の固定した文脈を、今のファイルから読み直すだけ。読む場所は変わらない）。
 //   setSessionMcp は write で、外した MCP を戻す向き（removed: false）だけ riskOf が guarded に上げる（戻すと次のターンでつなぎ直す）。
-// 中身を読む操作（session・diff・scan・skills・agentMcp・nativeInstructions・findings。ADR 0096）は read。画面（人）には今までの形を返し（uiHandler）、
+// 中身を読む操作（session・diff・scan・skills・agentMcp・nativeInstructions・findings。ADR 0104）は read。画面（人）には今までの形を返し（uiHandler）、
 // AI・CLI には一覧を limit / cursor で区切り、本文を切り、コマンド・URL・env の秘密を伏せた形を返す（maskTree）。
 // 探索（scan・skills・会話の文脈の突き合わせ）は 1 つずつ。画面は接続ごと、AI はまとめて 1 つ（ctx.scanLock。core/server.mjs）。
 import { z } from 'zod';
@@ -164,7 +164,7 @@ export const contextOps = [
     handler: (ctx, { sessionId, name, removed }) => run(ctx, async () => { await ctx.context.setSessionMcp(needSession(ctx, sessionId), name, removed !== false); return { ok: true }; }),
   }),
 
-  // ---- 中身を読む（ADR 0096）
+  // ---- 中身を読む（ADR 0104）
   defineOp({
     id: 'context.session', summary: 'agent:ops.context.session.summary', risk: 'read', scope: 'session',
     input: z.object({ sessionId: sessionArg, compare: z.boolean().optional().describe(D('session', 'compare')), kind: z.enum(['instruction', 'skill', 'mcp']).optional().describe(D('scan', 'kind')), limit, cursor, maxChars }),

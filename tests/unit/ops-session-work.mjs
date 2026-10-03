@@ -1,4 +1,4 @@
-// 画面の中だけ（ui-internal）から操作に移したもの（ADR 0096）を、依存を差し替えて確かめる（サーバーは立てない）。
+// 画面の中だけ（ui-internal）から操作に移したもの（ADR 0104）を、依存を差し替えて確かめる（サーバーは立てない）。
 //   - 分け方: 移した 24 のコマンドはどれかの操作の legacyCommand、残した 11 は ui-internal のままで AI の一覧（list_ops）に出ない
 //   - 危険度: shell.run・sessions.switchBackend は guarded（承認待ち・bypass は記録して通る・束縛なしは NEEDS_UI・読み取りの会話は断る）、
 //     切り替えで承認モードが緩くなるときは AI から NEEDS_UI。止める・印だけの書き込みは write
@@ -20,7 +20,7 @@ export const title = '画面の中だけから移した操作: 分け方・危�
 const MARKER = 'SECRET-MARKER-41ab';
 const BASELINE = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'ops-baseline.json');
 
-// 移したコマンドと操作（ADR 0096 の表）
+// 移したコマンドと操作（ADR 0104 の表）
 export const MOVED = {
   notifyStatus: 'notify.status', slashSkills: 'context.skills', sessionContext: 'context.session', contextDiff: 'context.diff', gitStatus: 'git.status',
   gitPanel: 'git.changes', gitDiff: 'git.diff', worktreeCheck: 'worktrees.check', worktreeSettings: 'worktrees.settings', agentMcp: 'context.agentMcp',
@@ -28,7 +28,7 @@ export const MOVED = {
   runShell: 'shell.run', stopShell: 'shell.stop', skipShell: 'shell.skip', switchBackend: 'sessions.switchBackend', setGrouped: 'sessions.setGrouped',
   listDirs: 'files.listDirs', loadSubagent: 'sessions.readSubagent', findSubagent: 'sessions.subagents', loadBackground: 'sessions.background', stopBackground: 'sessions.stopBackground',
 };
-// 画面の中だけに残したもの（理由は ADR 0096 の表）
+// 画面の中だけに残したもの（理由は ADR 0104 の表）
 export const KEPT = ['presence', 'notifyRegister', 'plyHookPreview', 'hookTargets', 'onboardingStatus', 'onboardingSeen', 'completeSetup', 'hostCapabilities', 'resolvePath', 'prefs', 'uploadCheck'];
 
 const human = { by: 'human', via: 'ui', local: true };

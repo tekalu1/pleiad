@@ -1,4 +1,4 @@
-// files.*: このホストのフォルダーの中身（作業ディレクトリを選ぶ簡易ブラウザー・添付の「ホストから」と同じ本体。core/list-dirs.mjs。ADR 0096）。
+// files.*: このホストのフォルダーの中身（作業ディレクトリを選ぶ簡易ブラウザー・添付の「ホストから」と同じ本体。core/list-dirs.mjs。ADR 0104）。
 // 名前と大きさ・更新時刻だけを返し、ファイルの中身は読まない。画面（人）には今までの形を返し（uiHandler）、AI・CLI には並びを limit / cursor で区切って返す。
 import { z } from 'zod';
 import { defineOp } from './registry.mjs';

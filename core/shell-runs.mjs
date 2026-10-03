@@ -100,7 +100,7 @@ export function createShellRuns({ store, emit, timeoutMs = Number(process.env.AG
       ...(run.mode === 'native' ? { stdout, stderr: null } : {}) });
   }
 
-  /** 終わるまで最長 ms 待って結果を返す（shell.run の AI の呼び出し。ADR 0096）。待ちきれなければ null（走り続ける）。知らない runId も null */
+  /** 終わるまで最長 ms 待って結果を返す（shell.run の AI の呼び出し。ADR 0104）。待ちきれなければ null（走り続ける）。知らない runId も null */
   async function wait(runId, ms) {
     const run = runs.get(runId);
     if (run && !finished.has(runId)) {
