@@ -431,6 +431,81 @@
         "reason": "分ける理由（変更の記録に残る）。",
         "beforeMessageId": "この発言（uuid）の手前まで写す。",
         "reasonKey": "画面の定型理由のキー。", "reasonParams": "定型理由に入れる値。", "backend": "会話のエージェント。"
+      },
+      "new": {
+        "summary": "新しい会話（まだ送っていない下書き）を作る。作るだけで、発言を送るのは人。承認モード・接続先は選べない（引き継ぎ元か既定）。",
+        "sourceSessionId": "設定の引き継ぎ元の会話の id（エージェント・モデル・思考の強さ・承認モードを継ぐ）。",
+        "backend": "エージェントの id（claude・codex・antigravity）。",
+        "model": "モデルの id。省くと引き継ぎ元か既定。",
+        "effort": "思考の強さ。省くと引き継ぎ元か既定。",
+        "mode": "承認モードの id。人（画面）だけが決められる。AI が渡すと NEEDS_UI。",
+        "cwd": "作業フォルダー。省くとホームフォルダー。",
+        "status": "付ける状態（グループ名）。",
+        "draft": "入力欄に入れておく文（送らない）。",
+        "endpoint": "互換の接続先の id。人（画面）だけが決められる。AI が渡すと NEEDS_UI。"
+      },
+      "deleteUnsent": {
+        "summary": "まだ送っていない（下書きだけの）会話を消す。送った会話は消せない。会話に承認カードが出て、ユーザーが許可したときだけ消える。",
+        "sessionId": "消す会話の id。",
+        "card": "まだ送っていない会話「{{title}}」を消します。"
+      },
+      "abort": {
+        "summary": "会話のターンを止める。このホストで動いている会話だけ。止めたターンは会話に中断として残り、人が再開できる。理由（reason）が必須で、止めた会話の変更の記録に残る。",
+        "sessionId": "止める会話の id。省くと自分の会話。",
+        "kind": "止める種類（user・update・quit）。省くと user。",
+        "reason": "止める理由（500 字まで）。AI は必ず書く。止めた会話の変更の記録に、誰が・どこから・なぜを残す。"
+      },
+      "resume": {
+        "summary": "中断した会話を続ける。保留の送信待ちを送り直すか、「続けて」の文を送る。続きは、その会話の承認モードで動く。",
+        "sessionId": "続ける会話の id。"
+      },
+      "compact": {
+        "summary": "会話の圧縮（文脈の要約）を始める。会話が動いていれば、そのターンのあとに回る。発言の記録は変わらない。",
+        "sessionId": "圧縮する会話の id。"
+      },
+      "cancelCompaction": {
+        "summary": "予約・待ちの圧縮を取り消す。",
+        "sessionId": "会話の id。"
+      },
+      "setAutoCompaction": {
+        "summary": "この会話の自動圧縮を切る・入れる。ホスト全体の設定は settings.set の compaction.auto。",
+        "sessionId": "会話の id。省くと自分の会話。",
+        "off": "true で切る、false で入れる。"
+      },
+      "setTurnSettings": {
+        "summary": "次のターンから効く設定を予約する（エージェント・モデル・思考の強さ・作業フォルダー）。作業フォルダーとエージェントを替えるのは承認カードが要る。承認モード・アカウント・接続先は人だけ。",
+        "sessionId": "会話の id。省くと自分の会話。",
+        "backend": "次のターンのエージェントの id。替えると承認カードが要る。",
+        "model": "次のターンのモデルの id。",
+        "effort": "次のターンの思考の強さ。",
+        "cwd": "次のターンの作業フォルダー。替えると承認カードが要る。",
+        "cancel": "true で予約を取り消す。",
+        "mode": "承認モードの id。人（画面）だけ。AI が渡すと NEEDS_UI。",
+        "account": "Claude のアカウントの id。人（画面）だけ。AI が渡すと NEEDS_UI。",
+        "endpoint": "互換の接続先の id。人（画面）だけ。AI が渡すと NEEDS_UI。",
+        "remember": "選んだ値を既定として覚える。人（画面）だけ（AI は settings.set）。"
+      },
+      "suggestTitle": {
+        "summary": "会話の中身から短い題を考えさせる。会話は変えない（付けるのは sessions.setTitle）。会話のアカウントで小さな 1 回が動く。",
+        "sessionId": "会話の id。省くと自分の会話。"
+      },
+      "outbox": {
+        "summary": "会話の送信待ち（まだエージェントに渡っていない発言）を返す。本文は 500 字まで。",
+        "sessionId": "会話の id。省くと自分の会話。",
+        "limit": "返す件数（既定 30、最大 100）。",
+        "cursor": "前の返り値の next。続きから返す。"
+      },
+      "changes": {
+        "summary": "会話の変更の記録（時刻・誰が・前 → 後・理由）を新しい順に返す。",
+        "sessionId": "会話の id。省くと自分の会話。",
+        "limit": "返す件数（既定 30、最大 100）。",
+        "cursor": "前の返り値の next。続きから返す。"
+      },
+      "lineage": {
+        "summary": "同じ根を持つ会話（分岐の家族）を、根から幅優先で返す。",
+        "sessionId": "起点の会話の id。省くと自分の会話。",
+        "limit": "返す件数（既定 30、最大 100）。",
+        "cursor": "前の返り値の next。続きから返す。"
       }
     },
     "statuses": {
@@ -442,6 +517,43 @@
       "create": {
         "summary": "空の状態のグループを作る。",
         "status": "グループの名前。"
+      },
+      "list": {
+        "summary": "使われた状態（グループ）の一覧を、使い始めの古い順に返す。件数・最初と最後に使った時刻・アイコン付き。",
+        "limit": "返す件数（既定 30、最大 100）。",
+        "cursor": "前の返り値の next。続きから返す。"
+      },
+      "rename": {
+        "summary": "状態のグループの名前を替える。付いている会話の状態を全部替え、会話ごとに変更の記録が残る。to を空にするとグループを消して状態を外す。",
+        "from": "今のグループ名。",
+        "to": "新しい名前。空でグループを消す。"
+      }
+    },
+    "agents": {
+      "list": {
+        "summary": "使えるエージェント（claude・codex・antigravity など）の一覧。id・名前・説明・できること。"
+      },
+      "models": {
+        "summary": "エージェントのモデルの一覧（id・名前・注）。",
+        "backend": "エージェントの id。省くと既定のエージェント。",
+        "cwd": "作業フォルダー（モデルの一覧が場所で変わるとき）。",
+        "limit": "返す件数（既定 30、最大 100）。",
+        "cursor": "前の返り値の next。続きから返す。"
+      },
+      "modes": {
+        "summary": "エージェントの承認モードの一覧（id・名前・注）。選ぶのは人だけ。",
+        "backend": "エージェントの id。省くと既定のエージェント。"
+      },
+      "efforts": {
+        "summary": "エージェントの思考の強さの選べる値（id・名前・注）。",
+        "backend": "エージェントの id。省くと既定のエージェント。",
+        "model": "モデルの id（段がモデルで変わる）。",
+        "cwd": "作業フォルダー。",
+        "endpoint": "互換の接続先の id。"
+      },
+      "authStatus": {
+        "summary": "エージェントにログインしているかを返す（入れているか・ログイン済みか）。メールアドレスやトークンは返さない。ログイン・ログアウトは画面だけ。",
+        "backend": "エージェントの id。省くと既定のエージェント。"
       }
     },
     "errors": {
@@ -520,13 +632,34 @@
       "taskSend": { "summary": "自分が委譲した子へ追加の指示を送る。", "taskId": "子のタスク id。", "message": "追加の指示。" },
       "taskCancel": { "summary": "自分が委譲した子を止める。", "taskId": "子のタスク id。" },
       "taskList": { "summary": "自分が委譲した子の一覧を読む。" },
-      "usage": { "summary": "委譲先の使用枠を読む。", "backend": "調べるエージェント。省くと全部。" }
+      "usage": { "summary": "委譲先の使用枠を読む。", "backend": "調べるエージェント。省くと全部。" },
+      "instructions": {
+        "summary": "委譲の子への追加の指示の履歴を新しい順に返す（本文は 1,000 字まで）。",
+        "taskId": "タスクの id。",
+        "limit": "返す件数（既定 30、最大 100）。",
+        "cursor": "前の返り値の next。続きから返す。"
+      },
+      "retry": {
+        "summary": "別の候補で、同じ依頼を新しい子のタスクとしてやり直す。自分が委譲した子だけ。依頼元より強い承認モードの子になる場合は NEEDS_UI（ユーザーの確認が要る）。",
+        "taskId": "やり直す元のタスクの id。",
+        "candidate": "委譲先の候補（<エージェント>:<モデル>）。delegation.routing の candidates から選ぶ。",
+        "stop": "元のタスクが動いているとき、止めるか（必須）。",
+        "account": "Claude のアカウントの id。人（画面）だけ。AI が渡すと NEEDS_UI。",
+        "approved": "承認モードが強くなる確認を済ませたか。人（画面）だけ。AI が渡すと NEEDS_UI。"
+      },
+      "routing": {
+        "summary": "委譲先の自動振り分けの今の状態（設定・警告・使える候補）を返す。判定器のキーは返さない（登録の有無だけ）。設定を変えるのは settings.set の delegationRouting。",
+        "refresh": "true で使用量を取り直してから返す。",
+        "limit": "返す候補の件数（既定 30、最大 100）。",
+        "cursor": "前の返り値の next。続きから返す。"
+      }
     },
     "browser": { "listProfiles": { "summary": "この会話で使えるブラウザーのプロフィール一覧を読む。" }, "useProfile": { "summary": "この会話のブラウザープロフィールを切り替える。", "profile": "プロフィールの id か名前。" }, "setProfile": { "summary": "会話のブラウザープロフィールを切り替える。", "sessionId": "会話の id。", "profile": "プロフィールの id。" } },
     "control": {
       "instructions": "Pleiad の機能と設定は ply_control から使えます。\nまず list_ops で操作を探し（id を渡すと入力の JSON Schema が分かります）、call_op で呼びます。検索・読み出し・設定の get/set は直に呼べます。\nPleiad の状態を変える操作はこの会話の承認モードに従います。関所を緩める変更はユーザーに承認カードを出し、待たずに status: pending で返ります（結果は後でこの会話に届きます）。code が NEEDS_UI・NEEDS_APPROVAL・READ_ONLY_MODE で返ったら、やり直さずユーザーに伝えてください。",
       "listOps": "Pleiad で使える操作の一覧。id を渡すと、その操作の説明・入力の JSON Schema・危険度を返す。呼ぶのは call_op。",
       "listOpsId": "操作の id（例: sessions.list）。省くと全部の id と 1 行の説明。",
+      "listOpsPrefix": "id の先頭で絞る（例: sessions.）。",
       "callOp": "Pleiad の操作を呼ぶ。入力が合わないと、どの項目がなぜ違うかが code: INVALID で返る。",
       "callOpOp": "操作の id（list_ops で探す）。",
       "callOpArgs": "操作の入力。list_ops に id を渡して得た JSON Schema の形。"

@@ -97,7 +97,7 @@ export const settings = [
     normalize: (ctx, input, { before }) => {
       try {
         return { after: normalizeCompactionSettings({ ...before, ...input, claude: { ...before.claude, ...input.claude }, codex: { ...before.codex, ...input.codex } }) };
-      } catch { throw invalid(ctx, 'compaction.auto'); }
+      } catch (e) { throw invalid(ctx, 'compaction.auto', String(e?.message ?? e)); }
     },
     write: (ctx, value) => ctx.writes.compaction(value) }),
   // 確認を切る向き（オン → オフ）は関所を緩めるので guarded（広げる向きだけ確認する。ADR 0031・0082）
@@ -158,7 +158,7 @@ export const settings = [
       for (const [key, value] of Object.entries(patch)) { if (value === null) delete raw[key]; else raw[key] = structuredClone(value); }
       for (const key of ROUTING_RETIRED_KEYS) delete raw[key];
       try { return { after: normalizeRoutingSettings(raw, { strict: true }), arg: { patch } }; }
-      catch (e) { throw invalid(ctx, e instanceof RoutingSettingsError ? t(`routing.settings.${e.code}`, e.detail) : String(e?.message ?? e)); }
+      catch (e) { const why = e instanceof RoutingSettingsError ? t(`routing.settings.${e.code}`, e.detail) : String(e?.message ?? e); throw invalid(ctx, why, why); }
     },
     write: (ctx, arg) => ctx.writes.routing(arg.patch) }),
   // action は save / toggle / delete / reset / order（core/ply-instructions.mjs の changePlyInstructions）。読むのは項目の一覧
@@ -299,6 +299,9 @@ export const settingOps = [
     risk: 'write',
     riskReason: 'Each setting carries its own risk: the write settings only change a display or a default; the ones that loosen a gate are raised to guarded by riskOf (an approval card for the user), and human-only settings are invisible to an agent',
     legacyCommand: 'setPref',
+    // 画面の別の入口。setAutoCompaction（設定 › 自動圧縮）は key が compaction.auto、setDelegationRouting（設定 › 委譲）は key が delegationRouting
+    // の settings.set と同じ定義を通る（検査・保存・配信・AI から見た危険度が同じ。ADR 0091 追記）
+    legacyAliases: ['setAutoCompaction', 'setDelegationRouting'],
     input: z.object({
       key: z.string().min(1).max(100).describe(D('set', 'key')),
       value: z.unknown().describe(D('set', 'value')),

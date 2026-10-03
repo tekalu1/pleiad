@@ -207,6 +207,7 @@ const offlineTexts = {
   instructions: 'Pleiad is not running. Start Pleiad (the desktop app, or npm start in the repository) and these tools will update.',
   listOps: 'List the operations available in Pleiad (Pleiad is not running now).',
   listOpsId: 'An operation id.',
+  listOpsPrefix: 'An id prefix.',
   callOp: 'Call a Pleiad operation (Pleiad is not running now).',
   callOpOp: 'The operation id.',
   callOpArgs: 'The operation input.',
