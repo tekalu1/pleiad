@@ -29,7 +29,7 @@
 .deck:is([data-deck=split],[data-deck=solo],.moving) #chFeedComposer:not(:focus-within) .ch-input{max-height:calc(1.6em + 12px);overflow:hidden}
 /* 開いているスレッドの根の投稿（選択中）。背景と、左の細い棒（枠線ではなく面の棒。.file-preview-resize::before と同じ作り） */
 .ch-feed .post[data-open]{background:var(--surface-hover)}
-.ch-feed .post[data-open]::before{content:"";position:absolute;left:0;top:8px;bottom:8px;width:3px;border-radius:var(--r-pill);background:var(--fill-primary);pointer-events:none}
+.ch-feed .post[data-open]::before{content:"";position:absolute;left:0;top:8px;bottom:8px;width:3px;border-radius:var(--r-pill);background:var(--fill-primary);color:var(--on-fill);pointer-events:none}
 .ch-feed .post[data-open] .thread-summary{background:var(--surface-sel);font-weight:600}
 
 /* ---- スレッドの見出し（Chats の頭と同じ高さ・並び） */
