@@ -15,7 +15,8 @@
 //                       folders は触れてよいフォルダーの渡し方 { all, additionalDirectories, writableRoots }。runArgs の botFolders になる）
 //     onTurnEvent(turn, event): void                 … makeEmit の中。bot の会話の分
 //     onTurnEnd(turn, { outcome, interrupted, requeued }): Promise<void>    … endTurn の最後（ターンを手放した後。最終の返答は lastReply、提示は onTurnEvent の present）
-//     onPermission(card, phase): void                … askPermission（phase: 'open' | 'settled'）
+//                       dispatch がターンの投稿を確定した後に、ルーティンの実行なら routines.onTurnEnd が根の投稿の状態（終了・要確認・失敗・止めた）を決める
+//     onPermission(card, phase): void                … askPermission（phase: 'open' | 'settled'）。dispatch（作業中の印）と routines（承認待ちの期限・イベントのトリガ「あなた待ち」）の両方へ
 //     onSessionDone(sessionId, outcome): void        … 完了通知が落ち着いたとき（イベントのトリガ）
 //     onCompacted(sessionId): void                   … 圧縮の完了
 //     handleHttp(req, res): Promise<boolean>         … 認証の前。自分の要求（/hooks/）なら応答して true
@@ -28,6 +29,7 @@ import { createBotService } from './bots/service.mjs';
 import { createMemoryService } from './memory/service.mjs';
 import { createDispatcher } from './bots/dispatch.mjs';
 import { createRoutineService } from './routines/service.mjs';
+import { clock as routinesClock } from './routines/clock.mjs';
 import { createWebhookReceiver } from './routines/webhook.mjs';
 
 export function createBotHost(deps) {
@@ -56,7 +58,7 @@ export function createBotHost(deps) {
   // ---- dispatch（S4）
   const dispatch = createDispatcher({ channels, bots, memory, host, emit });
   // ---- routines（R1）
-  const routines = createRoutineService({ dataDir, channels, bots, dispatch, host, emit });
+  const routines = createRoutineService({ dataDir, channels, bots, dispatch, host, emit, clock: routinesClock });
   // ---- webhook（H1）
   const webhook = createWebhookReceiver({ dataDir, routines, host });
 
@@ -79,7 +81,10 @@ export function createBotHost(deps) {
       return { botInstructions: extra?.botInstructions ?? setup?.botInstructions ?? null, notes: extra?.notes ?? [], folders: setup?.folders ?? null };
     }, { botInstructions: null, notes: [], folders: null }),
     onTurnEvent: guard('onTurnEvent', (turn, event) => dispatch.onTurnEvent(turn, event)),
-    onTurnEnd: guard('onTurnEnd', (turn, end) => dispatch.onTurnEnd(turn, end)),
+    // ターンの投稿を確定した後で、ルーティンの実行なら根の投稿の状態（終了・要確認・失敗・止めた）を決める
+    onTurnEnd: guard('onTurnEnd', async (turn, end) => {
+      try { await dispatch.onTurnEnd(turn, end); } finally { await routines.onTurnEnd(turn, end); }
+    }),
     onPermission: guard('onPermission', (card, phase) => { dispatch.onPermission(card, phase); routines.onPermission(card, phase); }),
     onSessionDone: guard('onSessionDone', (sessionId, outcome) => routines.onSessionDone(sessionId, outcome)),
     onCompacted: guard('onCompacted', (sessionId) => dispatch.onCompacted(sessionId)),

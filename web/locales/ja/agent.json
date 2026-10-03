@@ -617,6 +617,7 @@
       "SETTING_READ_ONLY": "設定「{{key}}」は読むだけで、settings.set では変えられません。",
       "BOT_NOT_FOUND": "bot「{{id}}」が見つかりません。bots.list で探してください。",
       "BOT_NAME_TAKEN": "bot の名前「{{name}}」はすでに使われています。別の名前にしてください。",
+      "ROUTINE_NOT_FOUND": "ルーティン「{{id}}」が見つかりません。routines.list で探してください。",
       "MEMORY_SOURCE": "記憶に書けません。出どころが足りません: {{reason}}",
       "MEMORY_REJECTED": "記憶に書けません: {{reason}}",
       "MEMORY_NOT_FOUND": "記憶「{{id}}」が見つかりません。memory.list で探してください。",
@@ -1034,7 +1035,42 @@
         "id": "忘れた記憶の id。"
       }
     },
-    "routines": {}
+    "routines": {
+      "list": {"summary": "ルーティン（決まった時刻・間隔・出来事で bot に仕事をさせる定義）の一覧。名前・bot・チャンネル・トリガ・モード・一時停止・最後の実行・次の実行の時刻（nextAt）を返す。"},
+      "get": {"summary": "ルーティン 1 つの定義・最後の実行・次の実行の時刻を返す。", "routineId": "ルーティンの id。"},
+      "create": {
+        "summary": "ルーティンを作る。発火のたびにチャンネルへ根の投稿が立ち、bot がそのスレッドで指示（prompt）を実行する（実行の履歴 = スレッドの並び）。AI が作るときは承認が要る。",
+        "name": "ルーティンの名前（1 行。根の投稿の最初の行になる）。",
+        "botId": "実行する bot の id（bots.list）。",
+        "channelId": "実行のスレッドを立てるチャンネルの id（DM は不可）。",
+        "prompt": "bot への指示（毎回この文が渡る）。",
+        "trigger": "いつ動くか。daily（at: HH:MM・weekdaysOnly）・weekly（days: 0=日〜6=土・at）・interval（minutes・window: {from, to} の時間帯）・cron（expr: 5 欄「分 時 日 月 曜日」）・event（on: done / failed / waiting・scope: all か { sessionIds }。bot・ルーティンの会話は対象外）・webhook（hookId）。時刻は PC の現地時刻。",
+        "mode": "実行の承認モードの id（bot のエージェントのもの）。省略は bot の今のモード。無人で動くので、承認待ちは approvalTimeoutMin で取り消される。",
+        "approvalTimeoutMin": "承認待ちの期限（分。既定 30）。過ぎるとターンを止め、スレッドに報告する。",
+        "paused": "true なら一時停止で作る。",
+        "reason": "作る理由（承認カードに出る）。"
+      },
+      "update": {
+        "summary": "ルーティンの名前・bot・チャンネル・指示・トリガ・モード・承認の期限を変える。頻度を上げる・モードを強くする・見る会話を広げるとき、AI が指示を変えるときは承認が要る。",
+        "routineId": "ルーティンの id。",
+        "name": "新しい名前。",
+        "botId": "実行する bot の id。",
+        "channelId": "チャンネルの id。",
+        "prompt": "指示の全文（置き換え）。",
+        "mode": "承認モードの id。",
+        "approvalTimeoutMin": "承認待ちの期限（分）。",
+        "reason": "変える理由（承認カードに出る）。"
+      },
+      "pause": {"summary": "ルーティンを一時停止する（予約を外す。走っている実行は止めない）。", "routineId": "ルーティンの id。"},
+      "resume": {"summary": "一時停止を解いて予約し直す。止めていた間の予定は数えない。承認が要る。", "routineId": "ルーティンの id。", "reason": "再開する理由（承認カードに出る）。"},
+      "run": {
+        "summary": "ルーティンを今すぐ 1 回走らせる（一時停止中でも）。dryRun は、使い捨ての会話を計画（読み取り）のモードで走らせ、チャンネルへは投稿しない。承認が要る。",
+        "routineId": "ルーティンの id。",
+        "dryRun": "true なら試しの実行（投稿しない。返りの sessionId の会話で結果を読める）。",
+        "reason": "走らせる理由（承認カードに出る）。"
+      },
+      "delete": {"summary": "ルーティンを消す。実行の履歴のスレッドは残る。承認が要る。", "routineId": "ルーティンの id。", "reason": "消す理由（承認カードに出る）。"}
+    }
   },
   "memory": {
     "title": {
@@ -1085,7 +1121,18 @@
     "heldWake": "{{bot}} は {{mode}} で動くので、{{from}} の返事からは起こしていません。人が @ すると起きます。",
     "turn": { "failed": "失敗しました: {{error}}", "stopped": "止めました" }
   },
-  "routine": {},
+  "routine": {
+    "event": {
+      "done": "きっかけ: 会話「{{title}}」が完了しました。",
+      "failed": "きっかけ: 会話「{{title}}」が失敗で終わりました。",
+      "waiting": "きっかけ: 会話「{{title}}」があなたの承認・回答を待っています。",
+      "untitled": "題の無い会話"
+    },
+    "approvalTimeout": "承認が無かったので取り消しました",
+    "dryRunTitle": "試し: {{name}}",
+    "dryRunStillRunning": "まだ走っています（会話を開くと続きが見えます）",
+    "dryRunNote": "これはルーティンの試しの実行です。チャンネルへは投稿せず、実行したら何をするか・結果を、この会話の返事として答えてください（読み取りのモードで動いています）。"
+  },
   "settings": {
     "locale": "画面の言語（auto は OS に合わせる）。",
     "linkOpen": "リンクの開き先（inapp は内蔵ブラウザー、external は既定のブラウザー）。",

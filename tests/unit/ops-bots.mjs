@@ -129,6 +129,13 @@ export default async function (t) {
     t.ok('人が決めると変わり、今ある会話の承認モードも揃う', setMode.ok && setMode.result.mode === 'auto' && sessions[sess.sessionId].mode === 'auto');
     t.ok('知らないモードは INVALID', (await call(human, 'bots.setMode', { botId: owl, mode: 'zzz' })).code === 'INVALID');
     t.ok('無い bot は BOT_NOT_FOUND', (await call(human, 'bots.setMode', { botId: 'b_nope', mode: 'auto' })).code === 'BOT_NOT_FOUND');
+    // ルーティンの会話の承認モードはルーティンの mode。bot のモードを変えても揃えない（スレッド・DM の会話は揃う）
+    const wren = (await call(human, 'bots.create', { name: 'Wren', backend: 'claude' })).result;
+    const wrenRoutine = await f.service.createSession({ botId: wren.id, channel: { id: 'c_r', kind: 'channel', name: 'r', cwd: folderA }, threadId: 'p_r', kind: 'routine', routineId: 'r_x', rootText: '朝' });
+    const wrenThread = await f.service.createSession({ botId: wren.id, channel: { id: 'c_r', kind: 'channel', name: 'r', cwd: folderA }, threadId: 'p_t', kind: 'thread', rootText: '朝' });
+    sessions[wrenRoutine.sessionId].mode = 'plan';
+    await call(human, 'bots.setMode', { botId: wren.id, mode: 'auto' });
+    t.ok('bot の承認モードを変えても、ルーティンの会話はルーティンの mode のまま（スレッドの会話は揃う）', sessions[wrenRoutine.sessionId].mode === 'plan' && sessions[wrenThread.sessionId].mode === 'auto');
     const agy = (await call(human, 'bots.create', { name: 'Gravity', backend: 'antigravity' })).result;
     t.ok('Antigravity の bot は yolo で始まる', agy.mode === 'yolo');
     t.ok('Antigravity の bot は yolo 以外を断る', (await call(human, 'bots.setMode', { botId: agy.id, mode: 'default' })).code === 'INVALID' && (await call(human, 'bots.setMode', { botId: agy.id, mode: 'yolo' })).ok);

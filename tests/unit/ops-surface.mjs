@@ -191,7 +191,12 @@ export default async function (t) {
       search: async () => [{ id: 'm_x', layer: 'user', text: 'PR は小さく', sources: [], at: 1, updatedAt: 1, by: { kind: 'human' }, ...secret }],
       get: async () => null,
     },
-    routines: {},   // R1（P2）
+    routines: {     // R1（P2）
+      list: async () => [{ id: 'r_000000000aaaaaa', name: '朝のまとめ', botId: 'b_1', channelId: 'c_000000000aaaaaa', prompt: 'まとめて', trigger: { kind: 'daily', at: '09:00', weekdaysOnly: false },
+        mode: 'default', approvalTimeoutMin: 30, paused: false, createdBy: { kind: 'human' }, createdAt: 1, nextAt: 2, ...secret }],
+      get: async () => ({ id: 'r_000000000aaaaaa', name: '朝のまとめ', botId: 'b_1', channelId: 'c_000000000aaaaaa', prompt: 'まとめて', trigger: { kind: 'daily', at: '09:00', weekdaysOnly: false },
+        mode: 'default', approvalTimeoutMin: 30, paused: false, createdBy: { kind: 'human' }, createdAt: 1, nextAt: 2, ...secret }),
+    },
     botOfSession: async () => null,
   };
   // 人の画面には返すが agent には伏せるもの（引数の秘密・承認の URL・ペアリングの番号・URL のクエリ）は tests/unit/ops-mcp-hooks.mjs
@@ -206,6 +211,7 @@ export default async function (t) {
     'channels.get': [{ channelId: 'c_000000000aaaaaa' }], 'channels.read': [{ channelId: 'c_000000000aaaaaa' }], 'channels.search': [{ query: 'こんにちは' }],
     'memory.list': [{ layer: 'user' }], 'memory.search': [{ query: 'PR' }],
     'bots.get': [{ botId: 'b_1' }],
+    'routines.get': [{ routineId: 'r_000000000aaaaaa' }],
   };
   for (const op of registry.ops.filter((o) => o.risk === 'read' && o.surfaces.ui)) {
     const needs = Object.keys(op.input.shape).length && Object.values(op.input.shape).some((f) => !f.safeParse(undefined).success);
