@@ -11,6 +11,7 @@
 // post は、投稿の主体が AI（bot を含む）で、@ の宛先の bot の承認モードが主体の会話より強い（範囲・自律のどちらかが上）ときは、投稿は残すが起こさず、
 // channels.wake（guarded。「<bot> は <モード> で動きます。起こしますか」の承認カード）を出す。人の投稿・同じか弱い bot への @ は確認なし。呼び合いの回数の上限は置かない（ADR 0109）。
 // bot の会話に束縛された post は、threadId を省くとその会話のスレッド。チャンネルの流れへ書くのは threadId: null と new: true を一緒に渡したときだけ。
+// bot が自分のスレッドへ書いた返事は、そのターンの最初の 1 件がターンの投稿に入り、2 件目からは新しい投稿（ADR 0117。決めるのは dispatch.claimPost）。
 import { z } from 'zod';
 import { agentT } from '../i18n.mjs';
 import { authorKey } from '../channels/types.mjs';
@@ -50,7 +51,7 @@ async function strongTargets(ctx, channelId, text, author) {
   if (!channel || channel.archivedAt) return [];
   const ids = channel.kind === 'dm'
     ? (author.kind === 'bot' || !channel.botId ? [] : [channel.botId])
-    : (await ctx.channels.mentionsOf(text)).filter((m) => m !== 'you' && m !== author.botId);
+    : (await ctx.channels.mentionsOf(text, author)).filter((m) => m !== 'you' && m !== author.botId);
   const subject = await ctx.modeOf?.(ctx.actor.sessionId);
   const held = [];
   for (const id of new Set(ids)) {
@@ -193,9 +194,10 @@ export const channelOps = [
       const saved = await run(ctx, () => ctx.channels.post({
         ...args, ...(files ? { attachments: files } : {}), ...(sb?.taint ? { taint: sb.taint } : {}), ...(target !== undefined ? { threadId: target } : {}), ...(state && author.kind === 'bot' ? { state } : {}),
         ...(author.kind === 'human' ? {} : { hold: held }), ...(origin ? { origin } : {}),
+        ...(author.kind === 'bot' ? { bySession: ctx.actor.sessionId } : {}),
       }, author));
-      // ターンの投稿の置き換え（進捗）では誰も起こさない。@ はターンの終わりの返事で解かれ、そこで同じ確認を通る
-      if (!held.length || saved.turn) return saved;
+      // 起こす宛先に強い bot がいれば承認を出す。ターンの投稿に入った返事（ADR 0117）も同じ
+      if (!held.length) return saved;
       const wake = [];
       for (const botId of held) {
         const r = await ctx.registry.invoke(ctx.principal, 'channels.wake', { channelId: args.channelId, postId: saved.id, botId }, ctx);

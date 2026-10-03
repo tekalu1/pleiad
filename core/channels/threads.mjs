@@ -6,7 +6,7 @@
 //     get(channelId, threadId): Promise<ThreadState|null>
 //     list(channelId?): Promise<ThreadState[]>
 //     update(channelId, threadId, patch | (current) => patch): Promise<ThreadState>
-//         … 無ければ空のスレッドから作る。patch の欄: sessions（bot ごとに足す）・state・tokens（欄ごとに足し直す）・calls・stopped・origin（{ channelId, threadId }。bot が自分のスレッドから起こして新しくできたスレッドの、起こした元。null で外す）。
+//         … 無ければ空のスレッドから作る。patch の欄: sessions（bot ごとに足す）・state・tokens（欄ごとに足し直す）・calls・chain（人が最後に書いてからの、bot が起こした続けての回数。ADR 0117）・stopped・origin（{ channelId, threadId }。bot が自分のスレッドから起こして新しくできたスレッドの、起こした元。null で外す）。
 //           関数で渡すと、直列化された中で今の値（写し）を受け取って patch を返す（トークンの足し算など、読んでから書く更新はこちら）
 //   emptyThread(channelId, threadId, now) → ThreadState
 import path from 'node:path';
@@ -39,6 +39,7 @@ export function applyThreadPatch(current, patch, now) {
     for (const k of ['input', 'output', 'cached']) next.tokens[k] = num(patch.tokens[k], next.tokens[k]);
   }
   if (patch.calls !== undefined) next.calls = num(patch.calls, next.calls);
+  if (patch.chain !== undefined) next.chain = num(patch.chain, next.chain ?? 0);
   if (patch.origin !== undefined) {
     if (patch.origin !== null && !(typeof patch.origin?.channelId === 'string' && patch.origin.channelId && typeof patch.origin?.threadId === 'string' && patch.origin.threadId)) throw new Error('origin must be null or { channelId: string, threadId: string }');
     if (patch.origin === null) delete next.origin; else next.origin = { channelId: patch.origin.channelId, threadId: patch.origin.threadId };

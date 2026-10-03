@@ -14,6 +14,7 @@ export const title = 'チャンネルの保存: index.json・.jsonl の追記と
 
 const HUMAN = { kind: 'human' };
 const BOT = { kind: 'bot', botId: 'b_owl' };
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const codeOf = async (fn) => { try { await fn(); return null; } catch (e) { return e instanceof ChannelError ? e.code : `other:${e.message}`; } };
 const exists = (p) => fs.stat(p).then(() => true, () => false);
 
@@ -192,6 +193,30 @@ export default async function (t) {
     await svc.edit({ channelId: general.id, postId: turn.id, state: 'done' }, BOT);
     const afterDone = await svc.post({ channelId: general.id, threadId: root.id, text: '終わった後の発言' }, BOT);
     t.ok('ターンが終わった（working でない）後の bot の発言は新しい投稿', afterDone.id !== turn.id);
+
+    // ターンの会話が分かる書き込み（ADR 0117）: ターンの投稿に入れるかは hooks.botPost（dispatch.claimPost）が決める。入れた返事も posted へ渡す
+    {
+      const asked = [], posted = [];
+      let answer = undefined;
+      const claimSvc = makeService('claim', { now: () => (clock += 10), listBots: async () => botList,
+        hooks: { botPost: (a) => { asked.push(a); return answer; }, posted: (p, c, extra) => posted.push([p, extra]) } });
+      await claimSvc.start();
+      const ch = await claimSvc.create({ name: 'claim' }, HUMAN);
+      const croot = await claimSvc.post({ channelId: ch.id, text: '根' }, HUMAN);
+      const cturn = await claimSvc.post({ channelId: ch.id, threadId: croot.id, text: '…', state: 'working', turn: { botId: 'b_owl', sessionId: 's_o' }, new: true }, BOT);
+      t.ok('ADR 0117: ターンの投稿そのものを作るときは botPost に聞かない', asked.length === 0);
+      answer = { postId: cturn.id };
+      await sleep(5);
+      posted.length = 0;
+      const first = await claimSvc.post({ channelId: ch.id, threadId: croot.id, text: '@Lynx 返事', new: true, bySession: 's_o' }, BOT);
+      await sleep(5);
+      t.ok('ADR 0117: botPost が返した投稿（ターンの投稿）に、new: true でも返事が入る。呼んだ会話の id が渡る', first.id === cturn.id && first.text === '@Lynx 返事'
+        && asked.at(-1).sessionId === 's_o' && asked.at(-1).threadId === croot.id && asked.at(-1).botId === 'b_owl', JSON.stringify(asked.at(-1)));
+      t.ok('ADR 0117: 入れた返事も posted へ渡る（extra.filled。@ をここで解く）', posted.length === 1 && posted[0][0].id === cturn.id && posted[0][1].filled === true && posted[0][0].mentions.includes('b_lynx'), JSON.stringify(posted.map((x) => x[1])));
+      answer = { postId: null };
+      const second = await claimSvc.post({ channelId: ch.id, threadId: croot.id, text: '2 件目', bySession: 's_o' }, BOT);
+      t.ok('ADR 0117: botPost が null を返したら、new が無くても新しい投稿（前の返事を同じ id で消さない）', second.id !== cturn.id && (await claimSvc.getPost({ channelId: ch.id, postId: cturn.id })).text === '@Lynx 返事');
+    }
 
     // 作業中の更新は 1 秒に 1 回まで配る
     const slowClock = 50_000; // 時計は動かさない（続きの更新は 1 秒後の実時間のタイマーなので、ここでは出ない）
