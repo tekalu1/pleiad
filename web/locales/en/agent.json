@@ -367,8 +367,6 @@
     },
     "resumeQueue": { "get": { "summary": "Show the queue and progress for resuming after usage limits." }, "set": { "summary": "Change the order and automatic recovery after usage limits.", "action": "The change to make.", "sessionId": "The conversation ID for first or auto.", "enabled": "Whether auto enables automatic resume." } },
     "sessions": {
-      "resume": { "summary": "Resume an interrupted conversation.", "sessionId": "The conversation ID to resume." },
-      "listMessages": { "summary": "List unsent messages for a conversation.", "sessionId": "The conversation ID." },
       "schedules": { "summary": "List planned actions for conversations.", "sessionId": "Limit the list to one conversation; omit for all." },
       "cancelSchedule": { "summary": "Cancel a planned action.", "id": "The schedule ID." },
       "search": {
@@ -437,6 +435,81 @@
         "beforeMessageId": "Copy up to before this message (uuid).",
         "reasonKey": "A predefined reason key from the UI.", "reasonParams": "Values for the predefined reason.", "backend": "Conversation agent."
       },
+      "new": {
+        "summary": "Create a new conversation (an unsent draft). It only creates it; a person sends the first message. The approval mode and the endpoint cannot be chosen (inherited or default).",
+        "sourceSessionId": "Id of the conversation to inherit settings from (agent, model, effort, approval mode).",
+        "backend": "Agent id (claude, codex, antigravity).",
+        "model": "Model id. Omit to inherit or use the default.",
+        "effort": "Thinking effort. Omit to inherit or use the default.",
+        "mode": "Approval mode id. Only a person (the screen) can set it; an agent gets NEEDS_UI.",
+        "cwd": "Working folder. Omit for the home folder.",
+        "status": "Status (group name) to give it.",
+        "draft": "Text to put in the input box (it is not sent).",
+        "endpoint": "Compatible endpoint id. Only a person (the screen) can set it; an agent gets NEEDS_UI."
+      },
+      "deleteUnsent": {
+        "summary": "Delete a conversation that was never sent (a draft only). Sent conversations cannot be deleted. An approval card is shown in the conversation; it is deleted only if the user allows it.",
+        "sessionId": "Id of the conversation to delete.",
+        "card": "Delete the unsent conversation \"{{title}}\"."
+      },
+      "abort": {
+        "summary": "Stop a conversation's running turn. Only conversations running on this host. The stopped turn stays in the conversation as interrupted and a person can resume it. A reason is required and is kept in the stopped conversation's change log.",
+        "sessionId": "Id of the conversation to stop. Omit for your own.",
+        "kind": "Kind of stop (user, update, quit). Omit for user.",
+        "reason": "Why you stop it (up to 500 characters). Required for an agent. Kept in the stopped conversation's change log with who and from where."
+      },
+      "resume": {
+        "summary": "Continue an interrupted conversation: re-send the paused queued messages, or send the \"continue\" text. It runs under that conversation's approval mode.",
+        "sessionId": "Id of the conversation to continue."
+      },
+      "compact": {
+        "summary": "Start compaction (a summary of the context) of a conversation. If it is running, it goes after the turn. The transcript does not change.",
+        "sessionId": "Id of the conversation to compact."
+      },
+      "cancelCompaction": {
+        "summary": "Cancel a scheduled or queued compaction.",
+        "sessionId": "Conversation id."
+      },
+      "setAutoCompaction": {
+        "summary": "Turn the automatic compaction of this conversation off or on. The host-wide setting is settings.set compaction.auto.",
+        "sessionId": "Conversation id. Omit for your own.",
+        "off": "true to turn it off, false to turn it on."
+      },
+      "setTurnSettings": {
+        "summary": "Reserve settings for the next turn (agent, model, thinking effort, working folder). Changing the working folder or the agent needs an approval card. The approval mode, account and endpoint are for a person only.",
+        "sessionId": "Conversation id. Omit for your own.",
+        "backend": "Agent id for the next turn. Changing it needs an approval card.",
+        "model": "Model id for the next turn.",
+        "effort": "Thinking effort for the next turn.",
+        "cwd": "Working folder for the next turn. Changing it needs an approval card.",
+        "cancel": "true cancels the reservation.",
+        "mode": "Approval mode id. Only a person (the screen); an agent gets NEEDS_UI.",
+        "account": "Claude account id. Only a person (the screen); an agent gets NEEDS_UI.",
+        "endpoint": "Compatible endpoint id. Only a person (the screen); an agent gets NEEDS_UI.",
+        "remember": "Remember the chosen value as the default. Only a person (the screen); an agent uses settings.set."
+      },
+      "suggestTitle": {
+        "summary": "Ask for a short title from the conversation's contents. It does not change the conversation (sessions.setTitle sets it). One small call runs on the conversation's account.",
+        "sessionId": "Conversation id. Omit for your own."
+      },
+      "listMessages": {
+        "summary": "Return a conversation's outbox (messages not yet handed to the agent). Text is cut at 500 characters.",
+        "sessionId": "Conversation id. Omit for your own.",
+        "limit": "How many to return (default 30, max 100).",
+        "cursor": "The next of the previous result. Continues from there."
+      },
+      "changes": {
+        "summary": "Return a conversation's change log (time, who, before → after, reason), newest first.",
+        "sessionId": "Conversation id. Omit for your own.",
+        "limit": "How many to return (default 30, max 100).",
+        "cursor": "The next of the previous result. Continues from there."
+      },
+      "lineage": {
+        "summary": "Return the conversations that share a root (the branch family), breadth first from the root.",
+        "sessionId": "Id of the starting conversation. Omit for your own.",
+        "limit": "How many to return (default 30, max 100).",
+        "cursor": "The next of the previous result. Continues from there."
+      },
       "setModel": {
         "summary": "Change a conversation's model. A running turn picks it up at once when the agent supports it. The change log keeps who changed it and why. The choices are the model setting in settings.schema.",
         "sessionId": "The conversation id. Defaults to this conversation.",
@@ -454,6 +527,43 @@
       "create": {
         "summary": "Create an empty status group.",
         "status": "The group name."
+      },
+      "list": {
+        "summary": "Return the statuses (groups) that have been used, oldest first. With the count, the first and last time used and the icon.",
+        "limit": "How many to return (default 30, max 100).",
+        "cursor": "The next of the previous result. Continues from there."
+      },
+      "rename": {
+        "summary": "Rename a status group. Every conversation in it gets the new status and a change-log row. An empty to removes the group and the status.",
+        "from": "The current group name.",
+        "to": "The new name. Empty removes the group."
+      }
+    },
+    "agents": {
+      "list": {
+        "summary": "List the available agents (claude, codex, antigravity, …): id, name, description and what each can do."
+      },
+      "models": {
+        "summary": "List an agent's models (id, name, note).",
+        "backend": "Agent id. Omit for the default agent.",
+        "cwd": "Working folder (when the model list depends on the place).",
+        "limit": "How many to return (default 30, max 100).",
+        "cursor": "The next of the previous result. Continues from there."
+      },
+      "modes": {
+        "summary": "List an agent's approval modes (id, name, note). Only a person chooses one.",
+        "backend": "Agent id. Omit for the default agent."
+      },
+      "efforts": {
+        "summary": "List the thinking-effort values an agent offers (id, name, note).",
+        "backend": "Agent id. Omit for the default agent.",
+        "model": "Model id (the steps depend on the model).",
+        "cwd": "Working folder.",
+        "endpoint": "Compatible endpoint id."
+      },
+      "authStatus": {
+        "summary": "Return whether you are logged in to an agent (installed, logged in). No email address or token is returned. Login and logout are for the screen only.",
+        "backend": "Agent id. Omit for the default agent."
       }
     },
     "errors": {
@@ -548,7 +658,27 @@
       "taskSend": { "summary": "Send another instruction to your child task.", "taskId": "Child task id.", "message": "Additional instruction." },
       "taskCancel": { "summary": "Stop your child task.", "taskId": "Child task id." },
       "taskList": { "summary": "List your child tasks." },
-      "usage": { "summary": "Read quota usage for delegation targets.", "backend": "Agent to check; omit for all." }
+      "usage": { "summary": "Read quota usage for delegation targets.", "backend": "Agent to check; omit for all." },
+      "instructions": {
+        "summary": "Return the history of follow-up instructions sent to a delegated child, newest first (text is cut at 1,000 characters).",
+        "taskId": "Task id.",
+        "limit": "How many to return (default 30, max 100).",
+        "cursor": "The next of the previous result. Continues from there."
+      },
+      "retry": {
+        "summary": "Redo the same request as a new child task on another candidate. Only a child you delegated. If the child would get a stronger approval mode than the requester, you get NEEDS_UI (the user must confirm).",
+        "taskId": "Id of the task to redo.",
+        "candidate": "The candidate (<agent>:<model>). Pick one from the candidates of delegation.routing.",
+        "stop": "Whether to stop the original task if it is running (required then).",
+        "account": "Claude account id. Only a person (the screen); an agent gets NEEDS_UI.",
+        "approved": "Whether the stronger-approval-mode confirmation was done. Only a person (the screen); an agent gets NEEDS_UI."
+      },
+      "routing": {
+        "summary": "Return the current state of the automatic delegation routing (settings, warnings, usable candidates). Judge keys are never returned (only whether one is registered). settings.set delegationRouting changes the settings.",
+        "refresh": "true re-reads the usage before returning.",
+        "limit": "How many candidates to return (default 30, max 100).",
+        "cursor": "The next of the previous result. Continues from there."
+      }
     },
     "browser": { "listProfiles": { "summary": "List the browser profiles available to this conversation." }, "useProfile": { "summary": "Switch this conversation's browser profile.", "profile": "Profile id or name." }, "setProfile": { "summary": "Switch a conversation's browser profile.", "sessionId": "Conversation id.", "profile": "Profile id." } },
     "worktrees": {
@@ -578,6 +708,7 @@
       "instructions": "Pleiad's features and settings are available through ply_control.\nFind an operation with list_ops (pass an id to get its input JSON Schema) and call it with call_op. Conversation search and reading (search_sessions, get_session, read_session) and current setting values (get_setting) can be called directly.\nOperations that change Pleiad's state follow this conversation's approval mode. A change that loosens a gate shows the user an approval card and returns status: pending without waiting; the result is delivered to this conversation later. If the code is NEEDS_UI, NEEDS_APPROVAL, or READ_ONLY_MODE, do not retry; tell the user.",
       "listOps": "List the operations available in Pleiad. Pass an id to get that operation's description, input JSON Schema, and risk. Call it with call_op.",
       "listOpsId": "An operation id (for example sessions.list). Omit it to get every id with a one-line description.",
+      "listOpsPrefix": "Only ids that start with this (for example sessions.).",
       "callOp": "Call a Pleiad operation. If the input does not fit, the result has code: INVALID and says which field is wrong and why.",
       "callOpOp": "The operation id (find it with list_ops).",
       "callOpArgs": "The operation's input, in the shape of the JSON Schema you get by passing the id to list_ops."

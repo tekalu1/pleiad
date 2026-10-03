@@ -25,7 +25,7 @@ const SNAPSHOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '
 // T4: ply_control が毎ターン文脈に載せる文（指示 + tools/list。直に出すツール・list_ops・call_op の定義）の上限。ja・en それぞれ。上限を変えるのは ADR の範囲（docs/design.md「操作の一覧」）
 const CONTROL_TOKEN_LIMIT = 1800;
 const ERROR_CODES = ['NOT_FOUND', 'HOST_SCREEN_ONLY', 'INVALID', 'READ_ONLY_MODE', 'NEEDS_UI', 'NEEDS_APPROVAL', 'INVALID_RISK', 'INVALID_PRINCIPAL', 'SESSION_NOT_FOUND', 'MESSAGE_NOT_FOUND', 'SETTING_NOT_FOUND', 'TASK_NOT_FOUND', 'SETTING_READ_ONLY', 'DENIED', 'STALE', 'sessionRequired', 'badCursor'];
-const CONTROL_KEYS = ['instructions', 'listOps', 'listOpsId', 'callOp', 'callOpOp', 'callOpArgs'];
+const CONTROL_KEYS = ['instructions', 'listOps', 'listOpsId', 'listOpsPrefix', 'callOp', 'callOpOp', 'callOpArgs'];
 
 const hash = (value) => crypto.createHash('sha256').update(JSON.stringify(value)).digest('hex').slice(0, 12);
 
@@ -40,7 +40,7 @@ export function snapshotOf() {
   return {
     ops: [...registry.ops].sort((a, b) => a.id.localeCompare(b.id)).map((op) => ({
       id: op.id, risk: op.risk, riskOf: Boolean(op.riskOf), scope: op.scope, modeGate: op.modeGate, hostScreenOnly: op.hostScreenOnly,
-      surfaces: op.surfaces, legacyCommand: op.legacyCommand ?? null, input: hash(inputJsonSchema(op)),
+      surfaces: op.surfaces, legacyCommand: op.legacyCommand ?? null, ...(op.legacyAliases ? { legacyAliases: op.legacyAliases } : {}), input: hash(inputJsonSchema(op)),
     })),
     settings: [...registry.settings].sort((a, b) => a.key.localeCompare(b.key)).map((s) => ({ key: s.key, risk: s.risk, riskOf: Boolean(s.riskOf), writable: !s.readOnly, prefKeys: s.prefKeys })),
     // 全設定 × 全主体の判定（settings.set。向きで危険度が変わる設定は guarded になる向きも）。読むだけの設定は書けない
@@ -124,30 +124,47 @@ export default async function (t) {
   // ---- T6 伏せ字: 秘密の目印を入れた依存で、全 read 操作を既定の引数で呼ぶ。返りに目印が出ない
   // 段階 1 以降は、秘密の場所（mcp-secrets・アカウントのトークン・判定器の鍵・ヘッダー値）に目印を入れた一時のデータ置き場へ広げる
   const MARKER = 'SECRET-MARKER-7f3a';
+  const EMAIL = 'someone@example.invalid';
   // どの read 操作も、秘密らしい名前の欄に目印が入った生の値を受け取っても、返りに出さない（最後の網。実際のデータ置き場でのものは ops-control.mjs）
   const secret = { token: MARKER, apiKey: MARKER, authorization: MARKER };
   const deps = {
     locale: 'ja',
     app: { status: async () => ({ version: '0', protocolVersion: 0, startedAt: 0, locale: { setting: 'auto', lang: 'ja' }, running: 0, ...secret }),
       running: async () => ({ count: 0, turns: [], tasks: [], waiting: 0, ...secret }),
+      runningWork: async () => ({ count: 0, turns: [], permissions: [], tasks: [], subagents: [], background: [], ...secret }),
       cliSetup: () => ({ command: 'node', args: ['pleiad.mjs', 'mcp'], env: {}, json: '{}', claude: 'claude mcp add', ...secret }),
       searchSessions: async () => ({ total: 1, partial: false, sessions: [{ sessionId: 's1', title: 't', hits: [], ...secret }] }) },
     sessions: {
       list: async () => [{ id: 's1', title: 't', backend: 'x', status: null, claudeAccount: MARKER, compatEndpoint: MARKER, ...secret }],
       get: async () => ({ row: { id: 's1', title: 't', backend: 'x', claudeAccount: MARKER, ...secret }, children: [], history: [{ at: 'a', by: 'agent', field: 'title', from: 'x', to: 'y', ...secret }] }),
       read: async () => [{ uuid: 'm', role: 'user', text: 'こんにちは', at: 'a', ...secret }],
+      rows: async () => [{ id: 's1', title: 't', backend: 'x', claudeAccount: MARKER, compatEndpoint: MARKER, draft: { text: MARKER }, ...secret }],
+      history: async () => [{ at: 'a', by: 'agent', field: 'title', from: 'x', to: 'y', reason: null, ...secret }],
     },
+    conversations: { outbox: async () => [{ id: 'm1', status: 'queued', at: 'a', args: { prompt: 'こんにちは', attached: [] }, ...secret }], suggestTitle: async () => ({ title: 't', ...secret }) },
+    agents: {
+      list: async () => [{ id: 'x', label: 'X', description: 'd', capabilities: { fork: true, login: false }, ...secret }],
+      models: async () => ({ backend: 'x', models: { '': { label: 'L', note: 'n', ...secret } } }),
+      modes: async () => ({ backend: 'x', modes: { default: { label: 'D', note: 'n', ...secret } } }),
+      efforts: async () => ({ backend: 'x', efforts: { '': { label: 'E', ...secret } } }),
+      authStatus: async () => ({ backend: 'x', status: { supported: true, installed: true, loggedIn: true, account: EMAIL, detail: 'ChatGPT / plus', path: MARKER, ...secret } }),
+    },
+    statuses: { list: async () => [{ status: 'a', count: 1, firstUsedAt: 'a', lastUsedAt: 'b', icon: null, kept: false, ...secret }] },
     prefs: async () => ({ agentSitePermissions: [{ origin: 'o', ...secret }], locale: 'ja' }),
     compactionSettings: () => ({ enabled: true, ...secret }),
-    delegation: { list: () => [{ taskId: 't', status: 'completed', ...secret }], get: () => ({ taskId: 't', status: 'completed', result: 'done', ...secret }) },
+    delegation: { list: () => [{ taskId: 't', status: 'completed', ...secret }], get: () => ({ taskId: 't', status: 'completed', result: 'done', ...secret }),
+      instructions: () => ({ taskId: 't', revision: 1, instructions: [{ id: 'i', text: 'x', at: 1, state: 'queued', ...secret }] }),
+      routing: async () => ({ settings: { enabled: true }, warnings: [], keys: { openrouter: { hasKey: true } }, candidates: [{ candidate: 'x:y' }], ...secret }),
+      providerUsage: async () => ({ backend: 'x', label: 'X', quota: { ...secret }, local: {}, ...secret }) },
     limitResume: { messages: () => [], schedules: () => [], queue: () => ({ pending: [], running: [] }) },
     hooks: { read: async () => ({ agent: 'claude', scope: 'user', path: 'p', command: 'echo', ...secret }), readPly: async () => ({ id: 'h-1', name: 'n', command: 'echo', ...secret }) },
   };
   // 必須の引数がある read 操作に渡す引数（設定は全部の key）
   const samples = {
     'settings.get': registry.settings.map((x) => ({ key: x.key })), 'settings.schema': registry.settings.map((x) => ({ key: x.key })),
-    'sessions.search': [{ query: 'こんにちは' }], 'sessions.get': [{ sessionId: 's1' }], 'sessions.read': [{ sessionId: 's1' }],
-    'sessions.listMessages': [{ sessionId: 's1' }], 'delegation.status': [{ taskId: 't' }],
+    'sessions.search': [{ query: 'こんにちは' }], 'sessions.get': [{ sessionId: 's1' }], 'sessions.read': [{ sessionId: 's1' }], 'delegation.status': [{ taskId: 't' }],
+    'sessions.listMessages': [{ sessionId: 's1' }], 'sessions.changes': [{ sessionId: 's1' }], 'sessions.lineage': [{ sessionId: 's1' }], 'sessions.suggestTitle': [{ sessionId: 's1' }],
+    'delegation.instructions': [{ taskId: 't' }],
     'hooks.read': [{ agent: 'claude', scope: 'user', loc: { event: 'PreToolUse', group: 0, handler: 0 } }], 'hooks.readPly': [{ id: 'h-1' }],
   };
   for (const op of registry.ops.filter((o) => o.risk === 'read' && o.surfaces.ui)) {
@@ -155,7 +172,24 @@ export default async function (t) {
     if (needs && !samples[op.id]) { t.ok(`T6 ${op.id}: 必須の引数の例がある`, false); continue; }
     for (const args of samples[op.id] ?? [{}]) {
       const r = await registry.invoke({ by: 'human', via: 'ui', local: true }, op.id, args, deps);
-      t.ok(`T6 ${op.id}${args.key ? `（${args.key}）` : ''}: 返りに秘密の目印が出ない`, r.ok && !JSON.stringify(r.result).includes(MARKER), r.ok ? '' : r.error);
+      // 画面向きの形（uiHandler）は、画面が今まで読んでいた行（アカウント・接続先の id・下書きの有無・実行ファイルの場所）をそのまま持つ。
+      // 秘密の名前の欄は伏せ字になる。AI・CLI の形に出ないことは下の検査が見る
+      const raw = ['sessions.list', 'sessions.lineage', 'agents.authStatus'].includes(op.id);
+      t.ok(`T6 ${op.id}${args.key ? `（${args.key}）` : ''}: 返りに秘密の目印が出ない${raw ? '（画面向きの形は id・場所を含む。秘密の名前の欄だけ伏せる）' : ''}`,
+        r.ok && (raw ? !JSON.stringify(r.result).replace(new RegExp(`"(claudeAccount|compatEndpoint|path)":"${MARKER}"`, 'g'), '').replace(`"text":"${MARKER}"`, '').includes(MARKER) : !JSON.stringify(r.result).includes(MARKER)), r.ok ? '' : r.error);
     }
   }
+  // 画面（人）に全量の形を返す操作（uiHandler）は、AI・CLI の形（上限のある形）でも秘密の目印・メールアドレスを返さない
+  const agent = { by: 'agent', via: 'mcp', sessionId: 's1' };
+  for (const op of registry.ops.filter((o) => o.risk === 'read' && o.uiHandler && o.surfaces.mcp !== false && o.id !== 'delegation.usage')) {
+    for (const args of samples[op.id] ?? [{}]) {
+      const r = await registry.invoke(agent, op.id, args, deps);
+      const text = JSON.stringify(r.result);
+      t.ok(`T6 ${op.id}: AI・CLI の形にも秘密の目印・メールアドレスが出ない`, r.ok && !text.includes(MARKER) && !text.includes(EMAIL), r.ok ? '' : r.error);
+    }
+  }
+  const auth = await registry.invoke(agent, 'agents.authStatus', {}, deps);
+  t.ok('agents.authStatus: AI にはログインの状態だけ（メールアドレス・詳細・パスは返さない）', JSON.stringify(auth.result) === JSON.stringify({ backend: 'x', supported: true, installed: true, loggedIn: true }), JSON.stringify(auth.result));
+  const humanAuth = await registry.invoke({ by: 'human', via: 'ui', local: true }, 'agents.authStatus', {}, deps);
+  t.ok('agents.authStatus: 画面には従来の形（アカウント名・詳細を含む）', humanAuth.result?.account === EMAIL && humanAuth.result?.loggedIn === true);
 }

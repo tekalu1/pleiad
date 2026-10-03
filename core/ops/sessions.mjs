@@ -211,10 +211,13 @@ export const sessionOps = [
     }),
     output: z.object({ total: z.number().int(), sessions: z.array(listItem), next: z.string().nullable() }),
     surfaces: { ui: true, mcp: 'catalog', cli: { path: ['sessions', 'list'] } },
+    legacyCommand: 'listSessions',
     handler: async (ctx, args) => {
       try { return pageSessions(await ctx.sessions.list(), args); }
       catch (e) { if (e instanceof OpError && e.code === 'INVALID') throw new OpError('INVALID', agentT(ctx.locale, 'ops.errors.badCursor')); throw e; }
     },
+    // 画面のサイドバーは、下書きの会話・状態・圧縮・中断・委譲の記録・作業場所など全部の欄を持つ行を、上限なしで読む
+    uiHandler: (ctx) => ctx.sessions.rows(),
   }),
 
   defineOp({

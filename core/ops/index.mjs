@@ -3,6 +3,8 @@
 import { createRegistry } from './registry.mjs';
 import { appOps } from './app.mjs';
 import { sessionOps } from './sessions.mjs';
+import { conversationOps } from './conversations.mjs';
+import { agentOps } from './agents.mjs';
 import { resumeOps } from './resume.mjs';
 import { statusOps } from './statuses.mjs';
 import { settingOps, settings } from './settings.mjs';
@@ -19,7 +21,7 @@ import { probeOps } from './probe.mjs';
 const withProbe = String(process.env.AGENT_HOST_BACKENDS ?? '').split(',').map((s) => s.trim()).includes('fake');
 
 export const registry = createRegistry({
-  ops: [...appOps, ...sessionOps, ...resumeOps, ...statusOps, ...settingOps, ...delegationOps, ...browserOps,
+  ops: [...appOps, ...sessionOps, ...resumeOps, ...conversationOps, ...agentOps, ...statusOps, ...settingOps, ...delegationOps, ...browserOps,
     ...worktreeOps, ...notifyOps, ...hookOps, ...compatOps, ...computerOps, ...(withProbe ? probeOps : [])],
   settings: [...settings],
 });

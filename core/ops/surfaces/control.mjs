@@ -13,6 +13,7 @@ export const controlTexts = (locale) => ({
   instructions: agentT(locale, 'ops.control.instructions'),
   listOps: agentT(locale, 'ops.control.listOps'),
   listOpsId: agentT(locale, 'ops.control.listOpsId'),
+  listOpsPrefix: agentT(locale, 'ops.control.listOpsPrefix'),
   callOp: agentT(locale, 'ops.control.callOp'),
   callOpOp: agentT(locale, 'ops.control.callOpOp'),
   callOpArgs: agentT(locale, 'ops.control.callOpArgs'),

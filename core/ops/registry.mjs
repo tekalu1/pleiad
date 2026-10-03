@@ -51,6 +51,10 @@ export function defineOp(def) {
     fail(id, 'an op that can be guarded needs confirm(ctx, args) (the approval card line and the receipt)');
   if (def.scope !== undefined && !['session', 'global'].includes(def.scope)) fail(id, 'scope must be session | global');
   if (typeof def.handler !== 'function') fail(id, 'handler is required');
+  if (def.legacyAliases !== undefined && !(Array.isArray(def.legacyAliases) && def.legacyAliases.every((n) => typeof n === 'string' && n)))
+    fail(id, 'legacyAliases must be an array of WS command names');
+  if (def.uiHandler !== undefined && typeof def.uiHandler !== 'function') fail(id, 'uiHandler must be a function (ctx, args) => result');
+  if (def.uiHandler && def.surfaces?.ui !== true) fail(id, 'uiHandler needs surfaces.ui: true');
 
   const s = def.surfaces;
   if (!s || typeof s.ui !== 'boolean') fail(id, 'surfaces.ui (true | false) is required');
@@ -216,9 +220,10 @@ export function createRegistry({ ops = [], settings = [] } = {}) {
     if (op?.kind !== 'op') throw new Error('ops: createRegistry ops must come from defineOp');
     if (byId.has(op.id)) throw new Error(`ops: duplicate id: ${op.id}`);
     byId.set(op.id, op);
-    if (op.legacyCommand) {
-      if (byLegacy.has(op.legacyCommand)) throw new Error(`ops: duplicate legacyCommand: ${op.legacyCommand}`);
-      byLegacy.set(op.legacyCommand, op);
+    // legacyAliases: 同じ操作を別の引数の形で呼ぶ WS のコマンド（画面が持つ形のまま。例: setAutoCompaction は settings.set の compaction.auto）
+    for (const name of [op.legacyCommand, ...(op.legacyAliases ?? [])].filter(Boolean)) {
+      if (byLegacy.has(name)) throw new Error(`ops: duplicate legacyCommand: ${name}`);
+      byLegacy.set(name, op);
     }
   }
   const settingsByKey = new Map();
@@ -282,7 +287,8 @@ export function createRegistry({ ops = [], settings = [] } = {}) {
     const run = async () => {
       if (risk !== 'read') await deps.audit?.({ op: op.id, risk, reason: verdict.reason, actor, sessionScope: op.scope });
       try {
-        const result = await op.handler(ctx, parsed.data);
+        // 画面（人）には、画面が読む全量の形を返せる（uiHandler）。AI・CLI は handler の、件数と字数に上限のある形（ADR 0091 追記）
+        const result = await (op.uiHandler && principal.by === 'human' ? op.uiHandler(ctx, parsed.data) : op.handler(ctx, parsed.data));
         return { ok: true, result: maskOutput(result ?? null), decision: verdict.decision };
       } catch (err) {
         if (err instanceof OpError) return { ok: false, code: err.code, error: err.message, decision: verdict.decision };

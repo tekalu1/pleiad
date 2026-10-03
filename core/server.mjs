@@ -44,6 +44,7 @@ import { WebSocketServer } from "ws";
 import * as P from "./protocol.mjs";
 import { registry as opsRegistry } from './ops/index.mjs';
 import { OpError, targetText as settingTarget } from './ops/registry.mjs';
+import { FAILED } from './ops/host.mjs';
 import { createControlBridge, CONTROL_MCP_PATH, controlInstructions } from './ops/surfaces/control.mjs';
 import { createOpsHttp, OPS_PATH } from './ops/surfaces/http.mjs';
 import { writeControlFile, removeControlFile } from './control-file.mjs';
@@ -2098,6 +2099,8 @@ const opsApp = {
   status: async () => ({ version: APP_VERSION, protocolVersion: P.PROTOCOL_VERSION, startedAt: SERVER_STARTED_AT, locale: { ...locale }, running: (await runningWork()).count }),
   // 外の AI の MCP の設定に貼る pleiad mcp（app.cliSetup。core/cli-launcher.mjs）
   cliSetup: () => mcpSetup({ dataDir: store.dataDir }),
+  // 画面が読む走っている作業の全量（turns・permissions・tasks・subagents・background・count）
+  runningWork: () => runningWork(),
   // いま走っている作業の要約（app.running）。会話のターン・委譲の子・承認待ちの数
   running: async () => {
     const work = await runningWork();
@@ -2141,6 +2144,10 @@ async function changeStatus(backend, sessionId, status, { actor, reason, alone }
 const opsSessions = {
   clientReason,
   list: () => sessionList({ limit: 500, track: false }),
+  // 画面のサイドバーが読む全部の行（作業場所を許可する場所に覚える。track）
+  rows: () => sessionList(),
+  // 変更の記録（会話が無ければ null）
+  history: async (id) => ((await resolveBackendForSession(id)) ? (await store.get(id)).history ?? [] : null),
   get: async (id) => {
     const rows = await sessionList({ limit: 500, track: false });
     let row = rows.find((r) => r.id === id);
@@ -2161,6 +2168,310 @@ const opsSessions = {
   setStatus: async (id, status, { actor, reason, alone, backend } = {}) => changeStatus(await pickBackend(id, backend), id, status, { actor, reason: reasonOf(reason), alone }),
   fork: (input, { actor } = {}) => forkConversation(input, actor),
   setModel: (id, model, { actor, reason, backend } = {}) => changeModel(id, model, { actor, reason: reasonOf(reason), backend }),
+};
+
+/** 新しい会話を作る（sessions.new。WS の newSession の中身）。まだ送っていない（unsent）下書きの会話ができる */
+async function createSession(args) {
+  const sourceId = args?.sourceSessionId;
+  if (sourceId) await settingsWrites.get(sourceId);
+  const sourceBackend = sourceId ? await resolveBackendForSession(sourceId) : null;
+  if (sourceId && !sourceBackend) throw new Error(t('session.sourceNotFound'));
+  const source = sourceId ? await store.get(sourceId) : null;
+  const selected = source?.nextSettings?.backend ?? sourceBackend?.id;
+  // 引き継ぎ元が対応を終えたエージェントなら、エージェントは継がない（既定へ落とす）
+  const selectedBackend = getBackend(selected) ? selected : undefined;
+  const backend = await pickBackend(null, args?.backend ?? selectedBackend);
+  const inherit = source && backend.id === selectedBackend;
+  const model = args?.model ?? (inherit ? source.nextSettings?.model ?? source.model ?? "" : undefined);
+  const mode = args?.mode ?? (inherit ? source.nextSettings?.mode ?? (backend.id === sourceBackend.id ? source.mode : undefined) : undefined);
+  const cwd = typeof args?.cwd === "string" && args.cwd.trim() ? args.cwd.trim() : os.homedir();
+  const status = typeof args?.status === "string" ? args.status.trim() || null : null;
+  // draft: 入力欄に入れておく文（「見直しを頼む」。ADR 0056）。作るのと同時に下書きとして保存し、送らない
+  const draft = args?.draft;
+  if (draft !== undefined && (typeof draft !== "string" || draft.length > 2_000_000)) throw new Error(t('session.draftTooLarge'));
+  const now = Date.now();
+  // 既定のタイトルは保存しない（空）。画面が今の言語で既定名を出す（web/style.css の .row-t:empty など）。過去の記録には「新しいセッション」が残っている
+  const info = { title: "", cwd, tag: status, createdAt: now, lastModified: now };
+  const sessionId = await createConversation(backend, info);
+  try {
+    await store.setMeta(sessionId, { backend: backend.id, ...info, status, unsent: true });
+    // 内蔵ブラウザーのプロフィール: 引き継ぎ元があればそのもの、無ければ作業フォルダーで最後に使ったもの / 既定（ADR 0078）
+    await store.setSessionData(sessionId, 'browserProfile', await browserProfiles.forNew(cwd, source));
+    // 互換の接続先（決定 2・3）: 同じエージェントの引き継ぎなら元の会話の接続先（予約中ならそれ）を継ぐ。
+    // それ以外は設定で「既定にする」を押した接続先（無ければ公式）。削除済みは継がない
+    let endpoint = '';
+    if (endpointCapable(backend)) {
+      if (typeof args?.endpoint === 'string') {
+        endpoint = args.endpoint;
+        if (endpoint && !(await compatEndpoints.has(endpoint, backend.id))) throw new Error(t('settings.endpointNotRegistered'));
+      } else {
+        endpoint = inherit ? source.nextSettings?.endpoint ?? source.compatEndpoint ?? '' : await compatEndpoints.defaultFor(backend.id);
+        if (endpoint && !(await compatEndpoints.has(endpoint, backend.id))) endpoint = '';
+      }
+    }
+    if (endpoint) await store.setSessionData(sessionId, 'compatEndpoint', endpoint);
+    const selected = await resolveModel(null, inherit || args?.model !== undefined ? model : undefined, backend, cwd || undefined, endpoint);
+    await store.setModel(sessionId, selected);
+    const effort = args?.effort ?? (inherit ? source.nextSettings?.effort ?? source.effort : undefined);
+    await store.setSessionData(sessionId, 'effort', await resolveEffort(null, effort, backend, selected, cwd || undefined, await endpointRow(endpoint)));
+    await store.setMode(sessionId, await resolveMode(null, mode, backend));
+    // 引き継ぎ元の会話で選んでいた Claude のアカウントも継ぐ（予約中ならそれを）
+    // 引き継ぎ元が無ければ前回選んだアカウント（削除済みなら、ログイン中のアカウントのまま）
+    const account = source ? source.nextSettings?.account ?? source.claudeAccount ?? '' : (await store.getPrefs()).claudeAccount ?? '';
+    if (account && await claudeAccounts.has(account)) await store.setSessionData(sessionId, 'claudeAccount', account);
+    if (draft) await store.setSessionData(sessionId, "draft", { text: draft, attached: [] });
+  } catch (e) { await deleteUnsentConversation(sessionId); await store.removeSession(sessionId); releaseAgentConnection(sessionId); throw e; }
+  emitGlobal({ type: "sessionsChanged", sessionId: null });
+  return { sessionId };
+}
+
+/** 次のターンの設定を予約する（sessions.setTurnSettings。WS の setTurnSettings の中身）。予約は nextSettings。返り値は予約（取り消しは null） */
+async function reserveTurnSettings(args) {
+  const { sessionId, backend: targetId, model, mode, cwd: requestedCwd, cancel, account, endpoint } = args ?? {};
+  if (!sessionId) throw new Error(t('session.required'));
+  if (forking.has(sessionId) || switching.has(sessionId) && !runtime.turns.has(sessionId)) throw new Error(t('session.preparingSettings'));
+  const work = (settingsWrites.get(sessionId) ?? Promise.resolve()).catch(() => {}).then(async () => {
+    const source = refuseRetired(await resolveBackendForSession(sessionId));
+    if (!source) throw new Error(t('session.notFound'));
+    const current = { ...(await store.get(sessionId)) };
+    // 予約の行き先が今は無いエージェント（対応を終えた procway など）なら、予約は無かったものとして扱う（取り消し・選び直しができるように）
+    if (current.nextSettings?.backend && !getBackend(current.nextSettings.backend)) current.nextSettings = null;
+    const target = getBackend(targetId ?? current.nextSettings?.backend ?? source.id);
+    if (!target) throw new Error(t('agents.notFound'));
+    const selectedMode = mode ?? (target.id === (current.nextSettings?.backend ?? source.id)
+      ? current.nextSettings?.mode : target.id !== source.id ? await resolveMode(null, undefined, target) : undefined);
+    if (!cancel && selectedMode !== undefined && !target.modes()[selectedMode]) throw new Error(t('settings.modeUnavailable'));
+    const settingsCwd = requestedCwd || current.nextSettings?.cwd || current.cwd;
+    // 互換の接続先（'' = 公式）。エージェントを変えたら、変えた先の既定（設定で「既定にする」を押したもの。無ければ公式）。
+    // 元のエージェントへ戻したら、この会話の今の接続先に戻る
+    if (endpoint !== undefined && typeof endpoint !== 'string') throw new Error(t('settings.endpointInvalid'));
+    const previousSelection = current.nextSettings?.backend ?? source.id;
+    const currentEndpoint = current.compatEndpoint ?? '';
+    const previousEndpoint = current.nextSettings?.endpoint ?? currentEndpoint;
+    let selectedEndpoint = !endpointCapable(target) ? ''
+      : endpoint ?? (target.id === previousSelection ? previousEndpoint : target.id === source.id ? currentEndpoint : await compatEndpoints.defaultFor(target.id));
+    if (!cancel && endpoint && !(await compatEndpoints.has(endpoint, target.id))) throw new Error(t('settings.endpointNotRegistered'));
+    const endpointChanged = selectedEndpoint !== currentEndpoint;
+    // 接続先を変えたらモデルは接続先の既定（メインのモデル）に戻す（公式のモデル名を互換の先へ送らない）
+    const selectedModel = model ?? (target.id === previousSelection && selectedEndpoint === previousEndpoint ? current.nextSettings?.model ?? current.model ?? "" : "");
+    if (!cancel && !await validModel(target, selectedModel, settingsCwd, selectedEndpoint)) throw new Error(t('settings.modelUnavailable'));
+    const selectedEndpointRow = await endpointRow(selectedEndpoint);
+    const previousBackend = current.nextSettings?.backend ?? source.id;
+    const previousEffort = target.id === previousBackend ? current.nextSettings?.effort ?? current.effort ?? ''
+      : target.id === source.id ? current.effort ?? '' : (await store.getPrefs()).backends?.[target.id]?.effort ?? '';
+    const choices = cancel ? { '': {} } : await effortOptions(target, selectedModel, settingsCwd, selectedEndpointRow);
+    const selectedEffort = cancel ? '' : args.effort !== undefined
+      ? await validateEffort(target, args.effort, selectedModel, settingsCwd, selectedEndpointRow)
+      : Object.hasOwn(choices, previousEffort) ? previousEffort : '';
+    // Claude のアカウント（'' = ログイン中のアカウント）。モデルと同じく次のターンから効く
+    if (account !== undefined && typeof account !== 'string') throw new Error(t('settings.accountInvalid'));
+    const selectedAccount = account ?? current.nextSettings?.account ?? current.claudeAccount ?? '';
+    if (!cancel && account && !(await claudeAccounts.has(account))) throw new Error(t('settings.accountNotRegistered'));
+    const accountChanged = selectedAccount !== (current.claudeAccount ?? '');
+    let selectedCwd = current.nextSettings?.cwd;
+    if (!cancel && requestedCwd !== undefined) {
+      if (typeof requestedCwd !== "string" || !requestedCwd.trim() || requestedCwd.length > 8192) throw new Error(t('cwd.required'));
+      selectedCwd = (await resolveCwd(null, path.resolve(requestedCwd.trim()), source)).cwd;
+      const info = await source.getSession(sessionId);
+      const own = (current.history ?? []).some(h => h?.field === "cwd") ? current.cwd ?? info?.cwd : info?.cwd ?? current.cwd;
+      if (own && path.resolve(own) === selectedCwd) selectedCwd = undefined;
+    }
+    const next = cancel || (source.id === target.id && (current.model ?? "") === selectedModel && (selectedMode === undefined || selectedMode === current.mode) && (current.effort ?? "") === selectedEffort && !selectedCwd && !accountChanged && !endpointChanged)
+      ? null : { backend: target.id, model: selectedModel, effort: selectedEffort, ...(selectedMode !== undefined ? { mode: selectedMode } : {}), ...(selectedCwd ? { cwd: selectedCwd } : {}), ...(accountChanged ? { account: selectedAccount } : {}), ...(endpointChanged ? { endpoint: selectedEndpoint } : {}) };
+    await store.setSessionData(sessionId, "nextSettings", next);
+    if (current.interrupted?.reason === 'limit'
+      && ((account !== undefined && accountChanged) || (!cancel && next?.backend && next.backend !== source.id))) {
+      await schedule.cancel(`resume:${sessionId}`);
+      resumeQueue.remove(sessionId);
+      const interrupted = { ...current.interrupted, autoResume: false, notifyAtReset: false };
+      await store.setMeta(sessionId, { interrupted });
+      limitStates.set(sessionId, interruptedOf(interrupted));
+      emitGlobal({ type: 'limitResumeChanged', sessionId, interrupted });
+    }
+    // 取り消した・別の場所に替えた予約が分けた作業場所なら、使っていなければ片付ける（ADR 0089）
+    if (current.nextSettings?.cwd && current.nextSettings.cwd !== next?.cwd) settleWorktreeAt(current.nextSettings.cwd).catch(() => {});
+    if (!cancel) {
+      if (targetId !== undefined) await savePref("backend", target.id);
+      // 互換の接続先のモデル・段は公式の既定（prefs）に覚えない。接続先の既定は設定の「既定にする」だけで決まる（決定 2）
+      if (args.rememberEffort && !selectedEndpoint) await savePref("effort", selectedEffort, target.id);
+      if (args.rememberModel && !selectedEndpoint) await savePref("model", selectedModel, target.id);
+      if (args.rememberMode && selectedMode !== undefined) await savePref("mode", selectedMode, target.id);
+      // 人が選んだ Claude のアカウントは、次に開く新しい会話の既定にする（newSession）
+      if (account !== undefined) await savePref("claudeAccount", account || null);
+    }
+    emitGlobal({ type: "nextSettings", sessionId, nextSettings: next });
+    return next;
+  });
+  settingsWrites.set(sessionId, work);
+  try { return await work; }
+  finally { if (settingsWrites.get(sessionId) === work) settingsWrites.delete(sessionId); }
+}
+
+/** 送っていない会話を消す（sessions.deleteUnsent。WS の deleteUnsentSession の中身） */
+async function deleteUnsentSessionOf(args) {
+  const { sessionId } = args ?? {};
+  if (!sessionId || switching.has(sessionId) || forking.has(sessionId) || runtime.turns.has(sessionId)
+      || (await outbox.list(sessionId)).some(m => !['sent', 'cancelled'].includes(m.status))) throw new Error(t('session.cannotDeleteBusy'));
+  switching.add(sessionId);
+  try {
+    if (!(await store.get(sessionId)).unsent) throw new Error(t('session.onlyUnsentDeletable'));
+    compactionScheduler.cancel(sessionId);
+    queuedCompactions.delete(sessionId);
+    shellRuns.stopSession(sessionId);
+    await deleteUnsentConversation(sessionId);
+    await store.removeSession(sessionId);
+    releaseAgentConnection(sessionId);
+    settleWorktreesOf(sessionId).catch(() => {});
+    emitGlobal({ type: "sessionsChanged", sessionId: null, deleted: sessionId });
+    return "deleted";
+  } finally { switching.delete(sessionId); completionNotices.changed(sessionId); }
+}
+
+/** 会話の圧縮を頼む（sessions.compact。WS の compactConversation の中身） */
+async function requestCompaction(args) {
+  const sessionId = args?.sessionId;
+  compactionScheduler.cancel(sessionId);
+  const backend = sessionId ? await resolveBackendForSession(sessionId) : null;
+  if (!backend) throw new Error(t('session.notFound'));
+  if (!backend.capabilities?.compact) throw new Error(t('compaction.unsupported'));
+  const queued = sessionBusy(sessionId);
+  void compactConversation(sessionId).catch(err => compactionStartFailed(sessionId, 'manual', err));
+  return { status: queued ? 'queued' : 'started' };
+}
+
+/** 予約・待ちの圧縮を取り消す（sessions.cancelCompaction） */
+async function cancelRequestedCompaction(args) {
+  const sessionId = args?.sessionId;
+  compactionScheduler.cancel(sessionId);
+  queuedCompactions.delete(sessionId);
+  return { cancelled: true };
+}
+
+/** 会話ごとの自動圧縮の切り替え（sessions.setAutoCompaction） */
+async function setConversationAutoCompactionOf(args) {
+  const sessionId = args?.sessionId;
+  const off = args?.off;
+  if (typeof off !== 'boolean') throw new Error(t('compaction.invalidSetting'));
+  if (!sessionId) throw new Error(t('session.notFound'));
+  if (off) compactionScheduler.cancel(sessionId);
+  if (!(await resolveBackendForSession(sessionId))) throw new Error(t('session.notFound'));
+  await store.setSessionData(sessionId, 'autoCompactionOff', off);
+  emitGlobal({ type: 'conversationAutoCompaction', sessionId, off });
+  return { off };
+}
+
+/** 会話の題を考えてもらう（sessions.suggestTitle。WS の suggestTitle の中身）。会話は変えない */
+async function suggestTitleOf(args) {
+  const { sessionId } = args ?? {};
+  if (!sessionId) throw new Error(t('session.required'));
+  const backend = await resolveBackendForSession(sessionId);
+  if (!backend) throw new Error(t('agents.notFound'));
+  if (!backend.suggestTitle) throw new Error(t('title.unsupported'));
+  const { messages } = await history.loadTranscript(sessionId, backend);
+  // タイトルは会話の言語で作る（渡す見出しもその言語）
+  const lng = await ensureAgentLocale(sessionId);
+  const gist = messages
+    .filter((m) => m.text)
+    .slice(0, 6)
+    .map((m) => m.role === "user" ? agentT(lng, 'title.request', { text: textForTitleModel(m.text).slice(0, 600) }) : agentT(lng, 'title.response', { text: m.text.slice(0, 600) }))
+    .join(NL + NL);
+  if (!gist) throw new Error(t('title.noContent'));
+
+  let title = "";
+  const context = {};
+  try {
+    // タイトル生成もその会話で選んだアカウントで回す。使えないアカウントなら生成しない（別のアカウントへ落とさない）
+    // 互換の接続先の会話は、その接続先の Haiku 相当（Codex は既定）のモデルで作る。使えない接続先なら作らない
+    const saved = await store.get(sessionId);
+    if (endpointCapable(backend) && saved.compatEndpoint) context.endpoint = await compatEndpoints.resolve(saved.compatEndpoint, backend.id);
+    if (!context.endpoint && backend.capabilities?.claudeAccounts) {
+      const account = await claudeAccounts.resolve(saved.claudeAccount ?? '');
+      if (account) context.oauthToken = account.token;
+    }
+    title = String(await backend.suggestTitle({ transcript: gist, locale: lng, ...context }) ?? "");
+  } catch (err) {
+    throw new Error(t('title.failed', { error: redactSecret(redactToken(err?.message ?? err, context.oauthToken), context.endpoint?.key) }));
+  }
+
+  // 前後の記号を落とす。モデルが鉤括弧やクオートで包むことがある
+  title = title.trim().split(NL)[0].replace(/^["'「『]|["'」』。]$/g, "").trim().slice(0, 60);
+  if (!title) throw new Error(t('title.empty'));
+  return { title };
+}
+
+/** 状態のグループの名前を替える（statuses.rename。WS の renameStatus の中身）。付いている会話ごとに変更の記録を残す */
+async function renameStatusGroup(args, actor) {
+  const { from, to } = args ?? {};
+  if (typeof from !== "string" || !from) throw new Error(t('statuses.renameFromRequired'));
+  const next = typeof to === "string" ? to.trim() : "";
+  const hit = (await sessionList({ limit: 500 })).filter((x) => (x.status ?? "") === from);
+  let done = 0;
+  for (const x of hit) {
+    const backend = getBackend(x.backend);
+    if (backend?.capabilities?.tag && backend.setTag) {
+      await backend.setTag(x.id, next || null).catch(() => {});
+    }
+    await store.recordChange(x.id, {
+      ...changeBy(actor), field: "status", from, to: next || null, backend,
+      ...(next ? savedReason('renameStatus', { to: next }) : savedReason('deleteGroup')),
+    });
+    emitGlobal({ type: 'statusProgress', from, to: next, done: ++done, total: hit.length });
+  }
+  // statuses.json の器（アイコン・作った時刻）も一緒に移す。削除なら捨てる（空のグループはこれで消える）
+  await store.moveStatus(from, next || null);
+  emitGlobal({ type: "status", sessionId: null, status: next, by: changeBy(actor).by, bulk: hit.length,
+         ...(next ? savedReason('renamedGroup', { from, to: next }) : savedReason('deletedGroup', { from })) });
+  return { moved: hit.length };
+}
+
+/** 設定の「使用量」の 1 エージェント分（delegation.usage。WS の providerUsage の中身） */
+async function providerUsageOf(args) {
+  const backend = getBackend(args?.backend);
+  if (!backend) throw new Error(t('agents.notFound'));
+  const quota = await providerQuota(backend);
+  let local;
+  try { local = await usageStore.summary(backend.id); }
+  catch { local = { error: t('quota.localFailed') }; }
+  return { backend: backend.id, label: backend.label, quota, local };
+}
+
+// 会話の操作（sessions.new・abort・compact など。core/ops/conversations.mjs）の本体。画面の WS コマンドの中身を移したもの
+const opsConversations = {
+  create: (args) => createSession(args),
+  deleteUnsent: (sessionId) => deleteUnsentSessionOf({ sessionId }),
+  // 止めた会話の変更の記録に、誰が・どこから・なぜを残す（AI の呼び出しだけ。画面の「止める」は今までどおり記録しない）
+  abort: async ({ sessionId, kind, note, actor }) => {
+    const result = await abortSessions({ sessionId, reason: kind });
+    if (note && sessionId) await store.recordChange(sessionId, { ...changeBy(actor), field: 'abort', to: result.reason, reason: note });
+    return result;
+  },
+  compact: (sessionId) => requestCompaction({ sessionId }),
+  cancelCompaction: (sessionId) => cancelRequestedCompaction({ sessionId }),
+  setAutoCompaction: (sessionId, off) => setConversationAutoCompactionOf({ sessionId, off }),
+  setTurnSettings: (args) => reserveTurnSettings(args),
+  suggestTitle: (sessionId) => suggestTitleOf({ sessionId }),
+  outbox: (sessionId) => outbox.list(sessionId),
+};
+
+// 選べるもの（agents.*。core/ops/agents.mjs）の本体
+const opsAgents = {
+  list: () => describeBackends(),
+  models: async (id, cwd) => { const backend = await pickBackend(null, id); return { backend: backend.id, models: await backend.models(cwd) }; },
+  modes: async (id) => { const backend = await pickBackend(null, id); return { backend: backend.id, modes: backend.modes() }; },
+  efforts: async ({ backend: id, model, cwd, endpoint }) => {
+    const backend = await pickBackend(null, id);
+    // endpoint を渡すと互換の接続先の段（既定の段を作らない。Claude は「思考を送る」がオフなら段なし）
+    const row = endpointCapable(backend) && typeof endpoint === 'string' ? await endpointRow(endpoint) : null;
+    return { backend: backend.id, efforts: await effortOptions(backend, model ?? '', cwd, row) };
+  },
+  // 認証はエージェントごとに持ち方が違う。持たないものは supported:false を返す（web はボタンごと隠す）
+  authStatus: async (id) => {
+    const backend = await pickBackend(null, id);
+    const installed = installation(backend.id);
+    if (!installed.installed) return { backend: backend.id, status: { supported: true, ...installed } };
+    if (!backend.auth?.status) return { backend: backend.id, status: { supported: false } };
+    return { backend: backend.id, status: { supported: true, ...installed, ...(await backend.auth.status()) } };
+  },
 };
 
 /**
@@ -2188,7 +2499,13 @@ async function changeModel(sessionId, model, { actor, reason, backend: given } =
 }
 
 // 状態のグループ（statuses.*）の本体
-const opsStatuses = { setIcon: setStatusIconOf, create: createStatusGroup };
+const opsStatuses = {
+  setIcon: setStatusIconOf,
+  create: createStatusGroup,
+  // 既出の状態一覧。事前定義ではなく補完候補（設計メモ §6）
+  list: () => history.listStatuses(listBackends(), { list: nativeSessions }),
+  rename: (from, to, actor) => renameStatusGroup({ from, to }, actor),
+};
 
 /** 分けた作業場所を作れなかった理由 → 画面の言語の文（server:worktree.fail.<reason>）の OpError */
 // i18n-dynamic: server:worktree.fail.
@@ -2429,7 +2746,24 @@ function opsDeps(lng = currentLocale()) {
       },
     },
     delegation: { list: (owner) => agentTasks?.list(owner) ?? [], get: (taskId, offset) => agentTasks?.get(taskId, offset) ?? null,
-      call: (owner, name, args, locale) => callAgentOp(owner, name, args, { locale }) },
+      call: (owner, name, args, locale) => callAgentOp(owner, name, args, { locale }),
+      instructions: (taskId) => agentTasks.instructions(taskId),
+      // 画面の「止める」。どの会話の委譲でも止められる（AI は ply_task_cancel で自分の子だけ）
+      cancel: async (taskId) => {
+        const task = agentTasks.get(taskId);
+        if (!task) throw new Error(t('delegation.taskNotFound'));
+        await agentTasks.cancel(task.taskId);
+        return agentTasks.get(task.taskId);
+      },
+      retry: (args) => retryAgentTask(args),
+      // 委譲先の自動振り分けの設定（設定 › 委譲）。キーは返さない（hasKey だけ）。refresh: true なら使用量を取り直してから返す
+      routing: async ({ refresh } = {}) => {
+        if (refresh && routingSettingsCache.enabled) await routingUsage.refresh();
+        return delegationRoutingState();
+      },
+      providerUsage: (id) => providerUsageOf({ backend: id }) },
+    conversations: opsConversations,
+    agents: opsAgents,
     browser: { call: (owner, name, args, locale) => callBrowserOp(owner, name, args, { locale }),
       setProfile: async (sessionId, profile) => {
         const meta = await store.get(sessionId);
@@ -4253,10 +4587,17 @@ wss.on("connection", (ws, req) => {
     const reply = (ok, payload, code, extra) => {
       if (ws.readyState === ws.OPEN) ws.send(JSON.stringify({ kind: P.RESPONSE, id: msg.id ?? null, ok, ...(ok ? { result: payload } : { error: payload, ...(code ? { code } : {}), ...extra }) }));
     };
-    // 操作の一覧（core/ops/）へ移したコマンド: 画面（human）として op を呼ぶ。then は成功の返り値を画面の形に直す（無ければそのまま）
-    const viaOp = async (id, then = (result) => result) => {
-      const r = await opsRegistry.invoke({ by: 'human', via: 'ui', local }, id, msg.args, opsDeps(locale.lang));
-      return r.ok ? reply(true, await then(r.result)) : reply(false, r.error, r.code);
+    // 画面のコマンドは、操作の一覧（core/ops/）の同じ操作を人（画面）として呼ぶだけの外側。返り値は人に返す形（uiHandler）のまま。
+    // viaOp(id)                  msg.args をそのまま渡す。then（成功の返り値を画面の形に直す）は第 2 引数に関数で渡せる
+    // viaOp(id, input, { shape })  input を渡す（送らない欄 null・undefined は省く）。shape は従来の返り値の形へ寄せるとき
+    // code が FAILED（code の無い失敗）なら画面へは code を付けない
+    const args = msg.args;
+    const viaOp = async (id, second, { shape = (r) => r } = {}) => {
+      const then = typeof second === 'function' ? second : shape;
+      const input = typeof second === 'function' || second === undefined ? (msg.args ?? {})
+        : Object.fromEntries(Object.entries(second ?? {}).filter(([, v]) => v !== null && v !== undefined));
+      const r = await opsRegistry.invoke({ by: 'human', via: 'ui', local }, id, input, opsDeps(locale.lang));
+      return r.ok ? reply(true, await then(r.result)) : reply(false, r.error, r.code === FAILED ? undefined : r.code, r.issues ? { issues: r.issues } : undefined);
     };
 
     let releaseUpdateGate;
@@ -4505,7 +4846,7 @@ wss.on("connection", (ws, req) => {
           finally { ws.contextScanning = false; }
         }
         case "listSessions":
-          return reply(true, await sessionList());
+          return viaOp('sessions.list', args);
 
         // リモート（ホスト側）。秘密・トークンは返さない（core/remote/connector.mjs）
         case 'remoteStatus':
@@ -4600,98 +4941,13 @@ wss.on("connection", (ws, req) => {
           return reply(true, claudeLogin.cancel(String(msg.args?.loginId ?? '')));
 
         // 使えるエージェントと、その語彙・出し分けの材料
-        case 'providerUsage': {
-          const backend = getBackend(msg.args?.backend);
-          if (!backend) throw new Error(t('agents.notFound'));
-          const quota = await providerQuota(backend);
-          let local;
-          try { local = await usageStore.summary(backend.id); }
-          catch { local = { error: t('quota.localFailed') }; }
-          return reply(true, { backend: backend.id, label: backend.label, quota, local });
-        }
+        case 'providerUsage':
+          return viaOp('delegation.usage', args);
         case "backends":
-          return reply(true, describeBackends());
+          return viaOp('agents.list', args);
 
-        case "setTurnSettings": {
-          const { sessionId, backend: targetId, model, mode, cwd: requestedCwd, cancel, account, endpoint } = msg.args ?? {};
-          if (!sessionId) throw new Error(t('session.required'));
-          if (forking.has(sessionId) || switching.has(sessionId) && !runtime.turns.has(sessionId)) throw new Error(t('session.preparingSettings'));
-          const work = (settingsWrites.get(sessionId) ?? Promise.resolve()).catch(() => {}).then(async () => {
-            const source = refuseRetired(await resolveBackendForSession(sessionId));
-            if (!source) throw new Error(t('session.notFound'));
-            const current = { ...(await store.get(sessionId)) };
-            // 予約の行き先が今は無いエージェント（対応を終えた procway など）なら、予約は無かったものとして扱う（取り消し・選び直しができるように）
-            if (current.nextSettings?.backend && !getBackend(current.nextSettings.backend)) current.nextSettings = null;
-            const target = getBackend(targetId ?? current.nextSettings?.backend ?? source.id);
-            if (!target) throw new Error(t('agents.notFound'));
-            const selectedMode = mode ?? (target.id === (current.nextSettings?.backend ?? source.id)
-              ? current.nextSettings?.mode : target.id !== source.id ? await resolveMode(null, undefined, target) : undefined);
-            if (!cancel && selectedMode !== undefined && !target.modes()[selectedMode]) throw new Error(t('settings.modeUnavailable'));
-            const settingsCwd = requestedCwd || current.nextSettings?.cwd || current.cwd;
-            // 互換の接続先（'' = 公式）。エージェントを変えたら、変えた先の既定（設定で「既定にする」を押したもの。無ければ公式）。
-            // 元のエージェントへ戻したら、この会話の今の接続先に戻る
-            if (endpoint !== undefined && typeof endpoint !== 'string') throw new Error(t('settings.endpointInvalid'));
-            const previousSelection = current.nextSettings?.backend ?? source.id;
-            const currentEndpoint = current.compatEndpoint ?? '';
-            const previousEndpoint = current.nextSettings?.endpoint ?? currentEndpoint;
-            let selectedEndpoint = !endpointCapable(target) ? ''
-              : endpoint ?? (target.id === previousSelection ? previousEndpoint : target.id === source.id ? currentEndpoint : await compatEndpoints.defaultFor(target.id));
-            if (!cancel && endpoint && !(await compatEndpoints.has(endpoint, target.id))) throw new Error(t('settings.endpointNotRegistered'));
-            const endpointChanged = selectedEndpoint !== currentEndpoint;
-            // 接続先を変えたらモデルは接続先の既定（メインのモデル）に戻す（公式のモデル名を互換の先へ送らない）
-            const selectedModel = model ?? (target.id === previousSelection && selectedEndpoint === previousEndpoint ? current.nextSettings?.model ?? current.model ?? "" : "");
-            if (!cancel && !await validModel(target, selectedModel, settingsCwd, selectedEndpoint)) throw new Error(t('settings.modelUnavailable'));
-            const selectedEndpointRow = await endpointRow(selectedEndpoint);
-            const previousBackend = current.nextSettings?.backend ?? source.id;
-            const previousEffort = target.id === previousBackend ? current.nextSettings?.effort ?? current.effort ?? ''
-              : target.id === source.id ? current.effort ?? '' : (await store.getPrefs()).backends?.[target.id]?.effort ?? '';
-            const choices = cancel ? { '': {} } : await effortOptions(target, selectedModel, settingsCwd, selectedEndpointRow);
-            const selectedEffort = cancel ? '' : msg.args.effort !== undefined
-              ? await validateEffort(target, msg.args.effort, selectedModel, settingsCwd, selectedEndpointRow)
-              : Object.hasOwn(choices, previousEffort) ? previousEffort : '';
-            // Claude のアカウント（'' = ログイン中のアカウント）。モデルと同じく次のターンから効く
-            if (account !== undefined && typeof account !== 'string') throw new Error(t('settings.accountInvalid'));
-            const selectedAccount = account ?? current.nextSettings?.account ?? current.claudeAccount ?? '';
-            if (!cancel && account && !(await claudeAccounts.has(account))) throw new Error(t('settings.accountNotRegistered'));
-            const accountChanged = selectedAccount !== (current.claudeAccount ?? '');
-            let selectedCwd = current.nextSettings?.cwd;
-            if (!cancel && requestedCwd !== undefined) {
-              if (typeof requestedCwd !== "string" || !requestedCwd.trim() || requestedCwd.length > 8192) throw new Error(t('cwd.required'));
-              selectedCwd = (await resolveCwd(null, path.resolve(requestedCwd.trim()), source)).cwd;
-              const info = await source.getSession(sessionId);
-              const own = (current.history ?? []).some(h => h?.field === "cwd") ? current.cwd ?? info?.cwd : info?.cwd ?? current.cwd;
-              if (own && path.resolve(own) === selectedCwd) selectedCwd = undefined;
-            }
-            const next = cancel || (source.id === target.id && (current.model ?? "") === selectedModel && (selectedMode === undefined || selectedMode === current.mode) && (current.effort ?? "") === selectedEffort && !selectedCwd && !accountChanged && !endpointChanged)
-              ? null : { backend: target.id, model: selectedModel, effort: selectedEffort, ...(selectedMode !== undefined ? { mode: selectedMode } : {}), ...(selectedCwd ? { cwd: selectedCwd } : {}), ...(accountChanged ? { account: selectedAccount } : {}), ...(endpointChanged ? { endpoint: selectedEndpoint } : {}) };
-            await store.setSessionData(sessionId, "nextSettings", next);
-            if (current.interrupted?.reason === 'limit'
-              && ((account !== undefined && accountChanged) || (!cancel && next?.backend && next.backend !== source.id))) {
-              await schedule.cancel(`resume:${sessionId}`);
-              resumeQueue.remove(sessionId);
-              const interrupted = { ...current.interrupted, autoResume: false, notifyAtReset: false };
-              await store.setMeta(sessionId, { interrupted });
-              limitStates.set(sessionId, interruptedOf(interrupted));
-              emitGlobal({ type: 'limitResumeChanged', sessionId, interrupted });
-            }
-            // 取り消した・別の場所に替えた予約が分けた作業場所なら、使っていなければ片付ける（ADR 0089）
-            if (current.nextSettings?.cwd && current.nextSettings.cwd !== next?.cwd) settleWorktreeAt(current.nextSettings.cwd).catch(() => {});
-            if (!cancel) {
-              if (targetId !== undefined) await savePref("backend", target.id);
-              // 互換の接続先のモデル・段は公式の既定（prefs）に覚えない。接続先の既定は設定の「既定にする」だけで決まる（決定 2）
-              if (msg.args.rememberEffort && !selectedEndpoint) await savePref("effort", selectedEffort, target.id);
-              if (msg.args.rememberModel && !selectedEndpoint) await savePref("model", selectedModel, target.id);
-              if (msg.args.rememberMode && selectedMode !== undefined) await savePref("mode", selectedMode, target.id);
-              // 人が選んだ Claude のアカウントは、次に開く新しい会話の既定にする（newSession）
-              if (account !== undefined) await savePref("claudeAccount", account || null);
-            }
-            emitGlobal({ type: "nextSettings", sessionId, nextSettings: next });
-            return next;
-          });
-          settingsWrites.set(sessionId, work);
-          try { return reply(true, await work); }
-          finally { if (settingsWrites.get(sessionId) === work) settingsWrites.delete(sessionId); }
-        }
+        case "setTurnSettings":
+          return viaOp('sessions.setTurnSettings', args);
 
         case "saveDraft": {
           const { sessionId, text = "", attached = [], version } = msg.args ?? {};
@@ -4711,24 +4967,8 @@ wss.on("connection", (ws, req) => {
           return reply(true, "saved");
         }
 
-        case "deleteUnsentSession": {
-          const { sessionId } = msg.args ?? {};
-          if (!sessionId || switching.has(sessionId) || forking.has(sessionId) || runtime.turns.has(sessionId)
-              || (await outbox.list(sessionId)).some(m => !['sent', 'cancelled'].includes(m.status))) throw new Error(t('session.cannotDeleteBusy'));
-          switching.add(sessionId);
-          try {
-            if (!(await store.get(sessionId)).unsent) throw new Error(t('session.onlyUnsentDeletable'));
-            compactionScheduler.cancel(sessionId);
-            queuedCompactions.delete(sessionId);
-            shellRuns.stopSession(sessionId);
-            await deleteUnsentConversation(sessionId);
-            await store.removeSession(sessionId);
-            releaseAgentConnection(sessionId);
-            settleWorktreesOf(sessionId).catch(() => {});
-            emitGlobal({ type: "sessionsChanged", sessionId: null, deleted: sessionId });
-            return reply(true, "deleted");
-          } finally { switching.delete(sessionId); completionNotices.changed(sessionId); }
-        }
+        case "deleteUnsentSession":
+          return viaOp('sessions.deleteUnsent', args, { shape: () => "deleted" });
 
         case "switchBackend": {
           const { sessionId, backend: targetId } = msg.args ?? {};
@@ -4822,76 +5062,45 @@ wss.on("connection", (ws, req) => {
             throw e;
           }
         }
-        case 'compactConversation': {
-          const sessionId = msg.args?.sessionId;
-          compactionScheduler.cancel(sessionId);
-          const backend = sessionId ? await resolveBackendForSession(sessionId) : null;
-          if (!backend) throw new Error(t('session.notFound'));
-          if (!backend.capabilities?.compact) throw new Error(t('compaction.unsupported'));
-          const queued = sessionBusy(sessionId);
-          void compactConversation(sessionId).catch(err => compactionStartFailed(sessionId, 'manual', err));
-          return reply(true, { status: queued ? 'queued' : 'started' });
-        }
-        case 'cancelCompaction': {
-          const sessionId = msg.args?.sessionId;
-          compactionScheduler.cancel(sessionId);
-          queuedCompactions.delete(sessionId);
-          return reply(true, { cancelled: true });
-        }
-        case 'setConversationAutoCompaction': {
-          const sessionId = msg.args?.sessionId;
-          const off = msg.args?.off;
-          if (typeof off !== 'boolean') throw new Error(t('compaction.invalidSetting'));
-          if (!sessionId) throw new Error(t('session.notFound'));
-          if (off) compactionScheduler.cancel(sessionId);
-          if (!(await resolveBackendForSession(sessionId))) throw new Error(t('session.notFound'));
-          await store.setSessionData(sessionId, 'autoCompactionOff', off);
-          emitGlobal({ type: 'conversationAutoCompaction', sessionId, off });
-          return reply(true, { off });
-        }
+        case 'compactConversation':
+          return viaOp('sessions.compact', args);
+        case 'cancelCompaction':
+          return viaOp('sessions.cancelCompaction', args);
+        case 'setConversationAutoCompaction':
+          return viaOp('sessions.setAutoCompaction', args);
         case 'messageAction': {
           const { sessionId, messageId, action } = msg.args ?? {};
           await outbox.action(sessionId, messageId, action);
           return reply(true, await outbox.list(sessionId));
         }
         case 'listMessages':
-          return reply(true, await outbox.list(msg.args?.sessionId));
+          return viaOp('sessions.listMessages', args);
 
-        case "abort": {
-          // { sessionId?, reason? }。sessionId を省略したら全部止める。reason は user|update|quit（ほかは user）
-          const { sessionId, reason } = msg.args ?? {};
-          return reply(true, await abortSessions({ sessionId, reason }));
-        }
+        // { sessionId?, reason? }。sessionId を省略したら全部止める。reason は user|update|quit（ほかは user）。操作では reason は理由の文で、この種類は kind
+        case "abort":
+          return viaOp('sessions.abort', { sessionId: args?.sessionId, kind: ['user', 'update', 'quit'].includes(args?.reason) ? args.reason : undefined });
 
         // 中断した会話を続ける（docs/design.md「中断と再開」）。{ sessionId } -> { sent: "outbox"|"text", count }
         case "resume":
-          return reply(true, await resumeSession(msg.args?.sessionId));
+          return viaOp('sessions.resume', args);
 
-        case 'agentTasks': return reply(true, agentTasks.list(msg.args?.sessionId));
-        case 'agentTaskInstructions': {
-          const result = agentTasks.instructions(msg.args?.taskId);
-          if (!result) throw new Error(t('delegation.taskNotFound'));
-          return reply(true, result);
-        }
-        case 'cancelAgentTask': {
-          const task = agentTasks.get(msg.args?.taskId);
-          if (!task) throw new Error(t('delegation.taskNotFound'));
-          await agentTasks.cancel(task.taskId); return reply(true, agentTasks.get(task.taskId));
-        }
+        case 'agentTasks':
+          return viaOp('delegation.tasks', { parentSessionId: args?.sessionId });
+        case 'agentTaskInstructions':
+          return viaOp('delegation.instructions', args);
+        case 'cancelAgentTask':
+          return viaOp('delegation.taskCancel', args);
         // 委譲カードの「別の候補でやり直す」。{ taskId, candidate, stop?, approved? } -> { task } か、承認モードが強くなるときは { confirm }
-        case 'retryAgentTask': return reply(true, await retryAgentTask(msg.args ?? {}));
+        case 'retryAgentTask':
+          return viaOp('delegation.retry', args);
 
         // 委譲先の自動振り分けの設定（設定 › 委譲）。タスクごとの振り分けの記録は agentTasks の各行の routing。
         // キーは返さない（hasKey だけ）。refresh: true なら使用量を取り直してから返す
         case 'delegationRouting':
-          if (msg.args?.refresh && routingSettingsCache.enabled) await routingUsage.refresh();
-          return reply(true, await delegationRoutingState());
-        // settings は prefs.json の delegationRouting に重ねる項目（null の項目は既定に戻す）。全体を検証してから保存する
-        case 'setDelegationRouting': {
-          await applyRoutingSettings(msg.args?.settings);
-          settingsChanged(['delegationRouting']);
-          return reply(true, await delegationRoutingState());
-        }
+          return viaOp('delegation.routing', args);
+        // settings は prefs.json の delegationRouting に重ねる項目（null の項目は既定に戻す）。全体を検証してから保存する（settings.set の delegationRouting と同じ定義）
+        case 'setDelegationRouting':
+          return viaOp('settings.set', { key: 'delegationRouting', value: args?.settings }, { shape: () => delegationRoutingState() });
         // 判定器のキー（service: openrouter = Jev / cerebras）。登録が外部送信の同意になる（キーが無ければ何も送らない）
         case 'setDelegationRoutingKey':
         case 'deleteDelegationRoutingKey': {
@@ -5017,79 +5226,19 @@ wss.on("connection", (ws, req) => {
         }
 
         // Allocate the host identity before the native engine has a first turn.
-        case "newSession": {
-          const sourceId = msg.args?.sourceSessionId;
-          if (sourceId) await settingsWrites.get(sourceId);
-          const sourceBackend = sourceId ? await resolveBackendForSession(sourceId) : null;
-          if (sourceId && !sourceBackend) throw new Error(t('session.sourceNotFound'));
-          const source = sourceId ? await store.get(sourceId) : null;
-          const selected = source?.nextSettings?.backend ?? sourceBackend?.id;
-          // 引き継ぎ元が対応を終えたエージェントなら、エージェントは継がない（既定へ落とす）
-          const selectedBackend = getBackend(selected) ? selected : undefined;
-          const backend = await pickBackend(null, msg.args?.backend ?? selectedBackend);
-          const inherit = source && backend.id === selectedBackend;
-          const model = msg.args?.model ?? (inherit ? source.nextSettings?.model ?? source.model ?? "" : undefined);
-          const mode = msg.args?.mode ?? (inherit ? source.nextSettings?.mode ?? (backend.id === sourceBackend.id ? source.mode : undefined) : undefined);
-          const cwd = typeof msg.args?.cwd === "string" && msg.args.cwd.trim() ? msg.args.cwd.trim() : os.homedir();
-          const status = typeof msg.args?.status === "string" ? msg.args.status.trim() || null : null;
-          // draft: 入力欄に入れておく文（「見直しを頼む」。ADR 0056）。作るのと同時に下書きとして保存し、送らない
-          const draft = msg.args?.draft;
-          if (draft !== undefined && (typeof draft !== "string" || draft.length > 2_000_000)) throw new Error(t('session.draftTooLarge'));
-          const now = Date.now();
-          // 既定のタイトルは保存しない（空）。画面が今の言語で既定名を出す（web/style.css の .row-t:empty など）。過去の記録には「新しいセッション」が残っている
-          const info = { title: "", cwd, tag: status, createdAt: now, lastModified: now };
-          const sessionId = await createConversation(backend, info);
-          try {
-            await store.setMeta(sessionId, { backend: backend.id, ...info, status, unsent: true });
-            // 内蔵ブラウザーのプロフィール: 引き継ぎ元があればそのもの、無ければ作業フォルダーで最後に使ったもの / 既定（ADR 0078）
-            await store.setSessionData(sessionId, 'browserProfile', await browserProfiles.forNew(cwd, source));
-            // 互換の接続先（決定 2・3）: 同じエージェントの引き継ぎなら元の会話の接続先（予約中ならそれ）を継ぐ。
-            // それ以外は設定で「既定にする」を押した接続先（無ければ公式）。削除済みは継がない
-            let endpoint = '';
-            if (endpointCapable(backend)) {
-              if (typeof msg.args?.endpoint === 'string') {
-                endpoint = msg.args.endpoint;
-                if (endpoint && !(await compatEndpoints.has(endpoint, backend.id))) throw new Error(t('settings.endpointNotRegistered'));
-              } else {
-                endpoint = inherit ? source.nextSettings?.endpoint ?? source.compatEndpoint ?? '' : await compatEndpoints.defaultFor(backend.id);
-                if (endpoint && !(await compatEndpoints.has(endpoint, backend.id))) endpoint = '';
-              }
-            }
-            if (endpoint) await store.setSessionData(sessionId, 'compatEndpoint', endpoint);
-            const selected = await resolveModel(null, inherit || msg.args?.model !== undefined ? model : undefined, backend, cwd || undefined, endpoint);
-            await store.setModel(sessionId, selected);
-            const effort = msg.args?.effort ?? (inherit ? source.nextSettings?.effort ?? source.effort : undefined);
-            await store.setSessionData(sessionId, 'effort', await resolveEffort(null, effort, backend, selected, cwd || undefined, await endpointRow(endpoint)));
-            await store.setMode(sessionId, await resolveMode(null, mode, backend));
-            // 引き継ぎ元の会話で選んでいた Claude のアカウントも継ぐ（予約中ならそれを）
-            // 引き継ぎ元が無ければ前回選んだアカウント（削除済みなら、ログイン中のアカウントのまま）
-            const account = source ? source.nextSettings?.account ?? source.claudeAccount ?? '' : (await store.getPrefs()).claudeAccount ?? '';
-            if (account && await claudeAccounts.has(account)) await store.setSessionData(sessionId, 'claudeAccount', account);
-            if (draft) await store.setSessionData(sessionId, "draft", { text: draft, attached: [] });
-          } catch (e) { await deleteUnsentConversation(sessionId); await store.removeSession(sessionId); releaseAgentConnection(sessionId); throw e; }
-          emitGlobal({ type: "sessionsChanged", sessionId: null });
-          return reply(true, { sessionId });
-        }
+        case "newSession":
+          return viaOp('sessions.new', args);
 
         // 既出の状態一覧。事前定義ではなく補完候補（設計メモ §6）。
         case "listStatuses":
-          return reply(true, await history.listStatuses(listBackends(), { list: nativeSessions }));
+          return viaOp('statuses.list', args);
 
-        case "modes": {
-          const backend = await pickBackend(null, msg.args?.backend);
-          return reply(true, backend.modes());
-        }
-
-        case "efforts": {
-          const backend = await pickBackend(null, msg.args?.backend);
-          // endpoint を渡すと互換の接続先の段（既定の段を作らない。Claude は「思考を送る」がオフなら段なし）
-          const endpoint = endpointCapable(backend) && typeof msg.args?.endpoint === 'string' ? await endpointRow(msg.args.endpoint) : null;
-          return reply(true, await effortOptions(backend, msg.args?.model ?? '', msg.args?.cwd, endpoint));
-        }
-        case "models": {
-          const backend = await pickBackend(null, msg.args?.backend);
-          return reply(true, await backend.models(msg.args?.cwd));
-        }
+        case "modes":
+          return viaOp('agents.modes', args);
+        case "efforts":
+          return viaOp('agents.efforts', args);
+        case "models":
+          return viaOp('agents.models', args);
         // 作業ディレクトリを選ぶ簡易ブラウザー（ブラウザー版の入力欄）。フォルダーの名前だけを返す
         case "listDirs":
           return reply(true, await listDirs(msg.args?.path, { files: msg.args?.files === true }));
@@ -5166,13 +5315,8 @@ wss.on("connection", (ws, req) => {
 
         // 認証はエージェントごとに持ち方が違う。持たないものは supported:false を返す
         // （web はボタンごと隠す。「押せるのに何も起きない」を作らない）。
-        case "authStatus": {
-          const backend = await pickBackend(null, msg.args?.backend);
-          const installed = installation(backend.id);
-          if (!installed.installed) return reply(true, { supported: true, ...installed });
-          if (!backend.auth?.status) return reply(true, { supported: false });
-          return reply(true, { supported: true, ...installed, ...(await backend.auth.status()) });
-        }
+        case "authStatus":
+          return viaOp('agents.authStatus', args);
 
         case "authLogin": {
           const backend = await pickBackend(null, msg.args?.backend);
@@ -5204,7 +5348,7 @@ wss.on("connection", (ws, req) => {
         }
 
         case "running":
-          return reply(true, await runningWork());
+          return viaOp('app.running', args);
 
         // 操作の一覧（core/ops/）の汎用の口。画面は新しい機能をここから呼ぶ（protocol.mjs を触らずに増やせる。ADR 0080）
         case 'invoke': {
@@ -5239,51 +5383,17 @@ wss.on("connection", (ws, req) => {
           prefs.autoCompaction = compactionSettings;
           return reply(true, prefs);
         }
+        // 設定 › 自動圧縮。settings.set の compaction.auto と同じ定義を通る
         case 'setAutoCompaction':
-          return reply(true, await applyAutoCompaction(normalizeCompactionSettings(msg.args?.settings)).then((r) => { settingsChanged(['compaction.auto']); return r; }));
+          return viaOp('settings.set', { key: 'compaction.auto', value: args?.settings }, { shape: (r) => r.value });
 
         /**
          * AI にタイトルを考えてもらう。
          * 会話の中身を見て決めるので、走っているターンとは別に小さく1本立てる。
          * 生成はエージェントの仕事、整形（前後の記号を落とす）はここ。
          */
-        case "suggestTitle": {
-          const { sessionId } = msg.args ?? {};
-          if (!sessionId) return reply(false, t('session.required'));
-          const backend = await resolveBackendForSession(sessionId);
-          if (!backend) return reply(false, t('agents.notFound'));
-          if (!backend.suggestTitle) return reply(false, t('title.unsupported'));
-          const { messages } = await history.loadTranscript(sessionId, backend);
-          // タイトルは会話の言語で作る（渡す見出しもその言語）
-          const lng = await ensureAgentLocale(sessionId);
-          const gist = messages
-            .filter((m) => m.text)
-            .slice(0, 6)
-            .map((m) => m.role === "user" ? agentT(lng, 'title.request', { text: textForTitleModel(m.text).slice(0, 600) }) : agentT(lng, 'title.response', { text: m.text.slice(0, 600) }))
-            .join(NL + NL);
-          if (!gist) return reply(false, t('title.noContent'));
-
-          let title = "";
-          const context = {};
-          try {
-            // タイトル生成もその会話で選んだアカウントで回す。使えないアカウントなら生成しない（別のアカウントへ落とさない）
-            // 互換の接続先の会話は、その接続先の Haiku 相当（Codex は既定）のモデルで作る。使えない接続先なら作らない
-            const saved = await store.get(sessionId);
-            if (endpointCapable(backend) && saved.compatEndpoint) context.endpoint = await compatEndpoints.resolve(saved.compatEndpoint, backend.id);
-            if (!context.endpoint && backend.capabilities?.claudeAccounts) {
-              const account = await claudeAccounts.resolve(saved.claudeAccount ?? '');
-              if (account) context.oauthToken = account.token;
-            }
-            title = String(await backend.suggestTitle({ transcript: gist, locale: lng, ...context }) ?? "");
-          } catch (err) {
-            return reply(false, t('title.failed', { error: redactSecret(redactToken(err?.message ?? err, context.oauthToken), context.endpoint?.key) }));
-          }
-
-          // 前後の記号を落とす。モデルが鉤括弧やクオートで包むことがある
-          title = title.trim().split(NL)[0].replace(/^["'「『]|["'」』。]$/g, "").trim().slice(0, 60);
-          if (!title) return reply(false, t('title.empty'));
-          return reply(true, { title });
-        }
+        case "suggestTitle":
+          return viaOp('sessions.suggestTitle', args);
 
         /**
          * 人間が会話へファイルを渡す。present の逆方向（設計メモ §7）。
@@ -5368,29 +5478,8 @@ wss.on("connection", (ws, req) => {
         // 状態の一括改名。to が空なら状態を外す（＝グループの削除）。
         // 状態は事前定義しないので「グループ」は実体を持たず、付いているセッションの集合でしかない。
         // だから改名も削除も、対象セッションの状態を書き換えるだけで足りる。
-        case "renameStatus": {
-          const { from, to } = msg.args ?? {};
-          if (typeof from !== "string" || !from) return reply(false, t('statuses.renameFromRequired'));
-          const next = typeof to === "string" ? to.trim() : "";
-          const hit = (await sessionList({ limit: 500 })).filter((x) => (x.status ?? "") === from);
-          let done = 0;
-          for (const x of hit) {
-            const backend = getBackend(x.backend);
-            if (backend?.capabilities?.tag && backend.setTag) {
-              await backend.setTag(x.id, next || null).catch(() => {});
-            }
-            await store.recordChange(x.id, {
-              by: "human", field: "status", from, to: next || null, backend,
-              ...(next ? savedReason('renameStatus', { to: next }) : savedReason('deleteGroup')),
-            });
-            emitGlobal({ type: 'statusProgress', from, to: next, done: ++done, total: hit.length });
-          }
-          // statuses.json の器（アイコン・作った時刻）も一緒に移す。削除なら捨てる（空のグループはこれで消える）
-          await store.moveStatus(from, next || null);
-          emitGlobal({ type: "status", sessionId: null, status: next, by: "human", bulk: hit.length,
-                 ...(next ? savedReason('renamedGroup', { from, to: next }) : savedReason('deletedGroup', { from })) });
-          return reply(true, { moved: hit.length });
-        }
+        case "renameStatus":
+          return viaOp('statuses.rename', args);
 
         // 詳細の読み出しは停止から独立した操作。
         case "loadBackground": {
@@ -5521,23 +5610,12 @@ wss.on("connection", (ws, req) => {
          * 根へ遡り、子孫を集める（core/lineage.mjs）。行はここに揃っているので、
          * 家族の分だけエージェントへ聞き直すことはしない。
          */
-        case "lineage": {
-          const { sessionId } = msg.args ?? {};
-          if (!sessionId) return reply(false, t('session.required'));
-          const rows = await sessionList({ limit: 500 });
-          const byId = new Map(rows.map((r) => [r.id, r]));
-          const { rootId, ids } = familyOf(rows, sessionId);
-          return reply(true, { rootId, sessions: ids.map((id) => byId.get(id) ?? { id, parent: null }) });
-        }
+        case "lineage":
+          return viaOp('sessions.lineage', args);
 
         // 会話の変更の記録（時刻・誰が・前 → 後・理由）。脇の会話の行の「変更の記録」が読む
-        case "sessionChanges": {
-          const { sessionId } = msg.args ?? {};
-          if (!sessionId) return reply(false, t('session.required'));
-          const entry = await store.get(sessionId);
-          return reply(true, { changes: (entry.history ?? []).map(({ at, by, field, from, to, reason, reasonKey, reasonParams }) =>
-            ({ at, by, field, from: from ?? null, to: to ?? null, reason: reason ?? null, ...(reasonKey ? { reasonKey, ...(reasonParams ? { reasonParams } : {}) } : {}) })) });
-        }
+        case "sessionChanges":
+          return viaOp('sessions.changes', args);
 
         // 会話の今の内蔵ブラウザーのプロフィールを人が替えた（右パネルのメニュー。main のタブの一覧は画面が先に替えている。ADR 0078）。
         // 会話に残し、作業フォルダーの「最後に使ったもの」と、走っているターン（ply_browser の今のもの）にも伝える

@@ -1,6 +1,106 @@
 {
   "ops": [
     {
+      "id": "agents.authStatus",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "agents",
+            "auth"
+          ]
+        }
+      },
+      "legacyCommand": "authStatus",
+      "input": "42de447790d5"
+    },
+    {
+      "id": "agents.efforts",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "agents",
+            "efforts"
+          ]
+        }
+      },
+      "legacyCommand": "efforts",
+      "input": "1d0cc7c623e6"
+    },
+    {
+      "id": "agents.list",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "agents",
+            "list"
+          ]
+        }
+      },
+      "legacyCommand": "backends",
+      "input": "25c7d85c859a"
+    },
+    {
+      "id": "agents.models",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "agents",
+            "models"
+          ]
+        }
+      },
+      "legacyCommand": "models",
+      "input": "5d455995ab0e"
+    },
+    {
+      "id": "agents.modes",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "agents",
+            "modes"
+          ]
+        }
+      },
+      "legacyCommand": "modes",
+      "input": "d9721654ab73"
+    },
+    {
       "id": "app.cliSetup",
       "risk": "read",
       "riskOf": false,
@@ -31,7 +131,7 @@
           ]
         }
       },
-      "legacyCommand": null,
+      "legacyCommand": "running",
       "input": "25c7d85c859a"
     },
     {
@@ -183,6 +283,73 @@
       "input": "99f99ce422d2"
     },
     {
+      "id": "delegation.instructions",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "delegation",
+            "instructions"
+          ],
+          "positional": [
+            "taskId"
+          ]
+        }
+      },
+      "legacyCommand": "agentTaskInstructions",
+      "input": "2f2e13a9fa0a"
+    },
+    {
+      "id": "delegation.retry",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "session",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "delegation",
+            "retry"
+          ],
+          "positional": [
+            "taskId",
+            "candidate"
+          ]
+        }
+      },
+      "legacyCommand": "retryAgentTask",
+      "input": "629309f73cd2"
+    },
+    {
+      "id": "delegation.routing",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "delegation",
+            "routing"
+          ]
+        }
+      },
+      "legacyCommand": "delegationRouting",
+      "input": "e7f5ed427e6d"
+    },
+    {
       "id": "delegation.status",
       "risk": "read",
       "riskOf": false,
@@ -213,11 +380,11 @@
       "modeGate": false,
       "hostScreenOnly": false,
       "surfaces": {
-        "ui": false,
+        "ui": true,
         "mcp": "catalog",
         "cli": true
       },
-      "legacyCommand": null,
+      "legacyCommand": "cancelAgentTask",
       "input": "aa46a1003ecf"
     },
     {
@@ -252,7 +419,7 @@
           ]
         }
       },
-      "legacyCommand": null,
+      "legacyCommand": "agentTasks",
       "input": "3674e4e2e03f"
     },
     {
@@ -308,11 +475,11 @@
       "modeGate": true,
       "hostScreenOnly": false,
       "surfaces": {
-        "ui": false,
+        "ui": true,
         "mcp": "catalog",
         "cli": true
       },
-      "legacyCommand": null,
+      "legacyCommand": "providerUsage",
       "input": "e713b07977ab"
     },
     {
@@ -443,6 +610,52 @@
       "input": "b4a434de6904"
     },
     {
+      "id": "sessions.abort",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "session",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "sessions",
+            "abort"
+          ],
+          "positional": [
+            "sessionId"
+          ]
+        }
+      },
+      "legacyCommand": "abort",
+      "input": "d70835b046e2"
+    },
+    {
+      "id": "sessions.cancelCompaction",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "session",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "sessions",
+            "cancelCompaction"
+          ],
+          "positional": [
+            "sessionId"
+          ]
+        }
+      },
+      "legacyCommand": "cancelCompaction",
+      "input": "e68070615d84"
+    },
+    {
       "id": "sessions.cancelSchedule",
       "risk": "write",
       "riskOf": false,
@@ -464,6 +677,75 @@
       },
       "legacyCommand": null,
       "input": "fab80600bbbe"
+    },
+    {
+      "id": "sessions.changes",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "session",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "sessions",
+            "changes"
+          ],
+          "positional": [
+            "sessionId"
+          ]
+        }
+      },
+      "legacyCommand": "sessionChanges",
+      "input": "cd8dabae9d20"
+    },
+    {
+      "id": "sessions.compact",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "session",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "sessions",
+            "compact"
+          ],
+          "positional": [
+            "sessionId"
+          ]
+        }
+      },
+      "legacyCommand": "compactConversation",
+      "input": "716323b9326b"
+    },
+    {
+      "id": "sessions.deleteUnsent",
+      "risk": "guarded",
+      "riskOf": true,
+      "scope": "session",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "sessions",
+            "deleteUnsent"
+          ],
+          "positional": [
+            "sessionId"
+          ]
+        }
+      },
+      "legacyCommand": "deleteUnsentSession",
+      "input": "f2f3b93dbb87"
     },
     {
       "id": "sessions.fork",
@@ -512,6 +794,29 @@
       "input": "18e4482f0f74"
     },
     {
+      "id": "sessions.lineage",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "session",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "sessions",
+            "lineage"
+          ],
+          "positional": [
+            "sessionId"
+          ]
+        }
+      },
+      "legacyCommand": "lineage",
+      "input": "196ff4b8d5bd"
+    },
+    {
       "id": "sessions.list",
       "risk": "read",
       "riskOf": false,
@@ -528,19 +833,19 @@
           ]
         }
       },
-      "legacyCommand": null,
+      "legacyCommand": "listSessions",
       "input": "9b44cafbe720"
     },
     {
       "id": "sessions.listMessages",
       "risk": "read",
       "riskOf": false,
-      "scope": "global",
+      "scope": "session",
       "modeGate": true,
       "hostScreenOnly": false,
       "surfaces": {
         "ui": true,
-        "mcp": false,
+        "mcp": "catalog",
         "cli": {
           "path": [
             "sessions",
@@ -552,7 +857,27 @@
         }
       },
       "legacyCommand": "listMessages",
-      "input": "b5d37837d86c"
+      "input": "e9dac191d271"
+    },
+    {
+      "id": "sessions.new",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "sessions",
+            "new"
+          ]
+        }
+      },
+      "legacyCommand": "newSession",
+      "input": "2796e364c1c8"
     },
     {
       "id": "sessions.read",
@@ -581,12 +906,12 @@
       "id": "sessions.resume",
       "risk": "write",
       "riskOf": false,
-      "scope": "global",
+      "scope": "session",
       "modeGate": true,
       "hostScreenOnly": false,
       "surfaces": {
         "ui": true,
-        "mcp": false,
+        "mcp": "catalog",
         "cli": {
           "path": [
             "sessions",
@@ -640,6 +965,29 @@
       },
       "legacyCommand": null,
       "input": "e62fd6215a96"
+    },
+    {
+      "id": "sessions.setAutoCompaction",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "session",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "sessions",
+            "autoCompaction"
+          ],
+          "positional": [
+            "sessionId"
+          ]
+        }
+      },
+      "legacyCommand": "setConversationAutoCompaction",
+      "input": "46ccb253749e"
     },
     {
       "id": "sessions.setModel",
@@ -712,6 +1060,52 @@
       },
       "legacyCommand": "setTitle",
       "input": "a2ea8053be13"
+    },
+    {
+      "id": "sessions.setTurnSettings",
+      "risk": "write",
+      "riskOf": true,
+      "scope": "session",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "sessions",
+            "next"
+          ],
+          "positional": [
+            "sessionId"
+          ]
+        }
+      },
+      "legacyCommand": "setTurnSettings",
+      "input": "ab66527a27f3"
+    },
+    {
+      "id": "sessions.suggestTitle",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "session",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "sessions",
+            "suggestTitle"
+          ],
+          "positional": [
+            "sessionId"
+          ]
+        }
+      },
+      "legacyCommand": "suggestTitle",
+      "input": "4084dc263114"
     },
     {
       "id": "settings.get",
@@ -801,6 +1195,10 @@
         }
       },
       "legacyCommand": "setPref",
+      "legacyAliases": [
+        "setAutoCompaction",
+        "setDelegationRouting"
+      ],
       "input": "cf5833e094bf"
     },
     {
@@ -825,6 +1223,50 @@
       },
       "legacyCommand": "createStatus",
       "input": "afc00334d287"
+    },
+    {
+      "id": "statuses.list",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "statuses",
+            "list"
+          ]
+        }
+      },
+      "legacyCommand": "listStatuses",
+      "input": "0843324c5576"
+    },
+    {
+      "id": "statuses.rename",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "statuses",
+            "rename"
+          ],
+          "positional": [
+            "from",
+            "to"
+          ]
+        }
+      },
+      "legacyCommand": "renameStatus",
+      "input": "23e6ec4470ab"
     },
     {
       "id": "statuses.setIcon",
@@ -1356,7 +1798,7 @@
     },
     {
       "name": "list_ops",
-      "input": "bb8cd515f6e5"
+      "input": "55672f8720ec"
     },
     {
       "name": "call_op",
@@ -1364,6 +1806,31 @@
     }
   ],
   "cli": [
+    {
+      "id": "agents.authStatus",
+      "path": "agents auth",
+      "positional": []
+    },
+    {
+      "id": "agents.efforts",
+      "path": "agents efforts",
+      "positional": []
+    },
+    {
+      "id": "agents.list",
+      "path": "agents list",
+      "positional": []
+    },
+    {
+      "id": "agents.models",
+      "path": "agents models",
+      "positional": []
+    },
+    {
+      "id": "agents.modes",
+      "path": "agents modes",
+      "positional": []
+    },
     {
       "id": "browser.listProfiles",
       "path": "browser listProfiles",
@@ -1389,6 +1856,26 @@
     {
       "id": "delegation.delegate",
       "path": "delegation delegate",
+      "positional": []
+    },
+    {
+      "id": "delegation.instructions",
+      "path": "delegation instructions",
+      "positional": [
+        "taskId"
+      ]
+    },
+    {
+      "id": "delegation.retry",
+      "path": "delegation retry",
+      "positional": [
+        "taskId",
+        "candidate"
+      ]
+    },
+    {
+      "id": "delegation.routing",
+      "path": "delegation routing",
       "positional": []
     },
     {
@@ -1488,10 +1975,52 @@
       "positional": []
     },
     {
+      "id": "sessions.abort",
+      "path": "sessions abort",
+      "positional": [
+        "sessionId"
+      ]
+    },
+    {
+      "id": "sessions.setAutoCompaction",
+      "path": "sessions autoCompaction",
+      "positional": [
+        "sessionId"
+      ]
+    },
+    {
       "id": "sessions.cancelSchedule",
       "path": "sessions cancel-schedule",
       "positional": [
         "id"
+      ]
+    },
+    {
+      "id": "sessions.cancelCompaction",
+      "path": "sessions cancelCompaction",
+      "positional": [
+        "sessionId"
+      ]
+    },
+    {
+      "id": "sessions.changes",
+      "path": "sessions changes",
+      "positional": [
+        "sessionId"
+      ]
+    },
+    {
+      "id": "sessions.compact",
+      "path": "sessions compact",
+      "positional": [
+        "sessionId"
+      ]
+    },
+    {
+      "id": "sessions.deleteUnsent",
+      "path": "sessions deleteUnsent",
+      "positional": [
+        "sessionId"
       ]
     },
     {
@@ -1509,6 +2038,13 @@
       ]
     },
     {
+      "id": "sessions.lineage",
+      "path": "sessions lineage",
+      "positional": [
+        "sessionId"
+      ]
+    },
+    {
       "id": "sessions.list",
       "path": "sessions list",
       "positional": []
@@ -1519,6 +2055,18 @@
       "positional": [
         "sessionId",
         "model"
+      ]
+    },
+    {
+      "id": "sessions.new",
+      "path": "sessions new",
+      "positional": []
+    },
+    {
+      "id": "sessions.setTurnSettings",
+      "path": "sessions next",
+      "positional": [
+        "sessionId"
       ]
     },
     {
@@ -1561,6 +2109,13 @@
       "positional": [
         "sessionId",
         "status"
+      ]
+    },
+    {
+      "id": "sessions.suggestTitle",
+      "path": "sessions suggestTitle",
+      "positional": [
+        "sessionId"
       ]
     },
     {
@@ -1615,6 +2170,19 @@
       "positional": [
         "status",
         "icon"
+      ]
+    },
+    {
+      "id": "statuses.list",
+      "path": "statuses list",
+      "positional": []
+    },
+    {
+      "id": "statuses.rename",
+      "path": "statuses rename",
+      "positional": [
+        "from",
+        "to"
       ]
     },
     {
