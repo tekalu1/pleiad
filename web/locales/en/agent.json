@@ -777,6 +777,8 @@
       "tasks": {
         "summary": "List delegated child tasks, newest first (request and result text are not included).",
         "parentSessionId": "Filter by the requesting conversation's id.",
+        "tree": "Use with parentSessionId. Also include tasks that child conversations delegated in turn.",
+        "taskIds": "Return only these task ids (at most 100).",
         "status": "Filter by status (queued, running, completed, and so on).",
         "limit": "Number of rows to return (default 20, max 100)."
       },

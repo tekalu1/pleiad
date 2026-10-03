@@ -186,8 +186,11 @@ export default async function (t) {
     const asked = await c.runTurn({ sessionId: first.sessionId, prompt: ply('ply_task_status', { taskId: forcedTask.taskId }) });
     const reply = (await c.cmd('loadSession', { sessionId: asked.sessionId })).messages.filter((m) => m.role === 'assistant').at(-1)?.text ?? '';
     t.ok('ply_task_status にも workspaceSummary と構造（ブランチ・場所・元・状態）', reply.includes(`"workspaceSummary":"作業場所: 分けた作業場所 ${forcedTask.worktree.branch}（未取り込み · 2 ファイル）`) && /"workspace":\{[^}]*"state":"unmerged"/.test(reply), reply.slice(0, 500));
+    // 終わって通知が届いたタスクは running に載らない。画面は会話の分（tree）を読む
     const running = await c.cmd('running');
-    t.ok('一覧（running）の委譲の行に、台帳に残っている印（未取り込みの表示に使う）', running.tasks.find((r) => r.taskId === forcedTask.taskId)?.worktree?.live === true);
+    const cards = await c.cmd('agentTasks', { sessionId: first.sessionId, tree: true });
+    t.ok('会話の分の委譲の行に、台帳に残っている印（未取り込みの表示に使う）。running には載らない',
+      cards.find((r) => r.taskId === forcedTask.taskId)?.worktree?.live === true && !running.tasks.some((r) => r.taskId === forcedTask.taskId), JSON.stringify(running.tasks.map((r) => r.taskId)));
     const panel2 = await c.cmd('gitPanel', { sessionId: first.sessionId });
     const leftTask = panel2.worktrees.leftovers.find((x) => x.branch === forcedTask.worktree.branch);
     t.ok('残っている作業場所に出る: 取り込みを頼む相手は依頼元の会話', leftTask?.mergeSessionId === first.sessionId && leftTask.purpose === 'task' && leftTask.files === 2, JSON.stringify(leftTask));
