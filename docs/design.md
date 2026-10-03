@@ -198,11 +198,11 @@ Codex は `model/list` の `supportedReasoningEfforts` を候補として `turn/
 
 使用量の上限は [ADR 0093](adr/0093-resume-after-usage-limit.md) に従う。`turnResult.outcome: limited` を正常終了・失敗と分け、`interrupted: { at, reason: "limit", resetsAt, window, account, backend, autoResume }` を保存する。Claude は SDK の `rate_limit_event` と合成 assistant の `error: rate_limit`、Codex は失敗の文と `account/rateLimits/read` の解除時刻で判定する。Antigravity は上限の失敗を安定して識別できる形がまだ確認できていないため対象外とする。解除時刻が分かり 12 時間以内なら既定で自動再開し、それ以外は人が確かめる。`user`・`update`・`quit`・`hostAway`・`restart` は ADR 0036 の押して再開する規則を保つ。
 
-上限中に受け付けた指示は送信待ちの `waiting: { reason: "limit", resetsAt }` に置き、API には渡さない。解除後は保留・配送失敗の指示、続く待機指示を順に送り、無ければ `resume.prompt.limit` を見える発言として送る。結果不明の指示は自動で送らない。最初の指示を重ねて送らない。解除時刻が分かる予定はデータ置き場の `schedule.json` に `kind: resume` で永続化し、起動時とスリープ解除時に確かめ直す。段階 2 の送信予定は同じ形式に `kind: send` を足す。放置時の自動圧縮は、上限中の会話では予約しない。
+上限中に受け付けた指示は送信待ちの `waiting: { reason: "limit", resetsAt }` に置き、API には渡さない。解除後は保留・配送失敗の指示、続く待機指示を順に送り、無ければ `resume.prompt.limit` を見える発言として送る。結果不明の指示は自動で送らない。最初の指示を重ねて送らない。解除時刻が分かる予定はデータ置き場の `schedule.json` に `kind: resume` で永続化し、起動時とスリープ解除時に確かめ直す。日時を指定した送信は同じ形式の `kind: send`（「送信予定」）。放置時の自動圧縮は、上限中の会話では予約しない。
 
 再開待ち行列は委譲の子を親より先に置き、通常の会話は最後に人が送った順とする。既定は同時に 3 件、新しい枠の使用率が 50% 以上なら未開始分を止める。再び上限なら新しい解除時刻で並べ直す。設定 `limitResume` は `mode: auto|ask|off`、`concurrency: 1|2|3|all`（全部は 0）、`guardPercent: 30|50|null`（なしは null）。アカウントは自動で替えず、Claude の別アカウントを人が選んだときだけ切り替える。再開・予定・順番は `sessions.resume`、`sessions.listMessages`、`sessions.schedules`、`sessions.cancelSchedule`、`resumeQueue.get/set` の操作で画面と CLI に出す。
 
-自動再開する上限は完了通知と未確認の丸を出さない。自動再開しない上限と、解除が 12 時間より先の上限は失敗として通知する。「解除時に知らせる」を選んだ会話は、解除時に画面の再開の一行とスマホの `limitReady` 通知を出し、人が押したら再開待ち行列に渡す。新しい枠の使用率の歯止めで行列が止まったら `limitGuarded` 通知を一度出す。通知の題とロック画面の文には会話本文を含めない。
+自動再開する上限は完了通知と未確認の丸を出さない。自動再開しない上限と、解除が 12 時間より先の上限は失敗として通知する。「解除時に知らせる」を選んだ会話は、解除時に画面の再開の一行とスマホの `limitReady` 通知を出し、人が押したら再開待ち行列に渡す。新しい枠の使用率の歯止めで行列が止まったら `limitGuarded` 通知を一度出す。送信予定の時刻を過ぎて送らなかったら `scheduleMissed` 通知を出す（「送信予定」）。通知の題とロック画面の文には会話本文を含めない。
 
 - 保存: ターンが中断で終わったら（`turnResult` が aborted。止めた後に失敗として終わったものも含む）、sidecar の会話の行に `interrupted: { at, reason }` を書く。`at` は同じターンの `completedAt` と同じ値（確認済みの印 `readAt` は `completedAt` で丸めるので、ずらすと未読から戻れない）。次のターンの開始で `null` にする。始まらなかったターン（開始前の失敗）と requeue は消さない・書かない。
 - 理由（`reason`）: `user`（中断ボタン）・`update`（更新のため）・`quit`（終了のため）・`hostAway`（`AGENT_HOST_GRACE_MS` の猶予切れ）・`restart`（落ちた・強制終了）。
@@ -258,6 +258,19 @@ Electron main が electron-updater と更新設定を持ち、sandbox preload �
 更新は自動確認・自動ダウンロード（設定でオフにできる）・明示的な再起動に分ける。脇の通知は後回しにでき、詳細と再起動の確認は設定画面で行う。更新時のサーバーロックは処理中コマンド、ターン、承認、送信キューの処理を確認し、新規処理の開始と終了判定の競合を防ぐ。実行中の作業があっても断らず、「中断して更新」で全部を中断して（理由 `update`）止まり終えてから更新する（「中断と再開」、[ADR 0036](adr/0036-interrupt-and-update-while-running.md)）。
 安定版・先行版と段階配信の公開手順、署名資格情報、データ形式の互換性は `docs/desktop-releases.md`。
 コードと配布先は public リポジトリ `tekalu1/pleiad` にまとめ、自己署名の評価版を Releases で配布する。Actions は自分のリポジトリ（`github.repository`）へ標準の GITHUB_TOKEN でアップロードする。アプリに焼き込む更新フィードはアップロード先と分け、既定は `tekalu1/pleiad`（`PLY_RELEASE_REPOSITORY` で上書き）。自動更新に GitHub のログインは要らない。Electron main は起動環境または GitHub CLI からトークンを毎回探し、あれば付けて（レート制限を避けるため）、無ければ認証ヘッダーなしで同じプロバイダーを使う。トークンは画面・設定保存・サーバーへ渡さない。認証なしの 403/429 はレート制限として案内し、トークンを付けた 401/403 だけ資格情報の確認を案内する。非公開GitHubプロバイダー用のメタデータ名は先行版も `latest*.yml` とする。
+
+## 送信予定（2026-10-03）
+
+承認済み（2026-10-03）。日時を指定して送る。理由と決定は [ADR 0094](adr/0094-scheduled-send.md)、見た目は `docs/design-system.md`「送信日時の指定」。
+
+- 予定は送信待ち（outbox）の状態にせず、`schedule.json` に `{ id: "send:<messageId>", kind: "send", sessionId, messageId, at, createdAt, by, args: { prompt, attachments?, cwd?, mode? } }` で持つ（形と判定は `core/send-schedule.mjs`、置き場は `core/schedule.mjs`）。`at` は UTC のミリ秒。置けるのは「今から 1 秒より先・1 年以内」で、1 会話 50 件・全体 500 件まで。同じ `messageId` で同じ内容の置き直しは 1 件のまま、内容が違えば断る。
+- 時刻が来たら `acceptSend`（画面の `sendMessage` と同じ入口。中断した会話の保留を先に戻す規則も同じ）で、本文に `scheduledFor`（予定の時刻）を添えて送信待ちの末尾へ入れる。会話が走っていれば「作業が終わると自動で送信」、上限で止まっていれば解除まで（`waiting: { reason: "limit" }`）待つ。送れなければ（失敗）1 分後に再試行し、予定の時刻 `at` は変えない。会話が無くなっていれば捨てる。
+- 遅れの扱い: 起動時とスリープ解除（デスクトップの `powerMonitor` から worker へ `wake`）に期限を確かめる。遅れが 1 時間（`GRACE_MS`）以内なら送る。それより遅れたら送らず、行に `held: "missed"` を付けて残し（再起動しても発火しない）、脇の行に三角と「送信予定を過ぎた」、スマホに通知 `scheduleMissed`（起動の 15 秒後にもう一度だけ確かめて送る）を出す。人が［今すぐ送る］か［取り消す］を選ぶ。PC のスリープは防がない。
+- 履歴: 予定で送った発言は会話の sidecar `scheduledSends`（本文と予定の時刻。30 件まで）に覚え、`loadSession` の発言に `scheduledFor` を付ける。`userMessage` の知らせも `scheduledFor` を持つ。画面は、送られた時刻が予定より 2 分以上遅れた発言にだけ「9:00 の予定を 9:32 に送りました」を出す。
+- 終了の確認（デスクトップ）: `runningWork()` が `scheduled: { send, held, resume, nextSendAt }` を返す。作業が無くても、送信予定か上限の解除後の再開があれば、終了の前に「送信予定が N 件（次は …）、上限の解除後の再開が M 件あります。終了している間は送られません。」を確かめる（作業があるときはその確認の文に足す）。
+- ホスト・端末: WS の `ready` に `hostTimeZone`。日時の面の「PC の時刻: …」は端末の時刻帯がこれと違うときだけ出し、「閉じている間は送れません」の一言は、窓を閉じるとサーバーが終わる設定（`remoteStatus` の `resident.available` かつ リモートが無効か `keepRunning` が切）のときだけ出す。
+- 操作の一覧: `sessions.scheduleSend { sessionId, prompt, at, messageId?, attachments?, cwd?, mode? }`・`sessions.sendScheduledNow { id }`（どちらも `guarded`。画面と CLI だけで MCP には出さない。エージェントに送信予定を作らせない）、`sessions.schedules`・`sessions.cancelSchedule { id }`（送信予定は取り出して `entry` を返す。「編集」はこれで本文を入力欄へ戻す）。「今すぐ送る」は取り出した予定を同じ入口で送り、送れなければ予定へ戻す。CLI は `pleiad sessions schedule-send` ほか。
+- スマホ・リモートからも同じ一覧が見え、取り消し・今すぐ送る・編集ができる（予定はサーバーが持ち、`schedules` イベントで全部の画面へ配る）。
 
 ## 作業中のメッセージ送信（2026-09-12）
 

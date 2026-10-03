@@ -142,6 +142,15 @@ class NotifyPlannerTest {
         assertTrue(p.onNotice(notice(NoticeKind.LIMIT_GUARDED, "s4"), noFailed).isEmpty())
     }
 
+    @Test fun scheduleMissedRequiresAttentionAndFollowsFailurePreference() {
+        val post = p.onNotice(notice(NoticeKind.SCHEDULE_MISSED, "s1"), on).single() as NotifyAction.Post
+        assertEquals(NoticeKind.SCHEDULE_MISSED, post.kind)
+        assertTrue(post.attention)
+        assertEquals(listOf<NotifyAction>(NotifyAction.Cancel(slot("s1"))),
+            p.onNotice(notice(NoticeKind.CANCEL, "s1", cancel = "seen"), on))
+        assertTrue(p.onNotice(notice(NoticeKind.SCHEDULE_MISSED, "s2"), NotifySettings(enabled = true, failed = false)).isEmpty())
+    }
+
     @Test fun anApprovalOverwritesAFinishedConversationAndLeavesTheBundle() {
         p.onNotice(notice(NoticeKind.DONE, "a"), on); p.onNotice(notice(NoticeKind.DONE, "b"), on)
         val out = p.onNotice(notice(NoticeKind.APPROVAL, "a", id = "p9"), on)
