@@ -11,6 +11,16 @@
     "failedTitle": "Pleiad failed to start"
   },
   "quit": {
+    "scheduledTitle": "Quit Pleiad?",
+    "scheduledSend_one": "{{count}} scheduled message{{next}}",
+    "scheduledSend_other": "{{count}} scheduled messages{{next}}",
+    "scheduledSendNext": " (next: {{time}})",
+    "scheduledResume_one": "{{count}} resume after a usage limit",
+    "scheduledResume_other": "{{count}} resumes after a usage limit",
+    "scheduledJoin": ", ",
+    "scheduledTail": " waiting. Nothing is sent while Pleiad is closed.",
+    "scheduledLate": " When Pleiad opens again, scheduled messages up to an hour late are still sent.",
+    "quitAnyway": "Quit",
     "checkFailed": "Could not check what is running. Wait a moment, then close again.",
     "busyTitle": "Work is still running",
     "busyMessage": "Work is still running. If you stop it and quit, the stopped conversations are kept with ⚠ the next time you start Pleiad, and Resume continues from where they left off. Waiting approvals are denied.",

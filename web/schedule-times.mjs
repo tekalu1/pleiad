@@ -27,7 +27,7 @@ export function dateText(at) {
 
 /** 今日なら「9:00」、ほかの日は「10/4（日）9:00」 */
 export const whenText = (at, now = Date.now()) =>
-  new Date(at).toDateString() === new Date(now).toDateString() ? timeText(at) : `${dateText(at)} ${timeText(at)}`;
+  new Date(at).toDateString() === new Date(now).toDateString() ? timeText(at) : t('schedule.dateTime', { date: dateText(at), time: timeText(at) });
 
 /** 長さ（ミリ秒）を「41 分」「1 時間 5 分」「1 日 7 時間」にする（分未満は切り上げて 1 分） */
 export function spanText(ms) {

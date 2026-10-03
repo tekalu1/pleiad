@@ -67,6 +67,7 @@ export default async function (t) {
   t.ok('返事が要るとき（承認・質問）は reply の設定に従う', decide('approval').send && decide('question').send && !decide('approval', { reply: false }).send && !decide('question', { reply: false }).send);
   t.ok('失敗は failed の設定に従う', decide('failed').send && !decide('failed', { failed: false }).send);
   t.ok('再開待ち行列の歯止めは失敗通知の設定に従う', decide('limitGuarded').send && !decide('limitGuarded', { failed: false }).send);
+  t.ok('送信予定を過ぎて送らなかった通知は失敗通知の設定に従う', decide('scheduleMissed').send && !decide('scheduleMissed', { failed: false }).send);
   t.ok('完了は done の設定に従う', decide('done').send && !decide('done', { done: false }).send);
   t.ok('知らない種類は送らない', decide('weird').reason === 'kind');
   t.ok('2 分より古い完了は送らない（失敗・返事待ちには効かない）', decide('done', {}, { completedAt: now - STALE_DONE_MS - 1 }).reason === 'stale'
@@ -151,6 +152,9 @@ export default async function (t) {
   reset();
   notifier.limitGuarded({ sessionId: 's8', title: '確認する会話' });
   t.ok('歯止めで止まったらスマホに確認を知らせる', sent.length === 2 && sent.every(s => s.notice.kind === 'limitGuarded'));
+  reset();
+  notifier.scheduleMissed({ sessionId: 's9', title: '送れなかった会話' });
+  t.ok('送信予定を過ぎたらスマホに確認を知らせる', sent.length === 2 && sent.every(s => s.notice.kind === 'scheduleMissed'));
   reset();
   notifier.viewed('s2');
   t.ok('完了を見たら、出ている完了の通知を消す（seen）', sent.length === 1 && sent[0].id === 'dPhone' && sent[0].notice.cancel === 'seen' && sent[0].notice.session === 's2');

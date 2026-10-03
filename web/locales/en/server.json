@@ -828,6 +828,13 @@
     "openFailed": "Cannot open the folder: {{dir}}",
     "invalidPath": "Invalid path."
   },
+  "schedule": {
+    "invalidTime": "Couldn't read the send time",
+    "past": "A time in the past or right now can't be scheduled. Send the message instead",
+    "tooFar": "Scheduled messages can be at most a year ahead",
+    "full": "A conversation can hold at most {{max}} scheduled messages",
+    "notFound": "The scheduled message wasn't found (it may already be sent or cancelled)"
+  },
   "queue": {
     "idConflict": "Cannot change the content under the same send ID.",
     "full": "Up to {{max}} messages can wait to be sent.",

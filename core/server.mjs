@@ -54,6 +54,7 @@ import * as history from "./history.mjs";
 import { createMessageQueue } from "./message-queue.mjs";
 import { createSchedule } from './schedule.mjs';
 import { createResumeQueue, normalizeLimitResume } from './resume-queue.mjs';
+import { buildSendRow, decideFire, sendArgs, decorateScheduled, addRecord, MAX_PER_SESSION, MAX_TOTAL } from './send-schedule.mjs';
 import { createCompactionScheduler, idleCompactionGuards } from './compaction-scheduler.mjs';
 import { normalizeCompactionSettings } from './compaction-settings.mjs';
 import { mergeCompactionHistory, attachCompactSummaries } from './compaction-history.mjs';
@@ -2241,8 +2242,23 @@ function opsDeps(lng = currentLocale()) {
       resume: resumeSession,
       messages: id => outbox.list(id),
       schedules: id => schedule.list().filter(row => !id || row.sessionId === id),
+      scheduleSend: (input, by) => scheduleSendMessage(input, by),
+      // 「今すぐ送る」。取り出した予定を同じ入口で送る。送れなければ予定に戻す（失っても二重にもしない）
+      sendScheduledNow: async id => {
+        if (schedule.get(id)?.kind !== 'send') throw new Error(t('schedule.notFound'));
+        const taken = await schedule.take(id);
+        if (!taken) throw new Error(t('schedule.notFound'));
+        try { await sendScheduledNow(taken); }
+        catch (e) { await schedule.put(taken).catch(() => {}); throw e; }
+        return { sent: true, sessionId: taken.sessionId, messageId: taken.messageId };
+      },
       cancel: async id => {
         const row = schedule.list().find(entry => entry.id === id);
+        // 送信予定は取り出して返す（画面の「編集」は本文を入力欄へ戻す。取り出したものは時刻が来ても動かない）
+        if (row?.kind === 'send') {
+          const taken = await schedule.take(id);
+          return { cancelled: Boolean(taken), ...(taken ? { entry: taken } : {}) };
+        }
         const cancelled = await schedule.cancel(id);
         if (cancelled && row?.kind === 'resume') {
           const meta = await store.get(row.sessionId);
@@ -2405,10 +2421,15 @@ async function runningWork() {
     kind: "background", ...b, tasks: b.tasks.map((x) => ({ ...x })),
   }));
 
+  const dueRows = schedule.list();
   return {
     turns,
     permissions,
     subagents,
+    // 終了している間は動かない予定（送信予定・上限の解除後の再開）。終了の確認に件数と次の時刻を出す
+    scheduled: { send: dueRows.filter(r => r.kind === 'send' && !r.held).length, held: dueRows.filter(r => r.kind === 'send' && r.held).length,
+      resume: dueRows.filter(r => r.kind === 'resume').length,
+      nextSendAt: Math.min(Infinity, ...dueRows.filter(r => r.kind === 'send' && !r.held).map(r => r.at)) },
     tasks: (live => agentTasks?.list().map(({ result, ...r }) => (r.worktree ? { ...r, worktree: { ...r.worktree, live: live.has(r.worktree.id) } } : r)) ?? [])(new Set(worktreeHost.worktrees.ids().map(x => x.id))),
     background,
     // 中継の複製は数えない。1つの承認が会話の数だけ増えて見える
@@ -2703,6 +2724,7 @@ const outbox = createMessageQueue({
     // 受理と「エージェントに渡った」は別。後から合図を出せるバックエンド（steerConfirms）の分だけ
     // pending を立て、画面は渡るまで待っていることを出す。出せないバックエンドは今までどおり即時扱い
     emitGlobal({ type: 'userMessage', sessionId, messageId: item.id, text: item.args.prompt, at: item.at,
+      ...(item.args.scheduledFor ? { scheduledFor: item.args.scheduledFor } : {}),
       ...(turn.control.steerConfirms ? { pending: true } : {}) });
     if (item.args.attachments?.length) {
       (turn.steeredAttachments ??= []).push({ key: item.id, prompt: item.args.prompt });
@@ -3326,7 +3348,8 @@ async function runTurnInternal(args, onStarted, hooks) {
         const stops = (await store.get(sessionId).catch(() => null))?.stops;
         interruption = interruptionNote(agentLocale, stops, stops?.reason);
       }
-      if (args.messageId) emit({ type: "userMessage", messageId: args.messageId, text: String(prompt ?? ""), at: args.at, initial: true, pending: true });
+      if (args.messageId) emit({ type: "userMessage", messageId: args.messageId, text: String(prompt ?? ""), at: args.at, initial: true, pending: true,
+        ...(args.scheduledFor ? { scheduledFor: args.scheduledFor } : {}) });
       if (interruption) emit({ type: 'interruptionNote', text: interruption.body, ...(args.messageId ? { messageId: args.messageId } : {}) });
       broadcastRunning();
       syncRunningPoll();
@@ -4015,6 +4038,17 @@ async function resumeSession(sessionId) {
   }
 }
 
+/**
+ * 送信を受け付ける（画面の送信・送信予定の時刻・「今すぐ送る」が同じ入口）。
+ * 中断した会話に新しい指示を送ったら、中断で保留になった未送信を先に並びのまま送り直す（再開と同じ）。
+ * 戻さないと新しい指示は保留の後ろで順番を待ち続ける。画面は「保留中の N 件の後にこの指示で続けます」と出している
+ */
+async function acceptSend(sessionId, messageId, args) {
+  if (!sessionBusy(sessionId) && interruptedOf((await store.get(sessionId)).interrupted)?.reason !== 'limit'
+    && (await outbox.list(sessionId)).some(m => m.status === 'paused')) await outbox.retryPaused(sessionId);
+  return outbox.accept(sessionId, messageId, args);
+}
+
 async function limitSentAt(sessionId, fallback) {
   const items = await outbox.list(sessionId).catch(() => []);
   return Math.max(fallback, ...items.filter(item => item.status !== 'cancelled')
@@ -4045,6 +4079,7 @@ const resumeQueue = createResumeQueue({
 const schedule = createSchedule({ file: path.join(store.dataDir, 'schedule.json'),
   changed: entries => emitGlobal({ type: 'schedules', sessionId: null, entries }),
   fire: async row => {
+    if (row.kind === 'send') return fireScheduledSend(row);
     if (row.kind !== 'resume') throw new Error(`Unsupported schedule kind: ${row.kind}`);
     const meta = await store.get(row.sessionId);
     if (meta.interrupted?.reason !== 'limit' || meta.interrupted.at !== row.createdAt) return;
@@ -4061,6 +4096,57 @@ const schedule = createSchedule({ file: path.join(store.dataDir, 'schedule.json'
       priority: row.priority ?? (meta.delegation ? 1 : 0) });
   },
 });
+
+/**
+ * 送信予定の時刻が来た。ふつうの送信と同じ入口（acceptSend）から送信待ちの末尾へ入れるので、会話が走っていれば
+ * 「作業が終わると自動で送信」で待ち、上限で止まっていれば解除まで待つ。予定は送信待ちの順番を塞がない。
+ * 遅れが 1 時間以内なら送り、それより遅れていたら送らずに行を残して確かめさせる（ADR 0094）
+ */
+async function fireScheduledSend(row) {
+  if (!(await resolveBackendForSession(row.sessionId).catch(() => null))) {
+    console.error(`  送信予定を捨てた（会話が無い）: ${row.sessionId}`);
+    return undefined;
+  }
+  if (decideFire(row).action === 'hold') {
+    notifyScheduleMissed(row);
+    return { hold: 'missed' };
+  }
+  await sendScheduledNow(row);
+  return undefined;
+}
+
+/** 送らずに確かめを待っている予定をスマホに知らせる（一度だけ。起動の直後はリモートがまだつながっていないので遅らせて呼ぶ） */
+function notifyScheduleMissed(row) {
+  if (row.notified) return;
+  void conversationTitleOf(row.sessionId).then(title => pushNotifier.scheduleMissed({ sessionId: row.sessionId, title }))
+    .then(sent => (sent?.length ? schedule.patch(row.id, { notified: true }) : null)).catch(() => {});
+}
+
+/** 予定の発言を送信待ちへ渡す。遅れて送ったことを、履歴の発言に添えるため会話に覚える（decorateScheduled） */
+async function sendScheduledNow(row) {
+  compactionScheduler.cancel(row.sessionId);
+  await acceptSend(row.sessionId, row.messageId, sendArgs(row));
+  const meta = await store.get(row.sessionId);
+  await store.setSessionData(row.sessionId, 'scheduledSends', addRecord(meta.scheduledSends, row));
+}
+
+/** 予定を置く。会話ごと・全体の数を絞り、同じ messageId の置き直しは 1 件のまま（二重の予定を作らない） */
+async function scheduleSendMessage(input, by = 'human') {
+  const { sessionId } = input ?? {};
+  if (!sessionId || !refuseRetired(await resolveBackendForSession(sessionId))) throw new Error(t('session.notFound'));
+  const row = buildSendRow({ ...input, sessionId, by });
+  const rows = schedule.list().filter(r => r.kind === 'send');
+  const existing = rows.find(r => r.id === row.id);
+  if (existing) {
+    if (JSON.stringify(existing.args) !== JSON.stringify(row.args) || existing.sessionId !== row.sessionId || existing.at !== row.at)
+      throw new Error(t('queue.idConflict'));
+    return { id: existing.id, at: existing.at, messageId: existing.messageId };
+  }
+  if (rows.filter(r => r.sessionId === sessionId).length >= MAX_PER_SESSION || rows.length >= MAX_TOTAL)
+    throw new Error(t('schedule.full', { max: MAX_PER_SESSION }));
+  await schedule.put(row);
+  return { id: row.id, at: row.at, messageId: row.messageId };
+}
 
 wss.on("connection", (ws, req) => {
   // OS の操作（revealPath / openPath）を許すのは、サーバーのある PC の画面からの接続だけ（core/os-open.mjs）
@@ -4086,6 +4172,8 @@ wss.on("connection", (ws, req) => {
     notify: 1,
     // 画面の言語。setting は設定値（auto|ja|en）、lang は実際に使う言語（ja|en）
     locale,
+    // 送信予定の時刻をこの PC の時刻でも添えるため（見ている端末と時刻帯が違うとき。ADR 0094）
+    hostTimeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
   }));
   ws.on("close", () => {
     detach(ws);
@@ -4605,7 +4693,8 @@ wss.on("connection", (ws, req) => {
         case "deleteUnsentSession": {
           const { sessionId } = msg.args ?? {};
           if (!sessionId || switching.has(sessionId) || forking.has(sessionId) || runtime.turns.has(sessionId)
-              || (await outbox.list(sessionId)).some(m => !['sent', 'cancelled'].includes(m.status))) throw new Error(t('session.cannotDeleteBusy'));
+              || (await outbox.list(sessionId)).some(m => !['sent', 'cancelled'].includes(m.status))
+              || schedule.list().some(row => row.sessionId === sessionId && row.kind === 'send')) throw new Error(t('session.cannotDeleteBusy'));
           switching.add(sessionId);
           try {
             if (!(await store.get(sessionId)).unsent) throw new Error(t('session.onlyUnsentDeletable'));
@@ -4672,11 +4761,7 @@ wss.on("connection", (ws, req) => {
             const rewound = await rewindConversation({ sessionId, beforeMessageId: rewind.beforeMessageId, stopRunning: rewind.stopRunning === true });
             return reply(true, { ...(await outbox.accept(sessionId, messageId, args)), rewind: rewound });
           }
-          // 中断した会話に新しい指示を送ったら、中断で保留になった未送信を先に並びのまま送り直す（再開と同じ）。
-          // 戻さないと新しい指示は保留の後ろで順番を待ち続ける。画面は「保留中の N 件の後にこの指示で続けます」と出している
-          if (!sessionBusy(sessionId) && interruptedOf((await store.get(sessionId)).interrupted)?.reason !== 'limit'
-            && (await outbox.list(sessionId)).some(m => m.status === 'paused')) await outbox.retryPaused(sessionId);
-          return reply(true, await outbox.accept(sessionId, messageId, args));
+          return reply(true, await acceptSend(sessionId, messageId, args));
         }
         // 入力欄の `!`（シェルの行。ADR 0054）。人の操作なので承認モードは掛けない。送信待ちにも送り直しの控えにも積まない
         case 'runShell': {
@@ -4867,6 +4952,8 @@ wss.on("connection", (ws, req) => {
             // 渡さなかった分は、次の人の発言の前に差す（ADR 0055）
             data.messages = msg.args?.outline ? shellRuns.decorate(data.messages, sidecar, backend)
               : [...shellRuns.placeKept(shellRuns.decorate(data.messages, sidecar, backend), sidecar), ...shellRuns.rows(sessionId, sidecar)];
+            // 送信予定で送った発言には、予定の時刻を付ける（画面は遅れて送ったものにだけ「9:00 の予定を 9:32 に送りました」を出す）
+            if (!msg.args?.outline) data.messages = decorateScheduled(data.messages, sidecar.scheduledSends);
             // 系譜の照合（web/branches.mjs）は uuid・役割・本文・ツール名しか見ない。
             // ツール結果や提示まで載せると、家族を開くたびに数十MBが流れて画面が止まる
             if (msg.args?.outline) return reply(true, { messages: data.messages.map(m => ({
@@ -5544,4 +5631,6 @@ for (const [id, meta] of Object.entries(await store.getAll())) {
   if (meta.interrupted?.reason === 'limit') limitStates.set(id, interruptedOf(meta.interrupted));
 }
 await schedule.restore().catch(err => console.error('  再開の予定を戻せませんでした:', String(err?.message ?? err)));
+// 起動のときに過ぎていた送信予定の知らせは、リモートがつながってからでないと届かない。落ち着いたころにもう一度だけ確かめる
+setTimeout(() => { for (const row of schedule.list()) if (row.kind === 'send' && row.held && !row.notified) notifyScheduleMissed(row); }, 15_000).unref();
 server.listen(PORT, HOST, announce);

@@ -253,18 +253,39 @@ async function boot() {
   }
 }
 
+/** 終了の確認に足す、動かなくなる予定の文（送信予定の件数と次の時刻・上限の解除後の再開の件数）。無ければ null */
+function scheduledText(scheduled) {
+  const send = Number(scheduled?.send) || 0;
+  const resume = Number(scheduled?.resume) || 0;
+  if (!send && !resume) return null;
+  const next = Number.isFinite(scheduled?.nextSendAt)
+    ? t('quit.scheduledSendNext', { time: new Date(scheduled.nextSendAt).toLocaleString(undefined, { month: 'numeric', day: 'numeric', weekday: 'short', hour: 'numeric', minute: '2-digit' }) }) : '';
+  const parts = [send ? t('quit.scheduledSend', { count: send, next }) : '', resume ? t('quit.scheduledResume', { count: resume }) : ''].filter(Boolean);
+  return parts.join(t('quit.scheduledJoin')) + t('quit.scheduledTail') + (send ? t('quit.scheduledLate') : '');
+}
+
 async function closeSafely() {
   if (updates?.state.phase === 'installing') return;
   if (closing) return;
   closing = true;
   try {
     const work = await runningWork();
+    const waiting = scheduledText(work.scheduled);
     if (work.count > 0) {
-      // 「作業に戻る」か「中断して終了」（reason: quit。中断した会話は次の起動で残り、「再開」で続けられる。ADR 0036）
-      const { response } = await dialog.showMessageBox(window, { type: 'info', title: t('quit.busyTitle'), message: t('quit.busyMessage'),
+      // 「作業に戻る」か「中断して終了」（reason: quit。中断した会話は次の起動で残り、「再開」で続けられる。ADR 0036）。
+      // 送信予定・上限の解除後の再開があれば、終了している間は動かないことも添える
+      const { response } = await dialog.showMessageBox(window, { type: 'info', title: t('quit.busyTitle'),
+        message: waiting ? `${t('quit.busyMessage')}
+
+${waiting}` : t('quit.busyMessage'),
         buttons: [t('quit.backToWork'), t('quit.abortAndQuit')], defaultId: 0, cancelId: 0, noLink: true });
       if (response !== 1) return;
       await abortAll('quit');
+    } else if (waiting) {
+      // 作業が無くても、送信予定や再開の予定があれば確かめる（終了している間は送られない。ADR 0094）
+      const { response } = await dialog.showMessageBox(window, { type: 'info', title: t('quit.scheduledTitle'), message: waiting,
+        buttons: [t('quit.backToWork'), t('quit.quitAnyway')], defaultId: 0, cancelId: 0, noLink: true });
+      if (response !== 1) return;
     }
     quitting = true; worker.postMessage({ type: 'shutdown' }); app.quit();
   } catch (e) { await dialog.showMessageBox(window, { message: e.message, buttons: [t('common.back')] }); }

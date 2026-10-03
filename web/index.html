@@ -241,6 +241,8 @@
           <span class="crow-gap"></span>
           <!-- 「保存済み」: 行の空きに弱い字で。700px 以下では出さない（保存の失敗は上の #draftFail） -->
           <button type="button" class="btn draft-saved" id="draftSaved" aria-live="polite"></button>
+          <!-- 日時を指定した送信（編集で戻したもの）の時刻。× で外せばふつうの送信になる -->
+          <span class="chip armed" id="armedChip" hidden><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8"/><path d="M12 7v5l3 2"/></svg><span class="v" id="armedText"></span><button type="button" class="x" id="armedRemove" data-i18n-aria-label="schedule.armedRemove" data-i18n-title="schedule.armedRemove"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button></span>
           <!-- 接続先（互換の接続先）はモデルのチップの面の中で選ぶ（入力欄の行に専用の欄は置かない） -->
           <button type="button" class="chip model" id="modelChip" aria-controls="modelPop"></button>
           <!-- 承認モード。人間だけが変えられる（AI 用のツールは生やさない） -->
@@ -250,15 +252,20 @@
           <!-- 再開。中断状態・走っていない・欄が空のときだけ、中断と同じ位置に（web/interrupt.mjs）。保留があれば「保留中の N 件を送って再開」。上限で止まった会話は再生の三角が時計・字は「◷ 2:30 に再開」に替わり、▾ から面が開く -->
           <button type="button" class="btn btn-quiet resume" id="resume" hidden data-i18n-title="interrupt.resume" data-i18n-aria-label="interrupt.resume"><svg class="i resume-play" viewBox="0 0 24 24" aria-hidden="true"><path d="M8.5 6.2v11.6a.8.8 0 0 0 1.2.7l9-5.8a.8.8 0 0 0 0-1.4l-9-5.8a.8.8 0 0 0-1.2.7z"/></svg><svg class="i resume-clock" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8"/><path d="M12 7v5l3 2"/></svg><span id="resumeLabel" data-i18n="interrupt.resume"></span><svg class="i resume-caret" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 10l5 5 5-5"/></svg></button>
           <button type="submit" class="btn btn-primary send" id="send" data-i18n-title="chat.composer.sendTitle" data-i18n-aria-label="chat.composer.sendTitle"><svg class="i i-send" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 3L10 14M21 3l-7 18-4-7-7-4z"/></svg><svg class="i i-run" viewBox="0 0 24 24" aria-hidden="true"><path d="M8.5 6.2v11.6a.8.8 0 0 0 1.2.7l9-5.8a.8.8 0 0 0 0-1.4l-9-5.8a.8.8 0 0 0-1.2.7z"/></svg></button>
+          <!-- 送信の円の右の ▾。日時を指定して送る面（web/send-menu.mjs）。右クリック・長押し・Ctrl+Shift+Enter でも開く。480px 以下は出さない（長押しで下からシート） -->
+          <button type="button" class="send-more" id="sendMore" aria-controls="sendPop" data-i18n-title="schedule.sendMoreTitle" data-i18n-aria-label="schedule.sendMore"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 10l5 5 5-5"/></svg></button>
         </div>
       </div>
       <!-- 中断中に字を書いたときだけ見える一行。書いていない間も高さは取っておく（.quiet） -->
       <div class="resume-note quiet" id="resumeNote" hidden data-i18n="interrupt.resumeNote"></div>
       <div class="resume-note" id="newLimitWarning" hidden></div>
+      <div class="resume-note" id="armedNote" hidden></div>
       <div class="pop cpop" id="cwdPop" role="dialog" data-i18n-aria-label="chat.composer.cwd" hidden></div>
       <div class="pop cpop" id="modelPop" role="dialog" data-i18n-aria-label="chat.composer.model" hidden></div>
       <div class="pop cpop" id="modePop" role="dialog" data-i18n-aria-label="chat.composer.mode" hidden></div>
       <div class="pop cpop" id="limitResumePop" role="dialog" data-i18n-aria-label="interrupt.limitMenu" hidden></div>
+      <div class="pop cpop send-pop" id="sendPop" role="menu" data-i18n-aria-label="schedule.menuTitle" hidden></div>
+      <div class="send-veil" id="sendVeil" hidden></div>
     </form>
     <dialog id="limitQueueDialog" class="limit-queue-dialog" aria-labelledby="limitQueueTitle">
       <h2 id="limitQueueTitle" data-i18n="interrupt.order"></h2>

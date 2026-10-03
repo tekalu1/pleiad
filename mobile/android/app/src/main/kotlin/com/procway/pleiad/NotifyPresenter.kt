@@ -83,6 +83,7 @@ class NotifyPresenter(private val ctx: Context) : NotifySink {
         NoticeKind.FAILED -> ctx.getString(R.string.notify_failed)
         NoticeKind.LIMIT_READY -> ctx.getString(R.string.notify_limit_ready)
         NoticeKind.LIMIT_GUARDED -> ctx.getString(R.string.notify_limit_guarded)
+        NoticeKind.SCHEDULE_MISSED -> ctx.getString(R.string.notify_schedule_missed)
         else -> ctx.getString(R.string.notify_done)
     }
 
@@ -92,6 +93,7 @@ class NotifyPresenter(private val ctx: Context) : NotifySink {
         NoticeKind.FAILED -> R.string.notify_public_failed
         NoticeKind.LIMIT_READY -> R.string.notify_public_limit_ready
         NoticeKind.LIMIT_GUARDED -> R.string.notify_public_limit_guarded
+        NoticeKind.SCHEDULE_MISSED -> R.string.notify_public_schedule_missed
         else -> R.string.notify_public_done
     })
 

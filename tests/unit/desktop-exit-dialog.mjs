@@ -11,14 +11,14 @@ const source = fs.readFileSync(new URL('../../desktop/main.cjs', import.meta.url
 const desktop = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../desktop');
 const tick = () => new Promise(resolve => setImmediate(resolve));
 
-async function start({ ready = true } = {}) {
+async function start({ ready = true, work = { count: 0 } } = {}) {
   const calls = { dialogs: [], messages: [], quits: 0, syncDialogs: 0 };
   const worker = new EventEmitter();
   worker.stdout = new EventEmitter();
   worker.stderr = new EventEmitter();
   worker.postMessage = message => {
     calls.messages.push(message);
-    if (message.type === 'running') queueMicrotask(() => worker.emit('message', { type: 'running', work: { count: 0 } }));
+    if (message.type === 'running') queueMicrotask(() => worker.emit('message', { type: 'running', work }));
   };
   worker.kill = () => {};
   const app = new EventEmitter();
@@ -122,6 +122,24 @@ export default async function (t) {
     worker.emit('exit');
     await tick();
     t.ok('session-end は shutdown を送り、サーバー終了を通知しない', calls.messages.some(m => m.type === 'shutdown') && calls.dialogs.length === 0);
+  }
+  {
+    // 作業が無くても、送信予定や再開の予定があれば終了の前に確かめる（終了している間は送られない。ADR 0094）
+    const { calls, resolveDialog } = await start({ work: { count: 0, scheduled: { send: 2, held: 0, resume: 12, nextSendAt: Date.UTC(2026, 9, 4, 0, 0) } } });
+    calls.window.emit('close', { preventDefault() {} });
+    await tick();
+    const dialog = calls.dialogs[0]?.[1];
+    t.ok('予定があれば、作業が無くても終了の前に確かめる', dialog?.title === 'quit.scheduledTitle' && dialog.buttons.join() === 'quit.backToWork,quit.quitAnyway', JSON.stringify(dialog));
+    t.ok('確認には送信予定の件数と次の時刻・再開の件数・遅れの扱いが入る', ['quit.scheduledSend', 'quit.scheduledResume', 'quit.scheduledTail', 'quit.scheduledLate'].every(key => dialog.message.includes(key)), dialog?.message);
+    resolveDialog();
+    await tick();
+    t.ok('「作業に戻る」なら終了しない', calls.quits === 0 && !calls.messages.some(m => m.type === 'shutdown'));
+  }
+  {
+    const { calls } = await start({ work: { count: 0, scheduled: { send: 0, held: 0, resume: 0 } } });
+    calls.window.emit('close', { preventDefault() {} });
+    await tick(); await tick();
+    t.ok('予定が無ければ確認なしで終了する', calls.dialogs.length === 0 && calls.quits === 1);
   }
   {
     const { calls, resolveDialog } = await start({ ready: false });
