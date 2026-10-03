@@ -55,7 +55,7 @@ export function removedSummary(messages, target) {
   const removed = messages.slice(target);
   return {
     messages: removed.length,
-    // やり直す発言そのものは数えない（「この後の N 件の発言」）
+    // やり直す発言そのものは数えない（「この後のやり取り（あなたの発言 N 件と返答）」）
     userMessages: removed.slice(1).filter(m => m.role === "user" && !m.kind).length,
     replies: removed.filter(m => m.role === "assistant").length,
   };

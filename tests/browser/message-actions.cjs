@@ -123,11 +123,11 @@ async page => {
   check((await user.innerText()).includes('README.md'), '編集時に添付名を表示');
   await band.waitFor();
   check(await band.getAttribute('role') === 'group' && await band.getAttribute('aria-label') === '送り方', '帯は「送り方」の group');
-  check((await band.innerText()).includes('この後の 1 件の発言は、送り直すと消え、分岐して送ると残ります。'), '帯に後ろの発言の件数と、送り直す・分岐して送るの違いを書く');
+  check((await band.innerText()).includes('この後のやり取り（あなたの発言 1 件と返答）は、送り直すと消え、分岐して送ると残ります。'), '帯に後ろの発言の件数と、送り直す・分岐して送るの違いを書く');
   check(await page.locator('.message-edit-controls').count() === 0, '帯があるとき編集欄は自前の送信ボタンを持たない（送り先を 1 か所に）');
   const buttons = await band.locator('button').allInnerTexts();
   check(buttons.map(s => s.trim()).join('|') === '取り消し|分岐して送る|送り直す', '帯のボタンは［取り消し］［分岐して送る］［送り直す］の順（主が右端）');
-  check(await band.getByRole('button', { name: '送り直す、この後の 1 件の発言を消します' }).count() === 1, '主のボタンの読み上げ名に消える件数');
+  check(await band.getByRole('button', { name: '送り直す、この後のやり取り（あなたの発言 1 件と返答）を消します' }).count() === 1, '主のボタンの読み上げ名に消える件数');
   check(await editor.getAttribute('aria-describedby') === await band.locator('.rb-t').getAttribute('id'), '編集欄は帯の文を読み上げに結ぶ');
   const doomedCount = await page.locator('#thread .mw.doomed').count();
   check(doomedCount >= 3, '送り直すと消える範囲（後ろの行）を薄くする');

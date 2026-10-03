@@ -1509,7 +1509,7 @@
     },
     "resend": {
       "group": "送り方",
-      "removeUsers_other": "この後の {{count}} 件の発言は、送り直すと消え、分岐して送ると残ります。",
+      "removeUsers_other": "この後のやり取り（あなたの発言 {{count}} 件と返答）は、送り直すと消え、分岐して送ると残ります。",
       "removeReplies": "この後の返答は、送り直すと消え、分岐して送ると残ります。",
       "running": "実行中の返答は、送り直すと止まります。分岐して送ると、元の会話で続きます。",
       "files": "ファイルの変更は、どちらを選んでも元に戻りません。",
@@ -1519,7 +1519,7 @@
       "cancel": "取り消し",
       "branchLabel": "分岐して送る、今の続きを残します",
       "sendLabel": "{{label}}、{{removes}}",
-      "removesUsers_other": "この後の {{count}} 件の発言を消します",
+      "removesUsers_other": "この後のやり取り（あなたの発言 {{count}} 件と返答）を消します",
       "removesReplies": "この後の返答を消します",
       "removesRunning": "実行中の返答を止めます",
       "doneUsers_other": "{{count}} 件の発言を消して送り直しました",
