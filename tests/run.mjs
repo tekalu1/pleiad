@@ -417,6 +417,8 @@ const cases = [
   await import("./unit/memory-tail.mjs"),
   // --- dispatch (S4) ---
   // --- channels-ui: 脇・流れ・スレッド・bot のページ (W1・W2・W3・W4) ---
+  // 流れ (W2): @ の補完の判定・候補の絞り込み・リアクションの札と先取り・時刻の文言・スレッドを開く口の配線（描画とキーは tests/browser/channels.cjs）
+  await import("./unit/channels-feed-ui.mjs"),
   // --- routines (R1・R2・W5、P2) ---
   // --- memory-learn・sessions-send・webhook (L1・X1・H1、P3) ---
 ];
