@@ -1981,6 +1981,87 @@ async function forkConversation({ sessionId, upToMessageId, beforeMessageId, tit
   }
 }
 
+/**
+ * 同じ会話の中で、ある発言（beforeMessageId。自分の発言）の手前まで巻き戻す（sendMessage の rewind。ADR 0091）。
+ * 会話の id は変わらない。分岐（forkConversation）と同じ排他（forking）で、実行中のターン・分岐・別の送り直しと重ならない。
+ * 実行中のターンがあるときは stopRunning: true のときだけ止める（止まり終えてから巻き戻す）。
+ * 巻き戻しは、バックエンドの履歴の切り方（conversations.mjs の rewind）のほかに、切り口より後のものを整える:
+ *   送信待ち（送れていないものは全部、切り口より後に送られたもの）・切り口より後に生まれた委譲の子・裏の作業・
+ *   渡し済みの控え（contextSession.delivered。巻き戻した先のモデルは、捨てたターンで渡された本文を持っていない）・
+ *   中断の印と止めたもの（中断した位置が消える）・圧縮の記録のうち切り口より後
+ * 提示（添付・可視化）は conversations.mjs の rewind が切る。下書きには触らない
+ */
+async function rewindConversation({ sessionId, beforeMessageId, stopRunning = false }) {
+  if (!sessionId) throw new Error(t('session.required'));
+  const running = runtime.turns.get(sessionId);
+  if (forking.has(sessionId) || switching.has(sessionId) && !running) throw new Error(t('session.preparingRewind'));
+  forking.add(sessionId);
+  try {
+    compactionScheduler.cancel(sessionId);
+    await settingsWrites.get(sessionId);
+    const backend = refuseRetired(await pickBackend(sessionId));
+    if (!backend.rewind) throw new Error(t('session.cannotRewind'));
+    // 委譲された会話（子）は、同じ会話では送り直せない。走らせた委譲タスクの結果・状態が、巻き戻した履歴と食い違う（画面は分岐して送るだけを出す）
+    if ((await store.get(sessionId)).delegation) throw new Error(t('rewind.delegated'));
+    // 検証は、走っているターンを止める・委譲の子を取り消すより前に済ませる（止めてから断られると戻せない）。時刻は委譲の子を取り消す境目に使う
+    const { since } = await backend.rewindPlan(sessionId, { beforeMessageId });
+    if (running) {
+      if (!stopRunning) throw Object.assign(new Error(t('rewind.running')), { code: 'SESSION_RUNNING' });
+      await stopTurnForRewind(sessionId, running);
+    }
+    const result = await backend.rewind(sessionId, { beforeMessageId });
+    // 巻き戻せたあとで、切り口より後に生まれた委譲の子を取り消す（完了通知も届けない）。子の会話そのものは一覧に独立の会話として残る
+    if (Number.isFinite(since)) await agentTasks.cancelOwner(sessionId, { since });
+    // ターンの外に残っている裏の作業（Codex の端末など）も止める
+    const outside = runtime.background.get(sessionId);
+    for (const x of outside?.tasks ?? []) await getBackend(outside.backend)?.stopBackground?.(sessionId, x.id).catch(() => {});
+    // 送信待ちは、どれも切り口より後に送ったもの（送り終えたものは履歴にいる）。巻き戻した先では意味を失うので取り消す
+    for (const m of await outbox.list(sessionId)) {
+      if (!['sent', 'cancelled'].includes(m.status)) await outbox.action(sessionId, m.id, 'cancel').catch(() => {});
+    }
+    const entry = await store.get(sessionId);
+    if (entry.contextSession?.delivered) await store.setSessionData(sessionId, 'contextSession', { ...entry.contextSession, delivered: null });
+    // 中断した位置・止めたものは、捨てた範囲の出来事
+    await store.setMeta(sessionId, { interrupted: null });
+    await store.clearStops(sessionId);
+    // 切り口より後の記録（圧縮・渡さなかった `!` の行・hooks の発火）は捨てる。渡していない `!` の結果（shellPending）は次の発言と一緒に渡るので残す
+    if (Number.isFinite(since)) {
+      const time = at => (typeof at === 'number' ? at : Date.parse(at ?? ''));
+      for (const [field, list, at] of [['compactions', entry.compactions, c => Number(c.at)], ['shellKept', entry.shellKept, e => time(e.at)], ['hookRuns', entry.hookRuns, h => Number(h.at)]]) {
+        if (list?.some(x => at(x) >= since)) await store.setSessionData(sessionId, field, list.filter(x => !(at(x) >= since)));
+      }
+    }
+    // 文脈量の表示は、巻き戻す前の履歴の量。次のターンの値で上書きされるまで古いままにしない
+    await store.setSessionData(sessionId, 'contextWindow', null);
+    // 捨てたターンの「未読の完了」の点は残さない
+    if (Number.isFinite(entry.completedAt)) await store.markRead([[sessionId, entry.completedAt]]).catch(() => []);
+    emitGlobal({ type: 'rewind', sessionId, renumbered: Boolean(result.renumbered), removed: result.removed });
+    return result;
+  } finally {
+    forking.delete(sessionId);
+    completionNotices.changed(sessionId);
+    outbox.kick(sessionId).catch(() => {});
+  }
+}
+
+/** 走っているターンを止めて、止まり終える（runtime.turns から消える）のを待つ。巻き戻しのために止めたので、中断の記録は残さない（上の rewindConversation が消す） */
+async function stopTurnForRewind(sessionId, turn) {
+  turn.abortReason ??= 'user';
+  turn.ac.abort();
+  settleAll('aborted', sessionId);
+  if (!turn.info.stopping) {
+    turn.info.stopping = true;
+    makeEmit(turn)({ type: 'activity', state: 'stopping' });
+    broadcastRunning();
+  }
+  // Claude の停止は最悪 stopAckMs + stopExitMs（claude.mjs）かかる
+  const deadline = Date.now() + 20_000;
+  while (runtime.turns.get(sessionId) === turn) {
+    if (Date.now() > deadline) throw new Error(t('rewind.stopTimeout'));
+    await waitFree(sessionId, 250);
+  }
+}
+
 /** 状態グループのアイコン。人間が選んでも AI が渡しても同じ store に入る（設計メモ 2.2） */
 async function setStatusIconOf(status, icon) {
   if (typeof status !== "string" || !status.trim()) throw new Error(t('statuses.statusRequired'));
@@ -4406,19 +4487,26 @@ wss.on("connection", (ws, req) => {
           await runTurn(msg.args ?? {}, () => reply(true, "started"));
           return;
         case 'sendMessage': {
-          const { sessionId, messageId, prompt, attachments, cwd, mode } = msg.args ?? {};
+          const { sessionId, messageId, prompt, attachments, cwd, mode, rewind } = msg.args ?? {};
           if (!sessionId || !refuseRetired(await resolveBackendForSession(sessionId))) throw new Error(t('session.notFound'));
           if (typeof messageId !== 'string' || !/^[a-zA-Z0-9-]{8,80}$/.test(messageId)) throw new Error(t('send.messageIdRequired'));
           if (typeof prompt !== 'string' || !prompt.trim()) throw new Error(t('send.messageRequired'));
           if (attachments !== undefined && !Array.isArray(attachments)) throw new Error(t('send.invalidAttachments'));
+          // 同じ会話の中で、発言の手前まで巻き戻して送り直す（ADR 0091）。{ beforeMessageId, stopRunning? }
+          if (rewind !== undefined && (typeof rewind?.beforeMessageId !== 'string' || !rewind.beforeMessageId)) throw new Error(t('rewind.invalid'));
           compactionScheduler.cancel(sessionId);
+          const args = { prompt, ...(attachments ? { attachments } : {}), ...(cwd ? { cwd } : {}), ...(mode ? { mode } : {}) };
+          if (rewind) {
+            // 受け付け済みの再送（応答が届かず送り直した同じ messageId）は、巻き戻し直さない（もう巻き戻してある）
+            if ((await outbox.list(sessionId)).some(m => m.id === messageId)) return reply(true, await outbox.accept(sessionId, messageId, args));
+            const rewound = await rewindConversation({ sessionId, beforeMessageId: rewind.beforeMessageId, stopRunning: rewind.stopRunning === true });
+            return reply(true, { ...(await outbox.accept(sessionId, messageId, args)), rewind: rewound });
+          }
           // 中断した会話に新しい指示を送ったら、中断で保留になった未送信を先に並びのまま送り直す（再開と同じ）。
           // 戻さないと新しい指示は保留の後ろで順番を待ち続ける。画面は「保留中の N 件の後にこの指示で続けます」と出している
           if (!sessionBusy(sessionId) && interruptedOf((await store.get(sessionId)).interrupted)
             && (await outbox.list(sessionId)).some(m => m.status === 'paused')) await outbox.retryPaused(sessionId);
-          return reply(true, await outbox.accept(sessionId, messageId, {
-            prompt, ...(attachments ? { attachments } : {}), ...(cwd ? { cwd } : {}), ...(mode ? { mode } : {}),
-          }));
+          return reply(true, await outbox.accept(sessionId, messageId, args));
         }
         // 入力欄の `!`（シェルの行。ADR 0054）。人の操作なので承認モードは掛けない。送信待ちにも送り直しの控えにも積まない
         case 'runShell': {
