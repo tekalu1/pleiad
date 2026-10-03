@@ -252,6 +252,7 @@
     "undoFailed": "Couldn’t undo: {{error}}"
   },
   "routines": {
+    "webhook": {"hostOnly": "Get the webhook URL on the PC hosting this Pleiad.", "invalidates": "Rotating invalidates the old secret.", "url": "Webhook URL", "copyUrl": "Copy URL", "rotate": "Rotate secret", "secret": "Secret (HMAC)", "once": "This secret is shown only now. Copy it before closing.", "copySecret": "Copy secret", "copied": "Copied", "saveFirst": "Save to get the webhook URL and create a secret.", "tunnel": "To receive requests from outside, provide your own tunnel (such as ngrok)."},
     "title": "Routine",
     "heading": "Routines",
     "headingTitle_one": "Routines in this channel ({{count}})",

@@ -308,6 +308,7 @@ export function createChannelService({ dir, emit = () => {}, hooks = {}, now = D
       if (threadId !== null) {
         const root = all.find((p) => p.id === threadId);
         if (!root) throw new ChannelError('POST_NOT_FOUND', { id: String(threadId) });
+        if (root.taint) taint = root.taint;
         if (root.threadId !== null) throw invalid('threadId must be the id of a post in the channel flow (a thread root)');
       }
       const resolved = mentions ?? await resolveMentions(text);
@@ -315,7 +316,7 @@ export function createChannelService({ dir, emit = () => {}, hooks = {}, now = D
       // bot がターンの中で書く: 新しい投稿を作らず、そのターンの投稿の本文を置き換える
       if (author.kind === 'bot' && !forceNew) {
         const turnPost = [...all].reverse().find((p) => p.threadId === threadId && p.state === 'working' && p.turn?.botId === author.botId && !p.deletedAt);
-        if (turnPost) return service.edit({ channelId, postId: turnPost.id, text, ...(state !== undefined ? { state } : {}), ...(presents !== undefined ? { presents } : {}), mentions: resolved }, author);
+        if (turnPost) return service.edit({ channelId, postId: turnPost.id, text, taint, ...(state !== undefined ? { state } : {}), ...(presents !== undefined ? { presents } : {}), mentions: resolved }, author);
       }
 
       const at = now();
@@ -337,10 +338,11 @@ export function createChannelService({ dir, emit = () => {}, hooks = {}, now = D
       return saved;
     },
 
-    async edit({ channelId, postId, text, state, presents, mentions }, _author) {
+    async edit({ channelId, postId, text, state, presents, mentions, taint }, _author) {
       const post = await needPost(channelId, postId);
       if (post.deletedAt) throw new ChannelError('POST_NOT_FOUND', { id: String(postId) });
       const op = { op: 'edit', id: postId, at: now() };
+      if (taint === 'webhook') op.taint = taint;
       if (text !== undefined) {
         checkText(text, { allowEmpty: Boolean(presents?.length || post.presents?.length) });
         op.text = text;

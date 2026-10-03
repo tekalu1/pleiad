@@ -1858,7 +1858,7 @@
         }
       },
       "legacyCommand": null,
-      "input": "7fad649cbcb3"
+      "input": "29ce6382d1e4"
     },
     {
       "id": "routines.delete",
@@ -1973,6 +1973,21 @@
       "input": "2efd2644ef06"
     },
     {
+      "id": "routines.rotateSecret",
+      "risk": "human-only",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": false,
+        "cli": false
+      },
+      "legacyCommand": null,
+      "input": "2153fff6986d"
+    },
+    {
       "id": "routines.run",
       "risk": "guarded",
       "riskOf": false,
@@ -2016,7 +2031,7 @@
         }
       },
       "legacyCommand": null,
-      "input": "f81aeb7fab34"
+      "input": "fea14d9d33fa"
     },
     {
       "id": "sessions.abort",

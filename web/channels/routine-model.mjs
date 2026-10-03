@@ -14,8 +14,8 @@ export const INTERVAL_MINUTES = Object.freeze([5, 10, 15, 30, 45, 60, 120, 180, 
 export const TIMEOUT_MINUTES = Object.freeze([5, 10, 15, 30, 60, 120, 360, 720, 1440]);
 export const DEFAULT_TIMEOUT = 30;
 export const EVENT_ONS = Object.freeze(['done', 'failed', 'waiting']);
-/** 今は選べない種類（webhook は P3 の H1 が受け口を足してから） */
-export const DISABLED_KINDS = Object.freeze(['webhook']);
+/** 今は選べない種類 */
+export const DISABLED_KINDS = Object.freeze([]);
 
 const HHMM = /^([01]\d|2[0-3]):([0-5]\d)$/;
 export const isHHMM = (s) => typeof s === 'string' && HHMM.test(s);
@@ -112,7 +112,7 @@ export function validate(draft) {
     if (!parseCron(tr.expr)) errors.trigger = 'cron';
   } else if (tr.kind === 'event') {
     if (!EVENT_ONS.includes(tr.on)) errors.trigger = 'event';
-  } else errors.trigger = 'kind';   // webhook は今は作れない
+  } else if (tr.kind !== 'webhook') errors.trigger = 'kind';
   return { ok: Object.keys(errors).length === 0, errors };
 }
 

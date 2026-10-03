@@ -181,7 +181,7 @@ export const channelOps = [
       const held = author.kind === 'human' ? [] : await run(ctx, () => strongTargets(ctx, args.channelId, args.text, author));
       // 要確認の印は、実行を担う bot（ルーティンの実行を含む）だけが付けられる
       const saved = await run(ctx, () => ctx.channels.post({
-        ...args, ...(target !== undefined ? { threadId: target } : {}), ...(state && author.kind === 'bot' ? { state } : {}),
+        ...args, ...(sb?.taint ? { taint: sb.taint } : {}), ...(target !== undefined ? { threadId: target } : {}), ...(state && author.kind === 'bot' ? { state } : {}),
         ...(author.kind === 'human' ? {} : { hold: held }), ...(origin ? { origin } : {}),
       }, author));
       // ターンの投稿の置き換え（進捗）では誰も起こさない。@ はターンの終わりの返事で解かれ、そこで同じ確認を通る
@@ -225,7 +225,11 @@ export const channelOps = [
     input: z.object({ channelId: channelId('edit'), postId: postId('edit'), text: z.string().min(1).max(LIMITS.text).describe(D('edit', 'text')) }),
     output: z.unknown(),
     surfaces: { ui: true, mcp: 'catalog', cli: { path: ['channels', 'edit'], positional: ['channelId', 'postId', 'text'] } },
-    handler: async (ctx, args) => run(ctx, async () => ctx.channels.edit(args, await ownPost(ctx, args))),
+    handler: async (ctx, args) => run(ctx, async () => {
+      const author = await ownPost(ctx, args);
+      const sb = author.kind === 'bot' ? await boundBot(ctx) : null;
+      return ctx.channels.edit({ ...args, ...(sb?.taint ? { taint: sb.taint } : {}) }, author);
+    }),
   }),
   defineOp({
     id: 'channels.delete', summary: D('delete', 'summary'), risk: 'write',

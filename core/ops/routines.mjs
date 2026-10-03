@@ -10,7 +10,7 @@
 //   routines.pause           write（狭める向き）
 //   routines.resume / run    guarded（動き出す。run は dryRun でも承認カードを出す）
 //   routines.delete          guarded（消す操作。実行の履歴のスレッドは残る）
-//   routines.rotateSecret    human-only（秘密の値。P3 の H1 が足す。ADR 0112）
+//   routines.rotateSecret    human-only（秘密の値。ADR 0112）
 import { z } from 'zod';
 import { agentT } from '../i18n.mjs';
 import { defineOp, OpError } from './registry.mjs';
@@ -40,7 +40,7 @@ const trigger = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('interval'), minutes: z.number().int().min(1).max(INTERVAL_MAX_MINUTES), window: z.object({ from: hhmm, to: hhmm }).optional() }),
   z.object({ kind: z.literal('cron'), expr: z.string().min(1).max(100) }),
   z.object({ kind: z.literal('event'), on: z.enum(['done', 'failed', 'waiting']), scope: z.union([z.literal('all'), z.object({ sessionIds: z.array(z.string().min(1)).min(1).max(100) })]).optional() }),
-  z.object({ kind: z.literal('webhook'), hookId: z.string().min(1).max(100) }),
+  z.object({ kind: z.literal('webhook'), hookId: z.string().max(100).optional() }),
 ]).describe('agent:ops.routines.create.trigger');
 
 const lastShape = z.object({ at: z.number(), runId: z.string(), state: z.string(), postId: z.string().optional() });
@@ -55,6 +55,14 @@ const clip = (s, n = 80) => { const a = [...String(s ?? '').replace(/\s+/g, ' ')
 const stable = (r) => (r ? { id: r.id, name: r.name, botId: r.botId, channelId: r.channelId, prompt: r.prompt, trigger: r.trigger, mode: r.mode, approvalTimeoutMin: r.approvalTimeoutMin, paused: r.paused } : null);
 
 export const routineOps = [
+  defineOp({
+    id: 'routines.rotateSecret', summary: D('rotateSecret', 'summary'), risk: 'human-only',
+    input: z.object({ routineId: routineId('rotateSecret') }),
+    output: z.object({ secret: z.string() }), humanSecretOutput: true,
+    surfaces: { ui: true, mcp: false, cli: false },
+    handler: (ctx, args) => run(ctx, () => ctx.routines.rotateSecret(args)),
+  }),
+
   defineOp({
     id: 'routines.list', summary: D('list', 'summary'), risk: 'read', input: z.object({}),
     output: z.object({ routines: z.array(routineRow) }),

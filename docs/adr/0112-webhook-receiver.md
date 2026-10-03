@@ -25,4 +25,6 @@
 
 - トンネルを張るのは利用者の作業で、公開範囲はその設定次第。画面に注意書きを出す。
 - `docs/remote.md` の「やらないこと」に「webhook は中継を通さない」を足す。
-- 受け口は P3 で実装する。それまでは何も受けない。
+- 受け口は `core/routines/webhook.mjs`、実行入口は `service.fire(routineId, { source, note })`。一時停止中は skipped。外部本文は根の投稿の `routine.payload` に保持し、実行の notes に渡す（通常の投稿の文字数上限とは分ける）。
+- `X-Pleiad-Timestamp` は Unix 時刻の秒。同じ署名の記憶は口ごとのメモリで持ち、再起動で消える。GitHub 形式には時刻が無いため 10 分後の再送は再び受ける。
+- 秘密は 32 バイトの乱数の hex。`createSecretStore` で OS の暗号化を使い、使えない起動では 0600 の平文で置く。取得の操作は持たず、人の画面で再発行した応答だけ値を返す。

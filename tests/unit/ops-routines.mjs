@@ -1,4 +1,4 @@
-// routines.* の操作（registry 越し。bot・会話・dispatch は身代わり、チャンネルは本物）: 口の出し分け（rotateSecret は P3 なので無い）・危険度・
+// routines.* の操作（registry 越し。bot・会話・dispatch は身代わり、チャンネルは本物）: 口の出し分け（rotateSecret は人だけ）・危険度・
 // AI が作る・広げる向きの update・AI が指示を変える・狭める向きは通る・resume / run / delete は承認・試しの実行・失敗の code。ADR 0082・0111
 import fs from 'node:fs/promises';
 import os from 'node:os';
@@ -25,9 +25,9 @@ export default async function (t) {
   try {
     const ids = (principal) => registry.list(principal).map((o) => o.id).filter((id) => id.startsWith('routines.')).sort().join();
     const want = 'routines.create,routines.delete,routines.get,routines.list,routines.pause,routines.resume,routines.run,routines.update';
-    t.ok('AI（MCP・CLI）にも画面にも 8 つの操作が出る（rotateSecret は P3 の H1 が足す）', ids(agent('x')) === want && ids(agent('x', 'cli')) === want && ids(human) === want, ids(human));
-    t.ok('どの操作も直のツールではない（T4 の余りが小さい）', registry.ops.filter((o) => o.id.startsWith('routines.')).every((o) => o.surfaces.mcp === 'catalog'));
-    t.ok('危険度: list・get は read、create・update・pause は write、resume・run・delete は guarded（human-only は無い）',
+    t.ok('AI（MCP・CLI）には 8 操作、画面には秘密の再発行も出る', ids(agent('x')) === want && ids(agent('x', 'cli')) === want && ids(human) === want.replace('routines.run', 'routines.rotateSecret,routines.run'), ids(human));
+    t.ok('どの操作も直のツールではない（T4 の余りが小さい）', registry.ops.filter((o) => o.id.startsWith('routines.')).every((o) => o.surfaces.mcp === 'catalog' || o.id === 'routines.rotateSecret' && o.surfaces.mcp === false));
+    t.ok('危険度: list・get は read、create・update・pause は write、resume・run・delete は guarded（秘密の再発行は human-only）',
       ['routines.list:read', 'routines.get:read', 'routines.create:write', 'routines.update:write', 'routines.pause:write', 'routines.resume:guarded', 'routines.run:guarded', 'routines.delete:guarded']
         .every((s) => registry.get(s.split(':')[0]).risk === s.split(':')[1]));
     t.ok('create・update は riskOf を持つ（AI が作る・広げる向きは guarded に上がる）', registry.get('routines.create').riskOf && registry.get('routines.update').riskOf && !registry.get('routines.pause').riskOf);

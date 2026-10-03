@@ -64,7 +64,7 @@ export function validateTrigger(trigger) {
       return { kind: 'event', on: trigger.on, scope: 'all' };
     }
     case 'webhook':
-      // 受け口は P3（H1。ADR 0112）。ここは型と分岐の入れ物だけ（hookId は H1 が決める）
+      // hookId は service が生成する（受け口は webhook.mjs）
       if (typeof trigger.hookId !== 'string' || !trigger.hookId) throw new TriggerError('hookId must be a string');
       return { kind: 'webhook', hookId: trigger.hookId };
     default:

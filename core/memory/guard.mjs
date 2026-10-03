@@ -75,6 +75,7 @@ async function verifyOne(src, resolvers) {
     if (!src.channelId || !src.postId || !resolvers?.post) return { problem: 'unresolved' };
     const post = await resolvers.post({ channelId: src.channelId, postId: src.postId, threadId: src.threadId ?? null }).catch(() => null);
     if (!post || post.deletedAt) return { problem: 'notFound' };
+    if (post.taint) return { problem: 'tainted' };
     if (!includesQuote(post.text, quote)) return { problem: 'quote' };
     const channelId = post.channelId ?? src.channelId;
     const stored = { kind: 'post', channelId, postId: post.id ?? src.postId, ...(src.threadId ? { threadId: src.threadId } : {}), quote, at: Number.isFinite(post.at) ? post.at : 0 };
@@ -87,6 +88,7 @@ async function verifyOne(src, resolvers) {
     if (!src.sessionId || !src.messageId || !resolvers?.message) return { problem: 'unresolved' };
     const msg = await resolvers.message({ sessionId: src.sessionId, messageId: src.messageId }).catch(() => null);
     if (!msg) return { problem: 'notFound' };
+    if (msg.taint) return { problem: 'tainted' };
     if (!includesQuote(msg.text, quote)) return { problem: 'quote' };
     const at = typeof msg.at === 'number' ? msg.at : Date.parse(msg.at ?? '');
     const stored = { kind: 'message', sessionId: src.sessionId, messageId: src.messageId, quote, at: Number.isFinite(at) ? at : 0 };
@@ -155,7 +157,7 @@ export function sourceResolvers({ channels, sessions, botOfSession } = {}) {
       const bot = await botOfSession?.(sessionId).catch(() => null);
       const delegated = Boolean((await sessions?.get?.(sessionId).catch(() => null))?.row?.delegation);
       const origin = bot?.botId ? (bot.kind === 'routine' ? 'routine' : 'bot') : delegated ? 'delegation' : null;
-      return { ...hit, origin, firstUser: messages.find((m) => m.role === 'user')?.uuid === messageId };
+      return { ...hit, ...(bot?.taint ? { taint: bot.taint } : {}), origin, firstUser: messages.find((m) => m.role === 'user')?.uuid === messageId };
     },
   };
 }

@@ -190,8 +190,9 @@ export function createDispatcher({ channels, bots, memory, host, emit = () => {}
     const parts = [];
     if (picked.length) parts.push(channelThreadEnvelope({ ...common, posts: await Promise.all(picked.map(env)) }));
     for (const p of triggers) parts.push(channelEnvelope(await env(p)));
+    const payloadNotes = triggers.filter((p) => p.author.kind === 'routine' && p.taint === 'webhook' && p.routine?.payload).map((p) => p.routine.payload);
     const cursor = (cut >= fresh.length ? fresh.at(-1) : cut > 0 ? fresh[cut - 1] : null)?.id ?? sb?.postCursor ?? null;
-    return { prompt: parts.join('\n'), cursor, incomingText: triggers.map((p) => p.text).join('\n'), triggers };
+    return { prompt: parts.join('\n'), payloadNotes, cursor, incomingText: triggers.map((p) => p.text).join('\n'), triggers };
   }
 
   // ------------------------------------------------------------ 起こす
@@ -413,7 +414,7 @@ export function createDispatcher({ channels, bots, memory, host, emit = () => {}
     const ids = items.map((i) => i.id);
     if (!built.triggers.length) { await inbox.remove(ids); return; }
     await inbox.mark(ids, 'delivering');
-    starting.set(sessionId, { itemIds: ids, incomingText: built.incomingText, cursor: built.cursor, channelId: channel.id, threadId, botId: items[0].botId });
+    starting.set(sessionId, { itemIds: ids, payloadNotes: built.payloadNotes, incomingText: built.incomingText, cursor: built.cursor, channelId: channel.id, threadId, botId: items[0].botId });
     refreshThread(channel.id, threadId);
     const key = threadKeyOf(channel.id, threadId);
     // 待たない（ターンが終わるまで返らない）。始められなかったときだけここで片付ける
@@ -464,6 +465,13 @@ export function createDispatcher({ channels, bots, memory, host, emit = () => {}
     if (!sb) return none;
     const bot = await getBot(sb.botId);
     if (!bot) return none;
+    if (!sb.taint && sb.threadId && sb.channelId) {
+      const root = await channels.getPost({ channelId: sb.channelId, postId: sb.threadId });
+      if (root?.taint === 'webhook') {
+        sb.taint = 'webhook';
+        await updateSidecar(sessionId, (cur) => ({ ...cur, taint: 'webhook' }));
+      }
+    }
     const pre = starting.get(sessionId);
     if (pre) starting.delete(sessionId);
     startFailures.delete(sessionId);
@@ -492,7 +500,7 @@ export function createDispatcher({ channels, bots, memory, host, emit = () => {}
     } catch (e) { log('could not build the turn tail:', errText(e)); }
     if (channelId && POST_KINDS.has(sb.kind) && (sb.kind === 'dm' || rec.threadId)) {
       try {
-        const post = await channels.post({ channelId, threadId: rec.threadId, text: PLACEHOLDER, state: 'working', turn: { botId: bot.id, sessionId }, new: true }, botAuthor(bot.id));
+        const post = await channels.post({ channelId, threadId: rec.threadId, text: PLACEHOLDER, state: 'working', taint: sb.taint, turn: { botId: bot.id, sessionId }, new: true }, botAuthor(bot.id));
         rec.postId = post.id;
       } catch (e) { log('could not create the turn post:', errText(e)); }
     }
@@ -500,7 +508,7 @@ export function createDispatcher({ channels, bots, memory, host, emit = () => {}
       await channels.threads.update(channelId, rec.threadId, { sessions: { [bot.id]: sessionId } }).catch(() => {});
       await refreshThread(channelId, rec.threadId);
     }
-    return { botInstructions: null, notes };
+    return { botInstructions: null, notes: [...notes, ...(pre?.payloadNotes ?? [])] };
   }
 
   /** 終わりの届かなかったターンの記録を片付ける: 投稿は stopped にして、書き換えの予約を止める */

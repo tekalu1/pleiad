@@ -21,7 +21,7 @@ const MODES = { default: { scope: 'workspace', autonomy: 'ask' }, plan: { scope:
 
 export default async function (t) {
   // ---- 種類・既定
-  t.ok('種類は 6 つで、webhook は今は選べない', KINDS.join() === 'daily,weekly,interval,cron,event,webhook' && DISABLED_KINDS.join() === 'webhook');
+  t.ok('種類は 6 つで、webhook も選べる', KINDS.join() === 'daily,weekly,interval,cron,event,webhook' && DISABLED_KINDS.length === 0);
   t.ok('種類ごとの既定のトリガ', defaultTrigger('daily').at === '09:00' && defaultTrigger('weekly').days.join() === '1' && defaultTrigger('interval').minutes === 30
     && defaultTrigger('cron').expr === '0 9 * * 1-5' && defaultTrigger('event').on === 'failed' && defaultTrigger('event').scope === 'all');
   t.ok('種類を替えても時刻は引き継ぐ（毎日 → 毎週）。同じ種類なら同じもの', switchKind({ kind: 'daily', at: '07:30', weekdaysOnly: true }, 'weekly').at === '07:30'
@@ -48,8 +48,8 @@ export default async function (t) {
     && !bad({ trigger: { kind: 'interval', minutes: 30, window: { from: '22:00', to: '06:00' } } }).trigger);
   t.ok('cron は 5 欄で読めるものだけ', bad({ trigger: { kind: 'cron', expr: '0 9 * *' } }).trigger === 'cron' && bad({ trigger: { kind: 'cron', expr: '61 9 * * *' } }).trigger === 'cron'
     && bad({ trigger: { kind: 'cron', expr: '*/0 * * * *' } }).trigger === 'cron' && !bad({ trigger: { kind: 'cron', expr: '*/15 9-17 * * 1-5' } }).trigger);
-  t.ok('イベントは 3 つのどれか。webhook は作れない', !bad({ trigger: { kind: 'event', on: 'waiting', scope: 'all' } }).trigger && bad({ trigger: { kind: 'event', on: 'x', scope: 'all' } }).trigger === 'event'
-    && bad({ trigger: { kind: 'webhook', hookId: '' } }).trigger === 'kind');
+  t.ok('イベントは 3 つのどれか。webhook は作れる', !bad({ trigger: { kind: 'event', on: 'waiting', scope: 'all' } }).trigger && bad({ trigger: { kind: 'event', on: 'x', scope: 'all' } }).trigger === 'event'
+    && !bad({ trigger: { kind: 'webhook', hookId: '' } }).trigger);
 
   // ---- 保存する欄
   const f = fieldsOf({ ...base(), name: ' 朝のまとめ ', prompt: ' 調べて\n', trigger: { kind: 'weekly', days: [0, 3, 1, 3], at: '09:00', extra: 1 }, approvalTimeoutMin: 0 });
@@ -146,5 +146,5 @@ export default async function (t) {
   t.ok('入口: index.mjs が部品を並べる・脇が行と＋を持つ・見出しがボタンを置く', /parts\.push\(createRoutineSheet\(host\)\)/.test(index) && /openRoutine\(\{ routineId/.test(sidebar) && /sortForSide/.test(sidebar) && /headingButton\(host, ch\)/.test(feed));
   t.ok('シートは routines.* の操作だけを呼ぶ（新しい WS コマンドを足さない）', ['create', 'update', 'pause', 'resume', 'delete', 'run', 'get'].every((op) => sheet.includes(`routines.${op}`)) && !/cmd\('(?!modes)/.test(sheet.replace(/host\.cmd\('modes'/g, '')));
   t.ok('試しに動かすは dryRun: true で呼ぶ', /routines\.run', \{ routineId: id, dryRun: true \}/.test(sheet));
-  t.ok('webhook は選べない形だけ（今は disabled）', /DISABLED_KINDS/.test(sheet));
+  t.ok('選べない種類はモデルに従う', /DISABLED_KINDS/.test(sheet));
 }

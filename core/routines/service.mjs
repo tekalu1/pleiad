@@ -15,13 +15,15 @@
 //   planCreate(input): Promise<{ mode, label, loosens }>                    … create が作るルーティンのモードと、弱くないか（承認カードに出す）
 //   run({ routineId, dryRun? }, author): Promise<{ postId: string|null, runId: string, ... }>   … 一時停止中でも手では走らせられる。dryRun は使い捨ての会話を計画のモードで走らせ、走り終えるまで待って
 //                                         { postId: null, runId, sessionId, mode, state, summary?, dryRun: true } を返す（投稿しない）
-//   fire(routineId, { source, note? }): Promise<...>                         … 外から起こす入口（P3 の webhook が使う）
-//   rotateSecret({ routineId }): Promise<{ secret }>                         … P3（H1）
+//   fire(routineId, { source, note? }): Promise<...>                         … 外から起こす入口（webhook が使う）
+//   rotateSecret({ routineId }): Promise<{ secret }>                         … 秘密を作り直して一度だけ返す（人の画面だけ）
 //   onPermission(card, phase) / onSessionDone(sessionId, outcome) / onTurnEnd(turn, end)   … bots-host のつなぎ目から
 //
 // 予約: ルーティンごとにタイマー 1 本。発火の時刻は baselineOf（作った・再開した・トリガを変えた・前に動いた時刻のうち、いちばん後ろ）から nextFireAt で決める。
 // 発火のたびに armedAt を今にして次を予約してから走らせる（走るのが遅くても次の予約が遅れない）。
 import path from 'node:path';
+import crypto from 'node:crypto';
+import { createSecretStore, defaultCipher } from '../secret-store.mjs';
 import { agentT } from '../i18n.mjs';
 import { newId } from '../channels/types.mjs';
 import { strongerMode, looserThanDefault } from '../bots/approval.mjs';
@@ -65,6 +67,7 @@ const clip = (s, n = 80) => { const a = [...String(s ?? '').replace(/\s+/g, ' ')
 export function createRoutineService({ dataDir, channels, bots, dispatch, host, emit = () => {}, now, clock } = {}) {
   const clk = clock ?? (now ? { ...defaultClock, now } : defaultClock);
   const store = createRoutineStore({ file: path.join(dataDir ?? '', 'routines.json') });
+  const secrets = createSecretStore({ file: path.join(dataDir ?? '', 'webhook-secrets.json'), cipher: defaultCipher() });
   const timers = new Map();       // routineId → { handle, at }
   let closed = true;
   const locale = () => host?.currentLocale?.() ?? 'ja';
@@ -213,7 +216,7 @@ export function createRoutineService({ dataDir, channels, bots, dispatch, host, 
       next.prompt = input.prompt; change('prompt', clip(cur.prompt), clip(input.prompt));
     }
     if (input.trigger !== undefined) {
-      const trigger = checkTrigger(input.trigger);
+      const trigger = checkTrigger(input.trigger?.kind === 'webhook' ? { kind: 'webhook', hookId: cur.trigger.kind === 'webhook' ? cur.trigger.hookId : newId('hook', clk.now()) } : input.trigger);
       if (describeTrigger(trigger) !== describeTrigger(cur.trigger)) {
         next.trigger = trigger; change('trigger', describeTrigger(cur.trigger), describeTrigger(trigger));
         reasons.push(...triggerLoosens(cur.trigger, trigger));
@@ -297,7 +300,7 @@ export function createRoutineService({ dataDir, channels, bots, dispatch, host, 
       const name = String(input?.name ?? '');
       const problem = nameProblem(name) ?? promptProblem(input?.prompt) ?? (input?.approvalTimeoutMin === undefined ? null : timeoutProblem(input.approvalTimeoutMin));
       if (problem) throw invalid(problem);
-      const trigger = checkTrigger(input?.trigger);
+      const trigger = checkTrigger(input?.trigger?.kind === 'webhook' ? { kind: 'webhook', hookId: newId('hook', clk.now()) } : input?.trigger);
       const bot = await needBot(input?.botId);
       const channel = await needChannel(input?.channelId);
       const mode = await resolveMode(bot, input?.mode);
@@ -364,14 +367,20 @@ export function createRoutineService({ dataDir, channels, bots, dispatch, host, 
       return { postId: started.postId, runId: started.runId, state: started.state, ...(started.reason ? { reason: started.reason } : {}) };
     },
 
-    /** 外から起こす入口（webhook など。P3）。一時停止中は走らせない */
+    /** 外から起こす入口（webhook など）。一時停止中は走らせない */
     async fire(routineId, { source = 'webhook', note = '' } = {}) {
       const r = need(routineId);
       if (r.paused) return { postId: null, runId: null, state: 'skipped', reason: 'paused' };
       return runner.run(r, { source, note });
     },
 
-    async rotateSecret() { throw new Error('routines.rotateSecret is not implemented yet'); },   // P3（H1。ADR 0112）
+    async rotateSecret({ routineId }) {
+      const r = need(routineId);
+      if (r.trigger.kind !== 'webhook') throw invalid('trigger must be webhook');
+      const secret = crypto.randomBytes(32).toString('hex');
+      await secrets.set(r.trigger.hookId, secret);
+      return { secret };
+    },
 
     onPermission(card, phase) {
       runner.onPermission(card, phase);
