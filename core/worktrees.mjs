@@ -153,9 +153,15 @@ export function createWorktrees({ dataDir, users = async () => ({ busy: [], atta
     const parsed = status.ok ? git.parseStatus(status.stdout) : null;
     const repoDir = path.basename(info.commonDir) === '.git' ? path.dirname(info.commonDir) : info.root;
     const parent = `${path.dirname(slash(repoDir))}/${path.basename(slash(repoDir))}.pleiad`;
-    // Git returns the real path on Windows even when cwd contains an 8.3 short name.
-    const origin = slash(await io.realpath(cwd));
-    const sub = trimEnd(path.relative(info.root, origin) ?? '').replaceAll('\\', '/');
+    // Git が返すルートは実体のパスなので、cwd が 8.3 の短い名前（RUNNER~1 など）だとルートの外に見える。
+    // そのときだけ実体のパスで比べ直す（origin は利用者が開いた形のまま残す）
+    const subOf = (p) => trimEnd(path.relative(info.root, p) ?? '');
+    const within = (s) => !s.startsWith('..') && !path.isAbsolute(s);
+    let sub = subOf(cwd);
+    if (!within(sub)) {
+      const real = await io.realpath(cwd).catch(() => null);
+      if (real) sub = subOf(real);
+    }
     let id = null;
     for (let i = 0; i < 30 && !id; i++) {
       const pick = `ply-${crypto.randomBytes(2).toString('hex')}`;
@@ -163,7 +169,7 @@ export function createWorktrees({ dataDir, users = async () => ({ busy: [], atta
       id = pick;
     }
     if (!id) return { ok: false, reason: 'git', error: 'no free id' };
-    const entry = { id, state: 'creating', purpose, repoDir: slash(repoDir), root: info.root, origin, sub: sub.startsWith('..') ? '' : sub,
+    const entry = { id, state: 'creating', purpose, repoDir: slash(repoDir), root: info.root, origin: slash(cwd), sub: within(sub) ? sub : '',
       path: `${parent}/${id}`, branch: `pleiad/${id}`, base: from?.base ?? head, baseBranch: from ? from.baseBranch ?? null : parsed?.branch ?? null,
       sessionId, parentSessionId, taskId, createdAt: now(), kept: false };
     busyIds.add(id);
