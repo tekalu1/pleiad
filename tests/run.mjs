@@ -95,6 +95,8 @@ const cases = [
   await import('./unit/ops-cli.mjs'),
   // 設定の変更の承認: 待たずに返る・期限なしのカード・結果を会話へ届ける（ターンの終わり・中断・途中送信・置き換え・聞き直し・再起動。ADR 0088）
   await import('./unit/server-setting-approval.mjs'),
+  // 委譲の子が出した承認の結果の届け先: 子のタスクが終わっていれば依頼元の会話へ、動いていれば子へ、再起動の取り下げも同じ（ADR 0088）
+  await import('./unit/server-setting-approval-delegated.mjs'),
   await import('./unit/server-ops.mjs'),
   await import('./unit/sessions-search-op.mjs'),
   await import('./unit/agent-tasks.mjs'),
