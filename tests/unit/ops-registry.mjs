@@ -20,6 +20,7 @@ export default async function (t) {
   const bad = [
     ['id が <領域>.<動詞> でない', base('nodot')],
     ['summary のキーが id と合わない', base('t.a', { summary: 'agent:ops.t.b.summary' })],
+    ['秘密の出力をAIに公開できない', base('t.a', { humanSecretOutput: true })],
     ['risk が不正', base('t.a', { risk: 'admin' })],
     ['input が z.object でない', base('t.a', { input: z.string() })],
     ['read に output が無い', base('t.a', { output: undefined })],

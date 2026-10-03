@@ -1,8 +1,8 @@
-// ホストとして常駐する（docs/remote.md §6.3）。リモートが有効な間、窓を閉じてもサーバーを続けてトレイに残し、
+// ホストとして常駐する（docs/remote.md §6.3）。リモートの常駐がオン、または有効なルーティンがあれば、窓を閉じてもトレイに残し、
 // 選んだ規則でスリープを防ぐ。設定と状態はサーバーが持ち、parentPort の { type: 'resident', state } で届く
 // （core/remote/resident.mjs の residentSignal）。main.cjs からは createResident と、窓の close での keepOnClose() だけを使う。
 //
-//   state = { remote, keepRunning, sleep: 'working'|'always'|'off', working, running, waiting, devices, relay, locale }
+//   state = { remote, routines, keepRunning, sleep: 'working'|'always'|'off', working, running, waiting, devices, relay, locale }
 //
 // スリープ: 'working' はターンが走っているか承認待ちがある間だけ、'always' はリモートが有効な間ずっと
 // powerSaveBlocker.start('prevent-app-suspension')。画面は消えてよい。リモートが無効なら何もしない。
@@ -17,7 +17,7 @@ function sleepWanted(state) {
 
 /** 窓を閉じてもホストを続けるか（トレイに残す） */
 function keepRunning(state) {
-  return Boolean(state?.remote && state.keepRunning);
+  return Boolean((state?.remote && state.keepRunning) || state?.routines > 0);
 }
 
 // 文言は web/locales/<言語>/desktop.json（desktop/i18n.cjs）。言語はサーバーが送る state.locale（画面の言語）に従う
@@ -45,10 +45,12 @@ function createResident({ Tray, Menu, powerSaveBlocker, icon, getWindow, quit, p
     // i18n-dynamic: resident.relay.
     const relay = t(`resident.relay.${state?.relay ?? 'disabled'}`);
     const summary = t('resident.summary', { relay, devices: state?.devices ?? 0, running: state?.running ?? 0 });
+    const routines = state?.routines > 0 ? t('resident.routines', { count: state.routines }) : null;
     return {
-      tooltip: `Pleiad · ${summary}`,
+      tooltip: `Pleiad · ${summary}${routines ? ' · ' + routines : ''}`,
       menu: Menu.buildFromTemplate([
         { label: summary, enabled: false },
+        ...(routines ? [{ label: routines, enabled: false }] : []),
         { type: 'separator' },
         { label: t('resident.open'), click: show },
         { label: t('resident.quit'), click: () => { show(); quit(); } },

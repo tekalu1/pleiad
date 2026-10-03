@@ -2,6 +2,14 @@
   "about": "tests/lint-i18n.mjs の許可リスト。sameAsJa: ja と同じ値のままでよいキー（固有名など）を「名前空間:キー」で書く",
   "sameAsJa": [
     "server:codex.subagent.collab",
+    "channels:side.tabs.chats",
+    "channels:side.tabs.channels",
+    "channels:side.sections.bots",
+    "channels:side.dm",
+    "channels:event.post",
+    "channels:feed.system",
+    "agent:channel.envelope.from.bot",
+    "agent:channel.envelope.from.system",
     "ui:chat.opApproval.hookDelete.label",
     "ui:chat.opApproval.hooks.label",
     "ui:chat.opApproval.mcp.label",
@@ -31,6 +39,11 @@
     "ui:routing.settings.service.cerebras",
     "ui:saved.reason.contextChanged",
     "ui:sessionContext.hooks.ms",
-    "ui:settings.remote.platform.android"
+    "ui:settings.remote.platform.android",
+    "channels:routines.kind.cron",
+    "channels:routines.kind.webhook",
+    "channels:routines.text.cron",
+    "channels:routines.text.webhook",
+    "channels:routines.where.dm"
   ]
 }

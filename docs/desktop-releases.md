@@ -81,6 +81,7 @@ package.json と package-lock.json の番号を揃え、原稿と生成済み JS
 今後のデータ形式変更では、全書き込みを停止してから対象ファイルをバックアップし、コピー上で移行と検証を行い、
 成功後に形式番号を更新する移行処理とテストを同じPRに追加する。失敗時に元データを維持することを公開条件とする。
 形を変えずに値だけを直す移行は、形式番号を上げない。写しを残し、済んだことを対象のファイルに記録する（例: `usage.json` の Claude の記録。[ADR 0052](adr/0052-claude-usage-delta.md)）。
+0.6.0 は Channels・bot・記憶・ルーティンのデータ（`channels/`・`bots.json`・`memory/`・`routines.json`・`webhook-secrets.json` と sessions.json の会話の `bot` の欄）を足した。形式番号は上げない（古い版は知らない欄・ファイルを読まないだけ）。0.6.0 から手で古い版へ戻すと、bot の会話が Chats の一覧に普通の会話として並ぶ（[docs/channels.md](channels.md)「データ」）。
 アプリの自動ダウングレードは無効。問題があれば修正版の番号を上げて配る。
 
 ## 公開前の準備（管理者が一度設定）

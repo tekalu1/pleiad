@@ -240,6 +240,18 @@ export const EVENTS = new Set([
   "nextSettings",
   "worktreeSettings", // { always } 「いつも分ける」が変わった（sessionId は null。ADR 0089）
   "worktreesChanged", // 分けた作業場所が増えた・消えた（sessionId は null）。右パネルの「残っている作業場所」を取り直す
+  // ---- チャンネル・bot・記憶・ルーティン（docs/channels.md「WS の出来事」。どれも sessionId は null で全接続へ。リモートの端末にも届く）
+  "channelsChanged", // { channel?: Channel, removed?: string } チャンネル・DM の定義と一覧の変化
+  "channelPost",     // { channelId, op: add|edit|delete, post } 投稿の追加・編集・削除（bot のターンの投稿の進み具合は 1 秒に 1 回まで）
+  "channelReaction", // { channelId, postId, reactions } リアクションの付け外し
+  "channelThread",   // { channelId, threadId, thread: ThreadState } スレッドの状態（作業中・トークン・止めた印）
+  "channelRead",     // { channelId, readAt } 別の端末・窓の既読
+  "botsChanged",     // { bot?: Bot, removed?: string }
+  "memoryChanged",   // { layer, rev } 記憶が増えた・直した・忘れた（中身は memory.list で取り直す）
+  "routinesChanged", // { routine?: Routine, removed?: string }
+  // { rows: [{ role: system, kind: channelEvent | contextNote, … }] } bot の会話へチャンネルの出来事・記憶の包みを渡した（会話の sessionId 付き。
+  // 履歴の splitLeadingNotes と同じ行の形で、画面は履歴と同じ描き方をする）
+  "channelEvent",
   "claudeAccountsChanged", // Claude のアカウント一覧が変わった（sessionId は null）。中身は claudeAccounts コマンドで取り直す
   "compatEndpointsChanged", // 互換の接続先の一覧・既定が変わった（sessionId は null）。中身は compatEndpoints コマンドで取り直す
   "delegationRoutingChanged", // change: settings|usage（旧送信元では省略）。sessionId は null。中身は delegationRouting コマンドで取り直す

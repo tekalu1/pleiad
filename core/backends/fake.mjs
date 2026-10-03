@@ -32,7 +32,10 @@
 //                    続きの発言には Claude の履歴と同じ stopHookFollowUp を付ける
 //   "steps:<json>" または "steps:@<json ファイルの絶対パス>" … ツールと本文を台本どおりに並べる。{"steps":[{"tool":"Grep","input":{…},"result":"…","error":false,"ms":600,"ask":false},{"text":"…"}]}
 //                    ms は結果を返すまでの時間、ask はツールを始めたあと承認（kind:"tool"）を待つ（computerApp を添えるとアプリの承認）、images・computer は ply_computer の結果の画像と印、text は本文を書く（前のツールは同じ発言に入る）、newMessage は発言の切れ目（text.end）だけを出す
+//   "notes:" / "instructions:" … Pleiad が足した notes（記憶・末尾）／ botInstructions（人格）を JSON で返す（bot の会話の検査用）
 //   それ以外        … prompt をそのまま echo
+// 行頭の <pleiad-channel> などの包み（bot の会話。core/system-messages.mjs の splitLeadingNotes）は外してから台本を選ぶ（scriptOf）。
+// 環境変数: AGENT_HOST_FAKE_USAGE=1 … ターンの終わりに固定の usage を流す／AGENT_HOST_FAKE_SLOW_STEER=1 … "slow" が途中送信を受ける
 import crypto from "node:crypto";
 import { undelivered } from "./undelivered.mjs";
 import { computerDisplay, computerToolInput } from "../computer-use/display.mjs";
@@ -103,6 +106,23 @@ const STEER_LATENCY_MS = Number(process.env.AGENT_HOST_FAKE_STEER_LATENCY_MS) ||
 // 途中送信を「受理」してから「渡った」までの間を作る（ミリ秒）。指定したときだけ steerConfirms を立て、
 // 本物（claude / codex）と同じ pending → userMessage.delivered の順で流す。画面の確認とテスト用
 const STEER_CONFIRM_MS = Number(process.env.AGENT_HOST_FAKE_STEER_CONFIRM_MS) || 0;
+// 1 のとき、台本 "slow" のターンも途中送信（control.steer）を受ける（bot への書き足しの検査用。既存のテストの挙動を変えないため既定は受けない）
+const SLOW_STEER = process.env.AGENT_HOST_FAKE_SLOW_STEER === "1";
+// 1 のとき、ターンの終わりに固定の usage（入力 1000・出力 200・キャッシュ読み出し 900）を流す。既存のテストの usage.json を変えないため既定は流さない
+const FAKE_USAGE = process.env.AGENT_HOST_FAKE_USAGE === "1";
+
+// bot の会話の user の行の先頭に付く包み（core/system-messages.mjs の LEADING_TAGS と同じ）。台本の接頭辞はこれを外してから判定する。
+// <pleiad-channel> は中身が発言なので、@名前 の呼びかけを除いて台本として読む（"@Owl echo:やった"）。記憶・スレッドの履歴・中断の文は台本ではない
+const LEADING_WRAPPER = /^\s*<(pleiad-interruption|pleiad-memory-core|pleiad-turn-context|pleiad-channel-thread|pleiad-channel)(?=[\s>])[^>]*>([\s\S]*?)<\/\1>\s*/;
+export function scriptOf(prompt) {
+  let rest = String(prompt ?? "");
+  let said = null;
+  for (let hit; (hit = LEADING_WRAPPER.exec(rest));) {
+    rest = rest.slice(hit[0].length);
+    if (hit[1] === "pleiad-channel") said = hit[2];
+  }
+  return rest.trim() || (said ?? "").replace(/^\s*(?:@\S+\s+)+/, "").trim();
+}
 
 /**
  * 台本 "bg [本数] [秒]"。Claude のバックグラウンド subagent と同じ形のイベントを流す（docs/multi-backend.md §2.2）。
@@ -307,9 +327,9 @@ export const backend = {
     emit({ type: 'contextWindow', usedTokens: 21_000, windowTokens: 200_000 });
   },
 
-  async runTurn({ prompt, sessionId, cwd, mode, model, emit, onPromptDelivered, askPermission, signal, control, agentRuntime, contextRuntime, computerRuntime, browserRuntime, controlRuntime, browserInstructions, oauthToken, hostSessionId, shellAppends = [], notes = [], rewind = null }) {
+  async runTurn({ prompt, sessionId, cwd, mode, model, emit, onPromptDelivered, askPermission, signal, control, agentRuntime, contextRuntime, computerRuntime, browserRuntime, controlRuntime, browserInstructions, oauthToken, hostSessionId, shellAppends = [], notes = [], botInstructions = null, rewind = null }) {
     // プロンプトを渡す前に失敗する台本（claude のネイティブ指示を止められなかったときと同じ形）。会話にも記録しない
-    if (String(prompt ?? "").trim().startsWith("undelivered")) {
+    if (scriptOf(prompt).startsWith("undelivered")) {
       const error = "fake: failed before the prompt was delivered";
       emit({ type: "turnResult", outcome: "error", error });
       throw undelivered(new Error(error));
@@ -336,10 +356,10 @@ export const backend = {
     // 中断の後に Pleiad が添える文は、Claude の別の text ブロックをつないだ履歴と同じく、発言の前に置く
     push(s, { role: "user", text: [...notes, String(prompt ?? "")].join("") });
     // silent: は渡った合図を出さないバックエンド（antigravity）の代わり。server は返答の中身で渡ったとみなす
-    if (!String(prompt ?? "").trim().startsWith("silent:")) onPromptDelivered?.();
+    if (!scriptOf(prompt).startsWith("silent:")) onPromptDelivered?.();
     emit({ type: "activity", state: "thinking" });
 
-    const text = String(prompt ?? "").trim();
+    const text = scriptOf(prompt);
     if (text.startsWith('limit ')) {
       const raw = text.slice(6).trim();
       const resetsAt = /^\d+$/.test(raw) ? Number(raw) : Date.parse(raw);
@@ -354,6 +374,15 @@ export const backend = {
     try {
       if (text.startsWith("slow")) {
         // 中断できることを測るための台本。signal が来るまで終わらない
+        if (SLOW_STEER && control) {
+          // AGENT_HOST_FAKE_SLOW_STEER=1 のとき: 途中送信を受理して履歴に積む（bot への書き足しの検査用。終わりは finally が外す）
+          control.steer = async (item) => {
+            if (signal?.signal?.aborted) return false;
+            push(s, { role: "user", text: String(item?.args?.prompt ?? "") });
+            return true;
+          };
+          control.onReady?.();
+        }
         await new Promise((resolve) => {
           if (signal?.signal?.aborted) return resolve();
           signal?.signal?.addEventListener?.("abort", () => resolve(), { once: true });
@@ -362,7 +391,17 @@ export const backend = {
         return { sessionId: id };
       }
 
-      if (text.startsWith('ply:')) {
+      if (text.startsWith('<pleiad-memory-learn>')) {
+        // L1 の学習会話。固定台本で、人の「覚えて:」だけを候補にする。
+        const line = text.split('\n').find((part) => part.startsWith('Human statements: '));
+        const statements = JSON.parse(line?.slice('Human statements: '.length) ?? '[]');
+        out.text = JSON.stringify({ memories: statements.flatMap((item) => {
+          const match = /^覚えて[:：]\s*(.{8,300})/u.exec(item.text.trim());
+          const learned = match?.[1] ?? item.aiContext?.text;
+          return learned ? [{ action: 'add', layer: 'user', text: learned, sourceIndexes: [item.index] }] : [];
+        }) });
+        await say(emit, out.text, out.uuid);
+      } else if (text.startsWith('ply:')) {
         const params = JSON.parse(text.slice(4));
         const callId = crypto.randomUUID();
         emit({ type: 'tool.start', id: callId, name: `mcp__ply_agents__${params.name}`, input: params.arguments });
@@ -415,6 +454,10 @@ export const backend = {
           }
           out.text = texts.join('\n');
         }
+        await say(emit, out.text, out.uuid);
+      } else if (text.startsWith("notes:") || text.startsWith("instructions:")) {
+        // bot の会話の検査用。Pleiad が足した notes（記憶・末尾）／ botInstructions（人格）を JSON で返す
+        out.text = JSON.stringify(text.startsWith("notes:") ? notes : botInstructions);
         await say(emit, out.text, out.uuid);
       } else if (text.startsWith('control:')) {
         // ply_control（操作の一覧。ADR 0081）の呼び出し。ほかの MCP と同じく mcp__ply_control__<ツール> の行で残す。渡っていなければ "control: unavailable"
@@ -624,6 +667,7 @@ export const backend = {
 
     if (out.text || out.toolCalls) push(s, out);
     emit({ type: 'contextWindow', usedTokens: s.contextTokens ?? 164_000, windowTokens: 200_000 });
+    if (FAKE_USAGE) emit({ type: "usage", inputTokens: 1000, outputTokens: 200, cachedTokens: 900, costUsd: 0 });
     emit({ type: "turnResult", outcome: "ok", turns: 1, costUsd: 0 });
     return { sessionId: id };
   },

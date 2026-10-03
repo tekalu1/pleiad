@@ -1,4 +1,5 @@
 import { isComposingKey } from "./keyboard.mjs";
+import { openEmojiPicker, closeEmojiPicker } from "./emoji-picker.mjs";
 // 脇のパネル（セッション一覧）。docs/design-system.md §4.1〜4.3。
 //
 // 別画面にすると「今どれが自分の番か」を見るのに会話から離れることになる（設計メモ §2.1）。
@@ -102,19 +103,7 @@ function pendingLabel(text) {
   return label;
 }
 
-// 絵文字の一覧（1363 件）は重いので、起動後の空き時間に先読みし、押した瞬間は面と弧を先に出す
-let emojiMod = null;
-const loadEmoji = () => (emojiMod ??= import("./emoji.mjs"));
-/** 絵文字のカテゴリの名前。辞書に無い id は emoji.mjs の名前のまま */
-// i18n-dynamic: sidebar.emoji.category.
-const CATEGORY_IDS = ["smileys", "nature", "food", "activity", "travel", "objects", "symbols", "flags"];
-const categoryLabel = (c) => (CATEGORY_IDS.includes(c.id) ? t(`sidebar.emoji.category.${c.id}`) : c.label);
-(globalThis.requestIdleCallback ?? ((f) => setTimeout(f, 1500)))(() => { loadEmoji().catch(() => {}); });
-const sections = new Map();   // カテゴリ id -> 一度作った格子。2 回目以降は作り直さない
-
 const STORE_KEY = "agent-host-side";
-const RECENT_KEY = "agent-host-emoji-recent";
-const RECENT_MAX = 16;
 const STALE_DAYS = 7;        // 状態がこれ以上動いていないものは ◌ と日数を出す（設計メモ §6）
 const UNDO_MS = 12000;       // 「元に戻す」の一行が出ている時間。押さなければ静かに消える
 const RECENT_SEARCH_KEY = "agent-host-side-recent";   // 最近の検索（結果を開いた語だけ。端末ごと）
@@ -192,6 +181,10 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
   const decided = new Set();                    // 人が開閉を決めた家族。決めるまで、今いる会話の器は開いたまま
   const made = new Set();                       // この画面で作った（まだ誰も付いていない）仮の状態
   let last = { sessions: [], statuses: [], currentId: null, runningIds: new Set(), waitingIds: new Set(), unreadIds: new Set(), interrupted: new Map(), schedules: new Map(), draft: null, backendLabels: null, pendingRows: new Map(), pendingStatuses: new Map(), pendingNew: null };
+  // Channels（web/channels/sidebar.mjs）から借りるもの。bot の会話の行の印（アイコン・#チャンネル）と、検索の横断
+  let directory = { channels: new Map(), bots: new Map() };   // id → Channel / Bot
+  let channelsLink = null;                      // connectChannels() の口。無ければ Chats だけを探す
+  const rendered = new Set();                   // 描き直しの知らせ（Channels 側のタブの点）
   let renderedRows = new Map();
   let nextRows = new Map();
   let dirty = true;
@@ -303,6 +296,22 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
     resetRemote();
     const wanted = document.createElement('div');
     nextRows = new Map();
+    const visible = last.sessions.filter(matchesFilter);
+    // あなたを待っている bot の会話（client があなた待ちの間だけ渡す。ADR 0109）。状態を持たないので利用者の状態のグループには入れず、
+    // 一覧の先頭（全グループの上）に短い見出しを付けて置く（計画 §7.2-4: いちばん上で目に入る位置）
+    const botWaits = visible.filter((s) => s.bot).sort((a, b) => (b.lastModified ?? 0) - (a.lastModified ?? 0));
+    if (botWaits.length) {
+      const sec = keyed(el("section", "grp bot-waits"), "bot-waits", true);
+      sec.setAttribute("role", "none");
+      const head = el("div", "grp-head bot-waits-head");
+      head.setAttribute("role", "none");
+      head.append(el("span", "wait", t("channels:side.botWaitsHead")));
+      const rowsEl = keyed(el("div", "rows"), "rows:bot-waits", true);
+      rowsEl.setAttribute("role", "none");
+      for (const s of botWaits) rowsEl.append(row(s, 1));
+      sec.append(head, rowsEl);
+      wanted.append(sec);
+    }
     if (last.pendingNew) {
       const top = keyed(el('div', 'rows pending-new-top'), 'pending-new', true);
       top.setAttribute("role", "none");
@@ -314,10 +323,9 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
 
     // グループ（根とその子孫）にまとめる。器は根の状態の見出しの下に入り、枝は器の中だけに出る。
     // 親が絞り込みで消えている枝は、入れる一番近い祖先に付く。付ける先が無ければ自分が根（= ただの行）
-    const visible = last.sessions.filter(matchesFilter);
     const byGroup = new Map();
     inFamily.clear();
-    for (const fam of familiesOf(visible, last.sessions)) {
+    for (const fam of familiesOf(visible.filter((s) => !s.bot), last.sessions)) {
       const k = statusKey(fam.root);
       if (!byGroup.has(k)) byGroup.set(k, []);
       byGroup.get(k).push(fam);
@@ -356,6 +364,7 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
       ic.title = t("sidebar.group.pickIcon");
       ic.onclick = (e) => { e.stopPropagation(); openIconPicker(st, ic); };
       const name = el("span", "grp-name" + (st == null ? " none" : ""), st ?? t("session.status.none"));
+      name.setAttribute("role", "button");
       name.onclick = () => setOpen(isCollapsed);
       head.append(ic, name);
       const pendingStatus = last.pendingStatuses.get(st);
@@ -573,7 +582,33 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
   const members = (fam) => [fam.root, ...[...fam.kin].sort(rowOrder)];
   const famWhen = (fam) => Math.max(...members(fam).map((s) => s.lastModified ?? 0));
   const famStale = (fam) => (members(fam).some(isStale) ? 1 : 0);
-  const titleOf = (s) => (s.title === "(no title)" ? "" : (s.title ?? ""));
+  const titleOf = (s) => (s.bot ? botTitle(s) : s.title === "(no title)" ? "" : (s.title ?? ""));
+  /**
+   * bot の会話の題。会話の題は「🦉 Owl · #checkout-perf › 根の投稿の頭」（core/bots/sessions.mjs の sessionTitle）で、
+   * bot とチャンネルは行の印（.row-ch）が示すので、題には根の投稿の頭だけを出す。頭が無ければ bot の名前
+   */
+  function botTitle(s) {
+    const parts = botTitleParts(s);
+    return parts.head || directory.bots.get(s.bot.botId)?.name || parts.bot;
+  }
+  /** 会話の題「🦉 Owl · #checkout-perf › 頭」を { bot, channel, head } に分ける（DM は「🦉 Owl」だけ） */
+  function botTitleParts(s) {
+    const m = /^\S+\s+(.*?)(?: · #(.*?))?(?: › (.*))?$/su.exec(String(s.title ?? ""));
+    return { bot: m?.[1] ?? "", channel: m?.[2] ?? "", head: m?.[3] ?? "" };
+  }
+  /** bot の会話の印: bot のアイコンと #チャンネル（DM なら「DM」）。行の時刻の前に置く */
+  function botChannelMark(s) {
+    const bot = directory.bots.get(s.bot.botId);
+    const channel = s.bot.channelId ? directory.channels.get(s.bot.channelId) : null;
+    const mark = el("span", "row-ch");
+    const av = el("span", "av xs", bot?.icon || String(s.title ?? "").split(/\s/, 1)[0] || "");
+    av.setAttribute("aria-hidden", "true");
+    const name = channel?.name ?? botTitleParts(s).channel;   // 一覧をまだ読めていなければ会話の題から（id は出さない）
+    const where = s.bot.kind === "dm" || channel?.kind === "dm" ? t("channels:side.dm") : name ? `#${name}` : "";
+    mark.append(av, el("span", "row-ch-name", where));
+    if (bot) mark.title = where ? `${bot.name} · ${where}` : bot.name;
+    return mark;
+  }
 
   /**
    * fork で生まれた会話の印。題の前に出す。グループから外しても、状態を変えても消えない
@@ -727,7 +762,8 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
     const key = `session:${level}:${s.id ?? ''}`;
     const signature = JSON.stringify([s, level, s.id === last.currentId, last.runningIds.has(s.id), last.waitingIds.has(s.id),
       last.bgWaiting.get(s.id), last.unreadIds.has(s.id), last.interrupted.get(s.id), last.schedules.get(s.id),
-      last.pendingRows.get(s.id), last.backendLabels, document.documentElement.lang, Math.floor(Date.now() / 60000)]);
+      last.pendingRows.get(s.id), last.backendLabels, document.documentElement.lang, Math.floor(Date.now() / 60000),
+      s.bot ? [directory.bots.get(s.bot.botId), s.bot.channelId ? directory.channels.get(s.bot.channelId) : null] : null]);
     const cached = renderedRows.get(key);
     if (cached?.signature === signature && cached.node.isConnected) {
       nextRows.set(key, cached);
@@ -785,6 +821,7 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
       why.setAttribute('aria-hidden', 'true');
       meta.append(why);
     }
+    if (s.bot) { r.classList.add("botwait"); meta.append(botChannelMark(s)); }
     if (last.waitingIds.has(s.id)) meta.append(el("span", "wait", t("sidebar.waiting")));
     if (pendingRow?.visible) meta.append(pendingLabel(pendingRow.text));
     else if (isStale(s)) meta.append(el("span", "stale", t("sidebar.staleDays", { count: staleDays(s.statusChangedAt) })));
@@ -809,7 +846,7 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
 
     r.onclick = () => { if (!open) onOpen?.(s.id); };
     r.oncontextmenu = (e) => { if (!onContext || !interactive) return; e.preventDefault(); onContext(s, e.clientX, e.clientY); };
-    if (!interactive) return r;
+    if (!interactive || s.bot) return r;   // bot の会話は状態を持たないので、つかんで状態へ落とせない
 
     // つかんで別の状態へ落とすと状態が変わる（グループの中の行はそこで外れる）。
     // 同じ状態の空きへ落とせば、状態はそのままグループから外れるだけ。
@@ -917,7 +954,7 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
 
   /** 結果が要るのに、今の条件の答えが無い（または一覧が動いた）ときだけ、少し待ってから問い合わせる */
   function wantRemote(q) {
-    if (!onSearch) return;
+    if (!onSearch && !channelsLink) return;
     const key = searchKey(q);
     if (remote?.key === key && remote.sig === listSig) return;
     if (wanted === key) return;
@@ -932,12 +969,15 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
   async function fetchRemote(q, key) {
     const seq = ++remoteSeq;
     const sig = listSig;
-    let result = null;
-    try { result = await onSearch(searchInput(q)); } catch { result = null; }
+    // チャンネルの投稿も同時に探す（channels.search。失敗しても会話の結果は出す）
+    const [result, posts] = await Promise.all([
+      onSearch ? Promise.resolve().then(() => onSearch(searchInput(q))).catch(() => null) : null,
+      channelsLink?.searchPosts ? channelsLink.searchPosts(q).catch(() => []) : [],
+    ]);
     if (seq !== remoteSeq) return;                 // もっと新しい問い合わせが走っている
     wanted = null;
     if (searchBox.value.trim() !== q || searchKey(q) !== key) return;   // 打ち直した（次の問い合わせは予約済み）
-    remote = { key, sig, at: Date.now(), result };
+    remote = { key, sig, at: Date.now(), result, posts: Array.isArray(posts) ? posts : [] };
     clearTimeout(partialTimer);
     if (result?.partial && partialPolls < PARTIAL_POLL_MAX) {
       partialPolls++;
@@ -947,7 +987,24 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
   }
 
   /** 結果の 1 行分のデータ。手元の照合（題・状態・場所）とサーバーの結果を同じ形にそろえる */
+  /**
+   * 会話の結果に、チャンネルの当たり（名前の一致・投稿の本文）を混ぜる（脇の 2 タブを横断する検索。ADR 0107）。
+   * 名前の一致は手元で即座に先頭へ、投稿は会話の本文と同じ問い合わせで届いてから（新しい順なら会話と時刻で混ぜ、関連度順なら会話の後）。
+   * Chats の絞り込み（場所・状態・エージェント・期間）をかけている間は会話だけを探す（チャンネルには当てはまらない）
+   */
   function resultRows(q) {
+    const base = sessionResultRows(q);
+    const withChannels = Boolean(channelsLink) && !filtering() && scope.speaker === "any";
+    const names = withChannels ? channelsLink.matchNames(parseTerms(q)) : [];
+    const posts = withChannels && remote?.key === searchKey(q) ? remote.posts ?? [] : [];
+    const merged = sortMode === "recent"
+      ? [...base.rows, ...posts].sort((a, b) => (b.lastModified ?? 0) - (a.lastModified ?? 0))
+      : [...base.rows, ...posts];
+    return { ...base, total: base.total + names.length + posts.length, rows: [...names, ...merged], mixed: names.length + posts.length > 0,
+      sources: withChannels && directory.channels.size > 0 };
+  }
+
+  function sessionResultRows(q) {
     const byId = new Map(last.sessions.map((s) => [s.id, s]));
     const key = searchKey(q);
     if (remote?.key === key && remote.result) {
@@ -995,12 +1052,14 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
   function openResult(r) {
     const q = searchBox.value.trim();
     if (q) { recentSearches = pushRecentSearch(recentSearches, q, RECENT_SEARCH_MAX); try { localStorage.setItem(RECENT_SEARCH_KEY, JSON.stringify(recentSearches)); } catch { /* 保存できなくても動く */ } }
+    if (r.channelId) { channelsLink?.open(r); return; }
     const hit = r.hit?.uuid ? r.hit : null;
     onOpen?.(r.id, hit ? { uuid: hit.uuid, role: hit.role, query: q, speaker: scope.speaker } : null);
   }
 
   /** 結果の 1 行。題 + 件数の札、一致した発言の抜粋（2 行まで）、時刻・エージェント・状態・場所（委譲は「委譲 · 親の題」） */
-  function resultRow(r, index, terms) {
+  function resultRow(r, index, terms, sources) {
+    if (r.channelId) return channelResultRow(r, index, terms);
     const open = r.id === last.currentId;
     const row = el("div", "row res" + (open ? " sel" : ""));
     row.id = `side-opt-${index}`;
@@ -1031,6 +1090,8 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
       spokenHit = t("sidebar.search.rowWho", { who, text: r.hit.excerpt });
     }
     const meta = el("div", "row-meta");
+    // チャンネルも探しているときは出どころを添える（「Chats」か「#チャンネル」）
+    if (sources) meta.append(el("span", "row-src", t("channels:side.tabs.chats")));
     meta.append(el("span", "row-when", relTime(r.lastModified)));
     if (last.backendLabels && r.backend) meta.append(backendLogo(r.backend, last.backendLabels[r.backend] ?? r.backend));
     if (r.status) meta.append(el("span", "row-st", r.status));
@@ -1048,19 +1109,54 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
     return row;
   }
 
+  /**
+   * チャンネルの当たりの 1 行。名前の一致は「# 名前」、投稿は抜粋（誰の発言か + 本文の 2 行まで）。
+   * 出どころは「#チャンネル」。押すとそのチャンネル（投稿がスレッドの中ならそのスレッド）を開く
+   */
+  function channelResultRow(r, index, terms) {
+    const row = el("div", "row res ch-res");
+    row.id = `side-opt-${index}`;
+    row.setAttribute("role", "option");
+    row.setAttribute("aria-selected", "false");
+    row.dataset.channel = r.channelId;
+    if (r.postId) row.dataset.post = r.postId;
+    if (!r.postId) {
+      const head = el("div", "row-title");
+      head.append(el("span", "hash", "#"), fillMarked(el("span", "row-t", ""), r.title, findRanges(r.title, terms)));
+      row.append(head);
+    } else {
+      const snip = el("div", "snip");
+      const flow = el("span", "snip-flow");
+      if (r.who) flow.append(el("span", "snip-who", r.who));
+      fillMarked(flow, r.snippet, findRanges(r.snippet, terms));
+      snip.append(flow);
+      row.append(snip);
+    }
+    const meta = el("div", "row-meta");
+    // 出どころ。投稿は「#チャンネル」、名前の一致はチャンネルそのものなので種類（「チャンネル」）
+    meta.append(el("span", "row-src", r.postId ? `#${r.channelName}` : t("channels:side.sections.channels")));
+    if (r.lastModified) meta.append(el("span", "row-when", relTime(r.lastModified)));
+    row.append(meta);
+    row.setAttribute("aria-label", [r.postId ? `${r.who ? `${r.who}: ` : ""}${r.snippet}` : `#${r.title}`, `#${r.channelName}`,
+      r.lastModified ? relTime(r.lastModified) : ""].filter(Boolean).join(", "));
+    row.onclick = () => openResult(r);
+    row._result = r;
+    return row;
+  }
+
   function renderResults(q) {
     if (!searchOn) { searchOn = true; paintMode(true); }
     wantRemote(q);
-    const { server, total, partial, rows } = resultRows(q);
+    const { server, total, partial, rows, mixed, sources } = resultRows(q);
     const terms = parseTerms(q);
     root.replaceChildren();
-    resultNodes = rows.map((r, i) => resultRow(r, i, terms));
+    resultNodes = rows.map((r, i) => resultRow(r, i, terms, sources));
     root.append(...resultNodes);
     const more = el("div", "empty", server && total > rows.length ? t("sidebar.search.more", { count: total - rows.length }) : "");
     more.setAttribute("role", "none");
     if (more.textContent) root.append(more);
     if (!rows.length && server) {
-      const none = el("div", "empty", t("sidebar.search.none"));
+      const none = el("div", "empty", sources ? t("channels:side.search.none") : t("sidebar.search.none"));
       none.setAttribute("role", "none");
       root.append(none);
     }
@@ -1069,7 +1165,8 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
     paintOption(false);
     // 件数・弧（写しを読み込み中）・並び替え
     $("resHead").hidden = false;
-    $("resCount").textContent = t("sidebar.search.count", { count: total });
+    const countText = mixed ? t("channels:side.search.count", { count: total }) : t("sidebar.search.count", { count: total });
+    $("resCount").textContent = countText;
     $("resArc").replaceChildren(...(partial ? [runMark(t("sidebar.search.searching"))] : []));
     const sort = $("resSort");
     sort.setAttribute("aria-pressed", String(sortMode === "recent"));
@@ -1077,7 +1174,7 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
     sort.title = sortMode === "recent" ? t("sidebar.search.sort.toRelevance") : t("sidebar.search.sort.toRecent");
     sort.setAttribute("aria-label", sort.title);
     // 読み上げは、本文まで探した結果が届いてから 1 度（手元の結果で 2 度言わない）
-    if (server && !partial) $("resLive").textContent = rows.length ? t("sidebar.search.count", { count: total }) : t("sidebar.search.none");
+    if (server && !partial) $("resLive").textContent = rows.length ? countText : sources ? t("channels:side.search.none") : t("sidebar.search.none");
     $("filterBtn").classList.toggle("on", filtering());
     renderChips();
     syncSearchHint();
@@ -1085,6 +1182,8 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
 
   /** 一覧の入れ物を、結果（listbox・平ら）といつもの木（tree）で切り替える */
   function paintMode(on) {
+    // Channels のタブを見ていても、語がある間は結果の一覧（この #groups）を出す（web/channels-side.css）
+    document.documentElement.classList.toggle("side-searching", on);
     root.setAttribute("role", on ? "listbox" : "tree");
     root.setAttribute("aria-label", on ? t("sidebar.search.results") : t("sidebar.list"));
     root.classList.toggle("flat", on);
@@ -1192,9 +1291,10 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
         recentAt = down ? recentAt + 1 : Math.max(-1, recentAt - 1);
         syncRecent();
       } else if (down && !searching) {
-        // 検索欄で ↓ を押すと一覧の先頭の行へ入る
+        // 検索欄で ↓ を押すと一覧の先頭の行へ入る（Channels のタブを見ていれば、そちらの一覧へ）
         e.preventDefault();
-        enterTree();
+        if (channelsLink?.active()) channelsLink.enterList();
+        else enterTree();
       }
       return;
     }
@@ -1224,7 +1324,14 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
   // ---- 浮く面 --------------------------------------------------------------
 
   const pops = ["filterPop", "iconPop"];
-  const closePops = (except) => { for (const id of pops) if (id !== except) $(id).hidden = true; };
+  const closePops = (except) => {
+    for (const id of pops) {
+      if (id !== except) {
+        if (id === "iconPop") closeEmojiPicker();
+        else $(id).hidden = true;
+      }
+    }
+  };
   document.addEventListener("click", (e) => { if (!e.target.closest(".pop")) closePops(); });
   document.addEventListener("keydown", (e) => { if (!isComposingKey(e) && e.key === "Escape") closePops(); });
 
@@ -1328,127 +1435,17 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
 
   // ---- アイコン選択（絵文字ピッカー）。既定はフォルダ。人間が選ぶ経路。AI は set_status で同じ値を渡せる ----
 
-  const loadRecent = () => {
-    try { const a = JSON.parse(localStorage.getItem(RECENT_KEY) ?? "[]"); return Array.isArray(a) ? a.filter((x) => typeof x === "string") : []; }
-    catch { return []; }
-  };
-  const pushRecent = (e) => {
-    const next = [e, ...loadRecent().filter((x) => x !== e)].slice(0, RECENT_MAX);
-    try { localStorage.setItem(RECENT_KEY, JSON.stringify(next)); } catch { /* 保存できなくても動く */ }
-  };
-
-  async function openIconPicker(st, anchor) {
+  function openIconPicker(st, anchor) {
     if (st == null) return;                                 // 「状態なし」にアイコンは付けない
-    const p = $("iconPop");
     closePops("iconPop");
-    p.hidden = false;
-    const r = anchor.getBoundingClientRect();
-    const side = $("sidebar").getBoundingClientRect();
-    p.style.left = `${Math.max(4, Math.min(r.left - side.left, side.width - 316))}px`;
-    p.style.top = `${r.bottom - side.top + 4}px`;
-    const cur = iconOf(st) ?? "";
-    const choose = (e) => { p.hidden = true; pushRecent(e); onSetIcon?.(st, e); };
-
-    // 押した瞬間に面を出す。一覧の読み込みを待つ間は弧
-    p.replaceChildren(el("div", "head", t("sidebar.emoji.title", { status: st })));
-    const q = document.createElement("input");
-    q.className = "field";
-    q.placeholder = t("sidebar.emoji.placeholder");
-    q.setAttribute("aria-label", t("sidebar.emoji.search"));
-    p.append(q);
-    const tabs = el("div", "etabs");
-    const body = el("div", "ebody");
-    const wait = el("div", "empty ewait");
-    wait.append(runMark(t("sidebar.emoji.loadingMark")), el("span", null, t("sidebar.emoji.loading")));
-    body.append(wait);
-    p.append(tabs, body);
-    const reset = el("button", "li");
-    reset.type = "button";
-    reset.append(icon(FOLDER), el("span", "lbl", t("sidebar.emoji.reset")), el("span", "hint", t("sidebar.emoji.folder")));
-    reset.onclick = () => { p.hidden = true; onSetIcon?.(st, ""); };
-    p.append(reset);
-    setTimeout(() => q.focus(), 0);
-
-    const opened = (p.dataset.seq = String(Number(p.dataset.seq ?? 0) + 1));
-    let mod;
-    try { mod = await loadEmoji(); } catch { wait.textContent = t("sidebar.emoji.loadFailed"); return; }
-    if (p.hidden || p.dataset.seq !== opened) return;      // 待っている間に閉じた・別のを開いた
-    const { CATEGORIES, EMOJI_RE } = mod;
-
-    /** 格子。触れると薄い丸、押すと確定。押した先は body で受ける（格子は使い回すので、ここでは結ばない） */
-    const grid = (items) => {
-      const g = el("div", "egrid");
-      for (const [e, en, ja] of items) {
-        const b = el("button", null, e);
-        b.type = "button";
-        b.dataset.e = e;
-        b.title = `${ja} ${en}`.trim();
-        g.append(b);
-      }
-      return g;
-    };
-    const section = (id, label, items) => {
-      const s = el("div", "esec");
-      s.dataset.cat = id;
-      s.append(el("div", "head", label), grid(items));
-      return s;
-    };
-    // カテゴリの格子は一度作ったら使い回す（1363 個のボタンを毎回作らない）
-    const cached = (c) => {
-      if (!sections.has(c.id)) sections.set(c.id, section(c.id, categoryLabel(c), c.items));
-      return sections.get(c.id);
-    };
-    body.onclick = (e) => {
-      const b = e.target.closest(".egrid button");
-      if (b) choose(b.dataset.e);
-    };
-    const markCurrent = () => {
-      for (const b of body.querySelectorAll(".egrid button.on")) b.classList.remove("on");
-      if (cur) for (const b of body.querySelectorAll(`.egrid button[data-e="${CSS.escape(cur)}"]`)) b.classList.add("on");
-    };
-
-    for (const c of CATEGORIES) {
-      const tab = el("button", "etab", c.icon);
-      tab.type = "button";
-      tab.title = categoryLabel(c);
-      tab.onclick = () => { q.value = ""; renderAll(); body.querySelector(`.esec[data-cat="${c.id}"]`)?.scrollIntoView({ block: "start" }); };
-      tabs.append(tab);
-    }
-
-    const renderAll = () => {
-      body.replaceChildren();
-      const recent = loadRecent();
-      if (recent.length) {
-        const all = new Map(CATEGORIES.flatMap((c) => c.items).map((it) => [it[0], it]));
-        body.append(section("recent", t("sidebar.emoji.recent"), recent.map((e) => all.get(e) ?? [e, "", ""])));
-      }
-      for (const c of CATEGORIES) body.append(cached(c));
-      markCurrent();
-    };
-    const renderSearch = (text) => {
-      body.replaceChildren();
-      const typed = text.trim();
-      // 貼り付けた絵文字はそのまま候補の先頭に。一覧に無いものでも選べる
-      const pasted = [...new Set([...typed.matchAll(EMOJI_RE)].map((m) => m[0]))];
-      const words = typed.replace(EMOJI_RE, " ").toLowerCase().split(/\s+/).filter(Boolean);
-      const hits = words.length
-        ? CATEGORIES.flatMap((c) => c.items).filter(([e, en, ja]) => {
-            const hay = `${en} ${ja}`.toLowerCase();
-            return words.every((w) => hay.includes(w)) && !pasted.includes(e);
-          })
-        : [];
-      const items = [...pasted.map((e) => [e, "", ""]), ...hits];
-      body.append(items.length ? section("search", t("sidebar.emoji.hits", { count: items.length }), items) : el("div", "empty", t("sidebar.noMatch")));
-      markCurrent();
-    };
-    q.oninput = () => (q.value.trim() ? renderSearch(q.value) : renderAll());
-    q.onkeydown = (e) => {
-      if (isComposingKey(e)) return;
-      if (e.key === "Escape") { e.preventDefault(); p.hidden = true; }
-      // Enter は先頭の候補で確定
-      if (e.key === "Enter") { e.preventDefault(); body.querySelector(".egrid button")?.click(); }
-    };
-    if (q.value.trim()) renderSearch(q.value); else renderAll();   // 待っている間に打ち始めていたらその結果から
+    openEmojiPicker({
+      anchor,
+      within: $("sidebar"),
+      title: t("sidebar.emoji.title", { status: st }),
+      current: iconOf(st) ?? "",
+      onPick: (e) => onSetIcon?.(st, e),
+      onReset: () => onSetIcon?.(st, ""),
+    });
   }
 
   $("clearFilterOutside").onclick = () => { filter.backends = []; filter.dir = null; filter.status = undefined; filter.period = 0; save(); render(); };
@@ -1510,7 +1507,27 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
       // 会話が増えた・更新された（ターンの終わりなど）。語があるなら、本文まで探した結果も取り直す
       listSig = `${last.sessions.length}:${last.sessions.reduce((m, s) => Math.max(m, s.lastModified ?? 0), 0)}`;
       render();
+      for (const fn of rendered) fn();
     },
+    /** 一覧を描き直したら呼ぶ（Channels のタブの点を数え直す）。外す関数を返す */
+    onRender(fn) { rendered.add(fn); return () => rendered.delete(fn); },
+    /** Chats の側に、あなたを待っている会話・未読の会話があるか（脇のタブの点。web/channels/sidebar.mjs） */
+    attention() {
+      return { waiting: last.sessions.some((s) => last.waitingIds.has(s.id)), unread: last.unreadIds.size > 0 };
+    },
+    /** チャンネルと bot の一覧（bot の会話の行の印・検索のチャンネル名）。Channels の脇が読むたびに渡す */
+    setDirectory({ channels = [], bots = [] } = {}) {
+      directory = { channels: new Map(channels.map((c) => [c.id, c])), bots: new Map(bots.map((b) => [b.id, b])) };
+      if (remote) remote.sig = null;   // 検索中ならチャンネルの当たりも取り直す
+      render();
+    },
+    /**
+     * 検索をチャンネルへ広げる口（web/channels/sidebar.mjs）:
+     *   matchNames(terms) → 行（名前の一致。手元で即座に）、searchPosts(q) → Promise<行>（channels.search）、open(行)、
+     *   active() → Channels のタブを見ているか、enterList() → 検索欄の ↓ で Channels の一覧へ入る
+     * 行は { id, channelId, channelName, title, postId?, threadId?, who?, snippet?, lastModified? }
+     */
+    connectChannels(link) { channelsLink = link; },
     /** この画面で作った、まだ誰も付いていない状態を一覧に出す */
     keep(status) { if (status) made.add(status); },
     get filter() { return { ...filter }; },

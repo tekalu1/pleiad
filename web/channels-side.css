@@ -1,0 +1,83 @@
+/* ==================== 脇の Chats / Channels（web/channels/side-tabs.mjs、ADR 0107） ====================
+   切り替えは html.side-channels（脇）と body.channels（メイン）。見えているのは片側だけで、見ていない側の札に点を付ける。
+   面は --surface-*、字は --ink-*、枠線は使わない（選んでいる札は面の持ち上がりで示す） */
+
+/* ---- 2 タブ（.seg と同じ pill の 2 択） */
+.side-tabs{display:flex;gap:2px;margin:4px 12px;padding:3px;background:var(--surface-3);border-radius:var(--r-pill)}
+.side-tab{flex:1;display:inline-flex;align-items:center;justify-content:center;gap:6px;padding:4px 0;border-radius:var(--r-pill);background:transparent;
+  color:var(--ink-weak);font-size:13px;cursor:pointer;transition:background-color var(--dur-fast) var(--ease-out)}
+.side-tab:hover{color:var(--ink)}
+.side-tab[aria-selected=true]{background:var(--surface-paper);color:var(--ink);font-weight:600;box-shadow:0 1px 4px var(--shadow)}
+/* 札の点。あなた待ちは差し色（--ink-mark はこの意味にだけ）、未読は一覧と同じ青い丸 */
+.tab-dot{display:none;font-style:normal;line-height:1}
+.tab-dot:not([hidden]){display:inline-block}
+.tab-dot::before{content:"●";font-size:8px}
+.tab-dot.mark::before{content:"◆";font-size:9px;color:var(--ink-mark)}
+.tab-dot.unread::before{color:var(--ink-unread)}
+/* 設定を開いている間は、一覧と同じくタブも隠す */
+body.settings > #sidebar > :is(#sideTabs,#channelsSide){display:none}
+
+/* ---- Channels 側の一覧（#channelsSide。web/channels/sidebar.mjs）。見出しと行は Chats の一覧と同じ形（.grp-head・.rows・.row） */
+.channels-side{display:none}
+/* 検索欄は両方を探す。Channels を見ている間は Chats の一覧・絞り込みを隠し、語があるときだけ結果（#groups）を出す */
+html.side-channels #filterBtn{display:none}
+html.side-channels:not(.side-searching) :is(#sidebar .fchips,#sidebar .filter-outside,#sidebar .res-head,#groups){display:none}
+html.side-channels:not(.side-searching) .channels-side:not([hidden]){display:flex;flex-direction:column;gap:14px;flex:1;min-height:0;overflow-y:auto;padding:4px 10px 16px;
+  scrollbar-width:thin;scrollbar-color:var(--surface-3) transparent}
+.cs-icon{cursor:default}
+.cs-icon:hover{background:transparent}
+.cs-head h2.cs-name{margin:0;font-size:inherit;cursor:default;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cs-sec .empty{padding:4px 10px}
+
+/* 行（1 行の .row.one）: チャンネルは # 名前・あなた宛ての件数、bot はアイコン・名前・エージェント・状態 */
+.cs-row.one{display:flex;align-items:center;gap:7px;padding-top:6px;padding-bottom:6px;font-size:13px}
+.cs-row:focus-visible{outline:2px solid var(--line-blue);outline-offset:-1px}
+.cs-row .row-t{flex:1}
+.cs-row .hash{color:var(--ink-weak);flex:none;width:12px;text-align:center}
+.cs-row.unread .row-t{font-weight:700;color:var(--ink-strong)}
+.cs-row.quiet .row-t{color:var(--ink-weak)}
+.cs-row .mc{flex:none;min-width:18px;height:18px;padding:0 5px;border-radius:var(--r-pill);background:var(--surface-3);font:600 var(--fs-xs)/18px var(--font-mono);text-align:center;color:var(--ink-strong)}
+.cs-row.sel .mc{background:var(--surface-2)}
+.cs-row .av.s{width:22px;height:22px;flex:none;display:grid;place-items:center;border-radius:50%;background:var(--surface-paper);font-size:13px;line-height:1;color:var(--ink)}
+.cs-row.sel .av.s{background:var(--surface-1)}
+.cs-row .row-t.cs-bot-name{flex:0 1 auto}
+.cs-row .cs-fill{flex:1}
+.cs-row .st-r{flex:none;font-size:var(--fs-xs);color:var(--ink-weak);white-space:nowrap}
+.cs-row .wait{font-size:var(--fs-xs);white-space:nowrap}
+
+/* チャンネルを作る（＋ で出るその場の名前の欄） */
+.cs-new{display:flex;flex-direction:column;gap:2px}
+.cs-new-line{display:flex;align-items:center;gap:7px;padding:3px 10px;border-radius:var(--r-m);background:var(--surface-paper);font-size:var(--fs-s)}
+.cs-new-line .hash{color:var(--ink-weak);flex:none;width:12px;text-align:center}
+.cs-new-input{flex:1;min-width:0;padding:3px 0;background:transparent;font:inherit;color:var(--ink);outline:none}
+.cs-new-input::placeholder{color:var(--ink-weak)}
+.cs-new-line .cs-new-input:focus-visible{outline:none}   /* 輪は欄の行（.cs-new-line）に付ける。検索欄の .qbox と同じ */
+.cs-new-line:has(.cs-new-input:focus-visible){outline:2px solid var(--line-blue);outline-offset:-1px}
+.cs-new-err{padding:0 10px 2px;font-size:var(--fs-xs);color:var(--ink-strong)}
+
+/* Chats の一覧: あなた待ちの bot の会話の印（bot のアイコンと #チャンネル）と、検索の結果の出どころ */
+.bot-waits-head{padding-left:8px;font-weight:600}
+.row-ch{display:inline-flex;align-items:center;gap:4px;min-width:0;white-space:nowrap}
+.row-ch .av.xs{width:16px;height:16px;flex:none;display:inline-grid;place-items:center;font-size:11px;line-height:1}
+.row-ch-name{min-width:0;overflow:hidden;text-overflow:ellipsis}
+.row-src{flex:none;max-width:50%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:0 6px;border-radius:var(--r-pill);background:var(--surface-2);line-height:16px}
+.row.sel .row-src{background:var(--surface-1)}
+.row.res.ch-res .hash{color:var(--ink-weak);flex:none}
+
+/* ---- メインの面（#channelsView）。設定の画面と同じく会話を覆う（会話は描いたまま、スクロール位置も残す） */
+.channels-view{display:none}
+body.channels:not(.settings) .channels-view{display:flex;flex-direction:column;position:absolute;inset:0;z-index:1;background:var(--surface-paper);border-radius:inherit}
+.channels-view .top h2{flex:1;min-width:0;margin:0;padding:5px 10px;font-size:var(--fs-l);font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ch-body{flex:1;min-height:0;position:relative;overflow-y:auto}
+.ch-empty{margin:24px 18px;color:var(--ink-weak);font-size:var(--fs-s)}
+/* bot のページを見せている間は、頭の見出しを引っ込める（bot のページ自身の頭が見出し。読み上げには残す）。頭の行は、脇を開く入口が要る間だけ残す */
+.channels-view .top.bot-top{padding-top:0;padding-bottom:0}
+.channels-view .top.bot-top h2{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip-path:inset(50%);flex:none}
+:root.side-closed .channels-view .top.bot-top{padding:10px 18px 0}
+/* 脇を閉じている間の入口（#openSidebar と同じ出し方） */
+#chOpenSidebar{display:none}
+:root.side-closed #chOpenSidebar{display:inline-flex;margin-left:-6px}
+@media (max-width:700px){
+  #chOpenSidebar{display:inline-flex;margin-left:-6px}
+  .channels-view .top.bot-top{padding:10px 18px 0}
+}

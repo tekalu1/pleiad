@@ -1,0 +1,139 @@
+/* ==================== bot のページ・記憶の一覧（W4）: #botView.bot-page ====================
+   承認済みのモック 05（temporary/mockups/bots-channels.html）の形。web/channels/bot-page.mjs・memory-list.mjs。
+   面は --surface-* / --fill-*、字は --ink-*、枠線なし（tests/lint-design.mjs）。モデル・承認モードのチップと浮く面は style.css の .chip・.cpop をそのまま使う */
+
+/* ---- 面。#channelsBody いっぱいに、頭と 2 列 */
+.bot-page{position:absolute;inset:0;overflow-y:auto;overscroll-behavior:contain;background:var(--surface-paper);padding:18px 24px 28px;
+  scrollbar-width:thin;scrollbar-color:var(--surface-thumb) transparent}
+.bot-page[hidden]{display:none}
+.bp-head{display:flex;align-items:center;gap:14px;margin-bottom:16px;flex-wrap:wrap}
+.bp-id{min-width:0}
+.bp-spacer{flex:1}
+.bp-av{width:56px;height:56px;border-radius:50%;display:grid;place-items:center;flex:none;font-size:30px;line-height:1;background:var(--surface-1);
+  cursor:pointer;transition:background-color var(--dur-fast) var(--ease-out)}
+.bp-av:hover{background:var(--surface-2)}
+.bp-name{display:block;font:700 20px/1.4 var(--font);color:var(--ink);padding:2px 8px;margin-left:-8px;border-radius:var(--r-s);width:min(100%,12em);outline:none;background:transparent}
+.bp-name:hover,.bp-name:focus{background:var(--surface-1)}
+.bp-name::placeholder{color:var(--ink-weak);font-weight:400}
+.bp-sub{display:flex;align-items:center;gap:8px;font-size:var(--fs-s);color:var(--ink-weak);flex-wrap:wrap;min-height:20px}
+.bp-sub .row-be{flex:none}
+.bp-sub .wait{color:var(--ink-mark);font-weight:600}
+.bp-err{margin:0 0 12px;padding:8px 12px;border-radius:var(--r-m);background:var(--surface-1);color:var(--ink-strong);font-size:var(--fs-s);overflow-wrap:anywhere}
+.bp-err[hidden]{display:none}
+.bp-gone{margin:32px 4px;color:var(--ink-weak);font-size:var(--fs-s);text-align:center}
+
+.bp-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px;align-items:start}
+.bp-col{min-width:0}
+.bp-col>.bp-blk+.bp-blk,.bp-col>.bp-blk+.bp-usage{margin-top:16px}
+.bot-page.is-new .bp-grid{grid-template-columns:minmax(0,1fr);max-width:640px}
+.bp-blk{background:var(--surface-1);border-radius:var(--r-l);padding:14px 16px;min-width:0}
+.bp-blk h4{margin:0 0 8px;font-size:var(--fs-s);color:var(--ink-weak);font-weight:600;display:flex;align-items:center;gap:8px}
+.bp-blk h4 .r{margin-left:auto;font-weight:400}
+.bp-blk h4.bp-h-folders{margin-top:14px}
+
+/* ---- 人格 */
+.bp-persona{display:block;width:100%;resize:none;overflow-y:auto;box-sizing:border-box;background:var(--surface-paper);color:var(--ink);border-radius:var(--r-m);
+  padding:10px 12px;font:400 13px/1.7 var(--font);min-height:72px;outline:none}
+.bp-persona::placeholder{color:var(--ink-weak)}
+.bp-persona:focus-visible{outline:2px solid var(--line-blue);outline-offset:-2px}
+
+/* ---- 動かし方: チップ・承認モードの注記・フォルダー・スイッチ */
+.bp-kvr{display:flex;align-items:center;gap:8px;padding:6px 0;font-size:13px;min-width:0;flex-wrap:wrap}
+.bp-kvr>.k{width:6.5em;flex:none;color:var(--ink-weak);font-size:var(--fs-s)}
+.bp-kvr .bp-nt,.bot-page .bp-nt{font-size:var(--fs-xs);color:var(--ink-weak);line-height:1.5;margin:0}
+.bp-kvr .bp-nt{flex-basis:100%;padding-left:calc(6.5em + 8px)}
+.bp-chips{gap:4px;padding:0}
+.chip.fieldish{background:var(--surface-paper)}
+.chip.fieldish:hover,.chip.fieldish[aria-expanded=true]{background:var(--surface-sel)}
+.bp-locknote{display:inline-flex;align-items:center;gap:4px;font-size:var(--fs-xs);color:var(--ink-weak);margin-top:6px}
+.bp-locknote svg.i{width:13px;height:13px;flex:none}
+.bp-fact{margin-top:4px}
+.bp-folders{display:flex;flex-direction:column}
+.bp-empty{margin:0 0 6px;font-size:var(--fs-s);color:var(--ink-weak)}
+.bp-fold{display:flex;align-items:center;gap:8px;padding:5px 6px 5px 10px;border-radius:var(--r-m);background:var(--surface-paper);font-size:var(--fs-s);margin-bottom:4px;min-width:0}
+.bp-fold svg.i{width:14px;height:14px;flex:none;color:var(--ink-weak)}
+.bp-fold .p{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--font-mono)}
+.bp-fold .p.all-name{font-family:var(--font);font-weight:600}
+.bp-fold-acc{flex:none;padding:2px 8px;border-radius:var(--r-pill);color:var(--ink-weak);font-size:var(--fs-xs);cursor:pointer;transition:background-color var(--dur-fast) var(--ease-out)}
+.bp-fold-acc:hover:not(:disabled){background:var(--surface-2);color:var(--ink)}
+.bp-fold-rm{flex:none;width:22px;height:22px;border-radius:50%;display:grid;place-items:center;color:var(--ink-weak);cursor:pointer}
+.bp-fold-rm svg.i{width:12px;height:12px;color:inherit}
+.bp-fold-rm:hover:not(:disabled){background:var(--surface-2);color:var(--ink)}
+.folders-off{opacity:.45;pointer-events:none}
+.bp-folder-note{display:flex;padding:2px 4px 6px}
+.bp-folder-note[hidden]{display:none}
+.bp-addfolder{margin-top:2px}
+.bp-send{margin-top:6px}
+.bp-send-targets{margin-top:12px;min-width:0}
+.bp-send-title{font-size:var(--fs-s);font-weight:600;margin:0 0 6px}
+.bp-send-target{display:flex;align-items:center;gap:12px;padding:6px 0;min-width:0}
+.bp-send-info{display:flex;flex:1;flex-direction:column;min-width:0;gap:2px}
+.bp-send-open{justify-content:flex-start;padding:0;text-align:left;color:var(--ink);font-size:var(--fs-s);overflow-wrap:anywhere}
+.bp-send-open:hover{text-decoration:underline}
+.bp-send-target>.btn-quiet{flex:none}
+.bp-sw{width:34px;height:20px;border-radius:var(--r-pill);background:var(--surface-3);position:relative;flex:none;cursor:pointer;transition:background-color var(--dur-fast) var(--ease-out)}
+.bp-sw::after{content:"";position:absolute;left:3px;top:3px;width:14px;height:14px;border-radius:50%;background:var(--surface-paper);transition:transform var(--dur-fast) var(--ease-out)}
+.bp-sw[aria-checked="true"]{background:var(--fill-primary);color:var(--on-fill)}
+.bp-sw[aria-checked="true"]::after{transform:translateX(14px)}
+.bp-sw:disabled{opacity:.45;cursor:not-allowed}
+.bot-page .btn.link{background:transparent;color:var(--ink-blue);font-weight:600;padding:3px 8px}
+.bot-page .btn.link:hover{background:var(--surface-2)}
+.bot-page .btn.link:disabled{opacity:.4}
+
+/* ---- 記憶の一覧（memory-list.mjs） */
+.mem-wrap{display:flex;flex-direction:column;gap:2px}
+.memh{display:flex;align-items:baseline;gap:8px;padding:2px 8px;font-size:13px;font-weight:600;color:var(--ink)}
+.memh b{font-weight:600}
+.memh span{font-size:var(--fs-xs);font-weight:400;color:var(--ink-weak)}
+.memh.second{margin-top:10px}
+.memcore{display:flex;flex-direction:column}
+.mem-empty{padding:4px 8px;font-size:12px;color:var(--ink-weak)}
+.mem{display:flex;gap:8px;align-items:flex-start;padding:6px 8px;border-radius:var(--r-s);font-size:13px;
+  transition:opacity var(--dur) var(--ease-out),background-color var(--dur-fast) var(--ease-out)}
+.mem:hover{background:var(--surface-paper)}
+.mem.editing{background:var(--surface-paper)}
+.mem.gone{opacity:0}
+.mem .tx{flex:1;min-width:0}
+.mem .tx-text{display:block;overflow-wrap:anywhere;line-height:1.55}
+.mem .src{display:block;font-size:var(--fs-xs);color:var(--ink-blue);overflow-wrap:anywhere}
+.mem .src.untrusted{color:var(--ink-weak)}
+.mem .src-link{background:transparent;color:inherit;font:inherit;text-align:left;padding:0;cursor:pointer;overflow-wrap:anywhere}
+.mem .src-link:hover{text-decoration:underline}
+.mem .src-more{margin-left:6px;color:var(--ink-weak)}
+.mem .acts2{display:flex;flex:none}
+.mem .forget{opacity:0;flex:none;padding:3px 8px}
+.mem:hover .forget,.mem .forget:focus-visible,.mem.editing .acts2 .btn{opacity:1}
+.mem .memedit{display:block;width:100%;box-sizing:border-box;background:var(--surface-1);color:var(--ink);border-radius:var(--r-s);padding:4px 8px;font:400 13px/1.55 var(--font);margin-bottom:2px;outline:none}
+.mem .memedit:focus-visible{outline:2px solid var(--line-blue);outline-offset:-2px}
+.mem-err{margin:6px 8px 0;font-size:var(--fs-xs);color:var(--ink-strong);overflow-wrap:anywhere}
+.mem-err[hidden]{display:none}
+.mem-undo{display:flex;align-items:center;gap:8px;font-size:var(--fs-xs);color:var(--ink-weak);padding:4px 8px}
+.mem-undo[hidden]{display:none}
+
+/* ---- 使用量。静かに */
+.bp-usage{font-size:12px;color:var(--ink-weak);padding:10px 4px 0}
+.bp-usage b{color:var(--ink);font-weight:600}
+.bp-usage b.warn{color:var(--ink-strong)}
+.bp-usage-warn{margin-left:6px}
+.bot-page .bp-mono{font-family:var(--font-mono)}
+
+/* ---- 狭い画面（モックの 360 幅）: 1 列、記憶の［直す］［忘れる］は常に見せて 2 行目へ */
+@media (max-width:900px){
+  .bp-grid{grid-template-columns:minmax(0,1fr)}
+}
+@media (max-width:700px){
+  .bot-page{padding:14px}
+  .bp-name{width:100%}
+  .bp-id{flex:1;min-width:10em}
+  .mem{flex-wrap:wrap}
+  .mem .acts2{width:100%;justify-content:flex-end;margin-top:-4px}
+  .mem .forget{opacity:1}
+  .bp-kvr .bp-nt{padding-left:0}
+}
+@media (pointer:coarse){
+  .mem .forget{opacity:1}
+}
+@media (prefers-reduced-motion:reduce){
+  .mem,.bp-sw,.bp-sw::after,.bp-av,.bp-fold-acc{transition:none}
+}
+.bp-name:focus-visible{outline:none}

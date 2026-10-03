@@ -20,12 +20,12 @@
    3. store.setPref を一覧の外から呼んでいない。prefs.json へ書く出口は core/server.mjs の savePref（設定の一覧の writes と、既定の記憶だけが通る）に
       絞り、それ以外の store.setPref( の呼び出しは、同じ行に `ops-allow-setpref: 理由` の印を付けたものだけ。印の数（setPrefAllowed）は増やせない。
    4. human-only は 5 つに限る（ADR 0094）。基準の human-only・操作の risk: human-only（検査用の probe.* を除く）・設定の risk: human-only は、
-      core/ops/policy.mjs の HUMAN_ONLY にあるものだけ。逆に HUMAN_ONLY にあるものは human-only のまま（todo や write にしない）。
+      core/ops/policy.mjs の HUMAN_ONLY にあるもの（操作は legacyCommand か、WS のコマンドを持たない操作の id）だけ。逆に HUMAN_ONLY にあるものは human-only のまま（todo や write にしない）。
    5. 自己診断（npm test でも回す）。 */
 import { readFileSync, writeFileSync, readdirSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { HUMAN_ONLY_COMMANDS, HUMAN_ONLY_SETTINGS } from '../core/ops/policy.mjs';
+import { HUMAN_ONLY_COMMANDS, HUMAN_ONLY_SETTINGS, HUMAN_ONLY_OPS } from '../core/ops/policy.mjs';
 
 export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 export const BASELINE_FILE = path.join(ROOT, 'tests', 'ops-baseline.json');
@@ -71,9 +71,9 @@ export function scanSetPrefCalls(root = ROOT) {
  * @param registry  操作の一覧（createRegistry の結果）
  * @param prefKeys  scanPrefKeys() の結果
  * @param setPrefCalls scanSetPrefCalls() の結果
- * @param humanOnly  human-only にしてよいもの { commands, settings }（既定は core/ops/policy.mjs の HUMAN_ONLY）
+ * @param humanOnly  human-only にしてよいもの { commands, settings, ops? }（既定は core/ops/policy.mjs の HUMAN_ONLY）
  */
-export function checkCoverage({ baseline, commands, registry, prefKeys, setPrefCalls = [], humanOnly = { commands: HUMAN_ONLY_COMMANDS, settings: HUMAN_ONLY_SETTINGS } }) {
+export function checkCoverage({ baseline, commands, registry, prefKeys, setPrefCalls = [], humanOnly = { commands: HUMAN_ONLY_COMMANDS, settings: HUMAN_ONLY_SETTINGS, ops: HUMAN_ONLY_OPS } }) {
   const problems = [];
   const add = (rule, message) => problems.push({ rule, message });
   const legacy = registry.legacyCommands();
@@ -108,8 +108,9 @@ export function checkCoverage({ baseline, commands, registry, prefKeys, setPrefC
   const outside = (what) => `${what} は human-only の 5 つ（core/ops/policy.mjs の HUMAN_ONLY）に当たらない。agent も使える操作として定義する（危険度は read・write・guarded から選ぶ）`;
   for (const [name, kind] of Object.entries(listed)) if (kind === 'human-only' && !legacy.has(name) && !humanOnly.commands.has(name)) add('human-only-outside', outside(`除外表の ${name}`));
   for (const op of registry.ops) {
-    if (op.risk === 'human-only' && !op.id.startsWith('probe.') && !humanOnly.commands.has(op.legacyCommand)) add('human-only-outside', outside(`操作 ${op.id}`));
+    if (op.risk === 'human-only' && !op.id.startsWith('probe.') && !humanOnly.commands.has(op.legacyCommand) && !humanOnly.ops?.has(op.id)) add('human-only-outside', outside(`操作 ${op.id}`));
     if (op.legacyCommand && humanOnly.commands.has(op.legacyCommand) && op.risk !== 'human-only') add('human-only-missing', `操作 ${op.id}（${op.legacyCommand}）は human-only の 5 つに当たる。risk を human-only にする`);
+    if (humanOnly.ops?.has(op.id) && op.risk !== 'human-only') add('human-only-missing', `操作 ${op.id} は human-only の 5 つに当たる。risk を human-only にする`);
   }
   for (const s of registry.settings) {
     if (s.risk === 'human-only' && !humanOnly.settings.has(s.key)) add('human-only-outside', outside(`設定 ${s.key}`));

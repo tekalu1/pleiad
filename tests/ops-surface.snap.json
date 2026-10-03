@@ -154,6 +154,130 @@
       "input": "25c7d85c859a"
     },
     {
+      "id": "bots.create",
+      "risk": "write",
+      "riskOf": true,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "bots",
+            "create"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "5bbb30b5ae47"
+    },
+    {
+      "id": "bots.delete",
+      "risk": "guarded",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "bots",
+            "delete"
+          ],
+          "positional": [
+            "botId"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "ca36324b5bf0"
+    },
+    {
+      "id": "bots.get",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "bots",
+            "get"
+          ],
+          "positional": [
+            "botId"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "1f60ac102bdb"
+    },
+    {
+      "id": "bots.list",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "bots",
+            "list"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "25c7d85c859a"
+    },
+    {
+      "id": "bots.setMode",
+      "risk": "human-only",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": false,
+        "cli": false
+      },
+      "legacyCommand": null,
+      "input": "9e0192ce82cc"
+    },
+    {
+      "id": "bots.update",
+      "risk": "write",
+      "riskOf": true,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "bots",
+            "update"
+          ],
+          "positional": [
+            "botId"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "b4ab3d833bb6"
+    },
+    {
       "id": "browser.listProfiles",
       "risk": "read",
       "riskOf": false,
@@ -197,6 +321,329 @@
       },
       "legacyCommand": null,
       "input": "974c851ac5dd"
+    },
+    {
+      "id": "channels.archive",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "channels",
+            "archive"
+          ],
+          "positional": [
+            "channelId"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "d2c542cd9935"
+    },
+    {
+      "id": "channels.create",
+      "risk": "write",
+      "riskOf": true,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "channels",
+            "create"
+          ],
+          "positional": [
+            "name"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "d63f6603a488"
+    },
+    {
+      "id": "channels.delete",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "channels",
+            "delete"
+          ],
+          "positional": [
+            "channelId",
+            "postId"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "df30662261e2"
+    },
+    {
+      "id": "channels.edit",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "channels",
+            "edit"
+          ],
+          "positional": [
+            "channelId",
+            "postId",
+            "text"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "88044904e06c"
+    },
+    {
+      "id": "channels.get",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "channels",
+            "get"
+          ],
+          "positional": [
+            "channelId"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "e475f1a687e9"
+    },
+    {
+      "id": "channels.list",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": true
+      },
+      "legacyCommand": null,
+      "input": "25c7d85c859a"
+    },
+    {
+      "id": "channels.markRead",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "channels",
+            "mark-read"
+          ],
+          "positional": [
+            "channelId"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "1845196c0c2c"
+    },
+    {
+      "id": "channels.post",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": false,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "channels",
+            "post"
+          ],
+          "positional": [
+            "channelId",
+            "text"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "1eb1b9e00627"
+    },
+    {
+      "id": "channels.react",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": false,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "channels",
+            "react"
+          ],
+          "positional": [
+            "channelId",
+            "postId",
+            "emoji"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "3eb9323f205d"
+    },
+    {
+      "id": "channels.read",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "channels",
+            "read"
+          ],
+          "positional": [
+            "channelId"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "11de5b77aa28"
+    },
+    {
+      "id": "channels.search",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "channels",
+            "search"
+          ],
+          "positional": [
+            "query"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "5fb08bd9af74"
+    },
+    {
+      "id": "channels.stopThread",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": false,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "channels",
+            "stop-thread"
+          ],
+          "positional": [
+            "channelId",
+            "threadId"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "3f31d9d4d283"
+    },
+    {
+      "id": "channels.update",
+      "risk": "write",
+      "riskOf": true,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "channels",
+            "update"
+          ],
+          "positional": [
+            "channelId"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "82d73789eaf1"
+    },
+    {
+      "id": "channels.wake",
+      "risk": "guarded",
+      "riskOf": true,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "channels",
+            "wake"
+          ],
+          "positional": [
+            "channelId",
+            "postId",
+            "botId"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "ea7af0bff606"
     },
     {
       "id": "compatEndpoints.delete",
@@ -1386,6 +1833,136 @@
       "input": "f16d1746215b"
     },
     {
+      "id": "memory.edit",
+      "risk": "write",
+      "riskOf": true,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "memory",
+            "edit"
+          ],
+          "positional": [
+            "id"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "a0c75da9f533"
+    },
+    {
+      "id": "memory.forget",
+      "risk": "guarded",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "memory",
+            "forget"
+          ],
+          "positional": [
+            "id"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "a2135a18629b"
+    },
+    {
+      "id": "memory.list",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "memory",
+            "list"
+          ],
+          "positional": [
+            "layer"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "5299217d33d7"
+    },
+    {
+      "id": "memory.search",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "memory",
+            "search"
+          ],
+          "positional": [
+            "query"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "730dd7ff714a"
+    },
+    {
+      "id": "memory.unforget",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "memory",
+            "unforget"
+          ],
+          "positional": [
+            "id"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "4f9fc0d81908"
+    },
+    {
+      "id": "memory.write",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": false,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": false
+      },
+      "legacyCommand": null,
+      "input": "558cfb267283"
+    },
+    {
       "id": "notify.setDevice",
       "risk": "write",
       "riskOf": false,
@@ -1528,6 +2105,199 @@
       },
       "legacyCommand": null,
       "input": "b4a434de6904"
+    },
+    {
+      "id": "routines.create",
+      "risk": "write",
+      "riskOf": true,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "routines",
+            "create"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "29ce6382d1e4"
+    },
+    {
+      "id": "routines.delete",
+      "risk": "guarded",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "routines",
+            "delete"
+          ],
+          "positional": [
+            "routineId"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "7dfd46eb9221"
+    },
+    {
+      "id": "routines.get",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "routines",
+            "get"
+          ],
+          "positional": [
+            "routineId"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "3bbbf14bf228"
+    },
+    {
+      "id": "routines.list",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "routines",
+            "list"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "25c7d85c859a"
+    },
+    {
+      "id": "routines.pause",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "routines",
+            "pause"
+          ],
+          "positional": [
+            "routineId"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "7f851c95cb3d"
+    },
+    {
+      "id": "routines.resume",
+      "risk": "guarded",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "routines",
+            "resume"
+          ],
+          "positional": [
+            "routineId"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "2efd2644ef06"
+    },
+    {
+      "id": "routines.rotateSecret",
+      "risk": "human-only",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": false,
+        "cli": false
+      },
+      "legacyCommand": null,
+      "input": "2153fff6986d"
+    },
+    {
+      "id": "routines.run",
+      "risk": "guarded",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "routines",
+            "run"
+          ],
+          "positional": [
+            "routineId"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "2a650714c939"
+    },
+    {
+      "id": "routines.update",
+      "risk": "write",
+      "riskOf": true,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "routines",
+            "update"
+          ],
+          "positional": [
+            "routineId"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "fea14d9d33fa"
     },
     {
       "id": "sessions.abort",
@@ -2879,6 +3649,33 @@
       ]
     },
     {
+      "key": "memoryLearnAt",
+      "risk": "write",
+      "riskOf": false,
+      "writable": true,
+      "prefKeys": [
+        "memoryLearnAt"
+      ]
+    },
+    {
+      "key": "memoryLearnBackend",
+      "risk": "write",
+      "riskOf": false,
+      "writable": true,
+      "prefKeys": [
+        "memoryLearnBackend"
+      ]
+    },
+    {
+      "key": "memoryLearnPaused",
+      "risk": "write",
+      "riskOf": false,
+      "writable": true,
+      "prefKeys": [
+        "memoryLearnPaused"
+      ]
+    },
+    {
       "key": "mode",
       "risk": "human-only",
       "riskOf": false,
@@ -3033,6 +3830,27 @@
       "agent-bound-never-full": "write=allow",
       "agent-bound-readonly": "write=deny:READ_ONLY_MODE"
     },
+    "memoryLearnAt": {
+      "human": "write=allow",
+      "agent-unbound": "write=allow",
+      "agent-bound-ask": "write=allow",
+      "agent-bound-never-full": "write=allow",
+      "agent-bound-readonly": "write=deny:READ_ONLY_MODE"
+    },
+    "memoryLearnBackend": {
+      "human": "write=allow",
+      "agent-unbound": "write=allow",
+      "agent-bound-ask": "write=allow",
+      "agent-bound-never-full": "write=allow",
+      "agent-bound-readonly": "write=deny:READ_ONLY_MODE"
+    },
+    "memoryLearnPaused": {
+      "human": "write=allow",
+      "agent-unbound": "write=allow",
+      "agent-bound-ask": "write=allow",
+      "agent-bound-never-full": "write=allow",
+      "agent-bound-readonly": "write=deny:READ_ONLY_MODE"
+    },
     "mode": {
       "human": "human-only=allow",
       "agent-unbound": "human-only=hidden",
@@ -3112,6 +3930,37 @@
       "positional": []
     },
     {
+      "id": "bots.create",
+      "path": "bots create",
+      "positional": []
+    },
+    {
+      "id": "bots.delete",
+      "path": "bots delete",
+      "positional": [
+        "botId"
+      ]
+    },
+    {
+      "id": "bots.get",
+      "path": "bots get",
+      "positional": [
+        "botId"
+      ]
+    },
+    {
+      "id": "bots.list",
+      "path": "bots list",
+      "positional": []
+    },
+    {
+      "id": "bots.update",
+      "path": "bots update",
+      "positional": [
+        "botId"
+      ]
+    },
+    {
       "id": "browser.listProfiles",
       "path": "browser listProfiles",
       "positional": []
@@ -3125,6 +3974,111 @@
       "id": "browser.useProfile",
       "path": "browser useProfile",
       "positional": []
+    },
+    {
+      "id": "channels.archive",
+      "path": "channels archive",
+      "positional": [
+        "channelId"
+      ]
+    },
+    {
+      "id": "channels.create",
+      "path": "channels create",
+      "positional": [
+        "name"
+      ]
+    },
+    {
+      "id": "channels.delete",
+      "path": "channels delete",
+      "positional": [
+        "channelId",
+        "postId"
+      ]
+    },
+    {
+      "id": "channels.edit",
+      "path": "channels edit",
+      "positional": [
+        "channelId",
+        "postId",
+        "text"
+      ]
+    },
+    {
+      "id": "channels.get",
+      "path": "channels get",
+      "positional": [
+        "channelId"
+      ]
+    },
+    {
+      "id": "channels.list",
+      "path": "channels list",
+      "positional": []
+    },
+    {
+      "id": "channels.markRead",
+      "path": "channels mark-read",
+      "positional": [
+        "channelId"
+      ]
+    },
+    {
+      "id": "channels.post",
+      "path": "channels post",
+      "positional": [
+        "channelId",
+        "text"
+      ]
+    },
+    {
+      "id": "channels.react",
+      "path": "channels react",
+      "positional": [
+        "channelId",
+        "postId",
+        "emoji"
+      ]
+    },
+    {
+      "id": "channels.read",
+      "path": "channels read",
+      "positional": [
+        "channelId"
+      ]
+    },
+    {
+      "id": "channels.search",
+      "path": "channels search",
+      "positional": [
+        "query"
+      ]
+    },
+    {
+      "id": "channels.stopThread",
+      "path": "channels stop-thread",
+      "positional": [
+        "channelId",
+        "threadId"
+      ]
+    },
+    {
+      "id": "channels.update",
+      "path": "channels update",
+      "positional": [
+        "channelId"
+      ]
+    },
+    {
+      "id": "channels.wake",
+      "path": "channels wake",
+      "positional": [
+        "channelId",
+        "postId",
+        "botId"
+      ]
     },
     {
       "id": "computer.stop",
@@ -3459,6 +4413,41 @@
       "positional": []
     },
     {
+      "id": "memory.edit",
+      "path": "memory edit",
+      "positional": [
+        "id"
+      ]
+    },
+    {
+      "id": "memory.forget",
+      "path": "memory forget",
+      "positional": [
+        "id"
+      ]
+    },
+    {
+      "id": "memory.list",
+      "path": "memory list",
+      "positional": [
+        "layer"
+      ]
+    },
+    {
+      "id": "memory.search",
+      "path": "memory search",
+      "positional": [
+        "query"
+      ]
+    },
+    {
+      "id": "memory.unforget",
+      "path": "memory unforget",
+      "positional": [
+        "id"
+      ]
+    },
+    {
       "id": "notify.setDevice",
       "path": "notify device",
       "positional": [
@@ -3495,6 +4484,58 @@
       "id": "resumeQueue.set",
       "path": "resume-queue set",
       "positional": []
+    },
+    {
+      "id": "routines.create",
+      "path": "routines create",
+      "positional": []
+    },
+    {
+      "id": "routines.delete",
+      "path": "routines delete",
+      "positional": [
+        "routineId"
+      ]
+    },
+    {
+      "id": "routines.get",
+      "path": "routines get",
+      "positional": [
+        "routineId"
+      ]
+    },
+    {
+      "id": "routines.list",
+      "path": "routines list",
+      "positional": []
+    },
+    {
+      "id": "routines.pause",
+      "path": "routines pause",
+      "positional": [
+        "routineId"
+      ]
+    },
+    {
+      "id": "routines.resume",
+      "path": "routines resume",
+      "positional": [
+        "routineId"
+      ]
+    },
+    {
+      "id": "routines.run",
+      "path": "routines run",
+      "positional": [
+        "routineId"
+      ]
+    },
+    {
+      "id": "routines.update",
+      "path": "routines update",
+      "positional": [
+        "routineId"
+      ]
     },
     {
       "id": "app.running",

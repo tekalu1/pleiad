@@ -31,7 +31,7 @@ async page => {
   await chooseBackend('fake');
   await mode('auto');
   await page.locator('#modeChip').click();
-  if (await page.getByRole('option', { name: /読むだけ/ }).count()) throw Error('Previous agent modes remain');
+  if (await page.locator('#modePop [data-key="mode:readonly"]').count()) throw Error('Previous agent modes remain');
   await page.keyboard.press('Escape');
   await chooseBackend('codex');
   await mode('ask');

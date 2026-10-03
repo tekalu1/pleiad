@@ -43,6 +43,7 @@ export function defineOp(def) {
   if (def.summary !== `agent:ops.${id}.summary`) fail(id, `summary must be agent:ops.${id}.summary`);
   if (!RISKS.includes(def.risk)) fail(id, `risk must be one of ${RISKS.join(' / ')}`);
   if (!isZodObject(def.input)) fail(id, 'input must be z.object(…) (z.object({}) for no arguments)');
+  if (def.humanSecretOutput && (def.risk !== 'human-only' || def.surfaces?.ui !== true || def.surfaces?.mcp || def.surfaces?.cli)) fail(id, 'secret output requires a human-only UI operation');
   if (def.risk === 'read' && !def.output) fail(id, 'a read op needs an output schema');
   if (def.output && typeof def.output.parse !== 'function') fail(id, 'output must be a zod schema');
   if (def.risk === 'write' && !(typeof def.riskReason === 'string' && def.riskReason.trim()))
@@ -303,7 +304,7 @@ export function createRegistry({ ops = [], settings = [] } = {}) {
       try {
         // 画面（人）には、画面が読む全量の形を返せる（uiHandler）。AI・CLI は handler の、件数と字数に上限のある形（ADR 0091 追記）
         const result = await (op.uiHandler && principal.by === 'human' ? op.uiHandler(ctx, parsed.data) : op.handler(ctx, parsed.data));
-        return { ok: true, result: maskOutput(result ?? null), decision: verdict.decision };
+        return { ok: true, result: op.humanSecretOutput && principal.by === 'human' && principal.via === 'ui' ? result : maskOutput(result ?? null), decision: verdict.decision };
       } catch (err) {
         if (err instanceof OpError) return { ok: false, code: err.code, error: err.message, decision: verdict.decision };
         throw err;

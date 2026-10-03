@@ -24,7 +24,7 @@ const SNAPSHOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '
 
 // T4: ply_control が毎ターン文脈に載せる文（指示 + tools/list。直に出すツール・list_ops・call_op の定義）の上限。ja・en それぞれ。上限を変えるのは ADR の範囲（docs/design.md「操作の一覧」）
 const CONTROL_TOKEN_LIMIT = 1800;
-const ERROR_CODES = ['NOT_FOUND', 'HOST_SCREEN_ONLY', 'INVALID', 'READ_ONLY_MODE', 'NEEDS_UI', 'NEEDS_APPROVAL', 'INVALID_RISK', 'INVALID_PRINCIPAL', 'SESSION_NOT_FOUND', 'MESSAGE_NOT_FOUND', 'SETTING_NOT_FOUND', 'TASK_NOT_FOUND', 'SETTING_READ_ONLY', 'MASKED', 'DENIED', 'STALE', 'sessionRequired', 'badCursor'];
+const ERROR_CODES = ['NOT_FOUND', 'HOST_SCREEN_ONLY', 'INVALID', 'READ_ONLY_MODE', 'NEEDS_UI', 'NEEDS_APPROVAL', 'INVALID_RISK', 'INVALID_PRINCIPAL', 'SESSION_NOT_FOUND', 'MESSAGE_NOT_FOUND', 'CHANNEL_NOT_FOUND', 'POST_NOT_FOUND', 'NOT_YOUR_POST', 'CHANNEL_NAME_TAKEN', 'CHANNEL_ARCHIVED', 'SETTING_NOT_FOUND', 'TASK_NOT_FOUND', 'SETTING_READ_ONLY', 'MASKED', 'DENIED', 'STALE', 'sessionRequired', 'badCursor', 'BOT_NOT_FOUND', 'BOT_NAME_TAKEN', 'BOT_SEND_DISABLED', 'BOT_SEND_TARGET', 'MEMORY_SOURCE', 'MEMORY_REJECTED', 'MEMORY_NOT_FOUND'];
 const CONTROL_KEYS = ['instructions', 'listOps', 'listOpsId', 'listOpsPrefix', 'callOp', 'callOpOp', 'callOpArgs'];
 
 const hash = (value) => crypto.createHash('sha256').update(JSON.stringify(value)).digest('hex').slice(0, 12);
@@ -193,6 +193,29 @@ export default async function (t) {
     remote: { status: async () => ({ enabled: false, connection: { ...secret }, devices: [], ...secret }) },
     endpoints: { list: async () => ({ endpoints: [{ id: 'e', baseUrl: 'https://e.example', ...secret }], defaults: {} }) },
     limitResume: { messages: () => [], schedules: () => [], queue: () => ({ pending: [], running: [] }) },
+    // bot・Channels・ルーティン（docs/channels.md）。read の操作を足すパッケージが、自分の領域の返り（秘密の目印を入れたもの）をここに足し、
+    // 必須の引数がある操作は下の samples にも足す。足したパッケージの区画以外は触らない
+    channels: {     // S1
+      list: async () => [{ id: 'c_000000000aaaaaa', kind: 'channel', name: 'general', unread: 0, mentions: 0, threadsWorking: 0, ...secret }],
+      get: async () => ({ id: 'c_000000000aaaaaa', kind: 'channel', name: 'general', ...secret }),
+      read: async () => ({ posts: [{ id: 'p_000000000aaaaaa', text: 'こんにちは', ...secret }], threads: [{ threadId: 'p_000000000aaaaaa', ...secret }], summaries: {}, nextBefore: null }),
+      search: async () => ({ hits: [{ postId: 'p_000000000aaaaaa', snippet: 'こんにちは', ...secret }] }),
+    },
+    bots: { overview: async ({ botId } = {}) => [{ id: botId ?? 'b_1', name: 'Owl', icon: '🦉', persona: '', backend: 'fake', model: '', effort: '', mode: 'default',
+      folders: [], sendToOthers: true, sendTargets: [], dmChannelId: 'c_1', dmSessionId: null, createdAt: 0, updatedAt: 0,
+      usage: { weekTokens: 0, cacheRatio: null }, state: 'idle', ...secret }] },   // S2
+    memory: {       // S3
+      list: async () => [{ id: 'm_x', layer: 'user', text: 'PR は小さく', sources: [], at: 1, updatedAt: 1, by: { kind: 'human' }, ...secret }],
+      search: async () => [{ id: 'm_x', layer: 'user', text: 'PR は小さく', sources: [], at: 1, updatedAt: 1, by: { kind: 'human' }, ...secret }],
+      get: async () => null,
+    },
+    routines: {     // R1（P2）
+      list: async () => [{ id: 'r_000000000aaaaaa', name: '朝のまとめ', botId: 'b_1', channelId: 'c_000000000aaaaaa', prompt: 'まとめて', trigger: { kind: 'daily', at: '09:00', weekdaysOnly: false },
+        mode: 'default', approvalTimeoutMin: 30, paused: false, createdBy: { kind: 'human' }, createdAt: 1, nextAt: 2, ...secret }],
+      get: async () => ({ id: 'r_000000000aaaaaa', name: '朝のまとめ', botId: 'b_1', channelId: 'c_000000000aaaaaa', prompt: 'まとめて', trigger: { kind: 'daily', at: '09:00', weekdaysOnly: false },
+        mode: 'default', approvalTimeoutMin: 30, paused: false, createdBy: { kind: 'human' }, createdAt: 1, nextAt: 2, ...secret }),
+    },
+    botOfSession: async () => null,
   };
   // 人の画面には返すが agent には伏せるもの（引数の秘密・承認の URL・ペアリングの番号・URL のクエリ）は tests/unit/ops-mcp-hooks.mjs
   // 必須の引数がある read 操作に渡す引数（設定は全部の key）
@@ -205,6 +228,10 @@ export default async function (t) {
     'hooks.read': [{ agent: 'claude', scope: 'user', loc: { event: 'PreToolUse', group: 0, handler: 0 } }], 'hooks.readPly': [{ id: 'h-1' }],
     'git.diff': [{ path: 'a' }], 'sessions.readSubagent': [{ sessionId: 's1', agentId: 'a' }], 'sessions.background': [{ sessionId: 's1', taskId: 't' }],
     'sessions.subagents': [{ sessionId: 's1', toolId: 'x' }],
+    'channels.get': [{ channelId: 'c_000000000aaaaaa' }], 'channels.read': [{ channelId: 'c_000000000aaaaaa' }], 'channels.search': [{ query: 'こんにちは' }],
+    'memory.list': [{ layer: 'user' }], 'memory.search': [{ query: 'PR' }],
+    'bots.get': [{ botId: 'b_1' }],
+    'routines.get': [{ routineId: 'r_000000000aaaaaa' }],
   };
   for (const op of registry.ops.filter((o) => o.risk === 'read' && o.surfaces.ui)) {
     const needs = Object.keys(op.input.shape).length && Object.values(op.input.shape).some((f) => !f.safeParse(undefined).success);
