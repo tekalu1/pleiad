@@ -19,6 +19,28 @@ export const taskRow = (r) => ({
   routing: routingOf(r.routing),
 });
 
+/**
+ * delegation.tasks の行を選ぶ。parentSessionId はその会話から委譲したもの、tree を付けると子の会話がさらに委譲した子孫まで。
+ * taskIds はその id の行だけ（ほかの条件と重ねる）
+ */
+function selectTasks(ctx, { parentSessionId, tree = false, taskIds }) {
+  let rows = ctx.delegation?.list(tree ? undefined : parentSessionId) ?? [];
+  if (parentSessionId && tree) {
+    const byParent = new Map();
+    for (const r of rows) byParent.set(r.parentSessionId, [...(byParent.get(r.parentSessionId) ?? []), r]);
+    const keep = new Set(), seen = new Set([parentSessionId]), queue = [parentSessionId];
+    while (queue.length) {
+      for (const r of byParent.get(queue.shift()) ?? []) {
+        keep.add(r.taskId);
+        if (r.sessionId && !seen.has(r.sessionId)) { seen.add(r.sessionId); queue.push(r.sessionId); }
+      }
+    }
+    rows = rows.filter((r) => keep.has(r.taskId));
+  }
+  if (taskIds) { const ids = new Set(taskIds); rows = rows.filter((r) => ids.has(r.taskId)); }
+  return rows;
+}
+
 const row = z.object({ taskId: z.string(), title: z.string().nullable(), status: z.string(), backend: z.string().nullable(), model: z.string().nullable(), cwd: z.string().nullable(),
   parentSessionId: z.string().nullable(), sessionId: z.string().nullable(), createdAt: z.number().nullable(), updatedAt: z.number().nullable(),
   routing: z.object({ kind: z.string().nullable(), mode: z.string().nullable(), backend: z.string().nullable(), model: z.string().nullable() }).nullable() });
@@ -30,18 +52,26 @@ export const delegationOps = [
     risk: 'read',
     input: z.object({
       parentSessionId: z.string().max(200).optional().describe(D('tasks', 'parentSessionId')),
+      tree: z.boolean().optional().describe(D('tasks', 'tree')),
+      taskIds: z.array(z.string().max(200)).max(TASKS_MAX).optional().describe(D('tasks', 'taskIds')),
       status: z.string().max(40).optional().describe(D('tasks', 'status')),
       limit: z.number().int().min(1).max(TASKS_MAX).optional().describe(D('tasks', 'limit')),
     }),
     output: z.object({ total: z.number().int(), tasks: z.array(row) }),
     surfaces: { ui: true, mcp: 'catalog', cli: { path: ['delegation', 'tasks'] } },
     legacyCommand: 'agentTasks',
-    handler: (ctx, { parentSessionId, status, limit = 20 }) => {
-      const all = (ctx.delegation?.list(parentSessionId) ?? []).filter((r) => !status || r.status === status).sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0));
+    handler: (ctx, { status, limit = 20, ...pick }) => {
+      const all = selectTasks(ctx, pick).filter((r) => !status || r.status === status).sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0));
       return { total: all.length, tasks: all.slice(0, limit).map(taskRow) };
     },
-    // 画面は、依頼の本文以外の全部の欄（通知・承認・作業場所・振り分けの記録）を持つ行を、件数の上限なしで読む
-    uiHandler: (ctx, { parentSessionId }) => ctx.delegation.list(parentSessionId),
+    // 画面は、依頼の本文以外の全部の欄（通知・承認・作業場所・振り分けの記録）を持つ行を、件数の上限なしで読む。
+    // 会話の分（tree）・指定の行（taskIds）は委譲カードとバックグラウンドの一覧に使う形で、結果の本文と拒否の記録を載せない
+    // （running は過去のタスクを配らない。docs/agent-delegation.md「保存・画面・再起動」）
+    uiHandler: (ctx, { status, ...pick }) => {
+      const rows = selectTasks(ctx, pick).filter((r) => !status || r.status === status);
+      if (!pick.tree && !pick.taskIds) return rows;
+      return rows.map(({ result, resultOffset, resultLength, nextOffset, rejections, ...r }) => r);
+    },
   }),
 
   defineOp({

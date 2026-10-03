@@ -43,6 +43,7 @@ const cases = [
   // computer use の main 側（desktop/computer/*）: キーの解釈・SendInput の中身・releaseAll・撮影の縮小・アプリの特定・service の列と止め方（偽の Win32。本物の入力は送らない）
   await import('./unit/computer-native.mjs'),
   await import('./unit/header-entries.mjs'),
+  await import('./unit/arc.mjs'),
   await import('./unit/agent-browser-relay.mjs'),
   // 新規会話の最初のターンの中継のキーを、会話 ID が決まったとき本物へ付け替える（parentPort の身代わり）
   await import('./unit/server-browser-rebind.mjs'),
@@ -125,6 +126,9 @@ const cases = [
   // 追加指示を走っている子のターンへ途中送信で渡す（fake の bg 台本。合図あり・なし、受理されない、結果不明、捨てられた、合図なし）
   await import('./unit/server-delegation-steer.mjs'),
   await import('./unit/background-model.mjs'),
+  // 委譲の行: running は終わっていない・通知が届いていない短い行だけ。会話の分は agentTasks の tree・taskIds で読み、running を重ねる
+  await import('./unit/task-cards.mjs'),
+  await import('./unit/server-running-slim.mjs'),
   await import('./unit/task-instructions.mjs'),
   // 委譲した子の詳細: ツールだけの発言を本文が来るまで 1 つにまとめる・変更の記録の行（新しい順・項目・誰がの訳）
   await import('./unit/tool-turns.mjs'),

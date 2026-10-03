@@ -66,18 +66,21 @@ export default async function (t) {
   {
     const store = fakeStore();
     const events = [];
-    const runs = createShellRuns({ store, emit: (e) => events.push(e), timeoutMs: 400 });
+    // 止める分は上限を長くする。上限が短いと、混んだ CI でシェルの起動と最初の出力が遅れ、止める前に上限で終わる
+    const runs = createShellRuns({ store, emit: (e) => events.push(e), timeoutMs: 60_000 });
+    const short = createShellRuns({ store, emit: (e) => events.push(e), timeoutMs: 400 });
     await runs.start({ sessionId: 's2', runId: 'run-stop-1', command: 'echo start; sleep 20', cwd: process.cwd(), backend: HOST });
     await until(() => events.some(e => e.type === 'shell.output'));
     const began = Date.now();
     t.ok('走っている分を止められる', runs.stop('run-stop-1') === true);
-    await until(() => events.some(e => e.type === 'shell.done' && e.runId === 'run-stop-1'));
+    await until(() => events.some(e => e.type === 'shell.done' && e.runId === 'run-stop-1'), 15_000);
     const stopped = events.find(e => e.type === 'shell.done' && e.runId === 'run-stop-1');
-    t.ok('止めたら「止めました」（終了コードは無い）で終わる', stopped?.stopped === true && stopped.exitCode === null && Date.now() - began < 5000, JSON.stringify(stopped));
+    // sleep 20 を待たずに終わること。Windows の taskkill は混んでいると数秒かかるので、時間の上限は 20 秒より十分短い 15 秒にとどめる
+    t.ok('止めたら「止めました」（終了コードは無い）で終わる', stopped?.stopped === true && stopped.exitCode === null && Date.now() - began < 15_000, JSON.stringify(stopped));
     await until(() => store.data.s2?.shellPending?.length === 1);
     t.ok('止めた分もそれまでの出力で残る', store.data.s2.shellPending[0].stdout.includes('start'));
 
-    await runs.start({ sessionId: 's2', runId: 'run-timeout-1', command: 'sleep 20', cwd: process.cwd(), backend: HOST });
+    await short.start({ sessionId: 's2', runId: 'run-timeout-1', command: 'sleep 20', cwd: process.cwd(), backend: HOST });
     await until(() => events.some(e => e.type === 'shell.done' && e.runId === 'run-timeout-1'));
     const timed = events.find(e => e.type === 'shell.done' && e.runId === 'run-timeout-1');
     t.ok('上限を過ぎたら止める（テストでは 400ms）', timed?.timedOut === true && timed.timeoutMs === 400, JSON.stringify(timed));

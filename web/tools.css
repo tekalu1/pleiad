@@ -315,6 +315,7 @@
 .cu-ap .ap-was{color:var(--ink-weak);text-decoration:line-through;text-decoration-thickness:1px}
 .cu-ap .ap-arrow{flex:none;color:var(--ink-weak)}
 .cu-ap .ap-now{color:var(--ink);overflow-wrap:anywhere}
+.cu-ap .ap-chg code{font-family:var(--font-mono);white-space:pre-wrap;overflow-wrap:anywhere}
 .cu-ap .ap-tag{flex:none;min-width:2.4em;font-size:var(--fs-xs);color:var(--ink-weak)}
 .cu-ap .ap-unset{font-family:var(--font);font-style:italic;text-decoration:none}
 .appic{display:inline-block;width:14px;height:14px;vertical-align:-2px;margin-right:6px;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linejoin:round}

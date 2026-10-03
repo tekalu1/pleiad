@@ -7,6 +7,8 @@ import { taskTitle } from './task-title.mjs';
 import { writeAtomic, RENAME_DELAYS } from './atomic-file.mjs';
 
 const ACTIVE = new Set(['queued', 'running', 'cancelling']);
+// 完了通知がまだ依頼元に届いていない（終わった直後・送る前・送っている最中）。running にはこの間だけ終わったタスクも載せる
+const UNDELIVERED = new Set(['none', 'pending', 'delivering']);
 // 保存障害の間、スケジューラーが保存をやり直す間隔の上限（ms）。500ms から倍にしていく
 const RETRY_MAX = 15000;
 // 保存障害の記録（agent-tasks-errors.log）の大きさの上限。超えたら新しい半分だけ残す
@@ -485,6 +487,19 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
   return {
     get busy() { return live.size > 0 || notices.size > 0 || silenceNotices.size > 0 || commandNotices.size > 0 || Object.values(records).some(r => ACTIVE.has(r.status) || r.notification === 'pending'); },
     list(owner) { return Object.values(records).filter(r => !owner || r.parentSessionId === owner).map(r => view(r)); },
+    /**
+     * 全端末へ配る running に載せる行（docs/agent-delegation.md「保存・画面・再起動」）。終わっていないものと、完了通知がまだ依頼元に
+     * 届いていないものだけ。依頼文・振り分けの記録・結果は載せない（過去のタスクは画面が会話ごとに delegation.tasks で読む）
+     */
+    running() {
+      return Object.values(records).filter(r => ACTIVE.has(r.status) || UNDELIVERED.has(r.notification)).map(r => ({
+        taskId: r.taskId, title: taskTitle(r.title, r.task), status: r.status, parentSessionId: r.parentSessionId, sessionId: r.sessionId,
+        backend: r.backend ?? null, model: r.model ?? null, effort: r.effort ?? null, createdAt: r.createdAt ?? null, updatedAt: r.updatedAt ?? null,
+        notification: r.notification, error: r.error ? String(r.error).slice(0, 500) : null,
+        pendingMessages: (r.instructions ?? []).filter(x => x.state === 'queued').length, instructionRevision: r.instructionRevision ?? 0,
+        worktree: r.worktree ?? null, retryOf: r.routing?.retry?.of ?? null,
+      }));
+    },
     get(taskId, offset = 0) { return records[taskId] ? view(records[taskId], offset) : null; },
     observe(sessionId, event) {
       const r = bySession.get(sessionId);

@@ -62,6 +62,8 @@ export default async function (t) {
     // 会話の右パネル（ターンの終わりに開いていれば描き直す）。このテストの対象外
     sessionContext: { isOpen: () => false, refresh: noop },
     syncHistory: () => { syncs++; }, refresh: async () => {},
+    // 委譲の行（会話の分）を一緒に読む（web/task-cards.mjs）。このテストの対象外
+    loadTaskCards: async () => {},
     cmd: () => new Promise(r => { releaseHistory = r; }),
     // 文言（web/i18n.mjs の t と client.mjs の html.t・ACTIVITY_LABEL）。このテストは文言を見ない
     t: key => key, html: { t: key => key }, ACTIVITY_LABEL: {},

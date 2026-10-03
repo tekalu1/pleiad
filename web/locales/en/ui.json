@@ -1426,14 +1426,148 @@
       "sending": "Sending “{{action}}”…",
       "sendFailedInline": "Couldn't send “{{action}}” · {{error}}"
     },
+    "opApproval": {
+      "op": {
+        "label": "Action",
+        "question": "{{agent}} wants to take an action",
+        "allow": "Allow",
+        "allowed": "Allowed",
+        "failed": "Failed",
+        "warn": "⚠ This lets the agent do more without asking you.",
+        "notice": "{{agent}} is waiting for your approval of an action"
+      },
+      "setting": {
+        "label": "Setting",
+        "question": "{{agent}} wants to change a setting",
+        "allow": "Allow change",
+        "allowed": "Change allowed",
+        "failed": "Couldn't change",
+        "warn": "⚠ This lets the agent do more without asking you.",
+        "notice": "{{agent}} is waiting for your approval to change the setting \"{{name}}\""
+      },
+      "send": {
+        "label": "Send",
+        "question": "{{agent}} wants to send a message to another conversation",
+        "allow": "Allow sending",
+        "allowed": "Sending allowed",
+        "failed": "Couldn't send",
+        "warn": "⚠ The other conversation runs in an approval mode that asks you less than this one.",
+        "notice": "{{agent}} is waiting for your approval to send to another conversation"
+      },
+      "resend": {
+        "label": "Resend",
+        "question": "{{agent}} wants to resend a message to another conversation",
+        "allow": "Allow resending",
+        "allowed": "Resending allowed",
+        "failed": "Couldn't resend",
+        "warn": "⚠ The other conversation runs in an approval mode that asks you less than this one.",
+        "notice": "{{agent}} is waiting for your approval to resend to another conversation"
+      },
+      "schedule": {
+        "label": "Schedule",
+        "question": "{{agent}} wants to schedule a message",
+        "allow": "Allow scheduling",
+        "allowed": "Scheduling allowed",
+        "failed": "Couldn't schedule",
+        "notice": "{{agent}} is waiting for your approval to schedule a message"
+      },
+      "sendNow": {
+        "label": "Send",
+        "question": "{{agent}} wants to send a scheduled message now",
+        "allow": "Allow sending",
+        "allowed": "Sending allowed",
+        "failed": "Couldn't send",
+        "notice": "{{agent}} is waiting for your approval to send a scheduled message now"
+      },
+      "shell": {
+        "label": "Command",
+        "question": "{{agent}} wants to run a command",
+        "allow": "Allow running",
+        "allowed": "Running allowed",
+        "failed": "Couldn't run",
+        "warn": "⚠ The command runs with your permissions, without asking again.",
+        "notice": "{{agent}} is waiting for your approval to run a command"
+      },
+      "switchBackend": {
+        "label": "Agent",
+        "question": "{{agent}} wants to switch the conversation's agent",
+        "allow": "Allow switching",
+        "allowed": "Switching allowed",
+        "failed": "Couldn't switch",
+        "notice": "{{agent}} is waiting for your approval to switch the agent"
+      },
+      "turnSettings": {
+        "label": "Conversation",
+        "question": "{{agent}} wants to change the conversation's settings",
+        "allow": "Allow change",
+        "allowed": "Change allowed",
+        "failed": "Couldn't change",
+        "warn": "⚠ This lets the agent do more without asking you.",
+        "notice": "{{agent}} is waiting for your approval to change the conversation's settings"
+      },
+      "mcp": {
+        "label": "MCP",
+        "question": "{{agent}} wants to change MCP servers",
+        "allow": "Allow change",
+        "allowed": "Change allowed",
+        "failed": "Couldn't change",
+        "warn": "⚠ This lets the agent do more without asking you.",
+        "notice": "{{agent}} is waiting for your approval to change MCP servers"
+      },
+      "mcpDelete": {
+        "label": "MCP",
+        "question": "{{agent}} wants to delete an MCP server",
+        "allow": "Allow deleting",
+        "allowed": "Deleting allowed",
+        "failed": "Couldn't delete",
+        "notice": "{{agent}} is waiting for your approval to delete an MCP server"
+      },
+      "hooks": {
+        "label": "Hooks",
+        "question": "{{agent}} wants to change hooks",
+        "allow": "Allow change",
+        "allowed": "Change allowed",
+        "failed": "Couldn't change",
+        "warn": "⚠ Hooks run commands at set moments without asking you.",
+        "notice": "{{agent}} is waiting for your approval to change hooks"
+      },
+      "hookDelete": {
+        "label": "Hooks",
+        "question": "{{agent}} wants to delete a hook",
+        "allow": "Allow deleting",
+        "allowed": "Deleting allowed",
+        "failed": "Couldn't delete",
+        "notice": "{{agent}} is waiting for your approval to delete a hook"
+      },
+      "context": {
+        "label": "Context",
+        "question": "{{agent}} wants to change context settings",
+        "allow": "Allow change",
+        "allowed": "Change allowed",
+        "failed": "Couldn't change",
+        "warn": "⚠ This lets the agent do more without asking you.",
+        "notice": "{{agent}} is waiting for your approval to change context settings"
+      },
+      "endpointDelete": {
+        "label": "Endpoint",
+        "question": "{{agent}} wants to delete an endpoint",
+        "allow": "Allow deleting",
+        "allowed": "Deleting allowed",
+        "failed": "Couldn't delete",
+        "notice": "{{agent}} is waiting for your approval to delete an endpoint"
+      },
+      "sessionDelete": {
+        "label": "Conversation",
+        "question": "{{agent}} wants to delete an unsent conversation",
+        "allow": "Allow deleting",
+        "allowed": "Deleting allowed",
+        "failed": "Couldn't delete",
+        "notice": "{{agent}} is waiting for your approval to delete a conversation"
+      }
+    },
     "settingApproval": {
-      "label": "Setting",
       "agent": "The agent",
-      "question": "{{agent}} wants to change a setting",
       "reason": "Reason: {{reason}}",
-      "warn": "⚠ This lets the agent do more without asking you.",
-      "allow": "Allow change",
-      "allowed": "Change allowed",
       "unset": "unset",
       "where": "Settings › {{section}}",
       "on": "On",
@@ -1510,6 +1644,58 @@
       "taskResultState": "Delegation result ({{state}})",
       "taskFull": "Full text given to the agent",
       "interruptionNote": "Told the agent what the interruption stopped",
+      "opResult": "Operation result ({{state}})",
+      "opResults_one": "Operation results ({{count}})",
+      "opResults_other": "Operation results ({{count}})",
+      "opState": {
+        "op": {
+          "allowed": "done"
+        },
+        "send": {
+          "allowed": "sent"
+        },
+        "resend": {
+          "allowed": "resent"
+        },
+        "schedule": {
+          "allowed": "scheduled"
+        },
+        "sendNow": {
+          "allowed": "sent"
+        },
+        "shell": {
+          "allowed": "ran"
+        },
+        "switchBackend": {
+          "allowed": "switched"
+        },
+        "turnSettings": {
+          "allowed": "changed"
+        },
+        "mcp": {
+          "allowed": "changed"
+        },
+        "mcpDelete": {
+          "allowed": "deleted"
+        },
+        "hooks": {
+          "allowed": "changed"
+        },
+        "hookDelete": {
+          "allowed": "deleted"
+        },
+        "context": {
+          "allowed": "changed"
+        },
+        "endpointDelete": {
+          "allowed": "deleted"
+        },
+        "sessionDelete": {
+          "allowed": "deleted"
+        },
+        "denied": "denied",
+        "withdrawn": "withdrawn"
+      },
       "settingResult": "Setting change result ({{state}})",
       "settingResults_one": "Setting change results ({{count}})",
       "settingResults_other": "Setting change results ({{count}})",
@@ -2554,7 +2740,6 @@
   "notify": {
     "completed": "Work finished",
     "waitingReply": "Waiting for your reply",
-    "settingApproval": "{{agent}} is waiting for your approval to change the setting \"{{key}}\"",
     "computerApproval": "{{agent}} is waiting for permission to use “{{app}}”",
     "computerApprovalMore_one": "{{agent}} is waiting for permission to use “{{app}}” and {{count}} other app",
     "computerApprovalMore_other": "{{agent}} is waiting for permission to use “{{app}}” and {{count}} other apps",

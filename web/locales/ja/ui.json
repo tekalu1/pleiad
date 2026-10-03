@@ -1391,14 +1391,148 @@
       "sending": "{{action}}を送っています…",
       "sendFailedInline": "{{action}}を送れませんでした · {{error}}"
     },
+    "opApproval": {
+      "op": {
+        "label": "操作",
+        "question": "{{agent}} が操作をしようとしています",
+        "allow": "許可",
+        "allowed": "許可した",
+        "failed": "できなかった",
+        "warn": "⚠ 確認なしでできることが増える操作です。",
+        "notice": "{{agent}} が操作の許可を待っています"
+      },
+      "setting": {
+        "label": "設定",
+        "question": "{{agent}} が設定を変えようとしています",
+        "allow": "変更を許可",
+        "allowed": "変更を許可した",
+        "failed": "変更できなかった",
+        "warn": "⚠ 確認なしでできることが増える変更です。",
+        "notice": "{{agent}} が設定「{{name}}」の変更の許可を待っています"
+      },
+      "send": {
+        "label": "送信",
+        "question": "{{agent}} が別の会話にメッセージを送ろうとしています",
+        "allow": "送信を許可",
+        "allowed": "送信を許可した",
+        "failed": "送れなかった",
+        "warn": "⚠ 送り先の会話は、この会話より確認の少ない承認モードで動きます。",
+        "notice": "{{agent}} が別の会話への送信の許可を待っています"
+      },
+      "resend": {
+        "label": "再送",
+        "question": "{{agent}} が別の会話にメッセージを送り直そうとしています",
+        "allow": "再送を許可",
+        "allowed": "再送を許可した",
+        "failed": "送り直せなかった",
+        "warn": "⚠ 送り先の会話は、この会話より確認の少ない承認モードで動きます。",
+        "notice": "{{agent}} が別の会話への再送の許可を待っています"
+      },
+      "schedule": {
+        "label": "送信予定",
+        "question": "{{agent}} がメッセージを送信予定にしようとしています",
+        "allow": "送信予定を許可",
+        "allowed": "送信予定を許可した",
+        "failed": "送信予定にできなかった",
+        "notice": "{{agent}} が送信予定の許可を待っています"
+      },
+      "sendNow": {
+        "label": "送信",
+        "question": "{{agent}} が送信予定のメッセージを今すぐ送ろうとしています",
+        "allow": "送信を許可",
+        "allowed": "送信を許可した",
+        "failed": "送れなかった",
+        "notice": "{{agent}} が送信予定のメッセージの送信の許可を待っています"
+      },
+      "shell": {
+        "label": "コマンド",
+        "question": "{{agent}} がコマンドを実行しようとしています",
+        "allow": "実行を許可",
+        "allowed": "実行を許可した",
+        "failed": "実行できなかった",
+        "warn": "⚠ コマンドは確認なしで、あなたと同じ権限で動きます。",
+        "notice": "{{agent}} がコマンドの実行の許可を待っています"
+      },
+      "switchBackend": {
+        "label": "エージェント",
+        "question": "{{agent}} が会話のエージェントを切り替えようとしています",
+        "allow": "切り替えを許可",
+        "allowed": "切り替えを許可した",
+        "failed": "切り替えられなかった",
+        "notice": "{{agent}} がエージェントの切り替えの許可を待っています"
+      },
+      "turnSettings": {
+        "label": "会話",
+        "question": "{{agent}} が会話の設定を変えようとしています",
+        "allow": "変更を許可",
+        "allowed": "変更を許可した",
+        "failed": "変更できなかった",
+        "warn": "⚠ 確認なしでできることが増える変更です。",
+        "notice": "{{agent}} が会話の設定の変更の許可を待っています"
+      },
+      "mcp": {
+        "label": "MCP",
+        "question": "{{agent}} が MCP サーバーの設定を変えようとしています",
+        "allow": "変更を許可",
+        "allowed": "変更を許可した",
+        "failed": "変更できなかった",
+        "warn": "⚠ 確認なしでできることが増える変更です。",
+        "notice": "{{agent}} が MCP サーバーの変更の許可を待っています"
+      },
+      "mcpDelete": {
+        "label": "MCP",
+        "question": "{{agent}} が MCP サーバーを削除しようとしています",
+        "allow": "削除を許可",
+        "allowed": "削除を許可した",
+        "failed": "削除できなかった",
+        "notice": "{{agent}} が MCP サーバーの削除の許可を待っています"
+      },
+      "hooks": {
+        "label": "Hooks",
+        "question": "{{agent}} が Hooks を変えようとしています",
+        "allow": "変更を許可",
+        "allowed": "変更を許可した",
+        "failed": "変更できなかった",
+        "warn": "⚠ Hooks は、決まったときに確認なしでコマンドを動かします。",
+        "notice": "{{agent}} が Hooks の変更の許可を待っています"
+      },
+      "hookDelete": {
+        "label": "Hooks",
+        "question": "{{agent}} が Hook を削除しようとしています",
+        "allow": "削除を許可",
+        "allowed": "削除を許可した",
+        "failed": "削除できなかった",
+        "notice": "{{agent}} が Hook の削除の許可を待っています"
+      },
+      "context": {
+        "label": "コンテキスト",
+        "question": "{{agent}} がコンテキストの設定を変えようとしています",
+        "allow": "変更を許可",
+        "allowed": "変更を許可した",
+        "failed": "変更できなかった",
+        "warn": "⚠ 確認なしでできることが増える変更です。",
+        "notice": "{{agent}} がコンテキストの設定の変更の許可を待っています"
+      },
+      "endpointDelete": {
+        "label": "接続先",
+        "question": "{{agent}} が接続先を削除しようとしています",
+        "allow": "削除を許可",
+        "allowed": "削除を許可した",
+        "failed": "削除できなかった",
+        "notice": "{{agent}} が接続先の削除の許可を待っています"
+      },
+      "sessionDelete": {
+        "label": "会話",
+        "question": "{{agent}} が未送信の会話を削除しようとしています",
+        "allow": "削除を許可",
+        "allowed": "削除を許可した",
+        "failed": "削除できなかった",
+        "notice": "{{agent}} が会話の削除の許可を待っています"
+      }
+    },
     "settingApproval": {
-      "label": "設定",
       "agent": "エージェント",
-      "question": "{{agent}} が設定を変えようとしています",
       "reason": "理由: {{reason}}",
-      "warn": "⚠ 確認なしでできることが増える変更です。",
-      "allow": "変更を許可",
-      "allowed": "変更を許可した",
       "unset": "未設定",
       "where": "設定 › {{section}}",
       "on": "オン",
@@ -1471,6 +1605,57 @@
       "taskResultState": "委譲の結果（{{state}}）",
       "taskFull": "エージェントに渡した全文",
       "interruptionNote": "中断で止めたものをエージェントに伝えました",
+      "opResult": "操作の結果（{{state}}）",
+      "opResults_other": "操作の結果（{{count}} 件）",
+      "opState": {
+        "op": {
+          "allowed": "操作した"
+        },
+        "send": {
+          "allowed": "送信した"
+        },
+        "resend": {
+          "allowed": "再送した"
+        },
+        "schedule": {
+          "allowed": "送信予定にした"
+        },
+        "sendNow": {
+          "allowed": "送信した"
+        },
+        "shell": {
+          "allowed": "実行した"
+        },
+        "switchBackend": {
+          "allowed": "切り替えた"
+        },
+        "turnSettings": {
+          "allowed": "変更した"
+        },
+        "mcp": {
+          "allowed": "変更した"
+        },
+        "mcpDelete": {
+          "allowed": "削除した"
+        },
+        "hooks": {
+          "allowed": "変更した"
+        },
+        "hookDelete": {
+          "allowed": "削除した"
+        },
+        "context": {
+          "allowed": "変更した"
+        },
+        "endpointDelete": {
+          "allowed": "削除した"
+        },
+        "sessionDelete": {
+          "allowed": "削除した"
+        },
+        "denied": "拒否した",
+        "withdrawn": "取り下げた"
+      },
       "settingResult": "設定の変更の結果（{{state}}）",
       "settingResults_other": "設定の変更の結果（{{count}} 件）",
       "settingState": {
@@ -2463,7 +2648,6 @@
   "notify": {
     "completed": "作業が完了しました",
     "waitingReply": "返事を待っています",
-    "settingApproval": "{{agent}} が設定「{{key}}」の変更の許可を待っています",
     "computerApproval": "{{agent}} が「{{app}}」の使用の許可を待っています",
     "computerApprovalMore_other": "{{agent}} が「{{app}}」ほか {{count}} 件の使用の許可を待っています",
     "untitled": "Pleiad の会話",
