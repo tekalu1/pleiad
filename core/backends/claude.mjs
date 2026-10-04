@@ -111,7 +111,9 @@ const MODELS = FALLBACK_MODELS;
 // ただし設定が別の接続先（ANTHROPIC_BASE_URL・Bedrock など）を指すときは設定を読ませない: setModel は
 // モデルの確かめに接続先へ POST /v1/messages を送るので、利用者の接続先へ裏で投げてしまう。
 // そのときの段は settings.json の effortLevel で補う（applied: false）。
-const CATALOG_TTL = 30 * 60_000, CATALOG_RETRY = 60_000, CATALOG_WAIT = 8_000;
+// CATALOG_WAIT は手元に一覧が何も無いとき（起動直後の初回）だけ待つ上限。引き直しは 9〜11 秒掛かるので、8 秒待っても
+// 間に合わず固定の一覧で答えていた。起動のときに warmModels で引いておくので、ここで待つのは起動から数秒の間だけにする
+const CATALOG_TTL = 30 * 60_000, CATALOG_RETRY = 60_000, CATALOG_WAIT = 3_000;
 const PROVIDER_ENV = ["ANTHROPIC_BASE_URL", "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY",
   "CLAUDE_CODE_USE_MANTLE", "CLAUDE_CODE_USE_ANTHROPIC_AWS", "CLAUDE_CODE_USE_GATEWAY"];
 // 引く条件（作業場所・段に効く設定）ごとに 1 件。{ value, at, failed, probe, cliSig }
@@ -170,9 +172,12 @@ sdk.probe ??= probeCatalog;
 
 /** anyCatalog を、今の CLI の目印と食い違わない間だけ返す。食い違ったら（版が変わった）忘れる */
 function freshAnyCatalog(cliSig) {
-  if (anyCatalog && cliSig && anyCatalogSig && cliSig !== anyCatalogSig) { anyCatalog = null; anyCatalogSig = null; }
+  if (anyCatalog && cliSig && anyCatalogSig && cliSig !== anyCatalogSig) { anyCatalog = null; anyCatalogSig = null; coldSince = 0; }
   return anyCatalog;
 }
+// 手元に一覧が何も無いまま待ち始めた時刻。待つのは CATALOG_WAIT までを全員で共有する（呼ぶたびに数え直さない。
+// 起動直後は newSession・models・efforts が続けて来るので、数え直すと 3 秒ずつ重なる）
+let coldSince = 0;
 function loadCatalog(cwd, pref) {
   // 別の接続先のときは設定を読まないので、作業場所で結果は変わらない
   const key = pref.custom ? "custom" : `${cwd || ""}|${pref.sig}`, now = Date.now();
@@ -185,14 +190,27 @@ function loadCatalog(cwd, pref) {
   // CLI の版が変わっていたら（claude update）、30 分の TTL 内・失敗の再試行待ちの中でも忘れて引き直す
   if (e.cliSig && cliSig && e.cliSig !== cliSig) { e.value = null; e.at = 0; e.failed = 0; }
   if (e.value && now - e.at < CATALOG_TTL) return Promise.resolve(e.value);
-  if (!e.value && now - e.failed < CATALOG_RETRY) return Promise.resolve(null);
+  // 手元の答え: この条件の古い一覧 → 別の条件で取れた一覧（段は利用者の設定で補う）。無ければ null（固定の一覧で答える）
+  const stand = () => e.value ?? (freshAnyCatalog(cliSig) && { ...anyCatalog, applied: false }) ?? null;
+  if (now - e.failed < CATALOG_RETRY) return Promise.resolve(stand());
   e.probe ??= sdk.probe(cwd, !pref.custom)
-    .then((c) => { e.value = c; e.cliSig = cliSig; anyCatalog = c; anyCatalogSig = cliSig; e.at = Date.now(); return c; })
+    .then((c) => { e.value = c; e.cliSig = cliSig; e.failed = 0; anyCatalog = c; anyCatalogSig = cliSig; coldSince = 0; e.at = Date.now(); return c; })
     .catch((err) => { e.failed = Date.now(); e.cliSig = cliSig; console.error("  Claude のモデル一覧を取れなかった:", String(err?.message ?? err)); return e.value; })
     .finally(() => { e.probe = null; });
-  // 初めの 1 回だけ待つ。長く掛かる（未ログイン・未導入）ときは、別の条件で取れた一覧か固定の一覧で先に答える
-  const stand = () => e.value ?? (freshAnyCatalog(cliSig) && { ...anyCatalog, applied: false });
-  return Promise.race([e.probe.then((v) => v ?? stand()), new Promise((resolve) => setTimeout(() => resolve(stand()), CATALOG_WAIT).unref?.())]);
+  // 引き直しは裏で走らせ、手元の答えがあれば待たずに返す（引き直しは CLI を起こして 10 秒ほど掛かる。会話を作る・一覧を開くたびに待たせない）
+  const handy = stand();
+  if (handy) return Promise.resolve(handy);
+  // 手元に何も無い（起動直後の初回）ときだけ待つ。長く掛かる（未ログイン・未導入）ときは固定の一覧で先に答える
+  coldSince ||= now;
+  const left = CATALOG_WAIT - (now - coldSince);
+  if (left <= 0) return Promise.resolve(null);
+  return Promise.race([e.probe.then((v) => v ?? stand()), new Promise((resolve) => setTimeout(() => resolve(stand()), left).unref?.())]);
+}
+
+/** 起動のときに一覧を裏で引いておく（最初の会話・一覧の要求が待たない）。作業場所は新しい会話の既定（ホーム）。失敗は黙る（引くときに出す） */
+async function warmCatalog(cwd) {
+  const pref = await preferredSettings(cwd);
+  await loadCatalog(cwd, pref);
 }
 // 利用者の設定のモデルとエフォート。env が settings.json より強い（CLI と同じ順）。作業場所ごとに違いうるので cwd で引く。
 // effort は段を利用者の設定のもとで引けなかったとき（applied: false）だけ既定の段に重ねる。
@@ -612,6 +630,7 @@ export const backend = {
 
   modes: () => MODES,
   models: (cwd) => claudeModels(cwd),
+  warmModels: (cwd) => warmCatalog(cwd),
   // 一覧が引けないうち（未ログイン・一覧の取得中）は、保存済みの id を無効にしない（CLI が確かめる）
   async validModel(model, cwd) {
     if (typeof model !== "string" || model.length > 200 || /[\r\n\x00]/.test(model)) return false;

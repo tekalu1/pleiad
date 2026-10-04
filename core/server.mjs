@@ -6140,6 +6140,9 @@ async function announce() {
   process.parentPort?.postMessage({ type: "ready", port, token: TOKEN, locale: locale.lang });
   remote.start().catch(() => {});
   if (routingSettingsCache.enabled && ROUTING_USAGE_AUTO) routingUsage.start();
+  // モデルの一覧を裏で引いておく。新しい会話・モデル選択が、CLI を起こす 10 秒ほどを待たない。
+  // 作業場所は新しい会話の既定（ホーム）。取れなければ一覧の要求のときにまた引く（テストは ROUTING_USAGE_AUTO=off で起こさない）
+  if (ROUTING_USAGE_AUTO) for (const b of listBackends()) if (b.warmModels && installation(b.id).installed) b.warmModels(os.homedir()).catch(() => {});
   // 起動直後の常駐の状態（リモートが無効でも送る。main はそれを見てトレイを出さない）
   if (process.parentPort) Promise.all([residentPrefs.loaded, remote.status(), runningWork()])
     .then(([, status, work]) => postResident({ status: withResident(status), work })).catch(() => {});
