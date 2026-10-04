@@ -171,9 +171,10 @@ const attrs = (obj) => Object.entries(obj).filter(([, v]) => v !== null && v !==
  * channel は表示名（`#名前`・DM は bot の名前）、channelId は channels.post などの操作へ渡すチャンネルの id（`channel-id` 属性。任意）、
  * from は表示名（bot は `🦉 Owl (bot)`）、at は ISO の分まで（呼び出し側が決める）。
  * reply: `reply="true"`。呼んだ bot（@ で起こした相手）の返事（bot の会話でそのターンの終わりに返す。ADR 0109）
+ * heard: `heard="true"`。あなたに @ していない人の投稿で、スレッドのほかの bot（宛先）も受けている。返事をするかは bot が決める（ADR 0128）
  */
-export function channelEnvelope({ channel, channelId, thread, post, from, at, reply, text }) {
-  return `<${CHANNEL_TAG}${attrs({ channel, 'channel-id': channelId, thread, post, from, reply, at })}>${escapeBody(text)}</${CHANNEL_TAG}>`;
+export function channelEnvelope({ channel, channelId, thread, post, from, at, reply, heard, text }) {
+  return `<${CHANNEL_TAG}${attrs({ channel, 'channel-id': channelId, thread, post, from, reply, heard, at })}>${escapeBody(text)}</${CHANNEL_TAG}>`;
 }
 /** 初回に渡す、スレッドのそれまでの投稿。posts は channelEnvelope の引数の並び */
 export function channelThreadEnvelope({ channel, channelId, thread, posts }) {
