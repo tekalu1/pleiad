@@ -52,7 +52,9 @@ jobs:
       - run: npm ci
       # 子プロセスの worker 2 本で並列に回す（tests/run.mjs --jobs。重い suite から配る）。ジョブは増やさない。
       # 同じ suite の並列で落ちる・遅くなるようなら --jobs 1 に戻せば従来どおり（同じプロセスで 1 本ずつ）
-      - run: npm test -- --jobs 2 --timings temporary/test-timings.json
+      # npm test を通さず直に呼ぶ。Windows の既定の shell（pwsh）は `npm test -- --jobs 2` の `--` を食べ、
+      # npm が --jobs を自分の設定として取るので、tests/run.mjs には `2 temporary/…` だけが suite 名として届いて落ちる（0.8.0 で起きた）
+      - run: node tests/run.mjs --jobs 2 --timings temporary/test-timings.json
       # suite ごとの時間・判定数・skip の記録（tests/run.mjs --timings）だけを残す。ログや環境変数・トークンは上げない。
       # 落ちた実行でも残し（always）、npm test が引数の不正などで書けなかったときは警告だけ（失敗にしない）
       - name: Upload test timings
