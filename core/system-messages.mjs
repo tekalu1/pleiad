@@ -60,7 +60,7 @@ function leadingRow(tag, attrText, body, m) {
   const base = { role: "system", text: "", at: m.at ?? null, ...(m.backend ? { backend: m.backend } : {}) };
   if (tag === INTERRUPTION_TAG) return { ...base, kind: "interruptionNote", body };
   const a = attrsOf(attrText);
-  // <pleiad-inner> の kind（tail・pulse・wake）は見出しの出し分けに使う（wake は予約した時刻に起きた。ADR 0135）
+  // <pleiad-inner> の kind（tail・pulse・wake）は見出しの出し分けに使う（wake は予約した時刻に起きた。ADR 0136）
   if (tag === MEMORY_CORE_TAG || tag === BOT_RECENT_TAG || tag === TURN_CONTEXT_TAG || tag === INNER_TAG) return { ...base, kind: "contextNote", tag: tag === MEMORY_CORE_TAG ? "memory-core" : tag === BOT_RECENT_TAG ? "bot-recent" : tag === INNER_TAG ? "inner" : "turn-context", ...(tag === INNER_TAG && a.kind ? { innerKind: a.kind } : {}), body };
   return { ...base, kind: "channelEvent", history: tag === CHANNEL_THREAD_TAG, channel: a.channel ?? "", threadId: a.thread ?? null,
     postId: a.post ?? null, from: a.from ?? "", sentAt: a.at ?? null, body };

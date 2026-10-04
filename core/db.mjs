@@ -506,7 +506,7 @@ export function brainTable(db) {
   };
 }
 
-// ---- bot の予約（自分で予約した時刻に起きる。ADR 0135）。1 件 1 行。待っているものは 1 体 20 件まで、終わったものは 7 日で消す（core/brain/wakes.mjs） ----
+// ---- bot の予約（自分で予約した時刻に起きる。ADR 0136）。1 件 1 行。待っているものは 1 体 20 件まで、終わったものは 7 日で消す（core/brain/wakes.mjs） ----
 export function wakeTable(db) {
   ensureLateTables(db);
   const row = (r) => ({ ...JSON.parse(r.data), id: r.id, botId: r.bot_id, status: r.status, at: r.at });

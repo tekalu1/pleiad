@@ -1068,7 +1068,7 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
   }
 
   /**
-   * 予約した時刻になった bot を、予約した会話で起こす（core/brain/wakes.mjs。ADR 0135）。handoff と同じく、投稿を持たない出来事（inner。kind: 'wake'）を
+   * 予約した時刻になった bot を、予約した会話で起こす（core/brain/wakes.mjs。ADR 0136）。handoff と同じく、投稿を持たない出来事（inner。kind: 'wake'）を
    * inbox に積んでふつうの道に乗せる。承認・強い bot の確認・［止める］はそのまま効き、走っているターンには途中送信しない。
    * 止めたスレッド・その bot の会話でなくなったものは断る。返りは { ok: true, sessionId, channelId, threadId } | { ok: false, reason }（resting・closed は待てば起こせる）
    */

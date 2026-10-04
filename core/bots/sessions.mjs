@@ -32,7 +32,7 @@ export function botInstructions(bot, locale) {
     agentT(locale, 'guide.bot.quiet'),
     // @ の無い人の投稿は、スレッドのほかの bot にも聞こえた投稿として届く（ADR 0128）。答えるかは bot が決める
     agentT(locale, 'guide.bot.heard'),
-    // 後で起きるのは会話の中のタイマーではなく Pleiad の予約（brain.wakeAdd。ADR 0135）。会話の中のタイマーはターンが止まっている間は鳴らない
+    // 後で起きるのは会話の中のタイマーではなく Pleiad の予約（brain.wakeAdd。ADR 0136）。会話の中のタイマーはターンが止まっている間は鳴らない
     agentT(locale, 'guide.bot.wake'),
   ].filter(Boolean).join('\n\n');
 }

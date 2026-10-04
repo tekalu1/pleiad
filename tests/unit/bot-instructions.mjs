@@ -50,8 +50,8 @@ export default async function (t) {
   // ---- 人格の文: 決定的で、並びは固定
   const ja = botInstructions(owl, 'ja'), en = botInstructions(owl, 'en');
   ok('同じ bot・同じ言語なら毎回同じバイト列', botInstructions({ ...owl }, 'ja') === ja && botInstructions(JSON.parse(JSON.stringify(owl)), 'ja') === ja);
-  ok('名前 → 人格 → 操作の要点 → 予算の残りの届き方 → 聞こえた投稿の扱い → 後で起きる予約。人格に定型のラベルを付けない（ADR 0119・0128・0135）', ja.split('\n\n').length === 6 && ja.startsWith('あなたは 🦉 Owl') && ja.split('\n\n')[1] === owl.persona && ja.split('\n\n')[3].includes('予算の残り') && ja.split('\n\n')[4].includes('heard="true"') && ja.split('\n\n')[5].includes('brain.wakeAdd') && !ja.endsWith('\n'), ja);
-  ok('ADR 0135: 後で起きるのは会話の中のタイマーではなく brain.wakeAdd の予約（一覧・取り消しも）（ja・en）', ['brain.wakeAdd', 'brain.wakeList', 'brain.wakeCancel', 'Cron'].every((s) => ja.includes(s) && en.includes(s)), ja);
+  ok('名前 → 人格 → 操作の要点 → 予算の残りの届き方 → 聞こえた投稿の扱い → 後で起きる予約。人格に定型のラベルを付けない（ADR 0119・0128・0136）', ja.split('\n\n').length === 6 && ja.startsWith('あなたは 🦉 Owl') && ja.split('\n\n')[1] === owl.persona && ja.split('\n\n')[3].includes('予算の残り') && ja.split('\n\n')[4].includes('heard="true"') && ja.split('\n\n')[5].includes('brain.wakeAdd') && !ja.endsWith('\n'), ja);
+  ok('ADR 0136: 後で起きるのは会話の中のタイマーではなく brain.wakeAdd の予約（一覧・取り消しも）（ja・en）', ['brain.wakeAdd', 'brain.wakeList', 'brain.wakeCancel', 'Cron'].every((s) => ja.includes(s) && en.includes(s)), ja);
   ok('ADR 0128: 聞こえた投稿（@ の無い人の投稿）は、ほかの bot がもう答えている・自分に向いていないなら黙ってよい（ja・en）', ja.includes('文章を書かずに終えてよい') && ja.includes('ほかの bot がもう答えている')
     && en.includes('If another bot has already answered or it is not for you, you may finish without writing anything.'), ja);
   ok('使い方に list_ops・call_op と、よく使う op の id', ['list_ops', 'call_op', 'channels.post', 'channels.react', 'memory.search', 'memory.write', 'channels.read', 'search_sessions'].every((s) => ja.includes(s)), ja);

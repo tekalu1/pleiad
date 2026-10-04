@@ -13,7 +13,7 @@
 //   BotHost（server.mjs のつなぎ目。どれも例外を外へ出さない。bot の会話でなければ何もしない）:
 //     opsDeps(): { channels, bots, memory, memoryLearner, brain, pulse, wakes, routines, botOfSession, wake }   … opsDeps() に足す。ops の handler が ctx.channels などで呼ぶ。
 //                       brain は bot の頭の中の保存（思考の流れ・気がかり。core/brain/store.mjs）、pulse は心拍（core/brain/pulse.mjs。ADR 0126）、
-//                       wakes は bot が自分で決めた時刻に起きる予約（core/brain/wakes.mjs。ADR 0135）
+//                       wakes は bot が自分で決めた時刻に起きる予約（core/brain/wakes.mjs。ADR 0136）
 //                       memoryLearner は夜の整理（core/memory/learn.mjs）。memory.learnStatus が status() を呼ぶ
 //                       wake({ channelId, postId, botId }) は channels.wake の本体（dispatch.wakePost。起こせたかを { woken, reason? } で返す）
 //     turnExtras(turn): Promise<{ botInstructions: string|null, notes: string[], folders: object|null }>   … runArgs に足す（notes は既存の notes の後ろ。
@@ -89,7 +89,7 @@ export function createBotHost(deps) {
     ...(Number(process.env.AGENT_HOST_PULSE_FLOOR_MS) > 0 ? { floorMs: Number(process.env.AGENT_HOST_PULSE_FLOOR_MS) } : {}),
     ...(Number(process.env.AGENT_HOST_PULSE_TICK_MS) > 0 ? { tickMs: Number(process.env.AGENT_HOST_PULSE_TICK_MS) } : {}),
     ...(Number(process.env.AGENT_HOST_PULSE_EVERY_MS) > 0 ? { everyMs: Number(process.env.AGENT_HOST_PULSE_EVERY_MS) } : {}) });
-  // ---- 予約（bot が自分で決めた時刻に、その会話で起きる。心拍の ON・OFF に依らない。ADR 0135）
+  // ---- 予約（bot が自分で決めた時刻に、その会話で起きる。心拍の ON・OFF に依らない。ADR 0136）
   wakes = createWakes({ dataDir, channels, bots, dispatch, budget: dispatch.budget, clock: routinesClock, emit, localeOf: () => deps.currentLocale?.() ?? 'ja' });
   // ---- webhook（H1）
   const webhook = createWebhookReceiver({ dataDir, routines, host });

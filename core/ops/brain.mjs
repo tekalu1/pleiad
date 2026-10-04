@@ -7,7 +7,7 @@
 // 危険度: view・list は read。気がかりの足す・手放す・眠らせる（止める向き）は write。起こす（pause: false）・［今すぐ］（beat）は AI が呼ぶと guarded
 //   （自発の動きを増やす向き。人は write）。流れを消す（clear）は guarded（記録を消す。人は承認なしで通る）。
 // 心拍の ON・間隔は bots.update の pulse（広げる向きは guarded）。ここでは足さない。
-// 予約（wakeAdd・wakeList・wakeCancel。ADR 0135）は `ctx.wakes`（core/brain/wakes.mjs）。予約を作れるのは bot のスレッド・DM の会話の AI だけで、行き先はその会話。
+// 予約（wakeAdd・wakeList・wakeCancel。ADR 0136）は `ctx.wakes`（core/brain/wakes.mjs）。予約を作れるのは bot のスレッド・DM の会話の AI だけで、行き先はその会話。
 //   作る・取り消すは write で、読み取りのモードの bot も使える（modeGate: false。channels.post と同じ）。起きたターンは、その会話のモード・承認のまま走る。
 import { z } from 'zod';
 import { agentT } from '../i18n.mjs';
@@ -118,7 +118,7 @@ export const brainOps = [
     id: 'brain.wakeAdd',
     summary: D('wakeAdd', 'summary'),
     risk: 'write',
-    riskReason: 'Reserves one wake-up of the bot in its own thread or DM conversation at a time it chooses (at least a minute ahead, at most 30 days, up to 20 waiting per bot). It runs nothing now. The woken turn runs in the same conversation with its own mode and approvals, is counted in the channel budget like a heartbeat, waits while the budget is empty, and is dropped if the thread is stopped (ADR 0135). It is the same as the bot continuing its own conversation later, so it is not guarded',
+    riskReason: 'Reserves one wake-up of the bot in its own thread or DM conversation at a time it chooses (at least a minute ahead, at most 30 days, up to 20 waiting per bot). It runs nothing now. The woken turn runs in the same conversation with its own mode and approvals, is counted in the channel budget like a heartbeat, waits while the budget is empty, and is dropped if the thread is stopped (ADR 0136). It is the same as the bot continuing its own conversation later, so it is not guarded',
     modeGate: false,
     input: z.object({
       at: z.union([z.number(), z.string().max(40)]).optional().describe(D('wakeAdd', 'at')),
@@ -164,7 +164,7 @@ export const brainOps = [
     id: 'brain.wakeCancel',
     summary: D('wakeCancel', 'summary'),
     risk: 'write',
-    riskReason: 'Cancels one waiting wake-up reservation of the bot. It only narrows what will run later, and a human can do the same, so an agent is treated the same (ADR 0135)',
+    riskReason: 'Cancels one waiting wake-up reservation of the bot. It only narrows what will run later, and a human can do the same, so an agent is treated the same (ADR 0136)',
     modeGate: false,
     input: z.object({
       botId: botIdArg('wakeCancel', true),

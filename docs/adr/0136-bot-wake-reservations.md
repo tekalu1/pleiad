@@ -1,4 +1,4 @@
-# 0135 bot が自分で決めた時刻に起きる予約
+# 0136 bot が自分で決めた時刻に起きる予約
 
 - 状態: 提案
 - [ADR 0126](0126-bot-pulse-and-stream.md)（心拍）の「予約した時刻」を、心拍を入れていない bot にも使える 1 回きりの予約として外に出す。起こし方は [ADR 0126](0126-bot-pulse-and-stream.md) の引き継ぎ、予算は [ADR 0119](0119-channel-budget-and-resting.md)、取りこぼしの決まりは [ADR 0112](0112-routines.md) に合わせる
