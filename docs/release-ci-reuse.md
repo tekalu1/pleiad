@@ -1,7 +1,7 @@
 # リリースでの main の CI の結果の使い方
 
 タグの `Evaluation release`（`.github/workflows/evaluation-release.yml`）は、同じ commit の main の CI（`.github/workflows/test.yml` の push の run）が、必須のジョブを全部通していれば、その結果を使って release の中の `npm test` を省く。
-CI が赤ければ公開しない。使える成功が無ければ、今までどおり release の中で `npm test` を全部回す（[ADR 0129](adr/0129-release-reuses-main-ci.md)）。
+CI が赤ければ公開しない。使える成功が無ければ、今までどおり release の中で `npm test` を全部回す（[ADR 0130](adr/0130-release-reuses-main-ci.md)）。
 
 ## 流れ
 
