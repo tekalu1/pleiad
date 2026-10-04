@@ -171,7 +171,7 @@
         }
       },
       "legacyCommand": null,
-      "input": "e273dc2b33f3"
+      "input": "5bbb30b5ae47"
     },
     {
       "id": "bots.delete",
@@ -275,7 +275,145 @@
         }
       },
       "legacyCommand": null,
-      "input": "2fff207a517a"
+      "input": "52c1b22d9c98"
+    },
+    {
+      "id": "brain.beat",
+      "risk": "write",
+      "riskOf": true,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "brain",
+            "beat"
+          ],
+          "positional": [
+            "botId"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "fbf6c62da7b0"
+    },
+    {
+      "id": "brain.clear",
+      "risk": "guarded",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "brain",
+            "clear"
+          ],
+          "positional": [
+            "botId"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "3f02411ddcf8"
+    },
+    {
+      "id": "brain.loopAdd",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "brain",
+            "loop-add"
+          ],
+          "positional": [
+            "text"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "fcfbb79ea447"
+    },
+    {
+      "id": "brain.loopResolve",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "brain",
+            "loop-resolve"
+          ],
+          "positional": [
+            "id"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "56acea26a422"
+    },
+    {
+      "id": "brain.pause",
+      "risk": "write",
+      "riskOf": true,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "brain",
+            "pause"
+          ],
+          "positional": [
+            "botId"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "40ce7bf5251f"
+    },
+    {
+      "id": "brain.view",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "brain",
+            "view"
+          ],
+          "positional": [
+            "botId"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "3cef2b237b95"
     },
     {
       "id": "browser.listProfiles",
@@ -3991,6 +4129,48 @@
     {
       "id": "bots.update",
       "path": "bots update",
+      "positional": [
+        "botId"
+      ]
+    },
+    {
+      "id": "brain.beat",
+      "path": "brain beat",
+      "positional": [
+        "botId"
+      ]
+    },
+    {
+      "id": "brain.clear",
+      "path": "brain clear",
+      "positional": [
+        "botId"
+      ]
+    },
+    {
+      "id": "brain.loopAdd",
+      "path": "brain loop-add",
+      "positional": [
+        "text"
+      ]
+    },
+    {
+      "id": "brain.loopResolve",
+      "path": "brain loop-resolve",
+      "positional": [
+        "id"
+      ]
+    },
+    {
+      "id": "brain.pause",
+      "path": "brain pause",
+      "positional": [
+        "botId"
+      ]
+    },
+    {
+      "id": "brain.view",
+      "path": "brain view",
       "positional": [
         "botId"
       ]
