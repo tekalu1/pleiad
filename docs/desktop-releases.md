@@ -165,13 +165,19 @@ Actionsは `PLY_RELEASE_REPOSITORY` Variableや `PLY_RELEASE_TOKEN` Secretを参
 Releases は public で、ブラウザーからはログインなしで取得できる。評価版は自己署名のため、インストール前に公開証明書の扱いを確認する（下記「自己署名の配布」）。
 自動更新に GitHub のログインは要らない。`gh auth login` も不要で、GitHub CLI が無い PC・未ログインの PC でも更新できる。
 更新設定は `private: true` のまま（外すと最新の先行版を semver で選ぶ `NewestReleaseProvider` が効かなくなり、先行版のメタデータ `beta.yml` も探されるため。導入済みのアプリにもこの設定が焼き込まれている）。
-資格情報が無いときは、`PrivateGitHubProvider` 系の同じプロバイダーが `authorization` ヘッダーを付けずに GitHub API を呼ぶ。アセットは API の URL を `Accept: application/octet-stream` で取り、S3 へのリダイレクトを追う。
+資格情報が無いときは、`PrivateGitHubProvider` 系の同じプロバイダーが `authorization` ヘッダーを付けずに GitHub API を呼ぶ。
+インストーラーと blockmap は、API の資産の URL（`/releases/assets/<番号>`）ではなく公開の配布の URL（`/releases/download/v<版>/<名前>`）から、トークンを付けずに取る。
+- 資産の URL は名前を含まない。そのため electron-updater は CPU に合う `Pleiad-<版>-win-<arch>.exe` を選べず、`latest.yml` の先頭にある両方入り（2 倍の大きさ）を取っていた。blockmap の URL も作れず、差分の取得が毎回失敗して全体を取っていた（0.8.1 で直した）。
+- 差分の範囲は 1 つずつ要求する。GitHub の配信は、複数の範囲をまとめた要求に 501 を返す。
+- 差分の元は、前回の更新で手元に残したインストーラー（`%LOCALAPPDATA%\agent-host-updater\installer.exe`）。0.8.0 までに残した両方入りは、前の版の両方入りの blockmap と組む。
+- 0.7.2 → 0.8.0 の x64 なら、取るのは 228MB のうち 6.8MB になる。
 資格情報があれば使う（GitHub API のレート制限を避けるため）。Electron main が更新確認のたびに、起動環境の `GH_TOKEN` / `GITHUB_TOKEN`、なければ `gh auth token --hostname github.com`（Windows は標準インストール先も探す）の順で探す。
 専用の fine-grained PAT なら配布先の Contents read 権限を与える。ブラウザーの GitHub ログイン状態を自動更新が共有することはない。
 認証なしの GitHub API は 1 IP あたり 1 時間 60 回まで。確認 1 回は 1〜2 回の呼び出しだが、同じ回線を共有する PC が多いと上限に達し、403/429 になる。その場合は設定に「しばらく待つか、GitHub CLI で `gh auth login` すると上限が上がる」と出す。トークンを付けたのに 401/403 のときだけ、資格情報の確認を案内する。
 
 取得したトークンは Electron main のメモリーに留め、画面・設定ファイル・内部サーバーへ渡さない。
-更新ライブラリーの生ログと認証CLIの生エラーは出さない。Pleiadは GitHub CLI の認証情報を書き換えない。
+更新ライブラリーの記録は `userData/logs/updater.log` に残す（1MB を超えたら `.old` に 1 世代だけ残す）。差分の取得が効いたか（`Full: … To download: …`）や失敗の理由は、ここで確かめる。
+書く前に、トークン・`authorization`・URL の問い合わせ部分（配信の署名付きの一時 URL の鍵）を伏せる（`desktop/update-log.cjs`）。認証CLIの生エラーは出さない。Pleiadは GitHub CLI の認証情報を書き換えない。
 先行版・安定版とも、`PrivateGitHubProvider` が要求する `latest.yml` / `latest-mac.yml` を配る。
 GitHub Release の prerelease 属性とアプリの先行版設定で選別し、安定版へ先行版を流さない。
 

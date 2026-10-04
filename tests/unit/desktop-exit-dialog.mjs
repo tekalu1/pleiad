@@ -64,6 +64,7 @@ async function start({ ready = true, work = { count: 0 } } = {}) {
   const modules = {
     './updates.cjs': { Updates: class { constructor() { this.enabled = false; this.state = { phase: 'idle' }; } on() {} async init() {} snapshot() { return {}; } } },
     './update-auth.cjs': { prepareUpdateCheck: () => {} },
+    './update-log.cjs': { createUpdateLog: () => ({}) },
     './server-port.cjs': { savedPort: () => 7499, rememberPort: () => {} },
     './secret-bridge.cjs': { attachSecretBridge: () => {} },
     './i18n.cjs': { t: key => key, setLocale: () => {}, resolveLocale: () => 'ja', initDesktopI18n: async () => {} },

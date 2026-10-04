@@ -3,6 +3,7 @@ const path = require('node:path');
 const fs = require('node:fs');
 const { Updates } = require('./updates.cjs');
 const { prepareUpdateCheck } = require('./update-auth.cjs');
+const { createUpdateLog } = require('./update-log.cjs');
 const { savedPort, rememberPort } = require('./server-port.cjs');
 const { attachSecretBridge } = require('./secret-bridge.cjs');
 const { t, setLocale, resolveLocale, initDesktopI18n } = require('./i18n.cjs');
@@ -235,8 +236,8 @@ async function boot() {
   window.show();
   remoteWindows.handleArgv(process.argv);
   const { autoUpdater } = require('electron-updater');
-  // Provider errors may include authenticated HTTP request details.
-  autoUpdater.logger = null;
+  // 記録は userData/logs/updater.log に残す。トークンと配信の署名付きの URL は伏せて書く（desktop/update-log.cjs）
+  autoUpdater.logger = createUpdateLog(path.join(app.getPath('userData'), 'logs', 'updater.log'));
   updates = new Updates({ updater: autoUpdater, version: app.getVersion(), file: path.join(app.getPath('userData'), 'updates.json'),
     enabled: app.isPackaged && require('../package.json').plyRelease === true && fs.existsSync(path.join(process.resourcesPath, 'app-update.yml')), install: installUpdate,
     prepareCheck: () => prepareUpdateCheck(autoUpdater, path.join(process.resourcesPath, 'app-update.yml')) });
