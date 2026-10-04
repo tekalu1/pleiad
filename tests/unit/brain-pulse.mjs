@@ -196,6 +196,23 @@ export default async function (t) {
     const own = await pulse.beat(bot.id);
     t.ok('自分の投稿と system の投稿では起きない（自分の出来事で自分が起きない）', own.gate.reason === 'nothing' && prompts.length === 0);
 
+    // ---- 答え済みの質問: 返事が一度失敗し、5 分後に答え直した。束に自分の返事が見え、質問に「答え済み」の印が付く
+    clock += 11 * MIN;
+    const question = await channels.post({ channelId: home.id, text: '予算の表示がずっと 0% なのはなぜ？', mentions: [bot.id] }, human);
+    clock += MIN;
+    await channels.post({ channelId: home.id, threadId: question.id, text: '（返事を書けませんでした）', state: 'failed' }, { kind: 'bot', botId: bot.id });
+    clock += 5 * MIN;
+    await channels.post({ channelId: home.id, threadId: question.id, text: '分母が週の枠なので、小数が切り捨てられて 0% に見えています' }, { kind: 'bot', botId: bot.id });
+    clock += MIN;
+    prompts.length = 0;
+    answer = { do: 'none' };
+    const answeredBeat = await pulse.beat(bot.id, { force: true });
+    const bundle = prompts.at(-1) ?? '';
+    const questionLine = bundle.split('\n').find((l) => l.includes('予算の表示がずっと 0%')) ?? '';
+    t.ok('答え直した自分の返事が束に見える（自分の投稿は「you」。失敗した返事も印つきで並ぶ）', answeredBeat.ran && bundle.includes('分母が週の枠なので') && /\byou\b.*分母が週の枠/.test(bundle) && /you \(failed\)/.test(bundle));
+    t.ok('自分が後で答えた質問には「答え済み」の印が付き、気がかりにしないよう束に書く', /answered by you/.test(questionLine) && /already answered/i.test(bundle));
+    t.ok('自分の投稿は、ふるい・欲求の未読には数えない（未読は人の質問の 1 件だけ）', last().meta?.unread === 1);
+
     // ---- タイマー: 取りこぼしは最新の 1 回だけ
     pulse.start();
     brain.setState(bot.id, { nextAt: clock - 5 * 60 * MIN, paused: false });
