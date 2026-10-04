@@ -6,7 +6,8 @@
 //     store, dataDir, usageStore, sessionSearch, runtime（走っているターンの表）, outbox（人の送信待ち）,
 //     createConversation, runTurn(args, onStarted, hooks), noticeTarget, noticeBlocked, abortSessions, emitGlobal,
 //     getBackend(id), listBackends(), resolveModel, resolveEffort, agentLocaleFor(sessionId), agentT, currentLocale(),
-//     readQuota(backendId)（使用枠。チャンネルの予算が使う。ADR 0119）
+//     readQuota(backendId)（使用枠。チャンネルの予算が使う。ADR 0119）、
+//     deleteHidden(sessionId)（隠れた会話をネイティブの会話ごと消す。消せなければ false。心拍・夜の整理の片付けが使う。ADR 0127）
 //   各モジュールには deps をまとめた HostTools（下の host）を渡す。emit(event) は sessionId: null で全接続へ、emitSession(sessionId, event) は会話の出来事
 //
 //   BotHost（server.mjs のつなぎ目。どれも例外を外へ出さない。bot の会話でなければ何もしない）:

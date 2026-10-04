@@ -42,7 +42,12 @@ try {
     resolveModel: async () => '', resolveEffort: async () => '',
     createConversation: async () => `fake-${crypto.randomUUID()}`,
     runTurn: async ({ sessionId, prompt }) => { calls++; await runFake(sessionId, prompt); return 'ok'; },
+    deleteHidden: async (id) => { pruned.push(id); side.delete(id); return true; },
   };
+  // 前の版が残した学習の隠れた会話（ADR 0127: 新しい 20 個を残して、古いものはネイティブの会話ごと消す）
+  const pruned = [];
+  const oldLearners = Array.from({ length: 25 }, (_, i) => `old-learner-${i}`);
+  oldLearners.forEach((id, i) => side.set(id, { backend: 'fake', createdAt: 1000 + i, bot: { botId: 'b_learner', kind: 'learner' } }));
   const learner = createMemoryLearner({ dataDir: dir, channels, bots: { get: async () => null }, memory, host, clock,
     readMessages: async (id) => fake.getMessages(id),
   });
@@ -53,6 +58,8 @@ try {
   assert.equal(entries[0].sources[0].kind, 'message');
   assert.equal(entries[0].sources[0].sessionId, chat);
   assert.equal(calls, 1);
+  assert.deepEqual(pruned.sort(), oldLearners.slice(0, 6).sort(), 'keeps the newest 20 learner conversations (including the new one) and deletes the rest');
+  assert.equal([...side.values()].filter((v) => v.bot?.kind === 'learner').length, 20);
   // 進みは DB の memory_state（会話・チャンネルごとのカーソルを 1 件 1 行。ADR 0115）。learn-state.json は作らない
   const reader = openReadOnly(dir);
   const cursor = (kind, id) => { const row = reader.prepare('SELECT value FROM memory_state WHERE kind = ? AND id = ?').get(kind, id); return row ? JSON.parse(row.value) : undefined; };
@@ -81,7 +88,7 @@ try {
   side.set(many, { backend: 'fake', lastModified: Date.now() + 2000 });
   const fourth = await learner.runNow();
   assert.equal(fourth.changed, 7, '5 件を超えても残りの候補を失わない');
-  assert.equal(calls, 4, '5 件ずつ別の learner 会話で整理する');
+  assert.equal(calls, 3, '40 件までの発言を 1 回の learner 会話でまとめて整理する（ADR 0127。以前は 5 件ずつ別の会話）');
   assert.equal((await memory.list({ layer: 'user' })).length, 10);
   const adopted = `fake-${crypto.randomUUID()}`;
   await runFake(adopted, 'echo: 報告は要点を三つにまとめる。');
@@ -103,7 +110,7 @@ try {
     readMessages: async (id) => fake.getMessages(id) });
   await restarted.start();
   assert.equal((await restarted.runNow()).read, 0, '再起動後も保存したカーソルから再開する');
-  assert.equal(calls, 6, '再起動後に同じ発言でエージェントを呼び直さない');
+  assert.equal(calls, 5, '再起動後に同じ発言でエージェントを呼び直さない');
   restarted.close();
   learner.close();
   memory.stop();

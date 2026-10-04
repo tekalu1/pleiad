@@ -875,6 +875,12 @@ export default async function (t) {
           await b.d.onPosted(human, b.channel);
           await tick();
           t.ok('ADR 0119: 使い切っても、人が呼べば bot は起きる', lynxRuns() === 3, String(lynxRuns()));
+          const plain = botPost('p_budget_plain', [], { author: { kind: 'human' }, text: 'みんなはどう思う？' });
+          b.posts.push(plain);
+          await b.d.onPosted(plain, b.channel);
+          await tick();
+          const plainItems = (await b.d.inbox.list({})).filter((i) => i.postId === 'p_budget_plain');
+          t.ok('ADR 0128: 予算を使い切ったら、@ の無い人の投稿は宛先の 1 体だけが受ける（スレッドのほかの bot には聞こえた投稿を届けない）', plainItems.length === 1 && !plainItems[0].heard, JSON.stringify(plainItems));
           const notes = (await b.d.turnExtras({ info: { sessionId: 's1', backend: 'fake', model: '' }, agentLocale: 'ja', stream: {} })).notes;
           t.ok('ADR 0119: 毎ターン、末尾の文脈で予算の残りを渡す（使い切ったら 0）', notes.some((n) => n.startsWith('<pleiad-turn-context>') && n.includes('このスレッドの予算の残り: 0%') && n.includes('チャンネルの今日の残り: 0%')), JSON.stringify(notes));
         }
@@ -1147,9 +1153,34 @@ export default async function (t) {
       await sleep(300);
       const g3 = await read(dev.id, rootG.id);
       const owlSession = g3.threads[0].sessions[owl.id];
-      t.ok('ADR 0117: 複数の bot がいるスレッドでも、@ の無い人の投稿で起きるのは最後に話した 1 体だけ', botPost(g2, lynx, 'done').at(-1).text === 'G3' && botPost(g3, owl).length === 2
-        && turnEnds(owlSession, mG).length === 0, JSON.stringify(g3.posts.map((p) => [p.author.kind, p.text.slice(0, 30)])));
-      t.ok('ADR 0117: bot の @ の無い返事は誰も起こさない（Lynx の返事で Owl が起きない・起こし合いにならない）', g3.threads[0].calls === 4, String(g3.threads[0].calls));
+      const lynxSession = g3.threads[0].sessions[lynx.id];
+      await until(async () => turnEnds(owlSession, mG).length === 1, { label: 'G Owl が聞こえた投稿で 1 ターン' });
+      const ends = c.since(mG).filter((e) => e.type === 'turnEnd');
+      const lynxReply = botPost(g3, lynx, 'done').at(-1);
+      t.ok('ADR 0128: @ の無い人の投稿は最後に話した Lynx が返事をし、スレッドにいる Owl にも、Lynx のターンが終わってから聞こえた投稿として届く',
+        lynxReply.text === 'G3' && ends.findIndex((e) => e.sessionId === lynxSession) >= 0 && ends.findIndex((e) => e.sessionId === lynxSession) < ends.findIndex((e) => e.sessionId === owlSession),
+        JSON.stringify(ends.map((e) => e.sessionId)));
+      const heardRows = (await history(owlSession)).filter((m) => m.kind === 'channelEvent');
+      t.ok('ADR 0128: 聞こえた投稿の後ろに、宛先の Lynx の返事も渡る（それを見て、言うことがあるかを決める）', heardRows.findIndex((m) => String(m.body ?? '').includes(`post="${lynxReply.id}"`)) > heardRows.findIndex((m) => m.body === 'echo:G3'), JSON.stringify(heardRows.map((m) => [m.postId, m.body?.slice(0, 20)])));
+      await settled(rootG);
+      const g3b = await read(dev.id, rootG.id);
+      t.ok('ADR 0128: 文章を書かずに終えた Owl の投稿は残らない（聞こえただけのターンは「…」も作らない）', botPost(g3b, owl).length === 2
+        && !c.since(mG).some((e) => e.type === 'channelPost' && e.op === 'add' && e.post?.turn?.sessionId === owlSession), JSON.stringify(g3b.posts.map((p) => [p.author.kind, p.text.slice(0, 30)])));
+      t.ok('ADR 0117: bot の @ の無い返事は誰も起こさない（Lynx・Owl の返事で起こし合わない。数えるのは人の投稿で起きた 4 回と、聞こえた Owl の 1 回）', g3b.threads[0].calls === 5, String(g3b.threads[0].calls));
+      // 聞こえた投稿に、言うことがあれば Owl も答える（fake の台本 chime: は、聞こえた bot だけが話す）
+      const mH = c.mark();
+      await call('channels.post', { channelId: dev.id, threadId: rootG.id, text: 'chime:わたしも気になる' });
+      const g4 = await until(async () => { const r = await read(dev.id, rootG.id); return botPost(r, owl, 'done').length === 3 && botPost(r, lynx, 'done').length === 3 ? r : null; }, { label: 'G chime で Owl も話す' });
+      const owlChime = botPost(g4, owl, 'done').at(-1), lynxChime = botPost(g4, lynx, 'done').at(-1);
+      t.ok('ADR 0128: 聞こえた投稿に言うことがあれば、宛先の返事の後に答える（返事の投稿は宛先の後ろ）', owlChime.text === 'わたしも気になる' && lynxChime.text === 'chime:わたしも気になる'
+        && g4.posts.indexOf(g4.posts.find((p) => p.id === lynxChime.id)) < g4.posts.indexOf(g4.posts.find((p) => p.id === owlChime.id)), JSON.stringify(g4.posts.slice(-3).map((p) => [p.author.botId, p.text])));
+      t.ok('ADR 0128: 聞こえた bot の返事は誰も起こさない', await (async () => { await settled(rootG); await sleep(300); return turnEnds(lynxSession, mH).length === 1 && turnEnds(owlSession, mH).length === 1; })());
+      await call('channels.post', { channelId: dev.id, threadId: rootG.id, text: '@Lynx echo:準備' });
+      await until(async () => botPost(await read(dev.id, rootG.id), lynx, 'done').length === 4, { label: 'G Lynx を最後の話し手に戻す' });
+      await call('channels.post', { channelId: dev.id, threadId: rootG.id,
+        text: `chime-steps:${JSON.stringify({ steps: [{ text: '先に一言' }, { tool: 'fake_shell', ms: 1 }] })}` });
+      const g5 = await until(async () => { const r = await read(dev.id, rootG.id); return botPost(r, owl, 'done').length === 4 ? r : null; }, { label: 'G 聞こえたターンの道具前の文章' });
+      t.ok('ADR 0128: 聞こえたターンも道具前の短い文章を投稿に残す', botPost(g5, owl, 'done').at(-1).text === '先に一言', JSON.stringify(g5.posts.slice(-3).map((p) => [p.author.botId, p.text])));
     }
     // 自分への @ は数えない・bot の返事の @ は同じ規則（Owl が自分に @Owl と書いても起きない）
     const rootSelf = await call('channels.post', { channelId: dev.id, text: '@Owl echo:自分に @Owl と書く' });

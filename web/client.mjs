@@ -2643,7 +2643,8 @@ function onEvent(ev, replay = false) {
   if (ev.type === 'completionReady') {
     completionNotifications.completed(ev, state.sessions.find(s => s.id === ev.sessionId), replay);
     // スマホのアプリでは、最初の作業が終わったときに「離れていても知らせますか？」を尋ねる
-    if (ev.outcome !== 'error') void mobileNotify.completed(replay);
+    // bot の会話（隠れた夜の整理・心拍を含む）の完了は、利用者が待っていた作業ではないので数えない
+    if (ev.outcome !== 'error' && !ev.bot) void mobileNotify.completed(replay);
     return;
   }
   if (ev.type === 'notifyStatus') { notifySettings.event(ev); return; }

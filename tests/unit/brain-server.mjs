@@ -110,6 +110,11 @@ export default async function (t) {
     t.ok('画面へ brainChanged が出る', c.since(m1).some((e) => e.type === 'brainChanged' && e.botId === owl.id));
     const hidden = (await c.cmd('listSessions')).filter((s) => s.bot?.kind === 'pulse');
     t.ok('安いモデルの隠れた会話は bot の会話（kind: pulse。画面は bot の会話を Chats の一覧に出さない）で、読み取りのモード（plan）。1 回の心拍に 1 つ', hidden.length === 1 && hidden[0].bot.botId === owl.id && hidden[0].mode === 'plan' && hidden[0].title.includes('Owl'));
+    await sleep(200);
+    t.ok('ADR 0127: 隠れた会話のターンが終わっても、画面へ完了の知らせ（completionReady）を出さない（PC の通知・スマホの通知が出ない）',
+      c.since(m1).some((e) => e.type === 'turnEnd' && e.sessionId === hidden[0].id) && !c.since(m1).some((e) => e.type === 'completionReady' && e.sessionId === hidden[0].id),
+      JSON.stringify(c.since(m1).filter((e) => ['turnEnd', 'completionReady'].includes(e.type)).map((e) => [e.type, e.sessionId])));
+    t.ok('ADR 0127: 隠れた会話の場所（ホーム）は、最近の場所の候補（place）にしない', hidden[0].place === null && typeof hidden[0].cwd === 'string');
     // 隠れた会話で道具の承認を求めても、人に見えるカード・通知は出さず、すぐ断る（誰も答えず心拍が止まったままにならない）
     const askHidden = await c.runTurn({ sessionId: hidden[0].id, prompt: 'ask' }, { ms: 20_000 });
     const askedText = (await c.cmd('loadSession', { sessionId: hidden[0].id })).messages.filter((m) => m.role === 'assistant').at(-1)?.text ?? '';
