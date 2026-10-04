@@ -477,6 +477,7 @@ const SUITES = [
   // bot を起こす・配る: @ で起こす・返事の @ で連鎖・［止める］・途中送信とたまった出来事・DM・暗黙では起こさない・末尾（記憶の核の写し）・再起動の戻し・inbox.json
   './unit/bot-dispatch.mjs',
   './unit/bot-budget.mjs',
+  './unit/thread-budget-ui.mjs',
   // bot の頭の中（ADR 0126）: 欲求・ふるい・返事の読み取り・思考の流れの束・独り言の写り・思考の流れと気がかりの保存
   './unit/brain-core.mjs',
   // 心拍（ふるい → 安いモデル → 引き継ぎ・予算・失敗・止める・下限）と、予算の心拍の分

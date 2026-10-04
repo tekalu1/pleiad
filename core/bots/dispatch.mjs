@@ -55,6 +55,7 @@ import { innerTail, WORK_NOTES_VERSION } from '../brain/inner.mjs';
 import { createInboxStore } from './inbox.mjs';
 import { strongerMode } from './approval.mjs';
 import { createBudget } from './budget.mjs';
+import { inputWithCache } from '../usage.mjs';
 import { createResting, restKey } from './resting.mjs';
 import { LIMITS as CHANNEL_LIMITS } from '../channels/service.mjs';
 
@@ -128,7 +129,7 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
   const retries = new Map();       // sessionId → 忙しいときの再試行のタイマー
   const sidecarChains = new Map(); // sessionId → sidecar `bot` の書き換えの直列化
   const threadChains = new Map();  // threadKey → スレッドの状態の書き換えの直列化
-  const threadStates = new Map();  // threadKey → 最後に書いた ThreadState.state
+  const threadStates = new Map();  // threadKey → 最後に書いた ThreadState.state と live の印
   const creating = new Map();      // threadKey/botId → スレッドの会話を作っている最中
   const startFailures = new Map(); // sessionId → 始められなかった回数（配り直しの上限用。始まったら消す）
   const stoppedKeys = new Set();   // 止めたスレッド（canStart の同期の判定用。人が書いたら外す）
@@ -172,9 +173,14 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
       const recs = [...active.values()].filter((r) => r.channelId === channelId && r.threadId === threadId && !r.ended);
       const going = recs.length > 0 || [...starting.values()].some((s) => s.channelId === channelId && s.threadId === threadId);
       const state = recs.some((r) => r.waiting.size) ? 'waiting' : going ? 'working' : failedKeys.has(key) ? 'failed' : 'idle';
-      if (threadStates.get(key) === state) return;
-      await channels.threads.update(channelId, threadId, { state });
-      threadStates.set(key, state);
+      // どの bot が動いているか（state はスレッド全体の集計）。始めたばかりのターンは作業中として数える
+      const live = {};
+      for (const s of starting.values()) if (s.channelId === channelId && s.threadId === threadId && s.botId) live[s.botId] = 'working';
+      for (const r of recs) live[r.botId] = r.waiting.size ? 'waiting' : 'working';
+      const mark = JSON.stringify([state, Object.entries(live).sort(([x], [y]) => x.localeCompare(y))]);
+      if (threadStates.get(key) === mark) return;
+      await channels.threads.update(channelId, threadId, { state, live });
+      threadStates.set(key, mark);
     }).catch((e) => log('could not write the thread state:', errText(e)));
     const tail = run.then(() => {}, () => {});
     threadChains.set(key, tail);
@@ -1197,9 +1203,33 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
     for (const th of (await channels.threads.list?.()) ?? []) {
       if (th.state !== 'working' && th.state !== 'waiting') continue;
       await stale(th.channelId, th.threadId);
-      await channels.threads.update(th.channelId, th.threadId, { state: 'idle' }).catch(() => {});
+      await channels.threads.update(th.channelId, th.threadId, { state: 'idle', live: {} }).catch(() => {});
     }
     for (const ch of (await channels.list().catch(() => [])).filter((c) => c.kind === 'dm')) await stale(ch.id, null);
+  }
+
+  /**
+   * キャッシュを入力と分けて数えていた頃の Antigravity の分（2026-10-04 に usage の数え方をそろえた）が混ざったスレッドは、
+   * cached が input を超えて見分けがつく。その tokens を、使用量の記録（会話ごと）から数え直す。数え直すと cached は input を超えないので、2 回目からは触らない。
+   * 記録が見つからないスレッドはそのまま
+   */
+  async function repairTokens() {
+    if (!host.usageStore?.records) return;
+    const legacy = ((await channels.threads.list?.()) ?? []).filter((th) => (th.tokens?.cached ?? 0) > (th.tokens?.input ?? 0) && Object.keys(th.sessions ?? {}).length);
+    if (!legacy.length) return;
+    const rows = await host.usageStore.records({ sessionIds: [...new Set(legacy.flatMap((th) => Object.values(th.sessions)))] });
+    const by = new Map();
+    for (const r of rows) {
+      const sum = by.get(r.sessionId) ?? { input: 0, output: 0, cached: 0 };
+      const input = inputWithCache(r);
+      sum.input += input; sum.output += r.outputTokens ?? 0; sum.cached += Math.min(r.cachedTokens ?? 0, input);
+      by.set(r.sessionId, sum);
+    }
+    for (const th of legacy) {
+      const total = { input: 0, output: 0, cached: 0 };
+      for (const id of Object.values(th.sessions)) for (const k of Object.keys(total)) total[k] += by.get(id)?.[k] ?? 0;
+      if (total.input || total.output) await channels.threads.update(th.channelId, th.threadId, { tokens: total }).catch((e) => log('could not repair the token usage:', errText(e)));
+    }
   }
 
   async function start() {
@@ -1208,6 +1238,7 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
       await inbox.load();
       const { sessions } = await inbox.recover();
       await recoverStale();
+      await repairTokens().catch((e) => log('could not repair the token usage:', errText(e)));
       // サーバーが立ち上がりきってから配り直す
       const timer = setTimeout(() => { for (const id of sessions) pump(id); }, 0);
       timer.unref?.();
@@ -1230,5 +1261,7 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
     activeCount: () => active.size,
     /** 使用量の上限で休んでいれば解除の時刻（ms）。bots.overview の restingUntil（ADR 0119） */
     restingUntil: (bot) => resting.until(bot),
+    /** スレッドの帯の「予算」の内訳（channels.threadBudget。ADR 0119）。チャンネルでなければ null */
+    threadBudget: async ({ channelId, threadId }) => budget.snapshot({ channelId, threadId, bots: await bots.list(), restingOf: (bot) => resting.until(bot) }),
   };
 }

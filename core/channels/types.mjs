@@ -54,6 +54,7 @@ import { CHANNEL_TAG, CHANNEL_THREAD_TAG, MEMORY_CORE_TAG, TURN_CONTEXT_TAG, INN
  *   channelId: string, threadId: string,
  *   sessions: { [botId: string]: string },                // スレッドごと・bot ごとの会話（ADR 0109）
  *   state: 'idle'|'working'|'waiting'|'failed',
+ *   live?: { [botId: string]: 'working'|'waiting' },       // いま動いている bot ごとの状態（state はスレッド全体の集計なので、どの bot かはここで持つ。流れの要約の行が名前を出す）
  *   tokens: { input: number, output: number, cached: number },  // このスレッドの bot の会話の合計（usage の出来事から）
  *   calls: number,                                        // bot が起こされた回数（表示だけ。上限には使わない）
  *   spend?: { day: string, percent: number },             // チャンネルの予算に数えた、その日（現地の日付）に使った分（bot のバックエンドの週の使用枠に対する %。origin の根のスレッドに持つ。ADR 0119）

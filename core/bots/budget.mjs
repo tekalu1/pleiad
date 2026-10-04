@@ -19,6 +19,11 @@
 //         Left = { daily, perThread, thread, channel, left, known }。thread・channel・left は残りの %。known = その bot の枠を今 % にできるか
 //     allows({ channelId, threadId }): Promise<boolean>   … bot どうしの呼びかけを起こしてよいか（残りが 0 より大きい。分からないときは止めない）
 //     root(channelId, threadId): Promise<{ channelId, threadId }>
+//     snapshot({ channelId, threadId, bots, restingOf }): Promise<Snapshot|null>   … スレッドの帯の「予算」の内訳（channels.threadBudget）。チャンネルでないとき（DM）は null
+//         Snapshot = { day, daily, perThread, allowance, spent, channelSpent, derived, bots: [{ botId, backend, model, today: { input, output, cached }, allowanceTokens, window, restingUntil }] }
+//         allowance … このスレッドが 1 日に使ってよい分（週の枠に対する %。daily が null なら null）。spent … 根のスレッドの今日の分（同じ単位）。channelSpent … チャンネルの今日の分の合計
+//         today … そのスレッドの会話が今日使ったトークン（input はキャッシュ読みを含み、cached はその内訳。ADR 0119）。allowanceTokens … allowance をその bot のバックエンドのトークンにした目安（1% あたりが分からなければ null）
+//         window … その bot のモデルに効く週の枠 { usedPercent, resetsAt }。無ければ null
 //   心拍・自発の引き継ぎの分（ADR 0126）。スレッドを持たないので、bot の「家」のチャンネルの今日の分として brain.addSpend に足す
 //   （チャンネルの今日の分の合計に入る = 残りが減る。ThreadState.spend には足さない）。数えるのは同じ「週の使用枠に対する %」。
 //   使用枠が読めなくても止まるように、bot ごとの 1 日のトークン（入力 + 出力 + キャッシュ読み / 10）の上限 BRAIN_DAILY_TOKENS も持つ:
@@ -26,6 +31,7 @@
 //     leftBrain({ channelId, botId, backend?, model? }): Promise<{ daily, channel, known, tokensLeft } | null>   … 予算なし（daily が null）でも tokensLeft は返す。チャンネルが引けなければ null
 //     allowsBrain({ channelId, botId }): Promise<boolean>   … 自発をしてよいか（チャンネルの残りが 0 より大きく、トークンの上限の内。分からない・読めないときは % の側は止めない）
 import { windowsFor } from '../delegation-routing.mjs';
+import { inputWithCache } from '../usage.mjs';
 import { budgetOf, allowanceOf, dayOf, spentOn, spentToday } from '../channels/budget.mjs';
 
 const WEEK_MINUTES = 10080;
@@ -66,6 +72,18 @@ export function createBudget({ channels, host, now = Date.now, log = () => {}, b
       }
     } catch (e) { log('could not read the usage window:', errText(e)); }
     return rates.get(key) ?? null;
+  }
+
+  /** その bot のバックエンド・モデルの枠: 週の枠 1% あたりのトークンと、効いている週の枠。どちらも分からなければ null */
+  async function quotaOf(backend, model) {
+    const rate = await rateOf(backend, model);
+    let window = null;
+    try {
+      const quota = await host?.readQuota?.(backend);
+      const w = quota ? weeklyWindow(backend, model, quota, now()) : null;
+      if (w) window = { usedPercent: w.usedPercent, resetsAt: w.resetsAt };
+    } catch (e) { log('could not read the usage window:', errText(e)); }
+    return { rate, window };
   }
 
   async function root(channelId, threadId) {
@@ -109,6 +127,49 @@ export function createBudget({ channels, host, now = Date.now, log = () => {}, b
     return { ...budget, thread: threadLeft, channel: channelLeft, left: Math.min(threadLeft, channelLeft), known };
   }
 
+  async function snapshot({ channelId, threadId, bots = [], restingOf = () => null }) {
+    if (!channelId || !threadId) return null;
+    const at = await root(channelId, threadId);
+    const channel = await channels.get({ channelId: at.channelId }).catch(() => null);
+    if (!channel || channel.kind !== 'channel') return null;
+    const budget = budgetOf(channel);
+    const day = dayOf(now());
+    const startOfDay = new Date(now()); startOfDay.setHours(0, 0, 0, 0);
+    const [rootThread, own, threads] = await Promise.all([
+      channels.threads.get(at.channelId, at.threadId).catch(() => null),
+      channels.threads.get(channelId, threadId).catch(() => null),
+      channels.threads.list(at.channelId).catch(() => []),
+    ]);
+    const allowance = allowanceOf(budget);
+    const sessions = own?.sessions ?? {};
+    const botOf = new Map(Object.entries(sessions).map(([botId, sessionId]) => [sessionId, botId]));
+    const records = botOf.size ? await host?.usageStore?.records?.({ sessionIds: [...botOf.keys()], since: startOfDay.getTime() }).catch(() => []) : [];
+    const today = new Map();
+    for (const r of records ?? []) {
+      const botId = botOf.get(r.sessionId);
+      if (!botId) continue;
+      const row = today.get(botId) ?? { input: 0, output: 0, cached: 0 };
+      const input = inputWithCache(r);
+      row.input += input; row.output += r.outputTokens ?? 0; row.cached += Math.min(r.cachedTokens ?? 0, input);
+      today.set(botId, row);
+    }
+    const rows = [];
+    for (const botId of Object.keys(sessions)) {
+      const bot = bots.find((b) => b.id === botId);
+      if (!bot) continue;
+      const { rate, window } = await quotaOf(bot.backend, bot.model);
+      rows.push({
+        botId, backend: bot.backend, model: bot.model ?? null, today: today.get(botId) ?? { input: 0, output: 0, cached: 0 },
+        allowanceTokens: allowance !== null && rate ? Math.round(allowance * rate) : null, window, restingUntil: restingOf(bot) ?? null,
+      });
+    }
+    return {
+      day, daily: budget.daily, perThread: budget.perThread, allowance,
+      spent: spentOn(rootThread, day), channelSpent: spentToday(threads, at.channelId, day) + (brain?.spentPercent(at.channelId, day) ?? 0),
+      derived: at.threadId !== threadId, bots: rows,
+    };
+  }
+
   async function allows({ channelId, threadId }) {
     try {
       const l = await left({ channelId, threadId });
@@ -148,5 +209,5 @@ export function createBudget({ channels, host, now = Date.now, log = () => {}, b
     } catch (e) { log('could not check the brain budget:', errText(e)); return false; }
   }
 
-  return { charge, left, allows, root, chargeBrain, leftBrain, allowsBrain };
+  return { charge, left, allows, root, snapshot, chargeBrain, leftBrain, allowsBrain };
 }

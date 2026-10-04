@@ -54,6 +54,36 @@ export default async function (t) {
       t.ok('inbox: 読めない版は読み込まない', await createInboxStore({ dir: future }).list({}).then(() => false, (e) => /version 2/.test(e.message)));
     }
 
+    // ================================================================ 古い Antigravity の tokens の数え直し（キャッシュを入力と分けて数えていた頃の分）
+    {
+      const rows = {
+        'p_old': { channelId: 'c_1', threadId: 'p_old', state: 'idle', sessions: { b_c: 's_claude', b_a: 's_agy' }, tokens: { input: 1100, output: 70, cached: 1600 } },   // cached > input = 古い形が混ざった
+        'p_ok': { channelId: 'c_1', threadId: 'p_ok', state: 'idle', sessions: { b_c: 's_claude' }, tokens: { input: 1000, output: 50, cached: 900 } },
+        'p_none': { channelId: 'c_1', threadId: 'p_none', state: 'idle', sessions: { b_a: 's_gone' }, tokens: { input: 10, output: 5, cached: 99 } },   // 記録が見つからない
+      };
+      const updates = [];
+      const channels = {
+        dir: path.join(tmp, 'repair'),
+        list: async () => [], read: async () => ({ posts: [] }),
+        threads: {
+          get: async (c, id) => structuredClone(rows[id] ?? null),
+          list: async () => structuredClone(Object.values(rows)),
+          update: async (c, id, patch) => { updates.push([id, patch]); Object.assign(rows[id], patch); return rows[id]; },
+        },
+      };
+      const records = [
+        { sessionId: 's_claude', inputTokens: 1000, outputTokens: 50, cachedTokens: 900 },
+        { sessionId: 's_agy', inputTokens: 100, outputTokens: 20, cachedTokens: 700 },   // 古い形（cached > input）。入力に足して読む
+      ];
+      const host = { store: { get: async () => ({}) }, usageStore: { records: async ({ sessionIds }) => records.filter((r) => sessionIds.includes(r.sessionId)) } };
+      const d = createDispatcher({ channels, bots: { get: async () => null, list: async () => [] }, memory: {}, host });
+      await d.start();
+      d.stop();
+      t.ok('cached が input を超えたスレッドだけ、使用量の記録（会話ごと）から tokens を数え直す', rows.p_old.tokens.input === 1800 && rows.p_old.tokens.output === 70 && rows.p_old.tokens.cached === 1600
+        && updates.length === 1 && updates[0][0] === 'p_old', JSON.stringify([rows.p_old.tokens, updates]));
+      t.ok('直したスレッド・正しいスレッドは触らず、記録が見つからないスレッドもそのまま', rows.p_ok.tokens.input === 1000 && rows.p_none.tokens.cached === 99);
+    }
+
     // ================================================================ 空の入れ物（P0 のつなぎ目と同じく、bot の会話でなければ何もしない）
     {
       const sessions = { plain: {} };
@@ -1115,9 +1145,11 @@ export default async function (t) {
     const rootC = await call('channels.post', { channelId: dev.id, text: '@Owl @Lynx slow' });
     const c1 = await until(async () => { const r = await read(dev.id, rootC.id); return botPost(r, owl, 'working').length && botPost(r, lynx, 'working').length ? r : null; }, { label: '2 体が作業中' });
     t.ok('1 つの投稿の 2 つの @ で、2 体がそれぞれ別の会話で起きる', c1.threads[0].state === 'working' && c1.threads[0].calls === 2 && Object.keys(c1.threads[0].sessions).length === 2);
+    t.ok('スレッドの live は、動いている bot ごとの状態（state は集計。名前はここから選ぶ）', c1.threads[0].live?.[owl.id] === 'working' && c1.threads[0].live?.[lynx.id] === 'working' && Object.keys(c1.threads[0].live).length === 2, JSON.stringify(c1.threads[0].live));
     const mC = c.mark();
     await call('channels.stopThread', { channelId: dev.id, threadId: rootC.id });
     const c2 = await until(async () => { const r = await read(dev.id, rootC.id); return botPost(r, owl, 'stopped').length && botPost(r, lynx, 'stopped').length && r.threads[0].state === 'idle' ? r : null; }, { label: '2 体が止まる' });
+    t.ok('止まったら live は空になる', c2.threads[0].live === undefined, JSON.stringify(c2.threads[0].live));
     t.ok('［止める］で走っていた 2 体のターンが両方止まる', turnEnds(c2.threads[0].sessions[owl.id], mC).length === 1 && turnEnds(c2.threads[0].sessions[lynx.id], mC).length === 1);
 
     // ---- D: 作業中に同じスレッドへ書き足すと、途中送信で渡る（Claude・Codex の形）

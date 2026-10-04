@@ -238,6 +238,7 @@ export default async function (t) {
     'sessions.subagents': [{ sessionId: 's1', toolId: 'x' }],
     'channels.get': [{ channelId: 'c_000000000aaaaaa' }], 'channels.read': [{ channelId: 'c_000000000aaaaaa' }], 'channels.search': [{ query: 'こんにちは' }],
     'channels.wakePreview': [{ channelId: 'c_000000000aaaaaa', text: '@everyone' }],
+    'channels.threadBudget': [{ channelId: 'c_000000000aaaaaa', threadId: 'p_000000000bbbbbb' }],
     'memory.list': [{ layer: 'user' }], 'memory.search': [{ query: 'PR' }],
     'git.commit': [{ hash: 'abc1234' }], 'git.worktree': [{ worktree: 'C:/r' }],
     'bots.get': [{ botId: 'b_1' }], 'brain.view': [{ botId: 'b_1' }],

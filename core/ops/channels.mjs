@@ -119,6 +119,13 @@ export const channelOps = [
     handler: (ctx, args) => run(ctx, () => ctx.channels.read(args)),
   }),
   defineOp({
+    id: 'channels.threadBudget', summary: D('threadBudget', 'summary'), risk: 'read',
+    input: z.object({ channelId: channelId('threadBudget'), threadId: postId('threadBudget', 'threadId') }),
+    output: z.unknown(),
+    surfaces: { ui: true, mcp: 'catalog', cli: { path: ['channels', 'thread-budget'], positional: ['channelId', 'threadId'] } },
+    handler: async (ctx, args) => (await ctx.threadBudget?.(args)) ?? null,
+  }),
+  defineOp({
     id: 'channels.search', summary: D('search', 'summary'), risk: 'read',
     input: z.object({
       query: z.string().trim().min(1).max(200).describe(D('search', 'query')),

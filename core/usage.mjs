@@ -6,6 +6,9 @@ import { usageTable } from './db.mjs';
 import { CLAUDE_COST_DELTA } from './usage-migrations.mjs';
 
 export const number = value => typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
+// 記録の入力は「キャッシュ読みを含む」で、cachedTokens はその内訳（Claude・Codex・Antigravity とも。Antigravity は 2026-10-04 まで分けて入れていた）。
+// cachedTokens が入力より大きい記録は古い Antigravity の形なので、足して読む。割合は 1 を超えないようにする
+export const inputWithCache = r => { const input = number(r?.inputTokens) ?? 0, cached = number(r?.cachedTokens) ?? 0; return cached > input ? input + cached : input; };
 // Thread totals include previous turns; last describes the latest model request.
 export function createCodexMeter() {
   const previous = {}, totals = {};

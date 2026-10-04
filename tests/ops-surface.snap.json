@@ -736,6 +736,30 @@
       "input": "3f31d9d4d283"
     },
     {
+      "id": "channels.threadBudget",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "channels",
+            "thread-budget"
+          ],
+          "positional": [
+            "channelId",
+            "threadId"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "a4332e367d65"
+    },
+    {
       "id": "channels.update",
       "risk": "write",
       "riskOf": true,
@@ -4327,6 +4351,14 @@
     {
       "id": "channels.stopThread",
       "path": "channels stop-thread",
+      "positional": [
+        "channelId",
+        "threadId"
+      ]
+    },
+    {
+      "id": "channels.threadBudget",
+      "path": "channels thread-budget",
       "positional": [
         "channelId",
         "threadId"

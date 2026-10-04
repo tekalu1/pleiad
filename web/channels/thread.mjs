@@ -18,6 +18,7 @@ import { openEmojiPicker } from '../emoji-picker.mjs';
 import { createDeck } from './deck.mjs';
 import { createThreadHead } from './thread-head.mjs';
 import { createThreadToc } from './thread-toc.mjs';
+import { createBudgetMeter, meterOf, tokenSplit } from './thread-budget.mjs';
 import { createToolSource, turnWindows, logInWindow, signatureOf, toolNodes } from './thread-tools.mjs';
 
 const PAGE = 50;
@@ -83,6 +84,12 @@ export function createThread(host) {
   const band = el('div', 'th-band');
   band.hidden = true;
   band.setAttribute('role', 'status');
+  // 予算のメーター（Chats の文脈のメーターと同じ部品。押すと内訳）。帯を描き直しても要素は使い回し、開いた状態を保つ
+  const meter = createBudgetMeter({
+    load: () => host.invoke('channels.threadBudget', { channelId: S.channelId, threadId: S.threadId }),
+    bots: () => S.bots,
+    lang: () => document.documentElement.lang || undefined,
+  });
   const composer = createChComposer({
     id: 'chThreadComposer',
     host,
@@ -187,17 +194,19 @@ export function createThread(host) {
   let bandSig = '', stopBusy = false;
   function paintBand() {
     const th = S.thread;
-    const total = (th?.tokens?.input ?? 0) + (th?.tokens?.output ?? 0);
+    // トークンはキャッシュ読みを除いた分（新しい入力 + 出力）。キャッシュは内訳で別に見せる
+    const split = tokenSplit(th?.tokens);
+    const total = split.total;
     const live = liveBots();
     const working = th?.state === 'working' || th?.state === 'waiting' || live.length > 0;
     const waiting = !working ? false : (th?.state === 'waiting' || S.posts.some((p) => p.turn && p.state === 'waiting' && !p.deletedAt)) && !S.posts.some((p) => p.turn && p.state === 'working' && !p.deletedAt);
     const stopped = !working && Boolean(th?.stopped);
     const calls = Math.max(0, (th?.calls ?? 0) - 1);
-    const budget = budgetUse(th);
+    const budget = meterOf(S.channel?.kind === 'channel' ? S.channel.budget : null, th);
     const sig = JSON.stringify([working, waiting, stopped, total, calls, live.map((b) => b.id), th?.tokens, stopBusy, budget]);
     if (sig === bandSig) return;
     bandSig = sig;
-    if (!total && !working && !stopped) { band.hidden = true; band.replaceChildren(); return; }
+    if (!total && !working && !stopped) { band.hidden = true; band.replaceChildren(); meter.update(null, null); return; }
     band.hidden = false;
     band.classList.toggle('quiet', !working && !stopped);
     const text = el('span', 'th-band-text');
@@ -221,17 +230,12 @@ export function createThread(host) {
       const tok = el('span', 'th-band-tokens');
       if (at < 0) tok.textContent = full;
       else tok.append(el('span', 'th-tok-aux', full.slice(0, at)), el('span', 'th-tok-num', num), el('span', 'th-tok-aux', full.slice(at + num.length)));
-      tok.title = t('channels:thread.band.tokensTitle', { input: th.tokens.input ?? 0, output: th.tokens.output ?? 0, cached: th.tokens.cached ?? 0 });
+      tok.title = t('channels:thread.band.tokensTitle', { input: split.fresh, output: split.output, cached: split.cached });
       pieces.push(tok);
     }
-    if (budget) {
-      // 「予算 0.8% / 2.5%」: このスレッドが今日使った分と、1 スレッドの配分（ADR 0119）
-      const use = el('span', 'th-band-budget', t('channels:thread.band.budget', budget));
-      use.title = t('channels:thread.band.budgetTitle');
-      pieces.push(use);
-    }
     pieces.forEach((p, i) => { if (i) text.append(el('span', 'th-band-dot', '·')); text.append(p); });
-    band.replaceChildren(text);
+    band.replaceChildren(text, meter.el);
+    meter.update(budget, th?.tokens);
     if (working) {
       const stop = el('button', 'btn btn-quiet th-stop');
       stop.type = 'button';
@@ -240,15 +244,6 @@ export function createThread(host) {
       stop.onclick = () => stopThread();
       band.append(stop);
     }
-  }
-  /** このスレッドが今日予算に数えた分と配分（%）。予算の無いチャンネル・まだ使っていないスレッドは null */
-  function budgetUse(th) {
-    const b = S.channel?.kind === 'channel' ? S.channel.budget : null;
-    if (!b || b.daily == null || !th?.spend) return null;
-    const d = new Date(), day = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-    if (th.spend.day !== day || !(th.spend.percent > 0)) return null;
-    const r = (n) => Math.round(n * 100) / 100;
-    return { spent: r(th.spend.percent), allowance: r((b.daily * b.perThread) / 100) };
   }
   async function stopThread() {
     if (stopBusy || !S.threadId) return;
@@ -382,7 +377,7 @@ export function createThread(host) {
     postEls.clear(); toolCache.clear(); cards.clear(); tools.forget();
     perms.replaceChildren();
     rootSlot.replaceChildren(); replies.replaceChildren(); rdiv.textContent = '';
-    bandSig = ''; band.hidden = true; band.replaceChildren();
+    bandSig = ''; band.hidden = true; band.replaceChildren(); meter.update(null, null);
     jump.hidden = true;
     readSent = 0;
   }
@@ -607,7 +602,7 @@ export function createThread(host) {
     channelsChanged(ev) {
       if (!S.channelId) return;
       if (ev.removed === S.channelId) { close(); return; }
-      if (ev.channel?.id === S.channelId) { S.channel = ev.channel; paintHead(); composer.setDisabled(Boolean(ev.channel.archivedAt), t('channels:feed.archived')); }
+      if (ev.channel?.id === S.channelId) { S.channel = ev.channel; paintHead(); paintBand(); composer.setDisabled(Boolean(ev.channel.archivedAt), t('channels:feed.archived')); }
     },
     botsChanged(ev) {
       if (ev.removed) S.bots.delete(ev.removed);

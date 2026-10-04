@@ -21,9 +21,9 @@ export default async function (t) {
   const tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'ops-channels-'));
   try {
     // ---- 定義
-    t.ok('操作は 15 個（集団宛ての wakePreview を含む）', IDS.every((id) => registry.get(id)) && registry.ops.filter((o) => o.id.startsWith('channels.')).length === 15);
+    t.ok('操作は 16 個（集団宛ての wakePreview と、スレッドの予算の内訳 threadBudget を含む）', IDS.every((id) => registry.get(id)) && registry.ops.filter((o) => o.id.startsWith('channels.')).length === 16);
     const risk = (id) => registry.get(id).risk;
-    t.ok('危険度: 読む 5 つは read・書く 9 つは write・wake は guarded（human-only はない。ADR 0082 の 5 つ以外は AI も使える）', ['list', 'get', 'read', 'search', 'wakePreview'].every((v) => risk(`channels.${v}`) === 'read')
+    t.ok('危険度: 読む 6 つは read・書く 9 つは write・wake は guarded（human-only はない。ADR 0082 の 5 つ以外は AI も使える）', ['list', 'get', 'read', 'search', 'wakePreview', 'threadBudget'].every((v) => risk(`channels.${v}`) === 'read')
       && ['create', 'update', 'archive', 'post', 'edit', 'delete', 'react', 'markRead', 'stopThread'].every((v) => risk(`channels.${v}`) === 'write') && risk('channels.wake') === 'guarded');
     t.ok('modeGate: false は post・react・stopThread だけ（読み取り・計画の bot も返事・リアクション・停止はできる）', IDS.filter((id) => registry.get(id).modeGate === false).join() === 'channels.post,channels.react,channels.stopThread');
     t.ok('口: どれも画面から。MCP は catalog（直のツールは足さない）。CLI は全部（markRead も AI・CLI に出す）', IDS.every((id) => registry.get(id).surfaces.ui === true && registry.get(id).surfaces.mcp === 'catalog' && registry.get(id).surfaces.cli));
@@ -42,6 +42,12 @@ export default async function (t) {
     const modes = { s_ro: { scope: 'readonly', autonomy: 'ask' }, s_plan: { scope: 'readonly', autonomy: 'ask' } };
     const deps = { locale: 'ja', channels, botOfSession: async (id) => bound[id] ?? null, modeOf: async (id) => modes[id] ?? { scope: 'workspace', autonomy: 'ask' }, audit: () => {} };
     const run = (p, id, args) => registry.invoke(p, id, args, deps);
+    {
+      const seen = [];
+      const ok = await registry.invoke(HUMAN, 'channels.threadBudget', { channelId: 'c_000000000aaaaaa', threadId: 'p_x' }, { ...deps, threadBudget: async (a) => { seen.push(a); return { allowance: 2.5 }; } });
+      const off = await registry.invoke(HUMAN, 'channels.threadBudget', { channelId: 'c_000000000aaaaaa', threadId: 'p_x' }, { ...deps, threadBudget: async () => null });
+      t.ok('threadBudget: 引数をそのまま渡し、返りを返す。予算の無い場所は null', ok.ok && ok.result.allowance === 2.5 && seen[0].channelId === 'c_000000000aaaaaa' && seen[0].threadId === 'p_x' && off.ok && off.result === null, JSON.stringify([ok, off]));
+    }
 
     const made = await run(HUMAN, 'channels.create', { name: '#ops', purpose: 'テスト' });
     t.ok('create: 画面（人）から作れる', made.ok && made.result.name === 'ops', JSON.stringify(made));
