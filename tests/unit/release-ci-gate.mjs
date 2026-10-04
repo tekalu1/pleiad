@@ -162,6 +162,16 @@ export default async function (t) {
     c = clock();
     const gone = await waitForCi({ read: seq([state([run()])]), confirm: async () => null, deadlineMs: 0, intervalMs: 30_000, ...c });
     t.ok('TOCTOU: 読み直しで run が見つからなければ reuse にしない', gone.verdict === 'fallback' && gone.reason.includes('run-changed'), gone.reason);
+    for (const conclusion of ['failure', 'timed_out', 'action_required', 'startup_failure']) {
+      c = clock();
+      const confirmedRed = await waitForCi({ read: seq([state([run()])]), confirm: async r => ({ ...r, run_attempt: 3, conclusion }), deadlineMs: 0, intervalMs: 30_000, ...c });
+      t.ok(`TOCTOU: 再照合で ${conclusion} を確認したら期限切れでも公開を止める`, confirmedRed.verdict === 'fail' && confirmedRed.run.run_attempt === 3 && c.now() === 0, confirmedRed.reason);
+    }
+    for (const latest of [{ workflow_id: 1 }, { path: '.github/workflows/other.yml' }, { event: 'workflow_dispatch' }, { head_branch: 'other' }, { repository: { full_name: 'other/repo' } }]) {
+      c = clock();
+      const wrongIdentity = await waitForCi({ read: seq([state([run()])]), confirm: async r => ({ ...r, ...latest }), deadlineMs: 0, intervalMs: 30_000, ...c });
+      t.ok('TOCTOU: 再照合の workflow・イベント・ブランチ・リポジトリも一致が必要', wrongIdentity.verdict === 'fallback', JSON.stringify(latest));
+    }
     for (const [label, latest] of [['結論が success でない', { conclusion: 'failure' }], ['別の commit', { head_sha: OTHER }], ['完了していない', { status: 'in_progress' }]]) {
       c = clock();
       const x = await waitForCi({ read: seq([state([run()])]), confirm: async r => ({ ...r, ...latest }), deadlineMs: 0, intervalMs: 30_000, ...c });

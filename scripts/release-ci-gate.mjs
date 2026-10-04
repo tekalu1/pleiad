@@ -104,8 +104,15 @@ export async function readState({ request, repo, sha }) {
 }
 
 // reuse と判定した run を読み直した結果が、判定に使った attempt のままの成功か
+function sameRun(run, latest) {
+  return latest?.id === run.id && latest.head_sha === run.head_sha && latest.workflow_id === run.workflow_id
+    && latest.path === run.path && latest.event === run.event && latest.head_branch === run.head_branch
+    && latest.repository?.full_name === run.repository?.full_name
+    && latest.head_repository?.full_name === run.head_repository?.full_name;
+}
+
 function unchanged(run, latest) {
-  return latest?.id === run.id && latest.run_attempt === run.run_attempt && latest.head_sha === run.head_sha
+  return sameRun(run, latest) && latest.run_attempt === run.run_attempt
     && latest.status === 'completed' && latest.conclusion === 'success';
 }
 
@@ -137,7 +144,9 @@ export async function waitForCi({ read, confirm, deadlineMs, intervalMs, missing
         const latest = await confirm(result.run);
         if (!unchanged(result.run, latest)) {
           result.notes.push(`run ${result.run.id}: changed after the jobs were read (attempt ${result.run.run_attempt} → ${latest?.run_attempt ?? '?'}, ${latest?.status ?? 'missing'}/${latest?.conclusion ?? '-'})`);
-          result = { ...result, verdict: 'pending', reason: `run-changed:${result.run.id}` };
+          result = sameRun(result.run, latest) && RED.has(latest.conclusion)
+            ? { ...result, run: latest, verdict: 'fail', reason: `confirmed-run-${latest.conclusion}` }
+            : { ...result, verdict: 'pending', reason: `run-changed:${result.run.id}` };
         }
       }
       errors = 0;
