@@ -85,7 +85,7 @@ import { createSessionLoads } from "./session-stream.mjs";
 const sessionLoads = createSessionLoads();
 import { createReadCompletions } from "./unread.mjs";
 import { isInterrupted, interruptUnread, interruptReadPoint, interruptLineText, reasonOf, stopMark, pausedCount, resumeLabel,
-  resumeNoteText, resumeVisible, updateInterrupted, limitResumeState, limitLineNote } from './interrupt.mjs';
+  resumeNoteText, resumeVisible, updateInterrupted, limitResumeState, limitLineNote, resumeShortLabel } from './interrupt.mjs';
 import { setupContext } from './context.mjs';
 import { setupSessionContext, chipText } from './session-context.mjs';
 import { budgetOf } from './instruction-amount.mjs';
@@ -3854,8 +3854,10 @@ function paintInterruptLine(live) {
     // 1 行目は「■ 使用量の上限に達したため中断しました（private · 5 時間枠）· 01:43」。2 行目に自動で再開する旨とリンク
     const scope = [capsOf(interrupted.backend).claudeAccounts ? accountLabel(interrupted.account) : '',
       interrupted.window === 'five_hour' ? t('interrupt.limitWindowFiveHour') : interrupted.window ?? ''].filter(Boolean).join(' · ');
-    const head = [el('span', null, scope ? t('interrupt.limitHead', { line: interruptLineText(interrupted), scope }) : interruptLineText(interrupted))];
-    if (Number.isFinite(at) && at > 0) head.push(el('span', null, '·'), el('span', 't', hhmm(at)));
+    // ■・本文・時刻は 1 つの流れの文にする（狭い幅でも ■ は本文の 1 文字目の前に付いたまま、時刻は本文の末尾に続く）
+    const head = el('span', 'limit-interrupt-head');
+    head.append(stopMark(), el('span', null, scope ? t('interrupt.limitHead', { line: interruptLineText(interrupted), scope }) : interruptLineText(interrupted)));
+    if (Number.isFinite(at) && at > 0) head.append(el('span', 'sep', '·'), el('span', 't', hhmm(at)));
     const auto = interrupted.autoResume === true;
     // i18n-dynamic: interrupt.limitStopAuto
     // i18n-dynamic: interrupt.limitStartAuto
@@ -3865,7 +3867,7 @@ function paintInterruptLine(live) {
     toggle.onclick = () => setLimitAuto(!auto).catch(e => { $('settingsError').textContent = e.message; });
     sub.append(toggle);
     m.classList.add('limit');
-    m.replaceChildren(stopMark(), ...head, sub);
+    m.replaceChildren(head, sub);
   } else {
     m.classList.remove('limit');
     m.replaceChildren(stopMark(), el('span', null, interruptLineText(interrupted)));
@@ -3896,6 +3898,8 @@ function syncResume() {
     button.title = label;
     button.setAttribute('aria-label', label);
   }
+  // 480px 以下の上限の時計は時刻だけ（全文は title と読み上げ名に残る）
+  $('resumeShort').textContent = resumeShortLabel(s?.interrupted);
   // 上限の会話の時計（自動で戻る・解除前）は押せない表示。解除の後（自動を外した会話）は普通の「再開」
   const waitingClock = limitState === 'auto' || limitState === 'release';
   button.classList.toggle('is-limit', waitingClock);

@@ -3,7 +3,7 @@
 // 次のターンが始まったら消える。ここは印・文言・数え方だけを持ち、DOM の置き場所は client.mjs と side.mjs が決める。
 import { svgEl } from "./dom.mjs";
 import { t } from "./i18n.mjs";
-import { whenText } from "./schedule-times.mjs";
+import { whenText, timeText } from "./schedule-times.mjs";
 
 // i18n-dynamic: interrupt.label.
 // i18n-dynamic: interrupt.line.
@@ -94,6 +94,12 @@ export function resumeLabel(paused, interrupted, now = Date.now()) {
   }
   if (state === 'release') return t('interrupt.limitReleaseAt', { time: limitTime(interrupted.resetsAt) });
   return paused > 0 ? t("interrupt.resumeOutbox", { count: paused }) : t("interrupt.resume");
+}
+
+/** 狭い幅（480px 以下）の上限の時計の字。時刻だけ（「21:04」）、時刻が分からなければ空（時計のアイコンだけ）。上限の時計でなければ空 */
+export function resumeShortLabel(interrupted, now = Date.now()) {
+  const state = limitResumeState(interrupted, now);
+  return (state === 'auto' || state === 'release') && Number.isFinite(interrupted.resetsAt) ? timeText(interrupted.resetsAt) : '';
 }
 
 /** 入力欄の下の一行。保留があれば「送ると、保留中の N 件の後にこの指示で続けます」（サーバーが保留を先に送り直す） */
