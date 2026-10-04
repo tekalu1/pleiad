@@ -179,6 +179,8 @@ electron tests/manual/computer-use-probe.cjs             # VM の中で。メモ
 | 番犬 | `computer-arm` の後に core を落とす（ターンの途中でプロセスを止める）と、約 30 秒後に押したままのボタンが離れる |
 | 署名済みのインストーラー | `npm run desktop:dist` の成果物で koffi が読めて、`computer-ready { supported: true }` が返る（Windows の arm64 は下の注を参照） |
 
+オーバーレイ（枠）が出たかは、撮影では確かめられない（`setContentProtection` で写らない）。PC でも読み取りだけで確かめられる: 題が `Pleiad overlay` の窓を `EnumWindows` で探し、`IsWindowVisible` を 0.15 秒ごとに記録して、`ply_computer` の呼び出しの時刻と並べる。枠は呼び出しの直後に出て、最後の呼び出しから約 6.6 秒（`idleMs` 6 秒 + フェード）で消える。呼び出しの合間が長い子（bash で待つなど）では、ロックを持っていても枠はほとんど出ていない（2026-10-04 に親・ネイティブのサブエージェント・委譲の子で確かめ、どれも出た）。
+
 arm64 の注: koffi 3 のネイティブ本体は `@koromix/koffi-<os>-<arch>` という別のパッケージで、`npm ci` はビルド機の分（x64 のランナーなら `win32-x64`）しか入れない。x64 のランナーで作る Windows の arm64 のインストーラーには arm64 の本体が入らず、そこでは `computer-ready { supported: false, reason: 'native' }` になる。そのため `evaluation-release.yml`・`desktop-release.yml`・`desktop.yml` は `npm ci` の後に `npm install --no-save --force @koromix/koffi-win32-arm64@<koffi の版>` で arm64 の本体を足し、`scripts/release-preflight.mjs` が両方の本体の有無を確かめる。実機の arm64 で読めるかは未確認。
 
 本物の SendInput で通しを流して分かったこと（2026-10-01。利用者が席を外した PC で、操作先を自分で起動したテスト用の窓に限って実施）:
