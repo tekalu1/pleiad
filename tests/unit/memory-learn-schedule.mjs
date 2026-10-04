@@ -48,12 +48,14 @@ export default async function (t) {
     let prefs = { backend: 'fake' };
     let failNext = false;
     let asks = 0;
+    let asked = [];   // 学習の呼び出しに渡った人の発言の本文（呼び出しごと）
     // 学習の会話の代わり: 「覚えて」の発言を候補にし、「やめて」があれば種類 stop、なければ pref。重みは 3
     const ask = async (prompt) => {
       asks++;
       if (failNext) { failNext = false; throw new Error('backend is down'); }
       const line = prompt.split('\n').find((part) => part.startsWith('Human statements: '));
       const statements = JSON.parse(line.slice('Human statements: '.length));
+      asked.push(statements.map((item) => item.text));
       return JSON.stringify({ memories: statements.flatMap((item) => {
         const m = /^覚えて[:：]\s*(.{8,300})/u.exec(item.text.trim());
         return m ? [{ action: 'add', layer: 'user', text: m[1], kind: /やめて/.test(m[1]) ? 'stop' : 'pref', weight: 3, sourceIndexes: [item.index] }] : [];
@@ -131,7 +133,7 @@ export default async function (t) {
     memory.stop();
     await channels.close();
 
-    // ---- 読む量の上限: 最後まで読んだ会話は読み直さない・読む範囲より古い発言は読まない・1 回に 40 束（200 件）まで
+    // ---- 読む量の上限: 最後まで読んだ会話は読み直さない・読む範囲より古い発言は読まない・1 回の呼び出しに 40 件、1 回の実行は 5 回（200 件）まで（ADR 0127）
     const dir2 = path.join(dir, 'limits');
     const channels2 = createChannelService({ dir: path.join(dir2, 'channels') });
     await channels2.start();
@@ -148,13 +150,18 @@ export default async function (t) {
       readPrefs: async () => ({ backend: 'fake' }), ask,
       readMessages: async (id) => { reads.push(id); return structuredClone(convs.get(id)?.messages ?? []); },
       listSessions: async () => [...convs].map(([id, c]) => ({ id, ...c.meta })) });
+    asked = [];
     const capped = await learner2.runNow();
     t.ok('1 回に読むのは 200 件まで。残りがあることを結果に残す', capped.read === 200 && capped.more === true && (await learner2.status()).lastResult.more === true, JSON.stringify(capped));
+    t.ok('ADR 0127: 200 件を 40 件ずつ 5 回の呼び出しで渡す（以前は 5 件ずつ 40 回で、呼び出しのたびに隠れた会話と通知ができた）', asked.length === 5 && asked.every((list) => list.length === 40), asked.map((l) => l.length).join());
+    t.ok('ADR 0127: 1 回の呼び出しで共通層へ書けるのは 20 件まで（40 件の発言から 20 件。5 件の上限は夜の整理では呼び出しの候補の数に置き換わる）', capped.changed === 100, JSON.stringify(capped));
     const texts2 = () => memory2.list({ layer: 'user' }).then((list) => list.map((e) => e.text).join('\n'));
     t.ok('読む範囲より古い会話は読まない（最初の回は 3 日）', !reads.includes('syn-old') && !(await texts2()).includes('old 番目'));
+    asked = [];
     const restRun = await learner2.runNow();
-    t.ok('残りは次の回にカーソルから読む（範囲より古い発言は渡さない）', restRun.read === 31 && !restRun.more && (await memory2.list({ layer: 'user' })).length === 231
-      && (await texts2()).includes('mixed-new') && !(await texts2()).includes('mixed-old'), JSON.stringify(restRun));
+    const restTexts = asked.flat().join('\n');
+    t.ok('残りは次の回にカーソルから読む（範囲より古い発言は渡さない）', restRun.read === 31 && !restRun.more && asked.length === 1 && (await memory2.list({ layer: 'user' })).length === 120
+      && restTexts.includes('mixed-new') && !restTexts.includes('mixed-old') && !(await texts2()).includes('mixed-old'), JSON.stringify(restRun));
     reads = [];
     const idle = await learner2.runNow();
     t.ok('最後まで読んで変わっていない会話は読み直さない（古い会話も読まない）', idle.read === 0 && reads.length === 0, reads.join());

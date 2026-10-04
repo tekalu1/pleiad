@@ -195,6 +195,31 @@ export async function deleteUnsentConversation(id) {
   }
 }
 
+/**
+ * 人に見せない隠れた会話（夜の整理・心拍。ADR 0127）を、ネイティブの会話ごと消す。消したら true。
+ * ネイティブの会話を消せないバックエンド（deleteSession を持たない）なら何もせず false。host の記録だけを消すと、
+ * 隠していたネイティブの会話が一覧に出てくる（wrapBackend の listSessions は、host の記録が持つネイティブの id だけを隠す）。
+ * backendOf(id) はバックエンドの id から、deleteSession を持つバックエンドを返す。sidecar（store）は呼び出し側が消す
+ */
+export async function deleteHiddenConversation(id, backendOf) {
+  const r = await conversation(id);
+  if (!r) return false;
+  const natives = new Map(r.segments.map(s => [s.nativeId, s.backend]));
+  if (r.nativeId) natives.set(r.nativeId, r.backend);
+  natives.delete(null); natives.delete(undefined);
+  for (const backendId of natives.values()) if (typeof backendOf(backendId)?.deleteSession !== "function") return false;
+  for (const [nativeId, backendId] of natives) await backendOf(backendId).deleteSession(nativeId);
+  delete records[id];
+  try {
+    await save();
+    await fs.rm(sessionFilePath(id), { force: true }).catch(() => {});
+  } catch (e) {
+    records[id] = r;
+    throw e;
+  }
+  return true;
+}
+
 // Preserve messages the native engine has compacted away; refresh matching messages in place.
 export function mergeMessages(record, recent, backend) {
   record._dirty = true;

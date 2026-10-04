@@ -146,16 +146,16 @@ export function createPulse({ dataDir, brain, channels, bots, host, budget, disp
     return { text, sessionId, usage, backend: backend.id, model };
   }
 
-  /** 古い心拍の隠れた会話を、新しい KEEP_SESSIONS 件を残して消す（1 回 1 会話なので、放っておくと夜ごとに積もる） */
+  /**
+   * 古い心拍の隠れた会話を、新しい KEEP_SESSIONS 件を残して消す（1 回 1 会話なので、放っておくと夜ごとに積もる）。
+   * ネイティブの会話ごと消せるときだけ消す（host.deleteHidden）。以前は sidecar だけを消していて、bot の印を失った会話が Chats の一覧に出た（ADR 0127）
+   */
   async function pruneSessions(botId) {
     try {
+      if (!host.deleteHidden) return;
       const all = await host.store.getAll();
       const mine = Object.entries(all).filter(([, v]) => v?.bot?.kind === 'pulse' && v.bot.botId === botId).sort(([, a], [, b]) => (b.createdAt ?? 0) - (a.createdAt ?? 0));
-      const drop = host.deleteUnsent ?? (await import('../conversations.mjs')).deleteUnsentConversation;
-      for (const [id] of mine.slice(KEEP_SESSIONS)) {
-        await drop(id).catch(() => {});
-        await host.store.removeSession(id).catch(() => {});
-      }
+      for (const [id] of mine.slice(KEEP_SESSIONS)) await host.deleteHidden(id).catch((e) => log('could not delete a hidden conversation:', errText(e)));
     } catch (e) { log('could not prune the hidden conversations:', errText(e)); }
   }
 

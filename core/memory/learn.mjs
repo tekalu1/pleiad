@@ -4,7 +4,8 @@
 // （learner は自分の隠れた会話で走り、ターンの同時の数に上限は無い。以前は Chats を含む全部のターンが 0 になるまで待ち、ずっと走れなかった）。
 // 走っているターンの会話だけは読まずに次の回へ回す（deferred）。待つのは、learner 自身が走っている間・止めている間・失敗の後の間隔だけ。
 // 読む量の上限: 最後まで読んだ会話は、その時の更新時刻（cursor.seen）から変わるまで読み直さない。読むのは 14 日以内（最初の回は 3 日）の発言・投稿だけ。
-// 1 回に 40 束（200 件）まで読み、残りは次の回（lastResult.more）。
+// 1 回の学習の呼び出しに人の発言を 40 件（本文 2.4 万字）までまとめ、1 回の実行は 5 回の呼び出し（200 件）まで。残りは次の回（lastResult.more）。
+// 呼び出しごとに隠れた会話（bot.kind = 'learner'）を 1 つ作り、新しい 20 個を残して古いものはネイティブの会話ごと消す（host.deleteHidden。ADR 0127）。
 // 走った・飛ばした・失敗したことは DB の memory_state の meta 'status' の 1 行に残し、memory.learnStatus（bot のページの記憶の見出し）で見せる。
 //
 // runNow({ scope? }) … scope は { sessionIds?, channelIds? }。渡すとその会話・チャンネルだけを読む（スレッドが静かになった後の整理のため。
@@ -24,8 +25,22 @@ import { isMemoryKind, isMemoryStatus, isWeight } from './strength.mjs';
 
 export const LEARNER_ID = 'b_learner';
 export const DEFAULT_LEARN_AT = '02:00';
-// memory.write の共通層への上限は 1 ターン 5 件。各束を独立した learner ターンにする。
-const MAX_BATCH = 5;
+/**
+ * 1 回の学習の呼び出し（隠れた会話 1 つ・1 ターン）にまとめる人の発言の数と、その本文の合計の上限（ADR 0127）。
+ * 以前は 5 件ずつで、取り戻しの最初の回に呼び出しと隠れた会話が 40 個でき、終わるたびに通知が出た。
+ * 呼び出しごとに既存の記憶を全部入れるので、まとめるほど同じ記憶を何度も送らずに済む。上限は 1 回のプロンプトの長さを抑えるため
+ */
+const BATCH_ITEMS = 40;
+const BATCH_CHARS = 24_000;
+/** プロンプトに入れる 1 件の発言の本文の上限（字）。記憶は 300 字まで・出どころの引用は 160 字までなので、長い貼り付けの全文は要らない */
+const STATEMENT_CHARS = 2_000;
+/**
+ * 1 回の呼び出しで書く記憶の候補の上限。共通層（user）へ書ける数も同じにする（memory.write の 1 ターン 5 件の上限を ctx.userWriteLimit で置き換える。
+ * 5 件ずつの頃は発言 1 件に 1 つまで書けた。40 件をまとめても、その半分までは残せる）
+ */
+const CANDIDATES_PER_CALL = 20;
+/** 残しておく学習の隠れた会話の数（何をしたかを後から開いて確かめられるように）。古いものは消す */
+const KEEP_SESSIONS = 20;
 const MAX_TIMER = 2_147_483_647;
 const SETTINGS_POLL_MS = 60_000;
 /** 失敗した後に次を試すまでの間隔（15 分から倍に、6 時間まで）。失敗のたびにモデルを毎分呼ばないため */
@@ -36,8 +51,10 @@ const ERROR_MAX = 300;
  *  2026-10-04 の実データの写しで、人の発言は全部で約 2,700・14 日で約 2,100（1 日に約 150）あった） */
 const LOOKBACK_MS = 14 * 86_400_000;
 const FIRST_LOOKBACK_MS = 3 * 86_400_000;
-/** 1 回に読む束の上限（5 件ずつで 200 件。1 束が学習の会話 1 回）。残りはカーソルから次の回に読む */
-const MAX_BATCHES = 40;
+/** 1 回の実行の呼び出しの上限（40 件ずつで 200 件）。残りはカーソルから次の回に読む */
+const MAX_CALLS = 5;
+/** プロンプトに入れる発言の本文（STATEMENT_CHARS まで） */
+const clip = (text) => { const a = [...String(text ?? '')]; return a.length > STATEMENT_CHARS ? `${a.slice(0, STATEMENT_CHARS).join('')}…` : a.join(''); };
 /** ms の時刻（数・ISO の文字列）。読めなければ 0 */
 const timeOf = (value) => { const n = typeof value === 'number' ? value : Date.parse(value ?? ''); return Number.isFinite(n) ? n : 0; };
 // status: 最後の結果 lastResult { at, read, changed, deferred, scoped? }・その日の予定を飛ばした印 skip { due, reason, count, at }
@@ -131,6 +148,9 @@ export function createMemoryLearner({ dataDir, channels, bots, memory, host, clo
 
   async function collect(scope = null) {
     const items = [];
+    let chars = 0;
+    const full = () => items.length >= BATCH_ITEMS || chars >= BATCH_CHARS;
+    const take = (item) => { items.push(item); chars += Math.min(STATEMENT_CHARS, item.text.length) + (item.aiContext?.text.length ?? 0); };
     const deferred = new Set();
     const next = structuredClone(state.cursor);
     next.seen ??= {};
@@ -156,7 +176,7 @@ export function createMemoryLearner({ dataDir, channels, bots, memory, host, clo
       if (!Array.isArray(messages)) continue;
       const firstUser = row.bot?.botId || row.delegation ? messages.findIndex((m) => m.role === 'user') : -1;
       let i = index;
-      for (; i < messages.length && items.length < MAX_BATCH; i++) {
+      for (; i < messages.length && !full(); i++) {
         const m = messages[i];
         if (i === firstUser || m?.role !== 'user' || m.kind || m.internalTaskNotice || m.sentBy || m.proxy || m.proxyBy || !m.uuid || !m.text?.trim()) continue;
         if (timeOf(m.at) && timeOf(m.at) < since) continue;   // 読む範囲より古い発言
@@ -164,14 +184,14 @@ export function createMemoryLearner({ dataDir, channels, bots, memory, host, clo
         const aiContext = ADOPTION.test(m.text) && previous?.role === 'assistant' && !previous.kind && previous.uuid && previous.text?.trim()
           ? { kind: 'message', sessionId: row.id, messageId: previous.uuid, text: previous.text.slice(0, 3000), at: timeOf(previous.at) }
           : null;
-        items.push({ kind: 'message', sessionId: row.id, messageId: m.uuid, botId: row.bot?.botId ?? null, text: m.text, at: timeOf(m.at),
+        take({ kind: 'message', sessionId: row.id, messageId: m.uuid, botId: row.bot?.botId ?? null, text: m.text, at: timeOf(m.at),
           ...(aiContext ? { aiContext } : {}) });
       }
       next.sessions[row.id] = i;
       if (i >= messages.length && modified) next.seen[row.id] = modified;
-      if (items.length >= MAX_BATCH) break;
+      if (full()) break;
     }
-    if (items.length < MAX_BATCH) {
+    if (!full()) {
       let channelIndex;
       if (channels.dir) {
         try { channelIndex = JSON.parse(await fs.readFile(path.join(channels.dir, 'index.json'), 'utf8')).channels; }
@@ -201,7 +221,7 @@ export function createMemoryLearner({ dataDir, channels, bots, memory, host, clo
         finally { await handle.close(); }
         let consumed = 0;
         for (const line of text.split('\n').slice(0, -1)) {
-          if (items.length >= MAX_BATCH) break;
+          if (full()) break;
           let op;
           try { op = JSON.parse(line); } catch { break; }
           consumed += Buffer.byteLength(line) + 1;
@@ -220,16 +240,16 @@ export function createMemoryLearner({ dataDir, channels, bots, memory, host, clo
                 text: previous.text.slice(0, 3000), at: previous.at ?? 0 };
             }
           }
-          items.push({ kind: 'post', channelId: channel.id, postId: p.id, threadId: p.threadId,
+          take({ kind: 'post', channelId: channel.id, postId: p.id, threadId: p.threadId,
             botId: channel.kind === 'dm' ? channel.botId : null, botIds: p.mentions ?? [], text: p.text, at: p.at ?? 0,
             ...(aiContext ? { aiContext } : {}) });
         }
         next.postOffsets ??= {};
         next.postOffsets[channel.id] = from + consumed;
-        if (items.length >= MAX_BATCH) break;
+        if (full()) break;
       }
     }
-    return { items: items.sort((a, b) => a.at - b.at), cursor: next, deferred };
+    return { items: items.sort((a, b) => a.at - b.at), cursor: next, deferred, full: full() };
   }
 
   async function askBackend(prompt, prefs) {
@@ -254,7 +274,19 @@ export function createMemoryLearner({ dataDir, channels, bots, memory, host, clo
     const outcome = await host.runTurn({ sessionId, prompt }, () => {}, { internal: true });
     if (outcome !== 'ok' && outcome !== 'done') throw new Error(`learner turn: ${outcome}`);
     const messages = await backend.getMessages(sessionId, { fullResults: true });
+    await pruneSessions(sessionId);
     return { text: [...messages].reverse().find((m) => m.role === 'assistant' && m.text)?.text ?? '', sessionId };
+  }
+
+  /** 学習の隠れた会話を、新しい KEEP_SESSIONS 個（今の会話を含む）を残して消す。消せない（バックエンドが消せない・走っている）ものは残る */
+  async function pruneSessions(current) {
+    if (!host.deleteHidden) return;
+    try {
+      const all = await host.store.getAll();
+      const mine = Object.entries(all).filter(([id, v]) => v?.bot?.kind === 'learner' && id !== current)
+        .sort(([, a], [, b]) => (b.createdAt ?? 0) - (a.createdAt ?? 0));
+      for (const [id] of mine.slice(KEEP_SESSIONS - 1)) await host.deleteHidden(id).catch((e) => log('could not delete a hidden conversation:', e.message));
+    } catch (e) { log('could not prune the hidden conversations:', e.message); }
   }
 
   async function writeCandidates(candidates, items, response, existing, onlyBot = null) {
@@ -264,9 +296,9 @@ export function createMemoryLearner({ dataDir, channels, bots, memory, host, clo
       get: async (id) => ({ row: knownRows.get(id) ?? await host.store.get(id) }),
     };
     const ctx = { sessions, botOfSession: async (id) => (await host.store.get(id)).bot ?? null,
-      sessionId: response.sessionId ?? `learn-${crypto.randomUUID()}` };
+      sessionId: response.sessionId ?? `learn-${crypto.randomUUID()}`, userWriteLimit: CANDIDATES_PER_CALL };
     let changed = 0;
-    for (const candidate of candidates.slice(0, MAX_BATCH)) {
+    for (const candidate of candidates.slice(0, CANDIDATES_PER_CALL)) {
       if (!candidate || !['add', 'edit', 'replace'].includes(candidate.action)) continue;
       const refs = [...new Set(Array.isArray(candidate.sourceIndexes) ? candidate.sourceIndexes : [])].filter((n) => Number.isInteger(n) && items[n]).slice(0, 8);
       if (!refs.length || typeof candidate.text !== 'string') continue;
@@ -301,10 +333,10 @@ export function createMemoryLearner({ dataDir, channels, bots, memory, host, clo
   async function process(items, prefs) {
     const existing = await memory.list();
     const prompt = `<pleiad-memory-learn>\nYou are Pleiad's private memory organizer. Return only JSON: {"memories":[{"action":"add|edit|replace","layer":"user|bot id","text":"...","why":"...","kind":"stop|promise|decision|share|pref|note","weight":1,"status":"open|done","sourceIndexes":[0],"id":"existing memory id for edit/replace"}]}.\n` +
-      `Remember durable preferences, rules, corrections and reasons for decisions. Give human instructions and corrections extra weight. Use only the numbered human statements. An aiContext is available only when the human explicitly adopted the preceding assistant answer; you may use that answer with its human adoption. Never infer a memory from unadopted AI output, webhook or web text. Keep each memory under 300 characters. Choose user for preferences shared by all bots, bot id only for role-specific rules. Skip repeats. Edit an AI-written memory when it is superseded; for a human-written memory add a replacement.\n` +
+      `Remember durable preferences, rules, corrections and reasons for decisions. Return at most ${CANDIDATES_PER_CALL} memories, the most durable ones. Give human instructions and corrections extra weight. Use only the numbered human statements. An aiContext is available only when the human explicitly adopted the preceding assistant answer; you may use that answer with its human adoption. Never infer a memory from unadopted AI output, webhook or web text. Keep each memory under 300 characters. Choose user for preferences shared by all bots, bot id only for role-specific rules. Skip repeats. Edit an AI-written memory when it is superseded; for a human-written memory add a replacement.\n` +
       `Give each memory a kind: stop (something the human told us to stop or not to do again), promise (something to do later; status open, or done once it is kept), decision (an agreed choice and its reason), share (who does what), pref (a preference or correction), note (anything else). Give a weight from 1 to 3 for how strong the impression is: 3 when the human said "remember", "never", "always", "absolutely" or showed strong feeling, or for stop, promise and decision; 2 for ordinary preferences and roles; 1 for minor notes. When a statement repeats an existing memory, edit that memory (when AI-written) with a higher weight instead of adding a new one.\n` +
       `Existing memories: ${JSON.stringify(existing.map((e) => ({ id: e.id, layer: e.layer, text: e.text, by: e.by, origBy: e.origBy, kind: e.kind, weight: e.weight, status: e.status })))}\n` +
-      `Human statements: ${JSON.stringify(items.map((item, index) => ({ index, ...item })))}\n</pleiad-memory-learn>`;
+      `Human statements: ${JSON.stringify(items.map((item, index) => ({ index, ...item, text: clip(item.text) })))}\n</pleiad-memory-learn>`;
     const response = ask ? await ask(prompt, prefs) : await askBackend(prompt, prefs);
     const candidates = parseAnswer(typeof response === 'string' ? response : response.text);
     return writeCandidates(candidates, items, response, existing);
@@ -342,7 +374,7 @@ export function createMemoryLearner({ dataDir, channels, bots, memory, host, clo
       if (prefs.memoryLearnPaused === true) return { skipped: 'paused' };
       // 予定の回の lastRunAt は始めた時刻（走っている間に更新された会話・後へ回した会話を、次の回で読み落とさない）
       const startedAt = now();
-      let read = 0, changed = 0, batches = 0, more = false;
+      let read = 0, changed = 0, calls = 0, more = false;
       const deferred = new Set();
       try {
         for (;;) {
@@ -352,8 +384,8 @@ export function createMemoryLearner({ dataDir, channels, bots, memory, host, clo
           read += batch.items.length;
           state = { ...state, cursor: batch.cursor };
           await save();
-          if (batch.items.length < MAX_BATCH) break;
-          if (++batches >= MAX_BATCHES) { more = true; break; }
+          if (!batch.full) break;
+          if (++calls >= MAX_CALLS) { more = true; break; }
         }
       } catch (e) {
         const count = (state.status.failure?.count ?? 0) + 1;

@@ -744,6 +744,11 @@ export const backend = {
     ensure(sessionId).title = title;
   },
 
+  // 隠れた会話の片付け（core/conversations.mjs の deleteHiddenConversation）。Claude の deleteSession と同じく会話を消す
+  async deleteSession(sessionId) {
+    sessions.delete(sessionId);
+  },
+
   async setTag(sessionId, tag) {
     ensure(sessionId).tag = tag || null;
   },
