@@ -1,6 +1,6 @@
 // 分けた作業場所をサーバー越しに（fake + 一時リポジトリ。ADR 0089）。
 // ぶつかりの判定（書き込み中の別の会話・読むだけ・git 管理外・自分は数えない）・分けて始める（予約・取り消し・戻す）・
-// 「いつも分ける」の自動・委譲の子の自動の分け方と isolate・完了通知と ply_task_status の作業場所の行・
+// 自動で分ける（既定・今回だけ元の場所・保存したオフ）・委譲の子の自動の分け方と isolate・完了通知と ply_task_status の作業場所の行・
 // 取り込み後の片付け・右パネルの残り（残す・退避・作り直し）・ファイルのプレビューの許可。
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs/promises';
@@ -11,7 +11,7 @@ import { open, sleep } from '../lib/ws-client.mjs';
 import { COMMANDS } from '../../core/protocol.mjs';
 
 export const name = 'server-worktree';
-export const title = '分けた作業場所（サーバー越し）: ぶつかりの判定・分けて始める・いつも分ける・委譲の自動の分け方・完了通知・取り込み後の片付け・退避と作り直し';
+export const title = '分けた作業場所（サーバー越し）: ぶつかりの判定・分けて始める・自動で分ける・委譲の自動の分け方・完了通知・取り込み後の片付け・退避と作り直し';
 
 const sh = (cwd, ...args) => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.com', '-c', 'commit.gpgsign=false', ...args], { cwd, encoding: 'utf8', windowsHide: true }).trim();
 const ply = (name, args) => 'ply:' + JSON.stringify({ name, arguments: args });
@@ -53,7 +53,9 @@ export default async function (t) {
     const seed = await c.runTurn({ backend: 'fake', cwd: repo, prompt: 'echo:seed' });          // repo を「使ったことのある場所」にする
     await c.runTurn({ backend: 'fake', cwd: plain, prompt: 'echo:seed' });
     const idle = await c.cmd('worktreeCheck', { cwd: repo, backend: 'fake', mode: 'default' });
-    t.ok('誰も書いていなければ conflicts は空・分けられる（git）', idle.git === true && idle.conflicts.length === 0 && idle.canSplit === true && idle.always === false, JSON.stringify(idle));
+    t.ok('誰も書いていなければ conflicts は空・分けられる（git）', idle.git === true && idle.conflicts.length === 0 && idle.canSplit === true, JSON.stringify(idle));
+    t.ok('保存した値が無ければ、自動で分けるが既定（check・settings とも）', idle.always === true && (await c.cmd('worktreeSettings')).always === true);
+    await c.cmd('setWorktreeSettings', { always: false });   // 1・2 は分けない前提で見る（3 で自動を見る）
     const A = await startLong(repo, 40_000);
     const busy = await c.cmd('worktreeCheck', { cwd: repo, backend: 'fake', mode: 'default' });
     t.ok('同じリポジトリで書き込みのターンが走っていれば、その会話が conflicts に出る', busy.conflicts.length === 1 && busy.conflicts[0].sessionId === A.sessionId && busy.canSplit === true, JSON.stringify(busy));
@@ -109,28 +111,38 @@ export default async function (t) {
     t.ok('元に戻す: 退避から新しい分けた作業場所を作り直し、中身（未コミットだったファイル）がある', (await exists(`${restored.worktree.path}/note.txt`)) && (await fs.readFile(`${restored.worktree.path}/note.txt`, 'utf8')).trim() === 'wip' && restored.worktree.id !== split2.id, JSON.stringify(restored));
     await c.cmd('worktreeArchive', { id: restored.worktree.id });
 
-    // ---- 3. いつも分ける
+    // ---- 3. 自動で分ける（既定。ぶつかっているとき、確かめずに分けて始める）
     const events = [];
     const settings = await c.cmd('setWorktreeSettings', { always: true });
-    t.ok('いつも分ける: 保存され、読める', settings.always === true && (await c.cmd('worktreeSettings')).always === true && c.events.some((e) => e.type === 'worktreeSettings' && e.always === true));
+    t.ok('自動で分ける: オンに戻して保存され、読める', settings.always === true && (await c.cmd('worktreeSettings')).always === true && c.events.some((e) => e.type === 'worktreeSettings' && e.always === true));
     const fromB = c.mark();
     const B = await c.runTurn({ backend: 'fake', cwd: repo, prompt: 'echo:auto' });          // A が repo で書き込み中
     const notice = B.events.find((e) => e.type === 'present' && e.kind === 'worktree');
     const bRow = (await c.cmd('listSessions', {})).find((s) => s.id === B.sessionId);
-    t.ok('いつも分ける: 別の会話が書き込み中なら、確かめずに分けて始め、会話に 1 行の印を残す', Boolean(notice) && notice.sessionId === B.sessionId && notice.worktree.count === 1 && /^pleiad\/ply-/.test(notice.worktree.branch)
+    t.ok('自動で分ける: 別の会話が書き込み中なら、確かめずに分けて始め、会話に 1 行の印を残す', Boolean(notice) && notice.sessionId === B.sessionId && notice.worktree.count === 1 && /^pleiad\/ply-/.test(notice.worktree.branch)
       && slash(bRow?.cwd ?? '').startsWith(`${scratch}/repo.pleiad/`), JSON.stringify([notice, bRow?.cwd]));
     const bLoaded = await c.cmd('loadSession', { sessionId: B.sessionId });
     t.ok('印の行は会話に保存され、読み直しても出る', bLoaded.presents.some((p) => p.kind === 'worktree' && p.worktree.id === notice?.worktree.id));
     const bCheck = await c.cmd('worktreeCheck', { sessionId: B.sessionId, backend: 'fake', mode: 'default' });
     t.ok('分けた先の会話は current（もう分けない）', bCheck.current?.id === notice?.worktree.id && bCheck.canSplit === false);
     void fromB; void events;
+    // 「このまま元の場所で始める」（keepPlace）を選んだ今回だけは、ぶつかっていても分けない
+    const D = await c.runTurn({ backend: 'fake', cwd: repo, prompt: 'echo:stay', keepPlace: true });
+    t.ok('keepPlace: 自動で分ける設定でもぶつかっていても、今回だけ元の場所で始める（印の行も出ない）', !D.events.some((e) => e.type === 'present' && e.kind === 'worktree')
+      && slash((await c.cmd('listSessions', {})).find((s) => s.id === D.sessionId)?.cwd ?? '') === repo);
+    const D2 = await c.runTurn({ backend: 'fake', cwd: repo, prompt: 'echo:again' });
+    t.ok('keepPlace は今回だけ: 付けない次の新しい会話はまた自動で分ける', D2.events.some((e) => e.type === 'present' && e.kind === 'worktree'));
+    // 保存したオフは尊重する（既定が自動でも、オフにしたら分けない）
+    await c.cmd('setWorktreeSettings', { always: false });
+    const E = await c.runTurn({ backend: 'fake', cwd: repo, prompt: 'echo:off' });
+    t.ok('自動で分けるをオフにしたら、ぶつかっていても分けない', !E.events.some((e) => e.type === 'present' && e.kind === 'worktree')
+      && slash((await c.cmd('listSessions', {})).find((s) => s.id === E.sessionId)?.cwd ?? '') === repo);
     await c.cmd('abort', { sessionId: A.sessionId });
     await A.running;
-    await c.cmd('setWorktreeSettings', { always: false });
-    // 書き込み中の別の会話が居なければ、いつも分けるでも分けない
+    // 書き込み中の別の会話が居なければ、自動で分けるでも分けない
     await c.cmd('setWorktreeSettings', { always: true });
     const C = await c.runTurn({ backend: 'fake', cwd: repo, prompt: 'echo:alone' });
-    t.ok('書き込み中の別の会話が居ないときは、いつも分けるでも分けない', !C.events.some((e) => e.type === 'present' && e.kind === 'worktree') && slash((await c.cmd('listSessions', {})).find((s) => s.id === C.sessionId)?.cwd ?? '') === repo);
+    t.ok('書き込み中の別の会話が居ないときは、自動で分けるでも分けない', !C.events.some((e) => e.type === 'present' && e.kind === 'worktree') && slash((await c.cmd('listSessions', {})).find((s) => s.id === C.sessionId)?.cwd ?? '') === repo);
     await c.cmd('setWorktreeSettings', { always: false });
 
     // ---- 4. 委譲: 自動の分け方・isolate・子への指示・完了通知・取り込み後の片付け

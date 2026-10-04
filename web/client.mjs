@@ -102,7 +102,7 @@ import { createConversationRail } from './conversation-rail.mjs';
 import { createConversationToc } from './conversation-toc.mjs';
 import { setupGitPanel } from './git-panel.mjs';
 import { renderDelegateGit, branchLabel } from './git-view.mjs';
-import { renderSplitNote, paintWorktreeLine, setWorktreeLineMode, setupWorktreeSettings, askText, shortPath } from './worktree-ui.mjs';
+import { autoSplitPlan, paintWorktreeLine, setWorktreeLineMode, setupWorktreeSettings, askText, shortPath } from './worktree-ui.mjs';
 import { branchIcon } from './icons.mjs';
 const outboxes = new Map();
 const turnErrorRows = new Map();
@@ -298,8 +298,9 @@ const state = {
   messages: [],        // 今のセッションの履歴（loadSession の messages）
   contextInfo: null,   // 今のセッションの読み込み記録（sessionContext の戻り）。タイトル行の入口と筋の一行に使う
   contextInfoId: null, // 上の記録がどのセッションのものか
-  // 分けた作業場所（ADR 0089）。worktreeCheck の結果（今の場所が分けた作業場所か・分けられるか・同じリポジトリで書き込み中の別の会話）。「このまま」を選んだ場所は dismissed
-  worktree: { key: null, data: null, always: false, dismissed: new Set(), ticket: 0 },
+  // 分けた作業場所（ADR 0089, 0133）。worktreeCheck の結果（今の場所が分けた作業場所か・分けられるか・同じリポジトリで書き込み中の別の会話・自動で分けるか）。
+  // 「このまま元の場所で始める」を選んだ会話×場所は stay（今回だけ。メモリだけで、送ったら外す）
+  worktree: { key: null, data: null, stay: new Set(), ticket: 0 },
   git: { key: null, sessionId: null, data: null },   // 作業場所の git の状態（gitStatus。ADR 0085）。頭の行のアイコン・入力欄のブランチ・「…」のメニューに使う
   presents: [],
   turnEl: null,        // 追記中の AI の発言（.m.ai）
@@ -3715,11 +3716,14 @@ const controls = setupComposerControls({
       modes: state.modes, mode: state.mode,
       git: state.git.data,
       worktree: state.worktree.data,
+      // 送ると自動で分けた作業場所で始めるとき { who }（チップの「· 分けて始めます」）。今回だけ元の場所と決めたときは null
+      worktreeAuto: worktreeAutoPlan(),
     };
   },
   on: {
     cwd: applyCwd,
     worktreeSplit: () => startWorktree(),
+    worktreeStay: () => stayInPlace(),
     worktreeBack: () => backFromWorktree(),
     backend: (v) => { state.shownBackend = v; controls.paint(); chooseSettings({ backend: v, model: "" }); },
     model: (v) => { state.model = v; controls.paint(); chooseSettings({ model: v, rememberModel: true }); },
@@ -6586,28 +6590,22 @@ async function runWorktreeCheck() {
   const res = await cmd('worktreeCheck', { ...(sessionId ? { sessionId } : {}), cwd: state.cwd, backend: state.shownBackend ?? activeBackendId(), mode: state.mode }).catch(() => null);
   if (mine !== state.worktree.ticket) return;
   state.worktree.data = res?.git ? res : null;
-  state.worktree.always = Boolean(res?.always);
   paintWorktree();
 }
-function paintWorktree() { controls.paint(); paintWorktreeNote(); paintSettingsNotice(); paintWorktreeLines(); }
-/** 同じリポジトリで別の会話が書き込み中のとき、入力欄のすぐ上に 1 行。送信は止めない（選ばずに送れば「このまま」） */
-function paintWorktreeNote() {
-  const box = $('worktreeNote');
-  const d = state.worktree.data;
-  const key = `${state.current ?? ''}\n${state.cwd}`;
-  const show = Boolean(d && d.canSplit && d.conflicts?.length && !d.always && !state.worktree.dismissed.has(key) && !(state.current && state.runningIds.has(state.current)));
-  if (!show) { box.hidden = true; if (box.firstChild) box.replaceChildren(); delete box.dataset.sig; return; }
-  const sig = `${key}\n${d.conflicts.map((c) => `${c.sessionId}:${c.title}`).join('|')}`;
-  if (box.dataset.sig === sig && !box.hidden) return;
-  box.dataset.sig = sig;
-  box.replaceChildren(renderSplitNote({ conflicts: d.conflicts,
-    onSplit: () => startWorktree(),
-    onKeep: () => { state.worktree.dismissed.add(key); paintWorktreeNote(); },
-    onAlways: async () => { await cmd('setWorktreeSettings', { always: true }).catch(() => {}); worktreeSettings.paint(true); await startWorktree(); } }));
-  box.hidden = false;
+function paintWorktree() { controls.paint(); paintSettingsNotice(); paintWorktreeLines(); }
+const worktreeKey = () => `${state.current ?? ''}\n${state.cwd}`;
+/** 送ると自動で分けた作業場所で始めるか（ぶつかっていて、自動で分ける設定で、今回だけ元の場所と決めていない）。始めるなら { who }、でなければ null */
+function worktreeAutoPlan() {
+  return autoSplitPlan(state.worktree.data, { stay: state.worktree.stay.has(worktreeKey()), running: Boolean(state.current && state.runningIds.has(state.current)) });
+}
+/** 作業場所の面の「このまま元の場所で始める」。今回の送信だけ分けない */
+function stayInPlace() {
+  state.worktree.stay.add(worktreeKey());
+  controls.paint();
 }
 /** 分けた作業場所を作り、次のターンの作業場所に予約する（下書きなら作業場所をそれにする） */
 async function startWorktree() {
+  state.worktree.stay.delete(worktreeKey());
   try {
     const res = await cmd('worktreeSplit', { ...(state.current ? { sessionId: state.current } : {}), cwd: state.cwd });
     await applyCwd(res.cwd);
@@ -7608,8 +7606,10 @@ async function submit({ at = armedSends.get(state.current) } = {}) {
     const inDoc = composerEditor.attachmentKeys();
     const tail = attachments.filter(a => !inDoc.has(attachedKey(a.path)));
     const full = [text.trim(), tail.map(a => attachmentLine(agentLang, a.path)).join(NL)].filter(Boolean).join(NL + NL);
+    // 「このまま元の場所で始める」を選んだ今回だけ、ぶつかっていても分けない（core/server.mjs autoSplitTurn）
+    const stayKey = worktreeKey();
     const args = { sessionId, prompt: full, cwd: state.cwd.trim() || undefined, mode: state.mode,
-      ...(attachments.length ? { attachments } : {}) };
+      ...(attachments.length ? { attachments } : {}), ...(state.worktree.stay.has(stayKey) ? { keepPlace: true } : {}) };
     // 日時を指定した送信は、送信待ちではなく予定として置く（時刻が来たら同じ送信待ちへ入る。core/send-schedule.mjs）
     if (at) {
       const key = `${sessionId}\n${full}\n${at}`;
@@ -7637,6 +7637,7 @@ async function submit({ at = armedSends.get(state.current) } = {}) {
     // 吹き出しは、受理の応答が先でも userMessage が先でも、この仮の添付で描く
     if (ordered.length && !messageRow(request.messageId)) provisionalByMessage.set(request.messageId, ordered.map(provisionalPresent));
     await cmd('sendMessage', request);
+    state.worktree.stay.delete(stayKey);
     if (state.current === sessionId && !messageRow(request.messageId)) {
       markDelivery(ensureMessageRow(request.messageId, full, new Date().toISOString()), 'sending');
       syncOutboxRows(outboxes.get(sessionId) ?? []);
@@ -7695,6 +7696,8 @@ function connect() {
       for (const wake of [...onlineWaiters]) wake();
       // 設定 › アプリ情報の「外の AI から Pleiad を使う」。ホストの画面でだけ取れて、取れたら出す（web/cli-setup.mjs）
       cliSetup.load();
+      // 設定 › エージェント設定の「作業場所」。つながる前の読み込みは失敗するので、つながったときに読む（既定がオンなので、読めないとオフの人にもオンに見える）
+      worktreeSettings.load();
       // OS の操作（エクスプローラー・ブラウザーで開く）を出してよいか。接続元を見てサーバーが答える（遠隔なら false）
       // 同じ答えで、添付の出どころを選ばせるか（ホストの画面でない接続）も決める（composer-layout.mjs の attachSources）
       cmd("hostCapabilities").then((c) => {
@@ -8053,7 +8056,7 @@ const delegationSettings = setupDelegationSettings({ cmd, page: onboarding.page,
   modelName: (backend, model) => routingNames.model(backend, model) });
 // 設定 › 委譲の末尾の「分けた作業場所」（いつも分ける。ADR 0089）
 const worktreeSettings = setupWorktreeSettings({ cmd });
-$('delegationPanel').append(worktreeSettings.element);
+$('setupPanel').append(worktreeSettings.element);
 clearThread();
 initTheme();
 initLocale();
