@@ -332,6 +332,8 @@ const cases = [
   await import("./unit/claude-turn-end.mjs"),
   // Claude のモデル一覧: CLI の実体（版）が変わったら 30 分の TTL の中でも引き直す
   await import("./unit/claude-catalog-cli-version.mjs"),
+  // Claude のモデル一覧: 手元に古い一覧・別の作業場所の一覧があれば、引き直しを待たずに返す
+  await import("./unit/claude-catalog-stale.mjs"),
   await import("./unit/codex-background.mjs"),
   await import("./unit/codex-terminals.mjs"),
   await import("./unit/event-session-id.mjs"),
