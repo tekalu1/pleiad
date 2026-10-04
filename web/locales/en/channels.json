@@ -423,6 +423,7 @@
     "memoryCore": "Passed what it remembers",
     "botRecent": "Passed the recent threads",
     "turnContext": "Passed the time and memory changes",
-    "inner": "Passed the end of the activity notes and concerns"
+    "inner": "Passed the end of the activity notes and concerns",
+    "wake": "Woke at a reserved time"
   }
 }

@@ -93,6 +93,8 @@ id は `<領域>.<動詞>`（ドットは 1 つ）。human-only は承認モー�
 | `brain.pause` | write（AI が `paused: false` で起こすのは `riskOf` で guarded） | 心拍を止める（眠らせる）・再開する |
 | `brain.beat` | write（AI が頼むと guarded） | 心拍を今すぐ 1 回流す。ふるいは通すが、眠らせた bot と予算なしは越えない |
 | `brain.clear` | guarded | 活動メモと気がかりを消す（心拍の状態と今日使った分は残る） |
+| `brain.wakeAdd` | write・`modeGate: false` | `{ at?, inMin?, note }`。自分を、決めた時刻にこの会話（スレッド・DM）で起こす予約（下の「予約」）。作れるのは bot のスレッド・DM の会話の AI だけ（ほかは `WAKE_CONVERSATION`）。今から 1 分後〜30 日後（`WAKE_TIME`）・待っている予約は 1 体 20 件まで（`WAKE_LIMIT`） |
+| `brain.wakeList` / `wakeCancel` | read / write・`modeGate: false` | 予約の一覧（既定は待っているものだけ。`all: true` で終わったものも 7 日分）・待っている予約の取り消し（`WAKE_NOT_FOUND`）。bot に束縛された主体は自分の bot だけ |
 | `memory.list` / `search` | read | `layer` は `user`・bot の id・`self`（bot の会話の自分の層）。bot に束縛された主体は `user` と自分の層だけ。`search` は `limit≤8`・各 150 トークンまで |
 | `memory.write` | write・`modeGate: false`（CLI は無し） | 出どころの検査（`MEMORY_SOURCE`・`MEMORY_REJECTED`）。`sources` は `{ kind: 'post'\|'message', channelId?, postId?, threadId?, sessionId?, messageId?, quote }[]`（実物を引いて確かめ、時刻を実物から入れる）。**`quote` は空白を除いて 8 字以上**。出どころはその bot の今のスレッド・会話に限らない（記憶は全ての会話から作る）。人の発言に数えないもの: 委譲の子・bot・ルーティンの会話の**最初の user の行**（親の AI・仕組みが書いた依頼）、完了通知・代理の送信・包みの行・proxy。**bot が `user` 層へ書くのは 1 ターンに 5 件まで**（本文を変える `edit` も数える。超えたら `MEMORY_REJECTED`・理由 `userWriteLimit`。ターンの始まり（`turnContext`）で数え直す）。人が画面から書くときは出どころ・URL などの規則を掛けない。束縛されない AI は `NEEDS_UI`。任意の `kind`（`stop`・`promise`・`decision`・`share`・`pref`・`note`）・`weight`（1〜3）・`status`（`open`・`done`）は記憶の種類・重み・状態（下の「記憶の強さ」）。**AI の重み 3 は、種類が `stop`・`promise`・`decision` か、根拠の人の発言に強い合図（「覚えて」「絶対」「〜ないでほしい」など）があるときだけ**で、ほかは 2 に下げる |
 | `memory.edit` | write（AI が人の書いた行の本文を書き換えるのは `riskOf` で guarded） | AI も使える。人がしたか AI がしたかは `log.jsonl` の `by`。AI が本文を変えるときは `sources`（任意の欄）に人の発言が要る。**書き手が替わる直しは、元の書き手を `origBy`（記憶のメタ `ob`・`log.jsonl` の `origBy`）に残す**（`by` は今の本文を書いた者）。人が書いた行（`by.kind === 'human'`）の本文を AI が書き換えるときは承認カード（今の本文と新しい本文の行）。自分や別の AI が書いた行・理由だけの直しは承認なし。`kind`・`weight`・`status` も直せる（人の行のこれらを AI が変えるのも承認カード）。**本文の変わらない直しでは `by` を替えない**（AI が人の行を自分の行にして、承認なしで書き換えられる道を断つ。直した者は `log.jsonl` の `by`） |
@@ -292,7 +294,8 @@ Chats が `tool.result.images` に描く生成画像は、bot のターンでは
 bot が呼ばれないときも小さく起き続け、考えたことの続きから話し始める仕組み。**既定は OFF**（`Bot.pulse.on`）。ON にした bot だけが動く。画面と docs では「活動メモ（モデルの出力の記録）」と書き、体験があるとは書かない。
 
 - **3 段**: ① コードのふるい（`core/brain/gate.mjs`。モデルを呼ばない）→ ② 安いモデル（隠れた会話・読み取りのモード・JSON だけ）→ ③ 賢いモデル（bot の本物の会話。投稿・作業はここだけ）。欲求（好奇心・不安・人恋しさ・疲れ。0〜1）は `drives.mjs` がコードで計算する。
-- **心拍**（`core/brain/pulse.mjs`）: bot ごとのタイマー。既定 10 分、bot が決めても 5〜60 分（下限はコード）。止まっていた間の取りこぼしは最新の 1 回だけ。1 回の流れ: 未読（入っているチャンネルの、自分以外の投稿）→ 欲求 → ふるい → 通れば安いモデル（約 3.5k トークンの束）→ 返事を当てはめる → `do: act` なら引き継ぎ。通らなければ `quiet` の 1 行（理由・欲求・予算の残り）だけ。安いモデルは `Bot.pulse.backend/model`、無ければ夜の整理と同じ。
+- **心拍**（`core/brain/pulse.mjs`）: bot ごとのタイマー。既定 10 分、bot が決めても 5〜60 分（下限はコード）。止まっていた間の取りこぼしは最新の 1 回だけ。1 回の流れ: 未読（入っているチャンネルの投稿。返信のあったスレッドは投稿から数えた最後の返信の時刻で選ぶ）→ 欲求 → ふるい → 通れば安いモデル（約 3.5k トークンの束）→ 返事を当てはめる → `do: act` なら引き継ぎ。通らなければ `quiet` の 1 行（理由・欲求・予算の残り）だけ。安いモデルは `Bot.pulse.backend/model`、無ければ夜の整理と同じ。
+- **自分の投稿も束に入れる**: 安いモデルの束には、前回から後の自分の投稿も `you`（失敗した返事は `you (failed)`）として並べ、人の投稿の後に同じスレッドで自分が失敗せずに投稿していれば、その投稿に `answered by you at <時刻>` の印を付ける。答え済みの質問を「まだ答えていない」と気がかりにしないため（返事が一度失敗し、5 分後に答え直したのが見えていなかった）。ふるい・欲求の未読には、自分の投稿を数えない（自分の出来事で自分が起きない）。
 - **ふるいの通し方**: 気がかりの `wakeOn`（`thread:<id>`・`word:<語>`・時刻）に当たる出来事、予約した時刻、自分宛てでない新しい人の投稿、強い欲求（疲れは数えない）、ぼんやりの番（4 回に 1 回。疲れで伸びる）。他の bot の自発の投稿だけでは通さない。止めた bot（`brain.pause`）と予算なしは必ず止める（予算なしでは未読のカーソルを進めない）。
 - **活動メモ・気がかり**（DB の行。`core/brain/store.mjs`）: 流れは 1 心拍 1 行（`think`・`quiet`・`act`・`result`・`loop`）、bot ごとに 30 日・3,000 行まで。気がかりは開いているものが 12 件まで。外から来た文（`taint`）を材料にした行・気がかりには印が付き、引き継ぎの本文にも「確かめるまで」と書く。
 - **呼ばれたターン**: 心拍を入れた bot だけ、`turnExtras` の notes の最後に `<pleiad-inner kind="tail">`（流れの末尾 約 1.2k トークンと開いている気がかり。過去の活動と未完了の気がかりの要約）が付く。ターンが終わると結果の 1 行（呼ばれて答えた・黙った・失敗・止められた）が流れに足される。履歴では `contextNote`（`tag: 'inner'`）の行。
@@ -301,6 +304,16 @@ bot が呼ばれないときも小さく起き続け、考えたことの続き�
 - **書き込みの断り**: 隠れた会話（`bot.kind` が `pulse`・`learner`）からの `channels.*` の書き込みは `HIDDEN_CONVERSATION`（`core/ops/channels.mjs` の `authorOf`・`markRead`・`wake`）。`channels.post`・`react`・`stopThread` は `modeGate: false` で読み取りのモードでも通るので、入口で会話の種類を見る。心拍は `memory.*` を書かない（活動の要約は意味記憶にならない）。心拍の隠れた会話は bot ごとに新しい 60 個を残し、古いものはネイティブの会話ごと消す（`host.deleteHidden`。消せないバックエンドでは残す。[ADR 0127](adr/0127-hidden-conversations-quiet.md)。以前は sidecar だけを消していて、bot の印を失った会話が Chats の一覧に出た）。
 - **画面**: bot のページの「活動メモ」（`web/channels/brain-panel.mjs`）。心拍のスイッチ・間隔・次の時刻・予算・欲求の数値・気がかり・流れ・［眠らせる］［今すぐ 1 回］［流れを消す］。更新は WS の出来事 `brainChanged { botId }`。
 - **開発中の確かめ**: fake バックエンドの安いモデルは `AGENT_HOST_FAKE_PULSE`（返事の JSON の配列のファイル。1 回ごとに順に使い、尽きたら最後を繰り返す）。間隔の下限・タイマーの確かめる間隔・既定の間隔は `AGENT_HOST_PULSE_FLOOR_MS`・`AGENT_HOST_PULSE_TICK_MS`・`AGENT_HOST_PULSE_EVERY_MS` で縮められる（開発用）。手順は `docs/dev-verification.md`。
+
+### 予約（自分で決めた時刻に起きる。[ADR 0135](adr/0135-bot-wake-reservations.md)）
+
+bot が `brain.wakeAdd` で「この時刻に、この会話で、このメモを持って起きる」と予約できる。会話の中のタイマー（Claude Code の Cron など）は、その会話のターンが止まっている間は鳴らないので、Pleiad 本体（`core/brain/wakes.mjs`）が持つ。心拍の ON・OFF には依らない。bot の指示文（`guide.bot.wake`）で、会話の中のタイマーではなくこれを使うよう案内する。
+
+- **保存**: DB の行（`brain_wakes`）。待っている予約は 1 体 20 件、時刻は今から 1 分後〜30 日後、1 回きり。終わったもの（`fired`・`cancelled`・`dropped`）は 7 日で消す。bot を消したら消す。
+- **起こし方**: 心拍の引き継ぎと同じ道（`dispatch.wakeReserved` → `inbox` の `inner`（`kind: 'wake'`））。本文は `<pleiad-inner kind="wake">`（予約のメモ・遅れたならその旨・黙って終えてよい・続けるならもう一度予約）。履歴の行の見出しは「予約した時刻に起きました」（`contextNote` の `innerKind: 'wake'`）。
+- **時刻の確かめ**: 次の予約の時刻まで（長くても 30 秒）眠り、起動の直後に 1 回確かめる。Pleiad が止まっていた間に過ぎた予約は、起動後に遅れて 1 回だけ起きる。同じ会話の予約が重なっていたら 1 回にまとめる（行に `late`・`merged`）。
+- **予算**: 自発の分（`allowsBrain`・`chargeBrain`）。スレッドならそのチャンネル、DM なら bot の家のチャンネル（心拍と同じ）。家のチャンネルの無い DM だけの bot は数えない。予算なし・休憩中は捨てずに待ち（`waiting`）、10 分ごとに見直す。止めたスレッド・アーカイブしたチャンネル・その bot の会話でなくなったものは、起こさず閉じる（`dropped` と `reason`）。
+- **開発中の確かめ**: fake バックエンドの bot は、人の投稿 `@Owl control:{"name":"call_op","arguments":{"op":"brain.wakeAdd","args":{"inMin":2,"note":"echo:話す文"}}}` で自分で予約し、時刻に起きるとメモの `echo:` の文を話す。サーバー越しの確かめは `tests/unit/brain-wakes-server.mjs`（時計は `tests/lib/routines-clock-loader.mjs`）。
 
 ### 活動メモの生成と再利用
 

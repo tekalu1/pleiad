@@ -11,8 +11,9 @@
 //   各モジュールには deps をまとめた HostTools（下の host）を渡す。emit(event) は sessionId: null で全接続へ、emitSession(sessionId, event) は会話の出来事
 //
 //   BotHost（server.mjs のつなぎ目。どれも例外を外へ出さない。bot の会話でなければ何もしない）:
-//     opsDeps(): { channels, bots, memory, memoryLearner, brain, pulse, routines, botOfSession, wake }   … opsDeps() に足す。ops の handler が ctx.channels などで呼ぶ。
-//                       brain は bot の頭の中の保存（思考の流れ・気がかり。core/brain/store.mjs）、pulse は心拍（core/brain/pulse.mjs。ADR 0126）
+//     opsDeps(): { channels, bots, memory, memoryLearner, brain, pulse, wakes, routines, botOfSession, wake }   … opsDeps() に足す。ops の handler が ctx.channels などで呼ぶ。
+//                       brain は bot の頭の中の保存（思考の流れ・気がかり。core/brain/store.mjs）、pulse は心拍（core/brain/pulse.mjs。ADR 0126）、
+//                       wakes は bot が自分で決めた時刻に起きる予約（core/brain/wakes.mjs。ADR 0135）
 //                       memoryLearner は夜の整理（core/memory/learn.mjs）。memory.learnStatus が status() を呼ぶ
 //                       wake({ channelId, postId, botId }) は channels.wake の本体（dispatch.wakePost。起こせたかを { woken, reason? } で返す）
 //     turnExtras(turn): Promise<{ botInstructions: string|null, notes: string[], folders: object|null }>   … runArgs に足す（notes は既存の notes の後ろ。
@@ -39,6 +40,7 @@ import { clock as routinesClock } from './routines/clock.mjs';
 import { createWebhookReceiver } from './routines/webhook.mjs';
 import { createBrainStore } from './brain/store.mjs';
 import { createPulse } from './brain/pulse.mjs';
+import { createWakes } from './brain/wakes.mjs';
 
 export function createBotHost(deps) {
   const { store, dataDir, emitGlobal } = deps;
@@ -65,9 +67,9 @@ export function createBotHost(deps) {
   });
   // ---- 頭の中（思考の流れ・気がかり。ADR 0126）
   const brain = createBrainStore({ dataDir, emit });
-  let pulse;
-  // bot を消したら、その bot の思考の流れ・気がかりも消す
-  host.botRemoved = (botId) => brain.clear(botId);
+  let pulse, wakes;
+  // bot を消したら、その bot の思考の流れ・気がかり・予約も消す
+  host.botRemoved = (botId) => { brain.clear(botId); wakes?.clear(botId); };
   // ---- bots（S2）
   const bots = createBotService({ dataDir, channels, host, emit });
   // ---- memory（S3）
@@ -87,10 +89,12 @@ export function createBotHost(deps) {
     ...(Number(process.env.AGENT_HOST_PULSE_FLOOR_MS) > 0 ? { floorMs: Number(process.env.AGENT_HOST_PULSE_FLOOR_MS) } : {}),
     ...(Number(process.env.AGENT_HOST_PULSE_TICK_MS) > 0 ? { tickMs: Number(process.env.AGENT_HOST_PULSE_TICK_MS) } : {}),
     ...(Number(process.env.AGENT_HOST_PULSE_EVERY_MS) > 0 ? { everyMs: Number(process.env.AGENT_HOST_PULSE_EVERY_MS) } : {}) });
+  // ---- 予約（bot が自分で決めた時刻に、その会話で起きる。心拍の ON・OFF に依らない。ADR 0135）
+  wakes = createWakes({ dataDir, channels, bots, dispatch, budget: dispatch.budget, clock: routinesClock, emit, localeOf: () => deps.currentLocale?.() ?? 'ja' });
   // ---- webhook（H1）
   const webhook = createWebhookReceiver({ dataDir, routines, host });
 
-  const services = [channels, bots, memory, dispatch, routines, webhook, learner, episodes, pulse];
+  const services = [channels, bots, memory, dispatch, routines, webhook, learner, episodes, pulse, wakes];
   // つなぎ目は、bot の側の失敗でターン・承認・起動を巻き込まない
   const guard = (name, fn, fallback) => (...args) => {
     const fail = (err) => { console.error(`  bot host: ${name} に失敗:`, String(err?.message ?? err)); return fallback; };
@@ -101,7 +105,7 @@ export function createBotHost(deps) {
   };
 
   return {
-    opsDeps: () => ({ channels, bots, memory, memoryLearner: learner, brain, pulse, routines, botOfSession, wake: guard('wake', (args) => dispatch.wakePost(args), { woken: false, reason: 'failed' }) }),
+    opsDeps: () => ({ channels, bots, memory, memoryLearner: learner, brain, pulse, wakes, routines, botOfSession, wake: guard('wake', (args) => dispatch.wakePost(args), { woken: false, reason: 'failed' }) }),
     // 人格とフォルダーは bots（S2）、末尾の notes は dispatch（S4。記憶の差分など）。bot の会話でなければどちらも空
     turnExtras: guard('turnExtras', async (turn) => {
       const setup = await bots.turnSetup(turn);
@@ -120,6 +124,6 @@ export function createBotHost(deps) {
     async start() { for (const s of services) await guard('start', () => s.start())(); },
     stop() { for (const s of [...services].reverse()) guard('stop', () => s.stop())(); },
     /** stop に加えて、DB の接続を離す（スレッドの状態・夜の整理の進み。データ置き場を消す前。テストの後片付け用） */
-    async close() { this.stop(); await guard('close', () => channels.close())(); learner.close(); brain.close(); },
+    async close() { this.stop(); await guard('close', () => channels.close())(); learner.close(); brain.close(); wakes.close(); },
   };
 }

@@ -167,7 +167,8 @@ export function scriptOf(prompt) {
     rest = rest.slice(hit[0].length);
     if (hit[1] === "pleiad-channel") { said = hit[2]; heard = /^<pleiad-channel\b[^>]*\sheard="true"/.test(hit[0]); }
     // 心拍から自分で起きたターン（ADR 0126）: 本文の「理由: …」を台本にする（"echo:こんにちは" なら話す。何も無ければ黙る）
-    else if (hit[1] === "pleiad-inner") { const why = /(?:理由|Reason): (.*)/.exec(hit[2])?.[1]; if (why) said = why; }
+    // 予約した時刻に起きたターン（kind="wake"。ADR 0135）: 最初の予約のメモを台本にする
+    else if (hit[1] === "pleiad-inner") { const why = /(?:理由|Reason|予約のメモ|Note of the reservation for [^:]*): (.*)/.exec(hit[2])?.[1]; if (why) said = why; }
   }
   const script = rest.trim() || (said ?? "").replace(/^\s*(?:@\S+\s+)+/, "").trim();
   if (heard && !rest.trim()) return script.startsWith("chime-steps:") ? `steps:${script.slice(12)}` : script.startsWith("chime:") ? `echo:${script.slice(6)}` : "echo:";

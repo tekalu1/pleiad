@@ -48,6 +48,13 @@ const log = (...a) => console.error('  pulse:', ...a);
 const errText = (e) => String(e?.message ?? e);
 const clip = (s, n) => [...String(s ?? '').replace(/\s+/g, ' ').trim()].slice(0, n).join('');
 
+/** 予算を引く「家」のチャンネル: Bot.pulse.channelId（有効なチャンネルなら）、無ければ入っている最初のチャンネル。list は channels.list() の返り。予約（wakes.mjs）も使う */
+export function pickHome(bot, list) {
+  const usable = (c) => c.kind === 'channel' && !c.archivedAt;
+  const chosen = bot.pulse?.channelId ? list.find((c) => c.id === bot.pulse.channelId && usable(c)) : null;
+  return chosen ?? list.filter((c) => usable(c) && c.members?.includes(bot.id)).sort((a, b) => (a.createdAt ?? 0) - (b.createdAt ?? 0))[0] ?? null;
+}
+
 export function createPulse({ dataDir, brain, channels, bots, host, budget, dispatch, memory = null, clock, now = () => clock.now(), ask = null, floorMs = PULSE_FLOOR_MS, tickMs = TICK_MS, everyMs = null } = {}) {
   let timer = null;
   let closed = true;
@@ -61,13 +68,8 @@ export function createPulse({ dataDir, brain, channels, bots, host, budget, disp
 
   // ------------------------------------------------------------ 材料
 
-  /** 予算を引く「家」のチャンネル: Bot.pulse.channelId（有効なチャンネルなら）、無ければ入っている最初のチャンネル */
-  async function homeOf(bot) {
-    const list = await channels.list();
-    const usable = (c) => c.kind === 'channel' && !c.archivedAt;
-    const chosen = bot.pulse?.channelId ? list.find((c) => c.id === bot.pulse.channelId && usable(c)) : null;
-    return chosen ?? list.filter((c) => usable(c) && c.members?.includes(bot.id)).sort((a, b) => (a.createdAt ?? 0) - (b.createdAt ?? 0))[0] ?? null;
-  }
+  /** 予算を引く「家」のチャンネル（pickHome） */
+  const homeOf = async (bot) => pickHome(bot, await channels.list());
 
   /**
    * 前回の心拍から後の出来事（所属チャンネルの投稿だけ。Chats の会話・他の bot の DM は読まない）。system・消した投稿・書き途中の投稿は除く。
