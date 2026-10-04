@@ -4949,7 +4949,8 @@ function inputRouting(card) {
 function pinnedFacts(card, routing) {
   const result = cardJson(card, '.tc-output') ?? {};
   const task = taskById(card.dataset.taskId) ?? {};
-  const mode = result.mode ?? task.mode ?? '';
+  // 依頼元が子の設定を替えたら（ADR 0135）、ply_delegate の返り値は前の委譲先のもの。タスクの記録の今の mode を使う
+  const mode = (routing.changed ? task.mode ?? result.mode : result.mode ?? task.mode) ?? '';
   // 分けた作業場所の子は、パスの代わりに「作業場所」の行（ブランチ付き。paintDelegateWorkspace）が出る
   return { names: routingNames, mode: mode ? state.vocab.get(routing.target.backend)?.modes?.[mode]?.label ?? mode : '', cwd: task.worktree ? '' : result.cwd ?? task.cwd ?? '' };
 }

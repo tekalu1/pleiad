@@ -375,7 +375,7 @@ export function pinnedDetail(routing, { names = defaultNames, mode = '', cwd = '
   const facts = el('dl', 'rt-facts');
   const target = targetText(routing?.target, names);
   facts.append(fact(t('routing.detail.kind'), kindText(routing?.kind)),
-    fact(t('routing.detail.target'), routing?.mode === 'pinned' ? t('routing.detail.targetPinned', { target }) : target));
+    fact(t('routing.detail.target'), routing?.changed ? t('routing.detail.targetChanged', { target }) : routing?.mode === 'pinned' ? t('routing.detail.targetPinned', { target }) : target));
   if (mode) facts.append(fact(t('routing.detail.mode'), mode));
   if (cwd) facts.append(fact(t('routing.detail.cwd'), cwd));
   root.append(facts);

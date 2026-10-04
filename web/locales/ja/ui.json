@@ -2857,6 +2857,7 @@
       "retried": "やり直し",
       "target": "委譲先",
       "targetPinned": "{{target}}（依頼元が指定）",
+      "targetChanged": "{{target}}（依頼元が変更）",
       "mode": "承認モード",
       "cwd": "作業場所",
       "json": "入力・出力（JSON）"
