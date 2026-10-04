@@ -605,15 +605,13 @@
     "who": "“{{title}}”",
     "whoMany": "“{{title}}” and {{count}} more",
     "whoAnother": "another conversation",
-    "note": "Same repository in use by {{who}}",
-    "noteLabel": "Other work in the same repository",
-    "split": "Start separately",
-    "keep": "Stay here",
-    "always": "Always separate",
-    "alwaysTitle": "From now on, start in a separate workspace without asking. You can turn this off in Settings.",
+    "autoSuffix": "starts separately",
+    "autoTitle": "Same repository in use by {{who}}, so this starts in a separate workspace",
     "chipSuffix": "separate workspace",
     "chipTitle": "Separate workspace · from {{origin}}",
     "start": "Start in a separate workspace",
+    "stay": "Start here in the original",
+    "stayOnce": "This time only",
     "from": "from {{path}}",
     "back": "Back to the original",
     "next": "Separate workspace ({{path}})",
@@ -657,9 +655,9 @@
       }
     },
     "settings": {
-      "title": "Separate workspaces",
-      "always": "When another conversation is working in the same repository, always start separately without asking",
-      "description": "When off, you choose “Start separately” or “Stay here” above the composer. When on, conversations you start begin in a separate workspace and leave a single quiet line in the conversation."
+      "title": "Workspaces",
+      "always": "Start in a separate workspace while another conversation is writing in the same repository",
+      "description": "When this happens, a line in the conversation lets you move back to the original."
     },
     "delegate": {
       "unmerged": "Not merged"

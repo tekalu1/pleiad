@@ -62,7 +62,7 @@ export default async function (t) {
 
   const uploading = [];
   const state = { current: 'old', busy: false, loadingSession: null, drafts: new Map(), attached: [], sessions: [], messages: [], presents: [],
-    pendingPerms: new Map(), cwd: '', homeDir: 'C:/home', backendId: 'fake', prefs: {}, draft: {}, mode: 'default', runningIds: new Set(), stopping: new Set() };
+    pendingPerms: new Map(), cwd: '', homeDir: 'C:/home', backendId: 'fake', prefs: {}, draft: {}, mode: 'default', runningIds: new Set(), stopping: new Set(), worktree: { stay: new Set() } };
   const storage = new Map();
   // client.mjs の saveDraft・loadDraft・submit などをここで走らせる。そこから新しいモジュールの定数を引いたら、身代わりを足す
   const context = vm.createContext({
@@ -102,6 +102,9 @@ export default async function (t) {
     syncResume: noop, paintInterruptLine: noop, isInterrupted: () => false, interruptReadPoint: () => 0, resumeSettled: () => false,
     // 送信予定（日時を指定した送信。web/client.mjs の submit が引く）。このテストは日時を指定しない
     armedSends: new Map(), scheduleAttempt: null, limitOp: async () => ({}), paintArmed: noop,
+    // 分けた作業場所（ADR 0133）。submit が「このまま元の場所で始める」の印（keepPlace）を引く。このテストでは選ばない
+    worktreeKey: () => `${state.current ?? ''}
+${state.cwd}`,
   });
   vm.runInContext(code, context);
   context.composerWait = createComposerWait({ box: $('cbox'), prompt: $('prompt'), send: $('send'), note: $('composerNote'),

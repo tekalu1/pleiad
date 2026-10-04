@@ -3991,11 +3991,11 @@ async function renewTaskWorktree(task) {
 }
 
 /**
- * 人が始めるターンで、「いつも分ける」を選んでいて、同じリポジトリの別の会話が書き込み中なら、確かめずに分ける（ADR 0089）。
- * 分けなかった・分けられなかったときは null（今の場所のまま始める）
+ * 人が始めるターンで、同じリポジトリの別の会話が書き込み中なら、確かめずに分ける（既定。設定でオフにできる。ADR 0133）。
+ * keepPlace は「このまま元の場所で始める」を選んだ今回だけ。分けなかった・分けられなかったときは null（今の場所のまま始める）
  */
-async function autoSplitTurn({ sessionId, cwd }) {
-  if (!(await worktreeHost.worktrees.getSettings()).always) return null;
+async function autoSplitTurn({ sessionId, cwd, keepPlace = false }) {
+  if (keepPlace || !(await worktreeHost.worktrees.getSettings()).always) return null;
   const check = await worktreeHost.check({ sessionId, cwd, writes: true });
   if (!check.canSplit || !check.conflicts.length) return null;
   const made = await worktreeHost.split({ cwd, sessionId });
@@ -4304,12 +4304,12 @@ async function runTurnInternal(args, onStarted, hooks) {
     const model = await resolveModel(sessionId, reserved ? reserved.model : args?.model, backend, cwd, endpointId);
     const effort = await resolveEffort(sessionId, reserved ? reserved.effort ?? "" : args?.effort, backend, model, cwd, endpointInfo);
     // 分けた作業場所（ADR 0089）。使う場所が分けた作業場所の中なら控える（片付けの印・取り込みを頼む相手）。片付けている最中の場所では始めない。
-    // 「いつも分ける」を選んでいて、人が始めるターンで同じリポジトリの別の会話が書き込み中なら、確かめずに分けて始める
+    // 人が始めるターンで同じリポジトリの別の会話が書き込み中なら、確かめずに分けて始める（「このまま元の場所で始める」の今回だけは除く）
     let worktreeEntry = await worktreeHost.worktrees.byPath(cwd);
     if (worktreeEntry && worktreeEntry.state !== 'ready') throw new Error(t('worktree.cleaning'));
     let worktreeNote = null;
     if (!worktreeEntry && !hooks.internal && !hooks.compact && !hooks.signal && writesScope(backend.modes()?.[permissionMode])) {
-      const split = await autoSplitTurn({ sessionId, cwd }).catch(() => null);
+      const split = await autoSplitTurn({ sessionId, cwd, keepPlace: args?.keepPlace === true }).catch(() => null);
       if (split) {
         if (sessionId) {
           await store.recordChange(sessionId, { by: 'ply', field: 'cwd', from: cwd, to: split.cwd, ...savedReason('worktreeSplit'), backend });
@@ -5785,14 +5785,15 @@ wss.on("connection", (ws, req) => {
           await runTurn(msg.args ?? {}, () => reply(true, "started"));
           return;
         case 'sendMessage': {
-          const { sessionId, messageId, prompt, attachments, cwd, mode, rewind } = msg.args ?? {};
+          const { sessionId, messageId, prompt, attachments, cwd, mode, rewind, keepPlace } = msg.args ?? {};
           if (!sessionId || !refuseRetired(await resolveBackendForSession(sessionId))) throw new Error(t('session.notFound'));
           if (typeof messageId !== 'string' || !/^[a-zA-Z0-9-]{8,80}$/.test(messageId)) throw new Error(t('send.messageIdRequired'));
           if (typeof prompt !== 'string' || !prompt.trim()) throw new Error(t('send.messageRequired'));
           if (attachments !== undefined && !Array.isArray(attachments)) throw new Error(t('send.invalidAttachments'));
           // 同じ会話の中で、発言の手前まで巻き戻して送り直す（ADR 0102）。{ beforeMessageId, stopRunning? }
           if (rewind !== undefined && (typeof rewind?.beforeMessageId !== 'string' || !rewind.beforeMessageId)) throw new Error(t('rewind.invalid'));
-          const args = { prompt, ...(attachments ? { attachments } : {}), ...(cwd ? { cwd } : {}), ...(mode ? { mode } : {}) };
+          // keepPlace: 今回だけ、ぶつかっていても分けずに今の場所で始める（入力欄の「このまま元の場所で始める」。ADR 0133）
+          const args = { prompt, ...(attachments ? { attachments } : {}), ...(cwd ? { cwd } : {}), ...(mode ? { mode } : {}), ...(keepPlace === true ? { keepPlace } : {}) };
           return reply(true, await acceptMessage(sessionId, messageId, args, { rewind }));
         }
         // 入力欄の `!`（シェルの行。ADR 0054）。人の操作なので承認モードは掛けない。送信待ちにも送り直しの控えにも積まない

@@ -86,7 +86,7 @@ export default async function (t) {
     t.ok('human-only から外した操作（モデル・分けた作業場所・通知・Hooks の読み出し・接続先・computer の停止）が CLI の一覧に出る',
       ['sessions.setModel', 'worktrees.setSettings', 'worktrees.archive', 'notify.setPc', 'hooks.readPly', 'compatEndpoints.recheck', 'compatEndpoints.delete', 'computer.stop'].every((id) => cliOps.some((o) => o.id === id)));
     t.ok('CLI の一覧に、human-only の 5 つに当たる操作は無い', !cliOps.some((o) => o.risk === 'human-only' || HUMAN_ONLY_COMMANDS.has(registry.get(o.id)?.legacyCommand)));
-    t.ok('worktrees settings true / false: 束縛されない CLI から「いつも分ける」を変えられる（write）', run('worktrees', 'settings', 'true').code === 0 && (await c.cmd('worktreeSettings')).always === true
+    t.ok('worktrees settings true / false: 束縛されない CLI から「自動で分ける」を変えられる（write）', run('worktrees', 'settings', 'true').code === 0 && (await c.cmd('worktreeSettings')).always === true
       && run('worktrees', 'settings', 'false').code === 0 && (await c.cmd('worktreeSettings')).always === false);
     t.ok('CLI に 5 つのコマンドは無い（mode・accounts の類は知らないコマンドで 2）', run('call', 'setMode').code === 2 && run('call', 'remoteDevices').code === 2);
     t.ok('--help（コマンドの後ろ）はそのコマンドの引数', (() => { const o = run('sessions', 'read', '--help').out; return /pleiad sessions read <sessionId>/.test(o) && /--message-id/.test(o) && /--before integer/.test(o); })());
