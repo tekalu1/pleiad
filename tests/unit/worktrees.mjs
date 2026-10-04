@@ -65,8 +65,19 @@ export default async function (t) {
     t.ok('設定: オフにすると保存され、読み直しても尊重される（既定で上書きしない）',
       (await createWorktrees({ dataDir: settingsDir }).getSettings()).always === false && JSON.parse(await fs.readFile(`${settingsDir}/worktrees.json`, 'utf8')).settings.always === false);
     await fresh.setSettings({ always: true });
-    t.ok('設定: オンに戻せる', (await createWorktrees({ dataDir: settingsDir }).getSettings()).always === true);
-    for (const [i, [label, body]] of [['settings が無い古い台帳', { version: 1, entries: {} }], ['always が真偽でない台帳', { version: 1, settings: { always: 'no' }, entries: {} }]].entries()) {
+    t.ok('設定: 選んだオフは chosen: true と一緒に保存される', JSON.parse(await fs.readFile(`${settingsDir}/worktrees.json`, 'utf8')).settings.chosen === true);
+    t.ok('設定: オンを選んだものも尊重される（印つきで保存）', (await createWorktrees({ dataDir: settingsDir }).getSettings()).always === true && JSON.parse(await fs.readFile(`${settingsDir}/worktrees.json`, 'utf8')).settings.chosen === true);
+    // 作業場所の行が変わって save が走っても、選んでいない設定に印は付かない（旧版の always:false が居残らない）
+    const unchosenDir = `${scratch}/settings-unchosen`;
+    await fs.mkdir(unchosenDir, { recursive: true });
+    await fs.writeFile(`${unchosenDir}/worktrees.json`, JSON.stringify({ version: 1, settings: { always: false }, entries: {} }));
+    const old = createWorktrees({ dataDir: unchosenDir });
+    const oldMade = await old.create({ cwd: repo, sessionId: 'old' });
+    await old.settle(oldMade.entry.id);   // 変更なしなので消える（後の検査に作業場所を残さない）
+    const rewritten = JSON.parse(await fs.readFile(`${unchosenDir}/worktrees.json`, 'utf8')).settings;
+    t.ok('設定: 行が変わって書き直されても、選んでいなければ印は付かず、既定のオンのまま', rewritten.chosen === false && (await createWorktrees({ dataDir: unchosenDir }).getSettings()).always === true, JSON.stringify(rewritten));
+    for (const [i, [label, body]] of [['settings が無い古い台帳', { version: 1, entries: {} }], ['always が真偽でない台帳', { version: 1, settings: { always: 'no', chosen: true }, entries: {} }],
+      ['旧版が選ばずに書いた always:false（印が無い）', { version: 1, settings: { always: false }, entries: {} }], ['印が無い always:true', { version: 1, settings: { always: true }, entries: {} }]].entries()) {
       const dir = `${scratch}/settings-old-${i}`;
       await fs.mkdir(dir, { recursive: true });
       await fs.writeFile(`${dir}/worktrees.json`, JSON.stringify(body));

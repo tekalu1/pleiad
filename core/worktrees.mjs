@@ -105,7 +105,9 @@ export function createWorktrees({ dataDir, users = async () => ({ busy: [], atta
   remove = wt.worktreeRemove, removeForced = wt.worktreeRemoveForced } = {}) {
   const file = path.join(dataDir, 'worktrees.json');
   let entries = null;          // id -> entry
-  let settings = { always: true };    // 人が始めた会話がぶつかったとき、確かめずに分けるか（既定は分ける。ADR 0133）
+  // 人が始めた会話がぶつかったとき、確かめずに分けるか（既定は分ける。ADR 0133）。chosen は人が選んだ印で、選んだときだけ always を使う
+  // （旧版の save は選ばなくても settings.always:false を書いていたので、印の無い always は捨てる）
+  let settings = { always: true, chosen: false };
   let chain = Promise.resolve();
   const busyIds = new Set();   // 作成・片付けの途中の id（同じものを二重に動かさない）
 
@@ -116,8 +118,8 @@ export function createWorktrees({ dataDir, users = async () => ({ busy: [], atta
     try {
       const v = JSON.parse(await io.readFile(file, 'utf8'));
       entries = v && typeof v === 'object' && v.entries && typeof v.entries === 'object' ? v.entries : {};
-      // 保存された値はそのまま尊重する。無い・真偽でないときだけ既定（分ける）
-      settings = { always: typeof v?.settings?.always === 'boolean' ? v.settings.always : true };
+      const chosen = v?.settings?.chosen === true && typeof v.settings.always === 'boolean';
+      settings = { always: chosen ? v.settings.always : true, chosen };
     } catch { entries = {}; }
     return entries;
   }
@@ -413,8 +415,8 @@ export function createWorktrees({ dataDir, users = async () => ({ busy: [], atta
     /** パスが台帳の分けた作業場所の中なら、その入口。作成・片付けの途中のものも返す */
     async byPath(p) { await load(); return Object.values(entries).map((e) => ({ ...e })).find((e) => insideDir(p, e.path)) ?? null; },
     /** 設定（いつも分ける）。台帳と同じファイルに持つ（prefs の設定の一覧に載せる段階まで） */
-    async getSettings() { await load(); return { ...settings }; },
-    async setSettings(patch) { await mutate(() => { if (typeof patch?.always === 'boolean') settings.always = patch.always; }); return { ...settings }; },
+    async getSettings() { await load(); return { always: settings.always }; },
+    async setSettings(patch) { await mutate(() => { if (typeof patch?.always === 'boolean') { settings.always = patch.always; settings.chosen = true; } }); return { always: settings.always }; },
     /** 台帳にある id（読み込み済みのときだけ。画面の「未取り込み」の印に使う。同期） */
     ids() { return entries ? Object.values(entries).filter((e) => e.state !== 'creating').map((e) => ({ id: e.id, kept: Boolean(e.kept) })) : []; },
     /** パスが台帳の分けた作業場所の中なら、その入口（同期。読み込み済みのときだけ。一覧の行の印に使う） */
