@@ -491,8 +491,10 @@ async function taskSettingsPlan(owner, args, lng) {
   const cwd = meta.nextSettings?.cwd ?? meta.cwd ?? task.cwd;
   const before = { backend: current.id, model: (reserved ? meta.nextSettings.model : meta.nextSettings?.model ?? meta.model) ?? '',
     effort: (reserved ? meta.nextSettings.effort : meta.nextSettings?.effort ?? meta.effort) ?? '' };
+  // 予約したエージェントを今の会話のエージェントへ戻すときは、子の会話の接続先・モデルに戻す
   let endpoint;
   if (target.id === current.id) endpoint = meta.nextSettings?.endpoint ?? meta.compatEndpoint ?? '';
+  else if (target.id === source.id) endpoint = meta.compatEndpoint ?? '';
   else {
     const auto = ['auto', 'manual'].includes(task.routing?.mode);
     const parentBackend = await resolveBackendForSession(owner);
@@ -500,7 +502,8 @@ async function taskSettingsPlan(owner, args, lng) {
     if (endpoint && !(await compatEndpoints.has(endpoint, target.id))) throw new Error(agentT(lng, 'delegation.endpointDeleted'));
   }
   if (!endpointCapable(target)) endpoint = '';
-  const model = args.model ?? (target.id === current.id ? before.model : await resolveModel(null, undefined, target, cwd, endpoint));
+  const model = args.model ?? (target.id === current.id ? before.model : target.id === source.id ? meta.model ?? ''
+    : await resolveModel(null, undefined, target, cwd, endpoint));
   if (args.model !== undefined && !(await validModel(target, model, cwd, endpoint).catch(() => false))) {
     const known = endpoint ? [] : Object.keys(await target.models(cwd).catch(() => ({}))).filter(Boolean).slice(0, 30);
     throw new Error(agentT(lng, 'tasks.modelUnknown', { model, backend: target.id, models: known.join(', ') || '-' }));
