@@ -21,12 +21,19 @@ export default async function (t) {
   const scratch = await fs.mkdtemp(path.join(os.tmpdir(), 'ply-delegation-settings-'));
   const server = await startServer({ dataDir: scratch, env: { AGENT_HOST_BACKENDS: 'fake,codex,antigravity',
     AGENT_HOST_CODEX_BIN: `node "${path.join(ROOT, 'tests/lib/fake-codex.mjs')}"`,
-    AGENT_HOST_AGY_BIN: `node "${path.join(ROOT, 'tests/lib/fake-agy.mjs')}"` } });
+    AGENT_HOST_AGY_BIN: `node "${path.join(ROOT, 'tests/lib/fake-agy.mjs')}"`,
+    // 使用枠: 身代わりの agy の「Claude and GPT models」は 5 時間の枠が 100%（quota_full の確かめ）。取り置きは定期的に取る
+    AGENT_HOST_ROUTING_USAGE: 'on', FAKE_AGY_EXTRA_MODELS: 'claude-opus-4-6-thinking',
+    // 台本 slow も途中送信を受ける（エージェントを替える指示が、今のターンへ途中送信されないことの確かめ）
+    AGENT_HOST_FAKE_SLOW_STEER: '1' } });
   const permissions = [];
   let allow = true;
+  // 承認カードが届いたときに、答える前に走らせる仕事（承認を待つ間にタスクが止められる場面）
+  let beforeAnswer = null;
   const c = await open({ port: server.port, token: server.token, onEvent: async (ev, api) => {
     if (ev.type !== 'permission') return;
     permissions.push(ev);
+    if (beforeAnswer && ev.toolName === 'ply_task_send') { const fn = beforeAnswer; beforeAnswer = null; await fn(api).catch(() => {}); }
     await api.cmd('resolvePermission', { id: ev.id, allow }).catch(() => {});
   } });
   const tasks = async () => c.cmd('agentTasks');
@@ -142,5 +149,70 @@ export default async function (t) {
     done = (await tasks()).find(r => r.taskId === made.taskId);
     t.ok('許可すれば替わり、子の承認モードは委譲と同じ規則で決まる（agy は yolo）', !agy.error && asked().length === 2 && done.backend === 'antigravity' && done.mode === 'yolo'
       && (await row(made.sessionId)).nextSettings?.mode === 'yolo', JSON.stringify({ agy: agy.error, backend: done.backend, mode: done.mode }));
+
+    // ---- 元のエージェントへ戻すと、タスクの承認モードも子の会話の今のモードに戻る（yolo のまま残さない）
+    const back = await call(parent, 'ply_task_send', { taskId: made.taskId, backend: 'fake' });
+    done = (await tasks()).find(r => r.taskId === made.taskId);
+    child = await row(made.sessionId);
+    t.ok('元のエージェントへ戻すと予約が消え、タスクの mode も子の会話の今のモードになる', !back.error && !child.nextSettings && done.backend === 'fake' && done.mode === child.mode && done.mode !== 'yolo'
+      && back.settings?.mode === child.mode, JSON.stringify({ back: back.error, task: done.mode, child: child.mode }));
+
+    // ---- 何も変わらない呼び出しは記録を書かない（「依頼元が変更」の回数を増やさない）
+    const countBefore = done.routing?.changed?.count;
+    const quietMark = c.mark();
+    const same = await call(parent, 'ply_task_send', { taskId: made.taskId, model: 'fast' });
+    done = (await tasks()).find(r => r.taskId === made.taskId);
+    t.ok('今と同じ値なら、タスクの記録も変更の記録も書かず、画面にも知らせない', !same.error && done.routing?.changed?.count === countBefore
+      && !c.since(quietMark).some(e => e.type === 'agentTaskChanged'), JSON.stringify({ count: done.routing?.changed?.count, countBefore }));
+
+    // ---- 空白だけの message と一緒に送ったら、設定も書かない
+    const blank = await call(parent, 'ply_task_send', { taskId: made.taskId, effort: 'high', message: '   ' });
+    done = (await tasks()).find(r => r.taskId === made.taskId);
+    t.ok('空白だけの message は断り、思考の強さの予約も入れない', Boolean(blank.error) && done.effort !== 'high' && !(await row(made.sessionId)).nextSettings,
+      JSON.stringify({ blank, effort: done.effort, next: (await row(made.sessionId)).nextSettings }));
+
+    // ---- 使用枠が満杯と分かっている委譲先は断る（承認カードも出さない）
+    for (let i = 0; i < 200; i++) {
+      const cand = (await c.cmd('delegationRouting')).candidates.find(x => x.candidate === 'antigravity:claude-opus-4-6-thinking');
+      if (cand?.reason === 'quota_full' || cand?.checkedAt) break;
+      await sleep(100);
+    }
+    const askedBefore = asked().length;
+    const full = await call(parent, 'ply_task_send', { taskId: made.taskId, backend: 'antigravity', model: 'claude-opus-4-6-thinking' });
+    t.ok('使用枠が満杯の委譲先は quota_full で断り、聞かずに何も変えない', String(full.error ?? '').includes('quota_full') && asked().length === askedBefore
+      && (await tasks()).find(r => r.taskId === made.taskId).backend === 'fake', JSON.stringify(full));
+
+    // ---- ply_control の call_op（delegation.taskSend）からも同じ道で替えられる
+    const viaControl = await c.runTurn({ sessionId: parent, prompt: 'control:' + JSON.stringify({ name: 'call_op', arguments: { op: 'delegation.taskSend', args: { taskId: made.taskId, effort: 'low' } } }) });
+    const controlOut = viaControl.events.find(e => e.type === 'tool.result' && e.sessionId === parent);
+    done = (await tasks()).find(r => r.taskId === made.taskId);
+    t.ok('ply_control の delegation.taskSend でも設定だけ替えられる', controlOut && !controlOut.isError && done.effort === 'low', controlOut?.text?.slice(0, 300));
+
+    // ---- 人が子の予約を取り消したら、子のターンの始まりでタスクの記録を実際の値に合わせる
+    await call(parent, 'ply_task_send', { taskId: made.taskId, backend: 'codex' });
+    t.ok('（前提）タスクは codex を指す', (await tasks()).find(r => r.taskId === made.taskId).backend === 'codex');
+    await c.cmd('setTurnSettings', { sessionId: made.sessionId, cancel: true });
+    await call(parent, 'ply_task_send', { taskId: made.taskId, message: 'echo:FOUR' });
+    await settle(made.taskId);
+    done = (await tasks()).find(r => r.taskId === made.taskId);
+    t.ok('人が予約を取り消した子は元のエージェントで走り、タスクの記録もそれに合う', done.result === 'FOUR' && done.backend === 'fake' && (await row(made.sessionId)).backend === 'fake',
+      JSON.stringify({ backend: done.backend, result: done.result }));
+
+    // ---- 走っている子にエージェントの切り替えと指示を一緒に送ると、指示は今のターンへ途中送信せず、替えた後のターンへ回す
+    const run2 = await call(parent, 'ply_delegate', { kind: 'mechanical', backend: 'fake', task: 'slow' });
+    await awaitTask(run2.taskId, r => r.status === 'running', 'slow2 running');
+    for (let i = 0; i < 100 && !(await c.cmd('running')).turns.some(x => x.sessionId === run2.sessionId); i++) await sleep(50);
+    const together = await call(parent, 'ply_task_send', { taskId: run2.taskId, backend: 'codex', message: 'echo:ON_CODEX' });
+    const queued = (await c.cmd('agentTaskInstructions', { taskId: run2.taskId })).instructions;
+    t.ok('エージェントを替える指示は走っているターンへ途中送信しない（待機にして替えた後のターンで読ませる）', !together.error && queued.length === 1 && queued[0].state === 'queued',
+      JSON.stringify({ together: together.error, queued }));
+
+    // ---- 承認カードを待つ間にタスクが止められたら、許可しても何も書かない
+    beforeAnswer = api => api.cmd('cancelAgentTask', { taskId: run2.taskId });
+    const raced = await call(parent, 'ply_task_send', { taskId: run2.taskId, backend: 'antigravity' });
+    const run2Row = (await tasks()).find(r => r.taskId === run2.taskId);
+    const run2Child = await row(run2.sessionId);
+    t.ok('承認を待つ間に止められたタスクは、許可しても断り、子の予約も記録も変えない', Boolean(raced.error) && run2Row.backend === 'codex' && run2Child.nextSettings?.backend === 'codex',
+      JSON.stringify({ raced, backend: run2Row.backend, next: run2Child.nextSettings }));
   } finally { c.close(); await server.stop(); await fs.rm(scratch, { recursive: true, force: true }); }
 }

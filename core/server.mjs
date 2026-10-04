@@ -21,7 +21,7 @@ import { appendFileSync } from 'node:fs';
 import { KINDS, JUDGES, TIERS, SIGNALS, normalizeSettings, RETIRED_KEYS, RoutingSettingsError, pinnedRouting, manualRouting, route, candidateStates, settingsWarnings, checkCandidate, selectRetryAccount, parseCandidate, formatSkippedCandidates } from './delegation-routing.mjs';
 import { judgeDifficulty, normalizeKey, SECRET_PREFIX as ROUTING_SECRET_PREFIX, JUDGE_SERVICE, JUDGE_TIMEOUT_MS } from './delegation-judges.mjs';
 import { createUsageMonitor } from './delegation-usage.mjs';
-import { canDelegate, resolveDelegatedMode, modePosition, scopeRank } from './modes.mjs';
+import { canDelegate, resolveDelegatedMode, modePosition, scopeRank, autonomyRank, SCOPES, AUTONOMIES } from './modes.mjs';
 import { createGitActivity } from './git-activity.mjs';
 import * as gitInfo from './git-info.mjs';
 import { createWorktreeHost, writesScope } from './worktree-host.mjs';
@@ -432,11 +432,12 @@ async function callAgentOp(owner, name, args, { locale } = {}) {
   // 選んだ後は、書いた backend と同じく下の承認の強さの判定・承認カードを通る
   if (name === 'ply_delegate') args = await routeDelegation(args, lng, path.resolve(turn.info.cwd ?? process.cwd(), typeof args.cwd === 'string' ? args.cwd : '.'));
   // ply_task_send の backend・model・effort（ADR 0135）。何も変えないうちに確かめ、エージェントを替えるなら下の承認の強さの判定を通す
-  const settings = name === 'ply_task_send' && TASK_SETTINGS.some(k => args[k] !== undefined) ? await taskSettingsPlan(owner, args, lng) : null;
+  let settings = name === 'ply_task_send' && TASK_SETTINGS.some(k => args[k] !== undefined) ? await taskSettingsPlan(owner, args, lng, turn) : null;
   // 子の承認モードは「親の強さまで継ぐ、それを超えない」（core/modes.mjs）。
   // 決めるのはここだけ。prepare は決まった結果をそのまま使う（同じ判定を二度しない）。
   const child = name === 'ply_delegate' ? getBackend(args.backend) : settings?.switching ? settings.target : null;
-  const decided = child ? resolveDelegatedMode({ parentMode: turn.info.mode, parentModes: turn.backend.modes(), childModes: child.modes() }) : null;
+  // 子の設定を替えるときは、子の今の強さも上限にした判定（taskSettingsPlan の decided）
+  const decided = settings ? settings.decided : child ? resolveDelegatedMode({ parentMode: turn.info.mode, parentModes: turn.backend.modes(), childModes: child.modes() }) : null;
   // codex は MCP のツール呼び出しを自前の承認に通さない。full / yolo 以外の codex 親では、
   // これが無いと委譲が起きたこと自体に人間が気づけないので、強さが収まっていても聞く。
   const codexBlind = turn.backend.id === 'codex' && !['full', 'yolo'].includes(turn.info.mode);
@@ -445,6 +446,12 @@ async function callAgentOp(owner, name, args, { locale } = {}) {
     const title = decided ? t('permission.delegateEscalation', { agent: child.label, mode: child.modes()[decided.mode]?.label ?? decided.mode, modeId: decided.mode }) : undefined;
     const answer = await askPermission({ toolName: name, input: args, title, sessionId: owner, signal: turn.ac.signal, kind: 'tool', canAlways: false, locale: lng });
     if (!answer.allow) throw new Error(agentT(lng, 'delegation.denied'));
+    // 承認を待つ間に、タスクが止められた・子の設定が人や別の呼び出しで変わったなら、古い計画で書かずに断る
+    if (settings) {
+      const again = await taskSettingsPlan(owner, args, lng, turn);
+      if (again.key !== settings.key) throw new Error(agentT(lng, 'tasks.settingsMoved'));
+      settings = again;
+    }
   }
   // 分けた作業場所（ADR 0089）。同じリポジトリに書き手が並ぶとき（または isolate: true）、Pleiad が子ごとに作る。isolate: false・git でない・読むだけなら今の場所
   if (name === 'ply_delegate') {
@@ -454,11 +461,7 @@ async function callAgentOp(owner, name, args, { locale } = {}) {
       writes: child ? writesScope(child.modes()[decided?.mode]) : true });
     args = { ...args, isolate: verdict.isolate };
   }
-  if (settings) {
-    const applied = await applyTaskSettings(owner, settings, decided?.mode, lng);
-    if (args.message === undefined) return applied;
-    return { ...(await agentTasks.call(owner, name, args, turn.ac.signal, lng)), settings: applied.settings };
-  }
+  if (settings) return applyTaskSettings(owner, settings, lng, { message: args.message, signal: turn.ac.signal });
   const result = await agentTasks.call(owner, name, decided?.mode ? { ...args, mode: decided.mode } : args, turn.ac.signal, lng);
   // 子が使い始めるので、振り分けに使う使用量を取り直しておく（待たない）
   if (name === 'ply_delegate' && routingSettingsCache.enabled && ROUTING_USAGE_AUTO) routingUsage.refresh().catch(() => {});
@@ -467,30 +470,38 @@ async function callAgentOp(owner, name, args, { locale } = {}) {
 
 // ---- 委譲した子の設定を親が替える（ply_task_send の backend・model・effort。docs/agent-delegation.md「ツール」、ADR 0135）
 const TASK_SETTINGS = ['backend', 'model', 'effort'];
+/** 子のターンが始まるところ（引き継ぎの最中を含む）・分岐の最中。この間は子の設定を書かない（reserveTurnSettings も断る） */
+const childStarting = sessionId => forking.has(sessionId) || (switching.has(sessionId) && !runtime.turns.has(sessionId));
 /**
- * 替える内容を確かめて決める（まだ何も変えない）。自分が委譲した子だけ。モデル・思考の強さは子の作業場所の一覧で確かめ、
- * 無い・使用枠が満杯なら断る。エージェントを替えるときの接続先は ply_delegate と同じ規則（自動・人が選んだ委譲先なら公式、
- * 固定なら親の会話から継ぐ）。アカウントは替えない（子の会話のまま。ADR 0094）
+ * 替える内容を確かめて決める（まだ何も変えない）。断る理由はすべてここで見る: 自分が委譲した子か・止めている途中か・
+ * 子のターンが始まるところか・message の形・モデルが子の作業場所の一覧にあるか・使用枠が満杯か・思考の強さを選べるか。
+ * エージェントを替えるときの子の承認モードもここで決める（親の強さと、子の今の強さの弱い方まで。decided）。
+ * 接続先は ply_delegate と同じ規則（自動・人が選んだ委譲先なら公式、固定なら親の会話から継ぐ）。アカウントは替えない（子の会話のまま。ADR 0094）。
+ * key は計画の元にした状態（承認カードを待つ間に変わったかを見る）
  */
-async function taskSettingsPlan(owner, args, lng) {
+async function taskSettingsPlan(owner, args, lng, turn) {
   const task = agentTasks.get(String(args.taskId ?? ''));
   if (!task || task.parentSessionId !== owner) throw new Error(agentT(lng, 'tasks.notOwned'));
   if (task.status === 'cancelling') throw new Error(agentT(lng, 'tasks.stopping'));
   for (const k of TASK_SETTINGS) {
     if (args[k] !== undefined && (typeof args[k] !== 'string' || (k === 'backend' && !args[k]) || args[k].length > 200)) throw new Error(agentT(lng, 'tasks.textLength', { name: k, max: 200 }));
   }
+  // 一緒に積む指示は、設定を書く前に agentTasks と同じ規則で確かめる（空白だけ・60,000 字を超える）
+  if (args.message !== undefined && (typeof args.message !== 'string' || !args.message.trim() || args.message.length > 60000))
+    throw new Error(agentT(lng, 'tasks.textLength', { name: 'message', max: 60000 }));
   const sessionId = task.sessionId;
+  if (childStarting(sessionId)) throw new Error(agentT(lng, 'tasks.childStarting'));
   const meta = await store.get(sessionId);
   const source = refuseRetired(await resolveBackendForSession(sessionId));
   if (!source) throw new Error(agentT(lng, 'tasks.notOwned'));
-  // 次のターンが走る先（予約があればそれ）。替えるのはそこからの差分
+  // 次のターンが走る先（予約があればそれ。予約はいつも backend を持つ）。替えるのはそこからの差分
   const reserved = meta.nextSettings?.backend ? getBackend(meta.nextSettings.backend) : null;
   const current = reserved ?? source;
   const target = args.backend !== undefined ? getBackend(args.backend) : current;
   if (!target) throw new Error(agentT(lng, 'delegation.backendDisabled'));
   const cwd = meta.nextSettings?.cwd ?? meta.cwd ?? task.cwd;
-  const before = { backend: current.id, model: (reserved ? meta.nextSettings.model : meta.nextSettings?.model ?? meta.model) ?? '',
-    effort: (reserved ? meta.nextSettings.effort : meta.nextSettings?.effort ?? meta.effort) ?? '' };
+  const before = { backend: current.id, model: (reserved ? meta.nextSettings.model : meta.model) ?? '',
+    effort: (reserved ? meta.nextSettings.effort : meta.effort) ?? '', mode: (reserved ? meta.nextSettings.mode : undefined) ?? meta.mode ?? '' };
   // 予約したエージェントを今の会話のエージェントへ戻すときは、子の会話の接続先・モデルに戻す
   let endpoint;
   if (target.id === current.id) endpoint = meta.nextSettings?.endpoint ?? meta.compatEndpoint ?? '';
@@ -518,42 +529,79 @@ async function taskSettingsPlan(owner, args, lng) {
     const choices = Object.keys(await effortOptions(target, model, cwd, await endpointRow(endpoint)));
     if (args.effort !== '' && !choices.includes(args.effort)) throw new Error(agentT(lng, 'tasks.effortUnknown', { effort: args.effort, backend: target.id, model: model || '-', choices: choices.filter(Boolean).join(', ') || '-' }));
   }
-  return { task, sessionId, source, target, before, model, effort: args.effort, endpoint, account, cwd,
-    switching: target.id !== source.id, modelGiven: args.model !== undefined };
+  const switching = target.id !== source.id;
+  // 子の承認モード（エージェントを替えるとき）。上限は親の強さと、子の今の強さ（人が下げていればそれ）の弱い方
+  let decided = null;
+  if (switching) {
+    const parent = modePosition(turn.backend.modes()[turn.info.mode]);
+    const own = modePosition(source.modes()[meta.mode]);
+    const cap = { scope: SCOPES[Math.min(scopeRank(parent.scope), scopeRank(own.scope))], autonomy: AUTONOMIES[Math.min(autonomyRank(parent.autonomy), autonomyRank(own.autonomy))],
+      enforced: parent.enforced && own.enforced };
+    decided = resolveDelegatedMode({ parentMode: 'cap', parentModes: { cap }, childModes: target.modes() });
+  }
+  const key = JSON.stringify([task.status === 'cancelling', meta.nextSettings ?? null, meta.model ?? '', meta.effort ?? '', meta.mode ?? '', source.id, target.id, model, args.effort ?? null, endpoint, account, decided?.mode ?? null, decided?.escalation ?? null]);
+  return { task, sessionId, source, target, before, model, effort: args.effort, endpoint, account, cwd, switching, decided, key, modelGiven: args.model !== undefined };
 }
 
 /**
- * 決めた内容を子の会話とタスクの記録に入れる。子が走っていれば今のターンは止めず次のターンから（予約 nextSettings。
- * エージェントの切り替えは引き継ぎ（docs/backend-handoff.md）で履歴を渡す）。同じエージェントのモデルは、できるエージェントなら
- * 走っているターンにも即時に伝える（sessions.setModel と同じ）。mode はエージェントを替えるときの子の承認モード（親の強さまで）
+ * 決めた内容を子の会話とタスクの記録に入れ、message があれば積む。書くのはここだけで、順に
+ * 子の会話の予約（nextSettings）→ タスクの記録（retarget）→ 指示（ply_task_send）。途中で失敗したら、書いた分を前に戻して断る。
+ * 予約は子の次のターンから効き、走っているターンは止めない（エージェントの切り替えは引き継ぎ〈docs/backend-handoff.md〉で履歴を渡す）。
+ * 予約がある間は子の走っているターンへ指示を途中送信しない（canSteerNotice）ので、一緒に積んだ指示は替えた後のターンで読まれる。
+ * 全部書けたら、変更の記録を残し、同じエージェントのモデルは走っているターンにも即時に伝える（sessions.setModel と同じ。できるエージェントだけ）
  */
-async function applyTaskSettings(owner, plan, mode, lng) {
+async function applyTaskSettings(owner, plan, lng, { message, signal } = {}) {
   const { sessionId, target, before } = plan;
+  const mode = plan.decided?.mode;
+  if (childStarting(sessionId)) throw new Error(agentT(lng, 'tasks.childStarting'));
+  const prior = await store.get(sessionId);
+  const priorNext = prior.nextSettings ?? null;
+  const undoReserve = async () => {
+    await store.setSessionData(sessionId, 'nextSettings', priorNext, { durable: true }).catch(() => {});
+    emitGlobal({ type: 'nextSettings', sessionId, nextSettings: priorNext });
+  };
+  let next;
+  try {
+    next = await reserveTurnSettings({ sessionId, backend: target.id, model: plan.model,
+      ...(plan.effort !== undefined ? { effort: plan.effort } : {}), ...(plan.switching && mode ? { mode } : {}),
+      ...(target.id !== before.backend ? { endpoint: plan.endpoint } : {}), keepPrefs: true });
+  } catch (e) {
+    await undoReserve();
+    throw new Error(agentT(lng, 'tasks.settingsFailed', { error: String(e?.message ?? e) }));
+  }
+  const now = await store.get(sessionId);
+  // 子が次に走る値。承認モードは予約が無ければ子の会話の今のもの（元のエージェントへ戻したときも、タスクの mode をこれに合わせる）
+  const after = next ? { backend: next.backend, model: next.model ?? '', effort: next.effort ?? '', mode: next.mode ?? now.mode ?? '' }
+    : { backend: plan.source.id, model: now.model ?? '', effort: now.effort ?? '', mode: now.mode ?? '' };
+  let retargeted = null, result;
+  try {
+    retargeted = await agentTasks.retarget(owner, plan.task.taskId, { ...after, account: after.backend === 'claude' ? plan.account : null }, lng);
+    result = message === undefined ? retargeted.task : await agentTasks.call(owner, 'ply_task_send', { taskId: plan.task.taskId, message }, signal, lng);
+  } catch (e) {
+    if (retargeted?.changed) await agentTasks.untarget(plan.task.taskId, retargeted.previous).catch(() => {});
+    await undoReserve();
+    throw e;
+  }
+  // ここから先は断らない（起きたことの記録と、即時のモデル）
   const actor = { by: 'agent', via: 'mcp', sessionId: owner };
   const reason = savedReason('parentChanged');
-  let live = false, modelRecorded = false;
-  if (!plan.switching && plan.modelGiven && plan.model !== ((await store.get(sessionId)).model ?? '')) {
-    ({ live } = await changeModel(sessionId, plan.model, { actor, reason }));
-    modelRecorded = true;
-  }
-  const next = await reserveTurnSettings({ sessionId, backend: target.id, model: plan.model,
-    ...(plan.effort !== undefined ? { effort: plan.effort } : {}), ...(plan.switching && mode ? { mode } : {}),
-    ...(target.id !== before.backend ? { endpoint: plan.endpoint } : {}), keepPrefs: true });
-  const now = await store.get(sessionId);
-  const after = next ? { backend: next.backend, model: next.model ?? '', effort: next.effort ?? '' }
-    : { backend: plan.source.id, model: now.model ?? '', effort: now.effort ?? '' };
-  // 変更の記録（by: agent・via・bySession）。モデルを即時に替えた分は changeModel が残している
   const who = changeBy(actor);
   for (const field of TASK_SETTINGS) {
-    if (before[field] === after[field] || (field === 'model' && modelRecorded)) continue;
-    await store.recordChange(sessionId, { ...who, field, from: before[field], to: after[field], ...reason, backend: plan.source });
+    if (before[field] === after[field]) continue;
+    await store.recordChange(sessionId, { ...who, field, from: before[field], to: after[field], ...reason, backend: plan.source }).catch(() => {});
   }
-  const task = await agentTasks.retarget(owner, plan.task.taskId, { ...after, ...(plan.switching && mode ? { mode } : {}),
-    account: after.backend === 'claude' ? plan.account : null }, lng);
-  if (task.routing) await store.setSessionData(sessionId, 'routing', task.routing);
-  emitGlobal({ type: 'agentTaskChanged', sessionId: null, taskId: task.taskId });
+  let live = false;
+  const liveTurn = runtime.turns.get(sessionId);
+  if (!plan.switching && plan.modelGiven && after.model && after.model !== (prior.model ?? '') && liveTurn?.control.handle && target.setModelLive) {
+    live = await target.setModelLive(liveTurn.control.handle, after.model).catch(() => false);
+    if (live) { await store.setModel(sessionId, after.model).catch(() => {}); emitGlobal({ type: 'model', sessionId, model: after.model, by: who.by, live }); }
+  }
+  if (retargeted.changed) {
+    if (retargeted.task.routing) await store.setSessionData(sessionId, 'routing', retargeted.task.routing).catch(() => {});
+    emitGlobal({ type: 'agentTaskChanged', sessionId: null, taskId: plan.task.taskId });
+  }
   // 即時に伝わったのはモデルだけ。ほかは子の次のターンから（走っていなければ、次に走るとき）
-  return { ...task, settings: { ...after, appliesTo: 'nextTurn', ...(live ? { modelLive: true } : {}) } };
+  return { ...result, settings: { ...after, appliesTo: 'nextTurn', ...(live ? { modelLive: true } : {}) } };
 }
 
 const agentOpIds = {
@@ -4283,6 +4331,9 @@ async function runTurnInternal(args, onStarted, hooks) {
         emitGlobal({ type: "backend", sessionId, backend: backend.id, applied: true });
         emitGlobal({ type: "nextSettings", sessionId, nextSettings: null });
       }
+      // 委譲の子なら、タスクの記録を実際に走る値に合わせる（依頼元が替えた予約を人が取り消した・替えたとき。ADR 0135）
+      const synced = await agentTasks?.sync(sessionId, { backend: backend.id, model, effort, mode: permissionMode }).catch(() => null);
+      if (synced) emitGlobal({ type: 'agentTaskChanged', sessionId: null, taskId: synced });
     }
 
     if (changedFrom) settleWorktreeAt(changedFrom).catch(() => {});
