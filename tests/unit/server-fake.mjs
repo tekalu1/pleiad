@@ -575,11 +575,9 @@ async function gateCase(t, scratch, plain) {
   });
   const c = await open({ port: server.port, token: server.token });
   try {
-    // 時間指定（既定）は今までどおり、ゲート無しで時間が来れば終わる
     const timed = await c.runTurn({ backend: "fake", cwd: ROOT, prompt: "bg 2 0.3" }, { ms: 10_000 });
     t.ok("時間指定の bg は、ゲート無しで今までどおり時間で終わる", timed.outcome === "ok" && textIn(timed.events).includes("サブエージェント 1 が終わった") && textIn(timed.events).includes("サブエージェント 2 が終わった"));
 
-    // 開くまで終わらず、開くと終わる
     const mark = c.mark();
     const running = c.runTurn({ backend: "fake", cwd: ROOT, prompt: "bg 2 gate:g1" }, { ms: 20_000 });
     const session = (await c.waitFor((e) => e.type === "session", { from: mark, ms: 10_000 })).sessionId;
@@ -591,7 +589,6 @@ async function gateCase(t, scratch, plain) {
     const done = await running;
     t.ok("ゲートを開くと、本数ぶんの子が順に終わってターンが終わる", done.outcome === "ok" && textIn(done.events).includes("サブエージェント 1 が終わった") && textIn(done.events).includes("サブエージェント 2 が終わった"));
 
-    // 開かないまま中断しても、待ちから抜ける
     const mark2 = c.mark();
     const slow = c.runTurn({ backend: "fake", cwd: ROOT, prompt: "bg 1 gate:never" }, { ms: 20_000 });
     const session2 = (await c.waitFor((e) => e.type === "session", { from: mark2, ms: 10_000 })).sessionId;
@@ -600,7 +597,6 @@ async function gateCase(t, scratch, plain) {
     const stopped = await slow;
     t.ok("ゲートを開かないまま中断すると、待ちから抜けてターンが終わる", stopped.outcome === "aborted" && (await c.cmd("running")).count === 0, String(stopped.outcome));
 
-    // 「渡った」合図を HOLD_CONFIRM で止めている間に中断しても、待ちから抜ける。ゲートを開く前は合図を出さない
     const mark3 = c.mark();
     const holding = c.runTurn({ backend: "fake", cwd: ROOT, prompt: "bg 1 gate:never2" }, { ms: 20_000 });
     const session3 = (await c.waitFor((e) => e.type === "session", { from: mark3, ms: 10_000 })).sessionId;
@@ -611,6 +607,15 @@ async function gateCase(t, scratch, plain) {
     await c.cmd("abort", { sessionId: session3 });
     const held = await holding;
     t.ok("HOLD_CONFIRM の待ちの途中で中断しても、ターンが終わる", held.outcome === "aborted" && (await c.cmd("running")).count === 0, String(held.outcome));
+
+    // 不正なゲート名は途中で切って通さず、エラーでターンを終える
+    const mark4 = c.mark();
+    const bad = c.runTurn({ backend: "fake", cwd: ROOT, prompt: "bg 1 gate:never3" }, { ms: 20_000 });
+    const session4 = (await c.waitFor((e) => e.type === "session", { from: mark4, ms: 10_000 })).sessionId;
+    await c.waitFor((e) => e.type === "phase" && e.sessionId === session4 && e.state === "waiting", { from: mark4, ms: 10_000 });
+    await c.cmd("sendMessage", { sessionId: session4, messageId: "hold-0002", prompt: "ping HOLD_CONFIRM:bad/name" });
+    const badResult = (await bad).events.find((e) => e.type === "turnResult" && e.sessionId === session4);
+    t.ok("HOLD_CONFIRM の名前が不正なら、途中で切らずエラーで終わる", badResult?.outcome === "error" && String(badResult.error).includes("bad gate name"), JSON.stringify(badResult));
   } finally {
     c.close();
     await server.stop();

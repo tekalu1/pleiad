@@ -246,8 +246,8 @@ async function background(text, { s, out, emit, signal, control }) {
       if (inbox.length) {
         const { id: steeredId, text: said } = inbox.shift();
         if (STEER_CONFIRM_MS) {
-          // 本文の HOLD_CONFIRM:<ゲート> は、ゲートが開くまで「渡った」を出さない（受理してから渡るまでの間を、テストが好きなだけ見られる）
-          const hold = /HOLD_CONFIRM:([\w.-]+)/.exec(said)?.[1];
+          // 本文の HOLD_CONFIRM:<ゲート> は、ゲートが開くまで「渡った」を出さない（受理してから渡るまでの間を、テストが好きなだけ見られる）。名前が不正ならエラー
+          const hold = /(?:^|\s)HOLD_CONFIRM:(\S+)/.exec(said)?.[1];
           if (hold) await gateWait(hold, aborted);
           await Promise.race([wait(STEER_CONFIRM_MS), aborted]);
           if (signal?.signal?.aborted) continue;

@@ -17,8 +17,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 export async function fakeSignal(server, name, ms = 30_000) {
   const end = Date.now() + ms;
   while (!server.tail(200).includes(`fake-signal: ${name}`)) {
-    if (Date.now() > end) throw new Error(`fake の合図 ${name} が ${ms}ms 出なかった
-${server.tail(10)}`);
+    if (Date.now() > end) throw new Error(`fake の合図 ${name} が ${ms}ms 出なかった\n${server.tail(10)}`);
     await sleep(20);
   }
 }
