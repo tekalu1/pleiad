@@ -7696,6 +7696,8 @@ function connect() {
       for (const wake of [...onlineWaiters]) wake();
       // 設定 › アプリ情報の「外の AI から Pleiad を使う」。ホストの画面でだけ取れて、取れたら出す（web/cli-setup.mjs）
       cliSetup.load();
+      // 設定 › エージェント設定の「作業場所」。つながる前の読み込みは失敗するので、つながったときに読む（既定がオンなので、読めないとオフの人にもオンに見える）
+      worktreeSettings.load();
       // OS の操作（エクスプローラー・ブラウザーで開く）を出してよいか。接続元を見てサーバーが答える（遠隔なら false）
       // 同じ答えで、添付の出どころを選ばせるか（ホストの画面でない接続）も決める（composer-layout.mjs の attachSources）
       cmd("hostCapabilities").then((c) => {
