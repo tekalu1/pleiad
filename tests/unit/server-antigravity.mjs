@@ -260,6 +260,20 @@ export default async function (t) {
     finally { db.close(); }
     t.ok("server が failed にした経路も残す", failures.at(-1)?.source === "backend.turnResult"
       && failures.at(-1)?.error === "結果は失敗", JSON.stringify(failures.at(-1)));
+    const afterReply = await c.runTurn({ prompt: "limit-after-reply", sessionId: bodySid, cwd: ROOT }, { ms: 60_000 });
+    t.ok("完成した返事の後の上限は成功として本文を届ける", afterReply.outcome === "ok" && textOf(afterReply) === "完成した返事"
+      && !afterReply.events.some((e) => e.type === "turnResult" && e.outcome === "limited"), JSON.stringify(afterReply.outcome));
+    const afterOtherError = await c.runTurn({ prompt: "error-after-reply", sessionId: bodySid, cwd: ROOT }, { ms: 60_000 });
+    t.ok("完成した返事の後の一般エラーも成功として本文を届ける", afterOtherError.outcome === "ok" && textOf(afterOtherError) === "完成した返事");
+    const diagnostics = new DatabaseSync(path.join(dataDir, "pleiad.db"), { readOnly: true });
+    let afterFailures;
+    try { afterFailures = JSON.parse(diagnostics.prepare("SELECT value FROM session_fields WHERE session_id = ? AND field = 'antigravityFailures'").get(bodySid)?.value ?? "[]"); }
+    finally { diagnostics.close(); }
+    t.ok("返事後の失敗理由を成功ターンにも残す", afterFailures.slice(-2).every((r) => r.outcome === "ok" && r.source === "backend.afterReply"), JSON.stringify(afterFailures.slice(-2)));
+    const noReply = await c.runTurn({ prompt: "limit-no-reply", sessionId: bodySid, cwd: ROOT }, { ms: 60_000 });
+    t.ok("返事が完成しない上限は従来どおり limited", noReply.outcome === "limited", String(noReply.outcome));
+    const unfinished = await c.runTurn({ prompt: "error-after-tool", sessionId: bodySid, cwd: ROOT }, { ms: 60_000 });
+    t.ok("返事の後に道具を呼んで未完了なら失敗", unfinished.outcome === "error", String(unfinished.outcome));
     const recovered = await c.runTurn({ prompt: "復帰", sessionId: bodySid, cwd: ROOT }, { ms: 60_000 });
     t.ok("非成功 result が次のターンへ残らない", recovered.outcome === "ok" && (await spawned()).length === pidCount,
       String(recovered.outcome));

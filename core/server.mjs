@@ -1719,6 +1719,9 @@ function makeEmit(turn) {
       if (event.outcome === "error" || event.outcome === 'limited') turn.errorShown = true;
       if (turn.backend.id === 'antigravity' && (event.outcome === 'error' || event.outcome === 'limited') && !turn.failureReason)
         turn.failureReason = { source: 'backend.turnResult', error: String(event.error ?? '').slice(0, 1000) };
+      if (turn.backend.id === 'antigravity' && event.backendFailure)
+        turn.failureReason = { source: 'backend.afterReply', status: String(event.backendFailure.status ?? '').slice(0, 100),
+          error: String(event.backendFailure.error ?? '').slice(0, 1000) };
       const execution = taskExecutions.get(turn.info.sessionId);
       if (execution) { execution.outcome = event.outcome; execution.error = event.error ?? null; }
     }
@@ -4616,7 +4619,7 @@ async function endTurn(turn, emit, { record = true } = {}) {
   if (limited) interrupted.notifyAtReset = notifyAtReset;
   if (record && !requeued) await usageStore.record({ ...turn.usage, id: turn.presentKey, backend: turn.backend.id, sessionId: turn.info.sessionId })
     .catch(() => { console.error('  使用量を記録できませんでした'); });
-  if (turn.backend.id === 'antigravity' && turn.info.sessionId && (turn.outcome === 'error' || turn.outcome === 'limited')) {
+  if (turn.backend.id === 'antigravity' && turn.info.sessionId && (turn.outcome === 'error' || turn.outcome === 'limited' || turn.failureReason?.source === 'backend.afterReply')) {
     const previous = (await store.get(turn.info.sessionId).catch(() => ({}))).antigravityFailures ?? [];
     await store.setSessionData(turn.info.sessionId, 'antigravityFailures', [...previous, {
       at: completedAt, outcome: turn.outcome, ...(turn.failureReason ?? { source: 'unknown', error: '' }),

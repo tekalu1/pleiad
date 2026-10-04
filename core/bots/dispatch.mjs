@@ -40,9 +40,8 @@
 //   無ければ新しいターン、途中送信できない（Antigravity・圧縮・人の送信待ち）・忙しいときはターンの終わりにまとめて渡す。結果不明は自動では送り直さない。
 // ターンの投稿: ターンが始まると、そのスレッドに bot の投稿を 1 つ作り（state: working）、本文を 1 秒に 1 回まで書き換える。
 //   終わりに最終の返答（最後の道具の呼び出しより後の文。前の独り言は入れない）と提示を入れて state を決める。
-//   ターンの中で bot が channels.post で自分のスレッドへ書いたら、それがこのターンの返事（ADR 0117）: 最初の 1 件はターンの投稿に入り、2 件目からは新しい投稿。
-//   最終の返答（「投稿しました」のような作業の報告）は、そのときは投稿に書かない。
-//   途中送信が届いたら、これまでの返事と提示を確定し、次の返事は新しい投稿に入れる。
+//   ターンの中で bot が channels.post で自分のスレッドへ書いたら、最初の 1 件はターンの投稿に入り、2 件目からは新しい投稿（ADR 0117）。
+//   assistant の文章は道具や Stop フックを挟んでも、順番どおりにターンの投稿へまとめる。途中送信でも投稿は分けない。
 //   生の流れ（text.delta）はチャンネルへ流さず、サーバーで投稿に畳む（ADR 0024 の 1 接続 1 購読）。
 import path from 'node:path';
 import crypto from 'node:crypto';
@@ -54,6 +53,7 @@ import { createInboxStore } from './inbox.mjs';
 import { strongerMode } from './approval.mjs';
 import { createBudget } from './budget.mjs';
 import { createResting, restKey } from './resting.mjs';
+import { LIMITS as CHANNEL_LIMITS } from '../channels/service.mjs';
 
 /** ターンの投稿の本文を書き換える間隔の下限（ms）。全接続へ配る間隔と同じ */
 export const PROGRESS_INTERVAL_MS = 1000;
@@ -66,12 +66,23 @@ export const PLACEHOLDER = '…';
 export const PROGRESS_MIN_CHARS = 40;
 // 途中経過に出す区切り: 文の終わり（。！？ . ! ?）か改行。書きかけの文は出さない（1 秒おきの更新が文の途中に当たって、1 文字の断片が一瞬出るため）
 const SENTENCE_END = /^[\s\S]*(?:[。．！？!?]|\n|\.(?=\s))/;
+const postText = (value) => {
+  const text = String(value ?? '').trim();
+  if (text.length <= CHANNEL_LIMITS.text) return text;
+  let end = CHANNEL_LIMITS.text - 1;
+  if (/[\uD800-\uDBFF]/.test(text[end - 1])) end--;
+  return `${text.slice(0, end)}…`;
+};
 /**
- * ターンの投稿の途中経過の本文。出すのは、今書いている文章の「文の切れ目まで」か、書き終えた文章（道具を呼ぶ前のものは入らない）のうち、
- * 十分に長いもの。短い独り言や 1 文字の断片は '' で、投稿は「…」のまま。最終の返事は終わりに lastReply で書き換わる（finalizePost）
+ * ターンの投稿の途中経過。書き終えた文章と、今書いている文の切れ目までを出す。
+ * 短い断片は途中では表示せず、ターンの終わりに全ての文章を入れる。
  */
 export function progressBody(rec) {
   const settled = rec.cur ? (rec.cur.match(SENTENCE_END)?.[0] ?? '') : '';
+  if (rec.parts?.length) {
+    const body = postText([...rec.parts, settled].filter((part) => String(part ?? '').trim()).join('\n\n'));
+    return [...body].length >= PROGRESS_MIN_CHARS ? body : '';
+  }
   for (const text of [settled, rec.last]) {
     const body = String(text ?? '').trim();
     if ([...body].length >= PROGRESS_MIN_CHARS) return body;
@@ -513,46 +524,12 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
   /** 途中送信が渡った: 渡した印を残し、会話の画面へ出す */
   async function steered(sessionId, ids, text, cursor, callers = []) {
     const rec = active.get(sessionId);
-    if (rec && !rec.ended) { rotateReply(rec); rec.receivedSteer = true; }
+    if (rec && !rec.ended) rec.receivedSteer = true;
     await inbox.mark(ids, 'sent');
     if (rec && !rec.committed && cursor) rec.cursor = cursor;
     if (rec) for (const c of callers) rec.callers.set(c.botId, c);   // 渡った呼び出しの返事も、このターンの終わりに返す
     if (cursor) await updateSidecar(sessionId, (sb) => ({ ...sb, postCursor: cursor }));
     host.emitSession?.(sessionId, { type: 'channelEvent', rows: channelEventRows(text) });
-  }
-
-  /** 途中送信が実際に届いた位置で、それまでの返事を確定して次の返事の投稿を用意する。 */
-  function rotateReply(rec) {
-    const hasReply = rec.spoke || rec.presents.length || rec.cur.trim() || rec.last.trim() || rec.narration.trim();
-    if (!hasReply || !rec.postReady) return;
-    clearTimeout(rec.timer);
-    rec.timer = null;
-    const previous = { ...rec, presents: rec.presents, callers: rec.callers };
-    const priorPost = rec.postReady;
-    rec.postId = null;
-    rec.cur = ''; rec.last = ''; rec.narration = '';
-    rec.sawText = false; rec.sinceTool = ''; rec.lastSeg = ''; rec.sawTool = false;
-    rec.presents = []; rec.spoke = false; rec.filled = false; rec.explicit = null; rec.explicitMentions = new Set();
-    rec.callers = new Map();
-    rec.lastWritten = PLACEHOLDER; rec.postedState = 'working'; rec.botControlled = false;
-    rec.dirty = false;
-    rec.postReady = rec.chain.then(async () => {
-      previous.postId = await priorPost;
-      try {
-        const { woke, reply } = await finalizePost(previous, rec.abandoned ? 'stopped' : 'done', !rec.abandoned, { boundary: true });
-        if (!rec.abandoned && woke) await route(woke, await channels.get({ channelId: rec.channelId }));
-        if (!rec.abandoned && reply && previous.callers.size) await returnReply(previous, reply, woke);
-      } catch (e) { log('could not finalize a reply before a steer:', errText(e)); }
-      if (rec.abandoned) return null;
-      const post = await channels.post({ channelId: rec.channelId, threadId: rec.threadId, text: PLACEHOLDER,
-        state: rec.state, taint: rec.taint, turn: { botId: rec.botId, sessionId: rec.sessionId }, new: true }, botAuthor(rec.botId));
-      if (rec.abandoned) { await channels.edit({ channelId: rec.channelId, postId: post.id, state: 'stopped' }, botAuthor(rec.botId)); return null; }
-      if (rec.postReady === ready) { rec.postId = post.id; rec.postedState = rec.state; }
-      if (rec.dirty || rec.cur || rec.last || rec.presents.length) progress(rec, { immediate: true });
-      return post.id;
-    }).catch((e) => log('could not separate replies after a steer:', errText(e)));
-    const ready = rec.postReady;
-    rec.chain = ready.then(() => {}, () => {});
   }
 
   /** 新しいターンで渡す */
@@ -673,9 +650,7 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
       // 自分の心拍から起きたターン（inner: 予算の数え先・結果の行の印）と、心拍が動いている bot か（呼ばれたターンの後にも流れへ 1 行足す。ADR 0126）
       inner: pre?.inner ?? null, pulseBot: Boolean(brain && bot.pulse?.on),
       itemIds: pre?.itemIds ?? [], cursor: pre?.cursor ?? null, tail: null, callers: new Map((pre?.callers ?? []).map((c) => [c.botId, c])),
-      cur: '', last: '', narration: '', sawText: false, presents: [],
-      // 最後の道具の呼び出しより後の文（sinceTool）と、道具の前で終わった最後の文（lastSeg）。最終の返答から前の独り言を外すのに使う（finalReplyText）
-      sinceTool: '', lastSeg: '', sawTool: false,
+      cur: '', last: '', parts: [], sawText: false, presents: [],
       // bot が channels.post で自分のスレッドへ書いた（spoke）・そのうち最初の 1 件がターンの投稿に入った（filled）・2 件目からの新しい投稿の最後（explicit）
       spoke: false, filled: false, explicit: null, explicitMentions: new Set(), usage: {}, credited: { input: 0, output: 0, cached: 0 }, waiting: new Set(),
       state: 'working', postedState: 'working', lastWritten: PLACEHOLDER, botControlled: false, error: null,
@@ -784,24 +759,17 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
       case 'text.delta':
         rec.sawText = true;
         rec.cur += String(event.text ?? '');
-        rec.sinceTool += String(event.text ?? '');
         progress(rec);
         break;
       case 'text.end':
         rec.sawText = true;
-        if (rec.cur.trim()) rec.last = rec.cur;
+        if (rec.cur.trim()) { rec.last = rec.cur; rec.parts.push(rec.cur.trim()); }
         rec.cur = '';
         progress(rec);
         break;
       case 'tool.start':
-        // 途中送信の後に見えていた返事は、後続の道具呼び出しで「…」へ戻さず、その投稿に残す。
-        if (rec.receivedSteer && ((rec.lastWritten !== PLACEHOLDER && rec.lastWritten.trim()) || rec.presents.length)) rotateReply(rec);
-        // 道具を呼ぶ前の文章は、最終の返事ではなく独り言。本文には出さず、出していたら「…」に戻す。終わりの本文（止めた・失敗）の控えには残す
-        rec.narration = (rec.cur || rec.last || rec.narration);
-        rec.cur = ''; rec.last = '';
-        rec.sawTool = true;
-        if (rec.sinceTool.trim()) rec.lastSeg = rec.sinceTool;
-        rec.sinceTool = '';
+        // agy は道具の前後の文章を同じ assistant 発言で流す。境界で控え、どちらも投稿に残す。
+        if (rec.cur.trim()) { rec.last = rec.cur; rec.parts.push(rec.cur.trim()); rec.cur = ''; }
         progress(rec);
         break;
       case 'usage':
@@ -939,6 +907,10 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
     if (rec.pulseBot && (rec.kind === 'thread' || rec.kind === 'dm')) await noteResult(rec, { outcome, interrupted, reply }).catch((e) => log('could not write the stream line:', errText(e)));
     // 使用量の上限に当たった: 休憩中にして、Pleiad のお知らせを出す（bot の発言には上限の文を書かない）
     if (limited) await limitReached(rec, Number(interrupted?.resetsAt)).catch((e) => log('could not record a usage limit:', errText(e)));
+    if (outcome === 'ok') {
+      const bot = await getBot(rec.botId).catch(() => null);
+      if (bot) resting.clear(bot);
+    }
     if (rec.kind === 'thread' && rec.threadId) {
       try { episodes?.onTurnEnd(rec.channelId, rec.threadId); }
       catch (e) { log('could not schedule the thread episode:', errText(e)); }
@@ -1049,16 +1021,16 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
     }
   }
 
-  /** ターンの投稿に最終の返答と提示を入れて state を決める。本文のある返事なら failed でも @ と呼び元へ届ける */
-  async function finalizePost(rec, state, ok, { limited = false, boundary = false } = {}) {
+  /** ターンの投稿に assistant の文章と提示を入れて state を決める。本文のある返事なら failed でも @ と呼び元へ届ける */
+  async function finalizePost(rec, state, ok, { limited = false } = {}) {
     const lng = locale();
-    // bot が channels.post で自分のスレッドへ返事を書いたターンは、それが返事。最終の返答（作業の報告）は投稿に書かない（ADR 0117）
-    let text = rec.spoke ? '' : (rec.cur || rec.last || rec.narration).trim();
-    if (ok && rec.sawText && !rec.spoke) text = finalReplyText(rec, boundary ? null : await host.lastReply?.(rec.sessionId).catch(() => null)) || text;
+    let text = postText([...rec.parts, rec.cur].filter((part) => String(part ?? '').trim()).join('\n\n'));
     const none = { woke: null, reply: null };
     const current = await channels.getPost({ channelId: rec.channelId, postId: rec.postId }).catch(() => null);
     if (!current || current.deletedAt) return none;
     const bodyByBot = rec.filled || (current.text !== PLACEHOLDER && current.text !== rec.lastWritten);
+    // channels.post で明示的に書いた本文も残し、assistant の文章をその後ろに置く。
+    if (rec.spoke && bodyByBot && text) text = postText(`${current.text}\n\n${text}`);
     const hasBody = Boolean(text || (bodyByBot && current.text !== PLACEHOLDER && current.text.trim()));
     if (!text && state === 'failed' && !bodyByBot) text = agentT(lng, 'channel.turn.failed', { error: rec.error ?? '' });
     // 使用量の上限で終わったターンは、bot の発言に「止めました」も上限の文も書かない（知らせは Pleiad の投稿。ADR 0119）。bot が書いた分は残す
@@ -1076,18 +1048,6 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
     // 返事を何件かに分けて書いたなら、呼んだ bot へ返すのは最後の 1 件（その前の投稿は文脈として一緒に渡る）
     // bot が channels.post で入れた返事の @ は、書いたときに解いてある（onPosted の extra.filled）。ここで重ねて起こさない
     return { woke: deliver && !rec.filled && saved?.mentions?.some((m) => m !== 'you') ? saved : null, reply: deliver && saved ? (rec.explicit ?? saved) : null };
-  }
-
-  /**
-   * 最終の返答の文。lastReply（会話の最後の AI の発言）が、最後の道具の呼び出しより後の文（無ければ道具の前で終わった最後の文）で終わるなら、その部分だけにする。
-   * Antigravity は 1 ターンの文を 1 つの発言に続けて書くので、lastReply に道具の前の独り言（「Let me check the schema.」）まで入る。
-   * Claude・Codex は道具の前後で発言が分かれるので、lastReply と同じになる。lastReply が無ければ流れの文
-   */
-  function finalReplyText(rec, reply) {
-    const full = typeof reply === 'string' ? reply.trim() : '';
-    const seg = (rec.sinceTool.trim() || rec.lastSeg.trim());
-    if (!full) return seg;
-    return rec.sawTool && seg && full !== seg && full.endsWith(seg) ? seg : full;
   }
 
   // ------------------------------------------------------------ 止める

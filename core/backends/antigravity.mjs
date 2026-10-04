@@ -170,9 +170,13 @@ const modeFor = (id) => (Object.hasOwn(MODES, id) ? id : "yolo");
 const effortFor = (e) => (EFFORTS.includes(e) ? e : "");
 
 /** `result.status` -> turnResult（公式ドキュメントの 7 値）。使用量の上限の失敗は limited と解除の時刻にそろえる（antigravity-limit.mjs。ADR 0119） */
-function turnResultFor(result) {
+function turnResultFor(result, { finishedReply = false } = {}) {
   const status = result?.status;
   if (status === "SUCCESS") return { type: "turnResult", outcome: "ok", turns: result?.num_turns ?? 1 };
+  // agy can fail in a later internal request after completing the answer. Keep the
+  // failure as a diagnostic, but do not discard the already completed reply.
+  if (finishedReply) return { type: "turnResult", outcome: "ok", turns: result?.num_turns ?? 1,
+    backendFailure: { status: String(status ?? ''), error: String(result?.error ?? '') } };
   if (status === "CANCELED" || status === "INTERRUPTED") return { type: "turnResult", outcome: "aborted", turns: 1 };
   const limit = antigravityLimit(result?.error);
   if (limit) return { type: "turnResult", outcome: "limited", turns: result?.num_turns ?? 1, error: String(result.error), resetsAt: limit.resetsAt, window: null };
@@ -266,6 +270,8 @@ export const backend = {
     const resumed = Boolean(sessionId);
     let sawText = false;
     let text = "";                 // 控えに残す本文
+    let finishedReply = false;     // agent_response の DONE。途中までの文とは分ける
+    let replyTextSinceTool = "";
     const toolCalls = [];          // 控えに残すツール呼び出し
     let settle = null;
     let failed = null;
@@ -404,14 +410,18 @@ export const backend = {
         case "step_update": {
           const s = ev.step_update ?? {};
           if (s.step_type === "agent_response") {
+            if (String(s.state ?? "").toUpperCase() === "DONE" && (replyTextSinceTool.trim() || String(s.text_delta ?? '').trim())) finishedReply = true;
             const delta = s.text_delta;
             if (!delta) return;
             if (!sawText) { sawText = true; emit({ type: "activity", state: "writing" }); }
             text += delta;
+            replyTextSinceTool += delta;
             saveSoon();
             return emit({ type: "text.delta", text: String(delta) });
           }
           if (s.step_type === "tool") {
+            finishedReply = false; // 返事の後に道具が続けば、その返事はまだ最終文ではない
+            replyTextSinceTool = "";
             // **同じ step_index で 2 回来る**: `ACTIVE`（output 無し）-> `DONE`（output あり）。
             // 開始と完了に分ける。同じに扱うとツールが二重に並び、1 つ目は結果が空になる
             // （実測。docs/multi-backend.md §2.8）
@@ -464,7 +474,7 @@ export const backend = {
           if (sawText) emit({ type: "text.end" });
           const usage = usageFor(r.usage);
           if (usage) emit(usage);
-          const outcome = turnResultFor(r);
+          const outcome = turnResultFor(r, { finishedReply });
           resultTrace = { source: "result", status: String(r.status ?? "").slice(0, 100), outcome: outcome.outcome,
             ...(r.error ? { error: String(r.error).slice(0, 1000) } : {}) };
           if (outcome.outcome === "error") failed = new Error(outcome.error);

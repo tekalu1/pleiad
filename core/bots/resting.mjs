@@ -51,6 +51,13 @@ export function createResting({ now = Date.now, onChange = () => {} } = {}) {
       seen.add(place);
       return true;
     },
+    clear(bot) {
+      const key = restKey(bot);
+      if (!until.has(key)) return false;
+      end(key);
+      onChange(key);
+      return true;
+    },
     stop() { for (const t of timers.values()) clearTimeout(t); timers.clear(); },
   };
   return self;
