@@ -16,6 +16,7 @@
 //     host … store.getPrefs・getBackend・listBackends・resolveModel・resolveEffort・createConversation・runTurn・usageStore・currentLocale（learn.mjs と同じ）
 //     budget … createBudget の返り（allowsBrain・leftBrain・chargeBrain）。dispatch … { handoff }（賢いモデルへの引き継ぎ）
 //     ask(prompt, { bot, prefs }) → string | { text, sessionId?, usage? }   … 安いモデルの身代わり（テスト用）。無ければ隠れた会話で聞く
+//     floorMs・tickMs・everyMs … 間隔の下限・タイマーの確かめる間隔・既定の間隔の上書き（テストと開発中の確かめ用。bots-host が環境変数から渡す）
 //   Pulse:
 //     start()・stop()・close()   … タイマー（tickMs ごとに、時刻の来た bot の心拍を 1 本ずつ流す）
 //     beat(botId, { force }): Promise<Result>   … 1 回の心拍。Result = { botId, ran, gate?, did?, error?, skipped? }。force は人の［今すぐ］（ふるいは通すが、止めた bot・予算は越えない）
@@ -47,13 +48,15 @@ const log = (...a) => console.error('  pulse:', ...a);
 const errText = (e) => String(e?.message ?? e);
 const clip = (s, n) => [...String(s ?? '').replace(/\s+/g, ' ').trim()].slice(0, n).join('');
 
-export function createPulse({ dataDir, brain, channels, bots, host, budget, dispatch, memory = null, clock, now = () => clock.now(), ask = null, floorMs = PULSE_FLOOR_MS, tickMs = TICK_MS } = {}) {
+export function createPulse({ dataDir, brain, channels, bots, host, budget, dispatch, memory = null, clock, now = () => clock.now(), ask = null, floorMs = PULSE_FLOOR_MS, tickMs = TICK_MS, everyMs = null } = {}) {
   let timer = null;
   let closed = true;
   let chain = Promise.resolve();
   const running = new Set();
   const beats = new Map();   // botId → 心拍の数（隠れた会話の掃除の間隔用）
   const locale = () => host?.currentLocale?.() ?? 'ja';
+  /** 既定の間隔（ms）。Bot.pulse.everyMin（5〜60 分）。everyMs は開発中の確かめ用の上書き（AGENT_HOST_PULSE_EVERY_MS） */
+  const everyOf = (bot) => everyMs ?? (bot.pulse?.everyMin ?? 10) * 60_000;
   const clampMs = (ms, base) => Math.min(PULSE_CEIL_MS, Math.max(floorMs, ms - base));
 
   // ------------------------------------------------------------ 材料
@@ -171,7 +174,7 @@ export function createPulse({ dataDir, brain, channels, bots, host, budget, disp
     if (!bot.pulse?.on && !force) return { botId, ran: false, skipped: 'off' };
     const at = now();
     const state = brain.state(bot.id);
-    const every = (bot.pulse?.everyMin ?? 10) * 60_000;
+    const every = everyOf(bot);
     const home = await homeOf(bot);
     const stamp = { lastBeatAt: at };
     // 家のチャンネルが無い: 予算を引く先が無いので自発はしない
@@ -292,7 +295,7 @@ export function createPulse({ dataDir, brain, channels, bots, host, budget, disp
       if (!bot.pulse?.on) continue;
       const state = brain.state(bot.id);
       if (state.paused) continue;
-      if (state.nextAt == null) { brain.setState(bot.id, { nextAt: at + bot.pulse.everyMin * 60_000, cursorAt: at }); continue; }
+      if (state.nextAt == null) { brain.setState(bot.id, { nextAt: at + everyOf(bot), cursorAt: at }); continue; }
       // PC が止まっていた間に溜まった心拍は、最新の 1 回だけ（nextAt を 1 回進めるだけで、溜まった分は走らない）
       if (state.nextAt <= at && !running.has(bot.id)) await enqueue(() => beat(bot.id));
     }

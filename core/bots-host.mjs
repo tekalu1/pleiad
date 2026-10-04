@@ -65,6 +65,8 @@ export function createBotHost(deps) {
   // ---- 頭の中（思考の流れ・気がかり。ADR 0126）
   const brain = createBrainStore({ dataDir, emit });
   let pulse;
+  // bot を消したら、その bot の思考の流れ・気がかりも消す
+  host.botRemoved = (botId) => brain.clear(botId);
   // ---- bots（S2）
   const bots = createBotService({ dataDir, channels, host, emit });
   // ---- memory（S3）
@@ -79,10 +81,11 @@ export function createBotHost(deps) {
   const routines = createRoutineService({ dataDir, channels, bots, dispatch, host, emit, clock: routinesClock });
   // ---- memory learner（L1。利用者のルーティン一覧には置かない）
   learner = createMemoryLearner({ dataDir, channels, bots, memory, host, clock: routinesClock });
-  // ---- 心拍（bot ごとの設定で既定は OFF。AGENT_HOST_PULSE_FLOOR_MS・AGENT_HOST_PULSE_TICK_MS は開発中の確かめ用で、間隔の下限と確かめる間隔を縮める。docs/dev-verification.md）
+  // ---- 心拍（bot ごとの設定で既定は OFF。AGENT_HOST_PULSE_FLOOR_MS・AGENT_HOST_PULSE_TICK_MS・AGENT_HOST_PULSE_EVERY_MS は開発中の確かめ用で、間隔の下限・確かめる間隔・既定の間隔を縮める。docs/dev-verification.md）
   pulse = createPulse({ dataDir, brain, channels, bots, host, budget: dispatch.budget, dispatch, memory, clock: routinesClock,
     ...(Number(process.env.AGENT_HOST_PULSE_FLOOR_MS) > 0 ? { floorMs: Number(process.env.AGENT_HOST_PULSE_FLOOR_MS) } : {}),
-    ...(Number(process.env.AGENT_HOST_PULSE_TICK_MS) > 0 ? { tickMs: Number(process.env.AGENT_HOST_PULSE_TICK_MS) } : {}) });
+    ...(Number(process.env.AGENT_HOST_PULSE_TICK_MS) > 0 ? { tickMs: Number(process.env.AGENT_HOST_PULSE_TICK_MS) } : {}),
+    ...(Number(process.env.AGENT_HOST_PULSE_EVERY_MS) > 0 ? { everyMs: Number(process.env.AGENT_HOST_PULSE_EVERY_MS) } : {}) });
   // ---- webhook（H1）
   const webhook = createWebhookReceiver({ dataDir, routines, host });
 

@@ -300,7 +300,7 @@ bot が呼ばれないときも小さく起き続け、考えたことの続き�
 - **予算**: 自発の分も、bot の家のチャンネル（`Bot.pulse.channelId`、無ければ入っている最初のチャンネル）の予算から引く（`core/bots/budget.mjs` の `chargeBrain`・`leftBrain`・`allowsBrain`）。チャンネルの今日の分の合計に入り、0 なら自発は止まる。使用枠が読めなくても止まるよう、bot ごとの 1 日のトークンの上限（1.5M。入力 + 出力 + キャッシュ読み / 10）も持つ。家のチャンネルが引けない・確認が失敗したときは自発しない。
 - **書き込みの断り**: 隠れた会話（`bot.kind` が `pulse`・`learner`）からの `channels.*` の書き込みは `HIDDEN_CONVERSATION`（`core/ops/channels.mjs` の `authorOf`・`markRead`・`wake`）。`channels.post`・`react`・`stopThread` は `modeGate: false` で読み取りのモードでも通るので、入口で会話の種類を見る。心拍は `memory.*` を書かない（独り言は意味記憶にならない）。
 - **画面**: bot のページの「思考の流れ」（`web/channels/brain-panel.mjs`）。心拍のスイッチ・間隔・次の時刻・予算・欲求の数値・気がかり・流れ・［眠らせる］［今すぐ 1 回］［流れを消す］。更新は WS の出来事 `brainChanged { botId }`。
-- **開発中の確かめ**: fake バックエンドの安いモデルは `AGENT_HOST_FAKE_PULSE`（返事の JSON の配列のファイル。1 回ごとに順に使い、尽きたら最後を繰り返す）。間隔の下限・タイマーの確かめる間隔は `AGENT_HOST_PULSE_FLOOR_MS`・`AGENT_HOST_PULSE_TICK_MS` で縮められる（開発用）。手順は `docs/dev-verification.md`。
+- **開発中の確かめ**: fake バックエンドの安いモデルは `AGENT_HOST_FAKE_PULSE`（返事の JSON の配列のファイル。1 回ごとに順に使い、尽きたら最後を繰り返す）。間隔の下限・タイマーの確かめる間隔・既定の間隔は `AGENT_HOST_PULSE_FLOOR_MS`・`AGENT_HOST_PULSE_TICK_MS`・`AGENT_HOST_PULSE_EVERY_MS` で縮められる（開発用）。手順は `docs/dev-verification.md`。
 
 ## テスト
 

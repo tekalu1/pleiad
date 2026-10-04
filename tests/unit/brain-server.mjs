@@ -10,6 +10,7 @@ import { open, sleep } from '../lib/ws-client.mjs';
 import { registry } from '../../core/ops/index.mjs';
 import { createBotService } from '../../core/bots/service.mjs';
 import { findLeaks } from '../../core/brain/inner.mjs';
+import { openReadOnly } from '../../core/db.mjs';
 
 export const name = 'brain-server';
 export const title = '心拍を入れた bot: 設定・今すぐの心拍・引き継ぎ（話す・黙る）・予算・独り言が漏れない・呼ばれたターンの末尾・隠れた会話の書き込みの拒否';
@@ -195,6 +196,18 @@ export default async function (t) {
     // ---- DB の形: 追記の行・JSON のファイルを増やさない
     const files = await fs.readdir(dataDir);
     t.ok('保存は pleiad.db の行で、頭の中の JSON ファイルを作らない', !files.some((f) => /brain|stream|loops/.test(f)));
+
+    // ---- bot を消すと、その bot の思考の流れ・気がかりも消える
+    const gone = await call('bots.create', { name: 'Tmp', icon: '🐭', backend: 'fake' });
+    await call('brain.loopAdd', { botId: gone.id, text: '消える前のメモ' });
+    await call('bots.delete', { botId: gone.id });
+    await c.close();
+    clients.length = 0;
+    await servers.pop().stop();
+    const db = openReadOnly(dataDir);
+    const left = (table) => Number(db.prepare(`SELECT COUNT(*) AS n FROM ${table} WHERE bot_id = ?`).get(gone.id).n);
+    t.ok('bot を消すと、その bot の気がかりも思考の流れも消える', left('brain_loops') === 0 && left('brain_stream') === 0);
+    db.close();
   } finally {
     for (const c of clients) { try { c.close(); } catch { /* 閉じるだけ */ } }
     for (const s of servers) await s.stop?.();

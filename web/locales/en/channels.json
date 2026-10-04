@@ -228,7 +228,7 @@
       "record": "a record of model output",
       "note": "This is a record of what the model wrote. It does not mean there is any experience. You can see all of it here and delete it. Private thoughts never become semantic memory; only memories based on what people said are kept.",
       "pulse": {
-        "label": "Heartbeat (wakes up a little by itself)",
+        "label": "Heartbeat",
         "every": "Heartbeat interval",
         "minutes": "{{n}} min",
         "off": "Off (the bot only runs when called)",
@@ -422,6 +422,7 @@
     "thread": "Passed the earlier posts in {{channel}}",
     "memoryCore": "Passed what it remembers",
     "botRecent": "Passed the recent threads",
-    "turnContext": "Passed the time and memory changes"
+    "turnContext": "Passed the time and memory changes",
+    "inner": "Passed the end of the stream of thought and concerns (its own drafts)"
   }
 }

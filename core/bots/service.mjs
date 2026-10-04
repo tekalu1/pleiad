@@ -421,6 +421,8 @@ export function createBotService({ dataDir, channels, host = null, emit = () => 
       if (bot.dmChannelId && typeof channels?.archive === 'function') {
         await channels.archive({ channelId: bot.dmChannelId, on: true }, { kind: 'system' }).catch((e) => log('could not archive the DM channel:', String(e?.message ?? e)));
       }
+      // その bot の思考の流れ・気がかりは消す（心拍の状態は bot ごとの 1 行なので、残っても害は無い。ADR 0126）
+      try { host?.botRemoved?.(botId); } catch (e) { log('could not clear the inner life of a removed bot:', String(e?.message ?? e)); }
       // 会話は消さない。bot の印を外して Chats の一覧に戻す（履歴は残る）
       for (const id of ids) await host.store.setSessionData(id, 'bot', null, { durable: true }).catch(() => {});
     },
