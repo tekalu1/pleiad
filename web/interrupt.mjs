@@ -3,6 +3,7 @@
 // 次のターンが始まったら消える。ここは印・文言・数え方だけを持ち、DOM の置き場所は client.mjs と side.mjs が決める。
 import { svgEl } from "./dom.mjs";
 import { t } from "./i18n.mjs";
+import { whenText, timeText } from "./schedule-times.mjs";
 
 // i18n-dynamic: interrupt.label.
 // i18n-dynamic: interrupt.line.
@@ -70,16 +71,58 @@ export const PLAY_PATH = "M8.5 6.2v11.6a.8.8 0 0 0 1.2.7l9-5.8a.8.8 0 0 0 0-1.4l
 /** 中断で保留になった未送信の数（再開はこれを送る） */
 export const pausedCount = (messages) => (messages ?? []).filter((m) => m?.status === "paused").length;
 
-/** 再開ボタンの字。保留があれば「保留中の N 件を送って再開」 */
-export const limitTime = (at) => Number.isFinite(at) ? new Date(at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : null;
-export const resumeLabel = (paused, interrupted) => reasonOf(interrupted) === 'limit'
-  ? t('interrupt.limitResumeAt', { time: limitTime(interrupted.resetsAt) ?? t('interrupt.unknownTime') })
-  : (paused > 0 ? t("interrupt.resumeOutbox", { count: paused }) : t("interrupt.resume"));
+/** 解除の時刻。今日なら「2:30」、ほかの日は「10/7（水）9:00」。分からなければ null */
+export const limitTime = (at) => Number.isFinite(at) ? whenText(at) : null;
+
+/** 解除時刻の後、自動の再開を待つ長さ。これを過ぎたら時計をやめる */
+export const LIMIT_GRACE_MS = 2 * 60_000;
+
+/**
+ * 上限で止まった会話の、入力欄の再開の状態（docs/design-system.md「使用量の上限」）。
+ * auto = 解除時刻に自動で戻る（押せない時計）、release = 自動を外した会話の解除前（押せない時計）、
+ * ready = 解除の後（自動を外した会話。時刻が分からない場合も）で、普通の「再開」。上限でなければ null
+ */
+export function limitResumeState(interrupted, now = Date.now()) {
+  if (reasonOf(interrupted) !== 'limit') return null;
+  // 解除時刻を過ぎて 2 分たっても自動再開が残っているのは、自動で戻れなかった（受け付けた後に送信が失敗した・Pleiad が動いていない）。
+  // 固まった時計をやめて、人が押せる普通の「再開」にする
+  if (interrupted.autoResume === true) return Number.isFinite(interrupted.resetsAt) && now - interrupted.resetsAt > LIMIT_GRACE_MS ? 'ready' : 'auto';
+  return Number.isFinite(interrupted.resetsAt) && interrupted.resetsAt > now ? 'release' : 'ready';
+}
+
+/** 再開ボタンの字。保留があれば「保留中の N 件を送って再開」。上限の会話は時計の字（auto は「2:30 に再開」、時刻不明は「解除を確認中」） */
+export function resumeLabel(paused, interrupted, now = Date.now()) {
+  const state = limitResumeState(interrupted, now);
+  if (state === 'auto') {
+    const time = limitTime(interrupted.resetsAt);
+    return time ? t('interrupt.limitResumeAt', { time }) : t('interrupt.limitChecking');
+  }
+  if (state === 'release') return t('interrupt.limitReleaseAt', { time: limitTime(interrupted.resetsAt) });
+  return paused > 0 ? t("interrupt.resumeOutbox", { count: paused }) : t("interrupt.resume");
+}
+
+/** 狭い幅（480px 以下）の上限の時計の字。時刻だけ（「21:04」）、時刻が分からなければ空（時計のアイコンだけ）。上限の時計でなければ空 */
+export function resumeShortLabel(interrupted, now = Date.now()) {
+  const state = limitResumeState(interrupted, now);
+  return (state === 'auto' || state === 'release') && Number.isFinite(interrupted.resetsAt) ? timeText(interrupted.resetsAt) : '';
+}
 
 /** 入力欄の下の一行。保留があれば「送ると、保留中の N 件の後にこの指示で続けます」（サーバーが保留を先に送り直す） */
-export const resumeNoteText = (paused, interrupted) => reasonOf(interrupted) === 'limit'
-  ? t('interrupt.limitSendNote', { time: limitTime(interrupted.resetsAt) ?? t('interrupt.unknownTime') })
-  : (paused > 0 ? t("interrupt.resumeNoteHeld", { count: paused }) : t("interrupt.resumeNote"));
+export function resumeNoteText(paused, interrupted, now = Date.now()) {
+  const state = limitResumeState(interrupted, now);
+  if (state === 'auto' || state === 'release') {
+    const time = limitTime(interrupted.resetsAt);
+    return time ? t('interrupt.limitSendNote', { time }) : t('interrupt.limitSendNoteUnknown');
+  }
+  return paused > 0 ? t("interrupt.resumeNoteHeld", { count: paused }) : t("interrupt.resumeNote");
+}
+
+/** 会話の末尾の 2 行目の文（上限の会話）。自動のとき「2:30 に自動で再開します」、外したとき「自動では再開しません。…」 */
+export function limitLineNote(interrupted) {
+  if (interrupted.autoResume !== true) return t('interrupt.limitNoAuto');
+  const time = limitTime(interrupted.resetsAt);
+  return time ? t('interrupt.limitAutoAt', { time }) : t('interrupt.limitAutoPoll');
+}
 
 /**
  * 再開ボタンを出すか。中断状態・走っていない・承認を待っていない・入力欄が空のとき。

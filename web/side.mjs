@@ -26,7 +26,7 @@ import { botIcon } from './channels/bot-icon.mjs';
 import { fmt, t } from "./i18n.mjs";
 import { familiesOf } from "./family.mjs";
 import { timeText } from "./schedule-times.mjs";
-import { warnMark, interruptLabel, showsReasonInMeta, limitTime } from "./interrupt.mjs";
+import { warnMark, interruptLabel, showsReasonInMeta, resumeLabel, limitResumeState } from "./interrupt.mjs";
 import { aiMarkTitle } from "./change-log.mjs";
 import { branchIcon } from "./icons.mjs";
 import { parseTerms, matchLocal, findRanges, localOrder, periodSince, pushRecentSearch, searchShortcutLabel, searchShortcutAria } from "./session-find.mjs";
@@ -799,14 +799,14 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
     // 中断した会話は注意の三角（未読は --ink、開いた後は --ink-weak）。次のターンが始まるまで残る。走っていればそちらが先
     const stopped = last.interrupted.get(s.id);
     const moving = last.runningIds.has(s.id) || behind;
-    // 解除の後に自動で再開する会話は、人の手が要らないので三角ではなく時計（「◷ 2:30 に再開」だけ。経過の時間は出さない）
-    const resumeAt = !moving && stopped?.reason === 'limit' && stopped.autoResume && Number.isFinite(stopped.resetsAt);
+    // 解除の後に自動で再開する会話は、人の手が要らないので三角ではなく時計（「◷ 2:30 に再開」。解除時刻が分からないときは「◷ 解除を確認中」。経過の時間は出さない）
+    const resumeAt = !moving && limitResumeState(stopped) === 'auto';
     // 送信予定（時刻が先にある）は時計と「9:00 に送信」。過ぎて送らなかった予定は三角と「送信予定を過ぎた」
     const sched = last.schedules.get(s.id);
     const sendAt = !moving && !resumeAt && !stopped && !sched?.missed && Number.isFinite(sched?.next) ? sched.next : null;
     const missed = !moving && !stopped && Boolean(sched?.missed);
     if (moving) meta.append(behind ? satMark(behind, t("activity.behindCount", { count: behind })) : runMark(t("activity.turnRunning")));
-    else if (resumeAt) meta.append(scheduleMark(t('interrupt.limitResumeAt', { time: limitTime(stopped.resetsAt) })));
+    else if (resumeAt) meta.append(scheduleMark(resumeLabel(0, stopped)));
     else if (stopped) meta.append(warnMark(interruptLabel(stopped), { read: !stopped.unread }));
     else if (missed) meta.append(warnMark(t('schedule.sideMissed')));
     else if (sendAt) meta.append(scheduleMark(t('schedule.sideSend', { time: timeText(sendAt) })));

@@ -11,7 +11,6 @@ import os from 'node:os';
 import { z } from 'zod';
 import { agentT, LOCALE_SETTINGS, t } from '../i18n.mjs';
 import { DEFAULT_COMPACTION_SETTINGS, normalizeCompactionSettings } from '../compaction-settings.mjs';
-import { DEFAULT_LIMIT_RESUME, normalizeLimitResume } from '../resume-queue.mjs';
 import { DEFAULTS as ROUTING_DEFAULTS, normalizeSettings as normalizeRoutingSettings, RoutingSettingsError, RETIRED_KEYS as ROUTING_RETIRED_KEYS } from '../delegation-routing.mjs';
 import { KINDS as CONTEXT_KINDS, normalizeKind as normalizeContextKind } from '../context-settings.mjs';
 import { MIN_BUDGET, MAX_BUDGET } from '../../web/instruction-amount.mjs';
@@ -102,19 +101,6 @@ export const settings = [
   // 既定のアカウントを替えると、新しい会話が別の契約・課金で動く。アカウントは human-only（ADR 0082）
   defineSetting({ key: 'claudeAccount', summary: S('claudeAccount'), risk: 'human-only', schema: z.string().nullable(), default: null, read: fromPrefs('claudeAccount'),
     ...plainPref('claudeAccount', async (ctx, v) => { if (!(await ctx.host.accountIds()).includes(v)) throw invalid(ctx, `claudeAccount: ${String(v).slice(0, 40)}`); return v; }, { nullable: true }) }),
-  defineSetting({ key: 'limitResume', summary: S('limitResume'), risk: 'write',
-    riskReason: 'Only chooses how conversations that already stopped at the usage limit continue (auto, ask or off), how many resume at once and the usage guard. '
-      + 'It never switches the Claude account (human-only) and does not touch approval modes or permissions; the default is already auto (ADR 0094)',
-    prefKeys: ['limitResume'], schema: z.object({ mode: z.enum(['auto', 'ask', 'off']),
-      concurrency: z.union([z.literal(0), z.literal(1), z.literal(2), z.literal(3)]),
-      guardPercent: z.union([z.literal(30), z.literal(50), z.null()]) }),
-    default: DEFAULT_LIMIT_RESUME, read: async ctx => normalizeLimitResume((await prefs(ctx)).limitResume),
-    normalize: (ctx, input) => {
-      if (!input || typeof input !== 'object' || !['auto', 'ask', 'off'].includes(input.mode)
-        || ![0, 1, 2, 3].includes(input.concurrency) || ![30, 50, null].includes(input.guardPercent)) throw invalid(ctx, 'limitResume');
-      return { after: normalizeLimitResume(input) };
-    },
-    write: (ctx, value) => ctx.writes.pref('limitResume', value) }),
   defineSetting({ key: 'compaction.auto', summary: S('compaction.auto'), risk: 'write', riskReason: `Auto compaction threshold and delay. ${WRITE_ABOUT}`, prefKeys: ['autoCompaction'],
     schema: compaction, writeSchema: compactionPatch, default: DEFAULT_COMPACTION_SETTINGS, read: (ctx) => ctx.compactionSettings?.(),
     normalize: (ctx, input, { before }) => {

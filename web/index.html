@@ -128,10 +128,6 @@
       <button type="button" class="btn" id="resumeAll" data-i18n="interrupt.resumeAll"></button>
       <button type="button" class="btn btn-icon side-undo-close" id="closeResumeStrip" data-i18n-title="interrupt.stripClose" data-i18n-aria-label="interrupt.stripClose"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
     </div>
-    <div class="side-undo limit-strip" id="limitStrip" role="status" hidden>
-      <span class="side-undo-text" id="limitStripText"></span>
-      <button type="button" class="btn" id="limitQueueOpen" data-i18n="interrupt.order"></button>
-    </div>
     <!-- 一覧にキーボードのフォーカスがある間だけ出る操作キーの一行（web/side.mjs）。読み上げには役割と aria-keyshortcuts で伝える -->
     <div class="key-hint" id="searchHint" hidden aria-hidden="true"><span><kbd>↑↓</kbd><span data-i18n="sidebar.search.keyHint.move"></span></span><span><kbd>Enter</kbd><span data-i18n="sidebar.search.keyHint.open"></span></span><span><kbd>Esc</kbd><span data-i18n="sidebar.search.keyHint.clear"></span></span></div>
     <div class="key-hint" id="keyHint" hidden aria-hidden="true"><span><kbd>↑↓</kbd><span data-i18n="sidebar.keyHint.move"></span></span><span><kbd>Enter</kbd><span data-i18n="sidebar.keyHint.open"></span></span><span><kbd>Shift+F10</kbd><span data-i18n="sidebar.keyHint.menu"></span></span><span><kbd>Ctrl+B</kbd><span data-i18n="sidebar.keyHint.sidebar"></span></span></div>
@@ -267,7 +263,7 @@
           <!-- 中断。狭い幅（480px 以下）では四角のアイコンだけにする -->
           <button type="button" class="btn btn-quiet abort" id="abort" hidden data-i18n-title="chat.composer.abort" data-i18n-aria-label="chat.composer.abort"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="7" width="10" height="10" rx="2"/></svg><span data-i18n="chat.composer.abort"></span></button>
           <!-- 再開。中断状態・走っていない・欄が空のときだけ、中断と同じ位置に（web/interrupt.mjs）。保留があれば「保留中の N 件を送って再開」。上限で止まった会話は再生の三角が時計・字は「◷ 2:30 に再開」に替わり、▾ から面が開く -->
-          <button type="button" class="btn btn-quiet resume" id="resume" hidden data-i18n-title="interrupt.resume" data-i18n-aria-label="interrupt.resume"><svg class="i resume-play" viewBox="0 0 24 24" aria-hidden="true"><path d="M8.5 6.2v11.6a.8.8 0 0 0 1.2.7l9-5.8a.8.8 0 0 0 0-1.4l-9-5.8a.8.8 0 0 0-1.2.7z"/></svg><svg class="i resume-clock" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8"/><path d="M12 7v5l3 2"/></svg><span id="resumeLabel" data-i18n="interrupt.resume"></span><svg class="i resume-caret" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 10l5 5 5-5"/></svg></button>
+          <button type="button" class="btn btn-quiet resume" id="resume" hidden data-i18n-title="interrupt.resume" data-i18n-aria-label="interrupt.resume"><svg class="i resume-play" viewBox="0 0 24 24" aria-hidden="true"><path d="M8.5 6.2v11.6a.8.8 0 0 0 1.2.7l9-5.8a.8.8 0 0 0 0-1.4l-9-5.8a.8.8 0 0 0-1.2.7z"/></svg><svg class="i resume-clock" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8"/><path d="M12 7v5l3 2"/></svg><span id="resumeLabel" data-i18n="interrupt.resume"></span><span id="resumeShort" class="resume-short" aria-hidden="true"></span></button>
           <button type="submit" class="btn btn-primary send" id="send" data-i18n-title="chat.composer.sendTitle" data-i18n-aria-label="chat.composer.sendTitle"><svg class="i i-send" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 3L10 14M21 3l-7 18-4-7-7-4z"/></svg><svg class="i i-run" viewBox="0 0 24 24" aria-hidden="true"><path d="M8.5 6.2v11.6a.8.8 0 0 0 1.2.7l9-5.8a.8.8 0 0 0 0-1.4l-9-5.8a.8.8 0 0 0-1.2.7z"/></svg></button>
           <!-- 送信の円の右の ▾。日時を指定して送る面（web/send-menu.mjs）。右クリック・長押し・Ctrl+Shift+Enter でも開く。480px 以下は出さない（長押しで下からシート） -->
           <button type="button" class="send-more" id="sendMore" aria-controls="sendPop" data-i18n-title="schedule.sendMoreTitle" data-i18n-aria-label="schedule.sendMore"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 10l5 5 5-5"/></svg></button>
@@ -275,21 +271,13 @@
       </div>
       <!-- 中断中に字を書いたときだけ見える一行。書いていない間も高さは取っておく（.quiet） -->
       <div class="resume-note quiet" id="resumeNote" hidden data-i18n="interrupt.resumeNote"></div>
-      <div class="resume-note" id="newLimitWarning" hidden></div>
       <div class="resume-note" id="armedNote" hidden></div>
       <div class="pop cpop" id="cwdPop" role="dialog" data-i18n-aria-label="chat.composer.cwd" hidden></div>
       <div class="pop cpop" id="modelPop" role="dialog" data-i18n-aria-label="chat.composer.model" hidden></div>
       <div class="pop cpop" id="modePop" role="dialog" data-i18n-aria-label="chat.composer.mode" hidden></div>
-      <div class="pop cpop" id="limitResumePop" role="dialog" data-i18n-aria-label="interrupt.limitMenu" hidden></div>
       <div class="pop cpop send-pop" id="sendPop" role="menu" data-i18n-aria-label="schedule.menuTitle" hidden></div>
       <div class="send-veil" id="sendVeil" hidden></div>
     </form>
-    <dialog id="limitQueueDialog" class="limit-queue-dialog" aria-labelledby="limitQueueTitle">
-      <h2 id="limitQueueTitle" data-i18n="interrupt.order"></h2>
-      <div id="limitQueueRows"></div>
-      <div id="limitQueueSettings"></div>
-      <button type="button" class="btn" id="limitQueueClose" data-i18n="interrupt.close"></button>
-    </dialog>
 
     <!-- ==================== 設定（会話と入れ替わる。脇は settingsNav になる） ==================== -->
     <section class="settings-view" id="settingsView" aria-labelledby="settingsPageTitle">

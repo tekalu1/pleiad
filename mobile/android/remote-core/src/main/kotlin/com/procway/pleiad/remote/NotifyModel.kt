@@ -39,8 +39,6 @@ object NoticeKind {
     const val APPROVAL = "approval"
     const val QUESTION = "question"
     const val FAILED = "failed"
-    const val LIMIT_READY = "limitReady"
-    const val LIMIT_GUARDED = "limitGuarded"
     const val SCHEDULE_MISSED = "scheduleMissed"
     const val DONE = "done"
     const val CANCEL = "cancel"
@@ -64,7 +62,7 @@ data class PushNotice(
         fun fromJson(o: JSONObject): PushNotice? {
             if (o.optInt("v") != 1) return null
             val kind = o.optString("kind")
-            if (kind !in setOf(NoticeKind.APPROVAL, NoticeKind.QUESTION, NoticeKind.FAILED, NoticeKind.LIMIT_READY, NoticeKind.LIMIT_GUARDED, NoticeKind.SCHEDULE_MISSED, NoticeKind.DONE, NoticeKind.CANCEL)) return null
+            if (kind !in setOf(NoticeKind.APPROVAL, NoticeKind.QUESTION, NoticeKind.FAILED, NoticeKind.SCHEDULE_MISSED, NoticeKind.DONE, NoticeKind.CANCEL)) return null
             val seq = o.optLong("seq", 0)
             if (seq <= 0) return null
             return PushNotice(

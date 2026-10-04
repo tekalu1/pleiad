@@ -43,17 +43,14 @@ export function spanText(ms) {
 export const leftText = (at, now = Date.now()) => t('schedule.left', { span: spanText(at - now) });
 
 /**
- * 送信の候補。1 回押せば決まる。上限で止まっている会話は「上限の解除後」が先頭。
+ * 送信の候補。1 回押せば決まる。
  * 今朝 9:00 は朝 6 時前だけ、今日 18:00 は 10 分以上先のときだけ、月曜の朝 9:00 は水〜土だけ（近い週明け）
  * @returns {{ key: string, label: string, hint: string, at: number }[]}
  */
-export function presets(now = Date.now(), { resetsAt = null } = {}) {
+export function presets(now = Date.now()) {
   const n = new Date(now);
   const out = [];
   const hint = (at) => (at - now < 24 * 60 * MIN ? t('schedule.after', { span: spanText(at - now) }) : dateText(at));
-  if (Number.isFinite(resetsAt) && resetsAt > now) {
-    out.push({ key: 'reset', label: t('schedule.afterReset', { time: timeText(resetsAt) }), hint: t('schedule.after', { span: spanText(resetsAt - now) }), at: resetsAt });
-  }
   const morning = dayAt(n, 0, 9).getTime();
   if (n.getHours() < MORNING_EDGE) out.push({ key: 'morning', label: t('schedule.morning'), hint: hint(morning), at: morning });
   const evening = dayAt(n, 0, 18).getTime();

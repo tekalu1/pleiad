@@ -261,7 +261,9 @@ function scheduledText(scheduled) {
   const next = Number.isFinite(scheduled?.nextSendAt)
     ? t('quit.scheduledSendNext', { time: new Date(scheduled.nextSendAt).toLocaleString(undefined, { month: 'numeric', day: 'numeric', weekday: 'short', hour: 'numeric', minute: '2-digit' }) }) : '';
   const parts = [send ? t('quit.scheduledSend', { count: send, next }) : '', resume ? t('quit.scheduledResume', { count: resume }) : ''].filter(Boolean);
-  return parts.join(t('quit.scheduledJoin')) + t('quit.scheduledTail') + (send ? t('quit.scheduledLate') : '');
+  // 送信予定は終了している間は送られない。上限の解除後の再開は、次に開いたときに（時刻を過ぎていても）再開する（ADR 0132）
+  const tail = send && resume ? t('quit.scheduledTailBoth') : resume ? t('quit.scheduledTailResume') : t('quit.scheduledTail');
+  return parts.join(t('quit.scheduledJoin')) + tail + (send ? t('quit.scheduledLate') : '');
 }
 
 async function closeSafely() {

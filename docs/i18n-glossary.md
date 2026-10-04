@@ -61,11 +61,10 @@
 | 送信 / 中断 | Send / Stop |
 | 再開 / 中断しました | Resume / Stopped |
 | 使用量の上限 / 上限のため中断 | usage limit / Stopped at usage limit |
-| 解除後に自動で再開 / 自動で再開しない | Resume automatically after reset / Do not resume automatically |
-| 再開の順番 / 同時に動かす | Resume order / Run concurrently |
+| 再開しない / 自動で再開する | Don't resume / Resume automatically |
 | 送信予定（日時を指定して送る。「予約」は次のターンの設定の予約で使うので送信には使わない） | scheduled message |
 | 送信予定にする / 今すぐ送る / 編集 / 取り消す | Schedule / Send now / Edit / Cancel |
-| 日時を指定… / 上限の解除後 | Pick a date and time… / After the limit resets |
+| 日時を指定… | Pick a date and time… |
 | 送信予定を過ぎた（送らず確かめを待つ） | Scheduled time passed |
 | 未送信 | Unsent |
 | 次のターンから適用 | Applies from the next turn |

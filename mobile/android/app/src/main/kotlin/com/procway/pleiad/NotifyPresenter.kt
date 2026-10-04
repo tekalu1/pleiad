@@ -81,8 +81,6 @@ class NotifyPresenter(private val ctx: Context) : NotifySink {
         NoticeKind.APPROVAL -> if (a.pending > 1) ctx.getString(R.string.notify_approval_many, a.pending) else ctx.getString(R.string.notify_approval)
         NoticeKind.QUESTION -> if (a.pending > 1) ctx.getString(R.string.notify_question_many, a.pending) else ctx.getString(R.string.notify_question)
         NoticeKind.FAILED -> ctx.getString(R.string.notify_failed)
-        NoticeKind.LIMIT_READY -> ctx.getString(R.string.notify_limit_ready)
-        NoticeKind.LIMIT_GUARDED -> ctx.getString(R.string.notify_limit_guarded)
         NoticeKind.SCHEDULE_MISSED -> ctx.getString(R.string.notify_schedule_missed)
         else -> ctx.getString(R.string.notify_done)
     }
@@ -91,8 +89,6 @@ class NotifyPresenter(private val ctx: Context) : NotifySink {
         NoticeKind.APPROVAL -> R.string.notify_public_approval
         NoticeKind.QUESTION -> R.string.notify_public_question
         NoticeKind.FAILED -> R.string.notify_public_failed
-        NoticeKind.LIMIT_READY -> R.string.notify_public_limit_ready
-        NoticeKind.LIMIT_GUARDED -> R.string.notify_public_limit_guarded
         NoticeKind.SCHEDULE_MISSED -> R.string.notify_public_schedule_missed
         else -> R.string.notify_public_done
     })

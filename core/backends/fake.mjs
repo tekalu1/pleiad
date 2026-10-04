@@ -36,7 +36,9 @@
 //   "notes:" / "instructions:" … Pleiad が足した notes（記憶・末尾）／ botInstructions（人格）を JSON で返す（bot の会話の検査用）
 //   それ以外        … prompt をそのまま echo
 // 行頭の <pleiad-channel> などの包み（bot の会話。core/system-messages.mjs の splitLeadingNotes）は外してから台本を選ぶ（scriptOf）。
-// 環境変数: AGENT_HOST_FAKE_USAGE=1 … ターンの終わりに固定の usage を流す／AGENT_HOST_FAKE_SLOW_STEER=1 … "slow" が途中送信を受ける
+// 環境変数: AGENT_HOST_FAKE_USAGE=1 … ターンの終わりに固定の usage を流す／AGENT_HOST_FAKE_SLOW_STEER=1 … "slow" が途中送信を受ける／
+//   AGENT_HOST_FAKE_QUOTA=<JSON のファイル> … 使用枠（usage()。{ windows: [{ label, usedPercent, resetsAt, minutes }] }）を毎回そのファイルから読む。
+//   指定が無いと usage() を持たない（使用量の上限の再開が、解除時刻の分からない上限の空きを確かめる検査用）
 //
 // ゲート（実時間でなく、テストが終わりを決める待ち。server は別プロセスなので、実体は AGENT_HOST_FAKE_GATE_DIR のディレクトリのファイル）:
 //   <dir>/<名前> が在れば開いている。テストが作る（tests/lib/fake-gate.mjs の open）。"bg <本数> gate:<名前>" と途中送信の本文の "HOLD_CONFIRM:<名前>" が待つ。
@@ -339,6 +341,9 @@ export const backend = {
   id: "fake",
   label: "Fake (test)",
   description: "テスト用のダミー。LLM は呼ばない",
+  ...(process.env.AGENT_HOST_FAKE_QUOTA ? { async usage() {
+    try { return JSON.parse(fs.readFileSync(process.env.AGENT_HOST_FAKE_QUOTA, 'utf8')); } catch { return { windows: [], message: 'no quota file' }; }
+  } } : {}),
 
   // 出し分けの経路を全部通せるように、hostTools 以外は持てることにする。
   // hostTools だけ false なのは、AI 側から present / set_status を呼ぶ口が無い

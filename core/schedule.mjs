@@ -3,6 +3,8 @@
 // kind 'send' is a message the user scheduled (core/send-schedule.mjs).
 // fire() may return { hold } to keep a due row without firing it again (a send that is too late
 // to send unattended); the row stays in the list until a person sends or cancels it.
+// fire() may return { reschedule: at, patch? } to keep the row (with patch merged in) and fire it again at that time
+// (a usage limit whose reset time is unknown is checked again after 30 minutes or more).
 import fs from 'node:fs/promises';
 import { writeAtomic } from './atomic-file.mjs';
 
@@ -34,6 +36,7 @@ export function createSchedule({ file, fire, changed = () => {}, now = Date.now,
         const current = rows.get(row.id);
         if (current?.createdAt === row.createdAt) {
           if (result?.hold) rows.set(row.id, { ...current, held: result.hold, heldAt: now() });
+          else if (Number.isFinite(result?.reschedule)) rows.set(row.id, { ...current, ...(result.patch ?? {}), at: result.reschedule, retryAt: undefined });
           else rows.delete(row.id);
           await save();
           changed(list());

@@ -192,7 +192,7 @@ export default async function (t) {
     files: { listDirs: async () => ({ path: 'C:/', parent: null, dirs: ['a'], files: [], truncated: false, roots: [], ...secret }) },
     remote: { status: async () => ({ enabled: false, connection: { ...secret }, devices: [], ...secret }) },
     endpoints: { list: async () => ({ endpoints: [{ id: 'e', baseUrl: 'https://e.example', ...secret }], defaults: {} }) },
-    limitResume: { messages: () => [], schedules: () => [], queue: () => ({ pending: [], running: [] }) },
+    limitResume: { messages: () => [], schedules: () => [] },
     // bot・Channels・ルーティン（docs/channels.md）。read の操作を足すパッケージが、自分の領域の返り（秘密の目印を入れたもの）をここに足し、
     // 必須の引数がある操作は下の samples にも足す。足したパッケージの区画以外は触らない
     channels: {     // S1

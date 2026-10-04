@@ -798,26 +798,14 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 /* 「■ 中断しました · 14:32」。保存された中断から描く一行（client.mjs の paintInterruptLine） */
 .m.sys.interrupted{display:flex;align-items:center;gap:6px}
 /* 上限のための中断は 1 行目に「■ 中断しました（private · 5 時間枠）· 01:43」、2 行目（字の左を 1 行目の字に揃える）に自動で再開する旨とリンク */
-.m.sys.interrupted.limit{flex-wrap:wrap}
-.limit-interrupt-sub{flex-basis:100%;padding-left:20px;display:flex;flex-wrap:wrap;gap:4px 12px;align-items:center;color:var(--ink-weak)}
-.limit-strip{gap:6px}
-.limit-queue-dialog{position:fixed;inset:auto auto 80px 10px;margin:0;width:min(342px,calc(100vw - 20px));max-height:min(70vh,620px);border:0;border-radius:var(--r-l);background:var(--surface-paper);color:var(--ink);padding:14px;overflow:auto;box-shadow:0 8px 28px var(--shadow);z-index:31}
-.limit-queue-dialog h2{font-size:var(--fs-s);font-weight:600;margin:0 0 10px}
-.limit-queue-row{display:flex;align-items:center;gap:5px;padding:5px 0;font-size:var(--fs-s)}
-.limit-queue-row>span:nth-child(2){flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.limit-queue-number{width:16px;text-align:center;color:var(--ink-weak);flex:none}
-.limit-queue-first{font-size:var(--fs-xs);padding:2px 4px;flex:none}
-.limit-queue-toggle{font-size:0;border:0;background:var(--surface-2);border-radius:99px;width:30px;height:18px;padding:2px;cursor:pointer;flex:none}
-.limit-queue-toggle:before{content:"";display:block;width:14px;height:14px;border-radius:50%;background:var(--surface-paper);box-shadow:0 1px 2px var(--shadow)}
-.limit-queue-toggle[aria-pressed=true]{background:var(--fill-primary);color:var(--on-fill)}
-.limit-queue-toggle[aria-pressed=true]:before{margin-left:12px}
-.limit-queue-toggle:focus-visible{outline:2px solid var(--line-blue)}
-.limit-queue-setting{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:10px 0;font-size:var(--fs-s)}
-.limit-queue-setting select{font:inherit;min-width:84px}
-@media(max-width:700px){.limit-queue-dialog{inset:auto 8px 66px 8px;width:auto;max-height:70vh}}
+.m.sys.interrupted.limit{display:block}
+.limit-interrupt-head{display:block;padding-left:20px;text-indent:-20px}
+.limit-interrupt-head .stop-mark{display:inline-block;vertical-align:-2px;margin-right:6px;text-indent:0}
+.limit-interrupt-head .sep,.limit-interrupt-head .t{margin-left:6px}
+.limit-interrupt-sub{margin-top:6px;padding-left:20px;display:flex;flex-wrap:wrap;gap:4px 12px;align-items:center;color:var(--ink-weak)}
 .m.sys .stop-mark{width:14px;height:14px;flex:none;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linejoin:round}
 /* 一行の中から画面を開く（コンテキストの記録の「中身を見る」）。押すのはボタン、見た目はリンク */
-.m.sys .lnk{padding:0;font-size:var(--fs-xs);color:var(--ink-blue);text-decoration:underline;text-decoration-color:var(--line-strong);text-underline-offset:2px}
+.m.sys .lnk{padding:0;border:0;background:transparent;font-size:var(--fs-xs);color:var(--ink-blue);text-decoration:underline;text-decoration-color:var(--line-strong);text-underline-offset:2px}
 .m.sys .lnk:hover{background:transparent;color:var(--ink-blue);text-decoration-color:var(--line-blue)}
 /* 開ける出来事の一行（別のセッションからのメッセージ・Pleiad の完了通知。web/system-messages.mjs の sysFold）。
    開閉は会話の中の折りたたみ（tools.css の .tc-fold）と同じ ▸ の回転。既定は閉じた状態 */
@@ -1248,12 +1236,12 @@ body.inapp-links .present-tools .visualize-expand{display:none}
 /* 再開。中断と同じ位置・同じ薄い面。再生の三角と字（480px 以下は三角だけ） */
 .resume{flex:none;margin-left:4px}
 .resume svg.i{width:16px;height:16px}
-/* 上限で止まった会話の再開は「◷ 2:30 に再開 ▾」。三角は時計に替わり、▾ から面（待つ・別のアカウント・順番）が開く */
-.resume .resume-clock,.resume .resume-caret{display:none}
+/* 上限で止まった会話の自動で戻る間は「◷ 2:30 に再開」。押せない表示（面の無い字）で、三角は時計に替わる。解除の後の「再開」は普通の再開 */
+.resume .resume-clock{display:none}
 .resume.is-limit .resume-play{display:none}
 .resume.is-limit .resume-clock{display:block}
-.resume.is-limit .resume-caret{display:block;width:12px;height:12px;color:var(--ink-weak)}
-.resume.is-limit{font-variant-numeric:tabular-nums}
+.resume.is-limit{font-variant-numeric:tabular-nums;background:transparent;color:var(--ink-weak);cursor:default;opacity:1}
+.resume .resume-short{display:none}
 /* 中断中に字を書いたときの「送ると、この指示で続けます」。入力の箱の下に小さく。書いていない間も高さは保つ */
 .resume-note{font-size:var(--fs-xs);color:var(--ink-weak);padding:4px 10px 0;min-height:22px}
 .resume-note[hidden]{display:none}
@@ -1860,7 +1848,10 @@ body{padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) 0 env(s
   .abort span{display:none}
   .resume{width:36px;height:36px;padding:0;border-radius:50%}
   .resume span{display:none}
-  .resume.is-limit .resume-caret{display:none}
+  .resume.is-limit{width:auto;min-width:36px;padding:0 10px;border-radius:var(--r-pill)}
+  .resume.is-limit #resumeLabel{display:none}
+  .resume.is-limit .resume-short{display:inline}
+  .resume.is-limit .resume-short:empty{display:none}
   .send-more{display:none}
 }
 @media (max-width:399px){
