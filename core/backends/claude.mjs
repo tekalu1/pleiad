@@ -9,7 +9,7 @@
 import {
   query, createSdkMcpServer, tool, resolveSettings,
   listSessions as sdkListSessions, getSessionInfo, getSessionMessages,
-  renameSession, tagSession, forkSession,
+  renameSession, tagSession, forkSession, deleteSession as sdkDeleteSession,
   listSubagents as sdkListSubagents, getSubagentMessages as sdkGetSubagentMessages,
 } from "@anthropic-ai/claude-agent-sdk";
 import { claudeAuth } from '../auth/claude-cli.mjs';
@@ -1121,6 +1121,8 @@ export const backend = {
   },
 
   setTitle: (sessionId, title) => renameSession(sessionId, title),
+  // 隠れた会話（夜の整理・心拍）を片付けるときだけ使う（core/conversations.mjs の deleteHiddenConversation。ADR 0127）
+  deleteSession: (sessionId) => sdkDeleteSession(sessionId),
   setTag: (sessionId, tag) => tagSession(sessionId, tag || null),
   fork: (sessionId, { upToMessageId, title } = {}) => forkSession(sessionId, { upToMessageId, title }),
 

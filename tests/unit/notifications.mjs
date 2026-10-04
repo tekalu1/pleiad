@@ -55,6 +55,8 @@ export default async function(t) {
   busy.connected = true;
   completions.changed();
   t.ok('画面が離れていた完了は接続後に知らせる', events.length === 5 && events[4].sessionId === 'offline');
+  completions.finished('bot-thread', 'ok', 60, { bot: 'thread' });
+  t.ok('bot の会話の完了は、種類を bot に載せて画面へ渡す（画面が出し分ける。ADR 0127）', events.length === 6 && events[5].bot === 'thread' && !('bot' in events[4]));
 
   const sent = [], opened = [];
   let requests = 0, click;

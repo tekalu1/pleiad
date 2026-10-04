@@ -100,7 +100,7 @@ import { computerUsePrefs, validComputerUse } from '../web/computer-prefs.mjs';
 import { computerUseCapability } from './computer-use-capability.mjs';
 import { streamEvents } from "../web/session-stream.mjs";
 import { serveFrom } from "../web/history-sync.mjs";
-import { switchBackend, createConversation, deleteUnsentConversation, pendingHandoff, conversation } from "./conversations.mjs";
+import { switchBackend, createConversation, deleteUnsentConversation, deleteHiddenConversation, pendingHandoff, conversation } from "./conversations.mjs";
 import { familyOf } from "./lineage.mjs";
 import {
   getBackend, sessionBackend, listBackends, defaultBackend, describeBackends, resolveBackendForSession,
@@ -163,7 +163,7 @@ import { createHostSessionSearch } from './session-search-host.mjs';
 import { taskStop, backgroundStop, approvalStop, interruptionNote } from './interrupt-stops.mjs';
 import { splitLeadingNotes } from './system-messages.mjs';
 import { createBotHost } from './bots-host.mjs';
-import { channelEventRows } from './channels/types.mjs';
+import { channelEventRows, HIDDEN_BOT_KINDS } from './channels/types.mjs';
 import { textForTitleModel } from './prompt-title.mjs';
 
 const PORT = Number(process.env.AGENT_HOST_PORT ?? 7420);
@@ -1061,7 +1061,8 @@ function sessionRow(b, s, extra = {}) {
     // 変えていなければネイティブ優先（公式 CLI で移した分も拾える）
     cwd: ((extra.history ?? []).some((h) => h?.field === "cwd") ? extra.cwd ?? s?.cwd : s?.cwd ?? extra.cwd) ?? null,
     // 最近の場所の候補（ユーザーが Pleiad で使った場所。委譲の子会話やネイティブのみの会話は除外）
-    place: (extra.delegation || typeof extra.cwd !== 'string' || !extra.cwd.trim()) ? null : extra.cwd.trim(),
+    // 隠れた bot の会話（夜の整理・心拍。cwd はホーム）は利用者が選んだ場所ではないので、候補に入れない（ADR 0127）
+    place: (extra.delegation || HIDDEN_BOT_KINDS.has(extra.bot?.kind) || typeof extra.cwd !== 'string' || !extra.cwd.trim()) ? null : extra.cwd.trim(),
     lastModified: toMs(s?.lastModified) ?? toMs(extra.lastModified),
     createdAt: s?.createdAt ?? extra.createdAt ?? null,
   };
@@ -1484,7 +1485,9 @@ const completionNotices = createCompletionNotices({
     store.get(sessionId).then(async meta => {
       if (meta?.delegation) return;
       botHost?.onSessionDone(sessionId, outcome);
-      // bot の会話の完了はスレッドで見える。スマホへは送らない（承認・質問・失敗は送る。ADR 0109）
+      // bot の会話の完了はスレッドで見える。スマホへは送らない（承認・質問・失敗は送る。ADR 0109）。
+      // 隠れた会話（夜の整理・心拍）は失敗も送らない（endTurn が finished を呼ばないのでここへは来ないが、念のため。ADR 0127）
+      if (HIDDEN_BOT_KINDS.has(meta?.bot?.kind)) return;
       if (meta?.bot && outcome !== 'error') return;
       pushNotifier.finished({ sessionId, outcome, completedAt, startedAt, title: await conversationTitleOf(sessionId) });
     }).catch(() => {});
@@ -1719,6 +1722,9 @@ function makeEmit(turn) {
       if (event.outcome === "error" || event.outcome === 'limited') turn.errorShown = true;
       if (turn.backend.id === 'antigravity' && (event.outcome === 'error' || event.outcome === 'limited') && !turn.failureReason)
         turn.failureReason = { source: 'backend.turnResult', error: String(event.error ?? '').slice(0, 1000) };
+      if (turn.backend.id === 'antigravity' && event.backendFailure)
+        turn.failureReason = { source: 'backend.afterReply', status: String(event.backendFailure.status ?? '').slice(0, 100),
+          error: String(event.backendFailure.error ?? '').slice(0, 1000) };
       const execution = taskExecutions.get(turn.info.sessionId);
       if (execution) { execution.outcome = event.outcome; execution.error = event.error ?? null; }
     }
@@ -3605,7 +3611,7 @@ const askPermission = async ({ toolName, input, sessionId, toolUseID, title, sig
   const localize = answer => answer?.messageKey ? { ...answer, message: agentT(lng, `approval.${answer.messageKey}`, answer.messageParams) } : answer;
   // 隠れた会話（心拍の安いモデル・夜の記憶の整理。ADR 0126）は人に見えない。承認を求めても誰も答えず、その心拍・整理が止まったまま
   // （心拍は 1 本ずつ流すので、ほかの bot の心拍も）になる。カードもスマホの通知も出さず、すぐ断る（道具は使わせない）
-  if (askingMeta?.bot?.kind === 'pulse' || askingMeta?.bot?.kind === 'learner') return localize({ allow: false, messageKey: 'hiddenConversation' });
+  if (HIDDEN_BOT_KINDS.has(askingMeta?.bot?.kind)) return localize({ allow: false, messageKey: 'hiddenConversation' });
   // 祖先を読むあいだに中断されたなら、待たせずに返す（abort はもう来ない）
   if (signal?.aborted) return localize({ allow: false, messageKey: 'aborted' });
   return new Promise((resolve) => {
@@ -4109,6 +4115,13 @@ botHost = createBotHost({
   createConversation, runTurn, noticeTarget, noticeBlocked, abortSessions, emitGlobal,
   getBackend, listBackends, resolveModel, resolveEffort, agentLocaleFor, agentT, currentLocale, lastReply,
   sessionBusy: id => sessionBusy(id),
+  // 隠れた会話（夜の整理・心拍）をネイティブの会話ごと消す。消せないバックエンド・走っている会話は残して false（ADR 0127）
+  deleteHidden: async id => {
+    if (sessionBusy(id) || !HIDDEN_BOT_KINDS.has((await store.get(id)).bot?.kind)) return false;
+    if (!await deleteHiddenConversation(id, getBackend)) return false;
+    await store.removeSession(id);
+    return true;
+  },
   // チャンネルの予算（ADR 0119）が読む使用枠。設定の「使用量」・ply_usage と同じ quotaCache を通す
   readQuota: id => { const b = getBackend(id); return b ? providerQuota(b) : null; },
 });
@@ -4172,6 +4185,7 @@ async function runTurnInternal(args, onStarted, hooks) {
       }
       backend = target;
     }
+    await backend.prepareTurn?.(sessionId);
     // Reject before marking the conversation sent or consuming its pending handoff.
     if (hooks.compact && backend.compact) {
       const record = await conversation(sessionId);
@@ -4616,7 +4630,7 @@ async function endTurn(turn, emit, { record = true } = {}) {
   if (limited) interrupted.notifyAtReset = notifyAtReset;
   if (record && !requeued) await usageStore.record({ ...turn.usage, id: turn.presentKey, backend: turn.backend.id, sessionId: turn.info.sessionId })
     .catch(() => { console.error('  使用量を記録できませんでした'); });
-  if (turn.backend.id === 'antigravity' && turn.info.sessionId && (turn.outcome === 'error' || turn.outcome === 'limited')) {
+  if (turn.backend.id === 'antigravity' && turn.info.sessionId && (turn.outcome === 'error' || turn.outcome === 'limited' || turn.failureReason?.source === 'backend.afterReply')) {
     const previous = (await store.get(turn.info.sessionId).catch(() => ({}))).antigravityFailures ?? [];
     await store.setSessionData(turn.info.sessionId, 'antigravityFailures', [...previous, {
       at: completedAt, outcome: turn.outcome, ...(turn.failureReason ?? { source: 'unknown', error: '' }),
@@ -4652,7 +4666,10 @@ async function endTurn(turn, emit, { record = true } = {}) {
     });
   }
   // 委譲された子の会話（delegation）の完了は、画面が通知しない。結果は依頼元の会話へ届く
-  const delegated = turn.info.sessionId ? Boolean((await store.get(turn.info.sessionId).catch(() => null))?.delegation) : false;
+  const endMeta = turn.info.sessionId ? await store.get(turn.info.sessionId).catch(() => null) : null;
+  const delegated = Boolean(endMeta?.delegation);
+  // bot の会話の種類（thread・dm・routine・learner・pulse）。完了の知らせの出し分けに使う（ADR 0127）
+  const botKind = endMeta?.bot?.kind ?? null;
   // Retain turnEnd in snapshots already being read, then release the turn.
   emit({ type: "turnEnd", completedAt, outcome: turn.outcome, interrupted, ...(requeued ? { requeued: true } : {}), ...(delegated ? { delegated: true } : {}) });
   runtime.turns.delete(turn.key);
@@ -4686,8 +4703,9 @@ async function endTurn(turn, emit, { record = true } = {}) {
   // 分けた作業場所: このターンで取り込まれたもの・使われなくなったものを片付ける（ADR 0089）
   worktreeSweepSoon();
   // 空いている間の自動圧縮（idle）は利用者の作業ではないので、完了として知らせない
-  if (!delegated && turn.compactTrigger !== 'idle') completionNotices.finished(turn.info.sessionId,
-    limited && !interrupted.autoResume ? 'error' : turn.outcome, completedAt, { startedAt: turn.startedAtMs });
+  // 夜の整理・心拍の隠れた会話（learner・pulse）は、完了も失敗も知らせない（失敗は memory.learnStatus・bot のページで見える。ADR 0127）
+  if (!delegated && !HIDDEN_BOT_KINDS.has(botKind) && turn.compactTrigger !== 'idle') completionNotices.finished(turn.info.sessionId,
+    limited && !interrupted.autoResume ? 'error' : turn.outcome, completedAt, { startedAt: turn.startedAtMs, bot: botKind });
   settingApprovals?.changed();
   // bot の会話なら、ターンの投稿を確定し、たまった出来事を渡す（ターンを手放した後。待たない）
   if (!requeued) void botHost?.onTurnEnd(turn, { outcome: turn.outcome, interrupted, requeued });
