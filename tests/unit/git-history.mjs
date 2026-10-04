@@ -108,7 +108,9 @@ export default async function (t) {
     await fs.rm(path.join(repo, 'HEAD'));
     await write('long.txt', 'l\n'); sh(repo, 'add', 'long.txt');
     sh(repo, 'commit', '-q', '-m', 'S'.repeat(2000) + '\n\n' + 'B'.repeat(30000));
-    const long = (await history.readHistory(repo, { limit: 1 })).commits[0];
+    // 同じ秒のコミットが並ぶと、別のブランチ（作業場所の exp）の先が先頭に来ることがある（Linux の CI で起きた）。hash で選ぶ
+    const longHash = sh(repo, 'rev-parse', 'HEAD');
+    const long = (await history.readHistory(repo, { limit: 50 })).commits.find((c) => c.hash === longHash);
     t.ok('題は 300 字で切る', long.subject.length <= 300 && long.subject.length > 100, String(long.subject.length));
     const longDetail = await history.readCommit(repo, long.hash);
     t.ok('本文は 20000 字で切り、切ったら印', longDetail.body.length === history.BODY_MAX && longDetail.bodyTruncated === true, String(longDetail.body.length));
