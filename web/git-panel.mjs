@@ -35,6 +35,8 @@ const countsHTML = (f) => (f.binary ? '' : `${f.add ? `<span class="a">+${f.add}
 const stateName = (s) => t(`git.state${s}`);
 
 export function setupGitPanel({ cmd, preview, session, jump, use, onState = () => {}, worktrees, canOpen = () => true }) {
+  // 返事が来ない問い合わせで「読み込み中…」のまま止まらないよう、30 秒で諦めて「取れませんでした」にする
+  const ask = (command, args) => new Promise((resolve, reject) => { const timer = setTimeout(() => reject(new Error('timeout')), 30_000); cmd(command, args).then(resolve, reject).finally(() => clearTimeout(timer)); });
   const leftovers = createLeftovers({ ...worktrees, changed: () => { if (st.tab === 'worktrees') paint(); } });
   const fresh = (key) => ({ key, tab: 'changes', sel: { k: 'uncommitted' }, back: 'uncommitted', initial: 'uncommitted', shut: new Set(), older: false, base: null, changes: {}, commitData: {}, hist: null, histLoading: false,
     wt: null, wtOpen: new Set(), wtDetail: new Map(), diff: null, loading: false, failed: false, at: null, note: '' });
@@ -101,7 +103,8 @@ export function setupGitPanel({ cmd, preview, session, jump, use, onState = () =
     return { title: `<code>${esc(c.short)}</code> ${esc(c.subject)}`, html: true, commit: c, groups: [{ id: `c${c.short}`, title: null, files: tag(data.files, { commit: c.hash }) }], total: data.total };
   }
 
-  const countOf = () => { const m = listModel(); return m.loading ? null : m.total.files; };
+  // 読み込み中・取れなかったときは数を出さない（0 と読めてしまうため）
+  const countOf = () => { if (!st.base || st.failed) return null; const m = listModel(); return m.loading || m.failed ? null : m.total.files; };
 
   // ---------------------------------------------------------------- 頭・タブ
   function paintHead() {
@@ -360,7 +363,7 @@ export function setupGitPanel({ cmd, preview, session, jump, use, onState = () =
   async function loadDiffAt(index) {
     const d = st.diff; if (!d || d.cache.has(index)) return;
     const f = d.list[index]; let res = null;
-    try { res = await cmd('gitDiff', diffRequest(f)); } catch { /* 取れなかった */ }
+    try { res = await ask('gitDiff', diffRequest(f)); } catch { /* 取れなかった */ }
     if (st.diff !== d) return;
     if (res?.diff) d.cache.set(index, res.diff); else d.failed.add(index);
     if (d.index === index) paint({ keepScroll: true });
@@ -496,14 +499,14 @@ export function setupGitPanel({ cmd, preview, session, jump, use, onState = () =
   // ---------------------------------------------------------------- 取得
   async function loadRange(range) {
     const id = sid(); let data = null;
-    try { data = await cmd('gitPanel', { sessionId: id, range }); } catch { /* */ }
+    try { data = await ask('gitPanel', { sessionId: id, range }); } catch { /* */ }
     if (sid() !== id || !data?.changes) return;
     st.changes[range] = data.changes;
     if (st.sel.k === range && st.tab === 'changes' && !st.diff) { const cl = root.querySelector('.cl'); if (cl) { cl.innerHTML = listHTML(); wireTree(); applySelection(); paintTabs(); } }
   }
   async function loadCommit(hash) {
     const id = sid(); let res = null;
-    try { res = await cmd('gitCommit', { sessionId: id, hash }); } catch { /* */ }
+    try { res = await ask('gitCommit', { sessionId: id, hash }); } catch { /* */ }
     if (sid() !== id) return;
     st.commitData[hash] = res?.commit ?? { commit: { hash, short: hash.slice(0, 7), subject: '', author: '', at: 0, parents: [] }, files: [], total: { files: 0, add: 0, del: 0 } };
     if (st.sel.k === 'commit' && st.sel.hash === hash && st.tab === 'changes' && !st.diff) { const cl = root.querySelector('.cl'); if (cl) { cl.innerHTML = listHTML(); wireTree(); paintTabs(); } }
@@ -511,7 +514,7 @@ export function setupGitPanel({ cmd, preview, session, jump, use, onState = () =
   async function loadHistory() {
     const id = sid(); st.histLoading = true;
     let res = null;
-    try { res = await cmd('gitHistory', { sessionId: id, limit: HISTORY_PAGE }); } catch { /* */ }
+    try { res = await ask('gitHistory', { sessionId: id, limit: HISTORY_PAGE }); } catch { /* */ }
     if (sid() !== id) return;
     st.histLoading = false;
     if (!res?.history) { st.hist = null; return; }
@@ -519,28 +522,28 @@ export function setupGitPanel({ cmd, preview, session, jump, use, onState = () =
     // 会話の始まりのコミットが読み込みの外なら、見つかるまで続けて読む（上限あり）
     for (let n = 0; n < SESSION_PAGES && st.hist.session?.head && st.hist.next != null && !st.hist.commits.some((c) => c.hash === st.hist.session.head); n++) {
       let more = null;
-      try { more = await cmd('gitHistory', { sessionId: id, limit: HISTORY_PAGE, cursor: st.hist.next }); } catch { break; }
+      try { more = await ask('gitHistory', { sessionId: id, limit: HISTORY_PAGE, cursor: st.hist.next }); } catch { break; }
       if (sid() !== id || !more?.history) break;
       st.hist = { ...st.hist, commits: [...st.hist.commits, ...more.history.commits], next: more.history.next };
     }
   }
   async function loadMoreHistory() {
     const id = sid(); let more = null;
-    try { more = await cmd('gitHistory', { sessionId: id, limit: HISTORY_PAGE, cursor: st.hist.next }); } catch { /* */ }
+    try { more = await ask('gitHistory', { sessionId: id, limit: HISTORY_PAGE, cursor: st.hist.next }); } catch { /* */ }
     if (sid() !== id || !more?.history) return;
     st.hist = { ...st.hist, commits: [...st.hist.commits, ...more.history.commits], next: more.history.next };
     paint({ keepScroll: true });
   }
   async function loadWorktrees() {
     const id = sid(); let res = null;
-    try { res = await cmd('gitWorktrees', { sessionId: id }); } catch { /* */ }
+    try { res = await ask('gitWorktrees', { sessionId: id }); } catch { /* */ }
     if (sid() !== id) return;
     st.wt = res?.worktrees ?? null; st.wtFailed = !st.wt;
     paint({ keepScroll: true });
   }
   async function loadWtDetail(w) {
     const id = sid(); let res = null;
-    try { res = await cmd('gitWorktree', { sessionId: id, worktree: w.path }); } catch { /* */ }
+    try { res = await ask('gitWorktree', { sessionId: id, worktree: w.path }); } catch { /* */ }
     if (sid() !== id) return;
     st.wtDetail.set(w.path, res?.worktree ?? { committed: { files: [] }, uncommitted: { files: [] }, head: null, base: null });
     paint({ keepScroll: true });
@@ -553,7 +556,7 @@ export function setupGitPanel({ cmd, preview, session, jump, use, onState = () =
     st.loading = true; st.failed = false;
     if (!st.base) paint();
     let data = null;
-    try { data = await cmd('gitPanel', { sessionId: id, range: 'uncommitted' }); } catch { /* 取れなかった */ }
+    try { data = await ask('gitPanel', { sessionId: id, range: 'uncommitted' }); } catch { /* 取れなかった */ }
     if (mine !== ticket || sid() !== id) return;
     st.loading = false; st.at = Date.now();
     if (!data?.git) { st.base = null; st.failed = true; onState(null, { foreign: foreign() }); paint(); return; }
