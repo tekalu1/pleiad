@@ -4,6 +4,7 @@
 //   - コミット 1 つの変更ファイル
 //   - コミットしていない分の「ステージ済み」と「変更」の区別（index の tree と作業ツリーの tree を比べる）
 //   - 作業場所（git worktree）の一覧と、1 つの中身
+import fs from 'node:fs/promises';
 import * as git from './git-info.mjs';
 import { isPleiadBranch, worktreeList } from './git-worktree.mjs';
 
@@ -125,11 +126,15 @@ export async function resolveCommit(root, rev) {
 export async function readWorktrees(root, { limit = 30 } = {}) {
   const list = await worktreeList(root);
   if (!list) return null;
-  const sameDir = (a, b) => String(a).replaceAll('\\', '/').replace(/\/+$/, '').toLowerCase() === String(b).replaceAll('\\', '/').replace(/\/+$/, '').toLowerCase();
+  // 同じ場所でも書き方が違うことがある（Windows の 8.3 の短い名前 RUNNER~1・リンク・大文字小文字）。実際の場所に解いてから比べる
+  const real = async (p) => { try { return await fs.realpath(p); } catch { return p; } };
+  const norm = (p) => String(p).replaceAll('\\', '/').replace(/\/+$/, '').toLowerCase();
+  const rootReal = norm(await real(root));
   const main = list[0] ?? null;
   const rows = await Promise.all(list.slice(0, limit).map(async (w, index) => {
+    const here = norm(w.path) === norm(root) || norm(await real(w.path)) === rootReal;
     const row = { path: w.path, branch: w.branch, head: w.head ? w.head.slice(0, 7) : null, detached: w.detached, locked: w.locked, prunable: w.prunable,
-      main: index === 0, here: sameDir(w.path, root), exists: true, dirty: 0, ahead: 0, behind: 0, at: null };
+      main: index === 0, here, exists: true, dirty: 0, ahead: 0, behind: 0, at: null };
     if (w.prunable) return { ...row, exists: false };
     const status = await git.readStatus(w.path);
     if (!status) return { ...row, exists: false };
