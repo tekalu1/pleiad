@@ -96,9 +96,12 @@ export function createMemoryService({ dataDir, channels = null, emit = () => {},
 
   /** bot が user 層へ書く（本文を変える）ときの 1 ターンの上限。数えるのは書けたときだけ（ensure → bump の順） */
   const budgetKey = (author, ctx) => (author?.kind === 'bot' && ctx?.sessionId ? ctx.sessionId : author?.kind === 'bot' ? `bot:${author.botId}` : null);
+  // ctx.userWriteLimit は夜の整理（core/memory/learn.mjs）だけが渡す。1 回の呼び出しに人の発言を 40 件までまとめるので、上限をその呼び出しの候補の数にする（ADR 0127）。
+  // ops の ctx は server が組み立て、AI の入力からは入らない
   const ensureBudget = (layer, author, ctx) => {
     const key = layer === USER_LAYER ? budgetKey(author, ctx) : null;
-    if (key && (userWrites.get(key) ?? 0) >= USER_WRITES_PER_TURN) throw new MemoryError('MEMORY_REJECTED', 'userWriteLimit', String(USER_WRITES_PER_TURN));
+    const limit = Number.isInteger(ctx?.userWriteLimit) && ctx.userWriteLimit > 0 ? ctx.userWriteLimit : USER_WRITES_PER_TURN;
+    if (key && (userWrites.get(key) ?? 0) >= limit) throw new MemoryError('MEMORY_REJECTED', 'userWriteLimit', String(limit));
     return key;
   };
   const bump = (key) => { if (key) userWrites.set(key, (userWrites.get(key) ?? 0) + 1); };

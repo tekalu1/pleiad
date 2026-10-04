@@ -124,16 +124,20 @@ function nextPulseAnswer() {
 // bot の会話の user の行の先頭に付く包み（core/system-messages.mjs の LEADING_TAGS と同じ）。台本の接頭辞はこれを外してから判定する。
 // <pleiad-channel> は中身が発言なので、@名前 の呼びかけを除いて台本として読む（"@Owl echo:やった"）。記憶・スレッドの履歴・中断の文は台本ではない
 const LEADING_WRAPPER = /^\s*<(pleiad-interruption|pleiad-memory-core|pleiad-bot-recent|pleiad-turn-context|pleiad-inner|pleiad-channel-thread|pleiad-channel)(?=[\s>])[^>]*>([\s\S]*?)<\/\1>\s*/;
+// 聞こえただけの投稿（heard="true"。ADR 0128）は、台本が "chime:<文字>" なら echo のように話し、ほかは黙る（文章なしで終える）
 export function scriptOf(prompt) {
   let rest = String(prompt ?? "");
   let said = null;
+  let heard = false;
   for (let hit; (hit = LEADING_WRAPPER.exec(rest));) {
     rest = rest.slice(hit[0].length);
-    if (hit[1] === "pleiad-channel") said = hit[2];
+    if (hit[1] === "pleiad-channel") { said = hit[2]; heard = /^<pleiad-channel\b[^>]*\sheard="true"/.test(hit[0]); }
     // 心拍から自分で起きたターン（ADR 0126）: 本文の「理由: …」を台本にする（"echo:こんにちは" なら話す。何も無ければ黙る）
     else if (hit[1] === "pleiad-inner") { const why = /(?:理由|Reason): (.*)/.exec(hit[2])?.[1]; if (why) said = why; }
   }
-  return rest.trim() || (said ?? "").replace(/^\s*(?:@\S+\s+)+/, "").trim();
+  const script = rest.trim() || (said ?? "").replace(/^\s*(?:@\S+\s+)+/, "").trim();
+  if (heard && !rest.trim()) return script.startsWith("chime:") ? `echo:${script.slice(6)}` : "echo:";
+  return script;
 }
 
 /**
@@ -742,6 +746,11 @@ export const backend = {
 
   async setTitle(sessionId, title) {
     ensure(sessionId).title = title;
+  },
+
+  // 隠れた会話の片付け（core/conversations.mjs の deleteHiddenConversation）。Claude の deleteSession と同じく会話を消す
+  async deleteSession(sessionId) {
+    sessions.delete(sessionId);
   },
 
   async setTag(sessionId, tag) {

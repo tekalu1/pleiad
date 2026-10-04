@@ -15,7 +15,7 @@
 // bot が自分のスレッドへ書いた返事は、そのターンの最初の 1 件がターンの投稿に入り、2 件目からは新しい投稿（ADR 0117。決めるのは dispatch.claimPost）。
 import { z } from 'zod';
 import { agentT } from '../i18n.mjs';
-import { authorKey } from '../channels/types.mjs';
+import { authorKey, HIDDEN_BOT_KINDS } from '../channels/types.mjs';
 import { ChannelError, LIMITS } from '../channels/service.mjs';
 import { groupTargets, expandGroups } from '../channels/group-mentions.mjs';
 import { BUDGET_LIMITS, budgetOf, loosensBudget, normalizeBudget } from '../channels/budget.mjs';
@@ -37,15 +37,13 @@ async function run(ctx, fn) {
   }
 }
 
-/** 心拍（pulse）・夜の整理（learner）の隠れた会話。投稿の種類に入れず、チャンネルへ書かせない */
-const HIDDEN_KINDS = new Set(['pulse', 'learner']);
 /**
  * 隠れた会話からのチャンネルの書き込みを断る。`channels.post` などは modeGate: false（読み取りのモードの bot も返事・リアクションはできる）なので、
  * 読み取りのモードで動く隠れた会話が、そのまま投稿できてしまう。独り言が人に見える場所へ漏れないよう、書き込みの入口で会話の種類を見る（ADR 0126）
  */
 async function refuseHidden(ctx) {
   const sb = ctx.actor?.sessionId ? await ctx.botOfSession?.(ctx.actor.sessionId) : null;
-  if (HIDDEN_KINDS.has(sb?.kind)) throw new OpError('HIDDEN_CONVERSATION', agentT(ctx.locale, 'ops.errors.HIDDEN_CONVERSATION'));
+  if (HIDDEN_BOT_KINDS.has(sb?.kind)) throw new OpError('HIDDEN_CONVERSATION', agentT(ctx.locale, 'ops.errors.HIDDEN_CONVERSATION'));
 }
 
 /** 操作の主体 → 投稿の発言者。隠れた会話（心拍・夜の整理）は断る */

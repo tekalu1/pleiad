@@ -9,6 +9,7 @@ import path from "node:path";
 import vm from "node:vm";
 import { startServer, ROOT } from "../lib/server.mjs";
 import { open, sleep } from "../lib/ws-client.mjs";
+import { HIDDEN_BOT_KINDS } from "../../core/channels/types.mjs";
 
 export const name = "cwd-recent-places";
 export const title = "最近の場所の候補: Pleiadで使った実在フォルダーのみ・委譲やネイティブ一覧や消えた場所を除外";
@@ -84,6 +85,7 @@ export default async function (t) {
     agentLocaleOf: () => null,
     statusChangedByAi: () => null,
     toMs: (v) => (typeof v === "number" ? v : null),
+    HIDDEN_BOT_KINDS,
   });
   vm.runInContext(rowCode, rowCtx);
 
@@ -99,6 +101,11 @@ export default async function (t) {
   // C. sidecar に cwd がない（ネイティブのみの会話）
   const nativeOnlyRow = rowCtx.sessionRow(fakeBackend, { sessionId: "t3", cwd: "/cli/dir" }, { id: "t3" });
   t.ok("sessionRow: sidecar に cwd がない会話は place が null", nativeOnlyRow.place === null && nativeOnlyRow.cwd === "/cli/dir");
+
+  // D. 夜の整理・心拍の隠れた会話（作業場所はホーム。ADR 0127）
+  const hiddenRows = ["learner", "pulse"].map((kind) => rowCtx.sessionRow(fakeBackend, null, { id: `t-${kind}`, cwd: "/home/user", bot: { botId: "b_x", kind } }));
+  const threadRow = rowCtx.sessionRow(fakeBackend, null, { id: "t-thread", cwd: "/bot/folder", bot: { botId: "b_x", kind: "thread", channelId: "c_1", threadId: "p_1" } });
+  t.ok("sessionRow: 隠れた会話（learner・pulse）は place が null。スレッドの bot の会話はそのまま", hiddenRows.every((r) => r.place === null && r.cwd === "/home/user") && threadRow.place === "/bot/folder");
 
   // =========================================================================
   // 3. サーバー統合テスト (startServer 経由)

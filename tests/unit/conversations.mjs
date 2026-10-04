@@ -34,6 +34,7 @@ export default async function(t) {
   const child = await promisify(execFile)(process.execPath,
     [fileURLToPath(new URL('../lib/conversations-compaction-worker.mjs', import.meta.url))], { timeout: 30000 });
   t.ok('圧縮の ID 変換・未送信・旧来会話・Claude の経路', child.stdout.includes('compaction contracts passed'));
+  t.ok('ADR 0127: 隠れた会話の片付けは、ネイティブの会話を消せるときだけ記録ごと消す（一覧に戻ってこない）', child.stdout.includes('hidden delete contracts passed'), child.stdout + child.stderr);
 }
 
 // Run in a child with its own store: other suites import the store before this test runs.
@@ -103,4 +104,42 @@ export async function compactionContracts() {
   assert.deepEqual(turns.map(a => a.sessionId), [null, 'claude-native', 'claude-native']);
   assert.deepEqual(turns.map(a => a.compact), [undefined, 'manual', 'idle']);
   assert.deepEqual(await claude.getCompactions(cid), boundary);
+}
+
+// 隠れた会話（夜の整理・心拍）の片付け（ADR 0127）。ネイティブの会話を消せるときだけ host の記録ごと消す。
+// host の記録だけを消すと、隠していたネイティブの会話が一覧に出てくる（wrapBackend の listSessions は記録が持つネイティブの id だけを隠す）
+export async function hiddenDeleteContracts() {
+  const { deleteHiddenConversation } = await import('../../core/conversations.mjs');
+  const deleted = [];
+  const natives = new Set(['n-old', 'n-now', 'n-user']);
+  const native = { id: 'fakeish', capabilities: {},
+    async listSessions() { return [...natives].map(sessionId => ({ sessionId, title: sessionId })); },
+    async getSession(id) { return natives.has(id) ? { sessionId: id } : null; },
+    async deleteSession(id) { deleted.push(id); natives.delete(id); },
+  };
+  const wrapped = wrapBackend(native);
+  const id = await createConversation(native, { title: 'learner' });
+  const entry = await conversation(id);
+  entry.nativeId = 'n-now';
+  entry.segments = [{ backend: 'fakeish', nativeId: 'n-old' }, { backend: 'fakeish', nativeId: 'n-now' }];
+  const before = (await wrapped.listSessions()).map(r => r.sessionId);
+  assert.ok(before.includes(id) && !before.includes('n-now') && !before.includes('n-old') && before.includes('n-user'), 'The record hides its native segments');
+  assert.equal(await deleteHiddenConversation(id, () => wrapped), true);
+  assert.deepEqual(deleted.sort(), ['n-now', 'n-old'], 'Every native segment is deleted');
+  assert.equal(await conversation(id), null, 'The host record is gone');
+  const after = (await wrapped.listSessions()).map(r => r.sessionId);
+  assert.deepEqual(after, ['n-user'], 'Neither the record nor its native sessions come back in the list');
+
+  // ネイティブの会話を消せないバックエンドなら何もしない（記録が残り、ネイティブの会話は隠れたまま）
+  const keepNative = { id: 'nodelete', capabilities: {}, async listSessions() { return [{ sessionId: 'k-1' }]; }, async getSession() { return null; } };
+  const keepWrapped = wrapBackend(keepNative);
+  const kept = await createConversation(keepNative, { title: 'pulse' });
+  Object.assign(await conversation(kept), { nativeId: 'k-1', segments: [{ backend: 'nodelete', nativeId: 'k-1' }] });
+  assert.equal(await deleteHiddenConversation(kept, () => keepWrapped), false);
+  assert.ok(await conversation(kept), 'The record stays');
+  assert.ok(!(await keepWrapped.listSessions()).some(r => r.sessionId === 'k-1'), 'Its native session stays hidden');
+  // まだ送っていない（ネイティブの会話が無い）なら、消せないバックエンドでも消す
+  const unsent = await createConversation(keepNative, {});
+  assert.equal(await deleteHiddenConversation(unsent, () => keepWrapped), true);
+  assert.equal(await conversation(unsent), null);
 }

@@ -53,6 +53,17 @@ export default async function (t) {
   alerts.completed({ type: 'completionReady', sessionId: 'b', completedAt: 70 }, { title: '別の会話' });
   alerts.waiting({ type: 'permission', notifyReply: true, id: 'p3', sessionId: 'b', conversationTitle: '承認' });
   t.ok('別の会話の分は出る', shown.length === 5);
+  // ADR 0127: 夜の整理・心拍の隠れた会話は、完了も失敗も出さない（server が completionReady の bot に種類を載せる。一覧にまだ無い会話でも効く）
+  alerts.completed({ type: 'completionReady', sessionId: 'learn-1', completedAt: 80, bot: 'learner' });
+  alerts.completed({ type: 'completionReady', sessionId: 'learn-2', completedAt: 81, bot: 'learner', outcome: 'error' });
+  alerts.completed({ type: 'completionReady', sessionId: 'pulse-1', completedAt: 82, bot: 'pulse', outcome: 'error' });
+  t.ok('隠れた会話（learner・pulse）は完了も失敗も出ない', shown.length === 5);
+  // スレッド・DM・ルーティンの bot の会話は、スマホと同じく完了は出さず、失敗だけ出す（ADR 0109）
+  alerts.completed({ type: 'completionReady', sessionId: 'th-1', completedAt: 90, bot: 'thread' });
+  alerts.completed({ type: 'completionReady', sessionId: 'dm-1', completedAt: 91 }, { title: 'DM', bot: { botId: 'b_1', kind: 'dm' } });
+  t.ok('bot の会話の完了は出ない（event の bot か、一覧の会話の bot で見分ける）', shown.length === 5);
+  alerts.completed({ type: 'completionReady', sessionId: 'th-1', completedAt: 92, bot: 'thread', outcome: 'error' }, { title: '#dev のスレッド' });
+  t.ok('bot の会話の失敗は出る', shown.length === 6 && shown[5].title === '作業が失敗しました');
 
   // デスクトップ版の OS 通知（失敗の種類）
   const native = [];

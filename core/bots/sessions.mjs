@@ -29,6 +29,8 @@ export function botInstructions(bot, locale) {
     agentT(locale, 'guide.bot.tools'),
     // 黙る自由（ADR 0119）: 文章を書かずに終えたターンは投稿を残さない（core/bots/dispatch.mjs の finalizePost）
     agentT(locale, 'guide.bot.quiet'),
+    // @ の無い人の投稿は、スレッドのほかの bot にも聞こえた投稿として届く（ADR 0128）。答えるかは bot が決める
+    agentT(locale, 'guide.bot.heard'),
   ].filter(Boolean).join('\n\n');
 }
 
