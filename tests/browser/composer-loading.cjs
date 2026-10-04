@@ -223,5 +223,59 @@ async page => {
   }), createdIdB);
   check('予約送信: サーバーで走った cwd が選んだ場所', serverRowB?.cwd === folderB, JSON.stringify(serverRowB));
 
+  // ---- 作成中に model・mode・作業場所を選ぶ（newSession の応答後、一覧の読み直しを 3 秒遅らせた間）
+  // 以前は、チップがその間の選択を会話に渡さず、できた会話の値（サーバーの値・既定）に戻った
+  const folderC = 'D:\\dev\\pleiad\\temporary\\cwd-race\\folder-A';
+  const chips = () => page.evaluate(() => ({
+    cwd: document.querySelector('#cwdChip .v')?.textContent, model: document.querySelector('#modelChip')?.dataset.value,
+    mode: document.querySelector('#modeChip')?.dataset.value,
+  }));
+  // 基準: モデルは smart・承認モードは default・作業場所は folder-A 以外にしておく（選んだ値が変化として見える）
+  await page.evaluate(() => Object.assign(window.__hold.delay, { newSession: 0, listSessions: 0, loadSession: 0 }));
+  await page.locator('#newSession').click();
+  await page.waitForFunction(() => { const sel = document.querySelector('.row.sel')?.dataset.session; return sel && !sel.startsWith('pending-'); }, null, { timeout: 10000 });
+  await page.waitForTimeout(500);
+  const base = await chips();
+  check('基準: 作成中に選ぶ前のチップは smart / default / folder-A 以外', base.model === '' && base.mode === 'default' && base.cwd !== 'folder-A', JSON.stringify(base));
+
+  await page.evaluate(() => { Object.assign(window.__hold.delay, { newSession: 300, listSessions: 3000, loadSession: 0 }); window.__hold.log.length = 0; window.__samples = []; });
+  const beforeRows = await page.evaluate(() => [...document.querySelectorAll('.row[data-session]')].map(r => r.dataset.session));
+  await page.locator('#newSession').click();
+  // newSession の応答が来て、一覧の読み直し(listSessions)を送ったところで選ぶ
+  await page.waitForFunction(() => { const l = window.__hold.log, i = l.map(x => x.command).lastIndexOf('newSession'); return i >= 0 && l.slice(i).some(x => x.command === 'listSessions'); }, null, { timeout: 10000 });
+  await page.evaluate(() => {
+    const read = () => ({ cwd: document.querySelector('#cwdChip .v')?.textContent, model: document.querySelector('#modelChip')?.dataset.value, mode: document.querySelector('#modeChip')?.dataset.value });
+    window.__sampler = setInterval(() => window.__samples.push({ t: Date.now(), ...read() }), 40);
+  });
+  await page.locator('#modelChip').click();
+  await page.locator('#modelPop [data-key="model:fast"]').click();
+  await page.waitForTimeout(150);
+  await page.keyboard.press('Escape');
+  await page.locator('#modeChip').click();
+  const modeOpts = page.locator('#modePop .copt');
+  for (let i = 0, n = await modeOpts.count(); i < n; i++) { if (!(await modeOpts.nth(i).locator('.tick').textContent())) { await modeOpts.nth(i).click(); break; } }
+  await page.waitForTimeout(150);
+  await page.keyboard.press('Escape');
+  await page.locator('#cwdChip').click();
+  await page.locator('#cwdPop .cpath').fill(folderC);
+  await page.locator('#cwdPop .cpath').press('Enter');
+  await page.waitForTimeout(300);
+  const picked = await chips();
+  const tPicked = await page.evaluate(() => Date.now());
+  check('一覧の読み直し中に選んだ値がチップに出る', picked.model === 'fast' && picked.mode !== 'default' && picked.cwd === 'folder-A', JSON.stringify(picked));
+  // 読み直しが終わる（3 秒後）まで待ち、会話が開いてからさらに待つ
+  await page.waitForFunction(ids => { const sel = document.querySelector('.row.sel')?.dataset.session; return sel && !ids.includes(sel) && !sel.startsWith('pending-'); }, beforeRows, { timeout: 15000 });
+  await page.waitForTimeout(1500);
+  const settled = await chips();
+  const flicker = await page.evaluate(({ t, want }) => { clearInterval(window.__sampler); return window.__samples.filter(x => x.t >= t && (x.model !== want.model || x.mode !== want.mode || x.cwd !== want.cwd)); }, { t: tPicked, want: picked });
+  check('読み直しが終わって会話が開いても、選んだ値のまま（モデル・承認モード・作業場所）', settled.model === picked.model && settled.mode === picked.mode && settled.cwd === picked.cwd, JSON.stringify(settled));
+  check('その間、チップが一瞬も戻らない', flicker.length === 0, JSON.stringify(flicker.slice(0, 3)));
+  const createdId = await page.evaluate(() => document.querySelector('.row.sel').dataset.session);
+  const sentCmds = await page.evaluate(() => window.__hold.log.filter(l => ['setTurnSettings', 'setMode', 'setPref'].includes(l.command)).map(l => ({ command: l.command, args: l.args })));
+  check('できた会話へモデル・承認モード・作業場所が渡る', sentCmds.some(c => c.command === 'setTurnSettings' && c.args.sessionId === createdId && c.args.model === 'fast')
+    && sentCmds.some(c => c.args.sessionId === createdId && c.args.mode === (picked.mode)) && sentCmds.some(c => c.command === 'setTurnSettings' && c.args.sessionId === createdId && c.args.cwd === folderC), JSON.stringify(sentCmds));
+  check('承認モードで既定のモード（setPref）を書き換えない', !sentCmds.some(c => c.command === 'setPref'), JSON.stringify(sentCmds));
+  await page.screenshot({ path: `${shots}/11-settings-during-creation.png` });
+
   return { passed: true, checks };
 }

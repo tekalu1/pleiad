@@ -4,6 +4,8 @@
 //   - "" の下書き（作っている間の仮置き）は、作った会話が引き取ったら消える
 //   - 作っている間の送信は予約され、できしだい送る。取り消せば送らず、字は残る
 //   - 別の会話を開く間は readonly + aria-busy。読み込みに失敗したら欄を書けるように戻し、「もう一度読む」で読み直す
+//   - 作っている間に選んだ設定（作業場所・モデル・effort・承認モード・エージェント）は、変えた時点（newSession の応答前・応答後の一覧の読み直し中・
+//     履歴の読み込み中）によらず、できた会話の setTurnSettings に載る。承認モードは setPref でグローバルの既定を書き換えない
 // 見た目（150ms 後の弧・待機文言）は tests/unit/composer-wait.mjs、ブラウザーでは tests/browser/composer-loading.cjs。
 import fs from 'node:fs/promises';
 import vm from 'node:vm';
@@ -13,11 +15,11 @@ import { createComposerWait } from '../../web/composer-wait.mjs';
 import { syncRequest, joinReply, retainPlan } from '../../web/history-sync.mjs';
 
 export const name = 'composer-new-session';
-export const title = '新しい会話を作っている間に書いた字が消えない・作成中の送信の予約・作成中の作業場所の反映・読み込み失敗で欄が戻る';
+export const title = '新しい会話を作っている間に書いた字が消えない・作成中の送信の予約・作成中の作業場所と設定の反映・読み込み失敗で欄が戻る';
 
 const FUNCTIONS = ['startNew', 'select', 'loadHistory', 'loadAndPaint', 'paintSession', 'saveDraft', 'persistDraft', 'dropBlankDraft', 'loadDraft',
   'syncRunState', 'submit', 'clearSentDraft', 'uploadsHere', 'adoptUploads', 'uploadBlockReason', 'attachFiles', 'runUpload', 'saveDraftSoon', 'flushDraft',
-  'reserveSettings', 'applyCwd'];
+  'reserveSettings', 'applyCwd', 'chooseSettings', 'justCreated', 'noteDraftChange', 'draftView', 'sendDraftSettings'];
 
 export default async function (t) {
   const source = (await fs.readFile(new URL('../../web/client.mjs', import.meta.url), 'utf8')).replaceAll('\r\n', '\n');
@@ -66,11 +68,11 @@ export default async function (t) {
   const context = vm.createContext({
     state, $, cmd, refresh, syncRequest, joinReply, retainPlan, retainThread: noop, holdReading: noop, t: (k, params) => params?.error ? `${k}: ${params.error}` : k, html: { t: k => k }, sys: noop, escText: x => x, NL: '\n',
     creatingSession: null, pendingNewSession: null, freshSessionId: null, draftTimer: null, draftSavedAt: 0, DRAFT_THROTTLE_MS: 400, queuedSend: null, settingsFailure: null, syncSettingsHold: noop,
-    failedSettingsPatch: null, failedSettingsError: '', cwdSaving: 0,
+    failedSettingsPatch: null, failedSettingsError: '', cwdSaving: 0, stagedNext: new Map(),
     settingsWrite: Promise.resolve(), modeWrite: Promise.resolve(),
     DRAFT_STORE: 'drafts', draftWrites: new Map(), draftKey: () => state.current ?? '',
     localStorage: { setItem: (k, v) => storage.set(k, v), getItem: k => storage.get(k) ?? null },
-    setDrawer: noop, randomId: () => Math.random().toString(36).slice(2), renderAttached: noop, fitPrompt: noop, clearThread: noop, prepareHistoryHeights: noop, syncTopbar: noop,
+    setDrawer: noop, randomId: () => Math.random().toString(36).slice(2), renderAttached: noop, fitPrompt: noop, clearThread: noop, prepareHistoryHeights: noop, syncTopbar: async () => {},
     syncWorkEntry: noop, refreshGit: async () => {}, restorePastSubagents: noop, loadTaskCards: async () => {}, paintContextStrip: noop, paintCompactions: noop,
     pendingRows: new Map(), renderSessions: noop, pendingAfterDelay: () => noop, side: { keep: noop, showUndo: noop },
     filePreview: { sessionChanged: noop }, setTimeout: () => 1, clearTimeout: noop, el: () => new N('div'), append: noop,
@@ -371,4 +373,115 @@ export default async function (t) {
   context.cmd = oldCmd;
   context.settingsFailure = null;
   context.failedSettingsPatch = null;
+
+  // ---------------------------------------------------------------- 作成中に設定（モデル・effort・承認モード・エージェント・作業場所）を変える
+  // 変えた時点 3 つ × 項目 5 つ。どれも、できた会話の予約（setTurnSettings。承認モードは会話が開いた後なら setMode）に載る
+  const turnSettingsOf = (id) => calls.filter(c => c.command === 'setTurnSettings' && c.args.sessionId === id).map(c => c.args);
+  // 設定のチップのハンドラ（client.mjs の controls の on。cwd・backend・model・effort・mode）をそのまま取り出して走らせる
+  const onStart = source.indexOf('    cwd: applyCwd,');
+  const on = run(`({ ${source.slice(onStart, source.indexOf('    // モデルの面を開いた', onStart))} })`);
+  context.activeBackendId = () => 'fake';
+  context.composerError = noop;
+  const ITEMS = {
+    cwd: { apply: () => on.cwd('D:/chosen'), live: a => a.cwd === 'D:/chosen' },
+    model: { apply: () => on.model('fast'), live: a => a.model === 'fast' && a.rememberModel === true },
+    effort: { apply: () => on.effort('low'), live: a => a.effort === 'low' && a.rememberEffort === true },
+    backend: { apply: () => on.backend('codex'), live: a => a.backend === 'codex' && a.model === '' },
+    mode: { apply: () => on.mode('auto'), live: a => a.mode === 'auto' && a.rememberMode === true },
+  };
+  let n = 0;
+  for (const [item, spec] of Object.entries(ITEMS)) {
+    for (const when of ['before', 'refresh', 'load']) {
+      const id = `s${++n}`;
+      state.cwd = 'C:/home'; state.attached = []; prompt.value = '';
+      const before = calls.length;
+      const making = run('startNew()');
+      if (when === 'before') spec.apply();
+      await reply('newSession', { sessionId: id });
+      if (when === 'refresh') spec.apply();
+      state.sessions.push({ id, cwd: 'C:/home', nextSettings: null });
+      releaseRefresh(); releaseRefresh = null;
+      await settle();
+      if (when === 'load') spec.apply();
+      await reply('loadSession', { messages: [], presents: [], draft: { text: '', attached: [] } });
+      await making;
+      await settle();
+      const mine = calls.slice(before);
+      const label = `${item}・${{ before: 'newSession の応答前', refresh: '応答後の一覧の読み直し中', load: '履歴の読み込み中' }[when]}`;
+      // 作った会話は応答のすぐ後に開く（state.current になる）ので、承認モードのチップは応答後なら setMode を送る
+      if (item === 'mode' && when !== 'before') {
+        t.ok(`${label}に変えたら、開いた会話の承認モードを変える（setMode）`, mine.some(c => c.command === 'setMode' && c.args.sessionId === id && c.args.mode === 'auto'), JSON.stringify(mine.map(c => c.command)));
+      } else {
+        const sent = turnSettingsOf(id);
+        t.ok(`${label}に変えたら、できた会話の setTurnSettings に載る`, sent.some(spec.live), JSON.stringify(sent));
+      }
+      if (item === 'mode') t.ok(`${label}: 承認モードを変えても setPref でグローバルの既定を書き換えない`, !mine.some(c => c.command === 'setPref'), JSON.stringify(mine.map(c => c.command)));
+      t.ok(`${label}: 会話が開き、集めた設定は渡し終えて空になる`, state.current === id && !state.draft.changes?.length && state.draft.created === null);
+    }
+  }
+
+  // チップの表示（syncTopbar の草稿の分岐が読む値）: 選んだ順に畳む。エージェントを変えたら、変えた先の既定に戻る
+  const view = (...changes) => context.draftView(changes);
+  const viewJson = (...changes) => JSON.stringify(view(...changes));
+  t.ok('選んだ値が見える', viewJson({ model: 'fast', rememberModel: true }, { effort: 'low' }) === JSON.stringify({ model: 'fast', rememberModel: true, effort: 'low' }));
+  t.ok('エージェントを変えたら effort・承認モード・接続先は戻り、モデルは既定になる',
+    (v => v.backend === 'codex' && v.model === '' && !('effort' in v) && !('mode' in v) && !('endpoint' in v))(view({ mode: 'auto' }, { effort: 'low' }, { model: 'fast' }, { backend: 'codex', model: '' })));
+  t.ok('エージェントを変えた後に選んだ値は残る', view({ backend: 'codex', model: '' }, { model: 'gpt', rememberModel: true }, { mode: 'auto' }).model === 'gpt' && view({ backend: 'codex', model: '' }, { mode: 'auto' }).mode === 'auto');
+  t.ok('接続先を変えたらモデルと effort は接続先の既定に戻る', (v => v.endpoint === 'e1' && v.model === '' && !('effort' in v))(view({ model: 'fast' }, { effort: 'low' }, { endpoint: 'e1' })));
+
+  // 同じ項目を続けて選び直したら最後の 1 つだけ流す。項目が違えば選んだ順のまま（モデルを替えてから effort、が効かなくならない）
+  state.current = null; state.draft = { status: null, cwd: '', changes: [], created: null };
+  run("chooseSettings({ model: 'a', rememberModel: true })"); run("chooseSettings({ model: 'b', rememberModel: true })");
+  run("chooseSettings({ effort: 'low', rememberEffort: true })"); run("chooseSettings({ model: 'c', rememberModel: true })");
+  t.ok('同じ項目の続けての変更は 1 つにまとめ、違う項目は選んだ順', JSON.stringify(state.draft.changes.map(c => c.model ?? c.effort)) === '["b","low","c"]', JSON.stringify(state.draft.changes));
+
+  // まっさらな新規の欄（会話が無い）で選んだ設定は、次に作る会話へ持ち越す（newSession の引数にも載せる）
+  state.cwd = 'C:/home';
+  state.draft = { status: null, cwd: '', changes: [{ backend: 'codex', model: '' }, { model: 'gpt', rememberModel: true }, { mode: 'auto', rememberMode: true }], created: null };
+  const carry = run('startNew()');
+  await reply('newSession', { sessionId: 'carry' });
+  const carryArgs = calls.filter(c => c.command === 'newSession').at(-1).args;
+  t.ok('新規の欄で選んだエージェント・モデル・承認モードを newSession に載せる', carryArgs.backend === 'codex' && carryArgs.model === 'gpt' && carryArgs.mode === 'auto' && carryArgs.sourceSessionId === null, JSON.stringify(carryArgs));
+  t.ok('できた会話へも覚える印つきで流す', turnSettingsOf('carry').some(a => a.rememberMode === true && a.mode === 'auto') && turnSettingsOf('carry').some(a => a.rememberModel === true && a.model === 'gpt'));
+  state.sessions.push({ id: 'carry', cwd: 'C:/home' });
+  releaseRefresh(); releaseRefresh = null;
+  await reply('loadSession', { messages: [], presents: [], draft: { text: '', attached: [] } });
+  await carry;
+
+  // 作成に失敗したら、やり直しは作っている間に選んだ設定・作業場所を引き継ぐ
+  let retry = null;
+  context.side.showUndo = (_message, fn) => { retry = fn; };
+  state.current = 'carry'; state.cwd = 'C:/home';
+  const failing = run('startNew()');
+  run("applyCwd('D:/retry-dir')");
+  run("chooseSettings({ model: 'fast', rememberModel: true })");
+  await reply('newSession', 'disk full', true);
+  await failing;
+  t.ok('作成に失敗したら、やり直しを出す', typeof retry === 'function');
+  state.current = null;
+  const retrying = retry();
+  await settle();
+  const retryArgs = calls.filter(c => c.command === 'newSession').at(-1).args;
+  t.ok('やり直しは作っている間に選んだ作業場所とモデルで作る', retryArgs.cwd === 'D:/retry-dir' && retryArgs.model === 'fast', JSON.stringify(retryArgs));
+  await reply('newSession', { sessionId: 'retried' });
+  state.sessions.push({ id: 'retried', cwd: 'D:/retry-dir' });
+  releaseRefresh(); releaseRefresh = null;
+  await reply('loadSession', { messages: [], presents: [], draft: { text: '', attached: [] } });
+  await retrying;
+  context.side.showUndo = noop;
+
+  // 予約が一覧の行より先に書けても、行が載ったときに合わせる（読み直しの写しが書く前のものでも、開いた会話のチップが戻らない）
+  const cmdBefore = context.cmd;
+  context.cmd = (command, args = {}) => command === 'setTurnSettings' ? Promise.resolve({ model: args.model ?? '', effort: '', ...(args.model ? { rememberedModel: true } : {}) }) : cmdBefore(command, args);
+  state.cwd = 'C:/home'; state.current = 'retried';
+  const staging = run('startNew()');
+  await reply('newSession', { sessionId: 'staged' });
+  run("chooseSettings({ model: 'fast', rememberModel: true })");
+  await settle();
+  state.sessions.push({ id: 'staged', cwd: 'C:/home', nextSettings: null });   // 書く前の写しの行
+  releaseRefresh(); releaseRefresh = null;
+  await reply('loadSession', { messages: [], presents: [], draft: { text: '', attached: [] } });
+  await staging;
+  t.ok('書く前の写しの行が載っても、予約の結果で合わせる', state.sessions.find(s => s.id === 'staged').nextSettings?.model === 'fast', JSON.stringify(state.sessions.find(s => s.id === 'staged')));
+  context.cmd = cmdBefore;
 }
