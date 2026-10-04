@@ -119,7 +119,7 @@ export default async function (t) {
   t.ok('朝 6 時を過ぎたら今朝 9:00 は出さない（水曜 7:00）', keys(at(2026, 9, 7, 7)) === 'evening,tomorrow,monday', keys(at(2026, 9, 7, 7)));
   t.ok('18:00 の 10 分前を過ぎたら今日 18:00 は出さない', keys(at(2026, 9, 7, 17, 55)) === 'tomorrow,monday');
   t.ok('火曜は月曜まで遠いので出さない・日曜は明日が月曜なので重ねない', !keys(at(2026, 9, 6, 10)).includes('monday') && !keys(at(2026, 9, 4, 10)).includes('monday'));
-  t.ok('「上限の解除後」は候補にしない（上限中に送れば、解除まで送信待ちで同じ動きになる。ADR 0129）', !presets(sat0149, { resetsAt: sat0149 + 41 * 60_000 }).some(p => p.key === 'reset'));
+  t.ok('「上限の解除後」は候補にしない（上限中に送れば、解除まで送信待ちで同じ動きになる。ADR 0132）', !presets(sat0149, { resetsAt: sat0149 + 41 * 60_000 }).some(p => p.key === 'reset'));
 
   const days = dayChips(sat0149);
   t.ok('日のチップは 7 日分（今日・明日・以降は日付）', days.length === 7 && days[0].offset === 0 && days[1].sub.includes('10/4') && days[2].label.includes('10/5'));

@@ -1,4 +1,4 @@
-// 使用量の上限で止まった会話の自動再開の、時刻と使用量の判断（ADR 0129。docs/design.md「中断と再開」）。
+// 使用量の上限で止まった会話の自動再開の、時刻と使用量の判断（ADR 0132。docs/design.md「中断と再開」）。
 // 副作用を持たない関数だけを置く（予定の置き方・再開の実行は core/server.mjs）。
 import { codexBucket } from './backends/codex-limit.mjs';
 import { windowsFor } from './delegation-routing.mjs';
