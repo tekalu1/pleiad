@@ -47,7 +47,7 @@ export default async function (t) {
     t.ok('botOfSession は store が落ちても null', (await broken.opsDeps().botOfSession('s1')) === null);
 
     // ---- 配線: 出来事・操作の一覧
-    const eight = ['channelsChanged', 'channelPost', 'channelReaction', 'channelThread', 'channelRead', 'botsChanged', 'memoryChanged', 'routinesChanged', 'channelEvent'];
+    const eight = ['channelsChanged', 'channelPost', 'channelReaction', 'channelThread', 'channelRead', 'botsChanged', 'memoryChanged', 'brainChanged', 'routinesChanged', 'channelEvent'];
     t.ok('WS の出来事が EVENTS にある', eight.every((e) => EVENTS.has(e)));
     t.ok('操作の一覧の登録が壊れていない（空の領域でも）', registry.ops.length > 0);
 

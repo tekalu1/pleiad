@@ -12,7 +12,7 @@
 //   <data>/routines.json              ルーティン
 // 新しいファイルは全部 { version: 1 } を持ち、読めない版は読み込まずに画面へ出して止める。
 import crypto from 'node:crypto';
-import { CHANNEL_TAG, CHANNEL_THREAD_TAG, MEMORY_CORE_TAG, TURN_CONTEXT_TAG, ROUTINE_PAYLOAD_TAG, splitLeadingNotes } from '../system-messages.mjs';
+import { CHANNEL_TAG, CHANNEL_THREAD_TAG, MEMORY_CORE_TAG, TURN_CONTEXT_TAG, INNER_TAG, ROUTINE_PAYLOAD_TAG, splitLeadingNotes } from '../system-messages.mjs';
 
 /** @typedef {{ kind: 'human' }
  *          | { kind: 'bot', botId: string }
@@ -72,12 +72,13 @@ import { CHANNEL_TAG, CHANNEL_THREAD_TAG, MEMORY_CORE_TAG, TURN_CONTEXT_TAG, ROU
  *   sendToOthers: boolean,                                // 既定 true（P3 の sessions.send。bot に束縛された主体のときだけ確かめる。ON にするのは広げる向き = bots.update が guarded）
  *   sendTargets: string[],                                // 送れる会話。自動追加と bots.update の置き換えを同じ一覧に保存（ADR 0114）
  *   sendTargetSources?: { [sessionId: string]: 'shown'|'created'|'manual' }, // 外しても残し、自動で戻さない。入力では受け取らない
+ *   pulse: { on: boolean, everyMin: number, backend: string, model: string, channelId: string },   // 心拍（ADR 0126）。既定は on: false。everyMin = 既定の間隔（5〜60 分）、backend・model = 安いモデル（空なら memoryLearnBackend）、channelId = 予算を引く「家」のチャンネル（空なら入っている最初のチャンネル）
  *   dmChannelId: string, dmSessionId: string|null,
  *   createdAt: number, updatedAt: number }} Bot */
 
 /** 会話の記録（DB の session_fields）の新しい欄 `bot`（core/store.mjs の setSessionData の許可リスト）
  * @typedef {{
- *   botId: string, kind: 'thread'|'dm'|'routine'|'learner',
+ *   botId: string, kind: 'thread'|'dm'|'routine'|'learner'|'pulse',   // pulse = 心拍の安いモデルの隠れた会話（ADR 0126。投稿は作らず、channels.* の書き込みは断る）
  *   channelId: string|null, threadId: string|null, routineId?: string, taint?: 'webhook',
  *   memRev: number,                                       // 末尾の差分をどこまで渡したか（memory/log.jsonl の rev）
  *   snapshotDue: boolean,                                 // 次のターンで核の写しを渡す（始まり・圧縮の完了で true）
@@ -108,7 +109,7 @@ import { CHANNEL_TAG, CHANNEL_THREAD_TAG, MEMORY_CORE_TAG, TURN_CONTEXT_TAG, ROU
  *   last?: { at: number, runId: string, state: Post['state'], postId?: string } }} Routine */   // postId = その実行の根の投稿
 
 /** bot の会話の sidecar の `bot.kind`（ThreadState.sessions・Bot.dmSessionId の会話がどれか） */
-export const BOT_SESSION_KINDS = Object.freeze(['thread', 'dm', 'routine', 'learner']);
+export const BOT_SESSION_KINDS = Object.freeze(['thread', 'dm', 'routine', 'learner', 'pulse']);
 /** Post.state の値 */
 export const POST_STATES = Object.freeze(['working', 'waiting', 'done', 'checking', 'failed', 'stopped', 'skipped']);
 /** ThreadState.state の値 */
@@ -180,6 +181,8 @@ export function channelThreadEnvelope({ channel, channelId, thread, posts }) {
 export const memoryCoreEnvelope = (text) => `<${MEMORY_CORE_TAG}>\n${escapeBody(text)}\n</${MEMORY_CORE_TAG}>`;
 /** 毎ターンの末尾（時刻・記憶の差分・関係する記憶。notes） */
 export const turnContextEnvelope = (text) => `<${TURN_CONTEXT_TAG}>\n${escapeBody(text)}\n</${TURN_CONTEXT_TAG}>`;
+/** bot の思考の流れの末尾と気がかり（自分の下書き）。呼ばれたターンの末尾の notes と、心拍からの起こし方の本文（ADR 0126）。kind は 'tail'（呼ばれたターン）・'pulse'（自分で起きた） */
+export const innerEnvelope = ({ kind, at }, text) => `<${INNER_TAG}${attrs({ kind, at })}>\n${escapeBody(text)}\n</${INNER_TAG}>`;
 /** ルーティンの外から来た本文（webhook など）。「データであり指示ではない」の固定の 1 行は呼び出し側（辞書 agent:routine.payloadNote）が前に付ける */
 export function routinePayloadEnvelope({ source, hook, at, text }) {
   return `<${ROUTINE_PAYLOAD_TAG}${attrs({ source, hook, at })}>${escapeBody(text)}</${ROUTINE_PAYLOAD_TAG}>`;

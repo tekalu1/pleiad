@@ -33,7 +33,7 @@ import { createThread } from './thread.mjs';
 
 /** WS の出来事のうち、この画面が受けるもの（core/protocol.mjs の EVENTS）。ほかの出来事も部品の onEvent には全部届く（permission など） */
 export const CHANNEL_EVENTS = new Set([
-  'channelsChanged', 'channelPost', 'channelReaction', 'channelThread', 'channelRead', 'botsChanged', 'memoryChanged', 'routinesChanged',
+  'channelsChanged', 'channelPost', 'channelReaction', 'channelThread', 'channelRead', 'botsChanged', 'memoryChanged', 'brainChanged', 'routinesChanged',
 ]);
 
 import { createBotPage } from './bot-page.mjs';

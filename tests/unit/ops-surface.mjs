@@ -202,14 +202,16 @@ export default async function (t) {
       read: async () => ({ posts: [{ id: 'p_000000000aaaaaa', text: 'こんにちは', ...secret }], threads: [{ threadId: 'p_000000000aaaaaa', ...secret }], summaries: {}, nextBefore: null }),
       search: async () => ({ hits: [{ postId: 'p_000000000aaaaaa', snippet: 'こんにちは', ...secret }] }),
     },
-    bots: { overview: async ({ botId } = {}) => [{ id: botId ?? 'b_1', name: 'Owl', icon: '🦉', persona: '', backend: 'fake', model: '', effort: '', mode: 'default',
-      folders: [], sendToOthers: true, sendTargets: [], dmChannelId: 'c_1', dmSessionId: null, createdAt: 0, updatedAt: 0,
+    bots: { get: async ({ botId }) => ({ id: botId, name: 'Owl', icon: '🦉', pulse: { on: false, everyMin: 10, backend: '', model: '', channelId: '' } }), overview: async ({ botId } = {}) => [{ id: botId ?? 'b_1', name: 'Owl', icon: '🦉', persona: '', backend: 'fake', model: '', effort: '', mode: 'default',
+      folders: [], sendToOthers: true, sendTargets: [], pulse: { on: false, everyMin: 10, backend: '', model: '', channelId: '' }, dmChannelId: 'c_1', dmSessionId: null, createdAt: 0, updatedAt: 0,
       usage: { weekTokens: 0, cacheRatio: null }, state: 'idle', ...secret }] },   // S2
     memory: {       // S3
       list: async () => [{ id: 'm_x', layer: 'user', text: 'PR は小さく', sources: [], at: 1, updatedAt: 1, by: { kind: 'human' }, ...secret }],
       search: async () => [{ id: 'm_x', layer: 'user', text: 'PR は小さく', sources: [], at: 1, updatedAt: 1, by: { kind: 'human' }, ...secret }],
       get: async () => null,
     },
+    brain: { list: () => [{ seq: 1, botId: 'b_1', at: 1, kind: 'think', text: '考える', ...secret }], loops: () => [{ id: 'l1', status: 'open', text: 'やりかけ', updatedAt: 1, ...secret }], count: () => 1 },   // 頭の中（ADR 0126）
+    pulse: { status: async () => ({ on: false, paused: false, running: false, nextAt: null, lastBeatAt: null, drives: null, home: null, budget: null, ...secret }) },
     memoryLearner: { status: async () => ({ at: '02:00', paused: false, running: false, lastRunAt: null, nextAt: 2, lastResult: null, skip: null, failure: null, ...secret }) },   // S3
     routines: {     // R1（P2）
       list: async () => [{ id: 'r_000000000aaaaaa', name: '朝のまとめ', botId: 'b_1', channelId: 'c_000000000aaaaaa', prompt: 'まとめて', trigger: { kind: 'daily', at: '09:00', weekdaysOnly: false },
@@ -233,7 +235,7 @@ export default async function (t) {
     'channels.get': [{ channelId: 'c_000000000aaaaaa' }], 'channels.read': [{ channelId: 'c_000000000aaaaaa' }], 'channels.search': [{ query: 'こんにちは' }],
     'channels.wakePreview': [{ channelId: 'c_000000000aaaaaa', text: '@everyone' }],
     'memory.list': [{ layer: 'user' }], 'memory.search': [{ query: 'PR' }],
-    'bots.get': [{ botId: 'b_1' }],
+    'bots.get': [{ botId: 'b_1' }], 'brain.view': [{ botId: 'b_1' }],
     'routines.get': [{ routineId: 'r_000000000aaaaaa' }],
   };
   for (const op of registry.ops.filter((o) => o.risk === 'read' && o.surfaces.ui)) {

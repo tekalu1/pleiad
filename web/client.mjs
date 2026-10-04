@@ -1279,7 +1279,7 @@ function systemHistoryNode(m) {
   if (m.kind === 'interruptionNote') return sysFold(t('chat.sys.interruptionNote'), m.body ?? '');
   // bot の会話の先頭の包み（core/system-messages.mjs の splitLeadingNotes）。チャンネルの出来事は「#チャンネル · 発言者」、記憶は渡した印。開くと中身が読める
   if (m.kind === 'channelEvent') return sysFold(m.history ? t('channels:event.thread', { channel: m.channel }) : t('channels:event.post', { channel: m.channel, from: m.from }), m.body ?? '', hhmm(m.at));
-  if (m.kind === 'contextNote') return sysFold(m.tag === 'memory-core' ? t('channels:event.memoryCore') : m.tag === 'bot-recent' ? t('channels:event.botRecent') : t('channels:event.turnContext'), m.body ?? '', hhmm(m.at));
+  if (m.kind === 'contextNote') return sysFold(m.tag === 'memory-core' ? t('channels:event.memoryCore') : m.tag === 'bot-recent' ? t('channels:event.botRecent') : m.tag === 'inner' ? t('channels:event.inner') : t('channels:event.turnContext'), m.body ?? '', hhmm(m.at));
   // Pleiad の完了通知。「タスクの結果で再開」の 1 行を開くと、エージェントに渡した本文が読める
   if (m.internalTaskNotice) return taskNoticeNode(m.text, hhmm(m.at));
   return undefined;

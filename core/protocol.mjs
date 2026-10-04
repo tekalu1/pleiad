@@ -248,6 +248,7 @@ export const EVENTS = new Set([
   "channelRead",     // { channelId, readAt } 別の端末・窓の既読
   "botsChanged",     // { bot?: Bot, removed?: string }
   "memoryChanged",   // { layer, rev } 記憶が増えた・直した・忘れた（中身は memory.list で取り直す）
+  "brainChanged",    // { botId } bot の思考の流れ・気がかり・心拍の状態が変わった（中身は brain.view で取り直す。ADR 0126）
   "routinesChanged", // { routine?: Routine, removed?: string }
   // { rows: [{ role: system, kind: channelEvent | contextNote, … }] } bot の会話へチャンネルの出来事・記憶の包みを渡した（会話の sessionId 付き。
   // 履歴の splitLeadingNotes と同じ行の形で、画面は履歴と同じ描き方をする）

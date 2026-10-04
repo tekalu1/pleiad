@@ -35,6 +35,7 @@ const botShape = {
   backend: z.string(), model: z.string(), effort: z.string(), mode: z.string(),
   folders: z.array(z.object({ path: z.string(), access: z.enum(['rw', 'ro']) })),
   sendToOthers: z.boolean(), sendTargets: z.array(z.string()),
+  pulse: z.object({ on: z.boolean(), everyMin: z.number(), backend: z.string(), model: z.string(), channelId: z.string() }),
   dmChannelId: z.string(), dmSessionId: z.string().nullable(),
   createdAt: z.number(), updatedAt: z.number(),
 };
@@ -110,7 +111,7 @@ export const botOps = [
     id: 'bots.update',
     summary: 'agent:ops.bots.update.summary',
     risk: 'write',
-    riskReason: 'Changing the name, emoji icon, model or effort, or narrowing the folders and send targets, only changes a bot definition. Widening what a bot can touch (adding a folder or send target, turning send-to-others on, a backend with a stronger approval mode) and an AI changing a persona or image icon (its own included) are raised to guarded by riskOf',
+    riskReason: 'Changing the name, emoji icon, model or effort, or narrowing the folders and send targets, only changes a bot definition. Widening what a bot can touch (adding a folder or send target, turning send-to-others on, a backend with a stronger approval mode), turning the heartbeat on or making it more frequent (the bot then acts by itself, ADR 0126), and an AI changing a persona or image icon (its own included) are raised to guarded by riskOf',
     input: z.object({
       botId: z.string().min(1).max(100).describe(D('update', 'botId')),
       name: z.string().min(1).max(64).optional().describe(D('update', 'name')),
@@ -123,6 +124,13 @@ export const botOps = [
       folders: z.array(folder).max(20).optional().describe(D('update', 'folders')),
       sendToOthers: z.boolean().optional().describe(D('update', 'sendToOthers')),
       sendTargets: z.array(z.string().min(1).max(200)).max(100).optional().describe(D('update', 'sendTargets')),
+      pulse: z.object({
+        on: z.boolean().optional().describe(D('update', 'pulseOn')),
+        everyMin: z.number().int().min(5).max(60).optional().describe(D('update', 'pulseEveryMin')),
+        backend: z.string().max(40).optional().describe(D('update', 'pulseBackend')),
+        model: z.string().max(200).optional().describe(D('update', 'pulseModel')),
+        channelId: z.string().max(100).optional().describe(D('update', 'pulseChannelId')),
+      }).optional().describe(D('update', 'pulse')),
       reason: z.string().max(500).optional().describe(D('update', 'reason')),
     }),
     riskOf: async (ctx, args) => {

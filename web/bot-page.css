@@ -145,3 +145,35 @@
   .mem,.bp-sw,.bp-sw::after,.bp-av,.bp-fold-acc{transition:none}
 }
 .bp-name:focus-visible{outline:none}
+
+/* ---- 思考の流れ（モデルの出力の記録。ADR 0126）。欲求は数値で見せる */
+.bp-brain h4{margin-bottom:6px}
+.brain-note{margin:0 0 8px;padding:0}
+.brain-pulse{align-items:center;gap:10px}
+.brain-every{background:var(--surface-paper);color:var(--ink);border-radius:var(--r-s);padding:3px 8px;font:400 13px/1.4 var(--font)}
+.brain-every:disabled{opacity:.45}
+.brain-status{margin:6px 0 0;font-size:var(--fs-xs);color:var(--ink-weak);overflow-wrap:anywhere}
+.brain-actions{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0}
+.brain-actions .btn:disabled{opacity:.45;cursor:not-allowed}
+.brain-drives{display:grid;grid-template-columns:auto 1fr auto;gap:4px 10px;align-items:center;margin:8px 8px 4px;font-size:var(--fs-xs)}
+.brain-drives[hidden]{display:none}
+.brain-drive{display:contents}
+.brain-dk{color:var(--ink-weak)}
+.brain-meter{display:block;height:6px;border-radius:var(--r-pill);background:var(--surface-3);overflow:hidden;min-width:60px}
+.brain-fill{display:block;height:100%;border-radius:var(--r-pill);background:var(--fill-primary);color:var(--on-fill)}
+.brain-dv{font-family:var(--font-mono);color:var(--ink)}
+.brain-loops,.brain-stream{display:flex;flex-direction:column}
+.brain-loop,.brain-row{display:flex;gap:8px;align-items:flex-start;padding:5px 8px;border-radius:var(--r-s);font-size:13px}
+.brain-loop:hover,.brain-row:hover{background:var(--surface-paper)}
+.brain-loop .tx,.brain-row .tx{flex:1;min-width:0}
+.brain-loop .tx-text,.brain-row .tx-text{overflow-wrap:anywhere;line-height:1.55}
+.brain-loop .forget{opacity:0;flex:none;padding:3px 8px}
+.brain-loop:hover .forget,.brain-loop .forget:focus-visible{opacity:1}
+.brain-time{flex:none;width:7.5em;font-size:var(--fs-xs);color:var(--ink-weak);font-family:var(--font-mono);padding-top:2px}
+.brain-kind{display:inline-block;padding:0 6px;margin-right:6px;border-radius:var(--r-pill);background:var(--surface-2);color:var(--ink-weak);font-size:var(--fs-xs);line-height:1.6;vertical-align:1px}
+.brain-row.k-quiet .tx-text{color:var(--ink-weak)}
+.brain-row.k-act .brain-kind,.brain-row.k-result .brain-kind{color:var(--ink-blue)}
+.brain-meta{display:block;font-size:var(--fs-xs);color:var(--ink-weak);overflow-wrap:anywhere}
+@media (pointer:coarse){
+  .brain-loop .forget{opacity:1}
+}

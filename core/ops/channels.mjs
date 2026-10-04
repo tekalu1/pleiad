@@ -6,7 +6,8 @@
 //   人（画面）                          → { kind: 'human' }
 //   会話に束縛された AI                  → その会話が bot の会話なら { kind: 'bot', botId }、それ以外は { kind: 'agent', sessionId }
 //   会話に束縛されない CLI・外の MCP      → NEEDS_UI（人として書かせない。画面へ誘導）
-// post・react・stopThread は modeGate: false（読み取り・計画モードの bot も返事・リアクション・停止はできる）。
+// post・react・stopThread は modeGate: false（読み取り・計画モードの bot も返事・リアクション・停止はできる）。ただし心拍・夜の整理の隠れた会話（sidecar の bot.kind が pulse・learner）からの書き込みは、
+// 全部 HIDDEN_CONVERSATION で断る（authorOf と markRead・wake の入口。独り言が投稿に漏れない。ADR 0126）。
 // AI が作業場所（cwd）を決める・変えるのは riskOf で guarded（フォルダーを持たない bot の作業場所になるので、bots.update のフォルダーと同じ重さ）。
 // post は、投稿の主体が AI（bot を含む）で、@ の宛先の bot の承認モードが主体の会話より強い（範囲・自律のどちらかが上）ときは、投稿は残すが起こさず、
 // channels.wake（guarded。「<bot> は <モード> で動きます。起こしますか」の承認カード）を出す。人の投稿・同じか弱い bot への @ は確認なし。呼び合いの回数の上限は置かない（ADR 0109）。
@@ -36,11 +37,23 @@ async function run(ctx, fn) {
   }
 }
 
-/** 操作の主体 → 投稿の発言者 */
+/** 心拍（pulse）・夜の整理（learner）の隠れた会話。投稿の種類に入れず、チャンネルへ書かせない */
+const HIDDEN_KINDS = new Set(['pulse', 'learner']);
+/**
+ * 隠れた会話からのチャンネルの書き込みを断る。`channels.post` などは modeGate: false（読み取りのモードの bot も返事・リアクションはできる）なので、
+ * 読み取りのモードで動く隠れた会話が、そのまま投稿できてしまう。独り言が人に見える場所へ漏れないよう、書き込みの入口で会話の種類を見る（ADR 0126）
+ */
+async function refuseHidden(ctx) {
+  const sb = ctx.actor?.sessionId ? await ctx.botOfSession?.(ctx.actor.sessionId) : null;
+  if (HIDDEN_KINDS.has(sb?.kind)) throw new OpError('HIDDEN_CONVERSATION', agentT(ctx.locale, 'ops.errors.HIDDEN_CONVERSATION'));
+}
+
+/** 操作の主体 → 投稿の発言者。隠れた会話（心拍・夜の整理）は断る */
 export async function authorOf(ctx) {
   const { actor } = ctx;
   if (actor?.by === 'human') return { kind: 'human' };
   if (!actor?.sessionId) throw new OpError('NEEDS_UI', agentT(ctx.locale, 'ops.errors.NEEDS_UI', { id: ctx.op?.id ?? 'channels' }));
+  await refuseHidden(ctx);
   const bot = await ctx.botOfSession?.(actor.sessionId);
   return bot?.botId ? { kind: 'bot', botId: bot.botId } : { kind: 'agent', sessionId: actor.sessionId };
 }
@@ -270,7 +283,7 @@ export const channelOps = [
       };
     },
     surfaces: { ui: true, mcp: 'catalog', cli: { path: ['channels', 'wake'], positional: ['channelId', 'postId', 'botId'] } },
-    handler: async (ctx, args) => run(ctx, async () => ({ ...(await ctx.wake({ channelId: args.channelId, postId: args.postId, botId: args.botId })), botId: args.botId })),
+    handler: async (ctx, args) => run(ctx, async () => { await refuseHidden(ctx); return { ...(await ctx.wake({ channelId: args.channelId, postId: args.postId, botId: args.botId })), botId: args.botId }; }),
   }),
   defineOp({
     id: 'channels.edit', summary: D('edit', 'summary'), risk: 'write',
@@ -311,7 +324,7 @@ export const channelOps = [
     output: z.unknown(),
     surfaces: { ui: true, mcp: 'catalog', cli: { path: ['channels', 'mark-read'], positional: ['channelId'] } },
     // at は今を超えない（既読の位置は進める向きにしか動かないので、未来の時刻を 1 回入れられると、そのチャンネルの未読の印が二度と付かなくなる）
-    handler: (ctx, { channelId: id, at }) => run(ctx, () => ctx.channels.markRead({ channelId: id, at: Math.min(at ?? Date.now(), Date.now()) })),
+    handler: (ctx, { channelId: id, at }) => run(ctx, async () => { await refuseHidden(ctx); return ctx.channels.markRead({ channelId: id, at: Math.min(at ?? Date.now(), Date.now()) }); }),
   }),
   defineOp({
     id: 'channels.stopThread', summary: D('stopThread', 'summary'), risk: 'write', modeGate: false,

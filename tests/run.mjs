@@ -463,6 +463,12 @@ const cases = [
   // bot を起こす・配る: @ で起こす・返事の @ で連鎖・［止める］・途中送信とたまった出来事・DM・暗黙では起こさない・末尾（記憶の核の写し）・再起動の戻し・inbox.json
   await import("./unit/bot-dispatch.mjs"),
   await import("./unit/bot-budget.mjs"),
+  // bot の頭の中（ADR 0126）: 欲求・ふるい・返事の読み取り・思考の流れの束・独り言の写り・思考の流れと気がかりの保存
+  await import("./unit/brain-core.mjs"),
+  // 心拍（ふるい → 安いモデル → 引き継ぎ・予算・失敗・止める・下限）と、予算の心拍の分
+  await import("./unit/brain-pulse.mjs"),
+  // サーバー越し: 心拍を入れた bot（呼ばれたターンの末尾・引き継ぎ・結果の行・予算・漏れ・隠れた会話の書き込みの拒否）
+  await import("./unit/brain-server.mjs"),
   // bot の会話は Chats の一覧に出さず、あなた待ちのときだけ出す（一覧の行の bot・承認待ち・検索の除外・スマホ通知）
   await import("./unit/bot-sessions-list.mjs"),
   // --- channels-ui: 脇・流れ・スレッド・bot のページ (W1・W2・W3・W4) ---

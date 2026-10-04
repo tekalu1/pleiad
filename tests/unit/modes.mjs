@@ -1,7 +1,7 @@
 // 承認モードの軸（core/modes.mjs）の解決規則を表で固定する。
 // ここが崩れると、委譲した子が親より強い権限で黙って動く。
 import assert from 'node:assert/strict';
-import { canDelegate, modePosition, resolveDelegatedMode } from '../../core/modes.mjs';
+import { canDelegate, modePosition, narrowestMode, resolveDelegatedMode } from '../../core/modes.mjs';
 import { backend as claude } from '../../core/backends/claude.mjs';
 import { backend as codex } from '../../core/backends/codex.mjs';
 import { backend as antigravity } from '../../core/backends/antigravity.mjs';
@@ -46,4 +46,13 @@ export default async function (t) {
   const empty = resolveDelegatedMode({ parentMode: 'default', parentModes: claude.modes(), childModes: {} });
   t.ok('モードを持たない相手でも落ちない', empty.mode === null && empty.escalation === false);
   t.ok('引数が欠けても落ちない', resolveDelegatedMode({}).mode === null);
+
+  // 隠れた会話（心拍・夜の整理）のモード: readonly 以下でいちばん狭いもの。Claude は読むだけのモードを持たないので plan（none）
+  t.ok('隠れた会話のモード: Claude は plan（none）・Codex は readonly・Antigravity は無し（全部自動だけ）',
+    narrowestMode(claude.modes()) === 'plan' && narrowestMode(codex.modes()) === 'readonly' && narrowestMode(antigravity.modes()) === null,
+    JSON.stringify([narrowestMode(claude.modes()), narrowestMode(codex.modes()), narrowestMode(antigravity.modes())]));
+  t.ok('隠れた会話のモード: none と readonly があれば none、同じ範囲なら自律の弱いほう。モードが無くても落ちない',
+    narrowestMode({ r: { scope: 'readonly', autonomy: 'judge' }, n: { scope: 'none', autonomy: 'judge' } }) === 'n'
+      && narrowestMode({ j: { scope: 'readonly', autonomy: 'judge' }, a: { scope: 'readonly', autonomy: 'ask' } }) === 'a'
+      && narrowestMode({ w: { label: '軸なし' } }) === null && narrowestMode(undefined) === null);
 }

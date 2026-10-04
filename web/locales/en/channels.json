@@ -223,6 +223,46 @@
       "title": "Memory",
       "auto": "Learned automatically from all your chats"
     },
+    "brain": {
+      "title": "Stream of thought",
+      "record": "a record of model output",
+      "note": "This is a record of what the model wrote. It does not mean there is any experience. You can see all of it here and delete it. Private thoughts never become semantic memory; only memories based on what people said are kept.",
+      "pulse": {
+        "label": "Heartbeat",
+        "every": "Heartbeat interval",
+        "minutes": "{{n}} min",
+        "off": "Off (the bot only runs when called)",
+        "hint": "When on, this bot wakes up briefly at a steady interval, does nothing most of the time, and thinks with a cheap model only when needed. To speak, it wakes again with its smart model. Its budget comes from the channel budget; when it runs out, spontaneous activity stops."
+      },
+      "status": {
+        "next": "Next around {{time}}",
+        "last": "Last {{time}}",
+        "never": "Has not run yet",
+        "paused": "Put to sleep",
+        "running": "Thinking…",
+        "home": "Budget: #{{name}}",
+        "budgetLeft": "{{pct}}% of the channel's budget left today",
+        "budgetNone": "No channel budget",
+        "tokensLeft": "{{k}}k tokens left today for this bot",
+        "noHome": "No channel to charge the budget to (add this bot to a channel)"
+      },
+      "actions": {
+        "sleep": "Put to sleep",
+        "wake": "Wake",
+        "beat": "Beat now",
+        "clear": "Clear the stream",
+        "clearConfirm": "This deletes all of this bot's stream of thought and concerns. Continue?"
+      },
+      "drives": { "title": "Drives (numbers computed by code)", "curiosity": "Curiosity", "anxiety": "Anxiety", "loneliness": "Loneliness", "fatigue": "Fatigue" },
+      "loops": { "title": "Concerns (unfinished business)", "empty": "None right now", "wake": "wake on: {{wake}}", "due": "due {{due}}", "taint": "includes text from outside", "resolve": "Drop" },
+      "stream": { "title": "Recent stream", "empty": "Nothing yet", "quiet": "Quiet", "quietMany": "Quiet ×{{n}}", "why": "reason: {{reason}}", "tokens": "{{n}} tokens", "taint": "includes text from outside", "total": "{{n}} rows in all" },
+      "kind": { "think": "Thought", "quiet": "Quiet", "act": "Asked", "result": "Result", "loop": "Concern", "dream": "Dream", "summary": "Summary" },
+      "reason": {
+        "paused": "put to sleep", "budget": "no budget", "nothing": "no change", "forced": "manual", "loop": "a concern's condition", "reserved": "reserved time",
+        "human": "new human post", "drive": "a drive", "muse": "musing turn", "error": "failed", "noHome": "no home channel"
+      },
+      "failed": "Could not do that: {{error}}"
+    },
     "usage": {
       "week": "This week",
       "tokens": "tokens",
@@ -382,6 +422,7 @@
     "thread": "Passed the earlier posts in {{channel}}",
     "memoryCore": "Passed what it remembers",
     "botRecent": "Passed the recent threads",
-    "turnContext": "Passed the time and memory changes"
+    "turnContext": "Passed the time and memory changes",
+    "inner": "Passed the end of the stream of thought and concerns (its own drafts)"
   }
 }

@@ -10,7 +10,8 @@
 //   各モジュールには deps をまとめた HostTools（下の host）を渡す。emit(event) は sessionId: null で全接続へ、emitSession(sessionId, event) は会話の出来事
 //
 //   BotHost（server.mjs のつなぎ目。どれも例外を外へ出さない。bot の会話でなければ何もしない）:
-//     opsDeps(): { channels, bots, memory, memoryLearner, routines, botOfSession, wake }   … opsDeps() に足す。ops の handler が ctx.channels などで呼ぶ。
+//     opsDeps(): { channels, bots, memory, memoryLearner, brain, pulse, routines, botOfSession, wake }   … opsDeps() に足す。ops の handler が ctx.channels などで呼ぶ。
+//                       brain は bot の頭の中の保存（思考の流れ・気がかり。core/brain/store.mjs）、pulse は心拍（core/brain/pulse.mjs。ADR 0126）
 //                       memoryLearner は夜の整理（core/memory/learn.mjs）。memory.learnStatus が status() を呼ぶ
 //                       wake({ channelId, postId, botId }) は channels.wake の本体（dispatch.wakePost。起こせたかを { woken, reason? } で返す）
 //     turnExtras(turn): Promise<{ botInstructions: string|null, notes: string[], folders: object|null }>   … runArgs に足す（notes は既存の notes の後ろ。
@@ -35,6 +36,8 @@ import { createDispatcher } from './bots/dispatch.mjs';
 import { createRoutineService } from './routines/service.mjs';
 import { clock as routinesClock } from './routines/clock.mjs';
 import { createWebhookReceiver } from './routines/webhook.mjs';
+import { createBrainStore } from './brain/store.mjs';
+import { createPulse } from './brain/pulse.mjs';
 
 export function createBotHost(deps) {
   const { store, dataDir, emitGlobal } = deps;
@@ -50,13 +53,20 @@ export function createBotHost(deps) {
   };
 
   // ---- channels（S1）
+  // 気がかりの「起こしてほしい条件」に当たる投稿は、心拍を早める（pulse は下で作る。投稿が来る頃には出来ている）
+  const noteBrain = (post, channel) => { try { pulse?.onPosted(post, channel); } catch (e) { console.error('  pulse:', String(e?.message ?? e)); } };
   const noteEpisode = (post) => { try { episodes.onPosted(post); } catch (e) { console.error('  memory episode:', String(e?.message ?? e)); } };
   const channels = createChannelService({
     dir: path.join(dataDir, 'channels'), emit, listBots: () => bots.list(),
-    hooks: { posted: async (...args) => { noteEpisode(args[0]); await bots.noteShown(...args); return dispatch.onPosted(...args); },
+    hooks: { posted: async (...args) => { noteEpisode(args[0]); noteBrain(args[0], args[1]); await bots.noteShown(...args); return dispatch.onPosted(...args); },
       edited: async (...args) => { noteEpisode(args[0]); return bots.noteShown(...args); },
       removed: noteEpisode, stopThread: lazy(() => dispatch.stopThread), botPost: lazy(() => dispatch.claimPost) },
   });
+  // ---- 頭の中（思考の流れ・気がかり。ADR 0126）
+  const brain = createBrainStore({ dataDir, emit });
+  let pulse;
+  // bot を消したら、その bot の思考の流れ・気がかりも消す
+  host.botRemoved = (botId) => brain.clear(botId);
   // ---- bots（S2）
   const bots = createBotService({ dataDir, channels, host, emit });
   // ---- memory（S3）
@@ -64,17 +74,22 @@ export function createBotHost(deps) {
   let learner;
   const episodes = createEpisodes({ channels, bots, summarize: (args) => learner.summarizeEpisode(args), localeOf: () => deps.currentLocale?.() ?? 'ja' });
   // ---- dispatch（S4）
-  const dispatch = createDispatcher({ channels, bots, memory, episodes, host, emit });
+  const dispatch = createDispatcher({ channels, bots, memory, episodes, brain, host, emit });
   // bots.overview の restingUntil（使用量の上限で休憩中。ADR 0119）は dispatch が持つ
   host.restingUntil = (bot) => dispatch.restingUntil(bot);
   // ---- routines（R1）
   const routines = createRoutineService({ dataDir, channels, bots, dispatch, host, emit, clock: routinesClock });
   // ---- memory learner（L1。利用者のルーティン一覧には置かない）
   learner = createMemoryLearner({ dataDir, channels, bots, memory, host, clock: routinesClock });
+  // ---- 心拍（bot ごとの設定で既定は OFF。AGENT_HOST_PULSE_FLOOR_MS・AGENT_HOST_PULSE_TICK_MS・AGENT_HOST_PULSE_EVERY_MS は開発中の確かめ用で、間隔の下限・確かめる間隔・既定の間隔を縮める。docs/dev-verification.md）
+  pulse = createPulse({ dataDir, brain, channels, bots, host, budget: dispatch.budget, dispatch, memory, clock: routinesClock,
+    ...(Number(process.env.AGENT_HOST_PULSE_FLOOR_MS) > 0 ? { floorMs: Number(process.env.AGENT_HOST_PULSE_FLOOR_MS) } : {}),
+    ...(Number(process.env.AGENT_HOST_PULSE_TICK_MS) > 0 ? { tickMs: Number(process.env.AGENT_HOST_PULSE_TICK_MS) } : {}),
+    ...(Number(process.env.AGENT_HOST_PULSE_EVERY_MS) > 0 ? { everyMs: Number(process.env.AGENT_HOST_PULSE_EVERY_MS) } : {}) });
   // ---- webhook（H1）
   const webhook = createWebhookReceiver({ dataDir, routines, host });
 
-  const services = [channels, bots, memory, dispatch, routines, webhook, learner, episodes];
+  const services = [channels, bots, memory, dispatch, routines, webhook, learner, episodes, pulse];
   // つなぎ目は、bot の側の失敗でターン・承認・起動を巻き込まない
   const guard = (name, fn, fallback) => (...args) => {
     const fail = (err) => { console.error(`  bot host: ${name} に失敗:`, String(err?.message ?? err)); return fallback; };
@@ -85,7 +100,7 @@ export function createBotHost(deps) {
   };
 
   return {
-    opsDeps: () => ({ channels, bots, memory, memoryLearner: learner, routines, botOfSession, wake: guard('wake', (args) => dispatch.wakePost(args), { woken: false, reason: 'failed' }) }),
+    opsDeps: () => ({ channels, bots, memory, memoryLearner: learner, brain, pulse, routines, botOfSession, wake: guard('wake', (args) => dispatch.wakePost(args), { woken: false, reason: 'failed' }) }),
     // 人格とフォルダーは bots（S2）、末尾の notes は dispatch（S4。記憶の差分など）。bot の会話でなければどちらも空
     turnExtras: guard('turnExtras', async (turn) => {
       const setup = await bots.turnSetup(turn);
@@ -104,6 +119,6 @@ export function createBotHost(deps) {
     async start() { for (const s of services) await guard('start', () => s.start())(); },
     stop() { for (const s of [...services].reverse()) guard('stop', () => s.stop())(); },
     /** stop に加えて、DB の接続を離す（スレッドの状態・夜の整理の進み。データ置き場を消す前。テストの後片付け用） */
-    async close() { this.stop(); await guard('close', () => channels.close())(); learner.close(); },
+    async close() { this.stop(); await guard('close', () => channels.close())(); learner.close(); brain.close(); },
   };
 }

@@ -8,7 +8,7 @@
 //   触れてよいフォルダー … 行（パス・読み書き/読み取り）と［フォルダーを足す］。bots.update の folders（置き換え）
 //     実際に書き込みの範囲を限れないモード（範囲 full: Claude の YOLO・Codex の YOLO・Antigravity）だけ「すべてのフォルダー」で非活性（計画 §7.2-2）
 //   他の会話に送る … スイッチ（既定 ON）。bots.update の sendToOthers
-// 右に記憶の一覧（memory-list.mjs）と今週の使用量。操作はすべて host.invoke(op, args)。出来事は botsChanged・memoryChanged・channelsChanged。
+// 右に思考の流れ（brain-panel.mjs。心拍の入り切り・欲求・気がかり。ADR 0126）、記憶の一覧（memory-list.mjs）と今週の使用量。操作はすべて host.invoke(op, args)。出来事は botsChanged・memoryChanged・channelsChanged。
 // 認証・アカウント・1 日の上限・長い注記は出さない。
 import { el, svgEl } from '../dom.mjs';
 import { t } from '../i18n.mjs';
@@ -21,6 +21,7 @@ import { splitChipLabel } from '../composer-layout.mjs';
 import { createMemoryList } from './memory-list.mjs';
 import { botIcon } from './bot-icon.mjs';
 import { sendAttachment } from '../attach-upload.mjs';
+import { createBrainPanel } from './brain-panel.mjs';
 import * as M from './bot-model.mjs';
 
 // 線画（composer-controls.mjs のチップと同じ。あちらは内部の定数）
@@ -199,6 +200,10 @@ export function createBotPage(host) {
       else navigate({ kind: 'channel', id: target.channelId, ...(target.threadId ? { threadId: target.threadId } : {}), ...(target.postId ? { postId: target.postId } : {}) });
     },
   });
+  // 思考の流れ（モデルの出力の記録）。心拍の ON・間隔は bots.update の pulse なので、ここの保存の列に乗せる
+  const brain = createBrainPanel(host, { update: (patch) => update(patch) });
+  const brainBlk = el('div', 'bp-blk bp-brain-blk');
+  brainBlk.append(brain.el);
   const memHead = el('h4', null, t('channels:bot.memory.title'));
   memHead.append(el('span', 'r', t('channels:bot.memory.auto')));
   const memBlk = el('div', 'bp-blk bp-memory');
@@ -208,7 +213,7 @@ export function createBotPage(host) {
   const left = el('div', 'bp-col');
   left.append(personaBlk, runBlk);
   const right = el('div', 'bp-col');
-  right.append(memBlk, usage);
+  right.append(brainBlk, memBlk, usage);
   const grid = el('div', 'bp-grid');
   grid.append(left, right);
   root.append(head, err, notice, grid, modelPop, modePop, addPop);
@@ -431,6 +436,7 @@ export function createBotPage(host) {
     show(sendRow, !creating);
     show(sendTargets, !creating);
     show(memBlk, !creating);
+    show(brainBlk, !creating);
     show(usage, !creating);
     show(notice, S.gone);
     show(grid, !S.gone);
@@ -442,6 +448,7 @@ export function createBotPage(host) {
     paintUsage();
     if (!creating && S.bot) memory.setBot(S.bot);
     else memory.setBot(null);
+    brain.setBot(!creating && S.bot ? S.bot : null);
   }
 
   const growPersona = () => {
@@ -741,6 +748,7 @@ export function createBotPage(host) {
       S.id = null;
       S.draft = null;
       memory.setBot(null);
+      brain.setBot(null);
     },
     onEvent(ev) {
       switch (ev?.type) {
@@ -750,6 +758,9 @@ export function createBotPage(host) {
           return;
         case 'memoryChanged':
           if (!root.hidden) memory.refresh(ev.layer);
+          return;
+        case 'brainChanged':
+          if (!root.hidden && ev.botId === S.id) brain.refresh();
           return;
         case 'channelsChanged':
           if (!root.hidden) loadChannels();
