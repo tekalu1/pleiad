@@ -87,7 +87,7 @@ export function edgePiece(e, r, rowCount, laneOf) {
   return null;
 }
 
-const laneColor = (lane) => (lane === 0 ? 'var(--line-blue)' : 'var(--line-strong)');
+const laneClass = (lane) => (lane === 0 ? ' l0' : '');   // HEAD の筋（レーン 0）は --line-blue、ほかは --line-strong（色は web/git.css）
 
 /** 行 r の SVG（文字列）。辺と点に data-e / data-n を付け、強調は呼び出し側が on / dim の class で切り替える */
 export function rowSvg(layout, r) {
@@ -97,12 +97,12 @@ export function rowSvg(layout, r) {
     const d = edgePiece(e, r, layout.rows.length, laneOf);
     if (!d) return;
     halo += `<path class="h" data-e="${i}" d="${d}"/>`;
-    core += `<path class="e" data-e="${i}" d="${d}" style="--c:${laneColor(e.mid)}"${e.dash ? ' stroke-dasharray="3 3"' : ''}/>`;
+    core += `<path class="e${laneClass(e.mid)}" data-e="${i}" d="${d}"${e.dash ? ' stroke-dasharray="3 3"' : ''}/>`;
   });
   const row = layout.rows[r], x = laneX(row.lane);
   const kind = row.wt ? 'wt' : row.head ? 'head' : row.merge ? 'merge' : '';
   const radius = row.head ? 5 : row.merge ? 3.6 : 4.3;
-  return `<svg class="g" viewBox="0 0 44 ${ROW_H}" aria-hidden="true">${halo}<circle class="hn" data-n="${r}" cx="${x}" cy="${ROW_MID}" r="6.5"/>${core}<circle class="n ${kind}" data-n="${r}" cx="${x}" cy="${ROW_MID}" r="${radius}" style="--c:${laneColor(row.lane)}"/></svg>`;
+  return `<svg class="g" viewBox="0 0 44 ${ROW_H}" aria-hidden="true">${halo}<circle class="hn" data-n="${r}" cx="${x}" cy="${ROW_MID}" r="6.5"/>${core}<circle class="n ${kind}${laneClass(row.lane)}" data-n="${r}" cx="${x}" cy="${ROW_MID}" r="${radius}"/></svg>`;
 }
 
 /** 「さらに N 件」の行の頭に付ける、下へ切れる線 */

@@ -72,8 +72,9 @@ export function customSlots({ label = '' } = {}) {
  * git（会話のブランチ・したこと・変更。ADR 0085）。見出し（git・ルートのパス）と本文、下の行（取得時刻・再読み込み・会話で使う）と閉じるだけ。
  * footer は下の行に並べるボタンの名前の列（web/file-preview.mjs の openPanel が作る）
  */
-export function gitSlots({ label = '', footer = null } = {}) {
-  return { mode: 'custom', label, kind: '', head: ['close'], views: false, toolbar: [], aside: false, footer };
+export function gitSlots({ label = '', footer = null, head = null, toolbar = null } = {}) {
+  // head・toolbar は部品の名前の列。git パネル（ADR 0134）は頭に再読み込みと広げる、道具の列にタブを置く
+  return { mode: 'custom', label, kind: '', head: head ? [...head, 'wide', 'close'] : ['close'], views: false, toolbar: toolbar ?? [], aside: false, footer };
 }
 
 /**
@@ -101,7 +102,7 @@ export function applySlots(parts, config) {
   parts.panel.dataset.mode = config.mode;
   parts.panel.classList.toggle('custom', config.mode === 'custom');
   parts.panel.setAttribute('aria-label', config.label ?? '');
-  if (config.title !== undefined) parts.name.textContent = config.title;
+  if (config.title !== undefined) { if (config.title && typeof config.title === 'object') parts.name.replaceChildren(config.title); else parts.name.textContent = config.title; }
   if (config.subtitle !== undefined) parts.path.textContent = config.subtitle;
   parts.kind.textContent = config.kind ?? '';
   parts.kind.hidden = !config.kind;

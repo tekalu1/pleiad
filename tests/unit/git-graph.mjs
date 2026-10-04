@@ -24,7 +24,7 @@ export default async function (t) {
   // 作業ツリーの行
   const wt = layoutGraph([c('h', 'p'), c('p')], { withWorktree: true, headHash: 'h' });
   t.ok('作業ツリーの行は先頭で、HEAD へ点線の辺', wt.rows[0].wt === true && wt.rows[0].key === WT_KEY && wt.edges[0].dash === true && wt.edges[0].a === 0 && wt.edges[0].b === 1);
-  t.ok('SVG は作業ツリーの点を wt、HEAD の点を head にする', rowSvg(wt, 0).includes('class="n wt"') && rowSvg(wt, 1).includes('class="n head"'));
+  t.ok('SVG は作業ツリーの点を wt、HEAD の点を head にする', rowSvg(wt, 0).includes('class="n wt') && rowSvg(wt, 1).includes('class="n head'));
 
   // 範囲: 会話の始まりの HEAD は p。HEAD h と、別の枝 s（始まり p から出たが HEAD から辿れない）
   const commits = [c('s', 'p'), c('h', 'p2'), c('p2', 'p'), c('p', 'o'), c('o')];

@@ -101,7 +101,7 @@ export default async function (t) {
     // 名前の変更
     sh(repo, 'stash', '-q', '-u');
     sh(repo, 'mv', 'f.txt', 'g.txt'); sh(repo, 'commit', '-q', '-m', 'rename');
-    const ren = await history.commitFiles(repo, (await history.readHistory(repo, { limit: 1 })).commits[0].hash);
+    const ren = await history.commitFiles(repo, sh(repo, 'rev-parse', 'HEAD'));
     t.ok('名前の変更を R と元のパスで出す', ren.files[0].state === 'R' && ren.files[0].orig === 'f.txt' && ren.files[0].path === 'g.txt', JSON.stringify(ren.files));
   } finally { await fs.rm(scratch, { recursive: true, force: true }); }
 }
