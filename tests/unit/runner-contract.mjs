@@ -326,8 +326,8 @@ export default async function (t) {
 
     if (process.platform === "win32") {
       // プロセス表（PowerShell）が読めない環境: 子孫が残っていないか確かめられないので、注意だけで成功にせず失敗にする
-      const blind = await fixtureRun(["./fx-pass-a.mjs", "./fx-pass-b.mjs"], ["--jobs", "2"], { PATH: path.dirname(process.execPath), SystemRoot: "" });
-      t.ok("Windows: プロセス表が読めないと、suite が全部通っても終了コード 1（回収を確かめられなかったことを失敗に数える）", blind.code === 1 && blind.stdout.includes("子孫のプロセスの回収を確かめられなかった"), `${blind.code} ${blind.stdout.slice(-300)}`);
+      const blind = await fixtureRun(["./fx-pass-a.mjs", "./fx-pass-b.mjs"], ["--jobs", "2"], { PATH: path.dirname(process.execPath) });
+      t.ok("Windows: プロセス表が読めないと、suite が全部通っても終了コード 1（回収を確かめられなかったことを失敗に数える）", blind.code === 1 && blind.stdout.includes("子孫のプロセスの回収を確かめられなかった"), `${blind.code} ${blind.stdout.slice(-300)} ${blind.stderr.slice(-300)}`);
     }
 
     // ---- 不正な引数・登録は、何も走らせない -------------------------------------------------------------------------------------
