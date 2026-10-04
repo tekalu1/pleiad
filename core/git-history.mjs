@@ -1,4 +1,4 @@
-// git の履歴・コミット・ステージの区別・作業場所の一覧の読み取り（docs/design.md「git の動き」、ADR 0134）。
+// git の履歴・コミット・ステージの区別・作業場所の一覧の読み取り（docs/design.md「git の動き」、ADR 0135）。
 // どれも読むだけ（core/git-info.mjs の許可表の内）。git パネルの「変更」タブ（グラフと範囲）と「作業場所」タブの元。
 //   - 履歴: git log --branches --tags --remotes HEAD --topo-order。親・作者・日時・refs・題。Pleiad の隠し ref（refs/pleiad/）は混ぜない
 //   - コミット 1 つの変更ファイル

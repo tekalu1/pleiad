@@ -1,4 +1,4 @@
-// git パネルのコミットのグラフ（docs/design-system.md「git の動き」、ADR 0134）。DOM に触れない部分（レーンの割り当て・範囲の判定）と、
+// git パネルのコミットのグラフ（docs/design-system.md「git の動き」、ADR 0135）。DOM に触れない部分（レーンの割り当て・範囲の判定）と、
 // 1 行ぶんの SVG の文字列を作る部分。線の色は線の族だけ（HEAD の筋は --line-blue、ほかは --line-strong。差分の緑・赤は使わない）。
 
 export const ROW_H = 30;

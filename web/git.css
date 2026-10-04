@@ -41,7 +41,7 @@
 .crow.fit-nobranch .git-br{display:none}
 #cwdChip .git-br[hidden]{display:none}
 
-/* ---------- 右パネル（ADR 0134） ---------- */
+/* ---------- 右パネル（ADR 0135） ---------- */
 @keyframes gp-appear{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
 @keyframes gp-viewin{from{opacity:0;transform:translateX(6px)}to{opacity:1;transform:none}}
 .file-preview[data-panel="git"] .file-preview-content{background:var(--surface-paper);border-radius:var(--r-l)}
@@ -58,7 +58,7 @@
 .gp-br .meta a:hover{text-decoration:underline}
 .gp-br .meta svg{width:12px;height:12px}
 .git-tag{background:var(--surface-3);color:var(--ink-weak);font-size:var(--fs-xs);padding:0 10px;line-height:1.7;border-radius:var(--r-pill);white-space:nowrap}
-/* タブ（Chats / Channels と同じ部品。ADR 0134） */
+/* タブ（Chats / Channels と同じ部品。ADR 0135） */
 .gp-tabs{display:flex;gap:2px;padding:3px;background:var(--surface-3);border-radius:var(--r-pill);width:100%}
 .gp-tabs[hidden]{display:none}
 .gp-tab{flex:1;display:inline-flex;align-items:center;justify-content:center;gap:6px;border:0;background:transparent;border-radius:var(--r-pill);padding:4px 6px;font:inherit;font-size:13px;color:var(--ink-weak);cursor:pointer;white-space:nowrap;

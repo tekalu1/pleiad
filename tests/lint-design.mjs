@@ -34,7 +34,7 @@ const FAM = {
   line:    n => n === '--line' || n.startsWith('--line-'),
   onfill:  n => n === '--on-fill',
   shadow:  n => n === '--shadow',
-  diff:    n => n.startsWith('--diff-'),   /* git の差分と状態の文字だけ（ADR 0134）。使える場所は DIFF_FILE */
+  diff:    n => n.startsWith('--diff-'),   /* git の差分と状態の文字だけ（ADR 0135）。使える場所は DIFF_FILE */
 };
 /* プロパティごとに許す族。ここに無い族のトークンを色のプロパティに書いたら落とす。 */
 const ALLOW = {

@@ -1,5 +1,5 @@
 // playwright-cli run-code --filename=tests/browser/git-panel.cjs
-// git パネル（docs/design-system.md「git の動き」、ADR 0134）: Ctrl+Shift+G・タブ・範囲の切り替え・コミットを押す・差分の畳み・キーボード。
+// git パネル（docs/design-system.md「git の動き」、ADR 0135）: Ctrl+Shift+G・タブ・範囲の切り替え・コミットを押す・差分の畳み・キーボード。
 // Open an isolated AGENT_HOST_BACKENDS=fake server first (token git-panel-test, port 7433, AGENT_HOST_LOCALE=ja). Never run against live data.
 // 作業場所に使うのはこのリポジトリ自身（コミットが 2 つ以上ある git の作業場所なら何でもよい）。
 async (page) => {

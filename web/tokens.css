@@ -62,7 +62,7 @@
   --ink-code-keyword:#3a499e;
   --ink-code-fn:#1c2247;
 
-  /* -- 差分の色（--diff-*）。git パネルの差分と、変更の一覧の状態の文字（M / A / D / U）と +a −d にだけ使う。面は彩度を持つので、他の面・文字に流用しない（docs/design-system.md §2.1、ADR 0134。tests/lint-design.mjs が web/git.css の外を落とす） -- */
+  /* -- 差分の色（--diff-*）。git パネルの差分と、変更の一覧の状態の文字（M / A / D / U）と +a −d にだけ使う。面は彩度を持つので、他の面・文字に流用しない（docs/design-system.md §2.1、ADR 0135。tests/lint-design.mjs が web/git.css の外を落とす） -- */
   --diff-add-line:#e3f4e7;--diff-add-word:#b4e0c0;--diff-add-gutter:#d2ebd9;
   --diff-del-line:#fce8eb;--diff-del-word:#f4bdc5;--diff-del-gutter:#f6d5da;
   --diff-add-ink:#25773f;--diff-del-ink:#b2303e;--diff-mod-ink:#875900;

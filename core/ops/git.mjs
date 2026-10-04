@@ -1,4 +1,4 @@
-// git.*: 会話の作業場所の git の動き（読み取りだけ。ADR 0085・0105・0134）。右パネルの git の面・入力欄の上の札と同じ本体を通る（core/server.mjs の opsGit）。
+// git.*: 会話の作業場所の git の動き（読み取りだけ。ADR 0085・0105・0135）。右パネルの git の面・入力欄の上の札と同じ本体を通る（core/server.mjs の opsGit）。
 // 作業場所は会話の cwd。会話の無い場所は、どれかの会話が使ったことのある場所だけ（任意のフォルダーで git を走らせない）。git が無い・git 管理外は null。
 // 画面（人）には今までの形を返し（uiHandler）、AI・CLI にはファイルの一覧を limit / cursor で区切り、差分を統一差分の文字列にして切った形を返す。
 // 履歴（git.history）・コミット（git.commit）・作業場所（git.worktrees・git.worktree）は、画面の「変更」「作業場所」タブの元で、AI・CLI も同じものを読める。

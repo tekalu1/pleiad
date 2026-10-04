@@ -1,4 +1,4 @@
-// git パネルの差分の組み立て（docs/design-system.md「git の動き」、ADR 0134）。行番号（旧・新）・語の強調・変わっていない行の畳みと展開・
+// git パネルの差分の組み立て（docs/design-system.md「git の動き」、ADR 0135）。行番号（旧・新）・語の強調・変わっていない行の畳みと展開・
 // インライン / 左右。色は --diff-*（差分と状態の文字だけに使う族）。DOM に触れない buildItems / wordRange と、文字列を返す diffHTML。
 import { t } from './i18n.mjs';
 import { moreIcon } from './icons.mjs';

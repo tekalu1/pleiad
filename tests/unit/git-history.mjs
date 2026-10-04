@@ -1,4 +1,4 @@
-// git の履歴・コミット・ステージの区別・差分の行番号・作業場所の一覧（core/git-history.mjs・git-info.mjs。ADR 0134）。一時リポジトリで確かめる。
+// git の履歴・コミット・ステージの区別・差分の行番号・作業場所の一覧（core/git-history.mjs・git-info.mjs。ADR 0135）。一時リポジトリで確かめる。
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs/promises';
 import { realpathSync } from 'node:fs';
