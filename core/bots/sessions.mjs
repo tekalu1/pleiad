@@ -32,6 +32,12 @@ export function botInstructions(bot, locale) {
   ].filter(Boolean).join('\n\n');
 }
 
+/** 心拍の安いモデル（隠れた会話）の指示。人格は入れる（独り言の口調のもと）。投稿・道具の使い方は書かない（ADR 0126。使わせない） */
+export function pulseInstructions(bot, locale) {
+  const persona = String(bot?.persona ?? '').replace(/\r\n/g, '\n').trim();
+  return [agentT(locale, 'guide.pulse.heading', { icon: bot?.icon ?? '', name: bot?.name ?? '' }), persona || null, agentT(locale, 'guide.pulse.rules')].filter(Boolean).join('\n\n');
+}
+
 /** そのモードが書き込みの範囲を限れないか（フォルダーを「すべて」と見せるモード）。modes() の 1 エントリで見る */
 export const unrestrictedMode = (modeEntry) => scopeRank(modePosition(modeEntry).scope) >= scopeRank('full');
 
@@ -140,7 +146,8 @@ export function createBotSessions({ host, now = Date.now } = {}) {
       if (!backend || meta.backend !== backend.id) return false;   // backend を変えた bot の古い会話は、次の新しい会話から（そのままにする）
       const modes = backend.modes();
       // ルーティンの会話の承認モードはルーティンの mode（core/routines/runner.mjs）。人が bot のモードを変えても、実行中・過去の実行の強さは変えない
-      if (modes[bot.mode] && meta.mode !== bot.mode && meta.bot?.kind !== 'routine') await host.store.setMode(sessionId, bot.mode);
+      // 心拍の会話は読み取りのモードで作る（ADR 0126）。人が bot のモードを変えても替えない
+      if (modes[bot.mode] && meta.mode !== bot.mode && meta.bot?.kind !== 'routine' && meta.bot?.kind !== 'pulse') await host.store.setMode(sessionId, bot.mode);
       const cwd = meta.cwd ?? bot.folders?.[0]?.path ?? os.homedir();
       const model = await host.resolveModel(null, bot.model || undefined, backend, cwd, '');
       if (meta.model !== model) await host.store.setModel(sessionId, model);
@@ -167,5 +174,6 @@ export async function botTurnSetup({ host, bots, turn }) {
   const backend = host.getBackend(meta.backend ?? bot.backend);
   const modeEntry = backend?.modes?.()[meta.mode ?? bot.mode];
   const locale = turn.agentLocale ?? meta.agentLocale ?? host.currentLocale?.() ?? 'ja';
+  if (meta.bot.kind === 'pulse') return { botInstructions: pulseInstructions(bot, locale), folders: null };
   return { botInstructions: botInstructions(bot, locale), folders: folderPlan(bot, modeEntry, turn.info?.cwd ?? meta.cwd ?? null) };
 }

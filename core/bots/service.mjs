@@ -14,8 +14,9 @@
 //   list(): Promise<Bot[]>・get({ botId }): Promise<Bot|null>
 //   byName(name): Promise<Bot|null>               … @ の解析（core/channels/mentions.mjs）が使う。名前はチャンネルを通して一意（NFKC・大小を区別しない）
 //   create({ name, icon?, persona?, backend?, model?, effort? }, author): Promise<Bot>
-//   update({ botId, name?, icon?, persona?, backend?, model?, effort?, folders?, sendToOthers?, sendTargets? }, author): Promise<Bot>
-//                                                 … フォルダー・送る先を広げる向きは ops が guarded にする（riskOf。planUpdate().loosens）
+//   update({ botId, name?, icon?, persona?, backend?, model?, effort?, folders?, sendToOthers?, sendTargets?, pulse? }, author): Promise<Bot>
+//                                                 … フォルダー・送る先を広げる向き・心拍を入れる／間隔を縮める向きは ops が guarded にする（riskOf。planUpdate().loosens）。
+//                                                   pulse は渡した欄だけ変わる（{ on?, everyMin?, backend?, model?, channelId? }。ADR 0126）
 //   planUpdate(input): Promise<{ bot, next, loosens, rows }>   … update の検査と、承認カードに出す前後。riskOf・confirm・update が同じ結果を使う
 //   setMode({ botId, mode }, author): Promise<Bot>                 … 承認モード。human-only の操作から（Antigravity は 'yolo' だけ）。既存の会話の承認モードも揃える
 //   remove({ botId }, author): Promise<void>      … DM のチャンネルは archive。会話は消さず、bot の印を外して Chats の一覧に戻す
@@ -37,7 +38,7 @@ import crypto from 'node:crypto';
 import { inspectFile } from '../file-preview.mjs';
 import { newId } from '../channels/types.mjs';
 import { modePosition, scopeRank, autonomyRank } from '../modes.mjs';
-import { createBotStore, BotStoreError, nameProblem, iconProblem, personaProblem, normalizeFolders, folderKey, FOLDERS_MAX, SEND_TARGETS_MAX } from './store.mjs';
+import { createBotStore, BotStoreError, nameProblem, iconProblem, personaProblem, normalizeFolders, folderKey, normalizePulse, FOLDERS_MAX, SEND_TARGETS_MAX, PULSE_MIN_MINUTES, PULSE_MAX_MINUTES } from './store.mjs';
 import { createBotSessions, defaultMode, botTurnSetup, botInstructions } from './sessions.mjs';
 import { referencedSessions, shownTo } from './send-targets.mjs';
 import { looserThanDefault } from './approval.mjs';
@@ -347,11 +348,28 @@ export function createBotService({ dataDir, channels, host = null, emit = () => 
         if (targets.some((id) => !bot.sendTargets.includes(id))) reasons.push('sendTargets');
         if (targets.join() !== bot.sendTargets.join()) row('sendTargets', bot.sendTargets.join(', ') || '-', targets.join(', ') || '-');
       }
+      if (input.pulse !== undefined) {
+        const p = input.pulse && typeof input.pulse === 'object' && !Array.isArray(input.pulse) ? input.pulse : null;
+        if (!p) throw invalid('pulse: object');
+        if (p.on !== undefined && typeof p.on !== 'boolean') throw invalid('pulse.on: boolean');
+        if (p.everyMin !== undefined && !(Number.isInteger(p.everyMin) && p.everyMin >= PULSE_MIN_MINUTES && p.everyMin <= PULSE_MAX_MINUTES)) throw invalid(`pulse.everyMin: ${PULSE_MIN_MINUTES}-${PULSE_MAX_MINUTES}`);
+        if (p.backend && !backendOf(p.backend)) throw invalid(`pulse.backend: unknown or disabled: ${p.backend}`);
+        if (p.channelId) {
+          const channel = await channels?.get?.({ channelId: p.channelId }).catch(() => null);
+          if (!channel || channel.kind !== 'channel' || channel.archivedAt) throw invalid(`pulse.channelId: not a channel: ${p.channelId}`);
+        }
+        const before = bot.pulse ?? normalizePulse(null);
+        next.pulse = normalizePulse({ ...before, ...p });
+        const show = (v) => `${v.on ? 'on' : 'off'} · ${v.everyMin}min${v.backend ? ` · ${v.backend}${v.model ? `/${v.model}` : ''}` : ''}${v.channelId ? ` · ${v.channelId}` : ''}`;
+        if (show(before) !== show(next.pulse)) row('pulse', show(before), show(next.pulse));
+        // 自発の動きを始める・増やす向きは、広げる向き（AI が自分で心拍を入れられない。人が入れる）
+        if ((!before.on && next.pulse.on) || (next.pulse.on && next.pulse.everyMin < before.everyMin)) reasons.push('pulse');
+      }
       return {
         bot, next, rows, reasons, loosens: reasons.length > 0, changed: rows.length > 0,
         // 受領証の元（承認のあとに読み直して、承認した変更と同じか確かめる）
         before: { name: bot.name, icon: bot.icon, iconImage: bot.iconImage, persona: bot.persona, backend: bot.backend, model: bot.model, effort: bot.effort, mode: bot.mode,
-          folders: bot.folders, sendToOthers: bot.sendToOthers, sendTargets: bot.sendTargets },
+          folders: bot.folders, sendToOthers: bot.sendToOthers, sendTargets: bot.sendTargets, pulse: bot.pulse },
       };
     },
 

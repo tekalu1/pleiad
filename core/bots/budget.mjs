@@ -9,7 +9,8 @@
 // 止め方: 残り = min(1 スレッドの配分 − 根のスレッドの今日の分, チャンネルの 1 日の予算 − チャンネルの今日の分の合計)。0 になったら、
 //   bot どうしの呼びかけ（bot の投稿の @・呼んだ bot へ返す返事）だけ起こさない。人の投稿・人が承認した起こし方は起こす。Pleiad はお知らせを出さない。
 //
-//   createBudget({ channels, host, now, log }) → Budget
+//   createBudget({ channels, host, now, log, brain }) → Budget
+//     brain … 頭の中の保存（core/brain/store.mjs）。無ければ心拍の分は数えない（ADR 0126）
 //     host.readQuota(backendId) … 使用枠（server の providerQuota。設定の「使用量」・ply_usage と同じ quotaCache）
 //     host.usageStore.tokensSince(backendId, sinceMs) … この PC の記録のトークンの合計
 //   Budget:
@@ -18,6 +19,12 @@
 //         Left = { daily, perThread, thread, channel, left, known }。thread・channel・left は残りの %。known = その bot の枠を今 % にできるか
 //     allows({ channelId, threadId }): Promise<boolean>   … bot どうしの呼びかけを起こしてよいか（残りが 0 より大きい。分からないときは止めない）
 //     root(channelId, threadId): Promise<{ channelId, threadId }>
+//   心拍・自発の引き継ぎの分（ADR 0126）。スレッドを持たないので、bot の「家」のチャンネルの今日の分として brain.addSpend に足す
+//   （チャンネルの今日の分の合計に入る = 残りが減る。ThreadState.spend には足さない）。数えるのは同じ「週の使用枠に対する %」。
+//   使用枠が読めなくても止まるように、bot ごとの 1 日のトークン（入力 + 出力 + キャッシュ読み / 10）の上限 BRAIN_DAILY_TOKENS も持つ:
+//     chargeBrain({ channelId, botId, backend, model, usage }): Promise<{ percent: number|null, tokens: number }>
+//     leftBrain({ channelId, botId, backend?, model? }): Promise<{ daily, channel, known, tokensLeft } | null>   … 予算なし（daily が null）でも tokensLeft は返す。チャンネルが引けなければ null
+//     allowsBrain({ channelId, botId }): Promise<boolean>   … 自発をしてよいか（チャンネルの残りが 0 より大きく、トークンの上限の内。分からない・読めないときは % の側は止めない）
 import { windowsFor } from '../delegation-routing.mjs';
 import { budgetOf, allowanceOf, dayOf, spentOn, spentToday } from '../channels/budget.mjs';
 
@@ -32,7 +39,12 @@ const ROOT_HOPS = 20;
 const tokensOf = (u) => (u?.inputTokens ?? 0) + (u?.outputTokens ?? 0) + (u?.cachedTokens ?? 0);
 const errText = (e) => String(e?.message ?? e);
 
-export function createBudget({ channels, host, now = Date.now, log = () => {} } = {}) {
+/** bot 1 体が 1 日に心拍・引き継ぎで使えるトークンの上限（設計 §7.14: 1 晩 1.5M）。使用枠の % が数えられないときの歯止めでもある */
+export const BRAIN_DAILY_TOKENS = 1_500_000;
+/** キャッシュ読みは 1/10 で数える（設計 §7.2） */
+const weighted = (u) => (u?.inputTokens ?? 0) + (u?.outputTokens ?? 0) + (u?.cachedTokens ?? 0) / 10;
+
+export function createBudget({ channels, host, now = Date.now, log = () => {}, brain = null } = {}) {
   const rates = new Map();   // `${backend}:${model}` → 週の枠 1% あたりのトークン（最後に分かった値）
   const keyOf = (backend, model) => `${backend}:${model ?? ''}`;
 
@@ -88,7 +100,7 @@ export function createBudget({ channels, host, now = Date.now, log = () => {} } 
     const day = dayOf(now());
     const [thread, threads] = await Promise.all([channels.threads.get(at.channelId, at.threadId).catch(() => null), channels.threads.list(at.channelId).catch(() => [])]);
     const threadLeft = Math.max(0, allowanceOf(budget) - spentOn(thread, day));
-    const channelLeft = Math.max(0, budget.daily - spentToday(threads, at.channelId, day));
+    const channelLeft = Math.max(0, budget.daily - spentToday(threads, at.channelId, day) - (brain?.spentPercent(at.channelId, day) ?? 0));
     let known = true;
     if (backend) {
       const cached = rates.get(keyOf(backend, model));
@@ -104,5 +116,37 @@ export function createBudget({ channels, host, now = Date.now, log = () => {} } 
     } catch (e) { log('could not check the budget:', errText(e)); return true; }
   }
 
-  return { charge, left, allows, root };
+  async function chargeBrain({ channelId, botId, backend, model, usage }) {
+    const tokens = weighted(usage);
+    if (!brain || !channelId || !botId || !(tokens > 0)) return { percent: null, tokens: 0 };
+    const rate = backend ? await rateOf(backend, model) : null;
+    const percent = rate ? tokensOf(usage) / rate : null;
+    brain.addSpend(channelId, botId, { day: dayOf(now()), percent: percent ?? 0, tokens });
+    return { percent, tokens };
+  }
+
+  async function leftBrain({ channelId, botId, backend, model }) {
+    if (!channelId || !botId) return null;
+    const channel = await channels.get({ channelId }).catch(() => null);
+    if (!channel || channel.kind !== 'channel') return null;
+    const day = dayOf(now());
+    const tokensLeft = Math.max(0, BRAIN_DAILY_TOKENS - (brain?.spentTokens(botId, day) ?? 0));
+    const budget = budgetOf(channel);
+    if (budget.daily === null) return { daily: null, channel: null, known: true, tokensLeft };
+    const threads = await channels.threads.list(channelId).catch(() => []);
+    const channelLeft = Math.max(0, budget.daily - spentToday(threads, channelId, day) - (brain?.spentPercent(channelId, day) ?? 0));
+    let known = true;
+    if (backend) known = Boolean(rates.get(keyOf(backend, model)) ?? await Promise.race([rateOf(backend, model), new Promise((r) => { const t = setTimeout(r, LEFT_WAIT_MS, null); t.unref?.(); })]));
+    return { daily: budget.daily, channel: channelLeft, known, tokensLeft };
+  }
+
+  async function allowsBrain({ channelId, botId }) {
+    try {
+      const l = await leftBrain({ channelId, botId });
+      if (!l) return false;   // 家のチャンネルが引けない自発はしない（数える先が無い）
+      return l.tokensLeft > 0 && (l.channel === null || l.channel > 0);
+    } catch (e) { log('could not check the brain budget:', errText(e)); return false; }
+  }
+
+  return { charge, left, allows, root, chargeBrain, leftBrain, allowsBrain };
 }
