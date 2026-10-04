@@ -24,6 +24,8 @@ export const REQUIRED_JOBS = Object.freeze([
   'safe-storage (linux-gnome-keyring)',
   'safe-storage (linux-no-keyring)',
 ]);
+// test.yml にあって、main の push では if で飛ばすジョブ（週次・手動だけ）。skipped でよいのはこれだけ
+export const SKIPPED_ON_PUSH = Object.freeze(['safe-storage-macos']);
 // main が赤いとみなす結論。これがあれば、ほかの run が成功していても公開しない
 const RED = new Set(['failure', 'timed_out', 'action_required', 'startup_failure']);
 
@@ -31,7 +33,7 @@ const RED = new Set(['failure', 'timed_out', 'action_required', 'startup_failure
  * 1 回分の状態（workflow・run・最新の attempt の jobs）から判定する。API は呼ばない。
  * @returns {{ verdict: 'reuse'|'fail'|'pending'|'fallback', reason: string, run?: object, notes: string[] }}
  */
-export function evaluate({ repo, sha, workflow, runs, jobsByRun, requiredJobs = REQUIRED_JOBS }) {
+export function evaluate({ repo, sha, workflow, runs, jobsByRun, requiredJobs = REQUIRED_JOBS, skippedOnPush = SKIPPED_ON_PUSH }) {
   const notes = [];
   if (!workflow) return { verdict: 'fallback', reason: 'workflow-missing', notes };
   if (workflow.path !== WORKFLOW_PATH) return { verdict: 'fallback', reason: `workflow-path:${workflow.path}`, notes };
@@ -47,7 +49,7 @@ export function evaluate({ repo, sha, workflow, runs, jobsByRun, requiredJobs = 
   }
   if (!candidates.length) return { verdict: 'fallback', reason: 'no-run', notes };
 
-  const results = candidates.map(run => ({ run, ...evaluateRun(run, jobsByRun?.[run.id], sha, requiredJobs) }));
+  const results = candidates.map(run => ({ run, ...evaluateRun(run, jobsByRun?.[run.id], sha, requiredJobs, skippedOnPush) }));
   for (const r of results) notes.push(`run ${r.run.id} attempt ${r.run.run_attempt}: ${r.verdict} (${r.reason})`);
   // 赤が 1 つでもあれば止める。次に、終わっていないものがあれば待つ。どれでもなく揃った成功があれば使う
   for (const verdict of ['fail', 'pending', 'reuse']) {
@@ -57,7 +59,7 @@ export function evaluate({ repo, sha, workflow, runs, jobsByRun, requiredJobs = 
   return { verdict: 'fallback', reason: results.map(r => r.reason).join(','), notes };
 }
 
-function evaluateRun(run, jobs, sha, requiredJobs) {
+function evaluateRun(run, jobs, sha, requiredJobs, skippedOnPush) {
   if (RED.has(run.conclusion)) return { verdict: 'fail', reason: `run-${run.conclusion}` };
   // 最新の attempt の jobs だけを見る（再実行で成功した attempt 2 があれば、attempt 1 の失敗は見ない）
   if (!Array.isArray(jobs)) return run.status === 'completed' ? { verdict: 'fallback', reason: 'jobs-missing' } : { verdict: 'pending', reason: `run-${run.status}` };
@@ -74,6 +76,9 @@ function evaluateRun(run, jobs, sha, requiredJobs) {
     if (same.length !== 1) return { verdict: 'fallback', reason: `${same.length ? 'job-duplicated' : 'job-missing'}:${name}` };
     if (same[0].conclusion !== 'success') return { verdict: 'fallback', reason: `job-${same[0].conclusion}:${name}` };
   }
+  // 必須でないジョブも、success か push で飛ばすと決めたものの skipped でなければ使わない（test.yml に足したジョブが cancelled・neutral でも reuse にしない）
+  const loose = own.find(job => !requiredJobs.includes(job.name) && job.conclusion !== 'success' && !(job.conclusion === 'skipped' && skippedOnPush.includes(job.name)));
+  if (loose) return { verdict: 'fallback', reason: `job-${loose.conclusion}:${loose.name}` };
   // 必須のジョブが全部 success でも、run の結論が success でなければ使わない（逆に run の success だけでも使わない）
   if (run.conclusion !== 'success') return { verdict: 'fallback', reason: `run-${run.conclusion}` };
   return { verdict: 'reuse', reason: 'success' };
@@ -209,10 +214,25 @@ export function parseDuration(name, text, fallback, { positive = false } = {}) {
   return value;
 }
 
+// API から来た文字（ジョブの名前・path・結論）を 1 行にする。GITHUB_OUTPUT に行を足したり、ログの行頭で workflow command（::）になったりしないように
+export function oneLine(text) {
+  return String(text).replace(/[\u0000-\u001f\u007f\u0085\u2028\u2029]+/g, ' ');
+}
+
+// ログは固定の接頭辞を付けて 1 行で出す（行頭が :: にならない）
+function say(text) {
+  console.log(`ci-gate: ${oneLine(text)}`);
+}
+
+// ::error:: の本文。改行を除き、% を GitHub の約束どおりに逃がす
+function commandText(text) {
+  return oneLine(text).replace(/%/g, '%25');
+}
+
 function summary(result, sha) {
-  const lines = [`### CI result for ${sha}`, '', `decision: **${result.decision}** (${result.reason})`];
-  if (result.run) lines.push('', `run: ${result.run.html_url} (attempt ${result.run.run_attempt})`);
-  if (result.notes?.length) lines.push('', ...result.notes.map(n => `- ${n}`));
+  const lines = [`### CI result for ${sha}`, '', `decision: **${result.decision}** (${oneLine(result.reason)})`];
+  if (result.run) lines.push('', `run: ${oneLine(result.run.html_url)} (attempt ${oneLine(result.run.run_attempt)})`);
+  if (result.notes?.length) lines.push('', ...result.notes.map(n => `- ${oneLine(n)}`));
   return lines.join('\n') + '\n';
 }
 
@@ -232,21 +252,22 @@ async function main() {
     read: () => readState({ request, repo, sha }),
     confirm: run => request(`/repos/${repo}/actions/runs/${run.id}`),
     deadlineMs, intervalMs, missingGraceMs,
-    log: msg => console.log(msg),
+    log: say,
   });
   const decision = result.verdict === 'reuse' ? 'reuse' : result.verdict === 'fail' ? 'fail' : 'fallback';
   const report = { ...result, decision };
-  for (const note of result.notes ?? []) console.log(note);
-  console.log(`decision=${decision} reason=${result.reason}`);
+  for (const note of result.notes ?? []) say(note);
+  say(`decision=${decision} reason=${result.reason}`);
   if (process.env.GITHUB_STEP_SUMMARY) fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, summary(report, sha));
   if (decision === 'fail') {
-    console.error(`::error::main CI is red for ${sha} (${result.reason}). Fix main or re-run the failed jobs; the release is not published.`);
+    console.error(`::error::main CI is red for ${sha} (${commandText(result.reason)}). Fix main or re-run the failed jobs; the release is not published.`);
     process.exitCode = 1;
     return;
   }
-  if (process.env.GITHUB_OUTPUT) fs.appendFileSync(process.env.GITHUB_OUTPUT, `decision=${decision}\nsha=${sha}\nreason=${result.reason}\n`);
+  // decision は最後の行に書く（同じ名前が 2 度あれば後ろが使われるため。reason も 1 行にしてある）
+  if (process.env.GITHUB_OUTPUT) fs.appendFileSync(process.env.GITHUB_OUTPUT, `sha=${sha}\nreason=${oneLine(result.reason)}\ndecision=${decision}\n`);
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  main().catch(err => { console.error(`::error::${err.message}`); process.exitCode = 2; });
+  main().catch(err => { console.error(`::error::${commandText(err.message)}`); process.exitCode = 2; });
 }

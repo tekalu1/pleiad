@@ -7,7 +7,7 @@ import http from 'node:http';
 import { spawn, execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { parse } from 'yaml';
-import { evaluate, readState, waitForCi, resolveTagCommit, githubRequest, parseArgs, parseDuration, REQUIRED_JOBS, WORKFLOW_PATH } from '../../scripts/release-ci-gate.mjs';
+import { evaluate, readState, waitForCi, resolveTagCommit, githubRequest, parseArgs, parseDuration, oneLine, REQUIRED_JOBS, SKIPPED_ON_PUSH, WORKFLOW_PATH } from '../../scripts/release-ci-gate.mjs';
 
 export const name = 'release-ci-gate';
 export const title = 'リリースは同じ commit の main の CI の完全な成功だけを使い、赤なら公開しない・揃わなければ全部回す';
@@ -30,6 +30,7 @@ function jobs(r = run(), over = {}) {
 }
 const state = (runs, jobsByRun = Object.fromEntries(runs.map(r => [r.id, jobs(r)]))) => ({ repo: REPO, sha: SHA, workflow: WORKFLOW, runs, jobsByRun });
 
+// CLI のログ（::error:: の行を含む）をそのまま詳細に出すと、test.yml の中で本物の注記になる。詳細は JSON.stringify で 1 行にする
 export default async function (t) {
   // ===== 1 回分の判定（evaluate）=====
   {
@@ -79,8 +80,6 @@ export default async function (t) {
     const latestFailed = run({ run_attempt: 2, conclusion: 'failure' });
     const lf = evaluate(state([latestFailed], { [latestFailed.id]: jobs(latestFailed, { 'test (windows-latest, 22.13)': { conclusion: 'failure' } }) }));
     t.ok('最新の attempt が failure なら fail（attempt 1 が成功していても公開しない）', lf.verdict === 'fail' && lf.reason === 'run-failure', JSON.stringify(lf));
-    const recovered = run({ run_attempt: 2 });
-    t.ok('attempt 1 が失敗でも、再実行した最新の attempt 2 が揃った成功なら reuse', evaluate(state([recovered])).verdict === 'reuse');
 
     // 赤
     const jobFailed = evaluate(state([run({ conclusion: null, status: 'in_progress' })], { [r.id]: jobs(run({ conclusion: null, status: 'in_progress' }), { 'test (ubuntu-latest, 22.13)': { conclusion: 'failure' }, 'test (windows-latest, 22.13)': { status: 'in_progress', conclusion: null } }) }));
@@ -99,7 +98,20 @@ export default async function (t) {
     t.ok('queued は pending', evaluate(state([queued], {})).verdict === 'pending');
     const progress = run({ status: 'in_progress', conclusion: null });
     t.ok('in_progress は pending（成功したジョブがあっても使わない）', evaluate(state([progress], { [progress.id]: jobs(progress, { 'test (windows-latest, 22.13)': { status: 'in_progress', conclusion: null } }) })).verdict === 'pending');
-    t.ok('揃った成功と走っている run が並べば、待つ', evaluate(state([run(), progress], { [run().id]: jobs(run()) })).verdict === 'pending');
+    const done = run();
+    const other = run({ id: 37186441599, status: 'in_progress', conclusion: null });
+    const both = evaluate(state([done, other], { [done.id]: jobs(done), [other.id]: jobs(other, { 'test (windows-latest, 22.13)': { status: 'in_progress', conclusion: null } }) }));
+    t.ok('揃った成功と、別の id の走っている run が並べば、待つ', both.verdict === 'pending' && both.run.id === other.id, JSON.stringify(both.notes));
+
+    // 必須でないジョブ: push で飛ばすと決めたものの skipped と success だけを許す
+    t.ok('push で飛ばすジョブ（safe-storage-macos）の skipped は reuse を妨げない', evaluate(state([r])).verdict === 'reuse');
+    const extra = (conclusion, name = 'test (windows-latest, 24)') => evaluate(state([r], { [r.id]: [...jobs(r), { ...jobs(r)[0], id: 9, name, conclusion }] }));
+    t.ok('test.yml に足したジョブが success なら reuse を妨げない', extra('success').verdict === 'reuse');
+    for (const conclusion of ['cancelled', 'skipped', 'neutral', null]) {
+      const x = extra(conclusion);
+      t.ok(`test.yml に足した必須でないジョブが ${conclusion} なら reuse にしない`, x.verdict === 'fallback' && x.reason === `job-${conclusion}:test (windows-latest, 24)`, x.reason);
+    }
+    t.ok('push で飛ばすジョブでも cancelled なら reuse にしない', extra('cancelled', 'safe-storage-macos').verdict === 'fallback');
   }
 
   // ===== 期限つきの待ち（waitForCi）=====
@@ -200,6 +212,22 @@ export default async function (t) {
     t.ok('読んだ状態の判定は reuse', evaluate(s).verdict === 'reuse');
     const nothing = await readState({ request: async () => null, repo: REPO, sha: SHA });
     t.ok('workflow が 404 なら workflow-missing', evaluate(nothing).reason === 'workflow-missing');
+    // 失敗したジョブだけの再実行（run 37186441550 の形）: attempt 1 は Windows の脚が failure、attempt 2 は 7 件すべて run_attempt 2 で success
+    const rerun = run({ run_attempt: 2 });
+    const attempt1 = jobs({ ...rerun, run_attempt: 1 }, { 'test (windows-latest, 22.13)': { conclusion: 'failure' } });
+    const rerunCalls = [];
+    const rerunResponses = {
+      [`/repos/${REPO}/actions/workflows/test.yml`]: WORKFLOW,
+      [`/repos/${REPO}/actions/workflows/${WORKFLOW.id}/runs?head_sha=${SHA}&event=push&branch=main&per_page=100`]: { total_count: 1, workflow_runs: [rerun] },
+      [`/repos/${REPO}/actions/runs/${rerun.id}/attempts/1/jobs?per_page=100`]: { total_count: 7, jobs: attempt1 },
+      [`/repos/${REPO}/actions/runs/${rerun.id}/attempts/2/jobs?per_page=100`]: { total_count: 7, jobs: jobs(rerun) },
+    };
+    const rerunState = await readState({ request: async p => { rerunCalls.push(p); return p in rerunResponses ? rerunResponses[p] : null; }, repo: REPO, sha: SHA });
+    t.ok('再実行: attempt 1 の失敗は読まず、最新の attempt 2 の jobs だけで reuse', evaluate(rerunState).verdict === 'reuse' && !rerunCalls.some(p => p.includes('/attempts/1/')) && rerunCalls.some(p => p.includes('/attempts/2/')), rerunCalls.join(' '));
+    const stillRed = { ...rerunResponses, [`/repos/${REPO}/actions/workflows/${WORKFLOW.id}/runs?head_sha=${SHA}&event=push&branch=main&per_page=100`]: { total_count: 1, workflow_runs: [run({ run_attempt: 1, conclusion: 'failure' })] } };
+    const redState = await readState({ request: async p => (p in stillRed ? stillRed[p] : null), repo: REPO, sha: SHA });
+    t.ok('再実行の前（最新が attempt 1 の失敗）なら fail', evaluate(redState).verdict === 'fail' && evaluate(redState).reason === 'run-failure');
+
     let threw = false;
     try { await readState({ request: async p => p.endsWith('test.yml') ? WORKFLOW : { total_count: 101, workflow_runs: [] }, repo: REPO, sha: SHA }); } catch { threw = true; }
     t.ok('1 ページに収まらない件数は例外（一部だけで判定しない）', threw);
@@ -297,17 +325,17 @@ export default async function (t) {
     };
 
     const ok = await cli(api(s => [run({ head_sha: s })]));
-    t.ok('CLI: 揃った成功なら decision=reuse と commit を出し、終了コード 0', ok.code === 0 && ok.output.includes('decision=reuse\n') && ok.output.includes(`sha=${sha}\n`), ok.log + ok.output);
+    t.ok('CLI: 揃った成功なら decision=reuse と commit を出し、終了コード 0', ok.code === 0 && ok.output.includes('decision=reuse\n') && ok.output.includes(`sha=${sha}\n`), JSON.stringify(ok.log + ok.output));
     t.ok('CLI: reuse の直前に run を読み直す', ok.hits.some(h => h.url === `/repos/${REPO}/actions/runs/37186441550`));
     t.ok('CLI: トークンは見出しで渡し、ログ・出力に出さない', ok.hits.every(h => h.auth === 'Bearer test-token-value' && h.method === 'GET') && !ok.log.includes('test-token-value') && !ok.output.includes('test-token-value'));
 
     const red = await cli(api(s => [run({ head_sha: s, conclusion: 'failure' })]));
-    t.ok('CLI: main の CI が赤なら終了コード 1、decision を出さない（release のジョブが走らない）', red.code === 1 && !red.output.includes('decision=') && /main CI is red/.test(red.log), red.log + red.output);
+    t.ok('CLI: main の CI が赤なら終了コード 1、decision を出さない（release のジョブが走らない）', red.code === 1 && !red.output.includes('decision=') && /main CI is red/.test(red.log), JSON.stringify(red.log + red.output));
     const latestRed = await cli(api(s => [run({ head_sha: s, run_attempt: 3, conclusion: 'failure' })], r => jobs(r, { 'test (windows-latest, 22.13)': { conclusion: 'failure' } })));
     t.ok('CLI: 最新の attempt が赤なら終了コード 1', latestRed.code === 1 && latestRed.hits.some(h => h.url.includes('/attempts/3/jobs')));
 
     const cancelled = await cli(api(s => [run({ head_sha: s, conclusion: 'cancelled' })], r => jobs(r, { 'test (ubuntu-latest, 22.13)': { conclusion: 'cancelled' } })));
-    t.ok('CLI: cancelled なら decision=fallback（release の中で全部回す）', cancelled.code === 0 && cancelled.output.includes('decision=fallback\n'), cancelled.output);
+    t.ok('CLI: cancelled なら decision=fallback（release の中で全部回す）', cancelled.code === 0 && cancelled.output.includes('decision=fallback\n'), JSON.stringify(cancelled.output));
     const none = await cli(api(() => []));
     t.ok('CLI: run が無ければ decision=fallback', none.code === 0 && none.output.includes('decision=fallback\n') && none.output.includes('reason=no-run'));
     const wrong = await cli(api(() => [run({ head_sha: OTHER })]));
@@ -315,14 +343,25 @@ export default async function (t) {
     const partial = await cli(api(s => [run({ head_sha: s })], r => jobs(r).filter(j => !j.name.startsWith('safe-storage ('))));
     t.ok('CLI: 一部のジョブだけの成功なら decision=fallback', partial.code === 0 && partial.output.includes('decision=fallback\n'));
     const pending = await cli(api(s => [run({ head_sha: s, status: 'in_progress', conclusion: null })], () => []));
-    t.ok('CLI: 期限までに終わらなければ decision=fallback（pending-deadline）', pending.code === 0 && pending.output.includes('decision=fallback\n') && pending.output.includes('reason=pending-deadline'), pending.output);
+    t.ok('CLI: 期限までに終わらなければ decision=fallback（pending-deadline）', pending.code === 0 && pending.output.includes('decision=fallback\n') && pending.output.includes('reason=pending-deadline'), JSON.stringify(pending.output));
     const denied = await cli(() => ({ httpStatus: 403 }));
-    t.ok('CLI: API が 403 を返し続ければ decision=fallback（api-error）。reuse にしない', denied.code === 0 && denied.output.includes('decision=fallback\n') && denied.output.includes('reason=api-error'), denied.output);
+    t.ok('CLI: API が 403 を返し続ければ decision=fallback（api-error）。reuse にしない', denied.code === 0 && denied.output.includes('decision=fallback\n') && denied.output.includes('reason=api-error'), JSON.stringify(denied.output));
+    const EVIL = 'x\r\ndecision=reuse\n::warning::injected\u2028::set-output name=decision::reuse';
+    const evilJobs = conclusion => r => [...jobs(r), { ...jobs(r)[0], id: 9, name: EVIL, conclusion }];
+    const injected = await cli(api(s => [run({ head_sha: s })], evilJobs('cancelled')));
+    const outLines = injected.output.split('\n').filter(Boolean);
+    t.ok('CLI: ジョブの名前に改行と decision=reuse が入っていても、GITHUB_OUTPUT の decision は最後の 1 行の fallback だけ', injected.code === 0 && outLines.filter(l => l.startsWith('decision=')).length === 1 && outLines.at(-1) === 'decision=fallback' && outLines.length === 3, JSON.stringify(outLines));
+    t.ok('CLI: ログに行頭が :: の行（workflow command）を作らない', !injected.log.split(/\r?\n/).some(l => l.startsWith('::')), JSON.stringify(injected.log));
+    const injectedRed = await cli(api(s => [run({ head_sha: s })], evilJobs('failure')));
+    const redLines = injectedRed.log.split(/\r?\n/).filter(l => l.startsWith('::'));
+    t.ok('CLI: 赤のときも、行頭が :: なのは自分の ::error:: の 1 行だけ', injectedRed.code === 1 && redLines.length === 1 && redLines[0].startsWith('::error::main CI is red') && !injectedRed.output.includes('decision='), JSON.stringify(redLines));
+    t.ok('oneLine: CR・LF・U+2028 などの区切りを空白にする', oneLine('a\r\nb\u2028c\u0085d\te') === 'a b c d e');
+
     const raced = await cli(api(s => [run({ head_sha: s })], undefined, r => ({ ...r, run_attempt: 3, status: 'in_progress', conclusion: null })));
-    t.ok('CLI: jobs を読んだ後に再実行が始まっていれば reuse にしない（期限 0 なので fallback）', raced.code === 0 && raced.output.includes('decision=fallback\n') && raced.output.includes('reason=pending-deadline:run-changed'), raced.output);
+    t.ok('CLI: jobs を読んだ後に再実行が始まっていれば reuse にしない（期限 0 なので fallback）', raced.code === 0 && raced.output.includes('decision=fallback\n') && raced.output.includes('reason=pending-deadline:run-changed'), JSON.stringify(raced.output));
     for (const hang of ['headers', 'body']) {
       const stuck = await cli(() => ({ hang }), ['--request-timeout-seconds', '0.2']);
-      t.ok(`CLI: API の${hang === 'headers' ? '応答' : '本文'}が止まっても、有限の時間で decision=fallback（api-error）`, stuck.code === 0 && stuck.output.includes('decision=fallback\n') && stuck.output.includes('reason=api-error') && stuck.ms < 15_000, `${stuck.output} ${stuck.ms} ms`);
+      t.ok(`CLI: API の${hang === 'headers' ? '応答' : '本文'}が止まっても、有限の時間で decision=fallback（api-error）`, stuck.code === 0 && stuck.output.includes('decision=fallback\n') && stuck.output.includes('reason=api-error') && stuck.ms < 15_000, `${JSON.stringify(stuck.output)} ${stuck.ms} ms`);
     }
 
     // 引数の誤りは終了コード 2（ジョブが落ちて公開しない）。GitHub は呼ばない
@@ -337,7 +376,7 @@ export default async function (t) {
     ];
     for (const [label, args] of ARGS_REJECTED) {
       const x = await cli(api(s => [run({ head_sha: s })]), [], { args });
-      t.ok(`CLI: ${label}は終了コード 2、decision を出さず GitHub を呼ばない`, x.code === 2 && !x.output.includes('decision=') && x.hits.length === 0, `${x.code} ${x.log}`);
+      t.ok(`CLI: ${label}は終了コード 2、decision を出さず GitHub を呼ばない`, x.code === 2 && !x.output.includes('decision=') && x.hits.length === 0, `${x.code} ${JSON.stringify(x.log)}`);
     }
   } finally {
     await fs.rm(dir, { recursive: true, force: true });
@@ -359,6 +398,8 @@ export default async function (t) {
     }
     t.ok('REQUIRED_JOBS は test.yml が main の push で回すジョブ全部と一致（matrix を変えたらここで落ちる）', JSON.stringify([...names].sort()) === JSON.stringify([...REQUIRED_JOBS].sort()), names.join(' | '));
     t.ok('test.yml は main の push で走る', testYml.on.push.branches.includes('main'));
+    const skipped = Object.entries(testYml.jobs).filter(([, job]) => !onPush(job)).map(([id, job]) => job.name ?? id);
+    t.ok('SKIPPED_ON_PUSH は test.yml が push で飛ばすジョブと一致', JSON.stringify(skipped.sort()) === JSON.stringify([...SKIPPED_ON_PUSH].sort()), skipped.join(' | '));
 
     const rel = parse(await fs.readFile(path.join(ROOT, '.github/workflows/evaluation-release.yml'), 'utf8'));
     const gate = rel.jobs['ci-gate'];
