@@ -42,6 +42,43 @@ function newestReleaseProvider() {
     configureHeaders(accept) {
       return this.token ? super.configureHeaders(accept) : { accept };
     }
+    // インストーラーと blockmap は API の資産の URL（/releases/assets/<番号>）ではなく、公開の配布の URL
+    // （/releases/download/v<版>/<名前>）から取る。資産の URL は名前を含まないので、electron-updater が
+    // CPU に合う Pleiad-<版>-win-x64.exe を選べず一覧の先頭の両方入り（2 倍の大きさ）を取り、blockmap の URL も
+    // 作れずに差分の取得が毎回失敗して全体を取っていた（0.8.0）。配布の URL は API の回数の上限にも数えられない
+    resolveFiles(updateInfo) {
+      const files = super.resolveFiles(updateInfo).map(file => {
+        const name = path.posix.basename(file.info.url).replace(/ /g, '-');
+        const asset = updateInfo.assets.find(it => it?.name === name);
+        return asset?.browser_download_url ? { ...file, url: new URL(asset.browser_download_url) } : file;
+      });
+      this.fileSizes = new Map(files.map(file => [file.url.href, file.info.size]));
+      return files;
+    }
+    // 差分の元は、前回の更新で取って手元に残したインストーラー（installer.exe）。0.8.0 までの版は両方入りを取っていたので、
+    // それが残っていれば、前の版の blockmap も両方入りのものを使う（中の x64 の部分がそのまま使え、取る量は変わらない）。
+    // 違う blockmap と組むと、組み上げた後の検査で落ちて全体を取り直す
+    async getBlockMapFiles(baseUrl, oldVersion, newVersion, oldBlockMapFileBaseUrl = null) {
+      const [oldUrl, newUrl] = await super.getBlockMapFiles(baseUrl, oldVersion, newVersion, oldBlockMapFileBaseUrl);
+      const archName = `-${process.arch}.exe.blockmap`;
+      const cacheDir = this.updater.downloadedUpdateHelper?.cacheDir;
+      if (!oldUrl.pathname.endsWith(archName) || !cacheDir) return [oldUrl, newUrl];
+      // 両方入りは片方だけの約 2 倍の大きさなので、新しいインストーラーとの大きさの比で見分ける
+      const newSize = this.fileSizes?.get(baseUrl.href);
+      const cachedSize = await fs.stat(path.join(cacheDir, 'installer.exe')).then(s => s.size, () => 0);
+      if (!newSize || cachedSize < newSize * 1.5) return [oldUrl, newUrl];
+      const combined = new URL(oldUrl);
+      combined.pathname = oldUrl.pathname.slice(0, -archName.length) + '.exe.blockmap';
+      return [combined, newUrl];
+    }
+    // 配布先は public なので、取るときにトークンは送らない
+    get fileExtraDownloadHeaders() {
+      return { accept: 'application/octet-stream' };
+    }
+    // GitHub の配信は複数の範囲をまとめた要求に 501 を返す。差分は範囲を 1 つずつ取る（標準の GitHubProvider と同じ）
+    get isUseMultipleRangeRequest() {
+      return false;
+    }
     async getLatestVersionInfo(cancellationToken) {
       const json = 'application/vnd.github.v3+json';
       // 標準の実装は失敗を包み直して HTTP の状態コードを落とすので、状態コードでエラー文を分けられるよう自前で取る

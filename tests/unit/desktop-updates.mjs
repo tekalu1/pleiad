@@ -18,6 +18,7 @@ const { AppUpdater } = createRequire(import.meta.url)('electron-updater/out/AppU
 const { GitHubProvider } = createRequire(import.meta.url)('electron-updater/out/providers/GitHubProvider.js');
 const { PrivateGitHubProvider } = createRequire(import.meta.url)('electron-updater/out/providers/PrivateGitHubProvider.js');
 const { resolveGitHubToken, prepareUpdateCheck } = createRequire(import.meta.url)('../../desktop/update-auth.cjs');
+const { createUpdateLog } = createRequire(import.meta.url)('../../desktop/update-log.cjs');
 const { t: tr } = createRequire(import.meta.url)('../../desktop/i18n.cjs');
 export const name = 'desktop-updates';
 export const title = 'Desktop update state, persistence, release integrity and safe shutdown';
@@ -100,7 +101,32 @@ export default async function(t) {
     real.channel = 'beta'; real.allowPrerelease = true;
     const newest = await newestProvider.getLatestVersion();
     t.ok('Beta picks the newest version rather than the first listed', newest.version === '0.1.0-beta.11' && newestProvider.resolveFiles(newest)[0].url.pathname.endsWith('/installer'));
-    t.ok('Newest-version provider keeps authentication', newestProvider.fileExtraDownloadHeaders.authorization === 'token test-private-token');
+    t.ok('Newest-version provider downloads from the public release without the token', JSON.stringify(newestProvider.fileExtraDownloadHeaders) === '{"accept":"application/octet-stream"}');
+    // インストーラーは公開の配布の URL（名前入り）から取る。API の資産の URL（番号）では CPU に合うものを選べず、
+    // 一覧の先頭の両方入りを取り、blockmap の URL も作れずに差分の取得が毎回失敗していた（0.8.0）
+    const { findFile } = createRequire(import.meta.url)('electron-updater/out/providers/Provider.js');
+    const download = name => `https://github.com/tekalu1/pleiad/releases/download/v0.8.1/${name}`;
+    const archRelease = { version: '0.8.1', files: ['Pleiad-0.8.1-win.exe', 'Pleiad-0.8.1-win-x64.exe', 'Pleiad-0.8.1-win-arm64.exe'].map(url => ({ url, sha512: 'hash', size: 1 })), path: 'Pleiad-0.8.1-win.exe', sha512: 'hash',
+      assets: ['Pleiad-0.8.1-win.exe', 'Pleiad-0.8.1-win-x64.exe', 'Pleiad-0.8.1-win-arm64.exe'].map((name, i) => ({ name, url: `https://api.github.com/repos/tekalu1/pleiad/releases/assets/${i + 1}`, browser_download_url: download(name) })) };
+    const archFiles = newestProvider.resolveFiles(archRelease);
+    const ownArch = findFile(archFiles, 'exe');
+    t.ok('The installer for this CPU is chosen, not the combined one listed first', ownArch.url.href === download(`Pleiad-0.8.1-win-${process.arch}.exe`) || !['x64', 'arm64'].includes(process.arch));
+    const ownInstaller = new URL(download(`Pleiad-0.8.1-win-${process.arch}.exe`));
+    const previous = name => `https://github.com/tekalu1/pleiad/releases/download/v0.8.0/${name}`;
+    const [oldBlockMap, newBlockMap] = await newestProvider.getBlockMapFiles(ownInstaller, '0.8.0', '0.8.1');
+    t.ok('Block maps for the differential download point at both releases', newBlockMap.href === `${ownInstaller.href}.blockmap`
+      && oldBlockMap.href === previous(`Pleiad-0.8.0-win-${process.arch}.exe.blockmap`));
+    // 0.8.0 までは両方入りを取って手元に残していた。それが残っていれば、前の版の blockmap も両方入りのものと組む
+    const cacheDir = path.join(dir, 'updater-cache');
+    await fs.mkdir(cacheDir, { recursive: true });
+    real.downloadedUpdateHelper = { cacheDir };
+    await fs.writeFile(path.join(cacheDir, 'installer.exe'), 'xx');
+    t.ok('A cached combined installer is paired with the combined block map of the previous release', (await newestProvider.getBlockMapFiles(ownInstaller, '0.8.0', '0.8.1'))[0].href === previous('Pleiad-0.8.0-win.exe.blockmap'));
+    await fs.writeFile(path.join(cacheDir, 'installer.exe'), 'x');
+    t.ok('A cached installer for this CPU keeps the block map for this CPU', (await newestProvider.getBlockMapFiles(ownInstaller, '0.8.0', '0.8.1'))[0].href === previous(`Pleiad-0.8.0-win-${process.arch}.exe.blockmap`));
+    real.downloadedUpdateHelper = null;
+    t.ok('Differential ranges are requested one at a time (GitHub answers multi-range requests with 501)', newestProvider.isUseMultipleRangeRequest === false);
+    t.ok('Assets without a public URL keep the API URL', newestProvider.resolveFiles({ ...archRelease, assets: archRelease.assets.map(({ browser_download_url, ...a }) => a) })[1].url.href.endsWith('/assets/2'));
     // トークン無し: 同じプロバイダーで、どの要求にも authorization を付けない
     const anonymousRequests = [];
     const anonymousProvider = new anonymousFeed.updateProvider(anonymousFeed, real, { platform: 'win32', executor: { request: async options => {
@@ -118,6 +144,22 @@ export default async function(t) {
     t.ok('Without a token downloads ask for the raw asset and carry no authorization', JSON.stringify(anonymousProvider.fileExtraDownloadHeaders) === '{"accept":"application/octet-stream"}');
     real.channel = 'latest'; real.allowPrerelease = false;
     t.ok('Stable-channel HTTP failures keep their status code so the error text can tell them apart', await new anonymousFeed.updateProvider(anonymousFeed, real, { platform: 'win32', executor: { request: async () => { throw new HttpError(429); } } }).getLatestVersion().then(() => 0, e => e.statusCode) === 429);
+    // 更新の記録: トークン・authorization・署名付きの URL の問い合わせ部分は伏せ、大きくなったら 1 世代だけ残す
+    const updateLogFile = path.join(dir, 'logs', 'updater.log');
+    const updateLog = createUpdateLog(updateLogFile);
+    updateLog.info('Download block maps (old: "https://github.com/o/r/releases/download/v1/a.blockmap", new: https://release-assets.githubusercontent.com/x/1?sig=SECRETSIG&jwt=SECRETJWT)');
+    updateLog.error(new Error('HttpError: 401 headers {"authorization":"token gho_0123456789abcdefghijABCDEFGHIJ"} Bearer abcdefghijklmnopqrstuvwxyz'));
+    updateLog.warn('github_pat_0123456789abcdefghijklmnop leaked');
+    await updateLog.flush();
+    const logged = await fs.readFile(updateLogFile, 'utf8');
+    t.ok('Update log keeps the useful text', logged.includes('Download block maps') && logged.includes('releases/download/v1/a.blockmap') && logged.includes('release-assets.githubusercontent.com/x/1?[redacted]'));
+    t.ok('Update log hides tokens and signed URL keys', !/SECRETSIG|SECRETJWT|gho_|github_pat_|abcdefghijklmnopqrstuvwxyz/.test(logged));
+    const rotatingFile = path.join(dir, 'logs', 'rotating.log');
+    const rotating = createUpdateLog(rotatingFile, { maxBytes: 100 });
+    rotating.info('a'.repeat(150));
+    rotating.info('second');
+    await rotating.flush();
+    t.ok('Update log rotates once it grows past its limit', (await fs.readFile(`${rotatingFile}.old`, 'utf8')).includes('aaaa') && (await fs.readFile(rotatingFile, 'utf8')).trim().endsWith('info second'));
     real.channel = 'latest'; real.allowPrerelease = false;
     const file = path.join(dir, 'updates.json');
     const make = version => new Updates({ updater, version, file, enabled: true, install: async () => { if (blocked) throw new Error('Busy'); installed++; } });
