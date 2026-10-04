@@ -136,7 +136,7 @@ export function scriptOf(prompt) {
     else if (hit[1] === "pleiad-inner") { const why = /(?:理由|Reason): (.*)/.exec(hit[2])?.[1]; if (why) said = why; }
   }
   const script = rest.trim() || (said ?? "").replace(/^\s*(?:@\S+\s+)+/, "").trim();
-  if (heard && !rest.trim()) return script.startsWith("chime:") ? `echo:${script.slice(6)}` : "echo:";
+  if (heard && !rest.trim()) return script.startsWith("chime-steps:") ? `steps:${script.slice(12)}` : script.startsWith("chime:") ? `echo:${script.slice(6)}` : "echo:";
   return script;
 }
 

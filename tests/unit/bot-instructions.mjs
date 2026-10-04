@@ -62,8 +62,8 @@ export default async function (t) {
   ok('役立つ人の情報は判断して記憶でき、Claude の内蔵メモリを使わない（ja・en）',
     ja.includes('自分の判断で `memory.write` に覚えてよい') && ja.includes('Claude 内蔵のメモリや作業場所の外のファイルには書かない')
     && en.includes('You may use `memory.write` on your own judgment') && en.includes("Do not use Claude's built-in memory"));
-  ok('最後の文章が返事。リアクションだけで終えられる（ja・en）', ja.includes('最後の文章がそのまま投稿') && ja.includes('リアクションだけなら文章なし')
-    && en.includes('Your last text becomes the reply') && en.includes('only a reaction and no text'));
+  ok('ターン中の文章を順に投稿し、リアクションだけでも終えられる（ja・en）', ja.includes('ターン中に書いた文章を順番につないで一つの投稿') && ja.includes('リアクションだけなら文章なし')
+    && en.includes('All assistant text written during the turn is joined in order') && en.includes('only a reaction and no text'));
   ok('時刻・件数・日付らしい数字を入れない', !/\d{4}-\d{2}-\d{2}|\d{1,2}:\d{2}/.test(ja));
   ok('言語ごとの文（会話の言語で固定。画面の言語とは連動しない）', en !== ja && en.startsWith('You are 🦉 Owl') && en.includes('call_op'));
   ok('人格を直したときだけ変わる（名前・アイコンも変わる。フォルダー・モデルでは変わらない）', botInstructions({ ...owl, persona: '朝型' }, 'ja') !== ja
