@@ -1,0 +1,21 @@
+{
+  "schema": 1,
+  "unit": "ms",
+  "source": "tests/unit/runner-contract.mjs の試験用",
+  "defaultMs": 100,
+  "suites": {
+    "fx-heavy": 700,
+    "fx-pass-a": 50,
+    "fx-pass-b": 10,
+    "fx-fail": 10,
+    "fx-skip": 10,
+    "fx-throw": 10,
+    "fx-exit": 10,
+    "fx-kill": 10,
+    "fx-probe": 10,
+    "fx-orphan": 10,
+    "fx-leak": 10,
+    "fx-hang": 10,
+    "fx-shell": 10
+  }
+}

@@ -3,10 +3,12 @@
 // 操作中のディスプレイだけを覆う、透明・最前面・クリック透過・フォーカスを奪わない窓を出す（縁のグロー・上端のピル・霧のカーソル）。
 // 描くのは desktop/computer-overlay.html（数値は ADR 0073）。この main 側は窓の出し入れ・時間・Esc だけを持つ。
 //   - computer-overlay { owner, state, display, agent, title, cursor? } … activity で出す・6 秒を数え直す／hide・stopped
-//   - computer-arm { owner } … ロックの持ち主。変わったら前の持ち主の表示を消す
+//     6 秒たってもロックの持ち主のままなら、消さずに「使用中」の薄い縁とピルにする（ADR 0129）。消すのはターンの終わり・持ち主の変更・hide
+//   - computer-arm { owner } … ロックの持ち主。変わったら前の持ち主の表示を消す。前に出したことのある持ち主へ戻ったら（委譲の子から返った）「使用中」で出す
 //   - computer-stop { owner } … 会話の「止める」。Esc と同じ見た目の後始末（computer-escape は返さない）
 //   - computer-turn-ended { owner } … すぐ消す
-//   - 物理の Esc … オーバーレイが出ている間だけ globalShortcut を持つ。拾ったら onEscape（A: 押したままの入力を離す）→ 止めました → computer-escape
+//   - 物理の Esc … 操作中（active）の間だけ globalShortcut を持つ。「使用中」の間は持たない（長く続くので、人の Esc を奪わない）。
+//     拾ったら onEscape（A: 押したままの入力を離す）→ 止めました → computer-escape
 // オーバーレイの窓だけを setContentProtection(true) で撮影から外す。Pleiad 本体の窓には掛けない（契約）。
 const path = require('node:path');
 
@@ -14,6 +16,8 @@ const path = require('node:path');
 // keepMs: 隠した窓を使い回すために残す時間（過ぎたら破棄する）
 const TIMING = { idleMs: 6000, stopMs: 1200, tailMs: 300, exitMs: 600, rmExitMs: 150, marginMs: 80, keepMs: 60_000, escapeWaitMs: 3000 };
 const TITLE_MAX = 16;
+// 「使用中」で出し直すために覚えておく持ち主の数（ターンの終わりで消す。中断で終わりが届かない分の上限）
+const KNOWN_MAX = 16;
 
 /** 会話のタイトルをピルに出す長さ（16 字、越えたら …）に切る */
 function cutTitle(title) {
@@ -41,9 +45,12 @@ function createComputerOverlay({ electron, post, t, onEscape, reducedMotion, con
   const T = { ...TIMING, ...timing };
   let handler = onEscape;
   let armed; // undefined = まだ便りが無い / null = 持ち主なし / 文字列 = 持ち主
-  let cur = null; // 今見えている（か、消えつつある）操作 { owner, entry, agent, title, phase: 'active'|'exiting'|'stopping', escOk, timers }
+  // 今見えている（か、消えつつある）操作 { owner, entry, agent, title, phase, escOk, timers }。
+  // phase: active = 操作中 / held = 操作の合間（ロックは持ったまま。薄い縁とピル） / exiting = 消えつつある / stopping = 止めました
+  let cur = null;
   let escRegistered = false, suspended = 0, closed = false;
   const entries = new Map(); // display.id → { display, win, loaded, queue, destroyTimer }
+  const known = new Map(); // owner → { display, agent, title }。最後に出した場所と名前（委譲の子から返ったときに「使用中」で出す）
 
   // ------------------------------------------------------------------ 窓
   function send(entry, payload) {
@@ -96,6 +103,12 @@ function createComputerOverlay({ electron, post, t, onEscape, reducedMotion, con
     clearTimeout(entry.destroyTimer);
     entry.destroyTimer = setTimeout(() => dropEntry(entry), T.keepMs);
     entry.destroyTimer.unref?.();
+  }
+
+  /** 縁が引き終わってから隠す。同じ窓をすぐ使い直したら（entryFor）取り消す */
+  function parkLater(entry, ms) {
+    clearTimeout(entry.destroyTimer);
+    entry.destroyTimer = setTimeout(() => park(entry), ms);
   }
 
   function place(entry) {
@@ -194,7 +207,7 @@ function createComputerOverlay({ electron, post, t, onEscape, reducedMotion, con
 
   function pillOf(c) {
     return {
-      who: t('computer.overlay.who', { agent: agentLabel(c.agent) }),
+      who: c.phase === 'held' ? t('computer.overlay.held', { agent: agentLabel(c.agent) }) : t('computer.overlay.who', { agent: agentLabel(c.agent) }),
       title: c.title ? t('computer.overlay.title', { title: c.title }) : '',
       hint: c.escOk ? t('computer.overlay.hint') : '',
       stopped: t('computer.overlay.stopped'),
@@ -219,6 +232,21 @@ function createComputerOverlay({ electron, post, t, onEscape, reducedMotion, con
     park(c.entry);
   }
 
+  /** 前の表示が別のディスプレイなら引っ込める（switch_display・持ち主の交代）。同じ窓なら消えかけを取り消して使い回す */
+  function takeOver(entry) {
+    if (!cur) return;
+    clearTimers(cur);
+    if (cur.entry === entry) return;
+    send(cur.entry, { op: 'hide', kind: 'now' }); parkLater(cur.entry, exitMs('now')); cur = null;
+  }
+
+  function remember(owner, info) {
+    if (!owner) return;
+    known.delete(owner);
+    known.set(owner, info);
+    if (known.size > KNOWN_MAX) known.delete(known.keys().next().value);
+  }
+
   function activity(message) {
     const display = findDisplay(message.display);
     if (!display) { log('unknown display for the overlay:', JSON.stringify(message.display)); return; }
@@ -229,10 +257,9 @@ function createComputerOverlay({ electron, post, t, onEscape, reducedMotion, con
     const entry = entryFor(display);
     const title = cutTitle(message.title);
     const agent = agentLabel(message.agent);
+    remember(message.owner, { display: message.display, agent, title });
     const show = !cur || cur.phase !== 'active' || cur.entry !== entry;
-    if (cur && cur.entry !== entry) { // 操作するディスプレイが移った（switch_display）。前の窓は引っ込める
-      clearTimers(cur); send(cur.entry, { op: 'hide', kind: 'now' }); const old = cur.entry; setTimeout(() => park(old), exitMs('now')); cur = null;
-    }
+    if (cur && cur.entry !== entry) takeOver(entry); // 操作するディスプレイが移った（switch_display）。前の窓は引っ込める
     if (!cur) cur = { owner: message.owner, entry, agent, title, phase: 'active', escOk: true, idleTimer: null, exitTimer: null };
     clearTimeout(cur.exitTimer);
     const changed = cur.owner !== message.owner || cur.agent !== agent || cur.title !== title;
@@ -247,14 +274,42 @@ function createComputerOverlay({ electron, post, t, onEscape, reducedMotion, con
     }
     clearTimeout(cur.idleTimer);
     const c = cur;
-    c.idleTimer = setTimeout(() => hide('idle'), T.idleMs);
+    c.idleTimer = setTimeout(() => idle(c), T.idleMs);
     c.idleTimer.unref?.();
+  }
+
+  /** 最後の操作から 6 秒。まだロックの持ち主なら「使用中」にする。持ち主が分からない・別なら消す */
+  function idle(c) {
+    if (cur !== c || c.phase !== 'active') return;
+    if (armed !== undefined && armed === c.owner) hold(c);
+    else hide('idle');
+  }
+
+  /** 操作の合間（held）。縁を薄くし、ピルを「使用中」にする。Esc は離す（長く続くので、人の Esc を奪わない） */
+  function hold(c) {
+    clearTimers(c);
+    c.phase = 'held';
+    c.escOk = false;
+    releaseEscape();
+    send(c.entry, { op: 'rest', pill: pillOf(c), rm: motion() });
+  }
+
+  /** 委譲の子から持ち主が戻った。前に出した場所へ「使用中」で出す（次の操作で操作中に戻る） */
+  function holdKnown(owner) {
+    const info = known.get(owner);
+    const display = info && findDisplay(info.display);
+    if (!display) return;
+    const entry = entryFor(display);
+    takeOver(entry);
+    cur = { owner, entry, agent: info.agent, title: info.title, phase: 'held', escOk: false, idleTimer: null, exitTimer: null };
+    place(entry);
+    send(entry, { op: 'rest', pill: pillOf(cur), rm: motion() });
   }
 
   /** 消す。止めている最中なら「止めました」を最後まで見せる（ターンの終わりはそのすぐ後に来る） */
   function hide(kind = 'now') {
     const c = cur;
-    if (!c || c.phase !== 'active') return;
+    if (!c || (c.phase !== 'active' && c.phase !== 'held')) return;
     clearTimers(c);
     c.phase = 'exiting';
     releaseEscape();
@@ -299,10 +354,14 @@ function createComputerOverlay({ electron, post, t, onEscape, reducedMotion, con
           if (cur.phase === 'stopping') return true;
           hide('now');
         }
+        if (owner && known.has(owner) && (!cur || cur.owner !== owner)) holdKnown(owner);
         return true;
       }
       case 'computer-stop': if (cur && cur.owner === message.owner) stop({ escape: false }); return true;
-      case 'computer-turn-ended': if (cur && cur.owner === message.owner) hide('now'); return true;
+      case 'computer-turn-ended':
+        known.delete(message.owner);
+        if (cur && cur.owner === message.owner) hide('now');
+        return true;
       default: return false;
     }
   }
@@ -323,6 +382,7 @@ function createComputerOverlay({ electron, post, t, onEscape, reducedMotion, con
   /** 全部消す（core の終了・アプリの終了）。押したままの入力は desktop/computer 側が離す */
   function hideAll() {
     if (cur) { clearTimers(cur); cur = null; }
+    known.clear();
     releaseEscape();
     for (const entry of [...entries.values()]) dropEntry(entry);
   }

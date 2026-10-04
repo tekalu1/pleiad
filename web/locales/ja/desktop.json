@@ -129,6 +129,7 @@
   "computer": {
     "overlay": {
       "who": "{{agent}} が操作中",
+      "held": "{{agent}} が PC を使用中",
       "title": "「{{title}}」",
       "hint": "Esc で止める",
       "stopped": "止めました"
