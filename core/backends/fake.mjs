@@ -32,12 +32,20 @@
 //                    続きの発言には Claude の履歴と同じ stopHookFollowUp を付ける
 //   "steps:<json>" または "steps:@<json ファイルの絶対パス>" … ツールと本文を台本どおりに並べる。{"steps":[{"tool":"Grep","input":{…},"result":"…","error":false,"ms":600,"ask":false},{"text":"…"}]}
 //                    ms は結果を返すまでの時間、ask はツールを始めたあと承認（kind:"tool"）を待つ（computerApp を添えるとアプリの承認）、images・computer は ply_computer の結果の画像と印、text は本文を書く（前のツールは同じ発言に入る）、newMessage は発言の切れ目（text.end）だけを出す
+//   "bg <本数> gate:<名前>" … "bg" の時間指定の代わりに、ゲート（下の「ゲート」）が開いたときに裏の子が順に終わる（実時間で待たない）
 //   "notes:" / "instructions:" … Pleiad が足した notes（記憶・末尾）／ botInstructions（人格）を JSON で返す（bot の会話の検査用）
 //   それ以外        … prompt をそのまま echo
 // 行頭の <pleiad-channel> などの包み（bot の会話。core/system-messages.mjs の splitLeadingNotes）は外してから台本を選ぶ（scriptOf）。
 // 環境変数: AGENT_HOST_FAKE_USAGE=1 … ターンの終わりに固定の usage を流す／AGENT_HOST_FAKE_SLOW_STEER=1 … "slow" が途中送信を受ける
+//
+// ゲート（実時間でなく、テストが終わりを決める待ち。server は別プロセスなので、実体は AGENT_HOST_FAKE_GATE_DIR のディレクトリのファイル）:
+//   <dir>/<名前> が在れば開いている。テストが作る（tests/lib/fake-gate.mjs の open）。"bg <本数> gate:<名前>" と途中送信の本文の "HOLD_CONFIRM:<名前>" が待つ。
+//   fake は読むだけで、ファイルを書かない。ゲートを待っている間に中断されたら、開かないままでも抜ける
+//   AGENT_HOST_FAKE_GATE_DIR が無いのにゲートを使うと、黙って固まらずにエラーにする
+//   fake からテストへの合図は server の標準出力の 1 行（SIGNAL_PREFIX + 名前。テストは startServer の tail で待つ）。途中送信を DECLINE_STEER で受理しなかったとき steer-declined を出す
 import crypto from "node:crypto";
 import fs from "node:fs";
+import path from "node:path";
 import { undelivered } from "./undelivered.mjs";
 import { computerDisplay, computerToolInput } from "../computer-use/display.mjs";
 
@@ -51,6 +59,30 @@ let host = null;   // attachHost で受け取る server の口（ターンの外
 const now = () => Date.now();
 const iso = () => new Date().toISOString();
 const wait = (ms) => new Promise((r) => setTimeout(r, ms).unref?.());
+
+const GATE_DIR = process.env.AGENT_HOST_FAKE_GATE_DIR || null;
+const GATE_POLL_MS = 20;
+const gateFile = (name) => {
+  if (!GATE_DIR) throw new Error("fake: AGENT_HOST_FAKE_GATE_DIR is not set");
+  if (!/^[\w.-]+$/.test(name)) throw new Error(`fake: bad gate name: ${name}`);
+  return path.join(GATE_DIR, name);
+};
+/** ゲートが開くのを待ち、開いたら onOpen を 1 回呼ぶ。待つのをやめる関数を返す */
+function watchGate(name, onOpen) {
+  const file = gateFile(name);
+  if (fs.existsSync(file)) { onOpen(); return () => {}; }
+  const timer = setInterval(() => { if (fs.existsSync(file)) { clearInterval(timer); onOpen(); } }, GATE_POLL_MS);
+  timer.unref?.();
+  return () => clearInterval(timer);
+}
+/** ゲートが開くか aborted が解けるまで待つ */
+const gateWait = (name, aborted) => new Promise((resolve) => {
+  const stop = watchGate(name, resolve);
+  aborted?.then(() => { stop(); resolve(); });
+});
+/** テストへの合図。server の標準出力に 1 行出すだけ（startServer が直近の行を持つ）。ファイルは書かない */
+const SIGNAL_PREFIX = "fake-signal: ";
+const announce = (name) => console.log(`  ${SIGNAL_PREFIX}${name}`);
 
 const MODES = {
   default: { label: "都度確認", short: "都度", note: "全部聞く",     scope: "workspace", autonomy: "ask",   enforced: false },
@@ -143,13 +175,15 @@ export function scriptOf(prompt) {
 /**
  * 台本 "bg [本数] [秒]"。Claude のバックグラウンド subagent と同じ形のイベントを流す（docs/multi-backend.md §2.2）。
  * main は先に返答し、phase: waiting で裏の完了を待つ。完了ごとに main が再開して一言返す。
+ * 秒の代わりに "gate:<名前>" を書くと、時間でなくゲートが開いたときに（開くまでの間の途中送信には答えながら）本数ぶんが順に終わる。
  * 待っている間の途中送信（control.steer）には、main がその場で答える。
  * 中断されたら true（呼び出し側はそこで終わる）。
  */
 async function background(text, { s, out, emit, signal, control }) {
   const [, nArg, secArg] = text.split(/\s+/);
   const n = Math.max(1, Math.min(5, Math.floor(Number(nArg)) || 2));
-  const total = Math.max(0.2, Number(secArg) || 6) * 1000;
+  const gate = /^gate:(.+)$/.exec(secArg ?? "")?.[1] ?? null;
+  const total = gate ? 0 : Math.max(0.2, Number(secArg) || 6) * 1000;
   const live = Array.from({ length: n }, (_, i) => ({ id: `fake-task-${i + 1}`, kind: "agent", label: `サブエージェント ${i + 1}` }));
   // Claude と同じく、委譲ツールを呼んでからサブエージェントが生まれる。server は見出しを tool_use id で引く
   for (const x of live) {
@@ -179,7 +213,7 @@ async function background(text, { s, out, emit, signal, control }) {
       // テスト用: 完了通知（core/server.mjs の steerNotice。id が task-notice-）と追加指示（steerInstruction。id が task-send-）の
       // 本文に DECLINE_STEER があれば受理しない（Claude が入力を閉じた終わり際のように、受理できずに空いてからの新しいターンへ回る形）。
       // THROW_STEER なら例外（結果不明）
-      if (/^task-(notice|send)-/.test(String(item?.id ?? "")) && String(item?.args?.prompt ?? "").includes("DECLINE_STEER")) return false;
+      if (/^task-(notice|send)-/.test(String(item?.id ?? "")) && String(item?.args?.prompt ?? "").includes("DECLINE_STEER")) { announce("steer-declined"); return false; }
       if (String(item?.id ?? "").startsWith("task-send-") && String(item?.args?.prompt ?? "").includes("THROW_STEER")) throw new Error("steer failed");
       inbox.push({ id: item?.id ?? null, text: String(item?.args?.prompt ?? "") });
       poke();
@@ -194,6 +228,8 @@ async function background(text, { s, out, emit, signal, control }) {
     push(s, m);
   };
 
+  let gateOpen = !gate;
+  const stopGate = gate ? watchGate(gate, () => { gateOpen = true; poke(); }) : () => {};
   const shown = () => live.map(({ agent, ...x }) => ({ ...x }));
   emit({ type: "background", tasks: shown() });
   await reply(`裏で ${n} 本を動かした`);
@@ -210,6 +246,9 @@ async function background(text, { s, out, emit, signal, control }) {
       if (inbox.length) {
         const { id: steeredId, text: said } = inbox.shift();
         if (STEER_CONFIRM_MS) {
+          // 本文の HOLD_CONFIRM:<ゲート> は、ゲートが開くまで「渡った」を出さない（受理してから渡るまでの間を、テストが好きなだけ見られる）。名前が不正ならエラー
+          const hold = /(?:^|\s)HOLD_CONFIRM:(\S+)/.exec(said)?.[1];
+          if (hold) await gateWait(hold, aborted);
           await Promise.race([wait(STEER_CONFIRM_MS), aborted]);
           if (signal?.signal?.aborted) continue;
           // テスト用: 本文の DROP_STEER は読まれずに捨てられた合図（userMessage.dropped）、SILENT_STEER は合図を出さず読みもしない
@@ -225,6 +264,10 @@ async function background(text, { s, out, emit, signal, control }) {
         await wait(STEER_LATENCY_MS);
         await reply(`受け取った: ${said}`);
         emit({ type: "phase", state: "waiting" });
+        continue;
+      }
+      if (!gateOpen) {
+        await Promise.race([new Promise((resolve) => { wake = resolve; }), aborted]);
         continue;
       }
       const left = started + total * (finished + 1) / n - Date.now();
@@ -243,6 +286,7 @@ async function background(text, { s, out, emit, signal, control }) {
     }
   } finally {
     done = true;
+    stopGate();
   }
   // 発言は都度履歴に積んだ。runTurn の最後で二重に積まないよう空にしておく
   out.text = "";
