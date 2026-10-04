@@ -7,10 +7,11 @@
 //   - パネル用の変更の一覧と差分（開いたときだけ）
 // 会話ごとに直列化する。git が無い・git 管理外は、どの口も null（画面は「情報なし」）。
 import * as git from './git-info.mjs';
+import * as history from './git-history.mjs';
 
 const TTL_MS = 2_000;
 const PRUNE_AFTER_MS = 30 * 24 * 60 * 60 * 1000;
-const EMPTY_TREE = '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
+const EMPTY_TREE = git.EMPTY_TREE;
 
 const SESSION_RANGES = ['uncommitted', 'session'];
 
@@ -135,7 +136,9 @@ export function createGitActivity({ now = Date.now, pruneAfterMs = PRUNE_AFTER_M
 
   /**
    * パネルの変更の一覧。range は 'uncommitted'（HEAD と今）か 'session'（会話の最初の撮影と今）。
-   * hasSession は「この会話の間」の基準があるか（無いと範囲の札を出さない）
+   * hasSession は「この会話の間」の基準があるか（無いと範囲の札を出さない）。
+   * uncommitted のときは groups = { staged, work }（ステージ済みと変更。ファイルは名前の変更も見つける）も返し、
+   * files の各行に staged / unstaged の印を付ける
    */
   function changes(cwd, sessionId, range = 'uncommitted') {
     return serial(`session:${sessionId ?? cwd}`, async () => {
@@ -143,25 +146,89 @@ export function createGitActivity({ now = Date.now, pruneAfterMs = PRUNE_AFTER_M
       if (!info) return null;
       const b = await bases(info.root, sessionId);
       const use = range === 'session' && b.session ? 'session' : 'uncommitted';
-      const tree = await git.snapshotTree(info.root);
-      if (!tree) return { range: use, hasSession: Boolean(b.session), files: [], total: { files: 0, add: 0, del: 0 }, failed: true };
+      const failed = { range: use, hasSession: Boolean(b.session), files: [], total: { files: 0, add: 0, del: 0 }, failed: true };
+      const groups = use === 'uncommitted' ? await history.uncommittedGroups(info.root) : null;
+      const tree = groups ? groups.tree : use === 'session' ? await git.snapshotTree(info.root) : null;
+      if (!tree) return failed;
       const diff = await git.diffFiles(info.root, use === 'session' ? b.session : b.head, tree);
-      if (!diff) return { range: use, hasSession: Boolean(b.session), files: [], total: { files: 0, add: 0, del: 0 }, failed: true };
-      return { range: use, hasSession: Boolean(b.session), files: diff.files, total: diff.total };
+      if (!diff) return failed;
+      if (!groups) return { range: use, hasSession: Boolean(b.session), files: diff.files, total: diff.total };
+      const stagedPaths = new Set(groups.staged.flatMap((f) => [f.path, f.orig].filter(Boolean)));
+      const workPaths = new Set(groups.work.flatMap((f) => [f.path, f.orig].filter(Boolean)));
+      const files = diff.files.map((f) => ({ ...f, ...(stagedPaths.has(f.path) ? { staged: true } : {}), ...(workPaths.has(f.path) ? { unstaged: true } : {}) }));
+      return { range: use, hasSession: Boolean(b.session), files, total: diff.total, groups: { staged: groups.staged, work: groups.work } };
     });
   }
 
-  /** 1 ファイルの統一差分（path はルート相対）。範囲は changes と同じ */
-  function diff(cwd, sessionId, range, file) {
+  /** 差分の比べる元と先（tree-ish）。commit・from/to は hash だけ。ステージ済みは HEAD と index、変更は index と作業ツリー */
+  async function diffSource(root, sessionId, range, { stage, commit, from, to } = {}) {
+    if (history.isHash(commit)) {
+      const c = await history.resolveCommit(root, commit);
+      if (!c) return null;
+      const parent = await git.readGit(root, ['rev-parse', '--verify', '-q', `${c}^1`]);
+      return { from: parent.ok && parent.stdout.trim() ? parent.stdout.trim() : EMPTY_TREE, to: c, range: 'commit' };
+    }
+    if (history.isHash(from) && history.isHash(to)) {
+      const [a, z] = await Promise.all([history.resolveCommit(root, from), history.resolveCommit(root, to)]);
+      return a && z ? { from: a, to: z, range: 'commits' } : null;
+    }
+    const b = await bases(root, sessionId);
+    if (range === 'session' && b.session) {
+      const tree = await git.snapshotTree(root);
+      return tree ? { from: b.session, to: tree, range: 'session' } : null;
+    }
+    if (stage === 'staged') {
+      const index = await git.indexTree(root);
+      return index ? { from: b.head, to: index, range: 'uncommitted', stage } : null;
+    }
+    if (stage === 'work') {
+      const [index, tree] = await Promise.all([git.indexTree(root), git.snapshotTree(root)]);
+      return tree ? { from: index ?? b.head, to: tree, range: 'uncommitted', stage } : null;
+    }
+    const tree = await git.snapshotTree(root);
+    return tree ? { from: b.head, to: tree, range: 'uncommitted' } : null;
+  }
+
+  /**
+   * 1 ファイルの統一差分（path はルート相対）。範囲は changes と同じに、押したコミット（commit）・2 つのコミットの間（from・to）・
+   * ステージ済み／変更の区別（stage）も選べる。orig は名前の変更の元のパス、context は前後の行数。
+   * after: true なら、畳んだ「変更なし」の行を開くための差分の後ろ側のファイルの全行（大きい・消えたものは null）も返す
+   */
+  function diff(cwd, sessionId, range, file, opts = {}) {
     return serial(`session:${sessionId ?? cwd}`, async () => {
       const info = await git.repoInfo(cwd);
       if (!info || typeof file !== 'string' || !file || file.includes('\0')) return null;
-      const b = await bases(info.root, sessionId);
-      const tree = await git.snapshotTree(info.root);
-      if (!tree) return null;
-      const result = await git.diffFile(info.root, range === 'session' && b.session ? b.session : b.head, tree, file);
-      return result ? { range: range === 'session' && b.session ? 'session' : 'uncommitted', path: file, ...result } : null;
+      const src = await diffSource(info.root, sessionId, range, opts);
+      if (!src) return null;
+      const orig = typeof opts.orig === 'string' && opts.orig && !opts.orig.includes('\0') ? opts.orig : null;
+      const result = await git.diffFile(info.root, src.from, src.to, file, { orig, context: opts.context });
+      if (!result) return null;
+      const after = opts.after && !result.binary && !result.truncated ? await git.fileLines(info.root, src.to, file) : null;
+      return { range: src.range, ...(src.stage ? { stage: src.stage } : {}), path: file, ...result, ...(opts.after ? { after } : {}) };
     });
+  }
+
+  /** 会話の始まり: 最初のターンの撮影の時刻と、そのときの HEAD（グラフの ⚑）。撮影が無い会話は null */
+  async function sessionStart(root, sessionId) {
+    const first = await sessionBase(root, sessionId);
+    if (!first) return null;
+    const parent = await git.readGit(root, ['rev-parse', '--verify', '-q', `${first.commit}^`]);
+    return { n: first.n, at: first.at, head: parent.ok && parent.stdout.trim() ? parent.stdout.trim() : null };
+  }
+
+  /** コミットの履歴の 1 ページ（グラフ）。session は会話の始まり。git 管理外・読めないときは null */
+  async function commits(cwd, sessionId, { limit, skip } = {}) {
+    const info = await git.repoInfo(cwd);
+    if (!info) return null;
+    const page = await history.readHistory(info.root, { limit, skip });
+    if (!page) return null;
+    return { ...page, session: await sessionStart(info.root, sessionId), root: info.root };
+  }
+
+  /** コミット 1 つの題・本文と変わったファイル */
+  async function commit(cwd, hash) {
+    const info = await git.repoInfo(cwd);
+    return info ? history.commitFiles(info.root, hash) : null;
   }
 
   /**
@@ -188,5 +255,5 @@ export function createGitActivity({ now = Date.now, pruneAfterMs = PRUNE_AFTER_M
     return info ? git.forgetSession(info.root, sessionId) : 0;
   }
 
-  return { status, invalidate, begin, attach, finish, changes, diff, summary, forget, ranges: SESSION_RANGES };
+  return { status, invalidate, begin, attach, finish, changes, diff, commits, commit, sessionStart, summary, forget, ranges: SESSION_RANGES };
 }

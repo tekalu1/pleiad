@@ -97,7 +97,7 @@ export async function repoInfo(cwd) {
  * 未追跡の数は untracked、追跡している変更は changed、競合は conflicts。dirty はコミットしていない変更のあるファイルの数
  */
 export function parseStatus(text) {
-  const out = { branch: null, detached: false, oid: null, upstream: null, ahead: null, behind: null, changed: 0, untracked: 0, conflicts: 0 };
+  const out = { branch: null, detached: false, oid: null, upstream: null, ahead: null, behind: null, changed: 0, untracked: 0, conflicts: 0, entries: [] };
   const tokens = String(text ?? '').split('\0');
   for (let i = 0; i < tokens.length; i++) {
     const line = tokens[i];
@@ -108,13 +108,20 @@ export function parseStatus(text) {
     else if (line.startsWith('# branch.ab ')) {
       const m = /\+(\d+) -(\d+)/.exec(line);
       if (m) { out.ahead = Number(m[1]); out.behind = Number(m[2]); }
-    } else if (line.startsWith('1 ')) out.changed++;
-    else if (line.startsWith('2 ')) { out.changed++; i++; }   // 名前の変更は元のパスが次の項目
-    else if (line.startsWith('u ')) out.conflicts++;
-    else if (line.startsWith('? ')) out.untracked++;
+    } else if (line.startsWith('1 ')) { out.changed++; out.entries.push({ kind: 'changed', xy: line.slice(2, 4), path: fieldsAfter(line, 8) }); }
+    else if (line.startsWith('2 ')) { out.changed++; out.entries.push({ kind: 'renamed', xy: line.slice(2, 4), path: fieldsAfter(line, 9), orig: tokens[i + 1] ?? '' }); i++; }   // 名前の変更は元のパスが次の項目
+    else if (line.startsWith('u ')) { out.conflicts++; out.entries.push({ kind: 'conflict', xy: line.slice(2, 4), path: fieldsAfter(line, 10) }); }
+    else if (line.startsWith('? ')) { out.untracked++; out.entries.push({ kind: 'untracked', xy: '??', path: line.slice(2) }); }
   }
   out.dirty = out.changed + out.conflicts + out.untracked;
   return out;
+}
+
+/** 空白で区切った n 個の項目の後ろ（パスは空白を含みうるので、最初の n 個だけ割る） */
+function fieldsAfter(line, n) {
+  let at = 0;
+  for (let k = 0; k < n; k++) { at = line.indexOf(' ', at) + 1; if (at === 0) return ''; }
+  return line.slice(at);
 }
 
 /**
@@ -138,40 +145,64 @@ export async function readStatus(cwd) {
 
 // ---------------------------------------------------------------- 差分
 
-/** `git diff --numstat -z` の出力 → [{ path, add, del, binary }]。名前の変更は --no-renames で出さない */
+/** 空の tree。最初のコミットの「親」として比べる */
+export const EMPTY_TREE = '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
+
+/**
+ * `git diff --numstat -z` の出力 → [{ path, add, del, binary, orig? }]。
+ * 名前の変更（-M のとき）は「追加\t削除\t」の後に元のパス・新しいパスが NUL 区切りで続く
+ */
 export function parseNumstat(text) {
   const files = [];
-  for (const entry of String(text ?? '').split('\0')) {
-    if (!entry) continue;
-    const m = /^(\d+|-)\t(\d+|-)\t(.*)$/s.exec(entry);
+  const tokens = String(text ?? '').split('\0');
+  for (let i = 0; i < tokens.length; i++) {
+    const m = /^(\d+|-)\t(\d+|-)\t(.*)$/s.exec(tokens[i] ?? '');
     if (!m) continue;
     const binary = m[1] === '-';
-    files.push({ path: m[3], add: binary ? 0 : Number(m[1]), del: binary ? 0 : Number(m[2]), binary });
+    const counts = { add: binary ? 0 : Number(m[1]), del: binary ? 0 : Number(m[2]), binary };
+    if (m[3] === '' && i + 2 < tokens.length) { files.push({ path: tokens[i + 2], ...counts, orig: tokens[i + 1] }); i += 2; }
+    else files.push({ path: m[3], ...counts });
   }
   return files;
 }
 
-/** `git diff --name-status -z` の出力 → Map(path → 'A'|'M'|'D') */
-export function parseNameStatus(text) {
-  const map = new Map();
+/** `git diff --name-status -z` の出力 → [{ state: 'A'|'M'|'D'|'R', path, orig? }]。R・C は元のパスと新しいパスの 2 つが続く */
+export function parseNameStatusList(text) {
+  const list = [];
   const tokens = String(text ?? '').split('\0');
-  for (let i = 0; i + 1 < tokens.length; i += 2) {
+  for (let i = 0; i < tokens.length;) {
     const letter = tokens[i]?.[0];
-    if (!letter) continue;
-    map.set(tokens[i + 1], letter === 'A' ? 'A' : letter === 'D' ? 'D' : 'M');
+    if (!letter) { i++; continue; }
+    if (letter === 'R' || letter === 'C') {
+      if (i + 2 >= tokens.length) break;
+      list.push({ state: letter === 'R' ? 'R' : 'A', path: tokens[i + 2], ...(letter === 'R' ? { orig: tokens[i + 1] } : {}) });
+      i += 3;
+    } else {
+      if (i + 1 >= tokens.length) break;
+      list.push({ state: letter === 'A' ? 'A' : letter === 'D' ? 'D' : 'M', path: tokens[i + 1] });
+      i += 2;
+    }
   }
-  return map;
+  return list;
 }
 
-/** 2 つの tree-ish の差。ファイルごとの状態（A 新規・M 変更・D 削除）と行数、合計 */
-export async function diffFiles(root, from, to) {
-  const base = ['diff', '--no-ext-diff', '--no-textconv', '--no-color', '--no-renames', '--ignore-submodules=dirty'];
+/** `git diff --name-status -z` の出力 → Map(path → 'A'|'M'|'D'|'R') */
+export function parseNameStatus(text) {
+  return new Map(parseNameStatusList(text).map((e) => [e.path, e.state]));
+}
+
+/**
+ * 2 つの tree-ish の差。ファイルごとの状態（A 新規・M 変更・D 削除・R 名前の変更）と行数、合計。
+ * 名前の変更は renames: true のときだけ見つける（既定は --no-renames で、移した 2 つを削除と新規で数える）
+ */
+export async function diffFiles(root, from, to, { renames = false } = {}) {
+  const base = ['diff', '--no-ext-diff', '--no-textconv', '--no-color', renames ? '-M' : '--no-renames', '--ignore-submodules=dirty'];
   const [num, status] = await Promise.all([
     readGit(root, [...base, '--numstat', '-z', from, to, '--']),
     readGit(root, [...base, '--name-status', '-z', from, to, '--']),
   ]);
   if (!num.ok || !status.ok) return null;
-  const states = parseNameStatus(status.stdout);
+  const states = new Map(parseNameStatusList(status.stdout).map((e) => [e.path, e.state]));
   const files = parseNumstat(num.stdout).map((f) => ({ ...f, state: states.get(f.path) ?? 'M' })).sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
   return { files, total: totals(files) };
 }
@@ -182,16 +213,32 @@ export function totals(files) {
 
 const DIFF_MAX_BYTES = 512 * 1024;
 const DIFF_MAX_LINES = 4000;
+/** 畳んだ行を開くために返す、差分の後ろ側のファイルの上限 */
+const AFTER_MAX_BYTES = 256 * 1024;
+const AFTER_MAX_LINES = 6000;
+
+/** `@@ -a,b +c,d @@ 節` → { oldStart, oldCount, newStart, newCount, section }。読めなければ null */
+export function parseHunkHeader(header) {
+  const m = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@ ?(.*)$/.exec(String(header ?? ''));
+  if (!m) return null;
+  return { oldStart: Number(m[1]), oldCount: m[2] === undefined ? 1 : Number(m[2]), newStart: Number(m[3]), newCount: m[4] === undefined ? 1 : Number(m[4]), section: m[5] ?? '' };
+}
 
 /**
- * 統一差分を読んで { hunks: [{ header, lines: [{ t: '+'|'-'|' ', s }] }] } にする。ヘッダー（diff --git・index・---・+++）は捨てる。
+ * 統一差分を読んで { hunks: [{ header, oldStart, oldCount, newStart, newCount, section, lines: [{ t: '+'|'-'|' ', s }] }] } にする。
+ * ヘッダー（diff --git・index・---・+++）は捨てる。行番号は見出しの oldStart / newStart から数える（web/git-diff.mjs）。
  * 「\ No newline at end of file」は直前の行の印として落とす
  */
 export function parseUnifiedDiff(text) {
   const hunks = [];
   let current = null, count = 0, truncated = false;
   for (const line of String(text ?? '').split('\n')) {
-    if (line.startsWith('@@')) { current = { header: line, lines: [] }; hunks.push(current); continue; }
+    if (line.startsWith('@@')) {
+      const h = parseHunkHeader(line);
+      current = { header: line, oldStart: h?.oldStart ?? 1, oldCount: h?.oldCount ?? 0, newStart: h?.newStart ?? 1, newCount: h?.newCount ?? 0, section: h?.section ?? '', lines: [] };
+      hunks.push(current);
+      continue;
+    }
     if (!current) continue;
     const c = line[0];
     if (c === '+' || c === '-' || c === ' ') {
@@ -202,16 +249,31 @@ export function parseUnifiedDiff(text) {
   return { hunks, truncated };
 }
 
-/** 1 ファイルの差分。バイナリ・大きすぎるものは本文を返さない。path はルート相対 */
-export async function diffFile(root, from, to, file) {
-  const base = ['diff', '--no-ext-diff', '--no-textconv', '--no-color', '--no-renames', '--ignore-submodules=dirty', '-U3'];
-  const r = await readGit(root, [...base, from, to, '--', file], { maxBuffer: DIFF_MAX_BYTES });
+/**
+ * 1 ファイルの差分。バイナリ・大きすぎるものは本文を返さない。path はルート相対。
+ * orig は名前の変更の元のパス（あれば両方を指定して、名前の変更として読む）。context は前後の行数（既定 3）
+ */
+export async function diffFile(root, from, to, file, { orig = null, context = 3 } = {}) {
+  const base = ['diff', '--no-ext-diff', '--no-textconv', '--no-color', orig ? '-M' : '--no-renames', '--ignore-submodules=dirty', `-U${Math.min(Math.max(Number(context) || 0, 0), 1000)}`];
+  const r = await readGit(root, [...base, from, to, '--', ...(orig ? [orig, file] : [file])], { maxBuffer: DIFF_MAX_BYTES });
   if (!r.ok && !r.truncated) return null;
   if (r.truncated) return { hunks: [], binary: false, truncated: true };
   const binary = /^Binary files .* differ$/m.test(r.stdout) || /^GIT binary patch$/m.test(r.stdout);
   if (binary) return { hunks: [], binary: true, truncated: false };
   const parsed = parseUnifiedDiff(r.stdout);
   return { hunks: parsed.hunks, binary: false, truncated: parsed.truncated };
+}
+
+/**
+ * 差分の後ろ側のファイルの全行（畳んだ「変更なし」の行を開くため）。to は tree-ish（commit・tree）。
+ * 無い（削除）・大きい・バイナリは null。lines は行の配列（末尾の改行は行を増やさない）
+ */
+export async function fileLines(root, to, file) {
+  const r = await readGit(root, ['cat-file', '-p', `${to}:${file}`], { maxBuffer: AFTER_MAX_BYTES });
+  if (!r.ok || r.truncated || r.stdout.includes('\0')) return null;
+  const lines = r.stdout.split(/\r?\n/);
+  if (lines.at(-1) === '') lines.pop();
+  return lines.length > AFTER_MAX_LINES ? null : lines;
 }
 
 // ---------------------------------------------------------------- 隠し ref
@@ -230,6 +292,21 @@ export async function snapshotTree(root) {
     const added = await writeGit(root, ['add', '-A'], { env, timeout: SNAPSHOT_TIMEOUT });
     if (!added.ok) return null;
     const tree = await writeGit(root, ['write-tree'], { env });
+    return tree.ok && /^[0-9a-f]{40,64}$/.test(tree.stdout.trim()) ? tree.stdout.trim() : null;
+  } catch { return null; } finally { fs.rm(tmp, { force: true }).catch(() => {}); }
+}
+
+/**
+ * ユーザーの index（ステージした内容）を tree にする。本物の index を一時ファイルへ写し、その上で write-tree だけする（add -A はしない）。
+ * 競合（unmerged）が残っているなど write-tree が断ったら null
+ */
+export async function indexTree(root) {
+  const tmp = path.join(os.tmpdir(), `pleiad-index-${crypto.randomUUID()}`);
+  try {
+    const idx = await readGit(root, ['rev-parse', '--path-format=absolute', '--git-path', 'index']);
+    if (!idx.ok || !idx.stdout.trim()) return null;
+    await fs.copyFile(idx.stdout.trim(), tmp).catch(() => {});   // index がまだ無い（最初のコミット前）なら空の index
+    const tree = await writeGit(root, ['write-tree'], { env: { GIT_INDEX_FILE: tmp } });
     return tree.ok && /^[0-9a-f]{40,64}$/.test(tree.stdout.trim()) ? tree.stdout.trim() : null;
   } catch { return null; } finally { fs.rm(tmp, { force: true }).catch(() => {}); }
 }
