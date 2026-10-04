@@ -961,7 +961,7 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
       if (ok && !rec.committed) commit(rec);
       if (!rec.committed && rec.itemIds.length) await inbox.mark(rec.itemIds, 'unknown', { error: rec.error ?? String(outcome) });
       // 聞こえた投稿だけのターンでも、assistant の文章があれば道具の前後を問わず残す（ADR 0128）。
-      if (rec.deferPost && !rec.postId && ((ok && !rec.spoke && [...rec.parts, rec.cur].some((part) => String(part ?? '').trim())) || rec.presents.length || state === 'failed')) {
+      if (rec.deferPost && !rec.postId && ((!rec.spoke && [...rec.parts, rec.cur].some((part) => String(part ?? '').trim())) || rec.presents.length || state === 'failed')) {
         rec.deferPost = false;
         const post = await channels.post({ channelId: rec.channelId, threadId: rec.threadId, text: PLACEHOLDER, state: 'working', taint: rec.taint,
           turn: { botId: rec.botId, sessionId: rec.sessionId }, new: true }, botAuthor(rec.botId)).catch((e) => { log('could not create the turn post:', errText(e)); return null; });
