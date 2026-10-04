@@ -166,8 +166,9 @@
       "stopped": "止めました",
       "tokens": "このスレッドで {{tokens}} トークン",
       "tokensTitle": "入力 {{input}} · 出力 {{output}} · キャッシュ読み出し {{cached}}",
-      "budget": "予算 {{spent}}% / {{allowance}}%",
-      "budgetTitle": "このスレッドが今日使った分 / 1 スレッドの配分（bot のバックエンドの週の使用枠に対する目安）。使い切ると bot どうしの呼びかけだけ止まります"
+      "budget": "今日 {{rate}}% · {{spent}} / {{allowance}}",
+      "budgetTitle": "このスレッドの今日の予算使用率（{{rate}}% · {{spent}} / {{allowance}}）。使い切ると bot 同士の呼びかけは休止します",
+      "budgetExceeded": "（休止中）"
     }
   },
   "bot": {

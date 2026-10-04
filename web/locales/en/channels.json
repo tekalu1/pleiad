@@ -169,8 +169,9 @@
       "stopped": "Stopped",
       "tokens": "{{tokens}} tokens in this thread",
       "tokensTitle": "Input {{input}} · output {{output}} · cache read {{cached}}",
-      "budget": "Budget {{spent}}% / {{allowance}}%",
-      "budgetTitle": "Used by this thread today / share per thread (an estimate against the weekly usage window of each bot's backend). Once it runs out, only calls between bots stop"
+      "budget": "Today {{rate}}% · {{spent}} / {{allowance}}",
+      "budgetTitle": "Budget usage of this thread today ({{rate}}% · {{spent}} / {{allowance}}). Once it runs out, calls between bots are paused",
+      "budgetExceeded": "(Paused)"
     }
   },
   "bot": {

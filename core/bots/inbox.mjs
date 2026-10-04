@@ -63,9 +63,9 @@ export function createInboxStore({ dir, now = Date.now } = {}) {
   return {
     file,
     load: () => serial(async () => { await load(); }),
-    add: ({ sessionId, botId, channelId, threadId = null, postId = null, caller, reply, inner, heard }) => mutate((data) => {
+    add: ({ sessionId, botId, channelId, threadId = null, postId = null, caller, reply, inner, heard, reaction }) => mutate((data) => {
       const at = now();
-      const item = { id: newId('inbox', at), sessionId, botId, channelId, threadId, postId, ...(caller ? { caller } : {}), ...(reply ? { reply } : {}), ...(inner ? { inner } : {}), ...(heard ? { heard: true } : {}), status: 'pending', at, updatedAt: at };
+      const item = { id: newId('inbox', at), sessionId, botId, channelId, threadId, postId, ...(caller ? { caller } : {}), ...(reply ? { reply } : {}), ...(inner ? { inner } : {}), ...(heard ? { heard: true } : {}), ...(reaction ? { reaction } : {}), status: 'pending', at, updatedAt: at };
       data.items.push(item);
       return clone(item);
     }),

@@ -62,7 +62,7 @@ function leadingRow(tag, attrText, body, m) {
   if (tag === MEMORY_CORE_TAG || tag === BOT_RECENT_TAG || tag === TURN_CONTEXT_TAG || tag === INNER_TAG) return { ...base, kind: "contextNote", tag: tag === MEMORY_CORE_TAG ? "memory-core" : tag === BOT_RECENT_TAG ? "bot-recent" : tag === INNER_TAG ? "inner" : "turn-context", body };
   const a = attrsOf(attrText);
   return { ...base, kind: "channelEvent", history: tag === CHANNEL_THREAD_TAG, channel: a.channel ?? "", threadId: a.thread ?? null,
-    postId: a.post ?? null, from: a.from ?? "", sentAt: a.at ?? null, body };
+    postId: a.post ?? null, from: a.from ?? "", sentAt: a.at ?? null, reactions: a.reactions ?? null, body };
 }
 
 /**

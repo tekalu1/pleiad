@@ -205,15 +205,25 @@ export function renderSummary(post, ctx) {
   b.type = 'button';
   b.setAttribute('aria-label', t('channels:feed.openThread', { count: s.count }));
   b.append(el('span', 'ts-count', `💬 ${t('channels:feed.replies', { count: s.count })}`));
+  const workingBot = th?.working?.[0] ? ctx.bots.get(th.working[0]) : null;
   const lastBot = [...(s.authors ?? [])].reverse().find((a) => a.kind === 'bot');
   const botId = lastBot?.botId ?? Object.keys(th?.sessions ?? {})[0];
-  const bot = botId ? ctx.bots.get(botId) : null;
+  const bot = workingBot ?? (botId ? ctx.bots.get(botId) : null);
   const status = el('span', 'ts-status');
   if (th?.state === 'working') {
     status.classList.add('working');
     status.append('· ');
-    if (bot) status.append(botIcon(bot, 'ts-bot-icon'), ` ${bot.name}`);
-    else status.append(t('channels:feed.unknownBot'));
+    const activeBots = (th?.working ?? []).map((id) => ctx.bots.get(id)).filter(Boolean);
+    if (activeBots.length > 0) {
+      activeBots.forEach((b, i) => {
+        if (i) status.append(' ⇄ ');
+        status.append(botIcon(b, 'ts-bot-icon'), ` ${b.name}`);
+      });
+    } else if (bot) {
+      status.append(botIcon(bot, 'ts-bot-icon'), ` ${bot.name}`);
+    } else {
+      status.append(t('channels:feed.unknownBot'));
+    }
     status.append(` ${t('channels:feed.threadWorking')}`, runMark(t('channels:feed.state.working')));
   } else if (th?.state === 'waiting') {
     status.classList.add('waiting');

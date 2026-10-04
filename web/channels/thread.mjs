@@ -225,9 +225,16 @@ export function createThread(host) {
       pieces.push(tok);
     }
     if (budget) {
-      // 「予算 0.8% / 2.5%」: このスレッドが今日使った分と、1 スレッドの配分（ADR 0119）
-      const use = el('span', 'th-band-budget', t('channels:thread.band.budget', budget));
-      use.title = t('channels:thread.band.budgetTitle');
+      // Chats のメーターに合わせた細いメーター 1 本と %・トークン数
+      const use = el('span', 'th-band-budget');
+      const bar = el('span', 'th-budget-bar');
+      const fill = el('span', `th-budget-fill${budget.exceeded ? ' exceeded' : ''}`);
+      fill.style.width = `${budget.fillPercent}%`;
+      bar.append(fill);
+      const label = el('span', 'th-budget-text', t('channels:thread.band.budget', budget));
+      use.append(bar, label);
+      if (budget.exceeded) use.append(el('span', 'th-budget-paused', t('channels:thread.band.budgetExceeded')));
+      use.title = t('channels:thread.band.budgetTitle', budget);
       pieces.push(use);
     }
     pieces.forEach((p, i) => { if (i) text.append(el('span', 'th-band-dot', '·')); text.append(p); });
@@ -247,8 +254,20 @@ export function createThread(host) {
     if (!b || b.daily == null || !th?.spend) return null;
     const d = new Date(), day = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
     if (th.spend.day !== day || !(th.spend.percent > 0)) return null;
-    const r = (n) => Math.round(n * 100) / 100;
-    return { spent: r(th.spend.percent), allowance: r((b.daily * b.perThread) / 100) };
+    const allowance = (b.daily * b.perThread) / 100;
+    if (!(allowance > 0)) return null;
+    const rateVal = (th.spend.percent / allowance) * 100;
+    const rate = Math.round(rateVal * 10) / 10;
+    const fillPercent = Math.min(100, Math.max(0, rateVal));
+    const spentTokens = (th?.tokens?.input ?? 0) + (th?.tokens?.output ?? 0);
+    const capTokens = Math.round(1_500_000 * (allowance / 2.5));
+    return {
+      rate: rate >= 10 || rate === 0 ? String(Math.round(rate)) : rate.toFixed(1),
+      fillPercent,
+      spent: tokensText(spentTokens),
+      allowance: tokensText(capTokens),
+      exceeded: rateVal >= 100,
+    };
   }
   async function stopThread() {
     if (stopBusy || !S.threadId) return;

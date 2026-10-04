@@ -8,7 +8,7 @@ import path from 'node:path';
 import { startServer } from '../lib/server.mjs';
 import { open, sleep } from '../lib/ws-client.mjs';
 import { createInboxStore } from '../../core/bots/inbox.mjs';
-import { createDispatcher, PLACEHOLDER, PROGRESS_MIN_CHARS, progressBody } from '../../core/bots/dispatch.mjs';
+import { createDispatcher, PLACEHOLDER, PROGRESS_MIN_CHARS, progressBody, isSilentText } from '../../core/bots/dispatch.mjs';
 
 export const name = 'bot-dispatch';
 export const title = 'bot を起こす・配る: @ で起こす・返事の @ で連鎖・止める・途中送信とたまった出来事・DM・暗黙では起こさない・再起動の戻し・inbox.json';
@@ -66,6 +66,12 @@ export default async function (t) {
       await d.onPosted({ id: 'p_1', author: { kind: 'system' }, text: '@Owl' }, { id: 'c_1', kind: 'channel' });
       t.ok('bot の会話でなければ turnExtras は空・つなぎ目は何もしない', extras.botInstructions === null && extras.notes.length === 0 && d.activeCount() === 0);
       t.ok('PLACEHOLDER は言語を持たない印', PLACEHOLDER === '…');
+      t.ok('isSilentText: （なし）・(none)・（変わったことはありません）などを沈黙と判定する',
+        isSilentText('（なし）') && isSilentText('(none)') && isSilentText('（変わったことはありません）')
+        && isSilentText('（特になし）') && isSilentText('（発言なし）') && isSilentText('（返信なし）')
+        && isSilentText('（変更なし）') && isSilentText('（追加はありません）') && isSilentText('  (no response)  ')
+        && isSilentText('') && isSilentText('   ') && isSilentText(null) && isSilentText(undefined)
+        && !isSilentText('了解です') && !isSilentText('（重要）お知らせです') && !isSilentText('なし'));
     }
 
     // ================================================================ 途中送信の形ごとの扱い（身代わりのサービス・バックエンド）
@@ -924,6 +930,41 @@ export default async function (t) {
           await tick();
           t.ok('ADR 0119: 文章なしで正常に終えたターンは、作業中の投稿（…）を消す', removed.includes(lynxPost?.id), JSON.stringify(removed));
           t.ok('ADR 0119: 黙って終えたら、呼んだ bot へ返事を返さない（呼び合いが自然に終わる）', !q.started.some((s) => s.args.sessionId === 's1') && !(await itemsOf(q, 's1')).length);
+        }
+
+        // 黙る自由（Bug #35）: （なし）や（変わったことはありません）のような filler だけのターンも投稿を残さない
+        {
+          const q = mkWorld();
+          const removed = [];
+          q.d.channels.remove = async ({ postId }) => { removed.push(postId); const p = q.posts.find((x) => x.id === postId); if (p) p.deletedAt = 1; };
+          await callOwl(q);
+          await tick();
+          const lynxPost = q.posts.find((p) => p.turn?.sessionId === 's_new_b_2');
+          const turn = turnOf('s_new_b_2');
+          q.d.onTurnEvent(turn, { type: 'text.delta', text: '（なし）' });
+          await q.d.onTurnEnd(turn, { outcome: 'ok' });
+          await tick();
+          t.ok('Bug #35: （なし）で終えたターンも作業中の投稿を消し、投稿を残さない', removed.includes(lynxPost?.id), JSON.stringify(removed));
+        }
+
+        // リアクションでの起こし（Bug #36）: 人間が bot の投稿にリアクションを付けると author の bot が起きる
+        {
+          const q = mkWorld();
+          const botPost = { id: 'p_bot_1', channelId: 'c_1', threadId: 'p_root', author: { kind: 'bot', botId: 'b_1' }, text: 'bot の投稿', mentions: [], at: 5000, reactions: {} };
+          q.posts.push(botPost);
+          await q.d.onReacted({ channelId: 'c_1', postId: 'p_bot_1', emoji: '👍', on: true, author: { kind: 'human' }, post: botPost, reactions: { '👍': [{ kind: 'human' }] } });
+          await tick();
+          const items = await itemsOf(q, 's1');
+          t.ok('Bug #36: 人が bot の投稿にリアクションを付けると author の bot が起き、reaction 情報が inbox に入る', items.some((i) => i.reaction?.emoji === '👍'), JSON.stringify(items));
+        }
+
+        // 作業中 bot の追跡（Bug #37）: refreshThread が作業中の botId を ThreadState.working に保存する
+        {
+          const q = mkWorld();
+          await callOwl(q);
+          await tick();
+          const th = await q.d.channels.threads.get('c_1', 'p_root');
+          t.ok('Bug #37: スレッドの ThreadState.working に作業中の botId が保持される', Array.isArray(th?.working) && th.working.includes('b_2'), JSON.stringify(th));
         }
       }
 

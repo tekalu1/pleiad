@@ -54,6 +54,7 @@ import { CHANNEL_TAG, CHANNEL_THREAD_TAG, MEMORY_CORE_TAG, TURN_CONTEXT_TAG, INN
  *   channelId: string, threadId: string,
  *   sessions: { [botId: string]: string },                // スレッドごと・bot ごとの会話（ADR 0109）
  *   state: 'idle'|'working'|'waiting'|'failed',
+ *   working?: string[],                                   // 作業中の bot の id の配列（ThreadState.state が working のとき）
  *   tokens: { input: number, output: number, cached: number },  // このスレッドの bot の会話の合計（usage の出来事から）
  *   calls: number,                                        // bot が起こされた回数（表示だけ。上限には使わない）
  *   spend?: { day: string, percent: number },             // チャンネルの予算に数えた、その日（現地の日付）に使った分（bot のバックエンドの週の使用枠に対する %。origin の根のスレッドに持つ。ADR 0119）
@@ -173,8 +174,8 @@ const attrs = (obj) => Object.entries(obj).filter(([, v]) => v !== null && v !==
  * reply: `reply="true"`。呼んだ bot（@ で起こした相手）の返事（bot の会話でそのターンの終わりに返す。ADR 0109）
  * heard: `heard="true"`。あなたに @ していない人の投稿で、スレッドのほかの bot（宛先）も受けている。返事をするかは bot が決める（ADR 0128）
  */
-export function channelEnvelope({ channel, channelId, thread, post, from, at, reply, heard, text }) {
-  return `<${CHANNEL_TAG}${attrs({ channel, 'channel-id': channelId, thread, post, from, reply, heard, at })}>${escapeBody(text)}</${CHANNEL_TAG}>`;
+export function channelEnvelope({ channel, channelId, thread, post, from, at, reply, heard, reactions, text }) {
+  return `<${CHANNEL_TAG}${attrs({ channel, 'channel-id': channelId, thread, post, from, reply, heard, reactions, at })}>${escapeBody(text)}</${CHANNEL_TAG}>`;
 }
 /** 初回に渡す、スレッドのそれまでの投稿。posts は channelEnvelope の引数の並び */
 export function channelThreadEnvelope({ channel, channelId, thread, posts }) {

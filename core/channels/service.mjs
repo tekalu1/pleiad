@@ -430,6 +430,7 @@ export function createChannelService({ dir, emit = () => {}, hooks = {}, now = D
       if (on && !post.reactions[emoji] && Object.keys(post.reactions).length >= LIMITS.reactionKinds) throw invalid(`a post can have at most ${LIMITS.reactionKinds} kinds of reactions`);
       const saved = await store.append(channelId, { op: 'react', id: postId, emoji, by: clone(author), on: Boolean(on), at: now() });
       emit({ type: 'channelReaction', channelId, postId, reactions: saved.reactions });
+      if (on) Promise.resolve().then(async () => hooks.reacted?.({ channelId, postId, emoji, on, author: clone(author), post: clone(post), reactions: clone(saved.reactions) }, clone(await need(channelId)))).catch((e) => console.error('  channels: reacted の後処理に失敗:', String(e?.message ?? e)));
       return { reactions: saved.reactions };
     },
 

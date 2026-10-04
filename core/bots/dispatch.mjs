@@ -76,6 +76,14 @@ const postText = (value) => {
   if (/[\uD800-\uDBFF]/.test(text[end - 1])) end--;
   return `${text.slice(0, end)}…`;
 };
+export const SILENT_RE = /^[（(]\s*(?:なし|特になし|発言なし|返信なし|変更なし|変わったことはありません|追加はありません|no response|none|\.{2,}|…)\s*[)）]$/i;
+export function isSilentText(val) {
+  const s = String(val ?? '').trim();
+  if (!s) return true;
+  if (SILENT_RE.test(s)) return true;
+  if (/^[（(][\s\S]*?(?:変わったことはありません|追加はありません|特になし|発言なし|返信なし)[)）]$/.test(s)) return true;
+  return false;
+}
 /**
  * ターンの投稿の途中経過。書き終えた文章と、今書いている文の切れ目までを出す。
  * 短い断片は途中では表示せず、ターンの終わりに全ての文章を入れる。
@@ -170,11 +178,15 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
     const prev = threadChains.get(key) ?? Promise.resolve();
     const run = prev.then(async () => {
       const recs = [...active.values()].filter((r) => r.channelId === channelId && r.threadId === threadId && !r.ended);
-      const going = recs.length > 0 || [...starting.values()].some((s) => s.channelId === channelId && s.threadId === threadId);
-      const state = recs.some((r) => r.waiting.size) ? 'waiting' : going ? 'working' : failedKeys.has(key) ? 'failed' : 'idle';
-      if (threadStates.get(key) === state) return;
-      await channels.threads.update(channelId, threadId, { state });
-      threadStates.set(key, state);
+      const working = [...new Set([
+        ...recs.map((r) => r.botId),
+        ...[...starting.values()].filter((s) => s.channelId === channelId && s.threadId === threadId).map((s) => s.botId),
+      ])];
+      const state = recs.some((r) => r.waiting.size) ? 'waiting' : working.length > 0 ? 'working' : failedKeys.has(key) ? 'failed' : 'idle';
+      const sig = `${state}:${working.join(',')}`;
+      if (threadStates.get(key) === sig) return;
+      await channels.threads.update(channelId, threadId, { state, working });
+      threadStates.set(key, sig);
     }).catch((e) => log('could not write the thread state:', errText(e)));
     const tail = run.then(() => {}, () => {});
     threadChains.set(key, tail);
@@ -249,7 +261,16 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
     }
     picked.reverse();
     const common = { channel: channelLabel(channel), channelId: channel.id, thread: threadId ?? undefined };
-    const env = async (p) => ({ ...common, post: p.id, from: await nameOf(p.author, botList, lng), at: stamp(p.at), text: p.text });
+    const formatReactions = (reactions) => {
+      const entries = Object.entries(reactions ?? {}).filter(([, authors]) => Array.isArray(authors) && authors.length);
+      if (!entries.length) return undefined;
+      const you = agentT(lng, 'channel.envelope.from.you');
+      return entries.map(([e, authors]) => {
+        const hasHuman = authors.some((a) => a.kind === 'human');
+        return hasHuman ? `${e}(${you})` : `${e}:${authors.length}`;
+      }).join(' ');
+    };
+    const env = async (p) => ({ ...common, post: p.id, from: await nameOf(p.author, botList, lng), at: stamp(p.at), reactions: formatReactions(p.reactions), text: p.text });
     const triggers = [];
     for (const item of postItems) {
       const p = posts.find((x) => x.id === item.postId) ?? await channels.getPost({ channelId: channel.id, postId: item.postId }).catch(() => null);
@@ -266,7 +287,9 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
     const cursor = (cut >= fresh.length ? fresh.at(-1) : cut > 0 ? fresh[cut - 1] : null)?.id ?? sb?.postCursor ?? null;
     // 引き継ぎで起きたターンの印（予算の数え先・流れに残す結果の行・外から来た文の印）。複数なら最初のもの
     const inner = innerItems.length ? { ...innerItems[0].inner } : null;
-    return { prompt: parts.join('\n'), payloadNotes, cursor, incomingText: [...triggers.map((p) => p.text), ...innerItems.map((i) => i.inner.why ?? '')].join('\n'), triggers, inner, heardOnly };
+    // i18n-ignore: bot に渡す出来事の印
+    const reactionLines = postItems.filter((i) => i.reaction).map((i) => `[リアクション: ${i.reaction.emoji}]`);
+    return { prompt: parts.join('\n'), payloadNotes, cursor, incomingText: [...triggers.map((p) => p.text), ...innerItems.map((i) => i.inner.why ?? ''), ...reactionLines].join('\n'), triggers, inner, heardOnly };
   }
 
   // ------------------------------------------------------------ 起こす
@@ -274,6 +297,20 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
   async function threadStopped(channelId, threadId) {
     if (!threadId) return false;
     return Boolean((await channels.threads.get(channelId, threadId).catch(() => null))?.stopped);
+  }
+
+  /** 人が bot の投稿にリアクションを付けたとき、その bot を起こす（#36） */
+  async function onReacted({ channelId, postId, emoji, author, post, reactions }, channel) {
+    try {
+      if (closed || !post || post.deletedAt || author?.kind !== 'human') return;
+      channel = channel ?? (await channels.get({ channelId })) ?? (await channels.get?.(channelId));
+      if (!channel) return;
+      if (post.author?.kind !== 'bot' || !post.author.botId) return;
+      const botId = post.author.botId;
+      const threadId = channel.kind === 'dm' ? null : (post.threadId ?? post.id);
+      if (threadId && (await threadStopped(channel.id, threadId))) return;
+      await wake({ botId, channel, threadId, post, approved: true, reaction: { emoji, by: author } });
+    } catch (e) { log('failed to handle a reaction:', errText(e)); }
   }
 
   /** 投稿の後。ターンの投稿（作りたての「…」・進捗の更新）では起こさない。誰を起こすかは route */
@@ -479,7 +516,7 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
    * 1 体の bot を、この投稿で起こす（届ける前の出来事を保存してから配る）。届けたら { sessionId, itemId }、配らなかったら null。
    * heard: @ の無い人の投稿を、宛先でない bot に聞こえた投稿として届ける（ADR 0128）。予算を使い切っていたら配らず、休憩中なら知らせずに配らない
    */
-  async function wake({ botId, channel, threadId, post, approved = false, heard = false }) {
+  async function wake({ botId, channel, threadId, post, approved = false, heard = false, reaction = null }) {
     const bot = await getBot(botId);
     if (!bot) return null;
     // 使用量の上限で休憩中なら配らない（解除の後にもう一度呼んでもらう）。その場所で初めてなら知らせる（聞こえただけの投稿では知らせない）
@@ -490,7 +527,7 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
     const sessionId = await sessionFor({ bot, channel, threadId, post });
     // 呼んだのが別の bot なら、この会話のターンが終わったときに返事を返す相手として残す（人・ルーティン・外から来た文には返さない）
     const caller = post.author?.kind === 'bot' && post.author.botId !== botId ? post.author.botId : null;
-    const item = await inbox.add({ sessionId, botId, channelId: channel.id, threadId, postId: post.id, ...(caller ? { caller } : {}), ...(heard ? { heard: true } : {}) });
+    const item = await inbox.add({ sessionId, botId, channelId: channel.id, threadId, postId: post.id, ...(caller ? { caller } : {}), ...(heard ? { heard: true } : {}), ...(reaction ? { reaction } : {}) });
     if (threadId) await bumpCalls(channel.id, threadId);
     await pump(sessionId);
     return { sessionId, itemId: item?.id ?? null };
@@ -1110,6 +1147,7 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
   async function finalizePost(rec, state, ok, { limited = false } = {}) {
     const lng = locale();
     let text = postText([...rec.parts, rec.cur].filter((part) => String(part ?? '').trim()).join('\n\n'));
+    if (isSilentText(text)) text = '';
     const none = { woke: null, reply: null };
     const current = await channels.getPost({ channelId: rec.channelId, postId: rec.postId }).catch(() => null);
     if (!current || current.deletedAt) return none;
@@ -1225,7 +1263,7 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
 
   return {
     channels, bots, memory, host, emit, now, inbox, budget,
-    start, stop, onPosted, claimPost, wake, wakePost, handoff, stopThread, turnExtras, onTurnEvent, onTurnEnd, onPermission, onCompacted,
+    start, stop, onPosted, onReacted, claimPost, wake, wakePost, handoff, stopThread, turnExtras, onTurnEvent, onTurnEnd, onPermission, onCompacted,
     /** テスト・診断用: 走っている bot のターンの数 */
     activeCount: () => active.size,
     /** 使用量の上限で休んでいれば解除の時刻（ms）。bots.overview の restingUntil（ADR 0119） */
