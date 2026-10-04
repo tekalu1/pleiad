@@ -108,7 +108,13 @@ export default async function (t) {
 
     // modeGate
     const ro = agent('s_ro');
-    t.ok('読み取り専用の会話の AI も、post・react は通る（modeGate: false）', (await run(ro, 'channels.post', { channelId: cid, text: '読み取り専用でも返事はする' })).ok && (await run(ro, 'channels.react', { channelId: cid, postId: byHuman.result.id, emoji: '👀' })).ok);
+    const roPost = await run(ro, 'channels.post', { channelId: cid, text: '読み取り専用の AI の投稿' });
+    const roReact = await run(ro, 'channels.react', { channelId: cid, postId: byHuman.result.id, emoji: '👀' });
+    t.ok('読み取り専用の会話の AI（bot でない会話）は、post・react とも READ_ONLY_MODE で断られる（ADR 0136。居場所を持たないので、どこにも書けない）',
+      roPost.code === 'READ_ONLY_MODE' && roReact.code === 'READ_ONLY_MODE' && /自分のスレッド・DM の外/.test(roPost.error), JSON.stringify([roPost, roReact]));
+    t.ok('断られた投稿・リアクションは残らない', !(await channels.read({ channelId: cid })).posts.some((p) => p.text === '読み取り専用の AI の投稿')
+      && !(await channels.getPost({ channelId: cid, postId: byHuman.result.id })).reactions?.['👀']);
+    t.ok('読み取り専用でない会話の AI は、これまでどおり post・react が通る', (await run(agent('s_chat'), 'channels.post', { channelId: cid, text: '作業できる会話の投稿' })).ok);
     t.ok('読み取り専用の会話の AI は、stopThread も通る', (await run(ro, 'channels.stopThread', { channelId: cid, threadId: byHuman.result.id })).ok);
     const roDenied = await Promise.all([run(ro, 'channels.create', { name: 'zz' }), run(ro, 'channels.update', { channelId: cid, name: 'zz' }), run(ro, 'channels.archive', { channelId: cid, on: true })]);
     t.ok('読み取り専用の会話の AI は、チャンネルの定義を変えられない（READ_ONLY_MODE）。読むのは通る', roDenied.every((r) => !r.ok && r.code === 'READ_ONLY_MODE') && (await run(ro, 'channels.list', {})).ok);
@@ -142,7 +148,7 @@ export default async function (t) {
     const rd = await run(HUMAN, 'channels.read', { channelId: cid, limit: 2 });
     t.ok('read: posts・threads・summaries・nextBefore を返す。limit は 100 まで', rd.ok && Array.isArray(rd.result.posts) && 'nextBefore' in rd.result && 'summaries' in rd.result && (await run(HUMAN, 'channels.read', { channelId: cid, limit: 101 })).code === 'INVALID');
     t.ok('read(threadId): 根と返信・スレッドの状態（止めた印つき）', (await run(HUMAN, 'channels.read', { channelId: cid, threadId: byHuman.result.id })).result.threads[0].stopped.by.botId === 'b_owl');
-    t.ok('search: 本文で探す（チャンネルの名前つき）', (await run(HUMAN, 'channels.search', { query: '読み取り専用でも' })).result.hits[0].channelName === 'ops' && (await run(HUMAN, 'channels.search', { query: '' })).code === 'INVALID');
+    t.ok('search: 本文で探す（チャンネルの名前つき）', (await run(HUMAN, 'channels.search', { query: '作業できる会話の投稿' })).result.hits[0].channelName === 'ops' && (await run(HUMAN, 'channels.search', { query: '' })).code === 'INVALID');
 
     // 失敗の文
     const nf = await run(HUMAN, 'channels.get', { channelId: 'c_nope0000' });
@@ -176,8 +182,9 @@ export default async function (t) {
         s_fox: { botId: 'b_fox', kind: 'thread', channelId: made.id, threadId: root.id },
         s_lynx: { botId: 'b_lynx', kind: 'thread', channelId: made.id, threadId: root.id },
         s_plan: { botId: 'b_fox', kind: 'thread', channelId: made.id, threadId: root.id },
+        s_plan_dm: { botId: 'b_lynx', kind: 'dm', channelId: null, threadId: null },
       };
-      const sessionMode = { s_chat: 'default', s_chat_auto: 'auto', s_owl: 'default', s_owl_dm: 'default', s_fox: 'auto', s_lynx: 'bypass', s_plan: 'plan' };
+      const sessionMode = { s_chat: 'default', s_chat_auto: 'auto', s_owl: 'default', s_owl_dm: 'default', s_fox: 'auto', s_lynx: 'bypass', s_plan: 'plan', s_plan_dm: 'plan' };
       const bots = {
         approvalOf: async ({ botId }) => { const b = BOTS.find((x) => x.id === botId); if (!b) return null; const mode = botModes[botId]; return { ...b, mode, label: MODE_ENTRY[mode].label, entry: MODE_ENTRY[mode] }; },
         get: async ({ botId }) => BOTS.find((b) => b.id === botId) ?? null,
@@ -235,6 +242,30 @@ export default async function (t) {
       t.ok('S-2: 人の投稿は確認なし（hold も checked も付けない）', humanPost.result.wake === undefined && lastHook().extra.hold === undefined && lastHook().extra.checked === undefined);
       const roStrong = await call(agent('s_plan'), 'channels.post', { channelId: made.id, text: '@Owl 計画モードから' });
       t.ok('S-2: 読み取りの bot（計画）は、動くモードが上の bot を起こせない。投稿は残り、wake は READ_ONLY_MODE で断られる', roStrong.ok && roStrong.result.wake[0].status === 'denied' && roStrong.result.wake[0].code === 'READ_ONLY_MODE', JSON.stringify(roStrong.result.wake));
+      // ADR 0136: 読み取り・計画のモードの bot は、自分のスレッド・DM にだけ書ける・リアクションできる
+      {
+        const plan = agent('s_plan');
+        const inside = await call(plan, 'channels.post', { channelId: made.id, threadId: root.id, text: '計画の bot の自分のスレッドへの返事' });
+        t.ok('ADR 0136: 読み取りの bot は、自分のスレッドへは書ける（threadId を明示しても省いても）', inside.ok && inside.result.threadId === root.id);
+        const otherThread = await call(plan, 'channels.post', { channelId: made.id, threadId: otherRoot.id, text: '別のスレッドへ' });
+        const flowPost = await call(plan, 'channels.post', { channelId: made.id, threadId: null, new: true, text: '流れへ' });
+        const otherChannel = await call(plan, 'channels.post', { channelId: dm.id, text: '別のチャンネルへ' });
+        t.ok('ADR 0136: 読み取りの bot は、別のスレッド・チャンネルの流れ・別のチャンネルへは書けない（READ_ONLY_MODE。文は居場所の外と言う）',
+          [otherThread, flowPost, otherChannel].every((r) => !r.ok && r.code === 'READ_ONLY_MODE') && /自分のスレッド・DM の外/.test(otherThread.error), JSON.stringify([otherThread, flowPost, otherChannel]));
+        t.ok('ADR 0136: 断られた投稿は残らない', !(await reviewChannels.read({ channelId: made.id })).posts.some((p) => ['別のスレッドへ', '流れへ'].includes(p.text)));
+        const dmPlan = agent('s_plan_dm');
+        t.ok('ADR 0136: 読み取りの bot の DM（sidecar の channelId が無くても）は、自分の DM へ書ける。ほかのチャンネルへは書けない',
+          (await call(dmPlan, 'channels.post', { channelId: dm.id, text: 'DM の返事' })).ok && (await call(dmPlan, 'channels.post', { channelId: made.id, text: '外へ' })).code === 'READ_ONLY_MODE');
+        t.ok('ADR 0136: 別の bot の DM には書けない（DM の持ち主が違う）', (await call(agent('s_plan'), 'channels.post', { channelId: dm.id, text: 'Lynx の DM へ' })).code === 'READ_ONLY_MODE');
+        const inThreadPost = (await reviewChannels.read({ channelId: made.id, threadId: root.id })).posts.find((p) => p.id === inside.result.id);
+        t.ok('ADR 0136: react も同じ。自分のスレッドの根・中の投稿には付けられ、別のスレッドの投稿・流れの投稿には付けられない',
+          (await call(plan, 'channels.react', { channelId: made.id, postId: root.id, emoji: '👀' })).ok && (await call(plan, 'channels.react', { channelId: made.id, postId: inThreadPost.id, emoji: '👀' })).ok
+          && (await call(plan, 'channels.react', { channelId: made.id, postId: otherRoot.id, emoji: '👀' })).code === 'READ_ONLY_MODE');
+        t.ok('ADR 0136: DM の中の投稿にも付けられる', (await call(dmPlan, 'channels.react', { channelId: dm.id, postId: (await reviewChannels.read({ channelId: dm.id })).posts[0].id, emoji: '👀' })).ok);
+        t.ok('ADR 0136: stopThread は狭める向きなので、読み取りの bot も通る（modeGate: false のまま）', (await call(plan, 'channels.stopThread', { channelId: made.id, threadId: otherRoot.id })).ok);
+        t.ok('ADR 0136: 読み取りでないモードの bot は居場所の外にも書ける（今までどおり）。人は常に書ける', (await call(agent('s_owl'), 'channels.post', { channelId: made.id, threadId: otherRoot.id, text: '別のスレッドへ' })).ok
+          && (await call(HUMAN, 'channels.post', { channelId: made.id, text: '人の投稿' })).ok);
+      }
       const noCard = await call(agent('s_chat'), 'channels.post', { channelId: made.id, text: '@Lynx 承認の口なし' }, { ...rdeps, approve: undefined });
       t.ok('S-2: 承認の口が無い呼び出しは NEEDS_APPROVAL（起こさない）', noCard.result.wake[0].status === 'denied' && noCard.result.wake[0].code === 'NEEDS_APPROVAL');
       const dmPost = await call(agent('s_chat'), 'channels.post', { channelId: dm.id, text: 'DM の bot（全部自動）へ' });
@@ -274,6 +305,17 @@ export default async function (t) {
       t.ok('S-4: 人は cwd を承認なしで変えられる。AI が cwd つきで作るのも承認、cwd なしの作成は承認なし', (await call(HUMAN, 'channels.update', { channelId: made.id, cwd: path.join(tmp, 'work') })).ok === true
         && (await call(agent('s_chat'), 'channels.create', { name: 'with-cwd', cwd: path.join(tmp, 'work') })).pending === true
         && (await call(agent('s_chat'), 'channels.create', { name: 'without-cwd' })).ok === true);
+
+      // ここでの決まり（memo）は bot のターンに渡る（core/bots/dispatch.mjs）ので、AI が足す・書き換えるのは承認。空にする・同じ値・人は承認なし
+      const memoMark = asked.length;
+      const memoAsk = await call(agent('s_chat'), 'channels.update', { channelId: made.id, memo: '返事は 3 行まで' });
+      t.ok('memo: AI が channels.update で決まりを書くのは承認（memo の行）。許可前は変わらない', memoAsk.pending === true && asked.length === memoMark + 1 && asked.at(-1).change.rows.some((r) => r.path === 'memo' && r.after === '返事は 3 行まで')
+        && !(await reviewChannels.get({ channelId: made.id })).memo);
+      await asked.at(-1).proceed();
+      t.ok('memo: 許可されたら変わる。同じ値・空にする・人が書くのは承認なし', (await reviewChannels.get({ channelId: made.id })).memo === '返事は 3 行まで'
+        && (await call(agent('s_chat'), 'channels.update', { channelId: made.id, memo: '返事は 3 行まで' })).ok === true && asked.length === memoMark + 1
+        && (await call(HUMAN, 'channels.update', { channelId: made.id, memo: '人が書いた決まり' })).ok === true
+        && (await call(agent('s_chat'), 'channels.update', { channelId: made.id, memo: '' })).ok === true && asked.length === memoMark + 1);
 
       // ADR 0119: 予算は channels.get が既定を埋めて返す。AI が外す・上げるのは承認、下げるのは承認なし。人はどちらも承認なし
       const shownBudget = await reviewChannels.get({ channelId: made.id });

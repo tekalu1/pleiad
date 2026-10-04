@@ -97,6 +97,8 @@ const RETRY_MS = 3000;
 const START_RETRIES = 3;
 /** スレッドのトークンの足し算を書く間隔（ms）。スレッドの状態の書き込みと全接続への配信を毎秒にしない。ターンの終わりには必ず書く */
 export const CREDIT_INTERVAL_MS = 5000;
+/** チャンネルの「ここでの決まり」を bot へ渡す長さの上限（字）。保存の上限（LIMITS.memo = 4000）より短く、超えたぶんは channels.get で読ませる */
+const MEMO_PROMPT_CHARS = 2000;
 const PRESENT_MAX = 8;
 const PRESENT_BYTES = 1_000_000;
 // バックエンドが入力を受け取ったあとにしか出せない出来事（core/server.mjs の ANSWER_EVENTS と同じ）。最初のものが「渡った」の目印
@@ -210,6 +212,23 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
   }
 
   const channelLabel = (channel) => (channel.kind === 'dm' ? channel.name : `#${channel.name}`);
+
+  /**
+   * チャンネルの「ここでの決まり」（memo）を、そのターンの notes に足す 1 件にする。無ければ null。
+   * 渡すのは、会話が決まりを受け取っていない・決まりが変わった（memoKey が違う）・核の記憶を取り直す（snapshotDue。圧縮・巻き戻しの後）ときだけ。
+   * 決まりが空になったときは「もう適用しない」と 1 回だけ伝える。本文は指示ではなく材料として読む旨の固定の文（辞書）を前に付け、包みの開閉は escapeBody が無効にする（turnContextEnvelope）。
+   * key は渡した決まりの全文のハッシュ（空なら ''）。渡った（commit）ときに sidecar の memoKey へ書く
+   */
+  async function channelMemoNote({ channelId, sb, lng }) {
+    const channel = await channels.get({ channelId }).catch(() => null);
+    const memo = typeof channel?.memo === 'string' ? channel.memo.trim() : '';
+    const key = memo ? crypto.createHash('sha256').update(memo).digest('hex').slice(0, 16) : '';
+    const had = sb.memoKey ?? '';
+    if (!memo) return had ? { key, note: sb.snapshotDue ? null : turnContextEnvelope(agentT(lng, 'channel.memo.cleared')) } : null;   // 取り直しなら前の文脈は無いので、空になったと伝えない
+    if (key === had && !sb.snapshotDue) return null;
+    const shown = memo.length > MEMO_PROMPT_CHARS ? `${memo.slice(0, MEMO_PROMPT_CHARS)}\n${agentT(lng, 'channel.memo.truncated', { n: MEMO_PROMPT_CHARS, id: channelId })}` : memo;
+    return { key, note: turnContextEnvelope(agentT(lng, 'channel.memo.intro', { channel: channelLabel(channel), memo: shown })) };
+  }
 
   /**
    * bot の会話へ渡す文。items は同じ会話宛ての起こした投稿（trigger）。
@@ -757,6 +776,17 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
         if (text) notes = [...notes, innerEnvelope({ kind: 'tail', at: stamp(now()) }, text)];
       } catch (e) { log('could not build the inner tail:', errText(e)); }
     }
+    // チャンネルの「ここでの決まり」（memo）。渡すのは会話の始まり・圧縮や巻き戻しの後（snapshotDue）と、決まりが変わったときだけ
+    if (channelId && POST_KINDS.has(sb.kind)) {
+      try {
+        const memo = await channelMemoNote({ channelId, sb, lng: turn.agentLocale ?? locale() });
+        if (memo) {
+          rec.memoKey = memo.key;
+          const lead = notes.findLastIndex((n) => n.startsWith('<pleiad-memory-core>') || n.startsWith('<pleiad-bot-recent>')) + 1;
+          if (memo.note) notes = [...notes.slice(0, lead), memo.note, ...notes.slice(lead)];
+        }
+      } catch (e) { log('could not build the channel memo note:', errText(e)); }
+    }
     if (channelId && POST_KINDS.has(sb.kind) && (sb.kind === 'dm' || rec.threadId) && !rec.deferPost) {
       try {
         const post = await channels.post({ channelId, threadId: rec.threadId, text: PLACEHOLDER, state: 'working', taint: sb.taint, turn: { botId: bot.id, sessionId }, new: true }, botAuthor(bot.id));
@@ -799,6 +829,7 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
       ...(rec.recentAttempted ? { recentDelivered: true } : {}),
       ...(rec.cursor ? { postCursor: rec.cursor } : {}),
       ...(rec.personaKey ? { personaKey: rec.personaKey } : {}),
+      ...(rec.memoKey !== undefined ? { memoKey: rec.memoKey } : {}),
     }));
     const marked = rec.itemIds.length ? inbox.mark(rec.itemIds, 'sent').catch((e) => log('could not record a delivered event:', errText(e))) : Promise.resolve();
     // 渡る前にたまっていた出来事は、ここから途中送信で渡せる

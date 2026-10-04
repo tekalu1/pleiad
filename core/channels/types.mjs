@@ -85,7 +85,8 @@ import { CHANNEL_TAG, CHANNEL_THREAD_TAG, MEMORY_CORE_TAG, TURN_CONTEXT_TAG, INN
  *   recentDelivered?: boolean,                            // 最近のスレッドの申し送りを最初のターンで渡した印
  *   delivered: string[],                                  // この写しの後に渡した記憶の id（圧縮で空に）
  *   postCursor: string|null,                              // このスレッドの投稿をどこまで渡したか
- *   personaKey?: string }} SessionBot */                  // Antigravity の会話が最後に受け取った人格のハッシュ（直したら次のターンに新しい人格を渡す。ADR 0109）
+ *   memoKey?: string,                                     // チャンネルの「ここでの決まり」を最後に渡したときの全文のハッシュ（変わったときだけ渡す。決まりが空なら ''）
+ *   personaKey?: string }} SessionBot */                 // Antigravity の会話が最後に受け取った人格のハッシュ（直したら次のターンに新しい人格を渡す。ADR 0109）
 
 /** @typedef {{
  *   id: string, layer: 'user'|string,                     // 'user' か botId
