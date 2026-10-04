@@ -213,7 +213,7 @@
 .gp .cg-row.headc .subj{font-weight:600}
 .gp .cg-row.wt .subj{font-weight:600}
 .gp .cg-t .cnt{flex:none;font:var(--fs-xs) var(--font-mono);background:var(--surface-2);border-radius:var(--r-pill);padding:0 7px;color:var(--ink-weak)}
-.gp .startmk{flex:none;display:inline-flex;align-items:center;gap:3px;font-size:var(--fs-xs);color:var(--ink-blue);padding:0 7px 0 5px;border-radius:var(--r-pill);white-space:nowrap;transition:background var(--dur) var(--ease-out)}
+.gp .startmk{flex:0 1 auto;min-width:2.4em;overflow:hidden;text-overflow:ellipsis;display:inline-flex;align-items:center;gap:3px;font-size:var(--fs-xs);color:var(--ink-blue);padding:0 7px 0 5px;border-radius:var(--r-pill);white-space:nowrap;transition:background var(--dur) var(--ease-out)}
 .gp .startmk.on{background:var(--surface-3);font-weight:600}
 .gp .cg-row.dim .startmk.on{opacity:1}
 .gp svg.g .h{fill:none;stroke:transparent;stroke-width:10;transition:stroke var(--dur) var(--ease-out)}
