@@ -3398,16 +3398,20 @@ let settingsFailure = null;
 let failedSettingsPatch = null;
 let failedSettingsError = "";
 let cwdSaving = 0;   // 作業ディレクトリを保存している間、チップの字を弱くする（docs/design-system.md §4.6）
+const stagedNext = new Map();   // 一覧に行が載る前に書けた予約（sessionId -> nextSettings）
 function reserveSettings(patch, targetId = state.current) {
   const id = targetId;
   if (!id) return;
   const write = settingsWrite.catch(() => {}).then(async () => {
-    const s = state.sessions.find(s => s.id === id);
     const value = await cmd("setTurnSettings", { sessionId: id, ...patch });
-    if (s) s.nextSettings = value;
+    // 書いている間に一覧が読み直されることがあるので、行は書けた後に引く。まだ一覧に行が無いなら控えておき、
+    // startNew が行が載ったところで合わせる（読み直しの写しが書く前のものでも、チップが戻らないように）
+    const s = state.sessions.find(s => s.id === id);
+    if (s) { s.nextSettings = value; stagedNext.delete(id); } else if (state.draft.created === id) stagedNext.set(id, value);
     settingsFailure = null;
     failedSettingsPatch = null;
     if (state.current === id) { syncSettingsHold(); await syncTopbar(); }
+    return value;
   });
   settingsWrite = write;
   write.catch(e => {
@@ -3418,6 +3422,51 @@ function reserveSettings(patch, targetId = state.current) {
     if (state.current === id) { syncSettingsHold(); syncTopbar().catch(() => {}); }
   });
   return write;
+}
+/**
+ * 設定のチップの入口。会話があれば次のターンへ予約する。新しい会話の欄（まだ会話が無い・作っている間）なら state.draft.changes に
+ * 選んだ順に集め、会話ができたら startNew が同じ順で流す（できた後に選んだ分は、その場で新しい会話へ流す）。
+ * 作業場所は state.draft.cwd（applyCwd）。集めた変更はチップの表示（syncTopbar → draftView）にも使うので、一覧の読み直しでチップが戻らない
+ */
+function chooseSettings(patch) {
+  if (!state.current) { noteDraftChange(patch); syncTopbar().catch(() => {}); return; }
+  if (justCreated()) noteDraftChange(patch);
+  return reserveSettings(patch);
+}
+/** いま開いているのは、作ったばかりの会話か（startNew の途中。一覧の行が載るまでは、集めた変更が表示の元になる） */
+function justCreated() {
+  return Boolean(state.draft.created) && state.current === state.draft.created;
+}
+function noteDraftChange(patch) {
+  const changes = state.draft.changes ??= [];
+  const last = changes.at(-1);
+  // 同じ項目の続けての変更（モデルを何度か選び直した）は最後の 1 つにまとめる
+  if (last && Object.keys(last).sort().join() === Object.keys(patch).sort().join()) changes[changes.length - 1] = patch;
+  else changes.push(patch);
+}
+/** 集めた変更を、いまの値の見え方に畳む。エージェント・接続先を変えると、その先の既定へ戻る（core/server.mjs の reserveTurnSettings と同じ） */
+function draftView(changes) {
+  const view = {};
+  for (const patch of changes ?? []) {
+    if ("backend" in patch) { delete view.effort; delete view.mode; delete view.endpoint; }
+    if ("endpoint" in patch) { delete view.effort; view.model = ""; }
+    Object.assign(view, patch);
+  }
+  return view;
+}
+/**
+ * できた会話へ、作っている間に選んだ設定を流す（作業場所 → 選んだ順の変更）。newSession の引数に載せた分（持ち越した設定）も、
+ * 覚える印（rememberModel など）とエージェントの切り替えに伴う既定への戻りは予約を通すのが正本なので、もう一度流す（同じ値なら予約は変わらない）
+ */
+function sendDraftSettings(draft, sessionId, requestedCwd) {
+  const chosenCwd = draft.cwd;
+  if (chosenCwd && chosenCwd !== requestedCwd) {
+    const ticket = ++cwdSaving;
+    $("cwdChip")?.classList.add("saving");
+    const write = reserveSettings({ cwd: chosenCwd }, sessionId);
+    write?.catch(() => {}).finally(() => { if (ticket === cwdSaving) $("cwdChip")?.classList.remove("saving"); });
+  }
+  for (const patch of draft.changes ?? []) reserveSettings(patch, sessionId);
 }
 /**
  * 設定を保存できなかった会話では、入力欄の上に理由と「再試行」「選び直す」（作業ディレクトリのとき）「取り消す」を出し、
@@ -3630,7 +3679,9 @@ function endpointView(bid) {
 function applyCwd(v) {
   state.cwd = v;
   controls.paint();
-  if (!state.current) { state.draft.cwd = v; return; }
+  // 会話がまだ無い間、または作ったばかりで一覧に行が載る前は、作業場所は草稿（syncTopbar が読む）に持つ
+  if (!state.current || justCreated()) state.draft.cwd = v;
+  if (!state.current) return;
   // 保存できるまでは弱い字。失敗したら reserveSettings がチップを元の値へ戻す
   const ticket = ++cwdSaving;
   $("cwdChip").classList.add("saving");
@@ -3693,26 +3744,28 @@ const controls = setupComposerControls({
     cwd: applyCwd,
     worktreeSplit: () => startWorktree(),
     worktreeBack: () => backFromWorktree(),
-    backend: (v) => { state.shownBackend = v; controls.paint(); reserveSettings({ backend: v, model: "" }); },
-    model: (v) => { state.model = v; controls.paint(); reserveSettings({ model: v, rememberModel: true }); },
+    backend: (v) => { state.shownBackend = v; controls.paint(); chooseSettings({ backend: v, model: "" }); },
+    model: (v) => { state.model = v; controls.paint(); chooseSettings({ model: v, rememberModel: true }); },
     // 互換の接続先。'' は公式。モデルは接続先の既定（メイン）に戻る（server も同じ）
-    endpoint: (v) => { state.endpoint = v; state.model = ""; state.effort = ""; controls.paint(); reserveSettings({ endpoint: v }); },
+    endpoint: (v) => { state.endpoint = v; state.model = ""; state.effort = ""; controls.paint(); chooseSettings({ endpoint: v }); },
     // Claude のアカウント。'' はログイン中のアカウント（既定）
-    account: (v) => { state.account = v; controls.paint(); reserveSettings({ account: v }); },
-    effort: (effort) => { state.effort = effort; controls.paint(); reserveSettings({ effort, rememberEffort: true }); },
+    account: (v) => { state.account = v; controls.paint(); chooseSettings({ account: v }); },
+    effort: (effort) => { state.effort = effort; controls.paint(); chooseSettings({ effort, rememberEffort: true }); },
     mode: (v) => {
       state.mode = v;
       controls.paint();
+      // 新しい会話の欄（まだ会話が無い・作っている間）: 覚える印つきで集め、会話ができたらそこへ流す。
+      // 以前はここで setPref を送り、新しい会話に届かないまま既定のモードだけを書き換えていた
+      if (!state.current) { chooseSettings({ mode: v, rememberMode: true }); return; }
+      if (justCreated()) noteDraftChange({ mode: v, rememberMode: true });
       const sessionId = state.current, backend = activeBackendId();
       const s = state.sessions.find(s => s.id === sessionId);
       if (s?.nextSettings?.backend && s.nextSettings.backend !== backend) {
         reserveSettings({ mode: v, rememberMode: true });
         return;
       }
-      // 既存セッションなら覚えさせる。新規はこの後の最初の runTurn に載る
-      modeWrite = modeWrite.catch(() => {}).then(() => sessionId
-        ? cmd("setMode", { sessionId, mode: v, reasonKey: "manual" })
-        : cmd("setPref", { key: "mode", value: v, backend }));
+      // 会話のモードを覚えさせる（setMode は次に新しく始めるときの既定にもする）
+      modeWrite = modeWrite.catch(() => {}).then(() => cmd("setMode", { sessionId, mode: v, reasonKey: "manual" }));
       modeWrite.catch(e => composerError(t("chat.sys.modeSaveFailed", { error: e.message })));
     },
     // モデルの面を開いた。候補を裏で取り直し、変わっていたら描き直す
@@ -4133,16 +4186,21 @@ document.addEventListener("visibilitychange", () => {
 /** 新しいセッション。絞り込みの条件（一意に定まるもの）を引き継ぐ */
 let creatingSession = null;
 let pendingNewSession = null;
-async function startNew({ status = null, cwd = "", backend } = {}) {
+async function startNew({ status = null, cwd = "", backend, changes } = {}) {
   if (state.busy || creatingSession) return creatingSession;
   setDrawer(false);
   saveDraft().catch(() => {});
   const source = state.current;
   const requestedCwd = cwd || state.cwd || state.homeDir || '';
+  // もう新しい会話の欄にいる（作成に失敗してやり直す・最初の送信）なら、そこで選んだ設定（chooseSettings）を持ち越す。
+  // 別の会話から作るときは、その会話の設定をサーバーが引き継ぐ（newSession の sourceSessionId）
+  const carried = changes ?? (source ? [] : state.draft.changes ?? []);
+  const chosen = draftView(carried);
   pendingNewSession = { id: `pending-${randomId()}`, title: t('pending.newSession'), status: status ?? '', cwd: requestedCwd,
-    backend: backend ?? state.backendId, lastModified: new Date().toISOString(), unsent: true };
+    backend: backend ?? chosen.backend ?? state.backendId, lastModified: new Date().toISOString(), unsent: true };
   state.current = null;
-  const draft = { status, cwd: pendingNewSession.cwd };
+  // changes: 作っている間も集め続ける。created: できた会話の id（できた後の選び直しはその場で流す）
+  const draft = { status, cwd: pendingNewSession.cwd, changes: [...carried], created: null };
   state.draft = draft;
   state.messages = [];
   state.contextInfo = null;
@@ -4166,28 +4224,24 @@ async function startNew({ status = null, cwd = "", backend } = {}) {
     try {
       await settingsWrite.catch(() => {});
       await modeWrite;
-      const result = await cmd("newSession", { sourceSessionId: source, backend: backend ?? (source ? undefined : state.prefs.backend ?? state.backendId),
-        cwd: requestedCwd, status });
+      const result = await cmd("newSession", { sourceSessionId: source, backend: backend ?? chosen.backend ?? (source ? undefined : state.prefs.backend ?? state.backendId),
+        cwd: requestedCwd, status,
+        ...Object.fromEntries(["model", "effort", "mode", "endpoint"].filter(k => chosen[k] !== undefined).map(k => [k, chosen[k]])) });
       pendingRows.delete(pendingNewSession.id);
       pendingNewSession = null;
       side.keep(status);
 
-      // 作成中に選んだ作業場所があれば、できた会話に反映する（select の前に反映を済ませて一覧の読み直しに載せる）
-      const chosenCwd = draft.cwd;
-      const cwdDiffers = Boolean(chosenCwd && chosenCwd !== requestedCwd);
-      if (cwdDiffers) {
-        const ticket = ++cwdSaving;
-        $("cwdChip")?.classList.add("saving");
-        const write = reserveSettings({ cwd: chosenCwd }, result.sessionId);
-        write?.catch(() => {}).finally(() => { if (ticket === cwdSaving) $("cwdChip")?.classList.remove("saving"); });
-        await settingsWrite.catch(() => {});
-      }
-
-      await refresh().catch(() => {});
+      // 作っている間に選んだ設定（作業場所・モデルなど）をできた会話へ流す。会話はすぐ開く（下の select）ので、ここから後の選び直しは
+      // ふつうの予約になる。一覧に行が載るまでの表示は集めた変更が持つので、draft.created の間は chooseSettings・applyCwd が草稿にも残す。
+      // 一覧の読み直しは待たずに会話を開き、履歴の読み込みと並べる（描く前に select が待つ）。sessionsChanged の分が走っていれば共有して 1 回にする。
+      // 読み直しの写しが予約を書く前のものでも、書けた結果で合わせる（下の stagedNext）
+      draft.created = result.sessionId;
+      sendDraftSettings(draft, result.sessionId, requestedCwd);
+      const listing = refresh({ sharePending: true }).catch(() => {});
       if (state.current === null) {
         // 開き直しと違い、欄に触らない（無効にしない・下書きを読み直さない）。写しも取らない:
         // 作っている間に書いた字は、終わった時点で欄にあるものがそのまま、この会話の下書きになる
-        await select(result.sessionId, { fresh: true });
+        await select(result.sessionId, { fresh: true, after: listing });
         if (state.current === result.sessionId) {
           if ($('prompt').value || state.attached.length) await saveDraft().catch(() => {});
           dropBlankDraft();
@@ -4199,12 +4253,23 @@ async function startNew({ status = null, cwd = "", backend } = {}) {
         dropBlankDraft();
       }
       adoptUploads(result.sessionId);   // 作っている間に始めた添付（会話を開けなかった・別の会話へ移った場合も、できた会話のもの）
+      await listing;
+      await settingsWrite.catch(() => {});
+      const staged = stagedNext.get(result.sessionId);
+      stagedNext.delete(result.sessionId);
+      const row = state.sessions.find(s => s.id === result.sessionId);
+      if (row && staged !== undefined) row.nextSettings = staged;
+      // 集めた設定は会話に渡し終えた（会話が消えて欄が新規に戻ったとき、古い選択を出さない）。ここから先のチップは会話の予約が元
+      const touched = draft.changes.length > 0 || draft.cwd !== requestedCwd;
+      if (state.draft === draft) { draft.changes = []; draft.created = null; }
+      if (touched && state.current === result.sessionId) await syncTopbar().catch(() => {});
       return result.sessionId;
     } catch (e) {
       if (pendingNewSession) pendingRows.delete(pendingNewSession.id);
       pendingNewSession = null;
       renderSessions();
-      side.showUndo(t('pending.failed', { reason: e.message }), () => startNew({ status, cwd, backend }), { retry: true });
+      // やり直しは、失敗の後に欄で選び直した作業場所・設定も引き継ぐ
+      side.showUndo(t('pending.failed', { reason: e.message }), () => startNew({ status, cwd: draft.cwd || cwd, backend, changes: draft.changes }), { retry: true });
     }
     finally { cancel(); creatingSession = null; }
   })();
@@ -6845,9 +6910,9 @@ function syncTitleControls() {
   $("sessionMore").hidden = !s;
   paintContextEntry();
 }
-function selectedMode(s, bid, modes) {
+function selectedMode(s, bid, modes, chosen = null) {
   const prefs = (state.prefs.backends ? state.prefs.backends[bid] : state.prefs) ?? {};
-  const mode = s?.nextSettings?.mode ?? (s?.backend === bid ? s.mode : prefs.mode);
+  const mode = chosen?.mode ?? s?.nextSettings?.mode ?? (s?.backend === bid ? s.mode : prefs.mode);
   return mode in modes ? mode : "default" in modes ? "default" : Object.keys(modes)[0] ?? "";
 }
 async function syncTopbar() {
@@ -6856,7 +6921,10 @@ async function syncTopbar() {
   const s = state.sessions.find((x) => x.id === state.current);
   const on = Boolean(state.current);
   const id = state.current;
-  const bid = s?.nextSettings?.backend ?? activeBackendId();
+  // 新しい会話の欄（まだ会話が無い）と、作ったばかりの会話（startNew が予約を流し終えるまで）は、そこで選んだ設定を見せる。
+  // 流している途中に来た一覧の読み直しは書く前の予約を持つことがあり、そのまま見せるとチップが一瞬戻る（chooseSettings）
+  const chosen = !s || justCreated() ? draftView(state.draft.changes) : null;
+  const bid = chosen?.backend ?? s?.nextSettings?.backend ?? activeBackendId();
   const caps = capsOf(activeBackendId());
 
   $("titleEdit").value = s?.title === "(no title)" ? "" : (s?.title ?? "");
@@ -6867,7 +6935,7 @@ async function syncTopbar() {
   headerUsage.show({ backend: bid, account: s?.nextSettings?.account ?? s?.claudeAccount ?? "", endpoint: endpointOf(s) });
 
   // 予約があれば次のターンの作業場所を表示する。
-  if (s) state.cwd = s.nextSettings?.cwd ?? s.cwd ?? state.homeDir ?? "";
+  if (s) state.cwd = (justCreated() && state.draft.cwd) || (s.nextSettings?.cwd ?? s.cwd ?? state.homeDir ?? "");
   else if (state.draft.cwd) state.cwd = state.draft.cwd;
   else if (state.homeDir) state.cwd = state.homeDir;
   controls.paint();
@@ -6878,9 +6946,9 @@ async function syncTopbar() {
   if (state.current !== id || version !== topbarVersion) return;
   state.modes = modes;
   state.models = models;
-  if (s) { state.mode = s.mode ?? "default"; state.model = s.nextSettings?.model ?? s.model ?? ""; }
-  else { const prefs = (state.prefs.backends ? state.prefs.backends[bid] : state.prefs) ?? {}; state.mode = prefs.mode ?? "default"; state.model = prefs.model ?? ""; }
-  state.mode = selectedMode(s, bid, modes);
+  if (s) { state.mode = s.mode ?? "default"; state.model = chosen?.model ?? s.nextSettings?.model ?? s.model ?? ""; }
+  else { const prefs = (state.prefs.backends ? state.prefs.backends[bid] : state.prefs) ?? {}; state.mode = prefs.mode ?? "default"; state.model = chosen.model ?? prefs.model ?? ""; }
+  state.mode = selectedMode(s, bid, modes, chosen);
   await syncEndpoint(s, bid);
   if (state.current !== id || version !== topbarVersion) return;
   // 互換の接続先のモデルは接続先の一覧＋自由入力なので、公式の一覧に無くても戻さない
@@ -6888,7 +6956,7 @@ async function syncTopbar() {
   const efforts = await cmd('efforts', { backend: bid, model: state.model, cwd: s?.nextSettings?.cwd || s?.cwd || undefined, ...(state.endpoint ? { endpoint: state.endpoint } : {}) }).catch(() => ({ '': { label: t('chat.next.useDefault') } }));
   if (state.current !== id || version !== topbarVersion) return;
   state.efforts = efforts;
-  state.effort = s?.nextSettings?.effort ?? s?.effort ?? '';
+  state.effort = chosen?.effort ?? s?.nextSettings?.effort ?? s?.effort ?? '';
   state.effortDisabled = Object.keys(efforts).length <= 1;
   controls.paint();
   await syncAccount(s, bid);
@@ -7177,8 +7245,9 @@ async function loadHistory(args, prev = null) {
  * fresh は作ったばかりの会話（startNew）。空なので骨組みも「読み込み中」も出さず、入力欄に触らない（書いている字が正本）。
  * retry は読み込みに失敗した今の会話を読み直す（「もう一度読む」。開き直しと同じ見せ方）
  * jump は脇の検索の抜粋から開いたとき。読み込んだ後にその発言へ送って輪を付ける（openFromSearch・revealMessage）
+ * after は fresh のとき、描く前に待つ約束（startNew の一覧の読み直し。会話の行が載ってから描く）
  */
-async function select(id, { keepUpTo, reload = false, fresh = false, retry = false, jump = null } = {}) {
+async function select(id, { keepUpTo, reload = false, fresh = false, retry = false, jump = null, after = null } = {}) {
   if (state.busy || (id === state.current && keepUpTo === undefined && !reload && !retry)) return;
   const quiet = reload && !retry && id === state.current && keepUpTo === undefined && !state.loadingSession;
   if (keepUpTo === undefined && !quiet && !fresh) setDrawer(false);
@@ -7212,7 +7281,7 @@ async function select(id, { keepUpTo, reload = false, fresh = false, retry = fal
     if (!fresh) loadDraft();
   }
   try {
-    await loadAndPaint(id, { keepUpTo, quiet, fresh });
+    await loadAndPaint(id, { keepUpTo, quiet, fresh, after });
   } finally { if (freshSessionId === id) freshSessionId = null; }
   if (jump && state.current === id && !state.loadingSession) revealMessage(jump);
 }
@@ -7255,7 +7324,7 @@ function flashMessage(m, mark) {
   flashMessageTimer = setTimeout(() => { body.classList.remove('flash'); if (flashedMessage === body) flashedMessage = null; }, 1300);
 }
 
-async function loadAndPaint(id, { keepUpTo, quiet, fresh }) {
+async function loadAndPaint(id, { keepUpTo, quiet, fresh, after = null }) {
   sessionLoads.cancel(state.displayLoad);
   const load = sessionLoads.begin(id);
   state.displayLoad = load;
@@ -7277,6 +7346,8 @@ async function loadAndPaint(id, { keepUpTo, quiet, fresh }) {
     const cards = loadTaskCards(id);
     data = await loadHistory({ sessionId: id, live: true, watch: true }, quiet && state.messages.length ? { messages: state.messages, presents: state.presents } : null);
     await cards;
+    // 作ったばかりの会話（startNew）は、一覧の読み直しと並べて履歴を読む。描く前に一覧の行が載るのを待つ
+    await after;
   } catch (e) {
     clearTimeout(historyTimer);
     sessionLoads.cancel(load);

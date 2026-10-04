@@ -123,7 +123,7 @@ export default function (t) {
   const client = read('web/client.mjs');
   const startNew = client.slice(client.indexOf('async function startNew('), client.indexOf('function branchIsFresh('));
   t.ok('新しい会話: 作成後に欄を写しで上書きしない（refresh の間に書いた字が消えていた）', !/draftText/.test(startNew) && !/\$\('prompt'\)\.value = draft/.test(startNew));
-  t.ok('新しい会話: select は fresh（欄に触らない）で開き、欄の字をこの会話の下書きにする', /select\(result\.sessionId, \{ fresh: true \}\)/.test(startNew) && /saveDraft\(\)/.test(startNew) && /dropBlankDraft\(\)/.test(startNew));
+  t.ok('新しい会話: select は fresh（欄に触らない）で開き、欄の字をこの会話の下書きにする', /select\(result\.sessionId, \{ fresh: true(, after: listing)? \}\)/.test(startNew) && /saveDraft\(\)/.test(startNew) && /dropBlankDraft\(\)/.test(startNew));
   t.ok('新しい会話: 別の会話から移ったときだけ欄を空にする', /if \(source\) \{\s*\$\('prompt'\)\.value = ''/.test(startNew));
   const select = client.slice(client.indexOf('async function select('), client.indexOf('async function paintSession('));
   t.ok('会話を開く: disabled ではなく readonly + aria-busy（composerWait.busy）', !/prompt"\)\.disabled = true/.test(select) && /composerWait\.busy\("history"\)/.test(select));
