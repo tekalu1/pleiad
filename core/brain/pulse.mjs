@@ -28,7 +28,7 @@ import { agentT } from '../i18n.mjs';
 import { narrowestMode } from '../modes.mjs';
 import { computeDrives } from './drives.mjs';
 import { gate as runGate, wakeMatches } from './gate.mjs';
-import { beatPrompt, handoffText } from './inner.mjs';
+import { beatPrompt, handoffText, WORK_NOTES_VERSION, workNotesContext } from './inner.mjs';
 import { parseBeat } from './answer.mjs';
 import { BRAIN_DAILY_TOKENS } from '../bots/budget.mjs';
 
@@ -146,16 +146,16 @@ export function createPulse({ dataDir, brain, channels, bots, host, budget, disp
     return { text, sessionId, usage, backend: backend.id, model };
   }
 
-  /** 古い心拍の隠れた会話を、新しい KEEP_SESSIONS 件を残して消す（1 回 1 会話なので、放っておくと夜ごとに積もる） */
+  /**
+   * 古い心拍の隠れた会話を、新しい KEEP_SESSIONS 件を残して消す（1 回 1 会話なので、放っておくと夜ごとに積もる）。
+   * ネイティブの会話ごと消せるときだけ消す（host.deleteHidden）。以前は sidecar だけを消していて、bot の印を失った会話が Chats の一覧に出た（ADR 0127）
+   */
   async function pruneSessions(botId) {
     try {
+      if (!host.deleteHidden) return;
       const all = await host.store.getAll();
       const mine = Object.entries(all).filter(([, v]) => v?.bot?.kind === 'pulse' && v.bot.botId === botId).sort(([, a], [, b]) => (b.createdAt ?? 0) - (a.createdAt ?? 0));
-      const drop = host.deleteUnsent ?? (await import('../conversations.mjs')).deleteUnsentConversation;
-      for (const [id] of mine.slice(KEEP_SESSIONS)) {
-        await drop(id).catch(() => {});
-        await host.store.removeSession(id).catch(() => {});
-      }
+      for (const [id] of mine.slice(KEEP_SESSIONS)) await host.deleteHidden(id).catch((e) => log('could not delete a hidden conversation:', errText(e)));
     } catch (e) { log('could not prune the hidden conversations:', errText(e)); }
   }
 
@@ -187,7 +187,7 @@ export function createPulse({ dataDir, brain, channels, bots, host, budget, disp
     const since = state.cursorAt ?? at - every;
     const { events, cursorTo, lastHumanAt } = await collect(bot, since);
     const recent = brain.tail(bot.id, 12);
-    const loops = brain.loops(bot.id, 'open');
+    const loops = workNotesContext({ loops: brain.loops(bot.id, 'open') }).loops;
     const prefs = await host.store.getPrefs().catch(() => ({}));
     const cheapBackend = bot.pulse?.backend || prefs.memoryLearnBackend || bot.backend;
     const left = await budget.leftBrain({ channelId: home.id, botId: bot.id, backend: cheapBackend, model: bot.pulse?.model });
@@ -231,15 +231,15 @@ export function createPulse({ dataDir, brain, channels, bots, host, budget, disp
     let parsed;
     try { parsed = parseBeat(answered.text, { now: at }); }
     catch (e) { return failed(bot, { state, at, every, cursor: state.cursorAt ?? since, common, meta: { ...meta, ...(answered.sessionId ? { session: answered.sessionId } : {}) }, message: errText(e), tokens }); }
-    const rowMeta = { ...meta, ...(answered.sessionId ? { session: answered.sessionId } : {}) };
+    const rowMeta = { ...meta, workNotesVersion: WORK_NOTES_VERSION, ...(answered.sessionId ? { session: answered.sessionId } : {}) };
 
     // ⑦ 返事を当てはめる: 流れ・気がかり・次に起きる時刻
     let seq = null;
     if (parsed.thought) seq = brain.append(bot.id, { kind: 'think', text: parsed.thought, refs: parsed.refs, taint, tokens, meta: rowMeta }).seq;
     else if (parsed.do === 'none' || !parsed.thought) seq = brain.append(bot.id, { kind: 'quiet', tokens, meta: { ...rowMeta, by: 'model' } }).seq;
     if (parsed.loops.length) {
-      const { applied } = brain.applyLoops(bot.id, parsed.loops, { taint });
-      for (const a of applied) brain.append(bot.id, { kind: 'loop', text: agentT(locale(), `brain.loop.${a.op}`, { text: a.text }), refs: [a.id], taint });
+      const { applied } = brain.applyLoops(bot.id, parsed.loops, { taint, workNotesVersion: WORK_NOTES_VERSION });
+      for (const a of applied) brain.append(bot.id, { kind: 'loop', text: agentT(locale(), `brain.loop.${a.op}`, { text: a.text }), refs: [a.id], taint, meta: { workNotesVersion: WORK_NOTES_VERSION } });
     }
     const reservedAt = parsed.wakeAt ? at + clampMs(parsed.wakeAt, at) : null;
     const sleepAt = parsed.do === 'sleep' ? at + Math.min(PULSE_CEIL_MS, Math.max(every * 3, 30 * 60_000)) : null;
@@ -273,7 +273,7 @@ export function createPulse({ dataDir, brain, channels, bots, host, budget, disp
   async function handOff(bot, home, parsed, { taint, taintOnly, at }) {
     const l = locale();
     const stream = brain.tail(bot.id, 20);
-    const act = brain.append(bot.id, { kind: 'act', text: parsed.handoff.why, refs: parsed.refs, taint, meta: { where: parsed.handoff.where ?? null, ...(taintOnly ? { taintOnly: true } : {}) } });
+    const act = brain.append(bot.id, { kind: 'act', text: parsed.handoff.why, refs: parsed.refs, taint, meta: { workNotesVersion: WORK_NOTES_VERSION, where: parsed.handoff.where ?? null, ...(taintOnly ? { taintOnly: true } : {}) } });
     if (!(await budget.allowsBrain({ channelId: home.id, botId: bot.id }))) {
       brain.append(bot.id, { kind: 'result', text: agentT(l, 'brain.line.handoffFailed', { reason: agentT(l, 'brain.reason.budget') }), refs: [String(act.seq)], taint });
       return;
@@ -320,7 +320,7 @@ export function createPulse({ dataDir, brain, channels, bots, host, budget, disp
         const state = brain.state(bot.id);
         if (state.paused) continue;
         const event = { threadId: post.threadId ?? post.id, text: post.text };
-        if (!brain.loops(bot.id, 'open').some((l) => wakeMatches(l.wakeOn, event))) continue;
+        if (!workNotesContext({ loops: brain.loops(bot.id, 'open') }).loops.some((l) => wakeMatches(l.wakeOn, event))) continue;
         // 起こしてほしい条件に当たった: 次の心拍を早める。間隔の下限は守る（前の心拍から floorMs 後より早くはしない）
         const soonest = Math.max(now(), (state.lastBeatAt ?? 0) + floorMs);
         if (state.nextAt == null || state.nextAt > soonest) brain.setState(bot.id, { nextAt: soonest, reservedAt: soonest });

@@ -110,6 +110,8 @@ import { CHANNEL_TAG, CHANNEL_THREAD_TAG, MEMORY_CORE_TAG, TURN_CONTEXT_TAG, INN
 
 /** bot の会話の sidecar の `bot.kind`（ThreadState.sessions・Bot.dmSessionId の会話がどれか） */
 export const BOT_SESSION_KINDS = Object.freeze(['thread', 'dm', 'routine', 'learner', 'pulse']);
+/** 人に見せない隠れた会話（心拍・夜の整理）。チャンネルへ書かせず（ADR 0126）、完了の知らせ・最近の場所の候補に出さない（ADR 0127） */
+export const HIDDEN_BOT_KINDS = new Set(['learner', 'pulse']);
 /** Post.state の値 */
 export const POST_STATES = Object.freeze(['working', 'waiting', 'done', 'checking', 'failed', 'stopped', 'skipped']);
 /** ThreadState.state の値 */
@@ -169,9 +171,10 @@ const attrs = (obj) => Object.entries(obj).filter(([, v]) => v !== null && v !==
  * channel は表示名（`#名前`・DM は bot の名前）、channelId は channels.post などの操作へ渡すチャンネルの id（`channel-id` 属性。任意）、
  * from は表示名（bot は `🦉 Owl (bot)`）、at は ISO の分まで（呼び出し側が決める）。
  * reply: `reply="true"`。呼んだ bot（@ で起こした相手）の返事（bot の会話でそのターンの終わりに返す。ADR 0109）
+ * heard: `heard="true"`。あなたに @ していない人の投稿で、スレッドのほかの bot（宛先）も受けている。返事をするかは bot が決める（ADR 0128）
  */
-export function channelEnvelope({ channel, channelId, thread, post, from, at, reply, text }) {
-  return `<${CHANNEL_TAG}${attrs({ channel, 'channel-id': channelId, thread, post, from, reply, at })}>${escapeBody(text)}</${CHANNEL_TAG}>`;
+export function channelEnvelope({ channel, channelId, thread, post, from, at, reply, heard, text }) {
+  return `<${CHANNEL_TAG}${attrs({ channel, 'channel-id': channelId, thread, post, from, reply, heard, at })}>${escapeBody(text)}</${CHANNEL_TAG}>`;
 }
 /** 初回に渡す、スレッドのそれまでの投稿。posts は channelEnvelope の引数の並び */
 export function channelThreadEnvelope({ channel, channelId, thread, posts }) {

@@ -347,6 +347,19 @@ async function runTurn(text) {
     } });
   }
 
+  if (text === "error-after-reply" || text === "limit-after-reply" || text === "limit-no-reply" || text === "error-after-tool") {
+    if (text !== "limit-no-reply") {
+      step({ step_index: ++stepIndex, state: "ACTIVE", step_type: "agent_response", text_delta: "完成した返事" });
+      step({ step_index: stepIndex, state: "DONE", step_type: "agent_response" });
+    }
+    if (text === "error-after-tool") step({ step_index: ++stepIndex, state: "ACTIVE", step_type: "tool", tool_name: "read_file", tool_info: { parameters: { path: "x" } } });
+    return send({ event: "result", result: {
+      conversation_id: conversationId, status: "ERROR", response: text === "limit-no-reply" ? "" : "完成した返事",
+      error: text === "error-after-reply" || text === "error-after-tool" ? "後続処理が失敗" : "Individual quota reached. Resets in 3h.",
+      num_turns: 1,
+    } });
+  }
+
   if (text.startsWith("fail")) {
     return send({
       event: "result",

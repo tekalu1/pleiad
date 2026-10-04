@@ -11,8 +11,9 @@ import { t, agentT } from "./i18n.mjs";
 import { writeAtomic } from "./atomic-file.mjs";
 import { openData } from "./data-schema.mjs";
 import { conversationTable } from "./db.mjs";
-import { classifySystemMessages } from "./system-messages.mjs";
+import { classifySystemMessages, BOT_RECENT_TAG } from "./system-messages.mjs";
 import { promptTitle } from "./prompt-title.mjs";
+import { WORK_NOTES_VERSION } from "./brain/inner.mjs";
 
 // 会話の索引（本文を除いたメタ情報）は SQLite の conversations（1 会話 1 行。core/db.mjs、ADR 0115）、本文は
 // conversations/<id>.json（会話ごとに 1 ファイル）。索引は変えた会話の行だけを書く。本文はまだ変更のたびに 1 会話分を丸ごと書く
@@ -193,6 +194,31 @@ export async function deleteUnsentConversation(id) {
     records[id] = r;
     throw e;
   }
+}
+
+/**
+ * 人に見せない隠れた会話（夜の整理・心拍。ADR 0127）を、ネイティブの会話ごと消す。消したら true。
+ * ネイティブの会話を消せないバックエンド（deleteSession を持たない）なら何もせず false。host の記録だけを消すと、
+ * 隠していたネイティブの会話が一覧に出てくる（wrapBackend の listSessions は、host の記録が持つネイティブの id だけを隠す）。
+ * backendOf(id) はバックエンドの id から、deleteSession を持つバックエンドを返す。sidecar（store）は呼び出し側が消す
+ */
+export async function deleteHiddenConversation(id, backendOf) {
+  const r = await conversation(id);
+  if (!r) return false;
+  const natives = new Map(r.segments.map(s => [s.nativeId, s.backend]));
+  if (r.nativeId) natives.set(r.nativeId, r.backend);
+  natives.delete(null); natives.delete(undefined);
+  for (const backendId of natives.values()) if (typeof backendOf(backendId)?.deleteSession !== "function") return false;
+  for (const [nativeId, backendId] of natives) await backendOf(backendId).deleteSession(nativeId);
+  delete records[id];
+  try {
+    await save();
+    await fs.rm(sessionFilePath(id), { force: true }).catch(() => {});
+  } catch (e) {
+    records[id] = r;
+    throw e;
+  }
+  return true;
 }
 
 // Preserve messages the native engine has compacted away; refresh matching messages in place.
@@ -418,7 +444,8 @@ export function wrapBackend(native) {
     try {
       await store.inheritSettings(id, child);
       await save({ [child]: { backend: native.id, nativeId: null, base: messages.length,
-        messages: structuredClone(messages), presents: structuredClone(presents), segments: [], info, _dirty: true } });
+        messages: structuredClone(messages), presents: structuredClone(presents), segments: [], info,
+        ...(r?.contextStart ? { contextStart: Math.min(classifySystemMessages(r.messages.slice(0, r.contextStart)).length, messages.length), contextSince: r.contextSince } : {}), _dirty: true } });
     } catch (error) {
       delete (await all())[child];
       await fs.rm(sessionFilePath(child), { force: true }).catch(() => {});
@@ -551,6 +578,7 @@ export function wrapBackend(native) {
     const titleReset = firstMessage && !humanTitle;
     const nativeId = existing ? existing.nativeId : id;
     const entry = existing ? structuredClone(existing) : { backend: native.id, segments: [{ backend: native.id, nativeId: id }], info: await rewoundInfo(id, titleReset) };
+    if (existing?.contextStart) entry.contextStart = Math.min(classifySystemMessages(existing.messages.slice(0, existing.contextStart)).length, messages.length);
     entry.messages = structuredClone(messages);
     entry.presents = structuredClone(presents);
     entry.nativeId = null;
@@ -576,8 +604,37 @@ export function wrapBackend(native) {
       return runOnce(args);
     }
   };
+  wrapped.prepareTurn = async (id) => {
+    const r = id && await conversation(id);
+    if (r && r.backend === native.id) {
+      const meta = await store.get(id);
+      const bot = meta.bot;
+      if ((bot?.kind === 'thread' || bot?.kind === 'dm') && bot.workNotesVersion !== WORK_NOTES_VERSION) {
+        await wrapped.getMessages(id, { fullResults: true });
+        const messages = r.messages;
+        if (messages.some((m) => (m.kind === 'contextNote' && m.tag === 'inner') || (m.role === 'user' && /<pleiad-inner(?:\s|>)/.test(m.text ?? '')))) {
+          // Preserve the visible history, but start a new execution segment without replaying the legacy prompt.
+          const previous = r.nativeId;
+          r.messages = messages;
+          r.contextStart = messages.length;
+          r.contextSince = new Date().toISOString();
+          r.base = messages.length;
+          r.nativeId = null;
+          delete r.injected; delete r.original;
+          r._dirty = true;
+          await save();
+          await store.setSessionData(id, 'rewind', null, { durable: true });
+          if (previous) await Promise.resolve(native.releaseConversation?.(previous)).catch(() => {});
+          await store.setSessionData(id, 'bot', { ...bot, snapshotDue: true, delivered: [], workNotesVersion: WORK_NOTES_VERSION }, { durable: true });
+        } else {
+          await store.setSessionData(id, 'bot', { ...bot, workNotesVersion: WORK_NOTES_VERSION }, { durable: true });
+        }
+      }
+    }
+  };
   async function runOnce(args) {
     const id = args.sessionId;
+    await wrapped.prepareTurn(id);
     const r = id && await conversation(id);
     const mark = id && native.capabilities?.rewind === "resumeAt" ? await liveRewindMark(id, r ? r.nativeId : id) : null;
     // 同じ印で何度も失敗する（拒否の形が想定と違った）ときは、無限に残さずホスト管理に落とす（3 回目は渡さない）
@@ -587,11 +644,20 @@ export function wrapBackend(native) {
     if (!r) return native.runTurn(rewind ? { ...args, rewind } : args);
     if (r.backend !== native.id) throw new Error(t("conversations.backendMismatch"));
     let prompt = args.prompt;
+    if (!r.nativeId && r.contextStart) {
+      const recent = classifySystemMessages(r.messages.slice(0, r.contextStart))
+        .filter((m) => m.kind === 'channelEvent' || ((m.role === 'user' || m.role === 'assistant') && !m.kind && m.text && !m.text.startsWith('API Error:')))
+        .slice(-12).map((m) => ({ from: m.from ?? m.role, text: String(m.body ?? m.text).slice(0, 2000) }));
+      if (recent.length) {
+        const body = agentT(args.locale, 'brain.inner.recent', { context: JSON.stringify(recent) }).replace(/</g, '&lt;');
+        args = { ...args, notes: [...(args.notes ?? []), `<${BOT_RECENT_TAG}>\n${body}\n</${BOT_RECENT_TAG}>`] };
+      }
+    }
     let checkpoint = Promise.resolve();
-    if (!r.nativeId && r.messages.length) {
+    if (!r.nativeId && r.messages.length > (r.contextStart ?? 0)) {
       // Full transcript stays on disk; bounded input plus a readable reference for long conversations.
-      const presents = await wrapped.getPresents(id);
-      const messages = r.messages.map(({ thinking, ...m }) => m);
+      const presents = (await wrapped.getPresents(id)).filter((p) => !r.contextSince || p.at >= r.contextSince);
+      const messages = r.messages.slice(r.contextStart ?? 0).map(({ thinking, ...m }) => m);
       const transcript = JSON.stringify({ messages, presents });
       const ref = path.join(store.dataDir, `handoff-${crypto.createHash("sha256").update(id).digest("hex")}.json`);
       await fs.writeFile(ref, transcript);

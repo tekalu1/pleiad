@@ -19,6 +19,7 @@ import os from 'node:os';
 import { agentT } from '../i18n.mjs';
 import { modePosition, scopeRank } from '../modes.mjs';
 import { folderKey } from './store.mjs';
+import { WORK_NOTES_VERSION } from '../brain/inner.mjs';
 
 /** bot の名前・本人の人格・操作の要点・予算の残りの届き方。区切りは空行 1 つ、末尾の改行なし */
 export function botInstructions(bot, locale) {
@@ -29,6 +30,8 @@ export function botInstructions(bot, locale) {
     agentT(locale, 'guide.bot.tools'),
     // 黙る自由（ADR 0119）: 文章を書かずに終えたターンは投稿を残さない（core/bots/dispatch.mjs の finalizePost）
     agentT(locale, 'guide.bot.quiet'),
+    // @ の無い人の投稿は、スレッドのほかの bot にも聞こえた投稿として届く（ADR 0128）。答えるかは bot が決める
+    agentT(locale, 'guide.bot.heard'),
   ].filter(Boolean).join('\n\n');
 }
 
@@ -121,7 +124,7 @@ export function createBotSessions({ host, now = Date.now } = {}) {
       const sidecar = {
         botId: bot.id, kind, channelId: channel?.id ?? null, threadId: threadId ?? null,
         ...(routineId ? { routineId } : {}),
-        memRev: 0, snapshotDue: true, delivered: [], postCursor: null,
+        memRev: 0, snapshotDue: true, delivered: [], postCursor: null, workNotesVersion: WORK_NOTES_VERSION,
       };
       try {
         const { store } = host;

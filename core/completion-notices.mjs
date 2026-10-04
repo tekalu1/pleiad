@@ -9,7 +9,7 @@ export const hasPendingChild = tasks => tasks.some(r =>
  * ターンの終わりを、会話が落ち着いてから 1 回だけ知らせる。正常終了（ok）と失敗（error）が対象で、中断は知らせない。
  * send は画面へ（届け先が居なければ false を返し、次に誰かがつながったとき届ける）。
  * ready は離れた端末への通知用で、画面が居るかによらず、落ち着いた時点で 1 回だけ呼ぶ（ADR 0086）。
- * info.startedAt は 30 秒未満のターンを通知から外すために ready へ渡す。
+ * info.startedAt は 30 秒未満のターンを通知から外すために ready へ渡す。info.bot は bot の会話の種類（sidecar の bot.kind）で、画面への completionReady に `bot` として載せる。
  */
 export function createCompletionNotices({ busy, send, ready = () => {} }) {
   const pending = new Map();
@@ -20,7 +20,8 @@ export function createCompletionNotices({ busy, send, ready = () => {} }) {
       entry.pushed = true;
       try { ready({ sessionId, outcome: entry.outcome, completedAt: entry.completedAt, startedAt: entry.startedAt }); } catch { /* 離れた端末への通知の失敗で画面の通知を止めない */ }
     }
-    if (!send({ type: 'completionReady', sessionId, completedAt: entry.completedAt, outcome: entry.outcome })) return false;
+    // bot の会話なら種類を添える（画面の通知は、スレッド・DM・ルーティンの会話の完了を出さず、失敗だけ出す。ADR 0109・0127）
+    if (!send({ type: 'completionReady', sessionId, completedAt: entry.completedAt, outcome: entry.outcome, ...(entry.bot ? { bot: entry.bot } : {}) })) return false;
     pending.delete(sessionId);
     return true;
   };
@@ -28,7 +29,7 @@ export function createCompletionNotices({ busy, send, ready = () => {} }) {
     finished(sessionId, outcome, completedAt, info = {}) {
       if (!sessionId) return;
       if ((outcome === 'ok' || outcome === 'error') && Number.isFinite(completedAt)) {
-        pending.set(sessionId, { completedAt, outcome, startedAt: info.startedAt, pushed: false });
+        pending.set(sessionId, { completedAt, outcome, startedAt: info.startedAt, bot: info.bot ?? null, pushed: false });
       }
       flush(sessionId);
     },

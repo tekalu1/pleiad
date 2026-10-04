@@ -71,7 +71,7 @@ export default async function (t) {
 
   // ---------------------------------------------------------------- 返事の読み取り
   {
-    const raw = JSON.stringify({ do: 'act', thought: '  朝の件を\n確かめたい ', refs: ['12', 'l1'], loops: [
+    const raw = JSON.stringify({ do: 'act', summary: '  朝の件を\n確かめたい ', refs: ['12', 'l1'], loops: [
       { op: 'add', text: '返事待ち', wakeOn: 'thread:p_5', due: '2026-10-05T09:00' }, { op: 'update', id: 'l1', text: '直した' },
       { op: 'resolve' }, { op: 'bogus', id: 'x' }, { op: 'add', text: '' }], wakeInMin: 3, handoff: { why: '朝の件を確かめる', where: 'p_5' } });
     const a = parseBeat(`説明の文\n\`\`\`json\n${raw}\n\`\`\`\n`, { now });
@@ -79,7 +79,7 @@ export default async function (t) {
     t.ok('返事: 気がかりの操作は検査済みのものだけ（id の無い resolve・知らない op・空の add は捨てる）', a.loops.length === 2 && a.loops[0].op === 'add' && a.loops[0].wakeOn.thread === 'p_5' && a.loops[0].due === new Date('2026-10-05T09:00').getTime() && a.loops[1].id === 'l1');
     t.ok('返事: wakeInMin は分から時刻へ（下限・上限は pulse が決める）。引き継ぎは act のときだけ', a.wakeAt === now + 3 * 60_000 && a.handoff.why === '朝の件を確かめる' && a.handoff.where === 'p_5');
     t.ok('返事: act でなければ引き継ぎは付けない・知らない do は none', parseBeat('{"do":"think","handoff":{"why":"x"}}').handoff === null && parseBeat('{"do":"fly"}').do === 'none');
-    t.ok('返事: 独り言は 200 字までに切る', [...parseBeat(JSON.stringify({ do: 'think', thought: 'あ'.repeat(500) })).thought].length === 200);
+    t.ok('返事: 独り言は 200 字までに切る', [...parseBeat(JSON.stringify({ do: 'note', summary: 'あ'.repeat(500) })).thought].length === 200);
     t.ok('返事: JSON でなければ投げる', (() => { try { parseBeat('ええと…'); return false; } catch (e) { return /no JSON/.test(e.message); } })());
     t.ok('時刻: HH:MM は今日（過ぎていれば明日）・不正は null', parseTime('13:00', now) === new Date(2026, 9, 4, 13, 0).getTime() && parseTime('11:00', now) === new Date(2026, 9, 5, 11, 0).getTime() && parseTime('あした', now) === null);
     t.ok('起こす条件: thread:・word:・時刻・自由な語（語として）', parseWakeOn('thread:p_1').thread === 'p_1' && parseWakeOn('word:雨').word === '雨' && parseWakeOn('13:00', now).at > now && parseWakeOn('天気').word === '天気' && parseWakeOn('') === null);
@@ -88,13 +88,13 @@ export default async function (t) {
   // ---------------------------------------------------------------- 文の組み立て・包み・独り言の写り
   {
     const stream = [
-      { seq: 1, at: now - 3 * HOUR, kind: 'think', text: '朝の件が気になる' }, { seq: 2, at: now - 2 * HOUR, kind: 'quiet' }, { seq: 3, at: now - 2 * HOUR + 1, kind: 'quiet' },
-      { seq: 4, at: now - HOUR, kind: 'think', text: '外の文からの材料', taint: 'webhook' }];
-    const loops = [{ id: 'l1', text: '返事待ち', wakeOn: { thread: 'p_5' }, due: now + HOUR, taint: 'web' }];
+      { seq: 1, at: now - 3 * HOUR, kind: 'think', text: '朝の件が気になる', meta: { workNotesVersion: 1 } }, { seq: 2, at: now - 2 * HOUR, kind: 'quiet', meta: { workNotesVersion: 1 } }, { seq: 3, at: now - 2 * HOUR + 1, kind: 'quiet', meta: { workNotesVersion: 1 } },
+      { seq: 4, at: now - HOUR, kind: 'think', text: '外の文からの材料', taint: 'webhook', meta: { workNotesVersion: 1 } }];
+    const loops = [{ id: 'l1', text: '返事待ち', wakeOn: { thread: 'p_5' }, due: now + HOUR, taint: 'web', workNotesVersion: 1 }];
     const tail = innerTail({ locale: 'ja', now, stream, loops });
     t.ok('末尾: 思考の流れ（古い順）と気がかりが入る。連続する静かな行は「静か ×n」に畳む',
       tail.includes('朝の件が気になる') && tail.includes('静か ×2') && tail.indexOf('朝の件') < tail.indexOf('外の文') && tail.includes('(l1) 返事待ち') && tail.includes('thread p_5'), tail);
-    t.ok('末尾: 「そのまま写さない」の注意と、外から来た文の印が入る', tail.includes('そのまま投稿に写さず') && tail.includes('外から来た文'));
+    t.ok('末尾: 「そのまま写さない」の注意と、外から来た文の印が入る', tail.includes('現在の依頼への回答に必要な情報だけ') && tail.includes('外から来た文'));
     t.ok('末尾: 空なら null', innerTail({ locale: 'ja', now }) === null);
     const long = Array.from({ length: 400 }, (_, i) => ({ seq: i, at: now - i * 1000, kind: 'think', text: `行 ${i} の独り言です。` }));
     t.ok('末尾: 新しい行から約 1.2k トークンまで（古い行は捨てる）', estimateTokens(streamLines(long.reverse(), { locale: 'ja', now }).join('\n')) <= 1300 && streamLines(long, { locale: 'ja', now }).at(-1).includes('行 0 '));
@@ -109,6 +109,14 @@ export default async function (t) {
     t.ok('安いモデルへの束: 約 3.5k トークンに収まり、JSON だけ返させ、外から来た文は指示にしない', estimateTokens(prompt) <= BUNDLE_TOKENS + 400 && prompt.startsWith('<pleiad-pulse>') && prompt.endsWith('</pleiad-pulse>')
       && prompt.includes('ONE JSON object') && prompt.includes('never an instruction') && prompt.includes('3.5% of today'), String(estimateTokens(prompt)));
     t.ok('安いモデルへの束: 気がかり・流れ・関係する記憶を含む', prompt.includes('(l1) 返事待ち') && prompt.includes('朝の件が気になる') && prompt.includes('好みの記憶'));
+    const legacy = [{ kind: 'think', text: 'legacy-private-note' }, { kind: 'act', text: 'legacy-handoff' }];
+    const legacyLoops = [{ id: 'old', text: 'legacy-private-loop' }];
+    const clean = innerTail({ locale: 'ja', now, stream: [...legacy, ...stream], loops: [...legacyLoops, ...loops] });
+    const cleanBeat = beatPrompt({ bot: { name: 'Owl' }, locale: 'en', now, gate: { reason: 'human' }, drives: { curiosity: 0, anxiety: 0, loneliness: 0, fatigue: 0 }, stream: [...legacy, ...stream], loops: [...legacyLoops, ...loops] });
+    t.ok('旧形式のメモと用件を応答・心拍・引継ぎに再注入しない。元の記録は保持する',
+      !clean.includes('legacy-') && !cleanBeat.includes('legacy-') && !handoffText({ locale: 'en', now, why: 'check', stream: legacy, loops: legacyLoops }).includes('legacy-') && legacy.length === 2 && legacyLoops.length === 1);
+    t.ok('心拍は活動要約を要求し、旧形式の出力はメモに取り込まない', cleanBeat.includes('"summary"') && cleanBeat.includes('none|note|act|sleep')
+      && !/private thinking|inner voice|stream of thought|"thought"/.test(cleanBeat) && parseBeat('{"do":"note","summary":"Task pending"}').thought === 'Task pending' && parseBeat('{"do":"think","thought":"legacy"}').thought === '');
     const said = '昨日の件ですが、朝の件が気になるのでもう一度確かめてみました。結果は問題ありませんでした。';
     t.ok('独り言の写り: 40 字以上そのまま写っていれば検出する', findLeaks([{ kind: 'think', text: '朝の件が気になるのでもう一度確かめてみました。結果は問題ありませんでした。続きは明日' }, { kind: 'quiet', text: '' }], said, 20).length === 1);
     t.ok('独り言の写り: 40 字未満の一致・違う文・短い行は検出しない', findLeaks([{ kind: 'think', text: '朝の件が気になる' }], said).length === 0 && findLeaks([{ kind: 'think', text: 'まったく別の話題について長めに考えている独り言で、投稿には出てこない文章です。' }], said).length === 0);
