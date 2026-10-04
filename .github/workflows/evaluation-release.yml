@@ -15,7 +15,37 @@ concurrency:
   group: desktop-release
   cancel-in-progress: false
 jobs:
+  # 同じ commit の main の CI（test.yml の push の run）を読み、release の npm test を省けるかを決める（docs/release-ci-reuse.md）。
+  # 書く権限を持たない別のジョブにし、待つ間は Windows の runner を使わない。CI が赤ければここで止まり、release のジョブは走らない
+  ci-gate:
+    if: github.actor == github.repository_owner && (github.event_name == 'push' || github.ref == 'refs/heads/main')
+    runs-on: ubuntu-latest
+    # 待つ上限（--wait-minutes 40）より少し長く。test.yml のジョブの上限は 30 分
+    timeout-minutes: 50
+    permissions:
+      actions: read
+      contents: read
+    env:
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+    outputs:
+      decision: ${{ steps.gate.outputs.decision }}
+      sha: ${{ steps.gate.outputs.sha }}
+    steps:
+      # 照合のスクリプトはこのワークフローの commit のもの（手動でやり直す古いタグには、まだスクリプトが無い）。タグを commit に解くため履歴とタグを取る
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "22.13"
+      - id: gate
+        name: Check main CI result for the release commit
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/release-ci-gate.mjs --tag "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --wait-minutes 40 --interval-seconds 30 --missing-grace-minutes 5 --request-timeout-seconds 20
   release:
+    needs: ci-gate
     if: github.actor == github.repository_owner && (github.event_name == 'push' || github.ref == 'refs/heads/main')
     runs-on: windows-latest
     timeout-minutes: 45
@@ -26,6 +56,7 @@ jobs:
         shell: powershell
     env:
       RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+      CI_SHA: ${{ needs.ci-gate.outputs.sha }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -37,9 +68,11 @@ jobs:
           if ($env:RELEASE_TAG -notmatch '^v\d+\.\d+\.\d+(-beta\.\d+)?$') { throw 'Expected release tag (vX.Y.Z or vX.Y.Z-beta.N)' }
           git merge-base --is-ancestor HEAD origin/main
           if ($LASTEXITCODE -ne 0) { throw 'Release source must be on main' }
+          if ((git rev-parse HEAD) -cne $env:CI_SHA) { throw 'Checkout does not match the commit checked against main CI' }
+      # test.yml の Windows の脚と同じ Node（CI の結果を使うとき、OS・Node・lockfile・commit が CI と同じになる）
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: 22
+          node-version: "22.13"
           cache: npm
       - name: Validate release notes
         run: |
@@ -66,7 +99,19 @@ jobs:
           foreach ($arch in 'x64', 'arm64') {
             if (!(Test-Path -LiteralPath "node_modules/@koromix/koffi-win32-$arch/win32_$arch/koffi.node")) { throw "Missing koffi binary for win32-$arch" }
           }
-      - run: npm test
+      # CI の結果を使えないとき（run が無い・cancelled・一部だけ・期限までに終わらない・API の失敗）は、ここで全部回す。reuse 以外の値はすべてこちら
+      - name: Full test (main CI result not reusable)
+        if: needs.ci-gate.outputs.decision != 'reuse'
+        run: npm test
+      # CI に無い release だけの差は、npm ci の後に --force で足した koffi の arm64 本体。足した後の node_modules でネイティブを読めるかと、
+      # 配布の手順（desktop-updates）・本物の koffi の構造体の配置（computer-native）を確かめる
+      - name: Release environment smoke (main CI result reused)
+        if: needs.ci-gate.outputs.decision == 'reuse'
+        run: |
+          node -e "require('koffi'); require('node-pty')"
+          if ($LASTEXITCODE -ne 0) { throw 'Native modules failed to load' }
+          node tests/run.mjs computer-native desktop-updates
+          if ($LASTEXITCODE -ne 0) { throw 'Release smoke tests failed' }
       - name: Sign, verify and publish
         env:
           GH_TOKEN: ${{ github.token }}
