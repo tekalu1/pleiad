@@ -19,7 +19,8 @@ function redact(text) {
 function createUpdateLog(file, { maxBytes = MAX_BYTES, now = () => new Date() } = {}) {
   let queue = Promise.resolve();
   const write = level => (...args) => {
-    const text = args.map(a => a instanceof Error ? (a.stack || a.message) : typeof a === 'string' ? a : JSON.stringify(a)).join(' ');
+    // 記録の失敗で更新を止めない（循環した値などで JSON.stringify が投げても、呼んだ側へ返さない）
+    const text = args.map(a => { try { return a instanceof Error ? (a.stack || a.message) : typeof a === 'string' ? a : JSON.stringify(a); } catch { return String(a); } }).join(' ');
     const line = `${now().toISOString()} ${level} ${redact(text)}\n`;
     queue = queue.then(async () => {
       await fs.mkdir(path.dirname(file), { recursive: true });
@@ -29,7 +30,8 @@ function createUpdateLog(file, { maxBytes = MAX_BYTES, now = () => new Date() } 
       await fs.appendFile(file, line, 'utf8');
     }).catch(() => {});
   };
-  return { info: write('info'), warn: write('warn'), error: write('error'), debug: write('debug'), flush: () => queue };
+  // debug は持たない。持つと差分の取得の全操作の JSON や範囲ごとの行が流れ込み、上限で前の文脈が押し出される
+  return { info: write('info'), warn: write('warn'), error: write('error'), flush: () => queue };
 }
 
 module.exports = { createUpdateLog, redact };

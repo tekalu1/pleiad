@@ -150,9 +150,12 @@ export default async function(t) {
     updateLog.info('Download block maps (old: "https://github.com/o/r/releases/download/v1/a.blockmap", new: https://release-assets.githubusercontent.com/x/1?sig=SECRETSIG&jwt=SECRETJWT)');
     updateLog.error(new Error('HttpError: 401 headers {"authorization":"token gho_0123456789abcdefghijABCDEFGHIJ"} Bearer abcdefghijklmnopqrstuvwxyz'));
     updateLog.warn('github_pat_0123456789abcdefghijklmnop leaked');
+    const circular = {}; circular.self = circular;
+    updateLog.info('circular', circular);
+    t.ok('Update log has no debug channel (the differential plan would flood it)', !('debug' in updateLog));
     await updateLog.flush();
     const logged = await fs.readFile(updateLogFile, 'utf8');
-    t.ok('Update log keeps the useful text', logged.includes('Download block maps') && logged.includes('releases/download/v1/a.blockmap') && logged.includes('release-assets.githubusercontent.com/x/1?[redacted]'));
+    t.ok('Update log keeps the useful text', logged.includes('Download block maps') && logged.includes('releases/download/v1/a.blockmap') && logged.includes('release-assets.githubusercontent.com/x/1?[redacted]') && logged.includes('circular [object Object]'));
     t.ok('Update log hides tokens and signed URL keys', !/SECRETSIG|SECRETJWT|gho_|github_pat_|abcdefghijklmnopqrstuvwxyz/.test(logged));
     const rotatingFile = path.join(dir, 'logs', 'rotating.log');
     const rotating = createUpdateLog(rotatingFile, { maxBytes: 100 });
