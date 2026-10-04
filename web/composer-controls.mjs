@@ -500,7 +500,10 @@ export function setupComposerControls({ cmd, get, on }) {
   const folderGlyph = glyph(FOLDER), splitGlyph = branchGlyph();
   const splitSuffix = el("span", "wt-sfx");
   splitSuffix.hidden = true;
-  chips.cwd.append(folderGlyph, cwdName, splitSuffix, gitBranch, glyph(CARET));
+  // 送ると自動で分けた作業場所で始める間だけ、末尾に「· 分けて始めます」（青い字。狭いと splitSuffix と一緒に最初に畳む）
+  const autoSuffix = el("span", "wt-sfx wt-auto");
+  autoSuffix.hidden = true;
+  chips.cwd.append(folderGlyph, cwdName, splitSuffix, gitBranch, autoSuffix, glyph(CARET));
   chips.cwd.lastChild.classList.add("caret");
   const modelName = el("span", "v");
   chips.model.append(glyph(...MODEL), modelName, glyph(CARET));
@@ -618,7 +621,8 @@ export function setupComposerControls({ cmd, get, on }) {
     // 分けた作業場所（ADR 0089）: いるときは面の先頭に元の場所と「元の場所に戻す」、git の場所には末尾に「分けた作業場所で始める」
     const current = d.worktree?.current;
     const bar = current ? splitBar(current) : null;
-    const start = d.worktree?.canSplit ? splitItem() : null;
+    // 自動で分ける予定の間は末尾が「このまま元の場所で始める」（今回だけ）。そうでなければ手で分ける「分けた作業場所で始める」
+    const start = d.worktreeAuto ? stayItem() : d.worktree?.canSplit ? splitItem() : null;
     pop.replaceChildren(...(bar ? [bar] : []), inputWrap, msg, head(t("composer.cwd.recent")),
       recent.length ? listbox(t("composer.cwd.recent"), recent) : el("p", "cnote", t("composer.cwd.noRecent")),
       pick, ...(start ? [start] : []), box, err);
@@ -639,6 +643,13 @@ export function setupComposerControls({ cmd, get, on }) {
     b.type = "button";
     b.append(branchGlyph(), el("span", null, t("worktree.start")));
     b.onclick = () => { folder.hide(); on.worktreeSplit?.(); };
+    return b;
+  }
+  function stayItem() {
+    const b = el("button", "caction wt-start");
+    b.type = "button";
+    b.append(glyph(FOLDER), el("span", null, t("worktree.stay")), el("span", "r", t("worktree.stayOnce")));
+    b.onclick = () => { folder.hide(); on.worktreeStay?.(); };
     return b;
   }
   // 閉じたら確かめている途中のパスは取り消す（Esc・面の外で閉じたのに、後から確かめが通って変わらないように）
@@ -676,6 +687,9 @@ export function setupComposerControls({ cmd, get, on }) {
     chips.cwd.classList.toggle("wt", Boolean(split));
     splitSuffix.hidden = !split;
     splitSuffix.textContent = split ? `· ${t("worktree.chipSuffix")}` : "";
+    const auto = d.worktreeAuto ?? null;
+    autoSuffix.hidden = !auto;
+    autoSuffix.textContent = auto ? `· ${t("worktree.autoSuffix")}` : "";
     const lead = split ? splitGlyph : folderGlyph;
     if (chips.cwd.firstChild !== lead) chips.cwd.firstChild.replaceWith(lead);
     chips.cwd.setAttribute("aria-label", t("composer.cwd.chipAria", { cwd: cwd || t("composer.cwd.unset") }));
@@ -688,6 +702,12 @@ export function setupComposerControls({ cmd, get, on }) {
     if (gitName) {
       chips.cwd.title = `${chips.cwd.title} · ${t("git.chipBranch", { branch: gitName })}`;
       chips.cwd.setAttribute("aria-label", `${chips.cwd.getAttribute("aria-label")} · ${t("git.chipBranch", { branch: gitName })}`);
+    }
+    // 送ると分けた作業場所で始める間は、理由（誰が作業中か）を title と読み上げに足す
+    if (auto) {
+      const why = t("worktree.autoTitle", { who: auto.who });
+      chips.cwd.title = `${chips.cwd.title} · ${why}`;
+      chips.cwd.setAttribute("aria-label", `${chips.cwd.getAttribute("aria-label")} · ${why}`);
     }
     // モデル
     // 互換の接続先は「接続先 · モデル · 段」。モデルは表示名（web/compat-models.mjs）で、1M は札。送る ID を含む全体は title に出す
@@ -739,7 +759,7 @@ export function setupComposerControls({ cmd, get, on }) {
 
   /**
    * チップの行を 1 行に収める（docs/design-system.md「入力欄と上端」）。短い値は詰めない。足りない分だけ、この順に削る:
-   *   0. 分けた作業場所の「· 分けた作業場所」を畳み（ADR 0089）、次に作業場所のブランチを外す（git のとき。ADR 0085）
+   *   0. 分けた作業場所の「· 分けた作業場所」「· 分けて始めます」を畳み（ADR 0089, 0133）、次に作業場所のブランチを外す（git のとき。ADR 0085）
    *   1. 承認モードを短い名前に（都度確認 → 都度）  2. モデルの「 · 段」を外す
    *   3. モデル名を … で詰める（「Smart…」くらいまで）  4. 作業ディレクトリの名前を … で詰める（9 字くらいまでは残す）
    * 縮める前の幅は、チップを縮めない状態（.measuring）で測る。行の幅・中身が変わるたびに呼ぶ（paint・窓の幅・中断の出入り）

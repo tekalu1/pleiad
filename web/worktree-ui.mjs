@@ -1,14 +1,12 @@
-// 分けた作業場所の画面の部品（docs/design-system.md「分けた作業場所」、ADR 0089）。
-//   - 入力欄の上の 1 行（同じリポジトリで別の会話が作業中: 分けて始める / このまま / いつも分ける）
+// 分けた作業場所の画面の部品（docs/design-system.md「分けた作業場所」、ADR 0089, 0133）。
+//   - 送ると自動で分けるかの判定（入力欄のチップの「· 分けて始めます」の元。web/composer-controls.mjs が描く）
 //   - 会話の中の静かな 1 行（分けた作業場所で始めました・元の場所に戻す）— present kind: 'worktree'
 //   - 右パネル「git」の「残っている作業場所」（取り込みを頼む・退避して消す・残す）
-//   - 設定の「いつも分ける」
+//   - 設定 › エージェント設定の「作業場所」
 // 文の組み立ては DOM に触れない関数に分ける。DOM は web/dom.mjs の el だけ。
 import { el } from './dom.mjs';
 import { t, fmt } from './i18n.mjs';
 import { branchIcon, archiveIcon, linkIcon, lockIcon, chevRightIcon, undoIcon } from './icons.mjs';
-
-const MARK = '⁣';
 
 /** パスの末尾 2 つ（D:/dev/pleiad.pleiad/ply-7f3a → pleiad.pleiad/ply-7f3a）。次のターンの行・チップの title に使う */
 export function shortPath(p) {
@@ -22,15 +20,6 @@ export function whoText(conflicts) {
   const count = (conflicts ?? []).length;
   if (!titles.length) return t('worktree.whoAnother');
   return count > 1 ? t('worktree.whoMany', { title: titles[0], count: count - 1 }) : t('worktree.who', { title: titles[0] });
-}
-
-/** 辞書の文の {{x}} の所へ要素を差し込む（git-panel の fill と同じ手） */
-// i18n-dynamic: worktree.note
-function fill(key, params, nodes) {
-  const text = t(key, { ...params, ...Object.fromEntries(Object.keys(nodes).map((k) => [k, `${MARK}${k}${MARK}`])) });
-  const out = [];
-  for (const piece of text.split(MARK)) if (piece) out.push(nodes[piece] ?? el('span', null, piece));
-  return out;
 }
 
 function icon(svg) {
@@ -47,24 +36,18 @@ function button(className, label, onClick) {
   return b;
 }
 
-// ---------------------------------------------------------------- 入力欄の上の 1 行
+// ---------------------------------------------------------------- 送ると自動で分けるか
 
 /**
- * 同じリポジトリで別の会話が書き込み中のとき、入力欄のすぐ上に出す 1 行。送信は止めない（選ばずに送れば「このまま」）。
- * @param {{ conflicts: object[], onSplit: () => void, onKeep: () => void, onAlways: () => void }} o
+ * 送ると分けた作業場所で始める間だけ { who }（チップの「· 分けて始めます」と、その title の元）、でなければ null。
+ * 条件: 分けられる場所で、書き込み中の別の会話があり、自動で分ける設定（worktreeCheck の always）で、
+ * 今回だけ元の場所と決めておらず（stay）、この会話が走っていない（走っている間の送信は今のターンへ渡るので分けない）
+ * @param {{ canSplit?: boolean, conflicts?: object[], always?: boolean }|null} data worktreeCheck の結果
+ * @param {{ stay?: boolean, running?: boolean }} [o]
  */
-export function renderSplitNote({ conflicts, onSplit, onKeep, onAlways }) {
-  const box = el('div', 'wt-note');
-  box.setAttribute('role', 'group');
-  box.setAttribute('aria-label', t('worktree.noteLabel'));
-  const text = el('span', 'wt-note-t');
-  text.append(icon(branchIcon), ...fill('worktree.note', {}, { who: el('b', null, whoText(conflicts)) }));
-  const acts = el('span', 'wt-acts');
-  acts.append(button('btn btn-quiet', t('worktree.split'), onSplit), button('btn', t('worktree.keep'), onKeep));
-  const always = button('wt-always', t('worktree.always'), onAlways);
-  always.title = t('worktree.alwaysTitle');
-  box.append(text, acts, always);
-  return box;
+export function autoSplitPlan(data, { stay = false, running = false } = {}) {
+  if (!data || !data.canSplit || !data.always || !data.conflicts?.length || stay || running) return null;
+  return { who: whoText(data.conflicts) };
 }
 
 // ---------------------------------------------------------------- 会話の中の静かな 1 行
@@ -215,10 +198,10 @@ export function createLeftovers({ keep, ask, unask, archive, restore, changed })
   };
 }
 
-// ---------------------------------------------------------------- 設定の「いつも分ける」
+// ---------------------------------------------------------------- 設定の「作業場所」
 
 /**
- * 設定 › 委譲の末尾の節。同じリポジトリで別の会話が作業中のとき、確かめずに分けて始める。
+ * 設定 › エージェント設定の末尾の節「作業場所」。ほかの会話が同じリポジトリで書いている間は、分けた作業場所で始める（既定はオン）。
  * @param {{ cmd: (c:string, a?:object) => Promise<any> }} o
  */
 export function setupWorktreeSettings({ cmd }) {
@@ -236,7 +219,7 @@ export function setupWorktreeSettings({ cmd }) {
   const desc = el('p', 'mp-note', t('worktree.settings.description'));
   sec.append(el('h3', null, t('worktree.settings.title')), row, desc);
   const paint = (always) => { sw.setAttribute('aria-checked', String(Boolean(always))); };
-  paint(false);
+  paint(true);
   const load = () => cmd('worktreeSettings').then((s) => paint(s?.always)).catch(() => {});
   sw.onclick = () => {
     const next = sw.getAttribute('aria-checked') !== 'true';
