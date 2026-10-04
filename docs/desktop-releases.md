@@ -186,7 +186,7 @@ GitHub Release の prerelease 属性とアプリの先行版設定で選別し�
 ### 自己署名の配布（現在の運用）
 
 `Evaluation release` は GitHub-hosted `windows-latest` で動く。このPCの常駐プロセス、ログイン状態、self-hosted runnerには依存しない。
-`main` に含まれる `vX.Y.Z`（正式）または `vX.Y.Z-beta.N`（先行版）のタグをpushすると、通常テスト・x64/ARM64ビルド・署名・署名検証を行い、そのリポジトリの Releases に配布する（Android のタグ `android-v…` では動かない）。
+`main` に含まれる `vX.Y.Z`（正式）または `vX.Y.Z-beta.N`（先行版）のタグをpushすると、[同一 commit の main CI の検証結果](release-ci-reuse.md)を確認し、x64/ARM64ビルド・署名・署名検証を行い、そのリポジトリの Releases に配布する（Android のタグ `android-v…` では動かない）。成功を再利用できる場合はリリース環境の短い検査を行い、結果が揃わなければ通常テストを全部回す。main CI の失敗が確認された場合は公開しない。
 正式な版は Latest、先行版は Pre-release として公開する。手動実行（`workflow_dispatch`）でも同じ形のタグを受け付ける。
 下書きへアップロードした全ファイルを再取得してSHA-256を照合した後、100%配信で公開する。失敗時は公開へ進まない。既存リリースのバイナリは上書きしない。
 
