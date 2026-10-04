@@ -8,7 +8,7 @@ import { savedReason } from './saved-text.mjs';
 // i18n-dynamic: changeLog.field.
 // i18n-dynamic: changeLog.by.
 /** 記録に出す項目（会話の設定として人が見分けられるもの）。context・parent は内部の記録なので出さない */
-const FIELDS = ['status', 'title', 'cwd', 'mode', 'model'];
+const FIELDS = ['status', 'title', 'cwd', 'mode', 'model', 'backend', 'effort'];
 
 const known = (prefix, value) => {
   const key = `${prefix}.${value}`;

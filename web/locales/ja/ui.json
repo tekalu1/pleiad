@@ -1324,7 +1324,9 @@
       "title": "タイトル",
       "cwd": "作業ディレクトリ",
       "mode": "承認モード",
-      "model": "モデル"
+      "model": "モデル",
+      "backend": "エージェント",
+      "effort": "思考の強さ"
     },
     "by": {
       "human": "あなた",
@@ -1337,6 +1339,7 @@
     "reason": {
       "resumeCwd": "再開時に変更",
       "worktreeSplit": "分けた作業場所へ",
+      "parentChanged": "依頼元の AI が変更",
       "worktreeBack": "元の場所へ",
       "cwdFrom": "{{from}} から",
       "contextReloaded": "指示・Skills を読み込み直した",
@@ -2828,7 +2831,8 @@
       "pinned": "{{kind}} → {{target}}",
       "selectedHigh": "使用量が多いが選んだ（{{window}} {{percent}}%・線 {{avoidPercent}}%）",
       "selectedLow": "余裕が少ないが選んだ（{{reason}}）",
-      "selectedLower": "下の段から選んだ"
+      "selectedLower": "下の段から選んだ",
+      "changedByParent": "依頼元が変更（元: {{from}}）"
     },
     "detail": {
       "label": "振り分けの内訳",

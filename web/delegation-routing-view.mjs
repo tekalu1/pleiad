@@ -84,10 +84,13 @@ export function skippedPhrase(skipped, names = defaultNames) {
  */
 export function routingLine(routing, names = defaultNames) {
   if (!routing?.target) return '';
+  // 依頼元が子の設定を替えた（ADR 0135）。行き先は新しい委譲先、元の委譲先を添える
+  const changed = routing.changed?.from ? [t('routing.line.changedByParent', { from: targetText(routing.changed.from, names) })] : [];
   if (!isAutoRouting(routing)) {
     const head = t('routing.line.pinned', { kind: kindText(routing.kind), target: targetText(routing.target, names) });
-    return routing.selectedWithLowHeadroom ? [head, lowHeadroomText(routing.selectedWithLowHeadroom)].join(t('routing.line.join')) : head;
+    return [head, ...(routing.selectedWithLowHeadroom ? [lowHeadroomText(routing.selectedWithLowHeadroom)] : []), ...changed].join(t('routing.line.join'));
   }
+  if (changed.length) return [t('routing.line.head', { kind: kindText(routing.kind), difficulty: difficultyText(routing.difficulty), target: targetText(routing.target, names) }), ...changed].join(t('routing.line.join'));
   const head = t('routing.line.head', { kind: kindText(routing.kind), difficulty: difficultyText(routing.difficulty), target: targetText(routing.target, names) });
   const notes = [];
   const low = routing.selectedWithLowHeadroom;

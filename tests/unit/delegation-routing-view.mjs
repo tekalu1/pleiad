@@ -91,6 +91,11 @@ export default async function (t) {
   const pinned = { mode: 'pinned', kind: 'implement', difficulty: null, tier: null, target: { backend: 'codex', model: null }, skipped: [] };
   assert.equal(routingLine(pinned, names), '実装 → Codex');
   assert.equal(routingLine({ ...pinned, target: { backend: 'codex', model: 'gpt-6-sol' } }, names), '実装 → Codex gpt-6-sol');
+  // 依頼元が子の設定を替えた（ADR 0135）: 行き先は新しい委譲先で、元の委譲先を添える。自動でも飛ばした候補の一言は出さない（替える前の選び方なので）
+  const changed = { by: 'parent', at: '2026-10-04T00:00:00.000Z', from: { backend: 'claude', model: 'sonnet' }, count: 1 };
+  assert.equal(routingLine({ ...pinned, target: { backend: 'codex', model: 'gpt-6-sol' }, changed }, names), '実装 → Codex gpt-6-sol · 依頼元が変更（元: Claude Code Sonnet）');
+  assert.equal(routingLine({ ...routing, changed }, names), '実装・中 → Codex gpt-6-sol · 依頼元が変更（元: Claude Code Sonnet）');
+  t.ok('依頼元が替えた委譲は、新しい委譲先と元の委譲先を 1 行に出す', true);
   const facts = pinnedDetail(pinned, { names, mode: '都度確認', cwd: String.raw`D:\dev\pleiad` });
   const factText = facts.textContent;
   assert.ok(factText.includes('Codex（依頼元が指定）') && factText.includes('都度確認') && factText.includes('pleiad'), factText);
