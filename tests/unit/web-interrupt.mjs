@@ -5,6 +5,7 @@ import { readFileSync } from 'node:fs';
 import {
   REASONS, reasonOf, isInterrupted, interruptUnread, interruptReadPoint, showsReasonInMeta, interruptLabel, interruptLineText,
   warnMark, pausedCount, resumeLabel, resumeNoteText, resumeVisible, updateInterrupted, workRows, workCounts, interruptProgress,
+  limitResumeState, limitLineNote, limitTime,
 } from '../../web/interrupt.mjs';
 
 export const name = 'web-interrupt';
@@ -42,6 +43,25 @@ export default function (t) {
   t.ok('保留の未送信だけを数える', pausedCount([{ status: 'paused' }, { status: 'queued' }, { status: 'paused' }, null]) === 2 && pausedCount(undefined) === 0);
   t.ok('保留が無ければ「再開」、あれば「保留中の N 件を送って再開」', resumeLabel(0) === '再開' && resumeLabel(2) === '保留中の 2 件を送って再開');
   t.ok('欄の下の一行: 保留があれば「保留中の N 件の後に」', resumeNoteText(0) === '送ると、この指示で続けます' && resumeNoteText(3) === '送ると、保留中の 3 件の後にこの指示で続けます');
+  // 上限で止まった会話（docs/design-system.md「使用量の上限」）。自動で戻る間と、自動を外した会話の解除前は押せない時計、解除の後は普通の「再開」
+  const nowMs = Date.parse('2026-10-04T10:00:00');
+  const soon = nowMs + 2 * 3600_000;
+  const week = Date.parse('2026-10-07T09:00:00');
+  const auto = { reason: 'limit', at: nowMs, resetsAt: soon, autoResume: true };
+  t.ok('上限の会話の状態: 自動 = auto、自動を外した解除前 = release、解除の後・時刻不明で外した = ready、上限でなければ null',
+    limitResumeState(auto, nowMs) === 'auto' && limitResumeState({ ...auto, autoResume: false }, nowMs) === 'release'
+    && limitResumeState({ ...auto, autoResume: false }, soon + 1) === 'ready' && limitResumeState({ ...auto, autoResume: false, resetsAt: null }, nowMs) === 'ready'
+    && limitResumeState({ reason: 'user' }, nowMs) === null);
+  t.ok('自動で戻る会話の入力欄は「◷ 時刻 に再開」', /に再開$/.test(resumeLabel(0, auto, nowMs)) && resumeLabel(0, auto, nowMs).includes(limitTime(soon)));
+  t.ok('解除時刻が分からない会話は「解除を確認中」の時計', resumeLabel(0, { ...auto, resetsAt: null }, nowMs) === '解除を確認中');
+  t.ok('自動を外した会話は、解除前は「時刻 に解除」の時計、解除の後は普通の「再開」', /に解除$/.test(resumeLabel(0, { ...auto, autoResume: false }, nowMs))
+    && resumeLabel(0, { ...auto, autoResume: false }, soon + 1) === '再開' && resumeLabel(2, { ...auto, autoResume: false }, soon + 1) === '保留中の 2 件を送って再開');
+  t.ok('今日でない解除は日付つき（週の上限は「10/7（水）9:00」）', /^10\/7（水）/.test(limitTime(week, nowMs)) && /に自動で再開します$/.test(limitLineNote({ ...auto, resetsAt: week })) && limitLineNote({ ...auto, resetsAt: week }).includes('10/7（水）'));
+  t.ok('末尾の 2 行目: 自動のとき「時刻 に自動で再開します」、時刻不明は 30 分ごとの確認、外したら「自動では再開しません。…」',
+    limitLineNote(auto).endsWith('に自動で再開します') && limitLineNote({ ...auto, resetsAt: null }) === '解除時刻が分からないため、30 分ごとに確かめて再開します'
+    && limitLineNote({ ...auto, autoResume: false }) === '自動では再開しません。解除の後に「再開」で続けられます');
+  t.ok('解除の後の欄の下の一行は普通の再開と同じ（上限の解除を待つ文にしない）', resumeNoteText(0, { ...auto, autoResume: false }, soon + 1) === '送ると、この指示で続けます'
+    && resumeNoteText(0, auto, nowMs).includes('上限の解除'));
   const base = { interrupted: true, running: false, waiting: false, text: '', attached: false };
   t.ok('中断状態・走っていない・欄が空なら出す', resumeVisible(base));
   t.ok('欄に字があれば隠す（空白だけなら出す）', !resumeVisible({ ...base, text: '別の指示' }) && resumeVisible({ ...base, text: '  \n' }));

@@ -46,7 +46,7 @@ import { createContextMenu } from "./context-menu.mjs";
 import { setupLongPress } from "./long-press.mjs";
 import { whenText, timeText } from './schedule-times.mjs';
 import { setupSendMenu } from './send-menu.mjs';
-import { setupComposerControls, resolvedModel, folderBrowser, panel } from "./composer-controls.mjs";
+import { setupComposerControls, resolvedModel, folderBrowser } from "./composer-controls.mjs";
 import { createFolderUpload, canSendFolders, entriesFromDirectory, summarize, askDroppedFolder } from "./folder-upload.mjs";
 import { setupAttachMenu } from "./attach-menu.mjs";
 import { promptMaxHeight, attachSources, attachFolderHints } from "./composer-layout.mjs";
@@ -84,8 +84,8 @@ import { createShellComposer } from "./shell-composer.mjs";
 import { createSessionLoads } from "./session-stream.mjs";
 const sessionLoads = createSessionLoads();
 import { createReadCompletions } from "./unread.mjs";
-import { isInterrupted, interruptUnread, interruptReadPoint, interruptLineText, reasonOf, stopMark, pausedCount, resumeLabel, limitTime,
-  resumeNoteText, resumeVisible, updateInterrupted } from './interrupt.mjs';
+import { isInterrupted, interruptUnread, interruptReadPoint, interruptLineText, reasonOf, stopMark, pausedCount, resumeLabel,
+  resumeNoteText, resumeVisible, updateInterrupted, limitResumeState, limitLineNote } from './interrupt.mjs';
 import { setupContext } from './context.mjs';
 import { setupSessionContext, chipText } from './session-context.mjs';
 import { budgetOf } from './instruction-amount.mjs';
@@ -2683,19 +2683,16 @@ function onEvent(ev, replay = false) {
   if (!replay && sessionLoads.capture(ev, state.current)) return;
   if (ev.type === "prefs") { state.prefs = ev.prefs ?? {}; applyLocale(ev.locale); paintAutoCompactionSettings(); browserSettings.paint(); browserPanel?.profilesChanged(); computerSettings.paint(); refreshPreviewConfirmation(); filePreview.prefsChanged(); sessionContext.refresh(); return; }
   if (ev.type === 'autoCompactionSettings') { state.prefs.autoCompaction = ev.settings; paintAutoCompactionSettings(); return; }
-  if (ev.type === 'resumeQueue') { limitQueueState = { ...limitQueueState, ...ev.state }; syncLimitStrip(); if ($('limitQueueDialog').open) paintLimitQueue(); return; }
   if (ev.type === 'schedules') {
     state.schedules = ev.entries ?? [];
-    limitQueueState.schedules = state.schedules.filter(r => r.kind === 'resume');
-    syncLimitStrip(); if ($('limitQueueDialog').open) paintLimitQueue();
     paintOutbox(); renderSessions();
     return;
   }
-  if (ev.type === 'limitResumeReady') { refreshLimitQueue().catch(() => {}); return; }
   if (ev.type === 'limitResumeChanged') {
     const s = state.sessions.find(s => s.id === ev.sessionId);
     if (s) s.interrupted = ev.interrupted;
-    renderSessions(); if (ev.sessionId === state.current) paintInterruptLine(); return;
+    renderSessions(); if (ev.sessionId === state.current) { paintInterruptLine(); syncResume(); }
+    return;
   }
   // どの口（画面・AI・CLI）から設定を変えても届く。prefs などの既存の配信が無い設定（コンテキストの既定）は、開いている設定の画面がここで取り直す
   if (ev.type === 'settingsChanged') { window.dispatchEvent(new CustomEvent('ply:settings-changed', { detail: ev })); return; }
@@ -3602,26 +3599,6 @@ async function syncAccount(s, bid) {
   accountWarning = warning;
   if (warning) $("settingsError").textContent = warning;
   state.account = value;
-  const banner = $('newLimitWarning'); banner.hidden = true; banner.replaceChildren();
-  if (s?.unsent && !s.interrupted && !s.completedAt && supported && !warning) {
-    const sessionId = s.id;
-    const usage = await cmd('providerUsage', { backend: 'claude' }).catch(() => null);
-    if (state.current !== sessionId) return;
-    const windows = usage?.quota?.accounts
-      ? (usage.quota.accounts.find(a => a.accountId === value)?.windows ?? usage.quota.accounts[0]?.windows ?? [])
-      : usage?.quota?.windows ?? [];
-    const limited = windows.find(w => w.usedPercent >= 100 && Date.parse(w.resetsAt) > Date.now());
-    if (limited) {
-      banner.hidden = false;
-      banner.append(el('span', null, t('interrupt.newLimitWarning', { account: accountLabel(value), time: limitTime(Date.parse(limited.resetsAt)) })));
-      const other = usage?.quota?.accounts?.find(a => a.accountId !== value && a.windows?.some(w => w.usedPercent < 100));
-      if (other) {
-        const button = el('button', 'btn btn-quiet', t('interrupt.newLimitSwitch', { account: other.label }));
-        button.type = 'button'; button.onclick = () => cmd('setTurnSettings', { sessionId, account: other.accountId }).then(() => select(sessionId, { reload: true }));
-        banner.append(button);
-      }
-    }
-  }
 }
 
 // 互換の接続先の設定（web/compat-endpoints.mjs）。入力欄の面が候補を引くので、controls より先に作る
@@ -3841,7 +3818,6 @@ function renderSessions() {
     schedules: sideSchedules(),
   });
   syncResumeStrip();
-  syncLimitStrip();
   syncResume();
 }
 
@@ -3880,22 +3856,14 @@ function paintInterruptLine(live) {
       interrupted.window === 'five_hour' ? t('interrupt.limitWindowFiveHour') : interrupted.window ?? ''].filter(Boolean).join(' · ');
     const head = [el('span', null, scope ? t('interrupt.limitHead', { line: interruptLineText(interrupted), scope }) : interruptLineText(interrupted))];
     if (Number.isFinite(at) && at > 0) head.push(el('span', null, '·'), el('span', 't', hhmm(at)));
-    const time = limitTime(interrupted.resetsAt) ?? t('interrupt.unknownTime');
-    const order = state.sessions.filter(s => s.interrupted?.autoResume === true)
-      .sort((a, b) => Number(Boolean(b.delegation)) - Number(Boolean(a.delegation)) || b.lastModified - a.lastModified)
-      .findIndex(s => s.id === state.current) + 1;
+    const auto = interrupted.autoResume === true;
+    // i18n-dynamic: interrupt.limitStopAuto
+    // i18n-dynamic: interrupt.limitStartAuto
     const sub = el('span', 'limit-interrupt-sub');
-    sub.append(el('span', null, interrupted.notifyAtReset
-      ? t('interrupt.limitAsk', { time }) : interrupted.autoResume === false
-        ? t('interrupt.limitWaiting') : order ? t('interrupt.limitAfterAt', { time, count: order }) : t('interrupt.limitAfter', { time })));
-    const link = (label, onClick) => {
-      const b = el('button', 'lnk', label); b.type = 'button'; b.onclick = onClick; sub.append(b);
-    };
-    const selected = currentSession()?.nextSettings?.account ?? currentSession()?.claudeAccount ?? '';
-    const alternative = capsOf(interrupted.backend).claudeAccounts && currentSession()?.backend === interrupted.backend
-      ? accountOptions().find(a => a.value !== selected && (a.value === '' ? state.auth.get('claude')?.loggedIn : !a.hint)) : null;
-    if (alternative) link(t('interrupt.limitSwitchWith', { account: alternative.label }), () => limitResumeMenu.show());
-    link(t(interrupted.autoResume === false ? 'interrupt.limitStartAuto' : 'interrupt.limitStopAuto'), () => setLimitAuto(interrupted.autoResume === false));
+    sub.append(el('span', null, limitLineNote(interrupted)));
+    const toggle = el('button', 'lnk', t(auto ? 'interrupt.limitStopAuto' : 'interrupt.limitStartAuto')); toggle.type = 'button';
+    toggle.onclick = () => setLimitAuto(!auto).catch(e => { $('settingsError').textContent = e.message; });
+    sub.append(toggle);
     m.classList.add('limit');
     m.replaceChildren(stopMark(), ...head, sub);
   } else {
@@ -3906,6 +3874,7 @@ function paintInterruptLine(live) {
   if (!line) append(m);
 }
 
+let limitClockTimer = null;
 /**
  * 入力欄の「▶ 再開」。中断状態・走っていない・欄が空のときだけ「中断」の位置に出す。
  * 保留の未送信があれば「保留中の N 件を送って再開」。字を書いたら隠し、欄の下に「送ると、この指示で続けます」。
@@ -3921,13 +3890,18 @@ function syncResume() {
   const button = $('resume');
   const paused = interrupted ? pausedCount(outboxes.get(state.current)) : 0;
   const label = resumeLabel(paused, s?.interrupted);
+  const limitState = interrupted ? limitResumeState(s.interrupted) : null;
   if ($('resumeLabel').textContent !== label) {
     $('resumeLabel').textContent = label;
     button.title = label;
     button.setAttribute('aria-label', label);
   }
-  button.classList.toggle('is-limit', reasonOf(s?.interrupted) === 'limit');
-  button.disabled = resuming.has(state.current);
+  // 上限の会話の時計（自動で戻る・解除前）は押せない表示。解除の後（自動を外した会話）は普通の「再開」
+  const waitingClock = limitState === 'auto' || limitState === 'release';
+  button.classList.toggle('is-limit', waitingClock);
+  button.disabled = resuming.has(state.current) || waitingClock;
+  clearTimeout(limitClockTimer);
+  if (limitState === 'release') limitClockTimer = setTimeout(syncResume, Math.min(2_147_000_000, Math.max(1000, s.interrupted.resetsAt - Date.now() + 500)));
   const note = $('resumeNote');
   note.hidden = !interrupted || running;
   // 保留があれば、送った指示は保留の後ろに並ぶ（サーバーが保留を先に送り直す。sendMessage）
@@ -3966,170 +3940,21 @@ async function resumeSession(sessionId) {
 }
 
 $('resume').onclick = () => {
-  if (reasonOf(currentSession()?.interrupted) === 'limit') return;
+  if (limitResumeState(currentSession()?.interrupted, Date.now()) === 'auto') return;
   const sessionId = state.current;
   completionNotifications.requestPermission();
   $('settingsError').textContent = '';
   resumeSession(sessionId).catch(e => { $('settingsError').textContent = t('interrupt.resumeFailed', { error: e.message }); });
 };
 
-let limitQueueState = { pending: [], running: [], schedules: [], paused: false, guardUsed: null, settings: { mode: 'auto', concurrency: 3, guardPercent: 50 } };
 const limitOp = (op, args = {}) => cmd('invoke', { op, args });
-async function refreshLimitQueue() {
-  limitQueueState = await limitOp('resumeQueue.get');
-  syncLimitStrip();
-  if ($('limitQueueDialog').open) paintLimitQueue();
-}
+/** 会話末尾の［再開しない］／［自動で再開する］（上限の自動再開を、その会話だけ入れる・外す） */
 async function setLimitAuto(enabled) {
-  await limitOp('resumeQueue.set', { action: 'auto', sessionId: state.current, enabled });
+  await limitOp('sessions.setAutoResume', { sessionId: state.current, enabled });
   const s = currentSession();
   if (s?.interrupted?.reason === 'limit') s.interrupted.autoResume = enabled;
   paintInterruptLine(); syncResume(); renderSessions();
-  await refreshLimitQueue();
 }
-// 別のアカウントの 5 時間枠の使用率（「今すぐ OZ で続ける」の右に出す）。メニューを開いたときに取り、届いたら描き直す
-let limitUsage = null;
-const limitResumeMenu = panel($('resume'), $('limitResumePop'), { align: 'right', width: 330,
-  when: () => reasonOf(currentSession()?.interrupted) === 'limit',
-  onShow: () => {
-    if (!capsOf(currentSession()?.backend).claudeAccounts) return;
-    cmd('providerUsage', { backend: currentSession().backend }).then(usage => { limitUsage = usage?.quota ?? null; if (limitResumeMenu.open) limitResumeMenu.render(); }).catch(() => {});
-  },
-  render: () => {
-    const pop = $('limitResumePop'); pop.replaceChildren();
-    const s = currentSession();
-    if (!s?.interrupted) return;
-    const stopped = s.interrupted;
-    const time = limitTime(stopped.resetsAt) ?? t('interrupt.unknownTime');
-    const left = Number.isFinite(stopped.resetsAt) && stopped.resetsAt > Date.now() ? t('interrupt.limitResetLeft', { left: leftText(stopped.resetsAt) }) : '';
-    pop.append(el('div', 'chead', capsOf(stopped.backend).claudeAccounts
-      ? t('interrupt.limitAccountReset', { account: accountLabel(stopped.account), time, left }) : t('interrupt.limitReset', { time, left })));
-    const add = ({ label, tag, note, recommended }, onClick) => {
-      const b = el('button', 'copt copt-note'); b.type = 'button';
-      const body = el('span', 'cbody'); body.append(el('span', 'main', label));
-      if (note) body.append(el('span', 'sub', note));
-      b.append(body);
-      if (recommended) b.append(el('span', 'tag rec', t('interrupt.limitRecommend')));
-      else if (tag) b.append(el('span', 'r', tag));
-      b.onclick = () => { limitResumeMenu.hide(false); Promise.resolve(onClick()).catch(e => { $('settingsError').textContent = e.message; }); };
-      pop.append(b);
-    };
-    // i18n-dynamic: interrupt.limitAutoAt
-    // i18n-dynamic: interrupt.limitStartAuto
-    // 解除がキャッシュの持ち時間（止まってから約 1 時間）より前なら待つ、後なら読み直しは避けられないので余裕のある別のアカウントをすすめる
-    const cacheEnds = stopped.at + 60 * 60_000;
-    const soon = Number.isFinite(stopped.resetsAt) && stopped.resetsAt - stopped.at <= 55 * 60_000;
-    const selected = s.nextSettings?.account ?? s.claudeAccount ?? '';
-    const alternatives = capsOf(s.backend).claudeAccounts ? accountOptions().filter(a => a.value !== selected
-      && (a.value === '' ? state.auth.get('claude')?.loggedIn : !a.hint)) : [];
-    const waitNote = !capsOf(s.backend).claudeAccounts ? null
-      : soon ? t('interrupt.limitCacheKept', { time: limitTime(cacheEnds) }) : t('interrupt.limitCacheLost');
-    add({ label: t(stopped.autoResume === false ? 'interrupt.limitStartAutoAt' : 'interrupt.limitAutoAt', { time }), note: waitNote,
-      recommended: soon || !alternatives.length }, () => (stopped.autoResume === false ? setLimitAuto(true) : undefined));
-    const tokens = state.contextWindow?.usedTokens;
-    for (const account of alternatives) {
-      const windows = limitUsage?.accounts?.find(a => a.accountId === account.value)?.windows ?? (account.value === '' ? limitUsage?.accounts?.[0]?.windows : null) ?? [];
-      const five = windows.find(w => w.minutes === 300)?.usedPercent;
-      add({ label: t('interrupt.limitSwitchWith', { account: account.label }),
-        tag: Number.isFinite(five) ? t('interrupt.limitWindowUse', { percent: Math.round(five) }) : null,
-        note: tokens ? t('interrupt.limitSwitchNote', { tokens: compactNumber(tokens), account: account.label }) : t('interrupt.limitSwitchNoteShort', { account: account.label }),
-        recommended: !soon && account === alternatives[0] }, async () => {
-        await cmd('setTurnSettings', { sessionId: s.id, account: account.value });
-        await resumeSession(s.id);
-      });
-    }
-    add({ label: t('interrupt.limitOrder') }, () => openLimitQueue());
-    pop.append(el('div', 'sep'));
-    if (stopped.autoResume !== false) add({ label: t('interrupt.limitStopAuto') }, () => setLimitAuto(false));
-  },
-});
-
-function syncLimitStrip() {
-  const limited = state.sessions.filter(s => s.interrupted?.reason === 'limit'
-    && (s.interrupted.autoResume === true || s.interrupted.notifyAtReset === true));
-  const pending = limitQueueState.pending?.length ?? 0;
-  const running = limitQueueState.running?.length ?? 0;
-  const count = limited.length || pending + running;
-  const strip = $('limitStrip'); strip.hidden = !count;
-  if (!count) return;
-  const ready = limited.filter(s => s.interrupted.notifyAtReset && s.interrupted.resetsAt <= Date.now()).length;
-  const time = limitTime(Math.min(...limited.map(s => s.interrupted.resetsAt).filter(Number.isFinite))) ?? t('interrupt.unknownTime');
-  $('limitStripText').textContent = limitQueueState.paused
-    ? t('interrupt.limitGuarded', { percent: limitQueueState.settings?.guardPercent ?? 50, count: pending })
-    : running ? t('interrupt.limitRunning', { count: running, total: running + pending, percent: limitQueueState.guardUsed ?? 0 })
-      : ready ? t('interrupt.limitReady', { count: ready }) : t('interrupt.limitStrip', { count, time });
-  $('limitQueueOpen').textContent = ready && !running && !pending ? t('interrupt.resumeReady') : t('interrupt.order');
-}
-
-async function openLimitQueue() {
-  await refreshLimitQueue();
-  paintLimitQueue();
-  $('limitQueueDialog').show();
-}
-function paintLimitQueue() {
-  const root = $('limitQueueRows'); root.replaceChildren();
-  const priority = s => limitQueueState.pending?.find(r => r.sessionId === s.id)?.priority
-    ?? limitQueueState.schedules?.find(r => r.sessionId === s.id)?.priority
-    ?? (s.delegation ? 1 : 0);
-  const rows = state.sessions.filter(s => s.interrupted?.reason === 'limit')
-    .sort((a, b) => priority(b) - priority(a) || (b.interrupted.sentAt ?? 0) - (a.interrupted.sentAt ?? 0));
-  for (const [index, s] of rows.entries()) {
-    const row = el('div', 'limit-queue-row');
-    row.append(el('span', 'limit-queue-number', String(index + 1)));
-    row.append(el('span', null, s.title));
-    const first = el('button', 'btn btn-quiet limit-queue-first', t('interrupt.first'));
-    first.type = 'button'; first.onclick = () => limitOp('resumeQueue.set', { action: 'first', sessionId: s.id }).then(refreshLimitQueue);
-    const toggle = el('button', 'limit-queue-toggle', t(s.interrupted.autoResume === false ? 'interrupt.limitStartAuto' : 'interrupt.limitStopAuto'));
-    toggle.type = 'button'; toggle.setAttribute('aria-pressed', s.interrupted.autoResume !== false ? 'true' : 'false');
-    toggle.onclick = async () => {
-      const enabled = s.interrupted.autoResume === false;
-      await limitOp('resumeQueue.set', { action: 'auto', sessionId: s.id, enabled });
-      s.interrupted.autoResume = enabled; await refreshLimitQueue(); renderSessions();
-    };
-    row.append(first, toggle); root.append(row);
-  }
-  const settings = $('limitQueueSettings'); settings.replaceChildren();
-  const choices = [
-    ['mode', 'mode', [['auto', t('interrupt.modeAuto')], ['ask', t('interrupt.modeAsk')], ['off', t('interrupt.modeOff')]]],
-    ['concurrency', 'concurrency', [[1, '1'], [2, '2'], [3, '3'], [0, t('interrupt.all')]]],
-    ['guardPercent', 'guard', [[30, '30%'], [50, '50%'], [null, t('interrupt.none')]]],
-  ];
-  for (const [key, label, options] of choices) {
-    // i18n-dynamic: interrupt.concurrency
-    // i18n-dynamic: interrupt.guard
-    // i18n-dynamic: interrupt.mode
-    const wrap = el('label', 'limit-queue-setting', t(`interrupt.${label}`));
-    const select = el('select'); select.setAttribute('aria-label', t(`interrupt.${label}`));
-    for (const [value, name] of options) {
-      const opt = el('option', null, name); opt.value = String(value); opt.selected = limitQueueState.settings?.[key] === value; select.append(opt);
-    }
-    select.onchange = async () => {
-      const value = key === 'mode' ? select.value : select.value === 'null' ? null : Number(select.value);
-      const next = { ...limitQueueState.settings, [key]: value };
-      await cmd('setPref', { key: 'limitResume', value: next });
-      limitQueueState.settings = next; await refreshLimitQueue();
-    };
-    wrap.append(select); settings.append(wrap);
-  }
-  // i18n-dynamic: interrupt.continue
-  // i18n-dynamic: interrupt.stop
-  const action = el('button', 'btn', t(limitQueueState.paused ? 'interrupt.continue' : 'interrupt.stop'));
-  action.type = 'button'; action.onclick = () => limitOp('resumeQueue.set', { action: limitQueueState.paused ? 'continue' : 'stop' }).then(refreshLimitQueue);
-  settings.append(action);
-}
-$('limitQueueOpen').onclick = async () => {
-  try {
-    const ready = state.sessions.some(s => s.interrupted?.notifyAtReset && s.interrupted.resetsAt <= Date.now());
-    if (ready) {
-      await limitOp('resumeQueue.set', { action: 'release' });
-      for (const s of state.sessions) if (s.interrupted?.notifyAtReset && s.interrupted.resetsAt <= Date.now())
-        s.interrupted.notifyAtReset = false;
-    }
-    else await openLimitQueue();
-    await refreshLimitQueue();
-  } catch (e) { $('settingsError').textContent = e.message; }
-};
-$('limitQueueClose').onclick = () => $('limitQueueDialog').close();
 
 /** 脇の下の「更新で中断した会話が N 件あります［まとめて再開］［×］」。× は閉じたときの最大の at を覚える */
 const RESUME_STRIP_KEY = 'ply-update-interrupts-dismissed';
@@ -7853,7 +7678,6 @@ function connect() {
       // 画面と違う言語なら読み直すので、ここで止める
       if (applyLocale(m.locale)) return;
       connStatus.ready();
-      refreshLimitQueue().catch(() => {});
       state.hostTimeZone = m.hostTimeZone ?? null;
       refreshSchedules().catch(() => {});
       // 切れている間の確認と、旧版がこのブラウザーに持っていた確認済みを送る（受け取られたら旧版の分は消す）
@@ -7926,7 +7750,7 @@ function connect() {
 // 送信の日時の面（▾・送信の円の右クリックと長押し・Ctrl+Shift+Enter。web/send-menu.mjs）
 const sendMenu = setupSendMenu({ send: $('send'), more: $('sendMore'), pop: $('sendPop'), veil: $('sendVeil'),
   narrow: matchMedia('(max-width:480px)'),
-  context: () => ({ available: canScheduleHere(), resetsAt: limitResetHere() }),
+  context: () => ({ available: canScheduleHere() }),
   // 窓を閉じても動き続けるか（常駐しているか）。動き続けないときだけ、面の一言「閉じている間は送れません」を出す
   environment: async () => {
     const status = await cmd('remoteStatus').catch(() => null);
@@ -7940,11 +7764,6 @@ $('armedRemove').onclick = () => { armedSends.delete(state.current); paintArmed(
 setInterval(() => { if (state.current && sendSchedules(state.current).some(r => !r.held)) paintOutbox(); }, 30_000);
 /** いま日時を指定して送れるか（送る中身があり、シェルの形でなく、送れる会話か） */
 function canScheduleHere() { return Boolean(($('prompt').value.trim() || state.attached.length) && !composerShellMode && !retiredHere()); }
-/** 上限で止まっている会話の解除の時刻（候補の先頭「上限の解除後」） */
-function limitResetHere() {
-  const stopped = currentSession()?.interrupted;
-  return reasonOf(stopped) === 'limit' && stopped.resetsAt > Date.now() ? stopped.resetsAt : null;
-}
 function syncSendMore() { $('sendMore').disabled = !canScheduleHere() || $('send').disabled; }
 
 const shellComposer = createShellComposer({ box: $('cbox'), prompt: $('prompt'), head: $('shellHead'), send: $('send'), t,

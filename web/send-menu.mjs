@@ -18,7 +18,7 @@ import { presets, dayChips, targetAt, TIME_STEPS, leftText, whenText, hostTimeTe
  * @param {HTMLElement} o.pop          面
  * @param {HTMLElement} o.veil         シートの後ろの幕（狭い幅）
  * @param {MediaQueryList} o.narrow    480px 以下
- * @param {() => ({ available: boolean, resetsAt?: number|null })} o.context  今の会話の事情（送れない会話では available: false）
+ * @param {() => ({ available: boolean })} o.context  今の会話の事情（送れない会話では available: false）
  * @param {() => Promise<{ persistent: boolean, hostZone: string|null }>} o.environment  窓を閉じても動き続けるか・PC の時刻帯
  * @param {(at: number) => Promise<void>} o.onSchedule
  * @param {() => Promise<void>} o.onSendNow
@@ -46,7 +46,7 @@ export function setupSendMenu({ send, more, pop, veil, narrow, context, environm
   function renderMenu() {
     pop.append(el('div', 'chead', t('schedule.menuTitle')));
     const now = Date.now();
-    for (const p of presets(now, { resetsAt: context().resetsAt })) {
+    for (const p of presets(now)) {
       pop.append(row({ label: p.label, hint: p.hint, onClick: () => commit(p.at).catch(() => {}) }));
     }
     pop.append(el('div', 'sep'));
