@@ -47,7 +47,7 @@
 
 - **載せ忘れの検査**: `tests/lint-ops.mjs`（`npm test` の `ops-coverage`）。`COMMANDS` の各名前は、操作の `legacyCommand` か `tests/ops-baseline.json` の除外表（理由の種類: `ui-internal`・`stream`・`human-only`・`host-screen-only`・`gateway`・`todo`）に載る。`human-only` は `HUMAN_ONLY` の 5 つとちょうど同じで、操作と設定の risk も突き合わせる（WS のコマンドを持たない操作は `HUMAN_ONLY` の `ops`。今は bot の承認モードの `bots.setMode` だけ。[ADR 0109](adr/0109-bot-and-dispatch.md)）（5 つに当たらないものを human-only にしても、当たるものを外しても落ちる）。`todo` と、`store.setPref` を直に呼ぶ印（`ops-allow-setpref`。prefs.json への書き込みの出口 `savePref`・起動時の修復・自動圧縮の 3 か所）は増やせない（縮めるときだけ `node tests/lint-ops.mjs --update-baseline`）。prefs に書くキー（`savePref` の呼び出し）は全部、設定の一覧にある（未移行の欄は無い）。`setPref` の WS コマンドは設定の一覧から作るので、キーの一覧を手で持たない。権限の表・定義の検査・関所の順序は `ops-policy`・`ops-registry`、実際の一覧の snapshot（`tests/ops-surface.snap.json`。更新は `OPS_UPDATE_SNAPSHOT=1 npm test -- ops-surface`）・文の量・辞書・JSON Schema・伏せ字は `ops-surface`。
 
-## git の動き（2026-10-03）
+## git の動き（2026-10-03。右パネルは 2026-10-04 に作り直し）
 
 エージェントが git で何をしたかを、普段は隠し、いざというときに辿れるようにする（[ADR 0085](adr/0085-host-reads-git-and-turn-snapshots.md)）。画面は `docs/design-system.md`「git の動き」。
 
@@ -58,6 +58,8 @@
 - **会話に流れたコマンドの結果から拾う**（`core/git-timeline.mjs`）: `git checkout -b` / `git switch -c` の引数・`git commit` の結果の `[branch hash] subject`・`gh pr create` の結果の URL。Claude の Bash・PowerShell、Codex の commandExecution、Antigravity の run_command の入力（`command` / `CommandLine`）と結果の本文だけを見る。失敗・結果の無い呼び出しは拾わない。
 - **WS の読み取りコマンド**: `gitStatus`（状態。`summary: true` で会話の間のファイル・コミットの合計も）・`gitPanel`（状態・したこと・変更の一覧）・`gitDiff`（1 ファイルの統一差分をハンクの行に構造化して返す。バイナリ・大きいものは本文なし）。いずれも操作 `git.status`・`git.changes`・`git.diff` を呼ぶ外側（AI・CLI も同じ操作を呼ぶ。ADR 0105）。`PROTOCOL_VERSION` は据え置き。
 - **委譲**: 子のタスクの完了時に子の作業場所の会話の間のファイル・コミットがあれば、完了通知と `ply_task_status` / `ply_task_wait` に 1 行 `変更: <branch> · N ファイル +a −d · コミット k`（`docs/agent-delegation.md`）。
+- **履歴・コミット・ステージの区別・作業場所の読み取り**（`core/git-history.mjs`。[ADR 0134](adr/0134-git-panel-tabs.md)）: すべて許可表の内の読み取り。`git.history` は `git log --branches --tags --remotes HEAD --topo-order`（hash・親・作者・日時・refs・題。`--all` は使わない。`refs/pleiad/` の撮影が混ざるため）を 50 件ずつ（`--skip` と `--max-count`）。会話の始まりは最初のターンの撮影（`-start`）の親（そのときの HEAD）で、グラフの範囲の印に使う。`git.commit` はコミット 1 つの題・本文と変更ファイル（最初の親との差。最初のコミットは空の tree。名前の変更は `-M`）。ステージの区別は `status` の XY を捨てず、index を一時ファイルへ写して `write-tree` し、ステージ済み = HEAD と index、変更 = index と作業ツリー（未追跡は U）。`git.worktrees` は `git worktree list --porcelain` に Pleiad の台帳（使っているもの・取り込みが要るもの）を突き合わせ、ふつうの worktree も出す。`git.worktree` は 1 つの中身（主の HEAD との分岐点からのコミット済みと、未コミット）。
+- **差分**: `git.diff` は範囲（`uncommitted` / `session`）の代わりに、`commit`・`from`+`to`・`stage`（`staged` / `work`）・`worktree` を選べ、`orig`（名前の変更の元）・`context`（前後の行数）・`after`（畳みを開くための後ろ側のファイルの全行。`cat-file`。大きい・消えたものは null）を受ける。ハンクは見出しをパースした `oldStart` / `oldCount` / `newStart` / `newCount` / `section` を持つ。AI・CLI には統一差分の文字列に切って返す（既存のまま）。
 
 ## 分けた作業場所（2026-10-03）
 
