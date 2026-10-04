@@ -14,7 +14,7 @@
 //      item/started で見た item を覚えておいて承認カードに載せる。
 import os from "node:os";
 import { codexQuota, createCodexMeter } from '../usage.mjs';
-import { codexLimitError } from './codex-limit.mjs';
+import { codexLimitError, codexResetOf } from './codex-limit.mjs';
 import { rpc } from "./codex-rpc.mjs";
 import { rpc as nativeRpc } from './codex-rpc.mjs';
 import { commandActivity } from "./codex-background.mjs";
@@ -1426,10 +1426,9 @@ export const backend = {
       const message = hide(String(error?.message ?? error?.type ?? error ?? t('codex.errors.failed')));
       if (!codexLimitError(error)) return { type: 'turnResult', outcome: 'error', error: message, turns };
       const usage = await rpc.request('account/rateLimits/read', {}, 15_000).then(codexQuota, () => null);
-      const next = usage?.windows?.filter(w => Date.parse(w.resetsAt) > Date.now())
-        .sort((a, b) => Date.parse(a.resetsAt) - Date.parse(b.resetsAt))[0];
+      const next = codexResetOf(usage?.windows);
       return { type: 'turnResult', outcome: 'limited', error: message, turns,
-        resetsAt: next ? Date.parse(next.resetsAt) : null, window: next?.label ?? null };
+        resetsAt: next?.resetsAt ?? null, window: next?.window ?? null };
     };
     // 別プロセスの接続（contextRuntime）の通知は native の onNotify に来ない。サブエージェントの観測はここで足す
     const observe = rpc === nativeRpc ? () => {} : observeSubagents;

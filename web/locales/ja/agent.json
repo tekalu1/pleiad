@@ -376,12 +376,12 @@
         "summary": "外の AI から pleiad mcp を起動する設定（MCP の設定の JSON と claude mcp add のコマンド）を返す。"
       }
     },
-    "resumeQueue": { "get": { "summary": "上限の解除後に再開する会話の順番と進みを返す。" }, "set": { "summary": "上限の解除後の再開の順番や自動再開を変える。", "action": "変更する操作。", "sessionId": "対象の会話 ID（first・auto で使う）。", "enabled": "auto のとき自動再開を有効にするか。" } },
     "sessions": {
       "scheduleSend": { "summary": "会話に送信予定を置く。時刻が来たら、ふつうの送信と同じ送信待ちへ入る。人が決める操作なので承認が要る。", "sessionId": "送る会話の ID。", "prompt": "送る本文。", "at": "送る時刻（Unix ミリ秒、または ISO 8601 の日時）。", "messageId": "送信の ID（英数字とハイフンで 8〜80 文字）。省略すると新しく決める。", "attachments": "添付（パス・名前・MIME）。", "cwd": "作業ディレクトリ。", "mode": "承認モード。", "confirm": "会話 {{session}} に {{at}} の送信予定を置く: {{prompt}}" },
       "sendScheduledNow": { "summary": "送信予定を、時刻を待たずに今すぐ送信待ちへ入れる。", "id": "予定の ID。", "confirm": "送信予定 {{id}} を今すぐ送る" },
       "schedules": { "summary": "会話の予定を返す。", "sessionId": "絞り込む会話の ID。省略すると全件。" },
       "cancelSchedule": { "summary": "会話の予定を取り消す。", "id": "予定の ID。" },
+      "setAutoResume": { "summary": "上限で止まった会話の、解除後の自動再開を会話ごとに入れる・外す。", "sessionId": "対象の会話 ID。", "enabled": "自動再開を有効にするか。" },
       "search": {
         "summary": "会話の題・状態・場所・本文を探す。語は空白で AND、\"…\" で完全一致。結果は会話ごとの抜粋つき。",
         "query": "検索語。空白区切りは AND、\"…\" で囲むと完全一致（大小・全角半角を区別）。空なら絞り込みだけ。",
@@ -1402,7 +1402,6 @@
     "effort": "新しい会話の既定の思考の深さ。",
     "mode": "承認モードの既定（人間だけが変える）。",
     "claudeAccount": "既定の Claude のアカウント（id。トークンは持たない。人間だけが変える）。",
-    "limitResume": "使用量の上限の解除後に再開する方法・同時に動かす数・使用率の歯止め。",
     "compaction": {
       "auto": "自動圧縮の設定（有効・閾値のトークン数・エージェントごとの放置の分数）。"
     },

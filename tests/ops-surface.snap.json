@@ -2240,46 +2240,6 @@
       "input": "25c7d85c859a"
     },
     {
-      "id": "resumeQueue.get",
-      "risk": "read",
-      "riskOf": false,
-      "scope": "global",
-      "modeGate": true,
-      "hostScreenOnly": false,
-      "surfaces": {
-        "ui": true,
-        "mcp": false,
-        "cli": {
-          "path": [
-            "resume-queue",
-            "get"
-          ]
-        }
-      },
-      "legacyCommand": null,
-      "input": "25c7d85c859a"
-    },
-    {
-      "id": "resumeQueue.set",
-      "risk": "write",
-      "riskOf": false,
-      "scope": "global",
-      "modeGate": true,
-      "hostScreenOnly": false,
-      "surfaces": {
-        "ui": true,
-        "mcp": false,
-        "cli": {
-          "path": [
-            "resume-queue",
-            "set"
-          ]
-        }
-      },
-      "legacyCommand": null,
-      "input": "b4a434de6904"
-    },
-    {
       "id": "routines.create",
       "risk": "write",
       "riskOf": true,
@@ -3012,6 +2972,29 @@
       },
       "legacyCommand": "setConversationAutoCompaction",
       "input": "46ccb253749e"
+    },
+    {
+      "id": "sessions.setAutoResume",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": false,
+        "cli": {
+          "path": [
+            "sessions",
+            "set-auto-resume"
+          ],
+          "positional": [
+            "sessionId"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "918aa1c61e4e"
     },
     {
       "id": "sessions.setGrouped",
@@ -3795,15 +3778,6 @@
       ]
     },
     {
-      "key": "limitResume",
-      "risk": "write",
-      "riskOf": false,
-      "writable": true,
-      "prefKeys": [
-        "limitResume"
-      ]
-    },
-    {
       "key": "linkOpen",
       "risk": "write",
       "riskOf": false,
@@ -3976,13 +3950,6 @@
       "agent-bound-readonly": "write=deny:READ_ONLY_MODE guarded=deny:READ_ONLY_MODE"
     },
     "instructionBudget": {
-      "human": "write=allow",
-      "agent-unbound": "write=allow",
-      "agent-bound-ask": "write=allow",
-      "agent-bound-never-full": "write=allow",
-      "agent-bound-readonly": "write=deny:READ_ONLY_MODE"
-    },
-    "limitResume": {
       "human": "write=allow",
       "agent-unbound": "write=allow",
       "agent-bound-ask": "write=allow",
@@ -4696,16 +4663,6 @@
       "positional": []
     },
     {
-      "id": "resumeQueue.get",
-      "path": "resume-queue get",
-      "positional": []
-    },
-    {
-      "id": "resumeQueue.set",
-      "path": "resume-queue set",
-      "positional": []
-    },
-    {
       "id": "routines.create",
       "path": "routines create",
       "positional": []
@@ -4939,6 +4896,13 @@
       "path": "sessions send-scheduled-now",
       "positional": [
         "id"
+      ]
+    },
+    {
+      "id": "sessions.setAutoResume",
+      "path": "sessions set-auto-resume",
+      "positional": [
+        "sessionId"
       ]
     },
     {
