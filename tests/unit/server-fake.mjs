@@ -11,6 +11,7 @@ import path from "node:path";
 import { startServer, ROOT } from "../lib/server.mjs";
 import { open, sleep } from "../lib/ws-client.mjs";
 import { readSessions } from '../lib/data-store.mjs';
+import { createFakeGates } from '../lib/fake-gate.mjs';
 
 export const name = "server-fake";
 export const title = "サーバ全体が LLM 無しで往復する";
@@ -417,6 +418,9 @@ export default async function (t) {
 
     // ---- ready は新しくつないだ接続にだけ返る（別サーバ）
     await readyCase(t, scratch);
+
+    // ---- テスト用のゲート（別サーバ。台本 "bg <本数> gate:<名前>"）。置き場の無いこのサーバでは、固まらずにエラー
+    await gateCase(t, scratch, c);
   } finally {
     c.close();
     await server.stop();
@@ -549,6 +553,66 @@ async function graceCase(t, scratch) {
       back.close();
     }
   } finally {
+    await server.stop();
+  }
+}
+
+/**
+ * テスト用のゲート（core/backends/fake.mjs。ほかのテストが、実時間でなく終わりを決めるのに使う）。
+ * 開くまで終わらない・開くと本数ぶんが終わる・開かないまま中断しても待ちから抜ける・従来の時間指定の "bg" はそのまま・置き場が無ければエラー。
+ */
+async function gateCase(t, scratch, plain) {
+  const textIn = (events) => events.filter((e) => e.type === "text.delta").map((e) => e.text).join("");
+  const noDir = await plain.runTurn({ backend: "fake", cwd: ROOT, prompt: "bg 1 gate:x" }, { ms: 10_000 });
+  const noDirResult = noDir.events.find((e) => e.type === "turnResult");
+  t.ok("ゲートの置き場が無ければ、固まらずエラーで終わる", noDirResult?.outcome === "error" && String(noDirResult.error).includes("AGENT_HOST_FAKE_GATE_DIR"), JSON.stringify(noDirResult));
+
+  const gates = await createFakeGates(scratch);
+  const server = await startServer({
+    env: { AGENT_HOST_BACKENDS: "fake", AGENT_HOST_FAKE_STEER_CONFIRM_MS: "20", ...gates.env },
+    dataDir: path.join(scratch, "gate"),
+    timeoutMs: 30_000,
+  });
+  const c = await open({ port: server.port, token: server.token });
+  try {
+    // 時間指定（既定）は今までどおり、ゲート無しで時間が来れば終わる
+    const timed = await c.runTurn({ backend: "fake", cwd: ROOT, prompt: "bg 2 0.3" }, { ms: 10_000 });
+    t.ok("時間指定の bg は、ゲート無しで今までどおり時間で終わる", timed.outcome === "ok" && textIn(timed.events).includes("サブエージェント 1 が終わった") && textIn(timed.events).includes("サブエージェント 2 が終わった"));
+
+    // 開くまで終わらず、開くと終わる
+    const mark = c.mark();
+    const running = c.runTurn({ backend: "fake", cwd: ROOT, prompt: "bg 2 gate:g1" }, { ms: 20_000 });
+    const session = (await c.waitFor((e) => e.type === "session", { from: mark, ms: 10_000 })).sessionId;
+    await c.waitFor((e) => e.type === "phase" && e.sessionId === session && e.state === "waiting", { from: mark, ms: 10_000 });
+    t.ok("ゲートが開くまでは、裏の子は終わらず、ターンも続く",
+      !c.since(mark).some((e) => e.type === "turnEnd" && e.sessionId === session) && !textIn(c.since(mark)).includes("が終わった")
+      && (await c.cmd("running")).turns.some((r) => r.sessionId === session));
+    await gates.open("g1");
+    const done = await running;
+    t.ok("ゲートを開くと、本数ぶんの子が順に終わってターンが終わる", done.outcome === "ok" && textIn(done.events).includes("サブエージェント 1 が終わった") && textIn(done.events).includes("サブエージェント 2 が終わった"));
+
+    // 開かないまま中断しても、待ちから抜ける
+    const mark2 = c.mark();
+    const slow = c.runTurn({ backend: "fake", cwd: ROOT, prompt: "bg 1 gate:never" }, { ms: 20_000 });
+    const session2 = (await c.waitFor((e) => e.type === "session", { from: mark2, ms: 10_000 })).sessionId;
+    await c.waitFor((e) => e.type === "phase" && e.sessionId === session2 && e.state === "waiting", { from: mark2, ms: 10_000 });
+    await c.cmd("abort", { sessionId: session2 });
+    const stopped = await slow;
+    t.ok("ゲートを開かないまま中断すると、待ちから抜けてターンが終わる", stopped.outcome === "aborted" && (await c.cmd("running")).count === 0, String(stopped.outcome));
+
+    // 「渡った」合図を HOLD_CONFIRM で止めている間に中断しても、待ちから抜ける。ゲートを開く前は合図を出さない
+    const mark3 = c.mark();
+    const holding = c.runTurn({ backend: "fake", cwd: ROOT, prompt: "bg 1 gate:never2" }, { ms: 20_000 });
+    const session3 = (await c.waitFor((e) => e.type === "session", { from: mark3, ms: 10_000 })).sessionId;
+    await c.waitFor((e) => e.type === "phase" && e.sessionId === session3 && e.state === "waiting", { from: mark3, ms: 10_000 });
+    await c.cmd("sendMessage", { sessionId: session3, messageId: "hold-0001", prompt: "ping HOLD_CONFIRM:hold" });
+    await c.waitFor((e) => e.type === "userMessage" && e.messageId === "hold-0001", { from: mark3, ms: 10_000 });
+    t.ok("HOLD_CONFIRM のゲートが開くまでは、渡った合図を出さない", !c.since(mark3).some((e) => e.type === "userMessage.delivered" && e.messageId === "hold-0001"));
+    await c.cmd("abort", { sessionId: session3 });
+    const held = await holding;
+    t.ok("HOLD_CONFIRM の待ちの途中で中断しても、ターンが終わる", held.outcome === "aborted" && (await c.cmd("running")).count === 0, String(held.outcome));
+  } finally {
+    c.close();
     await server.stop();
   }
 }
