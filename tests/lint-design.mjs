@@ -34,15 +34,18 @@ const FAM = {
   line:    n => n === '--line' || n.startsWith('--line-'),
   onfill:  n => n === '--on-fill',
   shadow:  n => n === '--shadow',
+  diff:    n => n.startsWith('--diff-'),   /* git の差分と状態の文字だけ（ADR 0135）。使える場所は DIFF_FILE */
 };
 /* プロパティごとに許す族。ここに無い族のトークンを色のプロパティに書いたら落とす。 */
 const ALLOW = {
-  background: ['surface', 'fill'],
-  color:      ['ink', 'onfill'],
+  background: ['surface', 'fill', 'diff'],
+  color:      ['ink', 'onfill', 'diff'],
   border:     ['line', 'surface', 'shadow', 'fill'],   /* 主要ボタンの枠だけ fill を許す */
   svg:        ['line', 'ink', 'fill', 'surface'],
   decoration: ['line', 'ink'],                          /* リンクの下線 */
 };
+/* --diff-* を使ってよいファイル。差分の色は面が彩度を持つので、他の画面に流用させない（design-system §2.1 の例外） */
+const DIFF_FILE = /(^|[\/])git\.css$/;
 /* 片側だけの線。border-left のような単独指定と、inset の影で片側に置いた線。意味を持たせても
    持たせなくても使わない（選択・待ち・失敗は面の階調・記号・文字で表す）。
    border-top-left-radius のような角丸は線ではないので除く。 */
@@ -424,7 +427,9 @@ export function lint(files, opts) {
         if (group === 'background' && FAM.line(n) && /gradient\(/.test(d.value)) continue;  /* 線から作る階調は許す */
         // This 7px pseudo-element is a graph node, not a UI surface.
         if (group === 'background' && n === '--line-blue' && r.selector === '.thread.branched .mw.node:not(.card) .mw-gutter::before') continue;
-        if (!fam || !ALLOW[group].includes(fam))
+        if (fam === 'diff' && !DIFF_FILE.test(r.file))
+          add(r.file, d.line, 'family', `${d.prop} に var(${n})：--diff-* は web/git.css（git の差分・変更の一覧）だけで使える`);
+        else if (!fam || !ALLOW[group].includes(fam))
           add(r.file, d.line, 'family', `${d.prop} に var(${n})：${group} が使えるのは ${ALLOW[group].map(x => '--' + x + '-*').join(' / ')} だけ`);
         if (group === 'background' && FAM.fill(n)) usesFill = true;
       }

@@ -1,7 +1,7 @@
 // 分けた作業場所の画面の部品（docs/design-system.md「分けた作業場所」、ADR 0089, 0133）。
 //   - 送ると自動で分けるかの判定（入力欄のチップの「· 分けて始めます」の元。web/composer-controls.mjs が描く）
 //   - 会話の中の静かな 1 行（分けた作業場所で始めました・元の場所に戻す）— present kind: 'worktree'
-//   - 右パネル「git」の「残っている作業場所」（取り込みを頼む・退避して消す・残す）
+//   - 右パネル「git」の作業場所タブの、未取り込みの行を開いた中の操作（取り込みを頼む・退避して消す・残す。ADR 0135）
 //   - 設定 › エージェント設定の「作業場所」
 // 文の組み立ては DOM に触れない関数に分ける。DOM は web/dom.mjs の el だけ。
 import { el } from './dom.mjs';
@@ -116,25 +116,27 @@ export function createLeftovers({ keep, ask, unask, archive, restore, changed })
   // i18n-dynamic: worktree.left.fail.
   const failText = (why) => t(`worktree.left.fail.${['busy', 'links', 'changed', 'archive', 'unowned', 'attached'].includes(why) ? why : 'other'}`);
 
-  function rowView(row) {
+  function rowView(row, { header = true } = {}) {
     const st = stateOf.get(row.id) ?? { s: row.kept ? 'keep' : 'idle', msg: row.kept ? t('worktree.left.kept') : '', undo: t('worktree.left.keptUndo') };
     const box = el('div', 'wt-item');
     box.dataset.state = st.s;
-    const line = el('button', 'wt-row');
-    line.type = 'button';
-    line.setAttribute('aria-expanded', String(open.has(row.id)));
-    line.append(icon(branchIcon), el('code', null, row.branch));
-    const meta = [row.files != null ? t('git.files', { count: row.files }) : null, row.at ? fmt.relative(row.at) : null].filter(Boolean).join(' · ');
-    line.append(el('span', 'wt-row-m', meta ? `· ${meta}` : ''));
-    const chev = el('span', 'wt-chev');
-    chev.innerHTML = chevRightIcon;
-    line.append(chev);
-    line.onclick = () => { if (open.has(row.id)) open.delete(row.id); else open.add(row.id); changed(); };
-    box.append(line);
-    if (open.has(row.id) && row.fileNames?.length) {
-      const ul = el('ul', 'wt-files');
-      for (const name of row.fileNames) ul.append(el('li', null, name));
-      box.append(ul);
+    if (header) {
+      const line = el('button', 'wt-row');
+      line.type = 'button';
+      line.setAttribute('aria-expanded', String(open.has(row.id)));
+      line.append(icon(branchIcon), el('code', null, row.branch));
+      const meta = [row.files != null ? t('git.files', { count: row.files }) : null, row.at ? fmt.relative(row.at) : null].filter(Boolean).join(' · ');
+      line.append(el('span', 'wt-row-m', meta ? `· ${meta}` : ''));
+      const chev = el('span', 'wt-chev');
+      chev.innerHTML = chevRightIcon;
+      line.append(chev);
+      line.onclick = () => { if (open.has(row.id)) open.delete(row.id); else open.add(row.id); changed(); };
+      box.append(line);
+      if (open.has(row.id) && row.fileNames?.length) {
+        const ul = el('ul', 'wt-files');
+        for (const name of row.fileNames) ul.append(el('li', null, name));
+        box.append(ul);
+      }
     }
     if (st.s === 'idle' || st.s === 'fail') {
       const acts = el('div', 'wt-item-acts');
@@ -175,6 +177,8 @@ export function createLeftovers({ keep, ask, unask, archive, restore, changed })
   }
 
   return {
+    /** 行を開いた中の操作と結果だけ（git パネルの作業場所タブ。見出しの行は呼び出し側が持つ） */
+    actions(row) { return rowView(row, { header: false }); },
     /** パネルのブロック。rows が空でも、退避した直後の「元に戻す」の行が残っていれば出す */
     section(rows) {
       const shown = [...rows];

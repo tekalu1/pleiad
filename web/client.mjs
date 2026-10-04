@@ -7831,14 +7831,15 @@ $('contextEntry').onclick = () => sessionContext.toggle($('contextEntry'));
 const toc = createConversationToc({ thread, log, nav, preview: filePreview, narrow: navNarrow, button: $('tocEntry') });
 // 会話の右パネル「git」（ADR 0085）。頭の行のアイコン・返答の下の要約行・委譲カードの「変更」・狭い画面の「…」から開く
 gitPanel = setupGitPanel({ cmd, preview: filePreview, session: () => ({ id: state.current ?? null, cwd: state.cwd }),
-  jump: jumpToConversation, use: useGitText, worktrees: worktreeOps,
+  jump: jumpToConversation, use: useGitText, worktrees: worktreeOps, canOpen: () => Boolean(state.current && state.git.data),
   onState: (git, { foreign }) => { if (!foreign) { state.git.data = git; paintGit(); } } });
 gitPanel.onOpenChange(paintGitEntry);
 $('gitEntry').onclick = () => gitPanel.toggle($('gitEntry'));
 document.addEventListener('ply-git-open', (event) => {
   const sessionId = event.detail?.sessionId ?? null;
   if (!sessionId && !state.current) return;
-  gitPanel.open(event.target.closest?.('button') ?? null, { sessionId });
+  // 返答の下の 1 行（detail.turn）と委譲カードから開いたら「この会話の間」、頭のアイコン・近道からは「コミットしていない分」
+  gitPanel.open(event.target.closest?.('button') ?? null, { sessionId, range: 'session' });
   paintGitEntry();
 });
 document.addEventListener('keydown', event => {

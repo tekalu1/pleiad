@@ -24,6 +24,8 @@ import { createUsageMonitor } from './delegation-usage.mjs';
 import { canDelegate, resolveDelegatedMode, modePosition, scopeRank, autonomyRank, SCOPES, AUTONOMIES } from './modes.mjs';
 import { createGitActivity } from './git-activity.mjs';
 import * as gitInfo from './git-info.mjs';
+import * as gitHistory from './git-history.mjs';
+import { worktreeList } from './git-worktree.mjs';
 import { createWorktreeHost, writesScope } from './worktree-host.mjs';
 import { insideDir, sameDir } from './worktrees.mjs';
 import { createCallTracker, timelineOf } from './git-timeline.mjs';
@@ -964,6 +966,16 @@ async function gitCwd(args) {
   const cwd = typeof args?.cwd === 'string' && args.cwd ? args.cwd : null;
   if (!cwd) return null;
   return await knownCwd(cwd) ? cwd : null;
+}
+
+/** git の問い合わせの作業場所。worktree が言われたら、この会話のリポジトリの git worktree の一覧にあるものだけ（任意の場所は通さない） */
+async function gitWorktreeCwd(args) {
+  const cwd = await gitCwd(args);
+  const asked = typeof args?.worktree === 'string' && args.worktree ? args.worktree : null;
+  if (!cwd || !asked) return cwd;
+  const info = await gitInfo.repoInfo(cwd);
+  const list = info ? await worktreeList(info.root) : null;
+  return list?.find(w => sameDir(w.path, asked))?.path ?? null;
 }
 
 /**
@@ -3086,18 +3098,64 @@ const opsGit = {
   panel: async (args, { sweep = false } = {}) => {
     const sessionId = args?.sessionId;
     const cwd = await gitCwd(args);
-    const state = cwd ? await gitActivity.status(cwd, { fresh: true }) : null;
+    const only = args?.only === 'changes' || args?.only === 'light' ? args.only : null;
+    const state = cwd ? await gitActivity.status(cwd, { fresh: only !== 'changes' }) : null;
     if (!state) return { git: null };
+    const range = args?.range === 'session' ? 'session' : 'uncommitted';
+    // 範囲の切り替えは変更の一覧だけで足りる（会話の記録も、分けた作業場所の一覧も読まない）
+    if (only === 'changes') return { git: state, changes: await gitActivity.changes(cwd, sessionId, range), at: Date.now() };
     if (sweep) worktreeSweepSoon();
-    const worktrees = { current: await worktreeHost.worktrees.byPath(cwd).then(e => (e ? publicWorktree(e) : null)).catch(() => null), leftovers: await worktreeHost.leftovers({ cwd }).catch(() => []) };
+    const worktrees = only === 'light' ? { current: null, leftovers: [] } : { current: await worktreeHost.worktrees.byPath(cwd).then(e => (e ? publicWorktree(e) : null)).catch(() => null), leftovers: await worktreeHost.leftovers({ cwd }).catch(() => []) };
     const backend = sessionId ? await resolveBackendForSession(sessionId) : null;
     const timeline = sessionId ? timelineOf((await history.loadTranscript(sessionId, backend).catch(() => ({ messages: [] }))).messages) : [];
-    const changes = await gitActivity.changes(cwd, sessionId, args?.range === 'session' ? 'session' : 'uncommitted');
+    const changes = await gitActivity.changes(cwd, sessionId, range);
     return { git: state, timeline, changes, worktrees, at: Date.now() };
   },
   diff: async (args) => {
+    const cwd = await gitWorktreeCwd(args);
+    const opts = { stage: args?.stage, commit: args?.commit, from: args?.from, to: args?.to, orig: args?.orig, context: args?.context, after: args?.after === true };
+    return { diff: cwd ? await gitActivity.diff(cwd, args?.sessionId, args?.range === 'session' ? 'session' : 'uncommitted', String(args?.path ?? ''), opts) : null };
+  },
+  // コミットの履歴（グラフ）の 1 ページ。skip は読み飛ばす件数
+  history: async (args) => {
     const cwd = await gitCwd(args);
-    return { diff: cwd ? await gitActivity.diff(cwd, args?.sessionId, args?.range === 'session' ? 'session' : 'uncommitted', String(args?.path ?? '')) : null };
+    return { history: cwd ? await gitActivity.commits(cwd, args?.sessionId, { limit: args?.limit, skip: args?.skip }) : null };
+  },
+  // コミット 1 つの題・本文と変わったファイル
+  commit: async (args) => {
+    const cwd = await gitCwd(args);
+    return { commit: cwd ? await gitActivity.commit(cwd, args?.hash) : null };
+  },
+  // このリポジトリの作業場所（git worktree）の一覧。Pleiad の台帳と突き合わせ、ふつうの git worktree add で作ったものも出す
+  worktrees: async (args) => {
+    const cwd = await gitCwd(args);
+    const info = cwd ? await gitInfo.repoInfo(cwd) : null;
+    const view = info ? await gitHistory.readWorktrees(info.root) : null;
+    if (!view) return { worktrees: null };
+    const [ledger, left, all] = await Promise.all([worktreeHost.worktrees.list().catch(() => []), worktreeHost.leftovers({ cwd }).catch(() => []), store.getAll().catch(() => ({}))]);
+    const rows = await Promise.all(view.rows.map(async (row) => {
+      const entry = ledger.find(e => e.state === 'ready' && sameDir(e.path, row.path));
+      if (row.here) return { ...row, kind: 'here' };
+      if (!entry) return { ...row, kind: 'plain' };
+      const leftover = left.find(l => l.id === entry.id);
+      if (leftover) return { ...row, kind: 'left', leftover };
+      const users = await worktreeHost.users(entry, all).catch(() => ({ busy: [], attached: [] }));
+      if (users.busy.length || users.attached.length) {
+        const who = users.attached.map(a => all?.[a.sessionId]?.title).find(Boolean) ?? '';
+        return { ...row, kind: 'busy', who };
+      }
+      return { ...row, kind: 'clean' };
+    }));
+    return { worktrees: { base: view.base, total: view.total, rows } };
+  },
+  // 作業場所 1 つの中身（主の作業場所の HEAD との分岐点からのコミット済みの変更と、コミットしていない変更）
+  worktree: async (args) => {
+    const cwd = await gitWorktreeCwd(args);
+    const info = cwd ? await gitInfo.repoInfo(cwd) : null;
+    if (!info || !args?.worktree) return { worktree: null };
+    const list = await worktreeList(info.root);
+    const baseHead = list?.[0]?.head ?? null;
+    return { worktree: { path: cwd, ...(await gitHistory.readWorktreeDetail(info.root, cwd, baseHead)) } };
   },
 };
 
@@ -5586,6 +5644,14 @@ wss.on("connection", (ws, req) => {
           return await viaOp('git.changes');
         case 'gitDiff':
           return await viaOp('git.diff');
+        case 'gitHistory':
+          return await viaOp('git.history');
+        case 'gitCommit':
+          return await viaOp('git.commit');
+        case 'gitWorktrees':
+          return await viaOp('git.worktrees');
+        case 'gitWorktree':
+          return await viaOp('git.worktree');
         // ---- 分けた作業場所（ADR 0089）。ぶつかりの確認・分ける・片付けの操作・「いつも分ける」の設定
         case 'worktreeCheck':
           return await viaOp('worktrees.check');

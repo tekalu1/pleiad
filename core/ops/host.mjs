@@ -18,8 +18,8 @@ export async function fromHost(fn) {
 export const PAGE_DEFAULT = 30;
 export const PAGE_MAX = 100;
 
-const encode = (offset) => Buffer.from(`o${offset}`).toString('base64url');
-const decode = (cursor) => {
+export const encodeCursor = (offset) => Buffer.from(`o${offset}`).toString('base64url');
+export const decodeCursor = (cursor) => {
   const m = /^o(\d{1,9})$/.exec(Buffer.from(String(cursor), 'base64url').toString('utf8'));
   return m ? Number(m[1]) : null;
 };
@@ -29,10 +29,10 @@ const decode = (cursor) => {
  * 返り値: { total, items, next }。next が null なら終わり
  */
 export function pageOf(ctx, items, { limit = PAGE_DEFAULT, cursor } = {}) {
-  const start = cursor === undefined ? 0 : decode(cursor);
+  const start = cursor === undefined ? 0 : decodeCursor(cursor);
   if (start === null) throw new OpError('INVALID', agentT(ctx.locale, 'ops.errors.badCursor'));
   const page = items.slice(start, start + limit);
-  return { total: items.length, items: page, next: start + limit < items.length ? encode(start + limit) : null };
+  return { total: items.length, items: page, next: start + limit < items.length ? encodeCursor(start + limit) : null };
 }
 
 /** 長い文字列を切る（AI が 1 回で読む量を抑える。切ったら truncated で知らせる側が使う） */

@@ -121,8 +121,8 @@ export const DATA_WRITES = [
   { file: 'core/folder-uploads.mjs', sites: 7, targets: [
     { name: 'uploads/…（manifest.json と、利用者が選んだ作業フォルダーへの写し）', limit: '手元のフォルダーの送信 1 回につき 1 組。7 日触られなければ掃除する', reason: '成果物と送信の途中の台帳。作業フォルダーへの書き込みは置き場の外' },
   ] },
-  { file: 'core/git-info.mjs', sites: 1, targets: [
-    { name: '(置き場の外) os.tmpdir() の pleiad-index-*', limit: 'git の索引 1 つの写し。呼び出しごとに作って消す', reason: '作業場所の git の索引を汚さずに差分を取るための一時ファイル' },
+  { file: 'core/git-info.mjs', sites: 2, targets: [
+    { name: '(置き場の外) os.tmpdir() の pleiad-index-*', limit: 'git の索引 1 つの写し。呼び出しごとに作って消す', reason: '作業場所の git の索引を汚さずに差分を取るための一時ファイル（作業ツリーの撮影 snapshotTree と、ステージ済みの tree を読む indexTree の 2 か所）' },
   ] },
   { file: 'desktop/agent-browser-bin.cjs', sites: 1, targets: [
     { name: 'agent-browser-bin/agent-browser(.exe)', limit: '同梱の実行ファイル 1 つ。大きさが違うときだけ写し直す', reason: '開発時（未パッケージ）に実行ファイルを置き場へ写す。書き換えない成果物' },

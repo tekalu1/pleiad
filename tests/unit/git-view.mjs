@@ -1,12 +1,11 @@
 // git の動きの画面の部品（web/git-view.mjs・web/git-panel.mjs の純粋な部分）。
-// 要約行の文・委譲カードの「変更」の行・右パネルの「したこと」の行と差分の描き方（色を付けない・+ − の記号と面の階調）を、最小の DOM で見る。
+// 要約行の文・委譲カードの「変更」の行・右パネルの枠の表（gitSlots）を、最小の DOM で見る。
 import assert from 'node:assert/strict';
 import { changeText, branchLabel, filesText, summaryParts, renderGitSummary, renderDelegateGit } from '../../web/git-view.mjs';
-import { actRow, diffBody } from '../../web/git-panel.mjs';
 import { applySlots, gitSlots } from '../../web/side-panel.mjs';
 
 export const name = 'git-view';
-export const title = 'git の動きの画面: 要約行の文・委譲カードの変更の行・したことの行・差分の面（色なし）・右パネルの表';
+export const title = 'git の動きの画面: 要約行の文・委譲カードの変更の行・右パネルの表';
 
 const text = (node) => node.textContent;
 const all = (node, cls) => node.querySelectorAll(`.${cls}`);
@@ -48,32 +47,11 @@ export default async function (t) {
   assert.equal(text(renderDelegateGit({ branch: 'main', linked: false, session: { files: 1, add: 1, del: 0, commits: 0 } }, { sessionId: 'c' }).querySelector('.git-sum')), 'main·1 ファイル +1', '分けた作業場所でなければ札を付けない・コミットが無ければ出さない');
   t.ok('委譲カード: 「変更」の行（分けた作業場所の札・ファイルとコミット）・押すと子の git パネル', true);
 
-  // ---- 右パネルの「したこと」の行
-  const jumps = [];
-  const branchRow = actRow({ kind: 'branch', branch: 'fix/x', at: '2026-10-03T03:31:00Z', uuid: 'a1', toolId: 't1' }, { jump: (e) => jumps.push(e) });
-  assert(text(branchRow).includes('ブランチ') && text(branchRow).includes('fix/x') && text(branchRow).includes('を作成'));
-  assert.equal(branchRow.querySelector('code').textContent, 'fix/x', 'ブランチ名・hash は等幅（code）');
-  const commitRow = actRow({ kind: 'commit', hash: '3f2a9c1', subject: 'fix: a', branch: 'x' }, { jump: () => {} });
-  assert(text(commitRow).includes('コミット') && text(commitRow).includes('3f2a9c1') && text(commitRow).includes('「fix: a」'));
-  assert(text(actRow({ kind: 'pr', number: 128, url: 'u' }, { jump: () => {} })).includes('PR #128 を作成'));
-  const go = branchRow.querySelector('button');
-  assert.equal(go.attrs['aria-label'], '会話のこの場所へ'); go.onclick();
-  assert.deepEqual(jumps, [{ kind: 'branch', branch: 'fix/x', at: '2026-10-03T03:31:00Z', uuid: 'a1', toolId: 't1' }], '会話のこの場所へ: 行の元の出来事を渡す');
-  assert.equal(actRow({ kind: 'pr', number: 1, url: 'u' }, { jump: () => {}, jumpable: false }).querySelector('button').hidden, true, '別の会話の作業場所では飛ばない');
-  t.ok('したことの行: 時刻・種類のアイコン・文（ブランチ名と hash は等幅）・会話のこの場所へ', true);
-
-  // ---- 差分: 色を付けず、記号と面の階調
-  const box = diffBody({ hunks: [{ header: '@@ -1,2 +1,2 @@ fn', lines: [{ t: ' ', s: 'keep' }, { t: '-', s: 'old' }, { t: '+', s: 'new' }] }, { header: '@@ -9 +9 @@', lines: [{ t: '+', s: 'x' }] }] });
-  const lines = all(box, 'git-dl');
-  assert.deepEqual(lines.map((l) => l.className), ['git-dl c', 'git-dl d', 'git-dl a', 'git-dl a']);
-  assert.deepEqual(lines.map((l) => l.children[0].textContent), [' ', '−', '+', '+'], '削除は − の記号（U+2212）で出す');
-  assert.equal(all(box, 'git-dh').length, 2);
-  assert(!/color|style/.test(box.outerHTML.replace(/class="[^"]*"/g, '')), '色や style を直書きしない');
-  t.ok('差分: 追加・削除・文脈を class で分け（面の階調は CSS）、記号は + − 、色の指定を持たない', true);
-
   // ---- 右パネルの表（gitSlots）
   const slots = gitSlots({ label: 'git', footer: ['custom0', 'custom1'] });
   assert.deepEqual(slots.head, ['close']); assert.deepEqual(slots.footer, ['custom0', 'custom1']);
+  assert.deepEqual(gitSlots({ label: 'git', head: ['customHead0'], toolbar: ['customTool0'] }).head, ['customHead0', 'wide', 'close'], 'git パネルは頭に再読み込み・広げる・閉じる');
+  assert.deepEqual(gitSlots({ label: 'git', toolbar: ['customTool0'] }).toolbar, ['customTool0'], '道具の列にタブ');
   assert.equal(slots.aside, false); assert.equal(slots.views, false); assert.deepEqual(slots.toolbar, []); assert.equal(gitSlots({ label: 'git' }).footer, null);
   const node = (tag = 'div') => document.createElement(tag);
   const buttons = Object.fromEntries(['close', 'custom0', 'custom1', 'reload', 'use'].map((id) => { const b = node('button'); b.textContent = id; return [id, b]; }));

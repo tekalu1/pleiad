@@ -401,7 +401,7 @@ export default async function (t) {
         : o.id === 'mcp.read' ? [{ name: 'x' }] : o.id === 'hooks.scan' ? [{}, { cwd: home }] : o.id === 'hooks.session' ? [{ sessionId: ask.sessionId, cwd: home, backend: 'claude' }]
         // 中身を読む操作（ADR 0105）: 目印の入った home を探す・並べる
         : ['context.scan', 'context.agentMcp', 'context.skills', 'hooks.unifyPreview'].includes(o.id) ? [{}, { cwd: home }] : o.id === 'context.nativeInstructions' ? [{ cwd: home, backend: 'claude' }]
-        : o.id === 'files.listDirs' ? [{ path: home, files: true }] : o.id === 'git.diff' ? [{ sessionId: ask.sessionId, path: 'a.txt' }]
+        : o.id === 'files.listDirs' ? [{ path: home, files: true }] : o.id === 'git.diff' ? [{ sessionId: ask.sessionId, path: 'a.txt' }] : o.id === 'git.commit' ? [{ sessionId: ask.sessionId, hash: 'abcdef1' }] : o.id === 'git.worktree' ? [{ sessionId: ask.sessionId, worktree: 'x' }]
         : o.id === 'sessions.readSubagent' ? [{ sessionId: ask.sessionId, agentId: 'none' }]
         : required.length ? null : [{}];
       if (!inputs) { t.ok(`T6 ${o.id}: 必須の引数の例がある`, false); continue; }

@@ -234,7 +234,7 @@ export function setupFilePreview({ getContext, useFile, onLayout, showMenu, cmd,
   /** 今のモードの設定。状態（custom・visual・file）から毎回作り直す */
   function slots() {
     if (browsing) return browserSlots();
-    if (custom) return custom.footer ? gitSlots({ label:custom.label, footer:custom.footer }) : customSlots({ label:custom.label });
+    if (custom) return custom.footer || custom.head ? gitSlots({ label:custom.label, footer:custom.footer, head:custom.head, toolbar:custom.toolbar }) : customSlots({ label:custom.label });
     if (visual) return visualizationSlots({ origin:visual.origin, html:visual.html, canBrowse:!!snapshotQuery(visual), canUse:!!useFile });
     return fileSlots({ file, osActions:osActions() });
   }
@@ -497,7 +497,7 @@ export function setupFilePreview({ getContext, useFile, onLayout, showMenu, cmd,
    * ファイル以外の中身を同じパネルに出す（会話の右パネル「この会話のコンテキスト」）。
    * 幅・Esc・狭い画面の全面表示はファイルと共有する。出す部品は customSlots（見出しと本文と閉じるだけ）
    */
-  function openPanel({ key, title, subtitle = '', body, label, element, onClose, width = 0, footer = null, status: statusText }) {
+  function openPanel({ key, title, subtitle = '', body, label, element, onClose, width = 0, footer = null, head = null, toolbar = null, status: statusText }) {
     const previous = custom;
     abort?.abort(); generation++; paintId++; disposePdf();
     if (previous && previous.key !== key) { leaveCustom(); previous.onClose?.(); }
@@ -505,7 +505,10 @@ export function setupFilePreview({ getContext, useFile, onLayout, showMenu, cmd,
     opener = element ?? null; file = null; reference = null; visual = null;
     // 下の行のボタン（git の「再読み込み」「会話で使う」など）。枠の部品の表（parts.buttons）へ名前を付けて足し、モードの設定が並べる
     const footerIds = (footer ?? []).map((f, i) => { parts.buttons[`custom${i}`] = button(f.label, f.onClick); return `custom${i}`; });
-    custom = { key, label, onClose, opener: element ?? null, width, footer: footerIds.length ? footerIds : null };
+    // 頭の右のアイコンの列（head: [{ icon, label, onClick }]）と、道具の列に置く要素（toolbar: [Node]）。git パネルが使う
+    const headIds = (head ?? []).map((h, i) => { parts.buttons[`customHead${i}`] = h.node ?? iconButton(h.icon, h.label, h.onClick); return `customHead${i}`; });
+    const toolIds = (toolbar ?? []).map((node, i) => { parts.buttons[`customTool${i}`] = node; return `customTool${i}`; });
+    custom = { key, label, onClose, opener: element ?? null, width, footer: footerIds.length ? footerIds : null, head: headIds.length ? headIds : null, toolbar: toolIds.length ? toolIds : null };
     context = getContext(element);
     panel.hidden = false; panel.dataset.panel = key; document.body.classList.add('file-preview-open');
     document.body.classList.remove('file-preview-wide');
@@ -519,7 +522,7 @@ export function setupFilePreview({ getContext, useFile, onLayout, showMenu, cmd,
   function updatePanel(key, { title, subtitle, body, status: statusText } = {}) {
     if (panel.hidden || custom?.key !== key) return false;
     const top = content.scrollTop;
-    if (title !== undefined) name.textContent = title;
+    if (title !== undefined) { if (title && typeof title === 'object') name.replaceChildren(title); else name.textContent = title; }
     if (subtitle !== undefined) path.textContent = subtitle;
     if (statusText !== undefined) status.textContent = statusText;
     if (body) content.replaceChildren(body);

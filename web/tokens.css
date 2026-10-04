@@ -62,6 +62,11 @@
   --ink-code-keyword:#3a499e;
   --ink-code-fn:#1c2247;
 
+  /* -- 差分の色（--diff-*）。git パネルの差分と、変更の一覧の状態の文字（M / A / D / U）と +a −d にだけ使う。面は彩度を持つので、他の面・文字に流用しない（docs/design-system.md §2.1、ADR 0135。tests/lint-design.mjs が web/git.css の外を落とす） -- */
+  --diff-add-line:#e3f4e7;--diff-add-word:#b4e0c0;--diff-add-gutter:#d2ebd9;
+  --diff-del-line:#fce8eb;--diff-del-word:#f4bdc5;--diff-del-gutter:#f6d5da;
+  --diff-add-ink:#25773f;--diff-del-ink:#b2303e;--diff-mod-ink:#875900;
+
   /* -- 影。浮いているもの（候補一覧・設定メニュー）にだけ。青みを持たせて地に馴染ませる -- */
   --shadow:rgba(58,73,158,.16);
 
@@ -109,6 +114,9 @@
     --ink-code-comment:#6f7699;--ink-code-string:#b8c4e0;--ink-code-number:#c48fd4;
     --ink-code-keyword:#8fa0e6;--ink-code-fn:#dfe3f2;
     --shadow:rgba(0,0,0,.5);
+    --diff-add-line:#1b3124;--diff-add-word:#2a5838;--diff-add-gutter:#213c2c;
+    --diff-del-line:#3a1f26;--diff-del-word:#6a2a36;--diff-del-gutter:#48252f;
+    --diff-add-ink:#6fce8f;--diff-del-ink:#f28b98;--diff-mod-ink:#dcb36a;
     /* スクロールバーを暗色にする */
     color-scheme:dark}}
 
@@ -126,6 +134,9 @@
   --ink-code-comment:#6f7699;--ink-code-string:#b8c4e0;--ink-code-number:#c48fd4;
   --ink-code-keyword:#8fa0e6;--ink-code-fn:#dfe3f2;
   --shadow:rgba(0,0,0,.5);
+  --diff-add-line:#1b3124;--diff-add-word:#2a5838;--diff-add-gutter:#213c2c;
+  --diff-del-line:#3a1f26;--diff-del-word:#6a2a36;--diff-del-gutter:#48252f;
+  --diff-add-ink:#6fce8f;--diff-del-ink:#f28b98;--diff-mod-ink:#dcb36a;
   color-scheme:dark}
 
 /* 動きを減らす設定。枝の線は一瞬で引き、明滅は止める。状態が消えないよう色と形は残す */

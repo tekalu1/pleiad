@@ -1406,7 +1406,30 @@
         }
       },
       "legacyCommand": "gitPanel",
-      "input": "5638de2fdcf3"
+      "input": "323059218dcd"
+    },
+    {
+      "id": "git.commit",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "git",
+            "commit"
+          ],
+          "positional": [
+            "hash"
+          ]
+        }
+      },
+      "legacyCommand": "gitCommit",
+      "input": "d331d09630cc"
     },
     {
       "id": "git.diff",
@@ -1429,7 +1452,27 @@
         }
       },
       "legacyCommand": "gitDiff",
-      "input": "0161890a8b9d"
+      "input": "2a7fd4d807b8"
+    },
+    {
+      "id": "git.history",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "git",
+            "history"
+          ]
+        }
+      },
+      "legacyCommand": "gitHistory",
+      "input": "e894f481f4d9"
     },
     {
       "id": "git.status",
@@ -1450,6 +1493,49 @@
       },
       "legacyCommand": "gitStatus",
       "input": "c16539d234db"
+    },
+    {
+      "id": "git.worktree",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "git",
+            "worktree"
+          ],
+          "positional": [
+            "worktree"
+          ]
+        }
+      },
+      "legacyCommand": "gitWorktree",
+      "input": "2c8e728315bf"
+    },
+    {
+      "id": "git.worktrees",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "git",
+            "worktrees"
+          ]
+        }
+      },
+      "legacyCommand": "gitWorktrees",
+      "input": "6e29f82f210b"
     },
     {
       "id": "hooks.copy",
@@ -4435,6 +4521,13 @@
       "positional": []
     },
     {
+      "id": "git.commit",
+      "path": "git commit",
+      "positional": [
+        "hash"
+      ]
+    },
+    {
       "id": "git.diff",
       "path": "git diff",
       "positional": [
@@ -4442,8 +4535,25 @@
       ]
     },
     {
+      "id": "git.history",
+      "path": "git history",
+      "positional": []
+    },
+    {
       "id": "git.status",
       "path": "git status",
+      "positional": []
+    },
+    {
+      "id": "git.worktree",
+      "path": "git worktree",
+      "positional": [
+        "worktree"
+      ]
+    },
+    {
+      "id": "git.worktrees",
+      "path": "git worktrees",
       "positional": []
     },
     {
