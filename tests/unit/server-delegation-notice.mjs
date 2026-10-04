@@ -10,9 +10,11 @@ export const title = '委譲の完了通知: 走っているターンへ途中�
 const ply = (name, args) => 'ply:' + JSON.stringify({ name, arguments: args });
 const delegate = task => ply('ply_delegate', { kind: 'mechanical', backend: 'fake', task });
 const NOTICE = 'Pleiad タスク完了通知';
-// サーバーは 500ms ごとに通知を見直す（core/agent-tasks.mjs の kick）。途中送信を止めている間に「届かない」ことは、
-// 通知を試みた合図がサーバーの外から見えないので、見直しが 2 回以上回る間だけ観察する（これだけが時間で決まる待ち）
+// サーバーは 500ms ごとに通知を見直す（core/agent-tasks.mjs の kick）。「後から新しいターンも通知も起きない」ことは、
+// 見直しが 2〜3 回回る間だけ観察する。固定の bg のように子の終わりを待つ時間ではなく、起きないことの確認。
+// 通知を試みた合図はサーバーの外から見えないので、状態やイベントでは代えられない
 const NOTICE_RETRY_WINDOW_MS = 1200;
+const NO_LATE_NOTICE_MS = { a: 1600, wait: 2000, p4: 1200, p5: 600 };
 
 export default async function(t) {
   const scratch = await fs.mkdtemp(path.join(os.tmpdir(), 'ply-notice-'));
@@ -32,7 +34,7 @@ export default async function(t) {
     };
     const noticesOf = (sessionId, from = 0) => c.since(from).filter(e => e.type === 'taskNotice' && e.sessionId === sessionId);
     const turnEnds = (sessionId, from = 0) => c.since(from).filter(e => e.type === 'turnEnd' && e.sessionId === sessionId);
-    // 依頼元の会話が落ち着いた合図（ターンが終わり、子の通知も済んだ）。これ以降に新しいターンは起きない
+    // 依頼元の直前のターンが終わり、そのとき保留の子の通知が無かった合図。後から別のターンが起きないことまでは表さない
     const idle = (sessionId, from) => c.waitFor(e => e.type === 'completionReady' && e.sessionId === sessionId, { from, ms: 30_000 });
     // 依頼元のターン（bg 台本）が途中送信を受けられる（phase: waiting）ようになるまで
     const listening = (sessionId, from) => c.waitFor(e => e.type === 'phase' && e.sessionId === sessionId && e.state === 'waiting', { from, ms: 30_000 });
@@ -59,6 +61,7 @@ export default async function(t) {
       await gates.open('a-parent');
       await running1;
       await idle(p1, mark1);
+      await sleep(NO_LATE_NOTICE_MS.a);
       t.ok('依頼元のターンが終わっても、同じ完了通知の新しいターンは始まらない', turnEnds(p1, mark1).length === 1 && noticesOf(p1, mark1).length === 1);
       const loaded = await c.cmd('loadSession', { sessionId: p1 });
       const asNotice = loaded.messages.filter(m => m.internalTaskNotice);
@@ -70,7 +73,8 @@ export default async function(t) {
       const p2 = (await c.runTurn({ backend: 'fake', cwd: ROOT, prompt: delegate('bg 1 gate:b-child') })).sessionId;
       const mark2 = c.mark();
       const waiting2 = c.runTurn({ sessionId: p2, prompt: ply('ply_task_wait', { taskId: (await tasksOf(p2))[0].taskId, seconds: 30 }) });
-      // 待ちに入ってから子を終わらせる（待ちのツール呼び出しが始まり、サーバーが受けた後）
+      // 待ちのツール呼び出しが始まってから、サーバーへ 1 往復して子を終わらせる（待ちの登録そのものは外から見えない。
+      // 登録より先に終わっても、結果を受け取って通知が来ない（read）契約は同じ）
       await c.waitFor(e => e.type === 'tool.start' && e.sessionId === p2 && e.name === 'mcp__ply_agents__ply_task_wait', { from: mark2, ms: 30_000 });
       await c.cmd('agentTasks');
       await gates.open('b-child');
@@ -78,6 +82,7 @@ export default async function(t) {
       const got = JSON.parse(waited.events.find(e => e.type === 'tool.result' && e.sessionId === p2).text);
       t.ok('依頼元は ply_task_wait で完了と結果を受け取る', got.status === 'completed');
       await idle(p2, mark2);
+      await sleep(NO_LATE_NOTICE_MS.wait);
       const read = (await tasksOf(p2))[0];
       t.ok('受け取った結果の完了通知は届かない（read）', read.notification === 'read' && noticesOf(p2, mark2).length === 0 && turnEnds(p2, mark2).length === 1, read.notification);
 
@@ -124,6 +129,7 @@ export default async function(t) {
       await gates.open('p4-parent');
       await running4;
       await idle(p4, mark4);
+      await sleep(NO_LATE_NOTICE_MS.p4);
       t.ok('渡った通知は新しいターンで送り直さない', turnEnds(p4, mark4).length === 1 && noticesOf(p4, mark4).length === 1);
 
       // 受理されない（steer が false）: 空いた後の新しいターンで届く
@@ -142,6 +148,7 @@ export default async function(t) {
       await awaitTasks(p5, rows => rows[0]?.notification === 'sent');
       await c.waitFor(e => e.type === 'taskNotice' && e.sessionId === p5, { from: mark5, ms: 20000 });
       await idle(p5, mark5);
+      await sleep(NO_LATE_NOTICE_MS.p5);
       t.ok('空いた後の新しいターンで届く（今までの経路）', noticesOf(p5, mark5).length === 1 && turnEnds(p5, mark5).length === 2, `${turnEnds(p5, mark5).length} ターン`);
     }
   } finally {

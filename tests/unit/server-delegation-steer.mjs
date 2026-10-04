@@ -10,6 +10,9 @@ export const title = '委譲の追加指示（ply_task_send）: 走っている�
 const ply = (name, args) => 'ply:' + JSON.stringify({ name, arguments: args });
 const delegate = task => ply('ply_delegate', { kind: 'mechanical', backend: 'fake', task });
 
+// 終わった後に新しいターンが走らないことの観察（子の終わりを待つ時間ではない）
+const NO_LATE_TURN_MS = { a: 800, thrown: 600, e1: 600 };
+
 export default async function(t) {
   const scratch = await fs.mkdtemp(path.join(os.tmpdir(), 'ply-steer-'));
   const servers = [], clients = [];
@@ -38,13 +41,12 @@ export default async function(t) {
     const send = (parent, task, message) => c.runTurn({ sessionId: parent, prompt: ply('ply_task_send', { taskId: task.taskId, message }) });
     const instructions = async task => (await c.cmd('agentTaskInstructions', { taskId: task.taskId })).instructions;
     const stateOf = async task => (await instructions(task)).map(x => `${x.text}:${x.state}`).join();
-    // サーバーが合図（イベント）を受けて状態を書き換えるのは、イベントが届いた後。その状態になるまで待つ
     const awaitState = async (task, want, ms = 10_000) => {
       const end = Date.now() + ms; let now;
       while (Date.now() < end) { now = await stateOf(task); if (now === want) return now; await sleep(20); }
       return now;
     };
-    // 結果が確定し、完了通知が依頼元へ届き終わるまで（これ以降は新しいターンを起こす仕事が残っていない）
+    // 結果が確定し、完了通知が依頼元へ届き終わるまで
     const settled = (parent, fn = () => true) => awaitTask(parent, r => r.status === 'completed' && r.notification === 'sent' && fn(r));
     const turnEnds = (task, from) => c.since(from).filter(e => e.type === 'turnEnd' && e.sessionId === task.sessionId);
     const events = (task, from, type) => c.since(from).filter(e => e.type === type && e.sessionId === task.sessionId);
@@ -66,6 +68,7 @@ export default async function(t) {
         um.length === 1 && um[0].text === 'echo:STEER_A' && um[0].messageId.startsWith('task-send-') && !um[0].pending, JSON.stringify(um));
       await a.finish();
       const doneA = await settled(a.parent);
+      await sleep(NO_LATE_TURN_MS.a);
       t.ok('同じターンの中で答え、新しいターンは走らない', turnEnds(a.task, a.mark).length === 1 && doneA.pendingMessages === 0);
       const historyA = await c.cmd('loadSession', { sessionId: a.task.sessionId });
       t.ok('子の履歴に指示と、その場の返答が並ぶ', historyA.messages.some(m => m.role === 'user' && m.text === 'echo:STEER_A')
@@ -88,6 +91,7 @@ export default async function(t) {
         && outTh.pendingMessages === 0 && typeof outTh.warning === 'string');
       await cth.finish();
       await settled(cth.parent);
+      await sleep(NO_LATE_TURN_MS.thrown);
       t.ok('自動で送り直さない', turnEnds(cth.task, cth.mark).length === 1 && !(await userTexts(cth.task)).some(x => x.includes('THROWN')));
 
       // 次ターンの設定が予約されている子は、途中送信を断る（完了通知と同じ）
@@ -117,6 +121,7 @@ export default async function(t) {
       t.ok('渡った合図で配送済みになる', await awaitState(e1.task, `${held}:delivered`) === `${held}:delivered`);
       await e1.finish();
       await settled(e1.parent);
+      await sleep(NO_LATE_TURN_MS.e1);
       t.ok('新しいターンは走らない', turnEnds(e1.task, e1.mark).length === 1);
 
       // 読まれずに捨てられた（userMessage.dropped）: 待機へ戻り、次のターンで 1 回だけ

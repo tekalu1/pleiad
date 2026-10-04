@@ -15,6 +15,8 @@ export const name = 'server-setting-approval-delegated';
 export const title = '委譲の子の設定の変更の承認: 子のタスクが終わっていれば結果は依頼元へ・動いていれば子へ・再起動の取り下げも同じ（fake）';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+// 「届かない」ことの観察。idle や台帳が空になるのは届け終えた後の合図で、遅れて別の経路から届くことの否定には使えない
+const NOT_DELIVERED_WINDOW_MS = 500;
 // 届けるたびに台帳を書く（送る前と後）。混んだ CI では決め打ちの時間で済まないので、条件がそろうまで待つ
 const until = async (fn, ms = 10_000) => { const end = Date.now() + ms; while (!fn() && Date.now() < end) await sleep(20); return fn(); };
 const ply = (name, args) => 'ply:' + JSON.stringify({ name, arguments: args });
@@ -42,17 +44,17 @@ export default async function (t) {
     const resolve = (card, allow) => c.cmd('resolvePermission', { id: card.id, allow, receipt: card.settingChange.receipt });
     const noticesOf = (sessionId, requestId, from) => c.since(from).filter((e) => e.type === 'taskNotice' && e.sessionId === sessionId && String(e.text).includes(requestId));
     const turnEnds = (sessionId, from) => c.since(from).filter((e) => e.type === 'turnEnd' && e.sessionId === sessionId);
-    // 会話が落ち着いた合図（ターンが終わり、子の通知も済んだ）。これ以降に、その会話で新しいターンは起きない
+    // 会話の直前のターンが終わり、そのとき保留の子の通知が無かった合図。後から別のターンや通知が起きないことまでは表さない
     const idle = (sessionId, from) => c.waitFor((e) => e.type === 'completionReady' && e.sessionId === sessionId, { from, ms: 30_000 });
-    // 届け終えたところ（台帳の通知と承認待ちが空）まで。届けるたびに台帳を書くので、書き終わるのを待ってから読む
+    // 届け終えたところ（台帳の通知と承認待ちが空）まで。届けるたびに台帳を書くので、書き終わるのを待ってから読む。空にならなければ例外
     const ledgerEmpty = async (ms = 10_000) => {
       const end = Date.now() + ms; let left;
       while (Date.now() < end) {
         left = await fs.readFile(path.join(dataDir, 'setting-approvals.json'), 'utf8').then(JSON.parse, () => null);
-        if (left && !left.pending.length && !left.notices.length) break;
+        if (left && !left.pending.length && !left.notices.length) return left;
         await sleep(20);
       }
-      return left;
+      throw new Error(`setting-approvals.json が ${ms}ms で空にならなかった: ${JSON.stringify(left)}`);
     };
     /** 依頼元が子を作り、子が set_setting で承認待ちを受けて終わるまで。子の完了通知が依頼元のターンで読まれ、依頼元が落ち着くまで待つ */
     const childAsks = async (label, taskPrompt = control('set_setting', { key: 'confirmAgentSites', value: false, reason: 'テスト' })) => {
@@ -77,6 +79,7 @@ export default async function (t) {
       && noticeA.text.includes('ply_task_send'), noticeA.text);
     await c.waitFor((e) => e.type === 'turnEnd' && e.sessionId === a.parent, { from, ms: 30_000 });
     await idle(a.parent, from);
+    await sleep(NOT_DELIVERED_WINDOW_MS);
     const parentHistory = await c.cmd('loadSession', { sessionId: a.parent });
     t.ok('依頼元の履歴では通知として描かれ、依頼元がそれを読んで答える',
       parentHistory.messages.some((m) => m.role === 'user' && m.internalTaskNotice === true && String(m.text).includes(a.card.settingChange.requestId))
@@ -108,7 +111,8 @@ export default async function (t) {
     from = c.mark();
     await resolve(b.card, false);
     const childNotice = await c.waitFor((e) => e.type === 'taskNotice' && e.sessionId === b.child && String(e.text).includes(b.card.settingChange.requestId), { from, ms: 30_000 });
-    await ledgerEmpty();   // 届け先は 1 つに決まって渡し終えた。依頼元へも届いていないことをここで確かめる
+    await ledgerEmpty();
+    await sleep(NOT_DELIVERED_WINDOW_MS);
     t.ok('子のタスクが動いている間は、結果（拒否）は求めた子に届き、依頼元には届かない', /結果: 拒否/.test(childNotice.text) && !childNotice.text.includes('ply_task_send')
       && noticesOf(b.parent, b.card.settingChange.requestId, from).length === 0, childNotice.text);
     await gates.open('b-child');
@@ -124,6 +128,7 @@ export default async function (t) {
     c = await open({ port: server.port, token: server.token });
     const restarted = await c.waitFor((e) => e.type === 'taskNotice' && e.sessionId === d.parent && String(e.text).includes(pendingId), { from: 0, ms: 30_000 });
     await idle(d.parent, 0);
+    await sleep(NOT_DELIVERED_WINDOW_MS);
     t.ok('再起動で取り下げた結果も、子のタスクが終わっていれば依頼元の会話に届く（子の題・taskId つき）',
       /結果: 取り下げ/.test(restarted.text) && /再起動/.test(restarted.text) && restarted.text.includes('再起動をまたぐ子') && restarted.text.includes(d.task.taskId), restarted.text);
     t.ok('子の会話には届かない', c.since(0).filter((e) => e.type === 'taskNotice' && e.sessionId === d.child && String(e.text).includes(pendingId)).length === 0
