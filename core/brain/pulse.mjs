@@ -209,7 +209,8 @@ export function createPulse({ dataDir, brain, channels, bots, host, budget, disp
 
     // ② 安いモデル
     const taintedInput = events.some((e) => e.taint) || loops.some((l) => l.taint);
-    const cleanInput = events.some((e) => !e.taint && e.authorKind === 'human') || loops.some((l) => !l.taint);
+    // 起きた理由が、外から来た文だけか（きっかけの人の投稿・条件に当たった気がかりのどちらも、外から来た文でない場合だけ「確かめる」を越えてよい）
+    const cleanTrigger = events.some((e) => !e.taint && e.authorKind === 'human') || Boolean(verdict.loopId && !loops.find((l) => l.id === verdict.loopId)?.taint);
     const taint = taintedInput ? (events.find((e) => e.taint)?.taint ?? loops.find((l) => l.taint)?.taint ?? 'web') : null;
     const prompt = beatPrompt({ bot, locale: locale(), now: at, gate: verdict, drives, events, stream: brain.tail(bot.id, 40), loops,
       budget: left ? { channel: left.channel ?? left.daily ?? 0, known: left.known } : null, related: await relatedOf(bot, events), minMin: Math.round(floorMs / 60_000), maxMin: Math.round(PULSE_CEIL_MS / 60_000) });
@@ -242,7 +243,7 @@ export function createPulse({ dataDir, brain, channels, bots, host, budget, disp
     brain.setState(bot.id, { ...common, cursorAt: cursorTo, nextAt, reservedAt: reservedAt ?? sleepAt, sinceMuse: 0, failures: 0 });
 
     // ⑧ 賢いモデルへの引き継ぎ（確かめる・話す）
-    if (parsed.do === 'act' && parsed.handoff) await handOff(bot, home, parsed, { taint, taintOnly: taintedInput && !cleanInput, at });
+    if (parsed.do === 'act' && parsed.handoff) await handOff(bot, home, parsed, { taint, taintOnly: taintedInput && !cleanTrigger, at });
     const n = (beats.get(bot.id) ?? 0) + 1;
     beats.set(bot.id, n);
     if (!ask && n % PRUNE_SESSIONS_EVERY === 0) pruneSessions(bot.id);

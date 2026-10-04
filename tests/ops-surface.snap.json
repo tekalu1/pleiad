@@ -171,7 +171,7 @@
         }
       },
       "legacyCommand": null,
-      "input": "5bbb30b5ae47"
+      "input": "e273dc2b33f3"
     },
     {
       "id": "bots.delete",
@@ -275,7 +275,7 @@
         }
       },
       "legacyCommand": null,
-      "input": "52c1b22d9c98"
+      "input": "ca8d9169efc1"
     },
     {
       "id": "brain.beat",

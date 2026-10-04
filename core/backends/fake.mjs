@@ -37,6 +37,7 @@
 // 行頭の <pleiad-channel> などの包み（bot の会話。core/system-messages.mjs の splitLeadingNotes）は外してから台本を選ぶ（scriptOf）。
 // 環境変数: AGENT_HOST_FAKE_USAGE=1 … ターンの終わりに固定の usage を流す／AGENT_HOST_FAKE_SLOW_STEER=1 … "slow" が途中送信を受ける
 import crypto from "node:crypto";
+import fs from "node:fs";
 import { undelivered } from "./undelivered.mjs";
 import { computerDisplay, computerToolInput } from "../computer-use/display.mjs";
 
@@ -110,16 +111,27 @@ const STEER_CONFIRM_MS = Number(process.env.AGENT_HOST_FAKE_STEER_CONFIRM_MS) ||
 const SLOW_STEER = process.env.AGENT_HOST_FAKE_SLOW_STEER === "1";
 // 1 のとき、ターンの終わりに固定の usage（入力 1000・出力 200・キャッシュ読み出し 900）を流す。既存のテストの usage.json を変えないため既定は流さない
 const FAKE_USAGE = process.env.AGENT_HOST_FAKE_USAGE === "1";
+// 心拍の安いモデルの台本（core/brain/pulse.mjs が聞く <pleiad-pulse> の返事）。ファイルは毎回読み直す（確かめる側が途中で差し替えられる）
+let pulseCalls = 0;
+function nextPulseAnswer() {
+  let list = [];
+  try { list = JSON.parse(fs.readFileSync(process.env.AGENT_HOST_FAKE_PULSE ?? '', 'utf8')); } catch { /* 台本が無ければ何もしない返事 */ }
+  const answer = Array.isArray(list) && list.length ? list[Math.min(pulseCalls, list.length - 1)] : { do: 'none' };
+  pulseCalls++;
+  return typeof answer === 'string' ? answer : JSON.stringify(answer);
+}
 
 // bot の会話の user の行の先頭に付く包み（core/system-messages.mjs の LEADING_TAGS と同じ）。台本の接頭辞はこれを外してから判定する。
 // <pleiad-channel> は中身が発言なので、@名前 の呼びかけを除いて台本として読む（"@Owl echo:やった"）。記憶・スレッドの履歴・中断の文は台本ではない
-const LEADING_WRAPPER = /^\s*<(pleiad-interruption|pleiad-memory-core|pleiad-bot-recent|pleiad-turn-context|pleiad-channel-thread|pleiad-channel)(?=[\s>])[^>]*>([\s\S]*?)<\/\1>\s*/;
+const LEADING_WRAPPER = /^\s*<(pleiad-interruption|pleiad-memory-core|pleiad-bot-recent|pleiad-turn-context|pleiad-inner|pleiad-channel-thread|pleiad-channel)(?=[\s>])[^>]*>([\s\S]*?)<\/\1>\s*/;
 export function scriptOf(prompt) {
   let rest = String(prompt ?? "");
   let said = null;
   for (let hit; (hit = LEADING_WRAPPER.exec(rest));) {
     rest = rest.slice(hit[0].length);
     if (hit[1] === "pleiad-channel") said = hit[2];
+    // 心拍から自分で起きたターン（ADR 0126）: 本文の「理由: …」を台本にする（"echo:こんにちは" なら話す。何も無ければ黙る）
+    else if (hit[1] === "pleiad-inner") { const why = /(?:理由|Reason): (.*)/.exec(hit[2])?.[1]; if (why) said = why; }
   }
   return rest.trim() || (said ?? "").replace(/^\s*(?:@\S+\s+)+/, "").trim();
 }
@@ -391,7 +403,11 @@ export const backend = {
         return { sessionId: id };
       }
 
-      if (text.startsWith('<pleiad-memory-learn>')) {
+      if (text.startsWith('<pleiad-pulse>')) {
+        // 心拍の安いモデル（ADR 0126）。台本は AGENT_HOST_FAKE_PULSE の JSON ファイル（返事の配列。1 回ごとに順に使い、尽きたら最後を繰り返す）。無ければ何もしない返事
+        out.text = nextPulseAnswer();
+        await say(emit, out.text, out.uuid);
+      } else if (text.startsWith('<pleiad-memory-learn>')) {
         // L1 の学習会話。固定台本で、人の「覚えて:」だけを候補にする。
         const line = text.split('\n').find((part) => part.startsWith('Human statements: '));
         const statements = JSON.parse(line?.slice('Human statements: '.length) ?? '[]');
