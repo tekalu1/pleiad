@@ -237,7 +237,7 @@ export default async function (t) {
     // 外した操作を agent が呼ぶ。画面のコマンドと同じ本体・同じ配信を通る
     from = c.mark();
     const always = await api(bound(ask), 'POST', '/api/ops/worktrees.setSettings', { always: true });
-    t.ok('worktrees.setSettings: ask の会話の agent が承認なしで「いつも分ける」を変え、画面へ worktreeSettings が届く', always.status === 200 && always.body.result.always === true
+    t.ok('worktrees.setSettings: ask の会話の agent が承認なしで「自動で分ける」を変え、画面へ worktreeSettings が届く', always.status === 200 && always.body.result.always === true
       && (await c.cmd('worktreeSettings')).always === true && Boolean(await c.waitFor((e) => e.type === 'worktreeSettings' && e.always === true, { from, ms: 5_000 })), JSON.stringify(always.body));
     t.ok('画面の setWorktreeSettings（昔のコマンド）も同じ操作を通る。真偽でなければ拒否', (await c.cmd('setWorktreeSettings', { always: false })).always === false
       && await c.cmd('setWorktreeSettings', { always: 'yes' }).then(() => false, () => true));

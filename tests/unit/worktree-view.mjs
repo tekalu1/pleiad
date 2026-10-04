@@ -1,11 +1,11 @@
 // 分けた作業場所の画面の部品（web/worktree-ui.mjs。ADR 0089）を最小の DOM で見る。
-// 入力欄の上の 1 行（分けて始める / このまま / いつも分ける）・会話の中の静かな 1 行の状態（here / backing / back）・
+// 送ると自動で分けるかの判定・設定の「作業場所」・会話の中の静かな 1 行の状態（here / backing / back）・
 // 右パネルの「残っている作業場所」（取り込みを頼む・退避して消す・残す・取り消し・元に戻す・安全の 2 行）・取り込みの依頼文。
 import assert from 'node:assert/strict';
-import { shortPath, whoText, askText, renderSplitNote, renderWorktreeLine, paintWorktreeLine, setWorktreeLineMode, createLeftovers } from '../../web/worktree-ui.mjs';
+import { shortPath, whoText, askText, autoSplitPlan, setupWorktreeSettings, renderWorktreeLine, paintWorktreeLine, setWorktreeLineMode, createLeftovers } from '../../web/worktree-ui.mjs';
 
 export const name = 'worktree-view';
-export const title = '分けた作業場所の画面: 入力欄の上の 1 行・会話の中の静かな 1 行・残っている作業場所の操作と結果の行・取り込みの依頼文';
+export const title = '分けた作業場所の画面: 自動で分けるかの判定・設定の作業場所・会話の中の静かな 1 行・残っている作業場所の操作と結果の行・取り込みの依頼文';
 
 const all = (node, cls) => node.querySelectorAll(`.${cls}`);
 const buttonsOf = (node) => node.querySelectorAll('button');
@@ -20,21 +20,30 @@ export default async function (t) {
   assert.equal(whoText([{ title: '' }]), 'ほかの会話'); assert.equal(whoText([]), 'ほかの会話');
   t.ok('作業中の別の会話の名前: 1 件・複数・題が無い', true);
 
-  // ---- 入力欄の上の 1 行
-  const calls = [];
-  const note = renderSplitNote({ conflicts: [{ title: 'リリースノートの下書き' }], onSplit: () => calls.push('split'), onKeep: () => calls.push('keep'), onAlways: () => calls.push('always') });
-  assert.equal(note.className, 'wt-note');
-  assert.equal(note.querySelector('.wt-note-t').textContent, '「リリースノートの下書き」が同じリポジトリで作業中', '題を太字で、「が同じリポジトリで作業中」');
-  assert.equal(note.querySelector('b').textContent, '「リリースノートの下書き」');
-  const acts = buttonsOf(note);
-  assert.deepEqual(acts.map((b) => b.textContent), ['分けて始める', 'このまま', 'いつも分ける']);
-  assert(acts[0].className.includes('btn-quiet') && !acts[1].className.includes('btn-quiet') && acts[2].className === 'wt-always', '分けて始めるだけ面付き・このままは平ら・いつも分けるは小さなリンク');
-  assert(acts[2].attrs.title.includes('設定でいつでも戻せます'));
-  acts.forEach((b) => b.onclick());
-  assert.deepEqual(calls, ['split', 'keep', 'always']);
-  assert.equal(note.attrs['aria-label'], '同じリポジトリのほかの作業');
-  assert(!/style=/.test(note.outerHTML), '色や style を直書きしない');
-  t.ok('入力欄の上の 1 行: 文・3 つの操作（分けて始める・このまま・いつも分ける）・読み上げ名', true);
+  // ---- 送ると自動で分けるか（チップの「· 分けて始めます」の元。入力欄の上の 1 行は無い）
+  const conflict = { git: true, canSplit: true, always: true, conflicts: [{ title: 'リリースノートの下書き' }] };
+  assert.deepEqual(autoSplitPlan(conflict), { who: '「リリースノートの下書き」' }, 'ぶつかっていて自動で分けるなら、誰が作業中かを返す');
+  assert.deepEqual(autoSplitPlan({ ...conflict, conflicts: [{ title: 'A' }, { title: 'B' }] }), { who: '「A」ほか 1 件' });
+  assert.equal(autoSplitPlan({ ...conflict, always: false }), null, '自動で分ける設定がオフなら出さない（保存したオフ）');
+  assert.equal(autoSplitPlan({ ...conflict, conflicts: [] }), null, 'ぶつかっていなければ出さない');
+  assert.equal(autoSplitPlan({ ...conflict, canSplit: false }), null, '分けた作業場所の中・分けられない場所では出さない');
+  assert.equal(autoSplitPlan(conflict, { stay: true }), null, '「このまま元の場所で始める」を選んだら出さない');
+  assert.equal(autoSplitPlan(conflict, { running: true }), null, 'この会話が走っている間は出さない（送ると今のターンへ渡る）');
+  assert.equal(autoSplitPlan(null), null); assert.equal(autoSplitPlan(undefined, { stay: false }), null);
+  t.ok('自動で分けるか: ぶつかり・設定・分けられるか・今回だけ元の場所・走っている間', true);
+
+  // ---- 設定 › エージェント設定の「作業場所」
+  const sent = [];
+  const settings = setupWorktreeSettings({ cmd: async (c, a) => { sent.push([c, a]); return { always: c === 'setWorktreeSettings' ? a.always : false }; } });
+  assert.equal(settings.element.querySelector('h3').textContent, '作業場所');
+  const sw = settings.element.querySelector('button');
+  assert.equal(sw.attrs['aria-label'], 'ほかの会話が同じリポジトリで書いている間は、分けた作業場所で始める');
+  assert.equal(settings.element.querySelector('.mp-note').textContent, '分けたときは、会話の一行から元の場所に戻せます。');
+  settings.paint(true);
+  assert.equal(sw.getAttribute('aria-checked'), 'true', '既定はオンの見た目');
+  sw.onclick(); await tick(); await tick();
+  assert.deepEqual(sent.at(-1), ['setWorktreeSettings', { always: false }]); assert.equal(sw.getAttribute('aria-checked'), 'false');
+  t.ok('設定「作業場所」: 見出し・スイッチの名前・説明・既定オン・押すと保存', true);
 
   // ---- 会話の中の静かな 1 行
   const ev = { kind: 'worktree', worktree: { id: 'ply-7f3a', branch: 'pleiad/ply-7f3a', path: 'D:/dev/pleiad.pleiad/ply-7f3a', origin: 'D:/dev/pleiad', conflicts: ['リリースノートの下書き'], count: 1 } };
