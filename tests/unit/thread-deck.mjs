@@ -82,4 +82,12 @@ export default function (t) {
     && thread.includes("'channels.read', { channelId, threadId"));
   const css = read('web/channels-thread.css');
   t.ok('動きは transform（deck.mjs）。CSS は 200ms の値だけを持ち、動きを減らす設定では 0', /--dur-deck:200ms/.test(css) && /prefers-reduced-motion:reduce\)\{\.deck\{--dur-deck:0ms\}/.test(css));
+
+  // ---- サブエージェント（bot が委譲した子）: Chats の部品を使い回す（ADR 0137。確かめは tests/browser/thread-subagents.cjs）
+  t.ok('client.mjs の host が、委譲の子の口（見る会話・項目・開く・カードの仕上げ・描き直し）を渡す', /background: \{[\s\S]*watch:[\s\S]*items:[\s\S]*subscribe:[\s\S]*open:[\s\S]*link:[\s\S]*mount:[\s\S]*paint:/.test(client));
+  t.ok('スレッドの入口は Chats の入力欄の上と同じチップ（createBackgroundChip）で、押すと一覧を開く。子がいなければ出さない', thread.includes("from '../background-chip.mjs'")
+    && thread.includes('createBackgroundChip(subsButton)') && thread.includes('host.background?.open(scope)') && /subs\.hidden = !items\.length/.test(thread));
+  t.ok('作業ログの委譲カードは、Chats の委譲カードと同じ仕上げ（link）を通す', thread.includes('link: (card, c) => host.background?.link(card, c.input, c.result') && /link && isBoundary\(card\.dataset\.tool\)/.test(read('web/channels/thread-tools.mjs')));
+  t.ok('Chats の一覧・カードは、範囲（scope）を渡したときだけスレッドの分を引く（既定は今開いている会話）', /function backgroundItems\(scope = null\)/.test(client) && /function openWork\(key, scope = null\)/.test(client)
+    && /scope\.openSession\(item\.childId\)/.test(client));
 }

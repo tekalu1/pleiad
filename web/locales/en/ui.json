@@ -2189,6 +2189,7 @@
       "stopFailed": "Couldn't stop: {{error}}",
       "readFailed": "Couldn't read: {{error}}",
       "title": "Background",
+      "titleSub": "Subagents",
       "count": "Running {{live}} · Completed {{ended}}",
       "listLabel": "Background list",
       "groupRunning": "Running",

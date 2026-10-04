@@ -46,10 +46,9 @@ export default async function(t) {
     await f.tick(4.99);
     f.emit({ type: 'text.delta', text: 'working' });
     f.sdk({ type: 'tool_progress', tool_use_id: 'b', elapsed_time_seconds: 200 });
-    f.codex('item/commandExecution/outputDelta', { itemId: 'a', delta: 'more' });
     t.ok('5分未満は通知しない・コマンドだけを複数保持する', f.notices.length === 0 && f.view().activeCommands.length === 2);
     await f.tick(5); await until(() => f.notices.length === 1);
-    t.ok('他の活動・stdout・heartbeatがあっても最初のコマンドは5分で通知', f.notices[0].command.toolCallId === 'a' && f.notices[0].command.elapsedMinutes === 5);
+    t.ok('他の活動・heartbeatがあっても（出力でなければ）最初のコマンドは5分で通知', f.notices[0].command.toolCallId === 'a' && f.notices[0].command.elapsedMinutes === 5);
     await f.tick(6); await until(() => f.notices.length === 2);
     await f.tick(30);
     t.ok('複数コマンドは個別に一度だけ通知し、子を止めない', f.notices.map(n => n.command.toolCallId).join() === 'a,b' && f.view().status === 'running');
@@ -92,7 +91,7 @@ export default async function(t) {
     bg.sdk({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'text-bg', content: 'Command running in background with ID: txt-1. Output file: /x' }] } });
     t.ok('構造化結果がない場合も background の起動結果を識別', bg.view().activeCommands[0].nativeTaskId === 'txt-1');
     bg.sdk({ type: 'system', subtype: 'task_notification', task_id: 'txt-1', status: 'failed' });
-    bg.start('terminal', 'commandExecution', { command: 'server', cwd: 'D:/codex' }, { startedAt: 4 * minute, turnId: 'turn', processId: 'process' });
+    bg.start('terminal', 'commandExecution', { command: 'serve codex', cwd: 'D:/codex' }, { startedAt: 4 * minute, turnId: 'turn', processId: 'process' });
     bg.release(); await until(() => bg.view().status === 'completed');
     await bg.tick(9); await until(() => bg.notices.length === 2);
     t.ok('Codex: 既知の開始から数え、ターン・子の完了後も監視する', bg.view().activeCommands[0].startKnown && bg.notices[1].command.toolCallId === 'terminal');
@@ -150,6 +149,69 @@ export default async function(t) {
       t.ok('再起動後は生存不明・経過不明で通知を再送しない', command.state === 'unknown' && command.elapsedMinutes === null && count === 0);
     } finally { reloaded.close(); }
   } finally { await restored.close(); }
+
+  // 待っている先が動いている・明らかに待つためのコマンドは知らせない。知らせるのは同じ子の同じコマンドで 1 回だけ（ADR 0136）
+  const moving = await fixture({ silenceMinutes: 0 });
+  try {
+    moving.start('a', 'commandExecution', { command: 'npm test' });
+    await moving.tick(4.9);
+    moving.codex('item/commandExecution/outputDelta', { itemId: 'a', delta: 'ok 1' });
+    await moving.tick(5);
+    t.ok('出力が伸びている間は5分たっても知らせない', moving.notices.length === 0 && moving.view().activeCommands.length === 1);
+    moving.codex('item/commandExecution/outputDelta', { itemId: 'a', delta: 'ok 2' });
+    await moving.tick(5.9); t.ok('最後の出力から1分未満は動いているとみなす', moving.notices.length === 0);
+    await moving.tick(6); await until(() => moving.notices.length === 1);
+    t.ok('出力が止まって1分たち、なお終わらなければ1回だけ知らせる', moving.notices[0].command.toolCallId === 'a' && moving.notices[0].command.elapsedMinutes === 6);
+  } finally { await moving.close(); }
+
+  const loops = await fixture({ silenceMinutes: 0 });
+  try {
+    loops.start('w1', 'Bash', { command: 'until gh run view 123 --exit-status; do sleep 30; done' });
+    loops.start('w2', 'PowerShell', { command: 'gh run watch 123' });
+    loops.start('w3', 'commandExecution', { command: 'Start-Sleep -Seconds 900' });
+    await loops.tick(30);
+    t.ok('until / sleep / gh run watch など待つためのコマンドは知らせない', loops.notices.length === 0 && loops.view().activeCommands.length === 3);
+    loops.emit({ type: 'tool.result', id: 'w1', text: 'done' });
+    loops.start('w4', 'Bash', { command: 'npm test' });
+    await loops.tick(40); await until(() => loops.notices.length === 1);
+    t.ok('待つコマンドの後の普通の長いコマンドは知らせる', loops.notices[0].command.toolCallId === 'w4');
+  } finally { await loops.close(); }
+
+  // 出力の途中に「Command running in background with ID: …」が出てきただけ（ファイルを cat・grep した結果）で、終わったコマンドを裏に残さない（2026-10-04、5 分後に誤って通知が出た）
+  const echoed = await fixture({ silenceMinutes: 0 });
+  try {
+    echoed.start('cat', 'Bash', { command: 'cat tests/unit/task-command-notice.mjs' });
+    echoed.sdk({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'cat', content: 'text\nbg.start(x)\nCommand running in background with ID: txt-1. Output file: /x\nend' }] } });
+    t.ok('結果の途中の文字では background にせず、終わったコマンドとして外す', echoed.view().activeCommands.length === 0);
+    await echoed.tick(30);
+    t.ok('終わったコマンドを根拠に長時間通知を出さない', echoed.notices.length === 0);
+  } finally { await echoed.close(); }
+
+  // 裏のコマンドが残っていても、子が別の道具で動いている間は「止まっている」とは知らせない。子が黙れば 1 回だけ知らせる
+  const busy = await fixture({ silenceMinutes: 0 });
+  try {
+    busy.sdk({ type: 'assistant', message: { content: [{ type: 'tool_use', id: 'srv', name: 'Bash', input: { command: 'node server.mjs', run_in_background: true } }] } });
+    busy.sdk({ type: 'user', tool_use_result: { backgroundTaskId: 'native-srv' }, message: { content: [{ type: 'tool_result', tool_use_id: 'srv', content: 'launched' }] } });
+    await busy.tick(4.9);
+    busy.emit({ type: 'text.delta', text: 'working' });
+    await busy.tick(5.5);
+    t.ok('裏のコマンドがあっても子が別の作業で動いている間は知らせない', busy.notices.length === 0 && busy.view().activeCommands[0].state === 'background');
+    await busy.tick(6); await until(() => busy.notices.length === 1);
+    t.ok('子が1分黙ったら裏のコマンドを1回だけ知らせる', busy.notices[0].command.toolCallId === 'srv');
+  } finally { await busy.close(); }
+
+  const repeat = await fixture({ silenceMinutes: 0 });
+  try {
+    repeat.start('first', 'Bash', { command: 'npm   test' });
+    await repeat.tick(5); await until(() => repeat.notices.length === 1);
+    repeat.emit({ type: 'tool.result', id: 'first', text: 'fail' });
+    repeat.start('second', 'Bash', { command: 'npm test' });
+    await repeat.tick(11);
+    t.ok('同じ子が同じコマンドをやり直しても繰り返し知らせない', repeat.notices.length === 1);
+    repeat.start('third', 'Bash', { command: 'npm run build' });
+    await repeat.tick(17); await until(() => repeat.notices.length === 2);
+    t.ok('別のコマンドなら知らせる', repeat.notices[1].command.toolCallId === 'third');
+  } finally { await repeat.close(); }
 
   for (const locale of ['en', 'ja']) for (const supported of [true, false]) {
     const args = { list: normalizePlyInstructions(), locale, supported, routing: true, canDelegate: true };

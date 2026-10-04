@@ -106,6 +106,11 @@
 /* ---- 帯: 作業中の［止める］とこのスレッドで使ったトークン。作業していないときは静かな一行 */
 .th-band{display:flex;align-items:center;gap:8px;flex:none;margin:0 16px 6px;padding:6px 6px 6px 14px;border-radius:var(--r-pill);background:var(--surface-1);font-size:var(--fs-s);color:var(--ink-weak)}
 .th-band[hidden]{display:none}
+/* サブエージェントの入口: 入力欄のすぐ上の右端（Chats の入力欄の上の帯と同じチップ。style.css の .work-entry・.strip-chip）。子がいなければ出さない */
+.th-subs{justify-content:flex-end;margin:0 16px 2px}
+.th-subs[hidden]{display:none}
+/* 一覧（#workDialog）の bot ごとの見出し: アイコンと名前 */
+.bg-bot{display:flex;align-items:center;gap:6px}
 .th-band.quiet{padding:0 14px;background:transparent;font-size:var(--fs-xs)}
 .th-band-text{flex:1;min-width:0;display:flex;align-items:center;gap:6px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
 .th-band-live{display:inline-flex;align-items:center;gap:6px;flex:none;color:var(--ink);font-weight:600}
@@ -139,6 +144,7 @@
   .th-sys{margin-left:44px}
   .th-perms{--gut:44px}
   .th-band{margin:0 10px 6px}
+  .th-subs{margin:0 10px 2px}
   .th-band-tokens{position:relative;flex:none}
   .th-tok-aux{position:absolute;width:1px;height:1px;margin:-1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}   /* 数字だけ見せる。語は読み上げに残す */
   .deck[data-deck=solo] .th-side{display:inline-flex;margin-left:-6px}

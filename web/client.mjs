@@ -60,8 +60,8 @@ import { runMark, satMark, stillMark } from "./arc.mjs";
 import { approvalTarget } from "./approval-summary.mjs";
 import { isComputerTool, approvalApps, approvalBody, approvalHeading, approvalSaid, lockWaitBox, relayLabel } from "./computer-use.mjs";
 import { approvalChange, changeBody, changeHeading, changeWord } from "./setting-change.mjs";
-import { backgroundTitle, taskTree, backgroundTotals } from './background-model.mjs';
-import { mergeTasks, tasksToFetch, staleTasks } from './task-cards.mjs';
+import { backgroundTitle, taskTree, backgroundTotals, groupByOwner, visibleRows } from './background-model.mjs';
+import { mergeTasks, tasksToFetch, staleTasks, treeSessions } from './task-cards.mjs';
 import { createBackgroundChip } from './background-chip.mjs';
 import { overlaySessions, rollbackSessions, currentRows } from './pending-sidebar.mjs';
 import { behindOfTasks, liveTasksOf } from './work-status.mjs';
@@ -4201,10 +4201,22 @@ const TASK_LIVE = new Set(['queued', 'running', 'cancelling']);
  * 重ねた結果は、rows を書き換える（ver を進める）か running が届くまで使い回す（カードごとに引くので）
  */
 const taskCards = { sessionId: null, rows: new Map(), ver: 0, live: new Map(), asked: new Set(), merged: null };
+/**
+ * Channels のスレッドが見ている bot の会話（子孫まで）の委譲の行。Chats の会話の分（taskCards.rows）とは別に持つので、Chats の会話を切り替えても消えない。
+ * sessions: 見ている会話、rows: taskId → 行、loaded: 読み終えた会話、listeners: 一覧・数が変わったときに呼ぶ（スレッドの入口）。
+ * 委譲のカード・一覧は Chats と同じ部品で、taskById / allTasks がこの行も引く
+ */
+const watched = { sessions: new Set(), rows: new Map(), loaded: new Set(), listeners: new Set() };
+/** Channels の画面の委譲カード（スレッドの作業ログ）の置き場 → そのスレッドの範囲。card → { scope, sessionId, backend }（linkDelegateCard が覚える） */
+const channelRoots = new Map();
+const cardCtx = new WeakMap();
+/** 委譲カードを探して描く置き場: Chats の会話と、Channels のスレッド。[置き場, 範囲 | null] */
+const delegateRoots = () => [[thread, null], ...channelRoots];
+const notifyWatchers = () => { for (const fn of [...watched.listeners]) fn(); };
 function mergedTasks() {
   const m = taskCards.merged;
   if (m && m.ver === taskCards.ver && m.live === state.work.tasks) return m;
-  const list = mergeTasks(taskCards.rows, state.work.tasks);
+  const list = mergeTasks(watched.rows.size ? new Map([...watched.rows, ...taskCards.rows]) : taskCards.rows, state.work.tasks);
   return (taskCards.merged = { ver: taskCards.ver, live: state.work.tasks, list, byId: new Map(list.map(r => [r.taskId, r])) });
 }
 const allTasks = () => mergedTasks().list;
@@ -4238,8 +4250,9 @@ async function fetchTaskCards(ids, { again = true } = {}) {
     rows.push(...part);
   }
   for (const r of rows) taskCards.rows.set(r.taskId, r);
+  const forWatched = keepWatched(rows);
   taskCards.ver++;
-  if (state.current === sessionId) repaintTasks();
+  if (state.current === sessionId || forWatched) repaintTasks();
   const stale = staleTasks(rows, state.work.tasks);
   if (again && stale.length) fetchTaskCards(stale, { again: false }).catch(() => {});
 }
@@ -4248,8 +4261,43 @@ function syncTaskCards() {
   const live = state.work.tasks ?? [];
   const ids = taskCards.sessionId === state.current
     ? tasksToFetch({ cards: taskCards.rows, live, prevLive: taskCards.live, sessionId: state.current }) : [];
+  // Channels のスレッドが見ている会話の分も、同じ規則で（持っている行は Chats の分と合わせて引く）
+  if (watched.sessions.size) {
+    const cards = new Map([...watched.rows, ...taskCards.rows]);
+    for (const sessionId of watched.sessions) ids.push(...tasksToFetch({ cards, live, prevLive: taskCards.live, sessionId }));
+  }
   taskCards.live = new Map(live.map(r => [r.taskId, r]));
-  if (ids.length) fetchTaskCards(ids).catch(() => {});
+  if (ids.length) fetchTaskCards([...new Set(ids)]).catch(() => {});
+}
+/** 読んだ行のうち、Channels のスレッドが見ている会話の木に入るものを、その分の入れ物にも置く。置いたものがあれば true */
+function keepWatched(rows) {
+  if (!watched.sessions.size) return false;
+  const all = [...watched.rows.values(), ...taskCards.rows.values(), ...rows];
+  const tree = new Set([...watched.sessions].flatMap(id => [...treeSessions(id, all)]));
+  let kept = false;
+  for (const r of rows) if (watched.rows.has(r.taskId) || tree.has(r.parentSessionId)) { watched.rows.set(r.taskId, r); kept = true; }
+  return kept;
+}
+/**
+ * Channels のスレッドが見る会話（bot の会話）を決める。まだ読んでいない会話の分（子孫まで）を読む。force は読み直す（一覧を開いたとき。
+ * 配信の間に始まって終わった子孫の委譲も出すため）
+ */
+function watchSessions(ids, { force = false } = {}) {
+  watched.sessions = new Set(ids);
+  if (force) for (const id of watched.sessions) watched.loaded.delete(id);
+  for (const id of watched.sessions) {
+    if (watched.loaded.has(id)) continue;
+    watched.loaded.add(id);
+    readTaskCards(id).then((rows) => {
+      if (!rows) { watched.loaded.delete(id); return; }
+      for (const r of rows) watched.rows.set(r.taskId, r);
+      taskCards.ver++;
+      const stale = staleTasks(rows, state.work.tasks);
+      if (stale.length) fetchTaskCards(stale, { again: false }).catch(() => {});
+      repaintTasks();
+    }).catch(() => { watched.loaded.delete(id); });
+  }
+  notifyWatchers();
 }
 function repaintTasks() {
   paintDelegateCards();
@@ -4290,7 +4338,7 @@ function backgroundHere() {
 const timeOf = (v) => (v ? new Date(v).getTime() || 0 : 0);
 
 /** history は過去のツールカードから findSubagent で引き直した子。 */
-const bg = { selected: null, extra: new Map(), history: new Map(), finding: new Set(), notFound: new Set(), view: null, narrowDetail: false, shownEnded: 10 };
+const bg = { scope: null, selected: null, extra: new Map(), history: new Map(), finding: new Set(), notFound: new Set(), view: null, narrowDetail: false, shownEnded: 10 };
 
 /** Past native subagents no longer appear in runningWork; resolve their tool IDs from the loaded history. */
 function restorePastSubagents(sessionId) {
@@ -4319,15 +4367,20 @@ function restorePastSubagents(sessionId) {
  * 一覧の項目。種類ごとの違いはここで吸収し、描く側は同じ形だけを見る。
  * group: agent（サブエージェント。ネイティブと Pleiad タスクを区別しない）| command（裏のコマンド・端末）
  */
-function backgroundItems() {
+function backgroundItems(scope = null) {
   const items = [];
-  for (const a of [...subagentsHere(), ...bg.history.values()].filter(a => a.sessionId === state.current)) items.push({
+  // scope: Channels のスレッドの一覧。そのスレッドの bot の会話から委譲した子だけ（裏のコマンド・過去のネイティブの子は含めない）
+  const here = scope ? new Set(scope.sessions()) : null;
+  const natives = here ? (state.work.subagents ?? []).filter(a => here.has(a.sessionId))
+    : [...subagentsHere(), ...bg.history.values()].filter(a => a.sessionId === state.current);
+  for (const a of natives) items.push({
     key: `a:${a.sessionId}:${a.id}`, group: 'agent', source: 'native', title: a.description || a.saying || a.id,
     backend: a.backend ?? activeBackendId(), model: a.model ?? null, effort: null, status: a.status ?? null,
     live: subagentLive(a), startedAt: a.startedAt ?? null, endedAt: a.endedAt ?? null, messages: a.messages,
     origin: a.origin ?? null, parentId: a.sessionId, agentId: a.id,
   });
-  for (const { task, depth, rootLive, childCount } of plyTasksHere()) {
+  const trees = here ? [...here].flatMap(id => taskTree(allTasks(), id)) : plyTasksHere();
+  for (const { task, depth, rootLive, childCount } of trees) {
     const live = TASK_LIVE.has(task.status);
     const waiting = live && taskWaiting(task);
     items.push({
@@ -4340,11 +4393,11 @@ function backgroundItems() {
       worktree: task.worktree ?? null,
     });
   }
-  for (const { task, entry } of backgroundHere()) items.push({
+  for (const { task, entry } of here ? [] : backgroundHere()) items.push({
     key: `c:${entry.sessionId}:${task.id}`, group: 'command', title: task.label || task.id, kindLabel: KIND_SUB[task.kind] ?? KIND_SUB.other,
     status: 'running', live: true, startedAt: task.startedAtMs ?? null, task, entry,
   });
-  for (const x of bg.extra.values()) if (!items.some(i => i.key === x.key)) items.push(x);
+  for (const x of bg.extra.values()) if ((!here || here.has(x.parentId)) && !items.some(i => i.key === x.key)) items.push(x);
   // 親を区分・時刻で並べ、子孫はその直後に置く。途中の子が終わっても親から離さない。
   const roots = [], children = new Map();
   for (const item of items) {
@@ -4355,12 +4408,13 @@ function backgroundItems() {
   }
   roots.sort((a, b) => Number(!a.live) - Number(!b.live) || timeOf(b.startedAt) - timeOf(a.startedAt));
   const ordered = [], seen = new Set();
-  const add = item => {
+  // owner: 親（根）の会話。Channels のスレッドの一覧が bot ごとに分けるのに使う（子孫は根と同じ）
+  const add = (item, owner) => {
     if (seen.has(item.key)) return;
-    seen.add(item.key); ordered.push(item);
-    for (const child of children.get(item.childId) ?? []) add(child);
+    seen.add(item.key); item.owner = owner; ordered.push(item);
+    for (const child of children.get(item.childId) ?? []) add(child, owner);
   };
-  roots.forEach(add);
+  roots.forEach(item => add(item, item.parentSessionId ?? item.parentId ?? null));
   return ordered;
 }
 
@@ -4375,6 +4429,7 @@ function syncWorkEntry() {
   $('workEntry').hidden = !live && !ended;
   workChip.update(items, state.current);
   syncStripVisible();
+  notifyWatchers();
 }
 $('workEntryButton').onclick = () => openWork();
 
@@ -4475,15 +4530,38 @@ function listRow(item) {
   return row;
 }
 
+/** いま開いている一覧の項目（Channels のスレッドから開いたときは、そのスレッドの bot の分） */
+const dialogItems = () => backgroundItems(bg.scope);
+
+/** Channels のスレッドの一覧: bot ごとに区切り、中は動いているものが先（親の直後に子孫）。終わった親は bot ごとに 10 件ずつ */
+function renderScopedList(list, items) {
+  for (const [owner, rows] of groupByOwner(items)) {
+    const who = bg.scope.group(owner);
+    const head = el('div', 'bg-group bg-bot');
+    const logo = who.icon?.();
+    if (logo) head.append(logo);
+    head.append(el('span', null, who.name));
+    list.append(head);
+    const { rows: visible, remaining } = visibleRows(rows, bg.shownEnded);
+    list.append(...visible.map(listRow));
+    if (remaining > 0) {
+      const more = el('button', 'btn bg-more', t('dialog.work.showMore', { count: remaining }));
+      more.type = 'button'; more.onclick = () => { bg.shownEnded += 10; renderBackground(); };
+      list.append(more);
+    }
+  }
+}
+
 /** 一覧を描き直す。詳細は選んでいる項目が変わったときだけ描き直す（読んでいる位置を保つ） */
 function renderBackground() {
-  const items = backgroundItems();
+  const items = dialogItems();
   if (!items.some(x => x.key === bg.selected)) bg.selected = items[0]?.key ?? null;
   const { live, ended } = backgroundTotals(items);
   $('workCount').textContent = t('dialog.work.count', { live, ended });
   const list = $('workList');
   list.replaceChildren();
-  const agents = items.filter(x => x.group === 'agent');
+  if (bg.scope) renderScopedList(list, items);
+  const agents = bg.scope ? [] : items.filter(x => x.group === 'agent');
   const active = agents.filter(x => x.rootLive ?? x.live);
   const finished = agents.filter(x => !(x.rootLive ?? x.live));
   if (active.length) list.append(el('div', 'bg-group', t('dialog.work.groupRunning')), ...active.map(listRow));
@@ -4524,10 +4602,12 @@ function selectBackground(key) {
 }
 
 /** ダイアログを開く。key を渡すとその項目を選んだ状態で開く（会話の中のカードから） */
-function openWork(key) {
+function openWork(key, scope = null) {
+  bg.scope = scope;
+  $('workTitle').textContent = scope ? t('dialog.work.titleSub') : t('dialog.work.title');
   bg.shownEnded = 10;
   if (typeof key === 'string') {
-    const rows = backgroundItems().filter(x => x.group === 'agent' && !(x.rootLive ?? x.live));
+    const rows = dialogItems().filter(x => x.group === 'agent' && !(x.rootLive ?? x.live));
     let root = 0;
     for (const row of rows) {
       if (!row.depth) root++;
@@ -4536,13 +4616,14 @@ function openWork(key) {
   }
   bg.narrowDetail = typeof key === 'string';
   if (typeof key === 'string') bg.selected = key;
-  else if (!bg.selected || !backgroundItems().some(x => x.key === bg.selected && x.live)) bg.selected = backgroundItems()[0]?.key ?? null;
+  else if (!bg.selected || !dialogItems().some(x => x.key === bg.selected && x.live)) bg.selected = dialogItems()[0]?.key ?? null;
   bg.view = null;
   // 先に開く。詳細の読み込みは開いているときだけ走る
   if (!$('workDialog').open) $('workDialog').showModal();
   renderBackground();
   // 配信の間に始まって終わった子孫の委譲も一覧に出すため、会話の分を読み直す
-  loadTaskCards(state.current).then(repaintTasks).catch(() => {});
+  if (scope) watchSessions([...scope.sessions()], { force: true });
+  else loadTaskCards(state.current).then(repaintTasks).catch(() => {});
   if (typeof key !== 'string') $('workList').scrollTop = 0;
   else $('workList').querySelector(`[data-key="${CSS.escape(key)}"]`)?.scrollIntoView({ block: 'nearest' });
 }
@@ -4582,7 +4663,7 @@ function paintDetailHead(item) {
     open.title = t('dialog.work.openChat');
     open.setAttribute('aria-label', t('dialog.work.openChat'));
     open.append(icon(GO_PATH));
-    open.onclick = () => { $('workDialog').close(); select(item.childId); };
+    open.onclick = () => { const scope = bg.scope; $('workDialog').close(); if (scope) scope.openSession(item.childId); else select(item.childId); };
     actions.append(open);
     if (['queued', 'running'].includes(item.taskStatus) || item.waiting) {
       const stop = el('button', 'btn btn-quiet', t('dialog.work.stop'));
@@ -4883,7 +4964,8 @@ const watchValueWidth = (res) => valueWidths?.observe(res);
  * 委譲のカードに、子の会話へ移る矢印を足す。押すとバックグラウンドのダイアログでその子を選んだ状態になる。
  * Pleiad タスクは結果（taskId）が届いてから押せるようにする。メインの会話のカードだけに付ける
  */
-function linkDelegateCard(card, input = null, result = null) {
+function linkDelegateCard(card, input = null, result = null, ctx = null) {
+  if (card && ctx) cardCtx.set(card, ctx);   // Channels のスレッドのカード: どの範囲・会話・エージェントの子か（無ければ今開いている会話）
   const name = card?.dataset.tool;
   // 一覧の見出しに使う依頼の一行（結果が後から届くカードは、始まったときに覚えた分を使う）
   const said = input?.description || input?.task || (typeof input?.prompt === 'string' ? input.prompt.split(/\r?\n/).find(Boolean) : '');
@@ -4898,7 +4980,7 @@ function linkDelegateCard(card, input = null, result = null) {
     // 振り分けの記録。ply_delegate の結果（JSON）にある。タスクの一覧（running）にあればそちらを使う
     const routing = delegateResult(result)?.routing;
     if (routing) cardRouting.set(card, routing);
-  } else if (!SUBAGENT_TOOLS.has(name) || !card.dataset.id || capsOf(activeBackendId()).subagents === false) return;
+  } else if (!SUBAGENT_TOOLS.has(name) || !card.dataset.id || capsOf(ctx?.backend ?? activeBackendId()).subagents === false) return;
   card.classList.add('tc-delegate');
   card.append(goButton(t('timeline.delegate.openChild'), (b) => openFromCard(card, b)));
   const res = card.querySelector('.tc-res');
@@ -5140,22 +5222,25 @@ function paintRetried(card) {
       el('span', 'rt-retried-state', TASK_STATUS[task.status] ?? task.status ?? ''));
     const open = el('button', 'btn', t('dialog.work.open'));
     open.type = 'button';
-    open.onclick = (e) => { e.preventDefault(); openWork(`t:${task.taskId}`); };
+    open.onclick = (e) => { e.preventDefault(); openWork(`t:${task.taskId}`, cardCtx.get(card)?.scope ?? null); };
     row.append(open);
     return row;
   }));
 }
 /** タスクの一覧が変わったら、会話の中の委譲カードを追いつかせる（記録が後から届いたカード・やり直しの行） */
 function paintDelegateCards() {
+  for (const [root, scope] of delegateRoots()) paintDelegateCardsIn(root, scope);
+}
+function paintDelegateCardsIn(root, scope) {
   const missing = [];
-  for (const card of thread.querySelectorAll('.tc[data-task-id]')) {
+  for (const card of root.querySelectorAll('.tc[data-task-id]')) {
     if (card.dataset.routed) { repaintRouteTarget(card); paintRetried(card); }
     else decorateDelegateCard(card);
     // 始まって終わるまでが running の配信の間に収まった委譲は、会話の分を読んだ後に増えている。カードの分だけ 1 度読む
     const id = card.dataset.taskId;
-    if (taskCards.sessionId === state.current && !taskCards.asked.has(id) && !taskById(id)) { taskCards.asked.add(id); missing.push(id); }
+    if ((scope || taskCards.sessionId === state.current) && !taskCards.asked.has(id) && !taskById(id)) { taskCards.asked.add(id); missing.push(id); }
   }
-  paintDelegateStates();
+  paintDelegateStates(root, scope);
   if (missing.length) fetchTaskCards(missing).catch(() => {});
 }
 
@@ -5176,16 +5261,16 @@ function delegateStateOf(item) {
 /** 走っているカードの経過を 1 秒ごとに書き換える。走っているカードが無くなったら止める */
 let delegateTicker = 0;
 function tickDelegateElapsed() {
-  const spans = thread.querySelectorAll('.tc-el[data-start]');
+  const spans = delegateRoots().flatMap(([root]) => [...root.querySelectorAll('.tc-el[data-start]')]);
   if (!spans.length) { clearInterval(delegateTicker); delegateTicker = 0; return; }
   const now = Date.now();
   for (const span of spans) span.textContent = clockText(now - Number(span.dataset.start));
 }
 
-function paintDelegateStates() {
-  const cards = [...thread.querySelectorAll('.tc[data-tool]')].filter(c => c.querySelector(':scope > .tc-go'));
+function paintDelegateStates(root = thread, scope = null) {
+  const cards = [...root.querySelectorAll('.tc[data-tool]')].filter(c => c.querySelector(':scope > .tc-go'));
   if (!cards.length) return;
-  const items = backgroundItems().filter(i => i.group === 'agent');
+  const items = backgroundItems(scope).filter(i => i.group === 'agent');
   for (const card of cards) {
     const res = card.querySelector('.tc-res');
     if (!res || card.classList.contains('tc-error')) continue;
@@ -5219,7 +5304,7 @@ function paintDelegateStates() {
     }
     res.replaceChildren(...parts);
   }
-  if (!delegateTicker && thread.querySelector('.tc-el[data-start]')) delegateTicker = setInterval(tickDelegateElapsed, 1000);
+  if (!delegateTicker && root.querySelector('.tc-el[data-start]')) delegateTicker = setInterval(tickDelegateElapsed, 1000);
 }
 /** 「別の候補でやり直す」の面を開閉する。候補は設定 › 委譲と同じ一覧から、今使えるものだけ */
 async function toggleRetry(card, root, button) {
@@ -5261,26 +5346,27 @@ function cardNote(card, text) {
 }
 
 async function openFromCard(card, button) {
-  if (card.dataset.taskId) return openWork(`t:${card.dataset.taskId}`);
+  const ctx = cardCtx.get(card) ?? null, scope = ctx?.scope ?? null;
+  if (card.dataset.taskId) return openWork(`t:${card.dataset.taskId}`, scope);
   const toolId = card.dataset.id;
-  const live = backgroundItems().find(x => x.origin === toolId);
-  if (live) return openWork(live.key);
-  const sessionId = state.current;
+  const live = backgroundItems(scope).find(x => x.origin === toolId);
+  if (live) return openWork(live.key, scope);
+  const sessionId = ctx?.sessionId ?? state.current;
   button.disabled = true;
   try {
     const { agentId, status, startedAt, endedAt } = await cmd('findSubagent', { sessionId, toolId });
     if (!agentId) throw new Error(t('dialog.work.notFound'));
     const key = `a:${sessionId}:${agentId}`;
     const title = card.dataset.bgTitle;
-    bg.extra.set(key, { key, group: 'agent', source: 'native', title: title || agentId, backend: activeBackendId(), model: null, effort: null,
+    bg.extra.set(key, { key, group: 'agent', source: 'native', title: title || agentId, backend: ctx?.backend ?? activeBackendId(), model: null, effort: null,
       status: status ?? (card.classList.contains('tc-fail') ? 'failed' : 'completed'), live: status === 'running', extra: true,
       startedAt: startedAt ?? null, endedAt: endedAt ?? null, origin: toolId, parentId: sessionId, agentId });
-    openWork(key);
+    openWork(key, scope);
   } catch (e) { cardNote(card, t('dialog.work.openFailed', { error: e.message })); }
   finally { button.disabled = false; }
 }
 
-$('workDialog').addEventListener('close', () => { bg.view = null; bg.extra.clear(); });
+$('workDialog').addEventListener('close', () => { bg.view = null; bg.extra.clear(); bg.scope = null; });
 
 // ---------------------------------------------------------------- 配色
 // 明示的に選んだらそれを守る。選んでいなければ OS の設定に従う。端末ごとの好みなのでブラウザ側に覚える。
@@ -5626,6 +5712,16 @@ const channelsUi = setupChannels({
   openImage: (src, caption, path, origin) => openLightbox(src, caption, path, origin),   // 添付の画像を大きく見る（会話と同じライトボックス）
   permissionCard: (ev, into) => (ev.kind === 'question' ? questionCard(ev, into) : permissionCard(ev, into)),   // 質問も同じ口（bot の質問）
   openSession: async (id) => { channelsUi.setTab('chats'); await select(id); },
+  // 委譲の子の様子（スレッドの入口・作業ログの委譲カード）。Chats と同じ部品を使う（docs/design-system.md「バックグラウンド」「委譲カード」）
+  background: {
+    watch: (ids) => watchSessions(ids),
+    items: (scope) => backgroundItems(scope).filter(i => i.group === 'agent'),
+    subscribe: (fn) => { watched.listeners.add(fn); return () => watched.listeners.delete(fn); },
+    open: (scope) => openWork(undefined, scope),
+    link: (card, input, result, ctx) => linkDelegateCard(card, input, result, ctx),
+    mount: (root, scope) => { channelRoots.set(root, scope); },
+    paint: () => paintDelegateCards(),
+  },
   openSidebar: () => setSidebar(true),
   showMenu: (x, y, items, title) => showMenu(x, y, items, title),
   renderAssistantMarkdown, renderPresent,

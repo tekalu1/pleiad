@@ -18,6 +18,7 @@ import { openEmojiPicker } from '../emoji-picker.mjs';
 import { createDeck } from './deck.mjs';
 import { createThreadHead } from './thread-head.mjs';
 import { createThreadToc } from './thread-toc.mjs';
+import { createBackgroundChip } from '../background-chip.mjs';
 import { createToolSource, turnWindows, logInWindow, signatureOf, toolNodes } from './thread-tools.mjs';
 
 const PAGE = 50;
@@ -83,6 +84,15 @@ export function createThread(host) {
   const band = el('div', 'th-band');
   band.hidden = true;
   band.setAttribute('role', 'status');
+  // サブエージェントの入口（入力欄のすぐ上の右端。Chats の「バックグラウンド」と同じチップ。bot が委譲した子がいなければ出さない）。
+  // 押すと bot ごとに子を並べる一覧が開く（Chats と同じ部品。docs/design-system.md「バックグラウンド」）
+  const subs = el('div', 'work-entry th-subs');
+  subs.hidden = true;
+  const subsButton = el('button', 'strip-chip bg-chip');
+  subsButton.type = 'button';
+  subsButton.setAttribute('aria-controls', 'workDialog');
+  subs.append(subsButton);
+  const subsChip = createBackgroundChip(subsButton);
   const composer = createChComposer({
     id: 'chThreadComposer',
     host,
@@ -95,7 +105,7 @@ export function createThread(host) {
   });
   const toc = createThreadToc({ host, posts: () => S.posts, ctx: () => ctx, go: (p) => goTo(p) });
   const head = createThreadHead({ host, onClose: () => close(), onBack: () => close(), onToc: (b) => toc.toggle(b) });
-  root.append(head.el, log, jump, band, composer.el);
+  root.append(head.el, log, jump, band, subs, composer.el);
   composer.bindDropZone(root);
   wireAttachmentZoom(log, host);
   const deck = createDeck({ view, body, feed: feedRoot, thread: root, top });
@@ -177,6 +187,40 @@ export function createThread(host) {
     return Object.values(S.thread?.sessions ?? {}).at(-1) ?? null;
   }
   const sessionIds = () => new Set([...Object.values(S.thread?.sessions ?? {}), ...S.posts.map((p) => p.turn?.sessionId).filter(Boolean)]);
+
+  // ---------------------------------------------------------------- サブエージェント（bot が委譲した子）
+  /** この会話を持つ bot（スレッドの bot の会話 → bot。一覧は bot ごとに分ける） */
+  function botOfSession(sessionId) {
+    for (const [botId, sid] of Object.entries(S.thread?.sessions ?? {})) if (sid === sessionId) return S.bots.get(botId) ?? { id: botId };
+    const p = S.posts.find((x) => x.turn?.sessionId === sessionId && x.turn.botId);
+    return p ? (S.bots.get(p.turn.botId) ?? { id: p.turn.botId }) : null;
+  }
+  /** client.mjs の一覧・カードに渡す範囲: このスレッドの bot の会話から委譲した子 */
+  const scope = {
+    sessions: () => sessionIds(),
+    group: (sessionId) => {
+      const bot = botOfSession(sessionId);
+      return { name: bot?.name ?? t('channels:feed.unknownBot'), icon: () => botIcon(bot, 'th-band-icon') };
+    },
+    openSession: (id) => host.openSession(id),
+  };
+  host.background?.mount(log, scope);
+  subsButton.onclick = () => host.background?.open(scope);
+  function paintSubs() {
+    const items = S.threadId && host.background ? host.background.items(scope) : [];
+    subsChip.update(items, S.threadId);
+    subs.hidden = !items.length;
+  }
+  host.background?.subscribe(paintSubs);
+  /** このスレッドの bot の会話が変わった（委譲の子の行を読む範囲）。変わっていなければ何もしない */
+  const syncSubs = () => { host.background?.watch(S.threadId && S.ready ? [...sessionIds()] : []); paintSubs(); };
+  /** 作業ログの委譲カードを、Chats と同じ形（状態の印・経過・子の会話への矢印）に仕上げさせる。カードが DOM に入ってから 1 回にまとめる */
+  let delegatesQueued = false;
+  function paintDelegates() {
+    if (delegatesQueued || !host.background) return;
+    delegatesQueued = true;
+    requestAnimationFrame(() => { delegatesQueued = false; host.background.paint(); });
+  }
 
   // ---------------------------------------------------------------- 見出し・帯
   function paintHead() {
@@ -299,7 +343,9 @@ export function createThread(host) {
           box.append(text);
           continue;
         }
-        const built = toolNodes(item.calls, { running: running && item === lastCalls });
+        const backend = S.bots.get(p.turn?.botId)?.backend ?? null;
+        const built = toolNodes(item.calls, { running: running && item === lastCalls,
+          link: (card, c) => host.background?.link(card, c.input, c.result, { scope, sessionId: w.sessionId, backend }) });
         const group = el('div', 'th-tools');
         group.append(...built.nodes);
         box.append(group);
@@ -347,6 +393,7 @@ export function createThread(host) {
     if (p.author?.kind === 'system') { const n = sysNode(p); old.replaceWith(n); postEls.set(id, n); return; }
     fillPost(old, p, ctx);
     decorate(old, p);
+    paintDelegates();
   }
   const repaintTurns = (sessionId) => { for (const p of S.posts) if (p.turn && (!sessionId || p.turn.sessionId === sessionId)) repaint(p.id); };
 
@@ -364,6 +411,7 @@ export function createThread(host) {
     replies.replaceChildren(...rest.map((p) => { const n = nodeFor(p); postEls.set(p.id, n); return n; }));
     older.hidden = !S.nextBefore;
     paintRdiv();
+    paintDelegates();
   }
 
   function addPost(p) {
@@ -374,6 +422,7 @@ export function createThread(host) {
     postEls.set(p.id, node);
     replies.append(node);
     paintRdiv();
+    paintDelegates();
   }
 
   // ---------------------------------------------------------------- 読み込み
@@ -385,6 +434,8 @@ export function createThread(host) {
     bandSig = ''; band.hidden = true; band.replaceChildren();
     jump.hidden = true;
     readSent = 0;
+    host.background?.watch([]);
+    paintSubs();
   }
 
   async function load() {
@@ -411,6 +462,7 @@ export function createThread(host) {
       paintAll();
       paintBand();
       paintPlaceholder();
+      syncSubs();
       for (const ev of S.queue.splice(0)) events[ev.type]?.(ev);
       paintPendingPerms();
       toBottom();
@@ -543,6 +595,7 @@ export function createThread(host) {
     composer.refresh();
     toc.refresh();
     head.setSession(activeSession());
+    syncSubs();
   }
 
   function onReply(op, p) {
@@ -601,6 +654,7 @@ export function createThread(host) {
       S.thread = ev.thread;
       paintBand();
       paintPlaceholder();
+      syncSubs();
       paintPendingPerms();
       if (idle) head.setSession(activeSession(), { force: true });   // ターンが終わったら git の変更の有無を取り直す
     },
@@ -618,6 +672,7 @@ export function createThread(host) {
       paintBand();
       paintPlaceholder();
       composer.refresh();
+      paintSubs();
     },
     permission(ev) {
       if (S.ready && S.threadId) showCard(ev);
@@ -664,6 +719,8 @@ export function createThread(host) {
     toc.close();
     S.seq++;
     S.threadId = null;
+    host.background?.watch([]);
+    paintSubs();
     markSelected();
     deck.setThread(false);
     feedRoot.querySelector('.ch-input')?.focus({ preventScroll: true });
