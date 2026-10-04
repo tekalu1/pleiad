@@ -13,8 +13,23 @@ import fs from "node:fs";
 export const WORKER_TAG_ENV = "PLEIAD_TEST_WORKER_TAG";
 
 const SLACK_MS = 2000;
-/** worker は fork の直後に生まれる。pid が使い回された別のプロセスと見分けるための、生まれた時刻の許容幅 */
+/** worker は fork の直後に生まれる。worker が自分の生まれた時刻（bornAt）を知らせていないときの、起こした時刻（spawnedAt）からの許容幅 */
 const BIRTH_WINDOW_MS = 15_000;
+/** worker が知らせた生まれた時刻（bornAt。Date.now() - uptime で求めるので数百ミリ秒ずれる）とプロセス表の作成時刻の許容幅 */
+const BORN_TOLERANCE_MS = 3000;
+
+/**
+ * root の pid が今のプロセス表にあるとき、それが本物の worker か（pid が別のプロセスに使い回されていないか）。
+ *   - 生まれた時刻が、worker が知らせた bornAt の近く（無ければ起こした時刻 spawnedAt の近く）であること
+ *   - worker が死んでいる（endedAt がある）なら、死ぬより後に生まれたものは本物ではない
+ * 判定できない（表に作成時刻が無い）ときは本物とみなさない（子孫を辿らない）。
+ */
+export function isSameRoot(me, r) {
+  if (!me || !Number.isFinite(me.created) || me.created <= 0) return false;
+  if (r.endedAt != null && me.created > r.endedAt) return false;
+  if (r.bornAt != null) return Math.abs(me.created - r.bornAt) <= BORN_TOLERANCE_MS;
+  return me.created >= r.spawnedAt - SLACK_MS && me.created <= r.spawnedAt + BIRTH_WINDOW_MS;
+}
 
 /** Windows のプロセス表: Map<pid, { ppid, created(ms) }>。読めなければ null（1 回だけ引き直す） */
 export function listProcessesWin() {
@@ -33,10 +48,10 @@ export function listProcessesWin() {
 }
 
 /**
- * table（pid → { ppid, created }）から、roots（{ pid, spawnedAt, endedAt? }）の子孫を集める。roots 自身は含めない・自分（selfPid）は含めない。
+ * table（pid → { ppid, created }）から、roots（{ pid, spawnedAt, bornAt?, endedAt? }）の子孫を集める。roots 自身は含めない・自分（selfPid）は含めない。
  * pid の使い回しで、ほかの作業のプロセスを自分のものと取り違えないための条件:
- *   - root の pid が今もある（生きている）なら、その生まれた時刻が、起こした時刻（spawnedAt）の近くであること。違えば別のプロセスなので辿らない
- *   - root が死んだ後は、子が生まれたのが root の死（endedAt。無ければ今）より後でないこと。死んだ後に生まれた子は、使い回された pid の子
+ *   - root の pid が今もある（生きている）なら、isSameRoot（生まれた時刻が worker の知らせた bornAt・起こした時刻の近く、かつ死（endedAt）より後でない）であること。違えば別のプロセスなので辿らない
+ *   - root が死んでいる（endedAt）なら、子が生まれたのが root の死より後でないこと。死んだ後に生まれた子は、使い回された pid の子
  *   - 子は親より後に生まれていること（鎖の各段）
  */
 export function ownedDescendants(table, roots, selfPid = process.pid, now = Date.now()) {
@@ -57,8 +72,8 @@ export function ownedDescendants(table, roots, selfPid = process.pid, now = Date
   };
   for (const r of roots) {
     const me = table.get(r.pid);
-    if (me && (me.created < r.spawnedAt - SLACK_MS || me.created > r.spawnedAt + BIRTH_WINDOW_MS)) continue;   // pid が別のプロセスに使い回されている
-    walk(r.pid, r.spawnedAt, me ? Infinity : (r.endedAt ?? now) + SLACK_MS);
+    if (me && !isSameRoot(me, r)) continue;   // pid が別のプロセスに使い回されている（または確かめられない）。その子孫は辿らない
+    walk(r.pid, me ? Math.min(me.created, r.spawnedAt) : r.spawnedAt, me && r.endedAt == null ? Infinity : (r.endedAt ?? now) + SLACK_MS);
   }
   return owned;   // Map<pid, { ppid, created }>
 }

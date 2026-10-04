@@ -15,7 +15,7 @@ import { pathToFileURL, fileURLToPath } from "node:url";
 import { Suite, runCase, summarize, pick } from "./harness.mjs";
 import { snapshotPleiadWorktrees, leakedWorktrees } from "./worktree-guard.mjs";
 import { installDomStub } from "./dom-stub.mjs";
-import { reapOwned, WORKER_TAG_ENV } from "./process-reap.mjs";
+import { reapOwned, killTagged, WORKER_TAG_ENV } from "./process-reap.mjs";
 import { ArgError, USAGE, parseArgs, loadRegistry, loadWeights, weightOf, isWeighted, heaviestFirst, assignShards, planHash } from "./runner-plan.mjs";
 
 const WORKER_PATH = fileURLToPath(new URL("./run-worker.mjs", import.meta.url));
@@ -157,8 +157,9 @@ async function runPool({ entries, jobs, root, weights, parentDataDir }) {
 
   /** ws の worker が起こした子孫（suite が起こしたサーバーなど）のうち残っているものだけを止める。範囲は worker の pid から鎖で辿れるものだけ（tests/lib/process-reap.mjs） */
   const reapRoots = (ws) => {
-    const r = reapOwned(ws.map((w) => ({ pid: w.pid, spawnedAt: w.spawnedAt, endedAt: w.endedAt, tag: w.tag })));
+    const r = reapOwned(ws.map((w) => ({ pid: w.pid, spawnedAt: w.spawnedAt, bornAt: w.bornAt, endedAt: w.endedAt, tag: w.tag })));
     reaped += r.killed;
+    for (const w of ws) w.reaped = true;   // 同じ root の回収は 1 度だけ（最後の一括からは外す）
     if (r.error && !reapErrors.includes(r.error)) reapErrors.push(r.error);
   };
 
@@ -206,7 +207,7 @@ async function runPool({ entries, jobs, root, weights, parentDataDir }) {
 
     child.on("message", (msg) => {
       if (!msg || typeof msg !== "object") return;
-      if (msg.type === "ready") { w.ready = true; w.dataDir = msg.dataDir ?? null; startFailures = 0; dispatch(w); }
+      if (msg.type === "ready") { w.ready = true; w.bornAt = Number.isFinite(msg.bornAt) ? msg.bornAt : null; w.dataDir = msg.dataDir ?? null; startFailures = 0; dispatch(w); }
       else if (msg.type === "out") { w.busy?.out.push(String(msg.text)); }
       else if (msg.type === "fatal") { w.fatal = String(msg.message); }
       else if (msg.type === "result") {
@@ -278,7 +279,9 @@ async function runPool({ entries, jobs, root, weights, parentDataDir }) {
   }
 
   // 全員の終わった後、suite が残した子孫（正常に終わった worker の分も）を止めてから、worker の置き場を消す（掴まれていると消せない）
-  if (process.platform === "win32") reapRoots(workers.filter((w) => w.closed));
+  // Windows: 予定外の終わりで回収済みの worker は除く。POSIX は各 worker の終わりに回収済みなので、残りがないかを印だけで確かめる（印は worker ごとに一意なので安全）
+  if (process.platform === "win32") reapRoots(workers.filter((w) => w.closed && !w.reaped));
+  else reaped += killTagged(workers.map((w) => w.tag));
   for (const w of workers) removeWorkerData(w.dataDir);
 
   for (const [name, n] of completions) if (n > 1) problems.push(`${name} が ${n} 回走った`);

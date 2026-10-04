@@ -72,4 +72,5 @@ process.on("message", async (msg) => {
   busy = false;
 });
 
-send({ type: "ready", dataDir: testDataDir, pid: process.pid });
+// 自分の生まれた時刻（ms）。親が、pid の使い回しと見分けるのに使う
+send({ type: "ready", dataDir: testDataDir, pid: process.pid, bornAt: Date.now() - process.uptime() * 1000 });

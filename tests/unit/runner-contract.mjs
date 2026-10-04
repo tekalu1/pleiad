@@ -228,6 +228,12 @@ export default async function (t) {
       t.ok("生きている worker の子孫（孫まで）を集める。root 自身・自分・無関係なプロセスは入れない", same(names(ownedDescendants(tbl([[100, 1, T0 + 10], [200, 100, T0 + 100], [300, 200, T0 + 200], [400, 1, T0 + 50], [500, 400, T0 + 60], [999, 100, T0 + 300]]), [{ pid: 100, spawnedAt: T0 }], 999)), [200, 300]));
       t.ok("root の pid が別のプロセスに使い回されている（生まれた時刻が、起こした時刻と違う）なら、その新しい子孫も辿らない", ownedDescendants(tbl([[100, 1, T0 + 3_600_000], [200, 100, T0 + 3_600_500], [300, 200, T0 + 3_600_900]]), [root]).size === 0);
       t.ok("root が死んでいて、その pid の子が root の死より後に生まれていたら（使い回された pid の子）辿らない。死ぬ前に生まれた子（本物の孫）は辿る", same(names(ownedDescendants(tbl([[200, 100, T0 + 1000], [201, 100, T0 + 3_600_000], [300, 201, T0 + 3_600_100]]), [root])), [200]));
+      // 起こした時刻 1000 → worker の死 2000 → 同じ pid の新しいプロセスが 2500（許容幅の 15 秒の中）に生まれ、その子が 3000 に生まれた
+      const reusedSoon = ownedDescendants(tbl([[100, 1, 2500], [200, 100, 3000]]), [{ pid: 100, spawnedAt: 1000, endedAt: 2000 }], 999, 10_000);
+      t.ok("worker の死（endedAt 2000）より後に同じ pid で生まれた新しいプロセス（2500。起こした時刻 1000 から 15 秒の許容幅の中）とその新しい子（3000）は、絶対に対象にしない", reusedSoon.size === 0);
+      t.ok("死んだ worker が（ハンドルが残って）表にまだ載っているときは、本物として子孫を辿る（生まれた時刻が死より前）", ownedDescendants(tbl([[100, 1, 1100], [200, 100, 1500]]), [{ pid: 100, spawnedAt: 1000, endedAt: 2000 }], 999, 10_000).has(200));
+      t.ok("worker が知らせた bornAt があれば、それと 3 秒以内の作成時刻だけを本物とする（15 秒の許容幅の中でも、bornAt から離れていれば辿らない）", ownedDescendants(tbl([[100, 1, 1000 + 10_000], [200, 100, 1000 + 10_500]]), [{ pid: 100, spawnedAt: 1000, bornAt: 1100 }], 999).size === 0 && ownedDescendants(tbl([[100, 1, 1500], [200, 100, 1800]]), [{ pid: 100, spawnedAt: 1000, bornAt: 1100 }], 999).has(200));
+      t.ok("作成時刻が表に無い（0）root は、本物かを確かめられないので辿らない（対象にしない）", ownedDescendants(tbl([[100, 1, 0], [200, 100, 5000]]), [{ pid: 100, spawnedAt: 1000 }], 999).size === 0);
       t.ok("子が親より先に生まれていたら（親の pid が使い回された）辿らない", ownedDescendants(tbl([[100, 1, T0 + 10], [200, 100, T0 + 100], [300, 200, T0 - 600_000]]), [{ pid: 100, spawnedAt: T0 }]).has(300) === false);
       t.ok("root の生まれた時刻が許容幅の中なら生きている root として辿る", ownedDescendants(tbl([[100, 1, T0 + 500], [200, 100, T0 + 900]]), [{ pid: 100, spawnedAt: T0 }]).has(200));
       const kills = [];
