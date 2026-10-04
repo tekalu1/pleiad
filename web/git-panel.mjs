@@ -565,7 +565,8 @@ export function setupGitPanel({ cmd, preview, session, jump, use, onState = () =
     st.commitData = {};
     await Promise.all([loadHistory(), st.sel.k === 'session' ? loadRange('session') : null, st.sel.k === 'commit' ? loadCommit(st.sel.hash) : null, st.tab === 'worktrees' ? loadWorktrees() : null]);
     if (mine !== ticket || sid() !== id) return;
-    if (st.diff) st.diff = null;
+    // 差分を開いている間に取り直しが終わったら、差分は開いたまま中身だけ読み直す
+    if (st.diff) { st.diff.cache.clear(); st.diff.failed.clear(); loadDiffAt(st.diff.index); }
     paint();
   }
 
