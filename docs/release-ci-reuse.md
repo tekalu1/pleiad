@@ -21,25 +21,27 @@ CI が赤ければ公開しない。使える成功が無ければ、今まで�
 
 | 状態 | 判定 |
 |---|---|
-| 最新の attempt で、必須の 6 ジョブがちょうど 1 つずつ `success`、run の結論も `success` | `reuse` |
+| 最新の attempt で、必須の 6 ジョブがちょうど 1 つずつ `success`、ほかのジョブも `success`（push で飛ばす `safe-storage-macos` だけは `skipped` でよい）、run の結論も `success` | `reuse` |
 | run かジョブ（必須でないものも）が `failure`・`timed_out`・`action_required`・`startup_failure` | **赤**。公開しない。走っている途中でも、終わったジョブが赤ければ待たずに止める。同じ commit の run が複数あり、どれかが赤ければ止める |
 | run・ジョブが終わっていない | 待つ（下記） |
 | run が無い（`site/**` だけの変更・まとめて push した途中の commit など） | `fallback` |
 | `cancelled`（次の push に取り消された）・`skipped`・`neutral` など | `fallback` |
-| 必須のジョブの欠け・重複・一部だけの成功、run の総合の `success` だけ、jobs を読めない | `fallback` |
+| 必須のジョブの欠け・重複・一部だけの成功、必須でないジョブの `cancelled`・`skipped`・`neutral`、run の総合の `success` だけ、jobs を読めない | `fallback` |
 | 別の commit・別の workflow・PR・手動の起動・別の枝の成功しか無い | `fallback` |
 | `reuse` と判定した直後に run を読み直すと、attempt・状態・結論が変わっていた（jobs を読んだ後に再実行が始まった） | 待つ。新しい attempt を同じ規則で見直す |
 | API の失敗（HTTP の失敗・時間切れ）が 3 回続いた | `fallback`。テストを省く方には倒さない |
 
 必須の 6 ジョブ（`REQUIRED_JOBS`）は、test.yml が main の push で回す `test (ubuntu-latest, 22.13)`・`test (ubuntu-latest, 24)`・`test (windows-latest, 22.13)` と `safe-storage (windows-dpapi)`・`safe-storage (linux-gnome-keyring)`・`safe-storage (linux-no-keyring)`。
-週次・手動だけの `safe-storage-macos` は push では `skipped` になるので数えない。
-test.yml の matrix やジョブを変えたら `REQUIRED_JOBS` も合わせる。`tests/unit/release-ci-gate.mjs` が test.yml を読んで突き合わせるので、合わせ忘れるとその commit の CI が赤くなり、そのままではリリースできない。
+週次・手動だけの `safe-storage-macos` は push では `skipped` になる。`skipped` を許すのはこれだけ（`SKIPPED_ON_PUSH`）。
+test.yml の matrix やジョブを変えたら `REQUIRED_JOBS`・`SKIPPED_ON_PUSH` も合わせる。`tests/unit/release-ci-gate.mjs` が test.yml を読んで突き合わせるので、合わせ忘れるとその commit の CI が赤くなり、そのままではリリースできない。
+合わせ忘れたまま足したジョブが `success` 以外で終わっても、`reuse` にはならない（上の表）。
 
 ## 待ち方
 
 - 30 秒ごとに読み直し、40 分で打ち切る（`--wait-minutes 40`。test.yml のジョブの上限は 30 分）。打ち切ったら `fallback`。
 - 始めの 5 分は、run が無いのも待つ（`--missing-grace-minutes 5`）。タグと main を同時に push すると、release が test.yml の run より先に始まることがあるため。
 - API の 1 回の呼び出しは、応答の本文を読み終えるまでを 20 秒で打ち切る（`--request-timeout-seconds 20`）。接続や本文が止まっても、待ちの期限の判定へ戻る。
+- API から来た文字（ジョブの名前など）は 1 行にしてから書く。ログは `ci-gate: ` で始め、`GITHUB_OUTPUT` は `decision` を最後の行に書く（ログの行頭が workflow command の `::` にならず、出力の行も増やせない）。
 - 待つのは `ci-gate`（ubuntu）で、Windows の runner は使わない。ジョブの上限は 50 分。
 - 引数は、知らない名前・同じ名前の 2 回目・10 進の 0 以上の数でない時間（NaN・Infinity・負など）・0 の間隔と時間切れを拒み、`ci-gate` を落とす（公開しない）。綴りを間違えた設定が既定値で走らないようにするため。
 
