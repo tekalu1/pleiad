@@ -50,7 +50,9 @@ jobs:
           node-version: ${{ matrix.node }}
           cache: npm
       - run: npm ci
-      - run: npm test
+      # 子プロセスの worker 2 本で並列に回す（tests/run.mjs --jobs。重い suite から配る）。ジョブは増やさない。
+      # 同じ suite の並列で落ちる・遅くなるようなら --jobs 1 に戻せば従来どおり（同じプロセスで 1 本ずつ）
+      - run: npm test -- --jobs 2
 
   # 外部 MCP の秘密の暗号化を、本物の Electron の safeStorage で確かめる（tests/desktop/safe-storage-smoke.cjs）。
   # main ↔ utilityProcess の橋渡し（desktop/secret-bridge.cjs）を通して暗号化・復号が往復するか、
