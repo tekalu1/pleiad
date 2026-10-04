@@ -1356,7 +1356,9 @@
       "title": "Title",
       "cwd": "Working directory",
       "mode": "Approval mode",
-      "model": "Model"
+      "model": "Model",
+      "backend": "Agent",
+      "effort": "Thinking effort"
     },
     "by": {
       "human": "You",
@@ -1369,6 +1371,7 @@
     "reason": {
       "resumeCwd": "Changed on resume",
       "worktreeSplit": "Moved to a separate workspace",
+      "parentChanged": "Changed by the requesting AI",
       "worktreeBack": "Moved back to the original",
       "cwdFrom": "from {{from}}",
       "contextReloaded": "Reloaded instructions and Skills",
@@ -2925,7 +2928,8 @@
       "pinned": "{{kind}} → {{target}}",
       "selectedHigh": "selected despite high usage ({{window}} {{percent}}%; threshold {{avoidPercent}}%)",
       "selectedLow": "selected with low headroom ({{reason}})",
-      "selectedLower": "selected from a lower tier"
+      "selectedLower": "selected from a lower tier",
+      "changedByParent": "changed by the requester (was {{from}})"
     },
     "detail": {
       "label": "Routing details",
@@ -2950,6 +2954,7 @@
       "retried": "Retried",
       "target": "Delegated to",
       "targetPinned": "{{target}} (chosen by the requester)",
+      "targetChanged": "{{target}} (changed by the requester)",
       "mode": "Approval mode",
       "cwd": "Working directory",
       "json": "Input and output (JSON)"
