@@ -159,7 +159,7 @@
 .gp .dx{background:var(--surface-1);border-radius:var(--r-m);overflow:auto;font:var(--fs-s)/1.7 var(--font-mono);margin-top:8px;padding:4px 0}
 .gp .din{width:max-content;min-width:100%}
 .gp .dl{display:grid;grid-template-columns:var(--gw,3.2em) var(--gw,3.2em) 1.5em minmax(0,1fr);color:var(--ink);background:var(--surface-1)}
-.gp .dl .ln, .gp .hc .ln{position:sticky;background:var(--surface-1);text-align:right;padding-right:8px;color:var(--ink-weak);font-size:var(--fs-xs);user-select:none;z-index:1}
+.gp .dl .ln, .gp .hc .ln{position:sticky;background:var(--surface-1);text-align:right;padding-right:8px;color:var(--ink);font-size:var(--fs-xs);user-select:none;z-index:1}
 .gp .dl .ln.o{left:0}.gp .dl .ln.n{left:var(--gw,3.2em)}
 .gp .dl .sg, .gp .hc .sg{text-align:center;user-select:none}
 .gp .code{white-space:pre;padding-right:14px}
@@ -178,6 +178,7 @@
 .gp .dgap code{font-size:var(--fs-xs);opacity:.85}
 .gp .dgap-lines{animation:gp-appear var(--dur) var(--ease-out)}
 .gp .flash{animation:gp-flash 1.2s var(--ease-out)}
+@media (prefers-reduced-motion:reduce){.gp .flash{animation:none}}
 @keyframes gp-flash{0%{box-shadow:inset 0 0 0 2px var(--line-blue)}100%{box-shadow:inset 0 0 0 2px transparent}}
 .gp .dx.wrap .din, .gp .dx.wrap .sbs{width:auto}
 .gp .dx.wrap .code{white-space:pre-wrap;overflow-wrap:anywhere}
@@ -206,7 +207,8 @@
 .gp svg.g{width:44px;height:30px;display:block;overflow:visible}
 .gp .cg-t{display:flex;align-items:center;gap:5px;min-width:0;transition:opacity var(--dur) var(--ease-out)}
 .gp .cg-tm{font-size:var(--fs-xs);color:var(--ink-weak);white-space:nowrap;padding-left:8px;transition:opacity var(--dur) var(--ease-out)}
-.gp .cg-row.dim .cg-t, .gp .cg-row.dim .cg-tm{opacity:.5}
+.gp .cg-row.dim .cg-t .subj, .gp .cg-row.dim .cg-tm{color:var(--ink-weak)}
+.gp .cg-row.dim .ref{background:transparent}
 .gp .cg-t .subj{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:4em;flex:0 1 auto}
 .gp .cg-row.headc .subj{font-weight:600}
 .gp .cg-row.wt .subj{font-weight:600}
@@ -272,8 +274,10 @@
 .gp .wdet .res .btn{height:24px;font-size:var(--fs-xs)}
 .gp .wsep{height:6px}
 /* ---- ref の札（ブランチ・タグ・リモート） ---- */
-.gp .ref{display:inline-flex;align-items:center;gap:3px;flex:0 1 auto;min-width:0;font-size:var(--fs-xs);line-height:1.6;padding:0 7px;border-radius:var(--r-pill);background:var(--surface-2);color:var(--ink-weak);white-space:nowrap;max-width:11em;overflow:hidden;text-overflow:ellipsis}
+.gp .ref{display:inline-flex;align-items:center;gap:3px;flex:0 1 auto;min-width:3.4em;font-size:var(--fs-xs);line-height:1.6;padding:0 7px;border-radius:var(--r-pill);background:var(--surface-2);color:var(--ink-weak);white-space:nowrap;max-width:11em;overflow:hidden;text-overflow:ellipsis}
 .gp .ref svg{flex:none}
 .gp .ref.head, .gp .ref.mine{flex:none}
 .gp .ref.head{background:var(--surface-3);color:var(--ink-blue);font-weight:700}
 .gp .ref.mine{background:none;color:var(--ink-blue);padding:0 2px;font-weight:600}
+.gp .ref .rn{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.gp .ref svg{flex:none}

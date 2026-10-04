@@ -2950,13 +2950,17 @@ const opsGit = {
   panel: async (args, { sweep = false } = {}) => {
     const sessionId = args?.sessionId;
     const cwd = await gitCwd(args);
-    const state = cwd ? await gitActivity.status(cwd, { fresh: true }) : null;
+    const only = args?.only === 'changes' || args?.only === 'light' ? args.only : null;
+    const state = cwd ? await gitActivity.status(cwd, { fresh: only !== 'changes' }) : null;
     if (!state) return { git: null };
+    const range = args?.range === 'session' ? 'session' : 'uncommitted';
+    // 範囲の切り替えは変更の一覧だけで足りる（会話の記録も、分けた作業場所の一覧も読まない）
+    if (only === 'changes') return { git: state, changes: await gitActivity.changes(cwd, sessionId, range), at: Date.now() };
     if (sweep) worktreeSweepSoon();
-    const worktrees = { current: await worktreeHost.worktrees.byPath(cwd).then(e => (e ? publicWorktree(e) : null)).catch(() => null), leftovers: await worktreeHost.leftovers({ cwd }).catch(() => []) };
+    const worktrees = only === 'light' ? { current: null, leftovers: [] } : { current: await worktreeHost.worktrees.byPath(cwd).then(e => (e ? publicWorktree(e) : null)).catch(() => null), leftovers: await worktreeHost.leftovers({ cwd }).catch(() => []) };
     const backend = sessionId ? await resolveBackendForSession(sessionId) : null;
     const timeline = sessionId ? timelineOf((await history.loadTranscript(sessionId, backend).catch(() => ({ messages: [] }))).messages) : [];
-    const changes = await gitActivity.changes(cwd, sessionId, args?.range === 'session' ? 'session' : 'uncommitted');
+    const changes = await gitActivity.changes(cwd, sessionId, range);
     return { git: state, timeline, changes, worktrees, at: Date.now() };
   },
   diff: async (args) => {

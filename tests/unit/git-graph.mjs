@@ -26,6 +26,10 @@ export default async function (t) {
   t.ok('作業ツリーの行は先頭で、HEAD へ点線の辺', wt.rows[0].wt === true && wt.rows[0].key === WT_KEY && wt.edges[0].dash === true && wt.edges[0].a === 0 && wt.edges[0].b === 1);
   t.ok('SVG は作業ツリーの点を wt、HEAD の点を head にする', rowSvg(wt, 0).includes('class="n wt') && rowSvg(wt, 1).includes('class="n head'));
 
+  // 作業ツリーの行が無く、HEAD より新しい別のブランチがある: HEAD の筋がレーン 0（青）のまま
+  const newer = layoutGraph([c('x', 'h'), c('h', 'p'), c('p')], { headHash: 'h' });
+  t.ok('HEAD より新しい枝があっても HEAD がレーン 0・新しい枝はレーン 1', newer.rows[1].lane === 0 && newer.rows[0].lane === 1 && newer.rows[1].head === true, JSON.stringify(newer.rows));
+
   // 範囲: 会話の始まりの HEAD は p。HEAD h と、別の枝 s（始まり p から出たが HEAD から辿れない）
   const commits = [c('s', 'p'), c('h', 'p2'), c('p2', 'p'), c('p', 'o'), c('o')];
   const lay = layoutGraph(commits, { withWorktree: true, headHash: 'h' });

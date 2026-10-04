@@ -18,6 +18,8 @@ export function layoutGraph(commits, { withWorktree = false, headHash = null } =
   for (const c of commits) items.push({ hash: c.hash, parents: c.parents ?? [], wt: false });
   const rowOf = new Map(items.map((c, i) => [c.hash, i]));
   const active = [];                     // 筋 → その筋が次に待つコミットの hash（空きは null）
+  // 作業ツリーの行が無いときも、レーン 0 は HEAD の筋のために空けておく（HEAD より新しいブランチが青い筋を取らない）
+  if (!withWorktree && headHash) active[0] = headHash;
   const rows = [], edges = [];
   const pending = [];                    // 筋に出した辺: { a, la, lane, parent, dash }
   let lanes = 0;

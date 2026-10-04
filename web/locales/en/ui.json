@@ -659,6 +659,7 @@
     "gapOpen": "Click to show",
     "stateU": "Untracked",
     "stateR": "Renamed",
+    "emptyCommit": "This commit changed no files",
     "jumpFailed": "Couldn't find it in the conversation."
   },
   "worktree": {

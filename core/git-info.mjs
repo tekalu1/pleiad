@@ -36,7 +36,7 @@ function exec(cwd, args, { env = {}, timeout = READ_TIMEOUT, maxBuffer = MAX_BUF
   return new Promise((resolve) => {
     let child;
     try {
-      child = execFile(gitBin, ['-c', 'core.quotepath=false', '-c', 'commit.gpgsign=false', ...args], {
+      child = execFile(gitBin, ['-c', 'core.quotepath=false', '-c', 'commit.gpgsign=false', '-c', 'log.showSignature=false', ...args], {
         cwd, encoding: 'utf8', windowsHide: true, timeout, maxBuffer,
         env: { ...process.env, GIT_OPTIONAL_LOCKS: '0', GIT_TERMINAL_PROMPT: '0', GIT_LITERAL_PATHSPECS: '1', ...env },
       }, (error, stdout, stderr) => {

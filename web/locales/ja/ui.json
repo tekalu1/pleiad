@@ -648,6 +648,7 @@
     "gapOpen": "押すと開く",
     "stateU": "未追跡",
     "stateR": "名前の変更",
+    "emptyCommit": "このコミットで変わったファイルはありません",
     "jumpFailed": "会話の中に見つかりませんでした"
   },
   "worktree": {

@@ -76,6 +76,7 @@ const SUITES = [
   './unit/git-history.mjs',
   './unit/git-graph.mjs',
   './unit/git-diff.mjs',
+  './unit/git-panel-html.mjs',
   './unit/server-git.mjs',
   // git の動きの画面（ADR 0085）: 要約行・委譲カードの変更の行・したことの行・差分の面（色なし）・右パネルの表（gitSlots）
   './unit/git-view.mjs',

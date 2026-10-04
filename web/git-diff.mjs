@@ -3,7 +3,7 @@
 import { t } from './i18n.mjs';
 import { moreIcon } from './icons.mjs';
 
-const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
 /** 削除の行と追加の行の、共通の頭と尻を除いた所 [from, to)（同じ・全部違うときは null） */
 export function wordRange(a, b) {
@@ -11,6 +11,10 @@ export function wordRange(a, b) {
   while (p < a.length && p < b.length && a[p] === b[p]) p++;
   let q = 0;
   while (q < a.length - p && q < b.length - p && a[a.length - 1 - q] === b[b.length - 1 - q]) q++;
+  // 絵文字などのサロゲートペアの間で切らない（頭は上位サロゲートの手前へ、尻は下位サロゲートの手前を含める）
+  const high = (c) => c >= 0xD800 && c <= 0xDBFF, low = (c) => c >= 0xDC00 && c <= 0xDFFF;
+  if (p > 0 && high(a.charCodeAt(p - 1))) p--;
+  if (q > 0 && low(a.charCodeAt(a.length - q))) q--;
   return p + q < Math.max(a.length, b.length) ? { a: [p, a.length - q], b: [p, b.length - q] } : null;
 }
 
@@ -23,12 +27,12 @@ export function buildItems(diff) {
   const items = [];
   let prevN = 0, lastDelta = 0;
   const after = diff.after ?? null;
-  const gap = (from, to, delta) => { if (to >= from) items.push({ gap: true, from, to, delta }); };
+  const gap = (from, to, delta, section = '') => { if (to >= from) items.push({ gap: true, from, to, delta, section }); };
   for (const h of diff.hunks ?? []) {
     // 「-3,0」「+3,0」は「3 行目の後ろ」の意味なので、行は 4 行目から数える
     let o = h.oldCount === 0 ? h.oldStart + 1 : h.oldStart;
     let n = h.newCount === 0 ? h.newStart + 1 : h.newStart;
-    if (n > prevN + 1) gap(prevN + 1, n - 1, o - n);
+    if (n > prevN + 1) gap(prevN + 1, n - 1, o - n, h.section ?? '');
     const rows = [];
     for (const line of h.lines) {
       if (line.t === '+') rows.push({ t: 'a', s: line.s, n: n++ });
@@ -80,7 +84,8 @@ function sideRows(rows) {
 
 /** 畳みの行の文。節の見出し（直前の関数）が分かれば添える */
 function gapLabel(g, after) {
-  const section = after ? [...after.slice(0, g.from - 1)].reverse().find((s) => /^(export )?(default )?(async )?(function|class) /.test(s)) : null;
+  // 直前の関数は、続くハンクの見出し（git の funcname。言語によらない）を使う。無ければ JS の関数・クラスの行を探す
+  const section = g.section || (after ? [...after.slice(0, g.from - 1)].reverse().find((s) => /^(export )?(default )?(async )?(function|class) /.test(s)) : null);
   return `<span>${moreIcon}${esc(t('git.gapLines', { count: g.to - g.from + 1 }))}${section ? ` · <code>${esc(section.trim().slice(0, 60))}</code>` : ''}</span>`;
 }
 

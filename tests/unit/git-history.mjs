@@ -98,6 +98,22 @@ export default async function (t) {
     const detail = await history.readWorktreeDetail(repo, wtDir, view.base.head);
     t.ok('作業場所の中身: コミット済み（e.txt）と未コミット（dirty.txt）を分ける', detail.committed.files.map((f) => f.path).join() === 'e.txt' && detail.uncommitted.files.map((f) => f.path).join() === 'dirty.txt', JSON.stringify(detail).slice(0, 300));
 
+    // 履歴が読めなくなる筋: HEAD という名のファイル・log.showSignature・長い題と本文
+    await fs.writeFile(path.join(repo, 'HEAD'), 'x\n');
+    sh(repo, 'config', 'log.showSignature', 'true');
+    const odd = await history.readHistory(repo, { limit: 5 });
+    t.ok('HEAD という名のファイルがあっても履歴が読める（ref とパスを -- で分ける）', odd && odd.commits.length >= 3, JSON.stringify(odd?.commits?.length));
+    t.ok('log.showSignature=true の利用者でも hash が先頭に来る', odd.commits.every((c) => /^[0-9a-f]{40}$/.test(c.hash)));
+    sh(repo, 'config', '--unset', 'log.showSignature');
+    await fs.rm(path.join(repo, 'HEAD'));
+    await write('long.txt', 'l\n'); sh(repo, 'add', 'long.txt');
+    sh(repo, 'commit', '-q', '-m', 'S'.repeat(2000) + '\n\n' + 'B'.repeat(30000));
+    const long = (await history.readHistory(repo, { limit: 1 })).commits[0];
+    t.ok('題は 300 字で切る', long.subject.length <= 300 && long.subject.length > 100, String(long.subject.length));
+    const longDetail = await history.readCommit(repo, long.hash);
+    t.ok('本文は 20000 字で切り、切ったら印', longDetail.body.length === history.BODY_MAX && longDetail.bodyTruncated === true, String(longDetail.body.length));
+    sh(repo, 'reset', '-q', '--hard', 'HEAD~1');
+
     // 名前の変更
     sh(repo, 'stash', '-q', '-u');
     sh(repo, 'mv', 'f.txt', 'g.txt'); sh(repo, 'commit', '-q', '-m', 'rename');

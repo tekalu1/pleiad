@@ -48,13 +48,15 @@ export const gitOps = [
       sessionId, cwd, range,
       limit: z.number().int().min(1).max(PAGE_MAX).optional().describe(A('limit')),
       cursor: z.string().max(400).optional().describe(A('cursor')),
+      // 画面だけが使う軽い問い合わせ（changes: 変更の一覧だけ。light: 分けた作業場所の一覧を計算しない）
+      only: z.enum(['changes', 'light']).optional().describe(D('changes', 'only')),
     }),
     output: z.object({ git: loose.nullable() }).passthrough(),
     surfaces: { ui: true, mcp: 'catalog', cli: { path: ['git', 'changes'] } },
     legacyCommand: 'gitPanel',
     // 画面のパネルは開いたときに、片付けられる分けた作業場所を片付ける（sweep）
     uiHandler: (ctx, args) => ctx.git.panel(args, { sweep: true }),
-    handler: (ctx, { limit, cursor, ...args }) => run(ctx, async () => {
+    handler: (ctx, { limit, cursor, only: _only, ...args }) => run(ctx, async () => {
       const got = await ctx.git.panel({ ...args, ...where(ctx, args) }, { sweep: false });
       if (!got?.git) return { git: null };
       const page = pageOf(ctx, got.changes?.files ?? [], { limit, cursor });
@@ -138,12 +140,18 @@ export const gitOps = [
   }),
   defineOp({
     id: 'git.worktree', summary: 'agent:ops.git.worktree.summary', risk: 'read',
-    input: z.object({ sessionId, cwd, worktree: z.string().max(4096).describe(A('worktree')) }),
+    input: z.object({ sessionId, cwd, worktree: z.string().max(4096).describe(A('worktree')), limit: z.number().int().min(1).max(PAGE_MAX).optional().describe(A('limit')) }),
     output: z.object({ worktree: loose.nullable() }),
     surfaces: { ui: true, mcp: 'catalog', cli: { path: ['git', 'worktree'], positional: ['worktree'] } },
     legacyCommand: 'gitWorktree',
     uiHandler: (ctx, args) => ctx.git.worktree(args),
-    handler: (ctx, args) => run(ctx, async () => maskTree(await ctx.git.worktree({ ...args, ...where(ctx, args) }))),
+    handler: (ctx, { limit = 30, ...args }) => run(ctx, async () => {
+      const got = (await ctx.git.worktree({ ...args, ...where(ctx, args) }))?.worktree;
+      if (!got) return { worktree: null };
+      // 数千ファイルになりうるので、それぞれ先頭から limit 件に切る（合計は total）
+      const cut = (g) => ({ ...g, files: (g?.files ?? []).slice(0, limit), more: (g?.files?.length ?? 0) > limit });
+      return maskTree({ worktree: { ...got, committed: cut(got.committed), uncommitted: cut(got.uncommitted) } });
+    }),
   }),
 ];
 

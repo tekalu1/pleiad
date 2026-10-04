@@ -13,7 +13,9 @@ const HASH_RX = /^[0-9a-f]{7,64}$/;
 export const isHash = (v) => typeof v === 'string' && HASH_RX.test(v);
 
 const FIELD = '\x1f';
-const LOG_FORMAT = ['%H', '%P', '%an', '%at', '%D', '%s'].join('%x1f');
+// 題は 300 字で切る（空行の無い長いメッセージでは %s が本文全体になり、200 件で出力が上限を超えるため）
+const LOG_FORMAT = ['%H', '%P', '%an', '%at', '%D', '%<(300,trunc)%s'].join('%x1f');
+export const BODY_MAX = 20_000;
 
 /**
  * `git log --decorate=full` の %D → [{ kind: 'head'|'branch'|'remote'|'tag', name, pleiad?, detached? }]。
@@ -45,7 +47,7 @@ export function parseLog(text) {
     if (!trimmed) continue;
     const [hash, parents, author, at, refs, subject] = trimmed.split(FIELD);
     if (!isHash(hash)) continue;
-    commits.push({ hash, short: hash.slice(0, 7), parents: parents ? parents.split(' ').filter(Boolean) : [], author: author ?? '', at: Number(at) * 1000 || 0, refs: parseRefs(refs), subject: subject ?? '' });
+    commits.push({ hash, short: hash.slice(0, 7), parents: parents ? parents.split(' ').filter(Boolean) : [], author: author ?? '', at: Number(at) * 1000 || 0, refs: parseRefs(refs), subject: (subject ?? '').trimEnd() });
   }
   return commits;
 }
@@ -59,7 +61,7 @@ export async function readHistory(root, { limit = HISTORY_DEFAULT, skip = 0 } = 
   const take = Math.min(Math.max(Number(limit) || HISTORY_DEFAULT, 1), HISTORY_MAX);
   const from = Math.max(Number(skip) || 0, 0);
   // refs/pleiad/ のターンの撮影は --branches --tags --remotes HEAD のどれにも入らない（--all は使わない）
-  const r = await git.readGit(root, ['log', '--topo-order', '--decorate=full', '-z', `--max-count=${take + 1}`, `--skip=${from}`, `--format=${LOG_FORMAT}`, '--branches', '--tags', '--remotes', ...(head ? ['HEAD'] : [])], { timeout: 8_000 });
+  const r = await git.readGit(root, ['log', '--topo-order', '--decorate=full', '-z', `--max-count=${take + 1}`, `--skip=${from}`, `--format=${LOG_FORMAT}`, '--branches', '--tags', '--remotes', ...(head ? ['HEAD'] : []), '--'], { timeout: 8_000 });
   if (!r.ok) return null;
   const commits = parseLog(r.stdout);
   const more = commits.length > take;
@@ -75,7 +77,8 @@ export async function readCommit(root, hash) {
   const parts = head.replace(/^\n+/, '').split(FIELD);
   const commit = parseLog(parts.slice(0, 6).join(FIELD))[0];
   if (!commit) return null;
-  return { ...commit, body: (parts[6] ?? '').trim() };
+  const body = (parts[6] ?? '').trim();
+  return { ...commit, body: body.slice(0, BODY_MAX), ...(body.length > BODY_MAX ? { bodyTruncated: true } : {}) };
 }
 
 /** コミットの変更ファイル（親との差。マージは最初の親。最初のコミットは空の tree）。名前の変更も見つける */

@@ -1406,7 +1406,7 @@
         }
       },
       "legacyCommand": "gitPanel",
-      "input": "5638de2fdcf3"
+      "input": "323059218dcd"
     },
     {
       "id": "git.commit",
@@ -1515,7 +1515,7 @@
         }
       },
       "legacyCommand": "gitWorktree",
-      "input": "0a0d1d86e93e"
+      "input": "2c8e728315bf"
     },
     {
       "id": "git.worktrees",

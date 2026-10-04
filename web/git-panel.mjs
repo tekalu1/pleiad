@@ -17,11 +17,17 @@ const WIDE_PX = 740;      // 左右の差分を選べる幅
 const HISTORY_PAGE = 50;
 const SESSION_PAGES = 4;  // 会話の始まりのコミットを探して続けて読むページの上限
 
-export const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+export const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+/** 数（サーバーから来た値でも HTML に入れる前に数にする） */
+const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0);
+/** 状態の文字は M / A / D / U / R だけ（class と HTML に入れるので、それ以外は M にする） */
+const stateOfFile = (v) => (typeof v === 'string' && v.length === 1 && 'MADUR'.includes(v) ? v : 'M');
+/** http(s) の URL だけをリンクにする */
+const safeUrl = (u) => (/^https?:\/\//i.test(String(u ?? '')) ? String(u) : '');
 const frag = (html) => { const tpl = document.createElement('template'); tpl.innerHTML = html.trim(); return tpl.content.firstElementChild; };
 const splitPath = (p) => { const i = p.lastIndexOf('/'); return i < 0 ? ['', p] : [p.slice(0, i), p.slice(i + 1)]; };
 const FT = { js: 'JS', mjs: 'JS', cjs: 'JS', ts: 'TS', md: 'M↓', css: '#', json: '{}', html: '<>' };
-const ftOf = (p) => FT[p.split('.').pop()] ?? '··';
+const ftOf = (p) => { const ext = p.split('.').pop(); return Object.hasOwn(FT, ext) ? FT[ext] : '··'; };
 const reduced = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 // 選んだ形（ツリー / 一覧、インライン / 左右、折り返し）は覚える
@@ -30,9 +36,31 @@ const prefs = (() => { try { return { view: 'list', mode: 'inline', wrap: false,
 const savePrefs = () => { try { localStorage.setItem(PREFS_KEY, JSON.stringify(prefs)); } catch { /* 覚えられなくても動く */ } };
 
 /** ファイルの行の「+a −d」 */
-const countsHTML = (f) => (f.binary ? '' : `${f.add ? `<span class="a">+${f.add}</span>` : ''}${f.add && f.del ? ' ' : ''}${f.del ? `<span class="d">−${f.del}</span>` : ''}`);
+const countsHTML = (f) => (f.binary ? '' : `${num(f.add) ? `<span class="a">+${num(f.add)}</span>` : ''}${num(f.add) && num(f.del) ? ' ' : ''}${num(f.del) ? `<span class="d">−${num(f.del)}</span>` : ''}`);
 // i18n-dynamic: git.state
 const stateName = (s) => t(`git.state${s}`);
+
+/** ref の札（ブランチ・タグ・リモート）。名前は span で包み、狭いと名前だけが省略される */
+export function refHTML(r) {
+  const name = (icon, label, title) => `<span class="ref${r.kind === 'head' ? ' head' : ''}" title="${esc(title)}">${icon}<span class="rn">${esc(label)}</span></span>`;
+  if (r.kind === 'head') return name(branchIcon, r.name ?? 'HEAD', `${t('git.refHead')}: ${r.name ?? 'HEAD'}`);
+  if (r.kind === 'tag') return name(tagIcon, r.name, `${t('git.refTag')}: ${r.name}`);
+  if (r.kind === 'remote') return name(cloudIcon, r.name, `${t('git.refRemote')}: ${r.name}`);
+  return name(branchIcon, r.name, r.pleiad ? `${t('git.refWorktree')}: ${r.name}` : r.name);
+}
+
+/** ファイルの行。key は DOM の data-key に入る行の識別子（パスを入れない。呼び出し側が添字などで作る） */
+export function fileRowHTML(f, key, lv, showDir) {
+  const [dir, nm] = splitPath(String(f.path));
+  const state = stateOfFile(f.state);
+  const label = `${f.path} ${stateName(state)} ${num(f.add) ? `+${num(f.add)}` : ''} ${num(f.del) ? `−${num(f.del)}` : ''}`;
+  return `<div class="fr${state === 'D' ? ' del' : ''}" role="treeitem" aria-level="${num(lv) + 1}" tabindex="-1" style="--lv:${num(lv)}" data-key="${esc(key)}" aria-label="${esc(label)}">
+      <span class="ft" aria-hidden="true">${esc(ftOf(String(f.path)))}</span><span class="nm">${esc(nm)}</span>${showDir ? `<span class="dir">${esc(f.orig ? `${f.orig} → ${dir}` : dir)}</span>` : '<span class="sp"></span>'}
+      <span class="cn">${countsHTML(f)}</span>
+      <span class="acts"><button class="btn btn-icon sm" type="button" tabindex="-1" data-act="diff" aria-label="${esc(t('git.openDiff'))}" title="${esc(t('git.openDiff'))}">${diffIcon}</button><button class="btn btn-icon sm" type="button" tabindex="-1" data-act="use" aria-label="${esc(t('git.use'))}" title="${esc(t('git.use'))}">${chatIcon}</button></span>
+      <button class="btn btn-icon sm more" type="button" tabindex="-1" data-act="more" aria-label="${esc(t('git.more'))}" aria-expanded="false">${moreIcon}</button>
+      <span class="st ${state}" title="${esc(stateName(state))}" aria-hidden="true">${state}</span></div>`;
+}
 
 export function setupGitPanel({ cmd, preview, session, jump, use, onState = () => {}, worktrees, canOpen = () => true }) {
   // 返事が来ない問い合わせで「読み込み中…」のまま止まらないよう、30 秒で諦めて「取れませんでした」にする
@@ -54,14 +82,15 @@ export function setupGitPanel({ cmd, preview, session, jump, use, onState = () =
 
   const reloadBtn = document.createElement('button');
   reloadBtn.type = 'button'; reloadBtn.className = 'btn btn-icon'; reloadBtn.innerHTML = refreshIcon;
-  reloadBtn.onclick = () => load();
+  reloadBtn.onclick = () => load({ force: true });
+  root.setAttribute('role', 'tabpanel');
   const tabs = frag(`<div class="gp-tabs" role="tablist" aria-label="${esc(t('git.tabs'))}"></div>`);
   tabs.addEventListener('click', (e) => { const b = e.target.closest('[data-t]'); if (b) selectTab(b.dataset.t); });
   tabs.addEventListener('keydown', (e) => {
     const keys = ['changes', 'worktrees'];
     const k = keys.indexOf(document.activeElement?.dataset?.t);
     if (k < 0) return;
-    const to = e.key === 'ArrowRight' ? keys[(k + 1) % 2] : e.key === 'ArrowLeft' ? keys[(k + 1) % 2] : e.key === 'Home' ? keys[0] : e.key === 'End' ? keys[1] : null;
+    const to = e.key === 'ArrowRight' ? keys[(k + 1) % keys.length] : e.key === 'ArrowLeft' ? keys[(k + keys.length - 1) % keys.length] : e.key === 'Home' ? keys[0] : e.key === 'End' ? keys.at(-1) : null;
     if (to) { e.preventDefault(); selectTab(to, true); }
   });
   new ResizeObserver(() => { const w = root.clientWidth >= WIDE_PX; if (w !== wide) { wide = w; if (st.diff) paint(); } }).observe(root);
@@ -100,7 +129,7 @@ export function setupGitPanel({ cmd, preview, session, jump, use, onState = () =
     const data = st.commitData[sel.hash];
     if (!data) return { title: sel.hash.slice(0, 7), groups: [], total: { files: 0, add: 0, del: 0 }, loading: true };
     const c = data.commit;
-    return { title: `<code>${esc(c.short)}</code> ${esc(c.subject)}`, html: true, commit: c, groups: [{ id: `c${c.short}`, title: null, files: tag(data.files, { commit: c.hash }) }], total: data.total };
+    return { title: `<code>${esc(c.short)}</code> ${esc(c.subject)}`, html: true, commit: c, failed: data.failed === true, groups: [{ id: `c${c.short}`, title: null, files: tag(data.files, { commit: c.hash }) }], total: data.total };
   }
 
   // 読み込み中・取れなかったときは数を出さない（0 と読めてしまうため）
@@ -115,7 +144,7 @@ export function setupGitPanel({ cmd, preview, session, jump, use, onState = () =
       const meta = [];
       if (g.branch && g.upstream) { if (g.ahead > 0) meta.push(`<span title="${esc(t('git.aheadTitle', { upstream: g.upstream, count: g.ahead }))}">↑${g.ahead}</span>`); if (g.behind > 0) meta.push(`<span title="${esc(t('git.behindTitle', { upstream: g.upstream, count: g.behind }))}">↓${g.behind}</span>`); }
       else if (g.branch && g.head) meta.push(`<span>${esc(t('git.unpushed'))}</span>`);
-      if (pr) meta.push(`<a href="${esc(pr.url)}" target="_blank" rel="noopener noreferrer" title="${esc(t('git.prTitle', { number: pr.number }))}">${esc(t('git.pr', { number: pr.number }))}${openInBrowserIcon}</a>`);
+      if (pr && safeUrl(pr.url)) meta.push(`<a href="${esc(safeUrl(pr.url))}" target="_blank" rel="noopener noreferrer" title="${esc(t('git.prTitle', { number: pr.number }))}">${esc(t('git.pr', { number: pr.number }))}${openInBrowserIcon}</a>`);
       title.innerHTML = `<span class="bn">${branchIcon}<span>${esc(branchLabel(g))}</span></span>${g.linked ? `<span class="git-tag">${esc(t('git.worktree'))}</span>` : ''}${meta.length ? `<span class="meta">${meta.join('<span aria-hidden="true">·</span>')}</span>` : ''}`;
     } else title.textContent = t('git.panel');
     preview.updatePanel(KEY, { title, subtitle: g?.root ?? '' });
@@ -127,17 +156,12 @@ export function setupGitPanel({ cmd, preview, session, jump, use, onState = () =
     const n = countOf();
     const wtN = st.wt?.total ?? null;
     tabs.innerHTML = [['changes', t('git.tabChanges'), n], ['worktrees', t('git.tabWorktrees'), wtN]].map(([k, label, count]) =>
-      `<button class="gp-tab" role="tab" type="button" data-t="${k}" aria-selected="${st.tab === k}" tabindex="${st.tab === k ? 0 : -1}">${esc(label)}${count != null ? `<span class="n">${count}</span>` : ''}</button>`).join('');
+      `<button class="gp-tab" role="tab" type="button" id="gp-tab-${k}" aria-controls="gp-panel" data-t="${k}" aria-selected="${st.tab === k}" tabindex="${st.tab === k ? 0 : -1}">${esc(label)}${count != null ? `<span class="n">${count}</span>` : ''}</button>`).join('');
+    root.id = 'gp-panel'; root.setAttribute('aria-labelledby', `gp-tab-${st.tab}`);
     tabs.hidden = Boolean(st.diff) && matchMedia('(max-width:760px)').matches;
   }
 
   // ---------------------------------------------------------------- 変更タブ
-  const refHTML = (r) => {
-    if (r.kind === 'head') return `<span class="ref head" title="${esc(t('git.refHead'))}">${branchIcon}${esc(r.name ?? 'HEAD')}</span>`;
-    if (r.kind === 'tag') return `<span class="ref" title="${esc(t('git.refTag'))}">${tagIcon}${esc(r.name)}</span>`;
-    if (r.kind === 'remote') return `<span class="ref" title="${esc(t('git.refRemote'))}">${cloudIcon}${esc(r.name)}</span>`;
-    return `<span class="ref" ${r.pleiad ? `title="${esc(t('git.refWorktree'))}"` : ''}>${branchIcon}${esc(r.name)}</span>`;
-  };
 
   let layout = null, commits = [], startRow = -1;
   function buildLayout() {
@@ -188,26 +212,16 @@ export function setupGitPanel({ cmd, preview, session, jump, use, onState = () =
     return `${h}</div>`;
   }
 
-  function fileRowHTML(f, key, lv, showDir) {
-    const [dir, nm] = splitPath(f.path);
-    const label = `${f.path} ${stateName(f.state)} ${f.add ? `+${f.add}` : ''} ${f.del ? `−${f.del}` : ''}`;
-    return `<div class="fr${f.state === 'D' ? ' del' : ''}" role="treeitem" aria-level="${lv + 1}" tabindex="-1" style="--lv:${lv}" data-key="${key}" aria-label="${esc(label)}">
-      <span class="ft" aria-hidden="true">${esc(ftOf(f.path))}</span><span class="nm">${esc(nm)}</span>${showDir ? `<span class="dir">${esc(f.orig ? `${f.orig} → ${dir}` : dir)}</span>` : '<span class="sp"></span>'}
-      <span class="cn">${countsHTML(f)}</span>
-      <span class="acts"><button class="btn btn-icon sm" type="button" tabindex="-1" data-act="diff" aria-label="${esc(t('git.openDiff'))}" title="${esc(t('git.openDiff'))}">${diffIcon}</button><button class="btn btn-icon sm" type="button" tabindex="-1" data-act="use" aria-label="${esc(t('git.use'))}" title="${esc(t('git.use'))}">${chatIcon}</button></span>
-      <button class="btn btn-icon sm more" type="button" tabindex="-1" data-act="more" aria-label="${esc(t('git.more'))}" aria-expanded="false">${moreIcon}</button>
-      <span class="st ${f.state}" title="${esc(stateName(f.state))}" aria-hidden="true">${f.state}</span></div>`;
-  }
 
   /** ツリー（フォルダーで束ねる。子が 1 つのフォルダーは「src/utils」に詰める） */
   function treeHTML(files, prefix, keyOf) {
-    const rootNode = { dirs: {}, files: [] };
-    files.forEach((f, idx) => { const parts = f.path.split('/'); let node = rootNode; for (const d of parts.slice(0, -1)) node = node.dirs[d] ??= { dirs: {}, files: [] }; node.files.push({ f, idx }); });
+    const rootNode = { dirs: new Map(), files: [] };   // フォルダー名は constructor・__proto__ でもよいので Map
+    files.forEach((f, idx) => { const parts = f.path.split('/'); let node = rootNode; for (const d of parts.slice(0, -1)) { let child = node.dirs.get(d); if (!child) node.dirs.set(d, child = { dirs: new Map(), files: [] }); node = child; } node.files.push({ f, idx }); });
     let html = '';
     const walk = (node, lv, base) => {
-      for (const [name, sub] of Object.entries(node.dirs).sort()) {
+      for (const [name, sub] of [...node.dirs.entries()].sort((x, y) => (x[0] < y[0] ? -1 : x[0] > y[0] ? 1 : 0))) {
         let label = name, n = sub, p = `${base}${name}/`;
-        while (Object.keys(n.dirs).length === 1 && !n.files.length) { const [k, v] = Object.entries(n.dirs)[0]; label += `/${k}`; n = v; p += `${k}/`; }
+        while (n.dirs.size === 1 && !n.files.length) { const [k, v] = [...n.dirs.entries()][0]; label += `/${k}`; n = v; p += `${k}/`; }
         const id = `${prefix}:${p}`; const open = !st.shut.has(id);
         html += `<div class="fr folder" role="treeitem" aria-level="${lv + 1}" aria-expanded="${open}" tabindex="-1" style="--lv:${lv}" data-fold="${esc(id)}"><span class="chev">${chevRightIcon}</span><span class="fd">${folderIcon}</span><span class="nm">${esc(label)}</span><span class="sp"></span></div><div class="fold${open ? '' : ' shut'}" role="group"><div>`;
         walk(n, lv + 1, p); html += '</div></div>';
@@ -228,7 +242,7 @@ export function setupGitPanel({ cmd, preview, session, jump, use, onState = () =
       return `<div class="cl-meta"><span>${esc(c.author)} · ${esc(new Date(c.at).toLocaleString())} · ${esc(t('git.parent'))} <code>${esc(c.parents.map((p) => p.slice(0, 7)).join(' ') || t('git.noParent'))}</code>${mine ? ` · ${esc(t('git.madeHere'))}` : ''}</span>${mine && !foreign() ? `<button class="btn btn-quiet" type="button" data-jump>${jumpIcon}${esc(t('git.jump'))}</button>` : ''}</div>`;
     })() : '';
     const body = m.loading ? `<div class="git-empty">${esc(t('git.loading'))}</div>` : m.failed ? `<div class="git-empty">${esc(t('git.failedChanges'))}</div>`
-      : m.groups.every((g) => !g.files.length) ? `<div class="git-empty">${esc(st.sel.k === 'session' ? t('git.emptySession') : t('git.emptyUncommitted'))}</div>` : '';
+      : m.groups.every((g) => !g.files.length) ? `<div class="git-empty">${esc(st.sel.k === 'session' ? t('git.emptySession') : st.sel.k === 'commit' ? t('git.emptyCommit') : t('git.emptyUncommitted'))}</div>` : '';
     const groupsHTML = m.groups.map((g) => {
       g.files.forEach((f, idx) => { fileKeys[`${g.id}:${idx}`] = diffList.length; diffList.push(f); });
       const keyOf = (idx) => `${g.id}:${idx}`;
@@ -266,6 +280,10 @@ export function setupGitPanel({ cmd, preview, session, jump, use, onState = () =
       x.setAttribute('aria-pressed', String(st.sel.k === 'commit' ? x.dataset.h === st.sel.hash : st.sel.k === 'uncommitted' && layout.rows[r].wt));
     }
     for (const x of root.querySelectorAll('.startmk')) x.classList.toggle('on', st.sel.k === 'session');
+    // グラフの行は Tab の止まりを 1 つにする（↑↓ で移る）。選んでいる行、無ければ最初の行
+    const rowsAll = [...root.querySelectorAll('.cg-row')];
+    const stop = rowsAll.find((x) => x.getAttribute('aria-pressed') === 'true') ?? rowsAll[0];
+    for (const x of rowsAll) x.tabIndex = x === stop ? 0 : -1;
   }
 
   /** 範囲・コミットを選び直す。グラフは動かさず、帯・一覧・タブの数だけ替える */
@@ -299,10 +317,14 @@ export function setupGitPanel({ cmd, preview, session, jump, use, onState = () =
   function wtDetailHTML(w) {
     const d = st.wtDetail.get(w.path);
     let h = '';
-    if (!d) h += `<div class="git-empty">${esc(t('git.loading'))}</div>`;
+    if (!w.exists) h += `<div class="git-empty">${esc(t('git.wtMissing'))}</div>`;
+    else if (!d) h += `<div class="git-empty">${esc(t('git.loading'))}</div>`;
+    else if (d.failed) h += `<div class="git-empty">${esc(t('git.failedChanges'))}</div>`;
     else {
-      const group = (title, files, key) => (files.length ? `<div class="gh">${esc(title)} ${files.length}</div><div class="tree" role="tree" aria-label="${esc(title)}" data-wtree="${esc(key)}">${files.map((f, i) => fileRowHTML(f, `${key}:${i}`, 0, true)).join('')}</div>` : '');
-      h += group(t('git.committed'), d.committed.files, `${w.path}\u0000c`) + group(t('git.uncommitted'), d.uncommitted.files, `${w.path}\u0000u`);
+      // 行の識別子は作業場所の添字・c / u・ファイルの添字だけ（パスを DOM の属性に入れない）
+      const wi = st.wt.rows.indexOf(w);
+      const group = (title, files, kind) => (files.length ? `<div class="gh">${esc(title)} ${files.length}</div><div class="tree" role="tree" aria-label="${esc(title)}">${files.map((f, i) => fileRowHTML(f, `w${wi}:${kind}:${i}`, 0, true)).join('')}</div>` : '');
+      h += group(t('git.committed'), d.committed.files, 'c') + group(t('git.uncommitted'), d.uncommitted.files, 'u');
       if (!d.committed.files.length && !d.uncommitted.files.length) h += `<div class="gh plain">${esc(t('git.wtNone'))}</div>`;
     }
     if (w.kind === 'busy') h += `<div class="safe">${esc(w.who ? t('git.wtBusyBy', { who: w.who }) : t('git.wtBusyAnon'))}</div>`;
@@ -442,8 +464,8 @@ export function setupGitPanel({ cmd, preview, session, jump, use, onState = () =
   }
   /** 作業場所タブのファイルの行 → その作業場所の並びと添字 */
   function wtList(row) {
-    const key = row.dataset.key; const m = /^(.*)\u0000([cu]):(\d+)$/.exec(key);
-    const w = st.wt.rows.find((x) => x.path === m[1]); const d = st.wtDetail.get(w.path);
+    const m = /^w(\d+):([cu]):(\d+)$/.exec(row.dataset.key);
+    const w = st.wt.rows[Number(m[1])]; const d = st.wtDetail.get(w.path);
     const files = (m[2] === 'c' ? d.committed.files : d.uncommitted.files).map((f) => ({ ...f, src: m[2] === 'c' ? { wt: w.path, from: d.base, to: d.head } : { wt: w.path, range: 'uncommitted' } }));
     return [files, Number(m[3])];
   }
@@ -456,7 +478,7 @@ export function setupGitPanel({ cmd, preview, session, jump, use, onState = () =
     }
     const crow = e.target.closest?.('.cg-row');
     if (crow && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
-      e.preventDefault(); const all = [...root.querySelectorAll('.cg-row')].filter((x) => !x.closest('.fold.shut')); all[all.indexOf(crow) + (e.key === 'ArrowDown' ? 1 : -1)]?.focus(); return;
+      e.preventDefault(); const all = [...root.querySelectorAll('.cg-row')].filter((x) => !x.closest('.fold.shut')); const next = all[all.indexOf(crow) + (e.key === 'ArrowDown' ? 1 : -1)]; if (next) { for (const x of all) x.tabIndex = -1; next.tabIndex = 0; next.focus(); } return;
     }
     const r = e.target.closest?.('.grp, .fr');
     if (!r || e.target !== r) return;
@@ -499,7 +521,7 @@ export function setupGitPanel({ cmd, preview, session, jump, use, onState = () =
   // ---------------------------------------------------------------- 取得
   async function loadRange(range) {
     const id = sid(); let data = null;
-    try { data = await ask('gitPanel', { sessionId: id, range }); } catch { /* */ }
+    try { data = await ask('gitPanel', { sessionId: id, range, only: 'changes' }); } catch { /* */ }
     if (sid() !== id || !data?.changes) return;
     st.changes[range] = data.changes;
     if (st.sel.k === range && st.tab === 'changes' && !st.diff) { const cl = root.querySelector('.cl'); if (cl) { cl.innerHTML = listHTML(); wireTree(); applySelection(); paintTabs(); } }
@@ -508,7 +530,7 @@ export function setupGitPanel({ cmd, preview, session, jump, use, onState = () =
     const id = sid(); let res = null;
     try { res = await ask('gitCommit', { sessionId: id, hash }); } catch { /* */ }
     if (sid() !== id) return;
-    st.commitData[hash] = res?.commit ?? { commit: { hash, short: hash.slice(0, 7), subject: '', author: '', at: 0, parents: [] }, files: [], total: { files: 0, add: 0, del: 0 } };
+    st.commitData[hash] = res?.commit ?? { failed: true, commit: { hash, short: hash.slice(0, 7), subject: '', author: '', at: 0, parents: [] }, files: [], total: { files: 0, add: 0, del: 0 } };
     if (st.sel.k === 'commit' && st.sel.hash === hash && st.tab === 'changes' && !st.diff) { const cl = root.querySelector('.cl'); if (cl) { cl.innerHTML = listHTML(); wireTree(); paintTabs(); } }
   }
   async function loadHistory() {
@@ -531,7 +553,10 @@ export function setupGitPanel({ cmd, preview, session, jump, use, onState = () =
     const id = sid(); let more = null;
     try { more = await ask('gitHistory', { sessionId: id, limit: HISTORY_PAGE, cursor: st.hist.next }); } catch { /* */ }
     if (sid() !== id || !more?.history) return;
-    st.hist = { ...st.hist, commits: [...st.hist.commits, ...more.history.commits], next: more.history.next };
+    // 続きを読む間に HEAD が動いたら、--skip がずれるので最初から読み直す
+    if (more.history.head !== st.hist.head) { await loadHistory(); paint({ keepScroll: true }); return; }
+    const seen = new Set(st.hist.commits.map((c) => c.hash));
+    st.hist = { ...st.hist, commits: [...st.hist.commits, ...more.history.commits.filter((c) => !seen.has(c.hash))], next: more.history.next };
     paint({ keepScroll: true });
   }
   async function loadWorktrees() {
@@ -545,18 +570,18 @@ export function setupGitPanel({ cmd, preview, session, jump, use, onState = () =
     const id = sid(); let res = null;
     try { res = await ask('gitWorktree', { sessionId: id, worktree: w.path }); } catch { /* */ }
     if (sid() !== id) return;
-    st.wtDetail.set(w.path, res?.worktree ?? { committed: { files: [] }, uncommitted: { files: [] }, head: null, base: null });
+    st.wtDetail.set(w.path, res?.worktree ?? { failed: true, committed: { files: [] }, uncommitted: { files: [] }, head: null, base: null });
     paint({ keepScroll: true });
   }
 
-  async function load() {
+  async function load({ force = false } = {}) {
     const id = sid();
     if (!id) return;
     const mine = ++ticket;
     st.loading = true; st.failed = false;
     if (!st.base) paint();
     let data = null;
-    try { data = await ask('gitPanel', { sessionId: id, range: 'uncommitted' }); } catch { /* 取れなかった */ }
+    try { data = await ask('gitPanel', { sessionId: id, range: 'uncommitted', only: 'light' }); } catch { /* 取れなかった */ }
     if (mine !== ticket || sid() !== id) return;
     st.loading = false; st.at = Date.now();
     if (!data?.git) { st.base = null; st.failed = true; onState(null, { foreign: foreign() }); paint(); return; }
@@ -566,11 +591,13 @@ export function setupGitPanel({ cmd, preview, session, jump, use, onState = () =
     st.initial = 'uncommitted';
     onState(data.git, { foreign: foreign() });
     st.commitData = {};
-    await Promise.all([loadHistory(), st.sel.k === 'session' ? loadRange('session') : null, st.sel.k === 'commit' ? loadCommit(st.sel.hash) : null, st.tab === 'worktrees' ? loadWorktrees() : null]);
+    const sameHead = !force && st.hist && data.git.head && st.hist.head?.startsWith(data.git.head);
+    await Promise.all([sameHead ? null : loadHistory(), st.sel.k === 'session' ? loadRange('session') : null, st.sel.k === 'commit' ? loadCommit(st.sel.hash) : null, st.tab === 'worktrees' ? loadWorktrees() : null]);
     if (mine !== ticket || sid() !== id) return;
     // 差分を開いている間に取り直しが終わったら、差分は開いたまま中身だけ読み直す
     if (st.diff) { st.diff.cache.clear(); st.diff.failed.clear(); loadDiffAt(st.diff.index); }
     paint();
+    if (!st.wt || force) loadWorktrees();
   }
 
   // ---------------------------------------------------------------- 開閉
@@ -604,13 +631,17 @@ export function setupGitPanel({ cmd, preview, session, jump, use, onState = () =
 
   // Esc: 差分を開いている間は、パネルを閉じずに一覧へ戻る（パネルの外にフォーカスがあっても）
   document.addEventListener('keydown', (e) => {
-    if (e.key !== 'Escape' || !isOpen() || !st.diff || e.defaultPrevented) return;
+    if (e.key !== 'Escape' || e.isComposing || !isOpen() || !st.diff || e.defaultPrevented) return;
+    // ダイアログ・メニューが開いている間と、フォーカスがパネルの外（入力欄など）にあるときは奪わない
+    if (document.querySelector('dialog[open], .pop.menu')) return;
+    const active = document.activeElement;
+    if (active && active !== document.body && !document.getElementById('filePreview')?.contains(active)) return;
     e.preventDefault(); e.stopImmediatePropagation(); closeDiff();
   }, true);
 
   // Ctrl+Shift+G（macOS は ⌘⇧G）で開閉。IME の変換中・ダイアログ・設定の画面では奪わない
   document.addEventListener('keydown', (e) => {
-    if (e.defaultPrevented || e.isComposing || !e.shiftKey || e.altKey || e.key.toLowerCase() !== 'g') return;
+    if (e.defaultPrevented || e.isComposing || !e.shiftKey || e.altKey || e.code !== 'KeyG') return;
     if (!(/Mac/.test(navigator.platform) ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey)) return;
     if (document.body.classList.contains('settings') || document.querySelector('dialog[open]') || !canOpen()) return;
     e.preventDefault();
@@ -618,7 +649,7 @@ export function setupGitPanel({ cmd, preview, session, jump, use, onState = () =
   });
 
   return {
-    open, toggle, isOpen, reload: () => { if (isOpen()) load(); },
+    open, toggle, isOpen, reload: () => { if (isOpen()) load({ force: true }); },
     /** 別の会話へ移った・会話を閉じた。開いているパネルは閉じる */
     reset() { target = null; resetFor(null); if (isOpen()) preview.close(false); },
     /** 会話の今の状態が変わった（ターンの終わり）。開いていれば取り直す */
