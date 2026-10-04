@@ -57,6 +57,17 @@ export function canDelegate(entry) {
  * @param childModes  委任先のバックエンドの modes()
  * @returns { mode, escalation, reason } escalation が true なら、委任した瞬間に1回だけ親の会話で聞く
  */
+/**
+ * 隠れた会話（心拍の安いモデル・夜の記憶の整理）に使う、いちばん狭いモード。範囲が readonly 以下（none を含む）のうち、
+ * 範囲 → 自律の順でいちばん弱いもの。無ければ null（その会話は作らない）。
+ * Claude は読むだけのモードを持たず plan（none）がいちばん狭い。Codex は readonly。Antigravity は全部自動だけなので無い。
+ */
+export function narrowestMode(modes) {
+  const limit = scopeRank('readonly');
+  const within = Object.entries(modes ?? {}).map(([id, entry]) => [id, modePosition(entry)]).filter(([, p]) => scopeRank(p.scope) <= limit);
+  return within.sort(([, a], [, b]) => compare(a, b))[0]?.[0] ?? null;
+}
+
 export function resolveDelegatedMode({ parentMode, parentModes, childModes }) {
   const entries = Object.entries(childModes ?? {}).map(([id, entry]) => [id, modePosition(entry)]);
   if (!entries.length) return { mode: null, escalation: false, reason: 'no-modes' };

@@ -110,6 +110,11 @@ export default async function (t) {
     t.ok('画面へ brainChanged が出る', c.since(m1).some((e) => e.type === 'brainChanged' && e.botId === owl.id));
     const hidden = (await c.cmd('listSessions')).filter((s) => s.bot?.kind === 'pulse');
     t.ok('安いモデルの隠れた会話は bot の会話（kind: pulse。画面は bot の会話を Chats の一覧に出さない）で、読み取りのモード（plan）。1 回の心拍に 1 つ', hidden.length === 1 && hidden[0].bot.botId === owl.id && hidden[0].mode === 'plan' && hidden[0].title.includes('Owl'));
+    // 隠れた会話で道具の承認を求めても、人に見えるカード・通知は出さず、すぐ断る（誰も答えず心拍が止まったままにならない）
+    const askHidden = await c.runTurn({ sessionId: hidden[0].id, prompt: 'ask' }, { ms: 20_000 });
+    const askedText = (await c.cmd('loadSession', { sessionId: hidden[0].id })).messages.filter((m) => m.role === 'assistant').at(-1)?.text ?? '';
+    t.ok('隠れた会話（pulse）で承認を求めると、カードを出さずにすぐ断る（道具は使えないと返す）',
+      askHidden.permissions.length === 0 && askHidden.outcome === 'ok' && askedText.startsWith('拒否された') && askedText.includes('道具を使えない'), JSON.stringify({ p: askHidden.permissions.length, o: askHidden.outcome, askedText }));
 
     // ---- ③ 引き継ぎ → DM の賢いモデルのターン
     const beat2 = await call('brain.beat', { botId: owl.id });

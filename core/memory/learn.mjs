@@ -16,7 +16,7 @@ import crypto from 'node:crypto';
 import { openData } from '../data-schema.mjs';
 import { memoryStateTable } from '../db.mjs';
 import { nextFireAt } from '../routines/schedule.mjs';
-import { modePosition } from '../modes.mjs';
+import { narrowestMode } from '../modes.mjs';
 import { prepareMessages } from '../history.mjs';
 import { agentT } from '../i18n.mjs';
 import { MemoryError } from './guard.mjs';
@@ -241,7 +241,8 @@ export function createMemoryLearner({ dataDir, channels, bots, memory, host, clo
     const model = await host.resolveModel(null, prefs.backends?.[backendId]?.model || (sameBackend ? prefs.model : undefined), backend, cwd, '');
     const effort = await host.resolveEffort(null, prefs.backends?.[backendId]?.effort || (sameBackend ? prefs.effort : undefined), backend, model, cwd, null);
     const modes = backend.modes();
-    const mode = Object.entries(modes).find(([, v]) => modePosition(v).scope === 'readonly')?.[0];
+    // いちばん狭いモード（Claude は plan、Codex は readonly）。以前は readonly だけを探していて、Claude では整理が走らなかった
+    const mode = narrowestMode(modes);
     if (!mode) throw new Error(`learner backend has no read-only mode: ${backendId}`);
     const title = agentT(locale(), 'memory.learn.title');
     const sessionId = await host.createConversation(backend, { title, cwd, createdAt: now(), lastModified: now() });

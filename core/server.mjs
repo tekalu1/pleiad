@@ -3597,11 +3597,15 @@ const askPermission = async ({ toolName, input, sessionId, toolUseID, title, sig
   const ancestors = sessionId ? await delegationAncestors(sessionId) : [];
   // 中継先の見出しは「どの会話の承認か」。委譲したときの info.title を使う
   const childTitle = ancestors.length ? (await store.get(sessionId)).title || t('permission.childConversation') : "";
-  const conversationTitle = sessionId ? (await store.get(sessionId).catch(() => null))?.title ?? '' : '';
+  const askingMeta = sessionId ? await store.get(sessionId).catch(() => null) : null;
+  const conversationTitle = askingMeta?.title ?? '';
   // 拒否・中断の理由はエージェントに返るので、承認を求めた会話の言語で訳す（settle には messageKey で来る）
   const lng = agentLocaleOf(locale) ?? await agentLocaleFor(sessionId);
   // i18n-dynamic: agent:approval.
   const localize = answer => answer?.messageKey ? { ...answer, message: agentT(lng, `approval.${answer.messageKey}`, answer.messageParams) } : answer;
+  // 隠れた会話（心拍の安いモデル・夜の記憶の整理。ADR 0126）は人に見えない。承認を求めても誰も答えず、その心拍・整理が止まったまま
+  // （心拍は 1 本ずつ流すので、ほかの bot の心拍も）になる。カードもスマホの通知も出さず、すぐ断る（道具は使わせない）
+  if (askingMeta?.bot?.kind === 'pulse' || askingMeta?.bot?.kind === 'learner') return localize({ allow: false, messageKey: 'hiddenConversation' });
   // 祖先を読むあいだに中断されたなら、待たせずに返す（abort はもう来ない）
   if (signal?.aborted) return localize({ allow: false, messageKey: 'aborted' });
   return new Promise((resolve) => {

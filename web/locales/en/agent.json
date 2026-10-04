@@ -202,7 +202,8 @@
     "userDenied": "The user denied it",
     "noHandler": "{{tool}} cannot run because there is nowhere to ask for approval",
     "failed": "Could not get approval: {{error}}",
-    "notAllowed": "The user did not allow it"
+    "notAllowed": "The user did not allow it",
+    "hiddenConversation": "Tools cannot be used in this conversation (heartbeat or memory review). Answer with text only"
   },
   "host": {
     "sessionPending": "The session ID is not determined yet",

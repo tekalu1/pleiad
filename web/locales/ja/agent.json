@@ -202,7 +202,8 @@
     "userDenied": "ユーザーが拒否した",
     "noHandler": "{{tool}} は承認先が無いので実行できない",
     "failed": "承認を取れなかった: {{error}}",
-    "notAllowed": "ユーザーが許可しなかった"
+    "notAllowed": "ユーザーが許可しなかった",
+    "hiddenConversation": "この会話（心拍・記憶の整理）では道具を使えない。返事の文だけで答えて"
   },
   "host": {
     "sessionPending": "セッションIDが未確定",

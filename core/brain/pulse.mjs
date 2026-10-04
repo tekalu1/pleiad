@@ -25,7 +25,7 @@
 //     pause(botId, paused): State   … ［眠らせる］・起こす
 import os from 'node:os';
 import { agentT } from '../i18n.mjs';
-import { modePosition } from '../modes.mjs';
+import { narrowestMode } from '../modes.mjs';
 import { computeDrives } from './drives.mjs';
 import { gate as runGate, wakeMatches } from './gate.mjs';
 import { beatPrompt, handoffText } from './inner.mjs';
@@ -124,7 +124,8 @@ export function createPulse({ dataDir, brain, channels, bots, host, budget, disp
     const own = backendId === bot.backend;
     const model = await host.resolveModel(null, bot.pulse?.model || prefs.backends?.[backendId]?.model || (!bot.pulse?.backend && !prefs.memoryLearnBackend && own ? bot.model : undefined) || undefined, backend, cwd, '');
     const effort = await host.resolveEffort(null, prefs.backends?.[backendId]?.effort || undefined, backend, model, cwd, null);
-    const mode = Object.entries(backend.modes()).find(([, v]) => modePosition(v).scope === 'readonly')?.[0];
+    // いちばん狭いモード（Claude は plan、Codex は readonly）。道具は使わせない（承認を求めても、隠れた会話では server が断る）
+    const mode = narrowestMode(backend.modes());
     if (!mode) throw new Error(`pulse backend has no read-only mode: ${backendId}`);
     const title = agentT(locale(), 'brain.pulse.title', { icon: bot.icon, name: bot.name });
     const at = now();
