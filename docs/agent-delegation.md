@@ -192,9 +192,9 @@ Pleiad タスクには件数・深さの上限を置かない。同時に活動�
 
 実行中の子の最後の動き（バックエンドのイベント、ツールの開始・結果、本文差分、承認待ちの開始・再開）を `lastActivityAt` に持つ。Antigravity は履歴に残さない `step_update`、Claude は SDK の `tool_progress`、Codex は `item/commandExecution/outputDelta` も数える。これらの活動だけで画面の表示を増やさない。`ply_task_status` / `ply_task_list` はこの時刻と `silenceMinutes`（実行中の無音分数。承認待ちは `null`）を返す。
 既定で 5 分、子から動きが無ければ、親が受け取れるときに専用の無音通知で親のターンを 1 回始める。`AGENT_HOST_TASK_SILENCE_MINUTES` で分数を変えられ、`0` で無効。子は止めない。同じ無音期間には重ねて通知せず、人間の承認待ちは数えず、再開時から数え直す。親が忙しい間は通知を保留し、送ったか不明な失敗では自動再送しない（[ADR 0048](adr/0048-delegation-silence-notice.md)）。
-待つためのコマンド（`until` / `while` のループ・`sleep`・`gh run watch` など。`isWaitingCommand`）が走っている間は、黙っていても知らせない。知らせるのは同じ子の同じ状態（走っているコマンドの組）で 1 回だけで、動きが戻って再び黙っても繰り返さない（別のコマンド・別の状態になれば知らせる。[ADR 0136](adr/0136-quiet-wait-notices.md)）。
+待つためのコマンド（`until` / `while` のループ・`sleep`・`gh run watch` など。`isWaitingCommand`）が走っている間は、黙っていても知らせない。知らせるのは同じ子の同じ状態（走っているコマンドの組）で 1 回だけで、動きが戻って再び黙っても繰り返さない（別のコマンド・別の状態になれば知らせる。[ADR 0138](adr/0138-quiet-wait-notices.md)）。
 
-コマンドの時間は無音とは別に数える。`AGENT_HOST_TASK_COMMAND_MINUTES`（既定 5 分、`0` で無効）に達すると、そのコマンドについて一度だけ親へ通知する。時計は人間の承認待ちだけを差し引く（出力・思考・別のツールの活動では延ばさない）。ただし、待つためのコマンド、実際の出力が伸びている間（最後の出力から 1 分以内。Codex のコマンド出力・Antigravity のステップだけが出力として数え、Claude の `tool_progress` の心拍は数えない）、子が別の作業で動いている間の裏のコマンドは知らせない。同じ子の同じコマンドは、やり直しても 2 回目を知らせない（[ADR 0136](adr/0136-quiet-wait-notices.md)）。親が忙しい間は保留し、未受領（`requeue`）だけ再送する。受領が不明な失敗は再送しない。通知はコマンド固有の ID を持ち、無音通知や完了通知とは区別する。
+コマンドの時間は無音とは別に数える。`AGENT_HOST_TASK_COMMAND_MINUTES`（既定 5 分、`0` で無効）に達すると、そのコマンドについて一度だけ親へ通知する。時計は人間の承認待ちだけを差し引く（出力・思考・別のツールの活動では延ばさない）。ただし、待つためのコマンド、実際の出力が伸びている間（最後の出力から 1 分以内。Codex のコマンド出力・Antigravity のステップだけが出力として数え、Claude の `tool_progress` の心拍は数えない）、子が別の作業で動いている間の裏のコマンドは知らせない。同じ子の同じコマンドは、やり直しても 2 回目を知らせない（[ADR 0138](adr/0138-quiet-wait-notices.md)）。親が忙しい間は保留し、未受領（`requeue`）だけ再送する。受領が不明な失敗は再送しない。通知はコマンド固有の ID を持ち、無音通知や完了通知とは区別する。
 
 `ply_task_status` / `ply_task_list` の `activeCommands` は、コマンドごとに `toolCallId`、`command`、`cwd`、`observedAt`、`startedAt`、`startKnown`、`elapsedMinutes`、`state`、分かれば `turnId`・`nativeTaskId`・`processId` を返す。本文と cwd は既存の秘密値の伏せ方を使い、本文は台帳で 2000 字、通知で 200 字に切る。既知の形式以外の秘密は伏せきれない。開始時刻がないものは最初の観測から数え、開始を推定して埋めない。`processId` はバックエンドの識別子であり OS の PID とは限らない。`stopSupported` はこの台帳が個別停止を提供するかを表し、現在は false。
 

@@ -14,7 +14,7 @@ const UNDELIVERED = new Set(['none', 'pending', 'delivering']);
 const RETRY_MAX = 15000;
 // 保存障害の記録（agent-tasks-errors.log）の大きさの上限。超えたら新しい半分だけ残す
 const LOG_MAX = 64 * 1024;
-// 1 タスクに持つ「知らせた」印（同じコマンド・同じ無音の状態を繰り返し知らせないための印）の上限。古いものから捨てる（ADR 0136）
+// 1 タスクに持つ「知らせた」印（同じコマンド・同じ無音の状態を繰り返し知らせないための印）の上限。古いものから捨てる（ADR 0138）
 const NOTICED_MAX = 50;
 // 1 タスクに持つ実行前の拒否（rejections）の上限。超えた分は捨て、rejectionsDropped に数だけ残す
 const MAX_REJECTIONS = 50;
@@ -422,7 +422,7 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
       });
     } finally { for (const r of rows) notices.delete(r.taskId); noticeOwners.delete(owner); }
   }
-  // 「止まっている可能性」の通知は、待っているだけの子には出さず、出すなら同じ子・同じコマンドで 1 回だけ（ADR 0136）。
+  // 「止まっている可能性」の通知は、待っているだけの子には出さず、出すなら同じ子・同じコマンドで 1 回だけ（ADR 0138）。
   // 待っている先が動いている（実際の出力が伸びている）間と、明らかに待つためのコマンド（until / sleep / gh run watch など）は控える。
   // 控えたものは通知済みにしない（待ちが終わって、なお黙っているなら、そのとき 1 回だけ出す）
   // 裏（background）のコマンドは、子が別の道具や出力で動いている間は、その子の止まっている根拠にしない

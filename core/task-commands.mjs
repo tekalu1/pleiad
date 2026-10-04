@@ -5,7 +5,7 @@ const TOOLS = new Set(['run_command', 'Bash', 'PowerShell', 'commandExecution'])
 const DONE = new Set(['completed', 'failed', 'stopped', 'killed', 'declined']);
 
 // 明らかに「待つためのコマンド」（until / while のループ・sleep・gh run watch・--watch など）。子が止まっているのではなく、
-// 何かの終わり（テスト・CI・サーバーの起動）を待っているだけなので、長時間・無音の通知の対象にしない（ADR 0136）。
+// 何かの終わり（テスト・CI・サーバーの起動）を待っているだけなので、長時間・無音の通知の対象にしない（ADR 0138）。
 const LEAD = String.raw`(?:^|[\s;&|(\x60'"])`;
 const END = String.raw`(?=$|[\s;&|)'"])`;
 const WAITING = new RegExp([

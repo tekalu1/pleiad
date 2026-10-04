@@ -63,7 +63,7 @@ export default async function(t) {
     clock = 400 * 60000 + 14 * 60000; manager.checkSilence(); await sleep(20);
     t.ok('ロック待ちが終わったら数え直す', notices.length === 3);
     clock = 400 * 60000 + 15 * 60000; manager.checkSilence(); await until(() => notices.length === 4);
-    // 同じ状態（同じコマンド）で動き出して、また黙っても繰り返さない（ADR 0136）
+    // 同じ状態（同じコマンド）で動き出して、また黙っても繰り返さない（ADR 0138）
     manager.activity('child');
     clock = 500 * 60000; manager.checkSilence(); await sleep(20);
     t.ok('同じ子・同じ状態の無音は繰り返し知らせない', notices.length === 4);

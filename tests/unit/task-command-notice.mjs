@@ -150,7 +150,7 @@ export default async function(t) {
     } finally { reloaded.close(); }
   } finally { await restored.close(); }
 
-  // 待っている先が動いている・明らかに待つためのコマンドは知らせない。知らせるのは同じ子の同じコマンドで 1 回だけ（ADR 0136）
+  // 待っている先が動いている・明らかに待つためのコマンドは知らせない。知らせるのは同じ子の同じコマンドで 1 回だけ（ADR 0138）
   const moving = await fixture({ silenceMinutes: 0 });
   try {
     moving.start('a', 'commandExecution', { command: 'npm test' });
