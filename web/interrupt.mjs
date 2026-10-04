@@ -74,6 +74,9 @@ export const pausedCount = (messages) => (messages ?? []).filter((m) => m?.statu
 /** 解除の時刻。今日なら「2:30」、ほかの日は「10/7（水）9:00」。分からなければ null */
 export const limitTime = (at) => Number.isFinite(at) ? whenText(at) : null;
 
+/** 解除時刻の後、自動の再開を待つ長さ。これを過ぎたら時計をやめる */
+export const LIMIT_GRACE_MS = 2 * 60_000;
+
 /**
  * 上限で止まった会話の、入力欄の再開の状態（docs/design-system.md「使用量の上限」）。
  * auto = 解除時刻に自動で戻る（押せない時計）、release = 自動を外した会話の解除前（押せない時計）、
@@ -81,7 +84,9 @@ export const limitTime = (at) => Number.isFinite(at) ? whenText(at) : null;
  */
 export function limitResumeState(interrupted, now = Date.now()) {
   if (reasonOf(interrupted) !== 'limit') return null;
-  if (interrupted.autoResume === true) return 'auto';
+  // 解除時刻を過ぎて 2 分たっても自動再開が残っているのは、自動で戻れなかった（受け付けた後に送信が失敗した・Pleiad が動いていない）。
+  // 固まった時計をやめて、人が押せる普通の「再開」にする
+  if (interrupted.autoResume === true) return Number.isFinite(interrupted.resetsAt) && now - interrupted.resetsAt > LIMIT_GRACE_MS ? 'ready' : 'auto';
   return Number.isFinite(interrupted.resetsAt) && interrupted.resetsAt > now ? 'release' : 'ready';
 }
 

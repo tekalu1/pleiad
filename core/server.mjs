@@ -55,7 +55,7 @@ import * as store from "./store.mjs";
 import * as history from "./history.mjs";
 import { createMessageQueue } from "./message-queue.mjs";
 import { createSchedule } from './schedule.mjs';
-import { POLL_MS, resumePlan, limitHolds, limitOpen } from './limit-resume.mjs';
+import { pollInterval, resumePlan, limitHolds, limitOpen } from './limit-resume.mjs';
 import { buildSendRow, decideFire, sendArgs, decorateScheduled, addRecord, MAX_PER_SESSION, MAX_TOTAL } from './send-schedule.mjs';
 import { createCompactionScheduler, idleCompactionGuards } from './compaction-scheduler.mjs';
 import { normalizeCompactionSettings } from './compaction-settings.mjs';
@@ -983,7 +983,7 @@ function interruptedOf(value) {
   return { at: value.at, reason: INTERRUPT_REASONS.has(value.reason) ? value.reason : "user",
     ...(value.reason === 'limit' ? { resetsAt: Number.isFinite(value.resetsAt) ? value.resetsAt : null,
       window: value.window ?? null, account: value.account ?? null, backend: value.backend ?? null,
-      autoResume: value.autoResume === true } : {}) };
+      model: value.model ?? null, autoResume: value.autoResume === true } : {}) };
 }
 
 /** 状態を最後に変えたのが AI（host のツールの ai・操作の一覧の agent。ADR 0081）なら { reason, reasonKey?, reasonParams? }、そうでなければ null */
@@ -1710,7 +1710,7 @@ function makeEmit(turn) {
       turn.outcome = event.outcome;
       if (event.outcome === 'limited') {
         turn.limit = { resetsAt: Number.isFinite(event.resetsAt) ? event.resetsAt : null,
-          window: event.window ?? null, account: turn.info.account ?? null, backend: turn.backend.id };
+          window: event.window ?? null, account: turn.info.account ?? null, backend: turn.backend.id, model: turn.info.model ?? null };
         event = { ...event, ...turn.limit };
       }
       // 中断で終わったら理由を添える（画面は会話の末尾の「中断しました」の文言を理由で選ぶ）
@@ -2354,7 +2354,7 @@ async function reserveTurnSettings(args) {
     await store.setSessionData(sessionId, "nextSettings", next, { durable: true });
     if (current.interrupted?.reason === 'limit'
       && ((account !== undefined && accountChanged) || (!cancel && next?.backend && next.backend !== source.id))) {
-      await setAutoResume(sessionId, false);
+      await leaveLimit(sessionId);
     }
     // 取り消した・別の場所に替えた予約が分けた作業場所なら、使っていなければ片付ける（ADR 0089）
     if (current.nextSettings?.cwd && current.nextSettings.cwd !== next?.cwd) settleWorktreeAt(current.nextSettings.cwd).catch(() => {});
@@ -3018,7 +3018,7 @@ const opsSessionWork = {
       if (!source || !target) throw new Error(t('agents.notFound'));
       await switchBackend(sessionId, source, target);
       if (source.id !== target.id) {
-        if ((await store.get(sessionId)).interrupted?.reason === 'limit') await setAutoResume(sessionId, false);
+        if ((await store.get(sessionId)).interrupted?.reason === 'limit') await leaveLimit(sessionId);
       }
       // 入力欄の `!`: 走っている分は止め、渡していない分は捨てる（前のエージェントの形でしか渡せない。ADR 0054）
       if (source.id !== target.id) await shellRuns.switched(sessionId, source, target);
@@ -3235,11 +3235,11 @@ function opsDeps(lng = currentLocale()) {
         const cancelled = await schedule.cancel(id);
         if (cancelled && row?.kind === 'resume') {
           const meta = await store.get(row.sessionId);
-          if (meta.interrupted?.reason === 'limit' && meta.interrupted.at === row.createdAt) await setAutoResume(row.sessionId, false);
+          if (meta.interrupted?.reason === 'limit' && meta.interrupted.at === row.createdAt) await setAutoResume(row.sessionId, false, { user: true });
         }
         return { cancelled };
       },
-      setAuto: (sessionId, enabled) => setAutoResume(sessionId, enabled, { strict: true }),
+      setAuto: (sessionId, enabled) => setAutoResume(sessionId, enabled, { strict: true, user: true }),
     },
     delegation: { list: (owner) => withWorktreeLive(agentTasks?.list(owner) ?? []), get: (taskId, offset) => agentTasks?.get(taskId, offset) ?? null,
       call: (owner, name, args, locale) => callAgentOp(owner, name, args, { locale }),
@@ -4576,8 +4576,14 @@ async function endTurn(turn, emit, { record = true } = {}) {
   const stopped = !requeued && (limited || turn.outcome === "aborted" || (turn.ac.signal.aborted && turn.outcome !== "ok"));
   const interrupted = limited ? { at: completedAt, reason: 'limit', ...turn.limit } : stopped ? { at: completedAt, reason: turn.abortReason ?? "user" } : null;
   // 上限で止まった会話は解除時刻（遠い先でも）に自動で戻る。時刻が分からないときは 30 分ごとに使用量を確かめる（resumePlan）
-  const plan = limited ? resumePlan(interrupted.resetsAt, completedAt) : null;
-  if (limited) { interrupted.resetsAt = plan.resetsAt; interrupted.autoResume = true; }
+  // 人が［再開しない］にした会話は、再び上限になっても外したままにする。時刻不明の上限を確かめ直して再開した直後にまた上限になったら、間隔を伸ばす
+  const sessionKey = turn.info.sessionId;
+  const keepOff = limited && sessionKey ? (await store.get(sessionKey).catch(() => ({}))).autoResumeOff === true : false;
+  const pollState = limited && sessionKey ? limitPoll.get(sessionKey) : null;
+  const plan = limited ? resumePlan(interrupted.resetsAt, completedAt, pollState?.resumed ? pollState.strikes + 1 : 0) : null;
+  if (limited) { interrupted.resetsAt = plan.resetsAt; interrupted.autoResume = !keepOff; }
+  if (sessionKey && (!limited || !plan.poll)) limitPoll.delete(sessionKey);
+  else if (limited && sessionKey) limitPoll.set(sessionKey, { strikes: pollState?.resumed ? pollState.strikes + 1 : 0, resumed: false });
   if (record && !requeued) await usageStore.record({ ...turn.usage, id: turn.presentKey, backend: turn.backend.id, sessionId: turn.info.sessionId })
     .catch(() => { console.error('  使用量を記録できませんでした'); });
   if (turn.backend.id === 'antigravity' && turn.info.sessionId && (turn.outcome === 'error' || turn.outcome === 'limited' || turn.failureReason?.source === 'backend.afterReply')) {
@@ -4605,7 +4611,8 @@ async function endTurn(turn, emit, { record = true } = {}) {
     if (limited) {
       const id = turn.info.sessionId;
       limitStates.set(id, interrupted);
-      await schedule.put(resumeRow(id, interrupted, plan));
+      if (keepOff) releaseLimitWait(id);
+      else await schedule.put(resumeRow(id, interrupted, plan));
     }
     // このターンで進んだ分を検索の写しへ（裏で読み直す。待たない）
     if (!requeued) sessionSearch.refresh(turn.info.sessionId);
@@ -4617,6 +4624,8 @@ async function endTurn(turn, emit, { record = true } = {}) {
   // 委譲された子の会話（delegation）の完了は、画面が通知しない。結果は依頼元の会話へ届く
   const endMeta = turn.info.sessionId ? await store.get(turn.info.sessionId).catch(() => null) : null;
   const delegated = Boolean(endMeta?.delegation);
+  // 人が［再開しない］にした印は、その会話が上限を抜けて普通に完了したら忘れる（次の上限はまた自動で戻る）
+  if (endMeta?.autoResumeOff && turn.outcome === 'ok' && turn.info.sessionId) store.setSessionData(turn.info.sessionId, 'autoResumeOff', false).catch(() => {});
   // bot の会話の種類（thread・dm・routine・learner・pulse）。完了の知らせの出し分けに使う（ADR 0127）
   const botKind = endMeta?.bot?.kind ?? null;
   // Retain turnEnd in snapshots already being read, then release the turn.
@@ -5030,23 +5039,22 @@ const resumeRunning = () => Object.assign(new Error(t('resume.running')), { code
  * 送り直すものが無ければ理由ごとの文を、普通の送信（sendMessage と同じ送信待ち）で送る。文は会話の言語で、見える発言になる。
  * 実行中（準備中・切り替え・分岐を含む。先頭が送信待ち・送信中も）の会話と、中断していない会話は断る
  */
-async function resumeSession(sessionId) {
+async function resumeSession(sessionId, { onSettled } = {}) {
   if (!sessionId || typeof sessionId !== 'string' || !refuseRetired(await resolveBackendForSession(sessionId))) throw new Error(t('session.notFound'));
   if (resuming.has(sessionId) || sessionBusy(sessionId)) throw resumeRunning();
   const oldLimit = limitStates.get(sessionId);
+  // 待ちの印と予定の行は、断る検査を通ってから下ろす（断った再開が、待たせる側だけを消さない）
+  const releaseLimit = async () => {
+    if (!oldLimit) return;
+    limitStates.delete(sessionId);
+    await schedule.cancel(`resume:${sessionId}`);
+  };
   if (oldLimit) {
     const selected = await store.get(sessionId);
-    const currentAccount = selected.nextSettings?.account ?? selected.claudeAccount ?? '';
-    const currentBackend = selected.nextSettings?.backend ?? selected.backend;
-    if (currentBackend !== oldLimit.backend || (oldLimit.backend === 'claude' && currentAccount !== (oldLimit.account ?? ''))) {
-      limitStates.delete(sessionId);
-      await schedule.cancel(`resume:${sessionId}`);
-    } else if (Number.isFinite(oldLimit.resetsAt) && oldLimit.resetsAt > Date.now()) {
+    if (limitSwitched(selected, oldLimit)) await releaseLimit();
+    else if (Number.isFinite(oldLimit.resetsAt) && oldLimit.resetsAt > Date.now()) {
       // 解除時刻の前は、人が押しても自動の予定が動くのを待たせる（画面はこの間、再開を押せない表示にする）。時刻が分からない上限は断らない
       throw Object.assign(new Error(t('resume.limitWaiting')), { code: 'LIMIT_WAITING' });
-    } else {
-      limitStates.delete(sessionId);
-      await schedule.cancel(`resume:${sessionId}`);
     }
   }
   resuming.add(sessionId);
@@ -5064,6 +5072,7 @@ async function resumeSession(sessionId) {
     if (open.some(m => m.status === 'sending') || (open[0]?.status === 'queued' && !oldLimit)
       || items.some(m => m.status === 'sent' && Date.parse(m.at) > interrupted.at)) throw resumeRunning();
     if (open.some(m => m.status === 'unknown')) throw Object.assign(new Error(t('resume.outboxUnknown')), { code: 'OUTBOX_UNKNOWN' });
+    await releaseLimit();
     if (open[0]?.status === 'queued' && oldLimit) {
       sent = open.filter(m => m.status === 'queued').map(m => m.id);
       outbox.kick(sessionId).catch(() => {});
@@ -5081,7 +5090,8 @@ async function resumeSession(sessionId) {
     sent = [item.id];
     return { sent: 'text', count: 1 };
   } finally {
-    if (sent) outboxSettled(sessionId, sent).finally(() => resuming.delete(sessionId));
+    if (sent) outboxSettled(sessionId, sent).finally(() => resuming.delete(sessionId))
+      .then(() => onSettled?.(sent)).catch(() => {});
     else resuming.delete(sessionId);
   }
 }
@@ -5101,11 +5111,25 @@ async function acceptSend(sessionId, messageId, args) {
 const resumeRow = (sessionId, interrupted, plan) => ({ id: `resume:${sessionId}`, kind: 'resume', sessionId, at: plan.at,
   createdAt: interrupted.at, by: 'limit', account: interrupted.account, ...(plan.poll ? { poll: true } : {}) });
 
+// 解除時刻が分からない上限の確かめ直し。会話 -> { strikes: 試しに再開してすぐ再び上限（時刻不明）になった回数, resumed: 今の再開が確かめ直しによるか }。
+// メモリだけ（再起動したら 30 分から数え直す）。strikes に応じて間隔を伸ばす（pollInterval）
+const limitPoll = new Map();
+const POLL_TRIAL_MISSES = 3;
+const BUSY_RETRY_MS = 120_000;
+
+/** 会話の選択中のアカウント・エージェントが、上限で止まったときと違うか（替えたなら、止まった枠の待ちは関係なくなる） */
+function limitSwitched(meta, limit) {
+  const account = meta.nextSettings?.account ?? meta.claudeAccount ?? '';
+  const backend = meta.nextSettings?.backend ?? meta.backend;
+  return backend !== limit.backend || (limit.backend === 'claude' && account !== (limit.account ?? ''));
+}
+
 /**
  * その会話の自動再開を入れる・外す（会話末尾の［再開しない］・アカウントやエージェントを替えたとき・予定の取り消し）。
- * 予定・会話の印・送信待ちの目安（limitStates）を合わせる。外した会話は、解除時刻を過ぎれば人の「再開」で続けられる
+ * 予定・会話の印・送信待ちの目安（limitStates）を合わせる。外した会話は、解除時刻を過ぎれば人の「再開」で続けられる。
+ * user は人が選んだとき: 会話に覚え、再び上限になっても外したままにする（外した会話が普通に完了すれば忘れる）
  */
-async function setAutoResume(sessionId, enabled, { strict = false } = {}) {
+async function setAutoResume(sessionId, enabled, { strict = false, user = false } = {}) {
   const stopped = (await store.get(sessionId)).interrupted;
   if (stopped?.reason !== 'limit') {
     if (strict) throw new Error(t('resume.notInterrupted'));
@@ -5113,6 +5137,7 @@ async function setAutoResume(sessionId, enabled, { strict = false } = {}) {
   }
   const interrupted = { ...stopped, autoResume: Boolean(enabled) };
   await store.setMeta(sessionId, { interrupted });
+  if (user) await store.setSessionData(sessionId, 'autoResumeOff', !enabled);
   limitStates.set(sessionId, interruptedOf(interrupted));
   emitGlobal({ type: 'limitResumeChanged', sessionId, interrupted: interruptedOf(interrupted) });
   if (!enabled) await schedule.cancel(`resume:${sessionId}`);
@@ -5123,6 +5148,18 @@ async function setAutoResume(sessionId, enabled, { strict = false } = {}) {
   }
   releaseLimitWait(sessionId);
   return { sessionId, enabled: interrupted.autoResume };
+}
+
+/**
+ * アカウントやエージェントを替えた。止まった枠の待ちは、替えた先には関係ない。自動再開を外し、待ちの印を下ろして、
+ * 送信待ち（替えて送った指示）をすぐ流す。interrupted の印は残る（末尾は「自動では再開しません」。会話は人の「再開」で続けられる）
+ */
+async function leaveLimit(sessionId) {
+  await setAutoResume(sessionId, false);
+  clearTimeout(limitReleaseTimers.get(sessionId));
+  limitReleaseTimers.delete(sessionId);
+  limitStates.delete(sessionId);
+  outbox.kick(sessionId).catch(() => {});
 }
 
 // 自動で戻さない会話（［再開しない］にした会話）の、解除時刻に送信待ちを流すタイマー
@@ -5140,31 +5177,42 @@ function releaseLimitWait(sessionId) {
   limitReleaseTimers.set(sessionId, timer);
 }
 
-/** 止まった枠が空いたか（使用量の表示と同じ口。providerQuota）。true / false / 読めない null */
+/** 止まった枠が空いたか（使用量の表示と同じ口。providerQuota）。true / false / 読めない null。止まった枠だけで判断する */
 async function limitOpenNow(stopped, meta) {
   const backend = getBackend(stopped.backend ?? meta.backend);
   if (!backend?.usage) return null;
   const quota = await providerQuota(backend).catch(() => null);
-  return limitOpen(quota, { account: stopped.account ?? '', window: stopped.window });
+  return limitOpen(quota, { account: stopped.account ?? '', window: stopped.window, backend: backend.id, model: stopped.model ?? meta.model ?? '' });
 }
 
 const autoResuming = new Set();
 // 自動の再開が断られても失敗ではない理由（人が先に再開した・続きを送り終えた）
 const AUTO_RESUME_SKIPPED = new Set(['SESSION_RUNNING', 'NOT_INTERRUPTED', 'LIMIT_WAITING']);
+/** 自動再開の失敗: 自動再開を外し（会話は人の「再開」に戻り、その押したときに理由が出る）、失敗として 1 回知らせる */
+async function autoResumeFailed(sessionId, reason) {
+  console.error(`  上限の後の自動再開に失敗: ${sessionId}`, reason);
+  await setAutoResume(sessionId, false).catch(() => {});
+  completionNotices.finished(sessionId, 'error', Date.now());
+}
 /**
  * 解除時刻（時刻不明なら空いたことの確認）に会話を再開する。全部の会話が同時に動く。
- * 戻れなかったとき（結果不明の未送信がある・続きを送れない）だけ、自動再開を外して失敗として 1 回知らせる。
- * 外すので、会話は人の「再開」に戻り、その押したときに理由が出る
+ * 戻れなかったとき（結果不明の未送信がある・続きを送れない・受け付けた後に送信が失敗した）だけ、自動再開を外して失敗として 1 回知らせる。
+ * 戻り値 'busy' は、別の作業が会話を使っていて受け付けられなかった（呼び出し元が後でもう一度試す）
  */
 async function resumeFromLimit(sessionId) {
-  if (autoResuming.has(sessionId)) return;
+  if (autoResuming.has(sessionId)) return 'busy';
   autoResuming.add(sessionId);
-  try { await resumeSession(sessionId); }
-  catch (err) {
-    if (AUTO_RESUME_SKIPPED.has(err?.code)) return;
-    console.error(`  上限の後の自動再開に失敗: ${sessionId}`, String(err?.message ?? err));
-    await setAutoResume(sessionId, false).catch(() => {});
-    completionNotices.finished(sessionId, 'error', Date.now());
+  try {
+    await resumeSession(sessionId, { onSettled: async ids => {
+      const failed = (await outbox.list(sessionId).catch(() => [])).filter(m => ids.includes(m.id) && ['failed', 'unknown'].includes(m.status));
+      if (failed.length) await autoResumeFailed(sessionId, failed[0].error ?? failed[0].status);
+    } });
+    return 'resumed';
+  } catch (err) {
+    if (err?.code === 'SESSION_RUNNING') return 'busy';
+    if (AUTO_RESUME_SKIPPED.has(err?.code)) return 'skipped';
+    await autoResumeFailed(sessionId, String(err?.message ?? err));
+    return 'failed';
   } finally { autoResuming.delete(sessionId); }
 }
 
@@ -5176,8 +5224,8 @@ async function recoverLimitResumes() {
   for (const [id, limit] of [...limitStates]) {
     const meta = await store.get(id).catch(() => null);
     if (meta?.interrupted?.reason !== 'limit') { limitStates.delete(id); continue; }
+    if (limitSwitched(meta, limit) || (meta.claudeAccount ?? '') !== (limit.account ?? '')) { await leaveLimit(id).catch(() => {}); continue; }
     if (limit.autoResume !== true) { releaseLimitWait(id); continue; }
-    if ((meta.claudeAccount ?? '') !== (limit.account ?? '')) continue;
     if (Number.isFinite(limit.resetsAt) && limit.resetsAt <= Date.now()) await resumeFromLimit(id);
     else if (!schedule.get(`resume:${id}`)) await schedule.put(resumeRow(id, limit, Number.isFinite(limit.resetsAt)
       ? { at: limit.resetsAt } : { at: Date.now(), poll: true }));
@@ -5191,11 +5239,21 @@ const schedule = createSchedule({ file: path.join(store.dataDir, 'schedule.json'
     if (row.kind !== 'resume') throw new Error(`Unsupported schedule kind: ${row.kind}`);
     const meta = await store.get(row.sessionId);
     const stopped = meta.interrupted;
-    if (stopped?.reason !== 'limit' || stopped.at !== row.createdAt || stopped.autoResume !== true) return;
-    if ((meta.claudeAccount ?? '') !== (row.account ?? '')) return;
-    // 解除時刻が分からない上限は、使用量を 30 分ごとに確かめ、枠が空いたら戻る。読めなければ次の確認まで待つ
-    if (row.poll && await limitOpenNow(stopped, meta) !== true) return { reschedule: Date.now() + POLL_MS };
-    await resumeFromLimit(row.sessionId);
+    // 今の上限の予定でない行（もう再開した・別の上限になった）は消えるだけ
+    if (stopped?.reason !== 'limit' || stopped.at !== row.createdAt || stopped.autoResume !== true) return undefined;
+    // 止まったときと違うアカウントを選んでいる会話は、勝手には動かさない（自動を外して人の「再開」に戻す）
+    if (limitSwitched(meta, stopped) || (meta.claudeAccount ?? '') !== (row.account ?? '')) { await leaveLimit(row.sessionId); return undefined; }
+    if (row.poll) {
+      // 解除時刻が分からない上限は、使用量を確かめ、止まった枠が空いたら戻る。読めない・まだ上限なら次の確認まで待つ。
+      // 読めないのが 3 回続いたら一度だけ試しに再開する（再び上限なら間隔が伸びる。endTurn の resumePlan）
+      const strikes = limitPoll.get(row.sessionId)?.strikes ?? 0;
+      const open = await limitOpenNow(stopped, meta);
+      const misses = open === null ? (row.misses ?? 0) + 1 : 0;
+      if (open === false || (open === null && misses < POLL_TRIAL_MISSES)) return { reschedule: Date.now() + pollInterval(strikes), patch: { misses } };
+      limitPoll.set(row.sessionId, { strikes, resumed: true });
+    }
+    if (await resumeFromLimit(row.sessionId) === 'busy') return { reschedule: Date.now() + BUSY_RETRY_MS };
+    return undefined;
   },
 });
 
@@ -6194,7 +6252,8 @@ server.once("error", (err) => {
 setTimeout(() => sessionSearch.start().catch(() => {}), 3000).unref();
 await restoreCompactionSchedule().catch(err => console.error('  自動圧縮の予約を戻せませんでした:', String(err?.message ?? err)));
 for (const [id, meta] of Object.entries(await store.getAll())) {
-  if (meta.interrupted?.reason === 'limit') limitStates.set(id, interruptedOf(meta.interrupted));
+  // 止まったときと違うアカウント・エージェントを選んでいる会話は、止まった枠の待ちに入れない（recoverLimitResumes が自動再開を外す）
+  if (meta.interrupted?.reason === 'limit' && !limitSwitched(meta, interruptedOf(meta.interrupted))) limitStates.set(id, interruptedOf(meta.interrupted));
 }
 // Restored sends can start a turn and use localOrigin(), which needs a bound port.
 const listening = new Promise(resolve => server.once('listening', resolve));

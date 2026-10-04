@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs';
 import {
   REASONS, reasonOf, isInterrupted, interruptUnread, interruptReadPoint, showsReasonInMeta, interruptLabel, interruptLineText,
   warnMark, pausedCount, resumeLabel, resumeNoteText, resumeVisible, updateInterrupted, workRows, workCounts, interruptProgress,
-  limitResumeState, limitLineNote, limitTime, resumeShortLabel,
+  limitResumeState, limitLineNote, limitTime, resumeShortLabel, LIMIT_GRACE_MS,
 } from '../../web/interrupt.mjs';
 
 export const name = 'web-interrupt';
@@ -52,6 +52,9 @@ export default function (t) {
     limitResumeState(auto, nowMs) === 'auto' && limitResumeState({ ...auto, autoResume: false }, nowMs) === 'release'
     && limitResumeState({ ...auto, autoResume: false }, soon + 1) === 'ready' && limitResumeState({ ...auto, autoResume: false, resetsAt: null }, nowMs) === 'ready'
     && limitResumeState({ reason: 'user' }, nowMs) === null);
+  t.ok('解除時刻を過ぎて 2 分たっても自動再開が残っていたら、時計をやめて普通の「再開」にする（自動で戻れなかった会話が固まらない）',
+    limitResumeState(auto, soon + LIMIT_GRACE_MS) === 'auto' && limitResumeState(auto, soon + LIMIT_GRACE_MS + 1) === 'ready' && resumeLabel(0, auto, soon + LIMIT_GRACE_MS + 1) === '再開'
+    && resumeShortLabel(auto, soon + LIMIT_GRACE_MS + 1) === '');
   t.ok('自動で戻る会話の入力欄は「◷ 時刻 に再開」', /に再開$/.test(resumeLabel(0, auto, nowMs)) && resumeLabel(0, auto, nowMs).includes(limitTime(soon)));
   t.ok('狭い幅の時計の字は時刻だけ（時刻不明は空＝アイコンだけ。解除の後・上限でないときも空）', /^\d{1,2}:\d{2}( ?[AP]M)?$/i.test(resumeShortLabel(auto, nowMs)) && resumeShortLabel({ ...auto, resetsAt: null }, nowMs) === ''
     && resumeShortLabel({ ...auto, autoResume: false }, soon + 1) === '' && resumeShortLabel({ reason: 'user' }, nowMs) === '');

@@ -473,7 +473,7 @@ export const dataDir = DIR;
 /** Host-only data. 書き込みはその場で行い、書けなければ投げる（durable は互換のために残す。意味は変わらない） */
 export async function setSessionData(sessionId, field, value, { durable = false } = {}) {
   void durable;
-  if (!sessionId || !["draft", "nextSettings", "outbox", "effort", "contextSession", "delegation", "taskNotices", "relayed", "ungrouped", "claudeAccount", "compatEndpoint", "agentLocale", "routing", "compactions", "contextWindow", "autoCompactionOff", "compacted", "hookRuns", "shellPending", "shellExits", "shellKept", "computerApps", "browserProfile", "rewind", "scheduledSends", "bot", "antigravityFailures"].includes(field)) throw new Error(t("store.invalidSessionField"));
+  if (!sessionId || !["draft", "nextSettings", "outbox", "effort", "contextSession", "delegation", "taskNotices", "relayed", "ungrouped", "claudeAccount", "compatEndpoint", "agentLocale", "routing", "compactions", "contextWindow", "autoCompactionOff", "compacted", "hookRuns", "shellPending", "shellExits", "shellKept", "computerApps", "browserProfile", "rewind", "scheduledSends", "bot", "antigravityFailures", "autoResumeOff"].includes(field)) throw new Error(t("store.invalidSessionField"));
   return exclusive(async () => {
     const all = await load();
     const before = all[sessionId];

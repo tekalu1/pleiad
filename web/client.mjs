@@ -85,7 +85,7 @@ import { createSessionLoads } from "./session-stream.mjs";
 const sessionLoads = createSessionLoads();
 import { createReadCompletions } from "./unread.mjs";
 import { isInterrupted, interruptUnread, interruptReadPoint, interruptLineText, reasonOf, stopMark, pausedCount, resumeLabel,
-  resumeNoteText, resumeVisible, updateInterrupted, limitResumeState, limitLineNote, resumeShortLabel } from './interrupt.mjs';
+  resumeNoteText, resumeVisible, updateInterrupted, limitResumeState, limitLineNote, resumeShortLabel, LIMIT_GRACE_MS } from './interrupt.mjs';
 import { setupContext } from './context.mjs';
 import { setupSessionContext, chipText } from './session-context.mjs';
 import { budgetOf } from './instruction-amount.mjs';
@@ -3905,7 +3905,11 @@ function syncResume() {
   button.classList.toggle('is-limit', waitingClock);
   button.disabled = resuming.has(state.current) || waitingClock;
   clearTimeout(limitClockTimer);
-  if (limitState === 'release') limitClockTimer = setTimeout(syncResume, Math.min(2_147_000_000, Math.max(1000, s.interrupted.resetsAt - Date.now() + 500)));
+  // 時計が切り替わる時刻（自動を外した会話は解除時刻、自動で戻る会話は解除の後の待ちの終わり）に描き直す
+  if ((limitState === 'release' || limitState === 'auto') && Number.isFinite(s.interrupted.resetsAt)) {
+    const switchAt = s.interrupted.resetsAt + (limitState === 'auto' ? LIMIT_GRACE_MS : 0) + 500;
+    limitClockTimer = setTimeout(() => { syncResume(); renderSessions(); }, Math.min(2_147_000_000, Math.max(1000, switchAt - Date.now())));
+  }
   const note = $('resumeNote');
   note.hidden = !interrupted || running;
   // 保留があれば、送った指示は保留の後ろに並ぶ（サーバーが保留を先に送り直す。sendMessage）

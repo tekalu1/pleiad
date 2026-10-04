@@ -2977,7 +2977,7 @@
       "id": "sessions.setAutoResume",
       "risk": "write",
       "riskOf": false,
-      "scope": "global",
+      "scope": "session",
       "modeGate": true,
       "hostScreenOnly": false,
       "surfaces": {

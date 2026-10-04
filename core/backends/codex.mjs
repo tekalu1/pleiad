@@ -1426,7 +1426,7 @@ export const backend = {
       const message = hide(String(error?.message ?? error?.type ?? error ?? t('codex.errors.failed')));
       if (!codexLimitError(error)) return { type: 'turnResult', outcome: 'error', error: message, turns };
       const usage = await rpc.request('account/rateLimits/read', {}, 15_000).then(codexQuota, () => null);
-      const next = codexResetOf(usage?.windows);
+      const next = codexResetOf(usage?.windows, Date.now(), model);
       return { type: 'turnResult', outcome: 'limited', error: message, turns,
         resetsAt: next?.resetsAt ?? null, window: next?.window ?? null };
     };

@@ -26,7 +26,7 @@ import { botIcon } from './channels/bot-icon.mjs';
 import { fmt, t } from "./i18n.mjs";
 import { familiesOf } from "./family.mjs";
 import { timeText } from "./schedule-times.mjs";
-import { warnMark, interruptLabel, showsReasonInMeta, resumeLabel } from "./interrupt.mjs";
+import { warnMark, interruptLabel, showsReasonInMeta, resumeLabel, limitResumeState } from "./interrupt.mjs";
 import { aiMarkTitle } from "./change-log.mjs";
 import { branchIcon } from "./icons.mjs";
 import { parseTerms, matchLocal, findRanges, localOrder, periodSince, pushRecentSearch, searchShortcutLabel, searchShortcutAria } from "./session-find.mjs";
@@ -800,7 +800,7 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
     const stopped = last.interrupted.get(s.id);
     const moving = last.runningIds.has(s.id) || behind;
     // 解除の後に自動で再開する会話は、人の手が要らないので三角ではなく時計（「◷ 2:30 に再開」。解除時刻が分からないときは「◷ 解除を確認中」。経過の時間は出さない）
-    const resumeAt = !moving && stopped?.reason === 'limit' && stopped.autoResume === true;
+    const resumeAt = !moving && limitResumeState(stopped) === 'auto';
     // 送信予定（時刻が先にある）は時計と「9:00 に送信」。過ぎて送らなかった予定は三角と「送信予定を過ぎた」
     const sched = last.schedules.get(s.id);
     const sendAt = !moving && !resumeAt && !stopped && !sched?.missed && Number.isFinite(sched?.next) ? sched.next : null;

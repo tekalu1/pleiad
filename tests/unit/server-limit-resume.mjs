@@ -18,14 +18,14 @@ export default async function (t) {
   const launch = () => startServer({ env: { AGENT_HOST_BACKENDS: 'fake', AGENT_HOST_FAKE_QUOTA: quotaFile }, dataDir });
   let server = await launch();
   t.ok('fake サーバーを起動', Number.isFinite(server.port), server.tail());
-  let c = await open({ port: server.port, token: server.token });
+  let c = await open({ port: server.port, token: server.token, autoAllow: true });
   t.ok('fake サーバーに接続', Boolean(c.ready));
   const op = (name, args = {}) => c.cmd('invoke', { op: name, args });
   const until = async (fn, ms = 10_000) => { const end = Date.now() + ms; while (Date.now() < end) { if (await fn().catch(() => false)) return true; await sleep(100); } return false; };
   const info = async id => (await c.cmd('listSessions')).find(s => s.id === id);
   const userTexts = async id => (await c.cmd('loadSession', { sessionId: id })).messages.filter(m => m.role === 'user').map(m => m.text);
   const newSession = async () => (await c.cmd('newSession', { backend: 'fake', cwd: ROOT })).sessionId;
-  const restart = async () => { c.close(); await server.stop(); server = await launch(); c = await open({ port: server.port, token: server.token }); };
+  const restart = async () => { c.close(); await server.stop(); server = await launch(); c = await open({ port: server.port, token: server.token, autoAllow: true }); };
   const readRows = async () => JSON.parse(await fs.readFile(path.join(dataDir, 'schedule.json'), 'utf8')).entries;
   try {
     // ---- 1. 解除時刻に一度だけ自動で再開する。上限中に送った指示は送信待ちで、解除後に流れる
@@ -106,14 +106,14 @@ export default async function (t) {
     const due = async () => { const rows = await readRows(); await fs.writeFile(path.join(dataDir, 'schedule.json'),
       JSON.stringify({ version: 1, entries: rows.map(r => ({ ...r, at: Date.now() - 1000, retryAt: undefined })) })); };
     c.close(); await server.stop(); await due();
-    server = await launch(); c = await open({ port: server.port, token: server.token });
+    server = await launch(); c = await open({ port: server.port, token: server.token, autoAllow: true });
     await sleep(800);
     const still = (await op('sessions.schedules', { sessionId: unknown }))[0];
     t.ok('まだ上限（100%）なら再開せず、次の確認を 30 分後に置く', (await info(unknown)).interrupted?.reason === 'limit'
       && still?.poll === true && still.at - Date.now() > 29 * 60_000, JSON.stringify(still));
     await writeQuota(30);
     c.close(); await server.stop(); await due();
-    server = await launch(); c = await open({ port: server.port, token: server.token });
+    server = await launch(); c = await open({ port: server.port, token: server.token, autoAllow: true });
     t.ok('枠が空いたら再開し、待っていた指示を送る', await until(async () => (await info(unknown)).interrupted === null && (await userTexts(unknown)).includes('echo:after-poll')),
       JSON.stringify(await userTexts(unknown)));
     t.ok('再開したら予定は消える', !(await op('sessions.schedules', { sessionId: unknown })).length);
@@ -125,10 +125,69 @@ export default async function (t) {
     c.close(); await server.stop();
     await fs.rm(path.join(dataDir, 'schedule.json'), { force: true });
     await sleep(1500);
-    server = await launch(); c = await open({ port: server.port, token: server.token });
+    server = await launch(); c = await open({ port: server.port, token: server.token, autoAllow: true });
     t.ok('起動時に、解除時刻を過ぎた上限の会話を再開する（schedule.json の行が無くても）',
       await until(async () => (await info(away)).interrupted === null && (await userTexts(away)).length === 2), JSON.stringify(await userTexts(away)));
     t.ok('起動時の再開も続けての文を一度だけ送る', (await userTexts(away)).filter(x => !x.startsWith('limit ')).length === 1);
+
+    // ---- 6. アカウントを替えて送ると、止まった枠の待ちは解ける（解除時刻まで待たない）
+    const switched = await newSession();
+    await c.runTurn({ sessionId: switched, prompt: `limit ${Date.now() + 3 * HOUR}` });
+    const account = await c.cmd('saveClaudeAccount', { name: '別のアカウント', token: 'sk-ant-oat01-' + 'Y'.repeat(48) });
+    await c.cmd('sendMessage', { sessionId: switched, messageId: 'switchedq00001', prompt: 'echo:before-switch' });
+    t.ok('替える前は、解除時刻まで送信待ち', (await c.cmd('listMessages', { sessionId: switched })).find(m => m.id === 'switchedq00001')?.waiting?.reason === 'limit');
+    const switchedFrom = c.mark();
+    await c.cmd('setTurnSettings', { sessionId: switched, account: account.id });
+    t.ok('アカウントを替えると、待っていた指示がすぐ送られる', await c.waitFor(e => e.type === 'turnEnd' && e.sessionId === switched && e.outcome === 'ok', { from: switchedFrom, ms: 10000 }).then(() => true, () => false));
+    t.ok('替えた会話は、解除時刻まで待たずに続く（印は消え、予定の行も残らない）', (await info(switched)).interrupted === null && !(await op('sessions.schedules', { sessionId: switched })).length);
+    const switchedAgain = await newSession();
+    await c.runTurn({ sessionId: switchedAgain, prompt: `limit ${Date.now() + 3 * HOUR}` });
+    // 新しい会話の既定のアカウントは、さっき選んだ別のアカウント。ログイン中のアカウント（''）へ替える
+    await c.cmd('setTurnSettings', { sessionId: switchedAgain, account: '' });
+    t.ok('替えた会話の末尾は「自動では再開しません」（自動再開が外れ、人の「再開」で続けられる）', (await info(switchedAgain)).interrupted?.autoResume === false
+      && !(await op('sessions.schedules', { sessionId: switchedAgain })).length);
+    const resumedByHand = await op('sessions.resume', { sessionId: switchedAgain });
+    t.ok('替えた後は、解除時刻の前でも人の「再開」が通る', resumedByHand.sent === 'text');
+
+    // ---- 7. 人が［再開しない］にした会話は、再び上限になっても外したまま。完了したら忘れる
+    const sticky = await newSession();
+    await c.runTurn({ sessionId: sticky, prompt: `limit ${Date.now() + 1200}` });
+    await op('sessions.setAutoResume', { sessionId: sticky, enabled: false });
+    await sleep(1500);
+    // 人が続けた（その続きがまた上限に当たる）
+    await c.runTurn({ sessionId: sticky, prompt: `limit ${Date.now() + 2 * HOUR}` });
+    t.ok('再び上限になっても、人が外した自動再開は外れたまま（予定の行も置かない）', (await info(sticky)).interrupted?.autoResume === false
+      && !(await op('sessions.schedules', { sessionId: sticky })).length);
+    await op('sessions.setAutoResume', { sessionId: sticky, enabled: true });
+    t.ok('［自動で再開する］に戻すと予定が置かれる', (await op('sessions.schedules', { sessionId: sticky })).length === 1);
+
+    // ---- 8. 受け付けた後に送信が失敗したら、自動再開を外し、失敗として 1 回知らせる（時計が固まらない）
+    const workDir = path.join(scratch, 'work');
+    await fs.mkdir(workDir, { recursive: true });
+    const broken = (await c.cmd('newSession', { backend: 'fake', cwd: workDir })).sessionId;
+    const brokenFrom = c.mark();
+    await c.runTurn({ sessionId: broken, prompt: `limit ${Date.now() + 1500}` });
+    await fs.rm(workDir, { recursive: true, force: true });
+    t.ok('作業場所が無くなって再開できなかった会話は、失敗として知らせる',
+      await c.waitFor(e => e.type === 'completionReady' && e.sessionId === broken && e.outcome === 'error', { from: brokenFrom, ms: 10000 }).then(() => true, () => false));
+    t.ok('自動再開は外れ、人の「再開」に戻る（失敗の通知は 1 回だけ）', (await info(broken)).interrupted?.autoResume === false
+      && c.since(brokenFrom).filter(e => e.type === 'completionReady' && e.sessionId === broken).length === 1);
+
+    // ---- 9. 解除時刻が分からない上限は、読めないのが 3 回続いたら一度だけ試しに再開する
+    await fs.writeFile(quotaFile, JSON.stringify({ windows: [] }));
+    const blind = await newSession();
+    await c.runTurn({ sessionId: blind, prompt: 'limit unknown' });
+    for (const round of [1, 2]) {
+      c.close(); await server.stop(); await due();
+      server = await launch(); c = await open({ port: server.port, token: server.token, autoAllow: true });
+      await sleep(800);
+      t.ok(`枠が読めない間は再開せず待つ（${round} 回目）`, (await info(blind)).interrupted?.reason === 'limit'
+        && (await op('sessions.schedules', { sessionId: blind }))[0]?.misses === round, JSON.stringify(await op('sessions.schedules', { sessionId: blind })));
+    }
+    c.close(); await server.stop(); await due();
+    server = await launch(); c = await open({ port: server.port, token: server.token, autoAllow: true });
+    t.ok('読めないのが 3 回続いたら、一度だけ試しに再開する', await until(async () => (await info(blind)).interrupted === null && (await userTexts(blind)).length === 2),
+      JSON.stringify(await userTexts(blind)));
   } finally {
     c.close(); await server.stop();
     if (path.resolve(scratch).startsWith(path.resolve(os.tmpdir()) + path.sep)) await fs.rm(scratch, { recursive: true, force: true });

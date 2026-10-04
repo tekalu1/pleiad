@@ -4,7 +4,7 @@ import path from 'node:path';
 import { normalizeSdkMessage } from '../../core/backends/claude-normalize.mjs';
 import { codexLimitError, codexResetOf } from '../../core/backends/codex-limit.mjs';
 import { createSchedule } from '../../core/schedule.mjs';
-import { POLL_MS, resumePlan, limitHolds, limitOpen } from '../../core/limit-resume.mjs';
+import { POLL_MS, POLL_MAX_MS, pollInterval, resumePlan, limitHolds, limitOpen } from '../../core/limit-resume.mjs';
 
 export const name = 'limit-resume';
 export const title = '使用量の上限の正規化・予定の戻しと再予約・自動再開の時刻と使用量の判断・Codex の解除時刻';
@@ -49,9 +49,10 @@ export default async function (t) {
     const fires = [];
     const poll = createSchedule({ file: path.join(scratch2, 'schedule.json'), now: () => clock, setTimer: timer, clearTimer() {},
       fire: async row => { fires.push(row.at); return answers.shift(); } });
+    answers = [{ reschedule: clock + POLL_MS, patch: { misses: 1 } }, undefined];
     await poll.put({ id: 'resume:p', kind: 'resume', sessionId: 'p', at: clock, createdAt: 1, by: 'limit', poll: true });
     await poll.check();
-    t.ok('空いていなければ行を残して 30 分後に確かめ直す', poll.list().length === 1 && poll.list()[0].at === 10_000 + POLL_MS && poll.list()[0].poll === true, JSON.stringify(poll.list()));
+    t.ok('空いていなければ行を残して 30 分後に確かめ直す（patch の項目も行に残る）', poll.list().length === 1 && poll.list()[0].at === 10_000 + POLL_MS && poll.list()[0].poll === true && poll.list()[0].misses === 1, JSON.stringify(poll.list()));
     await poll.check();
     t.ok('30 分たつまでは確かめない', fires.length === 1);
     clock += POLL_MS;
@@ -71,6 +72,9 @@ export default async function (t) {
   t.ok('解除が 12 時間より先（週の上限）でも、その時刻に予定を置く', resumePlan(week, base).at === week && resumePlan(week, base).poll === false && resumePlan(week, base).resetsAt === week);
   t.ok('解除時刻が分からないなら 30 分後から確かめる', resumePlan(null, base).poll === true && resumePlan(null, base).at === base + POLL_MS && resumePlan(null, base).resetsAt === null);
   t.ok('解除時刻がもう過ぎている（取得元が古い）ときも、すぐ再開せず 30 分後に確かめる', resumePlan(base - 1, base).poll === true && resumePlan(base - 1, base).at === base + POLL_MS);
+  t.ok('確かめ直しの間隔は 30 分から、再び上限になるたびに 1 時間・2 時間と伸び、6 時間まで',
+    pollInterval(0) === POLL_MS && pollInterval(1) === 2 * POLL_MS && pollInterval(2) === 4 * POLL_MS && pollInterval(4) === POLL_MAX_MS && pollInterval(20) === POLL_MAX_MS);
+  t.ok('予定の置き方も strikes で伸びる（解除時刻が分かるときは変わらない）', resumePlan(null, base, 2).at === base + 4 * POLL_MS && resumePlan(week, base, 3).at === week);
   t.ok('解除前は送信待ち。解除時刻を過ぎたら待ちを解く', limitHolds({ resetsAt: base + 1000 }, base) && !limitHolds({ resetsAt: base }, base) && !limitHolds({ resetsAt: base - 1 }, base));
   t.ok('解除時刻が分からない上限は、自動再開が入っている間だけ待ち、外したら待たない', limitHolds({ resetsAt: null, autoResume: true }, base) && !limitHolds({ resetsAt: null, autoResume: false }, base));
 
@@ -82,6 +86,17 @@ export default async function (t) {
   t.ok('どの枠か分からないなら、100% の枠が 1 つでもあれば上限', limitOpen({ windows: [win(30), win(100, { minutes: 10080 })] }, {}, base) === false);
   t.ok('解除時刻を過ぎた枠は、使用率が古いので空いたものとして数える', limitOpen({ windows: [win(100, { resetsAt: new Date(base - 1000).toISOString() })] }, {}, base) === true);
   t.ok('枠が無い・使用率が数でないときは読めない（次の確認まで待つ）', limitOpen({ windows: [] }, {}, base) === null && limitOpen({ windows: [win(null)] }, {}, base) === null && limitOpen(null, {}, base) === null);
+  // 止まった枠だけで判断する（別のバケット・別のモデルの枠は関係ない）
+  const main = { label: '5 時間', usedPercent: 40, resetsAt: null, minutes: 300, limitId: 'codex' };
+  const spark = { label: 'Spark 週', usedPercent: 100, resetsAt: null, minutes: 10080, limitId: 'spark', limitName: 'GPT-5-Codex-Spark' };
+  t.ok('Codex: 主の枠が空いていれば、別のバケット（Spark）が 100% でも空いた', limitOpen({ windows: [main, spark] }, { backend: 'codex', model: 'gpt-5-codex' }, base) === true);
+  t.ok('Codex: そのモデルに当たるバケットが 100% ならまだ上限', limitOpen({ windows: [main, spark] }, { backend: 'codex', model: 'gpt-5-codex-spark' }, base) === false);
+  const opus = { label: 'Opus 週', usedPercent: 100, resetsAt: null, minutes: 10080, model: 'opus' };
+  t.ok('Claude: 別のモデル系統（Opus）の枠が 100% でも、Sonnet の会話は空いたと見る', limitOpen({ windows: [win(30), opus] }, { backend: 'claude', model: 'claude-sonnet-5-5' }, base) === true);
+  t.ok('Claude: 同じモデル系統の枠が 100% ならまだ上限', limitOpen({ windows: [win(30), opus] }, { backend: 'claude', model: 'claude-opus-5-5' }, base) === false);
+  t.ok('止まったアカウントの項目が枠を持たないときは、別のアカウントの枠で判断しない（読めない）',
+    limitOpen({ accounts: [{ accountId: 'a', message: '認可が済んでいない' }, { accountId: 'b', windows: [win(10)] }] }, { account: 'a' }, base) === null
+    && limitOpen({ accounts: [{ accountId: 'b', windows: [win(10)] }] }, { account: 'zzz' }, base) === null);
   const accounts = { accounts: [{ accountId: 'a', windows: [win(100)] }, { accountId: 'b', windows: [win(10)] }] };
   t.ok('Claude の複数アカウントは、止まったアカウントの枠を見る', limitOpen(accounts, { account: 'a' }, base) === false && limitOpen(accounts, { account: 'b' }, base) === true);
 
@@ -93,5 +108,11 @@ export default async function (t) {
   t.ok('Codex は使い切った枠だけを見る（5 時間枠だけが 100% なら、使っていない週の枠は関係しない）',
     codexResetOf([five, { ...weekly, usedPercent: 40 }], base)?.resetsAt === Date.parse(five.resetsAt));
   t.ok('Codex はどれも 100% でなければ、一番早く解ける枠のまま', codexResetOf([{ ...five, usedPercent: 60 }, { ...weekly, usedPercent: 20 }], base)?.resetsAt === Date.parse(five.resetsAt));
+  const sparkWeek = { label: 'Spark 週', usedPercent: 100, resetsAt: iso(base + 72 * 3600_000), limitId: 'spark', limitName: 'GPT-5-Codex-Spark' };
+  t.ok('Codex は別のバケット（Spark の週枠）が 100% でも、主の枠を使う会話の解除時刻は主の枠のまま',
+    codexResetOf([{ ...five, limitId: 'codex' }, sparkWeek], base, 'gpt-5-codex')?.resetsAt === Date.parse(five.resetsAt)
+    && codexResetOf([{ ...five, limitId: 'codex' }, sparkWeek], base)?.resetsAt === Date.parse(five.resetsAt));
+  t.ok('Codex はそのモデルに当たるバケットなら、そのバケットの解除時刻', codexResetOf([{ ...five, limitId: 'codex' }, sparkWeek], base, 'gpt-5-codex-spark')?.resetsAt === Date.parse(sparkWeek.resetsAt) - 0
+    || codexResetOf([{ ...five, limitId: 'codex' }, sparkWeek], base, 'gpt-5-codex-spark')?.resetsAt === Date.parse(sparkWeek.resetsAt));
   t.ok('Codex は過ぎた枠・時刻のない枠を数えない', codexResetOf([{ ...weekly, resetsAt: iso(base - 1) }, { label: 'x', usedPercent: 100, resetsAt: null }], base) === null && codexResetOf(undefined, base) === null);
 }
