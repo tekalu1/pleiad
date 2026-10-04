@@ -18,6 +18,8 @@ async (page) => {
   await page.locator('#send').click();
   await page.locator('#gitEntry').waitFor({ state: 'visible' });
   await page.waitForFunction(() => !document.querySelector('#send').disabled);
+  await page.waitForTimeout(1500);   // 会話の id が付いて git の状態が揃うまで（揃う途中で開くとパネルは閉じる）
+  await page.waitForFunction(() => !document.querySelector('#send').disabled);
 
   // 近道で開く
   await page.locator('#prompt').click();
@@ -78,6 +80,15 @@ async (page) => {
   check(await page.locator('.wrow .wbadge.here').count() === 1, 'the current worktree is marked');
   await page.locator('.wrow').first().click();
   check(await page.locator('.wrow[aria-expanded="true"]').count() === 1, 'a worktree row opens');
+
+  // 作業場所のファイルを押すと差分が開く（行の識別子にパスを入れない）
+  if (await page.locator('.wdet .fr').count()) {
+    await page.locator('.wdet .fr .nm').first().click();
+    await page.locator('.dv .dl .ln').first().waitFor();
+    check(true, 'a file inside a worktree row opens its diff');
+    await page.keyboard.press('Escape');
+    await page.locator('.wrow').first().waitFor();
+  }
 
   // 閉じる
   await page.keyboard.press('Control+Shift+G');

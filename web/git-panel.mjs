@@ -633,7 +633,7 @@ export function setupGitPanel({ cmd, preview, session, jump, use, onState = () =
   document.addEventListener('keydown', (e) => {
     if (e.key !== 'Escape' || e.isComposing || !isOpen() || !st.diff || e.defaultPrevented) return;
     // ダイアログ・メニューが開いている間と、フォーカスがパネルの外（入力欄など）にあるときは奪わない
-    if (document.querySelector('dialog[open], .pop.menu')) return;
+    if (document.querySelector('dialog[open], .pop.menu:not([hidden])')) return;
     const active = document.activeElement;
     if (active && active !== document.body && !document.getElementById('filePreview')?.contains(active)) return;
     e.preventDefault(); e.stopImmediatePropagation(); closeDiff();
