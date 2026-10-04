@@ -4,9 +4,11 @@ import path from 'node:path';
 const scratch = await fs.mkdtemp(path.join(os.tmpdir(), 'ply-compaction-contract-'));
 process.env.AGENT_HOST_DATA = scratch;
 try {
-  const { compactionContracts, hiddenDeleteContracts } = await import('../unit/conversations.mjs');
+  const { compactionContracts, hiddenDeleteContracts, botContextContracts } = await import('../unit/conversations.mjs');
   await compactionContracts();
   console.log('compaction contracts passed');
+  await botContextContracts();
+  console.log('bot context contracts passed');
   await hiddenDeleteContracts();
   console.log('hidden delete contracts passed');
 } finally {

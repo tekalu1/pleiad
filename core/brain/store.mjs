@@ -16,6 +16,7 @@
 import crypto from 'node:crypto';
 import { openData } from '../data-schema.mjs';
 import { brainTable, memoryStateTable } from '../db.mjs';
+import { WORK_NOTES_VERSION } from './inner.mjs';
 
 export const STREAM_KINDS = Object.freeze(['think', 'quiet', 'act', 'result', 'loop', 'dream', 'summary']);
 export const STREAM_TEXT_MAX = 300;
@@ -76,7 +77,7 @@ export function createBrainStore({ dataDir, now = Date.now, emit = () => {} } = 
      * 気がかりの足す・直す・手放す。add の id が既にあれば直す。開いているものが MAX_OPEN_LOOPS を超えるときは、いちばん長く触っていないものを手放す。
      * taint（外から来た文を材料にした）は一度付いたら外れない。返りの applied は { op, id, text, evicted? }（流れに 1 行ずつ残す材料）
      */
-    applyLoops(botId, ops, { taint = null } = {}) {
+    applyLoops(botId, ops, { taint = null, workNotesVersion = WORK_NOTES_VERSION } = {}) {
       const t = open();
       const applied = [];
       let rejected = 0;
@@ -93,7 +94,7 @@ export function createBrainStore({ dataDir, now = Date.now, emit = () => {} } = 
               t.putLoop(botId, oldest.id, 'dropped', at, loopData(oldest));
               evicted = oldest.id;
             }
-            t.putLoop(botId, id, 'open', at, loopData({ text: clip(op.text, 200), wakeOn: op.wakeOn ?? null, due: op.due ?? null, taint: taintOf(taint), createdAt: at }));
+            t.putLoop(botId, id, 'open', at, loopData({ text: clip(op.text, 200), wakeOn: op.wakeOn ?? null, due: op.due ?? null, taint: taintOf(taint), createdAt: at, workNotesVersion }));
             applied.push({ op: 'add', id, text: clip(op.text, 200), ...(evicted ? { evicted } : {}) });
             continue;
           }
@@ -104,7 +105,7 @@ export function createBrainStore({ dataDir, now = Date.now, emit = () => {} } = 
             applied.push({ op: op.op, id: target.id, text: target.text });
           } else {   // update（と、開いている id への add）
             const next = { ...target, text: op.text ? clip(op.text, 200) : target.text, ...(op.wakeOn !== undefined ? { wakeOn: op.wakeOn } : {}), ...(op.due !== undefined ? { due: op.due } : {}),
-              taint: target.taint ?? taintOf(taint) };
+              taint: target.taint ?? taintOf(taint), workNotesVersion: op.text ? workNotesVersion : target.workNotesVersion ?? null };
             t.putLoop(botId, target.id, 'open', at, loopData(next));
             applied.push({ op: 'update', id: target.id, text: next.text });
           }
@@ -155,5 +156,5 @@ export function createBrainStore({ dataDir, now = Date.now, emit = () => {} } = 
 
 /** brain_loops の data 列に入れる欄（id・status・updatedAt は列に持つ） */
 function loopData(l) {
-  return { text: l.text ?? '', wakeOn: l.wakeOn ?? null, due: l.due ?? null, taint: l.taint ?? null, createdAt: l.createdAt ?? l.updatedAt ?? 0 };
+  return { text: l.text ?? '', wakeOn: l.wakeOn ?? null, due: l.due ?? null, taint: l.taint ?? null, createdAt: l.createdAt ?? l.updatedAt ?? 0, ...(l.workNotesVersion ? { workNotesVersion: l.workNotesVersion } : {}) };
 }

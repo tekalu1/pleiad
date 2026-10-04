@@ -4185,6 +4185,7 @@ async function runTurnInternal(args, onStarted, hooks) {
       }
       backend = target;
     }
+    await backend.prepareTurn?.(sessionId);
     // Reject before marking the conversation sent or consuming its pending handoff.
     if (hooks.compact && backend.compact) {
       const record = await conversation(sessionId);

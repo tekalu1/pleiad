@@ -51,7 +51,7 @@ import crypto from 'node:crypto';
 import { agentT } from '../i18n.mjs';
 import { channelEnvelope, channelThreadEnvelope, channelEventRows, turnContextEnvelope, innerEnvelope } from '../channels/types.mjs';
 import { TURN_CONTEXT_TAG } from '../system-messages.mjs';
-import { innerTail } from '../brain/inner.mjs';
+import { innerTail, WORK_NOTES_VERSION } from '../brain/inner.mjs';
 import { createInboxStore } from './inbox.mjs';
 import { strongerMode } from './approval.mjs';
 import { createBudget } from './budget.mjs';
@@ -223,7 +223,7 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
     const posts = page.posts;
     // 自分の心拍から起きた出来事（inner。ADR 0126）は投稿を持たない。本文は <pleiad-inner> の包みで渡す
     const postItems = items.filter((i) => i.postId);
-    const innerItems = items.filter((i) => i.inner);
+    const innerItems = items.filter((i) => i.inner?.workNotesVersion === WORK_NOTES_VERSION);
     const triggerIds = new Set(postItems.map((i) => i.postId));
     // 聞こえただけの投稿（@ の無い人の投稿の、宛先でない bot。ADR 0128）。包みに heard="true" を付ける。
     // 渡すのが聞こえた投稿だけなら、その後に書き上がった投稿（宛先の bot の返事など）も後ろに渡す（それを見て、言うことがあるかを決める）
@@ -1062,7 +1062,7 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
       if (!fresh?.dmChannelId) return { ok: false, reason: 'no DM' };
       target = { sessionId: dm.sessionId, channelId: fresh.dmChannelId, threadId: null };
     }
-    await inbox.add({ ...target, botId, postId: null, inner: { why: oneLine(why, 300), text: String(text ?? '').slice(0, 6000), actSeq, homeChannelId, taint } });
+    await inbox.add({ ...target, botId, postId: null, inner: { workNotesVersion: WORK_NOTES_VERSION, why: oneLine(why, 300), text: String(text ?? '').slice(0, 6000), actSeq, homeChannelId, taint } });
     await pump(target.sessionId);
     return { ok: true, ...target };
   }

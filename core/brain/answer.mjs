@@ -2,7 +2,7 @@
 //
 //   parseBeat(raw, { now }) → { do, thought, refs, loops, wakeAt, handoff }   … 読めなければ投げる（Error('pulse returned no JSON object') など）
 //     do … 'none' | 'think' | 'act' | 'sleep'（知らない値は 'none'）
-//     thought … 1〜2 行の独り言（THOUGHT_MAX 字まで）
+//     thought … summary から読む活動の要約（THOUGHT_MAX 字まで。返りの欄名は内部互換）
 //     refs … 続きなら前の行（seq）か気がかりの id（5 つまで）
 //     loops … [{ op: 'add'|'update'|'resolve'|'drop', id?, text?, wakeOn?, due? }]（4 つまで）。wakeOn・due は parseWakeOn・parseTime で形にする
 //     wakeAt … 次に起きたい時刻（ms。wakeAt の時刻・wakeInMin の分のどちらでも）。無ければ null
@@ -67,7 +67,7 @@ function jsonObject(raw) {
 
 export function parseBeat(raw, { now = Date.now() } = {}) {
   const o = jsonObject(raw);
-  const action = DOES.includes(o.do) ? o.do : 'none';
+  const action = o.do === 'note' ? 'think' : DOES.includes(o.do) ? o.do : 'none';
   const refs = (Array.isArray(o.refs) ? o.refs : []).map((r) => String(r).trim().slice(0, 40)).filter(Boolean).slice(0, 5);
   const loops = [];
   for (const l of Array.isArray(o.loops) ? o.loops : []) {
@@ -83,7 +83,7 @@ export function parseBeat(raw, { now = Date.now() } = {}) {
   const why = clip(o.handoff?.why, WHY_MAX);
   const where = typeof o.handoff?.where === 'string' && o.handoff.where.trim() ? o.handoff.where.trim().slice(0, 80) : null;
   return {
-    do: action, thought: clip(o.thought, THOUGHT_MAX), refs, loops, wakeAt: wakeAt ?? null,
+    do: action, thought: clip(o.summary, THOUGHT_MAX), refs, loops, wakeAt: wakeAt ?? null,
     handoff: action === 'act' && why ? { why, ...(where ? { where } : {}) } : null,
   };
 }

@@ -518,6 +518,22 @@ export default async function (t) {
         t.ok('F-2: 終わりが届かなかった記録の、合図待ちの途中送信は、次のターンの始まりで pending に戻る（delivering のまま固まらない）', before === 'delivering' && (await c.d.inbox.list({})).find((i) => i.postId === 'p_2')?.status === 'pending' && c.d.activeCount() === 1);
       }
 
+      // 更新前に待っていた心拍の本文は、単独でも人の投稿と同時でも再利用しない。
+      {
+        const w = world('plain');
+        w.turns.delete('s1');
+        const legacy = () => w.d.inbox.add({ sessionId: 's1', botId: 'b_1', channelId: 'c_1', threadId: 'p_root', postId: null,
+          inner: { text: 'legacy-private-note', why: 'old heartbeat' } });
+        await legacy();
+        await w.d.onTurnEnd({ info: { sessionId: 's1' }, compactTrigger: 'manual' }, { outcome: 'ok' });
+        t.ok('旧形式の心拍だけが待っていたときは、ターンを始めず待ちを取り消す', w.started.length === 0 && (await w.d.inbox.list({})).length === 0);
+        await legacy();
+        await w.d.onPosted({ ...w.posts[1], mentions: ['b_1'] }, w.channel);
+        await tick();
+        t.ok('旧形式の心拍と人の投稿が重なっても、投稿だけを渡す', w.started.length === 1
+          && w.started[0].args.prompt.includes('post="p_2"') && !w.started[0].args.prompt.includes('legacy-private-note'), w.started[0]?.args.prompt);
+      }
+
       // L-1: アーカイブされたチャンネルの出来事は配らない（ターンの投稿だけ作れずに走らない）
       {
         const w = world('plain');

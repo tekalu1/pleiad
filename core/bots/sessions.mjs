@@ -19,6 +19,7 @@ import os from 'node:os';
 import { agentT } from '../i18n.mjs';
 import { modePosition, scopeRank } from '../modes.mjs';
 import { folderKey } from './store.mjs';
+import { WORK_NOTES_VERSION } from '../brain/inner.mjs';
 
 /** bot の名前・本人の人格・操作の要点・予算の残りの届き方。区切りは空行 1 つ、末尾の改行なし */
 export function botInstructions(bot, locale) {
@@ -123,7 +124,7 @@ export function createBotSessions({ host, now = Date.now } = {}) {
       const sidecar = {
         botId: bot.id, kind, channelId: channel?.id ?? null, threadId: threadId ?? null,
         ...(routineId ? { routineId } : {}),
-        memRev: 0, snapshotDue: true, delivered: [], postCursor: null,
+        memRev: 0, snapshotDue: true, delivered: [], postCursor: null, workNotesVersion: WORK_NOTES_VERSION,
       };
       try {
         const { store } = host;

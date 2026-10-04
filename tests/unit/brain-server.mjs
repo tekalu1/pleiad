@@ -79,9 +79,9 @@ export default async function (t) {
     // 道具を 1 回使って、文章は書かずに終える（fake の台本 steps:。賢いモデルが黙る形）
     const silentWhy = 'steps:{"steps":[{"tool":"Grep","input":{"pattern":"資料"},"result":"確かめた"}]}';
     await fs.writeFile(script, JSON.stringify([
-      { do: 'think', thought: '来週の発表の資料が気になる。進み具合を聞きたい', loops: [{ op: 'add', id: 'doc', text: '発表の資料の様子を聞く', wakeOn: 'word:資料' }] },
-      { do: 'act', thought: '聞いてみよう', refs: ['doc'], handoff: { why } },
-      { do: 'act', thought: '今回は黙って見ておく', handoff: { why: silentWhy } },
+      { do: 'note', summary: '来週の発表の資料が気になる。進み具合を聞きたい', loops: [{ op: 'add', id: 'doc', text: '発表の資料の様子を聞く', wakeOn: 'word:資料' }] },
+      { do: 'act', summary: '聞いてみよう', refs: ['doc'], handoff: { why } },
+      { do: 'act', summary: '今回は黙って見ておく', handoff: { why: silentWhy } },
     ]));
     const server = await startServer({ env: { AGENT_HOST_BACKENDS: 'fake', AGENT_HOST_FAKE_USAGE: '1', AGENT_HOST_FAKE_PULSE: script }, dataDir, timeoutMs: 60_000 });
     const c = await open({ port: server.port, token: server.token });
@@ -135,7 +135,7 @@ export default async function (t) {
     const hist = (await c.cmd('loadSession', { sessionId: dmSession })).messages;
     const innerRow = hist.find((m) => m.kind === 'contextNote' && m.tag === 'inner');
     t.ok('賢いモデルの会話の履歴には <pleiad-inner> の行（人の吹き出しにならない）。理由・思考の流れの末尾・気がかり・「そのまま写さない」が入る',
-      innerRow && innerRow.body.includes(why) && innerRow.body.includes('聞いてみよう') && innerRow.body.includes('(doc)') && innerRow.body.includes('そのまま投稿に写さず') && !hist.some((m) => m.role === 'user' && !m.kind && String(m.text).includes('pleiad-inner')), JSON.stringify(innerRow)?.slice(0, 300));
+      innerRow && innerRow.body.includes(why) && innerRow.body.includes('聞いてみよう') && innerRow.body.includes('(doc)') && innerRow.body.includes('現在の依頼への回答に必要な情報だけ') && !hist.some((m) => m.role === 'user' && !m.kind && String(m.text).includes('pleiad-inner')), JSON.stringify(innerRow)?.slice(0, 300));
     const rowsNow = (await view(owl.id)).stream;
     t.ok('独り言が投稿に写らない（思考の行の 40 字以上が投稿の本文にない）', findLeaks(rowsNow.slice().reverse(), spoke.text).length === 0 && !spoke.text.includes('聞いてみよう'));
     t.ok('起きたターンの投稿は DM の流れにあり、スレッドは作られない（DM の根の投稿）', spoke.threadId === null);
@@ -159,7 +159,7 @@ export default async function (t) {
     const noted = await until(async () => (await read(dev.id, asked.id)).posts.find((p) => p.author?.botId === owl.id && p.state === 'done' && p.text) ?? null, { label: 'Owl の notes' });
     const notes = JSON.parse(noted.text);
     const inner = notes.find((n) => n.startsWith('<pleiad-inner kind="tail"'));
-    t.ok('心拍を入れた bot は、呼ばれたターンの末尾に思考の流れの末尾と気がかり（<pleiad-inner kind="tail">）が付く', inner && inner.includes('資料が気になる') && inner.includes('(doc) 発表の資料の様子を聞く') && inner.includes('そのまま投稿に写さず'), JSON.stringify(notes).slice(0, 300));
+    t.ok('心拍を入れた bot は、呼ばれたターンの末尾に思考の流れの末尾と気がかり（<pleiad-inner kind="tail">）が付く', inner && inner.includes('資料が気になる') && inner.includes('(doc) 発表の資料の様子を聞く') && inner.includes('現在の依頼への回答に必要な情報だけ'), JSON.stringify(notes).slice(0, 300));
     const lynxAsked = await call('channels.post', { channelId: dev.id, text: '@Lynx notes:' });
     const lynxNoted = await until(async () => (await read(dev.id, lynxAsked.id)).posts.find((p) => p.author?.botId === lynx.id && p.state === 'done' && p.text) ?? null, { label: 'Lynx の notes' });
     t.ok('心拍を入れていない bot には付かない（今までと同じ）', !lynxNoted.text.includes('pleiad-inner'));
@@ -170,7 +170,7 @@ export default async function (t) {
     // ---- 行き先のスレッドへの引き継ぎ・走っているターンには途中送信しない・［止める］で取り消す
     const answers = JSON.parse(await fs.readFile(script, 'utf8'));
     const turnsOf = (sessionId) => c.since(0).filter((e) => e.type === 'turnEnd' && e.sessionId === sessionId).length;
-    await fs.writeFile(script, JSON.stringify([...answers, { do: 'act', thought: 'スレッドで続けよう', handoff: { why: 'echo:スレッドの続きです', where: asked.id } }]));
+    await fs.writeFile(script, JSON.stringify([...answers, { do: 'act', summary: 'スレッドで続けよう', handoff: { why: 'echo:スレッドの続きです', where: asked.id } }]));
     const owlThread = (await read(dev.id, asked.id)).threads[0].sessions[owl.id];
     const before = turnsOf(owlThread);
     await call('brain.beat', { botId: owl.id });
@@ -179,7 +179,7 @@ export default async function (t) {
     const slow = await call('channels.post', { channelId: dev.id, text: '@Lynx slow' });
     await until(async () => (await read(dev.id, slow.id)).posts.find((p) => p.author?.botId === lynx.id && p.state === 'working') ?? null, { label: 'Lynx が作業中' });
     await call('bots.update', { botId: lynx.id, pulse: { on: true } });
-    await fs.writeFile(script, JSON.stringify([...answers, { do: 'act', thought: 'スレッドで続けよう', handoff: { why: 'echo:スレッドの続きです', where: asked.id } }, { do: 'act', thought: '走っている最中のスレッドへ', handoff: { why: 'echo:止められるはず', where: slow.id } }]));
+    await fs.writeFile(script, JSON.stringify([...answers, { do: 'act', summary: 'スレッドで続けよう', handoff: { why: 'echo:スレッドの続きです', where: asked.id } }, { do: 'act', summary: '走っている最中のスレッドへ', handoff: { why: 'echo:止められるはず', where: slow.id } }]));
     await call('brain.beat', { botId: lynx.id });
     const items = async () => JSON.parse(await fs.readFile(path.join(dataDir, 'channels', 'inbox.json'), 'utf8')).items.filter((i) => i.inner && i.botId === lynx.id);
     const pending = await until(async () => { const list = await items(); return list.length ? list : null; }, { label: '引き継ぎの出来事' });
