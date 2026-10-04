@@ -43,7 +43,7 @@ jobs:
         name: Check main CI result for the release commit
         env:
           GITHUB_TOKEN: ${{ github.token }}
-        run: node scripts/release-ci-gate.mjs --tag "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --wait-minutes 40 --interval-seconds 30 --missing-grace-minutes 5
+        run: node scripts/release-ci-gate.mjs --tag "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --wait-minutes 40 --interval-seconds 30 --missing-grace-minutes 5 --request-timeout-seconds 20
   release:
     needs: ci-gate
     if: github.actor == github.repository_owner && (github.event_name == 'push' || github.ref == 'refs/heads/main')

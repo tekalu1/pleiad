@@ -7,7 +7,7 @@ import http from 'node:http';
 import { spawn, execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { parse } from 'yaml';
-import { evaluate, readState, waitForCi, resolveTagCommit, githubRequest, REQUIRED_JOBS, WORKFLOW_PATH } from '../../scripts/release-ci-gate.mjs';
+import { evaluate, readState, waitForCi, resolveTagCommit, githubRequest, parseArgs, parseDuration, REQUIRED_JOBS, WORKFLOW_PATH } from '../../scripts/release-ci-gate.mjs';
 
 export const name = 'release-ci-gate';
 export const title = 'リリースは同じ commit の main の CI の完全な成功だけを使い、赤なら公開しない・揃わなければ全部回す';
@@ -108,31 +108,79 @@ export default async function (t) {
     const seq = list => { let i = 0; return async () => { const x = list[Math.min(i++, list.length - 1)]; if (x instanceof Error) throw x; return x; }; };
     const pending = state([run({ status: 'in_progress', conclusion: null })], {});
     const failed = state([run({ conclusion: 'failure' })]);
+    const same = async r => r;
 
     let c = clock();
-    const done = await waitForCi({ read: seq([pending, pending, state([run()])]), deadlineMs: 600_000, intervalMs: 30_000, ...c });
+    const done = await waitForCi({ read: seq([pending, pending, state([run()])]), confirm: same, deadlineMs: 600_000, intervalMs: 30_000, ...c });
     t.ok('終わるまで待ち、揃った成功になれば reuse', done.verdict === 'reuse' && c.now() === 60_000, `${done.verdict} ${c.now()}`);
     c = clock();
-    const red = await waitForCi({ read: seq([pending, failed]), deadlineMs: 600_000, intervalMs: 30_000, ...c });
+    const red = await waitForCi({ read: seq([pending, failed]), confirm: same, deadlineMs: 600_000, intervalMs: 30_000, ...c });
     t.ok('待つ間に赤くなれば fail', red.verdict === 'fail');
     c = clock();
-    const late = await waitForCi({ read: seq([pending]), deadlineMs: 120_000, intervalMs: 30_000, ...c });
+    const late = await waitForCi({ read: seq([pending]), confirm: same, deadlineMs: 120_000, intervalMs: 30_000, ...c });
     t.ok('期限までに終わらなければ fallback（pending-deadline）。reuse にはしない', late.verdict === 'fallback' && late.reason.startsWith('pending-deadline') && c.now() <= 120_000, `${late.reason} ${c.now()}`);
     c = clock();
-    const appears = await waitForCi({ read: seq([state([]), state([]), state([run()])]), deadlineMs: 600_000, intervalMs: 30_000, missingGraceMs: 300_000, ...c });
+    const appears = await waitForCi({ read: seq([state([]), state([]), state([run()])]), confirm: same, deadlineMs: 600_000, intervalMs: 30_000, missingGraceMs: 300_000, ...c });
     t.ok('始めの猶予の間は run が無いのも待ち、現れた成功を使う（タグと main を同時に push したとき）', appears.verdict === 'reuse' && c.now() === 60_000, `${appears.verdict} ${c.now()}`);
     c = clock();
-    const never = await waitForCi({ read: seq([state([])]), deadlineMs: 600_000, intervalMs: 30_000, missingGraceMs: 300_000, ...c });
+    const never = await waitForCi({ read: seq([state([])]), confirm: same, deadlineMs: 600_000, intervalMs: 30_000, missingGraceMs: 300_000, ...c });
     t.ok('猶予を過ぎても run が無ければ fallback（no-run）', never.verdict === 'fallback' && never.reason === 'no-run' && c.now() >= 300_000 && c.now() < 600_000, `${never.reason} ${c.now()}`);
     c = clock();
-    const errors = await waitForCi({ read: seq([new Error('GET x returned 502')]), deadlineMs: 600_000, intervalMs: 30_000, ...c });
+    const errors = await waitForCi({ read: seq([new Error('GET x returned 502')]), confirm: same, deadlineMs: 600_000, intervalMs: 30_000, ...c });
     t.ok('API の失敗が続けば fallback（api-error）。テストを省く方へは倒さない', errors.verdict === 'fallback' && errors.reason === 'api-error');
     c = clock();
-    const blip = await waitForCi({ read: seq([new Error('GET x returned 502'), state([run()])]), deadlineMs: 600_000, intervalMs: 30_000, ...c });
+    const blip = await waitForCi({ read: seq([new Error('GET x returned 502'), state([run()])]), confirm: same, deadlineMs: 600_000, intervalMs: 30_000, ...c });
     t.ok('一時の API の失敗の後に読めれば、その結果を使う', blip.verdict === 'reuse');
     c = clock();
-    const errLate = await waitForCi({ read: seq([new Error('GET x returned 502')]), deadlineMs: 0, intervalMs: 30_000, ...c });
+    const errLate = await waitForCi({ read: seq([new Error('GET x returned 502')]), confirm: same, deadlineMs: 0, intervalMs: 30_000, ...c });
     t.ok('期限の時点で API が失敗していても fallback（api-error）', errLate.verdict === 'fallback' && errLate.reason === 'api-error', errLate.reason);
+
+    // jobs を読んだ後に再実行が始まる（TOCTOU）: reuse の直前に run を読み直し、attempt が変わっていれば待ちに戻る
+    const rerunning = r => ({ ...r, run_attempt: r.run_attempt + 1, status: 'in_progress', conclusion: null });
+    c = clock();
+    const confirms = [];
+    const raced = await waitForCi({ read: seq([state([run()]), state([run({ run_attempt: 3, conclusion: 'failure' })])]), confirm: async r => { confirms.push(r.run_attempt); return rerunning(r); }, deadlineMs: 600_000, intervalMs: 30_000, ...c });
+    t.ok('TOCTOU: 読み直した run の attempt が進んでいれば reuse にせず、新しい attempt が赤なら fail', raced.verdict === 'fail' && confirms.join() === '2' && c.now() === 30_000, `${raced.verdict} ${raced.reason} ${c.now()}`);
+    c = clock();
+    const racedOk = await waitForCi({ read: seq([state([run()]), state([run({ run_attempt: 3 })])]), confirm: async r => (r.run_attempt === 2 ? rerunning(r) : r), deadlineMs: 600_000, intervalMs: 30_000, ...c });
+    t.ok('TOCTOU: 新しい attempt が揃った成功になれば、その attempt で reuse', racedOk.verdict === 'reuse' && racedOk.run.run_attempt === 3, `${racedOk.verdict} ${racedOk.run?.run_attempt}`);
+    c = clock();
+    const racedLate = await waitForCi({ read: seq([state([run()])]), confirm: async r => rerunning(r), deadlineMs: 60_000, intervalMs: 30_000, ...c });
+    t.ok('TOCTOU: 期限まで変わり続ければ fallback（pending-deadline:run-changed）', racedLate.verdict === 'fallback' && racedLate.reason.startsWith('pending-deadline:run-changed') && racedLate.notes.some(n => n.includes('changed after the jobs were read')), racedLate.reason);
+    c = clock();
+    const gone = await waitForCi({ read: seq([state([run()])]), confirm: async () => null, deadlineMs: 0, intervalMs: 30_000, ...c });
+    t.ok('TOCTOU: 読み直しで run が見つからなければ reuse にしない', gone.verdict === 'fallback' && gone.reason.includes('run-changed'), gone.reason);
+    for (const [label, latest] of [['結論が success でない', { conclusion: 'failure' }], ['別の commit', { head_sha: OTHER }], ['完了していない', { status: 'in_progress' }]]) {
+      c = clock();
+      const x = await waitForCi({ read: seq([state([run()])]), confirm: async r => ({ ...r, ...latest }), deadlineMs: 0, intervalMs: 30_000, ...c });
+      t.ok(`TOCTOU: 読み直した run が${label}なら reuse にしない`, x.verdict !== 'reuse', x.reason);
+    }
+    c = clock();
+    const confirmFails = await waitForCi({ read: seq([state([run()])]), confirm: async () => { throw new Error('GET x timed out after 20000 ms'); }, deadlineMs: 600_000, intervalMs: 30_000, ...c });
+    t.ok('TOCTOU: 読み直しの API が失敗し続ければ fallback（api-error）', confirmFails.verdict === 'fallback' && confirmFails.reason === 'api-error');
+
+    // 直接呼ぶときも時間の値を検める（NaN・Infinity・負、間隔 0 の空回り）。期限 0 は許す
+    const base = { read: seq([state([run()])]), confirm: same, deadlineMs: 1000, intervalMs: 1000 };
+    const bad = [{ deadlineMs: NaN }, { deadlineMs: Infinity }, { deadlineMs: -1 }, { intervalMs: 0 }, { intervalMs: NaN }, { intervalMs: Infinity }, { intervalMs: -5 },
+      { missingGraceMs: -1 }, { missingGraceMs: Infinity }, { deadlineMs: '1000' }, { maxErrors: 0 }, { confirm: undefined }];
+    let rejected = 0;
+    for (const over of bad) { try { await waitForCi({ ...base, ...over }); } catch { rejected += 1; } }
+    t.ok('waitForCi: NaN・Infinity・負・文字列の時間、間隔 0、maxErrors 0、confirm 無しは例外', rejected === bad.length, `${rejected} / ${bad.length}`);
+    t.ok('waitForCi: 期限 0 は許す', (await waitForCi({ ...base, deadlineMs: 0 })).verdict === 'reuse');
+  }
+
+  // ===== CLI の引数 =====
+  {
+    t.ok('parseArgs: 知っている引数を読む', JSON.stringify(parseArgs(['--tag', 'v1.0.0', '--wait-minutes', '3'])) === JSON.stringify({ tag: 'v1.0.0', 'wait-minutes': '3' }));
+    const throws = fn => { try { fn(); return false; } catch { return true; } };
+    t.ok('parseArgs: 知らない引数（綴りの間違い）は拒む', throws(() => parseArgs(['--wait-minute', '3'])) && throws(() => parseArgs(['tag', 'v1.0.0'])));
+    t.ok('parseArgs: 同じ引数の 2 回目は拒む', throws(() => parseArgs(['--wait-minutes', '3', '--wait-minutes', '4'])));
+    t.ok('parseArgs: 値の無い引数は拒む', throws(() => parseArgs(['--tag'])) && throws(() => parseArgs(['--tag', '--repo', 'a/b'])));
+    t.ok('parseArgs: __proto__ などの名前も拒む', throws(() => parseArgs(['--__proto__', 'x'])) && throws(() => parseArgs(['--constructor', 'x'])));
+    t.ok('parseDuration: 10 進の 0 以上の数・既定値', parseDuration('w', '0', 40) === 0 && parseDuration('w', '1.5', 40) === 1.5 && parseDuration('w', undefined, 40) === 40);
+    const badText = ['NaN', 'Infinity', '-1', '', ' 1', '1e3', '0x10', '1.', 'abc'];
+    t.ok('parseDuration: NaN・Infinity・負・空・指数・16 進は拒む', badText.every(x => throws(() => parseDuration('w', x, 40))), badText.filter(x => !throws(() => parseDuration('w', x, 40))).join(','));
+    t.ok('parseDuration: 間隔などの正の値に 0 は拒む', throws(() => parseDuration('i', '0', 30, { positive: true })) && throws(() => parseDuration('i', '0.0', 30, { positive: true })));
   }
 
   // ===== API の読み方（readState）=====
@@ -162,6 +210,29 @@ export default async function (t) {
     try { await githubRequest({ token: 'secret-value', fetchImpl })('/repos/a/b/actions/runs?head_sha=x'); } catch (err) { message = err.message; }
     t.ok('API の失敗の文にトークンと問い合わせの値を入れない', message === 'GET /repos/a/b/actions/runs returned 500', message);
     t.ok('トークンは Authorization の見出しでだけ渡す', seen[0].init.headers.Authorization === 'Bearer secret-value' && !seen[0].url.includes('secret-value'));
+
+    const stuck = http.createServer((req, res) => {
+      if (req.url.startsWith('/body')) { res.writeHead(200, { 'content-type': 'application/json' }); res.write('{"id":'); }
+      // /headers は何も返さない
+    });
+    await new Promise(r => stuck.listen(0, '127.0.0.1', r));
+    try {
+      const request = githubRequest({ token: 'secret-value', apiUrl: `http://127.0.0.1:${stuck.address().port}`, timeoutMs: 200 });
+      for (const kind of ['headers', 'body']) {
+        const t0 = Date.now();
+        let err = null;
+        try { await request(`/${kind}?head_sha=x`); } catch (e) { err = e; }
+        const ms = Date.now() - t0;
+        t.ok(`githubRequest: ${kind === 'headers' ? '応答の見出しが来ない' : '本文が終わらない'}ときは timeoutMs で打ち切る`, err && /timed out after 200 ms/.test(err.message) && ms < 5000, `${err?.message} ${ms} ms`);
+        t.ok(`githubRequest: 時間切れの文に問い合わせの値とトークンを入れない（${kind}）`, err && !err.message.includes('head_sha') && !err.message.includes('secret-value'));
+      }
+      let rejected = 0;
+      for (const timeoutMs of [0, -1, NaN, Infinity]) { try { githubRequest({ token: 'x', timeoutMs }); } catch { rejected += 1; } }
+      t.ok('githubRequest: 0・負・NaN・Infinity の timeoutMs は例外', rejected === 4, rejected);
+    } finally {
+      stuck.closeAllConnections();
+      stuck.close();
+    }
   }
 
   // ===== タグを commit に解く（注釈つきのタグは剥がす）=====
@@ -183,13 +254,16 @@ export default async function (t) {
 
     // ===== CLI（手元の HTTP サーバーを GitHub の API の代わりにする）=====
     const sha = first;
-    const cli = async (scenario, extra = []) => {
+    const BASE = ['--tag', 'v1.2.3', '--repo', REPO, '--wait-minutes', '0', '--interval-seconds', '1', '--missing-grace-minutes', '0'];
+    const cli = async (scenario, extra = [], { args = [...BASE, ...extra] } = {}) => {
       const hits = [];
       const server = http.createServer((req, res) => {
         hits.push({ url: req.url, auth: req.headers.authorization, method: req.method });
         const body = scenario(req.url.split('?')[0], sha);
         if (body == null) { res.writeHead(body === null ? 404 : 500); return res.end('{}'); }
-        if (body.status) { res.writeHead(body.status); return res.end('{}'); }
+        if (body.hang === 'headers') return;
+        if (body.hang === 'body') { res.writeHead(200, { 'content-type': 'application/json' }); return res.write('{"id":'); }
+        if (body.httpStatus) { res.writeHead(body.httpStatus); return res.end('{}'); }
         res.writeHead(200, { 'content-type': 'application/json' });
         res.end(JSON.stringify(body));
       });
@@ -197,28 +271,34 @@ export default async function (t) {
       const out = path.join(dir, `out-${hits.length}-${Math.random().toString(36).slice(2)}.txt`);
       await fs.writeFile(out, '');
       try {
-        const child = spawn(process.execPath, [path.join(ROOT, 'scripts/release-ci-gate.mjs'), '--tag', 'v1.2.3', '--repo', REPO, '--wait-minutes', '0', '--interval-seconds', '0', '--missing-grace-minutes', '0', ...extra], {
+        const t0 = Date.now();
+        const child = spawn(process.execPath, [path.join(ROOT, 'scripts/release-ci-gate.mjs'), ...args], {
           cwd: dir, env: { ...process.env, GITHUB_TOKEN: 'test-token-value', GITHUB_API_URL: `http://127.0.0.1:${server.address().port}`, GITHUB_OUTPUT: out, GITHUB_STEP_SUMMARY: '' },
         });
         let log = '';
         child.stdout.on('data', d => { log += d; });
         child.stderr.on('data', d => { log += d; });
         const code = await new Promise(r => child.on('close', r));
-        return { code, log, output: await fs.readFile(out, 'utf8'), hits };
+        return { code, log, output: await fs.readFile(out, 'utf8'), hits, ms: Date.now() - t0 };
       } finally {
+        server.closeAllConnections();
         server.close();
       }
     };
-    const api = (runs, jobsFor = r => jobs(r)) => (p, s) => {
+    // latest(run) は reuse の直前の読み直し（GET /actions/runs/<id>）が返す run。既定は一覧と同じ
+    const api = (runs, jobsFor = r => jobs(r), latest = r => r) => (p, s) => {
       if (p === `/repos/${REPO}/actions/workflows/test.yml`) return WORKFLOW;
       if (p === `/repos/${REPO}/actions/workflows/${WORKFLOW.id}/runs`) { const list = runs(s); return { total_count: list.length, workflow_runs: list }; }
       const m = p.match(/\/actions\/runs\/(\d+)\/attempts\/(\d+)\/jobs$/);
       if (m) { const r = runs(s).find(x => String(x.id) === m[1]); return r ? { total_count: jobsFor(r).length, jobs: jobsFor(r) } : null; }
+      const one = p.match(/\/actions\/runs\/(\d+)$/);
+      if (one) { const r = runs(s).find(x => String(x.id) === one[1]); return r ? latest(r) : null; }
       return null;
     };
 
     const ok = await cli(api(s => [run({ head_sha: s })]));
     t.ok('CLI: 揃った成功なら decision=reuse と commit を出し、終了コード 0', ok.code === 0 && ok.output.includes('decision=reuse\n') && ok.output.includes(`sha=${sha}\n`), ok.log + ok.output);
+    t.ok('CLI: reuse の直前に run を読み直す', ok.hits.some(h => h.url === `/repos/${REPO}/actions/runs/37186441550`));
     t.ok('CLI: トークンは見出しで渡し、ログ・出力に出さない', ok.hits.every(h => h.auth === 'Bearer test-token-value' && h.method === 'GET') && !ok.log.includes('test-token-value') && !ok.output.includes('test-token-value'));
 
     const red = await cli(api(s => [run({ head_sha: s, conclusion: 'failure' })]));
@@ -236,8 +316,29 @@ export default async function (t) {
     t.ok('CLI: 一部のジョブだけの成功なら decision=fallback', partial.code === 0 && partial.output.includes('decision=fallback\n'));
     const pending = await cli(api(s => [run({ head_sha: s, status: 'in_progress', conclusion: null })], () => []));
     t.ok('CLI: 期限までに終わらなければ decision=fallback（pending-deadline）', pending.code === 0 && pending.output.includes('decision=fallback\n') && pending.output.includes('reason=pending-deadline'), pending.output);
-    const denied = await cli(() => ({ status: 403 }));
+    const denied = await cli(() => ({ httpStatus: 403 }));
     t.ok('CLI: API が 403 を返し続ければ decision=fallback（api-error）。reuse にしない', denied.code === 0 && denied.output.includes('decision=fallback\n') && denied.output.includes('reason=api-error'), denied.output);
+    const raced = await cli(api(s => [run({ head_sha: s })], undefined, r => ({ ...r, run_attempt: 3, status: 'in_progress', conclusion: null })));
+    t.ok('CLI: jobs を読んだ後に再実行が始まっていれば reuse にしない（期限 0 なので fallback）', raced.code === 0 && raced.output.includes('decision=fallback\n') && raced.output.includes('reason=pending-deadline:run-changed'), raced.output);
+    for (const hang of ['headers', 'body']) {
+      const stuck = await cli(() => ({ hang }), ['--request-timeout-seconds', '0.2']);
+      t.ok(`CLI: API の${hang === 'headers' ? '応答' : '本文'}が止まっても、有限の時間で decision=fallback（api-error）`, stuck.code === 0 && stuck.output.includes('decision=fallback\n') && stuck.output.includes('reason=api-error') && stuck.ms < 15_000, `${stuck.output} ${stuck.ms} ms`);
+    }
+
+    // 引数の誤りは終了コード 2（ジョブが落ちて公開しない）。GitHub は呼ばない
+    const ARGS_REJECTED = [
+      ['知らない引数', [...BASE, '--wait-minute', '3']],
+      ['同じ引数の 2 回目', [...BASE, '--wait-minutes', '3']],
+      ['NaN の期限', ['--tag', 'v1.2.3', '--repo', REPO, '--wait-minutes', 'NaN']],
+      ['Infinity の期限', ['--tag', 'v1.2.3', '--repo', REPO, '--wait-minutes', 'Infinity']],
+      ['負の猶予', ['--tag', 'v1.2.3', '--repo', REPO, '--missing-grace-minutes', '-1']],
+      ['間隔 0', ['--tag', 'v1.2.3', '--repo', REPO, '--interval-seconds', '0']],
+      ['時間切れ 0', ['--tag', 'v1.2.3', '--repo', REPO, '--request-timeout-seconds', '0']],
+    ];
+    for (const [label, args] of ARGS_REJECTED) {
+      const x = await cli(api(s => [run({ head_sha: s })]), [], { args });
+      t.ok(`CLI: ${label}は終了コード 2、decision を出さず GitHub を呼ばない`, x.code === 2 && !x.output.includes('decision=') && x.hits.length === 0, `${x.code} ${x.log}`);
+    }
   } finally {
     await fs.rm(dir, { recursive: true, force: true });
   }

@@ -1,6 +1,6 @@
 // タグのリリースが、同じ commit の main の CI（test.yml の push の run）の成功をそのまま使えるかを決める。
 //
-//   node scripts/release-ci-gate.mjs --tag v0.7.4 --repo tekalu1/pleiad [--wait-minutes 40] [--interval-seconds 30] [--missing-grace-minutes 5]
+//   node scripts/release-ci-gate.mjs --tag v0.7.4 --repo tekalu1/pleiad [--wait-minutes 40] [--interval-seconds 30] [--missing-grace-minutes 5] [--request-timeout-seconds 20]
 //
 // 結果（GITHUB_OUTPUT の decision）:
 //   reuse    … 同じ commit の test.yml（push・main）の最新の attempt で、必須のジョブがすべて success。release の npm test を省ける
@@ -98,12 +98,29 @@ export async function readState({ request, repo, sha }) {
   return { repo, sha, workflow, runs, jobsByRun };
 }
 
+// reuse と判定した run を読み直した結果が、判定に使った attempt のままの成功か
+function unchanged(run, latest) {
+  return latest?.id === run.id && latest.run_attempt === run.run_attempt && latest.head_sha === run.head_sha
+    && latest.status === 'completed' && latest.conclusion === 'success';
+}
+
+function duration(name, value, { positive = false } = {}) {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0 || (positive && value === 0)) throw new RangeError(`${name} must be a finite ${positive ? 'positive' : 'non-negative'} number`);
+  return value;
+}
+
 /**
  * 終わるまで期限つきで読み直す。期限までに終わらなければ fallback（release の中で全部回す）。
  * API の失敗が続いたときも fallback（テストを省く方には倒さない）。
- * タグと main を同時に push すると、release が test.yml の run より先に始まることがある。始めの missingGraceMs の間は、run が無いのも待つ
+ * タグと main を同時に push すると、release が test.yml の run より先に始まることがある。始めの missingGraceMs の間は、run が無いのも待つ。
+ * reuse と判定したら、その run を confirm(run) で読み直す。jobs を読んだ後に再実行が始まって attempt が変わっていれば、待ちに戻って新しい attempt を見る
  */
-export async function waitForCi({ read, deadlineMs, intervalMs, missingGraceMs = 0, now = Date.now, sleep = ms => new Promise(r => setTimeout(r, ms)), log = () => {}, maxErrors = 3 }) {
+export async function waitForCi({ read, confirm, deadlineMs, intervalMs, missingGraceMs = 0, now = Date.now, sleep = ms => new Promise(r => setTimeout(r, ms)), log = () => {}, maxErrors = 3 }) {
+  if (typeof read !== 'function' || typeof confirm !== 'function') throw new TypeError('read and confirm are required');
+  duration('deadlineMs', deadlineMs);
+  duration('intervalMs', intervalMs, { positive: true });
+  duration('missingGraceMs', missingGraceMs);
+  if (!Number.isInteger(maxErrors) || maxErrors < 1) throw new RangeError('maxErrors must be a positive integer');
   const start = now();
   const until = start + deadlineMs;
   let errors = 0;
@@ -111,6 +128,13 @@ export async function waitForCi({ read, deadlineMs, intervalMs, missingGraceMs =
     let result;
     try {
       result = evaluate(await read());
+      if (result.verdict === 'reuse') {
+        const latest = await confirm(result.run);
+        if (!unchanged(result.run, latest)) {
+          result.notes.push(`run ${result.run.id}: changed after the jobs were read (attempt ${result.run.run_attempt} → ${latest?.run_attempt ?? '?'}, ${latest?.status ?? 'missing'}/${latest?.conclusion ?? '-'})`);
+          result = { ...result, verdict: 'pending', reason: `run-changed:${result.run.id}` };
+        }
+      }
       errors = 0;
     } catch (err) {
       errors += 1;
@@ -134,22 +158,55 @@ export function resolveTagCommit(tag, cwd = process.cwd()) {
   return sha;
 }
 
-export function githubRequest({ token, apiUrl = 'https://api.github.com', fetchImpl = fetch }) {
+/**
+ * GET を 1 回。応答の見出しから本文を読み終えるまでを timeoutMs で打ち切る（接続や本文が止まっても、待ちの期限の判定へ戻れるように）。
+ * 404 は null。失敗の文には、問い合わせの値とトークンを入れない
+ */
+export function githubRequest({ token, apiUrl = 'https://api.github.com', fetchImpl = fetch, timeoutMs = 20_000 }) {
+  duration('timeoutMs', timeoutMs, { positive: true });
   return async path => {
-    const res = await fetchImpl(apiUrl + path, { headers: { Accept: 'application/vnd.github+json', Authorization: `Bearer ${token}`, 'X-GitHub-Api-Version': '2022-11-28', 'User-Agent': 'pleiad-release-ci-gate' } });
-    if (res.status === 404) return null;
-    if (!res.ok) throw new Error(`GET ${path.split('?')[0]} returned ${res.status}`);
-    return res.json();
+    const where = `GET ${path.split('?')[0]}`;
+    const abort = new AbortController();
+    let timer;
+    const expired = new Promise((_, reject) => {
+      timer = setTimeout(() => { abort.abort(); reject(new Error(`${where} timed out after ${timeoutMs} ms`)); }, timeoutMs);
+    });
+    const get = async () => {
+      const res = await fetchImpl(apiUrl + path, { signal: abort.signal, headers: { Accept: 'application/vnd.github+json', Authorization: `Bearer ${token}`, 'X-GitHub-Api-Version': '2022-11-28', 'User-Agent': 'pleiad-release-ci-gate' } });
+      if (res.status === 404) return null;
+      if (!res.ok) throw new Error(`${where} returned ${res.status}`);
+      return JSON.parse(await res.text());
+    };
+    try {
+      return await Promise.race([get(), expired]);
+    } finally {
+      clearTimeout(timer);
+    }
   };
 }
 
-function args(argv) {
+// 受け付ける引数。知らない名前・2 回目・値の無いものは拒む（綴りを間違えた設定を黙って既定値で走らせない）
+const FLAGS = new Set(['tag', 'repo', 'wait-minutes', 'interval-seconds', 'missing-grace-minutes', 'request-timeout-seconds']);
+
+export function parseArgs(argv) {
   const out = {};
   for (let i = 0; i < argv.length; i += 2) {
-    if (!argv[i].startsWith('--') || argv[i + 1] == null) throw new Error(`Bad argument: ${argv[i]}`);
-    out[argv[i].slice(2)] = argv[i + 1];
+    const name = argv[i]?.startsWith('--') ? argv[i].slice(2) : null;
+    if (!name || !FLAGS.has(name)) throw new Error(`Unknown argument: ${argv[i]}`);
+    if (Object.hasOwn(out, name)) throw new Error(`Duplicate argument: --${name}`);
+    if (argv[i + 1] == null || argv[i + 1].startsWith('--')) throw new Error(`Missing value for --${name}`);
+    out[name] = argv[i + 1];
   }
   return out;
+}
+
+// 時間の引数。10 進の 0 以上の数だけ（NaN・Infinity・負・空・指数表記は拒む）
+export function parseDuration(name, text, fallback, { positive = false } = {}) {
+  const raw = text ?? String(fallback);
+  if (!/^\d+(\.\d+)?$/.test(raw)) throw new Error(`--${name} must be a non-negative decimal number`);
+  const value = Number(raw);
+  if (!Number.isFinite(value) || (positive && value === 0)) throw new Error(`--${name} must be ${positive ? 'greater than 0' : 'finite'}`);
+  return value;
 }
 
 function summary(result, sha) {
@@ -160,18 +217,21 @@ function summary(result, sha) {
 }
 
 async function main() {
-  const opt = args(process.argv.slice(2));
+  const opt = parseArgs(process.argv.slice(2));
+  const deadlineMs = parseDuration('wait-minutes', opt['wait-minutes'], 40) * 60_000;
+  const intervalMs = parseDuration('interval-seconds', opt['interval-seconds'], 30, { positive: true }) * 1000;
+  const missingGraceMs = parseDuration('missing-grace-minutes', opt['missing-grace-minutes'], 5) * 60_000;
+  const timeoutMs = parseDuration('request-timeout-seconds', opt['request-timeout-seconds'], 20, { positive: true }) * 1000;
   const repo = opt.repo ?? process.env.GITHUB_REPOSITORY;
   if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo ?? '')) throw new Error('Pass --repo owner/repo');
   const token = process.env.GITHUB_TOKEN;
   if (!token) throw new Error('GITHUB_TOKEN is required (actions: read)');
   const sha = resolveTagCommit(opt.tag ?? '');
-  const request = githubRequest({ token, apiUrl: process.env.GITHUB_API_URL || undefined });
+  const request = githubRequest({ token, apiUrl: process.env.GITHUB_API_URL || undefined, timeoutMs });
   const result = await waitForCi({
     read: () => readState({ request, repo, sha }),
-    deadlineMs: Number(opt['wait-minutes'] ?? 40) * 60_000,
-    intervalMs: Number(opt['interval-seconds'] ?? 30) * 1000,
-    missingGraceMs: Number(opt['missing-grace-minutes'] ?? 5) * 60_000,
+    confirm: run => request(`/repos/${repo}/actions/runs/${run.id}`),
+    deadlineMs, intervalMs, missingGraceMs,
     log: msg => console.log(msg),
   });
   const decision = result.verdict === 'reuse' ? 'reuse' : result.verdict === 'fail' ? 'fail' : 'fallback';
