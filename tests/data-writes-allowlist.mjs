@@ -136,6 +136,9 @@ export const DATA_WRITES = [
   { file: 'desktop/updates.cjs', sites: 2, targets: [
     { name: '(置き場の外) Electron の userData の、更新の設定', limit: '固定（チャンネル・自動確認・自動ダウンロード・最後の版）', reason: '更新の設定。一時ファイルに書いて置き換える' },
   ] },
+  { file: 'desktop/update-log.cjs', sites: 2, targets: [
+    { name: '(置き場の外) Electron の userData の logs/updater.log と、1 世代前の updater.log.old', limit: 'MAX_BYTES=1MB を超えたら .old へ回す（2 つで約 2MB まで）', reason: '更新ライブラリーの記録。1 行ずつ追記し、回すときは名前を替えるだけ', appendOnly: true },
+  ] },
   { file: 'core/bots/store.mjs', sites: 1, targets: [
     { name: 'bots.json', limit: 'bot の定義。人が 1 件ずつ作る（1 件の大きさは NAME_MAX=32 字・PERSONA_MAX_CHARS=6000 字・FOLDERS_MAX=20・SEND_TARGETS_MAX=100。件数の上限はコードに無いが、通常は数個から数十）', reason: '設定の台帳。増え方は利用量ではなく利用者の操作に比例する' },
   ] },
