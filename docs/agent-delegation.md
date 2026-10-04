@@ -18,11 +18,11 @@ Claude・Codex の会話から、`ply_agents` MCP の `ply_delegate` で別の�
 | `ply_usage` | 任意の `backend` | 各バックエンドの使用枠（枠ごとの `usedPercent`・`resetsAt`、`plan`、`checkedAt`、`message`）。省略時は使用枠を読めるバックエンドすべて |
 
 **子の設定を替える**（`ply_task_send` の `backend`・`model`・`effort`。[ADR 0135](adr/0135-parent-changes-child-settings.md)。`core/server.mjs` の `taskSettingsPlan` / `applyTaskSettings`）:
-- 子の会話の「次のターンから適用」（`nextSettings`。人の入力欄と同じ予約）に入れる。子が走っていても今のターンは止めない。走っていなければ次に走るとき（設定だけでは走らせない）。同じエージェントのモデルだけは、`sessions.setModel` と同じく走っているターンにも即時に伝える（できるエージェントだけ。返り値の `settings.modelLive`）。返り値はタスクの状態と `settings`（`{ backend, model, effort, appliesTo: 'nextTurn', modelLive? }`）
-- エージェントを替えると、子の次のターンで引き継ぎ（`docs/backend-handoff.md`）を通って会話の履歴を渡す。作業場所はそのまま。子の承認モードは `ply_delegate` と同じく親の強さまで（`resolveDelegatedMode`）で、収まらなければ親の会話で 1 回承認を求め、断ったら何も変えない
+- 子の会話の「次のターンから適用」（`nextSettings`。人の入力欄と同じ予約）に入れる。子が走っていても今のターンは止めない。走っていなければ次に走るとき（設定だけでは走らせない。例外: 使用枠の上限で止まっている子のエージェントを替えると、人の切り替えと同じく上限の待ちが解け、送信待ちが流れる）。一緒に積んだ `message` は、予約がある間は走っているターンへ途中送信しない（`canSteerNotice`）ので、替えた後のターンで読まれる。同じエージェントのモデルだけは、`sessions.setModel` と同じく走っているターンにも即時に伝える（できるエージェントだけ。返り値の `settings.modelLive`）。返り値はタスクの状態と `settings`（`{ backend, model, effort, mode, appliesTo: 'nextTurn', modelLive? }`）
+- エージェントを替えると、子の次のターンで引き継ぎ（`docs/backend-handoff.md`）を通って会話の履歴を渡す。作業場所はそのまま。子の承認モードは `resolveDelegatedMode` で、親の強さと子の今の強さ（人が下げていればそれ）の弱い方を上限にして決め、収まらなければ親の会話で 1 回承認を求め、断ったら何も変えない。元のエージェントへ戻したときは子の会話の今のモードのまま
 - アカウントは替えない（子の会話のアカウントのまま。[ADR 0094](adr/0094-human-only-five.md)）。接続先は `ply_delegate` と同じ規則
-- モデルが子の作業場所の一覧に無い（`model_unknown`。選べるものを添える）・そのモデルで選べない思考の強さ・使用量の取り置きで使用枠が満杯（`quota_full`）・自分が委譲していないタスク・止めている途中は断り、何も変えない
-- 記録: 子の会話の変更の記録（`backend`・`model`・`effort`。by: `agent`・via・bySession、理由「依頼元の AI が変更」）。タスクの `backend`・`model`・`effort`（替えたなら `mode`）を新しい値にし、`routing.target` を新しい委譲先に、`routing.changed`（`{ by: 'parent', at, from, count }`。`from` は最初の委譲先）を足す。`ply_task_status` の値は子の次のターンからのもの。画面へは `agentTaskChanged { taskId }` で知らせ、委譲カードは新しい委譲先と「依頼元が変更（元: …）」を出す
+- モデルが子の作業場所の一覧に無い（`model_unknown`。選べるものを添える）・そのモデルで選べない思考の強さ（`effort_unknown`）・使用量の取り置きで使用枠が満杯（`quota_full`）・自分が委譲していないタスク・止めている途中・子のターンが始まるところ（`agent:tasks.childStarting`）・`message` が空白だけか長すぎる・承認カードを待つ間に子の設定やタスクの状態が変わった（`agent:tasks.settingsMoved`。承認の後に計画を作り直して比べる）は断り、何も変えない。断る理由はすべて書く前に確かめる。書くのは子の予約 → タスクの記録 → 指示の順で、後の失敗（保存・受け付け）では書いた分を前に戻す
+- 記録: 子の会話の変更の記録（`backend`・`model`・`effort`。by: `agent`・via・bySession、理由「依頼元の AI が変更」）。タスクの `backend`・`model`・`effort`（替えたなら `mode`）を新しい値にし、`routing.target` を新しい委譲先に、`routing.changed`（`{ by: 'parent', at, from, count }`。`from` は最初の委譲先）を足す（今と同じ値なら書かず、最初の委譲先へ戻したら印を外す）。`ply_task_status` の値は子の次のターンからのもの。子のターンが始まるときは、タスクの記録を子が実際に走る値に合わせる（`agentTasks.sync`。人が子の予約を取り消した・替えたとき）。画面へは `agentTaskChanged { taskId }` で知らせ、委譲カードは新しい委譲先と「依頼元が変更（元: …）」を出す
 
 `ply_usage` は重い委譲・並列委譲の前に、使用率の高いバックエンドを避けるために呼ぶ。読むだけなので、読み取り・計画モードの会話からも呼べる（`ply_delegate` / `ply_task_send` だけが `DELEGATING_TOOLS` として制限される）。
 取得は設定の「使用量」（`providerUsage`）と同じ `quotaCache` を通すので、値は最大60秒古く、何度呼んでも各サービスへの問い合わせは増えない。リセット時刻を過ぎた枠の `usedPercent` は、画面と同じく今の値ではないので `null`（不明）にする。
