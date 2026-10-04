@@ -1,4 +1,4 @@
-// 依頼元が委譲した子の設定（エージェント・モデル・思考の強さ）を ply_task_send で替える（ADR 0135、docs/agent-delegation.md「ツール」）。
+// 依頼元が委譲した子の設定（エージェント・モデル・思考の強さ）を ply_task_send で替える（ADR 0134、docs/agent-delegation.md「ツール」）。
 // fake・身代わりの Codex・身代わりの agy でサーバー全体を通す。LLM は呼ばない
 //   - 走っている子: モデルは今のターンへ即時に伝わり、思考の強さは次のターンから。ターンは止めない
 //   - message なしで設定だけ・message と一緒に

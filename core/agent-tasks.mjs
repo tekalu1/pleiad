@@ -574,7 +574,7 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
       for (const instructionId of [...(steers.get(r.taskId) ?? [])]) await unclaim(r.taskId, instructionId);
     },
     /**
-     * 依頼元が子の設定（エージェント・モデル・思考の強さ）を替えた（ply_task_send の backend・model・effort。ADR 0135）。
+     * 依頼元が子の設定（エージェント・モデル・思考の強さ）を替えた（ply_task_send の backend・model・effort。ADR 0134）。
      * 子の会話へ入れるのは server（applyTaskSettings）。ここはタスクの記録だけ: backend・model・effort（と替えたなら mode）を新しい値にし、
      * routing.target を新しい委譲先に、routing.changed に「依頼元が替えた」印（最初の委譲先 from・時刻・回数）を残す。保存できなければ断る。
      * 今の値と同じなら何も書かない（changed: false）。最初の委譲先へ戻したら印を外す。

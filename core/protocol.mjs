@@ -240,7 +240,7 @@ export const EVENTS = new Set([
   "nextSettings",
   "worktreeSettings", // { always } 「いつも分ける」が変わった（sessionId は null。ADR 0089）
   "worktreesChanged", // 分けた作業場所が増えた・消えた（sessionId は null）。右パネルの「残っている作業場所」を取り直す
-  "agentTaskChanged", // { taskId } 依頼元が委譲の子の設定を替えた（sessionId は null。ADR 0135）。画面はその行を読み直す
+  "agentTaskChanged", // { taskId } 依頼元が委譲の子の設定を替えた（sessionId は null。ADR 0134）。画面はその行を読み直す
   // ---- チャンネル・bot・記憶・ルーティン（docs/channels.md「WS の出来事」。どれも sessionId は null で全接続へ。リモートの端末にも届く）
   "channelsChanged", // { channel?: Channel, removed?: string } チャンネル・DM の定義と一覧の変化
   "channelPost",     // { channelId, op: add|edit|delete, post } 投稿の追加・編集・削除（bot のターンの投稿の進み具合は 1 秒に 1 回まで）

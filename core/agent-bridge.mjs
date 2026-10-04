@@ -18,7 +18,7 @@ export const agentTools = locale => [
   tool('ply_delegate', delegateDescription(locale), { kind: { type: 'string', enum: [...KINDS] }, task: str, title: str, backend: { type: 'string', enum: ['claude', 'codex', 'antigravity'] }, context: str, cwd: str, model: str, effort: str, isolate: { type: 'boolean' } }, ['kind', 'task']),
   tool('ply_task_status', agentT(locale, 'bridge.tools.ply_task_status'), { taskId: str, offset: { type: 'integer', minimum: 0 } }, ['taskId']),
   tool('ply_task_wait', agentT(locale, 'bridge.tools.ply_task_wait'), { taskId: str, seconds: { type: 'integer', minimum: 1, maximum: 30 } }, ['taskId']),
-  // backend・model・effort は子の設定を替える（次のターンから。ADR 0135）。設定だけなら message を省ける
+  // backend・model・effort は子の設定を替える（次のターンから。ADR 0134）。設定だけなら message を省ける
   tool('ply_task_send', agentT(locale, 'bridge.tools.ply_task_send'), { taskId: str, message: str, backend: { type: 'string', enum: ['claude', 'codex', 'antigravity'] }, model: str, effort: str }, ['taskId']),
   tool('ply_task_cancel', agentT(locale, 'bridge.tools.ply_task_cancel'), { taskId: str }, ['taskId']),
   tool('ply_task_list', agentT(locale, 'bridge.tools.ply_task_list'), {}),

@@ -18,7 +18,7 @@ export default async function (t) {
   t.ok('操作の一覧からの変更（by: agent）も AI の行', changeRows([{ at: '2026-10-03T00:00:00.000Z', by: 'agent', via: 'mcp', sessionId: 's1', field: 'title', from: null, to: 'x', reason: null }])[0].ai === true);
   const agentRows = changeRows([{ at: '2026-10-04T00:00:00.000Z', by: 'agent', via: 'mcp', bySession: 's1', field: 'backend', from: 'fake', to: 'codex', reason: '依頼元の AI が変更', reasonKey: 'parentChanged' },
     { at: '2026-10-04T00:00:01.000Z', by: 'agent', via: 'mcp', bySession: 's1', field: 'effort', from: '', to: 'high', reason: null }]);
-  t.ok('委譲の依頼元が替えたエージェント・思考の強さも行に出す（ADR 0135）', agentRows.length === 2 && agentRows[0].label === '思考の強さ' && agentRows[1].label === 'エージェント'
+  t.ok('委譲の依頼元が替えたエージェント・思考の強さも行に出す（ADR 0134）', agentRows.length === 2 && agentRows[0].label === '思考の強さ' && agentRows[1].label === 'エージェント'
     && agentRows[1].reason === '依頼元の AI が変更' && agentRows[0].from === 'なし' && agentRows[1].to === 'Codex' && agentRows[1].from === 'fake', JSON.stringify(agentRows));
   t.ok('AI が変えた行にだけ ai の印', rows.filter(r => r.ai).length === 2 && rows.at(-1).ai === false);
   t.ok('理由は今の言語の文（キーがあれば辞書）', rows.at(-1).reason === '手動で変更' && rows[1].reason === '待ち');

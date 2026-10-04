@@ -2729,7 +2729,7 @@ function onEvent(ev, replay = false) {
   if (ev.type === 'worktreesChanged') { gitPanel?.changed(); loadTaskCards(state.current).then(repaintTasks).catch(() => {}); return; }
   // 委譲の振り分けの設定・キー・使用量が変わった。設定 › 委譲を開いていれば取り直す
   if (ev.type === 'delegationRoutingChanged') { delegationSettings.event(ev); return; }
-  // 依頼元が委譲の子の設定を替えた（ADR 0135）。持っている行なら読み直す（終わったタスクは running に載らないため）
+  // 依頼元が委譲の子の設定を替えた（ADR 0134）。持っている行なら読み直す（終わったタスクは running に載らないため）
   if (ev.type === 'agentTaskChanged') { if (taskCards.rows.has(ev.taskId)) fetchTaskCards([ev.taskId]).catch(() => {}); return; }
   // コンピューターの操作の状態（別の会話が操作中で待っている）。全部の会話の分が届くので、開いている会話の分だけ行に出す
   if (ev.type === 'computer.state') { onComputerState(ev); return; }
@@ -4949,7 +4949,7 @@ function inputRouting(card) {
 function pinnedFacts(card, routing) {
   const result = cardJson(card, '.tc-output') ?? {};
   const task = taskById(card.dataset.taskId) ?? {};
-  // 依頼元が子の設定を替えたら（ADR 0135）、ply_delegate の返り値は前の委譲先のもの。タスクの記録の今の mode を使う
+  // 依頼元が子の設定を替えたら（ADR 0134）、ply_delegate の返り値は前の委譲先のもの。タスクの記録の今の mode を使う
   const mode = (routing.changed ? task.mode ?? result.mode : result.mode ?? task.mode) ?? '';
   // 分けた作業場所の子は、パスの代わりに「作業場所」の行（ブランチ付き。paintDelegateWorkspace）が出る
   return { names: routingNames, mode: mode ? state.vocab.get(routing.target.backend)?.modes?.[mode]?.label ?? mode : '', cwd: task.worktree ? '' : result.cwd ?? task.cwd ?? '' };
@@ -5093,7 +5093,7 @@ function decorateFailedDelegate(card, result) {
     if (wasOpen) card.querySelector(':scope > .tc-cands-fold').open = true;
   }).catch(() => {});
 }
-/** 委譲先の印（依頼元が子の設定を替えると変わる。ADR 0135） */
+/** 委譲先の印（依頼元が子の設定を替えると変わる。ADR 0134） */
 const routeSig = routing => [routing?.target?.backend, routing?.target?.model, routing?.changed?.at].join('|');
 /** 依頼元が委譲先を替えた。題の前と行き先の行のロゴ、行き先の行を新しい委譲先で書き直す */
 function repaintRouteTarget(card) {

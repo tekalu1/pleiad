@@ -84,7 +84,7 @@ export function skippedPhrase(skipped, names = defaultNames) {
  */
 export function routingLine(routing, names = defaultNames) {
   if (!routing?.target) return '';
-  // 依頼元が子の設定を替えた（ADR 0135）。行き先は新しい委譲先、元の委譲先を添える
+  // 依頼元が子の設定を替えた（ADR 0134）。行き先は新しい委譲先、元の委譲先を添える
   const changed = routing.changed?.from ? [t('routing.line.changedByParent', { from: targetText(routing.changed.from, names) })] : [];
   if (!isAutoRouting(routing)) {
     const head = t('routing.line.pinned', { kind: kindText(routing.kind), target: targetText(routing.target, names) });

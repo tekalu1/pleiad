@@ -17,7 +17,7 @@ Claude・Codex の会話から、`ply_agents` MCP の `ply_delegate` で別の�
 | `ply_task_list` | なし | 呼び出し元が作成した Pleiad タスクだけを列挙する。結果の本文は載せず、拒否は件数（`rejectionCount`）だけ |
 | `ply_usage` | 任意の `backend` | 各バックエンドの使用枠（枠ごとの `usedPercent`・`resetsAt`、`plan`、`checkedAt`、`message`）。省略時は使用枠を読めるバックエンドすべて |
 
-**子の設定を替える**（`ply_task_send` の `backend`・`model`・`effort`。[ADR 0135](adr/0135-parent-changes-child-settings.md)。`core/server.mjs` の `taskSettingsPlan` / `applyTaskSettings`）:
+**子の設定を替える**（`ply_task_send` の `backend`・`model`・`effort`。[ADR 0134](adr/0134-parent-changes-child-settings.md)。`core/server.mjs` の `taskSettingsPlan` / `applyTaskSettings`）:
 - 子の会話の「次のターンから適用」（`nextSettings`。人の入力欄と同じ予約）に入れる。子が走っていても今のターンは止めない。走っていなければ次に走るとき（設定だけでは走らせない。例外: 使用枠の上限で止まっている子のエージェントを替えると、人の切り替えと同じく上限の待ちが解け、送信待ちが流れる）。一緒に積んだ `message` は、予約がある間は走っているターンへ途中送信しない（`canSteerNotice`）ので、替えた後のターンで読まれる。同じエージェントのモデルだけは、`sessions.setModel` と同じく走っているターンにも即時に伝える（できるエージェントだけ。返り値の `settings.modelLive`）。返り値はタスクの状態と `settings`（`{ backend, model, effort, mode, appliesTo: 'nextTurn', modelLive? }`）
 - エージェントを替えると、子の次のターンで引き継ぎ（`docs/backend-handoff.md`）を通って会話の履歴を渡す。作業場所はそのまま。子の承認モードは `resolveDelegatedMode` で、親の強さと子の今の強さ（人が下げていればそれ）の弱い方を上限にして決め、収まらなければ親の会話で 1 回承認を求め、断ったら何も変えない。元のエージェントへ戻したときは子の会話の今のモードのまま
 - アカウントは替えない（子の会話のアカウントのまま。[ADR 0094](adr/0094-human-only-five.md)）。接続先は `ply_delegate` と同じ規則

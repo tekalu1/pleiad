@@ -10,7 +10,7 @@ export const TASKS_MAX = 100;
 /** delegation.instructions: 1 件の本文の字数 */
 export const INSTRUCTION_CHARS = 1_000;
 
-// changedBy: 依頼元が子の設定を替えた（ply_task_send の backend・model・effort。ADR 0135）なら 'parent'
+// changedBy: 依頼元が子の設定を替えた（ply_task_send の backend・model・effort。ADR 0134）なら 'parent'
 const routingOf = (r) => (r?.target ? { kind: r.kind ?? null, mode: r.mode ?? null, backend: r.target.backend ?? null, model: r.target.model ?? null, changedBy: r.changed?.by ?? null } : null);
 
 /** 一覧の 1 行。長い本文（依頼・結果）は載せない */

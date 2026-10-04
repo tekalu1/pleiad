@@ -431,7 +431,7 @@ async function callAgentOp(owner, name, args, { locale } = {}) {
   // 委譲先の自動振り分け（docs/agent-delegation.md「委譲先の自動振り分け」）。backend を省けばここで選ぶ。
   // 選んだ後は、書いた backend と同じく下の承認の強さの判定・承認カードを通る
   if (name === 'ply_delegate') args = await routeDelegation(args, lng, path.resolve(turn.info.cwd ?? process.cwd(), typeof args.cwd === 'string' ? args.cwd : '.'));
-  // ply_task_send の backend・model・effort（ADR 0135）。何も変えないうちに確かめ、エージェントを替えるなら下の承認の強さの判定を通す
+  // ply_task_send の backend・model・effort（ADR 0134）。何も変えないうちに確かめ、エージェントを替えるなら下の承認の強さの判定を通す
   let settings = name === 'ply_task_send' && TASK_SETTINGS.some(k => args[k] !== undefined) ? await taskSettingsPlan(owner, args, lng, turn) : null;
   // 子の承認モードは「親の強さまで継ぐ、それを超えない」（core/modes.mjs）。
   // 決めるのはここだけ。prepare は決まった結果をそのまま使う（同じ判定を二度しない）。
@@ -468,7 +468,7 @@ async function callAgentOp(owner, name, args, { locale } = {}) {
   return result;
 }
 
-// ---- 委譲した子の設定を親が替える（ply_task_send の backend・model・effort。docs/agent-delegation.md「ツール」、ADR 0135）
+// ---- 委譲した子の設定を親が替える（ply_task_send の backend・model・effort。docs/agent-delegation.md「ツール」、ADR 0134）
 const TASK_SETTINGS = ['backend', 'model', 'effort'];
 /** 子のターンが始まるところ（引き継ぎの最中を含む）・分岐の最中。この間は子の設定を書かない（reserveTurnSettings も断る） */
 const childStarting = sessionId => forking.has(sessionId) || (switching.has(sessionId) && !runtime.turns.has(sessionId));
@@ -4114,7 +4114,7 @@ agentTasks = await createAgentTasks({
       taskStopReasons.delete(task.sessionId);
       if (child && why) child.abortReason ??= why;
       child?.ac.abort();
-      // タスクの記録の backend は、依頼元が替えた次のターンの値のことがある（ADR 0135）。止めるのは今の会話のエージェント
+      // タスクの記録の backend は、依頼元が替えた次のターンの値のことがある（ADR 0134）。止めるのは今の会話のエージェント
       resolveBackendForSession(task.sessionId).then(b => b?.stopSession?.(task.sessionId)).catch(() => {});
     };
     signal.addEventListener('abort', stopChild, { once: true });
@@ -4331,7 +4331,7 @@ async function runTurnInternal(args, onStarted, hooks) {
         emitGlobal({ type: "backend", sessionId, backend: backend.id, applied: true });
         emitGlobal({ type: "nextSettings", sessionId, nextSettings: null });
       }
-      // 委譲の子なら、タスクの記録を実際に走る値に合わせる（依頼元が替えた予約を人が取り消した・替えたとき。ADR 0135）
+      // 委譲の子なら、タスクの記録を実際に走る値に合わせる（依頼元が替えた予約を人が取り消した・替えたとき。ADR 0134）
       const synced = await agentTasks?.sync(sessionId, { backend: backend.id, model, effort, mode: permissionMode }).catch(() => null);
       if (synced) emitGlobal({ type: 'agentTaskChanged', sessionId: null, taskId: synced });
     }
