@@ -4,11 +4,12 @@
 import { el } from './dom.mjs';
 import { t, fmt } from './i18n.mjs';
 import { savedReason } from './saved-text.mjs';
+import { fallbackName } from './delegation-routing-view.mjs';
 
 // i18n-dynamic: changeLog.field.
 // i18n-dynamic: changeLog.by.
 /** 記録に出す項目（会話の設定として人が見分けられるもの）。context・parent は内部の記録なので出さない */
-const FIELDS = ['status', 'title', 'cwd', 'mode', 'model'];
+const FIELDS = ['status', 'title', 'cwd', 'mode', 'model', 'backend', 'effort'];
 
 const known = (prefix, value) => {
   const key = `${prefix}.${value}`;
@@ -18,11 +19,13 @@ const known = (prefix, value) => {
 /** 誰が。human → あなた、ai・agent → AI（agent は操作の一覧からの変更。ADR 0081）、ply → Pleiad（知らない値は届いたまま） */
 export const byText = (by) => known('changeLog.by', by);
 const valueText = (v) => (v == null || v === '' ? t('changeLog.none') : String(v));
+/** エージェントの行は id でなく名前（Claude Code・Codex・Antigravity。知らない id はそのまま） */
+const fieldValue = (field, v) => (field === 'backend' && v ? fallbackName('backend', v, v) : valueText(v));
 
 /** 記録を新しい順の行にする。行 = { at, field, label, from, to, by, byText, ai, reason } */
 export function changeRows(changes) {
   return (changes ?? []).filter(c => FIELDS.includes(c?.field)).map(c => ({
-    at: c.at, field: c.field, label: known('changeLog.field', c.field), from: valueText(c.from), to: valueText(c.to),
+    at: c.at, field: c.field, label: known('changeLog.field', c.field), from: fieldValue(c.field, c.from), to: fieldValue(c.field, c.to),
     by: c.by, byText: byText(c.by), ai: c.by === 'ai' || c.by === 'agent', reason: savedReason(c),
   })).reverse();
 }

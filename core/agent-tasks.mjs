@@ -573,6 +573,56 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
       if (!r) return;
       for (const instructionId of [...(steers.get(r.taskId) ?? [])]) await unclaim(r.taskId, instructionId);
     },
+    /**
+     * 依頼元が子の設定（エージェント・モデル・思考の強さ）を替えた（ply_task_send の backend・model・effort。ADR 0134）。
+     * 子の会話へ入れるのは server（applyTaskSettings）。ここはタスクの記録だけ: backend・model・effort（と替えたなら mode）を新しい値にし、
+     * routing.target を新しい委譲先に、routing.changed に「依頼元が替えた」印（最初の委譲先 from・時刻・回数）を残す。保存できなければ断る。
+     * 今の値と同じなら何も書かない（changed: false）。最初の委譲先へ戻したら印を外す。
+     * 返すのは { task, changed, previous }。previous は書く前の値で、後の失敗で戻すとき（untarget）に使う
+     */
+    async retarget(owner, taskId, { backend, model, effort, mode, account }, locale) {
+      const r = owned(owner, taskId, locale);
+      if (r.status === 'cancelling') throw new Error(agentT(locale, 'tasks.stopping'));
+      const same = (a, b) => (a.backend ?? null) === (b.backend ?? null) && (a.model ?? '') === (b.model ?? '') && (a.effort ?? '') === (b.effort ?? '');
+      if (same(r, { backend, model, effort }) && (r.mode ?? '') === (mode ?? '')) return { task: view(r), changed: false, previous: null };
+      const previous = structuredClone({ backend: r.backend, model: r.model, effort: r.effort, mode: r.mode, routing: r.routing ?? null });
+      await commit(r.taskId, row => {
+        if (row.status === 'cancelling') throw new Error(agentT(locale, 'tasks.stopping'));
+        const from = row.routing?.changed?.from ?? { backend: row.backend ?? null, model: row.model ?? null, effort: row.effort ?? null };
+        const target = row.routing?.target ?? {};
+        const sameAccount = backend === target.backend && (account ?? null) === (target.account ?? null);
+        row.routing = { ...(row.routing ?? { mode: 'pinned', kind: null }),
+          target: { backend, model, account: account ?? null, ...(sameAccount && target.accountLabel ? { accountLabel: target.accountLabel } : {}) } };
+        if (same(from, { backend, model, effort })) delete row.routing.changed;
+        else row.routing.changed = { by: 'parent', at: new Date().toISOString(), from, count: (previous.routing?.changed?.count ?? 0) + 1 };
+        // 選んだ時点の使用率は前の委譲先のものなので外す
+        if (backend !== target.backend || model !== target.model) { delete row.routing.targetWindows; delete row.routing.selectedWithLowHeadroom; }
+        row.backend = backend; row.model = model; row.effort = effort;
+        if (mode) row.mode = mode;
+      }, 'retarget', locale);
+      return { task: view(r), changed: true, previous };
+    },
+    /** retarget を書いた後に失敗した（指示を積めなかった）。書く前の値に戻す。保存に失敗しても投げない（メモリが正しく、後で追いつく） */
+    async untarget(taskId, previous) {
+      if (!records[taskId] || !previous) return;
+      await record(taskId, row => {
+        for (const k of ['backend', 'model', 'effort', 'mode']) { if (previous[k] === undefined) delete row[k]; else row[k] = previous[k]; }
+        if (previous.routing) row.routing = previous.routing; else delete row.routing;
+      }, 'untarget');
+    },
+    /**
+     * 子のターンが始まった。子が実際に走る backend・model・effort・mode にタスクの記録を合わせる（人が子の予約を取り消した・替えたときの食い違いを残さない）。
+     * 依頼元が替えた委譲（routing.changed）なら routing.target も合わせる。同じなら書かない。書いたらタスクの id を返す
+     */
+    async sync(sessionId, { backend, model, effort, mode }) {
+      const r = bySession.get(sessionId);
+      if (!r || ((r.backend ?? null) === backend && (r.model ?? '') === (model ?? '') && (r.effort ?? '') === (effort ?? '') && (r.mode ?? '') === (mode ?? ''))) return null;
+      await record(r.taskId, row => {
+        row.backend = backend; row.model = model; row.effort = effort; row.mode = mode;
+        if (row.routing?.changed && row.routing.target) row.routing.target = { ...row.routing.target, backend, model };
+      }, 'sync');
+      return r.taskId;
+    },
     instructions(taskId) { const r = records[taskId]; return r ? { taskId, revision: r.instructionRevision ?? 0, instructions: structuredClone(r.instructions) } : null; },
     /** 最初の依頼（task と context）。やり直しで同じ依頼を渡す。context を持つ前に作ったタスクは task だけ */
     request(taskId) { const r = records[taskId]; return r ? { task: r.task, title: r.title ?? null, context: r.context ?? null } : null; },

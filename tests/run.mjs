@@ -152,6 +152,8 @@ const SUITES = [
   './unit/server-agent-tasks.mjs',
   // 委譲の子に裏の作業が残るとき: 終わらないコマンドも自動停止しない・サブエージェントは止めない・端末は待たない（子にも親にも）
   './unit/server-delegation-background.mjs',
+  // 依頼元が子のエージェント・モデル・思考の強さを ply_task_send で替える（走っている子・走っていない子・断る場合・記録）
+  './unit/server-delegation-settings.mjs',
   // 委譲の結果に選ぶ返答: Stop フックの続き（調べものだけ）は飛ばす・中身の仕事をした続きは選ぶ（Claude の transcript の印）
   './unit/delegation-result.mjs',
   // 委譲先の自動振り分け: 規則・段・使用量で飛ばす・Claude のアカウント・判定器（偽の fetch）・使用量の取り置き

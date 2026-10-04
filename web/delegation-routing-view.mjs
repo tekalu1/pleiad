@@ -84,10 +84,13 @@ export function skippedPhrase(skipped, names = defaultNames) {
  */
 export function routingLine(routing, names = defaultNames) {
   if (!routing?.target) return '';
+  // 依頼元が子の設定を替えた（ADR 0134）。行き先は新しい委譲先、元の委譲先を添える
+  const changed = routing.changed?.from ? [t('routing.line.changedByParent', { from: targetText(routing.changed.from, names) })] : [];
   if (!isAutoRouting(routing)) {
     const head = t('routing.line.pinned', { kind: kindText(routing.kind), target: targetText(routing.target, names) });
-    return routing.selectedWithLowHeadroom ? [head, lowHeadroomText(routing.selectedWithLowHeadroom)].join(t('routing.line.join')) : head;
+    return [head, ...(routing.selectedWithLowHeadroom ? [lowHeadroomText(routing.selectedWithLowHeadroom)] : []), ...changed].join(t('routing.line.join'));
   }
+  if (changed.length) return [t('routing.line.head', { kind: kindText(routing.kind), difficulty: difficultyText(routing.difficulty), target: targetText(routing.target, names) }), ...changed].join(t('routing.line.join'));
   const head = t('routing.line.head', { kind: kindText(routing.kind), difficulty: difficultyText(routing.difficulty), target: targetText(routing.target, names) });
   const notes = [];
   const low = routing.selectedWithLowHeadroom;
@@ -372,7 +375,7 @@ export function pinnedDetail(routing, { names = defaultNames, mode = '', cwd = '
   const facts = el('dl', 'rt-facts');
   const target = targetText(routing?.target, names);
   facts.append(fact(t('routing.detail.kind'), kindText(routing?.kind)),
-    fact(t('routing.detail.target'), routing?.mode === 'pinned' ? t('routing.detail.targetPinned', { target }) : target));
+    fact(t('routing.detail.target'), routing?.changed ? t('routing.detail.targetChanged', { target }) : routing?.mode === 'pinned' ? t('routing.detail.targetPinned', { target }) : target));
   if (mode) facts.append(fact(t('routing.detail.mode'), mode));
   if (cwd) facts.append(fact(t('routing.detail.cwd'), cwd));
   root.append(facts);
