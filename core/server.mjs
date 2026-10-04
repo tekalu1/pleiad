@@ -431,9 +431,11 @@ async function callAgentOp(owner, name, args, { locale } = {}) {
   // 委譲先の自動振り分け（docs/agent-delegation.md「委譲先の自動振り分け」）。backend を省けばここで選ぶ。
   // 選んだ後は、書いた backend と同じく下の承認の強さの判定・承認カードを通る
   if (name === 'ply_delegate') args = await routeDelegation(args, lng, path.resolve(turn.info.cwd ?? process.cwd(), typeof args.cwd === 'string' ? args.cwd : '.'));
+  // ply_task_send の backend・model・effort（ADR 0135）。何も変えないうちに確かめ、エージェントを替えるなら下の承認の強さの判定を通す
+  const settings = name === 'ply_task_send' && TASK_SETTINGS.some(k => args[k] !== undefined) ? await taskSettingsPlan(owner, args, lng) : null;
   // 子の承認モードは「親の強さまで継ぐ、それを超えない」（core/modes.mjs）。
   // 決めるのはここだけ。prepare は決まった結果をそのまま使う（同じ判定を二度しない）。
-  const child = name === 'ply_delegate' ? getBackend(args.backend) : null;
+  const child = name === 'ply_delegate' ? getBackend(args.backend) : settings?.switching ? settings.target : null;
   const decided = child ? resolveDelegatedMode({ parentMode: turn.info.mode, parentModes: turn.backend.modes(), childModes: child.modes() }) : null;
   // codex は MCP のツール呼び出しを自前の承認に通さない。full / yolo 以外の codex 親では、
   // これが無いと委譲が起きたこと自体に人間が気づけないので、強さが収まっていても聞く。
@@ -452,11 +454,105 @@ async function callAgentOp(owner, name, args, { locale } = {}) {
       writes: child ? writesScope(child.modes()[decided?.mode]) : true });
     args = { ...args, isolate: verdict.isolate };
   }
+  if (settings) {
+    const applied = await applyTaskSettings(owner, settings, decided?.mode, lng);
+    if (args.message === undefined) return applied;
+    return { ...(await agentTasks.call(owner, name, args, turn.ac.signal, lng)), settings: applied.settings };
+  }
   const result = await agentTasks.call(owner, name, decided?.mode ? { ...args, mode: decided.mode } : args, turn.ac.signal, lng);
   // 子が使い始めるので、振り分けに使う使用量を取り直しておく（待たない）
   if (name === 'ply_delegate' && routingSettingsCache.enabled && ROUTING_USAGE_AUTO) routingUsage.refresh().catch(() => {});
   return result;
 }
+
+// ---- 委譲した子の設定を親が替える（ply_task_send の backend・model・effort。docs/agent-delegation.md「ツール」、ADR 0135）
+const TASK_SETTINGS = ['backend', 'model', 'effort'];
+/**
+ * 替える内容を確かめて決める（まだ何も変えない）。自分が委譲した子だけ。モデル・思考の強さは子の作業場所の一覧で確かめ、
+ * 無い・使用枠が満杯なら断る。エージェントを替えるときの接続先は ply_delegate と同じ規則（自動・人が選んだ委譲先なら公式、
+ * 固定なら親の会話から継ぐ）。アカウントは替えない（子の会話のまま。ADR 0094）
+ */
+async function taskSettingsPlan(owner, args, lng) {
+  const task = agentTasks.get(String(args.taskId ?? ''));
+  if (!task || task.parentSessionId !== owner) throw new Error(agentT(lng, 'tasks.notOwned'));
+  if (task.status === 'cancelling') throw new Error(agentT(lng, 'tasks.stopping'));
+  for (const k of TASK_SETTINGS) {
+    if (args[k] !== undefined && (typeof args[k] !== 'string' || (k === 'backend' && !args[k]) || args[k].length > 200)) throw new Error(agentT(lng, 'tasks.textLength', { name: k, max: 200 }));
+  }
+  const sessionId = task.sessionId;
+  const meta = await store.get(sessionId);
+  const source = refuseRetired(await resolveBackendForSession(sessionId));
+  if (!source) throw new Error(agentT(lng, 'tasks.notOwned'));
+  // 次のターンが走る先（予約があればそれ）。替えるのはそこからの差分
+  const reserved = meta.nextSettings?.backend ? getBackend(meta.nextSettings.backend) : null;
+  const current = reserved ?? source;
+  const target = args.backend !== undefined ? getBackend(args.backend) : current;
+  if (!target) throw new Error(agentT(lng, 'delegation.backendDisabled'));
+  const cwd = meta.nextSettings?.cwd ?? meta.cwd ?? task.cwd;
+  const before = { backend: current.id, model: (reserved ? meta.nextSettings.model : meta.nextSettings?.model ?? meta.model) ?? '',
+    effort: (reserved ? meta.nextSettings.effort : meta.nextSettings?.effort ?? meta.effort) ?? '' };
+  let endpoint;
+  if (target.id === current.id) endpoint = meta.nextSettings?.endpoint ?? meta.compatEndpoint ?? '';
+  else {
+    const auto = ['auto', 'manual'].includes(task.routing?.mode);
+    const parentBackend = await resolveBackendForSession(owner);
+    endpoint = endpointCapable(target) && !auto ? delegatedEndpoint(parentBackend?.id, target.id, (await store.get(owner)).compatEndpoint ?? '') : '';
+    if (endpoint && !(await compatEndpoints.has(endpoint, target.id))) throw new Error(agentT(lng, 'delegation.endpointDeleted'));
+  }
+  if (!endpointCapable(target)) endpoint = '';
+  const model = args.model ?? (target.id === current.id ? before.model : await resolveModel(null, undefined, target, cwd, endpoint));
+  if (args.model !== undefined && !(await validModel(target, model, cwd, endpoint).catch(() => false))) {
+    const known = endpoint ? [] : Object.keys(await target.models(cwd).catch(() => ({}))).filter(Boolean).slice(0, 30);
+    throw new Error(agentT(lng, 'tasks.modelUnknown', { model, backend: target.id, models: known.join(', ') || '-' }));
+  }
+  // 使用枠が満杯と分かっているときだけ断る（取り置きが無い・古いだけでは断らない。固定の ply_delegate も使用量では断らない）
+  const account = meta.nextSettings?.account ?? meta.claudeAccount ?? '';
+  if (!endpoint && model) {
+    const check = selectRetryAccount(checkCandidate(`${target.id}:${model}`, { usage: routingUsage.snapshot(), settings: routingSettingsCache, now: Date.now() }), target.id, target.id === 'claude' ? account : undefined);
+    if (check.reason === 'quota_full') throw new Error(agentT(lng, 'tasks.quotaFull', { model, backend: target.id }));
+  }
+  if (args.effort !== undefined) {
+    const choices = Object.keys(await effortOptions(target, model, cwd, await endpointRow(endpoint)));
+    if (args.effort !== '' && !choices.includes(args.effort)) throw new Error(agentT(lng, 'tasks.effortUnknown', { effort: args.effort, backend: target.id, model: model || '-', choices: choices.filter(Boolean).join(', ') || '-' }));
+  }
+  return { task, sessionId, source, target, before, model, effort: args.effort, endpoint, account, cwd,
+    switching: target.id !== source.id, modelGiven: args.model !== undefined };
+}
+
+/**
+ * 決めた内容を子の会話とタスクの記録に入れる。子が走っていれば今のターンは止めず次のターンから（予約 nextSettings。
+ * エージェントの切り替えは引き継ぎ（docs/backend-handoff.md）で履歴を渡す）。同じエージェントのモデルは、できるエージェントなら
+ * 走っているターンにも即時に伝える（sessions.setModel と同じ）。mode はエージェントを替えるときの子の承認モード（親の強さまで）
+ */
+async function applyTaskSettings(owner, plan, mode, lng) {
+  const { sessionId, target, before } = plan;
+  const actor = { by: 'agent', via: 'mcp', sessionId: owner };
+  const reason = savedReason('parentChanged');
+  let live = false, modelRecorded = false;
+  if (!plan.switching && plan.modelGiven && plan.model !== ((await store.get(sessionId)).model ?? '')) {
+    ({ live } = await changeModel(sessionId, plan.model, { actor, reason }));
+    modelRecorded = true;
+  }
+  const next = await reserveTurnSettings({ sessionId, backend: target.id, model: plan.model,
+    ...(plan.effort !== undefined ? { effort: plan.effort } : {}), ...(plan.switching && mode ? { mode } : {}),
+    ...(target.id !== before.backend ? { endpoint: plan.endpoint } : {}), keepPrefs: true });
+  const now = await store.get(sessionId);
+  const after = next ? { backend: next.backend, model: next.model ?? '', effort: next.effort ?? '' }
+    : { backend: plan.source.id, model: now.model ?? '', effort: now.effort ?? '' };
+  // 変更の記録（by: agent・via・bySession）。モデルを即時に替えた分は changeModel が残している
+  const who = changeBy(actor);
+  for (const field of TASK_SETTINGS) {
+    if (before[field] === after[field] || (field === 'model' && modelRecorded)) continue;
+    await store.recordChange(sessionId, { ...who, field, from: before[field], to: after[field], ...reason, backend: plan.source });
+  }
+  const task = await agentTasks.retarget(owner, plan.task.taskId, { ...after, ...(plan.switching && mode ? { mode } : {}),
+    account: after.backend === 'claude' ? plan.account : null }, lng);
+  if (task.routing) await store.setSessionData(sessionId, 'routing', task.routing);
+  emitGlobal({ type: 'agentTaskChanged', sessionId: null, taskId: task.taskId });
+  // 即時に伝わったのはモデルだけ。ほかは子の次のターンから（走っていなければ、次に走るとき）
+  return { ...task, settings: { ...after, appliesTo: 'nextTurn', ...(live ? { modelLive: true } : {}) } };
+}
+
 const agentOpIds = {
   ply_delegate: 'delegation.delegate', ply_task_status: 'delegation.taskStatus', ply_task_wait: 'delegation.taskWait',
   ply_task_send: 'delegation.taskSend', ply_task_cancel: 'delegation.taskCancel', ply_task_list: 'delegation.taskList', ply_usage: 'delegation.usage',
@@ -2358,7 +2454,8 @@ async function reserveTurnSettings(args) {
     }
     // 取り消した・別の場所に替えた予約が分けた作業場所なら、使っていなければ片付ける（ADR 0089）
     if (current.nextSettings?.cwd && current.nextSettings.cwd !== next?.cwd) settleWorktreeAt(current.nextSettings.cwd).catch(() => {});
-    if (!cancel) {
+    // keepPrefs: 依頼元の AI が子の設定を替えるとき（applyTaskSettings）。人の既定には覚えない
+    if (!cancel && !args.keepPrefs) {
       if (targetId !== undefined) await savePref("backend", target.id);
       // 互換の接続先のモデル・段は公式の既定（prefs）に覚えない。接続先の既定は設定の「既定にする」だけで決まる（決定 2）
       if (args.rememberEffort && !selectedEndpoint) await savePref("effort", selectedEffort, target.id);
@@ -3966,13 +4063,14 @@ agentTasks = await createAgentTasks({
       taskStopReasons.delete(task.sessionId);
       if (child && why) child.abortReason ??= why;
       child?.ac.abort();
-      getBackend(task.backend)?.stopSession?.(task.sessionId);
+      // タスクの記録の backend は、依頼元が替えた次のターンの値のことがある（ADR 0135）。止めるのは今の会話のエージェント
+      resolveBackendForSession(task.sessionId).then(b => b?.stopSession?.(task.sessionId)).catch(() => {});
     };
     signal.addEventListener('abort', stopChild, { once: true });
     try {
       // 追加の指示（ply_task_send）で再開した子の作業場所が、前の完了で片付いていたら作り直す（元の場所に書かせない）
       const renewed = await renewTaskWorktree(task).catch(() => null);
-      const outcome = await runTurn({ sessionId: task.sessionId, backend: task.backend, prompt }, () => {}, { signal });
+      const outcome = await runTurn({ sessionId: task.sessionId, prompt }, () => {}, { signal });
       if (outcome === 'requeue') return { requeue: true };
       // A child can itself delegate. Its result is final only after those results
       // have been delivered and it has finished responding to them.

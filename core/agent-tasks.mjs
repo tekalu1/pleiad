@@ -573,6 +573,28 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
       if (!r) return;
       for (const instructionId of [...(steers.get(r.taskId) ?? [])]) await unclaim(r.taskId, instructionId);
     },
+    /**
+     * 依頼元が子の設定（エージェント・モデル・思考の強さ）を替えた（ply_task_send の backend・model・effort。ADR 0135）。
+     * 子の会話へ入れるのは server（applyTaskSettings）。ここはタスクの記録だけ: backend・model・effort（と替えたなら mode）を新しい値にし、
+     * routing.target を新しい委譲先に、routing.changed に「依頼元が替えた」印（最初の委譲先 from・時刻・回数）を残す。保存できなければ断る
+     */
+    async retarget(owner, taskId, { backend, model, effort, mode, account }, locale) {
+      const r = owned(owner, taskId, locale);
+      await commit(r.taskId, row => {
+        if (row.status === 'cancelling') throw new Error(agentT(locale, 'tasks.stopping'));
+        const from = { backend: row.backend ?? null, model: row.model ?? null, effort: row.effort ?? null };
+        const target = row.routing?.target ?? {};
+        const sameAccount = backend === target.backend && (account ?? null) === (target.account ?? null);
+        row.routing = { ...(row.routing ?? { mode: 'pinned', kind: null }),
+          target: { backend, model, account: account ?? null, ...(sameAccount && target.accountLabel ? { accountLabel: target.accountLabel } : {}) },
+          changed: { by: 'parent', at: new Date().toISOString(), from: row.routing?.changed?.from ?? from, count: (row.routing?.changed?.count ?? 0) + 1 } };
+        // 選んだ時点の使用率は前の委譲先のものなので外す
+        delete row.routing.targetWindows; delete row.routing.selectedWithLowHeadroom;
+        row.backend = backend; row.model = model; row.effort = effort;
+        if (mode) row.mode = mode;
+      }, 'retarget', locale);
+      return view(r);
+    },
     instructions(taskId) { const r = records[taskId]; return r ? { taskId, revision: r.instructionRevision ?? 0, instructions: structuredClone(r.instructions) } : null; },
     /** 最初の依頼（task と context）。やり直しで同じ依頼を渡す。context を持つ前に作ったタスクは task だけ */
     request(taskId) { const r = records[taskId]; return r ? { task: r.task, title: r.title ?? null, context: r.context ?? null } : null; },

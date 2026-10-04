@@ -10,7 +10,8 @@ export const TASKS_MAX = 100;
 /** delegation.instructions: 1 件の本文の字数 */
 export const INSTRUCTION_CHARS = 1_000;
 
-const routingOf = (r) => (r?.target ? { kind: r.kind ?? null, mode: r.mode ?? null, backend: r.target.backend ?? null, model: r.target.model ?? null } : null);
+// changedBy: 依頼元が子の設定を替えた（ply_task_send の backend・model・effort。ADR 0135）なら 'parent'
+const routingOf = (r) => (r?.target ? { kind: r.kind ?? null, mode: r.mode ?? null, backend: r.target.backend ?? null, model: r.target.model ?? null, changedBy: r.changed?.by ?? null } : null);
 
 /** 一覧の 1 行。長い本文（依頼・結果）は載せない */
 export const taskRow = (r) => ({
@@ -43,7 +44,7 @@ function selectTasks(ctx, { parentSessionId, tree = false, taskIds }) {
 
 const row = z.object({ taskId: z.string(), title: z.string().nullable(), status: z.string(), backend: z.string().nullable(), model: z.string().nullable(), cwd: z.string().nullable(),
   parentSessionId: z.string().nullable(), sessionId: z.string().nullable(), createdAt: z.number().nullable(), updatedAt: z.number().nullable(),
-  routing: z.object({ kind: z.string().nullable(), mode: z.string().nullable(), backend: z.string().nullable(), model: z.string().nullable() }).nullable() });
+  routing: z.object({ kind: z.string().nullable(), mode: z.string().nullable(), backend: z.string().nullable(), model: z.string().nullable(), changedBy: z.string().nullable() }).nullable() });
 
 export const delegationOps = [
   defineOp({
@@ -107,8 +108,12 @@ export const delegationOps = [
       offset: z.number().int().min(0).optional().describe(D('taskStatus', 'offset')) }) },
     { id: 'taskWait', tool: 'ply_task_wait', risk: 'read', input: z.object({ taskId: z.string().min(1).describe(D('taskWait', 'taskId')),
       seconds: z.number().int().min(1).max(30).optional().describe(D('taskWait', 'seconds')) }) },
+    // message を省けば設定だけ替える（backend・model・effort のどれかが要る。確かめるのは server の taskSettingsPlan）
     { id: 'taskSend', tool: 'ply_task_send', risk: 'write', input: z.object({ taskId: z.string().min(1).describe(D('taskSend', 'taskId')),
-      message: z.string().min(1).describe(D('taskSend', 'message')) }) },
+      message: z.string().min(1).optional().describe(D('taskSend', 'message')),
+      backend: z.string().min(1).max(40).optional().describe(D('taskSend', 'backend')),
+      model: z.string().max(200).optional().describe(D('taskSend', 'model')),
+      effort: z.string().max(40).optional().describe(D('taskSend', 'effort')) }) },
     // 画面は、どの会話の委譲でも止められる（人の操作）。AI は自分が委譲した子だけ（ply_task_cancel）
     { id: 'taskCancel', tool: 'ply_task_cancel', risk: 'write', modeGate: false, input: z.object({ taskId: z.string().min(1).describe(D('taskCancel', 'taskId')) }),
       legacyCommand: 'cancelAgentTask', ui: (ctx, { taskId }) => fromHost(() => ctx.delegation.cancel(taskId)) },
