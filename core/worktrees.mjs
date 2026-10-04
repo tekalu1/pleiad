@@ -105,7 +105,7 @@ export function createWorktrees({ dataDir, users = async () => ({ busy: [], atta
   remove = wt.worktreeRemove, removeForced = wt.worktreeRemoveForced } = {}) {
   const file = path.join(dataDir, 'worktrees.json');
   let entries = null;          // id -> entry
-  let settings = { always: false };   // 人が始めた会話がぶつかったとき、確かめずに分けるか（「いつも分ける」）
+  let settings = { always: true };    // 人が始めた会話がぶつかったとき、確かめずに分けるか（既定は分ける。ADR 0133）
   let chain = Promise.resolve();
   const busyIds = new Set();   // 作成・片付けの途中の id（同じものを二重に動かさない）
 
@@ -116,7 +116,8 @@ export function createWorktrees({ dataDir, users = async () => ({ busy: [], atta
     try {
       const v = JSON.parse(await io.readFile(file, 'utf8'));
       entries = v && typeof v === 'object' && v.entries && typeof v.entries === 'object' ? v.entries : {};
-      settings = { always: v?.settings?.always === true };
+      // 保存された値はそのまま尊重する。無い・真偽でないときだけ既定（分ける）
+      settings = { always: typeof v?.settings?.always === 'boolean' ? v.settings.always : true };
     } catch { entries = {}; }
     return entries;
   }

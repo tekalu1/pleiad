@@ -223,7 +223,7 @@ export default async function (t) {
   t.ok('patchText: ハンクの見出しと行をつなぐ', patchText([{ header: '@@', lines: [{ t: ' ', s: 'a' }, { t: '+', s: 'b' }] }]) === '@@\n a\n+b');
   const check = await call(agent('ask'), 'worktrees.check', {});
   t.ok('worktrees.check: 省くとその会話', check.deps.calls.find((c) => c[0] === 'worktrees.check')?.[1].sessionId === 's1' && check.r.result.canSplit === true);
-  t.ok('worktrees.settings: 「いつも分ける」の値', (await call(agent('ask'), 'worktrees.settings', {})).r.result.always === true);
+  t.ok('worktrees.settings: 「自動で分ける」の値', (await call(agent('ask'), 'worktrees.settings', {})).r.result.always === true);
   const notify = (await call(agent('ask'), 'notify.status', {})).r.result;
   t.ok('notify.status: AI には端末を数だけ（一覧・id は返さない。リモートのペアリングは人だけ）', notify.devices.count === 2 && notify.devices.muted === 1 && notify.pc.reply === false && !JSON.stringify(notify).includes('dev-secret-id'));
   t.ok('notify.status: 画面には今までどおり端末の一覧', (await call(human, 'notify.status', {})).r.result.devices[0].id === 'dev-secret-id');
