@@ -32,6 +32,10 @@ export function botInstructions(bot, locale) {
     agentT(locale, 'guide.bot.quiet'),
     // @ の無い人の投稿は、スレッドのほかの bot にも聞こえた投稿として届く（ADR 0128）。答えるかは bot が決める
     agentT(locale, 'guide.bot.heard'),
+    // 黙るときの書き方（ADR 0119 の追記）: 文章なしか、印 [[no-reply]] だけ。印・括弧だけの一言は投稿しない（core/bots/silence.mjs）
+    agentT(locale, 'guide.bot.silent'),
+    // 自分の投稿へのリアクションは reaction の包みで届き、問いへの人の答えのリアクションは起こす（ADR 0109 の追記）
+    agentT(locale, 'guide.bot.reaction'),
   ].filter(Boolean).join('\n\n');
 }
 

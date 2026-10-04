@@ -476,6 +476,8 @@ const SUITES = [
   // --- dispatch (S4) ---
   // bot を起こす・配る: @ で起こす・返事の @ で連鎖・［止める］・途中送信とたまった出来事・DM・暗黙では起こさない・末尾（記憶の核の写し）・再起動の戻し・inbox.json
   './unit/bot-dispatch.mjs',
+  // bot の投稿へのリアクション（問いへの人の答えは起こす・ほかは次に渡す）と、黙って終えたターン（印・括弧だけの一言は投稿しない。ADR 0109・0119 の追記）
+  './unit/bot-reactions-silence.mjs',
   './unit/bot-budget.mjs',
   // bot の頭の中（ADR 0126）: 欲求・ふるい・返事の読み取り・思考の流れの束・独り言の写り・思考の流れと気がかりの保存
   './unit/brain-core.mjs',

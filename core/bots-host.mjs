@@ -61,7 +61,7 @@ export function createBotHost(deps) {
     dir: path.join(dataDir, 'channels'), emit, listBots: () => bots.list(),
     hooks: { posted: async (...args) => { noteEpisode(args[0]); noteBrain(args[0], args[1]); await bots.noteShown(...args); return dispatch.onPosted(...args); },
       edited: async (...args) => { noteEpisode(args[0]); return bots.noteShown(...args); },
-      removed: noteEpisode, stopThread: lazy(() => dispatch.stopThread), botPost: lazy(() => dispatch.claimPost) },
+      removed: noteEpisode, reacted: lazy(() => dispatch.onReacted), stopThread: lazy(() => dispatch.stopThread), botPost: lazy(() => dispatch.claimPost) },
   });
   // ---- 頭の中（思考の流れ・気がかり。ADR 0126）
   const brain = createBrainStore({ dataDir, emit });
