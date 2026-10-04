@@ -110,7 +110,7 @@ export default async function (t) {
     const ro = agent('s_ro');
     const roPost = await run(ro, 'channels.post', { channelId: cid, text: '読み取り専用の AI の投稿' });
     const roReact = await run(ro, 'channels.react', { channelId: cid, postId: byHuman.result.id, emoji: '👀' });
-    t.ok('読み取り専用の会話の AI（bot でない会話）は、post・react とも READ_ONLY_MODE で断られる（ADR 0136。居場所を持たないので、どこにも書けない）',
+    t.ok('読み取り専用の会話の AI（bot でない会話）は、post・react とも READ_ONLY_MODE で断られる（ADR 0137。居場所を持たないので、どこにも書けない）',
       roPost.code === 'READ_ONLY_MODE' && roReact.code === 'READ_ONLY_MODE' && /自分のスレッド・DM の外/.test(roPost.error), JSON.stringify([roPost, roReact]));
     t.ok('断られた投稿・リアクションは残らない', !(await channels.read({ channelId: cid })).posts.some((p) => p.text === '読み取り専用の AI の投稿')
       && !(await channels.getPost({ channelId: cid, postId: byHuman.result.id })).reactions?.['👀']);
@@ -242,28 +242,28 @@ export default async function (t) {
       t.ok('S-2: 人の投稿は確認なし（hold も checked も付けない）', humanPost.result.wake === undefined && lastHook().extra.hold === undefined && lastHook().extra.checked === undefined);
       const roStrong = await call(agent('s_plan'), 'channels.post', { channelId: made.id, text: '@Owl 計画モードから' });
       t.ok('S-2: 読み取りの bot（計画）は、動くモードが上の bot を起こせない。投稿は残り、wake は READ_ONLY_MODE で断られる', roStrong.ok && roStrong.result.wake[0].status === 'denied' && roStrong.result.wake[0].code === 'READ_ONLY_MODE', JSON.stringify(roStrong.result.wake));
-      // ADR 0136: 読み取り・計画のモードの bot は、自分のスレッド・DM にだけ書ける・リアクションできる
+      // ADR 0137: 読み取り・計画のモードの bot は、自分のスレッド・DM にだけ書ける・リアクションできる
       {
         const plan = agent('s_plan');
         const inside = await call(plan, 'channels.post', { channelId: made.id, threadId: root.id, text: '計画の bot の自分のスレッドへの返事' });
-        t.ok('ADR 0136: 読み取りの bot は、自分のスレッドへは書ける（threadId を明示しても省いても）', inside.ok && inside.result.threadId === root.id);
+        t.ok('ADR 0137: 読み取りの bot は、自分のスレッドへは書ける（threadId を明示しても省いても）', inside.ok && inside.result.threadId === root.id);
         const otherThread = await call(plan, 'channels.post', { channelId: made.id, threadId: otherRoot.id, text: '別のスレッドへ' });
         const flowPost = await call(plan, 'channels.post', { channelId: made.id, threadId: null, new: true, text: '流れへ' });
         const otherChannel = await call(plan, 'channels.post', { channelId: dm.id, text: '別のチャンネルへ' });
-        t.ok('ADR 0136: 読み取りの bot は、別のスレッド・チャンネルの流れ・別のチャンネルへは書けない（READ_ONLY_MODE。文は居場所の外と言う）',
+        t.ok('ADR 0137: 読み取りの bot は、別のスレッド・チャンネルの流れ・別のチャンネルへは書けない（READ_ONLY_MODE。文は居場所の外と言う）',
           [otherThread, flowPost, otherChannel].every((r) => !r.ok && r.code === 'READ_ONLY_MODE') && /自分のスレッド・DM の外/.test(otherThread.error), JSON.stringify([otherThread, flowPost, otherChannel]));
-        t.ok('ADR 0136: 断られた投稿は残らない', !(await reviewChannels.read({ channelId: made.id })).posts.some((p) => ['別のスレッドへ', '流れへ'].includes(p.text)));
+        t.ok('ADR 0137: 断られた投稿は残らない', !(await reviewChannels.read({ channelId: made.id })).posts.some((p) => ['別のスレッドへ', '流れへ'].includes(p.text)));
         const dmPlan = agent('s_plan_dm');
-        t.ok('ADR 0136: 読み取りの bot の DM（sidecar の channelId が無くても）は、自分の DM へ書ける。ほかのチャンネルへは書けない',
+        t.ok('ADR 0137: 読み取りの bot の DM（sidecar の channelId が無くても）は、自分の DM へ書ける。ほかのチャンネルへは書けない',
           (await call(dmPlan, 'channels.post', { channelId: dm.id, text: 'DM の返事' })).ok && (await call(dmPlan, 'channels.post', { channelId: made.id, text: '外へ' })).code === 'READ_ONLY_MODE');
-        t.ok('ADR 0136: 別の bot の DM には書けない（DM の持ち主が違う）', (await call(agent('s_plan'), 'channels.post', { channelId: dm.id, text: 'Lynx の DM へ' })).code === 'READ_ONLY_MODE');
+        t.ok('ADR 0137: 別の bot の DM には書けない（DM の持ち主が違う）', (await call(agent('s_plan'), 'channels.post', { channelId: dm.id, text: 'Lynx の DM へ' })).code === 'READ_ONLY_MODE');
         const inThreadPost = (await reviewChannels.read({ channelId: made.id, threadId: root.id })).posts.find((p) => p.id === inside.result.id);
-        t.ok('ADR 0136: react も同じ。自分のスレッドの根・中の投稿には付けられ、別のスレッドの投稿・流れの投稿には付けられない',
+        t.ok('ADR 0137: react も同じ。自分のスレッドの根・中の投稿には付けられ、別のスレッドの投稿・流れの投稿には付けられない',
           (await call(plan, 'channels.react', { channelId: made.id, postId: root.id, emoji: '👀' })).ok && (await call(plan, 'channels.react', { channelId: made.id, postId: inThreadPost.id, emoji: '👀' })).ok
           && (await call(plan, 'channels.react', { channelId: made.id, postId: otherRoot.id, emoji: '👀' })).code === 'READ_ONLY_MODE');
-        t.ok('ADR 0136: DM の中の投稿にも付けられる', (await call(dmPlan, 'channels.react', { channelId: dm.id, postId: (await reviewChannels.read({ channelId: dm.id })).posts[0].id, emoji: '👀' })).ok);
-        t.ok('ADR 0136: stopThread は狭める向きなので、読み取りの bot も通る（modeGate: false のまま）', (await call(plan, 'channels.stopThread', { channelId: made.id, threadId: otherRoot.id })).ok);
-        t.ok('ADR 0136: 読み取りでないモードの bot は居場所の外にも書ける（今までどおり）。人は常に書ける', (await call(agent('s_owl'), 'channels.post', { channelId: made.id, threadId: otherRoot.id, text: '別のスレッドへ' })).ok
+        t.ok('ADR 0137: DM の中の投稿にも付けられる', (await call(dmPlan, 'channels.react', { channelId: dm.id, postId: (await reviewChannels.read({ channelId: dm.id })).posts[0].id, emoji: '👀' })).ok);
+        t.ok('ADR 0137: stopThread は狭める向きなので、読み取りの bot も通る（modeGate: false のまま）', (await call(plan, 'channels.stopThread', { channelId: made.id, threadId: otherRoot.id })).ok);
+        t.ok('ADR 0137: 読み取りでないモードの bot は居場所の外にも書ける（今までどおり）。人は常に書ける', (await call(agent('s_owl'), 'channels.post', { channelId: made.id, threadId: otherRoot.id, text: '別のスレッドへ' })).ok
           && (await call(HUMAN, 'channels.post', { channelId: made.id, text: '人の投稿' })).ok);
       }
       const noCard = await call(agent('s_chat'), 'channels.post', { channelId: made.id, text: '@Lynx 承認の口なし' }, { ...rdeps, approve: undefined });

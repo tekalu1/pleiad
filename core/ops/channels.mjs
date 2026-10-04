@@ -7,7 +7,7 @@
 //   会話に束縛された AI                  → その会話が bot の会話なら { kind: 'bot', botId }、それ以外は { kind: 'agent', sessionId }
 //   会話に束縛されない CLI・外の MCP      → NEEDS_UI（人として書かせない。画面へ誘導）
 // post・react・stopThread は modeGate: false（読み取り・計画モードの bot も、自分のスレッド・DM への返事・リアクション・停止はできる）。post・react は、読み取り・計画のモードの会話からは
-// その会話自身の居場所（bot の会話のスレッド・DM）の外へは断る（refuseReadOnlyElsewhere。ADR 0136）。心拍・夜の整理の隠れた会話（sidecar の bot.kind が pulse・learner）からの書き込みは、
+// その会話自身の居場所（bot の会話のスレッド・DM）の外へは断る（refuseReadOnlyElsewhere。ADR 0137）。心拍・夜の整理の隠れた会話（sidecar の bot.kind が pulse・learner）からの書き込みは、
 // 全部 HIDDEN_CONVERSATION で断る（authorOf と markRead・wake の入口。独り言が投稿に漏れない。ADR 0126）。
 // AI が作業場所（cwd）を決める・変えるのは riskOf で guarded（フォルダーを持たない bot の作業場所になるので、bots.update のフォルダーと同じ重さ）。
 // post は、投稿の主体が AI（bot を含む）で、@ の宛先の bot の承認モードが主体の会話より強い（範囲・自律のどちらかが上）ときは、投稿は残すが起こさず、
@@ -49,7 +49,7 @@ async function refuseHidden(ctx) {
 }
 
 /**
- * 読み取り・計画のモードの会話からの書き込み（post・react）は、その会話自身の居場所（bot の会話のスレッド・DM）にだけ許す（ADR 0136）。
+ * 読み取り・計画のモードの会話からの書き込み（post・react）は、その会話自身の居場所（bot の会話のスレッド・DM）にだけ許す（ADR 0137）。
  * modeGate: false のままだと、モードを見ずに通ってしまう（Chats の読み取りの AI も、bot の読み取りのモードも、どのチャンネルにも書けた）。
  * 居場所の外（別のスレッド・チャンネルの流れ・bot でない AI の会話）は READ_ONLY_MODE で断る。人・読み取りでないモードの会話は何もしない。
  * where = { channelId, threadId? }（threadId は書く先のスレッドの根の id。DM は見ない）。post は書く先、react は付ける投稿のあるスレッド
@@ -228,7 +228,7 @@ export const channelOps = [
   }),
   defineOp({
     id: 'channels.post', summary: D('post', 'summary'), risk: 'write', modeGate: false,
-    riskReason: 'Writing a message in a channel is what a human and a bot are for, so a read-only or plan-mode bot may reply in its own thread or DM (the handler refuses any other place with READ_ONLY_MODE; ADR 0136). It only adds a post; an explicit @ may wake another bot, which runs in that bot\'s own approval mode (ADR 0109)',
+    riskReason: 'Writing a message in a channel is what a human and a bot are for, so a read-only or plan-mode bot may reply in its own thread or DM (the handler refuses any other place with READ_ONLY_MODE; ADR 0137). It only adds a post; an explicit @ may wake another bot, which runs in that bot\'s own approval mode (ADR 0109)',
     input: z.object({
       channelId: channelId('post'),
       threadId: z.string().min(1).nullable().optional().describe(D('post', 'threadId')),
@@ -329,7 +329,7 @@ export const channelOps = [
   }),
   defineOp({
     id: 'channels.react', summary: D('react', 'summary'), risk: 'write', modeGate: false,
-    riskReason: 'A reaction is one emoji on a post, added or removed by its own author. It is allowed from a read-only or plan-mode bot on posts of its own thread or DM, like a reply (ADR 0136)',
+    riskReason: 'A reaction is one emoji on a post, added or removed by its own author. It is allowed from a read-only or plan-mode bot on posts of its own thread or DM, like a reply (ADR 0137)',
     input: z.object({
       channelId: channelId('react'), postId: postId('react'),
       emoji: z.string().min(1).max(32).describe(D('react', 'emoji')),
