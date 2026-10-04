@@ -94,6 +94,22 @@ CREATE TABLE IF NOT EXISTS memory_state (
   value TEXT NOT NULL,
   PRIMARY KEY (kind, id)
 ) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS brain_stream (
+  seq INTEGER PRIMARY KEY AUTOINCREMENT,
+  bot_id TEXT NOT NULL,
+  at REAL NOT NULL,
+  kind TEXT NOT NULL,
+  data TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS brain_stream_bot ON brain_stream (bot_id, seq);
+CREATE TABLE IF NOT EXISTS brain_loops (
+  bot_id TEXT NOT NULL,
+  id TEXT NOT NULL,
+  status TEXT NOT NULL,
+  updated_at REAL NOT NULL,
+  data TEXT NOT NULL,
+  PRIMARY KEY (bot_id, id)
+) WITHOUT ROWID;
 `;
 const lateEnsured = new WeakSet();
 function ensureLateTables(db) {
@@ -398,6 +414,17 @@ export function memoryStateTable(db) {
       for (const row of prepared(db, 'SELECT kind, id, value FROM memory_state').iterate()) (out[row.kind] ??= {})[row.id] = JSON.parse(row.value);
       return out;
     },
+    /** 1 行の値（無ければ undefined）。bot の頭の中の状態など、1 体 1 行で毎回読むもの（loadAll は全部を読むので使わない） */
+    get(kind, id) {
+      const row = prepared(db, 'SELECT value FROM memory_state WHERE kind = ? AND id = ?').get(kind, id);
+      return row ? JSON.parse(row.value) : undefined;
+    },
+    /** kind の全行（{ [id]: 値 }）。id の前方一致で絞れる */
+    ofKind(kind, idPrefix = '') {
+      const out = {};
+      for (const row of prepared(db, 'SELECT id, value FROM memory_state WHERE kind = ? AND id >= ? AND id < ?').iterate(kind, idPrefix, `${idPrefix}￿`)) out[row.id] = JSON.parse(row.value);
+      return out;
+    },
     /** changes: [[kind, id, value]]。value が undefined なら行を消す。1 つのトランザクションで書く */
     save(changes) {
       if (!changes.length) return;
@@ -408,6 +435,65 @@ export function memoryStateTable(db) {
         }
       });
     },
+  };
+}
+
+// ---- bot の頭の中（思考の流れ・気がかり。ADR 0126）。思考の流れは心拍ごとに 1 行、気がかりは 1 件 1 行 ----------------
+// 思考の流れ brain_stream: 書くのは追記だけ（読むのは bot ごとの末尾と画面の一覧）。bot ごとに古い行を落とす（prune）ので、件数が際限なく増えない。
+// 気がかり brain_loops: (bot_id, id) の 1 行。開いているものは 1 体 12 件までに抑える（core/brain/store.mjs）。
+export function brainTable(db) {
+  ensureLateTables(db);
+  const streamRow = (row) => ({ seq: row.seq, botId: row.bot_id, at: row.at, kind: row.kind, ...JSON.parse(row.data) });
+  const loopRow = (row) => ({ botId: row.bot_id, id: row.id, status: row.status, updatedAt: row.updated_at, ...JSON.parse(row.data) });
+  return {
+    /** 1 行足す。足した行の seq を返す */
+    append(botId, at, kind, data) {
+      const info = prepared(db, 'INSERT INTO brain_stream (bot_id, at, kind, data) VALUES (?, ?, ?, ?)').run(botId, at, kind, jsonOf(data));
+      return Number(info.lastInsertRowid);
+    },
+    /** 新しい順に limit 件（before は seq。それより古い分）。画面の一覧 */
+    list(botId, { before = null, limit = 60 } = {}) {
+      const rows = before == null
+        ? prepared(db, 'SELECT seq, bot_id, at, kind, data FROM brain_stream WHERE bot_id = ? ORDER BY seq DESC LIMIT ?').all(botId, limit)
+        : prepared(db, 'SELECT seq, bot_id, at, kind, data FROM brain_stream WHERE bot_id = ? AND seq < ? ORDER BY seq DESC LIMIT ?').all(botId, before, limit);
+      return rows.map(streamRow);
+    },
+    /** 末尾の limit 件（古い順）。束に入れる分 */
+    tail(botId, limit) {
+      return prepared(db, 'SELECT seq, bot_id, at, kind, data FROM brain_stream WHERE bot_id = ? ORDER BY seq DESC LIMIT ?').all(botId, limit).reverse().map(streamRow);
+    },
+    /** at が since 以後の行（古い順）。朝に独り言の写りを突き合わせる材料 */
+    since(botId, since, limit = 2000) {
+      return prepared(db, 'SELECT seq, bot_id, at, kind, data FROM brain_stream WHERE bot_id = ? AND at >= ? ORDER BY seq LIMIT ?').all(botId, since, limit).map(streamRow);
+    },
+    count(botId) { return Number(prepared(db, 'SELECT COUNT(*) AS n FROM brain_stream WHERE bot_id = ?').get(botId).n); },
+    /** at が olderThan より前の行と、新しい keep 件より後ろの行を消す。消した件数を返す */
+    prune(botId, olderThan, keep) {
+      const cut = prepared(db, 'SELECT seq FROM brain_stream WHERE bot_id = ? ORDER BY seq DESC LIMIT 1 OFFSET ?').get(botId, Math.max(0, keep - 1));
+      let removed = Number(prepared(db, 'DELETE FROM brain_stream WHERE bot_id = ? AND at < ?').run(botId, olderThan).changes);
+      if (cut) removed += Number(prepared(db, 'DELETE FROM brain_stream WHERE bot_id = ? AND seq < ?').run(botId, cut.seq).changes);
+      return removed;
+    },
+    clearStream(botId) { return Number(prepared(db, 'DELETE FROM brain_stream WHERE bot_id = ?').run(botId).changes); },
+    loops(botId, status = null) {
+      const rows = status
+        ? prepared(db, 'SELECT bot_id, id, status, updated_at, data FROM brain_loops WHERE bot_id = ? AND status = ? ORDER BY updated_at').all(botId, status)
+        : prepared(db, 'SELECT bot_id, id, status, updated_at, data FROM brain_loops WHERE bot_id = ? ORDER BY updated_at').all(botId);
+      return rows.map(loopRow);
+    },
+    loop(botId, id) {
+      const row = prepared(db, 'SELECT bot_id, id, status, updated_at, data FROM brain_loops WHERE bot_id = ? AND id = ?').get(botId, id);
+      return row ? loopRow(row) : null;
+    },
+    putLoop(botId, id, status, updatedAt, data) {
+      prepared(db, 'INSERT INTO brain_loops (bot_id, id, status, updated_at, data) VALUES (?, ?, ?, ?, ?) ON CONFLICT (bot_id, id) DO UPDATE SET status = excluded.status, updated_at = excluded.updated_at, data = excluded.data').run(botId, id, status, updatedAt, jsonOf(data));
+    },
+    /** 手放した・解決した気がかりのうち、updated_at が olderThan より前のものを消す */
+    pruneLoops(botId, olderThan) {
+      return Number(prepared(db, "DELETE FROM brain_loops WHERE bot_id = ? AND status != 'open' AND updated_at < ?").run(botId, olderThan).changes);
+    },
+    clearLoops(botId) { return Number(prepared(db, 'DELETE FROM brain_loops WHERE bot_id = ?').run(botId).changes); },
+    transaction: (fn) => transaction(db, fn),
   };
 }
 

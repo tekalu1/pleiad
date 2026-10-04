@@ -35,6 +35,10 @@ const NAME_RX = /^[^\s@<>"'`.,;:!?、。，．！？：；()（）[\]{}「」『
 export const PERSONA_MAX_CHARS = 6000;   // 人格は 1.5k トークンまで（estimateTokens の上限の目安。日本語は 1 字 ≒ 1 トークン弱なので字数でも抑える）
 export const FOLDERS_MAX = 20;
 export const SEND_TARGETS_MAX = 100;
+/** 心拍の間隔（分）。既定 10。下限 5 はコードで持つ（bot が決めても 5 分より短くしない。ADR 0126） */
+export const PULSE_MIN_MINUTES = 5;
+export const PULSE_MAX_MINUTES = 60;
+export const PULSE_DEFAULT_MINUTES = 10;
 
 const oneEmoji = (s) => { const m = String(s ?? '').match(EMOJI_RE); return Boolean(m) && m.length === 1 && m[0] === s; };
 
@@ -53,6 +57,13 @@ export const personaProblem = (persona) => (typeof persona !== 'string' ? 'perso
 
 const str = (v, d = '') => (typeof v === 'string' ? v : d);
 const num = (v, d) => (Number.isFinite(v) ? v : d);
+
+/** 心拍の設定を整える。on は true のときだけ（既定は止めたまま）。間隔は 5〜60 分に丸める */
+export function normalizePulse(raw) {
+  const p = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
+  const every = Math.round(num(p.everyMin, PULSE_DEFAULT_MINUTES));
+  return { on: p.on === true, everyMin: Math.min(PULSE_MAX_MINUTES, Math.max(PULSE_MIN_MINUTES, every)), backend: str(p.backend), model: str(p.model), channelId: str(p.channelId) };
+}
 
 /** フォルダーの並び（先頭が既定の作業場所）。パスの重複（区切り・末尾の / ・Windows の大小）は先のものを残す */
 export function normalizeFolders(list) {
@@ -85,6 +96,7 @@ export function normalizeBot(raw, now = Date.now()) {
     sendTargets: [...new Set((Array.isArray(raw.sendTargets) ? raw.sendTargets : []).filter((s) => typeof s === 'string' && s))].slice(0, SEND_TARGETS_MAX),
     // Keep origins even after removal: later human references must not silently re-grant access.
     sendTargetSources: Object.fromEntries(Object.entries(raw.sendTargetSources ?? {}).filter(([id, source]) => id && ['shown', 'created', 'manual'].includes(source))),
+    pulse: normalizePulse(raw.pulse),
     dmChannelId: str(raw.dmChannelId), dmSessionId: typeof raw.dmSessionId === 'string' && raw.dmSessionId ? raw.dmSessionId : null,
     createdAt: num(raw.createdAt, now), updatedAt: num(raw.updatedAt, num(raw.createdAt, now)),
   };
