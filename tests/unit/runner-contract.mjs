@@ -11,6 +11,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { ROOT } from "../lib/server.mjs";
+import { ownedDescendants, reapOwned, killTagged, WORKER_TAG_ENV } from "../lib/process-reap.mjs";
 import { ArgError, parseArgs, extractSuiteName, loadRegistry, loadWeights, assignShards, heaviestFirst, weightOf } from "../lib/runner-plan.mjs";
 
 export const name = "runner-contract";
@@ -218,6 +219,56 @@ export default async function (t) {
       t.ok("--jobs 1 でも、例外・default が関数でない・name の不一致は失敗になり、残りは走る", d.code === 1 && ds["fx-pass-a"] === "pass" && ds["fx-throw"] === "error" && ds["fx-nodefault"] === "error" && Object.values(ds).includes("fail"), JSON.stringify(ds));
     }
 
+    // ---- 回収の判定（合成データ。pid の使い回し・止める直前の再確認・読めないときの扱い）-----------------------------------------------
+    {
+      const T0 = 1_000_000;   // worker を起こした時刻
+      const tbl = (rows) => new Map(rows.map(([pid, ppid, created]) => [pid, { ppid, created }]));
+      const root = { pid: 100, spawnedAt: T0, endedAt: T0 + 5000 };
+      const names = (m) => [...m.keys()].sort((a, b) => a - b);
+      t.ok("生きている worker の子孫（孫まで）を集める。root 自身・自分・無関係なプロセスは入れない", same(names(ownedDescendants(tbl([[100, 1, T0 + 10], [200, 100, T0 + 100], [300, 200, T0 + 200], [400, 1, T0 + 50], [500, 400, T0 + 60], [999, 100, T0 + 300]]), [{ pid: 100, spawnedAt: T0 }], 999)), [200, 300]));
+      t.ok("root の pid が別のプロセスに使い回されている（生まれた時刻が、起こした時刻と違う）なら、その新しい子孫も辿らない", ownedDescendants(tbl([[100, 1, T0 + 3_600_000], [200, 100, T0 + 3_600_500], [300, 200, T0 + 3_600_900]]), [root]).size === 0);
+      t.ok("root が死んでいて、その pid の子が root の死より後に生まれていたら（使い回された pid の子）辿らない。死ぬ前に生まれた子（本物の孫）は辿る", same(names(ownedDescendants(tbl([[200, 100, T0 + 1000], [201, 100, T0 + 3_600_000], [300, 201, T0 + 3_600_100]]), [root])), [200]));
+      t.ok("子が親より先に生まれていたら（親の pid が使い回された）辿らない", ownedDescendants(tbl([[100, 1, T0 + 10], [200, 100, T0 + 100], [300, 200, T0 - 600_000]]), [{ pid: 100, spawnedAt: T0 }]).has(300) === false);
+      t.ok("root の生まれた時刻が許容幅の中なら生きている root として辿る", ownedDescendants(tbl([[100, 1, T0 + 500], [200, 100, T0 + 900]]), [{ pid: 100, spawnedAt: T0 }]).has(200));
+      const kills = [];
+      const kill = (pid, sig) => { kills.push([pid, sig]); };
+      const live = tbl([[200, 100, T0 + 1000], [300, 200, T0 + 1100], [700, 1, T0 + 1200]]);
+      const r1 = reapOwned([root], { platform: "win32", list: () => live, kill });
+      t.ok("Windows: 鎖で辿れる子孫だけを止める（無関係な 700 は止めない）", r1.killed === 2 && same(kills.map((k) => k[0]).sort(), [200, 300]) && !r1.error, JSON.stringify({ r1, kills }));
+      kills.length = 0;
+      const r2 = reapOwned([root], { platform: "win32", list: () => null, kill });
+      t.ok("Windows: プロセス表が読めないときは error を返し、何も止めない（注意だけで成功にしない）", !!r2.error && r2.killed === 0 && kills.length === 0);
+      let calls = 0;
+      const r3 = reapOwned([root], { platform: "win32", list: () => (++calls === 1 ? live : null), kill });
+      t.ok("Windows: 止める直前の再読みができなければ error・何も止めない", !!r3.error && kills.length === 0);
+      calls = 0;
+      const r4 = reapOwned([root], { platform: "win32", list: () => (++calls === 1 ? live : tbl([[200, 100, T0 + 1000], [300, 4242, T0 + 1100]])), kill });
+      t.ok("Windows: 読んでから止めるまでに別のプロセスへ変わったもの（親が違う）は止めない", same(kills.map((k) => k[0]), [200]) && r4.killed === 1, JSON.stringify(kills));
+      calls = 0;
+      kills.length = 0;
+      reapOwned([root], { platform: "win32", list: () => (++calls === 1 ? live : tbl([[200, 100, T0 + 77_000], [300, 200, T0 + 1100]])), kill });
+      t.ok("Windows: 生まれた時刻が変わっていたもの（pid の使い回し）は止めない", same(kills.map((k) => k[0]), [300]), JSON.stringify(kills));
+      kills.length = 0;
+      reapOwned([{ pid: 100, spawnedAt: T0 }], { platform: "win32", list: () => tbl([[100, 1, T0 + 10], [200, 100, T0 + 100]]), kill });
+      t.ok("root が今も生きている場合も、子孫だけを止める（root は止めない。root は呼び出し側が止める）", same(kills.map((k) => k[0]), [200]));
+
+      // Linux: 環境変数の印（/proc/<pid>/environ）。偽の /proc で
+      const proc = path.join(tmp, "fakeproc");
+      for (const [pid, env] of [[10, `A=1\0${WORKER_TAG_ENV}=run-w1\0B=2`], [11, `${WORKER_TAG_ENV}=run-w2\0`], [12, "A=1\0B=2"], [13, `${WORKER_TAG_ENV}=run-w1`], [14, `${WORKER_TAG_ENV}=run-w1x`], [15, `X${WORKER_TAG_ENV}=run-w1`]]) {
+        fs.mkdirSync(path.join(proc, String(pid)), { recursive: true });
+        fs.writeFileSync(path.join(proc, String(pid), "environ"), env);
+      }
+      fs.mkdirSync(path.join(proc, "notapid"));
+      fs.mkdirSync(path.join(proc, "16"));   // environ が読めない
+      kills.length = 0;
+      const n = killTagged(["run-w1"], { procDir: proc, kill, selfPid: 13 });
+      t.ok("印（worker ごとの一意の文字列）が完全一致するプロセスだけを止める（別の worker の印・印なし・前方一致・別の変数名・自分・読めないものは止めない）", n === 1 && same(kills, [[10, "SIGKILL"]]), JSON.stringify(kills));
+      t.ok("印の一覧が空・/proc が無いときは何もしない", killTagged([], { procDir: proc, kill }) === 0 && killTagged(["x"], { procDir: path.join(tmp, "none"), kill }) === 0);
+      kills.length = 0;
+      const rp = reapOwned([{ pid: 4321, spawnedAt: T0, tag: "run-w2" }], { platform: "linux", kill });
+      t.ok("POSIX: worker のグループへ kill（-pid）してから、印のあるものを探す（本物の /proc に印が無ければ、グループだけ）", kills.some((k) => k[0] === -4321 && k[1] === "SIGKILL") && rp.killed >= 1);
+    }
+
     // ---- 孫のプロセスの回収（所有した worker の子孫だけ。ほかのプロセスには触れない）------------------------------------------------------
     {
       const outDir = path.join(tmp, "orphans");
@@ -232,11 +283,24 @@ export default async function (t) {
       const gone = await waitFor(() => pids.every((p) => !alive(p)), 8000);
       const st = Object.fromEntries(O.suites.map((x) => [x.name, x.status]));
       t.ok("worker が途中で死んだ suite は crash の失敗・suite が子を残して普通に終わったものと、ほかは通る", r.code === 1 && st["fx-orphan"] === "crash" && st["fx-leak"] === "pass" && st["fx-pass-a"] === "pass" && st["fx-pass-b"] === "pass", JSON.stringify(st));
-      t.ok("worker が起こした孫（worker の出力を掴んだまま居座る子・detached の子・普通の子・suite が残した子）は、ランナーが終わるまでに残らない（POSIX の detached だけは、グループを抜けるので範囲外）", pids.length === 4 && (gone || (process.platform !== "win32" && [orphan.plain, orphan.holder, leak.child].every((p) => !alive(p)))), JSON.stringify({ orphan, leak, aliveNow: pids.filter(alive) }));
+      t.ok("worker が起こした孫（worker の出力を掴んだまま居座る子・detached の子・普通の子・suite が残した子）は、ランナーが終わるまでに残らない（detached の子は、Windows は親子の鎖で・Linux は worker ごとの環境変数の印で見つける。印の読める /proc が無い macOS だけは、グループを抜けた子が範囲外）", pids.length === 4 && (gone || (process.platform === "darwin" && [orphan.plain, orphan.holder, leak.child].every((p) => !alive(p)))), JSON.stringify({ orphan, leak, aliveNow: pids.filter(alive) }));
       t.ok("worker（死んだもの・終わったもの）も残らない", O.workers.every((w) => !alive(w.pid)) && O.workers.every((w) => w.dataDirRemoved === true), JSON.stringify(O.workers.map((w) => [w.id, w.pid, w.dataDirRemoved])));
       t.ok("関係ないプロセス（ユーザーの別の作業の代わり）には触れない", alive(bystander.pid));
       t.ok("回収した本数が timings に残る（Windows は detached の子を鎖で辿って止める）", process.platform !== "win32" || O.reapedProcesses >= 1, JSON.stringify({ reaped: O.reapedProcesses, errors: O.reapErrors }));
       t.ok("終了コード 1（worker の死は失敗）", r.code === 1);
+
+      // 実際の経路: core/host-shell.mjs（POSIX は detached のシェル。入力欄の `!` と同じ）で孫を起こしたまま worker が死ぬ
+      const shellOut = path.join(tmp, "shell");
+      fs.mkdirSync(shellOut);
+      const rs = await fixtureRun(["./fx-pass-a.mjs", "./fx-shell.mjs"], ["--jobs", "2", "--timings", path.join(tmp, "sh.json")], { RUNNER_FIXTURE_OUT: shellOut });
+      const SH = read(path.join(tmp, "sh.json"));
+      const shellChild = readJsonIf(path.join(shellOut, "child-fx-shell.json"));
+      if (shellChild) stray.push(shellChild.child);
+      const shellGone = shellChild && process.platform !== "win32" ? await waitFor(() => !alive(shellChild.child), 8000) : null;
+      // Windows の Git Bash（msys）は、孫を自分の子として起こした後、仲介のプロセスが worker の死と一緒に消えると親子の鎖が切れる（孫の親が存在しない pid になる）。
+      // 鎖で辿れず、ほかの作業のプロセスと区別する印も無いので、この場合だけは回収を保証しない（止められるのは worker が生きている間の取り消し・正常な終わり）。ここでは残りものを最後に止める
+      t.ok("ホストのシェル（core/host-shell.mjs）が起こした孫は、worker が途中で死んでも残らない（POSIX。Windows の Git Bash 経由は保証しない）", rs.code === 1 && SH.suites.find((x) => x.name === "fx-shell")?.status === "crash" && !!shellChild && (process.platform === "win32" || !!shellGone), JSON.stringify({ code: rs.code, shellChild, alive: shellChild && alive(shellChild.child), tail: rs.stdout.slice(-300) }));
+      t.ok("そのときも関係ないプロセスには触れない", alive(bystander.pid));
     }
     {
       // 親のランナー（入口のプロセス）を外から止める: worker は自分と子孫（suite が起こしたもの）を残さない
@@ -252,6 +316,12 @@ export default async function (t) {
       const reaped = info ? await waitFor(() => !alive(info.worker) && !alive(info.child), 15_000) : null;
       t.ok("親のランナーが止められると、worker と、その suite が起こした孫が残らない", !!reaped, JSON.stringify({ info, workerAlive: info && alive(info.worker), childAlive: info && alive(info.child) }));
       t.ok("関係ないプロセスには触れない（取り消しのとき）", alive(bystander.pid));
+    }
+
+    if (process.platform === "win32") {
+      // プロセス表（PowerShell）が読めない環境: 子孫が残っていないか確かめられないので、注意だけで成功にせず失敗にする
+      const blind = await fixtureRun(["./fx-pass-a.mjs", "./fx-pass-b.mjs"], ["--jobs", "2"], { PATH: path.dirname(process.execPath), SystemRoot: "" });
+      t.ok("Windows: プロセス表が読めないと、suite が全部通っても終了コード 1（回収を確かめられなかったことを失敗に数える）", blind.code === 1 && blind.stdout.includes("子孫のプロセスの回収を確かめられなかった"), `${blind.code} ${blind.stdout.slice(-300)}`);
     }
 
     // ---- 不正な引数・登録は、何も走らせない -------------------------------------------------------------------------------------

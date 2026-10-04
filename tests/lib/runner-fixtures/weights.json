@@ -15,6 +15,7 @@
     "fx-probe": 10,
     "fx-orphan": 10,
     "fx-leak": 10,
-    "fx-hang": 10
+    "fx-hang": 10,
+    "fx-shell": 10
   }
 }

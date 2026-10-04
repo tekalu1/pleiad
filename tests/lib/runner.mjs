@@ -15,7 +15,7 @@ import { pathToFileURL, fileURLToPath } from "node:url";
 import { Suite, runCase, summarize, pick } from "./harness.mjs";
 import { snapshotPleiadWorktrees, leakedWorktrees } from "./worktree-guard.mjs";
 import { installDomStub } from "./dom-stub.mjs";
-import { reapOwned } from "./process-reap.mjs";
+import { reapOwned, WORKER_TAG_ENV } from "./process-reap.mjs";
 import { ArgError, USAGE, parseArgs, loadRegistry, loadWeights, weightOf, isWeighted, heaviestFirst, assignShards, planHash } from "./runner-plan.mjs";
 
 const WORKER_PATH = fileURLToPath(new URL("./run-worker.mjs", import.meta.url));
@@ -126,6 +126,7 @@ async function runPool({ entries, jobs, root, weights, parentDataDir }) {
   // 親の置き場は渡さない。worker は自分で一時ディレクトリを作る（tests/lib/test-env.mjs）
   delete env.AGENT_HOST_DATA;
 
+  const runTag = Date.now().toString(36);
   let alive = 0;
   let reaped = 0;
   const reapErrors = [];
@@ -156,7 +157,7 @@ async function runPool({ entries, jobs, root, weights, parentDataDir }) {
 
   /** ws の worker が起こした子孫（suite が起こしたサーバーなど）のうち残っているものだけを止める。範囲は worker の pid から鎖で辿れるものだけ（tests/lib/process-reap.mjs） */
   const reapRoots = (ws) => {
-    const r = reapOwned(ws.map((w) => ({ pid: w.pid, spawnedAt: w.spawnedAt })));
+    const r = reapOwned(ws.map((w) => ({ pid: w.pid, spawnedAt: w.spawnedAt, endedAt: w.endedAt, tag: w.tag })));
     reaped += r.killed;
     if (r.error && !reapErrors.includes(r.error)) reapErrors.push(r.error);
   };
@@ -179,10 +180,11 @@ async function runPool({ entries, jobs, root, weights, parentDataDir }) {
     const id = nextId++;
     const spawnedAt = Date.now();
     // POSIX は worker を自分のプロセスグループにする（死んだ後もグループへの kill で、残った子孫だけを止められる）
+    const tag = `${process.pid}-${runTag}-w${id}`;
     const child = fork(WORKER_PATH, [parentDataDir ?? ""], {
-      env, stdio: ["ignore", "pipe", "pipe", "ipc"], windowsHide: true, detached: process.platform !== "win32",
+      env: { ...env, [WORKER_TAG_ENV]: tag }, stdio: ["ignore", "pipe", "pipe", "ipc"], windowsHide: true, detached: process.platform !== "win32",
     });
-    const w = { id, child, pid: child.pid, spawnedAt, ready: false, busy: null, dataDir: null, tail: [], done: 0, busyMs: 0, exit: null, closed: false, exiting: false, fatal: null, killTimer: null };
+    const w = { id, child, pid: child.pid, spawnedAt, tag, ready: false, busy: null, dataDir: null, tail: [], done: 0, busyMs: 0, exit: null, closed: false, exiting: false, fatal: null, killTimer: null };
     workers.push(w);
     alive++;
 
@@ -227,11 +229,12 @@ async function runPool({ entries, jobs, root, weights, parentDataDir }) {
     child.on("exit", async (code, signal) => {
       clearTimeout(w.killTimer);
       w.closed = true;
+      w.endedAt = Date.now();
       w.exit = { code, signal };
       const expected = w.exiting && code === 0;
       const abnormal = !expected || !!w.busy;
       // 予定外の終わり（suite の途中・終わりの合図なし・終了コード非 0）は、worker が起こした子孫を今すぐ止める。ほかの worker は動いたまま
-      if (abnormal) reapRoots([w]);
+      if (abnormal || process.platform !== "win32") reapRoots([w]);
       await Promise.race([pipesClosed, new Promise((r) => setTimeout(r, 300))]);
       child.stdout.destroy();
       child.stderr.destroy();
@@ -275,7 +278,7 @@ async function runPool({ entries, jobs, root, weights, parentDataDir }) {
   }
 
   // 全員の終わった後、suite が残した子孫（正常に終わった worker の分も）を止めてから、worker の置き場を消す（掴まれていると消せない）
-  reapRoots(workers);
+  if (process.platform === "win32") reapRoots(workers.filter((w) => w.closed));
   for (const w of workers) removeWorkerData(w.dataDir);
 
   for (const [name, n] of completions) if (n > 1) problems.push(`${name} が ${n} 回走った`);
@@ -406,9 +409,10 @@ export async function main({ suites: files, baseDir, unitDir = null, argv, root,
   const after = await snapshotPleiadWorktrees(root);
   if (ran.reaped) console.log(`
   後始末: worker の子孫のプロセス ${ran.reaped} 本を止めた（suite が起こして残したもの・worker が途中で死んで残ったもの）`);
-  for (const e of ran.reapErrors) console.log(`  注意: 子孫のプロセスの回収を確かめられなかった — ${e}`);
+  for (const e of ran.reapErrors) console.log(`  NG  子孫のプロセスの回収を確かめられなかった — ${e}`);
 
-  const problemsRun = [...ran.problems];
+  // 回収を確かめられなかったときは、注意だけで成功にしない
+  const problemsRun = [...ran.problems, ...ran.reapErrors.map((e) => `子孫のプロセスの回収を確かめられなかった: ${e}`)];
   // 登録した suite がちょうど 1 回ずつ走ったか
   const got = new Map();
   for (const r of ran.records) got.set(r.entry.name, (got.get(r.entry.name) ?? 0) + 1);
