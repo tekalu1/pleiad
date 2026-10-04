@@ -130,6 +130,7 @@
   "computer": {
     "overlay": {
       "who": "{{agent}} is using your computer",
+      "held": "{{agent}} is holding your computer",
       "title": "“{{title}}”",
       "hint": "Esc to stop",
       "stopped": "Stopped"

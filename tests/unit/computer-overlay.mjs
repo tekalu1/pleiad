@@ -1,5 +1,6 @@
-// コンピューターの操作中のオーバーレイと Esc（docs/computer-use.md「core と main」、ADR 0072・0073）の、Electron を起こさずに確かめられる部分。
-//   - main（desktop/computer-overlay.cjs）を偽の electron で: 窓の作り・撮影から外す・6 秒のフェード・ターンの終わりですぐ消す・承認待ちで消す・
+// コンピューターの操作中のオーバーレイと Esc（docs/computer-use.md「core と main」、ADR 0072・0073・0129）の、Electron を起こさずに確かめられる部分。
+//   - main（desktop/computer-overlay.cjs）を偽の electron で: 窓の作り・撮影から外す・6 秒で「使用中」へ・委譲の子から返ったら「使用中」・
+//     ターンの終わりですぐ消す・承認待ちで消す・
 //     Esc は出ている間だけ握る・登録に失敗したらヒントを出さない・注入の前後で外して戻す・止めました 1.2 秒・倍率の違うモニターの座標
 //   - 描画の部品（desktop/computer-overlay-view.cjs）: イージング・カーソルの経路と時間
 // OS のキー入力は送らない。globalShortcut も偽物。
@@ -70,6 +71,7 @@ function fakeElectron({ registerOk = true, displays = [D1, D2] } = {}) {
 
 const dict = {
   'computer.overlay.who': ({ agent }) => `${agent} が操作中`,
+  'computer.overlay.held': ({ agent }) => `${agent} が PC を使用中`,
   'computer.overlay.title': ({ title }) => `「${title}」`,
   'computer.overlay.hint': () => 'Esc で止める',
   'computer.overlay.stopped': () => '止めました',
@@ -171,19 +173,82 @@ export default async function (t) {
     h.overlay.close();
   }
 
-  // ---------------------------------------------------------------- 6 秒のフェード・すぐ消す・承認待ち
+  // ---------------------------------------------------------------- 6 秒で「使用中」・すぐ消す・承認待ち
   {
     const h = setup();
     h.send({ type: 'computer-arm', owner: 'o1' });
     h.activity(); await sleep(35);
     h.activity(); await sleep(35);
-    t.ok('activity が来るたびに数え直す（最初から 70ms 経っても残る）', h.win(0).visible && !h.win(0).ops.includes('hide'));
+    t.ok('activity が来るたびに数え直す（最初から 70ms 経っても残る）', h.win(0).visible && !h.win(0).ops.includes('rest') && !h.win(0).ops.includes('hide'));
     await sleep(60);
-    t.ok('最後の操作から idleMs で縁を引く（kind: idle）', lastPayload(h.win(0), 'hide')?.kind === 'idle');
-    t.ok('フェードに入ったら Esc を離す（ほかのアプリの Esc を奪わない）', !h.overlay.snapshot().escapeRegistered && h.shortcuts.at(-1) === 'unregister:Escape');
+    const rest = lastPayload(h.win(0), 'rest');
+    t.ok('最後の操作から idleMs たってもロックの持ち主なら、消さずに「使用中」にする（rest）', rest && !h.win(0).ops.includes('hide') && h.win(0).visible && h.overlay.snapshot().phase === 'held');
+    t.ok('「使用中」のピルは「Claude が PC を使用中」と会話のタイトル。Esc のヒントは出さない', rest?.pill.who === 'Claude が PC を使用中' && rest.pill.title === '「請求書の入力」' && rest.pill.hint === '');
+    t.ok('「使用中」の間は Esc を離す（長く続くので、ほかのアプリの Esc を奪わない）', !h.overlay.snapshot().escapeRegistered && h.shortcuts.at(-1) === 'unregister:Escape');
+    await sleep(FAST.idleMs + 40);
+    t.ok('「使用中」は時間では消えない', h.win(0).visible && h.overlay.snapshot().phase === 'held' && !h.win(0).ops.includes('hide'));
+    const resume = h.overlay.suspendEscape(); resume();
+    t.ok('「使用中」の間に注入の後で戻しても Esc は握らない', !h.overlay.snapshot().escapeRegistered);
+    h.activity({ cursor: { x: 100, y: 100 } }); await sleep(2);
+    t.ok('次の操作で同じ窓のまま操作中に戻る（show・「Claude が操作中」· Esc で止める）。Esc も握り直す',
+      h.wins.length === 1 && lastPayload(h.win(0), 'show')?.pill.who === 'Claude が操作中' && lastPayload(h.win(0), 'show').pill.hint === 'Esc で止める'
+      && h.overlay.snapshot().phase === 'active' && h.overlay.snapshot().escapeRegistered);
+    await sleep(FAST.idleMs + 20);
+    h.send({ type: 'computer-turn-ended', owner: 'o1' });
+    t.ok('「使用中」からもターンの終わりですぐ消す', lastPayload(h.win(0), 'hide')?.kind === 'now');
+    await sleep(30);
+    t.ok('そして窓を隠す', !h.win(0).visible && h.overlay.snapshot().phase === null);
+    h.overlay.close();
+  }
+
+  {
+    const h = setup();
+    h.activity(); await sleep(FAST.idleMs + 10);
+    t.ok('ロックの持ち主が分からない（arm がまだ来ない）ときは、今までどおり idleMs で縁を引く（kind: idle）', lastPayload(h.win(0), 'hide')?.kind === 'idle' && !h.win(0).ops.includes('rest'));
+    t.ok('フェードに入ったら Esc を離す', !h.overlay.snapshot().escapeRegistered);
     await sleep(30);
     t.ok('消え終わったら窓を隠す', !h.win(0).visible && h.overlay.snapshot().phase === null);
-    t.ok('ターンは続いている: 次の操作で同じ窓を使って戻り、Esc も握り直す', (h.activity(), h.wins.length === 1 && h.win(0).visible && h.overlay.snapshot().escapeRegistered));
+    t.ok('次の操作で同じ窓を使って戻り、Esc も握り直す', (h.activity(), h.wins.length === 1 && h.win(0).visible && h.overlay.snapshot().escapeRegistered));
+    h.overlay.close();
+  }
+
+  for (const [label, message, op] of [
+    ['持ち主が変わった（arm）', { type: 'computer-arm', owner: 'o2' }, 'hide'],
+    ['持ち主がいなくなった（arm: null）', { type: 'computer-arm', owner: null }, 'hide'],
+    ['承認を待つ（hide）', { type: 'computer-overlay', owner: 'o1', state: 'hide' }, 'hide'],
+    ['会話の「止める」（computer-stop）', { type: 'computer-stop', owner: 'o1' }, 'stop'],
+  ]) {
+    const h = setup();
+    h.send({ type: 'computer-arm', owner: 'o1' });
+    h.activity(); await sleep(FAST.idleMs + 10);
+    h.send(message);
+    t.ok(`「使用中」から: ${label}で ${op} を送る`, h.overlay.snapshot().phase !== 'held' && h.win(0).ops.at(-1) === op, h.win(0).ops.join());
+    h.overlay.close();
+  }
+
+  // ---------------------------------------------------------------- 委譲の子へ貸して返る（ADR 0072 の貸し借り）
+  {
+    const h = setup();
+    h.send({ type: 'computer-arm', owner: 'P' });
+    h.activity({ owner: 'P', title: '親の会話' }); await sleep(FAST.idleMs + 10);
+    t.ok('親: 操作の合間は「使用中」', h.overlay.snapshot().phase === 'held' && h.overlay.snapshot().owner === 'P');
+    h.send({ type: 'computer-arm', owner: 'C' });
+    t.ok('子へ貸すと親の表示を消す', lastPayload(h.win(0), 'hide')?.kind === 'now');
+    h.activity({ owner: 'C', title: '子の会話', display: { id: 22, index: 2, bounds: PHYS[22], scale: 1.5 } }); await sleep(5);
+    t.ok('子の操作は子の会話の名前で出る（別のディスプレイ）', h.wins.length === 2 && lastPayload(h.win(1), 'show')?.pill.title === '「子の会話」' && h.overlay.snapshot().owner === 'C');
+    h.send({ type: 'computer-arm', owner: 'P' }); // 子のターンが終わると、ロックは親へ返る（core は arm を先に、turn-ended を後に送る）
+    h.send({ type: 'computer-turn-ended', owner: 'C' });
+    await sleep(5);
+    const back = lastPayload(h.win(0), 'rest');
+    t.ok('親へ返ったら、親が最後に操作したディスプレイに「使用中」で出す（操作は次まで無い）',
+      h.win(0).visible && back?.pill.title === '「親の会話」' && back.pill.who === 'Claude が PC を使用中' && h.overlay.snapshot().owner === 'P' && h.overlay.snapshot().phase === 'held', h.win(0).ops.join());
+    t.ok('子の窓は引っ込める。親の「使用中」では Esc を握らない', lastPayload(h.win(1), 'hide')?.kind === 'now' && !h.overlay.snapshot().escapeRegistered);
+    await sleep(40);
+    t.ok('子の窓は消え終わったら隠す', !h.win(1).visible && h.win(0).visible);
+    h.send({ type: 'computer-arm', owner: 'C' });
+    t.ok('ターンを終えた子へは戻さない（覚えた場所はターンの終わりで捨てる）', lastPayload(h.win(0), 'hide') && h.overlay.snapshot().owner !== 'C');
+    h.send({ type: 'computer-arm', owner: 'X' });
+    t.ok('一度も出していない持ち主へ移っても何も出さない', h.overlay.snapshot().owner !== 'X');
     h.overlay.close();
   }
 
