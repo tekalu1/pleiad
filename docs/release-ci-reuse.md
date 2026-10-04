@@ -28,7 +28,8 @@ CI が赤ければ公開しない。使える成功が無ければ、今まで�
 | `cancelled`（次の push に取り消された）・`skipped`・`neutral` など | `fallback` |
 | 必須のジョブの欠け・重複・一部だけの成功、run の総合の `success` だけ、jobs を読めない | `fallback` |
 | 別の commit・別の workflow・PR・手動の起動・別の枝の成功しか無い | `fallback` |
-| API の失敗が 3 回続いた | `fallback`。テストを省く方には倒さない |
+| `reuse` と判定した直後に run を読み直すと、attempt・状態・結論が変わっていた（jobs を読んだ後に再実行が始まった） | 待つ。新しい attempt を同じ規則で見直す |
+| API の失敗（HTTP の失敗・時間切れ）が 3 回続いた | `fallback`。テストを省く方には倒さない |
 
 必須の 6 ジョブ（`REQUIRED_JOBS`）は、test.yml が main の push で回す `test (ubuntu-latest, 22.13)`・`test (ubuntu-latest, 24)`・`test (windows-latest, 22.13)` と `safe-storage (windows-dpapi)`・`safe-storage (linux-gnome-keyring)`・`safe-storage (linux-no-keyring)`。
 週次・手動だけの `safe-storage-macos` は push では `skipped` になるので数えない。
@@ -38,7 +39,9 @@ test.yml の matrix やジョブを変えたら `REQUIRED_JOBS` も合わせる�
 
 - 30 秒ごとに読み直し、40 分で打ち切る（`--wait-minutes 40`。test.yml のジョブの上限は 30 分）。打ち切ったら `fallback`。
 - 始めの 5 分は、run が無いのも待つ（`--missing-grace-minutes 5`）。タグと main を同時に push すると、release が test.yml の run より先に始まることがあるため。
+- API の 1 回の呼び出しは、応答の本文を読み終えるまでを 20 秒で打ち切る（`--request-timeout-seconds 20`）。接続や本文が止まっても、待ちの期限の判定へ戻る。
 - 待つのは `ci-gate`（ubuntu）で、Windows の runner は使わない。ジョブの上限は 50 分。
+- 引数は、知らない名前・同じ名前の 2 回目・10 進の 0 以上の数でない時間（NaN・Infinity・負など）・0 の間隔と時間切れを拒み、`ci-gate` を落とす（公開しない）。綴りを間違えた設定が既定値で走らないようにするため。
 
 ## CI との環境の差
 
@@ -52,6 +55,18 @@ test.yml の matrix やジョブを変えたら `REQUIRED_JOBS` も合わせる�
 | runner の image | どちらも `windows-latest`。image の版までは揃えない |
 
 署名・ビルド・配布物の検査（`build-evaluation.ps1` の署名の確認、`release-artifacts.mjs`、アップロードしたものの SHA-256 の照合）は今までどおり release で行う。
+
+## 保証の範囲
+
+- 公開を止められるのは、照合が**読めた**結果が赤のときだけ。
+- 次のときは `fallback` で release の中のテストを全部回し、通れば公開まで進む。
+  - API の結果が分からない（失敗・時間切れが続いた）
+  - 期限までに終わらなかった
+  - run が無い
+  - `cancelled`
+
+  このとき main の CI が赤かどうかは分からないままで、照合はそれを保証しない。保証は「release の中の全部のテストが通った」ことだけになる。
+- `reuse` の直前の読み直しの後に始まった再実行は見ない。その attempt が後で赤くなっても、公開は止まらない（同じ commit で、揃った成功を一度確かめている）。
 
 ## 止まったとき
 
