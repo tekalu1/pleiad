@@ -59,7 +59,7 @@ Windows の arm64 は実機で未確認。ワークフローで arm64 の koffi 
 | core→main | `computer-call` | `{ id, owner, op, args }`（op は下の表） |
 | main→core | `computer-result` | `{ id, ok: true, data }` か `{ id, ok: false, error: { code, message } }` |
 | main→core | `computer-displays-changed` | `{ displays, displaysVersion }`。`screen` の `display-added` / `display-removed` / `display-metrics-changed` で版を 1 進める |
-| core→main | `computer-arm` | `{ owner }` / `{ owner: null }`。ロックの持ち主が変わった。持ち主が変わると、main は前の持ち主の押したままの入力を離し（`releaseAll`）、その持ち主のオーバーレイを消す |
+| core→main | `computer-arm` | `{ owner }` / `{ owner: null }`。ロックの持ち主が変わった。持ち主が変わると、main は前の持ち主の押したままの入力を離し（`releaseAll`）、その持ち主のオーバーレイを消す。前にオーバーレイを出したことのある持ち主へ戻ったとき（委譲の子のターンが終わって親へ返った）は、その持ち主が最後に操作したディスプレイに「使用中」で出す |
 | core→main | `computer-heartbeat` | `{ owner }`。持ち主がいる間、core が 10 秒ごとに送る |
 | core→main | `computer-overlay` | `{ owner, state, display, agent, title, cursor? }`。`state` は `activity` / `stopped` / `hide`。`cursor` は `{ x, y, pressed }`（物理）。`display` は `displays` の要素（`{ id, index, bounds, … }`）。main は物理の `bounds` でモニターを決める |
 | main→core | `computer-escape` | `{ owner }`。物理の Esc を拾った |
@@ -121,9 +121,9 @@ main の約束:
 
 - 操作は 1 本の列で直列に流す。固まりうる呼び出しは koffi の async で別スレッドに逃がす。
 - 押したキーとボタンを覚えておき、`releaseAll` で押したものだけを離す。例外でも `finally` で離す。`releaseAll` を行うのは Esc・`computer-stop`・`computer-turn-ended`・持ち主の変更・worker の終了・`will-quit`・番犬（持ち主がいるのに 30 秒 `computer-heartbeat` も他のメッセージも来ない）。
-- Esc は `globalShortcut.register('Escape')` をオーバーレイが出ている間だけ持つ。`key` / `keyDown` に Escape があるときは、送る前に解除し、送った後に戻す（自分の注入では止まらない）。登録に失敗したらピルに「Esc で止める」を出さず、ログに 1 行残す。
+- Esc は `globalShortcut.register('Escape')` をオーバーレイが操作中を出している間だけ持つ（「使用中」の間は持たない）。`key` / `keyDown` に Escape があるときは、送る前に解除し、送った後に戻す（自分の注入では止まらない）。登録に失敗したらピルに「Esc で止める」を出さず、ログに 1 行残す。
 - Esc を拾ったら `releaseAll` → ピルを「止めました」にして 1.2 秒 → 消す → `computer-escape`。`computer-stop` でも同じ順（最後の送り返しは無い）。
-- `activity` が来るたびに 6 秒を数え直し、過ぎたらフェードして消す。`hide` と `computer-turn-ended` ではすぐ消す。
+- `activity` が来るたびに 6 秒を数え直す。過ぎてもそのターンがロックの持ち主なら、消さずに「使用中」（薄い縁と「{エージェント名} が PC を使用中」のピル）にし、時間では消さない。持ち主が分からないときだけフェードして消す。`hide`・`computer-turn-ended`・持ち主の変更ではすぐ消す（[ADR 0129](adr/0129-computer-use-overlay-held.md)）。
 - **Pleiad の窓には `setContentProtection` を掛けない**。撮影から外すのはオーバーレイの窓だけ（2026-10-01 に決めた）。
 
 ### main の実装（`desktop/computer/`）
@@ -178,6 +178,8 @@ electron tests/manual/computer-use-probe.cjs             # VM の中で。メモ
 | Esc | オーバーレイが出ている間の物理の Esc で、押したままの入力が離れ、次の `input` が `stopped` になる（C と一緒に確かめる）。Esc を送る `key` では自分の注入で止まらない |
 | 番犬 | `computer-arm` の後に core を落とす（ターンの途中でプロセスを止める）と、約 30 秒後に押したままのボタンが離れる |
 | 署名済みのインストーラー | `npm run desktop:dist` の成果物で koffi が読めて、`computer-ready { supported: true }` が返る（Windows の arm64 は下の注を参照） |
+
+オーバーレイ（枠）が出たかは、撮影では確かめられない（`setContentProtection` で写らない）。PC でも読み取りだけで確かめられる: 題が `Pleiad overlay` の窓を `EnumWindows` で探し、`IsWindowVisible` を 0.15 秒ごとに記録して、`ply_computer` の呼び出しの時刻と並べる。枠は呼び出しの直後に出る（2026-10-04 に親・ネイティブのサブエージェント・委譲の子で確かめ、どれも出た）。「使用中」も窓は見えたままなので、操作中と見分けるには描画への指示（`show` / `rest`）を見る。
 
 arm64 の注: koffi 3 のネイティブ本体は `@koromix/koffi-<os>-<arch>` という別のパッケージで、`npm ci` はビルド機の分（x64 のランナーなら `win32-x64`）しか入れない。x64 のランナーで作る Windows の arm64 のインストーラーには arm64 の本体が入らず、そこでは `computer-ready { supported: false, reason: 'native' }` になる。そのため `evaluation-release.yml`・`desktop-release.yml`・`desktop.yml` は `npm ci` の後に `npm install --no-save --force @koromix/koffi-win32-arm64@<koffi の版>` で arm64 の本体を足し、`scripts/release-preflight.mjs` が両方の本体の有無を確かめる。実機の arm64 で読めるかは未確認。
 

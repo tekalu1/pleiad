@@ -1,8 +1,9 @@
 // オーバーレイの描画（desktop/computer-overlay.html）。ふつうの script として読む（file: ではモジュールを読めないため）。
 // Node（tests/unit/computer-overlay.mjs）から require したときは、描く前の純粋な部品だけを返す。
-// 動きの数値は ADR 0073。main（desktop/computer-overlay.cjs）が送る { op: show | pill | cursor | hide | stop } だけで動く。
+// 動きの数値は ADR 0073・0129。main（desktop/computer-overlay.cjs）が送る { op: show | rest | pill | cursor | hide | stop } だけで動く。
 (function () {
-  const OVC = { enter: 480, exit: 600, escExit: 360, rmFade: 150, pillDelay: 120, pillHold: 1200, half: 2000, restDepth: 30, maxDepth: 36 };
+  // heldDepth / heldOpacity: 操作の合間（rest）の縁。呼吸を止め、にじみを浅く・全体を薄くする
+  const OVC = { enter: 480, exit: 600, escExit: 360, rmFade: 150, pillDelay: 120, pillHold: 1200, half: 2000, restDepth: 30, maxDepth: 36, heldDepth: 10, heldOpacity: .6 };
 
   /** CSS の cubic-bezier と同じ曲線 */
   function bez(p1x, p1y, p2x, p2y) {
@@ -67,9 +68,27 @@
       glow.style.transition = `opacity ${OVC.enter}ms cubic-bezier(.2,.7,.2,1)`; glow.style.opacity = 1;
       S.enterT = setTimeout(() => { gi.style.transition = 'none'; gi.style.animation = `cuBreathe ${OVC.half}ms cubic-bezier(.37,0,.63,1) infinite alternate-reverse`; }, OVC.enter);
     }
-    pill.classList.remove('stopped');
+    pill.classList.remove('stopped', 'held');
     pill.style.transitionDuration = S.rm ? `${OVC.rmFade}ms` : '';
     S.pillT = setTimeout(() => pill.classList.add('in'), S.rm ? 0 : OVC.pillDelay);
+  }
+
+  /** 操作の合間: 縁を 600ms で浅く薄くして止め、カーソルを引っ込め、ピルを「使用中」にして残す。消えていたところからも出せる（子から持ち主が戻ったとき） */
+  function rest(message) {
+    clearTimeout(S.exitT); clearTimeout(S.pillT); clearTimeout(S.enterT);
+    S.rm = typeof message.rm === 'boolean' ? message.rm : reduceQuery.matches;
+    if (message.pill) setPill(message.pill);
+    const ms = S.rm ? OVC.rmFade : OVC.exit;
+    const d0 = S.vis ? depth() : 0;
+    S.vis = true; ov.classList.add('vis');
+    gi.style.animation = 'none'; gi.style.transition = 'none'; gi.style.setProperty('--d', S.rm ? OVC.heldDepth : d0); void gi.offsetWidth;
+    if (!S.rm) { gi.style.transition = `--d ${ms}ms cubic-bezier(.65,0,.25,1)`; gi.style.setProperty('--d', OVC.heldDepth); }
+    glow.style.transition = `opacity ${ms}ms cubic-bezier(.65,0,.25,1)`; glow.style.opacity = OVC.heldOpacity;
+    cur.classList.remove('in'); cur.classList.add('out');
+    S.moveToken++;
+    pill.classList.remove('stopped'); pill.classList.add('held');
+    pill.style.transitionDuration = S.rm ? `${OVC.rmFade}ms` : '';
+    if (!pill.classList.contains('in')) S.pillT = setTimeout(() => pill.classList.add('in'), S.rm ? 0 : OVC.pillDelay);
   }
 
   /** kind: now / idle = 縁を 600ms で引く。esc = 縁を 360ms で引き、ピルを「止めました」にして 1.2 秒残す */
@@ -83,7 +102,7 @@
     glow.style.transition = `opacity ${ms}ms cubic-bezier(.65,0,.25,1)`; glow.style.opacity = 0;
     cur.classList.remove('in'); cur.classList.add('out');
     S.moveToken++;
-    if (kind === 'esc') { pill.classList.add('stopped'); S.pillT = setTimeout(() => pill.classList.remove('in'), OVC.pillHold); }
+    if (kind === 'esc') { pill.classList.remove('held'); pill.classList.add('stopped'); S.pillT = setTimeout(() => pill.classList.remove('in'), OVC.pillHold); }
     else pill.classList.remove('in');
     S.exitT = setTimeout(() => { ov.classList.remove('vis'); S.x = null; }, Math.max(kind === 'esc' ? OVC.pillHold + 300 : ms, 260));
   }
@@ -115,6 +134,7 @@
 
   window.plyOverlay.onMessage(message => {
     if (message.op === 'show') show(message);
+    else if (message.op === 'rest') rest(message);
     else if (message.op === 'pill') setPill(message.pill);
     else if (message.op === 'cursor') { moveCursor(message.x, message.y); if (message.pressed) click(); }
     else if (message.op === 'hide') hide(message.kind);
