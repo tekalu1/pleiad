@@ -1849,7 +1849,7 @@ function makeEmit(turn) {
     if ((event?.type === "userMessage.delivered" || event?.type === "userMessage.dropped") && liveInstructions.has(event.messageId)) {
       const sent = liveInstructions.get(event.messageId);
       liveInstructions.delete(event.messageId);
-      agentTasks?.steered(sent.taskId, sent.instructionId, event.type === "userMessage.delivered" ? "delivered" : "dropped").catch(() => {});
+      agentTasks?.steered(sent.taskId, sent.instructionIds, event.type === "userMessage.delivered" ? "delivered" : "dropped").catch(() => {});
     }
     // 受理済みの途中送信が読まれずに捨てられた（userMessage.dropped）。送信待ちへ戻す
     if (event?.type === "userMessage.dropped" && turn.info.sessionId && event.messageId) {
@@ -4012,7 +4012,7 @@ async function steerInstruction(task, instruction) {
   const item = { id: `task-send-${instruction.id}`, args: { prompt: instruction.text } };
   const confirms = Boolean(turn.control.steerConfirms);
   // 合図は受理の応答より先に来ることがある。先に登録しておく
-  if (confirms) liveInstructions.set(item.id, { sessionId: task.sessionId, taskId: task.taskId, instructionId: instruction.id });
+  if (confirms) liveInstructions.set(item.id, { sessionId: task.sessionId, taskId: task.taskId, instructionIds: instruction.ids ?? [instruction.id] });
   let accepted;
   try { accepted = await turn.control.steer?.(item); }
   catch { liveInstructions.delete(item.id); return 'error'; }
@@ -4429,7 +4429,10 @@ async function runTurnInternal(args, onStarted, hooks) {
       userSentAt: toMs(args.at) ?? Date.now(),
       backend,
       agentLocale,
-      control: { handle: null, onReady: () => outbox.kick(sessionId).catch(() => {}) },
+      control: { handle: null, onReady: () => {
+        outbox.kick(sessionId).catch(() => {});
+        agentTasks?.sendQueued(sessionId).catch(() => {});
+      } },
       outcome: null,
       compactTrigger: hooks.compact ?? null,
       compactionRevision,
@@ -4802,12 +4805,12 @@ async function endTurn(turn, emit, { record = true } = {}) {
   // 待機へ戻して次のターンで送る。子の結果を確定する execute がこの後に返るので、結果の記録より先に戻る。
   // 画面には、渡っていない発言を下げる
   if (turn.info.sessionId) {
+    await agentTasks?.settleSteers(turn.info.sessionId).catch(() => {});
     for (const [id, sent] of [...liveInstructions]) {
       if (sent.sessionId !== turn.info.sessionId) continue;
       liveInstructions.delete(id);
       emitGlobal({ type: 'userMessage.dropped', sessionId: sent.sessionId, messageId: id });
     }
-    await agentTasks?.settleSteers(turn.info.sessionId).catch(() => {});
   }
   agentBrowser?.endTurn(turn.info.sessionId || turn.key);
   // ロックの解放、止めた印・このターンの拒否の消去、main への後始末（押したままの入力を離し、オーバーレイを消す）

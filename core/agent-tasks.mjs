@@ -123,7 +123,7 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
     if (instruction && instruction.state !== state) { instruction.state = state; r.instructionRevision = (r.instructionRevision ?? 0) + 1; }
   };
   const dropInstructions = r => {
-    for (const instruction of r.instructions ?? []) if (instruction.state === 'queued') setInstruction(r, instruction.id, 'dropped');
+    for (const instruction of r.instructions ?? []) { deferredInstructions.delete(instruction.id); if (instruction.state === 'queued') setInstruction(r, instruction.id, 'dropped'); }
     r.queue = [];
   };
   let writes = Promise.resolve(), closed = false, mutating = false, probing = false;
@@ -135,6 +135,8 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
   // waited: 依頼元が ply_task_wait で待っているタスク（taskId → 待ちの数）。待ちの間は完了通知を送らない（ADR 0057）
   // steers: 走っている子のターンへ途中送信で渡している追加指示（taskId → 指示 ID の集合）。メモリだけ（再起動では sending が delivered に戻る）
   const steers = new Map();
+  // RPC の送信順だけを直列化する。配送確認は次の送信を止めない。
+  const instructionSends = new Map(), deferredInstructions = new Set(), settlingInstructions = new Set();
   const live = new Map(), notices = new Set(), noticeOwners = new Set(), waited = new Map(), silenceNotices = new Set(), silenceWaiting = new Map(), listeners = new Set();
   const serial = fn => {
     const next = writes.then(async () => { mutating = true; try { return await fn(); } finally { mutating = false; } });
@@ -264,76 +266,109 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
   }
   // 途中送信の指示を待機へ戻す（受理されない・捨てられた・合図が来ないままターンが終わった）。
   // 次のターンで 1 回だけ送る。ID で claim を持っているものだけ戻すので、合図が先に来て配送済みにしたものは戻さない
-  function unclaim(taskId, instructionId) {
+  const idsOf = value => Array.isArray(value) ? value : [value];
+  function unclaim(taskId, instructionIds) {
     return serial(async () => {
-      const row = records[taskId];
-      if (!row || !steers.get(taskId)?.delete(instructionId)) return;
-      if (!steers.get(taskId).size) steers.delete(taskId);
-      if (['cancelled', 'interrupted'].includes(row.status)) setInstruction(row, instructionId, 'dropped');   // 止めたタスクを指示で生き返らせない
-      else {
-        row.queue.unshift({ instructionId }); setInstruction(row, instructionId, 'queued');
-        // 走っていた回がもう終わっていたら、待機の指示のために再開する（send と同じ）
+      const row = records[taskId], claims = steers.get(taskId);
+      if (!row || !claims) return;
+      const ids = idsOf(instructionIds).filter(id => claims.delete(id));
+      if (!ids.length) return;
+      if (!claims.size) steers.delete(taskId);
+      if (['cancelling', 'cancelled', 'interrupted'].includes(row.status)) {
+        for (const id of ids) setInstruction(row, id, 'dropped');
+      } else {
+        for (const id of ids) {
+          row.queue.push({ instructionId: id }); setInstruction(row, id, 'queued');
+          deferredInstructions.add(id);   // 明示的拒否・未受信は次のターンで送る
+        }
+        const order = new Map(row.instructions.map((instruction, index) => [instruction.id, index]));
+        row.queue.sort((a, b) => (order.get(a.instructionId) ?? -1) - (order.get(b.instructionId) ?? -1));
         if (!ACTIVE.has(row.status)) { row.status = 'queued'; row.notification = 'none'; }
       }
       row.updatedAt = Date.now();
       await persist('send.steer.requeue', taskId); touched();
     });
   }
-  // 途中送信の指示を配送済み（か、渡らなかったもの dropped）にして片付ける
-  function resolveClaim(taskId, instructionId, state) {
+  function resolveClaim(taskId, instructionIds, state) {
     return serial(async () => {
-      const row = records[taskId];
-      if (!row || !steers.get(taskId)?.delete(instructionId)) return;
-      if (!steers.get(taskId).size) steers.delete(taskId);
-      setInstruction(row, instructionId, state); row.updatedAt = Date.now();
+      const row = records[taskId], claims = steers.get(taskId);
+      if (!row || !claims) return;
+      const ids = idsOf(instructionIds).filter(id => claims.delete(id));
+      if (!ids.length) return;
+      if (!claims.size) steers.delete(taskId);
+      for (const id of ids) setInstruction(row, id, state);
+      row.updatedAt = Date.now();
       await persist('send.steer.done', taskId); touched();
     });
   }
-  // ply_task_send で積んだ指示を、走っている子のターンへ途中送信で渡してみる。渡せなければ何も変えない（待機のまま）。
-  // 渡すのは、後ろに待機の指示が無く（順序を守る）、前の途中送信が決着している（二重にしない）ときだけ
-  async function steerInstruction(r, instructionId) {
-    if (r.status !== 'running' || !live.has(r.taskId) || steers.get(r.taskId)?.size || r.queue.length !== 1) return;
-    if (!(await childSteerable(structuredClone(r)).catch(() => false))) return;
-    const claimed = await serial(async () => {
-      const row = records[r.taskId];
-      if (!row || row.status !== 'running' || !live.has(row.taskId) || steers.get(row.taskId)?.size
-        || row.queue.length !== 1 || row.queue[0]?.instructionId !== instructionId) return false;
-      row.queue.shift(); setInstruction(row, instructionId, 'sending'); row.updatedAt = Date.now();
-      steers.set(row.taskId, new Set([instructionId]));
-      await persist('send.steer', row.taskId); touched();
-      return true;
-    });
-    if (!claimed) return;
-    const text = r.instructions.find(x => x.id === instructionId)?.text ?? '';
-    const outcome = await steer(structuredClone(r), { id: instructionId, text }).catch(() => 'error');
-    if (outcome === 'delivered') await resolveClaim(r.taskId, instructionId, 'delivered');
-    else if (outcome === 'error') await resolveClaim(r.taskId, instructionId, 'dropped');
-    else if (outcome !== 'pending') await unclaim(r.taskId, instructionId);
-    return outcome;
+  // その時点の待機分をまとめて送る。先の配送確認を待たず、RPC の受理後に次の待機分も送る。
+  function steerInstructions(r) {
+    if (instructionSends.has(r.taskId)) return instructionSends.get(r.taskId).then(async unknown => new Set([...unknown, ...await steerInstructions(r)]));
+    const eligible = () => !closed && !fault && !settlingInstructions.has(r.taskId)
+      && r.status === 'running' && live.has(r.taskId) && r.queue.length
+      && !r.queue.some(entry => !entry.instructionId || deferredInstructions.has(entry.instructionId));
+    const send = (async () => {
+      const unknown = new Set();
+      while (eligible() && await childSteerable(structuredClone(r)).catch(() => false)) {
+        const batch = await serial(async () => {
+          if (!eligible()) return null;
+          const before = structuredClone(r);
+          const ids = r.queue.map(entry => entry.instructionId);
+          const text = ids.map(id => r.instructions.find(i => i.id === id).text).join('\n\n');
+          r.queue = [];
+          for (const id of ids) setInstruction(r, id, 'sending');
+          r.updatedAt = Date.now();
+          try { await write([r.taskId]); }
+          catch (e) { restore(r, before); failed(e, 'send.steer', r.taskId); throw e; }
+          const claims = steers.get(r.taskId) ?? new Set();
+          for (const id of ids) claims.add(id);
+          steers.set(r.taskId, claims); touched();
+          return { id: ids[0], ids, text };
+        });
+        if (!batch) break;
+        const outcome = await steer(structuredClone(r), batch).catch(() => 'error');
+        if (outcome === 'delivered') await resolveClaim(r.taskId, batch.ids, 'delivered');
+        else if (outcome === 'error') {
+          await resolveClaim(r.taskId, batch.ids, 'dropped');
+          for (const id of batch.ids) if (r.instructions.find(i => i.id === id)?.state === 'dropped') unknown.add(id);
+        }
+        else if (outcome !== 'pending') { await unclaim(r.taskId, batch.ids); break; }
+      }
+      return unknown;
+    })();
+    instructionSends.set(r.taskId, send);
+    const tracked = send.finally(() => instructionSends.delete(r.taskId));
+    instructionSends.set(r.taskId, tracked);
+    return tracked;
   }
   async function run(r, controller) {
     // stalled: 実行の開始を保存できなかった。子は動かしていないので queued のまま、次のタイマーでやり直す
-    let stalled = false, requeued = false, activeInstructionId;
+    let stalled = false, requeued = false, activeInstructionIds;
     // close()（正常終了）の abort。止めたことは書かず、走っていた状態のままファイルに残す（再起動で interrupted になる。
     // docs/agent-delegation.md「保存・画面・再起動」）。利用者の取り消しは先に cancelling にするので、それは cancelled を書く
     const halted = () => closed && r.status !== 'cancelling';
     try {
       while (!controller.signal.aborted) {
-        let prompt, instructionId;
+        let prompt, instructionIds;
+        settlingInstructions.delete(r.taskId);
         try { await commit(r.taskId, row => {
           const entry = row.queue.shift();
-          instructionId = entry?.instructionId;
-          prompt = instructionId ? row.instructions.find(x => x.id === instructionId)?.text : entry;
-          setInstruction(row, instructionId, 'sending');
+          instructionIds = [];
+          if (entry?.instructionId) {
+            instructionIds.push(entry.instructionId);
+            while (row.queue[0]?.instructionId) instructionIds.push(row.queue.shift().instructionId);
+            prompt = instructionIds.map(id => row.instructions.find(x => x.id === id)?.text ?? '').join('\n\n');
+          } else prompt = entry;
+          for (const id of instructionIds) { setInstruction(row, id, 'sending'); deferredInstructions.delete(id); }
           row.status = 'running'; row.lastActivityAt = now(); row.silenceNotifiedAt = null;
         }, 'run.start'); }
         catch { stalled = true; break; }
-        activeInstructionId = instructionId;
+        activeInstructionIds = instructionIds;
         const result = await execute(structuredClone(r), prompt, controller.signal);
         if (halted()) return;
         if (result?.requeue) {
-          await record(r.taskId, row => { row.queue.unshift(instructionId ? { instructionId } : prompt); setInstruction(row, instructionId, 'queued'); row.status = 'queued'; }, 'run.requeue');
-          activeInstructionId = undefined; requeued = true;
+          await record(r.taskId, row => { row.queue.unshift(...(instructionIds.length ? instructionIds.map(instructionId => ({ instructionId })) : [prompt])); for (const id of instructionIds) setInstruction(row, id, 'queued'); row.status = 'queued'; }, 'run.requeue');
+          activeInstructionIds = undefined; requeued = true;
           return;
         }
         await record(r.taskId, row => {
@@ -344,7 +379,7 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
           if (result?.workspace) row.workspace = result.workspace; else delete row.workspace;
           // 追加の指示で再開した回に、片付いていた作業場所を作り直したとき
           if (result?.worktree) row.worktree = result.worktree;
-          setInstruction(row, instructionId, 'delivered');
+          for (const id of instructionIds) setInstruction(row, id, 'delivered');
           // 実行前に拒否されたコマンド。前の完了通知の後に走った回の分を足していく（通知の前に続けて走った回の分も落とさない）
           const got = Array.isArray(result?.rejections) ? result.rejections : [];
           if (got.length) {
@@ -358,17 +393,17 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
           row.status = controller.signal.aborted ? 'cancelled' : result?.outcome === 'ok' ? (row.queue.length ? 'queued' : 'completed') : 'failed';
           if (['failed', 'cancelled'].includes(row.status)) dropInstructions(row);
         }, 'run.result');
-        activeInstructionId = undefined;
+        activeInstructionIds = undefined;
         if (r.status !== 'queued') break;
       }
     } catch (e) {
-      if (!halted()) await record(r.taskId, row => { row.status = controller.signal.aborted ? 'cancelled' : 'failed'; row.error = String(e.message ?? e); setInstruction(row, activeInstructionId, 'dropped'); dropInstructions(row); }, 'run.error');
+      if (!halted()) await record(r.taskId, row => { row.status = controller.signal.aborted ? 'cancelled' : 'failed'; row.error = String(e.message ?? e); for (const id of activeInstructionIds ?? []) setInstruction(row, id, 'dropped'); dropInstructions(row); }, 'run.error');
     } finally {
       if (halted()) { live.delete(r.taskId); return; }
       // 止まった後（run.result / run.error で cancelled）に ply_task_send で積まれた指示は、止めた回の分ではない。
       // cancelled に戻して捨てず、下の kick で次の実行にする（docs/agent-delegation.md「ツール」の ply_task_send）
       if (r.status === 'cancelling' || controller.signal.aborted) await record(r.taskId, row => { if (!requeued && row.status === 'queued' && row.queue.length) return; row.status = 'cancelled'; dropInstructions(row); }, 'run.cancelled');
-      live.delete(r.taskId);
+      live.delete(r.taskId); settlingInstructions.delete(r.taskId);
       if (!stalled || controller.signal.aborted) {
         if (r.queue.length && !controller.signal.aborted) await record(r.taskId, row => { row.status = 'queued'; row.notification = 'none'; }, 'run.queued');
         // 依頼元が結果を先に受け取っていたら（read）通知を送らない。通知は次の指示で走る回のためにまた始まる
@@ -485,6 +520,7 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
         }
       }
       if (r.status === 'running') {
+        if (r.queue.length && !instructionSends.has(r.taskId)) spawn(steerInstructions(r).catch(e => report({ event: 'unexpected', operation: 'steer', taskId: r.taskId, code: e?.code ?? null })));
         // 承認待ちとロック待ちは、どちらも「子が黙っている」ことに数えない（待ちが終わったら数え直す）
         const isWaiting = waiting(r.sessionId) || lockWaiting(r.sessionId);
         if (isWaiting) {
@@ -571,7 +607,14 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
     async settleSteers(sessionId) {
       const r = bySession.get(sessionId);
       if (!r) return;
-      for (const instructionId of [...(steers.get(r.taskId) ?? [])]) await unclaim(r.taskId, instructionId);
+      settlingInstructions.add(r.taskId);
+      await instructionSends.get(r.taskId)?.catch(() => {});
+      await unclaim(r.taskId, [...(steers.get(r.taskId) ?? [])]);
+    },
+    /** 子のバックエンドの入力が開いた。起動中に溜まった指示を現在のターンへ渡す */
+    async sendQueued(sessionId) {
+      const r = bySession.get(sessionId);
+      if (r) return steerInstructions(r);
     },
     /**
      * 依頼元が子の設定（エージェント・モデル・思考の強さ）を替えた（ply_task_send の backend・model・effort。ADR 0134）。
@@ -705,10 +748,10 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
           if (!live.has(row.taskId) || !ACTIVE.has(row.status)) row.status = 'queued';
         }, 'send', locale);
         // 子のターンが走っていて途中送信を受けられるなら、待たずに今のターンへ渡す（ADR 0065）
-        const steered = await steerInstruction(r, instructionId).catch(e => { report({ event: 'unexpected', operation: 'steer', taskId: r.taskId, code: e?.code ?? null }); });
+        const steered = await steerInstructions(r).catch(e => { report({ event: 'unexpected', operation: 'steer', taskId: r.taskId, code: e?.code ?? null }); });
         kick();
         // 渡ったか分からない指示は送り直さない。依頼元のエージェントには、確かめるよう一言添える
-        return steered === 'error' ? { ...view(r), warning: agentT(locale, 'tasks.steerUnknown') } : view(r);
+        return steered?.has(instructionId) ? { ...view(r), warning: agentT(locale, 'tasks.steerUnknown') } : view(r);
       }
       if (name === 'ply_task_cancel') {
         // 終わったタスクの結果はこの戻り値で渡る。同じ結果の完了通知を後から送らない
@@ -778,6 +821,7 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
     // （閉じた後も、走っていた分の保存は続く。データ置き場を消す前に待つ）
     async close() {
       closed = true; clearInterval(timer); for (const ac of live.values()) ac.abort();
+      await Promise.allSettled([...instructionSends.values()]);
       while (background.size) await Promise.all([...background]);
       await writes;
       handle?.release(); handle = null;
