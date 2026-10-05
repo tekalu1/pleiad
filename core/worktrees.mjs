@@ -1,6 +1,6 @@
-// 分けた作業場所（git worktree）の台帳・作成・片付け（docs/design.md「分けた作業場所」、ADR 0089）。
+// worktree（git worktree）の台帳・作成・片付け（docs/design.md「worktree」、ADR 0089）。
 //
-//   - 作るのは、ぶつかりそうなとき・委譲で並行に書く子・人が頼んだときだけ（判定は core/server.mjs）。画面から任意のパスを受けない:
+//   - 作るのは、人が明示したときか委譲で isolate: true が指定されたときだけ（判定は core/server.mjs）。画面から任意のパスを受けない:
 //     置き場は <リポジトリの親>/<リポジトリ名>.pleiad/<短い id>、ブランチは pleiad/<短い id>、ベースは今の HEAD。依存（node_modules など）は張らない
 //   - 台帳（<データ置き場>/worktrees.json）に「作成中」を書いてから作り、途中で落ちたら巻き戻す（起動時に reconcile で台帳と git worktree list を突き合わせる）
 //   - 片付け（settle）: 変更なし → 消す / 元のブランチへ取り込み済み → 消す / 未取り込み → 残す。状態が分からない・使っているものがある → 消さない。
@@ -105,9 +105,6 @@ export function createWorktrees({ dataDir, users = async () => ({ busy: [], atta
   remove = wt.worktreeRemove, removeForced = wt.worktreeRemoveForced } = {}) {
   const file = path.join(dataDir, 'worktrees.json');
   let entries = null;          // id -> entry
-  // 人が始めた会話がぶつかったとき、確かめずに分けるか（既定は分ける。ADR 0133）。chosen は人が選んだ印で、選んだときだけ always を使う
-  // （旧版の save は選ばなくても settings.always:false を書いていたので、印の無い always は捨てる）
-  let settings = { always: true, chosen: false };
   let chain = Promise.resolve();
   const busyIds = new Set();   // 作成・片付けの途中の id（同じものを二重に動かさない）
 
@@ -118,14 +115,12 @@ export function createWorktrees({ dataDir, users = async () => ({ busy: [], atta
     try {
       const v = JSON.parse(await io.readFile(file, 'utf8'));
       entries = v && typeof v === 'object' && v.entries && typeof v.entries === 'object' ? v.entries : {};
-      const chosen = v?.settings?.chosen === true && typeof v.settings.always === 'boolean';
-      settings = { always: chosen ? v.settings.always : true, chosen };
     } catch { entries = {}; }
     return entries;
   }
   async function save() {
     await io.mkdir(dataDir, { recursive: true });
-    await writeAtomic(file, JSON.stringify({ version: 1, settings, entries }, null, 2), { io });
+    await writeAtomic(file, JSON.stringify({ version: 1, entries }, null, 2), { io });
   }
   const mutate = (fn) => serial(async () => { await load(); const r = await fn(entries); await save(); return r; });
 
@@ -140,9 +135,9 @@ export function createWorktrees({ dataDir, users = async () => ({ busy: [], atta
   // ---------------------------------------------------------------- 作る
 
   /**
-   * cwd の Git ルートから、今の HEAD で分けた作業場所を作る。失敗は { ok: false, reason }（reason: not-git / no-commits / git / disabled）。
+   * cwd の Git ルートから、今の HEAD で worktree を作る。失敗は { ok: false, reason }（reason: not-git / no-commits / git / disabled）。
    * purpose: 'conversation'（人が分けた会話）か 'task'（委譲の子）。sessionId は使う会話、parentSessionId は取り込みを頼む相手（子なら依頼元）。
-   * nested: 分けた作業場所の中からも作る（分けた作業場所の中で動く依頼元が子を分けるとき）
+   * nested: worktree の中からも作る（worktree の中で動く依頼元が子を分けるとき）
    */
   async function create({ cwd, sessionId = null, parentSessionId = null, taskId = null, purpose = 'conversation', nested = false, from = null }) {
     if (disabled) return { ok: false, reason: 'disabled' };
@@ -412,14 +407,11 @@ export function createWorktrees({ dataDir, users = async () => ({ busy: [], atta
     create, inspect, classify, settle, archive, reconcile, sweep, owned,
     async list() { await load(); return Object.values(entries).map((e) => ({ ...e })); },
     async get(id) { await load(); return entries[id] ? { ...entries[id] } : null; },
-    /** パスが台帳の分けた作業場所の中なら、その入口。作成・片付けの途中のものも返す */
+    /** パスが台帳の worktree の中なら、その入口。作成・片付けの途中のものも返す */
     async byPath(p) { await load(); return Object.values(entries).map((e) => ({ ...e })).find((e) => insideDir(p, e.path)) ?? null; },
-    /** 設定（いつも分ける）。台帳と同じファイルに持つ（prefs の設定の一覧に載せる段階まで） */
-    async getSettings() { await load(); return { always: settings.always }; },
-    async setSettings(patch) { await mutate(() => { if (typeof patch?.always === 'boolean') { settings.always = patch.always; settings.chosen = true; } }); return { always: settings.always }; },
     /** 台帳にある id（読み込み済みのときだけ。画面の「未取り込み」の印に使う。同期） */
     ids() { return entries ? Object.values(entries).filter((e) => e.state !== 'creating').map((e) => ({ id: e.id, kept: Boolean(e.kept) })) : []; },
-    /** パスが台帳の分けた作業場所の中なら、その入口（同期。読み込み済みのときだけ。一覧の行の印に使う） */
+    /** パスが台帳の worktree の中なら、その入口（同期。読み込み済みのときだけ。一覧の行の印に使う） */
     lookup(p) { return entries ? Object.values(entries).find((e) => e.state !== 'creating' && insideDir(p, e.path)) ?? null : null; },
     /** 台帳のパス（ファイルのプレビューの基準。読み取りの許可には使わない。ADR 0050） */
     paths() { return entries ? Object.values(entries).map((e) => e.path) : []; },

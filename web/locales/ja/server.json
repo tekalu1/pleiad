@@ -82,14 +82,13 @@
     "required": "作業ディレクトリを入力してください"
   },
   "worktree": {
-    "cleaning": "この分けた作業場所は片付けています。少し待ってから、もう一度送ってください",
-    "notFound": "その分けた作業場所は見つかりません",
-    "settingsInvalid": "いつも分けるは、オンかオフで指定してください",
+    "cleaning": "この worktree は片付けています。少し待ってから、もう一度送ってください",
+    "notFound": "その worktree は見つかりません",
     "fail": {
-      "not-git": "この作業場所は git のリポジトリではないので、分けられません",
-      "no-commits": "まだコミットの無いリポジトリは、分けられません（最初のコミットが要ります）",
-      "already-split": "ここはすでに分けた作業場所の中です",
-      "git": "分けた作業場所を作れませんでした: {{error}}"
+      "not-git": "この作業場所は git のリポジトリではないので、worktree を作れません",
+      "no-commits": "まだコミットの無いリポジトリには、worktree を作れません（最初のコミットが要ります）",
+      "already-split": "ここはすでに worktree の中です",
+      "git": "worktree を作れませんでした: {{error}}"
     }
   },
   "session": {

@@ -61,7 +61,7 @@ export const DATA_WRITES = [
     { name: 'setting-approvals.json', limit: '承認待ちと通知の件数。決着・配達で消える', reason: '一時の台帳。通常は数件。件数に上限は無い', unbounded: true },
   ] },
   { file: 'core/worktrees.mjs', sites: 1, targets: [
-    { name: 'worktrees.json', limit: '分けた作業場所の数。削除で行が消える', reason: '台帳。通常は数個から数十。件数に上限は無い', unbounded: true },
+    { name: 'worktrees.json', limit: 'worktree の数。削除で行が消える', reason: '台帳。通常は数個から数十。件数に上限は無い', unbounded: true },
   ] },
   { file: 'core/context-settings.mjs', sites: 5, targets: [
     { name: 'context-scans.json', limit: 'ユーザーが設定した場所（places）の数。通常は数個から数十', reason: '探索の設定。件数に上限は無い', unbounded: true },

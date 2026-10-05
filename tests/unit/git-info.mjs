@@ -148,11 +148,11 @@ export default async function (t) {
     await activity.attach(await activity.begin({ cwd: repo }), 'session-cccc-3');
     t.ok('会話の ref を消すと、その会話の分だけ消える', (await activity.forget(repo, 'session-bbbb-2')) === 1 && (await git.listTurnRefs(info.root)).map((r) => r.session).join() === 'session-cccc-3');
 
-    // 分けた作業場所
+    // worktree
     const wt = path.join(scratch, 'wt');
     sh(repo, 'worktree', 'add', '-q', '-b', 'pleiad/ply-1', wt);
     const wtInfo = await git.repoInfo(wt);
-    t.ok('git worktree は linked（分けた作業場所）で、状態のブランチも取れる', wtInfo?.linked === true && (await git.readStatus(wt))?.branch === 'pleiad/ply-1');
+    t.ok('git worktree は linked（worktree）で、状態のブランチも取れる', wtInfo?.linked === true && (await git.readStatus(wt))?.branch === 'pleiad/ply-1');
     const wturn = await activity.begin({ cwd: wt });
     await activity.attach(wturn, 'session-dddd-4');
     await fs.writeFile(path.join(wt, 'x.txt'), 'x\n');

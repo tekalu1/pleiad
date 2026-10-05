@@ -124,10 +124,10 @@
     }
   },
   "bridge": {
-    "instructions": "Pleiad の委譲ツール（ply_agents MCP）: ply_delegate で Pleiad が管理する子の会話を作る。kind（仕事の種類）は必ず書く。backend を省くと、Pleiad が種類・難しさ・使用量から委譲先（backend・model・Claude のアカウント）を選び、選んだ理由を返り値の routing に載せる。特定の委譲先が要るときだけ backend（claude, codex, antigravity）を書く。これはネイティブの spawn_agent / agent_job / Agent やその ID とは別物である。ply-task- の ID には ply_task_* だけを使う。ply_delegate はすぐに戻り、完了の結果は Pleiad が後のターンでこの会話へ届ける。その間にほかの作業を続けても、応答を終えてもよい。ply_task_wait は最長 30 秒待ち、子が人間の承認を待つ状態（status: waiting）になった時点ですぐ戻る。そのときは待ち直さず、どの会話に承認があるかをユーザーに伝える。ply_task_send は同じ子の会話に追加の指示を積む。必要なタスクの文脈は明示して渡すこと。非公開の推論と親の会話の記録は写されない。cwd の既定はこの会話の作業場所。同じリポジトリを同時に書く子には、Pleiad が子ごとの分けた作業場所（git の worktree）を作って渡す（isolate で指定もできる）。子の変更はその作業場所のブランチに残り、元の場所へ取り込むのは依頼元の仕事。ply_usage は各バックエンドの使用枠を読む（読み取りのみ、最大 60 秒前の値）。タスクの完了を受け取ったことを伝えるためだけに再び委譲しない。ply_delegate には一覧と子の会話に使う短い title を付ける。委譲は、ユーザーのタスクと適用される指示で認められている場合に限って使う。",
+    "instructions": "Pleiad の委譲ツール（ply_agents MCP）: ply_delegate で Pleiad が管理する子の会話を作る。kind（仕事の種類）は必ず書く。backend を省くと、Pleiad が種類・難しさ・使用量から委譲先（backend・model・Claude のアカウント）を選び、選んだ理由を返り値の routing に載せる。特定の委譲先が要るときだけ backend（claude, codex, antigravity）を書く。これはネイティブの spawn_agent / agent_job / Agent やその ID とは別物である。ply-task- の ID には ply_task_* だけを使う。ply_delegate はすぐに戻り、完了の結果は Pleiad が後のターンでこの会話へ届ける。その間にほかの作業を続けても、応答を終えてもよい。ply_task_wait は最長 30 秒待ち、子が人間の承認を待つ状態（status: waiting）になった時点ですぐ戻る。そのときは待ち直さず、どの会話に承認があるかをユーザーに伝える。ply_task_send は同じ子の会話に追加の指示を積む。必要なタスクの文脈は明示して渡すこと。非公開の推論と親の会話の記録は写されない。cwd の既定はこの会話の作業場所。isolate: true はユーザーが worktree を使うよう指示したときだけ付ける。同じリポジトリに書く子を並べて任せるなら、worktree を使うかユーザーに聞く。省略したら子は今の作業場所で走る。worktree を作った子の変更はそのブランチに残り、元の場所へ取り込むのは依頼元の仕事。ply_usage は各バックエンドの使用枠を読む（読み取りのみ、最大 60 秒前の値）。タスクの完了を受け取ったことを伝えるためだけに再び委譲しない。ply_delegate には一覧と子の会話に使う短い title を付ける。委譲は、ユーザーのタスクと適用される指示で認められている場合に限って使う。",
     "title": "一覧と会話のタイトルに使う短い名前。30 字程度。",
     "tools": {
-      "ply_delegate": "Pleiad が管理するタスクを始める。taskId をすぐに返し、完了は自動で届く。ネイティブの spawn_agent とは別物。kind は必ず書く。backend を省くと、Pleiad が種類・難しさ・使用量から委譲先を選び、理由を routing に載せる（全部の候補が使えなければエラー。そのときは backend を書いて頼み直すか、ユーザーに聞く）。backend を書くと固定で、model・effort も指定できる（model・effort は backend を書いたときだけ）。子は呼び出し元の承認の強さを、それを超えない範囲で継ぐ。それより強い子には、ここで人間の承認が 1 回要る。isolate は任意の真偽: true で、この子だけの分けた作業場所（git の worktree。リポジトリの隣・専用のブランチ）で走らせる。false で今の作業場所のまま。省くと、同じリポジトリに書く別の作業（依頼元・ほかの子・別の会話）があるときだけ Pleiad が分ける。分けた子は作業場所の中だけに書き、終わるとコミットする。取り込みは依頼元が行う。",
+      "ply_delegate": "Pleiad が管理するタスクを始める。taskId をすぐに返し、完了は自動で届く。ネイティブの spawn_agent とは別物。kind は必ず書く。backend を省くと、Pleiad が種類・難しさ・使用量から委譲先を選び、理由を routing に載せる（全部の候補が使えなければエラー。そのときは backend を書いて頼み直すか、ユーザーに聞く）。backend を書くと固定で、model・effort も指定できる（model・effort は backend を書いたときだけ）。子は呼び出し元の承認の強さを、それを超えない範囲で継ぐ。それより強い子には、ここで人間の承認が 1 回要る。isolate は任意の真偽: true で、この子だけの worktree（リポジトリの隣・専用のブランチ）で走らせる。false で今の作業場所のまま。省くと今の作業場所のまま。true はユーザーが worktree を使うよう指示したときだけ付ける。同じリポジトリに書く子を並べるなら、worktree を使うかユーザーに聞く。worktree の子はその中だけに書き、終わるとコミットする。取り込みは依頼元が行う。",
       "ply_task_status": "Pleiad タスクとその結果を読む。長い結果の残りは nextOffset を使って読む。status: waiting は、子が人間の承認で止まっていることを表す。同じカードはこの会話にも出ているので、どこで承認するかをユーザーに伝える。",
       "ply_task_wait": "Pleiad タスクを最長 30 秒待つ。子が人間の承認を待つ状態（status: waiting）になったらすぐ戻る。まだ実行中という結果は失敗ではなく、完了は自動でも届く。waiting になったら待つのをやめ、どの会話に承認があるかをユーザーに伝える。",
       "ply_task_send": "同じ Pleiad の子の会話に追加の指示を積む。完了した後でもよい。backend・model・effort で子の設定を替えられる（次のターンから。設定だけなら message を省ける）。",
@@ -168,11 +168,11 @@
     "noticeSection": "--- {{taskId}} ---\n{{retry}}実行先: {{backend}}\n状態: {{status}}\n依頼: {{task}}\n結果（子エージェントの報告）:\n{{result}}{{more}}\n{{error}}\n{{rejections}}{{git}}\n",
     "noticeMore": "\n続きは ply_task_status の offset: {{offset}} で取得できます。",
     "noticeGit": "変更: {{branch}} · {{files}} ファイル +{{add}} −{{del}} · コミット {{commits}}",
-    "noticeWorkspaceUnmerged": "作業場所: 分けた作業場所 {{branch}}（未取り込み · {{files}} ファイル）\n  場所: {{path}}（元: {{origin}}）。取り込みは依頼元の作業です",
-    "noticeWorkspaceMerged": "作業場所: 分けた作業場所 {{branch}}（取り込み済み。片付けました）",
-    "noticeWorkspaceEmpty": "作業場所: 分けた作業場所 {{branch}}（変更なし。片付けました）",
-    "noticeWorkspaceGone": "作業場所: 分けた作業場所 {{branch}}（片付け済み）",
-    "noticeWorkspaceUnknown": "作業場所: 分けた作業場所 {{branch}}（状態を確かめられません。{{path}} を見てください）",
+    "noticeWorkspaceUnmerged": "作業場所: worktree {{branch}}（未取り込み · {{files}} ファイル）\n  場所: {{path}}（元: {{origin}}）。取り込みは依頼元の作業です",
+    "noticeWorkspaceMerged": "作業場所: worktree {{branch}}（取り込み済み。片付けました）",
+    "noticeWorkspaceEmpty": "作業場所: worktree {{branch}}（変更なし。片付けました）",
+    "noticeWorkspaceGone": "作業場所: worktree {{branch}}（片付け済み）",
+    "noticeWorkspaceUnknown": "作業場所: worktree {{branch}}（状態を確かめられません。{{path}} を見てください）",
     "noticeRetry": "利用者が {{of}} を別の委譲先でやり直したタスク\n",
     "noticeRejections": "実行前に拒否されたコマンド（Codex 自身の安全判定など）: {{count}} 件\n{{items}}\n全件は ply_task_status の rejections で読めます。",
     "noticeStoppedBackground": "子の返答の後も {{minutes}} 分以上終わらなかった裏の作業を、Pleiad が止めました: {{count}} 件\n{{items}}\n続きが要るなら、子の会話で結果を確かめてから ply_task_send で指示してください。",
@@ -185,7 +185,7 @@
     "halted": "実行は中断されています",
     "aborted": "中断しました",
     "withContext": "{{task}}\n\n依頼元からのコンテキスト:\n{{context}}",
-    "worktreeInstruction": "\n\n---\nこの作業は、分けた作業場所（git の worktree）で行う。\n作業場所: {{path}}（ブランチ {{branch}}。元の場所 {{origin}} から分けた）\n作業はこの作業場所の中だけで行う。元の場所（{{origin}}）の絶対パスに書かない。\n依存（node_modules など）は入っていない。必要なら自分で入れる。\n終わったら、変更をこのブランチにコミットする。元の場所への取り込みは依頼元がする。",
+    "worktreeInstruction": "\n\n---\nこの作業は git の worktree で行う。\nworktree: {{path}}（ブランチ {{branch}}。元の場所 {{origin}} から作った）\n作業はこの worktree の中だけで行う。元の場所（{{origin}}）の絶対パスに書かない。\n依存（node_modules など）は入っていない。必要なら自分で入れる。\n終わったら、変更をこのブランチにコミットする。元の場所への取り込みは依頼元がする。",
     "offsetInvalid": "offset は0以上の整数です",
     "secondsInvalid": "seconds は1〜30です",
     "isolateInvalid": "isolate は true か false で指定してください",
@@ -347,7 +347,7 @@
     },
     "delegate": "委譲を基本にする。コマンド 1 回や 1〜2 ファイルの小さな編集より大きい作業は、自分でやらずに ply_delegate で任せる。",
     "main": "この会話で自分でやるのは、方針を決める・任せた結果を確かめる・取り消せない操作（送信・削除・支払い。先にユーザーに確認する）・結果が小さい単発の作業だけ。複数手順の作業と、結果が大きい操作（ブラウザー操作・スクリーンショット・長いログ・大きな MCP 応答）は任せ、子には要約と証拠だけを返させる。",
-    "route": "任せるときは ply_delegate に kind を付け、backend は書かない（Pleiad が選ぶ）。backend を書くのはユーザーがエージェントやモデルを指定したときだけ。どの候補も枠が無いと返されたら、ユーザーに伝える。ネイティブのサブエージェント（Claude の Agent tool など）ではなく ply_delegate を使う。ply_delegate には一覧に出る短い title を付ける。同じリポジトリを同時に書く子は Pleiad が分けた作業場所に分ける。完了通知や ply_task_status に「作業場所: 分けた作業場所 …（未取り込み）」とあれば、その作業場所のブランチの変更を元の作業場所へ取り込む（マージ）のは自分の仕事。競合は自分で解く。取り込み後の片付けは Pleiad がする。",
+    "route": "任せるときは ply_delegate に kind を付け、backend は書かない（Pleiad が選ぶ）。backend を書くのはユーザーがエージェントやモデルを指定したときだけ。どの候補も枠が無いと返されたら、ユーザーに伝える。ネイティブのサブエージェント（Claude の Agent tool など）ではなく ply_delegate を使う。ply_delegate には一覧に出る短い title を付ける。isolate: true はユーザーが worktree を使うよう指示したときだけ付ける。同じリポジトリに書く子を並べて任せるなら、worktree を使うかユーザーに聞く。省略したら今の作業場所を使う。完了通知や ply_task_status に「作業場所: worktree …（未取り込み）」とあれば、その作業場所のブランチの変更を元の作業場所へ取り込む（マージ）のは自分の仕事。競合は自分で解く。取り込み後の片付けは Pleiad がする。",
     "commandLifetime": "コマンドは上限の時間を付けて実行する。終わらないもの（サーバー・画面のあるアプリ）はバックグラウンドで起動し、PID を控えて自分で止める。`Start-Process -Wait` のように終わりを無期限に待つ書き方はしない。",
     "child": "あなたは委譲された子の会話なので、さらに委譲しない。",
     "codexPolicy": "Codex の承認なしのモード（full・YOLO）でも、Codex 自身の安全判定で一部のコマンドが実行前に拒否されることがある（`blocked by policy` など）。拒否されたら、言い換えや別のコマンドで回避しようとしない。実行できなかったコマンドと理由、その結果残ったもの（消せなかったファイル・止められなかったプロセスなど）を報告する。"
@@ -818,7 +818,7 @@
         "taskId": "タスクの id。",
         "offset": "結果の読み始めの位置（前の返り値の nextOffset）。"
       },
-      "delegate": { "summary": "子の会話へ仕事を委譲する。", "kind": "仕事の種類。", "task": "子への依頼。", "title": "子の短い題。", "backend": "委譲先のエージェント。", "context": "子へ渡す背景情報。", "cwd": "作業場所。", "model": "委譲先のモデル。", "effort": "推論の強さ。", "isolate": "子の作業場所を分けるか。" },
+      "delegate": { "summary": "子の会話へ仕事を委譲する。", "kind": "仕事の種類。", "task": "子への依頼。", "title": "子の短い題。", "backend": "委譲先のエージェント。", "context": "子へ渡す背景情報。", "cwd": "作業場所。", "model": "委譲先のモデル。", "effort": "推論の強さ。", "isolate": "子を worktree で走らせるか（ユーザーが指示したときだけ true）。" },
       "taskStatus": { "summary": "自分が委譲した子の状態と結果を読む。", "taskId": "子のタスク id。", "offset": "結果の読み始めの位置。" },
       "taskWait": { "summary": "自分が委譲した子を最大 30 秒待つ。", "taskId": "子のタスク id。", "seconds": "待つ秒数（最大 30）。" },
       "taskSend": { "summary": "自分が委譲した子へ追加の指示を送る。子のエージェント・モデル・思考の強さも替えられる。", "taskId": "子のタスク id。", "message": "追加の指示。設定だけ替えるなら省ける。",
@@ -849,14 +849,12 @@
     },
     "browser": { "listProfiles": { "summary": "この会話で使えるブラウザーのプロフィール一覧を読む。" }, "useProfile": { "summary": "この会話のブラウザープロフィールを切り替える。", "profile": "プロフィールの id か名前。" }, "setProfile": { "summary": "会話のブラウザープロフィールを切り替える。", "sessionId": "会話の id。", "profile": "プロフィールの id。" } },
     "worktrees": {
-      "split": { "summary": "会話の作業場所（git）を、別のブランチの分けた作業場所（git worktree）に分ける。元の作業ツリーは変わらない。返る cwd で作業する（次のターンの作業場所は変えない）。", "sessionId": "会話の id。sessionId も cwd も省くとこの会話。", "cwd": "分ける場所（どれかの会話が使った場所だけ）。" },
-      "discard": { "summary": "分けた作業場所を片付ける。変更が無いか取り込み済みのときだけ消し、未取り込みの変更・使っている会話があれば残す（action: kept）。", "id": "分けた作業場所の id（分けたときの返り値・委譲の子の結果にある）。" },
-      "keep": { "summary": "分けた作業場所を自動の片付けから外す（kept: false で戻す）。", "id": "分けた作業場所の id。", "kept": "残すか（既定 true）。" },
-      "archive": { "summary": "分けた作業場所を退避して消す。作業ツリー全体を隠し ref に撮ってから消し、90 日は worktrees.restore で戻せる。使っている会話があれば消さない。", "id": "分けた作業場所の id。" },
-      "restore": { "summary": "退避した作業場所を、新しい分けた作業場所として作り直す。", "ref": "退避の ref（refs/pleiad/archive/ で始まる。worktrees.archive の返り値）。", "sessionId": "リポジトリを決める会話の id。sessionId も cwd も省くとこの会話。", "cwd": "リポジトリの場所（どれかの会話が使った場所だけ）。" },
-      "setSettings": { "summary": "「いつも分ける」を切り替える（同じリポジトリに書いている別の会話があるとき、確かめずに分ける）。", "always": "いつも分けるか。" },
-      "check": { "summary": "会話の作業場所の、分けた作業場所の状態（今いる場所・同じリポジトリに書いている別の会話・分けられるか・「いつも分ける」）。", "sessionId": "会話の id。sessionId も cwd も省くとこの会話。", "cwd": "確かめる場所（どれかの会話が使った場所だけ）。", "backend": "書き込みの見込みを決めるエージェント（省くと会話のもの）。", "mode": "書き込みの見込みを決める承認モード（省くと会話のもの）。" },
-      "settings": { "summary": "「いつも分ける」の今の値。" }
+      "split": { "summary": "会話の作業場所（git）から、別のブランチの worktree を作る。元の作業ツリーは変わらない。返る cwd で作業する（次のターンの作業場所は変えない）。", "sessionId": "会話の id。sessionId も cwd も省くとこの会話。", "cwd": "worktree を作る元の場所（どれかの会話が使った場所だけ）。" },
+      "discard": { "summary": "worktree を片付ける。変更が無いか取り込み済みのときだけ消し、未取り込みの変更・使っている会話があれば残す（action: kept）。", "id": "worktree の id（作ったときの返り値・委譲の子の結果にある）。" },
+      "keep": { "summary": "worktree を自動の片付けから外す（kept: false で戻す）。", "id": "worktree の id。", "kept": "残すか（既定 true）。" },
+      "archive": { "summary": "worktree を退避して消す。作業ツリー全体を隠し ref に撮ってから消し、90 日は worktrees.restore で戻せる。使っている会話があれば消さない。", "id": "worktree の id。" },
+      "restore": { "summary": "退避した worktree を、新しい worktree として作り直す。", "ref": "退避の ref（refs/pleiad/archive/ で始まる。worktrees.archive の返り値）。", "sessionId": "リポジトリを決める会話の id。sessionId も cwd も省くとこの会話。", "cwd": "リポジトリの場所（どれかの会話が使った場所だけ）。" },
+      "check": { "summary": "会話の worktree の状態（今いる場所・同じリポジトリに書いている別の会話・作れるか）。", "sessionId": "会話の id。sessionId も cwd も省くとこの会話。", "cwd": "確かめる場所（どれかの会話が使った場所だけ）。", "backend": "書き込みの見込みを決めるエージェント（省くと会話のもの）。", "mode": "書き込みの見込みを決める承認モード（省くと会話のもの）。" }
     },
     "notify": {
       "setPc": { "summary": "この PC の通知を種類ごとに切り替える。渡した項目だけ変わる。", "done": "終わったとき。", "reply": "返事（承認・質問）が要るとき。", "failed": "失敗したとき。" },
@@ -1059,14 +1057,14 @@
       }
     },
     "git": {
-      "arg": { "sessionId": "会話の id。sessionId も cwd も省くとこの会話。", "cwd": "作業場所（どれかの会話が使った場所だけ）。", "range": "uncommitted（コミットしていない変更。既定）か session（この会話の間の変更）。", "limit": "返す件数（既定 30、最大 100）。", "cursor": "前の返り値の next。続きから返す。", "maxChars": "差分の字数の上限（既定 20000、最大 100000）。", "hash": "コミットの hash（7〜64 桁の 16 進数。git.history の hash）。", "worktree": "作業場所（git worktree）のパス（git.worktrees の path）。" },
+      "arg": { "sessionId": "会話の id。sessionId も cwd も省くとこの会話。", "cwd": "作業場所（どれかの会話が使った場所だけ）。", "range": "uncommitted（コミットしていない変更。既定）か session（この会話の間の変更）。", "limit": "返す件数（既定 30、最大 100）。", "cursor": "前の返り値の next。続きから返す。", "maxChars": "差分の字数の上限（既定 20000、最大 100000）。", "hash": "コミットの hash（7〜64 桁の 16 進数。git.history の hash）。", "worktree": "worktree のパス（git.worktrees の path）。" },
       "status": { "summary": "会話の作業場所の git の状態（ブランチ・HEAD・変更の数）。git が無い・管理外は git: null。", "brief": "true で、この会話の間のファイル・コミットの数も返す。", "fresh": "true で読み直す（短い間の控えを使わない）。" },
-      "changes": { "summary": "会話の作業場所の変更の一覧（ファイルごとの増減）・分けた作業場所・この会話の git の出来事。", "only": "changes は変更の一覧だけ、light は分けた作業場所の一覧を計算しない（画面が使う軽い問い合わせ）。省くと全部。" },
+      "changes": { "summary": "会話の作業場所の変更の一覧（ファイルごとの増減）・worktree・この会話の git の出来事。", "only": "changes は変更の一覧だけ、light は worktree の一覧を計算しない（画面が使う軽い問い合わせ）。省くと全部。" },
       "diff": { "summary": "1 ファイルの差分（統一差分）。範囲の代わりに、コミット 1 つ・2 つのコミットの間・ステージ済み／変更の区別も選べる。", "path": "リポジトリのルートからのパス（git.changes の path）。", "commit": "このコミットの差分（最初の親との比較）。", "from": "2 つのコミットの間の、比べる元（to と一緒に）。", "to": "2 つのコミットの間の、比べる先（from と一緒に）。", "stage": "staged でステージ済み（HEAD と index）、work でステージしていない変更（index と作業ツリー。未追跡を含む）。", "orig": "名前の変更の元のパス。", "context": "前後の行数（既定 3）。画面が畳んだ行を開くときに使う。", "after": "true で、差分の後ろ側のファイルの全行も返す（画面が畳んだ行を開くため）。" },
       "history": { "summary": "コミットの履歴（git log --branches --tags --remotes HEAD を親が先の並びで。hash・親・作者・日時・ブランチ・タグ・題）。Pleiad の隠し ref は含めない。この会話の始まりの HEAD も返す。" },
       "commit": { "summary": "コミット 1 つの題・本文・作者・親と、変わったファイル（ファイルごとの増減）。マージは最初の親との差。" },
-      "worktrees": { "summary": "このリポジトリの作業場所（git worktree）の一覧。ブランチ・パス・未コミットの数・主の作業場所からの先行。Pleiad が分けたものと、ふつうに作ったものの区別つき。" },
-      "worktree": { "summary": "作業場所 1 つの中身（主の作業場所との分岐点からのコミット済みの変更と、コミットしていない変更のファイル）。" }
+      "worktrees": { "summary": "このリポジトリの worktree の一覧。ブランチ・パス・未コミットの数・主の作業場所からの先行。Pleiad が作ったものと、Pleiad の外で作ったものの区別つき。" },
+      "worktree": { "summary": "worktree 1 つの中身（主の worktree との分岐点からのコミット済みの変更と、コミットしていない変更のファイル）。" }
     },
     "shell": {
       "run": { "summary": "会話のシェルでコマンドを動かす（入力欄の ! と同じ。行と結果は会話に残り、次の発言でその会話のエージェントに渡る）。終わるまで待って結果を返す。ユーザーの承認が要る。", "sessionId": "会話の id。省くとこの会話。", "command": "動かすコマンド。", "cwd": "まだ送っていない会話で使う作業場所（送った会話は会話の作業場所）。", "runId": "行の id（英数字とハイフン 8〜80 字）。省くと作る。", "waitMs": "終わるまで待つ時間（ミリ秒。既定 30000、最大 120000、0 で待たない）。待ちきれなければ status: running。", "reason": "動かす理由（承認カードと記録に出る）。" },

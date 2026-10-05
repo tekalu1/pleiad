@@ -15,7 +15,7 @@
     "ui:chat.opApproval.mcp.label",
     "ui:chat.opApproval.mcpDelete.label",
     "ui:git.detached",
-    "ui:git.wtPlain",
+    "ui:worktree.chipSuffix",
     "ui:git.panel",
     "ui:git.pr",
     "ui:activity.bgItem",

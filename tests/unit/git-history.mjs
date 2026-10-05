@@ -17,7 +17,7 @@ export default async function (t) {
   // ---- 解析（git を呼ばない）
   const refs = history.parseRefs('HEAD -> refs/heads/main, tag: refs/tags/v1, refs/remotes/origin/main, refs/remotes/origin/HEAD, refs/heads/pleiad/ply-1a2b, refs/pleiad/turn/x/1-start, refs/stash');
   t.ok('refs: HEAD・タグ・リモート・ブランチだけ。refs/pleiad/ と stash は出ない', refs.map((r) => `${r.kind}:${r.name}`).join() === 'head:main,tag:v1,remote:origin/main,branch:pleiad/ply-1a2b', JSON.stringify(refs));
-  t.ok('refs: 分けた作業場所のブランチに印', refs.at(-1).pleiad === true);
+  t.ok('refs: worktree のブランチに印', refs.at(-1).pleiad === true);
   const hh = git.parseHunkHeader('@@ -35,6 +36,9 @@ export function total(items) {');
   t.ok('ハンクの見出し: 旧・新の開始と行数と節', hh.oldStart === 35 && hh.oldCount === 6 && hh.newStart === 36 && hh.newCount === 9 && hh.section === 'export function total(items) {');
   t.ok('ハンクの見出し: 行数の省略は 1', git.parseHunkHeader('@@ -3 +3 @@').oldCount === 1);

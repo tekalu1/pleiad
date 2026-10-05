@@ -260,7 +260,12 @@ export default async function (t) {
     agy.start();
     for (let i = 0; i < 100; i++) { try { await readFile(agyFile); break; } catch { await new Promise(resolve => setTimeout(resolve, 10)); } }
     const agySeen = JSON.parse(await readFile(agyFile, 'utf8'));
+    const agyProc = agy.proc;
     agy.kill();
+    await new Promise(resolve => {
+      if (!agyProc || agyProc.exitCode !== null || agyProc.signalCode !== null) resolve();
+      else agyProc.once('close', resolve);
+    });
     t.ok('Antigravity のシェルに会話の環境変数が届く', agySeen.config === env.AGENT_BROWSER_CONFIG && agySeen.session === env.AGENT_BROWSER_SESSION && agySeen.socketDir === env.AGENT_BROWSER_SOCKET_DIR && agySeen.namespace === '');
 
     let options;
@@ -276,6 +281,6 @@ export default async function (t) {
     if (codexBin === undefined) delete process.env.AGENT_HOST_CODEX_BIN; else process.env.AGENT_HOST_CODEX_BIN = codexBin;
     if (agyBin === undefined) delete process.env.AGENT_HOST_AGY_BIN; else process.env.AGENT_HOST_AGY_BIN = agyBin;
     if (fakeBrowserEnvFile === undefined) delete process.env.FAKE_BROWSER_ENV_FILE; else process.env.FAKE_BROWSER_ENV_FILE = fakeBrowserEnvFile;
-    await rm(scratch, { recursive: true, force: true });
+    await rm(scratch, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 }

@@ -1,5 +1,5 @@
-// 分けた作業場所を、ホストの会話・委譲・画面につなぐ層（docs/design.md「分けた作業場所」、ADR 0089）。
-// core/worktrees.mjs（台帳・作成・片付け）は会話を知らない。ここが「使っているもの」「ぶつかり」「委譲で分けるか」「画面に出す残り」を決める。
+// worktree を、ホストの会話・委譲・画面につなぐ層（docs/design.md「worktree」、ADR 0089）。
+// core/worktrees.mjs（台帳・作成・片付け）は会話を知らない。ここが「使っているもの」「ぶつかり」「委譲で isolate が指定されたか」「画面に出す残り」を決める。
 // 依存（会話の一覧・走っているターン・委譲の台帳）は引数で受けるので、サーバーなしで試せる。
 import fs from 'node:fs/promises';
 import * as git from './git-info.mjs';
@@ -8,10 +8,6 @@ import { archiveMeta } from './git-worktree.mjs';
 import { modePosition, scopeRank } from './modes.mjs';
 
 const ACTIVE = new Set(['queued', 'running', 'cancelling']);
-/** 書き込みをしうる仕事の種類。読むだけの investigate・review・design は分けない */
-export const WRITING_KINDS = new Set(['trivial', 'mechanical', 'implement', 'ux_change', 'ux_new', 'visual']);
-/** 同じターンから続けて呼ばれた委譲を、まとめて数えるために待つ時間（並列に呼ばれたものが出そろうまで） */
-const BATCH_WINDOW_MS = 250;
 const ROOT_TTL_MS = 3_000;
 /** 子の作業場所を作ってから、委譲の台帳に子が載るまでの間（この間は片付けない） */
 const TASK_START_MS = 120_000;
@@ -20,7 +16,7 @@ const TASK_START_MS = 120_000;
 export const writesScope = (entry) => scopeRank(modePosition(entry).scope) > scopeRank('readonly');
 
 export function createWorktreeHost({ dataDir, store, turns, shellCwds = () => [], tasks = () => [], background = () => new Map(), emit = () => {},
-  reason = () => ({}), parentWrote = async () => false, now = Date.now, sleep = (ms) => new Promise((r) => setTimeout(r, ms)), windowMs = BATCH_WINDOW_MS, log = () => {}, worktreeOptions = {} }) {
+  reason = () => ({}), now = Date.now, log = () => {}, worktreeOptions = {} }) {
   const exists = (p) => fs.stat(p).then((s) => s.isDirectory(), () => false);
 
   // ---------------------------------------------------------------- Git ルート（短いキャッシュ）
@@ -100,19 +96,18 @@ export function createWorktreeHost({ dataDir, store, turns, shellCwds = () => []
   }
 
   /**
-   * 入力欄の注記の元。cwd が git で、まだ分けた作業場所の中でなければ canSplit。conflicts は書き込み中の別の会話。
+   * 入力欄の注記の元。cwd が git で、まだ worktree の中でなければ canSplit。conflicts は書き込み中の別の会話。
    * writes は今の会話の承認モードが書き込みの範囲か（読むだけの会話には何も出さない）
    */
   async function check({ sessionId = null, cwd, writes = true }) {
     const info = await repoOf(cwd);
-    const settings = await worktrees.getSettings();
-    if (!info) return { git: false, current: null, conflicts: [], canSplit: false, always: settings.always };
+    if (!info) return { git: false, current: null, conflicts: [], canSplit: false };
     const current = await worktrees.byPath(cwd);
     const conflicts = current || !writes ? [] : await writers({ root: info.root, exceptSession: sessionId });
-    return { git: true, current: current ? publicEntry(current) : null, conflicts, canSplit: !current, always: settings.always };
+    return { git: true, current: current ? publicEntry(current) : null, conflicts, canSplit: !current };
   }
 
-  /** 人が分ける（または確認なしで分ける）。作った分けた作業場所の cwd を返す */
+  /** 人が分ける（または確認なしで分ける）。作った worktree の cwd を返す */
   async function split({ cwd, sessionId = null, purpose = 'conversation', parentSessionId = null, taskId = null }) {
     const made = await worktrees.create({ cwd, sessionId, parentSessionId, taskId, purpose });
     if (!made.ok) return made;
@@ -120,36 +115,13 @@ export function createWorktreeHost({ dataDir, store, turns, shellCwds = () => []
   }
 
   // ---------------------------------------------------------------- 委譲
-  const batches = new WeakMap();   // 依頼元のターン -> { pending: Set, max }
-
-  /**
-   * 子を分けるか。isolate が真偽で来ればそれに従う（git でなければ分けない）。省略なら:
-   * 子が書く（書き込みの範囲のモード・書く種類）うえで、同じリポジトリに書き手が（この子のほかに）いるときだけ分ける。
-   * 書き手 = 依頼元が今のターンでファイルを変えている・走っている別の会話や子・同じターンから並列に呼ばれた別の子
-   * 戻り: { isolate, why }。why: explicit / disabled / not-git / readonly / alone / writers
-   */
-  async function decideIsolation({ owner, turn, cwd, kind, writes, isolate }) {
-    if (isolate === false) return { isolate: false, why: 'explicit' };
+  /** isolate: true が指定され、git の場所で作成が有効なときだけ分ける。 */
+  async function decideIsolation({ cwd, isolate }) {
+    if (isolate !== true) return { isolate: false, why: isolate === false ? 'explicit' : 'not-requested' };
     if (worktreeOptions.disabled) return { isolate: false, why: 'disabled' };
     const info = await repoOf(cwd);
     if (!info) return { isolate: false, why: 'not-git' };
-    if (isolate === true) return { isolate: true, why: 'explicit' };
-    if (!writes || !WRITING_KINDS.has(kind)) return { isolate: false, why: 'readonly' };
-    const others = async () => (await writers({ root: info.root, exceptSession: owner })).length + (turn && await parentWrote(turn, info.root).catch(() => false) ? 1 : 0);
-    if (await others() >= 1) return { isolate: true, why: 'writers' };
-    // 同じターンから並列に呼ばれた委譲は、出そろうまで少し待ってまとめて数える
-    const batch = turn ? (batches.get(turn) ?? batches.set(turn, { pending: new Set(), max: 0 }).get(turn)) : { pending: new Set(), max: 0 };
-    const token = Symbol('delegate');
-    batch.pending.add(token);
-    try {
-      await sleep(windowMs);
-      batch.max = Math.max(batch.max, batch.pending.size);
-      if (batch.max >= 2) return { isolate: true, why: 'writers' };
-      return await others() >= 1 ? { isolate: true, why: 'writers' } : { isolate: false, why: 'alone' };
-    } finally {
-      batch.pending.delete(token);
-      if (!batch.pending.size) batch.max = 0;
-    }
+    return { isolate: true, why: 'explicit' };
   }
 
   /** 子の作業場所を作る。作れなければ null（子は元の場所で走る。理由は reason に） */
@@ -189,7 +161,7 @@ export function createWorktreeHost({ dataDir, store, turns, shellCwds = () => []
   }
 
   // ---------------------------------------------------------------- 画面（git パネル）
-  /** 右パネルの「残っている作業場所」。使っているもの・今いる場所・自動で消えるものは出さない */
+  /** 右パネルの「残っている worktree」。使っているもの・今いる場所・自動で消えるものは出さない */
   async function leftovers({ cwd }) {
     const info = await repoOf(cwd);
     if (!info) return [];
@@ -234,7 +206,7 @@ export function createWorktreeHost({ dataDir, store, turns, shellCwds = () => []
   }
 
   /**
-   * 退避から作業場所を作り直す（「元に戻す」）。退避の隠し ref のコミットから、新しい分けた作業場所を作る
+   * 退避から作業場所を作り直す（「元に戻す」）。退避の隠し ref のコミットから、新しい worktree を作る
    * （作業ツリー全体が 1 つのコミットになった状態。ベースは元のまま）。ref は refs/pleiad/archive/ だけ
    */
   async function restore({ cwd, ref }) {

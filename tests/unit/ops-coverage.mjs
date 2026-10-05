@@ -41,7 +41,7 @@ export default async function (t) {
   t.ok('実物の操作の human-only は、WS のコマンドを持たない承認モード・秘密の操作（bots.setMode・routines.rotateSecret）だけ（検査用の probe.* を除く）',
     registry.ops.filter((op) => op.risk === 'human-only' && !op.id.startsWith('probe.')).map((op) => op.id).join() === 'bots.setMode,routines.rotateSecret' && [...HUMAN_ONLY_OPS].join() === 'bots.setMode,routines.rotateSecret' && HUMAN_ONLY.mode.ops.includes('bots.setMode'));
   const moved = { worktreeSplit: ['worktrees.split', 'write'], worktreeKeep: ['worktrees.keep', 'write'], worktreeArchive: ['worktrees.archive', 'write'], worktreeRestore: ['worktrees.restore', 'write'],
-    setWorktreeSettings: ['worktrees.setSettings', 'write'], worktreeDiscard: ['worktrees.discard', 'write'], setNotifyPc: ['notify.setPc', 'write'], setNotifyDevice: ['notify.setDevice', 'write'],
+    worktreeDiscard: ['worktrees.discard', 'write'], setNotifyPc: ['notify.setPc', 'write'], setNotifyDevice: ['notify.setDevice', 'write'],
     readHook: ['hooks.read', 'read'], readPlyHook: ['hooks.readPly', 'read'], compatEndpointRecheck: ['compatEndpoints.recheck', 'write'], compatEndpointDelete: ['compatEndpoints.delete', 'guarded'],
     setModel: ['sessions.setModel', 'write'], computerStop: ['computer.stop', 'write'] };
   const wrong = Object.entries(moved).filter(([cmd, [id, risk]]) => { const op = registry.get(id); return !op || op.legacyCommand !== cmd || op.risk !== risk || op.surfaces.mcp === false || !op.surfaces.cli || cmd in baseline.commands; });

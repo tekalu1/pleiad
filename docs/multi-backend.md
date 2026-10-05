@@ -481,7 +481,7 @@ Pleiad はターンの後で rollout を読んで拾う（`core/backends/codex-r
 - `approvalRequested` は、同じターンで同じ call id（承認要求の `itemId`）の承認を求められたか。
 - 上流が拒否を `commandExecution`（`declined`）のアイテムとして出すようになれば、この読み取りは要らなくなる。
 
-**分けた作業場所と作業ディレクトリ（2026-10-03、[ADR 0089](adr/0089-worktree-on-demand.md)）。** 会話の cwd が分けた作業場所（`<リポジトリ>.pleiad/<id>`）になることがある。人が面の「分けた作業場所で始める」を選ぶと、サーバーが作った作業場所のパスを `setTurnSettings` の `cwd` で予約し（ターンの境界でだけ切り替わる）、ぶつかっていて自動で分ける設定（既定）ならターンの始まりに `runTurn` が分けて始める（変更履歴に `by: ply` の `cwd`、理由 `worktreeSplit`）。片付けで消すときは、先に会話の cwd と予約を元の場所へ戻す（理由 `worktreeBack`）。分けた作業場所の中の会話の一覧の行は、`cwd` はそのままで `worktree: { id, branch, origin }` を持ち、`place`（最近の場所の候補）は元の場所にする。
+**worktree と作業ディレクトリ（承認済み（2026-10-05）、[ADR 0136](adr/0136-worktree-opt-in.md)）。** 会話の cwd が worktree（`<リポジトリ>.pleiad/<id>`）になるのは、人が作業場所の面で「worktree で始める」を選んだときか、委譲で `isolate: true` を指示したときだけ。前者は `setTurnSettings` の cwd で次のターンに予約する。片付けで消す前に会話の cwd と予約を元の場所へ戻す（理由 `worktreeBack`）。worktree の中の会話の行は `worktree: { id, branch, origin }` を持ち、最近の場所の候補は元の場所にする。
 
 **codex の実行ファイル**は `AGENT_HOST_CODEX_BIN`（既定 `codex`）。
 **agy の実行ファイル**は `AGENT_HOST_AGY_BIN`（既定 `agy`）。

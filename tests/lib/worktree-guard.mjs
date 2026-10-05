@@ -1,6 +1,6 @@
-// テストが、このリポジトリの git に分けた作業場所（git worktree。ADR 0089）を残していないかの見張り。
+// テストが、このリポジトリの git に worktree（git worktree。ADR 0089）を残していないかの見張り。
 //
-// 分けた作業場所は <リポジトリ>.pleiad/<id>・ブランチ pleiad/<id> に作られ、リポジトリの Git の登録は worktree 同士で共有される。
+// worktree は <リポジトリ>.pleiad/<id>・ブランチ pleiad/<id> に作られ、リポジトリの Git の登録は worktree 同士で共有される。
 // cwd がこのリポジトリのテストが作ると、片付けの前にサーバーを止めたとき（一時の台帳ごと消えるので誰も片付けない）、
 // 開発中のリポジトリに残る。テストは一時の git リポジトリだけで作業場所を作る（tests/lib/server.mjs は既定で AGENT_HOST_WORKTREES=off）。
 // 並行して動く別の作業の worktree（temporary/worktrees/ など）は数えない: Pleiad が作った印（<…>.pleiad/ の置き場・pleiad/ のブランチ）だけを見る。
@@ -12,7 +12,7 @@ const git = (root, args) => new Promise((resolve) => {
 });
 const slash = (p) => String(p ?? '').replaceAll('\\', '/');
 
-/** root の git に今ある、Pleiad の分けた作業場所（置き場）とブランチ。読めなければ null */
+/** root の git に今ある、Pleiad の worktree（置き場）とブランチ。読めなければ null */
 export async function snapshotPleiadWorktrees(root) {
   const [list, branches] = await Promise.all([
     git(root, ['worktree', 'list', '--porcelain']),
