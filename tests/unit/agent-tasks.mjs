@@ -68,8 +68,8 @@ export default async function(t) {
       && manager.get(job.taskId).pendingMessages === 2);
     release();
     await until(() => manager.get(job.taskId).status === 'completed');
-    t.ok('同じ子の会話で追加指示を FIFO 配送し、配送済みを待機表示から外す', calls.length === 3
-      && calls.slice(1).every(x => x[1] === 'second') && manager.get(job.taskId).result === 'second'
+    t.ok('同じ子の会話で追加指示を FIFO 配送し、配送済みを待機表示から外す', calls.length === 2
+      && calls[1][1] === 'second\n\nsecond' && manager.get(job.taskId).result === 'second\n\nsecond'
       && manager.instructions(job.taskId).instructions.every(x => x.state === 'delivered') && manager.get(job.taskId).pendingMessages === 0);
     notifyBlocked = false;
     await until(() => manager.get(job.taskId).notification === 'sent');
@@ -174,7 +174,7 @@ export default async function(t) {
     t.ok('委譲の深さに上限が無い（6 階層まで委譲できる）', deepest.depth === 6);
     openGate();
     await until(() => many.every(j => manager.get(j.taskId).status === 'completed'));
-    t.ok('積んだ追加指示を順に全部実行する', manager.get(many[0].taskId).result === 'more 24');
+    t.ok('積んだ追加指示を順に全部実行する', manager.get(many[0].taskId).result.endsWith('more 24') && calls.filter(c => c[0] === many[0].taskId).flatMap(c => c[1].split('\n\n')).filter(p => p.startsWith('more ')).length === 25);
     const japanese = '日本語の依頼';
     const payload = Buffer.from(JSON.stringify({ jsonrpc: '2.0', id: 9, method: 'tools/call', params: { name: 'ply_delegate', arguments: { backend: 'claude', task: japanese } } }));
     const split = payload.indexOf(Buffer.from(japanese)) + 1;

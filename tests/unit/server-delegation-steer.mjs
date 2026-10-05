@@ -145,6 +145,34 @@ export default async function(t) {
       t.ok('合図なしでターンが終わったら、次のターンで 1 回だけ配送する', turnEnds(e3.task, e3.mark).length === 2 && await stateOf(e3.task) === 'echo:SILENT SILENT_STEER:delivered'
         && (await userTexts(e3.task)).filter(x => x.includes('SILENT')).length === 1);
       t.ok('渡っていない発言は画面から下げる（userMessage.dropped）', events(e3.task, mark3, 'userMessage.dropped').length === 1);
+
+      // 配送確認待ちでも、後続をバックエンドへ送信する。
+      const e4 = await child('e4');
+      const hold4 = 'echo:FIRST HOLD_CONFIRM:e4-confirm';
+      await send(e4.parent, e4.task, hold4);
+      await send(e4.parent, e4.task, 'echo:SECOND');
+      t.ok('先の合図待ちでも後続は送信済みで確認待ちになる', await stateOf(e4.task) === `${hold4}:sending,echo:SECOND:sending`);
+      await gates.open('e4-confirm');
+      t.ok('先と後の両方に配送確認を反映する', await awaitState(e4.task, `${hold4}:delivered,echo:SECOND:delivered`) === `${hold4}:delivered,echo:SECOND:delivered`);
+      await e4.finish(); await settled(e4.parent);
+      t.ok('後続を同じターンで処理する', turnEnds(e4.task, e4.mark).length === 1);
+
+      // 一時的に送れない間の待機分は、予約が外れたら1回で送る。
+      const e5 = await child('e5');
+      await c.cmd('setTurnSettings', { sessionId: e5.task.sessionId, backend: 'fake', model: 'fast' });
+      await send(e5.parent, e5.task, 'echo:BATCH_FIRST');
+      await send(e5.parent, e5.task, 'echo:BATCH_SECOND');
+      const mark5 = c.mark();
+      await c.cmd('setTurnSettings', { sessionId: e5.task.sessionId, cancel: true });
+      const batch5 = 'echo:BATCH_FIRST\n\necho:BATCH_SECOND';
+      const want5 = 'echo:BATCH_FIRST:delivered,echo:BATCH_SECOND:delivered';
+      t.ok('まとめた受信確認を全指示に反映する', await awaitState(e5.task, want5) === want5);
+      const messages5 = events(e5.task, mark5, 'userMessage');
+      t.ok('子の会話にも1つの本文として出す', messages5.length === 1 && messages5[0].text === batch5 && messages5[0].pending === true, JSON.stringify(messages5));
+      t.ok('履歴にまとめた本文が1回だけ入る', (await userTexts(e5.task)).filter(text => text === batch5).length === 1);
+      await e5.finish(); await settled(e5.parent);
+      t.ok('一括送信で新しいターンを増やさない', turnEnds(e5.task, e5.mark).length === 1);
+
     }
   } finally {
     for (const c of clients) c.close();

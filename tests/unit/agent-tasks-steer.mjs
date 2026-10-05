@@ -12,7 +12,7 @@ async function until(fn, ms = 8000) { const end = Date.now() + ms; while (Date.n
 export default async function(t) {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'ply-steer-'));
   let seq = 0, steerable = true, outcome = 'delivered', onSteer = null;
-  const runs = [], steered = [], holds = new Map();
+  const runs = [], steered = [], batches = [], holds = new Map();
   let manager;
   const states = id => manager.instructions(id).instructions.map(x => `${x.text}:${x.state}`).join();
   const runsOf = id => runs.filter(x => x[0] === id).map(x => x[1]);
@@ -33,7 +33,7 @@ export default async function(t) {
       deliver: async () => 'ok',
       childSteerable: async () => steerable,
       steer: async (task, instruction) => {
-        steered.push([task.taskId, instruction.text]);
+        steered.push([task.taskId, instruction.text]); batches.push(instruction);
         await onSteer?.(task, instruction);
         return outcome;
       },
@@ -161,30 +161,104 @@ export default async function(t) {
       steerable = true;
     }
 
-    // ---- 順序: 待機の指示が先にあるとき、後の指示だけ途中送信で追い越さない
+    // 起動準備中の待機分は、入力が開いたときに順序を保って1回で渡す。
     {
-      outcome = 'delivered'; steered.length = 0; steerable = false;
+      outcome = 'pending'; steered.length = 0; steerable = false;
       const id = await start('hold-i');
       await send(id, 'first-i');
-      steerable = true;
       await send(id, 'second-i');
-      t.ok('前の指示が待機中なら、後の指示も待機して順序を守る', steered.length === 0 && states(id) === 'first-i:queued,second-i:queued');
+      await send(id, 'third-i');
+      steerable = true;
+      await manager.sendQueued(`child-${seq}`);
+      const batch = batches.at(-1);
+      t.ok('待機分をすべて1回の途中送信で渡す', steered.length === 1 && batch.text === 'first-i\n\nsecond-i\n\nthird-i' && batch.ids.length === 3, JSON.stringify({steered,batch,states:states(id)}));
+      t.ok('まとめた全指示を配送確認待ちにする', states(id) === 'first-i:sending,second-i:sending,third-i:sending');
+      await manager.steered(id, batch.ids, 'delivered');
+      t.ok('1つの合図で全指示を配送済みにする', states(id) === 'first-i:delivered,second-i:delivered,third-i:delivered');
       release(id);
-      await until(() => manager.get(id).status === 'completed' && runsOf(id).length === 3);
-      t.ok('FIFO で配送する', JSON.stringify(runsOf(id)) === '["hold-i","first-i","second-i"]');
+      await until(() => manager.get(id).status === 'completed');
+      t.ok('まとめて渡した指示を次ターンで再送しない', JSON.stringify(runsOf(id)) === '["hold-i"]');
     }
 
-    // ---- 前の途中送信が決着する前の次の指示は待機（二重・順序の入れ替わりを避ける）
+    // 到着確認を待っている指示があっても、次の指示を即座に渡す。
     {
       outcome = 'pending'; steered.length = 0;
       const id = await start('hold-j');
       await send(id, 'first-j');
       await send(id, 'second-j');
-      t.ok('合図待ちの間に送った次の指示は待機する', steered.length === 1 && states(id) === 'first-j:sending,second-j:queued');
-      await manager.steered(id, manager.instructions(id).instructions[0].id, 'delivered');
+      t.ok('合図待ちでも後続を途中送信する', steered.length === 2 && states(id) === 'first-j:sending,second-j:sending');
+      const instructions = manager.instructions(id).instructions;
+      await manager.steered(id, instructions[1].id, 'delivered');
+      await manager.steered(id, instructions[0].id, 'delivered');
       release(id);
-      await until(() => manager.get(id).status === 'completed' && runsOf(id).length === 2);
-      t.ok('次の指示は次のターンで、先の指示は二重にならない', JSON.stringify(runsOf(id)) === '["hold-j","second-j"]' && states(id) === 'first-j:delivered,second-j:delivered');
+      await until(() => manager.get(id).status === 'completed');
+      t.ok('逆順の合図でも二重配送しない', JSON.stringify(runsOf(id)) === '["hold-j"]' && states(id) === 'first-j:delivered,second-j:delivered');
+    }
+
+    // 起動完了の通知を逃しても、スケジューラーが待機分を送る。
+    {
+      outcome = 'delivered'; steered.length = 0; steerable = false;
+      const id = await start('hold-ready');
+      await send(id, 'ready-one'); await send(id, 'ready-two');
+      steerable = true;
+      await until(() => manager.get(id).pendingMessages === 0);
+      t.ok('受信可能になるとターン完了を待たず一括配送する', steered.length === 1 && steered[0][1] === 'ready-one\n\nready-two');
+      release(id); await until(() => manager.get(id).status === 'completed');
+    }
+
+    // RPC の処理中に増えた待機分は次の送信で一括配送し、到着確認は待たない。
+    {
+      outcome = 'pending'; steered.length = 0;
+      let entered, finish;
+      const gate = new Promise(resolve => { finish = resolve; });
+      const started = new Promise(resolve => { entered = resolve; });
+      onSteer = async () => { entered(); await gate; };
+      const id = await start('hold-rpc');
+      const first = send(id, 'rpc-one');
+      await started;
+      const second = send(id, 'rpc-two'), third = send(id, 'rpc-three');
+      await until(() => manager.get(id).pendingMessages === 2);
+      onSteer = null; finish();
+      await Promise.all([first, second, third]);
+      t.ok('送信中に溜まった後続をまとめて送る', steered.length === 2 && steered[1][1] === 'rpc-two\n\nrpc-three');
+      await manager.steered(id, manager.instructions(id).instructions.map(i => i.id), 'delivered');
+      release(id); await until(() => manager.get(id).status === 'completed');
+    }
+
+    // 同じ送信処理に成功と結果不明が混ざっても、警告は該当指示にだけ返す。
+    for (const errorFirst of [true, false]) {
+      steered.length = 0;
+      let entered, finish;
+      const gate = new Promise(resolve => { finish = resolve; });
+      const started = new Promise(resolve => { entered = resolve; });
+      onSteer = async (_task, batch) => {
+        const first = batch.text === 'warn-first';
+        if (first) { entered(); await gate; }
+        outcome = first === errorFirst ? 'error' : 'delivered';
+      };
+      const id = await start(`hold-warning-${errorFirst}`);
+      const first = send(id, 'warn-first'); await started;
+      const second = send(id, 'warn-second');
+      await until(() => manager.get(id).pendingMessages === 1);
+      finish();
+      const results = await Promise.all([first, second]);
+      onSteer = null;
+      t.ok(`結果不明の指示だけに警告する（先行が結果不明: ${errorFirst}）`, Boolean(results[0].warning) === errorFirst && Boolean(results[1].warning) !== errorFirst, JSON.stringify(results.map(r => r.warning ?? null)));
+      release(id); await until(() => manager.get(id).status === 'completed');
+    }
+
+    // 複数の未受信確認が逆順に来ても、次ターンの本文は元の順序で1回にまとめる。
+    {
+      outcome = 'pending'; steered.length = 0;
+      const id = await start('hold-drops');
+      await send(id, 'drop-one'); await send(id, 'drop-two');
+      const instructions = manager.instructions(id).instructions;
+      await manager.steered(id, instructions[1].id, 'dropped');
+      await manager.steered(id, instructions[0].id, 'dropped');
+      await sleep(600);
+      t.ok('未受信の指示は同じターンに再送しない', steered.length === 2);
+      release(id); await until(() => manager.get(id).status === 'completed');
+      t.ok('未受信分は元の順序でまとめて次ターンへ渡す', JSON.stringify(runsOf(id)) === '["hold-drops","drop-one\\n\\ndrop-two"]' && states(id) === 'drop-one:delivered,drop-two:delivered');
     }
 
     // ---- 止めたタスクは、合図待ちの指示で生き返らない
@@ -195,6 +269,56 @@ export default async function(t) {
       await manager.cancel(id);
       await until(() => manager.get(id).status === 'cancelled');
       t.ok('止めた後は待機に残さず未配送（dropped）', states(id) === 'steered-k:dropped' && manager.get(id).pendingMessages === 0 && JSON.stringify(runsOf(id)) === '["hold-k"]', `${states(id)} ${manager.get(id).status}`);
+    }
+
+    // 送信 RPC 中に停止しても、未送信分を流したり後始末より後に再送したりしない。
+    {
+      outcome = 'pending'; steered.length = 0;
+      let entered, finish;
+      const gate = new Promise(resolve => { finish = resolve; });
+      const started = new Promise(resolve => { entered = resolve; });
+      onSteer = async () => { entered(); await gate; };
+      const id = await start('hold-stop-rpc');
+      const first = send(id, 'stop-first'); await started;
+      const second = send(id, 'stop-second');
+      await until(() => manager.get(id).pendingMessages === 1);
+      await manager.cancel(id);
+      onSteer = null; finish();
+      await Promise.all([first, second]);
+      await until(() => manager.get(id).status === 'cancelled');
+      t.ok('送信中の停止で待機分を送らず、全指示を未配送にする', steered.length === 1 && states(id) === 'stop-first:dropped,stop-second:dropped' && manager.get(id).pendingMessages === 0);
+    }
+
+    // 送信中の記録を書けないときはバックエンドへ渡さず、保存回復後にまとめて送る。
+    {
+      let rejectClaim = true, unblock;
+      const sent = [];
+      const isolated = await createAgentTasks({
+        dataDir: dir, log: () => {}, silenceMinutes: 0, commandMinutes: 0,
+        taskStorage: { loadRows: () => [], save: rows => {
+          if (rejectClaim && rows.some(([, json]) => JSON.parse(json).instructions.some(i => i.state === 'sending'))) {
+            throw Object.assign(new Error('injected claim failure'), { code: 'ENOSPC' });
+          }
+        } },
+        prepare: async () => ({ sessionId: 'storage-child', backend: 'fake' }),
+        execute: async (task, prompt, signal) => {
+          await new Promise(resolve => { unblock = resolve; signal.addEventListener('abort', resolve, { once: true }); });
+          await isolated.settleSteers(task.sessionId);
+          return { outcome: 'ok', text: prompt };
+        },
+        deliver: async () => 'ok', childSteerable: async () => true,
+        steer: async (_task, batch) => { sent.push(batch.text); return 'delivered'; },
+      });
+      try {
+        const task = await isolated.call('p', 'ply_delegate', { backend: 'fake', task: 'storage-hold' });
+        await until(() => unblock);
+        await isolated.call('p', 'ply_task_send', { taskId: task.taskId, message: 'save-first' });
+        t.ok('送信状態の保存に失敗した指示は待機へ戻し、送信しない', sent.length === 0 && isolated.instructions(task.taskId).instructions[0].state === 'queued' && isolated.fault?.code === 'ENOSPC');
+        await isolated.call('p', 'ply_task_send', { taskId: task.taskId, message: 'save-second' });
+        rejectClaim = false;
+        await until(() => isolated.get(task.taskId).pendingMessages === 0);
+        t.ok('保存回復後、全待機分を1回で送り重複しない', sent.length === 1 && sent[0] === 'save-first\n\nsave-second');
+      } finally { unblock?.(); await isolated.close(); }
     }
 
     // ---- 走っていない（完了済み）タスクへは途中送信しない

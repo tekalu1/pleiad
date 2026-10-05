@@ -117,8 +117,10 @@ export default async function (t) {
     t.ok('子の会話のメタデータにも routing', sessions.find(s => s.id === row.sessionId)?.routing?.target?.model === 'gemini-3.8-flash-high');
     const status = await call(sid, { kind: 'trivial', task: 'agy-auto-status' });
     await sleep(100);
-    const listed = await turnOn(sid, prompt('ply_task_status', { taskId: status.data.taskId }));
-    t.ok('ply_task_status でも routing を読める', JSON.parse(listed.events.find(e => e.type === 'tool.result').text).routing?.mode === 'auto');
+    const statusFrom = c.mark();
+    await turnOn(sid, prompt('ply_task_status', { taskId: status.data.taskId }));
+    const listed = await c.waitFor(e => e.type === 'tool.result' && e.sessionId === sid, { from: statusFrom, ms: 60000 });
+    t.ok('ply_task_status でも routing を読める', JSON.parse(listed.text).routing?.mode === 'auto');
 
     t.ok('選んだ候補に効いた枠の使用率を routing に残す（委譲カードの内訳）', r.targetWindows?.length === 2 && r.targetWindows.every(w => typeof w.usedPercent === 'number' && w.label), JSON.stringify(r.targetWindows));
 

@@ -297,7 +297,7 @@ Codex は実行中のハンドルに `steer` を公開し、`turn/steer` に `ex
 
 委譲した Pleiad タスクの完了通知も、依頼元のターンが走っていてこの途中送信を受けられるなら、同じ `control.steer` で今のターンへ渡す。人の発言ではないので outbox は通さず、本文のハッシュを記録して `taskNotice` として出す。人間の送信待ちがあるとき・次ターンの設定が予約されているときは渡さず、今までどおり空いてから新しいターンで送る（`docs/agent-delegation.md`「完了通知」、[ADR 0057](adr/0057-deliver-completion-notice-live.md)）。
 
-委譲の追加指示（`ply_task_send`）も、子のターンが走っていてこの途中送信を受けられるなら、同じ `control.steer` で子の今のターンへ渡す（item id は `task-send-<指示 ID>`）。子の会話には通常の user 発言として出し、`steerConfirms` のバックエンドでは合図まで `pending`。渡らなかった指示は待機へ戻して次のターンで送る。受けられない状態は完了通知と同じ（`docs/agent-delegation.md`「追加指示の配送」、[ADR 0065](adr/0065-steer-task-instructions.md)）。
+委譲の追加指示（`ply_task_send`）も、子のターンが走っていてこの途中送信を受けられるなら、同じ `control.steer` で子の今のターンへ渡す（item id は `task-send-<先頭の指示 ID>`。待機分を順序どおり1つの本文にまとめ、到着確認は全指示へ反映する）。子の会話には通常の user 発言として出し、`steerConfirms` のバックエンドでは合図まで `pending`。渡らなかった指示は待機へ戻して次のターンで送る。受けられない状態は完了通知と同じ（`docs/agent-delegation.md`「追加指示の配送」、[ADR 0065](adr/0065-steer-task-instructions.md)）。
 
 受理した発言を読まないままターンが死んだとき（中断・失敗・ラウンド上限）は `userMessage.dropped { messageId }` を出す（Claude は中断の interrupt で取り消された分。multi-backend.md §2.2）。server はその発言を送信待ちの「保留」へ戻し、web は吹き出しを会話から下げる。上限で止まった会話は解除後の再開に渡す。それ以外は勝手に送り直さない（ターンが死んだ直後で、続けて送ってよいか分からない）。
 
