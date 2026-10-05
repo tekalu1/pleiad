@@ -23,7 +23,7 @@ const BASELINE = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '
 // 移したコマンドと操作（ADR 0105 の表）
 export const MOVED = {
   notifyStatus: 'notify.status', slashSkills: 'context.skills', sessionContext: 'context.session', contextDiff: 'context.diff', gitStatus: 'git.status',
-  gitPanel: 'git.changes', gitDiff: 'git.diff', worktreeCheck: 'worktrees.check', worktreeSettings: 'worktrees.settings', agentMcp: 'context.agentMcp',
+  gitPanel: 'git.changes', gitDiff: 'git.diff', worktreeCheck: 'worktrees.check', agentMcp: 'context.agentMcp',
   nativeInstructions: 'context.nativeInstructions', contextFindings: 'context.findings', scanContext: 'context.scan', hooksUnifyPreview: 'hooks.unifyPreview',
   runShell: 'shell.run', stopShell: 'shell.stop', skipShell: 'shell.skip', switchBackend: 'sessions.switchBackend', setGrouped: 'sessions.setGrouped',
   listDirs: 'files.listDirs', loadSubagent: 'sessions.readSubagent', findSubagent: 'sessions.subagents', loadBackground: 'sessions.background', stopBackground: 'sessions.stopBackground',
@@ -87,7 +87,7 @@ function fakeDeps() {
       diff: async (a) => ({ diff: a.path ? { range: 'uncommitted', path: a.path, hunks: [{ header: '@@ -1 +1 @@', lines: [{ t: '-', s: 'old' }, { t: '+', s: `new --token ${MARKER}` }] }], binary: false, truncated: false } : null }),
     },
     notify: { status: async () => ({ pc: { done: true, reply: false, failed: true }, relayConnected: true, devices: [{ id: 'dev-secret-id', platform: 'ios', notify: { muted: true } }, { id: 'dev-2', platform: 'android', notify: {} }] }) },
-    worktrees: { check: async (a) => { calls.push(['worktrees.check', a]); return { git: true, current: null, conflicts: [], canSplit: true, always: false }; }, getSettings: async () => ({ always: true }) },
+    worktrees: { check: async (a) => { calls.push(['worktrees.check', a]); return { git: true, current: null, conflicts: [], canSplit: true }; } },
     hooks: { unifyPreview: async (a) => { calls.push(['unifyPreview', a]); return { imports: [{ id: 'i', digest: 'd', command: `deploy --token ${MARKER}` }], revision: 'r1' }; } },
     files: { listDirs: async (p, o) => { calls.push(['listDirs', p, o]); return { path: p ?? 'C:/home', parent: null, dirs: Array.from({ length: 40 }, (_, i) => `d${i}`), files: o.files ? [{ name: 'a.txt', size: 1, mtime: 0 }] : undefined, truncated: false, roots: [] }; } },
   };
@@ -106,7 +106,7 @@ export default async function (t) {
   const baseline = JSON.parse(fs.readFileSync(BASELINE, 'utf8')).commands;
   const legacy = new Map(registry.ops.flatMap((op) => [op.legacyCommand, ...(op.legacyAliases ?? [])].filter(Boolean).map((n) => [n, op.id])));
   const wrong = Object.entries(MOVED).filter(([cmd, id]) => legacy.get(cmd) !== id || cmd in baseline);
-  t.ok('移した 24 のコマンドは表のとおりの操作の legacyCommand で、基準（ui-internal）から外れた', Object.keys(MOVED).length === 24 && wrong.length === 0, JSON.stringify(wrong));
+  t.ok('残る 23 のコマンドは表のとおりの操作の legacyCommand で、基準（ui-internal）から外れた', Object.keys(MOVED).length === 23 && wrong.length === 0, JSON.stringify(wrong));
   t.ok('残した 11 は ui-internal のまま、どの操作にもなっていない', KEPT.every((c) => baseline[c] === 'ui-internal' && !legacy.has(c)), KEPT.filter((c) => baseline[c] !== 'ui-internal' || legacy.has(c)).join(','));
   for (const via of ['mcp', 'cli', 'mcp-stdio']) {
     const seen = registry.list({ by: 'agent', via, sessionId: via === 'mcp' ? 's1' : undefined, mode: MODES.bypass }).flatMap((op) => [op.legacyCommand, ...(op.legacyAliases ?? [])]);
@@ -213,7 +213,7 @@ export default async function (t) {
   const status = await call(agent('ask'), 'git.status', {});
   t.ok('git.status: 会話も場所も省くとその会話', status.deps.calls.find((c) => c[0] === 'git.status')?.[1].sessionId === 's1');
   const changes = await call(agent('ask'), 'git.changes', {});
-  t.ok('git.changes: ファイルを区切り、出来事は新しい 20 件。分けた作業場所の片付け（sweep）は画面だけ', changes.r.result.changes.files.length === 30 && changes.r.result.changes.next && changes.r.result.timeline.length === 20
+  t.ok('git.changes: ファイルを区切り、出来事は新しい 20 件。worktree の片付け（sweep）は画面だけ', changes.r.result.changes.files.length === 30 && changes.r.result.changes.next && changes.r.result.timeline.length === 20
     && changes.r.result.timelineTotal === 30 && changes.deps.calls.find((c) => c[0] === 'git.panel')?.[2].sweep === false);
   const screenChanges = await call(human, 'git.changes', { sessionId: 's1' });
   t.ok('git.changes: 画面には全量と、開いたときの片付け', screenChanges.r.result.changes.files.length === 45 && screenChanges.deps.calls.find((c) => c[0] === 'git.panel')?.[2].sweep === true);
@@ -223,7 +223,6 @@ export default async function (t) {
   t.ok('patchText: ハンクの見出しと行をつなぐ', patchText([{ header: '@@', lines: [{ t: ' ', s: 'a' }, { t: '+', s: 'b' }] }]) === '@@\n a\n+b');
   const check = await call(agent('ask'), 'worktrees.check', {});
   t.ok('worktrees.check: 省くとその会話', check.deps.calls.find((c) => c[0] === 'worktrees.check')?.[1].sessionId === 's1' && check.r.result.canSplit === true);
-  t.ok('worktrees.settings: 「自動で分ける」の値', (await call(agent('ask'), 'worktrees.settings', {})).r.result.always === true);
   const notify = (await call(agent('ask'), 'notify.status', {})).r.result;
   t.ok('notify.status: AI には端末を数だけ（一覧・id は返さない。リモートのペアリングは人だけ）', notify.devices.count === 2 && notify.devices.muted === 1 && notify.pc.reply === false && !JSON.stringify(notify).includes('dev-secret-id'));
   t.ok('notify.status: 画面には今までどおり端末の一覧', (await call(human, 'notify.status', {})).r.result.devices[0].id === 'dev-secret-id');

@@ -1,12 +1,11 @@
-// 分けた作業場所の画面の部品（docs/design-system.md「分けた作業場所」、ADR 0089, 0133）。
-//   - 送ると自動で分けるかの判定（入力欄のチップの「· 分けて始めます」の元。web/composer-controls.mjs が描く）
-//   - 会話の中の静かな 1 行（分けた作業場所で始めました・元の場所に戻す）— present kind: 'worktree'
+// worktree の画面の部品（docs/design-system.md「worktree」、ADR 0136）。
+//   - 書き込み中の別の会話を知らせるチップ（web/composer-controls.mjs が描く）
+//   - 会話の中の静かな 1 行（worktree で始めました・元の場所に戻す）— present kind: 'worktree'
 //   - 右パネル「git」の作業場所タブの、未取り込みの行を開いた中の操作（取り込みを頼む・退避して消す・残す。ADR 0135）
-//   - 設定 › エージェント設定の「作業場所」
 // 文の組み立ては DOM に触れない関数に分ける。DOM は web/dom.mjs の el だけ。
 import { el } from './dom.mjs';
-import { t, fmt } from './i18n.mjs';
-import { branchIcon, archiveIcon, linkIcon, lockIcon, chevRightIcon, undoIcon } from './icons.mjs';
+import { t } from './i18n.mjs';
+import { branchIcon, archiveIcon, undoIcon } from './icons.mjs';
 
 /** パスの末尾 2 つ（D:/dev/pleiad.pleiad/ply-7f3a → pleiad.pleiad/ply-7f3a）。次のターンの行・チップの title に使う */
 export function shortPath(p) {
@@ -36,17 +35,16 @@ function button(className, label, onClick) {
   return b;
 }
 
-// ---------------------------------------------------------------- 送ると自動で分けるか
+// ---------------------------------------------------------------- 別の会話の書き込み
 
 /**
- * 送ると分けた作業場所で始める間だけ { who }（チップの「· 分けて始めます」と、その title の元）、でなければ null。
- * 条件: 分けられる場所で、書き込み中の別の会話があり、自動で分ける設定（worktreeCheck の always）で、
- * 今回だけ元の場所と決めておらず（stay）、この会話が走っていない（走っている間の送信は今のターンへ渡るので分けない）
- * @param {{ canSplit?: boolean, conflicts?: object[], always?: boolean }|null} data worktreeCheck の結果
- * @param {{ stay?: boolean, running?: boolean }} [o]
+ * 同じリポジトリに別の会話が書き込んでいるときだけ { who } を返す。
+ * この会話が走っている間の送信は今のターンへ渡るため、知らせは出さない。
+ * @param {{ canSplit?: boolean, conflicts?: object[] }|null} data worktreeCheck の結果
+ * @param {{ running?: boolean }} [o]
  */
-export function autoSplitPlan(data, { stay = false, running = false } = {}) {
-  if (!data || !data.canSplit || !data.always || !data.conflicts?.length || stay || running) return null;
+export function busyPlan(data, { running = false } = {}) {
+  if (!data || !data.canSplit || !data.conflicts?.length || running) return null;
   return { who: whoText(data.conflicts) };
 }
 
@@ -57,8 +55,8 @@ let modeOf = () => 'here';
 export const setWorktreeLineMode = (fn) => { modeOf = fn; };
 
 /**
- * 分けた作業場所で始めた印の行（present kind: 'worktree'。worktree: { id, branch, path, origin, conflicts, count }）。
- * 状態は paintWorktreeLine で切り替える（here: 元の場所に戻す / backing: 次のターンから戻す・もう一度分ける / back: 戻した・もう一度分ける）。
+ * worktree で始めた印の行（present kind: 'worktree'。worktree: { id, branch, path, origin, conflicts, count }）。
+ * 状態は paintWorktreeLine で切り替える（here: 元の場所に戻す / backing: 次のターンから戻す・もう一度 worktree で始める / back: 戻した・もう一度 worktree で始める）。
  * 押したら ply-worktree を投げる（detail: { act: 'back' | 'again', note }）。聞くのは web/client.mjs
  */
 export function renderWorktreeLine(ev) {
@@ -94,7 +92,7 @@ export function askText(row) {
     : t('worktree.ask.textOriginal', { branch: row.branch, path: row.path, origin: row.origin });
 }
 
-// ---------------------------------------------------------------- 右パネル「残っている作業場所」
+// ---------------------------------------------------------------- 右パネル「残っている worktree」
 
 /**
  * @param {object} o
@@ -108,7 +106,6 @@ export function askText(row) {
 export function createLeftovers({ keep, ask, unask, archive, restore, changed }) {
   /** 行ごとの今の状態。id -> { s: 'idle'|'ask'|'keep'|'stash'|'fail', msg, undo, ref?, ask?, row? } */
   const stateOf = new Map();
-  const open = new Set();   // 開いているファイルの一覧（id）
 
   const set = (row, state) => { stateOf.set(row.id, { ...state, row }); changed(); };
   const clear = (id) => { stateOf.delete(id); changed(); };
@@ -116,28 +113,10 @@ export function createLeftovers({ keep, ask, unask, archive, restore, changed })
   // i18n-dynamic: worktree.left.fail.
   const failText = (why) => t(`worktree.left.fail.${['busy', 'links', 'changed', 'archive', 'unowned', 'attached'].includes(why) ? why : 'other'}`);
 
-  function rowView(row, { header = true } = {}) {
+  function rowView(row) {
     const st = stateOf.get(row.id) ?? { s: row.kept ? 'keep' : 'idle', msg: row.kept ? t('worktree.left.kept') : '', undo: t('worktree.left.keptUndo') };
     const box = el('div', 'wt-item');
     box.dataset.state = st.s;
-    if (header) {
-      const line = el('button', 'wt-row');
-      line.type = 'button';
-      line.setAttribute('aria-expanded', String(open.has(row.id)));
-      line.append(icon(branchIcon), el('code', null, row.branch));
-      const meta = [row.files != null ? t('git.files', { count: row.files }) : null, row.at ? fmt.relative(row.at) : null].filter(Boolean).join(' · ');
-      line.append(el('span', 'wt-row-m', meta ? `· ${meta}` : ''));
-      const chev = el('span', 'wt-chev');
-      chev.innerHTML = chevRightIcon;
-      line.append(chev);
-      line.onclick = () => { if (open.has(row.id)) open.delete(row.id); else open.add(row.id); changed(); };
-      box.append(line);
-      if (open.has(row.id) && row.fileNames?.length) {
-        const ul = el('ul', 'wt-files');
-        for (const name of row.fileNames) ul.append(el('li', null, name));
-        box.append(ul);
-      }
-    }
     if (st.s === 'idle' || st.s === 'fail') {
       const acts = el('div', 'wt-item-acts');
       const askBtn = button('btn btn-primary', t('worktree.left.ask'), async () => {
@@ -178,58 +157,7 @@ export function createLeftovers({ keep, ask, unask, archive, restore, changed })
 
   return {
     /** 行を開いた中の操作と結果だけ（git パネルの作業場所タブ。見出しの行は呼び出し側が持つ） */
-    actions(row) { return rowView(row, { header: false }); },
-    /** パネルのブロック。rows が空でも、退避した直後の「元に戻す」の行が残っていれば出す */
-    section(rows) {
-      const shown = [...rows];
-      for (const [id, st] of stateOf) if (st.s === 'stash' && !shown.some((r) => r.id === id)) shown.push(st.row);
-      if (!shown.length) return null;
-      const sec = el('section', 'git-sec wt-left');
-      const head = el('div', 'git-sh');
-      head.append(el('h3', null, t('worktree.left.title')), el('span', 'git-tot', String(rows.length)));
-      sec.append(head);
-      for (const row of shown) sec.append(rowView(row));
-      const safety = el('ul', 'wt-safety');
-      for (const [svg, text] of [[linkIcon, t('worktree.left.safetyLinks')], [lockIcon, t('worktree.left.safetyUse')]]) {
-        const li = el('li');
-        li.append(icon(svg), el('span', null, text));
-        safety.append(li);
-      }
-      sec.append(safety);
-      return sec;
-    },
-    reset() { stateOf.clear(); open.clear(); },
+    actions(row) { return rowView(row); },
+    reset() { stateOf.clear(); },
   };
-}
-
-// ---------------------------------------------------------------- 設定の「作業場所」
-
-/**
- * 設定 › エージェント設定の末尾の節「作業場所」。ほかの会話が同じリポジトリで書いている間は、分けた作業場所で始める（既定はオン）。
- * @param {{ cmd: (c:string, a?:object) => Promise<any> }} o
- */
-export function setupWorktreeSettings({ cmd }) {
-  const sec = el('section', 'mp-panel wt-settings');
-  sec.id = 'worktreeSettings';
-  const sw = el('button', 'cx-sw');
-  sw.type = 'button';
-  sw.id = 'worktreeAlways';
-  sw.setAttribute('role', 'switch');
-  sw.setAttribute('aria-label', t('worktree.settings.always'));
-  const label = el('label', 'rm-switch-label', t('worktree.settings.always'));
-  label.htmlFor = 'worktreeAlways';
-  const row = el('div', 'rm-switch');
-  row.append(label, sw);
-  const desc = el('p', 'mp-note', t('worktree.settings.description'));
-  sec.append(el('h3', null, t('worktree.settings.title')), row, desc);
-  const paint = (always) => { sw.setAttribute('aria-checked', String(Boolean(always))); };
-  paint(true);
-  const load = () => cmd('worktreeSettings').then((s) => paint(s?.always)).catch(() => {});
-  sw.onclick = () => {
-    const next = sw.getAttribute('aria-checked') !== 'true';
-    paint(next);
-    cmd('setWorktreeSettings', { always: next }).then((s) => paint(s?.always)).catch(() => paint(!next));
-  };
-  load();
-  return { element: sec, paint, load };
 }

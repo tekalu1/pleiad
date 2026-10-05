@@ -43,7 +43,7 @@ export function gitLine(locale, git) {
 }
 
 /**
- * 子の分けた作業場所の 1 行（作業場所: 分けた作業場所 <branch>（未取り込み · N ファイル）。ADR 0089）。依頼元の言語で。
+ * 子の worktree の 1 行（作業場所: worktree <branch>（未取り込み · N ファイル）。ADR 0089）。依頼元の言語で。
  * state は core/worktree-host.mjs の taskState（unmerged / merged / empty / unknown / gone）。完了通知と ply_task_status・ply_task_wait の workspaceSummary が同じ文を使う。
  * 作業場所が無ければ（分けていない子）空
  */
@@ -84,7 +84,7 @@ export function finalReply(messages) {
 export async function createAgentTasks({ dataDir, prepare, rollback = async () => {}, execute, deliver, deliverSilence = async () => 'ok', deliverCommand = async () => 'ok', cancelBackground = async () => {}, ready = async () => true, steerable = async () => false, childSteerable = async () => false, steer = async () => 'requeue', changed = () => {}, waiting = () => false,
   // コンピューターの操作のロックを待っているか（docs/computer-use.md「ロック・待ち・止めた印」）。承認待ちではないので status: waiting にはせず、沈黙の通知にだけ数えない
   lockWaiting = () => false,
-  // 子の分けた作業場所の今の状態（core/worktree-host.mjs の taskState）。ply_task_status・ply_task_wait の workspaceSummary に使う
+  // 子の worktree の今の状態（core/worktree-host.mjs の taskState）。ply_task_status・ply_task_wait の workspaceSummary に使う
   workspaceState = async () => null,
   now = Date.now, silenceMinutes = Number(process.env.AGENT_HOST_TASK_SILENCE_MINUTES ?? 5),
   commandMinutes = Number(process.env.AGENT_HOST_TASK_COMMAND_MINUTES ?? 5),
@@ -226,7 +226,7 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
     const v = view(r, offset);
     return ACTIVE.has(r.status) && waiting(r.sessionId) ? { ...v, status: 'waiting' } : v;
   };
-  // 分けた作業場所の今の状態の 1 行（ply_task_status・ply_task_wait）。作業場所を持たない子・状態が引けないときは何も足さない。
+  // worktree の今の状態の 1 行（ply_task_status・ply_task_wait）。作業場所を持たない子・状態が引けないときは何も足さない。
   // 片付け済み（もう無い）は、完了時の状態（row.workspace）から言う
   async function workspaceOf(r, locale) {
     if (!r.worktree) return {};
@@ -340,7 +340,7 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
           row.result = String(result?.text ?? ''); row.error = result?.error ?? null;
           // 子の作業場所の git の要約（ADR 0085。変更・コミットが無ければ載せない）。完了通知と ply_task_status に出る
           if (result?.git) row.git = result.git; else delete row.git;
-          // 子の分けた作業場所の、終わった時点の状態（ADR 0089。取り込まれていなければ完了通知に 1 行出る）
+          // 子の worktree の、終わった時点の状態（ADR 0089。取り込まれていなければ完了通知に 1 行出る）
           if (result?.workspace) row.workspace = result.workspace; else delete row.workspace;
           // 追加の指示で再開した回に、片付いていた作業場所を作り直したとき
           if (result?.worktree) row.worktree = result.worktree;

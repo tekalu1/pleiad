@@ -545,8 +545,8 @@
     "entryChanged": "git の状態 · コミットしていない変更あり",
     "detached": "HEAD {{hash}}",
     "noBranch": "（コミットなし）",
-    "worktree": "分けた作業場所",
-    "branchWorktree": "{{branch}}（分けた作業場所）",
+    "worktree": "worktree",
+    "branchWorktree": "{{branch}}（worktree）",
     "unpushed": "未 push",
     "pr": "PR #{{number}}",
     "prTitle": "PR #{{number}} をブラウザーで開く",
@@ -581,7 +581,7 @@
     "delegateOpen": "この作業場所の git を開く",
     "tabs": "git の表示",
     "tabChanges": "変更",
-    "tabWorktrees": "作業場所",
+    "tabWorktrees": "worktree",
     "staged": "ステージ済み",
     "fromSnapshot": "{{time}} の撮影から",
     "aheadTitle": "{{upstream}} より {{count}} コミット先",
@@ -590,7 +590,7 @@
     "refHead": "今の HEAD",
     "refTag": "タグ",
     "refRemote": "リモート",
-    "refWorktree": "分けた作業場所のブランチ",
+    "refWorktree": "worktree のブランチ",
     "rangeUncommittedShort": "未コミット",
     "rangeSessionShort": "この会話",
     "clearCommit": "コミット {{hash}} の選択を外す",
@@ -616,13 +616,13 @@
     "wtHere": "ここ",
     "wtUnmerged": "未取り込み",
     "wtBusy": "使用中",
-    "wtPlain": "git worktree",
+    "wtPlain": "Pleiad の外",
     "committed": "コミット済み",
     "uncommitted": "未コミット",
     "wtNone": "元のブランチとの差も、未コミットの変更もありません",
     "wtBusyBy": "会話「{{who}}」が使っています。",
     "wtBusyAnon": "会話が使っています。",
-    "wtReadOnly": "Pleiad の外で作った作業場所なので、読むだけです。",
+    "wtReadOnly": "Pleiad の外で作った worktree なので、読むだけです。",
     "wtMissing": "フォルダーがありません",
     "wtAhead": "{{base}} から ↑{{count}}",
     "wtSame": "{{base}} と同じ",
@@ -652,34 +652,32 @@
     "jumpFailed": "会話の中に見つかりませんでした"
   },
   "worktree": {
-    "label": "分けた作業場所",
+    "label": "worktree",
     "who": "「{{title}}」",
     "whoMany": "「{{title}}」ほか {{count}} 件",
     "whoAnother": "ほかの会話",
-    "autoSuffix": "分けて始めます",
-    "autoTitle": "{{who}}が同じリポジトリで作業中なので、送ると分けた作業場所で始めます",
-    "chipSuffix": "分けた作業場所",
-    "chipTitle": "分けた作業場所 · 元 {{origin}}",
-    "start": "分けた作業場所で始める",
-    "stay": "このまま元の場所で始める",
-    "stayOnce": "今回だけ",
+    "busySuffix": "ほかの会話も書き込み中",
+    "busyTitle": "{{who}}が同じリポジトリに書き込み中です。押すと worktree で始められます",
+    "busyNote": "{{who}}が同じリポジトリに書き込み中",
+    "chipSuffix": "worktree",
+    "chipTitle": "worktree · 元 {{origin}}",
+    "start": "worktree で始める",
     "from": "元 {{path}}",
     "back": "元の場所に戻す",
-    "next": "分けた作業場所（{{path}}）",
-    "splitFailed": "分けた作業場所を作れませんでした · {{error}}",
+    "next": "worktree（{{path}}）",
+    "splitFailed": "worktree を作れませんでした · {{error}}",
     "line": {
-      "started": "分けた作業場所で始めました（{{who}}が作業中）",
-      "startedNoWho": "分けた作業場所で始めました",
+      "started": "worktree で始めました（{{who}}が作業中）",
+      "startedNoWho": "worktree で始めました",
       "backing": "次のターンから元の場所に戻します",
       "backed": "元の場所に戻しました",
-      "again": "もう一度分ける"
+      "again": "もう一度 worktree で始める"
     },
     "ask": {
-      "text": "分けた作業場所 {{branch}}（{{path}}）の変更を、元の作業場所（{{origin}}）のブランチ {{base}} に取り込んでください。競合があれば解いてください。取り込めたら、分けた作業場所は Pleiad が片付けます。",
-      "textOriginal": "分けた作業場所 {{branch}}（{{path}}）の変更を、元の作業場所（{{origin}}）の元のブランチに取り込んでください。競合があれば解いてください。取り込めたら、分けた作業場所は Pleiad が片付けます。"
+      "text": "worktree {{branch}}（{{path}}）の変更を、元の作業場所（{{origin}}）のブランチ {{base}} に取り込んでください。競合があれば解いてください。取り込めたら、worktree は Pleiad が片付けます。",
+      "textOriginal": "worktree {{branch}}（{{path}}）の変更を、元の作業場所（{{origin}}）の元のブランチに取り込んでください。競合があれば解いてください。取り込めたら、worktree は Pleiad が片付けます。"
     },
     "left": {
-      "title": "残っている作業場所",
       "ask": "エージェントに取り込みを頼む",
       "archive": "退避して消す",
       "keep": "残す",
@@ -693,8 +691,6 @@
       "archived": "退避して消しました。",
       "archivedUndo": "元に戻す",
       "restoreFailed": "元に戻せませんでした。",
-      "safetyLinks": "消す前に、中のリンクだけ外します。",
-      "safetyUse": "使っている会話やシェルがあるあいだは、消しません。",
       "fail": {
         "busy": "使っているものがあるので、消せません。",
         "links": "中のリンクを外せなかったので、消していません。",
@@ -704,11 +700,6 @@
         "attached": "使っている会話があるので、消せません。",
         "other": "消せませんでした。"
       }
-    },
-    "settings": {
-      "title": "作業場所",
-      "always": "ほかの会話が同じリポジトリで書いている間は、分けた作業場所で始める",
-      "description": "分けたときは、会話の一行から元の場所に戻せます。"
     },
     "delegate": {
       "unmerged": "未取り込み"
@@ -1398,7 +1389,7 @@
   "saved": {
     "reason": {
       "resumeCwd": "再開時に変更",
-      "worktreeSplit": "分けた作業場所へ",
+      "worktreeSplit": "worktree へ",
       "parentChanged": "依頼元の AI が変更",
       "worktreeBack": "元の場所へ",
       "cwdFrom": "{{from}} から",

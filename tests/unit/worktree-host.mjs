@@ -1,14 +1,14 @@
-// 分けた作業場所を会話・委譲・画面につなぐ層（core/worktree-host.mjs。ADR 0089）。
-// ぶつかりの判定（書き込みの範囲だけ・別のルート・圧縮・自分）・委譲で分けるかの判定（isolate・読むだけ・書き手・並列に呼ばれた委譲のまとめ数え）・
-// 子の完了時の状態と片付け・準備中の子を片付けない・残っている作業場所の絞り込み・会話の cwd を戻す。
+// worktree を会話・委譲・画面につなぐ層（core/worktree-host.mjs。ADR 0089）。
+// ぶつかりの判定（書き込みの範囲だけ・別のルート・圧縮・自分）・委譲の isolate 指定の判定・
+// 子の完了時の状態と片付け・準備中の子を片付けない・残っている worktree の絞り込み・会話の cwd を戻す。
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { createWorktreeHost, writesScope, WRITING_KINDS } from '../../core/worktree-host.mjs';
+import { createWorktreeHost, writesScope } from '../../core/worktree-host.mjs';
 
 export const name = 'worktree-host';
-export const title = '分けた作業場所の層: ぶつかりの判定・委譲で分けるか・子の完了と片付け・準備中は消さない・残りの絞り込み・cwd を戻す（一時リポジトリ）';
+export const title = 'worktree の層: ぶつかりの判定・委譲で分けるか・子の完了と片付け・準備中は消さない・残りの絞り込み・cwd を戻す（一時リポジトリ）';
 
 const sh = (cwd, ...args) => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.com', '-c', 'commit.gpgsign=false', ...args], { cwd, encoding: 'utf8', windowsHide: true }).trim();
 const exists = (p) => fs.stat(p).then(() => true, () => false);
@@ -40,11 +40,10 @@ export default async function (t) {
     const turns = new Map();
     let taskRows = [];
     const emitted = [];
-    let wrote = false;
     const host = createWorktreeHost({ dataDir: `${scratch}/data`, store, turns: () => turns, tasks: () => taskRows, emit: (e) => emitted.push(e),
-      reason: (key) => ({ reasonKey: key }), parentWrote: async () => wrote, windowMs: 40, worktreeOptions: { graceMs: 0, retryMs: [1] } });
+      reason: (key) => ({ reasonKey: key }), worktreeOptions: { graceMs: 0, retryMs: [1] } });
 
-    t.ok('書き込みの範囲の判定: workspace 以上だけ（読むだけは違う）', writesScope(modes.default) && writesScope(modes.full) && !writesScope(modes.plan) && WRITING_KINDS.has('implement') && !WRITING_KINDS.has('investigate'));
+    t.ok('書き込みの範囲の判定: workspace 以上だけ（読むだけは違う）', writesScope(modes.default) && writesScope(modes.full) && !writesScope(modes.plan));
 
     // ---- ぶつかり
     turns.set('s-title', turn('s-title', repo));
@@ -66,15 +65,12 @@ export default async function (t) {
     t.ok('git でない場所は何も出さない', (await host.check({ sessionId: 'new', cwd: plain })).git === false);
     turns.clear();
 
-    // ---- 分ける・分けた先は分けない・「いつも分ける」の保存
+    // ---- 明示的に作る・worktree の中では重ねて作らない
     const split = await host.split({ cwd: repo, sessionId: 's-a' });
     t.ok('分ける: 公開の形（id・ブランチ・場所・元）と cwd', split.ok && split.entry.branch === `pleiad/${split.entry.id}` && split.cwd === split.entry.path && split.entry.origin === repo && !('base' in split.entry), JSON.stringify(split));
     const inside = await host.check({ sessionId: 's-a', cwd: split.cwd });
     t.ok('分けた先では current・もう分けない・conflicts なし', inside.current?.id === split.entry.id && inside.canSplit === false && inside.conflicts.length === 0);
-    t.ok('分けた作業場所の中からは分けられない（already-split）', (await host.split({ cwd: split.cwd })).reason === 'already-split');
-    t.ok('「いつも分ける」は台帳と同じファイルに保存され、読み直しても残る', (await host.worktrees.setSettings({ always: true })).always === true && (await createWorktreeHost({ dataDir: `${scratch}/data`, store, turns: () => turns }).worktrees.getSettings()).always === true);
-    await host.worktrees.setSettings({ always: false });
-
+    t.ok('worktree の中からは分けられない（already-split）', (await host.split({ cwd: split.cwd })).reason === 'already-split');
     // ---- 会話の cwd を戻す（消すとき）・予約の外し方
     sessions.set('s-a', { cwd: split.cwd, backend: 'fake', model: 'm', effort: '', nextSettings: { backend: 'fake', model: 'm', effort: '', cwd: split.cwd } });
     await host.release(split.entry, ['s-a']);
@@ -88,29 +84,15 @@ export default async function (t) {
     t.ok('使っていなければ片付く', (await host.worktrees.settle(split.entry.id)).action === 'removed');
 
     // ---- 委譲で分けるか
-    const owner = turn('owner', repo);
-    const decide = (args = {}, ownerTurn = owner) => host.decideIsolation({ owner: 'owner', turn: ownerTurn, cwd: repo, kind: 'implement', writes: true, isolate: undefined, ...args });
-    t.ok('isolate: false は分けない', (await decide({ isolate: false })).why === 'explicit');
-    t.ok('isolate: true は分ける（書き手が居なくても・読むだけの種類でも）', (await decide({ isolate: true, kind: 'investigate' })).isolate === true);
-    t.ok('git でなければ、isolate: true でも分けない（not-git）', (await decide({ isolate: true, cwd: plain })).why === 'not-git');
-    t.ok('読むだけの種類・読むだけのモードは分けない', (await decide({ kind: 'review' })).why === 'readonly' && (await decide({ writes: false })).why === 'readonly');
-    const alone = await decide();
-    t.ok('書き手が居なければ分けない（子 1 つだけ）', alone.isolate === false && alone.why === 'alone', JSON.stringify(alone));
+    const decide = (args = {}) => host.decideIsolation({ cwd: repo, ...args });
+    t.ok('isolate 省略と false は、書き手が居ても worktree を作らない',
+      (await decide()).isolate === false && (await decide({ isolate: false })).isolate === false);
     turns.set('human', turn('human', repo));
-    t.ok('同じリポジトリに別の書き手（人の会話）が居れば分ける', (await decide()).why === 'writers' && (await decide()).isolate === true);
+    t.ok('同じリポジトリの別の会話が書き込み中でも、省略時は作らない', (await decide()).isolate === false);
     turns.clear();
-    turns.set('s-child', turn('s-child', repo, 'full'));
-    t.ok('走っている子（まだ分けていない）が居れば分ける', (await decide()).isolate === true);
-    turns.clear();
-    wrote = true;
-    t.ok('依頼元が今のターンでファイルを変えていれば分ける', (await decide()).isolate === true);
-    wrote = false;
-    const results = await Promise.all([decide(), decide(), decide()]);
-    t.ok('同じターンから並列に呼ばれた 3 つの委譲は、まとめて数えて全部分ける', results.every((r) => r.isolate && r.why === 'writers'), JSON.stringify(results));
-    const sequential = [await decide(), await decide()];
-    t.ok('続けて 1 つずつ呼んだ（前が済んだ）ときは、書き手が居なければ分けない', sequential.every((r) => r.isolate === false));
-    const mixed = await Promise.all([decide(), decide({ isolate: false })]);
-    t.ok('並列の中の isolate: false は、そのまま分けない', mixed[1].why === 'explicit');
+    t.ok('並列で省略しても worktree を作らない', (await Promise.all([decide(), decide(), decide()])).every((r) => r.isolate === false));
+    t.ok('isolate: true は、書き手がいなくても worktree を作る', (await decide({ isolate: true })).isolate === true);
+    t.ok('git でない場所では isolate: true でも作らない', (await decide({ isolate: true, cwd: plain })).why === 'not-git');
 
     // ---- 子の作業場所: 準備中・完了・片付け
     const prepared = await host.createForTask({ cwd: repo, owner: 'owner', taskId: 'task-1' });
@@ -130,7 +112,7 @@ export default async function (t) {
     // 残りの絞り込み
     taskRows = [{ taskId: 'task-1', status: 'completed', cwd: prepared.cwd, sessionId: 'child-1', pendingMessages: 0 }];
     const left = await host.leftovers({ cwd: repo });
-    t.ok('残っている作業場所: 子の分（取り込みを頼む相手は依頼元）・ファイル名・ファイル数', left.length === 1 && left[0].id === prepared.entry.id && left[0].purpose === 'task' && left[0].mergeSessionId === 'owner' && left[0].files === 2 && left[0].fileNames.sort().join() === 'w.txt,w2.txt', JSON.stringify(left));
+    t.ok('残っている worktree: 子の分（取り込みを頼む相手は依頼元）・ファイル名・ファイル数', left.length === 1 && left[0].id === prepared.entry.id && left[0].purpose === 'task' && left[0].mergeSessionId === 'owner' && left[0].files === 2 && left[0].fileNames.sort().join() === 'w.txt,w2.txt', JSON.stringify(left));
     t.ok('今いる場所は出さない', (await host.leftovers({ cwd: prepared.cwd })).length === 0);
     t.ok('別のリポジトリの分は出さない', (await host.leftovers({ cwd: other })).length === 0);
     taskRows = [{ taskId: 'task-1', status: 'running', cwd: prepared.cwd, sessionId: 'child-1', pendingMessages: 0 }];

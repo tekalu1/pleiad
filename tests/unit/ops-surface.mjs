@@ -182,7 +182,7 @@ export default async function (t) {
       nativeInstructions: async () => ({ cwd: 'c', agent: 'claude', entries: [{ id: 'i', ...secret }] }),
       findings: async () => ({ duplicates: [], missing: [], ...secret }) },
     notify: { status: async () => ({ pc: { done: true, reply: true, failed: true }, relayConnected: true, devices: [{ id: 'd', platform: 'ios', notify: { muted: true } }], ...secret }) },
-    worktrees: { check: async () => ({ git: true, current: null, conflicts: [], canSplit: true, always: false, ...secret }), getSettings: async () => ({ always: false }) },
+    worktrees: { check: async () => ({ git: true, current: null, conflicts: [], canSplit: true, ...secret }) },
     git: { status: async () => ({ git: { branch: 'main', ...secret } }),
       panel: async () => ({ git: { branch: 'main' }, timeline: [], changes: { range: 'uncommitted', hasSession: false, files: [{ path: 'a', add: 1, del: 0, ...secret }], total: { files: 1, add: 1, del: 0 } }, worktrees: { current: null, leftovers: [] }, at: 0 }),
       diff: async () => ({ diff: { range: 'uncommitted', path: 'a', hunks: [{ header: '@@', lines: [{ t: '+', s: 'x' }] }], binary: false, truncated: false, ...secret } }),

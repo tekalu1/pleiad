@@ -3657,49 +3657,6 @@
       "input": "f58ff1aa555f"
     },
     {
-      "id": "worktrees.setSettings",
-      "risk": "write",
-      "riskOf": false,
-      "scope": "global",
-      "modeGate": true,
-      "hostScreenOnly": false,
-      "surfaces": {
-        "ui": true,
-        "mcp": "catalog",
-        "cli": {
-          "path": [
-            "worktrees",
-            "settings"
-          ],
-          "positional": [
-            "always"
-          ]
-        }
-      },
-      "legacyCommand": "setWorktreeSettings",
-      "input": "b99244f5026b"
-    },
-    {
-      "id": "worktrees.settings",
-      "risk": "read",
-      "riskOf": false,
-      "scope": "global",
-      "modeGate": true,
-      "hostScreenOnly": false,
-      "surfaces": {
-        "ui": true,
-        "mcp": "catalog",
-        "cli": {
-          "path": [
-            "worktrees",
-            "get-settings"
-          ]
-        }
-      },
-      "legacyCommand": "worktreeSettings",
-      "input": "25c7d85c859a"
-    },
-    {
       "id": "worktrees.split",
       "risk": "write",
       "riskOf": false,
@@ -5165,11 +5122,6 @@
       ]
     },
     {
-      "id": "worktrees.settings",
-      "path": "worktrees get-settings",
-      "positional": []
-    },
-    {
       "id": "worktrees.keep",
       "path": "worktrees keep",
       "positional": [
@@ -5181,13 +5133,6 @@
       "path": "worktrees restore",
       "positional": [
         "ref"
-      ]
-    },
-    {
-      "id": "worktrees.setSettings",
-      "path": "worktrees settings",
-      "positional": [
-        "always"
       ]
     },
     {

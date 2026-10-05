@@ -1,4 +1,4 @@
-// 分けた作業場所（core/worktrees.mjs・git-worktree.mjs。ADR 0089）。一時リポジトリで実際に作って消す。
+// worktree（core/worktrees.mjs・git-worktree.mjs。ADR 0089）。一時リポジトリで実際に作って消す。
 // 作成と失敗時の巻き戻し・片付けの判定（変更なし／取り込み済み／未取り込み）・使用中は消さない・
 // ReparsePoint（ジャンクション）を外してから消す（リンク先が残る）・退避の隠し ref・台帳と git の突き合わせ。
 import { execFileSync } from 'node:child_process';
@@ -10,7 +10,7 @@ import * as wtgit from '../../core/git-worktree.mjs';
 import { createWorktrees, findLinks, unlinkAll, insideDir, sameDir } from '../../core/worktrees.mjs';
 
 export const name = 'worktrees';
-export const title = '分けた作業場所: 作成・失敗の巻き戻し・片付けの判定・リンクを外してから消す・使用中は消さない・退避・突き合わせ（一時リポジトリ）';
+export const title = 'worktree: 作成・失敗の巻き戻し・片付けの判定・リンクを外してから消す・使用中は消さない・退避・突き合わせ（一時リポジトリ）';
 
 const sh = (cwd, ...args) => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.com', '-c', 'commit.gpgsign=false', ...args], { cwd, encoding: 'utf8', windowsHide: true });
 const exists = (p) => fs.stat(p).then(() => true, () => false);
@@ -45,7 +45,7 @@ export default async function (t) {
       created.ok && e.path === `${realRepo}.pleiad/${e.id}` && e.origin === slash(repo) && /^ply-[0-9a-f]{4}$/.test(e.id) && e.branch === `pleiad/${e.id}` && e.base === sh(repo, 'rev-parse', 'HEAD').trim() && e.baseBranch === 'main' && e.state === 'ready', JSON.stringify(created));
     t.ok('作成: git に登録され、ブランチ付き（detached ではない）で、依存は張らない', (await wtgit.worktreeList(repo)).some((w) => w.path === e.path && w.branch === e.branch && !w.detached) && !(await exists(`${e.path}/node_modules`)));
     t.ok('作成: 台帳に残る（worktrees.json）・ユーザーのブランチの先頭は動かない', JSON.parse(await fs.readFile(`${dataDir}/worktrees.json`, 'utf8')).entries[e.id].path === e.path && sh(repo, 'rev-parse', 'main').trim() === e.base);
-    t.ok('作成: 分けた作業場所の中からは分けない（already-split）・git 管理外は not-git', (await wts.create({ cwd: e.path })).reason === 'already-split' && (await wts.create({ cwd: scratch })).reason === 'not-git');
+    t.ok('作成: worktree の中からは分けない（already-split）・git 管理外は not-git', (await wts.create({ cwd: e.path })).reason === 'already-split' && (await wts.create({ cwd: scratch })).reason === 'not-git');
     const emptyRepo = `${scratch}/empty`;
     await fs.mkdir(emptyRepo); sh(emptyRepo, 'init', '-q', '-b', 'main');
     t.ok('作成: コミットの無いリポジトリは no-commits（作れない）', (await wts.create({ cwd: emptyRepo })).reason === 'no-commits' && !(await exists(`${scratch}/empty.pleiad`)));
@@ -56,33 +56,16 @@ export default async function (t) {
     const s1 = await wts.settle(sub.entry.id);
     t.ok('変更なしは自動で消える（フォルダー・登録・ブランチ・台帳）', s1.action === 'removed' && s1.kind === 'empty' && !(await exists(sub.entry.path)) && !(await wtgit.branchTip(repo, sub.entry.branch)) && !(await wts.get(sub.entry.id)), JSON.stringify(s1));
 
-    // ---- 自動で分ける設定（既定は分ける。保存された値はそのまま尊重する。ADR 0133）
-    const settingsDir = `${scratch}/settings-data`;
-    await fs.mkdir(settingsDir, { recursive: true });
-    const fresh = createWorktrees({ dataDir: settingsDir });
-    t.ok('設定: 台帳が無ければ既定は分ける（always: true）', (await fresh.getSettings()).always === true);
-    await fresh.setSettings({ always: false });
-    t.ok('設定: オフにすると保存され、読み直しても尊重される（既定で上書きしない）',
-      (await createWorktrees({ dataDir: settingsDir }).getSettings()).always === false && JSON.parse(await fs.readFile(`${settingsDir}/worktrees.json`, 'utf8')).settings.always === false);
-    await fresh.setSettings({ always: true });
-    t.ok('設定: 選んだオフは chosen: true と一緒に保存される', JSON.parse(await fs.readFile(`${settingsDir}/worktrees.json`, 'utf8')).settings.chosen === true);
-    t.ok('設定: オンを選んだものも尊重される（印つきで保存）', (await createWorktrees({ dataDir: settingsDir }).getSettings()).always === true && JSON.parse(await fs.readFile(`${settingsDir}/worktrees.json`, 'utf8')).settings.chosen === true);
-    // 作業場所の行が変わって save が走っても、選んでいない設定に印は付かない（旧版の always:false が居残らない）
-    const unchosenDir = `${scratch}/settings-unchosen`;
-    await fs.mkdir(unchosenDir, { recursive: true });
-    await fs.writeFile(`${unchosenDir}/worktrees.json`, JSON.stringify({ version: 1, settings: { always: false }, entries: {} }));
-    const old = createWorktrees({ dataDir: unchosenDir });
-    const oldMade = await old.create({ cwd: repo, sessionId: 'old' });
-    await old.settle(oldMade.entry.id);   // 変更なしなので消える（後の検査に作業場所を残さない）
-    const rewritten = JSON.parse(await fs.readFile(`${unchosenDir}/worktrees.json`, 'utf8')).settings;
-    t.ok('設定: 行が変わって書き直されても、選んでいなければ印は付かず、既定のオンのまま', rewritten.chosen === false && (await createWorktrees({ dataDir: unchosenDir }).getSettings()).always === true, JSON.stringify(rewritten));
-    for (const [i, [label, body]] of [['settings が無い古い台帳', { version: 1, entries: {} }], ['always が真偽でない台帳', { version: 1, settings: { always: 'no', chosen: true }, entries: {} }],
-      ['旧版が選ばずに書いた always:false（印が無い）', { version: 1, settings: { always: false }, entries: {} }], ['印が無い always:true', { version: 1, settings: { always: true }, entries: {} }]].entries()) {
-      const dir = `${scratch}/settings-old-${i}`;
-      await fs.mkdir(dir, { recursive: true });
-      await fs.writeFile(`${dir}/worktrees.json`, JSON.stringify(body));
-      t.ok(`設定: ${label}は既定（分ける）`, (await createWorktrees({ dataDir: dir }).getSettings()).always === true);
-    }
+    // ---- 旧台帳の settings は読み捨て、次の保存で落とす
+    const legacyDir = `${scratch}/settings-old`;
+    await fs.mkdir(legacyDir, { recursive: true });
+    await fs.writeFile(`${legacyDir}/worktrees.json`, JSON.stringify({ version: 1, settings: { always: true, chosen: true }, entries: {} }));
+    const legacy = createWorktrees({ dataDir: legacyDir });
+    const legacyMade = await legacy.create({ cwd: repo, sessionId: 'old' });
+    t.ok('旧台帳の settings.always は読まず、作った worktree は台帳へ登録する', legacyMade.ok && (await legacy.list()).length === 1);
+    const rewritten = JSON.parse(await fs.readFile(`${legacyDir}/worktrees.json`, 'utf8'));
+    t.ok('次に台帳を保存すると settings ごと消える', !('settings' in rewritten) && rewritten.version === 1 && Object.keys(rewritten.entries).length === 1);
+    await legacy.settle(legacyMade.entry.id);
 
     // ---- 失敗の巻き戻し
     const stuck = `${scratch}/stuck`;

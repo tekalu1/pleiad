@@ -48,13 +48,13 @@ export const gitOps = [
       sessionId, cwd, range,
       limit: z.number().int().min(1).max(PAGE_MAX).optional().describe(A('limit')),
       cursor: z.string().max(400).optional().describe(A('cursor')),
-      // 画面だけが使う軽い問い合わせ（changes: 変更の一覧だけ。light: 分けた作業場所の一覧を計算しない）
+      // 画面だけが使う軽い問い合わせ（changes: 変更の一覧だけ。light: worktree の一覧を計算しない）
       only: z.enum(['changes', 'light']).optional().describe(D('changes', 'only')),
     }),
     output: z.object({ git: loose.nullable() }).passthrough(),
     surfaces: { ui: true, mcp: 'catalog', cli: { path: ['git', 'changes'] } },
     legacyCommand: 'gitPanel',
-    // 画面のパネルは開いたときに、片付けられる分けた作業場所を片付ける（sweep）
+    // 画面のパネルは開いたときに、片付けられる worktree を片付ける（sweep）
     uiHandler: (ctx, args) => ctx.git.panel(args, { sweep: true }),
     handler: (ctx, { limit, cursor, only: _only, ...args }) => run(ctx, async () => {
       const got = await ctx.git.panel({ ...args, ...where(ctx, args) }, { sweep: false });

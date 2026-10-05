@@ -1,4 +1,4 @@
-// worktrees.*: 分けた作業場所（git worktree。ADR 0089）の操作。画面（入力欄の注記・右パネルの「残っている作業場所」・設定）も AI も同じ本体を通る。
+// worktrees.*: worktree（git worktree。ADR 0136）の操作。画面（入力欄の知らせ・右パネルの worktree）も AI も同じ本体を通る。
 // 本体はサーバーが ctx.worktrees で渡す（core/server.mjs の opsWorktrees。core/worktree-host.mjs）。作業場所の id は分けたときの返り値と、委譲の子の結果（ply_task_status）に出る。
 import { z } from 'zod';
 import { defineOp } from './registry.mjs';
@@ -67,19 +67,7 @@ export const worktreeOps = [
     handler: (ctx, args) => ctx.worktrees.restore(place(ctx, args)),
   }),
 
-  defineOp({
-    id: 'worktrees.setSettings',
-    summary: 'agent:ops.worktrees.setSettings.summary',
-    risk: 'write',
-    riskReason: 'Whether to always split without asking when another conversation is writing to the same repository. Either way the original working tree is not touched, and it does not change any approval mode or permission (ADR 0094)',
-    input: z.object({ always: z.boolean().describe(D('setSettings', 'always')) }),
-    output: z.object({ always: z.boolean() }),
-    surfaces: { ui: true, mcp: 'catalog', cli: { path: ['worktrees', 'settings'], positional: ['always'] } },
-    legacyCommand: 'setWorktreeSettings',
-    handler: (ctx, { always }) => ctx.worktrees.setSettings({ always }),
-  }),
-
-  // ---- 読む（ADR 0105）。入力欄の上の 1 行・チップの元（worktreeCheck）と、「いつも分ける」の今の値（worktreeSettings）
+  // ---- 読む（ADR 0105）。チップと作業場所の面の元（worktreeCheck）
   defineOp({
     id: 'worktrees.check',
     summary: 'agent:ops.worktrees.check.summary',
@@ -89,20 +77,10 @@ export const worktreeOps = [
       backend: z.string().max(40).optional().describe(D('check', 'backend')),
       mode: z.string().max(60).optional().describe(D('check', 'mode')),
     }),
-    output: z.object({ git: z.boolean(), current: z.unknown(), conflicts: z.array(z.unknown()), canSplit: z.boolean(), always: z.boolean() }).passthrough(),
+    output: z.object({ git: z.boolean(), current: z.unknown(), conflicts: z.array(z.unknown()), canSplit: z.boolean() }).passthrough(),
     surfaces: { ui: true, mcp: 'catalog', cli: { path: ['worktrees', 'check'] } },
     legacyCommand: 'worktreeCheck',
     handler: (ctx, args) => ctx.worktrees.check(place(ctx, args)),
   }),
 
-  defineOp({
-    id: 'worktrees.settings',
-    summary: 'agent:ops.worktrees.settings.summary',
-    risk: 'read',
-    input: z.object({}),
-    output: z.object({ always: z.boolean() }),
-    surfaces: { ui: true, mcp: 'catalog', cli: { path: ['worktrees', 'get-settings'] } },
-    legacyCommand: 'worktreeSettings',
-    handler: (ctx) => ctx.worktrees.getSettings(),
-  }),
 ];

@@ -88,15 +88,13 @@ export const COMMANDS = new Set([
   'gitCommit',      // { sessionId, hash } -> { commit: { commit: { hash, short, parents, author, at, subject, body }, merge, files: [{ path, orig?, state: A|M|D|R, add, del, binary }], total } | null }
   'gitWorktrees',   // { sessionId } -> { worktrees: { base: { path, branch, head }|null, total, rows: [{ path, branch, head, detached, locked, prunable, main, here, exists, dirty, ahead, behind, at, kind: here|plain|left|busy|clean, who?, leftover? }] } | null }
   'gitWorktree',    // { sessionId, worktree } -> { worktree: { path, head, base, committed: { files, total }, uncommitted: { files, total }, failed } | null }
-  // 分けた作業場所（ADR 0089）。作る・消すのはサーバーが決めた置き場・ブランチだけ（画面から任意のパスを受けない）
-  'worktreeCheck',  // { sessionId?, backend?, mode? } -> { git, current: { id, branch, path, origin, … } | null, conflicts: [{ sessionId, title, child }], canSplit, always }。同じリポジトリで書き込み中の別の会話（読むだけの会話・git 管理外では出さない）
-  'worktreeSplit',  // { sessionId? } -> { worktree: { id, branch, path, origin, … }, cwd }。今の作業場所の隣に分けた作業場所を作る。cwd の予約は画面が setTurnSettings で行う
+  // worktree（ADR 0089）。作る・消すのはサーバーが決めた置き場・ブランチだけ（画面から任意のパスを受けない）
+  'worktreeCheck',  // { sessionId?, backend?, mode? } -> { git, current: { id, branch, path, origin, … } | null, conflicts: [{ sessionId, title, child }], canSplit }。同じリポジトリで書き込み中の別の会話（読むだけの会話・git 管理外では出さない）
+  'worktreeSplit',  // { sessionId? } -> { worktree: { id, branch, path, origin, … }, cwd }。今の作業場所の隣に worktree を作る。cwd の予約は画面が setTurnSettings で行う
   'worktreeDiscard', // { id } -> { action }。予約を取り消したときなど。使っていなければ片付ける（変更があれば残る）
   'worktreeKeep',   // { id, kept } -> { id, kept }。右パネルの「残す」
   'worktreeArchive', // { id } -> { action, ref?, why? }。退避の隠し ref に作業ツリー全体を撮ってから消す
   'worktreeRestore', // { ref } -> { worktree, cwd }。退避した作業場所を作り直す（右パネルの「元に戻す」）
-  'worktreeSettings', // {} -> { always }
-  'setWorktreeSettings', // { always } -> { always }。「いつも分ける」（確かめずに分けて始める）
   'setSessionMcp',  // { sessionId, name, removed } -> この会話だけ外部 MCP を外す（ply_context に出さない）/ 戻す。次のターンから効く
   'agentMcp',       // { cwd } -> { agents: { claude|codex: [{ name, transport, endpoint, command, path, scope, disabled }] } } 各エージェントの登録（読むだけ）
   'nativeInstructions', // { cwd, backend } -> { cwd, agent, entries: [{ id, name, path, scope, tokens }] | null } エージェント任せの指示を、そのエージェントの規則で探した量（読むだけ。ADR 0056）
@@ -242,8 +240,7 @@ export const EVENTS = new Set([
   "session",      // sessionId が確定した { sessionId, model? }（model は実際に解決されたもの）
   "backend",      // { backend } 会話の実行先が変わった
   "nextSettings",
-  "worktreeSettings", // { always } 「いつも分ける」が変わった（sessionId は null。ADR 0089）
-  "worktreesChanged", // 分けた作業場所が増えた・消えた（sessionId は null）。右パネルの「残っている作業場所」を取り直す
+  "worktreesChanged", // worktree が増えた・消えた（sessionId は null）。右パネルの「残っている worktree」を取り直す
   "agentTaskChanged", // { taskId } 依頼元が委譲の子の設定を替えた（sessionId は null。ADR 0134）。画面はその行を読み直す
   // ---- チャンネル・bot・記憶・ルーティン（docs/channels.md「WS の出来事」。どれも sessionId は null で全接続へ。リモートの端末にも届く）
   "channelsChanged", // { channel?: Channel, removed?: string } チャンネル・DM の定義と一覧の変化

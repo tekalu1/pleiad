@@ -1,11 +1,11 @@
-/* 分けた作業場所（docs/design-system.md「分けた作業場所」、ADR 0089, 0133）。
-   会話の中の静かな 1 行・入力欄のチップと作業場所の面・委譲カードの行・右パネル「git」の「残っている作業場所」・設定。
+/* worktree（docs/design-system.md「worktree」、ADR 0136）。
+   会話の中の静かな 1 行・入力欄のチップと作業場所の面・委譲カードの行・右パネル「git」の worktree。
    色の族は面（surface）・文字（ink）・塗り（fill）だけ。枠線は使わない。差し色（待っている専用）は使わない。 */
 
 .wt-ic{display:inline-flex;flex:none}
 .wt-ic svg.i{width:13px;height:13px}
 
-/* ---------- 次のターンから適用（変えるのが分けた作業場所だけのとき） ---------- */
+/* ---------- 次のターンから適用（変えるのが worktree だけのとき） ---------- */
 .next-settings.wt-compact{background:none;border-radius:0;padding:4px 6px 4px 14px;margin-bottom:2px;gap:0;flex-wrap:wrap;color:var(--ink-weak)}
 .next-settings.wt-compact > div{display:flex;align-items:center;flex-wrap:wrap;gap:4px 8px;min-width:0}
 .next-settings.wt-compact b{font-weight:400;color:var(--ink-weak)}
@@ -19,16 +19,21 @@
 .wt-line-t{min-width:0;flex:1 1 200px}
 .wt-line .btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;border-radius:var(--r-pill);white-space:nowrap;height:24px;padding:0 10px;font-size:var(--fs-xs)}
 
-/* ---------- 脇の会話の行（分けた作業場所の中の会話は、元の場所の名前に枝分かれの印） ---------- */
+/* ---------- 脇の会話の行（worktree の中の会話は、元の場所の名前に枝分かれの印） ---------- */
 .row-cwd .wt-ic{margin-right:3px;vertical-align:-2px}
 .row-cwd .wt-ic svg.i{width:12px;height:12px}
 
 /* ---------- 入力欄のチップ ---------- */
 .chip.wt{color:var(--ink-blue)}
 .chip .wt-sfx{white-space:nowrap}
-.chip .wt-auto{color:var(--ink-blue)}
+.chip .wt-busy{color:var(--ink-weak);font-size:var(--fs-s)}
 .crow.fit-nosplit .wt-sfx{display:none}
 #cwdChip .wt-sfx[hidden]{display:none}
+@media (max-width:480px){
+  .crow:has(.wt-busy:not([hidden])) #modelChip .v,
+  .crow:has(.wt-busy:not([hidden])) #modeChip .v{display:none}
+  .crow.fit-nosplit .wt-busy{display:inline-block;min-width:24px;max-width:100px;overflow:hidden;text-overflow:ellipsis}
+}
 
 /* ---------- 作業場所の面 ---------- */
 .wt-splitbar{display:flex;align-items:center;flex-wrap:wrap;gap:6px 8px;padding:8px 10px;margin:0 2px 8px;background:var(--surface-1);border-radius:var(--r-m);font-size:var(--fs-s);color:var(--ink-weak)}
@@ -36,7 +41,7 @@
 .wt-splitbar .wt-orig{min-width:0;overflow-wrap:anywhere}
 .wt-splitbar .btn{margin-left:auto;height:24px;padding:0 10px;font-size:var(--fs-xs);border-radius:var(--r-pill)}
 .caction.wt-start{color:var(--ink-blue);font-weight:600}
-.caction.wt-start .r{margin-left:auto;flex:none;font-size:var(--fs-xs);font-weight:400;color:var(--ink-weak);white-space:nowrap}
+.wt-busy-note{color:var(--ink-weak);font-size:var(--fs-s);margin:8px 10px 2px}
 
 /* ---------- 委譲カード ---------- */
 .wt-delegate{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:2px 14px;margin:14px 0 4px;font-size:var(--fs-s)}
@@ -45,7 +50,7 @@
 .wt-delegate-value code{color:var(--ink-blue)}
 .tc-res .wt-unm{color:var(--ink-weak);font-size:var(--fs-xs);margin-right:8px}
 
-/* ---------- 右パネル「残っている作業場所」 ---------- */
+/* ---------- 右パネル「残っている worktree」 ---------- */
 .wt-item{background:var(--surface-1);border-radius:var(--r-m);padding:12px 14px;margin-top:8px}
 .wt-row{display:flex;align-items:center;flex-wrap:wrap;gap:8px;width:100%;padding:4px 0;border:0;background:none;text-align:left;cursor:pointer;font:inherit;font-size:var(--fs-s);color:var(--ink-weak)}
 .wt-row code{color:var(--ink)}

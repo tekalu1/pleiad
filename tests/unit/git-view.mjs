@@ -39,13 +39,13 @@ export default async function (t) {
   assert.equal(renderDelegateGit({ branch: 'pleiad/ply-1', session: { files: 0, add: 0, del: 0, commits: 0 } }, { sessionId: 'c' }), null, '変更もコミットも無ければ出さない');
   const child = renderDelegateGit({ branch: 'pleiad/ply-1', linked: true, session: { files: 3, add: 40, del: 12, commits: 2 } }, { sessionId: 'c' });
   assert.equal(child.querySelector('.git-delegate-label').textContent, '変更');
-  assert.equal(text(child.querySelector('.git-sum')), 'pleiad/ply-1（分けた作業場所）·3 ファイル +40 −12·コミット 2');
+  assert.equal(text(child.querySelector('.git-sum')), 'pleiad/ply-1（worktree）·3 ファイル +40 −12·コミット 2');
   let childDetail = null;
   child.querySelector('.git-sum').addEventListener('ply-git-open', (e) => { childDetail = e.detail; });
   child.querySelector('.git-sum').on.click[0]();
   assert.deepEqual(childDetail, { sessionId: 'c' }, '押すとその子の会話の作業場所の git パネル');
-  assert.equal(text(renderDelegateGit({ branch: 'main', linked: false, session: { files: 1, add: 1, del: 0, commits: 0 } }, { sessionId: 'c' }).querySelector('.git-sum')), 'main·1 ファイル +1', '分けた作業場所でなければ札を付けない・コミットが無ければ出さない');
-  t.ok('委譲カード: 「変更」の行（分けた作業場所の札・ファイルとコミット）・押すと子の git パネル', true);
+  assert.equal(text(renderDelegateGit({ branch: 'main', linked: false, session: { files: 1, add: 1, del: 0, commits: 0 } }, { sessionId: 'c' }).querySelector('.git-sum')), 'main·1 ファイル +1', 'worktree でなければ札を付けない・コミットが無ければ出さない');
+  t.ok('委譲カード: 「変更」の行（worktree の札・ファイルとコミット）・押すと子の git パネル', true);
 
   // ---- 右パネルの表（gitSlots）
   const slots = gitSlots({ label: 'git', footer: ['custom0', 'custom1'] });

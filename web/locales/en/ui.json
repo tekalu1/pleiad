@@ -554,8 +554,8 @@
     "entryChanged": "Git status · uncommitted changes",
     "detached": "HEAD {{hash}}",
     "noBranch": "(no commits yet)",
-    "worktree": "Separate workspace",
-    "branchWorktree": "{{branch}} (separate workspace)",
+    "worktree": "Worktree",
+    "branchWorktree": "{{branch}} (worktree)",
     "unpushed": "Not pushed",
     "pr": "PR #{{number}}",
     "prTitle": "Open PR #{{number}} in the browser",
@@ -601,7 +601,7 @@
     "refHead": "Current HEAD",
     "refTag": "Tag",
     "refRemote": "Remote",
-    "refWorktree": "Branch of a split worktree",
+    "refWorktree": "Worktree branch",
     "rangeUncommittedShort": "Uncommitted",
     "rangeSessionShort": "This chat",
     "clearCommit": "Clear the selection of commit {{hash}}",
@@ -627,7 +627,7 @@
     "wtHere": "Here",
     "wtUnmerged": "Not merged",
     "wtBusy": "In use",
-    "wtPlain": "git worktree",
+    "wtPlain": "Outside Pleiad",
     "committed": "Committed",
     "uncommitted": "Uncommitted",
     "wtNone": "No difference from the original branch and nothing uncommitted",
@@ -663,34 +663,32 @@
     "jumpFailed": "Couldn't find it in the conversation."
   },
   "worktree": {
-    "label": "Separate workspace",
+    "label": "Worktree",
     "who": "“{{title}}”",
     "whoMany": "“{{title}}” and {{count}} more",
     "whoAnother": "another conversation",
-    "autoSuffix": "starts separately",
-    "autoTitle": "Same repository in use by {{who}}, so this starts in a separate workspace",
-    "chipSuffix": "separate workspace",
-    "chipTitle": "Separate workspace · from {{origin}}",
-    "start": "Start in a separate workspace",
-    "stay": "Start here in the original",
-    "stayOnce": "This time only",
+    "busySuffix": "also in use",
+    "busyTitle": "{{who}} is writing to the same repository. Open this to start in a worktree.",
+    "busyNote": "{{who}} is writing to the same repository",
+    "chipSuffix": "worktree",
+    "chipTitle": "Worktree · from {{origin}}",
+    "start": "Start in a worktree",
     "from": "from {{path}}",
     "back": "Back to the original",
-    "next": "Separate workspace ({{path}})",
-    "splitFailed": "Could not create the separate workspace · {{error}}",
+    "next": "Worktree ({{path}})",
+    "splitFailed": "Could not create the worktree · {{error}}",
     "line": {
-      "started": "Started in a separate workspace (same repository in use by {{who}})",
-      "startedNoWho": "Started in a separate workspace",
+      "started": "Started in a worktree (same repository in use by {{who}})",
+      "startedNoWho": "Started in a worktree",
       "backing": "Going back to the original from the next turn",
       "backed": "Back in the original location",
-      "again": "Separate again"
+      "again": "Start in a worktree again"
     },
     "ask": {
-      "text": "Please merge the changes in the separate workspace {{branch}} ({{path}}) into branch {{base}} of the original workspace ({{origin}}). Resolve any conflicts. Once merged, Pleiad cleans up the separate workspace.",
-      "textOriginal": "Please merge the changes in the separate workspace {{branch}} ({{path}}) into the original branch of the original workspace ({{origin}}). Resolve any conflicts. Once merged, Pleiad cleans up the separate workspace."
+      "text": "Please merge the changes in worktree {{branch}} ({{path}}) into branch {{base}} of the original workspace ({{origin}}). Resolve any conflicts. Once merged, Pleiad cleans up the worktree.",
+      "textOriginal": "Please merge the changes in worktree {{branch}} ({{path}}) into the original branch of the original workspace ({{origin}}). Resolve any conflicts. Once merged, Pleiad cleans up the worktree."
     },
     "left": {
-      "title": "Leftover workspaces",
       "ask": "Ask the agent to merge",
       "archive": "Archive and remove",
       "keep": "Keep",
@@ -704,8 +702,6 @@
       "archived": "Archived and removed.",
       "archivedUndo": "Restore",
       "restoreFailed": "Could not restore it.",
-      "safetyLinks": "Before removing, only the links inside are unlinked.",
-      "safetyUse": "It is not removed while a conversation or shell is using it.",
       "fail": {
         "busy": "Something is using it, so it was not removed.",
         "links": "The links inside could not be unlinked, so it was not removed.",
@@ -715,11 +711,6 @@
         "attached": "A conversation is using it, so it was not removed.",
         "other": "It could not be removed."
       }
-    },
-    "settings": {
-      "title": "Workspaces",
-      "always": "Start in a separate workspace while another conversation is writing in the same repository",
-      "description": "When this happens, a line in the conversation lets you move back to the original."
     },
     "delegate": {
       "unmerged": "Not merged"
@@ -1432,7 +1423,7 @@
   "saved": {
     "reason": {
       "resumeCwd": "Changed on resume",
-      "worktreeSplit": "Moved to a separate workspace",
+      "worktreeSplit": "Moved to a worktree",
       "parentChanged": "Changed by the requesting AI",
       "worktreeBack": "Moved back to the original",
       "cwdFrom": "from {{from}}",

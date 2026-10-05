@@ -1,4 +1,4 @@
-// 分けた作業場所（git worktree）の git 呼び出し（ADR 0089）。core/git-info.mjs の読み取り・隠し ref の土台に乗る。
+// worktree（git worktree）の git 呼び出し（ADR 0089）。core/git-info.mjs の読み取り・隠し ref の土台に乗る。
 //
 // 作る・消す・ブランチを消すは、Pleiad が決めた形（ブランチ pleiad/<id>）のものだけ。強制の削除（worktree remove --force・branch -D）は持たない。
 // 失敗は例外にせず { ok: false, error } を返す（呼び出し側が巻き戻す）。誤った引数（呼び出し側の誤り）だけ投げる。

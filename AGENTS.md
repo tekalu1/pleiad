@@ -39,8 +39,8 @@ core が web へ流すのは正規化イベントだけで、バックエンド�
 | `AGENT_HOST_AGY_BIN` | Antigravity CLI の実行ファイル（既定 `agy`） |
 | `PLEIAD_CONTROL_URL` / `PLEIAD_CONTROL_TOKEN` | `pleiad` CLI のつなぎ先。Pleiad が会話のシェルへ渡し、その会話に束縛される（無ければ `AGENT_HOST_DATA` の `control.json`） |
 | `AGENT_HOST_GIT_SNAPSHOTS` | `off` でターンの始まりと終わりの git の撮影（`refs/pleiad/`。ADR 0085）を止める。テストが使う（`tests/lib/server.mjs`） |
-| `AGENT_HOST_WORKTREES` | `off` で分けた作業場所（git worktree。ADR 0089）を作らない。テストが使う（`tests/lib/server.mjs`。このリポジトリが cwd のテストが `<リポジトリ>.pleiad` に残すのを防ぐ）。確かめるテストは一時のリポジトリで `on` を渡す |
-| `AGENT_HOST_WORKTREE_GRACE_MS` | 分けた作業場所を作ってから、使われていないものとして自動で片付けるまでの猶予（既定 60 秒。ADR 0089）。テストが 0 にする |
+| `AGENT_HOST_WORKTREES` | `off` で worktree（ADR 0136）を作らない。テストが使う（`tests/lib/server.mjs`。このリポジトリが cwd のテストが `<リポジトリ>.pleiad` に残すのを防ぐ）。確かめるテストは一時のリポジトリで `on` を渡す |
+| `AGENT_HOST_WORKTREE_GRACE_MS` | worktree を作ってから、使われていないものとして自動で片付けるまでの猶予（既定 60 秒。ADR 0089）。テストが 0 にする |
 
 デスクトップ版は `npm run desktop`、インストーラーの生成は `npm run desktop:dist`（対象 OS で実行）。リリースの運用は `docs/desktop-releases.md`。
 

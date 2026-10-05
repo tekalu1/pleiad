@@ -206,7 +206,7 @@ export default async function (t) {
     await c.waitFor((e) => e.type === 'turnEnd' && e.sessionId === asker.sessionId, { from, ms: 30_000 });
 
     // ---- human-only は 5 つだけ（ADR 0094）
-    const MOVED = ['worktrees.split', 'worktrees.discard', 'worktrees.keep', 'worktrees.archive', 'worktrees.restore', 'worktrees.setSettings', 'notify.setPc', 'notify.setDevice',
+    const MOVED = ['worktrees.split', 'worktrees.discard', 'worktrees.keep', 'worktrees.archive', 'worktrees.restore', 'notify.setPc', 'notify.setDevice',
       'hooks.read', 'hooks.readPly', 'compatEndpoints.recheck', 'compatEndpoints.delete', 'sessions.setModel', 'computer.stop'];
     const cliIds = (await api(cli, 'GET', '/api/ops')).body.result.ops.map((o) => o.id);
     const boundOps = (await api(bound(bypass), 'GET', '/api/ops')).body.result.ops;
@@ -234,14 +234,7 @@ export default async function (t) {
     t.ok('agent の settings.list に、承認モードの既定（mode）と既定のアカウント（claudeAccount）は無い', [...HUMAN_ONLY_SETTINGS].every((k) => !agentSettings.includes(k)) && agentSettings.includes('model'));
     t.ok('agent が設定 mode を get しても SETTING_NOT_FOUND（ply_control の call_op）', (await callCode('settings.get', { key: 'mode' })) === 'SETTING_NOT_FOUND');
 
-    // 外した操作を agent が呼ぶ。画面のコマンドと同じ本体・同じ配信を通る
-    from = c.mark();
-    const always = await api(bound(ask), 'POST', '/api/ops/worktrees.setSettings', { always: true });
-    t.ok('worktrees.setSettings: ask の会話の agent が承認なしで「自動で分ける」を変え、画面へ worktreeSettings が届く', always.status === 200 && always.body.result.always === true
-      && (await c.cmd('worktreeSettings')).always === true && Boolean(await c.waitFor((e) => e.type === 'worktreeSettings' && e.always === true, { from, ms: 5_000 })), JSON.stringify(always.body));
-    t.ok('画面の setWorktreeSettings（昔のコマンド）も同じ操作を通る。真偽でなければ拒否', (await c.cmd('setWorktreeSettings', { always: false })).always === false
-      && await c.cmd('setWorktreeSettings', { always: 'yes' }).then(() => false, () => true));
-    t.ok('読み取り専用の会話（plan）の worktrees.setSettings は READ_ONLY_MODE', (await api(bound(plan), 'POST', '/api/ops/worktrees.setSettings', { always: true })).body.code === 'READ_ONLY_MODE');
+    t.ok('worktrees の設定操作は一覧から消えた', !cliIds.some((id) => ['worktrees.setSettings', 'worktrees.settings'].includes(id)));
     t.ok('worktrees.keep: 無い作業場所は 404 と WORKTREE_NOT_FOUND', (await api(bound(ask), 'POST', '/api/ops/worktrees.keep', { id: 'nope' })).body.code === 'WORKTREE_NOT_FOUND');
     const prefsBefore = JSON.stringify((await c.cmd('prefs')).backends ?? null);
     from = c.mark();

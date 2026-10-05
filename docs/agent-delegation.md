@@ -9,7 +9,7 @@ Claude・Codex の会話から、`ply_agents` MCP の `ply_delegate` で別の�
 
 | ツール | 引数 | 動作 |
 |---|---|---|
-| `ply_delegate` | `kind`, `task`, 任意の `title`, `backend`, `context`, `cwd`, `model`, `effort`, `isolate` | 子会話を作り、すぐ `taskId`・短い `title`・`routing`（どう選んだか）・分けた作業場所なら `worktree`（`{ id, branch, path, origin, baseBranch }`）を返す。`title` は一覧と子会話の見出しに使い、無ければ依頼の最初の空でない行。`model` / `effort` は `backend` を書いたときだけ。`isolate`（真偽）は下の「分けた作業場所」 |
+| `ply_delegate` | `kind`, `task`, 任意の `title`, `backend`, `context`, `cwd`, `model`, `effort`, `isolate` | 子会話を作り、すぐ `taskId`・短い `title`・`routing`（どう選んだか）・worktree なら `worktree`（`{ id, branch, path, origin, baseBranch }`）を返す。`title` は一覧と子会話の見出しに使い、無ければ依頼の最初の空でない行。`model` / `effort` は `backend` を書いたときだけ。`isolate`（真偽）は下の「worktree」 |
 | `ply_task_status` | `taskId`, 任意の `offset` | 状態と結果。結果は16,000文字ずつ返し、`nextOffset` で続きへ進む。子で実行前に拒否されたコマンドは `rejections`（下の「実行前に拒否されたコマンド」） |
 | `ply_task_wait` | `taskId`, 任意の `seconds`（1〜30、既定30） | 上限まで待つ。承認待ちになったらすぐ戻る。未完了なら現在の状態を返す |
 | `ply_task_send` | `taskId`, 任意の `message`, `backend`, `model`, `effort` | `backend` / `model` / `effort` を書くと子の設定を替える（下の「子の設定を替える」。設定だけなら `message` を省ける）。`message` は同じ子会話に追加指示。子のターンが走っていて途中送信を受けられるなら、今のターンへ途中送信（`control.steer`）で渡す（下の「追加指示の配送」）。渡せなければ順番に待ち、次のターンで送る。完了後・停止後なら再開する（止まった直後に送った指示も捨てずに走らせる）。止めている途中（`cancelling`）は断る |
@@ -29,7 +29,7 @@ Claude・Codex の会話から、`ply_agents` MCP の `ply_delegate` で別の�
 ローカルの使用実績（トークン数・参考費用）は返さない。Claude でアカウントを登録していれば `accounts` にアカウントごとの枠を並べ、表示名にメールアドレスが含まれる場合はローカル部を1文字残して伏せる。アカウント ID・資格情報は返さない。
 不明な `backend` はエラー。1つのバックエンドの取得失敗はそのバックエンドの `message` に入れ、他は返す。
 
-**委譲の指示**: 委譲の使い方は、利用者の指示ファイルではなく Pleiad の指示の既定の項目として Pleiad が入れる（[ADR 0023](adr/0023-pleiad-added-delegation-instructions.md) を [ADR 0026](adr/0026-context-global-settings-and-ply-instructions.md) で置き換え）。`ply_agents` の instructions の後ろに毎ターン足す。依頼元の会話には「委譲の進め方」（委譲を基本にする・この会話でやること。編集できる）と「委譲の振り分けの使い方」（`kind` を付けて `backend` を書かない。同じリポジトリを同時に書く子は Pleiad が分けた作業場所に分けること・完了通知や `ply_task_status` に「作業場所: 分けた作業場所 …（未取り込み）」とあればそのブランチを元の作業場所へ取り込むのは自分の仕事で競合も自分で解くことも書く。委譲と連動で編集できず、振り分けが無効なら入れない）、委譲された子の会話には「委譲した会話では任せない」（さらに委譲しない・コマンドには時間上限を付ける・常駐するサーバーやアプリはバックグラウンドで起動して PID を控え、自分で止める・`Start-Process -Wait` のような無期限待機をしない。編集できる）、Codex の子にだけ「Codex の実行前の拒否」（承認なしのモードでも Codex 自身の安全判定で拒否されることがある。言い換えで回避せず、実行できなかったコマンドと理由・残ったものを報告する。編集・切り替えできる）。項目・スイッチ・記録は context-runtime.md「Pleiad の指示」。Antigravity の子にも、コマンドの時間上限と PID の管理の指示をカスタムエージェントの本文に足す。親とユーザーの会話には足さない（[ADR 0048](adr/0048-delegation-silence-notice.md)）。編集済みの子向け指示は上書きせず、既定に戻すと新しい文面になる。
+**委譲の指示**: 委譲の使い方は、利用者の指示ファイルではなく Pleiad の指示の既定の項目として Pleiad が入れる（[ADR 0023](adr/0023-pleiad-added-delegation-instructions.md) を [ADR 0026](adr/0026-context-global-settings-and-ply-instructions.md) で置き換え）。`ply_agents` の instructions の後ろに毎ターン足す。依頼元の会話には「委譲の進め方」（委譲を基本にする・この会話でやること。編集できる）と「委譲の振り分けの使い方」（`kind` を付けて `backend` を書かない。同じリポジトリに書く子を並べるなら worktree を使うかユーザーに聞くこと・完了通知や `ply_task_status` に「作業場所: worktree …（未取り込み）」とあればそのブランチを元の作業場所へ取り込むのは自分の仕事で競合も自分で解くことも書く。委譲と連動で編集できず、振り分けが無効なら入れない）、委譲された子の会話には「委譲した会話では任せない」（さらに委譲しない・コマンドには時間上限を付ける・常駐するサーバーやアプリはバックグラウンドで起動して PID を控え、自分で止める・`Start-Process -Wait` のような無期限待機をしない。編集できる）、Codex の子にだけ「Codex の実行前の拒否」（承認なしのモードでも Codex 自身の安全判定で拒否されることがある。言い換えで回避せず、実行できなかったコマンドと理由・残ったものを報告する。編集・切り替えできる）。項目・スイッチ・記録は context-runtime.md「Pleiad の指示」。Antigravity の子にも、コマンドの時間上限と PID の管理の指示をカスタムエージェントの本文に足す。親とユーザーの会話には足さない（[ADR 0048](adr/0048-delegation-silence-notice.md)）。編集済みの子向け指示は上書きせず、既定に戻すと新しい文面になる。
 
 タスク ID は `ply-task-<UUID>`。Claude / Codex のネイティブサブエージェントとは別に管理する。
 `ply_agents` は専用の接続で注入するため、外部 MCP 中継のハッシュ化されたツール名にならない。
@@ -140,13 +140,13 @@ Claude・Codex の会話から、`ply_agents` MCP の `ply_delegate` で別の�
 子は新しい Pleiad 管理会話。親の会話全文や非公開の思考はコピーせず、`task` と明示された `context` を渡す。
 `cwd` の既定は親の作業場所。相対指定は親の作業場所から解決する。
 
-**分けた作業場所（2026-10-03、[ADR 0089](adr/0089-worktree-on-demand.md)）。** 同じリポジトリに書く子が並ぶとき、Pleiad が子ごとに分けた作業場所（`git worktree`）を作って子の `cwd` にし、終わった後の片付けまで持つ。**取り込み（マージ）は依頼元のエージェントがする**（Pleiad はマージしない）。
-- **いつ分けるか**（`ply_delegate` の `isolate`。省略時の自動判定は `core/worktree-host.mjs` の `decideIsolation`）: `isolate: false` は分けない。`isolate: true` は書き手が居なくても分ける（git でなければ分けない）。省略なら、子が書く（書き込みの範囲のモード・種類が `trivial` `mechanical` `implement` `ux_change` `ux_new` `visual`。`investigate` `review` `design` は分けない）うえで、同じリポジトリに依頼元以外の書き手（走っている別の会話・子、依頼元が今のターンでファイルを変えている）が居るときだけ分ける。同じターンから並列に呼ばれた委譲は 250ms ほど待ってまとめて数える（書き手が 1 つなら今の場所のまま）。
+**worktree（承認済み（2026-10-05）、[ADR 0136](adr/0136-worktree-opt-in.md)）。** `ply_delegate` は `isolate: true` を明示したときだけ、Git リポジトリの隣に子専用の worktree を作る。省略と `false` は今の作業場所。ユーザーが worktree を指示したときだけ true を付け、同じリポジトリに書く子を並べるなら worktree を使うかユーザーに聞く。取り込みは依頼元が行い、Pleiad が片付ける。
+- **作る条件**（`core/worktree-host.mjs` の `decideIsolation`）: `isolate: true` かつ Git の場所のときだけ作る。省略と `false` は今の作業場所。書き手の数や種類では自動判定しない。
 - **置き場**: `<リポジトリの親>/<リポジトリ名>.pleiad/<id>`、ブランチ `pleiad/<id>`、ベースは今の HEAD。依存（`node_modules` など）は張らない。作れなければ（git でない・コミットが無い・失敗）今の場所のまま走らせる。
 - **子への指示**（最初の依頼に足す。`agent:tasks.worktreeInstruction`）: 作業はこの作業場所の中だけ・元の場所の絶対パスに書かない・依存は入っていないので必要なら自分で入れる・終わったらこのブランチにコミットする。
-- **依頼元へ返す**: タスクの記録に `worktree`（上の形）と、完了時の状態 `workspace`（`{ state: unmerged | merged | empty | unknown, files, ahead, dirty, removed }`）。完了通知の結果の後に `作業場所: 分けた作業場所 <branch>（未取り込み · N ファイル）`（`agent:delegation.noticeWorkspace*`。取り込み済み・変更なしで片付けたものはその旨、もう無いものは「片付け済み」）。`ply_task_status` / `ply_task_wait` は今の状態の 1 行 `workspaceSummary` と構造 `workspace` を返す。
-- **片付け**: 子が終わったとき（変更なし・取り込み済みなら消す。子の会話の cwd は元の場所へ戻してから）・ターンの終わり・起動時・右パネルを開いたときに状態を見る。未取り込みは残り、右パネル「git」の「残っている作業場所」に出る（取り込みを頼む相手は依頼元の会話）。追加の指示（`ply_task_send`）で片付け済みの子が再開したときは、元の場所から新しい分けた作業場所を作り直す。
-- **一覧**: `agentTasks`（と `running` の `tasks`）の行の `worktree` に、台帳にまだあるか（`live`）。画面は作業場所が変わった（`worktreesChanged`）ら会話の分を読み直す。委譲カードの開いた内訳の「作業場所」は `⑂ 分けた作業場所 <branch>`、終わって取り込まれていなければ閉じた行の右端に「未取り込み」。
+- **依頼元へ返す**: タスクの記録に `worktree`（上の形）と、完了時の状態 `workspace`（`{ state: unmerged | merged | empty | unknown, files, ahead, dirty, removed }`）。完了通知の結果の後に `作業場所: worktree <branch>（未取り込み · N ファイル）`（`agent:delegation.noticeWorkspace*`。取り込み済み・変更なしで片付けたものはその旨、もう無いものは「片付け済み」）。`ply_task_status` / `ply_task_wait` は今の状態の 1 行 `workspaceSummary` と構造 `workspace` を返す。
+- **片付け**: 子が終わったとき（変更なし・取り込み済みなら消す。子の会話の cwd は元の場所へ戻してから）・ターンの終わり・起動時・右パネルを開いたときに状態を見る。未取り込みは残り、右パネル「git」の worktree に出る（取り込みを頼む相手は依頼元の会話）。追加の指示（`ply_task_send`）で片付け済みの子が再開したときは、元の場所から新しい worktree を作り直す。
+- **一覧**: `agentTasks`（と `running` の `tasks`）の行の `worktree` に、台帳にまだあるか（`live`）。画面は作業場所が変わった（`worktreesChanged`）ら会話の分を読み直す。委譲カードの開いた内訳の「作業場所」は `⑂ worktree <branch>`、終わって取り込まれていなければ閉じた行の右端に「未取り込み」。
 
 子の作業場所の git の変更は、Pleiad が事実として依頼元へ返す（2026-10-03、[ADR 0085](adr/0085-host-reads-git-and-turn-snapshots.md)）。子のタスクの完了時に、子の会話の間（その会話の最初のターンの始まりの撮影から今まで）に変わったファイルかコミットがあれば、タスクの記録の `git`（`{ branch, detached, head, linked, files, add, del, commits }`）に持つ。完了通知の結果の後に 1 行 `変更: <branch> · N ファイル +a −d · コミット k`（`agent:delegation.noticeGit`。変更が無ければ載せない）を添え、`ply_task_status` / `ply_task_wait` は `git` と同じ 1 行の `gitSummary` を返す。人の画面では、委譲カードの内訳の「変更」の行（押すとその作業場所の右パネル「git」）。親は子の報告文を信じる代わりに、事実で確かめられる。
 

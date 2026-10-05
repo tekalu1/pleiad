@@ -6,7 +6,7 @@
 //                     出力は suite ごとにまとめて、終わった順に出す（行が混ざらない）。
 //
 // どちらでも: 登録した suite はちょうど 1 回ずつ走り、走らなかったもの・二重に走ったもの・worker が途中で死んだものは失敗にする。
-// worktree の見張り（テストの後に本体の git に分けた作業場所が増えていない）は suite ごとに worker の中で見て、全体の前後でも親が見る。
+// worktree の見張り（テストの後に本体の git に worktree が増えていない）は suite ごとに worker の中で見て、全体の前後でも親が見る。
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -28,7 +28,7 @@ const firstLine = (e) => String(e?.stack ?? e ?? "").split("\n")[0];
 // suite を 1 本走らせる（同じプロセスの順次実行と、worker の中の両方が使う）
 
 /**
- * 各 suite の後に、本体の git の分けた作業場所が増えていないかを見る。後始末はしない（並行する別の作業のものかもしれない。理由は tests/lib/worktree-guard.mjs）。
+ * 各 suite の後に、本体の git の worktree が増えていないかを見る。後始末はしない（並行する別の作業のものかもしれない。理由は tests/lib/worktree-guard.mjs）。
  * parallel のときは、ほかの worker の suite の間に増えたものかもしれないことを、詳細に添える。
  */
 export function createGuardedRunner({ root, parallel = false }) {
@@ -40,7 +40,7 @@ export function createGuardedRunner({ root, parallel = false }) {
       if (expectedName && mod.name !== expectedName) suite.ok("登録した名前と export const name が一致する", false, `登録 ${expectedName} / 実際 ${mod.name}`);
       const now = await snapshotPleiadWorktrees(root);
       const leaked = leakedWorktrees(seen, now);
-      if (leaked.length) suite.ok("テストの後に本体の git の分けた作業場所が増えていない", false, leaked.join(", ") + (parallel ? "（並列実行中: 同時に走っている別の worker の suite のものかもしれない。単独で流して確かめる）" : ""));
+      if (leaked.length) suite.ok("テストの後に本体の git の worktree が増えていない", false, leaked.join(", ") + (parallel ? "（並列実行中: 同時に走っている別の worker の suite のものかもしれない。単独で流して確かめる）" : ""));
       seen = now ?? seen;
       return suite;
     },
@@ -404,7 +404,7 @@ export async function main({ suites: files, baseDir, unitDir = null, argv, root,
   }
 
   const t0 = Date.now();
-  // 全体の前後でも、本体の git の分けた作業場所を見る（suite ごとの見張りが拾えない取りこぼしと、worker が途中で死んだ場合の分）
+  // 全体の前後でも、本体の git の worktree を見る（suite ごとの見張りが拾えない取りこぼしと、worker が途中で死んだ場合の分）
   const before = await snapshotPleiadWorktrees(root);
   const ran = jobs > 1
     ? await runPool({ entries: selected, jobs, root, weights, parentDataDir: testEnv.testDataDir })
@@ -427,10 +427,10 @@ export async function main({ suites: files, baseDir, unitDir = null, argv, root,
   const suiteList = records.map((r) => r.suite);
 
   const leaked = leakedWorktrees(before, after);
-  if (leaked.length && !suiteList.some((s) => s.failures.some((f) => f.label.includes("分けた作業場所が増えていない")))) {
-    const g = new Suite("ランナー: worktree の見張り", "全体の前後で本体の git の分けた作業場所が増えていない");
+  if (leaked.length && !suiteList.some((s) => s.failures.some((f) => f.label.includes("worktree が増えていない")))) {
+    const g = new Suite("ランナー: worktree の見張り", "全体の前後で本体の git の worktree が増えていない");
     console.log(`\n── ${g.name}  ${g.title}`);
-    g.ok("全体の前後で本体の git の分けた作業場所が増えていない", false, leaked.join(", "));
+    g.ok("全体の前後で本体の git の worktree が増えていない", false, leaked.join(", "));
     suiteList.push(g);
   }
   if (problemsRun.length) {
