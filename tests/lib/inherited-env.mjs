@@ -6,7 +6,10 @@
 // （継いだ値を外すだけ。テストが自分で足すものは、この後で env に入る）。
 //
 // - tests/lib/test-env.mjs が、テストのプロセスの最初に process.env から外す（run.mjs・worker）。子プロセスは process.env を引き継ぐので全部きれいになる
-// - tests/lib/server.mjs の startServer も、サーバーの env を組むときに同じ関数を通す（test-env を読まない tests/e2e.mjs も同じ口になる）
+// - tests/e2e.mjs（test-env を読まない）も、最初に同じ関数を通す
+// - tests/lib/server.mjs の startServer は、サーバーの env を下の serverBaseEnv から組む（test-env を読まない tests/browser/* の入口も同じ）
+
+import { isBootEnvName } from '../../core/boot-env.mjs';
 
 /** Pleiad・agent-browser・Pleiad の制御の口の変数は、この接頭辞で外す */
 export const SCRUBBED_PREFIXES = ['AGENT_HOST_', 'PLEIAD_', 'PLY_', 'AGENT_BROWSER_'];
@@ -40,4 +43,18 @@ export function scrubInheritedEnv(env = process.env) {
   const removed = Object.keys(env).filter(isInheritedEnvName);
   for (const k of removed) delete env[k];
   return removed;
+}
+
+/**
+ * テストのサーバーの env の元（tests/lib/server.mjs）。env の写しから、main が起動の時にだけ渡す変数（core/boot-env.mjs）と、
+ * Pleiad が会話のシェルへ渡す変数（PLEIAD_CLI_*・PLEIAD_CONTROL_*・PLY_*・AGENT_BROWSER_*。PLEIAD_TEST_* は残す）を除く。
+ * 実行元から継いだ分は test-env が先に外しているが、test-env を読まない入口でも、サーバーと `!` の行の結果が実行元のシェルに左右されない
+ * （PLEIAD_CLI_* が残ると cli-launcher の起動口の判定が実行元の Ply.exe を指す）。
+ * ほかの AGENT_HOST_* は残す（テストが process.env に入れてサーバーへ継がせるもの: AGENT_HOST_CODEX_BIN など）
+ */
+export function serverBaseEnv(env = process.env) {
+  return Object.fromEntries(Object.entries(env).filter(([name]) => {
+    if (isBootEnvName(name)) return false;
+    return String(name).toUpperCase().startsWith('AGENT_HOST_') || !isInheritedEnvName(name);
+  }));
 }
