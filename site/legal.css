@@ -1,0 +1,45 @@
+/* 規約などの文章のページ（privacy/・en/privacy/）。字の多いページなので、削った書体（styles.css）は使わず端末の書体で出す */
+:root {
+  --bg: #f5f6fa;
+  --paper: #ffffff;
+  --ink: #1c2247;
+  --weak: #596089;
+  --line: #c9cee0;
+  --indigo: #3a499e;
+  color-scheme: light;
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: system-ui, -apple-system, "Segoe UI", "Hiragino Sans", "Noto Sans JP", "Yu Gothic UI", sans-serif;
+  font-size: 16px;
+  line-height: 1.8;
+  -webkit-text-size-adjust: 100%;
+}
+a { color: var(--indigo); }
+code { font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; font-size: .92em; overflow-wrap: anywhere; }
+
+.legal-top {
+  display: flex; align-items: center; justify-content: space-between; gap: 16px;
+  max-width: 760px; margin: 0 auto; padding: 20px clamp(20px, 5vw, 40px);
+  font-size: 14px;
+}
+.legal-brand { display: inline-flex; align-items: center; gap: 8px; color: var(--ink); font-weight: 600; text-decoration: none; }
+
+.legal {
+  max-width: 760px; margin: 0 auto 24px; padding: clamp(24px, 5vw, 48px) clamp(20px, 5vw, 48px);
+  background: var(--paper); border: 1px solid var(--line); border-radius: 12px;
+  overflow-wrap: break-word;
+}
+.legal h1 { margin: 0 0 8px; font-size: 28px; line-height: 1.3; }
+.legal h2 { margin: 36px 0 8px; font-size: 19px; line-height: 1.4; }
+.legal h3 { margin: 20px 0 4px; font-size: 16px; }
+.legal p, .legal ul { margin: 0 0 12px; }
+.legal ul { padding-left: 1.4em; }
+.legal-meta { color: var(--weak); font-size: 14px; }
+
+.legal-foot { max-width: 760px; margin: 0 auto; padding: 8px clamp(20px, 5vw, 40px) 48px; font-size: 13px; text-align: center; }
+.legal-foot a { color: var(--weak); }

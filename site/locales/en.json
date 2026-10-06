@@ -85,6 +85,7 @@
   "ph.running": "Running",
   "end.h2": "<span class=\"nw\">All your work,</span> <span class=\"nw\">in one place.</span>",
   "end.meta": "Requires each agent's CLI and sign-in.",
+  "foot.privacy": "Privacy policy",
   "strings": {
     "status.wait": "Waiting for approval",
     "status.run": "Running",
