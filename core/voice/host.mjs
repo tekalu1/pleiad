@@ -5,10 +5,9 @@
 //   onEvent(event)              server.mjs の emitGlobal から全部の出来事を受け、通話が見ている会話（chat = 会話の id、thread = そのスレッドの bot の会話）の
 //                               text.delta・text.end・userMessage・turnEnd だけを通話へ渡す。まだ見ていない会話の直近 3 秒は覚えておき、見始めたら渡す
 //                               （新しい会話は最初のターンで id が決まるため、見る先の更新が数 ms 遅れても最初の文を落とさない）
-//   status() / setKey / deleteKey / checkKey   設定 › 通話。OpenRouter のキーは voice-secrets.json（暗号化。Jev の判定器のキーとは別の項目）にだけ置き、画面へも返さない
+//   status() / checkKey / keysChanged   設定 › 通話。使う OpenRouter のキーは設定 › API キー（core/api-keys.mjs。ADR 0154）で選んだもの（apiKey が返す）で、画面へも返さない
 import path from 'node:path';
 import { WebSocketServer } from 'ws';
-import { createSecretStore } from '../secret-store.mjs';
 import { normalizeKey } from '../delegation-judges.mjs';
 import { createVoiceSession } from './session.mjs';
 import { createVoiceUsage } from './usage.mjs';
@@ -16,7 +15,6 @@ import { normalizeVoiceSettings } from './settings.mjs';
 import { redactKey, voiceBaseUrl } from './openrouter.mjs';
 
 export const VOICE_PATH = '/voice-ws';
-const SECRET_KEY = 'openrouter';
 const AGENT_EVENTS = new Set(['text.delta', 'text.end', 'userMessage', 'turnEnd']);
 const RECENT_MS = 3000;
 const RECENT_SESSIONS = 8;
@@ -26,7 +24,8 @@ const THREAD_CACHE = 256;
 /**
  * @param {object} d
  * @param {string} d.dataDir
- * @param {object} d.cipher  secret-store の暗号器
+ * @param {() => Promise<string|null>} d.apiKey  通話に使うキー（設定 › API キーで選んだもの。「使わない」・未登録なら null で、何も送らない）
+ * @param {() => Promise<object|null>} [d.keyStorage]  キーの置き場の暗号化の状態（画面の注意の材料）
  * @param {() => Promise<object>} d.getPrefs
  * @param {() => string} d.uiLang
  * @param {(key: string, params?: object) => string} d.t
@@ -34,16 +33,14 @@ const THREAD_CACHE = 256;
  * @param {(req: import('node:http').IncomingMessage) => boolean} d.isLocal
  * @param {(line: string, fields?: object) => void} [d.log]
  */
-export function createVoiceHost({ dataDir, cipher, getPrefs, uiLang, t, resolveThread, isLocal, log = () => {}, fetch: fetchImpl, now = Date.now, env = process.env }) {
-  const secrets = createSecretStore({ file: path.join(dataDir, 'voice-secrets.json'), cipher });
-  secrets.migrate().catch(() => {});
+export function createVoiceHost({ dataDir, apiKey, keyStorage = async () => null, getPrefs, uiLang, t, resolveThread, isLocal, log = () => {}, fetch: fetchImpl, now = Date.now, env = process.env }) {
   const usage = createVoiceUsage({ file: path.join(dataDir, 'voice-usage.json'), now });
   const wss = new WebSocketServer({ noServer: true, maxPayload: 256 * 1024 });
   const sessions = new Set();
   let keyCache; // undefined = 未読、null = 無い
 
   const getKey = async () => {
-    if (keyCache === undefined) keyCache = normalizeKey((await secrets.get(SECRET_KEY).catch(() => null))?.key) || null;
+    if (keyCache === undefined) keyCache = normalizeKey(await apiKey().catch(() => null)) || null;
     return keyCache;
   };
   const config = (apiKey) => ({ baseUrl: voiceBaseUrl(env), apiKey, fetch: fetchImpl });
@@ -146,7 +143,7 @@ export function createVoiceHost({ dataDir, cipher, getPrefs, uiLang, t, resolveT
     onEvent,
     /** 設定 › 通話に出す状態。キーそのものは返さない */
     async status() {
-      const [hasKey, storage, today] = await Promise.all([getKey().then(Boolean), secrets.status().catch(() => null), usage.today()]);
+      const [hasKey, storage, today] = await Promise.all([getKey().then(Boolean), keyStorage().catch(() => null), usage.today()]);
       return {
         hasKey,
         storage: storage ? { encrypted: storage.encrypted, backend: storage.backend, ...(storage.reason ? { reason: storage.reason } : {}) } : null,
@@ -154,16 +151,10 @@ export function createVoiceHost({ dataDir, cipher, getPrefs, uiLang, t, resolveT
         active: sessions.size,
       };
     },
-    async setKey(value) {
-      const key = normalizeKey(value);
-      if (!key) throw Object.assign(new Error('invalid key'), { code: 'INVALID_KEY' });
-      await secrets.set(SECRET_KEY, { key });
-      keyCache = key;
-    },
-    async deleteKey() {
-      await secrets.delete(SECRET_KEY);
-      keyCache = null;
-      for (const s of sessions) s.close();
+    /** 使うキーが変わった（差し替え・選び直し・削除）。覚えたキーを捨て、キーが無くなったなら通話を切る（切らないと、消したキーで送り続ける） */
+    async keysChanged() {
+      keyCache = undefined;
+      if (!(await getKey())) for (const s of sessions) s.close();
     },
     /** キーが通るか（OpenRouter の GET /key）。'ok' | 'invalid' | 'unreachable' | 'nokey'。本文・キーは返さない */
     async checkKey() {
