@@ -68,7 +68,10 @@ const browser = await chromium.launch({
   args: ['--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream', `--use-file-for-fake-audio-capture=${wav}%noloop`, '--autoplay-policy=no-user-gesture-required'],
 });
 
-const shot = async (page, name) => { if (SHOTS) { fs.mkdirSync(SHOTS, { recursive: true }); await page.screenshot({ path: path.join(SHOTS, `voice-call-${name}.png`) }); } };
+/** 足された語の溶け込み（180ms）が終わってから撮る */
+const settled = (page) => page.waitForFunction(() => [...document.querySelectorAll('.vc-words .lw')].every((w) => w.getAnimations().length === 0), null, { timeout: 3000 }).catch(() => {});
+const shot = async (page, name) => {
+  if (/hearing/.test(name)) await settled(page); if (SHOTS) { fs.mkdirSync(SHOTS, { recursive: true }); await page.screenshot({ path: path.join(SHOTS, `voice-call-${name}.png`) }); } };
 let lastPage = null;
 const msOf = (page, scope) => page.locator(`${scope} .vc-micwrap`).first().getAttribute('data-ms');
 async function until(fn, label, ms = 30000) {
@@ -122,6 +125,13 @@ try {
     const bubble = page.locator('#thread .vc-live');
     await until(async () => (await bubble.count()) === 1 && (await bubble.locator('.lw').count()) > 0, 'live words', 20000);
     check((await bubble.locator('.vc-body .vmark').count()) === 1, '吹き出しの左に小さなマイクの印');
+    // 普通のあなたの発言と同じ位置・同じ幅の規則（細い列に潰れない）。ぼかしは足された語の 180ms の間だけ
+    await sleep(350);
+    const geo = await bubble.evaluate((n) => { const b = n.querySelector('.body'), w = n.querySelector('.who'); const br = b.getBoundingClientRect(), wr = w.getBoundingClientRect(); return { left: br.left, width: br.width, whoH: wr.height, whoW: wr.width, logLeft: document.querySelector('#thread').getBoundingClientRect().left }; });
+    check(geo.whoH < 30 && geo.width >= 90 && geo.left - geo.logLeft >= 60, '声の吹き出しは潰れない（「あなた」は 1 行・本文は内容に合わせた幅・筋の右の列）', geo);
+    const blur = await bubble.locator('.lw').evaluateAll((words) => words.filter((w) => !w.classList.contains('out') && w.getAnimations().length === 0).map((w) => [getComputedStyle(w).filter, getComputedStyle(w).opacity]));
+    check(blur.length > 0 && blur.every(([f, o]) => f === 'none' && o === '1'), '溶け込みの終わった字（途中の弱い字を含む）は常にくっきり読める（filter なし・不透明）', blur);
+    global.__liveLeft = geo.left;
     check((await bubble.locator('.lw.p').count()) > 0, '途中の文字は弱い字（.p）');
     await shot(page, 'chat-hearing-1280-light');
     await until(async () => (await bubble.innerText()).includes('更新する') || (await bubble.count()) === 0, 'second piece', 20000);
@@ -129,6 +139,8 @@ try {
     // 確定して送る → 本物の発言の行
     await until(async () => (await page.locator('#thread .m.user .body').filter({ hasText: QUESTION }).count()) === 1, 'real user row', 30000);
     check((await page.locator('#thread .vc-live').count()) === 0, '本物の発言の行が現れたら声の吹き出しは消える（重ならない）');
+    const realLeft = await page.locator('#thread .m.user .body').first().evaluate((n) => n.getBoundingClientRect().left);
+    check(Math.abs(realLeft - global.__liveLeft) <= 2, '声の吹き出しは本物の発言の行と同じ左の位置（行が入れ替わっても動かない）', [realLeft, global.__liveLeft]);
     check((await page.locator('#thread .m.user .vmark').count()) === 1, '本物の発言の行にマイクの印');
     check((await msOf(page, '#composer')) === 'thinking' || (await msOf(page, '#composer')) === 'speaking', '送ったあとは考え中（縁を点が回る）');
     await shot(page, 'chat-thinking-1280-light');
@@ -189,6 +201,7 @@ try {
     check(!(await page.locator('header.top .vc-call').evaluate((n) => n.classList.contains('on'))), '権限なし: 通話は始まらない');
     await shot(page, 'chat-denied-1280-light');
     await page.locator('#composer .vc-note button').click();
+    await page.locator('#voicePanel').waitFor({ state: 'visible', timeout: 8000 }).catch(() => {});
     check(await page.locator('#voicePanel').isVisible(), '「設定を開く」で設定 › 通話が開く');
     await page.waitForSelector('#voicePanel .nf-card', { timeout: 8000 }).catch(async (e) => { console.error(await page.locator('#voicePanel').innerHTML()); throw e; });
     check((await page.locator('#voicePanel').innerText()).includes('OpenRouter のキー') && (await page.locator('#voicePanel').innerText()).includes('登録済み'), '設定 › 通話: キーは登録済みと出る（キーそのものは出ない）');
@@ -218,6 +231,11 @@ try {
     check(await page.locator('#chThread[data-vc-call]').count() === 1, 'スレッドの面に背景の印');
     await shot(page, 'thread-listening-1280-dark');
     await until(async () => (await page.locator('#chThread .vc-live .lw').count()) > 0, 'thread live words', 20000);
+    await sleep(350);
+    const tgeo = await page.locator('#chThread .vc-live').evaluate((n) => { const b = n.querySelector('.post-body'), h = n.querySelector('.post-head'), a = n.querySelector('.post-av'); const br = b.getBoundingClientRect(); return { left: br.left, width: br.width, headH: h.getBoundingClientRect().height, avLeft: a.getBoundingClientRect().left, otherBody: document.querySelector('#chThread .th-replies .post .post-body')?.getBoundingClientRect().left }; });
+    check(tgeo.headH < 30 && tgeo.width >= 90 && Math.abs(tgeo.avLeft - (await page.locator('#chThread .th-replies .post .post-av').first().evaluate((n) => n.getBoundingClientRect().left))) <= 2, 'スレッドの声の吹き出しも潰れず、ほかの投稿と同じ列', tgeo);
+    const tblur = await page.locator('#chThread .vc-live .lw').evaluateAll((words) => words.filter((w) => !w.classList.contains('out') && w.getAnimations().length === 0).map((w) => getComputedStyle(w).filter));
+    check(tblur.every((f) => f === 'none'), 'スレッド: 溶け込みの終わった字はくっきり');
     await shot(page, 'thread-hearing-1280-dark');
     await until(async () => (await page.locator('#chThread .th-replies .post').filter({ hasText: QUESTION }).count()) >= 1, 'thread real post', 30000);
     check((await page.locator('#chThread .vc-live').count()) === 0, 'スレッド: 本物の投稿が現れたら吹き出しは消える');

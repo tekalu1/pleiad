@@ -71,9 +71,9 @@
 .vmark{display:inline-flex;vertical-align:-3px;margin-right:6px;color:var(--ink-weak)}
 .vc-words .lw{display:inline-block;white-space:pre-wrap;transition:color .45s ease}
 .vc-words .lw.p{color:var(--ink-weak)}
-.vc-words .lw{animation:vc-lwin 180ms var(--ease-out) both}
+.vc-words .lw{animation:vc-lwin 180ms var(--ease-out) backwards}   /* 溶け込むのは足された語だけ・180ms の間だけ。終わったら字は常にくっきり */
 .vc-words .lw.out{animation:vc-lwout 140ms var(--ease-out) forwards}
-@keyframes vc-lwin{from{opacity:0;filter:blur(4px);transform:translateY(3px)}to{opacity:1;filter:none;transform:none}}
+@keyframes vc-lwin{from{opacity:0;filter:blur(4px);transform:translateY(3px)}}
 @keyframes vc-lwout{to{opacity:0;filter:blur(3px);transform:translateY(-3px)}}
 
 /* ---- いま話している場所: 話している文の下に --fill-primary の 2px の下線が、再生位置に合わせて左から右へ伸びる（行をまたぐと次の行で続く）。

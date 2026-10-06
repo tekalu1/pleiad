@@ -5894,16 +5894,18 @@ const computerSettings = setupComputerSettings({ cmd: (command, args) => cmd(com
 const browserSettings = setupBrowserSettings({ available: !!browserPanel, cmd: (command, args) => cmd(command, args), getPrefs: () => state.prefs, getAgentLabel: labelOf,
   showMenu: (x, y, items, title, opts) => showMenu(x, y, items, title, opts), onProfilesChanged: () => browserPanel?.profilesChanged() });
 // 通話モードの差し込み口（Chats の会話）。契約は web/voice/index.mjs の冒頭。入力欄・頭・メインの面へは、ここの 1 か所だけで繋ぐ
+const voiceWraps = new WeakMap();
 voiceUi.mount({
   id: 'chat',
   header: document.querySelector('body > main > header.top'), headerBefore: $('tocEntry'),
   composer: { root: $('composer'), row: document.querySelector('#cbox .crow'), before: $('send'), below: $('cbox'), refit: () => controls.fit() },
   main: document.querySelector('body > main'), log: $('log'), overlay: $('logFrame'), replyScope: () => $('log'),
   tail: {
-    place: (node) => thread.append(node), rows: thread,
+    // 本物の行と同じ入れ物（.mw > 筋 + .mw-body。wrap・place が作る）に入れて、同じ列・同じ幅の規則で出す。「止める」の行も同じ列へ（一度だけ包む）
+    place: (node) => place(node.classList.contains('mw') ? node : (voiceWraps.get(node) ?? voiceWraps.set(node, wrap(node)).get(node))), rows: thread,
     isRow: (node) => node.classList.contains('mw') && Boolean(node.querySelector('.m.user')),   // 会話の列の行は .mw の中に .m.user が入る
     markHost: (row) => row.querySelector('.m.user > .who > span'),
-    createRow: () => { const m = el('div', 'm user'); m.append(whoLine(t('chat.message.you'), new Date().toISOString(), { actions: false })); const body = el('div', 'body'); m.append(body); const wrap = el('div', 'mw node'); wrap.append(m); return { el: wrap, body }; },
+    createRow: () => { const m = el('div', 'm user'); m.append(whoLine(t('chat.message.you'), new Date().toISOString(), { actions: false })); const body = el('div', 'body'); m.append(body); return { el: wrap(m), body }; },
   },
   target: () => ({ kind: 'chat', sessionId: state.current && state.current !== freshSessionId ? state.current : null }),
   send: (text) => submitVoiceText(text),
