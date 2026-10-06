@@ -46,7 +46,7 @@
 .switch-notice .update-work { margin: 10px 0 0; max-height: 240px; overflow: auto; }
 .switch-notice .update-work-after { margin: 8px 2px 0; }
 .switch-list[hidden], .switch-grp[hidden] { display: none; }
-/* 設定のページに同じ一覧がある。設定を開いている間は脇の知らせを出さない（モックの承認。web/switch-notice.mjs） */
+/* 設定のページに同じ一覧がある。設定を開いている間は脇の知らせを出さない（docs/design-system.md「切り替えを待つ表示」） */
 body.settings > #sidebar > .switch-notice { display: none; }
 .switch-grp + .switch-grp { margin-top: 8px; }
 .switch-grp h4 { display: flex; justify-content: space-between; gap: 8px; }
