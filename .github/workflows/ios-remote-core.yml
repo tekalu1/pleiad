@@ -1,0 +1,64 @@
+# iOS 版の端末側（mobile/ios/remote-core。Swift Package）の試験を macOS で回す（ADR 0141）。
+# 手元の Windows では swift-crypto と移植用の WebSocket のクライアントで回すので、ここで確かめるのは Apple の経路:
+# CryptoKit、中継への URLSessionWebSocketTask、Darwin の BSD ソケット、iOS シミュレーター向けのビルド。
+# InteropTests は mobile/scripts/fake-host.mjs で本物の中継と core のサーバーを起こすので、ルートの依存も入れる。
+name: iOS remote-core
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'mobile/ios/**'
+      - 'tests/remote/vectors.json'
+      - 'mobile/scripts/fake-host.mjs'
+      - 'core/remote/**'
+      - 'relay/server.mjs'
+      - '.github/workflows/ios-remote-core.yml'
+  pull_request:
+    paths:
+      - 'mobile/ios/**'
+      - 'tests/remote/vectors.json'
+      - 'mobile/scripts/fake-host.mjs'
+      - 'core/remote/**'
+      - 'relay/server.mjs'
+      - '.github/workflows/ios-remote-core.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: ios-remote-core-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  test:
+    # ランナーの版と Xcode の版を固定する（swift-crypto 4.5.2 は Swift 6.1 以上 = Xcode 16.3 以上）
+    runs-on: macos-15
+    timeout-minutes: 30
+    env:
+      XCODE_VERSION: '16.4'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Select Xcode
+        run: |
+          if [ ! -d "/Applications/Xcode_${XCODE_VERSION}.app" ]; then
+            echo "Xcode ${XCODE_VERSION} is not on this runner image. Available:"; ls -d /Applications/Xcode_*.app
+            exit 1
+          fi
+          sudo xcode-select -s "/Applications/Xcode_${XCODE_VERSION}.app"
+          xcodebuild -version
+          swift --version
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install root dependencies
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+        run: npm ci
+      - name: swift test (macOS, CryptoKit)
+        working-directory: mobile/ios/remote-core
+        # PLEIAD_INTEROP=on: node は入れてあるので、往復の試験を飛ばさせない（見つからなければ落とす）
+        env:
+          PLEIAD_INTEROP: 'on'
+        run: swift test
+      - name: Build for the iOS Simulator
+        working-directory: mobile/ios/remote-core
+        run: xcodebuild build -scheme PleiadRemote -destination 'generic/platform=iOS Simulator' -quiet
