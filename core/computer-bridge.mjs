@@ -1,7 +1,7 @@
 // ply_computer: エージェントに PC の画面を撮らせ、マウスとキーボードで操作させる MCP サーバー（docs/computer-use.md、ADR 0070）。
 // core/agent-bridge.mjs（ply_agents）と同じ型で、会話ごとに Bearer の付いた HTTP の MCP を開く。
 // 撮影と入力は Electron の main（driver 越し）が行い、ここは MCP の面・アプリの承認・ロック・止めた印・スクショの保存だけを持つ。
-import crypto from 'node:crypto';
+import { claimToken } from './mcp-token.mjs';
 import { agentT } from './i18n.mjs';
 import { computerTools, COMPUTER_TOOL_NAMES, LOCKING } from './computer-use/tools.mjs';
 import { createActions, ToolFail } from './computer-use/actions.mjs';
@@ -111,10 +111,11 @@ export function createComputerBridge({ driver, lock, shots, access, askPermissio
   return {
     /**
      * 会話ごとに開く。owner() は呼び出しの時点のターン { turnId, sessionId, title, mode, signal, ancestors, agent? }。
-     * agent は { id, label }（オーバーレイのピルと承認カードの名前。関数でもよい）。delivery はバックエンドの capabilities.computerUse
+     * agent は { id, label }（オーバーレイのピルと承認カードの名前。関数でもよい）。delivery はバックエンドの capabilities.computerUse。
+     * token は開き直す口の値（省略なら新しく作る。形が違う・使用中なら投げる）
      */
-    open({ origin, owner, locale, agent, delivery }) {
-      const token = crypto.randomBytes(32).toString('hex');
+    open({ origin, owner, locale, agent, delivery, token: fixed }) {
+      const token = claimToken(bindings, fixed);
       const d = { ...DEFAULT_DELIVERY, ...(delivery && typeof delivery === 'object' ? delivery : {}) };
       // shot: その会話で最後に撮った全画面の撮影（座標の基準）。display: 切り替えた対象（番号）。known: 見たアプリの id -> 情報
       const binding = { owner, locale, agent, delivery: d, shot: null, display: null, pressed: false, known: new Map(), turns: new Set() };

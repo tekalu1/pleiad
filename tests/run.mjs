@@ -58,6 +58,8 @@ const SUITES = [
   // ply_browser の骨組み（ADR 0148）: 鍵付きの口・プロフィール（ADR 0078）の削除後の形・agy の束ね
   './unit/browser-bridge.mjs',
   './unit/browser-confirm.mjs',
+  // 会話の MCP の口を同じトークンで開き直す open({ token })（無停止の更新 2b-3）
+  './unit/mcp-bridge-token.mjs',
   // 設定 › コンピューターの操作: prefs の検査と既定・store の remember/forget・hostCapabilities.computerUse の判定・節の動き・setPref（docs/computer-use.md）
   './unit/computer-settings.mjs',
   // コンピューターの操作（ply_computer。docs/computer-use.md）: アプリの判定の順・禁止の一覧・印の行・座標・スクショの保存
