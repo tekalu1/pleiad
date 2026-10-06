@@ -2411,6 +2411,7 @@
       "reasonShort": {
         "escape": "Stopped",
         "stop": "Stopped",
+        "update": "Stopped by update",
         "locked": "Stopped (locked)",
         "forbidden": "Not allowed",
         "denied": "Denied",
@@ -2420,6 +2421,7 @@
       "reason": {
         "escape": "You stopped it with Esc",
         "stop": "You stopped it",
+        "update": "Stopped because Pleiad is updating",
         "locked": "The screen is locked. Unlock it, then ask again.",
         "forbidden": "“{{app}}” can't be controlled. It was declined without asking.",
         "denied": "Control of “{{app}}” was denied.",

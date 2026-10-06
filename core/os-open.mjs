@@ -114,8 +114,12 @@ export function parentPortOpener(port, { timeoutMs = 10_000 } = {}) {
  * 起動の形に合う実行器 (action, file, { directory }) => Promise。
  * AGENT_HOST_OS_OPEN=dry は起動せずに成功する（テスト用。実際に窓を開かない）
  */
-export function defaultOpener({ env = process.env, mainPort = getMainPort() } = {}) {
+export function defaultOpener({ env = process.env, mainPort = getMainPort(), launchImpl = launch } = {}) {
   if (env.AGENT_HOST_OS_OPEN === 'dry') return async () => {};
-  if (mainPort.hosted) return parentPortOpener(mainPort);
-  return (action, file, options) => launch(launchPlan(action, file, options));
+  const direct = (action, file, options) => launchImpl(launchPlan(action, file, options));
+  if (!mainPort.hosted) return direct;
+  const viaMain = parentPortOpener(mainPort);
+  // main が付け直す口（名前付きパイプ）で main が居ない間（更新）は、本体の shell に頼めないので OS に直に頼む
+  // （explorer.exe などをサーバーが起こす。範囲の判定は呼び出し側が済ませている。docs/zero-downtime-update/design.md §7.2）
+  return mainPort.resumable ? (action, file, options) => (mainPort.connected ? viaMain(action, file, options) : direct(action, file, options)) : viaMain;
 }

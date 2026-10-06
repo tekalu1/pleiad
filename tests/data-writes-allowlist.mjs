@@ -114,8 +114,8 @@ export const DATA_WRITES = [
   { file: 'core/visualize.mjs', sites: 1, targets: [
     { name: 'visualization-snapshots/<key>.html', limit: '1 つ 1 ファイル。24 時間で掃除する', reason: '可視化の写し。書き換えない' },
   ] },
-  { file: 'core/agent-browser.mjs', sites: 1, targets: [
-    { name: 'agent-browser/<hash>/agent-browser.json', limit: '固定（{ cdp }）', reason: '内蔵ブラウザーの接続先。ターンごとに上書き' },
+  { file: 'core/agent-browser.mjs', sites: 2, targets: [
+    { name: 'agent-browser/<hash>/agent-browser.json', limit: '固定（{ cdp }）', reason: '内蔵ブラウザーの接続先。ターンごとに上書き。付け直した main が別のポートで中継を立てたときも、ある会話のものだけ書き直す（無停止の更新 1-5）' },
   ] },
   { file: 'core/hooks-unify.mjs', sites: 2, targets: [
     { name: 'hooks-runtime/hook-adapter-<hash>.mjs', limit: 'アダプターごとに 1 つ。コードの複製', reason: '生成したコード' },

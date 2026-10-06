@@ -181,7 +181,7 @@ design.md §3 のとおり。参考にする動くコード: `scripts/zero-downt
 - **1-5 が使うときの注意**: (1) 付け直した main には、サーバーが `connect` のたびに最新の `ready` と `resident` を送る（`computer-ready-request` は main が `computer-ready` を返す）。それ以外の「居ない間に溜まったもの」は無い。(2) **main の `message` の登録は `connect()` の前**（`chooseServer` が返す包みに `main.cjs` が付けてから `connect()`）。窓ができる前に届いた `agent-browser-*` などは取りこぼす（今の `utilityProcess` と同じ）。(3) `secret` の `status`（暗号化できるか）はサーバーのメモリに残るので、2 回目の main への付け直しでは `secret` の往復が少ない（3 → 1）。(4) 内蔵ブラウザーの中継（`desktop/browser-relay.cjs`）は main のもので、付け直した main には中継が無い（ポート・鍵が変わる）。サーバーが一覧を持って同じポート・鍵で立て直す作業は 1-5。今は、次の `agent-browser-endpoint` の依頼で新しい中継ができる
 - **1-6 が使うときの注意**: (1) **`main-leaving` を送る所は未配線**（サーバー側の受け取りと見張りの 30 分だけある）。`installUpdate` は今も `update-lock` → `shutdown` で、パイプの経路でもサーバーを終わらせる。1-6 は、`main-leaving` を送ってから `ServerLink.leave()`・`quitAndInstall` の順にする。(2) 切り替えで旧サーバーを `shutdown` で終わらせると、`onServerExit` が「サーバーが終了しました」を出すので、切り替えの間は止める（`quitting` と同じ印）。(3) 新しいサーバーは `launchServer`（`mode` は `decideLaunch` の結果）・`serverEnv`（`token`・`port` に旧サーバーの `ready` の値）・`startAndConnect`（`main-link.json` の pid を待つので、旧サーバーが消した後の古いファイルを掴まない）で起こし、**同じ `ServerLink` に `connect()`**（`message` の登録が残る。`once('exit')` は付け直す）。(4) 前の版へ戻すときの Job の分岐は `chooseServer` と同じ。(5) 切り替えの待ちの `count` は孤児の見張りと同じ `runningWork`
 
-### 1-5 main が居ない間の機能ごとの扱い（M〜L）
+### 1-5 main が居ない間の機能ごとの扱い（M〜L。**実装済み 2026-10-06**。下の「実装のメモ」）
 
 design.md §7.2 の表のとおり。サーバー側が「main に頼むもの」を、main が居ない間は機能ごとに扱う。口の層（1-2）は捨てるだけなので、ここで決める。
 
@@ -195,6 +195,15 @@ design.md §7.2 の表のとおり。サーバー側が「main に頼むもの�
 - **locale**: 付け直しで送り直す
 - **`main-leaving`**: サーバーは受けたら、`hostAway` の猶予（`HOST_GRACE_MS`）を数えない（画面が居ない間の既存の仕組みと別に、main が居ないことを持つ）
 - テスト: `tests/unit/main-away.mjs`（口を切って、secret の待ちと上限・復号した値の保持・computer use の停止と戻った後の承認からのやり直し・resident の送り直し・wake・通知の溜まり）。内蔵ブラウザーは `tests/browser/` の既存の作りか、ハーネスで
+
+**実装のメモ（2026-10-06。実装済み。1-6・1-7 が使うときの注意を含む）**
+
+- **新しいファイル**: `core/main-away.mjs`（main が居る・居ない・main-leaving の出来事と、OAuth の同意画面などを開く口 `createExternalOpener`）。機能ごとの扱いは頼む側のモジュールが持つ: secret = `core/secret-store.mjs`、computer use = `core/computer-use/driver.mjs`（`onAway`）・`lock.mjs`（`stopAll`）、内蔵ブラウザー = `core/agent-browser.mjs` と `desktop/agent-browser-bridge.cjs`・`browser-relay.cjs`・`browser-panel.cjs`、screencast = `core/browser-screencast.mjs`、os-open = `core/os-open.mjs`。`core/server.mjs` の差分は配線だけ、`desktop/main.cjs` は 1 行（橋に `handover`）。口に `resumable`（パイプの口だけ true）を足し、main が居ない間の扱いは `resumable` の口だけが持つ（utilityProcess の口の挙動は変わらない）
+- **扱いの一覧**（design.md §7.2 の表にも書いた）: secret は待たせる（上限 5 分）・送って切れた依頼は戻す・復号と暗号化の組を持つ・答えを得られなければ平文に落とさず失敗。computer use は Esc と同じ（reason `update`。辞書・画面の表示を足した）。内蔵ブラウザーはサーバーが URL とタブの写しを持ち、居ない間の endpoint は写しか選んだ空きポートで答え、戻った main が `browser-restore-request` で引いてタブを先に開き直してから同じポート・鍵で待ち受ける（取れなければ別のポート + 設定ファイルの `cdp` を書き直す）。screencast は `ended('away')`。os-open・openExternal は居ない間 OS に直に。locale・wake・resident は付け直しで送り直す（wake はサーバー側で行い、main は送らない）。PC の通知は新しいコード無し（既存の溜め）。`main-leaving` の後は画面の猶予を数えない
+- **テスト**: `tests/unit/main-away.mjs`・`main-away-desktop.mjs`・`main-away-server.mjs`（本物のサーバーに偽の main をつなぎ、猶予の有無を対照）。全件の `npm test`（`--jobs 2`）は 312 本・11,992 判定が通り、`desktop-job` だけ一時フォルダーの `rmSync` の EPERM で落ちた（負荷中の掃除の失敗。単体で流し直すと 24 / 24 通過。この変更とは無関係）
+- **デスクトップのハーネス**（dev-verification.md の 1-5 の項。`desktop:pack` の resources・一時のデータ置き場と実行場所・fake）18 / 18 通過: main を `app.exit(0)` → サーバー生存 → 居ない間の `savePlyMcp`（env の秘密）は待たされ、`browser:` のターンは同じ `cdp` のまま終わり、`computer:` のターンは `stopped / update` → 付け直した main で秘密が約 3 秒後に通り（`safeStorage` で暗号化）、タブ 2 枚が戻り、1 回目の URL でつながり、本物の `agent-browser` が同じ常駐の pid のまま通る → `app.quit()` でサーバーが終わり control.json・main-link.json が消える。**os-open・openExternal の「居ない間」は実機では起こしていない**（explorer・ブラウザーが実際に開くため。起動する内容と注入した spawn で単体が確かめる）
+- **1-6 へ**: (1) `main-leaving` を送った後に更新を取りやめたとき、サーバーの「猶予を数えない」状態（`leaving`）は main の再接続でしか解けない。取りやめの知らせを足すかを決める。(2) `agentBrowserBridge.close()` は終わる前に最後のタブの写しを送る（`will-quit` で呼ばれる）ので、`installUpdate` から `quitAndInstall` へ進むときの順序は変えなくてよい。(3) 切り替えで新しいサーバーを起こすときは、旧サーバーが持つ内蔵ブラウザーの写し・中継の URL・復号した値は引き継がれない（新しいサーバーは空から始まり、新しい main の復元の依頼は空の答えになる）。タブは main のものなので残るが、写しの報告は次の変化まで届かない。切り替えの直後に main が `browser-state-report` を 1 回送り直す道（または新しいサーバーへの付け直しで `browser-restore-request` を使わず報告だけする）が要る
+- **1-7 へ**: os-open・openExternal の居ない間の実機（署名した旧版 → 新版の更新の最中）。更新の約 50 秒の間に、スリープ抑止の要否（1-0 の d）
 
 ### 1-6 更新の流れ・切り替えの先送り・画面の読み直し（M）
 

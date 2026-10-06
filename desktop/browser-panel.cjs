@@ -208,6 +208,7 @@ function createBrowserPanel({ window, WebContentsView, BrowserWindow, session, s
   const agents = new Map();
   const agentListeners = new Set();
   const profileListeners = new Set();
+  const stateListeners = new Set();
   // リモートの端末が見ているタブ（desktop/browser-screencast.cjs）。窓に載っていないと描かれないので、窓の外に 1px で載せておく
   const pinned = new Set(), parked = new Set();
   let navigation = null;
@@ -387,7 +388,39 @@ function createBrowserPanel({ window, WebContentsView, BrowserWindow, session, s
     pushTimer = setTimeout(() => {
       pushTimer = null;
       if (!window.isDestroyed()) window.webContents.send('ply:browser-state', snapshot());
+      for (const listener of stateListeners) { try { listener(); } catch {} }
     }, 16);
+  }
+  /**
+   * 無停止の更新（docs/zero-downtime-update/design.md §7.2）で、main が居なくなってもサーバーが持てるタブの写し。
+   * タブ（会話・プロフィール・URL・その会話で最後に選んだか）と、会話ごとの今のプロフィール。http(s) のタブだけ（file: の写し・空のタブは戻さない）
+   */
+  function exportState() {
+    const rows = order.map(id => tabs.get(id)).filter(tab => tab && !tab.detached);
+    return {
+      tabs: rows.map(tab => ({ sessionId: tab.sessionId, profile: tab.profile, url: externalUrl(info(tab).url), selected: selected.get(selectKey(tab.sessionId, tab.profile)) === tab.id }))
+        .filter(row => row.url),
+      profiles: [...profileOf].filter(([, profile]) => validProfile(profile)).map(([sessionId, profile]) => ({ sessionId, profile })),
+    };
+  }
+  /**
+   * exportState の写しからタブを開き直す（付け直した main の最初に 1 回。窓にはまだ載せない）。プロフィールを先に覚えさせる
+   * （使える id は setProfiles で届いた後。知らない id の会話は既定）。会話ごとに最後に選んでいたタブを選び直す。作ったタブの数を返す
+   */
+  function restoreState({ tabs: rows = [], profiles = [] } = {}) {
+    for (const row of Array.isArray(profiles) ? profiles : []) if (validProfile(row?.profile)) setProfileFor(row.sessionId ?? null, row.profile);
+    let made = 0;
+    const chosen = [];
+    for (const row of Array.isArray(rows) ? rows : []) {
+      const url = externalUrl(row?.url);
+      if (!url) continue;
+      const tab = createTab({ url, sessionId: row.sessionId ?? null, profile: validProfile(row.profile) ? row.profile : undefined, select: false });
+      made++;
+      if (row.selected === true) chosen.push(tab);
+    }
+    for (const tab of chosen) remember(tab);
+    pickForContext(); place(); push();
+    return made;
   }
 
   /** 今のタブの View を窓に載せる・外す。見せるのは、画面が表示中と言い、枠があり、凍らせていない間だけ */
@@ -783,6 +816,9 @@ function createBrowserPanel({ window, WebContentsView, BrowserWindow, session, s
       push();
     },
     onTabsChanged: listener => { tabListeners.add(listener); return () => tabListeners.delete(listener); },
+    // ---- サーバーへ写しを渡す・戻す（desktop/agent-browser-bridge.cjs。AGENT_HOST_HANDOVER=on のときだけ使う）
+    exportState, restoreState,
+    onStateChanged: listener => { stateListeners.add(listener); return () => stateListeners.delete(listener); },
     setAgent: (sessionId, tabId) => {
       const before = agents.get(sessionId)?.tabId ?? null;
       if (tabId) agents.set(sessionId, { sessionId, tabId }); else agents.delete(sessionId);

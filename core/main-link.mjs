@@ -83,6 +83,8 @@ const validRange = range => Array.isArray(range) && range.length === 2 && range.
 class MainLinkPort extends EventEmitter {
   constructor(link) { super(); this.link = link; }
   get connected() { return this.link.isConnected(); }
+  /** 切れても次の main が付け直す（機能ごとの扱いは core/main-away.mjs・1-5） */
+  get resumable() { return true; }
   postMessage(message) { return this.link.send(message); }
   /** つながっている main の握手の中身（{ appVersion, ipc }）。切れていれば null */
   get peer() { return this.link.peerInfo(); }
