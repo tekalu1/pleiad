@@ -40,8 +40,13 @@ const trust = createWindowTrust();
 let remoteWindows;
 // messages はサーバーの message を 1 つの listener で受けて橋へ配る（desktop/worker-messages.cjs）。橋は worker でなくこれに付ける
 let worker, messages, linked = null, window, origin, updates, quitting = false, closing = false, exitInProgress = false;
+let chromeOs = null;   // Chrome の OS の層（boot が作る）。終了のときに、画面の外へ隠したエージェントの窓を片付けるために main が持つ
 // 無停止の更新で、付け直したサーバーが古い版のときの新しい版への切り替え（desktop/switch.cjs）
 let serverSwitch = null;
+// main-leaving を送った後（更新で main が離れる途中）。この間につながりが切れても、サーバーは起こし直さない
+let updateLeaving = false;
+// 最後に届いたサーバーの ready。サーバーが落ちたとき、同じトークン・ポート・版で起こし直す材料（desktop/server-restart.cjs）
+let serverReady = null;
 // サーバーの起こし方の記録。updater.log（desktop/update-log.cjs）が出来るまでは溜め、出来たら流す（Job が抜け道を許さず今の流れに落ちた理由などを残す）
 let bootLogger = null;
 const pendingServerLog = [];
@@ -51,7 +56,7 @@ const serverBoot = () => require('./server-boot.cjs');
 // 配布物の resources\。開発の確認用に AGENT_HOST_RUNTIME_RESOURCES（desktop:pack の win-unpacked\resources など）で差し替えられる
 const runtimeResources = () => process.env.AGENT_HOST_RUNTIME_RESOURCES || process.resourcesPath;
 const nativeExit = app.exit.bind(app);
-app.exit = (...args) => { exitInProgress = true; return nativeExit(...args); };
+app.exit = (...args) => { exitInProgress = true; closeAgentWindows(); return nativeExit(...args); };   // app.exit は will-quit を通らない
 function showFatalError(title, message) {
   const options = { type: 'error', title, message };
   return window && !window.isDestroyed() ? dialog.showMessageBox(window, options) : dialog.showMessageBox(options);
@@ -70,14 +75,14 @@ if (process.platform === 'win32' && !PACKAGED_IDENTITY) app.setAppUserModelId(AP
 // ローカルの窓の本体フレームで、ローカルのサーバーの画面からの IPC だけを通す（リモートの窓・同梱の窓は別の口）
 function trusted(event) { trust.check(event, ['local']); }
 const switchScreen = createSwitchScreen({ ipcMain, trusted, getWindow: () => window });
-function workerRequest(type, extra = {}) {
+function workerRequest(type, extra = {}, { timeoutMs = 10000 } = {}) {
   return new Promise((resolve, reject) => {
     const id = ++requestId;
     const done = message => {
       if (message.type !== type || message.id !== id) return;
       clearTimeout(timer); messages.off('message', done); resolve(message);
     };
-    const timer = setTimeout(() => { messages.off('message', done); reject(new Error(t('errors.runningCheckFailed'))); }, 10000);
+    const timer = setTimeout(() => { messages.off('message', done); reject(new Error(t('errors.runningCheckFailed'))); }, timeoutMs);
     messages.on('message', done); worker.postMessage({ ...extra, type, id });
   });
 }
@@ -117,7 +122,7 @@ async function installUpdate() {
   // （before-quit-for-update。インストーラーを起こした後）につながりだけを切る。サーバーは走り続け、新しい main が付け直して切り替える（desktop/switch.cjs）
   const handover = Boolean(linked);
   try {
-    if (handover) worker.postMessage({ type: 'main-leaving', reason: 'update' });
+    if (handover) { updateLeaving = true; worker.postMessage({ type: 'main-leaving', reason: 'update' }); }
     else {
       const lock = await workerRequest('update-lock');
       if (!lock.ok) throw new Error(t('update.blocked', { reason: lock.reason }));
@@ -144,7 +149,7 @@ async function installUpdate() {
     });
   } catch (e) {
     // 更新を取りやめた。main は居続けるので、サーバーの main-leaving（猶予を数えない・切断の上限）を解く
-    quitting = false; worker.postMessage({ type: handover ? 'main-leaving-cancel' : 'update-unlock' }); throw e;
+    quitting = false; updateLeaving = false; worker.postMessage({ type: handover ? 'main-leaving-cancel' : 'update-unlock' }); throw e;
   }
 }
 
@@ -191,6 +196,15 @@ async function chooseLinkedServer(portFile) {
   }
 }
 
+/** 別のサーバー（切り替えの S2・起こし直したサーバー）の ready のポート・トークンで窓を読み直す。同じポートが取れなかったときは origin が変わる（design.md §8） */
+async function reloadWindow(next, portFile) {
+  origin = `http://127.0.0.1:${next.port}`;
+  rememberPort(portFile, next.port);
+  trust.update(window, { origin });
+  if (next.locale) setLocale(next.locale);
+  await window.loadURL(`${origin}/?token=${encodeURIComponent(next.token)}`);
+}
+
 /** 付け直したサーバーが古い版なら、作業が終わるのを待って新しい版のサーバーへ切り替える（desktop/switch.cjs）。待ちの表示は今は main のログ（[server] switch: …） */
 function startServerSwitch(ready, portFile, onServerExit) {
   const { startSwitch, incompatibleDialog } = require('./switch.cjs');
@@ -200,14 +214,7 @@ function startServerSwitch(ready, portFile, onServerExit) {
     ask: info => switchScreen.ask(info, incompatibleDialog({ dialog, getWindow: () => window, t })),
     // 同じ包みにつなぎ直したので、once('exit') の見張りを付け直す
     rearm: () => { if (!worker.listeners('exit').includes(onServerExit)) worker.once('exit', onServerExit); },
-    reload: async next => {
-      // 同じポートが取れなかったときは origin が変わる（design.md §8）
-      origin = `http://127.0.0.1:${next.port}`;
-      rememberPort(portFile, next.port);
-      trust.update(window, { origin });
-      if (next.locale) setLocale(next.locale);
-      await window.loadURL(`${origin}/?token=${encodeURIComponent(next.token)}`);
-    },
+    reload: next => reloadWindow(next, portFile),
     restart: () => { quitting = true; app.relaunch(); app.exit(0); },
     fallback: () => { if (!switchScreen.supported()) void dialog.showMessageBox(window, { type: 'warning', title: 'Pleiad', message: t('switch.fallback') }).catch(() => {}); },
     failed: error => { quitting = true; return showFatalError('Pleiad', t('switch.failed', { detail: error?.message ?? '' })).catch(e => console.error(e)).finally(() => app.quit()); },
@@ -251,7 +258,11 @@ async function boot() {
   try { win32 = loadWin32(); } catch (error) { win32Reason = error.reason ?? 'native'; if (win32Reason !== 'platform') console.warn('[computer]', `win32 unavailable: ${error.message}`); }
   computerService = attachComputerService(messages, { electron: { screen, nativeImage }, app, log: line => console.warn('[computer]', line), win32, reason: win32Reason,
     escape: { suspend: () => computerOverlay?.suspendEscape() ?? (() => {}) } });
-  attachChromeOs(messages, { chromeOs: createChromeOs({ platform: process.platform, win32: win32 ? withPerMonitorDpi(win32) : null, reason: win32Reason, log: line => console.warn('[chrome-os]', line) }), log: line => console.warn('[chrome-os]', line) });
+  chromeOs = createChromeOs({ platform: process.platform, win32: win32 ? withPerMonitorDpi(win32) : null, reason: win32Reason, log: line => console.warn('[chrome-os]', line) });
+  attachChromeOs(messages, { chromeOs, log: line => console.warn('[chrome-os]', line) });
+  // 画面の構成が変わったら（モニターの増減・解像度・DPI・スリープ復帰）、画面の外へ隠しているエージェントの Chrome の窓を置き直す（ADR 0154）
+  for (const event of ['display-added', 'display-removed', 'display-metrics-changed']) screen.on(event, () => chromeOs.reconceal());
+  powerMonitor.on('resume', () => chromeOs.reconceal());
   resident = attachResident({ app, worker: messages, icon: path.join(__dirname, 'icon.png'), getWindow: () => window, quit: () => closeSafely() });
   let startupError = '';
   worker.stderr?.on('data', data => { startupError = (startupError + data.toString()).replace(/token=\S+/g, 'token=[redacted]').slice(-2000); });
@@ -268,6 +279,8 @@ async function boot() {
   if (ready.locale) setLocale(ready.locale);
   // 画面で言語を変えたら、サーバーが解決し直した言語が届く（core/server.mjs の savePref）
   messages.on('message', message => { if (message?.type === 'locale' && message.locale) setLocale(message.locale); });
+  serverReady = ready;
+  messages.on('message', message => { if (message?.type === 'ready') serverReady = message; });
   origin = `http://127.0.0.1:${ready.port}`;
   rememberPort(portFile, ready.port);
   window = new BrowserWindow({ width: 1200, height: 850, minWidth: 640, minHeight: 480, title: 'Pleiad', icon: path.join(__dirname, 'icon.png'), show: false,
@@ -321,18 +334,34 @@ async function boot() {
     closeSafely();
   });
   window.on('session-end', () => { quitting = true; worker.postMessage({ type: 'shutdown' }); });
+  // サーバーが落ちたときの起こし直し（desktop/server-restart.cjs。名前付きパイプの経路だけ）
+  const restarter = linked ? require('./server-restart.cjs').createServerRestarter({ link: worker, getReady: () => serverReady, prepared: linked.prepared, root: linked.root,
+    dataDir: serverBoot().resolveDataDir(), resourcesPath: runtimeResources(), execPath: process.execPath, systemLocale: systemLanguage(), cwd: app.getPath('home'), log: line => log(`restart: ${line}`) }) : null;
   const onServerExit = () => {
     // 切り替え（desktop/switch.cjs）が古いサーバーを終わらせている間は、終了の知らせを出さない
     if (quitting || exitInProgress || serverSwitch?.replacing) return;
     void (async () => {
-      // 名前付きパイプの経路: 別の main が付け直した（bye 'replaced'）なら静かに終わる。つながりだけが切れたなら（サーバーは居る）付け直す
+      let restartFailed = false;
+      // 名前付きパイプの経路: 別の main が付け直した（bye 'replaced'）なら静かに終わる。つながりだけが切れたなら（サーバーは居る）付け直す。
+      // サーバーが居なければ（落ちた）、同じ版を同じトークン・ポートで起こし直して窓を 1 回だけ読み直す。main-leaving の後（更新で離れる途中）・サーバー自身が終わるところ（bye 'closing'）は起こし直さない
       if (linked) {
         if (worker.exitReason === 'replaced') { quitting = true; app.quit(); return; }
         if (worker.exitReason !== 'closing' && await serverBoot().reattachServer({ link: worker, dataDir: serverBoot().resolveDataDir(), log })) { worker.once('exit', onServerExit); return; }
+        if (worker.exitReason !== 'closing' && !updateLeaving && !quitting && !exitInProgress) {
+          const restarted = await restarter.restart();
+          if (restarted.ok) {
+            // 起こし直している間に終了が始まったなら、終了の shutdown は切れたつながりへ送られて届いていない。起こしたサーバーを終わらせる
+            if (quitting || exitInProgress) { if (quitting && !updateLeaving) worker.postMessage({ type: 'shutdown' }); return; }
+            if (!worker.listeners('exit').includes(onServerExit)) worker.once('exit', onServerExit);
+            await reloadWindow(restarted.ready, portFile).catch(e => log(`restart: reloading the window failed: ${e.message}`));
+            return;
+          }
+          restartFailed = true;
+        }
       }
       if (quitting || exitInProgress) return;
       quitting = true;
-      await showFatalError('Pleiad', t('server.exited')).catch(e => console.error(e)).finally(() => app.quit());
+      await showFatalError('Pleiad', restartFailed ? t('server.restartFailed') : t('server.exited')).catch(e => console.error(e)).finally(() => app.quit());
     })();
   };
   worker.once('exit', onServerExit);
@@ -427,9 +456,13 @@ ipcMain.on('ply:title-bar', (event, colors) => {
   if (!hex(colors?.color) || !hex(colors?.symbolColor)) return;
   window.setTitleBarOverlay({ color: colors.color, symbolColor: colors.symbolColor, height: TITLE_BAR_HEIGHT });
 });
+// 画面の外・透明・マウス素通しの窓は、Pleiad が終わると誰にも戻せない。終了の道（will-quit・will-quit を通らない app.exit）で閉じる（閉じられなければ見える形へ戻す）
+function closeAgentWindows() {
+  try { chromeOs?.closeAllAgents?.(); } catch (error) { console.warn('[chrome-os]', `closeAllAgents failed: ${error.message}`); }
+}
 if (!app.requestSingleInstanceLock()) app.quit();
 else {
-  app.on('will-quit', () => { serverSwitch?.cancel(); browserScreencastBridge?.close(); agentBrowserBridge?.close(); computerOverlay?.close(); });
+  app.on('will-quit', () => { closeAgentWindows(); serverSwitch?.cancel(); browserScreencastBridge?.close(); agentBrowserBridge?.close(); computerOverlay?.close(); });
   app.on('second-instance', (_event, argv) => { if (remoteWindows?.handleArgv(argv)) return; if (window) { window.restore(); window.show(); window.focus(); } });
   app.on('before-quit', event => { exitInProgress = true; if (!quitting && window) { event.preventDefault(); void closeSafely(); } });
   app.on('will-quit', () => { exitInProgress = true; });

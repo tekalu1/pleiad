@@ -12,6 +12,11 @@ import path from "node:path";
 import { runCase, summarize, pick } from "./lib/harness.mjs";
 import { startServer, ROOT } from "./lib/server.mjs";
 import { open } from "./lib/ws-client.mjs";
+import { scrubInheritedEnv } from "./lib/inherited-env.mjs";
+
+// インストール版 Pleiad の会話のシェルから継いだ Pleiad の変数は外す（tests/lib/inherited-env.mjs。AGENT_HOST_SERVER_LOG などが起動するサーバーへ渡ると、起動の合図が見えない）。
+// 実際の LLM を使うので利用者の上書き（AGENT_HOST_CODEX_BIN など）は残る
+scrubInheritedEnv();
 
 // 言語は日本語に固定する（tests/run.mjs と同じ理由）。起動するサーバーへも引き継がれる
 process.env.AGENT_HOST_LOCALE ||= "ja";

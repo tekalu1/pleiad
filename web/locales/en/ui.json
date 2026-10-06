@@ -38,6 +38,7 @@
     },
     "nav": {
       "agents": "Agents",
+      "apiKeys": "API keys",
       "usage": "Usage",
       "appearance": "Appearance",
       "context": "Plugins",
@@ -250,6 +251,8 @@
         },
         "setup": {
           "status": "Chrome needs setting up",
+          "unreachable": "Chrome isn’t running, or remote debugging is off",
+          "unreachableNote": "If Chrome is closed, it continues on its own once you start Chrome. If Chrome is running and nothing happens, turn it on with these steps.",
           "step1": "Copy this address",
           "step2": "Paste it into Chrome’s address bar, open it, and turn on “Allow remote debugging for this browser instance”",
           "note": "It continues on its own once the setting is on (no need to press again). You only do this once; it stays on after Chrome restarts.",
@@ -1509,10 +1512,11 @@
       "offline": "Can't send the answer because {{host}} is offline. You can send it once the connection returns.",
       "answeredByHost": "{{what}} on {{host}} · {{time}}",
       "answeredByDevice": "{{what}} on {{device}} · {{time}}",
-      "hostOnly": "This approval has to be answered on the host. Answer it on the host's screen, or open the child conversation.",
+      "hostOnly": "This approval has to be answered on the host. Answer it on the host's screen.",
+      "hostOnlyDesktop": "This approval has to be answered on the host. Answer it on the host's screen (you can also open it from View details → Open on host).",
       "answered": "answered",
       "hostOffline": "Host offline",
-      "viewChild": "View the child conversation",
+      "viewDetail": "View details",
       "hostCanAnswer": "You can also answer in the requesting conversation (⇄ {{device}})",
       "viewChildFailed": "Could not open the remote window: {{error}}"
       },
@@ -2264,7 +2268,8 @@
       "groupEnded": "Finished",
       "showMore": "Show {{count}} more",
       "delegated": "· {{count}} delegated",
-      "instructionsWaiting": "{{count}} follow-up instructions waiting",
+      "instructionsWaiting_one": "{{count}} follow-up instruction waiting",
+      "instructionsWaiting_other": "{{count}} follow-up instructions waiting",
       "instruction": "Follow-up instruction",
       "instructionQueued": "Waiting · delivered when the current work ends",
       "instructionDropped": "✕ Ended without being delivered",
@@ -2274,6 +2279,30 @@
       "groupCommands": "Commands",
       "openChat": "Open as conversation",
       "hostResult": "Result (from the host)",
+      "hostOmitted_one": "{{count}} older message is not shown",
+      "hostOmitted_other": "{{count}} older messages are not shown",
+      "hostDescendantsOmitted_one": "{{count}} older task delegated on the host is not listed",
+      "hostDescendantsOmitted_other": "{{count}} older tasks delegated on the host are not listed",
+      "openOnHost": "Open on host",
+      "hostOfflineUntil": "Offline · up to {{time}}",
+      "hostOfflineRow": "Offline · up to {{time}}",
+      "hostUntil": "up to {{time}}",
+      "hostOfflineMark": "Waiting for the host",
+      "hostStaleMark": "Was running when last read",
+      "hostStaleRow": "As of {{time}} · open to read again",
+      "hostStaleRowNoTime": "Open to read again",
+      "hostOfflineThread": "The host is offline",
+      "hostOfflineCatchUp": "Up to {{time}} · catches up when it reconnects",
+      "hostOfflineCatchUpNoTime": "Catches up when it reconnects",
+      "hostViewUnsupported": "This host cannot show progress (update Pleiad on the host to see it)",
+      "hostViewDenied": "The host is not accepting requests from AI",
+      "hostViewNotFound": "The host doesn't have this task",
+      "hostViewTooLarge": "The progress is too large to send",
+      "hostViewTimeout": "The host didn't answer",
+      "hostViewBusy": "Too many reads at once. It reads again shortly",
+      "hostViewFailed": "Couldn't read the progress from the host",
+      "hostOfflineBoxes": "The host is offline, so the progress hasn't been read yet. It is read when the host reconnects",
+      "hostOfflineBoxesUntil": "The host has been offline since {{time}}, so the progress hasn't been read yet. It is read when the host reconnects",
       "request": "Request",
       "noMessages": "No messages yet.",
       "open": "Open",
@@ -3096,6 +3125,186 @@
     "busy": "Another folder is being sent.",
     "dropFailed": "Couldn't read the folder ({{error}})"
   },
+  "apiKeys": {
+    "unnamed": "Unnamed key",
+    "lead": "Registering a key doesn't send anything anywhere. Data is sent only once you choose the key where it's used.",
+    "heading": "Registered keys",
+    "empty": "No keys yet",
+    "loadFailed": "Couldn't load the API keys: {{error}}",
+    "failed": "Couldn't complete that: {{error}}",
+    "cancel": "Cancel",
+    "show": "Show",
+    "hide": "Hide",
+    "manage": "Manage in API keys",
+    "useKey": "Key to use",
+    "checking": "Checking…",
+    "listSeparator": ", ",
+    "encryptedNote": "Keys are stored with OS encryption and never shown on screen.",
+    "notEncrypted": "This launch can't encrypt keys (they are stored in a file only you can read).",
+    "deferred": {
+      "title": "Moving the API keys is on hold",
+      "locked": "The old encrypted keys can't be read in this launch. Open Pleiad in a launch that can decrypt (the desktop app) to move them. Until then, voice calls, delegation and endpoints keep using their current keys.",
+      "other": "The old key storage can't be read, so moving the keys is on hold. Until then, voice calls, delegation and endpoints keep using their current keys."
+    },
+    "deferredInUse": "Moving the keys is on hold, so the current key is still in use (Settings › API keys)",
+    "deferredShort": "Moving the keys is on hold (Settings › API keys)",
+    "status": {
+      "registered": "Registered",
+      "registeredPrefix": "Registered ·",
+      "checked": "Registered · Checked ✓ {{when}}",
+      "checkedBare": "Checked ✓ {{when}}",
+      "failed": "⚠ Check failed: {{reason}} ({{when}})",
+      "reason": {
+        "invalid": "the key was not accepted",
+        "unreachable": "couldn't reach the provider"
+      }
+    },
+    "select": {
+      "none": "Don't use",
+      "register": "＋ Register a {{provider}} key…",
+      "failedHint": "⚠ Check failed",
+      "checkedHint": "Checked ✓ {{when}}"
+    },
+    "register": {
+      "hint": "Registered in API keys, so endpoints and delegation can choose it too.",
+      "useNow": "Register and use",
+      "submit": "Register"
+    },
+    "add": {
+      "open": "＋ Add a key",
+      "title": "Add a key",
+      "provider": "Provider",
+      "providers": {
+        "openrouter": {
+          "name": "OpenRouter",
+          "hint": "openrouter.ai · many models"
+        },
+        "cerebras": {
+          "name": "Cerebras",
+          "hint": "Delegation judge"
+        },
+        "custom": {
+          "name": "Other",
+          "hint": "Register with a name"
+        }
+      },
+      "taken": "Registered",
+      "name": "Name",
+      "nameAria": "Key name",
+      "namePlaceholder": "e.g. Company LiteLLM",
+      "key": "Key",
+      "keyAria": "{{provider}} key",
+      "keyAriaCustom": "Key",
+      "registered": "Registered the {{name}} key. Checking…",
+      "registeredChecked": "Registered the {{name}} key. Checked ✓",
+      "registeredFailed": "Registered the {{name}} key. The check failed."
+    },
+    "actions": {
+      "replace": "Replace",
+      "check": "Check",
+      "delete": "Delete",
+      "replaceAria": "Replace · {{name}}",
+      "checkAria": "Check · {{name}}",
+      "deleteAria": "Delete · {{name}}"
+    },
+    "check": {
+      "ok": "Checked the {{name}} key. Checked ✓",
+      "failed": "Checked the {{name}} key. The check failed."
+    },
+    "uses": {
+      "label": "Used by",
+      "none": "Not used anywhere",
+      "aria": "Where {{name}} is used",
+      "endpoint": "{{agent}} endpoint \"{{name}}\"",
+      "voice": "Voice calls",
+      "judge": "Delegation judge {{judge}}",
+      "more": "{{count}} more",
+      "less": "Show fewer",
+      "open": "Open Settings › {{page}}"
+    },
+    "effect": {
+      "endpoint": "Conversations that use it must choose again",
+      "voice": "Voice calls stop working",
+      "judge": "This judge is no longer used"
+    },
+    "list": {
+      "used": "Keys in use",
+      "unused": "Unused keys",
+      "unusedHeading": "Keys not used anywhere",
+      "all": "Registered keys"
+    },
+    "replace": {
+      "aria": "Replace the {{name}} key",
+      "input": "New key for {{name}}",
+      "cost": "Replacing checks the endpoints that use it again (this may cost a little).",
+      "submit": "Replace",
+      "done": "Replaced the {{name}} key"
+    },
+    "result": {
+      "aria": "Result of checking again",
+      "checking": "Checking…",
+      "running": "Checking where it is used…",
+      "noUses": "Nothing uses this key.",
+      "all": "Checked all {{total}} places again. Every one connected.",
+      "partial": "{{ok}} of {{total}} places connected; {{ng}} failed the check.",
+      "endpointOk": "Connected · {{count}} models",
+      "endpointFailed": "Check failed: {{error}}",
+      "keyOk": "Key checked",
+      "keyFailed": "Check failed: the key was not accepted",
+      "error": "Check failed: {{error}}",
+      "openEndpoint": "Open endpoint",
+      "openSettings": "Open settings",
+      "close": "Close"
+    },
+    "delete": {
+      "aria": "Confirm deleting {{name}}",
+      "withUses": "Delete the {{name}} key? These places will stop working.",
+      "noUses": "Delete the {{name}} key? Nothing uses it.",
+      "yes": "Delete",
+      "done": "Deleted the {{name}} key.",
+      "doneWithUses": "Deleted the {{name}} key. Choose a key again for the places that used it ({{uses}})."
+    },
+    "guide": {
+      "title": "There are {{count}} {{name}} keys",
+      "body": "The move found {{name}} keys with different values. Merging them means replacing or deleting only once.",
+      "merge": "Merge…",
+      "keep": "Leave as is",
+      "kept": "Left as is. This notice won't appear again.",
+      "pick": "Key to keep",
+      "usedBy": "Used by: {{uses}}",
+      "mergeGo": "Merge",
+      "note": "The keys you do not choose are deleted, and the places that used them switch to the key you keep.",
+      "merged": "Merged into one {{name}} key"
+    },
+    "voice": {
+      "note": "Once you choose a key, call audio and the text read aloud are sent to OpenRouter (and the provider of the model you pick).",
+      "unset": "Voice calls are unavailable. Choose a key to use them.",
+      "selectLabel": "Key for voice calls",
+      "chosen": "Using the OpenRouter key for voice calls.",
+      "unchosen": "Voice calls no longer use a key.",
+      "registered": "Registered the OpenRouter key and using it for voice calls."
+    },
+    "delegation": {
+      "title": "Keys the judges use",
+      "unset": "This judge is not used until you choose a key",
+      "selectKey": "Choose a key",
+      "selectLabel": "Key for {{service}}",
+      "note": "Once you choose a key, the delegation request text and its kind are sent to that service."
+    },
+    "endpoint": {
+      "registered": "Registered key",
+      "registeredOne": "Registered {{name}} key",
+      "selectLabel": "Registered key to use",
+      "usedBy": "used in {{count}} places",
+      "unused": "not used",
+      "own": "Enter another key",
+      "ownAria": "Another key",
+      "ownCaption": "It is registered in API keys as a separate key.",
+      "keyRequired": "Enter the other key",
+      "registersOpenrouter": "Registered in API keys, so voice calls and delegation can choose it too.",
+      "registersNamed": "Registered in API keys under this endpoint's name."
+    }
+  },
   "routing": {
     "auto": "Auto",
     "autoTitle": "Delegate chosen automatically",
@@ -3241,29 +3450,16 @@
       "escalate": "Ask Cerebras again when Jev is unsure",
       "effective": {
         "noKey": "No {{service}} key is registered, so kinds set to {{judge}} are treated as mid difficulty.",
-        "addKey": "Add key",
         "noCandidates": "No delegates are available, so automatic delegation will fail.",
         "viewCandidates": "View candidates"
       },
       "judgeLabel": "Judge for {{kind}}",
-      "keysTitle": "Judge keys",
-      "keySend": "When you add a key, the task text and kind of each delegation are sent to that service.",
       "service": {
         "openrouter": "OpenRouter (Jev)",
         "cerebras": "Cerebras"
       },
-      "keySaved": "Key: saved",
-      "keyNone": "Key: not added",
-      "keyAdd": "Add",
-      "keyChange": "Change",
-      "keyDelete": "Delete",
-      "keySave": "Save",
       "keyCancel": "Cancel",
-      "keyShow": "Show",
-      "keyHide": "Hide",
       "keyInput": "{{service}} key",
-      "keyDeleteConfirm": "Delete the {{service}} key? This judge will no longer be used.",
-      "notEncrypted": "Keys can't be encrypted in this session (they are saved to a file only you can read).",
       "advanced": "Advanced settings",
       "tiersTitle": "Candidates by tier",
       "tiersOrder": "Tried from the top",
@@ -4041,8 +4237,10 @@
       "starting": "Starting",
       "listening": "Listening",
       "hearing": "Hearing you",
+      "hold": "Still listening",
       "thinking": "Thinking",
       "speaking": "Speaking",
+      "speakingLive": "Speaking (say something to stop)",
       "muted": "Muted"
     },
     "live": {
@@ -4051,12 +4249,33 @@
       "muted": "Microphone muted",
       "unmuted": "Unmuted",
       "denied": "Microphone not allowed",
-      "ended": "Call ended"
+      "ended": "Call ended",
+      "sent": "Sent as one message",
+      "stopped": "Stopped reading aloud"
     },
     "mark": "Spoken message",
+    "hold": {
+      "group": "Your voice (waiting to send)",
+      "listening": "Listening",
+      "waiting": "Still listening · sending in {{seconds}} s",
+      "finishing": "Transcribing · sending shortly",
+      "sendNow": "Send now",
+      "cancel": "Discard"
+    },
+    "delivery": {
+      "sent": "Handed to the AI",
+      "pending": "Waiting to slip in · handed over at the next break",
+      "queued": "Queued · sent when this work finishes",
+      "queuedOrder": "Queued · sent after the earlier message",
+      "queuedLimit": "Queued · sent when the limit lifts"
+    },
     "openSettings": "Open settings",
     "hint": {
-      "reading": "Reading aloud",
+      "readingBarge": "Reading aloud · speak to stop",
+      "readingClosed": "Reading aloud · the microphone is closed for now",
+      "readingClosedEcho": "Reading aloud · the microphone is closed for now (echo cancellation is off)",
+      "cut": "Stopped reading aloud here",
+      "resume": "Keep reading",
       "stop": "Stop",
       "jump": "Go to the spoken line"
     },
@@ -4073,7 +4292,7 @@
       "stt": "Could not hear that. Please say it again",
       "tts": "Could not read that aloud. See the text on screen",
       "sendFailed": "Could not send the message: {{error}}",
-      "notSent": "It could not be sent right now, so the message was left in the input box",
+      "notSent": "It could not be sent right now",
       "start": "Could not start the call ·",
       "startTimeout": "The call did not get ready in time"
     },
@@ -4083,25 +4302,7 @@
       "saved": "Saved",
       "failed": "Could not save: {{error}}",
       "key": {
-        "title": "OpenRouter key",
-        "set": "Registered",
-        "unset": "Not registered",
-        "replace": "Replace",
-        "delete": "Delete",
-        "save": "Register",
-        "show": "Show",
-        "hide": "Hide",
-        "saved": "Key registered",
-        "deleted": "Key deleted",
-        "note": "Only this PC holds the key and it is never shown on screen. Once registered, the audio of calls and the text read aloud are sent to OpenRouter (and the provider of the model you pick).",
-        "encrypted": "The key is stored with the OS encryption.",
-        "plain": "This PC cannot encrypt, so the key is kept as-is in a file with restricted permissions.",
-        "check": {
-          "ok": "The key checked out",
-          "invalid": "OpenRouter did not accept this key",
-          "unreachable": "Could not reach OpenRouter to check",
-          "nokey": ""
-        }
+        "title": "OpenRouter key"
       },
       "models": {
         "title": "Models and voice",
@@ -4122,10 +4323,38 @@
         "today": "Today: calls {{minutes}} min · transcribed {{stt}} min · read aloud {{chars}} characters",
         "note": "A call ends when it reaches a limit (and cannot start once the day's limit is reached). A call that hears nobody for 10 minutes also ends."
       },
+      "nextCall": "Pause length, speaking to stop the reading, and echo cancellation are fixed when a call starts. If you change them during a call, they take effect from the next call (sound effects apply right away).",
+      "turn": {
+        "title": "Pause before sending",
+        "hint": "How long to wait after you stop talking before the message is sent. A longer wait keeps hesitations in one message; a shorter wait starts the reply sooner.",
+        "label": "Pause length",
+        "short": "Short",
+        "standard": "Standard",
+        "long": "Long",
+        "est": {
+          "short": "Short: sends about 0.7 s after you stop. The reply starts about as fast as before. A short pause can still split a message.",
+          "standard": "Standard: sends about 1.2 s after you stop. Hesitations like \"um, well,\" stay in one message. The reply starts about 0.5 s later than before.",
+          "long": "Long: sends about 2.0 s after you stop. Long pauses stay in one message. The reply starts about 1.3 s later than before."
+        },
+        "tail": "It waits a little longer when your words end with a comma or a connecting word, and a little less when they end a sentence."
+      },
+      "barge": {
+        "title": "Interrupting",
+        "label": "Speak to stop the reading",
+        "hint": "Works with a headset or when echo cancellation is on. Otherwise it turns itself off and the microphone stays closed while the reply is read."
+      },
+      "sounds": {
+        "title": "Sounds",
+        "label": "Sound effects",
+        "hint": "Short sounds so you can follow the call without looking at the screen. Nothing plays while the reply is read aloud (except the sound for stopping it).",
+        "off": "Off",
+        "few": "Few (sent, stopped)",
+        "all": "All"
+      },
       "audio": {
         "title": "Microphone",
         "echo": "Echo cancellation, noise suppression, auto gain",
-        "echoHint": "A browser feature. It helps avoid picking up sounds other than your voice when you listen on speakers. Turn it off if your voice sounds muffled.",
+        "echoHint": "A browser feature. It helps avoid picking up sounds other than your voice when you listen on speakers. Turn it off if your voice sounds muffled. With it off, \"Speak to stop the reading\" is unavailable.",
         "permission": "If the microphone is not allowed, allow it in the browser's site settings (the lock icon in the address bar) or the OS privacy settings. The desktop app allows microphone use from this screen automatically."
       }
     }

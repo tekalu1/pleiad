@@ -44,6 +44,9 @@ const GW_HWNDNEXT = 2;
 const GW_CHILD = 5;
 const GWL_EXSTYLE = -20;
 const TH32CS_SNAPPROCESS = 0x2;
+// レジストリの親キー（64 ビットの HKEY は 32 ビットの値を符号つきで広げたもの）
+const HIVES = { HKCU: -2147483647, HKLM: -2147483646 };
+const RRF_RT_REG_SZ_OR_EXPAND = 0x6;
 
 const text = (buf, chars) => buf.toString('utf16le', 0, Math.max(0, chars) * 2);
 
@@ -98,6 +101,10 @@ function createWin32(koffi) {
     BringWindowToTop: user32.func('bool __stdcall BringWindowToTop(intptr_t hwnd)'),
     PostMessageW: user32.func('bool __stdcall PostMessageW(intptr_t hwnd, uint32_t msg, uintptr_t wParam, intptr_t lParam)'),
     GetDpiForWindow: user32.func('uint32_t __stdcall GetDpiForWindow(intptr_t hwnd)'),
+    IsWindow: user32.func('bool __stdcall IsWindow(intptr_t hwnd)'),
+    SetWindowLongPtrW: user32.func('intptr_t __stdcall SetWindowLongPtrW(intptr_t hwnd, int index, intptr_t value)'),
+    SetWindowPos: user32.func('bool __stdcall SetWindowPos(intptr_t hwnd, intptr_t after, int x, int y, int cx, int cy, uint32_t flags)'),
+    SetLayeredWindowAttributes: user32.func('bool __stdcall SetLayeredWindowAttributes(intptr_t hwnd, uint32_t key, uint8_t alpha, uint32_t flags)'),
     GetCurrentThreadId: kernel32.func('uint32_t __stdcall GetCurrentThreadId()'),
     CreateCompatibleDC: gdi32.func('intptr_t __stdcall CreateCompatibleDC(intptr_t hdc)'),
     CreateCompatibleBitmap: gdi32.func('intptr_t __stdcall CreateCompatibleBitmap(intptr_t hdc, int w, int h)'),
@@ -120,6 +127,7 @@ function createWin32(koffi) {
     Process32NextW: kernel32.func('bool __stdcall Process32NextW(intptr_t snap, _Inout_ uint8_t *entry)'),
     OpenProcessToken: advapi32.func('bool __stdcall OpenProcessToken(intptr_t h, uint32_t access, _Out_ intptr_t *token)'),
     GetTokenInformation: advapi32.func('bool __stdcall GetTokenInformation(intptr_t token, int cls, _Out_ uint8_t *info, uint32_t len, _Out_ uint32_t *ret)'),
+    RegGetValueW: advapi32.func('int32_t __stdcall RegGetValueW(intptr_t hkey, const char16_t *subkey, const char16_t *value, uint32_t flags, _Out_ uint32_t *type, _Out_ uint8_t *data, _Inout_ uint32_t *len)'),
     GetExtendedTcpTable: iphlpapi.func('uint32_t __stdcall GetExtendedTcpTable(_Out_ uint8_t *table, _Inout_ uint32_t *size, bool order, uint32_t af, int cls, uint32_t reserved)'),
     ShellExecuteW: shell32.func('intptr_t __stdcall ShellExecuteW(intptr_t hwnd, const char16_t *verb, const char16_t *file, const char16_t *params, const char16_t *dir, int show)'),
     GetFileVersionInfoSizeW: version.func('uint32_t __stdcall GetFileVersionInfoSizeW(const char16_t *path, _Out_ uint32_t *handle)'),
@@ -358,6 +366,21 @@ function createWin32(koffi) {
     ownerOf: hwnd => num(f.GetWindow(hwnd, 4)),
     dpiForWindow(hwnd) { try { return f.GetDpiForWindow(hwnd) || 96; } catch { return 96; } },
     postMessage: (hwnd, msg, wParam = 0, lParam = 0) => !!f.PostMessageW(hwnd, msg, wParam, lParam),
+    // ---- エージェントの Chrome の窓を画面の外の見えない窓に置く（desktop/chrome-os/win32.cjs が使う。ADR 0154）
+    isWindow: hwnd => !!f.IsWindow(hwnd),
+    /** 拡張スタイル全体を置き換える（付ける・外すは呼び出し側が現在値と合成する）。反映（タスクバーの札）は ShowWindow で隠して出し直す */
+    setExStyle(hwnd, value) { f.SetWindowLongPtrW(hwnd, GWL_EXSTYLE, Number(value) >>> 0); return true; },
+    /** 位置・大きさ・Z 順（flags は SWP_*）。前面は取らない（呼び出し側が SWP_NOACTIVATE を付ける） */
+    setWindowPos: (hwnd, x, y, width, height, flags) => !!f.SetWindowPos(hwnd, 0, x, y, width, height, flags),
+    /** WS_EX_LAYERED の窓の透明度（0 = 完全に透明、255 = 不透明） */
+    setLayeredAlpha: (hwnd, alpha) => !!f.SetLayeredWindowAttributes(hwnd, 0, alpha, 2),
+    /** レジストリの文字列（hive は 'HKCU' | 'HKLM'。name が空なら既定値）。無い・読めないときは null */
+    registryString(hive, subkey, name = '') {
+      const key = HIVES[hive];
+      if (key === undefined) return null;
+      const buf = Buffer.alloc(2 * 1040), len = [buf.length];
+      return f.RegGetValueW(key, subkey, name || null, RRF_RT_REG_SZ_OR_EXPAND, [0], buf, len) === 0 ? text(buf, Math.max(0, len[0] / 2 - 1)) : null;
+    },
     /** IPv4 の待ち受けのポート（127.0.0.1 など）を持つプロセスの pid。待ち受けが無い・読めないときは null */
     listenerPid(port) {
       const AF_INET = 2, TCP_TABLE_OWNER_PID_LISTENER = 3, ROW = 24;

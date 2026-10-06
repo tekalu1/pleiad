@@ -32,6 +32,7 @@
 <link rel="stylesheet" href="/bot-page.css">
 <link rel="stylesheet" href="/routines.css">
 <link rel="stylesheet" href="/voice.css">
+<link rel="stylesheet" href="/api-keys.css">
 <!-- i18next はビルドしないので、裸の名前をサーバーの配信口へ向ける（core/server.mjs の /vendor/i18next.mjs）。モジュールより前に置く -->
 <script type="importmap">{ "imports": { "i18next": "/vendor/i18next.mjs" } }</script>
 <!-- 最初の描画より前に、配色・言語・窓の枠（デスクトップ版だけ）・脇の開閉を決める。client.mjs を待つと一瞬ずれて見える。
@@ -105,6 +106,7 @@
     <nav class="settings-menu" id="settingsNav" data-i18n-aria-label="app.settings">
       <h2 data-i18n="app.settings"></h2>
       <button type="button" id="setupTab" aria-controls="setupPanel" data-i18n="settings.nav.agents"></button>
+      <button type="button" id="apiKeysTab" aria-controls="apiKeysPanel" data-i18n="settings.nav.apiKeys"></button>
       <button type="button" id="usageTab" aria-controls="usagePanel" data-i18n="settings.nav.usage"></button>
       <button type="button" id="delegationTab" aria-controls="delegationPanel" data-i18n="settings.nav.delegation"></button>
       <button type="button" id="appearanceTab" aria-controls="appearancePanel" data-i18n="settings.nav.appearance"></button>
@@ -312,6 +314,7 @@
         </section>
         <!-- 委譲先の自動振り分け。中身は web/delegation-settings.mjs が作る -->
         <section id="delegationPanel" data-i18n-aria-label="settings.nav.delegation" hidden></section>
+        <section id="apiKeysPanel" data-i18n-aria-label="settings.nav.apiKeys" hidden></section>
         <section id="setupPanel" data-i18n-aria-label="settings.nav.agents">
           <p data-i18n="settings.agents.description"></p>
           <div id="settingsAgentSlot">

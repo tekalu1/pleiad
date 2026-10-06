@@ -74,6 +74,9 @@ export const DATA_WRITES = [
     { name: 'claude-accounts.json', limit: 'Claude のアカウント。ユーザーが数個作る', reason: '設定の台帳' },
     { name: 'claude-usage/<id>/<印>', limit: 'アカウントごとに 1 つ。固定の小ささ', reason: '使用量ログイン済みの印' },
   ] },
+  { file: 'core/api-keys.mjs', sites: 1, targets: [
+    { name: 'api-keys.json', limit: 'API キーの台帳。MAX_KEYS=200 件（キーの値は持たない。値は api-key-secrets.json）', reason: '設定の台帳（ADR 0155）。名前・プロバイダー・確認の結果・割り当てだけ。固定の小ささ' },
+  ] },
   { file: 'core/compat-endpoints.mjs', sites: 3, targets: [
     { name: 'compat-endpoints.json', limit: '互換の接続先。ユーザーが数個作る', reason: '設定の台帳' },
     { name: 'run/claude-compat-<uuid>.json', limit: 'ターンごとに 1 つ。dispose で消す', reason: 'ターン中だけの一時ファイル' },
@@ -89,7 +92,7 @@ export const DATA_WRITES = [
     { name: 'notify.json', limit: '固定', reason: 'この PC の通知設定' },
   ] },
   { file: 'core/secret-store.mjs', sites: 8, targets: [
-    { name: 'mcp-secrets.json・claude-account-secrets.json・compat-endpoint-secrets.json・webhook-secrets.json・remote/secrets.json', limit: 'MCP サーバー・アカウント・接続先・端末の数。ユーザーが数個', reason: '暗号化した秘密。1 件ごとに小さい' },
+    { name: 'mcp-secrets.json・claude-account-secrets.json・compat-endpoint-secrets.json・voice-secrets.json・api-key-secrets.json・webhook-secrets.json・remote/secrets.json', limit: 'MCP サーバー・アカウント・接続先・API キー（MAX_KEYS=200）・端末の数。ユーザーが数個', reason: '暗号化した秘密。1 件ごとに小さい' },
     { name: '<上の秘密ファイル>.lock', limit: '固定の小ささ（pid だけ）', reason: 'ロックファイル' },
   ] },
   { file: 'core/remote/devices.mjs', sites: 2, targets: [
@@ -100,6 +103,9 @@ export const DATA_WRITES = [
   ] },
   { file: 'core/main-link.mjs', sites: 1, targets: [
     { name: 'main-link.json', limit: '固定', reason: 'main がパイプにつなぐための名前・秘密（権限 0600。起動ごとに書き直し、終了で消す）' },
+  ] },
+  { file: 'core/holder/holder.mjs', sites: 1, targets: [
+    { name: '(置き場の外) 版ごとの実行場所の run/holder-<キー>-v<規約の版>.json', limit: '固定の小ささ（pid・パイプの名前・秘密・世代・版）。保持役 1 つにつき 1 ファイル', reason: 'サーバーがターンの保持役のパイプにつなぐための名前・秘密（権限 0600。起動ごとに書き直し、終了で自分のものだけ消す。データ置き場には書かない。docs/zero-downtime-update/design.md §4.2）' },
   ] },
   { file: 'core/server-log.mjs', sites: 1, targets: [
     { name: '(置き場の外) 版ごとの実行場所（AGENT_HOST_SERVER_LOG）の logs/server.log と、1 世代前の server.log.old', limit: 'SERVER_LOG_MAX_BYTES=1MB を超えたら .old へ回す（2 つで約 2MB まで）', reason: 'main の子でない形で起こしたサーバー（stdio が無い）の標準出力・標準エラー。起動の失敗の理由を main が末尾から読む。追記だけで、回すときは名前を替えるだけ', appendOnly: true },

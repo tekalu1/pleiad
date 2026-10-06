@@ -39,7 +39,7 @@ export default async function (t) {
     await r.chrome.turnOff();
     const first = r.conn.demand();
     await until(() => r.conn.state().state === 'setup');
-    t.ok('DevToolsActivePort が無い → setup', r.conn.state().state === 'setup' && r.chrome.upgrades === 0);
+    t.ok('DevToolsActivePort が無い → setup（reason は null。トグルを一度もオンにしていない）', r.conn.state().state === 'setup' && r.conn.state().reason === null && r.chrome.upgrades === 0);
     await r.clock.advance(3_600_000);
     t.ok('時計を 1 時間進めても setup のまま（打ち切らない）', r.conn.state().state === 'setup' && r.os.log.length === 0);
     await r.chrome.turnOn();
@@ -90,6 +90,7 @@ export default async function (t) {
     await until(() => r.conn.state().state === 'setup');
     await r.clock.advance(5000);
     t.ok('古いポート（つながらない）→ setup のまま。upgrade は投げない', r.conn.state().state === 'setup' && r.chrome.upgrades === 0);
+    t.ok('ファイルはあるのにつながらない setup は reason unreachable（Chrome を閉じた後もファイルは残るので、閉じているだけかもしれない）', r.conn.state().reason === 'unreachable', JSON.stringify(r.conn.state()));
     r.conn.giveUp();
     t.ok('「やめる」で off/declined、待っていた demand は declined で失敗', r.conn.state().state === 'off' && r.conn.state().reason === 'declined' && await code(p) === 'declined');
     await r.stop();

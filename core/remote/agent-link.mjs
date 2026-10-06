@@ -3,6 +3,7 @@
 // DeviceLink（中継を通るチャネル。device-link.mjs）の上に /agent の WebSocket のストリームを 1 本開き、決まった便りを交わす:
 //   request(op, args, requester)  委譲の 6 つの操作（delegate・status・wait・send・cancel・list）。ホストの答えで解決する
 //   answer({ id, receipt, allow }) 承認の中継への人の答え（端末の画面の resolvePermission からだけ呼ばれる。remote.md §4.5）
+//   view(taskId, cursor)           任せた子の会話の経過の読み出し（端末の画面の人の操作からだけ。端末の AI の道具には無い。ホストが対応しているときだけ）
 //   sync(taskIds)                  つなぎ直したとき、持っているタスクの今の状態を求める
 // ホストの便り（task・relays・relay・relayEnd・allowed）は 'event' で出す。状態（state）は
 //   'offline'      チャネルが無い・口が閉じた（張り直しは DeviceLink が受け持ち、チャネルが戻れば口も開き直す）
@@ -30,6 +31,7 @@ export class AgentLink extends EventEmitter {
     this.state = 'offline';
     this.allowed = false;
     this.hostName = '';
+    this.canView = false;    // ホストが経過の読み出しを知っているか（ready の view。古いホストには無い）
     this.stream = null;
     this.pending = new Map();
     this.seq = 0;
@@ -43,7 +45,7 @@ export class AgentLink extends EventEmitter {
     };
   }
 
-  get status() { return { state: this.state, allowed: this.allowed, hostName: this.hostName }; }
+  get status() { return { state: this.state, allowed: this.allowed, hostName: this.hostName, view: this.canView }; }
   /** 今すぐ依頼を出せるか（口が開いていて、ホストが許可している） */
   get usable() { return this.state === 'ready' && this.allowed; }
 
@@ -83,8 +85,10 @@ export class AgentLink extends EventEmitter {
   }
 
   #setState(state, extra = {}) {
-    const changed = state !== this.state || (extra.allowed !== undefined && extra.allowed !== this.allowed) || (extra.hostName !== undefined && extra.hostName !== this.hostName);
+    const changed = state !== this.state || (extra.allowed !== undefined && extra.allowed !== this.allowed) || (extra.hostName !== undefined && extra.hostName !== this.hostName)
+      || (extra.view !== undefined && extra.view !== this.canView);
     this.state = state;
+    if (extra.view !== undefined) this.canView = extra.view === true;
     if (extra.allowed !== undefined) this.allowed = extra.allowed === true;
     if (extra.hostName !== undefined) this.hostName = String(extra.hostName);
     if (changed) this.emit('state', this.status);
@@ -101,7 +105,7 @@ export class AgentLink extends EventEmitter {
     this.#failPending(new AgentError('OFFLINE', 'the host is offline'));
     if (had) { try { had.reset(RESET_CODE.CANCEL); } catch { /* もう無い */ } }
     // 許可の最後の値は、オフラインの間も覚える（一覧に「オフライン」の印で出すため）。知らない・取り消された間だけ捨てる
-    this.#setState(state, state === 'unsupported' || state === 'revoked' ? { allowed: false } : {});
+    this.#setState(state, state === 'unsupported' || state === 'revoked' ? { allowed: false, view: false } : {});
   }
 
   #open(ch) {
@@ -144,14 +148,14 @@ export class AgentLink extends EventEmitter {
       case 'ready':
         this.reopenAttempt = 0;
         if (msg.v !== AGENT_PROTO) { this.log(`remote agent: unknown protocol ${msg.v}`); return this.#drop('unsupported'); }
-        this.#setState('ready', { allowed: msg.allowed === true, hostName: typeof msg.hostName === 'string' ? msg.hostName : this.hostName });
+        this.#setState('ready', { allowed: msg.allowed === true, view: msg.view === true, hostName: typeof msg.hostName === 'string' ? msg.hostName : this.hostName });
         this.emit('ready', this.status);
         return;
       case 'allowed':
         this.#setState(this.state === 'offline' ? 'ready' : this.state, { allowed: msg.allowed === true });
         if (msg.allowed !== true && msg.reason === 'revoked') this.#setState('revoked', { allowed: false });
         return;
-      case 'res': {
+      case 'res': case 'viewed': {
         const p = this.pending.get(msg.id);
         if (!p) return;
         this.pending.delete(msg.id);
@@ -185,6 +189,25 @@ export class AgentLink extends EventEmitter {
       this.pending.set(id, { resolve, reject, timer, signal, onAbort });
       if (signal) { if (signal.aborted) return onAbort(); signal.addEventListener('abort', onAbort, { once: true }); }
       try { this.#send({ t: 'req', id, op, args, requester }); }
+      catch (e) { this.pending.delete(id); clearTimeout(timer); reject(e); }
+    });
+  }
+
+  /**
+   * 任せた子の会話の経過の読み出し。ホストの viewed で解決する（結果の形は core/remote/agent-view.mjs・server の remoteAgentView）。
+   * ホストが読み出しを知らない（古い版）なら UNSUPPORTED、オフラインなら OFFLINE で即座に reject する
+   */
+  view(taskId, cursor = null, { timeoutMs = 20_000, signal } = {}) {
+    if (!this.usable) return Promise.reject(new AgentError(this.state === 'ready' ? 'NOT_ALLOWED' : 'OFFLINE', this.state === 'ready' ? 'the host does not accept requests from this device' : 'the host is offline'));
+    if (!this.canView) return Promise.reject(new AgentError('UNSUPPORTED', 'the host cannot show progress'));
+    return new Promise((resolve, reject) => {
+      const id = `a${++this.seq}`;
+      const timer = setTimeout(() => { this.pending.delete(id); reject(new AgentError('TIMEOUT', 'the host did not answer')); }, timeoutMs);
+      timer.unref?.();
+      const onAbort = () => { if (this.pending.delete(id)) { clearTimeout(timer); reject(new AgentError('ABORTED', 'aborted')); } };
+      this.pending.set(id, { resolve, reject, timer, signal, onAbort });
+      if (signal) { if (signal.aborted) return onAbort(); signal.addEventListener('abort', onAbort, { once: true }); }
+      try { this.#send({ t: 'view', id, taskId, ...(cursor ? { cursor } : {}) }); }
       catch (e) { this.pending.delete(id); clearTimeout(timer); reject(e); }
     });
   }

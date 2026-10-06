@@ -8,6 +8,9 @@
 //   - S2 が立たない → 前の版、どちらも駄目 → failed
 //   - 形式番号が違う版は自動で切り替えない（あとで → held、中断して更新）・起こせない版は main を起動し直す
 //   - 「今すぐ中断して切り替える」・main の終了・S1 を手放している間（replacing）
+//   - 引き継ぎ（段階 2 の 2d）: 保持役に載ったターン（held）は待たず、update-lock も取らずに effects.handover へ進む（作業の最中でも切り替わる）。
+//     載っていないターンが残れば待つ・新しい版か旧サーバーが引き継ぎの形を持たなければ今までの先送り・断られたら待ち直す（間を延ばす）・
+//     S2 を起こせなければ S1 のまま・S1 が渡して終わったのに S2 が立たなければ前の版で起こし直す
 // 副作用の組み立て（createSwitchEffects）: S1 の終わりを待つ・付け直し・前の版の場所・ready の待ち。
 // preload の名前は前の版の画面が使う分を残す（新しい main が古い版の画面を出す間。design.md §7.1）
 // 本物: 別プロセスのサーバー（S1）に付けた包みのまま、S1 を終わらせて同じトークン・ポートで S2 を起こし、同じ包みでつながる
@@ -37,11 +40,14 @@ const busy = () => idle({ count: 1, turns: [{ sessionId: 's1', backend: 'fake' }
 /** 偽の副作用。works は running() が順に返す値（尽きたら最後の値） */
 function fakeEffects({ works = [idle()], prepare = { ok: true, runtime: { root: 'R', key: 'new' }, mode: 'detached' }, check = { check: 1, ipc: [1, 1], dataSchema: 2, dataSchemaFound: 2 },
   locks = [{ ok: true }], stops = [{ ok: true }], startNew = async () => ({ type: 'ready', port: 7420, token: 'tok', ...NEW }), startPrevious = async () => ({ type: 'ready', port: 7420, token: 'tok', ...OLD }),
-  ask = 'later', reattach = true, abortAll = async () => {}, now } = {}) {
+  ask = 'later', reattach = true, abortAll = async () => {}, now, handover = async () => ({ ready: { type: 'ready', port: 7420, token: 'tok', ...NEW }, timing: { ms: 12, gapMs: 3 } }) } = {}) {
   const calls = [];
+  const delays = [];
   let w = 0, l = 0, s = 0;
   const effects = {
-    delay: () => tick(),
+    delays,
+    delay: ms => { delays.push(ms); return tick(); },
+    handover: async (runtime, mode) => { calls.push(`handover:${runtime.key}:${mode}`); return handover(); },
     prepare: async () => { calls.push('prepare'); return prepare; },
     check: async runtime => { calls.push(`check:${runtime.key}`); if (check instanceof Error) throw check; return check; },
     ask: async info => { calls.push(`ask:${info.reason}`); effects.asked = info; return typeof ask === 'function' ? ask(info) : ask; },
@@ -376,6 +382,88 @@ export default async function (t) {
     const control = sw.createSwitch({ server: OLD, target: async () => null, effects });
     const snap = await control.run();
     t.ok('この版の manifest が読めなければ切り替えない', snap.state === 'current' && calls.length === 0);
+  }
+
+  // ---- 引き継ぎ（段階 2 の 2d）
+  {
+    const handoverCheck = { check: 1, ipc: [1, 1], dataSchema: 2, dataSchemaFound: 2, handover: [1, 1], holder: [1, 1] };
+    const heldWork = (extra = {}) => idle({ count: 2, turns: [{ sessionId: 'h1', backend: 'fake', held: true }], permissions: [{ sessionId: 'h1', toolName: 'Bash', held: true }], handover: { v: 1, holder: 1, held: 2, blocking: 0 }, ...extra });
+    const blockedWork = () => idle({ count: 3, turns: [{ sessionId: 'h1', backend: 'fake', held: true }, { sessionId: 'x1', backend: 'codex' }], permissions: [{ sessionId: 'h1', toolName: 'Bash', held: true }],
+      handover: { v: 1, holder: 1, held: 2, blocking: 1 } });
+    const asBlockers = sw.switchBlockers(blockedWork(), { handover: true });
+    t.ok('引き継ぎ: 待つ作業は held でないものだけ（count は blocking。保持役に載ったターンとその承認待ちは待たない）', asBlockers.count === 1 && asBlockers.items.length === 1 && asBlockers.items[0].sessionId === 'x1' && asBlockers.handover.held === 2, JSON.stringify(asBlockers));
+    t.ok('引き継ぎでなければ今までどおり全部数える（held の印は見ない）', sw.switchBlockers(blockedWork()).count === 3 && sw.switchBlockers(blockedWork()).items.length === 3);
+    t.ok('引き継ぎで切り替えるか: 新しい版の handover の範囲に旧サーバーの版が入る・旧サーバーが載せている保持役の世代が新しい版の範囲に入る',
+      sw.handoverMode(heldWork(), { handover: [1, 2], holder: [1, 1] }) === true
+      && sw.handoverMode(heldWork(), { handover: [2, 3], holder: [1, 1] }) === false
+      && sw.handoverMode(heldWork(), { handover: [1, 1], holder: [2, 2] }) === false
+      && sw.handoverMode(idle({ handover: { v: 1, holder: 1, held: 0, blocking: 0 } }), { handover: [1, 1], holder: [2, 2] }) === true
+      && sw.handoverMode(idle(), { handover: [1, 1], holder: [1, 1] }) === false
+      && sw.handoverMode(heldWork(), { handover: null, holder: null }) === false);
+    t.ok('事前の確かめ: handover・holder の範囲を持つ版はそれを返し、持たない版は null', sw.judgeCheck(handoverCheck).handover.join() === '1,1' && sw.judgeCheck(handoverCheck).holder.join() === '1,1'
+      && sw.judgeCheck({ check: 1, ipc: [1, 1], dataSchema: 2, dataSchemaFound: 2 }).handover === null);
+
+    // 保持役に載ったターンしか無い: 待たず、update-lock も取らず、引き継ぐ
+    {
+      const m = machine({ works: [heldWork()], check: handoverCheck });
+      const snap = await m.control.run();
+      t.ok('引き継ぎ: held のターンしか無ければ待たずに effects.handover へ進み（lock・stopOld・startNew は使わない）、窓を読み直して done',
+        snap.state === 'done' && snap.previous === false && m.calls.includes('handover:new:detached') && !m.calls.includes('lock') && !m.calls.includes('stopOld') && !m.calls.some(c => c.startsWith('startNew'))
+        && m.calls.at(-1) === 'reload:7420:tok' && snap.handover?.gapMs === 3 && m.states.includes('handing'), JSON.stringify({ calls: m.calls, states: m.states }));
+      t.ok('引き継ぎ: 切り替えを待つ表示は出さない（作業の最中でも待ちに入らない）', !m.states.includes('waiting') && !m.states.includes('locking'));
+    }
+    // 載っていないターンが残る間は待つ。終わったら（held のターンは残ったまま）引き継ぐ
+    {
+      const m = machine({ works: [blockedWork(), blockedWork(), heldWork()], check: handoverCheck });
+      const snap = await m.control.run();
+      const waiting = m.states.indexOf('waiting');
+      t.ok('引き継ぎ: 載っていないターンが残る間は待ち、無くなれば（held は残っていても）引き継ぐ', snap.state === 'done' && waiting >= 0 && m.states.indexOf('handing') > waiting && !m.calls.includes('lock'), JSON.stringify(m.states));
+    }
+    // 新しい版・旧サーバーが引き継ぎの形を持たない → 今までの先送り
+    {
+      const m = machine({ works: [heldWork({ count: 0, handover: undefined }), idle()], check: { check: 1, ipc: [1, 1], dataSchema: 2, dataSchemaFound: 2 } });
+      const snap = await m.control.run();
+      t.ok('引き継ぎの形を持たない版への切り替えは、今までの先送り（lock → stopOld → startNew）', snap.state === 'done' && m.calls.includes('lock') && m.calls.includes('stopOld') && m.calls.some(c => c.startsWith('startNew')) && !m.calls.some(c => c.startsWith('handover')));
+      const legacy = machine({ works: [idle()], check: handoverCheck });
+      const done = await legacy.control.run();
+      t.ok('旧サーバーの running が handover を載せていなければ、新しい版が持っていても今までの先送り', done.state === 'done' && legacy.calls.includes('lock') && !legacy.calls.some(c => c.startsWith('handover')));
+    }
+    // 断られた: S1 は元のまま。待ち直す。続けて断られると間を延ばす
+    {
+      let n = 0;
+      const m = machine({ works: [heldWork()], check: handoverCheck, handover: async () => (++n < 3 ? { declined: true, reason: 'blocked', detail: 'turn:x' } : { ready: { type: 'ready', port: 7420, token: 'tok', ...NEW }, timing: { ms: 1 } }) });
+      const snap = await m.control.run();
+      const waits = m.effects.delays.filter(ms => ms >= 2000);
+      t.ok('引き継ぎ: S1 に断られたら待ち（blockedBy に理由）、また頼む。続けて断られると間を延ばす（2 秒 → 4 秒）', snap.state === 'done' && n === 3 && waits.join() === '2000,4000' && m.calls.filter(c => c.startsWith('handover:')).length === 3, JSON.stringify({ n, waits }));
+    }
+    // S2 を起こせなかった: S1 は何も渡していない。そのまま動かし続ける（previous）
+    {
+      const m = machine({ works: [heldWork()], check: handoverCheck, handover: async () => ({ stay: new Error('spawn failed') }) });
+      const snap = await m.control.run();
+      t.ok('引き継ぎ: S2 を起こせなければ S1 のまま（前の版で動いている印。窓は読み直さない）', snap.state === 'done' && snap.previous === true && /spawn failed/.test(snap.error) && m.calls.includes('fallback') && !m.calls.some(c => c.startsWith('reload')) && !m.calls.some(c => c.startsWith('startPrevious')));
+      t.ok('S1 のままのとき retry でやり直せる', m.control.retry() === true);
+    }
+    // S1 は渡して終わったのに S2 が立たなかった: 前の版で起こし直す
+    {
+      const m = machine({ works: [heldWork()], check: handoverCheck, handover: async () => ({ failed: new Error('the new server exited') }) });
+      const snap = await m.control.run();
+      t.ok('引き継ぎ: S1 が渡して終わったのに S2 が立たなければ、前の版で起こし直し（前の版が札を読んで付け直す）、前の版で動いている旨を出す',
+        snap.state === 'done' && snap.previous === true && m.calls.some(c => c.startsWith('startPrevious')) && m.calls.includes('fallback') && m.calls.at(-2).startsWith('reload'), JSON.stringify(m.calls));
+      const both = machine({ works: [heldWork()], check: handoverCheck, handover: async () => ({ failed: new Error('x') }), startPrevious: async () => { throw new Error('y'); } });
+      const failed = await both.control.run();
+      t.ok('引き継ぎ: 前の版も起こせなければ failed', failed.state === 'failed' && both.calls.includes('failed'));
+    }
+    // 引き継ぎの間（S1 を手放している間）は「サーバーが終了しました」を出さない
+    {
+      let release;
+      const m = machine({ works: [heldWork()], check: handoverCheck, handover: () => new Promise(resolve => { release = () => resolve({ ready: { type: 'ready', port: 1, token: 't', ...NEW }, timing: {} }); }) });
+      const running = m.control.run();
+      await waitState(m.control, 'handing');
+      t.ok('引き継ぎの間は replacing（main の「サーバーが終了しました」を出さない）', m.control.replacing === true);
+      release();
+      await running;
+      t.ok('終われば replacing でなくなる', m.control.replacing === false);
+    }
   }
 
   // ---- 副作用の組み立て

@@ -1,0 +1,77 @@
+/* 設定 › API キー（承認済み 2026-10-07。docs/design-system.md「設定 › API キー」）と、使う側の 3 画面の「使うキー」の選択。
+   既存の .mp-*（manage-panel.css）・.nf-*（notify-settings.css）・.pop（style.css）・.run（style.css）の上に足すだけで、新しいトークンは無い。 */
+.ak-lead { margin:0 0 4px; }
+.ak-head h3 { margin:0; }
+.ak-count { color:var(--ink-weak); font-weight:400; margin-left:6px; font-size:var(--fs-s); }
+.ak-sub { margin:18px 0 0; font-size:var(--fs-xs); color:var(--ink-weak); letter-spacing:.06em; }
+.ak-list { list-style:none; margin:0; padding:0; }
+.ak-card { position:relative; }
+.ak-status { margin-top:2px; }
+.ak-uses { display:flex; gap:2px 10px; margin-top:10px; font-size:var(--fs-s); align-items:baseline; }
+.ak-uses ul { display:flex; flex:1 1 0; min-width:0; flex-wrap:wrap; margin:0; padding:0; list-style:none; }
+.ak-uses li:not(:last-child)::after { content:"·"; margin:0 6px; color:var(--ink-weak); }
+.ak-uses-l { color:var(--ink-weak); flex:none; }
+.ak-none { color:var(--ink-weak); }
+.ak-link { padding:0; background:none; color:var(--ink-blue); text-decoration:underline; text-decoration-color:var(--line-strong); text-underline-offset:2px; font-size:inherit; text-align:left; cursor:pointer; }
+.ak-link:hover { text-decoration-color:var(--line-blue); }
+/* 差し替え・削除の確認・結果の欄の開閉（高さと不透明度。240ms · ease-out。prefers-reduced-motion では --dur が 0） */
+.ak-fold { display:grid; grid-template-rows:0fr; opacity:0; transition:grid-template-rows var(--dur) var(--ease-out),opacity var(--dur) var(--ease-out); }
+.ak-fold.open { grid-template-rows:1fr; opacity:1; }
+.ak-fold > .ak-fold-in { overflow:hidden; min-height:0; padding:4px; margin:-4px; }
+.ak-card .mp-result { background:var(--surface-1); }
+.ak-rows { list-style:none; margin:8px 0 0; padding:0; display:flex; flex-direction:column; gap:6px; }
+.ak-rows li { display:grid; grid-template-columns:14px minmax(0,1fr); gap:2px 8px; align-items:baseline; font-size:var(--fs-s); }
+.ak-rows li > .ak-link { grid-column:2; justify-self:start; }
+.ak-rows li.enter { animation:ak-in var(--dur) var(--ease-out); }
+.ak-mark { flex:none; width:14px; text-align:center; }
+.ak-rows .t { min-width:0; overflow-wrap:anywhere; }
+.ak-rows .t b { font-weight:600; }
+.ak-rows .t.weak { color:var(--ink-weak); }
+@keyframes ak-in { from { opacity:0; transform:translateY(6px); } to { opacity:1; transform:none; } }
+.ak-cost { display:block; margin-top:8px; }
+.ak-warn { margin:8px 0 0; font-size:var(--fs-s); }
+.ak-confirm { flex-direction:column; align-items:stretch; }
+.ak-confirm .ak-confirm-body { display:block; }
+.ak-confirm p { flex:none; }
+.ak-effects { margin:6px 0 0; padding-left:18px; font-size:var(--fs-s); color:var(--ink-weak); }
+.ak-effects b { color:var(--ink); font-weight:600; }
+.ak-confirm .mp-card-actions { margin-left:auto; }
+.ak-guide { margin-top:0; margin-bottom:16px; }
+.ak-guide .nf-card { padding-top:12px; }
+.ak-guide p { margin:0 0 10px; line-height:1.6; }
+.ak-guide .mp-card-actions { justify-content:flex-start; margin:0; }
+.ak-radio { display:flex; gap:10px; align-items:flex-start; padding:6px 0; }
+.ak-radio input { margin-top:5px; flex:none; }
+.ak-radio .t { min-width:0; overflow-wrap:anywhere; }
+.ak-radio .t small { display:block; }
+.ak-add { margin:0 0 10px; }
+.ak-add .mp-presets { margin-bottom:4px; }
+.ak-add .mp-field { margin-top:10px; }
+/* 接続先のフォームの「登録済みのキー／別のキーを入れる」 */
+.ak-pick .ak-radio { padding:5px 0; }
+.ak-pick .mp-keyrow { margin:6px 0 0 28px; }
+.ak-pick .ak-cap { margin:4px 0 0 28px; display:block; }
+.ak-pick .ak-warn { margin-left:28px; }
+.ak-pick .ak-manage { margin:2px 0 0; }
+/* 「使うキー」の選択（独自のリストボックス。標準の select ではない） */
+.ak-selwrap { position:relative; display:inline-block; max-width:100%; }
+.ak-sel-l { font-size:var(--fs-s); color:var(--ink-weak); margin-right:6px; white-space:nowrap; }
+.ak-selbtn { display:inline-flex; align-items:center; gap:8px; max-width:100%; padding:6px 12px; border-radius:var(--r-pill); background:var(--surface-1); color:var(--ink); text-align:left; cursor:pointer; transition:background-color var(--dur-fast) var(--ease-out); }
+.ak-selbtn:hover,.ak-selbtn[aria-expanded=true] { background:var(--surface-2); }
+.nf-card .ak-selbtn,.mp-card .ak-selbtn { background:var(--surface-paper); }
+.nf-card .ak-selbtn:hover,.nf-card .ak-selbtn[aria-expanded=true],.mp-card .ak-selbtn:hover,.mp-card .ak-selbtn[aria-expanded=true] { background:var(--surface-2); }
+.ak-seltxt { min-width:0; overflow-wrap:anywhere; }
+.ak-chev { display:inline-flex; color:var(--ink-weak); transition:transform var(--dur-fast) var(--ease-out); }
+.ak-selbtn[aria-expanded=true] .ak-chev { transform:rotate(180deg); }
+.ak-pop { top:calc(100% + 4px); right:0; min-width:240px; width:max-content; max-width:min(340px,86vw); }
+.ak-pop.left { right:auto; left:0; }
+.ak-pop .li .lbl { overflow:visible; text-overflow:clip; white-space:normal; overflow-wrap:anywhere; }
+.ak-pop .li .hint { overflow:visible; text-overflow:clip; white-space:normal; }
+.ak-sels { display:flex; align-items:center; flex-wrap:wrap; justify-content:flex-end; margin-left:auto; gap:2px; }
+.ak-state { color:var(--ink); margin:0; }
+/* 設定 › 通話・委譲の「使うキー」の行（.nf-card・.mp-card の中の名前と状態は縦に並べる） */
+.nf-card .mp-card-info > strong,.nf-card .mp-card-info > small { display:block; }
+.nf-card .mp-row { margin:10px 0; }
+/* 白いカードの中の入力欄は一段沈める（白の上に白の欄が溶けないように） */
+.ak-add .mp-keyrow input,.ak-add .mp-field input:not([type=checkbox]):not([type=radio]) { background:var(--surface-1); }
+.ak-card .rt-key-form .mp-keyrow input { background:var(--surface-1); }

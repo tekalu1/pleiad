@@ -1605,6 +1605,9 @@ main.dropping #log{background:var(--surface-1)}
   .rt-usage.usage-rows .wl{grid-column:1/-1;max-width:none}
 }
 .work-head{font-size:var(--fs-xs);color:var(--ink-weak);letter-spacing:.04em;margin-top:6px}
+/* ホストの子の長い会話の「古い N 件は省いています」の 1 行（末尾だけ運ぶ）。入口は「ホストで開く」 */
+.work-head.omitted{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-left:14px}
+.work-head.omitted .btn{font-size:var(--fs-xs);padding:2px 8px;min-height:22px;color:var(--ink-blue)}
 /* 行の左端の状態の印（design-system §2.2）。弧（.run）と同じ 14px。終わった子は静止した線画 */
 .state-mark{display:inline-grid;place-items:center;width:14px;height:14px;color:var(--ink);flex:none}
 .state-mark svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}

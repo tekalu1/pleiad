@@ -3,7 +3,8 @@
 //   - 既定: パッケージ版は on（env が無ければ on）・開発（パッケージ版でない）は off。off を明示・on でもパッケージ版でない・chooseServer が null → 今の utilityProcess（変わらない）
 //   - on（既定を含む）のパッケージ版: パイプの包みを worker にして、つなぐ前に message を付け、ready のポート・トークンで窓を読み込む。utilityProcess は起こさない
 //   - 起動の失敗: 文は describeBootError。パイプのサーバーは kill（shutdown）せず leave で切る
-//   - サーバーが居なくなったとき: bye 'replaced' なら静かに終わる・つながりだけ切れたなら付け直す・居なければ「サーバーが終了しました」
+//   - サーバーが居なくなったとき: bye 'replaced' なら静かに終わる・つながりだけ切れたなら付け直す・居なければ起こし直して窓を 1 回読み直す（2e。desktop/server-restart.cjs）・
+//     起こし直せない・続けて落ちるなら「サーバーが終了しました」。切り替え中・main-leaving の後・bye 'closing'・off は起こし直さない
 //   - 更新（1-6）: on は作業を止めず・ロックせず main-leaving → つながりだけ切る（shutdown しない）、off は今のまま update-lock → shutdown。
 //     付け直した後は切り替え（desktop/switch.cjs）を始め、S1 を手放している間はサーバーの終了を知らせない
 import fs from 'node:fs';
@@ -41,8 +42,8 @@ class FakeLink extends EventEmitter {
   }
 }
 
-async function start({ env = {}, packaged = false, choice = 'link', connectError = null, reattach = false, resourcesPath = 'C:\\inst\\resources', quitFails = false } = {}) {
-  const calls = { dialogs: [], messages: [], quits: 0, forks: 0, connects: 0, loads: [], left: null, killed: false, chosen: null, reattaches: 0, logs: [], order: [], switches: [], updates: null };
+async function start({ env = {}, packaged = false, choice = 'link', connectError = null, reattach = false, resourcesPath = 'C:\\inst\\resources', quitFails = false, hangInstall = false, restart = { ok: false, reason: 'failed' } } = {}) {
+  const calls = { dialogs: [], messages: [], quits: 0, forks: 0, connects: 0, loads: [], left: null, killed: false, chosen: null, reattaches: 0, logs: [], order: [], switches: [], updates: null, restarts: 0, restarterOptions: null };
   const link = new FakeLink(calls);
   link.connectError = connectError;
   const utility = new EventEmitter();
@@ -78,12 +79,12 @@ async function start({ env = {}, packaged = false, choice = 'link', connectError
     utilityProcess: { fork: (_file, _args, options) => { calls.forks++; calls.forkOptions = options; queueMicrotask(() => utility.emit('message', { type: 'ready', port: 7499, token: 'utility-token' })); return utility; } },
     shell: { openExternal: () => Promise.resolve() },
     ipcMain: { on: () => {}, handle: () => {} },
-    Notification: class {}, nativeTheme: { shouldUseDarkColors: false }, safeStorage: {}, session: {}, nativeImage: {}, Menu: {}, powerMonitor: new EventEmitter(),
+    Notification: class {}, nativeTheme: { shouldUseDarkColors: false }, safeStorage: {}, session: {}, nativeImage: {}, Menu: {}, powerMonitor: new EventEmitter(), screen: calls.screen = new EventEmitter(),
     autoUpdater: new EventEmitter(),
   };
   // electron-updater の quitAndInstall: インストーラーを起こした後に before-quit-for-update を出して終わる（node_modules/electron-updater の BaseUpdater）
   const autoUpdater = new EventEmitter();
-  autoUpdater.quitAndInstall = () => { calls.order.push('quitAndInstall'); if (quitFails) throw new Error('installer did not start'); electron.autoUpdater.emit('before-quit-for-update'); };
+  autoUpdater.quitAndInstall = () => { calls.order.push('quitAndInstall'); if (hangInstall) return; if (quitFails) throw new Error('installer did not start'); electron.autoUpdater.emit('before-quit-for-update'); };
   const serverBoot = {
     chooseServer: async options => { calls.chosen = options; return choice === 'link' ? { link, logFile: 'C:\\rt\\logs\\server.log', connect: () => link.connect() } : null; },
     describeBootError: (error, t) => `described:${error.code}:${t('server.startTimeout')}`,
@@ -107,12 +108,13 @@ async function start({ env = {}, packaged = false, choice = 'link', connectError
     './agent-browser-bridge.cjs': { attachAgentBrowserBridge: listens(calls) },
     './computer/service.cjs': { attachComputerService: listens(calls), withPerMonitorDpi: win32 => win32 },
     './computer/win32.cjs': { loadWin32: () => { throw Object.assign(new Error('not windows'), { reason: 'platform' }); } },
-    './chrome-os/index.cjs': { createChromeOs: () => ({}), attachChromeOs: listens(calls) },
+    './chrome-os/index.cjs': { createChromeOs: () => ({ reconceal: () => { calls.reconceals = (calls.reconceals ?? 0) + 1; }, closeAllAgents: () => { calls.closeAlls = (calls.closeAlls ?? 0) + 1; if (calls.failCloseAll) throw new Error('boom'); return 0; } }), attachChromeOs: listens(calls) },
     './browser-screencast-bridge.cjs': { attachBrowserScreencastBridge: listens(calls) },
     './computer-overlay.cjs': { attachComputerOverlay: listens(calls) },
     './agent-browser-bin.cjs': { prepareAgentBrowserBin: () => '' },
     './notifications.cjs': { createDesktopNotifications: () => () => {} },
     './server-boot.cjs': serverBoot,
+    './server-restart.cjs': { createServerRestarter: options => { calls.restarterOptions = options; return { restart: async () => { calls.restarts++; calls.order.push('restart'); return typeof restart === 'function' ? restart(calls) : restart; } }; } },
     './worker-messages.cjs': workerMessages,
     './switch-screen.cjs': { createSwitchScreen: () => ({ attach: control => { calls.screenAttached = control; }, reset() {}, supported: () => false, ask: async () => 'later' }) },
     './switch.cjs': {
@@ -171,6 +173,24 @@ export default async function (t) {
     t.ok('off を明示すると、パッケージ版でも utilityProcess（今の流れ。戻し道）', calls.forks === 1 && calls.chosen === null);
   }
   {
+    const { calls } = await start({ env: { AGENT_HOST_HANDOVER: 'off' }, packaged: true });
+    calls.screen.emit('display-added'); calls.screen.emit('display-removed'); calls.screen.emit('display-metrics-changed');
+    t.ok('画面の構成が変わったら（display-added・display-removed・display-metrics-changed）、隠しているエージェントの Chrome の窓を置き直す（chromeOs.reconceal。ADR 0154）', calls.reconceals === 3, String(calls.reconceals));
+  }
+  {
+    // 画面の外に隠したエージェントの窓は、Pleiad が終わると誰にも戻せない。終了の道で片付ける（閉じる。閉じられなければ戻す）
+    const { app, calls } = await start({ env: { AGENT_HOST_HANDOVER: 'off' }, packaged: true });
+    t.ok('前提: 起動しただけでは片付けない', calls.closeAlls === undefined);
+    app.emit('will-quit');
+    t.ok('will-quit で、隠しているエージェントの Chrome の窓を片付ける（chromeOs.closeAllAgents。ADR 0154）', calls.closeAlls === 1, String(calls.closeAlls));
+    app.exit(0);
+    t.ok('will-quit を通らない app.exit（再起動・致命的な終了）でも片付ける', calls.closeAlls === 2, String(calls.closeAlls));
+    calls.failCloseAll = true;
+    let threw = null;
+    try { app.emit('will-quit'); app.exit(0); } catch (error) { threw = error; }
+    t.ok('片付けが投げても、終了を妨げない（ログに残す）', threw === null && calls.closeAlls === 4 && calls.logs.some(line => line.includes('closeAllAgents failed')), String(threw?.message));
+  }
+  {
     const { calls } = await start({ env: { AGENT_HOST_HANDOVER: 'on' }, packaged: false });
     t.ok('on でもパッケージ版でなく、確認用の resources の指定も無ければ utilityProcess のまま（理由を記録する）', calls.forks === 1 && calls.chosen === null && calls.logs.some(line => /needs a packaged app/.test(line)));
   }
@@ -220,7 +240,94 @@ export default async function (t) {
     const { calls, link } = await start({ env: { AGENT_HOST_HANDOVER: 'on' }, packaged: true, reattach: false });
     link.emit('exit', 1);
     await tick();
-    t.ok('パイプの経路: サーバーが居なければ「サーバーが終了しました」', calls.reattaches === 1 && calls.dialogs.length === 1 && calls.dialogs[0][1].message === 'server.exited');
+    t.ok('パイプの経路: サーバーが居なくて起こし直しにも失敗したら、致命的なダイアログ（起こし直せなかった文）', calls.reattaches === 1 && calls.restarts === 1 && calls.dialogs.length === 1 && calls.dialogs[0][1].message === 'server.restartFailed' && calls.quits === 0);
+  }
+  {
+    // 落ちた（付け直せない）→ 同じ版・トークン・ポートで起こし直す（2e）。窓は 1 回だけ読み直し、次の落ちも見張る
+    const next = { type: 'ready', port: 7611, token: 'attached-token', locale: 'ja' };
+    const { calls, link } = await start({ env: { AGENT_HOST_HANDOVER: 'on' }, packaged: true, reattach: false, restart: { ok: true, ready: next } });
+    t.ok('起こし直し: 起こす部品に、最後の ready・実行場所の置き場・データ置き場・resources を渡す', calls.restarterOptions.getReady().token === 'attached-token' && calls.restarterOptions.link === link && calls.restarterOptions.dataDir === 'D:\\data' && calls.restarterOptions.resourcesPath === 'C:\\inst\\resources');
+    const loads = calls.loads.length;
+    link.emit('exit', 1);
+    await tick();
+    t.ok('起こし直し: 落ちたら付け直しを試してから起こし直し、ダイアログを出さず終了もしない', calls.order.filter(step => step === 'restart').length === 1 && calls.reattaches === 1 && calls.dialogs.length === 0 && calls.quits === 0);
+    t.ok('起こし直し: 窓は 1 回だけ、起こし直したサーバーの ready のポート・トークンで読み直す', calls.loads.length === loads + 1 && calls.loads.at(-1) === 'http://127.0.0.1:7611/?token=attached-token' && calls.remembered === 7611);
+    link.emit('exit', 1);
+    await tick();
+    t.ok('起こし直し: 起こし直した後の次の落ちも見張る（もう一度起こし直す）', calls.restarts === 2 && calls.loads.length === loads + 2 && calls.dialogs.length === 0);
+  }
+  {
+    // 起こし直したサーバーの port が変わったとき（同じポートが取れなかった）は origin を替えて読み直す
+    const next = { type: 'ready', port: 7777, token: 'attached-token' };
+    const { calls, link } = await start({ env: { AGENT_HOST_HANDOVER: 'on' }, packaged: true, restart: { ok: true, ready: next } });
+    link.emit('exit', 1);
+    await tick();
+    t.ok('起こし直し: ポートが変わったら新しい origin で読み直し、信頼する origin も替える', calls.loads.at(-1) === 'http://127.0.0.1:7777/?token=attached-token' && calls.trusted === 'http://127.0.0.1:7777' && calls.remembered === 7777);
+  }
+  {
+    // サーバーが起こし直されたとき、最後の ready は新しいサーバーのもの（次に落ちたとき、その版・トークンで起こす）
+    const { calls, link } = await start({ env: { AGENT_HOST_HANDOVER: 'on' }, packaged: true, restart: { ok: true, ready: { type: 'ready', port: 7611, token: 'attached-token' } } });
+    link.emit('message', { type: 'ready', port: 7611, token: 'attached-token', runtimeKey: 'v2' });
+    t.ok('起こし直し: つながり直すたびに届く ready を、次の起こし直しの材料として持つ', calls.restarterOptions.getReady().runtimeKey === 'v2');
+  }
+  {
+    // 続けて落ちる（起こす部品が loop で断る）なら起こし直しをやめてダイアログ
+    const { calls, link } = await start({ env: { AGENT_HOST_HANDOVER: 'on' }, packaged: true, restart: { ok: false, reason: 'loop' } });
+    link.emit('exit', 1);
+    await tick();
+    t.ok('起こし直し: 短い間に続けて落ちて起こし直しを断られたら、窓を読み直さずダイアログ', calls.loads.length === 1 && calls.dialogs.length === 1 && calls.dialogs[0][1].message === 'server.restartFailed');
+  }
+  {
+    // 起こし直している間に利用者が終了した: 起こしたサーバーに shutdown を送って終わらせ、窓は読み直さない
+    let finish;
+    const next = { type: 'ready', port: 7611, token: 'attached-token' };
+    const { calls, link } = await start({ env: { AGENT_HOST_HANDOVER: 'on' }, packaged: true, restart: () => new Promise(resolve => { finish = () => resolve({ ok: true, ready: next }); }) });
+    const loads = calls.loads.length;
+    link.emit('exit', 1);
+    await tick();
+    // 終了の流れ（closeSafely）は running の問い合わせに答える相手が居ないので、quitting を立てる session-end で代える
+    calls.window.emit('session-end');
+    calls.messages.length = 0;
+    finish();
+    await tick();
+    t.ok('起こし直し中に終了が始まったら、起こしたサーバーを終わらせ、窓は読み直さない', calls.messages.some(m => m.type === 'shutdown') && calls.loads.length === loads && calls.dialogs.length === 0);
+  }
+  {
+    // サーバー自身が終わるところ（bye closing）・切り替え中・off は起こし直さない
+    const { calls, link } = await start({ env: { AGENT_HOST_HANDOVER: 'on' }, packaged: true, reattach: true });
+    link.exitReason = 'closing';
+    link.emit('exit', 0);
+    await tick();
+    t.ok('起こし直さない: サーバーが終わるところ（bye closing）', calls.restarts === 0 && calls.dialogs.length === 1 && calls.dialogs[0][1].message === 'server.exited');
+  }
+  {
+    const { calls, link } = await start({ env: { AGENT_HOST_HANDOVER: 'on' }, packaged: true, restart: { ok: true, ready: { type: 'ready', port: 7611, token: 't' } } });
+    calls.switches[0].replacing = true;
+    link.emit('exit', 0);
+    await tick();
+    t.ok('起こし直さない: 切り替えが古いサーバーを手放している間', calls.restarts === 0 && calls.reattaches === 0 && calls.dialogs.length === 0);
+  }
+  {
+    const { calls, utility } = await start({ env: {}, restart: { ok: true, ready: { type: 'ready', port: 7611, token: 't' } } });
+    utility.emit('exit');
+    await tick();
+    t.ok('起こし直さない: off（utilityProcess）は今のとおり「サーバーが終了しました」', calls.restarterOptions === null && calls.restarts === 0 && calls.dialogs.length === 1 && calls.dialogs[0][1].message === 'server.exited');
+  }
+  {
+    // main-leaving を送った後（更新で離れる途中）に切れても起こし直さない。更新を取りやめたら、また起こし直す
+    const { calls, link } = await start({ env: { AGENT_HOST_HANDOVER: 'on' }, packaged: true, hangInstall: true, restart: { ok: true, ready: { type: 'ready', port: 7611, token: 'attached-token' } } });
+    void calls.updates.install().catch(() => {});
+    await tick();
+    link.emit('exit', 1);
+    await tick();
+    t.ok('起こし直さない: main-leaving の後（更新で離れる途中）に切れたとき', calls.messages.some(m => m.type === 'main-leaving') && calls.restarts === 0 && calls.dialogs.length === 1 && calls.dialogs[0][1].message === 'server.exited');
+  }
+  {
+    const { calls, link } = await start({ env: { AGENT_HOST_HANDOVER: 'on' }, packaged: true, quitFails: true, restart: { ok: true, ready: { type: 'ready', port: 7611, token: 'attached-token' } } });
+    await calls.updates.install().catch(() => {});
+    link.emit('exit', 1);
+    await tick();
+    t.ok('更新を取りやめた後（main-leaving-cancel）は、また起こし直す', calls.restarts === 1 && calls.dialogs.length === 0);
   }
   {
     const { calls, link } = await start({ env: { AGENT_HOST_HANDOVER: 'on' }, packaged: true, reattach: true });

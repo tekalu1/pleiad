@@ -3,9 +3,9 @@
 // ホストの便りと線の状態を { type: 'remote-agent-event' | 'remote-agent-state' | 'remote-agent-hosts' } でサーバーへ返す。
 // デスクトップ版の main（desktop/remote-agent-bridge.cjs）とテスト（tests/lib/remote-agent-parent-port.mjs）が同じものを使う。
 //
-// 守り: 承認の答え（answer）を線へ運ぶのは、サーバーが画面（human）の resolvePermission の処理の中で出したときだけ（サーバー側の取り決め。
+// 守り: 承認の答え（answer）・経過の読み出し（view）を線へ運ぶのは、サーバーが画面（human）の処理の中で出したときだけ（サーバー側の取り決め。
 // remote.md §4.5）。この橋は「どの経路から来たか」を見分けられないので、サーバーが human の経路の外から作らないことに頼る。
-// AI が呼べる道具（MCP・CLI・ply_task_*）には、answer を作る道が無い。
+// AI が呼べる道具（MCP・CLI・ply_task_*）には、answer・view を作る道が無い。
 import { AgentError } from './agent-link.mjs';
 
 const displayName = rec => String(rec?.label || rec?.hostName || String(rec?.hostId ?? '').slice(0, 8));
@@ -23,7 +23,7 @@ export function createRemoteAgentService({ getDevice, post, log = () => {} }) {
     if (hooked !== d) {
       hooked = d;
       d.on('agent-state', async s => {
-        post({ type: 'remote-agent-state', hostId: s.hostId, state: s.state, allowed: s.allowed === true, hostName: s.hostName ?? '' });
+        post({ type: 'remote-agent-state', hostId: s.hostId, state: s.state, allowed: s.allowed === true, view: s.view === true, hostName: s.hostName ?? '' });
         post({ type: 'remote-agent-hosts', hosts: await hostsView().catch(() => []) });
       });
     }
@@ -36,7 +36,7 @@ export function createRemoteAgentService({ getDevice, post, log = () => {} }) {
     const rows = await d.list();
     return rows.map(h => ({
       hostId: h.hostId, name: displayName(h), hostName: h.hostName ?? '', agentUse: h.agentUse === true,
-      state: h.agent?.state ?? 'offline', allowed: h.agent?.allowed === true,
+      state: h.agent?.state ?? 'offline', allowed: h.agent?.allowed === true, view: h.agent?.view === true,
     }));
   }
 
@@ -64,7 +64,7 @@ export function createRemoteAgentService({ getDevice, post, log = () => {} }) {
   async function resync() {
     await refresh();
     for (const h of await hostsView()) {
-      if (h.state === 'ready') post({ type: 'remote-agent-ready', hostId: h.hostId, state: h.state, allowed: h.allowed, hostName: h.hostName });
+      if (h.state === 'ready') post({ type: 'remote-agent-ready', hostId: h.hostId, state: h.state, allowed: h.allowed, view: h.view === true, hostName: h.hostName });
     }
   }
 
@@ -95,6 +95,12 @@ export function createRemoteAgentService({ getDevice, post, log = () => {} }) {
           const agent = d.agent(message.hostId);
           if (!agent) throw new AgentError('OFFLINE', 'the host is not available');
           const result = await agent.answer(message.relay ?? {});
+          return post({ type: 'remote-agent', id, ok: true, result });
+        }
+        case 'view': {
+          const agent = d.agent(message.hostId);
+          if (!agent) throw new AgentError('OFFLINE', 'the host is not available');
+          const result = await agent.view(String(message.taskId ?? ''), message.cursor ?? null);
           return post({ type: 'remote-agent', id, ok: true, result });
         }
         case 'sync': {

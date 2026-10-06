@@ -297,7 +297,8 @@
       "noMore": "追加の指示はありません。開始時の指示を適用してください。",
       "unknownTool": "不明なコンテキストのツールです",
       "callFailed": "コンテキストの読み込みまたは MCP 呼び出しに失敗しました。設定・ファイルの変更と接続先を確認してください。",
-      "mcpDeclined": "MCP のツール呼び出しは断られました。"
+      "mcpDeclined": "MCP のツール呼び出しは断られました。",
+      "mcpRestarted": "この MCP サーバーは Pleiad の更新で起こし直したので、前の呼び出しで作った状態は残っていません。"
     }
   },
   "relay": {
@@ -832,6 +833,15 @@
       "opSuperseded": "{{target}}について新しい要求があったので、この要求は取り下げました。Pleiad は{{notDone}}。新しい要求の結果は別に届きます。",
       "opRestart": "Pleiad が再起動したので、{{target}}の承認を取り下げました。Pleiad は{{notDone}}。まだ必要なら、もう一度求めてください。"
     },
+    "apiKeys": {
+      "list": {
+        "summary": "設定 › API キーの状態を返す（登録したキーの名前・プロバイダー・確認の結果・使っている所と、通話・判定器に選んだキー）。キーの値は返さない。"
+      },
+      "check": {
+        "summary": "登録したキーそのものを、そのプロバイダーに送って受け付けられるか確かめ、結果を記録する（料金はかからない。接続先の確認とは別）。",
+        "id": "キーの id（apiKeys.list の keys[].id）"
+      }
+    },
     "voice": {
       "status": {
         "summary": "通話モードの状態を返す（OpenRouter のキーを登録済みか・今日の通話の長さ・使った量・現在の設定）。キーそのものは返さない。"
@@ -886,6 +896,12 @@
         "limit": "返す件数（既定 30、最大 100）。",
         "cursor": "前の返り値の next。続きから返す。"
       },
+      "hostView": {
+        "summary": "ホストに任せた子の会話の経過（発言・ツール・追加の指示・子孫の要約）を読む。ホストが、この端末が任せた子とその子孫だけを返す。詳細を開いている画面（人）だけが使う。",
+        "taskId": "ホストに任せたタスクの id（根か、読み出しで知った子孫）。",
+        "hostId": "任せ先のホストの id。",
+        "cursor": "持っている発言の続きの位置（前の答えの発言から計算する）。省くと末尾から。"
+      },
       "retry": {
         "summary": "別の候補で、同じ依頼を新しい子のタスクとしてやり直す。自分が委譲した子だけ。依頼元より強い承認モードの子になる場合は NEEDS_UI（ユーザーの確認が要る）。",
         "taskId": "やり直す元のタスクの id。",
@@ -927,7 +943,7 @@
       "stop": { "summary": "会話のコンピューターの操作（この PC のマウスとキーボード）を止める。始める・許可することはできない。", "sessionId": "会話の id。省くとこの会話。" }
     },
     "browser": {
-      "chromeStatus": { "summary": "エージェントのブラウザー（この PC の Chrome）への接続の状態を返す。state は off（未接続）・setup（Chrome でリモートデバッグをオンにする準備が要る）・permission（Chrome に許可の確認が出ている）・denied（Chrome で許可されなかった。確認の「キャンセル」か「[設定] でオフにする」）・connected（つながっている）・unsupported（この OS ではまだ使えない）。", "state": "接続の状態。", "reason": "理由。off になった理由は chrome-closed・revoked・disconnected・declined・protocol、denied は cancel。", "dialog": "Chrome の許可の確認の窓を見つけているか。", "product": "つながっている Chrome の版（例: Chrome/154.0.8037.97）。" },
+      "chromeStatus": { "summary": "エージェントのブラウザー（この PC の Chrome）への接続の状態を返す。state は off（未接続）・setup（Chrome でリモートデバッグをオンにする準備が要る）・permission（Chrome に許可の確認が出ている）・denied（Chrome で許可されなかった。確認の「キャンセル」か「[設定] でオフにする」）・connected（つながっている）・unsupported（この OS ではまだ使えない）。", "state": "接続の状態。", "reason": "理由。off になった理由は chrome-closed・revoked・disconnected・declined・protocol、denied は cancel、setup は unreachable（DevToolsActivePort はあるがつながらない。Chrome が起動していないか、リモートデバッグがオフ）。", "dialog": "Chrome の許可の確認の窓を見つけているか。", "product": "つながっている Chrome の版（例: Chrome/154.0.8037.97）。" },
       "chromeConnect": { "summary": "Chrome への接続を始める（Chrome が許可の確認を出す）。ホストの PC の画面だけから呼べる。" },
       "chromeDisconnect": { "summary": "Chrome への接続を切る・許可待ちをやめる（出ている確認は閉じる）。ホストの PC の画面だけから呼べる。" },
       "chromeRaiseDialog": { "summary": "Chrome の許可の確認を前に出す（答えは出さない）。ホストの PC の画面だけから呼べる。" }

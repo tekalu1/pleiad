@@ -18,6 +18,7 @@ export function createSchedule({ file, fire, changed = () => {}, now = Date.now,
   const rows = new Map();
   const firing = new Set();
   let timer = null;
+  let paused = false;
   let writes = Promise.resolve();
   const list = () => [...rows.values()].map(row => ({ ...row }));
   const save = () => {
@@ -27,6 +28,8 @@ export function createSchedule({ file, fire, changed = () => {}, now = Date.now,
   };
   const arm = () => {
     if (timer) clearTimer(timer);
+    timer = null;
+    if (paused) return;
     const next = Math.min(...list().filter(row => !firing.has(row.id) && !row.held).map(row => row.retryAt ?? row.at));
     if (!Number.isFinite(next)) return;
     timer = setTimer(() => { timer = null; void check(); }, Math.max(0, Math.min(2_147_000_000, next - now())));
@@ -34,6 +37,7 @@ export function createSchedule({ file, fire, changed = () => {}, now = Date.now,
   };
   const check = async () => {
     for (const row of list().filter(row => (row.retryAt ?? row.at) <= now() && !firing.has(row.id) && !row.held)) {
+      if (paused) break;
       firing.add(row.id);
       try {
         const result = await fire(row);
@@ -96,5 +100,10 @@ export function createSchedule({ file, fire, changed = () => {}, now = Date.now,
       return true;
     },
     check,
+    // 引き継ぎ（無停止の更新 2d）の間は、時刻が来ても撃たない。行は残り、新しいサーバーの restore が見る。取りやめたら resume で戻す
+    pause() { paused = true; if (timer) clearTimer(timer); timer = null; },
+    resume() { if (!paused) return; paused = false; arm(); },
+    /** 撃っている最中の行があるか（引き継ぎの前に終わるのを待つ） */
+    get firing() { return firing.size > 0; },
   };
 }

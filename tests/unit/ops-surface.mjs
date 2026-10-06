@@ -151,10 +151,14 @@ export default async function (t) {
     },
     statuses: { list: async () => [{ status: 'a', count: 1, firstUsedAt: 'a', lastUsedAt: 'b', icon: null, kept: false, ...secret }] },
     voice: { status: async () => ({ hasKey: true, storage: { encrypted: true, backend: 'fake' }, today: { callSeconds: 0, sttSeconds: 0, ttsChars: 0 }, active: 0 }) },
+    // API キー（ADR 0155）。値は持たない（名前・プロバイダー・確認の結果・使っている所だけ）
+    apiKeys: { list: async () => ({ migration: { state: 'done' }, storage: { encrypted: true, backend: 'fake' }, keys: [{ id: 'key-aaaaaaaaaaaa', provider: 'openrouter', label: 'OpenRouter', uses: [{ kind: 'voice' }], ...secret }], uses: { voice: 'key-aaaaaaaaaaaa', 'judge:jev': null, 'judge:cerebras': null }, guide: null }),
+      check: async (id) => ({ id, ok: true, at: 'a' }) },
     prefs: async () => ({ agentSitePermissions: [{ origin: 'o', ...secret }], locale: 'ja' }),
     compactionSettings: () => ({ enabled: true, ...secret }),
     delegation: { list: () => [{ taskId: 't', status: 'completed', ...secret }], get: () => ({ taskId: 't', status: 'completed', result: 'done', ...secret }),
       instructions: () => ({ taskId: 't', revision: 1, instructions: [{ id: 'i', text: 'x', at: 1, state: 'queued', ...secret }] }),
+      hostView: async () => ({ state: 'ok', messages: [], ...secret }),
       routing: async () => ({ settings: { enabled: true }, warnings: [], keys: { openrouter: { hasKey: true } }, candidates: [{ candidate: 'x:y' }], ...secret }),
       providerUsage: async () => ({ backend: 'x', label: 'X', quota: { ...secret }, local: {}, ...secret }) },
     // MCP・Hooks・コンテキスト・リモート・接続先（ADR 0095）。秘密の値の置き場（env・ヘッダー・bearer・clientSecret・URL のクエリ）に目印を入れる
@@ -244,7 +248,7 @@ export default async function (t) {
     'settings.get': registry.settings.map((x) => ({ key: x.key })), 'settings.schema': registry.settings.map((x) => ({ key: x.key })),
     'sessions.search': [{ query: 'こんにちは' }], 'sessions.get': [{ sessionId: 's1' }], 'sessions.read': [{ sessionId: 's1' }], 'delegation.status': [{ taskId: 't' }],
     'sessions.listMessages': [{ sessionId: 's1' }], 'sessions.changes': [{ sessionId: 's1' }], 'sessions.lineage': [{ sessionId: 's1' }], 'sessions.suggestTitle': [{ sessionId: 's1' }],
-    'delegation.instructions': [{ taskId: 't' }],
+    'delegation.instructions': [{ taskId: 't' }], 'delegation.hostView': [{ taskId: 't' }],
     'mcp.nativeList': [{ format: 'claude', scope: 'user', cwd: 'x' }], 'mcp.nativeRead': [{ format: 'codex', scope: 'directory', cwd: 'x', name: 'a' }], 'mcp.read': [{ name: 'a' }],
     'hooks.read': [{ agent: 'claude', scope: 'user', loc: { event: 'PreToolUse', group: 0, handler: 0 } }], 'hooks.readPly': [{ id: 'h-1' }],
     'git.diff': [{ path: 'a' }], 'sessions.readSubagent': [{ sessionId: 's1', agentId: 'a' }], 'sessions.background': [{ sessionId: 's1', taskId: 't' }],

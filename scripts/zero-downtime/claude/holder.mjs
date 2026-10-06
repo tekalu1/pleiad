@@ -44,7 +44,13 @@ function onParentWrite(c, text) {
 }
 
 function doSpawn(msg) {
-  const proc = spawn(msg.command, msg.args, { cwd: msg.cwd, env: msg.env, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true, shell: false });
+  // npm で入れた claude は claude.cmd（中身は bin/claude.exe）。.cmd は shell 無しでは起こせない（Node の CVE-2024-27980 の対策）。
+  // 段階 2-0 の確かめ用に cli-installation.mjs の spawnCli と同じく引数を引用符で包んで cmd.exe 経由で起こす
+  const viaCmd = process.platform === 'win32' && /\.(cmd|bat)$/i.test(msg.command);
+  const quote = v => `"${String(v).replace(/"/g, '""')}"`;
+  const proc = viaCmd
+    ? spawn([msg.command, ...msg.args].map(quote).join(' '), { cwd: msg.cwd, env: msg.env, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true, shell: true })
+    : spawn(msg.command, msg.args, { cwd: msg.cwd, env: msg.env, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true, shell: false });
   const c = { id: msg.id, proc, pid: proc.pid, seq: 0, lines: [], pending: new Map(), exit: null, outBuf: '', inBuf: '', stderr: '' };
   children.set(msg.id, c);
   proc.stdout.setEncoding('utf8');
@@ -81,7 +87,7 @@ function onMessage(sock, msg) {
     case 'end': if (c && !c.exit) c.proc.stdin.end(); break;
     case 'kill': if (c && !c.exit) { try { process.platform === 'win32' ? spawn('taskkill', ['/PID', String(c.pid), '/T', '/F'], { windowsHide: true }) : c.proc.kill('SIGKILL'); } catch { /* ignore */ } } break;
     case 'dump': send(sock, { t: 'dump', id: msg.id, reqId: msg.reqId, lines: (c?.lines ?? []).map(({ seq, type, uuid, line }) => ({ seq, type, uuid, bytes: line.length })), exit: c?.exit ?? null, alive: Boolean(c && !c.exit) }); break;
-    case 'info': send(sock, { t: 'info', reqId: msg.reqId, children: [...children.values()].map(x => ({ id: x.id, pid: x.pid, seq: x.seq, exit: x.exit, pending: x.pending.size })) }); break;
+    case 'info': send(sock, { t: 'info', reqId: msg.reqId, mem: process.memoryUsage(), children: [...children.values()].map(x => ({ id: x.id, pid: x.pid, seq: x.seq, exit: x.exit, pending: x.pending.size })) }); break;
     case 'shutdown': for (const x of children.values()) { try { x.proc.kill(); } catch { /* ignore */ } } setTimeout(() => process.exit(0), 200); break;
     default: break;
   }

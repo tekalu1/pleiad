@@ -297,7 +297,8 @@
       "noMore": "There are no additional instructions. Apply the instructions given at the start.",
       "unknownTool": "Unknown context tool",
       "callFailed": "Loading the context or calling the MCP server failed. Check the settings, the file changes and the MCP server.",
-      "mcpDeclined": "MCP tool call was declined."
+      "mcpDeclined": "MCP tool call was declined.",
+      "mcpRestarted": "Pleiad restarted this MCP server during an update, so any state from earlier calls is gone."
     }
   },
   "relay": {
@@ -832,6 +833,15 @@
       "opSuperseded": "This request was withdrawn because a newer request for {{target}} replaced it. Pleiad {{notDone}}. The result of the newer request will be delivered separately.",
       "opRestart": "Pleiad restarted, so approval for {{target}} was withdrawn. Pleiad {{notDone}}. Request it again if it is still needed."
     },
+    "apiKeys": {
+      "list": {
+        "summary": "Return the state of Settings › API keys (each registered key's name, provider, check result and where it is used, plus the keys chosen for voice calls and judges). Never returns key values."
+      },
+      "check": {
+        "summary": "Send a registered key to its own provider to see whether it is accepted, and record the result (free; separate from an endpoint check).",
+        "id": "Key id (keys[].id from apiKeys.list)"
+      }
+    },
     "voice": {
       "status": {
         "summary": "Return the call mode state (whether an OpenRouter key is registered, today's call length and usage, and the current settings). The key itself is never returned."
@@ -886,6 +896,12 @@
         "limit": "How many to return (default 30, max 100).",
         "cursor": "The next of the previous result. Continues from there."
       },
+      "hostView": {
+        "summary": "Read the progress of a child delegated to a host (messages, tools, follow-up instructions and a summary of descendants). The host returns only the children this device delegated and their descendants. Used only by the screen (a person) while a detail is open.",
+        "taskId": "Id of the task delegated to the host (the root, or a descendant learned from an earlier read).",
+        "hostId": "Id of the host the task was delegated to.",
+        "cursor": "Where the messages you hold continue (computed from the previous answer). Omit to read from the end."
+      },
       "retry": {
         "summary": "Redo the same request as a new child task on another candidate. Only a child you delegated. If the child would get a stronger approval mode than the requester, you get NEEDS_UI (the user must confirm).",
         "taskId": "Id of the task to redo.",
@@ -927,7 +943,7 @@
       "stop": { "summary": "Stop a conversation's computer use (mouse and keyboard on this PC). It cannot start or permit it.", "sessionId": "The conversation id. Defaults to this conversation." }
     },
     "browser": {
-      "chromeStatus": { "summary": "The state of the connection to the agent browser (the Chrome on this PC). state is off (not connected), setup (Chrome's remote debugging has to be turned on), permission (Chrome is showing its permission prompt), denied (Chrome didn't allow it: Cancel, or the settings button on the prompt), connected, or unsupported (not available on this OS yet).", "state": "The connection state.", "reason": "The reason. For off: chrome-closed, revoked, disconnected, declined, or protocol. For denied: cancel.", "dialog": "Whether Chrome's permission prompt window has been found.", "product": "The connected Chrome version (for example Chrome/154.0.8037.97)." },
+      "chromeStatus": { "summary": "The state of the connection to the agent browser (the Chrome on this PC). state is off (not connected), setup (Chrome's remote debugging has to be turned on), permission (Chrome is showing its permission prompt), denied (Chrome didn't allow it: Cancel, or the settings button on the prompt), connected, or unsupported (not available on this OS yet).", "state": "The connection state.", "reason": "The reason. For off: chrome-closed, revoked, disconnected, declined, or protocol. For denied: cancel. For setup: unreachable (DevToolsActivePort exists but does not answer: Chrome is not running, or remote debugging is off).", "dialog": "Whether Chrome's permission prompt window has been found.", "product": "The connected Chrome version (for example Chrome/154.0.8037.97)." },
       "chromeConnect": { "summary": "Start the connection to Chrome (Chrome shows a permission prompt). Only the host PC's screen can call it." },
       "chromeDisconnect": { "summary": "Close the connection to Chrome or stop waiting for the permission (a prompt that is showing is closed). Only the host PC's screen can call it." },
       "chromeRaiseDialog": { "summary": "Bring Chrome's permission prompt to the front (it does not answer it). Only the host PC's screen can call it." }

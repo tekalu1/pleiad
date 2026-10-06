@@ -2,8 +2,9 @@
 //
 // 設計は docs/design.md「互換の接続先」。要点:
 //   - 接続先はエージェントごと（claude: anthropic-messages、codex: openai-responses）。会話ごとに選ぶ（sidecar の endpoint）。
-//   - 置き場: <data>/compat-endpoints.json（一覧・役割のモデル・確認の結果。秘密は入れない）と
-//             <data>/compat-endpoint-secrets.json（API キー。core/secret-store.mjs。Claude のアカウント・MCP と同じく safeStorage）。
+//   - 置き場: <data>/compat-endpoints.json（一覧・役割のモデル・確認の結果・使うキーの参照 keyRef。秘密は入れない）。
+//             API キーは設定 › API キー（core/api-keys.mjs。api-key-secrets.json）に 1 回だけ登録し、接続先は keyRef で選ぶ（ADR 0155）。
+//             移行が済むまで・古い版のために、<data>/compat-endpoint-secrets.json（core/secret-store.mjs。safeStorage）も同じ値にそろえて書く。
 //   - 保存できるのは「接続の確認」が通った値だけ（確認 → 受領証 receipt → 保存。URL・キー・認証を変えたら確かめ直し）。
 //     確認は本物の 1 リクエスト（Claude: POST {URL}/v1/messages max_tokens 1、Codex: POST {URL}/responses）と、
 //     モデル一覧（GET /v1/models か /models。取れなくても失敗にしない）。
@@ -18,10 +19,13 @@ import dns from 'node:dns/promises';
 import net from 'node:net';
 import { addressKind, isLoopbackHost } from './mcp-url-guard.mjs';
 import { KIND, ROLE_KEYS, COMPAT_AGENTS } from '../web/compat-presets.mjs';
+import { providerOfEndpoint } from './api-keys.mjs';
+import { hostOf } from '../web/api-keys-model.mjs';
 import { t } from './i18n.mjs';
 
 const SECRET_PREFIX = 'compat-endpoint:';
 const ID = /^ep-[a-f0-9]{12}$/;
+const KEY_REF = /^key-[a-f0-9]{12}$/;
 const MAX_NAME = 60;
 const MAX_MODEL = 200;
 const MAX_MODELS = 5000;
@@ -321,8 +325,9 @@ export async function checkEndpoint({ agent, baseUrl, authMode, key, probeModel 
  * @param {ReturnType<import('./secret-store.mjs').createSecretStore>} o.secrets
  * @param {typeof fetch} [o.fetchImpl]
  * @param {Function} [o.lookup]  名前解決（テストで差し替える）
+ * @param {ReturnType<import('./api-keys.mjs').createApiKeys>|null} [o.apiKeys]  API キーの置き場。無ければ（または移行が済むまで）、接続先ごとの古い置き場にキーを持つ
  */
-export function createCompatEndpoints({ dataDir, secrets, fetchImpl = fetch, lookup, now = Date.now } = {}) {
+export function createCompatEndpoints({ dataDir, secrets, apiKeys = null, fetchImpl = fetch, lookup, now = Date.now } = {}) {
   const file = path.join(dataDir, 'compat-endpoints.json');
   const receipts = new Map();
   let queue = Promise.resolve();
@@ -361,12 +366,16 @@ export function createCompatEndpoints({ dataDir, secrets, fetchImpl = fetch, loo
 
   const fingerprint = v => crypto.createHash('sha256').update(JSON.stringify(v)).digest('hex');
   const keyHash = key => key ? crypto.createHash('sha256').update('compat:' + key).digest('hex') : '';
+  /** キーを API キーの参照（keyRef）で持つか。移行が済むまでは接続先ごとの古い置き場を読む */
+  const viaRefs = async () => Boolean(apiKeys) && await apiKeys.migrated();
+  const refOf = e => KEY_REF.test(e?.keyRef ?? '') ? e.keyRef : null;
 
-  /** 画面へ出す形（キーは返さない） */
-  function row(e, stored, defaults) {
+  /** 画面へ出す形（キーは返さない）。refs: キーを keyRef で持つ（移行済み） */
+  function row(e, stored, defaults, refs = false) {
     return {
       id: e.id, agent: e.agent, kind: KIND[e.agent], name: e.name, preset: e.preset ?? 'custom', baseUrl: e.baseUrl,
-      authMode: e.authMode ?? (e.agent === 'claude' ? 'auto' : 'bearer'), auth: e.auth ?? 'bearer', hasKey: stored.has(secretKey(e.id)),
+      authMode: e.authMode ?? (e.agent === 'claude' ? 'auto' : 'bearer'), auth: e.auth ?? 'bearer',
+      hasKey: refs ? Boolean(refOf(e)) : stored.has(secretKey(e.id)), keyRef: refs ? refOf(e) : null,
       roles: { ...e.roles }, ...storedModels(e), options: { ...(e.options ?? {}) },
       verifiedAt: e.verifiedAt ?? null, lastCheck: e.lastCheck ?? null, isDefault: defaults[e.agent] === e.id,
       ready: e.lastCheck?.ok !== false,
@@ -387,21 +396,42 @@ export function createCompatEndpoints({ dataDir, secrets, fetchImpl = fetch, loo
     const authMode = normalizeAuthMode(agent, input?.authMode);
     let key = normalizeKey(input?.key);
     let keySource = key ? 'input' : 'none';
+    const refs = await viaRefs();
+    const unreadable = e => { throw new CheckError(e.code === 'SECRET_LOCKED' ? e.message : t('compat.key.unreadable')); };
+    // 登録済みのキー（API キー）を選んだとき。値は API キーの置き場から読み、画面には出さない
+    const picked = String(input?.keyRef ?? '');
+    // 選んだキーは、この接続先のプロバイダー・ホスト用のものだけ（別のホスト用のキーを、URL を替えたまま送らない）
+    const endpoint = { preset: input?.preset ?? existing?.preset, baseUrl };
+    const fits = async ref => { if (!(await apiKeys.fits(ref, endpoint))) throw new CheckError(t('compat.key.hostMismatch')); };
+    if (!key && picked) {
+      if (!refs || !KEY_REF.test(picked)) throw new CheckError(t('compat.key.refMissing'));
+      await fits(picked);
+      const value = await apiKeys.keyValue(picked).catch(unreadable);
+      if (!value) throw new CheckError(t('compat.key.refMissing'));
+      key = value; keySource = 'ref:' + picked;
+    }
     // 編集でキー欄が空なら保存済みのキーを使う（keepKey: false でキーを消す）
     if (!key && existing && input?.keepKey !== false) {
-      const saved = await secrets.get(secretKey(existing.id)).catch(e => { throw new CheckError(e.code === 'SECRET_LOCKED' ? e.message : t('compat.key.unreadable')); });
-      if (saved?.key) { key = saved.key; keySource = 'saved'; }
+      const ref = refs ? refOf(existing) : null;
+      if (ref) {
+        await fits(ref);
+        const value = await apiKeys.keyValue(ref).catch(unreadable);
+        if (value) { key = value; keySource = 'ref:' + ref; }
+      } else if (!refs) {
+        const saved = await secrets.get(secretKey(existing.id)).catch(unreadable);
+        if (saved?.key) { key = saved.key; keySource = 'saved'; }
+      }
     }
-    return { agent, baseUrl, authMode, key, keySource, existing };
+    return { agent, baseUrl, authMode, key, keySource, existing, refs };
   }
 
   return {
     file,
     async list(agent) {
-      const [data, keys, storage] = await Promise.all([read(), secrets.keys(SECRET_PREFIX).catch(() => []), secrets.status().catch(() => null)]);
+      const [data, keys, storage, refs] = await Promise.all([read(), secrets.keys(SECRET_PREFIX).catch(() => []), secrets.status().catch(() => null), viaRefs()]);
       const stored = new Set(keys);
       return {
-        endpoints: data.endpoints.filter(e => !agent || e.agent === agent).map(e => row(e, stored, data.defaults)),
+        endpoints: data.endpoints.filter(e => !agent || e.agent === agent).map(e => row(e, stored, data.defaults, refs)),
         defaults: { ...data.defaults },
         storage: storage ? { encrypted: storage.encrypted, backend: storage.backend, ...(storage.reason ? { reason: storage.reason } : {}) } : null,
       };
@@ -411,7 +441,51 @@ export function createCompatEndpoints({ dataDir, secrets, fetchImpl = fetch, loo
       const e = data.endpoints.find(x => x.id === id);
       if (!e) return null;
       const stored = new Set(await secrets.keys(SECRET_PREFIX).catch(() => []));
-      return row(e, stored, data.defaults);
+      return row(e, stored, data.defaults, await viaRefs());
+    },
+    /** API キーの置き場が使う口: 接続先の行（キーの値は持たない）・使っているキー・割り当ての書き換え */
+    async rows() {
+      return (await read()).endpoints.map(e => ({ id: e.id, agent: e.agent, name: e.name, preset: e.preset ?? 'custom', baseUrl: e.baseUrl, keyRef: refOf(e) }));
+    },
+    async keyUsers() {
+      return (await read()).endpoints.filter(e => refOf(e)).map(e => ({ id: e.id, agent: e.agent, name: e.name, keyRef: refOf(e) }));
+    },
+    /** { <接続先の id>: <キーの id> } を書く（移行） */
+    setKeyRefs(refs) {
+      // 渡した対応が全部。無い接続先の古い keyRef（途中で保留になった移行の後に、古い方法でキーを外した接続先）は消す
+      return update(data => { for (const e of data.endpoints) { if (KEY_REF.test(refs[e.id] ?? '')) e.keyRef = refs[e.id]; else delete e.keyRef; } });
+    },
+    /** 台帳に無いキーを指す keyRef を外す。外した接続先の id を返す（detachKey と同じ扱い） */
+    async pruneKeyRefs(valid, { error = '' } = {}) {
+      const pruned = [];
+      await update(data => {
+        for (const e of data.endpoints) {
+          if (!e.keyRef || valid.has(e.keyRef)) continue;
+          delete e.keyRef; pruned.push(e.id);
+          e.lastCheck = { ok: false, at: new Date(now()).toISOString(), error: String(error).slice(0, 300), code: 'key-deleted' };
+        }
+      });
+      return pruned;
+    },
+    /** from のキーを使っていた接続先を to のキーに付け替える（まとめ） */
+    retargetKey(from, to) {
+      const gone = new Set(from);
+      return update(data => { for (const e of data.endpoints) if (gone.has(e.keyRef)) e.keyRef = to; });
+    },
+    /**
+     * キーを消したとき、使っていた接続先からキーを外す。接続先はキー無しで確認に失敗した扱いにして、会話は黙って公式に戻らず止まる
+     * （選び直しが要る）。外した接続先の id を返す
+     */
+    async detachKey(keyId, { error = '' } = {}) {
+      const detached = [];
+      await update(data => {
+        for (const e of data.endpoints) {
+          if (e.keyRef !== keyId) continue;
+          delete e.keyRef; detached.push(e.id);
+          e.lastCheck = { ok: false, at: new Date(now()).toISOString(), error: String(error).slice(0, 300), code: 'key-deleted' };
+        }
+      });
+      return detached;
     },
     async has(id, agent) {
       return (await read()).endpoints.some(e => e.id === id && (!agent || e.agent === agent));
@@ -452,9 +526,20 @@ export function createCompatEndpoints({ dataDir, secrets, fetchImpl = fetch, loo
       const preset = /^[a-z0-9-]{1,32}$/.test(String(input?.preset ?? '')) ? String(input.preset) : 'custom';
       const at = new Date(now()).toISOString();
       const created = id || 'ep-' + crypto.randomBytes(6).toString('hex');
-      // 秘密を先に書く。一覧に出た時点でキーがそろっているように
-      if (c.keySource === 'input') await secrets.set(secretKey(created), { key: c.key });
-      else if (!c.key) await secrets.delete(secretKey(created)).catch(() => {});
+      // 秘密を先に書く。一覧に出た時点でキーがそろっているように。
+      // 移行済みなら、入力したキーは API キーに 1 件として登録し（同じ値のキーがあればそれを使う）、接続先は keyRef で持つ。
+      // 古い置き場には同じ値を書く（古い版が読む。ADR 0155）
+      let keyRef = c.refs ? (c.keySource.startsWith('ref:') ? c.keySource.slice(4) : null) : undefined;
+      let registered = null;
+      if (c.refs && c.keySource === 'input') {
+        const provider = providerOfEndpoint({ preset, baseUrl: c.baseUrl });
+        const host = hostOf(c.baseUrl);
+        keyRef = await apiKeys.findByValue(provider, c.key, host);
+        if (!keyRef) keyRef = registered = (await apiKeys.add({ provider, label: name, key: c.key, host })).id;
+      } else if (!c.refs) {
+        if (c.keySource === 'input') await secrets.set(secretKey(created), { key: c.key });
+        else if (!c.key) await secrets.delete(secretKey(created)).catch(() => {});
+      }
       try {
         await update(data => {
           const entry = { id: created, agent: c.agent, name, preset, baseUrl: c.baseUrl, authMode: c.authMode, auth: proof.auth, roles, options,
@@ -462,13 +547,19 @@ export function createCompatEndpoints({ dataDir, secrets, fetchImpl = fetch, loo
           const i = data.endpoints.findIndex(e => e.id === created);
           if (id && i < 0) throw new CheckError(t('compat.store.notFound'));
           if (i >= 0) data.endpoints[i] = { ...data.endpoints[i], ...entry }; else data.endpoints.push({ ...entry, createdAt: at });
+          const target = data.endpoints.find(e => e.id === created);
+          if (c.refs) { if (keyRef) target.keyRef = keyRef; else delete target.keyRef; }
         });
       } catch (e) {
-        if (!id && c.keySource === 'input') await secrets.delete(secretKey(created)).catch(() => {});
+        if (!id && !c.refs && c.keySource === 'input') await secrets.delete(secretKey(created)).catch(() => {});
+        if (registered) await apiKeys.discard(registered);
         throw e;
       }
+      // まだどのホストにも結び付いていないキー（API キーのページで「その他」として登録したもの）は、初めて選んだこの接続先のホストに結び付く
+      if (c.refs && keyRef) await apiKeys.bindHost(keyRef, c.baseUrl);
+      if (c.refs) await apiKeys.mirrorEndpoint(created, keyRef ?? null);
       receipts.delete(String(receipt));
-      return { id: created };
+      return { id: created, ...(c.refs ? { keyRef: keyRef ?? null } : {}) };
     },
     /** 保存済みの接続先を確かめ直す（一覧の「接続を確認」）。結果を記録し、モデルの一覧を取り直す */
     async recheck(id) {
@@ -530,8 +621,18 @@ export function createCompatEndpoints({ dataDir, secrets, fetchImpl = fetch, loo
       if (agent && e.agent !== agent) throw new EndpointError(t('compat.resolve.wrongAgent', { name: e.name, agent: e.agent === 'claude' ? 'Claude Code' : 'Codex' }), 'agent');
       if (e.lastCheck && e.lastCheck.ok === false) throw new EndpointError(t('compat.resolve.failed', { name: e.name }), 'failed');
       let key = '';
-      try { key = (await secrets.get(secretKey(e.id)))?.key ?? ''; }
-      catch (err) { throw new EndpointError(err.code === 'SECRET_LOCKED' ? err.message : t('compat.resolve.keyUnreadable', { name: e.name }), 'unreadable'); }
+      try {
+        // 移行済みなら API キーの参照から。参照が無い接続先はキー無し（キーを消された接続先は、上で確認に失敗した扱いで止まる）
+        if (await viaRefs()) {
+          if (refOf(e)) {
+            key = await apiKeys.keyValue(refOf(e));
+            if (!key) throw new Error('missing');
+          } else if (e.auth && e.auth !== 'none') {
+            // キーを使う接続先（確認が bearer などで通った）なのにキーの参照が無い: 空のキーで送って 401 にせず、止めて選び直しを求める
+            throw new EndpointError(t('compat.resolve.keyMissing', { name: e.name }), 'unreadable');
+          }
+        } else key = (await secrets.get(secretKey(e.id)))?.key ?? '';
+      } catch (err) { if (err instanceof EndpointError) throw err; throw new EndpointError(err.code === 'SECRET_LOCKED' ? err.message : t('compat.resolve.keyUnreadable', { name: e.name }), 'unreadable'); }
       return { id: e.id, agent: e.agent, kind: KIND[e.agent], name: e.name, baseUrl: e.baseUrl, auth: e.auth ?? (key ? 'bearer' : 'none'), key,
         roles: { ...e.roles }, models: storedModels(e).models, options: { ...(e.options ?? {}) } };
     },
@@ -617,14 +718,27 @@ export async function writeClaudeFlagSettings(dataDir, endpoint, extra = {}) {
   return { file, dispose: async () => { if (gone) return; gone = true; await fs.rm(file, { force: true }).catch(() => {}); } };
 }
 
-/** 前の起動で消し損ねたフラグ設定のファイルを片付ける（起動時） */
-export async function sweepClaudeFlagSettings(dataDir, { olderThanMs = 0 } = {}) {
+const FLAG_FILE = /^claude-compat-[0-9a-f-]+\.json$/;
+
+/**
+ * 付け直したターン（無停止の更新 2c）のフラグ設定のファイル。旧サーバーが書き、札が名前を持つ（CLI は起動のときだけ読む）。
+ * 付け直したサーバーがターンの終わりに消す。名前の形が違えば null（データ置き場の run\ の外は指さない）
+ */
+export function adoptClaudeFlagSettings(dataDir, name) {
+  if (typeof name !== 'string' || !FLAG_FILE.test(name)) return null;
+  const file = path.join(dataDir, 'run', name);
+  let gone = false;
+  return { file, dispose: async () => { if (gone) return; gone = true; await fs.rm(file, { force: true }).catch(() => {}); } };
+}
+
+/** 前の起動で消し損ねたフラグ設定のファイルを片付ける（起動時）。except は付け直すターンの札が指すファイルの名前（消さない） */
+export async function sweepClaudeFlagSettings(dataDir, { olderThanMs = 0, except = [] } = {}) {
   const dir = path.join(dataDir, 'run');
   let names = [];
   try { names = await fs.readdir(dir); } catch { return 0; }
   let n = 0;
   for (const name of names) {
-    if (!/^claude-compat-[0-9a-f-]+\.json$/.test(name)) continue;
+    if (!FLAG_FILE.test(name) || except.includes(name)) continue;
     const f = path.join(dir, name);
     const st = await fs.stat(f).catch(() => null);
     if (!st || (olderThanMs > 0 && Date.now() - st.mtimeMs < olderThanMs)) continue;

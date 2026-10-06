@@ -8,11 +8,18 @@
 //   - sessionId は、どのエージェントの接続が attach したものかを覚え、ほかの接続の sessionId は断る
 //   - ブラウザー全体に効く操作（Browser.close・Storage.*・Cookie の一括の読み書きなど）は断る。断る・真似る・許すの一覧は下の表と docs
 // サイトの利用の確認（confirmAgentSites が ON のとき）は、中継が範囲のタブに自分のセッションを attach して Fetch で主フレームの要求を止めて聞く。
+// 「今の origin」は、そのセッションの Page.frameNavigated（主フレーム）で移り終えた先の securityOrigin で持つ（targetInfo の URL は断った先も指すため）。
+// 要求を出さずに移った（履歴の移動・bfcache の復元）ときは、移った後に聞き、断られたら about:blank に戻す。
 // window.open で開いたタブの最初の要求は Fetch では止められない（実機。docs）ので、開いた後に聞き、断られたら閉じる。
-// 窓の作り方は scope の口（第 4 段で専用の窓に差し替える）。ここの既定は仮の窓（createTarget の newWindow＋background と最小化）。
+// 窓の作り方は scope の口（既定は core/chrome/windows.mjs の専用の窓。ADR 0154）。窓は最小化せず、画面の外の見えない窓に置く。
+//   - エージェントの Page.bringToFront・Target.activateTarget は Chrome へ送らずに成功で返す（窓が前面を取るため。agent-browser の「今のタブ」は自分の側で持つ）
+//   - エージェントのターンの間、会話の窓のタブすべてに中継の自分のセッションで Emulation.setFocusEmulationEnabled(true) を保つ（隠した窓の描画・入力を保つため）。
+//     エージェントのセッションの付け外しでは切れない。ターンが終わったら外す
+//   - 範囲のタブが window.open の popup で開いた別窓にも、同じ置き方を当てる（scope.adoptPopup）
 import http from 'node:http';
 import crypto from 'node:crypto';
 import { WebSocketServer } from 'ws';
+import { createChromeWindows } from './windows.mjs';
 
 const KEY_PATH = /^\/devtools\/browser\/([a-f0-9]{48})$/;
 const random = () => crypto.randomBytes(24).toString('hex');
@@ -20,13 +27,33 @@ const CONNECT_WAIT_MS = 20_000;
 /** エージェントのコマンドの上りの上限。移動の確認（人が答える）を待つことがあるので長くとる。CLI は自分で先に打ち切る */
 const COMMAND_TIMEOUT_MS = 600_000;
 
-/** 人の操作と区別して、エージェントがタブを動かしているとみなすコマンド（内蔵ブラウザーの中継と同じ。desktop/browser-navigation.cjs） */
+/** 応答のときに確認の答えを待ち、断られた文を返すコマンド（内蔵ブラウザーの中継と同じ。desktop/browser-navigation.cjs） */
 const OPERATES = /^(Input\.|Runtime\.(evaluate|callFunctionOn)$|Page\.(navigate|reload|navigateToHistoryEntry)$)/;
+/**
+ * エージェントがタブを動かしている印を付けないコマンド（有効化と、iframe・worker の自動 attach の続き）。
+ * ほかのコマンドは全部、印を付ける（DOM の書き換え・runScript・Debugger などでも移動はできるため。ターンの終わりで外れる）
+ */
+const PASSIVE = /(\.enable|\.disable)$|^(Runtime\.runIfWaitingForDebugger|Target\.setAutoAttach)$/;
 
-// セッションの上（タブ・iframe・worker）で断るもの。ほかは通す
-const SESSION_DENIED_DOMAINS = ['Browser.', 'Storage.', 'Extensions.', 'PWA.', 'Autofill.', 'Cast.', 'SystemInfo.', 'Tethering.'];
-const SESSION_DENIED = new Set(['Network.getAllCookies', 'Network.clearBrowserCookies', 'Network.clearBrowserCache', 'Page.setDownloadBehavior', 'Security.setIgnoreCertificateErrors']);
+// セッションの上（タブ・iframe・worker）で断るもの。ほかは通す。
+// 考え方: ドメインごと通すものでも、引数でほかの origin・storageKey・url を指せて、自分のタブの外に届くコマンドは断る（docs）
+const SESSION_DENIED_DOMAINS = ['Browser.', 'Storage.', 'Extensions.', 'PWA.', 'Autofill.', 'Cast.', 'SystemInfo.', 'Tethering.',
+  // securityOrigin・storageKey・storageId でほかの origin の保存データ（localStorage・IndexedDB・Cache・Web SQL・OPFS・Service Worker）を読み書きできる
+  'DOMStorage.', 'IndexedDB.', 'CacheStorage.', 'Database.', 'FileSystem.', 'ServiceWorker.',
+  // 記録はブラウザーの全 origin の分（origin・storageKey が載る）
+  'BackgroundService.'];
+const SESSION_DENIED = new Set(['Network.getAllCookies', 'Network.clearBrowserCookies', 'Network.clearBrowserCache', 'Page.setDownloadBehavior', 'Security.setIgnoreCertificateErrors',
+  'Page.deleteCookie',                   // 任意の url の Cookie を消せる
+  'Network.loadNetworkResource',         // 資格情報つきでほかの origin を取れ、サイトの確認を通らない
+  'Network.getCertificate',              // 任意の origin の証明書（その origin へつないだかが分かる）
+  'Network.enableDeviceBoundSessions', 'Network.deleteDeviceBoundSession',   // 全サイトの端末に結んだセッションを見る・消す
+  'Network.setRequestInterception', 'Network.continueInterceptedRequest',    // 古い横取り。url を差し替えて、確認を通らずにほかの origin へ送れる（Fetch を使う）
+]);
 const COOKIE_WRITES = new Set(['Network.setCookie', 'Network.setCookies', 'Network.deleteCookies']);
+/** エージェントの Fetch で止まっている要求の URL（Fetch.continueRequest の url の差し替えを同じ origin に限るため）。接続あたりの上限 */
+const PAUSED_LIMIT = 1000;
+/** Page.navigateToHistoryEntry の応答の後、移り終える（frameNavigated）のを待つ上限 */
+const HISTORY_COMMIT_WAIT_MS = 1000;
 // ブラウザーの上（sessionId なし）で許すもの。ここに無いものは断る
 const BROWSER_ALLOWED = new Set([
   'Browser.getVersion',
@@ -49,32 +76,23 @@ export function safeUrl(value) {
 }
 const originOf = value => { try { const url = new URL(value); return ['http:', 'https:'].includes(url.protocol) ? url.origin : null; } catch { return null; } };
 const hostOf = value => { try { return new URL(value).hostname; } catch { return null; } };
-
-/**
- * 仮の窓（第 3 段）。タブを 1 つ作るたびに、前面を取らない新しい窓（newWindow・background）を作ってすぐ最小化する。
- * CDP の createTarget は窓を選べない（windowId が無い）ので、2 つ目以降のタブも別の窓になる。第 4 段で専用の窓（chrome.exe --profile-directory）に差し替える
- */
-export function createTempWindowScope() {
-  return {
-    /** @returns {Promise<{ targetId: string, windowId: number }>} */
-    async openTab({ cdp, url = 'about:blank' }) {
-      const { targetId } = await cdp.send('Target.createTarget', { url, newWindow: true, background: true });
-      const { windowId } = await cdp.send('Browser.getWindowForTarget', { targetId });
-      await cdp.send('Browser.setWindowBounds', { windowId, bounds: { windowState: 'minimized' } }).catch(() => {});
-      return { targetId, windowId };
-    },
-  };
+/** 主フレームが移り終えた先の origin（Page.frameNavigated の frame）。http(s) のときだけで、エラーのページ・about:blank・data: などは null */
+function committedOrigin(frame) {
+  if (!frame || frame.unreachableUrl) return null;
+  return originOf(frame.securityOrigin || frame.url || '');
 }
 
 /**
  * @param {object} deps
  * @param deps.connection  core/chrome/connection.mjs の接続（demand({ signal }) で cdp を返す）
- * @param [deps.scope]     窓の作り方（openTab）。既定は仮の窓
+ * @param deps.os          core/chrome/os.mjs の口（窓を隠す・見つける。connection と同じものでよい）
+ * @param deps.locate      Chrome の User Data（core/chrome/locate.mjs の chromeHomes の 1 つ。{ userDataDir, custom? }）
+ * @param [deps.scope]     窓の作り方（openTab・adoptPopup・windowClosed・rebind・reset・forget）。既定は core/chrome/windows.mjs の専用の窓
  * @param [deps.authorize] サイトの利用の確認（core/browser-confirm.mjs の createBrowserSiteApprovals）。({ sessionId, url }, signal) → { allow, message? }
  * @param [deps.deniedMessage] 確認で断られた移動をエージェントへ返す文
  */
-export function createChromeRelay({ connection, scope = createTempWindowScope(), authorize = async () => ({ allow: false }), deniedMessage = () => 'navigation denied',
-  connectWaitMs = CONNECT_WAIT_MS, commandTimeoutMs = COMMAND_TIMEOUT_MS, log = () => {} } = {}) {
+export function createChromeRelay({ connection, os, locate, log = () => {}, scope = createChromeWindows({ os, locate, log }), authorize = async () => ({ allow: false }), deniedMessage = () => 'navigation denied',
+  connectWaitMs = CONNECT_WAIT_MS, commandTimeoutMs = COMMAND_TIMEOUT_MS } = {}) {
   const entries = new Map();   // 会話の id -> entry
   const byKey = new Map();
   const wss = new WebSocketServer({ noServer: true, perMessageDeflate: false });
@@ -115,7 +133,8 @@ export function createChromeRelay({ connection, scope = createTempWindowScope(),
     if (up !== state) return;
     up = null;
     for (const off of state.offs) off();
-    for (const tab of state.tabs.values()) tab.controller.abort();
+    for (const tab of state.tabs.values()) { tab.controller.abort(); tab.fe = null; }
+    scope.reset?.();   // Chrome が閉じた。窓はもう無い
     for (const entry of entries.values()) {
       entry.windows.clear();
       for (const client of [...entry.clients]) { try { client.ws.close(1011, 'chrome disconnected'); } catch { /* 閉じていてもよい */ } }
@@ -136,6 +155,8 @@ export function createChromeRelay({ connection, scope = createTempWindowScope(),
         const code = error?.code;
         if (code === 'unsupported') throw new RelayError('the agent browser (Chrome) is not available on this computer');
         if (code === 'declined') throw new RelayError('the user did not allow the connection to Chrome');
+        // A（setup）は、Chrome が起動していないか、リモート デバッグがオフ（DevToolsActivePort は Chrome を閉じても残るので見分けない）
+        if (connection.state?.().state === 'setup') throw new RelayError('Chrome is not running, or remote debugging is off in Chrome (waiting for the user). Try again later');
         throw new RelayError('Chrome is not connected yet (waiting for the user to allow remote debugging in Chrome). Try again later');
       } finally { clearTimeout(timer); client.upWait = null; client.upAbort = null; }
     })();
@@ -144,8 +165,12 @@ export function createChromeRelay({ connection, scope = createTempWindowScope(),
 
   // ---- 範囲（会話の窓のタブ） ------------------------------------------------------------------
   function newTab(entry, info, windowId, opener = null) {
+    // origin: 主フレームが移り終えた先（中継のセッションの Page.frameNavigated。確認が ON の間だけ持つ）。approved: 確認で許可され、まだ移り終えていない origin
+    // gate: 移った後の確認の答えを待つ間、エージェントのこのタブへのコマンドを待たせる（{ promise }）
     return { targetId: info.targetId, entry, info: { ...info }, windowId, opener, internal: null, internalReady: null,
-      active: opener?.active ?? false, granted: new Set(), controller: new AbortController(), pending: new Set(), paused: new Map(), denial: null, popupChecked: false };
+      active: opener?.active ?? false, origin: null, approved: new Set(), commits: 0, gate: null,
+      controller: new AbortController(), pending: new Set(), paused: new Map(), denial: null, ops: 0, popupChecked: false,
+      fe: null };   // fe: focus emulation 用の中継自身のセッション（{ sessionId, promise }）。ターンの間だけ持つ
   }
   const tabsOf = (state, entry) => [...state.tabs.values()].filter(tab => tab.entry === entry);
   const clientsOf = entry => [...entry.clients];
@@ -166,6 +191,7 @@ export function createChromeRelay({ connection, scope = createTempWindowScope(),
       if (client.autoAttach) attachFor(state, client, tab).catch(() => {});
     }
     if (confirm) ensureInternal(state, tab).catch(() => {});
+    if (entry.turn) ensureFocus(state, tab).catch(() => {});
     if (opener) checkPopup(state, tab);
     return tab;
   }
@@ -174,10 +200,12 @@ export function createChromeRelay({ connection, scope = createTempWindowScope(),
     if (state.tabs.get(tab.targetId) !== tab) return;
     state.tabs.delete(tab.targetId);
     tab.controller.abort();
+    tab.fe = null;   // セッションはタブと一緒に消える
     for (const client of clientsOf(tab.entry)) if (client.discovering) send(client, { method: 'Target.targetDestroyed', params: { targetId: tab.targetId } });
     if (tab.windowId != null && ![...state.tabs.values()].some(other => other.windowId === tab.windowId)) {
       state.windows.delete(tab.windowId);
       tab.entry.windows.delete(tab.windowId);
+      scope.windowClosed?.(tab.entry.id, tab.windowId);   // 窓だけ閉じられた。次に使うときに黙って開き直す
     }
   }
 
@@ -188,7 +216,12 @@ export function createChromeRelay({ connection, scope = createTempWindowScope(),
       // 範囲のタブが開いたタブ（window.open）。popup の別窓なら、その窓も範囲に足す
       const tab = adopt(state, opener.entry, info, { opener });
       const where = await state.cdp.send('Browser.getWindowForTarget', { targetId: info.targetId }).catch(() => null);
-      if (where?.windowId != null && state.tabs.get(tab.targetId) === tab) { tab.windowId = where.windowId; addWindow(state, tab.entry, where.windowId); }
+      if (where?.windowId != null && state.tabs.get(tab.targetId) === tab) {
+        const isNewWindow = !tab.entry.windows.has(where.windowId);
+        tab.windowId = where.windowId; addWindow(state, tab.entry, where.windowId);
+        // popup の別窓は画面の左上などに出て前面を取る。同じ置き方（画面の外・透明）を当てる（ADR 0154）
+        if (isNewWindow) Promise.resolve(scope.adoptPopup?.({ cdp: state.cdp, entryId: tab.entry.id, windowId: where.windowId })).catch(() => {});
+      }
       return;
     }
     // ほかの経路で会話の窓に入ったタブ（利用者が窓へ移した、など）。会話の窓が 1 つも無ければ見ない（利用者のタブの数だけ問い合わせない）
@@ -212,6 +245,11 @@ export function createChromeRelay({ connection, scope = createTempWindowScope(),
         state.sessions.set(params.sessionId, { client: rec.client, tab: rec.tab, parent: sessionId });
         rec.client.sessions.add(params.sessionId);
       } else if (method === 'Target.detachedFromTarget' && params.sessionId) forgetSession(state, params.sessionId);
+      else if (method === 'Fetch.requestPaused' && params.requestId) {
+        const paused = rec.client.paused;
+        if (paused.size >= PAUSED_LIMIT) paused.delete(paused.keys().next().value);
+        paused.set(params.requestId, params.request?.url ?? '');
+      }
       send(rec.client, { method, params, sessionId });
       return;
     }
@@ -243,6 +281,12 @@ export function createChromeRelay({ connection, scope = createTempWindowScope(),
         forgetSession(state, params.sessionId);
         if (rec.client) send(rec.client, { method, params });
         else if (rec.tab.internal === params.sessionId) { rec.tab.internal = null; rec.tab.internalReady = null; }
+        else if (rec.tab.fe?.sessionId === params.sessionId) {
+          // Chrome の側で外れた。ターンの間は付け直す（タブが残っていれば）
+          const { tab } = rec;
+          tab.fe = null;
+          if (tab.entry.turn && state.tabs.get(tab.targetId) === tab) ensureFocus(state, tab).catch(() => {});
+        }
         return;
       }
       default: return;   // ほかのブラウザー全体のイベント（ダウンロードなど）は配らない
@@ -283,13 +327,58 @@ export function createChromeRelay({ connection, scope = createTempWindowScope(),
   }
   const attachFor = (state, client, tab) => attach(state, tab, client);
 
-  // ---- サイトの利用の確認（Fetch） ------------------------------------------------------------
-  /** 確認のために、中継自身のセッションをタブに付けて主フレームの Document の要求を止める */
+  // ---- focus emulation（ADR 0154） ---------------------------------------------------------------
+  /**
+   * 隠した窓のページに、見えている・フォーカスがあるものとして描かせ、入力を受けさせる（Emulation.setFocusEmulationEnabled）。
+   * セッションごとの状態なので、エージェントのセッション（付け外しされる）とは別に、中継自身のセッションを 1 タブにつき 1 本、ターンの間だけ保つ
+   */
+  function ensureFocus(state, tab) {
+    if (tab.fe) return tab.fe.promise;
+    const fe = { sessionId: null, promise: null };
+    tab.fe = fe;
+    fe.promise = (async () => {
+      const sessionId = await attach(state, tab, null);
+      fe.sessionId = sessionId;
+      if (tab.fe !== fe) { await detachFocus(state, sessionId); return; }   // つけている間に外された
+      await state.cdp.send('Emulation.setFocusEmulationEnabled', { enabled: true }, sessionId);
+    })().catch(error => {
+      if (tab.fe === fe) tab.fe = null;
+      log(`chrome-relay: focus emulation failed: ${error?.message ?? error}`);
+    });
+    return fe.promise;
+  }
+  async function detachFocus(state, sessionId) {
+    if (up !== state) return;
+    forgetSession(state, sessionId);
+    await state.cdp.send('Emulation.setFocusEmulationEnabled', { enabled: false }, sessionId).catch(() => {});
+    await state.cdp.send('Target.detachFromTarget', { sessionId }).catch(() => {});
+  }
+  async function dropFocus(state, tab) {
+    const fe = tab.fe;
+    if (!fe) return;
+    tab.fe = null;
+    await fe.promise;
+    if (fe.sessionId) await detachFocus(state, fe.sessionId);
+  }
+  /** 会話のタブの focus emulation を、ターンの状態（entry.turn）に合わせる */
+  function syncFocus(state, entry) {
+    for (const tab of tabsOf(state, entry)) (entry.turn ? ensureFocus(state, tab) : dropFocus(state, tab)).catch(() => {});
+  }
+
+  // ---- サイトの利用の確認（Fetch と Page.frameNavigated） ------------------------------------
+  /**
+   * 確認のために、中継自身のセッションをタブに付ける。Fetch で主フレームの Document の要求を止め、Page.frameNavigated で移り終えた先の origin を持つ。
+   * 付ける前に移り終えていた分は Page.getFrameTree で読む
+   */
   function ensureInternal(state, tab) {
     tab.internalReady ??= (async () => {
       const sessionId = await attach(state, tab, null);
       tab.internal = sessionId;
+      const commits = tab.commits;
+      await state.cdp.send('Page.enable', {}, sessionId);
       await state.cdp.send('Fetch.enable', { patterns: [{ urlPattern: '*', resourceType: 'Document', requestStage: 'Request' }] }, sessionId);
+      const tree = await state.cdp.send('Page.getFrameTree', {}, sessionId).catch(() => null);
+      if (tab.commits === commits) tab.origin = committedOrigin(tree?.frameTree?.frame);
       return sessionId;
     })().catch(error => { tab.internalReady = null; throw error; });
     return tab.internalReady;
@@ -297,7 +386,7 @@ export function createChromeRelay({ connection, scope = createTempWindowScope(),
   function dropInternal(state, tab) {
     for (const resume of [...tab.paused.values()]) resume();
     const sessionId = tab.internal;
-    tab.internal = null; tab.internalReady = null;
+    tab.internal = null; tab.internalReady = null; tab.origin = null; tab.approved.clear();
     if (sessionId) { forgetSession(state, sessionId); state.cdp.send('Target.detachFromTarget', { sessionId }).catch(() => {}); }
   }
 
@@ -308,8 +397,15 @@ export function createChromeRelay({ connection, scope = createTempWindowScope(),
     work.finally(() => tab.pending.delete(work));
     return work;
   }
+  /** 答えを待つ間、エージェントのこのタブへのコマンドを待たせる（then は答えの後の始末。済むまで待たせる） */
+  function hold(tab, work, then) {
+    const gate = {};
+    tab.gate = gate;
+    gate.promise = work.then(then).catch(() => {}).finally(() => { if (tab.gate === gate) tab.gate = null; });
+  }
 
   function onInternalEvent(state, tab, method, params) {
+    if (method === 'Page.frameNavigated') { if (params.frame && !params.frame.parentId) onCommit(state, tab, params.frame); return; }
     if (method !== 'Fetch.requestPaused') return;
     const { requestId } = params;
     const sessionId = tab.internal;
@@ -317,57 +413,86 @@ export function createChromeRelay({ connection, scope = createTempWindowScope(),
     const resume = () => { if (settled) return; settled = true; tab.paused.delete(requestId); state.cdp.send('Fetch.continueRequest', { requestId }, sessionId).catch(() => {}); };
     const block = () => { if (settled) return; settled = true; tab.paused.delete(requestId); state.cdp.send('Fetch.failRequest', { requestId, errorReason: 'BlockedByClient' }, sessionId).catch(() => {}); };
     tab.paused.set(requestId, resume);
+    // 主フレームだけを聞く（iframe は聞かない。確認はトップフレームの単位）
+    if (!confirm || params.frameId !== tab.targetId) { resume(); return; }
+    // 新しい移動（リダイレクトでない）なら、前の移動で許可して移り終えなかった分は捨てる
+    if (!params.redirectedRequestId) tab.approved.clear();
     const url = params.request?.url ?? '';
     const origin = originOf(url);
-    // 主フレームだけを聞く（iframe は聞かない）。エージェントが動かしていないタブ（人の操作）・同じ origin・許可済みは聞かない
-    if (!confirm || params.frameId !== tab.targetId || !tab.active || !origin || origin === originOf(tab.info.url) || tab.granted.has(origin)) { resume(); return; }
+    // エージェントが動かしていないタブ（人の操作）・移り終えた今の origin と同じ・この移動で許可済みは聞かない
+    if (!tab.active || !origin || origin === tab.origin || tab.approved.has(origin)) { resume(); return; }
     ask(tab, url).then(answer => {
       if (!confirm) { resume(); return; }
-      if (answer.allow && !tab.controller.signal.aborted) { tab.granted.add(origin); resume(); return; }
-      tab.denial = answer.message || deniedMessage();
+      if (answer.allow && !tab.controller.signal.aborted) { tab.approved.add(origin); resume(); return; }
+      deny(tab, answer);
       block();
     });
   }
 
-  /** タブの URL が替わった。許可は今の origin の分だけ残す（内蔵ブラウザーと同じ）。window.open のタブは最初の要求の後に聞く */
+  /**
+   * 主フレームが移り終えた。今の origin を替え、確認を通っていない別の origin へ移った（要求を出さない履歴の移動・bfcache の復元など）なら、
+   * 移った後に聞き、断られたら about:blank に戻す
+   */
+  function onCommit(state, tab, frame) {
+    tab.commits += 1;
+    const previous = tab.origin;
+    const origin = committedOrigin(frame);
+    const approved = Boolean(origin) && tab.approved.has(origin);
+    tab.origin = origin;
+    tab.approved.clear();
+    if (!origin || origin === previous || approved || !confirm || !tab.active) return;
+    if (tab.opener && !tab.popupChecked) { checkPopup(state, tab, origin, frame.url ?? ''); return; }
+    hold(tab, ask(tab, frame.url ?? origin), async answer => {
+      if (state.tabs.get(tab.targetId) !== tab || tab.origin !== origin || !confirm) return;   // 閉じた・もう別の所へ移った・OFF にした
+      if (answer.allow && !tab.controller.signal.aborted) return;
+      deny(tab, answer);
+      if (up === state && tab.internal) await state.cdp.send('Page.navigate', { url: 'about:blank' }, tab.internal, { timeoutMs: commandTimeoutMs }).catch(() => {});
+    });
+  }
+
+  /** タブの URL が替わった（targetInfoChanged）。window.open のタブは最初の要求の後に聞く */
   function onTabUrl(state, tab) {
-    const origin = originOf(tab.info.url);
-    if (origin) tab.granted = new Set([...tab.granted].filter(value => value === origin));
     if (tab.opener) checkPopup(state, tab);
   }
 
   /** window.open で開いたタブ（最初の要求は Fetch で止められない）。開いた後に聞き、断られたら閉じる */
-  function checkPopup(state, tab) {
+  function checkPopup(state, tab, origin = originOf(tab.info.url), url = tab.info.url) {
     if (tab.popupChecked || !confirm || !tab.opener.active) return;
-    const origin = originOf(tab.info.url);
     if (!origin) return;   // まだ about:blank。URL が付いたら聞く
     tab.popupChecked = true;
+    // 聞いている間の origin はこれとみなす（後から届く frameNavigated で二度聞かない。断られたらタブを閉じる）
+    tab.origin = origin;
     const opener = tab.opener;
-    if (origin === originOf(opener.info.url) || opener.granted.has(origin)) { tab.granted.add(origin); return; }
-    ask(tab, tab.info.url).then(answer => {
+    if (origin === opener.origin) return;
+    hold(tab, ask(tab, url), answer => {
       if (state.tabs.get(tab.targetId) !== tab) return;   // 先に閉じられた
-      if (answer.allow && !tab.controller.signal.aborted) { tab.granted.add(origin); return; }
-      opener.denial = answer.message || deniedMessage();
-      if (up === state && state.tabs.get(tab.targetId) === tab) state.cdp.send('Target.closeTarget', { targetId: tab.targetId }).catch(() => {});
+      if (answer.allow && !tab.controller.signal.aborted) return;
+      deny(opener, answer);
+      if (up === state) return state.cdp.send('Target.closeTarget', { targetId: tab.targetId }).catch(() => {});
     });
   }
 
-  /** 操作のコマンドの応答のときに、そのタブの確認がまだ済んでいなければ待ち、断られていれば断られた文を返す（内蔵ブラウザーと同じ） */
-  async function settleApprovals(tab) {
+  /** 断られた。そのときの最後の操作のコマンド（ops の番号）に返す文として覚える */
+  function deny(tab, answer) { tab.denial = { message: answer.message || deniedMessage(), op: tab.ops }; }
+  /**
+   * 操作のコマンド（op 番）の応答のときに、そのタブの確認がまだ済んでいなければ待ち、その操作の後に断られていれば断られた文を返す（内蔵ブラウザーと同じ）。
+   * 前の操作の断りは返さない（並んで送られた操作の片方が、ほかの操作の断りを取らないように）
+   */
+  async function settleApprovals(tab, op) {
     await new Promise(resolve => setImmediate(resolve));
-    while (tab.pending.size) await Promise.all([...tab.pending]);
-    const message = tab.denial;
+    while (tab.pending.size || tab.gate) await Promise.all([...tab.pending, tab.gate?.promise]);
+    const denial = tab.denial;
+    if (!denial || denial.op < op) return null;
     tab.denial = null;
-    return message;
+    return denial.message;
   }
-
   // ---- エージェントの接続 ------------------------------------------------------------------------
   function send(client, message) {
     if (client.ws.readyState === 1) client.ws.send(JSON.stringify(message));
   }
 
   function attachClient(entry, ws) {
-    const client = { entry, ws, sessions: new Set(), discovering: false, autoAttach: false, upWait: null, upAbort: null, closed: false };
+    const client = { entry, ws, sessions: new Set(), paused: new Map(), discovering: false, autoAttach: false, upWait: null, upAbort: null, closed: false };
     entry.clients.add(client);
     ws.on('message', raw => { void onMessage(client, raw); });
     ws.on('error', () => {});
@@ -419,27 +544,57 @@ export function createChromeRelay({ connection, scope = createTempWindowScope(),
     if (SESSION_DENIED.has(method) || SESSION_DENIED_DOMAINS.some(prefix => method.startsWith(prefix))) throw denied('browser command');
     let forward = params;
     if (method === 'Page.navigate' && !safeUrl(params.url)) throw denied('navigation');
+    // エージェントの Fetch で止めた要求の url の差し替えは、同じ origin の中だけ（ほかの origin へ送り先を替えると、確認を通らずに届く）
+    if (method === 'Fetch.continueRequest') {
+      const original = client.paused.get(params.requestId);
+      if (params.url !== undefined && (!originOf(params.url) || originOf(params.url) !== originOf(original ?? ''))) throw denied('request url');
+      client.paused.delete(params.requestId);
+    } else if (method === 'Fetch.failRequest' || method === 'Fetch.fulfillRequest') client.paused.delete(params.requestId);
+    // エージェントが動かしているタブの印（人の操作と区別する。ターンの終わりで外れる）
+    if (!PASSIVE.test(method)) tab.active = true;
+    // 移った後の確認の答えを待つ間は、このタブへのコマンドを待たせる（断られたページを読ませない）
+    while (tab.gate) await tab.gate.promise;
+    // 窓を前に出して前面を取る命令は、Chrome へ送らずに成功で返す。agent-browser の「今のタブ」は自分の側で持つので操作は変わらず、
+    // 隠した窓は前面を取らない。前に出すのは人が引き継いだときの Pleiad だけ（ADR 0154）
+    if (method === 'Page.bringToFront') return {};
     // Cookie は今のページのものだけ（ほかのサイトのログインを読む・消す・植えるのを防ぐ）
     if (method === 'Network.getCookies') forward = {};
     if (COOKIE_WRITES.has(method)) {
-      const host = hostOf(tab.info.url);
+      // 確認が ON なら、移り終えた今の origin のホスト（断った先のエラーのページは、どのホストでもない）
+      if (confirm) await ensureInternal(state, tab);
+      const host = confirm ? hostOf(tab.origin ?? '') : hostOf(tab.info.url);
       const list = method === 'Network.setCookies' ? (Array.isArray(params.cookies) ? params.cookies : []) : [params];
+      const domainOk = value => { const domain = value.replace(/^\./, ''); return Boolean(domain) && (host === domain || host.endsWith(`.${domain}`)); };
+      // url と domain は、渡されたものを全部見る（Chrome は domain を url より優先して使うことがある）
       const ok = cookie => {
-        if (!host) return false;
-        if (cookie?.url) return hostOf(cookie.url) === host;
-        const domain = typeof cookie?.domain === 'string' ? cookie.domain.replace(/^\./, '') : '';
-        return Boolean(domain) && (host === domain || host.endsWith(`.${domain}`));
+        if (!host || !cookie || (cookie.url == null && cookie.domain == null)) return false;
+        if (cookie.url != null && hostOf(cookie.url) !== host) return false;
+        if (cookie.domain != null && (typeof cookie.domain !== 'string' || !domainOk(cookie.domain))) return false;
+        return true;
       };
       if (!list.length || !list.every(ok)) throw denied('cookie');
     }
     const operates = OPERATES.test(method);
-    if (operates) { tab.active = true; tab.denial = null; }
+    const op = operates ? ++tab.ops : 0;
+    if (operates) {
+      // 確認を ON にした直後でも、中継のセッションの準備（Page と Fetch）が済むまで移動を待たせる
+      if (confirm) await ensureInternal(state, tab);
+    }
+    const commits = tab.commits;
     const result = await state.cdp.send(method, forward, sessionId, { timeoutMs: commandTimeoutMs });
     if (operates && confirm) {
-      const message = await settleApprovals(tab);
+      // 履歴の移動は要求を出さないこと（bfcache）があり、応答が移り終える前に返る。移り終えるのを少し待ってから答えを見る
+      if (method === 'Page.navigateToHistoryEntry') await commitAfter(tab, commits, HISTORY_COMMIT_WAIT_MS);
+      const message = await settleApprovals(tab, op);
       if (message) throw new RelayError(message);
     }
     return result;
+  }
+
+  /** タブの主フレームが commits の後にもう一度移り終えるのを、ms まで待つ */
+  async function commitAfter(tab, commits, ms) {
+    const end = Date.now() + ms;
+    while (tab.commits === commits && Date.now() < end && !tab.controller.signal.aborted) await new Promise(resolve => setTimeout(resolve, 10));
   }
 
   async function browserCommand(state, client, method, params) {
@@ -470,7 +625,7 @@ export function createChromeRelay({ connection, scope = createTempWindowScope(),
         return state.cdp.send(method, { sessionId: params.sessionId });
       }
       case 'Target.closeTarget': mine(state, client, params.targetId); return state.cdp.send(method, { targetId: params.targetId });
-      case 'Target.activateTarget': mine(state, client, params.targetId); return state.cdp.send(method, { targetId: params.targetId });
+      case 'Target.activateTarget': mine(state, client, params.targetId); return {};   // bringToFront と同じ。範囲の外の targetId は断る（上の mine）
       case 'Browser.getWindowForTarget': {
         if (!params.targetId) throw denied('target');
         mine(state, client, params.targetId);
@@ -494,13 +649,14 @@ export function createChromeRelay({ connection, scope = createTempWindowScope(),
     const { targetId, windowId } = await scope.openTab({ cdp: state.cdp, url: direct ? url : 'about:blank', entryId: entry.id });
     const fresh = await state.cdp.send('Target.getTargetInfo', { targetId }).catch(() => null);
     const tab = adopt(state, entry, fresh?.targetInfo ?? { targetId, type: 'page', title: '', url: 'about:blank', attached: false, canAccessOpener: false }, { windowId });
+    tab.active = true;   // エージェントが作ったタブ
     if (direct) return targetId;
-    tab.active = true;
+    const op = ++tab.ops;
     try {
       const sessionId = await ensureInternal(state, tab);
       const result = await state.cdp.send('Page.navigate', { url }, sessionId, { timeoutMs: commandTimeoutMs });
       if (result?.errorText) {
-        const message = tab.denial || result.errorText;
+        const message = (tab.denial?.op >= op && tab.denial.message) || result.errorText;
         tab.denial = null;
         throw new RelayError(message);
       }
@@ -528,11 +684,13 @@ export function createChromeRelay({ connection, scope = createTempWindowScope(),
   }
   /** 会話のタブの確認の待ちを取り下げ、エージェントが動かしている印を外す（ターンの終わり・止める） */
   function settleEntry(entry) {
+    entry.turn = false;   // ターンが終わった（止める・消す）。focus emulation を外す
     if (!up) return;
     for (const tab of tabsOf(up, entry)) {
-      tab.active = false; tab.granted.clear(); tab.denial = null;
+      tab.active = false; tab.approved.clear(); tab.denial = null;
       tab.controller.abort(); tab.controller = new AbortController();
     }
+    syncFocus(up, entry);
   }
 
   return {
@@ -542,8 +700,10 @@ export function createChromeRelay({ connection, scope = createTempWindowScope(),
       if (typeof sessionId !== 'string' || !sessionId || sessionId.length > 200) throw new Error('invalid session');
       await ensureListening();
       let entry = entries.get(sessionId);
-      if (!entry) { entry = { id: sessionId, key: random(), stopped: false, clients: new Set(), windows: new Set() }; entries.set(sessionId, entry); byKey.set(entry.key, entry); }
+      if (!entry) { entry = { id: sessionId, key: random(), stopped: false, clients: new Set(), windows: new Set(), turn: false }; entries.set(sessionId, entry); byKey.set(entry.key, entry); }
       if (unlock) this.resume(sessionId);
+      // 端点を渡すのはターンの始まり（core/agent-browser.mjs の browserEnvironment）。ターンの間、窓のタブに focus emulation を保つ
+      if (!entry.stopped && !entry.turn) { entry.turn = true; if (up) syncFocus(up, entry); }
       return `ws://127.0.0.1:${address.port}/devtools/browser/${entry.key}`;
     },
     /** 止める: 接続を閉じ、次の人の送信（resume）まで再接続を断る */
@@ -567,6 +727,7 @@ export function createChromeRelay({ connection, scope = createTempWindowScope(),
       const entry = entries.get(from);
       if (!entry || entries.has(to)) return;
       entries.delete(from); entry.id = to; entries.set(to, entry);
+      scope.rebind?.(from, to);
     },
     endTurn(sessionId) { const entry = entries.get(sessionId); if (entry) settleEntry(entry); },
     /** 会話を消した。接続を閉じて鍵を捨てる（窓を閉じるのは第 8 段） */
@@ -576,6 +737,7 @@ export function createChromeRelay({ connection, scope = createTempWindowScope(),
       entry.stopped = true;
       settleEntry(entry);
       closeClients(entry, 1000, 'forgotten');
+      scope.forget?.(sessionId);
       entries.delete(sessionId); byKey.delete(entry.key);
     },
     /** サイトの利用の確認（confirmAgentSites）。ON なら範囲のタブに確認の Fetch を付け、OFF なら外す（止めている要求は通す） */

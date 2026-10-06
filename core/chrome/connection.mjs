@@ -2,7 +2,8 @@
 //
 // 会話をまたいで 1 本を使い回す（許可の確認は接続ごとに出るため、切ってつなぎ直さない）。状態は 5 つ:
 //   off         何もしていない（起動直後・「切る」・「やめる」・接続が切れた後）
-//   setup  (A)  Chrome のトグル（chrome://inspect/#remote-debugging）がオフ。DevToolsActivePort が無い・書かれたポートにつながらない。1 秒ごとに読み直し、時間では打ち切らない
+//   setup  (A)  Chrome のトグル（chrome://inspect/#remote-debugging）がオフ。DevToolsActivePort が無い（reason null）・書かれたポートにつながらない
+//               （reason unreachable。Chrome が起動していないときも。ファイルは Chrome を閉じても残る）。1 秒ごとに読み直し、時間では打ち切らない
 //   permission (B)  Chrome に「リモート デバッグを許可しますか？」が出ている。待ちは無期限。Chrome の約 5 分の打ち切りは、Pleiad が確認を閉じてつなぎ直して覆う
 //   denied (C)  利用者が「キャンセル」を押した（打ち切りでは入らない）
 //   connected (D)  つながった。ws が閉じたら off＋理由。自動ではつなぎ直さない（つなぐたびに確認が出るため）
@@ -123,7 +124,8 @@ export function createChromeConnection({ locate, os, WebSocketImpl = NodeWebSock
     if (!info || !await probePort(info.port)) {
       if (stale(att)) return;
       if (att.cur) { await sweep(att.cur); att.cur = null; if (stale(att)) return; }
-      setStatus({ state: 'setup', reason: null, dialog: false });
+      // ファイルはあるのにつながらない（unreachable）: Chrome が起動していないか、トグルがオフ（どちらでもファイルは残る）。ファイルが無い（null）: トグルを一度もオンにしていない
+      setStatus({ state: 'setup', reason: info ? 'unreachable' : null, dialog: false });
       clearTimer(att, 'pollTimer');
       att.pollTimer = clock.setTimeout(() => { att.pollTimer = null; if (!stale(att)) run(tryPort(att)); }, opt.pollMs);
       return;
@@ -251,6 +253,7 @@ export function createChromeConnection({ locate, os, WebSocketImpl = NodeWebSock
     rnd.opened = true;
     clearRound(rnd);
     const cdp = createCdp(rnd.ws);
+    cdp.port = rnd.port;   // 窓を外形で探す層（core/chrome/windows.mjs）が、つないだ Chrome のプロセスを引くのに使う
     let product = null;
     try { product = (await cdp.send('Browser.getVersion')).product ?? null; }
     catch { cdp.close(); if (!stale(att)) finishAttempt(att, 'protocol', new ChromeConnectionError('protocol')); return; }

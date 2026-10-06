@@ -48,10 +48,10 @@ export function createLogSink({ file, maxBytes = SERVER_LOG_MAX_BYTES, fsImpl = 
 }
 
 /**
- * process の stdout・stderr を file へ向ける。console.log・console.error もここを通る。
+ * process の stdout・stderr を file へ向ける。console.log・console.error もここを通る。label は始まりの行の名前（サーバー・保持役 core/holder/main.mjs）。
  * 捕まらなかった例外・拒否の理由を書いてから、今と同じく異常終了する（起動の途中の失敗が、stdio の無い起動で消えないように）。戻り値は書き手
  */
-export function redirectOutput({ file, proc = process, maxBytes = SERVER_LOG_MAX_BYTES, now = () => new Date() } = {}) {
+export function redirectOutput({ file, proc = process, maxBytes = SERVER_LOG_MAX_BYTES, now = () => new Date(), label = 'server' } = {}) {
   const sink = createLogSink({ file, maxBytes });
   const route = stream => {
     stream.write = (chunk, encoding, callback) => {
@@ -66,6 +66,6 @@ export function redirectOutput({ file, proc = process, maxBytes = SERVER_LOG_MAX
     sink.write(`uncaughtException: ${error?.stack ?? error}\n`);
     proc.exit(1);
   });
-  sink.write(`--- server start ${now().toISOString()} pid ${proc.pid}\n`);
+  sink.write(`--- ${label} start ${now().toISOString()} pid ${proc.pid}\n`);
   return sink;
 }

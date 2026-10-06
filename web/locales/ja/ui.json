@@ -38,6 +38,7 @@
     },
     "nav": {
       "agents": "エージェント設定",
+      "apiKeys": "API キー",
       "usage": "使用量",
       "appearance": "外観",
       "context": "プラグイン",
@@ -249,6 +250,8 @@
         },
         "setup": {
           "status": "Chrome の準備が要ります",
+          "unreachable": "Chrome が起動していないか、リモート デバッグがオフです",
+          "unreachableNote": "Chrome を閉じているなら、起動すると自動で進みます。起動しているのに進まないときは、次の手順でオンにしてください。",
           "step1": "次のアドレスをコピーします",
           "step2": "Chrome のアドレス欄に貼り付けて開き、「Allow remote debugging for this browser instance」をオンにしてください",
           "note": "オンになったら自動で進みます（押し直しは要りません）。この設定は 1 回だけで、Chrome を起動し直しても残ります。",
@@ -1474,10 +1477,11 @@
       "offline": "{{host}} がオフラインのため、答えを送れません。つながり直すと送れます。",
       "answeredByHost": "{{host}} で{{what}} · {{time}}",
       "answeredByDevice": "{{device}} で{{what}} · {{time}}",
-      "hostOnly": "この承認はホストの画面で答えます。ホストの画面か、子の会話を見るから答えてください。",
+      "hostOnly": "この承認はホストの画面で答えます。ホストの画面で答えてください。",
+      "hostOnlyDesktop": "この承認はホストの画面で答えます。ホストの画面で答えてください（「詳細を見る」→「ホストで開く」からも開けます）。",
       "answered": "答えた",
       "hostOffline": "ホストがオフライン",
-      "viewChild": "子の会話を見る",
+      "viewDetail": "詳細を見る",
       "hostCanAnswer": "依頼元の会話（⇄ {{device}}）でも答えられます",
       "viewChildFailed": "リモートの窓を開けませんでした: {{error}}"
       },
@@ -2205,7 +2209,7 @@
       "groupEnded": "終わった",
       "showMore": "さらに {{count}} 件を表示",
       "delegated": "· 委譲 {{count}}",
-      "instructionsWaiting": "追加指示 {{count}} 件待機中",
+      "instructionsWaiting_other": "追加指示 {{count}} 件待機中",
       "instruction": "追加の指示",
       "instructionQueued": "待機中 · 今の作業が終わると届く",
       "instructionDropped": "✕ 届かずに終わった",
@@ -2215,6 +2219,28 @@
       "groupCommands": "コマンド",
       "openChat": "会話として開く",
       "hostResult": "結果（ホストから）",
+      "hostOmitted_other": "古い {{count}} 件のやり取りは省いています",
+      "hostDescendantsOmitted_other": "ホストで任せた作業のうち、古い {{count}} 件は一覧に出していません",
+      "openOnHost": "ホストで開く",
+      "hostOfflineUntil": "オフライン · {{time}} までの分",
+      "hostOfflineRow": "オフライン · {{time}} まで",
+      "hostUntil": "{{time}} まで",
+      "hostOfflineMark": "ホストの様子を待っている",
+      "hostStaleMark": "最後に読んだ時点では動いていた",
+      "hostStaleRow": "{{time}} の時点 · 開くと読み直します",
+      "hostStaleRowNoTime": "開くと読み直します",
+      "hostOfflineThread": "ホストがオフライン",
+      "hostOfflineCatchUp": "{{time}} までの分 · つながり直すと追いつきます",
+      "hostOfflineCatchUpNoTime": "つながり直すと追いつきます",
+      "hostViewUnsupported": "このホストは経過を読めません（ホストの Pleiad を新しくすると見えます）",
+      "hostViewDenied": "ホストが AI からの依頼を受けていません",
+      "hostViewNotFound": "ホストにこのタスクが見つかりません",
+      "hostViewTooLarge": "経過が大きすぎて運べません",
+      "hostViewTimeout": "ホストから返事がありません",
+      "hostViewBusy": "読み出しが混み合っています。少し待つと読み直します",
+      "hostViewFailed": "ホストから経過を読めませんでした",
+      "hostOfflineBoxes": "ホストがオフラインのため、経過はまだ読めていません。つながり直すと読みます",
+      "hostOfflineBoxesUntil": "ホストがオフライン（{{time}} から）のため、経過はまだ読めていません。つながり直すと読みます",
       "request": "依頼",
       "noMessages": "まだ発言はありません。",
       "open": "開く",
@@ -2989,6 +3015,186 @@
     "busy": "ほかのフォルダーを送っている途中です。",
     "dropFailed": "フォルダーを読めませんでした（{{error}}）"
   },
+  "apiKeys": {
+    "unnamed": "名前のないキー",
+    "lead": "登録しただけでは、どこにも送りません。使う所でキーを選んだときから送ります。",
+    "heading": "登録済みのキー",
+    "empty": "キーはまだありません",
+    "loadFailed": "API キーを読み込めませんでした: {{error}}",
+    "failed": "操作できませんでした: {{error}}",
+    "cancel": "やめる",
+    "show": "表示",
+    "hide": "隠す",
+    "manage": "API キーで管理",
+    "useKey": "使うキー",
+    "checking": "確かめています…",
+    "listSeparator": "・",
+    "encryptedNote": "キーは OS の暗号化で保存し、画面には表示しません。",
+    "notEncrypted": "この起動ではキーを暗号化できません（本人だけが読めるファイルに保存します）。",
+    "deferred": {
+      "title": "API キーの移行を保留しています",
+      "locked": "暗号化された古いキーを、この起動では読めません。暗号化できる起動（Pleiad デスクトップ）で開くと移行されます。それまでは、通話・委譲・接続先は今までのキーのまま使えます。",
+      "other": "古いキーの置き場を読めないため、移行を保留しています。それまでは、通話・委譲・接続先は今までのキーのまま使えます。"
+    },
+    "deferredInUse": "移行を保留中のため、今までのキーのまま使っています（設定 › API キー）",
+    "deferredShort": "移行を保留中です（設定 › API キー）",
+    "status": {
+      "registered": "登録済み",
+      "registeredPrefix": "登録済み ·",
+      "checked": "登録済み · 確認 ✓ {{when}}",
+      "checkedBare": "確認 ✓ {{when}}",
+      "failed": "⚠ 確認に失敗: {{reason}}（{{when}}）",
+      "reason": {
+        "invalid": "キーが受け付けられませんでした",
+        "unreachable": "確かめに行けませんでした"
+      }
+    },
+    "select": {
+      "none": "使わない",
+      "register": "＋ {{provider}} のキーを登録…",
+      "failedHint": "⚠ 確認に失敗",
+      "checkedHint": "確認 ✓ {{when}}"
+    },
+    "register": {
+      "hint": "API キーに登録され、接続先や委譲からも選べます。",
+      "useNow": "登録して使う",
+      "submit": "登録"
+    },
+    "add": {
+      "open": "＋ キーを追加",
+      "title": "キーを追加",
+      "provider": "プロバイダー",
+      "providers": {
+        "openrouter": {
+          "name": "OpenRouter",
+          "hint": "openrouter.ai · 多数のモデル"
+        },
+        "cerebras": {
+          "name": "Cerebras",
+          "hint": "委譲の判定器"
+        },
+        "custom": {
+          "name": "その他",
+          "hint": "名前を付けて登録"
+        }
+      },
+      "taken": "登録済み",
+      "name": "名前",
+      "nameAria": "キーの名前",
+      "namePlaceholder": "例: 社内 LiteLLM",
+      "key": "キー",
+      "keyAria": "{{provider}} のキー",
+      "keyAriaCustom": "キー",
+      "registered": "{{name}} のキーを登録しました。確かめています…",
+      "registeredChecked": "{{name}} のキーを登録しました。確認 ✓",
+      "registeredFailed": "{{name}} のキーを登録しました。確認に失敗しました。"
+    },
+    "actions": {
+      "replace": "差し替える",
+      "check": "確かめる",
+      "delete": "削除",
+      "replaceAria": "差し替える · {{name}}",
+      "checkAria": "確かめる · {{name}}",
+      "deleteAria": "削除 · {{name}}"
+    },
+    "check": {
+      "ok": "{{name}} のキーを確かめました。確認 ✓",
+      "failed": "{{name}} のキーを確かめました。確認に失敗しました。"
+    },
+    "uses": {
+      "label": "使っている所",
+      "none": "どこにも使われていません",
+      "aria": "{{name}} を使っている所",
+      "endpoint": "{{agent}} の接続先「{{name}}」",
+      "voice": "通話",
+      "judge": "委譲の判定器 {{judge}}",
+      "more": "ほか {{count}} か所",
+      "less": "たたむ",
+      "open": "設定 › {{page}} を開く"
+    },
+    "effect": {
+      "endpoint": "選んでいる会話は選び直しが必要になります",
+      "voice": "通話は使えなくなります",
+      "judge": "この判定器は使われなくなります"
+    },
+    "list": {
+      "used": "使っているキー",
+      "unused": "使われていないキー",
+      "unusedHeading": "どこにも使われていないキー",
+      "all": "登録済みのキー"
+    },
+    "replace": {
+      "aria": "{{name}} のキーを差し替える",
+      "input": "{{name}} の新しいキー",
+      "cost": "差し替えると、使っている接続先を確かめ直します（わずかに料金がかかることがあります）",
+      "submit": "差し替える",
+      "done": "{{name}} のキーを差し替えました"
+    },
+    "result": {
+      "aria": "確かめ直した結果",
+      "checking": "確かめています…",
+      "running": "使っている所を確かめ直しています…",
+      "noUses": "このキーを使っている所はありません。",
+      "all": "使っている所 {{total}} 件を確かめ直しました。すべてつながりました。",
+      "partial": "使っている所 {{total}} 件のうち {{ok}} 件につながり、{{ng}} 件は確認に失敗しました。",
+      "endpointOk": "つながりました · モデル {{count}} 件",
+      "endpointFailed": "確認に失敗: {{error}}",
+      "keyOk": "キーを確かめました",
+      "keyFailed": "確認に失敗: キーが受け付けられませんでした",
+      "error": "確認に失敗: {{error}}",
+      "openEndpoint": "接続先を開く",
+      "openSettings": "設定を開く",
+      "close": "閉じる"
+    },
+    "delete": {
+      "aria": "{{name}} の削除の確認",
+      "withUses": "{{name}} のキーを削除しますか。次の所が使えなくなります。",
+      "noUses": "{{name}} のキーを削除しますか。どこにも使われていません。",
+      "yes": "削除する",
+      "done": "{{name}} のキーを削除しました。",
+      "doneWithUses": "{{name}} のキーを削除しました。使っていた所（{{uses}}）は、キーを選び直してください。"
+    },
+    "guide": {
+      "title": "{{name}} のキーが {{count}} つあります",
+      "body": "移行のとき、値の違う {{name}} のキーが見つかりました。まとめると、差し替えや削除が 1 回で済みます。",
+      "merge": "まとめる…",
+      "keep": "このままにする",
+      "kept": "このままにしました。この案内はもう出しません。",
+      "pick": "残すキー",
+      "usedBy": "使っている所: {{uses}}",
+      "mergeGo": "まとめる",
+      "note": "選ばなかったキーは削除し、使っている所は残すキーに切り替えます。",
+      "merged": "{{name}} のキーを 1 つにまとめました"
+    },
+    "voice": {
+      "note": "選ぶと、通話中の音声と読み上げる文章が OpenRouter（と、選んだモデルの提供元）へ送られます。",
+      "unset": "通話は使えません。キーを選ぶと使えます。",
+      "selectLabel": "通話に使うキー",
+      "chosen": "OpenRouter のキーを通話に使います。",
+      "unchosen": "通話にキーを使わないようにしました。",
+      "registered": "OpenRouter のキーを登録し、通話に使います。"
+    },
+    "delegation": {
+      "title": "判定器が使うキー",
+      "unset": "キーを選ぶまで、この判定器は使われません",
+      "selectKey": "キーを選ぶ",
+      "selectLabel": "{{service}} に使うキー",
+      "note": "キーを選ぶと、委譲の依頼文と種類がそのサービスに送られます。"
+    },
+    "endpoint": {
+      "registered": "登録済みのキー",
+      "registeredOne": "登録済みの {{name}} のキー",
+      "selectLabel": "使う登録済みのキー",
+      "usedBy": "{{count}} か所で使用中",
+      "unused": "未使用",
+      "own": "別のキーを入れる",
+      "ownAria": "別のキー",
+      "ownCaption": "API キーに別のキーとして登録されます。",
+      "keyRequired": "別のキーを入力してください",
+      "registersOpenrouter": "API キーに登録され、通話や委譲でも選べます。",
+      "registersNamed": "接続先の名前で API キーに登録されます。"
+    }
+  },
   "routing": {
     "auto": "自動",
     "autoTitle": "委譲先を自動で選んだ",
@@ -3133,29 +3339,16 @@
       "escalate": "Jev が迷ったら Cerebras に聞き直す",
       "effective": {
         "noKey": "{{service}} のキーが登録されていないため、{{judge}} を選んだ種類は難しさを「中」として扱います。",
-        "addKey": "キーを登録",
         "noCandidates": "使える委譲先がないため、自動の委譲はすべて失敗します。",
         "viewCandidates": "候補を見る"
       },
       "judgeLabel": "{{kind}} の判定",
-      "keysTitle": "判定器のキー",
-      "keySend": "キーを登録すると、委譲の依頼文と種類がそのサービスに送られます。",
       "service": {
         "openrouter": "OpenRouter（Jev）",
         "cerebras": "Cerebras"
       },
-      "keySaved": "キー: 登録済み",
-      "keyNone": "キー: 未登録",
-      "keyAdd": "登録",
-      "keyChange": "変更",
-      "keyDelete": "削除",
-      "keySave": "保存",
       "keyCancel": "やめる",
-      "keyShow": "表示",
-      "keyHide": "隠す",
       "keyInput": "{{service}} のキー",
-      "keyDeleteConfirm": "{{service}} のキーを削除しますか。この判定器は使われなくなります。",
-      "notEncrypted": "この起動ではキーを暗号化できません（本人だけが読めるファイルに保存します）。",
       "advanced": "詳しい設定",
       "tiersTitle": "段ごとの候補",
       "tiersOrder": "上から順に試す",
@@ -3925,8 +4118,10 @@
       "starting": "準備中",
       "listening": "聞いています",
       "hearing": "聞き取っています",
+      "hold": "まとめ待ち（まだ聞いています）",
       "thinking": "考え中",
       "speaking": "話しています",
+      "speakingLive": "話しています（話すと止まります）",
       "muted": "ミュート中"
     },
     "live": {
@@ -3935,12 +4130,33 @@
       "muted": "マイクをミュートしました",
       "unmuted": "ミュートを解除しました",
       "denied": "マイクが許可されていません",
-      "ended": "通話を終えました"
+      "ended": "通話を終えました",
+      "sent": "まとめて 1 通で送りました",
+      "stopped": "読み上げを止めました"
     },
     "mark": "音声で話した発言",
+    "hold": {
+      "group": "あなたの声（まとめ待ち）",
+      "listening": "聞いています",
+      "waiting": "まだ聞いています · あと {{seconds}} 秒で送ります",
+      "finishing": "文字にしています · まもなく送ります",
+      "sendNow": "いま送る",
+      "cancel": "取り消す"
+    },
+    "delivery": {
+      "sent": "AI に渡しました",
+      "pending": "差し込み待ち · 次の区切りで渡します",
+      "queued": "送信待ち · この作業が終わると送ります",
+      "queuedOrder": "送信待ち · 前の発言が送られてから送ります",
+      "queuedLimit": "送信待ち · 上限が解けたら送ります"
+    },
     "openSettings": "設定を開く",
     "hint": {
-      "reading": "読み上げ中",
+      "readingBarge": "読み上げ中 · 話すと止まります",
+      "readingClosed": "読み上げ中 · いまはマイクを閉じています",
+      "readingClosedEcho": "読み上げ中 · いまはマイクを閉じています（エコー除去がオフのとき）",
+      "cut": "ここで読み上げを止めました",
+      "resume": "続きを読む",
       "stop": "止める",
       "jump": "話している場所へ"
     },
@@ -3957,7 +4173,7 @@
       "stt": "聞き取れませんでした。もう一度話してください",
       "tts": "読み上げられませんでした。画面の文字で見てください",
       "sendFailed": "発言を送れませんでした: {{error}}",
-      "notSent": "いまは送れなかったので、発言は入力欄に残しました",
+      "notSent": "いまは送れませんでした",
       "start": "通話を始められませんでした ·",
       "startTimeout": "通話の準備が整いませんでした"
     },
@@ -3967,25 +4183,7 @@
       "saved": "保存しました",
       "failed": "保存できませんでした: {{error}}",
       "key": {
-        "title": "OpenRouter のキー",
-        "set": "登録済み",
-        "unset": "未登録",
-        "replace": "差し替える",
-        "delete": "削除",
-        "save": "登録",
-        "show": "表示",
-        "hide": "隠す",
-        "saved": "キーを登録しました",
-        "deleted": "キーを削除しました",
-        "note": "キーはこの PC だけが持ち、画面には表示しません。登録すると、通話中の音声と読み上げる文章が OpenRouter（と、選んだモデルの提供元）へ送られます。",
-        "encrypted": "キーは OS の暗号化で保存されています。",
-        "plain": "この PC では暗号化できないため、キーは権限を絞ったファイルにそのまま置かれます。",
-        "check": {
-          "ok": "キーを確かめました",
-          "invalid": "このキーは OpenRouter に受け付けられませんでした",
-          "unreachable": "OpenRouter に確かめに行けませんでした",
-          "nokey": ""
-        }
+        "title": "OpenRouter のキー"
       },
       "models": {
         "title": "モデルと声",
@@ -4006,10 +4204,38 @@
         "today": "今日: 通話 {{minutes}} 分 · 聞き取り {{stt}} 分 · 読み上げ {{chars}} 字",
         "note": "上限に達すると通話を終えます（1 日の上限に達したあとは始められません）。声が聞こえないまま 10 分たった通話も終えます。"
       },
+      "nextCall": "区切り・話して読み上げを止める・エコー除去は、通話を始めるときに決まります。通話中に替えたときは、次の通話から効きます（効果音はすぐ効きます）。",
+      "turn": {
+        "title": "話の区切り",
+        "hint": "話し終えてから送るまでの待ちです。長いほど、言いよどんでも 1 通にまとまります。短いほど返事が早く始まります。",
+        "label": "区切りの長さ",
+        "short": "短め",
+        "standard": "標準",
+        "long": "長め",
+        "est": {
+          "short": "短め: 話し終えて約 0.7 秒で送ります。返事は今とほぼ同じ速さ。短い間でも別の通になることがあります。",
+          "standard": "標準: 話し終えて約 1.2 秒で送ります。「で、あのー、」のような言いよどみは 1 通にまとまります。返事は今より約 0.5 秒遅れます。",
+          "long": "長め: 話し終えて約 2.0 秒で送ります。間の長い話も 1 通にまとまります。返事は今より約 1.3 秒遅れます。"
+        },
+        "tail": "言葉が「、」や「で」「けど」で終わっているときは少し長く、「です。」「して」で終わっているときは少し短く待ちます。"
+      },
+      "barge": {
+        "title": "割り込み",
+        "label": "話して読み上げを止める",
+        "hint": "ヘッドセットか、エコー除去が効いているときに使えます。効かないときは自動でオフになり、読み上げ中は聞きません。"
+      },
+      "sounds": {
+        "title": "効果音",
+        "label": "効果音",
+        "hint": "画面を見なくても状態が分かる短い音です。読み上げ中は鳴らしません（止めたときの音だけ例外）。",
+        "off": "オフ",
+        "few": "少なめ（送った・止めた）",
+        "all": "すべて"
+      },
       "audio": {
         "title": "マイク",
         "echo": "エコー除去・ノイズ抑制・自動音量",
-        "echoHint": "ブラウザーの機能です。スピーカーで聞くときに、自分の声以外を拾いにくくします。声がこもるときは切ってください。",
+        "echoHint": "ブラウザーの機能です。スピーカーで聞くときに、自分の声以外を拾いにくくします。声がこもるときは切ってください。切ると「話して読み上げを止める」は使えません。",
         "permission": "マイクが許可されていないときは、ブラウザーのサイトの設定（アドレス欄の鍵のマーク）か、OS のプライバシーの設定でマイクを許可してください。デスクトップ版は、この画面からのマイクの利用を自動で許可します。"
       }
     }

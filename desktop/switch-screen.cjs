@@ -46,7 +46,7 @@ function displayState(snap) {
     case 'interrupting':
       return (snap.interrupt?.total ?? 0) > 0 ? { ...base, phase: 'stopping', interrupt: snap.interrupt } : { ...base, phase: 'switching' };
     // locking は作業が 0 件（止まるものも無いか止めてよい）になった後。ロックが取れなければ待ちに戻るが、ほとんどはそのまま切り替わる
-    case 'locking': case 'stopping': case 'starting': case 'fallback': case 'reloading':
+    case 'locking': case 'handing': case 'stopping': case 'starting': case 'fallback': case 'reloading':
       return { ...base, phase: 'switching' };
     case 'done':
       return snap.previous ? { ...base, phase: 'failed', at: snap.at ?? null } : { ...base, phase: 'done', at: snap.at ?? null, stopped: pickList(snap.stopped) };

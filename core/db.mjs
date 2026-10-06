@@ -653,9 +653,9 @@ export function notificationTable(db) {
       prepared(db, 'UPDATE notifications SET resolved_at = ?, read_at = COALESCE(read_at, ?), data = ? WHERE id = ?').run(at, at, jsonOf({ ...JSON.parse(row.data), outcome }), row.id);
       return true;
     },
-    /** 決着していないあなた待ちを全部決着させる（起動時。承認はメモリにしか無く、再起動で消える） */
-    resolveAllWaiting(at, outcome) {
-      const rows = prepared(db, "SELECT id, data FROM notifications WHERE kind = 'wait' AND resolved_at IS NULL").all();
+    /** 決着していないあなた待ちを全部決着させる（起動時。承認はメモリにしか無く、再起動で消える）。except の dedupeKey の行は残す（付け直すターンの承認） */
+    resolveAllWaiting(at, outcome, except = null) {
+      const rows = prepared(db, "SELECT id, dedupe_key, data FROM notifications WHERE kind = 'wait' AND resolved_at IS NULL").all().filter(row => !except?.has(row.dedupe_key));
       for (const row of rows) prepared(db, 'UPDATE notifications SET resolved_at = ?, read_at = COALESCE(read_at, ?), data = ? WHERE id = ?').run(at, at, jsonOf({ ...JSON.parse(row.data), outcome }), row.id);
       return rows.length;
     },
@@ -700,6 +700,22 @@ export function acquire(dir, prepare = () => {}) {
       try { slot.db.close(); } catch { /* 閉じるだけ */ }
     },
   };
+}
+
+/**
+ * この置き場の共有している接続を、持ち主が残っていても閉じる（WAL を本体へ戻してから）。引き継ぎ（無停止の更新 2d）で、データ置き場のロックを放す前に
+ * 呼ぶ: 新しいサーバーがロックを取ってすぐ DB を開くので、旧サーバーの接続が（プロセスの終了まで）開いたままだと、閉じかけの WAL に当たって読めないことがある。
+ * 閉じた後に acquire すれば開き直す。持ち主の release は何もしない
+ */
+export function closeAll(dir) {
+  const key = path.resolve(dir);
+  const slot = open.get(key);
+  if (!slot) return false;
+  open.delete(key);
+  slot.refs = 0;
+  try { slot.db.exec('PRAGMA wal_checkpoint(TRUNCATE)'); } catch { /* 閉じるだけ */ }
+  try { slot.db.close(); } catch { /* 閉じるだけ */ }
+  return true;
 }
 
 /** この置き場の共有している接続の数（0 なら閉じている。データ置き場を消す前の確認・テスト用） */

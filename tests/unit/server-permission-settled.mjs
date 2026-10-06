@@ -88,7 +88,8 @@ export default async function (t) {
   const onEvent = client.slice(client.indexOf('function onEvent('));
   t.ok('画面: permissionSettled は会話の絞り込み（isMine）の前に受ける（開いていない会話の覚えと、子の会話のダイアログのカードを畳むため）',
     onEvent.indexOf("ev.type === 'permissionSettled'") > 0 && onEvent.indexOf("ev.type === 'permissionSettled'") < onEvent.indexOf('if (!isMine(ev))'));
-  t.ok('画面: 答えを送っている最中のカードは触らず、応答で畳む', /function onPermissionSettled\([\s\S]*?entry\.sending\(\)/.test(client));
+  // 名簿は id ごとのカードの集合（web/card-roll.mjs）。同じ承認のカードのどれかが送っている最中なら触らない
+  t.ok('画面: 答えを送っている最中のカードは触らず、応答で畳む', /function onPermissionSettled\([\s\S]*?openCards\.sending\(ev\.id\)/.test(client));
   const apply = client.slice(client.indexOf('function applyRunning('), client.indexOf('const behind = new Map();'));
   t.ok('画面: running のたびに、出ているカードを permissions と突き合わせる', /reconcileOpenCards\(\)/.test(apply));
   const reconcile = client.slice(client.indexOf('function reconcileOpenCards('), client.indexOf('function registerRelayCard('));

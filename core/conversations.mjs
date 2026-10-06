@@ -680,6 +680,18 @@ export function wrapBackend(native) {
       return runOnce(args);
     }
   };
+  // 付け直したターン（無停止の更新 2b-7）。会話の id をネイティブの id に訳して流す（委譲の子・新規の下書きから始めた会話は、会話の id とネイティブの id が違う）。
+  // ネイティブの会話はターンの始まりの session の出来事で採用済み（旧サーバーが checkpoint で保存している）。履歴の取り込みは、会話を読むとき getMessages が行う
+  if (native.adoptTurn) wrapped.adoptTurn = async (args) => {
+    const id = args.sessionId;
+    const r = id && await conversation(id);
+    if (!r) return native.adoptTurn(args);
+    if (r.backend !== native.id) throw new Error(t("conversations.backendMismatch"));
+    if (!r.nativeId) throw new Error('adopt: the conversation has no native session');
+    return native.adoptTurn({ ...args, sessionId: r.nativeId, hostSessionId: id, hostBackend: wrapped,
+      askPermission: req => args.askPermission({ ...req, sessionId: id }),
+      emit: (ev, opts) => args.emit(hostEvent(ev, id, r.nativeId), opts) });
+  };
   wrapped.prepareTurn = async (id) => {
     const r = id && await conversation(id);
     if (r && r.backend === native.id) {

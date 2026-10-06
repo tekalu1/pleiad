@@ -2,9 +2,11 @@
 // 新しい main が、組み終えた実行場所の pleiad-node.exe で `app\<新>\core\handover-check.mjs` を走らせ、標準出力の最後の行の JSON を読む
 // （desktop/switch.cjs の runHandoverCheck）。この版のデータの形式番号・main との口の版の範囲・版とビルドを出し、
 // データ置き場の data-schema.json（今の形式番号）を読むだけで、DB もロックも開かない（走っている古いサーバーが持っている）。
-// 出力 { check: 1, appVersion, build, protocolVersion, dataSchema, dataSchemaFound, ipc: [min, max] }。
+// 出力 { check: 1, appVersion, build, protocolVersion, dataSchema, dataSchemaFound, ipc: [min, max], handover: [min, max], holder: [min, max] }。
 //   dataSchema       この版が使うデータの形式番号（core/data-schema.mjs の DATA_SCHEMA）
 //   dataSchemaFound  データ置き場の今の形式番号。読めなければ null
+//   handover         引き継ぎ（core/handover.mjs。保持役に載ったターンを待たずに渡す）の形の版の範囲。旧サーバーの running の handover.v が入っていれば引き継ぐ
+//   holder           保持役の規約の版の範囲（core/holder/protocol.mjs）。旧サーバーが載せている保持役の世代に入っていなければ、引き継ぎをしない
 // 形が変わっても、読む側（main）が知っている欄だけを見る。欄を消さない・意味を変えない（check の版を上げるときは読む側も直す）。
 // readBuildInfo はサーバーの ready（core/server.mjs）も使う。
 import fs from 'node:fs';
@@ -14,6 +16,8 @@ import { fileURLToPath } from 'node:url';
 import { DATA_SCHEMA } from './data-schema.mjs';
 import { IPC_RANGE } from './main-link.mjs';
 import { PROTOCOL_VERSION } from './protocol.mjs';
+import { HANDOVER_RANGE } from './handover.mjs';
+import { HOLDER_RANGE } from './holder/protocol.mjs';
 
 export const CHECK_VERSION = 1;
 /** 版を見分けるビルドの短いハッシュの長さ（desktop/runtime-manifest.cjs の BUILD_HASH_LENGTH と同じ） */
@@ -39,7 +43,7 @@ export function readDataSchema(dataDir) {
 }
 
 export function handoverInfo({ appRoot = path.join(path.dirname(fileURLToPath(import.meta.url)), '..'), dataDir }) {
-  return { check: CHECK_VERSION, ...readBuildInfo(appRoot), protocolVersion: PROTOCOL_VERSION, dataSchema: DATA_SCHEMA, dataSchemaFound: dataDir ? readDataSchema(dataDir) : null, ipc: IPC_RANGE };
+  return { check: CHECK_VERSION, ...readBuildInfo(appRoot), protocolVersion: PROTOCOL_VERSION, dataSchema: DATA_SCHEMA, dataSchemaFound: dataDir ? readDataSchema(dataDir) : null, ipc: IPC_RANGE, handover: HANDOVER_RANGE, holder: HOLDER_RANGE };
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
