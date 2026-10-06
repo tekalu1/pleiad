@@ -65,7 +65,17 @@ export default async function (t) {
     // 完了通知で始まった依頼元のターンが走っている間は、同じ会話に次のターンを始められない（切り替え中）。空くまで待ってやり直す
     const tool = async (sessionId, name, args, extra = {}) => {
       for (let i = 0; ; i++) {
-        try { return await ct.runTurn({ ...(sessionId ? { sessionId } : { backend: 'fake', cwd: ROOT }), ...extra, prompt: prompt(name, args) }, { ms: 60_000 }); }
+        try {
+          const from = ct.mark();
+          const r = await ct.runTurn({ ...(sessionId ? { sessionId } : { backend: 'fake', cwd: ROOT }), ...extra, prompt: prompt(name, args) }, { ms: 60_000 });
+          // 直前の完了通知で始まったターンの終わりを、自分のターンの終わりと取り違えて返ることがある（同じ会話の turnEnd）。
+          // 道具の結果がまだ無いときは、自分のターンの結果が届くまで待ってから返す
+          if (!r.events.some(e => e.type === 'tool.result')) {
+            await ct.waitFor(e => e.type === 'tool.result', { from, ms: 30_000 });
+            return ct.turnResult(from, { sessionId: r.sessionId });
+          }
+          return r;
+        }
         catch (e) {
           if (i < 40 && /切り替え中/.test(e.message)) { await sleep(250); continue; }
           e.message = `${name} ${JSON.stringify(args).slice(0, 80)}: ${e.message}`;
@@ -212,7 +222,9 @@ export default async function (t) {
 
     // ---- 設定の変更の承認: 端末のカードには答えるボタンが無く、AI にも「ホストの画面で答える」と伝わる。ホストで答えるとカードが畳まれる
     const markH = ct.mark();
-    const hoId = toolResult(await tool(sid, 'ply_delegate', { host: 'desk-test', kind: 'mechanical', backend: 'fake', task: 'control:' + JSON.stringify({ name: 'set_setting', arguments: { key: 'confirmAgentSites', value: false, reason: 'テスト' } }) })).json.taskId;
+    const hoStart = toolResult(await tool(sid, 'ply_delegate', { host: 'desk-test', kind: 'mechanical', backend: 'fake', task: 'control:' + JSON.stringify({ name: 'set_setting', arguments: { key: 'confirmAgentSites', value: false, reason: 'テスト' } }) }));
+    if (!hoStart.json?.taskId) throw new Error(`hostOnly の委譲が通らない: ${hoStart.text.slice(0, 300) || '(道具の結果なし)'}`);
+    const hoId = hoStart.json.taskId;
     const hoCard = await ct.waitFor(e => e.type === 'permission' && e.remote?.hostOnly === true && e.sessionId === sid, { from: markH, ms: 30_000 });
     t.ok('設定の変更の承認は、端末に答えられない「ホストの画面で答える」カード（hostOnly）として出る', hoCard.remote.hostName === 'desk-test' && hoCard.canAlways === false, JSON.stringify(hoCard.remote));
     const hoAns = await termCmd('resolvePermission', { id: hoCard.id, allow: true }).then(() => null, e => e);
