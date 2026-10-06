@@ -1459,6 +1459,8 @@
       "offline": "{{host}} がオフラインのため、答えを送れません。つながり直すと送れます。",
       "answeredByHost": "{{host}} で{{what}} · {{time}}",
       "answeredByDevice": "{{device}} で{{what}} · {{time}}",
+      "hostOnly": "この承認はホストの画面で答えます。ホストの画面か、子の会話を見るから答えてください。",
+      "answered": "答えた",
       "hostOffline": "ホストがオフライン",
       "viewChild": "子の会話を見る",
       "hostCanAnswer": "依頼元の会話（⇄ {{device}}）でも答えられます",
@@ -2049,6 +2051,7 @@
     "remoteOrigin": {
     "badge": "⇄ {{device}} の AI から",
     "request": "依頼元の会話「{{title}}」",
+    "modeIs": "承認モード {{mode}}（依頼元に合わせた）",
     "mode": "承認モードは依頼元に合わせた"
     },
     "rowMore": "「{{title}}」の操作",

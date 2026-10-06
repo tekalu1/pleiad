@@ -66,7 +66,8 @@ export function createAgentBridge({ call, hosts = () => [] }) {
       else if (m.method === 'tools/list') result = { tools: agentTools(locale, hosts()) };
       else if (m.method === 'tools/call') {
         try {
-          const definition = agentTools(locale, hosts()).find(t => t.name === m.params?.name);
+          // host の引数は、今使えるホストが無くても受ける（会話の途中で設定が変わっても、説明つきの失敗にする。callAgentOp の host の分岐が理由を言う）
+          const definition = agentTools(locale, [{ name: '', online: false }]).find(t => t.name === m.params?.name);
           const args = m.params?.arguments ?? {};
           if (!definition || !args || typeof args !== 'object' || Array.isArray(args) || Object.keys(args).some(k => !Object.hasOwn(definition.inputSchema.properties, k))) throw new Error(agentT(locale, 'bridge.invalidTool'));
           const data = await call(await owner(), definition.name, args, { locale });

@@ -8,7 +8,7 @@ export const AGENT_PROTO = 1;
 /** AI の依頼として口に出す操作は、委譲の 6 つだけ（任意の操作を呼ぶ道は無い） */
 export const AGENT_OPS = Object.freeze(['delegate', 'status', 'wait', 'send', 'cancel', 'list']);
 /** 端末ごとの上限（ADR 0141）: 動いているタスク・delegate と send の頻度・1 つの便りの大きさ・同時の依頼 */
-export const AGENT_LIMITS = Object.freeze({ active: 8, perMinute: 20, messageBytes: 256 * 1024, pending: 32, depth: 4 });
+export const AGENT_LIMITS = Object.freeze({ active: 8, perMinute: 20, messageBytes: 256 * 1024, pending: 32, depth: 4, portsPerDevice: 4, pendingPerDevice: 64 });
 /** 完了した便りに載せる結果の長さ（ply_task_status の 1 ページと同じ） */
 export const RESULT_PAGE = 16_000;
 /** 仮の親の ID。端末の会話の ID はホストに無いので、この形で「祖先」として扱う（ADR 0141） */
@@ -50,9 +50,21 @@ export function normalizeRequester(value) {
   };
 }
 
-/** 中継する承認の受領証。承認の ID・タスク・道具・入力に結んだ hash（ADR 0082 の受領証の考え）。ホストが中継したときに作り、答えに添えて返させる */
-export function relayReceipt({ id, taskId, toolName, input, salt }) {
-  return crypto.createHash('sha256').update(JSON.stringify([salt, id, taskId, toolName ?? '', input ?? null])).digest('hex');
+/**
+ * 中継する承認の受領証。承認の ID・タスク・道具・入力（質問なら質問の中身も）に結んだ hash（ADR 0082 の受領証の考え）。
+ * ホストが中継したときに作り、答えに添えて返させる
+ */
+export function relayReceipt({ id, taskId, toolName, input, questions, salt }) {
+  return crypto.createHash('sha256').update(JSON.stringify([salt, id, taskId, toolName ?? '', input ?? null, questions ?? null])).digest('hex');
+}
+
+/** 人の答えのうち、口へ運ぶ項目（質問の答え・注釈・自由記述）。大きさを絞る（承認の答えと同じ 1 通の上限の中で） */
+export function normalizeAnswerExtras(msg) {
+  const bounded = (v, max) => { if (v == null) return null; try { return JSON.stringify(v).length <= max ? v : null; } catch { return null; } };
+  return {
+    answers: bounded(msg?.answers, 16 * 1024), annotations: bounded(msg?.annotations, 16 * 1024),
+    response: typeof msg?.response === 'string' ? msg.response.slice(0, 8 * 1024) : bounded(msg?.response, 16 * 1024),
+  };
 }
 
 export const sameReceipt = (a, b) => {

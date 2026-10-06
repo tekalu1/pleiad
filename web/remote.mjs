@@ -325,6 +325,8 @@ export function setupRemote({ cmd, page, openSession = () => {} }) {
         button(t('settings.remote.agent.open'), () => openLatest(d), 'btn btn-quiet'),
         button(t('settings.remote.agent.stopAll'), () => setAgent(d, undefined, { stopAll: true }), 'btn btn-quiet'));
       line.querySelectorAll('button').forEach(b => { b.disabled = busy; });
+      // 止めるものが無いときは押せない（動いている作業が 0 件）
+      line.lastChild.disabled = busy || !(d.agent.active > 0);
       box.append(line);
     }
     return box;

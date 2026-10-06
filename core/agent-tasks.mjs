@@ -14,7 +14,11 @@ const UNDELIVERED = new Set(['none', 'pending', 'delivering']);
 // 手元の委譲には深さの上限は無い（2026-09-27 に廃止）
 const REMOTE_DEPTH_MAX = 4;
 // ホストの便りから写しの行へ写す項目（agent-tasks の mirror）。結果・状態・どの委譲先で動いているか
-const MIRROR_FIELDS = ['title', 'status', 'error', 'backend', 'model', 'effort', 'mode', 'cwd', 'remoteSessionId', 'worktree', 'routing', 'result', 'resultLength', 'hostWaiting', 'hostPendingMessages'];
+const MIRROR_FIELDS = ['title', 'status', 'error', 'backend', 'model', 'effort', 'mode', 'cwd', 'remoteSessionId', 'worktree', 'routing', 'result', 'resultLength', 'hostWaiting', 'hostPendingMessages', 'cancelPending', 'hostLost'];
+// ホストの子を止める依頼を待つ上限。応答しないホストが、会話の中断・「すべて止める」を長く止めない（届かなかった分は cancelPending でつながり直したときに送り直す）
+const CANCEL_HOST_MS = 3000;
+// ホストが便りで返す taskId の形。端末の台帳の鍵にするので、形を確かめる（__proto__ や手元のタスクの ID を入れさせない）
+const TASK_ID = /^ply-task-[0-9a-f-]{36}$/;
 // 保存障害の間、スケジューラーが保存をやり直す間隔の上限（ms）。500ms から倍にしていく
 const RETRY_MAX = 15000;
 // 保存障害の記録（agent-tasks-errors.log）の大きさの上限。超えたら新しい半分だけ残す
@@ -111,7 +115,7 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
   }
   // 最後に DB へ書けた JSON（taskId -> 文字列）。変わった行だけを書くための比べ元
   const saved = new Map();
-  let records = {};
+  let records = Object.create(null);   // 鍵はホストの便りの taskId も入る。Object.prototype の名前（__proto__ など）で引かれないようにする
   for (const [taskId, json] of rowStore.loadRows()) { records[taskId] = JSON.parse(json); saved.set(taskId, json); }
   // ホストに任せたタスクの写し（host）は、この PC の会話を持たない（sessionId なし）。会話の ID で引く表には入れない
   const bySession = new Map(Object.values(records).filter(r => r.sessionId).map(r => [r.sessionId, r]));
@@ -252,6 +256,15 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
       workspaceSummary: workspaceLine(locale, r.worktree, state) };
   }
   const restore = (r, before) => { for (const key of Object.keys(r)) delete r[key]; Object.assign(r, before); };
+  /**
+   * ホストの子を止める。届かなければ（オフライン・許可切れ・応答なし）止める予定（cancelPending）として行に残し、つながり直したとき送り直す
+   * （ホストの便りで running に戻さない。mirror）。待つのは CANCEL_HOST_MS まで
+   */
+  async function stopHost(r) {
+    let sent = false, timer;
+    try { sent = await Promise.race([cancelHost(structuredClone(r)), new Promise(res => { timer = setTimeout(res, CANCEL_HOST_MS, false); })]) === true; } catch { sent = false; } finally { clearTimeout(timer); }
+    if (!sent && records[r.taskId]) await record(r.taskId, row => { row.cancelPending = true; }, 'cancel.pending');
+  }
   // 保存できてから先へ進む書き換え。保存に失敗したらメモリを戻し、理由付きのエラーを投げる
   async function commit(id, fn, operation, locale) {
     return serial(async () => {
@@ -594,6 +607,20 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
     // ホストに任せたタスクの写しは、ホストで動いている（この PC の更新・終了を止めない）。完了通知がまだ届いていないものだけ数える
     get busy() { return live.size > 0 || notices.size > 0 || silenceNotices.size > 0 || commandNotices.size > 0 || Object.values(records).some(r => (ACTIVE.has(r.status) && !r.host) || r.notification === 'pending'); },
     list(owner) { return Object.values(records).filter(r => !owner || r.parentSessionId === owner).map(r => view(r)); },
+    /** sessionIds の会話が作った行と、その子孫の行の view（ホストに任された子の下の孫を数える・止める。docs/remote.md §4.5） */
+    descendants(sessionIds) {
+      const roots = new Set(sessionIds.filter(Boolean));
+      const seen = new Set(), out = [];
+      for (let grew = true; grew;) {
+        grew = false;
+        for (const r of Object.values(records)) {
+          if (seen.has(r.taskId) || !roots.has(r.parentSessionId)) continue;
+          seen.add(r.taskId); out.push(view(r)); grew = true;
+          if (r.sessionId) roots.add(r.sessionId);
+        }
+      }
+      return out;
+    },
     /** 記録の行が条件に合うものだけの view（端末の AI に任された作業のように、全部を view にしたくないとき） */
     rowsWhere(predicate) { return Object.values(records).filter(predicate).map(r => view(r)); },
     /**
@@ -722,10 +749,13 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
     async adopt(row, locale) {
       return serial(async () => {
         if (closed) throw new Error(agentT(locale, 'tasks.halted'));
-        if (records[row.taskId]) return view(records[row.taskId]);
+        // ホストの便りの taskId は信じ切らない: 形を確かめ、手元のタスクと同じ ID は受けない（既にある行を返さない）
+        if (typeof row.taskId !== 'string' || !TASK_ID.test(row.taskId) || records[row.taskId]) throw new Error(agentT(locale, 'tasks.remoteBadTaskId'));
         const parent = Object.values(records).find(r => r.sessionId === row.parentSessionId);
         const full = { manager: 'remote', depth: (parent?.depth ?? 0) + 1, createdAt: Date.now(), updatedAt: Date.now(), status: 'queued', notification: 'none',
           result: '', error: null, instructions: [], instructionRevision: 0, queue: [], sessionId: null, ...row };
+        // 最初から終わっている（すぐ終わった・すぐ失敗した）依頼は、結果を ply_delegate の戻りで渡すので、完了通知は送らない
+        if (!ACTIVE.has(full.status)) full.notification = 'read';
         records[full.taskId] = full;
         try { await write([full.taskId]); } catch (e) { delete records[full.taskId]; failed(e, 'adopt', full.taskId); throw refused(locale); }
         touched();
@@ -742,8 +772,17 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
       if (!r?.host) return null;
       return serial(async () => {
         const before = JSON.stringify(r);
+        // 追えなくなっていた（hostLost）行にホストの便りが戻ったら、ホストの状態に戻し、完了通知もやり直す
+        if (r.hostLost && patch.hostLost == null) r.notification = 'none';
         const was = r.status;
-        for (const k of MIRROR_FIELDS) if (k in patch) { if (patch[k] == null) delete r[k]; else r[k] = patch[k]; }
+        // 止める予定（cancelPending）の間は、ホストの動いている状態の便り（running・waiting）で止めた状態を戻さない。終わった状態の便りは写し、予定を外す
+        const keep = r.cancelPending === true && 'status' in patch && ACTIVE.has(patch.status) && !('cancelPending' in patch);
+        for (const k of MIRROR_FIELDS) if (k in patch) {
+          if (keep && ['status', 'hostWaiting', 'error'].includes(k)) continue;
+          if (patch[k] == null) delete r[k]; else r[k] = patch[k];
+        }
+        if (r.cancelPending === true && !ACTIVE.has(r.status) && patch.status && !ACTIVE.has(patch.status)) delete r.cancelPending;
+        if (patch.hostLost == null) delete r.hostLost;
         const wasActive = ACTIVE.has(was), isActive = ACTIVE.has(r.status);
         if (!isActive && (wasActive || r.notification === 'none')) r.notification = r.status === 'cancelled' ? 'suppressed' : r.notification === 'read' ? 'read' : 'pending';
         else if (isActive && !wasActive) r.notification = 'none';
@@ -858,7 +897,7 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
       // 止めることは保存できなくても止める（record。ファイルは後で追いつく）
       await record(taskId, row => { row.revision = (row.revision ?? 0) + 1; dropInstructions(row); row.notification = 'suppressed'; if (ACTIVE.has(row.status)) row.status = live.has(taskId) ? 'cancelling' : 'cancelled'; }, 'cancel');
       live.get(taskId)?.abort();
-      if (r.host && stopping) await cancelHost(structuredClone(r)).catch(() => {});
+      if (r.host && stopping) await stopHost(r);
       if (!live.has(taskId) && r.activeCommands?.length) await cancelBackground(view(r));
       return stopping && was !== 'cancelling' ? { taskId, parentSessionId: r.parentSessionId, title: r.title ?? null, status: was } : null;
     },
@@ -900,7 +939,8 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
         touched();
       });
       for (const r of change) live.get(r.taskId)?.abort();
-      for (const r of hostStops) await cancelHost(structuredClone(r)).catch(() => {});
+      // ホストの子を止める依頼は並列に・短い待ちで（応答しないホストの分だけ中断を遅らせない）
+      await Promise.all(hostStops.map(stopHost));
       return stopped;
     },
     /** 再起動で止まった（interrupted にした）タスク。[{ taskId, parentSessionId, title, status }]（status は止まる前の状態） */

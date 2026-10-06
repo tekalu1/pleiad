@@ -285,4 +285,3 @@ export default async function (t) {
     await fs.rm(scratch, { recursive: true, force: true }).catch(() => {});
   }
 }
-

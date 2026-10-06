@@ -164,6 +164,7 @@
     "delegated": "A delegated conversation cannot be resent in place. Send as a branch instead."
   },
   "delegation": {
+    "retryRemote": "A task handed to a host cannot be retried on this PC.",
     "taskNotFound": "Pleiad task not found."
   },
   "approval": {
@@ -900,6 +901,7 @@
       "unreachable": "Can't reach the relay ({{reason}})"
     },
     "agent": {
+      "hostScreenOnly": "Accepting requests from a device's AI can only be switched on from the host PC's own screen (switching it off and stopping everything also work from the device).",
       "desktopOnly": "Only a desktop device can hand work over from its AI"
     },
     "unnamedDevice": "Unnamed device",

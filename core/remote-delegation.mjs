@@ -104,7 +104,8 @@ export function createRemoteDelegation({ bridge, tasks, agentT, titleOf = async 
 
   /** ply_delegate の説明に載せる、任せられるホスト（端末側がオンで、ホストが許可しているもの）。オフラインは online: false */
   function describe() {
-    return hostsNow().filter(h => h.agentUse === true && h.allowed === true).map(h => ({ name: h.name, online: h.state === 'ready' }));
+    // 名前は AI の道具の説明に入るので、改行・制御文字を空白にして短くする（ホストが名乗る名前をそのまま信じない）
+    return hostsNow().filter(h => h.agentUse === true && h.allowed === true).map(h => ({ name: String(h.name ?? '').replace(/[\u0000-\u001f\u007f]/g, ' ').trim().slice(0, 40), online: h.state === 'ready' }));
   }
 
   function findHost(name, lng) {
@@ -189,13 +190,16 @@ export function createRemoteDelegation({ bridge, tasks, agentT, titleOf = async 
     const row = tasks()?.get(relay.taskId);
     // 自分が任せたタスク（この会話の写し）の承認だけを出す。知らないタスクの承認は出さない
     if (!row?.host || row.host.hostId !== hostId || row.parentSessionId !== relay.requesterSessionId) return;
+    // もう止めた・終わったタスク（止める予定を含む）の承認は出さない。つなぎ直しで送り直されても、止めたものを動かし直す入口にしない
+    if (FINAL.has(row.status) || row.cancelPending) return;
     const host = hostById(hostId);
+    const kind = ['question', 'hostOnly'].includes(relay.kind) ? relay.kind : 'tool';
     const cardId = cards.open({
-      sessionId: row.parentSessionId, hostId, hostName: host?.name ?? row.host.name, relayId: relay.id, taskId: relay.taskId,
-      toolName: relay.toolName, input: relay.input, title: relay.title ?? null, childTitle: row.title || relay.childTitle || '',
-      browserSite: relay.browserSite, computerApp: relay.computerApp, askedAt: relay.askedAt, online: usable(host),
+      sessionId: row.parentSessionId, hostId, hostName: host?.name ?? row.host.name, relayId: relay.id, taskId: relay.taskId, kind, hostOnly: kind === 'hostOnly',
+      toolName: relay.toolName, input: relay.input, questions: kind === 'question' ? relay.questions : undefined, title: relay.title ?? null, childTitle: row.title || relay.childTitle || '',
+      askedAt: relay.askedAt, online: usable(host),
     });
-    const entry = { cardId, hostId, relayId: relay.id, taskId: relay.taskId, receipt: relay.receipt };
+    const entry = { cardId, hostId, relayId: relay.id, taskId: relay.taskId, receipt: relay.receipt, hostOnly: kind === 'hostOnly' };
     open.set(key, entry);
     byCard.set(cardId, entry);
     changed();
@@ -221,6 +225,7 @@ export function createRemoteDelegation({ bridge, tasks, agentT, titleOf = async 
     switch (ev?.t) {
       case 'task': return onTask(hostId, ev.task).catch(e => log(`remote delegation: ${e?.message ?? e}`));
       case 'relays': return reconcile(hostId, ev.relays);
+      case 'synced': return unknownTasks(hostId, ev.unknown);
       case 'relay': return openRelay(hostId, ev.relay);
       case 'relayEnd': return closeRelay(hostId, ev.id, { by: ev.by === 'device' ? 'device' : ev.by === 'host' ? 'host' : null, allow: ev.allow === true });
       default:
@@ -234,18 +239,41 @@ export function createRemoteDelegation({ bridge, tasks, agentT, titleOf = async 
     try {
       cards?.online(hostId, status.state === 'ready' && status.allowed);
       if (status.state === 'ready' && status.allowed) {
-        const live = (tasks()?.rowsWhere(r => r.host?.hostId === hostId) ?? []).filter(r => !FINAL.has(r.status));
+        const rows = tasks()?.rowsWhere(r => r.host?.hostId === hostId) ?? [];
+        // オフライン中に止めた分（cancelPending）は、つながり直したここで送る。成功したら予定を外す
+        for (const r of rows.filter(x => x.cancelPending)) {
+          cancelHost(r).then(ok => { if (ok) return tasks().mirror(r.taskId, { cancelPending: null }); }).catch(() => {});
+        }
+        // 動いているもの・追えなくなっていたもの（hostLost）の今の状態を求める。ホストが知らない ID は synced の unknown で返る
+        const live = rows.filter(r => !FINAL.has(r.status) || r.hostLost);
         bridge.sync(hostId, live.map(r => r.taskId)).catch(() => {});
-      } else if (stopped(status)) await retire(hostId);
+      } else if (stopped(status)) await retire(hostId, 'stopped');
     } finally { syncing.delete(hostId); }
   }
 
-  /** ホストがもう依頼を受けていない（許可を切った・取り消した・古い版）。ホストの作業は止まっているか、もう追えない */
+  /**
+   * ホストがもう依頼を受けていない（許可を切った・取り消した・古い版）か、この PC 側で任せる設定を切った・ホストを消した。
+   * 動いていた写しは、理由つきで終わらせる（失敗。ホストの作業は止まっているか続いているか分からない）。追えなくなった印（hostLost）を付けるので、
+   * つながり直した・設定を入れ直したときの sync で、ホストの状態に戻せる
+   */
   const stopped = st => st.state === 'revoked' || st.state === 'unsupported' || (st.state === 'ready' && !st.allowed);
-  async function retire(hostId) {
+  async function retire(hostId, reason = 'stopped') {
     const live = (tasks()?.rowsWhere(r => r.host?.hostId === hostId) ?? []).filter(r => !FINAL.has(r.status));
-    for (const r of live) await tasks().mirror(r.taskId, { status: 'failed', hostWaiting: false, error: agentT(locale(), 'delegation.remote.hostStopped', { host: r.host.name }) });
+    for (const r of live) {
+      const error = reason === 'unlinked' ? agentT(locale(), 'delegation.remote.hostUnlinked', { host: r.host.name }) : agentT(locale(), 'delegation.remote.hostStopped', { host: r.host.name });
+      await tasks().mirror(r.taskId, { status: 'failed', hostWaiting: false, hostLost: true, error });
+    }
     for (const entry of [...open.values()]) if (entry.hostId === hostId) closeRelay(hostId, entry.relayId, { by: null, allow: null });
+  }
+
+  /** sync の答えの「ホストが知らない ID」。ホストのデータが消えた・別の端末として組み直した、など。動いているつもりの写しを、記録が無いものとして終わらせる */
+  async function unknownTasks(hostId, ids) {
+    for (const id of Array.isArray(ids) ? ids : []) {
+      const row = tasks()?.get(String(id));
+      if (!row?.host || row.host.hostId !== hostId || (FINAL.has(row.status) && !row.hostLost)) continue;
+      await tasks().mirror(row.taskId, { status: 'failed', hostWaiting: false, cancelPending: null, error: agentT(locale(), 'delegation.remote.hostNoRecord', { host: row.host.name }) });
+    }
+    changed();
   }
 
   let unsubscribe = [];
@@ -259,8 +287,15 @@ export function createRemoteDelegation({ bridge, tasks, agentT, titleOf = async 
         Promise.resolve(done).finally(changed);
       }),
       bridge.onReady((hostId, status) => catchUp(hostId, status).catch(e => log(`remote delegation: ${e?.message ?? e}`))),
-      // 一覧が変わった（agentUse を替えた・ホストを消した）。消えた・切ったホストの写しは追えない
-      bridge.onHosts(() => changed()),
+      // 一覧が変わった。この PC 側で任せる設定を切った・ホストを消したら、そのホストの動いていた写しは追えない（理由つきで終わらせる）
+      bridge.onHosts(list => {
+        const gone = new Set();
+        for (const r of tasks()?.rowsWhere(x => x.host && !FINAL.has(x.status)) ?? []) {
+          const h = list.find(x => x.hostId === r.host.hostId);
+          if (!h || !h.agentUse) gone.add(r.host.hostId);
+        }
+        Promise.all([...gone].map(id => retire(id, 'unlinked'))).catch(e => log(`remote delegation: ${e?.message ?? e}`)).finally(changed);
+      }),
     ];
     bridge.refresh().catch(() => {});
   }
@@ -307,8 +342,18 @@ export function createRemoteDelegation({ bridge, tasks, agentT, titleOf = async 
 
   /** AI へ返すタスクの形（端末の台帳の行から。host の名前・ホストでの会話は hostSessionId） */
   function present(row, hostName) {
-    const { host, sessionId, parentSessionId, remoteSessionId, hostWaiting, ...rest } = row;
-    return { ...rest, host: hostName ?? host?.name ?? null, ...(remoteSessionId ? { hostSessionId: remoteSessionId } : {}) };
+    const { host, sessionId, parentSessionId, remoteSessionId, hostWaiting, cancelPending, hostLost, ...rest } = row;
+    return { ...rest, host: hostName ?? host?.name ?? null, ...(remoteSessionId ? { hostSessionId: remoteSessionId } : {}), ...notesOf(row, hostName) };
+  }
+
+  /** AI に伝えておく事情: 止める依頼がまだホストへ届いていない／承認待ちの理由がホストの画面でしか答えられないもの（設定の変更の承認など） */
+  function notesOf(row, hostName) {
+    const name = hostName ?? row.host?.name ?? '';
+    const hostOnly = [...open.values()].some(e => e.taskId === row.taskId && e.hostOnly);
+    return {
+      ...(row.cancelPending ? { cancelPending: true, note: agentT(locale(), 'delegation.remote.cancelPending', { host: name }) } : {}),
+      ...(hostOnly ? { hostOnlyApproval: agentT(locale(), 'delegation.remote.hostOnlyApproval', { host: name }) } : {}),
+    };
   }
 
   /**
@@ -325,8 +370,18 @@ export function createRemoteDelegation({ bridge, tasks, agentT, titleOf = async 
     if (!op) throw new DelegationError(agentT(lng, 'tasks.unknownTool'), 'UNKNOWN_TOOL');
     if (op === 'send' && ['backend', 'model', 'effort'].some(k => args[k] !== undefined)) throw new DelegationError(agentT(lng, 'delegation.remote.settingsUnsupported'), 'UNSUPPORTED');
     if (!usable(host)) {
+      // wait は待つ約束なので、つながり直す（ready）か seconds が過ぎるまで待ってから返す（短い間隔で回らせない）
+      if (op === 'wait') {
+        await untilReady(row.host.hostId, (Number.isInteger(args.seconds) ? args.seconds : 30) * 1000, signal);
+        if (usable(hostById(row.host.hostId))) return taskCall({ owner, turn, name, args: { ...args, seconds: 1 }, signal, lng });
+      }
       if (op === 'status' || op === 'wait') {
-        return { ...present(row, hostName), hostOffline: true, note: agentT(lng, 'delegation.remote.statusOffline', { host: hostName }) };
+        return { ...present(t.get(row.taskId) ?? row, hostName), hostOffline: true, note: agentT(lng, 'delegation.remote.statusOffline', { host: hostName }) };
+      }
+      // 止めるは、つながっていなくても約束する: 端末の写しを止めた状態にして「止める予定」を残し、つながり直したらホストへ送る（catchUp）
+      if (op === 'cancel') {
+        await t.cancel(row.taskId);
+        return { ...present(t.get(row.taskId) ?? row, hostName), hostOffline: true };
       }
       throw new DelegationError(agentT(lng, 'delegation.remote.hostOffline', { host: hostName }), 'HOST_OFFLINE');
     }
@@ -346,7 +401,26 @@ export function createRemoteDelegation({ bridge, tasks, agentT, titleOf = async 
     const { task: _task, parentSessionId: _p, sessionId: hostSession, ...rest } = out ?? {};
     // 依頼元が終わった結果を受け取った。同じ結果の完了通知を後から送らない
     if (op === 'status' || op === 'wait' || op === 'cancel') { if (FINAL.has(fresh.status)) await t.markRead(row.taskId); }
-    return { ...rest, host: hostName, taskId: row.taskId, ...(hostSession ? { hostSessionId: hostSession } : {}) };
+    return { ...rest, host: hostName, taskId: row.taskId, ...(hostSession ? { hostSessionId: hostSession } : {}), ...notesOf(fresh, hostName) };
+  }
+
+  /** ホストがつながり直す（ready）か ms が過ぎるまで待つ（abort でも戻る） */
+  function untilReady(hostId, ms, signal) {
+    return new Promise(resolve => {
+      let off = () => {};
+      const done = () => { clearTimeout(timer); off(); signal?.removeEventListener('abort', done); resolve(); };
+      const timer = setTimeout(done, ms);
+      timer.unref?.();
+      off = bridge.onReady(id => { if (id === hostId) done(); });
+      signal?.addEventListener('abort', done, { once: true });
+      if (signal?.aborted) done();
+    });
+  }
+
+  /** ply_task_list の戻りの行を、ply_task_status と同じ形（host は名前）にする */
+  function presentList(out) {
+    if (!out?.tasks) return out;
+    return { ...out, tasks: out.tasks.map(r => (r.host ? present(r) : r)) };
   }
 
   /** 会話の中断・取り消しで写しの行を止めるとき、ホストのタスクも止める（つながっていれば。最善の努力） */
@@ -354,7 +428,7 @@ export function createRemoteDelegation({ bridge, tasks, agentT, titleOf = async 
     const host = hostById(row?.host?.hostId);
     if (!usable(host)) return false;
     const requester = { sessionId: row.parentSessionId, title: '', locale: 'en', mode: modePosition(null) };
-    try { await bridge.request(host.hostId, 'cancel', { taskId: row.taskId }, requester, { timeoutMs: 15_000 }); return true; }
+    try { await bridge.request(host.hostId, 'cancel', { taskId: row.taskId }, requester, { timeoutMs: 2500 }); return true; }
     catch { return false; }
   }
 
@@ -362,13 +436,15 @@ export function createRemoteDelegation({ bridge, tasks, agentT, titleOf = async 
    * 中継されたカードへの人の答え。画面（human）の resolvePermission の処理からだけ呼ぶ（core/server.mjs）。
    * ホストが受け取れば { ok: true }（カードは畳む）。つながっていない・もう決着していたなら { ok: false, code }
    */
-  async function answerCard(cardId, { allow, message } = {}) {
+  async function answerCard(cardId, { allow, message, answers, annotations, response } = {}) {
     const entry = byCard.get(cardId);
     if (!entry) return { ok: false, code: 'NOT_FOUND' };
+    if (entry.hostOnly) return { ok: false, code: 'HOST_ONLY' };
     const host = hostById(entry.hostId);
     if (!usable(host)) return { ok: false, code: 'OFFLINE' };
     let r;
-    try { r = await bridge.answer(entry.hostId, { id: entry.relayId, receipt: entry.receipt, allow: allow === true, ...(message ? { message } : {}) }); }
+    try { r = await bridge.answer(entry.hostId, { id: entry.relayId, receipt: entry.receipt, allow: allow === true, ...(message ? { message } : {}),
+      ...(answers != null ? { answers } : {}), ...(annotations != null ? { annotations } : {}), ...(response != null ? { response } : {}) }); }
     catch (e) { return { ok: false, code: e?.code === 'OFFLINE' ? 'OFFLINE' : 'ERROR' }; }
     if (r?.ok) closeRelay(entry.hostId, entry.relayId, { by: 'device', allow: allow === true });
     return { ok: r?.ok === true, code: r?.code ?? null };
@@ -376,7 +452,7 @@ export function createRemoteDelegation({ bridge, tasks, agentT, titleOf = async 
 
   return {
     enabled: Boolean(bridge),
-    start, describe, delegate, taskCall, cancelHost, answerCard,
+    start, describe, delegate, taskCall, cancelHost, answerCard, presentList,
     isRemoteCard: cardId => byCard.has(cardId),
     /** そのタスクが、依頼元の会話に中継された承認を待っているか */
     waitingFor: taskId => [...open.values()].some(e => e.taskId === taskId),

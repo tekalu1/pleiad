@@ -1494,6 +1494,8 @@
       "offline": "Can't send the answer because {{host}} is offline. You can send it once the connection returns.",
       "answeredByHost": "{{what}} on {{host}} · {{time}}",
       "answeredByDevice": "{{what}} on {{device}} · {{time}}",
+      "hostOnly": "This approval has to be answered on the host. Answer it on the host's screen, or open the child conversation.",
+      "answered": "answered",
       "hostOffline": "Host offline",
       "viewChild": "View the child conversation",
       "hostCanAnswer": "You can also answer in the requesting conversation (⇄ {{device}})",
@@ -2104,6 +2106,7 @@
     "remoteOrigin": {
     "badge": "⇄ From {{device}}'s AI",
     "request": "Requested from \"{{title}}\"",
+    "modeIs": "Approval mode {{mode}} (follows the requester)",
     "mode": "Approval mode follows the requester"
     },
     "rowMore": "Actions for \"{{title}}\"",

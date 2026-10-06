@@ -1908,4 +1908,6 @@ body{padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) 0 env(s
 .remote-origin{align-self:center;font-weight:400;overflow:hidden;text-overflow:ellipsis;min-width:0}
 .relay-note{margin:2px 0 0;color:var(--ink-weak);font-size:var(--fs-s)}
 .card .res.strong{color:var(--ink-strong);font-weight:600}
-@media (max-width:480px){.card-head:has(.relay-host){flex-wrap:wrap}.card-head:has(.relay-host) .desc{flex-basis:100%;order:3;white-space:normal}.relay-host{margin-left:auto}.remote-origin{display:none}}
+.relay-note.strong{color:var(--ink-strong);font-weight:600;padding:0 16px 6px}
+@media (max-width:480px){.card-head:has(.relay-host){flex-wrap:wrap}.card-head:has(.relay-host) .desc{flex-basis:100%;order:3;white-space:normal}.relay-host{margin-left:auto}
+  .remote-origin{flex-basis:100%;order:99;white-space:normal;font-size:var(--fs-xs)}}

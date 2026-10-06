@@ -161,7 +161,7 @@ export class AgentLink extends EventEmitter {
         else p.reject(Object.assign(new AgentError(typeof msg.code === 'string' ? msg.code : 'ERROR', String(msg.error ?? 'error'))));
         return;
       }
-      case 'task': case 'relays': case 'relay': case 'relayEnd': case 'answered': case 'pong':
+      case 'task': case 'relays': case 'relay': case 'relayEnd': case 'answered': case 'pong': case 'synced':
         this.emit('event', msg);
         return;
       default: return;
@@ -190,7 +190,7 @@ export class AgentLink extends EventEmitter {
   }
 
   /** 承認の中継への人の答え。ホストの `answered` で解決する（{ ok, code? }）。オフラインなら reject（OFFLINE） */
-  answer({ id, receipt, allow, message }, { timeoutMs = 15_000 } = {}) {
+  answer({ id, receipt, allow, message, answers, annotations, response }, { timeoutMs = 15_000 } = {}) {
     if (!this.usable) return Promise.reject(new AgentError('OFFLINE', 'the host is offline'));
     return new Promise((resolve, reject) => {
       const off = () => { this.off('event', onEvent); clearTimeout(timer); };
@@ -198,7 +198,8 @@ export class AgentLink extends EventEmitter {
       const timer = setTimeout(() => { off(); reject(new AgentError('TIMEOUT', 'the host did not answer')); }, timeoutMs);
       timer.unref?.();
       this.on('event', onEvent);
-      try { this.#send({ t: 'answer', id, receipt, allow: allow === true, ...(message ? { message } : {}) }); }
+      try { this.#send({ t: 'answer', id, receipt, allow: allow === true, ...(message ? { message } : {}),
+        ...(answers != null ? { answers } : {}), ...(annotations != null ? { annotations } : {}), ...(response != null ? { response } : {}) }); }
       catch (e) { off(); reject(e); }
     });
   }

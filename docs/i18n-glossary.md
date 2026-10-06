@@ -25,6 +25,7 @@
 | エージェント | agent |
 | エージェント設定 | Agents |
 | 委譲 / 委譲先 | delegate / delegated task |
+| （ホストへ）任せる / 任された作業 | hand over (to a host) / work handed over（ほかの PC のホストへの委譲。「delegate」は手元の委譲に使う） |
 | Pleiad タスク | Pleiad task |
 | 承認 | approval |
 | 外部の読み込み（ブラウザーの設定の見出し。旧「確認」） | External resources |

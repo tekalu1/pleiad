@@ -190,6 +190,8 @@
     "remote-frames": 52,
     "remote-agent": 6000,
     "remote-agent-e2e": 40000,
+    "agent-tasks-remote": 6000,
+    "remote-agent-hardening": 15000,
     "remote-host": 1668,
     "remote-links": 52,
     "remote-noise": 71,

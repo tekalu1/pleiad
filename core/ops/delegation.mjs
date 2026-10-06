@@ -15,7 +15,7 @@ const routingOf = (r) => (r?.target ? { kind: r.kind ?? null, mode: r.mode ?? nu
 
 /** 一覧の 1 行。長い本文（依頼・結果）は載せない */
 export const taskRow = (r) => ({
-  taskId: r.taskId, title: r.title ?? null, status: r.status, backend: r.backend ?? null, model: r.model ?? null, cwd: r.cwd ?? null,
+  taskId: r.taskId, title: r.title ?? null, host: r.host?.name ?? null, status: r.status, backend: r.backend ?? null, model: r.model ?? null, cwd: r.cwd ?? null,
   parentSessionId: r.parentSessionId ?? null, sessionId: r.sessionId ?? null, createdAt: r.createdAt ?? null, updatedAt: r.updatedAt ?? null,
   routing: routingOf(r.routing),
 });
@@ -42,7 +42,7 @@ function selectTasks(ctx, { parentSessionId, tree = false, taskIds }) {
   return rows;
 }
 
-const row = z.object({ taskId: z.string(), title: z.string().nullable(), status: z.string(), backend: z.string().nullable(), model: z.string().nullable(), cwd: z.string().nullable(),
+const row = z.object({ taskId: z.string(), title: z.string().nullable(), host: z.string().nullable().optional(), status: z.string(), backend: z.string().nullable(), model: z.string().nullable(), cwd: z.string().nullable(),
   parentSessionId: z.string().nullable(), sessionId: z.string().nullable(), createdAt: z.number().nullable(), updatedAt: z.number().nullable(),
   routing: z.object({ kind: z.string().nullable(), mode: z.string().nullable(), backend: z.string().nullable(), model: z.string().nullable(), changedBy: z.string().nullable() }).nullable() });
 

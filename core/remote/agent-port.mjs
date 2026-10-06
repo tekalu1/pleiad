@@ -8,7 +8,7 @@
 // 端末の AI が呼べる道具からは answer を作れない（端末側の守りと、口の種類の分離。docs/remote.md §4.5）。
 import crypto from 'node:crypto';
 import { RESET_CODE } from './frames.mjs';
-import { AGENT_OPS, AGENT_LIMITS, AGENT_PROTO, AgentError, normalizeRequester, relayReceipt, sameReceipt } from './agent-protocol.mjs';
+import { AGENT_OPS, AGENT_LIMITS, AGENT_PROTO, AgentError, normalizeRequester, normalizeAnswerExtras, relayReceipt, sameReceipt } from './agent-protocol.mjs';
 
 const idOk = v => typeof v === 'string' && v.length >= 1 && v.length <= 64 && !/[\0\r\n]/.test(v);
 
@@ -16,15 +16,20 @@ const idOk = v => typeof v === 'string' && v.length >= 1 && v.length <= 64 && !/
  * @param deps.allowed(deviceId)        この端末の AI からの依頼を受けてよいか（devices.json の agentDelegation。デスクトップ版の端末だけ）
  * @param deps.hostName()               ready に載せるホストの名前
  * @param deps.invoke(call)             委譲の本体。call = { device, requester, op, args, signal }。結果の JSON を返すか AgentError を投げる
- * @param deps.activeTasks(deviceId)    この端末から任された、動いているタスクの数（上限の判定）
+ * @param deps.activeTasks(deviceId)    この端末から任された、動いているタスクの数（任された子の子孫も数える。上限の判定）
+ * @param deps.wakes(device, requester, args)  send が、終わっているタスクを起こし直す（動いている数を増やす）か。起こすなら 1 枠の予約が要る
  * @param deps.tasksFor(deviceId, ids)  sync の答え。ids のタスクの今の公開の形（task の便りの形）の配列
  * @param deps.audit(entry)             記録（by・via・deviceId・種類）。失敗しても口は止めない
  */
-export function createAgentPort({ allowed = () => false, hostName = () => '', invoke, activeTasks = () => 0, tasksFor = () => [], audit = () => {}, log = () => {}, limits = {}, now = Date.now } = {}) {
+export function createAgentPort({ allowed = () => false, hostName = () => '', invoke, activeTasks = () => 0, wakes = () => false, tasksFor = () => [], audit = () => {}, log = () => {}, limits = {}, now = Date.now } = {}) {
   const lim = { ...AGENT_LIMITS, ...limits };
   const conns = new Map();         // deviceId → Set<conn>
   const relays = new Map();        // relayId → { id, deviceId, taskId, requesterSessionId, receipt, payload, answer, answered }
   const rate = new Map();          // deviceId → delegate・send の時刻の配列（1 分の窓）
+  const reserved = new Map();      // deviceId → 確かめてから行ができるまでの間に取った枠の数（同時に確かめて全部通る競合を防ぐ）
+  const gens = new Map();          // deviceId → 世代。許可を切る・取り消す・すべて止めるたびに増やし、作りかけの依頼が子を作らないよう invoke が見る
+  const pendingOf = deviceId => { let n = 0; for (const c of connsOf(deviceId)) n += c.pending.size; return n; };
+  const abortPending = deviceId => { for (const c of connsOf(deviceId)) { for (const ac of c.pending) ac.abort(); c.pending.clear(); } };
 
   const connsOf = deviceId => conns.get(deviceId) ?? new Set();
 
@@ -60,27 +65,40 @@ export function createAgentPort({ allowed = () => false, hostName = () => '', in
     const requester = normalizeRequester(msg.requester);
     if (!AGENT_OPS.includes(msg.op) || !requester) return reply({ ok: false, code: 'BAD_REQUEST', error: 'bad request' });
     const args = msg.args && typeof msg.args === 'object' && !Array.isArray(msg.args) ? msg.args : {};
-    if (conn.pending.size >= lim.pending) return reply({ ok: false, code: 'RATE_LIMITED', error: 'too many requests in flight' });
+    if (conn.pending.size >= lim.pending || pendingOf(device.id) >= lim.pendingPerDevice) return reply({ ok: false, code: 'RATE_LIMITED', error: 'too many requests in flight' });
+    const refuse = (code, error) => { audit({ by: 'agent', via: 'remote', deviceId: device.id, op: msg.op, refused: code }); return reply({ ok: false, code, error }); };
     if (msg.op === 'delegate' || msg.op === 'send') {
-      if (!rateOk(device.id)) return reply({ ok: false, code: 'RATE_LIMITED', error: `at most ${lim.perMinute} delegations or instructions per minute` });
+      if (!rateOk(device.id)) return refuse('RATE_LIMITED', `at most ${lim.perMinute} delegations or instructions per minute`);
     }
-    if (msg.op === 'delegate' && activeTasks(device.id) >= lim.active) return reply({ ok: false, code: 'TOO_MANY_TASKS', error: `at most ${lim.active} tasks at a time` });
+    // 動いているタスクの上限。新しい子を作る・終わったタスクを起こし直すときだけ枠が要る。確かめと行の作成の間に同じ端末の依頼が入っても数えるよう、予約を先に取る
+    const needsSlot = msg.op === 'delegate' || (msg.op === 'send' && wakes(device, requester, args));
+    const gen = gens.get(device.id) ?? 0;
+    if (needsSlot) {
+      if (activeTasks(device.id) + (reserved.get(device.id) ?? 0) >= lim.active) return refuse('TOO_MANY_TASKS', `at most ${lim.active} tasks at a time`);
+      reserved.set(device.id, (reserved.get(device.id) ?? 0) + 1);
+    }
     const ac = new AbortController();
     conn.pending.add(ac);
+    const valid = () => !ac.signal.aborted && (gens.get(device.id) ?? 0) === gen && allowed(device.id);
     try {
-      const result = await invoke({ device, requester, op: msg.op, args, signal: ac.signal });
-      audit({ by: 'agent', via: 'remote', deviceId: device.id, op: msg.op });
+      const result = await invoke({ device, requester, op: msg.op, args, signal: ac.signal, valid });
+      // 止められた・許可が変わった後に終わった依頼の答えは、端末へ返さない（invoke が作ったものは、invoke の側で取り消してある）
+      if (!valid()) return reply({ ok: false, code: 'NOT_ALLOWED', error: 'this device is no longer allowed to delegate to this host' });
+      audit({ by: 'agent', via: 'remote', deviceId: device.id, op: msg.op, args, result });
       reply({ ok: true, result: result ?? null });
     } catch (e) {
       reply({ ok: false, code: e instanceof AgentError ? e.code : 'ERROR', error: String(e?.message ?? e) });
-    } finally { conn.pending.delete(ac); }
+    } finally {
+      conn.pending.delete(ac);
+      if (needsSlot) reserved.set(device.id, Math.max(0, (reserved.get(device.id) ?? 1) - 1));
+    }
   }
 
   async function onAnswer(conn, msg) {
     const deviceId = conn.device.id;
     const fail = (code) => {
       log(`remote agent: answer dropped (${code}) device=${deviceId}`);
-      audit({ by: 'human', via: 'remote-device', deviceId, op: 'answer', dropped: code });
+      audit({ by: 'human', via: 'remote-device', deviceId, op: 'answer', dropped: code, relayId: idOk(msg.id) ? msg.id : null });
       sendTo(conn, { t: 'answered', id: idOk(msg.id) ? msg.id : '', ok: false, code });
     };
     if (!idOk(msg.id)) return fail('BAD_REQUEST');
@@ -88,10 +106,12 @@ export function createAgentPort({ allowed = () => false, hostName = () => '', in
     // 自分が中継した、今待っている承認で、この端末へ中継したものだけ。1 回だけ（answered を先に立てる）
     if (!entry || entry.answered || entry.deviceId !== deviceId) return fail('NOT_FOUND');
     if (!allowed(deviceId)) return fail('NOT_ALLOWED');
+    // ホストの画面で答えるしかない承認（設定の変更の承認など）は、口からは答えられない
+    if (typeof entry.answer !== 'function') return fail('NOT_ANSWERABLE');
     if (!sameReceipt(msg.receipt, entry.receipt)) return fail('RECEIPT_MISMATCH');
     entry.answered = true;
     let ok = false;
-    try { ok = await entry.answer({ allow: msg.allow === true, message: typeof msg.message === 'string' ? msg.message.slice(0, 2000) : null }); }
+    try { ok = await entry.answer({ allow: msg.allow === true, message: typeof msg.message === 'string' ? msg.message.slice(0, 2000) : null, ...normalizeAnswerExtras(msg) }); }
     catch (e) { log(`remote agent: answer failed: ${e?.message ?? e}`); }
     if (!ok) { entry.answered = false; return fail('ALREADY_RESOLVED'); }
     audit({ by: 'human', via: 'remote-device', deviceId, op: 'answer', allow: msg.allow === true, taskId: entry.taskId });
@@ -109,7 +129,10 @@ export function createAgentPort({ allowed = () => false, hostName = () => '', in
       case 'answer': onAnswer(conn, msg).catch(e => log(`remote agent: ${e?.message ?? e}`)); return;
       case 'sync': {
         const ids = Array.isArray(msg.taskIds) ? msg.taskIds.filter(x => typeof x === 'string' && x.length <= 100).slice(0, 100) : [];
-        if (allowed(conn.device.id)) for (const task of tasksFor(conn.device.id, ids)) sendTo(conn, { t: 'task', task });
+        const known = new Set();
+        if (allowed(conn.device.id)) for (const task of tasksFor(conn.device.id, ids)) { known.add(task.taskId); sendTo(conn, { t: 'task', task }); }
+        // 知らない ID（ホストの台帳に無い）を知らせる。端末は、動いているつもりの写しを「ホストに記録が無い」として終わらせる
+        if (allowed(conn.device.id)) sendTo(conn, { t: 'synced', unknown: ids.filter(id => !known.has(id)) });
         sendTo(conn, { t: 'relays', relays: allowed(conn.device.id) ? relaysOf(conn.device.id) : [] });
         return;
       }
@@ -122,6 +145,8 @@ export function createAgentPort({ allowed = () => false, hostName = () => '', in
     attach(stream, device) {
       if (stream.kind !== 'ws') return stream.reset(RESET_CODE.FORBIDDEN);
       const conn = { stream, device: { id: device.id, name: device.name ?? '', platform: device.platform ?? '' }, pending: new Set() };
+      // 端末 1 台の口の数に上限（待つ依頼を口ごとに積ませない）。多すぎる口は、受けてすぐ閉じる（端末の線は間を置いて開き直す）
+      if (connsOf(device.id).size >= lim.portsPerDevice) { stream.accept().then(() => stream.close(1013, 'too many ports')).catch(() => {}); return; }
       if (!conns.has(device.id)) conns.set(device.id, new Set());
       conns.get(device.id).add(conn);
       const drop = () => {
@@ -151,24 +176,31 @@ export function createAgentPort({ allowed = () => false, hostName = () => '', in
     },
     /** 端末を取り消した・許可を切った。口を閉じ、中継中の承認の登録は捨てる（子の会話のカードはホストに残る） */
     closeDevice(deviceId, reason = 'revoked') {
+      // 作りかけの依頼は、相手の close を待たずに今打ち切る（子を作らせない）。世代も進める
+      gens.set(deviceId, (gens.get(deviceId) ?? 0) + 1);
+      abortPending(deviceId);
       for (const conn of [...connsOf(deviceId)]) {
         sendTo(conn, { t: 'allowed', allowed: false, reason });
         conn.stream.close(1008, reason).catch(() => {});
       }
       for (const [id, r] of relays) if (r.deviceId === deviceId) relays.delete(id);
     },
+    /** 作りかけの依頼を打ち切り、世代を進める（「すべて止める」。口は閉じない）。これから終わる依頼は子を作らない */
+    cutOff(deviceId) { gens.set(deviceId, (gens.get(deviceId) ?? 0) + 1); abortPending(deviceId); },
     /** タスクの今の状態を端末へ。つながっている口が 1 つも無ければ false（完了通知を「届いた」にしない） */
     pushTask: (deviceId, task) => broadcast(deviceId, { t: 'task', task }),
 
     /**
-     * 子の承認を端末へ中継する（ホストの承認の待ちに 1 つ足す）。answer({ allow, message }) は決着を引き受ける関数（server が子の承認の settle を呼ぶ。
-     * 決着済みなら false）。返す end(by, allow) は、ホスト側で決着した・取り下げたときに呼ぶ（端末のカードを畳む）
+     * 子の承認・質問を端末へ中継する（ホストの承認の待ちに 1 つ足す）。answer({ allow, message, answers, annotations, response }) は決着を引き受ける関数
+     * （server が子の承認の settle を呼ぶ。決着済みなら false）。answer が無いものは「ホストの画面で答えてください」の知らせ
+     * （設定の変更の承認など。端末のカードに答えるボタンは無く、口からの答えも受けない）。
+     * 返す end(by, allow) は、ホスト側で決着した・取り下げたときに呼ぶ（端末のカードを畳む）
      */
-    relayOpen({ deviceId, taskId, requesterSessionId, payload, answer }) {
+    relayOpen({ deviceId, taskId, requesterSessionId, payload, answer = null }) {
       const id = crypto.randomUUID();
       const salt = crypto.randomBytes(16).toString('hex');
       const entry = { id, deviceId, taskId, requesterSessionId, payload, answer, answered: false, askedAt: new Date().toISOString(),
-        receipt: relayReceipt({ id, taskId, toolName: payload.toolName, input: payload.input, salt }) };
+        receipt: relayReceipt({ id, taskId, toolName: payload.toolName, input: payload.input, questions: payload.questions, salt }) };
       relays.set(id, entry);
       broadcast(deviceId, { t: 'relay', relay: publicRelay(entry) });
       return {

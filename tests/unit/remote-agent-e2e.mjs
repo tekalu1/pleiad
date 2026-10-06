@@ -34,6 +34,9 @@ export default async function (t) {
   let relay = createRelay({ enrollSecret: SECRET, trustProxy: false, logger: () => {} });
   const relayPort = (await relay.listen(0, '127.0.0.1')).port;
   const restartRelay = async () => { await within(relay.close(), 5000, '中継の停止'); relay = createRelay({ enrollSecret: SECRET, trustProxy: false, logger: () => {} }); await within(relay.listen(relayPort, '127.0.0.1'), 5000, '中継の立て直し'); };
+  // 設定の変更の承認（hostOnly の確かめ）が出るよう、ホストの設定は既定のまま（confirmAgentSites を明示する）
+  await fs.mkdir(hostDir, { recursive: true });
+  await fs.writeFile(path.join(hostDir, 'prefs.json'), JSON.stringify({ confirmAgentSites: true, agentSitePermissions: [] }));
   const host = await startServer({ env: { AGENT_HOST_BACKENDS: 'fake' }, dataDir: hostDir, timeoutMs: 30_000 });
   const ch = await open({ port: host.port, token: host.token });
   const hostCmd = (command, args = {}) => within(ch.cmd(command, args), 15_000, `ホストの ${command}`);
@@ -195,6 +198,46 @@ export default async function (t) {
     await ct.waitFor(e => e.type === 'permissionRelayEnd' && e.id === card3.id, { from: markAns, ms: 15_000 });
     await until(async () => (await tRows()).find(r => r.taskId === ask3 && r.status === 'completed'), 30_000, 'つなぎ直した後の答えの完了');
     t.ok('戻った後は答えを送れ、ホストの子が続く', true);
+
+    // ---- 質問のカードの中継: 端末の会話で選んで答え、選んだ項目がホストの子へ届く
+    const markQ = ct.mark();
+    const qId = toolResult(await tool(sid, 'ply_delegate', { host: 'desk-test', kind: 'mechanical', backend: 'fake', task: 'question' })).json.taskId;
+    const qCard = await ct.waitFor(e => e.type === 'permission' && e.remote?.relayId && e.kind === 'question' && e.sessionId === sid, { from: markQ, ms: 30_000 });
+    t.ok('ホストの子の質問が、端末の依頼元の会話に質問のカード（選択肢つき・⇄ ホスト名）として出る', qCard.remote.hostName === 'desk-test' && qCard.questions?.[0]?.question === 'どれにする？' && qCard.canAlways === false, JSON.stringify(qCard).slice(0, 240));
+    const markQa = ct.mark();
+    await termCmd('resolvePermission', { id: qCard.id, allow: true, answers: { 'どれにする？': 'B' } });
+    await ct.waitFor(e => e.type === 'permissionRelayEnd' && e.id === qCard.id, { from: markQa, ms: 15_000 });
+    const qDone = await until(async () => (await tRows()).find(r => r.taskId === qId && r.status === 'completed'), 30_000, '質問後の完了');
+    t.ok('端末で選んだ項目がホストの子へ届き、子が続きを走らせる', qDone.result === '回答: {"どれにする？":"B"}', qDone.result);
+
+    // ---- 設定の変更の承認: 端末のカードには答えるボタンが無く、AI にも「ホストの画面で答える」と伝わる。ホストで答えるとカードが畳まれる
+    const markH = ct.mark();
+    const hoId = toolResult(await tool(sid, 'ply_delegate', { host: 'desk-test', kind: 'mechanical', backend: 'fake', task: 'control:' + JSON.stringify({ name: 'set_setting', arguments: { key: 'confirmAgentSites', value: false, reason: 'テスト' } }) })).json.taskId;
+    const hoCard = await ct.waitFor(e => e.type === 'permission' && e.remote?.hostOnly === true && e.sessionId === sid, { from: markH, ms: 30_000 });
+    t.ok('設定の変更の承認は、端末に答えられない「ホストの画面で答える」カード（hostOnly）として出る', hoCard.remote.hostName === 'desk-test' && hoCard.canAlways === false, JSON.stringify(hoCard.remote));
+    const hoAns = await termCmd('resolvePermission', { id: hoCard.id, allow: true }).then(() => null, e => e);
+    t.ok('端末からは答えを送れない（カードは残る）', Boolean(hoAns) && (await termCmd('running')).permissions.some(p => p.id === hoCard.id));
+    const hoStatus = toolResult(await tool(sid, 'ply_task_status', { taskId: hoId }));
+    t.ok('AI へ返る状態に、ホストの画面で答える旨（hostOnlyApproval）が付く', /desk-test/.test(hoStatus.json?.hostOnlyApproval ?? ''), hoStatus.text.slice(0, 200));
+    const hoHost = await ch.waitFor(e => e.type === 'permission' && e.settingChange, { from: 0, ms: 15_000 });
+    const markHe = ct.mark();
+    await hostCmd('resolvePermission', { id: hoHost.id, allow: false, receipt: hoHost.settingChange.receipt });
+    const hoEnd = await ct.waitFor(e => e.type === 'permissionRelayEnd' && e.id === hoCard.id, { from: markHe, ms: 15_000 });
+    t.ok('ホストの画面で答えると、端末のカードが畳まれる（by: host）', hoEnd.by === 'host');
+
+    // ---- オフライン中の「止める」: 止める予定として残り、つながり直したらホストへ届く（ホストの便りで走り直した状態に戻らない）
+    const pendId = toolResult(await tool(sid, 'ply_delegate', { host: 'desk-test', kind: 'mechanical', backend: 'fake', task: 'slow' })).json.taskId;
+    await until(async () => (await tRows()).find(r => r.taskId === pendId && r.status === 'running'), 20_000, '止める予定の試験の実行中');
+    await within(relay.close(), 5000, '中継の停止（止める予定の試験）');
+    await until(async () => (await termCmd('hosts').catch(() => null)) !== undefined, 1000, 'x').catch(() => {});
+    const offCancel = toolResult(await tool(sid, 'ply_task_cancel', { taskId: pendId }));
+    const pendRow = (await tRows()).find(r => r.taskId === pendId);
+    t.ok('オフライン中の ply_task_cancel は止める予定になる（端末の写しは cancelled・cancelPending。ホストはまだ走っている）', !offCancel.isError && pendRow?.status === 'cancelled' && pendRow.cancelPending === true && ['running', 'queued'].includes((await hRows()).find(r => r.taskId === pendId)?.status), JSON.stringify([offCancel.text.slice(0, 120), pendRow?.status, pendRow?.cancelPending]));
+    const pendStatus = toolResult(await tool(sid, 'ply_task_status', { taskId: pendId }));
+    t.ok('オフライン中の ply_task_status は、止める依頼がまだ届いていないと伝える（cancelPending）', pendStatus.json?.cancelPending === true && /desk-test/.test(pendStatus.json?.note ?? ''), pendStatus.text.slice(0, 200));
+    await within((async () => { relay = createRelay({ enrollSecret: SECRET, trustProxy: false, logger: () => {} }); await relay.listen(relayPort, '127.0.0.1'); })(), 5000, '中継の立て直し（止める予定の試験）');
+    await until(async () => (await hRows()).find(r => r.taskId === pendId)?.status === 'cancelled', 40_000, 'つなぎ直しで止める依頼が届く');
+    t.ok('つなぎ直すと止める依頼がホストへ届き、止める予定が外れる', await until(async () => { const r = (await tRows()).find(x => x.taskId === pendId); return r && r.cancelPending === undefined && r.status === 'cancelled'; }, 30_000, '予定が外れる').then(() => true, () => false));
 
     // ---- 承認モードの引き上げ: 依頼元の会話が「聞かずに進む」で、ホストの委譲先が収まらないとき、依頼元の会話で 1 回だけ確かめる
     const markE = ct.mark();

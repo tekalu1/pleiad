@@ -1886,6 +1886,8 @@ function questionCard(ev, into = null) {
   const head = el("div", "card-head");
   head.append(...markedHead(t("chat.ask.heading", { mark: MARK }), t("chat.ask.headingMark")));
   head.append(el("span", "desc", ev.title ?? ""));
+  // ホストの子の質問の中継（端末の会話のカード。⇄ ホスト名。オフラインの間は答えを止める）
+  if (ev.remote) head.append(el("span", "relay-host", t("chat.approval.relay.host", { host: ev.remote.hostName })));
   card.append(head);
 
   // question文字列をキーに答えを集める（SDK の answers がその形）
@@ -1991,6 +1993,7 @@ function questionCard(ev, into = null) {
       return;
     }
     clearTimeout(arc);
+    if (card.classList.contains("done")) { state.pendingPerms.delete(ev.id); return; }   // 中継のカードは、決着の便りが先に届いて畳まれていることがある
     m.classList.add("done");
     m.closest(".mw")?.classList.add("done");
     card.classList.add("done");
@@ -2007,6 +2010,8 @@ function questionCard(ev, into = null) {
   send.onclick = () => settle(answersNow());
   skip.onclick = () => settle(null);
   placeCard(m, ev, into);
+  if (ev.remote) registerRelayCard(ev, { m, card, head, code: null, actions, res, question: true,
+    get buttons() { return [...card.querySelectorAll("button, input")]; } });
   return m;
 }
 
@@ -2219,18 +2224,36 @@ function permissionCard(ev, into = null) {
   return m;
 }
 
+/** ホストの画面でしか答えられない承認の知らせ（答えるボタンは無い。「子の会話を見る」はホストのリモートの窓で開く補助） */
+function hostOnlyCard(ev) {
+  const m = el("div", "m card");
+  const card = el("div", "card");
+  m.append(card);
+  const head = el("div", "card-head");
+  head.append(...markedHead(t("chat.approval.heading", { mark: MARK }), t("chat.approval.headingMark")));
+  head.append(el("span", "desc", ev.title ?? ""), el("span", "relay-host", t("chat.approval.relay.host", { host: ev.remote.hostName })));
+  card.append(head, el("p", "relay-note strong", t("chat.approval.relay.hostOnly")));
+  const actions = el("div", "card-actions");
+  const res = el("span", "res");
+  actions.append(res);
+  card.append(actions);
+  placeCard(m, ev, null);
+  registerRelayCard(ev, { m, card, head, code: null, actions, res, buttons: [], hostOnly: true });
+  return m;
+}
+
 // 承認の中継のカード（permission id → 部品）。端末の会話のカード（ev.remote）はホストのオフラインでボタンを止め、ホストで先に答えられたら 1 行に畳む。
 // ホストの側の子のカード（ev.remoteOrigin）は、端末で答えられたら 1 行に畳む（docs/remote.md §4.5、ADR 0141）
 const relayCards = new Map();
 
 function registerRelayCard(ev, parts) {
-  const { m, card, head, code, actions, res, buttons } = parts;
+  const { m, card, head, code, actions, res, buttons, question = false, hostOnly = false } = parts;
   const blocking = ev.remote ? null : t("chat.approval.blocking");
   if (ev.remote) {
     // 子の会話を見る（見るための補助。手元の窓だけ。ホストのリモートの窓でその会話を開く）
     const open = window.plyDesktop?.openRemoteSession;
     const childId = (state.work.tasks ?? []).find(x => x.taskId === ev.remote.taskId)?.remoteSessionId;
-    if (open && !window.plyRemote && childId) {
+    if (open && !window.plyRemote && childId && !question) {
       const view = el("button", "btn btn-quiet", t("chat.approval.relay.viewChild"));
       view.type = "button";
       view.onclick = async () => {
@@ -2241,7 +2264,7 @@ function registerRelayCard(ev, parts) {
     }
   }
   const setOnline = (online) => {
-    if (card.classList.contains("done") || card.dataset.sending) return;
+    if (hostOnly || card.classList.contains("done") || card.dataset.sending) return;
     for (const b of buttons) b.disabled = !online;
     card.classList.toggle("relay-offline", !online);
     res.className = online ? "res" : "res strong";
@@ -2252,7 +2275,7 @@ function registerRelayCard(ev, parts) {
     if (card.classList.contains("done")) return;
     // 誰がどこで答えたか分からない決着（つなぎ直しで消えた・タスクが止まった）は、カードごと下げる
     if (!by) { m.remove(); state.pendingPerms.delete(ev.id); return; }
-    const what = allow ? t("chat.approval.allowed") : t("chat.approval.denied");
+    const what = question ? t("chat.approval.relay.answered") : allow ? t("chat.approval.allowed") : t("chat.approval.denied");
     // この端末（の別の窓）で答えた決着は、ふつうの承認と同じ「許可した · 時刻」。ホストで先に答えられたら「ホスト名で…」、ホストの子のカードは「端末名で…」
     const line = ev.remote ? (by === "device" ? `${what} · ${hhmm(new Date())}` : t("chat.approval.relay.answeredByHost", { host: peer || ev.remote.hostName, what, time: hhmm(new Date()) }))
       : t("chat.approval.relay.answeredByDevice", { device: peer || ev.remoteOrigin?.deviceName || "", what, time: hhmm(new Date()) });
@@ -2260,11 +2283,11 @@ function registerRelayCard(ev, parts) {
     m.closest(".mw")?.classList.add("done");
     card.classList.add("done");
     for (const rest of head.querySelectorAll(".card-kind-rest")) rest.remove();
-    head.querySelector(".card-kind").textContent = t("chat.approval.done");
+    head.querySelector(".card-kind").textContent = question ? t("chat.ask.done") : t("chat.approval.done");
     head.append(el("span", "res", line));
     card.querySelector(".relay-note")?.remove();
     actions.remove();
-    if (!ev.browserSite) foldSettledCard(card, head, code, approvalTarget(ev.input));
+    if (code && !ev.browserSite) foldSettledCard(card, head, code, approvalTarget(ev.input));
     state.pendingPerms.delete(ev.id);
   };
   relayCards.set(ev.id, { setOnline, fold });
@@ -2285,6 +2308,8 @@ function onRelayCardEvent(ev) {
  */
 function renderPermission(ev) {
   if (thread.querySelector(`.mw[data-key="perm:${CSS.escape(ev.id)}"], [data-perm-id="${CSS.escape(ev.id)}"]`)) return;
+  // ホストの画面でしか答えられない承認（設定の変更など。ホストの子の承認の中継）は、答えるボタンの無い知らせのカード
+  if (ev.remote?.hostOnly) { closeTurnEl(); activity.show(t("activity.waitingApproval")); return hostOnlyCard(ev); }
   // 設定の変更の承認（ply_control の guarded。ADR 0082）。読めなければ（形が違う）ふつうの承認として出す
   const settingChange = ev.settingChange ? approvalChange(ev.settingChange) : null;
   if (settingChange) {
@@ -4523,7 +4548,8 @@ function syncParentEntry() {
   const origin = $('remoteOriginLine');
   origin.hidden = !remote;
   origin.textContent = remote ? [t('session.remoteOrigin.badge', { device: remote.deviceName || '' }),
-    ...(remote.title ? [t('session.remoteOrigin.request', { title: remote.title })] : []), t('session.remoteOrigin.mode')].join(' · ') : '';
+    ...(remote.title ? [t('session.remoteOrigin.request', { title: remote.title })] : []),
+    (() => { const label = state.modes?.[state.sessions.find(s => s.id === state.current)?.mode]?.label; return label ? t('session.remoteOrigin.modeIs', { mode: label }) : t('session.remoteOrigin.mode'); })()].join(' · ') : '';
 }
 
 const vocabAsked = new Set();
@@ -5200,7 +5226,7 @@ function decorateDelegateCard(card) {
   logo.setAttribute('aria-hidden', 'true');
   logo.classList.add('rt-target-logo');
   label.after(logo);
-  // ホストに任せたタスク: 題の前に ⇄ ホスト名（ホストがオフラインなら中抜き）。開いた中の「ホスト」の行は paintDelegateHost
+  // ホストに任せたタスク: 題の前に ⇄ ホスト名（ホストがオフラインなら中抜き）。ホストの内訳の専用の行は作らない（固定の内訳のまま）
   const hostRow = taskById(taskId)?.host;
   if (hostRow) { logo.after(hostMark(hostRow)); card.dataset.hostId = hostRow.hostId; }
   card.dataset.routeSig = routeSig(routing);
