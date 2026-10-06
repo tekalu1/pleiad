@@ -1,3 +1,5 @@
+// 先頭に置く: AGENT_HOST_SERVER_LOG があれば、他のモジュールの読み込みの失敗も含めて出力をファイルへ向ける（stdio の無い起動）
+import './server-log-boot.mjs';
 import { effortOptions, validateEffort } from './effort.mjs';
 import { listDirs } from './list-dirs.mjs';
 import { createQuotaCache, createUsageStore, agentUsage } from './usage.mjs';
@@ -95,6 +97,8 @@ import { MIN_BUDGET, MAX_BUDGET } from '../web/instruction-amount.mjs';
 import { parentPortBrowser, browserEnvironment, browserInstruction } from './agent-browser.mjs';
 import { getMainPort, setMainPortSource } from './main-port.mjs';
 import { createMainLink, handoverEnabled } from './main-link.mjs';
+import { createOrphanGuard } from './orphan-guard.mjs';
+import { markRuntimeInUse } from './runtime-use.mjs';
 import { parentPortScreencast, createScreencastHub, screencastCommand } from './browser-screencast.mjs';
 import { createBrowserSiteApprovals } from './browser-confirm.mjs';
 import { createBrowserProfiles, createBrowserBridge, findProfile, BROWSER_MCP_PATH } from './browser-profiles.mjs';
@@ -137,6 +141,9 @@ const APP_VERSION = JSON.parse(await fs.readFile(path.join(HERE, '..', 'package.
 const mainLink = handoverEnabled() && !process.parentPort ? createMainLink({ dataDir: store.dataDir, appVersion: APP_VERSION,
   log: line => console.log(`  [main-link] ${line}`) }) : null;
 if (mainLink) setMainPortSource(mainLink.port);
+// 版ごとの実行場所で走っているなら、その版を使っている印を付ける（desktop/runtime.cjs の掃除がこの版を消さない。core/runtime-use.mjs）。
+// 印は閉じない: プロセスの終了で OS が外す
+if (process.env.AGENT_HOST_RUNTIME_ROOT && process.env.AGENT_HOST_RUNTIME_KEY) markRuntimeInUse({ root: process.env.AGENT_HOST_RUNTIME_ROOT, key: process.env.AGENT_HOST_RUNTIME_KEY });
 const mainPort = getMainPort();
 const hostedPort = mainPort.hosted ? mainPort : null;
 const agentBrowser = parentPortBrowser(hostedPort);
@@ -6372,6 +6379,8 @@ mainPort.on("message", async ({ data }) => {
     mainPort.postMessage({ type: 'update-lock', id: data.id, ok, reason: ok ? null : reason || t('updateLock.other') });
   }
   if (data?.type === 'update-unlock') updateGate.release();
+  // main がこれから離れる（更新のためなど）。切れた後に作業が無いまま居続ける上限が決まる（core/orphan-guard.mjs）
+  if (data?.type === 'main-leaving') orphanGuard?.leaving(data.reason);
   if (data?.type === "running") mainPort.postMessage({ type: "running", work: await runningWork() });
   // デスクトップの「中断して終了」（desktop/main.cjs の closeSafely）。全部を reason 付きで止める。
   // main は running の count が 0 になるのを待ってから終了する
@@ -6388,8 +6397,20 @@ mainPort.on("message", async ({ data }) => {
   }
 });
 
+// 名前付きパイプの main が居ないまま長く居続けない（utilityProcess は main と一緒に終わるので要らない）。作業が 0 件のまま上限を過ぎたら、shutdown と同じに終わる
+const orphanGuard = mainLink ? createOrphanGuard({
+  isBusy: async () => (await runningWork()).count > 0,
+  onExpire: () => {
+    try { finishShutdown(store.flushNow, () => false); }
+    catch (e) { console.error('session store shutdown save failed:', e?.code ?? e?.message ?? e); process.exit(1); }
+  },
+  log: line => console.log(`  [main-link] ${line}`),
+}) : null;
+mainPort.on('disconnect', () => orphanGuard?.disconnected());
+orphanGuard?.disconnected();   // 起こした main が最初につながる前に落ちても、居続けない（最初のつながりで connected になる）
 let readyMessage = null;
 mainPort.on('connect', () => {
+  orphanGuard?.connected();
   if (readyMessage) mainPort.postMessage(readyMessage);
   // 付いた main は常駐の状態を持っていない。同じ内容でも送り直す
   residentLast = '';

@@ -31,7 +31,15 @@ const { attachComputerOverlay } = require('./computer-overlay.cjs');
 let computerOverlay;
 const trust = createWindowTrust();
 let remoteWindows;
-let worker, window, origin, updates, quitting = false, closing = false, exitInProgress = false;
+let worker, linked = null, window, origin, updates, quitting = false, closing = false, exitInProgress = false;
+// サーバーの起こし方の記録。updater.log（desktop/update-log.cjs）が出来るまでは溜め、出来たら流す（Job が抜け道を許さず今の流れに落ちた理由などを残す）
+let bootLogger = null;
+const pendingServerLog = [];
+const log = line => { console.warn('[server]', line); if (bootLogger) bootLogger.info?.(`[server] ${line}`); else pendingServerLog.push(line); };
+// 無停止の更新（ADR 0137）のサーバーの起こし方・付け直し。AGENT_HOST_HANDOVER=on のときだけ読む
+const serverBoot = () => require('./server-boot.cjs');
+// 配布物の resources\。開発の確認用に AGENT_HOST_RUNTIME_RESOURCES（desktop:pack の win-unpacked\resources など）で差し替えられる
+const runtimeResources = () => process.env.AGENT_HOST_RUNTIME_RESOURCES || process.resourcesPath;
 const nativeExit = app.exit.bind(app);
 app.exit = (...args) => { exitInProgress = true; return nativeExit(...args); };
 function showFatalError(title, message) {
@@ -142,6 +150,22 @@ function systemLanguage() {
   try { return app.getPreferredSystemLanguages()[0] || app.getLocale() || ''; } catch { return ''; }
 }
 
+/**
+ * AGENT_HOST_HANDOVER=on（パッケージ版か、AGENT_HOST_RUNTIME_RESOURCES つきの確認用）で、パイプでつなぐサーバーを選ぶ。
+ * 使えなければ null（今の utilityProcess。理由を log に残す）
+ */
+async function chooseLinkedServer(portFile) {
+  if (String(process.env.AGENT_HOST_HANDOVER ?? '').toLowerCase() !== 'on') return null;
+  if (!app.isPackaged && !process.env.AGENT_HOST_RUNTIME_RESOURCES) { log('AGENT_HOST_HANDOVER=on needs a packaged app (or AGENT_HOST_RUNTIME_RESOURCES): using the utility process'); return null; }
+  try {
+    return await serverBoot().chooseServer({ resourcesPath: runtimeResources(), execPath: process.execPath, appVersion: app.getVersion(), systemLocale: systemLanguage(), port: savedPort(portFile), cwd: app.getPath('home'),
+      dataDir: serverBoot().resolveDataDir(), log });
+  } catch (error) {
+    log(`zero-downtime update is not used (${error.message}): using the utility process`);
+    return null;
+  }
+}
+
 async function boot() {
   // サーバーが起動するまでは、設定（prefs.json）と OS の言語で決める。起動後はサーバーが解決した言語に合わせる（desktop/i18n.cjs）。
   // main の中のリモートの端末側（core/remote/device.mjs）が引く core/i18n.mjs もここで同じ言語にそろえる
@@ -149,7 +173,10 @@ async function boot() {
   // 開発版と配布版が同時に動いても互いのポートを奪い合わないよう、記録を分ける
   const portFile = path.join(app.getPath('userData'), app.isPackaged ? 'server-port.json' : 'server-port-dev.json');
   const agentBrowserBin = prepareAgentBrowserBin({ packaged: app.isPackaged, resourcesPath: process.resourcesPath, root: path.join(__dirname, '..'), dataDir: app.getPath('userData') });
-  worker = utilityProcess.fork(path.join(__dirname, 'server.cjs'), [], {
+  // AGENT_HOST_HANDOVER=on: サーバーを main の子でない形で起こす・走っているサーバーに付け直す（desktop/server-boot.cjs。名前付きパイプでつなぐ）。
+  // 起こせない環境（Job が抜け道を許さない・実行場所を組めない）では null で、今の utilityProcess に落ちる
+  linked = await chooseLinkedServer(portFile);
+  worker = linked ? linked.link : utilityProcess.fork(path.join(__dirname, 'server.cjs'), [], {
     cwd: app.getPath('home'),
     // OS の言語はサーバーからは確実に取れない（utilityProcess の Intl は OS の表示言語と一致しないことがある）ので、ここで渡す。
     // 画面の言語を「OS に合わせる」ときに使う（core/i18n.mjs）
@@ -157,8 +184,8 @@ async function boot() {
     stdio: 'pipe', serviceName: 'Pleiad server',
   });
   powerMonitor.on('resume', () => worker?.postMessage({ type: 'wake' }));
-  // Consume logs without exposing the private authentication URL.
-  worker.stdout.on('data', () => {});
+  // Consume logs without exposing the private authentication URL.（パイプの経路には stdout・stderr が無い。サーバーが logs\server.log に書く）
+  worker.stdout?.on('data', () => {});
   // 外部 MCP の秘密は safeStorage で暗号化する。safeStorage は main でしか使えないので、サーバーの依頼をここで受ける
   // MCP の OAuth の同意画面も、サーバー（utilityProcess）はブラウザを開けないので頼まれて開く
   attachSecretBridge(worker, { safeStorage, openExternal: url => shell.openExternal(url).catch(() => {}) });
@@ -169,11 +196,13 @@ async function boot() {
     escape: { suspend: () => computerOverlay?.suspendEscape() ?? (() => {}) } });
   resident = attachResident({ app, worker, icon: path.join(__dirname, 'icon.png'), getWindow: () => window, quit: () => closeSafely() });
   let startupError = '';
-  worker.stderr.on('data', data => { startupError = (startupError + data.toString()).replace(/token=\S+/g, 'token=[redacted]').slice(-2000); });
+  worker.stderr?.on('data', data => { startupError = (startupError + data.toString()).replace(/token=\S+/g, 'token=[redacted]').slice(-2000); });
   const ready = await new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error(t('server.startTimeout'))), 60_000);
     worker.on('message', message => { if (message.type === 'ready') { clearTimeout(timer); resolve(message); } });
-    worker.once('exit', () => { clearTimeout(timer); reject(new Error(t('server.startFailed', { detail: startupError }))); });
+    worker.once('exit', () => { clearTimeout(timer); reject(new Error(t('server.startFailed', { detail: startupError || (linked?.logFile ? serverBoot().readLogTail(linked.logFile) : '') }))); });
+    // パイプの経路は、ここで付け直す・起こす（message の登録は済んでいる。つながった直後に最新の ready が届く）
+    linked?.connect().then(result => log(`server ${result.attached ? 'attached' : 'started'} (pid ${result.pid})`), error => { clearTimeout(timer); reject(new Error(serverBoot().describeBootError(error, t))); });
   });
   if (ready.locale) setLocale(ready.locale);
   // 画面で言語を変えたら、サーバーが解決し直した言語が届く（core/server.mjs の savePref）
@@ -227,19 +256,27 @@ async function boot() {
     closeSafely();
   });
   window.on('session-end', () => { quitting = true; worker.postMessage({ type: 'shutdown' }); });
-  worker.once('exit', () => {
+  const onServerExit = () => {
     if (quitting || exitInProgress) return;
-    quitting = true;
-    void showFatalError('Pleiad', t('server.exited')).catch(e => console.error(e)).finally(() => app.quit());
-  });
+    void (async () => {
+      // 名前付きパイプの経路: 別の main が付け直した（bye 'replaced'）なら静かに終わる。つながりだけが切れたなら（サーバーは居る）付け直す
+      if (linked) {
+        if (worker.exitReason === 'replaced') { quitting = true; app.quit(); return; }
+        if (worker.exitReason !== 'closing' && await serverBoot().reattachServer({ link: worker, dataDir: serverBoot().resolveDataDir(), log })) { worker.once('exit', onServerExit); return; }
+      }
+      if (quitting || exitInProgress) return;
+      quitting = true;
+      await showFatalError('Pleiad', t('server.exited')).catch(e => console.error(e)).finally(() => app.quit());
+    })();
+  };
+  worker.once('exit', onServerExit);
   await window.loadURL(`${origin}/?token=${encodeURIComponent(ready.token)}`);
   window.show();
-  // 版ごとの実行場所（docs/zero-downtime-update/plan.md 1-3）を裏で組む。AGENT_HOST_HANDOVER=on のときだけで、サーバーは今のまま utilityProcess で起こす
-  if (process.env.AGENT_HOST_HANDOVER === 'on') void require('./runtime-boot.cjs').prepareRuntime({ resourcesPath: process.resourcesPath, execPath: process.execPath, log: line => console.warn('[runtime]', line) });
   remoteWindows.handleArgv(process.argv);
   const { autoUpdater } = require('electron-updater');
   // 記録は userData/logs/updater.log に残す。トークンと配信の署名付きの URL は伏せて書く（desktop/update-log.cjs）
-  autoUpdater.logger = createUpdateLog(path.join(app.getPath('userData'), 'logs', 'updater.log'));
+  autoUpdater.logger = bootLogger = createUpdateLog(path.join(app.getPath('userData'), 'logs', 'updater.log'));
+  for (const line of pendingServerLog.splice(0)) bootLogger.info?.(`[server] ${line}`);
   updates = new Updates({ updater: autoUpdater, version: app.getVersion(), file: path.join(app.getPath('userData'), 'updates.json'),
     enabled: app.isPackaged && require('../package.json').plyRelease === true && fs.existsSync(path.join(process.resourcesPath, 'app-update.yml')), install: installUpdate,
     prepareCheck: () => prepareUpdateCheck(autoUpdater, path.join(process.resourcesPath, 'app-update.yml')) });
@@ -329,7 +366,9 @@ else {
   app.whenReady().then(boot).catch(e => {
     console.error(e.message);
     if (quitting || exitInProgress) return;
-    quitting = true; worker?.kill();
+    quitting = true;
+    // パイプの経路のサーバーは main の子でなく、付け直した先は前の main が起こしたもの。止めずに切るだけにする（居続けるのは core/orphan-guard.mjs が終わらせる）
+    if (worker?.leave) worker.leave('boot-failed'); else worker?.kill();
     void showFatalError(t('boot.failedTitle'), e.message).catch(error => console.error(error)).finally(() => app.quit());
   });
 }
