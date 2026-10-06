@@ -119,6 +119,13 @@ CREATE TABLE IF NOT EXISTS brain_wakes (
 ) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS brain_wakes_due ON brain_wakes (status, at);
 CREATE INDEX IF NOT EXISTS brain_wakes_bot ON brain_wakes (bot_id, status);
+CREATE TABLE IF NOT EXISTS deleted_natives (
+  backend TEXT NOT NULL,
+  native_id TEXT NOT NULL,
+  session_id TEXT NOT NULL,
+  at REAL NOT NULL,
+  PRIMARY KEY (backend, native_id)
+) WITHOUT ROWID;
 `;
 const lateEnsured = new WeakSet();
 function ensureLateTables(db) {
@@ -546,6 +553,23 @@ export function conversationTable(db) {
       transaction(db, () => {
         for (const [id, json] of upserts) prepared(db, 'INSERT INTO conversations (id, data) VALUES (?, ?) ON CONFLICT (id) DO UPDATE SET data = excluded.data').run(id, json);
         for (const id of removals) prepared(db, 'DELETE FROM conversations WHERE id = ?').run(id);
+      });
+    },
+  };
+}
+
+// ---- 消した会話のネイティブの id（ADR 0147）。1 つのネイティブの会話 1 行 ------------------------------------
+// 送った会話を消しても、ネイティブの会話（Claude の transcript・Codex の rollout など）は残す。残ったものが一覧に
+// ネイティブだけの行として戻ってこないよう、消した会話が持っていたネイティブの id を覚えて一覧から隠す（core/conversations.mjs の wrapBackend）
+export function deletedNativeTable(db) {
+  ensureLateTables(db);
+  return {
+    /** [[backend, nativeId]] */
+    loadAll() { return prepared(db, 'SELECT backend, native_id FROM deleted_natives').all().map(row => [row.backend, row.native_id]); },
+    /** rows: [[backend, nativeId]]。1 つのトランザクションで書く */
+    add(rows, sessionId, at = Date.now()) {
+      transaction(db, () => {
+        for (const [backend, nativeId] of rows) prepared(db, 'INSERT OR IGNORE INTO deleted_natives (backend, native_id, session_id, at) VALUES (?, ?, ?, ?)').run(backend, nativeId, sessionId, at);
       });
     },
   };

@@ -1221,7 +1221,7 @@
         "cli": true
       },
       "legacyCommand": null,
-      "input": "99f99ce422d2"
+      "input": "3e002aa0e25e"
     },
     {
       "id": "delegation.instructions",
@@ -2730,6 +2730,29 @@
       },
       "legacyCommand": "compactConversation",
       "input": "716323b9326b"
+    },
+    {
+      "id": "sessions.delete",
+      "risk": "guarded",
+      "riskOf": true,
+      "scope": "session",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "sessions",
+            "delete"
+          ],
+          "positional": [
+            "sessionId"
+          ]
+        }
+      },
+      "legacyCommand": "deleteSession",
+      "input": "bb3819255f29"
     },
     {
       "id": "sessions.deleteUnsent",
@@ -4873,6 +4896,13 @@
     {
       "id": "sessions.compact",
       "path": "sessions compact",
+      "positional": [
+        "sessionId"
+      ]
+    },
+    {
+      "id": "sessions.delete",
+      "path": "sessions delete",
       "positional": [
         "sessionId"
       ]

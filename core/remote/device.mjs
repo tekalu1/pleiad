@@ -5,7 +5,8 @@
 //   <dir>/secrets.json  端末の静的鍵（deviceKey）と、ホストごとの中継用トークン（host:<hostId>）。core/secret-store.mjs
 //                       （デスクトップは safeStorage で包む cipher を渡す。試験・暗号化できない起動は 0600 の平文）
 //   <dir>/hosts.json    { version: 1, hosts: [{ hostId, hostName, label, relayUrl, hostPublicKey, deviceId, port,
-//                         pairedAt, lastConnectedAt, revokedAt }] }（秘密は入れない。port は §7.1 のホストごとに覚えるポート）
+//                         pairedAt, lastConnectedAt, revokedAt, agentUse }] }（秘密は入れない。port は §7.1 のホストごとに覚えるポート。
+//                         agentUse = この PC の AI からそのホストへ任せるか。既定オフ。docs/remote.md §4.5）
 //
 //   const device = createRemoteDevice({ dir, cipher, app: '0.1.0', name: os.hostname() });
 //   const host = await device.pair(payload, { onCode: code => show(code) });   // ホストで承認されたら解決
@@ -16,8 +17,9 @@ import { EventEmitter } from 'node:events';
 import { createSecretStore, plainCipher, withFileLock } from '../secret-store.mjs';
 import { Handshake, generateKeyPair, keyPairFromPrivate, prologueFor, derivePairing, confirmationCode } from './noise.mjs';
 import { parsePairingPayload, relayWsUrl, cleanLabel, PAIRING_TTL_MS } from './pairing.mjs';
-import { openRelaySocket } from './device-link.mjs';
+import { openRelaySocket, DeviceLink } from './device-link.mjs';
 import { DeviceProxy } from './device-proxy.mjs';
+import { AgentLink } from './agent-link.mjs';
 import { readJson, writeJson } from './devices.mjs';
 import { t } from '../i18n.mjs';
 
@@ -27,7 +29,7 @@ function publicRecord(h) {
   return {
     hostId: h.hostId, hostName: h.hostName ?? '', label: h.label ?? '', relayUrl: h.relayUrl,
     deviceId: h.deviceId, port: h.port ?? 0, pairedAt: h.pairedAt ?? null,
-    lastConnectedAt: h.lastConnectedAt ?? null, revokedAt: h.revokedAt ?? null,
+    lastConnectedAt: h.lastConnectedAt ?? null, revokedAt: h.revokedAt ?? null, agentUse: h.agentUse === true,
   };
 }
 
@@ -82,7 +84,7 @@ export function createDeviceStore({ dir, cipher = plainCipher }) {
           hostId: creds.hostId, hostName: cleanLabel(creds.hostName), label: prev?.label ?? '',
           relayUrl: creds.relayUrl, hostPublicKey: Buffer.from(creds.hostPublicKey).toString('base64url'),
           deviceId: creds.deviceId, port: prev?.port ?? 0, pairedAt: new Date().toISOString(),
-          lastConnectedAt: null, revokedAt: null,
+          lastConnectedAt: null, revokedAt: null, ...(prev?.agentUse === true ? { agentUse: true } : {}),
         };
         data.hosts = data.hosts.filter(h => h.hostId !== creds.hostId).concat(rec);
         await writeJson(hostsFile, data);
@@ -90,13 +92,14 @@ export function createDeviceStore({ dir, cipher = plainCipher }) {
       });
     },
 
-    /** 秘密でない項目を変える（port・label・hostName・lastConnectedAt・revokedAt）。 */
+    /** 秘密でない項目を変える（port・label・hostName・lastConnectedAt・revokedAt・agentUse）。 */
     async updateHost(hostId, patch) {
       return locked(async () => {
         const data = await readHosts();
         const h = data.hosts.find(x => x.hostId === hostId);
         if (!h) return null;
         for (const k of ['port', 'label', 'hostName', 'lastConnectedAt', 'revokedAt']) if (k in patch) h[k] = patch[k];
+        if ('agentUse' in patch) { if (patch.agentUse === true) h.agentUse = true; else delete h.agentUse; }
         await writeJson(hostsFile, data);
         return publicRecord(h);
       });
@@ -198,13 +201,16 @@ export function createRemoteDevice({ dir, cipher = plainCipher, app = '', name =
   const store = createDeviceStore({ dir, cipher });
   const events = new EventEmitter();
   const proxies = new Map();   // hostId -> Promise<DeviceProxy>
+  const agents = new Map();    // hostId -> { link: DeviceLink, agent: AgentLink }。この PC の AI からホストへ任せる線（agentUse のホストだけ。窓を開かなくても持つ）
 
   async function list() {
     const hosts = await store.hosts();
     return Promise.all(hosts.map(async h => {
       const px = proxies.has(h.hostId) ? await proxies.get(h.hostId).catch(() => null) : null;
       const st = px?.status;
-      return { ...h, open: Boolean(px), state: st?.state ?? (h.revokedAt ? 'revoked' : 'closed'), ...(st?.hostName ? { hostName: st.hostName } : {}) };
+      const ag = agents.get(h.hostId);
+      return { ...h, open: Boolean(px), state: st?.state ?? (h.revokedAt ? 'revoked' : 'closed'), ...(st?.hostName ? { hostName: st.hostName } : {}),
+        ...(ag ? { agent: ag.agent.status, agentLinkState: ag.link.state } : {}) };
     }));
   }
 
@@ -227,6 +233,46 @@ export function createRemoteDevice({ dir, cipher = plainCipher, app = '', name =
     proxies.set(hostId, run);
     run.catch(() => proxies.delete(hostId));
     return run;
+  }
+
+  // ---- この PC の AI からホストへ任せる線（docs/remote.md §4.5、ADR 0146）。端末の main が持ち、ローカルのサーバーとは parentPort の橋で話す
+
+  /** agentUse のホストの線を張る（窓のプロキシとは別のチャネル）。取り消し済み・資格が無いホストは張らない。張った AgentLink を返す */
+  async function agentOpen(hostId) {
+    if (agents.has(hostId)) return agents.get(hostId).agent;
+    const creds = await store.credentials(hostId);
+    if (!creds || creds.revokedAt) return null;
+    if (agents.has(hostId)) return agents.get(hostId).agent;
+    const keyPair = await store.identity();
+    const link = new DeviceLink({ creds, keyPair, app, name, shell: platform === 'desktop' ? 'desktop' : 'mobile', log, ...(proxyOptions.backoff ? { backoff: proxyOptions.backoff } : {}),
+      ...(proxyOptions.connectTimeoutMs ? { connectTimeoutMs: proxyOptions.connectTimeoutMs } : {}) });
+    const agent = new AgentLink({ link, log, ...(proxyOptions.agentRequestTimeoutMs ? { requestTimeoutMs: proxyOptions.agentRequestTimeoutMs } : {}) });
+    link.on('status', s => {
+      if (s.state === 'connected') store.updateHost(hostId, { lastConnectedAt: new Date().toISOString(), revokedAt: null, ...(s.hostName ? { hostName: cleanLabel(s.hostName) } : {}) }).catch(() => {});
+      if (s.state === 'revoked') store.updateHost(hostId, { revokedAt: new Date().toISOString() }).catch(() => {});
+    });
+    agent.on('state', st => events.emit('agent-state', { hostId, ...st }));
+    agents.set(hostId, { link, agent });
+    agent.start();
+    link.start();
+    return agent;
+  }
+
+  async function agentClose(hostId) {
+    const entry = agents.get(hostId);
+    if (!entry) return;
+    agents.delete(hostId);
+    entry.agent.stop();
+    entry.link.stop();
+    events.emit('agent-state', { hostId, state: 'offline', allowed: false, hostName: '' });
+  }
+
+  /** hosts.json の agentUse に合わせて線を張る・閉じる（起動のとき・agentUse を替えたとき） */
+  async function agentSync() {
+    const hosts = await store.hosts();
+    const want = new Set(hosts.filter(h => h.agentUse && !h.revokedAt).map(h => h.hostId));
+    for (const id of [...agents.keys()]) if (!want.has(id)) await agentClose(id);
+    for (const id of want) await agentOpen(id).catch(e => log(`remote agent: ${e.message}`));
   }
 
   async function close(hostId) {
@@ -253,6 +299,7 @@ export function createRemoteDevice({ dir, cipher = plainCipher, app = '', name =
         const full = await store.credentials(rec.hostId);
         px?.retryNow(full);
       }
+      if (agents.has(rec.hostId)) agents.get(rec.hostId).link.retryNow(await store.credentials(rec.hostId));
       return rec;
     },
     open,
@@ -261,7 +308,17 @@ export function createRemoteDevice({ dir, cipher = plainCipher, app = '', name =
     close,
     async rename(hostId, label) { return store.updateHost(hostId, { label: cleanLabel(label) }); },
     /** ペアリングを忘れる（ホストの端末一覧からは消えない。ホストで取り消す）。 */
-    async remove(hostId) { await close(hostId); return store.removeHost(hostId); },
-    async closeAll() { await Promise.all([...proxies.keys()].map(close)); },
+    async remove(hostId) { await close(hostId); await agentClose(hostId); return store.removeHost(hostId); },
+    async closeAll() { await Promise.all([...proxies.keys()].map(close)); await Promise.all([...agents.keys()].map(agentClose)); },
+    /** この PC の AI からそのホストへ任せるか（人だけが窓で変える。既定オフ）。入れたら線を張り、切ったら閉じる */
+    async setAgentUse(hostId, enabled) {
+      const rec = await store.updateHost(hostId, { agentUse: enabled === true });
+      if (!rec) throw Object.assign(new Error(t('remote.device.unknownHost')), { code: 'unknown-host' });
+      if (enabled === true) await agentOpen(hostId); else await agentClose(hostId);
+      return rec;
+    },
+    agentSync,
+    /** 張ってある線（無ければ null） */
+    agent: hostId => agents.get(hostId)?.agent ?? null,
   };
 }

@@ -16,7 +16,8 @@
     "failed": "✕ 操作できませんでした · {{reason}}",
     "newSession": "新しい会話",
     "deleteStatusConfirm": "「{{status}}」を削除しますか。{{count}} 件の会話は「{{destination}}」へ移ります。",
-    "deletedStatus": "「{{status}}」を削除しました"
+    "deletedStatus": "「{{status}}」を削除しました",
+    "deleteSessionConfirm": "「{{title}}」を削除しますか。元に戻せません。エージェント側の会話の記録（Claude Code の transcript など）は残ります。"
   },
   "settings": {
     "appearance": {
@@ -154,8 +155,23 @@
         "revoke": "取り消す",
         "revokeConfirm": "「{{name}}」を取り消しますか。この端末はすぐに切れ、もう一度ペアリングするまで使えません。",
         "keep": "やめる",
+        "revokeTasks": "この端末の AI から任された作業 {{count}} 件も止めます。",
         "revokeConfirmButton": "取り消す",
         "revoked": "「{{name}}」を取り消しました。"
+      },
+      "agent": {
+      "title": "この端末の AI からの依頼を受ける",
+      "help": "委譲と同じ扱い: 承認モードは依頼元の会話に合わせ、承認は依頼元の会話にも出ます",
+      "confirm": "{{name}} の AI からの依頼を受けますか？",
+      "confirmWarn": "⚠ 依頼元の会話が確認なしのモードなら、この PC でも確認なしで動きます。",
+      "accept": "受ける",
+      "cancel": "やめる",
+      "note": "依頼元の会話が確認なしなら、この PC でも確認なしで動きます。",
+      "tasks": "任された作業 · 動いている {{count}}",
+      "waiting": "承認待ち {{count}}",
+      "open": "最近の会話を開く",
+      "stopAll": "すべて止める",
+      "noTasks": "任された会話はまだありません。"
       },
       "platform": {
         "desktop": "デスクトップ",
@@ -1413,6 +1429,18 @@
       "deny": "拒否",
       "allow": "許可",
       "done": "承認",
+      "relay": {
+      "host": "⇄ {{host}}",
+      "offline": "{{host}} がオフラインのため、答えを送れません。つながり直すと送れます。",
+      "answeredByHost": "{{host}} で{{what}} · {{time}}",
+      "answeredByDevice": "{{device}} で{{what}} · {{time}}",
+      "hostOnly": "この承認はホストの画面で答えます。ホストの画面か、子の会話を見るから答えてください。",
+      "answered": "答えた",
+      "hostOffline": "ホストがオフライン",
+      "viewChild": "子の会話を見る",
+      "hostCanAnswer": "依頼元の会話（⇄ {{device}}）でも答えられます",
+      "viewChildFailed": "リモートの窓を開けませんでした: {{error}}"
+      },
       "allowedAlways": "常に許可した",
       "allowed": "許可した",
       "denied": "拒否した",
@@ -1556,6 +1584,14 @@
         "allowed": "削除を許可した",
         "failed": "削除できなかった",
         "notice": "{{agent}} が会話の削除の許可を待っています"
+      },
+      "conversationDelete": {
+        "label": "会話",
+        "question": "{{agent}} が会話を削除しようとしています",
+        "allow": "削除を許可",
+        "allowed": "削除を許可した",
+        "failed": "削除できなかった",
+        "notice": "{{agent}} が会話の削除の許可を待っています"
       }
     },
     "settingApproval": {
@@ -1679,6 +1715,9 @@
           "allowed": "削除した"
         },
         "sessionDelete": {
+          "allowed": "削除した"
+        },
+        "conversationDelete": {
           "allowed": "削除した"
         },
         "denied": "拒否した",
@@ -1976,6 +2015,8 @@
       "idCopyFailed": "セッション IDのコピーに失敗した",
       "deleteUnsent": "未送信のセッションを削除…",
       "deleteWithDraft": "下書きも削除する",
+      "delete": "セッションを削除…",
+      "deleteConfirm": "削除する",
       "newStatusEllipsis": "新しい状態を作る…",
       "statusName": "状態の名前",
       "createStatusFailed": "状態を作れなかった: {{error}}",
@@ -2006,6 +2047,12 @@
     "parentChat": "親の会話",
     "titleSuggestFailed": "タイトルを考えられなかった: {{error}}",
     "more": "この会話の操作",
+    "remoteOrigin": {
+    "badge": "⇄ {{device}} の AI から",
+    "request": "依頼元の会話「{{title}}」",
+    "modeIs": "承認モード {{mode}}（依頼元に合わせた）",
+    "mode": "承認モードは依頼元に合わせた"
+    },
     "rowMore": "「{{title}}」の操作",
     "groupMore": "状態「{{status}}」の操作",
     "familyMore": "グループ「{{title}}」の操作"
@@ -2125,6 +2172,7 @@
       "collapse": "たたむ",
       "groupCommands": "コマンド",
       "openChat": "会話として開く",
+      "hostResult": "結果（ホストから）",
       "request": "依頼",
       "noMessages": "まだ発言はありません。",
       "open": "開く",
@@ -2636,6 +2684,10 @@
       "downloading": "このまま作業を続けられます。準備ができたらお知らせします。",
       "noAutoUpdate": "この評価版は自動更新に対応していません。新しいインストーラーで更新してください。",
       "browser": "ブラウザー版では更新履歴を確認できます。"
+    },
+    "store": {
+      "status": "Microsoft Store から更新されます",
+      "hint": "新しいバージョンは Microsoft Store が配ります。すぐに確かめるときは、Microsoft Store の「ライブラリ」で「更新プログラムを取得する」を押してください。"
     },
     "lastChecked": "最終確認：{{when}}",
     "retry": "再試行",

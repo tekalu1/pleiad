@@ -9,7 +9,7 @@ Claude・Codex の会話から、`ply_agents` MCP の `ply_delegate` で別の�
 
 | ツール | 引数 | 動作 |
 |---|---|---|
-| `ply_delegate` | `kind`, `task`, 任意の `title`, `backend`, `context`, `cwd`, `model`, `effort`, `isolate` | 子会話を作り、すぐ `taskId`・短い `title`・`routing`（どう選んだか）・worktree なら `worktree`（`{ id, branch, path, origin, baseBranch }`）を返す。`title` は一覧と子会話の見出しに使い、無ければ依頼の最初の空でない行。`model` / `effort` は `backend` を書いたときだけ。`isolate`（真偽）は下の「worktree」 |
+| `ply_delegate` | `kind`, `task`, 任意の `title`, `backend`, `context`, `cwd`, `model`, `effort`, `isolate`, `host`（下の「リモートのホストへ任せる」） | 子会話を作り、すぐ `taskId`・短い `title`・`routing`（どう選んだか）・worktree なら `worktree`（`{ id, branch, path, origin, baseBranch }`）を返す。`title` は一覧と子会話の見出しに使い、無ければ依頼の最初の空でない行。`model` / `effort` は `backend` を書いたときだけ。`isolate`（真偽）は下の「worktree」 |
 | `ply_task_status` | `taskId`, 任意の `offset` | 状態と結果。結果は16,000文字ずつ返し、`nextOffset` で続きへ進む。子で実行前に拒否されたコマンドは `rejections`（下の「実行前に拒否されたコマンド」） |
 | `ply_task_wait` | `taskId`, 任意の `seconds`（1〜30、既定30） | 上限まで待つ。承認待ちになったらすぐ戻る。未完了なら現在の状態を返す |
 | `ply_task_send` | `taskId`, 任意の `message`, `backend`, `model`, `effort` | `backend` / `model` / `effort` を書くと子の設定を替える（下の「子の設定を替える」。設定だけなら `message` を省ける）。`message` は同じ子会話に追加指示。子のターンが走っていて途中送信を受けられるなら、今のターンへ途中送信（`control.steer`）で渡す（下の「追加指示の配送」）。起動準備中は受信可能になり次第、現在のターンに送る。待機分は順序を保ってまとめる。途中送信を受けられない場合は次のターンに送る。完了後・停止後なら再開する（止まった直後に送った指示も捨てずに走らせる）。止めている途中（`cancelling`）は断る |
@@ -135,6 +135,18 @@ Claude・Codex の会話から、`ply_agents` MCP の `ply_delegate` で別の�
 
 **鍵と外部送信。** 判定器のキーは互換の接続先と同じ秘密の置き場（`compat-endpoint-secrets.json`。`delegation-routing:openrouter` / `delegation-routing:cerebras`）に置き、画面には `hasKey` だけ返す。キーの中身は確かめない（確かめると登録の時点で外へ送ることになる）。キーをログ・タスク・会話の記録・エラーに出さない。**外部送信の同意はキーの登録**: キーが無ければ外へは何も送らず、難しさは `mid`。送り先の URL は固定で、リダイレクトは追わない。
 
+## リモートのホストへ任せる（`host`）
+
+提案（画面のモックは承認済み、2026-10-06）、[ADR 0146](adr/0146-remote-agent-delegation.md)、issue #57。デスクトップ版の端末（ほかの PC の Pleiad をリモートで使う側）の会話の AI が、ペアリング済みのホストの Pleiad に仕事を任せる。道具は増やさず、`ply_delegate` に任意の `host` を足す。口とプロトコルは [docs/remote.md](remote.md) §4.5。
+
+- **使い方**: `ply_delegate { host: "<ホストの名前>", kind, task, … }`。省けば今どおり手元。`ply_task_status`・`ply_task_wait`・`ply_task_send`・`ply_task_cancel`・`ply_task_list` は同じ `ply-task-` の ID で、ホストのタスクにも効く（`ply_task_list` の行・`ply_task_status` の返り値に `host` が付く）。`backend` を書かなければホストが委譲先を選び（ホストの設定 › 委譲の自動の振り分け）、`routing.decidedBy` は `host`。自動の振り分けはホストを選ばない（AI が `host` を書いたときだけ）。`ply_usage` は手元の使用枠だけ。
+- **使えるホスト**: 端末側（「ほかのホストにつなぐ」窓の「この PC の AI から任せる」）とホスト側（設定 › リモートの端末の「この端末の AI からの依頼を受ける」）の**両方がオン**で、ホストが動いているものだけ。どちらも既定オフで、人だけが変えられる。`ply_delegate` の説明には、使えるホストの名前（とオフラインの印）が会話ごとに入る。使えないホスト・オフラインのホストは、待たずに理由つきで失敗する。
+- **作業場所**: `cwd` はホストのパス（省けばホストのホーム）、`isolate` はホストの worktree の規則。端末の `cwd` は使わない。初版は絞らない。
+- **承認モード**: 子の承認モードは依頼元（端末の会話）に合わせる。端末は依頼元の会話の承認モードの位置（範囲・自律・強制できるか）を送り、ホストは手元の委譲と同じ `resolveDelegatedMode` で親の強さまでを継ぐ。ホスト側の上限は持たない（依頼元が確認なしなら、ホストの子も確認なしで動く）。引き上げが要るとき（`escalation`）は、ホストが子を作る前に計画を返し、端末が依頼元の会話で 1 回だけ確かめる（`permission.delegateEscalation`。見出しに ⇄ ホスト名）。許可されたら同じ鍵で確定する。Codex の親は手元と同じく、`full` / `yolo` 以外では端末で確かめる。`ply_delegate` の呼び出し自体は依頼元の会話の通常のツールの承認に従う。
+- **端末の側のタスク**: 端末の `agent_tasks` に、ホストのタスクを写した行（`host`・ホストのタスク ID）を持つ。ホストの便り（状態・完了）で更新し、完了したら手元と同じ完了通知（依頼元の会話へ。「完了通知」）を出す。つながっていない間は最後に知っている状態を出し、つながり直したら `sync` で追いつく。再起動しても行は残り、実行中のものも `interrupted` にしない（ホストで続いているため）。端末の `ply_task_cancel` はホストのタスクを止める（オフラインなら止められないので失敗する）。
+- **ホストの側**: 任された子の会話には、出どころの印（`delegation.remote = { deviceId, deviceName, sessionTitle }`。画面は「⇄ <端末> の AI から」）が付き、タスクの親は仮の ID `remote:<deviceId>:<端末の会話の ID>`。完了通知は端末へ便りで届ける（ホストの会話に新しいターンは始めない）。**任された会話（とその子孫）からは、さらに `host` を指定できない**。端末の AI から始まった鎖には、委譲の深さの上限（4）を効かせる。端末ごとの上限は、動いているタスクが 8 件（任された子の子孫も数える）・`delegate` と `send` が 1 分に 20 件。取り消し・「すべて止める」は、任された子の子孫まで止める。記録は `by: agent`・`via: remote`・`deviceId`（子の会話に `delegate`・`send`・`cancel` と、人の答えが残る）。
+- **端末を取り消す・許可を切る**: 任された動いている作業を止める（止めた旨は端末が次につながったときに知る）。端末側が許可を切った場合、ホストのタスクは続き、端末は新しい依頼も追跡もしない。
+
 ## 会話・権限・作業場所
 
 子は新しい Pleiad 管理会話。親の会話全文や非公開の思考はコピーせず、`task` と明示された `context` を渡す。
@@ -187,6 +199,8 @@ Pleiad タスクには件数・深さの上限を置かない。同時に活動�
 `ply_task_wait` は上限まで待たずにすぐ戻る。依頼元のエージェントには、どの会話で承認すればよいかを利用者へ伝えさせる。
 `waiting` は「いま承認を待っているか」から導く見せかけの状態で、保存する状態（`queued` / `running` …）は変えない。
 `ACTIVE` の集合と、再起動時に実行中を `interrupted` にする扱いを壊さないため。
+
+**祖先が端末の会話のとき**（リモートのホストに任せた子。[ADR 0146](adr/0146-remote-agent-delegation.md)）: ホストは子（と子孫）の承認を、依頼元の端末へ `relay`（承認の ID・受領証・見出し・入力）として流し、端末のローカルのサーバーが依頼元の会話の中継のカードとして出す（見出し「委譲先「…」」の後に ⇄ ホスト名。「常に許可」は出さない）。ホストの画面にも子の会話のカードが出て、先に答えた方で決着する。端末で答えると「許可を送っています…」のあと 1 行に畳み、ホストで先に答えられたら「<ホスト> で許可した <時刻>」に畳む。ホストがオフラインの間は、ボタンを止めて「<ホスト> がオフラインのため、答えを送れません。つながり直すと送れます。」を出す（ホストの側ではカードが待ち続ける）。質問のカード（AskUserQuestion）も同じ道で中継し、選んだ項目を送る。設定の変更の承認はホストの画面でしか答えられないので、端末のカードは「ホストの画面で答えてください」の知らせ（答えるボタンは無い）にし、`ply_task_status` の戻りにも `hostOnlyApproval` で書く。答えは端末の画面（人）の `resolvePermission` からだけ運ぶ（remote.md §4.5）。オフライン中に止めたタスク（`ply_task_cancel`・会話の中断）は「止める予定」として残り、つながり直したら送る。`ply_task_status` / `ply_task_wait` の `waiting` は、写した行に今待っている中継の承認があるかから導く。
 
 ## 無音と長いコマンドの通知
 
@@ -384,6 +398,7 @@ Windows では、別のプロセス（ウイルス対策・PowerShell の `Get-C
 
 ## 検証
 
+端末の AI からの委譲（`host`）は `tests/unit/remote-agent.mjs`（ホストの `/agent` の口）と `tests/unit/remote-agent-e2e.mjs`（端末のローカルのサーバー → main の橋 → 中継 → ホスト）で確かめる（remote.md §10）。
 `npm test` でタスクの管理と SDK MCP クライアント接続、fake を使ったサーバー全体の委譲・継続・停止と、承認の中継・`waiting` を検証する。
 完了通知は `tests/unit/agent-tasks-notice.mjs`（受け取り済み `read` は送らない・`ply_task_wait` の間は途中送信しない・同じ親の分を 1 回の配送にまとめる・`steerable` の途中送信で `sent`・受理されない/不明/捨てられた場合の状態・`canSteerNotice` の条件）と `tests/unit/server-delegation-notice.mjs`（fake の `bg` 台本で、依頼元のターンの中へ届く・人間の発言にしない・`ply_task_wait` の後は届かない・途中送信を止めている間に溜まった 2 件が 1 通・`steerConfirms` の合図と受理されない場合）。
 追加指示の途中送信は `tests/unit/agent-tasks-steer.mjs`（受理・合図待ち・合図が先に来る・捨てられた・合図なしでターンが終わった・受理されない・結果不明・渡せない・順序・合図待ちの間の次の指示・止めた後・再起動。管理側だけを身代わりで）と `tests/unit/server-delegation-steer.mjs`（fake の `bg` 台本で、同じターンに入り新しいターンを走らせない・`DECLINE_STEER`/`THROW_STEER`/次ターンの設定の予約で待機か未配送・`steerConfirms` の送信中と `DROP_STEER`/`SILENT_STEER` が次のターンで 1 回だけ）。

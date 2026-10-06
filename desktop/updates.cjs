@@ -3,13 +3,27 @@ const path = require('node:path');
 const { EventEmitter } = require('node:events');
 const { t } = require('./i18n.cjs');
 
+/**
+ * Microsoft Store の版か。Store 用の設定（electron-builder.store.cjs）が package.json に plyStore: true を焼き込む。
+ * MSIX のパッケージとして動いていれば Electron の process.windowsStore も立つ（docs/microsoft-store.md「自動更新」）
+ */
+function isStoreBuild({ pkg, windowsStore }) { return pkg?.plyStore === true || windowsStore === true; }
+/**
+ * electron-updater で自動更新するか。release 設定の配布版（plyRelease と更新フィードの app-update.yml）だけ。
+ * Store の版は Store が更新するので、フィードがあっても使わない（MSIX の入れ先は読み取り専用で、electron-updater では更新できない）
+ */
+function updaterEnabled({ packaged, pkg, windowsStore, feed }) {
+  return Boolean(packaged && !isStoreBuild({ pkg, windowsStore }) && pkg?.plyRelease === true && feed);
+}
+
 // No Electron dependency: the state machine is tested with a fake updater.
 class Updates extends EventEmitter {
-  constructor({ updater, version, file, enabled, install, prepareCheck = async () => {} }) {
+  constructor({ updater, version, file, enabled, install, prepareCheck = async () => {}, store = false }) {
     super();
+    enabled = enabled && !store;
     Object.assign(this, { updater, version, file, enabled, install, prepareCheck });
     this.authenticated = false;
-    this.state = { version, enabled, phase: enabled ? 'idle' : 'unavailable', channel: version.includes('-') ? 'beta' : 'stable', autoCheck: true, autoDownload: true, notice: false, lastChecked: null };
+    this.state = { version, enabled, store, phase: enabled ? 'idle' : 'unavailable', channel: version.includes('-') ? 'beta' : 'stable', autoCheck: true, autoDownload: true, notice: false, lastChecked: null };
     this.busy = false;
     updater.autoDownload = false;
     updater.autoInstallOnAppQuit = false;
@@ -120,4 +134,4 @@ function updateError(error, authenticated = false) {
 function notesText(notes) {
   return (typeof notes === 'string' ? notes : Array.isArray(notes) ? notes.map(n => `${n.version}\n${n.note || ''}`).join('\n\n') : '').slice(0, 30000);
 }
-module.exports = { Updates, notesText };
+module.exports = { Updates, notesText, isStoreBuild, updaterEnabled };

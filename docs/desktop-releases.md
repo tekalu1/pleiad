@@ -1,6 +1,7 @@
 # デスクトップのバージョンと更新
 
 Android 版の配布（`main` への push で署名済み APK を別のリリースとして出す）は [android-releases.md](android-releases.md)。
+Microsoft Store から配る MSIX（Store が署名し、更新も Store が行う。試作の段階）は [microsoft-store.md](microsoft-store.md)。
 
 ## バージョンと原稿
 
@@ -27,7 +28,7 @@ package.json と package-lock.json の番号を揃え、原稿と生成済み JS
 ## 利用者の操作
 
 設定の左メニュー「アプリ情報・更新」にバージョン、変更履歴、更新の状態、受け取る更新をまとめる。
-ブラウザー版と未署名の評価用パッケージでは履歴を読めるが自動更新はしない。
+ブラウザー版と未署名の評価用パッケージでは履歴を読めるが自動更新はしない。Microsoft Store 版は Store が更新するので、electron-updater を使わず、Store で更新する案内を出す（[microsoft-store.md](microsoft-store.md)「自動更新」）。
 署名を必須にする release 設定だけが `plyRelease: true` と配布先を埋め込む。
 
 新規設定の既定は自動確認あり（起動15秒後、以降30分ごと。ウィンドウへ戻ったときも、前回の確認から10分以上あいていれば確認する）、自動ダウンロードあり、明示的な再起動のみ。

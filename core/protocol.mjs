@@ -71,6 +71,7 @@ export const COMMANDS = new Set([
   'remotePairingDeny',     // { id } -> RemoteStatus
   'remoteDevices',         // {} -> 端末の一覧（RemoteStatus の devices と同じ）
   'remoteRevoke',          // { id } -> RemoteStatus。一覧と中継から消し、つながり中のチャネルを切る
+  'setRemoteDeviceAgent',  // { id, enabled?, stopAll? } -> 端末の行（agent を含む）。この端末の AI からの委譲を受けるか（既定オフ。デスクトップ版の端末だけ）・任された作業をすべて止める。docs/remote.md §4.5
   'setRemoteResident',     // { keepRunning?, sleep?: 'working'|'always'|'off' } -> RemoteStatus。常駐の設定（§6.3。RemoteStatus.resident に { available, keepRunning, sleep }）
   'contextSettings', // { cwd? } -> { defaults, places: [{ id, path, kinds: { <kind>: { value, override, from } }, roots, overrides, current }] } 種類ごとの設定と継承（core/context-settings.mjs）
   'slashSkills',     // { cwd } -> 入力欄「/」の候補。コンテキスト画面と同じ探索結果からのスキル一覧（説明文付き）
@@ -151,6 +152,7 @@ export const COMMANDS = new Set([
   "newSession",      // 空のセッションを開始する（最初の runTurn まで id は無い）。draft を渡すと入力欄の下書きとして保存する（送らない。「見直しを頼む」）
   "saveDraft",
   "deleteUnsentSession",
+  "deleteSession",   // { sessionId } -> "deleted"。送った会話も Pleiad の記録から消す（sessions.delete。ネイティブの会話は残す。ADR 0147）
   "setTurnSettings", // durable agent/model/cwd/account choice, applied at the next runTurn（account: '' = ログイン中の Claude アカウント）
   "setStatus",
   "markRead",     // { reads: [[sessionId, completedAt], ...] } -> { reads: 変わった分 }。完了を確認した（ホストに 1 つ・大きい方だけ）。read イベントで全接続へ

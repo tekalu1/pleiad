@@ -95,4 +95,12 @@ export default async function (t) {
   const codes = ['payload', 'relay-url', 'denied', 'expired', 'ticket', 'rate', 'host-offline', 'offline', 'cancelled', 'aborted', 'timeout', 'handshake', 'bad-response', 'storage', 'unknown-host', 'internal'];
   t.ok('ネイティブが返す失敗のコードはどれも殻で訳せる', codes.every(c => `err.${c}` in dict.en && `err.${c}` in dict.ja));
   t.ok('殻の文言の差し込み', tr('pair.approveOn', { host: 'desk' }) === 'desk の画面で承認してください');
+
+  // ---- プライバシーポリシーへのリンク（Google Play はアプリの中にも求める。docs/android-releases.md「Google Play」）
+  const page = (url) => url.match(/^https:\/\/pleiad\.dev\/(.*)$/)?.[1];
+  t.ok('ホスト一覧からプライバシーポリシーを開ける（言語ごとのサイトのページがある）',
+    /<a id="privacy"[^>]*data-t="hosts\.privacy"/.test(read('mobile/www/index.html')) && /\$\('privacy'\)\.href = t\('hosts\.privacyUrl'\)/.test(read('mobile/www/app.js'))
+      && [dict.ja['hosts.privacyUrl'], dict.en['hosts.privacyUrl']].every(u => page(u) != null && fs.existsSync(path.join(ROOT, 'site', page(u), 'index.html')))
+      && dict.ja['hosts.privacyUrl'] !== dict.en['hosts.privacyUrl'],
+    JSON.stringify([dict.ja['hosts.privacyUrl'], dict.en['hosts.privacyUrl']]));
 }

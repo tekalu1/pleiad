@@ -135,6 +135,8 @@
       "ply_task_list": "List only the Pleiad tasks created by this conversation. Does not list native subagent jobs.",
       "ply_usage": "Read subscription quota usage (usedPercent, resetsAt) per backend, or all usable backends when backend is omitted. Call before heavy or parallel delegation and avoid backends that are close to their limit. Values may be up to 60 seconds old."
     },
+    "hostOffline": "offline",
+    "hosts": "Write a Pleiad host's name in host to hand the work to that host (its AI works on that host's PC). Available hosts: {{hosts}}. cwd and isolate are interpreted with the host's paths and rules (omit cwd for the host's home folder). Omit backend and the host chooses the agent. Approvals for the host's child also appear in this conversation (the user answers them; you cannot). A request to an offline host fails immediately. ply_task_status, ply_task_wait, ply_task_send and ply_task_cancel work on the host's task with the same taskId (send only a message to a host task). Omit host to run it on this PC.",
     "invalidTool": "Invalid tool or arguments.",
     "kindsIntro": "kind (the kind of work):",
     "kinds": {
@@ -152,10 +154,30 @@
   },
   "delegation": {
     "notRunning": "This conversation is not running.",
+    "remote": {
+      "unavailable": "This PC's Pleiad has no way to hand work to a host (only a desktop device can).",
+      "nested": "A conversation that was handed over by another device cannot hand work to a host.",
+      "hostUnknown": "The host \"{{host}}\" is not one this PC is connected to. Available hosts: {{hosts}}",
+      "hostAmbiguous": "More than one host matches \"{{host}}\". Rename one or give the host's ID.",
+      "hostNotEnabled": "Handing work from this PC's AI to the host \"{{host}}\" is off (the user can change it in the Connect to other hosts window).",
+      "hostNotAllowed": "The host \"{{host}}\" is not accepting requests from this device's AI (the user can change it in the host's Settings > Remote).",
+      "hostOffline": "The host \"{{host}}\" is offline (the request failed immediately instead of waiting). Ask the user to check that Pleiad is running on the host and connected to the relay.",
+      "hostStopped": "The host \"{{host}}\" no longer accepts requests from this device's AI, so the task can no longer be followed (the host's work has stopped, or the user can check it on the host).",
+      "planChanged": "The host changed in the meantime, so the delegation was dropped. Try again.",
+      "badResponse": "Could not read the answer from the host \"{{host}}\".",
+      "statusOffline": "The host \"{{host}}\" is offline. This is the last known state (it catches up when the connection returns).",
+      "cutOff": "This device's request was cancelled because it was cut off (the host switched the permission off, revoked the device, or stopped everything).",
+      "hostUnlinked": "Handing work from this PC's AI to the host \"{{host}}\" was switched off (or the host was removed), so this task can no longer be followed. The host may still be working on it (switching it back on catches up).",
+      "hostNoRecord": "The host \"{{host}}\" has no record of this task (its data was lost, or it was set up again as a different device).",
+      "cancelPending": "The request to stop this task has not reached the host \"{{host}}\" yet (it is sent when the connection returns).",
+      "hostOnlyApproval": "Waiting for an approval that has to be answered on the host \"{{host}}\" (such as a settings change). Ask the user to answer it on the host (or open the child conversation).",
+      "settingsUnsupported": "Changing the settings of a task on a host (backend, model, effort) is not supported yet. Send only a message."
+    },
     "readOnly": "Pleiad child tasks cannot be started in read-only or plan mode.",
     "denied": "The delegation was not allowed.",
     "idPending": "The conversation ID is not determined yet.",
     "parentEnded": "The requesting conversation has ended.",
+    "childDeleted": "The delegated child conversation has been deleted. To continue, delegate again.",
     "backendDisabled": "The specified backend is not enabled.",
     "cwdNotDirectory": "cwd must be a directory.",
     "endpointDeleted": "The endpoint of the requesting conversation has been deleted. Choose an endpoint again in the requesting conversation.",
@@ -189,6 +211,8 @@
     "worktreeInstruction": "\n\n---\nDo this work in a git worktree.\nWorktree: {{path}} (branch {{branch}}, created from {{origin}})\nWork only inside this worktree. Do not write to absolute paths in the original location ({{origin}}).\nDependencies (node_modules and the like) are not installed. Install them yourself if needed.\nWhen finished, commit your changes to this branch. The requester merges them back.",
     "offsetInvalid": "offset must be an integer of 0 or more.",
     "secondsInvalid": "seconds must be from 1 to 30.",
+    "remoteBadTaskId": "The taskId in the host's message is malformed (an ID that matches a local task is not accepted either).",
+    "remoteDepth": "Work handed over from a device's AI can be delegated at most {{max}} levels deep.",
     "isolateInvalid": "isolate must be true or false.",
     "stopping": "The task is stopping. Wait a moment.",
     "modelUnknown": "model_unknown: model {{model}} is not in the current {{backend}} model list (available: {{models}}). Nothing was changed.",
@@ -475,6 +499,11 @@
         "sessionId": "Id of the conversation to delete.",
         "card": "Delete the unsent conversation \"{{title}}\"."
       },
+      "delete": {
+        "summary": "Delete a conversation from Pleiad (sent ones too). It cannot be undone. The agent's own record of the conversation (the Claude Code transcript, the Codex rollout and so on) is kept. A running conversation, one waiting for an approval or background work, one whose delegated child has not finished, and a bot's conversation cannot be deleted. An approval card is shown in the conversation; it is deleted only if the user allows it.",
+        "sessionId": "Id of the conversation to delete.",
+        "card": "Delete the conversation \"{{title}}\" from Pleiad. This cannot be undone. The agent's own record of the conversation is kept."
+      },
       "abort": {
         "summary": "Stop a conversation's running turn. Only conversations running on this host. The stopped turn stays in the conversation as interrupted and a person can resume it. A reason is required and is kept in the stopped conversation's change log.",
         "sessionId": "Id of the conversation to stop. Omit for your own.",
@@ -649,6 +678,7 @@
       "BOT_SEND_DISABLED": "This bot cannot send because sending to other conversations is turned off.",
       "BOT_SEND_TARGET": "{{id}} is not a conversation this bot can send to. Check its send targets on the bot page.",
       "SEND_SELF": "You cannot send to your own conversation.",
+      "DELETE_SELF": "You cannot delete your own conversation.",
       "SEND_TO_CHILD": "Conversation {{id}} is a child this conversation delegated to. Send further instructions with ply_task_send.",
       "SEND_TO_PARENT": "Conversation {{id}} is the one that delegated to this conversation. Your result reaches it automatically when you finish, so do not send to it.",
       "RELAY_LIMIT": "Sends between conversations have continued {{max}} times, so no more can be sent. Ask the user whether to go on.",
@@ -749,6 +779,12 @@
         "done": "deleted the conversation",
         "notDone": "has not deleted the conversation",
         "failed": "could not delete the conversation"
+      },
+      "conversationDelete": {
+        "target": "deleting the conversation",
+        "done": "deleted the conversation",
+        "notDone": "has not deleted the conversation",
+        "failed": "could not delete the conversation"
       }
     },
     "pending": "The change to {{target}} is waiting for the user's approval (requestId: {{requestId}}). Nothing has changed yet. The result (allowed or denied) will be delivered to this conversation later. You may continue other work or end your response without waiting. Do not request the same change again.",
@@ -826,7 +862,7 @@
         "taskId": "The task id.",
         "offset": "Where to start reading the result (nextOffset from the previous result)."
       },
-      "delegate": { "summary": "Delegate work to a child conversation.", "kind": "Kind of work.", "task": "Request for the child.", "title": "Short title for the child.", "backend": "Target agent.", "context": "Background for the child.", "cwd": "Working directory.", "model": "Target model.", "effort": "Reasoning effort.", "isolate": "Whether to run the child in a worktree (true only when the user asked for one)." },
+      "delegate": { "summary": "Delegate work to a child conversation.", "kind": "Kind of work.", "task": "Request for the child.", "title": "Short title for the child.", "backend": "Target agent.", "context": "Background for the child.", "cwd": "Working directory.", "model": "Target model.", "effort": "Reasoning effort.", "isolate": "Whether to run the child in a worktree (true only when the user asked for one).", "host": "Name of the host (another PC's Pleiad connected remotely) to hand the work to. Omit to run on this PC." },
       "taskStatus": { "summary": "Read the status and result of your child task.", "taskId": "Child task id.", "offset": "Result offset." },
       "taskWait": { "summary": "Wait up to 30 seconds for your child task.", "taskId": "Child task id.", "seconds": "Seconds to wait, at most 30." },
       "taskSend": { "summary": "Send another instruction to your child task, or change its agent, model or thinking effort.", "taskId": "Child task id.", "message": "Additional instruction. Omit it to change settings only.",

@@ -196,6 +196,7 @@ const SUITES = [
   // データ置き場を共有する 2 つのプロセス。本物の子プロセスを 2 本起動する
   './unit/mcp-oauth-processes.mjs',
   './unit/desktop-updates.mjs',
+  './unit/desktop-store.mjs',
   './unit/desktop-exit-dialog.mjs',
   './unit/message-queue.mjs',
   // 送り終わった outbox は刈らない: 古い項目でも returned・undelivered・同じ ID の再試行が見つかる（ADR 0115）
@@ -402,6 +403,8 @@ const SUITES = [
   // 同じ会話で巻き戻して送り直す（sendMessage の rewind。ADR 0102）: バックエンドの形ごと（Claude・拒否・Codex・巻き戻せない）× 実行中・送信待ち・検査。契約は身代わりのネイティブで
   './unit/server-rewind.mjs',
   './unit/server-ux.mjs',
+  // 送った会話の削除（sessions.delete。ADR 0147）: 片付けるデータ・ネイティブの会話は残す・断る条件・承認カード・委譲の親子
+  './unit/server-session-delete.mjs',
   // 変更の記録: sessionChanges の返す形と、statusByAi（AI が状態を変えたときだけ印。人が変えたら null）
   './unit/server-session-changes.mjs',
   // 最近の場所の候補: Pleiadで使った実在フォルダーのみ・委譲やネイティブ一覧や消えた場所を除外
@@ -417,6 +420,7 @@ const SUITES = [
   // codex バックエンド。app-server の身代わり（tests/lib/fake-codex.mjs）と話すだけで、
   // 本物の codex もネットワークも要らない
   './unit/server-codex.mjs',
+  './unit/server-codex-compaction.mjs',
   // 互換の接続先の配線。codex の身代わりと偽の互換 API だけと話す
   './unit/server-compat-endpoints.mjs',
   // 同じことを本物の Claude Code・Codex の CLI で（送り先は偽の互換 API。入っていなければとばす）
@@ -442,6 +446,14 @@ const SUITES = [
   './unit/relay.mjs',
   // リモートのホスト側（core/remote/connector.mjs）。中継をこのプロセスで、fake のサーバーを別プロセスで立て、試験用の端末で往復する
   './unit/remote-host.mjs',
+  // 端末の AI からの委譲の口 /agent（ホスト側。core/remote/agent-port.mjs）: 許可・防火壁・委譲と状態・承認モードの継承と引き上げ・上限・承認の中継と人の答え・取り消し
+  './unit/remote-agent.mjs',
+  // 端末の AI からホストへ任せる往復（端末のローカルのサーバー → main の橋の身代わり → 中継 → ホスト）: 委譲・完了通知・承認の中継と答え・オフライン・追いつき・取り消し
+  './unit/remote-agent-e2e.mjs',
+  // ホストに任せたタスクの写し（agent-tasks の host の行）の台帳の規則: adopt の検査・mirror・止める予定・並列の中断・追えなくなった行の復帰・子孫
+  './unit/agent-tasks-remote.mjs',
+  // 端末の AI の口へのレビュー後の守り: 同時数の予約・作りかけの依頼の打ち切り・口の数・質問と「ホストの画面で答える」承認の中継・子孫まで止める
+  './unit/remote-agent-hardening.mjs',
   // 設定 › リモートの部品と常駐（トレイ・スリープ。Electron は差し替える）、setRemoteResident
   './unit/remote-settings.mjs',
   // リモートの端末側（core/remote/device*.mjs）。中継とホストを立て、端末内プロキシの URL を素の HTTP と ws で叩く
@@ -534,6 +546,8 @@ const SUITES = [
   './unit/runner-contract.mjs',
   // リリースで使う同一 commit の main CI の照合と公開前の検証条件
   './unit/release-ci-gate.mjs',
+  // Google Play へ上げるワークフロー: APK の流れと同じ版・同じ鍵、入力と Secrets の確かめ（docs/android-releases.md「Google Play」）
+  './unit/android-play-workflow.mjs',
 ];
 
 const code = await main({

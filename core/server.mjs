@@ -84,6 +84,9 @@ import { createPlyHooks } from './ply-hooks.mjs';
 import { prepareHooksTurn, unifyPreview, importCandidate } from './hooks-unify.mjs';
 import { deliverable, classifyNativeRun } from './hooks-plan.mjs';
 import { createRemoteHost } from './remote/connector.mjs';
+import { createAgentPort } from './remote/agent-port.mjs';
+import { parentPortRemoteAgent, createRemoteDelegation } from './remote-delegation.mjs';
+import { AgentError, remoteOwnerId, isRemoteOwner, parseRemoteOwner, RESULT_PAGE } from './remote/agent-protocol.mjs';
 import { createResidentPrefs, residentSignal, enabledRoutineCount } from './remote/resident.mjs';
 import { createPushNotifier } from './notify/notifier.mjs';
 import { createPresence } from './notify/presence.mjs';
@@ -96,7 +99,7 @@ import { createVisualizationCollector, visualizeInstructions, snapshotResponse, 
 import { plyParts } from './instruction-amount.mjs';
 import { computerPrompt } from './backends/computer-delivery.mjs';
 import { MIN_BUDGET, MAX_BUDGET } from '../web/instruction-amount.mjs';
-import { parentPortBrowser, browserEnvironment, browserInstruction } from './agent-browser.mjs';
+import { parentPortBrowser, browserEnvironment, browserInstruction, forgetBrowserEnvironment } from './agent-browser.mjs';
 import { parentPortScreencast, createScreencastHub, screencastCommand } from './browser-screencast.mjs';
 import { createBrowserSiteApprovals } from './browser-confirm.mjs';
 import { createBrowserBridge, BROWSER_MCP_PATH } from './browser-bridge.mjs';
@@ -105,7 +108,7 @@ import { computerUsePrefs, validComputerUse } from '../web/computer-prefs.mjs';
 import { computerUseCapability } from './computer-use-capability.mjs';
 import { streamEvents } from "../web/session-stream.mjs";
 import { serveFrom } from "../web/history-sync.mjs";
-import { switchBackend, createConversation, deleteUnsentConversation, deleteHiddenConversation, pendingHandoff, conversation } from "./conversations.mjs";
+import { switchBackend, createConversation, deleteUnsentConversation, deleteHiddenConversation, deleteConversation, pendingHandoff, conversation } from "./conversations.mjs";
 import { familyOf } from "./lineage.mjs";
 import {
   getBackend, sessionBackend, listBackends, defaultBackend, describeBackends, resolveBackendForSession,
@@ -282,7 +285,36 @@ const mcpOAuth = createMcpOAuth({ secrets: mcpSecrets, lockDir: path.join(store.
 const contextBridge = createContextBridge({ plyMcp, oauth: mcpOAuth });
 // リモートの接続口（docs/remote.md §4.2・§6.1）。既定は無効で、有効にするまで中継へはつながない。
 // 端末からのストリームはこのサーバー自身（localOrigin）へ組み立て直し、UI トークンは接続口が差し込む
+// 端末の AI 用の口 /agent（docs/remote.md §4.5、ADR 0146）。委譲の本体は remoteAgentInvoke（下の「端末の AI からの委譲」）
+const remoteAgentPort = createAgentPort({
+  allowed: deviceId => remote.agentAllowed(deviceId),
+  hostName: () => remote.hostInfo()?.hostName ?? os.hostname(),
+  invoke: call => remoteAgentInvoke(call),
+  activeTasks: deviceId => remoteAgentStats(deviceId).active,
+  // send が、終わったタスクを起こし直す（動いている数を増やす）か
+  wakes: (device, requester, args) => {
+    const row = agentTasks?.get(String(args?.taskId ?? ''));
+    return Boolean(row) && row.parentSessionId === remoteOwnerId(device.id, requester.sessionId) && !REMOTE_ACTIVE.has(row.status);
+  },
+  tasksFor: (deviceId, ids) => { const want = new Set(ids); return remoteRowsOf(deviceId).filter(r => want.has(r.taskId)).map(remoteTaskEvent); },
+  // 端末の AI の操作の記録（by: agent・via: remote・端末）。send・cancel は子の会話の変更の記録へ。断った依頼・捨てた答えはログへ（中身は書かない）
+  audit: entry => {
+    if (entry.dropped) return console.log(`  端末 ${entry.deviceId} の承認の答えを捨てた: ${entry.dropped}`);
+    if (entry.refused) return console.log(`  端末 ${entry.deviceId} の依頼を断った: ${entry.op} ${entry.refused}`);
+    const to = entry.op === 'send' ? 'delegation.taskSend' : entry.op === 'cancel' ? 'delegation.taskCancel' : null;
+    const sessionId = to ? agentTasks?.get(String(entry.args?.taskId ?? ''))?.sessionId : null;
+    if (sessionId) store.recordChange(sessionId, { by: 'agent', via: 'remote', byDevice: entry.deviceId, field: 'op', to, reason: null }).catch(() => {});
+  },
+  log: line => console.log(`  ${line}`),
+});
 const remote = createRemoteHost({ dataDir: store.dataDir, cipher: secretCipher, token: TOKEN, appVersion: APP_VERSION,
+  agent: {
+    attach: (stream, device) => remoteAgentPort.attach(stream, device),
+    closeDevice: (deviceId, reason) => remoteAgentPort.closeDevice(deviceId, reason),
+    refresh: deviceId => remoteAgentPort.refresh(deviceId),
+    stats: deviceId => remoteAgentStats(deviceId),
+    stopTasks: deviceId => remoteAgentStopAll(deviceId),
+  },
   target: () => { const u = new URL(localOrigin()); return { host: u.hostname.replace(/^\[|\]$/g, ''), port: Number(u.port) }; },
   emit: event => {
     if (event.type !== 'remoteStatus') return emitGlobal({ ...event, sessionId: null });
@@ -445,6 +477,13 @@ async function callAgentOp(owner, name, args, { locale } = {}) {
   if (name === 'ply_usage') return agentUsage({ backend: args.backend, list: listBackends, get: getBackend, read: providerQuota, locale: lng });
   const mutation = DELEGATING_TOOLS.includes(name);
   if (mutation && !canDelegate(turn.backend.modes()[turn.info.mode])) throw new Error(agentT(lng, 'delegation.readOnly'));
+  // リモートのホストへ任せる（ply_delegate の host と、写しの行があるタスクへの ply_task_*。docs/agent-delegation.md「リモートのホストへ任せる」）
+  if (name === 'ply_delegate' && args.host !== undefined) return callRemoteDelegate(owner, turn, args, lng);
+  if (name.startsWith('ply_task_') && name !== 'ply_task_list' && agentTasks.get(String(args.taskId ?? ''))?.host) {
+    return remoteDelegation.taskCall({ owner, turn, name, args, signal: turn.ac.signal, lng });
+  }
+  // 一覧のホストのタスクの行は、ply_task_status と同じ形（host は名前）にする
+  if (name === 'ply_task_list') return remoteDelegation.presentList(await agentTasks.call(owner, name, args, turn.ac.signal, lng));
   // 委譲先の自動振り分け（docs/agent-delegation.md「委譲先の自動振り分け」）。backend を省けばここで選ぶ。
   // 選んだ後は、書いた backend と同じく下の承認の強さの判定・承認カードを通る
   if (name === 'ply_delegate') args = await routeDelegation(args, lng, path.resolve(turn.info.cwd ?? process.cwd(), typeof args.cwd === 'string' ? args.cwd : '.'));
@@ -482,6 +521,25 @@ async function callAgentOp(owner, name, args, { locale } = {}) {
   // 子が使い始めるので、振り分けに使う使用量を取り直しておく（待たない）
   if (name === 'ply_delegate' && routingSettingsCache.enabled && ROUTING_USAGE_AUTO) routingUsage.refresh().catch(() => {});
   return result;
+}
+
+/**
+ * ply_delegate { host }（端末のデスクトップ版の AI からホストの Pleiad へ。core/remote-delegation.mjs）。手元の委譲と同じ関門を通る:
+ * 読み取り・計画モードの会話は断る（上）・Codex の親は full / yolo 以外では呼び出し自体を確かめる・承認モードの引き上げが要るときは、ホストが計画を返し、
+ * 依頼元の会話で 1 回だけ確かめる。ホストに任された会話からは、さらにホストへ任せられない
+ */
+async function callRemoteDelegate(owner, turn, args, lng) {
+  if (!remoteDelegation.enabled) throw new Error(agentT(lng, 'delegation.remote.unavailable'));
+  if ((await delegationRoot(owner)).remote) throw new Error(agentT(lng, 'delegation.remote.nested'));
+  if (turn.backend.id === 'codex' && !['full', 'yolo'].includes(turn.info.mode)) {
+    const answer = await askPermission({ toolName: 'ply_delegate', input: args, sessionId: owner, signal: turn.ac.signal, kind: 'tool', canAlways: false, locale: lng });
+    if (!answer.allow) throw new Error(agentT(lng, 'delegation.denied'));
+  }
+  return remoteDelegation.delegate({
+    owner, turn, args, lng, signal: turn.ac.signal,
+    askPermission: ({ plan, host }) => askPermission({ toolName: 'ply_delegate', input: args, sessionId: owner, signal: turn.ac.signal, kind: 'tool', canAlways: false, locale: lng,
+      title: t('permission.delegateEscalationHost', { host, agent: plan.agent, mode: plan.mode, modeId: plan.modeId }) }),
+  });
 }
 
 // ---- 委譲した子の設定を親が替える（ply_task_send の backend・model・effort。docs/agent-delegation.md「ツール」、ADR 0134）
@@ -620,6 +678,150 @@ async function applyTaskSettings(owner, plan, lng, { message, signal } = {}) {
   return { ...result, settings: { ...after, appliesTo: 'nextTurn', ...(live ? { modelLive: true } : {}) } };
 }
 
+// ---- 端末の AI からの委譲（ホストの側。docs/remote.md §4.5、docs/agent-delegation.md「リモートのホストへ任せる」、ADR 0146）------------
+// 端末（リモートでつないだデスクトップ版）の会話の AI が、ply_delegate の host と ply_task_* でこのホストの Pleiad に仕事を任せる。
+// 口は接続口の /agent（core/remote/agent-port.mjs。端末ごとの許可・上限はそこ）。ここは口から呼ばれる委譲の本体で、手元の callAgentOp と同じ規則を使う:
+// 子の承認モードは依頼元（端末の会話）の位置までを継ぎ（resolveDelegatedMode）、引き上げが要るときは子を作らずに計画を返して端末で確かめさせる。
+// 依頼元の会話はホストに無いので、タスクの親は仮の ID（remote:<deviceId>:<端末の会話>。agent-protocol.mjs）。
+const REMOTE_DELEGATE_KEYS = ['kind', 'task', 'title', 'backend', 'context', 'cwd', 'model', 'effort', 'isolate'];
+const REMOTE_TASK_TOOLS = { status: 'ply_task_status', wait: 'ply_task_wait', send: 'ply_task_send', cancel: 'ply_task_cancel', list: 'ply_task_list' };
+const REMOTE_ACTIVE = new Set(['queued', 'running', 'cancelling']);
+const remoteRowsOf = deviceId => agentTasks?.rowsWhere(r => parseRemoteOwner(r.parentSessionId)?.deviceId === deviceId) ?? [];
+/** 端末から任された子と、その子がホストの中で作った孫・ひ孫（止める・数えるのはこの全部。ADR 0146） */
+const remoteTreeOf = deviceId => {
+  const roots = remoteRowsOf(deviceId);
+  return [...roots, ...(agentTasks?.descendants(roots.map(r => r.sessionId)) ?? [])];
+};
+const remoteWaiting = row => REMOTE_ACTIVE.has(row.status) && Boolean(row.sessionId) && blockingWaits().some(w => w.payload.sessionId === row.sessionId);
+
+/** 端末へ便りで知らせるタスクの形（task の便り。agent_tasks の行から、依頼文・振り分けの内訳を除いたもの） */
+function remoteTaskEvent(row) {
+  const parsed = parseRemoteOwner(row.parentSessionId);
+  const waiting = remoteWaiting(row);
+  return {
+    taskId: row.taskId, requesterSessionId: parsed?.sessionId ?? null, title: row.title ?? null,
+    status: waiting ? 'waiting' : row.status, rawStatus: row.status, notification: row.notification ?? null,
+    backend: row.backend ?? null, model: row.model ?? null, effort: row.effort ?? null, mode: row.mode ?? null, cwd: row.cwd ?? null,
+    sessionId: row.sessionId ?? null, createdAt: row.createdAt ?? null, updatedAt: row.updatedAt ?? null,
+    error: row.error ? String(row.error).slice(0, 500) : null, instructionRevision: row.instructionRevision ?? 0,
+    // 完了通知（deliver）には記録の行そのもの（結果の全文・instructions）が来て、一覧（agentTasks.list）には view（結果の最初のページ・pendingMessages）が来る。どちらも同じ形にする
+    pendingMessages: row.pendingMessages ?? (row.instructions ?? []).filter(x => x.state === 'queued').length,
+    // 結果は終わったときだけ最初のページを載せる。続きは端末が status の offset で読む
+    result: REMOTE_ACTIVE.has(row.status) ? '' : String(row.result ?? '').slice(0, RESULT_PAGE), resultLength: row.resultLength ?? String(row.result ?? '').length,
+    worktree: row.worktree ? { id: row.worktree.id, branch: row.worktree.branch, path: row.worktree.path, origin: row.worktree.origin } : null,
+    routing: row.routing ? { kind: row.routing.kind ?? null, mode: row.routing.mode ?? null, backend: row.routing.target?.backend ?? null, model: row.routing.target?.model ?? null } : null,
+  };
+}
+
+const remotePushed = new Map();   // taskId → 最後に端末へ知らせたときの署名（変わったときだけ知らせる）
+let remotePushTimer = null, remoteStatsSignature = '[]';
+/** 任された作業の状態が変わった。つながっている端末へ、変わった行だけ知らせる（まとめて 1 回） */
+function remoteTasksChanged() {
+  if (remotePushTimer || !agentTasks) return;
+  remotePushTimer = setTimeout(() => {
+    remotePushTimer = null;
+    try {
+      const counts = new Map();
+      for (const row of agentTasks.rowsWhere(r => isRemoteOwner(r.parentSessionId))) {
+        const parsed = parseRemoteOwner(row.parentSessionId);
+        if (!parsed) continue;
+        const event = remoteTaskEvent(row);
+        if (REMOTE_ACTIVE.has(row.status)) { const n = counts.get(parsed.deviceId) ?? [0, 0]; n[0]++; if (event.status === 'waiting') n[1]++; counts.set(parsed.deviceId, n); }
+        const signature = JSON.stringify([event.status, event.updatedAt, event.instructionRevision, event.resultLength, event.error, event.pendingMessages]);
+        if (remotePushed.get(row.taskId) !== signature && remoteAgentPort.pushTask(parsed.deviceId, event)) remotePushed.set(row.taskId, signature);
+      }
+      // 設定 › リモートの端末の行の「任された作業 N・承認待ち M」。数が変わったときだけ配り直す
+      const sig = JSON.stringify([...counts].sort());
+      if (sig !== remoteStatsSignature) { remoteStatsSignature = sig; remote.touchStatus(); }
+    } catch (e) { console.error('  任された作業の状態を端末へ知らせられなかった:', String(e?.message ?? e)); }
+  }, 30);
+  remotePushTimer.unref?.();
+}
+
+/** 完了通知の代わり。依頼元（端末）へ最後の状態を便りで届ける。端末がつながっていなければ requeue（つながり直したとき届ける） */
+async function remoteDeliver(tasks) {
+  const deviceId = parseRemoteOwner(tasks[0].parentSessionId)?.deviceId;
+  if (!deviceId || !remoteAgentPort.online(deviceId)) return 'requeue';
+  for (const task of tasks) remoteAgentPort.pushTask(deviceId, remoteTaskEvent(task));
+  return 'ok';
+}
+
+/** 口の委譲の本体。device は { id, name, platform }、requester は端末の会話（normalizeRequester の形）。AgentError か Error を投げる */
+async function remoteAgentInvoke({ device, requester, op, args, signal, valid = () => true }) {
+  const lng = agentLocaleOf(requester.locale) ?? currentLocale();
+  const owner = remoteOwnerId(device.id, requester.sessionId);
+  if (op === 'delegate') return remoteDelegate({ device, requester, args, signal, lng, owner, valid });
+  if (op === 'send') {
+    if (!canDelegate(requester.mode)) throw new AgentError('READ_ONLY_MODE', agentT(lng, 'delegation.readOnly'));
+    // 子の設定を替える（backend・model・effort。ADR 0134）は、初版ではホストのタスクに使えない
+    if (TASK_SETTINGS.some(k => args[k] !== undefined)) throw new AgentError('UNSUPPORTED', agentT(lng, 'delegation.remote.settingsUnsupported'));
+  }
+  const clean = {};
+  for (const k of ['taskId', 'offset', 'seconds', 'message']) if (args[k] !== undefined) clean[k] = args[k];
+  const out = await agentTasks.call(owner, REMOTE_TASK_TOOLS[op], clean, signal, lng);
+  // 許可を切る・取り消す・すべて止めるが、確かめた後に入っていたら、起こした子を止める
+  if (op === 'send' && !valid()) { await agentTasks.cancel(String(clean.taskId)).catch(() => {}); throw new AgentError('NOT_ALLOWED', agentT(lng, 'delegation.remote.cutOff')); }
+  // 端末が写している行を更新できるよう、タスクの今の状態を添える（ply_task_list は行の配列なので添えない）
+  if (op !== 'list' && out?.taskId) { const row = agentTasks.get(out.taskId); if (row) return { ...out, task: remoteTaskEvent(row) }; }
+  return out;
+}
+
+async function remoteDelegate({ device, requester, args, signal, lng, owner, valid = () => true }) {
+  if (!canDelegate(requester.mode)) throw new AgentError('READ_ONLY_MODE', agentT(lng, 'delegation.readOnly'));
+  if (!valid()) throw new AgentError('NOT_ALLOWED', agentT(lng, 'delegation.remote.cutOff'));
+  // 端末が余計な項目（remote など）を足しても通さない
+  const clean = {};
+  for (const k of REMOTE_DELEGATE_KEYS) if (args[k] !== undefined) clean[k] = args[k];
+  if (clean.isolate !== undefined && typeof clean.isolate !== 'boolean') throw new Error(agentT(lng, 'tasks.isolateInvalid'));
+  // 作業場所はホストのパスとホストの規則で解釈する（省けばホストのホーム）。端末の cwd は使わない
+  const cwd = path.resolve(os.homedir(), typeof clean.cwd === 'string' && clean.cwd.trim() ? clean.cwd : '.');
+  const routed = await routeDelegation(clean, lng, cwd);
+  const child = getBackend(routed.backend);
+  if (!child) throw new Error(agentT(lng, 'delegation.backendDisabled'));
+  // 子の承認モードは依頼元（端末の会話）の位置まで継ぐ。手元の委譲と同じ resolveDelegatedMode（上限はホスト側に持たない）
+  const decided = resolveDelegatedMode({ parentMode: 'cap', parentModes: { cap: requester.mode }, childModes: child.modes() });
+  if (decided.escalation) {
+    // 引き上げが要る（収まる委譲先が無い・範囲を強制できないエンジンに確認なしを渡す）。子は作らず、端末の依頼元の会話で 1 回だけ確かめさせる
+    const key = crypto.createHash('sha256').update(JSON.stringify([child.id, decided.mode, requester.mode.scope, requester.mode.autonomy, requester.mode.enforced])).digest('hex').slice(0, 24);
+    if (args.confirm !== key) return { plan: { key, backend: child.id, agent: child.label, mode: child.modes()[decided.mode]?.label ?? decided.mode, modeId: decided.mode } };
+  }
+  const verdict = await worktreeHost.decideIsolation({ cwd, isolate: clean.isolate });
+  const row = await agentTasks.call(owner, 'ply_delegate', {
+    ...routed, cwd, isolate: verdict.isolate, ...(decided.mode ? { mode: decided.mode } : {}),
+    remote: { deviceId: device.id, deviceName: device.name, sessionId: requester.sessionId, title: requester.title, locale: lng, mode: requester.mode },
+  }, signal, lng);
+  // 子を作っている間に、許可を切る・取り消す・すべて止めるが入っていたら、できた子を止めて断る（端末は子の ID を知らないまま、誰も追わない子を走らせない）
+  if (!valid()) { await agentTasks.cancel(row.taskId).catch(() => {}); throw new AgentError('NOT_ALLOWED', agentT(lng, 'delegation.remote.cutOff')); }
+  if (row.sessionId) store.recordChange(row.sessionId, { by: 'agent', via: 'remote', byDevice: device.id, field: 'op', to: 'delegation.delegate', reason: null }).catch(() => {});
+  if (routingSettingsCache.enabled && ROUTING_USAGE_AUTO) routingUsage.refresh().catch(() => {});
+  const stored = agentTasks.get(row.taskId);
+  return { task: remoteTaskEvent(stored ?? row) };
+}
+
+/** 端末ごとの、任された作業の数（設定 › リモートの端末の行）。active は動いているもの（任された子の子孫も数える）、waiting はそのうち承認待ち */
+function remoteAgentStats(deviceId) {
+  const rows = remoteTreeOf(deviceId).filter(r => REMOTE_ACTIVE.has(r.status));
+  return { active: rows.length, waiting: rows.filter(remoteWaiting).length };
+}
+/**
+ * この端末から任された作業をすべて止める（「すべて止める」・端末の取り消し）。任された子とその子孫のすべて（終わった子の下で動いている孫も）を止め、
+ * 子の会話は「止めた」印を付ける（あとから届く孫の完了通知で新しいターンを始めない）。作りかけの依頼は打ち切る（子を作らせない）
+ */
+async function remoteAgentStopAll(deviceId) {
+  remoteAgentPort.cutOff(deviceId);
+  const roots = remoteRowsOf(deviceId).filter(r => r.sessionId);
+  const now = new Date().toISOString();
+  for (const row of roots) {
+    const delegation = (await store.get(row.sessionId).catch(() => ({}))).delegation;
+    if (delegation?.remote && !delegation.remote.stoppedAt) await store.setSessionData(row.sessionId, 'delegation', { ...delegation, remote: { ...delegation.remote, stoppedAt: now } }, { durable: true }).catch(() => {});
+  }
+  // 状態によらず、任された子ごとに cancel を呼ぶ（cancel は子孫へ連鎖する。終わった子の孫も止まる）。子の会話の今のターンも止める
+  for (const row of remoteRowsOf(deviceId)) {
+    if (row.sessionId) runtime.turns.get(row.sessionId)?.ac.abort();
+    await agentTasks.cancel(row.taskId).catch(() => {});
+  }
+}
+
 const agentOpIds = {
   ply_delegate: 'delegation.delegate', ply_task_status: 'delegation.taskStatus', ply_task_wait: 'delegation.taskWait',
   ply_task_send: 'delegation.taskSend', ply_task_cancel: 'delegation.taskCancel', ply_task_list: 'delegation.taskList', ply_usage: 'delegation.usage',
@@ -628,7 +830,9 @@ const agentBridge = createAgentBridge({ call: async (owner, name, args, { locale
   const result = await opsRegistry.invoke({ by: 'agent', via: 'mcp', sessionId: owner }, agentOpIds[name], args, opsDeps(locale));
   if (!result.ok) throw new Error(result.error);
   return result.result;
-} });
+},
+// ply_delegate の host に書けるホスト（端末側・ホスト側の両方がオンのもの。オフラインの印つき）。無ければ host の引数自体を出さない
+hosts: () => remoteDelegation?.describe() ?? [] });
 
 // ---- 委譲先の自動振り分け ------------------------------------------------------
 // 設定は prefs.json の delegationRouting（未設定の項目は既定値）。判定器のキーは互換の接続先と同じ秘密の置き場
@@ -721,6 +925,8 @@ const routingSettingsError = e => e instanceof RoutingSettingsError ? new Error(
 async function retryAgentTask({ taskId, candidate, account, stop, approved } = {}) {
   const original = agentTasks.get(taskId);
   if (!original) throw new Error(t('delegation.taskNotFound'));
+  // ホストに任せたタスクは、手元でやり直さない（作業場所はホストのパスで、子はホストにある）
+  if (original.host) throw new Error(t('delegation.retryRemote'));
   const parsed = parseCandidate(candidate);
   if (!parsed) throw new Error(t('routing.retry.badCandidate'));
   const from = original.routing?.target ?? { backend: original.backend, model: original.model, account: null };
@@ -2523,6 +2729,77 @@ async function deleteUnsentSessionOf(args) {
   } finally { switching.delete(sessionId); completionNotices.changed(sessionId); }
 }
 
+/**
+ * 会話を消せないなら、理由（code: CANNOT_DELETE）を投げる（sessions.delete の承認カードの前と、消す直前。ADR 0147）。
+ * 断るのは、走っている・準備中（切り替え・分岐）・承認や質問を待っている・裏の作業（Codex のバックグラウンド端末・シェルの行）がある・
+ * 委譲の子として終わっていない・委譲した子が終わっていない（完了の通知がまだ届いていないものを含む）・送信待ちや送信予定がある会話と、bot の会話
+ */
+const deleteRefusal = (message) => Object.assign(new Error(message), { code: 'CANNOT_DELETE' });
+async function refuseDelete(sessionId) {
+  if (!sessionId) throw new Error(t('session.required'));
+  const meta = await store.get(sessionId);
+  // bot の会話は Channels のスレッド・DM・ルーティンが持つ（一覧にも出ない）。隠れた会話は host.deleteHidden が片付ける（ADR 0127）
+  if (meta.bot) throw deleteRefusal(t('session.deleteBot'));
+  if (sessionBusy(sessionId) || [...runtime.waiting.values()].some(w => w.payload?.sessionId === sessionId)
+      || runtime.background.get(sessionId)?.tasks?.length || shellRuns.runningIn(sessionId)
+      || (agentTasks?.running() ?? []).some(r => r.sessionId === sessionId)) throw deleteRefusal(t('session.deleteBusy'));
+  if ((agentTasks?.running() ?? []).some(r => r.parentSessionId === sessionId)) throw deleteRefusal(t('session.deleteChildren'));
+  if ((await outbox.list(sessionId)).some(m => !['sent', 'cancelled'].includes(m.status))
+      || schedule.list().some(row => row.sessionId === sessionId && row.kind === 'send')) throw deleteRefusal(t('session.deleteQueued'));
+}
+
+/**
+ * 会話を消す（sessions.delete。WS の deleteSession の中身。送った会話も。ADR 0147）。消すのは Pleiad の記録だけで、
+ * ネイティブの会話（Claude の transcript・Codex の rollout・Antigravity の控え）は消さない（バックエンドの deleteSession は呼ばない）。
+ * 一緒に消す: sidecar（DB の sessions・session_fields・context_entry_refs）・会話の記録（索引・本文・引き継ぎの写し）・提示の記録（presents）・
+ * 撮影（computer use）・git の撮影の ref（refs/pleiad/turn/）・内蔵ブラウザーの設定・自動圧縮と上限の再開の予約・設定の変更の承認の結果・まだ知らせていない完了。
+ * 残す: 会話に結び付いた worktree（ユーザーの変更が入っている。worktree の画面から扱う）・使用量の記録・委譲のタスクの記録（履歴）・
+ * 添付のファイル（uploads。ネイティブの会話と分岐した会話がパスで指している）
+ */
+async function deleteSessionOf(sessionId) {
+  await refuseDelete(sessionId);
+  const backend = await resolveBackendForSession(sessionId);
+  if (!backend) throw new Error(t('session.notFound'));
+  // 上の確かめの間（await）に始まったターン・準備は、ここで同期に見直してから押さえる（switching の間は送信も準備も始まらない）
+  if (sessionBusy(sessionId)) throw deleteRefusal(t('session.deleteBusy'));
+  switching.add(sessionId);
+  let deleted = false;
+  try {
+    // git の撮影の ref は会話が使った作業場所ごとのリポジトリにある。sidecar を消す前に集める
+    const meta = await store.get(sessionId);
+    const cwds = new Set([meta.cwd, meta.nextSettings?.cwd, ...(meta.history ?? []).filter(h => h?.field === 'cwd').flatMap(h => [h.from, h.to])]
+      .filter(c => typeof c === 'string' && c));
+    compactionScheduler.cancel(sessionId);
+    queuedCompactions.delete(sessionId);
+    shellRuns.stopSession(sessionId);
+    await deleteConversation(sessionId, backend.id);
+    await store.removeSession(sessionId);
+    deleted = true;
+    await schedule.cancel(`resume:${sessionId}`).catch(() => {});
+    clearTimeout(limitReleaseTimers.get(sessionId));
+    limitReleaseTimers.delete(sessionId); limitStates.delete(sessionId); limitPoll.delete(sessionId);
+    relayHops.delete(sessionId);
+    completionNotices.forget(sessionId);
+    pushNotifier.viewed(sessionId);
+    releaseAgentConnection(sessionId);
+    const cleanups = [
+      history.forgetPresents(sessionId),
+      computerShots.removeSession(sessionId),
+      forgetBrowserEnvironment({ bridge: agentBrowser, dataDir: store.dataDir, sessionId }),
+      settingApprovals?.forget(sessionId),
+      ...[...cwds].map(cwd => gitActivity.forget(cwd, sessionId)),
+    ];
+    for (const r of await Promise.allSettled(cleanups)) {
+      if (r.status === 'rejected') console.error('  消した会話の記録の片付けに失敗:', String(r.reason?.message ?? r.reason));
+    }
+    emitGlobal({ type: "sessionsChanged", sessionId: null, deleted: sessionId });
+    return "deleted";
+  } finally {
+    switching.delete(sessionId);
+    if (!deleted) completionNotices.changed(sessionId);
+  }
+}
+
 /** 会話の圧縮を頼む（sessions.compact。WS の compactConversation の中身） */
 async function requestCompaction(args) {
   const sessionId = args?.sessionId;
@@ -2682,6 +2959,8 @@ async function markReads(reads) {
 const opsConversations = {
   create: (args) => createSession(args),
   deleteUnsent: (sessionId) => deleteUnsentSessionOf({ sessionId }),
+  canDelete: (sessionId) => refuseDelete(sessionId),
+  delete: (sessionId) => deleteSessionOf(sessionId),
   // 止めた会話の変更の記録に、誰が・どこから・なぜを残す（AI の呼び出しだけ。画面の「止める」は今までどおり記録しない）
   abort: async ({ sessionId, kind, note, actor }) => {
     const result = await abortSessions({ sessionId, reason: kind });
@@ -3500,6 +3779,13 @@ function opsDeps(lng = currentLocale()) {
   };
 }
 
+/** ホストに任せたタスクの印に使う、つないでいるホストの名前とオンラインか（running に載せる。docs/remote.md §4.5） */
+function remoteHostsNow() {
+  const out = {};
+  for (const h of remoteAgentBridge?.hosts ?? []) if (h.agentUse) out[h.hostId] = { name: h.name, online: h.state === 'ready' && h.allowed === true };
+  return out;
+}
+
 async function runningWork() {
   const turns = [...runtime.turns.values()].map((t) => ({ kind: "turn", ...t.info }));
 
@@ -3510,6 +3796,7 @@ async function runningWork() {
     sessionId: w.payload.sessionId ?? null,
     askedAt: w.askedAt ?? null,
     relay: Boolean(w.relay),   // 祖先の会話へ中継した複製。元のカードと同じ1件を指す
+    ...(w.remote ? { remote: { hostId: w.remote.hostId, hostName: w.remote.hostName, online: w.remote.online !== false } } : {}),   // ホストの子の承認の中継（docs/remote.md §4.5）
     ...(w.detached ? { detached: true } : {}),   // ターンを止めていない承認（設定の変更。ADR 0088）
   }));
 
@@ -3569,13 +3856,15 @@ async function runningWork() {
       nextSendAt: Math.min(Infinity, ...dueRows.filter(r => r.kind === 'send' && !r.held).map(r => r.at)) },
     tasks,
     background,
+    // ホストに任せたタスクの印（⇄ ホスト名とオンラインか）。docs/remote.md §4.5
+    remoteHosts: remoteHostsNow(),
     // 中継の複製は数えない。1つの承認が会話の数だけ増えて見える
     // サブエージェントは走っている子だけを数える。終わった子はターンが終わるまで一覧に残るので、
     // そのまま数えると更新のゲート（web の count > 0）が閉じたままになる。status が null の子
     // （状態を返せないバックエンド・まだ分からない子）は数える。数えないとゲートを緩めてしまう
     // 設定の変更の承認（detached）は期限なしで残るので数えない（数えると、答えるまで終了も更新もできない）
     count: turns.length + permissions.filter((p) => !p.relay && !p.detached).length
-      + subagents.filter((a) => a.status === "running" || a.status == null).length + tasks.filter(r => ["queued", "running", "cancelling"].includes(r.status) && !runtime.turns.has(r.sessionId)).length,
+      + subagents.filter((a) => a.status === "running" || a.status == null).length + tasks.filter(r => !r.host && ["queued", "running", "cancelling"].includes(r.status) && !runtime.turns.has(r.sessionId)).length,
   };
 }
 
@@ -3675,6 +3964,7 @@ function settleAll(messageKey, sessionId) {
 function permissionsChanged() {
   broadcastRunning();
   agentTasks?.wake();
+  remoteTasksChanged();
 }
 
 /**
@@ -3683,17 +3973,33 @@ function permissionsChanged() {
  * 壊れた記録で回り続けないよう、同じ会話は二度通らず、辿る回数にも上限を置く（委譲は4階層まで）。
  */
 async function delegationAncestors(sessionId) {
+  return (await delegationRoot(sessionId)).chain;
+}
+
+/**
+ * delegationAncestors に、鎖のいちばん上が端末の AI（仮の親 remote:<deviceId>:<会話>）かどうかを足したもの。
+ * chain はホストの会話の祖先だけ（仮の親は含めない。画面に出す先が無い）。remote は端末の AI に任された子の鎖なら
+ * { deviceId, sessionId（端末の会話）, taskId（端末が任せたタスク）, owner（仮の親の ID）, deviceName?, title? }（docs/remote.md §4.5）
+ */
+async function delegationRoot(sessionId) {
   const chain = [];
   const seen = new Set([sessionId]);
   let id = sessionId;
+  let remote = null;
   for (let i = 0; i < 8; i++) {
-    const parent = (await store.get(id)).delegation?.parentSessionId;
+    const delegation = (await store.get(id)).delegation;
+    const parent = delegation?.parentSessionId;
     if (!parent || seen.has(parent)) break;
+    if (isRemoteOwner(parent)) {
+      const p = parseRemoteOwner(parent);
+      if (p) remote = { ...p, owner: parent, taskId: delegation.taskId ?? null, deviceName: delegation.remote?.deviceName ?? '', title: delegation.remote?.title ?? '', stoppedAt: delegation.remote?.stoppedAt ?? null };
+      break;
+    }
     seen.add(parent);
     chain.push(parent);
     id = parent;
   }
-  return chain;
+  return { chain, remote };
 }
 
 /**
@@ -3709,9 +4015,9 @@ async function delegationAncestors(sessionId) {
  * どれか1つで答えれば全部が決着し、残りは消える。
  */
 const askPermission = async ({ toolName, input, sessionId, toolUseID, title, signal, canAlways, kind, questions, locale, browserSite, computerApp, settingChange, detached = false }) => {
-  const ancestors = sessionId ? await delegationAncestors(sessionId) : [];
+  const { chain: ancestors, remote: remoteRoot } = sessionId ? await delegationRoot(sessionId) : { chain: [], remote: null };
   // 中継先の見出しは「どの会話の承認か」。委譲したときの info.title を使う
-  const childTitle = ancestors.length ? (await store.get(sessionId)).title || t('permission.childConversation') : "";
+  const childTitle = ancestors.length || remoteRoot ? (await store.get(sessionId)).title || t('permission.childConversation') : "";
   const askingMeta = sessionId ? await store.get(sessionId).catch(() => null) : null;
   const conversationTitle = askingMeta?.title ?? '';
   // 拒否・中断の理由はエージェントに返るので、承認を求めた会話の言語で訳す（settle には messageKey で来る）
@@ -3738,6 +4044,8 @@ const askPermission = async ({ toolName, input, sessionId, toolUseID, title, sig
       ...(computerApp ? { computerApp } : {}),
       ...(settingChange ? { settingChange } : {}),
       ...(questions ? { questions } : {}),
+      // 端末の AI に任された子の承認。画面は「依頼元の会話（⇄ 端末）でも答えられます」を添える（docs/remote.md §4.5）
+      ...(remoteRoot ? { remoteOrigin: { deviceName: remoteRoot.deviceName || '' } } : {}),
     };
     // 祖先ごとに別の id の複製を作り、どれも同じ settle を指す。
     // web は「id ごとに1つの会話」の前提のまま動き、消せば勝手に片付く
@@ -3748,12 +4056,15 @@ const askPermission = async ({ toolName, input, sessionId, toolUseID, title, sig
       // and origin / app, so the same choices are available to ancestors.
       payload: { ...payload, sessionId: ancestor, canAlways: !!browserSite || !!computerApp, title: title ? t('permission.relayTitleWith', { child: childTitle, title }) : t('permission.relayTitle', { child: childTitle }) },
     }))];
+    // 端末の AI に任された子の承認は、端末（依頼元の会話）へも中継する（docs/remote.md §4.5）。決着したら端末のカードも畳む
+    let remoteRelay = null;
     const onAbort = () => settle({ allow: false, messageKey: 'aborted' });
     const settle = (answer) => {
       // どれか1つで決着し、残りの複製も消す。1つも残っていなければ二重解決
       let found = false;
       for (const card of cards) if (runtime.waiting.delete(card.id)) found = true;
       if (!found) return;
+      remoteRelay?.end(answer?.messageKey === 'aborted' ? 'abort' : 'host', answer?.allow === true);
       // スマホに出ている承認・質問の通知を消す（どの端末で答えても、ターンが終わっても）
       pushNotifier.approvalResolved({ id: cards[0].id, sessionId: payload.sessionId });
       botHost?.onPermission({ id: cards[0].id, ...payload }, 'settled');
@@ -3764,6 +4075,27 @@ const askPermission = async ({ toolName, input, sessionId, toolUseID, title, sig
     };
 
     for (const card of cards) runtime.waiting.set(card.id, { settle, payload: card.payload, askedAt: new Date().toISOString(), relay: card.relay, notified: false, detached });
+    // 承認・質問は端末へ中継して、そこで答えられる。設定の変更の承認（受領証つきで、決着が別の台帳へ届く）など、ターンを止めない承認（detached）は、
+    // 端末の画面と AI に「ホストの画面で答えてください」と知らせるだけ（答えるボタンは無く、口からの答えも受けない。docs/remote.md §4.5）
+    if (remoteRoot && remoteRoot.taskId) {
+      const hostOnly = Boolean(settingChange) || detached;
+      const asked = payload.kind === 'question' ? 'question' : 'tool';
+      remoteRelay = remoteAgentPort.relayOpen({
+        deviceId: remoteRoot.deviceId, taskId: remoteRoot.taskId, requesterSessionId: remoteRoot.sessionId,
+        payload: hostOnly ? { kind: 'hostOnly', toolName, title: title ?? null, childTitle, canAlways: false }
+          : { kind: asked, toolName, input, ...(asked === 'question' ? { questions } : {}), title: title ?? null, childTitle, canAlways: false },
+        // 端末の人の答え（remote.md §4.5）。ホストが中継した今待っている承認の ID・受領証・1 回だけを照合した後にだけ来る。常に許可は受けない
+        answer: hostOnly ? null : ({ allow, message, answers, annotations, response }) => {
+          if (!runtime.waiting.has(cards[0].id)) return false;
+          store.recordChange(sessionId, { by: 'human', via: 'remote-device', byDevice: remoteRoot.deviceId, field: 'op', to: 'permission.answer', reason: null }).catch(() => {});
+          // ホストの画面の子のカードを、端末で答えられた 1 行に畳む（permissionRelayEnd。remoteOrigin のカードだけが畳む）
+          emitGlobal({ type: 'permissionRelayEnd', id: cards[0].id, sessionId, by: 'device', allow, peer: remoteRoot.deviceName || '', at: new Date().toISOString() });
+          settle({ allow, always: false, scope: 'once', message: message ?? null, ...(!allow && !message && asked === 'tool' ? { messageKey: 'userDenied' } : {}),
+            answers: answers ?? null, annotations: annotations ?? null, response: response ?? null });
+          return true;
+        },
+      });
+    }
     botHost?.onPermission({ id: cards[0].id, ...payload }, 'open');
     signal?.addEventListener?.("abort", onAbort, { once: true });
     // 離れたスマホへ（画面が居るかによらない。委譲の子の承認・質問は子の会話の分だけ。中継の複製は送らない）
@@ -4011,12 +4343,52 @@ async function settleWorktreesOf(sessionId) {
     if (e.purpose === 'conversation' && e.sessionId === sessionId && e.state === 'ready') await worktreeHost.worktrees.settle(e.id).catch(() => {});
   }
 }
+// この PC の AI からリモートのホストへ任せる（docs/agent-delegation.md「リモートのホストへ任せる」）。main との口は parentPort（デスクトップ版だけ）。
+// ホストの子の承認は、依頼元の会話の中継のカードとして出す（手元の委譲の中継と同じ runtime.waiting。ただし答えはホストへ運ぶ）
+const remoteCards = {
+  open(c) {
+    const id = crypto.randomUUID();
+    const child = c.childTitle || t('permission.childConversation');
+    const remote = { hostId: c.hostId, hostName: c.hostName, relayId: c.relayId, taskId: c.taskId, online: c.online !== false, ...(c.hostOnly ? { hostOnly: true } : {}) };
+    const payload = { type: 'permission', kind: c.kind === 'question' ? 'question' : 'tool', toolName: c.toolName, input: c.input, sessionId: c.sessionId, toolUseID: undefined,
+      title: c.title ? t('permission.relayTitleWith', { child, title: c.title }) : t('permission.relayTitle', { child }), conversationTitle: '',
+      canAlways: false, remote, ...(c.kind === 'question' ? { questions: c.questions } : {}) };
+    // settle は使わない（決着はホストの便りか、画面の人の答え。remoteDelegation が closeRelay で消す）
+    runtime.waiting.set(id, { settle: () => {}, payload, askedAt: c.askedAt ?? new Date().toISOString(), relay: true, notified: false, detached: false, remote });
+    sendTo({ kind: P.EVENT, event: { ...payload, id } });
+    permissionsChanged();
+    return id;
+  },
+  close(id, resolution) {
+    const w = runtime.waiting.get(id);
+    if (!w) return;
+    runtime.waiting.delete(id);
+    emitGlobal({ type: 'permissionRelayEnd', id, sessionId: w.payload.sessionId, by: resolution?.by ?? null, allow: resolution?.allow ?? null, peer: resolution?.hostName ?? w.remote.hostName, hostName: resolution?.hostName ?? w.remote.hostName, at: new Date().toISOString() });
+    permissionsChanged();
+  },
+  online(hostId, flag) {
+    for (const [id, w] of runtime.waiting) {
+      if (w.remote?.hostId !== hostId || (w.remote.online !== false) === flag) continue;
+      w.remote.online = flag;
+      emitGlobal({ type: 'permissionRelayState', id, sessionId: w.payload.sessionId, online: flag, hostName: w.remote.hostName, peer: w.remote.hostName });
+    }
+    if (runtime.waiting.size) broadcastRunning();
+  },
+};
+const remoteAgentBridge = parentPortRemoteAgent(process.parentPort);
+const remoteDelegation = createRemoteDelegation({
+  bridge: remoteAgentBridge, tasks: () => agentTasks, agentT, titleOf: async id => (await store.get(id)).title ?? '', cards: remoteCards,
+  locale: () => currentLocale(), changed: () => permissionsChanged(), log: line => console.log(`  ${line}`),
+});
 agentTasks = await createAgentTasks({
   dataDir: store.dataDir,
-  changed: () => { broadcastRunning(); completionNotices.changed(); },
+  changed: () => { broadcastRunning(); completionNotices.changed(); remoteTasksChanged(); },
   // 人間の承認を待っているか。承認は core/server.mjs 側にしかないので判定を渡す。
   // 中継の複製も数える（孫が止まっていれば、その子も止まっている）
-  waiting: sessionId => blockingWaits().some(w => w.payload.sessionId === sessionId),
+  waiting: sessionId => Boolean(sessionId) && blockingWaits().some(w => w.payload.sessionId === sessionId),
+  // ホストに任せたタスクの写し: 依頼元の会話に中継された承認を待っているか・会話の中断でホストのタスクも止める（core/remote-delegation.mjs）
+  remoteWaiting: row => remoteDelegation.waitingFor(row.taskId),
+  cancelHost: row => remoteDelegation.cancelHost(row),
   // コンピューターの操作のロックを待っている子は、黙っているとは数えない（承認待ちではないので ply_task_wait の waiting にはしない）
   lockWaiting: sessionId => computerLock.snapshot().some(s => s.sessionId === sessionId && s.state === 'waiting'),
   rollback: async ({ sessionId, worktree }) => {
@@ -4027,15 +4399,17 @@ agentTasks = await createAgentTasks({
   workspaceState: task => worktreeHost.taskState(task.worktree),
   prepare: async (owner, args, taskId, signal) => {
     const parent = runtime.turns.get(owner);
+    // 端末の AI から任された委譲（remoteAgentInvoke が付ける。docs/remote.md §4.5）。依頼元の会話はホストに無く、言語と承認モードは端末が送ってきたもの
+    const remoteReq = args.remote ?? null;
     // エラーは ply_delegate の結果として依頼元のエージェントが読む。子の会話は依頼元の会話の言語を継ぐ
-    const lng = parent?.agentLocale ?? await agentLocaleFor(owner);
+    const lng = parent?.agentLocale ?? remoteReq?.locale ?? await agentLocaleFor(owner);
     // 人が委譲カードの「別の候補でやり直す」で作るタスク（retryAgentTask）は、依頼元のターンの外で作る。
     // 作業場所は元のタスクの絶対パスを渡すので、依頼元のターンが無くても決まる
     const manual = args.routing?.mode === 'manual';
-    if ((!parent && !manual) || signal?.aborted) throw new Error(agentT(lng, 'delegation.parentEnded'));
+    if ((!parent && !manual && !remoteReq) || signal?.aborted) throw new Error(agentT(lng, 'delegation.parentEnded'));
     const backend = getBackend(args.backend);
     if (!backend) throw new Error(agentT(lng, 'delegation.backendDisabled'));
-    let cwd = path.resolve(parent?.info.cwd ?? (await store.get(owner)).cwd ?? process.cwd(), args.cwd ?? '.');
+    let cwd = path.resolve(parent?.info.cwd ?? (remoteReq ? os.homedir() : (await store.get(owner)).cwd) ?? process.cwd(), args.cwd ?? '.');
     if (!(await fs.stat(cwd)).isDirectory()) throw new Error(agentT(lng, 'delegation.cwdNotDirectory'));
     // 自動の振り分けで選んだ委譲先（agentBridge の call の routeDelegation）と、人が使用量を見て選び直した委譲先。
     // 候補は公式の使用枠で選んでいるので、接続先は継がず公式で走らせ、アカウントも選んだものを使う
@@ -4076,7 +4450,9 @@ agentTasks = await createAgentTasks({
       await store.setMeta(sessionId, { ...info, backend: backend.id, unsent: true });
       await store.setMode(sessionId, mode); await store.setModel(sessionId, model);
       await store.setSessionData(sessionId, 'effort', effort);
-      await store.setSessionData(sessionId, 'delegation', { taskId, parentSessionId: owner, manager: 'ply' }, { durable: true });
+      // 端末の AI から任された子は、出どころ（どの端末の・どの会話の AI か。画面の「⇄ <端末> の AI から」）と、依頼元の承認モードを残す
+      await store.setSessionData(sessionId, 'delegation', { taskId, parentSessionId: owner, manager: 'ply',
+        ...(remoteReq ? { remote: { deviceId: remoteReq.deviceId, deviceName: remoteReq.deviceName, sessionId: remoteReq.sessionId, title: remoteReq.title, mode: remoteReq.mode } } : {}) }, { durable: true });
       await store.setSessionData(sessionId, 'agentLocale', lng);
       if (account) await store.setSessionData(sessionId, 'claudeAccount', account);
       if (endpoint) await store.setSessionData(sessionId, 'compatEndpoint', endpoint);
@@ -4087,11 +4463,14 @@ agentTasks = await createAgentTasks({
       if (worktree) await worktreeHost.abandon(worktree.id).catch(() => {});
       throw e;
     }
-    return { backend: backend.id, model, effort, cwd, mode, sessionId, ...(worktree ? { worktree } : {}), ...(routing ? { routing } : {}) };
+    return { backend: backend.id, model, effort, cwd, mode, sessionId, ...(worktree ? { worktree } : {}), ...(routing ? { routing } : {}),
+      ...(remoteReq ? { requester: { deviceId: remoteReq.deviceId, deviceName: remoteReq.deviceName, sessionId: remoteReq.sessionId, title: remoteReq.title } } : {}) };
   },
   execute: async (task, prompt, signal) => {
     if (signal.aborted) { await worktreeHost.taskDone(task).catch(() => {}); return { outcome: 'aborted' }; }
     if (sessionBusy(task.sessionId)) return { requeue: true };
+    // 子の会話を人が消した（sessions.delete。ADR 0147）。追加の指示・やり直しは、消した会話を作り直さずに失敗で返す
+    if (!(await resolveBackendForSession(task.sessionId))) throw new Error(agentT(await agentLocaleFor(task.parentSessionId), 'delegation.childDeleted'));
     const execution = { outcome: null, error: null, rejections: [], stopped: [], reply: null, timer: null, streamed: '', streamEnded: false };
     taskExecutions.set(task.sessionId, execution);
     const stopChild = () => {
@@ -4148,9 +4527,9 @@ agentTasks = await createAgentTasks({
     } finally { signal.removeEventListener('abort', stopChild); clearTimeout(execution.timer); taskExecutions.delete(task.sessionId); }
   },
   // 依頼元が完了通知を受け取れるか。受け取れない間、委譲の管理は通知の状態を書き換えない（保存を減らす）
-  ready: async task => !(await noticeBlocked(task.parentSessionId)),
+  ready: async task => isRemoteOwner(task.parentSessionId) ? remoteAgentPort.online(parseRemoteOwner(task.parentSessionId)?.deviceId) : !(await noticeBlocked(task.parentSessionId)),
   // 走っている依頼元のターンへ、今すぐ途中送信で渡せるか（無音・コマンドの通知は使わない。ADR 0057）
-  steerable: async task => Boolean(await noticeTarget(task.parentSessionId)),
+  steerable: async task => !isRemoteOwner(task.parentSessionId) && Boolean(await noticeTarget(task.parentSessionId)),
   // 走っている子のターンへ、追加指示を今すぐ途中送信で渡せるか（ADR 0065）
   childSteerable: async task => Boolean(await childTarget(task.sessionId)),
   steer: steerInstruction,
@@ -4158,6 +4537,10 @@ agentTasks = await createAgentTasks({
   // 渡せなければ（requeue）空いてから新しいターンで
   deliver: async tasks => {
     const owner = tasks[0].parentSessionId;
+    // 端末の AI に任された作業の完了は、依頼元（端末）へ便りで届ける。ホストの会話に新しいターンは始めない
+    if (isRemoteOwner(owner)) return remoteDeliver(tasks);
+    // 取り消し・すべて止めるで止めた子の会話へは、孫の完了通知も新しいターンを始めずに捨てる（止めた依頼の続きをホストで動かさない）
+    if ((await delegationRoot(owner)).remote?.stoppedAt) return 'ok';
     const live = await noticeTarget(owner);
     if (!live && await noticeBlocked(owner)) return 'requeue';
     // 完了通知は依頼元の会話の言語で。人間の発言と見分ける印は文言ではなく、送った本文のハッシュ（taskNotices。recordTaskNotice）
@@ -4172,6 +4555,7 @@ agentTasks = await createAgentTasks({
   },
   deliverCommand: async (task, command) => {
     const owner = task.parentSessionId;
+    if (isRemoteOwner(owner)) return 'ok';   // 初版は、ホストの子の長いコマンド・無音を端末へ知らせない（docs/remote.md §4.5）
     if (await noticeBlocked(owner)) return 'requeue';
     const lng = await ensureAgentLocale(owner);
     const prompt = agentT(lng, 'delegation.commandNotice', { taskId: task.taskId, noticeId: command.noticeId,
@@ -4180,6 +4564,7 @@ agentTasks = await createAgentTasks({
   },
   deliverSilence: async (task, minutes) => {
     const owner = task.parentSessionId;
+    if (isRemoteOwner(owner)) return 'ok';
     if (await noticeBlocked(owner)) return 'requeue';
     const lng = await ensureAgentLocale(owner);
     const prompt = agentT(lng, 'delegation.silenceNotice', { taskId: task.taskId, title: task.title, minutes });
@@ -4189,6 +4574,8 @@ agentTasks = await createAgentTasks({
 // 前の起動で走っていて、再起動で止まった委譲タスクを、依頼元の会話の「止めたもの」に残す（次のターンで伝える）。
 // 裏の作業と承認待ちは保存していないので分からない（docs/design.md「中断と再開」）
 await recordTaskStops(agentTasks.restored, 'restart', { restart: true });
+// ホストに任せたタスクの写し: 動いていたものはホストで続いている。ホストの便りを聞き、つながり次第追いつく（remote-delegation.mjs）
+remoteDelegation.start();
 // 設定の変更の承認の結果を会話へ届ける（ADR 0088）。届け方は委譲の完了通知と同じ（ADR 0057）: 走っているターンへ途中送信で渡せればそこへ、
 // 渡せなければ会話が空いてから新しいターンで。前の起動で待っていた要求は、再起動で取り下げた結果として届ける
 settingApprovals = await createSettingApprovals({
@@ -5091,7 +5478,8 @@ function captureStops(turn) {
 async function recordTaskStops(list, reason, { restart = false } = {}) {
   const owners = new Map();
   for (const x of list ?? []) {
-    if (!x?.parentSessionId) continue;
+    // 端末の AI に任された作業の依頼元（端末の会話）はホストに無い。端末が同期で知る
+    if (!x?.parentSessionId || isRemoteOwner(x.parentSessionId)) continue;
     if (!owners.has(x.parentSessionId)) owners.set(x.parentSessionId, []);
     owners.get(x.parentSessionId).push(taskStop(x, { restart }));
   }
@@ -5688,6 +6076,13 @@ wss.on("connection", (ws, req) => {
         }
         case 'remoteRevoke':
           return reply(true, withResident(await remote.revoke(msg.args?.id)));
+        // この端末の AI からの委譲を受けるか・任された作業をすべて止める（人だけ。docs/remote.md §4.5、ADR 0146）
+        case 'setRemoteDeviceAgent': {
+          const a = msg.args ?? {};
+          // 入れるのはホストの PC の画面だけ（中継越しの端末の画面からは入れられない。両側の許可を片側の判断で崩さない。ADR 0146）。切る・すべて止めるは端末の画面からもできる
+          if (a.enabled === true && connectionDevices.get(ws)) return reply(false, t('remote.agent.hostScreenOnly'));
+          return reply(true, await remote.setDeviceAgent(a.id, { ...(a.enabled !== undefined ? { enabled: a.enabled === true } : {}), ...(a.stopAll === true ? { stopAll: true } : {}) }));
+        }
 
         // Claude のアカウント（会話ごとに選ぶ）。トークンは返さない（登録済みかどうかだけ）
         // 互換の接続先（core/compat-endpoints.mjs）。キーは返さない。確認の失敗は例外ではなく { ok: false, error, lines } で返す（理由の行を画面に出すため）
@@ -5769,6 +6164,8 @@ wss.on("connection", (ws, req) => {
 
         case "deleteUnsentSession":
           return viaOp('sessions.deleteUnsent', args, { shape: () => "deleted" });
+        case "deleteSession":
+          return viaOp('sessions.delete', args, { shape: () => "deleted" });
 
         // エージェントの切り替え（sessions.switchBackend。ADR 0105）
         case "switchBackend":
@@ -5850,6 +6247,13 @@ wss.on("connection", (ws, req) => {
           const { id, allow, always, scope, message, messageKey, answers, annotations, response, receipt } = msg.args ?? {};
           const w = runtime.waiting.get(id);
           if (!w) return reply(false, t('approval.alreadyResolved'));
+          // ホストの子の承認の中継（この PC の会話のカード）。人の答えをホストへ運ぶ（受領証・1 回だけはホストが照合する。docs/remote.md §4.5）。
+          // この道は画面（human）の WS のこの処理だけ。AI の道具（MCP・CLI・ply_task_*）からは作れない
+          if (w.remote) {
+            const r = await remoteDelegation.answerCard(id, { allow: allow === true, message: typeof message === 'string' ? message : null, answers, annotations, response });
+            if (r.ok) return reply(true, 'ok');
+            return reply(false, r.code === 'OFFLINE' ? t('approval.remoteOffline', { host: w.remote.hostName }) : t('approval.alreadyResolved'), r.code);
+          }
           // 設定の変更の承認は受領証つき。画面は出したカードの受領証を添えて答える。合わなければ別の変更への答えなので受け取らない（取り違え・再送を防ぐ）
           if (w.payload.settingChange && w.payload.settingChange.receipt !== receipt) return reply(false, t('approval.receiptMismatch'), 'RECEIPT_MISMATCH');
           // 回答を伴うツール（質問カード）は、承認ではなく入力の差し替えとして返る。

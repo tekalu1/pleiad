@@ -83,3 +83,11 @@
 ## 追記（2026-10-06）: `browser.*` の操作は Chrome のプロフィールへ
 
 内蔵ブラウザーのプロフィールの削除（[ADR 0148](0148-agent-browser-in-chrome.md)）で、`browser.listProfiles`・`browser.useProfile`・`browser.setProfile` は無くなった。`ply_browser` のツール名と渡し方は残り、プロフィールのツールは Chrome のプロフィールを指す形で、`hand_to_user`・`close_browser_window` とともに後の段で載せる。
+
+## 追記（2026-10-06）: 送った会話を消す
+
+| 操作 | 危険度 | 理由・追加の判定 |
+|---|---|---|
+| `sessions.delete` | guarded | 送った会話も消す（Pleiad の記録だけ。ネイティブの会話は残して一覧から隠す）。無い会話は承認の前に `SESSION_NOT_FOUND`、消せない会話（走っている・承認や裏の作業を待っている・委譲の子が終わっていない・送信待ちがある・bot の会話）は承認の前に `CANNOT_DELETE`、AI の自分の会話は `DELETE_SELF`。 |
+
+`sessions.deleteUnsent` は変えない（送った会話は今も断る）。決定と理由は [ADR 0147](0147-delete-sent-conversations.md)。

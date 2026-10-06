@@ -152,3 +152,17 @@
 .rm-dialog .mp-state:empty { display:none; }
 .rm-dialog-actions { display:flex; justify-content:flex-end; gap:10px; margin-top:20px; }
 @media(max-width:520px) { .rm-qr { width:100%; max-width:260px; margin:0 auto; } .rm-pair-body { justify-content:center; } .rm-dialog { padding:18px; } }
+/* 端末の行の「この端末の AI からの依頼を受ける」（docs/remote.md §6.1、ADR 0146）。スイッチは設定の .cx-sw と同じ部品 */
+.rm-agent { margin-top:12px; }
+.rm-agent-row { display:flex; align-items:center; gap:12px; }
+.rm-agent-text { flex:1; min-width:0; display:flex; flex-direction:column; gap:2px; }
+.rm-agent-text b { font-weight:600; }
+.rm-agent-help,.rm-agent-note { color:var(--ink-weak); font-size:var(--fs-s); }
+.rm-agent-note { margin:8px 0 0; }
+.rm-agent-warn { color:var(--ink-strong); font-weight:600; font-size:var(--fs-s); margin:4px 0 8px; }
+.rm-agent-confirm { flex-direction:column; align-items:flex-start; }
+.rm-agent-confirm p { flex:none; }
+.rm-agent-tasks { display:flex; align-items:center; flex-wrap:wrap; gap:4px 8px; margin-top:10px; font-size:var(--fs-s); }
+.rm-agent-count { flex:1; min-width:160px; }
+.rm-agent-waiting { color:var(--ink-mark); }
+@media (max-width:480px) { .rm-agent-count { flex-basis:100%; } }
