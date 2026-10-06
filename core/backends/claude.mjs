@@ -94,7 +94,9 @@ const MODES = {
 // bypassPermissions は allowDangerouslySkipPermissions: true を同時に渡さないと使えない
 // （sdk.d.ts の Options: "Must be set to `true` when using `permissionMode: 'bypassPermissions'`"。
 // sdk.mjs は真のときだけ CLI へ --allow-dangerously-skip-permissions を足す）。
-// このモードでは CLI が権限判定ごと飛ばすので **canUseTool は呼ばれない**＝承認カードは出ない。
+// このモードでも、Claude Code は安全の検査（中身が空かもしれない変数を使った危ない rm など）に当たる呼び出しだけは
+// 飛ばさず canUseTool で聞いてくる。承認カードが全く出ないとは限らない（bypass の子の `rm -f $OUT/*` で出た）。
+// 受ける側（askPermission）は、モードによらず来た問いを人に回す。
 const SDK_MODES = { bypass: "bypassPermissions" };
 const sdkMode = (mode) => (MODES[mode] ? SDK_MODES[mode] ?? mode : "default");
 
@@ -763,7 +765,8 @@ export const backend = {
         // 互換の接続先は「思考を送る」をオンにした先にだけ送る（決定 4。オフの先は env で thinking・effort を止めてある）
         ...(!endpoint || endpoint.options?.sendThinking ? { thinking: { type: "adaptive" } } : {}),
         // 承認モード。既定は都度確認。切り替えは人間だけができる（server 側で担保）。
-        // SDK 側が先に判断し、なお迷うものだけが canUseTool に来る（bypass では来ない）。
+        // SDK 側が先に判断し、なお迷うものだけが canUseTool に来る（bypass では、ふつうの呼び出しは来ない。
+        // 危ない rm のような安全の検査に当たったものは来る）。
         permissionMode: sdkMode(mode),
         ...(sdkMode(mode) === "bypassPermissions" ? { allowDangerouslySkipPermissions: true } : {}),
         // 未指定なら SDK の既定に任せる（設定を上書きしない）
