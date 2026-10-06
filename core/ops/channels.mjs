@@ -125,6 +125,13 @@ async function homeArgs(ctx, args, { make = false } = {}) {
   return home ? { ...args, channelId: home.id } : null;
 }
 const notFound = (ctx, id) => new OpError('CHANNEL_NOT_FOUND', agentT(ctx.locale, 'ops.errors.CHANNEL_NOT_FOUND', { id }));
+/** 組み込みの bot の呼び名（to・botId の 'plain'。チャンネルのスレッドの「bot なし」）。人だけが選べ、無ければ作る（ADR 9101） */
+const PLAIN = 'plain';
+async function plainId(ctx, id) {
+  if (id !== PLAIN) return id;
+  if (ctx.principal?.by !== 'human') throw new OpError('INVALID', agentT(ctx.locale, 'ops.errors.INVALID', { detail: 'only a human chooses the built-in agent' }));
+  return (await ctx.bots.ensurePlain()).id;
+}
 
 export const channelOps = [
   defineOp({
@@ -201,6 +208,7 @@ export const channelOps = [
     input: z.object({
       channelId: channelId('threadSettings'), threadId: postId('threadSettings', 'threadId'),
       botId: z.string().min(1).describe(D('threadSettings', 'botId')),
+      backend: z.string().max(40).optional().describe(D('threadSettings', 'backend')),
       model: z.string().max(200).optional().describe(D('threadSettings', 'model')),
       effort: z.string().max(40).optional().describe(D('threadSettings', 'effort')),
       mode: z.string().max(40).optional().describe(D('threadSettings', 'mode')),
@@ -208,10 +216,15 @@ export const channelOps = [
     }),
     output: z.object({ sessionId: z.string(), backend: z.string(), model: z.string(), effort: z.string(), mode: z.string(), cwd: z.string() }),
     surfaces: { ui: true, mcp: 'catalog', cli: { path: ['channels', 'thread-settings'], positional: ['channelId', 'threadId', 'botId'] } },
-    handler: async (ctx, args) => run(ctx, async () => {
+    handler: async (ctx, input) => run(ctx, async () => {
       await refuseHidden(ctx);
-      humanOnlyFields(ctx, args, ['mode']);
-      if (args.cwd !== undefined) {
+      humanOnlyFields(ctx, input, ['mode']);
+      const args = { ...input, botId: await plainId(ctx, input.botId) };
+      const plain = Boolean((await ctx.bots.get({ botId: args.botId }))?.plain);
+      // backend を選べるのは組み込みの bot だけ（会話を作るときの 1 回。人の bot は bot の backend のまま）。作業場所も人だけが選ぶ（フォルダーを持たない）
+      if (args.backend !== undefined && !plain) throw new OpError('INVALID', agentT(ctx.locale, 'ops.errors.INVALID', { detail: 'backend can only be chosen for the built-in agent' }));
+      if (plain) humanOnlyFields(ctx, args, ['backend', 'cwd']);
+      if (args.cwd !== undefined && !plain) {
         const bot = await ctx.bots.get({ botId: args.botId });
         const channel = await ctx.channels.get({ channelId: args.channelId });
         const allowed = [...(bot?.folders ?? []).map((f) => f.path), ...(channel?.cwd ? [channel.cwd] : [])];
@@ -358,7 +371,7 @@ export const channelOps = [
       if (clientId) args.clientId = clientId;
       // 宛先のチップ（to）は人だけ。bot・AI は本文の @ で呼ぶ（強さの確認が @ を数える）
       if (to && author.kind !== 'human') throw new OpError('INVALID', agentT(ctx.locale, 'ops.errors.INVALID', { detail: 'to is only for a human post; write @name in the text instead' }));
-      if (to) args.to = to;
+      if (to) args.to = await plainId(ctx, to);
       const files = attachments?.length ? await describeFiles(ctx, attachments) : null;
       let groupMentions;
       if (author.kind === 'human') {

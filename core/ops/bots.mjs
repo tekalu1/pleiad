@@ -38,6 +38,7 @@ const botShape = {
   pulse: z.object({ on: z.boolean(), everyMin: z.number(), backend: z.string(), model: z.string(), channelId: z.string() }),
   dmChannelId: z.string(), dmSessionId: z.string().nullable(),
   createdAt: z.number(), updatedAt: z.number(),
+  plain: z.boolean().optional(),   // 組み込みの bot（チャンネルのスレッドの「bot なし」。ADR 9101）
 };
 const botRow = z.object({
   ...botShape,

@@ -170,6 +170,15 @@ id は `<領域>.<動詞>`（ドットは 1 つ）。human-only は承認モー�
 本文に包みのタグが紛れても外へ出られない（`escapeBody`）。途中送信（`control.steer`）の道では末尾を付けず、`<pleiad-channel>` だけを渡す。
 `channel` は表示名（`#dev`・DM は bot の名前）、`channel-id` は `channels.post` などの操作へ渡すチャンネルの id（bot が自分で返事を書くのに要る。履歴の行は `channel` だけを持つ）、`thread` は根の投稿の id（DM は無い）、`from` は表示名（人は「あなた」、bot は「🦉 Owl (bot)」）、`at` は現地時刻の分まで。
 
+## 組み込みの bot（チャンネルのスレッドの「bot なし」。[ADR 9101](adr/9101-unify-chat-thread.md)（提案））
+
+`bots.json` の `plain: true` の 1 件（保存の名前は Agent、アイコンは ✦、画面の名前は「エージェント」）。人が宛先（`channels.post` の `to`）かスレッドの設定（`channels.threadSettings` の `botId`）に `'plain'` を書くと、無ければ Chats の既定の backend で作る（BotService の `ensurePlain`）。dispatch の経路（inbox → ターン → 返事の投稿・暗黙の宛先・予算・止める）は普通の bot と同じで、違うのは次の所だけ。
+
+- 名前で呼べない: `@` の名前引き（`listBots`）・一時チャットの宛先・名前の重複の検査から外す。メンバーに足さない。DM を作らない。
+- 人格・記憶・心拍を持たない: ターンの指示は固定の文だけ（`guide.bot.plainHeading`・`plainTools`。予約の文も入れない）、末尾の文脈に記憶・スレッドの申し送りを入れない、エピソード・夜の整理の層を作らない、`memory.write`・`brain.*` は断る。
+- 設定はスレッドごと: `channels.threadSettings` の `backend`（組み込みの bot だけ・会話を作るときの 1 回・人だけ）と `cwd`（人だけ。フォルダーの制限は無い）。bot の既定を持たないので、`sync` はしない。`bots.update`・`setMode`・`remove` は断る。
+- `bots.list` には `plain: true` の印つきで出る（画面は Bots の節・一時チャットの宛先・ルーティンの bot から外す）。
+
 ## bot の定義と、バックエンドへの渡し方（`core/bots/`）
 
 - **定義**（`bots.json`。`createBotStore`）: `Bot`（型は `core/channels/types.mjs`）。名前はチャンネルを通して一意（NFKC・大小を区別しない）で、空白・`@`・句読点・`you` / `あなた` / `here` / `everyone` は使えない。人格は 6000 字まで。読めない版・壊れた JSON・読み取りの失敗（ENOENT 以外。EBUSY・EACCES などは数回再試行してから）は読み込まずに止め（`BotStoreError`。`BOTS_CORRUPT`・`BOTS_UNSUPPORTED_VERSION`・`BOTS_UNREADABLE`）、上書きしない（読み直すには再起動）。id か name が無い行は読み込まれないので、捨てた件数をログへ出す。書き込みは全体で 1 本の直列化キュー（同じ名前の同時の作成でも 1 つだけ通る）。

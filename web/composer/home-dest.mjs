@@ -23,7 +23,8 @@ export function createHomeDest({ anchor, t, invoke, showMenu, visible = () => fa
 
   async function load() {
     if (loading) return loading;
-    loading = invoke('bots.list', {}).then((r) => { bots = r?.bots ?? []; }).catch(() => { bots ??= []; }).finally(() => { loading = null; paint(); });
+    // 組み込みの bot（チャンネルのスレッドの「bot なし」）は一時チャットでは使わない（ここの「bot なし」は普通の会話）
+    loading = invoke('bots.list', {}).then((r) => { bots = (r?.bots ?? []).filter((b) => !b.plain); }).catch(() => { bots ??= []; }).finally(() => { loading = null; paint(); });
     return loading;
   }
   const botOf = () => (chosen && bots?.find((b) => b.id === chosen)) || null;

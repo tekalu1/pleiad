@@ -18,6 +18,7 @@ import { feedDraftKey } from './ch-attach-model.mjs';
 import { openChannelSettings } from './feed-settings.mjs';
 import { openEmojiPicker } from '../emoji-picker.mjs';
 import { headingButton } from './routine-entry.mjs';
+import { shownBot } from './plain-bot.mjs';
 
 const PAGE = 50;
 const NEAR_BOTTOM = 80;
@@ -85,7 +86,7 @@ export function createFeed(host) {
   async function loadBots() {
     try {
       const got = await host.invoke('bots.list');
-      S.bots = new Map((got?.bots ?? []).map((b) => [b.id, b]));
+      S.bots = new Map((got?.bots ?? []).map((b) => [b.id, shownBot(b, t)]));
     } catch { /* bot の操作がまだ無い・失敗しても投稿は読める。発言者は名前を持たない扱い */ }
   }
 
@@ -499,7 +500,7 @@ export function createFeed(host) {
     channelsChanged: (ev) => onChannelsChanged(ev),
     botsChanged: (ev) => {
       if (ev.removed) S.bots.delete(ev.removed);
-      if (ev.bot) S.bots.set(ev.bot.id, ev.bot);
+      if (ev.bot) S.bots.set(ev.bot.id, shownBot(ev.bot, t));
       if (!S.id) return;
       paintHead();
       repaintAll();

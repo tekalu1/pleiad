@@ -24,6 +24,8 @@
 //   overview({ botId? }): Promise<(Bot & { usage, state })[]>      … bots.list / get の返り。state は 'working' | 'waiting' | 'idle'
 //   --- S4（dispatch）・host が使う口
 //   ensureDm({ botId }): Promise<Bot>             … DM のチャンネルが無ければ作る
+//   ensurePlain(): Promise<Bot>                   … 組み込みの bot（plain: true。チャンネルのスレッドの「bot なし」）。無ければ Chats の既定の backend で作る。
+//                                                   人格・記憶・心拍・DM を持たず、名前で呼べない。update・setMode・remove は断る（ADR 9101）
 //   ensureDmSession({ botId }): Promise<{ sessionId: string, created: boolean }>   … DM の会話（最初のターンの前に呼ぶ）。backend を変えた bot は新しく作る
 //   createSession({ botId, channel, threadId, kind, routineId?, rootText? }): Promise<{ sessionId, backend, model, effort, cwd, mode }>
 //                                                 … スレッド・ルーティン・学習の会話。ThreadState.sessions への登録は呼び出し側
@@ -199,7 +201,27 @@ export function createBotService({ dataDir, channels, host = null, emit = () => 
         if (e instanceof BotStoreError) { log(String(e.message)); return; }   // 読めない bots.json は上書きしない。画面へは problem で出す
         throw e;
       }
-      for (const bot of store.list()) if (!bot.dmChannelId) await ensureDm({ botId: bot.id }).catch(() => {});
+      for (const bot of store.list()) if (!bot.dmChannelId && !bot.plain) await ensureDm({ botId: bot.id }).catch(() => {});
+    },
+
+    async ensurePlain() {
+      requireStore();
+      return once('plain', async () => {
+        const known = store.list().find((b) => b.plain);
+        if (known) return known;
+        const prefs = await host?.store?.getPrefs?.().catch(() => null);
+        const backendId = (prefs?.backend && backendOf(prefs.backend) ? prefs.backend : null) ?? host?.listBackends?.()[0]?.id ?? '';
+        if (!backendId) throw invalid('backend: required');
+        const backend = backendOf(backendId);
+        const t = now();
+        const bot = await store.put({
+          id: newId('bot', t), plain: true, name: 'Agent', icon: '✦', iconImage: '', persona: '', backend: backendId, model: '', effort: '',
+          mode: backend ? defaultMode(backend.modes()) : '', folders: [], sendToOthers: true, sendTargets: [],
+          dmChannelId: '', dmSessionId: null, createdAt: t, updatedAt: t,
+        });
+        send({ type: 'botsChanged', bot });
+        return bot;
+      });
     },
     stop() {},
 
@@ -282,6 +304,7 @@ export function createBotService({ dataDir, channels, host = null, emit = () => 
     async planUpdate(input) {
       requireStore();
       const bot = getBot(input?.botId);
+      if (bot.plain) throw invalid('the built-in agent cannot be changed; choose its settings in each thread');
       const next = { ...bot };
       const rows = [];
       const row = (p, before, after) => rows.push({ path: p, before, after });
@@ -401,6 +424,7 @@ export function createBotService({ dataDir, channels, host = null, emit = () => 
     async setMode({ botId, mode }, _author) {
       requireStore();
       const bot = getBot(botId);
+      if (bot.plain) throw invalid('the built-in agent has no approval mode of its own; choose it in each thread');
       const modes = modesOf(bot.backend);
       if (modes && !modes[mode]) throw invalid(`mode: unknown for ${bot.backend}: ${mode}`);
       // Antigravity は途中で人に聞けないので、承認モードは yolo の 1 つだけ（決定 4。modes() もそれしか持たない）
@@ -415,6 +439,7 @@ export function createBotService({ dataDir, channels, host = null, emit = () => 
     async remove({ botId }, _author) {
       requireStore();
       const bot = getBot(botId);
+      if (bot.plain) throw invalid('the built-in agent cannot be removed');
       const ids = await sessionIdsOf(botId);
       await store.remove(botId);
       await removeIcon(bot.iconImage);
@@ -467,9 +492,9 @@ export function createBotService({ dataDir, channels, host = null, emit = () => 
       });
     },
 
-    async createSession({ botId, channel = null, threadId = null, kind, routineId, rootText = '' }) {
+    async createSession({ botId, channel = null, threadId = null, kind, routineId, rootText = '', backend = null, cwd = null }) {
       if (!sessions) throw new Error('bots: createSession needs the host');
-      return sessions.create({ bot: getBot(botId), channel, threadId, kind, routineId, rootText });
+      return sessions.create({ bot: getBot(botId), channel, threadId, kind, routineId, rootText, backend, cwd });
     },
 
     async turnSetup(turn) {

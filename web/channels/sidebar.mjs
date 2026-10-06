@@ -12,6 +12,7 @@ import { t } from '../i18n.mjs';
 import { runMark } from '../arc.mjs';
 import { backendLogo } from '../side.mjs';
 import { sideChannels, botState, tabDots, channelNameRows, postRows, showDetail, selectedRow } from './side-model.mjs';
+import { shownBot } from './plain-bot.mjs';
 import { getRoutineStore } from './routine-store.mjs';
 import { sortForSide, SIDE_LIMIT, lastFailed } from './routine-model.mjs';
 import { openRoutine, whenText, stateText } from './routine-entry.mjs';
@@ -102,7 +103,7 @@ export function createSidebar(host, getTabs) {
       try {
         const [c, b] = await Promise.all([host.invoke('channels.list', {}), host.invoke('bots.list', {})]);
         S.channels = c?.channels ?? [];
-        S.bots = b?.bots ?? [];
+        S.bots = (b?.bots ?? []).map((x) => shownBot(x, t));
         S.loaded = true;
         side?.setDirectory?.({ channels: S.channels, bots: S.bots });
         paint();
@@ -175,7 +176,8 @@ export function createSidebar(host, getTabs) {
     if (!box) return;
     const now = live();
     const label = (id) => host.state?.backends?.find((b) => b.id === id)?.label ?? id;
-    const nodes = S.bots.map((b) => {
+    // 組み込みの bot（bot なし）は Bots の節に出さない（スレッドの宛先の面でだけ選ぶ）
+    const nodes = S.bots.filter((b) => !b.plain).map((b) => {
       const state = botState(b, now);
       // i18n-dynamic: channels:side.botState.
       const stateText = t(`channels:side.botState.${state}`);

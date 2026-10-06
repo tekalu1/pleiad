@@ -599,14 +599,15 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
    * スレッドの bot の会話の設定を、このスレッドだけ変える（channels.threadSettings。ADR 9101）。会話がまだ無ければ作る。
    * 走っていれば次のターンから（予約 nextSettings）。変えた欄は sidecar の overrides に印を付け、bot の既定を変えても上書きしない
    */
-  async function threadSettings({ channelId, threadId, botId, model, effort, mode, cwd }) {
+  async function threadSettings({ channelId, threadId, botId, backend, model, effort, mode, cwd }) {
     const channel = await channels.get({ channelId });
     if (channel.kind === 'dm') throw Object.assign(new Error('a DM has no thread settings'), { code: 'INVALID' });
     const root = await channels.getPost({ channelId, postId: threadId });
     if (!root || root.threadId !== null) throw Object.assign(new Error(`thread not found: ${threadId}`), { code: 'POST_NOT_FOUND' });
     const bot = await getBot(botId);
     if (!bot) throw Object.assign(new Error(`bot not found: ${botId}`), { code: 'BOT_NOT_FOUND' });
-    const sessionId = await sessionFor({ bot, channel, threadId, post: root });
+    // 組み込みの bot の会話は、最初の設定（backend・作業場所）で作る。backend は作った後は変えない
+    const sessionId = await sessionFor({ bot, channel, threadId, post: root, ...(bot.plain ? { backend, cwd } : {}) });
     const patch = { ...(model !== undefined ? { model } : {}), ...(effort !== undefined ? { effort } : {}), ...(mode !== undefined ? { mode } : {}), ...(cwd !== undefined ? { cwd } : {}) };
     if (Object.keys(patch).length) await host.reserveTurnSettings({ sessionId, backend: bot.backend, ...patch });
     await updateSidecar(sessionId, (sb) => ({ ...sb, overrides: { ...(sb.overrides ?? {}), ...Object.fromEntries(Object.keys(patch).map((k) => [k, true])) } }));
@@ -616,7 +617,7 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
   }
 
   /** この bot の、このスレッド（DM なら DM）の会話。無ければ作る */
-  async function sessionFor({ bot, channel, threadId, post }) {
+  async function sessionFor({ bot, channel, threadId, post, backend = null, cwd = null }) {
     if (channel.kind === 'dm') return (await bots.ensureDmSession({ botId: bot.id })).sessionId;
     const key = `${threadKeyOf(channel.id, threadId)}/${bot.id}`;
     const running = creating.get(key);
@@ -626,7 +627,7 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
       const known = th?.sessions?.[bot.id];
       if (known && (await sidecarOf(known))?.botId === bot.id) return known;
       const rootText = threadId === post.id ? post.text : (await channels.getPost({ channelId: channel.id, postId: threadId }).catch(() => null))?.text ?? '';
-      const made = await bots.createSession({ botId: bot.id, channel, threadId, kind: 'thread', rootText });
+      const made = await bots.createSession({ botId: bot.id, channel, threadId, kind: 'thread', rootText, ...(backend ? { backend } : {}), ...(cwd ? { cwd } : {}) });
       await channels.threads.update(channel.id, threadId, { sessions: { [bot.id]: made.sessionId } });
       return made.sessionId;
     })().finally(() => creating.delete(key));
@@ -879,12 +880,15 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
     // 止めたスレッドの、自分が始めたターンは始めない（canStart と turnExtras の間に止められたとき）
     if (pre && key && stoppedKeys.has(key)) { rec.stopped = true; host.abortSessions?.({ sessionId, reason: 'user' }).catch(() => {}); }
     let notes = [];
-    try {
-      const tail = await memory.turnContext({ bot, session: sb, sessionId, incomingText: pre?.incomingText ?? turn.stream?.user?.text ?? '', locale: turn.agentLocale });
-      rec.tail = tail;
-      notes = tail.notes ?? [];
-    } catch (e) { log('could not build the turn tail:', errText(e)); }
-    if (sb.kind === 'thread' && !sb.recentDelivered) {
+    // 組み込みの bot（bot なし）は記憶もスレッドの申し送りも持たない（ADR 9101）
+    if (!bot.plain) {
+      try {
+        const tail = await memory.turnContext({ bot, session: sb, sessionId, incomingText: pre?.incomingText ?? turn.stream?.user?.text ?? '', locale: turn.agentLocale });
+        rec.tail = tail;
+        notes = tail.notes ?? [];
+      } catch (e) { log('could not build the turn tail:', errText(e)); }
+    }
+    if (sb.kind === 'thread' && !sb.recentDelivered && !bot.plain) {
       try {
         const recent = await episodes?.recent(bot.id, channelId, rec.threadId, turn.agentLocale);
         if (recent) notes.splice(notes[0]?.startsWith('<pleiad-memory-core>') ? 1 : 0, 0, recent);

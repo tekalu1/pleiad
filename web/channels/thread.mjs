@@ -13,6 +13,7 @@ import { savedEvent } from '../saved-text.mjs';
 import { renderPost, fillPost, authorInfo, wireAttachmentZoom, whenText } from './post.mjs';
 import { withReaction } from './reactions.mjs';
 import { createThreadComposer } from './thread-composer.mjs';
+import { PLAIN, plainOption, shownBot } from './plain-bot.mjs';
 import { threadDraftKey } from './ch-attach-model.mjs';
 import { openEmojiPicker } from '../emoji-picker.mjs';
 import { createDeck } from './deck.mjs';
@@ -115,22 +116,28 @@ export function createThread(host) {
     schedules: () => (host.state?.schedules ?? []).filter((r) => r.kind === 'post' && r.channelId === S.channelId && r.threadId === S.threadId).sort((a, b) => a.at - b.at),
     compact: (sessionId) => host.invoke('sessions.compact', { sessionId }),
     onSettings: async (botId, patch) => {
-      const got = await host.invoke('channels.threadSettings', { channelId: S.channelId, threadId: S.threadId, botId, ...patch });
+      // 組み込みの bot の最初の設定は、Chats の既定の backend で会話を作る（作った後は backend を変えない）
+      const first = botId === PLAIN && !Object.values(S.thread?.sessions ?? {}).length;
+      const s = botSettings(botId);
+      const got = await host.invoke('channels.threadSettings', { channelId: S.channelId, threadId: S.threadId, botId, ...patch,
+        ...(botId === PLAIN && first && s?.backend ? { backend: s.backend } : {}), ...(botId === PLAIN && patch.cwd === undefined && s?.values?.cwd ? { cwd: s.values.cwd } : {}) });
       settingsSeen.set(botId, got);
     },
   });
   // 宛先の bot の、このスレッドの会話の設定（channels.threadSettings が返した値を先に使う。会話の一覧が追い付くまでの間も出す）
   const settingsSeen = new Map();
   function botSettings(botId) {
-    const bot = S.bots.get(botId);
+    // 組み込みの bot をまだ作っていない（「bot なし」を選んだだけ）: Chats の新しい会話の既定から
+    const bot = S.bots.get(botId) ?? (botId === PLAIN ? { ...plainOption(t), backend: host.state?.prefs?.backend ?? host.state?.backendId ?? '', model: '', effort: '', mode: '', folders: [] } : null);
     if (!bot) return null;
     const sessionId = S.thread?.sessions?.[botId] ?? null;
     const row = sessionId ? host.state?.sessions?.find((s) => s.id === sessionId) : null;
-    const seen = settingsSeen.get(botId);
+    const seen = settingsSeen.get(botId) ?? (bot.plain ? settingsSeen.get(PLAIN) : undefined);
     const next = row?.nextSettings ?? {};
     const values = seen && (!row || seen.sessionId === sessionId) ? seen
       : { model: next.model ?? row?.model ?? bot.model ?? '', effort: next.effort ?? row?.effort ?? bot.effort ?? '', mode: next.mode ?? row?.mode ?? bot.mode ?? '', cwd: next.cwd ?? row?.cwd ?? S.channel?.cwd ?? bot.folders?.[0]?.path ?? '' };
-    const folders = [...new Set([...(bot.folders ?? []).map((f) => f.path), ...(S.channel?.cwd ? [S.channel.cwd] : [])])];
+    // 組み込みの bot はフォルダーを持たない: チャンネルの作業場所と、Chats の今の作業場所から選ぶ
+    const folders = [...new Set([...(bot.folders ?? []).map((f) => f.path), ...(S.channel?.cwd ? [S.channel.cwd] : []), ...(bot.plain && host.state?.cwd ? [host.state.cwd] : [])])];
     return { backend: bot.backend, sessionId, values, defaults: { model: bot.model ?? '', effort: bot.effort ?? '', mode: bot.mode ?? '' }, folders };
   }
   const toc = createThreadToc({ host, posts: () => S.posts, ctx: () => ctx, go: (p) => goTo(p) });
@@ -204,7 +211,7 @@ export function createThread(host) {
   async function loadBots() {
     try {
       const got = await host.invoke('bots.list');
-      S.bots = new Map((got?.bots ?? []).map((b) => [b.id, b]));
+      S.bots = new Map((got?.bots ?? []).map((b) => [b.id, shownBot(b, t)]));
     } catch { /* 定義が引けなくても投稿は出る */ }
   }
   const youInitial = () => [...t('channels:feed.you')][0] ?? '?';
@@ -258,7 +265,10 @@ export function createThread(host) {
     const live = liveBots();
     const lastSpoke = S.posts.findLast((p) => p.author?.kind === 'bot' && S.bots.has(p.author.botId))?.author.botId ?? null;
     const fallback = live.length === 1 ? live[0].id : lastSpoke ?? threadIds[0] ?? null;
-    return { inThread: threadIds.map(asBot), others, fallback };
+    // 「bot なし（モデルを直接選ぶ）」: 組み込みの bot（ADR 9101）。このスレッドにまだいなければ選べる（一時チャット・DM には出さない）
+    const plainHere = threadIds.some((id) => S.bots.get(id)?.plain);
+    const plain = !plainHere && S.channel?.kind === 'channel' && !S.channel.home ? { ...plainOption(t), state: 'idle' } : null;
+    return { inThread: threadIds.map(asBot), others, fallback, plain };
   }
 
   /** そのスレッドの bot の会話（右パネルの作業場所の基準・git・ブラウザー）。最後に動いた bot の会話 */
@@ -754,7 +764,7 @@ export function createThread(host) {
     },
     botsChanged(ev) {
       if (ev.removed) S.bots.delete(ev.removed);
-      if (ev.bot) S.bots.set(ev.bot.id, ev.bot);
+      if (ev.bot) S.bots.set(ev.bot.id, shownBot(ev.bot, t));
       if (!S.threadId || !S.ready) return;
       for (const id of postEls.keys()) repaint(id);
       bandSig = '';

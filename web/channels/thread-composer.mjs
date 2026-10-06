@@ -156,8 +156,10 @@ export function createThreadComposer({ host, bucket = () => null, candidates, su
   // ---- 宛先
   const destNow = () => {
     const d = dest();
-    const all = [...(d.inThread ?? []), ...(d.others ?? [])];
-    const id = chosen && all.some((b) => b.id === chosen) ? chosen : d.fallback;
+    const all = [...(d.inThread ?? []), ...(d.others ?? []), ...(d.plain ? [d.plain] : [])];
+    // 「bot なし」（'plain'）を選んだ後に組み込みの bot ができたら、その bot を指す
+    const want = chosen === 'plain' ? all.find((b) => b.plain)?.id ?? chosen : chosen;
+    const id = want && all.some((b) => b.id === want) ? want : d.fallback;
     return { bot: all.find((b) => b.id === id) ?? null, all, d };
   };
   // ---- 宛先の bot の設定のチップ（モックの 02。押すと一覧が浮く。選んだものはこのスレッドだけに効く）
@@ -260,6 +262,11 @@ export function createThreadComposer({ host, bucket = () => null, candidates, su
     if (d.others?.length) {
       if (items.length) items.push({ sep: true });
       items.push({ head: d.inThread?.length ? t('channels:thread.dest.others') : t('channels:thread.dest.members') }, ...d.others.map(item));
+    }
+    // 組み込みの bot（人格・記憶を持たない。モデル・承認モード・作業場所をチップで直接選ぶ。ADR 9101）
+    if (d.plain) {
+      if (items.length) items.push({ sep: true });
+      items.push({ label: t('channels:plain.choose'), hint: t('channels:plain.hint'), checked: bot?.id === d.plain.id, onClick: () => { chosen = d.plain.id; paintDest(); onDestChange(); input.focus(); } });
     }
     const r = destChip.getBoundingClientRect();
     host.showMenu(r.left, r.top - 4, items, t('channels:thread.dest.title'));

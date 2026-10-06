@@ -49,7 +49,7 @@ export function createRoutineSheet(host) {
       ]);
       const routine = detail.routineId ? (fresh?.id ? fresh : store.get(detail.routineId)) : null;
       if (detail.routineId && !routine) return;   // 消えている
-      const made = buildSheet({ host, store, routine, bots: bl?.bots ?? [], channels: cl?.channels ?? [], channelId: detail.channelId, botId: detail.botId, done: () => { if (sheet === made) sheet = null; } });
+      const made = buildSheet({ host, store, routine, bots: (bl?.bots ?? []).filter((b) => !b.plain), channels: cl?.channels ?? [], channelId: detail.channelId, botId: detail.botId, done: () => { if (sheet === made) sheet = null; } });
       sheet = made;
     } finally {
       opening = false;
