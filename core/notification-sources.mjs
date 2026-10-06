@@ -18,7 +18,7 @@ const firstLine = (s) => String(s ?? '').split('\n').map((l) => l.trim()).find(B
 
 export function createNotificationSources({ inbox, store, viewing = () => false, titleOf = async () => '', channels: getChannels = () => null, bots: getBots = () => null, hiddenKinds = new Set(), log = () => {} }) {
   const guard = (what, fn) => async (...args) => {
-    try { return await fn(...args); } catch (e) { log(`通知の一覧: ${what} に失敗: ${String(e?.message ?? e)}`); return null; }
+    try { return await fn(...args); } catch (e) { log(`notification inbox: ${what} failed: ${String(e?.message ?? e)}`); return null; }
   };
 
   const botActor = async (botId) => {
@@ -45,7 +45,7 @@ export function createNotificationSources({ inbox, store, viewing = () => false,
   }
 
   return {
-    completion: guard('完了', async ({ sessionId, outcome, completedAt, uuid = null }) => {
+    completion: guard('completion', async ({ sessionId, outcome, completedAt, uuid = null }) => {
       const meta = await store.get(sessionId).catch(() => null);
       const kind = completionKind({ outcome, bot: meta?.bot ?? null, delegation: meta?.delegation ?? null, hiddenKinds });
       if (!kind || !Number.isFinite(completedAt)) return null;
@@ -57,7 +57,7 @@ export function createNotificationSources({ inbox, store, viewing = () => false,
       });
     }),
 
-    permissionOpened: guard('あなた待ち', async ({ id, sessionId, kind = 'tool', via = null }) => {
+    permissionOpened: guard('permission opened', async ({ id, sessionId, kind = 'tool', via = null }) => {
       const target = via || sessionId;
       if (!target || !id) return null;
       const place = await sessionPlace(target);
@@ -67,9 +67,9 @@ export function createNotificationSources({ inbox, store, viewing = () => false,
         data: { ask: kind === 'question' ? 'question' : 'approval', threadId: place.threadId, actor: place.actor, title: place.title, channelName: place.channelName, threadTitle: place.threadTitle },
       });
     }),
-    permissionSettled: guard('あなた待ちの決着', async ({ id, answer, kind = 'tool' }) => inbox.settle(`wait:${id}`, permissionOutcome(answer, { kind }))),
+    permissionSettled: guard('permission settled', async ({ id, answer, kind = 'tool' }) => inbox.settle(`wait:${id}`, permissionOutcome(answer, { kind }))),
 
-    observe: guard('出来事', async (event) => {
+    observe: guard('event', async (event) => {
       if (event?.type === 'channelPost' && (event.op === 'add' || event.op === 'edit')) {
         const post = event.post;
         if (!post || post.deletedAt || !post.mentions?.includes('you') || post.author?.kind === 'human') return null;
@@ -82,6 +82,6 @@ export function createNotificationSources({ inbox, store, viewing = () => false,
       return null;
     }),
 
-    sessionRemoved: guard('会話の削除', async (sessionId) => inbox.removeSession(sessionId)),
+    sessionRemoved: guard('session removed', async (sessionId) => inbox.removeSession(sessionId)),
   };
 }

@@ -386,8 +386,11 @@ export function createThread(host) {
     const old = postEls.get(id);
     if (!p || !old) return;
     if (p.author?.kind === 'system') { const n = sysNode(p); old.replaceWith(n); postEls.set(id, n); return; }
+    // 通知の一覧・目次から着いた直後の強調（flash）は、bot の返事の更新で描き直されても消さない（クラスが書き換わっても同じ動きが続く）
+    const flashing = old.classList.contains('flash');
     fillPost(old, p, ctx);
     decorate(old, p);
+    if (flashing) old.classList.add('flash');
     paintDelegates();
   }
   const repaintTurns = (sessionId) => { for (const p of S.posts) if (p.turn && (!sessionId || p.turn.sessionId === sessionId)) repaint(p.id); };

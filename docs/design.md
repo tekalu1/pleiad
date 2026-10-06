@@ -27,6 +27,7 @@
 - **sessions.fork・statuses.setIcon・statuses.create**（write）: `sessions.fork` は画面の「ここから分岐」と同じ `forkConversation` を通り（親の履歴を写した新しい会話ができ、親は変わらない。分岐は親と同じ承認モードで始まる）、`statuses.setIcon`・`statuses.create` は状態のグループのアイコンと空のグループ（`legacyCommand` は `setStatusIcon`・`createStatus`・`fork`）。人間が全部の会話・グループに触れるので、agent も同じ（ADR 0082）。
 - **human-only から外した操作**（[ADR 0094](adr/0094-human-only-five.md)。WS のコマンドは操作を呼ぶ薄い外側。昔のコマンド名は `legacyCommand`）:
   - `worktrees.split`・`keep`・`archive`・`restore`・`discard`（write。worktree。`discard` は変更なし・取り込み済みのときだけ消し、ほかは `action: kept`。`sessionId` も `cwd` も省くと AI は自分の会話の場所。返り値の `id` を `keep` などに渡す）
+  - `notifications.list`・`notifications.count`・`notifications.markRead`（通知の一覧。list・count は read、markRead は write。下の「通知」の「通知の一覧」。ADR 9102）
   - `notify.setPc`・`notify.setDevice`（write。この PC の通知の種類・スマホ 1 台の停止。返すのは変えた値だけで、端末の一覧は返さない。画面のコマンドは続けて `notifyStatus` を返す）
   - `hooks.read`・`hooks.readPly`（read。Hooks の定義 1 つ。AI へのコマンドの文字列は秘密らしい値を伏せる）
   - `compatEndpoints.recheck`（write。保存済みの URL とキーで確かめ直す）・`compatEndpoints.delete`（guarded。キーも消える。承認カードの一文は `server:compat.deleteConfirm`）
@@ -175,6 +176,13 @@ setup-token が発行するトークンの scope は `user:inference` だけで�
 - **スマホ**（`core/notify/`）: ホストが端末ごとに判定し、端末ごとの通知鍵で暗号化して中継の通知の線へ渡す（`docs/remote.md` §5.6・§11-5）。送らない: 端末で切った種類・ホストで止めた端末・その端末自身の画面がその会話を見ている・他の画面（PC・別の端末）が見ていて端末の設定「PC で見ている会話は送らない」（既定オン）・2 分より古い完了・30 秒未満のターンの完了。承認・質問がどこかで決着した（ターンの終わりを含む）ら、出ている通知へ取り消しを送る。完了・失敗の会話をどこかで開いた・既読にしたときも取り消す。会話名は一覧の行と同じ題（無ければ空で、端末が「Pleiad の会話」にする）。
 - **端末の出し方**（Android。`NotifyPlanner`）: 同じ会話は 1 通を上書きし、承認・質問が複数なら件数を添える。完了はホストごとに 2 件目から「N 件の会話が終わりました」に束ねる（1 件に戻れば静かに戻す）。チャンネルは「要対応」（承認・質問・失敗）と「完了」。文面は会話名だけで、ホスト名をサブテキストに出す。ロック画面は既定で汎用の文。押すと `pleiad://open?h=&s=` でそのホストの窓がその会話を開く（束ねた通知は最新の会話）。通知から直接の許可は付けない。
 - **設定**: スマホのアプリの「通知」（受け取る・返事が要るとき・失敗・完了・ロック画面に会話名を出す・PC で見ている会話は送らない）は端末ごとで、変えたらホストへ登録し直す。デスクトップの設定 › 通知 の「スマホ」は、ペアリングしたスマホの一覧（最後に送った時刻・オン/オフ）で、ホスト側で止める切り替えだけを持つ。
+- **通知の一覧**（ベルのボタン。[ADR 9102](adr/9102-notification-inbox.md)）: OS 通知・スマホの通知は出して消えるが、あなた向けの出来事はサーバーの DB（`pleiad.db` の `notifications` 表。1 件 1 行。`LATE_TABLES_SQL` で足す表で、形式番号は上げない。欠けても失う記録は無い）にも残し、画面のベルの面から辿って飛べる。書くのは `core/notification-sources.mjs`（出来事の起きる場所から。`core/notifications.mjs` が表を持つ）。
+  - **載せる種類**: `wait`（あなた待ち。承認・質問。成立で載り、決着で `resolvedAt`・`outcome`（allowed・answered・denied・cancelled）が付いて既読になる。委譲の子の承認は、カードが出ている依頼元の会話へ飛ぶ。隠れた会話は載せない）・`failed`・`done`（ターンの終わり。`completionNotices` が会話を落ち着いてから 1 回出す点で書く。bot の会話は失敗だけ、隠れた会話（learner・pulse）・委譲の子・空き時間の自動圧縮は載せない。今の通知の規則と同じ）・`mention`（人以外の投稿の `@あなた`。投稿の追加・編集で書く）。チャンネルの新着・ルーティンの結果・委譲の完了は載せない。
+  - **飛び先**: 会話の通知は `sessionId` と、ターンの最後の発言の `uuid`（`text.end` の uuid。無いバックエンドは会話の末尾へ）。bot の会話のターン・承認はチャンネルとスレッド（`channelId`・`threadId`）、`@あなた` は加えて `postId`。名前（会話の題・bot・チャンネル・スレッドの題）は載せた時点の控え（画面は会話の題だけ今のものを先に使う）。
+  - **重複しない**: `dedupeKey`（完了・失敗 `done:<会話>:<completedAt>`・`failed:…`、あなた待ち `wait:<承認の id>`、メンション `mention:<投稿の id>`）が同じなら載せない。同じ出来事を何度渡してもよい。
+  - **既読**: 通知ごと（`read_at`）。会話の `markRead`（`readAt` まで）・その会話を見た（`presence`）・チャンネルの `channels.markRead`（`readAt` まで。bot の会話の通知はチャンネルの既読でも）で、対応する通知も既読になる。いま見ている会話で起きたものは最初から既読で載る。
+  - **上限**: 200 件・30 日（`NOTIFICATION_MAX`・`NOTIFICATION_KEEP_MS`。超えたら古い方から、既読を先に捨てる）。会話を消す・チャンネルをアーカイブすると、その行も消す。あなた待ちの承認はメモリにしか無く再起動で消えるので、起動時に決着していないあなた待ちを `cancelled` で決着させる。
+  - **操作**: `notifications.list { filter?: all|wait|mention, before?, limit? }`（新しい順・既定 50 件・最大 100 件。`before` は行の `seq`。未読とあなた待ちの件数も返す）・`notifications.count`（件数だけ。ベルの数）・`notifications.markRead { ids?, all? }`。件数が変わると出来事 `notificationsChanged { unread, waiting }` が全画面へ（リモートの端末にも届く。`waiting` は未読で決着していないあなた待ち）。画面は `web/notification-inbox.mjs`、見た目は [design-system.md](design-system.md)「通知の一覧」。
 - **WS コマンド**: `presence`・`notifyStatus`・`setNotifyPc { done?, reply?, failed? }`・`setNotifyDevice { id, muted }`（操作 `notify.setPc`・`notify.setDevice`。AI も使える）・`notifyRegister { key, settings }`（中継越しの端末の画面からだけ。画面の内部）。変わるたびに `notifyStatus` イベントを全画面へ。`ready` に `notify: 1`。
 
 ## タイトル生成（2026-09-15）

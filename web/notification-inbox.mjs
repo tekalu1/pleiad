@@ -14,6 +14,9 @@ import { el } from './dom.mjs';
 const FILTERS = ['all', 'wait', 'mention'];
 const COUNT_CAP = 99;
 
+// i18n-dynamic: inbox.line.
+// i18n-dynamic: inbox.outcome.
+// i18n-dynamic: inbox.filter.
 /** 通知 1 件の見せ方。{ icon, line, place, outcome, label }。titleOf(sessionId) は今の会話の題（無ければ控えの題） */
 export function describeNotification(n, t, titleOf = () => '') {
   const live = n.target?.sessionId ? titleOf(n.target.sessionId) : '';

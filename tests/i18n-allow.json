@@ -3,6 +3,7 @@
   "sameAsJa": [
     "server:codex.subagent.collab",
     "channels:side.tabs.chats",
+    "ui:inbox.place.chat",
     "channels:side.tabs.channels",
     "channels:side.sections.bots",
     "channels:side.dm",
