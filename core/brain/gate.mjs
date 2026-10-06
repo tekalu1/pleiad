@@ -7,7 +7,7 @@
 //     loops … 開いている気がかり [{ id, wakeOn: { thread?, word?, at? } | null }]
 //     reservedAt … bot が決めた「次に起きたい時刻」（ms。無ければ null）。drives … computeDrives の結果。sinceMuse … 前のぼんやりから何回目か
 //     force … 人が［今すぐ］を押した（ふるいは通すが、止めた bot と予算は越えない）
-//   reason: 'paused' | 'budget'（止めた。keepUnread: 未読はカーソルを進めず残す）／ 'forced' | 'loop' | 'reserved' | 'human' | 'drive' | 'muse'（通した）／ 'nothing'（止めた）
+//   reason: 'paused' | 'budget'（止めた。keepUnread: 未読はカーソルを進めず残す）／ 'forced' | 'loop' | 'reserved' | 'human'（新しい投稿。人・他の bot） | 'drive' | 'muse'（通した）／ 'nothing'（止めた）
 import { DRIVE_NAMES } from './drives.mjs';
 
 /** 欲求のどれかがこれ以上なら通す */
@@ -37,8 +37,9 @@ export function gate({ now, paused = false, allowed = true, events = [], loops =
     if (wakeDue(loop.wakeOn, now) || events.some((e) => wakeMatches(loop.wakeOn, e))) return { pass: true, reason: 'loop', loopId: loop.id, museEvery: every };
   }
   if (Number.isFinite(reservedAt) && reservedAt <= now) return { pass: true, reason: 'reserved', museEvery: every };
-  // 新しい人の投稿（自分宛てでないもの。自分宛てはふつうの道で賢いモデルが起きる）。他の bot の自発の投稿だけでは通さない
-  if (events.some((e) => e.authorKind === 'human' && !e.toMe)) return { pass: true, reason: 'human', museEvery: every };
+  // 新しい投稿（人・他の bot。自分宛てでないもの。自分宛てはふつうの道で賢いモデルが起きる）。書き手が人か bot かでは分けない。
+  // reason の名前 'human' は、人の投稿だけを通していた頃のまま（思考の流れの行に残っている）
+  if (events.some((e) => (e.authorKind === 'human' || e.authorKind === 'bot') && !e.toMe)) return { pass: true, reason: 'human', museEvery: every };
   const strong = DRIVE_NAMES.filter((name) => (drives[name] ?? 0) >= DRIVE_PASS && name !== 'fatigue');
   if (strong.length) return { pass: true, reason: 'drive', detail: strong[0], museEvery: every };
   if (sinceMuse >= every) return { pass: true, reason: 'muse', museEvery: every };

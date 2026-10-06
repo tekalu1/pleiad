@@ -256,7 +256,7 @@
       "kind": { "think": "考えた", "quiet": "静か", "act": "頼んだ", "result": "結果", "loop": "気がかり", "dream": "夢", "summary": "要約" },
       "reason": {
         "paused": "眠らせている", "budget": "予算がない", "nothing": "変化なし", "forced": "手動", "loop": "気がかりの条件", "reserved": "予約した時刻",
-        "human": "新しい人の投稿", "drive": "欲求", "muse": "ぼんやりの番", "error": "失敗", "noHome": "家のチャンネルがない"
+        "human": "新しい投稿", "drive": "欲求", "muse": "ぼんやりの番", "error": "失敗", "noHome": "家のチャンネルがない"
       },
       "failed": "操作できませんでした: {{error}}"
     },
@@ -418,6 +418,7 @@
     "memoryCore": "覚えていることを渡しました",
     "botRecent": "最近のスレッドを申し送りました",
     "turnContext": "時刻と記憶の変更を渡しました",
-    "inner": "活動メモの末尾と気がかりを渡しました"
+    "inner": "活動メモの末尾と気がかりを渡しました",
+    "wake": "予約した時刻に起きました"
   }
 }

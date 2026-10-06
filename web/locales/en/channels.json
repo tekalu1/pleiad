@@ -259,7 +259,7 @@
       "kind": { "think": "Thought", "quiet": "Quiet", "act": "Asked", "result": "Result", "loop": "Concern", "dream": "Dream", "summary": "Summary" },
       "reason": {
         "paused": "put to sleep", "budget": "no budget", "nothing": "no change", "forced": "manual", "loop": "a concern's condition", "reserved": "reserved time",
-        "human": "new human post", "drive": "a drive", "muse": "musing turn", "error": "failed", "noHome": "no home channel"
+        "human": "new post", "drive": "a drive", "muse": "musing turn", "error": "failed", "noHome": "no home channel"
       },
       "failed": "Could not do that: {{error}}"
     },
@@ -423,6 +423,7 @@
     "memoryCore": "Passed what it remembers",
     "botRecent": "Passed the recent threads",
     "turnContext": "Passed the time and memory changes",
-    "inner": "Passed the end of the activity notes and concerns"
+    "inner": "Passed the end of the activity notes and concerns",
+    "wake": "Woke at a reserved time"
   }
 }

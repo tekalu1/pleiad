@@ -294,7 +294,7 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
     }
     const parts = [];
     if (picked.length) parts.push(channelThreadEnvelope({ ...common, posts: await Promise.all(picked.map(env)) }));
-    for (const item of innerItems) parts.push(innerEnvelope({ kind: 'pulse', at: stamp(item.at) }, item.inner.text));
+    for (const item of innerItems) parts.push(innerEnvelope({ kind: item.inner.kind === 'wake' ? 'wake' : 'pulse', at: stamp(item.at) }, item.inner.text));
     // 呼んだ bot の返事（reply）は、包みに reply="true" を付ける（固定文: 呼んだ bot の返事は reply の付いた包みで返ってくる）
     const replies = new Set(postItems.filter((i) => i.reply).map((i) => i.postId));
     let reactions = 0;
@@ -1124,7 +1124,8 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
     }
     await refreshThread(rec.channelId, rec.threadId);
     // 使ったトークンをチャンネルの予算に数える（人が呼んだターンも。次の bot を起こす前に）
-    // 自分の心拍から起きたターンは、スレッドではなく bot の家のチャンネルの予算に数える（自発の分も数える。ADR 0126）
+    // 自分の心拍・予約から起きたターンは、スレッドではなく bot の家のチャンネルの予算に数える（自発の分も数える。ADR 0126）。
+    // 家が無い DM だけの bot の予約は、bot の 1 日のトークンにだけ数える（homeChannelId が null。ADR 0136）
     if (rec.inner) {
       await budget.chargeBrain({ channelId: rec.inner.homeChannelId, botId: rec.botId, backend: turn.info?.backend, model: turn.info?.model, usage: rec.usage })
         .catch((e) => log('could not charge the brain budget:', errText(e)));
@@ -1177,7 +1178,7 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
     brain.append(rec.botId, {
       kind: 'result', text: agentT(lng, `brain.line.${key}`, { where, text }), taint: rec.taint ?? null,
       ...(rec.inner?.actSeq ? { refs: [String(rec.inner.actSeq)] } : {}),
-      meta: { channelId: rec.channelId, threadId: rec.threadId, ...(rec.inner ? { by: 'pulse' } : {}), state },
+      meta: { channelId: rec.channelId, threadId: rec.threadId, ...(rec.inner ? { by: rec.inner.kind === 'wake' ? 'wake' : 'pulse' } : {}), state },
     });
   }
 
@@ -1210,6 +1211,23 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
     await inbox.add({ ...target, botId, postId: null, inner: { workNotesVersion: WORK_NOTES_VERSION, why: oneLine(why, 300), text: String(text ?? '').slice(0, 6000), actSeq, homeChannelId, taint } });
     await pump(target.sessionId);
     return { ok: true, ...target };
+  }
+
+  /**
+   * 予約した時刻になった bot を、予約した会話で起こす（core/brain/wakes.mjs。ADR 0136）。handoff と同じく、投稿を持たない出来事（inner。kind: 'wake'）を
+   * inbox に積んでふつうの道に乗せる。承認・強い bot の確認・［止める］はそのまま効き、走っているターンには途中送信しない。
+   * 止めたスレッド・その bot の会話でなくなったものは断る。返りは { ok: true, sessionId, channelId, threadId } | { ok: false, reason }（resting・closed は待てば起こせる）
+   */
+  async function wakeReserved({ botId, sessionId, channelId, threadId = null, why = '', text, homeChannelId = null, taint = null } = {}) {
+    if (closed) return { ok: false, reason: 'closed' };
+    const bot = await getBot(botId);
+    if (!bot) return { ok: false, reason: 'nobot' };
+    if (resting.until(bot)) return { ok: false, reason: 'resting' };
+    if (!sessionId || (await sidecarOf(sessionId))?.botId !== botId) return { ok: false, reason: 'nosession' };
+    if (threadId && (stoppedKeys.has(threadKeyOf(channelId, threadId)) || (await threadStopped(channelId, threadId)))) return { ok: false, reason: 'stopped' };
+    await inbox.add({ sessionId, channelId, threadId, botId, postId: null, inner: { kind: 'wake', workNotesVersion: WORK_NOTES_VERSION, why: oneLine(why, 300), text: String(text ?? '').slice(0, 6000), actSeq: null, homeChannelId, taint } });
+    await pump(sessionId);
+    return { ok: true, sessionId, channelId, threadId };
   }
 
   /** この bot（B）を呼んだ bot（A）の、このスレッド（無ければ派生元のスレッド）の会話。無ければ null */
@@ -1372,7 +1390,7 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
 
   return {
     channels, bots, memory, host, emit, now, inbox, budget,
-    start, stop, onPosted, onReacted, claimPost, wake, wakePost, handoff, stopThread, turnExtras, onTurnEvent, onTurnEnd, onPermission, onCompacted,
+    start, stop, onPosted, onReacted, claimPost, wake, wakePost, handoff, wakeReserved, stopThread, turnExtras, onTurnEvent, onTurnEnd, onPermission, onCompacted,
     /** テスト・診断用: 走っている bot のターンの数 */
     activeCount: () => active.size,
     /** 使用量の上限で休んでいれば解除の時刻（ms）。bots.overview の restingUntil（ADR 0119） */

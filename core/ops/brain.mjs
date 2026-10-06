@@ -7,10 +7,13 @@
 // 危険度: view・list は read。気がかりの足す・手放す・眠らせる（止める向き）は write。起こす（pause: false）・［今すぐ］（beat）は AI が呼ぶと guarded
 //   （自発の動きを増やす向き。人は write）。流れを消す（clear）は guarded（記録を消す。人は承認なしで通る）。
 // 心拍の ON・間隔は bots.update の pulse（広げる向きは guarded）。ここでは足さない。
+// 予約（wakeAdd・wakeList・wakeCancel。ADR 0136）は `ctx.wakes`（core/brain/wakes.mjs）。予約を作れるのは bot のスレッド・DM の会話の AI だけで、行き先はその会話。
+//   作る・取り消すは write で、読み取りのモードの bot も使える（modeGate: false。channels.post と同じ）。起きたターンは、その会話のモード・承認のまま走る。
 import { z } from 'zod';
 import { agentT } from '../i18n.mjs';
 import { OpError, defineOp } from './registry.mjs';
 import { parseWakeOn, parseTime, LOOP_TEXT_MAX } from '../brain/answer.mjs';
+import { WakeError, WAKE_NOTE_MAX } from '../brain/wakes.mjs';
 
 const D = (id, key) => `agent:ops.brain.${id}.${key}`;
 const botIdArg = (id, optional = false) => { const s = z.string().min(1).max(100).describe(D(id, 'botId')); return optional ? s.optional() : s; };
@@ -29,6 +32,15 @@ async function target(ctx, botId) {
 
 const streamOut = (r) => ({ seq: r.seq, at: r.at, kind: r.kind, text: r.text ?? '', refs: r.refs ?? [], taint: r.taint ?? null, tokens: r.tokens ?? null, meta: r.meta ?? null });
 const loopOut = (l) => ({ id: l.id, status: l.status, text: l.text, wakeOn: l.wakeOn ?? null, due: l.due ?? null, taint: l.taint ?? null, createdAt: l.createdAt ?? l.updatedAt, updatedAt: l.updatedAt });
+
+const wakeOut = (w) => ({ id: w.id, status: w.status, at: w.at, when: new Date(w.at).toISOString(), note: w.note ?? '', channelId: w.channelId, threadId: w.threadId ?? null,
+  createdAt: w.createdAt, ...(w.firedAt ? { firedAt: w.firedAt } : {}), ...(w.late ? { late: true } : {}), ...(w.waiting ? { waiting: w.waiting } : {}), ...(w.reason ? { reason: w.reason } : {}) });
+
+/** 予約の失敗（WakeError）を操作の失敗にする */
+function wakeFailed(ctx, e) {
+  if (!(e instanceof WakeError)) throw e;
+  throw new OpError(e.code, agentT(ctx.locale, `ops.errors.${e.code}`, e.detail));
+}
 
 const loopInput = {
   wakeOn: z.union([z.string().max(100), z.object({ thread: z.string().max(80).optional(), word: z.string().max(40).optional(), at: z.union([z.number(), z.string()]).optional() })]).optional().describe(D('loopAdd', 'wakeOn')),
@@ -99,6 +111,72 @@ export const brainOps = [
       if (!applied.length) throw new OpError('NOT_FOUND', agentT(ctx.locale, 'ops.errors.NOT_FOUND', { id }));
       for (const a of applied) ctx.brain.append(bot.id, { kind: 'loop', text: agentT(ctx.locale, `brain.loop.${a.op}`, { text: a.text }), refs: [a.id] });
       return { id, status };
+    },
+  }),
+
+  defineOp({
+    id: 'brain.wakeAdd',
+    summary: D('wakeAdd', 'summary'),
+    risk: 'write',
+    riskReason: 'Reserves one wake-up of the bot in its own thread or DM conversation at a time it chooses (at least a minute ahead, at most 30 days, up to 20 waiting per bot). It runs nothing now. The woken turn runs in the same conversation with its own mode and approvals, is counted in the channel budget like a heartbeat, waits while the budget is empty, and is dropped if the thread is stopped (ADR 0136). It is the same as the bot continuing its own conversation later, so it is not guarded',
+    modeGate: false,
+    input: z.object({
+      at: z.union([z.number(), z.string().max(40)]).optional().describe(D('wakeAdd', 'at')),
+      inMin: z.number().min(1).max(43_200).optional().describe(D('wakeAdd', 'inMin')),
+      note: z.string().trim().min(1).max(WAKE_NOTE_MAX).describe(D('wakeAdd', 'note')),
+    }),
+    output: z.unknown(),
+    surfaces: { ui: true, mcp: 'catalog', cli: { path: ['brain', 'wake-add'], positional: ['note'] } },
+    handler: async (ctx, { at, inMin, note }) => {
+      const sessionId = ctx.principal?.by === 'agent' ? ctx.actor?.sessionId ?? null : null;
+      const sb = sessionId ? await ctx.botOfSession?.(sessionId) : null;
+      if (!sb?.botId || (sb.kind !== 'thread' && sb.kind !== 'dm')) throw new OpError('WAKE_CONVERSATION', agentT(ctx.locale, 'ops.errors.WAKE_CONVERSATION'));
+      const bot = await ctx.bots.get({ botId: sb.botId });
+      if (!bot) throw new OpError('BOT_NOT_FOUND', agentT(ctx.locale, 'ops.errors.BOT_NOT_FOUND', { id: sb.botId }));
+      const now = ctx.wakes.now();
+      const when = inMin != null ? now + inMin * 60_000 : parseTime(at, now);
+      if (when == null) throw new OpError('INVALID', agentT(ctx.locale, 'ops.errors.INVALID', { detail: 'at (ISO / HH:MM) or inMin' }));
+      const channelId = sb.channelId ?? (sb.kind === 'dm' ? bot.dmChannelId : null);
+      try {
+        return wakeOut(ctx.wakes.add({ botId: bot.id, sessionId, channelId, threadId: sb.kind === 'thread' ? sb.threadId ?? null : null, at: when, note, taint: sb.taint ?? null }));
+      } catch (e) { return wakeFailed(ctx, e); }
+    },
+  }),
+
+  defineOp({
+    id: 'brain.wakeList',
+    summary: D('wakeList', 'summary'),
+    risk: 'read',
+    input: z.object({
+      botId: botIdArg('wakeList', true),
+      all: z.boolean().optional().describe(D('wakeList', 'all')),
+    }),
+    output: z.unknown(),
+    surfaces: { ui: true, mcp: 'catalog', cli: { path: ['brain', 'wake-list'], positional: ['botId'] } },
+    handler: async (ctx, { botId, all = false }) => {
+      const { bot } = await target(ctx, botId);
+      const rows = ctx.wakes.list(bot.id, all ? {} : { status: 'pending' });
+      return { botId: bot.id, wakes: (all ? [...rows].sort((a, b) => b.at - a.at) : rows).map(wakeOut) };
+    },
+  }),
+
+  defineOp({
+    id: 'brain.wakeCancel',
+    summary: D('wakeCancel', 'summary'),
+    risk: 'write',
+    riskReason: 'Cancels one waiting wake-up reservation of the bot. It only narrows what will run later, and a human can do the same, so an agent is treated the same (ADR 0136)',
+    modeGate: false,
+    input: z.object({
+      botId: botIdArg('wakeCancel', true),
+      id: z.string().min(1).max(40).describe(D('wakeCancel', 'id')),
+    }),
+    output: z.unknown(),
+    surfaces: { ui: true, mcp: 'catalog', cli: { path: ['brain', 'wake-cancel'], positional: ['id'] } },
+    handler: async (ctx, { botId, id }) => {
+      const { bot } = await target(ctx, botId);
+      const w = ctx.wakes.cancel(bot.id, id);
+      if (!w) throw new OpError('WAKE_NOT_FOUND', agentT(ctx.locale, 'ops.errors.WAKE_NOT_FOUND', { id }));
+      return wakeOut(w);
     },
   }),
 

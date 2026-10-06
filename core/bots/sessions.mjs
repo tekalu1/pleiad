@@ -36,6 +36,8 @@ export function botInstructions(bot, locale) {
     agentT(locale, 'guide.bot.silent'),
     // 自分の投稿へのリアクションは reaction の包みで届き、問いへの答えのリアクションは、付けたのが人でも bot・AI でも起こす（ADR 0109 の追記）
     agentT(locale, 'guide.bot.reaction'),
+    // 後で起きるのは会話の中のタイマーではなく Pleiad の予約（brain.wakeAdd。ADR 0136）。会話の中のタイマーはターンが止まっている間は鳴らない
+    agentT(locale, 'guide.bot.wake'),
   ].filter(Boolean).join('\n\n');
 }
 

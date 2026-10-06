@@ -48,6 +48,13 @@ const log = (...a) => console.error('  pulse:', ...a);
 const errText = (e) => String(e?.message ?? e);
 const clip = (s, n) => [...String(s ?? '').replace(/\s+/g, ' ').trim()].slice(0, n).join('');
 
+/** 予算を引く「家」のチャンネル: Bot.pulse.channelId（有効なチャンネルなら）、無ければ入っている最初のチャンネル。list は channels.list() の返り。予約（wakes.mjs）も使う */
+export function pickHome(bot, list) {
+  const usable = (c) => c.kind === 'channel' && !c.archivedAt;
+  const chosen = bot.pulse?.channelId ? list.find((c) => c.id === bot.pulse.channelId && usable(c)) : null;
+  return chosen ?? list.filter((c) => usable(c) && c.members?.includes(bot.id)).sort((a, b) => (a.createdAt ?? 0) - (b.createdAt ?? 0))[0] ?? null;
+}
+
 export function createPulse({ dataDir, brain, channels, bots, host, budget, dispatch, memory = null, clock, now = () => clock.now(), ask = null, floorMs = PULSE_FLOOR_MS, tickMs = TICK_MS, everyMs = null } = {}) {
   let timer = null;
   let closed = true;
@@ -61,16 +68,14 @@ export function createPulse({ dataDir, brain, channels, bots, host, budget, disp
 
   // ------------------------------------------------------------ 材料
 
-  /** 予算を引く「家」のチャンネル: Bot.pulse.channelId（有効なチャンネルなら）、無ければ入っている最初のチャンネル */
-  async function homeOf(bot) {
-    const list = await channels.list();
-    const usable = (c) => c.kind === 'channel' && !c.archivedAt;
-    const chosen = bot.pulse?.channelId ? list.find((c) => c.id === bot.pulse.channelId && usable(c)) : null;
-    return chosen ?? list.filter((c) => usable(c) && c.members?.includes(bot.id)).sort((a, b) => (a.createdAt ?? 0) - (b.createdAt ?? 0))[0] ?? null;
-  }
+  /** 予算を引く「家」のチャンネル（pickHome） */
+  const homeOf = async (bot) => pickHome(bot, await channels.list());
 
   /**
-   * 前回の心拍から後の出来事（所属チャンネルの投稿だけ。Chats の会話・他の bot の DM は読まない）。自分の投稿・system・消した投稿・書き途中の投稿は除く。
+   * 前回の心拍から後の出来事（所属チャンネルの投稿だけ。Chats の会話・他の bot の DM は読まない）。system・消した投稿・書き途中の投稿は除く。
+   * 自分の投稿は authorKind 'self' で入れる（ふるい・欲求には数えない）。返事が一度失敗して後で答え直したのを見落とし、答え済みの質問を気がかりにしたため。
+   * 人・他の bot の投稿の後に、同じスレッドで自分が失敗せずに投稿していれば answeredAt を付ける。
+   * toMe は自分への @（人・他の bot のどちらからでも。system はここまでに除いている）
    * 返りの cursorTo は次のカーソル（書き途中の投稿があれば、その手前まで。後で書き上がった分を取りこぼさない）
    */
   async function collect(bot, since) {
@@ -85,13 +90,14 @@ export function createPulse({ dataDir, brain, channels, bots, host, budget, disp
       seen.add(p.id);
       if (p.state === 'working') { cursorTo = Math.min(cursorTo, Math.max(since, p.at - 1)); return; }
       const kind = p.author?.kind;
-      if (kind === 'system' || (kind === 'bot' && p.author.botId === bot.id) || !p.text?.trim()) return;
+      if (kind === 'system' || !p.text?.trim()) return;
+      const self = kind === 'bot' && p.author.botId === bot.id;
       if (kind === 'human') lastHumanAt = Math.max(lastHumanAt ?? 0, p.at);
       events.push({
         at: p.at, channelId: channel.id, channelName: channel.name, threadId: p.threadId ?? p.id, postId: p.id,
-        authorKind: kind === 'human' ? 'human' : kind === 'bot' ? 'bot' : 'other',
-        author: kind === 'human' ? 'human' : kind === 'bot' ? names.get(p.author.botId) ?? p.author.botId : kind, toMe: kind === 'human' && (p.mentions ?? []).includes(bot.id),
-        taint: p.taint ?? null, text: p.text,
+        authorKind: self ? 'self' : kind === 'human' ? 'human' : kind === 'bot' ? 'bot' : 'other',
+        author: self ? 'you' : kind === 'human' ? 'human' : kind === 'bot' ? names.get(p.author.botId) ?? p.author.botId : kind, toMe: !self && (p.mentions ?? []).includes(bot.id),
+        taint: p.taint ?? null, text: p.text, ...(self && p.state === 'failed' ? { failed: true } : {}),
       });
     };
     const list = (await channels.list()).filter((c) => !c.archivedAt && ((c.kind === 'channel' && c.members?.includes(bot.id)) || (c.kind === 'dm' && c.botId === bot.id)));
@@ -104,13 +110,21 @@ export function createPulse({ dataDir, brain, channels, bots, host, budget, disp
         continue;
       }
       for (const p of page.posts) take(channel, p);
-      for (const th of page.threads ?? []) {
-        if ((th.updatedAt ?? 0) <= since) continue;
-        const replies = await channels.read({ channelId: channel.id, threadId: th.threadId, limit: THREAD_LIMIT }).catch(() => null);
+      // 返信のあったスレッド: 投稿から数えた最後の返信の時刻（summaries.lastAt）で選ぶ。スレッドの状態（ThreadState.updatedAt）は bot のターンでしか動かず、
+      // 人どうしの返信や、bot が答え直した返信を取りこぼした
+      const touched = new Set((page.threads ?? []).filter((th) => (th.updatedAt ?? 0) > since).map((th) => th.threadId));
+      for (const [rootId, s] of Object.entries(page.summaries ?? {})) if ((s?.lastAt ?? 0) > since) touched.add(rootId);
+      for (const threadId of touched) {
+        const replies = await channels.read({ channelId: channel.id, threadId, limit: THREAD_LIMIT }).catch(() => null);
         for (const p of replies?.posts ?? []) take(channel, p);
       }
     }
     events.sort((a, b) => a.at - b.at);
+    for (const e of events) {
+      if (e.authorKind === 'self' || e.authorKind === 'other') continue;
+      const reply = events.find((r) => r.authorKind === 'self' && !r.failed && r.channelId === e.channelId && r.threadId === e.threadId && r.at > e.at);
+      if (reply) e.answeredAt = reply.at;
+    }
     return { events: events.slice(-EVENTS_MAX), cursorTo, lastHumanAt };
   }
 
@@ -185,7 +199,9 @@ export function createPulse({ dataDir, brain, channels, bots, host, budget, disp
       return { botId, ran: true, gate: { pass: false, reason: 'noHome' } };
     }
     const since = state.cursorAt ?? at - every;
-    const { events, cursorTo, lastHumanAt } = await collect(bot, since);
+    const { events: seen, cursorTo, lastHumanAt } = await collect(bot, since);
+    // ふるい・欲求・外から来た文の判定は、自分以外の出来事だけ（自分の投稿は束で「答え済みか」を見るための材料）
+    const events = seen.filter((e) => e.authorKind !== 'self');
     const recent = brain.tail(bot.id, 12);
     const loops = workNotesContext({ loops: brain.loops(bot.id, 'open') }).loops;
     const prefs = await host.store.getPrefs().catch(() => ({}));
@@ -213,10 +229,11 @@ export function createPulse({ dataDir, brain, channels, bots, host, budget, disp
 
     // ② 安いモデル
     const taintedInput = events.some((e) => e.taint) || loops.some((l) => l.taint);
-    // 起きた理由が、外から来た文だけか（きっかけの人の投稿・条件に当たった気がかりのどちらも、外から来た文でない場合だけ「確かめる」を越えてよい）
-    const cleanTrigger = events.some((e) => !e.taint && e.authorKind === 'human') || Boolean(verdict.loopId && !loops.find((l) => l.id === verdict.loopId)?.taint);
+    // 起きた理由が、外から来た文だけか（きっかけの投稿・条件に当たった気がかりのどちらも、外から来た文でない場合だけ「確かめる」を越えてよい）。
+    // 投稿は人・他の bot のどちらでもよい（bot が外から来た文を読んで書いた投稿には、その taint が載る）
+    const cleanTrigger = events.some((e) => !e.taint && (e.authorKind === 'human' || e.authorKind === 'bot')) || Boolean(verdict.loopId && !loops.find((l) => l.id === verdict.loopId)?.taint);
     const taint = taintedInput ? (events.find((e) => e.taint)?.taint ?? loops.find((l) => l.taint)?.taint ?? 'web') : null;
-    const prompt = beatPrompt({ bot, locale: locale(), now: at, gate: verdict, drives, events, stream: brain.tail(bot.id, 40), loops,
+    const prompt = beatPrompt({ bot, locale: locale(), now: at, gate: verdict, drives, events: seen, stream: brain.tail(bot.id, 40), loops,
       budget: left ? { channel: left.channel ?? left.daily ?? 0, known: left.known } : null, related: await relatedOf(bot, events), minMin: Math.round(floorMs / 60_000), maxMin: Math.round(PULSE_CEIL_MS / 60_000) });
     let answered;
     try {

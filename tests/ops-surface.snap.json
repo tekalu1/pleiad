@@ -416,6 +416,75 @@
       "input": "3cef2b237b95"
     },
     {
+      "id": "brain.wakeAdd",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": false,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "brain",
+            "wake-add"
+          ],
+          "positional": [
+            "note"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "df46c8c15ea8"
+    },
+    {
+      "id": "brain.wakeCancel",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": false,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "brain",
+            "wake-cancel"
+          ],
+          "positional": [
+            "id"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "5dc2476eb711"
+    },
+    {
+      "id": "brain.wakeList",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "brain",
+            "wake-list"
+          ],
+          "positional": [
+            "botId"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "f08816c821a8"
+    },
+    {
       "id": "browser.listProfiles",
       "risk": "read",
       "riskOf": false,
@@ -4181,6 +4250,27 @@
     {
       "id": "brain.view",
       "path": "brain view",
+      "positional": [
+        "botId"
+      ]
+    },
+    {
+      "id": "brain.wakeAdd",
+      "path": "brain wake-add",
+      "positional": [
+        "note"
+      ]
+    },
+    {
+      "id": "brain.wakeCancel",
+      "path": "brain wake-cancel",
+      "positional": [
+        "id"
+      ]
+    },
+    {
+      "id": "brain.wakeList",
+      "path": "brain wake-list",
       "positional": [
         "botId"
       ]
