@@ -96,6 +96,13 @@
 .post-tool:hover,.post-tool[aria-expanded=true]{background:var(--surface-2);color:var(--ink)}
 .post-tool svg.i{width:16px;height:16px}
 .post-tool.add{opacity:1}
+/* システム側の投稿（Pleiad の知らせ）: 名前・アイコンを出さず、弱い字の 1 行（Chats のシステム側の行と同じ見え方） */
+.post.sys{padding-top:2px;padding-bottom:2px}
+.post.sys .post-av,.post.sys .post-head .post-name{visibility:hidden}
+.post.sys .post-body{color:var(--ink-weak);font-size:var(--fs-s)}
+.post.sys .post-tools{display:none}
+/* あなたの投稿の添付の行（📎 N ▾。Chats の .msg-tools） */
+.post-main > .msg-tools{margin-top:4px}
 /* コピーの ✓（Chats の発言のコピーと同じ） */
 .post-tool.copy .ok{display:none}
 .post-tool.copy.done .cp{display:none}

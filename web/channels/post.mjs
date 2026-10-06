@@ -6,7 +6,7 @@ import { el, svgEl } from '../dom.mjs';
 import { fmt, t } from '../i18n.mjs';
 import { runMark } from '../arc.mjs';
 import { backendLogo } from '../side.mjs';
-import { placeAttachments, attachmentHtml } from '../user-message.mjs';
+import { placeAttachments, attachmentHtml, paintUserBody, userTools, attachmentImageSrc } from '../user-message.mjs';
 import { renderReactions, addButton } from './reactions.mjs';
 import { botIcon } from './bot-icon.mjs';
 import { copyGlyphs, copyToClipboard } from '../message-actions.mjs';
@@ -43,8 +43,11 @@ export function authorInfo(author, ctx) {
       const bot = ctx.bots.get(author.botId);
       return { kind: 'bot', name: bot?.name ?? t('channels:feed.unknownBot'), avatar: bot?.icon || '🤖', backend: bot?.backend ?? null, you: false };
     }
-    case 'agent':
-      return { kind: 'agent', name: ctx.sessionTitle?.(author.sessionId) || t('channels:feed.agent'), avatar: '◇', backend: null, you: false };
+    case 'agent': {
+      // 別の会話の AI が書いた投稿。名前は Chats の「別の会話の AI が送った発言」と同じ言い方（ADR 9101・0104）
+      const title = ctx.sessionTitle?.(author.sessionId);
+      return { kind: 'agent', name: title ? t('chat.message.sentByConversation', { title }) : t('chat.message.sentByAnother'), avatar: '◇', backend: null, you: false };
+    }
     case 'routine':
       return { kind: 'routine', name: t('channels:feed.routine'), avatar: '⏱', backend: null, you: false };
     default:
@@ -257,7 +260,8 @@ export function renderSummary(post, ctx) {
  */
 export function fillPost(root, post, ctx) {
   const info = authorInfo(post.author, ctx);
-  root.className = `post${post.deletedAt ? ' deleted' : ''}${info.you ? ' mine' : ''}`;
+  // システム側の投稿（Pleiad の知らせ）は、Chats のシステム側の行と同じく小さく中立に出す（道具・リアクションは無い）
+  root.className = `post${post.deletedAt ? ' deleted' : ''}${info.you ? ' mine' : ''}${info.kind === 'system' ? ' sys' : ''}`;
   root.dataset.postId = post.id;
   root.dataset.author = info.kind;
   const av = info.kind === 'bot' ? botIcon(ctx.bots.get(post.author.botId), 'post-av') : el('span', `post-av${info.you ? ' you' : ''}`, info.avatar);
@@ -281,6 +285,10 @@ export function fillPost(root, post, ctx) {
   const body = el('div', 'post-body');
   if (post.deletedAt) {
     body.append(el('span', 'post-deleted', t('channels:feed.deleted')));
+  } else if (info.kind === 'human') {
+    // あなたの投稿は Chats の自分の発言と同じ描き方（添付をその位置に・長ければ畳む。原文は dataset.raw。web/user-message.mjs）
+    paintUserBody(body, post.text ?? '', (post.attachments ?? []).map(presentOf));
+    highlightMentions(body, (post.mentions ?? []).map((m) => (m === 'you' ? t('channels:feed.you') : ctx.bots.get(m)?.name)));
   } else {
     body.innerHTML = post.attachments?.length
       ? attachedBodyHtml(post.text ?? '', post.attachments, (s) => ctx.host.renderAssistantMarkdown(s))
@@ -291,6 +299,20 @@ export function fillPost(root, post, ctx) {
     if (post.turn) paintChecklist(body, post.state === 'working');
   }
   main.append(body);
+  // 添付の「📎 N ▾」と一覧の面（Chats の自分の発言と同じ。web/user-message.mjs の userTools）
+  if (!post.deletedAt && info.kind === 'human' && post.attachments?.length) {
+    const presents = post.attachments.map(presentOf);
+    const tools = userTools({
+      presents,
+      openItem: (item, present) => {
+        const src = present && attachmentImageSrc(present);
+        if (src) ctx.host.openImage?.(src, item.name, item.path);
+        else if (item.path) ctx.host.filePreview?.open({ path: item.path, line: null }, null);
+      },
+      copyPath: (path) => { navigator.clipboard?.writeText(path).catch(() => {}); },
+    });
+    if (tools) main.append(tools);
+  }
 
   if (!post.deletedAt) {
     const state = stateLine(post);

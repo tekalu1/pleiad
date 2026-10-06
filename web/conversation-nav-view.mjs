@@ -39,12 +39,23 @@ const arrowIcon = () => {
   return svg;
 };
 
+/** Chats の会話の発言の読み方（.mw の行・.body の吹き出し・.who の時刻） */
+const CHAT_ROWS = {
+  users: (thread) => [...thread.querySelectorAll(TURN_USER)],
+  rowOf: (user) => user.closest('.mw'),
+  bodyOf: (user) => user.querySelector(':scope > .body'),
+  whenOf: (user) => user.querySelector(':scope > .who .when')?.textContent ?? '',
+  subtree: false,
+};
+
 /**
  * @param {{ frame:HTMLElement, log:HTMLElement, thread:HTMLElement,
- *   scrollToEnd:()=>void, isRunning:()=>boolean, narrow:MediaQueryList }} o
+ *   scrollToEnd:()=>void, isRunning:()=>boolean, narrow:MediaQueryList, rows?:object }} o
  *   frame は #log を包む相対位置の入れ物。scrollToEnd は client.mjs の末尾追従（実寸の確定を待つ）
+ *   rows は発言の読み方（既定は Chats の会話）。チャンネルのスレッドは投稿の列を渡す（web/channels/thread.mjs）:
+ *   { users(thread) → 利用者の発言の要素, rowOf(user) → 位置を測る行, bodyOf(user) → 吹き出し（dataset.raw が原文）, whenOf(user) → 時刻の字, subtree → 行が thread の孫にもある }
  */
-export function createConversationNav({ frame, log, thread, scrollToEnd, isRunning, narrow }) {
+export function createConversationNav({ frame, log, thread, scrollToEnd, isRunning, narrow, rows = CHAT_ROWS }) {
   // ---- 部品
   const sticky = el('div', 'nav-sticky');
   sticky.hidden = true;
@@ -83,12 +94,12 @@ export function createConversationNav({ frame, log, thread, scrollToEnd, isRunni
   const listeners = new Set();
 
   const collect = () => {
-    const users = [...thread.querySelectorAll(TURN_USER)];
+    const users = rows.users(thread);
     // 発言の並びが同じなら、同じ配列を保つ（地図の点を作り直さない）
     if (users.length === turns.length && users.every((user, i) => user === turns[i].user)) return;
     // 静かな読み直し（web/history-sync.mjs）は、変わった所から後ろの行だけを描き直す。残った行の発言は同じ要素なので、測った値を引き継ぐ
     const before = new Map(turns.map((turn) => [turn.user, turn]));
-    turns = users.map((user) => { const kept = before.get(user); return kept?.row === user.closest('.mw') ? kept : { user, row: user.closest('.mw'), top: 0, ub: -1 }; });
+    turns = users.map((user) => { const kept = before.get(user); const row = rows.rowOf(user); return kept?.row === row ? kept : { user, row, top: 0, ub: -1 }; });
     measured = false;
   };
   /** 全発言の位置を 1 度に測る。読みだけ。fresh は「地図が点を置き直す」合図（次の update で 1 度だけ渡す） */
@@ -103,11 +114,11 @@ export function createConversationNav({ frame, log, thread, scrollToEnd, isRunni
   const fullText = (turn) => {
     // 発言の原文は .body の dataset.raw（web/client.mjs の userRaw。本文は Markdown で描くので、字だけでは印の行・コードの囲みが分からない）。
     // 添付が後から結び付いて描き直されることがあるので、原文が変わっていたら作り直す
-    const body = turn.user.querySelector(':scope > .body');
+    const body = rows.bodyOf(turn.user);
     const raw = body?.dataset.raw ?? body?.textContent ?? '';
     let text = texts.get(turn.user);
     if (text === undefined || text.raw !== raw) {
-      text = { raw, pieces: userPieces(raw), at: turn.user.querySelector(':scope > .who .when')?.textContent ?? '' };
+      text = { raw, pieces: userPieces(raw), at: rows.whenOf(turn.user) };
       text.plain = piecesText(text.pieces);
       texts.set(turn.user, text);
     }
@@ -250,7 +261,7 @@ export function createConversationNav({ frame, log, thread, scrollToEnd, isRunni
   /** 着いた印: 問いの吹き出しに輪を 1 度だけ（入力欄の上の一行・添付の入口と同じ note-flash） */
   let flashTimer = 0, flashed = null;
   function flash(turn) {
-    const body = turn?.user.querySelector(':scope > .body');
+    const body = turn ? rows.bodyOf(turn.user) : null;
     if (!body) return;
     clearTimeout(flashTimer);
     flashed?.classList.remove('flash');
@@ -328,7 +339,7 @@ export function createConversationNav({ frame, log, thread, scrollToEnd, isRunni
   // 発言の増減だけは並びから取り直す（中身の変化では取り直さない）
   new MutationObserver((records) => {
     if (records.some((r) => r.addedNodes.length || r.removedNodes.length)) { turnsDirty = true; schedule(); }
-  }).observe(thread, { childList: true });
+  }).observe(thread, { childList: true, subtree: Boolean(rows.subtree) });
   narrow.addEventListener('change', () => { stickyFor = null; watchEnd(); schedule(); });
 
   return {

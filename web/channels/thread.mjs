@@ -20,7 +20,9 @@ import { postMenu, setupPostMenu, menuPoint } from './post-menu.mjs';
 import { openSourceDialog } from '../message-actions.mjs';
 import { createDeck } from './deck.mjs';
 import { createThreadHead } from './thread-head.mjs';
-import { createThreadToc } from './thread-toc.mjs';
+import { createConversationNav } from '../conversation-nav-view.mjs';
+import { createConversationRail } from '../conversation-rail.mjs';
+import { createConversationToc } from '../conversation-toc.mjs';
 import { createBackgroundChip } from '../background-chip.mjs';
 import { createBudgetMeter, meterOf, tokenSplit } from './thread-budget.mjs';
 import { createToolSource, turnWindows, logInWindow, signatureOf, toolNodes } from './thread-tools.mjs';
@@ -82,9 +84,9 @@ export function createThread(host) {
   const replies = el('div', 'th-replies');
   const perms = el('div', 'th-perms bg-thread');   // 承認のカード（Chats の .mw.card をそのまま入れる。--gut は CSS で投稿の本文の位置に合わせる）
   log.append(older, rootSlot, rdiv, replies, perms);
-  const jump = el('button', 'ch-jump th-jump', t('channels:feed.newer'));
-  jump.type = 'button';
-  jump.hidden = true;
+  // 会話の移動（残る問い・最新へ・地図・目次と検索・Alt+↑↓・End）の部品が重なる、投稿の列の入れ物（Chats の #logFrame と同じ役）
+  const frame = el('div', 'log-frame th-frame');
+  frame.append(log);
   const band = el('div', 'th-band');
   band.hidden = true;
   band.setAttribute('role', 'status');
@@ -142,11 +144,11 @@ export function createThread(host) {
     const folders = [...new Set([...(bot.folders ?? []).map((f) => f.path), ...(S.channel?.cwd ? [S.channel.cwd] : []), ...(bot.plain && host.state?.cwd ? [host.state.cwd] : [])])];
     return { backend: bot.backend, sessionId, values, defaults: { model: bot.model ?? '', effort: bot.effort ?? '', mode: bot.mode ?? '' }, folders };
   }
-  const toc = createThreadToc({ host, posts: () => S.posts, ctx: () => ctx, go: (p) => goTo(p) });
-  const head = createThreadHead({ host, onClose: () => close(), onBack: () => close(), onToc: (b) => toc.toggle(b),
+  // 目次のボタンは会話の目次（web/conversation-toc.mjs）が自分で受ける
+  const head = createThreadHead({ host, onClose: () => close(), onBack: () => close(), onToc: () => {},
     // 題を変える（根の投稿は変えない。空にすると根の投稿の最初の行に戻る）
     onRename: (title) => host.invoke('channels.setThreadTitle', { channelId: S.channelId, threadId: S.threadId, title }).catch((err) => composer.say(t('channels:thread.renameFailed', { error: err?.message ?? String(err) }), true)) });
-  root.append(head.el, log, jump, band, subs, composer.el);
+  root.append(head.el, frame, band, subs, composer.el);
   composer.bindDropZone(root);
   wireAttachmentZoom(log, host);
   const deck = createDeck({ view, body, feed: feedRoot, thread: root, top });
@@ -179,7 +181,43 @@ export function createThread(host) {
   });
 
   const nearBottom = () => log.scrollHeight - log.scrollTop - log.clientHeight < NEAR_BOTTOM;
-  const toBottom = () => { log.scrollTop = log.scrollHeight; jump.hidden = true; markRead(); };
+  const toBottom = () => { log.scrollTop = log.scrollHeight; markRead(); };
+
+  // ---------------------------------------------------------------- 会話の移動（Chats と同じ部品。docs/design-system.md「会話の移動」）
+  // 発言の並びは、投稿の列のあなたの投稿（根と返信）。吹き出しは .post-body（あなたの投稿は dataset.raw に原文）
+  const narrow = matchMedia('(max-width: 700px)');
+  const nav = createConversationNav({
+    frame, log, thread: log, narrow, scrollToEnd: () => toBottom(), isRunning: () => liveBots().length > 0,
+    rows: {
+      users: (box) => [...box.querySelectorAll('.post[data-author="human"]:not(.deleted)')],
+      rowOf: (user) => user,
+      bodyOf: (user) => user.querySelector('.post-body'),
+      whenOf: (user) => user.querySelector('.post-when')?.textContent ?? '',
+      subtree: true,
+    },
+  });
+  createConversationRail({ frame, log, thread: log, nav, narrow });
+  const toc = createConversationToc({
+    thread: log, log, nav, preview: host.filePreview, narrow, button: head.tocButton,
+    // 項目: あなたの投稿 = 発言、bot・AI の投稿 = 返答、投稿の中のツールのカード = ツール
+    entriesOf: ({ turns, kinds, turnInfo }) => {
+      const turnOf = new Map(turns.map((x, i) => [x.row, i]));
+      const out = [];
+      let turn = -1;
+      for (const node of log.querySelectorAll('.post:not(.deleted)')) {
+        const body = node.querySelector('.post-body');
+        const at = node.querySelector('.post-when')?.textContent ?? '';
+        if (turnOf.has(node)) {
+          turn = turnOf.get(node);
+          out.push({ kind: 'user', turn, row: node, el: node, bodies: [body].filter(Boolean), at: turnInfo(turns[turn]).at, pending: kinds[turn] === 'pending' });
+          continue;
+        }
+        if (body?.textContent.trim()) out.push({ kind: 'answer', turn, row: node, el: node, bodies: [body], at });
+        for (const card of node.querySelectorAll('.tc')) if (!card.parentElement.closest('.tc')) out.push({ kind: 'tool', turn, row: node, el: card, at });
+      }
+      return out;
+    },
+  });
 
   // 既読: スレッドを見ていて末尾にいる間は、返信までチャンネルの既読を進める（流れの既読は流れの投稿だけを見るので、スレッドの返信が未読のまま残らないように）
   let readTimer = null, readSent = 0;
@@ -517,7 +555,7 @@ export function createThread(host) {
     perms.replaceChildren();
     rootSlot.replaceChildren(); replies.replaceChildren(); rdiv.textContent = '';
     bandSig = ''; band.hidden = true; band.replaceChildren(); meter.update(null, null);
-    jump.hidden = true;
+    nav.reset(); toc.reset();
     readSent = 0;
     host.background?.watch([]);
     paintSubs();
@@ -650,9 +688,8 @@ export function createThread(host) {
     const pt = menuPoint(node, at);
     openMenu(p, pt.x, pt.y, node, pt.alignRight);
   });
-  jump.onclick = () => toBottom();
   log.addEventListener('scroll', () => {
-    if (nearBottom()) { jump.hidden = true; markRead(); }
+    if (nearBottom()) markRead();
     if (log.scrollTop < 120) loadOlder();
   });
 
@@ -684,7 +721,7 @@ export function createThread(host) {
     const wrap = m?.closest?.('.mw') ?? perms.querySelector(`[data-key="perm:${CSS.escape(ev.id)}"]`);
     if (!wrap) return;
     cards.set(ev.id, wrap);
-    if (stick) toBottom(); else jump.hidden = false;
+    if (stick) toBottom(); else nav.replyArrived();
   }
   function paintPendingPerms() {
     for (const ev of host.state?.pendingPerms?.values?.() ?? []) showCard(ev);
@@ -707,7 +744,7 @@ export function createThread(host) {
     paintBand();
     paintPlaceholder();
     composer.refresh();
-    toc.refresh();
+    toc.refresh(); nav.refresh(); nav.syncRunning();
     head.setSession(activeSession());
     syncSubs();
   }
@@ -727,7 +764,7 @@ export function createThread(host) {
     afterPosts();
     // 走っている間の道具の行は、投稿の更新（1 秒に 1 回まで）に合わせて取り直す（間隔は thread-tools の REFRESH_MS）
     if (p.turn?.sessionId && (LIVE.has(p.state) || op === 'add')) tools.refresh(p.turn.sessionId, { force: op === 'add' });
-    if (stick || p.author?.kind === 'human') toBottom(); else jump.hidden = false;
+    if (stick || p.author?.kind === 'human') toBottom(); else nav.replyArrived();
   }
 
   function onRoot(op, p) {
@@ -736,7 +773,7 @@ export function createThread(host) {
     Object.assign(cur, p, op === 'delete' ? { deletedAt: p.deletedAt ?? Date.now() } : {});
     repaint(p.id);
     paintHead();
-    toc.refresh();
+    toc.refresh(); nav.refresh(); nav.syncRunning();
   }
 
   tools.onLoaded((sessionId) => {

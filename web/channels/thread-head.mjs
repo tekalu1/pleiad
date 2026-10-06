@@ -1,6 +1,6 @@
 // スレッドの見出し（.th-top）。左に「# チャンネル名 › スレッドの題」、右に Chats の頭と同じ入口（目次・git・内蔵ブラウザー）と閉じる ✕。
 // 左にチャンネルの流れが見えている間（split）はチャンネル名を出さず「› スレッドの題」だけ（CSS が .deck[data-deck] で出し分ける）。
-// 入口は右パネルの道具: 目次はスレッドの投稿の一覧（thread-toc.mjs）、git は bot の会話の作業場所の git（既存の ply-git-open）、
+// 入口は右パネルの道具: 目次は会話と同じ目次と検索（web/conversation-toc.mjs）、git は bot の会話の作業場所の git（既存の ply-git-open）、
 // 内蔵ブラウザーは右パネルのブラウザー。どれも bot の会話（そのスレッドで最後に動いた bot）を基準にする。
 import { el, svgEl } from '../dom.mjs';
 import { t } from '../i18n.mjs';

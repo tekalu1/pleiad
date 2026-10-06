@@ -46,7 +46,6 @@
     },
     "you": "あなた",
     "unknownBot": "不明な bot",
-    "agent": "会話の AI",
     "routine": "ルーティン",
     "system": "Pleiad",
     "edited": "（編集済み）",
@@ -167,13 +166,6 @@
     "entry": {
       "toc": "このスレッドの目次",
       "browser": "内蔵ブラウザー"
-    },
-    "toc": {
-      "title": "目次",
-      "search": "スレッド内を検索",
-      "empty": "投稿がありません",
-      "noMatch": "一致する言葉がありません",
-      "present": "（提示）"
     },
     "composer": {
       "placeholder": "スレッドに返信",

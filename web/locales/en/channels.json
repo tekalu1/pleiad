@@ -48,7 +48,6 @@
     },
     "you": "You",
     "unknownBot": "Unknown bot",
-    "agent": "Chat AI",
     "routine": "Routine",
     "system": "Pleiad",
     "edited": "(edited)",
@@ -171,13 +170,6 @@
     "entry": {
       "toc": "Outline of this thread",
       "browser": "Built-in browser"
-    },
-    "toc": {
-      "title": "Outline",
-      "search": "Search this thread",
-      "empty": "No posts",
-      "noMatch": "No matching words",
-      "present": "(shared item)"
     },
     "composer": {
       "placeholder": "Reply in thread",
