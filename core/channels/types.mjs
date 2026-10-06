@@ -38,6 +38,7 @@ import { CHANNEL_TAG, CHANNEL_THREAD_TAG, MEMORY_CORE_TAG, TURN_CONTEXT_TAG, INN
  *   state?: 'working'|'waiting'|'done'|'checking'|'failed'|'stopped'|'skipped',  // bot のターンの投稿・ルーティンの実行の根だけ
  *   turn?: { botId: string, sessionId: string },          // bot のターンの投稿（会話を開く → の行き先）
  *   presents?: object[],                                  // そのターンの提示（可視化・添付）の写し。描き方は web/render.mjs の renderPresent
+ *   to?: string,                                         // 宛先の bot（人の投稿だけ。入力欄の宛先のチップ。本文の @ が無いときの宛先。ADR 9101）
  *   attachments?: { path: string, name: string, kind: 'image'|'file', mime: string, size: number|null, origin: 'device'|'host' }[],  // 人（と AI）が付けたファイル。本文の `[添付] パス` の行と対（Chats の添付と同じ印。ADR 0116）。bot へは本文の印のまま渡る
  *   reactions: { [emoji: string]: Author[] },
  *   taint?: 'webhook'|'web'|null,                         // 外から来た文を含む（記憶の根拠にしない）

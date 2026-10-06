@@ -276,11 +276,15 @@ export const channelOps = [
       new: z.boolean().optional().describe(D('post', 'new')),
       state: z.enum(['checking']).optional().describe(D('post', 'state')),
       confirmedWake: z.array(z.string()).optional().describe(D('post', 'confirmedWake')),
+      to: z.string().min(1).max(80).optional().describe(D('post', 'to')),
     }),
     output: z.unknown(),
     surfaces: { ui: true, mcp: 'catalog', cli: { path: ['channels', 'post'], positional: ['channelId', 'text'] } },
-    handler: async (ctx, { state, threadId, attachments, confirmedWake, ...args }) => {
+    handler: async (ctx, { state, threadId, attachments, confirmedWake, to, ...args }) => {
       const author = await authorOf(ctx);
+      // 宛先のチップ（to）は人だけ。bot・AI は本文の @ で呼ぶ（強さの確認が @ を数える）
+      if (to && author.kind !== 'human') throw new OpError('INVALID', agentT(ctx.locale, 'ops.errors.INVALID', { detail: 'to is only for a human post; write @name in the text instead' }));
+      if (to) args.to = to;
       const files = attachments?.length ? await describeFiles(ctx, attachments) : null;
       let groupMentions;
       if (author.kind === 'human') {

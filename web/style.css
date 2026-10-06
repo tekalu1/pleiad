@@ -173,20 +173,20 @@ svg.i{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.6;stro
 .combo>.cbadge{position:absolute;right:12px;top:50%;transform:translateY(-50%);margin:0;pointer-events:none}
 .combo.combo:has(>.cbadge:not([hidden]))>input{padding-right:48px}
 /* 入力欄の「/」の候補（web/slash-skills.mjs）。既存の .clist と同じ面を使い、1 件を 2 段にする */
-#skillList{width:100%;max-width:640px;max-height:312px;white-space:normal;top:auto;bottom:calc(100% + 6px)}   /* 入力欄の上に浮かせる（既存の .clist の up と同じ位置） */
-#skillList .head{display:flex;gap:8px}
-#skillList .head .n{margin-left:auto;font-family:var(--font-mono);letter-spacing:0}
-#skillList li.it{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:0 10px;align-items:baseline;padding:6px 10px}
-#skillList .name{display:flex;align-items:baseline;min-width:0;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-#skillList .name b{color:var(--ink-blue)}   /* 打った文字と一致した部分。太くせず色だけ */
-#skillList .args{margin-left:8px;font-family:var(--font-mono);font-size:var(--fs-xs);font-weight:400;color:var(--ink-weak);overflow:hidden;text-overflow:ellipsis}
-#skillList .from{font-size:var(--fs-xs);color:var(--ink-weak);white-space:nowrap}
-#skillList .desc{grid-column:1/-1;font-size:var(--fs-xs);color:var(--ink-weak);line-height:1.5;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+:is(#skillList,#thSkillList){width:100%;max-width:640px;max-height:312px;white-space:normal;top:auto;bottom:calc(100% + 6px)}   /* 入力欄の上に浮かせる（既存の .clist の up と同じ位置） */
+:is(#skillList,#thSkillList) .head{display:flex;gap:8px}
+:is(#skillList,#thSkillList) .head .n{margin-left:auto;font-family:var(--font-mono);letter-spacing:0}
+:is(#skillList,#thSkillList) li.it{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:0 10px;align-items:baseline;padding:6px 10px}
+:is(#skillList,#thSkillList) .name{display:flex;align-items:baseline;min-width:0;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+:is(#skillList,#thSkillList) .name b{color:var(--ink-blue)}   /* 打った文字と一致した部分。太くせず色だけ */
+:is(#skillList,#thSkillList) .args{margin-left:8px;font-family:var(--font-mono);font-size:var(--fs-xs);font-weight:400;color:var(--ink-weak);overflow:hidden;text-overflow:ellipsis}
+:is(#skillList,#thSkillList) .from{font-size:var(--fs-xs);color:var(--ink-weak);white-space:nowrap}
+:is(#skillList,#thSkillList) .desc{grid-column:1/-1;font-size:var(--fs-xs);color:var(--ink-weak);line-height:1.5;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 /* 今は使えない候補（Antigravity の会話の /compact）。名前を弱い字にし、説明の欄に理由を全文で出す */
-#skillList li.it[aria-disabled=true]{cursor:default}
-#skillList li.it[aria-disabled=true] .name{color:var(--ink-weak)}
-#skillList li.it[aria-disabled=true] .desc{white-space:normal}
-#skillList .none{padding:6px 10px;font-size:var(--fs-xs);color:var(--ink-weak);cursor:default}
+:is(#skillList,#thSkillList) li.it[aria-disabled=true]{cursor:default}
+:is(#skillList,#thSkillList) li.it[aria-disabled=true] .name{color:var(--ink-weak)}
+:is(#skillList,#thSkillList) li.it[aria-disabled=true] .desc{white-space:normal}
+:is(#skillList,#thSkillList) .none{padding:6px 10px;font-size:var(--fs-xs);color:var(--ink-weak);cursor:default}
 /* 選んだ直後だけ、引数の書き方を入力欄の足元に薄く。打ち始めると消える */
 .slash-hint{font-size:var(--fs-xs);color:var(--ink-weak);padding:4px 16px 0;min-height:22px;font-family:var(--font-mono)}
 .slash-hint:empty{padding:0;min-height:0}
@@ -1072,7 +1072,7 @@ body.inapp-links .present-tools .visualize-expand{display:none}
 /* ---- 入力欄（design-system.md「入力欄と上端」） ----
    1 つの角丸の箱（--surface-1・--r-l）の中に、送る前の添付 → 字の欄 → チップと送信の行を入れる。デスクトップもスマホも同じ */
 .composer{flex:none;padding:4px 18px 12px;min-width:0;position:relative}   /* 候補（.clist）を入力欄の上に浮かせる基準 */
-/* 入力欄の上の 1 本の帯（#contextStrip。compaction.css）の右端: バックグラウンドの入口（web/background-chip.mjs）。
+/* 入力欄の上の 1 本の帯（:is(#contextStrip,#thContextStrip)。compaction.css）の右端: バックグラウンドの入口（web/background-chip.mjs）。
    帯のチップは見た目 28px・押せる範囲 36px（::before で上下 4px 広げる）。種類ごとのロゴを 6px 空けて並べ、数は右下、承認待ちは右上の ◆ */
 .work-entry{display:flex;flex:none;margin-left:auto;min-width:0}
 .work-entry[hidden]{display:none}
@@ -1119,14 +1119,14 @@ body.inapp-links .present-tools .visualize-expand{display:none}
 @media (prefers-reduced-motion:reduce){.att-entry.flash{animation:none;box-shadow:0 0 0 2px var(--line-blue)}}
 /* 字の欄（web/md-editor.mjs）。Markdown をその場で整える編集欄。1 行から始め、中身に合わせて伸ばす。上限はマウス 10 行・タッチ 6 行で、
    その先は中でスクロール（client.mjs の fitPrompt が max-height を決める）。1 行 = 1 ブロック（.md-b）。記号は見せず、種類は見た目で表す */
-#prompt{position:relative;width:100%;display:block;background:transparent;border-radius:var(--r-m);padding:9px 12px 3px;line-height:1.6;
+:is(#prompt,#thPrompt){position:relative;width:100%;display:block;background:transparent;border-radius:var(--r-m);padding:9px 12px 3px;line-height:1.6;
   overflow-y:auto;overflow-x:hidden;white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word;min-height:calc(1.6em + 12px);
   scrollbar-width:thin;scrollbar-color:var(--surface-thumb) transparent;outline:none;cursor:text}
-#prompt:focus{outline:none}
-#prompt[aria-disabled=true]{cursor:not-allowed}
-#prompt[data-empty=true]::before{content:attr(placeholder);position:absolute;left:12px;top:9px;right:12px;color:var(--ink-weak);pointer-events:none;
+:is(#prompt,#thPrompt):focus{outline:none}
+:is(#prompt,#thPrompt)[aria-disabled=true]{cursor:not-allowed}
+:is(#prompt,#thPrompt)[data-empty=true]::before{content:attr(placeholder);position:absolute;left:12px;top:9px;right:12px;color:var(--ink-weak);pointer-events:none;
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-#prompt.md-atom-sel{caret-color:transparent}
+:is(#prompt,#thPrompt).md-atom-sel{caret-color:transparent}
 .md-b{min-height:1.6em;margin:0}
 .md-b.md-h{font-weight:600;line-height:1.4;margin:.35em 0 .1em}
 .md-b.md-h[data-l="1"]{font-size:1.35em}
@@ -1142,10 +1142,10 @@ body.inapp-links .present-tools .visualize-expand{display:none}
 .md-b.md-code[data-pos^="top"]{border-top-left-radius:var(--r-s);border-top-right-radius:var(--r-s);padding-top:6px;color:var(--ink-weak)}
 .md-b.md-code[data-pos$="bottom"]{border-bottom-left-radius:var(--r-s);border-bottom-right-radius:var(--r-s);padding-bottom:6px}
 .md-b.md-code[data-pos="bottom"]{color:var(--ink-weak)}
-#prompt strong{color:var(--ink-strong);font-weight:650}
-#prompt code{background:var(--surface-2);border-radius:var(--r-s);padding:.05em .4em;font:.92em var(--font-mono)}
+:is(#prompt,#thPrompt) strong{color:var(--ink-strong);font-weight:650}
+:is(#prompt,#thPrompt) code{background:var(--surface-2);border-radius:var(--r-s);padding:.05em .4em;font:.92em var(--font-mono)}
 .md-b.md-code code{background:none;padding:0}
-#prompt a.md-link{color:var(--ink-blue);text-decoration:underline;cursor:text}
+:is(#prompt,#thPrompt) a.md-link{color:var(--ink-blue);text-decoration:underline;cursor:text}
 /* 添付（原子）。送信後と同じ見た目（.msg-att-img / .msg-att-file）を、字の間のブロックとして置く。押すと拡大・右パネル */
 .md-b.md-att{display:block;margin:4px 0;user-select:none;-webkit-user-select:none;border-radius:var(--r-s);cursor:default}
 .md-b.md-att+.md-b.md-att{margin-top:0}
@@ -1192,8 +1192,8 @@ body.inapp-links .present-tools .visualize-expand{display:none}
    書けない待ち（会話を開いている・初めて接続するまで）は欄を readonly にし、箱に aria-busy。150ms を越えたら（data-wait）
    中の字と案内を隠して、弧・待機文言・流れる棒（タイトル生成と同じ光）を重ねる。面は変えない。新しい色は足さない */
 .cbox{position:relative}
-.cbox[data-wait],.cbox[data-wait] #prompt{cursor:progress}
-.cbox[data-wait] #prompt,.cbox[data-wait] #prompt[data-empty=true]::before{color:transparent}
+.cbox[data-wait],.cbox[data-wait] :is(#prompt,#thPrompt){cursor:progress}
+.cbox[data-wait] :is(#prompt,#thPrompt),.cbox[data-wait] :is(#prompt,#thPrompt)[data-empty=true]::before{color:transparent}
 .composer-busy{position:absolute;left:16px;right:56px;top:10px;display:flex;align-items:center;gap:8px;font-size:var(--fs-s);color:var(--ink-weak);pointer-events:none;min-width:0}
 .composer-busy[hidden]{display:none}
 .composer-busy-text{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
@@ -1225,7 +1225,7 @@ body.inapp-links .present-tools .visualize-expand{display:none}
 .shell-head.unavail .msg{min-width:0;overflow-wrap:anywhere}
 .shell-head.flash{border-radius:var(--r-s);animation:note-flash 1.2s var(--ease-out)}
 @media (prefers-reduced-motion:reduce){.shell-head.flash{animation:none;box-shadow:0 0 0 2px var(--line-blue)}}
-.cbox.shell #prompt{font-family:var(--font-mono);font-size:13px}
+.cbox.shell :is(#prompt,#thPrompt){font-family:var(--font-mono);font-size:13px}
 .send svg.i-run{display:none;fill:currentColor;stroke:none}
 .cbox.shell .send svg.i-send{display:none}
 .cbox.shell .send svg.i-run{display:inline-block}
@@ -1654,9 +1654,9 @@ main.dropping #log{background:var(--surface-1)}
   main > .top:has(:is(#agentTasksEntry,#backgroundEntry):not([hidden])){flex-wrap:wrap}
   main > .top:has(:is(#agentTasksEntry,#backgroundEntry):not([hidden])) .title-field{flex-basis:calc(100% - 40px)}
   .composer{padding-left:8px;padding-right:8px}
-  #skillList{max-height:240px}
+  :is(#skillList,#thSkillList){max-height:240px}
   /* 「保存済み」は出さない（下書きがあることは脇の行の「未送信」で分かる）。保存の失敗は行の隙間では文が途中で切れるので、
-     チップの行の上の一行（#draftFail）に出す */
+     チップの行の上の一行（:is(#draftFail,#thDraftFail)）に出す */
   .crow .draft-saved{display:none}
   .draft-fail:not([hidden]){display:flex}
   /* 設定の左列は脇と同じに畳まれる（body の列幅）。ページ側の余白も会話に合わせる */
@@ -1801,13 +1801,13 @@ body{padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) 0 env(s
 @media (pointer:coarse){
   /* 入力欄の字は 16px 以上。iOS は 16px 未満の欄に触れると画面を拡大する（--fs は 14px）。
      欄ごとの字の大きさ（等幅の 12px など）は後に読む CSS にもあるので、下限として !important で上書きする */
-  input:not([type=checkbox],[type=radio],[type=range],[type=file],[type=button],[type=submit]),textarea,select,#prompt{font-size:max(16px,1em) !important}
+  input:not([type=checkbox],[type=radio],[type=range],[type=file],[type=button],[type=submit]),textarea,select,:is(#prompt,#thPrompt){font-size:max(16px,1em) !important}
   /* 押せる大きさ。行・メニューの行・アイコンのボタンを指の幅に近づける（見た目の字の大きさは変えない） */
   .btn-icon{min-width:36px;min-height:36px}
   /* 入力欄のチップ・中断は添付と同じ 36px。字の欄は 16px の字で 1.5 行間（上限 6 行は fitPrompt） */
   .chip{height:36px}
   .abort,.resume{min-height:36px}
-  #prompt{line-height:1.5}
+  :is(#prompt,#thPrompt){line-height:1.5}
   .md-b{min-height:1.5em}
   .row-more,.grp-more,.fam-more{min-width:32px;min-height:32px}
   .row{padding-top:9px;padding-bottom:9px}
@@ -1870,7 +1870,7 @@ body{padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) 0 env(s
   .resume{width:36px;height:36px;padding:0;border-radius:50%}
   .resume span{display:none}
   .resume.is-limit{width:auto;min-width:36px;padding:0 10px;border-radius:var(--r-pill)}
-  .resume.is-limit #resumeLabel{display:none}
+  .resume.is-limit :is(#resumeLabel,#thResumeLabel){display:none}
   .resume.is-limit .resume-short{display:inline}
   .resume.is-limit .resume-short:empty{display:none}
   .send-more{display:none}

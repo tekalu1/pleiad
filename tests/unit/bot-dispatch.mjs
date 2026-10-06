@@ -1228,6 +1228,26 @@ export default async function (t) {
     t.ok('明示の @ が無ければ起こさない（人の名前・コード・引用・メールの形・流れへの @ なし投稿・bot が話していないスレッド）', botPost(eRead, owl).length === 0 && botPost(eRead, lynx).length === 0
       && !c.since(mE).some((e) => e.type === 'turnEnd') && (await read(dev.id)).posts.every((p) => !p.turn));
 
+    // ---- 宛先のチップ（to。ADR 9101）: 本文に @ が無いときの宛先。@ があれば @ が先に効く
+    {
+      const rootT = await call('channels.post', { channelId: dev.id, text: 'echo:宛先のチップ', to: lynx.id });
+      await until(async () => botPost(await read(dev.id, rootT.id), lynx, 'done').length === 1, { label: 'to で流れから Lynx' });
+      t.ok('to: 流れの @ の無い投稿でも、宛先の bot がその投稿を根に返事をする', botPost(await read(dev.id, rootT.id), owl).length === 0);
+      await settled(rootT);
+      await call('channels.post', { channelId: dev.id, threadId: rootT.id, text: 'echo:Owl へ', to: owl.id });
+      const tRead = await until(async () => { const r = await read(dev.id, rootT.id); return botPost(r, owl, 'done').length === 1 ? r : null; }, { label: 'to でスレッドの Owl' });
+      t.ok('to: スレッドでは、最後に話した bot（Lynx）より宛先（Owl）が受ける', botPost(tRead, owl, 'done')[0].text === 'Owl へ', JSON.stringify(tRead.posts.map((p) => [p.author.botId, p.text])));
+      await settled(rootT);
+      await sleep(300);
+      const owlBefore = botPost(await read(dev.id, rootT.id), owl, 'done').length;
+      await call('channels.post', { channelId: dev.id, threadId: rootT.id, text: '@Lynx echo:@ が先', to: owl.id });
+      await until(async () => botPost(await read(dev.id, rootT.id), lynx, 'done').length === 2, { label: 'to より @ が先' });
+      await settled(rootT);
+      await sleep(300);
+      t.ok('to: 本文の @ があれば @ が先に効く（宛先の bot は起こさない）', botPost(await read(dev.id, rootT.id), owl, 'done').length === owlBefore);
+      t.ok('to: 投稿に宛先が残る（承認の後の起こし直しが使う）', (await read(dev.id, rootT.id)).posts.some((p) => p.to === owl.id));
+    }
+
     // ---- G: スレッドで @ の無い人の投稿は、そのスレッドで最後に話した bot が受ける（ADR 0117）。bot の @ の無い返事は誰も起こさない
     {
       const rootG = await call('channels.post', { channelId: dev.id, text: '@Owl echo:G1' });

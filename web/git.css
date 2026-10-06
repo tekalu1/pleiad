@@ -39,7 +39,7 @@
 .chip .git-br{display:inline-flex;align-items:center;gap:4px;color:var(--ink-weak);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:var(--fs-s)}
 .chip .git-br svg.i{width:13px;height:13px}
 .crow.fit-nobranch .git-br{display:none}
-#cwdChip .git-br[hidden]{display:none}
+:is(#cwdChip,#thCwdChip) .git-br[hidden]{display:none}
 
 /* ---------- 右パネル（ADR 0135） ---------- */
 @keyframes gp-appear{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}

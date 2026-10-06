@@ -19,10 +19,10 @@ const sendIcon = () => {
   return svg;
 };
 
-// ---- 書きかけ（端末の localStorage。入力欄どうしで共有する 1 つの入れ物）
+// ---- 書きかけ（端末の localStorage。入力欄どうしで共有する 1 つの入れ物。スレッドの入力欄 thread-composer.mjs も同じものを使う）
 let drafts = null;
-const draftStore = () => (drafts ??= parseDrafts((() => { try { return localStorage.getItem(DRAFT_STORE); } catch { return null; } })()));
-const persistDrafts = () => { try { localStorage.setItem(DRAFT_STORE, serializeDrafts(draftStore())); } catch { /* 入れ物がいっぱい・使えない: 画面の中の写しだけで続ける */ } };
+export const draftStore = () => (drafts ??= parseDrafts((() => { try { return localStorage.getItem(DRAFT_STORE); } catch { return null; } })()));
+export const persistDrafts = () => { try { localStorage.setItem(DRAFT_STORE, serializeDrafts(draftStore())); } catch { /* 入れ物がいっぱい・使えない: 画面の中の写しだけで続ける */ } };
 const SAVE_WAIT_MS = 400;
 
 /**

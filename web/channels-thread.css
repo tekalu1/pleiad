@@ -19,6 +19,11 @@
 .deck > .ch-thread{will-change:transform}
 @media (prefers-reduced-motion:reduce){.deck{--dur-deck:0ms}}
 /* 板の境目。線ではなく、面の階調の細い棒（上下は余白を空ける） */
+/* スレッドの入力欄（Chats の入力欄と同じ部品。web/channels/thread-composer.mjs）。先頭の宛先のチップ */
+.th-composer .chip.dest{display:inline-flex;align-items:center;gap:5px;min-width:0;max-width:40%}
+.th-composer .chip.dest .av.xs{width:18px;height:18px;flex:none;display:inline-grid;place-items:center;font-size:12px;line-height:1}
+.th-composer .chip.dest .v{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.th-composer .chip.dest .cv{flex:none;color:var(--ink-weak);font-size:10px}
 .th-title-edit{cursor:text;border-radius:var(--r-s)}
 .th-title-edit:hover{background:var(--surface-1)}
 .th-title-input{flex:1;min-width:0;font:inherit;font-weight:600;padding:2px 6px;border-radius:var(--r-s);background:var(--surface-1);color:var(--ink)}

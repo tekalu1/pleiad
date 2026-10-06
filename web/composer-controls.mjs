@@ -144,13 +144,13 @@ export function panel(chip, pop, { align = "left", render, onShow, onHide, width
   return self;
 }
 
-// 面の外を押したら閉じる。チップ自身は click で開け閉めするので除く
-document.addEventListener("pointerdown", (e) => {
+// 面の外を押したら閉じる。チップ自身は click で開け閉めするので除く（画面の無い所で読み込まれても落ちない: 単体テストが部品を読む）
+globalThis.document?.addEventListener?.("pointerdown", (e) => {
   if (!openPanel) return;
   if (openPanel.pop.contains(e.target) || openPanel.chip.contains(e.target)) return;
   openPanel.hide(false);
 }, true);
-window.addEventListener("resize", () => openPanel?.place());
+globalThis.addEventListener?.("resize", () => openPanel?.place());
 
 /** 一覧の行。main（名前）+ sub（補足）+ right（札・時刻）。選ばれていれば ✓ */
 function row({ on, main, sub, right, tag, mono, danger, onPick, title, key, disabled, badge }) {

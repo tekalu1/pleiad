@@ -12,7 +12,7 @@ import { runMark } from '../arc.mjs';
 import { savedEvent } from '../saved-text.mjs';
 import { renderPost, fillPost, authorInfo, wireAttachmentZoom, whenText } from './post.mjs';
 import { withReaction } from './reactions.mjs';
-import { createChComposer } from './ch-composer.mjs';
+import { createThreadComposer } from './thread-composer.mjs';
 import { threadDraftKey } from './ch-attach-model.mjs';
 import { openEmojiPicker } from '../emoji-picker.mjs';
 import { createDeck } from './deck.mjs';
@@ -100,8 +100,8 @@ export function createThread(host) {
     bots: () => S.bots,
     lang: () => document.documentElement.lang || undefined,
   });
-  const composer = createChComposer({
-    id: 'chThreadComposer',
+  // 入力欄は Chats の会話と同じ部品（web/channels/thread-composer.mjs。ADR 9101）。先頭に宛先のチップ
+  const composer = createThreadComposer({
     host,
     bucket: () => S.channelId,
     candidates: () => candidates(),
@@ -109,6 +109,8 @@ export function createThread(host) {
     wakePreview: (text) => host.invoke('channels.wakePreview', { channelId: S.channelId, threadId: S.threadId, text }),
     backendLabel: (id) => host.state?.backends?.find((b) => b.id === id)?.label ?? id,
     onSend: (draft) => send(draft),
+    dest: () => destOptions(),
+    onDestChange: () => paintPlaceholder(),
   });
   const toc = createThreadToc({ host, posts: () => S.posts, ctx: () => ctx, go: (p) => goTo(p) });
   const head = createThreadHead({ host, onClose: () => close(), onBack: () => close(), onToc: (b) => toc.toggle(b),
@@ -122,7 +124,7 @@ export function createThread(host) {
   host.voice?.mount({
     id: 'thread',
     header: head.el.querySelector('.th-entries'), headerBefore: head.tocButton,
-    composer: { root: composer.el, row: composer.el.querySelector('.ch-row'), before: composer.el.querySelector('.ch-send'), below: composer.el.querySelector('.ch-box') },
+    composer: composer.voiceSlot(),
     main: root, log, overlay: root, replyScope: () => log,
     tail: {
       place: (node) => replies.after(node), rows: replies, persistMarks: true,
@@ -213,7 +215,29 @@ export function createThread(host) {
     const live = liveBots();
     // 送信の近道は、指で使う画面には出さない（Chats の入力欄と同じ）
     const keys = window.matchMedia?.('(pointer:coarse)').matches ? '' : ` · ${t('channels:feed.composer.sendKeys')}`;
-    composer.setPlaceholder((live.length === 1 ? t('channels:thread.composer.working', { name: live[0].name }) : t('channels:thread.composer.placeholder')) + keys);
+    // 宛先に追従する: 宛先の bot が作業中なら「作業中でも届きます」、そうでなければ「〜に届きます」
+    const to = composer.dest?.bot ?? null;
+    const text = to && live.some((b) => b.id === to.id) ? t('channels:thread.composer.working', { name: to.name })
+      : to ? t('channels:thread.composer.to', { name: to.name })
+        : live.length === 1 ? t('channels:thread.composer.working', { name: live[0].name }) : t('channels:thread.composer.placeholder');
+    composer.setPlaceholder(text + keys);
+    composer.refresh();
+  }
+
+  /**
+   * 宛先のチップの候補: このスレッドの bot（会話を持つ bot。作業中・あなた待ちの状態つき）→ ほかのメンバー。
+   * 選んでいないときの宛先は、このスレッドの決まり（作業中の bot が 1 体ならそれ、無ければ最後に話した bot。ADR 0117）
+   */
+  function destOptions() {
+    const stateOf = new Map();
+    for (const p of S.posts) if (p.turn?.botId && LIVE.has(p.state) && !p.deletedAt) stateOf.set(p.turn.botId, p.state);
+    const asBot = (id) => ({ ...(S.bots.get(id) ?? { id, name: t('channels:feed.unknownBot'), icon: '🤖' }), state: stateOf.get(id) ?? 'idle' });
+    const threadIds = Object.keys(S.thread?.sessions ?? {}).filter((id) => S.bots.has(id));
+    const others = memberBots().filter((b) => !threadIds.includes(b.id)).map((b) => asBot(b.id));
+    const live = liveBots();
+    const lastSpoke = S.posts.findLast((p) => p.author?.kind === 'bot' && S.bots.has(p.author.botId))?.author.botId ?? null;
+    const fallback = live.length === 1 ? live[0].id : lastSpoke ?? threadIds[0] ?? null;
+    return { inThread: threadIds.map(asBot), others, fallback };
   }
 
   /** そのスレッドの bot の会話（右パネルの作業場所の基準・git・ブラウザー）。最後に動いた bot の会話 */
@@ -530,8 +554,8 @@ export function createThread(host) {
   }
 
   // ---------------------------------------------------------------- 操作
-  async function send({ text, attachments, confirmedWake }) {
-    const made = await host.invoke('channels.post', { channelId: S.channelId, threadId: S.threadId, text, ...(attachments?.length ? { attachments } : {}), ...(confirmedWake ? { confirmedWake } : {}) });
+  async function send({ text, attachments, confirmedWake, to }) {
+    const made = await host.invoke('channels.post', { channelId: S.channelId, threadId: S.threadId, text, ...(attachments?.length ? { attachments } : {}), ...(confirmedWake ? { confirmedWake } : {}), ...(to ? { to } : {}) });
     if (made?.id && !S.index.has(made.id) && made.threadId === S.threadId) { addPost(made); afterPosts(); }
     toBottom();
   }

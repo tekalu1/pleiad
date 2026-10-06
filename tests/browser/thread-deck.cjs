@@ -138,7 +138,7 @@ async page => {
   check(s.threadVis === 'visible' && s.feedVis === 'visible' && s.threadInert === false, 'both boards are visible and live in split');
   const head = await page.evaluate(() => ({ chan: getComputedStyle(document.querySelector('.th-chan')).display, title: document.querySelector('.th-title').textContent, sep: !!document.querySelector('.th-sep') }));
   check(head.chan === 'none' && head.sep && head.title.startsWith('v2.14.0 から') && !head.title.startsWith('@'), 'while the feed is on the left the heading is just "› thread title" (no channel name, no leading @)');
-  check(await page.evaluate(() => document.activeElement?.id === 'chThreadComposerInput'), 'focus goes to the thread composer when a thread opens');
+  check(await page.evaluate(() => document.activeElement?.id === 'thPrompt'), 'focus goes to the thread composer when a thread opens');
   const lastReplyAt = (await readThread(A.id)).posts.at(-1).at;
   await page.waitForFunction(([cid, at]) => window.__sent.some((c) => c.command === 'invoke' && c.args.op === 'channels.markRead' && c.args.args.channelId === cid && c.args.args.at >= at), [ch.id, lastReplyAt]);
   check(true, 'while you read the thread at the bottom, the channel is marked read up to the last reply (channels.markRead)');
@@ -149,7 +149,7 @@ async page => {
   check(fold.row === 'none' && fold.h < 70, 'the feed composer folds to one line while the thread is open (it opens only when you click it)');
   await page.locator('#chFeedComposerInput').click();
   check(await page.locator('#chFeedComposer .ch-row').isVisible(), 'clicking the folded feed composer opens it');
-  await page.locator('#chThreadComposerInput').click();
+  await page.locator('#thPrompt').click();
   check(await page.evaluate(() => getComputedStyle(document.querySelector('#chFeedComposer .ch-row')).display) === 'none', 'it folds again when focus returns to the thread');
   check(await page.locator(`#chFeed .post[data-post-id="${A.id}"][data-open]`).count() === 1, 'the open thread card in the feed is marked as selected');
   const sel = await page.evaluate((id) => { const n = document.querySelector(`#chFeed .post[data-post-id="${id}"]`); const b = getComputedStyle(n).backgroundColor; const bar = getComputedStyle(n, '::before'); return { bg: b, bar: bar.content, w: bar.width }; }, A.id);
@@ -185,9 +185,9 @@ async page => {
   const s0 = await dk();
   const logBox = await page.evaluate(() => { const l = document.querySelector('#chThread .th-log'); l.scrollTop = Math.min(300, l.scrollHeight); return { top: l.scrollTop, max: l.scrollHeight - l.clientHeight }; });
   check(logBox.max > 200 && logBox.top > 100, 'the thread log is long enough to scroll');
-  await page.locator('#chThreadComposerInput').click();
+  await page.locator('#thPrompt').click();
   await page.keyboard.type('下書きです');
-  await page.evaluate(() => { window.__nodes = { thread: document.getElementById('chThread'), log: document.querySelector('#chThread .th-log'), input: document.getElementById('chThreadComposerInput') }; window.__moving = 0; });
+  await page.evaluate(() => { window.__nodes = { thread: document.getElementById('chThread'), log: document.querySelector('#chThread .th-log'), input: document.getElementById('thPrompt') }; window.__moving = 0; });
   const scrollBefore = await page.evaluate(() => document.querySelector('#chThread .th-log').scrollTop);
 
   // ================================================================ 右パネルを開く → ［スレッド｜道具］
@@ -202,7 +202,7 @@ async page => {
   check(s.feedVis === 'hidden' && s.feedInert === true && s.feed.r <= s.dl.l + 2, 'the feed slid out to the left and is hidden');
   const crumb = await page.evaluate(() => ({ chan: getComputedStyle(document.querySelector('.th-chan')).display, text: document.querySelector('.th-crumb').textContent.replace(/\s+/g, '') }));
   check(crumb.chan !== 'none' && crumb.text.startsWith('#checkout-perf›'), 'with the thread alone the heading is "# channel › thread title"');
-  const kept = await page.evaluate((before) => ({ same: window.__nodes.thread === document.getElementById('chThread') && window.__nodes.log === document.querySelector('#chThread .th-log') && window.__nodes.input === document.getElementById('chThreadComposerInput'),
+  const kept = await page.evaluate((before) => ({ same: window.__nodes.thread === document.getElementById('chThread') && window.__nodes.log === document.querySelector('#chThread .th-log') && window.__nodes.input === document.getElementById('thPrompt'),
     top: window.__nodes.log.scrollTop, before, value: window.__nodes.input.value }), scrollBefore);
   check(kept.same && near(kept.top, kept.before, 80) && kept.value === '下書きです', 'sliding keeps the very same DOM: the scroll position stays (only text re-wrapping moves it a little) and the draft is unchanged', kept);
   check(await page.evaluate(() => window.__moving) >= 1, 'the slide is the deck mid-motion state (transform), not a rebuild');
@@ -212,7 +212,7 @@ async page => {
   await settled();
   s = await dk();
   check(!s.panel && s.deck === 'split' && near(s.feed.w / s.dl.w, 0.4, 0.02) && s.feedVis === 'visible' && s.feedInert === false, 'closing the right panel slides the window back to [feed | thread]');
-  const kept2 = await page.evaluate((before) => ({ same: window.__nodes.thread === document.getElementById('chThread') && window.__nodes.input === document.getElementById('chThreadComposerInput'), top: window.__nodes.log.scrollTop, before, value: window.__nodes.input.value }), scrollBefore);
+  const kept2 = await page.evaluate((before) => ({ same: window.__nodes.thread === document.getElementById('chThread') && window.__nodes.input === document.getElementById('thPrompt'), top: window.__nodes.log.scrollTop, before, value: window.__nodes.input.value }), scrollBefore);
   check(kept2.same && near(kept2.top, kept2.before, 80) && kept2.value === '下書きです', 'and the scroll position and draft are still the same after coming back', kept2);
 
   // ================================================================ ほかのスレッドへ（板は動かさず中身だけ入れ替える）
@@ -222,12 +222,12 @@ async page => {
   await sleep(250);
   s = await dk();
   const swapped = await page.evaluate(() => ({ title: document.querySelector('.th-title').textContent, same: window.__nodes.thread === document.getElementById('chThread'), moving: window.__moving,
-    marks: [...document.querySelectorAll('#chFeed .post[data-open]')].map((n) => n.dataset.postId), draft: document.getElementById('chThreadComposerInput').value }));
+    marks: [...document.querySelectorAll('#chFeed .post[data-open]')].map((n) => n.dataset.postId), draft: document.getElementById('thPrompt').value }));
   check(s.deck === 'split' && near(s.thread.l, leftBefore) && swapped.same && swapped.moving === 0, 'picking another thread in the feed keeps the board still (no motion) and only swaps the contents');
   check(swapped.title.startsWith('修正が入ったら') && swapped.marks.join() === B.id, 'the heading follows and the selected card moves to the other thread');
   check(swapped.draft === '', "each thread keeps its own draft (A's draft is not carried to B)");
   await open(A.id);
-  await page.waitForFunction(() => document.getElementById('chThreadComposerInput').value === '下書きです');
+  await page.waitForFunction(() => document.getElementById('thPrompt').value === '下書きです');
   check(true, "going back to the first thread brings its draft back");
 
   // ================================================================ 承認のカード（B のスレッド）
@@ -262,12 +262,12 @@ async page => {
   // ================================================================ 作業中: 書き足し・［止める］
   await open(C.id);
   await page.waitForFunction(() => document.querySelector('.th-stop'));
-  check(await page.locator('#chThreadComposerInput').getAttribute('placeholder').then((p) => p.includes('作業中でも Owl に届きます')), 'the thread composer says it reaches the working bot (steer)');
-  await page.locator('#chThreadComposerInput').click();
+  check(await page.locator('#thPrompt').getAttribute('placeholder').then((p) => p.includes('作業中でも Owl に届きます')), 'the thread composer says it reaches the working bot (steer)');
+  await page.locator('#thPrompt').click();
   await page.keyboard.type('途中の書き足し');
   await page.keyboard.press('Control+Enter');
   await page.waitForFunction(() => [...document.querySelectorAll('#chThread .post-body')].some((n) => n.textContent.includes('途中の書き足し')));
-  check(await page.evaluate(() => document.getElementById('chThreadComposerInput').value) === '' && !!(await page.locator('.th-stop').count()), 'a reply typed while the bot works is posted (steer) and the bot keeps working');
+  check(await page.evaluate(() => document.getElementById('thPrompt').value) === '' && !!(await page.locator('.th-stop').count()), 'a reply typed while the bot works is posted (steer) and the bot keeps working');
   const steered = (await readThread(C.id)).posts.find((p) => p.text === '途中の書き足し');
   check(steered?.author.kind === 'human' && steered.threadId === C.id, 'the reply is saved in the thread through channels.post');
   await deliver({ type: 'channelPost', channelId: ch.id, op: 'edit', post: { ...(await turnPosts(C.id))[0], state: 'working', text: '洗い出します。\n\n- [x] cart サービスの呼び出しを数える\n- [x] pricing.quote() を探す\n- [ ] 一括見積もりの形を決める\n- [ ] 移行する', editedAt: Date.now() } });
@@ -286,11 +286,11 @@ async page => {
   await postA.locator('.post-tool.quick').click();
   await postA.locator('.react-pill[data-emoji="👍"]').waitFor();
   check((await readThread(A.id)).posts.find((p) => p.id === turnA.id).reactions['👍']?.[0]?.kind === 'human', 'a reaction in the thread is saved through channels.react');
-  await page.locator('#chThreadComposerInput').click();
+  await page.locator('#thPrompt').click();
   await page.keyboard.press('Control+A');
   await page.keyboard.press('Backspace');
   await page.keyboard.type('お願い@');
-  const list = page.locator('#chThreadComposer .mention-list');
+  const list = page.locator('#thComposer .mention-list');
   await list.waitFor({ state: 'visible' });
   check((await list.locator('li[role=option] .lbl').allTextContents()).join() === 'Owl,Lynx,あなた', 'typing @ in the thread lists the channel members');
   await page.keyboard.press('Escape');
@@ -322,7 +322,7 @@ async page => {
   check(s.deck === 'feed' && near(s.feed.w, s.dl.w) && s.threadVis === 'hidden' && s.threadInert === true, 'the ✕ closes the thread and the feed gets the whole window back');
   check(await page.locator('#chFeedComposer .ch-row').isVisible() && await page.locator('#chFeed .post[data-open]').count() === 0, 'the feed composer opens again and no card is selected');
   await open(A.id);
-  await page.waitForFunction(() => document.getElementById('chThreadComposerInput').value === '');
+  await page.waitForFunction(() => document.getElementById('thPrompt').value === '');
   check(true, 'reopening works after the ✕');
   await page.locator('#chThread .th-close').click();
   await settled();
@@ -404,7 +404,7 @@ async page => {
   await open(A.id);
   await settled();
   const narrow = await page.evaluate(() => {
-    const t = document.getElementById('chThread').getBoundingClientRect(), c = document.getElementById('chThreadComposer').getBoundingClientRect();
+    const t = document.getElementById('chThread').getBoundingClientRect(), c = document.getElementById('thComposer').getBoundingClientRect();
     return { w: t.width, l: t.left, deck: document.getElementById('chDeck').dataset.deck, side: getComputedStyle(document.getElementById('chThreadOpenSidebar')).display,
       overflow: document.documentElement.scrollWidth > innerWidth || document.querySelector('#chThread .th-log').scrollWidth > document.querySelector('#chThread .th-log').clientWidth,
       composerInView: c.bottom <= innerHeight + 1 && c.left >= 0 && c.right <= innerWidth, git: getComputedStyle(document.querySelector('.th-git')).display };

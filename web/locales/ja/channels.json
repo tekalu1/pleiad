@@ -151,6 +151,7 @@
     "back": "{{name}} の流れに戻る",
     "untitled": "スレッド",
     "rename": "スレッドの題",
+    "dest": { "title": "宛先", "label": "宛先: {{name}}（選び直す）", "auto": "宛先", "inThread": "このスレッドの bot", "others": "ほかのメンバー", "members": "メンバー" },
     "renameFailed": "題を変えられませんでした: {{error}}",
     "loading": "読み込んでいます…",
     "loadFailed": "読み込めませんでした: {{error}}",
@@ -169,7 +170,8 @@
     },
     "composer": {
       "placeholder": "スレッドに返信",
-      "working": "スレッドに返信 · 作業中でも {{name}} に届きます"
+      "working": "スレッドに返信 · 作業中でも {{name}} に届きます",
+      "to": "スレッドに返信 · {{name}} に届きます"
     },
     "stop": "止める",
     "stopping": "止めています…",

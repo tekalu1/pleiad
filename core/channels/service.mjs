@@ -404,13 +404,15 @@ export function createChannelService({ dir, emit = () => {}, hooks = {}, now = D
       });
     },
 
-    async post({ channelId, threadId = null, text, new: forceNew = false, state, presents, attachments, turn, taint, routine, mentions, hold, origin, bySession }, author) {
+    async post({ channelId, threadId = null, text, new: forceNew = false, state, presents, attachments, turn, taint, routine, mentions, hold, origin, bySession, to }, author) {
       if (!isAuthor(author)) throw invalid('author is invalid');
       const channel = await need(channelId);
       if (channel.archivedAt) throw new ChannelError('CHANNEL_ARCHIVED', { id: channel.id });
       const files = normalizeAttachments(attachments);
       checkText(text, { allowEmpty: (Array.isArray(presents) && presents.length > 0) || files.length > 0 });
       if (state !== undefined && !POST_STATES.includes(state)) throw invalid(`state must be one of ${POST_STATES.join(' / ')}`);
+      // 宛先（入力欄の宛先のチップで選んだ bot。人の投稿だけ）。本文の @ が先に効き、@ が無いときの宛先になる
+      if (to !== undefined && to !== null && !(author.kind === 'human' && typeof to === 'string' && to)) throw invalid('to must be a bot id on a human post');
       const all = await store.snapshot(channelId);
       if (threadId !== null) {
         const root = all.find((p) => p.id === threadId);
@@ -442,6 +444,7 @@ export function createChannelService({ dir, emit = () => {}, hooks = {}, now = D
         id: newId('post', at), channelId, threadId, author: clone(author), text, mentions: resolved, at,
         ...(state !== undefined ? { state } : {}), ...(turn ? { turn: clone(turn) } : {}), ...(presents ? { presents: clone(presents) } : {}),
         ...(files.length ? { attachments: files } : {}), reactions: {}, ...(taint ? { taint } : {}), ...(routine ? { routine: clone(routine) } : {}), proxy: null,
+        ...(to ? { to } : {}),
       };
       const saved = await store.append(channelId, { op: 'post', post });
       const updated = await store.updateChannel(channelId, (c) => ({ ...c, lastPostAt: Math.max(c.lastPostAt ?? 0, at) })) ?? channel;

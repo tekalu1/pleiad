@@ -154,6 +154,7 @@
     "back": "Back to the {{name}} feed",
     "untitled": "Thread",
     "rename": "Thread title",
+    "dest": { "title": "Send to", "label": "Send to: {{name}} (change)", "auto": "Send to", "inThread": "Bots in this thread", "others": "Other members", "members": "Members" },
     "renameFailed": "Couldn't change the title: {{error}}",
     "loading": "Loading…",
     "loadFailed": "Could not load: {{error}}",
@@ -173,7 +174,8 @@
     },
     "composer": {
       "placeholder": "Reply in thread",
-      "working": "Reply in thread · reaches {{name}} even while it works"
+      "working": "Reply in thread · reaches {{name}} even while it works",
+      "to": "Reply in thread · goes to {{name}}"
     },
     "stop": "Stop",
     "stopping": "Stopping…",

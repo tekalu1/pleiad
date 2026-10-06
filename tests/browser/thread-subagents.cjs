@@ -79,7 +79,7 @@ async page => {
   await until(async () => (await chip.count()) === 1 && await page.locator('#chThread .th-subs').isVisible(), 'chip visible');
   const place = await page.evaluate(() => {
     const r = (s) => document.querySelector(s)?.getBoundingClientRect();
-    return { chip: r('#chThread .th-subs'), composer: r('#chThread .ch-composer') ?? r('#chThreadComposer') };
+    return { chip: r('#chThread .th-subs'), composer: r('#chThread .ch-composer') ?? r('#thComposer') };
   });
   check(place.chip && place.composer && place.chip.bottom <= place.composer.top + 1 && place.chip.right > place.composer.right - 40, 'the subagent chip is at the right end just above the thread composer', place);
   check(/一覧を開く/.test(await chip.getAttribute('aria-label')) && await chip.getAttribute('aria-controls') === 'workDialog', 'the chip has the same spoken name as the Chats chip and controls the work dialog');
