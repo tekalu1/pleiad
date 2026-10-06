@@ -420,6 +420,7 @@ const SUITES = [
   // codex バックエンド。app-server の身代わり（tests/lib/fake-codex.mjs）と話すだけで、
   // 本物の codex もネットワークも要らない
   './unit/server-codex.mjs',
+  './unit/server-codex-compaction.mjs',
   // 互換の接続先の配線。codex の身代わりと偽の互換 API だけと話す
   './unit/server-compat-endpoints.mjs',
   // 同じことを本物の Claude Code・Codex の CLI で（送り先は偽の互換 API。入っていなければとばす）
