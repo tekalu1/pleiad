@@ -1,7 +1,7 @@
 # 無停止の更新 — 段階に分けた実装計画
 
-- 状態: 確定（2026-10-06）。段階 0 は完了し、その実測で段階 1 以降を直した
-- 設計: [design.md](design.md)。決定: [ADR 0137](../adr/0137-zero-downtime-update.md)。実測の記録: [stage0-claude.md](stage0-claude.md)・[stage0-codex-agy.md](stage0-codex-agy.md)・[stage0-runtime.md](stage0-runtime.md)・[stage1-0.md](stage1-0.md)（段階 1 の 1-0）。管理: [issue #54](https://github.com/tekalu1/pleiad/issues/54)
+- 状態: 確定（2026-10-06）。段階 0 は完了し、その実測で段階 1 以降を直した。**段階 1 は実装・検証済み**（2026-10-06。パッケージ版の既定は on。署名した版・スマホ・利用者の操作が要る確認だけが残り、手順は [stage1-7.md](stage1-7.md) の「利用者に頼む確認」）
+- 設計: [design.md](design.md)。決定: [ADR 0137](../adr/0137-zero-downtime-update.md)。実測の記録: [stage0-claude.md](stage0-claude.md)・[stage0-codex-agy.md](stage0-codex-agy.md)・[stage0-runtime.md](stage0-runtime.md)・[stage1-0.md](stage1-0.md)（段階 1 の 1-0）・[stage1-7.md](stage1-7.md)（段階 1 の 1-7。実機の確認）。管理: [issue #54](https://github.com/tekalu1/pleiad/issues/54)
 - 規模の目安: S = 2 日まで、M = 3〜5 日、L = 1〜2 週、XL = 3 週以上（1 人。テストと文書を含む）。段階 0 の前の見積もりを、実測で分かったことに合わせて見直した（下の表）
 
 ## 全体
@@ -9,7 +9,7 @@
 | 段階 | 中身 | 利用者に見える価値 | 規模（段階 0 の前 → 後） |
 |---|---|---|---|
 | 0 | 実測 | なし | M → **完了** |
-| 1 | 実行場所を `$INSTDIR` の外へ。サーバーを main から切り離す。新しい main が古いサーバーに付け直す。サーバーの切り替えは作業が終わるまで先送り | **更新を押しても作業が止まらない**（core の切り替えは作業が終わってから。design.md §6.1） | L（2〜3 週）→ **L〜XL（4〜5 週）** |
+| 1 | 実行場所を `$INSTDIR` の外へ。サーバーを main から切り離す。新しい main が古いサーバーに付け直す。サーバーの切り替えは作業が終わるまで先送り | **更新を押しても作業が止まらない**（core の切り替えは作業が終わってから。design.md §6.1） | L（2〜3 週）→ **L〜XL（4〜5 週）** → **実装・検証済み**（署名・スマホの確認を除く） |
 | 2 | 保持役 + Claude。引き継ぎ。付け直し（再生） | **Claude の作業は core の切り替えでも止まらない**。サーバーが落ちても Claude の作業が続く | XL（4〜6 週）→ XL（4〜6 週。増減が相殺） |
 | 3 | Codex・agy・`!` の行を保持役へ | 全部のバックエンドで止まらない。先送りが要らなくなる | L（2〜3 週）→ **M〜L（2 週前後）** |
 | 4 | （測って要れば）待ち受けを保持役が持つ | 引き継ぎの 1 秒前後の間の MCP の呼び出しも落ちない | M（段階 2 の実機の数え方しだい） |
@@ -51,7 +51,7 @@
 
 ### 進め方
 
-- **途中の merge は機能を有効にしない**。環境変数 `AGENT_HOST_HANDOVER` で切り替える（`on` = 実行場所 + 名前付きパイプ + 先送り、`off` = 今の `utilityProcess`）。段階 1 の途中は既定を `off` にし、1-7 の最後の項目で、パッケージ版の既定を `on` にする。`off` の経路（今の形）は、開発（`npm run desktop`）と、合わない更新の戻し道（design.md §6）として残り、テストを流し続ける（R7）
+- **途中の merge は機能を有効にしない**。環境変数 `AGENT_HOST_HANDOVER` で切り替える（`on` = 実行場所 + 名前付きパイプ + 先送り、`off` = 今の `utilityProcess`）。段階 1 の途中は既定を `off` にし、1-7 の最後の項目で、パッケージ版の既定を `on` にした（**済み 2026-10-06**。env が無ければ on。開発の `electron .` は off のまま）。`off` の経路（今の形）は、開発（`npm run desktop`）と、合わない更新の戻し道（design.md §6）として残り、テストを流し続ける（R7）
 - 順序（矢印は依存。`‖` は並行できる）: **1-0 → 1-1 → (1-2 ‖ 1-3) → 1-4 → (1-5 ‖ 1-6) → 1-7**
 - 1-1 は挙動を変えないので、単独で main に入れてよい。1-2 以降は `AGENT_HOST_HANDOVER=on` のときだけ動く
 
@@ -149,7 +149,7 @@ design.md §3 のとおり。参考にする動くコード: `scripts/zero-downt
 - **外の AI に貼る設定**: `mcpSetup` は env の `PLEIAD_CLI_EXEC`・`PLEIAD_CLI_SCRIPT`・`PLEIAD_CLI_ELECTRON` があればそれを指す（`stableCli`）。**1-4 で main がサーバーの env に `stableCliEnv()` を足した**（`$INSTDIR` の `Ply.exe` と `resources\app\bin\pleiad.mjs`。`desktop/server-boot.cjs` の `serverEnv`）
 - **agy の relay**: サーバーが `pleiad-node.exe` で走れば `process.execPath` が実行場所の Node になり、`electron` が偽なので `ELECTRON_RUN_AS_NODE` は付かない（`tests/unit/cli-launcher.mjs`）。**1-4 でサーバーの env から `ELECTRON_RUN_AS_NODE` を外した**（`desktop/server.cjs` の分は `off` の経路だけ）
 - **1-4 が使うもの**: `resolveRuntimeRoot` → `install`（戻り値 `nodeExe`・`appDir`・`agentBrowserDir`・`key`）→ `nodeExe appDir\core\server.mjs` を `detached` で起こす。PATH には `agentBrowserDir`（`prepareAgentBrowserBin({ runtimeDir })`）と `appDir\bin` を足す。組んだ直後に起こさない順序は `install` が済んでから起こせば守られる（`install` は読み終えてから戻る）
-- **未実施（1-7）**: リリースの CI への Node のキャッシュ（取得と照合はビルドが毎回行う。キャッシュは `PLEIAD_NODE_CACHE` を `actions/cache` に載せる）・arm64 の実機・NSIS のインストーラーをまたいだ実行場所の生き残りの実機の確かめ
+- **1-7 の結果**: NSIS のインストーラーをまたいだ実行場所の生き残りは実機で確かめた（[stage1-7.md](stage1-7.md)）。**この確かめで、配布物の manifest がインストール後の木と合わない不具合が見つかり、直した**: NSIS は x64 の配布物の中の別 CPU の `.exe`・`.dll`（node-pty の `win32-arm64` の conpty・winpty）を黙って落とすので、実行場所を組めず `utilityProcess` に落ちていた（`desktop:pack` の `win-unpacked` では見えない）。afterPack が動かさない OS・CPU の prebuild を manifest の前に外す（`pruneOtherPrebuilds`）。**残り**: リリースの CI への Node のキャッシュ（`PLEIAD_NODE_CACHE` を `actions/cache` に載せる。取得と照合はビルドが毎回行う）・arm64 の実機（利用者に頼む確認 U10・U8）
 
 ### 1-4 main がサーバーを起こす・見つける・付け直す（M。**実装済み 2026-10-06**。下の「実装のメモ」）
 
@@ -251,19 +251,18 @@ design.md §5.1・§6.1・§8。
 - **画面**: 脇の下の `#switchNotice`、設定のページの `#switchBox`、⚙ の点、確認の段の 1 行（`state.handover` のとき）、「更新しました」を切り替えまで出さない・止めたものの 1 行（`web/updates.mjs`）。リモートの窓・ブラウザーは `plyDesktop.switch` が無いので何も出ない
 - **確かめた**: `tests/unit/desktop-switch.mjs`（Z・もう一度試す・中断の進み・待ち始め）・`desktop-switch-screen.mjs`（橋・hello・版）・`web-switch-notice.mjs`・`tests/browser/switch-notice.cjs`（実際の画面。橋は偽物。ライト・ダーク・640px・360px）
 
-### 1-7 テスト・文書・実機・既定を `on` に（M）
+### 1-7 テスト・文書・実機・既定を `on` に（M。**実装・確認済み 2026-10-06**。記録は [stage1-7.md](stage1-7.md)）
 
-- 通常テスト（`tests/unit/`）は各項目に書いたとおり。実時間に頼らない（時計・プロセスは注入）。`AGENT_HOST_HANDOVER=off` の経路の既存の試験は変えずに通す
-- デスクトップのハーネス（`docs/dev-verification.md`「デスクトップ版（Electron）」の作り）で、`AGENT_HOST_HANDOVER=on`・`AGENT_HOST_RUNTIME_DIR=<一時>`・`AGENT_HOST_RUNTIME_NODE=<素の Node>`・`AGENT_HOST_BACKENDS=fake` を決め、次を確かめる（パッケージ版でなくても動くように、`isPackaged` に依らない上書きを持たせる）:
-  1. fake の遅い台本のターンを走らせたまま、main だけを止めて（`app.exit`）起動し直し、サーバーが生き残り、新しい main が付け直し、ターンが最後まで流れる
-  2. サーバーの版を替えた実行場所を作り、切り替えの待ち → 作業が終わる → 新しいサーバーが同じポート・トークンで立ち、窓が読み直される
-  3. 新しいサーバーが立たない版（わざと壊した）→ 前の版で動き続け、その旨が出る
-  4. main が居ない間に computer use（fake の driver）・secret を使うターンが、待つ・止めるの扱いになる
-- 実機（署名なしの評価版でよいものと、署名した旧版→新版が要るもの。「実機で確かめる項目」の 1〜5・7〜9・11・12 の段階 1 の部分）
-- 文書（実装と同じ変更で書き換える。ADR 0137「影響」の段階 1 の分）
-- 最後に、パッケージ版の `AGENT_HOST_HANDOVER` の既定を `on` にする（env が無ければ `on`）
+- 通常テスト（`tests/unit/`）は各項目に書いたとおり。実時間に頼らない（時計・プロセスは注入）。`AGENT_HOST_HANDOVER=off` の経路の既存の試験は変えずに通す。1-7 で足したもの: `tests/unit/desktop-boot.mjs`（パッケージ版の既定 on・空の値・`off`・on でも空でもない値）・`tests/unit/pack-runtime.mjs`（動かさない prebuild を外す）・`tests/unit/zdtest-isolation.mjs`（実機の確認の試験用の構成が、利用者のインストール版と重ならない）
+- デスクトップのハーネス（1〜4）: **通った**。1-4〜1-6 の子が `temporary/` に置いた確認用のスクリプトは残っていなかったので、`desktop:pack` の `electron .` の形ではなく、**試験用のインストーラー（署名なし。appId・名前・場所・ポートを別にした）で本物のインストール版の形**に作り直して流した（`scripts/zero-downtime/stage1-7/`。`AGENT_HOST_HANDOVER` は渡さず既定の on。`AGENT_HOST_RUNTIME_NODE`・`isPackaged` の上書きは要らなかった）。1（main だけ止めて付け直し）・4（居ない間の computer use・secret）= s4、2（切り替えの待ち → 新しいサーバー → 窓の読み直し）= s1・s2、3（立たない版）= s3 --to C
+- 実機（「実機で確かめる項目」の段階 1）: 署名なしの試験用のインストーラーで、本物の NSIS・electron-updater の旧版 → 新版を通し、次を確かめた（結果の数値と手順は stage1-7.md）: 1（fake・Claude `claude.exe`・Codex・agy のターンを走らせたまま更新。中断の印なし。作業が終わった後に切り替わる）・2（承認待ちのまま更新: fake・Claude・Codex は新しい main の窓で承認が 1 つ出て答えられる。agy は承認のモードが無い）・4（待ちの表示・切り替え・窓の読み直し・下書き。「今すぐ中断して切り替える」は押してから 4.3 秒でターンが止まり約 1 秒後に切り替わる）・5 の main が居ない間の停止・6（内蔵ブラウザーのタブと中継）・7 の古い版の掃除（4 版 → 3 版。前方一致の移動は未確認）・8・9・10。**main が居ない時間は 44〜53 秒**。**残り（利用者に頼む確認。手順は stage1-7.md の U1〜U11）**: 署名した版での 1〜2・npm の `claude.cmd`・3（スマホ）・5 の本物の画面操作・7 の前方一致の移動・15（全ユーザー向け）・16（ARM64）・os-open・openExternal の居ない間・ホストへ任せる口・スリープ・リリースの CI の Node のキャッシュ
+- **見つけて直したこと**: 上の 1-3 の「1-7 の結果」（インストーラーが別 CPU の `.exe`・`.dll` を落とし、実行場所を組めなかった）。実行場所を組めない環境で `utilityProcess` に落ちる経路も、そのまま実機で確かめられた（理由が `updater.log` に残る）
+- 文書（実装と同じ変更で書き換えた。ADR 0137「影響」の段階 1 の分）: `docs/desktop-releases.md`（更新UX・適用とデータ保護・同梱する Node と実行場所・リリース判定）・`docs/design.md`（デスクトップの更新・中断と再開・4. アーキテクチャの「デスクトップ版の層」）・`docs/multi-backend.md`（`running` の `count` と切り替え）・`docs/computer-use.md`・`docs/inapp-browser.md`・`docs/remote.md`（1-5・1-6 で書いた）・`docs/design-system.md`（1-6 で書いた）・`docs/dev-verification.md`（本物のインストーラーの確認の作り）・ADR 0090（追記）・`AGENTS.md`（環境変数の表・サーバー起動・確認）
+- **パッケージ版の `AGENT_HOST_HANDOVER` の既定を `on` にした**（`desktop/main.cjs` の `chooseLinkedServer`。env が無ければ on・`off` で今の `utilityProcess`・on でも空でもない値は off と同じ。開発の `electron .` は `AGENT_HOST_RUNTIME_RESOURCES` つきで `on` を明示したときだけ on）。テストも合わせた。全件の `npm test`（`--jobs 2`）は 335 本・12,950 判定が全て通過した（518 秒。失敗なし）
 
 **段階 1 の完了の条件**: 署名した旧版 → 新版の更新を、fake ではない Claude・Codex・agy のターンを走らせたまま行い、**ターンが中断されずに終わる**（core の切り替えは作業が終わった後）。承認待ちのまま更新しても、新しい main に承認が出て答えられる。npm で入れた `claude` でも同じ。更新の間にスマホから承認・送信ができる。
+
+**達成度（2026-10-06）**: 署名なしの試験用のインストーラー（本物の NSIS・electron-updater）で、fake・Claude・Codex・agy のターンが中断されずに終わり、承認待ちのままの更新も fake・Claude・Codex で通った。**署名した版・npm の `claude.cmd`・スマホ・全ユーザー向け・ARM64 は未確認**（利用者に頼む確認 U1〜U11。stage1-7.md）。それ以外の段階 1 の項目（1-0〜1-7）は完了。
 
 ---
 

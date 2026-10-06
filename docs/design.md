@@ -217,7 +217,7 @@ Codex は `model/list` の `supportedReasoningEfforts` を候補として `turn/
 自動で戻る上限は完了通知と未確認の丸を出さない。自動で戻れなかったとき（再開の送信が失敗した・結果不明の未送信がある）（受け付けた後に送信が失敗して終わったときも含む）だけ、その会話の自動再開を外し、失敗として 1 回通知する（`completionNotices` の `error`）。解除時刻を過ぎて 2 分たっても自動再開の印が残っている会話は、画面が時計をやめて普通の「再開」にする。送信予定の時刻を過ぎて送らなかったら `scheduleMissed` 通知を出す（「送信予定」）。通知の題とロック画面の文には会話本文を含めない。
 
 - 保存: ターンが中断で終わったら（`turnResult` が aborted。止めた後に失敗として終わったものも含む）、sidecar の会話の行に `interrupted: { at, reason }` を書く。`at` は同じターンの `completedAt` と同じ値（確認済みの印 `readAt` は `completedAt` で丸めるので、ずらすと未読から戻れない）。次のターンの開始で `null` にする。始まらなかったターン（開始前の失敗）と requeue は消さない・書かない。
-- 理由（`reason`）: `user`（中断ボタン）・`update`（更新のため）・`quit`（終了のため）・`hostAway`（`AGENT_HOST_GRACE_MS` の猶予切れ）・`restart`（落ちた・強制終了）。
+- 理由（`reason`）: `user`（中断ボタン）・`update`（更新のため。無停止の更新では付かず、戻し道の「中断して更新」だけ）・`quit`（終了のため）・`hostAway`（`AGENT_HOST_GRACE_MS` の猶予切れ）・`restart`（落ちた・強制終了）。
 - 落ちたターン: ターンの開始で `turnStartedAt` を書き、終わりで片付ける。起動時に `turnStartedAt > (completedAt ?? 0)` の会話は `interrupted: { at: 起動時刻, reason: "restart" }` にし、`completedAt` も同じ時刻にする（`store.recoverInterruptedTurns`）。
 - 公開: 一覧の行・`loadSession`・`turnEnd` に `interrupted`（`{ at, reason } | null`）を載せる。実行中の会話は `null`。`turnResult { outcome: "aborted" }` に `reason` を足す。
 - WS `abort { sessionId?, reason? }`: `sessionId` を省略したら全部。`reason` は `user|update|quit` だけを受け、省略・ほかの値は `user`。先に止め始めたターンは最初の理由のまま。1 つの会話を止めたときは、その取り消しで実際に止まる委譲の子の会話のターン（終わっていないタスクの子。孫以下も）にだけ同じ理由を付ける（止める所 `stopChild` で付ける。終わったタスクの子の会話を人が直接動かしているターンは止まらないので付けない）。全部の中断では子の会話も走っているターンとして同じ理由で止まり、個別に再開できる。委譲タスクは今どおり取り消し、親の再開で委譲し直さない（取り消したことは再開後のエージェントに伝える。下の「止めたもの」）。
@@ -230,8 +230,8 @@ Codex は `model/list` の `supportedReasoningEfforts` を候補として `turn/
 - 止めたものを伝える: 次のターン（再開の文・保留の送り直し・中断した会話への新しい送信・完了通知のどれでも。圧縮は除く）の始めに、`stops` を会話の言語の文（`agent:stops.*`。`<pleiad-interruption>` で囲む）にして `runTurn` の `notes` で発言の前に添える。発言の本文は書き換えない（Claude は同じ user メッセージの別の text ブロック、Codex は `turn/start` の別の入力、agy は 1 行 1 ターンなので本文の前につなぐ）。渡った合図（`onPromptDelivered`）で伝えた分を `stops` から消す（`store.takeStops`。渡る前に失敗したら次のターンでまた添える）。止めたものが無ければ何も添えない。文は「何を止めたか」「終わっていた結果は `ply_task_status` で読める」「そのままやり直さず、今の状態を確かめてから委譲し直すか決める」。
 - 画面: 添えたターンでは `interruptionNote { text, messageId? }` を出し、その発言の吹き出しの前に「中断で止めたものをエージェントに伝えました」の開ける 1 行を置く（中身は伝えた文）。履歴は行の先頭の `<pleiad-interruption>` を `kind: interruptionNote` のシステム側の行に分け（`splitInterruptionNotes`。`history.mjs` の `loadTranscript` と `classifySystemMessages`）、続く発言は元の文のまま描く。
 - 委譲の子の会話: 中断はサーバーの子の会話の行にも残るが、脇の一覧は子の会話を並べないので三角は出ない。子の会話はタスクの一覧から開いて（子の会話の画面で）再開する。
-- 更新の後の一行（「更新で中断した会話が N 件あります」）: `ready` の `startedAt`（サーバーの起動時刻）より前の `update` の中断だけを数える（更新で Pleiad が再起動したときだけ。失敗・30 秒で止まらなかったときは出さない）。その画面で更新を進めている間も出さない。
-- デスクトップ: 更新は画面が `abort { reason: "update" }` で止め、`running` の数が 0 になるのを待ってから今の手順へ進む（サーバーの更新ロックは安全網として残す）。終了は main が worker に `{ type: "abort", reason: "quit" }` を送り、同じく待つ（`docs/desktop-releases.md`）。待つ間に始まったターン（別の端末からの送信・委譲の完了の届け・送信待ち）も止めるため、どちらも数が 0 になるまで見るたびに `abort` を送り直す（何度送っても同じ）。
+- 更新の後の一行（「更新で中断した会話が N 件あります」。無停止の更新ではターンが中断されないので出ず、戻し道の更新の後だけ出る）: `ready` の `startedAt`（サーバーの起動時刻）より前の `update` の中断だけを数える（更新で Pleiad が再起動したときだけ。失敗・30 秒で止まらなかったときは出さない）。その画面で更新を進めている間も出さない。
+- デスクトップ: 無停止の更新（既定）の更新は中断しない（main が `main-leaving` を送って入れ替わり、新しい main が `running` の数が 0 になるのを待ってサーバーを切り替える。`desktop/switch.cjs`）。戻し道の更新は画面が `abort { reason: "update" }` で止め、`running` の数が 0 になるのを待ってから今の手順へ進む（サーバーの更新ロックは安全網として残す）。終了は main が worker に `{ type: "abort", reason: "quit" }` を送り、同じく待つ（`docs/desktop-releases.md`）。待つ間に始まったターン（別の端末からの送信・委譲の完了の届け・送信待ち）も止めるため、どちらも数が 0 になるまで見るたびに `abort` を送り直す（何度送っても同じ）。
 
 ## 会話の読み直し（2026-09-29）
 
@@ -267,7 +267,7 @@ Codex は `model/list` の `supportedReasoningEfforts` を候補として `turn/
 
 Pleiad の画面・サーバー・デスクトップを一つのバージョンとして配布する。
 Electron main が electron-updater と更新設定を持ち、sandbox preload は限定した更新操作と状態通知だけを公開する。
-更新は自動確認・自動ダウンロード（設定でオフにできる）・明示的な再起動に分ける。脇の通知は後回しにでき、詳細と再起動の確認は設定画面で行う。更新時のサーバーロックは処理中コマンド、ターン、承認、送信キューの処理を確認し、新規処理の開始と終了判定の競合を防ぐ。実行中の作業があっても断らず、「中断して更新」で全部を中断して（理由 `update`）止まり終えてから更新する（「中断と再開」、[ADR 0036](adr/0036-interrupt-and-update-while-running.md)）。
+更新は自動確認・自動ダウンロード（設定でオフにできる）・明示的な再起動に分ける。脇の通知は後回しにでき、詳細と再起動の確認は設定画面で行う。更新時のサーバーロックは処理中コマンド、ターン、承認、送信キューの処理を確認し、新規処理の開始と終了判定の競合を防ぐ。既定は無停止の更新（[ADR 0137](adr/0137-zero-downtime-update.md)。パッケージ版は `AGENT_HOST_HANDOVER` が無ければ on）: 実行中の作業があっても断らず、止めず、main だけを入れ替え、サーバーの切り替えを作業が終わるまで先送りする（「4. アーキテクチャ」の「デスクトップ版の層」、`docs/zero-downtime-update/design.md`、`docs/desktop-releases.md`「適用とデータ保護」）。「中断して更新」（全部を中断して（理由 `update`）止まり終えてから更新する。「中断と再開」、[ADR 0036](adr/0036-interrupt-and-update-while-running.md)）は戻し道で、`AGENT_HOST_HANDOVER=off`・実行場所を組めない環境・データの形式番号や口の版が合わない版への更新・切り替えの待ちの「今すぐ中断して切り替える」だけで使う。
 安定版・先行版と段階配信の公開手順、署名資格情報、データ形式の互換性は `docs/desktop-releases.md`。
 コードと配布先は public リポジトリ `tekalu1/pleiad` にまとめ、自己署名の評価版を Releases で配布する。Actions は自分のリポジトリ（`github.repository`）へ標準の GITHUB_TOKEN でアップロードする。アプリに焼き込む更新フィードはアップロード先と分け、既定は `tekalu1/pleiad`（`PLY_RELEASE_REPOSITORY` で上書き）。自動更新に GitHub のログインは要らない。Electron main は起動環境または GitHub CLI からトークンを毎回探し、あれば付けて（レート制限を避けるため）、無ければ認証ヘッダーなしで同じプロバイダーを使う。トークンは画面・設定保存・サーバーへ渡さない。認証なしの 403/429 はレート制限として案内し、トークンを付けた 401/403 だけ資格情報の確認を案内する。非公開GitHubプロバイダー用のメタデータ名は先行版も `latest*.yml` とする。
 
@@ -393,6 +393,8 @@ AI がステータスを変える流れ: core のツールが呼ばれる → co
 host が store を更新して描画。**core は現在のステータスを保持しない**。
 人間が UI から変えたときも、host が store を更新して同じイベントを描画する。
 **経路は違っても、通る先は同じ**（思想 2.2）。これでコアを差し替えても host 側の資産が生き残る。
+
+**デスクトップ版の層（無停止の更新 段階 1。[ADR 0137](adr/0137-zero-downtime-update.md)・`docs/zero-downtime-update/design.md` §2）**: パッケージ版は main（Electron）とサーバー（core）の 2 層で、サーバーは main の子でなく、`$INSTDIR` の外の版ごとの実行場所（`%LOCALAPPDATA%\agent-host-runtime`）で公式の Node（`pleiad-node.exe`）として走る。main との間は名前付きパイプ（`core/main-link.mjs`・`desktop/server-link.cjs`。`utilityProcess` の `parentPort` と同じ型のメッセージ）。NSIS が入れ替えるのは main だけなので、更新でサーバーとターンは止まらず、新しい main が付け直す。main が居ない間（本物のインストーラーで約 45〜50 秒）の機能は `docs/zero-downtime-update/design.md` §7.2 の表のとおり（secret は待たせる・computer use は止める・内蔵ブラウザーはタブの写しから張り直す）。サーバーの切り替え（新しい版の core への入れ替え）は作業が終わった後。`AGENT_HOST_HANDOVER=off`・合わない環境では、今までどおり main が `utilityProcess` でサーバーを起こす（保持役は段階 2 以降）。
 
 **プロトコル**は procway-code の Host Contract に倣った（procway-code への対応は 2026-09 に終えたが、形はそのまま）。設計をゼロから起こさない。
 

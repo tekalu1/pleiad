@@ -1,7 +1,7 @@
 // desktop/main.cjs の boot() の、サーバーの起こし方の選び方（無停止の更新 1-4。docs/zero-downtime-update/plan.md 1-4）。
 // 既存の desktop-exit-dialog.mjs と同じく vm で main.cjs を評価し、Electron と desktop/ の部品は偽物に差し替える。
-//   - AGENT_HOST_HANDOVER が off（既定）・on でもパッケージ版でない・chooseServer が null → 今の utilityProcess（変わらない）
-//   - on のパッケージ版: パイプの包みを worker にして、つなぐ前に message を付け、ready のポート・トークンで窓を読み込む。utilityProcess は起こさない
+//   - 既定: パッケージ版は on（env が無ければ on）・開発（パッケージ版でない）は off。off を明示・on でもパッケージ版でない・chooseServer が null → 今の utilityProcess（変わらない）
+//   - on（既定を含む）のパッケージ版: パイプの包みを worker にして、つなぐ前に message を付け、ready のポート・トークンで窓を読み込む。utilityProcess は起こさない
 //   - 起動の失敗: 文は describeBootError。パイプのサーバーは kill（shutdown）せず leave で切る
 //   - サーバーが居なくなったとき: bye 'replaced' なら静かに終わる・つながりだけ切れたなら付け直す・居なければ「サーバーが終了しました」
 //   - 更新（1-6）: on は作業を止めず・ロックせず main-leaving → つながりだけ切る（shutdown しない）、off は今のまま update-lock → shutdown。
@@ -130,11 +130,23 @@ async function start({ env = {}, packaged = false, choice = 'link', connectError
 export default async function (t) {
   {
     const { calls } = await start({ env: {} });
-    t.ok('既定（off）: 今の utilityProcess で起こし、chooseServer は呼ばない', calls.forks === 1 && calls.chosen === null && calls.loads[0] === 'http://127.0.0.1:7499/?token=utility-token');
+    t.ok('開発（パッケージ版でない）の既定は off: 今の utilityProcess で起こし、chooseServer は呼ばない', calls.forks === 1 && calls.chosen === null && calls.loads[0] === 'http://127.0.0.1:7499/?token=utility-token');
+  }
+  {
+    const { calls, link } = await start({ env: {}, packaged: true });
+    t.ok('パッケージ版の既定は on: env が無くてもパイプの包みを worker にし、utilityProcess は起こさない', calls.forks === 0 && calls.connects === 1 && calls.secretBridge === link && calls.chosen !== null);
+  }
+  {
+    const { calls } = await start({ env: { AGENT_HOST_HANDOVER: '  ' }, packaged: true });
+    t.ok('パッケージ版で空の値も「無い」と同じ（on）', calls.forks === 0 && calls.chosen !== null);
+  }
+  {
+    const { calls } = await start({ env: { AGENT_HOST_HANDOVER: 'false' }, packaged: true });
+    t.ok('パッケージ版で on でも空でもない値（false など）は off と同じ: utilityProcess に落とし、chooseServer は呼ばない', calls.forks === 1 && calls.chosen === null);
   }
   {
     const { calls } = await start({ env: { AGENT_HOST_HANDOVER: 'off' }, packaged: true });
-    t.ok('off を明示しても同じ（パッケージ版でも utilityProcess）', calls.forks === 1 && calls.chosen === null);
+    t.ok('off を明示すると、パッケージ版でも utilityProcess（今の流れ。戻し道）', calls.forks === 1 && calls.chosen === null);
   }
   {
     const { calls } = await start({ env: { AGENT_HOST_HANDOVER: 'on' }, packaged: false });
