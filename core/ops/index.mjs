@@ -14,6 +14,7 @@ import { notifyOps } from './notify.mjs';
 import { hookOps } from './hooks.mjs';
 import { compatOps } from './compat.mjs';
 import { computerOps } from './computer.mjs';
+import { browserOps } from './browser.mjs';
 import { mcpOps } from './mcp.mjs';
 import { contextOps } from './context.mjs';
 import { remoteOps } from './remote.mjs';
@@ -36,7 +37,7 @@ const withProbe = String(process.env.AGENT_HOST_BACKENDS ?? '').split(',').map((
 
 export const registry = createRegistry({
   ops: [...appOps, ...sessionOps, ...resumeOps, ...conversationOps, ...agentOps, ...statusOps, ...settingOps, ...delegationOps,
-    ...worktreeOps, ...notifyOps, ...hookOps, ...compatOps, ...computerOps, ...mcpOps, ...contextOps, ...remoteOps,
+    ...worktreeOps, ...notifyOps, ...hookOps, ...compatOps, ...computerOps, ...browserOps, ...mcpOps, ...contextOps, ...remoteOps,
     ...gitOps, ...shellOps, ...sessionWorkOps, ...fileOps, ...attachmentOps, ...channelOps, ...botOps, ...memoryOps, ...brainOps, ...routineOps, ...notificationOps, ...voiceOps, ...(withProbe ? probeOps : [])],
   settings: [...settings],
 });

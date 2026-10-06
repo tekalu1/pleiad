@@ -233,6 +233,45 @@
       },
       "saveFailed": "Couldn't save: {{error}}",
       "agentOperation": { "title": "Agent operation", "bundled": "agent-browser {{version}} · Bundled" },
+      "agentBrowser": {
+        "title": "Agent browser",
+        "name": "Chrome",
+        "description": "Connects to the Chrome on this PC. Agents still use the built-in browser for now.",
+        "unsupportedOs": "Not available on this OS yet",
+        "unsupportedEnv": "Not available in this environment yet",
+        "giveUp": "Stop",
+        "failed": "Couldn’t do that: {{error}}",
+        "off": {
+          "status": "Not connected",
+          "connect": "Connect",
+          "chromeClosed": "Chrome was closed.",
+          "revoked": "Chrome revoked the permission.",
+          "protocol": "Chrome gave an unexpected response."
+        },
+        "setup": {
+          "status": "Chrome needs setting up",
+          "step1": "Copy this address",
+          "step2": "Paste it into Chrome’s address bar, open it, and turn on “Allow remote debugging for this browser instance”",
+          "note": "It continues on its own once the setting is on (no need to press again). You only do this once; it stays on after Chrome restarts.",
+          "copy": "Copy address",
+          "copied": "Copied",
+          "copyFailed": "Couldn’t copy. Select the address and copy it."
+        },
+        "permission": {
+          "status": "Chrome is asking for permission",
+          "raise": "Bring the prompt to the front",
+          "note": "If Chrome shows the prompt again, it keeps waiting. This continues until you press “Allow”."
+        },
+        "denied": {
+          "status": "“Cancel” was pressed in Chrome",
+          "retry": "Try again"
+        },
+        "connected": {
+          "status": "Connected · {{browser}}",
+          "disconnect": "Disconnect",
+          "note": "While connected, Chrome windows may show the banner “Chrome is being controlled by automated test software”."
+        }
+      },
       "confirm": {
         "title": "External resources",
         "scope": "In visualizations, HTML previews, and PC HTML files opened in the built-in browser, blocks loads (images, scripts, requests, and so on) from sites other than those you allow “Always”. Doesn’t apply to web pages. This setting is shared by all screens.",

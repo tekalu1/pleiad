@@ -112,6 +112,9 @@ import { createMainAway, createExternalOpener } from './main-away.mjs';
 import { readBuildInfo } from './handover-check.mjs';
 import { markRuntimeInUse } from './runtime-use.mjs';
 import { parentPortScreencast, createScreencastHub, screencastCommand } from './browser-screencast.mjs';
+import { createChromeConnection } from './chrome/connection.mjs';
+import { chromeHomes } from './chrome/locate.mjs';
+import { parentPortChromeOs } from './chrome/os.mjs';
 import { createBrowserSiteApprovals } from './browser-confirm.mjs';
 import { createBrowserBridge, BROWSER_MCP_PATH } from './browser-bridge.mjs';
 import { validBrowserPref, externalOrigin } from '../web/browser-confirm-policy.mjs';
@@ -167,6 +170,10 @@ const agentBrowser = parentPortBrowser(hostedPort, { dataDir: store.dataDir });
 const screencastBridge = parentPortScreencast(hostedPort);
 const screencastHub = screencastBridge ? createScreencastHub({ bridge: screencastBridge }) : null;
 const screencastClients = new WeakMap();   // ws -> hub に渡す端末
+// エージェントのブラウザー（PC の Chrome）への接続 1 本（core/chrome/connection.mjs、ADR 0148・0153）。デスクトップ版だけ。OS ごとの層は main（desktop/chrome-os）
+const chromeConnection = process.parentPort
+  ? createChromeConnection({ locate: chromeHomes()[0] ?? null, os: parentPortChromeOs(process.parentPort), log: line => console.log(`  ${line}`) })
+  : null;
 // A nested server may inherit another conversation's shell environment; only this process's bridge can issue browser access.
 delete process.env.AGENT_BROWSER_CONFIG;
 delete process.env.AGENT_BROWSER_SESSION;
@@ -367,6 +374,7 @@ const remote = createRemoteHost({ dataDir: store.dataDir, cipher: secretCipher, 
 const notifyPresence = createPresence();
 const notifySettings = createNotifySettings({ dataDir: store.dataDir });
 const connectionDevices = new WeakMap();   // ws -> 中継越しの端末（x-pleiad-device。ホストの PC の画面は無い）
+const hostScreens = new WeakSet();   // ホストの PC の画面からの接続（isLocalRequest）。Chrome への接続の状態はここだけに流す
 const pushNotifier = createPushNotifier({
   devices: () => remote.notifyTargets(),
   presence: notifyPresence,
@@ -1927,6 +1935,13 @@ function emitGlobal(event) {
   }
 }
 
+/** Chrome への接続の状態の便り。ホストの PC の画面だけに流し（中継越しの端末には送らない）、取りこぼしても次の状態で足りるので溜めない */
+const chromeBrowserFrame = state => ({ kind: P.EVENT, event: { type: 'chromeBrowser', sessionId: null, ...state } });
+chromeConnection?.onChange(state => {
+  const text = JSON.stringify(chromeBrowserFrame(state));
+  for (const ws of runtime.sockets) if (ws.readyState === ws.OPEN && hostScreens.has(ws)) ws.send(text);
+});
+
 /**
  * グループ（fork でつながった会話のまとまり、docs/design-system.md §4.1）を一覧の行から数える。
  * まとまりは持ち物ではなく、**親子でつながり・状態が同じ・人が外していない**ことで決まる。
@@ -3217,6 +3232,14 @@ const opsCompat = {
   },
 };
 
+// エージェントのブラウザー（PC の Chrome）への接続（browser.chrome*。core/ops/browser.mjs）。状態は chromeBrowser イベントでホストの画面へ流す
+const opsChrome = chromeConnection ? {
+  status: () => chromeConnection.state(),
+  connect: async () => { await chromeConnection.connect(); return chromeConnection.state(); },
+  disconnect: () => { chromeConnection.disconnect(); return chromeConnection.state(); },
+  raiseDialog: async () => { const result = await chromeConnection.raiseDialog(); return { raised: result.ok === true, method: String(result.method ?? 'none') }; },
+} : null;
+
 // コンピューターの操作を止める（computer.stop。docs/computer-use.md「computerStop」）。止める側なので、リモートの端末からも AI からも受ける
 const opsComputer = {
   stop: (sessionId) => {
@@ -3782,6 +3805,7 @@ function opsDeps(lng = currentLocale()) {
     notifications: inbox,
     compat: opsCompat,
     computer: opsComputer,
+    chrome: opsChrome,
     // MCP・Hooks・コンテキスト・リモート・接続先の操作（core/ops/mcp.mjs・hooks.mjs・context.mjs・remote.mjs。ADR 0095）。WS の同じ名前のコマンドがしていた処理
     mcp: opsMcp,
     hooks: opsHooks,
@@ -5953,6 +5977,9 @@ wss.on("connection", (ws, req) => {
     // 送信予定の時刻をこの PC の時刻でも添えるため（見ている端末と時刻帯が違うとき。ADR 0103）
     hostTimeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
   }));
+  // エージェントのブラウザー（PC の Chrome）への接続の今の状態。ホストの PC の画面だけ（リモートの端末へは送らない）
+  if (local) hostScreens.add(ws);
+  if (chromeConnection && local) ws.send(JSON.stringify(chromeBrowserFrame(chromeConnection.state())));
   ws.on("close", () => {
     detach(ws);
     notifyPresence.clear(ws);
@@ -6506,10 +6533,17 @@ wss.on("connection", (ws, req) => {
           // hostName は添付の「ホストから <ホスト名>」の見出し（リモートの印の無いブラウザーで使う）
           // pcBrowser: この接続から PC の内蔵ブラウザーを見られるか（デスクトップ版で、リモートの接続のとき）
           return reply(true, { osActions: local, hostName: os.hostname(), pcBrowser: !local && !!screencastBridge?.ready,
+            // エージェントのブラウザー（PC の Chrome）への接続の入口。ホストの PC の画面だけ。Electron の無いホストは false、OS の層が使えなければ 'unsupported'
+            chromeBrowser: local && chromeConnection ? (chromeConnection.state().state === 'unsupported' ? 'unsupported' : 'available') : false,
             computerUse: computerUseCapability({ hasParentPort: Boolean(computerDriver), platform: computerDriver?.kind === 'fake' ? 'win32' : undefined, ready: computerDriver?.state() ?? null }) });
         // コンピューターの操作を止める（docs/computer-use.md「computerStop」）。ホストの OS を操作する命令ではなく、止める側なので、リモートの端末からも受ける（computer.stop）
         case "computerStop":
           return viaOp('computer.stop');
+        // エージェントのブラウザー（PC の Chrome）への接続。つなぐ・切る・前に出すはホストの PC の画面だけ（browser.chrome*。ops が断る）
+        case 'chromeStatus': return viaOp('browser.chromeStatus');
+        case 'chromeConnect': return viaOp('browser.chromeConnect');
+        case 'chromeDisconnect': return viaOp('browser.chromeDisconnect');
+        case 'chromeRaiseDialog': return viaOp('browser.chromeRaiseDialog');
         case "resolvePath": case "revealPath": case "openPath": {
           const hostAction = msg.command !== 'resolvePath';
           if (hostAction && !local) return reply(false, t('files.remoteOnly'));
@@ -6859,6 +6893,8 @@ mainPort.on("message", async ({ data }) => {
   }
   if (data?.type === "shutdown") {
     void voiceHost.close();   // 通話の使用量の台帳を書き切る
+    // Chrome に許可の確認を残して終わらない（確認が出ていれば閉じる）。main の返事を待つので、長くても 2 秒まで
+    if (chromeConnection) await Promise.race([chromeConnection.close(), new Promise(resolve => setTimeout(resolve, 2000))]).catch(() => {});
     try { finishShutdown(store.flushNow, () => runtime.turns.size > 0 || agentTasks.busy); }
     catch (e) {
       console.error('session store shutdown save failed:', e?.code ?? e?.message ?? e);

@@ -35,6 +35,9 @@ if (!process.env.AGENT_HOST_DATA) {
   created = fs.mkdtempSync(path.join(os.tmpdir(), 'pleiad-test-data-'));
   process.env.AGENT_HOST_DATA = created;
 }
+// 4) Chrome の User Data を、存在しない一時ディレクトリへ向ける。テストが利用者の本物の Chrome の DevToolsActivePort を読まない（core/chrome/locate.mjs。
+//    偽の Chrome を使うテストは、自分の一時ディレクトリを AGENT_HOST_CHROME_USER_DATA に渡す）
+if (!process.env.AGENT_HOST_CHROME_USER_DATA) process.env.AGENT_HOST_CHROME_USER_DATA = path.join(os.tmpdir(), `pleiad-test-no-chrome-${process.pid}`);
 export const testDataDir = process.env.AGENT_HOST_DATA;
 /** このプロセスが作った一時の置き場か（利用者が AGENT_HOST_DATA を渡したときは false） */
 export const testDataOwned = created !== null;
