@@ -291,6 +291,11 @@ export async function getAll() {
   return { ...(await load()) };
 }
 
+/** 読み込み済みの記録を同期で引く（まだ読んでいない・無ければ null。引き継ぎの判定が待たずに見る。書き換えない） */
+export function peek(sessionId) {
+  return cache && Object.hasOwn(cache, sessionId) ? cache[sessionId] : null;
+}
+
 /** history を後ろから辿って、その field が最後に取った値を返す。 */
 function lastValue(entry, field) {
   const history = entry?.history ?? [];

@@ -94,7 +94,15 @@ export async function driveHeld({ source, record, emit, askPermission, signal, c
   }
   // 札を保持役の子に置く口（サーバーの touchCard が札の中身が変わるたびに呼ぶ）。最初の 1 回は今置く（落ちたときの付け直しの元）
   if (control && source.client) {
-    control.holder = { label: card => source.client.label(source.id, card) };
+    control.holder = {
+      label: card => source.client.label(source.id, card),
+      // 旧サーバーの手を離す口（引き継ぎ。core/handover.mjs）: 札を子に置き、保持役に detach して（答えが来た時点で、この親からの write は転送されない）、この道の読みを止める
+      handOff: async card => {
+        source.client.label(source.id, card);
+        await source.client.detach(source.id);
+        source.stop();
+      },
+    };
     control.touch?.();
   }
 

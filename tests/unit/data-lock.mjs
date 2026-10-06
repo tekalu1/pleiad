@@ -8,7 +8,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { ROOT, startServer } from '../lib/server.mjs';
-import { acquireDataLock, DataLockedError, LOCK_FILE, LOCK_DB_FILE } from '../../core/data-lock.mjs';
+import { acquireDataLock, acquireDataLockWait, DataLockedError, LOCK_FILE, LOCK_DB_FILE } from '../../core/data-lock.mjs';
 import { ensureDataSchema, openData } from '../../core/data-schema.mjs';
 import { readSessions } from '../lib/data-store.mjs';
 
@@ -92,6 +92,24 @@ export default async function (t) {
       await other.kill();
       const after = acquireDataLock(dir); after();
       t.ok('持ち主が強制終了したら、表示の PID に関わらず取れる', true);
+    }
+
+    // ---- 引き継ぎの新サーバー（無停止の更新 2d）: 持ち主が放すのを待って取る（数十 ms 刻み）。上限を過ぎたら取れなかった例外
+    {
+      const dir = await tmp('wait');
+      // 持ち主は 600 ms 後に明示して放す（プロセスは生きたまま。旧サーバーの release と同じ）
+      const other = await holder(dir, `const { acquireDataLock } = await import(process.env.LOCK_URL); const release = acquireDataLock(process.env.DIR); console.log('held ' + process.pid); setTimeout(() => { release(); console.log('released'); }, 600); setInterval(() => {}, 1000);`);
+      const from = Date.now();
+      const release = await acquireDataLockWait(dir, { timeoutMs: 8000 });
+      const waited = Date.now() - from;
+      t.ok(`持ち主が放すまで待って取る（${waited} ms）。持ち主のプロセスは生きたまま`, waited >= 300 && waited < 4000 && JSON.parse(await fs.readFile(path.join(dir, LOCK_FILE), 'utf8')).pid === process.pid);
+      release();
+      await other.kill();
+      const held = await holder(dir);
+      const refused = await acquireDataLockWait(dir, { timeoutMs: 250, pollMs: 20 }).then(() => null, e => e);
+      t.ok('持ち主が放さなければ、上限を過ぎて取れなかった例外（pid つき）', refused instanceof DataLockedError && refused.pid === held.pid, refused?.message);
+      await held.kill();
+      t.ok('持ち主が居なければ待たずに取れる', (await acquireDataLockWait(dir, { timeoutMs: 100 }))() === undefined);
     }
 
     // ---- store: 持っている間は別のプロセスが store を開けず、形式の移行にも入れない

@@ -11,6 +11,8 @@ export function createCompactionScheduler({ now = Date.now, setTimer = setTimeou
   const pending = new Map();
   const revisions = new Map();
   const graceMs = COMPACTION_GRACE_MS;
+  // 引き継ぎ（無停止の更新 2d）で止めた予約。予約は core/server.mjs が保存していて、新しいサーバーが戻す。取りやめたら resume で戻す
+  let stopped = null;
 
   const revision = id => revisions.get(id) ?? 0;
   function cancel(id) {
@@ -39,8 +41,15 @@ export function createCompactionScheduler({ now = Date.now, setTimer = setTimeou
     if (!id || !sessionId || !Number.isFinite(delayMs) || delayMs < 0) return null;
     const at = now() + delayMs;
     const entry = { id, sessionId, at, timer: null, visible: true, revision: expectedRevision, usedTokens };
-    const current = () => pending.get(id) === entry && revision(id) === entry.revision;
     pending.set(id, entry);
+    arm(entry, delayMs);
+    changed(id, at);
+    return at;
+  }
+
+  function arm(entry, delayMs) {
+    const { id, sessionId, at } = entry;
+    const current = () => pending.get(id) === entry && revision(id) === entry.revision;
     entry.timer = setTimer(async () => {
       if (!current()) return;
       entry.visible = false;
@@ -56,11 +65,26 @@ export function createCompactionScheduler({ now = Date.now, setTimer = setTimeou
       }
     }, delayMs);
     entry.timer?.unref?.();
-    changed(id, at);
-    return at;
   }
 
-  return { schedule, cancel, cancelFiring, revision, now, graceMs, get: id => pending.get(id)?.visible ? pending.get(id).at : null,
+  /** 予約のタイマーを止める（予約は残る）。引き継ぎのとき、新しいサーバーが保存から戻す */
+  function stop() {
+    stopped ??= [];
+    for (const entry of pending.values()) {
+      if (!entry.visible || !entry.timer) continue;
+      clearTimer(entry.timer);
+      entry.timer = null;
+      stopped.push(entry);
+    }
+  }
+  /** stop で止めた予約のタイマーを戻す（引き継ぎを取りやめたとき） */
+  function resume() {
+    const entries = stopped ?? [];
+    stopped = null;
+    for (const entry of entries) if (pending.get(entry.id) === entry && !entry.timer) arm(entry, Math.max(0, entry.at - now()));
+  }
+
+  return { schedule, cancel, cancelFiring, stop, resume, revision, now, graceMs, get: id => pending.get(id)?.visible ? pending.get(id).at : null,
     entries: () => [...pending.values()].filter(entry => entry.visible)
       .map(({ id, at, sessionId, usedTokens }) => ({ sessionId: id, at, backendId: sessionId, usedTokens })) };
 }

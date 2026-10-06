@@ -89,6 +89,20 @@ export function acquireDataLock(dir, { pid = process.pid } = {}) {
   };
 }
 
+/**
+ * 取れるまで待つ（無停止の更新の新サーバー。旧サーバーが放すのを待つ。docs/zero-downtime-update/design.md §5.2）。
+ * 刻みは数十 ms でよい: 旧が放してから新が取るまで最大 18.6 ms で、遅れは待ち手の試行の間隔による（取れない試行 1 回が約 30 ms）。
+ * 持ち主が居るあいだだけ待つ（DATA_LOCKED 以外の失敗はそのまま投げる）。上限を過ぎたら、取れなかった例外を投げる
+ */
+export async function acquireDataLockWait(dir, { timeoutMs = 30_000, pollMs = 25, now = Date.now, sleep = ms => new Promise(resolve => setTimeout(resolve, ms)), ...options } = {}) {
+  const until = now() + timeoutMs;
+  for (;;) {
+    try { return acquireDataLock(dir, options); }
+    catch (e) { if (e?.code !== 'DATA_LOCKED' || now() >= until) throw e; }
+    await sleep(pollMs);
+  }
+}
+
 // 正常に終わるとき（process.exit・シグナルを含む）は、持っているロックを手放す。強制終了・電源断のあとは、OS が外している
 process.on('exit', () => {
   for (const slot of held.values()) {

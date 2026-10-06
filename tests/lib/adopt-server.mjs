@@ -4,13 +4,13 @@
 // 場面: handOff（札を取る）・handOffNow（待たずに 1 回だけ。準備中などは null）・handOffHeld（台本 held: のターンを、札を取って保持役に detach して手を離す。2b-5）・
 // pauseHeld（held: のターンの読みを止める／再開）・muteHeld（held: のターンの偽の CLI への書き込みを止める／戻す。2b-6）・
 // handOffTurnOnly / handOffDetach（手を離す前半と後半を分ける。間に偽の CLI の出力が来ても、このサーバーは締めず読み捨てて ack する。
-// 渡った合図が B の再生の側に来る形。2b-7）
+// 渡った合図が B の再生の側に来る形。2b-7）・slowCall（処理中の MCP の呼び出しが ms の間続く形。引き継ぎの 2d）
 import fs from 'node:fs';
 import path from 'node:path';
 
 const dir = process.env.ADOPT_SCENES_DIR;
 if (!dir) throw new Error('adopt-server: ADOPT_SCENES_DIR is not set');
-const { handOffTurn } = await import('../../core/server.mjs');
+const { handOffTurn, handoverState, trackIn } = await import('../../core/server.mjs');
 const { handOffHeld, pauseHeld, muteHeld } = await import('../../core/backends/fake.mjs');
 const { conversation } = await import('../../core/conversations.mjs');
 
@@ -52,6 +52,8 @@ const scenes = {
     await handOffHeld(await nativeIdOf(sessionId), taken.card);
     return taken;
   },
+  // 処理中の MCP の呼び出しが ms の間続いている形を作る（引き継ぎの前に終わるのを待つ上限の確かめ。2d）
+  slowCall: async ({ ms }) => { trackIn(handoverState.inflight, new Promise(resolve => setTimeout(resolve, ms))); return handoverState.inflight.size; },
   pauseHeld: async ({ sessionId, paused }) => pauseHeld(sessionId, paused),
   muteHeld: async ({ sessionId, muted }) => muteHeld(sessionId, muted),
 };
