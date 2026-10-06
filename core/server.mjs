@@ -93,7 +93,8 @@ import { plyParts } from './instruction-amount.mjs';
 import { computerPrompt } from './backends/computer-delivery.mjs';
 import { MIN_BUDGET, MAX_BUDGET } from '../web/instruction-amount.mjs';
 import { parentPortBrowser, browserEnvironment, browserInstruction } from './agent-browser.mjs';
-import { getMainPort } from './main-port.mjs';
+import { getMainPort, setMainPortSource } from './main-port.mjs';
+import { createMainLink, handoverEnabled } from './main-link.mjs';
 import { parentPortScreencast, createScreencastHub, screencastCommand } from './browser-screencast.mjs';
 import { createBrowserSiteApprovals } from './browser-confirm.mjs';
 import { createBrowserProfiles, createBrowserBridge, findProfile, BROWSER_MCP_PATH } from './browser-profiles.mjs';
@@ -131,7 +132,11 @@ migrateClaudeUsage({ store: usageStore, projects: path.join(process.env.CLAUDE_C
   .catch(err => console.error(`  ${t('usage.migrateFailed')}`, String(err?.message ?? err)));
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const APP_VERSION = JSON.parse(await fs.readFile(path.join(HERE, '..', 'package.json'), 'utf8')).version;
-// main への口（core/main-port.mjs）。main の下でない起動（npm start）では、口を受け取る機能は null で無効になる
+// main への口（core/main-port.mjs）。main の下でない起動（npm start）では、口を受け取る機能は null で無効になる。
+// AGENT_HOST_HANDOVER=on で utilityProcess の下でない起動は、名前付きパイプの口（core/main-link.mjs）を main への口にする
+const mainLink = handoverEnabled() && !process.parentPort ? createMainLink({ dataDir: store.dataDir, appVersion: APP_VERSION,
+  log: line => console.log(`  [main-link] ${line}`) }) : null;
+if (mainLink) setMainPortSource(mainLink.port);
 const mainPort = getMainPort();
 const hostedPort = mainPort.hosted ? mainPort : null;
 const agentBrowser = parentPortBrowser(hostedPort);
@@ -1627,6 +1632,7 @@ const GIT_END_WAIT_MS = 6_000;
 process.on('exit', () => shellRuns.stopAll());
 process.on('exit', () => botHost?.stop());
 process.on('exit', () => removeControlFile({ dataDir: store.dataDir }));
+process.on('exit', () => mainLink?.dispose());
 // 端末の Ctrl-C・kill でも 'exit' を通し、control.json を消す
 for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => process.exit(0));
 const completionNotices = createCompletionNotices({
@@ -6382,13 +6388,26 @@ mainPort.on("message", async ({ data }) => {
   }
 });
 
+let readyMessage = null;
+mainPort.on('connect', () => {
+  if (readyMessage) mainPort.postMessage(readyMessage);
+  // 付いた main は常駐の状態を持っていない。同じ内容でも送り直す
+  residentLast = '';
+  void postResident();
+});
+
 async function announce() {
   const { port } = server.address();
   // CLI がつなぎ先を見つける control.json（ADR 0083）。権限 0600。終了時に pid が自分のときだけ消す。
   // 起動の案内（下の URL の行）を見て CLI や検査が動き出すので、その前に書き終える
-  await writeControlFile({ dataDir: store.dataDir, origin: localOrigin(), cliToken: CLI_TOKEN, startedAt: SERVER_STARTED_AT, appVersion: APP_VERSION, kind: mainPort.hosted ? 'desktop' : 'server' })
+  // main とのパイプは、control.json に名前を書く前に立てる（main-link.json の秘密も一緒に書く）
+  const link = await mainLink?.listen().catch(err => { console.error('  main とのパイプを立てられませんでした:', String(err?.message ?? err)); return null; });
+  await writeControlFile({ dataDir: store.dataDir, origin: localOrigin(), cliToken: CLI_TOKEN, startedAt: SERVER_STARTED_AT, appVersion: APP_VERSION, kind: mainPort.hosted ? 'desktop' : 'server',
+    ...(link ? { mainLink: link } : {}) })
     .catch((err) => console.error('  control.json を書けませんでした:', String(err?.message ?? err)));
-  mainPort.postMessage({ type: "ready", port, token: TOKEN, locale: locale.lang });
+  // パイプの口は、main がつながるのが ready より後になりうる。つながるたびに最新の ready を送る
+  readyMessage = { type: "ready", port, token: TOKEN, locale: locale.lang };
+  mainPort.postMessage(readyMessage);
   remote.start().catch(() => {});
   if (routingSettingsCache.enabled && ROUTING_USAGE_AUTO) routingUsage.start();
   // モデルの一覧を裏で引いておく。新しい会話・モデル選択が、CLI を起こす 10 秒ほどを待たない。

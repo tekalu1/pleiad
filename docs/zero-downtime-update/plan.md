@@ -90,9 +90,19 @@
 - 画面・WS・CLI の挙動は変えない。`desktop/` は変えない
 - テスト: 既存の `tests/lib/parent-port-server.mjs`（`process.parentPort` の身代わりを置いて `core/server.mjs` を起こす入口）を使う試験・`tests/unit/desktop-*.mjs` が変えずに通ること。`mainPort` の単体（つながっていない口に送っても落ちない）を `tests/unit/main-port.mjs` に足す
 
-### 1-2 名前付きパイプの口（M）
+### 1-2 名前付きパイプの口（M。`AGENT_HOST_HANDOVER=on` のときだけ動く。実装済み）
 
 運ぶメッセージの型は今の parentPort のもの（design.md §7.1）。
+
+実装したもの:
+
+- `core/link-codec.mjs`（符号化と行の分け方。両側が使う）・`core/main-link.mjs`（サーバー側）・`desktop/server-link.cjs`（main 側。`core/link-codec.mjs` は動的 import）。`core/main-port.mjs` に `setMainPortSource`（パイプの口を `process.parentPort` の代わりに差し込む）。サーバーは `AGENT_HOST_HANDOVER=on` で、`utilityProcess` の下でない（`process.parentPort` が無い）ときだけパイプの口を作る。既定の起動は何も変わらない
+- 秘密と名前は `main-link.json`（権限 0600。`{ version, pid, pipe, ipc, appVersion, secret }`。終了で自分の pid のものだけ消す）。`control.json` には `mainLink: { pipe, ipc }` だけを足す（`on` のときだけ）
+- 握手の形（`hello` / `welcome` / `reject` / `msg` / `bye`）は `core/main-link.mjs` の頭の注記に固定した。秘密が合わなければ何も返さず切り、合ったうえで `ipc` の範囲が合わなければ `reject`（サーバーの範囲・版・pid つき）を返して切る。握手の前の行は 64 KB まで・5 秒で切る
+- 口は常に 1 つ。後から握手に通った main が勝ち、古い方へ `bye('replaced')` を送って切る
+- main 側の包みは、最初に `connect()` する前の `postMessage` だけ溜めて（1000 件）、つながった直後に順に送る（`utilityProcess.fork` の直後に main が送る使い方と同じにするため）。切れた後は溜めずに `false`
+- つなぎ直しは同じ包みで `connect()` をもう一度呼ぶ（`message` の登録は残る。`once('exit')` は消えるので付け直す）。`kill()` は `shutdown` を送って閉じる
+- 1-4 のために先に入れたもの（パイプでは main が後からつながるため、起動直後の送信が捨てられて動かなくなる）: サーバーは `connect` のたびに最新の `ready`・常駐の状態を送り直す。computer use の driver は `connect` のたびに `computer-ready-request` を送り直す。secret の暗号器（`parentPortCipher`）は、口がまだつながっていないとき、`connect` まで依頼を送らずに待つ（上限 5 分。応答の待ちは送ってから数える）
 
 - core 側 `core/main-link.mjs`: パイプ（`\\.\pipe\pleiad-main-<データ置き場のハッシュ>`）を作って待ち受け、`hello { ipc: [min, max], appVersion, secret }` が合った接続だけを `mainPort` につなぐ。`secret` は起動時に作り、データ置き場の権限 0600 のファイル（`control.json` と同じ置き方。`core/atomic-file.mjs`）に書く。パイプの名前と `ipc` の範囲は `control.json` に足す（`CONTROL_VERSION` は上げず、足すだけ。読む側は無いキーを許す）
 - **符号化**: 1 行 1 JSON。`Uint8Array` / `Buffer`（`computer-result` の画面の写真）は `{ "$bin": "<base64>" }` に包み、受ける側で戻す。1 行の大きさの上限（既定 16 MB）を決め、超えたら落とす。写真が増やす量（約 4/3 倍）で computer use の往復が許容の時間に収まることを確かめる

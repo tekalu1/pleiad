@@ -48,6 +48,9 @@ export default async function (t) {
   const down = createMainPort({ parentPort: link });
   t.ok('切れている口: hosted のまま connected でない', down.hosted === true && down.connected === false);
   t.ok('切れている間の送信は何もせず false（溜めない）', down.postMessage({ type: 'resident' }) === false && link.sent.length === 0);
+  const refusing = fakeParentPort();
+  refusing.postMessage = () => false;
+  t.ok('実体の postMessage が false（パイプの口が捨てた）なら false を返す', createMainPort({ parentPort: refusing }).postMessage({ type: 'x' }) === false);
   const events = [];
   down.on('connect', () => events.push('connect'));
   down.on('disconnect', () => events.push('disconnect'));

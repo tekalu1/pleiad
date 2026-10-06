@@ -61,6 +61,9 @@ export function parentPortComputer(port, { timeoutMs = CALL_TIMEOUT_MS, launchTi
     }
   });
   port.postMessage({ type: 'computer-ready-request' });
+  // 名前付きパイプの口（core/main-link.mjs）は main が後からつながる・付け直すので、つながるたびに頼み直す
+  // （main の service は computer-ready-request で「core が作り直された」として状態を捨てる。utilityProcess の口では 'connect' は来ない）
+  port.on('connect', () => port.postMessage({ type: 'computer-ready-request' }));
 
   return {
     kind: 'electron',
