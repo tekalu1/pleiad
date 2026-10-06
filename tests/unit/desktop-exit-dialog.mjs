@@ -61,7 +61,7 @@ async function start({ ready = true, work = { count: 0 } } = {}) {
     utilityProcess: { fork: () => { queueMicrotask(() => worker.emit(ready ? 'message' : 'exit', ready ? { type: 'ready', port: 7499, token: 'test' } : undefined)); return worker; } },
     shell: { openExternal: () => Promise.resolve() },
     ipcMain: { on: () => {}, handle: () => {} },
-    Notification: class {}, nativeTheme: { shouldUseDarkColors: false }, safeStorage: {}, session: {}, nativeImage: {}, Menu: {}, powerMonitor: new EventEmitter(),
+    Notification: class {}, nativeTheme: { shouldUseDarkColors: false }, safeStorage: {}, session: {}, nativeImage: {}, Menu: {}, powerMonitor: new EventEmitter(), screen: new EventEmitter(),
   };
   const modules = {
     './updates.cjs': { Updates: class { constructor() { this.enabled = false; this.state = { phase: 'idle' }; } on() {} async init() {} snapshot() { return {}; } }, isStoreBuild: () => false, updaterEnabled: () => false },

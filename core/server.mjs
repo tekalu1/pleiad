@@ -198,13 +198,15 @@ const screencastBridge = parentPortScreencast(hostedPort);
 const screencastHub = screencastBridge ? createScreencastHub({ bridge: screencastBridge }) : null;
 const screencastClients = new WeakMap();   // ws -> hub に渡す端末
 // エージェントのブラウザー（PC の Chrome）への接続 1 本（core/chrome/connection.mjs、ADR 0148・0153）。デスクトップ版だけ。OS ごとの層は main（desktop/chrome-os）
-const chromeConnection = process.parentPort
-  ? createChromeConnection({ locate: chromeHomes()[0] ?? null, os: parentPortChromeOs(process.parentPort), log: line => console.log(`  ${line}`) })
+const chromeLocate = chromeHomes()[0] ?? null;
+const chromeOs = process.parentPort ? parentPortChromeOs(process.parentPort) : null;
+const chromeConnection = chromeOs
+  ? createChromeConnection({ locate: chromeLocate, os: chromeOs, log: line => console.log(`  ${line}`) })
   : null;
 // エージェントのブラウザーを PC の Chrome の絞り込みの中継へ向ける（core/chrome/relay.mjs）。環境変数 AGENT_HOST_AGENT_BROWSER=chrome のときだけ
 // （開発と実機の確かめ用。docs/inapp-browser.md「Chrome の中継（開発中）」）。無ければ内蔵ブラウザーの道のまま。確認は下の browserSiteApprovals
 const chromeRelay = chromeConnection && agentBrowserMode() === 'chrome'
-  ? createChromeRelay({ connection: chromeConnection, authorize: (request, signal) => browserSiteApprovals(request, signal), deniedMessage: () => t('permission.browserSiteDenied'), log: line => console.log(`  ${line}`) })
+  ? createChromeRelay({ connection: chromeConnection, os: chromeOs, locate: chromeLocate, authorize: (request, signal) => browserSiteApprovals(request, signal), deniedMessage: () => t('permission.browserSiteDenied'), log: line => console.log(`  ${line}`) })
   : null;
 // 会話の端点を出す口（ターンの開始・新しい会話の id の付け替え・ターンの終わり・会話の削除）。Chrome の道でなければ内蔵ブラウザーの橋そのもの
 const agentBrowserEndpoints = chromeRelay ? chromeRelayBrowser(chromeRelay) : agentBrowser;

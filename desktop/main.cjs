@@ -40,6 +40,7 @@ const trust = createWindowTrust();
 let remoteWindows;
 // messages はサーバーの message を 1 つの listener で受けて橋へ配る（desktop/worker-messages.cjs）。橋は worker でなくこれに付ける
 let worker, messages, linked = null, window, origin, updates, quitting = false, closing = false, exitInProgress = false;
+let chromeOs = null;   // Chrome の OS の層（boot が作る）。終了のときに、画面の外へ隠したエージェントの窓を片付けるために main が持つ
 // 無停止の更新で、付け直したサーバーが古い版のときの新しい版への切り替え（desktop/switch.cjs）
 let serverSwitch = null;
 // main-leaving を送った後（更新で main が離れる途中）。この間につながりが切れても、サーバーは起こし直さない
@@ -55,7 +56,7 @@ const serverBoot = () => require('./server-boot.cjs');
 // 配布物の resources\。開発の確認用に AGENT_HOST_RUNTIME_RESOURCES（desktop:pack の win-unpacked\resources など）で差し替えられる
 const runtimeResources = () => process.env.AGENT_HOST_RUNTIME_RESOURCES || process.resourcesPath;
 const nativeExit = app.exit.bind(app);
-app.exit = (...args) => { exitInProgress = true; return nativeExit(...args); };
+app.exit = (...args) => { exitInProgress = true; closeAgentWindows(); return nativeExit(...args); };   // app.exit は will-quit を通らない
 function showFatalError(title, message) {
   const options = { type: 'error', title, message };
   return window && !window.isDestroyed() ? dialog.showMessageBox(window, options) : dialog.showMessageBox(options);
@@ -257,7 +258,11 @@ async function boot() {
   try { win32 = loadWin32(); } catch (error) { win32Reason = error.reason ?? 'native'; if (win32Reason !== 'platform') console.warn('[computer]', `win32 unavailable: ${error.message}`); }
   computerService = attachComputerService(messages, { electron: { screen, nativeImage }, app, log: line => console.warn('[computer]', line), win32, reason: win32Reason,
     escape: { suspend: () => computerOverlay?.suspendEscape() ?? (() => {}) } });
-  attachChromeOs(messages, { chromeOs: createChromeOs({ platform: process.platform, win32: win32 ? withPerMonitorDpi(win32) : null, reason: win32Reason, log: line => console.warn('[chrome-os]', line) }), log: line => console.warn('[chrome-os]', line) });
+  chromeOs = createChromeOs({ platform: process.platform, win32: win32 ? withPerMonitorDpi(win32) : null, reason: win32Reason, log: line => console.warn('[chrome-os]', line) });
+  attachChromeOs(messages, { chromeOs, log: line => console.warn('[chrome-os]', line) });
+  // 画面の構成が変わったら（モニターの増減・解像度・DPI・スリープ復帰）、画面の外へ隠しているエージェントの Chrome の窓を置き直す（ADR 0154）
+  for (const event of ['display-added', 'display-removed', 'display-metrics-changed']) screen.on(event, () => chromeOs.reconceal());
+  powerMonitor.on('resume', () => chromeOs.reconceal());
   resident = attachResident({ app, worker: messages, icon: path.join(__dirname, 'icon.png'), getWindow: () => window, quit: () => closeSafely() });
   let startupError = '';
   worker.stderr?.on('data', data => { startupError = (startupError + data.toString()).replace(/token=\S+/g, 'token=[redacted]').slice(-2000); });
@@ -451,9 +456,13 @@ ipcMain.on('ply:title-bar', (event, colors) => {
   if (!hex(colors?.color) || !hex(colors?.symbolColor)) return;
   window.setTitleBarOverlay({ color: colors.color, symbolColor: colors.symbolColor, height: TITLE_BAR_HEIGHT });
 });
+// 画面の外・透明・マウス素通しの窓は、Pleiad が終わると誰にも戻せない。終了の道（will-quit・will-quit を通らない app.exit）で閉じる（閉じられなければ見える形へ戻す）
+function closeAgentWindows() {
+  try { chromeOs?.closeAllAgents?.(); } catch (error) { console.warn('[chrome-os]', `closeAllAgents failed: ${error.message}`); }
+}
 if (!app.requestSingleInstanceLock()) app.quit();
 else {
-  app.on('will-quit', () => { serverSwitch?.cancel(); browserScreencastBridge?.close(); agentBrowserBridge?.close(); computerOverlay?.close(); });
+  app.on('will-quit', () => { closeAgentWindows(); serverSwitch?.cancel(); browserScreencastBridge?.close(); agentBrowserBridge?.close(); computerOverlay?.close(); });
   app.on('second-instance', (_event, argv) => { if (remoteWindows?.handleArgv(argv)) return; if (window) { window.restore(); window.show(); window.focus(); } });
   app.on('before-quit', event => { exitInProgress = true; if (!quitting && window) { event.preventDefault(); void closeSafely(); } });
   app.on('will-quit', () => { exitInProgress = true; });

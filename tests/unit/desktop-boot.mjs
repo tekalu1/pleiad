@@ -79,7 +79,7 @@ async function start({ env = {}, packaged = false, choice = 'link', connectError
     utilityProcess: { fork: (_file, _args, options) => { calls.forks++; calls.forkOptions = options; queueMicrotask(() => utility.emit('message', { type: 'ready', port: 7499, token: 'utility-token' })); return utility; } },
     shell: { openExternal: () => Promise.resolve() },
     ipcMain: { on: () => {}, handle: () => {} },
-    Notification: class {}, nativeTheme: { shouldUseDarkColors: false }, safeStorage: {}, session: {}, nativeImage: {}, Menu: {}, powerMonitor: new EventEmitter(),
+    Notification: class {}, nativeTheme: { shouldUseDarkColors: false }, safeStorage: {}, session: {}, nativeImage: {}, Menu: {}, powerMonitor: new EventEmitter(), screen: calls.screen = new EventEmitter(),
     autoUpdater: new EventEmitter(),
   };
   // electron-updater の quitAndInstall: インストーラーを起こした後に before-quit-for-update を出して終わる（node_modules/electron-updater の BaseUpdater）
@@ -108,7 +108,7 @@ async function start({ env = {}, packaged = false, choice = 'link', connectError
     './agent-browser-bridge.cjs': { attachAgentBrowserBridge: listens(calls) },
     './computer/service.cjs': { attachComputerService: listens(calls), withPerMonitorDpi: win32 => win32 },
     './computer/win32.cjs': { loadWin32: () => { throw Object.assign(new Error('not windows'), { reason: 'platform' }); } },
-    './chrome-os/index.cjs': { createChromeOs: () => ({}), attachChromeOs: listens(calls) },
+    './chrome-os/index.cjs': { createChromeOs: () => ({ reconceal: () => { calls.reconceals = (calls.reconceals ?? 0) + 1; }, closeAllAgents: () => { calls.closeAlls = (calls.closeAlls ?? 0) + 1; if (calls.failCloseAll) throw new Error('boom'); return 0; } }), attachChromeOs: listens(calls) },
     './browser-screencast-bridge.cjs': { attachBrowserScreencastBridge: listens(calls) },
     './computer-overlay.cjs': { attachComputerOverlay: listens(calls) },
     './agent-browser-bin.cjs': { prepareAgentBrowserBin: () => '' },
@@ -171,6 +171,24 @@ export default async function (t) {
   {
     const { calls } = await start({ env: { AGENT_HOST_HANDOVER: 'off' }, packaged: true });
     t.ok('off を明示すると、パッケージ版でも utilityProcess（今の流れ。戻し道）', calls.forks === 1 && calls.chosen === null);
+  }
+  {
+    const { calls } = await start({ env: { AGENT_HOST_HANDOVER: 'off' }, packaged: true });
+    calls.screen.emit('display-added'); calls.screen.emit('display-removed'); calls.screen.emit('display-metrics-changed');
+    t.ok('画面の構成が変わったら（display-added・display-removed・display-metrics-changed）、隠しているエージェントの Chrome の窓を置き直す（chromeOs.reconceal。ADR 0154）', calls.reconceals === 3, String(calls.reconceals));
+  }
+  {
+    // 画面の外に隠したエージェントの窓は、Pleiad が終わると誰にも戻せない。終了の道で片付ける（閉じる。閉じられなければ戻す）
+    const { app, calls } = await start({ env: { AGENT_HOST_HANDOVER: 'off' }, packaged: true });
+    t.ok('前提: 起動しただけでは片付けない', calls.closeAlls === undefined);
+    app.emit('will-quit');
+    t.ok('will-quit で、隠しているエージェントの Chrome の窓を片付ける（chromeOs.closeAllAgents。ADR 0154）', calls.closeAlls === 1, String(calls.closeAlls));
+    app.exit(0);
+    t.ok('will-quit を通らない app.exit（再起動・致命的な終了）でも片付ける', calls.closeAlls === 2, String(calls.closeAlls));
+    calls.failCloseAll = true;
+    let threw = null;
+    try { app.emit('will-quit'); app.exit(0); } catch (error) { threw = error; }
+    t.ok('片付けが投げても、終了を妨げない（ログに残す）', threw === null && calls.closeAlls === 4 && calls.logs.some(line => line.includes('closeAllAgents failed')), String(threw?.message));
   }
   {
     const { calls } = await start({ env: { AGENT_HOST_HANDOVER: 'on' }, packaged: false });

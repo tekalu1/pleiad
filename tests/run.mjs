@@ -61,6 +61,8 @@ const SUITES = [
   './unit/chrome-connection.mjs',
   // Chrome の絞り込みの中継（ADR 0148・0153）: 会話の窓の範囲・断る／真似る一覧・sessionId の持ち主・サイトの利用の確認（Fetch・window.open）・止める・鍵・agent-browser の本物の通し（偽の Chrome）
   './unit/chrome-relay.mjs',
+  // 会話ごとの専用の Chrome の窓（ADR 0154）: chrome.exe の最初の窓・画面の外の隠した窓・前面を返す・窓だけ閉じられた／Chrome が閉じた・popup・bringToFront の握りつぶし・focus emulation（ターンの間だけ）（偽の OS の層・偽の Chrome）
+  './unit/chrome-windows.mjs',
   // Chrome への接続の OS の層（Windows）: 確認の窓の見つけ方・前面化・閉じる・使えない OS・parentPort の往復（偽の Win32 の表）
   './unit/chrome-os.mjs',
   // Chrome への接続（サーバー越し）: browser.chrome* の操作・chromeBrowser イベントはホストの画面だけ・使えない OS / Electron の無いホスト（偽の Chrome・parentPort の身代わり）

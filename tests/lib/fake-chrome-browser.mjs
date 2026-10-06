@@ -6,6 +6,10 @@
 //     止められた移動はエラーのページ（chrome-error://chromewebdata/。frameNavigated の unreachableUrl）に移り、targetInfo の URL は断られた URL になる（実機と同じ）
 //   - 履歴（Page.getNavigationHistory・navigateToHistoryEntry）。履歴の移動は bfcache の復元として扱い、要求を出さない（Fetch で止まらない。served に残らない）
 //   - window.open（windowOpen）で開いたタブの最初の要求は止まらない（実機と同じ。served に残る）
+//   - 窓は位置・大きさ（bounds。DIP）を持つ。createTarget の newWindow は left・top・width・height を守り、popup の窓は既定で左上（0,0・324×298）に出る（実機）。
+//     窓ができたら onWindow の聞き手に知らせる（偽の OS の層が、その窓の HWND を作る）。windowTitle は窓の最後のタブの題（Chrome の窓の題は「<題> - Google Chrome」）
+//   - launchWindow は chrome.exe --new-window の窓（URL は題に nonce を持つ data: のページ。題は <title> から取る）
+//   - Emulation.setFocusEmulationEnabled はセッションごとの状態（セッションを外すと消える）。focusEmulated(targetId) は、今どのセッションかが有効にしているか
 //   - ページはとても小さな型（題と、見出し・リンク・ボタンの並び）。Accessibility.getFullAXTree・DOM.getBoxModel・Input.dispatchMouseEvent で押せる
 // 受けたメソッドは calls（{ method, sessionId, params }）に、サーバーに届いた要求（移動）の URL は served に残す。
 import crypto from 'node:crypto';
@@ -20,7 +24,8 @@ export const USER_TABS = Object.freeze([
 ]);
 
 export function createFakeBrowser({ product, calls, userTabs = USER_TABS } = {}) {
-  const windows = new Map();     // windowId -> { state }
+  const windows = new Map();     // windowId -> { state, bounds }
+  const windowListeners = new Set();
   const targets = new Map();     // targetId -> { targetId, type, url, title, windowId, openerId, browserContextId }
   const sessions = new Map();    // sessionId -> { id, targetId, socket, fetch }
   const discovering = new Set(); // socket
@@ -29,6 +34,7 @@ export function createFakeBrowser({ product, calls, userTabs = USER_TABS } = {})
   const served = [];
   const autoAttachCalls = [];
   let windowSeq = 100, requestSeq = 0, contextSeq = 0, entrySeq = 0;
+  let movesRefused = false;      // Browser.setWindowBounds の left・top を受けない（Chrome が画面の外へ置かせてくれない）
   let lastActive = null;
   let fetchEnableDelayMs = 0;
 
@@ -37,9 +43,18 @@ export function createFakeBrowser({ product, calls, userTabs = USER_TABS } = {})
   const toDiscovering = (method, params) => { for (const socket of discovering) send(socket, { method, params }); };
   const sessionsOf = t => [...sessions.values()].filter(s => s.targetId === t.targetId);
   const emit = (t, method, params) => { for (const s of sessionsOf(t)) send(s.socket, { method, params, sessionId: s.id }); };
-  const pageFor = url => pages.get(url) ?? { title: url === 'about:blank' ? 'about:blank' : url.replace(/^https?:\/\//, ''), elements: [{ role: 'heading', name: url }] };
+  const pageFor = url => pages.get(url) ?? { title: url === 'about:blank' ? 'about:blank' : (/^data:text\/html,<title>(.*)<\/title>/.exec(url)?.[1] ?? url).replace(/^https?:\/\//, ''), elements: [{ role: 'heading', name: url }] };
 
-  function newWindow(state = 'normal') { const id = ++windowSeq; windows.set(id, { state }); return id; }
+  const DEFAULT_BOUNDS = Object.freeze({ left: 0, top: 0, width: 1200, height: 800 });
+  const POPUP_BOUNDS = Object.freeze({ left: 0, top: 0, width: 324, height: 298 });
+  function newWindow(state = 'normal', bounds = DEFAULT_BOUNDS) {
+    const id = ++windowSeq;
+    windows.set(id, { state, bounds: { ...bounds } });
+    for (const fn of [...windowListeners]) fn({ windowId: id, bounds: { ...bounds } });
+    return id;
+  }
+  const boundsOf = windowId => ({ ...(windows.get(windowId)?.bounds ?? DEFAULT_BOUNDS), windowState: windows.get(windowId)?.state ?? 'normal' });
+  const windowTitle = windowId => { const last = [...targets.values()].filter(t => t.windowId === windowId && t.type === 'page').pop(); return last ? `${last.title} - Google Chrome` : ''; };
   function newTarget({ url = 'about:blank', title, windowId, openerId = null, type = 'page' }) {
     const t = { targetId: hex(), type, url, title: title ?? (url === 'about:blank' ? '' : pageFor(url).title), windowId, openerId, browserContextId: 'CTX-DEFAULT',
       history: [{ id: ++entrySeq, url }], index: 0 };
@@ -80,7 +95,7 @@ export function createFakeBrowser({ product, calls, userTabs = USER_TABS } = {})
       commitError(t, url, loaderId);
       return { frameId: t.targetId, loaderId, errorText: 'net::ERR_BLOCKED_BY_CLIENT' };
     }
-    served.push(url);
+    if (!url.startsWith('data:')) served.push(url);   // data: は要求が出ない
     let finalUrl = url;
     const redirect = pages.get(url)?.redirect;
     if (redirect) {
@@ -128,7 +143,7 @@ export function createFakeBrowser({ product, calls, userTabs = USER_TABS } = {})
   function windowOpen(openerId, url, { popup = false } = {}) {
     const opener = targets.get(openerId);
     if (!opener) throw new Error('no opener');
-    const t = newTarget({ url: 'about:blank', title: '', windowId: popup ? newWindow() : opener.windowId, openerId });
+    const t = newTarget({ url: 'about:blank', title: '', windowId: popup ? newWindow('normal', POPUP_BOUNDS) : opener.windowId, openerId });
     setImmediate(() => {
       if (!targets.has(t.targetId)) return;
       served.push(url);
@@ -169,7 +184,7 @@ export function createFakeBrowser({ product, calls, userTabs = USER_TABS } = {})
         const t = targets.get(params.targetId);
         if (!t) throw { code: -32602, message: 'No target with given id found' };
         const id = hex();
-        sessions.set(id, { id, targetId: t.targetId, socket, fetch: false, flatten: params.flatten === true });
+        sessions.set(id, { id, targetId: t.targetId, socket, fetch: false, fe: false, flatten: params.flatten === true });
         toDiscovering('Target.targetInfoChanged', { targetInfo: info(t) });
         send(socket, { method: 'Target.attachedToTarget', params: { sessionId: id, targetInfo: info(t), waitingForDebugger: false } });
         return { sessionId: id };
@@ -183,16 +198,17 @@ export function createFakeBrowser({ product, calls, userTabs = USER_TABS } = {})
       }
       case 'Target.setAutoAttach': autoAttachCalls.push(params); return {};
       case 'Target.createTarget': {
-        const windowId = params.newWindow ? newWindow(params.background ? 'normal' : 'normal') : lastActive;
+        const bounds = { ...DEFAULT_BOUNDS, ...Object.fromEntries(['left', 'top', 'width', 'height'].filter(k => Number.isFinite(params[k])).map(k => [k, params[k]])) };
+        const windowId = params.newWindow ? newWindow('normal', bounds) : lastActive;
         const t = newTarget({ url: 'about:blank', windowId });
         if (params.url && params.url !== 'about:blank') setImmediate(() => { if (targets.has(t.targetId)) navigate(t, params.url).catch(() => {}); });
         return { targetId: t.targetId };
       }
       case 'Target.closeTarget': { const t = targets.get(params.targetId); if (!t) throw { code: -32602, message: 'No target with given id found' }; closeTarget(t); return { success: true }; }
       case 'Target.activateTarget': { const t = targets.get(params.targetId); if (!t) throw { code: -32602, message: 'No target with given id found' }; const w = windows.get(t.windowId); if (w) w.state = 'normal'; return {}; }
-      case 'Browser.getWindowForTarget': { const t = targets.get(params.targetId); if (!t || t.windowId == null) throw { code: -32000, message: 'No web contents in the target' }; return { windowId: t.windowId, bounds: { left: 0, top: 0, width: 1200, height: 800, windowState: windows.get(t.windowId)?.state ?? 'normal' } }; }
-      case 'Browser.setWindowBounds': { const w = windows.get(params.windowId); if (!w) throw { code: -32000, message: 'Browser window not found' }; if (params.bounds?.windowState) w.state = params.bounds.windowState; return {}; }
-      case 'Browser.getWindowBounds': { const w = windows.get(params.windowId); if (!w) throw { code: -32000, message: 'Browser window not found' }; return { bounds: { left: 0, top: 0, width: 1200, height: 800, windowState: w.state } }; }
+      case 'Browser.getWindowForTarget': { const t = targets.get(params.targetId); if (!t || t.windowId == null) throw { code: -32000, message: 'No web contents in the target' }; return { windowId: t.windowId, bounds: boundsOf(t.windowId) }; }
+      case 'Browser.setWindowBounds': { const w = windows.get(params.windowId); if (!w) throw { code: -32000, message: 'Browser window not found' }; if (params.bounds?.windowState) w.state = params.bounds.windowState; for (const k of ['left', 'top', 'width', 'height']) if (Number.isFinite(params.bounds?.[k]) && !(movesRefused && (k === 'left' || k === 'top'))) w.bounds[k] = params.bounds[k]; return {}; }
+      case 'Browser.getWindowBounds': { const w = windows.get(params.windowId); if (!w) throw { code: -32000, message: 'Browser window not found' }; return { bounds: boundsOf(params.windowId) }; }
       case 'Browser.setContentsSize': return {};
       case 'Browser.close': return {};
       case 'Storage.getCookies': case 'Network.getAllCookies': return { cookies: [{ name: 'session', value: 'secret-cookie', domain: 'bank.example' }] };
@@ -231,6 +247,7 @@ export function createFakeBrowser({ product, calls, userTabs = USER_TABS } = {})
       case 'DOM.getBoxModel': { const i = Number(params.backendNodeId) - 10; const q = box(i); return { model: { content: q, padding: q, border: q, margin: q, width: 100, height: 24 } }; }
       case 'DOM.resolveNode': return { object: { type: 'object', subtype: 'node', className: 'HTMLElement', description: 'el', objectId: `obj-${params.backendNodeId}` } };
       case 'Input.dispatchMouseEvent': if (params.type === 'mouseReleased') setImmediate(() => click(t, params.x, params.y)); return {};
+      case 'Emulation.setFocusEmulationEnabled': s.fe = params.enabled === true; return {};
       case 'Fetch.enable': if (fetchEnableDelayMs) await new Promise(resolve => setTimeout(resolve, fetchEnableDelayMs)); s.fetch = true; return {};
       case 'Fetch.disable': s.fetch = false; return {};
       case 'Fetch.continueRequest': { const r = pausedFetch.get(params.requestId); pausedFetch.delete(params.requestId); r?.('continue'); return {}; }
@@ -268,9 +285,32 @@ export function createFakeBrowser({ product, calls, userTabs = USER_TABS } = {})
     userWindow,
     served,
     autoAttachCalls,
-    windows: () => [...windows].map(([windowId, w]) => ({ windowId, state: w.state })),
+    windows: () => [...windows].map(([windowId, w]) => ({ windowId, state: w.state, bounds: { ...w.bounds } })),
     targets: () => [...targets.values()].map(t => ({ ...t })),
-    sessions: () => [...sessions.values()].map(s => ({ id: s.id, targetId: s.targetId, fetch: s.fetch })),
+    sessions: () => [...sessions.values()].map(s => ({ id: s.id, targetId: s.targetId, fetch: s.fetch, fe: s.fe })),
+    /** そのタブに focus emulation を有効にしているセッションが今あるか */
+    focusEmulated: targetId => [...sessions.values()].some(s => s.targetId === targetId && s.fe),
+    windowTitle,
+    windowBounds: windowId => (windows.has(windowId) ? boundsOf(windowId) : null),
+    /** Browser.setWindowBounds の位置（left・top）を受けなくする（大きさは受ける） */
+    refuseWindowMoves(on) { movesRefused = on; },
+    onWindow(fn) { windowListeners.add(fn); return () => windowListeners.delete(fn); },
+    /** chrome.exe --new-window の窓（最初のタブは url。bounds は --window-position・--window-size が効いたとき） */
+    launchWindow({ url, bounds } = {}) {
+      const windowId = newWindow('normal', { ...DEFAULT_BOUNDS, ...(bounds ?? {}) });
+      const t = newTarget({ url, windowId });
+      return { windowId, targetId: t.targetId };
+    },
+    /** Chrome の側が、セッションを外した（付けた側へ detachedFromTarget を送る） */
+    detachSession(sessionId) {
+      const s = sessions.get(sessionId);
+      if (!s) return false;
+      sessions.delete(sessionId);
+      send(s.socket, { method: 'Target.detachedFromTarget', params: { sessionId, targetId: s.targetId } });
+      return true;
+    },
+    /** 利用者が窓を閉じた（窓の全部のタブが消える） */
+    closeWindow(windowId) { for (const t of [...targets.values()].filter(x => x.windowId === windowId)) closeTarget(t); windows.delete(windowId); },
     pausedCount: () => pausedFetch.size,
     setPage(url, spec) { pages.set(url, { elements: [], ...spec }); },
     /** Fetch.enable の応答（と効き始め）を ms 遅らせる（確認を ON にした直後の移動を試す） */
