@@ -5,6 +5,9 @@
   "server": {
     "startTimeout": "The server took too long to start.",
     "startFailed": "Could not start the server.\n{{detail}}",
+    "launchFailed": "Could not start the server process.\n{{detail}}",
+    "unresponsive": "Could not connect to the running server. Restart Pleiad in a moment.\n{{detail}}",
+    "linkRejected": "The running server (version {{version}}) cannot talk to this version of Pleiad. Wait for its work to finish or stop it, then restart Pleiad.",
     "exited": "The server stopped. Restart Pleiad. Your saved conversations are kept."
   },
   "boot": {

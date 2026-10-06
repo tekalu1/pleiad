@@ -40,7 +40,10 @@ core が web へ流すのは正規化イベントだけで、バックエンド�
 | `PLEIAD_CONTROL_URL` / `PLEIAD_CONTROL_TOKEN` | `pleiad` CLI のつなぎ先。Pleiad が会話のシェルへ渡し、その会話に束縛される（無ければ `AGENT_HOST_DATA` の `control.json`） |
 | `AGENT_HOST_GIT_SNAPSHOTS` | `off` でターンの始まりと終わりの git の撮影（`refs/pleiad/`。ADR 0085）を止める。テストが使う（`tests/lib/server.mjs`） |
 | `AGENT_HOST_WORKTREES` | `off` で worktree（ADR 0136）を作らない。テストが使う（`tests/lib/server.mjs`。このリポジトリが cwd のテストが `<リポジトリ>.pleiad` に残すのを防ぐ）。確かめるテストは一時のリポジトリで `on` を渡す |
-| `AGENT_HOST_HANDOVER` | 無停止の更新（ADR 0137）を使うか。既定は `off`（今の `utilityProcess`）。`on` で、サーバーが `utilityProcess` の代わりに main との名前付きパイプを作り（`core/main-link.mjs`）、main が版ごとの実行場所を組む（`desktop/runtime-boot.cjs`）。段階 1 の途中は、main はサーバーを今のまま `utilityProcess` で起こし、パイプにつなぐのは確かめるハーネス（`docs/dev-verification.md`）だけ |
+| `AGENT_HOST_HANDOVER` | 無停止の更新（ADR 0137）を使うか。既定は `off`（今の `utilityProcess`）。`on`（パッケージ版か `AGENT_HOST_RUNTIME_RESOURCES` つき）で、main は版ごとの実行場所（`desktop/runtime-boot.cjs`）の `pleiad-node.exe` でサーバーを main の子でない形（detached）に起こす・走っているサーバーに付け直す（`desktop/server-boot.cjs`）。サーバーは `utilityProcess` の代わりに main との名前付きパイプを作る（`core/main-link.mjs`）。main の Job が抜け道を許さない・実行場所を組めないときは `off` と同じ流れに落ちる |
+| `AGENT_HOST_SERVER_LOG` | main の子でない形のサーバー（stdio が無い）が標準出力・標準エラーを書くファイル（`core/server-log.mjs`。1 MB で `.old` へ回す。トークンは伏せる）。`on` の main が実行場所の `logs\server.log` を渡す。無ければ今のとおり標準出力 |
+| `AGENT_HOST_RUNTIME_ROOT` / `AGENT_HOST_RUNTIME_KEY` | サーバーが走っている版ごとの実行場所の置き場と版の名前。サーバーがその版の使用中の印（`core/runtime-use.mjs`）を付ける。`on` の main が渡す |
+| `AGENT_HOST_RUNTIME_RESOURCES` | 実行場所を組む元の `resources\`（既定は `process.resourcesPath`）。パッケージ版でない `electron .` のハーネスが、`npm run desktop:pack` の `dist-desktop\win-unpacked\resources` を指して `AGENT_HOST_HANDOVER=on` を試すためのもの |
 | `AGENT_HOST_RUNTIME_DIR` | 版ごとの実行場所の置き場（既定 `%LOCALAPPDATA%\agent-host-runtime`。`$INSTDIR` と同じ文字列で始まる場所は使えない。テスト・ハーネス用）。`PLEIAD_NODE_CACHE` は、ビルドが取る公式の Node のキャッシュ（既定 `~/.cache/pleiad/node-runtime`） |
 | `AGENT_HOST_WORKTREE_GRACE_MS` | worktree を作ってから、使われていないものとして自動で片付けるまでの猶予（既定 60 秒。ADR 0089）。テストが 0 にする |
 

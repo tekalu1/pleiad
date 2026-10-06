@@ -307,6 +307,11 @@ const SUITES = [
   './unit/desktop-port.mjs',
   // 版ごとの実行場所（無停止の更新 1-3）: 置き場が $INSTDIR と前方一致しない・ハードリンクで組む・二重に組まない・壊れた写しの検出・掃除・使っている版を消さない・起動口
   './unit/desktop-runtime.mjs',
+  // main がサーバーを見つける・起こす・付け直す（無停止の更新 1-4）: Job の分岐（desktop/job.cjs）・サーバーの env・ログ・孤児の見張り・別プロセスのサーバーを main を切っても残して付け直す
+  './unit/desktop-job.mjs',
+  './unit/desktop-server-boot.mjs',
+  // main.cjs の boot の選び方（vm）: AGENT_HOST_HANDOVER の既定は今の utilityProcess のまま・パイプの包み・起動の失敗・サーバーが居なくなったとき
+  './unit/desktop-boot.mjs',
   // 実行場所の材料（afterPack）: 公式の Node の取得と SHA-256 の照合・runtime.json・manifest.json
   './unit/pack-runtime.mjs',
   // デスクトップ版の端末（リモートの窓）: 窓ごとの信頼・preload の出し分け・バッジ。Electron は起こさない

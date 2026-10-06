@@ -98,6 +98,9 @@ export const DATA_WRITES = [
   { file: 'core/main-link.mjs', sites: 1, targets: [
     { name: 'main-link.json', limit: '固定', reason: 'main がパイプにつなぐための名前・秘密（権限 0600。起動ごとに書き直し、終了で消す）' },
   ] },
+  { file: 'core/server-log.mjs', sites: 1, targets: [
+    { name: '(置き場の外) 版ごとの実行場所（AGENT_HOST_SERVER_LOG）の logs/server.log と、1 世代前の server.log.old', limit: 'SERVER_LOG_MAX_BYTES=1MB を超えたら .old へ回す（2 つで約 2MB まで）', reason: 'main の子でない形で起こしたサーバー（stdio が無い）の標準出力・標準エラー。起動の失敗の理由を main が末尾から読む。追記だけで、回すときは名前を替えるだけ', appendOnly: true },
+  ] },
   { file: 'core/backend-shape-diagnostics.mjs', sites: 1, targets: [
     { name: 'backend-shape-errors.log', limit: 'MAX_BYTES=64KiB。超えたら新しい半分だけ残す。同じ組は重複させない', reason: '非公開形式の変化の記録' },
   ] },

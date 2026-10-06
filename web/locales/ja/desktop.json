@@ -5,6 +5,9 @@
   "server": {
     "startTimeout": "サーバーの起動が時間切れになりました",
     "startFailed": "サーバーを起動できませんでした\n{{detail}}",
+    "launchFailed": "サーバーのプロセスを起こせませんでした\n{{detail}}",
+    "unresponsive": "動いているサーバーにつなげませんでした。しばらくしてから Pleiad を起動し直してください。\n{{detail}}",
+    "linkRejected": "動いているサーバー（版 {{version}}）とは、この版の Pleiad では通信の形が合いません。そのサーバーの作業が終わるのを待つか、終了してから Pleiad を起動し直してください。",
     "exited": "サーバーが終了しました。Pleiad を起動し直してください。保存済みの会話は残っています。"
   },
   "boot": {
