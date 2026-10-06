@@ -277,6 +277,9 @@ export const EVENTS = new Set([
   // { requestId, outcome: allowed|denied|failed|superseded|restart } 設定の変更の承認（permission の settingChange）が決着した。カードを 1 行に畳む合図（ADR 0088）
   "settingApproval",
   "permission",   // 承認が要る { id, kind: tool|question, toolName, input, canAlways, questions?, browserSite?, computerApp? }。computerApp は ply_computer のアプリの承認 { agent: { id, label }, apps: [{ id, name, risk: normal|high }], reason?, first }（docs/computer-use.md）
+  // { id, allow, reason? } その承認が片付いた（permission の id ごとに 1 つ。祖先の会話への中継の複製も別の id で 1 つずつ）。
+  // 答えた画面を含む全部の接続へ流す。答えを送っている最中のカードは応答で畳むので、画面はそれ以外の写しをここで「別の場所で処理された」に畳む。reason はエージェントへ返した理由の印（aborted など）
+  "permissionSettled",
   // { state: idle|running|waiting, holder?: { sessionId, title }, since? } コンピューターの操作のロック。running はこの会話のターンが持っている（借りている）、waiting は別の会話が操作中で待っている。承認と同じく全部の接続へ流す
   "computer.state",
   "auth",         // { backend, phase: url|done|error, url?, message? }

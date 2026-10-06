@@ -1444,6 +1444,7 @@
       "allowedAlways": "常に許可した",
       "allowed": "許可した",
       "denied": "拒否した",
+      "elsewhere": "別の場所で処理されました",
       "sending": "{{action}}を送っています…",
       "sendFailedInline": "{{action}}を送れませんでした · {{error}}"
     },
