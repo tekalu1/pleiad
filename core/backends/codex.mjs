@@ -1179,40 +1179,45 @@ export const backend = {
   toolHints: TOOL_HINTS,
   subagentTools: SUBAGENT_ITEMS,
 
-  async compact({ sessionId, emit, cwd, hooksRuntime = null }) {
+  async compact({ sessionId, emit, cwd, hooksRuntime = null, contextRuntime = null }) {
     if (!validId(sessionId)) throw new Error(t('codex.errors.noThreadId', { method: 'thread/compact/start' }));
-    // 圧縮でも PreCompact / PostCompact の hooks が動く。通常のターンと同じく、Hooks を Pleiad がそろえる会話は登録と止める key を渡し、
-    // 違う config でロードされている（か分からない）スレッドは外してから読み直す（ADR 0049）
-    const hooks = hooksRuntime ? await codexHooksConfig(hooksRuntime, nativeRpc, cwd) : null;
-    const hooksKey = hooks?.key ?? '';
-    await unloadForHooks(nativeRpc, sessionId, hooksKey);
-    await nativeRpc.request('thread/resume', { threadId: sessionId, ...(hooks ? { config: { hooks: hooks.config } } : {}) });
-    loadedHooks.set(sessionId, hooksKey);
+    // 通常のターンと同じ設定のサーバーを使う。共有サーバーで開いたままにすると、次の専用サーバーが書き込みロックで再開できない。
+    const rpc = contextRuntime ? await codexContextRpc(contextRuntime, cwd, nativeRpc) : nativeRpc;
     let off, timer;
-    const completed = new Promise((resolve, reject) => {
-      timer = setTimeout(() => reject(new Error('Compaction timed out')), 300_000);
-      timer.unref?.();
-      off = nativeRpc.onNotify((method, params) => {
-        if (params?.threadId !== sessionId) return;
-        if (method === 'thread/tokenUsage/updated') {
-          const window = codexContextWindow(params.tokenUsage);
-          if (window) emit(window);
-          return;
-        }
-        if (method === 'hook/started' || method === 'hook/completed') { emit(codexHookRun(method, params, hooksRuntime)); return; }
-        const event = codexCompactionEvent(method, params);
-        if (event?.phase !== 'complete') return;
-        clearTimeout(timer);
-        emit({ ...event, trigger: 'manual' });
-        resolve();
-      });
-    });
-    completed.catch(() => {});
     try {
+      // 圧縮でも PreCompact / PostCompact の hooks が動く。通常のターンと同じく、Hooks を Pleiad がそろえる会話は登録と止める key を渡し、
+      // 違う config でロードされている（か分からない）スレッドは外してから読み直す（ADR 0049）
+      const hooks = hooksRuntime ? await codexHooksConfig(hooksRuntime, rpc, cwd) : null;
+      const hooksKey = hooks?.key ?? '';
+      await unloadForHooks(rpc, sessionId, hooksKey);
+      await rpc.request('thread/resume', { threadId: sessionId, ...(hooks ? { config: { hooks: hooks.config } } : {}) });
+      if (rpc === nativeRpc) loadedHooks.set(sessionId, hooksKey);
+      const completed = new Promise((resolve, reject) => {
+        timer = setTimeout(() => reject(new Error('Compaction timed out')), 300_000);
+        timer.unref?.();
+        off = rpc.onNotify((method, params) => {
+          if (params?.threadId !== sessionId) return;
+          if (method === 'thread/tokenUsage/updated') {
+            const window = codexContextWindow(params.tokenUsage);
+            if (window) emit(window);
+            return;
+          }
+          if (method === 'hook/started' || method === 'hook/completed') { emit(codexHookRun(method, params, hooksRuntime)); return; }
+          const event = codexCompactionEvent(method, params);
+          if (event?.phase !== 'complete') return;
+          clearTimeout(timer);
+          emit({ ...event, trigger: 'manual' });
+          resolve();
+        });
+      });
+      completed.catch(() => {});
       emit({ type: 'compaction', phase: 'start', trigger: 'manual' });
-      await nativeRpc.request('thread/compact/start', { threadId: sessionId });
+      await rpc.request('thread/compact/start', { threadId: sessionId });
       await completed;
-    } finally { clearTimeout(timer); off?.(); }
+    } finally {
+      clearTimeout(timer); off?.();
+      if (rpc !== nativeRpc) await rpc.stop();
+    }
   },
 
   // ---- サブエージェント（第 1 引数はネイティブの threadId。conversations.mjs が翻訳済み）--------
@@ -1806,7 +1811,9 @@ export const backend = {
       if (!contextRuntime && !ephemeral) endTurn(threadId);
       if (ephemeral && threadId) await rpc.request("thread/unsubscribe", { threadId }).catch(() => {});
       if (control) { control.handle = null; control.steer = null; control.steerConfirms = false; }
-      if (rpc !== nativeRpc) rpc.stop();
+      // ターン用の app-server は終わるまで待ってから返す。返った直後に共有の app-server が同じ履歴の DB を読むので
+      // （委譲の結果・画面の履歴）、止めたプロセスが DB を開いたままだとぶつかる（core/history-retry.mjs）
+      if (rpc !== nativeRpc) await rpc.stop();
     }
 
     return { sessionId: threadId };

@@ -27,8 +27,10 @@ export default async function (t) {
     t.ok('欲求: 何も無ければ全部 0', Object.values(calm).every((v) => v === 0), JSON.stringify(calm));
     const curious = computeDrives({ now, unread: { human: 3, bot: 0, toMe: 0 }, loops: [{ updatedAt: now }, { updatedAt: now }, { updatedAt: now }] });
     t.ok('好奇心: 新しい人の投稿と開いている気がかりで上がる', curious.curiosity > 0.7, JSON.stringify(curious));
+    const humanOnly = computeDrives({ now, unread: { human: 3, bot: 0, toMe: 0 } });
     const botOnly = computeDrives({ now, unread: { human: 0, bot: 3, toMe: 0 } });
-    t.ok('好奇心: 他の bot の投稿は人の投稿より軽い', botOnly.curiosity < curious.curiosity && botOnly.curiosity > 0);
+    t.ok('好奇心: 他の bot の投稿も人の投稿と同じ重みで数える（書き手の種類で分けない）', botOnly.curiosity === humanOnly.curiosity && botOnly.curiosity > 0
+      && computeDrives({ now, unread: { human: 1, bot: 2, toMe: 0 } }).curiosity === humanOnly.curiosity, JSON.stringify({ humanOnly, botOnly }));
     t.ok('不安: 期限が過ぎた気がかりは 1・2 時間以内は 0.8・1 日以内は 0.4・それより先は 0',
       computeDrives({ now, loops: [{ due: now - 1 }] }).anxiety === 1 && computeDrives({ now, loops: [{ due: now + HOUR }] }).anxiety === 0.8
       && computeDrives({ now, loops: [{ due: now + 10 * HOUR }] }).anxiety === 0.4 && computeDrives({ now, loops: [{ due: now + 48 * HOUR }] }).anxiety === 0);
@@ -52,9 +54,11 @@ export default async function (t) {
     t.ok('ふるい: 人の［今すぐ］は通すが、眠らせた bot と予算なしは越えない',
       gate({ ...quiet, force: true }).reason === 'forced' && gate({ ...quiet, force: true, paused: true }).pass === false && gate({ ...quiet, force: true, allowed: false }).pass === false);
     const human = [{ authorKind: 'human', toMe: false, text: 'こんにちは', threadId: 'p_1' }];
-    t.ok('ふるい: 自分宛てでない新しい人の投稿は通す。自分宛て・他の bot だけの投稿では通さない（自分宛てはふつうの道で賢いモデルが起きる）',
-      gate({ ...quiet, events: human }).reason === 'human' && gate({ ...quiet, events: [{ authorKind: 'human', toMe: true }] }).pass === false
-      && gate({ ...quiet, events: [{ authorKind: 'bot', toMe: false }] }).pass === false);
+    t.ok('ふるい: 自分宛てでない新しい投稿は、人でも他の bot でも通す（書き手の種類で分けない）',
+      gate({ ...quiet, events: human }).reason === 'human' && gate({ ...quiet, events: [{ authorKind: 'bot', toMe: false }] }).reason === 'human');
+    t.ok('ふるい: 自分宛ての投稿だけでは、人からでも他の bot からでも通さない（自分宛てはふつうの道で賢いモデルが起きる）。書き手の分からない出来事も通さない',
+      gate({ ...quiet, events: [{ authorKind: 'human', toMe: true }] }).pass === false && gate({ ...quiet, events: [{ authorKind: 'bot', toMe: true }] }).pass === false
+      && gate({ ...quiet, events: [{ authorKind: 'other', toMe: false }] }).pass === false);
     const loops = [{ id: 'l1', wakeOn: { thread: 'p_9' } }, { id: 'l2', wakeOn: { word: 'リリース' } }, { id: 'l3', wakeOn: { at: now - 1 } }];
     t.ok('ふるい: 気がかりの「起こしてほしい条件」（スレッド・語・時刻）に当たれば通す',
       gate({ ...quiet, loops, events: [{ authorKind: 'bot', threadId: 'p_9', text: 'x' }] }).loopId === 'l1'

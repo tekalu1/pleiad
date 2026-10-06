@@ -9,7 +9,7 @@ Claude・Codex の会話から、`ply_agents` MCP の `ply_delegate` で別の�
 
 | ツール | 引数 | 動作 |
 |---|---|---|
-| `ply_delegate` | `kind`, `task`, 任意の `title`, `backend`, `context`, `cwd`, `model`, `effort`, `isolate` | 子会話を作り、すぐ `taskId`・短い `title`・`routing`（どう選んだか）・worktree なら `worktree`（`{ id, branch, path, origin, baseBranch }`）を返す。`title` は一覧と子会話の見出しに使い、無ければ依頼の最初の空でない行。`model` / `effort` は `backend` を書いたときだけ。`isolate`（真偽）は下の「worktree」 |
+| `ply_delegate` | `kind`, `task`, 任意の `title`, `backend`, `context`, `cwd`, `model`, `effort`, `isolate`, `host`（下の「リモートのホストへ任せる」） | 子会話を作り、すぐ `taskId`・短い `title`・`routing`（どう選んだか）・worktree なら `worktree`（`{ id, branch, path, origin, baseBranch }`）を返す。`title` は一覧と子会話の見出しに使い、無ければ依頼の最初の空でない行。`model` / `effort` は `backend` を書いたときだけ。`isolate`（真偽）は下の「worktree」 |
 | `ply_task_status` | `taskId`, 任意の `offset` | 状態と結果。結果は16,000文字ずつ返し、`nextOffset` で続きへ進む。子で実行前に拒否されたコマンドは `rejections`（下の「実行前に拒否されたコマンド」） |
 | `ply_task_wait` | `taskId`, 任意の `seconds`（1〜30、既定30） | 上限まで待つ。承認待ちになったらすぐ戻る。未完了なら現在の状態を返す |
 | `ply_task_send` | `taskId`, 任意の `message`, `backend`, `model`, `effort` | `backend` / `model` / `effort` を書くと子の設定を替える（下の「子の設定を替える」。設定だけなら `message` を省ける）。`message` は同じ子会話に追加指示。子のターンが走っていて途中送信を受けられるなら、今のターンへ途中送信（`control.steer`）で渡す（下の「追加指示の配送」）。起動準備中は受信可能になり次第、現在のターンに送る。待機分は順序を保ってまとめる。途中送信を受けられない場合は次のターンに送る。完了後・停止後なら再開する（止まった直後に送った指示も捨てずに走らせる）。止めている途中（`cancelling`）は断る |
@@ -135,6 +135,18 @@ Claude・Codex の会話から、`ply_agents` MCP の `ply_delegate` で別の�
 
 **鍵と外部送信。** 判定器のキーは互換の接続先と同じ秘密の置き場（`compat-endpoint-secrets.json`。`delegation-routing:openrouter` / `delegation-routing:cerebras`）に置き、画面には `hasKey` だけ返す。キーの中身は確かめない（確かめると登録の時点で外へ送ることになる）。キーをログ・タスク・会話の記録・エラーに出さない。**外部送信の同意はキーの登録**: キーが無ければ外へは何も送らず、難しさは `mid`。送り先の URL は固定で、リダイレクトは追わない。
 
+## リモートのホストへ任せる（`host`）
+
+提案（画面のモックは承認済み、2026-10-06）、[ADR 0146](adr/0146-remote-agent-delegation.md)、issue #57。デスクトップ版の端末（ほかの PC の Pleiad をリモートで使う側）の会話の AI が、ペアリング済みのホストの Pleiad に仕事を任せる。道具は増やさず、`ply_delegate` に任意の `host` を足す。口とプロトコルは [docs/remote.md](remote.md) §4.5。
+
+- **使い方**: `ply_delegate { host: "<ホストの名前>", kind, task, … }`。省けば今どおり手元。`ply_task_status`・`ply_task_wait`・`ply_task_send`・`ply_task_cancel`・`ply_task_list` は同じ `ply-task-` の ID で、ホストのタスクにも効く（`ply_task_list` の行・`ply_task_status` の返り値に `host` が付く）。`backend` を書かなければホストが委譲先を選び（ホストの設定 › 委譲の自動の振り分け）、`routing.decidedBy` は `host`。自動の振り分けはホストを選ばない（AI が `host` を書いたときだけ）。`ply_usage` は手元の使用枠だけ。
+- **使えるホスト**: 端末側（「ほかのホストにつなぐ」窓の「この PC の AI から任せる」）とホスト側（設定 › リモートの端末の「この端末の AI からの依頼を受ける」）の**両方がオン**で、ホストが動いているものだけ。どちらも既定オフで、人だけが変えられる。`ply_delegate` の説明には、使えるホストの名前（とオフラインの印）が会話ごとに入る。使えないホスト・オフラインのホストは、待たずに理由つきで失敗する。
+- **作業場所**: `cwd` はホストのパス（省けばホストのホーム）、`isolate` はホストの worktree の規則。端末の `cwd` は使わない。初版は絞らない。
+- **承認モード**: 子の承認モードは依頼元（端末の会話）に合わせる。端末は依頼元の会話の承認モードの位置（範囲・自律・強制できるか）を送り、ホストは手元の委譲と同じ `resolveDelegatedMode` で親の強さまでを継ぐ。ホスト側の上限は持たない（依頼元が確認なしなら、ホストの子も確認なしで動く）。引き上げが要るとき（`escalation`）は、ホストが子を作る前に計画を返し、端末が依頼元の会話で 1 回だけ確かめる（`permission.delegateEscalation`。見出しに ⇄ ホスト名）。許可されたら同じ鍵で確定する。Codex の親は手元と同じく、`full` / `yolo` 以外では端末で確かめる。`ply_delegate` の呼び出し自体は依頼元の会話の通常のツールの承認に従う。
+- **端末の側のタスク**: 端末の `agent_tasks` に、ホストのタスクを写した行（`host`・ホストのタスク ID）を持つ。ホストの便り（状態・完了）で更新し、完了したら手元と同じ完了通知（依頼元の会話へ。「完了通知」）を出す。つながっていない間は最後に知っている状態を出し、つながり直したら `sync` で追いつく。再起動しても行は残り、実行中のものも `interrupted` にしない（ホストで続いているため）。端末の `ply_task_cancel` はホストのタスクを止める（オフラインなら止められないので失敗する）。
+- **ホストの側**: 任された子の会話には、出どころの印（`delegation.remote = { deviceId, deviceName, sessionTitle }`。画面は「⇄ <端末> の AI から」）が付き、タスクの親は仮の ID `remote:<deviceId>:<端末の会話の ID>`。完了通知は端末へ便りで届ける（ホストの会話に新しいターンは始めない）。**任された会話（とその子孫）からは、さらに `host` を指定できない**。端末の AI から始まった鎖には、委譲の深さの上限（4）を効かせる。端末ごとの上限は、動いているタスクが 8 件（任された子の子孫も数える）・`delegate` と `send` が 1 分に 20 件。取り消し・「すべて止める」は、任された子の子孫まで止める。記録は `by: agent`・`via: remote`・`deviceId`（子の会話に `delegate`・`send`・`cancel` と、人の答えが残る）。
+- **端末を取り消す・許可を切る**: 任された動いている作業を止める（止めた旨は端末が次につながったときに知る）。端末側が許可を切った場合、ホストのタスクは続き、端末は新しい依頼も追跡もしない。
+
 ## 会話・権限・作業場所
 
 子は新しい Pleiad 管理会話。親の会話全文や非公開の思考はコピーせず、`task` と明示された `context` を渡す。
@@ -188,12 +200,15 @@ Pleiad タスクには件数・深さの上限を置かない。同時に活動�
 `waiting` は「いま承認を待っているか」から導く見せかけの状態で、保存する状態（`queued` / `running` …）は変えない。
 `ACTIVE` の集合と、再起動時に実行中を `interrupted` にする扱いを壊さないため。
 
+**祖先が端末の会話のとき**（リモートのホストに任せた子。[ADR 0146](adr/0146-remote-agent-delegation.md)）: ホストは子（と子孫）の承認を、依頼元の端末へ `relay`（承認の ID・受領証・見出し・入力）として流し、端末のローカルのサーバーが依頼元の会話の中継のカードとして出す（見出し「委譲先「…」」の後に ⇄ ホスト名。「常に許可」は出さない）。ホストの画面にも子の会話のカードが出て、先に答えた方で決着する。端末で答えると「許可を送っています…」のあと 1 行に畳み、ホストで先に答えられたら「<ホスト> で許可した <時刻>」に畳む。ホストがオフラインの間は、ボタンを止めて「<ホスト> がオフラインのため、答えを送れません。つながり直すと送れます。」を出す（ホストの側ではカードが待ち続ける）。質問のカード（AskUserQuestion）も同じ道で中継し、選んだ項目を送る。設定の変更の承認はホストの画面でしか答えられないので、端末のカードは「ホストの画面で答えてください」の知らせ（答えるボタンは無い）にし、`ply_task_status` の戻りにも `hostOnlyApproval` で書く。答えは端末の画面（人）の `resolvePermission` からだけ運ぶ（remote.md §4.5）。オフライン中に止めたタスク（`ply_task_cancel`・会話の中断）は「止める予定」として残り、つながり直したら送る。`ply_task_status` / `ply_task_wait` の `waiting` は、写した行に今待っている中継の承認があるかから導く。
+
 ## 無音と長いコマンドの通知
 
 実行中の子の最後の動き（バックエンドのイベント、ツールの開始・結果、本文差分、承認待ちの開始・再開）を `lastActivityAt` に持つ。Antigravity は履歴に残さない `step_update`、Claude は SDK の `tool_progress`、Codex は `item/commandExecution/outputDelta` も数える。これらの活動だけで画面の表示を増やさない。`ply_task_status` / `ply_task_list` はこの時刻と `silenceMinutes`（実行中の無音分数。承認待ちは `null`）を返す。
-既定で 5 分、子から動きが無ければ、親が受け取れるときに専用の無音通知で親のターンを 1 回始める。`AGENT_HOST_TASK_SILENCE_MINUTES` で分数を変えられ、`0` で無効。子は止めない。同じ無音期間には重ねて通知せず、動きが戻った後に再び無音になれば知らせ直す。人間の承認待ちは数えず、再開時から数え直す。親が忙しい間は通知を保留し、送ったか不明な失敗では自動再送しない（[ADR 0048](adr/0048-delegation-silence-notice.md)）。
+既定で 5 分、子から動きが無ければ、親が受け取れるときに専用の無音通知で親のターンを 1 回始める。`AGENT_HOST_TASK_SILENCE_MINUTES` で分数を変えられ、`0` で無効。子は止めない。同じ無音期間には重ねて通知せず、人間の承認待ちは数えず、再開時から数え直す。親が忙しい間は通知を保留し、送ったか不明な失敗では自動再送しない（[ADR 0048](adr/0048-delegation-silence-notice.md)）。
+待つためのコマンド（`until` / `while` のループ・`sleep`・`gh run watch` など。`isWaitingCommand`）が走っている間は、黙っていても知らせない。知らせるのは同じ子の同じ状態（走っているコマンドの組）で 1 回だけで、動きが戻って再び黙っても繰り返さない（別のコマンド・別の状態になれば知らせる。[ADR 0138](adr/0138-quiet-wait-notices.md)）。
 
-コマンドの時間は無音とは別に数える。`AGENT_HOST_TASK_COMMAND_MINUTES`（既定 5 分、`0` で無効）に達すると、そのコマンドについて一度だけ親へ通知する。コマンド出力・思考・別のツールの活動では時計を延ばさず、人間の承認待ちだけを差し引く。親が忙しい間は保留し、未受領（`requeue`）だけ再送する。受領が不明な失敗は再送しない。通知はコマンド固有の ID を持ち、無音通知や完了通知とは区別する。
+コマンドの時間は無音とは別に数える。`AGENT_HOST_TASK_COMMAND_MINUTES`（既定 5 分、`0` で無効）に達すると、そのコマンドについて一度だけ親へ通知する。時計は人間の承認待ちだけを差し引く（出力・思考・別のツールの活動では延ばさない）。ただし、待つためのコマンド、実際の出力が伸びている間（最後の出力から 1 分以内。Codex のコマンド出力・Antigravity のステップだけが出力として数え、Claude の `tool_progress` の心拍は数えない）、子が別の作業で動いている間の裏のコマンドは知らせない。同じ子の同じコマンドは、やり直しても 2 回目を知らせない（[ADR 0138](adr/0138-quiet-wait-notices.md)）。親が忙しい間は保留し、未受領（`requeue`）だけ再送する。受領が不明な失敗は再送しない。通知はコマンド固有の ID を持ち、無音通知や完了通知とは区別する。
 
 `ply_task_status` / `ply_task_list` の `activeCommands` は、コマンドごとに `toolCallId`、`command`、`cwd`、`observedAt`、`startedAt`、`startKnown`、`elapsedMinutes`、`state`、分かれば `turnId`・`nativeTaskId`・`processId` を返す。本文と cwd は既存の秘密値の伏せ方を使い、本文は台帳で 2000 字、通知で 200 字に切る。既知の形式以外の秘密は伏せきれない。開始時刻がないものは最初の観測から数え、開始を推定して埋めない。`processId` はバックエンドの識別子であり OS の PID とは限らない。`stopSupported` はこの台帳が個別停止を提供するかを表し、現在は false。
 
@@ -291,6 +306,17 @@ OS の完了通知は依頼元の会話に出す。依頼元のターン後も�
 理由: 2026-09-27、Claude の子が報告を書いた後に、ナレッジの棚卸しを促す Stop フックで ToolSearch と load_skill を呼んで「ナレッジ化対象なし」と書いて終わり、その一言が依頼元への結果になって報告が届かなかった。フックの出力は isMeta の user として transcript にだけ残り、会話の記録からは続きだと分からない。本文で見分けると、フックの文面や子の言い回しが変わるたびに外れる。続きで直して報告し直した（フックが不備を指摘する型）なら、そちらが本当の結果なので選ぶ。
 子の会話そのもの（画面）には続きの返答も残る。
 
+### 履歴が一時的に読めないとき
+
+子のターンの後には、履歴を 2 回読む。ターンの後の取り込み（`core/conversations.mjs` の `runOnce`。ネイティブの履歴を会話の記録へ入れる）と、結果の読み出し（`core/server.mjs` の `execute` の `lastReply`）。
+どちらも、一時的な SQLite のエラー（I/O エラー・ロック中。`core/history-retry.mjs` の `transientStorageError`）なら 0.5・1・2 秒の間を空けて 3 回まで読み直す。それ以外のエラーはこれまでどおり投げる。
+
+- 取り込みが読み直しても読めなければ、この回の取り込みは見送り、ターンは失敗にしない（次に会話を読むときに `getMessages` が取り込む）。
+- 結果の読み出しが読み直しても読めなければ、タスクは失敗にせず `completed` にする。結果は実行中に流れてきた最後の返答（`text.delta` を `text.end` で区切った最後の分）で、`error` に注意書き（`agent:delegation.historyUnreadable`。元のエラーを含む）を載せる。完了通知にも載る。
+- Codex のターン用の app-server（Pleiad が担当する会話。ターンごとに起こす）は、止めたプロセスが終わるまで待ってからターンを返す（`CodexRpc.stop()` の返り。上限 3 秒）。返った直後に共有の app-server が同じ履歴の DB を読むため。
+
+理由: 2026-09-27〜10-05 に、作業と報告を終えた Codex の子が 5 件、取り込みの `codex -32603: … (code: 1546) disk I/O error`（SQLITE_IOERR_TRUNCATE）で `failed` になった。履歴の DB は壊れておらず、少し後に読み直すと読める。止めたばかりのターン用の app-server（またはウイルス対策ソフト）と、WAL の切り詰めがぶつかったとみられる（openai/codex #49605 も Windows で同じ形）。
+
 ## 子に残った裏の作業
 
 子の結果は、子のターンが終わり、子が待つ裏の作業と子が作った Pleiad タスクが片付いてから確定する（`execute`）。**main がまだ結果を待っているコマンドは、5 分で知らせるだけで自動停止しない。完了報告後の裏の作業は、10 分待って片付ける。** この片付けは委譲の子だけに適用し、ユーザーの会話では行わない（[ADR 0048](adr/0048-delegation-silence-notice.md)）。
@@ -372,12 +398,14 @@ Windows では、別のプロセス（ウイルス対策・PowerShell の `Get-C
 
 ## 検証
 
+端末の AI からの委譲（`host`）は `tests/unit/remote-agent.mjs`（ホストの `/agent` の口）と `tests/unit/remote-agent-e2e.mjs`（端末のローカルのサーバー → main の橋 → 中継 → ホスト）で確かめる（remote.md §10）。
 `npm test` でタスクの管理と SDK MCP クライアント接続、fake を使ったサーバー全体の委譲・継続・停止と、承認の中継・`waiting` を検証する。
 完了通知は `tests/unit/agent-tasks-notice.mjs`（受け取り済み `read` は送らない・`ply_task_wait` の間は途中送信しない・同じ親の分を 1 回の配送にまとめる・`steerable` の途中送信で `sent`・受理されない/不明/捨てられた場合の状態・`canSteerNotice` の条件）と `tests/unit/server-delegation-notice.mjs`（fake の `bg` 台本で、依頼元のターンの中へ届く・人間の発言にしない・`ply_task_wait` の後は届かない・途中送信を止めている間に溜まった 2 件が 1 通・`steerConfirms` の合図と受理されない場合）。
 追加指示の途中送信は `tests/unit/agent-tasks-steer.mjs`（受理・合図待ち・合図が先に来る・捨てられた・合図なしでターンが終わった・受理されない・結果不明・渡せない・順序・合図待ちの間の次の指示・止めた後・再起動。管理側だけを身代わりで）と `tests/unit/server-delegation-steer.mjs`（fake の `bg` 台本で、同じターンに入り新しいターンを走らせない・`DECLINE_STEER`/`THROW_STEER`/次ターンの設定の予約で待機か未配送・`steerConfirms` の送信中と `DROP_STEER`/`SILENT_STEER` が次のターンで 1 回だけ）。
 保存障害は `tests/unit/agent-tasks-storage.mjs`（rename に EPERM を差し込む。回復・閉じない・障害中の読み取りと断り・requeue を書かない・再起動後の送り直し）。
 実行前の拒否は `tests/unit/codex-rejections.mjs`（rollout の解析・読む範囲・伏せ方）と `tests/unit/server-codex-rejections.mjs`（身代わりの Codex が rollout に拒否を書き、会話・`ply_task_status`・完了通知・`ply_task_send` の次の回まで）。
 子に残った裏の作業と子の結果は `tests/unit/server-delegation-background.mjs`（fake の台本 `bg-shell` / `active-shell` / `bg` / `term` / `hook-follow` で、報告後のコマンドを上限まで待って止める・台帳を閉じて完了通知に載せる・結果に止める前の報告を残す・返答前とユーザーの会話では止めない・サブエージェントは止めない・端末は子でも親でも待たない・Stop フックの続きの一言を結果にしない）と `tests/unit/delegation-result.mjs`（2026-09-27 の transcript と同じ行の形で、続きの印・中身の仕事をした続き・区切り・結果の選び方）と `tests/unit/claude-turn-end.mjs`（SDK の身代わりで、Stop フックの続きではターンが終わり、裏へ回ったまま終わらないコマンドがあると終わらず、`stopTask` で終わる）。
+履歴が一時的に読めないときは `tests/unit/history-retry.mjs`（見分け・0.5・1・2 秒の読み直し・一時的でないエラーはすぐ投げる・`CodexRpc.stop()` がプロセスの終わりを待つ）と `tests/unit/server-delegation-history-retry.mjs`（fake の台本 `history-ioerr <回数>` で、読み直して読める・取り込みを見送っても結果は読める・読めないままなら流れた返答で注意書き付きの `completed`）。
 振り分けは `tests/unit/delegation-routing.mjs`（規則・段・使用量・アカウント。判定器は偽の fetch）と `tests/unit/server-delegation-routing.mjs`（偽の Jev と偽の agy でサーバー全体。別の候補でやり直す・承認モードの確かめ・動いている元のタスク・完了通知の一行も）、画面の文と並びは `tests/unit/delegation-routing-view.mjs`。テストのサーバーは使用量を定期的に取らず（`AGENT_HOST_ROUTING_USAGE=off`）、判定器の送り先を手元に向ける（`AGENT_HOST_OPENROUTER_API` / `AGENT_HOST_CEREBRAS_API`。本物へは送らない）。
 子の設定を替えるのは `tests/unit/server-delegation-settings.mjs`（fake・身代わりの Codex と agy で、走っている子のモデル・思考の強さ、message なしと一緒、無いモデル・選べない思考の強さ、走っていない子のエージェントの切り替えと引き継ぎ、親より緩くなる切り替えの承認、他人のタスク、変更の記録）。
 `npm run test:e2e -- agent-delegation` は実サービスを呼び、Claude → Codex、Codex → Claude と結果通知による再開を確認する。

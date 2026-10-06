@@ -106,6 +106,11 @@
 /* ---- 帯: 作業中の［止める］とこのスレッドで使ったトークン。作業していないときは静かな一行 */
 .th-band{display:flex;align-items:center;gap:8px;flex:none;margin:0 16px 6px;padding:6px 6px 6px 14px;border-radius:var(--r-pill);background:var(--surface-1);font-size:var(--fs-s);color:var(--ink-weak)}
 .th-band[hidden]{display:none}
+/* サブエージェントの入口: 入力欄のすぐ上の右端（Chats の入力欄の上の帯と同じチップ。style.css の .work-entry・.strip-chip）。子がいなければ出さない */
+.th-subs{justify-content:flex-end;margin:0 16px 2px}
+.th-subs[hidden]{display:none}
+/* 一覧（#workDialog）の bot ごとの見出し: アイコンと名前 */
+.bg-bot{display:flex;align-items:center;gap:6px}
 .th-band.quiet{padding:0 14px;background:transparent;font-size:var(--fs-xs)}
 .th-band-text{flex:1;min-width:0;display:flex;align-items:center;gap:6px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
 .th-band-live{display:inline-flex;align-items:center;gap:6px;flex:none;color:var(--ink);font-weight:600}
@@ -116,6 +121,38 @@
 .th-stop{flex:none;display:inline-flex;align-items:center;gap:6px;padding:4px 12px 4px 8px}
 .th-stop svg.i{width:14px;height:14px}
 .th-jump{bottom:calc(var(--ch-composer-h,96px) + 56px)}
+
+/* ---- 予算のメーター（web/channels/thread-budget.mjs）。Chats の文脈のメーター（compaction.css の .context-meter / .context-meter-bar）をそのまま使う。
+   帯の面（--surface-1）の上に同じ色の面を重ねないよう、ふだんは透明にして、押せる範囲（::before）で広げる。80% 以上は字と棒を強い字の色にする（太字にしない） */
+.th-meter-wrap{flex:none}
+.th-band .context-meter{background:transparent;height:26px;padding:0 8px;font-size:inherit}
+.th-band .context-meter:hover{background:var(--surface-2)}
+.th-band .context-meter[aria-expanded=true]{background:var(--surface-3)}
+.th-band .context-meter[aria-expanded=true] .context-meter-bar{background:var(--surface-2)}
+.th-band .context-meter.high{color:var(--ink-strong)}
+.th-band .context-meter.high .context-meter-bar > span{background:currentColor}
+.th-band.quiet .context-meter{height:22px}
+.pop.th-budget-pop{top:auto;left:auto;right:0;bottom:calc(100% + 6px);z-index:60;width:min(340px,calc(100vw - 20px));max-height:min(60vh,460px);overflow-y:auto;padding:12px 14px;font-size:var(--fs-s);color:var(--ink);white-space:normal}
+.th-budget-pop[hidden]{display:none}
+.th-bp-head{display:flex;align-items:baseline;margin-bottom:6px}
+.th-bp-head b{font-size:var(--fs)}
+.th-bp-row{display:flex;justify-content:space-between;gap:12px;align-items:baseline}
+.th-bp-row .k{color:var(--ink-weak)}
+.th-bp-row .v{font-variant-numeric:tabular-nums}
+.th-bp-row.high .v{color:var(--ink-strong)}
+.th-bp-bar{height:6px;margin:6px 0 4px;background:var(--surface-3);border-radius:var(--r-pill);overflow:hidden}
+.th-bp-bar i{display:block;height:100%;background:var(--fill-primary);color:var(--on-fill);border-radius:var(--r-pill)}
+.th-bp-row.high + .th-bp-bar i{color:var(--ink-strong);background:currentColor}
+.th-bp-sub{margin:0 0 8px;font-size:var(--fs-xs);color:var(--ink-weak)}
+.th-bp-sec{margin:12px 0 4px;font-size:var(--fs-xs);color:var(--ink-weak);letter-spacing:.06em}
+.th-bp-bots{display:flex;flex-direction:column;gap:8px}
+.th-bp-bothead{display:flex;align-items:center;gap:6px;min-width:0}
+.th-bp-bothead b{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.th-bp-bothead .rest{margin-left:auto;font-size:var(--fs-xs);color:var(--ink-weak)}
+.th-bp-icon{display:inline-grid;place-items:center;flex:none;width:16px;height:16px;border-radius:50%;overflow:hidden}
+.th-bp-line{margin-top:2px;font-variant-numeric:tabular-nums}
+.th-bp-line.weak{font-size:var(--fs-xs);color:var(--ink-weak)}
+.th-bp-note{margin:10px 0 0;font-size:var(--fs-xs);line-height:1.6;color:var(--ink-weak)}
 
 /* ---- 目次（右パネルの本文） */
 .th-toc{display:flex;flex-direction:column;gap:8px;min-height:0;height:100%}
@@ -139,6 +176,7 @@
   .th-sys{margin-left:44px}
   .th-perms{--gut:44px}
   .th-band{margin:0 10px 6px}
+  .th-subs{margin:0 10px 2px}
   .th-band-tokens{position:relative;flex:none}
   .th-tok-aux{position:absolute;width:1px;height:1px;margin:-1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}   /* 数字だけ見せる。語は読み上げに残す */
   .deck[data-deck=solo] .th-side{display:inline-flex;margin-left:-6px}

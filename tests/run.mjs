@@ -166,6 +166,9 @@ const SUITES = [
   './unit/server-delegation-settings.mjs',
   // 委譲の結果に選ぶ返答: Stop フックの続き（調べものだけ）は飛ばす・中身の仕事をした続きは選ぶ（Claude の transcript の印）
   './unit/delegation-result.mjs',
+  // 委譲の子の履歴が一時的に読めない（Codex の 1546 disk I/O error）: 0.5・1・2 秒で読み直す・読めなければ流れた返答で注意書き付きの完了・ターン用の app-server の終わりを待つ
+  './unit/history-retry.mjs',
+  './unit/server-delegation-history-retry.mjs',
   // 委譲先の自動振り分け: 規則・段・使用量で飛ばす・Claude のアカウント・判定器（偽の fetch）・使用量の取り置き
   './unit/delegation-routing.mjs',
   // 同じくサーバー全体: kind の検査・自動で選んで子を作る・記録・設定とキーの口（偽の判定器と偽の agy）
@@ -203,6 +206,7 @@ const SUITES = [
   // データ置き場を共有する 2 つのプロセス。本物の子プロセスを 2 本起動する
   './unit/mcp-oauth-processes.mjs',
   './unit/desktop-updates.mjs',
+  './unit/desktop-store.mjs',
   './unit/desktop-exit-dialog.mjs',
   './unit/message-queue.mjs',
   // 送り終わった outbox は刈らない: 古い項目でも returned・undelivered・同じ ID の再試行が見つかる（ADR 0115）
@@ -278,11 +282,17 @@ const SUITES = [
   // Claude の巻き戻し（resumeSessionAt・resumeDropsTurn を resume に添える。拒否は呼び出し側へ）: SDK の query を身代わりに
   './unit/claude-rewind.mjs',
   './unit/md-doc.mjs',
+  // 貼り付けの HTML → 入力欄の形（ADR 0141）: 書式・リスト・引用・コード・リンク・表・画像の振り分け・構造の無い HTML は対象外・往復
+  './unit/html-paste.mjs',
   './unit/prompt-title.mjs',
   // 添付の件数に上限が無い（下書き・送信）。出どころの印。1 件 8MB の上限は残る
   './unit/attach-no-limit.mjs',
   // 添付を断片で送る（1 件 100MB まで）: 境目・抜け・やめる・切れても続きから・大きな画像は会話にパスだけ
   './unit/attach-chunked.mjs',
+  // 貼り付けた HTML の画像をホストが取りに行く口（ADR 0141）: https・公開アドレスのみ・リダイレクトの検査・大きさ・SVG と画像でない中身・やめる・置き場
+  './unit/image-import.mjs',
+  // 貼った画像の取り込みの画面側の段取り: 同時 3 枚・順番待ちのやめる・やめたあとの結果は捨てる・取れなければ静かに外す・読み上げ
+  './unit/paste-images.mjs',
   // 入力欄と上端の見直し: 字の欄の上限・チップの字・添付の出どころ・パンくず・規則
   './unit/composer-layout.mjs',
   './unit/unread.mjs',
@@ -415,6 +425,8 @@ const SUITES = [
   // 同じ会話で巻き戻して送り直す（sendMessage の rewind。ADR 0102）: バックエンドの形ごと（Claude・拒否・Codex・巻き戻せない）× 実行中・送信待ち・検査。契約は身代わりのネイティブで
   './unit/server-rewind.mjs',
   './unit/server-ux.mjs',
+  // 送った会話の削除（sessions.delete。ADR 0147）: 片付けるデータ・ネイティブの会話は残す・断る条件・承認カード・委譲の親子
+  './unit/server-session-delete.mjs',
   // 変更の記録: sessionChanges の返す形と、statusByAi（AI が状態を変えたときだけ印。人が変えたら null）
   './unit/server-session-changes.mjs',
   // 最近の場所の候補: Pleiadで使った実在フォルダーのみ・委譲やネイティブ一覧や消えた場所を除外
@@ -430,6 +442,7 @@ const SUITES = [
   // codex バックエンド。app-server の身代わり（tests/lib/fake-codex.mjs）と話すだけで、
   // 本物の codex もネットワークも要らない
   './unit/server-codex.mjs',
+  './unit/server-codex-compaction.mjs',
   // 互換の接続先の配線。codex の身代わりと偽の互換 API だけと話す
   './unit/server-compat-endpoints.mjs',
   // 同じことを本物の Claude Code・Codex の CLI で（送り先は偽の互換 API。入っていなければとばす）
@@ -455,6 +468,14 @@ const SUITES = [
   './unit/relay.mjs',
   // リモートのホスト側（core/remote/connector.mjs）。中継をこのプロセスで、fake のサーバーを別プロセスで立て、試験用の端末で往復する
   './unit/remote-host.mjs',
+  // 端末の AI からの委譲の口 /agent（ホスト側。core/remote/agent-port.mjs）: 許可・防火壁・委譲と状態・承認モードの継承と引き上げ・上限・承認の中継と人の答え・取り消し
+  './unit/remote-agent.mjs',
+  // 端末の AI からホストへ任せる往復（端末のローカルのサーバー → main の橋の身代わり → 中継 → ホスト）: 委譲・完了通知・承認の中継と答え・オフライン・追いつき・取り消し
+  './unit/remote-agent-e2e.mjs',
+  // ホストに任せたタスクの写し（agent-tasks の host の行）の台帳の規則: adopt の検査・mirror・止める予定・並列の中断・追えなくなった行の復帰・子孫
+  './unit/agent-tasks-remote.mjs',
+  // 端末の AI の口へのレビュー後の守り: 同時数の予約・作りかけの依頼の打ち切り・口の数・質問と「ホストの画面で答える」承認の中継・子孫まで止める
+  './unit/remote-agent-hardening.mjs',
   // 設定 › リモートの部品と常駐（トレイ・スリープ。Electron は差し替える）、setRemoteResident
   './unit/remote-settings.mjs',
   // リモートの端末側（core/remote/device*.mjs）。中継とホストを立て、端末内プロキシの URL を素の HTTP と ws で叩く
@@ -498,13 +519,21 @@ const SUITES = [
   // --- dispatch (S4) ---
   // bot を起こす・配る: @ で起こす・返事の @ で連鎖・［止める］・途中送信とたまった出来事・DM・暗黙では起こさない・末尾（記憶の核の写し）・再起動の戻し・inbox.json
   './unit/bot-dispatch.mjs',
+  // bot の投稿へのリアクション（問いへの答えは人・bot・AI のどれでも起こす・bot と AI は予算の内・ほかは次に渡す）と、黙って終えたターン（印・括弧だけの一言は投稿しない。ADR 0109・0119 の追記）
+  './unit/bot-reactions-silence.mjs',
+  // @ の無い投稿の宛先と、聞こえた投稿の手がかり（引用した bot が宛先・無ければ最後に話した bot。宛先の名前を包みの to に付ける。ADR 0128 の追記）
+  './unit/bot-heard-addressee.mjs',
   './unit/bot-budget.mjs',
+  './unit/thread-budget-ui.mjs',
   // bot の頭の中（ADR 0126）: 欲求・ふるい・返事の読み取り・思考の流れの束・独り言の写り・思考の流れと気がかりの保存
   './unit/brain-core.mjs',
   // 心拍（ふるい → 安いモデル → 引き継ぎ・予算・失敗・止める・下限）と、予算の心拍の分
   './unit/brain-pulse.mjs',
   // サーバー越し: 心拍を入れた bot（呼ばれたターンの末尾・引き継ぎ・結果の行・予算・漏れ・隠れた会話の書き込みの拒否）
   './unit/brain-server.mjs',
+  // bot の予約（ADR 0140）: 時刻に 1 回起こす・止まっていた間に重なった予約は 1 回・再起動で残る・予算なし／休憩中は待つ・止めたスレッドは起こさない・取り消し
+  './unit/brain-wakes.mjs',
+  './unit/brain-wakes-server.mjs',
   // bot の会話は Chats の一覧に出さず、あなた待ちのときだけ出す（一覧の行の bot・承認待ち・検索の除外・スマホ通知）
   './unit/bot-sessions-list.mjs',
   // --- channels-ui: 脇・流れ・スレッド・bot のページ (W1・W2・W3・W4) ---
@@ -539,6 +568,8 @@ const SUITES = [
   './unit/runner-contract.mjs',
   // リリースで使う同一 commit の main CI の照合と公開前の検証条件
   './unit/release-ci-gate.mjs',
+  // Google Play へ上げるワークフロー: APK の流れと同じ版・同じ鍵、入力と Secrets の確かめ（docs/android-releases.md「Google Play」）
+  './unit/android-play-workflow.mjs',
 ];
 
 const code = await main({

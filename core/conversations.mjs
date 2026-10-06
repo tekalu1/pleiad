@@ -10,10 +10,11 @@ import { buildItems } from "../web/timeline.mjs";
 import { t, agentT } from "./i18n.mjs";
 import { writeAtomic } from "./atomic-file.mjs";
 import { openData } from "./data-schema.mjs";
-import { conversationTable } from "./db.mjs";
+import { conversationTable, deletedNativeTable } from "./db.mjs";
 import { classifySystemMessages, BOT_RECENT_TAG } from "./system-messages.mjs";
 import { promptTitle } from "./prompt-title.mjs";
 import { WORK_NOTES_VERSION } from "./brain/inner.mjs";
+import { readWithRetry, transientStorageError } from "./history-retry.mjs";
 
 // 会話の索引（本文を除いたメタ情報）は SQLite の conversations（1 会話 1 行。core/db.mjs、ADR 0115）、本文は
 // conversations/<id>.json（会話ごとに 1 ファイル）。索引は変えた会話の行だけを書く。本文はまだ変更のたびに 1 会話分を丸ごと書く
@@ -25,7 +26,14 @@ let table = null;
 let handle = null;
 let writes = Promise.resolve();
 const indexSaved = new Map();   // 索引に最後に書けた JSON（id -> 文字列）。変わった会話だけを書くための比べ元
+// 消した会話（deleteConversation）が持っていたネイティブの id。backend -> Set<nativeId>。一覧から隠す（ADR 0147）
+const deletedNatives = new Map();
+let deletedTable = null;
+const isDeletedNative = (backend, nativeId) => Boolean(deletedNatives.get(backend)?.has(nativeId));
 const indexOf = ({ messages, presents, _dirty, ...meta }) => JSON.stringify(meta);
+
+/** 引き継ぎの文（HISTORY）が指す、履歴の写しのファイル（会話ごとに 1 つ。次の引き継ぎで書き直す） */
+const handoffPath = id => path.join(store.dataDir, `handoff-${crypto.createHash("sha256").update(id).digest("hex")}.json`);
 
 function sessionFilePath(id) {
   const safe = String(id).replace(/[^A-Za-z0-9._-]/g, "_");
@@ -64,6 +72,8 @@ async function all() {
     table = conversationTable(handle.db);
     records = {};
     for (const [id, json] of table.loadRows()) { records[id] = JSON.parse(json); indexSaved.set(id, json); }
+    deletedTable = deletedNativeTable(handle.db);
+    for (const [backend, nativeId] of deletedTable.loadAll()) noteDeleted(backend, nativeId);
     // 既存データのマイグレーション（旧 conversations.json に messages がある場合、個別ファイルへ切り離す）
     let needsMigration = false;
     for (const r of Object.values(records)) {
@@ -132,6 +142,7 @@ export async function closeConversations() {
   handle?.release();
   handle = null; table = null; loading = undefined; records = undefined;
   indexSaved.clear();
+  deletedTable = null; deletedNatives.clear();
 }
 
 /**
@@ -196,6 +207,62 @@ export async function deleteUnsentConversation(id) {
   }
 }
 
+function noteDeleted(backend, nativeId) {
+  if (!deletedNatives.has(backend)) deletedNatives.set(backend, new Set());
+  deletedNatives.get(backend).add(nativeId);
+}
+
+/** 会話が持つネイティブの会話（今のものと、エージェントの切り替え・巻き戻しの前の区間）。[[nativeId, backendId]] */
+function nativesOf(r) {
+  const natives = new Map(r.segments.map(s => [s.nativeId, s.backend]));
+  if (r.nativeId) natives.set(r.nativeId, r.backend);
+  natives.delete(null); natives.delete(undefined);
+  return natives;
+}
+
+/**
+ * 会話を Pleiad の記録から消す（sessions.delete。送った会話も。ADR 0147）。消したら true、記録が無ければ false。
+ * ネイティブの会話（Claude の transcript・Codex の rollout・Antigravity の控え）は消さない（claude --resume・使用量の調査から見えるように）。
+ * 残したネイティブの会話が一覧にネイティブだけの行として戻らないよう、持っていたネイティブの id を DB（deleted_natives）に覚えて隠す。
+ * Pleiad の記録を持たない会話（ネイティブだけの行。id がネイティブの id）は、nativeBackend（その行のエージェント）で隠す。
+ * sidecar（store）と、会話に付いたほかの記録は呼び出し側が消す（core/server.mjs の deleteSessionOf）
+ */
+export async function deleteConversation(id, nativeBackend = null) {
+  const entries = await all();
+  const r = entries[id];
+  const natives = r ? nativesOf(r) : new Map(nativeBackend ? [[id, nativeBackend]] : []);
+  // DB を先に。書けなければ投げて、メモリも会話の記録も変えない
+  const rows = [...natives].map(([nativeId, backend]) => [backend, nativeId]);
+  if (rows.length) {
+    deletedTable.add(rows, id);
+    for (const [backend, nativeId] of rows) noteDeleted(backend, nativeId);
+  }
+  if (!r) return false;
+  delete records[id];
+  try {
+    await save();
+    await fs.rm(sessionFilePath(id), { force: true }).catch(() => {});
+    await fs.rm(handoffPath(id), { force: true }).catch(() => {});
+  } catch (e) {
+    records[id] = r;
+    throw e;
+  }
+  return true;
+}
+
+/**
+ * ネイティブ側に transcript が無くて、会話そのものを読み書き・削除できなかった失敗か。
+ * Claude の SDK（@anthropic-ai/claude-agent-sdk 0.3.288）は `~/.claude/projects` 配下の `<id>.jsonl` が無いか 0 バイトのとき、
+ * renameSession・tagSession・deleteSession が `Session <id> not found in any project directory`（dir 指定時は `... not found in project directory for <dir>`）を投げる（2026-10-06）。
+ * 失敗の種類を示す印が文面しか無いので、ここだけ文面に頼る。ネイティブに書く物が無いだけなので、Pleiad 側の記録（題・状態・会話）は通してよい
+ */
+function nativeSessionMissing(e) {
+  return /not found in (?:any )?project directory/.test(String(e?.message ?? e));
+}
+async function tolerateMissing(call) {
+  try { await call(); } catch (e) { if (!nativeSessionMissing(e)) throw e; }
+}
+
 /**
  * 人に見せない隠れた会話（夜の整理・心拍。ADR 0127）を、ネイティブの会話ごと消す。消したら true。
  * ネイティブの会話を消せないバックエンド（deleteSession を持たない）なら何もせず false。host の記録だけを消すと、
@@ -205,11 +272,10 @@ export async function deleteUnsentConversation(id) {
 export async function deleteHiddenConversation(id, backendOf) {
   const r = await conversation(id);
   if (!r) return false;
-  const natives = new Map(r.segments.map(s => [s.nativeId, s.backend]));
-  if (r.nativeId) natives.set(r.nativeId, r.backend);
-  natives.delete(null); natives.delete(undefined);
+  const natives = nativesOf(r);
   for (const backendId of natives.values()) if (typeof backendOf(backendId)?.deleteSession !== "function") return false;
-  for (const [nativeId, backendId] of natives) await backendOf(backendId).deleteSession(nativeId);
+  // transcript の無いネイティブの会話は、消す物が無いので消せたとみなす（nativeSessionMissing）
+  for (const [nativeId, backendId] of natives) await tolerateMissing(() => backendOf(backendId).deleteSession(nativeId));
   delete records[id];
   try {
     await save();
@@ -285,14 +351,15 @@ export function wrapBackend(native) {
   wrapped.listSessions = async (args) => {
     const entries = Object.entries(await all());
     const hidden = new Set(entries.flatMap(([id, r]) => [id, ...r.segments.filter(s => s.backend === native.id).map(s => s.nativeId)]));
-    const rows = (await native.listSessions(args)).filter(s => !hidden.has(s.sessionId));
+    // 消した会話のネイティブの会話（残してある）も出さない（ADR 0147）
+    const rows = (await native.listSessions(args)).filter(s => !hidden.has(s.sessionId) && !isDeletedNative(native.id, s.sessionId));
     for (const [id, r] of entries) if (r.backend === native.id) rows.push(await wrapped.getSession(id));
     return rows;
   };
   wrapped.getSession = async (id) => {
     const entries = await all();
     const r = entries[id];
-    if (!r) return native.getSession(id);
+    if (!r) return isDeletedNative(native.id, id) ? null : native.getSession(id);
     if (r.backend !== native.id) return null;
     const meta = await store.get(id);
     return { ...r.info, ...meta, sessionId: id, tag: Object.hasOwn(meta, "status") ? meta.status : r.info.tag };
@@ -366,7 +433,8 @@ export function wrapBackend(native) {
       const r = entries[id];
       if (!r) return native[method](id, value);
       await store.setMeta(id, { [field]: value });
-      if (r.nativeId) await native[method](r.nativeId, value);
+      // Pleiad 側の記録（上の setMeta）は書けている。transcript の無いネイティブの会話には書く物が無いので、その失敗は見せない（nativeSessionMissing）
+      if (r.nativeId) await tolerateMissing(() => native[method](r.nativeId, value));
     };
   }
   for (const method of ["listSubagents", "getSubagentMessages", "getSubagentOrigin", "getSubagentState"]) {
@@ -632,6 +700,13 @@ export function wrapBackend(native) {
       }
     }
   };
+  // resume の前に、nativeId の transcript が無いと言い切れるか。読めなかった（例外・不明）ときは「ある」側に倒す（外すと履歴が消えたように見える）
+  async function nativeTranscriptMissing(nativeId) {
+    const history = await native.getMessages?.(nativeId, { fullResults: true }).catch(() => null);
+    if (!Array.isArray(history) || history.length) return false;
+    if (typeof native.getSession !== "function") return true;
+    return !(await native.getSession(nativeId).catch(() => "unknown"));
+  }
   async function runOnce(args) {
     const id = args.sessionId;
     await wrapped.prepareTurn(id);
@@ -643,6 +718,18 @@ export function wrapBackend(native) {
     const rewind = mark ? { at: mark.at, drops: mark.drops } : undefined;
     if (!r) return native.runTurn(rewind ? { ...args, rewind } : args);
     if (r.backend !== native.id) throw new Error(t("conversations.backendMismatch"));
+    // 存在しない nativeId を resume し続ける会話の救済。Claude Code は transcript の無い id の resume を `No conversation found with session ID` で断り、
+    // 戻る道が無いまま毎回失敗する（下の finally が採用を戻すようになる前に作られた会話。2026-10-06）。
+    // 失敗の文面には頼らず、resume の前に transcript があるか確かめる。本文（r.messages）がある会話の nativeId は外さない（履歴が消えたように見えるので、失敗を見せる）。
+    // 外した後に採用される id は新しいので、送り直しは 1 度で済む（また空なら finally が戻す）
+    if (r.nativeId && native.id === "claude" && !r.messages.length && await nativeTranscriptMissing(r.nativeId)) {
+      // i18n-ignore: サーバーのログ
+      console.error("  conversations: transcript の無い nativeId を外して新しく始める:", r.nativeId);
+      r.segments = (r.segments ?? []).filter(seg => seg.nativeId !== r.nativeId);
+      r.nativeId = null;
+      r._dirty = true;
+      await save();
+    }
     let prompt = args.prompt;
     if (!r.nativeId && r.contextStart) {
       const recent = classifySystemMessages(r.messages.slice(0, r.contextStart))
@@ -659,7 +746,7 @@ export function wrapBackend(native) {
       const presents = (await wrapped.getPresents(id)).filter((p) => !r.contextSince || p.at >= r.contextSince);
       const messages = r.messages.slice(r.contextStart ?? 0).map(({ thinking, ...m }) => m);
       const transcript = JSON.stringify({ messages, presents });
-      const ref = path.join(store.dataDir, `handoff-${crypto.createHash("sha256").update(id).digest("hex")}.json`);
+      const ref = handoffPath(id);
       await fs.writeFile(ref, transcript);
       const context = transcript.length <= 60000 ? transcript : JSON.stringify({
         partial: true,
@@ -674,6 +761,9 @@ export function wrapBackend(native) {
       r.injected = prompt;
       r.original = String(args.prompt ?? "");
     }
+    // このターンの中で初めて nativeId を採用したか（ターン前に nativeId が無かった）。採用した id の transcript が無ければ戻す（finally）
+    const before = { nativeId: r.nativeId, segments: r.segments?.length ?? 0 };
+    let turnFailed = false;
     try {
       return await native.runTurn({ ...args, prompt, sessionId: r.nativeId, ...(rewind ? { rewind } : {}),
         hostSessionId: id, hostBackend: wrapped,
@@ -689,11 +779,45 @@ export function wrapBackend(native) {
           args.emit(hostEvent(ev, id, r.nativeId));
         },
       });
+    } catch (e) {
+      turnFailed = true;
+      throw e;
     } finally {
       await checkpoint;
-      if (r.nativeId) {
+      // ターンの後の取り込み。一時的な SQLite のエラー（Codex の `(code: 1546) disk I/O error`）なら間を空けて読み直し、
+      // それでも読めなければ取り込みはこの回は見送る（ターンを失敗にしない。次に会話を読むとき getMessages が取り込む）。
+      // 2026-09-27 以降、作業と報告を終えた Codex の委譲の子が、ここで投げたエラーで「失敗」になっていた（core/history-retry.mjs）
+      const nativeMessages = r.nativeId ? await readWithRetry(() => native.getMessages(r.nativeId, { fullResults: true }), {
+        // i18n-ignore: サーバーのログ
+        onRetry: (e, n, ms) => console.error(`  conversations: ターンの後の履歴を読めなかったので ${ms}ms 後に読み直す（${n} 回目）:`, String(e?.message ?? e).slice(0, 300)),
+      }).catch((e) => {
+        if (!transientStorageError(e)) throw e;
+        // i18n-ignore: サーバーのログ
+        console.error("  conversations: ターンの後の履歴を読み直しても読めなかったので、取り込みを次に読むときへ回す:", String(e?.message ?? e).slice(0, 300));
+        return null;
+      }) : null;
+      // プロンプトを渡す前に中断・失敗したターンでも、CLI は session_id 付きのメッセージを先に返す（2026-10-06、@anthropic-ai/claude-agent-sdk 0.3.288。
+      // 遅らせたプロンプトを渡す前に abort すると、session_id は届くのに ~/.claude/projects/<cwd>/<id>.jsonl は作られない）。
+      // その id を採用したままだと、次のターンが無い transcript を resume して毎回落ちる。
+      // このターンで初めて採用した id の transcript が無いときは、採用をターン前に戻して保存する。
+      // 失敗・中断で終わったターンは元の結果をそのまま返す（historyUnreadable で上書きしない）。成功したのに transcript が無いのだけが historyUnreadable
+      const unadopted = Boolean(nativeMessages && !nativeMessages.length && r.nativeId && !before.nativeId);
+      if (unadopted) {
+        r.nativeId = null;
+        r.segments.length = before.segments;
+        // i18n-ignore: サーバーのログ
+        console.error("  conversations: このターンで採用した nativeId の transcript が無いので、採用を戻した");
+        // server は AbortController（turn.ac）を渡す。バックエンドと同じく .signal を見る
+        if (!turnFailed && !(args.signal?.signal ?? args.signal)?.aborted) {
+          r._dirty = true;
+          await save();
+          throw new Error(t("conversations.historyUnreadable"));
+        }
+      }
+      // 失敗したターンの後に transcript が空なのは、失敗の結果（例: 無い id の resume を断られた）。取り込まず、元の失敗を historyUnreadable で上書きしない
+      if (nativeMessages && !unadopted && !(turnFailed && !nativeMessages.length)) {
         // 巻き戻しを拒否されたターンは、鎖がまだ古い葉のまま。切ってから取り込む（捨てた発言が戻らないように）
-        const messages = applyRewindMark(await native.getMessages(r.nativeId, { fullResults: true }), mark);
+        const messages = applyRewindMark(nativeMessages, mark);
         if (!messages.length) throw new Error(t("conversations.historyUnreadable"));
         mergeMessages(r, messages, native.id);
         // Preallocated conversations start with a placeholder in the sidecar.

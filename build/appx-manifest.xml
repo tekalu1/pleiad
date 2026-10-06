@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Microsoft Store 向けの MSIX の manifest（electron-builder.store.cjs の appx.customManifestPath。docs/microsoft-store.md）。
+  ${…} は electron-builder が埋める。Identity の Name・Publisher と PublisherDisplayName は Partner Center が割り当てる値で、
+  electron-builder.store.cjs が環境変数（PLY_STORE_*）から渡す。
+  既定の雛形（app-builder-lib/templates/appx/appxmanifest.xml）との違いは、uap3 の名前空間と、Extensions を直に書くこと。
+  そのため electron-builder の protocols・fileAssociations・自動起動（startupTask）はここには入らない。足すときはこの Extensions に書く。
+-->
+<Package
+   xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+   xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+   xmlns:uap3="http://schemas.microsoft.com/appx/manifest/uap/windows10/3"
+   xmlns:desktop="http://schemas.microsoft.com/appx/manifest/desktop/windows10"
+   xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
+   IgnorableNamespaces="uap3">
+  <!-- use single quotes to avoid double quotes escaping in the publisher value  -->
+  <Identity Name="${identityName}"
+    ProcessorArchitecture="${arch}"
+    Publisher='${publisher}'
+    Version="${version}" />
+  <Properties>
+    <DisplayName>${displayName}</DisplayName>
+    <PublisherDisplayName>${publisherDisplayName}</PublisherDisplayName>
+    <Description>${description}</Description>
+    <Logo>${logo}</Logo>
+  </Properties>
+  <Resources>
+    ${resourceLanguages}
+  </Resources>
+  <Dependencies>
+    <TargetDeviceFamily Name="Windows.Desktop" MinVersion="${minVersion}" MaxVersionTested="${maxVersionTested}" />
+  </Dependencies>
+  ${capabilities}
+  <Applications>
+    <Application Id="${applicationId}" Executable="${executable}" EntryPoint="Windows.FullTrustApplication">
+      <uap:VisualElements
+       BackgroundColor="${backgroundColor}"
+       DisplayName="${displayName}"
+       Square150x150Logo="${square150x150Logo}"
+       Square44x44Logo="${square44x44Logo}"
+       Description="${description}">
+        ${lockScreen}
+        ${defaultTile}
+        ${splashScreen}
+      </uap:VisualElements>
+      <Extensions>
+        <!--
+          App Execution Alias。%LOCALAPPDATA%\Microsoft\WindowsApps\Ply.exe（版に依らないパス）から Ply.exe を起動できる。
+          パッケージの中の実行ファイル（C:\Program Files\WindowsApps\<版ごとの名前>\app\Ply.exe）は更新のたびにパスが変わるので、
+          外の AI（claude・codex）の MCP の設定に書くならこちらを指す（docs/microsoft-store.md「実行ファイルのパス」）
+        -->
+        <uap3:Extension Category="windows.appExecutionAlias" Executable="${executable}" EntryPoint="Windows.FullTrustApplication">
+          <uap3:AppExecutionAlias>
+            <desktop:ExecutionAlias Alias="Ply.exe" />
+          </uap3:AppExecutionAlias>
+        </uap3:Extension>
+      </Extensions>
+    </Application>
+  </Applications>
+</Package>

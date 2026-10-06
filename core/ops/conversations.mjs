@@ -127,10 +127,10 @@ const outboxRow = (m) => {
 };
 
 /** 画面の「変更の記録」が読む形（理由のキーと値も付く） */
-const uiChange = ({ at, by, field, from, to, reason, reasonKey, reasonParams }) =>
-  ({ at, by, field, from: from ?? null, to: to ?? null, reason: reason ?? null, ...(reasonKey ? { reasonKey, ...(reasonParams ? { reasonParams } : {}) } : {}) });
+const uiChange = ({ at, by, via, byDevice, field, from, to, reason, reasonKey, reasonParams }) =>
+  ({ at, by, ...(via ? { via } : {}), ...(byDevice ? { byDevice } : {}), field, from: from ?? null, to: to ?? null, reason: reason ?? null, ...(reasonKey ? { reasonKey, ...(reasonParams ? { reasonParams } : {}) } : {}) });
 
-const change = z.object({ at: z.string(), by: z.string(), via: z.string().optional(), bySession: z.string().optional(), field: z.string(), from: z.unknown(), to: z.unknown(), reason: z.string().nullable() });
+const change = z.object({ at: z.string(), by: z.string(), via: z.string().optional(), bySession: z.string().optional(), byDevice: z.string().optional(), field: z.string(), from: z.unknown(), to: z.unknown(), reason: z.string().nullable() });
 const listItem = z.object({ id: z.string(), title: z.string(), backend: z.string(), status: z.string().nullable(), cwd: z.string().nullable(),
   parent: z.string().nullable(), delegated: z.boolean(), lastModified: z.number().nullable(), createdAt: z.union([z.string(), z.number()]).nullable() });
 
@@ -183,6 +183,37 @@ export const conversationOps = [
     legacyCommand: 'deleteUnsentSession',
     handler: async (ctx, { sessionId: id }) => {
       await fromHost(() => ctx.conversations.deleteUnsent(id));
+      return { sessionId: id, deleted: true };
+    },
+  }),
+
+  // 会話を消す（送った会話も）。Pleiad の記録だけを消し、ネイティブの会話（transcript・rollout）は残す。戻せないので guarded（ADR 0147）。
+  // 走っている・承認や裏の作業を待っている・委譲の子が終わっていない・bot の会話は、サーバーが断る（ctx.conversations.delete）
+  defineOp({
+    id: 'sessions.delete',
+    summary: 'agent:ops.sessions.delete.summary',
+    risk: 'guarded',
+    scope: 'session',
+    input: z.object({ sessionId: sessionId('delete') }),
+    output: z.object({ sessionId: z.string(), deleted: z.boolean() }),
+    // 無い会話・消せない会話は承認カードを出す前に断る（riskOf の失敗は code で返る）
+    riskOf: async (ctx, { sessionId: id }) => {
+      await mustExist(ctx, id);
+      // 自分の会話は消せない（承認の結果を届ける先が無くなる）
+      if (ctx.principal.by === 'agent' && ctx.actor.sessionId === id) throw new OpError('DELETE_SELF', agentT(ctx.locale, 'ops.errors.DELETE_SELF'));
+      await fromHost(() => ctx.conversations.canDelete(id));
+      return 'guarded';
+    },
+    approvalWords: 'conversationDelete',
+    confirm: async (ctx, { sessionId: id }) => {
+      const found = await ctx.sessions.get(id);
+      if (!found) throw missing(ctx, id);
+      return { note: agentT(ctx.locale, 'ops.sessions.delete.card', { title: found.row.title || id }), before: { id } };
+    },
+    surfaces: { ui: true, mcp: 'catalog', cli: { path: ['sessions', 'delete'], positional: ['sessionId'] } },
+    legacyCommand: 'deleteSession',
+    handler: async (ctx, { sessionId: id }) => {
+      await fromHost(() => ctx.conversations.delete(id));
       return { sessionId: id, deleted: true };
     },
   }),

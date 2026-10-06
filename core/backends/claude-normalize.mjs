@@ -28,9 +28,10 @@ export function resultText(c) {
 }
 
 // A Bash result can acknowledge launch while the process is still alive.
+// 起動の知らせは結果の文の頭にある。出力の途中に同じ文字があるだけ（ファイルを cat・grep した結果など）では background にしない（残ると 5 分で「止まっている」と通知が出る）
 function backgroundCommandResult(result, content) {
   const id = result?.backgroundTaskId
-    ?? resultText(content).match(/(?:Command|Task) running in background with ID:\s*([\w-]+)/i)?.[1];
+    ?? resultText(content).match(/^\s*(?:Command|Task) running in background with ID:\s*([\w-]+)/i)?.[1];
   return id ? { commandBackground: true, nativeTaskId: String(id) } : {};
 }
 

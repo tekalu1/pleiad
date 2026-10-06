@@ -79,3 +79,11 @@
 - `todo` は 63 件から 31 件。`ops-baseline.json`・`ops-surface.snap.json`（`legacyAliases` も載る）・辞書（`agent.json` の `ops.sessions`・`statuses`・`agents`・`delegation`・`control.listOpsPrefix`）を更新した。
 - `delegation.taskCancel`・`delegation.usage` は画面にも出る（`ui: true`）。AI の動きは変わらない。
 - `ply_control` の文は ja 1733 → 1757・en 1632 → 1656 トークン（`prefix` の説明の分）。
+
+## 追記（2026-10-06）: 送った会話を消す
+
+| 操作 | 危険度 | 理由・追加の判定 |
+|---|---|---|
+| `sessions.delete` | guarded | 送った会話も消す（Pleiad の記録だけ。ネイティブの会話は残して一覧から隠す）。無い会話は承認の前に `SESSION_NOT_FOUND`、消せない会話（走っている・承認や裏の作業を待っている・委譲の子が終わっていない・送信待ちがある・bot の会話）は承認の前に `CANNOT_DELETE`、AI の自分の会話は `DELETE_SELF`。 |
+
+`sessions.deleteUnsent` は変えない（送った会話は今も断る）。決定と理由は [ADR 0147](0147-delete-sent-conversations.md)。

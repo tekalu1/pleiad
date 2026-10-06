@@ -58,6 +58,8 @@
     "replies_other": "{{count}} 件の返信",
     "openThread": "スレッドを開く（{{count}} 件の返信）",
     "threadWorking": "作業中",
+    "liveJoin": "{{a}}・{{b}}",
+    "liveMore": "{{first}} ほか {{count}}",
     "threadWaiting": "{{name}} があなたを待っている",
     "lastReply": "最後の返信 {{when}}",
     "state": {
@@ -165,9 +167,28 @@
       "calls": "呼び合い {{count}} 回",
       "stopped": "止めました",
       "tokens": "このスレッドで {{tokens}} トークン",
-      "tokensTitle": "入力 {{input}} · 出力 {{output}} · キャッシュ読み出し {{cached}}",
-      "budget": "予算 {{spent}}% / {{allowance}}%",
-      "budgetTitle": "このスレッドが今日使った分 / 1 スレッドの配分（bot のバックエンドの週の使用枠に対する目安）。使い切ると bot どうしの呼びかけだけ止まります"
+      "tokensTitle": "新しい入力 {{input}} · 出力 {{output}}（キャッシュ読み出し {{cached}} は含めません）"
+    },
+    "budget": {
+      "title": "今日の予算",
+      "label": "予算",
+      "spoken": "予算 {{pct}}。内訳を開く",
+      "failed": "内訳を読み込めませんでした。",
+      "thread": "このスレッドが今日使ってよい量",
+      "amount": "使った分 {{spent}} / 配分 {{allowance}}（bot のバックエンドの週の使用枠に対する目安）",
+      "derived": "このスレッドを起こした元のスレッドの分もあわせて数えています。",
+      "channel": "チャンネル全体の今日",
+      "channelAmount": "{{spent}} / {{daily}}",
+      "bots": "bot ごとの今日",
+      "botToday": "新しい入力 {{input}} · 出力 {{output}} · キャッシュ読み出し {{cached}}",
+      "botNone": "今日はまだ使っていません",
+      "botLimit": "1 日の上限の目安 {{tokens}} トークン",
+      "botWeek": "週の枠 {{used}} 使用",
+      "botReset": "{{time}} にリセット",
+      "botUnknown": "使用枠を読めません",
+      "resting": "休憩中（{{time}} ごろまで）",
+      "totals": "このスレッドの合計",
+      "hint": "使い切ると bot どうしの呼びかけだけ止まります（人が呼べば答えます）。トークン数にキャッシュ読み出しは含めません。"
     }
   },
   "bot": {
@@ -256,7 +277,7 @@
       "kind": { "think": "考えた", "quiet": "静か", "act": "頼んだ", "result": "結果", "loop": "気がかり", "dream": "夢", "summary": "要約" },
       "reason": {
         "paused": "眠らせている", "budget": "予算がない", "nothing": "変化なし", "forced": "手動", "loop": "気がかりの条件", "reserved": "予約した時刻",
-        "human": "新しい人の投稿", "drive": "欲求", "muse": "ぼんやりの番", "error": "失敗", "noHome": "家のチャンネルがない"
+        "human": "新しい投稿", "drive": "欲求", "muse": "ぼんやりの番", "error": "失敗", "noHome": "家のチャンネルがない"
       },
       "failed": "操作できませんでした: {{error}}"
     },
@@ -418,6 +439,7 @@
     "memoryCore": "覚えていることを渡しました",
     "botRecent": "最近のスレッドを申し送りました",
     "turnContext": "時刻と記憶の変更を渡しました",
-    "inner": "活動メモの末尾と気がかりを渡しました"
+    "inner": "活動メモの末尾と気がかりを渡しました",
+    "wake": "予約した時刻に起きました"
   }
 }

@@ -175,6 +175,9 @@ export const DATA_WRITES = [
   { file: 'core/mcp-config.mjs', sites: 2, targets: [
     { name: '(置き場の外) .mcp.json・~/.claude.json・~/.codex/config.toml', limit: '利用者の設定ファイル', reason: 'データ置き場ではない' },
   ] },
+  { file: 'core/image-import.mjs', sites: 1, targets: [
+    { name: 'uploads/<会話>/<時刻>_<名前>.(png|jpg|gif|webp|avif)', limit: '1 枚 IMPORT_MAX_BYTES=10MiB・同時 IMPORT_MAX_ACTIVE=6 件・1 回の貼り付けで 20 枚（貼る側）。先頭のバイトを確かめた画像だけ', reason: '貼り付けた HTML の画像の写し（ADR 0141）。添付と同じ置き場で、書き換えない（同名は枝番）' },
+  ] },
   { file: 'core/server.mjs', sites: 5, targets: [
     { name: 'compaction-schedule.json', limit: '予約中の会話の数。猶予 8 分で捨てる一時のもの', reason: '自動圧縮の予約の台帳' },
     { name: 'onboarding.json', limit: '固定', reason: '初回表示済みの印とセットアップ結果' },

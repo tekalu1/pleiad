@@ -16,7 +16,8 @@
     "failed": "✕ Could not complete the action · {{reason}}",
     "newSession": "New conversation",
     "deleteStatusConfirm": "Delete “{{status}}”? Conversations to move: {{count}}. Destination: “{{destination}}”.",
-    "deletedStatus": "Deleted “{{status}}”"
+    "deletedStatus": "Deleted “{{status}}”",
+    "deleteSessionConfirm": "Delete “{{title}}”? This cannot be undone. The agent's own record of the conversation (such as the Claude Code transcript) is kept."
   },
   "settings": {
     "appearance": {
@@ -155,8 +156,23 @@
         "revoke": "Revoke",
         "revokeConfirm": "Revoke \"{{name}}\"? It is disconnected right away and cannot connect until it is paired again.",
         "keep": "Cancel",
+        "revokeTasks": "The {{count}} tasks handed over by this device's AI are also stopped.",
         "revokeConfirmButton": "Revoke",
         "revoked": "Revoked \"{{name}}\"."
+      },
+      "agent": {
+      "title": "Accept requests from this device's AI",
+      "help": "Treated like a delegation: the approval mode follows the requesting conversation, and approvals also appear there",
+      "confirm": "Accept requests from {{name}}'s AI?",
+      "confirmWarn": "⚠ If the requesting conversation runs without confirmation, it also runs without confirmation on this PC.",
+      "accept": "Accept",
+      "cancel": "Cancel",
+      "note": "If the requesting conversation runs without confirmation, it also runs without confirmation on this PC.",
+      "tasks": "Handed-over work · {{count}} running",
+      "waiting": "{{count}} waiting for approval",
+      "open": "Open the latest conversation",
+      "stopAll": "Stop all",
+      "noTasks": "No conversations have been handed over yet."
       },
       "platform": {
         "desktop": "Desktop",
@@ -1474,6 +1490,18 @@
       "deny": "Deny",
       "allow": "Allow",
       "done": "Approval",
+      "relay": {
+      "host": "⇄ {{host}}",
+      "offline": "Can't send the answer because {{host}} is offline. You can send it once the connection returns.",
+      "answeredByHost": "{{what}} on {{host}} · {{time}}",
+      "answeredByDevice": "{{what}} on {{device}} · {{time}}",
+      "hostOnly": "This approval has to be answered on the host. Answer it on the host's screen, or open the child conversation.",
+      "answered": "answered",
+      "hostOffline": "Host offline",
+      "viewChild": "View the child conversation",
+      "hostCanAnswer": "You can also answer in the requesting conversation (⇄ {{device}})",
+      "viewChildFailed": "Could not open the remote window: {{error}}"
+      },
       "allowedAlways": "Always allowed",
       "allowed": "Allowed",
       "denied": "Denied",
@@ -1617,6 +1645,14 @@
         "allowed": "Deleting allowed",
         "failed": "Couldn't delete",
         "notice": "{{agent}} is waiting for your approval to delete a conversation"
+      },
+      "conversationDelete": {
+        "label": "Conversation",
+        "question": "{{agent}} wants to delete a conversation",
+        "allow": "Allow deleting",
+        "allowed": "Deleting allowed",
+        "failed": "Couldn't delete",
+        "notice": "{{agent}} is waiting for your approval to delete a conversation"
       }
     },
     "settingApproval": {
@@ -1747,6 +1783,9 @@
         "sessionDelete": {
           "allowed": "deleted"
         },
+        "conversationDelete": {
+          "allowed": "deleted"
+        },
         "denied": "denied",
         "withdrawn": "withdrawn"
       },
@@ -1827,6 +1866,7 @@
       "copyPath": "Copy path",
       "close": "Close",
       "sent": "Sent",
+      "importing": "Importing",
       "byPath": "Passed by path",
       "jump": "Go to its place in the text",
       "insert": "Insert at the cursor",
@@ -1847,8 +1887,21 @@
       "entrySending_other": "{{count}} sending",
       "entryFailed_one": "{{count}} failed",
       "entryFailed_other": "{{count}} failed",
+      "entryImporting_one": "{{count}} importing",
+      "entryImporting_other": "{{count}} importing",
       "blockSending": "Can't send while attachments are still uploading",
+      "blockImporting": "Images are still being imported",
       "blockFailed": "Some attachments couldn't be sent. Retry or remove them."
+    },
+    "paste": {
+      "importing": "Importing…",
+      "importingTitle": "Importing {{name}} from {{host}}",
+      "cancelImport": "Stop importing",
+      "startedLive_one": "Importing {{count}} image",
+      "startedLive_other": "Importing {{count}} images",
+      "doneLive_one": "Imported {{count}} image",
+      "doneLive_other": "Imported {{count}} images",
+      "imageName": "Image {{n}}"
     },
     "composerFormat": {
       "label": "Formatting",
@@ -2042,6 +2095,8 @@
       "idCopyFailed": "Couldn't copy the session ID",
       "deleteUnsent": "Delete unsent session…",
       "deleteWithDraft": "Delete it and its draft",
+      "delete": "Delete session…",
+      "deleteConfirm": "Delete",
       "newStatusEllipsis": "New status…",
       "statusName": "Status name",
       "createStatusFailed": "Couldn't create the status: {{error}}",
@@ -2076,6 +2131,12 @@
     "parentChat": "Parent conversation",
     "titleSuggestFailed": "Couldn't suggest a title: {{error}}",
     "more": "Actions for this conversation",
+    "remoteOrigin": {
+    "badge": "⇄ From {{device}}'s AI",
+    "request": "Requested from \"{{title}}\"",
+    "modeIs": "Approval mode {{mode}} (follows the requester)",
+    "mode": "Approval mode follows the requester"
+    },
     "rowMore": "Actions for \"{{title}}\"",
     "groupMore": "Actions for status \"{{status}}\"",
     "familyMore": "Actions for group \"{{title}}\""
@@ -2180,6 +2241,7 @@
       "stopFailed": "Couldn't stop: {{error}}",
       "readFailed": "Couldn't read: {{error}}",
       "title": "Background",
+      "titleSub": "Subagents",
       "count": "Running {{live}} · Completed {{ended}}",
       "listLabel": "Background list",
       "groupRunning": "Running",
@@ -2195,6 +2257,7 @@
       "collapse": "Collapse",
       "groupCommands": "Commands",
       "openChat": "Open as conversation",
+      "hostResult": "Result (from the host)",
       "request": "Request",
       "noMessages": "No messages yet.",
       "open": "Open",
@@ -2740,6 +2803,10 @@
       "downloading": "You can keep working. You'll be notified when it's ready.",
       "noAutoUpdate": "This preview build doesn't support automatic updates. Update with a new installer.",
       "browser": "In the browser version, you can view the release history."
+    },
+    "store": {
+      "status": "Updated through the Microsoft Store",
+      "hint": "New versions come from the Microsoft Store. To check now, open Library in the Microsoft Store and select Get updates."
     },
     "lastChecked": "Last checked: {{when}}",
     "retry": "Retry",

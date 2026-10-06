@@ -116,6 +116,13 @@ export async function createSettingApprovals({ dataDir, deliver, route = null, n
       await save();
       kick().catch(onError);
     },
+    /** 会話を消した（sessions.delete。ADR 0147）。その会話の待っている要求と届ける結果を捨てる（消した会話へ届けて記録を作り直さない） */
+    forget(sessionId) {
+      const before = pending.length + notices.length;
+      pending = pending.filter((p) => p.sessionId !== sessionId);
+      notices = notices.filter((n) => n.sessionId !== sessionId || n.state === 'delivering');
+      return before === pending.length + notices.length ? chain : save();
+    },
     /** 会話が空いたかもしれない。溜まっている結果を届けてみる */
     changed: () => { if (notices.length) kick().catch(onError); },
     snapshot: () => ({ pending: pending.map((p) => ({ ...p })), notices: notices.map((n) => ({ ...n })) }),

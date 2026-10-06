@@ -2,7 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { t, agentT } from './i18n.mjs';
-import { observeCommand, pauseCommands, commandElapsed, commandView } from './task-commands.mjs';
+import { observeCommand, pauseCommands, commandElapsed, commandView, isWaitingCommand, commandKey, outputMoving, OUTPUT_MOVING_MS } from './task-commands.mjs';
 import { taskTitle } from './task-title.mjs';
 import { openData } from './data-schema.mjs';
 import { taskTable } from './db.mjs';
@@ -10,10 +10,21 @@ import { taskTable } from './db.mjs';
 const ACTIVE = new Set(['queued', 'running', 'cancelling']);
 // 完了通知がまだ依頼元に届いていない（終わった直後・送る前・送っている最中）。running にはこの間だけ終わったタスクも載せる
 const UNDELIVERED = new Set(['none', 'pending', 'delivering']);
+// 端末の AI から始まった委譲の鎖の深さの上限（docs/remote.md §4.5、ADR 0146。core/remote/agent-protocol.mjs の AGENT_LIMITS.depth と同じ）。
+// 手元の委譲には深さの上限は無い（2026-09-27 に廃止）
+const REMOTE_DEPTH_MAX = 4;
+// ホストの便りから写しの行へ写す項目（agent-tasks の mirror）。結果・状態・どの委譲先で動いているか
+const MIRROR_FIELDS = ['title', 'status', 'error', 'backend', 'model', 'effort', 'mode', 'cwd', 'remoteSessionId', 'worktree', 'routing', 'result', 'resultLength', 'hostWaiting', 'hostPendingMessages', 'cancelPending', 'hostLost'];
+// ホストの子を止める依頼を待つ上限。応答しないホストが、会話の中断・「すべて止める」を長く止めない（届かなかった分は cancelPending でつながり直したときに送り直す）
+const CANCEL_HOST_MS = 3000;
+// ホストが便りで返す taskId の形。端末の台帳の鍵にするので、形を確かめる（__proto__ や手元のタスクの ID を入れさせない）
+const TASK_ID = /^ply-task-[0-9a-f-]{36}$/;
 // 保存障害の間、スケジューラーが保存をやり直す間隔の上限（ms）。500ms から倍にしていく
 const RETRY_MAX = 15000;
 // 保存障害の記録（agent-tasks-errors.log）の大きさの上限。超えたら新しい半分だけ残す
 const LOG_MAX = 64 * 1024;
+// 1 タスクに持つ「知らせた」印（同じコマンド・同じ無音の状態を繰り返し知らせないための印）の上限。古いものから捨てる（ADR 0138）
+const NOTICED_MAX = 50;
 // 1 タスクに持つ実行前の拒否（rejections）の上限。超えた分は捨て、rejectionsDropped に数だけ残す
 const MAX_REJECTIONS = 50;
 // これらの通知の状態なら、今の rejections は依頼元へ渡した（か、止めた）。ply_task_send で始まる次の回は新しく数え直す
@@ -82,6 +93,8 @@ export function finalReply(messages) {
 // 'delivered'（受理。合図の無いバックエンドは渡ったものとして扱う）/ 'pending'（受理。渡った合図を steered() で待つ）/
 // 'requeue'（受理されない。待機のまま次のターンで）/ 'error'（結果不明。送り直さない）を返す（ADR 0065）
 export async function createAgentTasks({ dataDir, prepare, rollback = async () => {}, execute, deliver, deliverSilence = async () => 'ok', deliverCommand = async () => 'ok', cancelBackground = async () => {}, ready = async () => true, steerable = async () => false, childSteerable = async () => false, steer = async () => 'requeue', changed = () => {}, waiting = () => false,
+  // リモートのホストに任せたタスクの写し（row.host を持つ行。docs/agent-delegation.md「リモートのホストへ任せる」）: 今、依頼元の会話に中継された承認を待っているか・ホストのタスクを止める口
+  remoteWaiting = () => false, cancelHost = async () => {},
   // コンピューターの操作のロックを待っているか（docs/computer-use.md「ロック・待ち・止めた印」）。承認待ちではないので status: waiting にはせず、沈黙の通知にだけ数えない
   lockWaiting = () => false,
   // 子の worktree の今の状態（core/worktree-host.mjs の taskState）。ply_task_status・ply_task_wait の workspaceSummary に使う
@@ -102,11 +115,14 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
   }
   // 最後に DB へ書けた JSON（taskId -> 文字列）。変わった行だけを書くための比べ元
   const saved = new Map();
-  let records = {};
+  let records = Object.create(null);   // 鍵はホストの便りの taskId も入る。Object.prototype の名前（__proto__ など）で引かれないようにする
   for (const [taskId, json] of rowStore.loadRows()) { records[taskId] = JSON.parse(json); saved.set(taskId, json); }
-  const bySession = new Map(Object.values(records).map(r => [r.sessionId, r]));
+  // ホストに任せたタスクの写し（host）は、この PC の会話を持たない（sessionId なし）。会話の ID で引く表には入れない
+  const bySession = new Map(Object.values(records).filter(r => r.sessionId).map(r => [r.sessionId, r]));
   // Older files kept only prompt strings in queue. Preserve their order and make
   // pending follow-ups visible without replaying the initial delegation request.
+  // 承認待ちか。ホストに任せたタスクの写しは、ホストの便り（hostWaiting）か、依頼元の会話に中継された承認の有無で決まる
+  const waitingOf = r => r.host ? r.hostWaiting === true || remoteWaiting(r) : waiting(r.sessionId);
   for (const r of Object.values(records)) {
     r.instructions ??= [];
     const initial = !r.revision && !r.result && r.status === 'queued' && r.createdAt === r.updatedAt;
@@ -198,7 +214,8 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
   // restored: 再起動で止まった（interrupted にした）タスク。server が依頼元の会話の「止めたもの」に残す（docs/design.md「中断と再開」）
   const restored = [];
   for (const r of Object.values(records)) {
-    if (ACTIVE.has(r.status)) {
+    // ホストに任せたタスクの写しは、ホストで続いている。再起動で止めず、つながり直したときの同期で追いつく
+    if (ACTIVE.has(r.status) && !r.host) {
       restored.push({ taskId: r.taskId, parentSessionId: r.parentSessionId, title: r.title ?? null, status: r.status });
       r.status = 'interrupted'; r.error = t('tasks.interruptedByRestart');
       for (const instruction of r.instructions ?? []) if (instruction.state === 'sending') setInstruction(r, instruction.id, 'delivered');
@@ -215,9 +232,9 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
   };
   // context は「別の候補でやり直す」で同じ依頼を渡し直すために持つだけ（長いので一覧・状態には載せない）
   const view = (r, offset = 0) => {
-    const { result = '', queue, context, instructions, rejections = [], silenceNotifiedAt, activeCommands = [], ...rest } = r;
-    pauseCommands(r, now(), waiting(r.sessionId));
-    return { ...rest, activeCommands: activeCommands.map(c => commandView(c, now())), silenceMinutes: r.status === 'running' && !waiting(r.sessionId) && !lockWaiting(r.sessionId) && r.lastActivityAt != null
+    const { result = '', queue, context, instructions, rejections = [], silenceNotifiedAt, noticedCommands, noticedSilence, lastOutputAt, activeCommands = [], ...rest } = r;
+    pauseCommands(r, now(), waitingOf(r));
+    return { ...rest, activeCommands: activeCommands.map(c => commandView(c, now())), silenceMinutes: r.status === 'running' && !waitingOf(r) && !lockWaiting(r.sessionId) && r.lastActivityAt != null
       ? Math.max(0, Math.floor((now() - r.lastActivityAt) / 60000)) : null,
       rejections, pendingMessages: instructions.filter(x => x.state === 'queued').length, result: result.slice(offset, offset + 16000), resultOffset: offset,
       resultLength: result.length, nextOffset: offset + 16000 < result.length ? offset + 16000 : null };
@@ -226,7 +243,7 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
   // 保存する status（queued / running …）は変えない。ACTIVE の集合と再起動時の interrupted の扱いを壊さないため
   const shown = (r, offset = 0) => {
     const v = view(r, offset);
-    return ACTIVE.has(r.status) && waiting(r.sessionId) ? { ...v, status: 'waiting' } : v;
+    return ACTIVE.has(r.status) && waitingOf(r) ? { ...v, status: 'waiting' } : v;
   };
   // worktree の今の状態の 1 行（ply_task_status・ply_task_wait）。作業場所を持たない子・状態が引けないときは何も足さない。
   // 片付け済み（もう無い）は、完了時の状態（row.workspace）から言う
@@ -239,6 +256,15 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
       workspaceSummary: workspaceLine(locale, r.worktree, state) };
   }
   const restore = (r, before) => { for (const key of Object.keys(r)) delete r[key]; Object.assign(r, before); };
+  /**
+   * ホストの子を止める。届かなければ（オフライン・許可切れ・応答なし）止める予定（cancelPending）として行に残し、つながり直したとき送り直す
+   * （ホストの便りで running に戻さない。mirror）。待つのは CANCEL_HOST_MS まで
+   */
+  async function stopHost(r) {
+    let sent = false, timer;
+    try { sent = await Promise.race([cancelHost(structuredClone(r)), new Promise(res => { timer = setTimeout(res, CANCEL_HOST_MS, false); })]) === true; } catch { sent = false; } finally { clearTimeout(timer); }
+    if (!sent && records[r.taskId]) await record(r.taskId, row => { row.cancelPending = true; }, 'cancel.pending');
+  }
   // 保存できてから先へ進む書き換え。保存に失敗したらメモリを戻し、理由付きのエラーを投げる
   async function commit(id, fn, operation, locale) {
     return serial(async () => {
@@ -455,18 +481,33 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
       });
     } finally { for (const r of rows) notices.delete(r.taskId); noticeOwners.delete(owner); }
   }
+  // 「止まっている可能性」の通知は、待っているだけの子には出さず、出すなら同じ子・同じコマンドで 1 回だけ（ADR 0138）。
+  // 待っている先が動いている（実際の出力が伸びている）間と、明らかに待つためのコマンド（until / sleep / gh run watch など）は控える。
+  // 控えたものは通知済みにしない（待ちが終わって、なお黙っているなら、そのとき 1 回だけ出す）
+  // 裏（background）のコマンドは、子が別の道具や出力で動いている間は、その子の止まっている根拠にしない
+  // 「動いている」とみなす間は 1 分。コマンドの時間を短くした設定（テスト）ではその長さまで縮める
+  const quietMs = Math.min(OUTPUT_MOVING_MS, commandMs || OUTPUT_MOVING_MS);
+  const childBusy = r => r.lastActivityAt != null && now() - r.lastActivityAt < quietMs;
+  const commandFit = (r, c) => c.state !== 'unknown' && !isWaitingCommand(c.command) && !outputMoving(r, now(), quietMs) && !(c.state === 'background' && childBusy(r));
+  const commandNoticed = (r, c) => Boolean(r.noticedCommands?.includes(commandKey(c.command)));
+  const silenceSignature = r => (r.activeCommands ?? []).filter(c => c.state !== 'unknown').map(c => commandKey(c.command)).sort().join('\n');
+  const silenceFit = r => !(r.activeCommands ?? []).some(c => c.state !== 'unknown' && isWaitingCommand(c.command));
+  const remember = (r, field, key) => { const list = r[field] ??= []; if (!list.includes(key)) { list.push(key); if (list.length > NOTICED_MAX) list.shift(); } };
+  const forget = (r, field, key) => { if (r[field]) r[field] = r[field].filter(k => k !== key); };
   async function notifySilence(r) {
     silenceNotices.add(r.taskId);
     const activityAt = r.lastActivityAt;
+    const signature = silenceSignature(r);
     try {
       if (!(await ready(structuredClone(r)).catch(() => false))) return;
-      if (r.status !== 'running' || waiting(r.sessionId) || lockWaiting(r.sessionId) || r.lastActivityAt !== activityAt || r.silenceNotifiedAt === activityAt) return;
+      if (r.status !== 'running' || waitingOf(r) || lockWaiting(r.sessionId) || r.lastActivityAt !== activityAt || r.silenceNotifiedAt === activityAt
+        || !silenceFit(r) || r.noticedSilence?.includes(signature)) return;
       // Mark before delivery, as with completion notices: an uncertain delivery must not be repeated.
-      try { await commit(r.taskId, row => { row.silenceNotifiedAt = activityAt; }, 'silence.notice'); }
+      try { await commit(r.taskId, row => { row.silenceNotifiedAt = activityAt; remember(row, 'noticedSilence', signature); }, 'silence.notice'); }
       catch { return; }
-      if (r.status !== 'running' || waiting(r.sessionId) || lockWaiting(r.sessionId) || r.lastActivityAt !== activityAt) return;
+      if (r.status !== 'running' || waitingOf(r) || lockWaiting(r.sessionId) || r.lastActivityAt !== activityAt) return;
       const outcome = await deliverSilence(structuredClone(r), Math.max(1, Math.floor((now() - activityAt) / 60000))).catch(() => 'error');
-      if (outcome === 'requeue' && r.lastActivityAt === activityAt) await record(r.taskId, row => { row.silenceNotifiedAt = null; }, 'silence.requeue');
+      if (outcome === 'requeue' && r.lastActivityAt === activityAt) await record(r.taskId, row => { row.silenceNotifiedAt = null; forget(row, 'noticedSilence', signature); }, 'silence.requeue');
     } finally { silenceNotices.delete(r.taskId); }
   }
   async function notifyCommand(r, command) {
@@ -475,28 +516,32 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
     const current = () => r.activeCommands?.find(c => c.noticeId === id);
     const eligible = () => {
       const c = current();
-      return c && c.state !== 'unknown' && !waiting(r.sessionId) && commandElapsed(c, now()) >= commandMs;
+      return c && commandFit(r, c) && !waitingOf(r) && commandElapsed(c, now()) >= commandMs;
     };
+    // 同じ子で同じコマンドは、もう知らせた（繰り返しの確認・再実行で何度も知らせない）
+    const key = command.command;
+    const release = () => { if (current()) current().notified = false; forget(r, 'noticedCommands', commandKey(key)); };
     try {
-      if (!(await ready(structuredClone(r)).catch(() => false)) || !eligible() || current().notified) return;
+      if (!(await ready(structuredClone(r)).catch(() => false)) || !eligible() || current().notified || commandNoticed(r, current())) return;
       const marked = await serial(async () => {
-        if (!eligible() || current().notified) return false;
+        if (!eligible() || current().notified || commandNoticed(r, current())) return false;
         current().notified = true;
+        remember(r, 'noticedCommands', commandKey(key));
         try { await write([r.taskId]); return true; }
         catch (e) {
-          if (current()) current().notified = false;
+          release();
           failed(e, 'command.notice', r.taskId);
           return false;
         }
       });
       if (!marked) return;
       if (!eligible()) {
-        if (current()) await record(r.taskId, () => { if (current()) current().notified = false; }, 'command.defer');
+        if (current()) await record(r.taskId, release, 'command.defer');
         return;
       }
       const c = current();
       const outcome = await deliverCommand(structuredClone(r), { ...commandView(c, now()), noticeId: id }).catch(() => 'error');
-      if (outcome === 'requeue' && current()) await record(r.taskId, () => { if (current()) current().notified = false; }, 'command.requeue');
+      if (outcome === 'requeue' && current()) await record(r.taskId, release, 'command.requeue');
     } finally { commandNotices.delete(id); }
   }
   // 保存障害の間は、間隔を空けて保存だけをやり直す（1 回に 1 秒ほど待つ保存を、500ms ごとに仕事の数だけ重ねない）。
@@ -512,9 +557,17 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
     if (fault) { probe(); return; }
     const groups = new Map();
     for (const r of Object.values(records)) {
-      pauseCommands(r, now(), waiting(r.sessionId));
+      // ホストに任せたタスクの写しは走らせない（ホストが正本）。完了通知だけ、手元の委譲と同じに届ける
+      if (r.host) {
+        if (r.notification === 'pending' && !notices.has(r.taskId) && !waited.has(r.taskId) && !ACTIVE.has(r.status)) {
+          if (!groups.has(r.parentSessionId)) groups.set(r.parentSessionId, []);
+          groups.get(r.parentSessionId).push(r);
+        }
+        continue;
+      }
+      pauseCommands(r, now(), waitingOf(r));
       for (const c of r.activeCommands ?? []) {
-        if (commandMs && c.state !== 'unknown' && !waiting(r.sessionId) && !c.notified
+        if (commandMs && commandFit(r, c) && !waitingOf(r) && !c.notified && !commandNoticed(r, c)
           && commandElapsed(c, now()) >= commandMs && !commandNotices.has(c.noticeId)) {
           spawn(notifyCommand(r, c).catch(e => report({ event: 'unexpected', operation: 'command', taskId: r.taskId, code: e?.code ?? null })));
         }
@@ -522,14 +575,15 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
       if (r.status === 'running') {
         if (r.queue.length && !instructionSends.has(r.taskId)) spawn(steerInstructions(r).catch(e => report({ event: 'unexpected', operation: 'steer', taskId: r.taskId, code: e?.code ?? null })));
         // 承認待ちとロック待ちは、どちらも「子が黙っている」ことに数えない（待ちが終わったら数え直す）
-        const isWaiting = waiting(r.sessionId) || lockWaiting(r.sessionId);
+        const isWaiting = waitingOf(r) || lockWaiting(r.sessionId);
         if (isWaiting) {
           if (!silenceWaiting.has(r.taskId)) { r.lastActivityAt = now(); r.silenceNotifiedAt = null; }
           silenceWaiting.set(r.taskId, true);
         }
         else if (silenceWaiting.delete(r.taskId)) { r.lastActivityAt = now(); r.silenceNotifiedAt = null; }
         if (silenceMs && !isWaiting && r.lastActivityAt != null && now() - r.lastActivityAt >= silenceMs
-          && r.silenceNotifiedAt !== r.lastActivityAt && !silenceNotices.has(r.taskId)) {
+          && r.silenceNotifiedAt !== r.lastActivityAt && !silenceNotices.has(r.taskId)
+          && silenceFit(r) && !r.noticedSilence?.includes(silenceSignature(r))) {
           spawn(notifySilence(r).catch(e => report({ event: 'unexpected', operation: 'silence', taskId: r.taskId, code: e?.code ?? null })));
         }
       } else silenceWaiting.delete(r.taskId);
@@ -550,8 +604,25 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
   }
   const timer = setInterval(kick, 500); timer.unref();
   return {
-    get busy() { return live.size > 0 || notices.size > 0 || silenceNotices.size > 0 || commandNotices.size > 0 || Object.values(records).some(r => ACTIVE.has(r.status) || r.notification === 'pending'); },
+    // ホストに任せたタスクの写しは、ホストで動いている（この PC の更新・終了を止めない）。完了通知がまだ届いていないものだけ数える
+    get busy() { return live.size > 0 || notices.size > 0 || silenceNotices.size > 0 || commandNotices.size > 0 || Object.values(records).some(r => (ACTIVE.has(r.status) && !r.host) || r.notification === 'pending'); },
     list(owner) { return Object.values(records).filter(r => !owner || r.parentSessionId === owner).map(r => view(r)); },
+    /** sessionIds の会話が作った行と、その子孫の行の view（ホストに任された子の下の孫を数える・止める。docs/remote.md §4.5） */
+    descendants(sessionIds) {
+      const roots = new Set(sessionIds.filter(Boolean));
+      const seen = new Set(), out = [];
+      for (let grew = true; grew;) {
+        grew = false;
+        for (const r of Object.values(records)) {
+          if (seen.has(r.taskId) || !roots.has(r.parentSessionId)) continue;
+          seen.add(r.taskId); out.push(view(r)); grew = true;
+          if (r.sessionId) roots.add(r.sessionId);
+        }
+      }
+      return out;
+    },
+    /** 記録の行が条件に合うものだけの view（端末の AI に任された作業のように、全部を view にしたくないとき） */
+    rowsWhere(predicate) { return Object.values(records).filter(predicate).map(r => view(r)); },
     /**
      * 全端末へ配る running に載せる行（docs/agent-delegation.md「保存・画面・再起動」）。終わっていないものと、完了通知がまだ依頼元に
      * 届いていないものだけ。依頼文・振り分けの記録・結果は載せない（過去のタスクは画面が会話ごとに delegation.tasks で読む）
@@ -563,12 +634,14 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
         notification: r.notification, error: r.error ? String(r.error).slice(0, 500) : null,
         pendingMessages: (r.instructions ?? []).filter(x => x.state === 'queued').length, instructionRevision: r.instructionRevision ?? 0,
         worktree: r.worktree ?? null, retryOf: r.routing?.retry?.of ?? null,
+        ...(r.host ? { host: r.host, remoteSessionId: r.remoteSessionId ?? null, hostWaiting: waitingOf(r) } : {}),
       }));
     },
     get(taskId, offset = 0) { return records[taskId] ? view(records[taskId], offset) : null; },
     observe(sessionId, event) {
       const r = bySession.get(sessionId);
       if (!r || !event?.type) return;
+      if (event.type === 'task.activity' && event.output) r.lastOutputAt = now();
       this.activity(sessionId);
       if (!['tool.start', 'tool.result', 'task.command'].includes(event.type)) return;
       observeCommand(r, event, now(), waiting(sessionId));
@@ -669,6 +742,56 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
     instructions(taskId) { const r = records[taskId]; return r ? { taskId, revision: r.instructionRevision ?? 0, instructions: structuredClone(r.instructions) } : null; },
     /** 最初の依頼（task と context）。やり直しで同じ依頼を渡す。context を持つ前に作ったタスクは task だけ */
     request(taskId) { const r = records[taskId]; return r ? { task: r.task, title: r.title ?? null, context: r.context ?? null } : null; },
+    /**
+     * ホストに任せたタスクの写しの行を足す（docs/agent-delegation.md「リモートのホストへ任せる」）。ホストが正本で、走らせるのはホスト。
+     * row は { taskId（ホストのもの）, parentSessionId（依頼元の会話）, host: { hostId, name }, … }。同じ taskId が既にあれば何もしない。保存できなければ断る
+     */
+    async adopt(row, locale) {
+      return serial(async () => {
+        if (closed) throw new Error(agentT(locale, 'tasks.halted'));
+        // ホストの便りの taskId は信じ切らない: 形を確かめ、手元のタスクと同じ ID は受けない（既にある行を返さない）
+        if (typeof row.taskId !== 'string' || !TASK_ID.test(row.taskId) || records[row.taskId]) throw new Error(agentT(locale, 'tasks.remoteBadTaskId'));
+        const parent = Object.values(records).find(r => r.sessionId === row.parentSessionId);
+        const full = { manager: 'remote', depth: (parent?.depth ?? 0) + 1, createdAt: Date.now(), updatedAt: Date.now(), status: 'queued', notification: 'none',
+          result: '', error: null, instructions: [], instructionRevision: 0, queue: [], sessionId: null, ...row };
+        // 最初から終わっている（すぐ終わった・すぐ失敗した）依頼は、結果を ply_delegate の戻りで渡すので、完了通知は送らない
+        if (!ACTIVE.has(full.status)) full.notification = 'read';
+        records[full.taskId] = full;
+        try { await write([full.taskId]); } catch (e) { delete records[full.taskId]; failed(e, 'adopt', full.taskId); throw refused(locale); }
+        touched();
+        return view(full);
+      });
+    },
+    /**
+     * ホストの便り（task）で、写しの行を更新する。ホストが正本なので、来た値をそのまま写す。終わった状態になったら、手元の委譲と同じに
+     * 完了通知の対象にする（止めたもの suppressed・受け取り済み read はそのまま）。再開（動いている状態に戻る）なら通知をやり直す。変わらなければ書かない
+     * 保存できなくても投げない（メモリが正しく、後で追いつく）。戻りは view（行が無い・写しでなければ null）
+     */
+    async mirror(taskId, patch) {
+      const r = records[taskId];
+      if (!r?.host) return null;
+      return serial(async () => {
+        const before = JSON.stringify(r);
+        // 追えなくなっていた（hostLost）行にホストの便りが戻ったら、ホストの状態に戻し、完了通知もやり直す
+        if (r.hostLost && patch.hostLost == null) r.notification = 'none';
+        const was = r.status;
+        // 止める予定（cancelPending）の間は、ホストの動いている状態の便り（running・waiting）で止めた状態を戻さない。終わった状態の便りは写し、予定を外す
+        const keep = r.cancelPending === true && 'status' in patch && ACTIVE.has(patch.status) && !('cancelPending' in patch);
+        for (const k of MIRROR_FIELDS) if (k in patch) {
+          if (keep && ['status', 'hostWaiting', 'error'].includes(k)) continue;
+          if (patch[k] == null) delete r[k]; else r[k] = patch[k];
+        }
+        if (r.cancelPending === true && !ACTIVE.has(r.status) && patch.status && !ACTIVE.has(patch.status)) delete r.cancelPending;
+        if (patch.hostLost == null) delete r.hostLost;
+        const wasActive = ACTIVE.has(was), isActive = ACTIVE.has(r.status);
+        if (!isActive && (wasActive || r.notification === 'none')) r.notification = r.status === 'cancelled' ? 'suppressed' : r.notification === 'read' ? 'read' : 'pending';
+        else if (isActive && !wasActive) r.notification = 'none';
+        if (JSON.stringify(r) !== before) { r.updatedAt = Date.now(); await persist('mirror', taskId); touched(); }
+        return view(r);
+      });
+    },
+    /** 依頼元が結果を受け取った（ホストのタスクの ply_task_status・ply_task_wait の戻り）。完了通知を送らない */
+    async markRead(taskId) { const r = records[taskId]; if (r) await markRead(r); },
     // locale は呼び出した会話（owner）の言語。子の会話も同じ言語を継ぐので、子への依頼文もこれで作る
     async call(owner, name, args = {}, signal, locale) {
       if (closed || signal?.aborted) throw new Error(agentT(locale, 'tasks.halted'));
@@ -684,11 +807,14 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
           // 同時の件数・1 会話の件数・深さに上限は置かない（2026-09-27 に廃止。depth は記録だけ残す）
           const parent = Object.values(records).find(r => r.sessionId === owner);
           const depth = (parent?.depth ?? 0) + 1;
+          // 端末の AI から任された作業（args.remote は口の本体だけが付ける）と、その子孫は、深さに上限を効かせる
+          const remoteOrigin = Boolean(args.remote || parent?.remoteOrigin);
+          if (remoteOrigin && depth > REMOTE_DEPTH_MAX) throw new Error(agentT(locale, 'tasks.remoteDepth', { max: REMOTE_DEPTH_MAX }));
           const taskId = `ply-task-${crypto.randomUUID()}`;
           const prepared = await prepare(owner, args, taskId, signal);
           try {
           if (signal?.aborted) throw new Error(agentT(locale, 'tasks.aborted'));
-          const row = { ...prepared, taskId, parentSessionId: owner, manager: 'ply', depth, task: args.task, title: args.title, ...(args.context !== undefined ? { context: args.context } : {}),
+          const row = { ...prepared, taskId, parentSessionId: owner, manager: 'ply', depth, ...(remoteOrigin ? { remoteOrigin: true } : {}), task: args.task, title: args.title, ...(args.context !== undefined ? { context: args.context } : {}),
             createdAt: Date.now(), updatedAt: Date.now(), status: 'queued', notification: 'none',
             result: '', error: null, instructions: [], instructionRevision: 0,
             queue: [(args.context ? agentT(locale, 'tasks.withContext', { task: args.task, context: args.context }) : args.task)
@@ -715,7 +841,7 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
         const seconds = args.seconds ?? 30;
         if (!Number.isInteger(seconds) || seconds < 1 || seconds > 30) throw new Error(agentT(locale, 'tasks.secondsInvalid'));
         // 人間の承認待ちになったら待たずに戻る。待つ相手が人間に変わったことを依頼元へ早く伝える
-        const pending = () => ACTIVE.has(r.status) && !waiting(r.sessionId);
+        const pending = () => ACTIVE.has(r.status) && !waitingOf(r);
         // 待っている間に終わったら、結果はこの戻り値で渡す。同じ結果の完了通知を走っているターンへ重ねないよう、待ちの間は通知を控える
         waited.set(r.taskId, (waited.get(r.taskId) ?? 0) + 1);
         try {
@@ -771,11 +897,12 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
       // 止めることは保存できなくても止める（record。ファイルは後で追いつく）
       await record(taskId, row => { row.revision = (row.revision ?? 0) + 1; dropInstructions(row); row.notification = 'suppressed'; if (ACTIVE.has(row.status)) row.status = live.has(taskId) ? 'cancelling' : 'cancelled'; }, 'cancel');
       live.get(taskId)?.abort();
+      if (r.host && stopping) await stopHost(r);
       if (!live.has(taskId) && r.activeCommands?.length) await cancelBackground(view(r));
       return stopping && was !== 'cancelling' ? { taskId, parentSessionId: r.parentSessionId, title: r.title ?? null, status: was } : null;
     },
     // 承認待ちの増減で ply_task_wait を起こす。保存する状態は変わらないので write() は通らない
-    wake() { for (const r of Object.values(records)) pauseCommands(r, now(), waiting(r.sessionId)); for (const fn of [...listeners]) fn(); },
+    wake() { for (const r of Object.values(records)) pauseCommands(r, now(), waitingOf(r)); for (const fn of [...listeners]) fn(); },
     // 会話を止めたときに、その会話が作ったタスク（と子孫）をまとめて止める。cancel と同じ書き換えを、
     // 書き換えて何かが変わるものにだけ行い、保存は 1 回にする。以前は終わったタスクまで 1 件ずつ保存していて
     // （1 会話で数十件になる）、会話の停止を遅らせていた。止め終わって通知も抑えたもの（cancel を呼んでも
@@ -797,11 +924,12 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
       const settled = r => !ACTIVE.has(r.status) && !r.queue.length && r.notification === 'suppressed' && !live.has(r.taskId);
       const change = targets.filter(r => !settled(r));
       if (!change.length) return [];
-      const stopped = [];
+      const stopped = [], hostStops = [];
       // cancel と同じく、保存できなくても止める
       await serial(async () => {
         for (const r of change) {
           const running = (ACTIVE.has(r.status) || live.has(r.taskId) || r.queue.length > 0) && r.status !== 'cancelling';
+          if (r.host && running) hostStops.push(r);
           if (running || readable(r)) stopped.push({ taskId: r.taskId, parentSessionId: r.parentSessionId, title: r.title ?? null, status: r.status, unread: !running });
           r.revision = (r.revision ?? 0) + 1; dropInstructions(r); r.notification = 'suppressed';
           if (ACTIVE.has(r.status)) r.status = live.has(r.taskId) ? 'cancelling' : 'cancelled';
@@ -811,6 +939,8 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
         touched();
       });
       for (const r of change) live.get(r.taskId)?.abort();
+      // ホストの子を止める依頼は並列に・短い待ちで（応答しないホストの分だけ中断を遅らせない）
+      await Promise.all(hostStops.map(stopHost));
       return stopped;
     },
     /** 再起動で止まった（interrupted にした）タスク。[{ taskId, parentSessionId, title, status }]（status は止まる前の状態） */

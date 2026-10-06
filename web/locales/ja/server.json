@@ -45,6 +45,7 @@
     "notRegistered": "そのアカウントは登録されていません"
   },
   "permission": {
+    "delegateEscalationHost": "この委譲は {{host}} で {{agent}} を「{{mode}}（{{modeId}}）」で動かします",
     "delegateEscalation": "この委譲は {{agent}} を「{{mode}}（{{modeId}}）」で動かします",
     "childConversation": "委譲した子の会話",
     "relayTitle": "委譲先「{{child}}」",
@@ -100,6 +101,10 @@
     "attachmentInfoTooLarge": "添付の情報が大きすぎます",
     "cannotDeleteBusy": "実行中または送信待ちのセッションは削除できません",
     "onlyUnsentDeletable": "未送信のセッションだけ削除できます",
+    "deleteBusy": "実行中・準備中のセッションと、承認や裏の作業を待っているセッションは削除できません。止めるか、終わってから削除してください",
+    "deleteQueued": "送信待ち・送信予定のメッセージがあるセッションは削除できません。取り消してから削除してください",
+    "deleteChildren": "委譲した作業が終わっていないセッションは削除できません。作業が終わるか止めてから削除してください",
+    "deleteBot": "bot のセッションは削除できません",
     "finishBeforeSwitch": "実行が終わってから切り替えてください",
     "sourceNotFound": "引き継ぎ元のセッションが見つかりません",
     "preparingFork": "会話の準備中です。分岐を再試行してください",
@@ -163,10 +168,12 @@
     "delegated": "委譲された会話は同じ会話では送り直せません。分岐して送ってください"
   },
   "delegation": {
+    "retryRemote": "ホストに任せたタスクは、この PC でやり直せません",
     "taskNotFound": "Pleiad タスクが見つかりません"
   },
   "approval": {
     "receiptMismatch": "この承認の受領証が合いません。カードを開き直してください",
+    "remoteOffline": "{{host}} がオフラインのため、答えを送れません。つながり直すと送れます。",
     "alreadyResolved": "この承認はすでに処理されています"
   },
   "title": {
@@ -177,7 +184,19 @@
   },
   "attach": {
     "noContent": "中身が無い",
-    "tooLarge": "大きすぎる（{{size}}MB / 上限 {{limit}}MB）"
+    "tooLarge": "大きすぎる（{{size}}MB / 上限 {{limit}}MB）",
+    "import": {
+      "label": "貼り付けた画像の URL",
+      "rejected": "取り込めないアドレスです（公開された https のアドレスだけ取り込めます）",
+      "tooLarge": "画像が大きすぎます（上限 10MB）",
+      "notImage": "画像（PNG・JPEG・GIF・WebP・AVIF）ではありません",
+      "tooSmall": "小さな画像（縦横 32px 以下）は取り込みません",
+      "status": "画像の取得先が HTTP {{status}} を返しました",
+      "timeout": "画像の取得が時間内に終わりませんでした",
+      "network": "画像を取得できませんでした",
+      "busy": "画像の取り込みが多すぎます",
+      "cancelled": "取り込みをやめました"
+    }
   },
   "statuses": {
     "renameFromRequired": "改名元の状態が要る",
@@ -894,6 +913,10 @@
       "rateLimited": "中継が一時的に接続を止めています（認証の失敗が続いたため）",
       "rejected": "中継が接続を受け付けませんでした（HTTP {{status}}）",
       "unreachable": "中継につながりません（{{reason}}）"
+    },
+    "agent": {
+      "hostScreenOnly": "この端末の AI からの依頼を受ける設定は、ホストの PC の画面からだけ入れられます（切る・すべて止めるは端末の画面からもできます）",
+      "desktopOnly": "この端末の AI からの依頼は、デスクトップ版の端末だけが受けられます"
     },
     "unnamedDevice": "名前のない端末",
     "settings": {

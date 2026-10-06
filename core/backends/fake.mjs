@@ -17,6 +17,8 @@
 //   "fail"         … 失敗で終わる（outcome: error。離れた端末への「失敗」の通知を測る）
 //   "limit <resetsAt>" … 指定時刻に解ける使用量の上限（ISO または Unix ミリ秒）
 //   "whoami"       … 渡されたアカウントのトークン（oauthToken）の指紋を本文にする。無ければ account:none
+//   "deleted-natives" … このプロセスで deleteSession に渡されたネイティブの id と、今あるネイティブの会話の id を JSON（{ deleted, live }）で本文にする
+//                    （送った会話の削除がネイティブの会話を消さないことの検査。ADR 0147）
 //   "context:<json>" … ply_context（contextRuntime）のツールを { name, arguments } で 1 回呼び、返りを本文にする
 //   "computer:<json>" … ply_computer（computerRuntime）のツールを { name, arguments }（配列なら順に）呼び、返りを本文にする。tool.result には印の行から作った images と computer を付ける
 //   "computer-hold:<json>" … "computer:" の後、中断されるまで走り続ける（ロックを持ったままのターン）。"computer-instructions" は ply_computer の指示文を返す
@@ -28,6 +30,8 @@
 //   "bg-shell <本文>" … 本文で返答した後、終わらない裏のコマンド（Claude の local_bash）を抱えて phase: waiting で待つ。
 //                    stopBackground で止めると main が再開して一言返し、ターンが終わる
 //   "term <本文>"  … 本文で返答して終わり、ターンの外に端末（Codex の unified_exec と同じ kind: terminal）を残す
+//   "history-ioerr <回数> <本文>" … 本文で返答して終わり、その後のこの会話の getMessages を <回数> だけ Codex と同じ
+//                    `(code: 1546) disk I/O error` で失敗させる（止めたばかりのターン用の app-server とぶつかった形。core/history-retry.mjs）
 //   "hook-follow <本文>" … 本文で返答した後、Stop フックに止められて続けた形（ToolSearch と load_skill を呼んで「ナレッジ化対象なし」）。
 //                    続きの発言には Claude の履歴と同じ stopHookFollowUp を付ける
 //   "steps:<json>" または "steps:@<json ファイルの絶対パス>" … ツールと本文を台本どおりに並べる。{"steps":[{"tool":"Grep","input":{…},"result":"…","error":false,"ms":600,"ask":false},{"text":"…"}]}
@@ -52,6 +56,7 @@ import { undelivered } from "./undelivered.mjs";
 import { computerDisplay, computerToolInput } from "../computer-use/display.mjs";
 
 const sessions = new Map();   // sessionId -> { sessionId, title, cwd, createdAt, lastModified, tag, messages, subagents }
+const deletedNatives = [];    // deleteSession に渡された id（台本 "deleted-natives"）
 const auth = { loggedIn: false, account: null };
 // 台本 "bg-shell" の止め口（Pleiad の会話 id -> taskId -> 止める関数）と、台本 "term" が残した端末（会話 id -> 端末の一覧）
 const shells = new Map();
@@ -167,7 +172,8 @@ export function scriptOf(prompt) {
     rest = rest.slice(hit[0].length);
     if (hit[1] === "pleiad-channel") { said = hit[2]; heard = /^<pleiad-channel\b[^>]*\sheard="true"/.test(hit[0]); }
     // 心拍から自分で起きたターン（ADR 0126）: 本文の「理由: …」を台本にする（"echo:こんにちは" なら話す。何も無ければ黙る）
-    else if (hit[1] === "pleiad-inner") { const why = /(?:理由|Reason): (.*)/.exec(hit[2])?.[1]; if (why) said = why; }
+    // 予約した時刻に起きたターン（kind="wake"。ADR 0140）: 最初の予約のメモを台本にする
+    else if (hit[1] === "pleiad-inner") { const why = /(?:理由|Reason|予約のメモ|Note of the reservation for [^:]*): (.*)/.exec(hit[2])?.[1]; if (why) said = why; }
   }
   const script = rest.trim() || (said ?? "").replace(/^\s*(?:@\S+\s+)+/, "").trim();
   if (heard && !rest.trim()) return script.startsWith("chime-steps:") ? `steps:${script.slice(12)}` : script.startsWith("chime:") ? `echo:${script.slice(6)}` : "echo:";
@@ -690,6 +696,9 @@ export const backend = {
         });
         out.text = `回答: ${JSON.stringify(answer?.answers ?? {})}`;
         await say(emit, out.text, out.uuid);
+      } else if (text === "deleted-natives") {
+        out.text = JSON.stringify({ deleted: deletedNatives, live: [...sessions.keys()] });
+        await say(emit, out.text, out.uuid);
       } else if (/(^|\n)whoami$/.test(text)) {   // 分岐した会話の最初のターンは履歴の引き継ぎ文の末尾に来る
         // トークンそのものは出さない。同じトークンかどうかだけ分かる指紋
         out.text = oauthToken ? `account:${crypto.createHash("sha256").update(oauthToken).digest("hex").slice(0, 12)}` : "account:none";
@@ -714,6 +723,11 @@ export const backend = {
         const follow = { uuid: crypto.randomUUID(), role: "assistant", text: "ナレッジ化対象なし", stopHookFollowUp: true };
         await say(emit, follow.text, follow.uuid);
         push(s, follow);
+      } else if (/^history-ioerr(\s|$)/.test(text)) {
+        const [, count, body] = /^history-ioerr\s+(\d+)\s*([\s\S]*)$/.exec(text) ?? [];
+        out.text = body || "報告";
+        await say(emit, out.text, out.uuid);
+        s.historyFailures = Number(count ?? 0);
       } else if (/^term(\s|$)/.test(text)) {
         out.text = text.replace(/^term\s*/, "") || "端末を残した";
         await say(emit, out.text, out.uuid);
@@ -790,7 +804,12 @@ export const backend = {
   },
 
   async getMessages(sessionId) {
-    return (sessions.get(sessionId)?.messages ?? []).map((m) => ({ ...m }));
+    const s = sessions.get(sessionId);
+    if (s?.historyFailures > 0) {
+      s.historyFailures--;
+      throw new Error("codex -32603: failed to list thread history: thread-store internal error: failed to access thread history: error returned from database: (code: 1546) disk I/O error");
+    }
+    return (s?.messages ?? []).map((m) => ({ ...m }));
   },
 
   async setTitle(sessionId, title) {
@@ -799,6 +818,7 @@ export const backend = {
 
   // 隠れた会話の片付け（core/conversations.mjs の deleteHiddenConversation）。Claude の deleteSession と同じく会話を消す
   async deleteSession(sessionId) {
+    deletedNatives.push(sessionId);
     sessions.delete(sessionId);
   },
 

@@ -104,7 +104,8 @@ export function handoffText({ locale, now, why, stream = [], loops = [], taintOn
 }
 
 const pct = (n) => String(Math.round(n * 100) / 100);
-const eventLine = (e, now) => `- [${whenOf(e.at, now)}] ${e.channelName ? `#${e.channelName}` : ''}${e.threadId ? ` > ${e.threadId}` : ''} ${e.author}${e.toMe ? ' (to me)' : ''}${e.taint ? ' (untrusted: from outside)' : ''}: ${clip(e.text, 160)}`;
+const eventLine = (e, now) => `- [${whenOf(e.at, now)}] ${e.channelName ? `#${e.channelName}` : ''}${e.threadId ? ` > ${e.threadId}` : ''} ${e.author}${e.failed ? ' (failed)' : ''}${e.toMe ? ' (to me)' : ''}`
+  + `${Number.isFinite(e.answeredAt) ? ` (answered by you at ${whenOf(e.answeredAt, now)})` : ''}${e.taint ? ' (untrusted: from outside)' : ''}: ${clip(e.text, 160)}`;
 
 /** 安いモデルへ聞く束。指示は英語（夜の整理と同じ。返事は JSON だけ・道具は使わない）。活動の要約は bot の言語 */
 export function beatPrompt({ bot, locale, now, gate, drives, events = [], stream = [], loops = [], budget = null, related = [], minMin = 5, maxMin = 60 }) {
@@ -140,7 +141,7 @@ export function beatPrompt({ bot, locale, now, gate, drives, events = [], stream
   const loopRows = take(loops, (l) => loopLine(l, { locale, now }));
   if (loopRows.length) body.push('Open loops:', ...loopRows);
   const eventRows = take(events, (e) => eventLine(e, now));
-  if (eventRows.length) body.push('', 'Unread events since the last heartbeat (not yours):', ...eventRows);
+  if (eventRows.length) body.push('', 'Events since the last heartbeat (oldest first; "you" is your own post, "you (failed)" a reply that failed). A post marked "answered by you" is already answered: before adding or keeping a loop about an unanswered question, check your later posts in the same thread.', ...eventRows);
   const streamRows = streamLines(stream, { locale, now, maxTokens: Math.max(300, Math.min(TAIL_TOKENS, left)) });
   if (streamRows.length) body.push('', 'Recent activity summaries (oldest first; seq is omitted, refer to loop ids):', ...streamRows);
   if (related.length) body.push('', 'Related memories (facts people told you):', ...related.slice(0, 3).map((m) => `- ${clip(m, 160)}`));

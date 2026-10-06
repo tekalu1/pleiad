@@ -54,6 +54,7 @@ import { CHANNEL_TAG, CHANNEL_THREAD_TAG, MEMORY_CORE_TAG, TURN_CONTEXT_TAG, INN
  *   channelId: string, threadId: string,
  *   sessions: { [botId: string]: string },                // スレッドごと・bot ごとの会話（ADR 0109）
  *   state: 'idle'|'working'|'waiting'|'failed',
+ *   live?: { [botId: string]: 'working'|'waiting' },       // いま動いている bot ごとの状態（state はスレッド全体の集計なので、どの bot かはここで持つ。流れの要約の行が名前を出す）
  *   tokens: { input: number, output: number, cached: number },  // このスレッドの bot の会話の合計（usage の出来事から）
  *   calls: number,                                        // bot が起こされた回数（表示だけ。上限には使わない）
  *   spend?: { day: string, percent: number },             // チャンネルの予算に数えた、その日（現地の日付）に使った分（bot のバックエンドの週の使用枠に対する %。origin の根のスレッドに持つ。ADR 0119）
@@ -85,7 +86,8 @@ import { CHANNEL_TAG, CHANNEL_THREAD_TAG, MEMORY_CORE_TAG, TURN_CONTEXT_TAG, INN
  *   recentDelivered?: boolean,                            // 最近のスレッドの申し送りを最初のターンで渡した印
  *   delivered: string[],                                  // この写しの後に渡した記憶の id（圧縮で空に）
  *   postCursor: string|null,                              // このスレッドの投稿をどこまで渡したか
- *   personaKey?: string }} SessionBot */                  // Antigravity の会話が最後に受け取った人格のハッシュ（直したら次のターンに新しい人格を渡す。ADR 0109）
+ *   memoKey?: string,                                     // チャンネルの「ここでの決まり」を最後に渡したときの全文のハッシュ（変わったときだけ渡す。決まりが空なら ''）
+ *   personaKey?: string }} SessionBot */                 // Antigravity の会話が最後に受け取った人格のハッシュ（直したら次のターンに新しい人格を渡す。ADR 0109）
 
 /** @typedef {{
  *   id: string, layer: 'user'|string,                     // 'user' か botId
@@ -172,9 +174,11 @@ const attrs = (obj) => Object.entries(obj).filter(([, v]) => v !== null && v !==
  * from は表示名（bot は `🦉 Owl (bot)`）、at は ISO の分まで（呼び出し側が決める）。
  * reply: `reply="true"`。呼んだ bot（@ で起こした相手）の返事（bot の会話でそのターンの終わりに返す。ADR 0109）
  * heard: `heard="true"`。あなたに @ していない人の投稿で、スレッドのほかの bot（宛先）も受けている。返事をするかは bot が決める（ADR 0128）
+ * to: `to="🦉 Owl (bot)"`。聞こえた投稿（heard）が、その bot との話の続き（その bot への返事・引用）であること（ADR 0128 の追記）。bot の名前だけを入れる
+ * reaction: `reaction="👍"`。from が、この bot の投稿（post）にそのリアクションを付けた（本文はリアクションの説明と投稿の書き出し。ADR 0109 の追記）
  */
-export function channelEnvelope({ channel, channelId, thread, post, from, at, reply, heard, text }) {
-  return `<${CHANNEL_TAG}${attrs({ channel, 'channel-id': channelId, thread, post, from, reply, heard, at })}>${escapeBody(text)}</${CHANNEL_TAG}>`;
+export function channelEnvelope({ channel, channelId, thread, post, from, at, reply, heard, to, reaction, text }) {
+  return `<${CHANNEL_TAG}${attrs({ channel, 'channel-id': channelId, thread, post, from, reply, heard, to, reaction, at })}>${escapeBody(text)}</${CHANNEL_TAG}>`;
 }
 /** 初回に渡す、スレッドのそれまでの投稿。posts は channelEnvelope の引数の並び */
 export function channelThreadEnvelope({ channel, channelId, thread, posts }) {

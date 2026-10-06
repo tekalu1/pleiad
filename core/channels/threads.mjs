@@ -6,7 +6,7 @@
 //     get(channelId, threadId): Promise<ThreadState|null>
 //     list(channelId?): Promise<ThreadState[]>
 //     update(channelId, threadId, patch | (current) => patch): Promise<ThreadState>
-//         … 無ければ空のスレッドから作る。patch の欄: sessions（bot ごとに足す）・state・tokens（欄ごとに足し直す）・calls・spend（{ day: 'YYYY-MM-DD', percent }。チャンネルの予算に数えた、その日に使った分。ADR 0119）・stopped・origin（{ channelId, threadId }。bot が自分のスレッドから起こして新しくできたスレッドの、起こした元。null で外す）。
+//         … 無ければ空のスレッドから作る。patch の欄: sessions（bot ごとに足す）・state・live（動いている bot ごとの状態 { [botId]: 'working'|'waiting' }。丸ごと置き換える。空で外す）・tokens（欄ごとに足し直す）・calls・spend（{ day: 'YYYY-MM-DD', percent }。チャンネルの予算に数えた、その日に使った分。ADR 0119）・stopped・origin（{ channelId, threadId }。bot が自分のスレッドから起こして新しくできたスレッドの、起こした元。null で外す）。
 //           関数で渡すと、直列化された中で今の値（写し）を受け取って patch を返す（トークンの足し算など、読んでから書く更新はこちら）
 //   emptyThread(channelId, threadId, now) → ThreadState
 import path from 'node:path';
@@ -35,6 +35,15 @@ export function applyThreadPatch(current, patch, now) {
   if (patch.state !== undefined) {
     if (!THREAD_STATES.includes(patch.state)) throw new Error(`thread state must be one of ${THREAD_STATES.join(' / ')}: ${patch.state}`);
     next.state = patch.state;
+  }
+  if (patch.live !== undefined) {
+    if (!patch.live || typeof patch.live !== 'object' || Array.isArray(patch.live)) throw new Error('live must be an object');
+    const live = {};
+    for (const [botId, state] of Object.entries(patch.live)) {
+      if (state !== 'working' && state !== 'waiting') throw new Error('live state must be working or waiting');
+      live[botId] = state;
+    }
+    if (Object.keys(live).length) next.live = live; else delete next.live;
   }
   if (patch.tokens && typeof patch.tokens === 'object') {
     for (const k of ['input', 'output', 'cached']) next.tokens[k] = num(patch.tokens[k], next.tokens[k]);

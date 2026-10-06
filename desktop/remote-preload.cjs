@@ -24,6 +24,12 @@ if (info) {
       return () => ipcRenderer.removeListener('ply:remote-status-changed', handler);
     },
     retry: () => ipcRenderer.invoke('ply:remote-retry'),
+    // 手元の窓の「子の会話を見る」から、この窓で開く会話（desktop/remote-windows.cjs の openHost）
+    onOpenSession: listener => {
+      const handler = (_event, sessionId) => listener(sessionId);
+      ipcRenderer.on('ply:remote-open-session', handler);
+      return () => ipcRenderer.removeListener('ply:remote-open-session', handler);
+    },
     closeWindow: () => ipcRenderer.send('ply:remote-close'),
   });
   contextBridge.exposeInMainWorld('plyDesktop', {

@@ -21,7 +21,7 @@ import { callMcpTool, mcpTools } from '../core/ops/surfaces/mcp.mjs';
 
 export const EXIT = { ok: 0, usage: 2, notRunning: 3, refused: 4, other: 5, pending: 6 };
 const REFUSED = new Set(['NEEDS_UI', 'NEEDS_APPROVAL', 'READ_ONLY_MODE', 'HOST_SCREEN_ONLY', 'DENIED', 'STALE', 'SETTING_READ_ONLY',
-  'SEND_SELF', 'SEND_TO_CHILD', 'SEND_TO_PARENT', 'RELAY_LIMIT', 'SEND_RATE']);
+  'SEND_SELF', 'SEND_TO_CHILD', 'SEND_TO_PARENT', 'RELAY_LIMIT', 'SEND_RATE', 'DELETE_SELF', 'CANNOT_DELETE']);
 const USAGE_ERRORS = new Set(['INVALID', 'NOT_FOUND', 'SESSION_NOT_FOUND', 'MESSAGE_NOT_FOUND', 'SETTING_NOT_FOUND', 'TASK_NOT_FOUND', 'WORKTREE_NOT_FOUND', 'ENDPOINT_NOT_FOUND', 'DEVICE_NOT_FOUND', 'HOOK_NOT_FOUND', 'NOT_GIT', 'CHANNEL_NOT_FOUND', 'POST_NOT_FOUND']);
 export const exitCodeOf = (code) => (REFUSED.has(code) ? EXIT.refused : USAGE_ERRORS.has(code) ? EXIT.usage : EXIT.other);
 

@@ -154,6 +154,36 @@
       "input": "25c7d85c859a"
     },
     {
+      "id": "attachments.cancelImport",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": false,
+        "cli": false
+      },
+      "legacyCommand": "attachImportCancel",
+      "input": "1c01f056200a"
+    },
+    {
+      "id": "attachments.importImage",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": false,
+        "cli": false
+      },
+      "legacyCommand": "attachImport",
+      "input": "f21a93c2cad3"
+    },
+    {
       "id": "bots.create",
       "risk": "write",
       "riskOf": true,
@@ -414,6 +444,75 @@
       },
       "legacyCommand": null,
       "input": "3cef2b237b95"
+    },
+    {
+      "id": "brain.wakeAdd",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": false,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "brain",
+            "wake-add"
+          ],
+          "positional": [
+            "note"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "df46c8c15ea8"
+    },
+    {
+      "id": "brain.wakeCancel",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": false,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "brain",
+            "wake-cancel"
+          ],
+          "positional": [
+            "id"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "5dc2476eb711"
+    },
+    {
+      "id": "brain.wakeList",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "brain",
+            "wake-list"
+          ],
+          "positional": [
+            "botId"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "f08816c821a8"
     },
     {
       "id": "browser.listProfiles",
@@ -734,6 +833,30 @@
       },
       "legacyCommand": null,
       "input": "3f31d9d4d283"
+    },
+    {
+      "id": "channels.threadBudget",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "channels",
+            "thread-budget"
+          ],
+          "positional": [
+            "channelId",
+            "threadId"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "a4332e367d65"
     },
     {
       "id": "channels.update",
@@ -1143,7 +1266,7 @@
         "cli": true
       },
       "legacyCommand": null,
-      "input": "99f99ce422d2"
+      "input": "3e002aa0e25e"
     },
     {
       "id": "delegation.instructions",
@@ -2652,6 +2775,29 @@
       },
       "legacyCommand": "compactConversation",
       "input": "716323b9326b"
+    },
+    {
+      "id": "sessions.delete",
+      "risk": "guarded",
+      "riskOf": true,
+      "scope": "session",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "sessions",
+            "delete"
+          ],
+          "positional": [
+            "sessionId"
+          ]
+        }
+      },
+      "legacyCommand": "deleteSession",
+      "input": "bb3819255f29"
     },
     {
       "id": "sessions.deleteUnsent",
@@ -4186,6 +4332,27 @@
       ]
     },
     {
+      "id": "brain.wakeAdd",
+      "path": "brain wake-add",
+      "positional": [
+        "note"
+      ]
+    },
+    {
+      "id": "brain.wakeCancel",
+      "path": "brain wake-cancel",
+      "positional": [
+        "id"
+      ]
+    },
+    {
+      "id": "brain.wakeList",
+      "path": "brain wake-list",
+      "positional": [
+        "botId"
+      ]
+    },
+    {
       "id": "browser.listProfiles",
       "path": "browser listProfiles",
       "positional": []
@@ -4284,6 +4451,14 @@
     {
       "id": "channels.stopThread",
       "path": "channels stop-thread",
+      "positional": [
+        "channelId",
+        "threadId"
+      ]
+    },
+    {
+      "id": "channels.threadBudget",
+      "path": "channels thread-budget",
       "positional": [
         "channelId",
         "threadId"
@@ -4829,6 +5004,13 @@
     {
       "id": "sessions.compact",
       "path": "sessions compact",
+      "positional": [
+        "sessionId"
+      ]
+    },
+    {
+      "id": "sessions.delete",
+      "path": "sessions delete",
       "positional": [
         "sessionId"
       ]

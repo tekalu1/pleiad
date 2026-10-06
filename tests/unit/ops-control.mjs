@@ -386,7 +386,7 @@ export default async function (t) {
       const inputs = o.id === 'settings.get' || o.id === 'settings.schema'
         ? (await api(cli, 'POST', '/api/ops/settings.list', {})).body.result.settings.map((s) => ({ key: s.key }))
         : ['sessions.get', 'sessions.read', 'sessions.listMessages'].includes(o.id) ? [{ sessionId: ask.sessionId }] : ['delegation.status', 'delegation.taskStatus', 'delegation.taskWait', 'delegation.instructions'].includes(o.id) ? [{ taskId: 'none' }] : o.id === 'bots.get' ? [{ botId: 'none' }] : o.id === 'sessions.search' ? [{ query: 'control' }, { query: MARKER }]
-        : o.id === 'channels.get' || o.id === 'channels.read' ? [{ channelId: 'c_000000000aaaaaa' }] : o.id === 'channels.search' ? [{ query: 'control' }, { query: MARKER }]
+        : o.id === 'channels.get' || o.id === 'channels.read' ? [{ channelId: 'c_000000000aaaaaa' }] : o.id === 'channels.search' ? [{ query: 'control' }, { query: MARKER }] : o.id === 'channels.threadBudget' ? [{ channelId: 'c_000000000aaaaaa', threadId: 'p_000000000bbbbbb' }]
         : o.id === 'memory.list' ? [{ layer: 'user' }] : o.id === 'memory.search' ? [{ query: 'control' }]
         : o.id === 'routines.get' ? [{ routineId: 'none' }]
         : o.id === 'hooks.readPly' ? [{ id: 'none' }] : o.id === 'hooks.read' ? [{ agent: 'claude', scope: 'project', base: scratch, loc: { event: 'PreToolUse', group: 0, handler: 0 } }]

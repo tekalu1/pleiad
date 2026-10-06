@@ -30,13 +30,24 @@
     };
   }
 
-  const api = { translator, hostLine };
+  /**
+   * 「この PC の AI から任せる」の下の 1 行（docs/remote.md §7.4）。オフなら何も出さない。オンでホストが未許可なら、ホストのどこで許可するかを言う
+   * （ホストの許可はホストで人が変える）。両方オンなら「使える」。host は hostRow（agentUse・agentAllowed・agentState）
+   */
+  function agentLine(host, t, deviceName) {
+    if (!host.agentUse) return { on: false, text: '' };
+    if (host.agentState === 'unsupported') return { on: true, text: t('remote.hosts.agent.unsupported') };
+    if (!host.agentAllowed) return { on: true, text: t('remote.hosts.agent.notAllowed', { host: host.name || host.hostId, device: deviceName || '' }) };
+    return { on: true, text: t('remote.hosts.agent.ready') };
+  }
+
+  const api = { translator, hostLine, agentLine };
   if (typeof module === 'object' && module.exports) { module.exports = api; return; }
 
   // ---------------------------------------------------------------- 画面
   const bridge = window.plyHosts;
   const $ = id => document.getElementById(id);
-  let t = translator({}), lang = 'en', hosts = [], editing = null, confirming = null, busy = new Set();
+  let t = translator({}), lang = 'en', hosts = [], editing = null, confirming = null, busy = new Set(), deviceName = '';
   const formatDate = iso => {
     try { return new Intl.DateTimeFormat(lang, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(iso)); } catch { return String(iso); }
   };
@@ -69,6 +80,7 @@
         button(t('remote.hosts.rename'), 'btn', () => { editing = host.hostId; confirming = null; render(); }),
         button(t('remote.hosts.remove'), 'btn', () => { confirming = host.hostId; editing = null; render(); }));
       li.append(info, acts);
+      if (!line.revoked) li.append(agentOption(host));
       if (line.revoked) li.append(el('p', 'weak sub', t('remote.hosts.revokedHint')));
       if (editing === host.hostId) li.append(renameLine(host, line.name));
       if (confirming === host.hostId) li.append(removeLine(host, line.name));
@@ -77,6 +89,31 @@
     $('empty').hidden = hosts.length > 0;
     const input = list.querySelector('.sub input');
     if (input) { input.focus(); input.select(); }
+  }
+
+  /** この PC の AI から任せるスイッチ（既定オフ。人だけが変える。ローカルのサーバーの設定・AI の操作の一覧には置かない） */
+  function agentOption(host) {
+    const info = agentLine(host, t, deviceName);
+    const box = el('div', 'aiopt');
+    const sw = el('button', 'sw');
+    sw.type = 'button';
+    sw.setAttribute('role', 'switch');
+    sw.setAttribute('aria-checked', String(info.on));
+    sw.id = `agent-${host.hostId}`;
+    sw.disabled = busy.has(`agent:${host.hostId}`);
+    sw.onclick = async () => {
+      busy.add(`agent:${host.hostId}`); render();
+      const r = await bridge.setAgentUse(host.hostId, !info.on);
+      busy.delete(`agent:${host.hostId}`);
+      if (!r.ok) { $('loadError').textContent = r.message; $('loadError').hidden = false; }
+      await refresh();
+    };
+    const label = el('label', 'swl');
+    label.htmlFor = sw.id;
+    label.append(el('span', 'swt', t('remote.hosts.agent.label')), sw);
+    box.append(label);
+    if (info.text) { const note = el('p', 'weak', info.text); note.setAttribute('role', 'status'); box.append(note); }
+    return box;
   }
 
   function renameLine(host, name) {
@@ -158,7 +195,7 @@
     t = translator(r.strings || {});
     lang = r.lang || 'en';
     applyStrings();
-    if (r.ok) { hosts = r.hosts; $('storage').hidden = r.encrypted !== false; }
+    if (r.ok) { hosts = r.hosts; deviceName = r.deviceName || ''; $('storage').hidden = r.encrypted !== false; }
     else { $('loadError').textContent = t('remote.hosts.loadFailed', { error: r.message }); $('loadError').hidden = false; }
     render();
     $('payload').focus();

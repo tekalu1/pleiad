@@ -58,3 +58,33 @@ export function backgroundSummary(items, maxVisible = 3) {
   return { live: live.length, ended: items.filter(item => item.group === 'agent' && !item.live).length,
     groups, visible, hidden: groups.length - visible.length };
 }
+
+/**
+ * Channels のスレッドの一覧: エージェントの項目を、親（根）の会話ごと（= bot ごと）に分ける。会話の出てくる順・中の順は items のまま。
+ * 子孫は根と同じグループ（item.owner は client.mjs の backgroundItems が根の会話を入れる）
+ * @returns {Map<string|null, object[]>}
+ */
+export function groupByOwner(items) {
+  const groups = new Map();
+  for (const item of items) {
+    if (item.group !== 'agent') continue;
+    (groups.get(item.owner ?? null) ?? groups.set(item.owner ?? null, []).get(item.owner ?? null)).push(item);
+  }
+  return groups;
+}
+
+/**
+ * 1 つのグループで見せる行。動いている親（とその子孫）は全部、終わった親は先頭から limit 件まで（子孫は親に付く）。
+ * remaining は見せなかった終わった親の数（「さらに N 件を表示」）
+ */
+export function visibleRows(rows, limit) {
+  const finishedRoots = rows.filter(x => !(x.rootLive ?? x.live) && !x.depth);
+  const shown = new Set(finishedRoots.slice(0, limit).map(x => x.key));
+  let root = null;
+  const visible = rows.filter(x => {
+    if (x.rootLive ?? x.live) return true;
+    if (!x.depth) { root = x.key; return shown.has(x.key); }
+    return shown.has(root);
+  });
+  return { rows: visible, remaining: finishedRoots.length - shown.size };
+}

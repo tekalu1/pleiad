@@ -127,6 +127,12 @@
       "removeConfirm": "Delete \"{{host}}\" from this PC? It stays in the host's device list, so revoke it on the host when you no longer use it.",
       "removeYes": "Delete",
       "revokedHint": "To pair again, create a new code on the host and paste it under \"Add a host\".",
+      "agent": {
+      "label": "Hand work over from this PC's AI",
+      "notAllowed": "Works once {{host}} accepts requests from this device ({{device}})'s AI in Settings > Remote",
+      "ready": "Available · approvals for handed-over work can also be answered in this PC's conversation",
+      "unsupported": "This host's Pleiad is too old to accept work from an AI"
+      },
       "unknown": "This host is not paired",
       "loadFailed": "Couldn't read the host list: {{error}}",
       "storagePlain": "Credentials can't be encrypted on this PC (they are saved in a file only you can read).",

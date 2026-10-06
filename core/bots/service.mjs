@@ -37,6 +37,7 @@ import os from 'node:os';
 import crypto from 'node:crypto';
 import { inspectFile } from '../file-preview.mjs';
 import { newId } from '../channels/types.mjs';
+import { inputWithCache } from '../usage.mjs';
 import { modePosition, scopeRank, autonomyRank } from '../modes.mjs';
 import { createBotStore, BotStoreError, nameProblem, iconProblem, personaProblem, normalizeFolders, folderKey, normalizePulse, FOLDERS_MAX, SEND_TARGETS_MAX, PULSE_MIN_MINUTES, PULSE_MAX_MINUTES } from './store.mjs';
 import { createBotSessions, defaultMode, botTurnSetup, botInstructions } from './sessions.mjs';
@@ -172,7 +173,7 @@ export function createBotService({ dataDir, channels, host = null, emit = () => 
     if (!ids.length || !host?.usageStore?.records) return { weekTokens: 0, cacheRatio: null };
     const rows = await host.usageStore.records({ sessionIds: ids, since: now() - WEEK_MS }).catch(() => []);
     let input = 0, output = 0, cached = 0;
-    for (const r of rows) { input += r.inputTokens ?? 0; output += r.outputTokens ?? 0; cached += r.cachedTokens ?? 0; }
+    for (const r of rows) { input += inputWithCache(r); output += r.outputTokens ?? 0; cached += Math.min(r.cachedTokens ?? 0, inputWithCache(r)); }
     return { weekTokens: input + output, cacheRatio: input > 0 ? Math.min(1, cached / input) : null };
   }
 

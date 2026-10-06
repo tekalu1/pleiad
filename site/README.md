@@ -15,6 +15,7 @@ python -m http.server 8799 --directory _site   # http://127.0.0.1:8799/ と /en/
 - JS が使う文言（星図の状態・状態の印・スマホの「許可した」など）は `index.html` の `<script id="strings">` に置く。英語は `en.json` の `strings`。分岐の札の文言は `<template>` の `data-i18n`。JS の中に文言を書かない（check が落とす）。
 - 画像は `main.js` の `asset()` で引く（英語は `/en/` にあり、文書からの相対では届かないため）。
 - 公開先の URL（canonical・hreflang・og:url・og:image）は `tools/build-site.mjs` の `SITE_URL` 1 か所。
+- `privacy/index.html`（日本語）・`en/privacy/index.html`（英語）: Android アプリのプライバシーポリシー（https://pleiad.dev/privacy/ 。Google Play の掲載に要る。`docs/android-releases.md`「Google Play」）。辞書を使わず、日本語と英語を別のファイルで持ち、そのまま写す。見た目は `legal.css`（字が多いので削った書体は使わない）。check は対があることと英語の側に日本語が無いことを見る。アプリが送るもの・権限・保存するものを変えたら、両方を直して制定日の下に更新日を書く。
 - `branch.js`: アプリ画面の分岐（`web/branch-view.mjs` の移植。寸法・時間・加減速はアプリと同じ）。アプリの分岐の動きを変えたら合わせる。
 - `hero.js`: ヒーローの星図（three.js。版は `index.html` の importmap で固定）。星 = 会話の節、線 = 分岐、青 = 今いる枝、赤紫の ◆ = 承認待ち、回る弧 = 実行中。色と印の意味はアプリと同じ（`docs/design-system.md`）。
 - WebGL が無い環境では `assets/sky.webp`（星図を焼いた一枚）を出す。`assets/og.png`（日本語）・`assets/og-en.png`（英語）は共有用の画像。どれも星図の形や見出しを変えたら撮り直す（窓 1200×630、`.hero-copy .cta, .hero-copy .meta, .nav-links` を隠し、`.hero` の高さを 630px にして、星図が落ち着いた所を撮る）。

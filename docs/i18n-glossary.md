@@ -25,6 +25,7 @@
 | エージェント | agent |
 | エージェント設定 | Agents |
 | 委譲 / 委譲先 | delegate / delegated task |
+| （ホストへ）任せる / 任された作業 | hand over (to a host) / work handed over（ほかの PC のホストへの委譲。「delegate」は手元の委譲に使う） |
 | Pleiad タスク | Pleiad task |
 | 承認 | approval |
 | 外部の読み込み（ブラウザーの設定の見出し。旧「確認」） | External resources |
@@ -125,6 +126,9 @@
 | パスで渡す（ホストのファイル） | Passed by path |
 | 送るのをやめる / 再試行（送っている途中・失敗の添付） | Stop sending / Retry |
 | N 件送信中 / N 件失敗（添付の入口） | N sending / N failed |
+| 取り込み中… / 取り込みをやめる（貼り付けた画像） | Importing… / Stop importing |
+| N 件取り込み中（添付の入口） | N importing |
+| 画像 N 件を取り込んでいます / 取り込みました（読み上げ） | Importing N images / Imported N images |
 | 書式（B・I・コード・リンク。範囲を選んだときの面） | Formatting (Bold / Italic / Code / Link) |
 | エージェントに渡した原文（発言の本文そのまま） | what was sent to the agent |
 | 続きを表示 / 折りたたむ（長い発言） | Show more / Show less |

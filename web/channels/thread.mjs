@@ -18,6 +18,8 @@ import { openEmojiPicker } from '../emoji-picker.mjs';
 import { createDeck } from './deck.mjs';
 import { createThreadHead } from './thread-head.mjs';
 import { createThreadToc } from './thread-toc.mjs';
+import { createBackgroundChip } from '../background-chip.mjs';
+import { createBudgetMeter, meterOf, tokenSplit } from './thread-budget.mjs';
 import { createToolSource, turnWindows, logInWindow, signatureOf, toolNodes } from './thread-tools.mjs';
 
 const PAGE = 50;
@@ -83,6 +85,21 @@ export function createThread(host) {
   const band = el('div', 'th-band');
   band.hidden = true;
   band.setAttribute('role', 'status');
+  // サブエージェントの入口（入力欄のすぐ上の右端。Chats の「バックグラウンド」と同じチップ。bot が委譲した子がいなければ出さない）。
+  // 押すと bot ごとに子を並べる一覧が開く（Chats と同じ部品。docs/design-system.md「バックグラウンド」）
+  const subs = el('div', 'work-entry th-subs');
+  subs.hidden = true;
+  const subsButton = el('button', 'strip-chip bg-chip');
+  subsButton.type = 'button';
+  subsButton.setAttribute('aria-controls', 'workDialog');
+  subs.append(subsButton);
+  const subsChip = createBackgroundChip(subsButton);
+  // 予算のメーター（Chats の文脈のメーターと同じ部品。押すと内訳）。帯を描き直しても要素は使い回し、開いた状態を保つ
+  const meter = createBudgetMeter({
+    load: () => host.invoke('channels.threadBudget', { channelId: S.channelId, threadId: S.threadId }),
+    bots: () => S.bots,
+    lang: () => document.documentElement.lang || undefined,
+  });
   const composer = createChComposer({
     id: 'chThreadComposer',
     host,
@@ -95,7 +112,7 @@ export function createThread(host) {
   });
   const toc = createThreadToc({ host, posts: () => S.posts, ctx: () => ctx, go: (p) => goTo(p) });
   const head = createThreadHead({ host, onClose: () => close(), onBack: () => close(), onToc: (b) => toc.toggle(b) });
-  root.append(head.el, log, jump, band, composer.el);
+  root.append(head.el, log, jump, band, subs, composer.el);
   composer.bindDropZone(root);
   wireAttachmentZoom(log, host);
   const deck = createDeck({ view, body, feed: feedRoot, thread: root, top });
@@ -178,6 +195,40 @@ export function createThread(host) {
   }
   const sessionIds = () => new Set([...Object.values(S.thread?.sessions ?? {}), ...S.posts.map((p) => p.turn?.sessionId).filter(Boolean)]);
 
+  // ---------------------------------------------------------------- サブエージェント（bot が委譲した子）
+  /** この会話を持つ bot（スレッドの bot の会話 → bot。一覧は bot ごとに分ける） */
+  function botOfSession(sessionId) {
+    for (const [botId, sid] of Object.entries(S.thread?.sessions ?? {})) if (sid === sessionId) return S.bots.get(botId) ?? { id: botId };
+    const p = S.posts.find((x) => x.turn?.sessionId === sessionId && x.turn.botId);
+    return p ? (S.bots.get(p.turn.botId) ?? { id: p.turn.botId }) : null;
+  }
+  /** client.mjs の一覧・カードに渡す範囲: このスレッドの bot の会話から委譲した子 */
+  const scope = {
+    sessions: () => sessionIds(),
+    group: (sessionId) => {
+      const bot = botOfSession(sessionId);
+      return { name: bot?.name ?? t('channels:feed.unknownBot'), icon: () => botIcon(bot, 'th-band-icon') };
+    },
+    openSession: (id) => host.openSession(id),
+  };
+  host.background?.mount(log, scope);
+  subsButton.onclick = () => host.background?.open(scope);
+  function paintSubs() {
+    const items = S.threadId && host.background ? host.background.items(scope) : [];
+    subsChip.update(items, S.threadId);
+    subs.hidden = !items.length;
+  }
+  host.background?.subscribe(paintSubs);
+  /** このスレッドの bot の会話が変わった（委譲の子の行を読む範囲）。変わっていなければ何もしない */
+  const syncSubs = () => { host.background?.watch(S.threadId && S.ready ? [...sessionIds()] : []); paintSubs(); };
+  /** 作業ログの委譲カードを、Chats と同じ形（状態の印・経過・子の会話への矢印）に仕上げさせる。カードが DOM に入ってから 1 回にまとめる */
+  let delegatesQueued = false;
+  function paintDelegates() {
+    if (delegatesQueued || !host.background) return;
+    delegatesQueued = true;
+    requestAnimationFrame(() => { delegatesQueued = false; host.background.paint(); });
+  }
+
   // ---------------------------------------------------------------- 見出し・帯
   function paintHead() {
     head.setTitle({ channel: S.channel?.name ?? '', title: titleOf(S.posts[0]) });
@@ -187,17 +238,19 @@ export function createThread(host) {
   let bandSig = '', stopBusy = false;
   function paintBand() {
     const th = S.thread;
-    const total = (th?.tokens?.input ?? 0) + (th?.tokens?.output ?? 0);
+    // トークンはキャッシュ読みを除いた分（新しい入力 + 出力）。キャッシュは内訳で別に見せる
+    const split = tokenSplit(th?.tokens);
+    const total = split.total;
     const live = liveBots();
     const working = th?.state === 'working' || th?.state === 'waiting' || live.length > 0;
     const waiting = !working ? false : (th?.state === 'waiting' || S.posts.some((p) => p.turn && p.state === 'waiting' && !p.deletedAt)) && !S.posts.some((p) => p.turn && p.state === 'working' && !p.deletedAt);
     const stopped = !working && Boolean(th?.stopped);
     const calls = Math.max(0, (th?.calls ?? 0) - 1);
-    const budget = budgetUse(th);
+    const budget = meterOf(S.channel?.kind === 'channel' ? S.channel.budget : null, th);
     const sig = JSON.stringify([working, waiting, stopped, total, calls, live.map((b) => b.id), th?.tokens, stopBusy, budget]);
     if (sig === bandSig) return;
     bandSig = sig;
-    if (!total && !working && !stopped) { band.hidden = true; band.replaceChildren(); return; }
+    if (!total && !working && !stopped) { band.hidden = true; band.replaceChildren(); meter.update(null, null); return; }
     band.hidden = false;
     band.classList.toggle('quiet', !working && !stopped);
     const text = el('span', 'th-band-text');
@@ -221,17 +274,12 @@ export function createThread(host) {
       const tok = el('span', 'th-band-tokens');
       if (at < 0) tok.textContent = full;
       else tok.append(el('span', 'th-tok-aux', full.slice(0, at)), el('span', 'th-tok-num', num), el('span', 'th-tok-aux', full.slice(at + num.length)));
-      tok.title = t('channels:thread.band.tokensTitle', { input: th.tokens.input ?? 0, output: th.tokens.output ?? 0, cached: th.tokens.cached ?? 0 });
+      tok.title = t('channels:thread.band.tokensTitle', { input: split.fresh, output: split.output, cached: split.cached });
       pieces.push(tok);
     }
-    if (budget) {
-      // 「予算 0.8% / 2.5%」: このスレッドが今日使った分と、1 スレッドの配分（ADR 0119）
-      const use = el('span', 'th-band-budget', t('channels:thread.band.budget', budget));
-      use.title = t('channels:thread.band.budgetTitle');
-      pieces.push(use);
-    }
     pieces.forEach((p, i) => { if (i) text.append(el('span', 'th-band-dot', '·')); text.append(p); });
-    band.replaceChildren(text);
+    band.replaceChildren(text, meter.el);
+    meter.update(budget, th?.tokens);
     if (working) {
       const stop = el('button', 'btn btn-quiet th-stop');
       stop.type = 'button';
@@ -240,15 +288,6 @@ export function createThread(host) {
       stop.onclick = () => stopThread();
       band.append(stop);
     }
-  }
-  /** このスレッドが今日予算に数えた分と配分（%）。予算の無いチャンネル・まだ使っていないスレッドは null */
-  function budgetUse(th) {
-    const b = S.channel?.kind === 'channel' ? S.channel.budget : null;
-    if (!b || b.daily == null || !th?.spend) return null;
-    const d = new Date(), day = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-    if (th.spend.day !== day || !(th.spend.percent > 0)) return null;
-    const r = (n) => Math.round(n * 100) / 100;
-    return { spent: r(th.spend.percent), allowance: r((b.daily * b.perThread) / 100) };
   }
   async function stopThread() {
     if (stopBusy || !S.threadId) return;
@@ -299,7 +338,9 @@ export function createThread(host) {
           box.append(text);
           continue;
         }
-        const built = toolNodes(item.calls, { running: running && item === lastCalls });
+        const backend = S.bots.get(p.turn?.botId)?.backend ?? null;
+        const built = toolNodes(item.calls, { running: running && item === lastCalls,
+          link: (card, c) => host.background?.link(card, c.input, c.result, { scope, sessionId: w.sessionId, backend }) });
         const group = el('div', 'th-tools');
         group.append(...built.nodes);
         box.append(group);
@@ -347,6 +388,7 @@ export function createThread(host) {
     if (p.author?.kind === 'system') { const n = sysNode(p); old.replaceWith(n); postEls.set(id, n); return; }
     fillPost(old, p, ctx);
     decorate(old, p);
+    paintDelegates();
   }
   const repaintTurns = (sessionId) => { for (const p of S.posts) if (p.turn && (!sessionId || p.turn.sessionId === sessionId)) repaint(p.id); };
 
@@ -364,6 +406,7 @@ export function createThread(host) {
     replies.replaceChildren(...rest.map((p) => { const n = nodeFor(p); postEls.set(p.id, n); return n; }));
     older.hidden = !S.nextBefore;
     paintRdiv();
+    paintDelegates();
   }
 
   function addPost(p) {
@@ -374,6 +417,7 @@ export function createThread(host) {
     postEls.set(p.id, node);
     replies.append(node);
     paintRdiv();
+    paintDelegates();
   }
 
   // ---------------------------------------------------------------- 読み込み
@@ -382,9 +426,11 @@ export function createThread(host) {
     postEls.clear(); toolCache.clear(); cards.clear(); tools.forget();
     perms.replaceChildren();
     rootSlot.replaceChildren(); replies.replaceChildren(); rdiv.textContent = '';
-    bandSig = ''; band.hidden = true; band.replaceChildren();
+    bandSig = ''; band.hidden = true; band.replaceChildren(); meter.update(null, null);
     jump.hidden = true;
     readSent = 0;
+    host.background?.watch([]);
+    paintSubs();
   }
 
   async function load() {
@@ -411,6 +457,7 @@ export function createThread(host) {
       paintAll();
       paintBand();
       paintPlaceholder();
+      syncSubs();
       for (const ev of S.queue.splice(0)) events[ev.type]?.(ev);
       paintPendingPerms();
       toBottom();
@@ -543,6 +590,7 @@ export function createThread(host) {
     composer.refresh();
     toc.refresh();
     head.setSession(activeSession());
+    syncSubs();
   }
 
   function onReply(op, p) {
@@ -601,13 +649,14 @@ export function createThread(host) {
       S.thread = ev.thread;
       paintBand();
       paintPlaceholder();
+      syncSubs();
       paintPendingPerms();
       if (idle) head.setSession(activeSession(), { force: true });   // ターンが終わったら git の変更の有無を取り直す
     },
     channelsChanged(ev) {
       if (!S.channelId) return;
       if (ev.removed === S.channelId) { close(); return; }
-      if (ev.channel?.id === S.channelId) { S.channel = ev.channel; paintHead(); composer.setDisabled(Boolean(ev.channel.archivedAt), t('channels:feed.archived')); }
+      if (ev.channel?.id === S.channelId) { S.channel = ev.channel; paintHead(); paintBand(); composer.setDisabled(Boolean(ev.channel.archivedAt), t('channels:feed.archived')); }
     },
     botsChanged(ev) {
       if (ev.removed) S.bots.delete(ev.removed);
@@ -618,6 +667,7 @@ export function createThread(host) {
       paintBand();
       paintPlaceholder();
       composer.refresh();
+      paintSubs();
     },
     permission(ev) {
       if (S.ready && S.threadId) showCard(ev);
@@ -664,6 +714,8 @@ export function createThread(host) {
     toc.close();
     S.seq++;
     S.threadId = null;
+    host.background?.watch([]);
+    paintSubs();
     markSelected();
     deck.setThread(false);
     feedRoot.querySelector('.ch-input')?.focus({ preventScroll: true });

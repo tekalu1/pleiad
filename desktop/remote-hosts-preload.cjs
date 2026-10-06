@@ -9,6 +9,7 @@ contextBridge.exposeInMainWorld('plyHosts', {
   open: hostId => ipcRenderer.invoke('ply:hosts-open', hostId),
   rename: (hostId, label) => ipcRenderer.invoke('ply:hosts-rename', hostId, label),
   remove: hostId => ipcRenderer.invoke('ply:hosts-remove', hostId),
+  setAgentUse: (hostId, enabled) => ipcRenderer.invoke('ply:hosts-agent-use', hostId, enabled),
   onCode: listener => {
     const handler = (_event, code) => listener(code);
     ipcRenderer.on('ply:hosts-code', handler);

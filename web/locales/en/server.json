@@ -45,6 +45,7 @@
     "notRegistered": "That account is not registered."
   },
   "permission": {
+    "delegateEscalationHost": "This delegation runs {{agent}} on {{host}} in \"{{mode}}\" ({{modeId}}).",
     "delegateEscalation": "This delegation runs {{agent}} in \"{{mode}}\" ({{modeId}}).",
     "childConversation": "Delegated conversation",
     "relayTitle": "Delegated task \"{{child}}\"",
@@ -100,6 +101,10 @@
     "attachmentInfoTooLarge": "The attachment details are too large.",
     "cannotDeleteBusy": "A session that is running or has queued messages cannot be deleted.",
     "onlyUnsentDeletable": "Only unsent sessions can be deleted.",
+    "deleteBusy": "A session that is running or being prepared, or that is waiting for an approval or background work, cannot be deleted. Stop it or wait for it to finish, then delete it.",
+    "deleteQueued": "A session with queued or scheduled messages cannot be deleted. Cancel them, then delete it.",
+    "deleteChildren": "A session whose delegated work has not finished cannot be deleted. Wait for the work to finish or stop it, then delete it.",
+    "deleteBot": "A bot's session cannot be deleted.",
     "finishBeforeSwitch": "Wait for the run to finish before switching.",
     "sourceNotFound": "The session to continue from was not found.",
     "preparingFork": "The conversation is being prepared. Try branching again.",
@@ -163,10 +168,12 @@
     "delegated": "A delegated conversation cannot be resent in place. Send as a branch instead."
   },
   "delegation": {
+    "retryRemote": "A task handed to a host cannot be retried on this PC.",
     "taskNotFound": "Pleiad task not found."
   },
   "approval": {
     "receiptMismatch": "The receipt does not match this approval. Reopen the card.",
+    "remoteOffline": "Can't send the answer because {{host}} is offline. You can send it once the connection returns.",
     "alreadyResolved": "That approval has already been resolved."
   },
   "title": {
@@ -177,7 +184,19 @@
   },
   "attach": {
     "noContent": "The file is empty.",
-    "tooLarge": "Too large ({{size}} MB / limit {{limit}} MB)."
+    "tooLarge": "Too large ({{size}} MB / limit {{limit}} MB).",
+    "import": {
+      "label": "Pasted image URL",
+      "rejected": "That address cannot be imported (only public https addresses can).",
+      "tooLarge": "The image is too large (limit 10 MB).",
+      "notImage": "It is not an image (PNG, JPEG, GIF, WebP or AVIF).",
+      "tooSmall": "Images of 32 px or less on both sides are not imported.",
+      "status": "The image host returned HTTP {{status}}.",
+      "timeout": "Fetching the image did not finish in time.",
+      "network": "The image could not be fetched.",
+      "busy": "Too many images are being imported.",
+      "cancelled": "The import was cancelled."
+    }
   },
   "statuses": {
     "renameFromRequired": "Specify the status to rename.",
@@ -896,6 +915,10 @@
       "rateLimited": "The relay is temporarily refusing connections (too many failed authentications)",
       "rejected": "The relay refused the connection (HTTP {{status}})",
       "unreachable": "Can't reach the relay ({{reason}})"
+    },
+    "agent": {
+      "hostScreenOnly": "Accepting requests from a device's AI can only be switched on from the host PC's own screen (switching it off and stopping everything also work from the device).",
+      "desktopOnly": "Only a desktop device can hand work over from its AI"
     },
     "unnamedDevice": "Unnamed device",
     "settings": {

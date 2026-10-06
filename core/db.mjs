@@ -110,6 +110,22 @@ CREATE TABLE IF NOT EXISTS brain_loops (
   data TEXT NOT NULL,
   PRIMARY KEY (bot_id, id)
 ) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS brain_wakes (
+  id TEXT PRIMARY KEY,
+  bot_id TEXT NOT NULL,
+  status TEXT NOT NULL,
+  at REAL NOT NULL,
+  data TEXT NOT NULL
+) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS brain_wakes_due ON brain_wakes (status, at);
+CREATE INDEX IF NOT EXISTS brain_wakes_bot ON brain_wakes (bot_id, status);
+CREATE TABLE IF NOT EXISTS deleted_natives (
+  backend TEXT NOT NULL,
+  native_id TEXT NOT NULL,
+  session_id TEXT NOT NULL,
+  at REAL NOT NULL,
+  PRIMARY KEY (backend, native_id)
+) WITHOUT ROWID;
 `;
 const lateEnsured = new WeakSet();
 function ensureLateTables(db) {
@@ -497,6 +513,32 @@ export function brainTable(db) {
   };
 }
 
+// ---- bot の予約（自分で予約した時刻に起きる。ADR 0140）。1 件 1 行。待っているものは 1 体 20 件まで、終わったものは 7 日で消す（core/brain/wakes.mjs） ----
+export function wakeTable(db) {
+  ensureLateTables(db);
+  const row = (r) => ({ ...JSON.parse(r.data), id: r.id, botId: r.bot_id, status: r.status, at: r.at });
+  return {
+    get(id) { const r = prepared(db, 'SELECT id, bot_id, status, at, data FROM brain_wakes WHERE id = ?').get(id); return r ? row(r) : null; },
+    put(id, botId, status, at, data) {
+      prepared(db, 'INSERT INTO brain_wakes (id, bot_id, status, at, data) VALUES (?, ?, ?, ?, ?) ON CONFLICT (id) DO UPDATE SET status = excluded.status, at = excluded.at, data = excluded.data').run(id, botId, status, at, jsonOf(data));
+    },
+    /** bot の予約（時刻の順）。status を渡せばそれだけ */
+    list(botId, status = null) {
+      const rows = status
+        ? prepared(db, 'SELECT id, bot_id, status, at, data FROM brain_wakes WHERE bot_id = ? AND status = ? ORDER BY at').all(botId, status)
+        : prepared(db, 'SELECT id, bot_id, status, at, data FROM brain_wakes WHERE bot_id = ? ORDER BY at').all(botId);
+      return rows.map(row);
+    },
+    /** 時刻が until 以前の、待っている予約（全 bot。時刻の順） */
+    due(until) { return prepared(db, "SELECT id, bot_id, status, at, data FROM brain_wakes WHERE status = 'pending' AND at <= ? ORDER BY at").all(until).map(row); },
+    countPending(botId) { return Number(prepared(db, "SELECT COUNT(*) AS n FROM brain_wakes WHERE bot_id = ? AND status = 'pending'").get(botId).n); },
+    /** 終わった予約（待っていないもの）のうち、時刻が olderThan より前のものを消す */
+    prune(olderThan) { return Number(prepared(db, "DELETE FROM brain_wakes WHERE status != 'pending' AND at < ?").run(olderThan).changes); },
+    clear(botId) { return Number(prepared(db, 'DELETE FROM brain_wakes WHERE bot_id = ?').run(botId).changes); },
+    transaction: (fn) => transaction(db, fn),
+  };
+}
+
 // ---- 会話の索引（conversations.json の後継）。1 会話 1 行（本文は conversations/<id>.json のまま） ----
 export function conversationTable(db) {
   return {
@@ -511,6 +553,23 @@ export function conversationTable(db) {
       transaction(db, () => {
         for (const [id, json] of upserts) prepared(db, 'INSERT INTO conversations (id, data) VALUES (?, ?) ON CONFLICT (id) DO UPDATE SET data = excluded.data').run(id, json);
         for (const id of removals) prepared(db, 'DELETE FROM conversations WHERE id = ?').run(id);
+      });
+    },
+  };
+}
+
+// ---- 消した会話のネイティブの id（ADR 0147）。1 つのネイティブの会話 1 行 ------------------------------------
+// 送った会話を消しても、ネイティブの会話（Claude の transcript・Codex の rollout など）は残す。残ったものが一覧に
+// ネイティブだけの行として戻ってこないよう、消した会話が持っていたネイティブの id を覚えて一覧から隠す（core/conversations.mjs の wrapBackend）
+export function deletedNativeTable(db) {
+  ensureLateTables(db);
+  return {
+    /** [[backend, nativeId]] */
+    loadAll() { return prepared(db, 'SELECT backend, native_id FROM deleted_natives').all().map(row => [row.backend, row.native_id]); },
+    /** rows: [[backend, nativeId]]。1 つのトランザクションで書く */
+    add(rows, sessionId, at = Date.now()) {
+      transaction(db, () => {
+        for (const [backend, nativeId] of rows) prepared(db, 'INSERT OR IGNORE INTO deleted_natives (backend, native_id, session_id, at) VALUES (?, ?, ?, ?)').run(backend, nativeId, sessionId, at);
       });
     },
   };

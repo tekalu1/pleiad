@@ -150,7 +150,7 @@ export default async function (t) {
     t.ok('ほかのホストにつなぐ窓を開く口', local.invoked.at(-1)?.[0] === 'ply:open-remote-hosts');
     const hosts = runPreload('remote-hosts-preload.cjs');
     t.ok('同梱の窓: plyHosts だけ（plyDesktop・plyRemote は無い）', Object.keys(hosts.exposed).join() === 'plyHosts'
-      && ['init', 'list', 'pair', 'cancelPair', 'open', 'rename', 'remove', 'onCode', 'onChange'].every(k => typeof hosts.exposed.plyHosts[k] === 'function'));
+      && ['init', 'list', 'pair', 'cancelPair', 'open', 'rename', 'remove', 'setAgentUse', 'onCode', 'onChange'].every(k => typeof hosts.exposed.plyHosts[k] === 'function'));
   }
 
   // ---------------------------------------------------------------- ほかのホストにつなぐ窓
@@ -164,6 +164,15 @@ export default async function (t) {
     t.ok('行: オンラインは丸と文字、窓を開いていればそれも', on.dot === 'on' && on.detail === 'オンライン · 窓を開いています' && on.canOpen);
     t.ok('行: 閉じているホストは中抜きと最後につないだ時刻', off.dot === 'off' && off.detail === '閉じています · 最後につないだ時刻 T');
     t.ok('行: 取り消されたホストは開けない（名前が無ければ hostId）', !rv.canOpen && rv.revoked && rv.name === HOST_ID && rv.detail === '取り消されました');
+    // この PC の AI から任せる（docs/remote.md §7.4）: オフは何も出さず、オンでホストが未許可なら許可する場所を言い、両方オンなら「使える」
+    const ta = view.translator({ remote: { hosts: { agent: { notAllowed: '{{host}} で {{device}} を許可', ready: '使える', unsupported: '古い' } } } });
+    const base = { hostId: HOST_ID, name: 'desk' };
+    t.ok('AI から任せる: オフは 1 行も出さない', view.agentLine({ ...base, agentUse: false, agentAllowed: true }, ta, 'laptop').text === '' && view.agentLine({ ...base }, ta, 'laptop').on === false);
+    t.ok('AI から任せる: オンでホストが未許可ならホスト名と端末名で案内する', view.agentLine({ ...base, agentUse: true, agentAllowed: false }, ta, 'laptop').text === 'desk で laptop を許可');
+    t.ok('AI から任せる: 両方オンは「使える」、古いホストは未対応', view.agentLine({ ...base, agentUse: true, agentAllowed: true }, ta, 'laptop').text === '使える'
+      && view.agentLine({ ...base, agentUse: true, agentState: 'unsupported' }, ta, 'laptop').text === '古い');
+    const arow = rw.hostRow({ hostId: HOST_ID, hostName: 'desk', relayUrl: 'https://r.example/', state: 'connected', deviceId: 'd1', agentUse: true, agent: { allowed: true, state: 'ready' } });
+    t.ok('一覧の行に、AI から任せるスイッチとホストの許可・線の状態が載る（秘密は載らない）', arow.agentUse === true && arow.agentAllowed === true && arow.agentState === 'ready' && !('token' in arow));
   }
 
   // ---------------------------------------------------------------- 画面のバッジ

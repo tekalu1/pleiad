@@ -231,6 +231,15 @@ export async function browserEnvironment({ bridge, dataDir, sessionId, unlock = 
   return { AGENT_BROWSER_CONFIG: file, AGENT_BROWSER_SESSION: session, AGENT_BROWSER_SOCKET_DIR: socketDir, AGENT_BROWSER_NAMESPACE: '' };
 }
 
+/** 会話を消したときに、その会話の agent-browser の設定とソケットの置き場を消す（sessions.delete。ADR 0147） */
+export async function forgetBrowserEnvironment({ bridge, dataDir, sessionId }) {
+  if (!sessionId) return;
+  const configSessionId = bridge?.configSessionId?.(sessionId) ?? sessionId;
+  const dir = path.join(dataDir, 'agent-browser', crypto.createHash('sha256').update(configSessionId).digest('hex'));
+  await fs.rm(browserSocketDirectory(dir), { recursive: true, force: true });
+  await fs.rm(dir, { recursive: true, force: true });
+}
+
 export function browserInstruction(env, locale, translate) {
   return env ? translate(locale, 'browser.instructions') : null;
 }

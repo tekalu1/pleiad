@@ -186,15 +186,21 @@ function turnResultFor(result, { finishedReply = false } = {}) {
   };
 }
 
-/** `result.usage` -> Pleiad の usage イベント。 */
+/**
+ * `result.usage` -> Pleiad の usage イベント。
+ * agy の usage は分けて数える（total_tokens = input + output + thinking + cache_read）。Claude・Codex と同じく
+ * 「入力はキャッシュ読みを含み、cachedTokens はその内訳」「出力は考えた分を含む」にそろえる。
+ * そろえないと、入力よりキャッシュ読みが大きくなって、キャッシュの割合が 100% に張り付く。
+ */
 function usageFor(usage) {
   if (!usage) return null;
   const n = (v) => (Number.isFinite(v) ? v : 0);
+  const cached = n(usage.cache_read_tokens);
   return {
     type: "usage",
-    inputTokens: n(usage.input_tokens),
-    outputTokens: n(usage.output_tokens),
-    cachedTokens: n(usage.cache_read_tokens),
+    inputTokens: n(usage.input_tokens) + cached,
+    outputTokens: n(usage.output_tokens) + n(usage.thinking_tokens),
+    cachedTokens: cached,
   };
 }
 
@@ -386,7 +392,7 @@ export const backend = {
 
     const handle = (ev) => {
       // Step updates without a history entry still show that the child is active.
-      emit({ type: 'task.activity' });
+      emit({ type: 'task.activity', output: true });
       switch (ev?.event) {
         case "init": {
           const id = ev.conversation_id ?? ev.init?.conversation_id ?? null;

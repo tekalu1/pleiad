@@ -1,0 +1,209 @@
+# Android の AAB を Google Play のテストのトラック（内部テスト・クローズドテスト）へ上げる
+# （docs/android-releases.md「Google Play」、ADR 0142）。
+#
+# 手動の起動（workflow_dispatch）だけで、main の上でしか動かない。GitHub Release へ APK を出す
+# android-release.yml とは別の流れで、版の決め方（versionCode = git rev-list --count HEAD）と
+# 署名鍵（PLY_ANDROID_KEYSTORE_*）は同じ。同じコミットからは同じ versionCode になる。
+# アップロード鍵を別にしたときだけ PLY_ANDROID_UPLOAD_*（5 つ全部）を使う。
+name: Android Play upload
+on:
+  workflow_dispatch:
+    inputs:
+      track:
+        description: 'Play のトラック: internal（内部テスト）・alpha（既定のクローズドテスト）・自分で作ったクローズドテストの名前'
+        type: string
+        required: true
+        default: internal
+      status:
+        description: 'draft（下書き。Play Console で公開する）・completed（すぐ公開）・inProgress（段階公開。user_fraction が要る）'
+        type: choice
+        options: [draft, completed, inProgress]
+        default: draft
+      user_fraction:
+        description: '段階公開で配る割合（0 より大きく 1 より小さい。status が inProgress のときだけ書く）'
+        type: string
+        required: false
+        default: ''
+      changes_not_sent_for_review:
+        description: '変更を審査へ送らずに残す（Play Console から送る）'
+        type: boolean
+        default: false
+permissions:
+  contents: read
+concurrency:
+  group: android-play
+  cancel-in-progress: false
+jobs:
+  upload:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      # 重い手順の前に、入力と Secrets を確かめる（足りなければ何も作らずに止める）
+      - name: Check inputs and secrets
+        id: check
+        env:
+          REF: ${{ github.ref }}
+          TRACK: ${{ inputs.track }}
+          STATUS: ${{ inputs.status }}
+          FRACTION: ${{ inputs.user_fraction }}
+          PLAY_JSON: ${{ secrets.PLY_ANDROID_PLAY_SERVICE_ACCOUNT_JSON }}
+          KEYSTORE_BASE64: ${{ secrets.PLY_ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.PLY_ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.PLY_ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.PLY_ANDROID_KEY_PASSWORD }}
+          CERT_SHA256: ${{ vars.PLY_ANDROID_CERT_SHA256 }}
+          UPLOAD_KEYSTORE_BASE64: ${{ secrets.PLY_ANDROID_UPLOAD_KEYSTORE_BASE64 }}
+          UPLOAD_KEYSTORE_PASSWORD: ${{ secrets.PLY_ANDROID_UPLOAD_KEYSTORE_PASSWORD }}
+          UPLOAD_KEY_ALIAS: ${{ secrets.PLY_ANDROID_UPLOAD_KEY_ALIAS }}
+          UPLOAD_KEY_PASSWORD: ${{ secrets.PLY_ANDROID_UPLOAD_KEY_PASSWORD }}
+          UPLOAD_CERT_SHA256: ${{ vars.PLY_ANDROID_UPLOAD_CERT_SHA256 }}
+        run: |
+          fail() { echo "::error::$1 (docs/android-releases.md)"; exit 1; }
+          [ "$REF" = "refs/heads/main" ] || fail "Run this workflow on main (got $REF)"
+
+          case "$TRACK" in
+            production|beta) fail "Track '$TRACK' is not allowed here; use internal, alpha or a closed testing track" ;;
+            *:*) fail "Form factor tracks are not used: '$TRACK'" ;;
+          esac
+          printf '%s' "$TRACK" | grep -Eq '^[A-Za-z0-9_.-]+$' || fail "Invalid track name: '$TRACK'"
+          if [ "$STATUS" = "inProgress" ]; then
+            node -e 'const f = Number(process.argv[1]); process.exit(process.argv[1] !== "" && f > 0 && f < 1 ? 0 : 1)' "$FRACTION" \
+              || fail "status inProgress needs user_fraction between 0 and 1 (exclusive), got '$FRACTION'"
+          elif [ -n "$FRACTION" ]; then
+            fail "user_fraction is only for status inProgress (status is $STATUS)"
+          fi
+
+          [ -n "$PLAY_JSON" ] || fail "Google Play upload is not configured. Empty: secrets.PLY_ANDROID_PLAY_SERVICE_ACCOUNT_JSON"
+          # 壊れた JSON の例外は中身の一部を出すので、何も出さずに終了コードだけ返す
+          node -e 'try { const j = JSON.parse(process.env.PLAY_JSON); process.exit(j.type === "service_account" && j.client_email && j.private_key ? 0 : 1) } catch { process.exit(1) }' \
+            || fail "secrets.PLY_ANDROID_PLAY_SERVICE_ACCOUNT_JSON is not a service account key (JSON with type service_account, client_email, private_key)"
+
+          upload=""
+          [ -n "$UPLOAD_KEYSTORE_BASE64$UPLOAD_KEYSTORE_PASSWORD$UPLOAD_KEY_ALIAS$UPLOAD_KEY_PASSWORD$UPLOAD_CERT_SHA256" ] && upload=1
+          missing=""
+          if [ -n "$upload" ]; then
+            [ -n "$UPLOAD_KEYSTORE_BASE64" ] || missing="$missing secrets.PLY_ANDROID_UPLOAD_KEYSTORE_BASE64"
+            [ -n "$UPLOAD_KEYSTORE_PASSWORD" ] || missing="$missing secrets.PLY_ANDROID_UPLOAD_KEYSTORE_PASSWORD"
+            [ -n "$UPLOAD_KEY_ALIAS" ] || missing="$missing secrets.PLY_ANDROID_UPLOAD_KEY_ALIAS"
+            [ -n "$UPLOAD_KEY_PASSWORD" ] || missing="$missing secrets.PLY_ANDROID_UPLOAD_KEY_PASSWORD"
+            [ -n "$UPLOAD_CERT_SHA256" ] || missing="$missing vars.PLY_ANDROID_UPLOAD_CERT_SHA256"
+            [ -z "$missing" ] || fail "The upload key is only partly configured. Empty:$missing"
+            echo "key=upload" >> "$GITHUB_OUTPUT"
+            echo "Signing with the separate upload key (PLY_ANDROID_UPLOAD_*)"
+          else
+            [ -n "$KEYSTORE_BASE64" ] || missing="$missing secrets.PLY_ANDROID_KEYSTORE_BASE64"
+            [ -n "$KEYSTORE_PASSWORD" ] || missing="$missing secrets.PLY_ANDROID_KEYSTORE_PASSWORD"
+            [ -n "$KEY_ALIAS" ] || missing="$missing secrets.PLY_ANDROID_KEY_ALIAS"
+            [ -n "$KEY_PASSWORD" ] || missing="$missing secrets.PLY_ANDROID_KEY_PASSWORD"
+            [ -n "$CERT_SHA256" ] || missing="$missing vars.PLY_ANDROID_CERT_SHA256"
+            [ -z "$missing" ] || fail "Android signing is not configured. Empty:$missing"
+            echo "key=app" >> "$GITHUB_OUTPUT"
+            echo "Signing with the APK signing key (PLY_ANDROID_KEYSTORE_*), also registered as the Play upload key"
+          fi
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4.9.1
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: gradle
+          cache-dependency-path: |
+            mobile/android/**/*.gradle*
+            mobile/android/gradle/wrapper/gradle-wrapper.properties
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            mobile/package-lock.json
+      # InteropTest（remote-core）がルートの依存で relay と core を起こす（android-release.yml と同じ）
+      - name: Install root dependencies
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+        run: npm ci
+      - name: Install and sync
+        working-directory: mobile
+        run: |
+          npm ci
+          npx cap sync android
+      - name: JVM tests
+        working-directory: mobile/android
+        run: |
+          chmod +x gradlew
+          ./gradlew :remote-core:test
+      # android-release.yml の「Decide version」と同じ決め方（tests/unit/android-play-workflow.mjs が突き合わせる）
+      - name: Decide version
+        id: version
+        env:
+          TRACK: ${{ inputs.track }}
+          STATUS: ${{ inputs.status }}
+        run: |
+          code=$(git rev-list --count HEAD)
+          base=$(node -p "require('./mobile/package.json').version")
+          name="${base}-${code}"
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+          echo "Uploading versionCode $code (versionName $name) to track '$TRACK' as $STATUS"
+      - name: Restore signing key
+        env:
+          KEY: ${{ steps.check.outputs.key }}
+          KEYSTORE_BASE64: ${{ secrets.PLY_ANDROID_KEYSTORE_BASE64 }}
+          UPLOAD_KEYSTORE_BASE64: ${{ secrets.PLY_ANDROID_UPLOAD_KEYSTORE_BASE64 }}
+        run: |
+          if [ "$KEY" = "upload" ]; then src="$UPLOAD_KEYSTORE_BASE64"; else src="$KEYSTORE_BASE64"; fi
+          printf '%s' "$src" | base64 -d > "$RUNNER_TEMP/pleiad-android.p12"
+          echo "PLY_ANDROID_KEYSTORE=$RUNNER_TEMP/pleiad-android.p12" >> "$GITHUB_ENV"
+      - name: Build signed release bundle
+        working-directory: mobile/android
+        env:
+          KEY: ${{ steps.check.outputs.key }}
+          APP_KEYSTORE_PASSWORD: ${{ secrets.PLY_ANDROID_KEYSTORE_PASSWORD }}
+          APP_KEY_ALIAS: ${{ secrets.PLY_ANDROID_KEY_ALIAS }}
+          APP_KEY_PASSWORD: ${{ secrets.PLY_ANDROID_KEY_PASSWORD }}
+          UPLOAD_KEYSTORE_PASSWORD: ${{ secrets.PLY_ANDROID_UPLOAD_KEYSTORE_PASSWORD }}
+          UPLOAD_KEY_ALIAS: ${{ secrets.PLY_ANDROID_UPLOAD_KEY_ALIAS }}
+          UPLOAD_KEY_PASSWORD: ${{ secrets.PLY_ANDROID_UPLOAD_KEY_PASSWORD }}
+          VERSION_CODE: ${{ steps.version.outputs.code }}
+          VERSION_NAME: ${{ steps.version.outputs.name }}
+        run: |
+          if [ "$KEY" = "upload" ]; then
+            export PLY_ANDROID_KEYSTORE_PASSWORD="$UPLOAD_KEYSTORE_PASSWORD" PLY_ANDROID_KEY_ALIAS="$UPLOAD_KEY_ALIAS" PLY_ANDROID_KEY_PASSWORD="$UPLOAD_KEY_PASSWORD"
+          else
+            export PLY_ANDROID_KEYSTORE_PASSWORD="$APP_KEYSTORE_PASSWORD" PLY_ANDROID_KEY_ALIAS="$APP_KEY_ALIAS" PLY_ANDROID_KEY_PASSWORD="$APP_KEY_PASSWORD"
+          fi
+          ./gradlew bundleRelease -PplyVersionCode="$VERSION_CODE" -PplyVersionName="$VERSION_NAME"
+      # AAB は jar の署名（v1）なので apksigner ではなく jarsigner と keytool で確かめる
+      - name: Verify signature
+        env:
+          KEY: ${{ steps.check.outputs.key }}
+          APP_SHA256: ${{ vars.PLY_ANDROID_CERT_SHA256 }}
+          UPLOAD_SHA256: ${{ vars.PLY_ANDROID_UPLOAD_CERT_SHA256 }}
+        run: |
+          aab=mobile/android/app/build/outputs/bundle/release/app-release.aab
+          [ -f "$aab" ] || { echo "::error::$aab was not built"; exit 1; }
+          jarsigner -verify "$aab" | tee "$RUNNER_TEMP/verify.txt"
+          grep -q '^jar verified' "$RUNNER_TEMP/verify.txt" || { echo "::error::$aab is not signed"; exit 1; }
+          keytool -printcert -jarfile "$aab" | tee "$RUNNER_TEMP/certs.txt"
+          norm() { printf '%s' "$1" | tr -d ': \r\n\t' | tr 'a-f' 'A-F'; }
+          actual=$(norm "$(grep -m1 'SHA256:' "$RUNNER_TEMP/certs.txt" | sed 's/.*SHA256://')")
+          if [ "$KEY" = "upload" ]; then expected=$(norm "$UPLOAD_SHA256"); else expected=$(norm "$APP_SHA256"); fi
+          if [ -z "$expected" ] || [ "$actual" != "$expected" ]; then
+            echo "::error::Signing certificate mismatch: got $actual, expected $expected"
+            exit 1
+          fi
+      - name: Upload to Google Play
+        uses: r0adkll/upload-google-play@e738b9dd8f2476ea806d921b64aacd24f34515a5 # v1.1.5
+        with:
+          serviceAccountJsonPlainText: ${{ secrets.PLY_ANDROID_PLAY_SERVICE_ACCOUNT_JSON }}
+          packageName: com.procway.pleiad
+          releaseFiles: mobile/android/app/build/outputs/bundle/release/app-release.aab
+          releaseName: ${{ steps.version.outputs.name }}
+          tracks: ${{ inputs.track }}
+          status: ${{ inputs.status }}
+          userFraction: ${{ inputs.user_fraction }}
+          changesNotSentForReview: ${{ inputs.changes_not_sent_for_review }}
+      - name: Remove signing key
+        if: always()
+        run: rm -f "$RUNNER_TEMP/pleiad-android.p12" serviceAccountJson.json

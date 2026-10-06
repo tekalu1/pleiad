@@ -171,6 +171,23 @@ export default async function (t) {
         && addressKind('fe80::1') === 'link-local' && addressKind('fd00::1') === 'private' && addressKind('::ffff:10.0.0.1') === 'private'
         && addressKind('::ffff:a00:1') === 'private' && addressKind('100.64.0.1') === 'private' && addressKind('0.0.0.0') === 'unspecified'
         && addressKind('93.184.216.34') === 'public' && addressKind('2606:4700::1111') === 'public' && addressKind('64:ff9b::a9fe:a9fe') === 'link-local');
+      // IPv4 を埋め込む IPv6 は、埋め込まれた IPv4 の種類で見る（内部のアドレスを IPv6 の書き方で公開に見せかけられない）
+      const kinds = (cases) => Object.entries(cases).filter(([ip, want]) => addressKind(ip) !== want).map(([ip, want]) => `${ip}=${addressKind(ip)}(want ${want})`);
+      const embedded = kinds({
+        '::127.0.0.1': 'loopback', '::7f00:1': 'loopback', '::10.0.0.8': 'private', '::a00:8': 'private', '::169.254.169.254': 'link-local', '::a9fe:a9fe': 'link-local', '::5db8:d822': 'public',
+        '::ffff:0:127.0.0.1': 'loopback', '::ffff:0:7f00:1': 'loopback', '::ffff:0:192.168.1.1': 'private', '::ffff:0:5db8:d822': 'public',
+        '2002:7f00:1::': 'loopback', '2002:a00:8::1': 'private', '2002:a9fe:a9fe::': 'link-local', '2002:c0a8:101::': 'private', '2002:5db8:d822::1': 'public',
+        'fec0::1': 'private', 'fec0:0:0:1::5': 'private', 'feff::1': 'private',
+        '64:ff9b:1::1': 'reserved', '64:ff9b:1:a9fe:a9fe::': 'reserved', '64:ff9b::7f00:1': 'loopback', '64:ff9b::10.0.0.1': 'private', '64:ff9b::5db8:d822': 'public',
+        '::ffff:127.0.0.1': 'loopback', '::FFFF:A00:1': 'private', '0:0:0:0:0:ffff:7f00:1': 'loopback', '0000:0000:0000:0000:0000:0000:0a00:0001': 'private',
+      });
+      t.ok('IPv6 に埋め込まれた IPv4（IPv4 互換 ::a.b.c.d・IPv4 変換 ::ffff:0:a.b.c.d・6to4 2002::/16・NAT64 64:ff9b::/96）は、埋め込まれた IPv4 の種類。サイトローカル fec0::/10 は private・ローカル用 NAT64 64:ff9b:1::/48 は reserved', embedded.length === 0, embedded.join(' '));
+      t.ok('IPv6 の公開アドレス・読めない形は今まで通り（2606:4700::1111・2001:4860:4860::8888 は public、文書用 2001:db8:: は reserved、不正な形は unknown）',
+        addressKind('2001:4860:4860::8888') === 'public' && addressKind('2a00:1450::1') === 'public' && addressKind('2001:db8::1') === 'reserved' && addressKind('ff02::1') === 'reserved' && addressKind('1::2::3') === 'unknown' && addressKind('zzz') === 'unknown');
+      const guardV6 = createUrlGuard({ publicOnly: true, lookup: async (host) => ({ 'tricky.example.com': [{ address: '::10.0.0.8' }], 'sixtofour.example.com': [{ address: '2002:7f00:1::' }], 'site.example.com': [{ address: 'fec0::1' }] }[host] ?? [{ address: '93.184.216.34' }]) });
+      const blocked = [];
+      for (const url of ['https://tricky.example.com/a', 'https://sixtofour.example.com/a', 'https://site.example.com/a', 'https://[::127.0.0.1]/a', 'https://[2002:a00:8::1]/a', 'https://[64:ff9b:1::1]/a']) await guardV6.check(url).then(() => blocked.push(`通った: ${url}`), () => {});
+      t.ok('検査器は、内部を指す IPv6（名前の解決先・直書き）を断る', blocked.length === 0, blocked.join(' '));
       t.ok('ループバックの名前', isLoopbackHost('localhost') && isLoopbackHost('127.0.0.1') && isLoopbackHost('[::1]') && isLoopbackHost('app.localhost') && !isLoopbackHost('example.com'));
       const table = { 'mcp.example.com': ['93.184.216.34'], 'as.example.com': ['93.184.216.35'], 'intranet.example.com': ['10.0.0.5'], 'mixed.example.com': ['93.184.216.36', '192.168.0.10'],
         'corp-mcp.internal': ['10.1.1.1'], 'corp-as.internal': ['10.1.1.2'] };

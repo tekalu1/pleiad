@@ -197,6 +197,23 @@ function stateLine(post) {
 }
 
 /** スレッドの要約の行。「💬 3 件の返信 · 🦉 Owl 作業中」。返信が無ければ null */
+/**
+ * スレッドで実際に動いている bot。状態（ThreadState.state）はスレッド全体の集計なので、名前は bot ごとの印（ThreadState.live）から選ぶ。
+ * あなた待ち（waiting）のときは待っている bot、作業中のときは作業している bot。印が無ければ空（名前を出さない）
+ * @returns {string[]} botId の並び（印の並び）
+ */
+export function liveBotIds(th) {
+  const want = th?.state === 'waiting' ? 'waiting' : 'working';
+  return Object.entries(th?.live ?? {}).filter(([, state]) => state === want).map(([botId]) => botId);
+}
+
+/** 動いている bot の名前の並び: 1 体は名前、2 体は「A・B」、3 体以上は「A ほか n」 */
+export function liveNamesText(names) {
+  if (names.length <= 1) return names[0] ?? '';
+  if (names.length === 2) return t('channels:feed.liveJoin', { a: names[0], b: names[1] });
+  return t('channels:feed.liveMore', { first: names[0], count: names.length - 1 });
+}
+
 export function renderSummary(post, ctx) {
   const s = ctx.summaryOf?.(post.id);
   if (!s?.count || post.threadId) return null;
@@ -205,19 +222,21 @@ export function renderSummary(post, ctx) {
   b.type = 'button';
   b.setAttribute('aria-label', t('channels:feed.openThread', { count: s.count }));
   b.append(el('span', 'ts-count', `💬 ${t('channels:feed.replies', { count: s.count })}`));
-  const lastBot = [...(s.authors ?? [])].reverse().find((a) => a.kind === 'bot');
-  const botId = lastBot?.botId ?? Object.keys(th?.sessions ?? {})[0];
-  const bot = botId ? ctx.bots.get(botId) : null;
+  // 動いている bot は ThreadState.live から選ぶ（返信した最後の bot や最初の会話の bot ではない。いま動いているのは別の bot のことがある）
+  const live = liveBotIds(th).map((id) => ctx.bots.get(id)).filter(Boolean);
+  const names = liveNamesText(live.map((b) => b.name));
   const status = el('span', 'ts-status');
   if (th?.state === 'working') {
     status.classList.add('working');
     status.append('· ');
-    if (bot) status.append(botIcon(bot, 'ts-bot-icon'), ` ${bot.name}`);
-    else status.append(t('channels:feed.unknownBot'));
+    if (live.length) {
+      for (const bot of live.slice(0, 2)) status.append(botIcon(bot, 'ts-bot-icon'));
+      status.append(` ${names}`);
+    } else status.append(t('channels:feed.unknownBot'));
     status.append(` ${t('channels:feed.threadWorking')}`, runMark(t('channels:feed.state.working')));
   } else if (th?.state === 'waiting') {
     status.classList.add('waiting');
-    status.append('· ', el('span', 'ts-mark', '◆'), ` ${t('channels:feed.threadWaiting', { name: bot?.name ?? t('channels:feed.unknownBot') })}`);
+    status.append('· ', el('span', 'ts-mark', '◆'), ` ${t('channels:feed.threadWaiting', { name: names || t('channels:feed.unknownBot') })}`);
   } else if (th?.state === 'failed') {
     status.classList.add('failed');
     status.append('· ', el('span', 'ts-mark', '✕'), ` ${t('channels:feed.state.failed')}`);

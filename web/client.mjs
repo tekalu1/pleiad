@@ -55,13 +55,14 @@ import { formatBytes } from "./folder-upload.mjs";
 import { modelRowIds, modelDisplayName } from "./composer-labels.mjs";
 import { setupSlashSkills } from "./slash-skills.mjs";
 import { createMarkdownEditor } from "./md-editor.mjs";
+import { createPasteImages } from "./paste-images.mjs";
 import { openAttachmentList } from "./attachment-list.mjs";
 import { runMark, satMark, stillMark } from "./arc.mjs";
 import { approvalTarget } from "./approval-summary.mjs";
 import { isComputerTool, approvalApps, approvalBody, approvalHeading, approvalSaid, lockWaitBox, relayLabel } from "./computer-use.mjs";
 import { approvalChange, changeBody, changeHeading, changeWord } from "./setting-change.mjs";
-import { backgroundTitle, taskTree, backgroundTotals } from './background-model.mjs';
-import { mergeTasks, tasksToFetch, staleTasks } from './task-cards.mjs';
+import { backgroundTitle, taskTree, backgroundTotals, groupByOwner, visibleRows } from './background-model.mjs';
+import { mergeTasks, tasksToFetch, staleTasks, treeSessions } from './task-cards.mjs';
 import { createBackgroundChip } from './background-chip.mjs';
 import { overlaySessions, rollbackSessions, currentRows } from './pending-sidebar.mjs';
 import { behindOfTasks, liveTasksOf } from './work-status.mjs';
@@ -218,6 +219,8 @@ const uploads = new Map();
 const composerEditor = createMarkdownEditor($("prompt"), {
   resolve: (path) => attachedInfo(path),
   pending: (pid) => pendingUpload(pid),
+  // 貼り付けた HTML の画像（data: はその場で、https はホストが取りに行く）。書けない待ちの間は取り込まない
+  importImages: (images) => (composerWait.accepts() ? pasteImages.start(images) : []),
   locale: () => composerAgentLang(),
   isPlain: () => composerPlain,
   onAtoms: (change) => onComposerAtoms(change),
@@ -1282,7 +1285,7 @@ function systemHistoryNode(m) {
   if (m.kind === 'interruptionNote') return sysFold(t('chat.sys.interruptionNote'), m.body ?? '');
   // bot の会話の先頭の包み（core/system-messages.mjs の splitLeadingNotes）。チャンネルの出来事は「#チャンネル · 発言者」、記憶は渡した印。開くと中身が読める
   if (m.kind === 'channelEvent') return sysFold(m.history ? t('channels:event.thread', { channel: m.channel }) : t('channels:event.post', { channel: m.channel, from: m.from }), m.body ?? '', hhmm(m.at));
-  if (m.kind === 'contextNote') return sysFold(m.tag === 'memory-core' ? t('channels:event.memoryCore') : m.tag === 'bot-recent' ? t('channels:event.botRecent') : m.tag === 'inner' ? t('channels:event.inner') : t('channels:event.turnContext'), m.body ?? '', hhmm(m.at));
+  if (m.kind === 'contextNote') return sysFold(m.tag === 'memory-core' ? t('channels:event.memoryCore') : m.tag === 'bot-recent' ? t('channels:event.botRecent') : m.tag === 'inner' ? (m.innerKind === 'wake' ? t('channels:event.wake') : t('channels:event.inner')) : t('channels:event.turnContext'), m.body ?? '', hhmm(m.at));
   // Pleiad の完了通知。「タスクの結果で再開」の 1 行を開くと、エージェントに渡した本文が読める
   if (m.internalTaskNotice) return taskNoticeNode(m.text, hhmm(m.at));
   return undefined;
@@ -1888,6 +1891,8 @@ function questionCard(ev, into = null) {
   const head = el("div", "card-head");
   head.append(...markedHead(t("chat.ask.heading", { mark: MARK }), t("chat.ask.headingMark")));
   head.append(el("span", "desc", ev.title ?? ""));
+  // ホストの子の質問の中継（端末の会話のカード。⇄ ホスト名。オフラインの間は答えを止める）
+  if (ev.remote) head.append(el("span", "relay-host", t("chat.approval.relay.host", { host: ev.remote.hostName })));
   card.append(head);
 
   // question文字列をキーに答えを集める（SDK の answers がその形）
@@ -1993,6 +1998,7 @@ function questionCard(ev, into = null) {
       return;
     }
     clearTimeout(arc);
+    if (card.classList.contains("done")) { state.pendingPerms.delete(ev.id); return; }   // 中継のカードは、決着の便りが先に届いて畳まれていることがある
     m.classList.add("done");
     m.closest(".mw")?.classList.add("done");
     card.classList.add("done");
@@ -2009,6 +2015,8 @@ function questionCard(ev, into = null) {
   send.onclick = () => settle(answersNow());
   skip.onclick = () => settle(null);
   placeCard(m, ev, into);
+  if (ev.remote) registerRelayCard(ev, { m, card, head, code: null, actions, res, question: true,
+    get buttons() { return [...card.querySelectorAll("button, input")]; } });
   return m;
 }
 
@@ -2146,7 +2154,10 @@ function permissionCard(ev, into = null) {
   if (ev.browserSite) card.classList.add('browser-site-approval');
   if (!ev.browserSite) head.append(el("span", "tool", ev.toolName ?? ""));
   head.append(el("span", "desc", ev.title ?? ""));
+  // ホストの子の承認の中継（端末の会話のカード。見出しに ⇄ ホスト名）。ホストの側の子のカードには、依頼元でも答えられる 1 行
+  if (ev.remote) head.append(el("span", "relay-host", t("chat.approval.relay.host", { host: ev.remote.hostName })));
   card.append(head);
+  if (ev.remoteOrigin) card.append(el("p", "relay-note", t("chat.approval.relay.hostCanAnswer", { device: ev.remoteOrigin.deviceName })));
 
   const input = JSON.stringify(ev.input ?? {}, null, 2);
   const short = input.length > 1200 ? input.slice(0, 1200) + NL + "…" : input;
@@ -2196,6 +2207,8 @@ function permissionCard(ev, into = null) {
       return;
     }
     clearTimeout(arc);
+    // 中継のカードは、サーバーの決着の便り（permissionRelayEnd）が答えの応答より先に届いて、もう畳まれていることがある
+    if (card.classList.contains("done")) { state.pendingPerms.delete(ev.id); return; }
     m.classList.add("done");
     m.closest(".mw")?.classList.add("done");
     card.classList.add("done");
@@ -2212,7 +2225,86 @@ function permissionCard(ev, into = null) {
   deny.onclick = () => settle(false);
   always.onclick = () => settle(true, true);
   placeCard(m, ev, into);
+  if (ev.remote || ev.remoteOrigin) registerRelayCard(ev, { m, card, head, code, actions, res, buttons });
   return m;
+}
+
+/** ホストの画面でしか答えられない承認の知らせ（答えるボタンは無い。「子の会話を見る」はホストのリモートの窓で開く補助） */
+function hostOnlyCard(ev) {
+  const m = el("div", "m card");
+  const card = el("div", "card");
+  m.append(card);
+  const head = el("div", "card-head");
+  head.append(...markedHead(t("chat.approval.heading", { mark: MARK }), t("chat.approval.headingMark")));
+  head.append(el("span", "desc", ev.title ?? ""), el("span", "relay-host", t("chat.approval.relay.host", { host: ev.remote.hostName })));
+  card.append(head, el("p", "relay-note strong", t("chat.approval.relay.hostOnly")));
+  const actions = el("div", "card-actions");
+  const res = el("span", "res");
+  actions.append(res);
+  card.append(actions);
+  placeCard(m, ev, null);
+  registerRelayCard(ev, { m, card, head, code: null, actions, res, buttons: [], hostOnly: true });
+  return m;
+}
+
+// 承認の中継のカード（permission id → 部品）。端末の会話のカード（ev.remote）はホストのオフラインでボタンを止め、ホストで先に答えられたら 1 行に畳む。
+// ホストの側の子のカード（ev.remoteOrigin）は、端末で答えられたら 1 行に畳む（docs/remote.md §4.5、ADR 0146）
+const relayCards = new Map();
+
+function registerRelayCard(ev, parts) {
+  const { m, card, head, code, actions, res, buttons, question = false, hostOnly = false } = parts;
+  const blocking = ev.remote ? null : t("chat.approval.blocking");
+  if (ev.remote) {
+    // 子の会話を見る（見るための補助。手元の窓だけ。ホストのリモートの窓でその会話を開く）
+    const open = window.plyDesktop?.openRemoteSession;
+    const childId = (state.work.tasks ?? []).find(x => x.taskId === ev.remote.taskId)?.remoteSessionId;
+    if (open && !window.plyRemote && childId && !question) {
+      const view = el("button", "btn btn-quiet", t("chat.approval.relay.viewChild"));
+      view.type = "button";
+      view.onclick = async () => {
+        const r = await open(ev.remote.hostId, childId).catch(e => ({ ok: false, message: e.message }));
+        if (r && r.ok === false) { res.className = "res fail"; res.replaceChildren(`✕ ${t("chat.approval.relay.viewChildFailed", { error: r.message ?? "" })}`); }
+      };
+      actions.prepend(view);
+    }
+  }
+  const setOnline = (online) => {
+    if (hostOnly || card.classList.contains("done") || card.dataset.sending) return;
+    for (const b of buttons) b.disabled = !online;
+    card.classList.toggle("relay-offline", !online);
+    res.className = online ? "res" : "res strong";
+    res.replaceChildren(online ? (blocking ?? "") : t("chat.approval.relay.offline", { host: ev.remote.hostName }));
+    if (!online) res.setAttribute("role", "status"); else res.removeAttribute("role");
+  };
+  const fold = ({ by, allow, peer }) => {
+    if (card.classList.contains("done")) return;
+    // 誰がどこで答えたか分からない決着（つなぎ直しで消えた・タスクが止まった）は、カードごと下げる
+    if (!by) { m.remove(); state.pendingPerms.delete(ev.id); return; }
+    const what = question ? t("chat.approval.relay.answered") : allow ? t("chat.approval.allowed") : t("chat.approval.denied");
+    // この端末（の別の窓）で答えた決着は、ふつうの承認と同じ「許可した · 時刻」。ホストで先に答えられたら「ホスト名で…」、ホストの子のカードは「端末名で…」
+    const line = ev.remote ? (by === "device" ? `${what} · ${hhmm(new Date())}` : t("chat.approval.relay.answeredByHost", { host: peer || ev.remote.hostName, what, time: hhmm(new Date()) }))
+      : t("chat.approval.relay.answeredByDevice", { device: peer || ev.remoteOrigin?.deviceName || "", what, time: hhmm(new Date()) });
+    m.classList.add("done");
+    m.closest(".mw")?.classList.add("done");
+    card.classList.add("done");
+    for (const rest of head.querySelectorAll(".card-kind-rest")) rest.remove();
+    head.querySelector(".card-kind").textContent = question ? t("chat.ask.done") : t("chat.approval.done");
+    head.append(el("span", "res", line));
+    card.querySelector(".relay-note")?.remove();
+    actions.remove();
+    if (code && !ev.browserSite) foldSettledCard(card, head, code, approvalTarget(ev.input));
+    state.pendingPerms.delete(ev.id);
+  };
+  relayCards.set(ev.id, { setOnline, fold });
+  if (ev.remote && ev.remote.online === false) setOnline(false);
+}
+
+/** 中継のカードの決着（permissionRelayEnd）と、ホストの接続の状態（permissionRelayState）。開いていないカードは何もしない */
+function onRelayCardEvent(ev) {
+  const entry = relayCards.get(ev.id);
+  if (!entry) return;
+  if (ev.type === "permissionRelayState") entry.setOnline(ev.online !== false);
+  else { entry.fold({ by: ev.by, allow: ev.allow === true, peer: ev.peer ?? ev.hostName }); relayCards.delete(ev.id); }
 }
 
 /**
@@ -2221,6 +2313,8 @@ function permissionCard(ev, into = null) {
  */
 function renderPermission(ev) {
   if (thread.querySelector(`.mw[data-key="perm:${CSS.escape(ev.id)}"], [data-perm-id="${CSS.escape(ev.id)}"]`)) return;
+  // ホストの画面でしか答えられない承認（設定の変更など。ホストの子の承認の中継）は、答えるボタンの無い知らせのカード
+  if (ev.remote?.hostOnly) { closeTurnEl(); activity.show(t("activity.waitingApproval")); return hostOnlyCard(ev); }
   // 設定の変更の承認（ply_control の guarded。ADR 0082）。読めなければ（形が違う）ふつうの承認として出す
   const settingChange = ev.settingChange ? approvalChange(ev.settingChange) : null;
   if (settingChange) {
@@ -2794,7 +2888,13 @@ function onEvent(ev, replay = false) {
       paintOutbox();
       return;
     case "sessionsChanged":
-      if (ev.deleted === state.current) { state.current = null; clearThread(); loadDraft(); }
+      if (ev.deleted === state.current) {
+        // 開いていた会話が消えた（未送信の削除・sessions.delete。ADR 0147）。前の会話の文脈のメーター・圧縮の予約も持ち越さない
+        state.current = null; clearThread(); loadDraft();
+        state.messages = []; state.contextWindow = null; state.compactionAt = null; state.compactionPhase = null; state.compactions = [];
+        paintContextStrip();
+        refreshContextEntry().catch(() => {});
+      }
       return refresh();
     case 'claudeAccountsChanged':
       claudeAccounts.invalidate();
@@ -2964,6 +3064,10 @@ function onEvent(ev, replay = false) {
 
     case "permission":
       return renderPermission(ev);
+
+    case "permissionRelayEnd":
+    case "permissionRelayState":
+      return onRelayCardEvent(ev);
 
     case "session":
       if (ev.sessionId && state.current !== ev.sessionId) {
@@ -3799,9 +3903,12 @@ const side = createSide({
 });
 
 function renderSessions() {
-  // 委譲された子の会話（Pleiad タスク）は一覧に出さない。開くのは「Pleiad タスク」の一覧から
+  // 委譲された子の会話（Pleiad タスク）は一覧に出さない。開くのは「Pleiad タスク」の一覧から。
+  // 依頼元の会話を消した子（ADR 0147）は、開く口が無くなるので一覧に出す
   // bot の会話（Channels のスレッド・DM・ルーティン。ADR 0109）も出さない。あなたを待っている間だけ出る
-  const listed = state.sessions.filter(s => !s.delegation && (!s.bot || state.waitingIds.has(s.id)));
+  // 端末の AI から任された会話（delegation.remote）は、依頼元の会話がこの PC に無いので一覧に出す（⇄ の印つき）
+  const ids = new Set(state.sessions.map(s => s.id));
+  const listed = state.sessions.filter(s => (!s.delegation || s.delegation.remote || !ids.has(s.delegation.parentSessionId)) && (!s.bot || state.waitingIds.has(s.id)));
   const unreadIds = new Set(listed.filter(s => readCompletions.hasUnread(s)).map(s => s.id));
   // 脇が見えていない間の印（web/open-sidebar-mark.mjs）。今の会話は数えない
   paintOpenSidebar($("openSidebar"), attentionCounts(listed, { currentId: state.current, waitingIds: state.waitingIds, unreadIds,
@@ -4200,10 +4307,22 @@ const TASK_LIVE = new Set(['queued', 'running', 'cancelling']);
  * 重ねた結果は、rows を書き換える（ver を進める）か running が届くまで使い回す（カードごとに引くので）
  */
 const taskCards = { sessionId: null, rows: new Map(), ver: 0, live: new Map(), asked: new Set(), merged: null };
+/**
+ * Channels のスレッドが見ている bot の会話（子孫まで）の委譲の行。Chats の会話の分（taskCards.rows）とは別に持つので、Chats の会話を切り替えても消えない。
+ * sessions: 見ている会話、rows: taskId → 行、loaded: 読み終えた会話、listeners: 一覧・数が変わったときに呼ぶ（スレッドの入口）。
+ * 委譲のカード・一覧は Chats と同じ部品で、taskById / allTasks がこの行も引く
+ */
+const watched = { sessions: new Set(), rows: new Map(), loaded: new Set(), listeners: new Set() };
+/** Channels の画面の委譲カード（スレッドの作業ログ）の置き場 → そのスレッドの範囲。card → { scope, sessionId, backend }（linkDelegateCard が覚える） */
+const channelRoots = new Map();
+const cardCtx = new WeakMap();
+/** 委譲カードを探して描く置き場: Chats の会話と、Channels のスレッド。[置き場, 範囲 | null] */
+const delegateRoots = () => [[thread, null], ...channelRoots];
+const notifyWatchers = () => { for (const fn of [...watched.listeners]) fn(); };
 function mergedTasks() {
   const m = taskCards.merged;
   if (m && m.ver === taskCards.ver && m.live === state.work.tasks) return m;
-  const list = mergeTasks(taskCards.rows, state.work.tasks);
+  const list = mergeTasks(watched.rows.size ? new Map([...watched.rows, ...taskCards.rows]) : taskCards.rows, state.work.tasks);
   return (taskCards.merged = { ver: taskCards.ver, live: state.work.tasks, list, byId: new Map(list.map(r => [r.taskId, r])) });
 }
 const allTasks = () => mergedTasks().list;
@@ -4237,8 +4356,9 @@ async function fetchTaskCards(ids, { again = true } = {}) {
     rows.push(...part);
   }
   for (const r of rows) taskCards.rows.set(r.taskId, r);
+  const forWatched = keepWatched(rows);
   taskCards.ver++;
-  if (state.current === sessionId) repaintTasks();
+  if (state.current === sessionId || forWatched) repaintTasks();
   const stale = staleTasks(rows, state.work.tasks);
   if (again && stale.length) fetchTaskCards(stale, { again: false }).catch(() => {});
 }
@@ -4247,8 +4367,43 @@ function syncTaskCards() {
   const live = state.work.tasks ?? [];
   const ids = taskCards.sessionId === state.current
     ? tasksToFetch({ cards: taskCards.rows, live, prevLive: taskCards.live, sessionId: state.current }) : [];
+  // Channels のスレッドが見ている会話の分も、同じ規則で（持っている行は Chats の分と合わせて引く）
+  if (watched.sessions.size) {
+    const cards = new Map([...watched.rows, ...taskCards.rows]);
+    for (const sessionId of watched.sessions) ids.push(...tasksToFetch({ cards, live, prevLive: taskCards.live, sessionId }));
+  }
   taskCards.live = new Map(live.map(r => [r.taskId, r]));
-  if (ids.length) fetchTaskCards(ids).catch(() => {});
+  if (ids.length) fetchTaskCards([...new Set(ids)]).catch(() => {});
+}
+/** 読んだ行のうち、Channels のスレッドが見ている会話の木に入るものを、その分の入れ物にも置く。置いたものがあれば true */
+function keepWatched(rows) {
+  if (!watched.sessions.size) return false;
+  const all = [...watched.rows.values(), ...taskCards.rows.values(), ...rows];
+  const tree = new Set([...watched.sessions].flatMap(id => [...treeSessions(id, all)]));
+  let kept = false;
+  for (const r of rows) if (watched.rows.has(r.taskId) || tree.has(r.parentSessionId)) { watched.rows.set(r.taskId, r); kept = true; }
+  return kept;
+}
+/**
+ * Channels のスレッドが見る会話（bot の会話）を決める。まだ読んでいない会話の分（子孫まで）を読む。force は読み直す（一覧を開いたとき。
+ * 配信の間に始まって終わった子孫の委譲も出すため）
+ */
+function watchSessions(ids, { force = false } = {}) {
+  watched.sessions = new Set(ids);
+  if (force) for (const id of watched.sessions) watched.loaded.delete(id);
+  for (const id of watched.sessions) {
+    if (watched.loaded.has(id)) continue;
+    watched.loaded.add(id);
+    readTaskCards(id).then((rows) => {
+      if (!rows) { watched.loaded.delete(id); return; }
+      for (const r of rows) watched.rows.set(r.taskId, r);
+      taskCards.ver++;
+      const stale = staleTasks(rows, state.work.tasks);
+      if (stale.length) fetchTaskCards(stale, { again: false }).catch(() => {});
+      repaintTasks();
+    }).catch(() => { watched.loaded.delete(id); });
+  }
+  notifyWatchers();
 }
 function repaintTasks() {
   paintDelegateCards();
@@ -4258,7 +4413,18 @@ function repaintTasks() {
 /** 子の会話を親として辿り、この会話からの委譲とその子孫を集める。 */
 const plyTasksHere = () => state.current ? taskTree(allTasks(), state.current) : [];
 /** 子の会話が人間の承認を待っているか。work.tasks の status は保存した値なので、承認の一覧から引く */
-const taskWaiting = (task) => (state.work.permissions ?? []).some(p => p.sessionId === task.sessionId && !p.relay);
+const taskWaiting = (task) => task.host ? task.hostWaiting === true || (state.work.permissions ?? []).some(p => p.remote?.taskId === task.taskId)
+  : (state.work.permissions ?? []).some(p => p.sessionId === task.sessionId && !p.relay);
+
+/** ホストに任せたタスクの「⇄ ホスト名」の印（リモートのバッジと同じ差しの青）。ホストがオフラインの間は中抜きの丸（色だけに頼らず title と読み上げ名にも）。docs/remote.md §4.5 */
+function hostMark(host) {
+  const online = state.work.remoteHosts?.[host?.hostId]?.online !== false;
+  const name = state.work.remoteHosts?.[host?.hostId]?.name ?? host?.name ?? "";
+  const mark = el("span", `host-mark${online ? "" : " off"}`, t("chat.approval.relay.host", { host: name }));
+  mark.title = online ? name : `${name} (${t("chat.approval.relay.hostOffline")})`;
+  if (!online) mark.setAttribute("aria-label", `${t("chat.approval.relay.host", { host: name })} (${t("chat.approval.relay.hostOffline")})`);
+  return mark;
+}
 
 const KIND_SUB = {
   terminal: t("dialog.work.kind.terminal"),
@@ -4289,7 +4455,7 @@ function backgroundHere() {
 const timeOf = (v) => (v ? new Date(v).getTime() || 0 : 0);
 
 /** history は過去のツールカードから findSubagent で引き直した子。 */
-const bg = { selected: null, extra: new Map(), history: new Map(), finding: new Set(), notFound: new Set(), view: null, narrowDetail: false, shownEnded: 10 };
+const bg = { scope: null, selected: null, extra: new Map(), history: new Map(), finding: new Set(), notFound: new Set(), view: null, narrowDetail: false, shownEnded: 10 };
 
 /** Past native subagents no longer appear in runningWork; resolve their tool IDs from the loaded history. */
 function restorePastSubagents(sessionId) {
@@ -4318,15 +4484,20 @@ function restorePastSubagents(sessionId) {
  * 一覧の項目。種類ごとの違いはここで吸収し、描く側は同じ形だけを見る。
  * group: agent（サブエージェント。ネイティブと Pleiad タスクを区別しない）| command（裏のコマンド・端末）
  */
-function backgroundItems() {
+function backgroundItems(scope = null) {
   const items = [];
-  for (const a of [...subagentsHere(), ...bg.history.values()].filter(a => a.sessionId === state.current)) items.push({
+  // scope: Channels のスレッドの一覧。そのスレッドの bot の会話から委譲した子だけ（裏のコマンド・過去のネイティブの子は含めない）
+  const here = scope ? new Set(scope.sessions()) : null;
+  const natives = here ? (state.work.subagents ?? []).filter(a => here.has(a.sessionId))
+    : [...subagentsHere(), ...bg.history.values()].filter(a => a.sessionId === state.current);
+  for (const a of natives) items.push({
     key: `a:${a.sessionId}:${a.id}`, group: 'agent', source: 'native', title: a.description || a.saying || a.id,
     backend: a.backend ?? activeBackendId(), model: a.model ?? null, effort: null, status: a.status ?? null,
     live: subagentLive(a), startedAt: a.startedAt ?? null, endedAt: a.endedAt ?? null, messages: a.messages,
     origin: a.origin ?? null, parentId: a.sessionId, agentId: a.id,
   });
-  for (const { task, depth, rootLive, childCount } of plyTasksHere()) {
+  const trees = here ? [...here].flatMap(id => taskTree(allTasks(), id)) : plyTasksHere();
+  for (const { task, depth, rootLive, childCount } of trees) {
     const live = TASK_LIVE.has(task.status);
     const waiting = live && taskWaiting(task);
     items.push({
@@ -4337,13 +4508,14 @@ function backgroundItems() {
       childId: task.sessionId, taskId: task.taskId, error: task.error, notification: task.notification, routing: task.routing ?? null,
       pendingMessages: task.pendingMessages ?? 0, instructionRevision: task.instructionRevision ?? 0,
       worktree: task.worktree ?? null,
+      ...(task.host ? { host: task.host, remoteSessionId: task.remoteSessionId ?? null } : {}),
     });
   }
-  for (const { task, entry } of backgroundHere()) items.push({
+  for (const { task, entry } of here ? [] : backgroundHere()) items.push({
     key: `c:${entry.sessionId}:${task.id}`, group: 'command', title: task.label || task.id, kindLabel: KIND_SUB[task.kind] ?? KIND_SUB.other,
     status: 'running', live: true, startedAt: task.startedAtMs ?? null, task, entry,
   });
-  for (const x of bg.extra.values()) if (!items.some(i => i.key === x.key)) items.push(x);
+  for (const x of bg.extra.values()) if ((!here || here.has(x.parentId)) && !items.some(i => i.key === x.key)) items.push(x);
   // 親を区分・時刻で並べ、子孫はその直後に置く。途中の子が終わっても親から離さない。
   const roots = [], children = new Map();
   for (const item of items) {
@@ -4354,12 +4526,13 @@ function backgroundItems() {
   }
   roots.sort((a, b) => Number(!a.live) - Number(!b.live) || timeOf(b.startedAt) - timeOf(a.startedAt));
   const ordered = [], seen = new Set();
-  const add = item => {
+  // owner: 親（根）の会話。Channels のスレッドの一覧が bot ごとに分けるのに使う（子孫は根と同じ）
+  const add = (item, owner) => {
     if (seen.has(item.key)) return;
-    seen.add(item.key); ordered.push(item);
-    for (const child of children.get(item.childId) ?? []) add(child);
+    seen.add(item.key); item.owner = owner; ordered.push(item);
+    for (const child of children.get(item.childId) ?? []) add(child, owner);
   };
-  roots.forEach(add);
+  roots.forEach(item => add(item, item.parentSessionId ?? item.parentId ?? null));
   return ordered;
 }
 
@@ -4374,14 +4547,24 @@ function syncWorkEntry() {
   $('workEntry').hidden = !live && !ended;
   workChip.update(items, state.current);
   syncStripVisible();
+  notifyWatchers();
 }
 $('workEntryButton').onclick = () => openWork();
 
 /** 委譲された子の会話では、ヘッダーに依頼元の会話へ戻る口を出す（子の会話は脇の一覧に出ないため） */
 function syncParentEntry() {
-  const parent = state.sessions.find(s => s.id === state.current)?.delegation?.parentSessionId;
+  const delegation = state.sessions.find(s => s.id === state.current)?.delegation;
+  const remote = delegation?.remote ?? null;
+  // 依頼元の会話を消した（ADR 0147）なら出さない。端末の AI から任された会話の依頼元は端末にあるので、戻る口は出さない
+  const parentId = remote ? null : delegation?.parentSessionId;
+  const parent = parentId && state.sessions.some(s => s.id === parentId) ? parentId : null;
   $('parentChatEntry').hidden = !parent;
   $('parentChatEntry').onclick = parent ? () => select(parent) : null;
+  const origin = $('remoteOriginLine');
+  origin.hidden = !remote;
+  origin.textContent = remote ? [t('session.remoteOrigin.badge', { device: remote.deviceName || '' }),
+    ...(remote.title ? [t('session.remoteOrigin.request', { title: remote.title })] : []),
+    (() => { const label = state.modes?.[state.sessions.find(s => s.id === state.current)?.mode]?.label; return label ? t('session.remoteOrigin.modeIs', { mode: label }) : t('session.remoteOrigin.mode'); })()].join(' · ') : '';
 }
 
 const vocabAsked = new Set();
@@ -4453,6 +4636,7 @@ function listRow(item) {
   // 1 行目は「状態の印・ロゴ・題 …… 経過」（カード・完了通知と同じ並び。ADR 0067）。ロゴは題の前
   const title = el('span', `bg-row-title${item.group === 'command' ? ' mono' : ''}`);
   if (item.group === 'agent') title.append(backendLogo(item.backend, labelOf(item.backend)));
+  if (item.host) title.append(hostMark(item.host));
   title.append(el('span', 'bg-row-name', item.title));
   row.append(title);
   row.append(el('span', 'bg-row-time', elapsedText(item)));
@@ -4474,15 +4658,38 @@ function listRow(item) {
   return row;
 }
 
+/** いま開いている一覧の項目（Channels のスレッドから開いたときは、そのスレッドの bot の分） */
+const dialogItems = () => backgroundItems(bg.scope);
+
+/** Channels のスレッドの一覧: bot ごとに区切り、中は動いているものが先（親の直後に子孫）。終わった親は bot ごとに 10 件ずつ */
+function renderScopedList(list, items) {
+  for (const [owner, rows] of groupByOwner(items)) {
+    const who = bg.scope.group(owner);
+    const head = el('div', 'bg-group bg-bot');
+    const logo = who.icon?.();
+    if (logo) head.append(logo);
+    head.append(el('span', null, who.name));
+    list.append(head);
+    const { rows: visible, remaining } = visibleRows(rows, bg.shownEnded);
+    list.append(...visible.map(listRow));
+    if (remaining > 0) {
+      const more = el('button', 'btn bg-more', t('dialog.work.showMore', { count: remaining }));
+      more.type = 'button'; more.onclick = () => { bg.shownEnded += 10; renderBackground(); };
+      list.append(more);
+    }
+  }
+}
+
 /** 一覧を描き直す。詳細は選んでいる項目が変わったときだけ描き直す（読んでいる位置を保つ） */
 function renderBackground() {
-  const items = backgroundItems();
+  const items = dialogItems();
   if (!items.some(x => x.key === bg.selected)) bg.selected = items[0]?.key ?? null;
   const { live, ended } = backgroundTotals(items);
   $('workCount').textContent = t('dialog.work.count', { live, ended });
   const list = $('workList');
   list.replaceChildren();
-  const agents = items.filter(x => x.group === 'agent');
+  if (bg.scope) renderScopedList(list, items);
+  const agents = bg.scope ? [] : items.filter(x => x.group === 'agent');
   const active = agents.filter(x => x.rootLive ?? x.live);
   const finished = agents.filter(x => !(x.rootLive ?? x.live));
   if (active.length) list.append(el('div', 'bg-group', t('dialog.work.groupRunning')), ...active.map(listRow));
@@ -4523,10 +4730,12 @@ function selectBackground(key) {
 }
 
 /** ダイアログを開く。key を渡すとその項目を選んだ状態で開く（会話の中のカードから） */
-function openWork(key) {
+function openWork(key, scope = null) {
+  bg.scope = scope;
+  $('workTitle').textContent = scope ? t('dialog.work.titleSub') : t('dialog.work.title');
   bg.shownEnded = 10;
   if (typeof key === 'string') {
-    const rows = backgroundItems().filter(x => x.group === 'agent' && !(x.rootLive ?? x.live));
+    const rows = dialogItems().filter(x => x.group === 'agent' && !(x.rootLive ?? x.live));
     let root = 0;
     for (const row of rows) {
       if (!row.depth) root++;
@@ -4535,13 +4744,14 @@ function openWork(key) {
   }
   bg.narrowDetail = typeof key === 'string';
   if (typeof key === 'string') bg.selected = key;
-  else if (!bg.selected || !backgroundItems().some(x => x.key === bg.selected && x.live)) bg.selected = backgroundItems()[0]?.key ?? null;
+  else if (!bg.selected || !dialogItems().some(x => x.key === bg.selected && x.live)) bg.selected = dialogItems()[0]?.key ?? null;
   bg.view = null;
   // 先に開く。詳細の読み込みは開いているときだけ走る
   if (!$('workDialog').open) $('workDialog').showModal();
   renderBackground();
   // 配信の間に始まって終わった子孫の委譲も一覧に出すため、会話の分を読み直す
-  loadTaskCards(state.current).then(repaintTasks).catch(() => {});
+  if (scope) watchSessions([...scope.sessions()], { force: true });
+  else loadTaskCards(state.current).then(repaintTasks).catch(() => {});
   if (typeof key !== 'string') $('workList').scrollTop = 0;
   else $('workList').querySelector(`[data-key="${CSS.escape(key)}"]`)?.scrollIntoView({ block: 'nearest' });
 }
@@ -4566,6 +4776,7 @@ function paintDetailHead(item) {
     const who = el('span', 'bg-model');
     who.append(backendLogo(item.backend, labelOf(item.backend)), el('span', null, modelText(item) || labelOf(item.backend)));
     meta.append(who);
+    if (item.host) meta.append(hostMark(item.host));
   }
   const status = statusText(item);
   if (status) meta.append(el('span', item.waiting ? 'bg-waiting' : null, status));
@@ -4581,8 +4792,17 @@ function paintDetailHead(item) {
     open.title = t('dialog.work.openChat');
     open.setAttribute('aria-label', t('dialog.work.openChat'));
     open.append(icon(GO_PATH));
-    open.onclick = () => { $('workDialog').close(); select(item.childId); };
-    actions.append(open);
+    open.onclick = () => { const scope = bg.scope; $('workDialog').close(); if (scope) scope.openSession(item.childId); else select(item.childId); };
+    // ホストに任せたタスクの子の会話はホストにある。手元の窓なら、そのホストのリモートの窓で開く（見るための補助）
+    if (item.host) {
+      const view = window.plyDesktop?.openRemoteSession;
+      if (view && !window.plyRemote && item.remoteSessionId) {
+        open.title = open.ariaLabel = t('chat.approval.relay.viewChild');
+        open.setAttribute('aria-label', t('chat.approval.relay.viewChild'));
+        open.onclick = () => { view(item.host.hostId, item.remoteSessionId).catch(() => {}); };
+        actions.append(open);
+      }
+    } else actions.append(open);
     if (['queued', 'running'].includes(item.taskStatus) || item.waiting) {
       const stop = el('button', 'btn btn-quiet', t('dialog.work.stop'));
       stop.type = 'button';
@@ -4684,7 +4904,24 @@ function requestOf(toolId) {
  * （web/stream-messages.mjs。Antigravity はターンが終わるまで履歴に何も書かない）。
  * watch は付けない（付けると、この接続がメインパネルで見ている会話が子へ書き換わる）
  */
+/** ホストに任せたタスクの詳細。子の会話はホストにあるので、依頼と結果（ホストの便りで写した分）だけを出す */
+async function hostTaskThread(item) {
+  const r = await cmd('invoke', { op: 'delegation.status', args: { taskId: item.taskId } }).catch(() => null);
+  const th = el('div', 'thread bg-thread bg-host-task');
+  const section = (label, text) => {
+    const box = el('div', 'rt-request');
+    const body = el('div', 'rt-request-text');
+    body.innerHTML = plainTextHtml(String(text ?? '').trim() || '—', { paths: false });
+    box.append(el('div', 'rt-request-label', label), body);
+    return box;
+  };
+  th.append(section(t('dialog.work.request'), item.request), section(t('dialog.work.hostResult'), r?.result));
+  if (item.error) th.append(wrap(el('div', 'm sys', item.error)));
+  return th;
+}
+
 async function taskThread(item) {
+  if (item.host) return hostTaskThread(item);
   const [data, instructionData] = await Promise.all([
     cmd('loadSession', { sessionId: item.childId, live: true }), cmd('agentTaskInstructions', { taskId: item.taskId }),
   ]);
@@ -4882,7 +5119,8 @@ const watchValueWidth = (res) => valueWidths?.observe(res);
  * 委譲のカードに、子の会話へ移る矢印を足す。押すとバックグラウンドのダイアログでその子を選んだ状態になる。
  * Pleiad タスクは結果（taskId）が届いてから押せるようにする。メインの会話のカードだけに付ける
  */
-function linkDelegateCard(card, input = null, result = null) {
+function linkDelegateCard(card, input = null, result = null, ctx = null) {
+  if (card && ctx) cardCtx.set(card, ctx);   // Channels のスレッドのカード: どの範囲・会話・エージェントの子か（無ければ今開いている会話）
   const name = card?.dataset.tool;
   // 一覧の見出しに使う依頼の一行（結果が後から届くカードは、始まったときに覚えた分を使う）
   const said = input?.description || input?.task || (typeof input?.prompt === 'string' ? input.prompt.split(/\r?\n/).find(Boolean) : '');
@@ -4897,7 +5135,7 @@ function linkDelegateCard(card, input = null, result = null) {
     // 振り分けの記録。ply_delegate の結果（JSON）にある。タスクの一覧（running）にあればそちらを使う
     const routing = delegateResult(result)?.routing;
     if (routing) cardRouting.set(card, routing);
-  } else if (!SUBAGENT_TOOLS.has(name) || !card.dataset.id || capsOf(activeBackendId()).subagents === false) return;
+  } else if (!SUBAGENT_TOOLS.has(name) || !card.dataset.id || capsOf(ctx?.backend ?? activeBackendId()).subagents === false) return;
   card.classList.add('tc-delegate');
   card.append(goButton(t('timeline.delegate.openChild'), (b) => openFromCard(card, b)));
   const res = card.querySelector('.tc-res');
@@ -5003,6 +5241,9 @@ function decorateDelegateCard(card) {
   logo.setAttribute('aria-hidden', 'true');
   logo.classList.add('rt-target-logo');
   label.after(logo);
+  // ホストに任せたタスク: 題の前に ⇄ ホスト名（ホストがオフラインなら中抜き）。ホストの内訳の専用の行は作らない（固定の内訳のまま）
+  const hostRow = taskById(taskId)?.host;
+  if (hostRow) { logo.after(hostMark(hostRow)); card.dataset.hostId = hostRow.hostId; }
   card.dataset.routeSig = routeSig(routing);
   // 委譲先の行（自動の印・種類・難しさ → 行き先・飛ばした候補）は開いた中へ
   const route = el('span', 'rt-route');
@@ -5139,22 +5380,25 @@ function paintRetried(card) {
       el('span', 'rt-retried-state', TASK_STATUS[task.status] ?? task.status ?? ''));
     const open = el('button', 'btn', t('dialog.work.open'));
     open.type = 'button';
-    open.onclick = (e) => { e.preventDefault(); openWork(`t:${task.taskId}`); };
+    open.onclick = (e) => { e.preventDefault(); openWork(`t:${task.taskId}`, cardCtx.get(card)?.scope ?? null); };
     row.append(open);
     return row;
   }));
 }
 /** タスクの一覧が変わったら、会話の中の委譲カードを追いつかせる（記録が後から届いたカード・やり直しの行） */
 function paintDelegateCards() {
+  for (const [root, scope] of delegateRoots()) paintDelegateCardsIn(root, scope);
+}
+function paintDelegateCardsIn(root, scope) {
   const missing = [];
-  for (const card of thread.querySelectorAll('.tc[data-task-id]')) {
+  for (const card of root.querySelectorAll('.tc[data-task-id]')) {
     if (card.dataset.routed) { repaintRouteTarget(card); paintRetried(card); }
     else decorateDelegateCard(card);
     // 始まって終わるまでが running の配信の間に収まった委譲は、会話の分を読んだ後に増えている。カードの分だけ 1 度読む
     const id = card.dataset.taskId;
-    if (taskCards.sessionId === state.current && !taskCards.asked.has(id) && !taskById(id)) { taskCards.asked.add(id); missing.push(id); }
+    if ((scope || taskCards.sessionId === state.current) && !taskCards.asked.has(id) && !taskById(id)) { taskCards.asked.add(id); missing.push(id); }
   }
-  paintDelegateStates();
+  paintDelegateStates(root, scope);
   if (missing.length) fetchTaskCards(missing).catch(() => {});
 }
 
@@ -5175,16 +5419,16 @@ function delegateStateOf(item) {
 /** 走っているカードの経過を 1 秒ごとに書き換える。走っているカードが無くなったら止める */
 let delegateTicker = 0;
 function tickDelegateElapsed() {
-  const spans = thread.querySelectorAll('.tc-el[data-start]');
+  const spans = delegateRoots().flatMap(([root]) => [...root.querySelectorAll('.tc-el[data-start]')]);
   if (!spans.length) { clearInterval(delegateTicker); delegateTicker = 0; return; }
   const now = Date.now();
   for (const span of spans) span.textContent = clockText(now - Number(span.dataset.start));
 }
 
-function paintDelegateStates() {
-  const cards = [...thread.querySelectorAll('.tc[data-tool]')].filter(c => c.querySelector(':scope > .tc-go'));
+function paintDelegateStates(root = thread, scope = null) {
+  const cards = [...root.querySelectorAll('.tc[data-tool]')].filter(c => c.querySelector(':scope > .tc-go'));
   if (!cards.length) return;
-  const items = backgroundItems().filter(i => i.group === 'agent');
+  const items = backgroundItems(scope).filter(i => i.group === 'agent');
   for (const card of cards) {
     const res = card.querySelector('.tc-res');
     if (!res || card.classList.contains('tc-error')) continue;
@@ -5218,7 +5462,7 @@ function paintDelegateStates() {
     }
     res.replaceChildren(...parts);
   }
-  if (!delegateTicker && thread.querySelector('.tc-el[data-start]')) delegateTicker = setInterval(tickDelegateElapsed, 1000);
+  if (!delegateTicker && root.querySelector('.tc-el[data-start]')) delegateTicker = setInterval(tickDelegateElapsed, 1000);
 }
 /** 「別の候補でやり直す」の面を開閉する。候補は設定 › 委譲と同じ一覧から、今使えるものだけ */
 async function toggleRetry(card, root, button) {
@@ -5260,26 +5504,27 @@ function cardNote(card, text) {
 }
 
 async function openFromCard(card, button) {
-  if (card.dataset.taskId) return openWork(`t:${card.dataset.taskId}`);
+  const ctx = cardCtx.get(card) ?? null, scope = ctx?.scope ?? null;
+  if (card.dataset.taskId) return openWork(`t:${card.dataset.taskId}`, scope);
   const toolId = card.dataset.id;
-  const live = backgroundItems().find(x => x.origin === toolId);
-  if (live) return openWork(live.key);
-  const sessionId = state.current;
+  const live = backgroundItems(scope).find(x => x.origin === toolId);
+  if (live) return openWork(live.key, scope);
+  const sessionId = ctx?.sessionId ?? state.current;
   button.disabled = true;
   try {
     const { agentId, status, startedAt, endedAt } = await cmd('findSubagent', { sessionId, toolId });
     if (!agentId) throw new Error(t('dialog.work.notFound'));
     const key = `a:${sessionId}:${agentId}`;
     const title = card.dataset.bgTitle;
-    bg.extra.set(key, { key, group: 'agent', source: 'native', title: title || agentId, backend: activeBackendId(), model: null, effort: null,
+    bg.extra.set(key, { key, group: 'agent', source: 'native', title: title || agentId, backend: ctx?.backend ?? activeBackendId(), model: null, effort: null,
       status: status ?? (card.classList.contains('tc-fail') ? 'failed' : 'completed'), live: status === 'running', extra: true,
       startedAt: startedAt ?? null, endedAt: endedAt ?? null, origin: toolId, parentId: sessionId, agentId });
-    openWork(key);
+    openWork(key, scope);
   } catch (e) { cardNote(card, t('dialog.work.openFailed', { error: e.message })); }
   finally { button.disabled = false; }
 }
 
-$('workDialog').addEventListener('close', () => { bg.view = null; bg.extra.clear(); });
+$('workDialog').addEventListener('close', () => { bg.view = null; bg.extra.clear(); bg.scope = null; });
 
 // ---------------------------------------------------------------- 配色
 // 明示的に選んだらそれを守る。選んでいなければ OS の設定に従う。端末ごとの好みなのでブラウザ側に覚える。
@@ -5637,6 +5882,16 @@ const channelsUi = setupChannels({
   openImage: (src, caption, path, origin) => openLightbox(src, caption, path, origin),   // 添付の画像を大きく見る（会話と同じライトボックス）
   permissionCard: (ev, into) => (ev.kind === 'question' ? questionCard(ev, into) : permissionCard(ev, into)),   // 質問も同じ口（bot の質問）
   openSession: async (id) => { channelsUi.setTab('chats'); await select(id); },
+  // 委譲の子の様子（スレッドの入口・作業ログの委譲カード）。Chats と同じ部品を使う（docs/design-system.md「バックグラウンド」「委譲カード」）
+  background: {
+    watch: (ids) => watchSessions(ids),
+    items: (scope) => backgroundItems(scope).filter(i => i.group === 'agent'),
+    subscribe: (fn) => { watched.listeners.add(fn); return () => watched.listeners.delete(fn); },
+    open: (scope) => openWork(undefined, scope),
+    link: (card, input, result, ctx) => linkDelegateCard(card, input, result, ctx),
+    mount: (root, scope) => { channelRoots.set(root, scope); },
+    paint: () => paintDelegateCards(),
+  },
   openSidebar: () => setSidebar(true),
   showMenu: (x, y, items, title) => showMenu(x, y, items, title),
   renderAssistantMarkdown, renderPresent,
@@ -5709,6 +5964,8 @@ const composerAgentLang = () => state.sessions.find(s => s.id === state.current)
 function pendingUpload(pid) {
   const u = uploads.get(pid);
   if (!u) return null;
+  // ホストが取りに行っている画像（貼り付けの HTML）。失敗の札は無い（取れなければ札ごと静かに消える）
+  if (u.import) return { name: u.name, state: 'importing', host: u.import.host };
   const failed = u.failed || u.cancelled;
   return { name: u.name, size: u.size, state: failed ? 'failed' : 'sending', percent: u.size ? Math.floor((u.sent / u.size) * 100) : 0,
     error: u.failed ?? (u.cancelled ? t('chat.composerAtt.cancelled') : '') };
@@ -5718,7 +5975,7 @@ function pendingUpload(pid) {
  * 新しい会話を作っている間（state.current が null）に始めたものは sessionId が null で、会話ができたら adoptUploads がその id へ付け替える
  */
 function uploadsHere() {
-  return [...uploads.values()].filter(u => u.sessionId === (state.current ?? null)
+  return [...uploads.values()].filter(u => !u.gone && u.sessionId === (state.current ?? null)
     && (!u.cancelled || composerEditor.hasAttachment(`i:${u.id}`)));
 }
 /**
@@ -5732,7 +5989,8 @@ function adoptUploads(id) {
 function uploadBlockReason() {
   const here = uploadsHere();
   if (here.some(u => u.failed || u.cancelled)) return t('chat.composerAtt.blockFailed');
-  return here.length ? t('chat.composerAtt.blockSending') : null;
+  if (!here.length) return null;
+  return here.every(u => u.import) ? t('chat.composerAtt.blockImporting') : t('chat.composerAtt.blockSending');
 }
 /** 添付を字の欄の位置の順に並べる。文中に無いものは後ろ（文末に付く） */
 function orderedAttachments() {
@@ -5749,7 +6007,8 @@ function onComposerAtoms({ added, removed }) {
       if (i >= 0) removedAttached.set(key, state.attached.splice(i, 1)[0]);
     } else {
       const u = uploads.get(key.slice(2));
-      if (u && !u.failed) u.cancelled = true;
+      if (u?.import) pasteImages.cancel(u);   // 取り込み中の札を外した・元に戻した: 取得もやめる
+      else if (u && !u.failed) u.cancelled = true;
     }
   }
   for (const key of added) {
@@ -5784,7 +6043,7 @@ let attachEntry = null, attachList = null, attachHintSig = "";
 function renderAttached() {
   const strip = $("attached");
   const here = uploadsHere();
-  const failed = here.filter(u => u.failed || u.cancelled).length, sending = here.length - failed;
+  const failed = here.filter(u => u.failed || u.cancelled).length, importing = here.filter(u => u.import).length, sending = here.length - failed - importing;
   const total = state.attached.length + here.length;
   strip.hidden = total === 0;
   if (!attachEntry) {
@@ -5802,8 +6061,9 @@ function renderAttached() {
     strip.append(b);
   }
   attachEntry.count.textContent = t("chat.attachList.count", { count: total });
-  attachEntry.state.textContent = failed ? ` · ${t("chat.composerAtt.entryFailed", { count: failed })}` : sending ? ` · ${t("chat.composerAtt.entrySending", { count: sending })}` : "";
-  attachEntry.b.dataset.state = failed ? "failed" : sending ? "sending" : "";
+  attachEntry.state.textContent = [failed ? t("chat.composerAtt.entryFailed", { count: failed }) : "", sending ? t("chat.composerAtt.entrySending", { count: sending }) : "",
+    importing ? t("chat.composerAtt.entryImporting", { count: importing }) : ""].filter(Boolean).map(s => ` · ${s}`).join("");
+  attachEntry.b.dataset.state = failed ? "failed" : sending || importing ? "sending" : "";
   // 同じ名前の添付が増えた・減った: 札に添える見分けのフォルダーが変わるので札を描き直す
   const hints = attachFolderHints(state.attached, { deviceLabel: t("chat.attach.deviceFolder") })
     .map((h, i) => (h ? `${attachedKey(state.attached[i].path)}=${h}` : "")).filter(Boolean).join("|");
@@ -5824,6 +6084,7 @@ function attachListRows() {
     size: Number.isFinite(a.size) ? a.size : null, status: a.from === "host" ? t("chat.attachList.byPath") : t("chat.attachList.sent"), section });
   const upload = (u, section) => {
     const p = pendingUpload(u.id);
+    if (p.state === "importing") return { id: `i:${u.id}`, kind: "image", name: u.name, path: "", origin: null, size: null, section, status: t("chat.attachList.importing"), progress: null };
     return { id: `i:${u.id}`, kind: "file", name: u.name, path: "", origin: "device", size: u.size, section,
       status: p.state === "failed" ? p.error : t("chat.composerAtt.entrySending", { count: 1 }), progress: p.state === "sending" ? p.percent : null };
   };
@@ -5849,7 +6110,9 @@ function openAttachList() {
       const key = item.id;
       if (key.startsWith("i:")) {
         const p = pendingUpload(key.slice(2));
-        return p?.state === "sending"
+        return p?.state === "importing"
+          ? [{ label: t("chat.paste.cancelImport"), run: () => removeComposerAttachment(key), keepOpen: true }]
+          : p?.state === "sending"
           ? [{ label: t("chat.attach.cancelSending"), run: () => removeComposerAttachment(key), keepOpen: true }]
           : [{ label: t("chat.composerAtt.retry"), run: () => onComposerAtomAction("retry", key), keepOpen: true },
              { label: t("chat.attach.remove"), run: () => removeComposerAttachment(key), keepOpen: true }];
@@ -5980,36 +6243,63 @@ async function runUpload(u) {
         onProgress: (sent) => { u.sent = sent; paintUpload(u); } }),
       isImage ? thumbnailOf(file).catch(() => null) : null,
     ]);
-    if (!r || u.cancelled) { u.cancelled = true; renderAttached(); return; }   // やめた（札は外れている）
+    if (!r || u.cancelled) { u.cancelled = true; renderAttached(); return false; }   // やめた（札は外れている）
     const item = { name: file.name, path: r.path, kind: r.kind, mime: file.type, from: "device", size: file.size,
       ...(thumb ? { dataUri: thumb.dataUri, width: thumb.width, height: thumb.height } : {}) };
-    // 持ち主は届いた時点で読む（新しい会話を作っている間に始めたものは、できた会話の id に付け替わっている: adoptUploads）
-    const owner = u.sessionId;
-    if (state.current === owner) {
-      uploads.delete(u.id);
-      state.attached.push(item);
-      composerEditor.resolvePending(u.id, r.path);
-      renderAttached();
-      saveDraft().catch(() => {});
-    } else {
-      // 送っている間に別の会話へ移った。その会話の下書きに積む（位置は持たない: 文末に付く）。"" は持ち主の会話が無い欄の下書き。
-      // 保存できたら札を消す（できなければ下の catch が本当の理由つきの失敗にする）
-      const key = owner ?? "";
-      const draft = state.drafts.get(key) ?? { text: "", attached: [] };
-      await persistDraft(key, { ...draft, attached: [...(draft.attached ?? []), item], version: 2, dirty: true });
-      uploads.delete(u.id);
-      renderAttached();
-    }
+    await settleUpload(u, item);
     // エージェントは画像をパスから自分の道具で読む。大きな画像は画像として読めないことがある（Claude の API は 1 枚 5MB まで）
     if (isImage && file.size > IMAGE_READ_HINT_BYTES) composerError(t("chat.attach.largeImage", { name: file.name, size: formatBytes(file.size) }));
+    return true;
   } catch (e) {
     u.failed = e?.message ?? String(e);
     // 札が字の欄にあれば札に理由・再試行・外すを出す。札の無い（平文の間など）失敗は入力欄の上の一行で
     if (u.placed && composerEditor.hasAttachment(`i:${u.id}`)) composerEditor.updatePending(u.id);
     else { uploads.delete(u.id); composerError(t("chat.attach.failed", { name: file.name, error: u.failed })); }
     renderAttached();
+    return false;
   }
 }
+/**
+ * 届いた添付（item）を、持ち主の下書きへ入れて、仮の札をパスの札に替える（ファイルの送信・貼り付けた画像の取り込みが使う）。
+ * 持ち主は届いた時点で読む（新しい会話を作っている間に始めたものは、できた会話の id に付け替わっている: adoptUploads）
+ */
+async function settleUpload(u, item) {
+  const owner = u.sessionId;
+  if (state.current === owner) {
+    uploads.delete(u.id);
+    state.attached.push(item);
+    composerEditor.resolvePending(u.id, item.path);
+    renderAttached();
+    saveDraft().catch(() => {});
+  } else {
+    // 送っている間に別の会話へ移った。その会話の下書きに積む（位置は持たない: 文末に付く）。"" は持ち主の会話が無い欄の下書き。
+    // 保存できたら札を消す（できなければ呼び出し側が本当の理由つきの失敗にする）
+    const key = owner ?? "";
+    const draft = state.drafts.get(key) ?? { text: "", attached: [] };
+    await persistDraft(key, { ...draft, attached: [...(draft.attached ?? []), item], version: 2, dirty: true });
+    uploads.delete(u.id);
+    renderAttached();
+  }
+}
+
+/** 貼り付けた HTML の画像の取り込み（web/paste-images.mjs。ADR 0141）。送信中の一覧（uploads）に載せ、送れない間・入口の件数・下書きは添付と同じ扱い */
+const pasteImages = createPasteImages({
+  cmd: (command, args) => cmd(command, args),
+  editor: () => composerEditor,
+  entry: (base) => {
+    const u = { sent: 0, sessionId: state.current ?? null, cancelled: false, failed: null, placed: true, ...base };
+    uploads.set(u.id, u);
+    return u;
+  },
+  bucketOf: (u) => u.sessionId,
+  uploadFile: (u) => runUpload(u),
+  finished: async (u, r) => {
+    await settleUpload(u, { name: r.name, path: r.path, kind: "image", mime: r.mime, from: "import", size: r.bytes });
+    if (r.bytes > IMAGE_READ_HINT_BYTES) composerError(t("chat.attach.largeImage", { name: r.name, size: formatBytes(r.bytes) }));
+  },
+  dropped: (u) => { uploads.delete(u.id); renderAttached(); },
+  registered: () => renderAttached(),
+});
 /**
  * 入力欄の高さの上限を決める。1 行から始めて中身に合わせて伸び（CSS）、上限はマウス 10 行・タッチ 6 行（promptMaxLines）。
  * その先は欄の中でスクロールする（送信の行は常に見える）。画面が低いとき（キーボードが出ている）は画面の 40% でも止める
@@ -6337,14 +6627,15 @@ function familyMenu(root, members, x, y) {
   ], t("session.menu.groupTitle", { title: rowLabel(root) }));
 }
 
-async function deleteUnsentRow(s) {
+/** 会話を消す。未送信は deleteUnsentSession、送った会話は deleteSession（sessions.delete。ADR 0147） */
+async function deleteSessionRow(s, command = 'deleteUnsentSession') {
   const pending = { kind: 'delete', text: t('pending.deleting'), visible: false };
   pendingRows.set(s.id, pending);
   pendingDeletedRows.set(s.id, s);
   renderSessions();
   const cancel = pendingAfterDelay(pending);
   try {
-    await cmd('deleteUnsentSession', { sessionId: s.id });
+    await cmd(command, { sessionId: s.id });
     state.drafts.delete(s.id);
     try { localStorage.setItem(DRAFT_STORE, JSON.stringify([...state.drafts])); } catch {}
     const row = document.querySelector(`[data-session="${CSS.escape(s.id)}"]`);
@@ -6358,7 +6649,7 @@ async function deleteUnsentRow(s) {
     await refresh().catch(() => {});
     renderSessions();
     document.querySelector(`[data-session="${CSS.escape(s.id)}"]`)?.classList.add('pending-bounce');
-    side.showUndo(t('pending.failed', { reason: e.message }), () => deleteUnsentRow(s), { retry: true });
+    side.showUndo(t('pending.failed', { reason: e.message }), () => deleteSessionRow(s, command), { retry: true });
   } finally { cancel(); }
 }
 
@@ -6437,8 +6728,8 @@ function rowMenu(s, x, y, lead = []) {
     { label: t("session.menu.copyCwd"), hint: s.cwd ?? "", onClick: () => copy(s.cwd, t("session.menu.cwdCopied"), t("session.menu.cwdCopyFailed")) },
     { label: t("session.menu.copyId"), onClick: () => copy(s.id, t("session.menu.idCopied"), t("session.menu.idCopyFailed")) },
     ...(s.unsent ? [{ label: t("session.menu.deleteUnsent"), sub: () => [
-      { label: t("session.menu.deleteWithDraft"), onClick: () => deleteUnsentRow(s) },
-    ] }] : []),
+      { label: t("session.menu.deleteWithDraft"), onClick: () => deleteSessionRow(s) },
+    ] }] : [{ label: t("session.menu.delete"), onClick: () => confirmDeleteSession(s, x, y) }]),
   ];
   return items;
   };
@@ -6505,6 +6796,15 @@ async function changeStatusName(from, to) {
     renderSessions();
     side.showUndo(t('pending.failed', { reason: e.message }), () => changeStatusName(from, next), { retry: true });
   } finally { cancel(); }
+}
+
+/** 送った会話を消す前の確かめ。戻せないことと、エージェント側の会話の記録は残ることを書く（ADR 0147） */
+function confirmDeleteSession(s, x, y) {
+  const title = s.title && s.title !== "(no title)" ? s.title : t("session.untitled");
+  showMenu(x, y, [
+    { label: t('pending.cancel'), onClick: () => {} },
+    { label: t('session.menu.deleteConfirm'), onClick: () => deleteSessionRow(s, 'deleteSession') },
+  ], { text: t('pending.deleteSessionConfirm', { title }), wrap: true });
 }
 
 function confirmDeleteStatus(st, count, x, y) {
@@ -8060,11 +8360,13 @@ const headerUsage = setupHeaderUsage({ $, source: usageSource, getBackends: () =
   openSettings: () => { onboarding.open('usage'); $('usageTab').click(); } });
 setupUsage({ $, cmd, source: usageSource, getBackends: () => state.backends, endpoints: async (agent) => (await compatEndpoints.load(true)).filter((e) => e.agent === agent), page: onboarding.page, isOpen: onboarding.isOpen,
   onUsageLogin: usageLogin });
-const remoteSettings = setupRemote({ cmd, page: onboarding.page });
+const remoteSettings = setupRemote({ cmd, page: onboarding.page, openSession: id => { onboarding.close(); select(id); } });
 // 設定 › 通知。この PC の設定とスマホの一覧（スマホの種類・ロック画面の会話名はスマホのアプリで変える）
 const notifySettings = setupNotifySettings({ cmd, page: onboarding.page, onPc: pc => { notifyPc = pc; } });
 // スマホのアプリの中だけ: 最初の作業が終わったときの帯と、通知から開く会話
 const mobileNotify = setupMobileNotify({ band: $('notifyBand'), openSession: id => select(id) });
+// 手元の窓の中継のカードの「子の会話を見る」で、このリモートの窓の会話を開く（desktop/remote-windows.cjs の openHost）
+window.plyRemote?.onOpenSession?.(id => { if (id) select(id); });
 // 見ている会話をホストへ知らせる。スマホへの通知を送らない・消すのに使う
 const presenceReporter = createPresenceReporter({ send: (visible, sessionId) => cmd('presence', { visible, sessionId }),
   current: () => state.current, visible: watchingNow });

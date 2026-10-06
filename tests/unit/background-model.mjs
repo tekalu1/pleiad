@@ -1,5 +1,5 @@
 import { taskTitle } from '../../core/task-title.mjs';
-import { backgroundTitle, taskTree, backgroundTotals, backgroundKind, backgroundSummary } from '../../web/background-model.mjs';
+import { backgroundTitle, taskTree, backgroundTotals, backgroundKind, backgroundSummary, groupByOwner, visibleRows } from '../../web/background-model.mjs';
 
 export const name = 'background-model';
 export const title = 'バックグラウンドのタイトル・集計・子孫の順序・入口の種類のまとめ';
@@ -40,4 +40,19 @@ export default async function(t) {
   t.ok('承認待ちの種類が 3 を超えても全部出す', allWaiting.visible.length === 4 && allWaiting.visible.every(g => g.waiting) && allWaiting.hidden === 0);
   const ended = backgroundSummary([agent('claude', { live: false }), agent('codex', { live: false }), { group: 'command', live: false }]);
   t.ok('終わったものだけなら種類は出さず、完了の数だけ（コマンドは数えない）', ended.live === 0 && ended.groups.length === 0 && ended.ended === 2);
+
+  // ---- Channels のスレッドの一覧: bot（根の会話）ごとに分け、終わった親は limit 件までなど
+  const row = (key, owner, live, extra = {}) => ({ key, group: 'agent', owner, live, ...extra });
+  const items = [row('a1', 'owl', true, { rootLive: true }), row('l1', 'lynx', false, { rootLive: false }), row('a1c', 'owl', true, { depth: 1, rootLive: true }),
+    row('a2', 'owl', false, { rootLive: false }), { key: 'cmd', group: 'command', owner: 'owl', live: true }, row('l2', 'lynx', true, { rootLive: true })];
+  const groups = groupByOwner(items);
+  t.ok('bot（根の会話）ごとに分け、出てくる順・中の順は元のまま。コマンドは入れない', [...groups.keys()].join() === 'owl,lynx'
+    && groups.get('owl').map(x => x.key).join() === 'a1,a1c,a2' && groups.get('lynx').map(x => x.key).join() === 'l1,l2');
+  const rows = [row('r1', 'o', true, { rootLive: true }), row('r2', 'o', false, { rootLive: false }), row('r2c', 'o', false, { depth: 1, rootLive: false }),
+    row('r3', 'o', false, { rootLive: false }), row('r3c', 'o', false, { depth: 1, rootLive: false })];
+  const two = visibleRows(rows, 1);
+  t.ok('動いている親は全部・終わった親は limit 件まで（子孫は親に付く）・残りの数を返す', two.rows.map(x => x.key).join() === 'r1,r2,r2c' && two.remaining === 1);
+  const all = visibleRows(rows, 10);
+  t.ok('limit 内なら全部出し、残りは 0', all.rows.length === 5 && all.remaining === 0);
+  t.ok('根が動いていれば、終わった子孫も動いている親と一緒に出す', visibleRows([row('p', 'o', false, { rootLive: true }), row('c', 'o', false, { depth: 1, rootLive: true })], 0).rows.length === 2);
 }

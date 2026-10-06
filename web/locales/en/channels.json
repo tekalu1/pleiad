@@ -60,6 +60,8 @@
     "replies_other": "{{count}} replies",
     "openThread": "Open thread ({{count}} replies)",
     "threadWorking": "working",
+    "liveJoin": "{{a}}, {{b}}",
+    "liveMore": "{{first}} +{{count}} more",
     "threadWaiting": "{{name}} is waiting for you",
     "lastReply": "last reply {{when}}",
     "state": {
@@ -168,9 +170,28 @@
       "calls": "{{count}} hand-offs",
       "stopped": "Stopped",
       "tokens": "{{tokens}} tokens in this thread",
-      "tokensTitle": "Input {{input}} · output {{output}} · cache read {{cached}}",
-      "budget": "Budget {{spent}}% / {{allowance}}%",
-      "budgetTitle": "Used by this thread today / share per thread (an estimate against the weekly usage window of each bot's backend). Once it runs out, only calls between bots stop"
+      "tokensTitle": "New input {{input}} · output {{output}} (cache read {{cached}} is not counted)"
+    },
+    "budget": {
+      "title": "Today's budget",
+      "label": "Budget",
+      "spoken": "Budget {{pct}}. Open the breakdown",
+      "failed": "Could not load the breakdown.",
+      "thread": "What this thread may use today",
+      "amount": "Used {{spent}} / share {{allowance}} (an estimate against the weekly usage window of each bot's backend)",
+      "derived": "Usage of the thread that started this one is counted together.",
+      "channel": "Whole channel today",
+      "channelAmount": "{{spent}} / {{daily}}",
+      "bots": "Per bot today",
+      "botToday": "New input {{input}} · output {{output}} · cache read {{cached}}",
+      "botNone": "Not used yet today",
+      "botLimit": "Daily limit about {{tokens}} tokens",
+      "botWeek": "Weekly window {{used}} used",
+      "botReset": "Resets {{time}}",
+      "botUnknown": "Usage window unavailable",
+      "resting": "Resting (until about {{time}})",
+      "totals": "This thread in total",
+      "hint": "Once it runs out, only calls between bots stop (a person can still call a bot). Token counts leave out cache reads."
     }
   },
   "bot": {
@@ -259,7 +280,7 @@
       "kind": { "think": "Thought", "quiet": "Quiet", "act": "Asked", "result": "Result", "loop": "Concern", "dream": "Dream", "summary": "Summary" },
       "reason": {
         "paused": "put to sleep", "budget": "no budget", "nothing": "no change", "forced": "manual", "loop": "a concern's condition", "reserved": "reserved time",
-        "human": "new human post", "drive": "a drive", "muse": "musing turn", "error": "failed", "noHome": "no home channel"
+        "human": "new post", "drive": "a drive", "muse": "musing turn", "error": "failed", "noHome": "no home channel"
       },
       "failed": "Could not do that: {{error}}"
     },
@@ -423,6 +444,7 @@
     "memoryCore": "Passed what it remembers",
     "botRecent": "Passed the recent threads",
     "turnContext": "Passed the time and memory changes",
-    "inner": "Passed the end of the activity notes and concerns"
+    "inner": "Passed the end of the activity notes and concerns",
+    "wake": "Woke at a reserved time"
   }
 }
