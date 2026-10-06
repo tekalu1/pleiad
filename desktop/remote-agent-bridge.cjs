@@ -1,6 +1,6 @@
 // ローカルのサーバー（utilityProcess）と、ホストへの AI 用の線（core/remote/agent-link.mjs）の間の橋（docs/remote.md §4.5、ADR 0146）。
 // サーバーの core/remote-delegation.mjs（parentPortRemoteAgent）が相手。メッセージの形は core/remote/agent-service.mjs に書いてある。
-//   worker -> main: { type: 'remote-agent', id, action: 'hosts' | 'request' | 'abort' | 'answer' | 'sync', … }
+//   worker -> main: { type: 'remote-agent', id, action: 'hosts' | 'request' | 'abort' | 'answer' | 'view' | 'sync', … }
 //   main -> worker: { type: 'remote-agent', id, ok, … }（応答）・{ type: 'remote-agent-event' | 'remote-agent-state' | 'remote-agent-hosts' | 'remote-agent-ready', … }
 // 無停止の更新（名前付きパイプの経路）: サーバーがつなぎ直すたびに（付け直し・切り替えで新しい版のサーバーに替わったとき）届く ready で、
 // 一覧と、つながっている線の ready を送り直す（resync）。サーバーは main が居ない間はホストを全部オフライン扱いにして依頼を待たせず失敗にする
