@@ -14,6 +14,7 @@
  * - AGENT_HOST_SERVER_LOG: 出力を書くファイル（core/server-log-boot.mjs）
  * - AGENT_HOST_RUNTIME_ROOT・AGENT_HOST_RUNTIME_KEY: 走っている版の実行場所と版の名前（core/runtime-use.mjs）
  * - AGENT_HOST_RUNTIME_RESOURCES・AGENT_HOST_RUNTIME_DIR: main が実行場所を組む元と置き場（desktop/runtime.cjs）。サーバーは読まず、継いでいるだけ
+ * - AGENT_HOST_CLAUDE_HOLDER: Claude の CLI を保持役に載せるか（無停止の更新 段階 2 の 2c。core/backends/claude-held.mjs）。会話のシェルで起こしたサーバーに継がせない
  */
 export const BOOT_ENV_NAMES = Object.freeze([
   'AGENT_HOST_HANDOVER',
@@ -21,6 +22,7 @@ export const BOOT_ENV_NAMES = Object.freeze([
   'AGENT_HOST_SYSTEM_LOCALE', 'AGENT_HOST_SERVER_LOG',
   'AGENT_HOST_RUNTIME_ROOT', 'AGENT_HOST_RUNTIME_KEY',
   'AGENT_HOST_RUNTIME_RESOURCES', 'AGENT_HOST_RUNTIME_DIR',
+  'AGENT_HOST_CLAUDE_HOLDER',
 ]);
 const NAMES = new Set(BOOT_ENV_NAMES);
 // サーバーが起動の時に process.env から外した値。外した後に読むモジュール（段階 2 の保持役の置き場など）はここから読む

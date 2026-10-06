@@ -54,8 +54,10 @@ function fileSource(child) {
  * ここで先に始める）。spawned: true は、自分が spawn した子（spawn で最初から親に付いている。attach を送り直さない）。
  * 付け直す側の取り分は write（子の stdin へ。承認の答え・途中送信）・release（終わった子の記録を捨てる。終わりの記録を処理し終えた後）・dispose（購読をやめる）。
  * stop() は手を離すとき（旧サーバーの detach の後）に、読みの列を { exit: { handedOff: true } } で終わらせる。paused はテスト用（読みを止めて、保持役に溜めさせる）
+ * redelivered: true は、保持役が付け直しで渡し直す控え（attach の from より前の mcp_message・elicitation。core/holder/holder.mjs）も
+ * { seq, line, redelivered: true } で列に入れる（Claude の付け直しは SDK へ流し直す。2c）。attach の答え（子の状態と pendingRequests）は attachedState に残す
  */
-export function holderSource(client, state, { spawned = false } = {}) {
+export function holderSource(client, state, { spawned = false, redelivered = false } = {}) {
   const id = String(state.id);
   const queue = [];
   let wake = null, stopped = false;
@@ -63,7 +65,11 @@ export function holderSource(client, state, { spawned = false } = {}) {
   let attached = spawned;
   const early = [];
   const poke = () => { const w = wake; wake = null; w?.(); };
-  const onOut = frame => { if (frame.id === id && !frame.redelivered) { queue.push({ seq: frame.seq, line: frame.line }); poke(); } };
+  const onOut = frame => {
+    if (frame.id !== id || (frame.redelivered && !redelivered)) return;
+    queue.push(frame.redelivered ? { seq: frame.seq, line: frame.line, redelivered: true } : { seq: frame.seq, line: frame.line });
+    poke();
+  };
   const onExit = frame => { if (frame.id === id) { queue.push({ exit: { code: frame.code ?? null, signal: frame.signal ?? null, error: frame.error ?? null } }); poke(); } };
   const onDisconnect = reason => { queue.push({ lost: String(reason ?? 'closed') }); poke(); };
   client.on('out', onOut);
@@ -81,8 +87,9 @@ export function holderSource(client, state, { spawned = false } = {}) {
       if (truncated) throw new Error('adopt: the record was truncated');
       return lines.map(({ seq, line }) => [seq, line]);
     },
+    attachedState: null,
     async *attach(from) {
-      if (!spawned) await client.attach(id, { from });
+      if (!spawned) source.attachedState = await client.attach(id, { from });
       attached = true;
       for (const data of early.splice(0)) client.write(id, data);
       for (;;) {
@@ -91,6 +98,7 @@ export function holderSource(client, state, { spawned = false } = {}) {
         const item = queue.shift();
         if (item.lost) throw new Error(`adopt: the holder connection was lost (${item.lost})`);
         if (item.exit) { yield item; return; }
+        if (item.redelivered) { yield item; continue; }      // 控えの渡し直し（通番は from より前。from は進めない）
         if (item.seq < from) continue;                       // 自分で起こした子の最初の記録と、attach の送り直しの重なり
         from = item.seq + 1;
         yield item;
@@ -108,7 +116,8 @@ export function holderSource(client, state, { spawned = false } = {}) {
 
 /**
  * 起動で付け直す、保持役の子の元（無停止の更新 2b-5）。居る保持役にだけつなぐ（起こさない）。付け直せるのは、札（label）と
- * ターンの印を持つ子だけ（旧サーバーが手を離すときに置く。stage2-server-state.md §6 の 2b-5 の実装のメモ）。居なければ空
+ * ターンの印を持つ子だけ（旧サーバーが手を離すときに置く。stage2-server-state.md §6 の 2b-5 の実装のメモ）。居なければ空。
+ * 控えの渡し直しも列に入れる（Claude の付け直しが SDK へ流す。2c。fake の held: の記録には控えが無い）
  */
 export async function readHolderSources({ dataDir, root, appVersion = '', log = () => {} } = {}) {
   let client;
@@ -116,7 +125,7 @@ export async function readHolderSources({ dataDir, root, appVersion = '', log = 
   catch (error) { if (error?.code === 'HOLDER_NONE') return []; throw error; }
   return (client.welcome?.children ?? [])
     .filter(child => child.label && Number.isInteger(child.marks?.[ADOPT_TURN_MARK]))
-    .map(child => holderSource(client, child));
+    .map(child => holderSource(client, child, { redelivered: true }));
 }
 
 /** 重なって届いた出来事を見分ける鍵（uuid・ツールの id を持つものだけ） */
@@ -156,6 +165,7 @@ export async function replayRecord({ source, normalize, emit }) {
   }
   for await (const item of source.attach(acked + 1)) {
     if (item.exit) return { exit: item.exit, replayed, live, acked: last };
+    if (item.redelivered) continue;
     await pass(item.line, false);
     source.ack(item.seq);
     last = item.seq;

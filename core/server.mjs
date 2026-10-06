@@ -351,8 +351,6 @@ const voiceHost = createVoiceHost({
   },
   log: (line, fields) => console.log(`  ${line}${fields ? ` ${JSON.stringify(fields)}` : ''}`),
 });
-// 同じデータ置き場を別の Pleiad（開発版と配布版）が使っていることがあるので、走っている会話のファイルは消さない（1 日より古いものだけ）
-sweepClaudeFlagSettings(store.dataDir, { olderThanMs: 24 * 60 * 60_000 }).catch(() => {});
 const mcpOAuth = createMcpOAuth({ secrets: mcpSecrets, lockDir: path.join(store.dataDir, 'mcp-locks'),
   // Client ID Metadata Document の URL（設定値。既定は無し。公開する文書のひな形は docs/mcp-oauth-client-metadata.json）
   clientMetadataUrl: async () => (await plyMcp.settings().catch(() => ({}))).clientMetadataUrl ?? undefined,
@@ -4499,6 +4497,9 @@ const outbox = createMessageQueue({
 // 付け直すターン（無停止の更新 2b-4。stage2-server-state.md §5.1）。後片付け（送信待ちの戻し・中断の記録・worktree の整理）と、
 // ターンを始めうるもの（予定・上限の再開・bot）より前に runtime.turns に載せる。口を開き直して記録を流すのは待ち受けの後
 const adopting = await restoreAdoptedTurns();
+// 前の起動で消し損ねた Claude のフラグ設定のファイル（core/compat-endpoints.mjs）。同じデータ置き場を別の Pleiad（開発版と配布版）が使っていることがあるので、
+// 走っている会話のファイルは消さない（1 日より古いものだけ）。付け直すターンの札が指すファイル（無停止の更新 2c）も消さない（そのターンの終わりに消える）
+sweepClaudeFlagSettings(store.dataDir, { olderThanMs: 24 * 60 * 60_000, except: adopting.map(a => a.ctx.card.backendCard?.flag).filter(Boolean) }).catch(() => {});
 await outbox.recover({ adopted: new Map(adopting.map(a => [a.ctx.sessionId, new Set(Object.keys(a.ctx.card.steers))])), keepQueued: HANDOVER_START });
 // 前の起動で走っていたのに終わりが記録されていないターン（落ちた・強制終了）を、会話の中断（reason: restart）として残す
 {
@@ -5583,14 +5584,18 @@ function steersOf(turn) {
   return steers;
 }
 
-/** 札の steers から、付け直すターンの途中送信の控えを作り直す（steersOf の逆。restoreTurn が呼ぶ）。戻り値は pendingSteers の id の集合 */
-function restoreSteers(sessionId, steers) {
+/**
+ * 札の steers から、付け直すターンの途中送信の控えを作り直す（steersOf の逆。restoreTurn が呼ぶ）。戻り値は pendingSteers の id の集合。
+ * texts は、このターンの transcript の人の発言（ハッシュ -> 本文）。札で切った完了通知の本文は、折り込まれていればここから戻す（2c）
+ */
+function restoreSteers(sessionId, steers, texts = new Map()) {
   const pending = new Set();
   for (const [id, entry] of Object.entries(steers)) {
     if (entry.waiters.includes('pendingSteers')) pending.add(id);
     const notice = entry.waiters.includes('liveNotices') ? entry.notice : null;
     if (notice && typeof notice.prompt === 'string' && Array.isArray(notice.items)) {
-      liveNotices.set(id, noticeEntry(sessionId, notice.prompt, notice.items.map(x => ({ taskId: String(x?.taskId ?? ''), revision: x?.revision ?? 0 })),
+      const prompt = notice.promptChars > notice.prompt.length ? texts.get(notice.promptHash) ?? notice.prompt : notice.prompt;
+      liveNotices.set(id, noticeEntry(sessionId, prompt, notice.items.map(x => ({ taskId: String(x?.taskId ?? ''), revision: x?.revision ?? 0 })),
         Array.isArray(notice.settingNotices) ? notice.settingNotices : null));
     }
     if (entry.waiters.includes('liveInstructions') && typeof entry.taskId === 'string' && Array.isArray(entry.instructionIds)) {
@@ -5604,7 +5609,12 @@ function restoreSteers(sessionId, steers) {
 function takeCard(ctx) {
   const { turn } = ctx;
   const entry = agentConnections.get(turn.key);
-  return cardOf({ ...ctx, connectionTokens: entry ? connectionTokens(entry) : null, waits: openWaitIds(turn.info.sessionId),
+  // ply_context の口は、会話のあいだ同じ値で開くバックエンド（agy）でなければ、ターンごとの値で開く（launchTurn）。CLI が持つのはその値なので、札にはその値を置く
+  // （付け直す側の adoptTurn が同じ値で開き直す。2c）
+  const live = /^Bearer ([a-f0-9]{64})$/.exec(ctx.runtimeContext?.headers?.Authorization ?? '')?.[1] ?? null;
+  const tokens = entry ? { ...connectionTokens(entry), ...(live ? { context: live } : {}) } : null;
+  // バックエンドの欄（backendCard）は、保持役に子を載せるバックエンドが control.backendCard で渡す（Claude の途中送信の控え・費用の基準など。2c）
+  return cardOf({ ...ctx, backendCard: turn.control?.backendCard?.() ?? null, connectionTokens: tokens, waits: openWaitIds(turn.info.sessionId),
     stopping: Boolean(turn.info.stopping || turn.ac.signal.aborted), steers: steersOf(turn), execution: taskExecutions.get(turn.info.sessionId) ?? null });
 }
 
@@ -5883,8 +5893,7 @@ async function restoreTurn(card, source) {
     // 付け直すのはバックエンドを呼んだ後のターンだけ（L4）
     didStart: true,
     backendInvoked: true,
-    // ply_context の口（contextBridge.open）は開き直していない（runtimeContext）。トークンの束縛は restoreConnection、
-    // 外部 MCP と呼び出しの最中の分は戻らない（R15。生きた子を付け直す 2b-5 以降）
+    // ply_context の口（contextBridge.open）は、待ち受けの後の adoptTurn が札のトークンで開き直す（外部 MCP は起こし直す。呼び出しの最中の分は戻らない。R15）
     runtimeContext: null,
     initialDelivered: fields.delivery.initialDelivered,
     interruption: fields.interruption,
@@ -5901,7 +5910,9 @@ async function restoreTurn(card, source) {
   turnContexts.set(turn, ctx);
   runtime.turns.set(turn.key, turn);
   // 途中送信の控え（札の steers）。登録の後に作り直す（ここから先は投げない）
-  turn.pendingSteers = restoreSteers(sessionId, fields.steers);
+  // 札で切った完了通知の本文は、折り込まれていれば transcript の人の発言にある（Claude）。ハッシュで引いて戻す
+  const texts = new Map(transcript.messages.slice(count).filter(m => m.role === 'user' && typeof m.text === 'string').map(m => [promptHash(m.text), m.text]));
+  turn.pendingSteers = restoreSteers(sessionId, fields.steers, texts);
   if (ctx.execution) taskExecutions.set(sessionId, ctx.execution);
   return ctx;
 }
@@ -5934,9 +5945,25 @@ async function adoptTurn(card, source, ctx = null, { abandon = null } = {}) {
         restoreConnection({ key: turn.key, sessionId, locale: agentLocale, tokens: ctx.card.connectionTokens, computerBackend: backend.id });
         broadcastRunning();
         syncRunningPoll();
+        // Pleiad の Hooks の登録（札の hooks があるターン）。Claude は 2 回目の initialize でコールバックを渡し直す（2c）ので、今の設定で組み直す。
+        // 記録（contextRecord.hooks）は札の会話の記録のまま。組めなければ渡さない（そのターンの残りで Pleiad の Hooks が動かない）
+        const hooksTurn = ctx.card.hooks ? await prepareHooksTurn({ agent: backend.id, cwd: ctx.cwd, ctx: { plyHooks, hooksConfig, dataDir: store.dataDir, findNode: findNodeOnPath,
+          context: { owners: ctx.policy?.owners ?? {}, delivered: false } } }).catch(e => { console.error(`  Hooks を組み直せない（${sessionId}）:`, String(e?.message ?? e)); return null; }) : null;
+        // ply_context の口（Pleiad がコンテキストを担当する会話。2c）。札のトークンで開き直し、外部の MCP はこのターンのために起こし直す（R15。ツールの名前は
+        // 項目の id とツールの名前から決まるので同じ。状態は消えるので、起こし直した後の最初の結果にその旨を添える）。開けなければ口の無いまま続ける
+        // （CLI の ply_context の呼び出しが失敗する）。CLI は口の URL・ヘッダーを持っているので、バックエンドには渡さない
+        if (managed(ctx.policy) && acceptsPlyContext(backend, ctx.policy)) {
+          try {
+            const resolved = await resolveRuntime(ctx.policy, { plyServers: await plyMcp.scanInput(), snapshots: CONTEXT_SNAPSHOTS, locale: agentLocale });
+            ctx.runtimeContext = await contextBridge.open({ runtime: resolved, prompt: ctx.prompt, token: ctx.card.connectionTokens.context, restarted: true,
+              origin: localOrigin(), signal: turn.ac.signal, isActive: () => runtime.turns.get(turn.key) === turn && !turn.ac.signal.aborted });
+            console.log(`  ply_context の口を開き直した（${sessionId}）: 外部の MCP ${resolved.servers.length} 件を起こし直した`);
+          } catch (e) { console.error(`  ply_context の口を開き直せない（${sessionId}）:`, String(e?.message ?? e)); }
+        }
         ctx.runArgs = {
           sessionId, cwd: ctx.cwd, mode: ctx.permissionMode, model: ctx.model || undefined, effort: ctx.effort,
           card: ctx.card.backendCard, source,
+          ...(hooksTurn?.runtime ? { hooksRuntime: hooksTurn.runtime } : {}),
           emit: (event, opts) => {
             if (opts?.replay) replayed = true;
             else { if (replayed) settle(); if (ANSWER_EVENTS.has(event?.type)) ctx.onPromptDelivered(); }
@@ -5978,7 +6005,7 @@ async function adoptTurn(card, source, ctx = null, { abandon = null } = {}) {
 /**
  * 起動で付け直すターンを読み、登録する（restoreTurn）。元は既定で空。テストだけが付ける: AGENT_HOST_ADOPT_FROM は
  * 「終わっていたターン」の札と記録（ファイルの元）、AGENT_HOST_ADOPT_HOLDER=1 は保持役の子（2b-5。実行場所の置き場は AGENT_HOST_RUNTIME_ROOT。
- * 旧サーバーが手を離すときに札を置いた子だけ。保持役に子を載せるバックエンドは fake の台本 held: だけ）。core/adopt.mjs。
+ * 旧サーバーが手を離すときに札を置いた子だけ。保持役に子を載せるバックエンドは fake の台本 held: と、AGENT_HOST_CLAUDE_HOLDER=on の Claude。2c）。core/adopt.mjs。
  * 付け直せない元は何もせず、起動時の restart の回復に任せる
  */
 async function restoreAdoptedTurns() {

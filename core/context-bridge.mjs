@@ -78,12 +78,15 @@ export function createContextBridge({ plyMcp, oauth } = {}) {
   /**
    * token を渡すと、その値で束ねる（会話のあいだ同じ値を使うバックエンド向け。antigravity は agy を会話ごとに
    * 1 本生かし、起動時に受け取った値をターンをまたいで使い続ける）。受け付けるのはこの open が開いている間だけ。
-   * 省略時はターンごとに新しい値を作る
+   * 省略時はターンごとに新しい値を作る。
+   * restarted: true は、無停止の更新で付け直したターンの開き直し（同じ token。外部の MCP は起こし直すので状態が消えている。R15）。
+   * 外部の MCP ごとに、起こし直した後の最初の呼び出しの結果へその旨を添える
    */
-  async function open({ runtime, prompt, origin, isActive, changed = async () => {}, progress = () => {}, authorize = async () => true, signal, token: fixed }) {
+  async function open({ runtime, prompt, origin, isActive, changed = async () => {}, progress = () => {}, authorize = async () => true, signal, token: fixed, restarted = false }) {
     if (fixed !== undefined && !/^[a-f0-9]{64}$/.test(fixed)) throw new Error(t('context.bridge.invalidToken'));
     const token = fixed ?? crypto.randomBytes(32).toString('hex'), helpers = contextTools(runtime, prompt);
-    const binding = { origin, isActive, runtime, helpers, tools: [...helpers.tools], clients: [], entries: new Map(), calls: new Map(), pending: new Set(), changed, authorize, closed: false };
+    const binding = { origin, isActive, runtime, helpers, tools: [...helpers.tools], clients: [], entries: new Map(), calls: new Map(), pending: new Set(), changed, authorize, closed: false,
+      restarted: new Set(restarted ? runtime.servers.map(item => item.id) : []) };
     const close = async () => {
       if (binding.closed) return;
       binding.closed = true;
@@ -193,7 +196,9 @@ export function createContextBridge({ plyMcp, oauth } = {}) {
         const result = call ? await call.client.callTool({ name: call.name, arguments: m.params.arguments ?? {} }, undefined,
           { timeout: Math.min(300000, (call.item.definition.tool_timeout_sec ?? 60) * 1000) }) : isMetadata ? {content:[{type:'text',text:JSON.stringify(await metadata(b,m.params.name==='mcp_resources'?'resources':'prompts',m.params.arguments))}]} : await b.helpers.call(m.params.name, m.params.arguments);
         if (call) { const row = b.runtime.report.entries.find(e => e.id === call.item.id); row.calls = (row.calls ?? 0) + 1; }
-        await b.changed(); return result;
+        await b.changed();
+        if (call && b.restarted.delete(call.item.id)) return { ...result, content: [{ type: 'text', text: agentT(b.runtime.locale, 'context.errors.mcpRestarted') }, ...(result?.content ?? [])] };
+        return result;
       } catch { return { isError: true, content: [{ type: 'text', text: agentT(b.runtime.locale, 'context.errors.callFailed') }] }; }
     })();
     b.pending.add(work);
