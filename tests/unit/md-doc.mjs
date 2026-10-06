@@ -2,7 +2,7 @@
 import {
   markdownToDoc, docToMarkdown, classifyLine, parseInline, serializeRuns, sliceRaw, fenceRoles, ensureShape,
   caret, deleteSelection, insertText, insertPlain, enter, backspaceAtStart, deleteAtEnd, insertAtom, removeAtoms, newAtom, atomKeys,
-  pasteText, normalizeFences, applyTriggers, toggleMark, marksInRange, selectionMarkdown, createHistory,
+  pasteText, pasteRich, removeAtomsTidy, normalizeFences, applyTriggers, toggleMark, marksInRange, selectionMarkdown, createHistory,
   posToOffset, offsetToPos, runsText, runsLength, normalizeAttachmentPath, docLayout, memoRaw,
 } from "../../web/md-doc.mjs";
 import { codeFenceMask } from "../../web/render.mjs";
@@ -263,5 +263,74 @@ export default async function (t) {
     const x = insertText({ blocks: doc("a**b**c"), sel: { s: { b: 0, v: 1 }, e: { b: 0, v: 2 } } }, "X");
     const y = insertPlain({ blocks: doc("**b**"), sel: caret(0, 1) }, "X");
     return md(x) === "aXc" && md(y) === "**b**X" && runsLength(x.blocks[0].runs) === 3;
+  })());
+
+  // ------------------------------------------------------------ 貼り付けの HTML（pasteRich。web/html-paste.mjs の結果を入れる。ADR 0141）
+  const pAtom = (pid) => ({ atom: newAtom({ pid }) });
+  const rich = (md0, b, v, parts) => pasteRich(st(md0, b, v), parts, { resolve });
+  t.ok("pasteRich: 1 行のふつうの字は今の行へ（記法は整える・字の途中でも）", (() => {
+    const r = rich("ab", 0, 1, [{ md: "**x**" }]);
+    return md(r) === "a**x**b" && r.blocks.length === 1 && r.blocks[0].runs.some(x => x.marks.some(m => m.t === "strong"));
+  })());
+  t.ok("pasteRich: 見出し 1 行は、空の行を見出しの行に置き換える（記号の字のまま入れない）", (() => {
+    const r = rich("", 0, 0, [{ md: "## 題" }]);
+    return md(r) === "## 題" && r.blocks[0].kind === "h" && r.blocks.length === 1;
+  })());
+  t.ok("pasteRich: 行の途中に貼る見出し・リストは、次の行から始める（前の字につなげない）。後ろの字は最後の行へ", (() => {
+    const r = rich("前後", 0, 1, [{ md: "## 題" }, { md: "- a" }]);
+    return md(r) === "前\n## 題\n- a後" && kinds(r) === "p,h,ul";
+  })());
+  t.ok("pasteRich: 先頭がふつうの段落なら今の行につなぐ", (() => {
+    const r = rich("前後", 0, 1, [{ md: "一" }, { md: "二" }]);
+    return md(r) === "前一\n二後" && r.sel.s.b === 1 && r.sel.s.v === 1;
+  })());
+  t.ok("pasteRich: 文・添付・文を、位置どおりの行にする（添付は pid の仮の札）。選択は消してから", (() => {
+    const r = pasteRich({ blocks: doc("A選択B"), sel: { s: { b: 0, v: 1 }, e: { b: 0, v: 3 } } }, [{ md: "前" }, pAtom("p1"), { md: "後" }], { resolve });
+    return kinds(r) === "p,att,p" && r.blocks[1].pid === "p1" && md(r) === "A前\n後B" && atomKeys(r.blocks).has("i:p1");
+  })());
+  t.ok("pasteRich: 画像が連続しても札は隣り合う（間に空行を足さない）・先頭・末尾の札には pad が付く", (() => {
+    const r = rich("", 0, 0, [pAtom("a"), pAtom("b"), pAtom("c")]);
+    return kinds(r) === "p*,att,att,att,p*" && md(r) === "";
+  })());
+  t.ok("pasteRich: コードの行はコードのまま（フェンスの中の空行・字下げ）。リスト・引用・表は平文の行の規則どおり", (() => {
+    const r = rich("", 0, 0, [{ md: "```sh" }, { md: "a" }, { md: "" }, { md: "  b" }, { md: "```" }, { md: "> 引" }, { md: "| a | b |" }]);
+    return kinds(r) === "code,code,code,code,code,quote,p" && md(r) === "```sh\na\n\n  b\n```\n> 引\n| a | b |";
+  })());
+  t.ok("pasteRich: 空の並びは何も変えない", md(rich("x", 0, 1, [])) === "x");
+
+  // ---- 取れなかった画像の札を何も残さず外す（removeAtomsTidy・history.rewrite）
+  t.ok("removeAtomsTidy: 札を外すと、札の隣だった余白の行も残らない（途中の字は残る）", (() => {
+    const start = pasteRich(st("", 0, 0), [{ md: "前" }, pAtom("x"), { md: "後" }], { resolve });
+    const tail = pasteRich(st("", 0, 0), [{ md: "字" }, pAtom("y")], { resolve });
+    const only = pasteRich(st("", 0, 0), [pAtom("z")], { resolve });
+    const a = removeAtomsTidy(start, (b) => b.pid === "x"), b = removeAtomsTidy(tail, (b) => b.pid === "y"), c = removeAtomsTidy(only, (b) => b.pid === "z");
+    return md(a) === "前\n後" && kinds(a) === "p,p" && md(b) === "字" && kinds(b) === "p" && kinds(c) === "p" && c.sel.s.b === 0;
+  })());
+  t.ok("removeAtomsTidy: 閉じたコードの後ろの pad・ほかの札の隣の pad は残す", (() => {
+    const s = pasteRich(st("", 0, 0), [{ md: "```" }, { md: "x" }, { md: "```" }, pAtom("q"), pAtom("r")], { resolve });
+    const r = removeAtomsTidy(s, (b) => b.pid === "q");
+    return kinds(r) === "code,code,code,att,p*" && atomKeys(r.blocks).has("i:r");
+  })());
+  t.ok("history.rewrite: 札を履歴のすべての状態から消し、同じになった記録は畳む。位置は同じ記録を指す", (() => {
+    const hh = createHistory({ now: () => 0 });
+    const s0 = st("", 0, 0);
+    hh.reset(s0);
+    const pasted = pasteRich(s0, [{ md: "前" }, pAtom("x"), { md: "後" }], { resolve });
+    hh.push(pasted, "paste");
+    const typed = insertText({ blocks: pasted.blocks, sel: caret(2, 1) }, "字");
+    hh.push(typed, "type");
+    const gone = (state) => removeAtomsTidy(state, (b) => b.pid === "x");
+    hh.rewrite(gone);
+    const now = hh.undo();   // 打つ前 = 貼った直後（札は無い）
+    const first = hh.undo(), none = hh.undo();
+    return md(now) === "前\n後" && md(first) === "" && none === null && hh.size === 3 && hh.canRedo && md(hh.redo()) === "前\n後" && md(hh.redo()) === "前\n後字";
+  })());
+  t.ok("history.rewrite: 札だけの貼り付けは、外すと貼る前と同じになり、記録は畳まれる（元に戻すで何も起きない記録を残さない）", (() => {
+    const hh = createHistory({ now: () => 0 });
+    const s0 = st("", 0, 0);
+    hh.reset(s0);
+    hh.push(pasteRich(s0, [pAtom("x")], { resolve }), "paste");
+    hh.rewrite((state) => removeAtomsTidy(state, (b) => b.pid === "x"));
+    return hh.size === 1 && !hh.canUndo && !hh.canRedo;
   })());
 }

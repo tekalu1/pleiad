@@ -10,6 +10,7 @@ import { t, lang } from '../i18n.mjs';
 import { sendAttachment, ATTACH_MAX_BYTES, IMAGE_READ_HINT_BYTES } from '../attach-upload.mjs';
 import { formatBytes } from '../folder-upload.mjs';
 import { openAttachmentList } from '../attachment-list.mjs';
+import { createPasteImages } from '../paste-images.mjs';
 import { attachFolderHints } from '../composer-layout.mjs';
 import { attachedKey, composeBody } from './ch-attach-model.mjs';
 
@@ -49,7 +50,7 @@ export function createChAttachments({ host, bucket, owner, accepts = () => true,
 
   const byPath = (path) => attached.find((a) => attachedKey(a.path) === attachedKey(path)) ?? null;
   const hintsOf = () => attachFolderHints(attached, { deviceLabel: t('chat.attach.deviceFolder') });
-  const mine = () => [...uploads.values()].filter((u) => u.owner === owner() && (!u.cancelled || editor?.hasAttachment(`i:${u.id}`)));
+  const mine = () => [...uploads.values()].filter((u) => !u.gone && u.owner === owner() && (!u.cancelled || editor?.hasAttachment(`i:${u.id}`)));
 
   // ---------------------------------------------------------------- 字の欄へ渡すもの（createMarkdownEditor の引数）
   const editorOptions = {
@@ -57,9 +58,13 @@ export function createChAttachments({ host, bucket, owner, accepts = () => true,
       const a = byPath(path);
       return a ? { ...a, hint: hintsOf()[attached.indexOf(a)] || '' } : null;
     },
+    // 貼り付けた HTML の画像（data: はその場で、https はホストが取りに行く。ADR 0141）。書けない間は取り込まない
+    importImages: (images) => (accepts() ? pasteImages.start(images) : []),
     pending: (pid) => {
       const u = uploads.get(pid);
       if (!u) return null;
+      // ホストが取りに行っている画像。失敗の札は無い（取れなければ札ごと静かに消える）
+      if (u.import) return { name: u.name, state: 'importing', host: u.import.host };
       const failed = u.failed || u.cancelled;
       return { name: u.name, size: u.size, state: failed ? 'failed' : 'sending', percent: u.size ? Math.floor((u.sent / u.size) * 100) : 0,
         error: u.failed ?? (u.cancelled ? t('chat.composerAtt.cancelled') : '') };
@@ -72,7 +77,8 @@ export function createChAttachments({ host, bucket, owner, accepts = () => true,
           if (i >= 0) removed.set(key, attached.splice(i, 1)[0]);
         } else {
           const u = uploads.get(key.slice(2));
-          if (u && !u.failed) u.cancelled = true;
+          if (u?.import) pasteImages.cancel(u);   // 取り込み中の札を外した・元に戻した: 取得もやめる
+          else if (u && !u.failed) u.cancelled = true;
         }
       }
       for (const key of added) {
@@ -94,7 +100,7 @@ export function createChAttachments({ host, bucket, owner, accepts = () => true,
   // ---------------------------------------------------------------- 入口「添付 N 件 ▾」と一覧
   function render() {
     const here = mine();
-    const failed = here.filter((u) => u.failed || u.cancelled).length, sending = here.length - failed;
+    const failed = here.filter((u) => u.failed || u.cancelled).length, importing = here.filter((u) => u.import).length, sending = here.length - failed - importing;
     const total = attached.length + here.length;
     strip.hidden = total === 0;
     if (!entry) {
@@ -112,8 +118,9 @@ export function createChAttachments({ host, bucket, owner, accepts = () => true,
       strip.append(b);
     }
     entry.count.textContent = t('chat.attachList.count', { count: total });
-    entry.status.textContent = failed ? ` · ${t('chat.composerAtt.entryFailed', { count: failed })}` : sending ? ` · ${t('chat.composerAtt.entrySending', { count: sending })}` : '';
-    entry.b.dataset.state = failed ? 'failed' : sending ? 'sending' : '';
+    entry.status.textContent = [failed ? t('chat.composerAtt.entryFailed', { count: failed }) : '', sending ? t('chat.composerAtt.entrySending', { count: sending }) : '',
+      importing ? t('chat.composerAtt.entryImporting', { count: importing }) : ''].filter(Boolean).map((s) => ` · ${s}`).join('');
+    entry.b.dataset.state = failed ? 'failed' : sending || importing ? 'sending' : '';
     // 同じ名前の添付が増えた・減った: 札に添える見分けのフォルダーが変わるので札を描き直す
     const hints = hintsOf().map((h, i) => (h ? `${attachedKey(attached[i].path)}=${h}` : '')).filter(Boolean).join('|');
     if (hints !== hintSig) { hintSig = hints; editor?.refresh(); }
@@ -131,6 +138,7 @@ export function createChAttachments({ host, bucket, owner, accepts = () => true,
     });
     const sending = (u, section) => {
       const p = editorOptions.pending(u.id);
+      if (p.state === 'importing') return { id: `i:${u.id}`, kind: 'image', name: u.name, path: '', origin: null, size: null, section, status: t('chat.attachList.importing'), progress: null };
       return { id: `i:${u.id}`, kind: 'file', name: u.name, path: '', origin: 'device', size: u.size, section,
         status: p.state === 'failed' ? p.error : t('chat.composerAtt.entrySending', { count: 1 }), progress: p.state === 'sending' ? p.percent : null };
     };
@@ -156,7 +164,9 @@ export function createChAttachments({ host, bucket, owner, accepts = () => true,
         const key = item.id;
         if (key.startsWith('i:')) {
           const p = editorOptions.pending(key.slice(2));
-          return p?.state === 'sending'
+          return p?.state === 'importing'
+            ? [{ label: t('chat.paste.cancelImport'), run: () => removeAttachment(key), keepOpen: true }]
+            : p?.state === 'sending'
             ? [{ label: t('chat.attach.cancelSending'), run: () => removeAttachment(key), keepOpen: true }]
             : [{ label: t('chat.composerAtt.retry'), run: () => editorOptions.onAtomAction('retry', key), keepOpen: true },
                { label: t('chat.attach.remove'), run: () => removeAttachment(key), keepOpen: true }];
@@ -230,29 +240,54 @@ export function createChAttachments({ host, bucket, owner, accepts = () => true,
     try {
       const r = await sendAttachment({ cmd: host.cmd, file, sessionId: u.bucket, cancelled: () => u.cancelled, online: host.whenOnline,
         onProgress: (sent) => { u.sent = sent; paint(u); } });
-      if (!r || u.cancelled) { u.cancelled = true; render(); return; }   // やめた（札は外れている）
-      const item = { name: file.name, path: r.path, kind: r.kind, mime: file.type, from: 'device', size: file.size };
-      if (u.owner === owner()) {
-        uploads.delete(u.id);
-        attached.push(item);
-        editor.resolvePending(u.id, r.path);
-        render();
-        onChange();
-      } else {
-        // 送っている間に別の入力欄・スレッドへ移った。持ち主の下書きへ積む（位置は持たない: 文末に付く）
-        adopt(u.owner, item);
-        uploads.delete(u.id);
-        render();
-      }
+      if (!r || u.cancelled) { u.cancelled = true; render(); return false; }   // やめた（札は外れている）
+      settleUpload(u, { name: file.name, path: r.path, kind: r.kind, mime: file.type, from: 'device', size: file.size });
       if (r.kind === 'image' && file.size > IMAGE_READ_HINT_BYTES) say(t('chat.attach.largeImage', { name: file.name, size: formatBytes(file.size) }));
+      return true;
     } catch (e) {
       u.failed = e?.message ?? String(e);
       // 札が字の欄にあれば札に理由・再試行・外すを出す。札の無い失敗は入力欄の下の一行で
       if (u.placed && editor.hasAttachment(`i:${u.id}`)) editor.updatePending(u.id);
       else { uploads.delete(u.id); say(t('chat.attach.failed', { name: file.name, error: u.failed })); }
       render();
+      return false;
     }
   }
+
+  /** 届いた添付（item）の始末（ファイルの送信・貼り付けた画像の取り込みが使う）。仮の札をパスの札に替える */
+  function settleUpload(u, item) {
+    if (u.owner === owner()) {
+      uploads.delete(u.id);
+      attached.push(item);
+      editor.resolvePending(u.id, item.path);
+      render();
+      onChange();
+    } else {
+      // 送っている間に別の入力欄・スレッドへ移った。持ち主の下書きへ積む（位置は持たない: 文末に付く）
+      adopt(u.owner, item);
+      uploads.delete(u.id);
+      render();
+    }
+  }
+
+  /** 貼り付けた HTML の画像の取り込み（web/paste-images.mjs。ADR 0141）。送信中の一覧（uploads）に載せ、送れない間・入口の件数・下書きは添付と同じ扱い */
+  const pasteImages = createPasteImages({
+    cmd: (command, args) => host.cmd(command, args),
+    editor: () => editor,
+    entry: (base) => {
+      const u = { sent: 0, owner: owner(), bucket: bucket(), cancelled: false, failed: null, placed: true, ...base };
+      uploads.set(u.id, u);
+      return u;
+    },
+    bucketOf: (u) => u.bucket,
+    uploadFile: (u) => runUpload(u),
+    finished: async (u, r) => {
+      settleUpload(u, { name: r.name, path: r.path, kind: 'image', mime: r.mime, from: 'import', size: r.bytes });
+      if (r.bytes > IMAGE_READ_HINT_BYTES) say(t('chat.attach.largeImage', { name: r.name, size: formatBytes(r.bytes) }));
+    },
+    dropped: (u) => { uploads.delete(u.id); render(); },
+    registered: () => render(),
+  });
 
   function paint(u) {
     editor.updatePending(u.id);
@@ -312,7 +347,8 @@ export function createChAttachments({ host, bucket, owner, accepts = () => true,
     blockReason() {
       const here = mine();
       if (here.some((u) => u.failed || u.cancelled)) return t('chat.composerAtt.blockFailed');
-      return here.length ? t('chat.composerAtt.blockSending') : null;
+      if (!here.length) return null;
+      return here.every((u) => u.import) ? t('chat.composerAtt.blockImporting') : t('chat.composerAtt.blockSending');
     },
     /** 送るもの（本文と、channels.post の attachments） */
     compose: (value) => composeBody(value, attached, editor.attachmentKeys(), lang),

@@ -383,6 +383,7 @@ window.plyDesktop = { platform, setTitleBar, notifyCompletion, onNotificationCli
 | Claude のアカウントの認可（`web/claude-accounts.mjs:42` の `desktop()`） | デスクトップ版ならサーバーがホストの画面でブラウザーを開く | `desktop()` を「`plyDesktop` があり `plyRemote` が無い」に変える。端末側でリンクを開き、コードを貼り戻す（今のブラウザー版と同じ。戻り先がループバックではないのでリモートでも完了できる） |
 | Claude CLI の `auth login`（`core/auth/claude-cli.mjs`）、Codex の ChatGPT ログイン（`core/backends/codex.mjs:1511`）、外部 MCP の OAuth（戻り先がホストの `127.0.0.1`。`core/mcp-oauth.mjs:12,64,185`）、Antigravity のログイン（`core/backends/index.mjs:120`） | 戻り先がホストのループバック・端末でしか受け取れない | **ホストの PC で済ませる。** リモートの窓（とモバイル）ではログインの操作の代わりに「このログインはホストの PC で行ってください。」の一文を出す（`plyRemote` の有無で分ける）。状態の表示（ログイン済み・未ログイン）はそのまま見える |
 | アプリの更新 `plyDesktop.update`（`web/updates.mjs:3`） | 手元のアプリの更新 | 出さない（手元のアプリの更新はローカルの窓で）。「アプリ情報・更新」はホストの版（`ready.version`）を出し、「ホストの Pleiad の更新はホストで行います」 |
+| 貼り付けた HTML の画像（https。[ADR 0141](adr/0141-rich-paste.md)） | ホストが取りに行く（WS の `attachImport`。画面の fetch は CORS で読めず、Electron の main はリモートの窓・モバイルでは使えない）。置き場・返す形は添付と同じ | そのまま。取りに行くのはホストの PC のネットワークから（公開アドレスの https だけ。ホストの LAN の内側へは届かない） |
 | 完了通知 `plyDesktop.notifyCompletion`（`web/notifications.mjs:20`） | 手元の OS 通知 | そのまま使う。本文の頭にホスト名。押すとそのリモートの窓の会話を開く |
 | 窓の枠 `web/index.html:20`（`desktop` の class） | `plyDesktop` の有無 | そのまま（リモートの窓も同じ枠）。`plyRemote` があれば `remote` の class も |
 | `desktop/main.cjs:17` の `trusted()`・遷移（`:115`）・権限（`:121`）・帯の色（`:190`） | 窓 1 枚・オリジン 1 つの変数 | 窓ごとのオリジンの表に変える。IPC は送り元の窓のオリジンと照合する。リモートの窓からの `ply:choose-folder`・`ply:update` は拒否 |

@@ -177,7 +177,19 @@
   },
   "attach": {
     "noContent": "The file is empty.",
-    "tooLarge": "Too large ({{size}} MB / limit {{limit}} MB)."
+    "tooLarge": "Too large ({{size}} MB / limit {{limit}} MB).",
+    "import": {
+      "label": "Pasted image URL",
+      "rejected": "That address cannot be imported (only public https addresses can).",
+      "tooLarge": "The image is too large (limit 10 MB).",
+      "notImage": "It is not an image (PNG, JPEG, GIF, WebP or AVIF).",
+      "tooSmall": "Images of 32 px or less on both sides are not imported.",
+      "status": "The image host returned HTTP {{status}}.",
+      "timeout": "Fetching the image did not finish in time.",
+      "network": "The image could not be fetched.",
+      "busy": "Too many images are being imported.",
+      "cancelled": "The import was cancelled."
+    }
   },
   "statuses": {
     "renameFromRequired": "Specify the status to rename.",

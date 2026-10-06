@@ -89,6 +89,9 @@ import { createPushNotifier } from './notify/notifier.mjs';
 import { createPresence } from './notify/presence.mjs';
 import { createNotifySettings } from './notify/settings.mjs';
 import { createFolderUploads } from './folder-uploads.mjs';
+import { createImageImporter, testImportOrigin } from './image-import.mjs';
+import { createUrlGuard } from './mcp-url-guard.mjs';
+import { pinnedFetch } from './pinned-fetch.mjs';
 import { createVisualizationCollector, visualizeInstructions, snapshotResponse, writeSnapshotFile } from './visualize.mjs';
 import { plyParts } from './instruction-amount.mjs';
 import { computerPrompt } from './backends/computer-delivery.mjs';
@@ -208,6 +211,18 @@ function attachTarget(sessionId, name) {
   const bucket = sessionId ? String(sessionId).replace(/[^A-Za-z0-9._-]/g, "_").replace(/[. ]+$/, "_").slice(0, 200) : "_new";
   return { bucket, dir: path.join(UPLOAD_DIR, bucket), rel: `${stamp}_${safe}` };
 }
+// 貼り付けた HTML の画像を取りに行く口（core/image-import.mjs、docs/adr/0141）。置き場と名前の決め方は添付と同じ。
+// 本番では公開アドレスの https だけ。テスト専用の緩め: バックエンドが fake だけのときに限り、AGENT_HOST_IMAGE_IMPORT_TEST_ORIGIN=<http://127.0.0.1:ポート>
+// （ホストがループバックのものだけ有効）を渡すと、検査をやめ、どの https の URL も、パスと問い合わせだけを残してそのテスト用サーバーへ向ける
+// （本物の外へは出ない。ブラウザーでの確認用。testImportOrigin）
+const imageImportTestOrigin = testImportOrigin();
+const imageImporter = createImageImporter({
+  target: (sessionId, name) => attachTarget(sessionId, name),
+  ...(imageImportTestOrigin ? {
+    guard: createUrlGuard({ serverUrl: "http://127.0.0.1" }),
+    fetchFn: (url, init) => { const u = new URL(url); return pinnedFetch(new URL(`${u.pathname}${u.search}`, imageImportTestOrigin), init); },
+  } : {}),
+});
 const IMAGE_MIME = /^image\//;
 // Native sessions opened outside this host may not have sidecar metadata yet.
 const workspaceRoots = new Set([process.cwd()]);
@@ -3486,6 +3501,8 @@ function opsDeps(lng = currentLocale()) {
     shell: opsShell,
     sessionWork: opsSessionWork,
     files: { listDirs: (p, opts) => listDirs(p, opts) },
+    // 貼り付けた HTML の画像を取りに行く（attachments.*。ADR 0141）
+    attachments: { importImage: (input) => imageImporter.importImage(input), cancelImport: (id) => imageImporter.cancel(id) },
     // コンテキストの探索の錠。AI・CLI はまとめて 1 つ（画面の WS は接続ごとの錠で上書きする）
     scanLock: agentScanLock,
     sessionCwd: async (id) => (await store.get(id)).cwd ?? null,
@@ -6243,6 +6260,11 @@ wss.on("connection", (ws, req) => {
           attachPending.delete(id);
           return reply(true, { path: pending.file, bytes: r.bytes, kind: IMAGE_MIME.test(pending.mime) ? "image" : "file" });
         }
+        // 貼り付けた HTML の画像（https）をホストが取りに行く（ADR 0141）。取れなければ失敗（画面は理由を出さず、札を静かに外す）
+        case "attachImport":
+          return await viaOp('attachments.importImage');
+        case "attachImportCancel":
+          return await viaOp('attachments.cancelImport');
         case "attachCancel": {
           const id = msg.args?.uploadId;
           if (!attachPending.has(id)) return reply(true, { cancelled: false });

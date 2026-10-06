@@ -271,11 +271,17 @@ const SUITES = [
   // Claude の巻き戻し（resumeSessionAt・resumeDropsTurn を resume に添える。拒否は呼び出し側へ）: SDK の query を身代わりに
   './unit/claude-rewind.mjs',
   './unit/md-doc.mjs',
+  // 貼り付けの HTML → 入力欄の形（ADR 0141）: 書式・リスト・引用・コード・リンク・表・画像の振り分け・構造の無い HTML は対象外・往復
+  './unit/html-paste.mjs',
   './unit/prompt-title.mjs',
   // 添付の件数に上限が無い（下書き・送信）。出どころの印。1 件 8MB の上限は残る
   './unit/attach-no-limit.mjs',
   // 添付を断片で送る（1 件 100MB まで）: 境目・抜け・やめる・切れても続きから・大きな画像は会話にパスだけ
   './unit/attach-chunked.mjs',
+  // 貼り付けた HTML の画像をホストが取りに行く口（ADR 0141）: https・公開アドレスのみ・リダイレクトの検査・大きさ・SVG と画像でない中身・やめる・置き場
+  './unit/image-import.mjs',
+  // 貼った画像の取り込みの画面側の段取り: 同時 3 枚・順番待ちのやめる・やめたあとの結果は捨てる・取れなければ静かに外す・読み上げ
+  './unit/paste-images.mjs',
   // 入力欄と上端の見直し: 字の欄の上限・チップの字・添付の出どころ・パンくず・規則
   './unit/composer-layout.mjs',
   './unit/unread.mjs',

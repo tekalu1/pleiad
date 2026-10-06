@@ -1083,6 +1083,10 @@
     "files": {
       "listDirs": { "summary": "What a folder on this host contains (folder names, and with files: true the names, sizes and modified times of files). File contents are not read.", "path": "The folder path. From a conversation, omit it for that conversation's working folder.", "files": "true also returns files.", "limit": "How many to return (default 30, at most 100).", "cursor": "The next value of the previous result. Continues from there." }
     },
+    "attachments": {
+      "importImage": { "summary": "The host fetches an image (https, public address) from pasted HTML and puts it in the attachment folder. Only the paste in the screen calls it.", "url": "The image URL (https only).", "sessionId": "The conversation id the file is filed under.", "name": "The card name (for example the alt text). The extension comes from the contents.", "importId": "An id used to cancel the import." },
+      "cancelImport": { "summary": "Cancels an image import that is still being fetched.", "importId": "The import id." }
+    },
     "probe": {
       "guarded": {
         "summary": "Test only: a stand-in for an operation that loosens the gates (appears only in tests)."

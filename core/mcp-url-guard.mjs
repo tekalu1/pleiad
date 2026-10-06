@@ -25,6 +25,28 @@ export class UrlRejected extends Error {
 const LOOPBACK_NAMES = new Set(['localhost', 'localhost.', 'ip6-localhost', 'ip6-loopback']);
 const bareHost = hostname => hostname.replace(/^\[|\]$/g, '').toLowerCase();
 
+/** IPv6 の文字 → 16 バイト（末尾の a.b.c.d・:: の省略・ゾーン ID を読む）。読めなければ null */
+function ipv6Bytes(ip) {
+  let s = ip.split('%')[0].toLowerCase();
+  const dotted = /(\d+)\.(\d+)\.(\d+)\.(\d+)$/.exec(s);
+  if (dotted) {
+    const [a, b, c, d] = dotted.slice(1).map(Number);
+    s = `${s.slice(0, -dotted[0].length)}${((a << 8) | b).toString(16)}:${((c << 8) | d).toString(16)}`;
+  }
+  const [head, rest, extra] = s.split('::');
+  if (extra !== undefined) return null;
+  const h = head ? head.split(':') : [], r = rest ? rest.split(':') : [];
+  const groups = rest === undefined ? h : [...h, ...Array(8 - h.length - r.length).fill('0'), ...r];
+  if (groups.length !== 8) return null;
+  const bytes = [];
+  for (const g of groups) {
+    const n = parseInt(g, 16);
+    if (!/^[0-9a-f]{1,4}$/.test(g) || Number.isNaN(n)) return null;
+    bytes.push(n >> 8, n & 255);
+  }
+  return bytes;
+}
+
 /** IP アドレスの種類。public 以外は「公開の MCP から誘導されて取りに行ってはいけない」宛先 */
 export function addressKind(address) {
   const ip = bareHost(address);
@@ -43,17 +65,25 @@ export function addressKind(address) {
   if (net.isIPv6(ip)) {
     if (ip === '::1') return 'loopback';
     if (ip === '::') return 'unspecified';
-    const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/.exec(ip) ?? /^::(\d+\.\d+\.\d+\.\d+)$/.exec(ip);
-    if (mapped) return addressKind(mapped[1]);
-    const hex = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(ip);
-    if (hex) { const n = (parseInt(hex[1], 16) << 16) | parseInt(hex[2], 16); return addressKind([n >>> 24, (n >>> 16) & 255, (n >>> 8) & 255, n & 255].join('.')); }
-    const first = parseInt(ip.split(':')[0] || '0', 16);
+    const b = ipv6Bytes(ip);
+    if (!b) return 'unknown';
+    const v4 = (at) => addressKind(`${b[at]}.${b[at + 1]}.${b[at + 2]}.${b[at + 3]}`);
+    const zero = (from, to) => b.slice(from, to).every(x => x === 0);
+    // IPv4 を埋め込む形は、埋め込まれた IPv4 の種類で見る（内部のアドレスを、IPv6 の書き方で公開に見せかけられないように）
+    if (zero(0, 10) && b[10] === 0xff && b[11] === 0xff) return v4(12);           // IPv4 射影 ::ffff:a.b.c.d
+    if (zero(0, 12)) return v4(12);                                               // IPv4 互換（廃止）::a.b.c.d
+    if (zero(0, 8) && b[8] === 0xff && b[9] === 0xff && b[10] === 0 && b[11] === 0) return v4(12);   // IPv4 変換 ::ffff:0:a.b.c.d
+    if (b[0] === 0x00 && b[1] === 0x64 && b[2] === 0xff && b[3] === 0x9b) {       // NAT64
+      if (zero(4, 12)) return v4(12);                                             // 64:ff9b::/96 は末尾 32 ビットが IPv4
+      if (b[4] === 0x00 && b[5] === 0x01) return 'reserved';                      // 64:ff9b:1::/48 ローカル用（埋め込みの位置が可変）
+    }
+    if (b[0] === 0x20 && b[1] === 0x02) return v4(2);                             // 6to4 2002::/16 は 3〜6 バイト目が IPv4
+    const first = (b[0] << 8) | b[1];
     if ((first & 0xfe00) === 0xfc00) return 'private';      // ユニークローカル fc00::/7
     if ((first & 0xffc0) === 0xfe80) return 'link-local';   // fe80::/10
+    if ((first & 0xffc0) === 0xfec0) return 'private';      // サイトローカル fec0::/10（廃止）
     if ((first & 0xff00) === 0xff00) return 'reserved';     // マルチキャスト
-    if (first === 0x2001 && ip.split(':')[1] === 'db8') return 'reserved'; // 文書用
-    // NAT64（64:ff9b::/96）は末尾 32 ビットの IPv4 として見る
-    if (ip.startsWith('64:ff9b::')) { const tail = ip.split(':'); return addressKind(tail.at(-1).includes('.') ? tail.at(-1) : `::ffff:${tail.slice(-2).join(':')}`); }
+    if (first === 0x2001 && b[2] === 0x0d && b[3] === 0xb8) return 'reserved'; // 文書用 2001:db8::/32
     return 'public';
   }
   return 'unknown';
@@ -79,14 +109,17 @@ const kindLabel = kind => t(`net.addressKind.${kind}`, { defaultValue: kind });
 /**
  * MCP 本体の URL を基準にした検査器。
  * @param {object} o
- * @param {string} o.serverUrl 利用者が登録した MCP の URL
+ * @param {string} [o.serverUrl] 利用者が登録した MCP の URL（publicOnly のときは要らない）
  * @param {(host: string, opts: object) => Promise<Array<{address: string}>>} [o.lookup] 名前解決（テストで差し替える）
+ * @param {boolean} [o.publicOnly] 基準になる MCP が無い（貼り付けた画像の URL など、信頼できない URL を取りに行く）。
+ *   いつでも「公開の側」として扱う: https だけ・解決先が公開アドレスだけ。ループバックの http も許さない（docs/adr/0141）
  */
-export function createUrlGuard({ serverUrl, lookup = dns.lookup }) {
-  const server = new URL(serverUrl);
-  const serverLoopback = isLoopbackHost(server.hostname);
+export function createUrlGuard({ serverUrl, lookup = dns.lookup, publicOnly = false }) {
+  const server = publicOnly ? null : new URL(serverUrl);
+  const serverLoopback = publicOnly ? false : isLoopbackHost(server.hostname);
   let serverPublic;
   async function mcpIsPublic() {
+    if (publicOnly) return true;
     if (serverLoopback) return false;
     // MCP 本体が解決できないときは、厳しい方（公開）に倒す
     serverPublic ??= resolveAll(server.hostname, lookup).then(list => list.every(a => addressKind(a) === 'public'), () => true);
