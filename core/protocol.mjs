@@ -19,7 +19,7 @@ export function stampSessionId(event, fallback) {
 }
 
 // server -> client
-export const READY = "ready";   // { protocolVersion, version, homeDir, resumedTurn, startedAt（サーバーの起動時刻 ms）, locale, notify（スマホへの通知に対応していれば 1） }
+export const READY = "ready";   // { protocolVersion, version（アプリの版）, build（ビルドの短いハッシュ。開発は null）, homeDir, resumedTurn, startedAt（サーバーの起動時刻 ms）, locale, notify（スマホへの通知に対応していれば 1） }。version・build が画面を配った版と違えば、画面は 1 回だけ読み直す（protocolVersion は変えない）
 export const EVENT = "event";
 export const RESPONSE = "response";
 export const ERROR = "error";
@@ -218,6 +218,11 @@ export const COMMANDS = new Set([
   'browserScreencastAgent',  // { sessionId, action: stop|takeOver } -> {}。エージェントの接続を止める・引き継ぐ
   // コンピューターの操作（docs/computer-use.md）。ホストの OS を操作する命令ではなく止める側なので、リモートの端末からも受ける
   'computerStop',            // { sessionId } -> { stopped }。その会話の走っているターン（貸している先の子のターンも）に止めた印を付け、main へ computer-stop を送る
+  // エージェントのブラウザー（PC の Chrome）への接続（docs/inapp-browser.md「Chrome への接続」、ADR 0148・0153）。つなぐ・切る・前に出すはホストの PC の画面だけ（browser.chrome*）
+  'chromeStatus',            // {} -> { state: off|setup|permission|denied|connected|unsupported, reason, dialog, product }。変わったら chromeBrowser イベント
+  'chromeConnect',           // {} -> 状態。つなぐ（denied のときは「もう一度」）
+  'chromeDisconnect',        // {} -> 状態。切る・やめる（確認が出ていれば閉じる）
+  'chromeRaiseDialog',       // {} -> { raised, method }。Chrome の許可の確認を前に出す
 ]);
 
 // event.type の一覧（server -> client の EVENT ペイロード）。
@@ -296,4 +301,6 @@ export const EVENTS = new Set([
   "contextRefreshed",
   "running",      // 動いているものが増減した
   "turnEnd",       // { completedAt, outcome, interrupted: { at, reason } | null, requeued?, delegated? }
+  // { state: off|setup|permission|denied|connected|unsupported, reason, dialog, product } Chrome への接続の状態（ホストの PC の画面だけに流す。リモートの端末には送らない。sessionId は null）
+  "chromeBrowser",
 ]);

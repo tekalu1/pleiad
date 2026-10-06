@@ -208,7 +208,7 @@ export default async function (t) {
     client = await openWs({ port: server.port, token: server.token });
     const real = p => fs.realpath(p);
     // npm start（デスクトップ版でない）には内蔵ブラウザーが無いので pcBrowser は false
-    assert.deepEqual(await client.cmd('hostCapabilities'), { osActions: true, hostName: os.hostname(), pcBrowser: false, computerUse: { supported: false, reason: 'desktop' } });
+    assert.deepEqual(await client.cmd('hostCapabilities'), { osActions: true, hostName: os.hostname(), pcBrowser: false, chromeBrowser: false, computerUse: { supported: false, reason: 'desktop' } });
     assert.equal((await client.cmd('revealPath', { path: path.join(outside, 'secret.html') })).path, await real(path.join(outside, 'secret.html')));
     assert.equal((await client.cmd('revealPath', { path: 'sub', sessionId: 'fixture' })).path, await real(path.join(work, 'sub')));
     assert.equal((await client.cmd('openPath', { path: 'escape/secret.html:3', sessionId: 'fixture' })).path, await real(path.join(outside, 'secret.html')));
@@ -242,7 +242,7 @@ export default async function (t) {
     const replies = new Map();
     await new Promise((resolve, reject) => { remote.once('error', reject); remote.on('message', raw => { const m = JSON.parse(raw); if (m.kind === 'ready') resolve(); if (m.kind === 'response') replies.get(m.id)?.(m); }); });
     const ask = (command, args) => new Promise(resolve => { const id = `r${replies.size + 1}`; replies.set(id, resolve); remote.send(JSON.stringify({ kind: 'command', command, id, args })); });
-    assert.deepEqual((await ask('hostCapabilities', {})).result, { osActions: false, hostName: os.hostname(), pcBrowser: false, computerUse: { supported: false, reason: 'desktop' } });
+    assert.deepEqual((await ask('hostCapabilities', {})).result, { osActions: false, hostName: os.hostname(), pcBrowser: false, chromeBrowser: false, computerUse: { supported: false, reason: 'desktop' } });
     const refused = await ask('revealPath', { path: path.join(work, 'page.html') });
     assert(!refused.ok && /サーバーのある PC/.test(refused.error), JSON.stringify(refused));
     assert.equal((await ask('openPath', { path: path.join(work, 'page.html') })).ok, false);

@@ -6,8 +6,9 @@ function binaryName(platform = process.platform, arch = process.arch) {
   return `agent-browser-${platform}-${target}${platform === 'win32' ? '.exe' : ''}`;
 }
 function commandName(platform = process.platform) { return `agent-browser${platform === 'win32' ? '.exe' : ''}`; }
-function prepareAgentBrowserBin({ packaged, resourcesPath, root, dataDir } = {}) {
-  if (packaged) return path.join(resourcesPath, 'agent-browser');
+// runtimeDir: 版ごとの実行場所に組んだ agent-browser の置き場（desktop/runtime.cjs の agentBrowserDir）。あればそちらを PATH に足す
+function prepareAgentBrowserBin({ packaged, resourcesPath, root, dataDir, runtimeDir } = {}) {
+  if (packaged) return runtimeDir || path.join(resourcesPath, 'agent-browser');
   const source = path.join(root, 'node_modules', 'agent-browser', 'bin', binaryName());
   const dir = path.join(dataDir, 'agent-browser-bin');
   fs.mkdirSync(dir, { recursive: true });

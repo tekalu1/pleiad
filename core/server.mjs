@@ -1,3 +1,5 @@
+// 先頭に置く: AGENT_HOST_SERVER_LOG があれば、他のモジュールの読み込みの失敗も含めて出力をファイルへ向ける（stdio の無い起動）
+import './server-log-boot.mjs';
 import { effortOptions, validateEffort } from './effort.mjs';
 import { listDirs } from './list-dirs.mjs';
 import { createQuotaCache, createUsageStore, agentUsage } from './usage.mjs';
@@ -102,8 +104,18 @@ import { createVisualizationCollector, visualizeInstructions, snapshotResponse, 
 import { plyParts } from './instruction-amount.mjs';
 import { computerPrompt } from './backends/computer-delivery.mjs';
 import { MIN_BUDGET, MAX_BUDGET } from '../web/instruction-amount.mjs';
-import { parentPortBrowser, browserEnvironment, browserInstruction, forgetBrowserEnvironment } from './agent-browser.mjs';
+import { parentPortBrowser, browserEnvironment, browserInstruction, forgetBrowserEnvironment, agentBrowserMode, chromeRelayBrowser } from './agent-browser.mjs';
+import { getMainPort, setMainPortSource } from './main-port.mjs';
+import { createMainLink, handoverEnabled } from './main-link.mjs';
+import { createOrphanGuard } from './orphan-guard.mjs';
+import { createMainAway, createExternalOpener } from './main-away.mjs';
+import { readBuildInfo } from './handover-check.mjs';
+import { markRuntimeInUse } from './runtime-use.mjs';
 import { parentPortScreencast, createScreencastHub, screencastCommand } from './browser-screencast.mjs';
+import { createChromeConnection } from './chrome/connection.mjs';
+import { chromeHomes } from './chrome/locate.mjs';
+import { parentPortChromeOs } from './chrome/os.mjs';
+import { createChromeRelay } from './chrome/relay.mjs';
 import { createBrowserSiteApprovals } from './browser-confirm.mjs';
 import { createBrowserBridge, BROWSER_MCP_PATH } from './browser-bridge.mjs';
 import { validBrowserPref, externalOrigin } from '../web/browser-confirm-policy.mjs';
@@ -139,11 +151,37 @@ migrateClaudeUsage({ store: usageStore, projects: path.join(process.env.CLAUDE_C
   .catch(err => console.error(`  ${t('usage.migrateFailed')}`, String(err?.message ?? err)));
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const APP_VERSION = JSON.parse(await fs.readFile(path.join(HERE, '..', 'package.json'), 'utf8')).version;
-const agentBrowser = parentPortBrowser(process.parentPort);
+// 版を見分けるビルドの短いハッシュ（実行場所の木・配布物なら有る。開発のリポジトリは null）。ready に載せ、版が変わった画面を読み直させる（docs/zero-downtime-update/design.md §8）
+const BUILD = readBuildInfo(path.join(HERE, '..')).build;
+// main への口（core/main-port.mjs）。main の下でない起動（npm start）では、口を受け取る機能は null で無効になる。
+// AGENT_HOST_HANDOVER=on で utilityProcess の下でない起動は、名前付きパイプの口（core/main-link.mjs）を main への口にする
+const mainLink = handoverEnabled() && !process.parentPort ? createMainLink({ dataDir: store.dataDir, appVersion: APP_VERSION,
+  log: line => console.log(`  [main-link] ${line}`) }) : null;
+if (mainLink) setMainPortSource(mainLink.port);
+// 版ごとの実行場所で走っているなら、その版を使っている印を付ける（desktop/runtime.cjs の掃除がこの版を消さない。core/runtime-use.mjs）。
+// 印は閉じない: プロセスの終了で OS が外す
+if (process.env.AGENT_HOST_RUNTIME_ROOT && process.env.AGENT_HOST_RUNTIME_KEY) markRuntimeInUse({ root: process.env.AGENT_HOST_RUNTIME_ROOT, key: process.env.AGENT_HOST_RUNTIME_KEY });
+const mainPort = getMainPort();
+const hostedPort = mainPort.hosted ? mainPort : null;
+// main が居ない間（更新）の出来事と、OAuth の同意画面などを開く口（core/main-away.mjs）。機能ごとの扱いは頼む側のモジュールが持つ
+const mainAway = createMainAway({ mainPort });
+const openExternal = createExternalOpener({ mainPort, log: line => console.log(`  [main-away] ${line}`) });
+const agentBrowser = parentPortBrowser(hostedPort, { dataDir: store.dataDir });
 // リモートの端末から PC の内蔵ブラウザーを見る（core/browser-screencast.mjs）。デスクトップ版だけ
-const screencastBridge = parentPortScreencast(process.parentPort);
+const screencastBridge = parentPortScreencast(hostedPort);
 const screencastHub = screencastBridge ? createScreencastHub({ bridge: screencastBridge }) : null;
 const screencastClients = new WeakMap();   // ws -> hub に渡す端末
+// エージェントのブラウザー（PC の Chrome）への接続 1 本（core/chrome/connection.mjs、ADR 0148・0153）。デスクトップ版だけ。OS ごとの層は main（desktop/chrome-os）
+const chromeConnection = process.parentPort
+  ? createChromeConnection({ locate: chromeHomes()[0] ?? null, os: parentPortChromeOs(process.parentPort), log: line => console.log(`  ${line}`) })
+  : null;
+// エージェントのブラウザーを PC の Chrome の絞り込みの中継へ向ける（core/chrome/relay.mjs）。環境変数 AGENT_HOST_AGENT_BROWSER=chrome のときだけ
+// （開発と実機の確かめ用。docs/inapp-browser.md「Chrome の中継（開発中）」）。無ければ内蔵ブラウザーの道のまま。確認は下の browserSiteApprovals
+const chromeRelay = chromeConnection && agentBrowserMode() === 'chrome'
+  ? createChromeRelay({ connection: chromeConnection, authorize: (request, signal) => browserSiteApprovals(request, signal), deniedMessage: () => t('permission.browserSiteDenied'), log: line => console.log(`  ${line}`) })
+  : null;
+// 会話の端点を出す口（ターンの開始・新しい会話の id の付け替え・ターンの終わり・会話の削除）。Chrome の道でなければ内蔵ブラウザーの橋そのもの
+const agentBrowserEndpoints = chromeRelay ? chromeRelayBrowser(chromeRelay) : agentBrowser;
 // A nested server may inherit another conversation's shell environment; only this process's bridge can issue browser access.
 delete process.env.AGENT_BROWSER_CONFIG;
 delete process.env.AGENT_BROWSER_SESSION;
@@ -233,7 +271,7 @@ const IMAGE_MIME = /^image\//;
 const workspaceRoots = new Set([process.cwd()]);
 const contextSettings = createContextSettings(store.dataDir);
 // 担当が Pleiad の外部 MCP。登録は Pleiad 自身の設定（エージェントの設定ファイルは書き換えない）、秘密は safeStorage で暗号化して置く
-// 暗号器は 1 つを使い回す（parentPort の応答は id で引くので、2 つ作ると同じ id を取り合う）
+// 暗号器は 1 つを使い回す（main の口の応答は id で引くので、2 つ作ると同じ id を取り合う）
 const secretCipher = defaultCipher();
 const mcpSecrets = createSecretStore({ file: path.join(store.dataDir, 'mcp-secrets.json'), cipher: secretCipher });
 const plyMcp = createPlyMcp({ dataDir: store.dataDir, secrets: mcpSecrets });
@@ -268,8 +306,8 @@ const claudeLogin = createClaudeLogin({
     emitGlobal({ type: 'claudeAccountsChanged', sessionId: null });
   },
   scratchDir: path.join(store.dataDir, 'claude-login-tmp'),
-  // デスクトップ版は main に頼んで既定のブラウザーで開く（npm start では画面のリンクから開く）
-  openExternal: url => process.parentPort?.postMessage({ type: 'open-external', url }),
+  // デスクトップ版は main に頼んで既定のブラウザーで開く（main が居ない間は OS に直に頼む。npm start では画面のリンクから開く）
+  openExternal,
 });
 process.on('exit', () => claudeLogin.cancelAll());
 // 互換の接続先（Claude Code の Anthropic 互換 / Codex の Responses 互換。会話ごとに選ぶ。core/compat-endpoints.mjs）。
@@ -293,8 +331,8 @@ sweepClaudeFlagSettings(store.dataDir, { olderThanMs: 24 * 60 * 60_000 }).catch(
 const mcpOAuth = createMcpOAuth({ secrets: mcpSecrets, lockDir: path.join(store.dataDir, 'mcp-locks'),
   // Client ID Metadata Document の URL（設定値。既定は無し。公開する文書のひな形は docs/mcp-oauth-client-metadata.json）
   clientMetadataUrl: async () => (await plyMcp.settings().catch(() => ({}))).clientMetadataUrl ?? undefined,
-  // utilityProcess からはブラウザを開けないので main に頼む（desktop/main.cjs）。npm start では画面に出る URL から開く
-  openExternal: url => process.parentPort?.postMessage({ type: 'open-external', url }),
+  // utilityProcess からはブラウザを開けないので main に頼む（desktop/main.cjs。main が居ない間は OS に直に頼む）。npm start では画面に出る URL から開く
+  openExternal,
   emit: event => emitGlobal({ ...event, sessionId: null }) });
 const contextBridge = createContextBridge({ plyMcp, oauth: mcpOAuth });
 // リモートの接続口（docs/remote.md §4.2・§6.1）。既定は無効で、有効にするまで中継へはつながない。
@@ -344,6 +382,7 @@ const remote = createRemoteHost({ dataDir: store.dataDir, cipher: secretCipher, 
 const notifyPresence = createPresence();
 const notifySettings = createNotifySettings({ dataDir: store.dataDir });
 const connectionDevices = new WeakMap();   // ws -> 中継越しの端末（x-pleiad-device。ホストの PC の画面は無い）
+const hostScreens = new WeakSet();   // ホストの PC の画面からの接続（isLocalRequest）。Chrome への接続の状態はここだけに流す
 const pushNotifier = createPushNotifier({
   devices: () => remote.notifyTargets(),
   presence: notifyPresence,
@@ -366,7 +405,7 @@ const inboxSources = createNotificationSources({
 // ホストとして常駐する設定（docs/remote.md §6.3。core/remote/resident.mjs）。使うのはデスクトップ版のホストだけ（available）。
 // トレイとスリープの抑止は main（desktop/resident.cjs）が持つ。リモート・実行中の作業・ルーティンの変更時に送る
 const residentPrefs = createResidentPrefs({ dataDir: store.dataDir });
-const withResident = status => ({ ...status, resident: { available: Boolean(process.parentPort), ...residentPrefs.get() } });
+const withResident = status => ({ ...status, resident: { available: mainPort.hosted, ...residentPrefs.get() } });
 const remoteStatus = async () => withResident(await remote.status());
 /** 設定 › 通知の材料: この PC の設定と、スマホ（デスクトップ版の端末以外）の一覧。鍵は含まない */
 const notifyStatus = async () => ({
@@ -376,7 +415,7 @@ const notifyStatus = async () => ({
 });
 let residentLast = '', residentStatus = null, residentWork = null, residentSeq = 0;
 async function postResident({ status, work } = {}) {
-  if (!process.parentPort) return;
+  if (!mainPort.hosted) return;
   if (status) residentStatus = status;
   if (work) residentWork = work;
   const seq = ++residentSeq;
@@ -386,7 +425,7 @@ async function postResident({ status, work } = {}) {
   const key = JSON.stringify(signal);
   if (key === residentLast) return;
   residentLast = key;
-  process.parentPort.postMessage({ type: 'resident', state: signal });
+  mainPort.postMessage({ type: 'resident', state: signal });
 }
 // 固定した指示・Skills の開始時の本文（「差分を見る」用。内容のハッシュを名前にして 1 つずつ）
 const CONTEXT_SNAPSHOTS = path.join(store.dataDir, 'context-snapshots');
@@ -1310,7 +1349,9 @@ const server = http.createServer(async (req, res) => {
     const rel = path.normalize(name).split(path.sep).filter(Boolean).join(path.sep);
     const file = path.join(WEB, rel);
     if (!file.startsWith(WEB)) throw new Error("outside web/");
-    const body = await fs.readFile(file);
+    let body = await fs.readFile(file);
+    // 画面を配った版。web/client.mjs が ready の版と比べ、違えば 1 回だけ読み直す（docs/zero-downtime-update/design.md §8）
+    if (rel === 'index.html') body = Buffer.from(String(body).replace('<meta name="pleiad-build" content="">', `<meta name="pleiad-build" content="${APP_VERSION}+${BUILD ?? ''}">`));
     const headers = { "content-type": MIME[path.extname(file)] ?? "application/octet-stream" };
     if (tokenOk(viaQuery)) {
       // HttpOnly なので JS からは読めない。SameSite=Strict で他サイトからは送られない
@@ -1743,12 +1784,20 @@ const runtime = {
 
 /** host が居ない時間が猶予を超えたか。タイマーに頼らず、その場で判定する。猶予が無効（既定）なら常に false。 */
 function graceExpired() {
-  return HOST_GRACE_MS > 0 && runtime.awaySince !== 0 && Date.now() - runtime.awaySince > HOST_GRACE_MS;
+  return HOST_GRACE_MS > 0 && runtime.awaySince !== 0 && !mainAway.holdsGrace() && Date.now() - runtime.awaySince > HOST_GRACE_MS;
+}
+
+/** main が更新で居ない間（main-leaving の後）は画面が居ないので猶予を数えない。戻った main の窓が付くまでの猶予は、戻った時から数え直す（core/main-away.mjs） */
+function restartGrace() {
+  if (runtime.awaySince === 0) return;
+  runtime.awaySince = Date.now();
+  clearTimeout(runtime.graceTimer);
+  runtime.graceTimer = HOST_GRACE_MS > 0 ? setTimeout(giveUp, HOST_GRACE_MS + 500) : null;
 }
 
 /** 猶予切れの後始末。何度呼ばれても安全。走っているターンは全部止める。猶予が無効なら何もしない。 */
 function giveUp() {
-  if (HOST_GRACE_MS <= 0 || runtime.awaySince === 0) return;
+  if (HOST_GRACE_MS <= 0 || runtime.awaySince === 0 || mainAway.holdsGrace()) return;
   const seconds = Math.round((Date.now() - runtime.awaySince) / 1000);
   runtime.awaySince = 0;
   clearTimeout(runtime.graceTimer);
@@ -1839,6 +1888,7 @@ const GIT_END_WAIT_MS = 6_000;
 process.on('exit', () => shellRuns.stopAll());
 process.on('exit', () => botHost?.stop());
 process.on('exit', () => removeControlFile({ dataDir: store.dataDir }));
+process.on('exit', () => mainLink?.dispose());
 // 端末の Ctrl-C・kill でも 'exit' を通し、control.json を消す
 for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => process.exit(0));
 const completionNotices = createCompletionNotices({
@@ -1866,7 +1916,7 @@ async function savePref(key, value, backendId) {
   locale = localeInfo(prefs);
   setLocale(locale.lang);
   // デスクトップ版の main（ダイアログ・通知・更新のエラー文）にも知らせる（desktop/main.cjs）
-  process.parentPort?.postMessage({ type: "locale", locale: locale.lang });
+  mainPort.postMessage({ type: "locale", locale: locale.lang });
   emitGlobal({ type: "prefs", sessionId: null, prefs, locale });
   return prefs;
 }
@@ -1892,6 +1942,13 @@ function emitGlobal(event) {
     }
   }
 }
+
+/** Chrome への接続の状態の便り。ホストの PC の画面だけに流し（中継越しの端末には送らない）、取りこぼしても次の状態で足りるので溜めない */
+const chromeBrowserFrame = state => ({ kind: P.EVENT, event: { type: 'chromeBrowser', sessionId: null, ...state } });
+chromeConnection?.onChange(state => {
+  const text = JSON.stringify(chromeBrowserFrame(state));
+  for (const ws of runtime.sockets) if (ws.readyState === ws.OPEN && hostScreens.has(ws)) ws.send(text);
+});
 
 /**
  * グループ（fork でつながった会話のまとまり、docs/design-system.md §4.1）を一覧の行から数える。
@@ -2126,7 +2183,7 @@ function makeEmit(turn) {
     // （差し替えると sidecar に "null" キーの行が生える）。
     if (event?.type === "session" && event.sessionId && !turn.info.sessionId) {
       turn.info.sessionId = event.sessionId;
-      if (turn.browserRelayId && turn.browserRelayId !== event.sessionId) { agentBrowser?.rebind(turn.browserRelayId, event.sessionId); turn.browserRelayId = event.sessionId; }
+      if (turn.browserRelayId && turn.browserRelayId !== event.sessionId) { agentBrowserEndpoints?.rebind(turn.browserRelayId, event.sessionId); turn.browserRelayId = event.sessionId; }
       turn.compactionRevision = compactionScheduler.revision(event.sessionId);
       for (const read of liveReads) if (read.sessionId === event.sessionId) read.turn = turn;
       runtime.turns.delete(turn.key);
@@ -2389,6 +2446,7 @@ async function applyBrowserPref(key, value) {
   const prefs = await savePref(key, value);
   agentBrowser?.prefs(prefs);
   agentBrowser?.loadPolicy(prefs);
+  chromeRelay?.setConfirm(prefs.confirmAgentSites === true);
   return prefs;
 }
 
@@ -2831,7 +2889,8 @@ async function deleteSessionOf(sessionId) {
     const cleanups = [
       history.forgetPresents(sessionId),
       computerShots.removeSession(sessionId),
-      forgetBrowserEnvironment({ bridge: agentBrowser, dataDir: store.dataDir, sessionId }),
+      forgetBrowserEnvironment({ bridge: agentBrowserEndpoints, dataDir: store.dataDir, sessionId }),
+      Promise.resolve().then(() => chromeRelay?.forget(sessionId)),
       settingApprovals?.forget(sessionId),
       ...[...cwds].map(cwd => gitActivity.forget(cwd, sessionId)),
     ];
@@ -3199,6 +3258,14 @@ const opsCompat = {
     return { id: String(id), deleted: true };
   },
 };
+
+// エージェントのブラウザー（PC の Chrome）への接続（browser.chrome*。core/ops/browser.mjs）。状態は chromeBrowser イベントでホストの画面へ流す
+const opsChrome = chromeConnection ? {
+  status: () => chromeConnection.state(),
+  connect: async () => { await chromeConnection.connect(); return chromeConnection.state(); },
+  disconnect: () => { chromeConnection.disconnect(); return chromeConnection.state(); },
+  raiseDialog: async () => { const result = await chromeConnection.raiseDialog(); return { raised: result.ok === true, method: String(result.method ?? 'none') }; },
+} : null;
 
 // コンピューターの操作を止める（computer.stop。docs/computer-use.md「computerStop」）。止める側なので、リモートの端末からも AI からも受ける
 const opsComputer = {
@@ -3766,6 +3833,7 @@ function opsDeps(lng = currentLocale()) {
     notifications: inbox,
     compat: opsCompat,
     computer: opsComputer,
+    chrome: opsChrome,
     // MCP・Hooks・コンテキスト・リモート・接続先の操作（core/ops/mcp.mjs・hooks.mjs・context.mjs・remote.mjs。ADR 0095）。WS の同じ名前のコマンドがしていた処理
     mcp: opsMcp,
     hooks: opsHooks,
@@ -3921,6 +3989,8 @@ async function runningWork() {
       nextSendAt: Math.min(Infinity, ...dueRows.filter(r => r.kind === 'send' && !r.held).map(r => r.at)) },
     tasks,
     background,
+    // `!` の行。count には入れない（終了・中断して更新では止まる。デスクトップの無停止の切り替えは終わるのを待つ。desktop/switch.cjs）
+    shells: shellRuns.list(),
     // ホストに任せたタスクの印（⇄ ホスト名とオンラインか）。docs/remote.md §4.5
     remoteHosts: remoteHostsNow(),
     // 中継の複製は数えない。1つの承認が会話の数だけ増えて見える
@@ -4196,7 +4266,8 @@ const askPermission = async ({ toolName, input, sessionId, toolUseID, title, sig
   });
 };
 
-agentBrowser?.configureAuthorization(createBrowserSiteApprovals({
+// サイトの利用の確認（ADR 0042）。内蔵ブラウザーの橋と Chrome の中継が同じものを使う
+const browserSiteApprovals = createBrowserSiteApprovals({
   getPrefs: store.getPrefs,
   getAgent: async id => {
     const turn = runtime.turns.get(id) ?? [...runtime.turns.values()].find(turn => turn.browserRelayId === id);
@@ -4204,7 +4275,9 @@ agentBrowser?.configureAuthorization(createBrowserSiteApprovals({
   },
   askPermission, translate: t,
   remember: async site => { const prefs = await store.rememberBrowserSite(site); emitGlobal({ type: 'prefs', sessionId: null, prefs, locale }); },
-}));
+});
+agentBrowser?.configureAuthorization(browserSiteApprovals);
+chromeRelay?.setConfirm((await store.getPrefs()).confirmAgentSites === true);
 agentBrowser?.prefs(await store.getPrefs());
 agentBrowser?.loadPolicy(await store.getPrefs());
 
@@ -4213,7 +4286,7 @@ agentBrowser?.loadPolicy(await store.getPrefs());
 // AGENT_HOST_COMPUTER_DRIVER=fake は偽の driver（実画面には何もしない。テスト用）。AGENT_HOST_COMPUTER_LOG にその呼び出しを 1 行ずつ残す
 const computerDriver = process.env.AGENT_HOST_COMPUTER_DRIVER === 'fake'
   ? fakeComputerDriver({ log: process.env.AGENT_HOST_COMPUTER_LOG ? entry => appendFileSync(process.env.AGENT_HOST_COMPUTER_LOG, JSON.stringify(entry) + '\n') : undefined })
-  : parentPortComputer(process.parentPort);
+  : parentPortComputer(hostedPort);
 const computerShots = createComputerShots({ dataDir: store.dataDir });
 const computerLock = createComputerLock({
   waitMs: Number(process.env.AGENT_HOST_COMPUTER_LOCK_WAIT_MS) > 0 ? Number(process.env.AGENT_HOST_COMPUTER_LOCK_WAIT_MS) : undefined,
@@ -4238,6 +4311,8 @@ const computerBridge = computerDriver ? createComputerBridge({
 computerDriver?.onEscape(owner => computerLock.escape(owner));
 // main か core が作り直された。持ち主を外し、待っている先頭に譲る
 computerDriver?.onReady(() => computerLock.reset());
+// main が居なくなった（更新）。オーバーレイも Esc も無いまま画面を動かさないので、Esc と同じに使用を止める。ターンは止めず、ツールには更新のための停止と返す
+computerDriver?.onAway?.(() => computerLock.stopAll('update'));
 
 // 送信待ちの一覧が変わるたびに呼ぶもの（sessionId -> Set<fn(messages)>）。再開の受け付けを、送った項目が出ていくまで保つのに使う
 const outboxWatchers = new Map();
@@ -4449,7 +4524,7 @@ const remoteCards = {
     if (runtime.waiting.size) broadcastRunning();
   },
 };
-const remoteAgentBridge = parentPortRemoteAgent(process.parentPort);
+const remoteAgentBridge = parentPortRemoteAgent(hostedPort);
 const remoteDelegation = createRemoteDelegation({
   bridge: remoteAgentBridge, tasks: () => agentTasks, agentT, titleOf: async id => (await store.get(id)).title ?? '', cards: remoteCards,
   locale: () => currentLocale(), changed: () => permissionsChanged(), log: line => console.log(`  ${line}`),
@@ -5040,7 +5115,7 @@ async function runTurnInternal(args, onStarted, hooks) {
         // エージェントに渡す文（指示・ツールの説明・タイトル生成など）の言語。会話ごとに決めて保存したもの
         locale: agentLocale,
         visualizeInstructions: visualizeInstructions(agentLocale),
-        browserEnv: await browserEnvironment({ bridge: agentBrowser, dataDir: store.dataDir, sessionId: sessionId || turn.key, unlock: turn.userInitiated }).catch(error => { console.error('agent browser unavailable:', error.message); return null; }),
+        browserEnv: await browserEnvironment({ bridge: agentBrowserEndpoints, dataDir: store.dataDir, sessionId: sessionId || turn.key, unlock: turn.userInitiated }).catch(error => { console.error('agent browser unavailable:', error.message); return null; }),
         browserInstructions: null,
         // ply_browser。内蔵ブラウザーを渡すターンだけ（下で入れる）
         browserRuntime: null,
@@ -5254,7 +5329,7 @@ async function endTurn(turn, emit, { record = true } = {}) {
       emitGlobal({ type: 'userMessage.dropped', sessionId: sent.sessionId, messageId: id });
     }
   }
-  agentBrowser?.endTurn(turn.info.sessionId || turn.key);
+  agentBrowserEndpoints?.endTurn(turn.info.sessionId || turn.key);
   // ロックの解放、止めた印・このターンの拒否の消去、main への後始末（押したままの入力を離し、オーバーレイを消す）
   if (computerLock.endTurn(turn.presentKey)) computerDriver?.turnEnded(turn.presentKey);
   notifyFree(turn.key);
@@ -5959,6 +6034,7 @@ wss.on("connection", (ws, req) => {
     kind: P.READY,
     protocolVersion: P.PROTOCOL_VERSION,
     version: APP_VERSION,
+    build: BUILD,
     homeDir: os.homedir(),
     resumedTurn: resumed,
     startedAt: SERVER_STARTED_AT,
@@ -5971,6 +6047,9 @@ wss.on("connection", (ws, req) => {
     // 送信予定の時刻をこの PC の時刻でも添えるため（見ている端末と時刻帯が違うとき。ADR 0103）
     hostTimeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
   }));
+  // エージェントのブラウザー（PC の Chrome）への接続の今の状態。ホストの PC の画面だけ（リモートの端末へは送らない）
+  if (local) hostScreens.add(ws);
+  if (chromeConnection && local) ws.send(JSON.stringify(chromeBrowserFrame(chromeConnection.state())));
   ws.on("close", () => {
     detach(ws);
     notifyPresence.clear(ws);
@@ -6524,10 +6603,17 @@ wss.on("connection", (ws, req) => {
           // hostName は添付の「ホストから <ホスト名>」の見出し（リモートの印の無いブラウザーで使う）
           // pcBrowser: この接続から PC の内蔵ブラウザーを見られるか（デスクトップ版で、リモートの接続のとき）
           return reply(true, { osActions: local, hostName: os.hostname(), pcBrowser: !local && !!screencastBridge?.ready,
+            // エージェントのブラウザー（PC の Chrome）への接続の入口。ホストの PC の画面だけ。Electron の無いホストは false、OS の層が使えなければ 'unsupported'
+            chromeBrowser: local && chromeConnection ? (chromeConnection.state().state === 'unsupported' ? 'unsupported' : 'available') : false,
             computerUse: computerUseCapability({ hasParentPort: Boolean(computerDriver), platform: computerDriver?.kind === 'fake' ? 'win32' : undefined, ready: computerDriver?.state() ?? null }) });
         // コンピューターの操作を止める（docs/computer-use.md「computerStop」）。ホストの OS を操作する命令ではなく、止める側なので、リモートの端末からも受ける（computer.stop）
         case "computerStop":
           return viaOp('computer.stop');
+        // エージェントのブラウザー（PC の Chrome）への接続。つなぐ・切る・前に出すはホストの PC の画面だけ（browser.chrome*。ops が断る）
+        case 'chromeStatus': return viaOp('browser.chromeStatus');
+        case 'chromeConnect': return viaOp('browser.chromeConnect');
+        case 'chromeDisconnect': return viaOp('browser.chromeDisconnect');
+        case 'chromeRaiseDialog': return viaOp('browser.chromeRaiseDialog');
         case "resolvePath": case "revealPath": case "openPath": {
           const hostAction = msg.command !== 'resolvePath';
           if (hostAction && !local) return reply(false, t('files.remoteOnly'));
@@ -6850,7 +6936,7 @@ async function readOnboarding() {
   catch { return { setupComplete: false }; }
 }
 
-process.parentPort?.on("message", async ({ data }) => {
+mainPort.on("message", async ({ data }) => {
   if (data?.type === 'wake') { await schedule.check(); await recoverLimitResumes().catch(() => {}); }
   if (data?.type === 'update-lock') {
     // 断るときは何が止めているかを返す。画面に出さないと、見た目に何も動いていないのに更新できない理由が分からない
@@ -6861,18 +6947,25 @@ process.parentPort?.on("message", async ({ data }) => {
       : switching.size || forking.size ? t('updateLock.switching')
       : null;
     const ok = updateGate.acquire(Boolean(reason));
-    process.parentPort.postMessage({ type: 'update-lock', id: data.id, ok, reason: ok ? null : reason || t('updateLock.other') });
+    mainPort.postMessage({ type: 'update-lock', id: data.id, ok, reason: ok ? null : reason || t('updateLock.other') });
   }
   if (data?.type === 'update-unlock') updateGate.release();
-  if (data?.type === "running") process.parentPort.postMessage({ type: "running", work: await runningWork() });
+  // main がこれから離れる（更新のためなど）。切れた後に作業が無いまま居続ける上限が決まる（core/orphan-guard.mjs）
+  if (data?.type === 'main-leaving') orphanGuard?.leaving(data.reason);
+  // 更新を取りやめた（インストーラーが起きなかった・失敗した）。main は居続けるので、猶予を数える状態と切断の上限を元に戻す
+  if (data?.type === 'main-leaving-cancel') orphanGuard?.leavingCancelled();
+  if (data?.type === "running") mainPort.postMessage({ type: "running", work: await runningWork() });
   // デスクトップの「中断して終了」（desktop/main.cjs の closeSafely）。全部を reason 付きで止める。
   // main は running の count が 0 になるのを待ってから終了する
   if (data?.type === 'abort') {
     const result = await abortSessions({ reason: data.reason }).catch(err => ({ error: String(err?.message ?? err) }));
-    process.parentPort.postMessage({ type: 'abort', id: data.id, ...result });
+    mainPort.postMessage({ type: 'abort', id: data.id, ...result });
   }
   if (data?.type === "shutdown") {
     void voiceHost.close();   // 通話の使用量の台帳を書き切る
+    // Chrome に許可の確認を残して終わらない（確認が出ていれば閉じる）。main の返事を待つので、長くても 2 秒まで
+    chromeRelay?.close();
+    if (chromeConnection) await Promise.race([chromeConnection.close(), new Promise(resolve => setTimeout(resolve, 2000))]).catch(() => {});
     try { finishShutdown(store.flushNow, () => runtime.turns.size > 0 || agentTasks.busy); }
     catch (e) {
       console.error('session store shutdown save failed:', e?.code ?? e?.message ?? e);
@@ -6881,20 +6974,53 @@ process.parentPort?.on("message", async ({ data }) => {
   }
 });
 
+// 名前付きパイプの main が居ないまま長く居続けない（utilityProcess は main と一緒に終わるので要らない）。作業が 0 件のまま上限を過ぎたら、shutdown と同じに終わる
+const orphanGuard = mainLink ? createOrphanGuard({
+  isBusy: async () => (await runningWork()).count > 0,
+  onExpire: () => {
+    try { finishShutdown(store.flushNow, () => false); }
+    catch (e) { console.error('session store shutdown save failed:', e?.code ?? e?.message ?? e); process.exit(1); }
+  },
+  log: line => console.log(`  [main-link] ${line}`),
+}) : null;
+mainPort.on('disconnect', () => orphanGuard?.disconnected());
+orphanGuard?.disconnected();   // 起こした main が最初につながる前に落ちても、居続けない（最初のつながりで connected になる）
+let readyMessage = null;
+mainAway.onStay(() => restartGrace());
+mainAway.onBack(({ first }) => {
+  // 付け直した main へ、言語を送り直す。居ない間に過ぎた予定（送信・上限の解除後の再開）は、wake と同じに確かめる（powerMonitor の resume は届かなかった）
+  mainPort.postMessage({ type: 'locale', locale: locale.lang });
+  if (!first) { void Promise.resolve(schedule.check()).catch(() => {}); void recoverLimitResumes().catch(() => {}); }
+  restartGrace();
+});
+mainPort.on('connect', () => {
+  orphanGuard?.connected();
+  if (readyMessage) mainPort.postMessage(readyMessage);
+  // 付いた main は常駐の状態を持っていない。同じ内容でも送り直す
+  residentLast = '';
+  void postResident();
+});
+
 async function announce() {
   const { port } = server.address();
   // CLI がつなぎ先を見つける control.json（ADR 0083）。権限 0600。終了時に pid が自分のときだけ消す。
   // 起動の案内（下の URL の行）を見て CLI や検査が動き出すので、その前に書き終える
-  await writeControlFile({ dataDir: store.dataDir, origin: localOrigin(), cliToken: CLI_TOKEN, startedAt: SERVER_STARTED_AT, appVersion: APP_VERSION, kind: process.parentPort ? 'desktop' : 'server' })
+  // main とのパイプは、control.json に名前を書く前に立てる（main-link.json の秘密も一緒に書く）
+  const link = await mainLink?.listen().catch(err => { console.error('  main とのパイプを立てられませんでした:', String(err?.message ?? err)); return null; });
+  await writeControlFile({ dataDir: store.dataDir, origin: localOrigin(), cliToken: CLI_TOKEN, startedAt: SERVER_STARTED_AT, appVersion: APP_VERSION, kind: mainPort.hosted ? 'desktop' : 'server',
+    ...(link ? { mainLink: link } : {}) })
     .catch((err) => console.error('  control.json を書けませんでした:', String(err?.message ?? err)));
-  process.parentPort?.postMessage({ type: "ready", port, token: TOKEN, locale: locale.lang });
+  // パイプの口は、main がつながるのが ready より後になりうる。つながるたびに最新の ready を送る
+  // appVersion・build・runtimeKey は、付け直した新しい main が版を比べて切り替える・前の版へ戻すのに使う（desktop/switch.cjs）
+  readyMessage = { type: "ready", port, token: TOKEN, locale: locale.lang, pid: process.pid, appVersion: APP_VERSION, build: BUILD, runtimeKey: process.env.AGENT_HOST_RUNTIME_KEY || null };
+  mainPort.postMessage(readyMessage);
   remote.start().catch(() => {});
   if (routingSettingsCache.enabled && ROUTING_USAGE_AUTO) routingUsage.start();
   // モデルの一覧を裏で引いておく。新しい会話・モデル選択が、CLI を起こす 10 秒ほどを待たない。
   // 作業場所は新しい会話の既定（ホーム）。取れなければ一覧の要求のときにまた引く（テストは ROUTING_USAGE_AUTO=off で起こさない）
   if (ROUTING_USAGE_AUTO) for (const b of listBackends()) if (b.warmModels && installation(b.id).installed) b.warmModels(os.homedir()).catch(() => {});
   // 起動直後の常駐の状態（リモートが無効でも送る。main はそれを見てトレイを出さない）
-  if (process.parentPort) Promise.all([residentPrefs.loaded, remote.status(), runningWork()])
+  if (mainPort.hosted) Promise.all([residentPrefs.loaded, remote.status(), runningWork()])
     .then(([, status, work]) => postResident({ status: withResident(status), work })).catch(() => {});
   console.log("");
   // 待ち受けがループバックか全アドレスなら、覚えやすい localhost で案内する（開く先は同じ）

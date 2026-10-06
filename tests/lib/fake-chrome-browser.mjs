@@ -1,0 +1,253 @@
+// 偽の Chrome の中身（tests/lib/fake-chrome.mjs が ws の接続ごとに serve する）。中継（core/chrome/relay.mjs）と agent-browser の本物が使う分だけの CDP を真似る。
+//   - 窓（windowId）とタブ（page のターゲット）。最初は利用者の窓 1 つに利用者のタブ 2 つ（URL・題は中継から漏れてはいけない値）
+//   - flatten のセッション（Target.attachToTarget）。イベントの順は実機に合わせる（targetInfoChanged → attachedToTarget → 応答）
+//   - Target.setDiscoverTargets・getTargets・createTarget（newWindow なら新しい窓、無ければ最後に使われた利用者の窓）・closeTarget・activateTarget
+//   - Fetch.enable したセッションがあるタブの移動は、Fetch.requestPaused で止まり continueRequest / failRequest を待つ（主フレームの Document だけ）
+//   - window.open（windowOpen）で開いたタブの最初の要求は止まらない（実機と同じ。served に残る）
+//   - ページはとても小さな型（題と、見出し・リンク・ボタンの並び）。Accessibility.getFullAXTree・DOM.getBoxModel・Input.dispatchMouseEvent で押せる
+// 受けたメソッドは calls（{ method, sessionId, params }）に、サーバーに届いた要求（移動）の URL は served に残す。
+import crypto from 'node:crypto';
+
+const hex = () => crypto.randomBytes(16).toString('hex').toUpperCase();
+const PNG_1X1 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
+const originOf = url => { try { const u = new URL(url); return ['http:', 'https:'].includes(u.protocol) ? u.origin : '://'; } catch { return '://'; } };
+
+export const USER_TABS = Object.freeze([
+  Object.freeze({ url: 'https://mail.example/inbox', title: 'Inbox — secret-user@example.com' }),
+  Object.freeze({ url: 'https://bank.example/account', title: 'Bank account 1234' }),
+]);
+
+export function createFakeBrowser({ product, calls, userTabs = USER_TABS } = {}) {
+  const windows = new Map();     // windowId -> { state }
+  const targets = new Map();     // targetId -> { targetId, type, url, title, windowId, openerId, browserContextId }
+  const sessions = new Map();    // sessionId -> { id, targetId, socket, fetch }
+  const discovering = new Set(); // socket
+  const pages = new Map();       // url -> { title, elements, redirect }
+  const pausedFetch = new Map(); // requestId -> resolve(decision)
+  const served = [];
+  const autoAttachCalls = [];
+  let windowSeq = 100, requestSeq = 0, contextSeq = 0;
+  let lastActive = null;
+
+  const send = (socket, message) => { if (socket.readyState === 1) socket.send(JSON.stringify(message)); };
+  const info = t => ({ targetId: t.targetId, type: t.type, title: t.title, url: t.url, attached: [...sessions.values()].some(s => s.targetId === t.targetId), canAccessOpener: false, ...(t.openerId ? { openerId: t.openerId } : {}), browserContextId: 'CTX-DEFAULT' });
+  const toDiscovering = (method, params) => { for (const socket of discovering) send(socket, { method, params }); };
+  const sessionsOf = t => [...sessions.values()].filter(s => s.targetId === t.targetId);
+  const emit = (t, method, params) => { for (const s of sessionsOf(t)) send(s.socket, { method, params, sessionId: s.id }); };
+  const pageFor = url => pages.get(url) ?? { title: url === 'about:blank' ? 'about:blank' : url.replace(/^https?:\/\//, ''), elements: [{ role: 'heading', name: url }] };
+
+  function newWindow(state = 'normal') { const id = ++windowSeq; windows.set(id, { state }); return id; }
+  function newTarget({ url = 'about:blank', title, windowId, openerId = null, type = 'page' }) {
+    const t = { targetId: hex(), type, url, title: title ?? (url === 'about:blank' ? '' : pageFor(url).title), windowId, openerId, browserContextId: 'CTX-DEFAULT' };
+    targets.set(t.targetId, t);
+    toDiscovering('Target.targetCreated', { targetInfo: info(t) });
+    return t;
+  }
+  function closeTarget(t) {
+    targets.delete(t.targetId);
+    for (const s of sessionsOf(t)) { sessions.delete(s.id); send(s.socket, { method: 'Target.detachedFromTarget', params: { sessionId: s.id, targetId: t.targetId } }); }
+    toDiscovering('Target.targetDestroyed', { targetId: t.targetId });
+    if (![...targets.values()].some(o => o.windowId === t.windowId)) windows.delete(t.windowId);
+  }
+
+  // 利用者の窓とタブ（ほかに Chrome の内部のターゲットも混ぜる。中継は page だけを見るはず）
+  const userWindow = newWindow();
+  lastActive = userWindow;
+  for (const tab of userTabs) newTarget({ url: tab.url, title: tab.title, windowId: userWindow });
+  newTarget({ url: 'chrome-extension://fake/background.js', title: 'Service Worker', windowId: null, type: 'service_worker' });
+
+  /** Fetch で止める（そのタブで Fetch.enable したセッションの順に聞く）。'continue' か 'fail' */
+  async function intercept(t, url, redirectedRequestId) {
+    for (const s of sessionsOf(t).filter(x => x.fetch)) {
+      const requestId = `interception-job-${++requestSeq}.0`;
+      const decision = await new Promise(resolve => {
+        pausedFetch.set(requestId, resolve);
+        send(s.socket, { method: 'Fetch.requestPaused', sessionId: s.id, params: { requestId, request: { url, method: 'GET', headers: {} }, frameId: t.targetId, resourceType: 'Document', ...(redirectedRequestId ? { redirectedRequestId } : {}) } });
+      });
+      if (decision === 'fail') return 'fail';
+    }
+    return 'continue';
+  }
+
+  /** 主フレームの移動。止められたら errorText を返す */
+  async function navigate(t, url) {
+    const loaderId = hex();
+    if (await intercept(t, url) === 'fail') {
+      emit(t, 'Page.frameStoppedLoading', { frameId: t.targetId });
+      return { frameId: t.targetId, loaderId, errorText: 'net::ERR_BLOCKED_BY_CLIENT' };
+    }
+    served.push(url);
+    let finalUrl = url;
+    const redirect = pages.get(url)?.redirect;
+    if (redirect) {
+      if (await intercept(t, redirect, 'redirect') === 'fail') {
+        emit(t, 'Page.frameStoppedLoading', { frameId: t.targetId });
+        return { frameId: t.targetId, loaderId, errorText: 'net::ERR_BLOCKED_BY_CLIENT' };
+      }
+      served.push(redirect);
+      finalUrl = redirect;
+    }
+    if (!targets.has(t.targetId)) return { frameId: t.targetId, loaderId, errorText: 'net::ERR_ABORTED' };
+    commit(t, finalUrl, loaderId);
+    return { frameId: t.targetId, loaderId };
+  }
+  function commit(t, url, loaderId = hex()) {
+    t.url = url; t.title = pageFor(url).title;
+    emit(t, 'Page.frameStartedLoading', { frameId: t.targetId });
+    emit(t, 'Runtime.executionContextsCleared', {});
+    emit(t, 'Page.frameNavigated', { frame: { id: t.targetId, loaderId, url, securityOrigin: originOf(url), mimeType: 'text/html' }, type: 'Navigation' });
+    toDiscovering('Target.targetInfoChanged', { targetInfo: info(t) });
+    emit(t, 'Runtime.executionContextCreated', { context: { id: ++contextSeq, origin: originOf(url), name: '', uniqueId: hex(), auxData: { isDefault: true, type: 'default', frameId: t.targetId } } });
+    emit(t, 'Page.domContentEventFired', { timestamp: Date.now() / 1000 });
+    emit(t, 'Page.loadEventFired', { timestamp: Date.now() / 1000 });
+    emit(t, 'Page.frameStoppedLoading', { frameId: t.targetId });
+  }
+
+  /** ページの window.open。同じ窓（popup なら新しい窓）に openerId 付きのタブを作り、最初の要求は止めずに出す（実機と同じ） */
+  function windowOpen(openerId, url, { popup = false } = {}) {
+    const opener = targets.get(openerId);
+    if (!opener) throw new Error('no opener');
+    const t = newTarget({ url: 'about:blank', title: '', windowId: popup ? newWindow() : opener.windowId, openerId });
+    setImmediate(() => {
+      if (!targets.has(t.targetId)) return;
+      served.push(url);
+      t.url = url; t.title = pageFor(url).title;
+      toDiscovering('Target.targetInfoChanged', { targetInfo: info(t) });
+    });
+    return t.targetId;
+  }
+
+  const box = i => { const y = 20 + 30 * i; return [8, y, 108, y, 108, y + 24, 8, y + 24]; };
+  function axTree(t) {
+    const spec = pageFor(t.url);
+    const nodes = [{ nodeId: '1', ignored: false, role: { type: 'internalRole', value: 'RootWebArea' }, name: { type: 'computedString', value: spec.title }, properties: [], childIds: spec.elements.map((_, i) => String(10 + i)), backendDOMNodeId: 1 }];
+    spec.elements.forEach((el, i) => nodes.push({ nodeId: String(10 + i), ignored: false, role: { type: 'role', value: el.role }, name: { type: 'computedString', value: el.name },
+      properties: el.role === 'heading' ? [{ name: 'level', value: { type: 'integer', value: 1 } }] : [], parentId: '1', childIds: [], backendDOMNodeId: 10 + i }));
+    return { nodes };
+  }
+  function click(t, x, y) {
+    const spec = pageFor(t.url);
+    const i = spec.elements.findIndex((_, n) => { const [x0, y0, x1, , , y2] = box(n); return x >= x0 && x <= x1 && y >= y0 && y <= y2; });
+    const el = spec.elements[i];
+    if (!el) return;
+    if (el.open) windowOpen(t.targetId, new URL(el.open.url, t.url).href, { popup: el.open.popup === true });
+    else if (el.href) navigate(t, new URL(el.href, t.url).href).catch(() => {});
+    else if (el.setTitle) { t.title = el.setTitle; toDiscovering('Target.targetInfoChanged', { targetInfo: info(t) }); }
+  }
+
+  function browserCommand(socket, method, params) {
+    switch (method) {
+      case 'Browser.getVersion': return { product, protocolVersion: '1.3', userAgent: 'fake', jsVersion: '1' };
+      case 'Target.setDiscoverTargets':
+        if (params.discover) { discovering.add(socket); for (const t of targets.values()) send(socket, { method: 'Target.targetCreated', params: { targetInfo: info(t) } }); }
+        else discovering.delete(socket);
+        return {};
+      case 'Target.getTargets': return { targetInfos: [...targets.values()].map(info) };
+      case 'Target.getTargetInfo': { const t = targets.get(params.targetId); if (!t) throw { code: -32602, message: 'No target with given id found' }; return { targetInfo: info(t) }; }
+      case 'Target.attachToTarget': {
+        const t = targets.get(params.targetId);
+        if (!t) throw { code: -32602, message: 'No target with given id found' };
+        const id = hex();
+        sessions.set(id, { id, targetId: t.targetId, socket, fetch: false, flatten: params.flatten === true });
+        toDiscovering('Target.targetInfoChanged', { targetInfo: info(t) });
+        send(socket, { method: 'Target.attachedToTarget', params: { sessionId: id, targetInfo: info(t), waitingForDebugger: false } });
+        return { sessionId: id };
+      }
+      case 'Target.detachFromTarget': {
+        const s = sessions.get(params.sessionId);
+        if (!s || s.socket !== socket) throw { code: -32602, message: 'No session with given id' };
+        sessions.delete(s.id);
+        send(socket, { method: 'Target.detachedFromTarget', params: { sessionId: s.id, targetId: s.targetId } });
+        return {};
+      }
+      case 'Target.setAutoAttach': autoAttachCalls.push(params); return {};
+      case 'Target.createTarget': {
+        const windowId = params.newWindow ? newWindow(params.background ? 'normal' : 'normal') : lastActive;
+        const t = newTarget({ url: 'about:blank', windowId });
+        if (params.url && params.url !== 'about:blank') setImmediate(() => { if (targets.has(t.targetId)) navigate(t, params.url).catch(() => {}); });
+        return { targetId: t.targetId };
+      }
+      case 'Target.closeTarget': { const t = targets.get(params.targetId); if (!t) throw { code: -32602, message: 'No target with given id found' }; closeTarget(t); return { success: true }; }
+      case 'Target.activateTarget': { const t = targets.get(params.targetId); if (!t) throw { code: -32602, message: 'No target with given id found' }; const w = windows.get(t.windowId); if (w) w.state = 'normal'; return {}; }
+      case 'Browser.getWindowForTarget': { const t = targets.get(params.targetId); if (!t || t.windowId == null) throw { code: -32000, message: 'No web contents in the target' }; return { windowId: t.windowId, bounds: { left: 0, top: 0, width: 1200, height: 800, windowState: windows.get(t.windowId)?.state ?? 'normal' } }; }
+      case 'Browser.setWindowBounds': { const w = windows.get(params.windowId); if (!w) throw { code: -32000, message: 'Browser window not found' }; if (params.bounds?.windowState) w.state = params.bounds.windowState; return {}; }
+      case 'Browser.getWindowBounds': { const w = windows.get(params.windowId); if (!w) throw { code: -32000, message: 'Browser window not found' }; return { bounds: { left: 0, top: 0, width: 1200, height: 800, windowState: w.state } }; }
+      case 'Browser.setContentsSize': return {};
+      case 'Browser.close': return {};
+      case 'Storage.getCookies': case 'Network.getAllCookies': return { cookies: [{ name: 'session', value: 'secret-cookie', domain: 'bank.example' }] };
+      default: throw { code: -32601, message: `'${method}' wasn't found` };
+    }
+  }
+
+  async function sessionCommand(socket, s, method, params) {
+    const t = targets.get(s.targetId);
+    if (!t) throw { code: -32602, message: 'Target closed' };
+    switch (method) {
+      case 'Runtime.enable': setImmediate(() => send(socket, { method: 'Runtime.executionContextCreated', sessionId: s.id, params: { context: { id: ++contextSeq, origin: originOf(t.url), name: '', uniqueId: hex(), auxData: { isDefault: true, type: 'default', frameId: t.targetId } } } })); return {};
+      case 'Runtime.evaluate': {
+        const expr = String(params.expression ?? '');
+        if (expr === '1') return { result: { type: 'number', value: 1, description: '1' } };
+        if (expr === 'location.href') return { result: { type: 'string', value: t.url } };
+        if (expr === 'document.title') return { result: { type: 'string', value: t.title } };
+        if (expr.includes('interactiveRoles')) return { result: { type: 'object', value: [] } };
+        return { result: { type: 'undefined' } };
+      }
+      case 'Runtime.callFunctionOn': return { result: { type: 'object', subtype: 'null', value: null } };
+      case 'Page.getFrameTree': return { frameTree: { frame: { id: t.targetId, loaderId: hex(), url: t.url, securityOrigin: originOf(t.url), mimeType: 'text/html' } } };
+      case 'Page.navigate': return navigate(t, params.url);
+      case 'Page.reload': return navigate(t, t.url).then(() => ({}));
+      case 'Page.captureScreenshot': return { data: PNG_1X1 };
+      case 'Accessibility.getFullAXTree': return axTree(t);
+      case 'DOM.getBoxModel': { const i = Number(params.backendNodeId) - 10; const q = box(i); return { model: { content: q, padding: q, border: q, margin: q, width: 100, height: 24 } }; }
+      case 'DOM.resolveNode': return { object: { type: 'object', subtype: 'node', className: 'HTMLElement', description: 'el', objectId: `obj-${params.backendNodeId}` } };
+      case 'Input.dispatchMouseEvent': if (params.type === 'mouseReleased') setImmediate(() => click(t, params.x, params.y)); return {};
+      case 'Fetch.enable': s.fetch = true; return {};
+      case 'Fetch.disable': s.fetch = false; return {};
+      case 'Fetch.continueRequest': { const r = pausedFetch.get(params.requestId); pausedFetch.delete(params.requestId); r?.('continue'); return {}; }
+      case 'Fetch.failRequest': { const r = pausedFetch.get(params.requestId); pausedFetch.delete(params.requestId); r?.('fail'); return {}; }
+      case 'Network.getCookies': return { cookies: [{ name: 'page', value: 'page-cookie', domain: new URL(t.url.startsWith('http') ? t.url : 'http://blank').hostname }] };
+      case 'Network.getAllCookies': case 'Storage.getCookies': return { cookies: [{ name: 'session', value: 'secret-cookie', domain: 'bank.example' }] };
+      default: return {};   // ほかの有効化（Page.enable など）は黙って通す
+    }
+  }
+
+  return {
+    /** ws の接続 1 本に CDP を答える */
+    serve(socket) {
+      socket.on('message', async raw => {
+        let message; try { message = JSON.parse(raw.toString()); } catch { return; }
+        calls.push({ method: message.method, sessionId: message.sessionId ?? null, params: message.params ?? {} });
+        try {
+          let result;
+          if (message.sessionId) {
+            const s = sessions.get(message.sessionId);
+            if (!s || s.socket !== socket) throw { code: -32001, message: 'Session with given id not found.' };
+            result = await sessionCommand(socket, s, message.method, message.params ?? {});
+          } else result = browserCommand(socket, message.method, message.params ?? {});
+          send(socket, { id: message.id, result, ...(message.sessionId ? { sessionId: message.sessionId } : {}) });
+        } catch (error) {
+          send(socket, { id: message.id, error: { code: error?.code ?? -32000, message: error?.message ?? String(error) }, ...(message.sessionId ? { sessionId: message.sessionId } : {}) });
+        }
+      });
+      socket.on('close', () => {
+        discovering.delete(socket);
+        for (const s of [...sessions.values()]) if (s.socket === socket) sessions.delete(s.id);
+        for (const [id, resolve] of [...pausedFetch]) { pausedFetch.delete(id); resolve('continue'); }
+      });
+    },
+    userWindow,
+    served,
+    autoAttachCalls,
+    windows: () => [...windows].map(([windowId, w]) => ({ windowId, state: w.state })),
+    targets: () => [...targets.values()].map(t => ({ ...t })),
+    sessions: () => [...sessions.values()].map(s => ({ id: s.id, targetId: s.targetId, fetch: s.fetch })),
+    pausedCount: () => pausedFetch.size,
+    setPage(url, spec) { pages.set(url, { elements: [], ...spec }); },
+    /** 利用者がタブを開いた（既定は利用者の窓。windowId を渡すとその窓に。エージェントの窓に人が開いた、など） */
+    openUserTab(url, title, windowId = userWindow) { return newTarget({ url, title, windowId }).targetId; },
+    windowOpen,
+    navigateUser(targetId, url) { const t = targets.get(targetId); return t ? navigate(t, url) : null; },
+    /** 利用者がタブを閉じた */
+    closeTab(targetId) { const t = targets.get(targetId); if (t) closeTarget(t); },
+  };
+}

@@ -55,8 +55,7 @@
     "opApproval": "{{agent}} is asking for your approval to run \"{{op}}\"",
     "computerAppJoin": "\", \"",
     "browserSite": "{{agent}} wants to use {{site}}",
-    "browserNotes": " ({{notes}})",
-    "browserAccountName": "signed in as {{account}}"
+    "browserSiteDenied": "Navigation to this site was not allowed."
   },
   "quota": {
     "unsupported": "This agent cannot report its usage limits.",

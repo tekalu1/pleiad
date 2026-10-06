@@ -246,11 +246,11 @@ function createComputerService({ post, win32: rawWin32 = null, reason = 'native'
 /**
  * desktop/main.cjs から 1 行でつなぐ。Windows 以外・koffi を読めないときは `computer-ready { supported: false, reason }` を返す。
  * @param worker utilityProcess（core）
- * @param {{ electron?: { screen?, nativeImage? }, app?, escape?, log?, win32? }} [options]
+ * @param {{ electron?: { screen?, nativeImage? }, app?, escape?, log?, win32?, reason? }} [options] win32 は main が 1 回だけ読んで共有する表（Chrome の OS の層と共有。読めなかった理由は reason）。無ければここで読む
  */
-function attachComputerService(worker, { electron = {}, app = null, escape = null, log = () => {}, win32: injected = null, ...rest } = {}) {
-  let win32 = injected, reason = 'native';
-  if (!win32) {
+function attachComputerService(worker, { electron = {}, app = null, escape = null, log = () => {}, win32: injected = null, reason: injectedReason = null, ...rest } = {}) {
+  let win32 = injected, reason = injectedReason ?? 'native';
+  if (!win32 && !injectedReason) {
     try { win32 = loadWin32(); } catch (error) { reason = error.reason ?? 'native'; log(`computer use unavailable: ${error.message}`); }
   }
   const service = createComputerService({ post: message => { try { worker.postMessage(message); } catch (error) { log(`postMessage failed: ${error.message}`); } },
@@ -258,7 +258,8 @@ function attachComputerService(worker, { electron = {}, app = null, escape = nul
   worker.on('message', message => { if (typeof message?.type === 'string' && message.type.startsWith('computer-')) service.handleMessage(message); });
   const screenEvents = ['display-added', 'display-removed', 'display-metrics-changed'];
   for (const event of screenEvents) electron.screen?.on(event, service.onDisplaysChanged);
-  worker.once?.('exit', () => service.releaseAll());
+  // on（once ではない）: 名前付きパイプの口（desktop/server-link.cjs）は切れるたびに 'exit' を出し、同じ包みにつなぎ直す（切り替えの S2・付け直し）。つなぎ直した後も見張りが残る
+  worker.on?.('exit', () => service.releaseAll());
   app?.on?.('will-quit', () => service.dispose());
   service.startWatchdog();
   return Object.assign(service, {

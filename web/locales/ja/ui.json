@@ -232,6 +232,45 @@
       },
       "saveFailed": "保存できませんでした: {{error}}",
       "agentOperation": { "title": "エージェントの操作", "bundled": "agent-browser {{version}} · 同梱" },
+      "agentBrowser": {
+        "title": "エージェントのブラウザー",
+        "name": "Chrome",
+        "description": "この PC の Chrome につなぎます。エージェントはまだ内蔵ブラウザーを使います。",
+        "unsupportedOs": "この OS ではまだ使えません",
+        "unsupportedEnv": "この環境ではまだ使えません",
+        "giveUp": "やめる",
+        "failed": "操作できませんでした: {{error}}",
+        "off": {
+          "status": "つながっていません",
+          "connect": "つなぐ",
+          "chromeClosed": "Chrome が閉じました。",
+          "revoked": "Chrome で許可が取り消されました。",
+          "protocol": "Chrome が想定外の応答をしました。"
+        },
+        "setup": {
+          "status": "Chrome の準備が要ります",
+          "step1": "次のアドレスをコピーします",
+          "step2": "Chrome のアドレス欄に貼り付けて開き、「Allow remote debugging for this browser instance」をオンにしてください",
+          "note": "オンになったら自動で進みます（押し直しは要りません）。この設定は 1 回だけで、Chrome を起動し直しても残ります。",
+          "copy": "アドレスをコピー",
+          "copied": "コピーしました",
+          "copyFailed": "コピーできませんでした。アドレスを選んでコピーしてください。"
+        },
+        "permission": {
+          "status": "Chrome に許可の確認が出ています",
+          "raise": "ダイアログを前に出す",
+          "note": "Chrome が確認を出し直しても、そのまま待ちます。「許可する」を押すまで続きます。"
+        },
+        "denied": {
+          "status": "Chrome で許可されませんでした",
+          "retry": "もう一度"
+        },
+        "connected": {
+          "status": "つながっています · {{browser}}",
+          "disconnect": "切る",
+          "note": "つないでいる間、Chrome の窓に「Chrome は自動テスト ソフトウェアによって制御されています」の帯が出ることがあります。"
+        }
+      },
       "confirm": {
         "title": "外部の読み込み",
         "scope": "可視化・HTML のプレビュー・内蔵ブラウザーで開いた PC の HTML ファイルで、「常に」許可したサイトのほかからの読み込み（画像・スクリプト・通信など）を止めます。Web のページには効きません。すべての画面で共通の設定です。",
@@ -2375,6 +2414,7 @@
       "reasonShort": {
         "escape": "止めた",
         "stop": "止めた",
+        "update": "更新で止めた",
         "locked": "ロックで止まった",
         "forbidden": "操作できない",
         "denied": "拒否した",
@@ -2384,6 +2424,7 @@
       "reason": {
         "escape": "あなたが Esc で止めました",
         "stop": "あなたが止めました",
+        "update": "Pleiad の更新のため止めました",
         "locked": "画面がロックされています。ロックを解除してから、もう一度頼んでください。",
         "forbidden": "「{{app}}」は操作できません。承認を出さずに断りました。",
         "denied": "「{{app}}」の操作は拒否されました。",
@@ -2710,7 +2751,50 @@
     "interruptTimeout": "30 秒待っても止まらない作業がありました。更新は準備済みのまま残ります。",
     "promptRunning_other": "実行中 {{count}} 件",
     "promptWaiting_other": "承認待ち {{count}} 件",
-    "promptJoin": "・"
+    "promptJoin": "・",
+    "handoverWork_other": "実行中の作業 {{count}} 件は止まりません。新しい版へは、作業が終わってから切り替わります。",
+    "handoverBrowser": "内蔵ブラウザーのタブは開き直されます。"
+  },
+  "switch": {
+    "waiting": "Pleiad {{target}} への切り替えを待っています",
+    "view": "作業を見る",
+    "collapse": "たたむ",
+    "interruptNow": "今すぐ中断して切り替える",
+    "interruptFailed": "止まらない作業があったため、中断をやめました。作業が終わるまで待ちます。",
+    "listTitle": "待っている作業",
+    "since": "{{time}} から",
+    "stoppersTitle": "切り替えで止まるもの",
+    "terminal": "端末",
+    "terminalNamed": "端末 · {{label}}",
+    "unknownSession": "バックグラウンドの作業",
+    "openSession": "この会話を開く",
+    "after": "中断した会話は {{mark}} で残り、「再開」で続けられます。承認待ちは却下扱いになります。",
+    "askTitle": "Pleiad {{target}} に切り替える準備ができました",
+    "askSub_other": "切り替えると {{count}} 件が止まります",
+    "stopAndSwitch": "止めて切り替え",
+    "later": "あとで",
+    "manualTitle": "Pleiad {{target}} に切り替えるには作業を中断します",
+    "manualSchema": "データの形式が変わるため、自動では切り替わりません",
+    "manualOther": "作業を続けたまま渡せない更新のため、自動では切り替わりません",
+    "interruptAndSwitch": "中断して切り替え",
+    "stopping": "Pleiad {{target}} · 作業を中断しています… {{done}} / {{total}}",
+    "switching": "Pleiad {{target}} に切り替えています…",
+    "progress": "切り替えの進み",
+    "failed": "新しい版を起動できなかったため、前の版（{{current}}）で動いています",
+    "failedMark": "失敗",
+    "retry": "もう一度試す",
+    "dismiss": "閉じる",
+    "stopped": "止めたもの: {{items}}",
+    "stoppedShell_other": "! のシェル {{count}} 件",
+    "stoppedAgent_other": "{{agent}} の端末 {{count}} 件",
+    "stoppedBackground_other": "裏の端末 {{count}} 件",
+    "pageWaiting": "新しい版への切り替えを待っています · {{target}}",
+    "pageAsking": "切り替えると止まるものがあります · {{target}}",
+    "pageManual": "作業を中断して切り替える更新です · {{target}}",
+    "pageSwitching": "{{target}} に切り替えています…",
+    "pageRunning": "動いているのは {{current}} です",
+    "pageFailed": "新しい版を起動できませんでした",
+    "pageFailedHint": "前の版（{{current}}）で動いています"
   },
   "outbox": {
     "status": {

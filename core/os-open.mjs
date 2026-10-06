@@ -10,6 +10,7 @@
 import { spawn } from 'node:child_process';
 import path from 'node:path';
 import { t } from './i18n.mjs';
+import { getMainPort } from './main-port.mjs';
 
 export const OPENABLE = /\.html?$/i;
 
@@ -87,7 +88,7 @@ export function bridgeError({ code, detail } = {}) {
 }
 
 /**
- * main プロセス（Electron）に頼む実行器。port は utilityProcess の process.parentPort。
+ * main プロセス（Electron）に頼む実行器。port は main への口（core/main-port.mjs）。
  * main 側（desktop/file-bridge.cjs）は { type:'os-open', id, action, path, directory } を受けて { type:'os-open', id, ok, code?, detail? } を返す。
  * 本体は画面の言語を知らないので、失敗は code（BRIDGE_ERRORS のキー）で返り、文言はここで辞書から引く
  */
@@ -113,8 +114,12 @@ export function parentPortOpener(port, { timeoutMs = 10_000 } = {}) {
  * 起動の形に合う実行器 (action, file, { directory }) => Promise。
  * AGENT_HOST_OS_OPEN=dry は起動せずに成功する（テスト用。実際に窓を開かない）
  */
-export function defaultOpener({ env = process.env, parentPort = process.parentPort } = {}) {
+export function defaultOpener({ env = process.env, mainPort = getMainPort(), launchImpl = launch } = {}) {
   if (env.AGENT_HOST_OS_OPEN === 'dry') return async () => {};
-  if (parentPort) return parentPortOpener(parentPort);
-  return (action, file, options) => launch(launchPlan(action, file, options));
+  const direct = (action, file, options) => launchImpl(launchPlan(action, file, options));
+  if (!mainPort.hosted) return direct;
+  const viaMain = parentPortOpener(mainPort);
+  // main が付け直す口（名前付きパイプ）で main が居ない間（更新）は、本体の shell に頼めないので OS に直に頼む
+  // （explorer.exe などをサーバーが起こす。範囲の判定は呼び出し側が済ませている。docs/zero-downtime-update/design.md §7.2）
+  return mainPort.resumable ? (action, file, options) => (mainPort.connected ? viaMain(action, file, options) : direct(action, file, options)) : viaMain;
 }

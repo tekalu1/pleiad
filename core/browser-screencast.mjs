@@ -5,6 +5,8 @@
 // フレームは Chromium が変化のあったときだけ出し、ack を返すまで次を出さない。ack は
 // 「見ている端末がみな受け取った（または ackTimeout が過ぎた）」かつ「前のフレームから minInterval が過ぎた」ときに返す。
 // 端末の受け取りを待つので、中継の遅い回線では自然に頻度が下がる。
+// main が居なくなった（更新）ときは、ページ（内蔵ブラウザーのタブ）ごと消えるので、見ている端末へ ended('away') を送って畳む
+// （待っていた依頼は失敗にし、新しい main の browser-screencast-ready まで ready は false。docs/zero-downtime-update/design.md §7.2）。
 
 export const QUALITY = {
   auto: { quality: 55, minInterval: 200, maxScale: 2 },   // 最大 5 fps
@@ -15,7 +17,7 @@ export function parentPortScreencast(port, { timeoutMs = 15_000 } = {}) {
   if (!port) return null;
   const pending = new Map();
   let next = 0, ready = false;
-  const listeners = { frame: new Set(), state: new Set(), ended: new Set() };
+  const listeners = { frame: new Set(), state: new Set(), ended: new Set(), away: new Set() };
   port.on('message', event => {
     const message = event?.data ?? event;
     switch (message?.type) {
@@ -31,6 +33,12 @@ export function parentPortScreencast(port, { timeoutMs = 15_000 } = {}) {
       }
     }
   });
+  // 名前付きパイプの口（main が付け直す）で main が切れた。見ている端末の画は戻らないので、依頼を落とし、ready を下げて、畳ませる
+  port.on('disconnect', () => {
+    ready = false;
+    for (const [id, item] of [...pending]) { pending.delete(id); clearTimeout(item.timer); item.reject(new Error('main is away')); }
+    for (const fn of listeners.away) fn();
+  });
   const on = kind => fn => { listeners[kind].add(fn); return () => listeners[kind].delete(fn); };
   return {
     get ready() { return ready; },
@@ -43,7 +51,7 @@ export function parentPortScreencast(port, { timeoutMs = 15_000 } = {}) {
       });
     },
     ack(sessionId, frameId) { port.postMessage({ type: 'browser-screencast-ack', sessionId, frameId }); },
-    onFrame: on('frame'), onState: on('state'), onEnded: on('ended'),
+    onFrame: on('frame'), onState: on('state'), onEnded: on('ended'), onAway: on('away'),
   };
 }
 
@@ -128,6 +136,14 @@ export function createScreencastHub({ bridge, ackTimeout = 3000, now = () => Dat
     if (!entry) return;
     drop(sessionId);
     for (const client of entry.clients.keys()) deliver(client, { kind: 'screencast', type: 'ended', sessionId, reason });
+  });
+  // main が居なくなった（更新）: 見ている端末へ終わりを知らせ、全部畳む。戻った main の前の続きは無い（タブの中身は一度切れる）
+  bridge.onAway?.(() => {
+    for (const sessionId of [...sessions.keys()]) {
+      const entry = entryOf(sessionId);
+      drop(sessionId);
+      for (const client of entry.clients.keys()) deliver(client, { kind: 'screencast', type: 'ended', sessionId, reason: 'away' });
+    }
   });
 
   /** 次のフレームを許す（Chromium へ ack）時を決める */

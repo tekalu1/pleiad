@@ -23,6 +23,7 @@ import { isSearchShortcut } from './session-find.mjs';
 import { captureViewState, restoreViewState } from './view-state.mjs';
 setupCodeCopy();
 import { setupUpdates } from './updates.mjs';
+import { setupSwitchNotice } from './switch-notice.mjs';
 import { setupCliSetup } from './cli-setup.mjs';
 import { setupRemoteBadge, remoteInfo } from './remote-badge.mjs';
 import { setupUsage, createUsageSource } from './usage.mjs';
@@ -90,7 +91,7 @@ import { createSessionLoads } from "./session-stream.mjs";
 const sessionLoads = createSessionLoads();
 import { createReadCompletions } from "./unread.mjs";
 import { isInterrupted, interruptUnread, interruptReadPoint, interruptLineText, reasonOf, stopMark, pausedCount, resumeLabel,
-  resumeNoteText, resumeVisible, updateInterrupted, limitResumeState, limitLineNote, resumeShortLabel, LIMIT_GRACE_MS } from './interrupt.mjs';
+  resumeNoteText, resumeVisible, updateInterrupted, limitResumeState, limitLineNote, resumeShortLabel, LIMIT_GRACE_MS, versionReload } from './interrupt.mjs';
 import { setupContext } from './context.mjs';
 import { setupSessionContext, chipText } from './session-context.mjs';
 import { budgetOf } from './instruction-amount.mjs';
@@ -202,6 +203,8 @@ const readCompletions = createReadCompletions({ storage: readStorage, send: read
 const displayedCompletions = new Map();
 // 更新の知らせ（web/updates.mjs）。実行中の件数が変わったら脇の知らせの一行を描き直す。setupUpdates が下で入れる
 let updatesUi = null;
+// 更新の後、新しい版への切り替えを待っている間の知らせ（web/switch-notice.mjs）。main が渡す状態を描く。下で入れる
+let switchUi = null;
 
 const token = new URL(location.href).searchParams.get("token") ?? "";
 const $ = (id) => document.getElementById(id);
@@ -265,6 +268,8 @@ let queuedSend = null;
 
 const NL = String.fromCharCode(10);
 const PROTOCOL = 3;
+// この画面を配ったサーバーの版（サーバーが index.html に埋める。web/interrupt.mjs の versionReload）
+const SERVED_BUILD = document.querySelector('meta[name="pleiad-build"]')?.content ?? "";
 // この PC の通知（設定 › 通知 › この PC）。切った種類と、いま見ている会話は出さない（ADR 0086）
 let notifyPc = { done: true, reply: true, failed: true };
 // スマホのアプリの殻が背面に回っている間は、画面が可視でも見ていない（殻が plyremote:stop / plyremote:start を投げる）
@@ -2928,6 +2933,8 @@ function onEvent(ev, replay = false) {
   if (ev.type === 'agentTaskChanged') { if (taskCards.rows.has(ev.taskId)) fetchTaskCards([ev.taskId]).catch(() => {}); return; }
   // コンピューターの操作の状態（別の会話が操作中で待っている）。全部の会話の分が届くので、開いている会話の分だけ行に出す
   if (ev.type === 'computer.state') { onComputerState(ev); return; }
+  // エージェントのブラウザー（PC の Chrome）への接続の状態。ホストの画面だけに届く（設定 › ブラウザー）
+  if (ev.type === 'chromeBrowser') { browserSettings.chromeEvent(ev); return; }
   if (!isMine(ev)) {
     // 一覧に効くものだけは取り込む（画面には出さない）。セッションに紐づかないもの（statusIcon 等）はここへ来ない
     if (["status", "group", "title", "fork", "mode", "model", "cwd", "backend", "nextSettings"].includes(ev.type)) {
@@ -3316,6 +3323,7 @@ function applyRunning(work) {
   paintSettingsNotice();
   if (changed) { renderSessions(); refreshWorktree().catch(() => {}); }
   updatesUi?.workChanged();
+  switchUi?.refresh();
   // バックグラウンドはこの会話の分だけ稼働表示に出す。他所の分は一覧の行に付く
   syncWorkEntry();
   restorePastSubagents(state.current);
@@ -5868,6 +5876,18 @@ function paintLocale() {
 }
 
 /** サーバーから届いた言語を受ける。読み直すなら true */
+/** 版の違うサーバーにつながったら、入力欄の下書きを保存してから読み直す。読み直すなら true（docs/zero-downtime-update/design.md §8） */
+function reloadForVersion(ready) {
+  let done = null;
+  try { done = sessionStorage.getItem("ply-version-reload"); } catch {}
+  const key = versionReload(SERVED_BUILD, ready, done);
+  if (!key) return false;
+  // 印を残せない（保存が禁止されている）と、読み直しを繰り返しうるので読み直さない
+  try { sessionStorage.setItem("ply-version-reload", key); } catch { return false; }
+  Promise.race([saveDraft().catch(() => {}), new Promise((resolve) => setTimeout(resolve, 3000))]).finally(() => location.reload());
+  return true;
+}
+
 function applyLocale(info) {
   if (!info || !["ja", "en"].includes(info.lang)) return false;
   state.locale = { setting: info.setting ?? "auto", lang: info.lang };
@@ -6185,7 +6205,7 @@ const notificationInbox = setupNotificationInbox({
 });
 // External resource confirmation is available on every screen.
 const computerSettings = setupComputerSettings({ cmd: (command, args) => cmd(command, args), getPrefs: () => state.prefs, getHostCaps: () => state.hostCaps });
-const browserSettings = setupBrowserSettings({ available: !!browserPanel, cmd: (command, args) => cmd(command, args), getPrefs: () => state.prefs, getAgentLabel: labelOf });
+const browserSettings = setupBrowserSettings({ available: !!browserPanel, cmd: (command, args) => cmd(command, args), getPrefs: () => state.prefs, getAgentLabel: labelOf, getHostCaps: () => state.hostCaps });
 // 通話モードの差し込み口（Chats の会話）。契約は web/voice/index.mjs の冒頭。入力欄・頭・メインの面へは、ここの 1 か所だけで繋ぐ
 const voiceWraps = new WeakMap();
 voiceUi.mount({
@@ -8075,6 +8095,8 @@ function connect() {
         sys(html.t("app.protocolUnsupported", { version: m.protocolVersion }));
         return ws.close();
       }
+      // 画面を配ったのと違う版のサーバーにつながった（無停止の更新の切り替え）。下書きを保存して 1 回だけ読み直す
+      if (reloadForVersion(m)) return;
       if (m.homeDir) state.homeDir = m.homeDir;
       // サーバーの起動時刻。これより前の更新による中断だけを「更新の後」の一行に数える（syncResumeStrip）
       state.serverStartedAt = Number.isFinite(m.startedAt) ? m.startedAt : null;
@@ -8095,6 +8117,8 @@ function connect() {
       cmd("hostCapabilities").then((c) => {
         state.hostCaps = c ?? null;
         computerSettings.paint();
+        // エージェントのブラウザー（PC の Chrome）への接続の入口。使える環境なら今の状態を取る（設定 › ブラウザー）
+        browserSettings.hostCapsChanged();
         state.osActions = c?.osActions === true && !window.plyRemote;
         filePreview.osChanged();
         syncAttachButton();
@@ -8384,7 +8408,17 @@ const onboarding = setupOnboarding({ cmd, refreshAuth, getAuth: () => state.auth
 // 実行中でも更新できる（ADR 0036）。確認の段で止まる作業を並べ、「中断して更新」で全部を reason update で中断してから保存へ進む。
 // 下の flush の count > 0 の断りは、中断が済んだ後の安全網（サーバーの更新ロックも残る）
 const cliSetup = setupCliSetup({ cmd });
+switchUi = setupSwitchNotice({
+  sessionName: (id) => rowLabel(state.sessions.find(s => s.id === id) ?? {}),
+  agentName: (id) => (id ? labelOf(id) : ''),
+  // 設定のページの一覧から会話を開くときは、設定を閉じてから
+  openSession: (id) => { onboarding.close(); select(id); },
+  onChange: () => updatesUi?.refresh(),
+});
 updatesUi = setupUpdates({ page: onboarding.page, open: onboarding.open, lock: onboarding.lock, cmd,
+  switchUi,
+  // 無停止の更新の確認の段: 内蔵ブラウザーのタブを開いている・コンピューターの操作中なら、開き直しの注意を出す
+  handoverNotes: () => ({ browser: (browserPanel?.state.tabs.length ?? 0) > 0 || state.computerStates.size > 0 }),
   work: () => state.work,
   sessionName: (id) => rowLabel(state.sessions.find(s => s.id === id) ?? {}),
   agentName: (id) => (id ? labelOf(id) : ''),

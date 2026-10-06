@@ -218,6 +218,15 @@ export function createComputerLock({ waitMs = LOCK_WAIT_MS, now = () => Date.now
       for (const x of targets) { x.stopped ??= { reason: 'escape', at: now() }; wake(x); }
       return targets.length > 0;
     },
+    /**
+     * main が居なくなった（更新）。持ち主・貸し借りでつながる全部・待っているターンに印を付ける。Esc と違い誰かのキーではなく、
+     * ロックは放さず（ターンの終わりで放す）、印だけを付ける。戻り: 印を付けたターンの数
+     */
+    stopAll(reason = 'update') {
+      const targets = [...new Set([...lenders, ...(holder ? [holder] : []), ...queue])].filter(x => !x.ended);
+      for (const x of targets) { x.stopped ??= { reason, at: now() }; wake(x); }
+      return targets.length;
+    },
     /** 今 running か waiting の会話の分（接続し直した画面に送り直す） */
     snapshot() {
       const out = [];

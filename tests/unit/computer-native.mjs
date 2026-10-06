@@ -62,6 +62,9 @@ function fakeWin32(over = {}) {
     captureRect: async rect => ({ width: rect.width, height: rect.height, bgra: Buffer.alloc(rect.width * rect.height * 4) }),
     shellOpen: async () => ({ ok: true, code: 33 }),
     activate: () => true,
+    // Chrome の OS の層（desktop/chrome-os）が使う表の関数（tests/unit/chrome-os.mjs が状態つきの偽物で動かす）
+    setForeground: () => true, showWindow: () => true, bringToTop: () => true, windowThread: () => 0, currentThread: () => 1,
+    attachThreadInput: () => true, ownerOf: () => 0, dpiForWindow: () => 96, postMessage: () => true,
     ...over,
   };
   return w;
@@ -406,12 +409,25 @@ export default async function (t) {
     t.ok('Per-Monitor（V1 でも）なら包まない', withPerMonitorDpi(same) === same);
   }
 
+  // ===== 名前付きパイプの口は切れるたびに 'exit' を出す。つなぎ直した包みの次の切断でも後始末が走る（1-6 の切り替えの S2・付け直し）=====
+  {
+    const { attachComputerService } = require('../../desktop/computer/service.cjs');
+    const { EventEmitter } = require('node:events');
+    const worker = new EventEmitter();
+    worker.postMessage = () => {};
+    const svc = attachComputerService(worker, { win32: fakeWin32() });
+    t.ok('attach: exit の見張りを付ける', worker.listenerCount('exit') === 1);
+    worker.emit('exit', 0);
+    t.ok('attach: 1 回目の exit で見張りが消えない（once ではない）', worker.listenerCount('exit') === 1);
+    svc.detach();
+  }
+
   // ===== main.cjs の配線（読んで確かめる。Electron は起こさない）=====
   {
     const fs = require('node:fs');
     const main = fs.readFileSync(new URL('../../desktop/main.cjs', import.meta.url), 'utf8');
-    t.ok('main.cjs: service を worker につなぎ、Esc の登録の解除はオーバーレイの suspendEscape へ渡す', /attachComputerService\(worker,[\s\S]*?escape: \{ suspend: \(\) => computerOverlay\?\.suspendEscape\(\)/.test(main));
-    t.ok('main.cjs: オーバーレイが Esc を拾ったら service.escape（computer-escape はオーバーレイが送る）', /attachComputerOverlay\(worker, \{ onEscape: owner => computerService\?\.escape\(\{ owner, notify: false \}\) \}\)/.test(main));
+    t.ok('main.cjs: service を worker の message の包み（messages）につなぎ、Esc の登録の解除はオーバーレイの suspendEscape へ渡す', /attachComputerService\(messages,[\s\S]*?escape: \{ suspend: \(\) => computerOverlay\?\.suspendEscape\(\)/.test(main));
+    t.ok('main.cjs: オーバーレイが Esc を拾ったら service.escape（computer-escape はオーバーレイが送る）', /attachComputerOverlay\(messages, \{ onEscape: owner => computerService\?\.escape\(\{ owner, notify: false \}\) \}\)/.test(main));
   }
 
   // ===== オーバーレイとつないだ Esc =====

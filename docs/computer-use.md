@@ -23,9 +23,9 @@ Windows の arm64 は実機で未確認。ワークフローで arm64 の koffi 
  エージェント（Claude SDK / codex app-server / agy）
         │  MCP（HTTP。agy だけ stdio の中継を挟む）
         ▼
- core（utilityProcess）── core/computer-bridge.mjs と core/computer-use/*
+ core（サーバー）── core/computer-bridge.mjs と core/computer-use/*
         │                  MCP の面・方針（承認・禁止）・ロック・止めた印・スクショの保存
-        │  parentPort（computer-* のメッセージ。下の「core と main」）
+        │  main への口（computer-* のメッセージ。下の「core と main」）
         ▼
  Electron の main ─── desktop/computer/*.cjs … koffi で Win32（撮影・入力・アプリの特定・入力デスクトップ）
         │              desktop/computer-overlay.cjs … オーバーレイの窓（ディスプレイごと）と Esc
@@ -46,9 +46,11 @@ Windows の arm64 は実機で未確認。ワークフローで arm64 の koffi 
 | E 設定 | `web/` の設定の節、`core/store.mjs`、`setPref` | prefs の `computerUse`、`hostCapabilities.computerUse` |
 | F 注入と正規化 | `core/backends/*`、`core/agy-context-relay.mjs`、指示文 | `capabilities.computerUse`、`runArgs.computerRuntime`、正規化（`computerDisplay`） |
 
-### core と main（parentPort）
+### core と main（main への口）
 
-`agent-browser-*` と同じく `{ type, … }` の JSON を `parentPort.postMessage` で送る。画像は `Uint8Array`（構造化複製で通る）。座標はすべて**物理画素の仮想デスクトップ座標**（左上のモニターが負になりうる）。DIP に直すのはオーバーレイに描くときの main だけ。
+`agent-browser-*` と同じく `{ type, … }` の JSON を `parentPort.postMessage` で送る（core は `process.parentPort` を直に触らず、`core/main-port.mjs` の「main への口」を通す。口は、`utilityProcess` のサーバー（`AGENT_HOST_HANDOVER=off`・開発）では parentPort をそのまま包んだもの、パッケージ版の既定（無停止の更新）では名前付きパイプ（`core/main-link.mjs`。型は同じで、`Uint8Array` は `{ $bin: base64 }` に包んで運ぶ））。画像は `Uint8Array`（構造化複製で通る）。座標はすべて**物理画素の仮想デスクトップ座標**（左上のモニターが負になりうる）。DIP に直すのはオーバーレイに描くときの main だけ。
+
+**main が居ない間**（更新で main が入れ替わる間・main が落ちた間。パイプの口だけ。無停止の更新 段階 1）: core は main の切断を Esc と同じに扱い、使用を止める（持ち主のロックを解き、進行中の呼び出しは `ComputerError('failed', …)` で返る）。ツールには「Pleiad の更新中のため止めました」を返し、ターンは止めない（`computer.state` は `stopped`・reason `update`）。戻った main には止めたことを送り直さず、次の呼び出しで承認からやり直す。`computer-ready-request` は main がつながるたびに送り直す（パイプでは main が後からつながるので、起動時の 1 回では捨てられる）。main の `releaseAll`・オーバーレイの `hideAll` は、つながりが切れるたび（`exit`）に走る。
 
 `owner` は core が決めるロックの持ち主の印（ターンごとに一意の文字列）。main は中身を解釈しない。
 
@@ -132,7 +134,7 @@ A が作った土台。`desktop/main.cjs` は `attachComputerService(worker, { e
 
 | ファイル | 持ち物 |
 |---|---|
-| `win32.cjs` | koffi の宣言。**koffi を知っているのはここだけ**。テストは同じ形の偽の表を渡す（`tests/unit/computer-native.mjs`）。koffi が読めない・Windows でないときは `loadWin32()` が `reason`（`native` / `platform`）付きで投げ、service は `computer-ready { supported: false, reason }` を返す |
+| `win32.cjs` | koffi の宣言。**koffi を知っているのはここだけ**。テストは同じ形の偽の表を渡す（`tests/unit/computer-native.mjs`）。koffi が読めない・Windows でないときは `loadWin32()` が `reason`（`native` / `platform`）付きで投げ、service は `computer-ready { supported: false, reason }` を返す。koffi を読む場所は 1 つのままで、`desktop/main.cjs` が `loadWin32()` を 1 回だけ呼び、コンピューターの操作（`attachComputerService` の `win32`・`reason`）と Chrome への接続の OS の層（`desktop/chrome-os/`。[内蔵ブラウザー](inapp-browser.md#os-ごとの層)）に同じ表を渡す。Chrome の確認の窓を扱うために、`setForeground`・`showWindow`・`bringToTop`・`windowThread`・`currentThread`・`attachThreadInput`・`ownerOf`・`dpiForWindow`・`postMessage`（`AttachThreadInput`・`BringWindowToTop`・`PostMessageW`・`GetDpiForWindow`・`GetCurrentThreadId` など）を表に足した |
 | `displays.cjs` | モニターの一覧。主モニターが `index` 1、残りは左から右・上から下。`id` は GDI のデバイス名（`\\.\DISPLAY1`）。`scale` は DPI / 96 |
 | `capture.cjs` | BitBlt（CAPTUREBLT）→ alpha を 255 にそろえる → `nativeImage.createFromBitmap`（BGRA のまま渡せる。実測）→ `resize`（best）→ `toJPEG`。縮小は切り捨て（1920×1080 → 1460×821） |
 | `input.cjs` + `keymap.cjs` | SendInput。押したままのキー・ボタンを覚え、`releaseAll` で押したものだけを離す。座標の絶対値は `ceil((x - 原点) * 65536 / 幅)`（Windows が戻す `floor(abs * 幅 / 65536)` が元の画素になる） |
