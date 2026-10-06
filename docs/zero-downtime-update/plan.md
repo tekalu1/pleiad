@@ -289,6 +289,21 @@ design.md §5.1・§6.1・§8。
 - 起動時の後片付けとぶつかる所（design.md §5.4）を、付け直すターンで外す
 - 実行中のスナップショットを再生で作る（再生は uuid で冪等。ack は「アプリのループで処理し終えた最後の行」）
 
+**仕分けの表・切り目・段（2026-10-06。案）**: [stage2-server-state.md](stage2-server-state.md)。表は 144 行（保存済み 17・札 45・再生 20・捨てる 62）。危ない所（§3）の上位は、Claude の SDK の `Query` に乗るコールバック（2c の作り直しで、hooks の登録を前と同じにする材料を札に置く）・委譲の子を待つ `agentTasks` の `execute` の鎖（後半を付け直しから呼ぶ）・5 か所に散った途中送信の「渡った」合図の控え。起動時の後片付けで外す所は 15 か所、旧サーバーで止める所は 6 か所（§5。design.md §5.4 の 4 項目に足した）。2b は次の段に分ける（順序 **2b-1 → (2b-2 ‖ 2b-3) → 2b-4 → [2a] → 2b-5 → 2b-6 → 2b-7**。2b-1〜2b-4 は保持役が無くても単独で取り込め、挙動を変えない）:
+
+| 段 | 中身 | 規模 |
+|---|---|---|
+| 2b-1 | `runTurnInternal` を `prepareTurn`・`beginTurn`・`launchTurn`・`driveTurn`（出来事を受けて `endTurn` で締める）・`releaseTurn` に分ける。閉包の値を `ctx` に移す。`endTurn` に 1 回だけの印 | M |
+| 2b-2 | 札の形（`core/turn-card.mjs`。純関数・版つき・秘密の欄を分ける・途中送信の控えを 1 つの欄に） | S |
+| 2b-3 | 会話の MCP の口（ply_agents・ply_computer・ply_browser・ply_control・ply_context）を同じトークンで開き直す `open({ token })` | S |
+| 2b-4 | 付け直しの入口 `adoptTurn(card, source)`・`makeEmit` の再生の道・起動の順序と後片付けの除外・`backend.adoptTurn` の口。元は既定で空。テストは「終わっていたターン」の札と記録から | M |
+| 2b-5 | fake の `adoptTurn`（台本を別プロセスの偽の CLI で走らせ、保持役の子に載せる） | M |
+| 2b-6 | スナップショットと承認を再生で作る（ack・uuid の冪等・承認のカードの id を決まった値に・中断の送り直し・ポートが取れないとき） | M |
+| 2b-7 | 途中送信と委譲の付け直し（`liveNotices`・`liveInstructions`・`agentTasks` の `steers`、`execute` の後半を `agentTasks.adopt` で） | M |
+
+- テストは fake の「途中で引き継ぐ」台本（準備中・承認待ち・ツールの実行中・渡った合図の前・裏の作業の待ち・委譲の子・中断の最中・終わった直後）で、`turnEnd`・`completedAt`・使用量・完了の知らせが 1 回だけであることを数える（stage2-server-state.md §6.1）。2d の前はサーバー A を強制終了して B を起こす形（2e と同じ）で引き継ぐ
+- bot の会話・圧縮のターンは 2b では付け直さない（先送りか中断）
+
 ### 2c Claude を保持役に載せる（M〜L）
 
 - `spawnClaudeCodeProcess` で保持役へ。偽の `SpawnedProcess`（`write`・`end`・`kill` を保持役に写し、`detach` の後は転送しない）。**`spawn` / `attach` は SDK の最初の stdin の書き込みより前に送る**
