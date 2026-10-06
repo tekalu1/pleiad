@@ -418,7 +418,8 @@ export default async function (t) {
       port.say({ type: 'os-open', id: port.take('os-open')[0].id, ok: true });
       await viaMain;
       port.disconnect();
-      await open('reveal', 'C:\\work\\a.txt');
+      // 起動する内容は OS ごとに違う（Linux は xdg-open）。Windows の分岐は platform を渡して見る
+      await open('reveal', 'C:\\work\\a.txt', { platform: 'win32' });
       t.ok('main が居ない間は OS に直に頼む（explorer.exe を絶対パスで）', launched.length === 1 && /explorer\.exe$/i.test(launched[0].command) && port.take('os-open').length === 1);
       const legacy = parentPort();
       const legacyOpen = defaultOpener({ env: {}, mainPort: createMainPort({ parentPort: legacy }), launchImpl: async () => { throw new Error('使わない'); } });
