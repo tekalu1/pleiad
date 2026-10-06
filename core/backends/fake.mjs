@@ -160,6 +160,16 @@ function nextPulseAnswer() {
   return typeof answer === 'string' ? answer : JSON.stringify(answer);
 }
 
+/** 通話の確認用の返事（環境変数 AGENT_HOST_FAKE_VOICE_REPLY）。本文が when と一致したら steps: の台本にして返す。無ければ null */
+function voiceReplyFor(text) {
+  const file = process.env.AGENT_HOST_FAKE_VOICE_REPLY;
+  if (!file) return null;
+  try {
+    const spec = JSON.parse(fs.readFileSync(file, "utf8"));
+    return String(text).trim() === spec.when ? `steps:${JSON.stringify({ steps: spec.steps })}` : null;
+  } catch { return null; }
+}
+
 // bot の会話の user の行の先頭に付く包み（core/system-messages.mjs の LEADING_TAGS と同じ）。台本の接頭辞はこれを外してから判定する。
 // <pleiad-channel> は中身が発言なので、@名前 の呼びかけを除いて台本として読む（"@Owl echo:やった"）。記憶・スレッドの履歴・中断の文は台本ではない
 const LEADING_WRAPPER = /^\s*<(pleiad-interruption|pleiad-memory-core|pleiad-bot-recent|pleiad-turn-context|pleiad-inner|pleiad-channel-thread|pleiad-channel)(?=[\s>])[^>]*>([\s\S]*?)<\/\1>\s*/;
@@ -430,7 +440,8 @@ export const backend = {
     if (!scriptOf(prompt).startsWith("silent:")) onPromptDelivered?.();
     emit({ type: "activity", state: "thinking" });
 
-    const text = scriptOf(prompt);
+    // AGENT_HOST_FAKE_VOICE_REPLY=<JSON ファイル>: { when, steps } の when と同じ本文の発言には steps の台本で返す（通話の確認用。声で話した言葉は台本の接頭辞を持てないため。docs/voice-call.md）
+    const text = voiceReplyFor(scriptOf(prompt)) ?? scriptOf(prompt);
     if (text.startsWith('limit ')) {
       const raw = text.slice(6).trim();
       const resetsAt = /^\d+$/.test(raw) ? Number(raw) : Date.parse(raw);

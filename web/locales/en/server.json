@@ -1132,5 +1132,15 @@
     "shellRun": "Runs a command in the shell of the conversation \"{{title}}\" ({{cwd}}).",
     "switchBackend": "Switches the agent of the conversation \"{{title}}\" to {{backend}}. The approval mode becomes the first mode of that agent.",
     "everywhere": "every place"
+  },
+  "voice": {
+    "skip": {
+      "code": "The code is on the screen",
+      "table": "The table is on the screen",
+      "log": "The log is on the screen"
+    },
+    "key": {
+      "invalid": "That does not look like an OpenRouter key (empty, too short, or contains whitespace)"
+    }
   }
 }

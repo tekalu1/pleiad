@@ -150,6 +150,7 @@ export default async function (t) {
       authStatus: async () => ({ backend: 'x', status: { supported: true, installed: true, loggedIn: true, account: EMAIL, detail: 'ChatGPT / plus', path: MARKER, ...secret } }),
     },
     statuses: { list: async () => [{ status: 'a', count: 1, firstUsedAt: 'a', lastUsedAt: 'b', icon: null, kept: false, ...secret }] },
+    voice: { status: async () => ({ hasKey: true, storage: { encrypted: true, backend: 'fake' }, today: { callSeconds: 0, sttSeconds: 0, ttsChars: 0 }, active: 0 }) },
     prefs: async () => ({ agentSitePermissions: [{ origin: 'o', ...secret }], locale: 'ja' }),
     compactionSettings: () => ({ enabled: true, ...secret }),
     delegation: { list: () => [{ taskId: 't', status: 'completed', ...secret }], get: () => ({ taskId: 't', status: 'completed', result: 'done', ...secret }),

@@ -828,6 +828,11 @@
       "opSuperseded": "This request was withdrawn because a newer request for {{target}} replaced it. Pleiad {{notDone}}. The result of the newer request will be delivered separately.",
       "opRestart": "Pleiad restarted, so approval for {{target}} was withdrawn. Pleiad {{notDone}}. Request it again if it is still needed."
     },
+    "voice": {
+      "status": {
+        "summary": "Return the call mode state (whether an OpenRouter key is registered, today's call length and usage, and the current settings). The key itself is never returned."
+      }
+    },
     "settings": {
       "list": {
         "summary": "List settings (key, description, risk, and whether read-only).",
@@ -1479,6 +1484,7 @@
   },
   "settings": {
     "locale": "Display language (auto follows the OS).",
+    "voice": "Call mode settings (speech-to-text and text-to-speech models and voice, language, per-call and per-day call length limits, echo cancellation). Only the fields you pass are overlaid; a null field returns to its default. Raising the limits needs the user's approval. The OpenRouter key is not handled here.",
     "linkOpen": "Where links open (inapp is the built-in browser, external is the default browser).",
     "instructionBudget": "The guideline for the amount of instructions you wrote (tokens; the right panel's \"Instruction amount\"). null means the default.",
     "backend": "The default agent for new conversations.",

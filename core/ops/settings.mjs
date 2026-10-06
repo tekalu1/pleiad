@@ -17,6 +17,7 @@ import { MIN_BUDGET, MAX_BUDGET } from '../../web/instruction-amount.mjs';
 import { validProfilePref } from '../../web/browser-profiles.mjs';
 import { validBrowserPref } from '../../web/browser-confirm-policy.mjs';
 import { computerUsePrefs, validComputerUse } from '../../web/computer-prefs.mjs';
+import { DEFAULTS as VOICE_DEFAULTS, normalizeVoiceSettings, VoiceSettingsError, loosensLimits as voiceLoosens } from '../voice/settings.mjs';
 import { defineOp, defineSetting, OpError, stableStringify } from './registry.mjs';
 import { maxRisk } from './policy.mjs';
 
@@ -159,6 +160,23 @@ export const settings = [
       if (v !== null && current.computerUse && same(computerUsePrefs(current), v)) return;
       await ctx.writes.pref('computerUse', v);
     } }),
+  // 通話モード（設定 › 通話。docs/voice-call.md）。渡した項目だけを重ねる。OpenRouter のキーは human-only の別の口（setVoiceKey）で、ここには出ない。
+  // 費用の安全弁（1 回・1 日の長さの上限）を上げる向きは関所を緩めるので guarded（下げる向き・モデルと声の選びは write）
+  defineSetting({ key: 'voice', summary: S('voice'), risk: 'write', riskReason: `Models, voice and language for the call mode. ${PICK_ABOUT}. Raising the call length limits loosens the cost gate and is raised to guarded by riskOf`,
+    riskOf: (before, after) => (voiceLoosens(normalizeVoiceSettings(before), normalizeVoiceSettings(after)) ? 'guarded' : 'write'),
+    riskExamples: [
+      { before: { ...VOICE_DEFAULTS }, after: { ...VOICE_DEFAULTS, dailyLimitMinutes: VOICE_DEFAULTS.dailyLimitMinutes + 60 }, risk: 'guarded' },
+      { before: { ...VOICE_DEFAULTS }, after: { ...VOICE_DEFAULTS, maxCallMinutes: VOICE_DEFAULTS.maxCallMinutes - 10 }, risk: 'write' },
+      { before: { ...VOICE_DEFAULTS }, after: { ...VOICE_DEFAULTS, ttsVoice: 'ara' }, risk: 'write' },
+    ],
+    schema: loose, writeSchema: z.record(z.string(), z.unknown()), default: VOICE_DEFAULTS, read: async (ctx) => normalizeVoiceSettings((await prefs(ctx)).voice),
+    normalize: async (ctx, patch, { before }) => {
+      const merged = { ...before };
+      for (const [key, value] of Object.entries(patch)) { if (value === null) delete merged[key]; else merged[key] = value; }   // null の項目は既定に戻す
+      try { return { after: normalizeVoiceSettings(merged, { strict: true }) }; }
+      catch (e) { throw invalid(ctx, e instanceof VoiceSettingsError ? e.message : String(e?.message ?? e)); }
+    },
+    write: (ctx, value) => ctx.writes.pref('voice', value) }),
   // 渡した項目だけを重ねる。null の項目は既定に戻す。判定器のキーは human-only の別の口で、ここには出ない
   defineSetting({ key: 'delegationRouting', summary: S('delegationRouting'), risk: 'guarded', prefKeys: ['delegationRouting'],
     schema: loose, writeSchema: z.record(z.string(), z.unknown()), default: ROUTING_DEFAULTS, read: (ctx) => ctx.routingSettings?.(),
