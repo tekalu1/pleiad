@@ -270,13 +270,22 @@ design.md §5.1・§6.1・§8。
 
 段階 1 の「サーバーの切り替えを先送りする」を、保持役の付け直しに替えていく。着手の最初に、未測定の Claude の場面を測る。
 
-### 2-0 頭の測定（S〜M）
+### 2-0 頭の測定（S〜M。**完了 2026-10-06**。記録は [stage2-claude.md](stage2-claude.md)）
 
 `scripts/zero-downtime/claude/` の作りで、次の最中に付け直したときの振る舞いを測る（stage0-claude の未確認）: サブエージェント・裏のコマンド（`background_tasks_changed`）・途中送信（`pendingSteers`）・圧縮（`PreCompact`）・`elicitation`・`request_user_dialog`・`oauth_token_refresh`・Pleiad の実際のオプション（`systemPrompt` のプリセット・`settingSources`・`skills`・プラグイン・互換の接続先）・npm で入れた `claude`（`pleiad-node.exe` で走らせる形）・数 MB の出力を流したときの保持役の遅さ・**外部の stdio MCP（`core/context-bridge.mjs` がサーバーの直の子として起こす）の扱い**（引き継ぎで旧サーバーと一緒に止まり、状態は戻らない。起こし直すか保持役の子にするか。R15）。**駄目な場面は「引き継ぎの前に終わるのを待つ」か「その場面のターンは保持役に載せない」に倒す**（design.md §4.4）。結果は `docs/zero-downtime-update/stage2-claude.md`
 
+**結果（CLI 2.1.284・SDK 0.3.288。要点）**: **「保持役に載せない」に倒す場面は無かった**（`cli.js` の npm の包みは付け直しの下限の版より古いので、版の一覧で外れる）。
+
+- **付け直せる**: サブエージェント（前面・裏・その中の承認待ち）・裏のコマンド（付け直し直後に CLI が裏の作業の全量を `background_tasks_changed` で出し直す）・途中送信（旧い親が流し込んだ分も同じ uuid の replay が新しい親に届き、`cancelQueued` で取り消せる）・圧縮（要約中も `PreCompact` の最中も。`PreCompact` は CLI が自分で取り消す）・`elicitation`（**控えの渡し直しが要る**。渡し直さないと止まる）・Pleiad の実際のオプション（**2 回目の `initialize` の systemPrompt・skills は CLI が使わない**）・互換の接続先（フラグ設定のファイルは起動時にだけ読まれる）・npm の `claude.cmd`（中身はネイティブの `bin/claude.exe`）・CLI の子の stdio MCP（状態も残る）・数 MB の出力（5 MB で +0.1〜0.3 秒、20 MB で約 2 倍・保持役 190〜460 MB）
+- **引き継ぎの前に終わるのを待つ**: 段階 0 の hooks（`PreToolUse` など）・`mcp_message`・HTTP の MCP に、**外部の stdio MCP の処理中の呼び出し**を足す
+- **対象外**: `request_user_dialog`（宣言しない限り CLI が出さない）・`oauth_token_refresh`（`getOAuthToken` を渡さない限り出ない）
+- **R15**: 段階 2 は起こし直す（約 0.2 秒、状態は消える。起こし直した後の最初の結果にその旨を添える）。保持役の子にすると状態は残るが、旧いクライアントの JSON-RPC の id への応答が新しいクライアントの同じ id にぶつかるので、世代つきの id が揃う段階 3 で
+- 2a〜2e に響くこと（控えに `elicitation`・答え済みの `control_request` を流し直さない・記録の上限・`.cmd` を exe に解く・札に `pendingSteers`）は stage2-claude.md「段階 2 の計画（2a〜2e）に響くこと」。下の 2a・2c・2d に反映した
+
 ### 2a 保持役（M〜L）
 
-- `core/holder/`（Node の組み込みだけ。目安 1,000 行以内）。規約 v1（design.md §4.2）、記録・印・ack・控え（`mcp_message` だけ渡し直す）・世代・札・預かり物、木ごとの強制終了、`logs\holder.log`。**JSON-RPC の id の付け替えと `initialize` の答えは持たない**
+- `core/holder/`（Node の組み込みだけ。目安 1,000 行以内）。規約 v1（design.md §4.2）、記録・印・ack・控え（`mcp_message` と `elicitation` だけ渡し直す。親が答え済みの `control_request` は再生で流し直さない。2-0）・世代・札・預かり物、木ごとの強制終了、`logs\holder.log`。**JSON-RPC の id の付け替えと `initialize` の答えは持たない**
+- 記録の上限（`truncated`）と、ack・印より前を捨てるのを最初から入れる（20 MB の本文のターンで保持役が 460 MB まで膨らんだ。2-0）。行は JSON で包み直さずに送る。`claude.cmd` は包みの `bin/claude.exe` に解いて直に起こす
 - 子の stdout・stderr を、親の有無にかかわらず**常に読む**（イベントループを長く止めない）。`detach` の後は、その親からの `write`・`end`・`kill` を転送しない。親が居ないあいだも子の stdin を閉じない
 - 起動は `detached: true` + `stdio: 'ignore'` + `windowsHide: true`（段階 1 と同じ起こし方と Job の分岐）
 - テスト（`tests/unit/holder-*.mjs`）: 偽の子（行を出す・依頼を出す・止まる・大量に出す）で、切断と付け直し・控えの渡し直し・**stdout を誰も読まない親でも詰まらない**（1 MB 以上）・`detach` 後の `kill` を転送しない・記録の上限（`truncated`）・二重起動の防止・`hello` の `secret` の不一致・世代の古いパイプ
@@ -292,14 +301,15 @@ design.md §5.1・§6.1・§8。
 ### 2c Claude を保持役に載せる（M〜L）
 
 - `spawnClaudeCodeProcess` で保持役へ。偽の `SpawnedProcess`（`write`・`end`・`kill` を保持役に写し、`detach` の後は転送しない）。**`spawn` / `attach` は SDK の最初の stdin の書き込みより前に送る**
-- 付け直し: 同じ CLI に `query` を作り直す（空の入力の流れ）。旧サーバーが手を離す順序は「保持役に `detach` → `query` を閉じる」。途中送信の控え（`pendingSteers`）・裏の作業の追跡（`claude-background.mjs`）・費用の基準（`readCostBase`）・フラグ設定のファイル（`writeClaudeFlagSettings`。ターンの終わりに消す）の札
+- 付け直し: 同じ CLI に `query` を作り直す（空の入力の流れ）。旧サーバーが手を離す順序は「保持役に `detach` → `query` を閉じる」。途中送信の控え（`pendingSteers`）・裏の作業の追跡（`claude-background.mjs`。生きている作業の一覧は付け直し直後の `background_tasks_changed` で置き換える）・費用の基準（`readCostBase`）・フラグ設定のファイル（`writeClaudeFlagSettings`。ターンの終わりに消す。`detach` の後は旧サーバーが消さず、新しいサーバーの起動時の掃除は札が指すファイルを外す）の札。systemPrompt・skills は札に要らない（CLI が 2 回目の `initialize` の値を使わない。2-0）
 - **`host` MCP は in-process のまま**（HTTP に移さない）。引き継ぎは、走っている hooks のコールバックと `mcp_message` のハンドラーが終わるのを（上限つきで）待つ
 - 付け直しに使える CLI の版の一覧を別に持つ（`backend-shape-diagnostics.mjs` の `VERIFIED` とは分ける。確かめたのは 2.1.284・2.1.288、`pending_permission_requests` は 2.1.268 から）。外れる版のターンは保持役に載せない
 - テスト: fake の CLI（stream-json を話す偽物）で、承認待ち・hooks・`mcp_message` の最中の付け直し。実機は `scripts/zero-downtime/claude/` の本物の CLI
 
 ### 2d 引き継ぎ（M）
 
-- 旧サーバー: 開始を止める・短い処理と処理中の HTTP の MCP と hooks・`mcp_message` を待つ・タイマーを止める・`flushNow`・`detach`・ロックを放す
+- 旧サーバー: 開始を止める・短い処理と処理中の HTTP の MCP と hooks・`mcp_message`・外部の stdio MCP の呼び出しを待つ・タイマーを止める・`flushNow`・`detach`・ロックを放す
+- 新サーバー（R15）: 外部の stdio MCP は札の束縛から起こし直す（ツールの名前は同じになる。状態は消えるので、起こし直した後の最初の結果にその旨を添える）
 - 新サーバー: `acquireDataLock` の待ち（数十 ms 刻み）、預かり物（トークン・ポート）、MCP の束縛を札から戻す、**HTTP の口を待ち受けてから**付け直す・新しい作業を始める、付け直し
 - モジュールを先に読み込んでロックを待つ起動（`--handover`）。間の目安を測り直す
 - 戻し道（design.md §6 の表）: 前の版のサーバーで付け直す、1 つのターンだけの中断、`AGENT_HOST_HANDOVER=off`
