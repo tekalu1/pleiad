@@ -5,6 +5,7 @@
 //   { t: 'hello', target }        通話を始める。target = { kind: 'chat', sessionId } か { kind: 'thread', channelId, threadId }。キー・上限を確かめて ready を返す
 //   { t: 'target', target }       見ている会話・スレッドが変わった（新しい会話の最初のターンで会話の id が決まったとき）
 //   { t: 'mute', on }             マイクのミュート（いま話している分は確定させる。音声フレームは送らない）
+//   { t: 'discard' }              まとめ待ちの［取り消す］: ここまでの発話は、話している最中のものも認識を待っているものも、結果を出さずに捨てる
 //   { t: 'spk', on }              スピーカーのミュート（読み上げを止め、合成も頼まない。解除すると次の文から）
 //   { t: 'halt', id? }            読み上げを止める（このターンの残りは「続きを読む」まで読まない）。barge は話して割り込んだとき（同じ扱い）。id = 止めたとき鳴っていた文（resume の始まり）
 //   { t: 'resume' }               止めた場所から読み直す（止めた文と、止めている間に届いた文）。新しい発言が来るまで使える
@@ -76,12 +77,16 @@ export function createVoiceSession({ send, sendBinary, close, hello, log = () =>
     send({ t: 'cancel' });
   };
 
-  /** 止めた場所から読み直す。止めた文（分からなければ最後に出した文）から、止めている間に届いた文まで */
+  /**
+   * 止めた場所から読み直す。止めた文から、止めている間に届いた文まで。止めた文が分からない（id が無い = 再生が始まる前に止めた。
+   * 合成は先行して進むので、耳に届いていない文が spoken に溜まっている）ときは、耳に届いていない最初の文 = spoken の先頭から。
+   * 聞き終えた文は spoken に残さない（読み直したあとの id なしの止め方が、聞き終えた文まで戻らないように）
+   */
   const resume = () => {
     if (!halted) return;
-    const from = cutId ?? spoken.at(-1)?.id ?? 0;
+    const from = cutId ?? spoken[0]?.id ?? 0;
     const again = [...spoken.filter((s) => s.id >= from), ...held];
-    spoken = spoken.filter((s) => s.id < from);
+    spoken = [];
     held = [];
     halted = false;
     cutId = null;
@@ -207,6 +212,7 @@ export function createVoiceSession({ send, sendBinary, close, hello, log = () =>
         case 'hello': if (!started && !ctx) await setup(msg).catch((e) => { log('voice.start_failed', { error: String(e?.message ?? e).slice(0, 200) }); if (!closed) { send({ t: 'error', code: 'start', fatal: true }); close(); } }); break;
         case 'target': if (started) { target = targetOf(msg.target) ?? target; onTarget(target); } break;
         case 'mute': if (started) { muted = msg.on === true; if (muted) stt.finish(); } break;
+        case 'discard': if (started) stt.discard(); break;
         case 'spk': if (started) { spkMuted = msg.on === true; if (spkMuted) { speaker.cancel(); send({ t: 'cancel' }); } } break;
         case 'halt': case 'barge': if (started) halt(msg.id); break;
         case 'resume': if (started) resume(); break;

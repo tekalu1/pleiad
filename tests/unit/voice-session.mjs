@@ -179,14 +179,36 @@ export default async function (t) {
     await h.msg('halt');
     const k = segs().length;
     await h.msg('resume');
-    t.ok('id が無い止め方は、最後に出した文から読み直す', segs().length === k + 1 && segs().at(-1).text === '止めたあとの文です。');
+    t.ok('id が無い止め方（読み直した文がまだ耳に届く前）は、読み直した 3 文を最初から読み直す。前に聞き終えた文には戻らない', segs().slice(k).map((x) => x.text).join('|') === '二つ目の文です。|三つ目の文です。|止めたあとの文です。', JSON.stringify(segs().slice(k)));
+    // 再生が始まる前に止めた（先読みの合成だけが進んでいた）: id が無い。耳に届いていない最初の文から読む（最後の文から読んで、前の文を飛ばさない）
+    const early = harness();
+    await early.hello();
+    const earlySegs = () => early.sent.filter((m) => m.t === 'seg');
+    for (const text of ['一つ目の文です。', '二つ目の文です。', '三つ目の文です。']) early.session.onAgentEvent({ type: 'text.delta', sessionId: 's1', text });
+    await early.msg('halt');
+    await early.msg('resume');
+    t.ok('再生が始まる前に（id なしで）止めたら、1〜3 の全部を最初から読み直す。最初の文の first は元のまま', earlySegs().slice(3).map((x) => `${x.text}:${x.first}`).join('|') === '一つ目の文です。:true|二つ目の文です。:false|三つ目の文です。:false', JSON.stringify(earlySegs().slice(3)));
     await h.msg('resume');
-    t.ok('止めていないときの resume は何もしない', segs().length === k + 1);
+    t.ok('止めていないときの resume は何もしない', segs().length === k + 3);
     await h.msg('barge', { id: 1 });
     h.session.onAgentEvent({ type: 'userMessage', sessionId: 's1' });
     const j = segs().length;
     await h.msg('resume');
     t.ok('新しい発言（userMessage）が来たら、止めた分は捨てる（resume しても読まない）', segs().length === j && h.session.state.halted === false);
+  }
+
+  // ---- まとめ待ちの［取り消す］（discard）: 話している最中の発話も結果を出さずに捨てる
+  {
+    const h = harness();
+    await h.hello();
+    h.frames(true, 8);
+    await h.msg('discard');
+    h.frames(false, 10);
+    await sleep(60);
+    t.ok('discard: 話している最中の発話は、無音が続いても final にならない（取り消した言葉の後半が届かない）', !types(h).includes('final') && !types(h).includes('partial'), JSON.stringify(types(h)));
+    h.frames(true, 8); h.frames(false, 8);
+    await waitFor(() => types(h).includes('final'));
+    t.ok('discard のあとの声は、新しい発話（番号 2）として確定する', h.sent.find((m) => m.t === 'final')?.utt === 2);
   }
 
   // ---- 見る先
