@@ -231,6 +231,45 @@
       },
       "saveFailed": "保存できませんでした: {{error}}",
       "agentOperation": { "title": "エージェントの操作", "bundled": "agent-browser {{version}} · 同梱" },
+      "agentBrowser": {
+        "title": "エージェントのブラウザー",
+        "name": "Chrome",
+        "description": "この PC の Chrome につなぎます。エージェントはまだ内蔵ブラウザーを使います。",
+        "unsupportedOs": "この OS ではまだ使えません",
+        "unsupportedEnv": "この環境ではまだ使えません",
+        "giveUp": "やめる",
+        "failed": "操作できませんでした: {{error}}",
+        "off": {
+          "status": "つながっていません",
+          "connect": "つなぐ",
+          "chromeClosed": "Chrome が閉じました。",
+          "revoked": "Chrome で許可が取り消されました。",
+          "protocol": "Chrome が想定外の応答をしました。"
+        },
+        "setup": {
+          "status": "Chrome の準備が要ります",
+          "step1": "次のアドレスをコピーします",
+          "step2": "Chrome のアドレス欄に貼り付けて開き、「Allow remote debugging for this browser instance」をオンにしてください",
+          "note": "オンになったら自動で進みます（押し直しは要りません）。この設定は 1 回だけで、Chrome を起動し直しても残ります。",
+          "copy": "アドレスをコピー",
+          "copied": "コピーしました",
+          "copyFailed": "コピーできませんでした。アドレスを選んでコピーしてください。"
+        },
+        "permission": {
+          "status": "Chrome に許可の確認が出ています",
+          "raise": "ダイアログを前に出す",
+          "note": "Chrome が確認を出し直しても、そのまま待ちます。「許可する」を押すまで続きます。"
+        },
+        "denied": {
+          "status": "Chrome で「キャンセル」が押されました",
+          "retry": "もう一度"
+        },
+        "connected": {
+          "status": "つながっています · {{browser}}",
+          "disconnect": "切る",
+          "note": "つないでいる間、Chrome の窓に「Chrome は自動テスト ソフトウェアによって制御されています」の帯が出ることがあります。"
+        }
+      },
       "confirm": {
         "title": "外部の読み込み",
         "scope": "可視化・HTML のプレビュー・内蔵ブラウザーで開いた PC の HTML ファイルで、「常に」許可したサイトのほかからの読み込み（画像・スクリプト・通信など）を止めます。Web のページには効きません。すべての画面で共通の設定です。",

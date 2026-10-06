@@ -515,6 +515,71 @@
       "input": "f08816c821a8"
     },
     {
+      "id": "browser.chromeConnect",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": true,
+      "surfaces": {
+        "ui": true,
+        "mcp": false,
+        "cli": false
+      },
+      "legacyCommand": "chromeConnect",
+      "input": "25c7d85c859a"
+    },
+    {
+      "id": "browser.chromeDisconnect",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": true,
+      "surfaces": {
+        "ui": true,
+        "mcp": false,
+        "cli": false
+      },
+      "legacyCommand": "chromeDisconnect",
+      "input": "25c7d85c859a"
+    },
+    {
+      "id": "browser.chromeRaiseDialog",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": true,
+      "surfaces": {
+        "ui": true,
+        "mcp": false,
+        "cli": false
+      },
+      "legacyCommand": "chromeRaiseDialog",
+      "input": "25c7d85c859a"
+    },
+    {
+      "id": "browser.chromeStatus",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "browser",
+            "status"
+          ]
+        }
+      },
+      "legacyCommand": "chromeStatus",
+      "input": "25c7d85c859a"
+    },
+    {
       "id": "channels.archive",
       "risk": "write",
       "riskOf": false,
@@ -4258,6 +4323,11 @@
       "positional": [
         "botId"
       ]
+    },
+    {
+      "id": "browser.chromeStatus",
+      "path": "browser status",
+      "positional": []
     },
     {
       "id": "channels.archive",

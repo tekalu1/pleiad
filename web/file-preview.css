@@ -196,6 +196,21 @@ body.file-preview-wide .file-preview-resize{display:none}
 .browser-confirm-settings input[role=switch]:checked:before{transform:translateX(14px)}
 .browser-confirm-settings input[role=switch]:focus-visible{outline:2px solid var(--line-blue);outline-offset:3px}
 .browser-site-name{flex:1;min-width:140px;overflow-wrap:anywhere}
+/* 設定 › ブラウザー › エージェントのブラウザー（PC の Chrome への接続。ADR 0148・0149） */
+.browser-conn-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;min-height:42px;padding:4px 6px;border-radius:var(--r-m);min-width:0}
+.browser-conn-mark{display:inline-grid;place-items:center;width:30px;height:30px;border-radius:50%;background:var(--surface-1);color:var(--ink);flex:none}
+.browser-conn-mark svg.i{width:18px;height:18px;stroke-width:1.5}
+.browser-conn-row .nm{flex:1;min-width:160px}
+.browser-conn-row .nm small{display:block;color:var(--ink-weak);font-size:var(--fs-xs)}
+.browser-conn-row .stt{font-size:var(--fs-s);color:var(--ink-weak);overflow-wrap:anywhere}
+.browser-conn-row .stt.on{color:var(--ink)}
+.browser-conn-row .btn{padding:3px 10px;font-size:var(--fs-s)}
+.browser-conn-steps{list-style:none;margin:10px 0 0;padding:0 0 0 46px;display:flex;flex-direction:column;gap:10px;font-size:var(--fs-s)}
+.browser-conn-steps li{display:flex;gap:10px;align-items:flex-start;flex-wrap:wrap}
+.browser-conn-steps .n{display:grid;place-items:center;width:20px;height:20px;margin-top:1px;border-radius:50%;background:var(--surface-1);font-size:var(--fs-xs);font-weight:600;flex:none}
+.browser-conn-steps code{font:var(--fs-s) var(--font-mono);background:var(--surface-1);border-radius:var(--r-pill);padding:1px 8px;overflow-wrap:anywhere}
+.browser-chrome-setting .browser-setting-note{padding-left:46px;margin:8px 0 0}
+.browser-chrome-error:empty{display:none}
 @media (max-width:520px){.browser-link-open{min-width:0;width:100%}}
 .preview-blocked{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:8px 12px;color:var(--ink-weak);font-size:var(--fs-s);flex:none}
 .preview-blocked span{flex:1;min-width:160px}

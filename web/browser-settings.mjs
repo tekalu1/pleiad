@@ -1,13 +1,27 @@
 // Browser settings and confirmation preferences (docs/inapp-browser.md, ADR 0042).
 // External resources can be confirmed on every screen; agent access needs the desktop browser.
 import { t } from './i18n.mjs';
-import { el } from './dom.mjs';
+import { el, svgEl } from './dom.mjs';
 import { LINK_OPEN_VALUES, linkOpenPref } from './browser-address.mjs';
 import { modifierKey } from './link-open.mjs';
 import { blockedPreviewOrigins, onBlockedPreviewOrigins } from './preview-confirm.mjs';
 const AGENT_BROWSER_VERSION = '0.38.1';
 
-export function setupBrowserSettings({ available, cmd, getPrefs, getAgentLabel = id => id }) {
+// エージェントのブラウザー（PC の Chrome）への接続の案内で開いてもらうアドレス。chrome.exe に渡しても新しいタブになるので、コピーして貼り付けてもらう
+const CHROME_INSPECT_ADDRESS = 'chrome://inspect/#remote-debugging';
+
+/** Chrome の印（16px の線画。web/header-entries.mjs の Chrome の入口と同じ形） */
+function chromeMark() {
+  const svg = svgEl('svg', { class: 'i', viewBox: '0 0 16 16', 'aria-hidden': 'true' });
+  svg.append(svgEl('circle', { cx: 8, cy: 8, r: 6.5 }), svgEl('circle', { cx: 8, cy: 8, r: 2.6 }), svgEl('path', { d: 'M8 5.4h5.9M10.25 9.3l-2.98 5.16M5.75 9.3 2.77 4.14' }));
+  const mark = el('span', 'browser-conn-mark'); mark.setAttribute('aria-hidden', 'true'); mark.append(svg);
+  return mark;
+}
+
+/** product（Chrome/154.0.8037.97）から「Chrome 154」を作る。読めなければ「Chrome」 */
+export const chromeLabel = product => { const m = /^(\w+)\/(\d+)/.exec(String(product ?? '')); return m ? `${m[1]} ${m[2]}` : 'Chrome'; };
+
+export function setupBrowserSettings({ available, cmd, getPrefs, getAgentLabel = id => id, getHostCaps = () => null }) {
   const $ = id => document.getElementById(id);
   const tab = $('browserTab'), root = $('browserPanel');
   tab.hidden = false;
@@ -27,6 +41,7 @@ export function setupBrowserSettings({ available, cmd, getPrefs, getAgentLabel =
   seg.append(...buttons);
   row.append(label, seg);
   const error = el('p', 'browser-setting-error'); error.setAttribute('role', 'status');
+  const chromeSection = el('section', 'browser-confirm-settings browser-chrome-setting'); chromeSection.hidden = true;
   const agentSection = el('div', 'browser-agent-setting');
   agentSection.append(el('strong', null, t('settings.browser.agentOperation.title')), el('p', null, t('settings.browser.agentOperation.bundled', { version: AGENT_BROWSER_VERSION })));
   // 近道の説明。修飾キーの名前は <kbd> にする（辞書の {{key}} の所に入れる）
@@ -37,7 +52,7 @@ export function setupBrowserSettings({ available, cmd, getPrefs, getAgentLabel =
   root.replaceChildren(el('p', null, available ? t('settings.browser.description') : t('settings.browser.descriptionRemote')), row, el('p', 'browser-setting-note', t('settings.browser.linkOpen.note')), shortcuts, error);
   if (!available) { row.remove(); agentSection.remove(); root.querySelectorAll('.browser-setting-note').forEach(n => n.remove()); }
   const confirmation = el('section', 'browser-confirm-settings');
-  error.remove(); root.append(confirmation); if (available) root.append(agentSection); root.append(error);
+  error.remove(); root.append(confirmation); if (available) root.append(chromeSection, agentSection); root.append(error);
   async function save(key, value) {
     error.textContent = '';
     try { await cmd('setPref', { key, value }); }
@@ -101,11 +116,90 @@ export function setupBrowserSettings({ available, cmd, getPrefs, getAgentLabel =
   }
   onBlockedPreviewOrigins(paintConfirmation);
 
+  // ---- エージェントのブラウザー（PC の Chrome）への接続。状態はサーバーの chromeBrowser イベントで替わる（docs/inapp-browser.md「Chrome への接続」、ADR 0148・0149）
+  let chrome = null;   // { state, reason, dialog, product } | null（まだ分からない）
+  let copied = false, copyFailed = false, copyTimer = null;
+  const chromeError = el('p', 'browser-setting-note browser-chrome-error'); chromeError.setAttribute('role', 'status');
+  function chromeCommand(command) {
+    chromeError.textContent = '';
+    return cmd(command).catch(e => { chromeError.textContent = t('settings.browser.agentBrowser.failed', { error: e.message }); });
+  }
+  function chromeButton(label, command, cls = 'btn') {
+    const b = el('button', cls, label); b.type = 'button';
+    b.onclick = () => { void chromeCommand(command); };
+    return b;
+  }
+  async function copyAddress() {
+    copyFailed = false;
+    try {
+      if (!navigator.clipboard?.writeText) throw new Error('clipboard unavailable');
+      await navigator.clipboard.writeText(CHROME_INSPECT_ADDRESS);
+      copied = true; clearTimeout(copyTimer); copyTimer = setTimeout(() => { copied = false; paintChrome(); }, 2000);
+    } catch { copyFailed = true; }
+    paintChrome();
+  }
+  // i18n-dynamic: settings.browser.agentBrowser.
+  function paintChrome() {
+    if (!available || !chrome || getHostCaps()?.chromeBrowser === false) { chromeSection.hidden = true; return; }
+    chromeSection.hidden = false;
+    const k = 'settings.browser.agentBrowser.';
+    const { state, reason, product } = chrome;
+    const status = el('span', 'stt'); status.setAttribute('role', 'status');
+    const actions = [];
+    const details = [];
+    const note = text => el('p', 'browser-setting-note', text);
+    if (state === 'unsupported') {
+      status.textContent = t(reason === 'platform' ? `${k}unsupportedOs` : `${k}unsupportedEnv`);
+    } else if (state === 'setup') {
+      status.textContent = t(`${k}setup.status`);
+      const steps = el('ol', 'browser-conn-steps');
+      const one = el('li'); one.append(el('span', 'n', '1'), el('span', null, t(`${k}setup.step1`)), el('code', null, CHROME_INSPECT_ADDRESS));
+      const two = el('li'); two.append(el('span', 'n', '2'), el('span', null, t(`${k}setup.step2`)));
+      steps.append(one, two);
+      details.push(steps, note(t(`${k}setup.note`)));
+      const copy = el('button', 'btn btn-primary', copied ? t(`${k}setup.copied`) : t(`${k}setup.copy`)); copy.type = 'button'; copy.onclick = () => { void copyAddress(); };
+      actions.push(copy, chromeButton(t(`${k}giveUp`), 'chromeDisconnect', 'btn btn-quiet'));
+      if (copyFailed) details.push(note(t(`${k}setup.copyFailed`)));
+    } else if (state === 'permission') {
+      status.textContent = t(`${k}permission.status`);
+      actions.push(chromeButton(t(`${k}permission.raise`), 'chromeRaiseDialog', 'btn btn-primary'), chromeButton(t(`${k}giveUp`), 'chromeDisconnect', 'btn btn-quiet'));
+      details.push(note(t(`${k}permission.note`)));
+    } else if (state === 'denied') {
+      status.textContent = t(`${k}denied.status`);
+      actions.push(chromeButton(t(`${k}denied.retry`), 'chromeConnect', 'btn btn-primary'), chromeButton(t(`${k}giveUp`), 'chromeDisconnect', 'btn btn-quiet'));
+    } else if (state === 'connected') {
+      status.textContent = t(`${k}connected.status`, { browser: chromeLabel(product) }); status.classList.add('on');
+      actions.push(chromeButton(t(`${k}connected.disconnect`), 'chromeDisconnect'));
+      details.push(note(t(`${k}connected.note`)));
+    } else {
+      status.textContent = t(`${k}off.status`);
+      actions.push(chromeButton(t(`${k}off.connect`), 'chromeConnect', 'btn btn-primary'));
+      // 切れた理由（自分で切ったときは出さない）
+      const why = { 'chrome-closed': 'chromeClosed', revoked: 'revoked', protocol: 'protocol' }[reason];
+      if (why) details.push(note(t(`${k}off.${why}`)));
+    }
+    const row = el('div', 'browser-conn-row');
+    const name = el('span', 'nm'); name.append(el('strong', null, t(`${k}name`)), el('small', null, t(`${k}description`)));
+    row.append(chromeMark(), name, status, ...actions);
+    chromeSection.replaceChildren(el('h3', null, t(`${k}title`)), row, ...details, chromeError);
+  }
+  function loadChrome() {
+    const caps = getHostCaps();
+    if (!available || caps === null || caps?.chromeBrowser === false) { paintChrome(); return Promise.resolve(); }
+    return cmd('chromeStatus').then(status => { chrome = status; paintChrome(); }).catch(() => {});
+  }
+
   function paint() {
     const value = linkOpenPref(getPrefs());
     for (const b of buttons) { b.classList.toggle('on', b.dataset.linkOpen === value); b.setAttribute('aria-pressed', String(b.dataset.linkOpen === value)); }
     paintConfirmation();
   }
   paint();
-  return { paint };
+  return {
+    paint,
+    /** サーバーの chromeBrowser イベント（ホストの画面だけに届く） */
+    chromeEvent(ev) { chrome = { state: ev.state, reason: ev.reason ?? null, dialog: ev.dialog === true, product: ev.product ?? null }; paintChrome(); },
+    /** hostCapabilities が届いた（つなぎ直したときも）。使える環境なら今の状態を取り直す */
+    hostCapsChanged: loadChrome,
+  };
 }

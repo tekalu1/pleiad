@@ -61,6 +61,10 @@ const SUITES = [
   './unit/chrome-connection.mjs',
   // Chrome への接続の OS の層（Windows）: 確認の窓の見つけ方・前面化・閉じる・使えない OS・parentPort の往復（偽の Win32 の表）
   './unit/chrome-os.mjs',
+  // Chrome への接続（サーバー越し）: browser.chrome* の操作・chromeBrowser イベントはホストの画面だけ・使えない OS / Electron の無いホスト（偽の Chrome・parentPort の身代わり）
+  './unit/server-chrome.mjs',
+  // 設定 › ブラウザー › エージェントのブラウザー: 状態ごとの字とボタン・使えない環境（DOM の代役）
+  './unit/chrome-settings.mjs',
   './unit/browser-confirm.mjs',
   // 設定 › コンピューターの操作: prefs の検査と既定・store の remember/forget・hostCapabilities.computerUse の判定・節の動き・setPref（docs/computer-use.md）
   './unit/computer-settings.mjs',
