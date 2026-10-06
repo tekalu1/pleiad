@@ -306,9 +306,9 @@ export default async function (t) {
           && w.steers[0].args.prompt.includes('post="p_2"') && w.steers[0].args.prompt.includes('channel-id="c_1"') && !w.steers[0].args.prompt.includes('pleiad-turn-context')
           && await statusOf(w, 'p_2') === 'delivering' && !w.emitted.some((e) => e.type === 'channelEvent'), w.steers[0]?.args.prompt);
         w.d.onTurnEvent(w.turn, { type: 'userMessage.delivered', messageId: w.steers[0].id });
-        await tick();
-        t.ok('途中送信: 合図（userMessage.delivered）で sent になり、会話の画面へ channelEvent を出し、postCursor を進める', await statusOf(w, 'p_2') === 'sent'
-          && w.emitted.some((e) => e.type === 'channelEvent' && e.id === 's1' && e.rows.some((r) => r.postId === 'p_2')) && w.sessions.s1.bot.postCursor === 'p_2', JSON.stringify(w.sessions.s1.bot));
+        const delivered = await until(async () => await statusOf(w, 'p_2') === 'sent'
+          && w.emitted.some((e) => e.type === 'channelEvent' && e.id === 's1' && e.rows.some((r) => r.postId === 'p_2')) && w.sessions.s1.bot.postCursor === 'p_2', { label: 'steer delivery saved and emitted' });
+        t.ok('途中送信: 合図（userMessage.delivered）で sent になり、会話の画面へ channelEvent を出し、postCursor を進める', delivered, JSON.stringify(w.sessions.s1.bot));
         await w.d.onPosted(w.posts[2], w.channel);
         w.d.onTurnEvent(w.turn, { type: 'userMessage.dropped', messageId: w.steers[1].id });
         await tick();

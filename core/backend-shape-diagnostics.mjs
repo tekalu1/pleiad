@@ -2,7 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 
 const MAX_BYTES = 64 * 1024;
-const VERIFIED = Object.freeze({ codex: '0.156.1', claude: '2.1.283', antigravity: '1.2.12' });
+const VERIFIED = Object.freeze({ codex: '0.160.0', claude: '2.1.283', antigravity: '1.2.12' });
 const KINDS = Object.freeze({
   codex: new Set(['rollout-unreadable', 'rollout-session-meta', 'rollout-turn-id']),
   // cost-state-*: 使用量の開始時点（transcript の cost-state。core/backends/claude-cost-state.mjs）が読めない
