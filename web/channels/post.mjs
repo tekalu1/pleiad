@@ -275,6 +275,8 @@ export function fillPost(root, post, ctx) {
     head.append(backendLogo(info.backend, label));
   }
   if (post.routine) head.append(el('span', 'post-kind', t('channels:feed.routine')));
+  // 分けたスレッドの根（channels.branchThread）。元のスレッドと同じ本文が並ぶので、枝だと分かる札
+  if (post.branchOf && !post.threadId) head.append(el('span', 'post-kind', t('channels:feed.branch')));
   const when = el('time', 'post-when', whenText(post.at));
   when.dateTime = new Date(post.at).toISOString();
   when.title = fmt.dateTime(post.at);

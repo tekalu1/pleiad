@@ -4757,6 +4757,9 @@ botHost = createBotHost({
   sessionBusy: id => sessionBusy(id),
   // スレッドの bot の会話の設定を、このスレッドだけ変える（channels.threadSettings。ADR 9101）。走っていれば次のターンから（nextSettings）
   reserveTurnSettings: (args) => reserveTurnSettings(args),
+  // スレッドを分ける（channels.branchThread）: bot の会話の発言（分けた行）を読み、切り口で会話を分ける
+  readMessages: async (id) => { const backend = await resolveBackendForSession(id); return backend?.getMessages ? backend.getMessages(id) : []; },
+  forkSession: ({ sessionId, beforeMessageId }) => forkConversation({ sessionId, ...(beforeMessageId ? { beforeMessageId } : {}), reason: 'branch' }, { by: 'human' }),
   // 隠れた会話（夜の整理・心拍）をネイティブの会話ごと消す。消せないバックエンド・走っている会話は残して false（ADR 0127）
   deleteHidden: async id => {
     if (sessionBusy(id) || !HIDDEN_BOT_KINDS.has((await store.get(id)).bot?.kind)) return false;

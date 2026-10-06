@@ -18,6 +18,7 @@ import { threadDraftKey } from './ch-attach-model.mjs';
 import { openEmojiPicker } from '../emoji-picker.mjs';
 import { postMenu, setupPostMenu, menuPoint } from './post-menu.mjs';
 import { openSourceDialog } from '../message-actions.mjs';
+import { makeBranchRow } from '../branch-view.mjs';
 import { createDeck } from './deck.mjs';
 import { createThreadHead } from './thread-head.mjs';
 import { createConversationNav } from '../conversation-nav-view.mjs';
@@ -595,6 +596,7 @@ export function createThread(host) {
       markSelected();
       if (seq === S.seq) composer.focus();
       requestAnimationFrame(flushReveal);
+      paintBranches();
     } catch (err) {
       if (seq !== S.seq) return;
       const box = el('div', 'ch-failed');
@@ -675,12 +677,69 @@ export function createThread(host) {
         openEmojiPicker({ anchor: at, title: t('channels:feed.reactPicker'), onPick: (emoji) => react(p, emoji, true, (p.reactions?.[emoji] ?? []).some((a) => a.kind === 'human')) });
       },
       source: received ? () => showSource(p, more ?? anchor) : null,
+      // ここから分岐: 根からこの投稿までを写した新しいスレッド（bot の会話もこの手前で分ける）
+      fork: S.channel?.kind === 'dm' || p.state === 'working' ? null : () => branchFrom(p),
       openSession: p.turn?.sessionId ? () => host.openSession(p.turn.sessionId) : null,
     });
     more?.setAttribute('aria-expanded', 'true');
     node?.classList.add('menu-open');
     host.showMenu(x, y, items, title, { alignRight, onClose: () => { more?.setAttribute('aria-expanded', 'false'); node?.classList.remove('menu-open'); } });
   }
+  // ---------------------------------------------------------------- 分岐（ADR 9101 の 4.4）
+  async function branchFrom(p) {
+    try {
+      const made = await host.invoke('channels.branchThread', { channelId: S.channelId, threadId: S.threadId, atPostId: p.id });
+      document.dispatchEvent(new CustomEvent('channels:show', { detail: { kind: 'channel', id: made.channelId, threadId: made.threadId } }));
+    } catch (err) { composer.say(t('channels:thread.branch.failed', { error: err?.message ?? String(err) }), true); }
+  }
+  /**
+   * 分けた投稿の直後に「オリジナル / 枝 N」の行（Chats の分岐の行と同じ部品。web/branch-view.mjs）。兄弟は同じ branchOf を持つスレッド。
+   * 枝の中では、頭に「分岐元」の一行と、写した分けた投稿の直後に同じ行。押すとそのスレッドへ
+   */
+  let branchSeq = 0;
+  async function paintBranches() {
+    const seq = ++branchSeq;
+    const rootPost = S.posts[0];
+    if (!S.threadId || !rootPost || S.channel?.kind === 'dm') { for (const n of log.querySelectorAll('.th-branch')) n.remove(); return; }
+    const origin = rootPost.branchOf?.threadId ?? S.threadId;
+    let roots;
+    try { roots = (await host.invoke('channels.read', { channelId: S.channelId, limit: 100 })).posts ?? []; } catch { return; }
+    const points = new Map();
+    for (const r of roots) if (r.branchOf?.threadId === origin && !r.deletedAt) (points.get(r.branchOf.postId) ?? points.set(r.branchOf.postId, []).get(r.branchOf.postId)).push(r);
+    const here = rootPost.branchOf ? [{ postId: rootPost.branchOf.postId, anchor: S.posts.find((p) => p.copyOf === rootPost.branchOf.postId) }]
+      : [...points.keys()].map((postId) => ({ postId, anchor: S.index.get(postId) }));
+    const rows = [];
+    for (const { postId, anchor } of here) {
+      if (!anchor) continue;
+      const ids = [origin, ...(points.get(postId) ?? []).sort((a, b) => (a.id < b.id ? -1 : 1)).map((r) => r.id)];
+      // 続きの件数: 分けた投稿（枝では写した投稿）より後ろの投稿の数
+      const counts = await Promise.all(ids.map(async (id) => {
+        try {
+          const page = await host.invoke('channels.read', { channelId: S.channelId, threadId: id, limit: 100 });
+          const i = page.posts.findIndex((p) => (id === origin ? p.id === postId : p.copyOf === postId));
+          return i >= 0 ? page.posts.length - i - 1 : 0;
+        } catch { return 0; }
+      }));
+      const entries = ids.map((id, i) => ({ id, name: i === 0 ? t('channels:thread.branch.original') : t('channels:thread.branch.nth', { n: i }), n: counts[i] }));
+      rows.push({ anchor, entries });
+    }
+    if (seq !== branchSeq) return;
+    for (const n of log.querySelectorAll('.th-branch')) n.remove();
+    if (rootPost.branchOf) {
+      const from = roots.find((r) => r.id === origin);
+      const line = el('p', 'th-branch th-branch-from', t('channels:thread.branch.from', { title: from ? titleOf(from) : t('channels:thread.untitled') }));
+      rootSlot.before(line);
+    }
+    for (const { anchor, entries } of rows) {
+      const row = makeBranchRow(`b:${anchor.id}`, entries, S.threadId, (id) => document.dispatchEvent(new CustomEvent('channels:show', { detail: { kind: 'channel', id: S.channelId, threadId: id } })));
+      row.classList.add('th-branch');
+      const node = postEls.get(anchor.id);
+      if (!node) continue;
+      node.after(row);
+      row.layout();
+    }
+  }
+
   // 右クリック・長押し・Shift+F10・メニューキー（Chats の発言と同じ口。web/message-actions.mjs の setupMessageMenu）
   setupPostMenu(log, (node, at) => {
     const p = S.index.get(node.dataset.postId);
@@ -791,6 +850,8 @@ export function createThread(host) {
       if (!p) return;
       if (p.threadId === S.threadId) onReply(ev.op, p);
       else if (!p.threadId && p.id === S.threadId) onRoot(ev.op, p);
+      // このスレッド（の元）から新しい枝ができた: 分岐の行を描き直す
+      else if (!p.threadId && p.branchOf && ev.op === 'add') paintBranches();
     },
     channelReaction(ev) {
       if (ev.channelId !== S.channelId || !S.threadId) return;

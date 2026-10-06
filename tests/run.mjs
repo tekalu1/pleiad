@@ -566,6 +566,7 @@ const SUITES = [
   './unit/home-channel.mjs',
   './unit/bot-plain.mjs',
   './unit/channels-deliveries.mjs',
+  './unit/thread-branch.mjs',
   // 流れ (W2): @ の補完の判定・候補の絞り込み・リアクションの札と先取り・時刻の文言・スレッドを開く口の配線（描画とキーは tests/browser/channels.cjs）
   './unit/channels-feed-ui.mjs',
   // 入力欄を Chats に揃えた分 (ADR 0116): 送る本文と添付の印・書きかけの保存と上限・添付つきの投稿の描き方・配線。画面の打鍵は tests/browser/channels-composer.cjs

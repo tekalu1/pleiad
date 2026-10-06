@@ -603,6 +603,21 @@
       "input": "d2c542cd9935"
     },
     {
+      "id": "channels.branchThread",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": false,
+        "cli": false
+      },
+      "legacyCommand": null,
+      "input": "6cddb5a34e55"
+    },
+    {
       "id": "channels.create",
       "risk": "write",
       "riskOf": true,

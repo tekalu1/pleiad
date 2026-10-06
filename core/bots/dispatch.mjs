@@ -616,6 +616,58 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
     return { sessionId, backend: meta.backend, model: next.model ?? meta.model ?? '', effort: next.effort ?? meta.effort ?? '', mode: next.mode ?? meta.mode ?? '', cwd: next.cwd ?? meta.cwd ?? '' };
   }
 
+  /**
+   * スレッドを atPostId のところで分ける（channels.branchThread。ADR 9101 の 4.4）。
+   * bot ごとに、atPostId より後の投稿を最初に含むまとまりの手前で会話を分ける（無ければ末尾まで）。atPostId より後に呼ばれた bot（残す配達が無い）は連れて行かない。
+   * 子の会話の sidecar は親の写しで、スレッドは新しい根・postCursor は残した配達のうち最後の投稿の写し（P と後ろの投稿を 1 通にまとめて渡していたら P の前。次のターンで P を渡し直す）。
+   * 投稿を黙って写し（channels.branchCopy）、新しいスレッドの状態（会話・利用者の状態）を作る。予算・呼んだ回数・申し送り・止めた印は写さない
+   */
+  async function branchThread({ channelId, threadId, atPostId }) {
+    const all = [];
+    let before;
+    do {
+      const page = await channels.read({ channelId, threadId, ...(before ? { before } : {}), limit: 100 });
+      all.unshift(...page.posts);
+      before = page.nextBefore;
+    } while (before);
+    const at = all.findIndex((p) => p.id === atPostId);
+    if (at < 0) throw Object.assign(new Error(`post not found: ${atPostId}`), { code: 'POST_NOT_FOUND' });
+    const order = new Map(all.map((p, i) => [p.id, i]));
+    const th = await channels.threads.get(channelId, threadId).catch(() => null);
+    const children = {};   // botId → { sessionId, cursor }
+    for (const [botId, sessionId] of Object.entries(th?.sessions ?? {})) {
+      const messages = await host.readMessages(sessionId);
+      let cut = null, cursor = -1, kept = 0;
+      for (const m of messages) {
+        if (m?.kind !== 'channelEvent') continue;
+        const ids = m.history ? [...String(m.body ?? '').matchAll(/post="([^"]+)"/g)].map((x) => x[1]) : [m.postId].filter(Boolean);
+        const idx = ids.map((id) => order.get(id)).filter((i) => i !== undefined);
+        if (idx.some((i) => i > at)) {
+          cut = m.groupUuid ?? m.uuid ?? null;
+          if (!cut) throw new Error('could not find where to cut the conversation');
+          break;
+        }
+        kept++;
+        cursor = Math.max(cursor, ...idx);
+      }
+      if (!kept) continue;
+      const made = await host.forkSession({ sessionId, ...(cut ? { beforeMessageId: cut } : {}) });
+      children[botId] = { sessionId: made.sessionId, parent: sessionId, cursor: cursor >= 0 ? all[cursor].id : null };
+    }
+    const sessions = Object.fromEntries(Object.values(children).map((c) => [c.parent, c.sessionId]));
+    const { root, idMap } = await channels.branchCopy({ channelId, threadId, atPostId, sessions });
+    for (const [botId, child] of Object.entries(children)) {
+      const parent = await sidecarOf(child.parent);
+      const sb = { ...(parent ?? {}), botId, kind: 'thread', channelId, threadId: root.id, postCursor: child.cursor ? idMap.get(child.cursor) ?? null : null,
+        snapshotDue: true, delivered: [] };
+      delete sb.recentDelivered;
+      await host.store.setSessionData(child.sessionId, 'bot', sb, { durable: true });
+    }
+    if (Object.keys(children).length) await channels.threads.update(channelId, root.id, { sessions: Object.fromEntries(Object.entries(children).map(([botId, c]) => [botId, c.sessionId])) });
+    if (th?.status) await channels.setThreadStatus({ channelId, threadId: root.id, status: th.status }, { kind: 'human' }).catch(() => {});
+    return { channelId, threadId: root.id };
+  }
+
   /** この bot の、このスレッド（DM なら DM）の会話。無ければ作る */
   async function sessionFor({ bot, channel, threadId, post, backend = null, cwd = null }) {
     if (channel.kind === 'dm') return (await bots.ensureDmSession({ botId: bot.id })).sessionId;
@@ -1447,7 +1499,7 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
 
   return {
     channels, bots, memory, host, emit, now, inbox, budget,
-    start, stop, onPosted, onReacted, claimPost, wake, wakePost, handoff, wakeReserved, stopThread, turnExtras, onTurnEvent, onTurnEnd, onPermission, onCompacted, threadSettings,
+    start, stop, onPosted, onReacted, claimPost, wake, wakePost, handoff, wakeReserved, stopThread, turnExtras, onTurnEvent, onTurnEnd, onPermission, onCompacted, threadSettings, branchThread,
     /** テスト・診断用: 走っている bot のターンの数 */
     activeCount: () => active.size,
     /** 使用量の上限で休んでいれば解除の時刻（ms）。bots.overview の restingUntil（ADR 0119） */

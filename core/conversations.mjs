@@ -465,10 +465,14 @@ export function wrapBackend(native) {
     if (!allMessages.length) throw new Error(t("conversations.forkEmpty"));
     let messages = allMessages;
     let presents = await wrapped.getPresents(id);
-    const beforeAt = before === undefined ? -1 : messages.findIndex(m => m.uuid === before);
+    let beforeAt = before === undefined ? -1 : messages.findIndex(m => m.uuid === before);
     if (before !== undefined && beforeAt < 0) throw new Error(options.snapshot
       ? t('conversations.messageNotSaved')
       : t('conversations.forkMessageNotFound'));
+    // bot の会話は 1 つの発言を記憶・文脈・包みの行に分けて持つ（core/system-messages.mjs の groupUuid）。
+    // 発言の手前で切るときは、そのまとまりの先頭で切る（分けた兄弟の行を、切り口の前に残さない）
+    const group = beforeAt > 0 ? messages[beforeAt].groupUuid : null;
+    if (group) beforeAt = Math.max(0, messages.findIndex(m => m.groupUuid === group));
     const cutId = before === undefined ? options.upToMessageId : messages[beforeAt - 1]?.uuid;
     const boundary = cutId ?? messages.at(-1)?.uuid;
     // A live turn may already have published attachments while its messages are

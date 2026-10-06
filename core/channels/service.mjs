@@ -490,6 +490,41 @@ export function createChannelService({ dir, emit = () => {}, hooks = {}, now = D
       return saved;
     },
 
+    /**
+     * スレッドを、ある投稿（atPostId）のところで分ける（channels.branchThread。ADR 9101）。根から atPostId までの投稿を新しい id で黙って写す
+     * （hooks.posted を呼ばない＝写した @ で bot を起こさない）。author・at・text・添付・提示・mentions・ターンは残し、ターンの会話は sessions で付け替える。
+     * 新しい根に branchOf、写した投稿に copyOf（元の投稿の id）。作業中だった投稿は stopped で写す。返り: { root, idMap }
+     */
+    async branchCopy({ channelId, threadId, atPostId, sessions = {} }) {
+      const channel = await need(channelId);
+      if (channel.kind === 'dm') throw invalid('a DM has no threads to branch');
+      const all = (await store.snapshot(channelId)).filter((p) => p.id === threadId || p.threadId === threadId);
+      if (!all.length || all[0].id !== threadId) throw new ChannelError('POST_NOT_FOUND', { id: String(threadId) });
+      const at = all.findIndex((p) => p.id === atPostId);
+      if (at < 0) throw new ChannelError('POST_NOT_FOUND', { id: String(atPostId) });
+      const idMap = new Map();
+      let root = null;
+      for (const p of all.slice(0, at + 1)) {
+        if (p.deletedAt && p.id !== threadId) continue;
+        const id = newId('post', now());
+        idMap.set(p.id, id);
+        const state = p.state === undefined ? undefined : ['working', 'waiting', 'checking'].includes(p.state) ? 'stopped' : p.state;
+        const copy = {
+          id, channelId, threadId: root ? root.id : null, author: clone(p.author), text: p.text, mentions: clone(p.mentions ?? []), at: p.at,
+          reactions: {}, proxy: null, copyOf: p.id,
+          ...(state !== undefined ? { state } : {}),
+          ...(p.attachments ? { attachments: clone(p.attachments) } : {}), ...(p.presents ? { presents: clone(p.presents) } : {}),
+          ...(p.turn ? { turn: { ...clone(p.turn), ...(sessions[p.turn.sessionId] ? { sessionId: sessions[p.turn.sessionId] } : {}) } } : {}),
+          ...(p.taint ? { taint: p.taint } : {}), ...(p.routine ? { routine: clone(p.routine) } : {}), ...(p.to ? { to: p.to } : {}),
+          ...(root ? {} : { branchOf: { channelId, threadId, postId: atPostId } }),
+        };
+        const saved = await store.append(channelId, { op: 'post', post: copy });
+        if (!root) root = saved;
+        emit({ type: 'channelPost', channelId, op: 'add', post: saved });
+      }
+      return { root: clone(root), idMap };
+    },
+
     async edit({ channelId, postId, text, state, presents, attachments, mentions, taint, failedWithBody }, _author) {
       const post = await needPost(channelId, postId);
       if (post.deletedAt) throw new ChannelError('POST_NOT_FOUND', { id: String(postId) });

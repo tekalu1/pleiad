@@ -235,6 +235,20 @@ export const channelOps = [
     }),
   }),
   defineOp({
+    // スレッドをある投稿のところで分ける（「ここから分岐」。ADR 9101 の 4.4）。根からその投稿までを写した新しいスレッドができ、
+    // スレッドの bot の会話もその手前で分ける。写した投稿は bot を起こさない。画面の道具（人だけ）
+    id: 'channels.branchThread', summary: D('branchThread', 'summary'), risk: 'write',
+    riskReason: 'Copies the posts of a thread up to one post into a new thread and forks the bot conversations of the thread at that point. The copies wake no bot and the original thread is not changed',
+    input: z.object({ channelId: channelId('branchThread'), threadId: postId('branchThread', 'threadId'), atPostId: postId('branchThread', 'atPostId') }),
+    output: z.object({ channelId: z.string(), threadId: z.string() }),
+    surfaces: { ui: true, mcp: false, cli: false },
+    handler: async (ctx, args) => run(ctx, async () => {
+      if (ctx.principal?.by !== 'human') throw new OpError('NEEDS_UI', agentT(ctx.locale, 'ops.errors.NEEDS_UI'));
+      if (!ctx.branchThread) throw new OpError('NEEDS_UI', agentT(ctx.locale, 'ops.errors.NEEDS_UI'));
+      return ctx.branchThread(args);
+    }),
+  }),
+  defineOp({
     // エージェントに渡した原文（ADR 9101。Chats の「エージェントに渡した原文を見る」と同じ）: スレッドの各 bot の会話の履歴から、
     // その投稿を運んだ発言を、包み（<pleiad-channel post="P">・<pleiad-channel-thread>）を分ける前の生の本文で返す。人だけ（画面の道具）
     id: 'channels.deliveries', summary: D('deliveries', 'summary'), risk: 'read',
