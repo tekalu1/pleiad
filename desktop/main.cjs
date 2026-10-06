@@ -169,11 +169,13 @@ function systemLanguage() {
 }
 
 /**
- * AGENT_HOST_HANDOVER=on（パッケージ版か、AGENT_HOST_RUNTIME_RESOURCES つきの確認用）で、パイプでつなぐサーバーを選ぶ。
+ * パイプでつなぐサーバーを選ぶ。パッケージ版は既定で on（AGENT_HOST_HANDOVER が無ければ on。off で今の utilityProcess）。
+ * 開発（electron .）は既定が off で、on にするなら AGENT_HOST_RUNTIME_RESOURCES つき（desktop:pack の resources を指す確認用）。
  * 使えなければ null（今の utilityProcess。理由を log に残す）
  */
 async function chooseLinkedServer(portFile) {
-  if (String(process.env.AGENT_HOST_HANDOVER ?? '').toLowerCase() !== 'on') return null;
+  const flag = String(process.env.AGENT_HOST_HANDOVER ?? '').trim().toLowerCase();
+  if (flag !== 'on' && !(app.isPackaged && flag === '')) return null;
   if (!app.isPackaged && !process.env.AGENT_HOST_RUNTIME_RESOURCES) { log('AGENT_HOST_HANDOVER=on needs a packaged app (or AGENT_HOST_RUNTIME_RESOURCES): using the utility process'); return null; }
   try {
     return await serverBoot().chooseServer({ resourcesPath: runtimeResources(), execPath: process.execPath, appVersion: app.getVersion(), systemLocale: systemLanguage(), port: savedPort(portFile), cwd: app.getPath('home'),
