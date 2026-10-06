@@ -1,4 +1,4 @@
-import crypto from 'node:crypto';
+import { claimToken } from './mcp-token.mjs';
 import { agentT } from './i18n.mjs';
 import { KINDS } from './delegation-routing.mjs';
 
@@ -36,9 +36,10 @@ export const DELEGATING_TOOLS = ['ply_delegate', 'ply_task_send'];
 export function createAgentBridge({ call, hosts = () => [] }) {
   const bindings = new Map();
   return {
-    // locale は接続した会話の言語。橋は会話ごとに開くので、instructions・ツールの説明・エラーはその会話の言語で返す
-    open({ origin, owner, locale }) {
-      const token = crypto.randomBytes(32).toString('hex'); bindings.set(token, { owner, locale });
+    // locale は接続した会話の言語。橋は会話ごとに開くので、instructions・ツールの説明・エラーはその会話の言語で返す。
+    // token は開き直す口の値（省略なら新しく作る。形が違う・使用中なら投げる）
+    open({ origin, owner, locale, token: fixed }) {
+      const token = claimToken(bindings, fixed); bindings.set(token, { owner, locale });
       return { url: origin + AGENTS_MCP_PATH, headers: { Authorization: `Bearer ${token}` }, instructions: agentInstructions(locale),
         close: () => bindings.delete(token) };
     },

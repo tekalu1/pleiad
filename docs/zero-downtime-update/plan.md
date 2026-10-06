@@ -270,16 +270,40 @@ design.md §5.1・§6.1・§8。
 
 段階 1 の「サーバーの切り替えを先送りする」を、保持役の付け直しに替えていく。着手の最初に、未測定の Claude の場面を測る。
 
-### 2-0 頭の測定（S〜M）
+### 2-0 頭の測定（S〜M。**完了 2026-10-06**。記録は [stage2-claude.md](stage2-claude.md)）
 
 `scripts/zero-downtime/claude/` の作りで、次の最中に付け直したときの振る舞いを測る（stage0-claude の未確認）: サブエージェント・裏のコマンド（`background_tasks_changed`）・途中送信（`pendingSteers`）・圧縮（`PreCompact`）・`elicitation`・`request_user_dialog`・`oauth_token_refresh`・Pleiad の実際のオプション（`systemPrompt` のプリセット・`settingSources`・`skills`・プラグイン・互換の接続先）・npm で入れた `claude`（`pleiad-node.exe` で走らせる形）・数 MB の出力を流したときの保持役の遅さ・**外部の stdio MCP（`core/context-bridge.mjs` がサーバーの直の子として起こす）の扱い**（引き継ぎで旧サーバーと一緒に止まり、状態は戻らない。起こし直すか保持役の子にするか。R15）。**駄目な場面は「引き継ぎの前に終わるのを待つ」か「その場面のターンは保持役に載せない」に倒す**（design.md §4.4）。結果は `docs/zero-downtime-update/stage2-claude.md`
 
-### 2a 保持役（M〜L）
+**結果（CLI 2.1.284・SDK 0.3.288。要点）**: **「保持役に載せない」に倒す場面は無かった**（`cli.js` の npm の包みは付け直しの下限の版より古いので、版の一覧で外れる）。
 
-- `core/holder/`（Node の組み込みだけ。目安 1,000 行以内）。規約 v1（design.md §4.2）、記録・印・ack・控え（`mcp_message` だけ渡し直す）・世代・札・預かり物、木ごとの強制終了、`logs\holder.log`。**JSON-RPC の id の付け替えと `initialize` の答えは持たない**
+- **付け直せる**: サブエージェント（前面・裏・その中の承認待ち）・裏のコマンド（付け直し直後に CLI が裏の作業の全量を `background_tasks_changed` で出し直す）・途中送信（旧い親が流し込んだ分も同じ uuid の replay が新しい親に届き、`cancelQueued` で取り消せる）・圧縮（要約中も `PreCompact` の最中も。`PreCompact` は CLI が自分で取り消す）・`elicitation`（**控えの渡し直しが要る**。渡し直さないと止まる）・Pleiad の実際のオプション（**2 回目の `initialize` の systemPrompt・skills は CLI が使わない**）・互換の接続先（フラグ設定のファイルは起動時にだけ読まれる）・npm の `claude.cmd`（中身はネイティブの `bin/claude.exe`）・CLI の子の stdio MCP（状態も残る）・数 MB の出力（5 MB で +0.1〜0.3 秒、20 MB で約 2 倍・保持役 190〜460 MB）
+- **引き継ぎの前に終わるのを待つ**: 段階 0 の hooks（`PreToolUse` など）・`mcp_message`・HTTP の MCP に、**外部の stdio MCP の処理中の呼び出し**を足す
+- **対象外**: `request_user_dialog`（宣言しない限り CLI が出さない）・`oauth_token_refresh`（`getOAuthToken` を渡さない限り出ない）
+- **R15**: 段階 2 は起こし直す（約 0.2 秒、状態は消える。起こし直した後の最初の結果にその旨を添える）。保持役の子にすると状態は残るが、旧いクライアントの JSON-RPC の id への応答が新しいクライアントの同じ id にぶつかるので、世代つきの id が揃う段階 3 で
+- 2a〜2e に響くこと（控えに `elicitation`・答え済みの `control_request` を流し直さない・記録の上限・`.cmd` を exe に解く・札に `pendingSteers`）は stage2-claude.md「段階 2 の計画（2a〜2e）に響くこと」。下の 2a・2c・2d に反映した
+
+### 2a 保持役（M〜L。**実装済み 2026-10-06**。下の「実装のメモ」）
+
+- `core/holder/`（Node の組み込みだけ。目安 1,000 行以内）。規約 v1（design.md §4.2）、記録・印・ack・控え（`mcp_message` と `elicitation` だけ渡し直す。親が答え済みの `control_request` は再生で流し直さない。2-0）・世代・札・預かり物、木ごとの強制終了、`logs\holder.log`。**JSON-RPC の id の付け替えと `initialize` の答えは持たない**
+- 記録の上限（`truncated`）と、ack・印より前を捨てるのを最初から入れる（20 MB の本文のターンで保持役が 460 MB まで膨らんだ。2-0）。行は JSON で包み直さずに送る。`claude.cmd` は包みの `bin/claude.exe` に解いて直に起こす
 - 子の stdout・stderr を、親の有無にかかわらず**常に読む**（イベントループを長く止めない）。`detach` の後は、その親からの `write`・`end`・`kill` を転送しない。親が居ないあいだも子の stdin を閉じない
 - 起動は `detached: true` + `stdio: 'ignore'` + `windowsHide: true`（段階 1 と同じ起こし方と Job の分岐）
 - テスト（`tests/unit/holder-*.mjs`）: 偽の子（行を出す・依頼を出す・止まる・大量に出す）で、切断と付け直し・控えの渡し直し・**stdout を誰も読まない親でも詰まらない**（1 MB 以上）・`detach` 後の `kill` を転送しない・記録の上限（`truncated`）・二重起動の防止・`hello` の `secret` の不一致・世代の古いパイプ
+
+**実装のメモ（2026-10-06。実装済み。2b・2c が使うときの注意と、design.md §4.2 とのずれを含む）**
+
+- **ファイル**（`core/holder/`、合計約 900 行。Node の組み込みと `core/link-codec.mjs`・`core/atomic-file.mjs`・`core/server-log.mjs`・`core/runtime-use.mjs` だけ）: `protocol.mjs`（規約 v1 の定数・パイプ・秘密のファイルの名前）・`holder.mjs`（保持役の本体 `createHolder`）・`main.mjs`（起動口。detached で起こされる）・`client.mjs`（サーバー側の口 `HolderClient`・`connectHolder`・`launchHolder`・`ensureHolder`）。既存のコードの変更は `core/server-log.mjs` の `redirectOutput` に始まりの行の名前（`label`）を足しただけ。**まだサーバーのターンには配線していない**（既定の流れは変わらない）。試験は `tests/unit/holder-{core,handshake,process}.mjs`（93 判定。偽の子は `tests/lib/holder-fake-child.mjs`）
+- **規約 v1 の形は `core/holder/protocol.mjs` の頭の注記に固定した**。パイプ `\\.\pipe\pleiad-holder-<データ置き場と利用者名のハッシュ>-v1`、1 行 1 JSON（`core/link-codec.mjs`）。名前と秘密は実行場所の `run\holder-<キー>-v1.json`（権限 0600。保持役が `listen` に成功してから書き、終了で自分のものだけ消す。データ置き場には書かない）。`hello { secret, protocol: [min, max], role: 'server', pid, appVersion }` → `welcome { protocol, generation, range, appVersion, pid, children, stash }`。秘密が合わなければ何も返さず切り、合って版が合わなければ `reject { reason: 'protocol', range, generation }`
+- **design.md §4.2 の素描との差**（実装に合わせて §4.2 の表を直した）: 答えの要る依頼の応答（`attached`・`detached`・`replay` の `reqId` つき連続・`error`）・`release`（終わった子の記録を捨てる）・`shutdown`（子を木ごと止めて終わる）・`bye`（`replaced`・`closing`・`leaving`）を足した。`attach` は `{ id, from? }`（from の既定は ack の次）。`overflow` は `{ id, reason: 'record' | 'line' }`（記録から落ちた分・長すぎて捨てた行）。`detach` は `{ id? }`（id 無しは全部）。`mark` の位置の既定は次の行。**世代 = 規約の版**で、`connectHolder({ generation })` が世代ごとに別のパイプ・別のファイルへつなぐ（`[H-1, H]` の 2 世代の保持役は並んで動く）。design.md の「子が 1 つも無く」は「生きている子が 1 つも無く」にした（終わった子の記録は idle の終了で消える）
+- **子の stdout は常に読み、親へはカーソルで流す**: 親が読まなければ、書きかけが 4 MB（`highWaterBytes`）を超えた時点で止まり、`drain` で記録から続きを送る（保持役のメモリは記録の上限で止まる）。試験は 3 MB を出す子と、まったく読まない親・一度もつながらない間の 2 MB で、子が詰まらず終わることを見る。記録の上限は子ごとに 32 MB（`maxRecordBytes`）で、超えたら古い行から捨てて `truncated`（`first` が進む。付け直した親には `overflow { reason: 'record', first }`）。子の 1 行の上限は 16 MB（超えた行は捨てて `overflow { reason: 'line' }`）、パイプの 1 行は 64 MB
+- **記録の捨て方**: 印（`mark`）と ack の小さい方より前を捨てる（印も ack も無ければ捨てない）。`ack` は戻らず、受け取った行数を越えない。`unmark` で印を外すと ack の次まで捨てる
+- **控え**: `claude-control` は `control_request` を `request_id` で控え、`control_response`（親の `write`）か `control_cancel_request`（子）で消す。付け直しで渡し直すのは **`attach` の `from` より前にある `mcp_message` と `elicitation` だけ**（stdio の MCP が出す `elicitation` は `initialize` の応答の控えに入らず CLI が再送しないので、`mcp_message` と同じく要る【2-0】。`can_use_tool` は CLI が `pending_permission_requests` で返し、`hook_callback` は CLI が自分で取り消すので控えない。`from` 以降は記録の再生で届くので重ねて渡さない。`redelivered: true` の `out`。通番の順で、生の出力の続きより前）。`jsonrpc` は `id` と `method` を持つ依頼を控え（key は `JSON.stringify(id)`）、`id` を持つ応答で消す。いずれも保持役は `id` を付け替えない
+- **答え済みの `control_request` を流し直さない責任は、サーバー（2b-6 の再生）にある**（2026-10-06 に決めた）。保持役は答え済み・取り消し済みの依頼を**控えから外す**ので、渡し直しには出ない（`mcp_message`・`elicitation`）。一方、記録の行そのもの（`out`・`replay`）は通番が連続する生の行で、保持役は書き換えも飛ばしもしない（ack は uuid の無い制御の行も数えるので、飛ばすと通番が欠ける。保持役はエージェントのプロトコルを解釈しない）。**再生で作る側（サーバー）は、`control_request` の行を SDK の `query` に流さず、状態を組み立てるためだけに読む**。流してよいのは、付け直しの `attached` の `pendingRequests`（答えを待っている依頼）に `requestId` が残っているものだけで、それは `redelivered` の `out` で届く。`attach` の `from`（ack の次）以降に答え済みの依頼が混ざりうるのは、ack が答えより前に止まっているとき（旧サーバーが依頼の行を処理し終えた直後に ack し、答えは後から返した）だけ。サーバーは `attached` の時点の `pendingRequests` に無い `requestId` の `control_request`（`seq` が `attached` の `seq` 以下）を捨て、通番は ack に数える
+- **`detach` の後**: その親からの `write`・`end`・`kill`・`ack`・`mark` などは無視され、その親へ `out` も流れない。答え（`detached`）が来た時点で転送は止まっている。**旧サーバーは `detached` を待ってから SDK の `query` を閉じる**。親の `write` は**行になった分だけ**子へ渡し、行の途中で親が切れたら（`detach` でも）捨てる。親が切れても子の stdin は閉じない
+- **起こし方**: `launchHolder`（段階 1 と同じ `detached: true`・`stdio: 'ignore'`・`windowsHide: true`。`mode: 'auto'` は `desktop/job.cjs` の `inspectJob`・`decideLaunch` で分け、`breakaway` なら `launchBreakaway`。**抜け道の無い Job は `HOLDER_UNSUPPORTED`**。呼び出し側は保持役を使わない今の流れに落とす）。起こした保持役の環境変数は `PLEIAD_HOLDER_DATA`・`PLEIAD_HOLDER_ROOT`・`PLEIAD_HOLDER_KEY`・`PLEIAD_HOLDER_APP_VERSION`・`PLEIAD_HOLDER_IDLE_MS`（`AGENT_HOST_TOKEN`・`ELECTRON_RUN_AS_NODE` は外す）。**二重起動の防止**: Windows の名前付きパイプは最初のインスタンスしか作れない（libuv。本物のパイプで確かめた）ので、後から立てた保持役は `HOLDER_RUNNING` で、何も書かずに終わる。unix ソケットは、つながるかを先に確かめる
+- **2-0 が挙げた 2a の点の確認**（2026-10-06）: 控えの `elicitation`・記録の上限（`truncated`）・ack と印より前を捨てる・答え済みの `control_request` を控えから外す、は実装済みで試験にある。**足していない 2 つ**: (1) 行を JSON で包み直さずに送る形（長さを前に付けた生の行など）は、規約 v1 の `framing: 'lines'` の枠（`spawn` の `framing`。今は `lines` 以外を `invalid` にしている）に別の値を足す形で、規約を変える段で入れる（20 MB の本文で約 2 倍・保持役 190〜460 MB。5 MB で +0.1〜0.3 秒なので、2b・2c の配線の後に実測して要るか決める）。(2) `.cmd` を包みの `bin/claude.exe` に解す処理は、保持役ではなく **2c のサーバー側**（`spawn` に渡す `command` を決める所）に置く。保持役は `command` と `args` を何も解釈せず `shell: false` で起こすので（`.cmd` は Windows の `spawn` が `EINVAL`）、どの CLI の包みかを知っているのはサーバー（`core/cli-installation.mjs` の `cliCommand`）だから
+- **ログ**: `logs\holder.log`（`core/server-log.mjs` の書き手。1 MB で `.old`）。子はコマンドのファイル名・pid・policy・終了コードだけを書き、**引数・env・札・秘密は書かない**
+- **2b・2c が使うときの注意**: (1) `ensureHolder({ dataDir, root, key, appVersion })`（`key` はサーバーの `AGENT_HOST_RUNTIME_KEY`）が「居れば付ける・居なければ起こす」。戻り値の `client.welcome.children` が付け直しの材料（札・通番・ack・印・控え・`stderr` の末尾）。`HolderClient` の `attach`・`detach`・`replay` は答えを待ち、`requestTimeoutMs`（10 秒）で `HOLDER_TIMEOUT`。(2) `spawn` / `attach` は SDK の最初の stdin の書き込みより前に送る。同じ接続の中の順序は保たれ、答えを待たずに `write` してよい。起こせなかったコマンドは `exit { error: 'ENOENT' }` で届く。(3) ターンの印は `mark(id, name)` をそのターンの最初の `write` より前に送る（位置は次の行）。再生に使う範囲は `replay(id, markSeq, acked)`。**落ちた分があれば `truncated`**（表示の途中の状態をあきらめる。§4.5 の 5）。(4) `ack` は、サーバーがアプリのループで処理し終えた最後の通番にする（SDK の stdout へ流した位置にしない）。(5) 保持役は `PLEIAD_HOLDER_KEY` があれば `run\<版>-<pid>.lock.db` を持つので、**保持役が走っている版の実行場所は掃除されない**。新しい版のサーバーは、世代が同じ保持役をそのまま使うので、保持役は古い版の `core/holder/` で走り続ける（design.md §4.3）。(6) 子の env は `spawn` に全部渡す（保持役は自分の環境を渡さない。`env` を省くと保持役の環境）。秘密はメモリだけ・ログには書かない。(7) Windows の保持役の子は libuv の Job に入るので、保持役が落ちれば子も止まる【Node の仕様。この試験では「保持役の `close` と `shutdown` で子が止まる」までを確かめた】。(8) 親の接続は常に 1 つ（後から合格した方が勝ち、古い方は `bye 'replaced'` で切られて以後何も書けない）。引き継ぎでは、旧サーバーが `detach` した後に新サーバーが `hello` する順にすれば、取り合いにならない。(9) idle で終わった保持役の「終わった子の記録」は消える。`release` は、終わりの記録（`exit`・使用量・完了通知）を処理し終えた後に呼ぶ
 
 ### 2b サーバーの「始める」と「動かす」を分ける（L〜XL。一番大きい）
 
@@ -295,7 +319,7 @@ design.md §5.1・§6.1・§8。
 |---|---|---|
 | 2b-1 | `runTurnInternal` を `prepareTurn`・`beginTurn`・`launchTurn`・`driveTurn`（出来事を受けて `endTurn` で締める）・`releaseTurn` に分ける。閉包の値を `ctx` に移す。`endTurn` に 1 回だけの印 | M |
 | 2b-2 | 札の形（`core/turn-card.mjs`。純関数・版つき・秘密の欄を分ける・途中送信の控えを 1 つの欄に） | S |
-| 2b-3 | 会話の MCP の口（ply_agents・ply_computer・ply_browser・ply_control・ply_context）を同じトークンで開き直す `open({ token })` | S |
+| 2b-3 | 会話の MCP の口（ply_agents・ply_computer・ply_browser・ply_control・ply_context）を同じトークンで開き直す `open({ token })`。**実装済み 2026-10-06**（トークンの検査は `core/mcp-token.mjs`、`server.mjs` に `restoreConnection(entry)`。まだ呼ばない。要点と 2b-4 への注意は [stage2-server-state.md](stage2-server-state.md) の「2b-3 の実装のメモ」） | S |
 | 2b-4 | 付け直しの入口 `adoptTurn(card, source)`・`makeEmit` の再生の道・起動の順序と後片付けの除外・`backend.adoptTurn` の口。元は既定で空。テストは「終わっていたターン」の札と記録から | M |
 | 2b-5 | fake の `adoptTurn`（台本を別プロセスの偽の CLI で走らせ、保持役の子に載せる） | M |
 | 2b-6 | スナップショットと承認を再生で作る（ack・uuid の冪等・承認のカードの id を決まった値に・中断の送り直し・ポートが取れないとき） | M |
@@ -307,14 +331,15 @@ design.md §5.1・§6.1・§8。
 ### 2c Claude を保持役に載せる（M〜L）
 
 - `spawnClaudeCodeProcess` で保持役へ。偽の `SpawnedProcess`（`write`・`end`・`kill` を保持役に写し、`detach` の後は転送しない）。**`spawn` / `attach` は SDK の最初の stdin の書き込みより前に送る**
-- 付け直し: 同じ CLI に `query` を作り直す（空の入力の流れ）。旧サーバーが手を離す順序は「保持役に `detach` → `query` を閉じる」。途中送信の控え（`pendingSteers`）・裏の作業の追跡（`claude-background.mjs`）・費用の基準（`readCostBase`）・フラグ設定のファイル（`writeClaudeFlagSettings`。ターンの終わりに消す）の札
+- 付け直し: 同じ CLI に `query` を作り直す（空の入力の流れ）。旧サーバーが手を離す順序は「保持役に `detach` → `query` を閉じる」。途中送信の控え（`pendingSteers`）・裏の作業の追跡（`claude-background.mjs`。生きている作業の一覧は付け直し直後の `background_tasks_changed` で置き換える）・費用の基準（`readCostBase`）・フラグ設定のファイル（`writeClaudeFlagSettings`。ターンの終わりに消す。`detach` の後は旧サーバーが消さず、新しいサーバーの起動時の掃除は札が指すファイルを外す）の札。systemPrompt・skills は札に要らない（CLI が 2 回目の `initialize` の値を使わない。2-0）
 - **`host` MCP は in-process のまま**（HTTP に移さない）。引き継ぎは、走っている hooks のコールバックと `mcp_message` のハンドラーが終わるのを（上限つきで）待つ
 - 付け直しに使える CLI の版の一覧を別に持つ（`backend-shape-diagnostics.mjs` の `VERIFIED` とは分ける。確かめたのは 2.1.284・2.1.288、`pending_permission_requests` は 2.1.268 から）。外れる版のターンは保持役に載せない
 - テスト: fake の CLI（stream-json を話す偽物）で、承認待ち・hooks・`mcp_message` の最中の付け直し。実機は `scripts/zero-downtime/claude/` の本物の CLI
 
 ### 2d 引き継ぎ（M）
 
-- 旧サーバー: 開始を止める・短い処理と処理中の HTTP の MCP と hooks・`mcp_message` を待つ・タイマーを止める・`flushNow`・`detach`・ロックを放す
+- 旧サーバー: 開始を止める・短い処理と処理中の HTTP の MCP と hooks・`mcp_message`・外部の stdio MCP の呼び出しを待つ・タイマーを止める・`flushNow`・`detach`・ロックを放す
+- 新サーバー（R15）: 外部の stdio MCP は札の束縛から起こし直す（ツールの名前は同じになる。状態は消えるので、起こし直した後の最初の結果にその旨を添える）
 - 新サーバー: `acquireDataLock` の待ち（数十 ms 刻み）、預かり物（トークン・ポート）、MCP の束縛を札から戻す、**HTTP の口を待ち受けてから**付け直す・新しい作業を始める、付け直し
 - モジュールを先に読み込んでロックを待つ起動（`--handover`）。間の目安を測り直す
 - 戻し道（design.md §6 の表）: 前の版のサーバーで付け直す、1 つのターンだけの中断、`AGENT_HOST_HANDOVER=off`
@@ -323,6 +348,17 @@ design.md §5.1・§6.1・§8。
 ### 2e サーバーが落ちたときの付け直し（S）
 
 - main がサーバーの切断（`main-leaving` 無し）を見たら、同じ版で起動し直して付け直す。今の「サーバーが終了しました」の致命的なダイアログ（`main.cjs` の `worker.once('exit')`）は、起動し直しにも失敗したときだけ
+
+**実装済み（2026-10-06）**
+
+- **流れ**（`desktop/main.cjs` の `onServerExit`。名前付きパイプの経路だけ。`AGENT_HOST_HANDOVER=off` の `utilityProcess` は今のまま）: つながりが切れたら、(1) `bye 'replaced'` なら静かに終わる（今のまま）、(2) `bye 'closing'` 以外ならまず今の `reattachServer`（サーバーは居てつながりだけ切れた場合。数回・約 1 秒）、(3) 居なければ `desktop/server-restart.cjs` の `restart()` で起こし直し、起こせたら窓を **1 回だけ**読み直す（起こし直したサーバーの `ready` のポート・トークン。同じポートが取れなければ origin が変わる。切り替えの S2 と同じ `reloadWindow`）。切り替えの `once('exit')` の見張りも付け直す。(4) 起こし直しに失敗した・続けて落ちて断られたときだけ致命的なダイアログ（`server.restartFailed`。起こし直しを試みなかった `closing` などは今の `server.exited`）
+- **起こし直さない場合**: 切り替えが S1 を手放している間（`serverSwitch.replacing`）、`main-leaving` を送った後（更新で離れる途中。`main-leaving-cancel` で取りやめれば、また起こし直す）、`bye 'closing'`（サーバー自身が終わる）、main が終わる途中（`quitting`・`app.exit`）。起こし直している間に終了が始まったら、起こしたサーバーに `shutdown` を送って終わらせ、窓は読み直さない
+- **起こす版・env**: 落ちたサーバーの最後の `ready` の `runtimeKey` の版が実行場所（`runtime.locate`）に残っていればその版、無ければこの main の版（`chooseServer` の `prepared`）。env は切り替えの S2 と同じ `serverEnv` で、**同じトークン・同じポート**（`ready` の値）。落ちたサーバーが残した `main-link.json`・`control.json` は、起こしたプロセスの pid と合うものだけを見る `startAndConnect` が無視する（データ置き場のロックは OS がプロセスの終了で外している）。`ready` を待ってから返す。起こしかけて立たなかったプロセスは止める
+- **続けて落ちるとき**: 1 分（`CRASH_WINDOW_MS`）の間に 3 回（`MAX_CRASHES`）落ちたら、3 回目は起こし直さずダイアログ（立ち上がってすぐ落ち続けるサーバーを回し続けない）。窓の外に出た古い落ちは数えない。起こし直しの失敗も 1 回に数える
+- **保持役との関係（今）**: 保持役（2a）はまだターンに載っていないので、**落ちたサーバーのターンは中断として残る**（起動時の `restart` の回復のまま。起こし直したサーバーの起動で `interrupted: { reason: 'restart' }` になり、「再開」で続けられる）。落ちて起こし直すだけで、走っていたターンが続くわけではない
+- **2b 以降の口**: `createServerRestarter` の `afterRestart(ready)`（起こし直して `ready` が届いた後。窓の読み直しより前）。保持役に載ったターンが付け直される段階（2b の `adoptTurn`・2c）では、新しいサーバーが起動で保持役へ付け直す（2d の引き継ぎと同じ入口）ので、main からは何も足さなくてよい見込み。足す必要が出たらここへ（`main.cjs` は今は渡していない）。そのとき、起動時の後片付け（ターンを `restart` の中断にする所）は、保持役が持つターンを外す（design.md §5.4）
+- **残る課題**: 落ちたサーバーの子（Claude の CLI など。保持役に載る前のもの）は main の子でも保持役の子でもなく、サーバーが落ちても残りうる。今は起動時の孤児の掃除に任せる。サーバーが落ちた理由は `logs\server.log` に残る（ダイアログには出さない）
+- テスト: `tests/unit/desktop-server-restart.mjs`（起こす版・同じトークン/ポート・起こせない・続けて落ちる・同時・`afterRestart`・**本物のサーバーを強制終了して同じトークン・ポートで起こし直す**）、`tests/unit/desktop-boot.mjs`（main の流れ: 起こし直し・窓 1 回・次の落ちも見張る・ポートが変わる・断られたらダイアログ・起こさない場合）。実機（`desktop:pack` の resources・本物の electron・fake。[dev-verification.md](../dev-verification.md)）: サーバーの強制終了 2 回は同じ origin・トークンで起こし直され窓は各 1 回だけ読み直し（約 1.8 秒）、3 回目は起こし直さずダイアログ（14 / 14）
 
 **段階 2 の完了の条件**: 承認待ち・ツールの実行中・途中送信の直後・裏の作業の待ち・委譲の子が走っている、のそれぞれで Claude のターンを走らせたまま core の違う版へ更新し、ターンが中断されずに続き、承認に答えられ、終わりの記録（完了通知・使用量・`completedAt`）が 1 回だけ残る。引き継ぎの間に当たった HTTP の MCP の呼び出しの失敗を数えて記録する（段階 4 を足すかの根拠）。
 

@@ -58,6 +58,8 @@ const SUITES = [
   // ply_browser の骨組み（ADR 0148）: 鍵付きの口・プロフィール（ADR 0078）の削除後の形・agy の束ね
   './unit/browser-bridge.mjs',
   './unit/browser-confirm.mjs',
+  // 会話の MCP の口を同じトークンで開き直す open({ token })（無停止の更新 2b-3）
+  './unit/mcp-bridge-token.mjs',
   // 設定 › コンピューターの操作: prefs の検査と既定・store の remember/forget・hostCapabilities.computerUse の判定・節の動き・setPref（docs/computer-use.md）
   './unit/computer-settings.mjs',
   // コンピューターの操作（ply_computer。docs/computer-use.md）: アプリの判定の順・禁止の一覧・印の行・座標・スクショの保存
@@ -70,6 +72,12 @@ const SUITES = [
   './unit/main-port.mjs',
   // main とサーバーを結ぶ名前付きパイプの口（段階 1 の 1-2）: 符号化・行の分け方・握手の拒否・往復と順序・大きなバイナリー・切断と再接続・別プロセスのサーバー
   './unit/main-link.mjs',
+  // ターンの保持役の本体（段階 2 の 2a）: 切断と付け直し・控えの渡し直し・読まない親でも詰まらない・detach 後は転送しない・記録の上限・印と ack・終わり方・木ごとの強制終了・idle
+  './unit/holder-core.mjs',
+  // ターンの保持役の握手と名前（段階 2 の 2a）: secret・規約の版の不一致・握手前の操作・世代の並走・二重起動の防止・launchHolder の Job の分岐
+  './unit/holder-handshake.mjs',
+  // ターンの保持役の本物のプロセス（段階 2 の 2a）: 起こした側が終わっても残る・秘密のファイルとログ・同時に起こしても 1 つ・shutdown・idle・後に残らない
+  './unit/holder-process.mjs',
   // main が居ない間の機能ごとの扱い（段階 1 の 1-5）: secret の待ち・computer use の停止・内蔵ブラウザーの写しと復元・screencast・os-open・openExternal・猶予
   './unit/main-away.mjs',
   // 内蔵ブラウザーの付け直し（main 側）: 中継を同じポートと鍵で立て直す・タブの写しの書き出しと開き直し・橋の流れ
@@ -331,6 +339,8 @@ const SUITES = [
   './unit/desktop-server-boot.mjs',
   // main.cjs の boot の選び方（vm）: AGENT_HOST_HANDOVER の既定（パッケージ版は on・開発は off）と off の utilityProcess・パイプの包み・起動の失敗・サーバーが居なくなったとき・更新の流れ
   './unit/desktop-boot.mjs',
+  // サーバーが落ちたときの起こし直し（無停止の更新 段階 2 の 2e）: 同じ版・トークン・ポートで起こす・起こせなければ失敗・続けて落ちたらやめる・本物のサーバーを強制終了して起こし直す
+  './unit/desktop-server-restart.mjs',
   // 新しい版のサーバーへの切り替え（無停止の更新 1-6）: 作業が 0 件まで待つ・ロック・S1 の終わり・S2・前の版へ戻す・合わない版は聞く・今すぐ中断。事前の確かめの出力
   './unit/desktop-switch.mjs',
   './unit/desktop-switch-screen.mjs',

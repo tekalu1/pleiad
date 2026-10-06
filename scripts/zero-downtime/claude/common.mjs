@@ -66,8 +66,9 @@ export function holderRequest(client, msg, replyType, timeoutMs = 5000) {
  *   mode 'attach': 既にある子（id）に付ける。command / args は捨てる。from 以降の記録を流し直してもらう。redeliver なら答えていない依頼の控えも
  * onLine(seq, line, info) は SDK の stdout に流す直前に呼ぶ（記録用）
  */
-export function makeSpawn({ client, id, mode, from = 1, redeliver = false, onLine = () => {}, onAttached = () => {}, onProcess = () => {} }) {
+export function makeSpawn({ client, id, mode, from = 1, redeliver = false, onLine = () => {}, onAttached = () => {}, onProcess = () => {}, onSpawnOptions = () => {} }) {
   return options => {
+    onSpawnOptions({ command: options.command, args: options.args });
     const proc = new EventEmitter();
     const stdout = new PassThrough();
     let exited = false;

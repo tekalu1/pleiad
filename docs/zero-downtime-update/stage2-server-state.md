@@ -195,7 +195,7 @@
 | O6 | Claude の `tracker`（main と裏の作業の状態。`claude-background.mjs:92-104` の `mainActive`・`seenResult`・`bg`・`known`・`states`・`toolTasks`）と `turnTrackers` | `claude.mjs:663`・`:592` | `:800`・`:836`・`:1026`・`getSubagentState` `:1146` | 再生 | `task_*`・`background_tasks_changed`・ツールの結果の行から作る。`pending`（`claude-background.mjs:97`）は O5 と組 |
 | O7 | Claude の `toldModel`・`heldResult`・`limit`・`sawMessage`・`computerIds`・`compactDiagnostic` | `claude.mjs:958-962`・`:653`・`:719` | `:983-1031` | 再生 | 印から流す |
 | O8 | Claude の `input`（stdin の列）・`hostCalls`・`closer`・`sdkAbort`・`stop` | `claude.mjs:664`・`:686`・`:688`・`:702`・`:911` | | 捨てる | 新しい `query` が作る。走っている `host` の呼び出しは 2d が待つ |
-| O9 | ply_agents の `bindings`（トークン → 持ち主・言語） | `agent-bridge.mjs:37` | `open` `:40-43` | 札 | トークンを札に。`open({ token })` で同じトークンを受ける形にする（2b-3） |
+| O9 | ply_agents の `bindings`（トークン → 持ち主・言語） | `agent-bridge.mjs:37` | `open` `:40-43` | 札 | トークンを札に。`open({ token })` で同じトークンを受ける形にする（2b-3。実装済み） |
 | O10 | ply_computer の `bindings`（トークン → 持ち主・配り方・`shot`・`known`・`turns`） | `computer-bridge.mjs:47` | `open` `:116-127` | 札 | トークンは札。`shot`・`known`（写した画面・知っているアプリ）は捨てる（承認からやり直す。M37） |
 | O11 | ply_browser・ply_control の `bindings` | `browser-bridge.mjs:16`・`mcp-bridge.mjs:17` | `open`・`lookup` `mcp-bridge.mjs:61-68` | 札 | O9 と同じ。ply_control のトークンは会話のシェルの `PLEIAD_CONTROL_TOKEN`（`server.mjs:1126`）にも入っている |
 | O12 | ply_context の `bindings`（トークン・`clients`・`tools`・`pending`・`report`） | `context-bridge.mjs:77`・`:85-86` | `open` `:85-134`、`close` `:87-94` | 札 | トークンと束縛は札。道具の名前は `m_<hash>` で決まる（`:113`）ので開き直せば同じ。**`clients`（外部の stdio MCP の子・SSE/HTTP の接続）と処理中の `pending` は失われる**（R15） |
@@ -369,13 +369,22 @@ adoptTurn(card, source)                              … 付け直しの入口�
 |---|---|---|---|
 | 2b-1 | **済** `runTurnInternal` を `prepareTurn`・`beginTurn`・`launchTurn`・`driveTurn`・`releaseTurn` に分ける（§4.2）。`ctx` に閉包の値を移す（§4.3）。`endTurn` に 1 回だけの印 | 取り込める（挙動を変えない） | M |
 | 2b-2 | 札の形 `core/turn-card.mjs`（純関数）: `cardOf(ctx)`・`restoreFields(card)`・版 `v: 1`・大きさの上限・秘密の欄を分ける。途中送信の控えを 1 つの欄にまとめる形（§3 の 3）。ターンの前の切り口（T1） | 取り込める（使う所が無い） | S |
-| 2b-3 | 会話の MCP の口を同じトークンで開き直す: `agent-bridge`・`computer-bridge`・`browser-bridge`・`mcp-bridge`（ply_control）・`context-bridge` の `open({ token })` と、`server.mjs` の `restoreConnection(entry)` | 取り込める（既定の `open()` は今のまま） | S |
+| 2b-3 | 会話の MCP の口を同じトークンで開き直す: `agent-bridge`・`computer-bridge`・`browser-bridge`・`mcp-bridge`（ply_control）・`context-bridge` の `open({ token })` と、`server.mjs` の `restoreConnection(entry)`。**実装済み 2026-10-06**（下の「2b-3 の実装のメモ」） | 取り込める（既定の `open()` は今のまま） | S |
 | 2b-4 | 付け直しの入口 `adoptTurn(card, source)` と `makeEmit` の再生の道（§4.4）、起動の順序（§5.1 の順序）と後片付けの除外（S5-S9・S12・S13）、`backend.adoptTurn` の口。**付け直す元は既定で空**。テスト用に「終わっていたターン」の元（札と記録のファイル。`AGENT_HOST_ADOPT_FROM`、テストだけが付ける）を読める | 取り込める（元が空なら何も変わらない） | M |
 | 2b-5 | fake の `adoptTurn`: fake の台本を別プロセスの偽の CLI（`core/backends/fake-agent.mjs`。1 行 1 JSON の出来事を出し、stdin で承認の答え・途中送信を受ける）で走らせる台本 `held:<台本>` と、保持役（2a）の子に載せる道。札は台本の位置 | 2a の後 | M |
 | 2b-6 | 実行中のスナップショットと承認を再生で作る: ack の位置、uuid で冪等、承認のカードの id を決まった値に（A3）、止め始めていたターンの中断の送り直し（T7）、待ち受けのポートが取れないときの扱い（§3 の 9） | 2b-5 の後 | M |
 | 2b-7 | 途中送信と委譲の付け直し: 札の途中送信の欄を埋める（`liveNotices`・`liveInstructions`・`agentTasks` の `steers`）、`execute` を分けて `agentTasks.adopt(taskId, turnPromise)`、S8 の除外 | 2b-6 の後 | M |
 
 bot の会話（O21）・圧縮のターン（`hooks.compact`）・Codex/agy（段階 3）は 2b では付け直さず、先送り（段階 1 の切り替え）か中断のまま。2b-4 の除外の一覧に入れ、`running` の `stoppers` と同じく待ちの表示に出す。
+
+**2b-3 の実装のメモ（2026-10-06。実装済み。2b-4 が使うときの注意を含む）**
+
+- 口の形: `agentBridge.open`・`browserBridge.open`・`computerBridge.open`・`controlBridge.open`（`createMcpBridge`）は、引数に `token`（任意）を受ける。省略なら今までどおり呼ぶたびに新しい値で、返り値の形も変えていない。トークンの検査は `core/mcp-token.mjs` の `claimToken(bindings, fixed)` に 1 つにまとめた: 64 桁の小文字の 16 進でなければ `Invalid token`、その口で使用中なら `Token already in use` を投げる（断った開き直しは元の束縛に触れない）。閉じた口のトークンはまた受ける
+- ply_context（`createContextBridge().open`）は、もとから `token` を受け形も見る（agy が会話のあいだ同じ値を使うため）。**使用中の値の検査は足していない**: 次のターンが同じ値で束ね直す使い方があり、`close` も「後から束ね直した方は消さない」作りのため。代わりに `restoreConnection` が、札の `contextToken` の形と他の会話との重なりを見る
+- `server.mjs`: `restoreConnection(entry)`（まだどこからも呼ばない）。`entry` は `{ key, sessionId, locale, tokens: { agents, context, control, browser, computer }, computerBackend }`。`tokens` は札へ入れる側の `connectionTokens(entry)` と同じ形で、**開いていなかった口は `null` のまま開かない**。`key` が `agentConnections` に既にあれば投げる（上書きしない）。途中で投げたときは、開いた口を閉じてから投げる（`agentConnections` には載せない）。ply_computer は `computerBackend` で `getBackend` を引いて開き直す（渡し方 `delivery` はそのバックエンドの `capabilities.computerUse` から作り直す。コンピューターの操作が今は使えない・バックエンドが無いときは投げる）
+- 既存の開き方は `attachAgentsPort`・`openComputerPort`・`openControlPort` に取り出し、`conversationConnection`・`computerConnection`・`controlRuntimeFor` と `restoreConnection` が同じ `owner`（走っているターンを `runtime.turns` から引く）を使う。挙動は変えていない
+- 2b-4 への注意: (1) `restoreConnection` は**口を開くだけ**で、`runtime.turns` には何も載せない。口の `owner` は呼ばれた時に `runtime.turns.get(key)` を引くので、付け直すターンの登録（`restoreTurn`）より前に呼んでよいが、**登録の前に CLI が口を呼ぶと `notRunning` で断られる**（ply_control だけは `entry.sessionId` で通る）。待ち受けの開始・起動時の後片付けより前に呼ぶ順序は §5.1 のとおり (2) `restoreConnection` が使う `localOrigin()` は `server.address().port` を読むので、**待ち受けが始まった後**でないと呼べない。URL は同じポートのときだけ前の値と一致する（ポートが取れなかったときは 2b-6 の扱い） (3) 札に入れるのは `connectionTokens(entry)` の値。`entry.runtime` の `headers` から取り出すので、口を開き直した後でも同じ値になる (4) `releaseAgentConnection`・`sessionId` の付け替え（`agentConnections` のキーを `event.sessionId` に替える所）は戻した `entry` でも同じに動く
+- テスト: `tests/unit/mcp-bridge-token.mjs`（口ごとに、同じトークンで開き直すと前の URL・ヘッダーで `initialize`・`tools/call` が通る・既定の `open` は新しい値・形の違う値と使用中の値は断る・閉じた後の同じトークンは受ける）。`restoreConnection` 自体は `server.mjs` がモジュールとして読めないので、単体では確かめていない（2b-4 の `adopt-finished.mjs` で通る）
 
 ### 6.1 テストの書き方
 

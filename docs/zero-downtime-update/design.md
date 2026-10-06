@@ -185,7 +185,7 @@ agent-host-runtime\
 - 子の出力（stdout は行、stderr はかたまり）を**親の有無にかかわらず常に読み**、通番を振って記録する。親（サーバー）が受け取った番号（ack）を覚える。**読まないと CLI が止まる**: Claude Code の stdout を誰も読まないと、約 60 KB までは平気だが、約 240 KB で CLI のループが止まった（`Bash` ツールも実行されない）。読み始めれば全部戻る【実測。止まる量は 60〜240 KB の間までしか絞れていない】。数字を 300 行書かせただけのターンで約 80〜90 KB の出力があるので、長いターンはこの量を超える。保持役のイベントループが長く止まることも避ける
 - **印**: サーバーがターンの始まりなどに付ける通番の位置。印より後ろの記録は残し、どの印も指さなくなった前の部分は捨てる（上限つき。超えたら `truncated` を立てる）
 - **答えていない依頼の控え**: 子から親への依頼で、親がまだ答えていないもの。付け直した親へ、生の出力の続きの前に渡し直す。種類ごとに要不要が違う（実測）:
-  - Claude の stream-json の `control_request`: **`mcp_message` は必須**（渡し直さないと、CLI は要求を再送せず 45 秒待っても終わらない）。**`can_use_tool` は要らない**（再 initialize の `pending_permission_requests` で足りる。渡し直しても SDK 側で 1 つにまとまるので害は無い）。**`hook_callback` は渡し直さない**（CLI が自分で、その呼び出しを打ち切るので無駄になる。§4.4）。`elicitation`・`request_user_dialog`・`oauth_token_refresh` などは未確認【未確認】
+  - Claude の stream-json の `control_request`: **`mcp_message` は必須**（渡し直さないと、CLI は要求を再送せず 45 秒待っても終わらない）。**`can_use_tool` は要らない**（再 initialize の `pending_permission_requests` で足りる。渡し直しても SDK 側で 1 つにまとまるので害は無い）。**`hook_callback` は渡し直さない**（CLI が自分で、その呼び出しを打ち切るので無駄になる。§4.4）。**`elicitation` も必須**（`initialize` の応答の控えに入らず、渡し直さないと止まる。[stage2-claude.md](stage2-claude.md)）。`request_user_dialog`・`oauth_token_refresh` は Pleiad の形では CLI が出さない（種類を宣言しない・`getOAuthToken` を渡さない）。親が答え済みの `control_request` は再生で流し直さない（流すと SDK がコールバックをもう一度走らせる）【実測】
   - JSON-RPC（Codex）: 子からの `method` と `id` を持つ依頼。ログに依頼の行が残っていれば再生で足りる。控えは、ログの上限で依頼の行が落ちるのを防ぐ補強
 - **札**: サーバーが子ごとに置く不透明な JSON（ターンの引数・MCP の束縛・印）。保持役は中を読まない。付け直したサーバーが読む
 - **預かり物**: サーバーが置く全体の値（画面のトークン・CLI のトークン・ポート・引き継ぎの形式の版）。メモリだけに置く
@@ -193,7 +193,7 @@ agent-host-runtime\
 
 **やらないこと**
 
-- エージェントのプロトコルを解釈しない（行の区切り、`control_request` の `mcp_message` の見分け、JSON-RPC の `id` を持つ依頼の見分け、`initialize` の見分け以外）
+- エージェントのプロトコルを解釈しない（行の区切り、`control_request` の `mcp_message`・`elicitation` の見分け、JSON-RPC の `id` を持つ依頼の見分け、`initialize` の見分け以外）
 - **JSON-RPC の id を付け替えない**（Codex の実測で不要になった。新しいサーバーが世代つきの文字列の id を使えば、古い世代の応答を捨てるだけで取り違えない。§4.4）。**`initialize` の答えを作らない**（Codex は 2 回目の `initialize` に `Already initialized` を返すだけで、接続は無事）
 - データ置き場に書かない（ADR 0115 の「1 つのプロセスだけが持つ」に触れない。記録は実行場所の `logs\`）
 - HTTP を話さない（段階 4 を足すまで）
@@ -207,17 +207,18 @@ agent-host-runtime\
 
 | 向き | 種類 | 中身 |
 |---|---|---|
-| 親→ | `hello` | `{ secret, protocol: [min, max], role: 'server', pid, appVersion }`。`secret` は保持役が起動時に作り、`run\` の利用者だけが読めるファイルに書いたもの。合わなければ何も返さず切る |
-| ←保持役 | `welcome` | `{ protocol, generation, children: [{ id, pid, alive, exitCode, label, seq, acked, marks, truncated, pendingRequests }], stash }` |
-| 親→ | `spawn` | `{ id, command, args, cwd, env, framing: 'lines', policy: 'claude-control' \| 'jsonrpc' \| 'none', label }`。`policy` は答えていない依頼の見分け方だけを決める（`claude-control` は stream-json の `control_request` を `request_id` で控え、渡し直すのは `mcp_message` だけ。`jsonrpc` は `id` を持つ依頼を控える。`none` は行だけ） |
-| 親→ | `attach` | `{ id }` 既存の子に付ける（`spawn` と同じく SDK の最初の stdin の書き込みより前に送る。§4.4） |
-| 親→ | `write` / `end` / `kill` | `{ id, data }` / `{ id }`（stdin を閉じる）/ `{ id, tree: true }` |
-| 親→ | `ack` / `mark` / `unmark` / `label` | 受け取った通番 / 印を付ける・外す / 札を置き直す |
-| 親→ | `replay` | `{ id, from, to }` 記録の一部を読み直す（組み立て直し用。§4.5） |
-| 親→ | `stash` / `detach` | 預かり物を置く / 手を離す（以後はその親からの `write`・`end`・`kill` を転送せず、記録だけを溜める） |
-| ←保持役 | `out` / `err` / `exit` / `overflow` | `{ id, seq, line }` / `{ id, chunk }` / `{ id, code, signal }` / `{ id }` |
+| 親→ | `hello` | `{ secret, protocol: [min, max], role: 'server', pid, appVersion }`。`secret` は保持役が起動時に作り、`run\` の利用者だけが読めるファイルに書いたもの。合わなければ何も返さず切る。合ったうえで版が合わなければ `reject { reason: 'protocol', range, generation, appVersion, pid }` を返して切る |
+| ←保持役 | `welcome` | `{ protocol, generation, range, appVersion, pid, children: [{ id, pid, alive, exitCode, signal, error, label, policy, seq, first, acked, marks, truncated, pendingRequests: [{ requestId, seq, subtype }], stderr }], stash }` |
+| 親→ | `spawn` | `{ id, command, args, cwd, env, framing: 'lines', policy: 'claude-control' \| 'jsonrpc' \| 'none', label }`。`policy` は答えていない依頼の見分け方だけを決める（`claude-control` は stream-json の `control_request` を `request_id` で控え、渡し直すのは `mcp_message` と `elicitation` だけ。`jsonrpc` は `id` と `method` を持つ依頼を控える。`none` は行だけ）。起こせなければ `exit { error }` で届く |
+| 親→ | `attach` | `{ id, from? }` 既存の子に付ける（`spawn` と同じく SDK の最初の stdin の書き込みより前に送る。§4.4）。`from` の既定は ack の次。答えは `attached`（子の状態）で、続けて `from` より前にある控えの渡し直し（`out` の `redelivered: true`）→ 記録の続き |
+| 親→ | `write` / `end` / `kill` | `{ id, data }`（行になった分だけ子へ渡す）/ `{ id }`（stdin を閉じる）/ `{ id, tree: true }` |
+| 親→ | `ack` / `mark` / `unmark` / `label` | 受け取った通番 `{ id, seq }` / 印を付ける・外す `{ id, name, seq? }`（位置の既定は次の行）/ 札を置き直す `{ id, label }` |
+| 親→ | `replay` | `{ id, from, to, reqId }` 記録の一部を読み直す（組み立て直し用。§4.5）。答えは `replay { reqId, lines: [[seq, line]], done, first, last, truncated }`（1 MB ごとに分けて、最後に `done: true`） |
+| 親→ | `stash` / `detach` / `release` / `shutdown` | 預かり物を置く `{ stash }`（全体の値）/ 手を離す `{ id? }`（id 無しは全部。以後はその親からの `write`・`end`・`kill`・`ack` などを子へ転送せず、記録だけを溜める。答えは `detached`）/ 終わった子の記録を捨てる `{ id }` / 子を木ごと止めて終わる |
+| ←保持役 | `out` / `err` / `exit` / `overflow` | `{ id, seq, line, redelivered? }` / `{ id, chunk }` / `{ id, code, signal, error? }`（out を全部流した後に 1 回）/ `{ id, reason: 'record' \| 'line', first?, bytes? }`（記録から落ちた分・長すぎて捨てた行） |
+| ←保持役 | `attached` / `detached` / `error` / `bye` | `attach` と `detach` の答え / 断った依頼 `{ id?, op, reason }` / `{ reason: 'replaced' \| 'closing' }` |
 
-- 保持役の起動はサーバー（必要になったとき。§3.2 の detached の起動）。子が 1 つも無く、親が 10 分つながっていなければ終わる
+- 保持役の起動はサーバー（必要になったとき。§3.2 の detached の起動）。生きている子が 1 つも無く、親が 10 分つながっていなければ終わる。実装は `core/holder/`（plan.md 2a の実装のメモ）。親の接続は常に 1 つ（後から合格した親が勝つ）。記録は親が読まなくても溜め、親へは記録のカーソルから流す（読まない親には書き溜めない）
 - 保持役が抱える子の env には秘密（OAuth のトークン・接続先のキー）が入る。パイプはメモリの中だけを通し、記録（`logs\holder.log`）には書かない
 - パイプの既定の DACL は同じ利用者以外にも読みの接続を許す【推測】ので、`hello` の `secret` が合うまで何も送らない。可能なら `GetNamedPipeClientProcessId` で相手の利用者も確かめる（koffi が使える）
 
@@ -249,7 +250,7 @@ agent-host-runtime\
 - **`canUseTool` は外に出さない**: SDK には承認を MCP のツールへ回す `permissionPromptToolName` もある（`canUseTool` とは併用できない）【確認】。しかし承認は人が答えるまで長く待つ HTTP の呼び出しになり、サーバーの入れ替えで切れる。stdio の `can_use_tool` は再 initialize で回し直せる【実測】ので、こちらに残す
 - **CLI が止まらないこと**: 親が居ない間、保持役が stdin を閉じず stdout を読み続ける限り、CLI は生き続ける（承認待ちのまま 300 秒でも、付け直して許可すると続いた）【実測】
 - CLI の版: 付け直しを確かめたのは 2.1.284・2.1.288。`pending_permission_requests` が必ず返るのは v2.1.268 から【確認：型定義の文】。付け直しに使える CLI の版は、`core/backend-shape-diagnostics.mjs` の `VERIFIED`（形の変化の診断用。今は 2.1.283）とは別の一覧で持ち（段階 2）、外れる版（2.1.268 未満）のターンは保持役に載せない（§6 の戻し道）
-- 親が居ない間のうち、**サブエージェント・裏のコマンド・途中送信・圧縮・`elicitation` などの最中の付け直しは測っていない**【未確認。段階 2 の最初に測る】
+- **サブエージェント（前面・裏・その中の承認）・裏のコマンド・途中送信・圧縮（`PreCompact` の最中も）・`elicitation`（控えの渡し直しで）・Pleiad の実際のオプション・互換の接続先・npm の `claude.cmd`・CLI の子の stdio MCP・数 MB の出力の最中も付け直せる**【実測。[stage2-claude.md](stage2-claude.md)】。付け直し直後に CLI は裏の作業の全量を `background_tasks_changed` で出し直す。旧い親が流し込んだ途中送信も同じ uuid の replay が新しい親に届き、`cancelQueued` で取り消せる。2 回目の `initialize` の systemPrompt・skills は CLI が使わない（最初の値のまま）
 
 **Codex**（codex-cli 0.160.0。偽のモデル提供元で【実測】。[stage0-codex-agy.md](stage0-codex-agy.md)）
 
@@ -288,7 +289,7 @@ agent-host-runtime\
 
 - 会話ごとの MCP の口（`mcp-bridge.mjs`）のトークンは、ターンを始めるときに札へ入れる（トークンそのものと束縛。保持役のメモリだけ）
 - 新しいサーバーは札から `bindings` を戻し、同じポートで待ち受ける。CLI に渡した URL（`origin + path`）が同じなら、CLI からは何も変わらない。HTTP の口は状態を持たない（MCP のセッション id を使わない。`initialize` もトークンだけで答える）【確認】。Codex は、口が閉じて開き直した後、再 `initialize` なしの `tools/call` だけで成功した【実測】
-- **外部の stdio MCP（利用者が設定した MCP）は、サーバーの直の子として起こされる**（`core/context-bridge.mjs` が MCP SDK の `StdioClientTransport` で起こす。detached でない）【確認。動いているサーバーの下に実在】。束縛を札から戻しても、その先の stdio の子は旧サーバーと一緒に止まり、状態（`node_repl` など）は戻らない。段階 2 で、起こし直す（状態の消失をツールのエラーで返す）か、保持役の子にするかを決める（plan.md R15）
+- **外部の stdio MCP（利用者が設定した MCP）は、サーバーの直の子として起こされる**（`core/context-bridge.mjs` が MCP SDK の `StdioClientTransport` で起こす。detached でない）【確認。動いているサーバーの下に実在】。束縛を札から戻しても、その先の stdio の子は旧サーバーと一緒に止まり、状態（`node_repl` など）は戻らない。**段階 2 は起こし直す**（素の Node の MCP で約 0.2 秒。状態は消えるので、起こし直した後の最初の結果にその旨を添える）。保持役の子にすると TS の MCP SDK のサーバーは 2 回目の `initialize` を受けて状態も残るが、旧いクライアントの id への応答が新しいクライアントの同じ id にぶつかるので、世代つきの id が揃う段階 3 で【実測。[stage2-claude.md](stage2-claude.md)】（plan.md R15）
 - **口が数秒つながらないときの 3 つの CLI の振る舞い**【実測】:
 
 | CLI | 口が閉じている間の呼び出し | MCP ごと外されるか |
@@ -366,7 +367,7 @@ agent-host-runtime\
 | S1 にも戻れない | 同上 | 保持役の子を全部止め、普通に起動する。止まったターンは起動時に `restart` の中断になる（今の ADR 0036 の回復）。「再開」で続けられる |
 | 1 つのターンだけ付け直せない（記録の形が読めない・札が壊れている） | S2 の付け直し | そのターンの子だけを止め、`interrupted: { reason: 'update' }` を書く。ほかのターンは続ける |
 | 保持役が落ちた | 子の stdio が閉じ、CLI が終わる【実測の裏付け：子は親と一緒に止まる】。S が保持役のパイプの切断を見る | 走っていたターンは全部終わる。`restart` の中断として残る（今の「落ちた」の扱いと同じ）。保持役を立て直す。保持役の記録に理由を残す |
-| サーバーが落ちた（更新と関係なく） | main がパイプの切断を見る | 同じ版のサーバーを起動し直し、保持役に付け直す。**今は落ちるとターンが全部止まるが、保持役があれば続く**（段階 2 の副産物） |
+| サーバーが落ちた（更新と関係なく） | main がパイプの切断を見る | 同じ版のサーバーを同じトークン・ポートで起動し直し（`desktop/server-restart.cjs`。段階 2 の 2e で実装済み）、窓を 1 回だけ読み直す。短い間（1 分に 3 回）に落ち続けるときと起こし直しに失敗したときは、致命的なダイアログ。保持役に載ったターンの付け直しは 2b 以降（`afterRestart` の口）で、**今は落ちるとターンが全部止まるが、保持役があれば続く**（段階 2 の副産物） |
 | 新しい main が戻ってこない（インストールの失敗・利用者が起動しない・アンインストール） | S1 は `main-leaving` から待つ | S1 は走り続ける（アンインストールしても止められない【実測】）。次に Pleiad を起動したとき（どの版でも）、その main が S1 に付け直す。main が来ないまま作業が 0 件で 30 分たったら、S1 は普通に終わる |
 | main が落ちた（`main-leaving` 無しの切断） | S1 がパイプの切断を見る | S1 は走り続ける（今は main が落ちるとサーバーも終わる）。次に Pleiad を起動したとき付け直す。作業が 0 件で 3 分たったら終わる |
 | main とサーバーの口の版が合わない | §7.1 の握手 | 握手の最小の部分（版を聞く・引き継ぎを頼む・終わらせる）だけは版をまたいで変えない。それ以外が合わなければ上の「事前の確かめで合わない」と同じ |
@@ -498,7 +499,7 @@ main が居ない時間は、試験用アプリで 17〜19 秒（Electron 本体
 | in-process の `host` MCP を HTTP の口に移す（付け直しの不確かさを 1 つ消す） | 付け直しで in-process の MCP も hooks も効く。HTTP に移すとつながらない間は待たずに即失敗するので、段階 4 が無いと今より悪い | **取り下げ**。in-process のまま、ハンドラーの終わりを待って二重実行を抑える（§4.4） |
 | Codex の付け直しは `initialize` を送らない始まり方が要るかもしれない／保持役が答えを作る | 2 回目の `initialize` は `Already initialized` を返すだけで無害。握手は要らない | 保持役は `initialize` の答えを作らない（§4.1・§4.4） |
 | JSON-RPC の id は保持役が付け替える（親の世代ごとの記録） | codex は文字列の id をそのまま返す。世代つきの文字列の id で足りる | **保持役から id の付け替えを外した**（§4.1・§4.3） |
-| 答えていない依頼は全部、付け直した親へ渡し直す | `can_use_tool` は要らない・`mcp_message` は必須・`hook_callback` は渡し直さない（CLI が打ち切る） | 種類ごとに決めた（§4.1） |
+| 答えていない依頼は全部、付け直した親へ渡し直す | `can_use_tool` は要らない・`mcp_message` と `elicitation` は必須・`hook_callback` は渡し直さない（CLI が打ち切る） | 種類ごとに決めた（§4.1） |
 | 承認待ちの最中の付け直しは未検証 | 通る（元と同じ `requestId`）。親が居ない 300 秒でも | 確定（§4.4） |
 | 旧サーバーは SDK の `query` を閉じて手を離す | 閉じると SDK が stdin を閉じて kill し、CLI が終わる。先に `detach` して転送を止める必要がある | 順序を書いた（§4.4・§5.1 の 8） |
 | 保持役の `spawn`/`attach` はいつ送ってもよい | SDK が最初の `initialize` を書く前に送らないと、hooks・MCP が効かないまま始まる | 順序を書いた（§4.4） |
@@ -530,9 +531,7 @@ main が居ない時間は、試験用アプリで 17〜19 秒（Electron 本体
 
 ## 未確認の点
 
-- npm で入れた `claude`（`Ply.exe` を Node として走らせる形）での付け直し。ここではネイティブの `claude.exe` だけ（実行場所では `pleiad-node.exe` で走るので、段階 1 の後に同じ形で測る）
-- 保持役を介して数 MB を超える出力を流したときの保持役のメモリ・遅さ（今回の最大は約 0.2 MB のターン）
-- Claude: サブエージェント・裏のコマンド（`background_tasks_changed`）・途中送信（`pendingSteers`）・圧縮（`PreCompact`）・`elicitation`・`request_user_dialog`・`oauth_token_refresh` の最中の付け直し。`host` の `fork` / `set_title` が二重に走ったときの実害。Pleiad の実際のオプション（`systemPrompt` のプリセット・`settingSources`・`skills`・プラグイン・互換の接続先）での付け直し。CLI をつながらない間に新しく起動したときの HTTP MCP の状態。親を殺す瞬間が SDK の内部の行の途中に当たる場合
+- Claude: `host` の `fork` / `set_title` が二重に走ったときの実害。CLI をつながらない間に新しく起動したときの HTTP MCP の状態。親を殺す瞬間が SDK の内部の行の途中に当たる場合。`PreToolUse`・`PreCompact` 以外の hooks の最中。TS 以外の MCP のサーバーの 2 回目の `initialize`（段階 2-0 で測ったものは [stage2-claude.md](stage2-claude.md)）
 - Codex: 本物のモデル・実際の認証での付け直し。承認を数分待たせたとき。サブエージェントが走っているときの付け直し。保持役が読まない状態が続いてパイプが詰まる量のとき
 - agy: 呼び出しの最中に口を切った場合。relay が複数（`--context --computer --browser --control` の束ね）の場合の不通
 - インストール版の `Ply.exe` の Job の制限の中身（`KILL_ON_JOB_CLOSE` の有無。Job に入っていることだけ確認した）と、explorer 経由の起動で付く Job の作り手
@@ -540,6 +539,6 @@ main が居ない時間は、試験用アプリで 17〜19 秒（Electron 本体
 - 旧サーバーが静かに放す形（`flushNow` → ロックを明示して放す）での引き継ぎの時間。強制終了ベースの値しかない。モジュールを先に読み込んでロックを待つ起動の実測
 - 本物のエージェントを起こす経路・ロックを取った後の裏の処理（`warmModels` など）を含む起動の重さ
 - 内蔵ブラウザー: 呼び出しの最中に中継が落ちた場合・立て直す前に同じポートを別のプロセスが取った場合・本物の panel（screencast）を付けた場合
-- 外部の stdio MCP を引き継ぎでどう扱うか（段階 2）・サーバーの孫（Claude の Bash ツールのコマンドなど）が親の CLI の終了で止まるか
+- サーバーの孫（Claude の Bash ツールのコマンドなど）が親の CLI の終了で止まるか
 - 本物のインストーラーの内訳のうち、旧版を消してから最初のファイルが出るまでの約 10 秒の中身・サイレント更新・署名した旧版→新版の内訳
 - この PC 以外（企業の EDR・Defender の除外設定がある環境）での、書いた直後の読みの遅さと Job の制限
