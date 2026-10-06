@@ -391,6 +391,7 @@ const SUITES = [
   './unit/shell-composer.mjs',
   // 同じくサーバー越し（fake）: 走らせる・送信待ちに入らない・次の発言で渡す・開き直した履歴・使えない会話・Codex の thread/shellCommand
   './unit/server-shell.mjs',
+  './unit/server-boot-env.mjs',
   './unit/claude-background.mjs',
   // Claude の途中送信の渡った合図（uuid・まとめ取り出し・次の内部ターン）と中断の interrupt。SDK の query を身代わりにする
   './unit/claude-steer-stop.mjs',
