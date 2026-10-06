@@ -70,6 +70,8 @@ textarea:focus { outline: 2px solid var(--lineb); outline-offset: 0; }
 .code { font: 600 32px ui-monospace, Consolas, "Roboto Mono", monospace; letter-spacing: .08em; text-align: center; margin: 12px 0 6px; font-variant-numeric: tabular-nums; min-height: 1.2em; }
 .error { color: var(--mark); margin: 12px 4px 0; font-size: 14px; }
 .foot { margin-top: auto; padding: 16px 4px 0; font-size: 13px; }
+.legal { padding: 0 4px; font-size: 13px; }
+.legal a { display: inline-block; padding: 12px 0; }
 
 .menu {
   position: absolute; z-index: 10; min-width: 200px; background: var(--paper); border-radius: 14px;
