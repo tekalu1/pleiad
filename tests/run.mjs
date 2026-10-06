@@ -277,6 +277,8 @@ const SUITES = [
   './unit/attach-chunked.mjs',
   // 貼り付けた HTML の画像をホストが取りに行く口（ADR 0141）: https・公開アドレスのみ・リダイレクトの検査・大きさ・SVG と画像でない中身・やめる・置き場
   './unit/image-import.mjs',
+  // 貼った画像の取り込みの画面側の段取り: 同時 3 枚・順番待ちのやめる・やめたあとの結果は捨てる・取れなければ静かに外す・読み上げ
+  './unit/paste-images.mjs',
   // 入力欄と上端の見直し: 字の欄の上限・チップの字・添付の出どころ・パンくず・規則
   './unit/composer-layout.mjs',
   './unit/unread.mjs',

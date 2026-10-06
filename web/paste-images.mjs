@@ -59,8 +59,9 @@ export function createPasteImages(h) {
   const waiting = [];
   let fileChain = Promise.resolve();
 
+  // 順番待ち: { u, run, skip }。やめたものは待ちから外し（取りに行かない）、skip で 1 回の貼り付けの数から外す
   const pump = () => {
-    while (active < IMPORT_CONCURRENCY && waiting.length) { const job = waiting.shift(); active++; job().finally(() => { active--; pump(); }); }
+    while (active < IMPORT_CONCURRENCY && waiting.length) { const job = waiting.shift(); active++; job.run().finally(() => { active--; pump(); }); }
   };
 
   /** 札を何も残さずに外す。失敗の札・知らせは出さない */
@@ -70,16 +71,22 @@ export function createPasteImages(h) {
     h.dropped(u);
   }
 
-  /** 利用者がやめた（札を外した・元に戻した）。取りに行っている途中なら切る。札はすでに無い */
+  /**
+   * 利用者がやめた（札を外した・元に戻した）。順番待ちなら待ちから外して取りに行かず、取りに行っている途中なら切る。
+   * ホストへは、どの段階でも「やめる」を送る（取れて置いたあとに届けば、ホストが置いたファイルを消す）。札はすでに無い
+   */
   function cancel(u) {
     if (u.gone || u.done) return;
     u.cancelled = true;
     u.gone = true;
+    const i = waiting.findIndex((job) => job.u === u);
+    if (i >= 0) waiting.splice(i, 1)[0].skip();
     if (u.import) h.cmd('attachImportCancel', { importId: u.id }).catch(() => {});
     h.editor().forgetPending(u.id).then(() => h.dropped(u));
   }
 
   async function runImport(u, batch) {
+    if (u.cancelled || u.gone) return settle(batch, false);   // 待っている間にやめられた
     let r = null;
     try {
       r = await h.cmd('attachImport', { url: u.import.url, sessionId: h.bucketOf(u) ?? null, name: u.name, importId: u.id });
@@ -122,7 +129,7 @@ export function createPasteImages(h) {
           return u.id;
         }
         const u = h.entry({ id: randomId(), name, size: 0, import: { url: img.src, host: hostOf(img.src) } });
-        jobs.push(() => { waiting.push(() => runImport(u, batch)); pump(); });
+        jobs.push(() => { waiting.push({ u, run: () => runImport(u, batch), skip: () => settle(batch, false) }); pump(); });
         batch.left++;
         return u.id;
       });

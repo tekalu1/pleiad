@@ -40,11 +40,11 @@ const redirect = (location, status = 302) => new Response(null, { status, header
 const PUBLIC = '93.184.216.34';
 
 /** 取り込みの口を作る。fetch は身代わり。名前の解決は table（無い名前は解決できない） */
-function importerWith({ fetchFn, table = {}, timeoutMs, dir }) {
-  const lookup = async (host) => { if (!table[host]) throw new Error('ENOTFOUND'); return table[host].map((address) => ({ address })); };
+function importerWith({ fetchFn, table = {}, timeoutMs, dir, lookup: own, ...limits }) {
+  const lookup = own ?? (async (host) => { if (!table[host]) throw new Error('ENOTFOUND'); return table[host].map((address) => ({ address })); });
   return createImageImporter({
     target: (sessionId, name) => ({ dir: path.join(dir, sessionId ?? '_new'), rel: `T_${name}` }),
-    lookup, fetchFn, ...(timeoutMs ? { timeoutMs } : {}),
+    lookup, fetchFn, ...(timeoutMs ? { timeoutMs } : {}), ...limits,
   });
 }
 const code = (p) => p.then(() => null, (e) => (e instanceof ImportFailed ? e.code : `other:${e?.message}`));
@@ -174,13 +174,62 @@ export default async function (t) {
     await new Promise((r) => setTimeout(r, 30));
     t.ok('取りに行っている途中でやめられる（cancelled・同時の数が戻る）', cancelable.cancel('job-1') === true && await pending === 'cancelled' && cancelable.activeCount === 0);
     t.ok('知らない id・終わった id のやめるは false', cancelable.cancel('job-1') === false && cancelable.cancel('nope') === false);
-    const limited = importerWith({ table, dir, fetchFn: hang });
+    // 同時に取りに行くのはホスト全体で IMPORT_MAX_ACTIVE 件。超えた分は断らず順番を待つ（待ちの上限を超えたら busy）
+    const limited = importerWith({ table, dir, fetchFn: hang, maxWaiting: 2 });
     const held = Array.from({ length: IMPORT_MAX_ACTIVE }, (_, i) => code(limited.importImage({ url: `https://img.example.com/s${i}.png`, importId: `h${i}` })));
     await new Promise((r) => setTimeout(r, 30));
-    t.ok(`同時に取りに行くのは ${IMPORT_MAX_ACTIVE} 件まで（超えたら断る）`, await code(limited.importImage({ url: 'https://img.example.com/over.png' })) === 'busy' && limited.activeCount === IMPORT_MAX_ACTIVE);
-    for (let i = 0; i < IMPORT_MAX_ACTIVE; i++) limited.cancel(`h${i}`);
-    await Promise.all(held);
-    t.ok('やめたら枠が空く', limited.activeCount === 0);
+    const waiters = [0, 1].map((i) => code(limited.importImage({ url: `https://img.example.com/w${i}.png`, importId: `w${i}` })));
+    await new Promise((r) => setTimeout(r, 30));
+    t.ok(`同時に取りに行くのは ${IMPORT_MAX_ACTIVE} 件まで。超えた分は順番を待つ（断らない）`, limited.activeCount === IMPORT_MAX_ACTIVE && limited.waitingCount === 2);
+    t.ok('待ちの上限を超えたら busy（待たせない）', await code(limited.importImage({ url: 'https://img.example.com/over.png' })) === 'busy');
+    t.ok('順番待ちの 1 件をやめると、取りに行かず cancelled・待ちが減る', limited.cancel('w0') === true && await waiters[0] === 'cancelled' && limited.waitingCount === 1 && limited.activeCount === IMPORT_MAX_ACTIVE);
+    limited.cancel('h0');
+    await new Promise((r) => setTimeout(r, 30));
+    t.ok('枠が空くと、待っていた次の 1 件が取りに行き始める（待ちが空になる）', limited.waitingCount === 0 && limited.activeCount === IMPORT_MAX_ACTIVE);
+    for (let i = 1; i < IMPORT_MAX_ACTIVE; i++) limited.cancel(`h${i}`);
+    limited.cancel('w1');
+    await Promise.all([...held, ...waiters]);
+    t.ok('全部やめたら枠が空く', limited.activeCount === 0 && limited.waitingCount === 0);
+
+    // デスクトップとモバイルが同時に貼っても（合わせて枠を超えても）全部入る。同時に取りに行くのは枠まで
+    let now = 0, peak = 0;
+    const steady = importerWith({ table, dir, fetchFn: async () => { now++; peak = Math.max(peak, now); await new Promise((r) => setTimeout(r, 40)); now--; return respond(pngOf(64, 64)); } });
+    const both = await Promise.all([...Array.from({ length: 6 }, (_, i) => code(steady.importImage({ url: `https://img.example.com/d${i}.png`, importId: `desk${i}`, sessionId: 'desk' }))),
+      ...Array.from({ length: 6 }, (_, i) => code(steady.importImage({ url: `https://img.example.com/m${i}.png`, importId: `mob${i}`, sessionId: 'mob' })))]);
+    t.ok(`6 枚ずつを 2 つの端末から同時に貼っても 12 枚とも入る（同時に取りに行くのは ${IMPORT_MAX_ACTIVE} 件まで）`, both.every((c) => c === null) && peak === IMPORT_MAX_ACTIVE && steady.activeCount === 0, `${both.join()} peak=${peak}`);
+
+    // 待つ間も 1 枚の制限時間に数える（待ちっぱなしにならない）
+    const queueSlow = importerWith({ table, dir, fetchFn: hang, timeoutMs: 150 });
+    const first = Array.from({ length: IMPORT_MAX_ACTIVE }, (_, i) => code(queueSlow.importImage({ url: `https://img.example.com/q${i}.png` })));
+    await new Promise((r) => setTimeout(r, 20));
+    const late = code(queueSlow.importImage({ url: 'https://img.example.com/late.png' }));
+    t.ok('順番待ちの間に制限時間が来たら timeout（待ちから外れる）', await late === 'timeout' && queueSlow.waitingCount === 0);
+    await Promise.all(first);
+
+    // 名前の解決が終わらなくても、制限時間で失敗にして枠を空ける（解決そのものは止められなくてよい）
+    const stuckLookup = () => new Promise(() => {});
+    const dns = importerWith({ dir, lookup: stuckLookup, fetchFn: async () => respond(pngOf(64, 64)), timeoutMs: 120, maxActive: 1 });
+    const t1 = Date.now();
+    t.ok('名前の解決が終わらなくても制限時間で timeout になり、枠が空く', await code(dns.importImage({ url: 'https://stuck.example.com/a.png' })) === 'timeout' && Date.now() - t1 < 2000 && dns.activeCount === 0);
+    t.ok('枠が空いているので、次の取り込みは待たされない', await code(dns.importImage({ url: 'https://93.184.216.34/ok.png' })) === null);
+    const dnsCancel = importerWith({ dir, lookup: stuckLookup, fetchFn: async () => respond(pngOf(64, 64)) });
+    const pendingDns = code(dnsCancel.importImage({ url: 'https://stuck.example.com/b.png', importId: 'dns1' }));
+    await new Promise((r) => setTimeout(r, 30));
+    t.ok('名前の解決の途中でやめても、すぐ cancelled・枠が空く', dnsCancel.cancel('dns1') === true && await pendingDns === 'cancelled' && dnsCancel.activeCount === 0);
+
+    // ---- やめるが、取りに行く前・書いた後に届いたとき（画面が結果を捨てたら、ファイルを残さない）
+    const files = (d) => fs.readdir(path.join(dir, d)).catch(() => []);
+    const late1 = importerWith({ table, dir, fetchFn: async () => respond(pngOf(64, 64)) });
+    t.ok('まだ届いていない importId のやめるは false。そのあと届いた取り込みは、取りに行かず cancelled', late1.cancel('early-1') === false && await code(late1.importImage({ url: 'https://img.example.com/a.png', importId: 'early-1', sessionId: 'gone1' })) === 'cancelled'
+      && (await files('gone1')).length === 0);
+    const done1 = await late1.importImage({ url: 'https://img.example.com/b.png', importId: 'after-1', sessionId: 'gone2' });
+    t.ok('取れて置いたあとに届いたやめるは、置いたファイルを消す（true）。もう一度は false', (await files('gone2')).length === 1 && late1.cancel('after-1') === true
+      && await (async () => { await new Promise((r) => setTimeout(r, 30)); return (await files('gone2')).length === 0; })() && late1.cancel('after-1') === false && done1.path.length > 0);
+    // 置く直前にやめられた（target の中で届く）: 書き終わったあとの確認でファイルを消して cancelled
+    let hook;
+    const midWrite = createImageImporter({ target: (sessionId, name) => { hook.cancel('mid-1'); return { dir: path.join(dir, sessionId), rel: `T_${name}` }; }, lookup: async () => [{ address: PUBLIC }], fetchFn: async () => respond(pngOf(64, 64)) });
+    hook = midWrite;
+    t.ok('置く直前にやめられたら cancelled。置いたファイルも残らない', await code(midWrite.importImage({ url: 'https://img.example.com/c.png', importId: 'mid-1', sessionId: 'gone3' })) === 'cancelled' && (await files('gone3')).length === 0);
 
     // ---- 本物の接続（127.0.0.1 のテスト用サーバー。検査の差し替えは緩めの検査器だけ）
     const seen = [];
@@ -240,6 +289,13 @@ export default async function (t) {
       const cancelled = await c2.cmd('attachImportCancel', { importId: 'imp-2' });
       t.ok('サーバー: attachImportCancel で取りに行っている途中のものをやめる（取り込みは失敗で返る）', cancelled.cancelled === true && await slow2 === 'failed');
       t.ok('サーバー: 知らない importId のやめるは cancelled: false', (await c2.cmd('attachImportCancel', { importId: 'nope' })).cancelled === false);
+      const kept = await c2.cmd('attachImport', { url: 'https://cdn.example.com/ok.png', sessionId, name: 'discard', importId: 'imp-3' });
+      const cancelAfter = await c2.cmd('attachImportCancel', { importId: 'imp-3' });
+      await new Promise((res) => setTimeout(res, 100));
+      t.ok('サーバー: 取れて置いたあとに届いたやめるは、置いたファイルを消す（画面が結果を捨てたとき）', cancelAfter.cancelled === true && await fs.stat(kept.path).then(() => false, () => true));
+      const early = await c2.cmd('attachImportCancel', { importId: 'imp-4' });
+      const afterEarly = await c2.cmd('attachImport', { url: 'https://cdn.example.com/ok.png', sessionId, importId: 'imp-4' }).then(() => null, (e) => e.message);
+      t.ok('サーバー: まだ届いていない importId のやめるのあとに届いた取り込みは、取りに行かず失敗（ファイルを置かない）', early.cancelled === false && /やめ/.test(afterEarly ?? '') && (await fs.readdir(path.join(dataDir, 'uploads', sessionId))).length === 1, String(afterEarly));
     } finally {
       await c1?.close?.(); await c2?.close?.();
       await strictServer?.stop?.(); await relaxedServer?.stop?.();

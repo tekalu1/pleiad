@@ -180,6 +180,7 @@
     "tooLarge": "大きすぎる（{{size}}MB / 上限 {{limit}}MB）",
     "import": {
       "label": "貼り付けた画像の URL",
+      "rejected": "取り込めないアドレスです（公開された https のアドレスだけ取り込めます）",
       "tooLarge": "画像が大きすぎます（上限 10MB）",
       "notImage": "画像（PNG・JPEG・GIF・WebP・AVIF）ではありません",
       "tooSmall": "小さな画像（縦横 32px 以下）は取り込みません",

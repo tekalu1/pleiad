@@ -7,7 +7,8 @@
 //   - Cookie・Referer・認証ヘッダーを付けない。リダイレクトは 5 回まで、毎回検査して追う
 //   - 1 枚 10 MiB・15 秒（名前の解決から読み切るまで）。Content-Length を信じず、読みながら数えて超えたら切る
 //   - 先頭のバイトが png・jpeg・gif・webp・avif のものだけ置く。SVG（スクリプト・外部参照を持てる）と、画像でない中身は断る
-//   - 同時に取りに行くのは MAX_ACTIVE 件まで。ファイル名は呼び出し側の名前から作り、URL からは作らない
+//   - 同時に取りに行くのは MAX_ACTIVE 件まで（ホスト全体。超えた分は MAX_WAITING 件まで順番を待ち、待つ間も 15 秒に数える）。ファイル名は呼び出し側の名前から作り、URL からは作らない
+//   - 画面がやめた（やめるが、取りに行く前・途中・置いた後のどれに届いても）ものは、ファイルを残さない
 // 1 回の貼り付けで取り込む枚数（20 枚）は、貼る側（web/html-paste.mjs の PASTE_IMAGE_MAX）が決める。
 // 置く場所と返す形は、ファイルの添付（attachFinish）と同じ（{ path, bytes, kind }）。
 import fs from 'node:fs/promises';
@@ -19,6 +20,8 @@ import { pinnedFetch } from './pinned-fetch.mjs';
 export const IMPORT_MAX_BYTES = 10 * 1024 * 1024;
 export const IMPORT_TIMEOUT_MS = 15_000;
 export const IMPORT_MAX_ACTIVE = 6;
+export const IMPORT_MAX_WAITING = 100;   // 枠が空くのを待てる数（超えたら断る）
+const IMPORT_MEMORY = 500;             // やめられた id・取れて置いた id を覚えておく数
 export const IMPORT_SMALL_PX = 32;   // 縦横とも これ以下の画像（指定が無くても実寸で分かる追跡ピクセル・絵文字）は札にしない（web/html-paste.mjs の SMALL_IMAGE_PX と同じ）
 const USER_AGENT = 'Mozilla/5.0 (compatible; Pleiad)';
 
@@ -94,10 +97,37 @@ function baseNameOf(name) {
  * @param {object} [o.guard] 検査器（テスト専用: 本物の外へ出さずに 127.0.0.1 のテスト用サーバーへ向けるときだけ差し替える）
  * @param {number} [o.timeoutMs] 1 枚の制限時間（テストで縮める）
  */
-export function createImageImporter({ target, lookup, fetchFn = pinnedFetch, guard = null, timeoutMs = IMPORT_TIMEOUT_MS }) {
+export function createImageImporter({ target, lookup, fetchFn = pinnedFetch, guard = null, timeoutMs = IMPORT_TIMEOUT_MS, maxActive = IMPORT_MAX_ACTIVE, maxWaiting = IMPORT_MAX_WAITING }) {
   const urlGuard = guard ?? createUrlGuard({ publicOnly: true, ...(lookup ? { lookup } : {}) });
   const guarded = urlGuard.wrap(fetchFn, t('attach.import.label'));
-  const active = new Map();   // importId -> AbortController
+  const entries = new Map();      // importId -> AbortController（順番待ちも含む。やめるときの宛先）
+  const completed = new Map();    // importId -> 置いたファイル（取れた後に画面が捨てたとき、消すため。古いものから捨てる）
+  const cancelled = new Set();    // 取り込みが始まる前にやめられた importId（あとから届いても取りに行かない。古いものから捨てる）
+  const queue = [];               // 順番待ちの { resolve }
+  let running = 0;
+
+  const remember = (collection, key, value) => {
+    if (collection instanceof Map) collection.set(key, value); else collection.add(key);
+    if (collection.size > IMPORT_MEMORY) collection.delete(collection.keys().next().value);
+  };
+
+  /** 同時に取りに行く枠。空いていなければ順番を待つ（待つ間も 1 枚の制限時間に数える）。返す関数で枠を返す */
+  function acquire(signal, stopped) {
+    const release = () => {
+      const next = queue.shift();
+      if (next) next.resolve(release);   // 枠はそのまま次へ渡す
+      else running--;
+    };
+    if (running < maxActive) { running++; return Promise.resolve(release); }
+    return new Promise((resolve, reject) => {
+      const waiter = { resolve };
+      queue.push(waiter);
+      signal.addEventListener('abort', () => {
+        const i = queue.indexOf(waiter);
+        if (i >= 0) { queue.splice(i, 1); reject(stopped()); }
+      }, { once: true });
+    });
+  }
 
   async function readLimited(res, signal) {
     const declared = Number(res.headers.get('content-length'));
@@ -122,31 +152,44 @@ export function createImageImporter({ target, lookup, fetchFn = pinnedFetch, gua
   }
 
   /**
-   * 1 枚を取りに行って置く。取れなければ ImportFailed（code あり）。やめたら code: 'cancelled'
+   * 1 枚を取りに行って置く。取れなければ ImportFailed（code あり）。やめたら code: 'cancelled'。
+   * 枠（同時 maxActive 件）が空くまで順番を待つ。待ちが maxWaiting を超えたら 'busy'。制限時間（timeoutMs）は待つ間・名前の解決も含めて数える
    * @returns {Promise<{ path: string, bytes: number, kind: 'image', mime: string, name: string }>}
    */
   async function importImage({ url, sessionId = null, name = '', importId = null }) {
-    if (active.size >= IMPORT_MAX_ACTIVE) throw new ImportFailed('busy', t('attach.import.busy'));
-    const abort = new AbortController();
     const id = importId ?? Symbol('import');
-    if (active.has(id)) throw new ImportFailed('duplicate', t('attach.import.busy'));
-    active.set(id, abort);
+    if (entries.has(id)) throw new ImportFailed('duplicate', t('attach.import.busy'));
+    if (cancelled.has(id)) throw new ImportFailed('cancelled', t('attach.import.cancelled'));
+    if (running >= maxActive && queue.length >= maxWaiting) throw new ImportFailed('busy', t('attach.import.busy'));
+    const abort = new AbortController();
+    entries.set(id, abort);
     // 制限時間は自前のタイマーで数える（AbortSignal.timeout のタイマーは unref で、他に動くものが無いと待ちごと終わってしまう）
     let timedOut = false;
     const timer = setTimeout(() => { timedOut = true; abort.abort(); }, timeoutMs);
     const signal = abort.signal;
     const stopped = () => (timedOut ? new ImportFailed('timeout', t('attach.import.timeout')) : new ImportFailed('cancelled', t('attach.import.cancelled')));
+    let release = null;
     try {
+      release = await acquire(signal, stopped);
+      if (signal.aborted) throw stopped();
       let res;
       try {
-        res = await guarded(String(url), {
+        // 名前の解決は止められないので、時間切れ・やめたときは待たずに失敗にして枠を返す（遅れて来た応答は捨てる）
+        const call = guarded(String(url), {
           signal, method: 'GET',
           // Cookie・Referer・認証は付けない（fetch は既定で持たない。ここで足さない）
           headers: { 'user-agent': USER_AGENT, accept: 'image/avif,image/webp,image/png,image/jpeg,image/gif;q=0.9,*/*;q=0.1' },
         });
+        call.then((late) => { if (signal.aborted) late.body?.cancel().catch(() => {}); }, () => {});
+        res = await Promise.race([call, new Promise((_, reject) => {
+          if (signal.aborted) reject(stopped());
+          else signal.addEventListener('abort', () => reject(stopped()), { once: true });
+        })]);
       } catch (e) {
+        if (e instanceof ImportFailed) throw e;
         if (signal.aborted) throw stopped();
-        if (e?.code === 'MCP_URL_REJECTED') throw new ImportFailed('rejected', e.message);
+        // 検査で断った理由は MCP 用の文言なので、取り込み用の文言に替える（画面には出さない）
+        if (e?.code === 'MCP_URL_REJECTED') throw new ImportFailed('rejected', t('attach.import.rejected'));
         throw new ImportFailed('network', t('attach.import.network'));
       }
       if (!res.ok) { await res.body?.cancel().catch(() => {}); throw new ImportFailed('http-status', t('attach.import.status', { status: res.status })); }
@@ -171,20 +214,33 @@ export function createImageImporter({ target, lookup, fetchFn = pinnedFetch, gua
         try { await fs.writeFile(file, buf, { flag: 'wx' }); break; }
         catch (e) { if (e?.code !== 'EEXIST' || n > 20) throw e; file = path.join(dir, rel.replace(/(\.[^.]*)$/, `-${n}$1`)); }
       }
+      // 書いている間にやめられた: 画面は結果を捨てるので、置いたファイルも残さない
+      if (signal.aborted) { await fs.unlink(file).catch(() => {}); throw stopped(); }
+      if (importId) remember(completed, importId, file);
       return { path: file, bytes: buf.length, kind: 'image', mime: kind.mime, name: fileName };
     } finally {
       clearTimeout(timer);
-      active.delete(id);
+      release?.();
+      entries.delete(id);
     }
   }
 
-  /** やめる（取りに行っている途中なら切る）。知らない id は false */
+  /**
+   * やめる。順番待ち・取りに行っている途中なら切る。もう取れて置いてあるなら、そのファイルを消す（画面は結果を捨てた）。
+   * まだ届いていない importId は覚えておく（あとから届いても取りに行かない）。止めたか消したら true
+   */
   function cancel(importId) {
-    const abort = active.get(importId);
-    if (!abort) return false;
-    abort.abort();
-    return true;
+    const abort = entries.get(importId);
+    if (abort) { abort.abort(); return true; }
+    const file = completed.get(importId);
+    if (file) {
+      completed.delete(importId);
+      fs.unlink(file).catch(() => {});
+      return true;
+    }
+    remember(cancelled, importId);
+    return false;
   }
 
-  return { importImage, cancel, get activeCount() { return active.size; } };
+  return { importImage, cancel, get activeCount() { return running; }, get waitingCount() { return queue.length; } };
 }
