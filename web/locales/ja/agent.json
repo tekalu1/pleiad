@@ -1379,7 +1379,7 @@
     "kind": { "think": "メモ", "quiet": "静か", "act": "頼んだ", "result": "結果", "loop": "気がかり", "dream": "夢", "summary": "要約" },
     "reason": {
       "paused": "眠らせている", "budget": "予算がない", "nothing": "変化なし", "forced": "手動", "loop": "気がかりの条件",
-      "reserved": "予約した時刻", "human": "新しい人の投稿", "drive": "欲求", "muse": "ぼんやりの番", "error": "失敗", "noHome": "家のチャンネルがない"
+      "reserved": "予約した時刻", "human": "新しい投稿", "drive": "欲求", "muse": "ぼんやりの番", "error": "失敗", "noHome": "家のチャンネルがない"
     },
     "inner": {
       "recent": "直近の公開されたやり取りです。現在の依頼に関係する背景として参照してください。\n{{context}}",

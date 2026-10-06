@@ -1,5 +1,5 @@
 // bot の予約（ADR 0136）: 作る（時刻の範囲・件数の上限）・時刻が来たら 1 回起こす・止まっていた間に重なった予約は 1 回にまとめて遅れて起こす・
-// 再起動しても残る・予算なし・休憩中は捨てずに待つ・止めたスレッドは起こさない・取り消し・タイマー・案内の 1 行。
+// 再起動しても残る・予算なし・休憩中は捨てずに待つ・家の無い DM だけの bot も 1 日のトークンの上限で待つ・止めたスレッドは起こさない・取り消し・タイマー・案内の 1 行。
 // チャンネルは本物のサービス、保存は一時のデータ置き場、dispatch は身代わり。
 import fs from 'node:fs/promises';
 import os from 'node:os';
@@ -7,7 +7,7 @@ import path from 'node:path';
 import { createChannelService } from '../../core/channels/service.mjs';
 import { createBrainStore } from '../../core/brain/store.mjs';
 import { createWakes, WakeError, WAKE_PENDING_MAX, WAKE_RETRY_MS, WAKE_TICK_MS } from '../../core/brain/wakes.mjs';
-import { createBudget } from '../../core/bots/budget.mjs';
+import { createBudget, BRAIN_DAILY_TOKENS } from '../../core/bots/budget.mjs';
 import { normalizePulse } from '../../core/bots/store.mjs';
 import { botInstructions } from '../../core/bots/sessions.mjs';
 
@@ -21,7 +21,9 @@ export default async function (t) {
   let clock = new Date(2026, 9, 5, 1, 0, 0).getTime();
   const now = () => clock;
   const bot = { id: 'b_sora', name: 'ソラ', icon: '🦊', persona: '', backend: 'fake', model: '', pulse: normalizePulse(null) };
-  const bots = { list: async () => [bot], get: async ({ botId }) => (botId === bot.id ? bot : null) };
+  // DM だけの bot（入っているチャンネルが無い = 家のチャンネルが無い）
+  const loner = { id: 'b_loner', name: 'ポラ', icon: '🐧', persona: '', backend: 'fake', model: '', pulse: normalizePulse(null) };
+  const bots = { list: async () => [bot, loner], get: async ({ botId }) => [bot, loner].find((b) => b.id === botId) ?? null };
   const channels = createChannelService({ dir: path.join(dir, 'channels'), now, listBots: bots.list });
   await channels.start();
   const brain = createBrainStore({ dataDir: dir, now });
@@ -113,6 +115,22 @@ export default async function (t) {
     clock += WAKE_RETRY_MS;
     await wakes.tick();
     t.ok('休憩が明けたら起こす', calls.length === 1 && wakes.get(w3.id).status === 'fired');
+
+    // ---- 家のチャンネルが無い DM だけの bot: チャンネルの % の数え先は無いが、bot の 1 日のトークンの上限で止まる（自分の予約で自分を起こし続けない）
+    calls.length = 0;
+    const lonerDm = await channels.createDm({ bot: loner });
+    const lonerWhere = { botId: loner.id, sessionId: 's_loner_dm', channelId: lonerDm.id, threadId: null };
+    const w7 = wakes.add({ ...lonerWhere, at: clock + 2 * MIN, note: 'DM で約束した確かめ' });
+    clock += 3 * MIN;
+    await wakes.tick();
+    t.ok('家の無い DM だけの bot の予約も、上限の内なら起こす（予算の数え先は bot だけ: homeChannelId は null）', calls.length === 1 && calls[0].homeChannelId === null && wakes.get(w7.id).status === 'fired');
+    calls.length = 0;
+    await budget.chargeBrain({ channelId: null, botId: loner.id, usage: { inputTokens: BRAIN_DAILY_TOKENS } });
+    const w8 = wakes.add({ ...lonerWhere, at: clock + 2 * MIN, note: '上限を使い切った後の予約' });
+    clock += 3 * MIN;
+    await wakes.tick();
+    t.ok('1 日のトークンの上限を使い切ったら、家の無い DM の bot も起こさず待たせる（waiting: budget）', calls.length === 0 && wakes.get(w8.id).status === 'pending' && wakes.get(w8.id).waiting === 'budget');
+    wakes.cancel(loner.id, w8.id);
 
     // ---- dispatch が断った: 待てるもの（resting）は待ち、ほかは閉じる
     calls.length = 0;

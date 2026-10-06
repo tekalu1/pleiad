@@ -979,7 +979,8 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
     }
     await refreshThread(rec.channelId, rec.threadId);
     // 使ったトークンをチャンネルの予算に数える（人が呼んだターンも。次の bot を起こす前に）
-    // 自分の心拍から起きたターンは、スレッドではなく bot の家のチャンネルの予算に数える（自発の分も数える。ADR 0126）
+    // 自分の心拍・予約から起きたターンは、スレッドではなく bot の家のチャンネルの予算に数える（自発の分も数える。ADR 0126）。
+    // 家が無い DM だけの bot の予約は、bot の 1 日のトークンにだけ数える（homeChannelId が null。ADR 0136）
     if (rec.inner) {
       await budget.chargeBrain({ channelId: rec.inner.homeChannelId, botId: rec.botId, backend: turn.info?.backend, model: turn.info?.model, usage: rec.usage })
         .catch((e) => log('could not charge the brain budget:', errText(e)));

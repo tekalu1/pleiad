@@ -2,7 +2,7 @@
 // 「体験」ではなく、ふるいと画面に見せる材料。好奇心・不安・人恋しさ・疲れの 4 つ。
 //
 //   computeDrives({ now, unread, loops, recent, lastHumanAt, failures, budgetUsed }) → { curiosity, anxiety, loneliness, fatigue }
-//     unread … { human, bot, toMe }（前回の心拍から後の出来事の数。human = 人の投稿・bot = 他の bot の投稿・toMe = 自分宛ての @ を含む人の投稿）
+//     unread … { human, bot, toMe }（前回の心拍から後の出来事の数。human = 人の投稿・bot = 他の bot の投稿・toMe = 自分宛ての @ を含む投稿。人・他の bot のどちらからでも）
 //     loops … 開いている気がかり [{ due?: ms, updatedAt }]
 //     recent … 思考の流れの末尾 [{ kind, text, at }]（新しいものが後ろ）
 //     lastHumanAt … 人が最後に書いた時刻（ms。分からなければ null）
@@ -42,8 +42,8 @@ export function repetition(thoughts) {
 
 export function computeDrives({ now, unread = {}, loops = [], recent = [], lastHumanAt = null, failures = 0, budgetUsed = null } = {}) {
   const human = unread.human ?? 0, bot = unread.bot ?? 0, toMe = unread.toMe ?? 0;
-  // 好奇心: 新しい出来事（他の bot の自発の分は軽く）と、答えの出ていない気がかりの数
-  const fresh = clamp01((human + 0.4 * bot) / 3);
+  // 好奇心: 新しい出来事（人の投稿も他の bot の投稿も同じ重み）と、答えの出ていない気がかりの数
+  const fresh = clamp01((human + bot) / 3);
   const open = clamp01(loops.length / 6);
   const curiosity = 0.6 * fresh + 0.4 * open;
   // 不安: 期限の近い（過ぎた）気がかり・失敗したターン

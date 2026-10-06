@@ -1,8 +1,13 @@
 // チャンネルの予算と、使用量の上限の休憩中（ADR 0119）。サーバーも LLM も使わない。
 //   core/channels/budget.mjs（形・検査・日付）・core/bots/budget.mjs（週の枠の % の目安で数える・根のスレッドに足す・残り・止めるか）・
-//   core/bots/resting.mjs（休憩中・場所ごとに 1 回の知らせ）・core/backends/antigravity-limit.mjs（Antigravity の上限の文）・ThreadState.spend の検査
+//   core/bots/resting.mjs（休憩中・場所ごとに 1 回の知らせ）・core/backends/antigravity-limit.mjs（Antigravity の上限の文）・ThreadState.spend の検査・
+//   自発の分（chargeBrain・leftBrain・allowsBrain。家のチャンネルが無い bot も 1 日のトークンの上限で止まる）
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import { DEFAULT_BUDGET, budgetOf, normalizeBudget, loosensBudget, allowanceOf, dayOf, spentToday } from '../../core/channels/budget.mjs';
-import { createBudget, MIN_USED_PERCENT } from '../../core/bots/budget.mjs';
+import { createBudget, MIN_USED_PERCENT, BRAIN_DAILY_TOKENS } from '../../core/bots/budget.mjs';
+import { createBrainStore } from '../../core/brain/store.mjs';
 import { createResting } from '../../core/bots/resting.mjs';
 import { antigravityLimit } from '../../core/backends/antigravity-limit.mjs';
 import { applyThreadPatch, emptyThread } from '../../core/channels/threads.mjs';
@@ -94,6 +99,34 @@ export default async function (t) {
     const zero = world({ windows: [week(10)], budget: { daily: 0, perThread: 50 } });
     t.ok('1 日の予算 0 は、bot どうしの呼びかけを最初から起こさない', !(await zero.budget.allows({ channelId: 'c_1', threadId: 'p_1' })));
     t.ok('DM（スレッドが無い）は数えない', (await zero.budget.charge({ channelId: 'c_1', threadId: null, backend: 'codex', model: '', usage: { inputTokens: 100 } })) === null);
+  }
+
+  // ---------------------------------------------------------------- 自発の分（心拍・予約。ADR 0126・0136）
+  {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'bot-budget-brain-'));
+    const brain = createBrainStore({ dataDir: dir });
+    try {
+      const w = world({ windows: [week(10)], budget: { daily: 2, perThread: 50 } });
+      const budget = createBudget({ channels: w.channels, host: w.host, brain });
+      const today = dayOf(Date.now());
+      const noHome = await budget.chargeBrain({ channelId: null, botId: 'b_dm', backend: 'codex', model: '', usage: { inputTokens: 1000, outputTokens: 200, cachedTokens: 1000 } });
+      t.ok('家のチャンネルが無い bot（DM だけ）の自発の分も、bot の 1 日のトークンに数える（キャッシュ読みは 1/10。% はどのチャンネルにも足さない）',
+        noHome.tokens === 1300 && noHome.percent === null && brain.spentTokens('b_dm', today) === 1300 && brain.spentPercent('c_1', today) === 0, JSON.stringify(noHome));
+      const left = await budget.leftBrain({ channelId: null, botId: 'b_dm' });
+      t.ok('家が無いときの残りは、1 日のトークンの上限だけ（チャンネルの % は null）', left.tokensLeft === BRAIN_DAILY_TOKENS - 1300 && left.channel === null && left.daily === null, JSON.stringify(left));
+      t.ok('上限の内なら、家が無くても自発してよい', await budget.allowsBrain({ channelId: null, botId: 'b_dm' }));
+      await budget.chargeBrain({ channelId: null, botId: 'b_dm', usage: { inputTokens: BRAIN_DAILY_TOKENS } });
+      t.ok('1 日のトークンの上限を使い切ったら、家が無くても自発しない', !(await budget.allowsBrain({ channelId: null, botId: 'b_dm' })) && (await budget.leftBrain({ channelId: null, botId: 'b_dm' })).tokensLeft === 0);
+      await budget.chargeBrain({ channelId: 'c_1', botId: 'b_mix', backend: 'codex', model: '', usage: { inputTokens: 100 } });
+      await budget.chargeBrain({ channelId: null, botId: 'b_mix', usage: { inputTokens: 200 } });
+      t.ok('同じ bot の、家のチャンネルの分と家が無いときの分は、1 日のトークンでは合わせて数える。チャンネルの % には家の分だけ入る',
+        brain.spentTokens('b_mix', today) === 300 && Math.abs(brain.spentPercent('c_1', today) - 0.1) < 1e-9 && (await budget.allowsBrain({ channelId: 'c_1', botId: 'b_mix' })));
+      t.ok('指したチャンネルが引けない自発はしない（数える先が無い）。botId が無ければ数えない',
+        !(await budget.allowsBrain({ channelId: 'c_missing', botId: 'b_mix' })) && (await budget.chargeBrain({ channelId: null, botId: null, usage: { inputTokens: 10 } })).tokens === 0 && (await budget.leftBrain({ channelId: null, botId: null })) === null);
+    } finally {
+      brain.close();
+      await fs.rm(dir, { recursive: true, force: true, maxRetries: 5 });
+    }
   }
 
   // ---------------------------------------------------------------- 休憩中

@@ -74,7 +74,8 @@ export function createPulse({ dataDir, brain, channels, bots, host, budget, disp
   /**
    * 前回の心拍から後の出来事（所属チャンネルの投稿だけ。Chats の会話・他の bot の DM は読まない）。system・消した投稿・書き途中の投稿は除く。
    * 自分の投稿は authorKind 'self' で入れる（ふるい・欲求には数えない）。返事が一度失敗して後で答え直したのを見落とし、答え済みの質問を気がかりにしたため。
-   * 人の投稿の後に、同じスレッドで自分が失敗せずに投稿していれば answeredAt を付ける。
+   * 人・他の bot の投稿の後に、同じスレッドで自分が失敗せずに投稿していれば answeredAt を付ける。
+   * toMe は自分への @（人・他の bot のどちらからでも。system はここまでに除いている）
    * 返りの cursorTo は次のカーソル（書き途中の投稿があれば、その手前まで。後で書き上がった分を取りこぼさない）
    */
   async function collect(bot, since) {
@@ -95,7 +96,7 @@ export function createPulse({ dataDir, brain, channels, bots, host, budget, disp
       events.push({
         at: p.at, channelId: channel.id, channelName: channel.name, threadId: p.threadId ?? p.id, postId: p.id,
         authorKind: self ? 'self' : kind === 'human' ? 'human' : kind === 'bot' ? 'bot' : 'other',
-        author: self ? 'you' : kind === 'human' ? 'human' : kind === 'bot' ? names.get(p.author.botId) ?? p.author.botId : kind, toMe: kind === 'human' && (p.mentions ?? []).includes(bot.id),
+        author: self ? 'you' : kind === 'human' ? 'human' : kind === 'bot' ? names.get(p.author.botId) ?? p.author.botId : kind, toMe: !self && (p.mentions ?? []).includes(bot.id),
         taint: p.taint ?? null, text: p.text, ...(self && p.state === 'failed' ? { failed: true } : {}),
       });
     };
@@ -120,7 +121,7 @@ export function createPulse({ dataDir, brain, channels, bots, host, budget, disp
     }
     events.sort((a, b) => a.at - b.at);
     for (const e of events) {
-      if (e.authorKind !== 'human') continue;
+      if (e.authorKind === 'self' || e.authorKind === 'other') continue;
       const reply = events.find((r) => r.authorKind === 'self' && !r.failed && r.channelId === e.channelId && r.threadId === e.threadId && r.at > e.at);
       if (reply) e.answeredAt = reply.at;
     }
@@ -228,8 +229,9 @@ export function createPulse({ dataDir, brain, channels, bots, host, budget, disp
 
     // ② 安いモデル
     const taintedInput = events.some((e) => e.taint) || loops.some((l) => l.taint);
-    // 起きた理由が、外から来た文だけか（きっかけの人の投稿・条件に当たった気がかりのどちらも、外から来た文でない場合だけ「確かめる」を越えてよい）
-    const cleanTrigger = events.some((e) => !e.taint && e.authorKind === 'human') || Boolean(verdict.loopId && !loops.find((l) => l.id === verdict.loopId)?.taint);
+    // 起きた理由が、外から来た文だけか（きっかけの投稿・条件に当たった気がかりのどちらも、外から来た文でない場合だけ「確かめる」を越えてよい）。
+    // 投稿は人・他の bot のどちらでもよい（bot が外から来た文を読んで書いた投稿には、その taint が載る）
+    const cleanTrigger = events.some((e) => !e.taint && (e.authorKind === 'human' || e.authorKind === 'bot')) || Boolean(verdict.loopId && !loops.find((l) => l.id === verdict.loopId)?.taint);
     const taint = taintedInput ? (events.find((e) => e.taint)?.taint ?? loops.find((l) => l.taint)?.taint ?? 'web') : null;
     const prompt = beatPrompt({ bot, locale: locale(), now: at, gate: verdict, drives, events: seen, stream: brain.tail(bot.id, 40), loops,
       budget: left ? { channel: left.channel ?? left.daily ?? 0, known: left.known } : null, related: await relatedOf(bot, events), minMin: Math.round(floorMs / 60_000), maxMin: Math.round(PULSE_CEIL_MS / 60_000) });

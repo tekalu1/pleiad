@@ -259,7 +259,7 @@
       "kind": { "think": "Thought", "quiet": "Quiet", "act": "Asked", "result": "Result", "loop": "Concern", "dream": "Dream", "summary": "Summary" },
       "reason": {
         "paused": "put to sleep", "budget": "no budget", "nothing": "no change", "forced": "manual", "loop": "a concern's condition", "reserved": "reserved time",
-        "human": "new human post", "drive": "a drive", "muse": "musing turn", "error": "failed", "noHome": "no home channel"
+        "human": "new post", "drive": "a drive", "muse": "musing turn", "error": "failed", "noHome": "no home channel"
       },
       "failed": "Could not do that: {{error}}"
     },

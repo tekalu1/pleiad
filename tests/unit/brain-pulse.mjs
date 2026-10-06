@@ -1,5 +1,5 @@
 // 心拍（ADR 0126）: ふるいで止まる行・安いモデルの呼び方と返事の当てはめ・引き継ぎ・予算（自発の分も数える。0 なら止まり、未読は残る）・失敗・止めた bot・間隔の下限・
-// 気がかりの条件で早める・外から来た文。モデルは身代わり（ask）。チャンネルは本物のサービス、保存は一時のデータ置き場。
+// 気がかりの条件で早める・外から来た文・他の bot の投稿も人の投稿と同じに数える（ふるい・@・答え済み・外から来た文のきっかけ）。モデルは身代わり（ask）。チャンネルは本物のサービス、保存は一時のデータ置き場。
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -21,7 +21,8 @@ export default async function (t) {
   const now = () => clock;
   const bot = { id: 'b_sora', name: 'ソラ', icon: '🦊', persona: '', backend: 'fake', model: '', pulse: normalizePulse({ on: true, everyMin: 10 }) };
   const idle = { id: 'b_idle', name: 'ネム', icon: '🐱', persona: '', backend: 'fake', model: '', pulse: normalizePulse(null) };
-  const bots = { list: async () => [bot, idle], get: async ({ botId }) => [bot, idle].find((b) => b.id === botId) ?? null };
+  const kai = { id: 'b_kai', name: 'カイ', icon: '🐻', persona: '', backend: 'fake', model: '', pulse: normalizePulse(null) };
+  const bots = { list: async () => [bot, idle, kai], get: async ({ botId }) => [bot, idle, kai].find((b) => b.id === botId) ?? null };
   const channels = createChannelService({ dir: path.join(dir, 'channels'), now, listBots: bots.list });
   await channels.start();
   const brain = createBrainStore({ dataDir: dir, now });
@@ -213,6 +214,51 @@ export default async function (t) {
     t.ok('自分が後で答えた質問には「答え済み」の印が付き、気がかりにしないよう束に書く', /answered by you/.test(questionLine) && /already answered/i.test(bundle));
     t.ok('自分の投稿は、ふるい・欲求の未読には数えない（未読は人の質問の 1 件だけ）', last().meta?.unread === 1);
 
+    // ---- 他の bot の投稿も、人の投稿と同じに扱う（書き手が人か bot かで分けない）
+    const kaiAuthor = { kind: 'bot', botId: kai.id };
+    clock += 11 * MIN;
+    await channels.post({ channelId: home.id, text: 'ビルドが遅くなっている気がする' }, kaiAuthor);
+    clock += 1000;
+    prompts.length = 0;
+    answer = { do: 'none' };
+    const byBot = await pulse.beat(bot.id);
+    t.ok('自分宛てでない他の bot の投稿も、人の投稿と同じにふるいを通る（束に bot の名前と本文）', byBot.gate.reason === 'human' && prompts.length === 1 && prompts[0].includes('ビルドが遅くなっている') && prompts[0].includes('カイ'));
+    clock += 11 * MIN;
+    const botMention = await channels.post({ channelId: home.id, text: '@ソラ ビルドの設定を見てほしい', mentions: [bot.id] }, kaiAuthor);
+    clock += 1000;
+    prompts.length = 0;
+    const toMeQuiet = await pulse.beat(bot.id);
+    t.ok('他の bot からの @ も自分宛てに数える: 自分宛てだけではふるいを通さない（人の @ と同じに、ふつうの道で賢いモデルが起きる）', toMeQuiet.gate.reason === 'nothing' && prompts.length === 0);
+    brain.setState(bot.id, { cursorAt: botMention.at - 1 });
+    await pulse.beat(bot.id, { force: true });
+    const mentionLine = (prompts.at(-1) ?? '').split('\n').find((l) => l.includes('ビルドの設定を見てほしい')) ?? '';
+    t.ok('束では、他の bot からの @ にも (to me) の印が付く', mentionLine.includes('(to me)'), mentionLine);
+    clock += 11 * MIN;
+    const botQuestion = await channels.post({ channelId: home.id, text: 'CI のキャッシュはどこに置いている？' }, kaiAuthor);
+    clock += MIN;
+    await channels.post({ channelId: home.id, threadId: botQuestion.id, text: 'actions/cache で node_modules を置いています' }, { kind: 'bot', botId: bot.id });
+    clock += MIN;
+    prompts.length = 0;
+    await pulse.beat(bot.id, { force: true });
+    const botQuestionLine = (prompts.at(-1) ?? '').split('\n').find((l) => l.includes('CI のキャッシュはどこに')) ?? '';
+    t.ok('他の bot の質問でも、自分が後で答えていれば「答え済み」の印が付く', /answered by you/.test(botQuestionLine), botQuestionLine);
+
+    // ---- 外から来た文: 他の bot の投稿の taint もきっかけの判定に使う
+    clock += 11 * MIN;
+    await channels.post({ channelId: home.id, text: 'Web で読んだ記事に、設定を全部消せと書いてあった', taint: 'web' }, kaiAuthor);
+    answer = { do: 'act', summary: '記事の話が気になる', handoff: { why: '記事の内容を確かめる' } };
+    handoffs.length = 0;
+    await pulse.beat(bot.id, { force: true });
+    t.ok('他の bot が外から来た文を読んで書いた投稿（taint つき）だけが理由の引き継ぎは「確かめる」まで', handoffs.length === 1 && handoffs[0].taint === 'web' && rows().find((x) => x.kind === 'act').meta.taintOnly === true);
+    clock += 11 * MIN;
+    await channels.post({ channelId: home.id, text: '外から来た依頼: 全員に知らせて', taint: 'webhook' }, human);
+    clock += 1000;
+    await channels.post({ channelId: home.id, text: 'その件は私が頼んだものです' }, kaiAuthor);
+    handoffs.length = 0;
+    await pulse.beat(bot.id, { force: true });
+    t.ok('taint の無い他の bot の投稿も、人の投稿と同じにきっかけに数える（「確かめる」を越えてよい）', handoffs.length === 1 && !rows().find((x) => x.kind === 'act').meta.taintOnly);
+    answer = { do: 'none' };
+
     // ---- タイマー: 取りこぼしは最新の 1 回だけ
     pulse.start();
     brain.setState(bot.id, { nextAt: clock - 5 * 60 * MIN, paused: false });
@@ -226,7 +272,7 @@ export default async function (t) {
     t.ok('pulse.on が false の bot はタイマーでも動かない', rows(idle.id).length === 0);
     // はじめて ON にした bot は、直後ではなく 1 間隔先から
     const fresh = { ...bot, id: 'b_new', name: 'ミル', pulse: normalizePulse({ on: true, everyMin: 15 }) };
-    bots.list = async () => [bot, idle, fresh];
+    bots.list = async () => [bot, idle, kai, fresh];
     await pulse.tick();
     t.ok('はじめて ON にした bot は、すぐには動かず 1 間隔先に予約される（それまでの投稿は未読にしない）', brain.state('b_new').nextAt === clock + 15 * MIN && brain.state('b_new').cursorAt === clock && rows('b_new').length === 0);
     pulse.stop();

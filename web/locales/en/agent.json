@@ -1379,7 +1379,7 @@
     "kind": { "think": "Note", "quiet": "Quiet", "act": "Asked", "result": "Result", "loop": "Concern", "dream": "Dream", "summary": "Summary" },
     "reason": {
       "paused": "put to sleep", "budget": "no budget", "nothing": "no change", "forced": "manual", "loop": "a concern's condition",
-      "reserved": "reserved time", "human": "new human post", "drive": "a drive", "muse": "musing turn", "error": "failed", "noHome": "no home channel"
+      "reserved": "reserved time", "human": "new post", "drive": "a drive", "muse": "musing turn", "error": "failed", "noHome": "no home channel"
     },
     "inner": {
       "recent": "These are excerpts from recent messages exchanged in this conversation. Use them as background for the current request.\n{{context}}",

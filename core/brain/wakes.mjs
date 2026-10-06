@@ -7,7 +7,8 @@
 //   - 時刻は今から WAKE_MIN_LEAD_MS 以上・WAKE_MAX_AHEAD_MS 以内。1 回きり（繰り返しはルーティン）
 //   - 起こし方は心拍の引き継ぎと同じ道（dispatch.wakeReserved → inbox の inner → pump → startTurn）。承認・強い bot の確認・［止める］・休憩中がそのまま効く
 //   - Pleiad が止まっていた間に時刻を過ぎた予約は、起動後に遅れて 1 回だけ起きる。同じ会話の予約が重なっていたら 1 回にまとめる（何十回も重ねない）
-//   - 自発の分なので予算から引く（心拍と同じ。スレッドならそのチャンネル、DM なら bot の家のチャンネル）。予算が無い・休憩中は捨てずに待ち、WAKE_RETRY_MS ごとに見直す
+//   - 自発の分なので予算から引く（心拍と同じ。スレッドならそのチャンネル、DM なら bot の家のチャンネル。家が無ければ bot の 1 日のトークンの上限だけ）。
+//     予算が無い・休憩中は捨てずに待ち、WAKE_RETRY_MS ごとに見直す
 //   - 止めたスレッド・アーカイブしたチャンネル・消した bot・もう無い会話の予約は起こさず、理由を付けて閉じる
 //
 //   createWakes({ dataDir, channels, bots, dispatch, budget, clock, now, emit, localeOf, tickMs }) → Wakes
@@ -116,9 +117,10 @@ export function createWakes({ dataDir, channels, bots, dispatch, budget, clock, 
       if (th?.stopped) { for (const w of list) drop(w, 'stopped'); return false; }
     }
     if (dispatch.restingUntil?.(bot)) { for (const w of list) wait(w, 'resting'); return false; }
-    // 予算: スレッドならそのチャンネル、DM なら bot の家のチャンネル。家が無い DM だけの bot は数える先が無いので止めない（DM は予算に数えない。ADR 0119）
+    // 予算: スレッドならそのチャンネル、DM なら bot の家のチャンネル。家が無い DM だけの bot は、チャンネルの % の数え先が無いので、
+    // bot の 1 日のトークンの上限（BRAIN_DAILY_TOKENS）だけを見る（自分の予約で自分を起こし続けても、上限で止まる）
     const home = channel.kind === 'channel' ? channel : pickHome(bot, await channels.list().catch(() => []));
-    if (home && !(await budget.allowsBrain({ channelId: home.id, botId: bot.id }))) { for (const w of list) wait(w, 'budget'); return false; }
+    if (!(await budget.allowsBrain({ channelId: home?.id ?? null, botId: bot.id }))) { for (const w of list) wait(w, 'budget'); return false; }
     const at = now();
     const result = await dispatch.wakeReserved({
       botId: bot.id, sessionId: head.sessionId, channelId: head.channelId, threadId: head.threadId ?? null,
