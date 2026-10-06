@@ -14,6 +14,7 @@ import { openAgent, requesterOf } from '../lib/remote-agent-client.mjs';
 import { checkPath } from '../../core/remote/forward.mjs';
 import { createAgentPort } from '../../core/remote/agent-port.mjs';
 import { viewMessages, viewCursor, trimViewMessage, VIEW_LIMITS } from '../../core/remote/agent-view.mjs';
+import { hostViewCursor, joinHostView, hostTreeRows, mergeHostTree } from '../../web/host-view.mjs';
 import { AGENT_OPS, AGENT_LIMITS, remoteOwnerId, parseRemoteOwner, normalizeRequester, relayReceipt } from '../../core/remote/agent-protocol.mjs';
 
 export const name = 'remote-agent';
@@ -69,6 +70,30 @@ export default async function (t) {
     const heavy = viewMessages(Array.from({ length: 60 }, () => ({ role: 'assistant', text: 'y'.repeat(16_000) })));
     t.ok('1 通は 192 KB に収め、収まらない分は古い方から省く', Buffer.byteLength(JSON.stringify(heavy.messages)) <= VIEW_LIMITS.bodyBytes && heavy.from > 20 && heavy.messages.length < 40 && heavy.full === true, JSON.stringify([heavy.from, heavy.messages.length]));
     t.ok('端末の AI の依頼（AGENT_OPS）に読み出しは入っていない', !AGENT_OPS.includes('view') && AGENT_OPS.length === 6);
+  }
+
+  // ---- 端末の画面が持つ側（web/host-view.mjs）: 続きをつなぐ・孫の並び
+  {
+    const msgs = Array.from({ length: 50 }, (_, i) => ({ role: i % 2 ? 'assistant' : 'user', text: `m${i}` }));
+    let held = joinHostView({ base: 0, messages: [], sigs: [] }, { ...viewMessages(msgs) });
+    t.ok('最初の答えは末尾 40 件を、位置（base）つきで持つ（古い 10 件は省いた分）', held.base === 10 && held.messages.length === 40 && held.total === 50);
+    const next = [...msgs, { role: 'assistant', text: 'new1' }, { role: 'user', text: 'new2' }];
+    const reply = viewMessages(next, hostViewCursor(held));
+    held = joinHostView(held, reply);
+    t.ok('続きの答えは持っている先頭につながり、位置は変わらない（行が増えるだけ）', reply.full === false && held.base === 10 && held.messages.length === 42 && held.messages.at(-1).text === 'new2' && held.total === 52 && held.sigs.length === 42);
+    const rewritten = viewMessages(next.map((m, i) => (i === 48 ? { ...m, text: 'changed' } : m)), hostViewCursor(held));
+    const replaced = joinHostView(held, rewritten);
+    t.ok('署名が合わない答え（full）は、持っている分を置き換える', rewritten.full === true && replaced.base === rewritten.from && replaced.messages.length === rewritten.messages.length);
+    t.ok('持っているのが少ないうちは続きを頼まず、末尾から読み直す', hostViewCursor({ base: 0, messages: msgs.slice(0, 3), sigs: null }) === null);
+    t.ok('位置が食い違う続きは、そのまま置き換える（つなぎ損ねない）', joinHostView(held, { messages: [{ role: 'user', text: 'x' }], from: 500, total: 501, full: false }).base === 500);
+    const rows = [
+      { taskId: 'g2', parentTaskId: 'r', sessionId: 's-g2', createdAt: 2 }, { taskId: 'g1', parentTaskId: 'r', sessionId: 's-g1', createdAt: 1 },
+      { taskId: 'gg', parentTaskId: 'g1', sessionId: 's-gg', createdAt: 3 }, { taskId: 'lost', parentTaskId: 'unknown', sessionId: 's-l', createdAt: 0 },
+    ];
+    const tree = hostTreeRows('r', 's-r', rows, id => `hs:${id}`);
+    t.ok('孫の並び: 兄弟は新しい順・子は親の直後・深さと親の印つき・親の分からない行は根の直下', tree.map(x => `${x.row.taskId}:${x.depth}:${x.parentKey}`).join(' ') === 'g2:1:hs:s-r g1:1:hs:s-r gg:2:hs:s-g1 lost:1:hs:s-r' && tree.find(x => x.row.taskId === 'g1').childCount === 1, tree.map(x => `${x.row.taskId}:${x.depth}`).join(' '));
+    t.ok('子孫の混ぜ方: 根を読んだときは置き換え、孫の詳細を読んだときは同じ行を更新して足す', mergeHostTree([{ taskId: 'a', v: 1 }, { taskId: 'b', v: 1 }], [{ taskId: 'a', v: 2 }], { replace: true }).length === 1
+      && mergeHostTree([{ taskId: 'a', v: 1 }, { taskId: 'b', v: 1 }], [{ taskId: 'a', v: 2 }, { taskId: 'c', v: 1 }]).map(r => `${r.taskId}${r.v}`).join() === 'a2,b1,c1');
   }
 
   // ---- 経過の読み出しの口だけの部品（サーバーなし）: 許可・未対応・件数だけの記録・口の種類
