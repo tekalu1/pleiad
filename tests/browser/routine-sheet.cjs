@@ -95,12 +95,12 @@ async page => {
   // ---- チャンネルを作って開く。ルーティンが無い間も［ルーティン］の入口がある（数は付けない）
   const name = 'daily' + String(Date.now()).slice(-5);
   const ch = await rpc('channels.create', { name, purpose: '毎日の見回りとまとめ' });
-  await page.locator('#tabChannels').click();
+  await page.locator('#sideOrder [data-order="channel"]').click();
   await showChannel(ch.id);
   await page.locator('#chFeed').waitFor();
   await page.waitForSelector('.ch-routines');
   check(await page.locator('.ch-routines .rt-n').textContent() === '', '見出しにルーティンの入口がある（無い間は数を付けない）');
-  check(await page.locator('#channelsSide .cs-sec[data-sec="routines"] .cs-empty').count() === 1, '脇のルーティンの節は、無い間は空の状態');
+  check(await page.locator('#groups .cs-sec[data-sec="routines"] .cs-empty').count() === 1, '脇のルーティンの節は、無い間は空の状態');
   await page.waitForFunction(() => window.__rcalls.some(c => c.op === 'routines.list'));   // 接続の前に読めなかったときは、少し待って読み直す
   check(true, 'ルーティンの一覧は routines.list で読む');
 
@@ -175,7 +175,7 @@ async page => {
   await sheet.waitFor({ state: 'hidden' });
   await page.waitForFunction(() => window.__rcalls.some(c => c.op === 'routines.delete'));
   check((await calls('routines.delete'))[0].args.routineId === 'r_1' && (await page.evaluate(() => window.__routines.length)) === 0, '取り消すと、試すために作った下書きを消す');
-  check(await page.locator('#channelsSide .cs-sec[data-sec="routines"] .cs-row').count() === 0, '消したら脇にも残らない');
+  check(await page.locator('#groups .cs-sec[data-sec="routines"] .cs-row').count() === 0, '消したら脇にも残らない');
 
   // ---- 試しの失敗
   await page.locator('.ch-routines').click();
@@ -219,8 +219,8 @@ async page => {
   const made = (await calls('routines.create')).at(-1).args;
   check(made.name === '朝のまとめ' && made.botId === 'b_lynx' && made.channelId === ch.id && made.mode === 'plan' && made.approvalTimeoutMin === 60
     && made.trigger.kind === 'daily' && made.trigger.at === '09:00' && made.trigger.weekdaysOnly === true && made.paused === false, '作るは routines.create に名前・bot・チャンネル・指示・トリガ・モード・期限を渡す');
-  await page.waitForSelector('#channelsSide .cs-sec[data-sec="routines"] .cs-row');
-  const row = page.locator('#channelsSide .cs-sec[data-sec="routines"] .cs-row').first();
+  await page.waitForSelector('#groups .cs-sec[data-sec="routines"] .cs-row');
+  const row = page.locator('#groups .cs-sec[data-sec="routines"] .cs-row').first();
   check(await row.locator('.row-t').textContent() === '朝のまとめ' && await row.locator('.cs-rt-ch').textContent() === `#${name}`, '脇に名前と #チャンネルが出る');
   check(await row.locator('.row-when').textContent().then(s => /\d:\d\d$/.test(s)), '脇に次の時刻が出る');
   check(await page.locator('.ch-routines .rt-n').textContent() === '1', '見出しの［ルーティン］に数が付く');
@@ -231,18 +231,18 @@ async page => {
   const t0 = Date.now();
   await page.evaluate(([a, b, c]) => { window.__routines.push(a, b, c); }, [mk('r_a', '夜の失敗の見回り', t0 + 20 * 60e3, { last: { at: t0 - 3600e3, runId: 'x', state: 'failed' } }), mk('r_b', '依存の更新', null, { paused: true }), mk('r_c', '週次のまとめ', t0 + 7 * 86400e3)]);
   for (const id of ['r_a', 'r_b', 'r_c']) await deliver({ type: 'routinesChanged', sessionId: null, routine: await page.evaluate(i => window.__routines.find(r => r.id === i), id) });
-  await page.waitForFunction(() => document.querySelectorAll('#channelsSide .cs-sec[data-sec="routines"] .cs-row').length === 3);
-  const order = await page.locator('#channelsSide .cs-sec[data-sec="routines"] .cs-row .row-t').allTextContents();
+  await page.waitForFunction(() => document.querySelectorAll('#groups .cs-sec[data-sec="routines"] .cs-row').length === 3);
+  const order = await page.locator('#groups .cs-sec[data-sec="routines"] .cs-row .row-t').allTextContents();
   check(order.join() === '夜の失敗の見回り,朝のまとめ,週次のまとめ', '脇は次に動く時刻の近い順に 3 件（4 件目は一時停止なので後ろ）');
-  check(await page.locator('#channelsSide .cs-rt-fail').first().textContent() === '✕ 失敗', '直近の失敗は「✕ 失敗」');
-  const more = page.locator('#channelsSide .cs-more');
+  check(await page.locator('#groups .cs-rt-fail').first().textContent() === '✕ 失敗', '直近の失敗は「✕ 失敗」');
+  const more = page.locator('#groups .cs-more');
   check(await more.textContent() === 'ほか 1 件を見る', '3 件を超えると［ほか n 件を見る］');
   await more.click();
-  check(await page.locator('#channelsSide .cs-sec[data-sec="routines"] .cs-row').count() === 4 && await page.locator('#channelsSide .cs-row.paused').count() === 1, '押すと全部出る。一時停止は薄い（.paused）');
-  check(await page.locator('#channelsSide .cs-row.paused .row-when').textContent() === '一時停止', '一時停止の行は時刻の代わりに「一時停止」');
+  check(await page.locator('#groups .cs-sec[data-sec="routines"] .cs-row').count() === 4 && await page.locator('#groups .cs-row.paused').count() === 1, '押すと全部出る。一時停止は薄い（.paused）');
+  check(await page.locator('#groups .cs-row.paused .row-when').textContent() === '一時停止', '一時停止の行は時刻の代わりに「一時停止」');
   check(await page.locator('.ch-routines .rt-n').textContent() === '4', '見出しの数が出来事で 4 になる');
   await shot('08-side');
-  await page.locator('#channelsSide .cs-more').click();
+  await page.locator('#groups .cs-more').click();
 
   // ---- 見出しの入口: 複数あればメニュー（そのルーティン … / ルーティンを作る）
   await page.locator('.ch-routines').click();
@@ -251,7 +251,7 @@ async page => {
   await page.keyboard.press('Escape');
 
   // ---- 編集: 脇の行 → 値が入る → 直して保存 → routines.update
-  await page.locator('#channelsSide .cs-row', { hasText: '朝のまとめ' }).click();
+  await page.locator('#groups .cs-row', { hasText: '朝のまとめ' }).click();
   await sheet.waitFor({ state: 'visible' });
   check(await page.locator('#rsName').inputValue() === '朝のまとめ' && await page.locator('#rsAt').inputValue() === '09:00' && await page.locator('#rsWeekdays .v').textContent() === '平日だけ', '編集のシートに今の値が入る');
   check(await page.locator('#rsSave').textContent() === '保存' && await page.locator('#rsDelete').isVisible() && await page.locator('[data-fld="state"]').isVisible(), '保存済みは［保存］［削除］と状態の欄がある');
@@ -264,17 +264,17 @@ async page => {
   check(upd.routineId && upd.trigger.at === '08:15' && upd.prompt.includes('提案だけ') && !('paused' in upd), '保存は routines.update に直した欄を渡す');
 
   // ---- 一時停止・再開（状態の欄。保存を待たずにすぐ効く）
-  await page.locator('#channelsSide .cs-row', { hasText: '朝のまとめ' }).click();
+  await page.locator('#groups .cs-row', { hasText: '朝のまとめ' }).click();
   await sheet.waitFor({ state: 'visible' });
   await page.locator('[data-state="off"]').click();
   await page.waitForFunction(() => window.__rcalls.some(c => c.op === 'routines.pause'));
   await page.waitForFunction(() => document.querySelector('[data-state="off"]').getAttribute('aria-pressed') === 'true');
   await page.keyboard.press('Escape');
   await sheet.waitFor({ state: 'hidden' });
-  await page.locator('#channelsSide .cs-more').click();   // 一時停止にすると 4 番目へ回り、3 件の外に出る
-  await page.waitForSelector('#channelsSide .cs-row.paused:has-text("朝のまとめ")');
+  await page.locator('#groups .cs-more').click();   // 一時停止にすると 4 番目へ回り、3 件の外に出る
+  await page.waitForSelector('#groups .cs-row.paused:has-text("朝のまとめ")');
   check(true, '状態を「一時停止」にすると routines.pause が呼ばれ、脇の行が薄くなる（後ろへ回る）');
-  await page.locator('#channelsSide .cs-row.paused', { hasText: '朝のまとめ' }).click();
+  await page.locator('#groups .cs-row.paused', { hasText: '朝のまとめ' }).click();
   await sheet.waitFor({ state: 'visible' });
   check(await page.locator('[data-state="off"]').getAttribute('aria-pressed') === 'true', '開き直すと状態は「一時停止」');
   await page.locator('[data-state="on"]').click();
@@ -288,22 +288,22 @@ async page => {
   check(await page.locator('#rsDelete').textContent() === 'もう一度押すと削除' && (await calls('routines.delete')).length === deletedBefore, '削除の 1 度目は「もう一度押すと削除」になるだけ');
   await page.locator('#rsDelete').click();
   await sheet.waitFor({ state: 'hidden' });
-  check((await calls('routines.delete')).length === deletedBefore + 1 && await page.locator('#channelsSide .cs-row', { hasText: '朝のまとめ' }).count() === 0, '2 度目で routines.delete を呼び、脇から消える');
+  check((await calls('routines.delete')).length === deletedBefore + 1 && await page.locator('#groups .cs-row', { hasText: '朝のまとめ' }).count() === 0, '2 度目で routines.delete を呼び、脇から消える');
 
   // ---- 脇の＋・失敗の行から編集・別の人が消した（出来事）ときはシートも閉じる
-  await page.locator('#channelsSide .cs-sec[data-sec="routines"] .grp-head').hover();
-  await page.locator('#channelsSide .cs-sec[data-sec="routines"] .cs-add').click();
+  await page.locator('#groups .cs-sec[data-sec="routines"] .grp-head').hover();
+  await page.locator('#groups .cs-sec[data-sec="routines"] .cs-add').click();
   await sheet.waitFor({ state: 'visible' });
   check(await page.locator('#rsChannelChip .v').textContent().then(s => s.includes(name)), '脇の＋でも作れる（開いているチャンネルが入る）');
   await page.keyboard.press('Escape');
   await sheet.waitFor({ state: 'hidden' });
-  await page.locator('#channelsSide .cs-row', { hasText: '夜の失敗の見回り' }).click();
+  await page.locator('#groups .cs-row', { hasText: '夜の失敗の見回り' }).click();
   await sheet.waitFor({ state: 'visible' });
   check(await page.locator('.rs-last').textContent().then(s => s.includes('✕ 失敗')) && await page.locator('.rs-last.fail').count() === 1, '編集のシートに前回の結果（✕ 失敗）が出る');
   await page.evaluate(() => { window.__routines = window.__routines.filter(r => r.id !== 'r_a'); });
   await deliver({ type: 'routinesChanged', sessionId: null, removed: 'r_a' });
   await sheet.waitFor({ state: 'hidden' });
-  check(await page.locator('#channelsSide .cs-row', { hasText: '夜の失敗の見回り' }).count() === 0, '別の所で消されたら、開いているシートも閉じて脇からも消える');
+  check(await page.locator('#groups .cs-row', { hasText: '夜の失敗の見回り' }).count() === 0, '別の所で消されたら、開いているシートも閉じて脇からも消える');
 
   // ---- bot のページの「ルーティン」の節
   await page.evaluate(() => document.dispatchEvent(new CustomEvent('channels:show', { detail: { kind: 'bot', id: 'b_lynx' } })));

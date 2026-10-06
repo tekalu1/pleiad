@@ -1,6 +1,6 @@
 {
   "side": {
-    "tabs": { "label": "脇の切り替え", "chats": "Chats", "channels": "Channels" },
+    "tabs": { "channels": "Channels" },
     "sections": { "channels": "チャンネル", "bots": "Bots", "routines": "ルーティン" },
     "newChannel": "チャンネルを作る",
     "newChannelPlaceholder": "チャンネルの名前（Enter で作る）",
@@ -17,6 +17,15 @@
     "openBot": "bot のページを開く",
     "dm": "DM",
     "botWaitsHead": "あなたを待っている",
+    "order": { "label": "脇の並べ方", "channel": "チャンネル", "status": "状態" },
+    "home": "一時チャット",
+    "newHome": "一時チャットに新しいスレッド",
+    "newInChannel": "{{name}} に新しいスレッド",
+    "more_other": "ほか {{count}} 件",
+    "less": "少なく表示",
+    "noThreads": "スレッドはまだありません",
+    "openThread": "スレッドを開く",
+    "openFeed": "チャンネルの流れを開く",
     "searchPlaceholder": "会話とチャンネルを検索",
     "search": { "count_other": "{{count}} 件", "none": "一致する会話・チャンネルがありません" }
   },

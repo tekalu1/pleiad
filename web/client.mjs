@@ -273,6 +273,7 @@ let seq = 0;
 const pending = new Map();
 
 const state = {
+  threadIndex: { threads: [], totals: {} },   // bot のスレッドの索引（channels.threads。脇の 2 つの並べ方）
   current: null,      // 選択中の sessionId（null = 新規）
   loadingSession: null,
   homeDir: "",
@@ -2820,6 +2821,8 @@ function syncOutboxRows(messages) {
 
 function onEvent(ev, replay = false) {
   // bot・Channels・ルーティンの画面（web/channels/）。この画面の出来事ならここで終わる。ほかの出来事（permission など）も部品へ渡る
+  // スレッドが動いた・投稿が増えた・既読が進んだ: 脇のスレッドの行を読み直す（まとめて 1 回）
+  if (THREAD_INDEX_EVENTS.has(ev.type)) loadThreadIndexSoon();
   if (channelsUi.onEvent(ev, replay)) return;
   if (ev.type === 'notificationsChanged') { notificationInbox.onEvent(ev); return; }
   if (ev.type?.startsWith('shell.')) return onShellEvent(ev);
@@ -3961,8 +3964,32 @@ const slashSkills = chatComposer.useSlash({
 
 // ---------------------------------------------------------------- セッション一覧（web/side.mjs）
 
+// 脇の並べ方（「チャンネル」|「状態」。docs/design-system.md「脇」）。端末ごとに覚える。前の版の札（Chats / Channels）を選んでいたら、その並びから始める
+const SIDE_ORDER_KEY = 'agent-host-side-order';
+let sideOrder = 'status';
+try { sideOrder = localStorage.getItem(SIDE_ORDER_KEY) ?? (localStorage.getItem('agent-host-side-tab') === 'channels' ? 'channel' : 'status'); } catch {}
+if (sideOrder !== 'channel') sideOrder = 'status';
+// Bots・ルーティンの節（web/channels/sidebar.mjs が描く）。チャンネルの並べ方の間、一覧の末尾に入る
+const channelExtraNodes = [...document.querySelectorAll('#channelsSide .cs-sec[data-sec="bots"], #channelsSide .cs-sec[data-sec="routines"]')];
+// メインの面（会話 / Channels）。channelsUi はこの後で作るので、作る前（起動の途中）は会話の面とみなす
+const surface = () => { try { return channelsUi.tab; } catch { return 'chats'; } };
+/** 脇の行の id がスレッドの行（"thread:<チャンネル>:<根>"）なら { channelId, threadId } */
+const threadOfRow = (id) => { const m = /^thread:([^:]+):(.+)$/.exec(String(id ?? '')); return m ? { channelId: m[1], threadId: m[2] } : null; };
+
 const side = createSide({
-  onOpen: (id, jump) => (id == null || id === pendingNewSession?.id ? startNew(state.draft) : openFromSearch(id, jump)),
+  onOpen: (id, jump) => {
+    const thread = threadOfRow(id);
+    if (thread) return viewAddress.go(thread);
+    channelsUi.setTab('chats');
+    return id == null || id === pendingNewSession?.id ? startNew(state.draft) : openFromSearch(id, jump);
+  },
+  onOpenChannel: (channelId) => viewAddress.go({ channelId }),
+  // チャンネルの見出しの ＋: 流れを開いて、流れの入力欄（新しいスレッドを書く所）へ
+  onNewInChannel: (channelId) => {
+    viewAddress.go({ channelId });
+    requestAnimationFrame(() => document.querySelector('#chFeed .ch-input')?.focus({ preventScroll: true }));
+  },
+  channelExtras: () => channelExtraNodes,
   // 本文まで探す。画面は新しい WS コマンドを足さず、操作の一覧の sessions.search を汎用の invoke で呼ぶ（core/ops/sessions.mjs）
   onSearch: (input) => cmd("invoke", { op: "sessions.search", args: input }),
   onNew: startNew,
@@ -3978,7 +4005,7 @@ const side = createSide({
   },
   onSetIcon: (status, icon) => cmd("setStatusIcon", { status, icon })
     .catch((e) => sideNote(t("session.menu.iconFailed", { error: e.message }))),
-  onContext: (s, x, y) => rowMenu(s, x, y),
+  onContext: (s, x, y) => (s.thread ? threadMenu(s, x, y) : rowMenu(s, x, y)),
   onGroupContext: (st, x, y) => groupMenu(st, x, y),
   onFamilyContext: (root, members, x, y) => familyMenu(root, members, x, y),
   onSetGrouped: (s, ungrouped) => setGrouped(s, ungrouped),
@@ -3990,22 +4017,97 @@ const side = createSide({
   visible: () => !document.body.classList.contains("settings") && (narrowView.matches ? drawerOpen() : !document.documentElement.classList.contains("side-closed")),
 });
 
+// ---- 脇のスレッドの行（channels.threads の索引。web/side.mjs の 2 つの並べ方）
+const THREAD_INDEX_EVENTS = new Set(['channelThread', 'channelPost', 'channelsChanged', 'channelRead', 'botsChanged']);
+let threadIndexTimer = 0;
+async function loadThreadIndex() {
+  clearTimeout(threadIndexTimer);
+  try {
+    state.threadIndex = await cmd('invoke', { op: 'channels.threads', args: { all: true } });
+    renderSessions();
+  } catch { /* 読めなければ前の索引のまま（接続し直したら読み直す） */ }
+}
+function loadThreadIndexSoon() {
+  clearTimeout(threadIndexTimer);
+  threadIndexTimer = setTimeout(loadThreadIndex, 150);
+}
+
+/** スレッドの行のメニュー: 開く・流れを開く・状態（会話と同じ状態のグループ） */
+function threadMenu(s, x, y) {
+  const { channelId, threadId } = s.thread;
+  const known = [...new Set([...state.sessions.map((z) => z.status), ...(state.threadIndex?.threads ?? []).map((th) => th.status)].filter(Boolean))];
+  const setStatus = (status) => cmd('invoke', { op: 'channels.setThreadStatus', args: { channelId, threadId, status } })
+    .then(() => { side.keep(status); loadThreadIndex(); }).catch((e) => sideNote(t('session.statusFailed', { error: e.message })));
+  showMenu(x, y, [
+    { label: t('channels:side.openThread'), onClick: () => viewAddress.go({ channelId, threadId }) },
+    { label: t('channels:side.openFeed'), onClick: () => viewAddress.go({ channelId }) },
+    { label: t('session.menu.changeStatus'), hint: s.status || t('session.status.none'), sub: () => [
+      { input: { placeholder: t('session.menu.newStatus'), onCommit: (v) => setStatus(v) } },
+      ...known.map((k) => ({ label: k, checked: k === s.status, onClick: () => setStatus(k) })),
+      { sep: true },
+      { label: t('session.menu.clearStatus'), onClick: () => setStatus('') },
+    ] },
+  ], s.title || t('session.untitled'));
+}
+
+// 並べ方の切り替え（#sideOrder）。押す・←→ で替える。メインの面は替えない
+{
+  const box = $('sideOrder');
+  const buttons = [...box.querySelectorAll('[data-order]')];
+  const paintOrder = () => {
+    for (const b of buttons) { const on = b.dataset.order === sideOrder; b.setAttribute('aria-checked', String(on)); b.tabIndex = on ? 0 : -1; }
+    document.documentElement.classList.toggle('side-order-channel', sideOrder === 'channel');
+  };
+  const setOrder = (next, focus = false) => {
+    if (next !== 'channel' && next !== 'status') return;
+    sideOrder = next;
+    try { localStorage.setItem(SIDE_ORDER_KEY, next); } catch {}
+    paintOrder();
+    renderSessions();
+    if (focus) buttons.find((b) => b.dataset.order === next)?.focus();
+  };
+  for (const b of buttons) b.addEventListener('click', () => setOrder(b.dataset.order));
+  box.addEventListener('keydown', (e) => {
+    if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(e.key)) return;
+    e.preventDefault();
+    setOrder(e.key === 'Home' || e.key === 'ArrowLeft' ? 'channel' : 'status', true);
+  });
+  paintOrder();
+}
+
 function renderSessions() {
   // 委譲された子の会話（Pleiad タスク）は一覧に出さない。開くのは「Pleiad タスク」の一覧から。
   // 依頼元の会話を消した子（ADR 0147）は、開く口が無くなるので一覧に出す
-  // bot の会話（Channels のスレッド・DM・ルーティン。ADR 0109）も出さない。あなたを待っている間だけ出る
+  // bot の会話（Channels のスレッド・DM・ルーティン。ADR 0109）は会話としては出さない。スレッドは下の threadRows が 1 スレッド 1 行で出す。
+  // DM・ルーティンの会話は、あなたを待っている間だけ出る
   // 端末の AI から任された会話（delegation.remote）は、依頼元の会話がこの PC に無いので一覧に出す（⇄ の印つき）
   const ids = new Set(state.sessions.map(s => s.id));
-  const listed = state.sessions.filter(s => (!s.delegation || s.delegation.remote || !ids.has(s.delegation.parentSessionId)) && (!s.bot || state.waitingIds.has(s.id)));
+  const listed = state.sessions.filter(s => (!s.delegation || s.delegation.remote || !ids.has(s.delegation.parentSessionId)) && (!s.bot || (state.waitingIds.has(s.id) && s.bot.kind !== 'thread')));
   const unreadIds = new Set(listed.filter(s => readCompletions.hasUnread(s)).map(s => s.id));
+  // bot のスレッド（channels.threads の索引）。会話に似た行にして、走っている・あなた待ち・未読の印は会話と同じ集合で渡す
+  const runningIds = new Set(state.runningIds), waitingIds = new Set(state.waitingIds);
+  const threadRows = (state.threadIndex?.threads ?? []).map((th) => {
+    const id = `thread:${th.channelId}:${th.threadId}`;
+    if (th.state === 'working' || Object.values(th.live ?? {}).includes('working')) runningIds.add(id);
+    if (th.state === 'waiting' || Object.values(th.live ?? {}).includes('waiting')) waitingIds.add(id);
+    if (th.unread) unreadIds.add(id);
+    return { id, thread: { channelId: th.channelId, threadId: th.threadId }, bot: { botId: th.bots?.[0] ?? null, channelId: th.channelId, threadId: th.threadId, kind: 'thread' },
+      title: th.title, status: th.status ?? '', lastModified: th.lastAt };
+  });
+  // 脇で選ばれて見える行: Channels の面ではそのスレッド、会話の面では開いている会話
+  const where = (() => { try { return viewAddress.current; } catch { return null; } })();   // 起動の途中（アドレスを作る前）は無い
+  const currentId = surface() === 'channels' ? (where?.threadId ? `thread:${where.channelId}:${where.threadId}` : null)
+    : pendingNewSession && !state.current ? pendingNewSession.id : state.current;
   // 脇が見えていない間の印（web/open-sidebar-mark.mjs）。今の会話は数えない
   paintOpenSidebar($("openSidebar"), attentionCounts(listed, { currentId: state.current, waitingIds: state.waitingIds, unreadIds,
     busyIds: new Set([...state.runningIds, ...state.bgWaiting.keys()]) }), t);
   side.render(listed, {
     statuses: state.statuses,
-    currentId: pendingNewSession && !state.current ? pendingNewSession.id : state.current,
-    runningIds: state.runningIds,
-    waitingIds: state.waitingIds,
+    currentId,
+    runningIds,
+    waitingIds,
+    threads: threadRows,
+    order: sideOrder,
     bgWaiting: state.bgWaiting,
     unreadIds,
     // 中断した会話（注意の三角）。未読は --ink、既読は --ink-weak（web/interrupt.mjs）
@@ -5968,8 +6070,8 @@ const channelsUi = setupChannels({
   permissionCard: (ev, into) => (ev.kind === 'question' ? questionCard(ev, into) : permissionCard(ev, into)),   // 質問も同じ口（bot の質問）
   openSession: (id) => viewAddress.go({ sessionId: id }),
   // 見ている場所が替わった（Channels の面・スレッドの開閉）・Chats の側へ戻った
-  noteView: (view) => viewAddress.note(view),
-  noteChats: () => { if (state.current) viewAddress.note({ sessionId: state.current }); },
+  noteView: (view) => { viewAddress.note(view); renderSessions(); },
+  noteChats: () => { if (state.current) viewAddress.note({ sessionId: state.current }); renderSessions(); },
   // 委譲の子の様子（スレッドの入口・作業ログの委譲カード）。Chats と同じ部品を使う（docs/design-system.md「バックグラウンド」「委譲カード」）
   background: {
     watch: (ids) => watchSessions(ids),
@@ -7880,6 +7982,7 @@ function connect() {
       notificationInbox.reconnected();
       presenceReporter.reset();
       presenceReporter.report(true);
+      loadThreadIndex();
       return refresh({ sharePending: true }).then(async () => {
         // スマホの通知を押して開いた会話（殻が ?open= で渡す）
         const wanted = mobileNotify.takeOpenRequest();

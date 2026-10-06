@@ -1,6 +1,6 @@
 {
   "side": {
-    "tabs": { "label": "Sidebar view", "chats": "Chats", "channels": "Channels" },
+    "tabs": { "channels": "Channels" },
     "sections": { "channels": "Channels", "bots": "Bots", "routines": "Routines" },
     "newChannel": "New channel",
     "newChannelPlaceholder": "Channel name (Enter to create)",
@@ -18,6 +18,16 @@
     "openBot": "Open bot page",
     "dm": "DM",
     "botWaitsHead": "Waiting on you",
+    "order": { "label": "Sidebar order", "channel": "Channels", "status": "Status" },
+    "home": "Quick chats",
+    "newHome": "New thread in Quick chats",
+    "newInChannel": "New thread in {{name}}",
+    "more_one": "{{count}} more",
+    "more_other": "{{count}} more",
+    "less": "Show less",
+    "noThreads": "No threads yet",
+    "openThread": "Open thread",
+    "openFeed": "Open channel feed",
     "searchPlaceholder": "Search chats and channels",
     "search": { "count_one": "{{count}} result", "count_other": "{{count}} results", "none": "No matching chats or channels" }
   },

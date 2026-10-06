@@ -135,7 +135,7 @@ async page => {
   const ring = await page.waitForFunction((id) => { const n = document.querySelector(`#chThread .post[data-post-id="${id}"].flash`); return n ? getComputedStyle(n).animationName : null; }, postId, { timeout: 8000 }).then((h) => h.jsonValue(), () => null);
   check(ring === 'none', `with reduced motion the post is marked without blinking (animation: ${ring})`);
   await page.emulateMedia({ reducedMotion: 'no-preference' });
-  check(await page.locator('#tabChannels').getAttribute('aria-selected') === 'true', 'the Channels tab is shown after jumping to a post');
+  check(await page.evaluate(() => document.body.classList.contains('channels')), 'the Channels view is shown after jumping to a post');
 
   // ---- すべて既読・開いている間に届く通知
   await bell.click();

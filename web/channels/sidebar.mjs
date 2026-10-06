@@ -317,7 +317,8 @@ export function createSidebar(host, getTabs) {
   }
 
   // ---------------------------------------------------------------- キーボード（一覧は Tab 1 回で入り、↑↓ で行を移る）
-  const rowNodes = () => [...panel.querySelectorAll('.cs-row')];
+  // 行は節（Bots・ルーティン）の中から引く。節はチャンネルの並べ方の間 #groups へ移る（web/side.mjs の channelExtras）
+  const rowNodes = () => Object.values(secs).filter(Boolean).flatMap((sec) => [...sec.querySelectorAll('.cs-row')]);
   const keyOf = (n) => `${n.dataset.kind}:${n.dataset.id}`;
   function roving(refocus) {
     const nodes = rowNodes();
@@ -334,7 +335,7 @@ export function createSidebar(host, getTabs) {
     node.focus();
     node.scrollIntoView({ block: 'nearest' });
   }
-  panel.addEventListener('keydown', (e) => {
+  const onRowKey = (e) => {
     const row = e.target.closest?.('.cs-row');
     if (!row) return;
     const nodes = rowNodes();
@@ -355,8 +356,13 @@ export function createSidebar(host, getTabs) {
         break;
       default:
     }
-  });
-  panel.addEventListener('focusin', (e) => { const row = e.target.closest?.('.cs-row'); if (row) S.focusKey = keyOf(row); });
+    e.stopPropagation();   // 移った先の一覧（#groups のツリー）のキー操作に渡さない
+  };
+  for (const sec of Object.values(secs)) {
+    if (!sec) continue;
+    sec.addEventListener('keydown', onRowKey);
+    sec.addEventListener('focusin', (e) => { const row = e.target.closest?.('.cs-row'); if (row) S.focusKey = keyOf(row); });
+  }
 
   // ---------------------------------------------------------------- タブの点
   function paintDots() {

@@ -114,7 +114,7 @@ async page => {
     sock.send(JSON.stringify({ kind: 'command', command: 'invoke', id, args: { op: o, args: a } }));
   }), [op, args]);
   const ch = await rpc('channels.create', { name: 'paste' + String(Date.now()).slice(-5), purpose: '貼り付け' });
-  await page.locator('#tabChannels').click();
+  await page.locator('#sideOrder [data-order="channel"]').click();
   await page.evaluate((id) => document.dispatchEvent(new CustomEvent('channels:show', { detail: { kind: 'channel', id } })), ch.id);
   await page.locator('#chFeedComposerInput').waitFor();
   const sel = '#chFeedComposerInput';

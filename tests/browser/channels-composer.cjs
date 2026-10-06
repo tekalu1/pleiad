@@ -62,7 +62,7 @@ async page => {
   const suffix = String(Date.now()).slice(-5);
   const ch = await rpc('channels.create', { name: 'attach' + suffix, purpose: '添付の確認' });
   const ch2 = await rpc('channels.create', { name: 'other' + suffix });
-  await page.locator('#tabChannels').click();
+  await page.locator('#sideOrder [data-order="channel"]').click();
   await show(ch.id);
   await page.locator('#chFeed').waitFor();
   await page.waitForFunction(() => !document.querySelector('#chFeed .ch-loading'));
@@ -138,7 +138,7 @@ async page => {
   await page.reload();
   await later.click({ timeout: 4000 }).catch(() => {});
   await page.waitForFunction(() => window.__sockets?.at(-1)?.readyState === 1 && document.getElementById('channelsView'));
-  await page.locator('#tabChannels').click();
+  await page.locator('#sideOrder [data-order="channel"]').click();
   await show(ch.id);
   await page.waitForFunction((n) => !document.querySelector('#chFeed .ch-loading') && document.getElementById('channelsPageTitle').textContent === `#${n}`, 'attach' + suffix);
   await page.waitForTimeout(400);

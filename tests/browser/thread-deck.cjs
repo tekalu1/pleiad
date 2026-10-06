@@ -122,7 +122,7 @@ async page => {
   const near = (a, b, tol = 2) => Math.abs(a - b) <= tol;
 
   // ================================================================ 1280 ［流れ｜スレッド］
-  await page.locator('#tabChannels').click();
+  await page.locator('#sideOrder [data-order="channel"]').click();
   await page.evaluate((id) => document.dispatchEvent(new CustomEvent('channels:show', { detail: { kind: 'channel', id } })), ch.id);
   await page.locator('#chFeed .post .thread-summary').first().waitFor();
   let s = await dk();
