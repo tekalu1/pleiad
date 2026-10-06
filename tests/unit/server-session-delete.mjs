@@ -62,12 +62,14 @@ export default async function (t) {
     const nativeId = nativeOf(sid);
     const presents = path.join(dataDir, 'presents', `${sid}.jsonl`);
     const body = path.join(dataDir, 'conversations', `${sid}.json`);
+    const filesDeadline = Date.now() + 10_000;
+    while (Date.now() < filesDeadline && (!(await exists(body)) || !(await exists(presents)))) await sleep(20);
     const usageCount = () => rows("SELECT COUNT(*) AS n FROM usage_records WHERE json_extract(data, '$.sessionId') = ?", sid)[0].n;
     let usageBefore = usageCount();
     t.ok('前提: 送った会話の記録（DB の行・本文・presents・git の撮影の ref・使用量）がある', Boolean(nativeId)
       && rows('SELECT 1 FROM sessions WHERE session_id = ?', sid).length === 1 && rows('SELECT 1 FROM session_fields WHERE session_id = ?', sid).length > 0
       && await exists(body) && await exists(presents) && refsOf(sid).length > 0 && usageBefore > 0,
-    JSON.stringify({ nativeId, refs: refsOf(sid), usageBefore, presents: await exists(presents) }));
+    JSON.stringify({ nativeId, refs: refsOf(sid), usageBefore, presents: await exists(presents), body: await exists(body), sessions: rows('SELECT 1 FROM sessions WHERE session_id = ?', sid).length, fields: rows('SELECT 1 FROM session_fields WHERE session_id = ?', sid).length }));
 
     // ---- 2. 走っている会話は断る
     let from = c.mark();
