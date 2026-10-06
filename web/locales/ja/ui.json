@@ -249,6 +249,8 @@
         },
         "setup": {
           "status": "Chrome の準備が要ります",
+          "unreachable": "Chrome が起動していないか、リモート デバッグがオフです",
+          "unreachableNote": "Chrome を閉じているなら、起動すると自動で進みます。起動しているのに進まないときは、次の手順でオンにしてください。",
           "step1": "次のアドレスをコピーします",
           "step2": "Chrome のアドレス欄に貼り付けて開き、「Allow remote debugging for this browser instance」をオンにしてください",
           "note": "オンになったら自動で進みます（押し直しは要りません）。この設定は 1 回だけで、Chrome を起動し直しても残ります。",

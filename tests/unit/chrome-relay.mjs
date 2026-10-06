@@ -146,6 +146,64 @@ export default async function (t) {
       await a1.cmd('Network.getCookies', { urls: ['https://bank.example/'] }, sid1);
       const cookieCall = r.chrome.calls.filter(c => c.method === 'Network.getCookies').at(-1);
       t.ok('Network.getCookies は urls を外して、今のページの Cookie だけにする', !!cookieCall && !('urls' in cookieCall.params), JSON.stringify(cookieCall));
+
+      // ほかの origin を引数で指せて、自分のタブの外に届くコマンド（保存データ・Cookie・資格情報つきの取得・横取りの古い口）
+      const bank = 'https://bank.example';
+      const storageId = { securityOrigin: bank, isLocalStorage: true };
+      const crossOrigin = [
+        ['DOMStorage.getDOMStorageItems', { storageId }], ['DOMStorage.setDOMStorageItem', { storageId, key: 'k', value: 'v' }], ['DOMStorage.removeDOMStorageItem', { storageId, key: 'k' }], ['DOMStorage.clear', { storageId }],
+        ['IndexedDB.requestDatabaseNames', { securityOrigin: bank }], ['IndexedDB.requestData', { securityOrigin: bank, databaseName: 'db', objectStoreName: 's', indexName: '', skipCount: 0, pageSize: 10 }],
+        ['IndexedDB.deleteDatabase', { securityOrigin: bank, databaseName: 'db' }], ['IndexedDB.clearObjectStore', { securityOrigin: bank, databaseName: 'db', objectStoreName: 's' }],
+        ['CacheStorage.requestCacheNames', { securityOrigin: bank }], ['CacheStorage.requestEntries', { cacheId: 'c' }], ['CacheStorage.deleteCache', { cacheId: 'c' }],
+        ['Database.executeSQL', { databaseId: '1', query: 'select 1' }], ['FileSystem.getDirectory', { bucketFileSystemLocator: { storageKey: `${bank}/`, pathComponents: [] } }],
+        ['ServiceWorker.unregister', { scopeURL: `${bank}/` }], ['ServiceWorker.deliverPushMessage', { origin: bank, registrationId: '1', data: '' }], ['BackgroundService.startObserving', { service: 'backgroundFetch' }],
+        ['Network.loadNetworkResource', { frameId: tabId, url: `${bank}/account`, options: { disableCache: true, includeCredentials: true } }], ['Network.getCertificate', { origin: bank }],
+        ['Network.enableDeviceBoundSessions', { enable: true }], ['Network.deleteDeviceBoundSession', { key: { site: bank, id: 'x' } }],
+        ['Network.setRequestInterception', { patterns: [{ urlPattern: '*' }] }], ['Network.continueInterceptedRequest', { interceptionId: 'x', url: `${bank}/` }],
+      ];
+      const crossReplies = [];
+      for (const [method, params] of crossOrigin) crossReplies.push(await a1.cmd(method, params, sid1));
+      t.ok('ほかの origin の保存データ（DOMStorage・IndexedDB・CacheStorage・Database・FileSystem・ServiceWorker・BackgroundService）・資格情報つきの取得・横取りの古い口を断る',
+        crossReplies.every(m => m.error), crossOrigin.filter((_, i) => !crossReplies[i].error).map(x => x[0]).join());
+      const crossForwarded = r.chrome.calls.filter(c => crossOrigin.some(([method]) => method === c.method));
+      t.ok('断ったものは上りへ送っていない（保存データ・取得）', crossForwarded.length === 0, crossForwarded.map(c => c.method).join());
+      const deleteCookie = await a1.cmd('Page.deleteCookie', { cookieName: 'session', url: `${bank}/` }, sid1);
+      t.ok('Page.deleteCookie（任意の url の Cookie を消せる）を断り、上りへ送らない', !!deleteCookie.error && !r.chrome.calls.some(c => c.method === 'Page.deleteCookie'), JSON.stringify(deleteCookie));
+
+      // エージェントの Fetch: 止めた要求の url の差し替えは同じ origin の中だけ
+      await a1.cmd('Fetch.enable', { patterns: [{ urlPattern: '*', resourceType: 'Document' }] }, sid1);
+      const navigating = a1.cmd('Page.navigate', { url: 'https://site2.example/' }, sid1);
+      await until(() => a1.events.some(e => e.method === 'Fetch.requestPaused' && e.sessionId === sid1));
+      const requestId = a1.events.find(e => e.method === 'Fetch.requestPaused' && e.sessionId === sid1)?.params.requestId;
+      const swapped = await a1.cmd('Fetch.continueRequest', { requestId, url: `${bank}/account` }, sid1);
+      t.ok('エージェントの Fetch.continueRequest で、ほかの origin へ送り先を差し替えるのを断る（確認を通らずに届くため）', !!swapped.error && !r.chrome.calls.some(c => c.method === 'Fetch.continueRequest' && c.params.url?.startsWith(bank)), JSON.stringify(swapped));
+      const sameOrigin = await a1.cmd('Fetch.continueRequest', { requestId, url: 'https://site2.example/other' }, sid1);
+      t.ok('同じ origin の中の差し替えは通す', !sameOrigin.error && !(await navigating).error, JSON.stringify(sameOrigin));
+      await a1.cmd('Fetch.disable', {}, sid1);
+
+      // Cookie の書き込み: url と domain の両方を見る（Chrome は domain を url より優先して使うことがある）
+      const cookieCases = [
+        ['Network.deleteCookies', { name: 'session', url: 'https://site2.example/', domain: 'bank.example' }],
+        ['Network.setCookie', { name: 'x', value: 'y', url: 'https://site2.example/', domain: '.bank.example' }],
+        ['Network.setCookies', { cookies: [{ name: 'x', value: 'y', url: 'https://site2.example/', domain: 'bank.example' }] }],
+      ];
+      const cookieReplies = [];
+      for (const [method, params] of cookieCases) cookieReplies.push(await a1.cmd(method, params, sid1));
+      t.ok('今のページの url とほかのサイトの domain を並べた Cookie の書き込み・削除を断る', cookieReplies.every(m => m.error), cookieCases.filter((_, i) => !cookieReplies[i].error).map(x => x[0]).join());
+      const ownCookie = await a1.cmd('Network.setCookie', { name: 'x', value: 'y', url: 'https://site2.example/' }, sid1);
+      const ownDelete = await a1.cmd('Network.deleteCookies', { name: 'x', domain: 'site2.example' }, sid1);
+      t.ok('今のページの Cookie は書ける・消せる', !ownCookie.error && !ownDelete.error, JSON.stringify([ownCookie, ownDelete]));
+
+      // ブラウザーの上の Target.createTarget も、Page.navigate と同じ規則（http(s)・認証情報なし・about:blank）
+      const createsBefore = r.chrome.calls.filter(c => c.method === 'Target.createTarget').length;
+      const badUrls = ['file:///C:/Windows/win.ini', 'javascript:alert(1)', 'https://user:pass@example.com/', 'https://user@example.com/', 'chrome://settings', 'data:text/html,hi', 'view-source:https://example.com/'];
+      const createReplies = [];
+      for (const url of badUrls) createReplies.push(await a1.cmd('Target.createTarget', { url }));
+      t.ok('Target.createTarget の file:・javascript:・認証情報つき・chrome: などの URL を断り、タブも作らない', createReplies.every(m => m.error) && r.chrome.calls.filter(c => c.method === 'Target.createTarget').length === createsBefore,
+        badUrls.filter((_, i) => !createReplies[i].error).join());
+
+      const key = url1.split('/').pop();
+      t.ok('鍵の文字列は中継のログに出ない', !r.logs.some(line => line.includes(key)), r.logs.join(' | '));
     } finally { a1?.close(); a2?.close(); await r.stop(); }
   }
 
@@ -237,6 +295,73 @@ export default async function (t) {
       const tabsBefore = fake.targets().length;
       const createdDenied = await a.cmd('Target.createTarget', { url: 'https://newtab.example/' });
       t.ok('URL つきの createTarget も確認を通し、断られたら作ったタブを閉じる', !!createdDenied.error && !fake.served.includes('https://newtab.example/') && await until(() => fake.targets().length === tabsBefore));
+    } finally { a?.close(); await r.stop(); }
+  }
+
+  // ===== 3b. サイトの確認の抜け道: 確認を ON にした直後・断った後の同じ origin・履歴の移動（要求を出さない bfcache の復元） =====
+  {
+    const r = await rig();
+    let a;
+    try {
+      const fake = r.fake;
+      a = await agent(await r.relay.endpoint('loop'));
+      const tabId = (await a.cmd('Target.createTarget', { url: 'about:blank' })).result.targetId;
+      const sid = (await a.cmd('Target.attachToTarget', { targetId: tabId, flatten: true })).result.sessionId;
+      const tabUrl = () => fake.targets().find(x => x.targetId === tabId)?.url;
+
+      // 確認を ON にした直後（中継の Fetch.enable が済む前）の移動
+      fake.delayFetchEnable(150);
+      r.relay.setConfirm(true);
+      const first = await a.cmd('Page.navigate', { url: 'https://first.example/' }, sid);
+      t.ok('確認を ON にした直後（中継の Fetch.enable が済む前）の移動も、確認を通してから移る', r.asked.length === 1 && r.asked[0].url === 'https://first.example/' && !first.error && fake.served.includes('https://first.example/'),
+        JSON.stringify({ asked: r.asked, first }));
+      fake.delayFetchEnable(0);
+
+      // 断る → 同じ origin へもう一度（受け入れの不具合 4）
+      r.answer(async () => ({ allow: false }));
+      const denied1 = await a.cmd('Page.navigate', { url: 'https://denied.example/x' }, sid);
+      t.ok('（偽の Chrome も実機と同じく、断った後の targetInfo の URL は断られた URL）', tabUrl() === 'https://denied.example/x');
+      const askedBefore = r.asked.length;
+      const denied2 = await a.cmd('Page.navigate', { url: 'https://denied.example/y' }, sid);
+      t.ok('断った直後に同じ origin へもう一度移ると、確認がまた出る（エラーのページを今の origin と取り違えない）', denied1.error?.message === 'DENIED-TEXT' && denied2.error?.message === 'DENIED-TEXT'
+        && r.asked.length === askedBefore + 1 && r.asked.at(-1).url === 'https://denied.example/y' && !fake.served.some(u => u.startsWith('https://denied.example')), JSON.stringify({ denied1, denied2, asked: r.asked.map(x => x.url) }));
+      const cookieOnError = await a.cmd('Network.setCookie', { name: 'x', value: 'y', url: 'https://denied.example/' }, sid);
+      t.ok('断った先のエラーのページでは、その origin の Cookie を書けない', !!cookieOnError.error);
+
+      // 履歴の移動（要求を出さない bfcache の復元）
+      r.answer(async () => ({ allow: true }));
+      await a.cmd('Page.navigate', { url: 'https://a.example/' }, sid);
+      await a.cmd('Page.navigate', { url: 'https://b.example/' }, sid);
+      const entryOf = async url => (await a.cmd('Page.getNavigationHistory', {}, sid)).result.entries.filter(e => e.url === url).at(-1)?.id;
+      const servedA = fake.served.filter(u => u === 'https://a.example/').length;
+      let release;
+      r.answer(() => new Promise(resolve => { release = resolve; }));
+      const askedHistory = r.asked.length;
+      const back = a.cmd('Page.navigateToHistoryEntry', { entryId: await entryOf('https://a.example/') }, sid);
+      t.ok('許可の無い origin へ履歴で戻る（要求を出さない）と、移った後に確認を出す', await until(() => r.asked.length === askedHistory + 1) && r.asked.at(-1).url === 'https://a.example/'
+        && fake.served.filter(u => u === 'https://a.example/').length === servedA, JSON.stringify(r.asked.map(x => x.url)));
+      let read = null;
+      const reading = a.cmd('Runtime.evaluate', { expression: 'location.href' }, sid).then(m => { read = m; return m; });
+      await sleep(80);
+      t.ok('確認の答えを待つ間、そのタブへのエージェントのコマンドは待たせる（戻ったページを読ませない）', read === null, JSON.stringify(read));
+      release({ allow: false });
+      const backReply = await back;
+      const readReply = await reading;
+      t.ok('断ると about:blank に戻し、履歴の移動は断られた文で返る。待たせたコマンドは戻した後のページで答える', backReply.error?.message === 'DENIED-TEXT' && tabUrl() === 'about:blank' && readReply.result?.result?.value === 'about:blank',
+        JSON.stringify({ backReply, readReply, url: tabUrl() }));
+      r.answer(async () => ({ allow: true }));
+      const askedAgain = r.asked.length;
+      const again = await a.cmd('Page.navigateToHistoryEntry', { entryId: await entryOf('https://a.example/') }, sid);
+      t.ok('許可すれば、履歴で戻った先にとどまる', !again.error && tabUrl() === 'https://a.example/' && r.asked.length === askedAgain + 1, JSON.stringify(again));
+      await a.cmd('Page.navigate', { url: 'https://a.example/2' }, sid);
+      const askedSame = r.asked.length;
+      const sameBack = await a.cmd('Page.navigateToHistoryEntry', { entryId: await entryOf('https://a.example/') }, sid);
+      t.ok('同じ origin の中の履歴の移動は聞かない', !sameBack.error && r.asked.length === askedSame && tabUrl() === 'https://a.example/');
+      r.relay.endTurn('loop');
+      const askedHuman = r.asked.length;
+      await a.cmd('Page.enable', {}, sid);
+      await fake.navigateUser(tabId, 'https://human.example/');
+      t.ok('ターンの終わりの後、有効化しか送っていないタブの人の移動は聞かない', r.asked.length === askedHuman && tabUrl() === 'https://human.example/');
     } finally { a?.close(); await r.stop(); }
   }
 
@@ -382,6 +507,7 @@ export default async function (t) {
       t.ok('その端点から偽の Chrome につながり、範囲（この会話の窓）だけが見える', (await a.cmd('Browser.getVersion')).result?.product === 'Chrome/154.0.8037.97' && (await a.cmd('Target.getTargets')).result?.targetInfos?.length === 0);
       const second = await c.runTurn({ backend: 'fake', cwd: ROOT, sessionId: turn.sessionId, prompt: 'ok' });
       const after = JSON.parse(await readFile(path.join(dataDir, 'agent-browser', configs[0], 'agent-browser.json'), 'utf8'));
+      t.ok('鍵の文字列はサーバーのログに出ない', !server.tail(200).includes(config.cdp.split('/').pop()));
       const configsAfter = await fs.readdir(path.join(dataDir, 'agent-browser'));
       t.ok('会話の id が決まった後のターンも同じ設定ファイル・同じ端点（中継の rebind）', second.sessionId === turn.sessionId && after.cdp === config.cdp && configsAfter.length === 1, JSON.stringify({ configsAfter, after }));
     } finally {
