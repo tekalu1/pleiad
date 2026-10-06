@@ -54,6 +54,8 @@ export function createVisualizationCollector({ access, publish }) {
       if (event.type === 'text.delta') text += String(event.text ?? '');
       if (event.type === 'text.end') end();
     },
+    // 付け直しの再生（core/adopt.mjs）の発言の終わり。旧サーバーが書き終えた分なので、集めた本文を書かずに捨てる
+    discard() { text = ''; },
     async close() { end(); await chain; },
   };
 }

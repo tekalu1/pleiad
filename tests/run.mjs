@@ -431,6 +431,8 @@ const SUITES = [
   './unit/server-interrupt-stops.mjs',
   // ターンの分割（prepare/begin/launch/drive/releaseTurn）と endTurn の 1 回だけの印（無停止の更新 2b-1）
   './unit/turn-phases.mjs',
+  // 付け直し（無停止の更新 2b-4）: 旧サーバーで手を離したターンを締めない・「終わっていたターン」の札と記録から付け直して 1 回だけ締める・合わない札は中断
+  './unit/adopt-finished.mjs',
   // Claude のアカウント切り替え（会話ごとのトークン）。env の組み立てと、server の配線を fake で通す
   './unit/claude-accounts.mjs',
   './unit/server-claude-accounts.mjs',

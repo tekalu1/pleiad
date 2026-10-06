@@ -499,13 +499,15 @@ export async function markRead(reads) {
  * 確認済みの印（readAt。markRead は completedAt で丸める）が中断の時刻まで届くようにするため。
  * turnStartedAt は片付ける。変えた会話の id を返す
  */
-export async function recoverInterruptedTurns(at = Date.now()) {
+export async function recoverInterruptedTurns(at = Date.now(), { except = new Set() } = {}) {
   return exclusive(async () => {
     const all = await load();
     const changed = [];
     const changes = [];
     for (const [id, entry] of Object.entries(all)) {
       if (!entry || entry.turnStartedAt == null) continue;
+      // 付け直すターンの会話（無停止の更新 2b-4）。走っている印はそのターンの終わり（endTurn）が片付ける
+      if (except.has(id)) continue;
       const started = entry.turnStartedAt;
       const patch = { turnStartedAt: null };
       if (Number.isFinite(started) && started > (Number.isFinite(entry.completedAt) ? entry.completedAt : 0)) {

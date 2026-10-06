@@ -1,6 +1,6 @@
 # 段階 2 の 2b: サーバーのメモリの仕分けと、「始める」と「動かす」の切り目
 
-- 状態: 2b-1・2b-3 実装済み、2b-2 実装済み（2026-10-06）。札の形 `core/turn-card.mjs`（純関数、版 `v: 1`、秘密の分離、途中送信の枠組み、T1、connectionTokens、上限）
+- 状態: 2b-1・2b-3 実装済み、2b-2 実装済み（2026-10-06）。札の形 `core/turn-card.mjs`（純関数、版 `v: 1`、秘密の分離、途中送信の枠組み、T1、connectionTokens、上限）。2b-4 実装済み（2026-10-07）。付け直しの入口 `restoreTurn`・`adoptTurn`、旧サーバーの口 `handOffTurn`、再生の道 `core/adopt.mjs`、起動の順序と後片付けの除外（下の「2b-4 の実装のメモ」）
 - 正本: [plan.md](plan.md) の 2b とリスク R2・R8・R15、[design.md](design.md) §4（保持役・付け直し・札・記録の再生）・§5（引き継ぎ。§5.4 起動時の後片付けとぶつかる所）
 - 目的: 2b の最初の一歩（R8 の表）。付け直すターンで「何を札に入れ、何を再生で作り、何を捨てるか」を、コードの場所つきで決める。そのうえで `runTurnInternal` の切り目と、2b を小さく取り込む段の順番を決める
 
@@ -265,12 +265,18 @@ runTurn(args, onStarted, hooks)                     … 今のまま（updateGat
     │   })
     └ finally releaseTurn(sessionId)                  … 5170-5175
 
-adoptTurn(card, source)                              … 付け直しの入口（2b-4）
-├ ctx = restoreTurn(card)                           … 札から組み立て・登録・emit（再生の間は画面へ出さない）・口を同じトークンで開き直す
-├ return await driveTurn(ctx, () =>
-│     ctx.backend.adoptTurn({ ...ctx.runArgs, card: card.backend, source }))
-└ finally releaseTurn(card.sessionId, { adopted: true })
+restoreTurn(card, source)                            … 札と記録の元から ctx と turn を組み立て、runtime.turns に登録（2b-4。起動の後片付けより前）
+adoptTurn(card, source, ctx = restoreTurn(...))      … 付け直しの入口（2b-4。待ち受けの後）
+├ updateGate.enter()・compactionRevision を取り直す
+├ return await driveTurn(ctx, () => {
+│     restoreConnection(札の connectionTokens)          … 口を同じトークンで開き直す
+│     return ctx.backend.adoptTurn({ ...runArgs, card: card.backendCard, source })   … 失敗したら restart の中断で締める
+│   })
+└ finally releaseTurn(sessionId, { adopted: true })
+handOffTurn(key)                                     … 旧サーバーの口（2b-4 で用意。2d が呼ぶ）。札を返し、turn.handedOff で締めを止める
 ```
+
+起動では、口を開き直すのに待ち受けが要り（`localOrigin()`）、登録は後片付けより前に要るので、`restoreTurn` と `adoptTurn` の後半を分けて呼ぶ（§5.1 の順序）。
 
 - `driveTurn(ctx, start)` が「出来事を受けて `endTurn` で締める」部分。通常結果の後処理（圧縮の失敗・requeue・表示の書き込み・添付の照合等）は `afterResult(ctx, result)` に切り出して `driveTurn` から呼ぶ。
 - `prepareTurn`・`beginTurn`・`launchTurn`・`driveTurn`・`releaseTurn`・`endTurn` は後の段（2b-2 や 2b-4）およびテストから呼べるよう export している（テストの入口 `tests/lib/turn-phases-server.mjs` が画面から入れない道を通すため `runTurn` も）。`start()` が返す Promise は、バックエンドを呼んだときは `backend.runTurn` と同じ形（`{ sessionId, requeue?, compactionFailureReason? }`）、呼ぶ前に `canInvoke` で戻したときは `{ requeue: true, beforeInvoke: true }`。後者では `driveTurn` が `turn.outcome = 'requeue'` にして `afterResult` を飛ばし、後始末で `turn.outcome` が変わっても `'requeue'` を返す（分割前の try の中の `return 'requeue'` と同じ）。出来事は `ctx.emit` を通る。**付け直しも同じ `driveTurn` を通るので、締め（`endTurn`）の道は 1 本**（R2）
@@ -372,7 +378,7 @@ adoptTurn(card, source)                              … 付け直しの入口�
 | 2b-1 | **済** `runTurnInternal` を `prepareTurn`・`beginTurn`・`launchTurn`・`driveTurn`・`releaseTurn` に分ける（§4.2）。`ctx` に閉包の値を移す（§4.3）。`endTurn` に 1 回だけの印 | 取り込める（挙動を変えない） | M |
 | 2b-2 | **済** 札の形 `core/turn-card.mjs`（純関数）: `cardOf(ctx)`・`restoreFields(card)`・版 `v: 1`・大きさの上限・秘密の欄を分ける。途中送信の控えを 1 つの欄にまとめる形（§3 の 3）。ターンの前の切り口（T1）。**実装済み 2026-10-06**（下の「2b-2 の実装のメモ」） | 取り込める（使う所が無い） | S |
 | 2b-3 | 会話の MCP の口を同じトークンで開き直す: `agent-bridge`・`computer-bridge`・`browser-bridge`・`mcp-bridge`（ply_control）・`context-bridge` の `open({ token })` と、`server.mjs` の `restoreConnection(entry)`。**実装済み 2026-10-06**（下の「2b-3 の実装のメモ」） | 取り込める（既定の `open()` は今のまま） | S |
-| 2b-4 | 付け直しの入口 `adoptTurn(card, source)` と `makeEmit` の再生の道（§4.4）、起動の順序（§5.1 の順序）と後片付けの除外（S5-S9・S12・S13）、`backend.adoptTurn` の口。**付け直す元は既定で空**。テスト用に「終わっていたターン」の元（札と記録のファイル。`AGENT_HOST_ADOPT_FROM`、テストだけが付ける）を読める | 取り込める（元が空なら何も変わらない） | M |
+| 2b-4 | **済** 付け直しの入口 `adoptTurn(card, source)` と `makeEmit` の再生の道（§4.4）、起動の順序（§5.1 の順序）と後片付けの除外（S5-S9・S12・S13）、`backend.adoptTurn` の口。**付け直す元は既定で空**。テスト用に「終わっていたターン」の元（札と記録のファイル。`AGENT_HOST_ADOPT_FROM`、テストだけが付ける）を読める。**実装済み 2026-10-07**（下の「2b-4 の実装のメモ」） | 取り込める（元が空なら何も変わらない） | M |
 | 2b-5 | fake の `adoptTurn`: fake の台本を別プロセスの偽の CLI（`core/backends/fake-agent.mjs`。1 行 1 JSON の出来事を出し、stdin で承認の答え・途中送信を受ける）で走らせる台本 `held:<台本>` と、保持役（2a）の子に載せる道。札は台本の位置 | 2a の後 | M |
 | 2b-6 | 実行中のスナップショットと承認を再生で作る: ack の位置、uuid で冪等、承認のカードの id を決まった値に（A3）、止め始めていたターンの中断の送り直し（T7）、待ち受けのポートが取れないときの扱い（§3 の 9） | 2b-5 の後 | M |
 | 2b-7 | 途中送信と委譲の付け直し: 札の途中送信の欄を埋める（`liveNotices`・`liveInstructions`・`agentTasks` の `steers`）、`execute` を分けて `agentTasks.adopt(taskId, turnPromise)`、S8 の除外 | 2b-6 の後 | M |
@@ -393,7 +399,7 @@ bot の会話（O21）・圧縮のターン（`hooks.compact`）・Codex/agy（�
   - **2b-2 で入れるもの**:
     - 基本文脈: `key` (T5), `sessionId`, `backend` (T10), `agentLocale` (T11), `startedAtMs` (T8), `userSentAt` (T9), `presentKey` (T24), `browserRelayId` (T35)
     - ターンの前の切り口 (T1): `baseline` (`count`, `lastUuid`)
-    - ターンの入力 (T2, T3, L1, L2, L3): `prompt`, `messageId`, `user`, `scheduledFor`, `sentBy`, `compactTrigger` (T14), `internal`, `taskId` (L3)
+    - ターンの入力 (T2, T3, L1, L2, L3): `prompt`, `messageId`, `user`, `scheduledFor`, `sentBy`, `compactTrigger` (T14), `internal`, `taskId` (L3)。**2b-4 で本文を札から外した**（`promptHash`・`promptChars`。下の「2b-4 の実装のメモ」の 1）
     - 設定・環境 (T22, T27, T42, L13): `cwd`, `permissionMode`, `model`, `effort`, `accountId`, `endpointId`, `attachments`, `steeredAttachments`, `pastSubagents`
     - 進行・合図の印 (L6, L7, L8): `delivery` (`initialDelivered`, `interruptionTaken`, `shellHanded`), `interruption` (`keys`, `dropped`, `text`, `body`), `shellHandoff` (`ids`, `skipped`, `lines`)
     - git の撮影 (T33): `git` (`setup`, `activity`, `late`)
@@ -420,6 +426,31 @@ bot の会話（O21）・圧縮のターン（`hooks.compact`）・Codex/agy（�
 - 既存の開き方は `attachAgentsPort`・`openComputerPort`・`openControlPort` に取り出し、`conversationConnection`・`computerConnection`・`controlRuntimeFor` と `restoreConnection` が同じ `owner`（走っているターンを `runtime.turns` から引く）を使う。挙動は変えていない
 - 2b-4 への注意: (1) `restoreConnection` は**口を開くだけ**で、`runtime.turns` には何も載せない。口の `owner` は呼ばれた時に `runtime.turns.get(key)` を引くので、付け直すターンの登録（`restoreTurn`）より前に呼んでよいが、**登録の前に CLI が口を呼ぶと `notRunning` で断られる**（ply_control だけは `entry.sessionId` で通る）。待ち受けの開始・起動時の後片付けより前に呼ぶ順序は §5.1 のとおり (2) `restoreConnection` が使う `localOrigin()` は `server.address().port` を読むので、**待ち受けが始まった後**でないと呼べない。URL は同じポートのときだけ前の値と一致する（ポートが取れなかったときは 2b-6 の扱い） (3) 札に入れるのは `connectionTokens(entry)` の値。`entry.runtime` の `headers` から取り出すので、口を開き直した後でも同じ値になる (4) `releaseAgentConnection`・`sessionId` の付け替え（`agentConnections` のキーを `event.sessionId` に替える所）は戻した `entry` でも同じに動く
 - テスト: `tests/unit/mcp-bridge-token.mjs`（口ごとに、同じトークンで開き直すと前の URL・ヘッダーで `initialize`・`tools/call` が通る・既定の `open` は新しい値・形の違う値と使用中の値は断る・閉じた後の同じトークンは受ける）。`restoreConnection` 自体は `server.mjs` がモジュールとして読めないので、単体では確かめていない（2b-4 の `adopt-finished.mjs` で通る）
+
+**2b-4 の実装のメモ（2026-10-07。実装済み。2b-5 以降が使うときの注意を含む）**
+
+- 形（`core/server.mjs`。`tests/lib/` の入口が使えるよう export）:
+  - `restoreTurn(card, source)`: 札と付け直す元から `ctx` と `turn` を組み立て、`runtime.turns` に登録する（`bindTurnContext` で `onPromptDelivered`・`saveContext` を `prepareTurn` と同じに付ける）。ターンの前の履歴は札の `baseline`（`lastUuid` が見つかればその次まで、無ければ `count`）で切り、このターンの present（`turnKey`）は外す。`didStart`・`backendInvoked` は真、`turn.setup` は解決済み、`compactionRevision` は `adoptTurn` で取る（`compactionScheduler` の宣言より前に走るため）
+  - `adoptTurn(card, source, ctx = null)`: `ctx` が無ければ `restoreTurn` を呼ぶ。`updateGate.enter()` → `driveTurn(ctx, start)`。`start` は `restoreConnection`（札の `connectionTokens`）→ `backend.adoptTurn({ sessionId, cwd, mode, model, effort, card: backendCard, source, emit, onPromptDelivered, askPermission, hostInvoke, signal, control, locale })`。締めは通常のターンと同じ `driveTurn`・`closeTurn`・`endTurn` の 1 本。`finally` で `releaseTurn(sessionId, { adopted: true })`。再生の終わりに `watchChildBackground`・`broadcastRunning`・（`phase: waiting` なら）`outbox.kick` を 1 回
+  - `handOffTurn(key)`（旧サーバーの口。2d が呼ぶ）: `cardOf({ ...ctx, connectionTokens })` の `{ card, secrets }` を返し、`turn.handedOff` を立てる。以後 `makeEmit` は何も流さず、`driveTurn` は締め（`closeTurn`。X1・X2）を飛ばして `'handedOff'` を返す。`outbox` の起動（`kick` の `start`）は `'handedOff'` で保留にしない。会話の id が決まる前・バックエンドを呼ぶ前・札が作れない（上限）ターンは `null`（渡さない）。渡したターンは旧サーバーの `runtime.turns` に残す（終わるまでその会話は走っている扱い）
+  - `core/adopt.mjs`: 付け直す元（source）の形（`state`＝保持役の子の状態・`attachable`・`replay(from, to)`・`attach(from)`＝`{ seq, line }` と最後の `{ exit }` の非同期の列・`ack(seq)`）、印の名前 `ADOPT_TURN_MARK = 'turn'`、再生の道 `replayRecord({ source, normalize, emit, signal })`（印から ack までは `emit(event, { replay: true })`、続きは普通に流して行ごとに ack、`text.end` の uuid・ツールの id で冪等。終わった発言の `text.delta` も捨てる）、ファイルの元 `readAdoptSources(dir)`（`AGENT_HOST_ADOPT_FROM` の `children.json` = 保持役の `welcome.children` の形に子ごとの `lines` を足したもの。読むだけ。終わった子だけ `attachable`）
+  - fake の `adoptTurn`: 記録の 1 行を fake の出来事そのものとして `replayRecord` に流し、返答を履歴に積む。`turnResult` が無ければ投げる
+  - `makeEmit` の `replay`: §4.4 の表のとおり。present の記録・圧縮の記録・bot・途中送信の合図・見張り/配り/送信待ちの流しは走らせず、スナップショット（`stream.events`）に積むだけで画面へ送らない。表示の参照は再生の `text.end` で書かずに捨てる（`visualizations.discard()`。旧サーバーが書き終えている）。再生では渡った合図（`onPromptDelivered`）を呼ばない（札の `delivery` が正）
+- 起動の順序（`core/server.mjs` の頭から）: `restoreAdoptedTurns()`（`restoreTurn` を元ごとに）→ S5 `outbox.recover({ adopted })` → S6 `recoverInterruptedTurns(now, { except })` → S7 → S8・S9 → S11 → S12 → … → 待ち受け → `adoptTurn`（待たない）→ S13 の予定・上限の再開・bot。付け直すターンは S5 より前に登録されるので、S12・S13 は `sessionBusy` で避ける
+- 後片付けの除外: S5 は付け直す会話の `queued` を保留にせず、`sending` は札の `steers` にある id だけ残す（ほかは今どおり結果不明。`steers` を埋めるのは 2b-7）。S6 は `except`。S7 は今のまま（下の 2）。S8・S9 は委譲の子を付け直さないので影響が無い。S1（Claude のフラグ設定）は 2c、S14（`CLI_TOKEN`）は 2d
+- 付け直さない（今の起動時の restart の中断に落ちる。`restoreTurn` が投げ、S6 が扱う）: 札が 64 KB を超える・版が違う・会話の id が無い・`presentKey` か ply_context のトークンが無い・バックエンドが `adoptTurn` を持たない・会話の `turnStartedAt` が札の `startedAtMs` と違う・委譲の子（2b-7）・bot の会話（O21）・圧縮のターン・記録に印が無い・記録が切れている（`truncated`。表示の途中の状態をあきらめて動かし続けるのは生きた子の 2b-6）・続きを受けられない（ファイルの元の生きた子）。登録の後で失敗した（口を開けない・記録を流せない）ときは、`adoptTurn` が `abortReason: 'restart'` の `turnResult: aborted` で締める（同じ restart の中断になる）。どちらも理由をサーバーのログに出す
+- **決めたこと 1: 発言の本文は札に入れない**。2b-2 の札は `input.prompt` に本文を入れていたので、上限（64 KB）を超える貼り付けのターンは札が作れず付け直せなかった。本文は CLI に渡し済みで、付け直しで要るのは実行中のスナップショットの発言（`stream.user`）と終わりの添付の照合だけなので、札には `promptHash`（sha256。`history.mjs` の `taskNotices` と同じ）と `promptChars` を置き、`restoreTurn` が履歴の切り口の後ろの人の発言か送信待ちの項目（`messageId`）から、ハッシュが合う本文を引く（見つからなければ空）。添付の照合（`afterResult`）はハッシュで突き合わせる。同じ理由で `stream.user` の `text`・中断の文（`interruption` の `text`・`body`）・`!` の行（`shellHandoff.lines`）も外し、途中送信の添付は `{ key, promptHash }` にした。上限を超えうるのは本文以外（前のターンまでのサブエージェントの一覧 `pastSubagents` など）だけになり、そのときは `handOffTurn` が渡さない（今の中断）
+- **決めたこと 2: 承認のカードの id（§3 の 5）は 2b-6 で扱う**。2b-4 で付け直すのは終わっていた子だけで、`askPermission` を呼び直す道が無い（呼び直しは 2c の 2 回目の `initialize` と 2b-5 の held の fake）。id を `toolUseID` から決まる値にするのは、その呼び直しの道と一緒に作り、S7（`inbox.settleAllWaiting`）の除外もそのときに足す（id が乱数のうちに外すと、決着しない「あなた待ち」の行が残る）
+- 使用量: 札の `presentKey` をそのまま `turn.presentKey` にするので、`endTurn` の `usageStore.record` は `usage.mjs` の id で 1 回だけになる（旧サーバーが記録済みでも重ねない。テストで確かめた）。使用量は再生（ack より前）の `usage` の出来事からも作る
+- テスト: `tests/unit/adopt-finished.mjs`（8 判定。入口 `tests/lib/adopt-server.mjs` が旧サーバー A の `handOffTurn` を通す）。再生の道の単体・A で手を離したターンを中断しても締めない・B で付け直したターンの `turnEnd`・`completedAt`・使用量が 1 回・再生の present を記録し直さない・続きの重なった発言が 1 回・最後の行まで ack・ply_agents と ply_control が札のトークンで通る・旧サーバーが記録済みの使用量に重ねない・版が違う・記録が切れている・札が無いターンは restart（後片付けの件数で外したことを見る）・付け直す会話の送信待ちが保留にならずターンの後に送られる
+- 2b-5 以降への注意:
+  - (1) 保持役の元は `core/adopt.mjs` の source の形に `HolderClient` を包む（`state` = `welcome.children` の 1 件、`replay` = `client.replay`、`attach` = `client.attach` と `out`・`exit` を非同期の列に、`ack` = `client.ack`、生きた子も `attachable`）。印は `mark(id, 'turn')`、札は `label`。起動の `restoreAdoptedTurns` の元をここで替える
+  - (2) **札の置き直しは配線していない**。`handOffTurn` がその時点の `ctx` から札を作るだけ。保持役に載せるときは、ターンの始まりと変わったとき（渡った合図・途中送信・`turnStartedAt`）に `label` を置き直す（落ちたときに渡す札が古いと、渡った合図の印などがずれる）
+  - (3) ply_context の口（`contextBridge.open`）は開き直していない（`runtimeContext` は null。束縛のトークンは `restoreConnection` が持つ）。生きた子では、`resolvedContext` を組み直して同じトークンで開く必要がある。外部 MCP は R15。`hooksRuntime`・`browserRuntime`・`computerRuntime` も `adoptTurn` の `runArgs` に入れていない（2c で 2 回目の `initialize` の材料と一緒に）
+  - (4) 付け直したターンの中断（`turn.ac`）は `backend.adoptTurn` に `signal` で渡すだけ。止め方（新しい `query` の `interrupt`・fake の held の台本）は 2b-5・2c。止め始めていたターンの送り直し（T7）は 2b-6
+  - (5) 再生の hooks の漏れの行（`contextRecord.hooks.leaks`）は、ターンの途中で保存されていた分と重なりうる（印より前と突き合わせていない）。2b-6 で突き合わせる
+  - (6) 口の URL はポートを含む。テストは道とトークンだけを確かめた（B は別のポート）。同じポートが取れないときの扱いは 2b-6（§3 の 9）
+  - (7) `restoreTurn` は起動の早い所（`outbox.recover` の前）で走る。そこから呼ぶものを足すときは、`core/server.mjs` の後ろで宣言する値（`compactionScheduler`・`schedule` など）に触れない（TDZ）
 
 ### 6.1 テストの書き方
 

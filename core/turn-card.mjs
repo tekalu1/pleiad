@@ -7,6 +7,8 @@
 //   - ターンの前の切り口（T1: baseline の発言数と最後の uuid）。
 //   - 会話の口のトークン（connectionTokens: { agents, computer, browser, control, context }）。
 //   - 札の大きさの上限（CARD_MAX_BYTES = 64 KB）。超えたら失敗。
+//   - 本文（発言・途中送信の本文・中断の文・`!` の行）は札に入れない（2b-4）。発言は sha256 と文字数だけを置き、付け直しは保存済みの発言
+//     （履歴のターンの前の切り口の次・送信待ちの messageId）から引いてハッシュで突き合わせる。長い貼り付けでも札が上限を超えないため
 import crypto from 'node:crypto';
 
 /** 札の規約の版 */
@@ -25,6 +27,11 @@ export const STEER_WAITERS = Object.freeze([
 ]);
 
 const TOKEN_PATTERN = /^[a-f0-9]{64}$/;
+
+/** 発言の本文のハッシュ（札に本文の代わりに置く。history.mjs の taskNotices と同じ sha256） */
+export function promptHash(text) {
+  return crypto.createHash('sha256').update(String(text ?? '')).digest('hex');
+}
 
 /**
  * 会話の口のトークン（connectionTokens）の形を正規化する。
@@ -122,7 +129,8 @@ export function cardOf(ctx, options = {}) {
   // 3. ターンの入力 (T2, T3, L1, L2, L3)
   const prompt = String(ctx.prompt ?? ctx.args?.prompt ?? '');
   const messageId = ctx.args?.messageId ?? ctx.turn?.stream?.initialMessageId ?? null;
-  const user = ctx.turn?.stream?.user ? { ...ctx.turn.stream.user } : null;
+  // 本文（text）は入れない。付け直しが保存済みの発言から引く
+  const user = ctx.turn?.stream?.user ? (({ text, ...rest }) => rest)(ctx.turn.stream.user) : null;
   const scheduledFor = ctx.args?.scheduledFor ?? null;
   const sentBy = ctx.args?.sentBy ? { ...ctx.args.sentBy } : null;
   const compactTrigger = ctx.turn?.compactTrigger ?? ctx.hooks?.compact ?? null;
@@ -141,8 +149,9 @@ export function cardOf(ctx, options = {}) {
     : Array.isArray(ctx.turn?.info?.attachments)
       ? [...ctx.turn.info.attachments]
       : [];
+  // 途中送信の添付は、項目の id と本文のハッシュだけ（終わりの照合は本文のハッシュで突き合わせる）
   const steeredAttachments = Array.isArray(ctx.turn?.steeredAttachments)
-    ? [...ctx.turn.steeredAttachments]
+    ? ctx.turn.steeredAttachments.map(a => ({ key: a?.key ?? null, promptHash: a?.promptHash ?? promptHash(a?.prompt) }))
     : [];
   const pastSubagents = Array.from(ctx.turn?.pastSubagents ?? ctx.pastSubagents ?? []);
 
@@ -152,21 +161,20 @@ export function cardOf(ctx, options = {}) {
     interruptionTaken: Boolean(ctx.interruptionTaken),
     shellHanded: Boolean(ctx.shellHanded),
   };
+  // 文（text・body）と `!` の行（lines）は CLI へ渡し済みで、付け直しでは要らない。渡った合図の処理に使う id だけ
   const interruption = ctx.interruption ? {
     keys: Array.isArray(ctx.interruption.keys) ? [...ctx.interruption.keys] : [],
     dropped: Array.isArray(ctx.interruption.dropped) ? [...ctx.interruption.dropped] : [],
-    text: ctx.interruption.text ?? null,
-    body: ctx.interruption.body ?? null,
   } : null;
   const shellHandoff = ctx.shellHandoff ? {
     ids: Array.isArray(ctx.shellHandoff.ids) ? [...ctx.shellHandoff.ids] : [],
     skipped: Array.isArray(ctx.shellHandoff.skipped) ? [...ctx.shellHandoff.skipped] : [],
-    lines: Array.isArray(ctx.shellHandoff.lines) ? [...ctx.shellHandoff.lines] : [],
   } : null;
 
   // 6. git の撮影 (T33)
+  // setup は撮影を始めたか（turn.gitSetup は Promise なので値を写さない）
   const git = (ctx.turn?.gitSetup || ctx.turn?.git || ctx.turn?.gitLate) ? {
-    setup: ctx.turn.gitSetup ?? null,
+    setup: Boolean(ctx.turn.gitSetup),
     activity: ctx.turn.git ?? null,
     late: Boolean(ctx.turn.gitLate),
   } : null;
@@ -208,7 +216,8 @@ export function cardOf(ctx, options = {}) {
       lastUuid: baselineLastUuid,
     },
     input: {
-      prompt,
+      promptHash: promptHash(prompt),
+      promptChars: prompt.length,
       messageId,
       user,
       scheduledFor,
@@ -291,7 +300,8 @@ export function restoreFields(card) {
     },
 
     // 入力
-    prompt: typeof card.input?.prompt === 'string' ? card.input.prompt : '',
+    promptHash: typeof card.input?.promptHash === 'string' ? card.input.promptHash : null,
+    promptChars: typeof card.input?.promptChars === 'number' ? card.input.promptChars : 0,
     messageId: typeof card.input?.messageId === 'string' ? card.input.messageId : null,
     user: card.input?.user ? { ...card.input.user } : null,
     scheduledFor: typeof card.input?.scheduledFor === 'string' ? card.input.scheduledFor : null,

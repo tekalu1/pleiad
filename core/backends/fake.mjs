@@ -53,6 +53,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { undelivered } from "./undelivered.mjs";
+import { replayRecord } from "../adopt.mjs";
 import { computerDisplay, computerToolInput } from "../computer-use/display.mjs";
 
 const sessions = new Map();   // sessionId -> { sessionId, title, cwd, createdAt, lastModified, tag, messages, subagents }
@@ -764,6 +765,21 @@ export const backend = {
     if (FAKE_USAGE) emit({ type: "usage", inputTokens: 1000, outputTokens: 200, cachedTokens: 900, costUsd: 0 });
     emit({ type: "turnResult", outcome: "ok", turns: 1, costUsd: 0 });
     return { sessionId: id };
+  },
+
+  // 付け直し（無停止の更新 2b-4。docs/zero-downtime-update/stage2-server-state.md §4.3）。記録の 1 行は fake の出来事そのもの（1 行 1 JSON）。
+  // 印から ack までは再生、続きは普通に流す（core/adopt.mjs の replayRecord）。返答は履歴に積む。台本を別プロセスで走らせる付け直しは 2b-5
+  async adoptTurn({ sessionId, cwd, source, emit, signal }) {
+    const s = ensure(sessionId, cwd);
+    let ended = false, text = '';
+    const { exit } = await replayRecord({ source, signal: signal?.signal, normalize: line => [JSON.parse(line)], emit: (event, opts) => {
+      if (event?.type === 'turnResult') ended = true;
+      if (event?.type === 'text.delta') text += String(event.text ?? '');
+      if (event?.type === 'text.end') { push(s, { role: 'assistant', text, ...(event.uuid ? { uuid: event.uuid } : {}) }); text = ''; }
+      return emit(event, opts);
+    } });
+    if (!ended) throw new Error(`fake: the adopted turn ended without a result (exit ${exit?.code ?? 'none'})`);
+    return { sessionId };
   },
 
   attachHost(h) { host = h; },

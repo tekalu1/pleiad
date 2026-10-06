@@ -3,6 +3,7 @@
 //   - ctx → 札 → 戻した値が一致する（往復）
 //   - 秘密（account.token・endpoint.key 等）が札の本体に入らず、secrets に隔離される
 //   - 大きさの上限（CARD_MAX_BYTES = 64 KB）を超えたら失敗する
+//   - 本文（発言・途中送信・中断の文・`!` の行）は札に入らない（ハッシュと文字数だけ。長い貼り付けでも札が作れる）
 //   - 知らない版（v !== 1）は null で断る
 //   - 途中送信の控え（steers）の形（5 か所の waiters）と正規化
 //   - 会話の口のトークン（connectionTokens）の形
@@ -14,6 +15,7 @@ import {
   STEER_WAITERS,
   cardOf,
   restoreFields,
+  promptHash,
   normalizeSteers,
   normalizeConnectionTokens,
 } from '../../core/turn-card.mjs';
@@ -77,7 +79,7 @@ export default async function (t) {
         gitSetup: { branch: 'main' },
         git: { snapshot: 'refs/pleiad/1' },
         gitLate: false,
-        steeredAttachments: [{ path: 'steered.png' }],
+        steeredAttachments: [{ key: 'steer-msg-1', prompt: '途中送信の本文' }],
         abortReason: null,
         info: { stopping: false },
       },
@@ -106,7 +108,9 @@ export default async function (t) {
     assert.equal(card.backend, 'claude');
     assert.equal(card.baseline.count, 5);
     assert.equal(card.baseline.lastUuid, sampleUuid);
-    assert.equal(card.input.prompt, 'テストプロンプト');
+    assert.equal(card.input.promptHash, promptHash('テストプロンプト'));
+    assert.equal(card.input.promptChars, 'テストプロンプト'.length);
+    assert.equal(JSON.stringify(card).includes('テストプロンプト'), false, '本文は札に入らない');
     assert.equal(card.input.messageId, 'msg-item-1');
     assert.equal(card.input.taskId, 'parent-task-77');
     assert.equal(card.settings.cwd, 'D:/dev/test-workspace');
@@ -133,7 +137,8 @@ export default async function (t) {
     assert.equal(restored.baseline.lastUuid, sampleUuid);
 
     // 入力
-    assert.equal(restored.prompt, ctx.prompt);
+    assert.equal(restored.promptHash, promptHash(ctx.prompt));
+    assert.equal(restored.promptChars, ctx.prompt.length);
     assert.equal(restored.messageId, ctx.args.messageId);
     assert.equal(restored.scheduledFor, ctx.args.scheduledFor);
     assert.deepEqual(restored.sentBy, ctx.args.sentBy);
@@ -149,18 +154,21 @@ export default async function (t) {
     assert.equal(restored.accountId, 'account-id-primary');
     assert.equal(restored.endpointId, 'endpoint-id-default');
     assert.deepEqual(restored.attachments, ctx.attachments);
-    assert.deepEqual(restored.steeredAttachments, ctx.turn.steeredAttachments);
+    assert.deepEqual(restored.steeredAttachments, [{ key: 'steer-msg-1', promptHash: promptHash('途中送信の本文') }]);
     assert.deepEqual(Array.from(restored.pastSubagents), ['subagent-1', 'subagent-2']);
 
     // 進行・合図
     assert.equal(restored.delivery.initialDelivered, true);
     assert.equal(restored.delivery.interruptionTaken, false);
     assert.equal(restored.delivery.shellHanded, true);
-    assert.deepEqual(restored.interruption, ctx.interruption);
-    assert.deepEqual(restored.shellHandoff, ctx.shellHandoff);
+    // 文と `!` の行は入らない（渡った合図の処理に使う id だけ）
+    assert.deepEqual(restored.interruption, { keys: ['stop-key-1'], dropped: [] });
+    assert.deepEqual(restored.shellHandoff, { ids: ['shell-1'], skipped: [] });
+    for (const body of ['中断注記テキスト', '中断注記本文', '! echo hello', '途中送信の本文'])
+      assert.equal(JSON.stringify(card).includes(body), false, `${body} は札に入らない`);
 
     // git
-    assert.equal(restored.git.setup.branch, 'main');
+    assert.equal(restored.git.setup, true);
     assert.equal(restored.git.activity.snapshot, 'refs/pleiad/1');
     assert.equal(restored.git.late, false);
 
@@ -225,13 +233,18 @@ export default async function (t) {
     t.ok('秘密が札の本体に入らず、secrets に隔離される', true);
   }
 
-  // 3. 上限を超えたら失敗する
+  // 3. 上限を超えたら失敗する。長い本文は上限に数えない
   {
-    const hugePrompt = 'x'.repeat(CARD_MAX_BYTES + 100);
+    const hugePrompt = 'x'.repeat(CARD_MAX_BYTES * 4);
+    const long = cardOf({ sessionId: 'session-long-prompt', backend: 'fake', prompt: hugePrompt });
+    assert.ok(Buffer.byteLength(JSON.stringify(long.card)) < 4096, '長い貼り付けの発言でも札は小さい');
+    assert.equal(long.card.input.promptChars, hugePrompt.length);
+
+    // 本文以外で大きくなるもの（前のターンまでのサブエージェントの一覧）が上限を超えたら例外
     const ctx = {
       sessionId: 'session-large',
       backend: 'fake',
-      prompt: hugePrompt,
+      pastSubagents: new Set(Array.from({ length: 2000 }, (_, i) => `agent-${String(i).padStart(4, '0')}-${'x'.repeat(30)}`)),
     };
 
     assert.throws(
@@ -251,7 +264,7 @@ export default async function (t) {
     const ok = cardOf({ sessionId: 'session-small', prompt: 'abc' }, { maxBytes: 2000 });
     assert.ok(ok.card);
 
-    t.ok('大きさの上限（CARD_MAX_BYTES）を超えたら失敗する', true);
+    t.ok('大きさの上限（CARD_MAX_BYTES）を超えたら失敗する。長い本文は札に入らない', true);
   }
 
   // 4. 知らない版は断る（restoreFields が null を返す）
