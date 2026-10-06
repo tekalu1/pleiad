@@ -122,7 +122,7 @@ export function createAgentPort({ allowed = () => false, hostName = () => '', in
 
   /**
    * 経過の読み出し（端末の画面が、任せた子の会話を読む。人の操作。answer と同じく端末の AI の道具からは作れない）。
-   * 端末・許可を確かめた後、deps.view がこの端末が任せた子とその子孫だけを返す（それ以外は NOT_FOUND）。記録は件数だけ（中身は残さない）
+   * 端末・許可を確かめた後、deps.view がこの端末が任せた子とその子孫だけを返す（それ以外は NOT_FOUND）。記録（deps.audit）へ渡すのは件数だけ（中身は渡さない）
    */
   async function onView(conn, msg) {
     const deviceId = conn.device.id;

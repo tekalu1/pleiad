@@ -13,7 +13,8 @@ import { pairDevice, connectDevice } from '../lib/remote-device.mjs';
 import { openAgent, requesterOf } from '../lib/remote-agent-client.mjs';
 import { checkPath } from '../../core/remote/forward.mjs';
 import { createAgentPort } from '../../core/remote/agent-port.mjs';
-import { viewMessages, viewCursor, trimViewMessage, VIEW_LIMITS } from '../../core/remote/agent-view.mjs';
+import { viewMessages, viewCursor, trimViewMessage, viewAnswer, viewInstructions, pickDescendants, VIEW_LIMITS } from '../../core/remote/agent-view.mjs';
+import { maskOutput, MASK } from '../../core/ops/registry.mjs';
 import { hostViewCursor, joinHostView, hostTreeRows, mergeHostTree } from '../../web/host-view.mjs';
 import { AGENT_OPS, AGENT_LIMITS, remoteOwnerId, parseRemoteOwner, normalizeRequester, relayReceipt } from '../../core/remote/agent-protocol.mjs';
 
@@ -68,8 +69,72 @@ export default async function (t) {
     const stale = viewMessages(many, { from: 10, check: 1 });
     t.ok('古すぎる位置（省いた範囲）も末尾から読み直す', stale.full === true && stale.from === 60);
     const heavy = viewMessages(Array.from({ length: 60 }, () => ({ role: 'assistant', text: 'y'.repeat(16_000) })));
-    t.ok('1 通は 192 KB に収め、収まらない分は古い方から省く', Buffer.byteLength(JSON.stringify(heavy.messages)) <= VIEW_LIMITS.bodyBytes && heavy.from > 20 && heavy.messages.length < 40 && heavy.full === true, JSON.stringify([heavy.from, heavy.messages.length]));
+    t.ok('発言は答えの予算に収め、収まらない分は古い方から省く', Buffer.byteLength(JSON.stringify(heavy.messages)) <= VIEW_LIMITS.bodyBytes && heavy.from > 20 && heavy.messages.length < 40 && heavy.full === true, JSON.stringify([heavy.from, heavy.messages.length]));
     t.ok('端末の AI の依頼（AGENT_OPS）に読み出しは入っていない', !AGENT_OPS.includes('view') && AGENT_OPS.length === 6);
+  }
+
+  // ---- 答えの大きさ: 日本語・ツールの多い発言、発言の外（task・追加の指示・子孫の要約）を足しても口の上限を超えない
+  {
+    const ja = n => 'あ'.repeat(n);
+    const frameBytes = result => Buffer.byteLength(JSON.stringify({ t: 'viewed', id: 'a1', ok: true, result }));
+    // 1 件に並列のツールが 20 個（入力と出力は日本語 3,000 字）。前は 1 件で 373 KB になり、末尾にある間は毎回 TOO_LARGE だった
+    const toolHeavy = { role: 'assistant', text: ja(500), toolCalls: Array.from({ length: 20 }, (_, i) => ({ id: `t${i}`, name: 'Edit', input: { file_path: 'a', old_string: ja(3000), new_string: ja(3000) }, result: { text: ja(3000) } })) };
+    const one = trimViewMessage(toolHeavy);
+    t.ok('ツールの多い日本語の発言 1 件も 48 KB に収める（一段絞る。ツールの名前と順は残す）', Buffer.byteLength(JSON.stringify(one)) <= VIEW_LIMITS.messageBytes && one.toolCalls.length === 20 && one.toolCalls[0].name === 'Edit' && one.toolCalls[0].result.truncated === true, String(Buffer.byteLength(JSON.stringify(one))));
+    const huge = { role: 'assistant', text: ja(20_000), toolCalls: Array.from({ length: 60 }, (_, i) => ({ id: `t${i}`, name: 'Write', input: Object.fromEntries(Array.from({ length: 30 }, (_, k) => [`k${k}`, ja(400)])), result: { text: ja(400) } })) };
+    const framed = trimViewMessage(huge);
+    t.ok('二段に絞っても大きすぎる発言は枠だけ（本文の頭とツールの名前。viewOmitted）', framed.viewOmitted === true && framed.toolCalls.length === VIEW_LIMITS.toolCalls && framed.toolCalls.every(c => c.input === null) && Buffer.byteLength(JSON.stringify(framed)) <= VIEW_LIMITS.messageBytes);
+    const keys = trimViewMessage({ role: 'assistant', text: '', toolCalls: [{ id: 'k', name: 'X', input: Object.fromEntries(Array.from({ length: 200 }, (_, i) => [`k${i}`, i])) }] });
+    t.ok('ツールの入力のキーの数も絞る（50 まで）', Object.keys(keys.toolCalls[0].input).length === VIEW_LIMITS.keys);
+    t.ok('考えた内容が文字列でなくても、絞ってから運ぶ', trimViewMessage({ role: 'assistant', text: '', thinking: { a: 'z'.repeat(10_000), b: 'data:image/png;base64,AA' } }).thinking.a.length <= VIEW_LIMITS.field + 1
+      && trimViewMessage({ role: 'assistant', text: '', thinking: { b: 'data:image/png;base64,AA' } }).thinking.b === '');
+    const tailOnly = viewMessages([{ role: 'user', text: 'hi' }, toolHeavy]);
+    t.ok('ツールの多い発言が末尾にあっても、答えに入る', tailOnly.messages.length === 2 && frameBytes(tailOnly) <= AGENT_LIMITS.messageBytes);
+    const msgs = Array.from({ length: 60 }, (_, i) => ({ role: i % 2 ? 'assistant' : 'user', text: ja(4000), at: i }));
+    const extras = {
+      task: { taskId: 'ply-task-x', title: ja(200), status: 'running', error: ja(500) }, sessionId: 's',
+      instructions: viewInstructions(Array.from({ length: 20 }, (_, i) => ({ id: i, text: ja(1000), state: 'delivered' }))),
+      descendants: Array.from({ length: 40 }, (_, i) => ({ taskId: `d${i}`, parentTaskId: 'ply-task-x', title: ja(80), status: 'failed', error: ja(500) })), descendantsOmitted: 0, waiting: false,
+    };
+    const full = viewAnswer(msgs, null, extras);
+    t.ok('発言の外（task・追加の指示 20 件・子孫の要約 40 件。日本語）を足した答え全体が、口の上限の内側に収まる', frameBytes(full) <= AGENT_LIMITS.messageBytes && full.messages.length > 0 && full.instructions.length === 20 && full.descendants.length === 40 && full.full === true, String(frameBytes(full)));
+    t.ok('答え全体の予算は、口の上限から余白を引いた値', VIEW_LIMITS.bodyBytes < AGENT_LIMITS.messageBytes && Buffer.byteLength(JSON.stringify(full)) <= VIEW_LIMITS.bodyBytes);
+    t.ok('利用者の発言の総数（userCount）は、省いた古い分も数える', full.userCount === 30 && full.messages.filter(m => m.role === 'user').length < 30);
+    // 口: 読み出しの答えが大きくても、TOO_LARGE にならずに届く
+    const sent = []; const h = {};
+    const port = createAgentPort({ allowed: () => true, hostName: () => 'h', invoke: async () => ({}), view: async () => viewAnswer([...msgs, toolHeavy], null, extras) });
+    port.attach({ kind: 'ws', destroyed: false, localDone: false, on: (n, f) => { h[n] = f; }, accept: () => Promise.resolve(), send: m => { sent.push(JSON.parse(m)); return Promise.resolve(); }, close: () => Promise.resolve(), reset() {} }, { id: 'dL', name: 'l', platform: 'desktop' });
+    await sleep(10);
+    h.message(Buffer.from(JSON.stringify({ t: 'view', id: 'big', taskId: 'ply-task-x' })), true, () => {});
+    await sleep(50);
+    const big = sent.find(m => m.t === 'viewed' && m.id === 'big');
+    t.ok('口: 日本語・ツールの多い発言と大きい追加の指示・子孫を含む答えも、TOO_LARGE にならずに届く', big?.ok === true && big.result.messages.at(-1).toolCalls?.length === 20, JSON.stringify(big).slice(0, 200));
+  }
+
+  // ---- 伏せ字と続きの位置: ホストは、端末の画面へ返す前の伏せ字（maskOutput）と同じ形で照合する
+  {
+    const withSecret = Array.from({ length: 60 }, (_, i) => ({ role: i % 2 ? 'assistant' : 'user', text: `m${i}`, toolCalls: i % 2 ? [{ id: `c${i}`, name: 'Login', input: { token: `tok-${i}`, password: 'pw' } }] : undefined }));
+    const masked = trimViewMessage(withSecret[1]);
+    t.ok('秘密らしい名前の欄は、運ぶ前に伏せる', masked.toolCalls[0].input.token === MASK && masked.toolCalls[0].input.password === MASK);
+    // 端末の画面は、ops の invoke が返す前に maskOutput を通した答えを持つ
+    let held = joinHostView({ base: 0, messages: [], sigs: [] }, maskOutput(viewMessages(withSecret)));
+    let resends = 0;
+    for (let n = 61; n <= 80; n++) {
+      const grown = [...withSecret, ...Array.from({ length: n - 60 }, (_, i) => ({ role: 'assistant', text: `new${i}`, toolCalls: [{ id: `n${i}`, name: 'Login', input: { token: `x${i}` } }] }))];
+      const reply = maskOutput(viewMessages(grown, hostViewCursor(held)));
+      if (reply.full) resends++;
+      held = joinHostView(held, reply);
+    }
+    t.ok('伏せた欄のある発言が続きの照合の位置に来ても、続きがつながる（末尾を読み直さない）', resends === 0 && held.messages.at(-1).text === 'new19', String(resends));
+  }
+
+  // ---- 子孫の要約の選び方
+  {
+    const rows = Array.from({ length: 50 }, (_, i) => ({ taskId: `d${i}`, status: i < 2 ? 'running' : 'completed', updatedAt: i < 2 ? 1 : 1000 + i }));
+    const picked = pickDescendants(rows, { isLive: r => r.status === 'running' });
+    t.ok('子孫の要約: 走っているもの・新しいものを優先して 40 件、省いた件数を返す（並びは元の順）', picked.rows.length === 40 && picked.omitted === 10
+      && picked.rows.some(r => r.taskId === 'd0') && picked.rows.some(r => r.taskId === 'd49') && !picked.rows.some(r => r.taskId === 'd11') && picked.rows[0].taskId === 'd0');
+    t.ok('子孫が 40 件以下なら、そのまま（省いた件数は 0）', pickDescendants(rows.slice(0, 5)).omitted === 0);
   }
 
   // ---- 端末の画面が持つ側（web/host-view.mjs）: 続きをつなぐ・孫の並び
@@ -236,6 +301,8 @@ export default async function (t) {
     const v1 = await a0.view(taskId);
     t.ok('読み出し: 任せた子の発言（依頼と返答）・タスクの形・追加の指示が返る', v1.ok && v1.result.task.taskId === taskId && v1.result.sessionId === row1.sessionId && v1.result.messages.some(m => m.role === 'user')
       && v1.result.messages.some(m => m.role === 'assistant' && /AGAIN/.test(m.text)) && v1.result.full === true && v1.result.total === v1.result.from + v1.result.messages.length, JSON.stringify(v1).slice(0, 400));
+    t.ok('読み出しの task は子孫の要約と同じ形（結果・作業場所は運ばない）。利用者の発言の総数と省いた子孫の件数も返す', v1.result.task.result === undefined && v1.result.task.cwd === undefined && v1.result.task.worktree === undefined
+      && v1.result.task.parentTaskId === null && v1.result.task.rawStatus === 'completed' && v1.result.userCount === 2 && v1.result.descendantsOmitted === 0, JSON.stringify(v1.result.task));
     const cur1 = viewCursor(v1.result.from, v1.result.messages);
     const v1b = await a0.view(taskId, cur1);
     t.ok('cursor を付けた読み出しは続きだけ（変わっていなければ末尾の数発言）', v1b.ok && v1b.result.full === false && v1b.result.from === (cur1?.from ?? v1b.result.from) && v1b.result.messages.length <= VIEW_LIMITS.resend + 1, JSON.stringify([v1b.result?.full, v1b.result?.from, v1b.result?.messages?.length]));
@@ -251,6 +318,7 @@ export default async function (t) {
     t.ok('子がホストで任せた孫が、子孫の要約（題・状態・親・深さの元）で返る（依頼文・結果は載せない）', grand.title === '孫の作業' && grand.parentTaskId === midId && grand.rawStatus === 'completed' && grand.result === undefined && grand.task === undefined, JSON.stringify(grand));
     const gv = await a0.view(grand.taskId);
     t.ok('孫の経過も、同じ口・同じ範囲（この端末が任せた木の中）で読める', gv.ok && gv.result.messages.some(m => m.role === 'assistant' && /GRANDCHILD/.test(m.text)), JSON.stringify(gv).slice(0, 300));
+    t.ok('孫の読み出しの task は孫自身の要約（親・状態。端末の一覧の孫の行を置き換える）', gv.result.task.taskId === grand.taskId && gv.result.task.parentTaskId === midId && gv.result.task.rawStatus === 'completed' && gv.result.task.title === '孫の作業', JSON.stringify(gv.result.task));
 
     // ---- 読み取り・計画モードの依頼元・引き上げ
     const ro = await a0.call('delegate', { kind: 'mechanical', backend: 'fake', task: 'echo:NO' }, requesterOf('conv-RO', { scope: 'readonly' }));

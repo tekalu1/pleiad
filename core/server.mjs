@@ -88,7 +88,7 @@ import { prepareHooksTurn, unifyPreview, importCandidate } from './hooks-unify.m
 import { deliverable, classifyNativeRun } from './hooks-plan.mjs';
 import { createRemoteHost } from './remote/connector.mjs';
 import { createAgentPort } from './remote/agent-port.mjs';
-import { viewMessages, viewInstructions, VIEW_LIMITS } from './remote/agent-view.mjs';
+import { viewAnswer, viewInstructions, pickDescendants } from './remote/agent-view.mjs';
 import { streamMessages } from '../web/stream-messages.mjs';
 import { parentPortRemoteAgent, createRemoteDelegation } from './remote-delegation.mjs';
 import { AgentError, remoteOwnerId, isRemoteOwner, parseRemoteOwner, RESULT_PAGE } from './remote/agent-protocol.mjs';
@@ -364,7 +364,7 @@ const remoteAgentPort = createAgentPort({
   audit: entry => {
     if (entry.dropped) return console.log(`  端末 ${entry.deviceId} の承認の答えを捨てた: ${entry.dropped}`);
     if (entry.refused) return console.log(`  端末 ${entry.deviceId} の依頼を断った: ${entry.op} ${entry.refused}`);
-    // 経過の読み出し（人の操作。4 秒ごとに来る）は、端末ごと・タスクごとに最初の 1 回だけ変更の記録へ残す（中身は残さない。件数は口の側で数える）
+    // 経過の読み出し（人の操作。4 秒ごとに来る）は、端末ごと・タスクごとに最初の 1 回だけ変更の記録へ「読んだ」を残す（中身も件数も残さない）
     if (entry.op === 'view') return remoteViewRecorded(entry);
     const to = entry.op === 'send' ? 'delegation.taskSend' : entry.op === 'cancel' ? 'delegation.taskCancel' : null;
     const sessionId = to ? agentTasks?.get(String(entry.args?.taskId ?? ''))?.sessionId : null;
@@ -872,7 +872,7 @@ async function remoteDelegate({ device, requester, args, signal, lng, owner, val
   return { task: remoteTaskEvent(stored ?? row) };
 }
 
-// 経過の読み出し（口の view。人の操作）。この端末が任せた子とその子孫だけを読む。残すのは「読んだ」記録の件数だけ（会話の中身は残さない）
+// 経過の読み出し（口の view。人の操作）。この端末が任せた子とその子孫だけを読む。残すのは最初の 1 回の「読んだ」だけ（会話の中身は残さない）
 const remoteViewSeen = new Set();   // `${deviceId}:${taskId}`。最初の 1 回だけ子の会話の変更の記録へ残す
 function remoteViewRecorded(entry) {
   const key = `${entry.deviceId}:${entry.taskId}`;
@@ -882,20 +882,25 @@ function remoteViewRecorded(entry) {
   const sessionId = agentTasks?.get(String(entry.taskId))?.sessionId;
   if (sessionId) store.recordChange(sessionId, { by: 'human', via: 'remote-device', byDevice: entry.deviceId, field: 'op', to: 'delegation.view', reason: null }).catch(() => {});
 }
-/** 子孫の要約（端末の一覧へ字下げの行で出す分）。依頼文・結果は載せず、題・状態・親だけ */
+/**
+ * 子孫の要約（端末の一覧へ字下げの行で出す分）と、読み出しの答えの task。題・状態・親だけで、結果・作業場所は載せない。
+ * 依頼文も載せないが、題の無い子は依頼文の最初の行（80 字）を題にする（一覧の行の名前。docs/remote.md §4.5）
+ */
 function remoteDescendantEvent(row, parentTaskId) {
   const ev = remoteTaskEvent(row);
   const first = String(row.task ?? '').split('\n').find(line => line.trim())?.trim().replace(/\s+/g, ' ') ?? '';
-  return { taskId: ev.taskId, parentTaskId, sessionId: ev.sessionId, title: ev.title ?? (first.slice(0, 80) || null), status: ev.status, rawStatus: ev.rawStatus,
+  return { taskId: ev.taskId, parentTaskId, sessionId: ev.sessionId, title: ev.title ? String(ev.title).slice(0, 200) : (first.slice(0, 80) || null), status: ev.status, rawStatus: ev.rawStatus,
     backend: ev.backend, model: ev.model, effort: ev.effort, createdAt: ev.createdAt, updatedAt: ev.updatedAt, error: ev.error };
 }
 /**
  * 端末の画面の経過の読み出し（口の view。docs/remote.md §4.5「経過の読み出し」、ADR 0146）。見せる範囲は、この端末が任せた子（remoteRowsOf）とその子孫だけ。
- * 読むだけ。末尾 40 発言・ツールの出力 1 つ 2 KB・考えた内容 4 KB・画像と添付は枠だけ・1 通 192 KB までに絞って返す（core/remote/agent-view.mjs）。
+ * 読むだけ。末尾 40 発言・ツールの出力 1 つ 2 KB・考えた内容 4 KB・画像と添付は枠だけ・発言 1 件 48 KB・答え全体を口の上限の内側に絞って返す
+ * （core/remote/agent-view.mjs）。task は子孫の要約と同じ形（結果・作業場所は運ばない。端末は一覧の行の状態を替えるだけに使う）。
  * 走っているターンは、手元の委譲の詳細と同じく履歴＋出来事の畳み込み（streamMessages）を 1 つの発言の並びにして返す。cursor は続きの位置（発言の位置と先頭の署名）
  */
 async function remoteAgentView({ device, taskId, cursor }) {
-  const row = remoteTreeOf(device.id).find(r => r.taskId === taskId);
+  const tree = remoteTreeOf(device.id);
+  const row = tree.find(r => r.taskId === taskId);
   if (!row) throw new AgentError('NOT_FOUND', 'no such task');
   let all = [];
   const sessionId = row.sessionId;
@@ -909,14 +914,18 @@ async function remoteAgentView({ device, taskId, cursor }) {
     }
   }
   const subs = sessionId ? (agentTasks.descendants([sessionId]) ?? []) : [];
-  const taskBySession = new Map([[sessionId, row.taskId], ...subs.map(r => [r.sessionId, r.taskId])]);
-  const shown = viewMessages(all, cursor);
-  return {
-    task: remoteTaskEvent(row), sessionId: sessionId ?? null, ...shown,
+  const taskBySession = new Map([...tree.filter(r => r.sessionId).map(r => [r.sessionId, r.taskId]), ...subs.map(r => [r.sessionId, r.taskId])]);
+  // 子孫の要約は、走っているもの・新しいものを優先して 40 件まで。省いた件数も返す
+  const picked = pickDescendants(subs, { isLive: r => REMOTE_ACTIVE.has(r.status) });
+  return viewAnswer(all, cursor, {
+    // 根の親は仮の親（remote:<deviceId>:…）なので null になる
+    task: remoteDescendantEvent(row, taskBySession.get(row.parentSessionId) ?? null),
+    sessionId: sessionId ?? null,
     instructions: viewInstructions(agentTasks.instructions(row.taskId)?.instructions),
-    descendants: subs.slice(0, VIEW_LIMITS.descendants).map(r => remoteDescendantEvent(r, taskBySession.get(r.parentSessionId) ?? null)),
+    descendants: picked.rows.map(r => remoteDescendantEvent(r, taskBySession.get(r.parentSessionId) ?? null)),
+    descendantsOmitted: picked.omitted,
     waiting: remoteWaiting(row),
-  };
+  });
 }
 
 /** 端末ごとの、任された作業の数（設定 › リモートの端末の行）。active は動いているもの（任された子の子孫も数える）、waiting はそのうち承認待ち */
