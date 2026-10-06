@@ -337,6 +337,17 @@ design.md §5.1・§6.1・§8。
 
 - main がサーバーの切断（`main-leaving` 無し）を見たら、同じ版で起動し直して付け直す。今の「サーバーが終了しました」の致命的なダイアログ（`main.cjs` の `worker.once('exit')`）は、起動し直しにも失敗したときだけ
 
+**実装済み（2026-10-06）**
+
+- **流れ**（`desktop/main.cjs` の `onServerExit`。名前付きパイプの経路だけ。`AGENT_HOST_HANDOVER=off` の `utilityProcess` は今のまま）: つながりが切れたら、(1) `bye 'replaced'` なら静かに終わる（今のまま）、(2) `bye 'closing'` 以外ならまず今の `reattachServer`（サーバーは居てつながりだけ切れた場合。数回・約 1 秒）、(3) 居なければ `desktop/server-restart.cjs` の `restart()` で起こし直し、起こせたら窓を **1 回だけ**読み直す（起こし直したサーバーの `ready` のポート・トークン。同じポートが取れなければ origin が変わる。切り替えの S2 と同じ `reloadWindow`）。切り替えの `once('exit')` の見張りも付け直す。(4) 起こし直しに失敗した・続けて落ちて断られたときだけ致命的なダイアログ（`server.restartFailed`。起こし直しを試みなかった `closing` などは今の `server.exited`）
+- **起こし直さない場合**: 切り替えが S1 を手放している間（`serverSwitch.replacing`）、`main-leaving` を送った後（更新で離れる途中。`main-leaving-cancel` で取りやめれば、また起こし直す）、`bye 'closing'`（サーバー自身が終わる）、main が終わる途中（`quitting`・`app.exit`）。起こし直している間に終了が始まったら、起こしたサーバーに `shutdown` を送って終わらせ、窓は読み直さない
+- **起こす版・env**: 落ちたサーバーの最後の `ready` の `runtimeKey` の版が実行場所（`runtime.locate`）に残っていればその版、無ければこの main の版（`chooseServer` の `prepared`）。env は切り替えの S2 と同じ `serverEnv` で、**同じトークン・同じポート**（`ready` の値）。落ちたサーバーが残した `main-link.json`・`control.json` は、起こしたプロセスの pid と合うものだけを見る `startAndConnect` が無視する（データ置き場のロックは OS がプロセスの終了で外している）。`ready` を待ってから返す。起こしかけて立たなかったプロセスは止める
+- **続けて落ちるとき**: 1 分（`CRASH_WINDOW_MS`）の間に 3 回（`MAX_CRASHES`）落ちたら、3 回目は起こし直さずダイアログ（立ち上がってすぐ落ち続けるサーバーを回し続けない）。窓の外に出た古い落ちは数えない。起こし直しの失敗も 1 回に数える
+- **保持役との関係（今）**: 保持役（2a）はまだターンに載っていないので、**落ちたサーバーのターンは中断として残る**（起動時の `restart` の回復のまま。起こし直したサーバーの起動で `interrupted: { reason: 'restart' }` になり、「再開」で続けられる）。落ちて起こし直すだけで、走っていたターンが続くわけではない
+- **2b 以降の口**: `createServerRestarter` の `afterRestart(ready)`（起こし直して `ready` が届いた後。窓の読み直しより前）。保持役に載ったターンが付け直される段階（2b の `adoptTurn`・2c）では、新しいサーバーが起動で保持役へ付け直す（2d の引き継ぎと同じ入口）ので、main からは何も足さなくてよい見込み。足す必要が出たらここへ（`main.cjs` は今は渡していない）。そのとき、起動時の後片付け（ターンを `restart` の中断にする所）は、保持役が持つターンを外す（design.md §5.4）
+- **残る課題**: 落ちたサーバーの子（Claude の CLI など。保持役に載る前のもの）は main の子でも保持役の子でもなく、サーバーが落ちても残りうる。今は起動時の孤児の掃除に任せる。サーバーが落ちた理由は `logs\server.log` に残る（ダイアログには出さない）
+- テスト: `tests/unit/desktop-server-restart.mjs`（起こす版・同じトークン/ポート・起こせない・続けて落ちる・同時・`afterRestart`・**本物のサーバーを強制終了して同じトークン・ポートで起こし直す**）、`tests/unit/desktop-boot.mjs`（main の流れ: 起こし直し・窓 1 回・次の落ちも見張る・ポートが変わる・断られたらダイアログ・起こさない場合）。実機（`desktop:pack` の resources・本物の electron・fake。[dev-verification.md](../dev-verification.md)）: サーバーの強制終了 2 回は同じ origin・トークンで起こし直され窓は各 1 回だけ読み直し（約 1.8 秒）、3 回目は起こし直さずダイアログ（14 / 14）
+
 **段階 2 の完了の条件**: 承認待ち・ツールの実行中・途中送信の直後・裏の作業の待ち・委譲の子が走っている、のそれぞれで Claude のターンを走らせたまま core の違う版へ更新し、ターンが中断されずに続き、承認に答えられ、終わりの記録（完了通知・使用量・`completedAt`）が 1 回だけ残る。引き継ぎの間に当たった HTTP の MCP の呼び出しの失敗を数えて記録する（段階 4 を足すかの根拠）。
 
 ---

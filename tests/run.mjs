@@ -339,6 +339,8 @@ const SUITES = [
   './unit/desktop-server-boot.mjs',
   // main.cjs の boot の選び方（vm）: AGENT_HOST_HANDOVER の既定（パッケージ版は on・開発は off）と off の utilityProcess・パイプの包み・起動の失敗・サーバーが居なくなったとき・更新の流れ
   './unit/desktop-boot.mjs',
+  // サーバーが落ちたときの起こし直し（無停止の更新 段階 2 の 2e）: 同じ版・トークン・ポートで起こす・起こせなければ失敗・続けて落ちたらやめる・本物のサーバーを強制終了して起こし直す
+  './unit/desktop-server-restart.mjs',
   // 新しい版のサーバーへの切り替え（無停止の更新 1-6）: 作業が 0 件まで待つ・ロック・S1 の終わり・S2・前の版へ戻す・合わない版は聞く・今すぐ中断。事前の確かめの出力
   './unit/desktop-switch.mjs',
   './unit/desktop-switch-screen.mjs',

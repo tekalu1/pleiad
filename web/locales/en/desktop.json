@@ -8,7 +8,8 @@
     "launchFailed": "Could not start the server process.\n{{detail}}",
     "unresponsive": "Could not connect to the running server. Restart Pleiad in a moment.\n{{detail}}",
     "linkRejected": "The running server (version {{version}}) cannot talk to this version of Pleiad. Wait for its work to finish or stop it, then restart Pleiad.",
-    "exited": "The server stopped. Restart Pleiad. Your saved conversations are kept."
+    "exited": "The server stopped. Restart Pleiad. Your saved conversations are kept.",
+    "restartFailed": "The server stopped unexpectedly and could not be restarted automatically. Restart Pleiad. Your saved conversations are kept."
   },
   "boot": {
     "failedTitle": "Pleiad failed to start"
