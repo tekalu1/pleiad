@@ -2300,6 +2300,66 @@
       "input": "619d48f70b75"
     },
     {
+      "id": "notifications.count",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "notifications",
+            "count"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "25c7d85c859a"
+    },
+    {
+      "id": "notifications.list",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "notifications",
+            "list"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "2ca572395bf8"
+    },
+    {
+      "id": "notifications.markRead",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "notifications",
+            "mark-read"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "c7f9055022f3"
+    },
+    {
       "id": "notify.setDevice",
       "risk": "write",
       "riskOf": false,
@@ -4767,6 +4827,21 @@
       "positional": [
         "id"
       ]
+    },
+    {
+      "id": "notifications.count",
+      "path": "notifications count",
+      "positional": []
+    },
+    {
+      "id": "notifications.list",
+      "path": "notifications list",
+      "positional": []
+    },
+    {
+      "id": "notifications.markRead",
+      "path": "notifications mark-read",
+      "positional": []
     },
     {
       "id": "notify.setDevice",

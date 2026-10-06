@@ -2738,6 +2738,69 @@
     "loading": "読み込み中…",
     "moreMatches_other": "ほかに {{count}} 件。文字を入れて絞り込んでください"
   },
+  "inbox": {
+    "bell": "通知",
+    "bellUnread": "通知（未読 {{n}} 件）",
+    "bellWait": "通知（未読 {{n}} 件・あなた待ちあり）",
+    "panel": "通知",
+    "list": "通知の一覧",
+    "empty": "新しい通知はありません",
+    "readAll": "すべて既読",
+    "more": "さらに表示",
+    "unreadMark": "未読",
+    "filter": {
+      "label": "絞り込み",
+      "all": "すべて",
+      "wait": "あなた待ち",
+      "mention": "@あなた"
+    },
+    "line": {
+      "approval": {
+        "named": {
+          "open": "{{name}} が承認を待っています",
+          "closed": "{{name}} が承認を待っていました"
+        },
+        "plain": {
+          "open": "エージェントが承認を待っています",
+          "closed": "エージェントが承認を待っていました"
+        }
+      },
+      "question": {
+        "named": {
+          "open": "{{name}} が質問への答えを待っています",
+          "closed": "{{name}} が質問への答えを待っていました"
+        },
+        "plain": {
+          "open": "エージェントが質問への答えを待っています",
+          "closed": "エージェントが質問への答えを待っていました"
+        }
+      },
+      "failed": {
+        "named": "{{name}} のターンが失敗しました",
+        "titled": "{{title}} が失敗しました",
+        "plain": "会話が失敗しました"
+      },
+      "done": {
+        "titled": "{{title}} が完了しました",
+        "plain": "会話が完了しました"
+      },
+      "mention": {
+        "named": "{{name}} が @あなた と書きました",
+        "plain": "@あなた 宛ての投稿があります"
+      }
+    },
+    "place": {
+      "thread": "#{{channel}} › {{thread}}",
+      "channel": "#{{channel}}",
+      "chat": "Chats › {{title}}"
+    },
+    "outcome": {
+      "allowed": "承認済み",
+      "answered": "回答済み",
+      "denied": "却下",
+      "cancelled": "取り消し"
+    }
+  },
   "notify": {
     "completed": "作業が完了しました",
     "waitingReply": "返事を待っています",

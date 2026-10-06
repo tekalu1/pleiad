@@ -1,0 +1,49 @@
+/* ==================== 通知ボタンと通知の一覧（web/notification-inbox.mjs。docs/design-system.md「通知の一覧」） ====================
+   ベル = 脇の頭（ロゴの右）。未読の件数が右上に付き、未読のあなた待ちがあれば ◆（差し色）を前に付ける。
+   面 = 広い幅は脇の頭の下に浮くポップ（360px。幕なし）、700px 以下は下からのシート（後ろに幕）。
+   行: 左に未読の青い丸（線は使わない）・種類の記号・1 行目（何が起きたか）と 2 行目（場所と時刻）。決着したあなた待ちは ◇ と弱い字。 */
+#notifBell{position:relative}
+.bell-badge{position:absolute;top:-3px;right:-5px;display:inline-flex;align-items:center;gap:2px;height:16px;padding:0 5px;border-radius:var(--r-pill);
+  background:var(--surface-paper);color:var(--ink-strong);font-size:10px;font-weight:700;line-height:1;box-shadow:0 1px 3px var(--shadow);pointer-events:none}
+.bell-badge .mark{font-size:9px;color:var(--ink-mark)}
+
+.nveil{position:fixed;inset:0;z-index:61;background:var(--surface-veil)}
+.nveil[hidden]{display:none}
+.npop{position:fixed;z-index:60;width:360px;max-width:calc(100vw - 16px);display:flex;flex-direction:column;overflow:hidden;
+  background:var(--surface-paper);color:var(--ink);border-radius:var(--r-m);box-shadow:0 8px 28px var(--shadow);transform-origin:30px 0;animation:npop-in var(--dur) var(--ease-out)}
+.npop[hidden]{display:none}
+@keyframes npop-in{from{opacity:0;transform:translateY(-6px) scale(.98)}to{opacity:1;transform:none}}
+.nhead{display:flex;align-items:center;gap:6px;padding:10px 10px 6px 12px;flex:none}
+.nhead .grow{flex:1}
+.nseg{display:inline-flex;gap:2px;padding:2px;background:var(--surface-2);border-radius:var(--r-pill)}
+.nseg button{height:26px;padding:0 10px;border-radius:var(--r-pill);font-size:var(--fs-s);color:var(--ink-weak);white-space:nowrap;background:transparent;cursor:pointer}
+.nseg button[aria-pressed=true]{background:var(--surface-paper);color:var(--ink-strong);font-weight:600;box-shadow:0 1px 3px var(--shadow)}
+.nlist{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;padding:2px 6px 8px;outline:none;scrollbar-width:thin;scrollbar-color:var(--surface-thumb) transparent}
+.nrow{display:flex;align-items:flex-start;gap:8px;width:100%;padding:8px 10px 8px 6px;border-radius:var(--r-m);cursor:pointer;color:var(--ink);transition:background-color var(--dur-fast) var(--ease-out)}
+.nrow:hover{background:var(--surface-hover)}
+.nrow.on{background:var(--surface-sel)}
+.nlist:focus-visible .nrow.on{box-shadow:0 0 0 2px var(--line-blue)}
+.nrow .nd{flex:none;width:9px;height:20px;display:grid;place-items:center}
+.nrow .udot{display:block;width:9px;height:9px;border-radius:50%;color:var(--ink-unread);background:currentColor}
+.nrow .nk{flex:none;width:18px;height:20px;display:grid;place-items:center;color:var(--ink-weak)}
+.nrow .nk.ask{color:var(--ink-mark)}
+.nrow .nk.at{color:var(--ink-blue);font-weight:700}
+.nrow .nk svg.i{width:14px;height:14px}
+.nrow .nb{min-width:0;flex:1}
+.nrow .nt{display:block;font-size:var(--fs);line-height:1.45;font-weight:500;overflow-wrap:anywhere}
+.nrow:not(.unread) .nt{font-weight:400}
+.nrow .nm{display:block;font-size:var(--fs-xs);color:var(--ink-weak);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.nrow .ns{flex:none;font-size:var(--fs-xs);color:var(--ink-weak);line-height:20px}
+.nempty{padding:36px 16px;text-align:center;color:var(--ink-weak);font-size:var(--fs)}
+.nmore{flex:none;margin:0 6px 8px;padding:8px;border-radius:var(--r-m);color:var(--ink-blue);font-size:var(--fs-s);cursor:pointer;background:transparent}
+.nmore:hover{background:var(--surface-hover)}
+.nmore[hidden]{display:none}
+
+/* 狭い幅（700px 以下）: 下からのシート。行は指で押せる高さ（44px 以上） */
+.npop.sheet{left:0!important;right:0!important;top:auto!important;bottom:0;width:auto;max-width:none;max-height:74vh!important;border-radius:var(--r-l) var(--r-l) 0 0;
+  padding-bottom:env(safe-area-inset-bottom,0px);z-index:62;animation:npop-sheet var(--dur) var(--ease-out)}
+.npop.sheet::before{content:"";display:block;width:36px;height:4px;border-radius:var(--r-pill);background:var(--surface-3);margin:8px auto 0;flex:none}
+.npop.sheet .nrow{min-height:44px;align-items:center}
+.npop.sheet .nseg button{height:32px}
+@keyframes npop-sheet{from{transform:translateY(40%);opacity:0}to{transform:none;opacity:1}}
+@media (prefers-reduced-motion:reduce){.npop,.npop.sheet{animation:none}}

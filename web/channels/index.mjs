@@ -12,7 +12,7 @@
 //     browser                       … 内蔵ブラウザーの部品（web/browser-panel.mjs の返り。使えない画面では null。スレッドの見出しの入口が使う）
 //     permissionCard(ev, into)      … 承認のカードを入れ物へ描く（client.mjs の permissionCard。質問は質問のカード。決着は resolvePermission と同じ）
 //     openSession(id)               … Chats の会話を開く（Chats のタブへ戻して select）
-//     openThread(channelId, threadId) … スレッドを開く。setupChannels が足す（部品の openThread へ配る）。呼ぶのは W2（要約の行・「スレッドで返信」）、受けるのは W3
+//     openThread(channelId, threadId, { postId }?) … スレッドを開く（postId があれば着いたその投稿へ送って輪を付ける。通知の一覧の飛び先）。setupChannels が足す（部品の openThread へ配る）。呼ぶのは W2（要約の行・「スレッドで返信」）、受けるのは W3
 //     openSidebar()                 … 脇を開く（狭い画面は引き出し）
 //     showMenu(x, y, items, title)  … 右クリックのメニュー（web/context-menu.mjs と同じ見え方）
 //     renderAssistantMarkdown(text, refs?)・renderPresent(ev)  … web/render.mjs
@@ -20,8 +20,8 @@
 //     t                             … 訳（'channels:feed.empty' のように名前空間を付ける）
 //
 //   部品（part）: { onEvent?(ev, replay): void, show?(view): void, hide?(): void, sideTabChanged?(tab): void, contextForPanel?(anchor): { sessionId, at } | null,
-//                  openThread?(channelId, threadId): void }
-//     - show(view) … メインに出す面。view = { kind: 'channel' | 'bot' | 'routine', id, threadId? }
+//                  openThread?(channelId, threadId, { postId }?): void }
+//     - show(view) … メインに出す面。view = { kind: 'channel' | 'bot' | 'routine', id, threadId?, postId? }（postId = 着いたら送って輪を付ける投稿。通知の一覧の飛び先）
 //     - contextForPanel(anchor) … 右パネルの作業場所の基準（そのスレッドの bot の会話）。分からなければ null（Chats と同じ基準へ）
 //
 //   DOM（web/index.html）: #sideTabs・#tabChats・#tabChannels・#channelsSide・.cs-sec[data-sec]・#channelsView・#channelsBody。
@@ -42,8 +42,8 @@ import { createRoutineSheet } from './routine-sheet.mjs';
 export function setupChannels(host) {
   const parts = [];
   // スレッドを開く口。投稿の要約の行・「スレッドで返信」が呼ぶ（部品の openThread(channelId, threadId)。W3 が受ける。受ける部品が無ければ何も起きない）
-  host.openThread ??= (channelId, threadId) => {
-    each('openThread', channelId, threadId);
+  host.openThread ??= (channelId, threadId, opts) => {
+    each('openThread', channelId, threadId, opts);
     document.dispatchEvent(new CustomEvent('channels:openthread', { detail: { channelId, threadId } }));   // 部品を持たない画面・テストが聞ける
   };
 

@@ -90,6 +90,8 @@ import { AgentError, remoteOwnerId, isRemoteOwner, parseRemoteOwner, RESULT_PAGE
 import { createResidentPrefs, residentSignal, enabledRoutineCount } from './remote/resident.mjs';
 import { createPushNotifier } from './notify/notifier.mjs';
 import { createPresence } from './notify/presence.mjs';
+import { createNotifications } from './notifications.mjs';
+import { createNotificationSources } from './notification-sources.mjs';
 import { createNotifySettings } from './notify/settings.mjs';
 import { createFolderUploads } from './folder-uploads.mjs';
 import { createImageImporter, testImportOrigin } from './image-import.mjs';
@@ -340,6 +342,14 @@ const pushNotifier = createPushNotifier({
   // 試験で待たずに済むよう、短いターンの下限だけ環境変数で変えられる（既定 30 秒）
   shortTurnMs: Number.isFinite(Number(process.env.AGENT_HOST_NOTIFY_MIN_TURN_MS)) && process.env.AGENT_HOST_NOTIFY_MIN_TURN_MS !== undefined
     ? Number(process.env.AGENT_HOST_NOTIFY_MIN_TURN_MS) : undefined,
+});
+// 通知の一覧（ベルのボタン。ADR 0149）。DB の notifications 表。書く側は core/notification-sources.mjs（ターンの完了・承認・チャンネルの出来事から行を作る）。
+// 件数が変わったら notificationsChanged を全画面へ（リモートの端末にも届く）
+const inbox = createNotifications({ dataDir: store.dataDir, emit: event => emitGlobal({ ...event, sessionId: null }) });
+const inboxSources = createNotificationSources({
+  inbox, store, viewing: sessionId => notifyPresence.viewing(sessionId), titleOf: sessionId => conversationTitleOf(sessionId),
+  channels: () => botHost?.opsDeps().channels ?? null, bots: () => botHost?.opsDeps().bots ?? null,
+  hiddenKinds: HIDDEN_BOT_KINDS, log: line => console.error(`  ${line}`),
 });
 // ホストとして常駐する設定（docs/remote.md §6.3。core/remote/resident.mjs）。使うのはデスクトップ版のホストだけ（available）。
 // トレイとスリープの抑止は main（desktop/resident.cjs）が持つ。リモート・実行中の作業・ルーティンの変更時に送る
@@ -1750,6 +1760,8 @@ const LIST_NEUTRAL_EVENTS = new Set([
   "shell.start", "shell.output", "shell.done", "shell.skip", "shell.handed",
   // チャンネル・bot・記憶・ルーティンの出来事。会話の一覧の行は変わらない（bot の会話の行の変化は sessionsChanged が伝える）
   "channelsChanged", "channelPost", "channelReaction", "channelThread", "channelRead", "botsChanged", "memoryChanged", "routinesChanged", "channelEvent",
+  // 通知の一覧の件数（ベルのボタン。ADR 0149）。会話の一覧の行は変わらない
+  "notificationsChanged",
 ]);
 
 // 接続ごとに、いま開いている会話（loadSession の watch）。宣言した接続には、流れの出来事（streamEvents）を
@@ -1821,7 +1833,8 @@ const completionNotices = createCompletionNotices({
   busy: sessionId => sessionBusy(sessionId) || awaitedBackground(sessionId) || hasPendingChild(agentTasks?.list(sessionId) ?? []),
   send: event => sendTo({ kind: P.EVENT, event }),
   // 落ち着いた時点で、画面が居なくてもスマホへ 1 回（委譲の子の完了は endTurn が渡さない。依頼元の完了に含む）
-  ready: ({ sessionId, outcome, completedAt, startedAt }) => {
+  ready: ({ sessionId, outcome, completedAt, startedAt, uuid }) => {
+    void inboxSources.completion({ sessionId, outcome, completedAt, uuid });
     store.get(sessionId).then(async meta => {
       if (meta?.delegation) return;
       botHost?.onSessionDone(sessionId, outcome);
@@ -1850,6 +1863,8 @@ const liveReads = new Set();
 let streamSequence = 0;
 function emitGlobal(event) {
   if (event.type === 'routinesChanged') void postResident();
+  // 通知の一覧: 人以外の投稿の @あなた・チャンネルの既読・アーカイブ（ADR 0149）
+  if (event.type === 'channelPost' || event.type === 'channelRead' || event.type === 'channelsChanged') void inboxSources.observe(event);
   if (!LIST_NEUTRAL_EVENTS.has(event.type)) invalidateSessionLists();
   if (streamEvents.has(event.type)) event = { ...event, streamSeq: ++streamSequence };
   const live = runtime.turns.get(event.sessionId);
@@ -2046,6 +2061,8 @@ function makeEmit(turn) {
     if (event?.type === "userMessage.dropped" && turn.info.sessionId && event.messageId) {
       outbox.returned(turn.info.sessionId, event.messageId).catch(() => {});
     }
+    // 最後の発言の id（通知の一覧の飛び先。ターンの終わりに completionNotices へ渡す）
+    if (event?.type === "text.end" && typeof event.uuid === "string" && event.uuid) turn.lastUuid = event.uuid;
     if (event?.type === "turnResult") {
       if (turn.compactTrigger) event = { ...event, compact: true };
       if (turn.stream.initialMessageId) event = { ...event, messageId: turn.stream.initialMessageId };
@@ -2781,6 +2798,7 @@ async function deleteSessionOf(sessionId) {
     relayHops.delete(sessionId);
     completionNotices.forget(sessionId);
     pushNotifier.viewed(sessionId);
+    void inboxSources.sessionRemoved(sessionId);
     releaseAgentConnection(sessionId);
     const cleanups = [
       history.forgetPresents(sessionId),
@@ -2950,6 +2968,8 @@ const noteRelayHops = (sessionId, args, { steered = false } = {}) => {
 async function markReads(reads) {
   const changed = await store.markRead(reads);
   if (changed.length) emitGlobal({ type: "read", sessionId: null, reads: changed });
+  // 通知の一覧: 会話の既読が進んだ分の完了・失敗の通知も既読にする（ADR 0149）
+  try { for (const [id, readAt] of changed) inbox.markSession(id, readAt); } catch (e) { console.error('  通知の一覧: 既読にできなかった:', String(e?.message ?? e)); }
   // どこかで見た完了・失敗は、スマホに出ている通知を消す
   for (const [id] of changed) pushNotifier.viewed(id);
   return changed;
@@ -3710,6 +3730,7 @@ function opsDeps(lng = currentLocale()) {
     statuses: opsStatuses,
     worktrees: opsWorktrees,
     notify: opsNotify,
+    notifications: inbox,
     compat: opsCompat,
     computer: opsComputer,
     // MCP・Hooks・コンテキスト・リモート・接続先の操作（core/ops/mcp.mjs・hooks.mjs・context.mjs・remote.mjs。ADR 0095）。WS の同じ名前のコマンドがしていた処理
@@ -4070,6 +4091,8 @@ const askPermission = async ({ toolName, input, sessionId, toolUseID, title, sig
       remoteRelay?.end(answer?.messageKey === 'aborted' ? 'abort' : 'host', answer?.allow === true);
       // スマホに出ている承認・質問の通知を消す（どの端末で答えても、ターンが終わっても）
       pushNotifier.approvalResolved({ id: cards[0].id, sessionId: payload.sessionId });
+      // 通知の一覧のあなた待ちを決着させる（承認済み・回答済み・却下・取り消し。ADR 0149）
+      void inboxSources.permissionSettled({ id: cards[0].id, answer, kind: payload.kind });
       botHost?.onPermission({ id: cards[0].id, ...payload }, 'settled');
       signal?.removeEventListener?.("abort", onAbort);
       const { messageKey, messageParams, ...rest } = localize(answer);
@@ -4100,6 +4123,8 @@ const askPermission = async ({ toolName, input, sessionId, toolUseID, title, sig
       });
     }
     botHost?.onPermission({ id: cards[0].id, ...payload }, 'open');
+    // 通知の一覧のあなた待ち。委譲の子の承認は、カードが出ている依頼元の会話へ飛ぶ（ADR 0149）
+    if (payload.sessionId) void inboxSources.permissionOpened({ id: cards[0].id, sessionId: payload.sessionId, kind: payload.kind, via: ancestors[0] ?? null });
     signal?.addEventListener?.("abort", onAbort, { once: true });
     // 離れたスマホへ（画面が居るかによらない。委譲の子の承認・質問は子の会話の分だけ。中継の複製は送らない）
     // （会話名を読むあいだに決着していたら送らない。送ると取り消しが先に行ってしまい、通知が残る）
@@ -4227,6 +4252,8 @@ await outbox.recover();
   const recovered = await store.recoverInterruptedTurns(Date.now()).catch(err => { console.error("  中断の記録に失敗:", String(err?.message ?? err)); return []; });
   if (recovered.length) console.log(`  前の起動で終わらなかったターン ${recovered.length} 件を中断として残した`);
 }
+// 前の起動で待っていた承認・質問はメモリにしか無く、再起動で消えた。通知の一覧のあなた待ちも決着させる（ADR 0149）
+try { inbox.settleAllWaiting('cancelled'); } catch (e) { console.error('  通知の一覧: あなた待ちを決着させられなかった:', String(e?.message ?? e)); }
 // 親が走っている・裏の作業が残っている・送信待ちがあるときは完了通知を送らない（docs/agent-delegation.md「完了通知」）
 const noticeBlocked = async owner => sessionBusy(owner) || awaitedBackground(owner) || (await outbox.list(owner)).some(m => !['sent', 'cancelled'].includes(m.status));
 
@@ -5194,7 +5221,7 @@ async function endTurn(turn, emit, { record = true } = {}) {
   // 空いている間の自動圧縮（idle）は利用者の作業ではないので、完了として知らせない
   // 夜の整理・心拍の隠れた会話（learner・pulse）は、完了も失敗も知らせない（失敗は memory.learnStatus・bot のページで見える。ADR 0127）
   if (!delegated && !HIDDEN_BOT_KINDS.has(botKind) && turn.compactTrigger !== 'idle') completionNotices.finished(turn.info.sessionId,
-    turn.outcome, completedAt, { startedAt: turn.startedAtMs, bot: botKind });
+    turn.outcome, completedAt, { startedAt: turn.startedAtMs, bot: botKind, uuid: turn.lastUuid });
   settingApprovals?.changed();
   // bot の会話なら、ターンの投稿を確定し、たまった出来事を渡す（ターンを手放した後。待たない）
   if (!requeued) void botHost?.onTurnEnd(turn, { outcome: turn.outcome, interrupted, requeued });
@@ -6292,7 +6319,11 @@ wss.on("connection", (ws, req) => {
           const a = msg.args ?? {};
           const via = connectionDevices.get(ws);
           notifyPresence.set(ws, { deviceId: via?.id ?? null, platform: via?.platform ?? null, visible: a.visible === true, sessionId: a.sessionId });
-          if (a.visible === true && typeof a.sessionId === 'string' && a.sessionId) pushNotifier.viewed(a.sessionId);
+          if (a.visible === true && typeof a.sessionId === 'string' && a.sessionId) {
+            pushNotifier.viewed(a.sessionId);
+            // 開いて見た会話の通知（あなた待ち・完了・失敗）は既読にする（ADR 0149）
+            try { inbox.viewSession(a.sessionId); } catch (e) { console.error('  通知の一覧: 既読にできなかった:', String(e?.message ?? e)); }
+          }
           return reply(true, 'ok');
         }
 

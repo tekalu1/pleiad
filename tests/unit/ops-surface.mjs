@@ -224,6 +224,11 @@ export default async function (t) {
         mode: 'default', approvalTimeoutMin: 30, paused: false, createdBy: { kind: 'human' }, createdAt: 1, nextAt: 2, ...secret }),
     },
     botOfSession: async () => null,
+    // 通知の一覧（ADR 0149）
+    notifications: {
+      list: () => ({ items: [{ id: 'n_1', seq: 1, kind: 'done', at: 1, unread: true, target: { sessionId: 's1' }, title: 'こんにちは', ...secret }], hasMore: false, unread: 1, waiting: 0 }),
+      counts: () => ({ unread: 1, waiting: 0 }), markRead: () => ({ changed: 0 }),
+    },
   };
   // 人の画面には返すが agent には伏せるもの（引数の秘密・承認の URL・ペアリングの番号・URL のクエリ）は tests/unit/ops-mcp-hooks.mjs
   // 必須の引数がある read 操作に渡す引数（設定は全部の key）

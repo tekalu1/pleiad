@@ -904,6 +904,11 @@
       "setDevice": { "summary": "Mute or unmute notifications to one paired phone. The device list is not shown (ask the user for the id).", "id": "The device id.", "muted": "Whether to mute." },
       "status": { "summary": "The notification state (on or off per kind on this PC, the relay connection, how many paired phones there are and how many are muted). The device list is not returned." }
     },
+    "notifications": {
+      "list": { "summary": "The notification list (needs you, failed, done, @you; newest first), the same as the bell panel. Also returns the counts (unread and needs-you).", "filter": "Filter: all, wait (needs you) or mention (@you).", "before": "Only entries before this seq (the next page; the seq of an item).", "limit": "How many to return (default 50, at most 100)." },
+      "count": { "summary": "The number of unread notifications and of unread needs-you notifications (the numbers on the bell button)." },
+      "markRead": { "summary": "Mark notifications as read (give ids, or all). Notifications are not deleted.", "ids": "The ids of the notifications to mark (at most 200).", "all": "Whether to mark all of them." }
+    },
     "compatEndpoints": {
       "recheck": { "summary": "Check a saved compatible endpoint again with its saved URL and key, and record the result and the model list (no key is entered or returned).", "id": "The endpoint id." },
       "delete": { "summary": "Delete a compatible endpoint (its saved key is deleted too). Approval-required conversations ask the user first.", "id": "The endpoint id.", "reason": "Why it is deleted (shown on the approval card and kept in the log)." }

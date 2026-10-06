@@ -392,6 +392,17 @@ export function createFeed(host) {
     },
   };
 
+  /** 流れの投稿へ送って、一瞬（1.2 秒）だけ強調する（通知の一覧から。動きを減らす設定では滑らせず、明滅もしない） */
+  function revealPost(postId) {
+    const node = postEls.get(postId);
+    if (!node) return;
+    node.scrollIntoView({ block: 'center', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+    node.classList.remove('flash');
+    void node.offsetWidth;
+    node.classList.add('flash');
+    setTimeout(() => node.classList.remove('flash'), 1300);
+  }
+
   return {
     show(view) {
       if (view?.kind !== 'channel' || !view.id) { this.hide(); return; }
@@ -404,7 +415,8 @@ export function createFeed(host) {
       else paintHead();   // 別の面（bot のページなど）へ移ると hide() が見出しを戻すので、同じチャンネルへ戻ったときも描き直す
       const done = same ? Promise.resolve().then(() => { toBottom(); markRead(); }) : load(view.id);
       done.then(() => {
-        if (view.threadId) host.openThread?.(view.id, view.threadId);
+        if (view.threadId) host.openThread?.(view.id, view.threadId, { postId: view.postId });
+        else if (view.postId) revealPost(view.postId);   // スレッドを開かない（流れの投稿）。通知の一覧の飛び先
         composer.focus();
       });
     },
