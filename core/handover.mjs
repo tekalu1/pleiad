@@ -25,8 +25,9 @@ export const INFLIGHT_MS = 5_000;
 export const LOCK_WAIT_MS = 30_000;
 /** 引き継げないターンが detach に失敗して中断した後、終わるのを待つ上限 */
 export const ABORT_WAIT_MS = 10_000;
-/** 預かり物の形の版 */
+/** 預かり物の形の版・預かり物を使ってよい古さの上限（旧サーバーが置いてから新サーバーが読むまで数秒。前の引き継ぎの古い値を拾わない） */
 export const STASH_VERSION = 1;
+export const STASH_MAX_AGE_MS = 5 * 60_000;
 
 /** 起動の引数に `--handover` があるか（新サーバー） */
 export const handoverStart = (argv = process.argv) => argv.slice(2).includes(HANDOVER_FLAG);
@@ -36,10 +37,11 @@ export function stashOf({ token, cliToken, port, appVersion = null, at = Date.no
   return { v: STASH_VERSION, handover: { token, cliToken, port, appVersion, at } };
 }
 
-/** 預かり物から、新サーバーが使う値を取り出す。形が合わなければ null（env の値で起動する） */
-export function readStash(stash) {
+/** 預かり物から、新サーバーが使う値を取り出す。形が合わない・古すぎる（前の引き継ぎのもの）なら null（env の値で起動する） */
+export function readStash(stash, { maxAgeMs = STASH_MAX_AGE_MS, now = Date.now() } = {}) {
   const h = stash?.v === STASH_VERSION ? stash.handover : null;
   if (!h || typeof h.token !== 'string' || !h.token) return null;
+  if (!Number.isFinite(h.at) || now - h.at > maxAgeMs || h.at - now > maxAgeMs) return null;
   return {
     token: h.token,
     cliToken: typeof h.cliToken === 'string' && /^[0-9a-f]{64}$/.test(h.cliToken) ? h.cliToken : null,

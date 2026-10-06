@@ -47,11 +47,12 @@ export default async function (t) {
   t.ok('起動の引数に --handover があるときだけ新サーバーの起動（node と entry は数えない）', handoverStart(['node', 'server.mjs', HANDOVER_FLAG]) === true && handoverStart(['node', 'server.mjs']) === false && handoverStart(['node', HANDOVER_FLAG]) === false);
   {
     const cli = 'c'.repeat(64);
-    const stash = stashOf({ token: 'tok', cliToken: cli, port: 7420, appVersion: '1.2.3', at: 5 });
-    t.ok('預かり物の往復（トークン・CLI のトークン・ポート）', JSON.stringify(readStash(JSON.parse(JSON.stringify(stash)))) === JSON.stringify({ token: 'tok', cliToken: cli, port: 7420, at: 5 }));
+    const stash = stashOf({ token: 'tok', cliToken: cli, port: 7420, appVersion: '1.2.3', at: 1_000_000 });
+    t.ok('預かり物の往復（トークン・CLI のトークン・ポート）', JSON.stringify(readStash(JSON.parse(JSON.stringify(stash)), { now: 1_000_500 })) === JSON.stringify({ token: 'tok', cliToken: cli, port: 7420, at: 1_000_000 }));
+    t.ok('前の引き継ぎの古い預かり物（5 分より古い）は使わない', readStash(stash, { now: 1_000_000 + 6 * 60_000 }) === null && readStash(stash, { now: 1_000_000 + 4 * 60_000 }) !== null);
     t.ok('預かり物の形が合わなければ null（起動の変数のまま起動する）', readStash(null) === null && readStash({}) === null && readStash({ v: STASH_VERSION + 1, handover: stash.handover }) === null
-      && readStash({ v: STASH_VERSION, handover: { token: '' } }) === null);
-    const odd = readStash(stashOf({ token: 'tok', cliToken: 'short', port: 99999 }));
+      && readStash({ v: STASH_VERSION, handover: { token: '' } }) === null && readStash({ v: STASH_VERSION, handover: { token: 'x' } }) === null);
+    const odd = readStash(stashOf({ token: 'tok', cliToken: 'short', port: 99999 }));   // at は今
     t.ok('形の悪い CLI のトークン・ポートは捨て、トークンだけ使う', odd.token === 'tok' && odd.cliToken === null && odd.port === null);
   }
   {
