@@ -58,8 +58,10 @@ export const plainCipher = {
 /**
  * main プロセスに safeStorage を頼む暗号器。port は main への口（core/main-port.mjs。parentPort と同じ形の物でもよい）。
  * main 側は { type:'secret', id, op, value } を受けて { type:'secret', id, ok, value | error } を返す。
+ * 名前付きパイプの口（core/main-link.mjs）で main がまだつながっていない間は、依頼を送らずに 'connect' まで待つ（上限 connectWaitMs。
+ * 応答の待ち timeoutMs はつながって送ってから数える）。
  */
-export function parentPortCipher(port, { timeoutMs = 10000 } = {}) {
+export function parentPortCipher(port, { timeoutMs = 10000, connectWaitMs = 5 * 60_000 } = {}) {
   const waiting = new Map();
   const instance = crypto.randomUUID(); // 同じ parentPort を使う別の秘密ストアの応答と混ざらない
   let seq = 0, cached = null;
@@ -72,9 +74,20 @@ export function parentPortCipher(port, { timeoutMs = 10000 } = {}) {
   });
   const request = (op, value) => new Promise((resolve, reject) => {
     const id = `${instance}:s${++seq}`;
-    const timer = setTimeout(() => { waiting.delete(id); reject(new Error(t('secrets.noResponse'))); }, timeoutMs);
-    waiting.set(id, { resolve, reject, timer });
-    port.postMessage({ type: 'secret', id, op, ...(value === undefined ? {} : { value }) });
+    const message = { type: 'secret', id, op, ...(value === undefined ? {} : { value }) };
+    const entry = { resolve, reject, timer: null };
+    waiting.set(id, entry);
+    // 送れたら応答を待つ。口が false を返すのは、つながっていないとき（parentPort は何も返さず、いつも送れる）
+    const send = () => {
+      if (port.postMessage(message) === false) return false;
+      entry.timer = setTimeout(() => { waiting.delete(id); reject(new Error(t('secrets.noResponse'))); }, timeoutMs);
+      return true;
+    };
+    if (send()) return;
+    const stopWaiting = () => { clearTimeout(waitTimer); (port.off ?? port.removeListener)?.call(port, 'connect', onConnect); };
+    const onConnect = () => { if (send()) stopWaiting(); };
+    const waitTimer = setTimeout(() => { stopWaiting(); waiting.delete(id); reject(new Error(t('secrets.noResponse'))); }, connectWaitMs);
+    port.on('connect', onConnect);
   });
   return {
     async status() {

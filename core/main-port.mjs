@@ -5,10 +5,11 @@
 // 口は parentPort と同じ形（on('message', ({ data }) => …)・postMessage）に、つながっているかを足したもの。
 //   hosted    main の下で動く起動か（デスクトップ版）。起動の形で決まり、途中で切れても変わらない
 //   connected 今 main に届くか。utilityProcess の parentPort は hosted と同じ（つながったまま）
-//   postMessage(message)  送れたら true。main が居ない（hosted でない・切れている）なら何もせず false（溜めない）
+//   postMessage(message)  送れたら true。main が居ない（hosted でない・切れている）なら何もせず false（溜めない）。
+//                         実体の postMessage が false を返したとき（パイプの口が行の上限などで捨てたとき）も false
 //   on / off  'message'（parentPort と同じ { data }）・'connect'・'disconnect'（つながり直し・切れたとき）
-// 実体の port は parentPort と同じ on / postMessage を持つ物なら何でもよい。名前付きパイプの口（段階 1 の 1-2）は、
-// connected と、'connect'・'disconnect' を足した同じ形の物を { parentPort } に渡して差し替える。
+// 実体の port は parentPort と同じ on / postMessage を持つ物なら何でもよい。名前付きパイプの口（core/main-link.mjs。
+// AGENT_HOST_HANDOVER=on のとき）は、connected と、'connect'・'disconnect' を足した同じ形の物で、setMainPortSource で差し込む。
 
 const EVENTS = new Set(['message', 'connect', 'disconnect']);
 
@@ -20,8 +21,7 @@ export function createMainPort({ parentPort = null } = {}) {
     get connected() { return Boolean(port) && port.connected !== false; },
     postMessage(message) {
       if (!port || port.connected === false) return false;
-      port.postMessage(message);
-      return true;
+      return port.postMessage(message) !== false;
     },
     on(type, listener) {
       if (port && EVENTS.has(type)) port.on(type, listener);
@@ -33,13 +33,16 @@ export function createMainPort({ parentPort = null } = {}) {
 }
 
 let shared = null;
+let source = null;
 
-/**
- * この起動の口（process.parentPort を包んだ物）。同じ port なら同じ口を返す。
- * 段階 1 の 1-2 で、パイプの口を process.parentPort の代わりにここへ差し込む
- */
+/** process.parentPort の代わりに使う実体（パイプの口）を差し込む。null で戻す。getMainPort の前に呼ぶ */
+export function setMainPortSource(port) {
+  source = port ?? null;
+}
+
+/** この起動の口（差し込まれた実体、無ければ process.parentPort を包んだ物）。同じ port なら同じ口を返す */
 export function getMainPort() {
-  const parentPort = process.parentPort ?? null;
+  const parentPort = source ?? process.parentPort ?? null;
   if (!shared || shared.parentPort !== parentPort) shared = { parentPort, port: createMainPort({ parentPort }) };
   return shared.port;
 }
