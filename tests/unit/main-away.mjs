@@ -2,11 +2,13 @@
 // 口は main が付け直す形の偽物（connected・resumable・connect/disconnect）。実時間は短い上限に縮める。
 //   secret（待たせる・上限・復号の保持・切れた依頼を戻す・答えを得られなかったときに平文で書かない）・computer use（Esc と同じに止める）・
 //   内蔵ブラウザー（中継の URL の写し・タブの写し・戻った main への復元の答え・別ポート）・screencast（ended away）・os-open と openExternal・
-//   main-leaving（画面の猶予を数えない）・既定（utilityProcess の口）は何も変わらない
+//   main-leaving（画面の猶予を数えない）・main-leaving-cancel（更新の取りやめで猶予を数える状態に戻す）・既定（utilityProcess の口）は何も変わらない
+//   切り替えで替わったサーバー（空から始まる）: secret は頼み直せば通る・内蔵ブラウザーは main が送り直した写しと中継の URL を取り込む
 import { EventEmitter } from 'node:events';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { createRequire } from 'node:module';
 import { createMainPort } from '../../core/main-port.mjs';
 import { createMainAway, createExternalOpener, openableUrl, urlLaunchPlan } from '../../core/main-away.mjs';
 import { parentPortCipher, createSecretStore } from '../../core/secret-store.mjs';
@@ -39,6 +41,8 @@ function parentPort() {
   return port;
 }
 
+const { attachSecretBridge } = createRequire(import.meta.url)('../../desktop/secret-bridge.cjs');
+
 const KEY = 'a'.repeat(48);
 const urlOf = (port, key = KEY) => `ws://127.0.0.1:${port}/devtools/browser/${key}`;
 
@@ -58,6 +62,20 @@ export default async function (t) {
       t.ok('main-leaving の後は、戻るまで画面の猶予を数えない（holdsGrace）', away.leaving?.reason === 'update' && away.holdsGrace() === true);
       link.connect();
       t.ok('出来事: 最初のつながり・切れた・付け直し（first が false）。戻ると main-leaving は忘れる', events.join() === 'first,away,back' && away.holdsGrace() === false && away.connects === 2);
+      // 更新を取りやめた（main は居続ける）: 猶予を数える状態に戻す。main-leaving の無いときの取りやめ・切れた後に来た取りやめは何も起こさない
+      const stays = [];
+      away.onStay(() => stays.push('stay'));
+      link.say({ type: 'main-leaving-cancel' });
+      t.ok('main-leaving が無いときの取りやめは何も起こさない', stays.length === 0 && away.holdsGrace() === false);
+      link.say({ type: 'main-leaving', reason: 'update' });
+      link.say({ type: 'main-leaving-cancel' });
+      t.ok('main-leaving の後の取りやめで、猶予を数える状態に戻る（onStay が 1 回）', stays.length === 1 && away.leaving === null && away.holdsGrace() === false);
+      link.say({ type: 'main-leaving-cancel' });
+      t.ok('取りやめを重ねて受けても 1 回', stays.length === 1);
+      link.say({ type: 'main-leaving', reason: 'update' });
+      link.disconnect();
+      link.connect();
+      t.ok('取りやめずに戻った main では、main-leaving は忘れている（前からの動き）', away.holdsGrace() === false && stays.length === 1);
       const plain = parentPort();
       const quiet = createMainAway({ mainPort: createMainPort({ parentPort: plain }) });
       plain.say({ type: 'main-leaving', reason: 'update' });
@@ -182,6 +200,28 @@ export default async function (t) {
       } finally { await h.close(); }
     }
 
+    // ---- 切り替えで替わったサーバー（空から始まる）: 復号の組は main に頼み直せば通る（safeStorage は main のもので、組は main に残っている）
+    {
+      const safeStorage = { isEncryptionAvailable: () => true, encryptString: text => Buffer.from(`E:${text}`), decryptString: bytes => bytes.toString().slice(2) };
+      let current = null;
+      const main = new EventEmitter();     // main から見たサーバーとの口（desktop/server-link.cjs の包み）。つなぎ先が S1 から S2 へ替わる
+      main.postMessage = message => current.say(message);
+      attachSecretBridge(main, { safeStorage, platform: 'win32' });
+      const attachServer = () => {
+        const port = linkPort();
+        port.postMessage = message => { port.sent.push(message); queueMicrotask(() => main.emit('message', message)); return true; };
+        current = port;
+        return parentPortCipher(port, { timeoutMs: 200, connectWaitMs: 400 });
+      };
+      const s1 = attachServer();
+      const sealed = await s1.encrypt('token-1');
+      const s2 = attachServer();
+      const state = await s2.status();
+      t.ok('S2 は空から始まり、暗号化の可否を頼み直して得る', state.encrypted === true && state.backend === 'dpapi');
+      t.ok('S1 が暗号化した値を、S2 が頼み直して復号できる（復号の組を引き継がなくてよい）', await s2.decrypt(sealed) === 'token-1');
+      t.ok('S2 は新しい値も暗号化できる', await s2.decrypt(await s2.encrypt('token-2')) === 'token-2');
+    }
+
     // ---- 内蔵ブラウザー（サーバー側）
     {
       const dataDir = path.join(scratch, 'data-browser');
@@ -238,6 +278,24 @@ export default async function (t) {
       bridge.rebind('s1', 's1-native');
       t.ok('rebind: 写しの会話の id も替わる', await ask('s1-native') === urlOf(6001));
       port.connect();
+    }
+    {
+      // 切り替えで替わったサーバー（空から始まる）: main が送り直した報告のタブの写しと中継の URL を取り込み、居ない間はその URL で答える
+      const port = linkPort();
+      const bridge = parentPortBrowser(port, { timeoutMs: 80, connectWaitMs: 200 });
+      port.say({ type: 'browser-state-report', tabs: [{ sessionId: 's1', profile: 'main', url: 'https://example.com/a', selected: true }], profiles: [],
+        relay: { port: 6000, entries: [{ sessionId: 's1', key: KEY }, { sessionId: 's2', key: 'zz' }, { sessionId: '', key: KEY }, null] } });
+      port.disconnect();
+      t.ok('main が送り直した中継の URL で、居ない間に答える（形の悪い鍵・空の会話は取り込まない）', await bridge.endpoint('s1') === urlOf(6000));
+      port.connect();
+      port.say({ type: 'browser-restore-request' });
+      const restore = port.take('browser-restore').at(-1);
+      t.ok('取り込んだ写しは、次に付け直す main への復元の答えにもなる（タブ・中継のポートと鍵）', restore.tabs.length === 1 && restore.relay.port === 6000 && restore.relay.entries.length === 1 && restore.relay.entries[0].key === KEY);
+      port.say({ type: 'browser-state-report', tabs: [], profiles: [], relay: { port: 0, entries: [{ sessionId: 's3', key: KEY }] } });
+      port.say({ type: 'browser-state-report', tabs: [], profiles: [] });
+      port.say({ type: 'browser-restore-request' });
+      const later = port.take('browser-restore').at(-1);
+      t.ok('中継の写しが無い・ポートの形が悪い報告は、持っている中継を変えない（写しの上書きは tabs だけ）', later.tabs.length === 0 && later.relay.port === 6000 && later.relay.entries.length === 1);
     }
     {
       // ポートを一度も知らない（main が一度も答えていない）うちは、main が居ない間にサーバーが空きポートを選んで答える。戻った main が立てる

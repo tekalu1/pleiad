@@ -6855,6 +6855,8 @@ mainPort.on("message", async ({ data }) => {
   if (data?.type === 'update-unlock') updateGate.release();
   // main がこれから離れる（更新のためなど）。切れた後に作業が無いまま居続ける上限が決まる（core/orphan-guard.mjs）
   if (data?.type === 'main-leaving') orphanGuard?.leaving(data.reason);
+  // 更新を取りやめた（インストーラーが起きなかった・失敗した）。main は居続けるので、猶予を数える状態と切断の上限を元に戻す
+  if (data?.type === 'main-leaving-cancel') orphanGuard?.leavingCancelled();
   if (data?.type === "running") mainPort.postMessage({ type: "running", work: await runningWork() });
   // デスクトップの「中断して終了」（desktop/main.cjs の closeSafely）。全部を reason 付きで止める。
   // main は running の count が 0 になるのを待ってから終了する
@@ -6883,6 +6885,7 @@ const orphanGuard = mainLink ? createOrphanGuard({
 mainPort.on('disconnect', () => orphanGuard?.disconnected());
 orphanGuard?.disconnected();   // 起こした main が最初につながる前に落ちても、居続けない（最初のつながりで connected になる）
 let readyMessage = null;
+mainAway.onStay(() => restartGrace());
 mainAway.onBack(({ first }) => {
   // 付け直した main へ、言語を送り直す。居ない間に過ぎた予定（送信・上限の解除後の再開）は、wake と同じに確かめる（powerMonitor の resume は届かなかった）
   mainPort.postMessage({ type: 'locale', locale: locale.lang });

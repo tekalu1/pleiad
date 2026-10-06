@@ -258,6 +258,14 @@ export default async function (t) {
     t.ok('見張り: main-leaving（update）の後は 30 分に届くまで終わらない', expired.length === 2);
     await tick(1);
     t.ok('見張り: 30 分で終わる（reason: update）', expired.length === 3 && expired[2].reason === 'update');
+    // main-leaving の後に取りやめた（main はつながったまま。更新の失敗）: 次の切断は main-leaving の無い切断と同じ 3 分
+    guard.connected();
+    guard.leaving('update');
+    guard.leavingCancelled();
+    guard.disconnected();
+    await tick(0);
+    await tick(ORPHAN_IDLE_MS);
+    t.ok('見張り: main-leaving を取りやめた後の切断は、30 分でなく 3 分（reason: lost）', expired.length === 4 && expired[3].reason === 'lost');
     // つながり直せば見張りをやめ、main-leaving も忘れる
     guard.leaving('update');
     guard.disconnected();
@@ -267,7 +275,7 @@ export default async function (t) {
     guard.disconnected();
     await tick(0);
     await tick(ORPHAN_IDLE_MS);
-    t.ok('見張り: 付け直した後の切断は、前の main-leaving を引き継がず 3 分', expired.length === 4 && expired[3].reason === 'lost');
+    t.ok('見張り: 付け直した後の切断は、前の main-leaving を引き継がず 3 分', expired.length === 5 && expired[4].reason === 'lost');
     // 起こした main が最初につながる前に落ちた場合（最初から切れている）も同じ
     t.ok('見張り: 上限の既定は 3 分と 30 分', ORPHAN_IDLE_MS === 180_000 && UPDATE_IDLE_MS === 1_800_000);
     const failing = createOrphanGuard({ isBusy: () => { throw new Error('probe failed'); }, onExpire: () => expired.push('x'), now: () => now, setTimer: () => ({ unref() {} }), clearTimer() {} });

@@ -1,6 +1,7 @@
 // main が居ない間の機能ごとの扱いの、main（desktop/）側（無停止の更新 段階 1 の 1-5。docs/zero-downtime-update/design.md §7.2）。
 //   内蔵ブラウザーの中継を同じポートと鍵で立て直す（relay.restore。別のポートに落ちるときは moved）・パネルのタブの写し（exportState / restoreState）・
 //   橋（desktop/agent-browser-bridge.cjs）の流れ: 復元の依頼 → タブを先に開き直す → 中継を立て直す → 写しの報告。既定（handover なし）は何も足さない
+//   切り替えで替わったサーバー（空から始まる）へ、つながった印（ready）で写しと中継の URL を 1 回送り直す（relay.snapshot）
 import { EventEmitter } from 'node:events';
 import net from 'node:net';
 import { createRequire } from 'node:module';
@@ -154,6 +155,18 @@ export default async function (t) {
     relay2.close();
   }
 
+  {
+    // snapshot: 立っている中継の写し（切り替えで替わったサーバーへ送り直す）。待ち受けが無い・会話が無ければ null
+    const relay = createBrowserRelay(relayPanel());
+    t.ok('snapshot: 待ち受けが無ければ null', relay.snapshot() === null);
+    const url = await relay.endpoint('s1');
+    const second = await relay.endpoint('s2');
+    const snap = relay.snapshot();
+    t.ok('snapshot: 待ち受けのポートと、会話ごとの鍵（endpoint で答えた URL と同じ）', snap.port === Number(new URL(url).port) && snap.entries.length === 2
+      && url.endsWith(snap.entries.find(row => row.sessionId === 's1').key) && second.endsWith(snap.entries.find(row => row.sessionId === 's2').key));
+    relay.close();
+  }
+
   // ---- パネル: タブの写しの書き出しと開き直し
   {
     const { panel, electron } = newPanel();
@@ -221,6 +234,37 @@ export default async function (t) {
     kit.log.state = { tabs: [], profiles: [] };
     bridge.close();
     t.ok('close: 終わる前に最後の写しを渡す', reports().length === 3 && reports()[2].tabs.length === 0);
+  }
+  {
+    // 切り替えで替わったサーバー（S2）は空から始まる。つながるたびに届く ready で、写しと中継の URL を 1 回送り直す（中身が変わらなくても）
+    const kit = bridgeKit();
+    const port = await freePort();
+    const bridge = attachAgentBrowserBridge(kit.worker, kit.panel, { handover: true, reportMs: 30, restoreWaitMs: 400 });
+    const reports = () => kit.worker.sent.filter(m => m.type === 'browser-state-report');
+    kit.worker.say({ type: 'ready', port: 7611, token: 'early' });
+    t.ok('復元が済む前の ready では送らない（復元の流れが報告を始める）', reports().length === 0);
+    kit.worker.say({ type: 'browser-restore', tabs: kit.log.state.tabs, profiles: [], relay: { port, entries: [{ sessionId: 's1', key: KEY }] } });
+    await until(() => reports().length === 1);
+    t.ok('復元の報告（中継の URL は付けない。同じ main が持つ写しなので）', reports()[0].relay === undefined);
+    kit.worker.say({ type: 'ready', port: 7611, token: 'switched' });
+    t.ok('S2 につながった（ready）直後に、中身が同じでも写しを送り直す', reports().length === 2 && reports()[1].tabs[0].url === 'https://example.com/a');
+    t.ok('送り直しには中継の URL（ポートと会話ごとの鍵）が付く', reports()[1].relay?.port === port && reports()[1].relay.entries.length === 1 && reports()[1].relay.entries[0].sessionId === 's1' && reports()[1].relay.entries[0].key === KEY);
+    kit.changed();
+    await sleep(100);
+    t.ok('送り直しの後も、中身が同じなら報告しない（重ねて送らない）', reports().length === 2);
+    bridge.close();
+  }
+  {
+    // 復元の待ちの上限を過ぎて報告を始めた後（古いサーバーなど）の ready でも送り直す。handover なしは何もしない
+    const kit = bridgeKit();
+    attachAgentBrowserBridge(kit.worker, kit.panel, { handover: true, reportMs: 10, restoreWaitMs: 40 });
+    await sleep(120);
+    kit.worker.say({ type: 'ready', port: 7611, token: 't' });
+    t.ok('復元の答えが無いまま待ちの上限を過ぎた後の ready でも、写しを送り直す（中継が無ければ relay は付けない）', kit.worker.sent.filter(m => m.type === 'browser-state-report').length === 2 && kit.worker.sent.at(-1).relay === undefined);
+    const plain = bridgeKit();
+    attachAgentBrowserBridge(plain.worker, plain.panel);
+    plain.worker.say({ type: 'ready', port: 7611, token: 't' });
+    t.ok('既定（handover なし）: ready で何も送らない', !plain.worker.sent.some(m => m.type === 'browser-state-report'));
   }
   {
     const kit = bridgeKit();
