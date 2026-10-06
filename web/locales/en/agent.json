@@ -665,6 +665,7 @@
       "SETTING_NOT_FOUND": "No such setting: {{key}}. Find keys with settings.list.",
       "TASK_NOT_FOUND": "No delegated task found with id {{id}}.",
       "sessionRequired": "Pass sessionId (it can be omitted only when it means this conversation).",
+      "chromeUnsupported": "The agent browser (Chrome) is not available on this OS or in this environment yet.",
       "badCursor": "The cursor is not valid. Pass the previous result's next as is.",
       "DENIED": "The user did not allow the change ({{id}}). Do not retry; ask the user why.",
       "STALE": "The value kept changing after approval, so {{id}} was not done. Check the current value with settings.get and try again.",
@@ -921,6 +922,12 @@
     },
     "computer": {
       "stop": { "summary": "Stop a conversation's computer use (mouse and keyboard on this PC). It cannot start or permit it.", "sessionId": "The conversation id. Defaults to this conversation." }
+    },
+    "browser": {
+      "chromeStatus": { "summary": "The state of the connection to the agent browser (the Chrome on this PC). state is off (not connected), setup (Chrome's remote debugging has to be turned on), permission (Chrome is showing its permission prompt), denied (Chrome didn't allow it: Cancel, or the settings button on the prompt), connected, or unsupported (not available on this OS yet).", "state": "The connection state.", "reason": "The reason. For off: chrome-closed, revoked, disconnected, declined, or protocol. For denied: cancel.", "dialog": "Whether Chrome's permission prompt window has been found.", "product": "The connected Chrome version (for example Chrome/154.0.8037.97)." },
+      "chromeConnect": { "summary": "Start the connection to Chrome (Chrome shows a permission prompt). Only the host PC's screen can call it." },
+      "chromeDisconnect": { "summary": "Close the connection to Chrome or stop waiting for the permission (a prompt that is showing is closed). Only the host PC's screen can call it." },
+      "chromeRaiseDialog": { "summary": "Bring Chrome's permission prompt to the front (it does not answer it). Only the host PC's screen can call it." }
     },
     "control": {
       "instructions": "Pleiad's features and settings are available through ply_control.\nFind an operation with list_ops (pass an id to get its input JSON Schema) and call it with call_op. Conversation search and reading (search_sessions, get_session, read_session) and current setting values (get_setting) can be called directly.\nOperations that change Pleiad's state follow this conversation's approval mode. A change that loosens a gate shows the user an approval card and returns status: pending without waiting; the result is delivered to this conversation later. If the code is NEEDS_UI, NEEDS_APPROVAL, or READ_ONLY_MODE, do not retry; tell the user.",

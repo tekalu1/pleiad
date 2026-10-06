@@ -3,12 +3,14 @@ import path from 'node:path';
 import vm from 'node:vm';
 import { EventEmitter } from 'node:events';
 import { fileURLToPath } from 'node:url';
+import { createRequire } from 'node:module';
 
 export const name = 'desktop-exit-dialog';
 export const title = 'サーバー終了の通知は非同期で、終了中は表示しない';
 
 const source = fs.readFileSync(new URL('../../desktop/main.cjs', import.meta.url), 'utf8');
 const desktop = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../desktop');
+const workerMessages = createRequire(import.meta.url)('../../desktop/worker-messages.cjs');
 const tick = () => new Promise(resolve => setImmediate(resolve));
 
 async function start({ ready = true, work = { count: 0 } } = {}) {
@@ -75,11 +77,16 @@ async function start({ ready = true, work = { count: 0 } } = {}) {
     './remote-windows.cjs': { createRemoteWindows: () => ({ attach: () => {}, attachWorker: () => {}, handleArgv: () => false }) },
     './browser-panel.cjs': { createBrowserPanel: () => ({ attach: () => {} }) },
     './agent-browser-bridge.cjs': { attachAgentBrowserBridge: () => ({ close: () => {} }) },
-    './computer/service.cjs': { attachComputerService: () => ({}) },
+    './computer/service.cjs': { attachComputerService: () => ({}), withPerMonitorDpi: w => w },
+    './computer/win32.cjs': { loadWin32: () => { throw Object.assign(new Error('not windows'), { reason: 'platform' }); } },
+    './chrome-os/index.cjs': { createChromeOs: () => ({}), attachChromeOs: () => {} },
     './browser-screencast-bridge.cjs': { attachBrowserScreencastBridge: () => ({ close: () => {} }) },
     './computer-overlay.cjs': { attachComputerOverlay: () => ({ close: () => {} }) },
     './agent-browser-bin.cjs': { prepareAgentBrowserBin: () => '' },
     './notifications.cjs': { createDesktopNotifications: () => () => {} },
+    './worker-messages.cjs': workerMessages,
+    // 起動の失敗の理由は、サーバーが書いた logs\server.log の末尾（core/server-log.mjs）
+    './server-boot.cjs': { readLogTail: () => 'tail of the log' },
     './switch-screen.cjs': { createSwitchScreen: () => ({ attach() {}, reset() {}, supported: () => false, ask: async () => 'later' }) },
     'electron-updater': { autoUpdater: {} },
   };

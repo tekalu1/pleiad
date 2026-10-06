@@ -24,7 +24,11 @@ const { attachAgentBrowserBridge } = require('./agent-browser-bridge.cjs');
 const { attachBrowserScreencastBridge } = require('./browser-screencast-bridge.cjs');
 const { prepareAgentBrowserBin } = require('./agent-browser-bin.cjs');
 // コンピューターの操作（Windows）の Win32 の層: 撮影・入力・アプリの特定（docs/computer-use.md、desktop/computer/service.cjs）
-const { attachComputerService } = require('./computer/service.cjs');
+const { attachComputerService, withPerMonitorDpi } = require('./computer/service.cjs');
+const { loadWin32 } = require('./computer/win32.cjs');
+// Chrome への接続（エージェントのブラウザー）の OS の層: 確認の窓を見つけて前に出す・閉じる（docs/inapp-browser.md「OS ごとの層」、ADR 0153）
+const { createChromeOs, attachChromeOs } = require('./chrome-os/index.cjs');
+const { createWorkerMessages } = require('./worker-messages.cjs');
 let computerService;
 let browserPanel;
 let agentBrowserBridge;
@@ -34,7 +38,8 @@ const { attachComputerOverlay } = require('./computer-overlay.cjs');
 let computerOverlay;
 const trust = createWindowTrust();
 let remoteWindows;
-let worker, linked = null, window, origin, updates, quitting = false, closing = false, exitInProgress = false;
+// messages はサーバーの message を 1 つの listener で受けて橋へ配る（desktop/worker-messages.cjs）。橋は worker でなくこれに付ける
+let worker, messages, linked = null, window, origin, updates, quitting = false, closing = false, exitInProgress = false;
 // 無停止の更新で、付け直したサーバーが古い版のときの新しい版への切り替え（desktop/switch.cjs）
 let serverSwitch = null;
 // main-leaving を送った後（更新で main が離れる途中）。この間につながりが切れても、サーバーは起こし直さない
@@ -74,19 +79,19 @@ function workerRequest(type, extra = {}) {
     const id = ++requestId;
     const done = message => {
       if (message.type !== type || message.id !== id) return;
-      clearTimeout(timer); worker.off('message', done); resolve(message);
+      clearTimeout(timer); messages.off('message', done); resolve(message);
     };
-    const timer = setTimeout(() => { worker.off('message', done); reject(new Error(t('errors.runningCheckFailed'))); }, 10000);
-    worker.on('message', done); worker.postMessage({ ...extra, type, id });
+    const timer = setTimeout(() => { messages.off('message', done); reject(new Error(t('errors.runningCheckFailed'))); }, 10000);
+    messages.on('message', done); worker.postMessage({ ...extra, type, id });
   });
 }
 
 /** 実行中の作業（core/server.mjs の runningWork）。10 秒で答えが無ければ失敗 */
 function runningWork() {
   return new Promise((resolve, reject) => {
-    const onMessage = message => { if (message.type === 'running') { clearTimeout(timer); worker.off('message', onMessage); resolve(message.work); } };
-    const timer = setTimeout(() => { worker.off('message', onMessage); reject(new Error(t('quit.checkFailed'))); }, 10_000);
-    worker.on('message', onMessage); worker.postMessage({ type: 'running' });
+    const onMessage = message => { if (message.type === 'running') { clearTimeout(timer); messages.off('message', onMessage); resolve(message.work); } };
+    const timer = setTimeout(() => { messages.off('message', onMessage); reject(new Error(t('quit.checkFailed'))); }, 10_000);
+    messages.on('message', onMessage); worker.postMessage({ type: 'running' });
   });
 }
 
@@ -227,39 +232,50 @@ async function boot() {
   // AGENT_HOST_HANDOVER=on: サーバーを main の子でない形で起こす・走っているサーバーに付け直す（desktop/server-boot.cjs。名前付きパイプでつなぐ）。
   // 起こせない環境（Job が抜け道を許さない・実行場所を組めない）では null で、今の utilityProcess に落ちる
   linked = await chooseLinkedServer(portFile);
+  // utilityProcess の経路でも、サーバーの標準出力・標準エラー（Chrome の接続の移り変わり `chrome: …` など）を userData\logs\server.log に残す。
+  // パイプの経路（<実行場所>\logs\server.log）と同じに、サーバー自身が書く（core/server-log.mjs。token=… は伏せ、1MB で .old へ回す）。開発版は別の名前
+  const utilityLogFile = process.env.AGENT_HOST_SERVER_LOG || path.join(app.getPath('userData'), 'logs', app.isPackaged ? 'server.log' : 'server-dev.log');
   worker = linked ? linked.link : utilityProcess.fork(path.join(__dirname, 'server.cjs'), [], {
     cwd: app.getPath('home'),
     // OS の言語はサーバーからは確実に取れない（utilityProcess の Intl は OS の表示言語と一致しないことがある）ので、ここで渡す。
     // 画面の言語を「OS に合わせる」ときに使う（core/i18n.mjs）
-    env: { ...process.env, PATH: `${agentBrowserBin}${path.delimiter}${process.env.PATH || ''}`, AGENT_HOST_BIND: '127.0.0.1', AGENT_HOST_PORT: String(savedPort(portFile)), AGENT_HOST_SYSTEM_LOCALE: systemLanguage() },
+    env: { ...process.env, PATH: `${agentBrowserBin}${path.delimiter}${process.env.PATH || ''}`, AGENT_HOST_BIND: '127.0.0.1', AGENT_HOST_PORT: String(savedPort(portFile)), AGENT_HOST_SYSTEM_LOCALE: systemLanguage(), AGENT_HOST_SERVER_LOG: utilityLogFile },
     stdio: 'pipe', serviceName: 'Pleiad server',
   });
+  messages = createWorkerMessages(worker);
   powerMonitor.on('resume', () => worker?.postMessage({ type: 'wake' }));
-  // Consume logs without exposing the private authentication URL.（パイプの経路には stdout・stderr が無い。サーバーが logs\server.log に書く）
+  // Consume logs without exposing the private authentication URL.（サーバーは出力を logs\server.log へ向けるので、ここにはほぼ来ない。パイプの経路には stdout・stderr が無い）
   worker.stdout?.on('data', () => {});
   // 外部 MCP の秘密は safeStorage で暗号化する。safeStorage は main でしか使えないので、サーバーの依頼をここで受ける
   // MCP の OAuth の同意画面も、サーバー（utilityProcess）はブラウザを開けないので頼まれて開く
-  attachSecretBridge(worker, { safeStorage, openExternal: url => shell.openExternal(url).catch(() => {}) });
+  attachSecretBridge(messages, { safeStorage, openExternal: url => shell.openExternal(url).catch(() => {}) });
   // 「エクスプローラーで表示」「ブラウザーで開く」。範囲と接続元はサーバーが確かめ、実行は本体の shell（窓を前に出せる）
-  attachFileBridge(worker, { shell });
+  attachFileBridge(messages, { shell });
   // Esc の登録を外す・戻すのは、オーバーレイ（computerOverlay。下で作る）が持つ。Esc を拾ったら、オーバーレイが computerService.escape を呼ぶ
-  computerService = attachComputerService(worker, { electron: { screen, nativeImage }, app, log: line => console.warn('[computer]', line),
+  // koffi（Win32）は 1 回だけ読み、コンピューターの操作と Chrome の OS の層で共有する。読めなかったら両方とも unsupported
+  let win32 = null, win32Reason = 'native';
+  try { win32 = loadWin32(); } catch (error) { win32Reason = error.reason ?? 'native'; if (win32Reason !== 'platform') console.warn('[computer]', `win32 unavailable: ${error.message}`); }
+  computerService = attachComputerService(messages, { electron: { screen, nativeImage }, app, log: line => console.warn('[computer]', line), win32, reason: win32Reason,
     escape: { suspend: () => computerOverlay?.suspendEscape() ?? (() => {}) } });
-  resident = attachResident({ app, worker, icon: path.join(__dirname, 'icon.png'), getWindow: () => window, quit: () => closeSafely() });
+  attachChromeOs(messages, { chromeOs: createChromeOs({ platform: process.platform, win32: win32 ? withPerMonitorDpi(win32) : null, reason: win32Reason, log: line => console.warn('[chrome-os]', line) }), log: line => console.warn('[chrome-os]', line) });
+  resident = attachResident({ app, worker: messages, icon: path.join(__dirname, 'icon.png'), getWindow: () => window, quit: () => closeSafely() });
   let startupError = '';
   worker.stderr?.on('data', data => { startupError = (startupError + data.toString()).replace(/token=\S+/g, 'token=[redacted]').slice(-2000); });
   const ready = await new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error(t('server.startTimeout'))), 60_000);
-    worker.on('message', message => { if (message.type === 'ready') { clearTimeout(timer); resolve(message); } });
-    worker.once('exit', () => { clearTimeout(timer); reject(new Error(t('server.startFailed', { detail: startupError || (linked?.logFile ? serverBoot().readLogTail(linked.logFile) : '') }))); });
+    let started = false;
+    const onReady = message => { if (message.type === 'ready') { started = true; clearTimeout(timer); messages.off('message', onReady); resolve(message); } };
+    messages.on('message', onReady);
+    // 起動の後の終了は onServerExit が扱う（起動の失敗のときだけ、記録の末尾を読む）
+    worker.once('exit', () => { if (started) return; clearTimeout(timer); reject(new Error(t('server.startFailed', { detail: startupError || serverBoot().readLogTail(linked?.logFile ?? utilityLogFile) }))); });
     // パイプの経路は、ここで付け直す・起こす（message の登録は済んでいる。つながった直後に最新の ready が届く）
     linked?.connect().then(result => log(`server ${result.attached ? 'attached' : 'started'} (pid ${result.pid})`), error => { clearTimeout(timer); reject(new Error(serverBoot().describeBootError(error, t))); });
   });
   if (ready.locale) setLocale(ready.locale);
   // 画面で言語を変えたら、サーバーが解決し直した言語が届く（core/server.mjs の savePref）
-  worker.on('message', message => { if (message?.type === 'locale' && message.locale) setLocale(message.locale); });
+  messages.on('message', message => { if (message?.type === 'locale' && message.locale) setLocale(message.locale); });
   serverReady = ready;
-  worker.on('message', message => { if (message?.type === 'ready') serverReady = message; });
+  messages.on('message', message => { if (message?.type === 'ready') serverReady = message; });
   origin = `http://127.0.0.1:${ready.port}`;
   rememberPort(portFile, ready.port);
   window = new BrowserWindow({ width: 1200, height: 850, minWidth: 640, minHeight: 480, title: 'Pleiad', icon: path.join(__dirname, 'icon.png'), show: false,
@@ -278,13 +294,13 @@ async function boot() {
   remoteWindows = createRemoteWindows({ app, BrowserWindow, session, ipcMain, nativeImage, nativeTheme, Notification, Menu, safeStorage, trust,
     icon: path.join(__dirname, 'icon.png'), external });
   remoteWindows.attach();
-  remoteWindows.attachWorker(worker);
+  remoteWindows.attachWorker(messages);
   browserPanel = createBrowserPanel({ window, WebContentsView, BrowserWindow, session, shell, ipcMain, app, trust, icon: path.join(__dirname, 'icon.png'), agentControl: (action, id) => agentBrowserBridge?.[action]?.(id) });
   browserPanel.attach();
   // 名前付きパイプの経路（無停止の更新）では、タブの写しをサーバーへ渡し、付け直したときにサーバーの写しからタブと中継を立て直す（core/agent-browser.mjs）
-  agentBrowserBridge = attachAgentBrowserBridge(worker, browserPanel, { handover: Boolean(linked) });
-  computerOverlay = attachComputerOverlay(worker, { onEscape: owner => computerService?.escape({ owner, notify: false }) });
-  browserScreencastBridge = attachBrowserScreencastBridge(worker, browserPanel, {
+  agentBrowserBridge = attachAgentBrowserBridge(messages, browserPanel, { handover: Boolean(linked) });
+  computerOverlay = attachComputerOverlay(messages, { onEscape: owner => computerService?.escape({ owner, notify: false }) });
+  browserScreencastBridge = attachBrowserScreencastBridge(messages, browserPanel, {
     agentControl: (action, id) => agentBrowserBridge?.[action]?.(id),
     // 隠れた窓（常駐で閉じた）ではページが描かれない。見られている間だけ最小化で出し、終われば隠し直す
     keepVisible: () => {

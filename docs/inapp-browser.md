@@ -24,7 +24,103 @@ agent-browser 0.38.1 の state ルートには専用の変更変数がない。`
 
 `ply_browser`（`core/browser-bridge.mjs`、`/mcp/browser`）は、エージェントのブラウザー操作の MCP の口の骨組み。内蔵ブラウザーを渡すターン（デスクトップ版で中継がある）にだけ渡す: Claude は `mcpServers`（ツールごとの承認は出さない）、Codex は `mcp_servers`（自動で承認）、Antigravity は stdio の中継 `core/agy-context-relay.mjs --browser`（`PLY_BROWSER_URL`・`PLY_BROWSER_AUTHORIZATION`）。agy は agent.md の `mcpServers` の先頭 1 本しか起こさない（1.2.14 で実測）ので、ply_context・ply_computer と一緒に渡すときは旗を並べた 1 本の中継に束ねる（`--context --computer --browser`。ツール名で振り分ける）。口は会話ごとに鍵付きで開き、会話のあいだ同じ値。
 
-今は載せるツールが無い（`tools/list` は空で、呼び出しは断る）。エージェントの操作を PC の Chrome の専用の窓に移す段で、ツール（Chrome のプロフィールの一覧と切り替え・`hand_to_user`・`close_browser_window`）を足す（[ADR 0148](adr/0148-agent-browser-in-chrome.md)。提案）。内蔵ブラウザーのプロフィール（保存領域を名前付きで分ける機能。[ADR 0078](adr/0078-inapp-browser-profiles.md)）は ADR 0148 で削除した。古い `prefs.json` の `browserProfiles` などの値と、メイン以外の保存領域のディレクトリが残っていても読まない。
+今は載せるツールが無い（`tools/list` は空で、呼び出しは断る）。エージェントの操作を PC の Chrome の専用の窓に移す段で、ツール（Chrome のプロフィールの一覧と切り替え・`hand_to_user`・`close_browser_window`）を足す（[ADR 0148](adr/0148-agent-browser-in-chrome.md)。承認済み）。内蔵ブラウザーのプロフィール（保存領域を名前付きで分ける機能。[ADR 0078](adr/0078-inapp-browser-profiles.md)）は ADR 0148 で削除した。古い `prefs.json` の `browserProfiles` などの値と、メイン以外の保存領域のディレクトリが残っていても読まない。
+
+## Chrome への接続（エージェントのブラウザー）
+
+[ADR 0148](adr/0148-agent-browser-in-chrome.md)・[ADR 0153](adr/0153-chrome-connection-waits-indefinitely-behind-os-layer.md)。PC の Chrome に Pleiad が CDP の接続を 1 本持ち、設定 › ブラウザー › 「エージェントのブラウザー」で**つなぐ・切る**ができる。**エージェントはまだ使わない**（エージェントの操作は上の「エージェントの操作」の内蔵ブラウザーの中継のまま。開発用の環境変数 `AGENT_HOST_AGENT_BROWSER=chrome` のときだけ、下の「Chrome の中継（開発中）」を使う）。
+
+- **対応する OS**: 当面は Windows の Chrome だけ。ほかの OS・koffi を読めない PC・Electron の無いホスト（`npm start`）では「この OS ではまだ使えません」（状態 `unsupported`。ホストの画面の `hostCapabilities.chromeBrowser` は OS の層が使えなければ `unsupported`、Electron の無いホストでは `false` で、後者は節を出さない）。
+- **読むものと送るもの**: Chrome の `User Data`（Windows は `%LOCALAPPDATA%\Google\Chrome\User Data`。テストは `AGENT_HOST_CHROME_USER_DATA`）の `DevToolsActivePort`（1 行目がポート、2 行目が `/devtools/browser/<id>`）だけ。Cookie・履歴・`Local State` は読まない。接続そのものが上りへ送る CDP は `Browser.getVersion` だけ（`Target.*` は送らない。利用者のタブの URL・題を受け取らない）。中継を使うときに送るものは下の「Chrome の中継（開発中）」。
+- **接続は 1 本で、会話をまたいで使い回す**。許可の確認（「リモート デバッグを許可しますか？」）は接続ごとに出るので、切れたら自動ではつなぎ直さない（次の `demand()` か「つなぐ」で A か B から）。実装は `core/chrome/connection.mjs`（`createChromeConnection`）。サーバーに 1 つ、Electron のあるデスクトップ版だけ。
+
+| 状態 | 意味 | 入る条件 | 出る先 |
+|---|---|---|---|
+| `off` | 何もしていない | 起動直後・「切る」・「やめる」・接続が切れた後 | 「つなぐ」→ `setup` か `permission` |
+| `setup`（A） | Chrome のトグルがオフ | `DevToolsActivePort` が無い、または書かれたポートにつながらない | 1 秒ごとに読み直し、つながれば自動で `permission`。時間では打ち切らない |
+| `permission`（B） | 許可の確認が出ている | ws の upgrade を投げた。`dialog` は確認の窓を見つけたか | 許可で `connected`。「キャンセル」・確認の「[設定] でオフにする」で `denied`。トグルを戻した（ポートが閉じた）で `setup` |
+| `denied`（C） | Chrome で許可されなかった | 確認が 290 秒より前に断られ、ポートが生きている（「キャンセル」と確認の「[設定] でオフにする」。打ち切りでは入らない） | 「もう一度」→ `setup` / `permission`。「やめる」→ `off`（`declined`） |
+| `connected`（D） | つながった | upgrade 成功と `Browser.getVersion` | ws が閉じたら `off` と理由（`chrome-closed`: ファイルが消えた・ポートが変わった・つながらない、`revoked`: ポートは生きている） |
+
+`off` の `reason` は `chrome-closed`・`revoked`・`disconnected`（自分で切った）・`declined`（「やめる」）・`protocol`（想定外の HTTP の応答）。`unsupported` の `reason` は `platform`（Windows でない）・`native`（koffi を読めない）・`no-desktop`（Electron が無い）。
+
+**待ちは無期限**（ADR 0153）。Chrome は確認を約 5 分で打ち切るので、Pleiad が確認を出してから 270 秒（`reissueMs`）で、利用者に見せずに古い確認を `WM_CLOSE` で閉じ、すぐ upgrade し直す（新しい確認が出る。確認は常に 1 つ。画面の状態は B のまま変わらない）。印の無い失敗が確認を出してから 290 秒（`cancelBeforeMs`）より前なら「キャンセル」（`denied`）、以降なら Chrome の打ち切りとして残った確認を閉じて出し直す。失敗の直後に `DevToolsActivePort` を読み直し、無い・つながらないなら `setup`。確認の窓を見つけられていないとき（`dialog: false`）も、出し直しで探して閉じる（**ws だけ閉じても確認は Chrome に残る**ため）。
+
+**前に出す頻度**: Pleiad が確認を前に出す（`raise`）のは、B に入って最初に見つけた 1 回と、「ダイアログを前に出す」だけ。出し直した確認は前に出さず、前面を取っていたら（1 秒の間 200 ms ごとに見る）、直前の前面がブラウザーの窓でなければ `yieldForeground` で返す。「やめる」・「切る」・Pleiad の終了（`shutdown` を受けたとき。2 秒まで）は、出ている確認を閉じてから終える（Chrome に確認を残さない）。
+
+**記録**: 状態の移り変わり（`chrome: state=… reason=…`）・前に出した方法（`chrome: raise method=…`）・返したか（`chrome: yield ok=…`）は、サーバーの標準出力に 1 行ずつ出る。デスクトップ版では、`utilityProcess` の経路は `userData\logs\server.log`（開発版は `server-dev.log`）、無停止の更新の経路は `<実行場所>\logs\server.log`（`AGENT_HOST_SERVER_LOG`。`core/server-log.mjs`）。main の OS の層の行（`[chrome-os] …`）は main の標準エラーで、ファイルには残らない。
+
+### 実機で確かめたこと（Chrome 154・Windows 11、2026-10-06）
+
+- **確認の「[設定] でオフにする」は、トグルを切らない**。`chrome://inspect/#remote-debugging` を新しいタブで開くだけで、確認は閉じて upgrade は断られ、ポートは生きたまま。Pleiad からは「キャンセル」と見分けられないので C（`denied`）になる（ADR 0153 は C を「キャンセルのときだけ」と書くが、実機ではこの押下でも入る）。A になるのは、利用者が開いたページで実際にトグルをオフにした後の「もう一度」で、切らずに押せば B。
+- 確認を閉じる（`WM_CLOSE`）・「キャンセル」では、upgrade は **HTTP 403** で断られる（`ws` パッケージでは `unexpected-response` の 403。Node 組み込みの WebSocket では 1006 に見える）。403 は拒否として扱い、それ以外の HTTP の応答は `protocol`。
+- 確認を閉じてすぐ upgrade し直すと、新しい確認は 30〜52 ms で出る（8 回）。**出た確認が前面を取ったことは無かった**（前面がほかのアプリ・Pleiad のとき。Chrome の窓が前面のときも変わらなかった）。つまり確認は背後に出るので、最初の 1 回は Pleiad が前に出す必要がある。`AttachThreadInput` 方式の前面化は node のプロセスからも通った。
+- Pleiad から ws だけ閉じても、確認は Chrome に残る（`WM_CLOSE` で消える）。
+- 確認の窓は、`WS_POPUP` で、**ブラウザーの窓が持ち主**（`GW_OWNER`）、外形は 694×354 物理画素（150% で 463×236 DIP）。ふつうの窓は持ち主が無い。題は日本語の Chrome で「リモート デバッグを許可しますか？」（英語の題は未確認。題が既知でも未知でも、持ち主のある新しい小さな窓が 1 つだけなら確認とみなす）。
+- **トグルをオフにしても `DevToolsActivePort` は残る**（中身も更新時刻も変わらず、古いまま）。ポートだけが閉じる。オンに戻すと、同じポートで経路の鍵が書き直される（数秒）。だから「ファイルがある」だけでは足りず、ポートにつながるかも見る（A と判断する）。
+- Chrome を閉じたときのファイルの扱いと、Chrome の約 5 分の打ち切りの正確な時間・失敗の見え方は未測（`reissueMs`・`cancelBeforeMs` は前回の観察の約 5 分から決めた値で、Pleiad が先に閉じるので、時計がずれたときだけ Chrome の打ち切りに当たる）。
+
+### 画面と操作
+
+- 設定 › ブラウザーの「エージェントのブラウザー」（`web/browser-settings.mjs`。「エージェントの操作」の行の上）。1 行目は Chrome の印・「Chrome」・状態の字（`role=status`）・右にボタン。`off`: 「つながっていません」＋「つなぐ」（切れた理由があれば 1 行）。`setup`: 手順 2 つ（アドレス `chrome://inspect/#remote-debugging` をコピー → Chrome のアドレス欄に貼り付けて開き「Allow remote debugging for this browser instance」をオン）＋主のボタン「アドレスをコピー」＋「やめる」、弱い字で「オンになったら自動で進みます」。`permission`: 「Chrome に許可の確認が出ています」＋「ダイアログを前に出す」＋「やめる」、弱い字で「Chrome が確認を出し直しても、そのまま待ちます」（出し直しでは字を変えない）。`denied`: 「Chrome で許可されませんでした」＋「もう一度」＋「やめる」（「キャンセル」と確認の「[設定] でオフにする」を見分けられないので、どちらとも取れる字。2026-10-06）。`connected`: 「つながっています · Chrome 154」＋「切る」、弱い字で、つないでいる間は Chrome の窓に「自動テスト ソフトウェアによって制御されています」の帯が出ることがあること。`unsupported`: 「この OS ではまだ使えません」だけ（OS 以外の理由は「この環境ではまだ使えません」）。承認済み（2026-10-06。UX モックの 09）。
+- 操作（`core/ops/browser.mjs`）: `browser.chromeStatus`（read。MCP の catalog・CLI の `pleiad browser status` にも出る）。`browser.chromeConnect`・`browser.chromeDisconnect`・`browser.chromeRaiseDialog`（write。画面だけ・ホストの PC の画面だけ。`hostScreenOnly`）。WS のコマンドは `chromeStatus`・`chromeConnect`・`chromeDisconnect`・`chromeRaiseDialog`（`legacyCommand`）。つなぐ・切る・前に出すを `human-only` にしないのは、`human-only` が ADR 0094 の 5 つだけだから（画面だけに出すのは `surfaces` で決める）。
+- 状態の便りは `chromeBrowser` イベント（`{ state, reason, dialog, product }`、`sessionId: null`）。**ホストの PC の画面（`isLocalRequest`）にだけ**流し、リモートの端末には送らない。つないだ画面には今の状態を最初に 1 回送る。
+
+## Chrome の中継（開発中）
+
+[ADR 0148](adr/0148-agent-browser-in-chrome.md)・[ADR 0153](adr/0153-chrome-connection-waits-indefinitely-behind-os-layer.md) の第 3 段。エージェントの agent-browser を、上の「Chrome への接続」の 1 本の上で、**会話の窓の範囲にだけ絞った CDP** につなぐ中継（`core/chrome/relay.mjs`）。**環境変数 `AGENT_HOST_AGENT_BROWSER=chrome` のときだけ**使う（開発と実機の確かめ用。設定にも画面にも出さない）。値が無い・ほかの値のときは、上の「エージェントの操作」の内蔵ブラウザーの道のまま何も変わらない。Electron の無いホスト（`npm start`）では値があっても使わない（接続が無いので内蔵ブラウザーの道のまま）。第 7 段の切り替えで環境変数を消し、この道だけにする。
+
+- **使い方**: `AGENT_HOST_AGENT_BROWSER=chrome npm run desktop`。先に設定 › ブラウザー › 「エージェントのブラウザー」で「つなぐ」を押して許可しておく。エージェントが接続の無いままつなぐと、中継は接続を求めて（Chrome に許可の確認が出る）約 20 秒（`connectWaitMs`）だけ待ち、つながらなければ「まだつながっていない」の失敗を返して待ちを外す（ほかに待つ人がいなければ確認も閉じる）。操作待ちのカード・`hand_to_user` で無期限に待つ形は第 7 段。
+- **渡し方**: ターンの開始（`browserEnvironment`）で、端点を parentPort の往復なしに core の中継から取る（`core/agent-browser.mjs` の `chromeRelayBrowser`）。`agent-browser.json` の `cdp`・環境変数は内蔵ブラウザーの道と同じで、`AGENT_BROWSER_PIN_TAB=1` を足す（agent-browser を自分のタブに縛る。3 つのバックエンドの env に入る。Codex は `shell_environment_policy.set` に、この値があるときだけ足す）。端点は `ws://127.0.0.1:<port>/devtools/browser/<鍵 48 桁>`（内蔵ブラウザーの中継と同じ形）。待ち受けのポートは中継に 1 つ、鍵は会話ごと。`Host` が `127.0.0.1:<port>` でない・相手が loopback でない・鍵が違う接続は断る。
+- **止める**: `stop(sessionId)` はつないでいる接続を閉じ、次の人の送信（`unlock` の `endpoint`。鍵を作り直す）まで再接続を断る。ターンの終わり（`endTurn`）は、そのタブで出ている確認を取り下げ、エージェントが動かしている印を外す。会話を消すと鍵を捨てる（窓を閉じるのは第 8 段）。画面から止める口（`browser.chromeStop`）は第 6 段。
+- **上りへ送るもの**: 最初のエージェントの接続で `Target.setDiscoverTargets` を 1 回だけ送り、範囲を知るのに使う（利用者のタブの `targetCreated`・`targetInfoChanged` も届くが、範囲の外のものは URL・題を覚えず、ログにも出さず、エージェントへ送らない）。**ブラウザー全体の `Target.setAutoAttach` は一度も送らない**（利用者の全タブに attach するため。エージェントが送ったものは中継の中で範囲のタブにだけ attach して真似る）。エージェントの接続が閉じたら、その接続が attach したセッションを上りで外す。上りが切れたら（Chrome が閉じた・許可の取り消し・「切る」）、エージェントの接続も閉じる（1011）。
+
+### 範囲
+
+範囲は会話の窓（`windowId`）の集合。中継が作った窓のタブと、範囲のタブが開いたタブ（`openerId`。`popup` 指定の `window.open` の別窓は、その窓も範囲に足す）。ほかの経路でその窓に入ったタブは `Browser.getWindowForTarget` で見つける（会話の窓が 1 つも無い間は問い合わせない）。`sessionId` はどのエージェントの接続が attach したものかを覚え（`Target.attachedToTarget` は応答より先に届くので、待っている attach に結ぶ）、ほかの接続・ほかの会話の `sessionId` は断る。セッションの自動 attach で付いた子（iframe・worker）は親と同じ接続のもの。
+
+**窓（仮）**: `Target.createTarget` は、context・`newWindow` などの指定を捨てて、`scope.openTab` で会話の窓に作る。第 3 段の `scope` は仮の窓で、`Target.createTarget({ newWindow: true, background: true })`＋`Browser.setWindowBounds({ windowState: 'minimized' })`。CDP の `createTarget` には窓を選ぶ引数が無いので、**2 つ目以降のタブも別の窓**になる（同じ会話の範囲には入る）。第 4 段で専用の窓（`chrome.exe --profile-directory`）と、その窓にタブを足す方法に差し替える。
+
+| | メソッド（ブラウザーの上） |
+|---|---|
+| 通す | `Browser.getVersion` |
+| 範囲のときだけ通す | `Target.getTargetInfo`・`Target.attachToTarget`（`flatten: true` を強いる）・`Target.detachFromTarget`（自分の接続のセッション）・`Target.closeTarget`・`Target.activateTarget`・`Browser.getWindowForTarget`・`Browser.getWindowBounds`／`Browser.setContentsSize`（会話の窓。agent-browser の `set viewport`） |
+| 真似る（上りへ送らない・送り方を変える） | `Target.setDiscoverTargets`（範囲のタブの `targetCreated` を配る）・`Target.getTargets`（範囲のタブだけ）・`Target.setAutoAttach`（範囲のタブにだけ attach）・`Target.getBrowserContexts`（空）・`Target.createTarget`（会話の窓に作る） |
+| 断る | 上のどれでもないもの全部。`Browser.close`・`Browser.crash`・`Browser.setDownloadBehavior`・`Browser.setWindowBounds`（窓を戻すと前面を取りうる）・`Browser.grantPermissions` など、`Storage.*`、`Network.getAllCookies`、`Target.createBrowserContext`・`disposeBrowserContext`・`exposeDevToolsProtocol`・`setRemoteLocations`・`sendMessageToTarget`、`SystemInfo.*` |
+
+セッションの上（タブ・iframe・worker）は通すのが既定で、`Target.*`（`Target.setAutoAttach` は iframe のために通す）・`Browser.*`・`Storage.*`・`Extensions.*`・`PWA.*`・`Autofill.*`・`Cast.*`・`SystemInfo.*`・`Tethering.*`・`Network.getAllCookies`・`Network.clearBrowserCookies`・`Network.clearBrowserCache`・`Page.setDownloadBehavior`・`Security.setIgnoreCertificateErrors` は断る。`Page.navigate` は http(s)（認証情報なし）と `about:blank` だけ。`Network.getCookies` は `urls` を外して今のページの分だけにする。`Network.setCookie`・`setCookies`・`deleteCookies` は今のページのホスト（とその親のドメイン）の Cookie だけ。
+
+### サイトの利用の確認（Chrome）
+
+`confirmAgentSites` が ON のとき、中継が範囲のタブに**自分の**セッションを attach して `Fetch.enable({ patterns: [{ urlPattern: '*', resourceType: 'Document', requestStage: 'Request' }] })` し、主フレームの要求（クリック・リダイレクト・スクリプト・`Page.navigate`）を**要求を出す前に**止めて、内蔵ブラウザーと同じ `createBrowserSiteApprovals`（`core/browser-confirm.mjs`）で聞く。許可で `Fetch.continueRequest`、断られたら `Fetch.failRequest('BlockedByClient')`。聞かないのは、iframe・同じ origin・そのタブで許可済みの origin・**エージェントが動かしていないタブ**（`Input.*`・`Runtime.evaluate`・`callFunctionOn`・`Page.navigate`・`reload`・`navigateToHistoryEntry` を送るまで。ターンの終わりで外れる＝人の操作には確認を挟まない）。許可は移った先の origin の分だけ残す。断られた移動は、`Page.navigate` と、確認が済む前に応答が返った操作のコマンドに、断られた文（確認の答えの文、無ければ「サイトへの移動が許可されませんでした。」）の失敗として返す。URL つきの `Target.createTarget` は、空のタブを作ってから確認を通して移り、断られたら閉じる。OFF にすると中継のセッションを外す（止めている要求は通す）。
+
+**`window.open` のタブの最初の要求は止められない**（実機。開いた側のセッションの `Fetch` は新しいタブに効かず、後から attach しても間に合わない）。範囲のタブが開いたタブ（`openerId`）は、URL が付いた時点（最初の要求の後）で、開いたタブと同じ origin・許可済みでなければ聞き、断られたら `Target.closeTarget` で閉じる。ON にした人への「Chrome では一部の移動を止められません」の注記は第 7 段で設定に出す。
+
+### agent-browser 0.38.1 の見え方（2026-10-06）
+
+Playwright の Chromium 151（一時のプロフィール。利用者の Chrome ではない）の前に記録用の中継を置いて記録し、偽の Chrome の通しでも同じ流れを確かめた。
+
+- つなぐと `Target.setDiscoverTargets` → `Target.getTargets` → タブに `Target.attachToTarget`（`flatten`）。セッションの上で `Page.enable`・`Runtime.enable`・`Network.enable`・`WebMCP.enable`・`Target.setAutoAttach`（`waitForDebuggerOnStart: true`）・`Runtime.runIfWaitingForDebugger`。コマンドごとに `Browser.getVersion` を送る。
+- **ブラウザー全体の `Target.setAutoAttach` は送らない。** `AGENT_BROWSER_PIN_TAB=1` では、つないだ最初に自分のタブを `Target.createTarget`（`about:blank`、`newWindow` なし）で作る。範囲のタブが 0 の新しい会話では最初に 2 つ作る（1 つ目は `about:blank` のまま残る。仮の窓では窓が 2 つ）。
+- **`close` は外の Chrome に何も送らない**（`Browser.close` を送らず、中継との接続を切るだけ）。`tab close` は `Target.closeTarget`。`set viewport` は `Emulation.setDeviceMetricsOverride` と `Browser.getWindowForTarget`＋`Browser.setContentsSize`。`cookies` はセッションの `Network.getCookies`（`urls` なし）。
+
+## OS ごとの層
+
+窓を前に出す・確認の窓を見つけて閉じる、といった OS で違う操作は、`core/chrome/os.mjs` の口（core から見た約束）の向こうの、Electron main の `desktop/chrome-os/<os>.cjs` に閉じ込める（ADR 0153）。`core/chrome/` のほかのファイルは OS の値（窓のハンドルなど）を持たず、窓は不透明な `WindowRef = { id }` で扱う。core と main は parentPort の `chrome-os`（`{ id, action, args }`）⇔ `chrome-os-result`（`{ id, ok, result | error }`）と、`chrome-os-ready { supported, reason, features }`（起動時と `chrome-os-ready-request` への返事）でつなぐ。
+
+| 口 | 意味 | Windows の実装（`desktop/chrome-os/win32.cjs`） |
+|---|---|---|
+| `capabilities()`・`ready()`・`onReady(fn)` | 層が使えるか・どの機能があるか。使えなければ `supported: false` | koffi を読めたか。今ある機能は `dialog`・`raise` |
+| `snapshotWindows()` | 今あるブラウザーの最上位の窓の印（確認の見つけ方の比べ元） | クラス `Chrome_WidgetWin_1` で、実行ファイルが `chrome.exe`・`msedge.exe` の窓（Electron のアプリは除く） |
+| `findPermissionDialog({ since })` | 確認の窓 | `since` に無い・見えている・最小化でない・外形が 1000×700 DIP 以下。題が既知なら優先、無ければブラウザーの窓が持ち主の窓が 1 つだけのとき |
+| `raise(ref)` | 窓を前に出す（最小化なら戻す） | `SetForegroundWindow`、前面が変わらなければ `AttachThreadInput`＋`BringWindowToTop`＋`SetForegroundWindow`。`method` は `direct`・`attach`・`failed`・`unknown` |
+| `yieldForeground(ref, { to })` | `ref` が前面を取っていたら `to` に返す | `raise` と同じ手順で `to` へ |
+| `foreground()` | 今の前面の窓（`{ id, browser }`） | `GetForegroundWindow`。`browser` はブラウザー自身の窓か |
+| `close(ref)` | 確認の窓を閉じる | `PostMessageW(WM_CLOSE)`。層が確認として出した `ref` で、同じ実行ファイルの窓のときだけ |
+
+どの口も、使えない OS・使えない機能・時間切れでは投げずに `null` / `false` を返す。層は自分が出した `ref` だけを覚え、**知らない値には何もしない**（ほかのアプリの窓を前に出す・閉じることが起きない）。koffi を読むのは `desktop/computer/win32.cjs` だけで、`desktop/main.cjs` が 1 回だけ読み、コンピューターの操作と Chrome の OS の層で表を共有する。読めなければ両方が unsupported。
+
+ほかの OS を足すとき: `desktop/chrome-os/<os>.cjs` を書いて `index.cjs` の `createChromeOs` で選ぶ（口の表の全部）。`core/chrome/locate.mjs` の `chromeHomes` の表に、その OS の Chrome の `User Data` を 1 行足す。接続・状態機械・設定の画面は変えない。第 4〜9 段で足す口（`locateBrowser`・`launchWindow`・`findWindowByNonce`・`minimize`・`watch`・`bounds`）は `capabilities().features` で有無を示す。
 
 ## 使える場所
 
@@ -100,7 +196,7 @@ View は DOM より上に描かれるので、メニュー・ダイアログ・�
 
 見出しは「外部の読み込み」（確認のスイッチ）と、デスクトップ版のホストの画面だけ「リンクの開き先」「エージェントのサイト利用」。ページの説明は画面ごとに変わる: ホストの画面は「会話やプレビューのリンクを開く場所、外部の読み込みの確認を選びます。」、それ以外（リモート・ブラウザーで開いた画面）は「外部の読み込みの確認を選びます。リンクの開き先は PC（ホスト）の画面で選びます。」。スイッチの下に、確認が効く範囲（プレビュー・内蔵ブラウザーで開いた PC の HTML ファイル・可視化の写し。Web のページには効かない。すべての画面で共通の設定）を弱い字で書く（承認済み、2026-10-02）。
 
-「リンクの開き先: 内蔵ブラウザー / 既定のブラウザー」。既定は内蔵ブラウザー。内蔵ブラウザーのときは HTML ファイルもここで開く（上の「PC のファイルのタブ」）。既定のブラウザーを選んだ人の HTML ファイルは、右パネルのプレビューのまま（⋯・Ctrl/⌘+クリック・「ブラウザーで開く」で既定のブラウザーへ出せる。外のブラウザーには確認の設定を効かせられない）。値はサーバーの `prefs.json` の `linkOpen`（`inapp` | `external`）で、`setPref` で保存し、`prefs` イベントでほかの画面にも届く。内蔵ブラウザーを使えない画面ではリンクの開き先の選択を出さない。リンクの開き先は `linkOpenTarget({ available, prefs })` で決め、使えない画面では設定によらず `external`（今どおり新しいタブか既定のブラウザー）。「エージェントの操作」には同梱した `agent-browser` の版を示す。
+「リンクの開き先: 内蔵ブラウザー / 既定のブラウザー」。既定は内蔵ブラウザー。内蔵ブラウザーのときは HTML ファイルもここで開く（上の「PC のファイルのタブ」）。既定のブラウザーを選んだ人の HTML ファイルは、右パネルのプレビューのまま（⋯・Ctrl/⌘+クリック・「ブラウザーで開く」で既定のブラウザーへ出せる。外のブラウザーには確認の設定を効かせられない）。値はサーバーの `prefs.json` の `linkOpen`（`inapp` | `external`）で、`setPref` で保存し、`prefs` イベントでほかの画面にも届く。内蔵ブラウザーを使えない画面ではリンクの開き先の選択を出さない。リンクの開き先は `linkOpenTarget({ available, prefs })` で決め、使えない画面では設定によらず `external`（今どおり新しいタブか既定のブラウザー）。「エージェントのブラウザー」（PC の Chrome への接続のつなぐ・切る。ホストの画面だけ。上の「Chrome への接続」）の下に、「エージェントの操作」として同梱した `agent-browser` の版を示す。
 
 
 ### 確認
@@ -113,7 +209,7 @@ ON のとき「許可したサイト」を表示し、止めた出どころを�
 
 ON のとき、エージェントが別の origin へ移る前に中継の `Page.navigate` と新しいタブの作成を保留する。ページ内の遷移・リダイレクト・新しい窓は Electron の `will-frame-navigate`・`will-redirect`・`setWindowOpenHandler` で止め、承認後に移動する。確認は `desktop/browser-navigation.cjs`、会話への受け渡しは `core/browser-confirm.mjs` が担当する。
 
-会話の承認カードに「<エージェント名> が <サイト> を使おうとしています」と「一度だけ / このサイトは常に / 断る」を出す。ログイン中のアカウント名が分かるときは「ログイン済み: <アカウント>」を添える。現在は GitHub の表示名 Cookie とログイン済みの印から読む。他のサイトの認証 Cookie から名前を推測しない。
+会話の承認カードに「<エージェント名> が <サイト> を使おうとしています」と「一度だけ / このサイトは常に / 断る」を出す。ログイン中のアカウント名（「ログイン済み」）は出さない（Chrome の Cookie を読まないので、内蔵ブラウザーの道でも Cookie を読まずに同じ形にした。[ADR 0153](adr/0153-chrome-connection-waits-indefinitely-behind-os-layer.md)）。Chrome の中継での止め方は上の「サイトの利用の確認（Chrome）」。
 
 「一度だけ」はその移動を通す。同じ origin 内の移動は聞き直さず、離れて戻れば再度聞く。「このサイトは常に」はエージェントの種類と origin の組で記録し、同じエージェントの別の会話にも効く。「断る」は中継の失敗として返す。承認待ちは通常の permission と同じ管理に入り、委譲元にもカードを出し、委譲の待機時計も承認待ちとして扱う。中断・タブの破棄・「止める」「引き継ぐ」では保留を取り消す。
 
@@ -140,7 +236,7 @@ ON のとき、エージェントが別の origin へ移る前に中継の `Page
 
 ## 検証
 
-`tests/unit/inapp-browser.mjs`（右パネルの表・アドレス欄・リンクの開き先・使える画面・preload・偽の electron での main のタブと位置・session は 1 つ・仮のキーからの付け替え・タブの列にプロフィールの選択が無いこと）と `tests/unit/server-ux.mjs`（`linkOpen` の保存）。`ply_browser` の骨組みは `tests/unit/browser-bridge.mjs`（鍵付きの口・ツールが無い間の断り方・サーバー越しにプロフィールの設定・コマンド・会話のメタ・中継の準備が無いこと・agy の束ね）。実機は fake バックエンドのデスクトップ版を別のデータ置き場と userData で起動し、http://example.com と手元の localhost のページで、タブ・戻る/進む・新しい窓・DevTools・既定のブラウザーで開く（呼ばれたことだけを記録）・メニューとの重なり・幅の変更・全面表示・別の窓を確かめた（2026-09-27）。`file:` の HTML（相対の CSS 付き）では、既定のブラウザーで開くが押せて実体のパスで `shell.openPath` が呼ばれること（呼ばれたことだけを記録）、ページのリンクで別の `file:` へ移った後と `.png` では押せないことを確かめた（2026-09-28）。
+`tests/unit/inapp-browser.mjs`（右パネルの表・アドレス欄・リンクの開き先・使える画面・preload・偽の electron での main のタブと位置・session は 1 つ・仮のキーからの付け替え・タブの列にプロフィールの選択が無いこと）と `tests/unit/server-ux.mjs`（`linkOpen` の保存）。Chrome への接続は `tests/unit/chrome-connection.mjs`（状態機械・出し直し・前に出す頻度・unsupported。偽の Chrome `tests/lib/fake-chrome.mjs`・偽の OS の層 `fake-chrome-os.mjs`・偽の時計。本物の Chrome・本物の `LOCALAPPDATA` は読まない。`tests/lib/test-env.mjs` が `AGENT_HOST_CHROME_USER_DATA` を存在しない場所に向ける）・`tests/unit/chrome-os.mjs`（偽の Win32 の表と parentPort の往復）・`tests/unit/server-chrome.mjs`（サーバー越し）・`tests/unit/chrome-settings.mjs`（設定の画面の字とボタン）。Chrome の中継は `tests/unit/chrome-relay.mjs`（範囲・利用者のタブの URL がエージェントの ws とログに出ないこと・断る一覧・`sessionId` の持ち主・上りへブラウザー全体の `setAutoAttach` を送らないこと・Fetch の確認と `window.open` の後追い・止める・鍵・上りが無い／切れたとき・`AGENT_BROWSER_PIN_TAB` の受け渡し、**同梱の agent-browser の本物を偽の Chrome＋中継につないだ通し**（`open`→`snapshot`→`click`→`tab new`→`close`。`tests/lib/agent-browser-cli.mjs`））。偽の Chrome の中身（窓・タブ・flatten のセッション・Fetch・ページの小さな型）は `tests/lib/fake-chrome-browser.mjs`。`ply_browser` の骨組みは `tests/unit/browser-bridge.mjs`（鍵付きの口・ツールが無い間の断り方・サーバー越しにプロフィールの設定・コマンド・会話のメタ・中継の準備が無いこと・agy の束ね）。実機は fake バックエンドのデスクトップ版を別のデータ置き場と userData で起動し、http://example.com と手元の localhost のページで、タブ・戻る/進む・新しい窓・DevTools・既定のブラウザーで開く（呼ばれたことだけを記録）・メニューとの重なり・幅の変更・全面表示・別の窓を確かめた（2026-09-27）。`file:` の HTML（相対の CSS 付き）では、既定のブラウザーで開くが押せて実体のパスで `shell.openPath` が呼ばれること（呼ばれたことだけを記録）、ページのリンクで別の `file:` へ移った後と `.png` では押せないことを確かめた（2026-09-28）。
 
 PC のファイルのタブ（2026-10-02）は `tests/unit/inapp-browser.mjs`（`webRequest` の判定・使い回し・一時の許可・写しの書き直し・データ置き場と UNC・移った先と Web のページに効かせないこと・止めた件数の一行・⋯ のファイルの操作・アドレス欄・設定の説明）と `tests/unit/file-actions.mjs`・`tests/unit/server-visualize.mjs`・`tests/unit/browser-confirm.mjs`・`tests/unit/agent-browser-relay.mjs`。実機は fake バックエンドのデスクトップ版を別のデータ置き場と userData で起動し、確認の ON/OFF・読み込む・設定・タブの使い回し・⋯・可視化のカード・`file:` の資源（データ置き場・uploads・UNC）・リモート 360 幅のプレビューと設定を確かめた。
 

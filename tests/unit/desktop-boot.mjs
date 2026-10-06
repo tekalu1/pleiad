@@ -12,6 +12,7 @@ import path from 'node:path';
 import vm from 'node:vm';
 import { EventEmitter } from 'node:events';
 import { fileURLToPath } from 'node:url';
+import { createRequire } from 'node:module';
 
 export const name = 'desktop-boot';
 export const title = 'main の boot: AGENT_HOST_HANDOVER の選び方（utilityProcess のまま・パイプの包み）と、サーバーが居なくなったときの扱い';
@@ -19,6 +20,9 @@ export const title = 'main の boot: AGENT_HOST_HANDOVER の選び方（utilityP
 const source = fs.readFileSync(new URL('../../desktop/main.cjs', import.meta.url), 'utf8');
 const desktop = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../desktop');
 const tick = () => new Promise(resolve => setImmediate(resolve));
+const workerMessages = createRequire(import.meta.url)('../../desktop/worker-messages.cjs');
+// 本物の橋と同じに message の受け手を 1 つ付ける偽物（受け手が worker の listener を増やさないことを見る）
+const listens = (calls, key) => worker => { worker.on('message', () => {}); if (key) calls[key] = worker; return { keepOnClose: () => false, close: () => {} }; };
 
 class FakeLink extends EventEmitter {
   constructor(calls) {
@@ -72,7 +76,7 @@ async function start({ env = {}, packaged = false, choice = 'link', connectError
   const dialog = { showMessageBox: (...args) => { calls.dialogs.push(args); return new Promise(() => {}); } };
   const electron = {
     app, BrowserWindow, WebContentsView: class {}, dialog,
-    utilityProcess: { fork: () => { calls.forks++; queueMicrotask(() => utility.emit('message', { type: 'ready', port: 7499, token: 'utility-token' })); return utility; } },
+    utilityProcess: { fork: (_file, _args, options) => { calls.forks++; calls.forkOptions = options; queueMicrotask(() => utility.emit('message', { type: 'ready', port: 7499, token: 'utility-token' })); return utility; } },
     shell: { openExternal: () => Promise.resolve() },
     ipcMain: { on: () => {}, handle: () => {} },
     Notification: class {}, nativeTheme: { shouldUseDarkColors: false }, safeStorage: {}, session: {}, nativeImage: {}, Menu: {}, powerMonitor: new EventEmitter(),
@@ -94,21 +98,24 @@ async function start({ env = {}, packaged = false, choice = 'link', connectError
     './update-auth.cjs': { prepareUpdateCheck: () => {} },
     './update-log.cjs': { createUpdateLog: () => ({}) },
     './server-port.cjs': { savedPort: () => 7499, rememberPort: (_file, port) => { calls.remembered = port; } },
-    './secret-bridge.cjs': { attachSecretBridge: worker => { calls.secretBridge = worker; } },
+    './secret-bridge.cjs': { attachSecretBridge: listens(calls, 'secretBridge') },
     './i18n.cjs': { t: key => key, setLocale: () => {}, resolveLocale: () => 'ja', initDesktopI18n: async () => {} },
-    './file-bridge.cjs': { attachFileBridge: () => {} },
-    './resident.cjs': { attachResident: () => ({ keepOnClose: () => false }) },
+    './file-bridge.cjs': { attachFileBridge: listens(calls) },
+    './resident.cjs': { attachResident: ({ worker }) => listens(calls)(worker) },
     './window-trust.cjs': { createWindowTrust: () => ({ register: () => {}, update: (_window, patch) => { calls.trusted = patch.origin; } }) },
-    './remote-windows.cjs': { createRemoteWindows: () => ({ attach: () => {}, attachWorker: () => {}, handleArgv: () => false }) },
+    './remote-windows.cjs': { createRemoteWindows: () => ({ attach: () => {}, attachWorker: listens(calls), handleArgv: () => false }) },
     './browser-panel.cjs': { createBrowserPanel: () => ({ attach: () => {} }) },
-    './agent-browser-bridge.cjs': { attachAgentBrowserBridge: () => ({ close: () => {} }) },
-    './computer/service.cjs': { attachComputerService: () => ({}) },
-    './browser-screencast-bridge.cjs': { attachBrowserScreencastBridge: () => ({ close: () => {} }) },
-    './computer-overlay.cjs': { attachComputerOverlay: () => ({ close: () => {} }) },
+    './agent-browser-bridge.cjs': { attachAgentBrowserBridge: listens(calls) },
+    './computer/service.cjs': { attachComputerService: listens(calls), withPerMonitorDpi: win32 => win32 },
+    './computer/win32.cjs': { loadWin32: () => { throw Object.assign(new Error('not windows'), { reason: 'platform' }); } },
+    './chrome-os/index.cjs': { createChromeOs: () => ({}), attachChromeOs: listens(calls) },
+    './browser-screencast-bridge.cjs': { attachBrowserScreencastBridge: listens(calls) },
+    './computer-overlay.cjs': { attachComputerOverlay: listens(calls) },
     './agent-browser-bin.cjs': { prepareAgentBrowserBin: () => '' },
     './notifications.cjs': { createDesktopNotifications: () => () => {} },
     './server-boot.cjs': serverBoot,
     './server-restart.cjs': { createServerRestarter: options => { calls.restarterOptions = options; return { restart: async () => { calls.restarts++; calls.order.push('restart'); return typeof restart === 'function' ? restart(calls) : restart; } }; } },
+    './worker-messages.cjs': workerMessages,
     './switch-screen.cjs': { createSwitchScreen: () => ({ attach: control => { calls.screenAttached = control; }, reset() {}, supported: () => false, ask: async () => 'later' }) },
     './switch.cjs': {
       startSwitch: options => { const control = { replacing: false, cancelled: false, cancel() { this.cancelled = true; }, options }; calls.switches.push(control); return control; },
@@ -133,10 +140,25 @@ export default async function (t) {
   {
     const { calls } = await start({ env: {} });
     t.ok('開発（パッケージ版でない）の既定は off: 今の utilityProcess で起こし、chooseServer は呼ばない', calls.forks === 1 && calls.chosen === null && calls.loads[0] === 'http://127.0.0.1:7499/?token=utility-token');
+    t.ok('off: サーバーの出力を userData の logs/server-dev.log へ向ける（開発版。core/server-log.mjs がサーバーの中で書く）', calls.forkOptions?.env?.AGENT_HOST_SERVER_LOG === path.join('test-user', 'logs', 'server-dev.log'));
+  }
+  {
+    const { calls, utility } = await start({ env: { AGENT_HOST_HANDOVER: 'off' }, packaged: true });
+    t.ok('off のパッケージ版: 出力は userData の logs/server.log', calls.forks === 1 && calls.forkOptions?.env?.AGENT_HOST_SERVER_LOG === path.join('test-user', 'logs', 'server.log'));
+    t.ok('橋が 9 つ message を受けても、worker の message の listener は 1 つ（MaxListenersExceededWarning を出さない。desktop/worker-messages.cjs）', utility.listenerCount('message') === 1 && calls.secretBridge !== utility);
+    const seen = [];
+    calls.secretBridge.on('message', message => seen.push(message.type));
+    utility.emit('message', { type: 'probe' });
+    calls.secretBridge.postMessage({ type: 'probe-out' });
+    t.ok('橋に渡すのは worker の包み: message は届き、postMessage は worker へ', seen.join() === 'probe' && calls.messages.some(m => m.type === 'probe-out'));
+  }
+  {
+    const { calls } = await start({ env: { AGENT_HOST_SERVER_LOG: 'D:/x/mine.log' } });
+    t.ok('AGENT_HOST_SERVER_LOG があればそれを使う', calls.forkOptions?.env?.AGENT_HOST_SERVER_LOG === 'D:/x/mine.log');
   }
   {
     const { calls, link } = await start({ env: {}, packaged: true });
-    t.ok('パッケージ版の既定は on: env が無くてもパイプの包みを worker にし、utilityProcess は起こさない', calls.forks === 0 && calls.connects === 1 && calls.secretBridge === link && calls.chosen !== null);
+    t.ok('パッケージ版の既定は on: env が無くてもパイプの包みを worker にし、utilityProcess は起こさない', calls.forks === 0 && calls.connects === 1 && link.listenerCount('message') === 1 && (calls.secretBridge.postMessage({ type: 'via-hub' }), calls.messages.at(-1)?.type === 'via-hub') && calls.chosen !== null);
   }
   {
     const { calls } = await start({ env: { AGENT_HOST_HANDOVER: '  ' }, packaged: true });
@@ -160,7 +182,7 @@ export default async function (t) {
   }
   {
     const { calls, link } = await start({ env: { AGENT_HOST_HANDOVER: 'on' }, packaged: true });
-    t.ok('on のパッケージ版: パイプの包みを worker にし、utilityProcess は起こさない', calls.forks === 0 && calls.connects === 1 && calls.secretBridge === link);
+    t.ok('on のパッケージ版: パイプの包みを worker にし、utilityProcess は起こさない', calls.forks === 0 && calls.connects === 1 && link.listenerCount('message') === 1 && (calls.secretBridge.postMessage({ type: 'via-hub' }), calls.messages.at(-1)?.type === 'via-hub'));
     t.ok('on: 付け直した ready のトークン・ポートで窓を読み込み、ポートを覚える', calls.loads[0] === 'http://127.0.0.1:7611/?token=attached-token' && calls.remembered === 7611);
     t.ok('on: chooseServer に配布物の resources・実行ファイル・版・保存したポート・cwd を渡す', calls.chosen.resourcesPath === 'C:\\inst\\resources' && calls.chosen.execPath === 'C:\\inst\\Ply.exe' && calls.chosen.appVersion === '1.2.3' && calls.chosen.port === 7499 && calls.chosen.cwd === 'test-home' && calls.chosen.dataDir === 'D:\\data');
   }

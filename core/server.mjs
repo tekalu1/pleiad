@@ -104,7 +104,7 @@ import { createVisualizationCollector, visualizeInstructions, snapshotResponse, 
 import { plyParts } from './instruction-amount.mjs';
 import { computerPrompt } from './backends/computer-delivery.mjs';
 import { MIN_BUDGET, MAX_BUDGET } from '../web/instruction-amount.mjs';
-import { parentPortBrowser, browserEnvironment, browserInstruction, forgetBrowserEnvironment } from './agent-browser.mjs';
+import { parentPortBrowser, browserEnvironment, browserInstruction, forgetBrowserEnvironment, agentBrowserMode, chromeRelayBrowser } from './agent-browser.mjs';
 import { getMainPort, setMainPortSource } from './main-port.mjs';
 import { createMainLink, handoverEnabled } from './main-link.mjs';
 import { createOrphanGuard } from './orphan-guard.mjs';
@@ -114,6 +114,10 @@ import { markRuntimeInUse } from './runtime-use.mjs';
 import { cardOf, restoreFields, promptHash, CARD_MAX_BYTES } from './turn-card.mjs';
 import { readAdoptSources, readHolderSources, ADOPT_TURN_MARK } from './adopt.mjs';
 import { parentPortScreencast, createScreencastHub, screencastCommand } from './browser-screencast.mjs';
+import { createChromeConnection } from './chrome/connection.mjs';
+import { chromeHomes } from './chrome/locate.mjs';
+import { parentPortChromeOs } from './chrome/os.mjs';
+import { createChromeRelay } from './chrome/relay.mjs';
 import { createBrowserSiteApprovals } from './browser-confirm.mjs';
 import { createBrowserBridge, BROWSER_MCP_PATH } from './browser-bridge.mjs';
 import { validBrowserPref, externalOrigin } from '../web/browser-confirm-policy.mjs';
@@ -169,6 +173,17 @@ const agentBrowser = parentPortBrowser(hostedPort, { dataDir: store.dataDir });
 const screencastBridge = parentPortScreencast(hostedPort);
 const screencastHub = screencastBridge ? createScreencastHub({ bridge: screencastBridge }) : null;
 const screencastClients = new WeakMap();   // ws -> hub に渡す端末
+// エージェントのブラウザー（PC の Chrome）への接続 1 本（core/chrome/connection.mjs、ADR 0148・0153）。デスクトップ版だけ。OS ごとの層は main（desktop/chrome-os）
+const chromeConnection = process.parentPort
+  ? createChromeConnection({ locate: chromeHomes()[0] ?? null, os: parentPortChromeOs(process.parentPort), log: line => console.log(`  ${line}`) })
+  : null;
+// エージェントのブラウザーを PC の Chrome の絞り込みの中継へ向ける（core/chrome/relay.mjs）。環境変数 AGENT_HOST_AGENT_BROWSER=chrome のときだけ
+// （開発と実機の確かめ用。docs/inapp-browser.md「Chrome の中継（開発中）」）。無ければ内蔵ブラウザーの道のまま。確認は下の browserSiteApprovals
+const chromeRelay = chromeConnection && agentBrowserMode() === 'chrome'
+  ? createChromeRelay({ connection: chromeConnection, authorize: (request, signal) => browserSiteApprovals(request, signal), deniedMessage: () => t('permission.browserSiteDenied'), log: line => console.log(`  ${line}`) })
+  : null;
+// 会話の端点を出す口（ターンの開始・新しい会話の id の付け替え・ターンの終わり・会話の削除）。Chrome の道でなければ内蔵ブラウザーの橋そのもの
+const agentBrowserEndpoints = chromeRelay ? chromeRelayBrowser(chromeRelay) : agentBrowser;
 // A nested server may inherit another conversation's shell environment; only this process's bridge can issue browser access.
 delete process.env.AGENT_BROWSER_CONFIG;
 delete process.env.AGENT_BROWSER_SESSION;
@@ -369,6 +384,7 @@ const remote = createRemoteHost({ dataDir: store.dataDir, cipher: secretCipher, 
 const notifyPresence = createPresence();
 const notifySettings = createNotifySettings({ dataDir: store.dataDir });
 const connectionDevices = new WeakMap();   // ws -> 中継越しの端末（x-pleiad-device。ホストの PC の画面は無い）
+const hostScreens = new WeakSet();   // ホストの PC の画面からの接続（isLocalRequest）。Chrome への接続の状態はここだけに流す
 const pushNotifier = createPushNotifier({
   devices: () => remote.notifyTargets(),
   presence: notifyPresence,
@@ -1985,6 +2001,13 @@ function emitGlobal(event) {
   }
 }
 
+/** Chrome への接続の状態の便り。ホストの PC の画面だけに流し（中継越しの端末には送らない）、取りこぼしても次の状態で足りるので溜めない */
+const chromeBrowserFrame = state => ({ kind: P.EVENT, event: { type: 'chromeBrowser', sessionId: null, ...state } });
+chromeConnection?.onChange(state => {
+  const text = JSON.stringify(chromeBrowserFrame(state));
+  for (const ws of runtime.sockets) if (ws.readyState === ws.OPEN && hostScreens.has(ws)) ws.send(text);
+});
+
 /**
  * グループ（fork でつながった会話のまとまり、docs/design-system.md §4.1）を一覧の行から数える。
  * まとまりは持ち物ではなく、**親子でつながり・状態が同じ・人が外していない**ことで決まる。
@@ -2224,7 +2247,7 @@ function makeEmit(turn) {
     // （差し替えると sidecar に "null" キーの行が生える）。
     if (event?.type === "session" && event.sessionId && !turn.info.sessionId) {
       turn.info.sessionId = event.sessionId;
-      if (turn.browserRelayId && turn.browserRelayId !== event.sessionId) { agentBrowser?.rebind(turn.browserRelayId, event.sessionId); turn.browserRelayId = event.sessionId; }
+      if (turn.browserRelayId && turn.browserRelayId !== event.sessionId) { agentBrowserEndpoints?.rebind(turn.browserRelayId, event.sessionId); turn.browserRelayId = event.sessionId; }
       turn.compactionRevision = compactionScheduler.revision(event.sessionId);
       for (const read of liveReads) if (read.sessionId === event.sessionId) read.turn = turn;
       runtime.turns.delete(turn.key);
@@ -2493,6 +2516,7 @@ async function applyBrowserPref(key, value) {
   const prefs = await savePref(key, value);
   agentBrowser?.prefs(prefs);
   agentBrowser?.loadPolicy(prefs);
+  chromeRelay?.setConfirm(prefs.confirmAgentSites === true);
   return prefs;
 }
 
@@ -2921,7 +2945,8 @@ async function deleteSessionOf(sessionId) {
     const cleanups = [
       history.forgetPresents(sessionId),
       computerShots.removeSession(sessionId),
-      forgetBrowserEnvironment({ bridge: agentBrowser, dataDir: store.dataDir, sessionId }),
+      forgetBrowserEnvironment({ bridge: agentBrowserEndpoints, dataDir: store.dataDir, sessionId }),
+      Promise.resolve().then(() => chromeRelay?.forget(sessionId)),
       settingApprovals?.forget(sessionId),
       ...[...cwds].map(cwd => gitActivity.forget(cwd, sessionId)),
     ];
@@ -3286,6 +3311,14 @@ const opsCompat = {
     return { id: String(id), deleted: true };
   },
 };
+
+// エージェントのブラウザー（PC の Chrome）への接続（browser.chrome*。core/ops/browser.mjs）。状態は chromeBrowser イベントでホストの画面へ流す
+const opsChrome = chromeConnection ? {
+  status: () => chromeConnection.state(),
+  connect: async () => { await chromeConnection.connect(); return chromeConnection.state(); },
+  disconnect: () => { chromeConnection.disconnect(); return chromeConnection.state(); },
+  raiseDialog: async () => { const result = await chromeConnection.raiseDialog(); return { raised: result.ok === true, method: String(result.method ?? 'none') }; },
+} : null;
 
 // コンピューターの操作を止める（computer.stop。docs/computer-use.md「computerStop」）。止める側なので、リモートの端末からも AI からも受ける
 const opsComputer = {
@@ -3852,6 +3885,7 @@ function opsDeps(lng = currentLocale()) {
     notifications: inbox,
     compat: opsCompat,
     computer: opsComputer,
+    chrome: opsChrome,
     // MCP・Hooks・コンテキスト・リモート・接続先の操作（core/ops/mcp.mjs・hooks.mjs・context.mjs・remote.mjs。ADR 0095）。WS の同じ名前のコマンドがしていた処理
     mcp: opsMcp,
     hooks: opsHooks,
@@ -4273,7 +4307,8 @@ const askPermission = async ({ toolName, input, sessionId, toolUseID, title, sig
   });
 };
 
-agentBrowser?.configureAuthorization(createBrowserSiteApprovals({
+// サイトの利用の確認（ADR 0042）。内蔵ブラウザーの橋と Chrome の中継が同じものを使う
+const browserSiteApprovals = createBrowserSiteApprovals({
   getPrefs: store.getPrefs,
   getAgent: async id => {
     const turn = runtime.turns.get(id) ?? [...runtime.turns.values()].find(turn => turn.browserRelayId === id);
@@ -4281,7 +4316,9 @@ agentBrowser?.configureAuthorization(createBrowserSiteApprovals({
   },
   askPermission, translate: t,
   remember: async site => { const prefs = await store.rememberBrowserSite(site); emitGlobal({ type: 'prefs', sessionId: null, prefs, locale }); },
-}));
+});
+agentBrowser?.configureAuthorization(browserSiteApprovals);
+chromeRelay?.setConfirm((await store.getPrefs()).confirmAgentSites === true);
 agentBrowser?.prefs(await store.getPrefs());
 agentBrowser?.loadPolicy(await store.getPrefs());
 
@@ -5183,7 +5220,7 @@ async function beginTurn(ctx) {
     // エージェントに渡す文（指示・ツールの説明・タイトル生成など）の言語。会話ごとに決めて保存したもの
     locale: agentLocale,
     visualizeInstructions: visualizeInstructions(agentLocale),
-    browserEnv: await browserEnvironment({ bridge: agentBrowser, dataDir: store.dataDir, sessionId: sessionId || turn.key, unlock: turn.userInitiated }).catch(error => { console.error('agent browser unavailable:', error.message); return null; }),
+    browserEnv: await browserEnvironment({ bridge: agentBrowserEndpoints, dataDir: store.dataDir, sessionId: sessionId || turn.key, unlock: turn.userInitiated }).catch(error => { console.error('agent browser unavailable:', error.message); return null; }),
     browserInstructions: null,
     // ply_browser。内蔵ブラウザーを渡すターンだけ（下で入れる）
     browserRuntime: null,
@@ -5692,7 +5729,7 @@ async function endTurn(turn, emit, { record = true } = {}) {
       emitGlobal({ type: 'userMessage.dropped', sessionId: sent.sessionId, messageId: id });
     }
   }
-  agentBrowser?.endTurn(turn.info.sessionId || turn.key);
+  agentBrowserEndpoints?.endTurn(turn.info.sessionId || turn.key);
   // ロックの解放、止めた印・このターンの拒否の消去、main への後始末（押したままの入力を離し、オーバーレイを消す）
   if (computerLock.endTurn(turn.presentKey)) computerDriver?.turnEnded(turn.presentKey);
   notifyFree(turn.key);
@@ -6384,6 +6421,9 @@ wss.on("connection", (ws, req) => {
     // 送信予定の時刻をこの PC の時刻でも添えるため（見ている端末と時刻帯が違うとき。ADR 0103）
     hostTimeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
   }));
+  // エージェントのブラウザー（PC の Chrome）への接続の今の状態。ホストの PC の画面だけ（リモートの端末へは送らない）
+  if (local) hostScreens.add(ws);
+  if (chromeConnection && local) ws.send(JSON.stringify(chromeBrowserFrame(chromeConnection.state())));
   ws.on("close", () => {
     detach(ws);
     notifyPresence.clear(ws);
@@ -6937,10 +6977,17 @@ wss.on("connection", (ws, req) => {
           // hostName は添付の「ホストから <ホスト名>」の見出し（リモートの印の無いブラウザーで使う）
           // pcBrowser: この接続から PC の内蔵ブラウザーを見られるか（デスクトップ版で、リモートの接続のとき）
           return reply(true, { osActions: local, hostName: os.hostname(), pcBrowser: !local && !!screencastBridge?.ready,
+            // エージェントのブラウザー（PC の Chrome）への接続の入口。ホストの PC の画面だけ。Electron の無いホストは false、OS の層が使えなければ 'unsupported'
+            chromeBrowser: local && chromeConnection ? (chromeConnection.state().state === 'unsupported' ? 'unsupported' : 'available') : false,
             computerUse: computerUseCapability({ hasParentPort: Boolean(computerDriver), platform: computerDriver?.kind === 'fake' ? 'win32' : undefined, ready: computerDriver?.state() ?? null }) });
         // コンピューターの操作を止める（docs/computer-use.md「computerStop」）。ホストの OS を操作する命令ではなく、止める側なので、リモートの端末からも受ける（computer.stop）
         case "computerStop":
           return viaOp('computer.stop');
+        // エージェントのブラウザー（PC の Chrome）への接続。つなぐ・切る・前に出すはホストの PC の画面だけ（browser.chrome*。ops が断る）
+        case 'chromeStatus': return viaOp('browser.chromeStatus');
+        case 'chromeConnect': return viaOp('browser.chromeConnect');
+        case 'chromeDisconnect': return viaOp('browser.chromeDisconnect');
+        case 'chromeRaiseDialog': return viaOp('browser.chromeRaiseDialog');
         case "resolvePath": case "revealPath": case "openPath": {
           const hostAction = msg.command !== 'resolvePath';
           if (hostAction && !local) return reply(false, t('files.remoteOnly'));
@@ -7290,6 +7337,9 @@ mainPort.on("message", async ({ data }) => {
   }
   if (data?.type === "shutdown") {
     void voiceHost.close();   // 通話の使用量の台帳を書き切る
+    // Chrome に許可の確認を残して終わらない（確認が出ていれば閉じる）。main の返事を待つので、長くても 2 秒まで
+    chromeRelay?.close();
+    if (chromeConnection) await Promise.race([chromeConnection.close(), new Promise(resolve => setTimeout(resolve, 2000))]).catch(() => {});
     try { finishShutdown(store.flushNow, () => runtime.turns.size > 0 || agentTasks.busy); }
     catch (e) {
       console.error('session store shutdown save failed:', e?.code ?? e?.message ?? e);

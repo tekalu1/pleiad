@@ -13,20 +13,15 @@ function attachAgentBrowserBridge(worker, panel, { handover = false, reportMs = 
   const idleTimers = new Map();
   const pending = new Map();
   let enabled = false, serial = 0;
-  const navigation = createBrowserNavigation({ enabled: () => enabled, authorize: async ({ sessionId, tabId, url, webContents, signal }) => {
-    let account;
-    // Only a known display cookie, never authentication tokens or guessed identities.
-    if (new URL(url).hostname === 'github.com') {
-      const cookies = await webContents.session.cookies.get({ url: 'https://github.com/' }).catch(() => []);
-      if (cookies.some(cookie => cookie.name === 'logged_in' && cookie.value === 'yes')) account = cookies.find(cookie => cookie.name === 'dotcom_user')?.value;
-    }
+  // 確認のカードに「ログイン済み」（アカウント名）は出さない（Cookie を読まない。ADR 0153）
+  const navigation = createBrowserNavigation({ enabled: () => enabled, authorize: async ({ sessionId, url, signal }) => {
     if (signal.aborted) return { allow: false };
     return new Promise(resolve => {
       const id = `navigation-${++serial}`;
       const cancel = () => { pending.delete(id); worker.postMessage({ type: 'agent-browser-authorize-cancel', id }); resolve({ allow: false }); };
       pending.set(id, answer => { signal.removeEventListener('abort', cancel); resolve(answer); });
       signal.addEventListener('abort', cancel, { once: true });
-      worker.postMessage({ type: 'agent-browser-authorize', id, sessionId, url, account });
+      worker.postMessage({ type: 'agent-browser-authorize', id, sessionId, url });
     });
   } });
   panel.setNavigationGuard(navigation);

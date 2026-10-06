@@ -93,6 +93,11 @@ function createWin32(koffi) {
     AreDpiAwarenessContextsEqual: user32.func('bool __stdcall AreDpiAwarenessContextsEqual(intptr_t a, intptr_t b)'),
     SetForegroundWindow: user32.func('bool __stdcall SetForegroundWindow(intptr_t hwnd)'),
     ShowWindow: user32.func('bool __stdcall ShowWindow(intptr_t hwnd, int cmd)'),
+    AttachThreadInput: user32.func('bool __stdcall AttachThreadInput(uint32_t idAttach, uint32_t idAttachTo, bool attach)'),
+    BringWindowToTop: user32.func('bool __stdcall BringWindowToTop(intptr_t hwnd)'),
+    PostMessageW: user32.func('bool __stdcall PostMessageW(intptr_t hwnd, uint32_t msg, uintptr_t wParam, intptr_t lParam)'),
+    GetDpiForWindow: user32.func('uint32_t __stdcall GetDpiForWindow(intptr_t hwnd)'),
+    GetCurrentThreadId: kernel32.func('uint32_t __stdcall GetCurrentThreadId()'),
     CreateCompatibleDC: gdi32.func('intptr_t __stdcall CreateCompatibleDC(intptr_t hdc)'),
     CreateCompatibleBitmap: gdi32.func('intptr_t __stdcall CreateCompatibleBitmap(intptr_t hdc, int w, int h)'),
     SelectObject: gdi32.func('intptr_t __stdcall SelectObject(intptr_t hdc, intptr_t obj)'),
@@ -338,6 +343,19 @@ function createWin32(koffi) {
       if (f.IsIconic(hwnd)) f.ShowWindow(hwnd, 9); // SW_RESTORE
       return !!f.SetForegroundWindow(hwnd);
     },
+    // ---- Chrome の確認の窓の操作（desktop/chrome-os/win32.cjs が使う。koffi を読むのはこのファイルだけ）
+    /** 窓を前に出す 1 手。前に出たかは foreground() で確かめる */
+    setForeground: hwnd => !!f.SetForegroundWindow(hwnd),
+    showWindow: (hwnd, cmd) => !!f.ShowWindow(hwnd, cmd),
+    bringToTop: hwnd => !!f.BringWindowToTop(hwnd),
+    /** 窓を作ったスレッドの id */
+    windowThread: hwnd => f.GetWindowThreadProcessId(hwnd, [0]),
+    currentThread: () => f.GetCurrentThreadId(),
+    attachThreadInput: (from, to, attach) => !!f.AttachThreadInput(from, to, attach),
+    /** 所有している窓（GW_OWNER）。無ければ 0 */
+    ownerOf: hwnd => num(f.GetWindow(hwnd, 4)),
+    dpiForWindow(hwnd) { try { return f.GetDpiForWindow(hwnd) || 96; } catch { return 96; } },
+    postMessage: (hwnd, msg, wParam = 0, lParam = 0) => !!f.PostMessageW(hwnd, msg, wParam, lParam),
     /** ShellExecute で開く。引数は渡さない。成功は戻り値 > 32 */
     async shellOpen(target, dir = null) {
       const code = num(await callAsync(f.ShellExecuteW, 0, 'open', target, null, dir, 1));

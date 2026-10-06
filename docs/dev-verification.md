@@ -48,6 +48,7 @@
 - 数秒で消える表示（脇の下の「元に戻す」は 12 秒）は、出す `eval` と `screenshot` を 1 回のコマンドでつなげて撮る。別々に打つと撮る前に消える。
 - 設定のページは中の欄がスクロールするので、`screenshot --full-page` では下が切れる。`resize 1280 1900` のように窓を縦に伸ばしてから撮る。
 - **切り替えを待つ表示**（無停止の更新。`web/switch-notice.mjs`）は、実機の更新を待たずに `tests/browser/switch-notice.cjs`（`playwright-cli --raw run-code --filename=…`）で確かめる（2026-10-06）。fake のサーバーを別ポート・別のデータ置き場で立て、`authLogin { backend: 'fake' }` と「あとで」（`#closeOnboarding`）を済ませてから流す。新しい main の橋（preload の `plyDesktop.switch`）と更新の口（`plyDesktop.update`）は `addInitScript` の偽物で、`window.__switch(payload)` で状態を渡し、画面の操作は `window.__acts` に溜まる（`window.__setUpdate` で更新の状態を替える）。ライト・ダーク・640px・360px を `temporary/screenshots/switch-notice-*.png` に撮る。`addInitScript` は同じセッションで積み重なるので、スタブを替えたら `playwright-cli close` で閉じて開き直す。dismiss（閉じる）の印は sessionStorage に残るので、流す前に消す（スクリプトの先頭）。
+- **設定 › ブラウザーの「エージェントのブラウザー」**（Chrome への接続。`web/browser-settings.mjs`）は、Electron も本物の Chrome も使わずに web の画面で状態 A〜D にして撮れる（2026-10-06）。サーバーは `tests/lib/parent-port-server.mjs`（parentPort の身代わり。Chrome の OS の層を「使える」と答える）を入口に、`AGENT_HOST_CHROME_USER_DATA` を偽の Chrome（`tests/lib/fake-chrome.mjs` の `startFakeChrome({ permission: 'hold' })`）の `userDataDir` にして起こす。節は内蔵ブラウザーのある画面でだけ出るので、`page.addInitScript(() => { window.plyDesktop = { browser: { command: async () => ({}), layout: () => {}, onState: () => () => {} } }; })` を置く（無いと節が出ない）。A は `chrome.turnOff()` の後に「つなぐ」、B は `turnOn()`、C は B で `chrome.cancel()`、D は `approve()`。
 
 ## fake で画面を出す
 

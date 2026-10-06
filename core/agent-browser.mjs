@@ -205,6 +205,29 @@ export function parentPortBrowser(port, { timeoutMs = 10_000, connectWaitMs = 30
   };
 }
 
+/**
+ * エージェントのブラウザーの道。環境変数 AGENT_HOST_AGENT_BROWSER=chrome のときだけ、PC の Chrome の中継（core/chrome/relay.mjs）を使う
+ * （開発と実機の確かめ用。設定にも画面にも出さない。docs/inapp-browser.md「Chrome の中継（開発中）」）。それ以外は内蔵ブラウザーの中継
+ */
+export function agentBrowserMode(env = process.env) {
+  return env.AGENT_HOST_AGENT_BROWSER === 'chrome' ? 'chrome' : 'inapp';
+}
+
+/**
+ * Chrome の中継を browserEnvironment の bridge の形にする。endpoint は parentPort の往復なしで core の中継から取る。
+ * pinTab: agent-browser を自分のタブに縛る（AGENT_BROWSER_PIN_TAB=1。無いと最初の open が「アクティブなタブ」を書き換えうる。ADR 0148）
+ */
+export function chromeRelayBrowser(relay) {
+  const configIds = new Map();
+  return {
+    pinTab: true,
+    endpoint: (sessionId, options) => relay.endpoint(sessionId, options),
+    rebind(from, to) { configIds.set(to, configIds.get(from) ?? from); relay.rebind(from, to); },
+    configSessionId: sessionId => configIds.get(sessionId) ?? sessionId,
+    endTurn: sessionId => relay.endTurn(sessionId),
+  };
+}
+
 export async function browserEnvironment({ bridge, dataDir, sessionId, unlock = false }) {
   if (!bridge || !sessionId) return null;
   const url = await bridge.endpoint(sessionId, { unlock });
@@ -217,7 +240,7 @@ export async function browserEnvironment({ bridge, dataDir, sessionId, unlock = 
   await fs.mkdir(dir, { recursive: true, mode: 0o700 });
   await fs.mkdir(socketDir, { recursive: true, mode: 0o700 });
   await fs.writeFile(file, JSON.stringify({ cdp: url }), { mode: 0o600 });
-  return { AGENT_BROWSER_CONFIG: file, AGENT_BROWSER_SESSION: session, AGENT_BROWSER_SOCKET_DIR: socketDir, AGENT_BROWSER_NAMESPACE: '' };
+  return { AGENT_BROWSER_CONFIG: file, AGENT_BROWSER_SESSION: session, AGENT_BROWSER_SOCKET_DIR: socketDir, AGENT_BROWSER_NAMESPACE: '', ...(bridge.pinTab ? { AGENT_BROWSER_PIN_TAB: '1' } : {}) };
 }
 
 /** 会話を消したときに、その会話の agent-browser の設定とソケットの置き場を消す（sessions.delete。ADR 0147） */

@@ -72,7 +72,7 @@ export const PLAY_PATH = "M8.5 6.2v11.6a.8.8 0 0 0 1.2.7l9-5.8a.8.8 0 0 0 0-1.4l
 export const pausedCount = (messages) => (messages ?? []).filter((m) => m?.status === "paused").length;
 
 /** 解除の時刻。今日なら「2:30」、ほかの日は「10/7（水）9:00」。分からなければ null */
-export const limitTime = (at) => Number.isFinite(at) ? whenText(at) : null;
+export const limitTime = (at, now = Date.now()) => Number.isFinite(at) ? whenText(at, now) : null;
 
 /** 解除時刻の後、自動の再開を待つ長さ。これを過ぎたら時計をやめる */
 export const LIMIT_GRACE_MS = 2 * 60_000;
@@ -118,9 +118,9 @@ export function resumeNoteText(paused, interrupted, now = Date.now()) {
 }
 
 /** 会話の末尾の 2 行目の文（上限の会話）。自動のとき「2:30 に自動で再開します」、外したとき「自動では再開しません。…」 */
-export function limitLineNote(interrupted) {
+export function limitLineNote(interrupted, now = Date.now()) {
   if (interrupted.autoResume !== true) return t('interrupt.limitNoAuto');
-  const time = limitTime(interrupted.resetsAt);
+  const time = limitTime(interrupted.resetsAt, now);
   return time ? t('interrupt.limitAutoAt', { time }) : t('interrupt.limitAutoPoll');
 }
 

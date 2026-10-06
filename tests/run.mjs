@@ -57,6 +57,16 @@ const SUITES = [
   './unit/server-browser-rebind.mjs',
   // ply_browser の骨組み（ADR 0148）: 鍵付きの口・プロフィール（ADR 0078）の削除後の形・agy の束ね
   './unit/browser-bridge.mjs',
+  // Chrome への接続（ADR 0148・0153）: A〜D の状態機械・無期限の待ち・確認の出し直し・OS の層が無いとき（偽の Chrome・偽の OS の層・偽の時計）
+  './unit/chrome-connection.mjs',
+  // Chrome の絞り込みの中継（ADR 0148・0153）: 会話の窓の範囲・断る／真似る一覧・sessionId の持ち主・サイトの利用の確認（Fetch・window.open）・止める・鍵・agent-browser の本物の通し（偽の Chrome）
+  './unit/chrome-relay.mjs',
+  // Chrome への接続の OS の層（Windows）: 確認の窓の見つけ方・前面化・閉じる・使えない OS・parentPort の往復（偽の Win32 の表）
+  './unit/chrome-os.mjs',
+  // Chrome への接続（サーバー越し）: browser.chrome* の操作・chromeBrowser イベントはホストの画面だけ・使えない OS / Electron の無いホスト（偽の Chrome・parentPort の身代わり）
+  './unit/server-chrome.mjs',
+  // 設定 › ブラウザー › エージェントのブラウザー: 状態ごとの字とボタン・使えない環境（DOM の代役）
+  './unit/chrome-settings.mjs',
   './unit/browser-confirm.mjs',
   // 会話の MCP の口を同じトークンで開き直す open({ token })（無停止の更新 2b-3）
   './unit/mcp-bridge-token.mjs',
@@ -343,6 +353,8 @@ const SUITES = [
   './unit/desktop-boot.mjs',
   // サーバーが落ちたときの起こし直し（無停止の更新 段階 2 の 2e）: 同じ版・トークン・ポートで起こす・起こせなければ失敗・続けて落ちたらやめる・本物のサーバーを強制終了して起こし直す
   './unit/desktop-server-restart.mjs',
+  // main の橋の message の受け手を 1 つの listener で配る（MaxListenersExceededWarning を出さない）
+  './unit/desktop-worker-messages.mjs',
   // 新しい版のサーバーへの切り替え（無停止の更新 1-6）: 作業が 0 件まで待つ・ロック・S1 の終わり・S2・前の版へ戻す・合わない版は聞く・今すぐ中断。事前の確かめの出力
   './unit/desktop-switch.mjs',
   './unit/desktop-switch-screen.mjs',
