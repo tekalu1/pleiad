@@ -8,7 +8,7 @@ import Foundation
 // state: connecting | connected | offline | host-offline | revoked | stopped
 // Backoff 0.5 s -> 30 s doubling (±25 % jitter), reset after 10 s connected. Streams never survive a reconnect.
 // iOS suspends the app in the background, which kills the relay socket: back in the foreground the proxy calls
-// checkNow() (ADR 0141).
+// checkNow() (ADR 0144).
 
 public struct LinkStatus: Equatable {
     public var state: String

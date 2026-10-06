@@ -466,7 +466,7 @@ window.plyDesktop = { platform, setTitleBar, notifyCompletion, onNotificationCli
 
 **A 案を推奨する。** デスクトップと同じ仕組み・同じ試験で済み、`web/` に手を入れない。B 案は「他のアプリから届かない」利点はあるが、トークンで塞げる危険と引き換えに、WebSocket の再実装と secure context の不確かさを抱える。
 A 案で WKWebView が `127.0.0.1` を secure context と見なさなかった場合に備え、`crypto.randomUUID()`（`web/client.mjs:3123`）には `crypto.getRandomValues` で作る代わりを置いておく（数行。ブラウザー版の LAN 利用でも効く）。それでも詰まる箇所が出たら B 案に切り替える（プロキシの内側 = トンネルとフレームはどちらの案でも同じ）。
-iOS も A 案にした（2026-10-06、[ADR 0141](adr/0141-ios-remote-core-in-swift.md)）。背面で切れるのは中継への線で、これは B 案でも同じく切れるので差にならない。A 案で増えるのは、前面に戻ったときに同じポートで待ち受け直すことだけ。
+iOS も A 案にした（2026-10-06、[ADR 0144](adr/0144-ios-remote-core-in-swift.md)）。背面で切れるのは中継への線で、これは B 案でも同じく切れるので差にならない。A 案で増えるのは、前面に戻ったときに同じポートで待ち受け直すことだけ。
 
 実装（Android、2026-09-23、issue #16）:
 
@@ -488,7 +488,7 @@ iOS も A 案にした（2026-10-06、[ADR 0141](adr/0141-ios-remote-core-in-swi
   - 画面を押して確かめるときは、ホストの窓の WebView の DevTools の口を使う（2026-09-27）: `adb -s <serial> forward tcp:9333 localabstract:webview_devtools_remote_$(adb -s <serial> shell pidof com.procway.pleiad)` の後、`http://127.0.0.1:9333/json/list` の `webSocketDebuggerUrl` へ CDP でつなぎ、`Runtime.evaluate` で要素の位置を取って `Input.dispatchTouchEvent` で押す（押したことになるので `window.open` も通る）。外へ出たかは `adb logcat` の `START u0` と `dumpsys activity activities` の `topResumedActivity` で見る。`adb` は `-s` を付ける（一時的に「more than one device」で落ちる）。使ったスクリプトは `temporary/scripts/remote-links-*`
   - `fake-host.mjs` は標準入力が閉じると止まるので、バックグラウンドでは `tail -f /dev/null | node mobile/scripts/fake-host.mjs …` で立てる。先頭のコメントにある `login` のコマンドは無い。会話を作ってターンを流すスクリプトは、先に `authLogin { backend: 'fake' }` を送る（送らないと `runTurn` が返らない）
 
-実装（iOS の第 1 段階、2026-10-06。[ADR 0141](adr/0141-ios-remote-core-in-swift.md)）:
+実装（iOS の第 1 段階、2026-10-06。[ADR 0144](adr/0144-ios-remote-core-in-swift.md)）:
 
 - **端末側を Swift に移した**（`mobile/ios/remote-core/`。Swift Package `PleiadRemote`、iOS 16・macOS 13 以上）。Android の `remote-core` と 1 対 1: `X25519.swift`・`Noise.swift`・`Frames.swift`・`Channel.swift`・`Loop.swift`（直列の DispatchQueue。Kotlin の `Loop` の代わり）・`RelaySocket.swift`・`Pairing.swift`・`DeviceLink.swift`・`DeviceProxy.swift` + `WebSocketFrames.swift`・`Socket.swift`・`Policies.swift`（`LinkPolicy`・`ResumePolicy`）・`RemoteDevice.swift`。通知（`Notify*`）は移さない（iOS は通知の対象外。ADR 0086）ので、ホストの `ready` の `notify` は見ず、`notifyRegister` も送らない
 - Android と違うところ:

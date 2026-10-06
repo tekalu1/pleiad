@@ -1,6 +1,6 @@
 import Foundation
 
-// Swift port of core/remote/device-proxy.mjs and DeviceProxy.kt (docs/remote.md §7.1・§7.4・§8.3 option A, ADR 0141):
+// Swift port of core/remote/device-proxy.mjs and DeviceProxy.kt (docs/remote.md §7.1・§7.4・§8.3 option A, ADR 0144):
 // one per host, listening on 127.0.0.1, carrying the WebView's HTTP and /ws over the DeviceLink channel. The UI is the
 // host's web/ unchanged.
 //
@@ -19,7 +19,7 @@ import Foundation
 //
 // iOS: the system reclaims the listening socket while the app is suspended. The shell calls resumeForeground() when
 // the app becomes active again: it listens on the same port (same origin, so web/'s localStorage and the cookie stay)
-// and checks the link (DeviceLink.checkNow: PING, reconnect without a PONG in 3 s) (ADR 0141).
+// and checks the link (DeviceLink.checkNow: PING, reconnect without a PONG in 3 s) (ADR 0144).
 
 /// Strings the proxy shows (the app supplies them from its localization).
 public protocol ProxyTexts {

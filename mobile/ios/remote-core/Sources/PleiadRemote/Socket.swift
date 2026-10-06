@@ -9,7 +9,7 @@ import Glibc
 import Musl
 #endif
 
-// Blocking TCP sockets on 127.0.0.1: the loopback proxy's listener (ADR 0141 option A) and, off Apple platforms, the
+// Blocking TCP sockets on 127.0.0.1: the loopback proxy's listener (ADR 0144 option A) and, off Apple platforms, the
 // test-only WebSocket client to a loopback relay. BSD sockets on Darwin / Linux, Winsock on Windows, so the same proxy
 // code runs on iOS and is tested with `swift test` on every platform. One thread per connection (like the Kotlin port).
 

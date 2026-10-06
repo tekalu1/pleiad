@@ -1,5 +1,5 @@
 // swift-tools-version:6.0
-// Pleiad remote device side for iOS (docs/remote.md §3・§4・§7・§8, ADR 0141): the Swift port of
+// Pleiad remote device side for iOS (docs/remote.md §3・§4・§7・§8, ADR 0144): the Swift port of
 // mobile/android/remote-core. Pure Swift so the protocol is tested with `swift test` against tests/remote/vectors.json
 // and a real Node relay + host (InteropTests). The iOS shell (stage 2) depends on it as a local package.
 //

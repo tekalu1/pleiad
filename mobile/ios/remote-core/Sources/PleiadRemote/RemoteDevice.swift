@@ -1,7 +1,7 @@
 import Foundation
 
 // Swift port of core/remote/device.mjs and RemoteDevice.kt (docs/remote.md §3.1・§3.3・§7): the device's key, the
-// paired hosts, pairing, and one loopback proxy per open host. No notifications on iOS (ADR 0086, ADR 0141).
+// paired hosts, pairing, and one loopback proxy per open host. No notifications on iOS (ADR 0086, ADR 0144).
 //
 //   SecretVault        device static key + per-host relay tokens (one JSON object). The iOS shell keeps it in the
 //                      Keychain (kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly); tests use FileVault.
@@ -306,7 +306,7 @@ public final class RemoteDevice {
         return try store.removeHost(hostId)
     }
 
-    /// The app became active again: every open proxy listens again and reconnects (ADR 0141). Returns the hosts whose
+    /// The app became active again: every open proxy listens again and reconnects (ADR 0144). Returns the hosts whose
     /// proxy had to move to another port (their WebView must load the new `url`).
     public func resumeForeground() -> [String] {
         lock.lock()
