@@ -205,6 +205,7 @@ export default async function (t) {
       mentionsOf: async () => ['everyone'],
       read: async () => ({ posts: [{ id: 'p_000000000aaaaaa', text: 'こんにちは', ...secret }], threads: [{ threadId: 'p_000000000aaaaaa', ...secret }], summaries: {}, nextBefore: null }),
       search: async () => ({ hits: [{ postId: 'p_000000000aaaaaa', snippet: 'こんにちは', ...secret }] }),
+      threadIndex: async () => ({ threads: [{ channelId: 'c_000000000aaaaaa', threadId: 'p_000000000aaaaaa', title: 'こんにちは', ...secret }], totals: { c_000000000aaaaaa: 1 } }),
     },
     bots: { get: async ({ botId }) => ({ id: botId, name: 'Owl', icon: '🦉', pulse: { on: false, everyMin: 10, backend: '', model: '', channelId: '' } }), overview: async ({ botId } = {}) => [{ id: botId ?? 'b_1', name: 'Owl', icon: '🦉', persona: '', backend: 'fake', model: '', effort: '', mode: 'default',
       folders: [], sendToOthers: true, sendTargets: [], pulse: { on: false, everyMin: 10, backend: '', model: '', channelId: '' }, dmChannelId: 'c_1', dmSessionId: null, createdAt: 0, updatedAt: 0,

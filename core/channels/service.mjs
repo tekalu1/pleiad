@@ -57,13 +57,16 @@ import path from 'node:path';
 import { EMOJI_RE } from '../../web/emoji.mjs';
 import { authorKey, isAuthor, isId, newId, POST_STATES } from './types.mjs';
 import { createChannelStore } from './store.mjs';
-import { createThreadStore, emptyThread } from './threads.mjs';
+import { createThreadStore, emptyThread, threadTitle } from './threads.mjs';
 import { parseMentions } from './mentions.mjs';
 import { budgetOf, normalizeBudget, spentToday, dayOf } from './budget.mjs';
 
 export const LIMITS = Object.freeze({ name: 60, purpose: 300, memo: 4000, cwd: 1000, text: 20000, attachments: 50, members: 50, reactionKinds: 30, readDefault: 50, readMax: 100, searchDefault: 20, searchMax: 50 });
 /** 作業中の投稿の更新を全接続へ配る間隔（ms。ADR 0108。リモートの端末の通信量のため） */
 export const WORKING_EDIT_INTERVAL_MS = 1000;
+/** スレッドの索引（threads）の、チャンネルごとの既定の件数と上限（脇の「最近のスレッド」） */
+export const THREADS_PER_CHANNEL = 5;
+export const THREADS_PER_CHANNEL_MAX = 50;
 
 export class ChannelError extends Error {
   constructor(code, params = {}, message) {
@@ -276,6 +279,58 @@ export function createChannelService({ dir, emit = () => {}, hooks = {}, now = D
       return { posts: clone(page), threads, summaries: summariesOf(all, ids), nextBefore: start > 0 ? page[0].id : null };
     },
 
+    /**
+     * スレッドの索引（脇の 2 つの並べ方の材料）。チャンネル（DM・アーカイブを除く。channelId を渡せばそのチャンネルだけ）ごとに、
+     * 返信があるか状態を持つ根を、最後の動きの新しい順に perChannel 件（all なら全部）。total はそのチャンネルのスレッドの数
+     */
+    async threadIndex({ channelId, perChannel = THREADS_PER_CHANNEL, all = false } = {}) {
+      if (channelId) await need(channelId);
+      const channels = (await store.channels()).filter((c) => (channelId ? c.id === channelId : c.kind === 'channel' && !c.archivedAt));
+      const [reads, states] = await Promise.all([store.allReadStates(), threadStore.list()]);
+      const byKey = new Map(states.map((th) => [`${th.channelId}\n${th.threadId}`, th]));
+      const per = Math.min(Math.max(1, Math.floor(perChannel) || THREADS_PER_CHANNEL), THREADS_PER_CHANNEL_MAX);
+      const threads = [], totals = {};
+      for (const channel of channels) {
+        const all_ = await store.snapshot(channel.id);
+        const replies = new Map();
+        for (const p of all_) {
+          if (!p.threadId || p.deletedAt) continue;
+          const r = replies.get(p.threadId) ?? { count: 0, lastAt: 0, mentions: 0 };
+          r.count++;
+          r.lastAt = Math.max(r.lastAt, p.at);
+          replies.set(p.threadId, r);
+        }
+        const channelRead = reads[channel.id]?.readAt ?? 0;
+        const rows = [];
+        for (const root of all_) {
+          if (root.threadId !== null || root.deletedAt) continue;
+          const th = byKey.get(`${channel.id}\n${root.id}`) ?? null;
+          const r = replies.get(root.id);
+          if (!r && !th) continue;
+          const lastAt = Math.max(root.at, r?.lastAt ?? 0);
+          const readAt = Math.max(channelRead, th?.readAt ?? 0);
+          rows.push({
+            channelId: channel.id, threadId: root.id, title: threadTitle(root.text), rootAt: root.at, lastAt, count: r?.count ?? 0,
+            unread: lastAt > readAt && (r?.lastAt ?? 0) > readAt, state: th?.state ?? 'idle', ...(th?.live ? { live: clone(th.live) } : {}),
+            ...(th?.status ? { status: th.status } : {}), bots: Object.keys(th?.sessions ?? {}), ...(th?.origin ? { origin: clone(th.origin) } : {}),
+            ...(th?.stopped ? { stopped: true } : {}),
+          });
+        }
+        rows.sort((a, b) => b.lastAt - a.lastAt);
+        totals[channel.id] = rows.length;
+        threads.push(...(all ? rows : rows.slice(0, per)));
+      }
+      return { threads, totals };
+    },
+
+    /** スレッドの状態（脇の「状態」の並べ方のグループ）を付ける・外す（空にすると外す） */
+    async setThreadStatus({ channelId, threadId, status }, _author) {
+      await needPost(channelId, threadId);
+      const thread = await threadStore.update(channelId, threadId, { status: status ? String(status) : null });
+      emitThread(thread);
+      return { channelId, threadId, status: thread.status ?? '' };
+    },
+
     async search({ query, channelId, limit = LIMITS.searchDefault }) {
       const q = foldName(query).trim();
       if (!q) return { hits: [] };
@@ -438,9 +493,14 @@ export function createChannelService({ dir, emit = () => {}, hooks = {}, now = D
       return { reactions: saved.reactions };
     },
 
-    async markRead({ channelId, at }) {
+    async markRead({ channelId, threadId, at }) {
       await need(channelId);
       if (!Number.isFinite(at)) throw invalid('at must be a number');
+      // スレッドを読んだ: そのスレッドの既読も進める（脇の行の未読。チャンネルの既読は今までどおり同じ値を進める）
+      if (threadId) {
+        await needPost(channelId, threadId);
+        emitThread(await threadStore.update(channelId, threadId, { readAt: at }));
+      }
       const state = await store.setReadState(channelId, { readAt: at, mentionAt: at });
       emit({ type: 'channelRead', channelId, readAt: state.readAt });
       return { readAt: state.readAt };

@@ -3094,7 +3094,9 @@ const opsStatuses = {
   setIcon: setStatusIconOf,
   create: createStatusGroup,
   // 既出の状態一覧。事前定義ではなく補完候補（設計メモ §6）
-  list: () => history.listStatuses(listBackends(), { list: nativeSessions }),
+  // スレッドの状態（channels.setThreadStatus）も同じ器に数える
+  list: async () => history.listStatuses(listBackends(), { list: nativeSessions,
+    extra: ((await botHost?.opsDeps().channels?.threads.list().catch(() => [])) ?? []).filter((th) => th.status).map((th) => ({ status: th.status, at: th.updatedAt })) }),
   rename: (from, to, actor) => renameStatusGroup({ from, to }, actor),
 };
 

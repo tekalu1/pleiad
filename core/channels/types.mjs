@@ -61,6 +61,8 @@ import { CHANNEL_TAG, CHANNEL_THREAD_TAG, MEMORY_CORE_TAG, TURN_CONTEXT_TAG, INN
  *   digest?: { [botId: string]: { text: string, at: number, lastAt: number, fingerprint: string } }, // bot ごとのエピソード要約（ADR 0125）
  *   stopped: null | { by: Author, at: number },           // [止める]。人が次に書くまで新しく起こさない
  *   origin?: { channelId: string, threadId: string },     // bot が自分のスレッドからチャンネルの流れへ @ を書いて新しくできたスレッドの、起こした元。[止める] は origin で結ばれた派生のスレッドにも届く
+ *   status?: string,                                      // 利用者の状態（脇の「状態」の並べ方のグループ。会話の status と同じ器。60 字まで）
+ *   readAt?: number,                                      // このスレッドを読んだ時刻（脇の行の未読。進める向きにだけ動く）
  *   updatedAt: number }} ThreadState */
 
 /** @typedef {{

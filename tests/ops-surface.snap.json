@@ -668,7 +668,7 @@
         }
       },
       "legacyCommand": null,
-      "input": "1845196c0c2c"
+      "input": "f25fa1c1b8ce"
     },
     {
       "id": "channels.post",
@@ -766,6 +766,31 @@
       "input": "5fb08bd9af74"
     },
     {
+      "id": "channels.setThreadStatus",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "channels",
+            "thread-status"
+          ],
+          "positional": [
+            "channelId",
+            "threadId",
+            "status"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "6af6007ac39f"
+    },
+    {
       "id": "channels.stopThread",
       "risk": "write",
       "riskOf": false,
@@ -812,6 +837,26 @@
       },
       "legacyCommand": null,
       "input": "a4332e367d65"
+    },
+    {
+      "id": "channels.threads",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "channels",
+            "threads"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "d0c50b27cff0"
     },
     {
       "id": "channels.update",
@@ -4451,6 +4496,20 @@
         "channelId",
         "threadId"
       ]
+    },
+    {
+      "id": "channels.setThreadStatus",
+      "path": "channels thread-status",
+      "positional": [
+        "channelId",
+        "threadId",
+        "status"
+      ]
+    },
+    {
+      "id": "channels.threads",
+      "path": "channels threads",
+      "positional": []
     },
     {
       "id": "channels.update",

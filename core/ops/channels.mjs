@@ -17,7 +17,8 @@
 import { z } from 'zod';
 import { agentT } from '../i18n.mjs';
 import { authorKey, HIDDEN_BOT_KINDS } from '../channels/types.mjs';
-import { ChannelError, LIMITS } from '../channels/service.mjs';
+import { ChannelError, LIMITS, THREADS_PER_CHANNEL_MAX } from '../channels/service.mjs';
+import { THREAD_STATUS_MAX } from '../channels/threads.mjs';
 import { groupTargets, expandGroups } from '../channels/group-mentions.mjs';
 import { BUDGET_LIMITS, budgetOf, loosensBudget, normalizeBudget } from '../channels/budget.mjs';
 import { OpError, defineOp } from './registry.mjs';
@@ -137,6 +138,29 @@ export const channelOps = [
     output: z.object({ posts: z.array(z.unknown()), threads: z.array(z.unknown()), summaries: z.unknown(), nextBefore: z.string().nullable() }),
     surfaces: { ui: true, mcp: 'catalog', cli: { path: ['channels', 'read'], positional: ['channelId'] } },
     handler: (ctx, args) => run(ctx, () => ctx.channels.read(args)),
+  }),
+  defineOp({
+    // スレッドの索引: チャンネルごとの最近のスレッド（題・最後の動き・返信の数・未読・状態・作業中の bot）。脇の 2 つの並べ方の材料
+    id: 'channels.threads', summary: D('threads', 'summary'), risk: 'read',
+    input: z.object({
+      channelId: z.string().min(1).optional().describe(D('threads', 'channelId')),
+      perChannel: z.number().int().min(1).max(THREADS_PER_CHANNEL_MAX).optional().describe(D('threads', 'perChannel')),
+      all: z.boolean().optional().describe(D('threads', 'all')),
+    }),
+    output: z.object({ threads: z.array(z.unknown()), totals: z.record(z.string(), z.number().int()) }),
+    surfaces: { ui: true, mcp: 'catalog', cli: { path: ['channels', 'threads'] } },
+    handler: (ctx, args) => run(ctx, () => ctx.channels.threadIndex(args)),
+  }),
+  defineOp({
+    id: 'channels.setThreadStatus', summary: D('setThreadStatus', 'summary'), risk: 'write',
+    riskReason: 'Sets or clears the status label of a thread (the same status groups as conversations). It only changes how the sidebar groups the thread; no post or bot is touched. A human can do the same, so an agent is treated the same (ADR 0082)',
+    input: z.object({
+      channelId: channelId('setThreadStatus'), threadId: postId('setThreadStatus', 'threadId'),
+      status: z.string().trim().max(THREAD_STATUS_MAX).describe(D('setThreadStatus', 'status')),
+    }),
+    output: z.object({ channelId: z.string(), threadId: z.string(), status: z.string() }),
+    surfaces: { ui: true, mcp: 'catalog', cli: { path: ['channels', 'thread-status'], positional: ['channelId', 'threadId', 'status'] } },
+    handler: async (ctx, args) => run(ctx, async () => { await refuseHidden(ctx); return ctx.channels.setThreadStatus(args, await authorOf(ctx)); }),
   }),
   defineOp({
     id: 'channels.threadBudget', summary: D('threadBudget', 'summary'), risk: 'read',
@@ -351,11 +375,12 @@ export const channelOps = [
   defineOp({
     id: 'channels.markRead', summary: D('markRead', 'summary'), risk: 'write',
     riskReason: 'Moves the read position of a channel forward (never back). It only changes unread badges and does not touch any post',
-    input: z.object({ channelId: channelId('markRead'), at: z.number().int().positive().optional().describe(D('markRead', 'at')) }),
+    input: z.object({ channelId: channelId('markRead'), threadId: z.string().min(1).optional().describe(D('markRead', 'threadId')),
+      at: z.number().int().positive().optional().describe(D('markRead', 'at')) }),
     output: z.unknown(),
     surfaces: { ui: true, mcp: 'catalog', cli: { path: ['channels', 'mark-read'], positional: ['channelId'] } },
     // at は今を超えない（既読の位置は進める向きにしか動かないので、未来の時刻を 1 回入れられると、そのチャンネルの未読の印が二度と付かなくなる）
-    handler: (ctx, { channelId: id, at }) => run(ctx, async () => { await refuseHidden(ctx); return ctx.channels.markRead({ channelId: id, at: Math.min(at ?? Date.now(), Date.now()) }); }),
+    handler: (ctx, { channelId: id, threadId, at }) => run(ctx, async () => { await refuseHidden(ctx); return ctx.channels.markRead({ channelId: id, threadId, at: Math.min(at ?? Date.now(), Date.now()) }); }),
   }),
   defineOp({
     id: 'channels.stopThread', summary: D('stopThread', 'summary'), risk: 'write', modeGate: false,

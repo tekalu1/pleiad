@@ -17,6 +17,17 @@ import { DAY_RX } from './budget.mjs';
 
 export const threadKey = (channelId, threadId) => `${channelId}/${threadId}`;
 
+/** スレッドの状態の名前の字数の上限（会話の状態と同じ） */
+export const THREAD_STATUS_MAX = 60;
+
+/** スレッドの題: 根の投稿の最初の行（先頭の @ の呼びかけは外す）。web/channels/thread.mjs の titleOf と同じ決まり */
+export function threadTitle(text) {
+  const line = String(text ?? '').split(/\r?\n/).find((l) => l.trim()) ?? '';
+  const plain = line.replace(/\s+/g, ' ').trim();
+  const stripped = plain.replace(/^(?:@\S+\s*)+/, '').trim();
+  return (stripped || plain).slice(0, 120);
+}
+
 export function emptyThread(channelId, threadId, now = Date.now()) {
   return { channelId, threadId, sessions: {}, state: 'idle', tokens: { input: 0, output: 0, cached: 0 }, calls: 0, stopped: null, updatedAt: now };
 }
@@ -65,6 +76,17 @@ export function applyThreadPatch(current, patch, now) {
   if (patch.origin !== undefined) {
     if (patch.origin !== null && !(typeof patch.origin?.channelId === 'string' && patch.origin.channelId && typeof patch.origin?.threadId === 'string' && patch.origin.threadId)) throw new Error('origin must be null or { channelId: string, threadId: string }');
     if (patch.origin === null) delete next.origin; else next.origin = { channelId: patch.origin.channelId, threadId: patch.origin.threadId };
+  }
+  if (patch.status !== undefined) {
+    // 利用者の状態（脇の「状態」の並べ方のグループ。会話の status と同じ名前の器）。空・null は外す
+    if (patch.status !== null && !(typeof patch.status === 'string' && [...patch.status.trim()].length <= THREAD_STATUS_MAX)) throw new Error(`status must be null or a string up to ${THREAD_STATUS_MAX} characters`);
+    const status = patch.status === null ? '' : patch.status.trim();
+    if (status) next.status = status; else delete next.status;
+  }
+  if (patch.readAt !== undefined) {
+    // このスレッドを読んだ時刻（進める向きにだけ動く）
+    if (!(Number.isFinite(patch.readAt) && patch.readAt >= 0)) throw new Error('readAt must be a number');
+    next.readAt = Math.max(next.readAt ?? 0, patch.readAt);
   }
   if (patch.stopped !== undefined) {
     if (patch.stopped !== null && !(isAuthor(patch.stopped?.by) && Number.isFinite(patch.stopped?.at))) throw new Error('stopped must be null or { by: Author, at: number }');

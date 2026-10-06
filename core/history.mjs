@@ -221,7 +221,7 @@ export async function forgetPresents(sessionId) {
  *                              （ネイティブに tag を持てるバックエンドだけ）
  * list はネイティブ一覧の読み方。サーバーは使い回しの一覧（core/server.mjs の nativeSessions）を渡す
  */
-export async function listStatuses(backends = [], { list = (b, limit) => b.listSessions({ limit }) } = {}) {
+export async function listStatuses(backends = [], { list = (b, limit) => b.listSessions({ limit }), extra = [] } = {}) {
   const [side, entries, ...lists] = await Promise.all([
     store.getAll().catch(() => ({})),
     store.getStatusEntries().catch(() => ({})),
@@ -266,7 +266,10 @@ export async function listStatuses(backends = [], { list = (b, limit) => b.listS
     }
   }
 
-  // 3) statuses.json。人が作った（まだ誰も付いていない）グループはここにしか無い。
+  // 3) 会話の外で付いた状態（チャンネルのスレッドの状態。{ status, at }）。脇の「状態」の並べ方で会話と同じ器に入る
+  for (const e of extra) bump(e?.status, isoOrNull(e?.at));
+
+  // 4) statuses.json。人が作った（まだ誰も付いていない）グループはここにしか無い。
   //    ある限り存在する（count 0、firstUsedAt は作った時刻）。アイコンも合流。付いていない状態は icon: null
   for (const [status, e] of Object.entries(entries)) {
     const hit = seen.get(status);
