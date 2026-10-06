@@ -61,7 +61,7 @@ export default function (t) {
   t.ok('解除時刻が分からない会話は「解除を確認中」の時計', resumeLabel(0, { ...auto, resetsAt: null }, nowMs) === '解除を確認中');
   t.ok('自動を外した会話は、解除前は「時刻 に解除」の時計、解除の後は普通の「再開」', /に解除$/.test(resumeLabel(0, { ...auto, autoResume: false }, nowMs))
     && resumeLabel(0, { ...auto, autoResume: false }, soon + 1) === '再開' && resumeLabel(2, { ...auto, autoResume: false }, soon + 1) === '保留中の 2 件を送って再開');
-  t.ok('今日でない解除は日付つき（週の上限は「10/7（水）9:00」）', /^10\/7（水）/.test(limitTime(week, nowMs)) && /に自動で再開します$/.test(limitLineNote({ ...auto, resetsAt: week })) && limitLineNote({ ...auto, resetsAt: week }).includes('10/7（水）'));
+  t.ok('今日でない解除は日付つき（週の上限は「10/7（水）9:00」）', /^10\/7（水）/.test(limitTime(week, nowMs)) && /に自動で再開します$/.test(limitLineNote({ ...auto, resetsAt: week }, nowMs)) && limitLineNote({ ...auto, resetsAt: week }, nowMs).includes('10/7（水）'));
   t.ok('末尾の 2 行目: 自動のとき「時刻 に自動で再開します」、時刻不明は 30 分ごとの確認、外したら「自動では再開しません。…」',
     limitLineNote(auto).endsWith('に自動で再開します') && limitLineNote({ ...auto, resetsAt: null }) === '解除時刻が分からないため、30 分ごとに確かめて再開します'
     && limitLineNote({ ...auto, autoResume: false }) === '自動では再開しません。解除の後に「再開」で続けられます');
