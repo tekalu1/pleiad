@@ -37,7 +37,9 @@ export function createVoiceHost({ dataDir, apiKey, keyStorage = async () => null
   const usage = createVoiceUsage({ file: path.join(dataDir, 'voice-usage.json'), now });
   const wss = new WebSocketServer({ noServer: true, maxPayload: 256 * 1024 });
   const sessions = new Set();
+  const sockets = new Map();   // 通話 -> その接続（キーが変わったとき、通話の後始末だけでなく接続も閉じるため）
   let keyCache; // undefined = 未読、null = 無い
+  let inUse = null; // 今の通話が hello で受け取ったキー（キーが差し替わった・選び直したときに、通話を切るかの比べ先）
 
   const getKey = async () => {
     if (keyCache === undefined) keyCache = normalizeKey(await apiKey().catch(() => null)) || null;
@@ -120,6 +122,7 @@ export function createVoiceHost({ dataDir, apiKey, keyStorage = async () => null
       hello: async () => {
         const settings = normalizeVoiceSettings((await getPrefs()).voice);
         const apiKey = await getKey();
+        inUse = apiKey;
         const lang = uiLang();
         return {
           settings, config: apiKey ? config(apiKey) : null, uiLang: lang, usage,
@@ -129,8 +132,9 @@ export function createVoiceHost({ dataDir, apiKey, keyStorage = async () => null
       },
     });
     sessions.add(session);
+    sockets.set(session, ws);
     ws.on('message', (data, isBinary) => { session.onMessage(isBinary ? data : data.toString(), isBinary).catch(() => {}); });
-    ws.on('close', () => { session.close(); sessions.delete(session); });
+    ws.on('close', () => { session.close(); sessions.delete(session); sockets.delete(session); });
     ws.on('error', () => {});
   }
 
@@ -151,10 +155,21 @@ export function createVoiceHost({ dataDir, apiKey, keyStorage = async () => null
         active: sessions.size,
       };
     },
-    /** 使うキーが変わった（差し替え・選び直し・削除）。覚えたキーを捨て、キーが無くなったなら通話を切る（切らないと、消したキーで送り続ける） */
+    /**
+     * 使うキーが変わった（差し替え・選び直し・削除）。覚えたキーを捨て、通話中のキーと違えば通話を切る
+     * （切らないと、消した・差し替える前のキーで送り続ける。次の通話は新しいキーで始まる）
+     */
     async keysChanged() {
       keyCache = undefined;
-      if (!(await getKey())) for (const s of sessions) s.close();
+      const now = await getKey();
+      if (sessions.size && now !== inUse) {
+        // 通話の後始末（session.close）だけでは接続が残るので、画面へ終わりの理由（fatal）を送って接続も閉じる
+        const code = now ? 'key-changed' : 'no-key';
+        for (const [s, ws] of [...sockets]) {
+          try { if (ws.readyState === ws.OPEN) ws.send(JSON.stringify({ t: 'error', code, fatal: true })); ws.close(1000); } catch { /* 閉じていた */ }
+          s.close();
+        }
+      }
     },
     /** キーが通るか（OpenRouter の GET /key）。'ok' | 'invalid' | 'unreachable' | 'nokey'。本文・キーは返さない */
     async checkKey() {

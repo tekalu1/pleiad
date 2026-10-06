@@ -5,6 +5,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { createApiKeys, providerOfEndpoint, normalizeApiKey } from '../../core/api-keys.mjs';
+import { keyFitsEndpoint, keyMatchesEndpoint } from '../../web/api-keys-model.mjs';
 import { createCompatEndpoints, EndpointError } from '../../core/compat-endpoints.mjs';
 import { createSecretStore, plainCipher } from '../../core/secret-store.mjs';
 import { startFakeOpenRouter } from '../lib/fake-openrouter.mjs';
@@ -54,7 +55,8 @@ export default async function (t) {
   const compatApi = await startFakeCompatApi({ keys: [A, L] });
   try {
     // ---- 入力の検査
-    t.ok('プロバイダー: プリセットと URL のホストで決める', providerOfEndpoint({ preset: 'openrouter', baseUrl: 'https://x.example' }) === 'openrouter'
+    t.ok('プロバイダー: プリセットと URL のホストで決める', providerOfEndpoint({ preset: 'openrouter', baseUrl: 'https://openrouter.ai/api' }) === 'openrouter'
+      && providerOfEndpoint({ preset: 'openrouter', baseUrl: 'https://proxy.example/api' }) === 'custom'
       && providerOfEndpoint({ preset: 'custom', baseUrl: 'https://openrouter.ai/api/v1' }) === 'openrouter'
       && providerOfEndpoint({ preset: 'custom', baseUrl: 'https://api.cerebras.ai/v1' }) === 'cerebras'
       && providerOfEndpoint({ preset: 'zai', baseUrl: 'https://api.z.ai/api/anthropic' }) === 'zai'
@@ -172,6 +174,29 @@ export default async function (t) {
       const done = await w2.apiKeys.list();
       t.ok('暗号化できる起動で開き直すと移行され、通話に引き継がれる', done.migration.state === 'done' && done.keys.length === 1 && done.uses.voice === done.keys[0].id && await w2.apiKeys.useKey('voice') === A);
     }
+    // ---- 保留: 暗号器が答えない・復号に失敗する（SECRET_LOCKED 以外の失敗も、キーを失わずに保留する）
+    for (const [label, cipher] of [
+      ['暗号器が答えない（main がつながっていない）', { status: async () => { throw new Error('main から応答がありません'); }, encrypt: async () => { throw new Error('x'); }, decrypt: async () => { throw new Error('x'); } }],
+      ['復号に失敗する（鍵束が変わった）', { status: async () => ({ encrypted: true, backend: 'fake' }), encrypt: async v => v, decrypt: async () => { throw new Error('復号に失敗しました'); } }],
+    ]) {
+      const d = await fresh();
+      await seed(d, { endpoints: [EP(EP1)] });
+      const sealed = { enc: 'safeStorage', data: 'zz', at: 'x' };
+      await fs.writeFile(path.join(d, 'voice-secrets.json'), JSON.stringify({ version: 1, entries: { openrouter: sealed } }));
+      await fs.writeFile(path.join(d, 'compat-endpoint-secrets.json'), JSON.stringify({ version: 1, entries: { ['compat-endpoint:' + EP1]: sealed } }));
+      const w = wire(d, { cipher });
+      await w.apiKeys.init();
+      const list = await w.apiKeys.list();
+      t.ok(`${label}: 移行を保留し、キー 0 件のまま「移行済み」にしない・何も書かない`, list.migration.state === 'deferred' && !(await exists(path.join(d, 'api-keys.json'))) && !(await exists(path.join(d, 'api-key-secrets.json'))),
+        JSON.stringify(list.migration));
+      t.ok(`${label}: 古い置き場のキーは消えず、接続先は keyRef を持たない`, (await w.compat.keys('compat-endpoint:')).length === 1 && (await w.eps.rows())[0].keyRef === null);
+      const again = wire(d, { cipher: plainCipher });
+      await fs.writeFile(path.join(d, 'voice-secrets.json'), JSON.stringify({ version: 1, entries: { openrouter: { enc: 'plain', data: JSON.stringify({ key: A }), at: 'x' } } }));
+      await fs.writeFile(path.join(d, 'compat-endpoint-secrets.json'), JSON.stringify({ version: 1, entries: { ['compat-endpoint:' + EP1]: { enc: 'plain', data: JSON.stringify({ key: A }), at: 'x' } } }));
+      await again.apiKeys.init();
+      const done = await again.apiKeys.list();
+      t.ok(`${label}: 読めるようになった起動で、同じ置き場から移行できる`, done.migration.state === 'done' && done.keys.length === 1 && done.uses.voice === done.keys[0].id);
+    }
     // 保留中の読み取りは古い置き場（平文なら読める）
     {
       const d = await fresh();
@@ -282,6 +307,96 @@ export default async function (t) {
       const stopped = await rejects(() => w.eps.resolve(saved.id, 'claude'));
       t.ok('消されたキーの接続先の会話は黙って公式に戻らず、EndpointError で止まる', stopped instanceof EndpointError && stopped.code === 'failed');
       t.ok('古い置き場の接続先の項目も消える（古い版が古いキーで送り続けない）', (await w.compat.keys('compat-endpoint:')).every(k => k !== 'compat-endpoint:' + saved.id && k !== 'compat-endpoint:' + typedSaved.id));
+    }
+
+    // ---- キーを別のホストへ送らない（接続先のフォームの既定・サーバーの connectionOf）
+    {
+      const lite = (url) => ({ preset: 'custom', baseUrl: url });
+      t.ok('キーとホスト: ホストの決まったプロバイダーはホストが合うときだけ。自前のキーは元のホストだけ・まだ結び付いていないキーは選べるが既定にしない',
+        keyFitsEndpoint({ provider: 'openrouter' }, { preset: 'openrouter', baseUrl: 'https://openrouter.ai/api' })
+        && !keyFitsEndpoint({ provider: 'openrouter' }, { preset: 'openrouter', baseUrl: 'https://proxy.example/api' })
+        && keyFitsEndpoint({ provider: 'custom', host: 'a.example' }, lite('https://a.example/v1')) && !keyFitsEndpoint({ provider: 'custom', host: 'a.example' }, lite('https://b.example/v1'))
+        && keyFitsEndpoint({ provider: 'custom', host: null }, lite('https://b.example/v1')) && !keyMatchesEndpoint({ provider: 'custom', host: null }, lite('https://b.example/v1'))
+        && keyMatchesEndpoint({ provider: 'custom', host: 'a.example' }, lite('https://a.example/v1')));
+      const d = await fresh();
+      await seed(d, { endpoints: [EP(EP1, { name: 'A のホスト', preset: 'custom', baseUrl: 'http://127.0.0.1:' + new URL(compatApi.url).port }), EP(EP2, { name: 'ほかのホスト', preset: 'custom', baseUrl: 'http://localhost:' + new URL(compatApi.url).port }), EP(EP3, { name: '同じ値', preset: 'custom', baseUrl: 'http://localhost:1' })],
+        endpointKeys: { [EP1]: L, [EP2]: L, [EP3]: L } });
+      const w = wire(d);
+      await w.apiKeys.init();
+      const keys = (await w.apiKeys.list()).keys;
+      t.ok('移行: 同じ値でも別のホストの接続先は別の件（ホストを持つ。同じホストなら 1 件）。キーを別のホストへ送らない', keys.length === 2 && keys.every(k => k.provider === 'custom' && k.host) && new Set(keys.map(k => k.host)).size === 2, JSON.stringify(keys.map(k => k.host)));
+      const [e1] = (await w.eps.list()).endpoints.filter(e => e.id === EP1);
+      const base = { agent: 'claude', name: 'x', preset: 'custom', baseUrl: compatApi.url, authMode: 'auto', roles: { main: 'm', opus: 'm', sonnet: 'm', haiku: 'm' } };
+      const own = keys.find(k => k.id === e1.keyRef);
+      const ok = await w.eps.check({ ...base, keyRef: own.id });
+      t.ok('自分のホストのキーなら確認できる', ok.ok === true);
+      const other = keys.find(k => k.host.startsWith('localhost') && k.id !== own.id);
+      const wrong = await rejects(() => w.eps.check({ ...base, keyRef: other.id }));
+      t.ok('別のホスト用のキー（keyRef）は確認の前に断る。値は送らない', wrong?.message.includes('URL（ホスト）用ではありません') && !compatApi.requests.some(r => r.path.includes('never')));
+      const edited = await rejects(() => w.eps.check({ agent: 'claude', baseUrl: 'http://localhost:1', authMode: 'auto', probeModel: 'm' }, { id: EP1 }));
+      t.ok('保存済みの接続先の URL を別のホストへ変えたら、元のキーでは確認できない（保存済みのキーを黙って送らない）', edited?.message.includes('URL（ホスト）用ではありません'));
+      // OpenRouter のプリセットのまま URL を別のホストへ
+      const orKey = await w.apiKeys.add({ provider: 'openrouter', label: 'OR', key: A });
+      const proxied = await rejects(() => w.eps.check({ ...base, preset: 'openrouter', keyRef: orKey.id }));
+      t.ok('OpenRouter のプリセットでも、URL のホストが openrouter.ai でなければ OpenRouter のキーは選べない', proxied?.message.includes('URL（ホスト）用ではありません'));
+      // まだ結び付いていないキー（「その他」で登録）は、初めて保存した接続先のホストに結び付く
+      const free = await w.apiKeys.add({ provider: 'custom', label: '自由', key: L });
+      t.ok('「その他」で登録したキーはホストを持たない', (await w.apiKeys.list()).keys.find(k => k.id === free.id).host === null);
+      const bound = await w.eps.check({ ...base, keyRef: free.id }).catch(e => e);
+      t.ok('結び付いていないキーは選べる（確認の相手はまだ A）', bound?.ok === true || compatApi.requests.length > 0);
+      const savedFree = await w.eps.save({ ...base, keyRef: free.id }, bound.receipt).catch(e => e);
+      t.ok('保存すると、そのホストに結び付く', !(savedFree instanceof Error) && (await w.apiKeys.list()).keys.find(k => k.id === free.id).host === '127.0.0.1', String(savedFree?.message ?? ''));
+      t.ok('結び付いた後は別のホストでは選べない', (await rejects(() => w.eps.check({ ...base, baseUrl: 'http://localhost:' + new URL(compatApi.url).port, keyRef: free.id })))?.message.includes('URL（ホスト）用ではありません'));
+      // 入力したキーは、同じ値でもホストが違えば別の件
+      const typed = { ...base, baseUrl: 'http://localhost:' + new URL(compatApi.url).port, key: L };
+      const typedChecked = await w.eps.check(typed);
+      const typedSaved = await w.eps.save({ ...typed, name: 'また別' }, typedChecked.receipt);
+      t.ok('入力したキーは、値が同じでもホストが違えば重ねない（同じホストなら重ねる）', typedSaved.keyRef === other.id);
+    }
+
+    // ---- 台帳に無いキーを指す接続先・古い keyRef・削除の保存が失敗したとき
+    {
+      const d = await fresh();
+      await seed(d, { endpoints: [EP(EP1), EP(EP2, { agent: 'codex', baseUrl: 'https://openrouter.ai/api/v1' })], endpointKeys: { [EP1]: A, [EP2]: A } });
+      const w = wire(d);
+      await w.apiKeys.init();
+      const id = (await w.apiKeys.list()).keys[0].id;
+      // 削除の保存が失敗する（台帳の置き場所をふさぐ）→ 接続先は外れず、キーも残る
+      const ledger = path.join(d, 'api-keys.json');
+      await fs.rm(ledger); await fs.mkdir(ledger);
+      const failed = await rejects(() => w.apiKeys.remove(id));
+      await fs.rm(ledger, { recursive: true });
+      t.ok('削除の保存に失敗したら、接続先は keyRef のまま（接続先だけ外れない）・キーも消えない', failed !== null && (await w.eps.list()).endpoints.every(e => e.keyRef === id && e.hasKey) && (await w.secrets.get('key:' + id))?.key === A);
+      // 台帳に無いキーを指す参照（削除の途中で止まった）は、次の起動で外れて止まる
+      await fs.writeFile(ledger, JSON.stringify({ version: 1, migration: { done: true, at: 'x' }, keys: [], uses: {}, guide: null }));
+      const next = wire(d);
+      await next.apiKeys.init();
+      const rows = (await next.eps.list()).endpoints;
+      t.ok('台帳に無いキーを指す keyRef は次の起動で外れ、確認に失敗した扱いで止まる', rows.every(e => !e.hasKey && e.keyRef === null && e.lastCheck.ok === false) && (await rejects(() => next.eps.resolve(EP1, 'claude'))) instanceof EndpointError);
+      t.ok('外した接続先の古い置き場のキーも消える（古い版が送り続けない）', (await next.compat.keys('compat-endpoint:')).length === 0);
+    }
+    {
+      // 途中で保留になった移行の後に古い方法でキーを外した接続先の keyRef が、次の移行で消える
+      const d = await fresh();
+      await seed(d, { endpoints: [EP(EP1), EP(EP2, { agent: 'codex', baseUrl: 'https://openrouter.ai/api/v1' })], endpointKeys: { [EP1]: A } });
+      const rows = JSON.parse(await fs.readFile(path.join(d, 'compat-endpoints.json'), 'utf8'));
+      rows.endpoints[1].keyRef = 'key-aaaaaaaaaaaa';   // 古い移行が途中まで書いた keyRef（EP2 のキーは古い方法で外してある）
+      await fs.writeFile(path.join(d, 'compat-endpoints.json'), JSON.stringify(rows));
+      const w = wire(d);
+      await w.apiKeys.init();
+      const byId = Object.fromEntries((await w.eps.list()).endpoints.map(e => [e.id, e]));
+      t.ok('移行は接続先の keyRef を結果のとおりに書く（キーの無い接続先の古い keyRef は残らない）', byId[EP1].keyRef && byId[EP2].keyRef === null && !byId[EP2].hasKey);
+    }
+
+    // ---- 移行済みで、キーを使う接続先に keyRef が無ければ、空のキーで送らず止まる
+    {
+      const d = await fresh();
+      await seed(d, { endpoints: [EP(EP1), EP(EP2, { agent: 'codex', name: 'ローカル', preset: 'ollama', baseUrl: 'http://localhost:11434/v1', auth: 'none' })] });
+      const w = wire(d);
+      await w.apiKeys.init();
+      const stopped = await rejects(() => w.eps.resolve(EP1, 'claude'));
+      t.ok('keyRef の無い（bearer の）接続先は、空のキーで走らず EndpointError で止まる', stopped instanceof EndpointError && stopped.code === 'unreadable' && stopped.message.includes('キーが選ばれていません'), String(stopped?.message));
+      t.ok('キーの要らない接続先（auth: none）は今までどおり走る', (await w.eps.resolve(EP2, 'codex')).key === '');
     }
 
     // ---- 値が一覧・ログ・イベントに出ない

@@ -202,6 +202,8 @@ const SUITES = [
   './unit/compat-endpoints.mjs',
   // API キーの置き場（設定 › API キー。ADR 0154）: 移行（同じ値は 1 件・違う値は別の件・登録済みの所だけ引き継ぐ・冪等・保留）・値を出さない・古い置き場にも書く・確認・接続先の keyRef
   './unit/api-keys.mjs',
+  // API キーのコマンドをサーバー越しに: 引数とエラー・使う側へのイベント・通話中の差し替え／使わない／削除で通話が切れる・値が出ない
+  './unit/server-api-keys.mjs',
   // リモート接続の暗号・フレーム・チャネル（core/remote/）。Noise の公式ベクトルと、メモリの管でつないだ往復
   './unit/remote-noise.mjs',
   './unit/remote-frames.mjs',

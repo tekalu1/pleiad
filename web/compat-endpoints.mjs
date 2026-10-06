@@ -13,7 +13,7 @@ import { t, fmt } from './i18n.mjs';
 import { createCombo } from './combo.mjs';
 import { compatModelLabel, modelCandidates, comboModelOptions, ONE_M_TITLE, SHOW_LIMIT } from './compat-models.mjs';
 import { PRESETS, CLAUDE_ROLES, CONTEXT_CANDIDATES, AUTH_LABEL, presetOf, urlCandidates, urlHelp } from './compat-presets.mjs';
-import { providerOfEndpoint } from './api-keys-model.mjs';
+import { keyFitsEndpoint, keyMatchesEndpoint } from './api-keys-model.mjs';
 import { apiKeyList, keySelect, notEncryptedNote, checkParts, manageLink } from './api-key-ui.mjs';
 
 const AGENT_NAME = { claude: 'Claude Code', codex: 'Codex' };
@@ -174,19 +174,32 @@ export function setupCompatEndpoints({ cmd, openSettings, openPage = () => {}, o
     c.root.querySelector('input').spellcheck = false;
     return c.root;
   }
-  /** キーの欄で選べる登録済みのキー（同じプロバイダー＋今選んでいるもの）。null は古い置き場の入力欄（移行を保留中・API キーを読めない・キーの要らないプリセット） */
+  /**
+   * キーの欄で選べる登録済みのキー（この接続先のプロバイダー・URL のホスト用のものだけ。別のホスト用のキーは出さない）。
+   * null は古い置き場の入力欄（移行を保留中・API キーを読めない・キーの要らないプリセット・合うキーが無い）
+   */
   function candidateKeys(P) {
     if (!keyData || keyData.migration?.state === 'deferred' || P.nokey) return null;
-    const provider = providerOfEndpoint({ preset: form.preset, baseUrl: form.baseUrl });
-    const list = keyData.keys.filter(k => k.provider === provider || k.id === form.keyRef);
+    const endpoint = { preset: form.preset, baseUrl: form.baseUrl };
+    const list = keyData.keys.filter(k => keyFitsEndpoint(k, endpoint));
     return list.length ? list : null;
   }
-  /** 「登録済みのキー」を選んでいるときの、選んでいるキー（そうでなければ null） */
+  /**
+   * 「登録済みのキー」を選んでいるときの、選んでいるキー（そうでなければ null）。選んでいるキーが候補から外れた（URL を替えた）ときは、
+   * ホストが確かに合うキーだけを既定にし、無ければ「別のキーを入れる」にする（まだどのホストにも結び付いていないキーは選べるが、既定にしない）
+   */
   function pickedKey() {
     const P = presetOf(agent, form.preset);
     const list = candidateKeys(P);
     if (!list || form.keyMode !== 'registered') return null;
-    if (!list.some(k => k.id === form.keyRef)) form.keyRef = (list.find(k => k.uses.length) ?? list[0]).id;
+    if (!list.some(k => k.id === form.keyRef)) {
+      const endpoint = { preset: form.preset, baseUrl: form.baseUrl };
+      // 人が「登録済みのキー」を選び直したときは、まだ結び付いていないキーも選べる（結び付くのは保存のとき）
+      const sure = list.filter(k => keyMatchesEndpoint(k, endpoint));
+      const pool = sure.length ? sure : form.keyChosen ? list : [];
+      if (!pool.length) { form.keyMode = 'own'; form.keyRef = ''; return null; }
+      form.keyRef = (pool.find(k => k.uses.length) ?? pool[0]).id;
+    }
     return list.find(k => k.id === form.keyRef);
   }
   function keyField(P, editing) {
@@ -215,7 +228,7 @@ export function setupCompatEndpoints({ cmd, openSettings, openPage = () => {}, o
     const radio = (mode, label, extra = []) => {
       const row = el('div', 'ak-radio'); const id = `epkey-${mode}`;
       const input = el('input'); input.type = 'radio'; input.name = 'epkey'; input.id = id; input.checked = form.keyMode === mode; input.dataset.fk = `rad:${mode}`;
-      input.onchange = () => { form.keyMode = mode; focusAfterDraw = `rad:${mode}`; invalidate(); draw(); };
+      input.onchange = () => { form.keyMode = mode; if (mode === 'registered') form.keyChosen = true; focusAfterDraw = `rad:${mode}`; invalidate(); draw(); };
       const text = el('span', 't'); const lab = el('label'); lab.htmlFor = id; lab.append(label); text.append(lab, ...extra);
       row.append(input, text); return row;
     };
@@ -224,7 +237,7 @@ export function setupCompatEndpoints({ cmd, openSettings, openPage = () => {}, o
     const registeredLabel = one ? el('b', null, t('apiKeys.endpoint.registeredOne', { name: picked?.label ?? '' })) : el('b', null, t('apiKeys.endpoint.registered'));
     const extra = [];
     if (!one) extra.push(' ', keySelect({ keys: list, current: picked?.id ?? null, label: t('apiKeys.endpoint.selectLabel'), focusKey: 'sel:ep', align: 'left',
-      choose: id => { if (id) form.keyRef = id; form.keyMode = 'registered'; focusAfterDraw = 'sel:ep'; invalidate(); draw(); } }).element);
+      choose: id => { if (id) form.keyRef = id; form.keyMode = 'registered'; form.keyChosen = true; focusAfterDraw = 'sel:ep'; invalidate(); draw(); } }).element);
     if (picked) {
       // 「登録済みのキー」と言った後ろなので、確認の結果（確かめていれば）・使っている数・管理へのリンクだけ続ける
       const small = el('small'); const check = checkParts(picked);

@@ -22,7 +22,7 @@ import crypto from 'node:crypto';
 import { writeAtomic } from './atomic-file.mjs';
 import { SECRET_PREFIX as JUDGE_PREFIX, JUDGE_SERVICE } from './delegation-judges.mjs';
 import { voiceBaseUrl } from './voice/openrouter.mjs';
-import { USE_PROVIDER, providerName, providerOfEndpoint } from '../web/api-keys-model.mjs';
+import { USE_PROVIDER, FIXED_HOST_PROVIDERS, providerName, providerOfEndpoint, hostOf, keyFitsEndpoint } from '../web/api-keys-model.mjs';
 import { t } from './i18n.mjs';
 
 export { providerOfEndpoint };
@@ -65,11 +65,17 @@ const sha = value => crypto.createHash('sha256').update('apikey:' + value).diges
 const iso = ms => new Date(ms).toISOString();
 const emptyState = () => ({ version: 1, migration: null, keys: [], uses: Object.fromEntries(USES.map(u => [u, null])), guide: null });
 
+/** キーを結び付けるホスト。ホストの決まったプロバイダー（OpenRouter・Cerebras）のキーは持たない（null） */
+function normalizeHost(provider, host) {
+  const h = String(host ?? '').trim().toLowerCase();
+  return !FIXED_HOST_PROVIDERS.has(provider) && /^[a-z0-9.:\-\[\]]{1,253}$/.test(h) ? h : null;
+}
+
 function clean(raw) {
   if (raw?.version !== 1 || !Array.isArray(raw.keys)) throw new Error('bad');
   const keys = raw.keys.filter(k => ID.test(k?.id ?? '') && PROVIDER.test(k.provider ?? '') && typeof k.label === 'string')
     .map(k => ({ id: k.id, provider: k.provider, label: k.label.slice(0, MAX_LABEL), createdAt: typeof k.createdAt === 'string' ? k.createdAt : null,
-      lastCheck: k.lastCheck && typeof k.lastCheck === 'object' ? k.lastCheck : null }));
+      host: normalizeHost(k.provider, k.host), lastCheck: k.lastCheck && typeof k.lastCheck === 'object' ? k.lastCheck : null }));
   const ids = new Set(keys.map(k => k.id));
   const uses = Object.fromEntries(USES.map(u => [u, ids.has(raw.uses?.[u]) ? raw.uses[u] : null]));
   return { version: 1, migration: raw.migration?.done ? { done: true, at: String(raw.migration.at ?? '') } : null, keys, uses,
@@ -158,8 +164,11 @@ export function createApiKeys({ dataDir, secrets, legacy = {}, endpoints = () =>
     const read = async fn => {
       try { return await fn(); }
       catch (e) {
-        if (e?.code === 'SECRET_LOCKED') blocked = 'locked';
-        else log('apikeys.legacy_unreadable', { code: String(e?.code ?? '') });
+        // ファイルそのものが解析できない（壊れている）ときだけ、その置き場を飛ばす（ファイルには触れない）。
+        // それ以外（暗号化を読めない・暗号器が答えない・復号に失敗する）は、キーがあるのに読めないだけなので、
+        // 空のまま「移行済み」にせず保留する（次の起動でやり直す）
+        if (e?.code === 'SECRET_FILE_BROKEN') log('apikeys.legacy_unreadable', { code: e.code });
+        else blocked = e?.code === 'SECRET_LOCKED' ? 'locked' : 'unreadable';
         return null;
       }
     };
@@ -181,11 +190,13 @@ export function createApiKeys({ dataDir, secrets, legacy = {}, endpoints = () =>
     }
     if (blocked) return blocked;
 
-    // (プロバイダー, 値) ごとに 1 件。id は値から決める（途中で止まっても、やり直しで同じ id になる）
+    // (プロバイダー, 値) ごとに 1 件。ホストの決まっていないプロバイダー（カスタムなど）は、使っている接続先のホストも分ける
+    // （同じ値でも別のホストなら別の件。キーを別のホストへ送らない）。id は値から決める（途中で止まっても、やり直しで同じ id になる）
     const groups = new Map();
     for (const s of sources) {
-      const g = `${s.provider}:${sha(s.value)}`;
-      if (!groups.has(g)) groups.set(g, { id: 'key-' + crypto.createHash('sha256').update(g).digest('hex').slice(0, 12), provider: s.provider, value: s.value, sources: [] });
+      const host = normalizeHost(s.provider, s.row ? hostOf(s.row.baseUrl) : '');
+      const g = `${s.provider}:${host ?? ''}:${sha(s.value)}`;
+      if (!groups.has(g)) groups.set(g, { id: 'key-' + crypto.createHash('sha256').update(g).digest('hex').slice(0, 12), provider: s.provider, host, value: s.value, sources: [] });
       groups.get(g).sources.push(s);
     }
     const list = [...groups.values()];
@@ -202,7 +213,7 @@ export function createApiKeys({ dataDir, secrets, legacy = {}, endpoints = () =>
       let unique = label, n = 2;
       while (used.has(unique)) unique = `${label.slice(0, MAX_LABEL - 4)} (${n++})`;
       used.add(unique);
-      return { id: g.id, provider: g.provider, label: unique, createdAt: iso(now()), lastCheck: null, value: g.value, sources: g.sources };
+      return { id: g.id, provider: g.provider, host: g.host, label: unique, createdAt: iso(now()), lastCheck: null, value: g.value, sources: g.sources };
     });
 
     // 書く順: 値 → 接続先の割り当て → 台帳（移行済みの印）。台帳が最後なので、途中で止まっても次の起動でやり直せる
@@ -213,17 +224,26 @@ export function createApiKeys({ dataDir, secrets, legacy = {}, endpoints = () =>
       if (s.kind === 'endpoint') refs[s.row.id] = k.id;
       else uses[s.use] = k.id;
     }
-    if (Object.keys(refs).length) await eps().setKeyRefs(refs);
+    // 接続先の割り当ては移行の結果をそのまま書く（以前の途中の移行や古い方法で残った keyRef は、ここに無ければ消える）
+    if (eps()?.setKeyRefs) await eps().setKeyRefs(refs);
     const providersWithMany = [...perProvider].filter(([p, n]) => n > 1 && p !== 'custom');
-    state = { version: 1, migration: { done: true, at: iso(now()) }, keys: keys.map(({ id, provider, label, createdAt, lastCheck }) => ({ id, provider, label, createdAt, lastCheck })),
+    state = { version: 1, migration: { done: true, at: iso(now()) }, keys: keys.map(({ id, provider, host, label, createdAt, lastCheck }) => ({ id, provider, host, label, createdAt, lastCheck })),
       uses, guide: providersWithMany.length ? 'pending' : null };
     await save();
     return null;
   }
 
+  /** 台帳に無いキーを指す接続先の keyRef を外す（削除の途中で止まった・台帳だけ戻った起動）。外した接続先は削除と同じ扱い（確認に失敗・選び直し） */
+  async function pruneDangling() {
+    try {
+      const gone = await eps()?.pruneKeyRefs?.(new Set(state.keys.map(k => k.id)), { error: t('apiKeys.endpointKeyDeleted') }) ?? [];
+      for (const epId of gone) await mirrorEndpoint(epId, null);
+    } catch (e) { log('apikeys.prune_failed', { code: String(e?.code ?? '') }); }
+  }
+
   async function init() {
     try { state = await load(); } catch (e) { state = emptyState(); deferred = 'broken'; log('apikeys.state_unreadable', { code: e.code }); return; }
-    if (migrated()) return;
+    if (migrated()) { await pruneDangling(); return; }
     try { deferred = await migrate(); }
     catch (e) { deferred = 'write-failed'; log('apikeys.migrate_failed', { code: String(e?.code ?? '') }); }
     if (deferred) { state = emptyState(); log('apikeys.migrate_deferred', { reason: deferred }); }
@@ -304,7 +324,7 @@ export function createApiKeys({ dataDir, secrets, legacy = {}, endpoints = () =>
     },
     usesState() { return { ...state.uses }; },
 
-    async add({ provider, label, key }) {
+    async add({ provider, label, key, host }) {
       await writable();
       const value = normalizeApiKey(key);
       if (!value) throw new ApiKeyError('INVALID_KEY');
@@ -313,7 +333,7 @@ export function createApiKeys({ dataDir, secrets, legacy = {}, endpoints = () =>
       const name = String(label ?? '').trim().replace(/[\x00-\x1f\x7f]/g, '').slice(0, MAX_LABEL) || providerName(p) || t('apiKeys.origin.unnamed');
       const id = 'key-' + crypto.randomBytes(6).toString('hex');
       await secrets.set(SECRET_PREFIX + id, { key: value });
-      try { await mutate(s => { s.keys.push({ id, provider: p, label: name, createdAt: iso(now()), lastCheck: null }); }); }
+      try { await mutate(s => { s.keys.push({ id, provider: p, label: name, createdAt: iso(now()), host: normalizeHost(p, host), lastCheck: null }); }); }
       catch (e) { await secrets.delete(SECRET_PREFIX + id).catch(() => {}); throw e; }
       emit({ keys: true });
       return { id };
@@ -337,9 +357,13 @@ export function createApiKeys({ dataDir, secrets, legacy = {}, endpoints = () =>
       const key = known(id);
       if (!key) throw new ApiKeyError('NOT_FOUND');
       const affected = await usersOf(id);
-      const detached = await eps()?.detachKey?.(id, { error: t('apiKeys.endpointKeyDeleted') }) ?? [];
       const usesBefore = USES.filter(u => state.uses[u] === id);
+      // 台帳を先に保存する（保存に失敗したら何も変わらない）。接続先の keyRef を外すのはその後で、途中で止まっても、台帳に無いキーを指す参照は
+      // 使うとき（keyValue が null）にも次の起動（pruneDangling）にも、黙って送らずに止まる
       await mutate(s => { s.keys = s.keys.filter(k => k.id !== id); for (const u of USES) if (s.uses[u] === id) s.uses[u] = null; });
+      let detached = [];
+      try { detached = await eps()?.detachKey?.(id, { error: t('apiKeys.endpointKeyDeleted') }) ?? []; }
+      catch (e) { log('apikeys.detach_failed', { code: String(e?.code ?? '') }); }
       for (const u of usesBefore) await mirrorUse(u);
       for (const epId of detached) await mirrorEndpoint(epId, null);
       await secrets.delete(SECRET_PREFIX + id).catch(() => {});
@@ -412,15 +436,31 @@ export function createApiKeys({ dataDir, secrets, legacy = {}, endpoints = () =>
       });
     },
     /** 値が同じキーがあるか（テスト用ではなく、接続先の「別のキーを入れる」で同じ値を重ねて登録しないため） */
-    async findByValue(provider, key) {
+    async findByValue(provider, key, host) {
       await ensure();
       const value = normalizeApiKey(key);
       if (!value || !migrated()) return null;
+      const want = normalizeHost(provider, host);
       for (const k of state.keys) {
         if (k.provider !== provider) continue;
-        if ((await keyValue(k.id).catch(() => null)) === value) return k.id;
+        // ホストの決まっていないプロバイダーは、同じホストのキー（まだ結び付いていないキーはそのホストに結び付ける）だけ再利用する
+        if (!FIXED_HOST_PROVIDERS.has(provider) && k.host && k.host !== want) continue;
+        if ((await keyValue(k.id).catch(() => null)) === value) { if (!k.host && want) await mutate(() => { known(k.id).host = want; }); return k.id; }
       }
       return null;
+    },
+    /** キーをその接続先（{ preset, baseUrl }）で選んでよいか（プロバイダーとホストが合うか）。値は読まない */
+    async fits(id, endpoint) {
+      await ensure();
+      return keyFitsEndpoint(known(String(id ?? '')), endpoint);
+    },
+    /** ホストの決まっていないプロバイダーのキーを、初めて選んだ接続先のホストに結び付ける（後は同じホストの接続先でだけ選べる） */
+    async bindHost(id, baseUrl) {
+      await ensure();
+      const key = known(String(id ?? ''));
+      const host = key ? normalizeHost(key.provider, hostOf(baseUrl)) : null;
+      if (!key || key.host || !host) return;
+      await mutate(() => { key.host = host; });
     },
   };
   return api;

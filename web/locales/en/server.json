@@ -254,6 +254,7 @@
       "control": "The name can't contain line breaks or other control characters."
     },
     "key": {
+      "hostMismatch": "The selected key is not for this endpoint's URL (host). Choose a key for this URL or enter another key",
       "refMissing": "The selected key was not found. Check it in API keys",
       "invalid": "The API key contains spaces or line breaks. Paste only the value.",
       "unreadable": "Can't read the saved key."
@@ -310,6 +311,7 @@
       "deleted": "This conversation's endpoint has been deleted. Choose another endpoint from the model panel in the input area.",
       "wrongAgent": "This conversation's endpoint \"{{name}}\" is for {{agent}}. Choose another endpoint.",
       "failed": "The last check of endpoint \"{{name}}\" failed. Check it again under Settings › Agents › Endpoints, or choose another endpoint.",
+      "keyMissing": "No key is selected for the endpoint \"{{name}}\". Register one in Settings › API keys and choose it when editing the endpoint.",
       "keyUnreadable": "Can't read the key for endpoint \"{{name}}\"."
     }
   },

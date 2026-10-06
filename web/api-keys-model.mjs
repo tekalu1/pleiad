@@ -10,12 +10,34 @@ export const USE_PROVIDER = Object.freeze({ voice: 'openrouter', 'judge:jev': 'o
 
 const PRESET = /^[a-z0-9-]{1,32}$/;
 
-/** 接続先の行から、キーのプロバイダーを決める（プリセットか URL のホスト）。決まらなければ custom */
+/** 送り先のホストが決まっているプロバイダー（キーにホストを持たせない）。それ以外のキーは、使った接続先のホストに結び付ける */
+export const FIXED_HOST_PROVIDERS = new Set(['openrouter', 'cerebras']);
+
+/** URL のホスト（小文字）。読めなければ '' */
+export function hostOf(url) {
+  try { return new URL(String(url ?? '')).hostname.toLowerCase(); } catch { return ''; }
+}
+
+/**
+ * 接続先の行から、キーのプロバイダーを決める（URL のホストが先。プリセットは自前のものだけ）。決まらなければ custom。
+ * OpenRouter は URL のホストが openrouter.ai のときだけ（プリセットを選んだまま URL を別のホストへ変えたら、別のホストなので custom）
+ */
 export function providerOfEndpoint({ preset, baseUrl } = {}) {
-  let host = '';
-  try { host = new URL(String(baseUrl ?? '')).hostname.toLowerCase(); } catch { /* 読めない URL はプリセットだけで決める */ }
-  if (preset === 'openrouter' || /(^|\.)openrouter\.ai$/.test(host)) return 'openrouter';
+  const host = hostOf(baseUrl);
+  if (/(^|\.)openrouter\.ai$/.test(host)) return 'openrouter';
   if (/(^|\.)cerebras\.ai$/.test(host)) return 'cerebras';
-  if (preset && preset !== 'custom' && PRESET.test(preset)) return preset;
+  if (preset && preset !== 'custom' && preset !== 'openrouter' && PRESET.test(preset)) return preset;
   return 'custom';
 }
+
+/**
+ * キーをその接続先で選んでよいか。プロバイダーが同じで、ホストが決まっていないプロバイダーのキーは、元のホストと同じ接続先だけ
+ * （まだどのホストにも結び付いていないキー（host なし）は、選んだ時に結び付く）。別のホスト用のキーを黙って送らない
+ */
+export function keyFitsEndpoint(key, endpoint) {
+  if (!key || key.provider !== providerOfEndpoint(endpoint)) return false;
+  return FIXED_HOST_PROVIDERS.has(key.provider) || !key.host || key.host === hostOf(endpoint.baseUrl);
+}
+
+/** 既定で選んでよいほど確かか（ホストが一致する・ホストの決まったプロバイダー）。結び付いていないキーは選べるが既定にしない */
+export const keyMatchesEndpoint = (key, endpoint) => keyFitsEndpoint(key, endpoint) && (FIXED_HOST_PROVIDERS.has(key.provider) || key.host === hostOf(endpoint.baseUrl));

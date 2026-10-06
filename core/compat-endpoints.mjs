@@ -20,6 +20,7 @@ import net from 'node:net';
 import { addressKind, isLoopbackHost } from './mcp-url-guard.mjs';
 import { KIND, ROLE_KEYS, COMPAT_AGENTS } from '../web/compat-presets.mjs';
 import { providerOfEndpoint } from './api-keys.mjs';
+import { hostOf } from '../web/api-keys-model.mjs';
 import { t } from './i18n.mjs';
 
 const SECRET_PREFIX = 'compat-endpoint:';
@@ -399,8 +400,12 @@ export function createCompatEndpoints({ dataDir, secrets, apiKeys = null, fetchI
     const unreadable = e => { throw new CheckError(e.code === 'SECRET_LOCKED' ? e.message : t('compat.key.unreadable')); };
     // 登録済みのキー（API キー）を選んだとき。値は API キーの置き場から読み、画面には出さない
     const picked = String(input?.keyRef ?? '');
+    // 選んだキーは、この接続先のプロバイダー・ホスト用のものだけ（別のホスト用のキーを、URL を替えたまま送らない）
+    const endpoint = { preset: input?.preset ?? existing?.preset, baseUrl };
+    const fits = async ref => { if (!(await apiKeys.fits(ref, endpoint))) throw new CheckError(t('compat.key.hostMismatch')); };
     if (!key && picked) {
       if (!refs || !KEY_REF.test(picked)) throw new CheckError(t('compat.key.refMissing'));
+      await fits(picked);
       const value = await apiKeys.keyValue(picked).catch(unreadable);
       if (!value) throw new CheckError(t('compat.key.refMissing'));
       key = value; keySource = 'ref:' + picked;
@@ -409,6 +414,7 @@ export function createCompatEndpoints({ dataDir, secrets, apiKeys = null, fetchI
     if (!key && existing && input?.keepKey !== false) {
       const ref = refs ? refOf(existing) : null;
       if (ref) {
+        await fits(ref);
         const value = await apiKeys.keyValue(ref).catch(unreadable);
         if (value) { key = value; keySource = 'ref:' + ref; }
       } else if (!refs) {
@@ -446,7 +452,20 @@ export function createCompatEndpoints({ dataDir, secrets, apiKeys = null, fetchI
     },
     /** { <接続先の id>: <キーの id> } を書く（移行） */
     setKeyRefs(refs) {
-      return update(data => { for (const e of data.endpoints) if (KEY_REF.test(refs[e.id] ?? '')) e.keyRef = refs[e.id]; });
+      // 渡した対応が全部。無い接続先の古い keyRef（途中で保留になった移行の後に、古い方法でキーを外した接続先）は消す
+      return update(data => { for (const e of data.endpoints) { if (KEY_REF.test(refs[e.id] ?? '')) e.keyRef = refs[e.id]; else delete e.keyRef; } });
+    },
+    /** 台帳に無いキーを指す keyRef を外す。外した接続先の id を返す（detachKey と同じ扱い） */
+    async pruneKeyRefs(valid, { error = '' } = {}) {
+      const pruned = [];
+      await update(data => {
+        for (const e of data.endpoints) {
+          if (!e.keyRef || valid.has(e.keyRef)) continue;
+          delete e.keyRef; pruned.push(e.id);
+          e.lastCheck = { ok: false, at: new Date(now()).toISOString(), error: String(error).slice(0, 300), code: 'key-deleted' };
+        }
+      });
+      return pruned;
     },
     /** from のキーを使っていた接続先を to のキーに付け替える（まとめ） */
     retargetKey(from, to) {
@@ -514,8 +533,9 @@ export function createCompatEndpoints({ dataDir, secrets, apiKeys = null, fetchI
       let registered = null;
       if (c.refs && c.keySource === 'input') {
         const provider = providerOfEndpoint({ preset, baseUrl: c.baseUrl });
-        keyRef = await apiKeys.findByValue(provider, c.key);
-        if (!keyRef) keyRef = registered = (await apiKeys.add({ provider, label: name, key: c.key })).id;
+        const host = hostOf(c.baseUrl);
+        keyRef = await apiKeys.findByValue(provider, c.key, host);
+        if (!keyRef) keyRef = registered = (await apiKeys.add({ provider, label: name, key: c.key, host })).id;
       } else if (!c.refs) {
         if (c.keySource === 'input') await secrets.set(secretKey(created), { key: c.key });
         else if (!c.key) await secrets.delete(secretKey(created)).catch(() => {});
@@ -535,6 +555,8 @@ export function createCompatEndpoints({ dataDir, secrets, apiKeys = null, fetchI
         if (registered) await apiKeys.discard(registered);
         throw e;
       }
+      // まだどのホストにも結び付いていないキー（API キーのページで「その他」として登録したもの）は、初めて選んだこの接続先のホストに結び付く
+      if (c.refs && keyRef) await apiKeys.bindHost(keyRef, c.baseUrl);
       if (c.refs) await apiKeys.mirrorEndpoint(created, keyRef ?? null);
       receipts.delete(String(receipt));
       return { id: created, ...(c.refs ? { keyRef: keyRef ?? null } : {}) };
@@ -605,9 +627,12 @@ export function createCompatEndpoints({ dataDir, secrets, apiKeys = null, fetchI
           if (refOf(e)) {
             key = await apiKeys.keyValue(refOf(e));
             if (!key) throw new Error('missing');
+          } else if (e.auth && e.auth !== 'none') {
+            // キーを使う接続先（確認が bearer などで通った）なのにキーの参照が無い: 空のキーで送って 401 にせず、止めて選び直しを求める
+            throw new EndpointError(t('compat.resolve.keyMissing', { name: e.name }), 'unreadable');
           }
         } else key = (await secrets.get(secretKey(e.id)))?.key ?? '';
-      } catch (err) { throw new EndpointError(err.code === 'SECRET_LOCKED' ? err.message : t('compat.resolve.keyUnreadable', { name: e.name }), 'unreadable'); }
+      } catch (err) { if (err instanceof EndpointError) throw err; throw new EndpointError(err.code === 'SECRET_LOCKED' ? err.message : t('compat.resolve.keyUnreadable', { name: e.name }), 'unreadable'); }
       return { id: e.id, agent: e.agent, kind: KIND[e.agent], name: e.name, baseUrl: e.baseUrl, auth: e.auth ?? (key ? 'bearer' : 'none'), key,
         roles: { ...e.roles }, models: storedModels(e).models, options: { ...(e.options ?? {}) } };
     },
