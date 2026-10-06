@@ -253,6 +253,7 @@ export function createChromeConnection({ locate, os, WebSocketImpl = NodeWebSock
     rnd.opened = true;
     clearRound(rnd);
     const cdp = createCdp(rnd.ws);
+    cdp.port = rnd.port;   // 窓を外形で探す層（core/chrome/windows.mjs）が、つないだ Chrome のプロセスを引くのに使う
     let product = null;
     try { product = (await cdp.send('Browser.getVersion')).product ?? null; }
     catch { cdp.close(); if (!stale(att)) finishAttempt(att, 'protocol', new ChromeConnectionError('protocol')); return; }

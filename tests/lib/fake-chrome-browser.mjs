@@ -34,6 +34,7 @@ export function createFakeBrowser({ product, calls, userTabs = USER_TABS } = {})
   const served = [];
   const autoAttachCalls = [];
   let windowSeq = 100, requestSeq = 0, contextSeq = 0, entrySeq = 0;
+  let movesRefused = false;      // Browser.setWindowBounds の left・top を受けない（Chrome が画面の外へ置かせてくれない）
   let lastActive = null;
   let fetchEnableDelayMs = 0;
 
@@ -206,7 +207,7 @@ export function createFakeBrowser({ product, calls, userTabs = USER_TABS } = {})
       case 'Target.closeTarget': { const t = targets.get(params.targetId); if (!t) throw { code: -32602, message: 'No target with given id found' }; closeTarget(t); return { success: true }; }
       case 'Target.activateTarget': { const t = targets.get(params.targetId); if (!t) throw { code: -32602, message: 'No target with given id found' }; const w = windows.get(t.windowId); if (w) w.state = 'normal'; return {}; }
       case 'Browser.getWindowForTarget': { const t = targets.get(params.targetId); if (!t || t.windowId == null) throw { code: -32000, message: 'No web contents in the target' }; return { windowId: t.windowId, bounds: boundsOf(t.windowId) }; }
-      case 'Browser.setWindowBounds': { const w = windows.get(params.windowId); if (!w) throw { code: -32000, message: 'Browser window not found' }; if (params.bounds?.windowState) w.state = params.bounds.windowState; for (const k of ['left', 'top', 'width', 'height']) if (Number.isFinite(params.bounds?.[k])) w.bounds[k] = params.bounds[k]; return {}; }
+      case 'Browser.setWindowBounds': { const w = windows.get(params.windowId); if (!w) throw { code: -32000, message: 'Browser window not found' }; if (params.bounds?.windowState) w.state = params.bounds.windowState; for (const k of ['left', 'top', 'width', 'height']) if (Number.isFinite(params.bounds?.[k]) && !(movesRefused && (k === 'left' || k === 'top'))) w.bounds[k] = params.bounds[k]; return {}; }
       case 'Browser.getWindowBounds': { const w = windows.get(params.windowId); if (!w) throw { code: -32000, message: 'Browser window not found' }; return { bounds: boundsOf(params.windowId) }; }
       case 'Browser.setContentsSize': return {};
       case 'Browser.close': return {};
@@ -291,6 +292,8 @@ export function createFakeBrowser({ product, calls, userTabs = USER_TABS } = {})
     focusEmulated: targetId => [...sessions.values()].some(s => s.targetId === targetId && s.fe),
     windowTitle,
     windowBounds: windowId => (windows.has(windowId) ? boundsOf(windowId) : null),
+    /** Browser.setWindowBounds の位置（left・top）を受けなくする（大きさは受ける） */
+    refuseWindowMoves(on) { movesRefused = on; },
     onWindow(fn) { windowListeners.add(fn); return () => windowListeners.delete(fn); },
     /** chrome.exe --new-window の窓（最初のタブは url。bounds は --window-position・--window-size が効いたとき） */
     launchWindow({ url, bounds } = {}) {

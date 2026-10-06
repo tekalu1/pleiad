@@ -49,6 +49,7 @@ function fakeWin32({ directForeground = true } = {}) {
     setLayeredAlpha(hwnd, alpha) { calls.push(['setLayeredAlpha', hwnd, alpha]); windows.get(hwnd).alpha = alpha; return true; },
     displays: [{ handle: 1, x: 0, y: 0, width: 2560, height: 1440, primary: true, dpi: 144 }, { handle: 2, x: 2560, y: 0, width: 1920, height: 1080, primary: false, dpi: 96 }],
     monitors: () => w.displays.map(d => ({ ...d })),
+    listenerPid: port => (port === 9222 ? 10 : null),   // つないだ Chrome（pid 10）がポート 9222 を待ち受けている
     registry: {},
     registryString: (hive, subkey, name) => w.registry[`${hive}|${subkey}|${name}`] ?? null,
     bringToTop(hwnd) { calls.push(['bringToTop', hwnd]); return true; },
@@ -361,17 +362,17 @@ export default async function (t) {
     const b = fakeWin32();
     b.add(600, { title: 'about:blank - Google Chrome', rect: { left: 0, top: 0, right: 486, bottom: 447 } });
     const ob = createWin32ChromeOs({ win32: b });
-    const popup = ob.findWindowByBounds({ bounds: { left: 0, top: 0, width: 324, height: 298 } });
+    const popup = ob.findWindowByBounds({ port: 9222, bounds: { left: 0, top: 0, width: 324, height: 298 } });
     t.ok('findWindowByBounds は外形（DIP。150% の物理画素を換算）が合う窓を返す', popup?.id === '600');
-    t.ok('すでにエージェントの窓として出した窓は、もう返さない', ob.findWindowByBounds({ bounds: { left: 0, top: 0, width: 324, height: 298 } }) === null);
+    t.ok('すでにエージェントの窓として出した窓は、もう返さない', ob.findWindowByBounds({ port: 9222, bounds: { left: 0, top: 0, width: 324, height: 298 } }) === null);
     b.add(601, { title: 'a', rect: { left: 0, top: 0, right: 486, bottom: 447 } });
     b.add(602, { title: 'b', rect: { left: 3, top: 3, right: 489, bottom: 450 } });
-    t.ok('合う窓が 2 つあれば曖昧なので null', ob.findWindowByBounds({ bounds: { left: 0, top: 0, width: 324, height: 298 } }) === null);
+    t.ok('合う窓が 2 つあれば曖昧なので null', ob.findWindowByBounds({ port: 9222, bounds: { left: 0, top: 0, width: 324, height: 298 } }) === null);
     b.windows.get(601).visible = false; b.windows.get(602).iconic = true;
-    t.ok('見えない窓・最小化の窓は候補にしない', ob.findWindowByBounds({ bounds: { left: 0, top: 0, width: 324, height: 298 } }) === null);
+    t.ok('見えない窓・最小化の窓は候補にしない', ob.findWindowByBounds({ port: 9222, bounds: { left: 0, top: 0, width: 324, height: 298 } }) === null);
     b.windows.get(601).visible = true;
-    t.ok('許容は 16 DIP（外れていれば見つけない）', ob.findWindowByBounds({ bounds: { left: 100, top: 100, width: 324, height: 298 } }) === null && ob.findWindowByBounds({ bounds: { left: 0, top: 0, width: 324, height: 298 } })?.id === '601');
-    t.ok('bounds が数でなければ null', ob.findWindowByBounds({ bounds: { left: 'a' } }) === null && ob.findWindowByBounds({}) === null);
+    t.ok('許容は 16 DIP（外れていれば見つけない）', ob.findWindowByBounds({ port: 9222, bounds: { left: 100, top: 100, width: 324, height: 298 } }) === null && ob.findWindowByBounds({ port: 9222, bounds: { left: 0, top: 0, width: 324, height: 298 } })?.id === '601');
+    t.ok('bounds が数でなければ null', ob.findWindowByBounds({ port: 9222, bounds: { left: 'a' } }) === null && ob.findWindowByBounds({}) === null);
   }
 
   // ===== エージェントの窓: 隠す・戻す・置き直し・解放 =====
@@ -471,12 +472,12 @@ export default async function (t) {
     w.fg = 700; os.guardTick();
     w.fg = 501; os.guardTick();   // popup が前面を取った。まだ隠していないので見張りは何もしない
     t.ok('隠していない窓が前面を取っただけでは、見張りは返さない', w.fg === 501);
-    const popup = os.findWindowByBounds({ bounds: { left: 0, top: 0, width: 324, height: 298 } });
+    const popup = os.findWindowByBounds({ port: 9222, bounds: { left: 0, top: 0, width: 324, height: 298 } });
     t.ok('popup の窓を隠すと、その窓が前面なら直前の前面（メモ帳）へすぐ返す（次の周期を待たない）', os.conceal(popup) === true && w.fg === 700, String(w.fg));
     // 見張りが前面を取った窓を一度も見ないまま隠した場合も、その窓が前面になる前の前面（最後に見た前面）へ返す
     w.add(502, { title: 'about:blank - Google Chrome', rect: { left: 10, top: 10, right: 496, bottom: 457 } });
     w.fg = 502;
-    const second = os.findWindowByBounds({ bounds: { left: 7, top: 7, width: 324, height: 298 } });
+    const second = os.findWindowByBounds({ port: 9222, bounds: { left: 7, top: 7, width: 324, height: 298 } });
     t.ok('見張りが前面の移り変わりを見る前に隠した窓も、直前の前面へ返す', os.conceal(second) === true && w.fg === 700, String(w.fg));
     // 直前の前面が隠した窓なら、その前までさかのぼる
     w.fg = 500; os.guardTick();   // 隠した窓同士の移り変わり（700 → 500）
@@ -501,6 +502,222 @@ export default async function (t) {
     t.ok('置き直し（reconceal）は吹き出しの窓も対象（親の窓と合わせて 3 つ）', os.reconceal() === 3 && w.windows.get(520).rect.left === 2920);
   }
 
+  // ===== 見直しの修正: 外形で窓を探すときの絞り込み（つないだ Chrome のプロセス・開く前の写し・許容） =====
+  {
+    const BOUNDS = { left: 0, top: 0, width: 324, height: 298 };
+    const RECT = { left: 0, top: 0, right: 486, bottom: 447 };   // 150%: 324×298 DIP
+    const make = () => {
+      const w = fakeWin32();
+      w.add(600, { title: 'つないだ Chrome の窓', pid: 10, rect: RECT });
+      w.add(601, { title: '別の Chrome（別の User Data）の窓', pid: 11, rect: RECT });
+      w.add(602, { title: 'Edge の窓', pid: 40, rect: RECT });
+      return { w, os: createWin32ChromeOs({ win32: w }) };
+    };
+    {
+      const { os } = make();
+      t.ok('port が無ければ採用しない（つないだ Chrome のプロセスが分からない。取り違えて隠さない）', os.findWindowByBounds({ bounds: BOUNDS }) === null);
+    }
+    {
+      const { os } = make();
+      t.ok('port の持ち主が分からなければ（待ち受けが無い）採用しない', os.findWindowByBounds({ bounds: BOUNDS, port: 9333 }) === null);
+    }
+    {
+      const { w, os } = make();
+      w.listenerPid = () => { throw new Error('iphlpapi'); };
+      t.ok('持ち主の引きが失敗しても投げず、採用しない', os.findWindowByBounds({ bounds: BOUNDS, port: 9222 }) === null);
+    }
+    {
+      const { os } = make();
+      const hit = os.findWindowByBounds({ bounds: BOUNDS, port: 9222 });
+      t.ok('つないだ Chrome のプロセスの窓だけを見る（別の chrome.exe・Edge の窓が同じ外形でも、曖昧にならず選ばない）', hit?.id === '600', JSON.stringify(hit));
+    }
+    {
+      const { os } = make();
+      t.ok('呼び出しの前の写し（since）に入っている窓は選ばない', os.findWindowByBounds({ bounds: BOUNDS, port: 9222, since: ['600'] }) === null);
+      t.ok('写しに別の窓の印があっても、ほかの窓は選べる', os.findWindowByBounds({ bounds: BOUNDS, port: 9222, since: ['601', '602'] })?.id === '600');
+    }
+    {
+      const { w, os } = make();
+      w.windows.get(600).rect = { left: 15, top: 15, right: 501, bottom: 462 };   // 10 DIP ずれた
+      t.ok('許容を狭めると（tolerance 2）、少しずれた窓は選ばない', os.findWindowByBounds({ bounds: BOUNDS, port: 9222, tolerance: 2 }) === null);
+      t.ok('許容の既定は 16 DIP（同じずれでも選ぶ）。16 を超える値は 16 に丸める', os.findWindowByBounds({ bounds: BOUNDS, port: 9222, tolerance: 500 })?.id === '600');
+    }
+    {
+      // 確認の窓は、エージェントの窓にしない（題や外形が偶然合っても、隠す・見張る対象にならない）
+      const w = fakeWin32();
+      const os = createWin32ChromeOs({ win32: w, timers: { setInterval: () => 1, clearInterval: () => {} } });
+      w.add(910, { ...DIALOG, title: `リモート デバッグを許可しますか？ PLY-${NONCE}` });
+      const dialog = os.findPermissionDialog({ since: [] });
+      t.ok('前提: 確認の窓が見つかる', dialog?.id === '910');
+      t.ok('確認の窓は、題に nonce があっても findWindowByNonce で返さない・conceal もしない', os.findWindowByNonce(NONCE) === null && os.conceal(dialog) === false && !w.calls.some(c => c[0] === 'setWindowPos' || c[0] === 'setExStyle'));
+      const rect = w.windows.get(910).rect;
+      const scale = 96 / 144;
+      t.ok('確認の窓は、外形で合っても findWindowByBounds で返さない', os.findWindowByBounds({ port: 9222, bounds: { left: rect.left * scale, top: rect.top * scale, width: (rect.right - rect.left) * scale, height: (rect.bottom - rect.top) * scale } }) === null);
+      t.ok('確認の窓は、そのまま閉じられる', os.close(dialog) === true && w.calls.some(c => c[0] === 'postMessage' && c[1] === 910 && c[2] === WM_CLOSE));
+    }
+  }
+
+  // ===== 見直しの修正: 隠した窓の持ち主の吹き出しを隠すとき、確認の窓は隠さない =====
+  {
+    const w = winWith();
+    const os = createWin32ChromeOs({ win32: w, timers: { setInterval: () => 1, clearInterval: () => {} } });
+    os.conceal(os.findWindowByNonce(NONCE));
+    // 隠した窓が持ち主になった確認の窓（題が既知）
+    w.add(530, { ...DIALOG, owner: 500 });
+    os.guardTick();
+    const dialogWin = w.windows.get(530);
+    t.ok('持ち主が隠した窓でも、確認の窓（題が既知で小さい）は隠さない（利用者が見て、Pleiad が閉じる）', dialogWin.alpha === undefined && dialogWin.rect.left === 100 && !(dialogWin.exStyle & WS_EX_TOOLWINDOW));
+    // 題が未知の言語の確認の窓: 層が確認として出していれば、隠さない
+    w.add(531, { ...DIALOG, title: 'Autoriser le débogage à distance ?', owner: 500 });
+    const ref = os.findPermissionDialog({ since: ['500', '700', '530'] });
+    t.ok('前提: 題が未知の確認の窓も、層が確認の窓として出す', ref?.id === '531', JSON.stringify(ref));
+    os.guardTick();
+    t.ok('層が確認の窓として出した窓は、題が未知でも隠さない', w.windows.get(531).alpha === undefined && w.windows.get(531).rect.left === 100);
+    t.ok('確認の窓の ref は、そのまま閉じられる', os.close(ref) === true && w.calls.some(c => c[0] === 'postMessage' && c[1] === 531 && c[2] === WM_CLOSE));
+    // ふつうの吹き出し（翻訳）は今までどおり隠す
+    w.add(532, { title: 'このページを翻訳しますか？', owner: 500, rect: { left: 300, top: 150, right: 900, bottom: 400 } });
+    os.guardTick();
+    t.ok('ふつうの吹き出し（確認でない）は、今までどおり隠す', w.windows.get(532).alpha === 0 && w.windows.get(532).rect.left === 5480);
+  }
+
+  // ===== 見直しの修正: 見張りの周期は、投げても止まらない =====
+  {
+    const w = winWith();
+    const intervals = [], logs = [];
+    const os = createWin32ChromeOs({ win32: w, log: line => logs.push(line), timers: { setInterval: (fn, ms) => { intervals.push(fn); return intervals.length; }, clearInterval: () => {} } });
+    os.conceal(os.findWindowByNonce(NONCE));
+    w.add(520, { title: '翻訳の確認', owner: 500, rect: { left: 300, top: 150, right: 900, bottom: 400 } });
+    const processPath = w.processPath;
+    w.processPath = pid => { if (w.boom) throw new Error('boom'); return processPath(pid); };
+    w.boom = true;
+    let threw = null;
+    try { intervals[0](); } catch (error) { threw = error; }
+    t.ok('setInterval から直に呼ばれる見張りは、中で投げても外へ出さない（ログに残す）', threw === null && logs.some(line => line.includes('guard failed')), String(threw?.message));
+    w.boom = false;
+    intervals[0]();
+    t.ok('投げた次の周期も動く（見張りは止まらず、吹き出しを隠せる）', w.windows.get(520).alpha === 0);
+  }
+
+  // ===== 見直しの修正: reveal は、隠していない窓には何もしない =====
+  {
+    const w = winWith();
+    const os = createWin32ChromeOs({ win32: w, timers: { setInterval: () => 1, clearInterval: () => {} } });
+    const ref = os.findWindowByNonce(NONCE);   // 見つけただけで隠していない
+    const before = JSON.stringify(w.windows.get(500)), n = w.calls.length;
+    t.ok('隠していない窓に reveal しても何もしない（元のスタイルを 0 扱いで壊さない）', os.reveal(ref) === false && w.calls.length === n && JSON.stringify(w.windows.get(500)) === before);
+    os.conceal(ref);
+    t.ok('隠した窓には、今までどおり reveal できる', os.reveal(ref) === true && w.windows.get(500).exStyle === 0x200000 && w.windows.get(500).alpha === 255);
+    t.ok('戻した後にもう一度 reveal しても何もしない', (() => { const m = w.calls.length; return os.reveal(ref) === false && w.calls.length === m; })());
+  }
+
+  // ===== 見直しの修正: エージェントの窓を閉じる（closeAgent）・隠している窓を全部片付ける（closeAllAgents） =====
+  {
+    let clock = 1000;
+    const noTimers = () => { const cleared = []; return { cleared, timers: { setInterval: () => 1, clearInterval: id => cleared.push(id) } }; };
+    const closes = w => w.calls.filter(c => c[0] === 'postMessage' && c[2] === WM_CLOSE).map(c => c[1]);
+    {
+      const w = winWith();
+      const { timers } = noTimers();
+      const logs = [];
+      const os = createWin32ChromeOs({ win32: w, timers, now: () => clock, log: line => logs.push(line) });
+      const ref = os.findWindowByNonce(NONCE);
+      os.conceal(ref);
+      t.ok('closeAgent は隠した窓へ WM_CLOSE を出して true（エージェント専用の窓は、残すより閉じる）', os.closeAgent(ref) === true && closes(w).join() === '500');
+      t.ok('依頼を出した窓は、窓が無くなるまで隠したまま・記録も残す（見張りが続ける）', w.windows.get(500).alpha === 0 && os.reveal(ref) === true && os.conceal(ref) === true);
+      os.closeAgent(ref);
+      clock += 1000; os.guardTick();
+      t.ok('依頼の後 3 秒より前なら、まだ戻さない', w.windows.get(500).alpha === 0);
+      clock += 2500; os.guardTick();
+      t.ok('依頼を出したのに残っている窓（離れる確認など）は、3 秒後に見える形へ戻して記録を手放す（見えない窓のまま残さない）',
+        w.windows.get(500).alpha === 255 && (w.windows.get(500).exStyle & WS_EX_TRANSPARENT) === 0 && os.conceal(ref) === false && logs.some(line => line.includes('close did not finish')), JSON.stringify(w.windows.get(500)));
+    }
+    {
+      const w = winWith();
+      const os = createWin32ChromeOs({ win32: w, timers: noTimers().timers, now: () => clock });
+      const ref = os.findWindowByNonce(NONCE);
+      os.conceal(ref);
+      os.closeAgent(ref);
+      w.windows.delete(500);   // 閉じた
+      os.guardTick();
+      t.ok('依頼で窓が閉じれば、見張りが記録を捨てる（戻さない）', os.reveal(ref) === false && os.conceal(ref) === false);
+    }
+    {
+      const w = winWith();
+      const os = createWin32ChromeOs({ win32: w, timers: noTimers().timers });
+      const ref = os.findWindowByNonce(NONCE);
+      os.conceal(ref);
+      w.windows.delete(500);   // Chrome が落ちて窓はもう無い
+      t.ok('窓がもう無ければ WM_CLOSE は出さず、記録を捨てて true', os.closeAgent(ref) === true && closes(w).length === 0 && os.conceal(ref) === false);
+    }
+    {
+      const w = winWith();
+      const os = createWin32ChromeOs({ win32: w, timers: noTimers().timers });
+      const ref = os.findWindowByNonce(NONCE);
+      os.conceal(ref);
+      w.postMessage = () => false;
+      t.ok('閉じる依頼が出せなければ false を返し、見える形へ戻す（元のスタイル・透明度 255）。記録も手放す',
+        os.closeAgent(ref) === false && w.windows.get(500).alpha === 255 && w.windows.get(500).exStyle === 0x200000 && os.conceal(ref) === false, JSON.stringify(w.windows.get(500)));
+    }
+    {
+      const w = winWith();
+      const os = createWin32ChromeOs({ win32: w, timers: noTimers().timers });
+      const ref = os.findWindowByNonce(NONCE);
+      os.conceal(ref);
+      w.postMessage = () => { throw new Error('access denied'); };
+      t.ok('postMessage が投げても投げず、見える形へ戻す', os.closeAgent(ref) === false && w.windows.get(500).alpha === 255);
+    }
+    {
+      // conceal が途中で投げても（隠しかけの窓）、閉じられる・戻せる
+      const w = winWith();
+      const os = createWin32ChromeOs({ win32: w, timers: noTimers().timers });
+      const ref = os.findWindowByNonce(NONCE);
+      const setAlpha = w.setLayeredAlpha;
+      w.setLayeredAlpha = () => { throw new Error('layered'); };
+      t.ok('conceal が途中で失敗したら false', os.conceal(ref) === false);
+      w.setLayeredAlpha = setAlpha;
+      t.ok('途中まで隠した窓も、closeAgent で閉じられる（隠しかけの窓を誰にも戻せなくしない）', os.closeAgent(ref) === true && closes(w).join() === '500');
+    }
+    {
+      // 隠していない窓（見つけただけ・戻した窓）と、層が出していない ref は閉じない
+      const w = winWith();
+      const os = createWin32ChromeOs({ win32: w, timers: noTimers().timers });
+      const found = os.findWindowByNonce(NONCE);
+      t.ok('隠していない窓は閉じない（記録だけ捨てる）', os.closeAgent(found) === false && closes(w).length === 0 && os.conceal(found) === false);
+      const fg = os.foreground();
+      const dialogW = fakeWin32(); dialogW.add(910, DIALOG); const dialogOs = createWin32ChromeOs({ win32: dialogW });
+      const dialog = dialogOs.findPermissionDialog({ since: [] });
+      t.ok('前面の窓の ref・確認の窓の ref・知らない ref・null は閉じない', os.closeAgent(fg) === false && dialogOs.closeAgent(dialog) === false && os.closeAgent({ id: '12345' }) === false && os.closeAgent(null) === false
+        && closes(w).length === 0 && closes(dialogW).length === 0);
+    }
+    {
+      // closeAllAgents: 隠している窓だけ。戻した窓（引き継いだ窓）には触らない
+      const w = winWith();
+      w.add(501, { title: `PLY-${NONCE.replace(/0/g, '1')} - Google Chrome`, rect: { left: 100, top: 100, right: 1700, bottom: 1180 } });
+      w.add(502, { title: `PLY-${NONCE.replace(/0/g, '2')} - Google Chrome`, rect: { left: 100, top: 100, right: 1700, bottom: 1180 } });
+      const { timers, cleared } = noTimers();
+      const os = createWin32ChromeOs({ win32: w, timers });
+      const r500 = os.findWindowByNonce(NONCE), r501 = os.findWindowByNonce(NONCE.replace(/0/g, '1')), r502 = os.findWindowByNonce(NONCE.replace(/0/g, '2'));
+      os.conceal(r500); os.conceal(r501); os.conceal(r502);
+      os.reveal(r502);   // 利用者が引き継いだ窓
+      const count = os.closeAllAgents();
+      t.ok('closeAllAgents は隠している窓を全部閉じる（引き継いだ窓・前面の窓・確認の窓には触らない）', count === 2 && closes(w).sort().join() === '500,501', JSON.stringify(closes(w)));
+      t.ok('見張りを止める', cleared.length >= 1);
+      t.ok('閉じられない窓があれば、それだけ見える形へ戻す（見えない窓を残さない）', (() => {
+        const v = winWith();
+        const o = createWin32ChromeOs({ win32: v, timers: noTimers().timers });
+        const r = o.findWindowByNonce(NONCE);
+        o.conceal(r);
+        v.postMessage = () => false;
+        return o.closeAllAgents() === 0 && v.windows.get(500).alpha === 255;
+      })());
+      t.ok('隠している窓が無ければ何もせず 0', createWin32ChromeOs({ win32: winWith() }).closeAllAgents() === 0);
+    }
+    {
+      const unsupported = createChromeOs({ platform: 'linux' });
+      t.ok('使えない OS の closeAgent・closeAllAgents は何もしない', unsupported.closeAgent({ id: '1' }) === false && unsupported.closeAllAgents() === 0);
+    }
+  }
+
   // ===== 往復（core ⇄ main ⇄ 偽の Win32）: エージェントの窓の口 =====
   {
     const w = winWith();
@@ -521,5 +738,12 @@ export default async function (t) {
     t.ok('hiddenSpot・conceal の往復', (await core.hiddenSpot()).x === 5480 && await core.conceal(ref) === true && w.windows.get(500).alpha === 0);
     t.ok('reveal・release の往復', await core.reveal(ref, { near: null }) === true && w.windows.get(500).alpha === 255 && await core.release(ref) === true);
     t.ok('findWindowByBounds の往復（合う窓が無ければ null）', await core.findWindowByBounds({ bounds: { left: 1, top: 1, width: 1, height: 1 } }) === null);
+    const again = await core.findWindowByNonce(NONCE);
+    await core.conceal(again);
+    t.ok('closeAgent の往復（WM_CLOSE が出る）', await core.closeAgent(again) === true && w.calls.some(c => c[0] === 'postMessage' && c[1] === 500 && c[2] === WM_CLOSE));
+    w.add(650, { title: 'popup', pid: 10, rect: { left: 0, top: 0, right: 486, bottom: 447 } });
+    const popupBounds = { left: 0, top: 0, width: 324, height: 298 };
+    t.ok('findWindowByBounds の往復（port・since・tolerance が層へ届く）', await core.findWindowByBounds({ bounds: popupBounds, port: 9222, since: ['650'], tolerance: 2 }) === null
+      && await core.findWindowByBounds({ bounds: popupBounds, tolerance: 2 }) === null && (await core.findWindowByBounds({ bounds: popupBounds, port: 9222, since: [], tolerance: 2 }))?.id === '650');
   }
 }

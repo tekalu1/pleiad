@@ -27,12 +27,18 @@
 //                                        → Promise<{ ok: boolean }>  chrome.exe --profile-directory --new-window。url は題に nonce を持つ data: のページ。
 //                                          userDataDir があれば --user-data-dir を必ず付ける（無ければ既定の User Data）。position（物理画素）・size（DIP）は一瞬見えるのを避ける
 // findWindowByNonce(nonce)               → Promise<WindowRef | null>  題に nonce を持つブラウザーの窓
-// findWindowByBounds({ bounds })         → Promise<WindowRef | null>  外形が bounds（CDP の Browser.getWindowBounds。DIP）に合う、まだ出していない窓がちょうど 1 つのとき（popup の別窓）
+// findWindowByBounds({ bounds, port, since, tolerance })
+//                                        → Promise<WindowRef | null>  外形が bounds（CDP の Browser.getWindowBounds。DIP）に合う、まだ出していない窓がちょうど 1 つのとき（popup の別窓）。
+//                                          port（つないだ Chrome の DevToolsActivePort）の待ち受けのプロセスの窓だけ。持ち主が分からなければ null（利用者の窓・Edge の窓を取り違えて隠さない）。
+//                                          since（snapshotWindows の写し）の窓は除く。tolerance は位置・大きさの許容（DIP。既定 16、最小 1）
 // hiddenSpot()                           → Promise<{ x, y } | null>  仮想デスクトップの右の外（物理画素）。createTarget の left・top と --window-position に使う
 // conceal(ref)                           → Promise<boolean>  画面の外へ置き、タスクバーと Alt+Tab から外し、透明度 0・マウスの素通しにする。最小化はしない。かけ直せる
 //                                          隠している間、層が前面の見張りを持ち、隠した窓が前面を取ったら直前の前面へ返す（第 6 段の引き継ぎの外）
 // reveal(ref, { near })                  → Promise<boolean>  conceal の逆。near（層が出した ref）のあるモニターの中へ戻す。前には出さない（第 6 段の「引き継ぐ」）
 // release(ref)                           → Promise<boolean>  窓の記録だけを捨てる（窓には触らない。窓が閉じた）
+// closeAgent(ref)                        → Promise<boolean>  エージェントの窓を閉じる（WM_CLOSE）。窓がもう無ければ記録を捨てて true。閉じる依頼が出せなければ見える形へ戻して false
+//                                          （画面の外・透明のまま誰にも戻せない窓を残さない）。Chrome との接続が切れたとき・窓の開きかけの失敗に使う。
+//                                          main は Pleiad の終了でも、隠している窓を全部これと同じに片付ける（closeAllAgents。main の中だけの口で、core からは呼ばない）
 // 画面の構成が変わったときの置き直し（reconceal）は main が Electron の screen のイベントで呼ぶので、core から呼ぶ口は無い
 
 const FEATURES_NONE = Object.freeze({ dialog: false, raise: false, launch: false, conceal: false, watch: false, bounds: false });
@@ -59,6 +65,7 @@ export function unsupportedChromeOs(reason = 'platform') {
     conceal: async () => false,
     reveal: async () => false,
     release: async () => false,
+    closeAgent: async () => false,
   };
 }
 
@@ -134,10 +141,11 @@ export function parentPortChromeOs(port, { timeoutMs = CALL_TIMEOUT_MS, readyWai
     launchWindow: ({ browser, profileDir, url, nonce, userDataDir = null, position = null, size = null } = {}) =>
       call('launchWindow', { browser, profileDir, url, nonce, userDataDir, position, size }, { ok: false }),
     findWindowByNonce: nonce => call('findWindowByNonce', { nonce }, null),
-    findWindowByBounds: ({ bounds } = {}) => call('findWindowByBounds', { bounds }, null),
+    findWindowByBounds: ({ bounds, port = null, since = [], tolerance = null } = {}) => call('findWindowByBounds', { bounds, port, since, tolerance }, null),
     hiddenSpot: () => call('hiddenSpot', {}, null),
     conceal: ref => call('conceal', { ref }, false),
     reveal: (ref, { near = null } = {}) => call('reveal', { ref, near }, false),
     release: ref => call('release', { ref }, false),
+    closeAgent: ref => call('closeAgent', { ref }, false),
   };
 }

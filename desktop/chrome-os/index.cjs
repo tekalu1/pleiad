@@ -6,7 +6,7 @@ const { createWin32ChromeOs } = require('./win32.cjs');
 
 const FEATURES_NONE = Object.freeze({ dialog: false, raise: false, launch: false, conceal: false, watch: false, bounds: false });
 const ACTIONS = new Set(['snapshotWindows', 'findPermissionDialog', 'raise', 'yieldForeground', 'foreground', 'close',
-  'locateBrowser', 'launchWindow', 'findWindowByNonce', 'findWindowByBounds', 'hiddenSpot', 'conceal', 'reveal', 'release']);
+  'locateBrowser', 'launchWindow', 'findWindowByNonce', 'findWindowByBounds', 'hiddenSpot', 'conceal', 'reveal', 'release', 'closeAgent']);
 
 /**
  * @param {{ platform?: string, win32?: object|null, reason?: string, log?: (line: string) => void }} options
@@ -31,7 +31,9 @@ function createChromeOs({ platform = process.platform, win32 = null, reason = 'n
     conceal: () => false,
     reveal: () => false,
     release: () => false,
+    closeAgent: () => false,
     reconceal: () => 0,
+    closeAllAgents: () => 0,
   };
 }
 
@@ -56,10 +58,11 @@ function attachChromeOs(worker, { chromeOs, log = () => {} }) {
         case 'locateBrowser': result = chromeOs.locateBrowser({ product: a.product }); break;
         case 'launchWindow': result = chromeOs.launchWindow(a); break;
         case 'findWindowByNonce': result = chromeOs.findWindowByNonce(a.nonce); break;
-        case 'findWindowByBounds': result = chromeOs.findWindowByBounds({ bounds: a.bounds }); break;
+        case 'findWindowByBounds': result = chromeOs.findWindowByBounds({ bounds: a.bounds, port: a.port, since: a.since, tolerance: a.tolerance }); break;
         case 'conceal': result = chromeOs.conceal(a.ref); break;
         case 'reveal': result = chromeOs.reveal(a.ref, { near: a.near }); break;
         case 'release': result = chromeOs.release(a.ref); break;
+        case 'closeAgent': result = chromeOs.closeAgent(a.ref); break;
         default: result = chromeOs[action](); break;
       }
       post({ type: 'chrome-os-result', id, ok: true, result });

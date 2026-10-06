@@ -6,7 +6,10 @@
 //     窓が見つからない・chrome.exe を起こせないときは、createTarget の新しい窓に落とす（プロフィールは選べない）
 //   - 2 枚目からのタブ: 新しい窓（createTarget に画面の外の位置を渡す。題の nonce で窓を見つけて隠す）。同じ窓へ足すと、裏のタブは hidden になり
 //     描画が止まる（agent-browser の tab tN が送る bringToFront は中継が握りつぶすので、前へ出せない）ので、タブごとに窓を持つ
-//   - window.open の popup の別窓: 中継が範囲に足したあと adoptPopup。外形（CDP の Browser.getWindowBounds）で窓を見つけて隠す
+//   - window.open の popup の別窓: 中継が範囲に足したあと adoptPopup。外形（CDP の Browser.getWindowBounds）で窓を見つけて隠す。
+//     外形で探すときは、先に CDP でその窓を一意な位置（画面の外）へ置き、つないだ Chrome のプロセスの窓で、開く前の写しに無いものだけを見る
+//     （利用者の窓・Edge の窓・別の Chrome の窓を取り違えて隠さない）。プロセスが分からなければ採用しない
+//   - Chrome の接続が切れたとき・窓の開きかけに失敗したときは、隠した窓を閉じる（閉じられなければ見える形へ戻す）。見えない窓を残さない
 // 窓の大きさ（DIP）は Pleiad が決める（Browser.setWindowBounds）。窓の ref は層が出した値で、core は覚えて返すだけ。
 // ログには窓の題・URL・プロフィール名を出さない。
 import crypto from 'node:crypto';
@@ -14,7 +17,9 @@ import { readLastUsedProfile } from './locate.mjs';
 
 /** 窓の大きさ（DIP）。右パネルの映像（第 5 段）の元の大きさ */
 export const WINDOW_DIP = Object.freeze({ width: 1100, height: 720 });
-const DEFAULT_TIMING = { hwndWaitMs: 3000, hwndPollMs: 20, targetWaitMs: 8000, targetPollMs: 50, popupWaitMs: 3000, navigateMs: 15_000 };
+const DEFAULT_TIMING = { hwndWaitMs: 3000, hwndPollMs: 20, targetWaitMs: 8000, targetPollMs: 50, popupWaitMs: 3000, boundsWaitMs: 1000, navigateMs: 15_000 };
+/** 外形で探す前に窓を置く、画面の外の位置の揺らぎ（DIP）と、最初の窓の大きさの端数。同時に外形で探す窓同士が同じ外形にならないように */
+const MARK_STEP = 8, MARK_SLOTS = 20, MARK_SIZE_EXTRA = { width: 3, height: 5 }, MARK_TOLERANCE = 2;
 
 /** 題に nonce を持つ小さなページ。窓の題が nonce になるので、層が HWND を見つけられる */
 export const nonceUrl = nonce => `data:text/html,<title>PLY-${nonce}</title>`;
@@ -40,6 +45,8 @@ export function createChromeWindows({ os, locate, log = () => {}, random = () =>
   const time = { ...DEFAULT_TIMING, ...timing };
   const entries = new Map();   // 会話の id -> { windows: Map<windowId, { ref, nonce, role }>, queue: Promise }
   let browser;                 // undefined: まだ探していない / null: 見つからない / { id, product }
+  let baseline = null;         // 直近の窓を開く前のブラウザーの窓の写し（snapshotWindows）。popup を外形で探すとき、それ以前からある窓を除く
+  let markSeq = 0;
 
   const entryOf = id => {
     let entry = entries.get(id);
@@ -76,10 +83,38 @@ export function createChromeWindows({ os, locate, log = () => {}, random = () =>
     finally { await cdp.send('Target.detachFromTarget', { sessionId }).catch(() => {}); }
   }
 
+  /**
+   * 外形で窓を見つける。つないだ Chrome のプロセス（cdp.port の待ち受け）の窓だけを、呼び出しの前の写し（since）に無いものに絞って探す。
+   * 探す前に、CDP でその窓を一意な位置（画面の外）へ置き、その外形でちょうど 1 つの窓を探す（取り違えを避ける。置けなければ、今の外形で探す）
+   */
+  async function findByBounds(cdp, windowId, since, { resize = false, waitMs = time.boundsWaitMs } = {}) {
+    const port = cdp.port ?? null;
+    if (!port) return null;   // つないだ Chrome のプロセスが分からない
+    const current = (await cdp.send('Browser.getWindowBounds', { windowId }).catch(() => null))?.bounds;
+    if (!current || ![current.width, current.height].every(Number.isFinite)) return null;
+    let marked = false;
+    const spot = await os.hiddenSpot();
+    if (spot) {
+      const size = resize ? { width: WINDOW_DIP.width + MARK_SIZE_EXTRA.width, height: WINDOW_DIP.height + MARK_SIZE_EXTRA.height } : { width: current.width, height: current.height };
+      const mark = { left: spot.x + (markSeq++ % MARK_SLOTS) * MARK_STEP, top: spot.y, ...size };
+      marked = await cdp.send('Browser.setWindowBounds', { windowId, bounds: mark }).then(() => true, () => false);
+    }
+    const now = marked ? (await cdp.send('Browser.getWindowBounds', { windowId }).catch(() => null))?.bounds ?? current : current;
+    return waitFor(async () => {
+      if (marked) {
+        const exact = await os.findWindowByBounds({ bounds: now, port, since: since ?? [], tolerance: MARK_TOLERANCE });
+        if (exact) return exact;
+      }
+      return since ? os.findWindowByBounds({ bounds: now, port, since }) : null;   // 写しが無ければ、ゆるい外形では探さない
+    }, waitMs, time.hwndPollMs);
+  }
+
   async function openWindow(cdp, entry, url) {
     const nonce = random();
     const features = os.capabilities().features;
     const before = await os.foreground();
+    const since = features.conceal && features.bounds ? await os.snapshotWindows() : null;
+    baseline = since;
     const first = entry.windows.size === 0;
     const spot = features.conceal ? await os.hiddenSpot() : null;
     let targetId = null;
@@ -98,22 +133,28 @@ export function createChromeWindows({ os, locate, log = () => {}, random = () =>
       ({ targetId } = await cdp.send('Target.createTarget', { url: nonceUrl(nonce), newWindow: true, background: true, ...(spot ? { left: spot.x, top: spot.y, ...WINDOW_DIP } : {}) }));
     }
     let ref = null;
-    if (features.conceal) {
-      ref = await waitFor(() => os.findWindowByNonce(nonce), time.hwndWaitMs, time.hwndPollMs);
-      if (ref) await hide(ref, before);
+    let windowId;
+    try {
+      if (features.conceal) {
+        ref = await waitFor(() => os.findWindowByNonce(nonce), time.hwndWaitMs, time.hwndPollMs);
+        if (ref) await hide(ref, before);
+      }
+      targetId ??= await waitFor(() => findTarget(cdp, nonce), time.targetWaitMs, time.targetPollMs);
+      if (!targetId) throw new Error('the agent browser window did not open in Chrome');
+      ({ windowId } = await cdp.send('Browser.getWindowForTarget', { targetId }));
+      if (features.conceal && !ref) {
+        // 題で見つからなかった（題が付く前・窓が遅れて出た）。もう一度題で、次に外形で探す
+        ref = await os.findWindowByNonce(nonce);
+        if (!ref && features.bounds) ref = await findByBounds(cdp, windowId, since, { resize: true });
+        if (ref) await hide(ref, before);
+        else log('chrome-windows: window not found, so it was not hidden');
+      }
+      entry.windows.set(windowId, { ref, nonce, role: first ? 'main' : 'extra' });
+    } catch (error) {
+      // 隠した窓の記録だけを残さない（見えない窓が、誰にも戻せないまま残る）。閉じる（だめなら戻す）
+      if (ref) await os.closeAgent(ref).catch(() => {});
+      throw error;
     }
-    targetId ??= await waitFor(() => findTarget(cdp, nonce), time.targetWaitMs, time.targetPollMs);
-    if (!targetId) throw new Error('the agent browser window did not open in Chrome');
-    const where = await cdp.send('Browser.getWindowForTarget', { targetId });
-    const { windowId } = where;
-    if (features.conceal && !ref) {
-      // 題で見つからなかった（題が付く前・窓が遅れて出た）。もう一度題で、次に外形で探す
-      ref = await os.findWindowByNonce(nonce);
-      if (!ref && features.bounds && where.bounds) ref = await os.findWindowByBounds({ bounds: where.bounds });
-      if (ref) await hide(ref, before);
-      else log('chrome-windows: window not found, so it was not hidden');
-    }
-    entry.windows.set(windowId, { ref, nonce, role: first ? 'main' : 'extra' });
     await cdp.send('Browser.setWindowBounds', { windowId, bounds: { ...WINDOW_DIP } }).catch(() => {});
     await navigate(cdp, targetId, url);
     return { targetId, windowId };
@@ -140,12 +181,9 @@ export function createChromeWindows({ os, locate, log = () => {}, random = () =>
       entry.windows.set(windowId, record);
       const features = os.capabilities().features;
       if (!features.conceal || !features.bounds) return;
-      const ref = await waitFor(async () => {
-        const got = await cdp.send('Browser.getWindowBounds', { windowId }).catch(() => null);
-        return got?.bounds ? os.findWindowByBounds({ bounds: got.bounds }) : null;
-      }, time.popupWaitMs, time.hwndPollMs);
+      const ref = await findByBounds(cdp, windowId, baseline, { waitMs: time.popupWaitMs });
       if (!ref) { log('chrome-windows: popup window not found, so it was not hidden'); return; }
-      if (entry.windows.get(windowId) !== record) return;   // 先に閉じられた
+      if (entry.windows.get(windowId) !== record) { await os.closeAgent(ref).catch(() => {}); return; }   // 先に閉じられた
       record.ref = ref;
       await hide(ref, null);
     },
@@ -166,10 +204,13 @@ export function createChromeWindows({ os, locate, log = () => {}, random = () =>
       entries.delete(from); entries.set(to, entry);
     },
 
-    /** Chrome の接続が切れた（Chrome が閉じた）。窓はもう無い */
+    /**
+     * Chrome の接続が切れた（Chrome が閉じた・許可の取り消し・利用者が切った）。窓が本当に無ければ記録を捨てるだけだが、Chrome が生きていれば、
+     * 隠した窓（画面の外・透明・マウス素通し）が残って誰にも戻せなくなる。エージェント専用の窓なので閉じる（閉じられなければ層が見える形へ戻す）
+     */
     reset() {
       for (const entry of entries.values()) {
-        for (const record of entry.windows.values()) if (record.ref) os.release(record.ref).catch(() => {});
+        for (const record of entry.windows.values()) if (record.ref) os.closeAgent(record.ref).catch(() => {});
         entry.windows.clear();
       }
     },

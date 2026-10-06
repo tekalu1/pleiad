@@ -28,6 +28,8 @@ const SWP_NOSIZE = 0x1, SWP_NOMOVE = 0x2, SWP_NOZORDER = 0x4, SWP_NOACTIVATE = 0
 const HIDDEN_MARGIN = 1000;
 const HIDDEN_X_MAX = 30000;
 const GUARD_MS = 100;
+/** 閉じる依頼（WM_CLOSE）を出した窓が、これだけ経っても残っていたら（beforeunload の確認など）、見える形へ戻す */
+const CLOSE_GRACE_MS = 3000;
 
 const PRODUCTS = {
   chrome: {
@@ -54,7 +56,7 @@ const isInt = v => Number.isInteger(v) && Math.abs(v) < 100000;
  * @param [deps.timers] 前面の見張りの周期（既定は setInterval / clearInterval）
  */
 function createWin32ChromeOs({ win32, log = () => {}, spawn = childProcess.spawn, env = process.env, exists = fs.existsSync,
-  timers = { setInterval: (fn, ms) => setInterval(fn, ms), clearInterval: handle => clearInterval(handle) }, guardMs = GUARD_MS }) {
+  timers = { setInterval: (fn, ms) => setInterval(fn, ms), clearInterval: handle => clearInterval(handle) }, guardMs = GUARD_MS, now = Date.now }) {
   const refs = new Map();   // id -> { hwnd, kind: 'dialog' | 'foreign' | 'agent', ex0?, concealed? }
   const browsers = new Map();   // id -> { path, product }
   let browserSeq = 0;
@@ -70,10 +72,10 @@ function createWin32ChromeOs({ win32, log = () => {}, spawn = childProcess.spawn
     }
     return { id };
   };
+  /** 確認の窓として出した窓は、エージェントの窓にしない（隠す・見張る対象にすると、確認の窓を閉じられなくなる）。そのとき null */
   const rememberAgent = hwnd => {
+    if (refs.get(String(hwnd))?.kind === 'dialog') return null;
     const out = remember(hwnd, 'agent');
-    const entry = refs.get(out.id);
-    if (entry.kind !== 'agent') { entry.kind = 'agent'; }
     const agents = [...refs].filter(([, e]) => e.kind === 'agent');
     if (agents.length > MAX_AGENT_REFS) { const [key, old] = agents[0]; if (!old.concealed) refs.delete(key); }
     return out;
@@ -109,6 +111,13 @@ function createWin32ChromeOs({ win32, log = () => {}, spawn = childProcess.spawn
 
   function snapshotWindows() {
     return browserWindows().map(w => String(w.hwnd));
+  }
+
+  /** 確認の窓の見た目（題が既知の文言で、見えていて、小さいブラウザーの窓）。隠す対象から外すのに使う */
+  function looksLikePermissionDialog(hwnd, info) {
+    if (!info.visible || info.iconic || info.cloaked || !DIALOG_TITLE.test(info.title)) return false;
+    const size = dipSize(hwnd, info.rect);
+    return Boolean(size && size.width <= MAX_DIALOG_DIP.width && size.height <= MAX_DIALOG_DIP.height);
   }
 
   /**
@@ -268,12 +277,21 @@ function createWin32ChromeOs({ win32, log = () => {}, spawn = childProcess.spawn
 
   /**
    * 外形が bounds（CDP の Browser.getWindowBounds の DIP）に合うブラウザーの窓。window.open の popup など、題で見つけられない窓用。
-   * 位置・大きさとも 16 DIP の内で、見えていて、すでにエージェントの窓として出していない窓がちょうど 1 つのときだけ返す（曖昧なら null）
+   * port（DevToolsActivePort のポート）の待ち受けのプロセス（つないだ Chrome）の窓だけを見る。持ち主が分からなければ採用しない（null。
+   * 利用者の窓・Edge の窓・別の Chrome の窓を取り違えて隠さない）。since（snapshotWindows の写し）に入っている窓は除く。
+   * 位置・大きさとも tolerance（既定 16 DIP）の内で、見えていて、すでにエージェントの窓として出していない窓がちょうど 1 つのときだけ返す（曖昧なら null）
    */
-  function findWindowByBounds({ bounds } = {}) {
+  function findWindowByBounds({ bounds, port = null, since = [], tolerance: wanted = 16 } = {}) {
     if (!bounds || ![bounds.left, bounds.top, bounds.width, bounds.height].every(Number.isFinite)) return null;
-    const tolerance = 16;
+    let ownerPid = null;
+    if (Number.isInteger(port) && port > 0 && port < 65536) {
+      try { ownerPid = win32.listenerPid?.(port) || null; } catch { ownerPid = null; }
+    }
+    if (!ownerPid) return null;
+    const before = new Set((Array.isArray(since) ? since : []).map(String));
+    const tolerance = Number.isFinite(wanted) ? Math.min(16, Math.max(1, wanted)) : 16;
     const hits = browserWindows().filter(({ hwnd, info }) => {
+      if (info.pid !== ownerPid || before.has(String(hwnd))) return false;
       if (refs.get(String(hwnd))?.kind === 'agent' || !info.visible || info.iconic || info.cloaked || !info.rect) return false;
       const scale = dipScale(hwnd);
       const left = info.rect.left * scale, top = info.rect.top * scale;
@@ -311,6 +329,8 @@ function createWin32ChromeOs({ win32, log = () => {}, spawn = childProcess.spawn
       if (!alive(entry.hwnd)) { refs.delete(ref.id); return false; }
       const info = win32.windowInfo(entry.hwnd);
       if (!entry.concealed) entry.ex0 = info.exStyle;
+      entry.concealed = true;   // 途中で投げても、隠しかけた窓を追えるようにする（閉じる・戻す・見張る）
+      startGuard();
       const spot = hiddenSpot();
       win32.setWindowPos(entry.hwnd, spot.x, spot.y, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
       const next = ((info.exStyle | WS_EX_TOOLWINDOW | WS_EX_LAYERED | WS_EX_TRANSPARENT) & ~WS_EX_APPWINDOW) >>> 0;
@@ -322,8 +342,6 @@ function createWin32ChromeOs({ win32, log = () => {}, spawn = childProcess.spawn
       } else {
         win32.setLayeredAlpha(entry.hwnd, 0);
       }
-      entry.concealed = true;
-      startGuard();
       guardTick();   // 隠した窓がもう前面を取っていたら、すぐ返す
       return true;
     } catch (error) {
@@ -335,11 +353,12 @@ function createWin32ChromeOs({ win32, log = () => {}, spawn = childProcess.spawn
   /** 見える形へ戻す（conceal の逆。第 6 段の「引き継ぐ」）。near（層が出した ref）のあるモニターの中へ動かす。前には出さない（raise は別） */
   function reveal(ref, { near = null } = {}) {
     const entry = knownAgent(ref);
-    if (!entry) return false;
+    if (!entry || !entry.concealed) return false;   // 隠していない窓は元のスタイルを覚えていない（0 扱いで壊す）ので触らない
     try {
       if (!alive(entry.hwnd)) { refs.delete(ref.id); return false; }
       const info = win32.windowInfo(entry.hwnd);
       entry.concealed = false;
+      entry.closeAt = 0;
       const original = entry.ex0 ?? 0;
       const next = (((info.exStyle & ~STYLE_BITS) | (original & STYLE_BITS)) >>> 0);
       win32.setLayeredAlpha(entry.hwnd, 255);
@@ -376,6 +395,34 @@ function createWin32ChromeOs({ win32, log = () => {}, spawn = childProcess.spawn
     return true;
   }
 
+  /**
+   * エージェントの窓を閉じる（WM_CLOSE。エージェント専用の窓なので、画面の外・透明のまま残すより閉じる）。窓がもう無ければ記録を捨てるだけ（true）。
+   * 隠していない窓（戻した窓・隠せなかった窓）は閉じず、記録だけ捨てる（false）。閉じる依頼が出せなければ、見える形へ戻して記録を捨てる（false）。
+   * 依頼を出した窓の記録は、窓が無くなるまで残す（見張りが掃除する。CLOSE_GRACE_MS を過ぎても残っていれば見える形へ戻す）
+   */
+  function closeAgent(ref) {
+    const entry = knownAgent(ref);
+    if (!entry) return false;
+    if (!entry.concealed) { release(ref); return false; }
+    try {
+      if (!alive(entry.hwnd)) { release(ref); return true; }
+      if (win32.postMessage(entry.hwnd, WM_CLOSE, 0, 0) === true) { entry.closeAt = now(); return true; }
+    } catch (error) { log(`close agent failed: ${error.message}`); }
+    reveal(ref);
+    release(ref);
+    return false;
+  }
+
+  /** 隠している窓を全部片付ける（閉じる。閉じられなければ戻す）。Pleiad の終了で、見えない窓を誰にも戻せないまま残さない。main の will-quit から呼ぶ */
+  function closeAllAgents() {
+    let count = 0;
+    for (const [id, entry] of [...refs]) {
+      if (entry.kind === 'agent' && entry.concealed && closeAgent({ id })) count += 1;
+    }
+    stopGuard();
+    return count;
+  }
+
   /** 画面の構成が変わった（モニターの増減・解像度・DPI・スリープ復帰）。隠している窓を置き直す。main が Electron の screen のイベントで呼ぶ */
   function reconceal() {
     let count = 0;
@@ -401,15 +448,17 @@ function createWin32ChromeOs({ win32, log = () => {}, spawn = childProcess.spawn
     let handles = [];
     try { handles = win32.topLevelWindows(); } catch { return; }
     for (const hwnd of handles) {
-      if (hidden.has(hwnd) || refs.get(String(hwnd))?.kind === 'agent') continue;
+      const kind = refs.get(String(hwnd))?.kind;
+      if (hidden.has(hwnd) || kind === 'agent' || kind === 'dialog') continue;
       let owner = 0;
       try { owner = win32.ownerOf(hwnd); } catch { continue; }
       if (!owner || !hidden.has(owner)) continue;
       let info;
       try { info = win32.windowInfo(hwnd); } catch { continue; }
       if (info.className !== BROWSER_CLASS || !BROWSER_EXES.has(exeName(win32.processPath(info.pid))) || !info.visible) continue;
+      if (looksLikePermissionDialog(hwnd, info)) continue;   // 確認の窓は隠さない（利用者が見て、Pleiad が閉じる）
       const ref = rememberAgent(hwnd);
-      if (conceal(ref)) { hidden.add(hwnd); log('conceal owned window'); }
+      if (ref && conceal(ref)) { hidden.add(hwnd); log('conceal owned window'); }
     }
   }
   let guard = null;
@@ -419,7 +468,9 @@ function createWin32ChromeOs({ win32, log = () => {}, spawn = childProcess.spawn
   function guardTick() {
     if (ticking) return;   // conceal の最後の guardTick から、見張りの中の conceal を呼び直さない
     ticking = true;
-    try { guardBody(); } finally { ticking = false; }
+    try { guardBody(); }
+    catch (error) { log(`guard failed: ${error.message}`); }   // setInterval から直に呼ばれる。投げても見張りを止めない
+    finally { ticking = false; }
   }
   function guardBody() {
     let fg = 0;
@@ -428,6 +479,12 @@ function createWin32ChromeOs({ win32, log = () => {}, spawn = childProcess.spawn
     for (const [id, entry] of [...refs]) {
       if (entry.kind !== 'agent' || !entry.concealed) continue;
       if (!alive(entry.hwnd)) { refs.delete(id); continue; }
+      if (entry.closeAt && now() - entry.closeAt > CLOSE_GRACE_MS) {
+        // 閉じる依頼を出したのに残っている（離れる確認など）。見えない窓のまま残さず、利用者が見える形へ戻す
+        log('close did not finish, so the window was revealed');
+        reveal({ id }); release({ id });
+        continue;
+      }
       hidden.add(entry.hwnd);
     }
     if (!hidden.size) { stopGuard(); return; }
@@ -464,8 +521,8 @@ function createWin32ChromeOs({ win32, log = () => {}, spawn = childProcess.spawn
   return {
     capabilities: () => ({ supported: true, reason: null, features: FEATURES }),
     snapshotWindows, findPermissionDialog, raise, yieldForeground, foreground, close,
-    locateBrowser, launchWindow, findWindowByNonce, findWindowByBounds, hiddenSpot, conceal, reveal, release,
-    reconceal,
+    locateBrowser, launchWindow, findWindowByNonce, findWindowByBounds, hiddenSpot, conceal, reveal, release, closeAgent,
+    reconceal, closeAllAgents,
     /** テスト用: 見張りを 1 回だけ回す・止める */
     guardTick, stopGuard,
   };

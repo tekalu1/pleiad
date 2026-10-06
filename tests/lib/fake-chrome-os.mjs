@@ -4,7 +4,12 @@
 // エージェントの窓（ADR 0154）: 偽の Chrome の窓ができるたびに偽の HWND を作る（hwnds()）。窓の題は偽の Chrome の窓の最後のタブの題、
 // 外形は偽の Chrome の窓の bounds。launchWindow は偽の Chrome に窓を作り（位置・大きさは honorPosition のとき守る）、findWindowByNonce は題で、
 // findWindowByBounds は外形で窓を見つけ、conceal・reveal・release は HWND のスタイル・位置を替える。
+// findWindowByBounds は、つないだ Chrome のプロセス（listenerPid。既定は CHROME_PID）の窓だけを、since に無いものに絞って、外形が合うちょうど 1 つを返す
+// （addWindow で利用者の窓・Edge の窓・別のプロセスの窓を足せる。偽の Chrome の窓の外形は、隠すまで Browser.setWindowBounds に追従する）。
+// closeAgent は、隠した窓を閉じる（偽の Chrome の窓も閉じる）。closeFails なら見える形へ戻す。窓が消えて（killWindow）いれば記録を捨てるだけ。
 // 前面の見張りは持たない（層のテストが偽の Win32 の表で見る）。stealsForeground(true) の間に出た窓は前面を取り、prevFg に前の前面を覚える。
+export const CHROME_PID = 4242;
+
 export function fakeChromeOs({ chrome = null, supported = true, reason = 'platform', features } = {}) {
   const caps = Object.freeze({
     supported, ...(supported ? {} : { reason }),
@@ -19,21 +24,23 @@ export function fakeChromeOs({ chrome = null, supported = true, reason = 'platfo
   const listeners = new Set();
   const hw = new Map();   // hwnd -> { id, windowId, rect(DIP), concealed, agent, alpha, ex, prevFg }
   let hwSeq = 100;
-  const opts = { launchFails: false, chromeMissing: false, hideNonce: false, hideBounds: false, concealFails: false, honorPosition: true };
+  const opts = { launchFails: false, chromeMissing: false, hideNonce: false, hideBounds: false, concealFails: false, honorPosition: true, noListener: false, closeFails: false };
   const OFFSCREEN = Object.freeze({ x: 6000, y: 0 });
   const isDialog = id => chrome?.dialogs().some(d => d.id === id);
   const note = entry => { log.push(entry); };
-  const titleOf = h => chrome?.browser.windowTitle(h.windowId) ?? '';
+  const titleOf = h => (h.windowId == null ? (h.title ?? '') : (chrome?.browser.windowTitle(h.windowId) ?? ''));
   if (chrome) chrome.onDialog(id => { if (stealing) fg = id; });
   if (chrome) chrome.browser.onWindow(({ windowId, bounds }) => {
     const id = `hw${++hwSeq}`;
-    const h = { id, windowId, rect: { ...bounds }, concealed: false, agent: false, released: false, alpha: 255, ex: { toolwindow: false, layered: false, transparent: false, appwindow: true }, prevFg: null };
+    const h = { id, windowId, pid: CHROME_PID, rect: { ...bounds }, concealed: false, agent: false, released: false, closed: false, gone: false, alpha: 255, ex: { toolwindow: false, layered: false, transparent: false, appwindow: true }, prevFg: null };
     hw.set(id, h);
     if (windowStealing) { h.prevFg = fg; fg = id; }
   });
   const known = ref => (ref && typeof ref.id === 'string' ? hw.get(ref.id) : undefined);
   const knownAgent = ref => { const h = known(ref); return h?.agent && !h.released ? h : undefined; };
-  const near = (a, b) => Math.abs(a - b) <= 16;
+  const near = (a, b, tolerance = 16) => Math.abs(a - b) <= tolerance;
+  /** 隠すまでは、偽の Chrome の窓の外形に追従する（本物の HWND は Chrome が動かす） */
+  const rectOf = h => (!h.concealed && chrome && h.windowId != null ? (chrome.browser.windowBounds(h.windowId) ?? h.rect) : h.rect);
 
   const self = {
     kind: 'fake',
@@ -43,7 +50,7 @@ export function fakeChromeOs({ chrome = null, supported = true, reason = 'platfo
     capabilities: () => caps,
     ready: async () => caps,
     onReady(fn) { listeners.add(fn); return () => listeners.delete(fn); },
-    async snapshotWindows() { note({ op: 'snapshotWindows' }); return [...windows.keys(), ...(chrome?.dialogs().map(d => d.id) ?? [])]; },
+    async snapshotWindows() { note({ op: 'snapshotWindows' }); return [...windows.keys(), ...(chrome?.dialogs().map(d => d.id) ?? []), ...hw.keys()]; },
     async findPermissionDialog({ since = [], port = null } = {}) {
       note({ op: 'findPermissionDialog', since, port });
       if (hideDialogs || !chrome) return null;
@@ -77,11 +84,16 @@ export function fakeChromeOs({ chrome = null, supported = true, reason = 'platfo
       h.agent = true;
       return { id: h.id };
     },
-    async findWindowByBounds({ bounds } = {}) {
-      note({ op: 'findWindowByBounds', bounds });
+    async findWindowByBounds({ bounds, port = null, since = [], tolerance = 16 } = {}) {
+      note({ op: 'findWindowByBounds', bounds, port, since, tolerance });
       if (!bounds || opts.hideBounds) return null;
-      const hits = [...hw.values()].filter(x => !x.agent && !x.concealed && !x.released
-        && near(x.rect.left, bounds.left) && near(x.rect.top, bounds.top) && near(x.rect.width, bounds.width) && near(x.rect.height, bounds.height));
+      const ownerPid = port && !opts.noListener ? CHROME_PID : null;
+      if (!ownerPid) return null;
+      const hits = [...hw.values()].filter(x => {
+        if (x.pid !== ownerPid || since.includes(x.id) || x.agent || x.concealed || x.released || x.closed || x.gone || x.hidden) return false;
+        const r = rectOf(x);
+        return near(r.left, bounds.left, tolerance) && near(r.top, bounds.top, tolerance) && near(r.width, bounds.width, tolerance) && near(r.height, bounds.height, tolerance);
+      });
       if (hits.length !== 1) return null;
       hits[0].agent = true;
       return { id: hits[0].id };
@@ -104,6 +116,17 @@ export function fakeChromeOs({ chrome = null, supported = true, reason = 'platfo
       return true;
     },
     async release(ref) { note({ op: 'release', ref: ref?.id }); const h = knownAgent(ref); if (!h) return false; h.released = true; return true; },
+    async closeAgent(ref) {
+      note({ op: 'closeAgent', ref: ref?.id });
+      const h = knownAgent(ref);
+      if (!h) return false;
+      if (h.gone) { h.released = true; return true; }
+      if (!h.concealed) { h.released = true; return false; }
+      if (opts.closeFails) { await self.reveal(ref); h.released = true; return false; }
+      h.closed = true; h.released = true;
+      if (chrome && h.windowId != null) { try { chrome.browser.closeWindow(h.windowId); } catch { /* 偽の Chrome がもう閉じている */ } }
+      return true;
+    },
 
     // ---- テストの操作
     setForeground(id, { browser = false } = {}) { if (!windows.has(id)) windows.set(id, { browser }); fg = id; },
@@ -115,7 +138,15 @@ export function fakeChromeOs({ chrome = null, supported = true, reason = 'platfo
     /** 確認の窓を見つけられない（findPermissionDialog が null） */
     hideDialogs(on) { hideDialogs = on; },
     /** 偽の HWND の今の姿（題・外形 DIP・隠しているか・スタイル・透明度）。窓の題は偽の Chrome の窓の最後のタブの題 */
-    hwnds: () => [...hw.values()].map(h => ({ id: h.id, windowId: h.windowId, title: titleOf(h), rect: { ...h.rect }, concealed: h.concealed, agent: h.agent, released: h.released, alpha: h.alpha, ex: { ...h.ex }, prevFg: h.prevFg })),
+    /** 利用者の窓・Edge の窓・別のプロセスの窓などを足す（偽の Chrome の窓ではない HWND。rect は DIP） */
+    addWindow({ pid = CHROME_PID, rect, title = '', hidden = false } = {}) {
+      const id = `hw${++hwSeq}`;
+      hw.set(id, { id, windowId: null, pid, rect: { ...rect }, concealed: false, agent: false, released: false, closed: false, gone: false, hidden, alpha: 255, ex: { toolwindow: false, layered: false, transparent: false, appwindow: true }, prevFg: null, title });
+      return { id };
+    },
+    /** 窓が（Chrome ごと）無くなった */
+    killWindow(id) { const h = hw.get(id); if (h) h.gone = true; },
+    hwnds: () => [...hw.values()].map(h => ({ id: h.id, windowId: h.windowId, pid: h.pid, title: titleOf(h), rect: { ...rectOf(h) }, concealed: h.concealed, agent: h.agent, released: h.released, closed: h.closed, gone: h.gone, alpha: h.alpha, ex: { ...h.ex }, prevFg: h.prevFg })),
     hwndOfWindow: windowId => { const h = [...hw.values()].find(x => x.windowId === windowId); return h ? { id: h.id } : null; },
   };
   return self;

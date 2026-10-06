@@ -47,7 +47,7 @@ function agent(url) {
   });
 }
 
-const TIMING = { hwndWaitMs: 200, hwndPollMs: 10, targetWaitMs: 500, targetPollMs: 10, popupWaitMs: 200 };
+const TIMING = { hwndWaitMs: 200, hwndPollMs: 10, targetWaitMs: 500, targetPollMs: 10, popupWaitMs: 200, boundsWaitMs: 100 };
 
 async function rig({ custom = true, localState } = {}) {
   const chrome = await startFakeChrome({ permission: 'auto' });
@@ -273,11 +273,12 @@ export default async function (t) {
       const a = await r.agent('one');
       await a.cmd('Target.createTarget', { url: 'about:blank' });
       await a.cmd('Target.createTarget', { url: 'about:blank' });
+      for (const h of r.os.hwnds()) r.os.killWindow(h.id);   // Chrome が落ちた（窓ごと無くなる）
       await r.chrome.restart();   // Chrome を閉じて開き直した（ポートと経路が変わる。接続が切れる）
       const closed = await a.closed;
       t.ok('Chrome が閉じたら、エージェントの接続を閉じる（1011）', closed.code === 1011);
       t.ok('接続は off（chrome-closed）になる', await until(() => r.conn.state().state === 'off' && r.conn.state().reason === 'chrome-closed'), JSON.stringify(r.conn.state()));
-      t.ok('窓の記録を全部捨てて ref を手放す（窓はもう無い）', r.scope.windows('one').length === 0 && r.os.calls('release').length === 2);
+      t.ok('窓の記録を全部捨てる（Chrome が落ちて窓はもう無い。窓が無ければ閉じる依頼は出さず、記録を手放すだけ）', r.scope.windows('one').length === 0 && r.os.hwnds().length === 2 && r.os.hwnds().every(h => h.released && !h.closed), JSON.stringify(r.os.hwnds()));
       const b = await r.agent('one');
       const created = await b.cmd('Target.createTarget', { url: 'about:blank' });
       t.ok('つなぎ直せば最初の窓から開き直す（chrome.exe をもう 1 回）', !created.error && r.os.calls('launchWindow').length === 2, JSON.stringify(created));
@@ -411,6 +412,125 @@ export default async function (t) {
       await sleep(80);
       t.ok('ターンが終わった会話が後からタブを作っても FE は付かない（ターンの外）', !r.fake.focusEmulated(late));
       a.close(); b.close(); c.close();
+    } finally { await r.stop(); }
+  }
+
+  // ===== 9. 窓を外形で探すとき、利用者の窓・別のプロセスの窓を取り違えない（つないだ Chrome の窓・開く前の写しに無い窓・一意な位置に置いてから探す） =====
+  const POPUP_RECT = { left: 0, top: 0, width: 324, height: 298 };
+  async function popupRig({ prepare, afterOpen } = {}) {
+    const r = await rig();
+    r.fake.setPage('https://open.example/', { title: 'Opener', elements: [
+      { role: 'link', name: 'tab', open: { url: 'https://open.example/tab' } },
+      { role: 'link', name: 'popup', open: { url: 'https://open.example/popup', popup: true } },
+    ] });
+    prepare?.(r);
+    const a = await r.agent('one');
+    const created = await a.cmd('Target.createTarget', { url: 'https://open.example/' });
+    const sid = (await a.cmd('Target.attachToTarget', { targetId: created.result.targetId, flatten: true })).result.sessionId;
+    await a.cmd('Target.setDiscoverTargets', { discover: true });
+    afterOpen?.(r);
+    await a.cmd('Input.dispatchMouseEvent', { type: 'mouseReleased', x: 20, y: 70, button: 'left' }, sid);
+    await until(() => r.fake.targets().some(x => x.url === 'https://open.example/popup'));
+    const popup = r.fake.targets().find(x => x.url === 'https://open.example/popup');
+    return { r, a, popup, hw: id => r.os.hwnds().find(h => h.id === id) };
+  }
+  const OTHER_PID = 777;
+  {
+    let other;
+    const { r, popup, hw } = await popupRig({ prepare: r => r.fake.refuseWindowMoves(true), afterOpen: r => { other = r.os.addWindow({ pid: OTHER_PID, rect: POPUP_RECT }); } });
+    try {
+      t.ok('別のプロセス（Edge・別の Chrome）の窓が同じ外形で居ても、つないだ Chrome の窓だけを隠す（別の窓は触らない）',
+        await until(() => concealedOk(hwndOf(r, popup?.windowId))) && hw(other.id).concealed === false && hw(other.id).agent === false && hw(other.id).alpha === 255, JSON.stringify(r.os.hwnds()));
+      t.ok('外形で探すときは、つないだ Chrome のポートを渡す', r.os.calls('findWindowByBounds').every(c => Number.isInteger(c.port) && c.port > 0));
+    } finally { await r.stop(); }
+  }
+  {
+    let user;
+    const { r, popup, hw } = await popupRig({ prepare: r => { r.fake.refuseWindowMoves(true); user = r.os.addWindow({ pid: 4242, rect: POPUP_RECT }); } });
+    try {
+      t.ok('同じ Chrome の利用者の窓が同じ外形で居ても、窓を開く前から居た窓（写しにある）は選ばない',
+        await until(() => concealedOk(hwndOf(r, popup?.windowId))) && hw(user.id).concealed === false && hw(user.id).agent === false, JSON.stringify(r.os.hwnds()));
+      t.ok('探すときに、開く前の窓の写し（since）を渡す', r.os.calls('findWindowByBounds').some(c => Array.isArray(c.since) && c.since.includes(user.id)));
+    } finally { await r.stop(); }
+  }
+  {
+    let user;
+    const { r, popup, hw } = await popupRig({ prepare: r => r.fake.refuseWindowMoves(true), afterOpen: r => { user = r.os.addWindow({ pid: 4242, rect: POPUP_RECT }); } });
+    try {
+      t.ok('写しに無い同じ Chrome の窓が同じ外形で居れば曖昧なので、どちらも隠さない（利用者の窓を隠さない）',
+        await until(() => r.logs.some(line => line.includes('popup window not found'))) && hw(user.id).concealed === false && hw(user.id).agent === false && hwndOf(r, popup.windowId)?.concealed === false, JSON.stringify(r.os.hwnds()));
+    } finally { await r.stop(); }
+  }
+  {
+    const { r, popup } = await popupRig({ prepare: r => { r.os.opts.noListener = true; } });
+    try {
+      t.ok('つないだ Chrome のプロセスが分からなければ（listenerPid が null）、窓を採用しない・隠さない',
+        await until(() => r.logs.some(line => line.includes('popup window not found'))) && hwndOf(r, popup.windowId)?.concealed === false && hwndOf(r, popup.windowId)?.agent === false, JSON.stringify(r.os.hwnds()));
+    } finally { await r.stop(); }
+  }
+  {
+    let user;
+    const { r, popup, hw } = await popupRig({ afterOpen: r => { user = r.os.addWindow({ pid: 4242, rect: POPUP_RECT }); } });
+    try {
+      t.ok('探す前に CDP で窓を一意な位置（画面の外）へ置く（Browser.setWindowBounds）。同じ外形の窓が居ても、その窓だけを見つけて隠す',
+        await until(() => concealedOk(hwndOf(r, popup?.windowId))) && hw(user.id).concealed === false && hw(user.id).agent === false
+        && r.chrome.calls.some(c => c.method === 'Browser.setWindowBounds' && c.params.windowId === popup.windowId && c.params.bounds.left >= 6000 && c.params.bounds.width === 324 && c.params.bounds.height === 298), JSON.stringify(r.chrome.calls.filter(c => c.method === 'Browser.setWindowBounds')));
+      const first = r.os.calls('findWindowByBounds')[0];
+      t.ok('最初は狭い許容（一意に置いた外形）で探す', first?.tolerance === 2 && first.bounds.left >= 6000, JSON.stringify(first));
+    } finally { await r.stop(); }
+  }
+  {
+    // 最初の窓を題で見つけられず外形で探す: 別のプロセスの窓・開く前から居る同じ Chrome の窓が近い外形で居ても、選ばない（位置を受けない Chrome）
+    let theirs, mine;
+    const r = await rig();
+    try {
+      r.os.opts.hideNonce = true;
+      r.fake.refuseWindowMoves(true);
+      theirs = r.os.addWindow({ pid: OTHER_PID, rect: { left: 0, top: 0, width: 1103, height: 725 } });
+      mine = r.os.addWindow({ pid: 4242, rect: { left: 0, top: 0, width: 1103, height: 725 } });
+      const a = await r.agent('one');
+      const created = await a.cmd('Target.createTarget', { url: 'about:blank' });
+      const tab = tabInfo(r, created.result?.targetId);
+      const hw = id => r.os.hwnds().find(h => h.id === id);
+      t.ok('最初の窓を外形で探すときも、別のプロセスの窓・開く前から居た窓は選ばず、開いた窓だけを隠す', !!tab && concealedOk(hwndOf(r, tab.windowId)) && !hw(theirs.id).concealed && !hw(mine.id).concealed && !hw(theirs.id).agent && !hw(mine.id).agent, JSON.stringify(r.os.hwnds()));
+    } finally { await r.stop(); }
+  }
+
+  // ===== 10. 終了・切断・失敗で、隠した窓（画面の外・透明・マウス素通し）を誰にも戻せないまま残さない =====
+  const agentWindows = r => r.os.hwnds().filter(h => h.agent);
+  {
+    const r = await rig();
+    try {
+      const a = await r.agent('one');
+      await a.cmd('Target.createTarget', { url: 'about:blank' });
+      await a.cmd('Target.createTarget', { url: 'about:blank' });
+      const before = agentWindows(r);
+      t.ok('前提: 隠した専用の窓が 2 つ', before.length === 2 && before.every(concealedOk));
+      r.conn.disconnect();   // 利用者が切った（Chrome は生きている）
+      t.ok('接続が切れたら（Chrome は生きている）、隠した専用の窓を閉じる（記録を捨てるだけにしない）', await until(() => agentWindows(r).every(h => h.closed)), JSON.stringify(r.os.hwnds()));
+      t.ok('閉じる窓は 2 つとも・会話の窓の記録も空', r.os.calls('closeAgent').length === 2 && r.scope.windows('one').length === 0 && r.os.calls('release').length === 0);
+      t.ok('偽の Chrome の窓も閉じた（利用者の窓だけが残る）', r.fake.windows().length === 1 && r.fake.windows()[0].windowId === r.fake.userWindow, JSON.stringify(r.fake.windows()));
+    } finally { await r.stop(); }
+  }
+  {
+    const r = await rig();
+    try {
+      const a = await r.agent('one');
+      await a.cmd('Target.createTarget', { url: 'about:blank' });
+      r.os.opts.closeFails = true;
+      r.conn.disconnect();
+      t.ok('閉じられなければ、見える形へ戻して記録を手放す（見えない窓を残さない）', await until(() => agentWindows(r).every(h => h.released && !h.closed && h.concealed === false && h.alpha === 255 && h.ex.appwindow)), JSON.stringify(r.os.hwnds()));
+    } finally { await r.stop(); }
+  }
+  {
+    // 隠した後に失敗したら、隠した窓の記録だけを残さない
+    const r = await rig();
+    try {
+      const cdp = await r.conn.demand();
+      const broken = { port: cdp.port, send: (method, ...rest) => (method === 'Browser.getWindowForTarget' ? Promise.reject(new Error('boom')) : cdp.send(method, ...rest)) };
+      const failed = await r.scope.openTab({ cdp: broken, entryId: 'x' }).then(() => null, error => error);
+      t.ok('窓を隠した後の Browser.getWindowForTarget が失敗すれば、openTab は失敗を返す', failed?.message === 'boom', String(failed?.message));
+      t.ok('隠した窓は閉じる（見えない窓の記録だけが残らない）。会話の窓の記録も残さない', agentWindows(r).length === 1 && agentWindows(r)[0].closed === true && r.scope.windows('x').length === 0, JSON.stringify(r.os.hwnds()));
     } finally { await r.stop(); }
   }
 }
