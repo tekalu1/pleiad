@@ -1,6 +1,6 @@
 # 段階 2 の 2b: サーバーのメモリの仕分けと、「始める」と「動かす」の切り目
 
-- 状態: 2b-1 実装済み（2026-10-06）。`runTurnInternal` を分割し `ctx` へ移行、`endTurn` に 1 回印を追加（行番号は分割前の main `e9ad556a` の時点）
+- 状態: 2b-1・2b-3 実装済み、2b-2 実装済み（2026-10-06）。札の形 `core/turn-card.mjs`（純関数、版 `v: 1`、秘密の分離、途中送信の枠組み、T1、connectionTokens、上限）
 - 正本: [plan.md](plan.md) の 2b とリスク R2・R8・R15、[design.md](design.md) §4（保持役・付け直し・札・記録の再生）・§5（引き継ぎ。§5.4 起動時の後片付けとぶつかる所）
 - 目的: 2b の最初の一歩（R8 の表）。付け直すターンで「何を札に入れ、何を再生で作り、何を捨てるか」を、コードの場所つきで決める。そのうえで `runTurnInternal` の切り目と、2b を小さく取り込む段の順番を決める
 
@@ -370,7 +370,7 @@ adoptTurn(card, source)                              … 付け直しの入口�
 | 段 | 中身 | 単独で取り込めるか | 規模 |
 |---|---|---|---|
 | 2b-1 | **済** `runTurnInternal` を `prepareTurn`・`beginTurn`・`launchTurn`・`driveTurn`・`releaseTurn` に分ける（§4.2）。`ctx` に閉包の値を移す（§4.3）。`endTurn` に 1 回だけの印 | 取り込める（挙動を変えない） | M |
-| 2b-2 | 札の形 `core/turn-card.mjs`（純関数）: `cardOf(ctx)`・`restoreFields(card)`・版 `v: 1`・大きさの上限・秘密の欄を分ける。途中送信の控えを 1 つの欄にまとめる形（§3 の 3）。ターンの前の切り口（T1） | 取り込める（使う所が無い） | S |
+| 2b-2 | **済** 札の形 `core/turn-card.mjs`（純関数）: `cardOf(ctx)`・`restoreFields(card)`・版 `v: 1`・大きさの上限・秘密の欄を分ける。途中送信の控えを 1 つの欄にまとめる形（§3 の 3）。ターンの前の切り口（T1）。**実装済み 2026-10-06**（下の「2b-2 の実装のメモ」） | 取り込める（使う所が無い） | S |
 | 2b-3 | 会話の MCP の口を同じトークンで開き直す: `agent-bridge`・`computer-bridge`・`browser-bridge`・`mcp-bridge`（ply_control）・`context-bridge` の `open({ token })` と、`server.mjs` の `restoreConnection(entry)`。**実装済み 2026-10-06**（下の「2b-3 の実装のメモ」） | 取り込める（既定の `open()` は今のまま） | S |
 | 2b-4 | 付け直しの入口 `adoptTurn(card, source)` と `makeEmit` の再生の道（§4.4）、起動の順序（§5.1 の順序）と後片付けの除外（S5-S9・S12・S13）、`backend.adoptTurn` の口。**付け直す元は既定で空**。テスト用に「終わっていたターン」の元（札と記録のファイル。`AGENT_HOST_ADOPT_FROM`、テストだけが付ける）を読める | 取り込める（元が空なら何も変わらない） | M |
 | 2b-5 | fake の `adoptTurn`: fake の台本を別プロセスの偽の CLI（`core/backends/fake-agent.mjs`。1 行 1 JSON の出来事を出し、stdin で承認の答え・途中送信を受ける）で走らせる台本 `held:<台本>` と、保持役（2a）の子に載せる道。札は台本の位置 | 2a の後 | M |
@@ -378,6 +378,39 @@ adoptTurn(card, source)                              … 付け直しの入口�
 | 2b-7 | 途中送信と委譲の付け直し: 札の途中送信の欄を埋める（`liveNotices`・`liveInstructions`・`agentTasks` の `steers`）、`execute` を分けて `agentTasks.adopt(taskId, turnPromise)`、S8 の除外 | 2b-6 の後 | M |
 
 bot の会話（O21）・圧縮のターン（`hooks.compact`）・Codex/agy（段階 3）は 2b では付け直さず、先送り（段階 1 の切り替え）か中断のまま。2b-4 の除外の一覧に入れ、`running` の `stoppers` と同じく待ちの表示に出す。
+
+**2b-2 の実装のメモ（2026-10-06。実装済み。2b-4・2b-7 が使うときの注意を含む）**
+
+- 純関数モジュール `core/turn-card.mjs` で実装。まだどこからも呼ばない（2b-4 の `adoptTurn`・`restoreTurn` で使う）。
+- 札の形:
+  - 版: `v: 1`（定数 `CARD_VERSION = 1`）。`restoreFields(card)` は知らない版（`v !== 1`）や不正な値に対して `null` を返して断る。
+  - 大きさの上限: `CARD_MAX_BYTES = 64 * 1024`（64 KB）。`cardOf(ctx)` で直列化サイズが超過した場合は例外を投げる。
+  - 秘密の欄の分離: `account.token` や `endpoint.key`（ヘッダー等）は札本体 `card` には入れず、`cardOf(ctx)` の戻り値 `{ card, secrets }` の `secrets` として別に返す（保持役の預かり物 stash やメモリに置く想定）。`card` の側には `accountId`・`endpointId` の識別子だけを残す。
+  - ターンの前の切り口（T1）: `baseline: { count, lastUuid }` にターンの前の発言数（`ctx.baselineLength`）と最後の発言の uuid を保持し、`restoreTurn` が履歴を読み直して切る材料にする。
+  - 会話の口のトークン（M2）: `connectionTokens: { agents, computer, browser, control, context }`。2b-3 の `restoreConnection` へそのまま渡せる形。
+  - 途中送信の控え（§3 の 3）: `steers: { [id]: { waiters: [...] } }` の形に集約。待つ側 5 か所（`pendingSteers`, `liveNotices`, `liveInstructions`, `agentTasks`, `botLiveSteers`）の定数 `STEER_WAITERS` と正規化関数 `normalizeSteers` を定義（2b-2 では形を固定し、実際に埋めるのは 2b-7）。
+- 表の「札へ入れる」の行の仕分け:
+  - **2b-2 で入れるもの**:
+    - 基本文脈: `key` (T5), `sessionId`, `backend` (T10), `agentLocale` (T11), `startedAtMs` (T8), `userSentAt` (T9), `presentKey` (T24), `browserRelayId` (T35)
+    - ターンの前の切り口 (T1): `baseline` (`count`, `lastUuid`)
+    - ターンの入力 (T2, T3, L1, L2, L3): `prompt`, `messageId`, `user`, `scheduledFor`, `sentBy`, `compactTrigger` (T14), `internal`, `taskId` (L3)
+    - 設定・環境 (T22, T27, T42, L13): `cwd`, `permissionMode`, `model`, `effort`, `accountId`, `endpointId`, `attachments`, `steeredAttachments`, `pastSubagents`
+    - 進行・合図の印 (L6, L7, L8): `delivery` (`initialDelivered`, `interruptionTaken`, `shellHanded`), `interruption` (`keys`, `dropped`, `text`, `body`), `shellHandoff` (`ids`, `skipped`, `lines`)
+    - git の撮影 (T33): `git` (`setup`, `activity`, `late`)
+    - 会話の口のトークン (M2, O9-O12): `connectionTokens` (`agents`, `computer`, `browser`, `control`, `context`)
+    - 途中送信の控えの枠 (O5, M4, M5, O16, O21 - §3 の 3): `steers` の形
+    - hooks 登録材料 (L10): `hooks` (`record`, `input`)
+    - 中断状態 (T7): `abort` (`reason`, `stopping`)
+    - バックエンド固有の札枠: `backendCard`
+  - **後の段で足すもの**:
+    - 2b-5: fake バックエンドの札（台本位置 `held:<台本>`）
+    - 2b-6: 承認カードの決定論的 id（A3）、止め始めていたターンの中断送り直し（T7）の実データ
+    - 2b-7: 途中送信の実データ（`steers` 欄の具体的な中身: pendingSteers, liveNotices, liveInstructions, agentTasks の steers, bot の liveSteers を実際に収集して埋める）、委譲のタスク状態（M3: taskExecutions の rejections / stopped / reply）
+    - 2c: Claude の固有札（O3: costBase, O4: flag設定パス, O5: pendingSteers, L10: hooksTurn のコールバック照合情報）
+- 2b-4・2b-7 への注意:
+  - (1) 2b-4 では `restoreTurn(card)` が `restoreFields(card)` の戻り値から `ctx` と `turn` を復元する。`connectionTokens` は `restoreConnection` で口を開き直し、`baseline` の発言数と `lastUuid` で履歴を切る。
+  - (2) 2b-7 では `steers` 欄に 5 か所の待ち手を集約し、`userMessage.delivered` / `dropped` の合図を欠落なく配送する。
+- テスト: `tests/unit/turn-card.mjs`（`tests/run.mjs` に登録。ctx → 札 → 復元の往復・秘密が札本体に出ない・上限超過で失敗・知らない版は null・途中送信の waiters の形・connectionTokens の正規化・baseline の切り口。7 判定全て通過）。
 
 **2b-3 の実装のメモ（2026-10-06。実装済み。2b-4 が使うときの注意を含む）**
 

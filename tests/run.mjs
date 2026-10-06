@@ -60,6 +60,8 @@ const SUITES = [
   './unit/browser-confirm.mjs',
   // 会話の MCP の口を同じトークンで開き直す open({ token })（無停止の更新 2b-3）
   './unit/mcp-bridge-token.mjs',
+  // ターンの札（無停止の更新 2b-2）: ctx → 札 → 復元の往復・秘密の隔離・上限・知らない版の拒否・途中送信の形
+  './unit/turn-card.mjs',
   // 設定 › コンピューターの操作: prefs の検査と既定・store の remember/forget・hostCapabilities.computerUse の判定・節の動き・setPref（docs/computer-use.md）
   './unit/computer-settings.mjs',
   // コンピューターの操作（ply_computer。docs/computer-use.md）: アプリの判定の順・禁止の一覧・印の行・座標・スクショの保存
