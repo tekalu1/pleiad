@@ -32,6 +32,8 @@
 //     スレッドの会話を持つほかの bot には、聞こえた投稿（包みに heard="true"）として届く（ADR 0128）。宛先がこの投稿で新しいターンを始めたら、その返事が
 //     書き終わってから、返事も添えて届ける。返事をするかは各 bot が決め、文章を書かずに終えたら投稿は残らない（聞こえただけのターンは、見せるものができるまで「…」を作らない）。
 //     聞こえた投稿は予算（ADR 0119）が残っている間だけ届ける（使い切ったら宛先の 1 体だけ）。休憩中の bot には知らせずに届けない。
+//     聞こえた投稿の包みには、誰との話の続きかを to="<bot の名前>" で付ける（ADR 0128 の追記）: 人の投稿の `>` の引用がスレッドの bot の投稿の本文と一致すればその bot、
+//     しなければ宛先の 1 体。手がかりが受け取る bot 自身なら付けない。足すのは bot の名前だけ（bot の思考は渡さない）。
 //     bot・Chats の AI の @ の無い投稿は誰も起こさない（暗黙の宛先は人の投稿だけ。bot 同士が起こし合わない）。
 //   - ThreadState.stopped があれば、人が次に書くまで起こさない。ThreadState.calls は数えるだけ。
 //   - bot の投稿へのリアクションは、その bot の会話へ次に起きたときに渡す（包みに reaction="👍"）。起こすのは、問いかけの投稿に付いた答えのリアクション（👍 👎 など）だけで、
@@ -63,6 +65,7 @@ import { createResting, restKey } from './resting.mjs';
 import { LIMITS as CHANNEL_LIMITS } from '../channels/service.mjs';
 import { isSilentReply, speakingParts, stripSilentMark } from './silence.mjs';
 import { answerOf, asksQuestion, excerpt } from './reactions.mjs';
+import { quotedPost } from './quotes.mjs';
 
 /** ターンの投稿の本文を書き換える間隔の下限（ms）。全接続へ配る間隔と同じ */
 export const PROGRESS_INTERVAL_MS = 1000;
@@ -241,6 +244,8 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
     // 渡すのが聞こえた投稿だけなら、その後に書き上がった投稿（宛先の bot の返事など）も後ろに渡す（それを見て、言うことがあるかを決める）
     const heardIds = new Set(postItems.filter((i) => i.heard && !postItems.some((o) => o.postId === i.postId && !o.heard)).map((i) => i.postId));
     const heardOnly = postItems.length > 0 && !innerItems.length && postItems.every((i) => heardIds.has(i.postId));
+    // 聞こえた投稿が誰との話の続きか（ADR 0128 の追記）。自分なら付けない。消えた bot の名前は出さない
+    const heardTo = new Map(postItems.filter((i) => heardIds.has(i.postId) && i.heardTo && i.heardTo !== sb?.botId && botList.some((b) => b.id === i.heardTo)).map((i) => [i.postId, i.heardTo]));
     const from = sb?.postCursor ? posts.findIndex((p) => p.id === sb.postCursor) : -1;
     const afterCursor = from >= 0 ? posts.slice(from + 1) : posts;
     const lastTrigger = afterCursor.reduce((at, p, i) => (triggerIds.has(p.id) ? i : at), -1);
@@ -282,7 +287,10 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
       parts.push(channelEnvelope({ ...common, post: p.id, from: await nameOf(item.reaction.by, botList, lng), at: stamp(item.reaction.at ?? now()), reaction: item.reaction.emoji,
         text: agentT(lng, 'channel.envelope.reaction', { emoji: item.reaction.emoji, text: excerpt(p.text) }) }));
     }
-    for (const p of triggers) parts.push(channelEnvelope({ ...(await env(p)), ...(replies.has(p.id) ? { reply: 'true' } : {}), ...(heardIds.has(p.id) ? { heard: 'true' } : {}) }));
+    for (const p of triggers) {
+      const to = heardTo.has(p.id) ? await nameOf({ kind: 'bot', botId: heardTo.get(p.id) }, botList, lng) : undefined;
+      parts.push(channelEnvelope({ ...(await env(p)), ...(replies.has(p.id) ? { reply: 'true' } : {}), ...(heardIds.has(p.id) ? { heard: 'true' } : {}), ...(to ? { to } : {}) }));
+    }
     if (following.length) parts.push(channelThreadEnvelope({ ...common, posts: await Promise.all(following.map(env)) }));
     const payloadNotes = triggers.filter((p) => p.author.kind === 'routine' && p.taint === 'webhook' && p.routine?.payload).map((p) => p.routine.payload);
     const cursor = (cut >= fresh.length ? fresh.at(-1) : cut > 0 ? fresh[cut - 1] : null)?.id ?? sb?.postCursor ?? null;
@@ -345,6 +353,19 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
     return known.length === 1 ? known[0] : null;
   }
 
+  /**
+   * 人の投稿の `>` の引用が、同じスレッドのそれより前の bot の投稿の本文と一致するなら、その bot（ADR 0128 の追記。core/bots/quotes.mjs）。
+   * 聞こえた投稿が誰との話の続きかの手がかりにする（起こす相手は変えない）。引用が無い・当たらなければ null
+   */
+  async function quotedBot(channelId, threadId, post) {
+    if (!String(post.text ?? '').includes('>')) return null;
+    const page = await channels.read({ channelId, threadId, limit: 100 }).catch(() => null);
+    const posts = page?.posts ?? [];
+    const upto = posts.findIndex((p) => p.id === post.id);
+    const said = (upto >= 0 ? posts.slice(0, upto) : posts).filter((p) => p.author?.kind === 'bot' && p.author.botId && p.state !== 'working');
+    return quotedPost(post.text, said)?.author.botId ?? null;
+  }
+
   /** その bot の会話（sessionId）が、自分のスレッドでない所（threadId。チャンネルの流れへの投稿ならその投稿が根になる）へ書いたか。会話が引けなければ false（自分への @ を数えない） */
   async function writtenElsewhere(sessionId, botId, channelId, threadId) {
     const sb = await sidecarOf(sessionId).catch(() => null);
@@ -374,6 +395,7 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
       let threadId = post.threadId;
       let targets = [];
       let heard = [];                                          // 宛先のほかに、聞こえた投稿として届ける bot（@ の無い人の投稿。ADR 0128）
+      let talkingTo = null;                                    // 聞こえた投稿が誰との話の続きか（引用した投稿の bot、無ければ宛先。ADR 0128 の追記）
       let origin = null;
       if (channel.kind === 'dm') {
         if (kind === 'bot') return;
@@ -399,6 +421,7 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
             heard = (await threadBots(channel.id, post.threadId)).filter((id) => id !== botId);
             if (!botId && !heard.length) return;
             targets = botId ? [botId] : [];
+            if (heard.length) talkingTo = (await quotedBot(channel.id, post.threadId, post)) ?? botId;
           } else return;
         }
       }
@@ -419,7 +442,7 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
         const woken = await wake({ botId, channel, threadId, post }).catch((e) => { log(`${botId} could not be woken:`, errText(e)); return null; });
         if (heard.length) addressed = woken;
       }
-      if (heard.length) await overhear({ addressed, heard, channel, threadId, post });
+      if (heard.length) await overhear({ addressed, heard, channel, threadId, post, talkingTo });
     } catch (e) { log('failed to handle a post:', errText(e)); }
   }
 
@@ -432,11 +455,11 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
   /**
    * @ の無い人の投稿を、宛先でない bot（heard）に聞こえた投稿として届ける（ADR 0128）。宛先の bot がこの投稿で新しいターンを始めたなら、
    * そのターンが終わってから届ける（宛先の返事も見たうえで、付け足すことがあるかを決められる。全員が同じことを言わない）。
-   * 宛先が無い・作業中で途中送信した・起こせなかったときは、すぐ届ける
+   * 宛先が無い・作業中で途中送信した・起こせなかったときは、すぐ届ける。talkingTo = 誰との話の続きか（包みの to。受け取る bot 自身には付けない）
    */
-  async function overhear({ addressed, heard, channel, threadId, post }) {
+  async function overhear({ addressed, heard, channel, threadId, post, talkingTo = null }) {
     const deliver = async () => {
-      for (const botId of heard) await wake({ botId, channel, threadId, post, heard: true }).catch((e) => log(`${botId} could not hear a post:`, errText(e)));
+      for (const botId of heard) await wake({ botId, channel, threadId, post, heard: true, talkingTo }).catch((e) => log(`${botId} could not hear a post:`, errText(e)));
     };
     const sid = addressed?.sessionId;
     const fresh = sid && addressed.itemId && [starting.get(sid), active.get(sid)].some((r) => r?.itemIds?.includes(addressed.itemId) && !r.ended);
@@ -564,9 +587,10 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
 
   /**
    * 1 体の bot を、この投稿で起こす（届ける前の出来事を保存してから配る）。届けたら { sessionId, itemId }、配らなかったら null。
-   * heard: @ の無い人の投稿を、宛先でない bot に聞こえた投稿として届ける（ADR 0128）。予算を使い切っていたら配らず、休憩中なら知らせずに配らない
+   * heard: @ の無い人の投稿を、宛先でない bot に聞こえた投稿として届ける（ADR 0128）。予算を使い切っていたら配らず、休憩中なら知らせずに配らない。
+   * talkingTo: 聞こえた投稿が誰との話の続きか（bot の id。自分なら残さない。ADR 0128 の追記）
    */
-  async function wake({ botId, channel, threadId, post, approved = false, heard = false }) {
+  async function wake({ botId, channel, threadId, post, approved = false, heard = false, talkingTo = null }) {
     const bot = await getBot(botId);
     if (!bot) return null;
     // 使用量の上限で休憩中なら配らない（解除の後にもう一度呼んでもらう）。その場所で初めてなら知らせる（聞こえただけの投稿では知らせない）
@@ -577,7 +601,7 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
     const sessionId = await sessionFor({ bot, channel, threadId, post });
     // 呼んだのが別の bot なら、この会話のターンが終わったときに返事を返す相手として残す（人・ルーティン・外から来た文には返さない）
     const caller = post.author?.kind === 'bot' && post.author.botId !== botId ? post.author.botId : null;
-    const item = await inbox.add({ sessionId, botId, channelId: channel.id, threadId, postId: post.id, ...(caller ? { caller } : {}), ...(heard ? { heard: true } : {}) });
+    const item = await inbox.add({ sessionId, botId, channelId: channel.id, threadId, postId: post.id, ...(caller ? { caller } : {}), ...(heard ? { heard: true } : {}), ...(heard && talkingTo && talkingTo !== botId ? { heardTo: talkingTo } : {}) });
     if (threadId) await bumpCalls(channel.id, threadId);
     await pump(sessionId);
     return { sessionId, itemId: item?.id ?? null };

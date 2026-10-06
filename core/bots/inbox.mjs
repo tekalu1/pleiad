@@ -4,8 +4,9 @@
 // 起動時は delivering を unknown にして、pending だけを配り直す（recover）。
 //
 //   createInboxStore({ dir, now }) → { load, add, list, mark, remove, recover }
-//     add({ sessionId, botId, channelId, threadId, postId, caller?, reply?, inner?, heard?, reaction? }): Promise<InboxItem>
+//     add({ sessionId, botId, channelId, threadId, postId, caller?, reply?, inner?, heard?, heardTo?, reaction? }): Promise<InboxItem>
 //       heard = @ の無い人の投稿を、宛先でない bot に聞こえた投稿として届ける（包みに heard="true"。返事をするかは bot が決める。ADR 0128）
+//       heardTo = 聞こえた投稿が誰との話の続きか（bot の id。包みに to="<bot の名前>"。heard のときだけ。ADR 0128 の追記）
 //       reaction = bot の投稿（postId）に付いたリアクション { emoji, by: Author, byKey, at, quiet? }。quiet なら配らず、次に起きたときに一緒に渡す（ADR 0109 の追記）
 //       caller = 起こした投稿を書いた bot の id（その会話のターンが終わったとき返事を返す相手）、reply = 呼んだ bot への返事として届ける投稿を書いた bot の id、
 //       inner = 自分の心拍から起きた出来事（postId は null。{ why, text, actSeq?, homeChannelId, taint? }。途中送信せず、新しいターンで <pleiad-inner> として渡す。ADR 0126）
@@ -13,7 +14,7 @@
 //     mark(ids, status, extra?): Promise<InboxItem[]>                                  … 変わったもの
 //     remove(ids): Promise<number>
 //     recover(): Promise<{ demoted: number, sessions: string[] }>                     … delivering → unknown。pending の会話の id を返す
-// InboxItem: { id: 'i_…', sessionId, botId, channelId, threadId: string|null, postId: string|null, caller?, reply?, inner?, heard?, reaction?, status, at, updatedAt, error? }
+// InboxItem: { id: 'i_…', sessionId, botId, channelId, threadId: string|null, postId: string|null, caller?, reply?, inner?, heard?, heardTo?, reaction?, status, at, updatedAt, error? }
 // 読めない版・壊れた JSON は上書きせずに投げる（threads.json と同じ方針）。送り終えた（sent）・結果不明のものは新しい 100 件だけ残す。
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -64,9 +65,9 @@ export function createInboxStore({ dir, now = Date.now } = {}) {
   return {
     file,
     load: () => serial(async () => { await load(); }),
-    add: ({ sessionId, botId, channelId, threadId = null, postId = null, caller, reply, inner, heard, reaction }) => mutate((data) => {
+    add: ({ sessionId, botId, channelId, threadId = null, postId = null, caller, reply, inner, heard, heardTo, reaction }) => mutate((data) => {
       const at = now();
-      const item = { id: newId('inbox', at), sessionId, botId, channelId, threadId, postId, ...(caller ? { caller } : {}), ...(reply ? { reply } : {}), ...(inner ? { inner } : {}), ...(heard ? { heard: true } : {}), ...(reaction ? { reaction } : {}), status: 'pending', at, updatedAt: at };
+      const item = { id: newId('inbox', at), sessionId, botId, channelId, threadId, postId, ...(caller ? { caller } : {}), ...(reply ? { reply } : {}), ...(inner ? { inner } : {}), ...(heard ? { heard: true } : {}), ...(heard && heardTo ? { heardTo } : {}), ...(reaction ? { reaction } : {}), status: 'pending', at, updatedAt: at };
       data.items.push(item);
       return clone(item);
     }),
