@@ -3,7 +3,7 @@
 //   - permission: 'hold' のとき、upgrade は approve() まで保留する。保留ごとに偽の確認の窓（dialogs()）を作る
 //   - cancel() は利用者の「キャンセル」: 保留の upgrade を HTTP 403 で断り（実機の見え方）、確認の窓も消す。expire() は Chrome の約 5 分の打ち切り: socket を壊し（見え方は未確認なので 403 とは別の形）、確認の窓は残す
 //   - closeDialog(id) は確認の窓を閉じる（本物の WM_CLOSE と同じに、upgrade は即座に 403 で断られる）
-//   - turnOff() は確認の「[設定] でオフにする」: 壊し、DevToolsActivePort を消し、ポートを閉じる。restart() はポートと経路を変えて書き直す
+//   - turnOff() はトグルをオフにした: 壊し、DevToolsActivePort を消し、ポートを閉じる。restart() はポートと経路を変えて書き直す
 //   - CDP は tests/lib/fake-chrome-browser.mjs の小さなブラウザー（窓・タブ・flatten のセッション・Fetch）が答える。受けたメソッドは calls に残す
 // 本物の Chrome・本物の LOCALAPPDATA は読まない。
 import http from 'node:http';
@@ -107,7 +107,7 @@ export async function startFakeChrome({ permission = 'auto', product = 'Chrome/1
     },
     /** ws だけ閉じる（許可の取り消し）。ファイルとポートはそのまま */
     dropConnections() { for (const ws of [...open]) ws.terminate(); },
-    /** 確認の「[設定] でオフにする」・トグルを戻した */
+    /** トグルをオフにした（確認の「[設定] でオフにする」はトグルを切らないので、これでなく cancel() と同じ見え方） */
     async turnOff() { dialogs.clear(); await shutdown(); await removeFile(); },
     /** トグルをオンに戻す（新しいポートと経路で書き直す） */
     async turnOn() { if (!server) await listen(); },

@@ -66,7 +66,7 @@ export default async function (t) {
 
     // ---- C: denied
     settings.chromeEvent({ state: 'denied', reason: 'cancel', dialog: false, product: null });
-    t.ok('denied（C）: 「Chrome で「キャンセル」が押されました」と「もう一度」「やめる」', statusOf(section) === 'Chrome で「キャンセル」が押されました' && buttonsOf(section).join() === 'もう一度,やめる');
+    t.ok('denied（C）: 「Chrome で許可されませんでした」（キャンセルと確認の「[設定] でオフにする」を見分けられないので中立の字）と「もう一度」「やめる」', statusOf(section) === 'Chrome で許可されませんでした' && buttonsOf(section).join() === 'もう一度,やめる');
     section.querySelectorAll('button')[0].onclick();
     t.ok('「もう一度」は chromeConnect を送る', sent.at(-1) === 'chromeConnect');
     t.ok('denied に「5 分で切れた」の字は無い', !section.textContent.includes('5 分') && !section.textContent.includes('切れ'));

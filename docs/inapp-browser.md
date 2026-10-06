@@ -38,8 +38,8 @@ agent-browser 0.38.1 の state ルートには専用の変更変数がない。`
 |---|---|---|---|
 | `off` | 何もしていない | 起動直後・「切る」・「やめる」・接続が切れた後 | 「つなぐ」→ `setup` か `permission` |
 | `setup`（A） | Chrome のトグルがオフ | `DevToolsActivePort` が無い、または書かれたポートにつながらない | 1 秒ごとに読み直し、つながれば自動で `permission`。時間では打ち切らない |
-| `permission`（B） | 許可の確認が出ている | ws の upgrade を投げた。`dialog` は確認の窓を見つけたか | 許可で `connected`。「キャンセル」で `denied`。「[設定] でオフにする」・トグルを戻した（ポートが閉じた）で `setup` |
-| `denied`（C） | 利用者が「キャンセル」を押した | **キャンセルのときだけ**（打ち切りでは入らない） | 「もう一度」→ `setup` / `permission`。「やめる」→ `off`（`declined`） |
+| `permission`（B） | 許可の確認が出ている | ws の upgrade を投げた。`dialog` は確認の窓を見つけたか | 許可で `connected`。「キャンセル」・確認の「[設定] でオフにする」で `denied`。トグルを戻した（ポートが閉じた）で `setup` |
+| `denied`（C） | Chrome で許可されなかった | 確認が 290 秒より前に断られ、ポートが生きている（「キャンセル」と確認の「[設定] でオフにする」。打ち切りでは入らない） | 「もう一度」→ `setup` / `permission`。「やめる」→ `off`（`declined`） |
 | `connected`（D） | つながった | upgrade 成功と `Browser.getVersion` | ws が閉じたら `off` と理由（`chrome-closed`: ファイルが消えた・ポートが変わった・つながらない、`revoked`: ポートは生きている） |
 
 `off` の `reason` は `chrome-closed`・`revoked`・`disconnected`（自分で切った）・`declined`（「やめる」）・`protocol`（想定外の HTTP の応答）。`unsupported` の `reason` は `platform`（Windows でない）・`native`（koffi を読めない）・`no-desktop`（Electron が無い）。
@@ -48,8 +48,11 @@ agent-browser 0.38.1 の state ルートには専用の変更変数がない。`
 
 **前に出す頻度**: Pleiad が確認を前に出す（`raise`）のは、B に入って最初に見つけた 1 回と、「ダイアログを前に出す」だけ。出し直した確認は前に出さず、前面を取っていたら（1 秒の間 200 ms ごとに見る）、直前の前面がブラウザーの窓でなければ `yieldForeground` で返す。「やめる」・「切る」・Pleiad の終了（`shutdown` を受けたとき。2 秒まで）は、出ている確認を閉じてから終える（Chrome に確認を残さない）。
 
+**記録**: 状態の移り変わり（`chrome: state=… reason=…`）・前に出した方法（`chrome: raise method=…`）・返したか（`chrome: yield ok=…`）は、サーバーの標準出力に 1 行ずつ出る。デスクトップ版では、`utilityProcess` の経路は `userData\logs\server.log`（開発版は `server-dev.log`）、無停止の更新の経路は `<実行場所>\logs\server.log`（`AGENT_HOST_SERVER_LOG`。`core/server-log.mjs`）。main の OS の層の行（`[chrome-os] …`）は main の標準エラーで、ファイルには残らない。
+
 ### 実機で確かめたこと（Chrome 154・Windows 11、2026-10-06）
 
+- **確認の「[設定] でオフにする」は、トグルを切らない**。`chrome://inspect/#remote-debugging` を新しいタブで開くだけで、確認は閉じて upgrade は断られ、ポートは生きたまま。Pleiad からは「キャンセル」と見分けられないので C（`denied`）になる（ADR 0153 は C を「キャンセルのときだけ」と書くが、実機ではこの押下でも入る）。A になるのは、利用者が開いたページで実際にトグルをオフにした後の「もう一度」で、切らずに押せば B。
 - 確認を閉じる（`WM_CLOSE`）・「キャンセル」では、upgrade は **HTTP 403** で断られる（`ws` パッケージでは `unexpected-response` の 403。Node 組み込みの WebSocket では 1006 に見える）。403 は拒否として扱い、それ以外の HTTP の応答は `protocol`。
 - 確認を閉じてすぐ upgrade し直すと、新しい確認は 30〜52 ms で出る（8 回）。**出た確認が前面を取ったことは無かった**（前面がほかのアプリ・Pleiad のとき。Chrome の窓が前面のときも変わらなかった）。つまり確認は背後に出るので、最初の 1 回は Pleiad が前に出す必要がある。`AttachThreadInput` 方式の前面化は node のプロセスからも通った。
 - Pleiad から ws だけ閉じても、確認は Chrome に残る（`WM_CLOSE` で消える）。
@@ -59,7 +62,7 @@ agent-browser 0.38.1 の state ルートには専用の変更変数がない。`
 
 ### 画面と操作
 
-- 設定 › ブラウザーの「エージェントのブラウザー」（`web/browser-settings.mjs`。「エージェントの操作」の行の上）。1 行目は Chrome の印・「Chrome」・状態の字（`role=status`）・右にボタン。`off`: 「つながっていません」＋「つなぐ」（切れた理由があれば 1 行）。`setup`: 手順 2 つ（アドレス `chrome://inspect/#remote-debugging` をコピー → Chrome のアドレス欄に貼り付けて開き「Allow remote debugging for this browser instance」をオン）＋主のボタン「アドレスをコピー」＋「やめる」、弱い字で「オンになったら自動で進みます」。`permission`: 「Chrome に許可の確認が出ています」＋「ダイアログを前に出す」＋「やめる」、弱い字で「Chrome が確認を出し直しても、そのまま待ちます」（出し直しでは字を変えない）。`denied`: 「Chrome で「キャンセル」が押されました」＋「もう一度」＋「やめる」。`connected`: 「つながっています · Chrome 154」＋「切る」、弱い字で、つないでいる間は Chrome の窓に「自動テスト ソフトウェアによって制御されています」の帯が出ることがあること。`unsupported`: 「この OS ではまだ使えません」だけ（OS 以外の理由は「この環境ではまだ使えません」）。承認済み（2026-10-06。UX モックの 09）。
+- 設定 › ブラウザーの「エージェントのブラウザー」（`web/browser-settings.mjs`。「エージェントの操作」の行の上）。1 行目は Chrome の印・「Chrome」・状態の字（`role=status`）・右にボタン。`off`: 「つながっていません」＋「つなぐ」（切れた理由があれば 1 行）。`setup`: 手順 2 つ（アドレス `chrome://inspect/#remote-debugging` をコピー → Chrome のアドレス欄に貼り付けて開き「Allow remote debugging for this browser instance」をオン）＋主のボタン「アドレスをコピー」＋「やめる」、弱い字で「オンになったら自動で進みます」。`permission`: 「Chrome に許可の確認が出ています」＋「ダイアログを前に出す」＋「やめる」、弱い字で「Chrome が確認を出し直しても、そのまま待ちます」（出し直しでは字を変えない）。`denied`: 「Chrome で許可されませんでした」＋「もう一度」＋「やめる」（「キャンセル」と確認の「[設定] でオフにする」を見分けられないので、どちらとも取れる字。2026-10-06）。`connected`: 「つながっています · Chrome 154」＋「切る」、弱い字で、つないでいる間は Chrome の窓に「自動テスト ソフトウェアによって制御されています」の帯が出ることがあること。`unsupported`: 「この OS ではまだ使えません」だけ（OS 以外の理由は「この環境ではまだ使えません」）。承認済み（2026-10-06。UX モックの 09）。
 - 操作（`core/ops/browser.mjs`）: `browser.chromeStatus`（read。MCP の catalog・CLI の `pleiad browser status` にも出る）。`browser.chromeConnect`・`browser.chromeDisconnect`・`browser.chromeRaiseDialog`（write。画面だけ・ホストの PC の画面だけ。`hostScreenOnly`）。WS のコマンドは `chromeStatus`・`chromeConnect`・`chromeDisconnect`・`chromeRaiseDialog`（`legacyCommand`）。つなぐ・切る・前に出すを `human-only` にしないのは、`human-only` が ADR 0094 の 5 つだけだから（画面だけに出すのは `surfaces` で決める）。
 - 状態の便りは `chromeBrowser` イベント（`{ state, reason, dialog, product }`、`sessionId: null`）。**ホストの PC の画面（`isLocalRequest`）にだけ**流し、リモートの端末には送らない。つないだ画面には今の状態を最初に 1 回送る。
 
