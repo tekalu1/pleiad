@@ -34,6 +34,8 @@ export default async function (t) {
     headerUsage: { turnEnded: noop },
     // スマホのアプリの帯（web/mobile-notify.mjs）と設定 › 通知（web/notify-settings.mjs）。このテストの対象外
     mobileNotify: { completed: noop }, notifySettings: { event: noop },
+    // 通話モード（web/voice/）の設定の画面と部品。設定・キーが変わったときに onEvent が渡す。このテストの対象外
+    voiceSettings: { event: noop }, voiceUi: { refresh: noop },
     // 会話の移動（web/conversation-nav-view.mjs）。最新へのボタンの新着と弧。このテストの対象外
     nav: { reset: noop, replyArrived: noop, syncRunning: noop }, navSession: null, toc: { reset: () => {}, refresh: () => {} },
     filePreview: { sessionChanged: noop },

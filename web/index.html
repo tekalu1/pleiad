@@ -28,6 +28,7 @@
 <link rel="stylesheet" href="/channels-thread.css">
 <link rel="stylesheet" href="/bot-page.css">
 <link rel="stylesheet" href="/routines.css">
+<link rel="stylesheet" href="/voice.css">
 <!-- i18next はビルドしないので、裸の名前をサーバーの配信口へ向ける（core/server.mjs の /vendor/i18next.mjs）。モジュールより前に置く -->
 <script type="importmap">{ "imports": { "i18next": "/vendor/i18next.mjs" } }</script>
 <!-- 最初の描画より前に、配色・言語・窓の枠（デスクトップ版だけ）・脇の開閉を決める。client.mjs を待つと一瞬ずれて見える。
@@ -109,6 +110,7 @@
       <button type="button" id="browserTab" aria-controls="browserPanel" data-i18n="settings.nav.browser" hidden></button>
       <button type="button" id="computerTab" aria-controls="computerPanel" data-i18n="settings.nav.computer"></button>
       <button type="button" id="notifyTab" aria-controls="notifyPanel" data-i18n="settings.nav.notify"></button>
+      <button type="button" id="voiceTab" aria-controls="voicePanel" data-i18n="settings.nav.voice"></button>
       <button type="button" id="remoteTab" aria-controls="remotePanel" data-i18n="settings.nav.remote"></button>
       <button type="button" id="updatesTab" aria-controls="updatesPanel" data-i18n="settings.nav.about"></button>
     </nav>
@@ -374,6 +376,8 @@
         <section id="computerPanel" data-i18n-aria-label="settings.nav.computer" hidden></section>
         <!-- 中身は web/notify-settings.mjs が作る -->
         <section id="notifyPanel" data-i18n-aria-label="settings.nav.notify" hidden></section>
+        <!-- 通話モード（web/voice/settings.mjs）。OpenRouter のキー・モデルと声・費用の安全弁 -->
+        <section id="voicePanel" data-i18n-aria-label="settings.nav.voice" hidden></section>
         <!-- 中身は web/remote.mjs が作る -->
         <section id="remotePanel" data-i18n-aria-label="settings.nav.remote" hidden></section>
       </div>

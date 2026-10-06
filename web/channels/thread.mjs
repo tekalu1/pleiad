@@ -10,7 +10,7 @@ import { botIcon } from './bot-icon.mjs';
 import { t } from '../i18n.mjs';
 import { runMark } from '../arc.mjs';
 import { savedEvent } from '../saved-text.mjs';
-import { renderPost, fillPost, authorInfo, wireAttachmentZoom } from './post.mjs';
+import { renderPost, fillPost, authorInfo, wireAttachmentZoom, whenText } from './post.mjs';
 import { withReaction } from './reactions.mjs';
 import { createChComposer } from './ch-composer.mjs';
 import { threadDraftKey } from './ch-attach-model.mjs';
@@ -116,6 +116,33 @@ export function createThread(host) {
   composer.bindDropZone(root);
   wireAttachmentZoom(log, host);
   const deck = createDeck({ view, body, feed: feedRoot, thread: root, top });
+  // 通話モードの差し込み口（スレッド。承認済み 2026-10-06）。契約は web/voice/index.mjs の冒頭。入力欄・見出し・面へは、ここの 1 か所だけで繋ぐ
+  host.voice?.mount({
+    id: 'thread',
+    header: head.el.querySelector('.th-entries'), headerBefore: head.tocButton,
+    composer: { root: composer.el, row: composer.el.querySelector('.ch-row'), before: composer.el.querySelector('.ch-send'), below: composer.el.querySelector('.ch-box') },
+    main: root, log, overlay: root, replyScope: () => log,
+    tail: {
+      place: (node) => replies.after(node), rows: replies, persistMarks: true,
+      isRow: (node) => node.classList.contains('post'), rowKey: (node) => node.dataset.postId ?? null,
+      markHost: (row) => row.querySelector('.post-head .post-name'),
+      createRow: () => {
+        const row = el('div', 'post mine');
+        const av = el('span', 'post-av you', youInitial());
+        av.setAttribute('aria-hidden', 'true');
+        const main = el('div', 'post-main');
+        const hd = el('div', 'post-head');
+        hd.append(el('b', 'post-name', t('channels:feed.you')), el('time', 'post-when', whenText(Date.now())));
+        const text = el('div', 'post-body');
+        main.append(hd, text);
+        row.append(av, main);
+        return { el: row, body: text };
+      },
+    },
+    target: () => (S.threadId ? { kind: 'thread', channelId: S.channelId, threadId: S.threadId } : null),
+    send: (text) => send({ text, attachments: [] }),
+    follow: () => { if (nearBottom()) log.scrollTop = log.scrollHeight; },
+  });
 
   const nearBottom = () => log.scrollHeight - log.scrollTop - log.clientHeight < NEAR_BOTTOM;
   const toBottom = () => { log.scrollTop = log.scrollHeight; jump.hidden = true; markRead(); };
