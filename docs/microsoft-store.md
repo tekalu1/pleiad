@@ -1,7 +1,7 @@
 # Microsoft Store 版（MSIX）
 
 Windows 版を Microsoft Store から MSIX で配るための設定と、MSIX で動かしたときの違い。GitHub Releases の NSIS の配布（[desktop-releases.md](desktop-releases.md)）はそのまま残す。
-Store は提出された MSIX に自分で署名して配るので、自己署名の証明書による SmartScreen の警告は出ない。まだ Store には出していない（2026-10-06 時点で試作と互換性の確認まで）。方式の決定は [ADR 0141](adr/0141-microsoft-store-msix.md)（提案）。
+Store は提出された MSIX に自分で署名して配るので、自己署名の証明書による SmartScreen の警告は出ない。まだ Store には出していない（2026-10-06 時点で試作と互換性の確認まで）。方式の決定は [ADR 0145](adr/0145-microsoft-store-msix.md)（提案）。
 
 ## 作り方
 
@@ -87,7 +87,7 @@ Store の版は Store が更新する。electron-updater の確認もダウン�
   アプリ・子プロセスの書き込みも userData も本物の場所になった（実測。userData は `%APPDATA%\agent-host` で NSIS 版と同じ）。
 - `Application` を `uap10:RuntimeBehavior="win32App" uap10:TrustLevel="mediumIL"` にする。識別子は付いたまま仮想化が無くなり、子プロセスはパッケージの外で走った（実測）。開発者モードでは `unvirtualizedResources` 無しで登録できたが、Microsoft のメンテナーは要ると述べている（WindowsAppSDK の議論 #410、2021-02）。
 
-capability を使わずに子プロセスだけを外に出す方法として、`CreateProcessW` の `PROC_THREAD_ATTRIBUTE_DESKTOP_APP_POLICY` に `PROCESS_CREATION_DESKTOP_APP_BREAKAWAY_ENABLE_PROCESS_TREE` を付ける API がある。パッケージの外の実行ファイル（`node.exe`）に付けると、その子も孫もパッケージの外で走り、書き込みは本物の場所に行った（実測）。パッケージの中の実行ファイル（`Ply.exe`）に付けても、その子は中のままだった（実測）。Node の `child_process` と node-pty はこの属性を渡せないので、使うなら起動の部分を作り直す（[ADR 0141](adr/0141-microsoft-store-msix.md)）。
+capability を使わずに子プロセスだけを外に出す方法として、`CreateProcessW` の `PROC_THREAD_ATTRIBUTE_DESKTOP_APP_POLICY` に `PROCESS_CREATION_DESKTOP_APP_BREAKAWAY_ENABLE_PROCESS_TREE` を付ける API がある。パッケージの外の実行ファイル（`node.exe`）に付けると、その子も孫もパッケージの外で走り、書き込みは本物の場所に行った（実測）。パッケージの中の実行ファイル（`Ply.exe`）に付けても、その子は中のままだった（実測）。Node の `child_process` と node-pty はこの属性を渡せないので、使うなら起動の部分を作り直す（[ADR 0145](adr/0145-microsoft-store-msix.md)）。
 
 ### 実行ファイルのパス
 

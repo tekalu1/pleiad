@@ -1,4 +1,4 @@
-# 0141 Windows 版を Microsoft Store から MSIX で配る。更新は Store に任せ、AppData と HKCU の仮想化は切る申請をする
+# 0145 Windows 版を Microsoft Store から MSIX で配る。更新は Store に任せ、AppData と HKCU の仮想化は切る申請をする
 
 - 状態: 提案
 
