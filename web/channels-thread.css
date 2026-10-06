@@ -66,6 +66,11 @@
 :root.side-closed .deck[data-deck=solo] .th-side{display:inline-flex;margin-left:-6px}
 
 /* ---- 投稿の列 */
+/* 頭の ✦（題の候補）。考えている間は弱い字 */
+.th-wand{flex:none;width:28px;height:28px;font-size:13px;color:var(--ink-weak)}
+.th-wand.busy{opacity:.5}
+/* 設定のチップのアイコン（Chats の入力欄と同じ線画） */
+.th-composer .crow > .chip > svg.i{width:14px;height:14px;flex:none}
 /* 送信待ち・`!` の行（ADR 9101）。`!` の行は Chats の .m.cmd をそのまま入れ、上に「〜の作業場所で実行」 */
 .th-shells{max-width:820px}
 .th-shell-where{margin:8px 0 2px 46px;font-size:var(--fs-xs);color:var(--ink-weak)}

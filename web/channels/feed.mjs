@@ -415,7 +415,6 @@ export function createFeed(host) {
         const at = node?.querySelector('.post-tool.add') ?? anchor;
         openEmojiPicker({ anchor: at, title: t('channels:feed.reactPicker'), onPick: (emoji) => react(p, emoji, true, (p.reactions?.[emoji] ?? []).some((a) => a.kind === 'human')) });
       },
-      openSession: p.turn?.sessionId ? () => host.openSession(p.turn.sessionId) : null,
     });
     host.showMenu(x, y, items, title, { alignRight });
   }

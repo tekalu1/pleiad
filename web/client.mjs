@@ -4048,7 +4048,14 @@ function loadThreadIndexSoon() {
   threadIndexTimer = setTimeout(loadThreadIndex, 150);
 }
 
-/** スレッドの行のメニュー: 開く・流れを開く・状態（会話と同じ状態のグループ） */
+/** スレッドの bot の会話の作業場所（最初に見つかった会話の cwd）。無ければ空 */
+function threadCwd(s) {
+  const th = (state.threadIndex?.threads ?? []).find((x) => x.channelId === s.thread.channelId && x.threadId === s.thread.threadId);
+  for (const sid of Object.values(th?.sessions ?? {})) { const cwd = state.sessions.find((z) => z.id === sid)?.cwd; if (cwd) return cwd; }
+  return '';
+}
+
+/** スレッドの行のメニュー: 開く・流れを開く・作業フォルダーと ID のコピー・状態（会話と同じ状態のグループ） */
 function threadMenu(s, x, y) {
   const { channelId, threadId } = s.thread;
   const known = [...new Set([...state.sessions.map((z) => z.status), ...(state.threadIndex?.threads ?? []).map((th) => th.status)].filter(Boolean))];
@@ -4057,6 +4064,9 @@ function threadMenu(s, x, y) {
   showMenu(x, y, [
     { label: t('channels:side.openThread'), onClick: () => viewAddress.go({ channelId, threadId }) },
     { label: t('channels:side.openFeed'), onClick: () => viewAddress.go({ channelId }) },
+    // 作業フォルダー（スレッドの bot の会話の作業場所）と ID のコピー（Chats の会話の行と同じ）
+    ...(threadCwd(s) ? [{ label: t("session.menu.copyCwd"), hint: threadCwd(s), onClick: () => copy(threadCwd(s), t("session.menu.cwdCopied"), t("session.menu.cwdCopyFailed")) }] : []),
+    { label: t("session.menu.copyId"), onClick: () => copy(threadId, t("session.menu.idCopied"), t("session.menu.idCopyFailed")) },
     { label: t('session.menu.changeStatus'), hint: s.status || t('session.status.none'), sub: () => [
       { input: { placeholder: t('session.menu.newStatus'), onCommit: (v) => setStatus(v) } },
       ...known.map((k) => ({ label: k, checked: k === s.status, onClick: () => setStatus(k) })),
@@ -4107,7 +4117,7 @@ function renderSessions() {
     if (th.state === 'working' || Object.values(th.live ?? {}).includes('working')) runningIds.add(id);
     if (th.state === 'waiting' || Object.values(th.live ?? {}).includes('waiting')) waitingIds.add(id);
     if (th.unread) unreadIds.add(id);
-    return { id, thread: { channelId: th.channelId, threadId: th.threadId }, bot: { botId: th.bots?.[0] ?? null, channelId: th.channelId, threadId: th.threadId, kind: 'thread' },
+    return { id, thread: { channelId: th.channelId, threadId: th.threadId, ...(th.branchOf ? { branch: true } : {}) }, bot: { botId: th.bots?.[0] ?? null, channelId: th.channelId, threadId: th.threadId, kind: 'thread' },
       title: th.title, status: th.status ?? '', lastModified: th.lastAt };
   });
   // 脇で選ばれて見える行: Channels の面ではそのスレッド、会話の面では開いている会話

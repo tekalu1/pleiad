@@ -27,8 +27,9 @@ const svgButton = (cls, label, paths) => {
  * @param {() => void} o.onBack  チャンネル名（流れに戻る）
  * @param {(button: HTMLElement) => void} o.onToc  目次
  * @param {(title: string) => void} [o.onRename]  題を変える（題を押すと欄になる。Enter で決め、Esc でやめる）
+ * @param {() => Promise<string|null>} [o.suggestTitle]  ✦ 題の候補（スレッドの bot の会話から。欄に入れて選ばせる）
  */
-export function createThreadHead({ host, onClose, onBack, onToc, onRename }) {
+export function createThreadHead({ host, onClose, onBack, onToc, onRename, suggestTitle = null }) {
   const head = el('header', 'th-top');
 
   // 脇を閉じている間の入口（流れの見出しの #chOpenSidebar と同じ働き。スレッドだけが見えているときだけ出す。CSS）
@@ -56,10 +57,10 @@ export function createThreadHead({ host, onClose, onBack, onToc, onRename }) {
     title.tabIndex = 0;
     title.setAttribute('role', 'button');
     title.classList.add('th-title-edit');
-    const edit = () => {
+    const edit = (value = null) => {
       if (head.querySelector('.th-title-input')) return;
       const input = el('input', 'th-title-input');
-      input.value = title.title || '';
+      input.value = value ?? (title.title || '');
       input.setAttribute('aria-label', t('channels:thread.rename'));
       input.maxLength = 120;
       let done = false;
@@ -81,8 +82,21 @@ export function createThreadHead({ host, onClose, onBack, onToc, onRename }) {
       input.focus();
       input.select();
     };
-    title.onclick = edit;
+    title.onclick = () => edit();
     title.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); edit(); } };
+    if (suggestTitle) {
+      const wand = el('button', 'btn btn-icon th-wand', '✦');
+      wand.type = 'button';
+      wand.title = t('session.titleWand');
+      wand.setAttribute('aria-label', t('session.titleWand'));
+      wand.onclick = async () => {
+        wand.disabled = true;
+        wand.classList.add('busy');
+        try { const next = await suggestTitle(); if (next) edit(next); }
+        finally { wand.disabled = false; wand.classList.remove('busy'); }
+      };
+      crumb.append(wand);
+    }
   }
 
   const toc = svgButton('th-toc', t('channels:thread.entry.toc'), [TOC_PATH]);

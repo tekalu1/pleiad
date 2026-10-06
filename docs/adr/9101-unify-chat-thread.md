@@ -22,7 +22,8 @@
 3. **脇は 1 つで、1 つのデータから 2 つの並べ方を出す。** チャンネルの並べ方（一時チャット・チャンネルの見出しと最近のスレッド・Bots・ルーティン）と状態の並べ方（利用者の状態のグループ。bot のスレッドは 1 スレッド 1 行）。スレッドの索引は `channels.threads`、スレッドの状態は `channels.setThreadStatus`（会話と同じ状態の器）。ADR 0107 を置き換える。
 4. **見ている場所を 1 つのアドレスにまとめる**（`{ channelId: 'home' | id, sessionId?, threadId?, postId?, uuid? }`。web/view-address.mjs）。通知・検索・脇の行はこれを通り、再読み込みでも同じ場所へ戻る。
 5. **入力欄は 1 つの部品**（web/composer/composer.mjs）。宛先のチップの bot を選ぶと、モデル・承認モード・作業ディレクトリのチップはその bot のこのスレッドの会話の値を出し、変えるとそのスレッドだけに効く（bot の既定を変えても上書きしない）。チャンネルのスレッドの「bot なし」は、人格・記憶・心拍を持たない組み込みの bot（`Bot.plain`）で、dispatch の経路は普通の bot と同じ。名前で `@` できず、記憶・エピソードを書かず、予算・止める・暗黙の宛先は普通の bot と同じ。
-6. **投稿に Chats と同じ操作。** 分岐は新しいスレッド（系譜は `ThreadState.branchOf`。`origin` とは別の欄にする）。編集して再送信は同じスレッドの中で、取り下げの記録と、bot の会話ごとの巻き戻し（[ADR 0102](0102-rewind-in-place.md)）。
+6. **投稿に Chats と同じ操作。** 分岐は新しいスレッド（系譜は新しい根の投稿の `branchOf`・写した投稿の `copyOf`。`origin` とは別の欄にする。写した投稿は bot を起こさない）。bot の会話は、1 つの発言から分けた行のまとまり（`groupUuid`）の先頭で分ける・巻き戻す。編集して再送信は同じスレッドの中で、取り下げの記録（記録の op `withdraw`）と、bot の会話ごとの巻き戻し（[ADR 0102](0102-rewind-in-place.md)）。根の投稿は送り直さず、分岐して送る。
+7. **スレッドの欄に Chats の欄の機能。** 送信の冪等（`clientId`）・送信の日時（予定の kind `post`）・`/` と `/compact`・`!`（宛先の bot の会話の作業場所）・送信待ちの行（取り下げ）・文脈の量・下書きのサーバーの写し（DB の表 `drafts`）。会話の移動（残る問い・最新へ・地図・目次と検索・Alt+↑↓）と長い発言の畳み・添付の一覧は、Chats の部品に発言の読み方を渡して使う。
 
 ## 理由
 
@@ -34,4 +35,6 @@
 
 - ADR 0107（脇の 2 タブ）を置き換える。ADR 0111（入力欄が 2 つ・「会話を開く」）と ADR 0116（Chats の添付は切り出せない）を改める。
 - design-system §2.3 の「場面切替」の例外は git のタブだけになる（並べ方の切り替えは面を替えない）。
-- 新しい操作: `channels.threads`・`channels.setThreadStatus`（ほかは段ごとに足す。docs/channels.md「操作」）。`ThreadState` に任意の欄（`status`・`readAt`・ほか）を足す（DB の形は変えない）。
+- 新しい操作（docs/channels.md「操作」）: `channels.threads`・`setThreadStatus`・`setThreadTitle`・`threadSettings`・`schedulePost`・`deliveries`・`branchThread`・`resend`・`pending`・`withdrawPending`、`sessions.roots`、`drafts.save`・`drafts.load`。`channels.post` に `to`・`clientId`、op の `channelId: 'home'`。画面の道具（`deliveries`・`branchThread`・`resend`・`pending`・`withdrawPending`・`drafts.*`・`schedulePost`）は MCP に出さない。
+- `ThreadState` に任意の欄（`status`・`readAt`・`title`）、`Post` に `to`・`clientId`・`branchOf`・`copyOf`・`withdrawnAt`、`Channel` に `home`、`Bot` に `plain`、sidecar の `bot` に `overrides` を足す（DB の形式番号は変えない。表 `drafts` は後から足す表）。
+- 投稿のメニューの「会話を開く」をやめる（bot の会話はスレッドそのもの）。

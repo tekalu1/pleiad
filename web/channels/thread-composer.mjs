@@ -9,6 +9,7 @@
 // 口は流れの入力欄（createChComposer）と同じ形にしてある（thread.mjs がそのまま使う）。
 import { buildComposer, composerEls, createComposer } from '../composer/composer.mjs';
 import { renderOutbox } from '../outbox.mjs';
+import { chipGlyph } from '../composer-controls.mjs';
 import { setupMentionComplete } from './mention-complete.mjs';
 import { draftStore, persistDrafts } from './ch-composer.mjs';
 import { runMark } from '../arc.mjs';
@@ -220,8 +221,9 @@ export function createThreadComposer({ host, bucket = () => null, candidates, su
     paintSettings();
   };
   const leaf = (path) => String(path ?? '').split(/[\\/]/).filter(Boolean).at(-1) ?? '';
+  const chipKind = (chip) => (chip === chips.cwd ? 'cwd' : chip === chips.model ? 'model' : 'mode');
   const chipBody = (chip, text, changed) => {
-    chip.replaceChildren(el('span', 'v', text), el('span', 'cv', '▾'));
+    chip.replaceChildren(chipGlyph(chipKind(chip)), el('span', 'v', text), el('span', 'cv', '▾'));
     if (changed) { const dot = el('span', 'entry-dot'); dot.setAttribute('aria-hidden', 'true'); chip.append(dot); }
     chip.classList.toggle('changed', Boolean(changed));
   };

@@ -69,7 +69,6 @@
     "reply": "Reply in thread",
     "more": "More",
     "copyText": "Copy text",
-    "openSession": "Open conversation",
     "replies_one": "{{count}} reply",
     "replies_other": "{{count}} replies",
     "openThread": "Open thread ({{count}} replies)",
@@ -182,6 +181,7 @@
     "stop": "Stop",
     "stopping": "Stopping…",
     "stopFailed": "Could not stop: {{error}}",
+    "titleNoSession": "No bot conversation in this thread yet",
     "shellNoSession": "The bot has no conversation in this thread yet. Talk to it first, then run the command",
     "shellWhere": "Run in {{name}}'s working folder",
     "band": {

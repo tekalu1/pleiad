@@ -152,7 +152,14 @@ export function createThread(host) {
   // 目次のボタンは会話の目次（web/conversation-toc.mjs）が自分で受ける
   const head = createThreadHead({ host, onClose: () => close(), onBack: () => close(), onToc: () => {},
     // 題を変える（根の投稿は変えない。空にすると根の投稿の最初の行に戻る）
-    onRename: (title) => host.invoke('channels.setThreadTitle', { channelId: S.channelId, threadId: S.threadId, title }).catch((err) => composer.say(t('channels:thread.renameFailed', { error: err?.message ?? String(err) }), true)) });
+    onRename: (title) => host.invoke('channels.setThreadTitle', { channelId: S.channelId, threadId: S.threadId, title }).catch((err) => composer.say(t('channels:thread.renameFailed', { error: err?.message ?? String(err) }), true)),
+    // ✦ 題の候補: このスレッドで最後に動いた bot の会話から（Chats の suggestTitle と同じ。bot の会話がまだ無ければ出さない）
+    suggestTitle: async () => {
+      const sessionId = activeSession();
+      if (!sessionId) { composer.say(t('channels:thread.titleNoSession')); return null; }
+      try { return (await host.cmd('suggestTitle', { sessionId }))?.title ?? null; }
+      catch (err) { composer.say(t('session.titleSuggestFailed', { error: err?.message ?? String(err) }), true); return null; }
+    } });
   root.append(head.el, frame, band, subs, composer.el);
   composer.bindDropZone(root);
   wireAttachmentZoom(log, host);
@@ -695,7 +702,6 @@ export function createThread(host) {
       fork: S.channel?.kind === 'dm' || p.state === 'working' ? null : () => branchFrom(p),
       // 編集して再送信・再送信: あなたの返信だけ（根は分岐して送る）
       ...(p.author?.kind === 'human' && p.threadId && S.channel?.kind !== 'dm' ? { edit: () => openResend(p, true), resend: () => openResend(p, false) } : {}),
-      openSession: p.turn?.sessionId ? () => host.openSession(p.turn.sessionId) : null,
     });
     more?.setAttribute('aria-expanded', 'true');
     node?.classList.add('menu-open');

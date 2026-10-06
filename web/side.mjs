@@ -782,6 +782,8 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
     // 一時チャットは置き場の名前（# を付けない）
     const where = s.bot.kind === "dm" || channel?.kind === "dm" ? t("channels:side.dm") : channel?.home ? name : name ? `#${name}` : "";
     mark.append(el("span", "row-ch-name", where));
+    // 分けたスレッド（枝。channels.branchThread）は「分岐」の札（元のスレッドと同じ題が並ぶので見分ける）
+    if (s.thread?.branch) mark.append(el("span", "row-branch", t("channels:feed.branch")));
     if (bot) mark.title = where ? `${bot.name} · ${where}` : bot.name;
     return mark;
   }

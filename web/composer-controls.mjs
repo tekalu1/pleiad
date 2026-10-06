@@ -28,6 +28,8 @@ const WARN = ["M12 3.5l9.5 16.5h-19z", "M12 10v4.5M12 17.2v.3"];
 // モデルのアイコン（チップの形を 3 つそろえるため。2026-09-23 に足した）
 const MODEL = ["M8 6h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2z", "M10 3v3M14 3v3M10 18v3M14 18v3M3 10h3M3 14h3M18 10h3M18 14h3"];
 const CARET = "M7 10l5 5 5-5";
+/** チップのアイコン（作業フォルダー・モデル・承認モード。スレッドの欄も同じ絵を使う。web/channels/thread-composer.mjs） */
+export const chipGlyph = (kind) => glyph(...(kind === "cwd" ? [FOLDER] : kind === "model" ? MODEL : kind === "danger" ? WARN : [SHIELD]));
 
 // git のブランチの線画（円 3 つと線。glyph は path だけなので別に作る）
 function branchGlyph() {

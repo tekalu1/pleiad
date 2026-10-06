@@ -67,7 +67,6 @@
     "reply": "スレッドで返信",
     "more": "その他",
     "copyText": "本文をコピー",
-    "openSession": "会話を開く",
     "replies_other": "{{count}} 件の返信",
     "openThread": "スレッドを開く（{{count}} 件の返信）",
     "threadWorking": "作業中",
@@ -178,6 +177,7 @@
     "stop": "止める",
     "stopping": "止めています…",
     "stopFailed": "止められませんでした: {{error}}",
+    "titleNoSession": "このスレッドにはまだ bot の会話がありません",
     "shellNoSession": "宛先の bot のこのスレッドの会話がまだありません。先に話しかけてから実行してください",
     "shellWhere": "{{name}} の作業場所で実行",
     "band": {

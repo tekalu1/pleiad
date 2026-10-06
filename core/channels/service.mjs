@@ -332,6 +332,8 @@ export function createChannelService({ dir, emit = () => {}, hooks = {}, now = D
             unread: lastAt > readAt && (r?.lastAt ?? 0) > readAt, state: th?.state ?? 'idle', ...(th?.live ? { live: clone(th.live) } : {}),
             ...(th?.status ? { status: th.status } : {}), bots: Object.keys(th?.sessions ?? {}), ...(th?.origin ? { origin: clone(th.origin) } : {}),
             ...(th?.stopped ? { stopped: true } : {}),
+            // 分けたスレッド（枝）の元・bot ごとの会話（脇の行の「枝」の札・作業フォルダーのコピー）
+            ...(root.branchOf ? { branchOf: clone(root.branchOf) } : {}), sessions: clone(th?.sessions ?? {}),
           });
         }
         rows.sort((a, b) => b.lastAt - a.lastAt);
