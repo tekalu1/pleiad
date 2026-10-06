@@ -14,6 +14,7 @@
  * - AGENT_HOST_SERVER_LOG: 出力を書くファイル（core/server-log-boot.mjs）
  * - AGENT_HOST_RUNTIME_ROOT・AGENT_HOST_RUNTIME_KEY: 走っている版の実行場所と版の名前（core/runtime-use.mjs）
  * - AGENT_HOST_RUNTIME_RESOURCES・AGENT_HOST_RUNTIME_DIR: main が実行場所を組む元と置き場（desktop/runtime.cjs）。サーバーは読まず、継いでいるだけ
+ * - AGENT_HOST_CLAUDE_HOLDER: Claude の CLI を保持役に載せるか（無停止の更新 段階 2 の 2c。core/backends/claude-held.mjs）。会話のシェルで起こしたサーバーに継がせない
  */
 export const BOOT_ENV_NAMES = Object.freeze([
   'AGENT_HOST_HANDOVER',
@@ -21,22 +22,30 @@ export const BOOT_ENV_NAMES = Object.freeze([
   'AGENT_HOST_SYSTEM_LOCALE', 'AGENT_HOST_SERVER_LOG',
   'AGENT_HOST_RUNTIME_ROOT', 'AGENT_HOST_RUNTIME_KEY',
   'AGENT_HOST_RUNTIME_RESOURCES', 'AGENT_HOST_RUNTIME_DIR',
+  'AGENT_HOST_CLAUDE_HOLDER',
 ]);
 const NAMES = new Set(BOOT_ENV_NAMES);
+// サーバーが起動の時に process.env から外した値。外した後に読むモジュール（段階 2 の保持役の置き場など）はここから読む
+let taken = Object.freeze({});
 
 /** 起動用の変数の名前か（Windows は変数名の大小を区別しないので、大文字にそろえて見る） */
 export const isBootEnvName = name => NAMES.has(String(name).toUpperCase());
 
 /** env から起動用の変数を外し、その値を一覧の名前で返す（凍らせる）。env を直接書き換える */
 export function takeBootEnv(env = process.env) {
-  const taken = {};
+  const values = {};
   for (const key of Object.keys(env)) {
     if (!isBootEnvName(key)) continue;
-    taken[key.toUpperCase()] = env[key];
+    values[key.toUpperCase()] = env[key];
     delete env[key];
   }
-  return Object.freeze(taken);
+  const frozen = Object.freeze(values);
+  if (env === process.env) taken = frozen;
+  return frozen;
 }
+
+/** process.env から外した起動用の変数（takeBootEnv の前は空）。外していなければ process.env の値 */
+export const bootEnv = name => taken[name] ?? process.env[name];
 
 /** env の写しから起動用の変数を除いたもの（env は書き換えない） */
 export function withoutBootEnv(env = process.env) {

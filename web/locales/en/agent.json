@@ -297,7 +297,8 @@
       "noMore": "There are no additional instructions. Apply the instructions given at the start.",
       "unknownTool": "Unknown context tool",
       "callFailed": "Loading the context or calling the MCP server failed. Check the settings, the file changes and the MCP server.",
-      "mcpDeclined": "MCP tool call was declined."
+      "mcpDeclined": "MCP tool call was declined.",
+      "mcpRestarted": "Pleiad restarted this MCP server during an update, so any state from earlier calls is gone."
     }
   },
   "relay": {

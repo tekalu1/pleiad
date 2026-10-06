@@ -2,7 +2,7 @@
 // 内蔵ブラウザーを渡すターン（デスクトップ版で中継がある）にだけ渡す。ADR 0148 でエージェントの接続先が Chrome の専用の窓に移るまでの骨組みで、
 // 載せるツール（Chrome のプロフィールの一覧・hand_to_user・close_browser_window）は browserTools に足す。
 // 今は空で、3 つのバックエンドへの渡し方・Bearer の鍵・agy の中継への束ねだけを保つ
-import crypto from 'node:crypto';
+import { claimToken } from './mcp-token.mjs';
 import { agentT } from './i18n.mjs';
 
 export const BROWSER_MCP_PATH = '/mcp/browser';
@@ -15,8 +15,9 @@ export const browserTools = _locale => [];
 export function createBrowserBridge() {
   const bindings = new Map();
   return {
-    open({ origin, owner, locale }) {
-      const token = crypto.randomBytes(32).toString('hex');
+    // token は開き直す口の値（省略なら新しく作る。形が違う・使用中なら投げる）
+    open({ origin, owner, locale, token: fixed }) {
+      const token = claimToken(bindings, fixed);
       bindings.set(token, { owner, locale });
       return { url: origin + BROWSER_MCP_PATH, headers: { Authorization: `Bearer ${token}` }, close: () => bindings.delete(token) };
     },

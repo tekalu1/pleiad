@@ -68,6 +68,10 @@ const SUITES = [
   // 設定 › ブラウザー › エージェントのブラウザー: 状態ごとの字とボタン・使えない環境（DOM の代役）
   './unit/chrome-settings.mjs',
   './unit/browser-confirm.mjs',
+  // 会話の MCP の口を同じトークンで開き直す open({ token })（無停止の更新 2b-3）
+  './unit/mcp-bridge-token.mjs',
+  // ターンの札（無停止の更新 2b-2）: ctx → 札 → 復元の往復・秘密の隔離・上限・知らない版の拒否・途中送信の形
+  './unit/turn-card.mjs',
   // 設定 › コンピューターの操作: prefs の検査と既定・store の remember/forget・hostCapabilities.computerUse の判定・節の動き・setPref（docs/computer-use.md）
   './unit/computer-settings.mjs',
   // コンピューターの操作（ply_computer。docs/computer-use.md）: アプリの判定の順・禁止の一覧・印の行・座標・スクショの保存
@@ -80,6 +84,12 @@ const SUITES = [
   './unit/main-port.mjs',
   // main とサーバーを結ぶ名前付きパイプの口（段階 1 の 1-2）: 符号化・行の分け方・握手の拒否・往復と順序・大きなバイナリー・切断と再接続・別プロセスのサーバー
   './unit/main-link.mjs',
+  // ターンの保持役の本体（段階 2 の 2a）: 切断と付け直し・控えの渡し直し・読まない親でも詰まらない・detach 後は転送しない・記録の上限・印と ack・終わり方・木ごとの強制終了・idle
+  './unit/holder-core.mjs',
+  // ターンの保持役の握手と名前（段階 2 の 2a）: secret・規約の版の不一致・握手前の操作・世代の並走・二重起動の防止・launchHolder の Job の分岐
+  './unit/holder-handshake.mjs',
+  // ターンの保持役の本物のプロセス（段階 2 の 2a）: 起こした側が終わっても残る・秘密のファイルとログ・同時に起こしても 1 つ・shutdown・idle・後に残らない
+  './unit/holder-process.mjs',
   // main が居ない間の機能ごとの扱い（段階 1 の 1-5）: secret の待ち・computer use の停止・内蔵ブラウザーの写しと復元・screencast・os-open・openExternal・猶予
   './unit/main-away.mjs',
   // 内蔵ブラウザーの付け直し（main 側）: 中継を同じポートと鍵で立て直す・タブの写しの書き出しと開き直し・橋の流れ
@@ -154,6 +164,8 @@ const SUITES = [
   './unit/agent-tasks-notice.mjs',
   // 追加指示（ply_task_send）を走っている子のターンへ途中送信で渡す: 受理・合図・捨てられた・合図なし・順序・止めた後（ADR 0065）
   './unit/agent-tasks-steer.mjs',
+  // 付け直した委譲の子（無停止の更新 2b-7）: 起動の復元で interrupted にせず、結果の確定を引き継ぐ（手を離した側は書かない・途中送信の claim・あきらめ・取り消し）
+  './unit/agent-tasks-adopt.mjs',
   // 中断で委譲タスクを止める: 届いていない結果を捨てずに返す・取り消したものを返す・cancel は終わったタスクの通知を止めない・再起動で止まったもの
   './unit/agent-tasks-interrupt.mjs',
   './unit/server-delegation-notice.mjs',
@@ -345,6 +357,8 @@ const SUITES = [
   './unit/desktop-server-boot.mjs',
   // main.cjs の boot の選び方（vm）: AGENT_HOST_HANDOVER の既定（パッケージ版は on・開発は off）と off の utilityProcess・パイプの包み・起動の失敗・サーバーが居なくなったとき・更新の流れ
   './unit/desktop-boot.mjs',
+  // サーバーが落ちたときの起こし直し（無停止の更新 段階 2 の 2e）: 同じ版・トークン・ポートで起こす・起こせなければ失敗・続けて落ちたらやめる・本物のサーバーを強制終了して起こし直す
+  './unit/desktop-server-restart.mjs',
   // main の橋の message の受け手を 1 つの listener で配る（MaxListenersExceededWarning を出さない）
   './unit/desktop-worker-messages.mjs',
   // 新しい版のサーバーへの切り替え（無停止の更新 1-6）: 作業が 0 件まで待つ・ロック・S1 の終わり・S2・前の版へ戻す・合わない版は聞く・今すぐ中断。事前の確かめの出力
@@ -434,6 +448,23 @@ const SUITES = [
   './unit/server-interrupt-resume.mjs',
   // 中断で止めたもの（委譲タスク・届いていない結果・裏のコマンド・承認待ち・再起動）を残し、中断の後の最初のターンで 1 回だけ伝える
   './unit/server-interrupt-stops.mjs',
+  // ターンの分割（prepare/begin/launch/drive/releaseTurn）と endTurn の 1 回だけの印（無停止の更新 2b-1）
+  './unit/turn-phases.mjs',
+  // 付け直し（無停止の更新 2b-4）: 旧サーバーで手を離したターンを締めない・「終わっていたターン」の札と記録から付け直して 1 回だけ締める・合わない札は中断
+  './unit/adopt-finished.mjs',
+  // 付け直し（無停止の更新 2b-5）: 保持役の子に載せた台本（fake の held:。別プロセスの偽の CLI）を、サーバーの入れ替えをまたいで途中から引き継ぐ（ツールの実行中・承認待ち・終わった直後）
+  './unit/adopt-held.mjs',
+  // 付け直し（無停止の更新 2c）: 保持役に載せた Claude の CLI（stream-json を話す偽物）を、承認待ち・途中送信・裏の作業・hooks・mcp_message の最中に引き継ぐ。切り替えと版の一覧
+  './unit/adopt-claude.mjs',
+  // Claude を保持役に載せる部品（無停止の更新 2c）: 版の一覧・npm の包みの解き方・偽の SpawnedProcess の転送と detach・付け直しで流さない行・札のフラグ設定のファイル
+  './unit/claude-held.mjs',
+  // 引き継ぎ（無停止の更新 2d）: 旧サーバーが held: のターンを渡して終わり、新サーバー（--handover）が同じトークン・ポートで付け直す。引き継げない作業があれば断る
+  './unit/handover-server.mjs',
+  './unit/handover-core.mjs',
+  // 引き継ぎを main の切り替えの流れごと（無停止の更新 2d）: 作業の最中でも待たずに替わる・S2 が立たなければ前の版で付け直す・引き継げない作業があれば待つ
+  './unit/desktop-handover.mjs',
+  // 承認のカードの id（無停止の更新 2b-6）: ツールの id と会話の id から決まる値・同じプロセスの 2 回目と、ツールの id が無い承認は乱数
+  './unit/approval-id.mjs',
   // Claude のアカウント切り替え（会話ごとのトークン）。env の組み立てと、server の配線を fake で通す
   './unit/claude-accounts.mjs',
   './unit/server-claude-accounts.mjs',

@@ -21,7 +21,7 @@
 //     markRead({ ids?, all? }): { changed }
 //     markSession(sessionId, upTo, kinds?)・markChannel(channelId, upTo)  … 会話・チャンネルの既読に合わせる
 //     settle(dedupeKey, outcome)  … あなた待ちの決着（outcome: allowed | answered | denied | cancelled）
-//     settleAllWaiting(outcome)・removeSession(id)・removeChannel(id)・close()
+//     settleAllWaiting(outcome, { except? })・removeSession(id)・removeChannel(id)・close()
 //   emit({ type: 'notificationsChanged', unread, waiting }) … 件数が変わったとき（画面のベルの数。リモートの端末にも届く）
 //   行（公開）: { id, seq, kind, at, unread, resolvedAt?, outcome?, target: { sessionId?, uuid?, channelId?, threadId?, postId? },
 //                actor?: { kind: 'bot' | 'agent', name, icon? }, ask?: 'approval' | 'question', title?, channelName?, threadTitle? }
@@ -122,8 +122,9 @@ export function createNotifications({ dataDir, emit = () => {}, now = Date.now }
       changed();
       return true;
     },
-    settleAllWaiting(outcome = 'cancelled') {
-      const n = open().resolveAllWaiting(now(), outcome);
+    /** except: 残す承認の id（付け直すターンの承認。無停止の更新 2b-6）。その id のあなた待ちの行は決着させない */
+    settleAllWaiting(outcome = 'cancelled', { except = [] } = {}) {
+      const n = open().resolveAllWaiting(now(), outcome, new Set([...except].map(id => `wait:${id}`)));
       if (n) changed();
       return n;
     },

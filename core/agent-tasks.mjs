@@ -101,7 +101,9 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
   workspaceState = async () => null,
   now = Date.now, silenceMinutes = Number(process.env.AGENT_HOST_TASK_SILENCE_MINUTES ?? 5),
   commandMinutes = Number(process.env.AGENT_HOST_TASK_COMMAND_MINUTES ?? 5),
-  io = fs, log = line => console.error(line), retryMax = RETRY_MAX, taskStorage = null }) {
+  io = fs, log = line => console.error(line), retryMax = RETRY_MAX, taskStorage = null,
+  // 付け直すターン（無停止の更新 2b-7）の委譲の子のタスク id。起動の復元で interrupted にせず、adoptRun() が結果の確定を引き継ぐ（stage2-server-state.md S8）
+  adopting = [] }) {
   const silenceMs = Number.isFinite(silenceMinutes) && silenceMinutes > 0 ? silenceMinutes * 60000 : 0;
   const commandMs = Number.isFinite(commandMinutes) && commandMinutes > 0 ? commandMinutes * 60000 : 0;
   const commandNotices = new Set();
@@ -213,8 +215,19 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
   // 渡ったか分からない delivering だけを unknown にする（二重に届けない）
   // restored: 再起動で止まった（interrupted にした）タスク。server が依頼元の会話の「止めたもの」に残す（docs/design.md「中断と再開」）
   const restored = [];
+  // 付け直す子のタスク（taskId -> 走っている印）。子のターンは新しいサーバーが続けているので、止めずに adoptRun() を待つ。
+  // 走っているのは running か cancelling の行だけ（取り消しの最中なら、その印も付けておく）
+  const adoptable = new Map();
+  for (const taskId of adopting) {
+    const r = records[taskId];
+    if (!r || r.host || !['running', 'cancelling'].includes(r.status)) continue;
+    const ac = new AbortController();
+    if (r.status === 'cancelling') ac.abort();
+    adoptable.set(taskId, ac);
+  }
   for (const r of Object.values(records)) {
     // ホストに任せたタスクの写しは、ホストで続いている。再起動で止めず、つながり直したときの同期で追いつく
+    if (adoptable.has(r.taskId)) continue;
     if (ACTIVE.has(r.status) && !r.host) {
       restored.push({ taskId: r.taskId, parentSessionId: r.parentSessionId, title: r.title ?? null, status: r.status });
       r.status = 'interrupted'; r.error = t('tasks.interruptedByRestart');
@@ -224,6 +237,7 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
     for (const c of r.activeCommands ?? []) { c.state = 'unknown'; c.pausedAt = null; }
     if (r.notification === 'delivering') r.notification = 'unknown';
   }
+  for (const [taskId, ac] of adoptable) live.set(taskId, ac);
   await serial(() => persist('restore'));
   const owned = (owner, id, locale) => {
     const r = records[id];
@@ -367,17 +381,23 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
     instructionSends.set(r.taskId, tracked);
     return tracked;
   }
-  async function run(r, controller) {
+  // adopted: 付け直した子のターン（adopt）の、結果を確定する側（task, signal）=> execute と同じ形の結果。1 回目の実行だけ、実行の開始を書かずにこれを待つ
+  async function run(r, controller, adopted = null) {
     // stalled: 実行の開始を保存できなかった。子は動かしていないので queued のまま、次のタイマーでやり直す
-    let stalled = false, requeued = false, activeInstructionIds;
+    let stalled = false, requeued = false, activeInstructionIds, handedOff = false;
     // close()（正常終了）の abort。止めたことは書かず、走っていた状態のままファイルに残す（再起動で interrupted になる。
-    // docs/agent-delegation.md「保存・画面・再起動」）。利用者の取り消しは先に cancelling にするので、それは cancelled を書く
-    const halted = () => closed && r.status !== 'cancelling';
+    // docs/agent-delegation.md「保存・画面・再起動」）。利用者の取り消しは先に cancelling にするので、それは cancelled を書く。
+    // 子のターンを新しいサーバーへ渡した（execute が handedOff を返した）ときも、結果は新しいサーバーが書く
+    const halted = () => (closed && r.status !== 'cancelling') || handedOff;
     try {
       while (!controller.signal.aborted) {
         let prompt, instructionIds;
         settlingInstructions.delete(r.taskId);
-        try { await commit(r.taskId, row => {
+        if (adopted) {
+          // この回の指示は、旧サーバーが実行の開始で sending にしたもの。途中送信で渡している最中の分（steers の claim）は含めない
+          const claims = steers.get(r.taskId) ?? new Set();
+          instructionIds = (r.instructions ?? []).filter(x => x.state === 'sending' && !claims.has(x.id)).map(x => x.id);
+        } else try { await commit(r.taskId, row => {
           const entry = row.queue.shift();
           instructionIds = [];
           if (entry?.instructionId) {
@@ -390,7 +410,10 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
         }, 'run.start'); }
         catch { stalled = true; break; }
         activeInstructionIds = instructionIds;
-        const result = await execute(structuredClone(r), prompt, controller.signal);
+        const finish = adopted;
+        adopted = null;
+        const result = finish ? await finish(structuredClone(r), controller.signal) : await execute(structuredClone(r), prompt, controller.signal);
+        if (result?.handedOff) handedOff = true;
         if (halted()) return;
         if (result?.requeue) {
           await record(r.taskId, row => { row.queue.unshift(...(instructionIds.length ? instructionIds.map(instructionId => ({ instructionId })) : [prompt])); for (const id of instructionIds) setInstruction(row, id, 'queued'); row.status = 'queued'; }, 'run.requeue');
@@ -605,6 +628,8 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
   const timer = setInterval(kick, 500); timer.unref();
   return {
     // ホストに任せたタスクの写しは、ホストで動いている（この PC の更新・終了を止めない）。完了通知がまだ届いていないものだけ数える
+    // 完了通知を渡している最中か（引き継ぎの前に終わるのを待つ。無停止の更新 2d。動いている子そのもの（busy）は、保持役に載った子は新しいサーバーが引き継ぐので数えない）
+    get settling() { return notices.size > 0 || silenceNotices.size > 0 || commandNotices.size > 0 || Object.values(records).some(r => r.notification === 'delivering'); },
     get busy() { return live.size > 0 || notices.size > 0 || silenceNotices.size > 0 || commandNotices.size > 0 || Object.values(records).some(r => (ACTIVE.has(r.status) && !r.host) || r.notification === 'pending'); },
     list(owner) { return Object.values(records).filter(r => !owner || r.parentSessionId === owner).map(r => view(r)); },
     /** sessionIds の会話が作った行と、その子孫の行の view（ホストに任された子の下の孫を数える・止める。docs/remote.md §4.5） */
@@ -683,6 +708,30 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
       settlingInstructions.add(r.taskId);
       await instructionSends.get(r.taskId)?.catch(() => {});
       await unclaim(r.taskId, [...(steers.get(r.taskId) ?? [])]);
+    },
+    /**
+     * 付け直した子のターン（起動の adopting に渡した taskId。無停止の更新 2b-7）の、結果の確定を引き継ぐ。
+     * finish(task, signal) は execute の後半（子のターンが終わるのを待って結果を作る。execute と同じ形の結果を返す）。
+     * claims は途中送信で渡している最中の追加指示の ID（旧サーバーの steers。札の liveInstructions）で、行がまだ sending のものだけ引き継ぐ
+     * （旧サーバーが渡った合図を処理し終えていたら、行は delivered か queued になっていて、もう待たない）。
+     * finish が無ければ付け直せなかったので、起動の復元と同じに interrupted にする。引き継げたら true
+     */
+    adoptRun(taskId, finish, { claims = [] } = {}) {
+      const r = records[taskId], ac = live.get(taskId);
+      if (!r || !ac || !adoptable.delete(taskId)) return false;
+      if (!finish) {
+        live.delete(taskId);
+        spawn(record(taskId, row => {
+          row.status = 'interrupted'; row.error = t('tasks.interruptedByRestart');
+          for (const instruction of row.instructions ?? []) if (instruction.state === 'sending') setInstruction(row, instruction.id, 'delivered');
+          dropInstructions(row);
+        }, 'adopt.abandon').catch(() => {}));
+        return false;
+      }
+      const claimed = new Set(claims.filter(id => r.instructions?.find(x => x.id === id)?.state === 'sending'));
+      if (claimed.size) steers.set(taskId, claimed);
+      spawn(run(r, ac, finish).catch(e => { live.delete(taskId); report({ event: 'unexpected', operation: 'adopt', taskId, code: e?.code ?? null }); }));
+      return true;
     },
     /** 子のバックエンドの入力が開いた。起動中に溜まった指示を現在のターンへ渡す */
     async sendQueued(sessionId) {

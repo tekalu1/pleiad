@@ -718,14 +718,27 @@ export async function writeClaudeFlagSettings(dataDir, endpoint, extra = {}) {
   return { file, dispose: async () => { if (gone) return; gone = true; await fs.rm(file, { force: true }).catch(() => {}); } };
 }
 
-/** 前の起動で消し損ねたフラグ設定のファイルを片付ける（起動時） */
-export async function sweepClaudeFlagSettings(dataDir, { olderThanMs = 0 } = {}) {
+const FLAG_FILE = /^claude-compat-[0-9a-f-]+\.json$/;
+
+/**
+ * 付け直したターン（無停止の更新 2c）のフラグ設定のファイル。旧サーバーが書き、札が名前を持つ（CLI は起動のときだけ読む）。
+ * 付け直したサーバーがターンの終わりに消す。名前の形が違えば null（データ置き場の run\ の外は指さない）
+ */
+export function adoptClaudeFlagSettings(dataDir, name) {
+  if (typeof name !== 'string' || !FLAG_FILE.test(name)) return null;
+  const file = path.join(dataDir, 'run', name);
+  let gone = false;
+  return { file, dispose: async () => { if (gone) return; gone = true; await fs.rm(file, { force: true }).catch(() => {}); } };
+}
+
+/** 前の起動で消し損ねたフラグ設定のファイルを片付ける（起動時）。except は付け直すターンの札が指すファイルの名前（消さない） */
+export async function sweepClaudeFlagSettings(dataDir, { olderThanMs = 0, except = [] } = {}) {
   const dir = path.join(dataDir, 'run');
   let names = [];
   try { names = await fs.readdir(dir); } catch { return 0; }
   let n = 0;
   for (const name of names) {
-    if (!/^claude-compat-[0-9a-f-]+\.json$/.test(name)) continue;
+    if (!FLAG_FILE.test(name) || except.includes(name)) continue;
     const f = path.join(dir, name);
     const st = await fs.stat(f).catch(() => null);
     if (!st || (olderThanMs > 0 && Date.now() - st.mtimeMs < olderThanMs)) continue;

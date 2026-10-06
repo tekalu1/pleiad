@@ -34,7 +34,7 @@ import { insideDir, sameDir } from './worktrees.mjs';
 import { createCallTracker, timelineOf } from './git-timeline.mjs';
 import { createUpdateGate } from './update-gate.mjs';
 import { ensureDataSchema } from './data-schema.mjs';
-import { acquireDataLock } from './data-lock.mjs';
+import { acquireDataLock, acquireDataLockWait } from './data-lock.mjs';
 import { localeInfo, setLocale, t, i18n, LOCALE_SETTINGS, agentT, agentLocaleOf, currentLocale } from './i18n.mjs';
 import http from "node:http";
 import crypto from "node:crypto";
@@ -114,6 +114,13 @@ import { createOrphanGuard } from './orphan-guard.mjs';
 import { createMainAway, createExternalOpener } from './main-away.mjs';
 import { readBuildInfo } from './handover-check.mjs';
 import { markRuntimeInUse } from './runtime-use.mjs';
+import { cardOf, restoreFields, promptHash, CARD_MAX_BYTES } from './turn-card.mjs';
+import { readAdoptSources, readHolderSources, ADOPT_TURN_MARK } from './adopt.mjs';
+import { holderLink } from './holder/link.mjs';
+import { HOLDER_PROTOCOL } from './holder/protocol.mjs';
+import { handoverStart, createHandover, stashOf, readStash, retryTransient, HANDOVER_VERSION, LOCK_WAIT_MS } from './handover.mjs';
+import { closeAll as closeDataDb } from './db.mjs';
+import { createApprovalIds } from './approval-id.mjs';
 import { parentPortScreencast, createScreencastHub, screencastCommand } from './browser-screencast.mjs';
 import { createChromeConnection } from './chrome/connection.mjs';
 import { chromeHomes } from './chrome/locate.mjs';
@@ -148,9 +155,22 @@ process.on('unhandledRejection', (reason) => {
 const updateGate = createUpdateGate();
 const quotaCache = createQuotaCache();
 // 書き込みを始める前に、データ置き場をこのプロセスだけが持つようにする（別のプロセスが持っていれば、理由を出して起動を止める。
-// 終了まで持つ。core/data-lock.mjs）。そのうえで形式を確かめ、古ければここで移行する（core/schema-migration.mjs。失敗すれば起動を止める）
-acquireDataLock(store.dataDir);
-const migrated = await ensureDataSchema(store.dataDir);
+// 終了まで持つ。core/data-lock.mjs）。そのうえで形式を確かめ、古ければここで移行する（core/schema-migration.mjs。失敗すれば起動を止める）。
+// 無停止の更新の新サーバー（--handover。core/handover.mjs）は、モジュールの読み込みを済ませたうえで、旧サーバーがデータ置き場を放すのを待って取る（数十 ms 刻み）
+const HANDOVER_START = handoverStart();
+// 版ごとの実行場所で走っているなら、その版を使っている印を付ける（desktop/runtime.cjs の掃除がこの版を消さない。core/runtime-use.mjs）。
+// 印は閉じない: プロセスの終了で OS が外す。データ置き場のロックより前に付ける: 引き継ぎの新サーバー（--handover）は、印ができたら
+// モジュールの読み込みが済んでロックを待っているとみなされ、main が旧サーバーに handover を頼む（desktop/switch.cjs）
+if (BOOT_ENV.AGENT_HOST_RUNTIME_ROOT && BOOT_ENV.AGENT_HOST_RUNTIME_KEY) markRuntimeInUse({ root: BOOT_ENV.AGENT_HOST_RUNTIME_ROOT, key: BOOT_ENV.AGENT_HOST_RUNTIME_KEY });
+const handoverLockFrom = Date.now();
+const releaseDataLock = HANDOVER_START ? await acquireDataLockWait(store.dataDir, { timeoutMs: LOCK_WAIT_MS }) : acquireDataLock(store.dataDir);
+const handoverLockWaitedMs = Date.now() - handoverLockFrom;
+if (HANDOVER_START) console.log(`  [handover] got the data lock after ${handoverLockWaitedMs} ms at=${Date.now()}`);
+// 旧サーバーが保持役に置いた預かり物（画面のトークン・CLI のトークン・ポート）。居る保持役にだけつなぐ（起こさない）。無ければ起動の変数のまま
+const handoverStash = HANDOVER_START && BOOT_ENV.AGENT_HOST_RUNTIME_ROOT
+  ? await holderLink({ dataDir: store.dataDir, root: BOOT_ENV.AGENT_HOST_RUNTIME_ROOT, appVersion: '', launch: false }).then(client => readStash(client.welcome?.stash), () => null)
+  : null;
+const migrated = HANDOVER_START ? await retryTransient(() => ensureDataSchema(store.dataDir)) : await ensureDataSchema(store.dataDir);
 if (migrated) console.log(`  ${t('data.migrated', { backup: migrated.backup })}`);
 const usageStore = createUsageStore(store.dataDir);
 // Claude の記録に入っていた会話の累計を、ターンの分へ一度だけ直す（core/usage-migrations.mjs、ADR 0053）。
@@ -167,9 +187,6 @@ const BUILD = readBuildInfo(path.join(HERE, '..')).build;
 const mainLink = handoverEnabled(BOOT_ENV) && !process.parentPort ? createMainLink({ dataDir: store.dataDir, appVersion: APP_VERSION,
   log: line => console.log(`  [main-link] ${line}`) }) : null;
 if (mainLink) setMainPortSource(mainLink.port);
-// 版ごとの実行場所で走っているなら、その版を使っている印を付ける（desktop/runtime.cjs の掃除がこの版を消さない。core/runtime-use.mjs）。
-// 印は閉じない: プロセスの終了で OS が外す
-if (BOOT_ENV.AGENT_HOST_RUNTIME_ROOT && BOOT_ENV.AGENT_HOST_RUNTIME_KEY) markRuntimeInUse({ root: BOOT_ENV.AGENT_HOST_RUNTIME_ROOT, key: BOOT_ENV.AGENT_HOST_RUNTIME_KEY });
 const mainPort = getMainPort();
 const hostedPort = mainPort.hosted ? mainPort : null;
 // main が居ない間（更新）の出来事と、OAuth の同意画面などを開く口（core/main-away.mjs）。機能ごとの扱いは頼む側のモジュールが持つ
@@ -225,9 +242,9 @@ import { createBotHost } from './bots-host.mjs';
 import { channelEventRows, HIDDEN_BOT_KINDS } from './channels/types.mjs';
 import { textForTitleModel } from './prompt-title.mjs';
 
-const PORT = Number(BOOT_ENV.AGENT_HOST_PORT ?? 7420);
+const PORT = handoverStash?.port ?? Number(BOOT_ENV.AGENT_HOST_PORT ?? 7420);
 const HOST = BOOT_ENV.AGENT_HOST_BIND ?? "127.0.0.1";
-const TOKEN = BOOT_ENV.AGENT_HOST_TOKEN ?? crypto.randomBytes(16).toString("hex");
+const TOKEN = handoverStash?.token ?? BOOT_ENV.AGENT_HOST_TOKEN ?? crypto.randomBytes(16).toString("hex");
 
 const NL = String.fromCharCode(10);
 const switching = new Set();
@@ -352,8 +369,6 @@ const voiceHost = createVoiceHost({
   },
   log: (line, fields) => console.log(`  ${line}${fields ? ` ${JSON.stringify(fields)}` : ''}`),
 });
-// 同じデータ置き場を別の Pleiad（開発版と配布版）が使っていることがあるので、走っている会話のファイルは消さない（1 日より古いものだけ）
-sweepClaudeFlagSettings(store.dataDir, { olderThanMs: 24 * 60 * 60_000 }).catch(() => {});
 const mcpOAuth = createMcpOAuth({ secrets: mcpSecrets, lockDir: path.join(store.dataDir, 'mcp-locks'),
   // Client ID Metadata Document の URL（設定値。既定は無し。公開する文書のひな形は docs/mcp-oauth-client-metadata.json）
   clientMetadataUrl: async () => (await plyMcp.settings().catch(() => ({}))).clientMetadataUrl ?? undefined,
@@ -520,6 +535,8 @@ let botHost;
 let settingApprovals;
 const agentConnections = new Map();
 const taskExecutions = new Map();
+// ターンから ctx を引く（旧サーバーが付け直しに渡すときに札を作る。handOffTurn。無停止の更新 2b-4）
+const turnContexts = new WeakMap();
 // 実行前に拒否されたコマンド（Codex。core/backends/codex-rejections.mjs）を依頼元へ返す形（docs/agent-delegation.md「実行前に拒否されたコマンド」）。
 // 依頼元は別のエージェント・別の提供元のモデルのこともあるので、command・reason・raw は形で秘密を伏せて切る
 const REJECTION_TEXT_MAX = 300;
@@ -1140,7 +1157,15 @@ function conversationConnection(turn) {
   // 持つのは鍵だけにして、呼ばれた時に今走っているターンを引く。
   // 会話の言語は会話を始めたときに決まり、以後は変わらない（runTurn）。橋の instructions・ツールの説明もその言語で開く
   const entry = { key: turn.key, locale: turn.agentLocale, sessionId: turn.info.sessionId ?? null };
-  const binding = agentBridge.open({ origin: localOrigin(), locale: entry.locale,
+  attachAgentsPort(entry);
+  entry.contextToken = crypto.randomBytes(32).toString('hex');
+  agentConnections.set(entry.key, entry);
+  return entry;
+}
+
+/** 会話の橋（ply_agents）を開いて entry に付ける。token があれば、その値で開き直す（restoreConnection） */
+function attachAgentsPort(entry, token) {
+  const binding = agentBridge.open({ origin: localOrigin(), locale: entry.locale, token,
     owner: async () => {
       const live = runtime.turns.get(entry.key);
       if (!live) throw new Error(agentT(entry.locale, 'delegation.notRunning'));
@@ -1150,10 +1175,48 @@ function conversationConnection(turn) {
     } });
   const { close, ...agentRuntime } = binding;
   entry.runtime = agentRuntime;
-  entry.contextToken = crypto.randomBytes(32).toString('hex');
   entry.close = close;
-  agentConnections.set(entry.key, entry);
-  return entry;
+}
+
+/** 札へ入れる、会話の口のトークン（開いていない口は null）。restoreConnection に渡す形 */
+function connectionTokens(entry) {
+  const bearer = (port) => /^Bearer ([a-f0-9]{64})$/.exec(port?.headers?.Authorization ?? '')?.[1] ?? null;
+  return { agents: bearer(entry.runtime), computer: bearer(entry.computer), browser: bearer(entry.browser), control: entry.control?.token ?? null, context: entry.contextToken ?? null };
+}
+
+/**
+ * 札の項目から会話の口を戻す（無停止の更新。新しいサーバーが、CLI の持つ URL・ヘッダーをそのまま通す）。
+ * entry は { key, sessionId, locale, tokens: connectionTokens の形, computerBackend }。開いていなかった口は開かない。
+ * 今ある口は上書きしない（登録済みの key は投げる）。トークンの形が違う・他の会話が使っている値なら、開いた分を閉じて投げる
+ */
+function restoreConnection(entry) {
+  const { key, sessionId = null, locale, tokens = {}, computerBackend } = entry ?? {};
+  if (typeof key !== 'string' || !key) throw new Error('Invalid connection key');
+  if (agentConnections.has(key)) throw new Error('Connection already restored');
+  // ply_context の口は会話のあいだ同じ値で開くので、口の側には衝突の検査が無い。ここで形と他の会話との重なりを見る
+  if (typeof tokens.context !== 'string' || !/^[a-f0-9]{64}$/.test(tokens.context)) throw new Error('Invalid token');
+  for (const other of agentConnections.values()) if (other.contextToken === tokens.context) throw new Error('Token already in use');
+  const restored = { key, locale, sessionId };
+  try {
+    attachAgentsPort(restored, tokens.agents);
+    restored.contextToken = tokens.context;
+    if (tokens.browser) restored.browser = browserBridge.open({ origin: localOrigin(), locale, owner: () => restored.key, token: tokens.browser });
+    if (tokens.control) restored.control = openControlPort(restored, tokens.control);
+    if (tokens.computer) {
+      const backend = getBackend(computerBackend);
+      if (!computerBridge || !backend) throw new Error('Computer use is not available');
+      restored.computerBackend = backend.id;
+      restored.computer = openComputerPort(restored, backend, tokens.computer);
+    }
+  } catch (e) {
+    try { restored.close?.(); } catch {}
+    try { restored.browser?.close(); } catch {}
+    try { restored.control?.close(); } catch {}
+    try { restored.computer?.close(); } catch {}
+    throw e;
+  }
+  agentConnections.set(key, restored);
+  return restored;
 }
 
 /** Pleiad 自身の HTTP の口（子プロセスや中継から呼ばせる先） */
@@ -1203,8 +1266,13 @@ function computerConnection(turn) {
   if (entry.computer && entry.computerBackend === turn.backend.id) return entry.computer;
   try { entry.computer?.close(); } catch {}
   entry.computerBackend = turn.backend.id;
-  entry.computer = computerBridge.open({ origin: localOrigin(), locale: entry.locale, delivery: turn.backend.capabilities?.computerUse || undefined,
-    agent: () => { const live = runtime.turns.get(entry.key) ?? turn; return { id: live.backend.id, label: live.backend.label }; },
+  entry.computer = openComputerPort(entry, turn.backend);
+  return entry.computer;
+}
+/** ply_computer の口を開く。token があれば、その値で開き直す（restoreConnection） */
+function openComputerPort(entry, backend, token) {
+  return computerBridge.open({ origin: localOrigin(), locale: entry.locale, delivery: backend.capabilities?.computerUse || undefined, token,
+    agent: () => { const live = runtime.turns.get(entry.key); const b = live?.backend ?? backend; return { id: b.id, label: b.label }; },
     owner: async () => {
       const live = runtime.turns.get(entry.key);
       if (!live) throw new Error(agentT(entry.locale, 'delegation.notRunning'));
@@ -1215,7 +1283,6 @@ function computerConnection(turn) {
         mode: modePosition(live.backend.modes()[live.info.mode]), signal: live.ac.signal, ancestors: await delegationAncestors(sessionId),
         agent: { id: live.backend.id, label: live.backend.label } };
     } });
-  return entry.computer;
 }
 
 // ---- ply_browser（エージェントのブラウザー操作の口。core/browser-bridge.mjs、ADR 0148）。ツールはまだ載せていない ----------------------------
@@ -1230,17 +1297,16 @@ function browserRuntimeFor(turn) {
 // ply_control: 操作の一覧（core/ops/）を会話に渡す HTTP の MCP（ADR 0081）。会話に束縛し、その会話の承認モードで権限が決まる（ADR 0082）
 const controlBridge = createControlBridge({ registry: opsRegistry, depsFor: opsDeps });
 // CLI 用トークン（control.json に書く。画面のトークンとは別で、効くのは /api/ops だけ。ADR 0083）
-const CLI_TOKEN = crypto.randomBytes(32).toString('hex');
+const CLI_TOKEN = handoverStash?.cliToken ?? crypto.randomBytes(32).toString('hex');
 const cliTokenOk = (given) => { const a = Buffer.from(String(given)), b = Buffer.from(CLI_TOKEN); return a.length === b.length && crypto.timingSafeEqual(a, b); };
 const opsHttp = createOpsHttp({
   registry: opsRegistry, depsFor: opsDeps, serverLocale: currentLocale,
   // 会話に束縛した接続のトークン（会話のシェルの環境変数）は、同じ会話に束縛された CLI になる
   authenticate: (token) => { if (cliTokenOk(token)) return {}; const bound = controlBridge.lookup(token); return bound ? { owner: bound.owner, locale: bound.locale } : null; },
 });
-/** このターンに渡す ply_control（url・headers・instructions）と、会話のシェルへ渡す環境変数（CLI を同じ会話に束縛する）。全会話・3 つのエージェントに渡す */
-function controlRuntimeFor(turn) {
-  const entry = conversationConnection(turn);
-  entry.control ??= controlBridge.open({ origin: localOrigin(), locale: entry.locale,
+/** ply_control の口を開く。token があれば、その値で開き直す（restoreConnection） */
+function openControlPort(entry, token) {
+  return controlBridge.open({ origin: localOrigin(), locale: entry.locale, token,
     // 会話の id が決まるまでは束縛を決められない。束縛なしの主体として通すと、読み取りの会話からの書き込みを断れなくなるので投げる
     owner: async () => {
       const live = runtime.turns.get(entry.key);
@@ -1248,6 +1314,11 @@ function controlRuntimeFor(turn) {
       else if (entry.sessionId) return entry.sessionId;
       throw new Error(agentT(entry.locale, 'delegation.idPending'));
     } });
+}
+/** このターンに渡す ply_control（url・headers・instructions）と、会話のシェルへ渡す環境変数（CLI を同じ会話に束縛する）。全会話・3 つのエージェントに渡す */
+function controlRuntimeFor(turn) {
+  const entry = conversationConnection(turn);
+  entry.control ??= openControlPort(entry);
   return { url: entry.control.url, headers: entry.control.headers, instructions: controlInstructions(entry.locale),
     env: { PLEIAD_CONTROL_URL: localOrigin(), PLEIAD_CONTROL_TOKEN: entry.control.token } };
 }
@@ -1364,13 +1435,25 @@ async function resolveSessionFile({ path: requested, sessionId, at, base }, sess
 const openOnHost = defaultOpener();
 const osActionAllowed = createRateLimit({ limit: 5, windowMs: 10_000 });
 
+// 引き継ぎ（無停止の更新 2d。core/handover.mjs）。hold: 新しい作業の開始を送信待ちに回している間（送信待ちは始まらず、完了通知・追加指示は渡さない）。
+// critical: 引き継ぎの前に終わるのを待つ短い処理（途中送信の受理待ち）。inflight: 処理中の HTTP の MCP・in-process の host MCP・hooks のコールバック
+// （待つのは上限つきで、待ち切れなくても進む。その呼び出しは 1 回失敗し、モデルが読んでやり直す）
+const handover = { hold: false, critical: new Set(), inflight: new Set(), droppedCalls: 0 };
+const trackIn = (set, promise) => {
+  const tracked = Promise.resolve(promise);
+  set.add(tracked);
+  const done = () => set.delete(tracked);
+  tracked.then(done, done);
+  return promise;
+};
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
-  if (url.pathname === AGENTS_MCP_PATH) return agentBridge.handle(req, res);
-  if (url.pathname === CONTEXT_MCP_PATH) return contextBridge.handle(req, res);
-  if (url.pathname === COMPUTER_MCP_PATH && computerBridge) return computerBridge.handle(req, res);
-  if (url.pathname === BROWSER_MCP_PATH) return browserBridge.handle(req, res);
-  if (url.pathname === CONTROL_MCP_PATH) return controlBridge.handle(req, res);
+  if (url.pathname === AGENTS_MCP_PATH) return trackIn(handover.inflight, agentBridge.handle(req, res));
+  if (url.pathname === CONTEXT_MCP_PATH) return trackIn(handover.inflight, contextBridge.handle(req, res));
+  if (url.pathname === COMPUTER_MCP_PATH && computerBridge) return trackIn(handover.inflight, computerBridge.handle(req, res));
+  if (url.pathname === BROWSER_MCP_PATH) return trackIn(handover.inflight, browserBridge.handle(req, res));
+  if (url.pathname === CONTROL_MCP_PATH) return trackIn(handover.inflight, controlBridge.handle(req, res));
   // CLI の口。画面のトークンは受けず、CLI 用トークンか会話の接続のトークンだけを受ける（core/ops/surfaces/http.mjs）
   if (url.pathname === OPS_PATH || url.pathname.startsWith(`${OPS_PATH}/`)) return opsHttp(req, res, url);
   // webhook の受け口（P3。/hooks/<id>。画面のトークンの前。ADR 0113）。自分の要求でなければ false
@@ -2155,12 +2238,32 @@ function clientReason(args) {
   return reasonOf(args?.reason);
 }
 
+/** hooks の漏れの行（contextRecord.hooks.leaks・unknownNative）の同一判定の鍵 */
+const hookLeakKey = ({ name, event, source }) => `${name}\0${event}\0${source ?? ''}`;
+/** 会話に保存済みの漏れの行のうち、このターンの開始以後のものの数（付け直しの再生が重ねないため。鍵ごと） */
+function savedHookLeaks(hooksRecord, startedAtMs) {
+  const count = list => {
+    const map = new Map();
+    for (const row of list ?? []) {
+      if (!(Date.parse(row?.at) >= startedAtMs)) continue;
+      const key = hookLeakKey(row);
+      map.set(key, (map.get(key) ?? 0) + 1);
+    }
+    return map;
+  };
+  return { leaks: count(hooksRecord?.leaks), unknownNative: count(hooksRecord?.unknownNative) };
+}
+
 /**
  * ターンに属するイベントを流す。ついでにそのターンの文脈を拾う。
  * 並行して複数のターンが走るので、文脈はグローバルではなくターンごとに持つ。
  */
 function makeEmit(turn) {
-  const emit = (event, { recorded = false } = {}) => {
+  // replay: 付け直しの再生（印から ack まで。core/adopt.mjs）。メモリの状態とスナップショットだけを作り、記録への書き込み・
+  // 途中送信の合図・画面への送信は走らせない（docs/zero-downtime-update/stage2-server-state.md §4.4）
+  const emit = (event, { recorded = false, replay = false } = {}) => {
+    // 付け直しに渡したターン（handOffTurn）の出来事は、このサーバーでは流さない（閉じたバックエンドの aborted など）
+    if (turn.handedOff) return;
     if (event?.type) agentTasks?.observe(turn.info.sessionId, event);
     // git でしたこと（PR の作成など）をターンの終わりの要約に使う
     turn.gitCalls?.track(event);
@@ -2168,7 +2271,7 @@ function makeEmit(turn) {
     if (event?.type === 'task.activity' || event?.type === 'task.command') return;
     if (event?.type === 'usage') turn.usage = { ...turn.usage, ...event };
     // bot の会話のターンの出来事（text.end・usage・activity・present・permission・turnResult・userMessage.delivered / dropped）。bot の会話でなければ何もしない
-    botHost?.onTurnEvent(turn, event);
+    if (!replay) botHost?.onTurnEvent(turn, event);
     if (event?.type === 'contextWindow' && Number.isFinite(event.usedTokens) && Number.isFinite(event.windowTokens)) {
       turn.contextWindow = { usedTokens: event.usedTokens, windowTokens: event.windowTokens };
     }
@@ -2192,7 +2295,7 @@ function makeEmit(turn) {
         if (event[key] !== undefined && event[key] !== null) entry[key] = event[key];
       turn.compaction = entry;
       event = { type: 'compaction', ...entry };
-      if (phase !== 'start' && turn.info.sessionId) {
+      if (phase !== 'start' && turn.info.sessionId && !replay) {
         const sessionId = turn.info.sessionId;
         turn.compactionWrite = turn.compactionWrite.then(async () => {
           const previous = (await store.get(sessionId)).compactions ?? [];
@@ -2214,8 +2317,10 @@ function makeEmit(turn) {
       // Claude の通知には出どころが無い（hook_name は「イベント:matcher」）。止めたはずの定義と同じイベント・matcher のものだけ漏れとし、
       // ほかは出どころの分からないネイティブの発火（管理者の hooks は止めない契約なので、それを漏れと言わない）
       const { leak, unknownNative } = classifyNativeRun({ record: hooksRecord, backend: turn.backend.id, pleiad, name, event: hookEvent, leak: event.leak });
-      if (leak && phase === 'started' && hooksRecord.leaks.length < HOOK_LEAKS_MAX) hooksRecord.leaks.push({ name, event: hookEvent, ...(source ? { source } : {}), at: new Date().toISOString() });
-      if (unknownNative && phase === 'started' && (hooksRecord.unknownNative ??= []).length < HOOK_LEAKS_MAX) hooksRecord.unknownNative.push({ name, event: hookEvent, at: new Date().toISOString() });
+      // 付け直しの再生（印から ack まで）は、ターンの途中で保存されていた漏れの行と重なる。同じ行を 1 つずつ使い切ってから積む（restoreTurn の savedHookLeaks）
+      const saved = (map, key) => replay && map?.get(key) > 0 && map.set(key, map.get(key) - 1);
+      if (leak && phase === 'started' && !saved(turn.savedHookLeaks?.leaks, hookLeakKey({ name, event: hookEvent, source })) && hooksRecord.leaks.length < HOOK_LEAKS_MAX) hooksRecord.leaks.push({ name, event: hookEvent, ...(source ? { source } : {}), at: new Date().toISOString() });
+      if (unknownNative && phase === 'started' && !saved(turn.savedHookLeaks?.unknownNative, hookLeakKey({ name, event: hookEvent })) && (hooksRecord.unknownNative ??= []).length < HOOK_LEAKS_MAX) hooksRecord.unknownNative.push({ name, event: hookEvent, at: new Date().toISOString() });
       // 多いときは新しいほうを残す（ターンの最後の Stop などが記録から落ちないように）
       turn.hookRuns.push({ phase, hookId, name, event: hookEvent, ...(outcome ? { outcome } : {}), ...(Number.isInteger(exitCode) ? { exitCode } : {}),
         ...(pleiad ? { pleiad: true, ...(id ? { id } : {}) } : {}), ...(source ? { source } : {}), ...(leak ? { leak: true } : {}), ...(unknownNative ? { unknownNative: true } : {}),
@@ -2223,23 +2328,31 @@ function makeEmit(turn) {
       trimHookRuns(turn.hookRuns);
       return;
     }
+    // 途中送信の合図（userMessage.delivered / dropped）を待っている控えは 3 つ（札の steers。stage2-server-state.md §3 の 3）。
+    // 付け直しの再生（印から ack まで）でも、札が控えていたものだけは処理する（手を離した後に旧サーバーが読み捨てた合図は、再生の側に来る）。
+    // 控えが無い合図（旧サーバーが処理済み）は再生では何もしない
+    const signal = event?.type === "userMessage.delivered" || event?.type === "userMessage.dropped";
     // 走っているターンへ渡した完了通知（liveNotices）は人間の発言ではない。渡ったら通知の一行にし、捨てられたら送り直す
-    if ((event?.type === "userMessage.delivered" || event?.type === "userMessage.dropped") && liveNotices.has(event.messageId)) {
+    if (signal && liveNotices.has(event.messageId)) {
       const notice = liveNotices.get(event.messageId);
       liveNotices.delete(event.messageId);
-      if (event.type === "userMessage.delivered") emit({ type: "taskNotice", text: notice.prompt });
+      touchCard(turn);
+      if (event.type === "userMessage.delivered") emit({ type: "taskNotice", text: notice.prompt }, { replay });
       else if (notice.redeliver) notice.redeliver();
       else agentTasks?.renotify(notice.items).catch(() => {});
       return;
     }
     // 子のターンへ途中送信で渡した追加指示（ply_task_send。liveInstructions）の合図。指示の状態を決めてから、画面にも流す
-    if ((event?.type === "userMessage.delivered" || event?.type === "userMessage.dropped") && liveInstructions.has(event.messageId)) {
+    if (signal && liveInstructions.has(event.messageId)) {
       const sent = liveInstructions.get(event.messageId);
       liveInstructions.delete(event.messageId);
+      touchCard(turn);
       agentTasks?.steered(sent.taskId, sent.instructionIds, event.type === "userMessage.delivered" ? "delivered" : "dropped").catch(() => {});
     }
-    // 受理済みの途中送信が読まれずに捨てられた（userMessage.dropped）。送信待ちへ戻す
-    if (event?.type === "userMessage.dropped" && turn.info.sessionId && event.messageId) {
+    // 受理済みの途中送信（送信待ちの項目）への合図。捨てられたら送信待ちへ戻す
+    const awaited = signal && event.messageId && turn.pendingSteers?.delete(event.messageId);
+    if (awaited) touchCard(turn);
+    if (event?.type === "userMessage.dropped" && turn.info.sessionId && event.messageId && (!replay || awaited)) {
       outbox.returned(turn.info.sessionId, event.messageId).catch(() => {});
     }
     // 最後の発言の id（通知の一覧の飛び先。ターンの終わりに completionNotices へ渡す）
@@ -2283,10 +2396,11 @@ function makeEmit(turn) {
     if (event?.type === "phase" || event?.type === "background") {
       if (event.type === "phase") turn.info.phase = event.state === "waiting" ? "waiting" : "active";
       else turn.info.background = Array.isArray(event.tasks) ? event.tasks : [];
-      if (event.type === "phase") watchChildBackground(turn);
-      broadcastRunning();
+      // 再生では状態だけ。見張り・配り・送信待ちの流しは、再生の終わりに 1 回（adoptTurn）
+      if (event.type === "phase" && !replay) watchChildBackground(turn);
+      if (!replay) broadcastRunning();
       // 裏だけを待つ間は、次のターンの設定の予約があっても途中送信できる。待っている送信をすぐ流す
-      if (event.type === "phase" && turn.info.phase === "waiting" && turn.info.sessionId) outbox.kick(turn.info.sessionId).catch(() => {});
+      if (!replay && event.type === "phase" && turn.info.phase === "waiting" && turn.info.sessionId) outbox.kick(turn.info.sessionId).catch(() => {});
     }
     // 新規セッションは走り出してから id が決まる。仮キーを本物へ差し替える。
     // sessionId が null の session は「まだ決まっていない」ので差し替えない
@@ -2345,7 +2459,7 @@ function makeEmit(turn) {
       });
     }
 
-    if (event?.type === "present" && event.sessionId && !recorded) {
+    if (event?.type === "present" && event.sessionId && !recorded && !replay) {
       const { type, sessionId, ...payload } = event;
       const pending = history.recordPresent(sessionId, { ...payload, turnKey: turn.presentKey });
       turn.presentWrites.push(pending);
@@ -2353,8 +2467,14 @@ function makeEmit(turn) {
         .catch((err) => console.error("  present の記録に失敗:", String(err?.message ?? err)));
     }
 
-    turn.visualizations?.accept(event);
+    if (replay && event?.type === 'text.end') turn.visualizations?.discard();
+    else turn.visualizations?.accept(event);
 
+    // 再生は実行中のスナップショット（画面がつなぎ直したときに配るもの）に積むだけで、画面へは送らない
+    if (replay) {
+      if (streamEvents.has(event?.type)) turn.stream.events.push({ ...P.stampSessionId(event, turn.info.sessionId), streamSeq: ++streamSequence });
+      return;
+    }
     // どのターンのものか分かるように必ず付ける。クライアントはこれで画面を選り分ける
     emitGlobal(P.stampSessionId(event, turn.info.sessionId));
   };
@@ -4009,11 +4129,14 @@ function remoteHostsNow() {
 }
 
 async function runningWork() {
-  const turns = [...runtime.turns.values()].map((t) => ({ kind: "turn", ...t.info }));
+  // 保持役に載っていて新しいサーバーへ渡せるターン（holdable）。切り替えはそれを待たずに引き継ぐ（desktop/switch.cjs）
+  const held = new Set([...runtime.turns.values()].filter(holdable).map(t => t.info.sessionId));
+  const turns = [...runtime.turns.values()].map((t) => ({ kind: "turn", ...t.info, ...(held.has(t.info.sessionId) ? { held: true } : {}) }));
 
   const permissions = [...runtime.waiting].map(([id, w]) => ({
     id,
     kind: "permission",
+    ...(held.has(w.payload.sessionId ?? null) ? { held: true } : {}),
     toolName: w.payload.toolName,
     sessionId: w.payload.sessionId ?? null,
     askedAt: w.askedAt ?? null,
@@ -4054,6 +4177,7 @@ async function runningWork() {
         status: state?.status ?? null,
         startedAt: state?.startedAt ?? null,
         endedAt: state?.endedAt ?? null,
+        ...(held.has(sessionId) ? { held: true } : {}),
       };
     }));
   }));
@@ -4068,6 +4192,11 @@ async function runningWork() {
   const dueRows = schedule.list();
   // 委譲のタスクは、終わっていないものと完了通知が届いていないものだけ（agentTasks.running）。過去の分は会話ごとに delegation.tasks で読む
   const tasks = withWorktreeLive(agentTasks?.running() ?? []);
+  const count = turns.length + permissions.filter((p) => !p.relay && !p.detached).length
+    + subagents.filter((a) => a.status === "running" || a.status == null).length + tasks.filter(r => !r.host && ["queued", "running", "cancelling"].includes(r.status) && !runtime.turns.has(r.sessionId)).length;
+  // 渡せる作業の数（count のうち、保持役に載ったターンとその承認待ち・サブエージェント）。blocking は引き継ぎを待たせる作業（無ければ作業の最中でも切り替わる）
+  const heldCount = turns.filter(x => x.held).length + permissions.filter(p => p.held && !p.relay && !p.detached).length
+    + subagents.filter(a => a.held && (a.status === "running" || a.status == null)).length;
   return {
     turns,
     permissions,
@@ -4087,8 +4216,9 @@ async function runningWork() {
     // そのまま数えると更新のゲート（web の count > 0）が閉じたままになる。status が null の子
     // （状態を返せないバックエンド・まだ分からない子）は数える。数えないとゲートを緩めてしまう
     // 設定の変更の承認（detached）は期限なしで残るので数えない（数えると、答えるまで終了も更新もできない）
-    count: turns.length + permissions.filter((p) => !p.relay && !p.detached).length
-      + subagents.filter((a) => a.status === "running" || a.status == null).length + tasks.filter(r => !r.host && ["queued", "running", "cancelling"].includes(r.status) && !runtime.turns.has(r.sessionId)).length,
+    count,
+    // 引き継ぎ（core/handover.mjs）に対応しているサーバーだけが載せる。main の切り替えは blocking が 0 なら待たずに引き継ぐ
+    handover: { v: HANDOVER_VERSION, holder: HOLDER_PROTOCOL, held: heldCount, blocking: count - heldCount },
   };
 }
 
@@ -4238,6 +4368,7 @@ async function delegationRoot(sessionId) {
  * 人間は最上位の会話に居るので、1段だけ上げても誰も見ない場所に出るだけになる。
  * どれか1つで答えれば全部が決着し、残りは消える。
  */
+const approvalIds = createApprovalIds();
 const askPermission = async ({ toolName, input, sessionId, toolUseID, title, signal, canAlways, kind, questions, locale, browserSite, computerApp, settingChange, detached = false }) => {
   const { chain: ancestors, remote: remoteRoot } = sessionId ? await delegationRoot(sessionId) : { chain: [], remote: null };
   // 中継先の見出しは「どの会話の承認か」。委譲したときの info.title を使う
@@ -4273,8 +4404,9 @@ const askPermission = async ({ toolName, input, sessionId, toolUseID, title, sig
     };
     // 祖先ごとに別の id の複製を作り、どれも同じ settle を指す。
     // web は「id ごとに1つの会話」の前提のまま動き、消せば勝手に片付く
-    const cards = [{ id: crypto.randomUUID(), payload, relay: false }, ...ancestors.map((ancestor) => ({
-      id: crypto.randomUUID(),
+    // 承認の id は、ツールの id があれば会話の id との組から決まる値（付け直しで旧サーバーと同じ id になる。core/approval-id.mjs）
+    const cards = [{ id: approvalIds.next(sessionId, toolUseID), payload, relay: false }, ...ancestors.map((ancestor) => ({
+      id: approvalIds.next(ancestor, toolUseID),
       relay: true,
       // Tool-wide grants stay in the child. Browser and computer grants show the specific agent
       // and origin / app, so the same choices are available to ancestors.
@@ -4288,6 +4420,7 @@ const askPermission = async ({ toolName, input, sessionId, toolUseID, title, sig
       let found = false;
       for (const card of cards) if (runtime.waiting.delete(card.id)) found = true;
       if (!found) return;
+      touchCard(runtime.turns.get(sessionId));
       // 片付いたことを画面へ知らせる。本来のカードも、祖先の会話の中継の複製も、ほかの窓・リモートの画面に残った写しも、これで畳める
       // （running の permissions から消えるだけでは、開いたままのカードは変わらない）。複製は id ごと・会話ごとに 1 つずつ
       for (const card of cards) emitGlobal({ type: 'permissionSettled', id: card.id, sessionId: card.payload.sessionId ?? null, allow: answer?.allow === true, reason: answer?.messageKey ?? null });
@@ -4304,6 +4437,7 @@ const askPermission = async ({ toolName, input, sessionId, toolUseID, title, sig
     };
 
     for (const card of cards) runtime.waiting.set(card.id, { settle, payload: card.payload, askedAt: new Date().toISOString(), relay: card.relay, notified: false, detached });
+    touchCard(runtime.turns.get(sessionId));   // 札の waits（出している承認の id）が変わった
     // 承認・質問は端末へ中継して、そこで答えられる。設定の変更の承認（受領証つきで、決着が別の台帳へ届く）など、ターンを止めない承認（detached）は、
     // 端末の画面と AI に「ホストの画面で答えてください」と知らせるだけ（答えるボタンは無く、口からの答えも受けない。docs/remote.md §4.5）
     if (remoteRoot && remoteRoot.taskId) {
@@ -4411,7 +4545,8 @@ const outboxWatchers = new Map();
 const taskStopReasons = new Map();
 // 走っている依頼元のターンへ途中送信（control.steer）で渡した完了通知のうち、「渡った」合図（steerConfirms）を待っているもの。
 // 通知の item id -> { owner, prompt, items: [{ taskId, revision }] }。渡れば画面へ通知の一行を出し、
-// 読まれないままターンが死んだら（userMessage.dropped・ターンの終わり）空いたときの経路で送り直す（ADR 0057）
+// 読まれないままターンが死んだら（userMessage.dropped・ターンの終わり）空いたときの経路で送り直す（ADR 0057）。
+// 付け直すターンへは札の steers で渡る（steersOf・restoreSteers。redeliver は関数なので settingNotices から作り直す）
 const liveNotices = new Map();
 // 走っている子のターンへ途中送信（control.steer）で渡した追加指示（ply_task_send）のうち、「渡った」合図（steerConfirms）を待っているもの。
 // 指示の item id（task-send-<指示 ID>） -> { sessionId: 子の会話, taskId, instructionId }。合図で指示の状態を決め、
@@ -4426,6 +4561,8 @@ const outbox = createMessageQueue({
     const limit = limitStates.get(id);
     if (limit && limitHolds(limit))
       return { blocked: true, wait: { reason: 'limit', resetsAt: limit.resetsAt } };
+    // 引き継ぎの間（core/handover.mjs）: 新しい作業の開始も途中送信も送信待ちのまま。新しいサーバー（取りやめなら今のサーバー）が続きを送る
+    if (handover.hold) return { blocked: true, wait: { reason: 'turn', detail: 'handover' } };
     const turn = runtime.turns.get(id);
     if (!turn) {
       if (switching.has(id) || forking.has(id)) return { blocked: true, wait: { reason: 'turn' } };
@@ -4435,7 +4572,19 @@ const outbox = createMessageQueue({
     // 送るのは outbox の item そのもの（本文だけではない）。バックエンドは item.id を
     // 相手に預け、「渡った」合図（userMessage.delivered）でこの id を返してくる
     return { turn, blocked: turn.ac.signal.aborted || Boolean(turn.outcome), phase: turn.info.phase,
-      steer: steer ? item => steer(item) : null };
+      steer: steer ? async item => {
+        // 渡った合図を後から出すバックエンドは、受理の応答より先に合図を出すことがある。受理を待つ前から控える（札の steers。付け直した先が合図を処理する）
+        const confirms = Boolean(turn.control.steerConfirms);
+        if (confirms) { turn.pendingSteers.add(item.id); touchCard(turn); }
+        try {
+          const accepted = await steer(item);
+          if (!accepted && turn.pendingSteers.delete(item.id)) touchCard(turn);
+          return accepted;
+        } catch (err) {
+          if (turn.pendingSteers.delete(item.id)) touchCard(turn);
+          throw err;
+        }
+      } : null };
   },
   start: runTurn,
   changed: (sessionId, messages) => {
@@ -4451,18 +4600,28 @@ const outbox = createMessageQueue({
     noteRelayHops(sessionId, item.args, { steered: true });
     if (item.args.attachments?.length) {
       (turn.steeredAttachments ??= []).push({ key: item.id, prompt: item.args.prompt });
+      touchCard(turn);
       await presentAttachments(sessionId, item.args.attachments, makeEmit({ ...turn, presentKey: item.id }));
     }
   },
 });
-await outbox.recover();
+// 付け直すターン（無停止の更新 2b-4。stage2-server-state.md §5.1）。後片付け（送信待ちの戻し・中断の記録・worktree の整理）と、
+// ターンを始めうるもの（予定・上限の再開・bot）より前に runtime.turns に載せる。口を開き直して記録を流すのは待ち受けの後
+const adopting = await restoreAdoptedTurns();
+// 前の起動で消し損ねた Claude のフラグ設定のファイル（core/compat-endpoints.mjs）。同じデータ置き場を別の Pleiad（開発版と配布版）が使っていることがあるので、
+// 走っている会話のファイルは消さない（1 日より古いものだけ）。付け直すターンの札が指すファイル（無停止の更新 2c）も消さない（そのターンの終わりに消える）
+sweepClaudeFlagSettings(store.dataDir, { olderThanMs: 24 * 60 * 60_000, except: adopting.map(a => a.ctx.card.backendCard?.flag).filter(Boolean) }).catch(() => {});
+await outbox.recover({ adopted: new Map(adopting.map(a => [a.ctx.sessionId, new Set(Object.keys(a.ctx.card.steers))])), keepQueued: HANDOVER_START });
 // 前の起動で走っていたのに終わりが記録されていないターン（落ちた・強制終了）を、会話の中断（reason: restart）として残す
 {
-  const recovered = await store.recoverInterruptedTurns(Date.now()).catch(err => { console.error("  中断の記録に失敗:", String(err?.message ?? err)); return []; });
+  const recovered = await store.recoverInterruptedTurns(Date.now(), { except: new Set(adopting.map(a => a.ctx.sessionId)) })
+    .catch(err => { console.error("  中断の記録に失敗:", String(err?.message ?? err)); return []; });
   if (recovered.length) console.log(`  前の起動で終わらなかったターン ${recovered.length} 件を中断として残した`);
 }
 // 前の起動で待っていた承認・質問はメモリにしか無く、再起動で消えた。通知の一覧のあなた待ちも決着させる（ADR 0149）
-try { inbox.settleAllWaiting('cancelled'); } catch (e) { console.error('  通知の一覧: あなた待ちを決着させられなかった:', String(e?.message ?? e)); }
+// 付け直すターンの出している承認（札の waits。止め始めていたターンは承認を出し直さないので外さない）の行は残す。承認の id が決まった値（core/approval-id.mjs）なので、
+// 付け直しで出し直す承認が同じ行になる（決着の行が dedupeKey で居座って新しい行が載らない、を防ぐ）
+try { inbox.settleAllWaiting('cancelled', { except: adopting.flatMap(a => a.ctx.card.stopping ? [] : a.ctx.card.waits) }); } catch (e) { console.error('  通知の一覧: あなた待ちを決着させられなかった:', String(e?.message ?? e)); }
 // 親が走っている・裏の作業が残っている・送信待ちがあるときは完了通知を送らない（docs/agent-delegation.md「完了通知」）
 const noticeBlocked = async owner => sessionBusy(owner) || awaitedBackground(owner) || (await outbox.list(owner)).some(m => !['sent', 'cancelled'].includes(m.status));
 
@@ -4472,7 +4631,7 @@ const noticeBlocked = async owner => sessionBusy(owner) || awaitedBackground(own
  * 渡してよい条件は completion-notices.mjs の canSteerNotice
  */
 async function noticeTarget(owner) {
-  const turn = runtime.turns.get(owner);
+  const turn = handover.hold ? null : runtime.turns.get(owner);
   if (!turn) return null;
   const unsent = (await outbox.list(owner)).some(m => !['sent', 'cancelled'].includes(m.status));
   return canSteerNotice(turn, { unsent, nextSettings: (await store.get(owner)).nextSettings }) ? turn : null;
@@ -4509,20 +4668,29 @@ function completionNotice(lng, tasks) {
  * 完了通知を、走っているターンへ途中送信（control.steer）で渡す。人間の発言ではないので、outbox は通さず
  * 本文のハッシュを記録して（履歴が通知として描く）、画面へは通知の一行を出す。
  * true=受理 → ok / false=受理できない → requeue（空いてから新しいターンで）/ throw=結果不明 → error（自動で再送しない）。
- * 「渡った」合図を後から出すバックエンド（steerConfirms）では、通知の一行を渡った時点で出し、捨てられたら送り直す（liveNotices）
+ * 「渡った」合図を後から出すバックエンド（steerConfirms）では、通知の一行を渡った時点で出し、捨てられたら送り直す（liveNotices）。
+ * 送り直し先は、タスクの完了通知なら agentTasks.renotify（items）、設定の変更の承認の結果なら台帳へ戻す（settingNotices。付け直す先でも作り直せる形）
  */
-async function steerNotice(turn, owner, prompt, tasks, redeliver = null) {
+async function steerNotice(turn, owner, prompt, tasks, settingNotices = null) {
   await recordTaskNotice(owner, prompt);
   const item = { id: `task-notice-${crypto.randomUUID()}`, args: { prompt } };
   const confirms = Boolean(turn.control.steerConfirms);
   // 合図は受理の応答より先に来ることがある。先に登録しておく
-  if (confirms) liveNotices.set(item.id, { owner, prompt, items: tasks.map(x => ({ taskId: x.taskId, revision: x.revision ?? 0 })), ...(redeliver ? { redeliver } : {}) });
+  if (confirms) {
+    liveNotices.set(item.id, noticeEntry(owner, prompt, tasks.map(x => ({ taskId: x.taskId, revision: x.revision ?? 0 })), settingNotices));
+    touchCard(turn);
+  }
   let accepted;
-  try { accepted = await turn.control.steer?.(item); }
-  catch { liveNotices.delete(item.id); return 'error'; }
-  if (!accepted) { liveNotices.delete(item.id); return 'requeue'; }
+  try { accepted = await trackIn(handover.critical, turn.control.steer?.(item)); }
+  catch { if (liveNotices.delete(item.id)) touchCard(turn); return 'error'; }
+  if (!accepted) { if (liveNotices.delete(item.id)) touchCard(turn); return 'requeue'; }
   if (!confirms) emitGlobal({ type: 'taskNotice', sessionId: owner, text: prompt });
   return 'ok';
+}
+
+/** 渡った合図を待つ完了通知の控え（liveNotices の値）。設定の変更の承認の結果は、台帳へ戻す口を settingNotices から作る */
+function noticeEntry(owner, prompt, items, settingNotices = null) {
+  return { owner, prompt, items, ...(settingNotices ? { settingNotices, redeliver: () => settingApprovals.requeue(settingNotices) } : {}) };
 }
 
 /**
@@ -4530,7 +4698,7 @@ async function steerNotice(turn, owner, prompt, tasks, redeliver = null) {
  * 渡してよい条件は完了通知と同じ（canSteerNotice。子の会話に人の送信待ちがあれば渡さない）
  */
 async function childTarget(sessionId) {
-  const turn = taskExecutions.has(sessionId) ? runtime.turns.get(sessionId) : null;
+  const turn = taskExecutions.has(sessionId) && !handover.hold ? runtime.turns.get(sessionId) : null;
   if (!turn) return null;
   const unsent = (await outbox.list(sessionId)).some(m => !['sent', 'cancelled'].includes(m.status));
   return canSteerNotice(turn, { unsent, nextSettings: (await store.get(sessionId)).nextSettings }) ? turn : null;
@@ -4548,11 +4716,14 @@ async function steerInstruction(task, instruction) {
   const item = { id: `task-send-${instruction.id}`, args: { prompt: instruction.text } };
   const confirms = Boolean(turn.control.steerConfirms);
   // 合図は受理の応答より先に来ることがある。先に登録しておく
-  if (confirms) liveInstructions.set(item.id, { sessionId: task.sessionId, taskId: task.taskId, instructionIds: instruction.ids ?? [instruction.id] });
+  if (confirms) {
+    liveInstructions.set(item.id, { sessionId: task.sessionId, taskId: task.taskId, instructionIds: instruction.ids ?? [instruction.id] });
+    touchCard(turn);
+  }
   let accepted;
-  try { accepted = await turn.control.steer?.(item); }
-  catch { liveInstructions.delete(item.id); return 'error'; }
-  if (!accepted) { liveInstructions.delete(item.id); return 'requeue'; }
+  try { accepted = await trackIn(handover.critical, turn.control.steer?.(item)); }
+  catch { if (liveInstructions.delete(item.id)) touchCard(turn); return 'error'; }
+  if (!accepted) { if (liveInstructions.delete(item.id)) touchCard(turn); return 'requeue'; }
   emitGlobal({ type: 'userMessage', sessionId: task.sessionId, messageId: item.id, text: instruction.text, at: Date.now(), ...(confirms ? { pending: true } : {}) });
   return confirms ? 'pending' : 'delivered';
 }
@@ -4566,6 +4737,103 @@ async function renewTaskWorktree(task) {
   await store.recordChange(task.sessionId, { by: 'ply', field: 'cwd', from: current, to: made.cwd, ...savedReason('worktreeSplit') });
   emitGlobal({ type: 'cwd', sessionId: task.sessionId, cwd: made.cwd, by: 'ply', ...savedReason('worktreeSplit') });
   return publicWorktree(made.entry);
+}
+
+/** 委譲の子のターンの実行の控え（taskExecutions の値）。makeEmit が出来事を集め、finishChild が結果にする。付け直すターンでは札の delegation から reply・stopped を戻す */
+function newExecution(card = null) {
+  return { outcome: null, error: null, rejections: [], stopped: card?.stopped ?? [], reply: card?.reply ?? null, timer: null, streamed: '', streamEnded: false };
+}
+
+/**
+ * 委譲の子のターンの実行の前半（agentTasks の execute と、付け直し）: 実行の控えを置き、タスクの取り消しで子のターンを止める口をつなぐ。
+ * 戻り値は外す関数（結果を確定したら呼ぶ）
+ */
+function trackChild(task, signal, execution) {
+  taskExecutions.set(task.sessionId, execution);
+  const stopChild = () => {
+    const child = runtime.turns.get(task.sessionId);
+    // 依頼元の会話を止めた理由（abortSessions が置く）。この取り消しが実際に止めるターンにだけ付ける
+    const why = taskStopReasons.get(task.sessionId);
+    taskStopReasons.delete(task.sessionId);
+    if (child && why) child.abortReason ??= why;
+    child?.ac.abort();
+    // タスクの記録の backend は、依頼元が替えた次のターンの値のことがある（ADR 0134）。止めるのは今の会話のエージェント
+    resolveBackendForSession(task.sessionId).then(b => b?.stopSession?.(task.sessionId)).catch(() => {});
+  };
+  signal.addEventListener('abort', stopChild, { once: true });
+  return () => { signal.removeEventListener('abort', stopChild); clearTimeout(execution.timer); if (taskExecutions.get(task.sessionId) === execution) taskExecutions.delete(task.sessionId); };
+}
+
+/**
+ * 委譲の子の実行の後半（execute と、付け直したターンの adoptChild）: 子のターンが終わった（outcome）のを受けて、孫の完了・裏の作業を待ち、
+ * 子の最後の返答と作業場所の状態から、依頼元へ届ける結果（agentTasks の run が書く形）を作る。renewed は、前半で作り直した作業場所
+ */
+async function finishChild(task, signal, execution, outcome, renewed = null) {
+  // A child can itself delegate. Its result is final only after those results
+  // have been delivered and it has finished responding to them.
+  const childrenBusy = () => agentTasks.list(task.sessionId).some(r => ['queued', 'running', 'cancelling'].includes(r.status) || ['pending', 'delivering'].includes(r.notification));
+  // ターンの外に残る端末（Codex）は待たない。終わっても main は再開せず、結果は変わらない（awaitedBackground）
+  while (!signal.aborted && (sessionBusy(task.sessionId) || awaitedBackground(task.sessionId) || childrenBusy())) await waitFree(task.sessionId, 250);
+  // 履歴の読み出しが一時的な SQLite のエラーで失敗したら、間を空けて読み直す（core/history-retry.mjs）。
+  // 読み直しても読めなければ、子の作業は終わっているので失敗にせず、流れてきた最後の返答を注意書き付きで結果にする。
+  // それ以外のエラーは今までどおり投げて失敗にする（docs/agent-delegation.md「子の結果」）
+  let last, historyNote = null;
+  try {
+    last = await readWithRetry(() => lastReply(task.sessionId), {
+      // i18n-ignore: サーバーのログ
+      onRetry: (e, n, ms) => console.error(`  [delegation] 子 ${task.sessionId} の履歴を読めなかったので ${ms}ms 後に読み直す（${n} 回目）:`, String(e?.message ?? e).slice(0, 300)),
+    });
+  } catch (e) {
+    if (!transientStorageError(e)) throw e;
+    // i18n-ignore: サーバーのログ
+    console.error(`  [delegation] 子 ${task.sessionId} の履歴を読み直しても読めなかった。流れてきた返答を結果にする:`, String(e?.message ?? e).slice(0, 300));
+    last = execution.streamed;
+    historyNote = agentT(await agentLocaleFor(task.parentSessionId), 'delegation.historyUnreadable', { error: String(e?.message ?? e).slice(0, 300) });
+  }
+  // 裏の作業を止める前の返答（報告）を残す。止めた後に main が再開して足した一言だけが結果にならないように
+  const text = execution.reply && execution.reply !== last ? [execution.reply, last].filter(Boolean).join('\n\n') : last;
+  // error は完了通知に載って依頼元のエージェントが読む（依頼元の会話の言語）
+  const rejections = execution.rejections.map(peerRejection);
+  const stoppedBackground = execution.stopped.map(peerBackground);
+  const nowCwd = (await store.get(task.sessionId).catch(() => null))?.cwd ?? task.cwd;
+  const git = await taskGitNote({ ...task, cwd: nowCwd });
+  // 子が終わった。変わっていなければ・取り込み済みなら片付け、そうでなければ残す。通知に載せる状態は片付ける前のもの
+  const workspace = await worktreeHost.taskDone({ ...task, worktree: renewed ?? task.worktree }).catch(() => null);
+  const extra = { ...(workspace ? { workspace } : {}), ...(renewed ? { worktree: renewed } : {}) };
+  worktreeSweepSoon();
+  const withNote = error => [error, historyNote].filter(Boolean).join('\n') || null;
+  if (agentTasks.list(task.sessionId).some(r => r.notification === 'unknown')) return { outcome: 'error', text, error: withNote(agentT(await agentLocaleFor(task.parentSessionId), 'delegation.noticeUnknown')), rejections, stoppedBackground, git, ...extra };
+  return { outcome: signal.aborted ? 'aborted' : execution.outcome ?? outcome, text, error: withNote(execution.error), rejections, stoppedBackground, git, ...extra };
+}
+
+/**
+ * 付け直したターンが委譲の子のとき、結果の確定を agentTasks に引き継ぐ（adopt。stage2-server-state.md §3 の 2・S8）。turnPromise は adoptTurn の戻り値
+ * （通常のターンの runTurn と同じ。子のターンが終わると解決する）。引き継げなかった（タスクが終わっている・取り消し済みなど）ときは、
+ * 子の実行の控えだけ外す（結果は書かず、そのターンだけを締める）。引き継げたら true
+ */
+function adoptChild(ctx, turnPromise, { abandon = false } = {}) {
+  const { taskId, execution, sessionId } = ctx;
+  const claims = Object.values(ctx.card.steers).flatMap(entry => entry.waiters.includes('agentTasks') && entry.taskId === taskId && Array.isArray(entry.instructionIds) ? entry.instructionIds : []);
+  // 付け直しをあきらめた（待ち受けのポートが取れない）ときは、今までの起動の復元と同じに interrupted にする（finish を渡さない）
+  const adopted = agentTasks.adoptRun(taskId, abandon ? null : async (task, signal) => {
+    const release = trackChild(task, signal, execution);
+    try {
+      const outcome = await turnPromise;
+      if (outcome === 'requeue') return { requeue: true };
+      // 作業場所を作り直した（追加指示で再開した子）。旧サーバーが結果を書く前に落ちたときも、子の会話の今の作業場所から台帳を引き直す
+      const renewed = await adoptedWorktree(task);
+      return await finishChild(task, signal, execution, outcome, renewed);
+    } finally { release(); }
+  }, { claims });
+  if (!adopted) void turnPromise.finally(() => { if (taskExecutions.get(sessionId) === execution) taskExecutions.delete(sessionId); });
+  return adopted;
+}
+
+/** 付け直した子の作業場所が、前半（renewTaskWorktree）で作り直したものなら公開の形を返す（作り直していなければ null）。台帳の taskId で見分ける */
+async function adoptedWorktree(task) {
+  const cwd = (await store.get(task.sessionId).catch(() => null))?.cwd;
+  const entry = cwd ? await worktreeHost.worktrees.byPath(cwd).catch(() => null) : null;
+  return entry && task.worktree && entry.id !== task.worktree.id && entry.taskId === task.taskId ? publicWorktree(entry) : null;
 }
 
 /** 画面が聞く「この会話の承認モードは書き込みの範囲か」。読むだけの会話には分ける注記を出さない */
@@ -4622,6 +4890,8 @@ const remoteDelegation = createRemoteDelegation({
 });
 agentTasks = await createAgentTasks({
   dataDir: store.dataDir,
+  // 付け直す委譲の子のタスクは、起動の復元で interrupted にしない（結果の確定は adoptChild が引き継ぐ。stage2-server-state.md S8）
+  adopting: adopting.flatMap(a => a.ctx.taskId ? [a.ctx.taskId] : []),
   changed: () => { broadcastRunning(); completionNotices.changed(); remoteTasksChanged(); },
   // 人間の承認を待っているか。承認は core/server.mjs 側にしかないので判定を渡す。
   // 中継の複製も数える（孫が止まっていれば、その子も止まっている）
@@ -4711,60 +4981,17 @@ agentTasks = await createAgentTasks({
     if (sessionBusy(task.sessionId)) return { requeue: true };
     // 子の会話を人が消した（sessions.delete。ADR 0147）。追加の指示・やり直しは、消した会話を作り直さずに失敗で返す
     if (!(await resolveBackendForSession(task.sessionId))) throw new Error(agentT(await agentLocaleFor(task.parentSessionId), 'delegation.childDeleted'));
-    const execution = { outcome: null, error: null, rejections: [], stopped: [], reply: null, timer: null, streamed: '', streamEnded: false };
-    taskExecutions.set(task.sessionId, execution);
-    const stopChild = () => {
-      const child = runtime.turns.get(task.sessionId);
-      // 依頼元の会話を止めた理由（abortSessions が置く）。この取り消しが実際に止めるターンにだけ付ける
-      const why = taskStopReasons.get(task.sessionId);
-      taskStopReasons.delete(task.sessionId);
-      if (child && why) child.abortReason ??= why;
-      child?.ac.abort();
-      // タスクの記録の backend は、依頼元が替えた次のターンの値のことがある（ADR 0134）。止めるのは今の会話のエージェント
-      resolveBackendForSession(task.sessionId).then(b => b?.stopSession?.(task.sessionId)).catch(() => {});
-    };
-    signal.addEventListener('abort', stopChild, { once: true });
+    const execution = newExecution();
+    const release = trackChild(task, signal, execution);
     try {
       // 追加の指示（ply_task_send）で再開した子の作業場所が、前の完了で片付いていたら作り直す（元の場所に書かせない）
       const renewed = await renewTaskWorktree(task).catch(() => null);
-      const outcome = await runTurn({ sessionId: task.sessionId, prompt }, () => {}, { signal });
+      const outcome = await runTurn({ sessionId: task.sessionId, prompt }, () => {}, { signal, taskId: task.taskId });
+      // 子のターンを新しいサーバーへ渡した（handOffTurn）。結果は付け直した先の finishChild が確定する（このサーバーでは何も書かない）
+      if (outcome === 'handedOff') return { handedOff: true };
       if (outcome === 'requeue') return { requeue: true };
-      // A child can itself delegate. Its result is final only after those results
-      // have been delivered and it has finished responding to them.
-      const childrenBusy = () => agentTasks.list(task.sessionId).some(r => ['queued', 'running', 'cancelling'].includes(r.status) || ['pending', 'delivering'].includes(r.notification));
-      // ターンの外に残る端末（Codex）は待たない。終わっても main は再開せず、結果は変わらない（awaitedBackground）
-      while (!signal.aborted && (sessionBusy(task.sessionId) || awaitedBackground(task.sessionId) || childrenBusy())) await waitFree(task.sessionId, 250);
-      // 履歴の読み出しが一時的な SQLite のエラーで失敗したら、間を空けて読み直す（core/history-retry.mjs）。
-      // 読み直しても読めなければ、子の作業は終わっているので失敗にせず、流れてきた最後の返答を注意書き付きで結果にする。
-      // それ以外のエラーは今までどおり投げて失敗にする（docs/agent-delegation.md「子の結果」）
-      let last, historyNote = null;
-      try {
-        last = await readWithRetry(() => lastReply(task.sessionId), {
-          // i18n-ignore: サーバーのログ
-          onRetry: (e, n, ms) => console.error(`  [delegation] 子 ${task.sessionId} の履歴を読めなかったので ${ms}ms 後に読み直す（${n} 回目）:`, String(e?.message ?? e).slice(0, 300)),
-        });
-      } catch (e) {
-        if (!transientStorageError(e)) throw e;
-        // i18n-ignore: サーバーのログ
-        console.error(`  [delegation] 子 ${task.sessionId} の履歴を読み直しても読めなかった。流れてきた返答を結果にする:`, String(e?.message ?? e).slice(0, 300));
-        last = execution.streamed;
-        historyNote = agentT(await agentLocaleFor(task.parentSessionId), 'delegation.historyUnreadable', { error: String(e?.message ?? e).slice(0, 300) });
-      }
-      // 裏の作業を止める前の返答（報告）を残す。止めた後に main が再開して足した一言だけが結果にならないように
-      const text = execution.reply && execution.reply !== last ? [execution.reply, last].filter(Boolean).join('\n\n') : last;
-      // error は完了通知に載って依頼元のエージェントが読む（依頼元の会話の言語）
-      const rejections = execution.rejections.map(peerRejection);
-      const stoppedBackground = execution.stopped.map(peerBackground);
-      const nowCwd = (await store.get(task.sessionId).catch(() => null))?.cwd ?? task.cwd;
-      const git = await taskGitNote({ ...task, cwd: nowCwd });
-      // 子が終わった。変わっていなければ・取り込み済みなら片付け、そうでなければ残す。通知に載せる状態は片付ける前のもの
-      const workspace = await worktreeHost.taskDone({ ...task, worktree: renewed ?? task.worktree }).catch(() => null);
-      const extra = { ...(workspace ? { workspace } : {}), ...(renewed ? { worktree: renewed } : {}) };
-      worktreeSweepSoon();
-      const withNote = error => [error, historyNote].filter(Boolean).join('\n') || null;
-      if (agentTasks.list(task.sessionId).some(r => r.notification === 'unknown')) return { outcome: 'error', text, error: withNote(agentT(await agentLocaleFor(task.parentSessionId), 'delegation.noticeUnknown')), rejections, stoppedBackground, git, ...extra };
-      return { outcome: signal.aborted ? 'aborted' : execution.outcome ?? outcome, text, error: withNote(execution.error), rejections, stoppedBackground, git, ...extra };
-    } finally { signal.removeEventListener('abort', stopChild); clearTimeout(execution.timer); taskExecutions.delete(task.sessionId); }
+      return await finishChild(task, signal, execution, outcome, renewed);
+    } finally { release(); }
   },
   // 依頼元が完了通知を受け取れるか。受け取れない間、委譲の管理は通知の状態を書き換えない（保存を減らす）
   ready: async task => isRemoteOwner(task.parentSessionId) ? remoteAgentPort.online(parseRemoteOwner(task.parentSessionId)?.deviceId) : !(await noticeBlocked(task.parentSessionId)),
@@ -4827,7 +5054,7 @@ settingApprovals = await createSettingApprovals({
     if (!live && await noticeBlocked(sessionId)) return 'requeue';
     const prompt = settingNotice(await ensureAgentLocale(sessionId), notices);
     if (live) {
-      const r = await steerNotice(live, sessionId, prompt, [], () => settingApprovals.requeue(notices));
+      const r = await steerNotice(live, sessionId, prompt, [], notices.map(({ requestId, sessionId, key, op, outcome, error, at }) => ({ requestId, sessionId, key, op, outcome, error, at })));
       return r === 'requeue' ? 'requeue' : r === 'ok' ? 'ok' : 'error';
     }
     return (await runTurn({ sessionId, prompt }, () => {}, { internal: true })) === 'requeue' ? 'requeue' : 'ok';
@@ -4876,7 +5103,7 @@ async function runTurn(args, onStarted = () => {}, hooks = {}) {
 const ANSWER_EVENTS = new Set(['text.delta', 'text.end', 'thinking.delta', 'tool.start']);
 
 async function runTurnInternal(args, onStarted, hooks) {
-  const { prompt, sessionId = null } = args ?? {};
+  const { sessionId = null } = args ?? {};
   if (hooks.canStart && !hooks.canStart()) return 'cancelled';
   if ((hooks.internal || hooks.signal) && (sessionBusy(sessionId))) return 'requeue';
   if (switching.has(sessionId) || forking.has(sessionId)) throw new Error(t('agents.switching'));
@@ -4886,450 +5113,1028 @@ async function runTurnInternal(args, onStarted, hooks) {
   const compactionRevision = sessionId ? compactionScheduler.revision(sessionId) : null;
   if (sessionId) switching.add(sessionId);
   try {
-
-    // 行き先が決まらないターンは始めない。断るのは登録する前。
-    await settingsWrites.get(sessionId);
-    let backend = refuseRetired(await pickBackend(sessionId, args?.backend));
-    const reserved = sessionId ? (await store.get(sessionId)).nextSettings : null;
-    let { cwd, changedFrom } = await resolveCwd(sessionId, reserved?.cwd ?? args?.cwd, backend);
-    // Claude のアカウント。削除済み・トークンが読めないものを選んでいる会話は、ここで止める
-    // （黙ってログイン中のアカウントで走らせない）。予約の切り替えより前に確かめる
-    const accountBackend = (reserved && getBackend(reserved.backend)) || backend;
-    // 互換の接続先（'' = 公式）。削除済み・確認に失敗している・キーを読めないものを選んでいる会話は、ここで止める
-    // （黙って公式で走らせない。アカウントと同じ扱い）。新しい会話は、設定で「既定にする」を押した接続先（無ければ公式）
-    const endpointId = !endpointCapable(accountBackend) ? ''
-      : reserved?.endpoint !== undefined ? reserved.endpoint
-      : sessionId ? (await store.get(sessionId)).compatEndpoint ?? ''
-      : typeof args?.endpoint === 'string' ? args.endpoint : await compatEndpoints.defaultFor(accountBackend.id);
-    const endpoint = endpointId ? await compatEndpoints.resolve(endpointId, accountBackend.id) : null;
-    const endpointInfo = endpointId ? await endpointRow(endpointId) : null;
-    // Claude のアカウント。互換の接続先では使わない（接続先のキーで送る）ので引かない
-    const accountId = reserved?.account !== undefined ? reserved.account : sessionId ? (await store.get(sessionId)).claudeAccount ?? "" : "";
-    const account = !endpoint && accountBackend.capabilities?.claudeAccounts ? await claudeAccounts.resolve(accountId) : null;
-    if (reserved) {
-      const target = getBackend(reserved.backend);
-      if (!target || !await validModel(target, reserved.model, cwd, endpointId) || (reserved.mode !== undefined && !target.modes()[reserved.mode])) throw new Error(t('turn.reservedInvalid'));
-      await validateEffort(target, reserved.effort ?? '', reserved.model, cwd, endpointInfo);
-      if (target.id !== backend.id) {
-        await switchBackend(sessionId, backend, target);
-        await shellRuns.switched(sessionId, backend, target);
-      }
-      backend = target;
-    }
-    await backend.prepareTurn?.(sessionId);
-    // Reject before marking the conversation sent or consuming its pending handoff.
-    if (hooks.compact && backend.compact) {
-      const record = await conversation(sessionId);
-      if (record && !record.nativeId) throw new Error(t('compaction.notStarted'));
-    }
-    // 再開のセッションの作業ディレクトリを人が変えた。status / title と同じく履歴に残し、一覧と会話に知らせる。
-    // エージェントが新しい cwd でセッションを見つけられるかはエージェント次第（claude は init の id で確かめる）
-    if (changedFrom) {
-      await store.recordChange(sessionId, { by: "human", field: "cwd", from: changedFrom, to: cwd, ...savedReason('resumeCwd'), backend });
-      emitGlobal({ type: "cwd", sessionId, cwd, by: "human", ...savedReason('cwdFrom', { from: changedFrom }) });
-    }
-    // 会話の言語（エージェントに渡す文の言語）。記録にあればそれ、無ければ今の画面の言語で決めて保存する（新規は id が決まったとき）
-    const agentLocale = sessionId ? await ensureAgentLocale(sessionId) : currentLocale();
-    const permissionMode = await resolveMode(sessionId, reserved ? reserved.mode : args?.mode, backend);
-    const model = await resolveModel(sessionId, reserved ? reserved.model : args?.model, backend, cwd, endpointId);
-    const effort = await resolveEffort(sessionId, reserved ? reserved.effort ?? "" : args?.effort, backend, model, cwd, endpointInfo);
-    // worktree（ADR 0089）。使う場所が worktree の中なら控える（片付けの印・取り込みを頼む相手）。片付けている最中の場所では始めない。
-    const worktreeEntry = await worktreeHost.worktrees.byPath(cwd);
-    if (worktreeEntry && worktreeEntry.state !== 'ready') throw new Error(t('worktree.cleaning'));
-    if (sessionId) {
-      if (!hooks.compact) await store.setSessionData(sessionId, 'compacted', false);
-      await store.setModel(sessionId, model);
-      await store.setSessionData(sessionId, "effort", effort);
-      if (reserved?.account !== undefined) await store.setSessionData(sessionId, 'claudeAccount', reserved.account);
-      if (reserved?.endpoint !== undefined) await store.setSessionData(sessionId, 'compatEndpoint', reserved.endpoint);
-      await store.setMode(sessionId, permissionMode);
-      await store.setMeta(sessionId, { cwd, unsent: false, lastModified: Date.now() });
-      if (reserved) {
-        await store.setSessionData(sessionId, "nextSettings", null, { durable: true });
-        emitGlobal({ type: "backend", sessionId, backend: backend.id, applied: true });
-        emitGlobal({ type: "nextSettings", sessionId, nextSettings: null });
-      }
-      // 委譲の子なら、タスクの記録を実際に走る値に合わせる（依頼元が替えた予約を人が取り消した・替えたとき。ADR 0134）
-      const synced = await agentTasks?.sync(sessionId, { backend: backend.id, model, effort, mode: permissionMode }).catch(() => null);
-      if (synced) emitGlobal({ type: 'agentTaskChanged', sessionId: null, taskId: synced });
-    }
-
-    if (changedFrom) settleWorktreeAt(changedFrom).catch(() => {});
-    // 新規のときだけ効く状態。再開したセッションの状態は setStatus で変える
-    const status = !sessionId && typeof args?.status === "string" && args.status.trim()
-      ? args.status.trim() : null;
-    // 入力欄に溜めていた添付（attachFile が置いたもの）。送信と一緒に会話へ載せる
-    const attachments = Array.isArray(args?.attachments) ? args.attachments : [];
-    const baseline = await history.loadTranscript(sessionId, backend);
-    // 前のターンまでのサブエージェント。listSubagents は全期間の分を返すので、実行中一覧から外すために覚える。
-    // CLI を起こす前に取る（後で取ると、このターンで生まれた分まで前の分に数えてしまう）
-    const pastSubagents = new Set(sessionId && backend.listSubagents
-      ? await backend.listSubagents(sessionId).catch(() => []) : []);
-    const previousContext = sessionId ? (await store.get(sessionId)).contextSession : null;
-    // 方針（担当・探索の計画）はターンごとに今の設定と作業場所で解き直す。設定の変更は始まっている会話にも次のターンから効く。
-    // 「この会話では外す」MCP と開始時刻は会話の方針として引き継ぐ（followSettings）。コンテキストの記録が無いまま送信済みの会話
-    // （この機能より前の会話）はエージェント任せのまま。作業場所を変えたときの探し直しは下の読み込み直し（refreshedContext）で知らせる
-    const { policy: followed, changed: settingsChanged } = followSettings(previousContext?.policy ?? null, await contextSettings.get(cwd),
-      { keepNative: !previousContext && baseline.messages.length > 0 });
-    let policy = followed;
-    // Pleiad 担当のコンテキストを受け取れないバックエンド（antigravity）では、担当が Pleiad でもエージェント任せとして扱う。
-    // 開いても届かない上に、外部 MCP へ無駄に接続（stdio なら起動）してしまう
-    const plyContext = managed(policy) && acceptsPlyContext(backend, policy);
-    const resolvedContext = plyContext ? await resolveRuntime(policy, { plyServers: await plyMcp.scanInput(), snapshots: CONTEXT_SNAPSHOTS, locale: agentLocale }) : null;
-    // 開始時の固定と違う＝指示・Skills が変わった。止めずに今の内容で続ける（resolvedContext が今のファイルで解き直した結果なので、
-    // 記録も pin も自動で新しくなる）。指示本文は毎ターン指示欄へ渡し直し、Skills はカタログしか渡していないので技術的な制約は無い。
-    // 右パネルの「渡したもの」との食い違いだけが問題なので、読み込み直したことを履歴と会話に残す
-    const refreshedContext = Boolean(plyContext && previousContext?.pin && resolvedContext?.pin !== previousContext.pin);
-    // コンテキストの設定の変更（担当・探す範囲・外部 MCP の登録や有効／無効）を、このターンから反映した
-    const appliedSettings = Boolean(previousContext && settingsChanged.length);
-    // instructions_for_path / load_skill で渡し済みの本文の控え（行の id → 本文のハッシュ）。会話の記録に残して
-    // 次のターンへ持ち越し、同じものを頼まれたら短い一行だけを返す（core/context-runtime.mjs の contextTools）。
-    // 履歴を引き継ぎの文で渡し直すターン（バックエンドの切り替え・ホスト側で写した分岐）と、記録した相手と違うバックエンドでは捨てる。
-    // 渡した本文が相手の手元に残っているとは限らないため
-    const handoff = await pendingHandoff(sessionId).catch(() => true);
-    const delivered = !handoff && previousContext?.delivered?.backend === backend.id ? { ...previousContext.delivered.entries } : {};
-    if (resolvedContext) resolvedContext.delivered = delivered;
-    // エージェント任せにしたターンでも固定（pin）は捨てない。Pleiad 担当を受け取れるエージェントへ戻したときに突き合わせる
-    const contextRecord = { policy: refreshedContext || appliedSettings ? { ...policy, refreshedAt: new Date().toISOString() } : policy,
-      pin: resolvedContext?.pin ?? (plyContext ? null : previousContext?.pin ?? null), report: resolvedContext?.report ?? nativeContextReport(policy, cwd, backend),
-      delivered: { backend: backend.id, entries: delivered },
-      // Pleiad が足した文の量（ADR 0056）。渡す文が出そろった所（下の runArgs の後）で数え直す。それまでは前のターンの値を見せる
-      ...(previousContext?.plyParts ? { plyParts: previousContext.plyParts } : {}) };
-    // Pleiad の指示（core/ply-instructions.mjs）。担当によらず、ターンごとに今の設定・モード・子かどうか・エージェントで決める。
-    // 渡すのは ply_agents の instructions の後ろ（下の agentRuntime）。項目ごとに入れたか（入れなかった理由）を会話の記録に残し、右パネルに出す
-    const added = turnInstructions({ list: plyInstructionsCache, locale: agentLocale, routing: routingSettingsCache.enabled,
-      child: Boolean(sessionId && (await store.get(sessionId)).delegation), supported: Boolean(backend.capabilities?.plyAgents),
-      canDelegate: canDelegate(backend.modes()[permissionMode]), agent: INSTRUCTION_AGENTS.includes(backend.id) ? backend.id : null });
-    if (added) contextRecord.added = added;
-    // Hooks の担当が Pleiad の場所（ADR 0049）。このエージェントへ渡す登録・止めるネイティブ・渡せないものを組み立て、会話の記録に残す。
-    // 組み立てられなければ送らない（ネイティブと登録が二重に動くか、どちらも動かないため）
-    let hooksTurn = null;
-    try { hooksTurn = await prepareHooksTurn({ agent: backend.id, cwd, ctx: { plyHooks, hooksConfig, dataDir: store.dataDir, findNode: findNodeOnPath,
-      context: { owners: policy.owners, delivered: plyContext } } }); }
-    catch (e) { throw new Error(t('hooksUnify.prepareFailed', { error: String(e?.message ?? e) })); }
-    if (hooksTurn) contextRecord.hooks = hooksTurn.record;
-    if (appliedSettings) {
-      await store.recordChange(sessionId, { by: 'ply', field: 'context', from: previousContext.pin ?? null, to: contextRecord.pin,
-        ...savedReason('contextSettingsApplied'), backend });
-      emitGlobal({ type: 'contextRefreshed', sessionId, settings: true, kinds: settingsChanged, names: [], count: 0 });
-    } else if (refreshedContext) {
-      // 何が変わったかは前の記録と今の記録の突き合わせで出す（pinChanges を呼ぶと同じターンで探索がもう一度走る）
-      const changed = pinnedChanges(previousContext.report?.entries ?? [], resolvedContext.report.entries);
-      const names = changed.map(c => c.name || path.basename(c.path ?? '')).filter(Boolean).slice(0, 3);
-      const reason = !names.length ? savedReason('contextReloaded')
-        : changed.length > names.length ? savedReason('contextChangedMore', { names, count: changed.length - names.length })
-        : savedReason('contextChanged', { names });
-      await store.recordChange(sessionId, { by: 'ply', field: 'context', from: previousContext.pin, to: resolvedContext.pin, ...reason, backend });
-      emitGlobal({ type: 'contextRefreshed', sessionId, names, count: changed.length });
-    }
-    const turn = {
-      stream: {
-        ...structuredClone(baseline),
-        user: hooks.internal || hooks.compact ? null : { role: "user", text: String(prompt ?? ""), at: new Date().toISOString(), backend: backend.id },
-        initialMessageId: args.messageId ?? null,
-        events: [],
-      },
-      key: sessionId ?? `new:${crypto.randomUUID()}`,
-      ac: new AbortController(),
-      // 中断の理由（abortSessions / giveUp が止める前に付ける。無いまま中断で終わったら user）
-      abortReason: null,
-      startedAtMs: Date.now(),
-      userSentAt: toMs(args.at) ?? Date.now(),
-      backend,
-      agentLocale,
-      control: { handle: null, onReady: () => {
-        outbox.kick(sessionId).catch(() => {});
-        agentTasks?.sendQueued(sessionId).catch(() => {});
-      } },
-      outcome: null,
-      compactTrigger: hooks.compact ?? null,
-      compactionRevision,
-      userInitiated: !hooks.internal && !hooks.compact,
-      compaction: null,
-      compactionWrite: Promise.resolve(),
-      contextWindow: null,
-      contextRecord,
-      taskHints: new Map(),
-      pastSubagents,
-      subagentOrigins: new Map(),
-      presentKey: crypto.randomUUID(),
-      presentWrites: [],
-      info: {
-        sessionId,
-        backend: backend.id,
-        startedAt: new Date().toISOString(),
-        cwd,
-        mode: permissionMode,
-        model: model || "",
-        effort,
-        endpoint: endpointId,
-        account: accountId,
-        status,
-        attachments,
-        // active = main が動いている / waiting = main は返答済みで、裏の subagent などを待っている
-        phase: "active",
-        background: [],
-      },
-    };
-    // 止めた瞬間に、このターンが抱えていたもの（裏の作業・承認待ち）を控える。中断で終わったら会話の「止めたもの」に残す（endTurn）。
-    // 承認待ちの却下（settleAll）より先に走るよう、ほかの abort の受け手より前に付ける
-    turn.ac.signal.addEventListener('abort', () => { turn.stops ??= captureStops(turn); }, { once: true });
-    if (hooks.signal?.aborted) turn.ac.abort();
-    const abortFromTask = () => turn.ac.abort();
-    hooks.signal?.addEventListener('abort', abortFromTask, { once: true });
-    runtime.turns.set(turn.key, turn);
-    // 送信待ちから始まったターン（人の発言・別の会話からの発言）で、送信の連鎖の数を決め直す（sessions.send の歯止め）
-    if (args.messageId) noteRelayHops(sessionId, args);
-    for (const read of liveReads) if (read.sessionId === sessionId) read.turn = turn;
-    // worktree を使うターン。会話の id が決まったら台帳に控える
-    turn.worktreeId = worktreeEntry?.id ?? null;
-    if (turn.worktreeId && sessionId) worktreeHost.worktrees.update(turn.worktreeId, { sessionId }).catch(() => {});
-    turn.gitCalls = createCallTracker();
-    const emit = makeEmit(turn);
-    turn.visualizations = createVisualizationCollector({
-      access: fileAccess,
-      publish: async payload => {
-        await turn.setup;
-        const id = turn.info.sessionId;
-        if (!id) throw new Error(t('agentRuntime.visualizeNotStarted'));
-        const record = await history.recordPresent(id, { ...payload, turnKey: turn.presentKey });
-        emit({ type: 'present', sessionId: id, ...record }, { recorded: true });
-      },
-    });
-
-    let didStart = false, backendInvoked = false, runtimeContext;
-    let initialDelivered = false;
-    // 中断で止めたもの（stops）を伝える文。このターンの発言の前に 1 回だけ添え、渡ったら会話から消す（docs/design.md「中断と再開」）
-    let interruption = null, interruptionTaken = false;
-    // 入力欄の `!` の結果（ADR 0054）。人の発言のターンでだけ、発言と一緒に渡す（完了通知で再開するターン・圧縮では渡さない）。
-    // 'host' の会話は未送の追記を shouldQuery: false の行で先に渡す。'native'（Codex）はエージェントの会話に既に入っている。
-    // 「渡さない」の行は渡さず、渡った後に会話に残す行へ移す（ADR 0055）
-    const shellHandoff = sessionId && !hooks.internal && !hooks.compact && shellMode(backend)
-      ? (shellMode(backend) === 'host' ? await shellRuns.appendsFor(sessionId) : { ids: [], skipped: [], lines: [] }) : null;
-    let shellHanded = false;
-    const onPromptDelivered = () => {
-      if (interruption && !interruptionTaken) {
-        interruptionTaken = true;
-        store.takeStops(sessionId, interruption.keys, { dropped: interruption.dropped }).catch(e => console.error('  中断で止めたものを伝えた記録に失敗:', String(e?.message ?? e)));
-      }
-      if (shellHandoff && !shellHanded) {
-        shellHanded = true;
-        shellRuns.delivered(sessionId, shellHandoff.ids, shellHandoff.skipped).catch(e => console.error('  shell: 渡した記録に失敗:', String(e?.message ?? e)));
-      }
-      if (initialDelivered || !args.messageId) return;
-      initialDelivered = true;
-      emit({ type: 'userMessage.delivered', messageId: args.messageId });
-    };
-    const saveContext = async () => {
-      await turn.setup;
-      if (turn.info.sessionId) await store.setSessionData(turn.info.sessionId, 'contextSession', contextRecord);
-      emit({ type: 'contextUsage', report: structuredClone(contextRecord.report), plyParts: contextRecord.plyParts ?? null });
-    };
-    try {
+    const ctx = await prepareTurn(args, hooks, compactionRevision);
+    return await driveTurn(ctx, async () => {
       await onStarted();
-      didStart = true;
-      // 次のターンが始まったので中断の印を消し、走っている印を付ける（新しい会話は id が決まったとき。makeEmit の session）
-      if (sessionId) limitStates.delete(sessionId);
-      if (sessionId) await store.setMeta(sessionId, { turnStartedAt: turn.startedAtMs, interrupted: null }).catch(err => {
-        console.error("  ターンの開始の記録に失敗:", String(err?.message ?? err));
-      });
-      // 中断で止めたものがあれば、エージェントの言語で文にして発言の前に添える（圧縮のターンでは添えない）。
-      // 画面には、何を伝えたかを開ける 1 行で出す（履歴は system-messages.mjs の splitInterruptionNotes が同じ行にする）。
-      // 発言の吹き出しの後に送り、画面は messageId の吹き出しの前へ置く（履歴と同じ並び）
-      if (sessionId && !hooks.compact) {
-        const stops = (await store.get(sessionId).catch(() => null))?.stops;
-        interruption = interruptionNote(agentLocale, stops, stops?.reason);
-      }
-      if (args.messageId) emit({ type: "userMessage", messageId: args.messageId, text: String(prompt ?? ""), at: args.at, initial: true, pending: true,
-        ...(args.scheduledFor ? { scheduledFor: args.scheduledFor } : {}),
-        ...(args.sentBy ? { sentBy: publicSender(args.sentBy) } : {}) });
-      if (interruption) emit({ type: 'interruptionNote', text: interruption.body, ...(args.messageId ? { messageId: args.messageId } : {}) });
-      broadcastRunning();
-      syncRunningPoll();
-      if (resolvedContext?.servers.length) emit({ type: 'activity', state: 'preparing' });
-      if (hooks.internal) {
-        await recordTaskNotice(sessionId, prompt);
-        // bot の会話へ渡すチャンネルの出来事・記憶の包みは、履歴と同じ行の形で出す（splitLeadingNotes）。それ以外は、本文も載せる。
-        // 画面の「タスクの結果で再開」の 1 行を開くと読める（ADR 0053）
-        const rows = channelEventRows(prompt);
-        if (rows.length) emit({ type: 'channelEvent', rows });
-        else emit({ type: 'taskNotice', text: String(prompt ?? '') });
-      }
-      await saveContext();
-      // agy のように会話のあいだ 1 本のプロセスを生かすバックエンドには、会話ごとの同じトークンで開く（起動時にしか渡せない）
-      if (resolvedContext) runtimeContext = await contextBridge.open({ runtime: resolvedContext, prompt,
-        ...(backend.capabilities?.plyContext === 'conversation' ? { token: conversationConnection(turn).contextToken } : {}),
-        origin: localOrigin(), signal: turn.ac.signal,
-        isActive: () => runtime.turns.get(turn.key) === turn && !turn.ac.signal.aborted, changed: saveContext,
-        progress: ({ current, total }) => emit({ type: 'activity', state: 'preparing', current, total }),
-        authorize: backend.id === 'codex' && !['full','yolo'].includes(permissionMode)
-          ? async (serverName, toolName, input) => Boolean((await askPermission({ toolName: `${serverName} / ${toolName}`, input, sessionId: turn.info.sessionId, signal: turn.ac.signal, kind: 'tool', canAlways: false, locale: agentLocale }))?.allow)
-          : undefined });
-      if (resolvedContext?.servers.length) emit({ type: 'activity', state: 'thinking' });
-      // 再開なら id が分かっているので先に載せる。新規は session イベントで id が決まった瞬間に（makeEmit）
-      if (sessionId && attachments.length) await presentAttachments(sessionId, attachments, emit);
-      if (hooks.signal?.aborted) throw new Error(t('turn.aborted'));
-      // Codex は走っている `!` のターンに発言を入れ、返答しないまま閉じる。終わるまで待ってから始める（ADR 0054）
-      if (sessionId && shellMode(backend) === 'native' && shellRuns.runningIn(sessionId)) {
-        await shellRuns.settled(sessionId, turn.ac.signal);
-        if (turn.ac.signal.aborted) throw new Error(t('turn.aborted'));
-      }
-      // bot の会話なら、人格（botInstructions）と、ターンの末尾（記憶の核の写し・差分。notes）を足す。bot でなければ空
-      const botExtras = await botHost?.turnExtras(turn) ?? { botInstructions: null, notes: [] };
-      const notes = [...(interruption ? [interruption.text] : []), ...botExtras.notes];
-      const runArgs = {
-        prompt,
-        ...(shellHandoff?.lines.length ? { shellAppends: shellHandoff.lines } : {}),
-        ...(notes.length ? { notes } : {}),
-        ...(botExtras.botInstructions ? { botInstructions: botExtras.botInstructions } : {}),
-        ...(botExtras.folders ? { botFolders: botExtras.folders } : {}),
-        ...(hooks.compact ? { compact: hooks.compact } : {}),
-        sessionId,
-        cwd,
-        mode: permissionMode,
-        model: model || undefined,
-        effort,
-        // 渡った合図（onPromptDelivered）を呼ばないバックエンド（antigravity）もある。返答の中身が届いたら渡ったとみなす
-        emit: (event, opts) => { if (ANSWER_EVENTS.has(event?.type)) onPromptDelivered(); return emit(event, opts); },
-        onPromptDelivered,
-        // 拒否・中断の理由をこの会話の言語で返すため、会話の言語を添えて聞く
-        askPermission: request => askPermission({ ...request, locale: agentLocale }),
-        hostInvoke: async (op, args) => {
-          const result = await opsRegistry.invoke({ by: 'agent', via: 'mcp', sessionId: args.sessionId }, op, args, opsDeps(agentLocale));
-          if (!result.ok) throw new Error(result.error);
-          return result.result;
-        },
-        signal: turn.ac,
-        control: turn.control,
-        // エージェントに渡す文（指示・ツールの説明・タイトル生成など）の言語。会話ごとに決めて保存したもの
-        locale: agentLocale,
-        visualizeInstructions: visualizeInstructions(agentLocale),
-        browserEnv: await browserEnvironment({ bridge: agentBrowserEndpoints, dataDir: store.dataDir, sessionId: sessionId || turn.key, unlock: turn.userInitiated }).catch(error => { console.error('agent browser unavailable:', error.message); return null; }),
-        browserInstructions: null,
-        // ply_browser。内蔵ブラウザーを渡すターンだけ（下で入れる）
-        browserRuntime: null,
-        // ply_computer（url・headers・instructions）。使えない・オフ・対応しないエージェントなら null（computerRuntimeFor）
-        computerRuntime: await computerRuntimeFor(turn),
-        // ply_control（操作の一覧）。全会話に渡す。env は会話のシェルへ渡す CLI の接続情報
-        controlRuntime: controlRuntimeFor(turn),
-        addedInstructions: !backend.capabilities?.plyAgents ? withAdded(null, contextRecord.added) : null,
-        contextRuntime: runtimeContext,
-        // Hooks を Pleiad がそろえるターンだけ（担当がエージェントなら渡さない。エージェントの設定の hooks がそのまま動く）
-        ...(hooksTurn?.runtime ? { hooksRuntime: hooksTurn.runtime } : {}),
-        // 橋は会話ごとに使い回すので、Pleiad の指示はターンごとにここで足す（設定の変更が始まっている会話にも次のターンから効く）
-        agentRuntime: (runtime => ({ ...runtime, instructions: withAdded(runtime.instructions, contextRecord.added) }))(agentConnection(turn)),
-        // 会話で選んだアカウントのトークン。この会話の query() の env にだけ入る（core/claude-accounts.mjs）
-        ...(account ? { oauthToken: account.token } : {}),
-        // 互換の接続先（キーを含む。backend の中でだけ使い、ログ・イベントには出さない。core/compat-endpoints.mjs）
-        ...(endpoint ? { endpoint } : {}),
-      };
-      if (runArgs.browserEnv) {
-        // 中継へ渡したキー。新規会話の id 決定での付け替え（rebind）と、承認の問い合わせ（getAgent）がこれで照合する
-        turn.browserRelayId = sessionId || turn.key;
-        // i18n-dynamic: agent:browser.instructions
-        runArgs.browserInstructions = browserInstruction(runArgs.browserEnv, agentLocale, agentT);
-        runArgs.browserRuntime = browserRuntimeFor(turn);
-      }
-      // Pleiad が足した文の量（右パネルの「指示の量」。ADR 0056）。このターンで渡す文が出そろったここで数え、変わったときだけ記録し直す
-      const parts = plyParts({ plyAgents: Boolean(backend.capabilities?.plyAgents), context: runtimeContext?.sections ?? null,
-        visualize: runArgs.visualizeInstructions, browser: runArgs.browserInstructions, agents: agentConnection(turn).instructions, added: contextRecord.added,
-        computer: computerPrompt(runArgs.computerRuntime, { locale: agentLocale, agent: backend.id }), control: runArgs.controlRuntime.instructions });
-      if (JSON.stringify(parts) !== JSON.stringify(contextRecord.plyParts ?? null)) { contextRecord.plyParts = parts; await saveContext(); }
+      ctx.didStart = true;
+      await beginTurn(ctx);
       // Preparation can await context and settings. A send or cancellation may have invalidated
       // an idle reservation since the first check; do not invoke the backend in that case.
-      if (hooks.canInvoke && !hooks.canInvoke()) {
-        turn.outcome = 'requeue';
-        return 'requeue';
-      }
-      // git の作業場所なら、ターンの始まりの状態を隠し ref に撮る（書き込みの範囲のターンだけ。圧縮では撮らない。ADR 0085）。
-      // 撮影が遅いときは待たずに始める（その回は撮影なし）
-      if (GIT_SNAPSHOTS && !hooks.compact && scopeRank(modePosition(backend.modes()?.[permissionMode]).scope) > scopeRank('readonly')) {
-        turn.gitSetup = gitActivity.begin({ cwd }).then(g => {
-          if (turn.gitLate) return null;
-          turn.git = g;
-          return g && turn.info.sessionId ? gitActivity.attach(g, turn.info.sessionId) : null;
-        }).catch(() => {});
-        let began = false;
-        await Promise.race([turn.gitSetup.then(() => { began = true; }), new Promise(resolve => setTimeout(resolve, GIT_BEGIN_WAIT_MS).unref?.())]);
-        // 間に合わなかった。エージェントが動き出した後の撮影は基準にならないので、このターンは撮らない
-        if (!began) turn.gitLate = true;
-      }
-      backendInvoked = true;
-      const result = hooks.compact && backend.compact
-        ? await backend.compact({ ...runArgs, trigger: hooks.compact })
-        : await backend.runTurn(runArgs);
-      if (hooks.compact && !turn.compaction?.phase?.match(/^complete$/)) {
-        emit({ type: 'compaction', phase: 'failed', trigger: hooks.compact,
-          reason: result?.compactionFailureReason || turn.compaction?.reason || t('compaction.noCompletion') });
-      }
-      if (hooks.compact && turn.outcome == null) emit({ type: 'turnResult', outcome: 'ok' });
-      // 相手が別のターンを走らせていて、何も届かなかった。
-      // 完了ではない。送信待ちへ戻し（message-queue）、そのターンが終わってから送り直す
-      if (result?.requeue) turn.outcome = "requeue";
-      await turn.visualizations.close();
-      // Complete any accepted steering write before releasing the live snapshot.
-      if (sessionId) await outbox.list(sessionId);
-      if (turn.info.sessionId) {
-        await turn.setup;
-        if (attachments.length || turn.steeredAttachments?.length) {
-          await Promise.all(turn.presentWrites);
-          // 中断の後に添えた文は発言から切り分けてから照らす（history.loadTranscript と同じ）
-          const messages = splitLeadingNotes(await backend.getMessages(turn.info.sessionId));
-          let cursor = baseline.messages.length;
-          for (const attachment of [{ key: turn.presentKey, prompt }, ...(turn.steeredAttachments ?? [])]) {
-            const index = messages.findIndex((m, i) => i >= cursor && m.role === 'user' && m.text === attachment.prompt);
-            if (index < 0) continue;
-            cursor = index + 1;
-            await history.anchorAttachments(turn.info.sessionId, attachment.key, messages[index].uuid);
-          }
-        }
-        await store.setMeta(turn.info.sessionId, { lastModified: Date.now() }).catch(() => {});
-      }
-    } catch (err) {
-      if (hooks.compact && turn.compaction?.phase !== 'complete') emit({ type: 'compaction', phase: 'failed', trigger: hooks.compact,
-        reason: String(err?.message ?? err) });
-      if (resolvedContext) { contextRecord.report.status = 'failed'; await saveContext().catch(() => {}); }
-      if (!turn.errorShown) {
-        if (turn.backend.id === 'antigravity') turn.failureReason = { source: 'server.catch', error: String(err?.message ?? err).slice(0, 1000) };
-        emit({ type: "turnResult", outcome: "error", error: String(err?.message ?? err) });
-      }
-      // プロンプトを渡す前に失敗した（backends/undelivered.mjs）。送信済みにしたままだと、本文がどこにも残らず消える。
-      // 送信待ちの「失敗」に戻し、利用者に再送か取り消しを選ばせる
-      if ((err?.undelivered || !backendInvoked) && sessionId && args.messageId) {
-        await outbox.undelivered(sessionId, args.messageId, String(err?.message ?? err)).catch(() => {});
-      }
-      if (!didStart) throw err;
-    } finally {
-      // 渡らずに終わった `!` の行は、また「渡さない」を切り替えられる
-      if (shellHandoff && !shellHanded) shellRuns.release(sessionId, shellHandoff);
-      if (didStart && turn.outcome !== 'ok' && turn.outcome !== 'requeue') await outbox.pause(sessionId).catch(() => {});
-      await turn.visualizations.close().catch(err => {
-        if (turn.backend.id === 'antigravity') turn.failureReason = { source: 'visualizations.close', error: String(err?.message ?? err).slice(0, 1000) };
-        emit({ type: 'turnResult', outcome: 'error', error: t('turn.visualizationSaveFailed', { error: err.message }) });
-      });
-      await Promise.allSettled([runtimeContext?.close()]);
-      await saveContext().catch(() => {
-        if (turn.backend.id === 'antigravity') turn.failureReason = { source: 'saveContext', error: t('turn.contextSaveFailed') };
-        emit({ type: 'turnResult', outcome: 'error', error: t('turn.contextSaveFailed') });
-      });
-      // git の動き（ADR 0085）: ターンの終わりの撮影と、返答の下の 1 行の元。ファイル・コミット・ブランチ・PR のどれかが動いたときだけ会話に残す
-      if (turn.gitSetup && didStart && turn.outcome !== 'requeue') {
-        const summary = await Promise.race([
-          turn.gitSetup.then(() => (turn.git ? gitActivity.finish(turn.git, turn.info.sessionId, turn.gitCalls.events()) : null)),
-          new Promise(resolve => setTimeout(resolve, GIT_END_WAIT_MS, null).unref?.()),
-        ]).catch(() => null);
-        if (summary && turn.info.sessionId) emit({ type: 'present', kind: 'git', git: summary, by: 'ai', at: new Date().toISOString(), sessionId: turn.info.sessionId });
-      }
-      await endTurn(turn, emit, { record: didStart });
-      hooks.signal?.removeEventListener("abort", abortFromTask);
-    }
-    return turn.outcome;
+      if (hooks.canInvoke && !hooks.canInvoke()) return { requeue: true, beforeInvoke: true };
+      return await launchTurn(ctx);
+    });
   } finally {
-    switching.delete(sessionId);
-    completionNotices.changed(sessionId);
-    notifyFree(sessionId);
-    await kickQueued();
+    await releaseTurn(sessionId);
   }
+}
+
+async function prepareTurn(args, hooks, compactionRevision) {
+  const { prompt, sessionId = null } = args ?? {};
+
+  // 行き先が決まらないターンは始めない。断るのは登録する前。
+  await settingsWrites.get(sessionId);
+  let backend = refuseRetired(await pickBackend(sessionId, args?.backend));
+  const reserved = sessionId ? (await store.get(sessionId)).nextSettings : null;
+  let { cwd, changedFrom } = await resolveCwd(sessionId, reserved?.cwd ?? args?.cwd, backend);
+  // Claude のアカウント。削除済み・トークンが読めないものを選んでいる会話は、ここで止める
+  // （黙ってログイン中のアカウントで走らせない）。予約の切り替えより前に確かめる
+  const accountBackend = (reserved && getBackend(reserved.backend)) || backend;
+  // 互換の接続先（'' = 公式）。削除済み・確認に失敗している・キーを読めないものを選んでいる会話は、ここで止める
+  // （黙って公式で走らせない。アカウントと同じ扱い）。新しい会話は、設定で「既定にする」を押した接続先（無ければ公式）
+  const endpointId = !endpointCapable(accountBackend) ? ''
+    : reserved?.endpoint !== undefined ? reserved.endpoint
+    : sessionId ? (await store.get(sessionId)).compatEndpoint ?? ''
+    : typeof args?.endpoint === 'string' ? args.endpoint : await compatEndpoints.defaultFor(accountBackend.id);
+  const endpoint = endpointId ? await compatEndpoints.resolve(endpointId, accountBackend.id) : null;
+  const endpointInfo = endpointId ? await endpointRow(endpointId) : null;
+  // Claude のアカウント。互換の接続先では使わない（接続先のキーで送る）ので引かない
+  const accountId = reserved?.account !== undefined ? reserved.account : sessionId ? (await store.get(sessionId)).claudeAccount ?? "" : "";
+  const account = !endpoint && accountBackend.capabilities?.claudeAccounts ? await claudeAccounts.resolve(accountId) : null;
+  if (reserved) {
+    const target = getBackend(reserved.backend);
+    if (!target || !await validModel(target, reserved.model, cwd, endpointId) || (reserved.mode !== undefined && !target.modes()[reserved.mode])) throw new Error(t('turn.reservedInvalid'));
+    await validateEffort(target, reserved.effort ?? '', reserved.model, cwd, endpointInfo);
+    if (target.id !== backend.id) {
+      await switchBackend(sessionId, backend, target);
+      await shellRuns.switched(sessionId, backend, target);
+    }
+    backend = target;
+  }
+  await backend.prepareTurn?.(sessionId);
+  // Reject before marking the conversation sent or consuming its pending handoff.
+  if (hooks.compact && backend.compact) {
+    const record = await conversation(sessionId);
+    if (record && !record.nativeId) throw new Error(t('compaction.notStarted'));
+  }
+  // 再開のセッションの作業ディレクトリを人が変えた。status / title と同じく履歴に残し、一覧と会話に知らせる。
+  // エージェントが新しい cwd でセッションを見つけられるかはエージェント次第（claude は init の id で確かめる）
+  if (changedFrom) {
+    await store.recordChange(sessionId, { by: "human", field: "cwd", from: changedFrom, to: cwd, ...savedReason('resumeCwd'), backend });
+    emitGlobal({ type: "cwd", sessionId, cwd, by: "human", ...savedReason('cwdFrom', { from: changedFrom }) });
+  }
+  // 会話の言語（エージェントに渡す文の言語）。記録にあればそれ、無ければ今の画面の言語で決めて保存する（新規は id が決まったとき）
+  const agentLocale = sessionId ? await ensureAgentLocale(sessionId) : currentLocale();
+  const permissionMode = await resolveMode(sessionId, reserved ? reserved.mode : args?.mode, backend);
+  const model = await resolveModel(sessionId, reserved ? reserved.model : args?.model, backend, cwd, endpointId);
+  const effort = await resolveEffort(sessionId, reserved ? reserved.effort ?? "" : args?.effort, backend, model, cwd, endpointInfo);
+  // worktree（ADR 0089）。使う場所が worktree の中なら控える（片付けの印・取り込みを頼む相手）。片付けている最中の場所では始めない。
+  const worktreeEntry = await worktreeHost.worktrees.byPath(cwd);
+  if (worktreeEntry && worktreeEntry.state !== 'ready') throw new Error(t('worktree.cleaning'));
+  if (sessionId) {
+    if (!hooks.compact) await store.setSessionData(sessionId, 'compacted', false);
+    await store.setModel(sessionId, model);
+    await store.setSessionData(sessionId, "effort", effort);
+    if (reserved?.account !== undefined) await store.setSessionData(sessionId, 'claudeAccount', reserved.account);
+    if (reserved?.endpoint !== undefined) await store.setSessionData(sessionId, 'compatEndpoint', reserved.endpoint);
+    await store.setMode(sessionId, permissionMode);
+    await store.setMeta(sessionId, { cwd, unsent: false, lastModified: Date.now() });
+    if (reserved) {
+      await store.setSessionData(sessionId, "nextSettings", null, { durable: true });
+      emitGlobal({ type: "backend", sessionId, backend: backend.id, applied: true });
+      emitGlobal({ type: "nextSettings", sessionId, nextSettings: null });
+    }
+    // 委譲の子なら、タスクの記録を実際に走る値に合わせる（依頼元が替えた予約を人が取り消した・替えたとき。ADR 0134）
+    const synced = await agentTasks?.sync(sessionId, { backend: backend.id, model, effort, mode: permissionMode }).catch(() => null);
+    if (synced) emitGlobal({ type: 'agentTaskChanged', sessionId: null, taskId: synced });
+  }
+
+  if (changedFrom) settleWorktreeAt(changedFrom).catch(() => {});
+  // 新規のときだけ効く状態。再開したセッションの状態は setStatus で変える
+  const status = !sessionId && typeof args?.status === "string" && args.status.trim()
+    ? args.status.trim() : null;
+  // 入力欄に溜めていた添付（attachFile が置いたもの）。送信と一緒に会話へ載せる
+  const attachments = Array.isArray(args?.attachments) ? args.attachments : [];
+  const baseline = await history.loadTranscript(sessionId, backend);
+  // 前のターンまでのサブエージェント。listSubagents は全期間の分を返すので、実行中一覧から外すために覚える。
+  // CLI を起こす前に取る（後で取ると、このターンで生まれた分まで前の分に数えてしまう）
+  const pastSubagents = new Set(sessionId && backend.listSubagents
+    ? await backend.listSubagents(sessionId).catch(() => []) : []);
+  const previousContext = sessionId ? (await store.get(sessionId)).contextSession : null;
+  // 方針（担当・探索の計画）はターンごとに今の設定と作業場所で解き直す。設定の変更は始まっている会話にも次のターンから効く。
+  // 「この会話では外す」MCP と開始時刻は会話の方針として引き継ぐ（followSettings）。コンテキストの記録が無いまま送信済みの会話
+  // （この機能より前の会話）はエージェント任せのまま。作業場所を変えたときの探し直しは下の読み込み直し（refreshedContext）で知らせる
+  const { policy: followed, changed: settingsChanged } = followSettings(previousContext?.policy ?? null, await contextSettings.get(cwd),
+    { keepNative: !previousContext && baseline.messages.length > 0 });
+  let policy = followed;
+  // Pleiad 担当のコンテキストを受け取れないバックエンド（antigravity）では、担当が Pleiad でもエージェント任せとして扱う。
+  // 開いても届かない上に、外部 MCP へ無駄に接続（stdio なら起動）してしまう
+  const plyContext = managed(policy) && acceptsPlyContext(backend, policy);
+  const resolvedContext = plyContext ? await resolveRuntime(policy, { plyServers: await plyMcp.scanInput(), snapshots: CONTEXT_SNAPSHOTS, locale: agentLocale }) : null;
+  // 開始時の固定と違う＝指示・Skills が変わった。止めずに今の内容で続ける（resolvedContext が今のファイルで解き直した結果なので、
+  // 記録も pin も自動で新しくなる）。指示本文は毎ターン指示欄へ渡し直し、Skills はカタログしか渡していないので技術的な制約は無い。
+  // 右パネルの「渡したもの」との食い違いだけが問題なので、読み込み直したことを履歴と会話に残す
+  const refreshedContext = Boolean(plyContext && previousContext?.pin && resolvedContext?.pin !== previousContext.pin);
+  // コンテキストの設定の変更（担当・探す範囲・外部 MCP の登録や有効／無効）を、このターンから反映した
+  const appliedSettings = Boolean(previousContext && settingsChanged.length);
+  // instructions_for_path / load_skill で渡し済みの本文の控え（行の id → 本文のハッシュ）。会話の記録に残して
+  // 次のターンへ持ち越し、同じものを頼まれたら短い一行だけを返す（core/context-runtime.mjs の contextTools）。
+  // 履歴を引き継ぎの文で渡し直すターン（バックエンドの切り替え・ホスト側で写した分岐）と、記録した相手と違うバックエンドでは捨てる。
+  // 渡した本文が相手の手元に残っているとは限らないため
+  const handoff = await pendingHandoff(sessionId).catch(() => true);
+  const delivered = !handoff && previousContext?.delivered?.backend === backend.id ? { ...previousContext.delivered.entries } : {};
+  if (resolvedContext) resolvedContext.delivered = delivered;
+  // エージェント任せにしたターンでも固定（pin）は捨てない。Pleiad 担当を受け取れるエージェントへ戻したときに突き合わせる
+  const contextRecord = { policy: refreshedContext || appliedSettings ? { ...policy, refreshedAt: new Date().toISOString() } : policy,
+    pin: resolvedContext?.pin ?? (plyContext ? null : previousContext?.pin ?? null), report: resolvedContext?.report ?? nativeContextReport(policy, cwd, backend),
+    delivered: { backend: backend.id, entries: delivered },
+    // Pleiad が足した文の量（ADR 0056）。渡す文が出そろった所（下の runArgs の後）で数え直す。それまでは前のターンの値を見せる
+    ...(previousContext?.plyParts ? { plyParts: previousContext.plyParts } : {}) };
+  // Pleiad の指示（core/ply-instructions.mjs）。担当によらず、ターンごとに今の設定・モード・子かどうか・エージェントで決める。
+  // 渡すのは ply_agents の instructions の後ろ（下の agentRuntime）。項目ごとに入れたか（入れなかった理由）を会話の記録に残し、右パネルに出す
+  const added = turnInstructions({ list: plyInstructionsCache, locale: agentLocale, routing: routingSettingsCache.enabled,
+    child: Boolean(sessionId && (await store.get(sessionId)).delegation), supported: Boolean(backend.capabilities?.plyAgents),
+    canDelegate: canDelegate(backend.modes()[permissionMode]), agent: INSTRUCTION_AGENTS.includes(backend.id) ? backend.id : null });
+  if (added) contextRecord.added = added;
+  // Hooks の担当が Pleiad の場所（ADR 0049）。このエージェントへ渡す登録・止めるネイティブ・渡せないものを組み立て、会話の記録に残す。
+  // 組み立てられなければ送らない（ネイティブと登録が二重に動くか、どちらも動かないため）
+  let hooksTurn = null;
+  try { hooksTurn = await prepareHooksTurn({ agent: backend.id, cwd, ctx: { plyHooks, hooksConfig, dataDir: store.dataDir, findNode: findNodeOnPath,
+    context: { owners: policy.owners, delivered: plyContext } } }); }
+  catch (e) { throw new Error(t('hooksUnify.prepareFailed', { error: String(e?.message ?? e) })); }
+  if (hooksTurn) contextRecord.hooks = hooksTurn.record;
+  if (appliedSettings) {
+    await store.recordChange(sessionId, { by: 'ply', field: 'context', from: previousContext.pin ?? null, to: contextRecord.pin,
+      ...savedReason('contextSettingsApplied'), backend });
+    emitGlobal({ type: 'contextRefreshed', sessionId, settings: true, kinds: settingsChanged, names: [], count: 0 });
+  } else if (refreshedContext) {
+    // 何が変わったかは前の記録と今の記録の突き合わせで出す（pinChanges を呼ぶと同じターンで探索がもう一度走る）
+    const changed = pinnedChanges(previousContext.report?.entries ?? [], resolvedContext.report.entries);
+    const names = changed.map(c => c.name || path.basename(c.path ?? '')).filter(Boolean).slice(0, 3);
+    const reason = !names.length ? savedReason('contextReloaded')
+      : changed.length > names.length ? savedReason('contextChangedMore', { names, count: changed.length - names.length })
+      : savedReason('contextChanged', { names });
+    await store.recordChange(sessionId, { by: 'ply', field: 'context', from: previousContext.pin, to: resolvedContext.pin, ...reason, backend });
+    emitGlobal({ type: 'contextRefreshed', sessionId, names, count: changed.length });
+  }
+  const turn = {
+    stream: {
+      ...structuredClone(baseline),
+      user: hooks.internal || hooks.compact ? null : { role: "user", text: String(prompt ?? ""), at: new Date().toISOString(), backend: backend.id },
+      initialMessageId: args.messageId ?? null,
+      events: [],
+    },
+    key: sessionId ?? `new:${crypto.randomUUID()}`,
+    ac: new AbortController(),
+    // 中断の理由（abortSessions / giveUp が止める前に付ける。無いまま中断で終わったら user）
+    abortReason: null,
+    startedAtMs: Date.now(),
+    userSentAt: toMs(args.at) ?? Date.now(),
+    backend,
+    agentLocale,
+    control: { handle: null, touch: () => touchCard(turn), track: promise => trackIn(handover.inflight, promise), onReady: () => {
+      outbox.kick(sessionId).catch(() => {});
+      agentTasks?.sendQueued(sessionId).catch(() => {});
+    } },
+    outcome: null,
+    compactTrigger: hooks.compact ?? null,
+    compactionRevision,
+    userInitiated: !hooks.internal && !hooks.compact,
+    compaction: null,
+    compactionWrite: Promise.resolve(),
+    contextWindow: null,
+    contextRecord,
+    taskHints: new Map(),
+    pastSubagents,
+    subagentOrigins: new Map(),
+    presentKey: crypto.randomUUID(),
+    presentWrites: [],
+    // 受理した途中送信（送信待ちの項目）のうち、渡った合図（userMessage.delivered / dropped）をまだ待っているものの id（steerConfirms のバックエンドだけ）。札の steers
+    pendingSteers: new Set(),
+    ended: false,
+    info: {
+      sessionId,
+      backend: backend.id,
+      startedAt: new Date().toISOString(),
+      cwd,
+      mode: permissionMode,
+      model: model || "",
+      effort,
+      endpoint: endpointId,
+      account: accountId,
+      status,
+      attachments,
+      // active = main が動いている / waiting = main は返答済みで、裏の subagent などを待っている
+      phase: "active",
+      background: [],
+    },
+  };
+  // 止めた瞬間に、このターンが抱えていたもの（裏の作業・承認待ち）を控える。中断で終わったら会話の「止めたもの」に残す（endTurn）。
+  // 承認待ちの却下（settleAll）より先に走るよう、ほかの abort の受け手より前に付ける
+  turn.ac.signal.addEventListener('abort', () => { turn.stops ??= captureStops(turn); touchCard(turn); }, { once: true });
+  if (hooks.signal?.aborted) turn.ac.abort();
+  const abortFromTask = () => turn.ac.abort();
+  hooks.signal?.addEventListener('abort', abortFromTask, { once: true });
+  runtime.turns.set(turn.key, turn);
+  // 送信待ちから始まったターン（人の発言・別の会話からの発言）で、送信の連鎖の数を決め直す（sessions.send の歯止め）
+  if (args.messageId) noteRelayHops(sessionId, args);
+  for (const read of liveReads) if (read.sessionId === sessionId) read.turn = turn;
+  // worktree を使うターン。会話の id が決まったら台帳に控える
+  turn.worktreeId = worktreeEntry?.id ?? null;
+  if (turn.worktreeId && sessionId) worktreeHost.worktrees.update(turn.worktreeId, { sessionId }).catch(() => {});
+  turn.gitCalls = createCallTracker();
+  const emit = makeEmit(turn);
+  turn.visualizations = createVisualizationCollector({
+    access: fileAccess,
+    publish: async payload => {
+      await turn.setup;
+      const id = turn.info.sessionId;
+      if (!id) throw new Error(t('agentRuntime.visualizeNotStarted'));
+      const record = await history.recordPresent(id, { ...payload, turnKey: turn.presentKey });
+      emit({ type: 'present', sessionId: id, ...record }, { recorded: true });
+    },
+  });
+
+  // 入力欄の `!` の結果（ADR 0054）。人の発言のターンでだけ、発言と一緒に渡す（完了通知で再開するターン・圧縮では渡さない）。
+  // 'host' の会話は未送の追記を shouldQuery: false の行で先に渡す。'native'（Codex）はエージェントの会話に既に入っている。
+  // 「渡さない」の行は渡さず、渡った後に会話に残す行へ移す（ADR 0055）
+  const shellHandoff = sessionId && !hooks.internal && !hooks.compact && shellMode(backend)
+    ? (shellMode(backend) === 'host' ? await shellRuns.appendsFor(sessionId) : { ids: [], skipped: [], lines: [] }) : null;
+
+  const ctx = {
+    args,
+    hooks,
+    sessionId,
+    prompt,
+    backend,
+    cwd,
+    account,
+    accountId,
+    endpoint,
+    endpointId,
+    agentLocale,
+    permissionMode,
+    model,
+    effort,
+    attachments,
+    baselineLength: baseline.messages.length,
+    policy,
+    plyContext,
+    resolvedContext,
+    hasContext: Boolean(resolvedContext),
+    contextRecord,
+    hooksTurn,
+    turn,
+    emit,
+    abortFromTask,
+    didStart: false,
+    backendInvoked: false,
+    runtimeContext: null,
+    initialDelivered: false,
+    // 中断で止めたもの（stops）を伝える文。このターンの発言の前に 1 回だけ添え、渡ったら会話から消す（docs/design.md「中断と再開」）
+    interruption: null,
+    interruptionTaken: false,
+    shellHandoff,
+    shellHanded: false,
+    runArgs: null,
+  };
+  bindTurnContext(ctx);
+  turnContexts.set(turn, ctx);
+  return ctx;
+}
+
+/** 渡った合図（onPromptDelivered）と文脈の保存（saveContext）を ctx に付ける。準備（prepareTurn）と付け直し（restoreTurn）が使う */
+function bindTurnContext(ctx) {
+  const { args, turn, emit } = ctx;
+  ctx.onPromptDelivered = () => {
+    touchCard(turn);   // 札の渡った合図の印（delivery）が変わりうる
+    if (ctx.interruption && !ctx.interruptionTaken) {
+      ctx.interruptionTaken = true;
+      store.takeStops(ctx.sessionId, ctx.interruption.keys, { dropped: ctx.interruption.dropped }).catch(e => console.error('  中断で止めたものを伝えた記録に失敗:', String(e?.message ?? e)));
+    }
+    if (ctx.shellHandoff && !ctx.shellHanded) {
+      ctx.shellHanded = true;
+      shellRuns.delivered(ctx.sessionId, ctx.shellHandoff.ids, ctx.shellHandoff.skipped).catch(e => console.error('  shell: 渡した記録に失敗:', String(e?.message ?? e)));
+    }
+    if (ctx.initialDelivered || !args.messageId) return;
+    ctx.initialDelivered = true;
+    emit({ type: 'userMessage.delivered', messageId: args.messageId });
+  };
+
+  ctx.saveContext = async () => {
+    // 付け直したターンは、会話に保存済みのコンテキストの記録が無いことがある（記録の無い会話）。そのときは書かない
+    if (!ctx.contextRecord) return;
+    await turn.setup;
+    if (turn.info.sessionId) await store.setSessionData(turn.info.sessionId, 'contextSession', ctx.contextRecord);
+    emit({ type: 'contextUsage', report: structuredClone(ctx.contextRecord.report), plyParts: ctx.contextRecord.plyParts ?? null });
+  };
+}
+
+async function beginTurn(ctx) {
+  const { args, hooks, sessionId, prompt, backend, cwd, account, endpoint, agentLocale,
+    permissionMode, model, effort, attachments, contextRecord, hooksTurn, turn, emit,
+    resolvedContext, shellHandoff } = ctx;
+
+  // 次のターンが始まったので中断の印を消し、走っている印を付ける（新しい会話は id が決まったとき。makeEmit の session）
+  if (sessionId) limitStates.delete(sessionId);
+  if (sessionId) await store.setMeta(sessionId, { turnStartedAt: turn.startedAtMs, interrupted: null }).catch(err => {
+    console.error("  ターンの開始の記録に失敗:", String(err?.message ?? err));
+  });
+  // 中断で止めたものがあれば、エージェントの言語で文にして発言の前に添える（圧縮のターンでは添えない）。
+  // 画面には、何を伝えたかを開ける 1 行で出す（履歴は system-messages.mjs の splitInterruptionNotes が同じ行にする）。
+  // 発言の吹き出しの後に送り、画面は messageId の吹き出しの前へ置く（履歴と同じ並び）
+  if (sessionId && !hooks.compact) {
+    const stops = (await store.get(sessionId).catch(() => null))?.stops;
+    ctx.interruption = interruptionNote(agentLocale, stops, stops?.reason);
+  }
+  if (args.messageId) emit({ type: "userMessage", messageId: args.messageId, text: String(prompt ?? ""), at: args.at, initial: true, pending: true,
+    ...(args.scheduledFor ? { scheduledFor: args.scheduledFor } : {}),
+    ...(args.sentBy ? { sentBy: publicSender(args.sentBy) } : {}) });
+  if (ctx.interruption) emit({ type: 'interruptionNote', text: ctx.interruption.body, ...(args.messageId ? { messageId: args.messageId } : {}) });
+  broadcastRunning();
+  syncRunningPoll();
+  if (resolvedContext?.servers.length) emit({ type: 'activity', state: 'preparing' });
+  if (hooks.internal) {
+    await recordTaskNotice(sessionId, prompt);
+    // bot の会話へ渡すチャンネルの出来事・記憶の包みは、履歴と同じ行の形で出す（splitLeadingNotes）。それ以外は、本文も載せる。
+    // 画面の「タスクの結果で再開」の 1 行を開くと読める（ADR 0053）
+    const rows = channelEventRows(prompt);
+    if (rows.length) emit({ type: 'channelEvent', rows });
+    else emit({ type: 'taskNotice', text: String(prompt ?? '') });
+  }
+  await ctx.saveContext();
+  // agy のように会話のあいだ 1 本のプロセスを生かすバックエンドには、会話ごとの同じトークンで開く（起動時にしか渡せない）
+  if (resolvedContext) ctx.runtimeContext = await contextBridge.open({ runtime: resolvedContext, prompt,
+    ...(backend.capabilities?.plyContext === 'conversation' ? { token: conversationConnection(turn).contextToken } : {}),
+    origin: localOrigin(), signal: turn.ac.signal,
+    isActive: () => runtime.turns.get(turn.key) === turn && !turn.ac.signal.aborted, changed: ctx.saveContext,
+    progress: ({ current, total }) => emit({ type: 'activity', state: 'preparing', current, total }),
+    authorize: backend.id === 'codex' && !['full','yolo'].includes(permissionMode)
+      ? async (serverName, toolName, input) => Boolean((await askPermission({ toolName: `${serverName} / ${toolName}`, input, sessionId: turn.info.sessionId, signal: turn.ac.signal, kind: 'tool', canAlways: false, locale: agentLocale }))?.allow)
+      : undefined });
+  if (resolvedContext?.servers.length) emit({ type: 'activity', state: 'thinking' });
+  // 再開なら id が分かっているので先に載せる。新規は session イベントで id が決まった瞬間に（makeEmit）
+  if (sessionId && attachments.length) await presentAttachments(sessionId, attachments, emit);
+  if (hooks.signal?.aborted) throw new Error(t('turn.aborted'));
+  // Codex は走っている `!` のターンに発言を入れ、返答しないまま閉じる。終わるまで待ってから始める（ADR 0054）
+  if (sessionId && shellMode(backend) === 'native' && shellRuns.runningIn(sessionId)) {
+    await shellRuns.settled(sessionId, turn.ac.signal);
+    if (turn.ac.signal.aborted) throw new Error(t('turn.aborted'));
+  }
+  // bot の会話なら、人格（botInstructions）と、ターンの末尾（記憶の核の写し・差分。notes）を足す。bot でなければ空
+  const botExtras = await botHost?.turnExtras(turn) ?? { botInstructions: null, notes: [] };
+  const notes = [...(ctx.interruption ? [ctx.interruption.text] : []), ...botExtras.notes];
+  const runArgs = {
+    prompt,
+    ...(shellHandoff?.lines.length ? { shellAppends: shellHandoff.lines } : {}),
+    ...(notes.length ? { notes } : {}),
+    ...(botExtras.botInstructions ? { botInstructions: botExtras.botInstructions } : {}),
+    ...(botExtras.folders ? { botFolders: botExtras.folders } : {}),
+    ...(hooks.compact ? { compact: hooks.compact } : {}),
+    sessionId,
+    cwd,
+    mode: permissionMode,
+    model: model || undefined,
+    effort,
+    // 渡った合図（onPromptDelivered）を呼ばないバックエンド（antigravity）もある。返答の中身が届いたら渡ったとみなす
+    emit: (event, opts) => { if (ANSWER_EVENTS.has(event?.type)) ctx.onPromptDelivered(); return emit(event, opts); },
+    onPromptDelivered: ctx.onPromptDelivered,
+    // 拒否・中断の理由をこの会話の言語で返すため、会話の言語を添えて聞く
+    askPermission: request => askPermission({ ...request, locale: agentLocale }),
+    hostInvoke: hostInvokeFor(agentLocale),
+    signal: turn.ac,
+    control: turn.control,
+    // エージェントに渡す文（指示・ツールの説明・タイトル生成など）の言語。会話ごとに決めて保存したもの
+    locale: agentLocale,
+    visualizeInstructions: visualizeInstructions(agentLocale),
+    browserEnv: await browserEnvironment({ bridge: agentBrowserEndpoints, dataDir: store.dataDir, sessionId: sessionId || turn.key, unlock: turn.userInitiated }).catch(error => { console.error('agent browser unavailable:', error.message); return null; }),
+    browserInstructions: null,
+    // ply_browser。内蔵ブラウザーを渡すターンだけ（下で入れる）
+    browserRuntime: null,
+    // ply_computer（url・headers・instructions）。使えない・オフ・対応しないエージェントなら null（computerRuntimeFor）
+    computerRuntime: await computerRuntimeFor(turn),
+    // ply_control（操作の一覧）。全会話に渡す。env は会話のシェルへ渡す CLI の接続情報
+    controlRuntime: controlRuntimeFor(turn),
+    addedInstructions: !backend.capabilities?.plyAgents ? withAdded(null, contextRecord.added) : null,
+    contextRuntime: ctx.runtimeContext,
+    // Hooks を Pleiad がそろえるターンだけ（担当がエージェントなら渡さない。エージェントの設定の hooks がそのまま動く）
+    ...(hooksTurn?.runtime ? { hooksRuntime: hooksTurn.runtime } : {}),
+    // 橋は会話ごとに使い回すので、Pleiad の指示はターンごとにここで足す（設定の変更が始まっている会話にも次のターンから効く）
+    agentRuntime: (runtime => ({ ...runtime, instructions: withAdded(runtime.instructions, contextRecord.added) }))(agentConnection(turn)),
+    // 会話で選んだアカウントのトークン。この会話の query() の env にだけ入る（core/claude-accounts.mjs）
+    ...(account ? { oauthToken: account.token } : {}),
+    // 互換の接続先（キーを含む。backend の中でだけ使い、ログ・イベントには出さない。core/compat-endpoints.mjs）
+    ...(endpoint ? { endpoint } : {}),
+  };
+  if (runArgs.browserEnv) {
+    // 中継へ渡したキー。新規会話の id 決定での付け替え（rebind）と、承認の問い合わせ（getAgent）がこれで照合する
+    turn.browserRelayId = sessionId || turn.key;
+    // i18n-dynamic: agent:browser.instructions
+    runArgs.browserInstructions = browserInstruction(runArgs.browserEnv, agentLocale, agentT);
+    runArgs.browserRuntime = browserRuntimeFor(turn);
+  }
+  // Pleiad が足した文の量（右パネルの「指示の量」。ADR 0056）。このターンで渡す文が出そろったここで数え、変わったときだけ記録し直す
+  const parts = plyParts({ plyAgents: Boolean(backend.capabilities?.plyAgents), context: ctx.runtimeContext?.sections ?? null,
+    visualize: runArgs.visualizeInstructions, browser: runArgs.browserInstructions, agents: agentConnection(turn).instructions, added: contextRecord.added,
+    computer: computerPrompt(runArgs.computerRuntime, { locale: agentLocale, agent: backend.id }), control: runArgs.controlRuntime.instructions });
+  if (JSON.stringify(parts) !== JSON.stringify(contextRecord.plyParts ?? null)) { contextRecord.plyParts = parts; await ctx.saveContext(); }
+  ctx.runArgs = runArgs;
+}
+
+/** バックエンドの host の口（in-process の MCP）から操作の一覧を呼ぶ。ターンを始めるとき（beginTurn）と付け直すとき（adoptTurn） */
+function hostInvokeFor(agentLocale) {
+  return (op, args) => trackIn(handover.inflight, (async () => {
+    const result = await opsRegistry.invoke({ by: 'agent', via: 'mcp', sessionId: args.sessionId }, op, args, opsDeps(agentLocale));
+    if (!result.ok) throw new Error(result.error);
+    return result.result;
+  })());
+}
+
+async function launchTurn(ctx) {
+  const { turn, backend, hooks, cwd, permissionMode, runArgs } = ctx;
+  // git の作業場所なら、ターンの始まりの状態を隠し ref に撮る（書き込みの範囲のターンだけ。圧縮では撮らない。ADR 0085）。
+  // 撮影が遅いときは待たずに始める（その回は撮影なし）
+  if (GIT_SNAPSHOTS && !hooks.compact && scopeRank(modePosition(backend.modes()?.[permissionMode]).scope) > scopeRank('readonly')) {
+    turn.gitSetup = gitActivity.begin({ cwd }).then(g => {
+      if (turn.gitLate) return null;
+      turn.git = g;
+      touchCard(turn);
+      return g && turn.info.sessionId ? gitActivity.attach(g, turn.info.sessionId) : null;
+    }).catch(() => {});
+    let began = false;
+    await Promise.race([turn.gitSetup.then(() => { began = true; }), new Promise(resolve => setTimeout(resolve, GIT_BEGIN_WAIT_MS).unref?.())]);
+    // 間に合わなかった。エージェントが動き出した後の撮影は基準にならないので、このターンは撮らない
+    if (!began) { turn.gitLate = true; touchCard(turn); }
+  }
+  ctx.backendInvoked = true;
+  return hooks.compact && backend.compact
+    ? await backend.compact({ ...runArgs, trigger: hooks.compact })
+    : await backend.runTurn(runArgs);
+}
+
+async function afterResult(ctx, result) {
+  const { turn, emit, hooks, sessionId, attachments, prompt } = ctx;
+  if (hooks.compact && !turn.compaction?.phase?.match(/^complete$/)) {
+    emit({ type: 'compaction', phase: 'failed', trigger: hooks.compact,
+      reason: result?.compactionFailureReason || turn.compaction?.reason || t('compaction.noCompletion') });
+  }
+  if (hooks.compact && turn.outcome == null) emit({ type: 'turnResult', outcome: 'ok' });
+  // 相手が別のターンを走らせていて、何も届かなかった。
+  // 完了ではない。送信待ちへ戻し（message-queue）、そのターンが終わってから送り直す
+  if (result?.requeue) turn.outcome = "requeue";
+  await turn.visualizations.close();
+  // Complete any accepted steering write before releasing the live snapshot.
+  if (sessionId) await outbox.list(sessionId);
+  if (turn.info.sessionId) {
+    await turn.setup;
+    if (attachments.length || turn.steeredAttachments?.length) {
+      await Promise.all(turn.presentWrites);
+      // 中断の後に添えた文は発言から切り分けてから照らす（history.loadTranscript と同じ）
+      const messages = splitLeadingNotes(await ctx.backend.getMessages(turn.info.sessionId));
+      let cursor = ctx.baselineLength;
+      // 付け直したターン（restoreTurn）の札は本文の代わりにハッシュを持つ（core/turn-card.mjs）
+      const same = (m, a) => (a.promptHash ? promptHash(m.text) === a.promptHash : m.text === a.prompt);
+      for (const attachment of [{ key: turn.presentKey, ...(ctx.card ? { promptHash: ctx.card.promptHash } : { prompt }) }, ...(turn.steeredAttachments ?? [])]) {
+        const index = messages.findIndex((m, i) => i >= cursor && m.role === 'user' && same(m, attachment));
+        if (index < 0) continue;
+        cursor = index + 1;
+        await history.anchorAttachments(turn.info.sessionId, attachment.key, messages[index].uuid);
+      }
+    }
+    await store.setMeta(turn.info.sessionId, { lastModified: Date.now() }).catch(() => {});
+  }
+}
+
+async function driveTurn(ctx, start) {
+  const { turn, emit, hooks, sessionId, args } = ctx;
+  // バックエンドを呼ぶ前に戻した（canInvoke）。後始末の失敗で turn.outcome が変わっても 'requeue' を返す
+  let beforeInvoke = false;
+  try {
+    const result = await start();
+    if (turn.handedOff) return 'handedOff';
+    if (result?.beforeInvoke) {
+      beforeInvoke = true;
+      turn.outcome = 'requeue';
+    } else {
+      await afterResult(ctx, result);
+    }
+  } catch (err) {
+    if (turn.handedOff) return 'handedOff';
+    if (hooks.compact && turn.compaction?.phase !== 'complete') emit({ type: 'compaction', phase: 'failed', trigger: hooks.compact,
+      reason: String(err?.message ?? err) });
+    if (ctx.resolvedContext) { ctx.contextRecord.report.status = 'failed'; await ctx.saveContext().catch(() => {}); }
+    if (!turn.errorShown) {
+      if (turn.backend.id === 'antigravity') turn.failureReason = { source: 'server.catch', error: String(err?.message ?? err).slice(0, 1000) };
+      emit({ type: "turnResult", outcome: "error", error: String(err?.message ?? err) });
+    }
+    // プロンプトを渡す前に失敗した（backends/undelivered.mjs）。送信済みにしたままだと、本文がどこにも残らず消える。
+    // 送信待ちの「失敗」に戻し、利用者に再送か取り消しを選ばせる
+    if ((err?.undelivered || !ctx.backendInvoked) && sessionId && args.messageId) {
+      await outbox.undelivered(sessionId, args.messageId, String(err?.message ?? err)).catch(() => {});
+    }
+    if (!ctx.didStart) throw err;
+  } finally {
+    // 付け直しに渡したターン（handOffTurn）は、このサーバーでは締めない（新しいサーバーの adoptTurn が締める。X1・X2）
+    if (!turn.handedOff) await closeTurn(ctx);
+    hooks.signal?.removeEventListener("abort", ctx.abortFromTask);
+  }
+  return beforeInvoke ? 'requeue' : turn.outcome;
+}
+
+/** ターンの締め（driveTurn の後始末）。送信待ち・表示・コンテキスト・git の終わりを書き、endTurn で終える */
+async function closeTurn(ctx) {
+  const { turn, emit, sessionId } = ctx;
+  // 渡らずに終わった `!` の行は、また「渡さない」を切り替えられる
+  if (ctx.shellHandoff && !ctx.shellHanded) shellRuns.release(sessionId, ctx.shellHandoff);
+  if (ctx.didStart && turn.outcome !== 'ok' && turn.outcome !== 'requeue') await outbox.pause(sessionId).catch(() => {});
+  await turn.visualizations.close().catch(err => {
+    if (turn.backend.id === 'antigravity') turn.failureReason = { source: 'visualizations.close', error: String(err?.message ?? err).slice(0, 1000) };
+    emit({ type: 'turnResult', outcome: 'error', error: t('turn.visualizationSaveFailed', { error: err.message }) });
+  });
+  await Promise.allSettled([ctx.runtimeContext?.close()]);
+  await ctx.saveContext().catch(() => {
+    if (turn.backend.id === 'antigravity') turn.failureReason = { source: 'saveContext', error: t('turn.contextSaveFailed') };
+    emit({ type: 'turnResult', outcome: 'error', error: t('turn.contextSaveFailed') });
+  });
+  // git の動き（ADR 0085）: ターンの終わりの撮影と、返答の下の 1 行の元。ファイル・コミット・ブランチ・PR のどれかが動いたときだけ会話に残す
+  if (turn.gitSetup && ctx.didStart && turn.outcome !== 'requeue') {
+    const summary = await Promise.race([
+      turn.gitSetup.then(() => (turn.git ? gitActivity.finish(turn.git, turn.info.sessionId, turn.gitCalls.events()) : null)),
+      new Promise(resolve => setTimeout(resolve, GIT_END_WAIT_MS, null).unref?.()),
+    ]).catch(() => null);
+    if (summary && turn.info.sessionId) emit({ type: 'present', kind: 'git', git: summary, by: 'ai', at: new Date().toISOString(), sessionId: turn.info.sessionId });
+  }
+  await endTurn(turn, emit, { record: ctx.didStart });
+}
+
+async function releaseTurn(sessionId, { adopted = false } = {}) {
+  if (!adopted && sessionId) switching.delete(sessionId);
+  completionNotices.changed(sessionId);
+  notifyFree(sessionId);
+  await kickQueued();
+}
+
+// ---- 付け直し（無停止の更新 2b-4。docs/zero-downtime-update/stage2-server-state.md §4.2・§5）----------------------
+
+/** 出している承認のカード（中継の複製・設定の変更の承認・ホストへ任せた子の承認を除く）の id。札の waits */
+const openWaitIds = sessionId => !sessionId ? [] : [...runtime.waiting]
+  .filter(([, w]) => !w.relay && !w.detached && !w.remote && w.payload.sessionId === sessionId).map(([id]) => id);
+
+/** 完了通知の本文を札に置く文字数の上限。長い結果が載る通知で札が上限を超えないよう、本文は切る（付け直した先の画面の通知の一行が短くなるだけ。ハッシュと元の文字数は残す） */
+const NOTICE_CARD_CHARS = 4000;
+
+/**
+ * 札の途中送信の欄（steers。stage2-server-state.md §3 の 3）: 渡った合図（userMessage.delivered / dropped）を待っている控えを、項目の id ごとに
+ * 「誰が待っているか」（waiters）と一緒にまとめる。送信待ちの項目の受理（pendingSteers）・走っている依頼元へ渡した完了通知（liveNotices）・
+ * 子のターンへ渡した追加指示（liveInstructions と、agentTasks の steers の claim）。bot の liveSteers は bot の会話を付け直さないので入れない。
+ * Claude の pendingSteers（CLI の uuid との組）は 2c が backendCard に足す。付け直す側は restoreSteers で同じ控えを作り直す
+ */
+function steersOf(turn) {
+  const sessionId = turn.info.sessionId;
+  const steers = {};
+  const add = (id, waiter, detail = {}) => { const entry = steers[id] ??= { waiters: [] }; entry.waiters.push(waiter); Object.assign(entry, detail); };
+  for (const id of turn.pendingSteers ?? []) add(id, 'pendingSteers');
+  for (const [id, notice] of liveNotices) {
+    if (notice.owner !== sessionId) continue;
+    add(id, 'liveNotices', { notice: { prompt: notice.prompt.slice(0, NOTICE_CARD_CHARS), promptHash: promptHash(notice.prompt), promptChars: notice.prompt.length,
+      items: notice.items, ...(notice.settingNotices ? { settingNotices: notice.settingNotices } : {}) } });
+  }
+  for (const [id, sent] of liveInstructions) {
+    if (sent.sessionId !== sessionId) continue;
+    add(id, 'liveInstructions', { taskId: sent.taskId, instructionIds: sent.instructionIds });
+    add(id, 'agentTasks');
+  }
+  return steers;
+}
+
+/**
+ * 札の steers から、付け直すターンの途中送信の控えを作り直す（steersOf の逆。restoreTurn が呼ぶ）。戻り値は pendingSteers の id の集合。
+ * texts は、このターンの transcript の人の発言（ハッシュ -> 本文）。札で切った完了通知の本文は、折り込まれていればここから戻す（2c）
+ */
+function restoreSteers(sessionId, steers, texts = new Map()) {
+  const pending = new Set();
+  for (const [id, entry] of Object.entries(steers)) {
+    if (entry.waiters.includes('pendingSteers')) pending.add(id);
+    const notice = entry.waiters.includes('liveNotices') ? entry.notice : null;
+    if (notice && typeof notice.prompt === 'string' && Array.isArray(notice.items)) {
+      const prompt = notice.promptChars > notice.prompt.length ? texts.get(notice.promptHash) ?? notice.prompt : notice.prompt;
+      liveNotices.set(id, noticeEntry(sessionId, prompt, notice.items.map(x => ({ taskId: String(x?.taskId ?? ''), revision: x?.revision ?? 0 })),
+        Array.isArray(notice.settingNotices) ? notice.settingNotices : null));
+    }
+    if (entry.waiters.includes('liveInstructions') && typeof entry.taskId === 'string' && Array.isArray(entry.instructionIds)) {
+      liveInstructions.set(id, { sessionId, taskId: entry.taskId, instructionIds: entry.instructionIds.filter(x => typeof x === 'string') });
+    }
+  }
+  return pending;
+}
+
+/** ターンの札（cardOf の { card, secrets }）。会話の口のトークン・出している承認の id・途中送信の控え・委譲の子の実行の控えを足す。作れなければ投げる */
+function takeCard(ctx) {
+  const { turn } = ctx;
+  const entry = agentConnections.get(turn.key);
+  // ply_context の口は、会話のあいだ同じ値で開くバックエンド（agy）でなければ、ターンごとの値で開く（launchTurn）。CLI が持つのはその値なので、札にはその値を置く
+  // （付け直す側の adoptTurn が同じ値で開き直す。2c）
+  const live = /^Bearer ([a-f0-9]{64})$/.exec(ctx.runtimeContext?.headers?.Authorization ?? '')?.[1] ?? null;
+  const tokens = entry ? { ...connectionTokens(entry), ...(live ? { context: live } : {}) } : null;
+  // バックエンドの欄（backendCard）は、保持役に子を載せるバックエンドが control.backendCard で渡す（Claude の途中送信の控え・費用の基準など。2c）
+  return cardOf({ ...ctx, backendCard: turn.control?.backendCard?.() ?? null, connectionTokens: tokens, waits: openWaitIds(turn.info.sessionId),
+    stopping: Boolean(turn.info.stopping || turn.ac.signal.aborted), steers: steersOf(turn), execution: taskExecutions.get(turn.info.sessionId) ?? null });
+}
+
+/**
+ * 札の置き直し（無停止の更新 2b-6）。保持役に子を載せるバックエンドは、ターンの control に holder: { label(card) } を渡す（置き直す口）。
+ * 札の中身が変わるたび（ターンの始まり・渡った合図・承認の出入り・中断の始まり・途中送信の添付・git の撮影）にここへ来て、保持役の子の札（label）を
+ * 置き直す。サーバーが強制終了された（2e）とき、新しいサーバーが付け直すのは、この札を読んで（旧サーバーが手を離す handOffTurn を経ない）。
+ * 同じ tick の呼び出しは 1 回にまとめる（変わった後の値を置く）。バックエンドを呼ぶ前・会話の id が決まる前・手を離した後・終わった後は置かない
+ */
+function touchCard(turn) {
+  if (!turn?.control?.holder || turn.cardPending || turn.handedOff || turn.ended) return;
+  turn.cardPending = true;
+  setImmediate(() => {
+    turn.cardPending = false;
+    const ctx = turnContexts.get(turn);
+    if (!ctx || turn.handedOff || turn.ended || !turn.info.sessionId || !ctx.backendInvoked) return;
+    try { turn.control.holder.label(takeCard(ctx).card); }
+    catch (e) { console.error(`  札を保持役に置き直せない（${turn.info.sessionId}）:`, String(e?.message ?? e)); }
+  });
+}
+
+/**
+ * 旧サーバーの口（2d が引き継ぎで呼ぶ）: 走っているターンを付け直しに渡し、保持役に置く札（cardOf の { card, secrets }）を返す。
+ * 渡したターンは、このサーバーでは締めず（driveTurn。X1）出来事も流さない（makeEmit）。detach の後に query を閉じるとバックエンドは
+ * aborted で返るので、そのまま締めると中断の印と completedAt が書かれる。会話の id が決まる前・バックエンドを呼ぶ前のターンと、
+ * 札が作れない（上限を超える）ターンは渡さない（null。今の中断のまま）
+ */
+function handOffTurn(key) {
+  const turn = runtime.turns.get(key);
+  const ctx = turn && turnContexts.get(turn);
+  if (!ctx || turn.ended || turn.handedOff || !turn.info.sessionId || !ctx.backendInvoked) return null;
+  let taken;
+  try { taken = takeCard(ctx); }
+  catch (e) { console.error(`  ターンを付け直しに渡せない（${turn.info.sessionId}）:`, String(e?.message ?? e)); return null; }
+  turn.handedOff = true;
+  return taken;
+}
+
+/**
+ * このターンは、保持役に載っていて新しいサーバーへ渡せるか（引き継ぎ。core/handover.mjs）。札を置く口 control.holder（handOff を持つもの）を渡す
+ * バックエンドの、バックエンドを呼んだ後のターン。bot の会話と圧縮のターンは渡さない（restoreTurn が付け直さない）
+ */
+function holdable(turn) {
+  const ctx = turn && turnContexts.get(turn);
+  if (!ctx || !ctx.backendInvoked || ctx.hooks?.compact || turn.ended || turn.handedOff || !turn.info.sessionId || !turn.control.holder?.handOff) return false;
+  return !store.peek(turn.info.sessionId)?.bot;
+}
+
+/** 旧サーバーの引き継ぎ（core/handover.mjs）。main の handover の依頼で走る。成功すると release の中で main へ答えてロックを放し、このプロセスは終わる */
+let handoverReply = null;
+const handoverRun = createHandover({
+  log: line => console.log(`  [handover] ${line}`),
+  hold: () => { handover.hold = true; },
+  unhold: () => {
+    handover.hold = false;
+    // 送信待ちに回していた分を送る
+    void store.getAll().then(all => { for (const [id, meta] of Object.entries(all)) if (meta.outbox?.length) outbox.kick(id).catch(() => {}); }).catch(() => {});
+  },
+  settled: () => {
+    const busy = [];
+    // switching はターンの間ずっと会話を持つ（releaseTurn が外す）。走っているターンの分は短い処理ではない
+    if ([...switching].some(id => !runtime.turns.has(id))) busy.push('switching');
+    if ([...forking].some(id => !runtime.turns.has(id))) busy.push('forking');
+    if (outbox.busy) busy.push('outbox');
+    if (agentTasks.settling) busy.push('notices');
+    if (handover.critical.size) busy.push('steer');
+    if (schedule.firing) busy.push('schedule');
+    return { ok: busy.length === 0, detail: busy.join(', ') };
+  },
+  blockers: () => {
+    const out = [];
+    const heldIds = new Set();
+    for (const turn of runtime.turns.values()) {
+      if (holdable(turn)) heldIds.add(turn.info.sessionId);
+      else out.push({ kind: 'turn', sessionId: turn.info.sessionId ?? null });
+    }
+    for (const [, w] of runtime.waiting) if (!w.relay && !w.detached && !heldIds.has(w.payload.sessionId ?? null)) out.push({ kind: 'permission', sessionId: w.payload.sessionId ?? null });
+    for (const r of agentTasks.running()) if (!r.host && ['queued', 'running', 'cancelling'].includes(r.status) && !runtime.turns.has(r.sessionId)) out.push({ kind: 'task', sessionId: r.sessionId ?? null });
+    return out;
+  },
+  inflight: () => handover.inflight.size,
+  turns: () => [...runtime.turns.values()].filter(holdable).map(turn => ({ key: turn.key, sessionId: turn.info.sessionId, turn })),
+  stopTimers: () => { schedule.pause(); compactionScheduler.stop(); },
+  resumeTimers: () => { schedule.resume(); compactionScheduler.resume(); },
+  take: item => handOffTurn(item.key),
+  untake: item => { item.turn.handedOff = false; },
+  detach: (item, taken) => item.turn.control.holder.handOff(taken.card),
+  abortOne: item => {
+    // 渡せなかったターンだけ中断する（理由は update。「再開」で続けられる）。このサーバーが締める
+    item.turn.handedOff = false;
+    void abortSessions({ sessionId: item.sessionId, reason: 'update' }).catch(() => {});
+  },
+  ended: item => item.turn.ended || runtime.turns.get(item.key) !== item.turn,
+  // 預かり物（トークン・ポート）を保持役へ置く。居る保持役にだけ（保持役が無ければ、新しいサーバーは main の渡した変数で起動する）
+  stash: async () => {
+    const root = BOOT_ENV.AGENT_HOST_RUNTIME_ROOT;
+    const client = root ? await holderLink({ dataDir: store.dataDir, root, launch: false }).catch(() => null) : null;
+    if (!client) return;
+    client.stash(stashOf({ token: TOKEN, cliToken: CLI_TOKEN, port: server.address().port, appVersion: APP_VERSION }));
+    // 預かり物の書き込みに答えは無い。同じ接続の順序は保たれるので、手を離す依頼（もう離れている）の答えを待てば、預かり物は保持役に届いている
+    await client.detach().catch(() => {});
+  },
+  // DB を書き切り、main へ答えてから、データ置き場のロックを放して終わる（以後このプロセスは何も書かない）
+  release: async result => {
+    await Promise.race([voiceHost.close(), new Promise(resolve => setTimeout(resolve, 2000))]).catch(() => {});
+    chromeRelay?.close();
+    store.flushNow();
+    handoverReply?.({ ...result, at: Date.now(), pid: process.pid });
+    // 答えがパイプへ出るのを待ってから終わる（すぐ終わると、書きかけの答えが main に届かないことがある）
+    await new Promise(resolve => setTimeout(resolve, 60));
+    // 待ち受けのポートも新しいサーバーのために空ける（同じポートで待ち受ける。画面は 1.5 秒ごとのつなぎ直しで戻る）
+    server.close();
+    server.closeAllConnections?.();
+    // bot の DB（別のファイル）を閉じ、データ置き場の DB の接続を持ち主が残っていても全部閉じてから、ロックを放す（新サーバーが取ってすぐ開く）
+    await Promise.race([Promise.resolve(botHost?.close?.()), new Promise(resolve => setTimeout(resolve, 1500))]).catch(() => {});
+    store.closeStore();
+    closeDataDb(store.dataDir);
+    releaseDataLock();
+    console.log(`  [handover] released the data lock at=${Date.now()}`);
+    process.exit(0);
+  },
+});
+
+/** main の handover の依頼（desktop/switch.cjs）。引き継げれば release の中で答えて終わる。引き継げなければ答え（ok: false。サーバーは元のまま）を返す */
+async function handoverToNext(data) {
+  const reply = body => mainPort.postMessage({ type: 'handover', id: data.id, ...body });
+  if (!mainLink) return reply({ ok: false, reason: 'unsupported' });
+  handoverReply = reply;
+  const result = await handoverRun.run({ ...(Number(data.drainMs) > 0 ? { drainMs: Number(data.drainMs) } : {}), ...(Number(data.inflightMs) >= 0 ? { inflightMs: Number(data.inflightMs) } : {}) })
+    .catch(error => ({ ok: false, reason: 'error', detail: String(error?.message ?? error) }));
+  if (!result.ok) reply(result);
+}
+
+/**
+ * 札と付け直す元（core/adopt.mjs の source）から、走っているターン（runtime.turns の 1 件と ctx）を組み立てて登録する。
+ * 起動時の後片付け（送信待ちの戻し・中断の記録）より前に呼ぶ。口を開き直すのと記録を流すのは、待ち受けの後の adoptTurn。
+ * 付け直せない（札が大きすぎる・版が違う・会話の走っている印と合わない・記録に印が無い・切れている・続きを受けられない、
+ * bot の会話・圧縮のターン・タスクの id が分からない委譲の子。委譲の子は 2b-7 から付け直す）ときは投げる。呼び出し側は何もせず、今の起動時の restart の回復（中断）に任せる
+ */
+async function restoreTurn(card, source) {
+  if (Buffer.byteLength(JSON.stringify(card ?? null), 'utf8') > CARD_MAX_BYTES) throw new Error('card too large');
+  const fields = restoreFields(card);
+  if (!fields) throw new Error('unknown card version');
+  const { sessionId, startedAtMs } = fields;
+  if (!sessionId || fields.key !== sessionId) throw new Error('no session id');
+  if (runtime.turns.has(sessionId)) throw new Error('already running');
+  if (!fields.presentKey || !fields.connectionTokens?.context) throw new Error('card is incomplete');
+  const backend = getBackend(fields.backendId);
+  if (!backend?.adoptTurn) throw new Error(`backend cannot adopt: ${fields.backendId}`);
+  const meta = await store.get(sessionId);
+  // 札が、この会話の走っている印（turnStartedAt）のターンのものか。合わない札は前の版のターンのもの
+  if (!meta.turnStartedAt || meta.turnStartedAt !== startedAtMs) throw new Error('turn mismatch');
+  // bot の会話（O21）・圧縮のターンは付け直さない。委譲の子は、タスクの id が分かるときだけ（結果の確定は adoptChild が agentTasks へ引き継ぐ。2b-7）
+  if (meta.bot || fields.compactTrigger) throw new Error('not adoptable');
+  const taskId = meta.delegation ? (meta.delegation.taskId ?? null) : null;
+  if (meta.delegation && (!taskId || (fields.taskId && fields.taskId !== taskId))) throw new Error('not adoptable');
+  if (!Number.isInteger(source?.state?.marks?.[ADOPT_TURN_MARK])) throw new Error('no turn mark');
+  if (source.state.truncated) throw new Error('record truncated');
+  if (!source.attachable) throw new Error('child cannot be attached');
+
+  // ターンの前の履歴（T1）。付け直しの時点の履歴にはこのターンの途中の発言が入っているので、札の切り口で切る。
+  // このターンの present（turnKey）は記録の再生が積むので外す
+  const transcript = await history.loadTranscript(sessionId, backend).catch(() => ({ messages: [], presents: [] }));
+  const lastAt = fields.baseline.lastUuid ? transcript.messages.findIndex(m => m.uuid === fields.baseline.lastUuid) : -1;
+  const count = lastAt >= 0 ? lastAt + 1 : Math.min(fields.baseline.count, transcript.messages.length);
+  const turnKeys = new Set([fields.presentKey, ...fields.steeredAttachments.map(a => a.key)]);
+  const baseline = { ...transcript, messages: transcript.messages.slice(0, count),
+    presents: (transcript.presents ?? []).filter(p => !turnKeys.has(p.turnKey)) };
+  // 発言の本文は札に入れていない（core/turn-card.mjs）。履歴の切り口の後ろか、送信待ちの項目から引き、ハッシュで突き合わせる
+  const queued = fields.messageId ? (await outbox.list(sessionId).catch(() => [])).find(m => m.id === fields.messageId) : null;
+  const prompt = [...transcript.messages.slice(count).filter(m => m.role === 'user').map(m => m.text), queued?.args?.prompt]
+    .find(text => typeof text === 'string' && promptHash(text) === fields.promptHash) ?? '';
+
+  const cwd = meta.cwd ?? fields.cwd;
+  const agentLocale = fields.agentLocale;
+  // 会話の記録の写し（store.get は記録そのものを返す。そのまま持つと、ターンの途中の変更が saveContext の「変わっていない」の判定で書かれない）
+  const contextRecord = structuredClone(meta.contextSession ?? null);
+  const turn = {
+    stream: {
+      ...structuredClone(baseline),
+      user: fields.internal ? null : { role: 'user', text: prompt, at: fields.user?.at ?? new Date(startedAtMs).toISOString(), backend: backend.id },
+      initialMessageId: fields.messageId,
+      events: [],
+    },
+    key: sessionId,
+    ac: new AbortController(),
+    abortReason: fields.abortReason,
+    startedAtMs,
+    userSentAt: fields.userSentAt ?? startedAtMs,
+    backend,
+    agentLocale,
+    control: { handle: null, touch: () => touchCard(turn), track: promise => trackIn(handover.inflight, promise), onReady: () => {
+      outbox.kick(sessionId).catch(() => {});
+      agentTasks?.sendQueued(sessionId).catch(() => {});
+    } },
+    outcome: null,
+    compactTrigger: null,
+    // 予約の版は compactionScheduler のメモリの値。待ち受けの後（adoptTurn）で取り直す（T15）
+    compactionRevision: null,
+    userInitiated: !fields.internal,
+    compaction: null,
+    compactionWrite: Promise.resolve(),
+    contextWindow: null,
+    contextRecord,
+    taskHints: new Map(),
+    pastSubagents: fields.pastSubagents,
+    subagentOrigins: new Map(),
+    presentKey: fields.presentKey,
+    presentWrites: [],
+    // 渡った合図を待つ途中送信の控え。付け直しでは札の steers から作り直す（restoreSteers。作るのは下の登録の前）
+    pendingSteers: new Set(),
+    ended: false,
+    // id は決まっている（付け直すのは id が決まったターンだけ。T5）。id 決定時の書き込みは済んでいる（T36）
+    setup: Promise.resolve(),
+    ...(fields.steeredAttachments.length ? { steeredAttachments: fields.steeredAttachments } : {}),
+    ...(fields.browserRelayId ? { browserRelayId: fields.browserRelayId } : {}),
+    info: {
+      sessionId,
+      backend: backend.id,
+      startedAt: new Date(startedAtMs).toISOString(),
+      cwd,
+      mode: meta.mode ?? fields.permissionMode,
+      model: meta.model ?? fields.model ?? '',
+      effort: meta.effort ?? fields.effort,
+      endpoint: fields.endpointId,
+      account: fields.accountId,
+      status: null,
+      attachments: fields.attachments,
+      phase: 'active',
+      background: [],
+    },
+  };
+  // 止め始めていたターン（T7）。中断をもう一度送るのは adoptTurn
+  if (fields.stopping) turn.info.stopping = true;
+  turn.savedHookLeaks = savedHookLeaks(contextRecord?.hooks, startedAtMs);
+  // 始まりの撮影（T33）。撮れていれば終わりの撮影（closeTurn）に渡す
+  if (fields.git?.activity) { turn.git = fields.git.activity; turn.gitSetup = Promise.resolve(fields.git.activity); }
+  if (fields.git?.late) turn.gitLate = true;
+  turn.ac.signal.addEventListener('abort', () => { turn.stops ??= captureStops(turn); touchCard(turn); }, { once: true });
+  turn.worktreeId = (await worktreeHost.worktrees.byPath(cwd).catch(() => null))?.id ?? null;
+  turn.gitCalls = createCallTracker();
+  const emit = makeEmit(turn);
+  turn.visualizations = createVisualizationCollector({
+    access: fileAccess,
+    publish: async payload => {
+      const record = await history.recordPresent(sessionId, { ...payload, turnKey: turn.presentKey });
+      emit({ type: 'present', sessionId, ...record }, { recorded: true });
+    },
+  });
+  const ctx = {
+    args: { sessionId, prompt, messageId: fields.messageId, at: fields.userSentAt, scheduledFor: fields.scheduledFor, sentBy: fields.sentBy },
+    hooks: { internal: fields.internal, ...(taskId ? { taskId } : {}) },
+    sessionId,
+    prompt,
+    backend,
+    cwd,
+    account: null,
+    accountId: fields.accountId,
+    endpoint: null,
+    endpointId: fields.endpointId,
+    agentLocale,
+    permissionMode: turn.info.mode,
+    model: turn.info.model,
+    effort: turn.info.effort,
+    attachments: fields.attachments,
+    baselineLength: count,
+    policy: contextRecord?.policy ?? null,
+    plyContext: false,
+    resolvedContext: null,
+    hasContext: false,
+    contextRecord,
+    hooksTurn: null,
+    turn,
+    emit,
+    abortFromTask: () => {},
+    // 付け直すのはバックエンドを呼んだ後のターンだけ（L4）
+    didStart: true,
+    backendInvoked: true,
+    // ply_context の口（contextBridge.open）は、待ち受けの後の adoptTurn が札のトークンで開き直す（外部 MCP は起こし直す。呼び出しの最中の分は戻らない。R15）
+    runtimeContext: null,
+    initialDelivered: fields.delivery.initialDelivered,
+    interruption: fields.interruption,
+    interruptionTaken: fields.delivery.interruptionTaken,
+    shellHandoff: fields.shellHandoff,
+    shellHanded: fields.delivery.shellHanded,
+    runArgs: null,
+    card: fields,
+    // 委譲の子のターン: タスクの id と実行の控え（結果の確定は adoptChild。rejections・streamed は再生の出来事から作り直る。reply・stopped は札）
+    taskId,
+    execution: taskId ? newExecution(fields.delegation) : null,
+  };
+  bindTurnContext(ctx);
+  turnContexts.set(turn, ctx);
+  runtime.turns.set(turn.key, turn);
+  // 途中送信の控え（札の steers）。登録の後に作り直す（ここから先は投げない）
+  // 札で切った完了通知の本文は、折り込まれていれば transcript の人の発言にある（Claude）。ハッシュで引いて戻す
+  const texts = new Map(transcript.messages.slice(count).filter(m => m.role === 'user' && typeof m.text === 'string').map(m => [promptHash(m.text), m.text]));
+  turn.pendingSteers = restoreSteers(sessionId, fields.steers, texts);
+  if (ctx.execution) taskExecutions.set(sessionId, ctx.execution);
+  return ctx;
+}
+
+/**
+ * 付け直しの入口（無停止の更新 2b-4）: 札と付け直す元から走っているターンの制御を作り、driveTurn で締める（締めの道は通常のターンと 1 本。R2）。
+ * ctx は restoreTurn の戻り値（起動では、後片付けより前に登録しておき、待ち受けの後にこれを呼ぶ）。無ければここで組み立てる。
+ * 会話の口は札のトークンで開き直す（restoreConnection。待ち受けの後でないと開けない）。記録は backend.adoptTurn が流す
+ * （印から ack までは再生。makeEmit の replay）。付け直せなかったら、そのターンを restart の中断で締める（起動時の後片付けと同じ印）
+ */
+async function adoptTurn(card, source, ctx = null, { abandon = null } = {}) {
+  ctx ??= await restoreTurn(card, source);
+  const { turn, sessionId, backend, agentLocale, emit } = ctx;
+  const releaseUpdateGate = updateGate.enter();
+  try {
+    turn.compactionRevision = compactionScheduler.revision(sessionId);
+    return await driveTurn(ctx, async () => {
+      // 再生の終わりに 1 回ずつ（makeEmit が再生では走らせない分。§4.4）
+      let replayed = false, settled = false;
+      const settle = () => {
+        if (settled) return;
+        settled = true;
+        watchChildBackground(turn);
+        broadcastRunning();
+        if (turn.info.phase === 'waiting') outbox.kick(sessionId).catch(() => {});
+      };
+      try {
+        // 待ち受けのポートが取れず付け直しをあきらめた（起動の待ち受け。MCP の口の URL が変わるので付け直せない。§3 の 9）
+        if (abandon) throw new Error(abandon);
+        restoreConnection({ key: turn.key, sessionId, locale: agentLocale, tokens: ctx.card.connectionTokens, computerBackend: backend.id });
+        broadcastRunning();
+        syncRunningPoll();
+        // Pleiad の Hooks の登録（札の hooks があるターン）。Claude は 2 回目の initialize でコールバックを渡し直す（2c）ので、今の設定で組み直す。
+        // 記録（contextRecord.hooks）は札の会話の記録のまま。組めなければ渡さない（そのターンの残りで Pleiad の Hooks が動かない）
+        const hooksTurn = ctx.card.hooks ? await prepareHooksTurn({ agent: backend.id, cwd: ctx.cwd, ctx: { plyHooks, hooksConfig, dataDir: store.dataDir, findNode: findNodeOnPath,
+          context: { owners: ctx.policy?.owners ?? {}, delivered: false } } }).catch(e => { console.error(`  Hooks を組み直せない（${sessionId}）:`, String(e?.message ?? e)); return null; }) : null;
+        // ply_context の口（Pleiad がコンテキストを担当する会話。2c）。札のトークンで開き直し、外部の MCP はこのターンのために起こし直す（R15。ツールの名前は
+        // 項目の id とツールの名前から決まるので同じ。状態は消えるので、起こし直した後の最初の結果にその旨を添える）。開けなければ口の無いまま続ける
+        // （CLI の ply_context の呼び出しが失敗する）。CLI は口の URL・ヘッダーを持っているので、バックエンドには渡さない
+        if (managed(ctx.policy) && acceptsPlyContext(backend, ctx.policy)) {
+          try {
+            const resolved = await resolveRuntime(ctx.policy, { plyServers: await plyMcp.scanInput(), snapshots: CONTEXT_SNAPSHOTS, locale: agentLocale });
+            ctx.runtimeContext = await contextBridge.open({ runtime: resolved, prompt: ctx.prompt, token: ctx.card.connectionTokens.context, restarted: true,
+              origin: localOrigin(), signal: turn.ac.signal, isActive: () => runtime.turns.get(turn.key) === turn && !turn.ac.signal.aborted });
+            console.log(`  ply_context の口を開き直した（${sessionId}）: 外部の MCP ${resolved.servers.length} 件を起こし直した`);
+          } catch (e) { console.error(`  ply_context の口を開き直せない（${sessionId}）:`, String(e?.message ?? e)); }
+        }
+        ctx.runArgs = {
+          sessionId, cwd: ctx.cwd, mode: ctx.permissionMode, model: ctx.model || undefined, effort: ctx.effort,
+          card: ctx.card.backendCard, source,
+          ...(hooksTurn?.runtime ? { hooksRuntime: hooksTurn.runtime } : {}),
+          emit: (event, opts) => {
+            if (opts?.replay) replayed = true;
+            else { if (replayed) settle(); if (ANSWER_EVENTS.has(event?.type)) ctx.onPromptDelivered(); }
+            return emit(event, opts);
+          },
+          onPromptDelivered: ctx.onPromptDelivered,
+          askPermission: request => askPermission({ ...request, locale: agentLocale }),
+          hostInvoke: hostInvokeFor(agentLocale),
+          signal: turn.ac,
+          control: turn.control,
+          locale: agentLocale,
+        };
+        // 止め始めていたターン（T7）は、中断をもう一度送る（旧サーバーの中断が子に届いたか分からない。届いていても重ねて送って害は無い）。理由は札のまま。
+        // 記録の再生は止めない（実行中のスナップショットは印から全部作る）。子への書き込みは付け直した後に出る（core/adopt.mjs の holderSource）
+        if (ctx.card.stopping) {
+          turn.ac.abort();
+          emit({ type: 'activity', state: 'stopping' });
+        }
+        const result = await backend.adoptTurn(ctx.runArgs);
+        if (replayed) settle();
+        console.log(`  ターンを付け直した（${sessionId}）: 記録 ${source.state.id}・ack ${source.acked ?? source.state.acked}`);
+        return result;
+      } catch (err) {
+        console.error(`  ターンを付け直せなかったので中断として残す（${sessionId}）:`, String(err?.message ?? err));
+        turn.abortReason = 'restart';
+        emit({ type: 'turnResult', outcome: 'aborted' });
+        return { sessionId };
+      }
+    });
+  } finally {
+    releaseUpdateGate();
+    // 札の承認のうち、出し直されず決着の行も付かなかったもの（答えが旧サーバーの手を離す前後で記録に入った・付け直しをあきらめた）の通知の一覧の行を畳む。
+    // 決着済みの行には何もしない（出し直して答えた承認は、その答えで決着している）
+    for (const id of ctx.card.waits) void inboxSources.permissionSettled({ id, answer: { messageKey: 'turnEnded' } });
+    await releaseTurn(sessionId, { adopted: true });
+  }
+}
+
+/**
+ * 起動で付け直すターンを読み、登録する（restoreTurn）。元は既定で空。テストだけが付ける: AGENT_HOST_ADOPT_FROM は
+ * 「終わっていたターン」の札と記録（ファイルの元）、AGENT_HOST_ADOPT_HOLDER=1 は保持役の子（2b-5。実行場所の置き場は AGENT_HOST_RUNTIME_ROOT。
+ * 旧サーバーが手を離すときに札を置いた子だけ。保持役に子を載せるバックエンドは fake の台本 held: と、AGENT_HOST_CLAUDE_HOLDER=on の Claude。2c）。core/adopt.mjs。
+ * 付け直せない元は何もせず、起動時の restart の回復に任せる
+ */
+async function restoreAdoptedTurns() {
+  const failed = err => { console.error('  付け直す元を読めませんでした:', String(err?.message ?? err)); return []; };
+  const dir = process.env.AGENT_HOST_ADOPT_FROM;
+  const root = BOOT_ENV.AGENT_HOST_RUNTIME_ROOT;
+  const sources = [
+    ...(dir ? await readAdoptSources(dir).catch(failed) : []),
+    ...((process.env.AGENT_HOST_ADOPT_HOLDER === '1' || HANDOVER_START || handoverEnabled(BOOT_ENV)) && root ? await readHolderSources({ dataDir: store.dataDir, root, appVersion: APP_VERSION }).catch(failed) : []),
+  ];
+  const adopted = [];
+  for (const source of sources) {
+    const card = source.state.label;
+    try { adopted.push({ card, source, ctx: await restoreTurn(card, source) }); }
+    catch (err) { source.dispose?.(); console.error(`  ターンを付け直せないので中断として残す（記録 ${source.id}）:`, String(err?.message ?? err)); }
+  }
+  return adopted;
 }
 
 /**
@@ -5337,6 +6142,8 @@ async function runTurnInternal(args, onStarted, hooks) {
  * requeue（相手が別のターンを走らせていて何も届かなかった）は完了ではないので、使用量も完了時刻も残さない。
  */
 async function endTurn(turn, emit, { record = true } = {}) {
+  if (turn.ended) return;
+  turn.ended = true;
   const requeued = turn.outcome === "requeue";
   const completedAt = requeued ? null : Date.now();
   // 中断で終わった（バックエンドが aborted を返した。止めた後に失敗として終わったものも含む）なら、会話に中断として残す。
@@ -7021,6 +7828,8 @@ mainPort.on("message", async ({ data }) => {
     mainPort.postMessage({ type: 'update-lock', id: data.id, ok, reason: ok ? null : reason || t('updateLock.other') });
   }
   if (data?.type === 'update-unlock') updateGate.release();
+  // 引き継ぎ（無停止の更新 2d。core/handover.mjs）: 保持役に載ったターンを新しいサーバーへ渡して終わる
+  if (data?.type === 'handover') void handoverToNext(data);
   // main がこれから離れる（更新のためなど）。切れた後に作業が無いまま居続ける上限が決まる（core/orphan-guard.mjs）
   if (data?.type === 'main-leaving') orphanGuard?.leaving(data.reason);
   // 更新を取りやめた（インストーラーが起きなかった・失敗した）。main は居続けるので、猶予を数える状態と切断の上限を元に戻す
@@ -7083,7 +7892,9 @@ async function announce() {
     .catch((err) => console.error('  control.json を書けませんでした:', String(err?.message ?? err)));
   // パイプの口は、main がつながるのが ready より後になりうる。つながるたびに最新の ready を送る
   // appVersion・build・runtimeKey は、付け直した新しい main が版を比べて切り替える・前の版へ戻すのに使う（desktop/switch.cjs）
-  readyMessage = { type: "ready", port, token: TOKEN, locale: locale.lang, pid: process.pid, appVersion: APP_VERSION, build: BUILD, runtimeKey: BOOT_ENV.AGENT_HOST_RUNTIME_KEY || null };
+  readyMessage = { type: "ready", port, token: TOKEN, locale: locale.lang, pid: process.pid, appVersion: APP_VERSION, build: BUILD, runtimeKey: BOOT_ENV.AGENT_HOST_RUNTIME_KEY || null,
+    ...(HANDOVER_START ? { handover: { lockWaitedMs: handoverLockWaitedMs, adopted: adopting.length, at: Date.now() } } : {}) };
+  if (HANDOVER_START) console.log(`  [handover] listening at=${Date.now()} (the data lock came ${handoverLockWaitedMs} ms after the start; adopting ${adopting.length} turn(s))`);
   mainPort.postMessage(readyMessage);
   remote.start().catch(() => {});
   if (routingSettingsCache.enabled && ROUTING_USAGE_AUTO) routingUsage.start();
@@ -7105,14 +7916,30 @@ async function announce() {
 // Windows は Hyper-V / WSL が TCP ポート範囲を予約するため、固定ポートが EACCES で落ちることがある。
 // `netsh interface ipv4 show excludedportrange protocol=tcp` で確認できる。範囲は再起動で動く。
 // 落ちるくらいなら空きポートへ逃がし、実際の URL を出す。
-server.once("error", (err) => {
+// 付け直すターンがあるときは、固定のポートが塞がっていても空きポートへ移らず取れるまで待つ（上限 ADOPT_PORT_WAIT_MS。旧サーバーがポートを手放すのを待つ）:
+// 付け直したターンの MCP の口の URL はポートを含み、CLI が持っている URL は変えられない（stage2-server-state.md §3 の 9）。上限を過ぎたら付け直しをあきらめ
+// （そのターンは restart の中断。adoptTurn の abandon）、これまでどおり空きポートへ移る
+const ADOPT_PORT_WAIT_MS = Number(process.env.AGENT_HOST_ADOPT_PORT_WAIT_MS) >= 0 ? Number(process.env.AGENT_HOST_ADOPT_PORT_WAIT_MS) : 10_000;
+const ADOPT_PORT_RETRY_MS = HANDOVER_START ? 40 : 200;   // 引き継ぎの起動は、旧サーバーがポートを放すのをすぐ拾う
+let portDeadline = 0, portWaiting = false, adoptAbandoned = null;
+// 引き継ぎの起動（--handover）も、旧サーバーが同じポートを放すのを待つ
+const waitsForPort = () => adopting.length > 0 || (HANDOVER_START && PORT > 0);
+const onListenError = (err) => {
   if (err.code !== "EACCES" && err.code !== "EADDRINUSE") throw err;
-  console.log(`  port ${PORT} は使えない (${err.code})。空きポートに切り替える。`);
+  if (waitsForPort() && Date.now() < portDeadline) {
+    if (!portWaiting) console.log(`  port ${PORT} は使えない (${err.code})。${adopting.length ? '付け直すターンがある' : '引き継ぎの起動'}ので空くまで待つ（${ADOPT_PORT_WAIT_MS / 1000} 秒まで）。`);
+    portWaiting = true;
+    setTimeout(() => { server.once("error", onListenError); server.listen(PORT, HOST); }, ADOPT_PORT_RETRY_MS);
+    return;
+  }
+  if (adopting.length) adoptAbandoned = `port ${PORT} is not available (${err.code})`;
+  console.log(`  port ${PORT} は使えない (${err.code})。空きポートに切り替える。${adopting.length ? '付け直すターンは中断として残す。' : ''}`);
   // listen(port, host, cb) の cb は once("listening") として登録される。
   // 失敗しても外れないので、外してから張り直さないと起動メッセージが二重に出る。
   server.removeListener("listening", announce);
   server.listen(0, HOST, announce);
-});
+};
+server.once("error", onListenError);
 // 設定とバックエンドが揃った後に、前の起動の放置圧縮の予約を戻す
 // 検索の写しは、起動の混み合いが落ち着いてから裏で作る（探されたときは待たずに読めた分で答える）
 setTimeout(() => sessionSearch.start().catch(() => {}), 3000).unref();
@@ -7123,8 +7950,18 @@ for (const [id, meta] of Object.entries(await store.getAll())) {
 }
 // Restored sends can start a turn and use localOrigin(), which needs a bound port.
 const listening = new Promise(resolve => server.once('listening', resolve));
+portDeadline = Date.now() + ADOPT_PORT_WAIT_MS;
 server.listen(PORT, HOST, announce);
 await listening;
+// 登録しておいた付け直すターンの口を開き直し、記録を流して締める（待たない。ターンが終わるまで続く）
+for (const { card, source, ctx } of adopting) {
+  const turnPromise = adoptTurn(card, source, ctx, { abandon: adoptAbandoned });
+  void turnPromise.catch(err => console.error('  ターンの付け直しに失敗:', String(err?.message ?? err)));
+  // 委譲の子は、結果の確定（execute の後半）を agentTasks へ引き継ぐ。付け直せなければ今までの起動と同じに interrupted にする
+  if (ctx.taskId) adoptChild(ctx, turnPromise, { abandon: Boolean(adoptAbandoned) });
+}
+// 引き継ぎの起動: 旧サーバーが送信待ちに回した分（核心は core/handover.mjs の hold）を送る
+if (HANDOVER_START) for (const [id, meta] of Object.entries(await store.getAll())) if (meta.outbox?.some(m => m.status === 'queued')) outbox.kick(id).catch(() => {});
 await schedule.restore().catch(err => console.error('  再開の予定を戻せませんでした:', String(err?.message ?? err)));
 // 解除時刻を過ぎた上限の会話は、予定の行が無くても再開する（Pleiad を閉じている間に過ぎた分）
 await recoverLimitResumes().catch(err => console.error('  上限の会話を見直せませんでした:', String(err?.message ?? err)));
@@ -7132,3 +7969,5 @@ await recoverLimitResumes().catch(err => console.error('  上限の会話を見�
 setTimeout(() => { for (const row of schedule.list()) if (row.kind === 'send' && row.held && !row.notified) notifyScheduleMissed(row); }, 15_000).unref();
 // 届ける前の出来事の戻し・ルーティンの取りこぼし（ターンを始めるので、ポートが決まった後）
 await botHost.start();
+
+export { runTurn, prepareTurn, beginTurn, launchTurn, driveTurn, releaseTurn, endTurn, handOffTurn, restoreTurn, adoptTurn, handover as handoverState, trackIn };
