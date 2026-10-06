@@ -88,6 +88,8 @@ export function setupChannels(host) {
     sideTabChanged(tab) { each('sideTabChanged', tab); },
     /** 会話が増えた・動いた（一時チャットの流れを読み直す。web/channels/feed.mjs） */
     homeChanged() { each('homeChanged'); },
+    /** 予定（schedule.json）が動いた（スレッドへの返信の予定の行。web/channels/thread.mjs） */
+    schedulesChanged() { each('schedulesChanged'); },
     /** 右パネルの作業場所の基準。Channels の中の要素でなければ null */
     contextForPanel(anchor) {
       if (!anchor?.closest?.('#channelsView')) return null;

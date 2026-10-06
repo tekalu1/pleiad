@@ -15,18 +15,19 @@ const BIN = path.join(ROOT, 'bin', 'pleiad.mjs');
 
 const HUMAN = { by: 'human', via: 'ui', local: true };
 const agent = (sessionId, via = 'mcp') => ({ by: 'agent', via, ...(sessionId ? { sessionId } : {}) });
-const IDS = ['list', 'get', 'read', 'search', 'create', 'update', 'archive', 'post', 'edit', 'delete', 'react', 'markRead', 'stopThread', 'wake', 'threads', 'setThreadStatus', 'setThreadTitle', 'threadSettings'].map((v) => `channels.${v}`);
+const IDS = ['list', 'get', 'read', 'search', 'create', 'update', 'archive', 'post', 'edit', 'delete', 'react', 'markRead', 'stopThread', 'wake', 'threads', 'setThreadStatus', 'setThreadTitle', 'threadSettings', 'schedulePost'].map((v) => `channels.${v}`);
 
 export default async function (t) {
   const tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'ops-channels-'));
   try {
     // ---- 定義
-    t.ok('操作は 20 個（集団宛ての wakePreview・スレッドの予算の内訳 threadBudget・スレッドの索引 threads と状態 setThreadStatus・題 setThreadTitle・設定 threadSettings を含む）', IDS.every((id) => registry.get(id)) && registry.ops.filter((o) => o.id.startsWith('channels.')).length === 20);
+    t.ok('操作は 21 個（集団宛ての wakePreview・スレッドの予算の内訳 threadBudget・スレッドの索引 threads と状態 setThreadStatus・題 setThreadTitle・設定 threadSettings・返信の予定 schedulePost を含む）', IDS.every((id) => registry.get(id)) && registry.ops.filter((o) => o.id.startsWith('channels.')).length === 21);
     const risk = (id) => registry.get(id).risk;
     t.ok('危険度: 読む 7 つは read・書く 12 は write・wake は guarded（human-only はない。ADR 0082 の 5 つ以外は AI も使える）', ['list', 'get', 'read', 'search', 'wakePreview', 'threadBudget', 'threads'].every((v) => risk(`channels.${v}`) === 'read')
-      && ['create', 'update', 'archive', 'post', 'edit', 'delete', 'react', 'markRead', 'stopThread', 'setThreadStatus', 'setThreadTitle', 'threadSettings'].every((v) => risk(`channels.${v}`) === 'write') && risk('channels.wake') === 'guarded');
+      && ['create', 'update', 'archive', 'post', 'edit', 'delete', 'react', 'markRead', 'stopThread', 'setThreadStatus', 'setThreadTitle', 'threadSettings'].every((v) => risk(`channels.${v}`) === 'write') && risk('channels.wake') === 'guarded' && risk('channels.schedulePost') === 'guarded');
     t.ok('modeGate: false は post・react・stopThread だけ（読み取り・計画の bot も返事・リアクション・停止はできる）', IDS.filter((id) => registry.get(id).modeGate === false).join() === 'channels.post,channels.react,channels.stopThread');
-    t.ok('口: どれも画面から。MCP は catalog（直のツールは足さない）。CLI は全部（markRead も AI・CLI に出す）', IDS.every((id) => registry.get(id).surfaces.ui === true && registry.get(id).surfaces.mcp === 'catalog' && registry.get(id).surfaces.cli));
+    t.ok('口: どれも画面から。MCP は catalog（直のツールは足さない。返信の予定 schedulePost は AI に作らせないので MCP に出さない）。CLI は全部（markRead も AI・CLI に出す）',
+      IDS.every((id) => registry.get(id).surfaces.ui === true && registry.get(id).surfaces.mcp === (id === 'channels.schedulePost' ? false : 'catalog') && registry.get(id).surfaces.cli));
     t.ok('write の理由（riskReason）を持つ', IDS.filter((id) => risk(id) === 'write').every((id) => registry.get(id).riskReason.length > 20));
     t.ok('CLI のコマンド: channels list / get / read / search / create / update / archive / post / edit / delete / react / mark-read 相当（位置引数は post が channelId と text）', registry.get('channels.post').surfaces.cli.positional.join() === 'channelId,text'
       && registry.get('channels.get').surfaces.cli.path.join(' ') === 'channels get');

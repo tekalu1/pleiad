@@ -154,6 +154,7 @@
     "back": "Back to the {{name}} feed",
     "untitled": "Thread",
     "rename": "Thread title",
+    "compactNoSession": "The selected bot has not talked in this thread yet, so there is nothing to compact",
     "settings": { "note": "Applies to this thread only. Change the bot's defaults on its page.", "changed": "changed", "botDefault": "{{name}}'s default", "failed": "Couldn't change the setting: {{error}}", "effort": "Effort" },
     "dest": { "title": "Send to", "label": "Send to: {{name}} (change)", "auto": "Send to", "inThread": "Bots in this thread", "others": "Other members", "members": "Members" },
     "renameFailed": "Couldn't change the title: {{error}}",

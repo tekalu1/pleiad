@@ -59,7 +59,7 @@ import * as history from "./history.mjs";
 import { createMessageQueue } from "./message-queue.mjs";
 import { createSchedule } from './schedule.mjs';
 import { pollInterval, resumePlan, limitHolds, limitOpen } from './limit-resume.mjs';
-import { buildSendRow, decideFire, sendArgs, decorateScheduled, addRecord, MAX_PER_SESSION, MAX_TOTAL } from './send-schedule.mjs';
+import { buildSendRow, buildPostRow, decideFire, sendArgs, decorateScheduled, addRecord, MAX_PER_SESSION, MAX_TOTAL } from './send-schedule.mjs';
 import { createCompactionScheduler, idleCompactionGuards } from './compaction-scheduler.mjs';
 import { normalizeCompactionSettings } from './compaction-settings.mjs';
 import { mergeCompactionHistory, attachCompactSummaries } from './compaction-history.mjs';
@@ -3713,17 +3713,18 @@ function opsDeps(lng = currentLocale()) {
       scheduleSend: (input, by) => scheduleSendMessage(input, by),
       // 「今すぐ送る」。取り出した予定を同じ入口で送る。送れなければ予定に戻す（失っても二重にもしない）
       sendScheduledNow: async id => {
-        if (schedule.get(id)?.kind !== 'send') throw new Error(t('schedule.notFound'));
+        const kind = schedule.get(id)?.kind;
+        if (kind !== 'send' && kind !== 'post') throw new Error(t('schedule.notFound'));
         const taken = await schedule.take(id);
         if (!taken) throw new Error(t('schedule.notFound'));
-        try { await sendScheduledNow(taken); }
+        try { if (kind === 'post') await postScheduled(taken); else await sendScheduledNow(taken); }
         catch (e) { await schedule.put(taken).catch(() => {}); throw e; }
-        return { sent: true, sessionId: taken.sessionId, messageId: taken.messageId };
+        return kind === 'post' ? { sent: true, sessionId: '', messageId: taken.clientId } : { sent: true, sessionId: taken.sessionId, messageId: taken.messageId };
       },
       cancel: async id => {
         const row = schedule.list().find(entry => entry.id === id);
-        // 送信予定は取り出して返す（画面の「編集」は本文を入力欄へ戻す。取り出したものは時刻が来ても動かない）
-        if (row?.kind === 'send') {
+        // 送信予定・投稿の予定は取り出して返す（画面の「編集」は本文を入力欄へ戻す。取り出したものは時刻が来ても動かない）
+        if (row?.kind === 'send' || row?.kind === 'post') {
           const taken = await schedule.take(id);
           return { cancelled: Boolean(taken), ...(taken ? { entry: taken } : {}) };
         }
@@ -3814,6 +3815,8 @@ function opsDeps(lng = currentLocale()) {
     contextDefaults: () => contextSettings.get(os.homedir(), { level: 'default' }),
     // channels・bots・memory・routines・botOfSession（ops の handler が ctx.channels などで呼ぶ）
     ...botHost?.opsDeps(),
+    // スレッドへの返信の予定（channels.schedulePost。kind 'post'）
+    schedulePost: (args) => schedulePost(args),
     describeAttachments,
     modeOf: async (sessionId) => {
       try {
@@ -5830,6 +5833,7 @@ const schedule = createSchedule({ file: path.join(store.dataDir, 'schedule.json'
   changed: entries => emitGlobal({ type: 'schedules', sessionId: null, entries }),
   fire: async row => {
     if (row.kind === 'send') return fireScheduledSend(row);
+    if (row.kind === 'post') return fireScheduledPost(row);
     if (row.kind !== 'resume') throw new Error(`Unsupported schedule kind: ${row.kind}`);
     const meta = await store.get(row.sessionId);
     const stopped = meta.interrupted;
@@ -5885,6 +5889,31 @@ async function sendScheduledNow(row) {
 }
 
 /** 予定を置く。会話ごと・全体の数を絞り、同じ messageId の置き直しは 1 件のまま（二重の予定を作らない） */
+/** スレッドへの返信の予定（channels.schedulePost。kind 'post'）。人の投稿として、同じ clientId で 1 回だけ投稿する */
+async function schedulePost(input) {
+  const channels = botHost?.opsDeps().channels;
+  if (!channels) throw new Error(t('schedule.notFound'));
+  const root = await channels.getPost({ channelId: input.channelId, postId: input.threadId });
+  if (!root || root.threadId !== null) throw new Error(t('schedule.notFound'));
+  const row = buildPostRow({ ...input, by: 'human' });
+  const rows = schedule.list().filter((r) => r.kind === 'post' || r.kind === 'send');
+  const existing = rows.find((r) => r.id === row.id);
+  if (existing) return { id: existing.id, at: existing.at };
+  if (rows.filter((r) => r.kind === 'post' && r.threadId === input.threadId).length >= MAX_PER_SESSION || rows.length >= MAX_TOTAL)
+    throw new Error(t('schedule.full', { max: MAX_PER_SESSION }));
+  await schedule.put(row);
+  return { id: row.id, at: row.at };
+}
+/** 予定の時刻が来た投稿。遅れすぎていれば送らずに確かめさせる（送信予定と同じ決まり） */
+async function fireScheduledPost(row) {
+  const decision = decideFire(row);
+  if (decision.action === 'hold') return { hold: 'late' };
+  await postScheduled(row);
+  return undefined;
+}
+const postScheduled = (row) => botHost.opsDeps().channels.post({ channelId: row.channelId, threadId: row.threadId, text: row.args.prompt,
+  ...(row.args.attachments?.length ? { attachments: row.args.attachments } : {}), ...(row.args.to ? { to: row.args.to } : {}), clientId: row.clientId }, { kind: 'human' });
+
 async function scheduleSendMessage(input, by = 'human') {
   const { sessionId } = input ?? {};
   if (!sessionId || !refuseRetired(await resolveBackendForSession(sessionId))) throw new Error(t('session.notFound'));

@@ -202,6 +202,27 @@ export const channelOps = [
     }),
   }),
   defineOp({
+    // スレッドへの返信を日時を指定して送る（入力欄の送信の日時。ADR 9101・0103）。AI には作らせない（sessions.scheduleSend と同じ）
+    id: 'channels.schedulePost', summary: D('schedulePost', 'summary'), risk: 'guarded',
+    approvalWords: 'schedule',
+    confirm: (ctx, args) => agentT(ctx.locale, 'ops.channels.schedulePost.confirm', { thread: args.threadId, at: String(args.at), text: String(args.text ?? '').slice(0, 120) }),
+    input: z.object({
+      channelId: channelId('schedulePost'), threadId: postId('schedulePost', 'threadId'),
+      text: z.string().min(1).max(LIMITS.text).describe(D('schedulePost', 'text')),
+      at: z.union([z.number(), z.string()]).describe(D('schedulePost', 'at')),
+      clientId: z.string().min(8).max(100).describe(D('schedulePost', 'clientId')),
+      attachments: z.array(z.object({ path: z.string().min(1), name: z.string().optional(), mime: z.string().optional() })).max(LIMITS.attachments).optional().describe(D('schedulePost', 'attachments')),
+      to: z.string().min(1).max(80).optional().describe(D('schedulePost', 'to')),
+    }),
+    output: z.object({ id: z.string(), at: z.number() }),
+    surfaces: { ui: true, mcp: false, cli: { path: ['channels', 'schedule-post'], positional: ['channelId', 'threadId', 'text'] } },
+    handler: async (ctx, args) => run(ctx, async () => {
+      if ((await authorOf(ctx)).kind !== 'human') throw new OpError('NEEDS_UI', agentT(ctx.locale, 'ops.errors.NEEDS_UI'));
+      const files = args.attachments?.length ? await describeFiles(ctx, args.attachments) : undefined;
+      return ctx.schedulePost({ ...args, ...(files ? { attachments: files } : {}) });
+    }),
+  }),
+  defineOp({
     id: 'channels.threadBudget', summary: D('threadBudget', 'summary'), risk: 'read',
     input: z.object({ channelId: channelId('threadBudget'), threadId: postId('threadBudget', 'threadId') }),
     output: z.unknown(),
@@ -305,11 +326,14 @@ export const channelOps = [
       state: z.enum(['checking']).optional().describe(D('post', 'state')),
       confirmedWake: z.array(z.string()).optional().describe(D('post', 'confirmedWake')),
       to: z.string().min(1).max(80).optional().describe(D('post', 'to')),
+      clientId: z.string().min(8).max(100).optional().describe(D('post', 'clientId')),
     }),
     output: z.unknown(),
     surfaces: { ui: true, mcp: 'catalog', cli: { path: ['channels', 'post'], positional: ['channelId', 'text'] } },
-    handler: async (ctx, { state, threadId, attachments, confirmedWake, to, ...args }) => {
+    handler: async (ctx, { state, threadId, attachments, confirmedWake, to, clientId, ...args }) => {
       const author = await authorOf(ctx);
+      if (clientId && author.kind !== 'human') throw new OpError('INVALID', agentT(ctx.locale, 'ops.errors.INVALID', { detail: 'clientId is only for a human post' }));
+      if (clientId) args.clientId = clientId;
       // 宛先のチップ（to）は人だけ。bot・AI は本文の @ で呼ぶ（強さの確認が @ を数える）
       if (to && author.kind !== 'human') throw new OpError('INVALID', agentT(ctx.locale, 'ops.errors.INVALID', { detail: 'to is only for a human post; write @name in the text instead' }));
       if (to) args.to = to;

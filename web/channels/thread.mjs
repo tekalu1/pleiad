@@ -112,6 +112,8 @@ export function createThread(host) {
     dest: () => destOptions(),
     onDestChange: () => paintPlaceholder(),
     settings: (botId) => botSettings(botId),
+    schedules: () => (host.state?.schedules ?? []).filter((r) => r.kind === 'post' && r.channelId === S.channelId && r.threadId === S.threadId).sort((a, b) => a.at - b.at),
+    compact: (sessionId) => host.invoke('sessions.compact', { sessionId }),
     onSettings: async (botId, patch) => {
       const got = await host.invoke('channels.threadSettings', { channelId: S.channelId, threadId: S.threadId, botId, ...patch });
       settingsSeen.set(botId, got);
@@ -129,7 +131,7 @@ export function createThread(host) {
     const values = seen && (!row || seen.sessionId === sessionId) ? seen
       : { model: next.model ?? row?.model ?? bot.model ?? '', effort: next.effort ?? row?.effort ?? bot.effort ?? '', mode: next.mode ?? row?.mode ?? bot.mode ?? '', cwd: next.cwd ?? row?.cwd ?? S.channel?.cwd ?? bot.folders?.[0]?.path ?? '' };
     const folders = [...new Set([...(bot.folders ?? []).map((f) => f.path), ...(S.channel?.cwd ? [S.channel.cwd] : [])])];
-    return { backend: bot.backend, values, defaults: { model: bot.model ?? '', effort: bot.effort ?? '', mode: bot.mode ?? '' }, folders };
+    return { backend: bot.backend, sessionId, values, defaults: { model: bot.model ?? '', effort: bot.effort ?? '', mode: bot.mode ?? '' }, folders };
   }
   const toc = createThreadToc({ host, posts: () => S.posts, ctx: () => ctx, go: (p) => goTo(p) });
   const head = createThreadHead({ host, onClose: () => close(), onBack: () => close(), onToc: (b) => toc.toggle(b),
@@ -573,8 +575,13 @@ export function createThread(host) {
   }
 
   // ---------------------------------------------------------------- 操作
-  async function send({ text, attachments, confirmedWake, to }) {
-    const made = await host.invoke('channels.post', { channelId: S.channelId, threadId: S.threadId, text, ...(attachments?.length ? { attachments } : {}), ...(confirmedWake ? { confirmedWake } : {}), ...(to ? { to } : {}) });
+  async function send({ text, attachments, confirmedWake, to, clientId, at }) {
+    // 日時を指定した返信は予定として置く（時刻が来たら人の投稿として投稿される。channels.schedulePost）
+    if (at) {
+      await host.invoke('channels.schedulePost', { channelId: S.channelId, threadId: S.threadId, text, at, clientId, ...(attachments?.length ? { attachments } : {}), ...(to ? { to } : {}) });
+      return;
+    }
+    const made = await host.invoke('channels.post', { channelId: S.channelId, threadId: S.threadId, text, ...(attachments?.length ? { attachments } : {}), ...(confirmedWake ? { confirmedWake } : {}), ...(to ? { to } : {}), ...(clientId ? { clientId } : {}) });
     if (made?.id && !S.index.has(made.id) && made.threadId === S.threadId) { addPost(made); afterPosts(); }
     toBottom();
   }
@@ -820,6 +827,8 @@ export function createThread(host) {
     },
     hide() { /* スレッドは開いたまま（Chats へ移って戻っても同じ所から） */ },
     onEvent(ev) { events[ev?.type]?.(ev); },
+    /** 予定（schedule.json）が動いた: このスレッドへの返信の予定の行を描き直す */
+    schedulesChanged() { composer.paintSchedules(); },
     contextForPanel(anchor) {
       if (!anchor?.closest?.('#chThread')) return null;
       return { sessionId: activeSession(), at: undefined };

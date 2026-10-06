@@ -692,7 +692,7 @@
         }
       },
       "legacyCommand": null,
-      "input": "1cfa348fb106"
+      "input": "a63c4c735e57"
     },
     {
       "id": "channels.react",
@@ -741,6 +741,31 @@
       },
       "legacyCommand": null,
       "input": "11de5b77aa28"
+    },
+    {
+      "id": "channels.schedulePost",
+      "risk": "guarded",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": false,
+        "cli": {
+          "path": [
+            "channels",
+            "schedule-post"
+          ],
+          "positional": [
+            "channelId",
+            "threadId",
+            "text"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "e59f6456fa40"
     },
     {
       "id": "channels.search",
@@ -4542,6 +4567,15 @@
       "path": "channels read",
       "positional": [
         "channelId"
+      ]
+    },
+    {
+      "id": "channels.schedulePost",
+      "path": "channels schedule-post",
+      "positional": [
+        "channelId",
+        "threadId",
+        "text"
       ]
     },
     {

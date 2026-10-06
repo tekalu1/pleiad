@@ -8,6 +8,7 @@
 // まだ使わない部品（送信の日時、待ち行列、文脈の帯、中断・再開）は隠す（段ごとに開ける）。
 // 口は流れの入力欄（createChComposer）と同じ形にしてある（thread.mjs がそのまま使う）。
 import { buildComposer, composerEls, createComposer } from '../composer/composer.mjs';
+import { renderOutbox } from '../outbox.mjs';
 import { setupMentionComplete } from './mention-complete.mjs';
 import { draftStore, persistDrafts } from './ch-composer.mjs';
 import { runMark } from '../arc.mjs';
@@ -18,7 +19,7 @@ import { botIcon } from './bot-icon.mjs';
 const PREFIX = 'th';
 const SAVE_WAIT_MS = 400;
 /** スレッドではまだ使わない部品（段ごとに開ける） */
-const UNUSED = ['sendMore', 'armedChip', 'draftSaved', 'abort', 'resume', 'contextStrip', 'outbox', 'nextSettings',
+const UNUSED = ['armedChip', 'draftSaved', 'abort', 'resume', 'contextStrip', 'nextSettings',
   'shellHead', 'resumeNote', 'armedNote', 'draftFail', 'connNote'];
 
 /**
@@ -35,9 +36,11 @@ const UNUSED = ['sendMore', 'armedChip', 'draftSaved', 'abort', 'resume', 'conte
  * @param {(botId: string) => ({ backend: string, values: { model, effort, mode, cwd }, defaults: { model, effort, mode }, folders: string[] }|null)} [o.settings]
  *   宛先の bot のこのスレッドの会話の設定（無ければ bot の既定）。チップに出す
  * @param {(botId: string, patch: object) => Promise<void>} [o.onSettings] 設定を変えた（このスレッドだけ）
+ * @param {() => object[]} [o.schedules] このスレッドへの返信の予定（schedule.json の kind post。時刻順）
+ * @param {(sessionId: string) => Promise<void>} [o.compact] 宛先の bot の会話を圧縮する（/compact）
  */
 export function createThreadComposer({ host, bucket = () => null, candidates, suggest = () => null, backendLabel, wakePreview, onSend, dest = () => ({ inThread: [], others: [], fallback: null }), onDestChange = () => {},
-  settings = () => null, onSettings = async () => {} }) {
+  settings = () => null, onSettings = async () => {}, schedules = () => [], compact = async () => {} }) {
   const form = buildComposer(PREFIX);
   form.classList.add('th-composer');
   form.noValidate = true;
@@ -106,11 +109,41 @@ export function createThreadComposer({ host, bucket = () => null, candidates, su
       onChange: () => { dismissWake(); saveDraft(); paintHint(); },
     },
     wait: { runMark, onChange: () => syncSend() },
-    keys: [(e) => mention.keydown(e)],
+    keys: [(e) => mention.keydown(e), (e) => c.slash?.keydown(e)],
     onSubmit: () => submit(),
+    onSchedule: () => c.sendMenu?.open(),
   });
   const att = c.attach;
   const mention = setupMentionComplete({ input, list, candidates, idPrefix: `${PREFIX}-mention`, backendLabel, onChange: () => paintHint() });
+  // 送信の日時（▾・送信の円の右クリックと長押し・Ctrl+Shift+Enter。ADR 0103）。時刻が来たら人の投稿として 1 回だけ投稿する（channels.schedulePost）
+  c.useSchedule({
+    context: () => ({ available: Boolean(input.value.trim() || att.items.length) && !disabled }),
+    environment: async () => (await host.scheduleEnvironment?.().catch(() => null)) ?? { persistent: true, hostZone: null },
+    onSchedule: (at) => submit({ at }),
+    onSendNow: () => submit({ at: null }),
+  });
+  // 欄の「/」のスキル候補。候補は宛先の bot の会話の作業フォルダーから（/compact は宛先の bot の会話を圧縮する）
+  const destSession = () => { const bot = destNow().bot; return bot ? settings(bot.id) : null; };
+  c.useSlash({
+    cwd: () => destSession()?.values?.cwd ?? '',
+    canCompact: () => Boolean(destSession()?.sessionId),
+    load: (cwd) => host.cmd('slashSkills', { cwd: cwd || undefined }),
+    off: () => c.editor.inCode(),
+  });
+  // このスレッドへの返信の予定の行（送信待ちの行と同じ部品。今すぐ送る・編集・取り消す）
+  const scheduleActions = {
+    now: async (entry) => { await host.invoke('sessions.sendScheduledNow', { id: entry.id }); },
+    cancel: async (entry) => { await host.invoke('sessions.cancelSchedule', { id: entry.id }); },
+    // 本文を欄へ戻す（取り出した予定は時刻が来ても動かない）
+    edit: async (entry) => {
+      const taken = await host.invoke('sessions.cancelSchedule', { id: entry.id });
+      const text = taken?.entry?.args?.prompt ?? entry.args?.prompt ?? '';
+      input.value = input.value.trim() ? `${text}\n\n${input.value}` : text;
+      input.focus();
+      saveDraft();
+    },
+  };
+  function paintSchedules() { renderOutbox(els.outbox, [], async () => {}, new Set(), { schedules: schedules(), scheduleActions }); }
 
   // クリップ: この端末のファイルを選ぶ（出どころの面はチャンネルには無い。ADR 0116）
   els.attach.addEventListener('pointerdown', att.rememberAt, true);
@@ -232,10 +265,10 @@ export function createThreadComposer({ host, bucket = () => null, candidates, su
     host.showMenu(r.left, r.top - 4, items, t('channels:thread.dest.title'));
   };
 
-  // ---- 提案（誰も @ していない文に）
+  // ---- 提案（誰も @ していない文に）。宛先のチップに bot が出ているとき（その bot が受ける）は出さない
   function paintHint() {
     const text = input.value.trim();
-    const bot = text && !disabled && !chosen ? suggest() : null;
+    const bot = text && !disabled && !chosen && !destNow().bot ? suggest() : null;
     if (!bot || /@/.test(text)) { hint.hidden = true; return; }
     hint.replaceChildren(el('span', null, t('channels:feed.hint.nobody')));
     const b = el('button', null, t('channels:feed.hint.call', { name: bot.name }));
@@ -251,13 +284,21 @@ export function createThreadComposer({ host, bucket = () => null, candidates, su
   }
 
   // ---- 送る
-  async function sendBody(body, confirmedWake) {
+  // 送り直し（応答が届かなかった）でも二重に投稿しないよう、同じ中身には同じ clientId を使う（サーバーが同じ id の投稿を作らない）
+  let attempt = null;
+  const clientIdOf = (body, at) => {
+    const key = JSON.stringify([body, at ?? null, chosen]);
+    if (attempt?.key !== key) attempt = { key, id: `th-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}` };
+    return attempt.id;
+  };
+  async function sendBody(body, confirmedWake, at = null) {
     busy = true;
     syncSend();
     wakeButton.disabled = true;
     say('');
     try {
-      await onSend({ ...body, ...(confirmedWake ? { confirmedWake } : {}), ...(chosen ? { to: chosen } : {}) });
+      await onSend({ ...body, ...(confirmedWake ? { confirmedWake } : {}), ...(chosen ? { to: chosen } : {}), clientId: clientIdOf(body, at), ...(at ? { at } : {}) });
+      attempt = null;
       input.value = '';
       att.clear();
       dismissWake();
@@ -273,12 +314,24 @@ export function createThreadComposer({ host, bucket = () => null, candidates, su
       wakeButton.disabled = false;
     }
   }
-  async function submit() {
+  async function submit({ at = null } = {}) {
     if (busy || disabled || pendingWake) return;
+    c.slash?.close();
     const body = att.compose(input.value);
     if (!body.text.trim() && !body.attachments.length) return;
     const block = att.blockReason();
     if (block) { say(block); att.flash(); return; }
+    // /compact: 宛先の bot の、このスレッドの会話を圧縮する（投稿にはしない）
+    if (body.text.trim() === '/compact' && !body.attachments.length) {
+      const s = destSession();
+      if (!s?.sessionId) { say(t('channels:thread.compactNoSession')); return; }
+      busy = true; syncSend();
+      try { await compact(s.sessionId); input.value = ''; saveDraft(); }
+      catch (err) { say(t('channels:feed.composer.failed', { error: err?.message ?? String(err) }), true); }
+      finally { busy = false; syncSend(); }
+      return;
+    }
+    if (at) { await sendBody(body, null, at); return; }
     if (wakePreview && /[@＠](?:here|everyone)(?![\p{L}\p{N}_-])/iu.test(body.text)) {
       const owner = draftKey;
       busy = true;
@@ -328,7 +381,9 @@ export function createThreadComposer({ host, bucket = () => null, candidates, su
       say(on ? reason : '', true);
       paintHint();
     },
-    refresh() { paintHint(); paintDest(); c.fit(); },
+    refresh() { paintHint(); paintDest(); paintSchedules(); c.fit(); },
+    /** 予定が動いた */
+    paintSchedules,
     say,
     clear() { dismissWake(); input.value = ''; att.clear(); say(''); saveDraft(); paintHint(); },
     mention,

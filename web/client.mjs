@@ -159,6 +159,7 @@ async function refreshSchedules() {
   state.schedules = await limitOp('sessions.schedules');
   if (state.current) paintOutbox();
   renderSessions();
+  try { channelsUi.schedulesChanged(); } catch { /* 起動の途中 */ }
 }
 function restoreScheduled(entry) {
   if (state.current !== entry.sessionId) return;
@@ -2872,6 +2873,7 @@ function onEvent(ev, replay = false) {
   if (ev.type === 'schedules') {
     state.schedules = ev.entries ?? [];
     paintOutbox(); renderSessions();
+    channelsUi.schedulesChanged();   // スレッドへの返信の予定（kind post）の行
     return;
   }
   if (ev.type === 'limitResumeChanged') {
@@ -6146,6 +6148,12 @@ const channelsUi = setupChannels({
   agentName: (sessionId) => { const s = state.sessions.find((x) => x.id === sessionId); return s ? labelOf(s.backend) : null; },
   // スレッドの入力欄の設定のチップ（web/channels/thread-composer.mjs）: エージェントのモデル・承認モードの語彙と、エフォートの段
   vocab: (backend) => loadVocab(backend),
+  // 送信の日時の面の一言（窓を閉じても動き続けるか・ホストの時刻帯）。会話の入力欄と同じ材料
+  scheduleEnvironment: async () => {
+    const status = await cmd('remoteStatus').catch(() => null);
+    const resident = status?.resident;
+    return { persistent: !resident?.available || Boolean(status?.enabled && resident.keepRunning), hostZone: state.hostTimeZone };
+  },
   efforts: (args) => cmd('efforts', args),
   noteChats: () => { setHomeSplit(false); if (state.current) viewAddress.note({ sessionId: state.current }); renderSessions(); },
   // 委譲の子の様子（スレッドの入口・作業ログの委譲カード）。Chats と同じ部品を使う（docs/design-system.md「バックグラウンド」「委譲カード」）
