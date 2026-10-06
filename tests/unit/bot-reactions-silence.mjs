@@ -67,8 +67,9 @@ export default async function (t) {
     runTurn: async (args) => {
       const turn = { info: { sessionId: args.sessionId }, agentLocale: 'ja', usage: {}, stream: {} };
       turns.set(args.sessionId, turn);
-      started.push({ sessionId: args.sessionId, prompt: args.prompt, turn });
+      // ターンの記録ができてから数える（先に数えると、記録ができる前にテストが onTurnEnd を呼び、終わりが捨てられて投稿が working のまま残る）
       await d.turnExtras(turn);
+      started.push({ sessionId: args.sessionId, prompt: args.prompt, turn });
       return 'ok';
     },
   };
