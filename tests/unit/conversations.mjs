@@ -36,6 +36,8 @@ export default async function(t) {
   t.ok('圧縮の ID 変換・未送信・旧来会話・Claude の経路', child.stdout.includes('compaction contracts passed'));
   t.ok('旧プロンプトの bot 会話は履歴を保持して文脈を切り替え、以後の引継ぎにも旧メモを混ぜない', child.stdout.includes('bot context contracts passed'), child.stdout + child.stderr);
   t.ok('ADR 0127: 隠れた会話の片付けは、ネイティブの会話を消せるときだけ記録ごと消す（一覧に戻ってこない）', child.stdout.includes('hidden delete contracts passed'), child.stdout + child.stderr);
+  t.ok('プロンプトを渡す前に終わったターンの session id は採用を戻し、transcript の無い id の空の会話は新しく始める（本文のある会話は外さない）', child.stdout.includes('abandoned session contracts passed'), child.stdout + child.stderr);
+  t.ok('transcript の無い nativeId の会話は、題・状態の変更と削除を Pleiad の記録だけで通す（別の失敗は隠さない）', child.stdout.includes('missing transcript contracts passed'), child.stdout + child.stderr);
 }
 
 // Run in a child with its own store: other suites import the store before this test runs.
@@ -216,4 +218,126 @@ export async function hiddenDeleteContracts() {
   const unsent = await createConversation(keepNative, {});
   assert.equal(await deleteHiddenConversation(unsent, () => keepWrapped), true);
   assert.equal(await conversation(unsent), null);
+}
+
+// Claude Code は、プロンプトを渡す前に中断されたターンでも session_id を先に返すが、その transcript は作られない（core/conversations.mjs の runOnce）。
+// 採用した id を残すと、次のターンが `No conversation found with session ID` で毎回落ちる。身代わりは transcript の有無だけを持つ
+export async function abandonedSessionContracts() {
+  const sessions = new Map(), calls = [];
+  let seq = 0;
+  const native = { id: 'claude', capabilities: {},
+    async getMessages(id) { return structuredClone(sessions.get(id) ?? []); },
+    async getSession(id) { return sessions.has(id) ? { sessionId: id } : null; },
+    async runTurn(args) {
+      calls.push({ sessionId: args.sessionId, prompt: args.prompt });
+      if (args.sessionId && !sessions.has(args.sessionId)) throw new Error(`Claude Code returned an error result: No conversation found with session ID: ${args.sessionId}`);
+      const id = args.sessionId ?? `claude-native-${++seq}`;
+      if (!args.sessionId) args.emit({ type: 'session', sessionId: id, first: true });
+      if (args.abandon) return { sessionId: id };       // プロンプトを渡す前に中断。transcript は作られない
+      const rows = sessions.get(id) ?? [];
+      rows.push({ role: 'user', uuid: `u${calls.length}`, text: args.prompt }, { role: 'assistant', uuid: `a${calls.length}`, text: 'done' });
+      sessions.set(id, rows);
+      return { sessionId: id };
+    },
+  };
+  const wrapped = wrapBackend(native);
+  const base = { emit() {}, askPermission: async () => ({ behavior: 'deny' }) };
+  // server と同じく AbortController を渡す（core/server.mjs の signal: turn.ac）
+  const abort = new AbortController(); abort.abort();
+
+  // (a) 最初のターンが session id だけ出して、プロンプトを渡さずに終わる。nativeId は残らず、次のターンは resume を付けずに新規で走る
+  const id = await createConversation(native, {});
+  const aborted = await wrapped.runTurn({ ...base, sessionId: id, prompt: 'first', abandon: true, signal: abort });
+  assert.equal(aborted.sessionId, 'claude-native-1', '中断は中断のまま返る（historyUnreadable で上書きしない）');
+  const record = await conversation(id);
+  assert.equal(record.nativeId, null);
+  assert.deepEqual(record.segments, []);
+  // 失敗で終わるターンも元のエラーのまま
+  const failing = wrapBackend({ ...native, async runTurn(args) { args.emit({ type: 'session', sessionId: 'claude-native-x', first: true }); throw new Error('boom before prompt'); } });
+  const failId = await createConversation(native, {});
+  await assert.rejects(failing.runTurn({ ...base, sessionId: failId, prompt: 'x' }), { message: 'boom before prompt' });
+  assert.equal((await conversation(failId)).nativeId, null);
+  await wrapped.runTurn({ ...base, sessionId: id, prompt: 'second' });
+  assert.deepEqual(calls.map(c => c.sessionId), [null, null], '次のターンは resume を付けない');
+  assert.equal(record.nativeId, 'claude-native-2');
+  assert.deepEqual(record.segments.map(s => s.nativeId), ['claude-native-2']);
+  assert.ok(sessions.has('claude-native-2') && record.messages.some(m => m.text === 'second'));
+  // ターンが成功したのに transcript が無いのは、これまでどおり historyUnreadable
+  const silent = wrapBackend({ ...native, async runTurn(args) { args.emit({ type: 'session', sessionId: 'claude-native-ok', first: true }); return {}; } });
+  const silentId = await createConversation(native, {});
+  await assert.rejects(silent.runTurn({ ...base, sessionId: silentId, prompt: 'x' }), { message: translate('conversations.historyUnreadable') });
+
+  // ターン前から nativeId があって transcript もある会話は、今までどおり
+  calls.length = 0;
+  await wrapped.runTurn({ ...base, sessionId: id, prompt: 'third' });
+  assert.deepEqual(calls.map(c => c.sessionId), ['claude-native-2']);
+  assert.equal(record.nativeId, 'claude-native-2');
+
+  // (b) すでに transcript の無い nativeId を持つ空の会話は、次のターンで新規に始まる（壊れた会話の救済）
+  const broken = await createConversation(native, {});
+  Object.assign(await conversation(broken), { nativeId: 'ghost', segments: [{ backend: 'claude', nativeId: 'ghost' }] });
+  calls.length = 0;
+  await wrapped.runTurn({ ...base, sessionId: broken, prompt: 'rescue' });
+  assert.deepEqual(calls.map(c => c.sessionId), [null], 'resume を付けずに新しい session で始める');
+  const rescued = await conversation(broken);
+  assert.equal(rescued.nativeId, 'claude-native-3');
+  assert.deepEqual(rescued.segments.map(s => s.nativeId), ['claude-native-3']);
+  // それでも空で終わるなら、無限に繰り返さず採用を戻す（送り直しは 1 回だけ）
+  const stuck = await createConversation(native, {});
+  Object.assign(await conversation(stuck), { nativeId: 'ghost-2', segments: [{ backend: 'claude', nativeId: 'ghost-2' }] });
+  calls.length = 0;
+  await wrapped.runTurn({ ...base, sessionId: stuck, prompt: 'again', abandon: true, signal: abort });
+  assert.equal(calls.length, 1);
+  assert.equal((await conversation(stuck)).nativeId, null);
+
+  // (c) 本文のある会話の nativeId は外さない（履歴が消えたように見えるので、失敗をそのまま見せる）
+  const full = await createConversation(native, {});
+  Object.assign(await conversation(full), { nativeId: 'ghost-3', segments: [{ backend: 'claude', nativeId: 'ghost-3' }], messages: [{ role: 'user', uuid: 'old', text: 'kept' }] });
+  calls.length = 0;
+  await assert.rejects(wrapped.runTurn({ ...base, sessionId: full, prompt: 'x' }), /No conversation found with session ID: ghost-3/);
+  assert.deepEqual(calls.map(c => c.sessionId), ['ghost-3']);
+  assert.equal((await conversation(full)).nativeId, 'ghost-3');
+  // transcript を読めなかった（例外）ときも外さない
+  let reads = 0;
+  const unknown = wrapBackend({ ...native, async getMessages() { if (!reads++) throw new Error('disk'); return []; } });
+  const unknownId = await createConversation(native, {});
+  Object.assign(await conversation(unknownId), { nativeId: 'ghost-4', segments: [{ backend: 'claude', nativeId: 'ghost-4' }] });
+  calls.length = 0;
+  await assert.rejects(unknown.runTurn({ ...base, sessionId: unknownId, prompt: 'x' }), /ghost-4/);
+  assert.equal((await conversation(unknownId)).nativeId, 'ghost-4');
+}
+
+// transcript の無い nativeId を持つ会話の、題・状態の変更と削除（core/conversations.mjs の nativeSessionMissing）。
+// SDK は transcript が無いと renameSession・tagSession・deleteSession を `Session <id> not found in any project directory` で断る。Pleiad の記録だけで通す
+export async function missingTranscriptContracts() {
+  const store = await import('../../core/store.mjs');
+  const { deleteHiddenConversation } = await import('../../core/conversations.mjs');
+  const gone = id => Object.assign(new Error(`Session ${id} not found in any project directory`), { code: 'ENOENT' });
+  const calls = [];
+  const native = { id: 'claude', capabilities: { title: true, tag: true },
+    async setTitle(id) { calls.push(['setTitle', id]); throw gone(id); },
+    async setTag(id) { calls.push(['setTag', id]); throw gone(id); },
+    async deleteSession(id) { calls.push(['deleteSession', id]); throw gone(id); },
+  };
+  const wrapped = wrapBackend(native);
+  for (const messages of [[], [{ role: 'user', uuid: 'old', text: 'kept' }]]) {
+    calls.length = 0;
+    const id = await createConversation(native, { title: 'old title' });
+    Object.assign(await conversation(id), { nativeId: 'ghost-m', segments: [{ backend: 'claude', nativeId: 'ghost-m' }], messages });
+    await wrapped.setTag(id, 'doing');
+    await wrapped.setTitle(id, 'new title');
+    const meta = await store.get(id);
+    assert.equal(meta.status, 'doing', '状態は Pleiad の記録に残る');
+    assert.equal(meta.title, 'new title', '題は Pleiad の記録に残る');
+    assert.deepEqual(calls, [['setTag', 'ghost-m'], ['setTitle', 'ghost-m']], 'ネイティブへは書こうとして、断られても失敗にしない');
+    assert.equal(await deleteHiddenConversation(id, () => wrapped), true, 'ネイティブに消す物が無ければ消せたとみなす');
+    assert.equal(await conversation(id), null);
+  }
+  // 別の失敗は隠さない
+  const broken = wrapBackend({ ...native, async setTag() { throw new Error('EPERM: operation not permitted'); }, async deleteSession() { throw new Error('EPERM: operation not permitted'); } });
+  const id = await createConversation(native, {});
+  Object.assign(await conversation(id), { nativeId: 'real', segments: [{ backend: 'claude', nativeId: 'real' }] });
+  await assert.rejects(broken.setTag(id, 'x'), /EPERM/);
+  await assert.rejects(deleteHiddenConversation(id, () => broken), /EPERM/);
+  assert.ok(await conversation(id), '消せなかった会話は残る');
 }

@@ -55,6 +55,7 @@ import { formatBytes } from "./folder-upload.mjs";
 import { modelRowIds, modelDisplayName } from "./composer-labels.mjs";
 import { setupSlashSkills } from "./slash-skills.mjs";
 import { createMarkdownEditor } from "./md-editor.mjs";
+import { createPasteImages } from "./paste-images.mjs";
 import { openAttachmentList } from "./attachment-list.mjs";
 import { runMark, satMark, stillMark } from "./arc.mjs";
 import { approvalTarget } from "./approval-summary.mjs";
@@ -218,6 +219,8 @@ const uploads = new Map();
 const composerEditor = createMarkdownEditor($("prompt"), {
   resolve: (path) => attachedInfo(path),
   pending: (pid) => pendingUpload(pid),
+  // 貼り付けた HTML の画像（data: はその場で、https はホストが取りに行く）。書けない待ちの間は取り込まない
+  importImages: (images) => (composerWait.accepts() ? pasteImages.start(images) : []),
   locale: () => composerAgentLang(),
   isPlain: () => composerPlain,
   onAtoms: (change) => onComposerAtoms(change),
@@ -5937,6 +5940,8 @@ const composerAgentLang = () => state.sessions.find(s => s.id === state.current)
 function pendingUpload(pid) {
   const u = uploads.get(pid);
   if (!u) return null;
+  // ホストが取りに行っている画像（貼り付けの HTML）。失敗の札は無い（取れなければ札ごと静かに消える）
+  if (u.import) return { name: u.name, state: 'importing', host: u.import.host };
   const failed = u.failed || u.cancelled;
   return { name: u.name, size: u.size, state: failed ? 'failed' : 'sending', percent: u.size ? Math.floor((u.sent / u.size) * 100) : 0,
     error: u.failed ?? (u.cancelled ? t('chat.composerAtt.cancelled') : '') };
@@ -5946,7 +5951,7 @@ function pendingUpload(pid) {
  * 新しい会話を作っている間（state.current が null）に始めたものは sessionId が null で、会話ができたら adoptUploads がその id へ付け替える
  */
 function uploadsHere() {
-  return [...uploads.values()].filter(u => u.sessionId === (state.current ?? null)
+  return [...uploads.values()].filter(u => !u.gone && u.sessionId === (state.current ?? null)
     && (!u.cancelled || composerEditor.hasAttachment(`i:${u.id}`)));
 }
 /**
@@ -5960,7 +5965,8 @@ function adoptUploads(id) {
 function uploadBlockReason() {
   const here = uploadsHere();
   if (here.some(u => u.failed || u.cancelled)) return t('chat.composerAtt.blockFailed');
-  return here.length ? t('chat.composerAtt.blockSending') : null;
+  if (!here.length) return null;
+  return here.every(u => u.import) ? t('chat.composerAtt.blockImporting') : t('chat.composerAtt.blockSending');
 }
 /** 添付を字の欄の位置の順に並べる。文中に無いものは後ろ（文末に付く） */
 function orderedAttachments() {
@@ -5977,7 +5983,8 @@ function onComposerAtoms({ added, removed }) {
       if (i >= 0) removedAttached.set(key, state.attached.splice(i, 1)[0]);
     } else {
       const u = uploads.get(key.slice(2));
-      if (u && !u.failed) u.cancelled = true;
+      if (u?.import) pasteImages.cancel(u);   // 取り込み中の札を外した・元に戻した: 取得もやめる
+      else if (u && !u.failed) u.cancelled = true;
     }
   }
   for (const key of added) {
@@ -6012,7 +6019,7 @@ let attachEntry = null, attachList = null, attachHintSig = "";
 function renderAttached() {
   const strip = $("attached");
   const here = uploadsHere();
-  const failed = here.filter(u => u.failed || u.cancelled).length, sending = here.length - failed;
+  const failed = here.filter(u => u.failed || u.cancelled).length, importing = here.filter(u => u.import).length, sending = here.length - failed - importing;
   const total = state.attached.length + here.length;
   strip.hidden = total === 0;
   if (!attachEntry) {
@@ -6030,8 +6037,9 @@ function renderAttached() {
     strip.append(b);
   }
   attachEntry.count.textContent = t("chat.attachList.count", { count: total });
-  attachEntry.state.textContent = failed ? ` · ${t("chat.composerAtt.entryFailed", { count: failed })}` : sending ? ` · ${t("chat.composerAtt.entrySending", { count: sending })}` : "";
-  attachEntry.b.dataset.state = failed ? "failed" : sending ? "sending" : "";
+  attachEntry.state.textContent = [failed ? t("chat.composerAtt.entryFailed", { count: failed }) : "", sending ? t("chat.composerAtt.entrySending", { count: sending }) : "",
+    importing ? t("chat.composerAtt.entryImporting", { count: importing }) : ""].filter(Boolean).map(s => ` · ${s}`).join("");
+  attachEntry.b.dataset.state = failed ? "failed" : sending || importing ? "sending" : "";
   // 同じ名前の添付が増えた・減った: 札に添える見分けのフォルダーが変わるので札を描き直す
   const hints = attachFolderHints(state.attached, { deviceLabel: t("chat.attach.deviceFolder") })
     .map((h, i) => (h ? `${attachedKey(state.attached[i].path)}=${h}` : "")).filter(Boolean).join("|");
@@ -6052,6 +6060,7 @@ function attachListRows() {
     size: Number.isFinite(a.size) ? a.size : null, status: a.from === "host" ? t("chat.attachList.byPath") : t("chat.attachList.sent"), section });
   const upload = (u, section) => {
     const p = pendingUpload(u.id);
+    if (p.state === "importing") return { id: `i:${u.id}`, kind: "image", name: u.name, path: "", origin: null, size: null, section, status: t("chat.attachList.importing"), progress: null };
     return { id: `i:${u.id}`, kind: "file", name: u.name, path: "", origin: "device", size: u.size, section,
       status: p.state === "failed" ? p.error : t("chat.composerAtt.entrySending", { count: 1 }), progress: p.state === "sending" ? p.percent : null };
   };
@@ -6077,7 +6086,9 @@ function openAttachList() {
       const key = item.id;
       if (key.startsWith("i:")) {
         const p = pendingUpload(key.slice(2));
-        return p?.state === "sending"
+        return p?.state === "importing"
+          ? [{ label: t("chat.paste.cancelImport"), run: () => removeComposerAttachment(key), keepOpen: true }]
+          : p?.state === "sending"
           ? [{ label: t("chat.attach.cancelSending"), run: () => removeComposerAttachment(key), keepOpen: true }]
           : [{ label: t("chat.composerAtt.retry"), run: () => onComposerAtomAction("retry", key), keepOpen: true },
              { label: t("chat.attach.remove"), run: () => removeComposerAttachment(key), keepOpen: true }];
@@ -6208,36 +6219,63 @@ async function runUpload(u) {
         onProgress: (sent) => { u.sent = sent; paintUpload(u); } }),
       isImage ? thumbnailOf(file).catch(() => null) : null,
     ]);
-    if (!r || u.cancelled) { u.cancelled = true; renderAttached(); return; }   // やめた（札は外れている）
+    if (!r || u.cancelled) { u.cancelled = true; renderAttached(); return false; }   // やめた（札は外れている）
     const item = { name: file.name, path: r.path, kind: r.kind, mime: file.type, from: "device", size: file.size,
       ...(thumb ? { dataUri: thumb.dataUri, width: thumb.width, height: thumb.height } : {}) };
-    // 持ち主は届いた時点で読む（新しい会話を作っている間に始めたものは、できた会話の id に付け替わっている: adoptUploads）
-    const owner = u.sessionId;
-    if (state.current === owner) {
-      uploads.delete(u.id);
-      state.attached.push(item);
-      composerEditor.resolvePending(u.id, r.path);
-      renderAttached();
-      saveDraft().catch(() => {});
-    } else {
-      // 送っている間に別の会話へ移った。その会話の下書きに積む（位置は持たない: 文末に付く）。"" は持ち主の会話が無い欄の下書き。
-      // 保存できたら札を消す（できなければ下の catch が本当の理由つきの失敗にする）
-      const key = owner ?? "";
-      const draft = state.drafts.get(key) ?? { text: "", attached: [] };
-      await persistDraft(key, { ...draft, attached: [...(draft.attached ?? []), item], version: 2, dirty: true });
-      uploads.delete(u.id);
-      renderAttached();
-    }
+    await settleUpload(u, item);
     // エージェントは画像をパスから自分の道具で読む。大きな画像は画像として読めないことがある（Claude の API は 1 枚 5MB まで）
     if (isImage && file.size > IMAGE_READ_HINT_BYTES) composerError(t("chat.attach.largeImage", { name: file.name, size: formatBytes(file.size) }));
+    return true;
   } catch (e) {
     u.failed = e?.message ?? String(e);
     // 札が字の欄にあれば札に理由・再試行・外すを出す。札の無い（平文の間など）失敗は入力欄の上の一行で
     if (u.placed && composerEditor.hasAttachment(`i:${u.id}`)) composerEditor.updatePending(u.id);
     else { uploads.delete(u.id); composerError(t("chat.attach.failed", { name: file.name, error: u.failed })); }
     renderAttached();
+    return false;
   }
 }
+/**
+ * 届いた添付（item）を、持ち主の下書きへ入れて、仮の札をパスの札に替える（ファイルの送信・貼り付けた画像の取り込みが使う）。
+ * 持ち主は届いた時点で読む（新しい会話を作っている間に始めたものは、できた会話の id に付け替わっている: adoptUploads）
+ */
+async function settleUpload(u, item) {
+  const owner = u.sessionId;
+  if (state.current === owner) {
+    uploads.delete(u.id);
+    state.attached.push(item);
+    composerEditor.resolvePending(u.id, item.path);
+    renderAttached();
+    saveDraft().catch(() => {});
+  } else {
+    // 送っている間に別の会話へ移った。その会話の下書きに積む（位置は持たない: 文末に付く）。"" は持ち主の会話が無い欄の下書き。
+    // 保存できたら札を消す（できなければ呼び出し側が本当の理由つきの失敗にする）
+    const key = owner ?? "";
+    const draft = state.drafts.get(key) ?? { text: "", attached: [] };
+    await persistDraft(key, { ...draft, attached: [...(draft.attached ?? []), item], version: 2, dirty: true });
+    uploads.delete(u.id);
+    renderAttached();
+  }
+}
+
+/** 貼り付けた HTML の画像の取り込み（web/paste-images.mjs。ADR 0141）。送信中の一覧（uploads）に載せ、送れない間・入口の件数・下書きは添付と同じ扱い */
+const pasteImages = createPasteImages({
+  cmd: (command, args) => cmd(command, args),
+  editor: () => composerEditor,
+  entry: (base) => {
+    const u = { sent: 0, sessionId: state.current ?? null, cancelled: false, failed: null, placed: true, ...base };
+    uploads.set(u.id, u);
+    return u;
+  },
+  bucketOf: (u) => u.sessionId,
+  uploadFile: (u) => runUpload(u),
+  finished: async (u, r) => {
+    await settleUpload(u, { name: r.name, path: r.path, kind: "image", mime: r.mime, from: "import", size: r.bytes });
+    if (r.bytes > IMAGE_READ_HINT_BYTES) composerError(t("chat.attach.largeImage", { name: r.name, size: formatBytes(r.bytes) }));
+  },
+  dropped: (u) => { uploads.delete(u.id); renderAttached(); },
+  registered: () => renderAttached(),
+});
 /**
  * 入力欄の高さの上限を決める。1 行から始めて中身に合わせて伸び（CSS）、上限はマウス 10 行・タッチ 6 行（promptMaxLines）。
  * その先は欄の中でスクロールする（送信の行は常に見える）。画面が低いとき（キーボードが出ている）は画面の 40% でも止める

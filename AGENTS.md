@@ -40,6 +40,7 @@ core が web へ流すのは正規化イベントだけで、バックエンド�
 | `PLEIAD_CONTROL_URL` / `PLEIAD_CONTROL_TOKEN` | `pleiad` CLI のつなぎ先。Pleiad が会話のシェルへ渡し、その会話に束縛される（無ければ `AGENT_HOST_DATA` の `control.json`） |
 | `AGENT_HOST_GIT_SNAPSHOTS` | `off` でターンの始まりと終わりの git の撮影（`refs/pleiad/`。ADR 0085）を止める。テストが使う（`tests/lib/server.mjs`） |
 | `AGENT_HOST_WORKTREES` | `off` で worktree（ADR 0136）を作らない。テストが使う（`tests/lib/server.mjs`。このリポジトリが cwd のテストが `<リポジトリ>.pleiad` に残すのを防ぐ）。確かめるテストは一時のリポジトリで `on` を渡す |
+| `AGENT_HOST_IMAGE_IMPORT_TEST_ORIGIN` | 貼り付けた画像の取り込み（ADR 0141）の確認用。`AGENT_HOST_BACKENDS` が `fake` だけのときに限り、origin のホストがループバック（127.0.0.1・::1・localhost）なら効き、検査をやめて、どの https の URL もこの origin へ向け替える。本物のバックエンドと並べたときや、ループバックでない origin は無視する（`tests/unit/image-import.mjs`） |
 | `AGENT_HOST_WORKTREE_GRACE_MS` | worktree を作ってから、使われていないものとして自動で片付けるまでの猶予（既定 60 秒。ADR 0089）。テストが 0 にする |
 
 デスクトップ版は `npm run desktop`、インストーラーの生成は `npm run desktop:dist`（対象 OS で実行）。リリースの運用は `docs/desktop-releases.md`。
@@ -48,7 +49,7 @@ core が web へ流すのは正規化イベントだけで、バックエンド�
 
 - 作業用 worktree 内で実装・検証・コミットを行い、依頼に必要な変更だけを含める。
 - 開発環境は Node.js 22.13 以上（`node:sqlite` を使う。ADR 0115）。依存関係の導入には `npm ci` を使う。
-- 作成直後の worktree には `node_modules` が無い。依存が `main` と同じなら、PowerShell から `cmd /c mklink /J <worktreeの絶対パス>\node_modules <メインの作業ディレクトリの絶対パス>\node_modules` でジャンクションを張れば足りる（Bash tool の `cmd //c mklink` は失敗する）。外すときは `cmd /c rmdir <worktreeの絶対パス>\node_modules`（`rm -rf` はリンク先の実体を消す恐れがある）。
+- 作成直後の worktree には `node_modules` が無い。依存が `main` と同じなら、PowerShell から `cmd /c mklink /J <worktreeの絶対パス>\node_modules <メインの作業ディレクトリの絶対パス>\node_modules` でジャンクションを張れば足りる（Bash tool の `cmd //c mklink` は失敗する）。外すときは `cmd /c rmdir <worktreeの絶対パス>\node_modules`（`rm -rf` はリンク先の実体を消す恐れがある）。ただし electron-builder でパッケージを作る（`desktop:pack`・`desktop:dist`・`desktop:store`）ときは、ジャンクションでは依存をたどれず中身が欠けるので `npm ci` で入れる（`docs/microsoft-store.md`「作り方」）。
 - テストは必ず作業用 worktree の中で実行する。`main` の作業ディレクトリで `npm test` を走らせても worktree の変更は検証できない。
 - 設計は `docs/design.md`、画面の変更は `docs/design-system.md` を参照する。
 - 画面・AI・CLI へ外に出す機能は、WS の case を足すだけにせず `core/ops/` に操作として定義する（ADR 0081）。足し忘れは `npm test` の ops-coverage が落とす（`tests/ops-baseline.json` の `todo` は増やせない）。設定（prefs.json）を足す・変えるときは `core/ops/settings.mjs` の `defineSetting`（危険度・`normalize`・`write`）に書き、`store.setPref` を直に呼ばない（画面の `setPref` も AI の `settings.set` も同じ定義を通る。`ops-coverage` が落とす）。操作の危険度・出す口を変えたら `OPS_UPDATE_SNAPSHOT=1 npm test -- ops-surface` で snapshot を更新し、差分を確認する。

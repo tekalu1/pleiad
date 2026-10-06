@@ -192,6 +192,9 @@ export const COMMANDS = new Set([
   "attachChunk",     // { uploadId, offset, data（base64）} -> { received }。data が空なら今の位置だけ
   "attachFinish",    // { uploadId } -> { path, bytes, kind }
   "attachCancel",    // { uploadId } -> { cancelled }
+  // 貼り付けた HTML の画像（https）をホストが取りに行く（core/image-import.mjs、docs/adr/0141）
+  "attachImport",    // { url, sessionId?, name?, importId? } -> { path, bytes, kind, mime, name }。取れなければ失敗（理由は画面に出さない）
+  "attachImportCancel", // { importId } -> { cancelled }
   // 手元のフォルダーをホストへ送る（core/folder-uploads.mjs、docs/remote.md §8.1）。リモート専用ではない一般の口
   "uploadCheck",     // { name, dest?, paths } -> { dest, root, exists, inRoot, empty, conflicts, sample, needsConfirm }。送る前の下見
   "uploadStart",     // { name, dest?, files: [{ path, size, mtime }], overwrite } -> { uploadId, dest, received: [バイト], resumed, chunkBytes } | { needsConfirm, ... }

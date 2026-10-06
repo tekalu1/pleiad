@@ -12,6 +12,7 @@
   let pairHostName = '';
 
   apply(document);
+  $('privacy').href = t('hosts.privacyUrl');
 
   function show(view) {
     $('list').hidden = view !== 'list';

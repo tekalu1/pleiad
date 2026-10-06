@@ -156,6 +156,9 @@ const SUITES = [
   './unit/server-delegation-settings.mjs',
   // 委譲の結果に選ぶ返答: Stop フックの続き（調べものだけ）は飛ばす・中身の仕事をした続きは選ぶ（Claude の transcript の印）
   './unit/delegation-result.mjs',
+  // 委譲の子の履歴が一時的に読めない（Codex の 1546 disk I/O error）: 0.5・1・2 秒で読み直す・読めなければ流れた返答で注意書き付きの完了・ターン用の app-server の終わりを待つ
+  './unit/history-retry.mjs',
+  './unit/server-delegation-history-retry.mjs',
   // 委譲先の自動振り分け: 規則・段・使用量で飛ばす・Claude のアカウント・判定器（偽の fetch）・使用量の取り置き
   './unit/delegation-routing.mjs',
   // 同じくサーバー全体: kind の検査・自動で選んで子を作る・記録・設定とキーの口（偽の判定器と偽の agy）
@@ -193,6 +196,7 @@ const SUITES = [
   // データ置き場を共有する 2 つのプロセス。本物の子プロセスを 2 本起動する
   './unit/mcp-oauth-processes.mjs',
   './unit/desktop-updates.mjs',
+  './unit/desktop-store.mjs',
   './unit/desktop-exit-dialog.mjs',
   './unit/message-queue.mjs',
   // 送り終わった outbox は刈らない: 古い項目でも returned・undelivered・同じ ID の再試行が見つかる（ADR 0115）
@@ -268,11 +272,17 @@ const SUITES = [
   // Claude の巻き戻し（resumeSessionAt・resumeDropsTurn を resume に添える。拒否は呼び出し側へ）: SDK の query を身代わりに
   './unit/claude-rewind.mjs',
   './unit/md-doc.mjs',
+  // 貼り付けの HTML → 入力欄の形（ADR 0141）: 書式・リスト・引用・コード・リンク・表・画像の振り分け・構造の無い HTML は対象外・往復
+  './unit/html-paste.mjs',
   './unit/prompt-title.mjs',
   // 添付の件数に上限が無い（下書き・送信）。出どころの印。1 件 8MB の上限は残る
   './unit/attach-no-limit.mjs',
   // 添付を断片で送る（1 件 100MB まで）: 境目・抜け・やめる・切れても続きから・大きな画像は会話にパスだけ
   './unit/attach-chunked.mjs',
+  // 貼り付けた HTML の画像をホストが取りに行く口（ADR 0141）: https・公開アドレスのみ・リダイレクトの検査・大きさ・SVG と画像でない中身・やめる・置き場
+  './unit/image-import.mjs',
+  // 貼った画像の取り込みの画面側の段取り: 同時 3 枚・順番待ちのやめる・やめたあとの結果は捨てる・取れなければ静かに外す・読み上げ
+  './unit/paste-images.mjs',
   // 入力欄と上端の見直し: 字の欄の上限・チップの字・添付の出どころ・パンくず・規則
   './unit/composer-layout.mjs',
   './unit/unread.mjs',
@@ -533,6 +543,8 @@ const SUITES = [
   './unit/runner-contract.mjs',
   // リリースで使う同一 commit の main CI の照合と公開前の検証条件
   './unit/release-ci-gate.mjs',
+  // Google Play へ上げるワークフロー: APK の流れと同じ版・同じ鍵、入力と Secrets の確かめ（docs/android-releases.md「Google Play」）
+  './unit/android-play-workflow.mjs',
 ];
 
 const code = await main({

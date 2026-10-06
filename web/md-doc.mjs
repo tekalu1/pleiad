@@ -580,6 +580,23 @@ export function removeAtoms(st, pred) {
   return next;
 }
 
+/** removeAtoms の後で、添付の隣でも閉じたコードの後ろでもなくなった余白の行（pad）も外す（取れなかった画像の札を、何も残さずに消すとき） */
+export function removeAtomsTidy(st, pred) {
+  const next = removeAtoms(st, pred);
+  const at = next.sel.s.b;
+  let shift = 0;
+  const keep = next.blocks.filter((b, i, all) => {
+    const stray = b.pad && isEmptyBlock(b) && all.length > 1 && all[i - 1]?.kind !== 'att' && all[i + 1]?.kind !== 'att'
+      && !(all[i - 1]?.kind === 'code' && fenceRoles(all.map(blockRaw))[i - 1] === 'close');
+    if (stray && i < at) shift++;
+    return !stray;
+  });
+  next.blocks = ensureShape(keep);
+  const idx = Math.max(0, Math.min(at - shift, next.blocks.length - 1));
+  next.sel = caret(idx, Math.min(next.sel.s.v, next.blocks[idx].kind === 'att' ? 0 : runsLength(next.blocks[idx].runs)));
+  return next;
+}
+
 export const atomKey = (b) => (b.path ? `p:${normalizeAttachmentPath(b.path)}` : b.pid ? `i:${b.pid}` : null);
 export const atomKeys = (blocks) => new Set(blocks.filter(b => b.kind === 'att').map(atomKey).filter(Boolean));
 
@@ -596,9 +613,32 @@ export function pasteText(st, text, { plain = false, resolve = () => null } = {}
   const { b, v } = cur.sel.s;
   const blk = cur.blocks[b];
   if (!src.includes('\n')) return insertRuns(cur, plain || blk.kind === 'code' ? plainRun(src) : parseInline(src));
+  const parsed = blk.kind === 'code' ? src.split('\n').map(codeBlock) : markdownToDoc(src, { resolve, plain }).filter(x => !x.pad);
+  return spliceParsed(cur, parsed, { resolve, plain });
+}
+
+/**
+ * 貼り付けの HTML（web/html-paste.mjs）を入れる。parts は { md: 1 行の Markdown } と { atom: 添付のブロック } の並び。
+ * 1 行の字だけなら今の行へ（記法は整える）。ほかは行ごとにブロックへ。先頭がふつうの段落なら今の行につなぎ、見出し・リスト・引用・コード・添付なら次の行から始める
+ */
+export function pasteRich(st, parts, { resolve = () => null } = {}) {
+  if (parts.length === 1 && parts[0].md !== undefined && classifyLine(parts[0].md).kind === 'p' && !ATTACHMENT_LINE.test(parts[0].md.trim())) return pasteText(st, parts[0].md, { resolve });
+  const cur = deleteSelection(st);
+  const parsed = [];
+  let lines = [];
+  const flushLines = () => { if (lines.length) { parsed.push(...markdownToDoc(lines.join('\n'), { resolve }).filter(x => !x.pad)); lines = []; } };
+  for (const part of parts) { if (part.md !== undefined) lines.push(part.md); else { flushLines(); parsed.push(part.atom); } }
+  flushLines();
+  if (!parsed.length) return cur;
+  return spliceParsed(cur, parsed, { resolve, rich: true });
+}
+
+/** 解いたブロックを、キャレットの行へ差し込む（pasteText・pasteRich の本体）。cur は選択を消した後の状態 */
+function spliceParsed(cur, parsed, { plain = false, resolve = () => null, rich = false } = {}) {
+  const { b, v } = cur.sel.s;
+  const blk = cur.blocks[b];
   const next = clone(cur);
   const inCode = blk.kind === 'code';
-  const parsed = inCode ? src.split('\n').map(codeBlock) : markdownToDoc(src, { resolve, plain }).filter(x => !x.pad);
   const cutAt = blk.kind === 'att' ? null : v;
   const left = blk.kind === 'att' ? null : { ...blk, runs: sliceRuns(blk.runs, 0, cutAt), pad: undefined };
   const right = blk.kind === 'att' ? null : { kind: blk.kind === 'h' ? 'p' : blk.kind, marker: blk.kind === 'h' ? '' : blk.kind === 'code' ? '' : continuedMarker(blk), runs: sliceRuns(blk.runs, cutAt) };
@@ -607,7 +647,7 @@ export function pasteText(st, text, { plain = false, resolve = () => null } = {}
   const firstIdx = seq.length;
   seq.push(...clone(parsed));
   // 空の頭の行は貼った先頭の行と一体（記号ごと置き換える）。中身のある行なら、貼った先頭の行の中身を後ろにつなぐ
-  if (firstIdx === 1 && seq[1].kind !== 'att' && seq[0].kind !== 'att' && !(inCode)) {
+  if (firstIdx === 1 && seq[1].kind !== 'att' && seq[0].kind !== 'att' && !(inCode) && (!rich || seq[1].kind === 'p')) {
     seq[0] = { ...seq[0], runs: mergeRuns([...seq[0].runs, ...seq[1].runs]) };
     seq.splice(1, 1);
   } else if (firstIdx === 1 && inCode) {
@@ -825,6 +865,22 @@ export function createHistory({ limit = 200, gap = 1000, now = () => Date.now() 
       }
       lastAt = t;
       return true;
+    },
+    /**
+     * すべての記録の状態を fn で書き換える（取れなかった画像の札を、戻す・やり直しにも出さない）。書き換えて同じになった隣の記録は 1 つにまとめる。
+     * いまの位置は、同じ記録を指したまま
+     */
+    rewrite(fn) {
+      const out = [];
+      let to = 0;
+      stack.forEach((entry, i) => {
+        const state = fn(entry.state);
+        const prev = out.at(-1);
+        if (!(prev && sameBlocks(prev.state.blocks, state.blocks))) out.push({ state: keep(state), reason: entry.reason });
+        if (i <= at) to = out.length - 1;
+      });
+      stack = out;
+      at = to;
     },
     /** 選択だけを最新の記録に反映する（履歴は増やさない） */
     touch(sel) { if (stack[at]) stack[at].state.sel = clone(sel); },

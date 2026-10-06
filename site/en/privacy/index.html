@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Privacy policy — Pleiad</title>
+<meta name="description" content="Privacy policy of the Pleiad Android app">
+<link rel="canonical" href="https://pleiad.dev/en/privacy/">
+<link rel="alternate" hreflang="ja" href="https://pleiad.dev/privacy/">
+<link rel="alternate" hreflang="en" href="https://pleiad.dev/en/privacy/">
+<link rel="alternate" hreflang="x-default" href="https://pleiad.dev/privacy/">
+<meta name="theme-color" content="#f5f6fa">
+<link rel="icon" href="../../assets/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../../legal.css">
+</head>
+<body>
+<header class="legal-top">
+  <a class="legal-brand" href="../"><img src="../../assets/pleiad-icon.svg" alt="" width="24" height="24">Pleiad</a>
+  <a href="../../privacy/" hreflang="ja" lang="ja">日本語</a>
+</header>
+<main class="legal">
+<h1>Privacy policy</h1>
+<p class="legal-meta">Applies to: the Android app “Pleiad” (package name <code>com.procway.pleiad</code>)<br>Effective: October 6, 2026</p>
+
+<p>The Pleiad Android app (“the app”) lets you use Pleiad running on your own PC (“the host”) from your phone, through a relay server that you set up (“the relay”). This policy explains what information the app handles and where it goes.</p>
+
+<h2>1. Information the developer receives</h2>
+<p>The developer does not receive any information about the app’s users. The developer runs no server for the app, and the app has no account sign-up and no advertising, usage analytics or crash reporting.</p>
+
+<h2>2. Where the app sends information</h2>
+<p>The app sends information off your device only to the following four places.</p>
+<h3>Your host (your own PC)</h3>
+<p>The app sends what you do on the host’s screen (conversations, approvals, settings and so on), files you choose to send, your device’s name (the name in your device settings, or the manufacturer and model) and the app version. These are end-to-end encrypted between your device and your host, and only the host can read them. The keys for pairing come only from the QR code (or code) shown on the host’s screen.</p>
+<h3>The relay you set up</h3>
+<p>The relay is a server run by you (or the owner of the host), not by the developer. The relay cannot read the content, but to connect the two sides it can see the host and device identifiers, connection tokens, IP addresses, when and how long you connect, and how much data is sent. The connection is encrypted with TLS (<code>https</code>/<code>wss</code>).</p>
+<h3>Google’s QR code scanner</h3>
+<p>To read a pairing QR code, the app uses the QR code scanner of Google Play services (ML Kit). Images are processed on your device. Google collects device and app information, performance metrics and similar data to diagnose and measure this feature (<a href="https://developers.google.com/ml-kit/android-data-disclosure">ML Kit data disclosure</a>, <a href="https://policies.google.com/privacy">Google Privacy Policy</a>). You can also pair by pasting the code instead of scanning it.</p>
+<h3>Other websites</h3>
+<p>Links on the host’s screen open in another app, such as your browser. When something shown on the host’s screen (an image in a conversation, a view an agent made, and so on) loads images or scripts from another website, your device connects to that site directly, and the site sees connection information such as your IP address. Those sites handle data under their own policies.</p>
+
+<h2>3. Information stored on your device</h2>
+<p>The app stores, in its own storage, the list of paired hosts (host name, relay URL and identifiers), the keys and tokens used to talk to them, your notification settings, and the host you opened last. Keys and tokens are encrypted with a key in the Android Keystore. None of this is backed up, and it is deleted when you uninstall the app. Removing a host from the list deletes that host’s information.</p>
+
+<h2>4. Notifications</h2>
+<p>While notifications are on, the app keeps running with one ongoing notification so that it stays connected to the relay. The host encrypts each notification (its kind, the host name, the conversation name and the time) with a key for your device before handing it to the relay, so the relay cannot read it. Notifications never contain message text. You can turn notifications off at any time on the app’s Notifications screen.</p>
+
+<h2>5. Permissions</h2>
+<ul>
+  <li>Camera: used only to scan the pairing QR code.</li>
+  <li>Notifications: used to tell you about approvals, failures and finished work. The app asks when you turn notifications on.</li>
+  <li>Foreground service and start at boot: used, while notifications are on, to stay connected to the relay and to reconnect after a restart or an app update.</li>
+  <li>Internet: used to connect to the relay.</li>
+</ul>
+
+<h2>6. How data is protected</h2>
+<p>Traffic between your device and your host is end-to-end encrypted with keys exchanged at pairing (the Noise protocol), and traffic to the relay is encrypted with TLS. At pairing, the device and the host show the same confirmation code, and the owner of the host compares them before approving. The device’s keys and tokens are stored encrypted with a key in the Android Keystore and are not included in backups.</p>
+
+<h2>7. Retention and deletion</h2>
+<p>The developer keeps no information about users. Information on your device is deleted when you remove a host from the list or uninstall the app. The relay does not store conversation content; while your device is offline it only holds encrypted notifications in memory for a short time (up to 15 minutes). The relay’s connection logs (identifiers, times, amounts and so on) and the host’s conversation history are kept by the users who run them, and they can delete them.</p>
+
+<h2>8. AI services used by the host</h2>
+<p>The host uses AI services that you signed in to with your own accounts (such as Claude Code, Codex and Antigravity) from your PC. Instructions and conversations you send from the app may be passed to those services through the host. Those services handle data under their own policies.</p>
+
+<h2>9. Children</h2>
+<p>The app is not directed to children and does not knowingly collect information from children.</p>
+
+<h2>10. Changes to this policy</h2>
+<p>When this policy changes, this page is updated and the date of the change is added below the effective date.</p>
+
+<h2>11. Contact</h2>
+<p>Contact us through <a href="https://github.com/tekalu1/pleiad/issues">GitHub Issues</a> or the developer contact on the app’s Google Play listing.</p>
+</main>
+<footer class="legal-foot"><a href="../">Pleiad</a></footer>
+</body>
+</html>

@@ -9,6 +9,7 @@ import { migrateClaudeUsage } from './usage-migrations.mjs';
 // 承認の保留・猶予・中断（設計メモ §8.5）だけはここに残す。エージェントに散らすと
 // 「host が居ないあいだ deny し続ける」壊れ方がエージェントの数だけ再発する。
 import { createAgentTasks, finalReply, gitLine, workspaceLine } from './agent-tasks.mjs';
+import { readWithRetry, transientStorageError } from './history-retry.mjs';
 import { createCompletionNotices, hasPendingChild, canSteerNotice } from './completion-notices.mjs';
 import { createSettingApprovals } from './setting-approvals.mjs';
 import { createAgentBridge, AGENTS_MCP_PATH, DELEGATING_TOOLS, kindList } from './agent-bridge.mjs';
@@ -91,6 +92,9 @@ import { createPushNotifier } from './notify/notifier.mjs';
 import { createPresence } from './notify/presence.mjs';
 import { createNotifySettings } from './notify/settings.mjs';
 import { createFolderUploads } from './folder-uploads.mjs';
+import { createImageImporter, testImportOrigin } from './image-import.mjs';
+import { createUrlGuard } from './mcp-url-guard.mjs';
+import { pinnedFetch } from './pinned-fetch.mjs';
 import { createVisualizationCollector, visualizeInstructions, snapshotResponse, writeSnapshotFile } from './visualize.mjs';
 import { plyParts } from './instruction-amount.mjs';
 import { computerPrompt } from './backends/computer-delivery.mjs';
@@ -210,6 +214,18 @@ function attachTarget(sessionId, name) {
   const bucket = sessionId ? String(sessionId).replace(/[^A-Za-z0-9._-]/g, "_").replace(/[. ]+$/, "_").slice(0, 200) : "_new";
   return { bucket, dir: path.join(UPLOAD_DIR, bucket), rel: `${stamp}_${safe}` };
 }
+// 貼り付けた HTML の画像を取りに行く口（core/image-import.mjs、docs/adr/0141）。置き場と名前の決め方は添付と同じ。
+// 本番では公開アドレスの https だけ。テスト専用の緩め: バックエンドが fake だけのときに限り、AGENT_HOST_IMAGE_IMPORT_TEST_ORIGIN=<http://127.0.0.1:ポート>
+// （ホストがループバックのものだけ有効）を渡すと、検査をやめ、どの https の URL も、パスと問い合わせだけを残してそのテスト用サーバーへ向ける
+// （本物の外へは出ない。ブラウザーでの確認用。testImportOrigin）
+const imageImportTestOrigin = testImportOrigin();
+const imageImporter = createImageImporter({
+  target: (sessionId, name) => attachTarget(sessionId, name),
+  ...(imageImportTestOrigin ? {
+    guard: createUrlGuard({ serverUrl: "http://127.0.0.1" }),
+    fetchFn: (url, init) => { const u = new URL(url); return pinnedFetch(new URL(`${u.pathname}${u.search}`, imageImportTestOrigin), init); },
+  } : {}),
+});
 const IMAGE_MIME = /^image\//;
 // Native sessions opened outside this host may not have sidecar metadata yet.
 const workspaceRoots = new Set([process.cwd()]);
@@ -2086,6 +2102,15 @@ function makeEmit(turn) {
     if (event?.type === "tool.result" && event.rejection && typeof event.rejection === "object") {
       taskExecutions.get(turn.info.sessionId)?.rejections.push(event.rejection);
     }
+    // 委譲の子の、流れてきた最後の返答。ターンの後に履歴を読めなかったときの結果にする（execute）
+    if (event?.type === "text.delta" || event?.type === "text.end") {
+      const execution = taskExecutions.get(turn.info.sessionId);
+      if (execution && event.type === "text.end") execution.streamEnded = true;
+      else if (execution) {
+        if (execution.streamEnded) { execution.streamed = ""; execution.streamEnded = false; }
+        execution.streamed += String(event.text ?? "");
+      }
+    }
     // main の状態と裏で動いているもの（docs/multi-backend.md §2.2）。一覧と稼働表示は running の
     // ターン行から読むので、変わったらすぐ配る（4 秒ごとの定期便を待たない）
     if (event?.type === "phase" || event?.type === "background") {
@@ -3682,6 +3707,8 @@ function opsDeps(lng = currentLocale()) {
     shell: opsShell,
     sessionWork: opsSessionWork,
     files: { listDirs: (p, opts) => listDirs(p, opts) },
+    // 貼り付けた HTML の画像を取りに行く（attachments.*。ADR 0141）
+    attachments: { importImage: (input) => imageImporter.importImage(input), cancelImport: (id) => imageImporter.cancel(id) },
     // コンテキストの探索の錠。AI・CLI はまとめて 1 つ（画面の WS は接続ごとの錠で上書きする）
     scanLock: agentScanLock,
     sessionCwd: async (id) => (await store.get(id)).cwd ?? null,
@@ -4431,7 +4458,7 @@ agentTasks = await createAgentTasks({
   execute: async (task, prompt, signal) => {
     if (signal.aborted) { await worktreeHost.taskDone(task).catch(() => {}); return { outcome: 'aborted' }; }
     if (sessionBusy(task.sessionId)) return { requeue: true };
-    const execution = { outcome: null, error: null, rejections: [], stopped: [], reply: null, timer: null };
+    const execution = { outcome: null, error: null, rejections: [], stopped: [], reply: null, timer: null, streamed: '', streamEnded: false };
     taskExecutions.set(task.sessionId, execution);
     const stopChild = () => {
       const child = runtime.turns.get(task.sessionId);
@@ -4454,7 +4481,22 @@ agentTasks = await createAgentTasks({
       const childrenBusy = () => agentTasks.list(task.sessionId).some(r => ['queued', 'running', 'cancelling'].includes(r.status) || ['pending', 'delivering'].includes(r.notification));
       // ターンの外に残る端末（Codex）は待たない。終わっても main は再開せず、結果は変わらない（awaitedBackground）
       while (!signal.aborted && (sessionBusy(task.sessionId) || awaitedBackground(task.sessionId) || childrenBusy())) await waitFree(task.sessionId, 250);
-      const last = await lastReply(task.sessionId);
+      // 履歴の読み出しが一時的な SQLite のエラーで失敗したら、間を空けて読み直す（core/history-retry.mjs）。
+      // 読み直しても読めなければ、子の作業は終わっているので失敗にせず、流れてきた最後の返答を注意書き付きで結果にする。
+      // それ以外のエラーは今までどおり投げて失敗にする（docs/agent-delegation.md「子の結果」）
+      let last, historyNote = null;
+      try {
+        last = await readWithRetry(() => lastReply(task.sessionId), {
+          // i18n-ignore: サーバーのログ
+          onRetry: (e, n, ms) => console.error(`  [delegation] 子 ${task.sessionId} の履歴を読めなかったので ${ms}ms 後に読み直す（${n} 回目）:`, String(e?.message ?? e).slice(0, 300)),
+        });
+      } catch (e) {
+        if (!transientStorageError(e)) throw e;
+        // i18n-ignore: サーバーのログ
+        console.error(`  [delegation] 子 ${task.sessionId} の履歴を読み直しても読めなかった。流れてきた返答を結果にする:`, String(e?.message ?? e).slice(0, 300));
+        last = execution.streamed;
+        historyNote = agentT(await agentLocaleFor(task.parentSessionId), 'delegation.historyUnreadable', { error: String(e?.message ?? e).slice(0, 300) });
+      }
       // 裏の作業を止める前の返答（報告）を残す。止めた後に main が再開して足した一言だけが結果にならないように
       const text = execution.reply && execution.reply !== last ? [execution.reply, last].filter(Boolean).join('\n\n') : last;
       // error は完了通知に載って依頼元のエージェントが読む（依頼元の会話の言語）
@@ -4466,8 +4508,9 @@ agentTasks = await createAgentTasks({
       const workspace = await worktreeHost.taskDone({ ...task, worktree: renewed ?? task.worktree }).catch(() => null);
       const extra = { ...(workspace ? { workspace } : {}), ...(renewed ? { worktree: renewed } : {}) };
       worktreeSweepSoon();
-      if (agentTasks.list(task.sessionId).some(r => r.notification === 'unknown')) return { outcome: 'error', text, error: agentT(await agentLocaleFor(task.parentSessionId), 'delegation.noticeUnknown'), rejections, stoppedBackground, git, ...extra };
-      return { outcome: signal.aborted ? 'aborted' : execution.outcome ?? outcome, text, error: execution.error, rejections, stoppedBackground, git, ...extra };
+      const withNote = error => [error, historyNote].filter(Boolean).join('\n') || null;
+      if (agentTasks.list(task.sessionId).some(r => r.notification === 'unknown')) return { outcome: 'error', text, error: withNote(agentT(await agentLocaleFor(task.parentSessionId), 'delegation.noticeUnknown')), rejections, stoppedBackground, git, ...extra };
+      return { outcome: signal.aborted ? 'aborted' : execution.outcome ?? outcome, text, error: withNote(execution.error), rejections, stoppedBackground, git, ...extra };
     } finally { signal.removeEventListener('abort', stopChild); clearTimeout(execution.timer); taskExecutions.delete(task.sessionId); }
   },
   // 依頼元が完了通知を受け取れるか。受け取れない間、委譲の管理は通知の状態を書き換えない（保存を減らす）
@@ -6544,6 +6587,11 @@ wss.on("connection", (ws, req) => {
           attachPending.delete(id);
           return reply(true, { path: pending.file, bytes: r.bytes, kind: IMAGE_MIME.test(pending.mime) ? "image" : "file" });
         }
+        // 貼り付けた HTML の画像（https）をホストが取りに行く（ADR 0141）。取れなければ失敗（画面は理由を出さず、札を静かに外す）
+        case "attachImport":
+          return await viaOp('attachments.importImage');
+        case "attachImportCancel":
+          return await viaOp('attachments.cancelImport');
         case "attachCancel": {
           const id = msg.args?.uploadId;
           if (!attachPending.has(id)) return reply(true, { cancelled: false });

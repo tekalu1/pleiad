@@ -182,6 +182,7 @@
     "endpointDeleted": "依頼元の会話の接続先は削除されています。依頼元の会話で接続先を選び直してください",
     "aborted": "中断しました",
     "noticeUnknown": "子タスクの完了通知を確認できませんでした。子の会話を確認してください",
+    "historyUnreadable": "注意: 子の作業は終わりましたが、終わった後の履歴を一時的なエラーで読み出せませんでした（{{error}}）。結果は実行中に受け取った最後の返答で、欠けていることがあります。子の会話で確かめてください",
     "commandNotice": "[Pleiad コマンド長時間通知 / {{taskId}} / {{noticeId}}]\n{{title}} の子が `{{command}}` を少なくとも {{minutes}} 分実行中、または完了を待っています。止まっている可能性があります。ply_task_status で様子を見るか、ply_task_cancel で止めてください。",
     "silenceNotice": "[Pleiad タスク無音通知 / {{taskId}}]\n{{title}} の子が {{minutes}} 分なにも出していません。止まっている可能性があります。ply_task_status で様子を見るか、ply_task_cancel で止めてください。",
     "notice": "[Pleiad タスク完了通知 / {{taskId}}]\n{{retry}}実行先: {{backend}}\n状態: {{status}}\n依頼: {{task}}\n結果（子エージェントの報告）:\n{{result}}{{more}}\n{{error}}\n{{rejections}}{{git}}元の依頼に必要な作業を続けてください。",
@@ -1104,6 +1105,10 @@
     },
     "files": {
       "listDirs": { "summary": "このホストのフォルダーの中身（フォルダーの名前と、files: true ならファイルの名前・大きさ・更新時刻）。ファイルの中身は読まない。", "path": "フォルダーのパス。会話から呼ぶときは省くとその会話の作業場所。", "files": "true でファイルも返す。", "limit": "返す件数（既定 30、最大 100）。", "cursor": "前の返り値の next。続きから返す。" }
+    },
+    "attachments": {
+      "importImage": { "summary": "貼り付けた HTML の画像（公開アドレスの https）をホストが取りに行き、添付の置き場へ置く。画面の貼り付けだけが呼ぶ。", "url": "画像の URL（https のみ）。", "sessionId": "置き場の分け先の会話の id。", "name": "札の名前（alt の字など）。拡張子は中身から決める。", "importId": "取りやめるための id。" },
+      "cancelImport": { "summary": "取りに行っている途中の画像の取り込みをやめる。", "importId": "取り込みの id。" }
     },
     "probe": {
       "guarded": {

@@ -1806,7 +1806,9 @@ export const backend = {
       if (!contextRuntime && !ephemeral) endTurn(threadId);
       if (ephemeral && threadId) await rpc.request("thread/unsubscribe", { threadId }).catch(() => {});
       if (control) { control.handle = null; control.steer = null; control.steerConfirms = false; }
-      if (rpc !== nativeRpc) rpc.stop();
+      // ターン用の app-server は終わるまで待ってから返す。返った直後に共有の app-server が同じ履歴の DB を読むので
+      // （委譲の結果・画面の履歴）、止めたプロセスが DB を開いたままだとぶつかる（core/history-retry.mjs）
+      if (rpc !== nativeRpc) await rpc.stop();
     }
 
     return { sessionId: threadId };

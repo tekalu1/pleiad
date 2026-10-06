@@ -57,6 +57,22 @@ visible.split("\n").forEach((line, i) => {
 if (/\{(claude|openai|antigravity)\}|data-i18n/.test(page)) errors.push("英語のページに展開されていない印が残っている");
 if (!/<html lang="en">/.test(page)) errors.push('英語のページの <html lang="en"> が無い');
 
+// 文章のページ（辞書を使わず、日本語と英語を別のファイルで持つ）: 対があり、英語の側に日本語が残っていない（日本語への切り替えのリンクは除く）
+for (const rel of ["privacy/index.html"]) {
+  const jaFile = path.join(SITE, rel);
+  const enFile = path.join(SITE, "en", rel);
+  if (!fs.existsSync(jaFile) || !fs.existsSync(enFile)) {
+    errors.push(`文章のページの対が無い: ${rel} と en/${rel}`);
+    continue;
+  }
+  if (!/<html lang="ja">/.test(fs.readFileSync(jaFile, "utf8"))) errors.push(`${rel} の <html lang="ja"> が無い`);
+  const enPage = fs.readFileSync(enFile, "utf8");
+  if (!/<html lang="en">/.test(enPage)) errors.push(`en/${rel} の <html lang="en"> が無い`);
+  enPage.replace(/<a [^>]*lang="ja"[^>]*>[^<]*<\/a>/g, "").split(/\r?\n/).forEach((line, i) => {
+    if (CJK.test(line)) errors.push(`en/${rel} に日本語が残っている（${i + 1} 行）: ${line.trim().slice(0, 100)}`);
+  });
+}
+
 // JS の中の文言
 for (const name of ["main.js", "hero.js", "branch.js"]) {
   const code = fs.readFileSync(path.join(SITE, name), "utf8")

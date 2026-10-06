@@ -154,6 +154,36 @@
       "input": "25c7d85c859a"
     },
     {
+      "id": "attachments.cancelImport",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": false,
+        "cli": false
+      },
+      "legacyCommand": "attachImportCancel",
+      "input": "1c01f056200a"
+    },
+    {
+      "id": "attachments.importImage",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": false,
+        "cli": false
+      },
+      "legacyCommand": "attachImport",
+      "input": "f21a93c2cad3"
+    },
+    {
       "id": "bots.create",
       "risk": "write",
       "riskOf": true,

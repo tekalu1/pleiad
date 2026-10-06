@@ -1808,6 +1808,7 @@
       "copyPath": "パスをコピー",
       "close": "閉じる",
       "sent": "送信済み",
+      "importing": "取り込み中",
       "byPath": "パスで渡す",
       "jump": "文中の位置へ移動",
       "insert": "カーソルの位置に入れる",
@@ -1826,8 +1827,18 @@
       "failed": "送れませんでした: {{error}}",
       "entrySending_other": "{{count}} 件送信中",
       "entryFailed_other": "{{count}} 件失敗",
+      "entryImporting_other": "{{count}} 件取り込み中",
       "blockSending": "添付を送っている間は送れません",
+      "blockImporting": "取り込み中の画像があります",
       "blockFailed": "送れなかった添付があります。再試行するか外してください"
+    },
+    "paste": {
+      "importing": "取り込み中…",
+      "importingTitle": "{{name}} を {{host}} から取り込んでいます",
+      "cancelImport": "取り込みをやめる",
+      "startedLive_other": "画像 {{count}} 件を取り込んでいます",
+      "doneLive_other": "画像 {{count}} 件を取り込みました",
+      "imageName": "画像 {{n}}"
     },
     "composerFormat": {
       "label": "書式",
@@ -2685,6 +2696,10 @@
       "downloading": "このまま作業を続けられます。準備ができたらお知らせします。",
       "noAutoUpdate": "この評価版は自動更新に対応していません。新しいインストーラーで更新してください。",
       "browser": "ブラウザー版では更新履歴を確認できます。"
+    },
+    "store": {
+      "status": "Microsoft Store から更新されます",
+      "hint": "新しいバージョンは Microsoft Store が配ります。すぐに確かめるときは、Microsoft Store の「ライブラリ」で「更新プログラムを取得する」を押してください。"
     },
     "lastChecked": "最終確認：{{when}}",
     "retry": "再試行",

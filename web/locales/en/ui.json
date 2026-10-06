@@ -1854,6 +1854,7 @@
       "copyPath": "Copy path",
       "close": "Close",
       "sent": "Sent",
+      "importing": "Importing",
       "byPath": "Passed by path",
       "jump": "Go to its place in the text",
       "insert": "Insert at the cursor",
@@ -1874,8 +1875,21 @@
       "entrySending_other": "{{count}} sending",
       "entryFailed_one": "{{count}} failed",
       "entryFailed_other": "{{count}} failed",
+      "entryImporting_one": "{{count}} importing",
+      "entryImporting_other": "{{count}} importing",
       "blockSending": "Can't send while attachments are still uploading",
+      "blockImporting": "Images are still being imported",
       "blockFailed": "Some attachments couldn't be sent. Retry or remove them."
+    },
+    "paste": {
+      "importing": "Importing…",
+      "importingTitle": "Importing {{name}} from {{host}}",
+      "cancelImport": "Stop importing",
+      "startedLive_one": "Importing {{count}} image",
+      "startedLive_other": "Importing {{count}} images",
+      "doneLive_one": "Imported {{count}} image",
+      "doneLive_other": "Imported {{count}} images",
+      "imageName": "Image {{n}}"
     },
     "composerFormat": {
       "label": "Formatting",
@@ -2773,6 +2787,10 @@
       "downloading": "You can keep working. You'll be notified when it's ready.",
       "noAutoUpdate": "This preview build doesn't support automatic updates. Update with a new installer.",
       "browser": "In the browser version, you can view the release history."
+    },
+    "store": {
+      "status": "Updated through the Microsoft Store",
+      "hint": "New versions come from the Microsoft Store. To check now, open Library in the Microsoft Store and select Get updates."
     },
     "lastChecked": "Last checked: {{when}}",
     "retry": "Retry",

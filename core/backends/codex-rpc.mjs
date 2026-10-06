@@ -21,6 +21,9 @@ const CLIENT_INFO = { name: "agent-host", title: "agent-host", version: "0.0.0" 
 /** 立ち上がりを待つ上限。codex.exe は 300MB あるので初回は遅い。 */
 const START_TIMEOUT_MS = Number(process.env.AGENT_HOST_CODEX_START_MS ?? 60_000);
 
+/** stop() がプロセスの終わりを待つ上限。kill の後はふつう数十ミリ秒で終わる */
+const STOP_WAIT_MS = 3_000;
+
 /** thread/start の応答待ちのあいだ預かる frame の上限。溢れた分は受け手の居ないものとして扱う */
 const MAX_HELD = 1000;
 /** 子 -> 親の対応を覚えておく上限。古いものから忘れる（1 本の子は数十バイト） */
@@ -365,13 +368,23 @@ export class CodexRpc {
     }
   }
 
-  /** テストとプロセス終了用。 */
-  stop() {
+  /**
+   * プロセスを止める（ターン用の app-server の片付け・テスト・プロセス終了）。返りはプロセスが終わったら（長くても waitMs で）解ける。
+   * 待つのは、止めたプロセスが履歴の DB を開いたまま、共有の app-server が同じ DB を読むと、Windows で
+   * `(code: 1546) disk I/O error` になることがあるため（core/history-retry.mjs）。呼び出し側は待たなくてもよい
+   */
+  stop({ waitMs = STOP_WAIT_MS } = {}) {
     const proc = this.proc;
     this.proc = null;
     this.ready = null;
+    const exited = !proc || proc.exitCode !== null || proc.signalCode !== null ? Promise.resolve() : new Promise((resolve) => {
+      const timer = setTimeout(resolve, waitMs);
+      timer.unref?.();
+      proc.once("exit", () => { clearTimeout(timer); resolve(); });
+    });
     try { proc?.stdin?.end(); } catch {}
     try { proc?.kill(); } catch {}
+    return exited;
   }
 }
 

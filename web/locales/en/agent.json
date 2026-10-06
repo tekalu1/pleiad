@@ -182,6 +182,7 @@
     "endpointDeleted": "The endpoint of the requesting conversation has been deleted. Choose an endpoint again in the requesting conversation.",
     "aborted": "Aborted.",
     "noticeUnknown": "Could not confirm the completion notices of the child tasks. Check the child conversation.",
+    "historyUnreadable": "Note: The child finished its work, but its history could not be read afterwards because of a temporary error ({{error}}). The result is the last reply received during the run and may be incomplete. Check the child conversation.",
     "commandNotice": "[Pleiad command duration notice / {{taskId}} / {{noticeId}}]\nThe child for {{title}} has been running `{{command}}` or waiting for it to finish for at least {{minutes}} minutes. It may be stuck. Check with ply_task_status or stop it with ply_task_cancel.",
     "silenceNotice": "[Pleiad task silence notice / {{taskId}}]\nThe child for {{title}} has produced no activity for {{minutes}} minutes. It may be stuck. Check with ply_task_status or stop it with ply_task_cancel.",
     "notice": "[Pleiad task completion notice / {{taskId}}]\n{{retry}}Backend: {{backend}}\nStatus: {{status}}\nTask: {{task}}\nResult (the child agent's report):\n{{result}}{{more}}\n{{error}}\n{{rejections}}{{git}}Continue the work needed for the original request.",
@@ -1104,6 +1105,10 @@
     },
     "files": {
       "listDirs": { "summary": "What a folder on this host contains (folder names, and with files: true the names, sizes and modified times of files). File contents are not read.", "path": "The folder path. From a conversation, omit it for that conversation's working folder.", "files": "true also returns files.", "limit": "How many to return (default 30, at most 100).", "cursor": "The next value of the previous result. Continues from there." }
+    },
+    "attachments": {
+      "importImage": { "summary": "The host fetches an image (https, public address) from pasted HTML and puts it in the attachment folder. Only the paste in the screen calls it.", "url": "The image URL (https only).", "sessionId": "The conversation id the file is filed under.", "name": "The card name (for example the alt text). The extension comes from the contents.", "importId": "An id used to cancel the import." },
+      "cancelImport": { "summary": "Cancels an image import that is still being fetched.", "importId": "The import id." }
     },
     "probe": {
       "guarded": {

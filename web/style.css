@@ -1161,6 +1161,25 @@ body.inapp-links .present-tools .visualize-expand{display:none}
 .md-att-up-bar::after{content:"";display:block;height:100%;width:var(--p,0%);background:var(--fill-primary);color:var(--on-fill);transition:width var(--dur-fast) linear}
 .md-att-act{font-size:var(--fs-s);color:var(--ink-blue);padding:0 6px;margin-left:auto}
 .md-att-up-err ~ .md-att-act{margin-left:0}
+/* 取り込み中の札（貼り付けた HTML の画像をホストが取りに行く間。ADR 0141）。進み具合は分からないので、細い棒の中を光が往復する。
+   取得元のホスト名は等幅の弱い字。取れたら画像の札に替わり、取れなかった札は 160ms で薄れて外れる（動きを減らす設定では、光は止めて棒の左 1/3 を塗ったまま・消えるのは即座） */
+.md-att-up[data-state=importing]{animation:att-in var(--dur) var(--ease-out)}
+.md-att-up[data-state=importing] .md-att-up-bar::after{width:34%;animation:att-indet 1.5s var(--ease-organic) infinite}
+.md-att-up-host{flex:none;font-family:var(--font-mono);font-size:var(--fs-xs);color:var(--ink-weak)}
+.md-b.md-att.leave{animation:att-out 160ms var(--ease-out) forwards}
+@keyframes att-in{from{opacity:0;transform:translateY(4px)}}
+@keyframes att-indet{0%{transform:translateX(-100%)}100%{transform:translateX(300%)}}
+@keyframes att-out{to{opacity:0;transform:translateY(-4px)}}
+@media (prefers-reduced-motion:reduce){.md-att-up[data-state=importing],.md-att-up[data-state=importing] .md-att-up-bar::after,.md-b.md-att.leave{animation:none}}
+/* 連続する画像の札（3 枚目から。web/md-editor.mjs の markGalleries が data-gal を付ける）: 小さなタイル（72×54）にして横へ並べる。
+   1 行 = 1 つの札は変わらない（Backspace・元に戻す・保存の形はそのまま）。名前は押す前の title と読み上げに持たせ、見える字にはしない */
+.md-b.md-att[data-gal]{display:inline-block;vertical-align:top;margin:0 6px 6px 0}
+.md-b.md-att[data-gal] .msg-att-img{min-width:0;max-width:72px;margin-right:0}
+.md-b.md-att[data-gal] .msg-att-zoom img{width:72px;height:54px;max-width:none;max-height:none;object-fit:cover}
+.md-b.md-att[data-gal] figcaption{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+.md-b.md-att[data-gal] .md-att-up{width:72px;height:54px;max-width:none;padding:0;flex-direction:column;justify-content:center;align-items:center;gap:4px;font-size:var(--fs-xs)}
+.md-b.md-att[data-gal] .md-att-up-name,.md-b.md-att[data-gal] .md-att-up-host,.md-b.md-att[data-gal] .md-att-act{display:none}
+.md-b.md-att[data-gal] .md-att-up-bar{left:8px;right:8px;bottom:5px}
 /* 範囲を選んだときだけ出る書式バー（B / I / コード / リンク） */
 .md-bar{position:absolute;z-index:20;display:flex;align-items:center;gap:0;padding:3px;background:var(--surface-paper);border-radius:var(--r-s);box-shadow:0 4px 18px var(--shadow)}
 .md-bar[hidden]{display:none}
