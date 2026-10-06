@@ -1,18 +1,19 @@
 'use strict';
-// Chrome への接続の OS の層（docs/inapp-browser.md「OS ごとの層」、ADR 0153）を選び、core の parentPort の依頼につなぐ。
+// Chrome への接続の OS の層（docs/inapp-browser.md「OS ごとの層」、ADR 0153・0154）を選び、core の parentPort の依頼につなぐ。
 // 実装があるのは Windows（win32.cjs）だけ。ほかの OS・koffi を読めないときは「使えない」を返す層（どの口も null / false）。
 // core は main の `chrome-os-ready { supported, reason, features }` を見て、エージェントのブラウザーを出すか決める。
 const { createWin32ChromeOs } = require('./win32.cjs');
 
-const FEATURES_NONE = Object.freeze({ dialog: false, raise: false, launch: false, watch: false, bounds: false });
-const ACTIONS = new Set(['snapshotWindows', 'findPermissionDialog', 'raise', 'yieldForeground', 'foreground', 'close']);
+const FEATURES_NONE = Object.freeze({ dialog: false, raise: false, launch: false, conceal: false, watch: false, bounds: false });
+const ACTIONS = new Set(['snapshotWindows', 'findPermissionDialog', 'raise', 'yieldForeground', 'foreground', 'close',
+  'locateBrowser', 'launchWindow', 'findWindowByNonce', 'findWindowByBounds', 'hiddenSpot', 'conceal', 'reveal', 'release']);
 
 /**
  * @param {{ platform?: string, win32?: object|null, reason?: string, log?: (line: string) => void }} options
  *   win32 は desktop/computer/win32.cjs の表。platform が win32 でなく、または win32 が null なら unsupported
  */
-function createChromeOs({ platform = process.platform, win32 = null, reason = 'native', log = () => {} } = {}) {
-  if (platform === 'win32' && win32) return createWin32ChromeOs({ win32, log });
+function createChromeOs({ platform = process.platform, win32 = null, reason = 'native', log = () => {}, ...deps } = {}) {
+  if (platform === 'win32' && win32) return createWin32ChromeOs({ win32, log, ...deps });
   const why = platform === 'win32' ? reason : 'platform';
   return {
     capabilities: () => ({ supported: false, reason: why, features: FEATURES_NONE }),
@@ -22,6 +23,15 @@ function createChromeOs({ platform = process.platform, win32 = null, reason = 'n
     yieldForeground: () => false,
     foreground: () => null,
     close: () => false,
+    locateBrowser: () => null,
+    launchWindow: () => ({ ok: false, reason: 'unsupported' }),
+    findWindowByNonce: () => null,
+    findWindowByBounds: () => null,
+    hiddenSpot: () => null,
+    conceal: () => false,
+    reveal: () => false,
+    release: () => false,
+    reconceal: () => 0,
   };
 }
 
@@ -43,6 +53,13 @@ function attachChromeOs(worker, { chromeOs, log = () => {} }) {
         case 'raise': result = chromeOs.raise(a.ref); break;
         case 'yieldForeground': result = chromeOs.yieldForeground(a.ref, { to: a.to }); break;
         case 'close': result = chromeOs.close(a.ref); break;
+        case 'locateBrowser': result = chromeOs.locateBrowser({ product: a.product }); break;
+        case 'launchWindow': result = chromeOs.launchWindow(a); break;
+        case 'findWindowByNonce': result = chromeOs.findWindowByNonce(a.nonce); break;
+        case 'findWindowByBounds': result = chromeOs.findWindowByBounds({ bounds: a.bounds }); break;
+        case 'conceal': result = chromeOs.conceal(a.ref); break;
+        case 'reveal': result = chromeOs.reveal(a.ref, { near: a.near }); break;
+        case 'release': result = chromeOs.release(a.ref); break;
         default: result = chromeOs[action](); break;
       }
       post({ type: 'chrome-os-result', id, ok: true, result });

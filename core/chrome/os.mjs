@@ -8,7 +8,7 @@
 // どの口も、使えない OS・使えない機能・時間切れでは投げずに null / false を返す（呼び出し側は、層が無くても進める作りにする）。
 //
 // @typedef {{ id: string }} WindowRef   層が出した値。core は覚える・比べる・返すだけ（Windows は窓のハンドルの 10 進）。層が出していない値には何もしない
-// @typedef {{ supported: boolean, reason?: string, features: { dialog: boolean, raise: boolean, launch: boolean, watch: boolean, bounds: boolean } }} Capabilities
+// @typedef {{ supported: boolean, reason?: string, features: { dialog: boolean, raise: boolean, launch: boolean, conceal: boolean, watch: boolean, bounds: boolean } }} Capabilities
 //
 // capabilities()                         → Capabilities（同期。main の chrome-os-ready を受けるまでは pending）
 // ready()                                → Promise<Capabilities>（main の返事を待つ。返事が無ければ supported: false）
@@ -21,9 +21,21 @@
 // foreground()                           → Promise<{ id: string, browser: boolean } | null>  今の前面の窓。browser はブラウザー自身の窓か
 // close(ref)                             → Promise<boolean>  確認の窓を閉じる（層が確認として出した ref だけ）
 //
-// 第 4 段以降で足す口（locateBrowser・launchWindow・findWindowByNonce・minimize・watch・bounds）は、capabilities().features で有無を示す。
+// エージェントの専用の窓（ADR 0154。core/chrome/windows.mjs が使う）。層が出した ref・browser 以外には何もしない
+// locateBrowser({ product })             → Promise<{ id, product } | null>  ブラウザーの実行ファイル（Windows はレジストリの App Paths → 既定の 3 か所）。id は launchWindow だけが使える
+// launchWindow({ browser, profileDir, url, nonce, userDataDir?, position?, size? })
+//                                        → Promise<{ ok: boolean }>  chrome.exe --profile-directory --new-window。url は題に nonce を持つ data: のページ。
+//                                          userDataDir があれば --user-data-dir を必ず付ける（無ければ既定の User Data）。position（物理画素）・size（DIP）は一瞬見えるのを避ける
+// findWindowByNonce(nonce)               → Promise<WindowRef | null>  題に nonce を持つブラウザーの窓
+// findWindowByBounds({ bounds })         → Promise<WindowRef | null>  外形が bounds（CDP の Browser.getWindowBounds。DIP）に合う、まだ出していない窓がちょうど 1 つのとき（popup の別窓）
+// hiddenSpot()                           → Promise<{ x, y } | null>  仮想デスクトップの右の外（物理画素）。createTarget の left・top と --window-position に使う
+// conceal(ref)                           → Promise<boolean>  画面の外へ置き、タスクバーと Alt+Tab から外し、透明度 0・マウスの素通しにする。最小化はしない。かけ直せる
+//                                          隠している間、層が前面の見張りを持ち、隠した窓が前面を取ったら直前の前面へ返す（第 6 段の引き継ぎの外）
+// reveal(ref, { near })                  → Promise<boolean>  conceal の逆。near（層が出した ref）のあるモニターの中へ戻す。前には出さない（第 6 段の「引き継ぐ」）
+// release(ref)                           → Promise<boolean>  窓の記録だけを捨てる（窓には触らない。窓が閉じた）
+// 画面の構成が変わったときの置き直し（reconceal）は main が Electron の screen のイベントで呼ぶので、core から呼ぶ口は無い
 
-const FEATURES_NONE = Object.freeze({ dialog: false, raise: false, launch: false, watch: false, bounds: false });
+const FEATURES_NONE = Object.freeze({ dialog: false, raise: false, launch: false, conceal: false, watch: false, bounds: false });
 
 /** テストとほかの OS の既定。どの口も null / false を返す */
 export function unsupportedChromeOs(reason = 'platform') {
@@ -39,6 +51,14 @@ export function unsupportedChromeOs(reason = 'platform') {
     yieldForeground: async () => false,
     foreground: async () => null,
     close: async () => false,
+    locateBrowser: async () => null,
+    launchWindow: async () => ({ ok: false }),
+    findWindowByNonce: async () => null,
+    findWindowByBounds: async () => null,
+    hiddenSpot: async () => null,
+    conceal: async () => false,
+    reveal: async () => false,
+    release: async () => false,
   };
 }
 
@@ -110,5 +130,14 @@ export function parentPortChromeOs(port, { timeoutMs = CALL_TIMEOUT_MS, readyWai
     yieldForeground: (ref, { to } = {}) => call('yieldForeground', { ref, to }, false),
     foreground: () => call('foreground', {}, null),
     close: ref => call('close', { ref }, false),
+    locateBrowser: ({ product = 'chrome' } = {}) => call('locateBrowser', { product }, null),
+    launchWindow: ({ browser, profileDir, url, nonce, userDataDir = null, position = null, size = null } = {}) =>
+      call('launchWindow', { browser, profileDir, url, nonce, userDataDir, position, size }, { ok: false }),
+    findWindowByNonce: nonce => call('findWindowByNonce', { nonce }, null),
+    findWindowByBounds: ({ bounds } = {}) => call('findWindowByBounds', { bounds }, null),
+    hiddenSpot: () => call('hiddenSpot', {}, null),
+    conceal: ref => call('conceal', { ref }, false),
+    reveal: (ref, { near = null } = {}) => call('reveal', { ref, near }, false),
+    release: ref => call('release', { ref }, false),
   };
 }

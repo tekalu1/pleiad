@@ -251,7 +251,11 @@ async function boot() {
   try { win32 = loadWin32(); } catch (error) { win32Reason = error.reason ?? 'native'; if (win32Reason !== 'platform') console.warn('[computer]', `win32 unavailable: ${error.message}`); }
   computerService = attachComputerService(messages, { electron: { screen, nativeImage }, app, log: line => console.warn('[computer]', line), win32, reason: win32Reason,
     escape: { suspend: () => computerOverlay?.suspendEscape() ?? (() => {}) } });
-  attachChromeOs(messages, { chromeOs: createChromeOs({ platform: process.platform, win32: win32 ? withPerMonitorDpi(win32) : null, reason: win32Reason, log: line => console.warn('[chrome-os]', line) }), log: line => console.warn('[chrome-os]', line) });
+  const chromeOs = createChromeOs({ platform: process.platform, win32: win32 ? withPerMonitorDpi(win32) : null, reason: win32Reason, log: line => console.warn('[chrome-os]', line) });
+  attachChromeOs(messages, { chromeOs, log: line => console.warn('[chrome-os]', line) });
+  // 画面の構成が変わったら（モニターの増減・解像度・DPI・スリープ復帰）、画面の外へ隠しているエージェントの Chrome の窓を置き直す（ADR 0154）
+  for (const event of ['display-added', 'display-removed', 'display-metrics-changed']) screen.on(event, () => chromeOs.reconceal());
+  powerMonitor.on('resume', () => chromeOs.reconceal());
   resident = attachResident({ app, worker: messages, icon: path.join(__dirname, 'icon.png'), getWindow: () => window, quit: () => closeSafely() });
   let startupError = '';
   worker.stderr?.on('data', data => { startupError = (startupError + data.toString()).replace(/token=\S+/g, 'token=[redacted]').slice(-2000); });

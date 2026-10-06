@@ -2,11 +2,11 @@ import { createRequire } from 'node:module';
 import { parentPortChromeOs, unsupportedChromeOs } from '../../core/chrome/os.mjs';
 
 const require = createRequire(import.meta.url);
-const { createWin32ChromeOs, WM_CLOSE } = require('../../desktop/chrome-os/win32.cjs');
+const { createWin32ChromeOs, WM_CLOSE, WS_EX_TRANSPARENT, WS_EX_TOOLWINDOW, WS_EX_APPWINDOW, WS_EX_LAYERED } = require('../../desktop/chrome-os/win32.cjs');
 const { createChromeOs, attachChromeOs } = require('../../desktop/chrome-os/index.cjs');
 
 export const name = 'chrome-os';
-export const title = 'Chrome への接続の OS の層（Windows）: 確認の窓の見つけ方・前面化・返す・閉じる・使えない OS（偽の Win32 の表。本物の窓には触らない。ADR 0153）';
+export const title = 'Chrome への接続の OS の層（Windows）: 確認の窓の見つけ方・前面化・返す・閉じる・使えない OS、エージェントの窓（ブラウザーの場所・chrome.exe の起こし方・窓の見つけ方・隠す／戻す・前面の見張り。偽の Win32 の表と偽の spawn。本物の窓には触らない。ADR 0153・0154）';
 
 const CHROME = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
 const EDGE = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe';
@@ -35,7 +35,22 @@ function fakeWin32({ directForeground = true } = {}) {
     ownerOf: hwnd => windows.get(hwnd)?.owner ?? 0,
     foreground: () => w.fg,
     setForeground(hwnd) { calls.push(['setForeground', hwnd, w.attached]); if (w.directForeground || w.attached) { w.fg = hwnd; return true; } return false; },
-    showWindow(hwnd, cmd) { calls.push(['showWindow', hwnd, cmd]); if (cmd === 9) windows.get(hwnd).iconic = false; return true; },
+    showWindow(hwnd, cmd) { calls.push(['showWindow', hwnd, cmd]); if (cmd === 9) windows.get(hwnd).iconic = false; if (cmd === 0) windows.get(hwnd).visible = false; if (cmd === 8 || cmd === 4) windows.get(hwnd).visible = true; return true; },
+    isWindow: hwnd => windows.has(hwnd),
+    setExStyle(hwnd, value) { calls.push(['setExStyle', hwnd, value]); windows.get(hwnd).exStyle = value >>> 0; return true; },
+    setWindowPos(hwnd, x, y, cx, cy, flags) {
+      calls.push(['setWindowPos', hwnd, x, y, cx, cy, flags]);
+      const wnd = windows.get(hwnd), width = wnd.rect.right - wnd.rect.left, height = wnd.rect.bottom - wnd.rect.top;
+      const left = flags & 0x2 ? wnd.rect.left : x, top = flags & 0x2 ? wnd.rect.top : y;
+      const nw = flags & 0x1 ? width : cx, nh = flags & 0x1 ? height : cy;
+      wnd.rect = { left, top, right: left + nw, bottom: top + nh };
+      return true;
+    },
+    setLayeredAlpha(hwnd, alpha) { calls.push(['setLayeredAlpha', hwnd, alpha]); windows.get(hwnd).alpha = alpha; return true; },
+    displays: [{ handle: 1, x: 0, y: 0, width: 2560, height: 1440, primary: true, dpi: 144 }, { handle: 2, x: 2560, y: 0, width: 1920, height: 1080, primary: false, dpi: 96 }],
+    monitors: () => w.displays.map(d => ({ ...d })),
+    registry: {},
+    registryString: (hive, subkey, name) => w.registry[`${hive}|${subkey}|${name}`] ?? null,
     bringToTop(hwnd) { calls.push(['bringToTop', hwnd]); return true; },
     windowThread: hwnd => windows.get(hwnd)?.thread ?? 0,
     currentThread: () => 1,
@@ -212,10 +227,14 @@ export default async function (t) {
       const caps = os.capabilities();
       t.ok(`${platform}${win32 ? '' : '（win32 の表なし）'} → supported: false / ${expect}、どの口も null・false で投げない`,
         caps.supported === false && caps.reason === expect && os.snapshotWindows() === null && os.findPermissionDialog({ since: [] }) === null
-        && os.raise({ id: '1' }).ok === false && os.yieldForeground({ id: '1' }, {}) === false && os.foreground() === null && os.close({ id: '1' }) === false);
+        && os.raise({ id: '1' }).ok === false && os.yieldForeground({ id: '1' }, {}) === false && os.foreground() === null && os.close({ id: '1' }) === false
+        && os.locateBrowser({}) === null && os.launchWindow({}).ok === false && os.findWindowByNonce('a') === null && os.findWindowByBounds({}) === null
+        && os.hiddenSpot() === null && os.conceal({ id: '1' }) === false && os.reveal({ id: '1' }) === false && os.release({ id: '1' }) === false && os.reconceal() === 0);
     }
     const win = createChromeOs({ platform: 'win32', win32: fakeWin32() });
-    t.ok('Windows と win32 の表があれば supported（今ある機能は dialog・raise）', win.capabilities().supported === true && win.capabilities().features.dialog === true && win.capabilities().features.raise === true && win.capabilities().features.launch === false);
+    const features = win.capabilities().features;
+    t.ok('Windows と win32 の表があれば supported（機能は dialog・raise・launch・conceal・watch・bounds）', win.capabilities().supported === true
+      && ['dialog', 'raise', 'launch', 'conceal', 'watch', 'bounds'].every(name => features[name] === true), JSON.stringify(features));
   }
   {
     // core の parentPortChromeOs ⇄ main の attachChromeOs ⇄ 偽の Win32
@@ -243,7 +262,7 @@ export default async function (t) {
     const raw = [];
     toPort.push(m => raw.push(m.data));
     worker.postMessage = m => queueMicrotask(() => toPort.forEach(fn => fn({ data: m })));
-    toWorker.forEach(fn => fn({ type: 'chrome-os', id: 'x1', action: 'launchWindow', args: {} }));
+    toWorker.forEach(fn => fn({ type: 'chrome-os', id: 'x1', action: 'minimizeAll', args: {} }));
     toWorker.forEach(fn => fn({ type: 'chrome-os', id: 'x2', action: '__proto__', args: {} }));
     await new Promise(r => setTimeout(r, 20));
     t.ok('知らない action は ok: false で断る', raw.filter(m => m.type === 'chrome-os-result').every(m => m.ok === false) && raw.filter(m => m.type === 'chrome-os-result').length === 2, JSON.stringify(raw));
@@ -266,5 +285,201 @@ export default async function (t) {
     const core2 = parentPortChromeOs(port2);
     handler({ data: { type: 'chrome-os-ready', supported: false, reason: 'platform' } });
     t.ok('unsupported を受けたら、依頼を main へ送らず null・false を返す', await core2.findPermissionDialog({ since: [] }) === null && posts.every(m => m.type !== 'chrome-os'));
+  }
+
+  // ===== エージェントの窓（ADR 0154）: ブラウザーの場所・chrome.exe の起こし方 =====
+  const NONCE = '0123456789abcdef';
+  const NONCE_URL = `data:text/html,<title>PLY-${NONCE}</title>`;
+  const APP_PATHS = 'Software\\Microsoft\\Windows\\CurrentVersion\\App Paths\\chrome.exe';
+  const ENV = { ProgramFiles: 'C:\\Program Files', 'ProgramFiles(x86)': 'C:\\Program Files (x86)', LOCALAPPDATA: 'C:\\Users\\x\\AppData\\Local' };
+  const fakeSpawn = () => {
+    const spawned = [];
+    const spawn = (exe, args, options) => { spawned.push({ exe, args, options }); return { on() {}, unref() {}, pid: 77 }; };
+    return { spawned, spawn };
+  };
+  {
+    const w = fakeWin32();
+    const present = new Set();
+    const { spawned, spawn } = fakeSpawn();
+    const os = createWin32ChromeOs({ win32: w, env: ENV, exists: p => present.has(p), spawn });
+    const exeOf = browser => { os.launchWindow({ browser, profileDir: 'Default', url: NONCE_URL, nonce: NONCE }); return spawned.at(-1)?.exe; };
+    t.ok('どこにも無ければ locateBrowser は null', os.locateBrowser({}) === null && os.locateBrowser({ product: 'firefox' }) === null);
+    const hklm = 'D:\\Chrome\\hklm\\chrome.exe', hkcu = 'D:\\Chrome\\hkcu\\chrome.exe';
+    w.registry[`HKLM|${APP_PATHS}|`] = hklm; present.add(hklm);
+    t.ok('レジストリの App Paths（HKLM）の chrome.exe を見つける', exeOf(os.locateBrowser({})) === hklm);
+    w.registry[`HKCU|${APP_PATHS}|`] = `"${hkcu}"`; present.add(hkcu);
+    t.ok('HKCU を HKLM より先に見る（引用符つきの値も読む）', exeOf(os.locateBrowser({})) === hkcu);
+    present.delete(hkcu);
+    t.ok('ファイルが無い候補は飛ばして、次の候補を使う', exeOf(os.locateBrowser({})) === hklm);
+    w.registry[`HKCU|${APP_PATHS}|`] = 'C:\\Windows\\System32\\notepad.exe'; present.add('C:\\Windows\\System32\\notepad.exe');
+    delete w.registry[`HKLM|${APP_PATHS}|`];
+    t.ok('chrome.exe でない実行ファイルは使わない（レジストリが書き換えられていても）', os.locateBrowser({}) === null);
+    delete w.registry[`HKCU|${APP_PATHS}|`];
+    const fallback = 'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe';
+    present.add(fallback); present.add('C:\\Users\\x\\AppData\\Local\\Google\\Chrome\\Application\\chrome.exe');
+    t.ok('レジストリに無ければ既定の 3 か所（Program Files → Program Files (x86) → LOCALAPPDATA の順）', exeOf(os.locateBrowser({})) === fallback);
+    const browser = os.locateBrowser({});
+    t.ok('locateBrowser は実行ファイルのパスを渡さず、層が出した id だけを返す', typeof browser.id === 'string' && browser.product === 'chrome' && !JSON.stringify(browser).includes('chrome.exe'));
+  }
+  {
+    const w = fakeWin32();
+    const { spawned, spawn } = fakeSpawn();
+    const exe = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
+    const os = createWin32ChromeOs({ win32: w, env: ENV, exists: p => p === exe, spawn });
+    const browser = os.locateBrowser({});
+    const base = { browser, profileDir: 'Profile 1', url: NONCE_URL, nonce: NONCE };
+    const result = os.launchWindow({ ...base, userDataDir: 'C:\\Users\\x\\dev\\pleiad-chrome-test', position: { x: 5480, y: 0 }, size: { width: 1100, height: 720 } });
+    const call = spawned.at(-1);
+    t.ok('chrome.exe を --user-data-dir・--profile-directory・--new-window・--window-position・--window-size・URL の順の引数で起こす', result.ok === true && call.exe === exe
+      && JSON.stringify(call.args) === JSON.stringify(['--user-data-dir=C:\\Users\\x\\dev\\pleiad-chrome-test', '--profile-directory=Profile 1', '--new-window', '--window-position=5480,0', '--window-size=1100,720', NONCE_URL]), JSON.stringify(call));
+    t.ok('切り離して起こす（detached・stdio なし）', call.options.detached === true && call.options.stdio === 'ignore');
+    os.launchWindow(base);
+    t.ok('userDataDir が無ければ --user-data-dir を付けない（既定の User Data）', spawned.at(-1).args.every(a => !a.startsWith('--user-data-dir')) && spawned.at(-1).args.includes('--profile-directory=Profile 1'));
+    const before = spawned.length;
+    const rejects = [
+      ['層が出していない browser', { ...base, browser: { id: 'b999' } }], ['browser の id でないもの', { ...base, browser: { id: 'C:\\Windows\\notepad.exe' } }],
+      ['親の道を含むプロフィール', { ...base, profileDir: '..\\Default' }], ['ハイフンで始まるプロフィール（引数の注入）', { ...base, profileDir: '--evil' }], ['空のプロフィール', { ...base, profileDir: '' }],
+      ['短い nonce', { ...base, nonce: 'abc' }], ['nonce を含まない URL', { ...base, url: 'data:text/html,<title>x</title>' }], ['data: でない URL', { ...base, url: `https://example.com/${NONCE}` }],
+      ['相対の userDataDir', { ...base, userDataDir: 'relative\\dir' }], ['改行を含む userDataDir', { ...base, userDataDir: 'C:\\a\nb' }],
+    ];
+    const failed = rejects.filter(([, args]) => os.launchWindow(args).ok !== false).map(([name]) => name);
+    t.ok('入力が不正なら chrome.exe を起こさない', failed.length === 0 && spawned.length === before, failed.join());
+    const throwing = createWin32ChromeOs({ win32: w, env: ENV, exists: p => p === exe, spawn: () => { throw new Error('spawn EACCES'); } });
+    t.ok('起こせなくても投げず ok: false', throwing.launchWindow({ ...base, browser: throwing.locateBrowser({}) }).ok === false);
+  }
+
+  // ===== エージェントの窓: 窓の見つけ方（題の nonce・外形） =====
+  {
+    const w = fakeWin32();
+    w.add(500, { title: `PLY-${NONCE} - Google Chrome`, rect: { left: 0, top: 0, right: 1650, bottom: 1080 } });
+    w.add(501, { title: `PLY-${NONCE} - Pleiad`, pid: 20 });                          // Electron のアプリ（同じクラス）
+    w.add(502, { title: `PLY-fedcba9876543210 - Google Chrome` });
+    const os = createWin32ChromeOs({ win32: w });
+    t.ok('findWindowByNonce は題に nonce を持つブラウザーの窓（Electron のアプリの窓・別の nonce の窓は除く）', os.findWindowByNonce(NONCE)?.id === '500');
+    t.ok('nonce が無い・形が違うときは null', os.findWindowByNonce('0000000000000000') === null && os.findWindowByNonce('PLY') === null && os.findWindowByNonce(null) === null);
+    // 外形（DIP）: 150% で 486×447 物理画素 = 324×298 DIP の popup が左上に出た
+    const b = fakeWin32();
+    b.add(600, { title: 'about:blank - Google Chrome', rect: { left: 0, top: 0, right: 486, bottom: 447 } });
+    const ob = createWin32ChromeOs({ win32: b });
+    const popup = ob.findWindowByBounds({ bounds: { left: 0, top: 0, width: 324, height: 298 } });
+    t.ok('findWindowByBounds は外形（DIP。150% の物理画素を換算）が合う窓を返す', popup?.id === '600');
+    t.ok('すでにエージェントの窓として出した窓は、もう返さない', ob.findWindowByBounds({ bounds: { left: 0, top: 0, width: 324, height: 298 } }) === null);
+    b.add(601, { title: 'a', rect: { left: 0, top: 0, right: 486, bottom: 447 } });
+    b.add(602, { title: 'b', rect: { left: 3, top: 3, right: 489, bottom: 450 } });
+    t.ok('合う窓が 2 つあれば曖昧なので null', ob.findWindowByBounds({ bounds: { left: 0, top: 0, width: 324, height: 298 } }) === null);
+    b.windows.get(601).visible = false; b.windows.get(602).iconic = true;
+    t.ok('見えない窓・最小化の窓は候補にしない', ob.findWindowByBounds({ bounds: { left: 0, top: 0, width: 324, height: 298 } }) === null);
+    b.windows.get(601).visible = true;
+    t.ok('許容は 16 DIP（外れていれば見つけない）', ob.findWindowByBounds({ bounds: { left: 100, top: 100, width: 324, height: 298 } }) === null && ob.findWindowByBounds({ bounds: { left: 0, top: 0, width: 324, height: 298 } })?.id === '601');
+    t.ok('bounds が数でなければ null', ob.findWindowByBounds({ bounds: { left: 'a' } }) === null && ob.findWindowByBounds({}) === null);
+  }
+
+  // ===== エージェントの窓: 隠す・戻す・置き直し・解放 =====
+  const WS_NOREDIRECTION = 0x200000;
+  const winWith = () => {
+    const w = fakeWin32();
+    w.add(500, { title: `PLY-${NONCE} - Google Chrome`, exStyle: WS_NOREDIRECTION, rect: { left: 100, top: 100, right: 1700, bottom: 1180 } });
+    w.add(700, { title: 'メモ帳', className: 'Notepad', pid: 30, rect: { left: 2600, top: 100, right: 3400, bottom: 700 } });
+    w.fg = 700;
+    return w;
+  };
+  {
+    const w = winWith();
+    const intervals = [], cleared = [];
+    const timers = { setInterval: (fn, ms) => { intervals.push({ fn, ms }); return intervals.length; }, clearInterval: id => cleared.push(id) };
+    const os = createWin32ChromeOs({ win32: w, timers, guardMs: 150 });
+    const ref = os.findWindowByNonce(NONCE);
+    t.ok('hiddenSpot は仮想デスクトップ（全モニター）の右の外', JSON.stringify(os.hiddenSpot()) === JSON.stringify({ x: 5480, y: 0 }), JSON.stringify(os.hiddenSpot()));
+    t.ok('conceal は true を返す', os.conceal(ref) === true);
+    const win = w.windows.get(500);
+    t.ok('窓を仮想デスクトップの右の外へ動かす（大きさは変えない）', win.rect.left === 5480 && win.rect.top === 0 && win.rect.right - win.rect.left === 1600 && win.rect.bottom - win.rect.top === 1080, JSON.stringify(win.rect));
+    t.ok('WS_EX_TOOLWINDOW・WS_EX_LAYERED・WS_EX_TRANSPARENT を付け、WS_EX_APPWINDOW は外す（元のスタイルは残す）',
+      (win.exStyle & WS_EX_TOOLWINDOW) && (win.exStyle & WS_EX_LAYERED) && (win.exStyle & WS_EX_TRANSPARENT) && !(win.exStyle & WS_EX_APPWINDOW) && (win.exStyle & WS_NOREDIRECTION), win.exStyle.toString(16));
+    t.ok('透明度は 0', win.alpha === 0);
+    const showCmds = w.calls.filter(c => c[0] === 'showWindow' && c[1] === 500).map(c => c[2]);
+    t.ok('タスクバーの札を替えるため、隠して出し直す（SW_HIDE → SW_SHOWNA）。最小化（SW_MINIMIZE）はしない', showCmds.join() === '0,8', showCmds.join());
+    t.ok('どの SetWindowPos も SWP_NOACTIVATE を付ける・前面は取らない', w.calls.filter(c => c[0] === 'setWindowPos').every(c => c[6] & 0x10) && !w.calls.some(c => c[0] === 'setForeground'));
+    const callsBefore = w.calls.length;
+    t.ok('もう一度かけても、スタイルが同じなら隠して出し直さない（置き直しだけ）', os.conceal(ref) === true && w.calls.slice(callsBefore).every(c => c[0] !== 'showWindow' && c[0] !== 'setExStyle'));
+
+    // 層が出した agent の ref 以外には何もしない
+    const fg = os.foreground();
+    const dialogW = fakeWin32(); dialogW.add(910, DIALOG); const dialogOs = createWin32ChromeOs({ win32: dialogW });
+    const dialog = dialogOs.findPermissionDialog({ since: [] });
+    const n = w.calls.length;
+    t.ok('前面の窓の ref・確認の窓の ref・知らない ref は conceal も reveal もしない', os.conceal(fg) === false && os.reveal(fg) === false && dialogOs.conceal(dialog) === false && os.conceal({ id: '12345' }) === false && os.conceal(null) === false
+      && w.calls.length === n && dialogW.calls.length === 0);
+
+    // 前面の見張り
+    t.ok('隠している間は見張りが 1 つ動く（150 ms ごと）', intervals.length === 1 && intervals[0].ms === 150);
+    w.fg = 700; os.guardTick();
+    w.fg = 500;
+    os.guardTick();
+    t.ok('隠した窓が前面を取ったら、直前の前面（メモ帳）へすぐ返す', w.fg === 700, String(w.fg));
+    w.windows.get(700).iconic = true; w.fg = 500; os.guardTick();
+    t.ok('直前の前面が最小化されていたら、勝手に戻さない', w.fg === 500 && !w.calls.some(c => c[0] === 'showWindow' && c[1] === 700 && c[2] === 9));
+    w.windows.get(700).iconic = false; w.fg = 700; os.guardTick();
+
+    // 戻す
+    const near = os.foreground();   // 前面の窓（メモ帳。2 つ目のモニター）
+    const beforeReveal = w.calls.length;
+    t.ok('reveal は true を返す', os.reveal(ref, { near }) === true);
+    t.ok('元のスタイルに戻す（付けた 3 つを外し、元からあるものは残す）・透明度 255', w.windows.get(500).exStyle === WS_NOREDIRECTION && w.windows.get(500).alpha === 255, w.windows.get(500).exStyle.toString(16));
+    const r = w.windows.get(500).rect;
+    t.ok('near のあるモニター（2 つ目: x 2560〜4480）の中へ戻す・前には出さない', r.left >= 2560 && r.right <= 4480 && r.top >= 0 && !w.calls.slice(beforeReveal).some(c => c[0] === 'setForeground') && w.fg === 700, JSON.stringify(r));
+    w.fg = 500; os.guardTick();
+    t.ok('戻した窓は見張らない（引き継いで前面にあってよい）', w.fg === 500);
+    const afterReveal = w.calls.length;
+    t.ok('戻した窓を release したあとは、conceal も reveal もしない', os.release(ref) === true && os.conceal(ref) === false && os.reveal(ref) === false && w.calls.length === afterReveal);
+    t.ok('release は窓には触らない・知らない ref には false', os.release(ref) === false);
+    os.guardTick();
+    t.ok('隠している窓が無くなれば見張りを止める', cleared.length >= 1, JSON.stringify(cleared));
+  }
+  {
+    // 画面の構成が変わったときの置き直し・閉じた窓
+    const w = winWith();
+    const os = createWin32ChromeOs({ win32: w, timers: { setInterval: () => 1, clearInterval: () => {} } });
+    const ref = os.findWindowByNonce(NONCE);
+    os.conceal(ref);
+    w.displays = [{ handle: 1, x: 0, y: 0, width: 1920, height: 1080, primary: true, dpi: 96 }];   // 2 つ目のモニターを外した
+    w.windows.get(500).rect = { left: 400, top: 300, right: 2000, bottom: 1380 };                  // Windows が画面の中へ寄せた
+    t.ok('reconceal は隠している窓を置き直す（新しい右の外へ）', os.reconceal() === 1 && w.windows.get(500).rect.left === 2920 && w.windows.get(500).rect.top === 0, JSON.stringify(w.windows.get(500).rect));
+    t.ok('置き直しても透明度 0 のまま', w.windows.get(500).alpha === 0 && (w.windows.get(500).exStyle & WS_EX_TOOLWINDOW) !== 0);
+    w.windows.delete(500);
+    t.ok('窓が閉じていたら置き直さず、記録も捨てる（投げない）', os.reconceal() === 0 && os.conceal(ref) === false);
+    const w2 = winWith();
+    const none = createWin32ChromeOs({ win32: { ...w2, monitors: () => [] } });
+    t.ok('モニターの一覧が取れないときの右の外は固定の位置', none.hiddenSpot().x === 20000);
+  }
+  {
+    // 層が出した ref を MAX_REFS で押し出さない（隠している窓の ref が、前面の窓の記録で消えない）
+    const w = winWith();
+    const os = createWin32ChromeOs({ win32: w, timers: { setInterval: () => 1, clearInterval: () => {} } });
+    const ref = os.findWindowByNonce(NONCE);
+    os.conceal(ref);
+    for (let i = 0; i < 300; i += 1) { w.add(1000 + i, { title: `x${i}`, pid: 30, className: 'Notepad' }); w.fg = 1000 + i; os.foreground(); }
+    t.ok('前面の窓の記録が溢れても、隠している窓の ref は残る', os.reveal(ref) === true);
+  }
+
+  // ===== 往復（core ⇄ main ⇄ 偽の Win32）: エージェントの窓の口 =====
+  {
+    const w = winWith();
+    const { spawned, spawn } = fakeSpawn();
+    const exe = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
+    const toWorker = [], toPort = [];
+    const worker = { on: (type, fn) => toWorker.push(fn), postMessage: m => queueMicrotask(() => toPort.forEach(fn => fn({ data: m }))) };
+    const port = { on: (type, fn) => toPort.push(fn), postMessage: m => queueMicrotask(() => toWorker.forEach(fn => fn(m))) };
+    const core = parentPortChromeOs(port, { timeoutMs: 500, readyWaitMs: 500 });
+    attachChromeOs(worker, { chromeOs: createChromeOs({ platform: 'win32', win32: w, env: ENV, exists: p => p === exe, spawn, timers: { setInterval: () => 1, clearInterval: () => {} } }) });
+    await core.ready();
+    const browser = await core.locateBrowser({ product: 'chrome' });
+    t.ok('locateBrowser の往復', browser?.product === 'chrome' && typeof browser.id === 'string');
+    const launched = await core.launchWindow({ browser, profileDir: 'Default', url: NONCE_URL, nonce: NONCE, userDataDir: 'C:\\t\\ud', position: { x: 1, y: 2 }, size: { width: 3, height: 4 } });
+    t.ok('launchWindow の往復（引数が chrome.exe の引数になる）', launched.ok === true && spawned.at(-1).args.includes('--user-data-dir=C:\\t\\ud') && spawned.at(-1).args.includes('--window-position=1,2'));
+    const ref = await core.findWindowByNonce(NONCE);
+    t.ok('findWindowByNonce の往復', ref?.id === '500');
+    t.ok('hiddenSpot・conceal の往復', (await core.hiddenSpot()).x === 5480 && await core.conceal(ref) === true && w.windows.get(500).alpha === 0);
+    t.ok('reveal・release の往復', await core.reveal(ref, { near: null }) === true && w.windows.get(500).alpha === 255 && await core.release(ref) === true);
+    t.ok('findWindowByBounds の往復（合う窓が無ければ null）', await core.findWindowByBounds({ bounds: { left: 1, top: 1, width: 1, height: 1 } }) === null);
   }
 }

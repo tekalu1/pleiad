@@ -11,10 +11,15 @@
 // 「今の origin」は、そのセッションの Page.frameNavigated（主フレーム）で移り終えた先の securityOrigin で持つ（targetInfo の URL は断った先も指すため）。
 // 要求を出さずに移った（履歴の移動・bfcache の復元）ときは、移った後に聞き、断られたら about:blank に戻す。
 // window.open で開いたタブの最初の要求は Fetch では止められない（実機。docs）ので、開いた後に聞き、断られたら閉じる。
-// 窓の作り方は scope の口（第 4 段で専用の窓に差し替える）。ここの既定は仮の窓（createTarget の newWindow＋background と最小化）。
+// 窓の作り方は scope の口（既定は core/chrome/windows.mjs の専用の窓。ADR 0154）。窓は最小化せず、画面の外の見えない窓に置く。
+//   - エージェントの Page.bringToFront・Target.activateTarget は Chrome へ送らずに成功で返す（窓が前面を取るため。agent-browser の「今のタブ」は自分の側で持つ）
+//   - エージェントのターンの間、会話の窓のタブすべてに中継の自分のセッションで Emulation.setFocusEmulationEnabled(true) を保つ（隠した窓の描画・入力を保つため）。
+//     エージェントのセッションの付け外しでは切れない。ターンが終わったら外す
+//   - 範囲のタブが window.open の popup で開いた別窓にも、同じ置き方を当てる（scope.adoptPopup）
 import http from 'node:http';
 import crypto from 'node:crypto';
 import { WebSocketServer } from 'ws';
+import { createChromeWindows } from './windows.mjs';
 
 const KEY_PATH = /^\/devtools\/browser\/([a-f0-9]{48})$/;
 const random = () => crypto.randomBytes(24).toString('hex');
@@ -78,30 +83,16 @@ function committedOrigin(frame) {
 }
 
 /**
- * 仮の窓（第 3 段）。タブを 1 つ作るたびに、前面を取らない新しい窓（newWindow・background）を作ってすぐ最小化する。
- * CDP の createTarget は窓を選べない（windowId が無い）ので、2 つ目以降のタブも別の窓になる。第 4 段で専用の窓（chrome.exe --profile-directory）に差し替える
- */
-export function createTempWindowScope() {
-  return {
-    /** @returns {Promise<{ targetId: string, windowId: number }>} */
-    async openTab({ cdp, url = 'about:blank' }) {
-      const { targetId } = await cdp.send('Target.createTarget', { url, newWindow: true, background: true });
-      const { windowId } = await cdp.send('Browser.getWindowForTarget', { targetId });
-      await cdp.send('Browser.setWindowBounds', { windowId, bounds: { windowState: 'minimized' } }).catch(() => {});
-      return { targetId, windowId };
-    },
-  };
-}
-
-/**
  * @param {object} deps
  * @param deps.connection  core/chrome/connection.mjs の接続（demand({ signal }) で cdp を返す）
- * @param [deps.scope]     窓の作り方（openTab）。既定は仮の窓
+ * @param deps.os          core/chrome/os.mjs の口（窓を隠す・見つける。connection と同じものでよい）
+ * @param deps.locate      Chrome の User Data（core/chrome/locate.mjs の chromeHomes の 1 つ。{ userDataDir, custom? }）
+ * @param [deps.scope]     窓の作り方（openTab・adoptPopup・windowClosed・rebind・reset・forget）。既定は core/chrome/windows.mjs の専用の窓
  * @param [deps.authorize] サイトの利用の確認（core/browser-confirm.mjs の createBrowserSiteApprovals）。({ sessionId, url }, signal) → { allow, message? }
  * @param [deps.deniedMessage] 確認で断られた移動をエージェントへ返す文
  */
-export function createChromeRelay({ connection, scope = createTempWindowScope(), authorize = async () => ({ allow: false }), deniedMessage = () => 'navigation denied',
-  connectWaitMs = CONNECT_WAIT_MS, commandTimeoutMs = COMMAND_TIMEOUT_MS, log = () => {} } = {}) {
+export function createChromeRelay({ connection, os, locate, log = () => {}, scope = createChromeWindows({ os, locate, log }), authorize = async () => ({ allow: false }), deniedMessage = () => 'navigation denied',
+  connectWaitMs = CONNECT_WAIT_MS, commandTimeoutMs = COMMAND_TIMEOUT_MS } = {}) {
   const entries = new Map();   // 会話の id -> entry
   const byKey = new Map();
   const wss = new WebSocketServer({ noServer: true, perMessageDeflate: false });
@@ -142,7 +133,8 @@ export function createChromeRelay({ connection, scope = createTempWindowScope(),
     if (up !== state) return;
     up = null;
     for (const off of state.offs) off();
-    for (const tab of state.tabs.values()) tab.controller.abort();
+    for (const tab of state.tabs.values()) { tab.controller.abort(); tab.fe = null; }
+    scope.reset?.();   // Chrome が閉じた。窓はもう無い
     for (const entry of entries.values()) {
       entry.windows.clear();
       for (const client of [...entry.clients]) { try { client.ws.close(1011, 'chrome disconnected'); } catch { /* 閉じていてもよい */ } }
@@ -177,7 +169,8 @@ export function createChromeRelay({ connection, scope = createTempWindowScope(),
     // gate: 移った後の確認の答えを待つ間、エージェントのこのタブへのコマンドを待たせる（{ promise }）
     return { targetId: info.targetId, entry, info: { ...info }, windowId, opener, internal: null, internalReady: null,
       active: opener?.active ?? false, origin: null, approved: new Set(), commits: 0, gate: null,
-      controller: new AbortController(), pending: new Set(), paused: new Map(), denial: null, ops: 0, popupChecked: false };
+      controller: new AbortController(), pending: new Set(), paused: new Map(), denial: null, ops: 0, popupChecked: false,
+      fe: null };   // fe: focus emulation 用の中継自身のセッション（{ sessionId, promise }）。ターンの間だけ持つ
   }
   const tabsOf = (state, entry) => [...state.tabs.values()].filter(tab => tab.entry === entry);
   const clientsOf = entry => [...entry.clients];
@@ -198,6 +191,7 @@ export function createChromeRelay({ connection, scope = createTempWindowScope(),
       if (client.autoAttach) attachFor(state, client, tab).catch(() => {});
     }
     if (confirm) ensureInternal(state, tab).catch(() => {});
+    if (entry.turn) ensureFocus(state, tab).catch(() => {});
     if (opener) checkPopup(state, tab);
     return tab;
   }
@@ -206,10 +200,12 @@ export function createChromeRelay({ connection, scope = createTempWindowScope(),
     if (state.tabs.get(tab.targetId) !== tab) return;
     state.tabs.delete(tab.targetId);
     tab.controller.abort();
+    tab.fe = null;   // セッションはタブと一緒に消える
     for (const client of clientsOf(tab.entry)) if (client.discovering) send(client, { method: 'Target.targetDestroyed', params: { targetId: tab.targetId } });
     if (tab.windowId != null && ![...state.tabs.values()].some(other => other.windowId === tab.windowId)) {
       state.windows.delete(tab.windowId);
       tab.entry.windows.delete(tab.windowId);
+      scope.windowClosed?.(tab.entry.id, tab.windowId);   // 窓だけ閉じられた。次に使うときに黙って開き直す
     }
   }
 
@@ -220,7 +216,12 @@ export function createChromeRelay({ connection, scope = createTempWindowScope(),
       // 範囲のタブが開いたタブ（window.open）。popup の別窓なら、その窓も範囲に足す
       const tab = adopt(state, opener.entry, info, { opener });
       const where = await state.cdp.send('Browser.getWindowForTarget', { targetId: info.targetId }).catch(() => null);
-      if (where?.windowId != null && state.tabs.get(tab.targetId) === tab) { tab.windowId = where.windowId; addWindow(state, tab.entry, where.windowId); }
+      if (where?.windowId != null && state.tabs.get(tab.targetId) === tab) {
+        const isNewWindow = !tab.entry.windows.has(where.windowId);
+        tab.windowId = where.windowId; addWindow(state, tab.entry, where.windowId);
+        // popup の別窓は画面の左上などに出て前面を取る。同じ置き方（画面の外・透明）を当てる（ADR 0154）
+        if (isNewWindow) Promise.resolve(scope.adoptPopup?.({ cdp: state.cdp, entryId: tab.entry.id, windowId: where.windowId })).catch(() => {});
+      }
       return;
     }
     // ほかの経路で会話の窓に入ったタブ（利用者が窓へ移した、など）。会話の窓が 1 つも無ければ見ない（利用者のタブの数だけ問い合わせない）
@@ -280,6 +281,12 @@ export function createChromeRelay({ connection, scope = createTempWindowScope(),
         forgetSession(state, params.sessionId);
         if (rec.client) send(rec.client, { method, params });
         else if (rec.tab.internal === params.sessionId) { rec.tab.internal = null; rec.tab.internalReady = null; }
+        else if (rec.tab.fe?.sessionId === params.sessionId) {
+          // Chrome の側で外れた。ターンの間は付け直す（タブが残っていれば）
+          const { tab } = rec;
+          tab.fe = null;
+          if (tab.entry.turn && state.tabs.get(tab.targetId) === tab) ensureFocus(state, tab).catch(() => {});
+        }
         return;
       }
       default: return;   // ほかのブラウザー全体のイベント（ダウンロードなど）は配らない
@@ -319,6 +326,44 @@ export function createChromeRelay({ connection, scope = createTempWindowScope(),
     return result.sessionId;
   }
   const attachFor = (state, client, tab) => attach(state, tab, client);
+
+  // ---- focus emulation（ADR 0154） ---------------------------------------------------------------
+  /**
+   * 隠した窓のページに、見えている・フォーカスがあるものとして描かせ、入力を受けさせる（Emulation.setFocusEmulationEnabled）。
+   * セッションごとの状態なので、エージェントのセッション（付け外しされる）とは別に、中継自身のセッションを 1 タブにつき 1 本、ターンの間だけ保つ
+   */
+  function ensureFocus(state, tab) {
+    if (tab.fe) return tab.fe.promise;
+    const fe = { sessionId: null, promise: null };
+    tab.fe = fe;
+    fe.promise = (async () => {
+      const sessionId = await attach(state, tab, null);
+      fe.sessionId = sessionId;
+      if (tab.fe !== fe) { await detachFocus(state, sessionId); return; }   // つけている間に外された
+      await state.cdp.send('Emulation.setFocusEmulationEnabled', { enabled: true }, sessionId);
+    })().catch(error => {
+      if (tab.fe === fe) tab.fe = null;
+      log(`chrome-relay: focus emulation failed: ${error?.message ?? error}`);
+    });
+    return fe.promise;
+  }
+  async function detachFocus(state, sessionId) {
+    if (up !== state) return;
+    forgetSession(state, sessionId);
+    await state.cdp.send('Emulation.setFocusEmulationEnabled', { enabled: false }, sessionId).catch(() => {});
+    await state.cdp.send('Target.detachFromTarget', { sessionId }).catch(() => {});
+  }
+  async function dropFocus(state, tab) {
+    const fe = tab.fe;
+    if (!fe) return;
+    tab.fe = null;
+    await fe.promise;
+    if (fe.sessionId) await detachFocus(state, fe.sessionId);
+  }
+  /** 会話のタブの focus emulation を、ターンの状態（entry.turn）に合わせる */
+  function syncFocus(state, entry) {
+    for (const tab of tabsOf(state, entry)) (entry.turn ? ensureFocus(state, tab) : dropFocus(state, tab)).catch(() => {});
+  }
 
   // ---- サイトの利用の確認（Fetch と Page.frameNavigated） ------------------------------------
   /**
@@ -509,6 +554,9 @@ export function createChromeRelay({ connection, scope = createTempWindowScope(),
     if (!PASSIVE.test(method)) tab.active = true;
     // 移った後の確認の答えを待つ間は、このタブへのコマンドを待たせる（断られたページを読ませない）
     while (tab.gate) await tab.gate.promise;
+    // 窓を前に出して前面を取る命令は、Chrome へ送らずに成功で返す。agent-browser の「今のタブ」は自分の側で持つので操作は変わらず、
+    // 隠した窓は前面を取らない。前に出すのは人が引き継いだときの Pleiad だけ（ADR 0154）
+    if (method === 'Page.bringToFront') return {};
     // Cookie は今のページのものだけ（ほかのサイトのログインを読む・消す・植えるのを防ぐ）
     if (method === 'Network.getCookies') forward = {};
     if (COOKIE_WRITES.has(method)) {
@@ -577,7 +625,7 @@ export function createChromeRelay({ connection, scope = createTempWindowScope(),
         return state.cdp.send(method, { sessionId: params.sessionId });
       }
       case 'Target.closeTarget': mine(state, client, params.targetId); return state.cdp.send(method, { targetId: params.targetId });
-      case 'Target.activateTarget': mine(state, client, params.targetId); return state.cdp.send(method, { targetId: params.targetId });
+      case 'Target.activateTarget': mine(state, client, params.targetId); return {};   // bringToFront と同じ。範囲の外の targetId は断る（上の mine）
       case 'Browser.getWindowForTarget': {
         if (!params.targetId) throw denied('target');
         mine(state, client, params.targetId);
@@ -636,11 +684,13 @@ export function createChromeRelay({ connection, scope = createTempWindowScope(),
   }
   /** 会話のタブの確認の待ちを取り下げ、エージェントが動かしている印を外す（ターンの終わり・止める） */
   function settleEntry(entry) {
+    entry.turn = false;   // ターンが終わった（止める・消す）。focus emulation を外す
     if (!up) return;
     for (const tab of tabsOf(up, entry)) {
       tab.active = false; tab.approved.clear(); tab.denial = null;
       tab.controller.abort(); tab.controller = new AbortController();
     }
+    syncFocus(up, entry);
   }
 
   return {
@@ -650,8 +700,10 @@ export function createChromeRelay({ connection, scope = createTempWindowScope(),
       if (typeof sessionId !== 'string' || !sessionId || sessionId.length > 200) throw new Error('invalid session');
       await ensureListening();
       let entry = entries.get(sessionId);
-      if (!entry) { entry = { id: sessionId, key: random(), stopped: false, clients: new Set(), windows: new Set() }; entries.set(sessionId, entry); byKey.set(entry.key, entry); }
+      if (!entry) { entry = { id: sessionId, key: random(), stopped: false, clients: new Set(), windows: new Set(), turn: false }; entries.set(sessionId, entry); byKey.set(entry.key, entry); }
       if (unlock) this.resume(sessionId);
+      // 端点を渡すのはターンの始まり（core/agent-browser.mjs の browserEnvironment）。ターンの間、窓のタブに focus emulation を保つ
+      if (!entry.stopped && !entry.turn) { entry.turn = true; if (up) syncFocus(up, entry); }
       return `ws://127.0.0.1:${address.port}/devtools/browser/${entry.key}`;
     },
     /** 止める: 接続を閉じ、次の人の送信（resume）まで再接続を断る */
@@ -675,6 +727,7 @@ export function createChromeRelay({ connection, scope = createTempWindowScope(),
       const entry = entries.get(from);
       if (!entry || entries.has(to)) return;
       entries.delete(from); entry.id = to; entries.set(to, entry);
+      scope.rebind?.(from, to);
     },
     endTurn(sessionId) { const entry = entries.get(sessionId); if (entry) settleEntry(entry); },
     /** 会話を消した。接続を閉じて鍵を捨てる（窓を閉じるのは第 8 段） */
@@ -684,6 +737,7 @@ export function createChromeRelay({ connection, scope = createTempWindowScope(),
       entry.stopped = true;
       settleEntry(entry);
       closeClients(entry, 1000, 'forgotten');
+      scope.forget?.(sessionId);
       entries.delete(sessionId); byKey.delete(entry.key);
     },
     /** サイトの利用の確認（confirmAgentSites）。ON なら範囲のタブに確認の Fetch を付け、OFF なら外す（止めている要求は通す） */

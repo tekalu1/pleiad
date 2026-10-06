@@ -62,10 +62,11 @@ async function rig({ permission = 'auto', connectWaitMs, authorize } = {}) {
   const logs = [];
   const asked = [];
   let answer = async () => ({ allow: true });
-  const relay = createChromeRelay({ connection: conn, deniedMessage: () => 'DENIED-TEXT', log: line => logs.push(line), ...(connectWaitMs ? { connectWaitMs } : {}),
+  const locate = { browser: 'chrome', userDataDir: chrome.userDataDir, custom: true };
+  const relay = createChromeRelay({ connection: conn, os: os_, locate, deniedMessage: () => 'DENIED-TEXT', log: line => logs.push(line), ...(connectWaitMs ? { connectWaitMs } : {}),
     authorize: authorize ?? (async (request, signal) => { asked.push(request); return answer(request, signal); }) });
   return {
-    chrome, conn, relay, logs, asked, fake: chrome.browser,
+    chrome, conn, relay, logs, asked, fake: chrome.browser, os: os_,
     answer: fn => { answer = fn; },
     async stop() { relay.close(); await conn.close(); await chrome.stop(); },
   };
@@ -89,7 +90,10 @@ export default async function (t) {
       const tab = r.fake.targets().find(x => x.targetId === tabId);
       const win = r.fake.windows().find(w => w.windowId === tab?.windowId);
       t.ok('createTarget は context・newWindow の指定を捨てて、会話の新しい窓に作る（利用者の窓に入れない）', !!tab && tab.windowId !== r.fake.userWindow, JSON.stringify(tab));
-      t.ok('仮の窓はすぐ最小化する', win?.state === 'minimized', JSON.stringify(win));
+      const hwnd = r.os.hwnds().find(h => h.windowId === tab?.windowId);
+      t.ok('窓は最小化せず、画面の外（右の外）の決めた大きさ（1100×720 DIP）で開く', win?.state === 'normal' && win.bounds.left >= 6000 && win.bounds.width === 1100 && win.bounds.height === 720, JSON.stringify(win));
+      t.ok('窓の HWND を隠す（画面の外・タスクバーと Alt+Tab から外す・透明度 0・マウスの素通し）', hwnd?.concealed === true && hwnd.alpha === 0 && hwnd.ex.toolwindow && hwnd.ex.layered && hwnd.ex.transparent && !hwnd.ex.appwindow, JSON.stringify(hwnd));
+      t.ok('窓の状態（最小化・復元）を上りへ送らない', !r.chrome.calls.some(c => c.method === 'Browser.setWindowBounds' && c.params.bounds?.windowState));
       t.ok('作ったタブだけが getTargets と targetCreated に出る', JSON.stringify((await a1.cmd('Target.getTargets')).result.targetInfos.map(x => x.targetId)) === JSON.stringify([tabId])
         && a1.events.some(e => e.method === 'Target.targetCreated' && e.params.targetInfo.targetId === tabId));
       r.fake.openUserTab('https://user-new.example/private', 'Private title');
@@ -134,8 +138,8 @@ export default async function (t) {
         'Target.createBrowserContext', 'Target.disposeBrowserContext', 'Target.exposeDevToolsProtocol', 'Target.setRemoteLocations', 'Target.sendMessageToTarget', 'SystemInfo.getInfo'];
       const replies = await Promise.all(browserDenied.map(method => a1.cmd(method, method === 'Browser.setWindowBounds' ? { windowId: tab.windowId, bounds: { windowState: 'normal' } } : {})));
       t.ok('ブラウザー全体の操作を断る（Browser.close・Storage.*・Cookie の一括・context・窓を戻すなど）', replies.every(m => m.error), browserDenied.filter((_, i) => !replies[i].error).join());
-      // 中継自身が仮の窓を最小化する setWindowBounds（minimized）は除く
-      const forwarded = r.chrome.calls.filter(c => browserDenied.includes(c.method) && !(c.method === 'Browser.setWindowBounds' && c.params.bounds?.windowState === 'minimized'));
+      // 中継自身が窓の大きさを決める setWindowBounds（windowState なし）は除く
+      const forwarded = r.chrome.calls.filter(c => browserDenied.includes(c.method) && !(c.method === 'Browser.setWindowBounds' && !c.params.bounds?.windowState));
       t.ok('断ったものは上りへ送っていない', forwarded.length === 0, forwarded.map(c => c.method).join());
       const sessionDenied = [['Target.createTarget', { url: 'about:blank' }], ['Browser.getVersion', {}], ['Storage.getCookies', {}], ['Network.getAllCookies', {}], ['Network.clearBrowserCookies', {}],
         ['Network.clearBrowserCache', {}], ['Page.navigate', { url: 'file:///C:/Windows/win.ini' }], ['Page.navigate', { url: 'chrome://settings' }], ['Page.navigate', { url: 'https://user:pass@example.com/' }],
@@ -468,6 +472,8 @@ export default async function (t) {
       const titled = await run(['get', 'title']);
       t.ok('click で移る', clicked.status === 0 && await until(async () => (await run(['get', 'title'])).stdout.trim() === 'Page B', 8000), titled.stdout + clicked.stderr);
       const newTab = await run(['tab', 'new']);
+      const switched = await run(['tab', 't2']);
+      t.ok('tab t2（別のタブへ切り替え）は成功する（bringToFront は中継が握りつぶす）', switched.status === 0, switched.stdout + switched.stderr);
       const list = await run(['tab', 'list']);
       t.ok('tab new は会話の窓に作り、tab list に利用者のタブは出ない', newTab.status === 0 && list.status === 0 && !USER_TABS.some(x => list.stdout.includes(x.url) || list.stdout.includes(x.title)), list.stdout + list.stderr);
       const closed = await run(['close']);
@@ -476,7 +482,9 @@ export default async function (t) {
       t.ok('利用者の窓のタブはそのまま（数・URL）、上りへブラウザー全体の setAutoAttach を送っていない',
         userTargets.length === USER_TABS.length && USER_TABS.every(x => userTargets.some(u => u.url === x.url)) && r.fake.autoAttachCalls.length === 0);
       t.ok('利用者のタブへは、中継も agent-browser も attach していない', !r.chrome.calls.some(c => c.method === 'Target.attachToTarget' && userTargets.some(u => u.targetId === c.params.targetId)));
-      t.ok('agent-browser の窓は会話の仮の窓（最小化）', r.fake.targets().filter(x => x.type === 'page' && x.windowId !== r.fake.userWindow).every(x => r.fake.windows().find(w => w.windowId === x.windowId)?.state === 'minimized'));
+      const agentWindows = r.fake.targets().filter(x => x.type === 'page' && x.windowId !== r.fake.userWindow).map(x => x.windowId);
+      t.ok('agent-browser の窓は、最小化せず、すべて画面の外の隠した窓', agentWindows.length >= 1 && agentWindows.every(id => r.fake.windows().find(w => w.windowId === id)?.state === 'normal' && r.os.hwnds().find(h => h.windowId === id)?.concealed === true));
+      t.ok('agent-browser の tab tN が送る bringToFront・activateTarget は上りへ届かない', !r.chrome.calls.some(c => c.method === 'Page.bringToFront' || c.method === 'Target.activateTarget'));
     } finally {
       if (env) { await runAgentBrowser(['close'], env, { timeoutMs: 10_000 }).catch(() => {}); await rm(browserSocketDirectory(path.dirname(env.AGENT_BROWSER_CONFIG)), { recursive: true, force: true }).catch(() => {}); }
       await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
