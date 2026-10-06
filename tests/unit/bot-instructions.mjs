@@ -54,8 +54,8 @@ export default async function (t) {
   ok('名前 → 人格 → 操作の要点 → 予算の残りの届き方 → 聞こえた投稿の扱い → 黙り方 → リアクションの届き方。人格に定型のラベルを付けない（ADR 0119・0128・0109）', ja.split('\n\n').length === 7 && ja.startsWith('あなたは 🦉 Owl') && ja.split('\n\n')[1] === owl.persona && ja.split('\n\n')[3].includes('予算の残り') && ja.split('\n\n')[4].includes('heard="true"') && ja.split('\n\n')[5].includes(SILENT_MARK) && ja.split('\n\n')[6].includes('reaction="👍"') && !ja.endsWith('\n'), ja);
   ok('ADR 0119 の追記: 黙るときは文章なしか、決まった印だけにする。「（なし）」のような文で黙ったことを書かない（ja・en）', ja.includes(`本文を \`${SILENT_MARK}\` だけにする`) && ja.includes('「（なし）」「(no reply)」などの文で書かない')
     && en.includes(`make the whole text \`${SILENT_MARK}\``) && en.includes('Do not announce your silence'), ja);
-  ok('ADR 0109 の追記: 自分の投稿へのリアクションは reaction の包みで届き、問いへの人の答えのリアクションだけが起こす（ja・en）', ja.includes('問いかけへの人の答えのリアクションだけがあなたを起こし')
-    && en.includes("Only a person's answer reaction on your question wakes you"), ja);
+  ok('ADR 0109 の追記: 自分の投稿へのリアクションは reaction の包みで届き、問いへの答えのリアクションは人・bot・AI のどれが付けても起こす（bot・AI は予算の内・DM では起こさない。ja・en）', ja.includes('人が付けてもほかの bot・AI が付けてもあなたを起こす') && ja.includes('DM では起こさない')
+    && en.includes('whether a person, another bot or an AI put it') && en.includes('never in a DM'), ja);
   ok('ADR 0128: 聞こえた投稿（@ の無い人の投稿）は、ほかの bot がもう答えている・自分に向いていないなら黙ってよい（ja・en）', ja.includes('文章を書かずに終えてよい') && ja.includes('ほかの bot がもう答えている')
     && en.includes('If another bot has already answered or it is not for you, you may finish without writing anything.'), ja);
   ok('使い方に list_ops・call_op と、よく使う op の id', ['list_ops', 'call_op', 'channels.post', 'channels.react', 'memory.search', 'memory.write', 'channels.read', 'search_sessions'].every((s) => ja.includes(s)), ja);

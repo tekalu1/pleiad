@@ -1,6 +1,7 @@
 // bot の投稿へのリアクションと、黙って終えたターン（ADR 0109・0119 の追記）。本物のチャンネルのサービスに身代わりの会話・バックエンドをつなぐ。LLM は使わない。
-//   リアクション: 人が問いかけの投稿に 👍 → その bot が起き、包みに reaction="👍"。答えでないリアクション・bot のリアクション・2 度目は起こさず、次に起きたときに渡す。
-//                 外したリアクションは渡さない。自分のリアクションは渡さない。DM の投稿も同じ。
+//   リアクション: 問いかけの投稿に 👍 → その bot が起き、包みに reaction="👍"。付けたのが人でも、ほかの bot・Chats の AI でも同じ（付けた者ごとに 1 回）。
+//                 答えでないリアクション・同じ者の 2 度目・予算切れの bot・AI のリアクションは起こさず、次に起きたときに渡す。人のリアクションは予算で止めない。
+//                 外したリアクションは渡さない。自分のリアクションは渡さない。DM の投稿も同じだが、DM では bot のリアクションで起こさない。
 //   黙る: 文章なし・[[no-reply]] だけ・「（なし）」のような括弧だけの一言で終えたターンは投稿を残さない。本当の返事は消さない。
 import fs from 'node:fs/promises';
 import os from 'node:os';
@@ -13,7 +14,7 @@ import { isSilentReply, stripSilentMark, SILENT_MARK } from '../../core/bots/sil
 import { answerOf, asksQuestion } from '../../core/bots/reactions.mjs';
 
 export const name = 'bot-reactions-silence';
-export const title = 'bot の投稿へのリアクション（問いへの人の答えは起こす・ほかは次に渡す・付け外しと連打）と、黙って終えたターン（印・括弧だけの一言は投稿しない）';
+export const title = 'bot の投稿へのリアクション（問いへの答えは人・bot・AI のどれでも起こす・bot と AI は予算の内・ほかは次に渡す・付け外しと連打）と、黙って終えたターン（印・括弧だけの一言は投稿しない）';
 
 const until = async (fn, { ms = 5000, label = '' } = {}) => {
   const end = Date.now() + ms;
@@ -117,15 +118,14 @@ export default async function (t) {
     await finish(second, ['（なし）']);
     t.ok('「（なし）」だけで終えたターンは投稿を残さない', (await turnPosts(channel.id, root.id)).length === 1, JSON.stringify(await turnPosts(channel.id, root.id)));
 
-    // ---- 2 度目の答え・答えでないリアクション・bot のリアクションは起こさない
+    // ---- 同じ人の 2 度目の答え・答えでないリアクション・自分のリアクションは起こさない
     await channels.react({ channelId: channel.id, postId: question.id, emoji: '✅', on: true }, human);
     await channels.react({ channelId: channel.id, postId: question.id, emoji: '🎉', on: true }, human);
-    await channels.react({ channelId: channel.id, postId: question.id, emoji: '👍', on: true }, { kind: 'bot', botId: 'b_lynx' });
     await channels.react({ channelId: channel.id, postId: question.id, emoji: '👀', on: true }, { kind: 'bot', botId: 'b_owl' });
     await quietWait();
-    t.ok('同じ投稿への 2 度目の答え・🎉・ほかの bot の 👍・自分の 👀 では起きない', started.length === 2, JSON.stringify(started.map((s) => s.sessionId)));
+    t.ok('同じ投稿への人の 2 度目の答え（✅）・🎉・自分の 👀 では起きない', started.length === 2, JSON.stringify(started.map((s) => s.sessionId)));
     const quiet = (await d.inbox.list({ sessionId: first.sessionId, status: 'pending' })).filter((i) => i.reaction);
-    t.ok('起こさないリアクションは次に渡す出来事として待つ（自分のリアクションは積まない）', quiet.length === 3 && quiet.every((i) => i.reaction.quiet)
+    t.ok('起こさないリアクションは次に渡す出来事として待つ（自分のリアクションは積まない）', quiet.length === 2 && quiet.every((i) => i.reaction.quiet)
       && !quiet.some((i) => i.reaction.byKey === 'bot:b_owl'), JSON.stringify(quiet));
 
     // ---- 外したら取り消す・付け直しても重ねない・連打しても 1 件
@@ -134,40 +134,52 @@ export default async function (t) {
     await channels.react({ channelId: channel.id, postId: question.id, emoji: '✅', on: true }, human);
     await quietWait();
     const after = (await d.inbox.list({ sessionId: first.sessionId, status: 'pending' })).filter((i) => i.reaction);
-    t.ok('外したリアクションは取り消し、付け直しても 1 件のまま。起きない', started.length === 2 && after.length === 2
-      && after.filter((i) => i.reaction.emoji === '✅').length === 1 && !after.some((i) => i.reaction.emoji === '🎉'), JSON.stringify(after));
+    t.ok('外したリアクションは取り消し、付け直しても 1 件のまま。起きない', started.length === 2 && after.length === 1
+      && after[0].reaction.emoji === '✅' && after[0].reaction.quiet, JSON.stringify(after));
 
-    // ---- 次に起きたとき（人の @）に、待っていたリアクションがまとめて渡る
+    // ---- ほかの bot の 👍 は、人が先に起こした投稿でも起こす（付けた者ごとに 1 回）。待っていた人の ✅ も一緒に渡る
+    await channels.react({ channelId: channel.id, postId: question.id, emoji: '👍', on: true }, { kind: 'bot', botId: 'b_lynx' });
+    const third = await nextStart(2, 'Lynx の 👍 で Owl が起きる');
+    t.ok('問いかけの投稿にほかの bot が 👍 → 人が先に起こした後でも、その bot の同じ会話が起きる', third.sessionId === first.sessionId
+      && third.prompt.includes('reaction="👍"') && third.prompt.includes('from="🐺 Lynx (bot)"') && third.prompt.includes('reaction="✅"'), third.prompt);
+    await finish(third, ['（なし）']);
+
+    // ---- 同じ bot の 2 度目の答えは起こさない。次に起きたとき（人の @）に、待っていたリアクションがまとめて渡る
+    await channels.react({ channelId: channel.id, postId: question.id, emoji: '✅', on: true }, { kind: 'bot', botId: 'b_lynx' });
+    await channels.react({ channelId: channel.id, postId: question.id, emoji: '🎉', on: true }, human);
+    await channels.react({ channelId: channel.id, postId: question.id, emoji: '🎉', on: false }, human);
+    await quietWait();
+    t.ok('同じ bot の 2 度目の答え（✅）では起きない', started.length === 3, JSON.stringify(started.map((s) => s.sessionId)));
     await channels.post({ channelId: channel.id, threadId: root.id, text: '@Owl ついでにタグも' }, human);
-    const third = await nextStart(2, '@ で Owl が起きる');
-    t.ok('次に起きたとき、待っていたリアクションが包みで渡る（外した 🎉 は渡らない）', third.prompt.includes('reaction="✅"') && third.prompt.includes('reaction="👍"')
-      && third.prompt.includes('from="🐺 Lynx (bot)"') && !third.prompt.includes('🎉') && third.prompt.includes('ついでにタグも'), third.prompt);
+    const fourth = await nextStart(3, '@ で Owl が起きる');
+    t.ok('次に起きたとき、待っていたリアクションが包みで渡る（外した 🎉 は渡らない）', fourth.prompt.includes('reaction="✅"')
+      && fourth.prompt.includes('from="🐺 Lynx (bot)"') && !fourth.prompt.includes('🎉') && fourth.prompt.includes('ついでにタグも'), fourth.prompt);
     t.ok('渡したリアクションは待ちから外れる', (await d.inbox.list({ sessionId: first.sessionId, status: 'pending' })).length === 0);
 
     // ---- 黙る印・本当の返事
-    await finish(third, ['タグを付けました。', SILENT_MARK]);
+    await finish(fourth, ['タグを付けました。', SILENT_MARK]);
     const posts3 = await turnPosts(channel.id, root.id);
     t.ok('文章の後ろの印だけを外し、本当の返事は残す', posts3.length === 2 && posts3.at(-1).text === 'タグを付けました。', JSON.stringify(posts3.at(-1)));
     await channels.post({ channelId: channel.id, threadId: root.id, text: '@Owl 確認だけ' }, human);
-    const fourth = await nextStart(3, '@ で Owl が起きる');
-    await finish(fourth, [SILENT_MARK]);
+    const fifth = await nextStart(4, '@ で Owl が起きる');
+    await finish(fifth, [SILENT_MARK]);
     t.ok('印だけで終えたターンは投稿を残さない', (await turnPosts(channel.id, root.id)).length === 2);
     await channels.post({ channelId: channel.id, threadId: root.id, text: '@Owl 件数は？' }, human);
-    const fifth = await nextStart(4, '@ で Owl が起きる');
-    await finish(fifth, ['（なし）ではなく、見つかったのは 3 件です']);
+    const sixth = await nextStart(5, '@ で Owl が起きる');
+    await finish(sixth, ['（なし）ではなく、見つかったのは 3 件です']);
     t.ok('括弧で始まっても続きのある返事は消さない', (await turnPosts(channel.id, root.id)).at(-1)?.text === '（なし）ではなく、見つかったのは 3 件です');
     // channels.post で返事を入れた後に「(no reply)」で終えた: 書いた返事だけが残る
     await channels.post({ channelId: channel.id, threadId: root.id, text: '@Owl まとめて' }, human);
-    const sixth = await nextStart(5, '@ で Owl が起きる');
-    await channels.post({ channelId: channel.id, threadId: root.id, text: 'まとめました: 3 件', bySession: sixth.sessionId }, { kind: 'bot', botId: 'b_owl' });
-    await finish(sixth, ['(no reply)']);
+    const seventh = await nextStart(6, '@ で Owl が起きる');
+    await channels.post({ channelId: channel.id, threadId: root.id, text: 'まとめました: 3 件', bySession: seventh.sessionId }, { kind: 'bot', botId: 'b_owl' });
+    await finish(seventh, ['(no reply)']);
     t.ok('channels.post で書いた返事の後ろに、黙る一言を足さない', (await turnPosts(channel.id, root.id)).at(-1)?.text === 'まとめました: 3 件', JSON.stringify((await turnPosts(channel.id, root.id)).at(-1)));
 
     // ---- 問いかけでない投稿への 👍 は起こさない（次に渡す）
     const statement = (await turnPosts(channel.id, root.id)).find((p) => p.text === 'タグを付けました。');
     await channels.react({ channelId: channel.id, postId: statement.id, emoji: '👍', on: true }, human);
     await quietWait();
-    t.ok('問いかけでない投稿への 👍 は起こさない（次に渡す）', started.length === 6
+    t.ok('問いかけでない投稿への 👍 は起こさない（次に渡す）', started.length === 7
       && (await d.inbox.list({ sessionId: first.sessionId, status: 'pending' })).some((i) => i.postId === statement.id && i.reaction?.quiet));
 
     // ---- 人の投稿へのリアクションは bot へ渡さない
@@ -177,13 +189,41 @@ export default async function (t) {
 
     // ---- 止めたスレッドでは起こさない
     const root2 = await channels.post({ channelId: channel.id, text: '@Owl もう一つ' }, human);
-    const seventh = await nextStart(6, '@ で Owl が起きる');
-    await finish(seventh, ['進めてよいですか？']);
+    const eighth = await nextStart(7, '@ で Owl が起きる');
+    await finish(eighth, ['進めてよいですか？']);
     const [q2] = await turnPosts(channel.id, root2.id);
     await channels.stopThread({ channelId: channel.id, threadId: root2.id }, human);
     await channels.react({ channelId: channel.id, postId: q2.id, emoji: '👍', on: true }, human);
     await quietWait();
-    t.ok('止めたスレッドの問いへの 👍 では起きない', started.length === 7);
+    t.ok('止めたスレッドの問いへの 👍 では起きない', started.length === 8);
+
+    // ---- 人でない者（bot・Chats の AI）のリアクションは、予算が残っている間だけ起こす。人のリアクションは予算で止めない
+    const root3 = await channels.post({ channelId: channel.id, text: '@Owl 三つ目' }, human);
+    const ninth = await nextStart(8, '@ で Owl が起きる');
+    await finish(ninth, ['タグを打ってよいですか？']);
+    const [q3] = await turnPosts(channel.id, root3.id);
+    const systemPosts = async () => (await channels.read({ channelId: channel.id, limit: 100 })).posts.filter((p) => p.author?.kind === 'system').length
+      + (await channels.read({ channelId: channel.id, threadId: root3.id, limit: 100 })).posts.filter((p) => p.author?.kind === 'system').length;
+    await channels.update({ channelId: channel.id, budget: { daily: 0 } }, human);
+    const notices = await systemPosts();
+    await channels.react({ channelId: channel.id, postId: q3.id, emoji: '👍', on: true }, { kind: 'bot', botId: 'b_lynx' });
+    await quietWait();
+    t.ok('予算を使い切ったら、ほかの bot の 👍 では起きず、次に渡す（お知らせも出さない）', started.length === 9 && (await systemPosts()) === notices
+      && (await d.inbox.list({ sessionId: ninth.sessionId, status: 'pending' })).some((i) => i.postId === q3.id && i.reaction?.byKey === 'bot:b_lynx' && i.reaction.quiet),
+    JSON.stringify(await d.inbox.list({ sessionId: ninth.sessionId })));
+    await channels.update({ channelId: channel.id, budget: { daily: 5 } }, human);
+    await channels.react({ channelId: channel.id, postId: q3.id, emoji: '✅', on: true }, { kind: 'agent', sessionId: 's_chat' });
+    const tenth = await nextStart(9, 'Chats の AI の ✅ で Owl が起きる');
+    t.ok('予算が残っていれば、Chats の AI の ✅ でも起きる（待っていた bot の 👍 も一緒に渡る）', tenth.sessionId === ninth.sessionId
+      && tenth.prompt.includes('reaction="✅"') && tenth.prompt.includes('reaction="👍"'), tenth.prompt);
+    await finish(tenth, ['（なし）']);
+    await channels.update({ channelId: channel.id, budget: { daily: 0 } }, human);
+    await channels.react({ channelId: channel.id, postId: q3.id, emoji: '👍', on: true }, human);
+    const eleventh = await nextStart(10, '人の 👍 で Owl が起きる');
+    t.ok('AI の答えが先に起こした投稿でも人の 👍 はまた起こし、予算を使い切っていても止めない', eleventh.sessionId === ninth.sessionId
+      && eleventh.prompt.includes('reaction="👍"') && eleventh.prompt.includes('from="あなた"'), eleventh.prompt);
+    await finish(eleventh, ['（なし）']);
+    await channels.update({ channelId: channel.id, budget: { daily: 5 } }, human);
 
     // ---- 起こさないリアクションは会話ごとに上限まで
     const s1 = first.sessionId;
@@ -197,9 +237,15 @@ export default async function (t) {
     BOTS[0].dmChannelId = dm.id;
     sessions.s_dm = { bot: { botId: 'b_owl', kind: 'dm', channelId: dm.id, threadId: null, memRev: 0, snapshotDue: false, delivered: [], postCursor: null } };
     const dmQ = await channels.post({ channelId: dm.id, text: '明日の予定を入れておきましょうか？', turn: { botId: 'b_owl', sessionId: 's_dm' }, state: 'done' }, { kind: 'bot', botId: 'b_owl' });
+    // DM には予算の数え先が無いので、ほかの bot の 👍 では起こさず次に渡す
+    await channels.react({ channelId: dm.id, postId: dmQ.id, emoji: '👍', on: true }, { kind: 'bot', botId: 'b_lynx' });
+    await quietWait();
+    t.ok('DM の bot の問いかけへのほかの bot の 👍 では起きず、次に渡す', started.length === 11
+      && (await d.inbox.list({ sessionId: 's_dm', status: 'pending' })).some((i) => i.postId === dmQ.id && i.reaction?.byKey === 'bot:b_lynx' && i.reaction.quiet));
     await channels.react({ channelId: dm.id, postId: dmQ.id, emoji: '🙆', on: true }, human);
-    const dmRun = await nextStart(7, 'DM の 🙆 で Owl が起きる');
-    t.ok('DM の bot の問いかけへの 🙆 で DM の会話が起きる', dmRun.sessionId === 's_dm' && dmRun.prompt.includes('reaction="🙆"'), dmRun.prompt);
+    const dmRun = await nextStart(11, 'DM の 🙆 で Owl が起きる');
+    t.ok('DM の bot の問いかけへの人の 🙆 で DM の会話が起きる（待っていた bot の 👍 も一緒に渡る）', dmRun.sessionId === 's_dm' && dmRun.prompt.includes('reaction="🙆"')
+      && dmRun.prompt.includes('reaction="👍"'), dmRun.prompt);
     await finish(dmRun, []);
     const dmPosts = (await channels.read({ channelId: dm.id, limit: 100 })).posts.filter((p) => p.turn && !p.deletedAt);
     t.ok('文章を書かずに終えた DM のターンは投稿を残さない', dmPosts.length === 1 && dmPosts[0].id === dmQ.id, JSON.stringify(dmPosts));

@@ -11,7 +11,7 @@
 //   start(): Promise<void>                                          … 届ける前の出来事の戻し（delivering → unknown、pending を配り直す）・前の起動で残った作業中の印の片付け
 //   stop(): void
 //   onPosted(post, channel, extra?): Promise<void>                  … channels.post の後。@ で bot を起こす（ChannelService.hooks.posted）。extra は { hold?, checked?, origin? }（ops の channels.post が渡す）
-//   onReacted(post, channel, { emoji, on, by }): Promise<void>       … bot の投稿のリアクションが変わった（ChannelService.hooks.reacted）。次に起きたときに渡し、問いへの人の答えなら起こす
+//   onReacted(post, channel, { emoji, on, by }): Promise<void>       … bot の投稿のリアクションが変わった（ChannelService.hooks.reacted）。次に起きたときに渡し、問いへの答えなら起こす
 //   claimPost({ channelId, threadId, botId, sessionId }): { postId } | undefined   … bot が channels.post で書く前（ChannelService.hooks.botPost）。
 //        そのターンの会話が自分のスレッドへ書くなら、最初の 1 件はターンの投稿に入れ（postId）、2 件目からは新しい投稿（postId: null）。会話が分からなければ undefined
 //   stopThread({ channelId, threadId }, author): Promise<void>      … [止める]（ChannelService.hooks.stopThread）。origin で結ばれた派生のスレッド（bot が起こして新しくできたもの）も止める
@@ -34,8 +34,9 @@
 //     聞こえた投稿は予算（ADR 0119）が残っている間だけ届ける（使い切ったら宛先の 1 体だけ）。休憩中の bot には知らせずに届けない。
 //     bot・Chats の AI の @ の無い投稿は誰も起こさない（暗黙の宛先は人の投稿だけ。bot 同士が起こし合わない）。
 //   - ThreadState.stopped があれば、人が次に書くまで起こさない。ThreadState.calls は数えるだけ。
-//   - bot の投稿へのリアクションは、その bot の会話へ次に起きたときに渡す（包みに reaction="👍"）。起こすのは、問いかけの投稿に人が付けた答えのリアクション（👍 👎 など）だけで、
-//     投稿ごとに 1 回まで。bot のリアクションでは起こさない。外したら、まだ渡していない同じリアクションを取り消す（ADR 0109 の追記）。
+//   - bot の投稿へのリアクションは、その bot の会話へ次に起きたときに渡す（包みに reaction="👍"）。起こすのは、問いかけの投稿に付いた答えのリアクション（👍 👎 など）だけで、
+//     その投稿・付けた者ごとに 1 回まで。付けたのが人でも bot・Chats の AI でも同じに起こす。ただし人でない者のリアクションは予算が残っている間だけ（使い切っても知らせない）で、
+//     DM では起こさない（予算の数え先が無い。DM への bot の書き込みで起こさないのと同じ）。外したら、まだ渡していない同じリアクションを取り消す（ADR 0109 の追記）。
 //   - bot が bot を起こす（返事・channels.post の @、呼んだ bot へ返す返事）のは、チャンネルの予算が残っている間だけ（ADR 0119。回数の上限は置かない）。
 //     使い切ったら起こさない（Pleiad はお知らせを出さない。人が呼べば起きる）。数えるのは core/bots/budget.mjs。残りは毎ターン末尾の文脈で bot に渡す。
 //   - 使用量の上限に当たった bot は休憩中（core/bots/resting.mjs）。休憩中の @ は配らず、その場所に 1 回だけ Pleiad のお知らせを出す（ADR 0119）。
@@ -480,8 +481,9 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
   /**
    * bot の投稿のリアクションが変わった（ChannelService.hooks.reacted）。by = 付けた・外した者、on = 付けたか。
    * 付けたリアクションは、その投稿を書いた bot の会話へ出来事（inbox の reaction）として積み、次に起きたときに `reaction` の包みで渡す（それだけでは起こさない）。
-   * 問いかけの投稿に人が付けた答えのリアクション（👍 👎 など。reactions.mjs の answerOf）だけは、その bot を起こす（投稿ごとに 1 回まで）。
-   * bot（自分・ほかの bot）のリアクションでは起こさず、自分のリアクションは渡さない。外したら、まだ渡していない同じ出来事を取り消す（付け外しで重ねない）
+   * 問いかけの投稿に付いた答えのリアクション（👍 👎 など。reactions.mjs の answerOf）だけは、その bot を起こす（その投稿・付けた者ごとに 1 回まで）。
+   * 付けたのが人でも、ほかの bot・Chats の AI でも同じに起こす。ただし人でない者のリアクションは、予算が残っている間だけ起こし、DM では起こさない（次に渡す）。
+   * 自分のリアクションは渡さない。外したら、まだ渡していない同じ出来事を取り消す（付け外しで重ねない）
    */
   function onReacted(post, channel, change) {
     const run = reactionChain.then(() => reacted(post, channel, change));
@@ -502,10 +504,14 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
       if (!on) { if (waiting.length) await inbox.remove(waiting.map((i) => i.id)); return; }
       // まだ渡していない・もう渡した同じリアクションがある（連打・外して付け直した）
       if (waiting.length || items.some((i) => i.status !== 'pending' && same(i))) return;
-      // 起こすのは: 人が・問いかけの投稿に・答えのリアクションを付けた・その投稿でまだ起こしていない・止めた/アーカイブのスレッドでない
+      // 起こすのは: 問いかけの投稿に・答えのリアクションが付いた・その投稿をその者のリアクションでまだ起こしていない・止めた/アーカイブのスレッドでない。
+      // 付けたのが人でも bot・Chats の AI でも同じ。「その者ごとに 1 回」なので、bot の 👍 が先に起こしても、人の答えはまた起こす
       const stopped = Boolean(target.threadId) && (stoppedKeys.has(threadKeyOf(channel.id, target.threadId)) || await threadStopped(channel.id, target.threadId));
-      let wakes = by.kind === 'human' && Boolean(answerOf(emoji)) && asksQuestion(post.text) && !channel.archivedAt && !stopped
-        && !items.some((i) => !i.reaction.quiet);
+      let wakes = Boolean(answerOf(emoji)) && asksQuestion(post.text) && !channel.archivedAt && !stopped
+        && !items.some((i) => i.reaction.byKey === byKey && !i.reaction.quiet);
+      // 人でない者（bot・Chats の AI）のリアクションで起こすのは、bot の @ と同じく予算が残っている間だけ（使い切っても知らせない。人の操作は止めない）。
+      // DM には予算の数え先が無いので起こさない（route() が DM への bot の書き込みで起こさないのと同じ。予算で止まらない起こし合いを作らない）
+      if (wakes && by.kind !== 'human' && (channel.kind === 'dm' || !(await budget.allows({ channelId: channel.id, threadId: target.threadId })))) wakes = false;
       // 休憩中なら起こさない（その場所で初めてならお知らせを出す）。リアクションは次に起きたときに渡す
       if (wakes) { const bot = await getBot(botId); if (!bot || await restingWake(bot, channel, target.threadId)) wakes = false; }
       await inbox.add({ sessionId: target.sessionId, botId, channelId: channel.id, threadId: target.threadId, postId: post.id, reaction: { emoji, by: structuredClone(by), byKey, at: now(), ...(wakes ? {} : { quiet: true }) } });
