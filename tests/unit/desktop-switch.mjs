@@ -1,7 +1,10 @@
 // 新しい版のサーバーへの切り替え（無停止の更新 1-6。desktop/switch.cjs、docs/zero-downtime-update/plan.md 1-6）。
 // 状態機械は副作用を偽物にして、実時間・実プロセスなしで確かめる:
-//   - 切り替えるか（版・ビルド）・待つ作業の数え方（`!` の行と裏の作業は待つ。外部の stdio MCP・送信予定は数えない）・事前の確かめの判定
+//   - 切り替えるか（版・ビルド）・待つ作業の数え方（`!` の行と裏の作業は切り替えで止まるもの。外部の stdio MCP・送信予定は数えない）・事前の確かめの判定
 //   - 待ち → update-lock → S1 の終わり → S2 → 窓の読み直し。ロックが取れない・ロックの後に新しい作業・S1 が終わらない
+//   - 止まるものだけが残ったとき（Z）: 自動では切り替えず「あとで／止めて切り替え」を聞く。あとで → held（止まるものが無くなれば切り替わる）・
+//     止めて切り替え・画面が答える（answer）・待ち始めの時刻（since）・中断の進み・切り替えで止めたもの（stopped）
+//   - 切り替えに失敗して前の版で動いている → もう一度試す（retry）
 //   - S2 が立たない → 前の版、どちらも駄目 → failed
 //   - 形式番号が違う版は自動で切り替えない（あとで → held、中断して更新）・起こせない版は main を起動し直す
 //   - 「今すぐ中断して切り替える」・main の終了・S1 を手放している間（replacing）
@@ -23,7 +26,7 @@ const { createServerLink } = require('../../desktop/server-link.cjs');
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 
 export const name = 'desktop-switch';
-export const title = '新しい版のサーバーへの切り替え: 作業が 0 件まで待つ・ロック・S1 の終わり・S2・読み直し・前の版へ戻す・合わない版は聞く・今すぐ中断';
+export const title = '新しい版のサーバーへの切り替え: 作業が 0 件まで待つ・止まるものが残れば聞く・ロック・S1 の終わり・S2・読み直し・前の版へ戻す・もう一度試す・合わない版は聞く・今すぐ中断';
 
 const tick = () => new Promise(resolve => setImmediate(resolve));
 const OLD = { appVersion: '1.0.0', build: 'aaaaaaaaaaaa' };
@@ -34,16 +37,16 @@ const busy = () => idle({ count: 1, turns: [{ sessionId: 's1', backend: 'fake' }
 /** 偽の副作用。works は running() が順に返す値（尽きたら最後の値） */
 function fakeEffects({ works = [idle()], prepare = { ok: true, runtime: { root: 'R', key: 'new' }, mode: 'detached' }, check = { check: 1, ipc: [1, 1], dataSchema: 2, dataSchemaFound: 2 },
   locks = [{ ok: true }], stops = [{ ok: true }], startNew = async () => ({ type: 'ready', port: 7420, token: 'tok', ...NEW }), startPrevious = async () => ({ type: 'ready', port: 7420, token: 'tok', ...OLD }),
-  ask = 'later', reattach = true, abortAll = async () => {} } = {}) {
+  ask = 'later', reattach = true, abortAll = async () => {}, now } = {}) {
   const calls = [];
   let w = 0, l = 0, s = 0;
   const effects = {
     delay: () => tick(),
     prepare: async () => { calls.push('prepare'); return prepare; },
     check: async runtime => { calls.push(`check:${runtime.key}`); if (check instanceof Error) throw check; return check; },
-    ask: async info => { calls.push(`ask:${info.reason}`); effects.asked = info; return ask; },
+    ask: async info => { calls.push(`ask:${info.reason}`); effects.asked = info; return typeof ask === 'function' ? ask(info) : ask; },
     running: async () => { calls.push('running'); const value = works[Math.min(w++, works.length - 1)]; if (value instanceof Error) throw value; return value; },
-    abortAll: async () => { calls.push('abortAll'); return abortAll(); },
+    abortAll: async onProgress => { calls.push('abortAll'); return abortAll(onProgress); },
     lock: async () => { calls.push('lock'); return locks[Math.min(l++, locks.length - 1)]; },
     unlock: () => { calls.push('unlock'); },
     stopOld: async () => { calls.push('stopOld'); return stops[Math.min(s++, stops.length - 1)]; },
@@ -60,7 +63,7 @@ function fakeEffects({ works = [idle()], prepare = { ok: true, runtime: { root: 
 
 function machine(options = {}, { server = OLD, target = NEW } = {}) {
   const { effects, calls } = fakeEffects(options);
-  const control = sw.createSwitch({ server, target, effects });
+  const control = sw.createSwitch({ server, target, effects, ...(options.now ? { now: options.now } : {}) });
   const states = [];
   control.onState(s => states.push(s.state));
   return { control, effects, calls, states };
@@ -90,9 +93,10 @@ export default async function (t) {
     scheduled: { send: 4, resume: 2, held: 0, nextSendAt: 1 },
   });
   const blockers = sw.switchBlockers(work);
-  t.ok('数は running の count に `!` の行と裏の作業を足したもの', blockers.count === 3 + 1 + 2, JSON.stringify(blockers));
-  t.ok('`!` の行は待つ（一覧に出す）', blockers.items.some(i => i.kind === 'shell' && i.command === 'npm run dev'));
-  t.ok('ターンの外に残っている裏の作業（Codex の裏の端末）は待つ（一覧に出す）', blockers.items.filter(i => i.kind === 'background').length === 2);
+  t.ok('待つ作業の数は running の count（`!` の行・裏の作業は足さない）', blockers.count === 3, JSON.stringify(blockers));
+  t.ok('`!` の行は切り替えで止まるもの（stoppers。コマンドを字にする）', blockers.stoppers.some(i => i.kind === 'shell' && i.command === 'npm run dev' && i.label === 'npm run dev') && !blockers.items.some(i => i.kind === 'shell'));
+  t.ok('ターンの外に残っている裏の作業（Codex の裏の端末）も止まるもの', blockers.stoppers.filter(i => i.kind === 'background').length === 2 && blockers.stoppers.find(i => i.id === 'b1').label === 'vite');
+  t.ok('止まるものの字は長さに上限がある', sw.switchBlockers(idle({ shells: [{ sessionId: 'd', runId: 'r', command: 'x'.repeat(1000) }] })).stoppers[0].label.length === 200);
   t.ok('中継の複製・設定の変更の承認・終わったサブエージェントは一覧に出さない', !blockers.items.some(i => i.kind === 'permission' && i.sessionId !== 'b') && !blockers.items.some(i => i.id === 'y'));
   t.ok('ターンの走っている会話の委譲タスクは重ねて出さない', !blockers.items.some(i => i.kind === 'task'));
   t.ok('送信予定・上限の解除後の再開は数えない（S2 が予定を戻す。断の数秒は送信の猶予 1 時間に収まる）', sw.switchBlockers(idle({ scheduled: { send: 3, resume: 1, held: 0, nextSendAt: Date.now() + 1000 } })).count === 0);
@@ -126,15 +130,78 @@ export default async function (t) {
     t.ok('状態の順: preparing → checking → waiting → locking → stopping → starting → reloading → done',
       ['preparing', 'checking', 'waiting', 'locking', 'stopping', 'starting', 'reloading', 'done'].every((s, i, a) => i === 0 || states.indexOf(s) > states.indexOf(a[i - 1])), states.join(' '));
   }
+  // ---- 止まるものだけが残ったとき（Z。docs/design-system.md「切り替えを待つ表示」）
+  const dev = () => idle({ shells: [{ sessionId: 'd', runId: 'r', command: 'npm run dev' }] });
+  const codexTerminal = () => idle({ background: [{ sessionId: 'e', backend: 'codex', tasks: [{ id: 'b', label: 'vite dev' }] }] });
   {
-    const { control, calls } = machine({ works: [idle({ shells: [{ sessionId: 'd', runId: 'r', command: 'sleep 30' }] }), idle()] });
+    const { control, calls, effects } = machine({ works: [dev()], ask: 'now' });
     await control.run();
-    t.ok('`!` の行が走っている間は切り替えない（終わるのを待つ）', calls.indexOf('lock') > calls.indexOf('running') && calls.filter(c => c === 'running').length >= 3);
+    t.ok('`!` の行が残っていれば自動では切り替えず聞く（待ちにも入らない）。「止めて切り替え」で ロック → S1 の終わり → S2', calls.includes('ask:stoppers') && effects.asked.waiting.stoppers[0].command === 'npm run dev'
+      && calls.indexOf('ask:stoppers') < calls.indexOf('lock') && calls.includes('startNew:new:detached') && control.snapshot().state === 'done');
+    t.ok('切り替えで止めたものを done に残す（切り替わった後の知らせに「止めたもの」を出す）', control.snapshot().stopped.length === 1 && control.snapshot().stopped[0].kind === 'shell');
   }
   {
-    const { control, calls } = machine({ works: [idle({ background: [{ sessionId: 'e', backend: 'codex', tasks: [{ id: 'b' }] }] }), idle()] });
+    const { control, calls, states } = machine({ works: [codexTerminal()], ask: 'now' });
     await control.run();
-    t.ok('裏の作業が残っている間は切り替えない', calls.filter(c => c === 'running').length >= 3 && calls.includes('stopOld'));
+    t.ok('裏の作業（Codex の端末）が残っていても同じ（asking を経て切り替える）', states.includes('asking') && !states.includes('waiting') && calls.includes('startNew:new:detached') && control.snapshot().stopped[0].kind === 'background');
+  }
+  {
+    const { control, calls, states } = machine({ works: [dev(), dev(), dev(), idle()], ask: 'later' });
+    const run = control.run();
+    t.ok('「あとで」は held（reason: stoppers）。自動では切り替えない', await waitState(control, 'held') && control.snapshot().reason === 'stoppers' && !calls.includes('lock'));
+    for (let i = 0; i < 20; i++) await tick();
+    t.ok('「あとで」の間は聞き直さない', calls.filter(c => c === 'ask:stoppers').length === 1);
+    await run;
+    t.ok('止まるものが自然に無くなれば（「あとで」の後）、そのまま切り替わる。止めたものは無い', control.snapshot().state === 'done' && calls.includes('startNew:new:detached') && control.snapshot().stopped.length === 0 && calls.filter(c => c === 'ask:stoppers').length === 1, states.join(' '));
+  }
+  {
+    const { control, calls } = machine({ works: [dev(), dev(), busy(), busy(), dev()], ask: 'later' });
+    const run = control.run();
+    await waitState(control, 'held');
+    for (let i = 0; i < 30 && !calls.includes('lock'); i++) await tick();
+    t.ok('「あとで」の後に作業が増えたら待ちに戻る（止まるものの「あとで」は終わり）。0 件になったらまた聞く', calls.filter(c => c === 'ask:stoppers').length === 2, calls.join(' '));
+    control.cancel();
+    await run;
+  }
+  {
+    const { control, calls, effects } = machine({ works: [dev()], ask: null });
+    const run = control.run();
+    t.ok('ask が答えを返さなければ（画面が答える）、answer() を待つ', await waitState(control, 'asking') && control.snapshot().waiting.stoppers.length === 1);
+    t.ok('answer(later) は held。answer は聞いていないとき false', control.answer('later') === true && await waitState(control, 'held') && control.answer('later') === false);
+    t.ok('held からも answer(now)（interruptNow）が効く', control.answer('now') === true);
+    effects.running = async () => idle();
+    await run;
+    t.ok('「止めて切り替え」で切り替わる（abortAll を呼ぶ）', control.snapshot().state === 'done' && calls.includes('abortAll'));
+  }
+  {
+    const { control } = machine({ works: [dev()], ask: null });
+    const run = control.run();
+    await waitState(control, 'asking');
+    t.ok('asking の interruptNow は「止めて切り替え」と同じ', control.interruptNow() === true);
+    await run;
+    t.ok('切り替わった', control.snapshot().state === 'done');
+  }
+  {
+    const { control, calls } = machine({ works: [dev()], ask: null });
+    const run = control.run();
+    await waitState(control, 'asking');
+    control.cancel();
+    const snap = await run;
+    t.ok('main が終わるなら asking の問いをやめる（ロックも S1 の終了もしない）', snap.state === 'cancelled' && !calls.includes('lock') && !calls.includes('stopOld'));
+  }
+  {
+    const { control, calls } = machine({ works: [idle({ shells: [{ sessionId: 'd', runId: 'r', command: 'sleep 30' }] }), busy(), idle()] });
+    await control.run();
+    t.ok('待っている間に止まるものが出ても、作業が終われば（あとでの既定）聞く', calls.includes('ask:stoppers'));
+  }
+  {
+    // since: 待ち始めた時刻。待ちでない状態から入ったときに決め、待っている間・ロックが取れず戻ったときは変えない
+    let clock = 1000;
+    const { control } = machine({ works: [busy(), busy(), idle()], locks: [{ ok: false, reason: 'busy' }, { ok: true }], now: () => clock++ });
+    const sinces = [];
+    control.onState(s => { if (s.state === 'waiting') sinces.push(s.since); });
+    await control.run();
+    t.ok('待ち始めの時刻（since）は待っている間・ロックの取り直しで変わらない', sinces.length >= 2 && new Set(sinces).size === 1 && Number.isFinite(sinces[0]), JSON.stringify(sinces));
   }
   {
     const { control, calls } = machine({ works: [idle({ scheduled: { send: 2, resume: 1 } })] });
@@ -182,6 +249,24 @@ export default async function (t) {
     t.ok('前の版で動いている（previous）', snap.state === 'done' && snap.previous === true && snap.server.build === OLD.build);
   }
   {
+    // もう一度試す（前の版で動いている間。画面の「もう一度試す」）
+    let tries = 0;
+    const { control, calls, states } = machine({ startNew: async () => { if (tries++ === 0) throw new Error('exited'); return { type: 'ready', port: 7420, token: 'tok', ...NEW }; }, works: [dev(), idle()], ask: 'now' });
+    await control.run();
+    t.ok('もう一度試すは、前の版で動いているときだけ（それ以外は false）', control.snapshot().previous === true && control.retry() === true);
+    for (let i = 0; i < 200 && control.snapshot().state !== 'done'; i++) await tick();
+    t.ok('やり直しは準備から同じ流れ（作業が残っていればまた待つ）で、今度は新しい版で動く', control.snapshot().state === 'done' && control.snapshot().previous === false && control.snapshot().server.build === NEW.build
+      && calls.filter(c => c === 'check:new').length === 2, calls.join(' '));
+    t.ok('やり直しの状態は idle から始まる（前の失敗を引きずらない）', states.lastIndexOf('idle') > states.indexOf('done') && control.retry() === false);
+  }
+  {
+    const { control } = machine({ works: [busy(), busy()] });
+    void control.run();
+    await waitState(control, 'waiting');
+    t.ok('待っている間の retry は何もしない', control.retry() === false);
+    control.cancel();
+  }
+  {
     const { control, calls } = machine({ startNew: async () => { throw new Error('exited'); }, startPrevious: async () => { throw new Error('also exited'); } });
     const snap = await control.run();
     t.ok('前の版も立たなければ failed（窓は読み直さない）', snap.state === 'failed' && calls.at(-1) === 'failed' && !calls.some(c => c.startsWith('reload')));
@@ -227,12 +312,28 @@ export default async function (t) {
   {
     const shellOnly = idle({ shells: [{ sessionId: 'd', runId: 'r', command: 'npm run dev' }] });
     const { control, calls } = machine({ works: [busy(), busy(), shellOnly] });
+    const progress = [];
+    control.onState(s => { if (s.state === 'interrupting') progress.push(s.interrupt); });
     const run = control.run();
     await waitState(control, 'waiting');
     t.ok('待ちの間だけ interruptNow が効く', control.interruptNow() === true);
     await run;
-    t.ok('今すぐ中断: 全部を update で中断し、`!` の行・裏の作業が残っていても切り替える（S1 と一緒に止まる）', calls.includes('abortAll') && calls.includes('stopOld') && control.snapshot().state === 'done');
+    t.ok('今すぐ中断: 全部を update で中断し、`!` の行・裏の作業が残っていても聞かずに切り替える（S1 と一緒に止まる）', calls.includes('abortAll') && calls.includes('stopOld') && !calls.includes('ask:stoppers') && control.snapshot().state === 'done');
+    t.ok('切り替えで止めたもの（stopped）に `!` の行が残る', control.snapshot().stopped.length === 1 && control.snapshot().stopped[0].kind === 'shell');
+    t.ok('中断の進み（interrupt: { done, total }）は total が中断を始めた時点の件数', progress[0]?.total === 1 && progress[0].done === 0);
     t.ok('終わった後の interruptNow は何もしない', control.interruptNow() === false);
+  }
+  {
+    // 中断の進み: abortAll が見るたびに onProgress(work) を呼ぶ。止まった数は戻らない
+    const seen = [];
+    const { control } = machine({ works: [idle({ count: 4, turns: [{ sessionId: 'a' }, { sessionId: 'b' }, { sessionId: 'c' }, { sessionId: 'd' }] }), idle()],
+      abortAll: async onProgress => { onProgress(idle({ count: 3, turns: [{}, {}, {}] })); onProgress(idle({ count: 4, turns: [{}, {}, {}, {}] })); onProgress(idle({ count: 1, turns: [{}] })); } });
+    control.onState(s => { if (s.state === 'interrupting') seen.push(s.interrupt.done); });
+    const run = control.run();
+    await waitState(control, 'waiting');
+    control.interruptNow();
+    await run;
+    t.ok('中断の進みは 0 → 1 → 3（途中で件数が増えても戻らない）', seen.join() === '0,1,3', seen.join());
   }
   {
     let first = true;
@@ -244,6 +345,7 @@ export default async function (t) {
     control.interruptNow();
     await run;
     t.ok('中断が 30 秒で終わらなければ、理由を出して待ちに戻る（中断はやめる）', errors.includes('2 件が止まらない') && calls.filter(c => c === 'abortAll').length === 1 && control.snapshot().state === 'done');
+    t.ok('止まらなかった印（interruptFailed）が立つ（画面は生の理由でなく辞書の文言を出す）', control.snapshot().interruptFailed === true);
   }
 
   // ---- main の終了・S1 を手放している間
@@ -329,6 +431,9 @@ export default async function (t) {
       && shown[0].buttons.join() === 'switch.later,switch.interruptAndUpdate' && shown[0].cancelId === 0);
     await ask({ reason: 'runtime', waiting: { count: 0, items: [] } });
     t.ok('ダイアログ: 作業が無ければボタンは「今すぐ更新」', shown[1].buttons[1] === 'switch.updateNow' && shown[1].message.includes('switch.reasonRuntime'));
+    const stoppers = await ask({ reason: 'stoppers', waiting: { count: 0, items: [], stoppers: [{ kind: 'shell' }, { kind: 'background' }] } });
+    t.ok('ダイアログ（画面が表示を持たない版）: 止まるものが残ったときは「あとで／止めて切り替え」', stoppers === 'now' && shown[2].message.includes('switch.stoppersMessage:{"count":2}') && shown[2].message.includes('switch.stoppersLater')
+      && shown[2].buttons.join() === 'switch.later,switch.stopAndSwitch' && shown[2].title === 'switch.stoppersTitle');
   }
 
   // ---- 付け直しの比べ方の材料（startSwitch）
@@ -416,7 +521,9 @@ export default async function (t) {
   {
     // 新しい main は、切り替えを待つ間、古い版のサーバーの画面を出す（design.md §7.1・§8）。名前を変えるときは、前の名前をこの一覧ごと 1 版残す
     const PREVIOUS_NAMES = ['platform', 'setTitleBar', 'notifyCompletion', 'onNotificationClick', 'chooseFolder', 'openRemoteHosts', 'update', 'onUpdate',
-      'browser.command', 'browser.layout', 'browser.onState', 'browser.onShortcut'];
+      'browser.command', 'browser.layout', 'browser.onState', 'browser.onShortcut',
+      // 切り替えを待つ表示（版 1。web/switch-notice.mjs。desktop/switch-screen.cjs の頭の注記: 口の形を変えるときは switch2 を足し、この switch は 1 版残す）
+      'switch.version', 'switch.hello', 'switch.state', 'switch.onState', 'switch.act'];
     const exposed = {};
     const electron = { contextBridge: { exposeInMainWorld: (key, api) => { exposed[key] = api; } }, ipcRenderer: { send() {}, invoke() {}, on() {}, removeListener() {} } };
     const source = fs.readFileSync(new URL('../../desktop/preload.cjs', import.meta.url), 'utf8');

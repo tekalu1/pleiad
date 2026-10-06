@@ -298,6 +298,7 @@ const SUITES = [
   './unit/unread.mjs',
   // 中断と再開の画面（web/interrupt.mjs）: 三角の未読・理由の文言・再開ボタン・更新で止めた会話・更新の確認の作業一覧と進み
   './unit/web-interrupt.mjs',
+  './unit/web-switch-notice.mjs',
   // 確認済み（既読）の置き場と、2 本の接続で共有されること（fake バックエンド）
   './unit/read-store.mjs',
   './unit/store-flush.mjs',
@@ -330,6 +331,7 @@ const SUITES = [
   './unit/desktop-boot.mjs',
   // 新しい版のサーバーへの切り替え（無停止の更新 1-6）: 作業が 0 件まで待つ・ロック・S1 の終わり・S2・前の版へ戻す・合わない版は聞く・今すぐ中断。事前の確かめの出力
   './unit/desktop-switch.mjs',
+  './unit/desktop-switch-screen.mjs',
   './unit/handover-check.mjs',
   // 実行場所の材料（afterPack）: 公式の Node の取得と SHA-256 の照合・runtime.json・manifest.json
   './unit/pack-runtime.mjs',

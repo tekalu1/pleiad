@@ -12,7 +12,9 @@ const WORK_ROWS = 6;
 const STOP_WAIT_MS = 30000;
 // 訳文の {{mark}} を三角に置き換えるための印（私用領域の 1 文字）
 const MARK = '\u{E000}';
-export function setupUpdates({ page, open, lock, flush, cmd, work: currentWork = () => null, sessionName = id => id, agentName = id => id }) {
+// switchUi: 切り替えを待つ表示（web/switch-notice.mjs）。待っている間の設定のページの字・⚙ の点・「更新しました」を出さない・止めたもの。
+// handoverNotes: 無停止の更新の確認の段に足す注意（内蔵ブラウザーのタブを開いている・コンピューターの操作中）の有無を返す
+export function setupUpdates({ page, open, lock, flush, cmd, work: currentWork = () => null, sessionName = id => id, agentName = id => id, switchUi = null, handoverNotes = () => ({}) }) {
   const $ = id => document.getElementById(id), bridge = window.plyDesktop;
   let info, state, busy = false, installing = false, confirming = false, shownNotice = null, failure = '';
   // 確認の段で見せた実行中の作業（running の戻り）。中断の進み { done, total } は押した後だけ
@@ -38,6 +40,9 @@ export function setupUpdates({ page, open, lock, flush, cmd, work: currentWork =
       : state.store ? t('updates.store.hint')
       : !state.enabled ? (bridge?.update ? t('updates.hint.noAutoUpdate') : t('updates.hint.browser'))
       : '';
+    // 新しい版への切り替えを待っている間は、窓（新しい版）とサーバー（動いている版）がずれる。字とヒントで言う
+    const waiting = switchUi?.page();
+    if (waiting) { $('updateStatus').textContent = waiting.status; $('updateHint').textContent = waiting.hint; }
     // リモートの窓: 版はホストが配る画面のもの（release-info.json）。手元のアプリの更新はローカルの窓で（docs/remote.md §7.3）
     if (window.plyRemote && !bridge?.update) {
       $('updateStatus').textContent = t('remote.updateStatus');
@@ -75,12 +80,17 @@ export function setupUpdates({ page, open, lock, flush, cmd, work: currentWork =
     $('updateConfirm').hidden = !confirming;
     $('confirmInstallUpdate').disabled = $('cancelInstallUpdate').disabled = working;
     paintConfirmWork();
-    $('settings').classList.toggle('has-update', ['available', 'downloaded'].includes(state.phase));
-    $('settings').title = ['available', 'downloaded'].includes(state.phase) ? t('updates.settingsHasUpdate') : t('app.settings');
+    const hasUpdate = ['available', 'downloaded'].includes(state.phase) || Boolean(switchUi?.pending);
+    $('settings').classList.toggle('has-update', hasUpdate);
+    $('settings').title = hasUpdate ? t('updates.settingsHasUpdate') : t('app.settings');
     let alreadyShown = false;
     try { alreadyShown = sessionStorage.getItem('ply-update-notice') === state.version; } catch {}
-    const show = state.notice && (shownNotice === state.version || !alreadyShown);
+    // 切り替えが済むまでは出さない（サーバーはまだ前の版。待ち・失敗の間は switchUi が知らせる）
+    const show = state.notice && !switchUi?.holdsNotice && (shownNotice === state.version || !alreadyShown);
     $('updateNotice').hidden = !show;
+    const stopped = show ? switchUi?.stoppedText() ?? '' : '';
+    $('updateNoticeStopped').hidden = !stopped;
+    $('updateNoticeStopped').textContent = stopped;
     if (show) { shownNotice = state.version; try { sessionStorage.setItem('ply-update-notice', state.version); } catch {} }
     $('updateNoticeText').textContent = t('updates.updated', { version: state.version });
     const key = `${state.target}:${state.phase}`;
@@ -109,6 +119,11 @@ export function setupUpdates({ page, open, lock, flush, cmd, work: currentWork =
     // 無停止の更新（state.handover。ADR 0137）では作業を止めないので、止まる作業を並べない
     const rows = confirming && !state?.handover ? workRows(confirmWork) : [];
     const stops = confirming && !state?.handover && (confirmWork?.count ?? 0) > 0;
+    // 無停止の更新: 作業は止まらないことを 1 行で。内蔵ブラウザーのタブ・コンピューターの操作があるときだけ、開き直しの注意も
+    const running = confirming && state?.handover ? workRows(confirmWork).length || (confirmWork?.count ?? 0) : 0;
+    $('updateHandoverWork').hidden = !running;
+    if (running) $('updateHandoverWork').textContent = t('updates.handoverWork', { count: running });
+    $('updateHandoverBrowser').hidden = !(confirming && state?.handover && handoverNotes().browser);
     $('updateWork').hidden = !rows.length;
     $('updateWorkAfter').hidden = !stops;
     $('confirmInstallUpdate').textContent = stops ? t('updates.interruptInstall') : t('settings.updates.confirmInstall');
@@ -222,6 +237,8 @@ export function setupUpdates({ page, open, lock, flush, cmd, work: currentWork =
   return {
     /** この画面で更新を進めている（作業を中断している・保存している・入れている）。その間は「更新で中断した会話」を出さない */
     get applying() { return installing || Boolean(stopping) || state?.phase === 'installing'; },
+    /** 切り替えを待つ表示の状態が変わった（web/switch-notice.mjs）。字・⚙ の点・「更新しました」を描き直す */
+    refresh() { if (state) paint(state); },
     /** running が変わった（client.mjs の applyRunning）。脇の件数と、開いている確認の段の一覧を合わせる */
     workChanged() {
       if (!state) return;

@@ -115,7 +115,7 @@
       <button type="button" id="updatesTab" aria-controls="updatesPanel" data-i18n="settings.nav.about"></button>
     </nav>
     <div class="pop" id="iconPop" hidden></div>
-    <div class="update-notice" id="updateNotice" hidden><span id="updateNoticeText"></span><button type="button" class="btn" id="viewUpdateNotes" data-i18n="app.update.viewNotes"></button><button type="button" class="btn" id="dismissUpdateNotice" data-i18n="app.update.dismiss"></button></div>
+    <div class="update-notice" id="updateNotice" hidden><span id="updateNoticeText"></span><span class="sub" id="updateNoticeStopped" hidden></span><button type="button" class="btn" id="viewUpdateNotes" data-i18n="app.update.viewNotes"></button><button type="button" class="btn" id="dismissUpdateNotice" data-i18n="app.update.dismiss"></button></div>
     <div class="update-notice" id="updatePrompt" hidden>
       <span id="updatePromptText" role="status" aria-live="polite"></span>
       <!-- 実行中の作業があれば「実行中 N 件・承認待ち M 件」（web/updates.mjs。更新すると中断される） -->
@@ -123,6 +123,15 @@
       <progress id="updatePromptProgress" max="100" hidden data-i18n-aria-label="app.update.progress"></progress>
       <button type="button" class="btn" id="viewAvailableUpdate" data-i18n="app.update.view"></button>
       <button type="button" class="btn" id="deferUpdate" data-i18n="app.update.later"></button>
+    </div>
+    <!-- 更新の後、新しい版への切り替えを待っている間の知らせ（web/switch-notice.mjs。無停止の更新。desktop/switch-screen.cjs が状態を渡す）。
+         一覧はこの中で開く。畳んだ脇・狭い窓は ⚙ の点と、設定 › アプリ情報・更新の同じ一覧（#switchBox）で補う -->
+    <div class="update-notice switch-notice" id="switchNotice" hidden>
+      <span class="switch-title" id="switchTitle"></span>
+      <span class="sub" id="switchSub" hidden></span>
+      <progress id="switchProgress" max="100" hidden data-i18n-aria-label="switch.progress"></progress>
+      <div class="switch-wd" id="switchDetail"><div><div class="update-work switch-list" id="switchList"></div><p class="update-work-after" id="switchAfter" hidden></p></div></div>
+      <div class="switch-acts" id="switchActs"></div>
     </div>
     <!-- 更新で中断した会話が残っている間の一行（docs/design-system.md「中断と再開」）。× は閉じたときの最大の中断時刻を覚える -->
     <div class="side-undo resume-strip" id="resumeStrip" role="status" hidden>
@@ -308,6 +317,13 @@
           <p id="updateStatus" role="status" aria-live="polite" data-i18n="settings.updates.loading"></p>
           <p id="updateHint"></p>
           <p id="updateLastChecked" hidden></p>
+          <!-- 切り替えを待っている間の一覧と操作（web/switch-notice.mjs）。脇の知らせと同じ内容 -->
+          <div id="switchBox" hidden>
+            <div class="update-work switch-list" id="switchPageList"></div>
+            <p class="update-work-after" id="switchPageAfter" hidden></p>
+            <progress id="switchPageProgress" max="100" hidden data-i18n-aria-label="switch.progress"></progress>
+            <div class="update-acts" id="switchPageActs"></div>
+          </div>
           <progress id="updateProgress" max="100" hidden data-i18n-aria-label="settings.updates.downloadProgress"></progress>
           <div id="updateNotes" class="body" hidden></div>
           <button type="button" class="btn" id="checkUpdate" hidden data-i18n="settings.updates.check"></button>
@@ -316,6 +332,9 @@
           <div id="updateConfirm" hidden aria-labelledby="updateConfirmTitle">
             <h3 id="updateConfirmTitle" tabindex="-1" data-i18n="settings.updates.confirmTitle"></h3>
             <p data-i18n="settings.updates.confirmBody"></p>
+            <!-- 無停止の更新（AGENT_HOST_HANDOVER=on）では、作業は止まらないことを 1 行で言う。内蔵ブラウザーのタブがあるときだけ、開き直されることも（web/updates.mjs） -->
+            <p id="updateHandoverWork" hidden></p>
+            <p id="updateHandoverBrowser" hidden data-i18n="updates.handoverBrowser"></p>
             <!-- 止まる作業（web/updates.mjs）。実行中でも断らず、並べて「中断して更新」を選ばせる（ADR 0036） -->
             <div class="update-work" id="updateWork" hidden><h4 data-i18n="updates.workTitle"></h4><div id="updateWorkList"></div></div>
             <p class="update-work-after" id="updateWorkAfter" hidden></p>

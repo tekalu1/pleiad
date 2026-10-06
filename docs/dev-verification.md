@@ -44,6 +44,7 @@
 - 作業ダイアログの一覧の行（`#workDialog .bg-row`）や脇の会話の行（`.row[data-session]`）は、`playwright-cli` の `click <ref>` や `click "text=…"` では選ばれないことがある（2026-09-29）。`eval` の中で `[...document.querySelectorAll('#workDialog .bg-row')].find(b => b.textContent.includes('…')).click()` のように取って押す。
 - 数秒で消える表示（脇の下の「元に戻す」は 12 秒）は、出す `eval` と `screenshot` を 1 回のコマンドでつなげて撮る。別々に打つと撮る前に消える。
 - 設定のページは中の欄がスクロールするので、`screenshot --full-page` では下が切れる。`resize 1280 1900` のように窓を縦に伸ばしてから撮る。
+- **切り替えを待つ表示**（無停止の更新。`web/switch-notice.mjs`）は、実機の更新を待たずに `tests/browser/switch-notice.cjs`（`playwright-cli --raw run-code --filename=…`）で確かめる（2026-10-06）。fake のサーバーを別ポート・別のデータ置き場で立て、`authLogin { backend: 'fake' }` と「あとで」（`#closeOnboarding`）を済ませてから流す。新しい main の橋（preload の `plyDesktop.switch`）と更新の口（`plyDesktop.update`）は `addInitScript` の偽物で、`window.__switch(payload)` で状態を渡し、画面の操作は `window.__acts` に溜まる（`window.__setUpdate` で更新の状態を替える）。ライト・ダーク・640px・360px を `temporary/screenshots/switch-notice-*.png` に撮る。`addInitScript` は同じセッションで積み重なるので、スタブを替えたら `playwright-cli close` で閉じて開き直す。dismiss（閉じる）の印は sessionStorage に残るので、流す前に消す（スクリプトの先頭）。
 
 ## fake で画面を出す
 
