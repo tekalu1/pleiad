@@ -3091,7 +3091,8 @@ async function changeModel(sessionId, model, { actor, reason, backend: given } =
   if (!(await validModel(backend, model, undefined, endpointId))) throw new OpError('INVALID', t('settings.unknownModel', { value: model }));
   const from = (await store.get(sessionId)).model ?? "";
   await store.setModel(sessionId, model);
-  if (!endpointId && who.by === 'human') await savePref("model", model, backend.id);
+  // bot の会話（スレッドだけの設定）で選んだものは、Chats の新しい会話の既定にしない
+  if (!endpointId && who.by === 'human' && !(await store.get(sessionId)).bot) await savePref("model", model, backend.id);
   await store.recordChange(sessionId, { ...who, field: "model", from, to: model, ...reason, backend });
   let live = false;
   const liveTurn = runtime.turns.get(sessionId);
@@ -4667,6 +4668,8 @@ botHost = createBotHost({
   createConversation, runTurn, noticeTarget, noticeBlocked, abortSessions, emitGlobal,
   getBackend, listBackends, resolveModel, resolveEffort, agentLocaleFor, agentT, currentLocale, lastReply,
   sessionBusy: id => sessionBusy(id),
+  // スレッドの bot の会話の設定を、このスレッドだけ変える（channels.threadSettings。ADR 9101）。走っていれば次のターンから（nextSettings）
+  reserveTurnSettings: (args) => reserveTurnSettings(args),
   // 隠れた会話（夜の整理・心拍）をネイティブの会話ごと消す。消せないバックエンド・走っている会話は残して false（ADR 0127）
   deleteHidden: async id => {
     if (sessionBusy(id) || !HIDDEN_BOT_KINDS.has((await store.get(id)).bot?.kind)) return false;
@@ -6731,8 +6734,8 @@ wss.on("connection", (ws, req) => {
           if (!backend.modes()[mode]) return reply(false, t('settings.unknownMode', { value: mode }));
           const from = (await store.get(sessionId)).mode ?? "default";
           await store.setMode(sessionId, mode);
-          // 人間が選んだものを、次に新しく始めるときの既定にする
-          await savePref("mode", mode, backend.id);
+          // 人間が選んだものを、次に新しく始めるときの既定にする（bot の会話のモードは、その会話だけのもの。既定にしない）
+          if (!(await store.get(sessionId)).bot) await savePref("mode", mode, backend.id);
           await store.recordChange(sessionId, {
             by: "human", field: "mode", from, to: mode, ...clientReason(msg.args), backend,
           });

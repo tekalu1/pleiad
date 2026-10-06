@@ -151,6 +151,7 @@
     "back": "{{name}} の流れに戻る",
     "untitled": "スレッド",
     "rename": "スレッドの題",
+    "settings": { "note": "このスレッドだけに効きます。bot の既定は bot のページで変えます。", "changed": "変更あり", "botDefault": "{{name}} の既定", "failed": "設定を変えられませんでした: {{error}}", "effort": "エフォート" },
     "dest": { "title": "宛先", "label": "宛先: {{name}}（選び直す）", "auto": "宛先", "inThread": "このスレッドの bot", "others": "ほかのメンバー", "members": "メンバー" },
     "renameFailed": "題を変えられませんでした: {{error}}",
     "loading": "読み込んでいます…",

@@ -22,6 +22,7 @@ import { THREAD_STATUS_MAX, THREAD_TITLE_MAX } from '../channels/threads.mjs';
 import { groupTargets, expandGroups } from '../channels/group-mentions.mjs';
 import { BUDGET_LIMITS, budgetOf, loosensBudget, normalizeBudget } from '../channels/budget.mjs';
 import { OpError, defineOp } from './registry.mjs';
+import { humanOnlyFields } from './host.mjs';
 import { strongerMode } from '../bots/approval.mjs';
 import { modePosition, scopeRank } from '../modes.mjs';
 
@@ -172,6 +173,33 @@ export const channelOps = [
     output: z.object({ channelId: z.string(), threadId: z.string(), title: z.string() }),
     surfaces: { ui: true, mcp: 'catalog', cli: { path: ['channels', 'thread-title'], positional: ['channelId', 'threadId', 'title'] } },
     handler: async (ctx, args) => run(ctx, async () => { await refuseHidden(ctx); return ctx.channels.setThreadTitle(args, await authorOf(ctx)); }),
+  }),
+  defineOp({
+    // スレッドの bot の会話の設定を、このスレッドだけ変える（入力欄の宛先の bot のチップ。ADR 9101）。承認モードは人だけ（bots.setMode と同じ）
+    id: 'channels.threadSettings', summary: D('threadSettings', 'summary'), risk: 'write',
+    riskReason: 'Changes how one bot runs in one thread (model, effort, approval mode, working folder) from its next turn. The bot\'s defaults are not changed. The approval mode is human-only like bots.setMode, and the working folder must be one the bot may use',
+    input: z.object({
+      channelId: channelId('threadSettings'), threadId: postId('threadSettings', 'threadId'),
+      botId: z.string().min(1).describe(D('threadSettings', 'botId')),
+      model: z.string().max(200).optional().describe(D('threadSettings', 'model')),
+      effort: z.string().max(40).optional().describe(D('threadSettings', 'effort')),
+      mode: z.string().max(40).optional().describe(D('threadSettings', 'mode')),
+      cwd: z.string().max(LIMITS.cwd).optional().describe(D('threadSettings', 'cwd')),
+    }),
+    output: z.object({ sessionId: z.string(), backend: z.string(), model: z.string(), effort: z.string(), mode: z.string(), cwd: z.string() }),
+    surfaces: { ui: true, mcp: 'catalog', cli: { path: ['channels', 'thread-settings'], positional: ['channelId', 'threadId', 'botId'] } },
+    handler: async (ctx, args) => run(ctx, async () => {
+      await refuseHidden(ctx);
+      humanOnlyFields(ctx, args, ['mode']);
+      if (args.cwd !== undefined) {
+        const bot = await ctx.bots.get({ botId: args.botId });
+        const channel = await ctx.channels.get({ channelId: args.channelId });
+        const allowed = [...(bot?.folders ?? []).map((f) => f.path), ...(channel?.cwd ? [channel.cwd] : [])];
+        const norm = (p) => String(p ?? '').split(String.fromCharCode(92)).join('/').replace(/[/]+$/, '').toLowerCase();
+        if (allowed.length && !allowed.some((p) => norm(p) === norm(args.cwd))) throw new OpError('INVALID', agentT(ctx.locale, 'ops.errors.INVALID', { detail: 'cwd must be one of the bot\'s folders or the channel folder' }));
+      }
+      return ctx.threadSettings(args);
+    }),
   }),
   defineOp({
     id: 'channels.threadBudget', summary: D('threadBudget', 'summary'), risk: 'read',

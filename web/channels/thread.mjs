@@ -111,7 +111,26 @@ export function createThread(host) {
     onSend: (draft) => send(draft),
     dest: () => destOptions(),
     onDestChange: () => paintPlaceholder(),
+    settings: (botId) => botSettings(botId),
+    onSettings: async (botId, patch) => {
+      const got = await host.invoke('channels.threadSettings', { channelId: S.channelId, threadId: S.threadId, botId, ...patch });
+      settingsSeen.set(botId, got);
+    },
   });
+  // 宛先の bot の、このスレッドの会話の設定（channels.threadSettings が返した値を先に使う。会話の一覧が追い付くまでの間も出す）
+  const settingsSeen = new Map();
+  function botSettings(botId) {
+    const bot = S.bots.get(botId);
+    if (!bot) return null;
+    const sessionId = S.thread?.sessions?.[botId] ?? null;
+    const row = sessionId ? host.state?.sessions?.find((s) => s.id === sessionId) : null;
+    const seen = settingsSeen.get(botId);
+    const next = row?.nextSettings ?? {};
+    const values = seen && (!row || seen.sessionId === sessionId) ? seen
+      : { model: next.model ?? row?.model ?? bot.model ?? '', effort: next.effort ?? row?.effort ?? bot.effort ?? '', mode: next.mode ?? row?.mode ?? bot.mode ?? '', cwd: next.cwd ?? row?.cwd ?? S.channel?.cwd ?? bot.folders?.[0]?.path ?? '' };
+    const folders = [...new Set([...(bot.folders ?? []).map((f) => f.path), ...(S.channel?.cwd ? [S.channel.cwd] : [])])];
+    return { backend: bot.backend, values, defaults: { model: bot.model ?? '', effort: bot.effort ?? '', mode: bot.mode ?? '' }, folders };
+  }
   const toc = createThreadToc({ host, posts: () => S.posts, ctx: () => ctx, go: (p) => goTo(p) });
   const head = createThreadHead({ host, onClose: () => close(), onBack: () => close(), onToc: (b) => toc.toggle(b),
     // 題を変える（根の投稿は変えない。空にすると根の投稿の最初の行に戻る）

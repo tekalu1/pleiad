@@ -595,6 +595,26 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
     return sessionId && (await sidecarOf(sessionId))?.botId === botId ? { sessionId, threadId } : null;
   }
 
+  /**
+   * スレッドの bot の会話の設定を、このスレッドだけ変える（channels.threadSettings。ADR 9101）。会話がまだ無ければ作る。
+   * 走っていれば次のターンから（予約 nextSettings）。変えた欄は sidecar の overrides に印を付け、bot の既定を変えても上書きしない
+   */
+  async function threadSettings({ channelId, threadId, botId, model, effort, mode, cwd }) {
+    const channel = await channels.get({ channelId });
+    if (channel.kind === 'dm') throw Object.assign(new Error('a DM has no thread settings'), { code: 'INVALID' });
+    const root = await channels.getPost({ channelId, postId: threadId });
+    if (!root || root.threadId !== null) throw Object.assign(new Error(`thread not found: ${threadId}`), { code: 'POST_NOT_FOUND' });
+    const bot = await getBot(botId);
+    if (!bot) throw Object.assign(new Error(`bot not found: ${botId}`), { code: 'BOT_NOT_FOUND' });
+    const sessionId = await sessionFor({ bot, channel, threadId, post: root });
+    const patch = { ...(model !== undefined ? { model } : {}), ...(effort !== undefined ? { effort } : {}), ...(mode !== undefined ? { mode } : {}), ...(cwd !== undefined ? { cwd } : {}) };
+    if (Object.keys(patch).length) await host.reserveTurnSettings({ sessionId, backend: bot.backend, ...patch });
+    await updateSidecar(sessionId, (sb) => ({ ...sb, overrides: { ...(sb.overrides ?? {}), ...Object.fromEntries(Object.keys(patch).map((k) => [k, true])) } }));
+    const meta = await host.store.get(sessionId);
+    const next = meta.nextSettings ?? {};
+    return { sessionId, backend: meta.backend, model: next.model ?? meta.model ?? '', effort: next.effort ?? meta.effort ?? '', mode: next.mode ?? meta.mode ?? '', cwd: next.cwd ?? meta.cwd ?? '' };
+  }
+
   /** この bot の、このスレッド（DM なら DM）の会話。無ければ作る */
   async function sessionFor({ bot, channel, threadId, post }) {
     if (channel.kind === 'dm') return (await bots.ensureDmSession({ botId: bot.id })).sessionId;
@@ -1423,7 +1443,7 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
 
   return {
     channels, bots, memory, host, emit, now, inbox, budget,
-    start, stop, onPosted, onReacted, claimPost, wake, wakePost, handoff, wakeReserved, stopThread, turnExtras, onTurnEvent, onTurnEnd, onPermission, onCompacted,
+    start, stop, onPosted, onReacted, claimPost, wake, wakePost, handoff, wakeReserved, stopThread, turnExtras, onTurnEvent, onTurnEnd, onPermission, onCompacted, threadSettings,
     /** テスト・診断用: 走っている bot のターンの数 */
     activeCount: () => active.size,
     /** 使用量の上限で休んでいれば解除の時刻（ms）。bots.overview の restingUntil（ADR 0119） */

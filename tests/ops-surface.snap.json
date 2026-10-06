@@ -884,6 +884,31 @@
       "input": "d0c50b27cff0"
     },
     {
+      "id": "channels.threadSettings",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "channels",
+            "thread-settings"
+          ],
+          "positional": [
+            "channelId",
+            "threadId",
+            "botId"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "7a52b1e181d2"
+    },
+    {
       "id": "channels.update",
       "risk": "write",
       "riskOf": true,
@@ -4540,6 +4565,15 @@
       "positional": [
         "channelId",
         "threadId"
+      ]
+    },
+    {
+      "id": "channels.threadSettings",
+      "path": "channels thread-settings",
+      "positional": [
+        "channelId",
+        "threadId",
+        "botId"
       ]
     },
     {

@@ -24,6 +24,10 @@
 .th-composer .chip.dest .av.xs{width:18px;height:18px;flex:none;display:inline-grid;place-items:center;font-size:12px;line-height:1}
 .th-composer .chip.dest .v{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .th-composer .chip.dest .cv{flex:none;color:var(--ink-weak);font-size:10px}
+/* 宛先の bot の設定のチップ。bot の既定と違えば「変更あり」の点（チップの右上） */
+.th-composer .crow > .chip{position:relative}
+.th-composer .chip .cv{flex:none;color:var(--ink-weak);font-size:10px}
+.th-composer .chip > .entry-dot{position:absolute;top:3px;right:3px}
 .th-title-edit{cursor:text;border-radius:var(--r-s)}
 .th-title-edit:hover{background:var(--surface-1)}
 .th-title-input{flex:1;min-width:0;font:inherit;font-weight:600;padding:2px 6px;border-radius:var(--r-s);background:var(--surface-1);color:var(--ink)}

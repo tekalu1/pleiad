@@ -3,7 +3,9 @@
 //   - 宛先のチップ（行の先頭。このスレッドの bot → ほかのメンバー）。選ぶと channels.post の to で送る（本文の @ が先に効く）
 //   - 「@」の補完（mention-complete.mjs）・誰も @ していない文への提案・@here / @everyone の人数の確認（ADR 0121）
 //   - 書きかけはスレッドごとに端末へ（流れの入力欄と同じ入れ物。ch-composer.mjs の draftStore）
-// まだ使わない部品（作業ディレクトリ・モデル・承認モードのチップ、送信の日時、待ち行列、文脈の帯、中断・再開）は隠す（段ごとに開ける）。
+//   - 宛先の bot の設定のチップ（作業フォルダー・モデルとエフォート・承認モード）。宛先の bot の、このスレッドの会話の値を出し、
+//     変えるとこのスレッドだけに効く（channels.threadSettings。bot の既定と違えば「変更あり」の点）
+// まだ使わない部品（送信の日時、待ち行列、文脈の帯、中断・再開）は隠す（段ごとに開ける）。
 // 口は流れの入力欄（createChComposer）と同じ形にしてある（thread.mjs がそのまま使う）。
 import { buildComposer, composerEls, createComposer } from '../composer/composer.mjs';
 import { setupMentionComplete } from './mention-complete.mjs';
@@ -16,7 +18,7 @@ import { botIcon } from './bot-icon.mjs';
 const PREFIX = 'th';
 const SAVE_WAIT_MS = 400;
 /** スレッドではまだ使わない部品（段ごとに開ける） */
-const UNUSED = ['cwdChip', 'modelChip', 'modeChip', 'sendMore', 'armedChip', 'draftSaved', 'abort', 'resume', 'contextStrip', 'outbox', 'nextSettings',
+const UNUSED = ['sendMore', 'armedChip', 'draftSaved', 'abort', 'resume', 'contextStrip', 'outbox', 'nextSettings',
   'shellHead', 'resumeNote', 'armedNote', 'draftFail', 'connNote'];
 
 /**
@@ -30,8 +32,12 @@ const UNUSED = ['cwdChip', 'modelChip', 'modeChip', 'sendMore', 'armedChip', 'dr
  * @param {(post: { text: string, attachments: object[], confirmedWake?: string[], to?: string }) => Promise<void>} o.onSend
  * @param {() => { inThread: object[], others: object[], fallback: string|null }} [o.dest] 宛先の候補（bot は { id, name, icon, iconImage, state }）と、選んでいないときの宛先
  * @param {() => void} [o.onDestChange] 宛先が替わった（placeholder を合わせる）
+ * @param {(botId: string) => ({ backend: string, values: { model, effort, mode, cwd }, defaults: { model, effort, mode }, folders: string[] }|null)} [o.settings]
+ *   宛先の bot のこのスレッドの会話の設定（無ければ bot の既定）。チップに出す
+ * @param {(botId: string, patch: object) => Promise<void>} [o.onSettings] 設定を変えた（このスレッドだけ）
  */
-export function createThreadComposer({ host, bucket = () => null, candidates, suggest = () => null, backendLabel, wakePreview, onSend, dest = () => ({ inThread: [], others: [], fallback: null }), onDestChange = () => {} }) {
+export function createThreadComposer({ host, bucket = () => null, candidates, suggest = () => null, backendLabel, wakePreview, onSend, dest = () => ({ inThread: [], others: [], fallback: null }), onDestChange = () => {},
+  settings = () => null, onSettings = async () => {} }) {
   const form = buildComposer(PREFIX);
   form.classList.add('th-composer');
   form.noValidate = true;
@@ -121,6 +127,83 @@ export function createThreadComposer({ host, bucket = () => null, candidates, su
     const id = chosen && all.some((b) => b.id === chosen) ? chosen : d.fallback;
     return { bot: all.find((b) => b.id === id) ?? null, all, d };
   };
+  // ---- 宛先の bot の設定のチップ（モックの 02。押すと一覧が浮く。選んだものはこのスレッドだけに効く）
+  const chips = { cwd: els.cwdChip, model: els.modelChip, mode: els.modeChip };
+  for (const chip of Object.values(chips)) { chip.removeAttribute('aria-controls'); chip.setAttribute('aria-haspopup', 'menu'); }
+  let vocabFor = null, vocab = { models: {}, modes: {} };
+  const loadVocab = async (backend) => {
+    if (!backend || vocabFor === backend) return;
+    vocabFor = backend;
+    vocab = (await host.vocab?.(backend).catch(() => null)) ?? { models: {}, modes: {} };
+    paintSettings();
+  };
+  const leaf = (path) => String(path ?? '').split(/[\\/]/).filter(Boolean).at(-1) ?? '';
+  const chipBody = (chip, text, changed) => {
+    chip.replaceChildren(el('span', 'v', text), el('span', 'cv', '▾'));
+    if (changed) { const dot = el('span', 'entry-dot'); dot.setAttribute('aria-hidden', 'true'); chip.append(dot); }
+    chip.classList.toggle('changed', Boolean(changed));
+  };
+  function paintSettings() {
+    const bot = destNow().bot;
+    const s = bot ? settings(bot.id) : null;
+    for (const chip of Object.values(chips)) chip.hidden = !s;
+    if (!s) return;
+    loadVocab(s.backend);
+    const v = s.values, d = s.defaults;
+    const modelLabel = vocab.models?.[v.model]?.label ?? (v.model || t('chat.model.default'));
+    const changed = { model: (v.model ?? '') !== (d.model ?? '') || (v.effort ?? '') !== (d.effort ?? ''), mode: (v.mode ?? '') !== (d.mode ?? '') };
+    chipBody(chips.cwd, leaf(v.cwd) || '~', false);
+    chips.cwd.title = v.cwd ?? '';
+    chipBody(chips.model, v.effort ? `${modelLabel} · ${v.effort}` : modelLabel, changed.model);
+    chipBody(chips.mode, vocab.modes?.[v.mode]?.label ?? v.mode ?? '', changed.mode);
+    const note = t('channels:thread.settings.note');
+    chips.model.title = `${modelLabel}${changed.model ? ` · ${t('channels:thread.settings.changed')}` : ''}`;
+    chips.mode.title = `${vocab.modes?.[v.mode]?.label ?? v.mode ?? ''}${changed.mode ? ` · ${t('channels:thread.settings.changed')}` : ''}`;
+    chips.model.setAttribute('aria-label', `${t('chat.composer.model')}: ${chips.model.title}. ${note}`);
+    chips.mode.setAttribute('aria-label', `${t('chat.composer.mode')}: ${chips.mode.title}. ${note}`);
+    chips.cwd.setAttribute('aria-label', `${t('chat.composer.cwd')}: ${v.cwd ?? ''}`);
+    c.controls?.fit?.();
+  }
+  const apply = async (patch) => {
+    const bot = destNow().bot;
+    if (!bot) return;
+    try { await onSettings(bot.id, patch); } catch (err) { say(t('channels:thread.settings.failed', { error: err?.message ?? String(err) }), true); }
+    paintSettings();
+  };
+  const menuAt = (chip, items, title) => { const r = chip.getBoundingClientRect(); host.showMenu(r.left, r.top - 4, items, title); };
+  const noteItem = () => ({ head: t('channels:thread.settings.note'), wrap: true });
+  chips.model.onclick = async () => {
+    const bot = destNow().bot;
+    const s = bot && settings(bot.id);
+    if (!s) return;
+    await loadVocab(s.backend);
+    const efforts = await host.efforts?.({ backend: s.backend, model: s.values.model ?? '', cwd: s.values.cwd || undefined }).catch(() => null);
+    const items = Object.entries(vocab.models ?? {}).filter(([id]) => id !== '').map(([id, m]) => ({
+      label: m.label ?? id, hint: id === s.defaults.model ? t('channels:thread.settings.botDefault', { name: bot.name }) : (m.note ?? ''), checked: id === s.values.model,
+      onClick: () => apply({ model: id }),
+    }));
+    const effortItems = Object.entries(efforts ?? {}).filter(([e]) => e !== '').map(([e, m]) => ({ label: m.label ?? e, checked: e === s.values.effort, onClick: () => apply({ effort: e }) }));
+    menuAt(chips.model, [...items, ...(effortItems.length ? [{ sep: true }, { label: t('channels:thread.settings.effort'), sub: () => effortItems }] : []), { sep: true }, noteItem()], t('chat.composer.model'));
+  };
+  chips.mode.onclick = async () => {
+    const bot = destNow().bot;
+    const s = bot && settings(bot.id);
+    if (!s) return;
+    await loadVocab(s.backend);
+    const items = Object.entries(vocab.modes ?? {}).map(([id, m]) => ({
+      label: m.label ?? id, hint: id === s.defaults.mode ? t('channels:thread.settings.botDefault', { name: bot.name }) : (m.note ?? ''), checked: id === s.values.mode,
+      onClick: () => apply({ mode: id }),
+    }));
+    menuAt(chips.mode, [...items, { sep: true }, noteItem()], t('chat.composer.mode'));
+  };
+  chips.cwd.onclick = () => {
+    const bot = destNow().bot;
+    const s = bot && settings(bot.id);
+    if (!s) return;
+    const items = s.folders.map((p) => ({ label: leaf(p) || p, hint: p, checked: p === s.values.cwd, onClick: () => apply({ cwd: p }) }));
+    menuAt(chips.cwd, [...items, { sep: true }, noteItem()], t('chat.composer.cwd'));
+  };
+
   function paintDest() {
     const { bot, all } = destNow();
     destChip.hidden = !all.length;
@@ -132,7 +215,7 @@ export function createThreadComposer({ host, bucket = () => null, candidates, su
     destChip.title = label;
     destChip.setAttribute('aria-label', label);
     destChip.classList.toggle('chosen', Boolean(chosen));
-    c.controls?.fit?.();
+    paintSettings();
   }
   // i18n-dynamic: channels:side.botState.
   const stateText = (b) => t(`channels:side.botState.${['working', 'waiting', 'resting'].includes(b.state) ? b.state : 'idle'}`);
@@ -140,10 +223,10 @@ export function createThreadComposer({ host, bucket = () => null, candidates, su
     const { bot, d } = destNow();
     const item = (b) => ({ label: b.name, hint: stateText(b), checked: bot?.id === b.id, onClick: () => { chosen = b.id; paintDest(); onDestChange(); input.focus(); } });
     const items = [];
-    if (d.inThread?.length) items.push({ label: t('channels:thread.dest.inThread'), disabled: true }, ...d.inThread.map(item));
+    if (d.inThread?.length) items.push({ head: t('channels:thread.dest.inThread') }, ...d.inThread.map(item));
     if (d.others?.length) {
       if (items.length) items.push({ sep: true });
-      items.push({ label: d.inThread?.length ? t('channels:thread.dest.others') : t('channels:thread.dest.members'), disabled: true }, ...d.others.map(item));
+      items.push({ head: d.inThread?.length ? t('channels:thread.dest.others') : t('channels:thread.dest.members') }, ...d.others.map(item));
     }
     const r = destChip.getBoundingClientRect();
     host.showMenu(r.left, r.top - 4, items, t('channels:thread.dest.title'));

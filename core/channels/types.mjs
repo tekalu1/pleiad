@@ -83,6 +83,7 @@ import { CHANNEL_TAG, CHANNEL_THREAD_TAG, MEMORY_CORE_TAG, TURN_CONTEXT_TAG, INN
 
 /** 会話の記録（DB の session_fields）の新しい欄 `bot`（core/store.mjs の setSessionData の許可リスト）
  * @typedef {{
+ *   overrides?: { model?: true, effort?: true, mode?: true, cwd?: true },   // このスレッドだけで人が変えた欄（channels.threadSettings）。bot の既定を変えても上書きしない（ADR 9101）
  *   botId: string, kind: 'thread'|'dm'|'routine'|'learner'|'pulse',   // pulse = 心拍の安いモデルの隠れた会話（ADR 0126。投稿は作らず、channels.* の書き込みは断る）
  *   channelId: string|null, threadId: string|null, routineId?: string, taint?: 'webhook',
  *   memRev: number,                                       // 末尾の差分をどこまで渡したか（memory/log.jsonl の rev）

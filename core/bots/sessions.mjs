@@ -156,12 +156,14 @@ export function createBotSessions({ host, now = Date.now } = {}) {
       const modes = backend.modes();
       // ルーティンの会話の承認モードはルーティンの mode（core/routines/runner.mjs）。人が bot のモードを変えても、実行中・過去の実行の強さは変えない
       // 心拍の会話は読み取りのモードで作る（ADR 0126）。人が bot のモードを変えても替えない
-      if (modes[bot.mode] && meta.mode !== bot.mode && meta.bot?.kind !== 'routine' && meta.bot?.kind !== 'pulse') await host.store.setMode(sessionId, bot.mode);
+      // このスレッドだけで変えた欄（sidecar の overrides。channels.threadSettings）は、bot の既定を変えても上書きしない（ADR 9101）
+      const own = meta.bot?.overrides ?? {};
+      if (!own.mode && modes[bot.mode] && meta.mode !== bot.mode && meta.bot?.kind !== 'routine' && meta.bot?.kind !== 'pulse') await host.store.setMode(sessionId, bot.mode);
       const cwd = meta.cwd ?? bot.folders?.[0]?.path ?? os.homedir();
-      const model = await host.resolveModel(null, bot.model || undefined, backend, cwd, '');
-      if (meta.model !== model) await host.store.setModel(sessionId, model);
+      const model = own.model ? meta.model : await host.resolveModel(null, bot.model || undefined, backend, cwd, '');
+      if (!own.model && meta.model !== model) await host.store.setModel(sessionId, model);
       const effort = await host.resolveEffort(null, bot.effort || undefined, backend, model, cwd, null);
-      if (meta.effort !== effort) await host.store.setSessionData(sessionId, 'effort', effort);
+      if (!own.effort && meta.effort !== effort) await host.store.setSessionData(sessionId, 'effort', effort);
       return true;
     },
   };

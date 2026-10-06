@@ -6144,6 +6144,9 @@ const channelsUi = setupChannels({
   newHomeThread: (draft) => newHomeThread(draft),
   homeStatusItems: (sessionId) => homeStatusItems(sessionId),
   agentName: (sessionId) => { const s = state.sessions.find((x) => x.id === sessionId); return s ? labelOf(s.backend) : null; },
+  // スレッドの入力欄の設定のチップ（web/channels/thread-composer.mjs）: エージェントのモデル・承認モードの語彙と、エフォートの段
+  vocab: (backend) => loadVocab(backend),
+  efforts: (args) => cmd('efforts', args),
   noteChats: () => { setHomeSplit(false); if (state.current) viewAddress.note({ sessionId: state.current }); renderSessions(); },
   // 委譲の子の様子（スレッドの入口・作業ログの委譲カード）。Chats と同じ部品を使う（docs/design-system.md「バックグラウンド」「委譲カード」）
   background: {
