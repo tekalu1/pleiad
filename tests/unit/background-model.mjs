@@ -20,6 +20,8 @@ export default async function(t) {
   t.ok('直下の委譲数と根の状態を子孫へ渡す', tree[1].childCount === 1 && tree[2].childCount === 1 && tree[3].rootLive === false);
   const totals = backgroundTotals([{ group: 'agent', live: true }, { group: 'agent', live: false }, { group: 'agent', live: false }, { group: 'command', live: true }]);
   t.ok('稼働中は全種、完了はサブエージェントと Pleiad タスクを数える', totals.live === 2 && totals.ended === 2);
+  const stale = backgroundTotals([{ group: 'agent', live: true }, { group: 'agent', live: false, hostStale: true }, { group: 'agent', live: false }]);
+  t.ok('しばらく読めていないホストの孫の行（hostStale）は、稼働中にも完了にも数えない', stale.live === 1 && stale.ended === 1);
 
   // ---- 入口のチップ（docs/design-system.md「入力欄の上の帯」）
   const agent = (backend, extra = {}) => ({ group: 'agent', backend, live: true, ...extra });

@@ -61,8 +61,11 @@ export default async function (t) {
     const dropped = [...feed(c, true, 2), ...feed(c, false, 8)].find((r) => r.kind === 'dropped');
     t.ok(`声が ${MIN_VOICED_MS}ms に届かない発話（咳・物音）は送らず捨てる`, dropped && dropped.voicedMs < MIN_VOICED_MS);
     c = cut();
-    const long = feed(c, true, 190).find((r) => r.kind === 'utterance');
-    t.ok('最長 15 秒で区切る（reason: max）', long?.utterance.reason === 'max' && long.utterance.pcm.length <= 15500 * 32);
+    const long = feed(c, true, 360).find((r) => r.kind === 'utterance');
+    t.ok('最長 30 秒で区切る（reason: max）', long?.utterance.reason === 'max' && long.utterance.pcm.length <= 30500 * 32);
+    c = cut();
+    const midway = [...feed(c, true, 140), ...feed(c, false, 2)].find((r) => r.kind === 'utterance');
+    t.ok('話し続けて 10 秒を超えても、短い間（170ms）では割らない（まとめ待ちの前に言いよどみで割れない。承認済み 2026-10-07）', midway === undefined && c.speaking());
     c = cut();
     feed(c, true, 5);
     const finished = c.finish();

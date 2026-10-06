@@ -202,6 +202,10 @@ const SUITES = [
   './unit/composer-agy.mjs',
   // 互換の接続先（保存・確認・キーを出さない・env と Codex の上書き）。偽の互換 API とだけ話す
   './unit/compat-endpoints.mjs',
+  // API キーの置き場（設定 › API キー。ADR 0155）: 移行（同じ値は 1 件・違う値は別の件・登録済みの所だけ引き継ぐ・冪等・保留）・値を出さない・古い置き場にも書く・確認・接続先の keyRef
+  './unit/api-keys.mjs',
+  // API キーのコマンドをサーバー越しに: 引数とエラー・使う側へのイベント・通話中の差し替え／使わない／削除で通話が切れる・値が出ない
+  './unit/server-api-keys.mjs',
   // リモート接続の暗号・フレーム・チャネル（core/remote/）。Noise の公式ベクトルと、メモリの管でつないだ往復
   './unit/remote-noise.mjs',
   './unit/remote-frames.mjs',
@@ -608,6 +612,7 @@ const SUITES = [
   './unit/server-voice.mjs',
   // 画面の部品: 送信ゲート・PCM の変換・再生キュー・状態機械・吹き出しの差し替え・読む場所の探し方・差し込み口の契約（偽の AudioContext・DOM）
   './unit/voice-ui.mjs',
+  './unit/voice-turns.mjs',
 ];
 
 const code = await main({

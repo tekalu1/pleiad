@@ -54,7 +54,7 @@ export default async function (t) {
     const before = ok.sent.length;
     ok.frames(true, 3);
     await sleep(20);
-    t.ok('音声フレームを受けても、ready の前の音は何も返さない（ready のあとは受ける）', ok.sent.slice(before).every((m) => m.t === 'speaking'));
+    t.ok('音声フレームを受けても、ready の前の音は何も返さない（ready のあとは受ける）', ok.sent.slice(before).every((m) => m.t === 'speaking' || m.t === 'busy'));
     ok.session.close();
     t.ok('閉じたあとのメッセージは捨てる', (() => { const n = ok.sent.length; ok.frames(true, 20); return ok.sent.length === n; })());
     t.ok('不正な JSON・知らないメッセージ・64KB 超は無視する（落ちない）', await (async () => {
@@ -150,6 +150,65 @@ export default async function (t) {
     t.ok('次の発言からは、また読む', x.sent.filter((m) => m.t === 'seg').at(-1)?.text === '次のターンの文です。' && x.session.state.halted === false);
     await x.msg('barge');
     t.ok('barge（話して割り込む 2 段目の口）も halt と同じ', x.session.state.halted === true);
+  }
+
+  // ---- まとめ待ちの材料（ready の区切り・busy）と、止めて続きを読む（承認済み 2026-10-07）
+  {
+    const d = harness();
+    await d.hello();
+    t.ok('ready: 区切りの長さ（既定 標準 1.2 秒）と、話して止めるが入っているかをクライアントへ渡す', d.sent[0].turnHoldMs === 1200 && d.sent[0].bargeIn === true);
+    const c = harness({ settings: { turnHold: 'long', bargeIn: false } });
+    await c.hello();
+    t.ok('ready: 設定の区切り（長め 2.0 秒）・話して止める（オフ）がそのまま届く', c.sent[0].turnHoldMs === 2000 && c.sent[0].bargeIn === false);
+    d.frames(true, 8); d.frames(false, 8);
+    await waitFor(() => types(d).includes('final') && d.sent.filter((m) => m.t === 'busy').length >= 2);
+    const busy = d.sent.filter((m) => m.t === 'busy');
+    const at = (type) => d.sent.findIndex((m) => m.t === type);
+    t.ok('busy: 話し始めで on、確定を出したあとで off（まとめ待ちは、これが閉じるまで送らない）', busy[0].on === true && busy.at(-1).on === false && d.sent.indexOf(busy.at(-1)) > at('final') && at('final') > d.sent.indexOf(busy[0]), JSON.stringify(types(d)));
+
+    const h = harness();
+    await h.hello();
+    const segs = () => h.sent.filter((m) => m.t === 'seg');
+    for (const text of ['一つ目の文です。', '二つ目の文です。', '三つ目の文です。']) h.session.onAgentEvent({ type: 'text.delta', sessionId: 's1', text });
+    await waitFor(() => h.sent.filter((m) => m.t === 'seg.end').length === 3);
+    await h.msg('halt', { id: 2 });
+    h.session.onAgentEvent({ type: 'text.delta', sessionId: 's1', text: '止めたあとの文です。' });
+    t.ok('止める（id つき）: 鳴っている音を捨て、止めたあとの文は読まずに覚えておく', types(h).includes('cancel') && segs().length === 3 && h.session.state.halted === true);
+    await h.msg('resume');
+    t.ok('続きを読む（resume）: 止めた文（2 番目）から、止めている間に届いた文までを読み直す（first は元の文のまま）', segs().slice(3).map((x) => `${x.text}:${x.first}`).join('|') === '二つ目の文です。:false|三つ目の文です。:false|止めたあとの文です。:false' && h.session.state.halted === false, JSON.stringify(segs().slice(3)));
+    await h.msg('halt');
+    const k = segs().length;
+    await h.msg('resume');
+    t.ok('id が無い止め方（読み直した文がまだ耳に届く前）は、読み直した 3 文を最初から読み直す。前に聞き終えた文には戻らない', segs().slice(k).map((x) => x.text).join('|') === '二つ目の文です。|三つ目の文です。|止めたあとの文です。', JSON.stringify(segs().slice(k)));
+    // 再生が始まる前に止めた（先読みの合成だけが進んでいた）: id が無い。耳に届いていない最初の文から読む（最後の文から読んで、前の文を飛ばさない）
+    const early = harness();
+    await early.hello();
+    const earlySegs = () => early.sent.filter((m) => m.t === 'seg');
+    for (const text of ['一つ目の文です。', '二つ目の文です。', '三つ目の文です。']) early.session.onAgentEvent({ type: 'text.delta', sessionId: 's1', text });
+    await early.msg('halt');
+    await early.msg('resume');
+    t.ok('再生が始まる前に（id なしで）止めたら、1〜3 の全部を最初から読み直す。最初の文の first は元のまま', earlySegs().slice(3).map((x) => `${x.text}:${x.first}`).join('|') === '一つ目の文です。:true|二つ目の文です。:false|三つ目の文です。:false', JSON.stringify(earlySegs().slice(3)));
+    await h.msg('resume');
+    t.ok('止めていないときの resume は何もしない', segs().length === k + 3);
+    await h.msg('barge', { id: 1 });
+    h.session.onAgentEvent({ type: 'userMessage', sessionId: 's1' });
+    const j = segs().length;
+    await h.msg('resume');
+    t.ok('新しい発言（userMessage）が来たら、止めた分は捨てる（resume しても読まない）', segs().length === j && h.session.state.halted === false);
+  }
+
+  // ---- まとめ待ちの［取り消す］（discard）: 話している最中の発話も結果を出さずに捨てる
+  {
+    const h = harness();
+    await h.hello();
+    h.frames(true, 8);
+    await h.msg('discard');
+    h.frames(false, 10);
+    await sleep(60);
+    t.ok('discard: 話している最中の発話は、無音が続いても final にならない（取り消した言葉の後半が届かない）', !types(h).includes('final') && !types(h).includes('partial'), JSON.stringify(types(h)));
+    h.frames(true, 8); h.frames(false, 8);
+    await waitFor(() => types(h).includes('final'));
+    t.ok('discard のあとの声は、新しい発話（番号 2）として確定する', h.sent.find((m) => m.t === 'final')?.utt === 2);
   }
 
   // ---- 見る先

@@ -38,6 +38,10 @@ export const COMMANDS = new Set([
   // 委譲先の自動振り分け（core/delegation-routing.mjs。docs/agent-delegation.md「委譲先の自動振り分け」）。判定器のキーは返さない（hasKey だけ）
   'delegationRouting',          // { refresh? } -> { settings, defaults, kinds, judges, tiers, signals, keys: { openrouter|cerebras: { hasKey } }, storage, warnings, candidates }
   'setDelegationRouting',       // { settings } -> 同上。prefs.json の delegationRouting に重ねて保存（null の項目は既定に戻す）。不正なら全体を断る
+  'setApiKey',          // { id?, provider, label?, key } -> { id }（id があれば値の差し替え）。キーは返さない。人だけ（秘密の値。ADR 0155）
+  'deleteApiKey',       // { id } -> { id, affected }。使っていた通話・判定器は「使わない」に、接続先はキー無しになる
+  'setApiKeyUse',       // { use: voice|judge:jev|judge:cerebras, id|null } -> { use, id }。使うキーを選んだときから外部へ送り始める
+  'resolveApiKeyGuide', // { keep: id|null } -> { merged }。移行の案内への答え（まとめる / このままにする）
   'setDelegationRoutingKey',    // { service: openrouter|cerebras, key } -> 同上。登録が判定器への外部送信の同意になる
   'deleteDelegationRoutingKey', // { service } -> 同上
   // 通話モードの OpenRouter のキー（設定 › 通話。core/voice/host.mjs）。キーは返さない。登録が音声の外部送信の同意になる
@@ -270,7 +274,8 @@ export const EVENTS = new Set([
   "notificationsChanged", // { unread, waiting } 通知の一覧（ベルのボタン。ADR 0149）の件数が変わった（sessionId は null。リモートの端末にも届く）。中身は notifications.list で取り直す
   "claudeAccountsChanged", // Claude のアカウント一覧が変わった（sessionId は null）。中身は claudeAccounts コマンドで取り直す
   "compatEndpointsChanged", // 互換の接続先の一覧・既定が変わった（sessionId は null）。中身は compatEndpoints コマンドで取り直す
-  "voiceChanged",  // 通話のキーの登録・削除（sessionId は null）。中身は invoke の voice.status で取り直す
+  "voiceChanged",  // 通話に使うキーの選び直し・差し替え・削除（sessionId は null）。中身は invoke の voice.status で取り直す
+  "apiKeysChanged", // API キーの登録・差し替え・削除・割り当て・確認の結果が変わった（sessionId は null）。中身は invoke の apiKeys.list で取り直す
   "delegationRoutingChanged", // change: settings|usage（旧送信元では省略）。sessionId は null。中身は delegationRouting コマンドで取り直す
   "claudeLogin",  // { loginId, kind, accountId, phase: url|code|verifying|done|error|cancelled, url?, message? } アカウントの認可の進み具合（sessionId は null）。トークンは載せない
   "remoteStatus",  // { status: RemoteStatus } リモートの設定・中継との接続・承認待ち・端末一覧が変わった（sessionId は null）
