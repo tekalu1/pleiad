@@ -55,7 +55,8 @@ import { formatBytes } from "./folder-upload.mjs";
 import { modelRowIds, modelDisplayName } from "./composer-labels.mjs";
 import { setupSlashSkills } from "./slash-skills.mjs";
 import { createMarkdownEditor } from "./md-editor.mjs";
-import { createComposerAttachments, attachedImageSrc } from "./composer/attachments.mjs";
+import { attachedImageSrc } from "./composer/attachments.mjs";
+import { createComposer, composerEls, rememberComposerTemplate } from "./composer/composer.mjs";
 import { openAttachmentList } from "./attachment-list.mjs";
 import { runMark, satMark, stillMark } from "./arc.mjs";
 import { approvalTarget } from "./approval-summary.mjs";
@@ -204,6 +205,8 @@ const thread = $("thread");
 setupMessagePeek(thread);   // タッチ: 発言を押すと時刻を 4 秒出す
 // 静的な HTML の文言（data-i18n*）を今の言語で埋める。以降の処理が書き換える文言より先に済ませる
 applyDom(document);
+// 入力欄の骨組みを写しておく（スレッドの入力欄はこの写しから作る。web/composer/composer.mjs）
+rememberComposerTemplate($("composer"));
 // 「サイドバーを開く」の名前は件数を入れて書く（web/open-sidebar-mark.mjs）ので、HTML の data-i18n には置かない。一覧が届くまでは件数なし
 paintOpenSidebar($("openSidebar"), {}, t);
 // CSS の content: に出す文言。style.css・file-preview.css が var(--i18n-…) で読む（CSS に言語ごとの文言を持たない）
@@ -215,31 +218,35 @@ for (const [name, text] of [["untitled", t("session.untitled")], ["default", t("
 // 以降のコードは今までどおり $("prompt").value などで触る。添付は字の間の 1 行の印（[添付] パス）が原子になり、実体の情報は state.attached、
 // 送っている途中のものは uploads（仮の ID）が持つ。シェルの形の間は整形も文中の添付もしない（composerPlain）
 let composerPlain = false, composerShellMode = null;
-// 添付（web/composer/attachments.mjs）。実体は state.attached に置き、持ち主は今の会話（作っている間は null）。
-// 書けない待ちの間は積まない（開いた会話の下書きで消されるか、予約した送信に紛れる）。札の出入りだけでは下書きを保存しない（字の入力で保存される）
-const chatAttach = createComposerAttachments({
-  host: { cmd: (command, args) => cmd(command, args), whenOnline: (err) => whenOnline(err), openImage: (src, name, path) => openLightbox(src, name, path),
-    filePreview: { open: (...a) => filePreview.open(...a) } },
-  owner: () => state.current ?? null,
-  store: { get: () => state.attached, set: (items) => { state.attached = items; } },
-  accepts: () => composerWait.accepts(),
-  say: (text) => composerError(text),
-  notify: (text) => notify(text),
-  onChange: () => { saveDraft().catch(() => {}); },
-  changeOnAtoms: false,
-  onRender: () => syncRunState(),
-  adopt: (owner, item) => adoptAttachment(owner, item),
-  strip: $("attached"),
-  thumbnails: true,
-  locale: () => composerAgentLang(),
+// 入力欄の部品（web/composer/composer.mjs）。字の欄・添付・書けない待ち・高さ・キー・送信の口を持つ。チップ・送信の日時・/・! は下で use〜 で差し込む。
+// 添付の実体は state.attached に置き、持ち主は今の会話（作っている間は null）。書けない待ちの間は積まない（開いた会話の下書きで消されるか、
+// 予約した送信に紛れる）。札の出入りだけでは下書きを保存しない（字の入力で保存される）。
+// 書けない待ちは disabled ではなく readonly + aria-busy。初めて接続して会話を開くまでは「接続しています…」（その間に書いた字は、開いた会話の下書きで上書きされるため）
+const chatComposer = createComposer({
+  els: composerEls(""), t,
+  attach: {
+    host: { cmd: (command, args) => cmd(command, args), whenOnline: (err) => whenOnline(err), openImage: (src, name, path) => openLightbox(src, name, path),
+      filePreview: { open: (...a) => filePreview.open(...a) } },
+    owner: () => state.current ?? null,
+    store: { get: () => state.attached, set: (items) => { state.attached = items; } },
+    accepts: () => composerWait.accepts(),
+    say: (text) => composerError(text),
+    notify: (text) => notify(text),
+    onChange: () => { saveDraft().catch(() => {}); },
+    changeOnAtoms: false,
+    onRender: () => syncRunState(),
+    adopt: (owner, item) => adoptAttachment(owner, item),
+    thumbnails: true,
+    locale: () => composerAgentLang(),
+  },
+  isPlain: () => composerPlain,
+  wait: { runMark, onChange: () => syncRunState() },
+  // 入力欄の `!` と「/」の候補が開いている間は、その操作を先に取る（Ctrl+Enter は送信のまま）
+  keys: [(e) => shellComposer.keydown(e), (e) => slashSkills.keydown(e)],
+  onSubmit: () => submit(),
+  onSchedule: () => sendMenu.open(),
 });
-const composerEditor = createMarkdownEditor($("prompt"), { ...chatAttach.editorOptions, isPlain: () => composerPlain });
-chatAttach.bind(composerEditor, $("prompt"));
-
-// 入力欄の待ち（web/composer-wait.mjs）。書けない待ちは disabled ではなく readonly + aria-busy。
-// 初めて接続して会話を開くまでは「接続しています…」（その間に書いた字は、開いた会話の下書きで上書きされるため）
-const composerWait = createComposerWait({ box: $("cbox"), prompt: $("prompt"), send: $("send"), note: $("composerNote"),
-  busyLine: $("composerBusy"), busyText: $("composerBusyText"), t, runMark, onChange: () => syncRunState() });
+const chatAttach = chatComposer.attach, composerEditor = chatComposer.editor, composerWait = chatComposer.wait;
 // 接続の状態（web/connection-status.mjs）。切れた一行は 1.5 秒続いてから、トークンが古いと分かったら案内に替えて再接続をやめる
 const connStatus = createConnectionStatus({ note: $("connNote"), sideLine: $("connLost"), live: $("connLive"), t, runMark,
   time: (ms) => fmt.time(ms), check: checkToken, reconnect: () => connect(), onChange: () => syncRunState() });
@@ -3811,7 +3818,7 @@ function syncAttachButton() {
 }
 
 // 入力欄の設定のチップ（web/composer-controls.mjs）。値は state に持ち、チップは get() で毎回読む
-const controls = setupComposerControls({
+const controls = chatComposer.useControls({
   cmd,
   get: () => {
     const bid = state.shownBackend ?? activeBackendId();
@@ -3866,10 +3873,7 @@ const controls = setupComposerControls({
 
 // カーソル位置の「/」。候補はコンテキスト画面と同じ探索結果から来る（core の slashSkills）。
 // 送信・下書きの後片付けからも触るので、入力欄と送信の配線より先に用意する
-const slashSkills = setupSlashSkills({
-  input: $("prompt"),
-  list: $("skillList"),
-  hint: $("slashHint"),
+const slashSkills = chatComposer.useSlash({
   cwd: () => state.cwd.trim() || state.draft.cwd || "",
   canCompact: () => canCompactHere(),
   load: (cwd) => cmd("slashSkills", { cwd: cwd || undefined }),
@@ -6013,11 +6017,7 @@ function attachFiles(files, o) {
  * その先は欄の中でスクロールする（送信の行は常に見える）。画面が低いとき（キーボードが出ている）は画面の 40% でも止める
  */
 function fitPrompt() {
-  const ed = $("prompt");
-  const css = getComputedStyle(ed);
-  const line = parseFloat(css.lineHeight) || 22;
-  const pad = (parseFloat(css.paddingTop) || 0) + (parseFloat(css.paddingBottom) || 0);
-  ed.style.maxHeight = `${promptMaxHeight({ line, pad, touch: matchMedia("(pointer:coarse)").matches, viewport: innerHeight })}px`;
+  chatComposer.fit();
 }
 
 function wireDropZone() {
@@ -7781,8 +7781,7 @@ function connect() {
 // ---------------------------------------------------------------- 操作
 
 // 送信の日時の面（▾・送信の円の右クリックと長押し・Ctrl+Shift+Enter。web/send-menu.mjs）
-const sendMenu = setupSendMenu({ send: $('send'), more: $('sendMore'), pop: $('sendPop'), veil: $('sendVeil'),
-  narrow: matchMedia('(max-width:480px)'),
+const sendMenu = chatComposer.useSchedule({
   context: () => ({ available: canScheduleHere() }),
   // 窓を閉じても動き続けるか（常駐しているか）。動き続けないときだけ、面の一言「閉じている間は送れません」を出す
   environment: async () => {
@@ -7799,22 +7798,12 @@ setInterval(() => { if (state.current && sendSchedules(state.current).some(r => 
 function canScheduleHere() { return Boolean(($('prompt').value.trim() || state.attached.length) && !composerShellMode && !retiredHere()); }
 function syncSendMore() { $('sendMore').disabled = !canScheduleHere() || $('send').disabled; }
 
-const shellComposer = createShellComposer({ box: $('cbox'), prompt: $('prompt'), head: $('shellHead'), send: $('send'), t,
+const shellComposer = chatComposer.useShell({
   availability: shellAvailability,
   where: () => ({ cwd: state.cwd.trim() || state.sessions.find(s => s.id === state.current)?.cwd || '', host: remoteInfo(window.plyRemote)?.host ?? '' }),
   touch: () => matchMedia('(pointer:coarse)').matches,
   onAsText: () => submit(),
   onChange: () => { composerPlain = shellComposer.active; composerShellMode = shellComposer.mode; composerEditor.modeChanged(); fitPrompt(); controls.fit(); syncRunState(); } });
-$('prompt').addEventListener('beforeinput', e => shellComposer.beforeinput(e));
-$('prompt').addEventListener('input', () => shellComposer.input());
-$("composer").onsubmit = (e) => { e.preventDefault(); submit(); };
-$("prompt").onkeydown = (e) => {
-  if (isComposingKey(e)) return;
-  if (shellComposer.keydown(e)) return;
-  // 入力欄の「/」の候補が開いている間は候補の操作を先に取る（Ctrl+Enter は送信のまま）
-  if (slashSkills.keydown(e)) return;
-  if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); if (e.shiftKey) sendMenu.open(); else submit(); }
-};
 // 設定 › コンテキストは全体の設定だけ（フォルダーごとは会話の右パネルの「この場所だけ変える」）。
 // 最近の会話の場所は「探す場所を足す」の候補、「設定 › 委譲で変える →」は委譲のページへ
 const context = setupContext({ button: $('openContext'), cmd,
@@ -7910,9 +7899,7 @@ $("abort").onclick = () => {
 
 $("authNeed").onclick = (e) => { e.stopPropagation(); side.closePops(); openSettings(); };
 
-$("prompt").addEventListener("input", fitPrompt);
 $("prompt").addEventListener("input", () => syncResume());
-addEventListener("resize", fitPrompt);
 
 $("workDialog").addEventListener("click", (e) => {
   if (e.target.dataset?.close !== undefined || e.target === $("workDialog")) $("workDialog").close();

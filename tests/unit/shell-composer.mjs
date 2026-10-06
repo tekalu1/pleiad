@@ -108,7 +108,7 @@ export default function (t) {
     /if \(shellComposer\.active\) return runShellFromComposer\(\);\s*if \(shellComposer\.blocked\) return shellComposer\.flash\(\);/.test(client));
   t.ok('走らせるのは runShell だけ（sendMessage・receipts に積まない）', runFn.includes("cmd('runShell'") && !runFn.includes('sendMessage') && !runFn.includes('receipts'));
   t.ok('走らせたら欄はすぐ空に戻る', runFn.indexOf("$('prompt').value = ''") < runFn.indexOf("cmd('runShell'"));
-  t.ok('beforeinput で `!` を見る（貼り付け・復元は insertText ではない）', client.includes("addEventListener('beforeinput', e => shellComposer.beforeinput(e))"));
+  t.ok('beforeinput で `!` を見る（貼り付け・復元は insertText ではない）', read('web/composer/composer.mjs').includes("prompt.addEventListener('beforeinput', (e) => parts.shell.beforeinput(e))") && client.includes('chatComposer.useShell({'));
   const server = read('core/server.mjs');
   const protocol = read('core/protocol.mjs');
   t.ok('runShell / stopShell / skipShell はサーバーの case とプロトコルの COMMANDS の両方にある',
