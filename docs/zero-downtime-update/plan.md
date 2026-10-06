@@ -328,13 +328,22 @@ design.md §5.1・§6.1・§8。
 - テストは fake の「途中で引き継ぐ」台本（準備中・承認待ち・ツールの実行中・渡った合図の前・裏の作業の待ち・委譲の子・中断の最中・終わった直後）で、`turnEnd`・`completedAt`・使用量・完了の知らせが 1 回だけであることを数える（stage2-server-state.md §6.1）。2d の前はサーバー A を強制終了して B を起こす形（2e と同じ）で引き継ぐ
 - bot の会話・圧縮のターンは 2b では付け直さない（先送りか中断）
 
-### 2c Claude を保持役に載せる（M〜L）
+### 2c Claude を保持役に載せる（M〜L。**実装済み 2026-10-07**。下の「実装のメモ」）
 
 - `spawnClaudeCodeProcess` で保持役へ。偽の `SpawnedProcess`（`write`・`end`・`kill` を保持役に写し、`detach` の後は転送しない）。**`spawn` / `attach` は SDK の最初の stdin の書き込みより前に送る**
 - 付け直し: 同じ CLI に `query` を作り直す（空の入力の流れ）。旧サーバーが手を離す順序は「保持役に `detach` → `query` を閉じる」。途中送信の控え（`pendingSteers`）・裏の作業の追跡（`claude-background.mjs`。生きている作業の一覧は付け直し直後の `background_tasks_changed` で置き換える）・費用の基準（`readCostBase`）・フラグ設定のファイル（`writeClaudeFlagSettings`。ターンの終わりに消す。`detach` の後は旧サーバーが消さず、新しいサーバーの起動時の掃除は札が指すファイルを外す）の札。systemPrompt・skills は札に要らない（CLI が 2 回目の `initialize` の値を使わない。2-0）
 - **`host` MCP は in-process のまま**（HTTP に移さない）。引き継ぎは、走っている hooks のコールバックと `mcp_message` のハンドラーが終わるのを（上限つきで）待つ
 - 付け直しに使える CLI の版の一覧を別に持つ（`backend-shape-diagnostics.mjs` の `VERIFIED` とは分ける。確かめたのは 2.1.284・2.1.288、`pending_permission_requests` は 2.1.268 から）。外れる版のターンは保持役に載せない
 - テスト: fake の CLI（stream-json を話す偽物）で、承認待ち・hooks・`mcp_message` の最中の付け直し。実機は `scripts/zero-downtime/claude/` の本物の CLI
+
+**実装のメモ（2026-10-07。実装済み。詳細と 2d への注意は [stage2-server-state.md](stage2-server-state.md) の「2c の実装のメモ」）**
+
+- **載せ方**: `core/backends/claude-held.mjs` の `heldPlan` が載せるかを決め、SDK の `spawnClaudeCodeProcess` に偽の `SpawnedProcess`（`createHeldCli`）を渡す。`spawn`（policy `claude-control`）と印 `turn` は SDK の最初の書き込みより前。stdin の `write`・`end` と `kill`（保持役が木ごと止める）を写し、`detach` の後は転送しない。`claude.cmd` は包みの `bin/claude.exe` に解く（解けなければ載せない）。ack はループで処理し終えた uuid の行
+- **付け直し**: `claude.mjs` の `runTurn` に付け直しの引数 `adopt` を足し、`adoptTurn` と本体を共有。印から ack までを読み直して状態を作り（再生）、空の入力の流れで同じ CLI に `query` を作り直す（2 回目の `initialize`。承認待ちは `pending_permission_requests` で `canUseTool` へ回り直り、記録の続きに出た同じ依頼と SDK が 1 回に畳む）。`attach` の答えの時点までの答え済みの `control_request` と旧い親への `control_response` は流さない。控えの渡し直し（`mcp_message`・`elicitation`）は流す。旧サーバーの口は `handOffClaude`（札を置く → `detach` → `query.close()`。閉じても承認を取り下げない）
+- **札**（`backendCard`）: `pendingSteers`（id・uuid・本文のハッシュ・`sawResult`）・費用の基準（`readCostBase`）・フラグ設定のファイルの名前（旧サーバーは消さず、付け直したサーバーがターンの終わりに消す。起動の掃除は札が指すファイルを外す）・流し込んだ数。裏の作業の追跡（`claude-background.mjs`）は札に入れず印からの再生で作り直す（付け直し直後の `background_tasks_changed` が全量で置き換える）。systemPrompt・skills は入れない。`host` MCP は in-process のまま。Pleiad の Hooks は付け直しで組み直して渡す
+- **版の一覧**: `HELD_CLI_VERSIONS`（2.1.284・2.1.288）。`--version` を CLI の実体ごとに 1 回聞き、外れる版は載せない
+- **切り替え**: **既定は載せない**。`AGENT_HOST_CLAUDE_HOLDER=on` を明示したときだけ（パッケージ版の `AGENT_HOST_HANDOVER=on` でも、2d が引き継ぎを配線するまでは自動では付けない）。圧縮・bot のターンは載せない
+- **テスト**: `tests/unit/adopt-claude.mjs`（偽の CLI `tests/lib/fake-claude-cli.mjs`。切り替え・承認待ち・途中送信・裏の作業・PreCompact と `mcp_message` の答えが届かないまま・強制終了。7 判定）、`tests/unit/claude-held.mjs`（部品。6 判定）。**実機**（CLI 2.1.284・haiku）: `scripts/zero-downtime/claude/held-server.mjs` で承認待ちを A → B で付け直し、B に同じ id の承認が 0.6 秒で 1 つ出て、許可すると続き、`turnEnd`・`completedAt`・使用量が 1 回
 
 ### 2d 引き継ぎ（M）
 
@@ -344,6 +353,7 @@ design.md §5.1・§6.1・§8。
 - モジュールを先に読み込んでロックを待つ起動（`--handover`）。間の目安を測り直す
 - 戻し道（design.md §6 の表）: 前の版のサーバーで付け直す、1 つのターンだけの中断、`AGENT_HOST_HANDOVER=off`
 - 段階 1 の先送りの制御（`desktop/switch.cjs`）を、保持役に載るターンは先送りせず引き継ぐ形に拡張する
+- 2c からの注意（[stage2-server-state.md](stage2-server-state.md) の「2c の実装のメモ」の 2d への注意）: Claude の手を離す口は `handOffClaude`。hooks のコールバックと in-process の `mcp_message` は待ってから手を離す。`AGENT_HOST_CLAUDE_HOLDER` の既定（今は明示したときだけ載せる）をここで決める。付け直せなかった子は保持役に残り続ける
 
 ### 2e サーバーが落ちたときの付け直し（S）
 

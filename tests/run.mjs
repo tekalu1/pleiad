@@ -450,6 +450,10 @@ const SUITES = [
   './unit/adopt-finished.mjs',
   // 付け直し（無停止の更新 2b-5）: 保持役の子に載せた台本（fake の held:。別プロセスの偽の CLI）を、サーバーの入れ替えをまたいで途中から引き継ぐ（ツールの実行中・承認待ち・終わった直後）
   './unit/adopt-held.mjs',
+  // 付け直し（無停止の更新 2c）: 保持役に載せた Claude の CLI（stream-json を話す偽物）を、承認待ち・途中送信・裏の作業・hooks・mcp_message の最中に引き継ぐ。切り替えと版の一覧
+  './unit/adopt-claude.mjs',
+  // Claude を保持役に載せる部品（無停止の更新 2c）: 版の一覧・npm の包みの解き方・偽の SpawnedProcess の転送と detach・付け直しで流さない行・札のフラグ設定のファイル
+  './unit/claude-held.mjs',
   // 承認のカードの id（無停止の更新 2b-6）: ツールの id と会話の id から決まる値・同じプロセスの 2 回目と、ツールの id が無い承認は乱数
   './unit/approval-id.mjs',
   // Claude のアカウント切り替え（会話ごとのトークン）。env の組み立てと、server の配線を fake で通す
