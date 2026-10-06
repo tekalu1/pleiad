@@ -19,7 +19,7 @@ export const DB_ONLY = ['sessions.json', 'agent-tasks.json', 'usage.json', 'conv
 
 export const DATA_WRITES = [
   { file: 'core/store.mjs', sites: 4, targets: [
-    { name: 'prefs.json', limit: '設定。computerUse.alwaysAllowed は COMPUTER_APP_LIMIT=500、browserLastProfiles は 100。agentSitePermissions だけ上限が無い（エージェント×origin×プロフィール）', reason: '設定。読むのは起動時と変更時だけで、通常は数 KB', unbounded: true },
+    { name: 'prefs.json', limit: '設定。computerUse.alwaysAllowed は COMPUTER_APP_LIMIT=500。agentSitePermissions だけ上限が無い（エージェント×origin）', reason: '設定。読むのは起動時と変更時だけで、通常は数 KB', unbounded: true },
     { name: 'statuses.json', limit: '会話の状態グループ。ユーザーが数個作る', reason: '台帳。数十行以下' },
   ] },
   { file: 'core/atomic-file.mjs', sites: 2, targets: [
@@ -126,9 +126,6 @@ export const DATA_WRITES = [
   ] },
   { file: 'desktop/agent-browser-bin.cjs', sites: 1, targets: [
     { name: 'agent-browser-bin/agent-browser(.exe)', limit: '同梱の実行ファイル 1 つ。大きさが違うときだけ写し直す', reason: '開発時（未パッケージ）に実行ファイルを置き場へ写す。書き換えない成果物' },
-  ] },
-  { file: 'desktop/browser-panel.cjs', sites: 2, targets: [
-    { name: '(置き場の外) Electron の userData の、消し残したブラウザープロフィールの名前の一覧', limit: 'プロフィールの数。消せたら行が消える', reason: '削除待ちの台帳。通常は 0〜数件' },
   ] },
   { file: 'desktop/server-port.cjs', sites: 1, targets: [
     { name: '(置き場の外) Electron の userData の、前回のポート', limit: '固定（{ port }）', reason: '画面の origin を保つための印' },

@@ -102,8 +102,7 @@ import { MIN_BUDGET, MAX_BUDGET } from '../web/instruction-amount.mjs';
 import { parentPortBrowser, browserEnvironment, browserInstruction, forgetBrowserEnvironment } from './agent-browser.mjs';
 import { parentPortScreencast, createScreencastHub, screencastCommand } from './browser-screencast.mjs';
 import { createBrowserSiteApprovals } from './browser-confirm.mjs';
-import { createBrowserProfiles, createBrowserBridge, findProfile, BROWSER_MCP_PATH } from './browser-profiles.mjs';
-import { profileList, profileName, validProfilePref, hasProfile, defaultProfile as defaultBrowserProfile, profileIds as browserProfileIds } from '../web/browser-profiles.mjs';
+import { createBrowserBridge, BROWSER_MCP_PATH } from './browser-bridge.mjs';
 import { validBrowserPref, externalOrigin } from '../web/browser-confirm-policy.mjs';
 import { computerUsePrefs, validComputerUse } from '../web/computer-prefs.mjs';
 import { computerUseCapability } from './computer-use-capability.mjs';
@@ -1048,38 +1047,8 @@ function computerConnection(turn) {
   return entry.computer;
 }
 
-// ---- 内蔵ブラウザーのプロフィール（docs/inapp-browser.md「プロフィール」、ADR 0078） ----------------------------
-// 会話の今のプロフィールの正本は会話のメタ。ターンは開始時に決めた値を turn.browserProfile に持ち、ply_browser の切り替えはそれを書き換える
-const browserProfiles = createBrowserProfiles({ getPrefs: store.getPrefs, getSession: id => store.get(id), setSessionData: store.setSessionData, rememberLast: store.rememberBrowserProfile });
-/** 中継のキー（新しい会話の最初のターンは仮のキー）か会話 ID から、走っているターン */
-const browserTurn = id => id ? runtime.turns.get(id) ?? [...runtime.turns.values()].find(turn => turn.browserRelayId === id) ?? null : null;
-// ply_browser: エージェントがプロフィールの一覧を読み、会話の今のプロフィールを切り替える。文はエージェントの言語（agent 名前空間）
-async function callBrowserOp(owner, name, args, { locale: lng0 } = {}) {
-  const turn = runtime.turns.get(owner);
-  const lng = turn?.agentLocale ?? lng0;
-  if (!turn || turn.ac.signal.aborted) throw new Error(agentT(lng, 'delegation.notRunning'));
-  const prefs = await store.getPrefs();
-  const mainName = agentT(lng, 'browserProfiles.main');
-  const current = hasProfile(prefs, turn.browserProfile) ? turn.browserProfile : await browserProfiles.resolve(turn.info.sessionId);
-  const row = (p, now = current) => ({ id: p.id, name: profileName(p, mainName), ...(p.id === defaultBrowserProfile(prefs) ? { default: true } : {}),
-    ...(p.id === now ? { current: true } : {}), ...(p.memo ? { memo: p.memo } : {}) });
-  if (name === 'list_browser_profiles') return { current, profiles: profileList(prefs).map(p => row(p)) };
-  const target = findProfile(prefs, args.profile, mainName);
-  if (!target) throw new Error(agentT(lng, 'browserProfiles.unknown', { profile: String(args.profile ?? '').slice(0, 80), names: profileList(prefs).map(p => profileName(p, mainName)).join(', ') }));
-  if (target.id === current) return { profile: row(target), changed: false };
-  turn.browserProfile = target.id;
-  if (turn.info.sessionId) await browserProfiles.set(turn.info.sessionId, target.id, turn.info.cwd);
-  // main はタブの一覧と中継のタブ集合を替え、画面に「<エージェント名> が『…』に切り替えました」を出す
-  agentBrowser?.profile(turn.browserRelayId ?? turn.info.sessionId ?? turn.key, target.id, turn.backend.label);
-  return { profile: row(target, target.id), changed: true, note: agentT(lng, 'browserProfiles.switched') };
-}
-const browserOpIds = { list_browser_profiles: 'browser.listProfiles', use_browser_profile: 'browser.useProfile' };
-const browserBridge = createBrowserBridge({ call: async (owner, name, args, { locale } = {}) => {
-  const sessionId = owner();
-  const result = await opsRegistry.invoke({ by: 'agent', via: 'mcp', sessionId }, browserOpIds[name], args, opsDeps(locale));
-  if (!result.ok) throw new Error(result.error);
-  return result.result;
-} });
+// ---- ply_browser（エージェントのブラウザー操作の口。core/browser-bridge.mjs、ADR 0148）。ツールはまだ載せていない ----------------------------
+const browserBridge = createBrowserBridge();
 /** このターンに渡す ply_browser（url・headers）。会話のあいだ同じ口を使う（agy は起動時にしか渡せない） */
 function browserRuntimeFor(turn) {
   const entry = conversationConnection(turn);
@@ -2146,8 +2115,6 @@ function makeEmit(turn) {
           backend: turn.backend.id, cwd, createdAt: turn.info.startedAt, lastModified: Date.now(),
           turnStartedAt: turn.startedAtMs, interrupted: null,
         }),
-        // ターンで使っていた内蔵ブラウザーのプロフィールを会話に残す（ADR 0078）
-        turn.browserProfile ? browserProfiles.set(sessionId, turn.browserProfile, cwd).catch(() => {}) : null,
         store.setMode(sessionId, mode),
           store.setModel(sessionId, model ?? ""),
           store.setSessionData(sessionId, "effort", turn.info.effort ?? ""),
@@ -2384,20 +2351,6 @@ async function applyPlyInstructions(next) {
   await savePref('addedContext', null);
   plyInstructionsCache = next;
   return next;
-}
-
-/** 内蔵ブラウザーのプロフィール（ADR 0078）。一覧・既定・新しい会話の規則。消えたプロフィールの既定と「このサイトは常に」は片付ける。値の検査は呼び出し側 */
-async function applyBrowserProfilePref(key, value) {
-  let prefs = await savePref(key, value);
-  if (key === 'browserProfiles') {
-    const ids = browserProfileIds(prefs);
-    if (prefs.browserDefaultProfile && !ids.includes(prefs.browserDefaultProfile)) prefs = await savePref('browserDefaultProfile', null);
-    const sites = prefs.agentSitePermissions ?? [];
-    const kept = sites.filter(row => !row.profile || ids.includes(row.profile));
-    if (kept.length !== sites.length) prefs = await savePref('agentSitePermissions', kept);
-  }
-  agentBrowser?.prefs(prefs);
-  return prefs;
 }
 
 /** 内蔵ブラウザーの確認と「このサイトは常に」。保存して、走っているブラウザーの方針にも伝える。値の検査は呼び出し側 */
@@ -2649,8 +2602,6 @@ async function createSession(args) {
   const sessionId = await createConversation(backend, info);
   try {
     await store.setMeta(sessionId, { backend: backend.id, ...info, status, unsent: true });
-    // 内蔵ブラウザーのプロフィール: 引き継ぎ元があればそのもの、無ければ作業フォルダーで最後に使ったもの / 既定（ADR 0078）
-    await store.setSessionData(sessionId, 'browserProfile', await browserProfiles.forNew(cwd, source), { durable: true });
     // 互換の接続先（決定 2・3）: 同じエージェントの引き継ぎなら元の会話の接続先（予約中ならそれ）を継ぐ。
     // それ以外は設定で「既定にする」を押した接続先（無ければ公式）。削除済みは継がない
     let endpoint = '';
@@ -3754,14 +3705,6 @@ function opsDeps(lng = currentLocale()) {
       providerUsage: (id) => providerUsageOf({ backend: id }) },
     conversations: opsConversations,
     agents: opsAgents,
-    browser: { call: (owner, name, args, locale) => callBrowserOp(owner, name, args, { locale }),
-      setProfile: async (sessionId, profile) => {
-        const meta = await store.get(sessionId);
-        if (!await browserProfiles.set(sessionId, profile, meta.cwd)) throw new OpError('INVALID', t('settings.unknownPrefValue', { key: 'browserProfile', value: String(profile) }));
-        const live = browserTurn(sessionId);
-        if (live) live.browserProfile = profile;
-        return { profile };
-      } },
     prefs: () => store.getPrefs(),
     compactionSettings: () => compactionSettings,
     statuses: opsStatuses,
@@ -3801,7 +3744,6 @@ function opsDeps(lng = currentLocale()) {
     writes: {
       pref: (key, value, backendId) => savePref(key, value, backendId),
       browserPref: applyBrowserPref,
-      browserProfiles: (value, key = 'browserProfiles') => applyBrowserProfilePref(key, value),
       compaction: applyAutoCompaction,
       routing: applyRoutingSettings,
       plyInstructions: applyPlyInstructions,
@@ -4189,12 +4131,8 @@ agentBrowser?.configureAuthorization(createBrowserSiteApprovals({
     return turn ? { id: turn.backend.id, label: turn.backend.label, sessionId: turn.info.sessionId || turn.key, signal: turn.ac.signal, locale: turn.agentLocale } : null;
   },
   askPermission, translate: t,
-  // 確認の文に添えるプロフィールの名前（画面の言語）
-  profileLabel: id => browserProfiles.label(id, t('browserProfiles.main')),
   remember: async site => { const prefs = await store.rememberBrowserSite(site); emitGlobal({ type: 'prefs', sessionId: null, prefs, locale }); },
 }));
-// main が覚えていない会話の今のプロフィール。走っているターン（仮のキーを含む）はターンの値、ほかは会話のメタ
-agentBrowser?.configureProfiles(async id => browserTurn(id)?.browserProfile ?? browserProfiles.resolve(id));
 agentBrowser?.prefs(await store.getPrefs());
 agentBrowser?.loadPolicy(await store.getPrefs());
 
@@ -4996,8 +4934,6 @@ async function runTurnInternal(args, onStarted, hooks) {
         await shellRuns.settled(sessionId, turn.ac.signal);
         if (turn.ac.signal.aborted) throw new Error(t('turn.aborted'));
       }
-      // 内蔵ブラウザーのプロフィール（ADR 0078）。会話の今のもの。中継の準備で main に渡す。ply_browser の切り替えはここを書き換える
-      if (agentBrowser) turn.browserProfile = await (sessionId ? browserProfiles.resolve(sessionId) : browserProfiles.forNew(cwd)).catch(() => null);
       // bot の会話なら、人格（botInstructions）と、ターンの末尾（記憶の核の写し・差分。notes）を足す。bot でなければ空
       const botExtras = await botHost?.turnExtras(turn) ?? { botInstructions: null, notes: [] };
       const notes = [...(interruption ? [interruption.text] : []), ...botExtras.notes];
@@ -5028,9 +4964,9 @@ async function runTurnInternal(args, onStarted, hooks) {
         // エージェントに渡す文（指示・ツールの説明・タイトル生成など）の言語。会話ごとに決めて保存したもの
         locale: agentLocale,
         visualizeInstructions: visualizeInstructions(agentLocale),
-        browserEnv: await browserEnvironment({ bridge: agentBrowser, dataDir: store.dataDir, sessionId: sessionId || turn.key, unlock: turn.userInitiated, profile: turn.browserProfile }).catch(error => { console.error('agent browser unavailable:', error.message); return null; }),
+        browserEnv: await browserEnvironment({ bridge: agentBrowser, dataDir: store.dataDir, sessionId: sessionId || turn.key, unlock: turn.userInitiated }).catch(error => { console.error('agent browser unavailable:', error.message); return null; }),
         browserInstructions: null,
-        // ply_browser（プロフィールの一覧と切り替え）。内蔵ブラウザーを渡すターンだけ（下で入れる）
+        // ply_browser。内蔵ブラウザーを渡すターンだけ（下で入れる）
         browserRuntime: null,
         // ply_computer（url・headers・instructions）。使えない・オフ・対応しないエージェントなら null（computerRuntimeFor）
         computerRuntime: await computerRuntimeFor(turn),
@@ -6773,12 +6709,6 @@ wss.on("connection", (ws, req) => {
         case "sessionChanges":
           return viaOp('sessions.changes', args);
 
-        // 会話の今の内蔵ブラウザーのプロフィールを人が替えた（右パネルのメニュー。main のタブの一覧は画面が先に替えている。ADR 0078）。
-        // 会話に残し、作業フォルダーの「最後に使ったもの」と、走っているターン（ply_browser の今のもの）にも伝える
-        case "setBrowserProfile": {
-          const r = await opsRegistry.invoke({ by: 'human', via: 'ui', local }, 'browser.setProfile', msg.args, opsDeps(locale.lang));
-          return r.ok ? reply(true, r.result) : reply(false, r.error, r.code);
-        }
         case "setTitle": {
           const r = await opsRegistry.invoke({ by: 'human', via: 'ui', local }, 'sessions.setTitle', msg.args, opsDeps(locale.lang));
           return r.ok ? reply(true, "ok") : reply(false, r.error, r.code);

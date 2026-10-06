@@ -9,7 +9,6 @@ import { resumeOps } from './resume.mjs';
 import { statusOps } from './statuses.mjs';
 import { settingOps, settings } from './settings.mjs';
 import { delegationOps } from './delegation.mjs';
-import { browserOps } from './browser.mjs';
 import { worktreeOps } from './worktrees.mjs';
 import { notifyOps } from './notify.mjs';
 import { hookOps } from './hooks.mjs';
@@ -34,7 +33,7 @@ import { routineOps } from './routines.mjs';
 const withProbe = String(process.env.AGENT_HOST_BACKENDS ?? '').split(',').map((s) => s.trim()).includes('fake');
 
 export const registry = createRegistry({
-  ops: [...appOps, ...sessionOps, ...resumeOps, ...conversationOps, ...agentOps, ...statusOps, ...settingOps, ...delegationOps, ...browserOps,
+  ops: [...appOps, ...sessionOps, ...resumeOps, ...conversationOps, ...agentOps, ...statusOps, ...settingOps, ...delegationOps,
     ...worktreeOps, ...notifyOps, ...hookOps, ...compatOps, ...computerOps, ...mcpOps, ...contextOps, ...remoteOps,
     ...gitOps, ...shellOps, ...sessionWorkOps, ...fileOps, ...attachmentOps, ...channelOps, ...botOps, ...memoryOps, ...brainOps, ...routineOps, ...(withProbe ? probeOps : [])],
   settings: [...settings],
