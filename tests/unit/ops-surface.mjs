@@ -207,6 +207,9 @@ export default async function (t) {
       read: async () => ({ posts: [{ id: 'p_000000000aaaaaa', text: 'こんにちは', ...secret }], threads: [{ threadId: 'p_000000000aaaaaa', ...secret }], summaries: {}, nextBefore: null }),
       search: async () => ({ hits: [{ postId: 'p_000000000aaaaaa', snippet: 'こんにちは', ...secret }] }),
       threadIndex: async () => ({ threads: [{ channelId: 'c_000000000aaaaaa', threadId: 'p_000000000aaaaaa', title: 'こんにちは', ...secret }], totals: { c_000000000aaaaaa: 1 } }),
+      // エージェントに渡した原文（channels.deliveries）: 投稿とスレッドの bot の会話
+      getPost: async () => ({ id: 'p_000000000aaaaaa', threadId: null, text: 'こんにちは' }),
+      threads: { get: async () => ({ sessions: { b_1: 's1' } }) },
     },
     bots: { get: async ({ botId }) => ({ id: botId, name: 'Owl', icon: '🦉', pulse: { on: false, everyMin: 10, backend: '', model: '', channelId: '' } }), overview: async ({ botId } = {}) => [{ id: botId ?? 'b_1', name: 'Owl', icon: '🦉', persona: '', backend: 'fake', model: '', effort: '', mode: 'default',
       folders: [], sendToOthers: true, sendTargets: [], pulse: { on: false, everyMin: 10, backend: '', model: '', channelId: '' }, dmChannelId: 'c_1', dmSessionId: null, createdAt: 0, updatedAt: 0,
@@ -247,6 +250,7 @@ export default async function (t) {
     'channels.get': [{ channelId: 'c_000000000aaaaaa' }], 'channels.read': [{ channelId: 'c_000000000aaaaaa' }], 'channels.search': [{ query: 'こんにちは' }],
     'channels.wakePreview': [{ channelId: 'c_000000000aaaaaa', text: '@everyone' }],
     'channels.threadBudget': [{ channelId: 'c_000000000aaaaaa', threadId: 'p_000000000bbbbbb' }],
+    'channels.deliveries': [{ channelId: 'c_000000000aaaaaa', postId: 'p_000000000aaaaaa' }],
     'memory.list': [{ layer: 'user' }], 'memory.search': [{ query: 'PR' }],
     'git.commit': [{ hash: 'abc1234' }], 'git.worktree': [{ worktree: 'C:/r' }],
     'bots.get': [{ botId: 'b_1' }], 'brain.view': [{ botId: 'b_1' }], 'brain.wakeList': [{ botId: 'b_1' }],

@@ -96,7 +96,18 @@
 .post-tool:hover,.post-tool[aria-expanded=true]{background:var(--surface-2);color:var(--ink)}
 .post-tool svg.i{width:16px;height:16px}
 .post-tool.add{opacity:1}
-@media (hover:none){.post-tools{display:none}}
+/* コピーの ✓（Chats の発言のコピーと同じ） */
+.post-tool.copy .ok{display:none}
+.post-tool.copy.done .cp{display:none}
+.post-tool.copy.done .ok{display:block}
+.post-tool.copy svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+.post-tool.copy.done{color:var(--ink)}
+/* タッチ（ホバーが無い）: ⋯ だけを薄く常に出す（36px）。ほかの道具は長押しのメニューから */
+@media (hover:none){
+  .post-tools{opacity:.6;pointer-events:auto;background:transparent;box-shadow:none;top:0;right:4px}
+  .post-tool:not(.more){display:none}
+  .post-tool.more{width:36px;height:36px}
+}
 
 /* ---- 入力欄。1 つの角丸の箱（--surface-1・--r-l）。Chats の入力欄と同じ作り（チップは無い） */
 .ch-composer{position:relative;flex:none;padding:4px 16px 12px;min-width:0}

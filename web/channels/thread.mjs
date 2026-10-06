@@ -16,6 +16,8 @@ import { createThreadComposer } from './thread-composer.mjs';
 import { PLAIN, plainOption, shownBot } from './plain-bot.mjs';
 import { threadDraftKey } from './ch-attach-model.mjs';
 import { openEmojiPicker } from '../emoji-picker.mjs';
+import { postMenu, setupPostMenu, menuPoint } from './post-menu.mjs';
+import { openSourceDialog } from '../message-actions.mjs';
 import { createDeck } from './deck.mjs';
 import { createThreadHead } from './thread-head.mjs';
 import { createThreadToc } from './thread-toc.mjs';
@@ -611,27 +613,42 @@ export function createThread(host) {
     }
   }
 
-  function openMenu(p, x, y, anchor) {
-    const items = [
-      { label: t('channels:feed.react'), onClick: () => {
-        const at = postEls.get(p.id)?.querySelector('.post-tool.add') ?? anchor;
-        openEmojiPicker({ anchor: at, title: t('channels:feed.reactPicker'), onPick: (emoji) => react(p, emoji, true, (p.reactions?.[emoji] ?? []).some((a) => a.kind === 'human')) });
-      } },
-      { sep: true },
-      { label: t('channels:feed.copyText'), onClick: () => { navigator.clipboard?.writeText(p.text ?? '').catch(() => {}); } },
-    ];
-    if (p.turn?.sessionId) items.splice(1, 0, { label: t('channels:feed.openSession'), onClick: () => host.openSession(p.turn.sessionId) });
-    host.showMenu(x, y, items, authorInfo(p.author, ctx).name);
+  /** エージェントに渡した原文（channels.deliveries）。bot ごとに切り替えて見る（聞こえた投稿はその印つき） */
+  async function showSource(p, opener) {
+    try {
+      const got = await host.invoke('channels.deliveries', { channelId: S.channelId, postId: p.id });
+      const list = got?.deliveries ?? [];
+      if (!list.length) { composer.say(t('channels:thread.noSource')); return; }
+      openSourceDialog({ opener, variants: list.map((d) => ({
+        label: `${S.bots.get(d.botId)?.name ?? t('channels:feed.unknownBot')}${d.heard ? ` · ${t('channels:thread.heardMark')}` : ''}`,
+        text: d.text, at: d.at ? whenText(Date.parse(d.at)) : '' })) });
+    } catch (err) { composer.say(t('channels:thread.sourceFailed', { error: err?.message ?? String(err) }), true); }
   }
-  log.addEventListener('contextmenu', (e) => {
-    const node = e.target.closest?.('.post');
-    if (!node || e.target.closest('a, button, .present')) return;
-    if (String(window.getSelection?.() ?? '').trim()) return;
+  function openMenu(p, x, y, anchor, alignRight = false) {
+    const node = postEls.get(p.id);
+    const more = node?.querySelector('.post-tool.more') ?? null;
+    // 原文は、このスレッド（DM）で bot が受けた人の投稿だけ
+    const received = p.author?.kind === 'human' && (S.channel?.kind === 'dm' || Object.keys(S.thread?.sessions ?? {}).length > 0);
+    const { items, title } = postMenu({
+      post: p, t, name: authorInfo(p.author, ctx).name, time: node?.querySelector('.post-when')?.textContent ?? '',
+      copyButton: node?.querySelector('.post-tool.copy') ?? null,
+      react: () => {
+        const at = node?.querySelector('.post-tool.add') ?? anchor;
+        openEmojiPicker({ anchor: at, title: t('channels:feed.reactPicker'), onPick: (emoji) => react(p, emoji, true, (p.reactions?.[emoji] ?? []).some((a) => a.kind === 'human')) });
+      },
+      source: received ? () => showSource(p, more ?? anchor) : null,
+      openSession: p.turn?.sessionId ? () => host.openSession(p.turn.sessionId) : null,
+    });
+    more?.setAttribute('aria-expanded', 'true');
+    node?.classList.add('menu-open');
+    host.showMenu(x, y, items, title, { alignRight, onClose: () => { more?.setAttribute('aria-expanded', 'false'); node?.classList.remove('menu-open'); } });
+  }
+  // 右クリック・長押し・Shift+F10・メニューキー（Chats の発言と同じ口。web/message-actions.mjs の setupMessageMenu）
+  setupPostMenu(log, (node, at) => {
     const p = S.index.get(node.dataset.postId);
     if (!p || p.deletedAt) return;
-    e.preventDefault();
-    const r = node.getBoundingClientRect();
-    openMenu(p, e.clientX || r.left + 8, e.clientY || r.bottom, node);
+    const pt = menuPoint(node, at);
+    openMenu(p, pt.x, pt.y, node, pt.alignRight);
   });
   jump.onclick = () => toBottom();
   log.addEventListener('scroll', () => {

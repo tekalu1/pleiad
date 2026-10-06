@@ -21,7 +21,9 @@ export default async function (t) {
   const tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'ops-channels-'));
   try {
     // ---- 定義
-    t.ok('操作は 21 個（集団宛ての wakePreview・スレッドの予算の内訳 threadBudget・スレッドの索引 threads と状態 setThreadStatus・題 setThreadTitle・設定 threadSettings・返信の予定 schedulePost を含む）', IDS.every((id) => registry.get(id)) && registry.ops.filter((o) => o.id.startsWith('channels.')).length === 21);
+    t.ok('操作は 22 個（集団宛ての wakePreview・スレッドの予算の内訳 threadBudget・スレッドの索引 threads と状態 setThreadStatus・題 setThreadTitle・設定 threadSettings・返信の予定 schedulePost・原文 deliveries を含む）', IDS.every((id) => registry.get(id)) && registry.ops.filter((o) => o.id.startsWith('channels.')).length === 22);
+    t.ok('原文 deliveries は読み取りで、画面の道具だけ（MCP・CLI に出さない。人だけ）', registry.get('channels.deliveries').risk === 'read' && registry.get('channels.deliveries').surfaces.ui === true
+      && registry.get('channels.deliveries').surfaces.mcp === false && !registry.get('channels.deliveries').surfaces.cli);
     const risk = (id) => registry.get(id).risk;
     t.ok('危険度: 読む 7 つは read・書く 12 は write・wake は guarded（human-only はない。ADR 0082 の 5 つ以外は AI も使える）', ['list', 'get', 'read', 'search', 'wakePreview', 'threadBudget', 'threads'].every((v) => risk(`channels.${v}`) === 'read')
       && ['create', 'update', 'archive', 'post', 'edit', 'delete', 'react', 'markRead', 'stopThread', 'setThreadStatus', 'setThreadTitle', 'threadSettings'].every((v) => risk(`channels.${v}`) === 'write') && risk('channels.wake') === 'guarded' && risk('channels.schedulePost') === 'guarded');

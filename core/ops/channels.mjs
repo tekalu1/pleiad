@@ -235,6 +235,39 @@ export const channelOps = [
     }),
   }),
   defineOp({
+    // エージェントに渡した原文（ADR 9101。Chats の「エージェントに渡した原文を見る」と同じ）: スレッドの各 bot の会話の履歴から、
+    // その投稿を運んだ発言を、包み（<pleiad-channel post="P">・<pleiad-channel-thread>）を分ける前の生の本文で返す。人だけ（画面の道具）
+    id: 'channels.deliveries', summary: D('deliveries', 'summary'), risk: 'read',
+    input: z.object({ channelId: channelId('deliveries'), postId: postId('deliveries') }),
+    output: z.object({ deliveries: z.array(z.object({ botId: z.string(), sessionId: z.string(), at: z.string().nullable(), heard: z.boolean(), text: z.string() })) }),
+    surfaces: { ui: true, mcp: false, cli: false },
+    handler: async (ctx, args) => run(ctx, async () => {
+      if (ctx.principal?.by !== 'human') throw new OpError('NEEDS_UI', agentT(ctx.locale, 'ops.errors.NEEDS_UI'));
+      const post = await ctx.channels.getPost(args);
+      if (!post) throw new OpError('POST_NOT_FOUND', agentT(ctx.locale, 'ops.errors.POST_NOT_FOUND', { id: args.postId }));
+      const channel = await ctx.channels.get({ channelId: args.channelId });
+      const sessions = new Map();
+      if (channel.kind === 'dm') {
+        const bot = channel.botId ? await ctx.bots?.get({ botId: channel.botId }) : null;
+        if (bot?.dmSessionId) sessions.set(bot.id, bot.dmSessionId);
+      } else {
+        const th = await ctx.channels.threads.get(args.channelId, post.threadId ?? post.id).catch(() => null);
+        for (const [botId, sessionId] of Object.entries(th?.sessions ?? {})) sessions.set(botId, sessionId);
+      }
+      const mark = `post="${post.id}"`;
+      const heardRe = new RegExp(`<pleiad-channel\\b[^>]*\\spost="${post.id}"[^>]*\\sheard="true"|<pleiad-channel\\b[^>]*\\sheard="true"[^>]*\\spost="${post.id}"`);
+      const deliveries = [];
+      for (const [botId, sessionId] of sessions) {
+        const messages = await ctx.rawMessages?.(sessionId).catch(() => []) ?? [];
+        for (const m of messages) {
+          if (m?.role !== 'user' || typeof m.text !== 'string' || !m.text.includes(mark)) continue;
+          deliveries.push({ botId, sessionId, at: m.at ?? null, heard: heardRe.test(m.text), text: m.text });
+        }
+      }
+      return { deliveries };
+    }),
+  }),
+  defineOp({
     // スレッドへの返信を日時を指定して送る（入力欄の送信の日時。ADR 9101・0103）。AI には作らせない（sessions.scheduleSend と同じ）
     id: 'channels.schedulePost', summary: D('schedulePost', 'summary'), risk: 'guarded',
     approvalWords: 'schedule',

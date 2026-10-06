@@ -150,9 +150,11 @@ let openDialog = null;
 /**
  * 「エージェントに渡した原文」のモーダル。添付の一覧の面（web/attachment-list.mjs）と同じ作り。
  * 700px 以下は下からのシート。Esc・閉じる・背後の押下で閉じ、フォーカスは opener（⋯）へ戻す。
- * @param {{ text: string, at?: string, opener?: HTMLElement | null }} o
+ * variants を渡すと、頭に切り替え（チャンネルのスレッドで bot ごとに渡した原文。web/channels/thread.mjs）
+ * @param {{ text?: string, at?: string, opener?: HTMLElement | null, variants?: { label: string, text: string, at?: string }[] }} o
  */
-export function openSourceDialog({ text, at = '', opener = null }) {
+export function openSourceDialog({ text = '', at = '', opener = null, variants = null }) {
+  if (variants?.length) ({ text, at = '' } = variants[0]);
   openDialog?.close();
   const dialog = el('dialog', 'src-dlg');
   const titleId = `srcTitle${Math.random().toString(36).slice(2, 8)}`;
@@ -175,7 +177,26 @@ export function openSourceDialog({ text, at = '', opener = null }) {
   head.append(copy, close);
   const body = el('pre', 'src-body', String(text ?? ''));
   body.tabIndex = 0;
-  inner.append(el('div', 'src-handle'), head, body);
+  const time = head.querySelector('.src-time');
+  let tabs = null;
+  if (variants?.length > 1) {
+    tabs = el('div', 'src-tabs');
+    tabs.setAttribute('role', 'group');
+    tabs.setAttribute('aria-label', t('chat.message.sourceFor'));
+    variants.forEach((v, i) => {
+      const b = el('button', 'src-tab', v.label);
+      b.type = 'button';
+      b.setAttribute('aria-pressed', String(i === 0));
+      b.onclick = () => {
+        text = v.text;
+        body.textContent = v.text;
+        if (time) time.textContent = v.at ?? '';
+        for (const x of tabs.children) x.setAttribute('aria-pressed', String(x === b));
+      };
+      tabs.append(b);
+    });
+  }
+  inner.append(el('div', 'src-handle'), head, ...(tabs ? [tabs] : []), body);
   dialog.append(inner);
 
   let timer = 0;

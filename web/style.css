@@ -685,6 +685,9 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 .src-time{font-size:var(--fs-xs);color:var(--ink-weak)}
 .src-btn{display:inline-flex;align-items:center;gap:5px;font-size:var(--fs-s);padding:3px 10px}
 .src-btn svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
+.src-tabs{display:flex;flex-wrap:wrap;gap:6px;padding:0 16px 8px}
+.src-tab{padding:4px 10px;border-radius:var(--r-pill);background:transparent;color:var(--ink-weak);font-size:12px;cursor:pointer}
+.src-tab[aria-pressed=true]{background:var(--surface-2);color:var(--ink)}
 .src-btn .ok{display:none}
 .src-btn.done .cp{display:none}
 .src-btn.done .ok{display:block}

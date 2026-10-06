@@ -3817,6 +3817,15 @@ function opsDeps(lng = currentLocale()) {
     ...botHost?.opsDeps(),
     // スレッドへの返信の予定（channels.schedulePost。kind 'post'）
     schedulePost: (args) => schedulePost(args),
+    // 会話の発言を、包みを分ける前の生の本文で読む（channels.deliveries。エージェントに渡した原文）
+    // Pleiad が持つ会話（bot の会話）は、読み込んで最新の行を記録へ足してから、記録の生の行を返す（getMessages の返りは包みを分けた後の形）
+    rawMessages: async (sessionId) => {
+      const backend = await resolveBackendForSession(sessionId);
+      if (!backend?.getMessages) return [];
+      const shown = await backend.getMessages(sessionId);
+      const record = await conversation(sessionId).catch(() => null);
+      return Array.isArray(record?.messages) ? record.messages : shown;
+    },
     describeAttachments,
     modeOf: async (sessionId) => {
       try {

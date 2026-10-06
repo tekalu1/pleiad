@@ -19,6 +19,7 @@ import { openChannelSettings } from './feed-settings.mjs';
 import { openEmojiPicker } from '../emoji-picker.mjs';
 import { headingButton } from './routine-entry.mjs';
 import { shownBot } from './plain-bot.mjs';
+import { postMenu, setupPostMenu, menuPoint } from './post-menu.mjs';
 
 const PAGE = 50;
 const NEAR_BOTTOM = 80;
@@ -396,7 +397,7 @@ export function createFeed(host) {
     host.openThread?.(p.channelId ?? S.id, p.threadId ?? p.id);
   }
 
-  function openMenu(p, x, y, anchor) {
+  function openMenu(p, x, y, anchor, alignRight = false) {
     if (p.home) {
       host.showMenu(x, y, [
         { label: t('channels:side.openThread'), onClick: () => openThread(p) },
@@ -405,29 +406,26 @@ export function createFeed(host) {
       ], authorInfo(p.author, ctx).name);
       return;
     }
-    const items = [
-      { label: t('channels:feed.reply'), onClick: () => openThread(p) },
-      { label: t('channels:feed.react'), onClick: () => {
-        const at = postEls.get(p.id)?.querySelector('.post-tool.add') ?? anchor;
+    const node = postEls.get(p.id);
+    const { items, title } = postMenu({
+      post: p, t, name: authorInfo(p.author, ctx).name, time: node?.querySelector('.post-when')?.textContent ?? '',
+      copyButton: node?.querySelector('.post-tool.copy') ?? null,
+      reply: () => openThread(p),
+      react: () => {
+        const at = node?.querySelector('.post-tool.add') ?? anchor;
         openEmojiPicker({ anchor: at, title: t('channels:feed.reactPicker'), onPick: (emoji) => react(p, emoji, true, (p.reactions?.[emoji] ?? []).some((a) => a.kind === 'human')) });
-      } },
-      { sep: true },
-      { label: t('channels:feed.copyText'), onClick: () => { navigator.clipboard?.writeText(p.text ?? '').catch(() => {}); } },
-    ];
-    if (p.turn?.sessionId) items.splice(2, 0, { label: t('channels:feed.openSession'), onClick: () => host.openSession(p.turn.sessionId) });
-    host.showMenu(x, y, items, authorInfo(p.author, ctx).name);
+      },
+      openSession: p.turn?.sessionId ? () => host.openSession(p.turn.sessionId) : null,
+    });
+    host.showMenu(x, y, items, title, { alignRight });
   }
 
-  // 右クリック・長押し（web/long-press.mjs が contextmenu を起こす）・Shift+F10 で同じメニュー
-  log.addEventListener('contextmenu', (e) => {
-    const node = e.target.closest?.('.post');
-    if (!node || e.target.closest('a, button')) return;
-    if (String(window.getSelection?.() ?? '').trim()) return;   // 文字を選んでいるときはブラウザーの「コピー」に任せる
+  // 右クリック・長押し（web/long-press.mjs が contextmenu を起こす）・Shift+F10・メニューキーで同じメニュー（Chats の発言と同じ口）
+  setupPostMenu(log, (node, at) => {
     const p = S.index.get(node.dataset.postId);
     if (!p || p.deletedAt) return;
-    e.preventDefault();
-    const r = node.getBoundingClientRect();
-    openMenu(p, e.clientX || r.left + 8, e.clientY || r.bottom, node);
+    const pt = menuPoint(node, at);
+    openMenu(p, pt.x, pt.y, node, pt.alignRight);
   });
   log.addEventListener('click', (e) => {
     if (S.id !== HOME || e.target.closest('a, button, .post-tools')) return;

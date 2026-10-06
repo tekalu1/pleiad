@@ -585,6 +585,21 @@
       "input": "df30662261e2"
     },
     {
+      "id": "channels.deliveries",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": false,
+        "cli": false
+      },
+      "legacyCommand": null,
+      "input": "5650092e1f2f"
+    },
+    {
       "id": "channels.edit",
       "risk": "write",
       "riskOf": false,

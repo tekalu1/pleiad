@@ -6172,7 +6172,7 @@ const channelsUi = setupChannels({
     paint: () => paintDelegateCards(),
   },
   openSidebar: () => setSidebar(true),
-  showMenu: (x, y, items, title) => showMenu(x, y, items, title),
+  showMenu: (x, y, items, title, opts) => showMenu(x, y, items, title, opts),
   renderAssistantMarkdown, renderPresent,
 });
 // 通知ボタンと通知の一覧（承認済み 2026-10-06。web/notification-inbox.mjs）。件数は notificationsChanged、一覧は notifications.list
