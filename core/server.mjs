@@ -99,7 +99,7 @@ import { createVisualizationCollector, visualizeInstructions, snapshotResponse, 
 import { plyParts } from './instruction-amount.mjs';
 import { computerPrompt } from './backends/computer-delivery.mjs';
 import { MIN_BUDGET, MAX_BUDGET } from '../web/instruction-amount.mjs';
-import { parentPortBrowser, browserEnvironment, browserInstruction } from './agent-browser.mjs';
+import { parentPortBrowser, browserEnvironment, browserInstruction, forgetBrowserEnvironment } from './agent-browser.mjs';
 import { parentPortScreencast, createScreencastHub, screencastCommand } from './browser-screencast.mjs';
 import { createBrowserSiteApprovals } from './browser-confirm.mjs';
 import { createBrowserProfiles, createBrowserBridge, findProfile, BROWSER_MCP_PATH } from './browser-profiles.mjs';
@@ -109,7 +109,7 @@ import { computerUsePrefs, validComputerUse } from '../web/computer-prefs.mjs';
 import { computerUseCapability } from './computer-use-capability.mjs';
 import { streamEvents } from "../web/session-stream.mjs";
 import { serveFrom } from "../web/history-sync.mjs";
-import { switchBackend, createConversation, deleteUnsentConversation, deleteHiddenConversation, pendingHandoff, conversation } from "./conversations.mjs";
+import { switchBackend, createConversation, deleteUnsentConversation, deleteHiddenConversation, deleteConversation, pendingHandoff, conversation } from "./conversations.mjs";
 import { familyOf } from "./lineage.mjs";
 import {
   getBackend, sessionBackend, listBackends, defaultBackend, describeBackends, resolveBackendForSession,
@@ -2778,6 +2778,77 @@ async function deleteUnsentSessionOf(args) {
   } finally { switching.delete(sessionId); completionNotices.changed(sessionId); }
 }
 
+/**
+ * 会話を消せないなら、理由（code: CANNOT_DELETE）を投げる（sessions.delete の承認カードの前と、消す直前。ADR 0147）。
+ * 断るのは、走っている・準備中（切り替え・分岐）・承認や質問を待っている・裏の作業（Codex のバックグラウンド端末・シェルの行）がある・
+ * 委譲の子として終わっていない・委譲した子が終わっていない（完了の通知がまだ届いていないものを含む）・送信待ちや送信予定がある会話と、bot の会話
+ */
+const deleteRefusal = (message) => Object.assign(new Error(message), { code: 'CANNOT_DELETE' });
+async function refuseDelete(sessionId) {
+  if (!sessionId) throw new Error(t('session.required'));
+  const meta = await store.get(sessionId);
+  // bot の会話は Channels のスレッド・DM・ルーティンが持つ（一覧にも出ない）。隠れた会話は host.deleteHidden が片付ける（ADR 0127）
+  if (meta.bot) throw deleteRefusal(t('session.deleteBot'));
+  if (sessionBusy(sessionId) || [...runtime.waiting.values()].some(w => w.payload?.sessionId === sessionId)
+      || runtime.background.get(sessionId)?.tasks?.length || shellRuns.runningIn(sessionId)
+      || (agentTasks?.running() ?? []).some(r => r.sessionId === sessionId)) throw deleteRefusal(t('session.deleteBusy'));
+  if ((agentTasks?.running() ?? []).some(r => r.parentSessionId === sessionId)) throw deleteRefusal(t('session.deleteChildren'));
+  if ((await outbox.list(sessionId)).some(m => !['sent', 'cancelled'].includes(m.status))
+      || schedule.list().some(row => row.sessionId === sessionId && row.kind === 'send')) throw deleteRefusal(t('session.deleteQueued'));
+}
+
+/**
+ * 会話を消す（sessions.delete。WS の deleteSession の中身。送った会話も。ADR 0147）。消すのは Pleiad の記録だけで、
+ * ネイティブの会話（Claude の transcript・Codex の rollout・Antigravity の控え）は消さない（バックエンドの deleteSession は呼ばない）。
+ * 一緒に消す: sidecar（DB の sessions・session_fields・context_entry_refs）・会話の記録（索引・本文・引き継ぎの写し）・提示の記録（presents）・
+ * 撮影（computer use）・git の撮影の ref（refs/pleiad/turn/）・内蔵ブラウザーの設定・自動圧縮と上限の再開の予約・設定の変更の承認の結果・まだ知らせていない完了。
+ * 残す: 会話に結び付いた worktree（ユーザーの変更が入っている。worktree の画面から扱う）・使用量の記録・委譲のタスクの記録（履歴）・
+ * 添付のファイル（uploads。ネイティブの会話と分岐した会話がパスで指している）
+ */
+async function deleteSessionOf(sessionId) {
+  await refuseDelete(sessionId);
+  const backend = await resolveBackendForSession(sessionId);
+  if (!backend) throw new Error(t('session.notFound'));
+  // 上の確かめの間（await）に始まったターン・準備は、ここで同期に見直してから押さえる（switching の間は送信も準備も始まらない）
+  if (sessionBusy(sessionId)) throw deleteRefusal(t('session.deleteBusy'));
+  switching.add(sessionId);
+  let deleted = false;
+  try {
+    // git の撮影の ref は会話が使った作業場所ごとのリポジトリにある。sidecar を消す前に集める
+    const meta = await store.get(sessionId);
+    const cwds = new Set([meta.cwd, meta.nextSettings?.cwd, ...(meta.history ?? []).filter(h => h?.field === 'cwd').flatMap(h => [h.from, h.to])]
+      .filter(c => typeof c === 'string' && c));
+    compactionScheduler.cancel(sessionId);
+    queuedCompactions.delete(sessionId);
+    shellRuns.stopSession(sessionId);
+    await deleteConversation(sessionId, backend.id);
+    await store.removeSession(sessionId);
+    deleted = true;
+    await schedule.cancel(`resume:${sessionId}`).catch(() => {});
+    clearTimeout(limitReleaseTimers.get(sessionId));
+    limitReleaseTimers.delete(sessionId); limitStates.delete(sessionId); limitPoll.delete(sessionId);
+    relayHops.delete(sessionId);
+    completionNotices.forget(sessionId);
+    pushNotifier.viewed(sessionId);
+    releaseAgentConnection(sessionId);
+    const cleanups = [
+      history.forgetPresents(sessionId),
+      computerShots.removeSession(sessionId),
+      forgetBrowserEnvironment({ bridge: agentBrowser, dataDir: store.dataDir, sessionId }),
+      settingApprovals?.forget(sessionId),
+      ...[...cwds].map(cwd => gitActivity.forget(cwd, sessionId)),
+    ];
+    for (const r of await Promise.allSettled(cleanups)) {
+      if (r.status === 'rejected') console.error('  消した会話の記録の片付けに失敗:', String(r.reason?.message ?? r.reason));
+    }
+    emitGlobal({ type: "sessionsChanged", sessionId: null, deleted: sessionId });
+    return "deleted";
+  } finally {
+    switching.delete(sessionId);
+    if (!deleted) completionNotices.changed(sessionId);
+  }
+}
+
 /** 会話の圧縮を頼む（sessions.compact。WS の compactConversation の中身） */
 async function requestCompaction(args) {
   const sessionId = args?.sessionId;
@@ -2937,6 +3008,8 @@ async function markReads(reads) {
 const opsConversations = {
   create: (args) => createSession(args),
   deleteUnsent: (sessionId) => deleteUnsentSessionOf({ sessionId }),
+  canDelete: (sessionId) => refuseDelete(sessionId),
+  delete: (sessionId) => deleteSessionOf(sessionId),
   // 止めた会話の変更の記録に、誰が・どこから・なぜを残す（AI の呼び出しだけ。画面の「止める」は今までどおり記録しない）
   abort: async ({ sessionId, kind, note, actor }) => {
     const result = await abortSessions({ sessionId, reason: kind });
@@ -4458,6 +4531,8 @@ agentTasks = await createAgentTasks({
   execute: async (task, prompt, signal) => {
     if (signal.aborted) { await worktreeHost.taskDone(task).catch(() => {}); return { outcome: 'aborted' }; }
     if (sessionBusy(task.sessionId)) return { requeue: true };
+    // 子の会話を人が消した（sessions.delete。ADR 0147）。追加の指示・やり直しは、消した会話を作り直さずに失敗で返す
+    if (!(await resolveBackendForSession(task.sessionId))) throw new Error(agentT(await agentLocaleFor(task.parentSessionId), 'delegation.childDeleted'));
     const execution = { outcome: null, error: null, rejections: [], stopped: [], reply: null, timer: null, streamed: '', streamEnded: false };
     taskExecutions.set(task.sessionId, execution);
     const stopChild = () => {
@@ -6153,6 +6228,8 @@ wss.on("connection", (ws, req) => {
 
         case "deleteUnsentSession":
           return viaOp('sessions.deleteUnsent', args, { shape: () => "deleted" });
+        case "deleteSession":
+          return viaOp('sessions.delete', args, { shape: () => "deleted" });
 
         // エージェントの切り替え（sessions.switchBackend。ADR 0105）
         case "switchBackend":

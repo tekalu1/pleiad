@@ -2886,7 +2886,13 @@ function onEvent(ev, replay = false) {
       paintOutbox();
       return;
     case "sessionsChanged":
-      if (ev.deleted === state.current) { state.current = null; clearThread(); loadDraft(); }
+      if (ev.deleted === state.current) {
+        // 開いていた会話が消えた（未送信の削除・sessions.delete。ADR 0147）。前の会話の文脈のメーター・圧縮の予約も持ち越さない
+        state.current = null; clearThread(); loadDraft();
+        state.messages = []; state.contextWindow = null; state.compactionAt = null; state.compactionPhase = null; state.compactions = [];
+        paintContextStrip();
+        refreshContextEntry().catch(() => {});
+      }
       return refresh();
     case 'claudeAccountsChanged':
       claudeAccounts.invalidate();
@@ -3895,10 +3901,12 @@ const side = createSide({
 });
 
 function renderSessions() {
-  // 委譲された子の会話（Pleiad タスク）は一覧に出さない。開くのは「Pleiad タスク」の一覧から
+  // 委譲された子の会話（Pleiad タスク）は一覧に出さない。開くのは「Pleiad タスク」の一覧から。
+  // 依頼元の会話を消した子（ADR 0147）は、開く口が無くなるので一覧に出す
   // bot の会話（Channels のスレッド・DM・ルーティン。ADR 0109）も出さない。あなたを待っている間だけ出る
   // 端末の AI から任された会話（delegation.remote）は、依頼元の会話がこの PC に無いので一覧に出す（⇄ の印つき）
-  const listed = state.sessions.filter(s => (!s.delegation || s.delegation.remote) && (!s.bot || state.waitingIds.has(s.id)));
+  const ids = new Set(state.sessions.map(s => s.id));
+  const listed = state.sessions.filter(s => (!s.delegation || s.delegation.remote || !ids.has(s.delegation.parentSessionId)) && (!s.bot || state.waitingIds.has(s.id)));
   const unreadIds = new Set(listed.filter(s => readCompletions.hasUnread(s)).map(s => s.id));
   // 脇が見えていない間の印（web/open-sidebar-mark.mjs）。今の会話は数えない
   paintOpenSidebar($("openSidebar"), attentionCounts(listed, { currentId: state.current, waitingIds: state.waitingIds, unreadIds,
@@ -4545,7 +4553,9 @@ $('workEntryButton').onclick = () => openWork();
 function syncParentEntry() {
   const delegation = state.sessions.find(s => s.id === state.current)?.delegation;
   const remote = delegation?.remote ?? null;
-  const parent = remote ? null : delegation?.parentSessionId;
+  // 依頼元の会話を消した（ADR 0147）なら出さない。端末の AI から任された会話の依頼元は端末にあるので、戻る口は出さない
+  const parentId = remote ? null : delegation?.parentSessionId;
+  const parent = parentId && state.sessions.some(s => s.id === parentId) ? parentId : null;
   $('parentChatEntry').hidden = !parent;
   $('parentChatEntry').onclick = parent ? () => select(parent) : null;
   const origin = $('remoteOriginLine');
@@ -6603,14 +6613,15 @@ function familyMenu(root, members, x, y) {
   ], t("session.menu.groupTitle", { title: rowLabel(root) }));
 }
 
-async function deleteUnsentRow(s) {
+/** 会話を消す。未送信は deleteUnsentSession、送った会話は deleteSession（sessions.delete。ADR 0147） */
+async function deleteSessionRow(s, command = 'deleteUnsentSession') {
   const pending = { kind: 'delete', text: t('pending.deleting'), visible: false };
   pendingRows.set(s.id, pending);
   pendingDeletedRows.set(s.id, s);
   renderSessions();
   const cancel = pendingAfterDelay(pending);
   try {
-    await cmd('deleteUnsentSession', { sessionId: s.id });
+    await cmd(command, { sessionId: s.id });
     state.drafts.delete(s.id);
     try { localStorage.setItem(DRAFT_STORE, JSON.stringify([...state.drafts])); } catch {}
     const row = document.querySelector(`[data-session="${CSS.escape(s.id)}"]`);
@@ -6624,7 +6635,7 @@ async function deleteUnsentRow(s) {
     await refresh().catch(() => {});
     renderSessions();
     document.querySelector(`[data-session="${CSS.escape(s.id)}"]`)?.classList.add('pending-bounce');
-    side.showUndo(t('pending.failed', { reason: e.message }), () => deleteUnsentRow(s), { retry: true });
+    side.showUndo(t('pending.failed', { reason: e.message }), () => deleteSessionRow(s, command), { retry: true });
   } finally { cancel(); }
 }
 
@@ -6703,8 +6714,8 @@ function rowMenu(s, x, y, lead = []) {
     { label: t("session.menu.copyCwd"), hint: s.cwd ?? "", onClick: () => copy(s.cwd, t("session.menu.cwdCopied"), t("session.menu.cwdCopyFailed")) },
     { label: t("session.menu.copyId"), onClick: () => copy(s.id, t("session.menu.idCopied"), t("session.menu.idCopyFailed")) },
     ...(s.unsent ? [{ label: t("session.menu.deleteUnsent"), sub: () => [
-      { label: t("session.menu.deleteWithDraft"), onClick: () => deleteUnsentRow(s) },
-    ] }] : []),
+      { label: t("session.menu.deleteWithDraft"), onClick: () => deleteSessionRow(s) },
+    ] }] : [{ label: t("session.menu.delete"), onClick: () => confirmDeleteSession(s, x, y) }]),
   ];
   return items;
   };
@@ -6771,6 +6782,15 @@ async function changeStatusName(from, to) {
     renderSessions();
     side.showUndo(t('pending.failed', { reason: e.message }), () => changeStatusName(from, next), { retry: true });
   } finally { cancel(); }
+}
+
+/** 送った会話を消す前の確かめ。戻せないことと、エージェント側の会話の記録は残ることを書く（ADR 0147） */
+function confirmDeleteSession(s, x, y) {
+  const title = s.title && s.title !== "(no title)" ? s.title : t("session.untitled");
+  showMenu(x, y, [
+    { label: t('pending.cancel'), onClick: () => {} },
+    { label: t('session.menu.deleteConfirm'), onClick: () => deleteSessionRow(s, 'deleteSession') },
+  ], { text: t('pending.deleteSessionConfirm', { title }), wrap: true });
 }
 
 function confirmDeleteStatus(st, count, x, y) {

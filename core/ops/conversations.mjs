@@ -187,6 +187,37 @@ export const conversationOps = [
     },
   }),
 
+  // 会話を消す（送った会話も）。Pleiad の記録だけを消し、ネイティブの会話（transcript・rollout）は残す。戻せないので guarded（ADR 0147）。
+  // 走っている・承認や裏の作業を待っている・委譲の子が終わっていない・bot の会話は、サーバーが断る（ctx.conversations.delete）
+  defineOp({
+    id: 'sessions.delete',
+    summary: 'agent:ops.sessions.delete.summary',
+    risk: 'guarded',
+    scope: 'session',
+    input: z.object({ sessionId: sessionId('delete') }),
+    output: z.object({ sessionId: z.string(), deleted: z.boolean() }),
+    // 無い会話・消せない会話は承認カードを出す前に断る（riskOf の失敗は code で返る）
+    riskOf: async (ctx, { sessionId: id }) => {
+      await mustExist(ctx, id);
+      // 自分の会話は消せない（承認の結果を届ける先が無くなる）
+      if (ctx.principal.by === 'agent' && ctx.actor.sessionId === id) throw new OpError('DELETE_SELF', agentT(ctx.locale, 'ops.errors.DELETE_SELF'));
+      await fromHost(() => ctx.conversations.canDelete(id));
+      return 'guarded';
+    },
+    approvalWords: 'conversationDelete',
+    confirm: async (ctx, { sessionId: id }) => {
+      const found = await ctx.sessions.get(id);
+      if (!found) throw missing(ctx, id);
+      return { note: agentT(ctx.locale, 'ops.sessions.delete.card', { title: found.row.title || id }), before: { id } };
+    },
+    surfaces: { ui: true, mcp: 'catalog', cli: { path: ['sessions', 'delete'], positional: ['sessionId'] } },
+    legacyCommand: 'deleteSession',
+    handler: async (ctx, { sessionId: id }) => {
+      await fromHost(() => ctx.conversations.delete(id));
+      return { sessionId: id, deleted: true };
+    },
+  }),
+
   // 会話のターンを止める。止められるのはこのホストで動いている会話だけ。他の会話も止められるので write（読み取りの会話からは断る）。
   // AI は理由（reason）を必ず書き、止めた会話の変更の記録（field: abort）に誰が・どこから・なぜを残す。sessionId を省くと全部を止める口は画面だけ
   defineOp({

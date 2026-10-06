@@ -10,7 +10,7 @@ import { buildItems } from "../web/timeline.mjs";
 import { t, agentT } from "./i18n.mjs";
 import { writeAtomic } from "./atomic-file.mjs";
 import { openData } from "./data-schema.mjs";
-import { conversationTable } from "./db.mjs";
+import { conversationTable, deletedNativeTable } from "./db.mjs";
 import { classifySystemMessages, BOT_RECENT_TAG } from "./system-messages.mjs";
 import { promptTitle } from "./prompt-title.mjs";
 import { WORK_NOTES_VERSION } from "./brain/inner.mjs";
@@ -26,7 +26,14 @@ let table = null;
 let handle = null;
 let writes = Promise.resolve();
 const indexSaved = new Map();   // 索引に最後に書けた JSON（id -> 文字列）。変わった会話だけを書くための比べ元
+// 消した会話（deleteConversation）が持っていたネイティブの id。backend -> Set<nativeId>。一覧から隠す（ADR 0147）
+const deletedNatives = new Map();
+let deletedTable = null;
+const isDeletedNative = (backend, nativeId) => Boolean(deletedNatives.get(backend)?.has(nativeId));
 const indexOf = ({ messages, presents, _dirty, ...meta }) => JSON.stringify(meta);
+
+/** 引き継ぎの文（HISTORY）が指す、履歴の写しのファイル（会話ごとに 1 つ。次の引き継ぎで書き直す） */
+const handoffPath = id => path.join(store.dataDir, `handoff-${crypto.createHash("sha256").update(id).digest("hex")}.json`);
 
 function sessionFilePath(id) {
   const safe = String(id).replace(/[^A-Za-z0-9._-]/g, "_");
@@ -65,6 +72,8 @@ async function all() {
     table = conversationTable(handle.db);
     records = {};
     for (const [id, json] of table.loadRows()) { records[id] = JSON.parse(json); indexSaved.set(id, json); }
+    deletedTable = deletedNativeTable(handle.db);
+    for (const [backend, nativeId] of deletedTable.loadAll()) noteDeleted(backend, nativeId);
     // 既存データのマイグレーション（旧 conversations.json に messages がある場合、個別ファイルへ切り離す）
     let needsMigration = false;
     for (const r of Object.values(records)) {
@@ -133,6 +142,7 @@ export async function closeConversations() {
   handle?.release();
   handle = null; table = null; loading = undefined; records = undefined;
   indexSaved.clear();
+  deletedTable = null; deletedNatives.clear();
 }
 
 /**
@@ -197,6 +207,49 @@ export async function deleteUnsentConversation(id) {
   }
 }
 
+function noteDeleted(backend, nativeId) {
+  if (!deletedNatives.has(backend)) deletedNatives.set(backend, new Set());
+  deletedNatives.get(backend).add(nativeId);
+}
+
+/** 会話が持つネイティブの会話（今のものと、エージェントの切り替え・巻き戻しの前の区間）。[[nativeId, backendId]] */
+function nativesOf(r) {
+  const natives = new Map(r.segments.map(s => [s.nativeId, s.backend]));
+  if (r.nativeId) natives.set(r.nativeId, r.backend);
+  natives.delete(null); natives.delete(undefined);
+  return natives;
+}
+
+/**
+ * 会話を Pleiad の記録から消す（sessions.delete。送った会話も。ADR 0147）。消したら true、記録が無ければ false。
+ * ネイティブの会話（Claude の transcript・Codex の rollout・Antigravity の控え）は消さない（claude --resume・使用量の調査から見えるように）。
+ * 残したネイティブの会話が一覧にネイティブだけの行として戻らないよう、持っていたネイティブの id を DB（deleted_natives）に覚えて隠す。
+ * Pleiad の記録を持たない会話（ネイティブだけの行。id がネイティブの id）は、nativeBackend（その行のエージェント）で隠す。
+ * sidecar（store）と、会話に付いたほかの記録は呼び出し側が消す（core/server.mjs の deleteSessionOf）
+ */
+export async function deleteConversation(id, nativeBackend = null) {
+  const entries = await all();
+  const r = entries[id];
+  const natives = r ? nativesOf(r) : new Map(nativeBackend ? [[id, nativeBackend]] : []);
+  // DB を先に。書けなければ投げて、メモリも会話の記録も変えない
+  const rows = [...natives].map(([nativeId, backend]) => [backend, nativeId]);
+  if (rows.length) {
+    deletedTable.add(rows, id);
+    for (const [backend, nativeId] of rows) noteDeleted(backend, nativeId);
+  }
+  if (!r) return false;
+  delete records[id];
+  try {
+    await save();
+    await fs.rm(sessionFilePath(id), { force: true }).catch(() => {});
+    await fs.rm(handoffPath(id), { force: true }).catch(() => {});
+  } catch (e) {
+    records[id] = r;
+    throw e;
+  }
+  return true;
+}
+
 /**
  * ネイティブ側に transcript が無くて、会話そのものを読み書き・削除できなかった失敗か。
  * Claude の SDK（@anthropic-ai/claude-agent-sdk 0.3.288）は `~/.claude/projects` 配下の `<id>.jsonl` が無いか 0 バイトのとき、
@@ -219,9 +272,7 @@ async function tolerateMissing(call) {
 export async function deleteHiddenConversation(id, backendOf) {
   const r = await conversation(id);
   if (!r) return false;
-  const natives = new Map(r.segments.map(s => [s.nativeId, s.backend]));
-  if (r.nativeId) natives.set(r.nativeId, r.backend);
-  natives.delete(null); natives.delete(undefined);
+  const natives = nativesOf(r);
   for (const backendId of natives.values()) if (typeof backendOf(backendId)?.deleteSession !== "function") return false;
   // transcript の無いネイティブの会話は、消す物が無いので消せたとみなす（nativeSessionMissing）
   for (const [nativeId, backendId] of natives) await tolerateMissing(() => backendOf(backendId).deleteSession(nativeId));
@@ -300,14 +351,15 @@ export function wrapBackend(native) {
   wrapped.listSessions = async (args) => {
     const entries = Object.entries(await all());
     const hidden = new Set(entries.flatMap(([id, r]) => [id, ...r.segments.filter(s => s.backend === native.id).map(s => s.nativeId)]));
-    const rows = (await native.listSessions(args)).filter(s => !hidden.has(s.sessionId));
+    // 消した会話のネイティブの会話（残してある）も出さない（ADR 0147）
+    const rows = (await native.listSessions(args)).filter(s => !hidden.has(s.sessionId) && !isDeletedNative(native.id, s.sessionId));
     for (const [id, r] of entries) if (r.backend === native.id) rows.push(await wrapped.getSession(id));
     return rows;
   };
   wrapped.getSession = async (id) => {
     const entries = await all();
     const r = entries[id];
-    if (!r) return native.getSession(id);
+    if (!r) return isDeletedNative(native.id, id) ? null : native.getSession(id);
     if (r.backend !== native.id) return null;
     const meta = await store.get(id);
     return { ...r.info, ...meta, sessionId: id, tag: Object.hasOwn(meta, "status") ? meta.status : r.info.tag };
@@ -694,7 +746,7 @@ export function wrapBackend(native) {
       const presents = (await wrapped.getPresents(id)).filter((p) => !r.contextSince || p.at >= r.contextSince);
       const messages = r.messages.slice(r.contextStart ?? 0).map(({ thinking, ...m }) => m);
       const transcript = JSON.stringify({ messages, presents });
-      const ref = path.join(store.dataDir, `handoff-${crypto.createHash("sha256").update(id).digest("hex")}.json`);
+      const ref = handoffPath(id);
       await fs.writeFile(ref, transcript);
       const context = transcript.length <= 60000 ? transcript : JSON.stringify({
         partial: true,

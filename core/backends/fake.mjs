@@ -17,6 +17,8 @@
 //   "fail"         … 失敗で終わる（outcome: error。離れた端末への「失敗」の通知を測る）
 //   "limit <resetsAt>" … 指定時刻に解ける使用量の上限（ISO または Unix ミリ秒）
 //   "whoami"       … 渡されたアカウントのトークン（oauthToken）の指紋を本文にする。無ければ account:none
+//   "deleted-natives" … このプロセスで deleteSession に渡されたネイティブの id と、今あるネイティブの会話の id を JSON（{ deleted, live }）で本文にする
+//                    （送った会話の削除がネイティブの会話を消さないことの検査。ADR 0147）
 //   "context:<json>" … ply_context（contextRuntime）のツールを { name, arguments } で 1 回呼び、返りを本文にする
 //   "computer:<json>" … ply_computer（computerRuntime）のツールを { name, arguments }（配列なら順に）呼び、返りを本文にする。tool.result には印の行から作った images と computer を付ける
 //   "computer-hold:<json>" … "computer:" の後、中断されるまで走り続ける（ロックを持ったままのターン）。"computer-instructions" は ply_computer の指示文を返す
@@ -54,6 +56,7 @@ import { undelivered } from "./undelivered.mjs";
 import { computerDisplay, computerToolInput } from "../computer-use/display.mjs";
 
 const sessions = new Map();   // sessionId -> { sessionId, title, cwd, createdAt, lastModified, tag, messages, subagents }
+const deletedNatives = [];    // deleteSession に渡された id（台本 "deleted-natives"）
 const auth = { loggedIn: false, account: null };
 // 台本 "bg-shell" の止め口（Pleiad の会話 id -> taskId -> 止める関数）と、台本 "term" が残した端末（会話 id -> 端末の一覧）
 const shells = new Map();
@@ -693,6 +696,9 @@ export const backend = {
         });
         out.text = `回答: ${JSON.stringify(answer?.answers ?? {})}`;
         await say(emit, out.text, out.uuid);
+      } else if (text === "deleted-natives") {
+        out.text = JSON.stringify({ deleted: deletedNatives, live: [...sessions.keys()] });
+        await say(emit, out.text, out.uuid);
       } else if (/(^|\n)whoami$/.test(text)) {   // 分岐した会話の最初のターンは履歴の引き継ぎ文の末尾に来る
         // トークンそのものは出さない。同じトークンかどうかだけ分かる指紋
         out.text = oauthToken ? `account:${crypto.createHash("sha256").update(oauthToken).digest("hex").slice(0, 12)}` : "account:none";
@@ -812,6 +818,7 @@ export const backend = {
 
   // 隠れた会話の片付け（core/conversations.mjs の deleteHiddenConversation）。Claude の deleteSession と同じく会話を消す
   async deleteSession(sessionId) {
+    deletedNatives.push(sessionId);
     sessions.delete(sessionId);
   },
 

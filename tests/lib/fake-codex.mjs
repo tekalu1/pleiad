@@ -18,7 +18,13 @@ const UNIQUE_IDS = process.env.FAKE_CODEX_UNIQUE_IDS === "1";
 // FAKE_CODEX_LEGACY=1: 以前に作った legacy のスレッドのふり（thread/revert を断る。codex-cli 0.156.1 の実測）
 const LEGACY = process.env.FAKE_CODEX_LEGACY === "1";
 
-const send = (frame) => process.stdout.write(JSON.stringify(frame) + NL);
+const send = (frame) => {
+  if (STATE_DIR && frame.method === 'turn/completed') {
+    const thread = threads.get(frame.params?.threadId);
+    if (thread?.loaded) persist(thread);
+  }
+  process.stdout.write(JSON.stringify(frame) + NL);
+};
 const notify = (method, params) => send({ jsonrpc: "2.0", method, params });
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -53,7 +59,7 @@ let parentFilter = "support";
 const account = { loggedIn: true, email: "tester@example.invalid", planType: "pro" };
 
 function makeThread({ cwd, forkedFromId = null, turns = [], parentThreadId = null, spawn = null }) {
-  const id = `th_${++seq}`;
+  const id = STATE_DIR ? `th_${process.pid}_${++seq}` : `th_${++seq}`;
   const now = secs();
   const t = { id, name: null, cwd: cwd ?? null, createdAt: now, updatedAt: now, forkedFromId, turns, parentThreadId, spawn };
   threads.set(id, t);
@@ -493,9 +499,34 @@ function emitHookRuns(t, turnId) {
 // FAKE_CODEX_LOG があれば、そのファイルへ 1 行 JSON で記録する（テストが「どの接続先・鍵・モデルでターンが走ったか」を見る）
 import fs from "node:fs";
 const LOG = process.env.FAKE_CODEX_LOG;
-const record = (entry) => { if (LOG) fs.appendFileSync(LOG, JSON.stringify(entry) + NL); };
+const record = (entry) => { if (LOG) fs.appendFileSync(LOG, JSON.stringify({ pid: process.pid, ...entry }) + NL); };
+// サーバーを替えて再開するテストだけ、履歴と生きている writer を別プロセスと共有する。
+const STATE_DIR = process.env.FAKE_CODEX_STATE_DIR;
+const statePath = id => path.join(STATE_DIR, `${id}.json`);
+const writerPath = id => path.join(STATE_DIR, `${id}.writer`);
+const persist = t => { if (STATE_DIR && !t.ephemeral) fs.writeFileSync(statePath(t.id), JSON.stringify(t)); };
+function readThread(id) {
+  let t = threads.get(id);
+  if (STATE_DIR && !t?.loaded && fs.existsSync(statePath(id))) {
+    t = { ...JSON.parse(fs.readFileSync(statePath(id), 'utf8')), loaded: false };
+    threads.set(id, t);
+  }
+  return t;
+}
+function claimWriter(t) {
+  if (!STATE_DIR || t.ephemeral) return;
+  let owner;
+  try { owner = Number(fs.readFileSync(writerPath(t.id), 'utf8')); } catch {}
+  if (owner && owner !== process.pid) {
+    let alive = false;
+    try { process.kill(owner, 0); alive = true; } catch {}
+    if (alive) throw new RpcError(`thread ${t.id} already has an active writer`, -32600);
+  }
+  fs.writeFileSync(writerPath(t.id), String(process.pid));
+}
 function applyProvider(t, params) {
   if (t.loaded) return;
+  claimWriter(t);
   t.loaded = true;
   // hooks の config（Hooks を Pleiad がそろえる会話）も読み込んだときのものだけが効く（ロード済みの resume では変わらない）
   t.hooksConfig = params?.config?.hooks ?? null;
@@ -551,6 +582,7 @@ async function handle(method, params) {
     case "fake/seedSubagents": return seedSubagents(params?.cwd ?? null);
 
     case "initialize":
+      record({ method, args: process.argv.slice(2) });
       return { userAgent: "fake-codex/0.0.0" };
 
     case "thread/start": {
@@ -573,7 +605,7 @@ async function handle(method, params) {
     }
 
     case "thread/resume": {
-      const t = threads.get(params?.threadId);
+      const t = readThread(params?.threadId);
       if (!t) throw new Error(`知らない threadId: ${params?.threadId}`);
       if (params?.model) t.model = params.model;
       applyProvider(t, params);
@@ -596,6 +628,8 @@ async function handle(method, params) {
       const item = { id: `compact_${++seq}`, type: "contextCompaction" };
       const turnId = `compact_turn_${seq}`;
       record({ method, threadId: t.id });
+      const control = process.env.FAKE_CODEX_CONTROL ? fs.readFileSync(process.env.FAKE_CODEX_CONTROL, 'utf8') : '';
+      if (control.includes('compact-fail')) throw new RpcError('compaction failed', -32000);
       notify("item/started", { threadId: t.id, turnId, startedAtMs: Date.now(), item });
       await wait(50);
       notify("item/completed", { threadId: t.id, turnId, completedAtMs: Date.now(), item });
@@ -699,7 +733,10 @@ async function handle(method, params) {
       // unsubscribe-fail があれば失敗を返す
       const control = process.env.FAKE_CODEX_CONTROL ? (() => { try { return fs.readFileSync(process.env.FAKE_CODEX_CONTROL, "utf8"); } catch { return ""; } })() : "";
       if (control.includes("unsubscribe-fail")) throw new RpcError("thread is busy", -32000);
-      if (gone && !control.includes("sticky")) gone.loaded = false;
+      if (gone && !control.includes("sticky")) {
+        gone.loaded = false;
+        if (STATE_DIR && fs.existsSync(writerPath(gone.id)) && Number(fs.readFileSync(writerPath(gone.id), 'utf8')) === process.pid) fs.unlinkSync(writerPath(gone.id));
+      }
       record({ method, threadId: params?.threadId });
       if (gone?.ephemeral) threads.delete(params.threadId);
       return { status: "unsubscribed" };
@@ -719,7 +756,7 @@ async function handle(method, params) {
     }
 
     case "thread/read": {
-      const t = threads.get(params?.threadId);
+      const t = readThread(params?.threadId);
       if (!t) throw new Error(`知らない threadId: ${params?.threadId}`);
       return { thread: wire(t, Boolean(params?.includeTurns)) };
     }
@@ -848,7 +885,7 @@ process.stdin.on("data", (chunk) => {
       Promise.resolve()
         .then(() => handle(msg.method, msg.params ?? {}))
         .then(
-          (result) => send({ jsonrpc: "2.0", id: msg.id, result: result ?? {} }),
+          (result) => { if (STATE_DIR) for (const t of threads.values()) if (t.loaded) persist(t); send({ jsonrpc: "2.0", id: msg.id, result: result ?? {} }); },
           (err) => send({ jsonrpc: "2.0", id: msg.id, error: { code: err?.code ?? -32000, message: String(err?.message ?? err) } }),
         );
     }

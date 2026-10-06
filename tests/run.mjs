@@ -403,6 +403,8 @@ const SUITES = [
   // 同じ会話で巻き戻して送り直す（sendMessage の rewind。ADR 0102）: バックエンドの形ごと（Claude・拒否・Codex・巻き戻せない）× 実行中・送信待ち・検査。契約は身代わりのネイティブで
   './unit/server-rewind.mjs',
   './unit/server-ux.mjs',
+  // 送った会話の削除（sessions.delete。ADR 0147）: 片付けるデータ・ネイティブの会話は残す・断る条件・承認カード・委譲の親子
+  './unit/server-session-delete.mjs',
   // 変更の記録: sessionChanges の返す形と、statusByAi（AI が状態を変えたときだけ印。人が変えたら null）
   './unit/server-session-changes.mjs',
   // 最近の場所の候補: Pleiadで使った実在フォルダーのみ・委譲やネイティブ一覧や消えた場所を除外
@@ -418,6 +420,7 @@ const SUITES = [
   // codex バックエンド。app-server の身代わり（tests/lib/fake-codex.mjs）と話すだけで、
   // 本物の codex もネットワークも要らない
   './unit/server-codex.mjs',
+  './unit/server-codex-compaction.mjs',
   // 互換の接続先の配線。codex の身代わりと偽の互換 API だけと話す
   './unit/server-compat-endpoints.mjs',
   // 同じことを本物の Claude Code・Codex の CLI で（送り先は偽の互換 API。入っていなければとばす）

@@ -38,6 +38,7 @@ export default async function(t) {
   t.ok('ADR 0127: 隠れた会話の片付けは、ネイティブの会話を消せるときだけ記録ごと消す（一覧に戻ってこない）', child.stdout.includes('hidden delete contracts passed'), child.stdout + child.stderr);
   t.ok('プロンプトを渡す前に終わったターンの session id は採用を戻し、transcript の無い id の空の会話は新しく始める（本文のある会話は外さない）', child.stdout.includes('abandoned session contracts passed'), child.stdout + child.stderr);
   t.ok('transcript の無い nativeId の会話は、題・状態の変更と削除を Pleiad の記録だけで通す（別の失敗は隠さない）', child.stdout.includes('missing transcript contracts passed'), child.stdout + child.stderr);
+  t.ok('ADR 0147: 送った会話の削除は Pleiad の記録だけを消し、ネイティブの会話は残したまま一覧に戻さない（再起動の後も。ネイティブだけの行も消せる）', child.stdout.includes('delete contracts passed'), child.stdout + child.stderr);
 }
 
 // Run in a child with its own store: other suites import the store before this test runs.
@@ -218,6 +219,46 @@ export async function hiddenDeleteContracts() {
   const unsent = await createConversation(keepNative, {});
   assert.equal(await deleteHiddenConversation(unsent, () => keepWrapped), true);
   assert.equal(await conversation(unsent), null);
+}
+
+// 送った会話の削除（sessions.delete。ADR 0147）。Pleiad の記録（索引・本文のファイル）だけを消し、ネイティブの会話は消さない（deleteSession を呼ばない）。
+// 残したネイティブの会話は、消した印（DB の deleted_natives）で一覧から隠す。再起動（接続の開き直し）の後も隠れたまま
+export async function deleteContracts() {
+  const fs = await import('node:fs/promises');
+  const path = await import('node:path');
+  const store = await import('../../core/store.mjs');
+  const { deleteConversation, closeConversations } = await import('../../core/conversations.mjs');
+  const deleted = [];
+  const natives = new Set(['d-old', 'd-now', 'd-cli', 'd-other']);
+  const native = { id: 'keeper', capabilities: {},
+    async listSessions() { return [...natives].map(sessionId => ({ sessionId, title: sessionId })); },
+    async getSession(id) { return natives.has(id) ? { sessionId: id, title: id } : null; },
+    async deleteSession(id) { deleted.push(id); natives.delete(id); },
+  };
+  const wrapped = wrapBackend(native);
+  const id = await createConversation(native, { title: 'sent' });
+  Object.assign(await conversation(id), { nativeId: 'd-now', segments: [{ backend: 'keeper', nativeId: 'd-old' }, { backend: 'keeper', nativeId: 'd-now' }],
+    messages: [{ role: 'user', uuid: 'u1', text: 'hello' }], _dirty: true });
+  await createConversation(native, { title: 'flush' });   // 本文のファイルを書かせる（save は _dirty の会話を書く）
+  const file = path.join(store.dataDir, 'conversations', `${id}.json`);
+  assert.ok(await fs.stat(file).then(() => true, () => false), 'The body file exists before deleting');
+  assert.equal(await deleteConversation(id), true);
+  assert.deepEqual(deleted, [], 'The native conversations are not deleted');
+  assert.ok(natives.has('d-old') && natives.has('d-now'), 'The native transcripts stay');
+  assert.equal(await conversation(id), null, 'The host record is gone');
+  assert.ok(!(await fs.stat(file).then(() => true, () => false)), 'The body file is gone');
+  let listed = (await wrapped.listSessions()).map(r => r.sessionId);
+  assert.ok(!listed.includes(id) && !listed.includes('d-old') && !listed.includes('d-now') && listed.includes('d-cli'), `Deleted natives do not come back: ${listed}`);
+  assert.equal(await wrapped.getSession('d-now'), null, 'A deleted native id is not found by id either');
+  // ネイティブだけの行（Pleiad の記録が無い。id がネイティブの id）も消せる
+  assert.equal(await deleteConversation('d-cli', 'keeper'), false);
+  listed = (await wrapped.listSessions()).map(r => r.sessionId);
+  assert.ok(!listed.includes('d-cli') && listed.includes('d-other') && natives.has('d-cli'), `A native-only row is hidden and kept: ${listed}`);
+  // 開き直し（再起動）の後も隠れたまま
+  await closeConversations();
+  listed = (await wrapped.listSessions()).map(r => r.sessionId);
+  assert.ok(!['d-old', 'd-now', 'd-cli'].some(x => listed.includes(x)) && listed.includes('d-other'), `Still hidden after reopening: ${listed}`);
+  assert.deepEqual(deleted, []);
 }
 
 // Claude Code は、プロンプトを渡す前に中断されたターンでも session_id を先に返すが、その transcript は作られない（core/conversations.mjs の runOnce）。

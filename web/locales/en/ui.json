@@ -16,7 +16,8 @@
     "failed": "✕ Could not complete the action · {{reason}}",
     "newSession": "New conversation",
     "deleteStatusConfirm": "Delete “{{status}}”? Conversations to move: {{count}}. Destination: “{{destination}}”.",
-    "deletedStatus": "Deleted “{{status}}”"
+    "deletedStatus": "Deleted “{{status}}”",
+    "deleteSessionConfirm": "Delete “{{title}}”? This cannot be undone. The agent's own record of the conversation (such as the Claude Code transcript) is kept."
   },
   "settings": {
     "appearance": {
@@ -1644,6 +1645,14 @@
         "allowed": "Deleting allowed",
         "failed": "Couldn't delete",
         "notice": "{{agent}} is waiting for your approval to delete a conversation"
+      },
+      "conversationDelete": {
+        "label": "Conversation",
+        "question": "{{agent}} wants to delete a conversation",
+        "allow": "Allow deleting",
+        "allowed": "Deleting allowed",
+        "failed": "Couldn't delete",
+        "notice": "{{agent}} is waiting for your approval to delete a conversation"
       }
     },
     "settingApproval": {
@@ -1772,6 +1781,9 @@
           "allowed": "deleted"
         },
         "sessionDelete": {
+          "allowed": "deleted"
+        },
+        "conversationDelete": {
           "allowed": "deleted"
         },
         "denied": "denied",
@@ -2083,6 +2095,8 @@
       "idCopyFailed": "Couldn't copy the session ID",
       "deleteUnsent": "Delete unsent session…",
       "deleteWithDraft": "Delete it and its draft",
+      "delete": "Delete session…",
+      "deleteConfirm": "Delete",
       "newStatusEllipsis": "New status…",
       "statusName": "Status name",
       "createStatusFailed": "Couldn't create the status: {{error}}",
