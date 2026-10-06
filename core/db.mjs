@@ -126,6 +126,21 @@ CREATE TABLE IF NOT EXISTS deleted_natives (
   at REAL NOT NULL,
   PRIMARY KEY (backend, native_id)
 ) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS notifications (
+  seq INTEGER PRIMARY KEY AUTOINCREMENT,
+  id TEXT NOT NULL UNIQUE,
+  dedupe_key TEXT NOT NULL UNIQUE,
+  kind TEXT NOT NULL,
+  at REAL NOT NULL,
+  session_id TEXT,
+  channel_id TEXT,
+  read_at REAL,
+  resolved_at REAL,
+  data TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS notifications_at ON notifications (at);
+CREATE INDEX IF NOT EXISTS notifications_session ON notifications (session_id);
+CREATE INDEX IF NOT EXISTS notifications_channel ON notifications (channel_id);
 `;
 const lateEnsured = new WeakSet();
 function ensureLateTables(db) {
@@ -572,6 +587,73 @@ export function deletedNativeTable(db) {
         for (const [backend, nativeId] of rows) prepared(db, 'INSERT OR IGNORE INTO deleted_natives (backend, native_id, session_id, at) VALUES (?, ?, ?, ?)').run(backend, nativeId, sessionId, at);
       });
     },
+  };
+}
+
+// ---- 通知の一覧（受信箱。ADR 9102）。1 件 1 行。件数・日数の上限は core/notifications.mjs（NOTIFICATION_MAX・NOTIFICATION_KEEP_MS） ----
+// 欠けても失った記録は無い（飛び先の会話・投稿の側が正本）ので後から足す表（LATE_TABLES_SQL）。形式番号は上げない
+const NOTIFICATION_COLUMNS = 'seq, id, dedupe_key, kind, at, session_id, channel_id, read_at, resolved_at, data';
+const notificationRow = (r) => ({ seq: Number(r.seq), id: r.id, dedupeKey: r.dedupe_key, kind: r.kind, at: r.at, sessionId: r.session_id, channelId: r.channel_id, readAt: r.read_at, resolvedAt: r.resolved_at, data: JSON.parse(r.data) });
+export function notificationTable(db) {
+  ensureLateTables(db);
+  /** kinds が空なら全部。['a','b'] → "AND kind IN (?,?)" */
+  const kindClause = (kinds) => (kinds?.length ? ` AND kind IN (${kinds.map(() => '?').join(',')})` : '');
+  return {
+    /** 入れる。dedupe_key が既にあれば入れずに false（同じ出来事を二重に載せない） */
+    insert({ id, dedupeKey, kind, at, sessionId = null, channelId = null, readAt = null, data }) {
+      const r = prepared(db, 'INSERT OR IGNORE INTO notifications (id, dedupe_key, kind, at, session_id, channel_id, read_at, data) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+        .run(id, dedupeKey, kind, at, sessionId, channelId, readAt, jsonOf(data));
+      return Number(r.changes) > 0;
+    },
+    /** 載せた順の逆（新しいものが先）。before は seq（それより前だけ）。kinds で種類を絞る */
+    list({ kinds = null, before = null, limit = 50 } = {}) {
+      const sql = `SELECT ${NOTIFICATION_COLUMNS} FROM notifications WHERE 1 = 1${kindClause(kinds)}${before ? ' AND seq < ?' : ''} ORDER BY seq DESC LIMIT ?`;
+      return db.prepare(sql).all(...(kinds ?? []), ...(before ? [before] : []), limit).map(notificationRow);
+    },
+    get(id) { const r = prepared(db, `SELECT ${NOTIFICATION_COLUMNS} FROM notifications WHERE id = ?`).get(id); return r ? notificationRow(r) : null; },
+    byDedupeKey(key) { const r = prepared(db, `SELECT ${NOTIFICATION_COLUMNS} FROM notifications WHERE dedupe_key = ?`).get(key); return r ? notificationRow(r) : null; },
+    /** { total, unread, waiting }。waiting は未読で、まだ決着していないあなた待ち */
+    counts() {
+      const r = prepared(db, "SELECT COUNT(*) AS total, SUM(CASE WHEN read_at IS NULL THEN 1 ELSE 0 END) AS unread, SUM(CASE WHEN read_at IS NULL AND kind = 'wait' AND resolved_at IS NULL THEN 1 ELSE 0 END) AS waiting FROM notifications").get();
+      return { total: Number(r.total ?? 0), unread: Number(r.unread ?? 0), waiting: Number(r.waiting ?? 0) };
+    },
+    /** 既読にする。変えた件数を返す（巻き戻さない: 既に既読の行は触らない） */
+    markIds(ids, at) {
+      let n = 0;
+      for (const id of ids) n += Number(prepared(db, 'UPDATE notifications SET read_at = ? WHERE id = ? AND read_at IS NULL').run(at, id).changes);
+      return n;
+    },
+    markAll(at) { return Number(prepared(db, 'UPDATE notifications SET read_at = ? WHERE read_at IS NULL').run(at).changes); },
+    /** 会話の通知を、upTo までの分だけ既読にする（会話の既読 readAt と同じ向き） */
+    markSession(sessionId, upTo, at, kinds = null) {
+      return Number(db.prepare(`UPDATE notifications SET read_at = ? WHERE session_id = ? AND read_at IS NULL AND at <= ?${kindClause(kinds)}`).run(at, sessionId, upTo, ...(kinds ?? [])).changes);
+    },
+    markChannel(channelId, upTo, at) {
+      return Number(prepared(db, 'UPDATE notifications SET read_at = ? WHERE channel_id = ? AND read_at IS NULL AND at <= ?').run(at, channelId, upTo).changes);
+    },
+    /** あなた待ちを決着させる（決着した行は既読にもする）。変えたら true */
+    resolve(dedupeKey, at, outcome) {
+      const row = prepared(db, "SELECT id, data FROM notifications WHERE dedupe_key = ? AND kind = 'wait' AND resolved_at IS NULL").get(dedupeKey);
+      if (!row) return false;
+      prepared(db, 'UPDATE notifications SET resolved_at = ?, read_at = COALESCE(read_at, ?), data = ? WHERE id = ?').run(at, at, jsonOf({ ...JSON.parse(row.data), outcome }), row.id);
+      return true;
+    },
+    /** 決着していないあなた待ちを全部決着させる（起動時。承認はメモリにしか無く、再起動で消える） */
+    resolveAllWaiting(at, outcome) {
+      const rows = prepared(db, "SELECT id, data FROM notifications WHERE kind = 'wait' AND resolved_at IS NULL").all();
+      for (const row of rows) prepared(db, 'UPDATE notifications SET resolved_at = ?, read_at = COALESCE(read_at, ?), data = ? WHERE id = ?').run(at, at, jsonOf({ ...JSON.parse(row.data), outcome }), row.id);
+      return rows.length;
+    },
+    removeSession(sessionId) { return Number(prepared(db, 'DELETE FROM notifications WHERE session_id = ?').run(sessionId).changes); },
+    removeChannel(channelId) { return Number(prepared(db, 'DELETE FROM notifications WHERE channel_id = ?').run(channelId).changes); },
+    /** 古いものを捨てる: cutoff より前、と max 件を超えた分（既読を先に、古い順）。捨てた件数を返す */
+    prune(cutoff, max) {
+      let n = Number(prepared(db, 'DELETE FROM notifications WHERE at < ?').run(cutoff).changes);
+      const excess = Number(prepared(db, 'SELECT COUNT(*) AS n FROM notifications').get().n) - max;
+      if (excess > 0) n += Number(prepared(db, 'DELETE FROM notifications WHERE seq IN (SELECT seq FROM notifications ORDER BY (read_at IS NULL) ASC, at ASC, seq ASC LIMIT ?)').run(excess).changes);
+      return n;
+    },
+    transaction: (fn) => transaction(db, fn),
   };
 }
 
