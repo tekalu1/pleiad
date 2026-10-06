@@ -45,7 +45,7 @@ function fake({ prefs: initial = {}, answers = [] } = {}) {
     writes: {
       pref: async (key, value) => { log.writes.push(['pref', key, value]); if (value === null) delete prefs[key]; else prefs[key] = value; },
       browserPref: async (key, value) => { log.writes.push(['browserPref', key, value]); prefs[key] = value; },
-      browserProfiles: async (value, key = 'browserProfiles') => { log.writes.push(['browserProfiles', key, value]); prefs[key] = value; },
+      plyInstructions: async (value) => { log.writes.push(['plyInstructions', value]); },
       compaction: async (value) => { log.writes.push(['compaction', value]); prefs.autoCompaction = value; },
     },
     recordSetting: async (entry) => { log.records.push(entry); },
@@ -82,7 +82,7 @@ export default async function (t) {
   }
   t.ok('危険度の内訳: human-only は承認モードの既定と既定のアカウントだけ（ADR 0094）。guarded は許可の一覧以外の「全体の構成」',
     settings.filter((s) => s.risk === 'human-only').map((s) => s.key).sort().join() === 'claudeAccount,mode'
-    && settings.filter((s) => s.risk === 'guarded').map((s) => s.key).sort().join() === 'addedContext,browserProfiles,context.default,delegationRouting,plyInstructions'
+    && settings.filter((s) => s.risk === 'guarded').map((s) => s.key).sort().join() === 'addedContext,context.default,delegationRouting,plyInstructions'
     && settings.filter((s) => s.riskOf).map((s) => s.key).sort().join() === 'agentSitePermissions,computerUse,confirmAgentSites,confirmExternalLoads,externalSitePermissions');
 
   // ---- riskOf は書いてある例のとおり（関所を緩める向きだけ guarded）
@@ -212,13 +212,18 @@ export default async function (t) {
   }
   {
     // 全体の構成（常に guarded）: 値が無効なら聞かない。変わらないなら聞かない
-    const f = fake({ prefs: { browserProfiles: [{ id: 'main' }] } });
-    const bad = await registry.invoke(bound('ask'), 'settings.set', { key: 'browserProfiles', value: [{ id: 'x' }] }, f.deps);
+    // plyInstructions の変更後の一覧は host（core/ply-instructions.mjs の changePlyInstructions）が出す。ここでは呼び出しごとに差し替える
+    const f = fake();
+    let next = () => { throw new Error('no such instruction'); };
+    f.deps.host.changePlyInstructions = (action) => next(action);
+    const bad = await registry.invoke(bound('ask'), 'settings.set', { key: 'plyInstructions', value: { action: 'toggle', id: 'x' } }, f.deps);
     t.ok('guarded でも無効な値は聞く前に INVALID', bad.code === 'INVALID' && f.log.approvals.length === 0);
-    const same = await registry.invoke(bound('ask'), 'settings.set', { key: 'browserProfiles', value: [{ id: 'main' }] }, f.deps);
+    next = () => [];
+    const same = await registry.invoke(bound('ask'), 'settings.set', { key: 'plyInstructions', value: { action: 'order', ids: [] } }, f.deps);
     t.ok('変わらない値は聞かない（write と同じ扱いで通り、changed: false）', same.ok && same.result.changed === false && f.log.approvals.length === 0);
-    const named = await registry.invoke(bound('ask'), 'settings.set', { key: 'browserProfiles', value: [{ id: 'main' }, { id: 'p0123456789ab', name: '仕事' }] }, f.deps);
-    t.ok('プロフィールの変更は guarded（承認カード）。⚠ の印は付けない（関所を緩める向きではない）', named.pending && f.log.approvals.length === 1 && f.log.approvals[0].change.loosens === false);
+    next = () => [{ id: 'x', title: '委譲', enabled: true }];
+    const changed = await registry.invoke(bound('ask'), 'settings.set', { key: 'plyInstructions', value: { action: 'toggle', id: 'x' } }, f.deps);
+    t.ok('Pleiad の指示の変更は guarded（承認カード）。⚠ の印は付けない（関所を緩める向きではない）', changed.pending && f.log.approvals.length === 1 && f.log.approvals[0].change.loosens === false);
   }
   {
     // computerUse: オブジェクトの設定は変わった項目だけを行にする

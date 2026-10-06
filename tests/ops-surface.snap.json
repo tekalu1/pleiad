@@ -515,51 +515,6 @@
       "input": "f08816c821a8"
     },
     {
-      "id": "browser.listProfiles",
-      "risk": "read",
-      "riskOf": false,
-      "scope": "global",
-      "modeGate": true,
-      "hostScreenOnly": false,
-      "surfaces": {
-        "ui": false,
-        "mcp": "catalog",
-        "cli": true
-      },
-      "legacyCommand": null,
-      "input": "25c7d85c859a"
-    },
-    {
-      "id": "browser.setProfile",
-      "risk": "write",
-      "riskOf": false,
-      "scope": "global",
-      "modeGate": true,
-      "hostScreenOnly": false,
-      "surfaces": {
-        "ui": true,
-        "mcp": "catalog",
-        "cli": true
-      },
-      "legacyCommand": "setBrowserProfile",
-      "input": "0c962f58fe1d"
-    },
-    {
-      "id": "browser.useProfile",
-      "risk": "write",
-      "riskOf": false,
-      "scope": "global",
-      "modeGate": false,
-      "hostScreenOnly": false,
-      "surfaces": {
-        "ui": false,
-        "mcp": "catalog",
-        "cli": true
-      },
-      "legacyCommand": null,
-      "input": "974c851ac5dd"
-    },
-    {
       "id": "channels.archive",
       "risk": "write",
       "riskOf": false,
@@ -3912,33 +3867,6 @@
       ]
     },
     {
-      "key": "browserDefaultProfile",
-      "risk": "write",
-      "riskOf": false,
-      "writable": true,
-      "prefKeys": [
-        "browserDefaultProfile"
-      ]
-    },
-    {
-      "key": "browserNewProfile",
-      "risk": "write",
-      "riskOf": false,
-      "writable": true,
-      "prefKeys": [
-        "browserNewProfile"
-      ]
-    },
-    {
-      "key": "browserProfiles",
-      "risk": "guarded",
-      "riskOf": false,
-      "writable": true,
-      "prefKeys": [
-        "browserProfiles"
-      ]
-    },
-    {
       "key": "claudeAccount",
       "risk": "human-only",
       "riskOf": false,
@@ -4113,27 +4041,6 @@
       "agent-bound-ask": "write=allow",
       "agent-bound-never-full": "write=allow",
       "agent-bound-readonly": "write=deny:READ_ONLY_MODE"
-    },
-    "browserDefaultProfile": {
-      "human": "write=allow",
-      "agent-unbound": "write=allow",
-      "agent-bound-ask": "write=allow",
-      "agent-bound-never-full": "write=allow",
-      "agent-bound-readonly": "write=deny:READ_ONLY_MODE"
-    },
-    "browserNewProfile": {
-      "human": "write=allow",
-      "agent-unbound": "write=allow",
-      "agent-bound-ask": "write=allow",
-      "agent-bound-never-full": "write=allow",
-      "agent-bound-readonly": "write=deny:READ_ONLY_MODE"
-    },
-    "browserProfiles": {
-      "human": "guarded=allow",
-      "agent-unbound": "guarded=deny:NEEDS_UI",
-      "agent-bound-ask": "guarded=ask",
-      "agent-bound-never-full": "guarded=allow",
-      "agent-bound-readonly": "guarded=deny:READ_ONLY_MODE"
     },
     "claudeAccount": {
       "human": "human-only=allow",
@@ -4411,21 +4318,6 @@
       "positional": [
         "botId"
       ]
-    },
-    {
-      "id": "browser.listProfiles",
-      "path": "browser listProfiles",
-      "positional": []
-    },
-    {
-      "id": "browser.setProfile",
-      "path": "browser setProfile",
-      "positional": []
-    },
-    {
-      "id": "browser.useProfile",
-      "path": "browser useProfile",
-      "positional": []
     },
     {
       "id": "channels.archive",

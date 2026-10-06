@@ -66,7 +66,7 @@ export function contextRefusal(owners = {}) {
  * agent.md の中身。frontmatter の値は JSON で書く（YAML としても読める）。
  * locale は会話の言語（説明・見出し・注意書きはエージェントが読むので、その言語で書く。agent 名前空間）
  * computerEnabled は ply_computer（`--computer`）を足すか（docs/computer-use.md「エージェントへの渡し方」）。
- * browserEnabled は ply_browser（`--browser`）を足すか（docs/inapp-browser.md「プロフィール」）。controlEnabled は ply_control（`--control`。ADR 0081）を足すか。
+ * browserEnabled は ply_browser（`--browser`）を足すか（docs/inapp-browser.md）。controlEnabled は ply_control（`--control`。ADR 0081）を足すか。
  * 2 つ以上を足すときは 1 本の中継に束ねる（servers）
  */
 export function agentDefinition({ owners, prompt, cwd, home, locale, contextEnabled = true, computerEnabled = false, browserEnabled = false, controlEnabled = false, execPath = process.execPath, electron = Boolean(process.versions.electron) }) {

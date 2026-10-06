@@ -56,7 +56,7 @@ export function createContextMenu() {
     };
     for (const item of items) {
       if (item.sep) { panel.append(el('div', 'sep')); continue; }
-      // 途中の見出し（内蔵ブラウザーのプロフィールの「Pleiad」など）。wrap は全文を折り返す
+      // 途中の見出し（項目の群の名前）。wrap は全文を折り返す
       if (item.head) { panel.append(el('div', 'head' + (item.wrap ? ' wrap' : ''), item.head)); continue; }
       if (item.input) {
         const input = el('input', 'field');
@@ -70,7 +70,7 @@ export function createContextMenu() {
       if (item.radio) row.setAttribute('aria-checked', String(!!item.checked));
       // 今は押せない項目（タイトル行の「…」のタイトルを生成: 生成中・未送信など）
       if (item.disabled) { row.disabled = true; row.setAttribute('aria-disabled', 'true'); }
-      // 名前の前の印（要素。プロフィールのモノグラムなど）
+      // 名前の前の印（要素。小さなアイコンなど）
       if (item.icon) row.append(item.icon);
       row.append(el('span', 'lbl', item.label));
       if (item.pending) { const label = el('span', 'hint pending-label'); label.append(runMark(t('pending.loading')), t('pending.loading')); row.append(label); }
