@@ -132,7 +132,7 @@ A が作った土台。`desktop/main.cjs` は `attachComputerService(worker, { e
 
 | ファイル | 持ち物 |
 |---|---|
-| `win32.cjs` | koffi の宣言。**koffi を知っているのはここだけ**。テストは同じ形の偽の表を渡す（`tests/unit/computer-native.mjs`）。koffi が読めない・Windows でないときは `loadWin32()` が `reason`（`native` / `platform`）付きで投げ、service は `computer-ready { supported: false, reason }` を返す |
+| `win32.cjs` | koffi の宣言。**koffi を知っているのはここだけ**。テストは同じ形の偽の表を渡す（`tests/unit/computer-native.mjs`）。koffi が読めない・Windows でないときは `loadWin32()` が `reason`（`native` / `platform`）付きで投げ、service は `computer-ready { supported: false, reason }` を返す。koffi を読む場所は 1 つのままで、`desktop/main.cjs` が `loadWin32()` を 1 回だけ呼び、コンピューターの操作（`attachComputerService` の `win32`・`reason`）と Chrome への接続の OS の層（`desktop/chrome-os/`。[内蔵ブラウザー](inapp-browser.md#os-ごとの層)）に同じ表を渡す。Chrome の確認の窓を扱うために、`setForeground`・`showWindow`・`bringToTop`・`windowThread`・`currentThread`・`attachThreadInput`・`ownerOf`・`dpiForWindow`・`postMessage`（`AttachThreadInput`・`BringWindowToTop`・`PostMessageW`・`GetDpiForWindow`・`GetCurrentThreadId` など）を表に足した |
 | `displays.cjs` | モニターの一覧。主モニターが `index` 1、残りは左から右・上から下。`id` は GDI のデバイス名（`\\.\DISPLAY1`）。`scale` は DPI / 96 |
 | `capture.cjs` | BitBlt（CAPTUREBLT）→ alpha を 255 にそろえる → `nativeImage.createFromBitmap`（BGRA のまま渡せる。実測）→ `resize`（best）→ `toJPEG`。縮小は切り捨て（1920×1080 → 1460×821） |
 | `input.cjs` + `keymap.cjs` | SendInput。押したままのキー・ボタンを覚え、`releaseAll` で押したものだけを離す。座標の絶対値は `ceil((x - 原点) * 65536 / 幅)`（Windows が戻す `floor(abs * 幅 / 65536)` が元の画素になる） |
