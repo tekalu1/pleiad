@@ -74,7 +74,6 @@ export default async function (t) {
   const base = { AGENT_HOST_BACKENDS: 'claude', ...fake.env, CLAUDE_CONFIG_DIR: path.join(scratch, 'claude'), FAKE_CLAUDE_LOG: cliLog, ...gates.env };
   const env = { ...base, AGENT_HOST_CLAUDE_HOLDER: 'on', AGENT_HOST_RUNTIME_ROOT: root, ADOPT_SCENES_DIR: scenesDir };
   let a = null, b = null, ca = null, cb = null, m1 = null, m2 = null, holderPid = null;
-  const childPids = new Set();
   try {
     const found = await ensureHolder({ dataDir, root, mode: 'detached', idleMs: 20_000, timeoutMs: 20_000 });
     holderPid = found.pid;
@@ -175,7 +174,6 @@ export default async function (t) {
         assert.ok(child, `${k}: 札つきの子が残る`);
         assert.equal(child.alive, true, `${k}: CLI は走り続けている`);
         assert.equal(child.policy, 'claude-control');
-        childPids.add(child.pid);
       }
       assert.ok(probe.welcome.children.find(c => c.label?.sessionId === ids.M).pendingRequests.some(p => p.subtype === 'mcp_message'), 'M: 答えの届いていない mcp_message が控えにある');
       probe.close();
@@ -357,15 +355,18 @@ ${b.tail(40)}`);
     }
 
     // 4. 後片付け
-    for (const x of await starts()) childPids.add(x.pid);
+    // 終わりを待つのは、保持役が今生きていると言う子と、その下で起きた偽の CLI（起動の記録の ppid がその子の pid。Windows は claude.cmd の下の node）だけ。
+    // 起動の記録の pid を全部待つと、とっくに終わって別のプロセスへ使い回された pid（Windows は早く使い回す）を「終わらない」と取り違える
+    const heldPids = new Set();
     {
       const probe = await connectHolder({ dataDir, root });
-      for (const child of probe.welcome.children) if (child.pid) childPids.add(child.pid);
+      for (const child of probe.welcome.children) if (child.pid && child.alive) heldPids.add(child.pid);
+      for (const x of await starts()) if (heldPids.has(x.ppid)) heldPids.add(x.pid);
       probe.shutdown();
       probe.close();
     }
     await until(() => !alive(holderPid), 10_000, '保持役が終わる');
-    for (const pid of childPids) await until(() => !alive(pid), 10_000, `偽の CLI（${pid}）が終わる`);
+    for (const pid of heldPids) await until(() => !alive(pid), 10_000, `偽の CLI（${pid}）が終わる`);
     holderPid = null;
     t.ok('後片付け: 保持役・偽の CLI が残らない', true);
   } finally {
