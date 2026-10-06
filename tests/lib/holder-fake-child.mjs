@@ -1,7 +1,7 @@
 // 保持役（core/holder/）の試験用の偽の子。node tests/lib/holder-fake-child.mjs <モード> [引数]。標準出力は 1 行 1 JSON。
 //   lines N [間隔ms]   {"n":1} … {"n":N} を出して、その後は echo のように生きる（stdin が閉じたら {"stdin":"closed"} を出して終わる）
 //   echo               stdin の行を {"echo":"<行>"} で返す。stdin が閉じたら {"stdin":"closed"} を出して終わる
-//   request            control_request（mcp_message・can_use_tool・hook_callback）を出す。control_response が来たら {"answered":"<request_id>"} を返す。他は echo
+//   request            control_request（mcp_message・elicitation・can_use_tool・hook_callback）を出す。control_response が来たら {"answered":"<request_id>"} を返す。他は echo
 //   jsonrpc            id と method を持つ依頼（c1）と、id の無い通知を出す。id を持つ応答が来たら {"answered":<id>} を返す。他は echo
 //   cancel             control_request（req-cancel）を出し、続けて control_cancel_request で取り消す
 //   flood KB           1 KB の行を KB 本、stdout へ出し切って {"done":true} で終わる（stdout が詰まれば終わらない）
@@ -58,6 +58,7 @@ switch (mode) {
   case 'request':
     emit({ ready: true, pid: process.pid });
     emit(request('req-mcp', 'mcp_message'));
+    emit(request('req-elicit', 'elicitation'));
     emit(request('req-tool', 'can_use_tool'));
     emit(request('req-hook', 'hook_callback'));
     echo((line, m) => { if (m?.type === 'control_response') { emit({ answered: m.response?.request_id }); return true; } return false; });

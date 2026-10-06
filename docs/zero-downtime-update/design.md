@@ -193,7 +193,7 @@ agent-host-runtime\
 
 **やらないこと**
 
-- エージェントのプロトコルを解釈しない（行の区切り、`control_request` の `mcp_message` の見分け、JSON-RPC の `id` を持つ依頼の見分け、`initialize` の見分け以外）
+- エージェントのプロトコルを解釈しない（行の区切り、`control_request` の `mcp_message`・`elicitation` の見分け、JSON-RPC の `id` を持つ依頼の見分け、`initialize` の見分け以外）
 - **JSON-RPC の id を付け替えない**（Codex の実測で不要になった。新しいサーバーが世代つきの文字列の id を使えば、古い世代の応答を捨てるだけで取り違えない。§4.4）。**`initialize` の答えを作らない**（Codex は 2 回目の `initialize` に `Already initialized` を返すだけで、接続は無事）
 - データ置き場に書かない（ADR 0115 の「1 つのプロセスだけが持つ」に触れない。記録は実行場所の `logs\`）
 - HTTP を話さない（段階 4 を足すまで）
@@ -209,7 +209,7 @@ agent-host-runtime\
 |---|---|---|
 | 親→ | `hello` | `{ secret, protocol: [min, max], role: 'server', pid, appVersion }`。`secret` は保持役が起動時に作り、`run\` の利用者だけが読めるファイルに書いたもの。合わなければ何も返さず切る。合ったうえで版が合わなければ `reject { reason: 'protocol', range, generation, appVersion, pid }` を返して切る |
 | ←保持役 | `welcome` | `{ protocol, generation, range, appVersion, pid, children: [{ id, pid, alive, exitCode, signal, error, label, policy, seq, first, acked, marks, truncated, pendingRequests: [{ requestId, seq, subtype }], stderr }], stash }` |
-| 親→ | `spawn` | `{ id, command, args, cwd, env, framing: 'lines', policy: 'claude-control' \| 'jsonrpc' \| 'none', label }`。`policy` は答えていない依頼の見分け方だけを決める（`claude-control` は stream-json の `control_request` を `request_id` で控え、渡し直すのは `mcp_message` だけ。`jsonrpc` は `id` と `method` を持つ依頼を控える。`none` は行だけ）。起こせなければ `exit { error }` で届く |
+| 親→ | `spawn` | `{ id, command, args, cwd, env, framing: 'lines', policy: 'claude-control' \| 'jsonrpc' \| 'none', label }`。`policy` は答えていない依頼の見分け方だけを決める（`claude-control` は stream-json の `control_request` を `request_id` で控え、渡し直すのは `mcp_message` と `elicitation` だけ。`jsonrpc` は `id` と `method` を持つ依頼を控える。`none` は行だけ）。起こせなければ `exit { error }` で届く |
 | 親→ | `attach` | `{ id, from? }` 既存の子に付ける（`spawn` と同じく SDK の最初の stdin の書き込みより前に送る。§4.4）。`from` の既定は ack の次。答えは `attached`（子の状態）で、続けて `from` より前にある控えの渡し直し（`out` の `redelivered: true`）→ 記録の続き |
 | 親→ | `write` / `end` / `kill` | `{ id, data }`（行になった分だけ子へ渡す）/ `{ id }`（stdin を閉じる）/ `{ id, tree: true }` |
 | 親→ | `ack` / `mark` / `unmark` / `label` | 受け取った通番 `{ id, seq }` / 印を付ける・外す `{ id, name, seq? }`（位置の既定は次の行）/ 札を置き直す `{ id, label }` |
@@ -499,7 +499,7 @@ main が居ない時間は、試験用アプリで 17〜19 秒（Electron 本体
 | in-process の `host` MCP を HTTP の口に移す（付け直しの不確かさを 1 つ消す） | 付け直しで in-process の MCP も hooks も効く。HTTP に移すとつながらない間は待たずに即失敗するので、段階 4 が無いと今より悪い | **取り下げ**。in-process のまま、ハンドラーの終わりを待って二重実行を抑える（§4.4） |
 | Codex の付け直しは `initialize` を送らない始まり方が要るかもしれない／保持役が答えを作る | 2 回目の `initialize` は `Already initialized` を返すだけで無害。握手は要らない | 保持役は `initialize` の答えを作らない（§4.1・§4.4） |
 | JSON-RPC の id は保持役が付け替える（親の世代ごとの記録） | codex は文字列の id をそのまま返す。世代つきの文字列の id で足りる | **保持役から id の付け替えを外した**（§4.1・§4.3） |
-| 答えていない依頼は全部、付け直した親へ渡し直す | `can_use_tool` は要らない・`mcp_message` は必須・`hook_callback` は渡し直さない（CLI が打ち切る） | 種類ごとに決めた（§4.1） |
+| 答えていない依頼は全部、付け直した親へ渡し直す | `can_use_tool` は要らない・`mcp_message` と `elicitation` は必須・`hook_callback` は渡し直さない（CLI が打ち切る） | 種類ごとに決めた（§4.1） |
 | 承認待ちの最中の付け直しは未検証 | 通る（元と同じ `requestId`）。親が居ない 300 秒でも | 確定（§4.4） |
 | 旧サーバーは SDK の `query` を閉じて手を離す | 閉じると SDK が stdin を閉じて kill し、CLI が終わる。先に `detach` して転送を止める必要がある | 順序を書いた（§4.4・§5.1 の 8） |
 | 保持役の `spawn`/`attach` はいつ送ってもよい | SDK が最初の `initialize` を書く前に送らないと、hooks・MCP が効かないまま始まる | 順序を書いた（§4.4） |

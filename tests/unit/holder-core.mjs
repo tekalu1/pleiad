@@ -1,5 +1,5 @@
 // ターンの保持役の本体（core/holder/holder.mjs・client.mjs。無停止の更新 段階 2 の 2a）。同じプロセスに保持役を立て、本物の子（偽の CLI）を起こす。
-// 起こす→最初の書き込み・切断と付け直し（stdin を閉じない・通番の続き）・答えていない依頼の控えの渡し直し（claude-control は mcp_message だけ・jsonrpc・取り消し）・
+// 起こす→最初の書き込み・切断と付け直し（stdin を閉じない・通番の続き）・答えていない依頼の控えの渡し直し（claude-control は mcp_message と elicitation だけ・jsonrpc・取り消し）・
 // stdout を読まない親でも子が詰まらない（3 MB）・detach の後は write・end・kill を転送しない・行の途中の書き込みは捨てる・記録の上限（truncated）・印と ack の捨て方・
 // 終わり方（最後の行・終了コード・起こせない・stderr）・長すぎる行・木ごとの強制終了・後から来た親が勝つ・札と預かり物・idle
 import { startHolder, fakeChild, waitFor, sleep, isAlive, rawConnect, hello } from '../lib/holder-harness.mjs';
@@ -93,13 +93,13 @@ export default async function (t) {
       a.client.spawn({ ...fakeChild('np', 'request'), policy: 'none' });
       a.client.spawn({ ...fakeChild('rpc', 'jsonrpc'), policy: 'jsonrpc' });
       a.client.spawn({ ...fakeChild('cx', 'cancel'), policy: 'claude-control' });
-      await waitFor(() => ['cc', 'np', 'rpc', 'cx'].every(id => a.events.out.filter(e => e.id === id).length >= 3), 8000, 'requests emitted');
+      await waitFor(() => ['cc', 'np', 'rpc', 'cx'].every(id => a.events.out.filter(e => e.id === id).length >= (id === 'cc' || id === 'np' ? 5 : 3)), 8000, 'requests emitted');
       await sleep(100);
       a.client.close();
       await waitFor(() => !h.holder.snapshot().connected, 8000, 'a gone');
       const b = await h.connect();
       const pend = id => b.client.welcome.children.find(c => c.id === id).pendingRequests;
-      t.ok('控え(claude-control): 答えていない control_request を request_id で控える（種類つき）', pend('cc').map(p => p.requestId).sort().join() === 'req-hook,req-mcp,req-tool' && pend('cc').find(p => p.requestId === 'req-mcp').subtype === 'mcp_message');
+      t.ok('控え(claude-control): 答えていない control_request を request_id で控える（種類つき）', pend('cc').map(p => p.requestId).sort().join() === 'req-elicit,req-hook,req-mcp,req-tool' && pend('cc').find(p => p.requestId === 'req-mcp').subtype === 'mcp_message' && pend('cc').find(p => p.requestId === 'req-elicit').subtype === 'elicitation');
       t.ok('控え: 取り消された依頼（control_cancel_request）・policy none は控えない', pend('cx').length === 0 && pend('np').length === 0);
       t.ok('控え(jsonrpc): id と method を持つ依頼だけ（id の無い通知は控えない）', pend('rpc').length === 1 && pend('rpc')[0].requestId === '"c1"' && pend('rpc')[0].subtype === 'item/commandExecution/requestApproval');
 
@@ -107,17 +107,24 @@ export default async function (t) {
       const lastCc = b.client.welcome.children.find(c => c.id === 'cc').seq;
       await b.client.attach('cc', { from: lastCc + 1 });
       await b.client.attach('rpc', { from: b.client.welcome.children.find(c => c.id === 'rpc').seq + 1 });
-      await waitFor(() => b.events.out.filter(e => e.redelivered).length >= 2, 8000, 'redelivered');
+      await waitFor(() => b.events.out.filter(e => e.redelivered).length >= 3, 8000, 'redelivered');
       const redelivered = b.events.out.filter(e => e.redelivered);
       const ccRe = redelivered.filter(e => e.id === 'cc');
-      t.ok('控えの渡し直し(claude-control): mcp_message だけ（can_use_tool・hook_callback は渡さない）', ccRe.length === 1 && JSON.parse(ccRe[0].line).request_id === 'req-mcp' && ccRe[0].seq < lastCc + 1);
+      t.ok('控えの渡し直し(claude-control): mcp_message と elicitation だけ（can_use_tool・hook_callback は渡さない）・出た順', ccRe.length === 2 && ccRe.map(e => JSON.parse(e.line).request_id).join() === 'req-mcp,req-elicit' && ccRe.every(e => e.seq < lastCc + 1) && ccRe[0].seq < ccRe[1].seq);
       t.ok('控えの渡し直し(jsonrpc): 答えていない依頼を渡す', redelivered.filter(e => e.id === 'rpc').length === 1 && JSON.parse(redelivered.find(e => e.id === 'rpc').line).id === 'c1');
 
       // 答えると控えから消える
       b.client.write('cc', `${JSON.stringify({ type: 'control_response', response: { subtype: 'success', request_id: 'req-mcp', response: {} } })}\n`);
+      b.client.write('cc', `${JSON.stringify({ type: 'control_response', response: { subtype: 'success', request_id: 'req-elicit', response: { action: 'accept' } } })}\n`);
       b.client.write('rpc', `${JSON.stringify({ jsonrpc: '2.0', id: 'c1', result: {} })}\n`);
-      await waitFor(() => b.events.lines('cc').some(l => l.answered === 'req-mcp') && b.events.lines('rpc').some(l => l.answered === 'c1'), 8000, 'answered');
-      t.ok('答えた依頼は控えから消える（答えていない can_use_tool・hook_callback は残る）', pendOf(h, 'cc').join() === 'req-hook,req-tool' && pendOf(h, 'rpc').length === 0);
+      await waitFor(() => b.events.lines('cc').some(l => l.answered === 'req-mcp') && b.events.lines('cc').some(l => l.answered === 'req-elicit') && b.events.lines('rpc').some(l => l.answered === 'c1'), 8000, 'answered');
+      t.ok('答えた依頼（mcp_message・elicitation）は控えから消える（答えていない can_use_tool・hook_callback は残る）', pendOf(h, 'cc').join() === 'req-hook,req-tool' && pendOf(h, 'rpc').length === 0);
+
+      // 答えた後に付け直した親へは、渡し直さない
+      const redeliveredBefore = b.events.out.filter(e => e.redelivered).length;
+      await b.client.attach('cc', { from: b.client.welcome.children.find(c => c.id === 'cc').seq + 1 });
+      await sleep(300);
+      t.ok('答えた後の付け直しでは、答え済みの mcp_message・elicitation を渡し直さない', b.events.out.filter(e => e.redelivered).length === redeliveredBefore);
 
       // 記録に残っている範囲（from が控えより前）なら、渡し直さず記録の再生で届く（二重に渡さない）
       b.client.close();
