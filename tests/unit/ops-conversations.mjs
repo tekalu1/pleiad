@@ -34,7 +34,9 @@ export default async function (t) {
       history: async (id) => (id === 'me' ? Array.from({ length: 5 }, (_, i) => ({ at: `a${i}`, by: 'human', field: 'title', from: `t${i}`, to: `t${i + 1}`, reason: null, reasonKey: 'menu' })) : null),
     },
     conversations: {
-      create: rec('create', { sessionId: 'new1' }), deleteUnsent: rec('deleteUnsent', undefined),
+      create: rec('create', { sessionId: 'new1' }), deleteUnsent: rec('deleteUnsent', undefined), delete: rec('delete', 'deleted'),
+      // 消せない会話（走っている など）はサーバーが CANNOT_DELETE で断る
+      canDelete: async (id) => { calls.push(['canDelete', id]); if (id === 'kid') throw Object.assign(new Error('実行中'), { code: 'CANNOT_DELETE' }); },
       abort: rec('abort', (a) => ({ aborted: 1, reason: a.kind ?? 'user' })), resume: rec('resume', { sent: 'text', count: 1 }),
       compact: rec('compact', { status: 'started' }), cancelCompaction: rec('cancelCompaction', { cancelled: true }),
       setAutoCompaction: rec('setAutoCompaction', (id, off) => ({ off })), setTurnSettings: rec('setTurnSettings', { backend: 'claude', model: 'm', effort: '' }),
@@ -62,9 +64,9 @@ export default async function (t) {
 
   // ---- 危険度（定義）
   const risk = (id) => registry.get(id).risk;
-  t.ok('書く操作は write、消す sessions.deleteUnsent は guarded、読むものは read',
+  t.ok('書く操作は write、消す sessions.deleteUnsent・sessions.delete は guarded、読むものは read',
     ['sessions.new', 'sessions.abort', 'sessions.resume', 'sessions.compact', 'sessions.cancelCompaction', 'sessions.setAutoCompaction', 'sessions.setTurnSettings', 'statuses.rename', 'delegation.retry'].every((id) => risk(id) === 'write')
-    && risk('sessions.deleteUnsent') === 'guarded'
+    && risk('sessions.deleteUnsent') === 'guarded' && risk('sessions.delete') === 'guarded'
     && ['sessions.suggestTitle', 'sessions.listMessages', 'sessions.changes', 'sessions.lineage', 'statuses.list', 'agents.list', 'agents.models', 'agents.modes', 'agents.efforts', 'agents.authStatus', 'delegation.instructions', 'delegation.routing'].every((id) => risk(id) === 'read'));
   t.ok('legacyCommand: 移した WS コマンドが操作に結ばれている（別の入口は settings.set の別名）',
     registry.get('sessions.new').legacyCommand === 'newSession' && registry.get('sessions.list').legacyCommand === 'listSessions' && registry.get('app.running').legacyCommand === 'running'
@@ -87,6 +89,20 @@ export default async function (t) {
   t.ok('承認なしのモード（full・never）では通り、記録が残る', (await run(agent(), 'sessions.deleteUnsent', { sessionId: 'draft' }, deps(NEVER_FULL))).ok && calls.some((c) => c[0] === 'deleteUnsent' && c[1] === 'draft') && audits.some((a) => a[0] === 'sessions.deleteUnsent' && a[1] === 'guarded'));
   t.ok('人（画面）はそのまま消せる。無い会話は承認前に SESSION_NOT_FOUND', (await run(human, 'sessions.deleteUnsent', { sessionId: 'draft' })).ok
     && (await run(agent(), 'sessions.deleteUnsent', { sessionId: 'nope' })).code === 'SESSION_NOT_FOUND');
+
+  // ---- sessions.delete: 送った会話も消す。guarded（ADR 0143）
+  const gone = await run(agent(), 'sessions.delete', { sessionId: 'root' });
+  t.ok('sessions.delete は AI には承認が要る（承認の口が無ければ NEEDS_APPROVAL。消さない）', !gone.ok && gone.code === 'NEEDS_APPROVAL' && !calls.some((c) => c[0] === 'delete'));
+  t.ok('sessions.delete: 束縛されない CLI は NEEDS_UI', (await run({ by: 'agent', via: 'cli' }, 'sessions.delete', { sessionId: 'root' })).code === 'NEEDS_UI' && !calls.some((c) => c[0] === 'delete'));
+  t.ok('sessions.delete: 承認なしのモード（full・never）では通り、記録が残る', (await run(agent(), 'sessions.delete', { sessionId: 'root' }, deps(NEVER_FULL))).ok
+    && calls.some((c) => c[0] === 'delete' && c[1] === 'root') && audits.some((a) => a[0] === 'sessions.delete' && a[1] === 'guarded'));
+  const humanDelete = await run(human, 'sessions.delete', { sessionId: 'root' });
+  t.ok('sessions.delete: 人（画面）はそのまま消せる', humanDelete.ok && humanDelete.result.deleted === true);
+  calls.length = 0;
+  const busyDelete = await run(agent(), 'sessions.delete', { sessionId: 'kid' }, deps(NEVER_FULL));
+  t.ok('sessions.delete: 消せない会話（走っている など）は、承認カードを出す前にサーバーの理由（CANNOT_DELETE）で断る', busyDelete.code === 'CANNOT_DELETE' && /実行中/.test(busyDelete.error) && !calls.some((c) => c[0] === 'delete'));
+  t.ok('sessions.delete: 無い会話は承認前に SESSION_NOT_FOUND、自分の会話は DELETE_SELF', (await run(agent(), 'sessions.delete', { sessionId: 'nope' })).code === 'SESSION_NOT_FOUND'
+    && (await run(agent('me'), 'sessions.delete', { sessionId: 'me' }, deps(NEVER_FULL))).code === 'DELETE_SELF' && !calls.some((c) => c[0] === 'delete'));
 
   // ---- sessions.abort: 理由が必須
   calls.length = 0;
