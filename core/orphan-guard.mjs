@@ -53,6 +53,8 @@ export function createOrphanGuard({ isBusy, onExpire, idleMs = ORPHAN_IDLE_MS, u
       timer = setTimer(() => { void check(); }, checkMs);
       timer?.unref?.();
     },
+    /** main が離れるのをやめた（更新を取りやめた。main-leaving-cancel）。つながったままなので見張りは動いていない。次の切断の上限は main-leaving の前に戻る */
+    leavingCancelled() { leavingReason = null; },
     /** main がつながった（付け直した）。見張りをやめ、main-leaving も忘れる */
     connected() {
       away = false;

@@ -503,8 +503,9 @@ export default async function (t) {
     handlers.message({ type: 'computer-overlay', owner: 'o1', state: 'activity', display: { id: 11, bounds: PHYS[11] } });
     pressEsc({ shortcut: fake.shortcut }); await sleep(15);
     t.ok('attach: setOnEscape で A の後始末をつなげる（呼ばれてから computer-escape）', sent.at(-2)?.released === 'o1' && sent.at(-1)?.type === 'computer-escape');
-    handlers['once:exit']();
+    handlers.exit();
     t.ok('attach: core が終わったら窓と Esc を片付ける', fake.wins.every(w => w.destroyed) && !fake.shortcut.registered.has('Escape'));
+    t.ok('attach: 見張りは once でなく残る（つなぎ直した包みの次の切断でも片付ける）', typeof handlers.exit === 'function' && !('once:exit' in handlers));
     overlay.close();
   }
 }

@@ -13,18 +13,20 @@ import path from 'node:path';
 
 /**
  * @param mainPort main への口（core/main-port.mjs）
- * @returns { onAway(cb), onBack(cb({ first })), leaving, holdsGrace(), connects }
- *   away: 口が切れた。back: つながった（first は、このサーバーで最初のつながり。付け直しではない）。
+ * @returns { onAway(cb), onBack(cb({ first })), onStay(cb), leaving, holdsGrace(), connects }
+ *   away: 口が切れた。back: つながった（first は、このサーバーで最初のつながり。付け直しではない）。stay: main-leaving の後に main が取りやめた（main-leaving-cancel）。
  *   leaving: main-leaving を受けて、まだ戻っていない（reason を持つ）。holdsGrace は、画面が居ない間の猶予（AGENT_HOST_GRACE_MS）を数えない間
  */
 export function createMainAway({ mainPort }) {
-  const listeners = { away: new Set(), back: new Set() };
+  const listeners = { away: new Set(), back: new Set(), stay: new Set() };
   let leaving = null, connects = 0;
   const fire = (set, ...args) => { for (const cb of [...set]) { try { cb(...args); } catch (e) { console.error('main-away:', String(e?.message ?? e)); } } };
   if (mainPort.resumable) {
     mainPort.on('message', event => {
       const data = event?.data ?? event;
       if (data?.type === 'main-leaving') leaving = { reason: typeof data.reason === 'string' ? data.reason : null, at: Date.now() };
+      // 更新を取りやめた（main は居続ける）。猶予を数える状態に戻す
+      else if (data?.type === 'main-leaving-cancel' && leaving) { leaving = null; fire(listeners.stay); }
     });
     mainPort.on('disconnect', () => fire(listeners.away));
     mainPort.on('connect', () => {
@@ -37,6 +39,7 @@ export function createMainAway({ mainPort }) {
   return {
     onAway: on(listeners.away),
     onBack: on(listeners.back),
+    onStay: on(listeners.stay),
     get leaving() { return leaving; },
     get connects() { return connects; },
     /** main が「これから離れる」と言って、まだ戻っていない間。画面の猶予（hostAway）を数えない（main が居ないのは更新のためで、人が離れたのではない） */

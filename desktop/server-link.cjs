@@ -2,7 +2,7 @@
 // utilityProcess の worker と同じ形（on('message')・off・once('exit')・postMessage・kill）の包みを返すので、
 // desktop/*-bridge.cjs・computer/service.cjs・resident.cjs は worker の代わりにこれを渡すだけでよい。
 //   - 'message' はメッセージそのもの（utilityProcess の worker と同じ。サーバー側の口の { data } とは違う）
-//   - **つながりが切れたら 'exit'**（computer/service.cjs の releaseAll・computer-overlay.cjs の hideAll が once('exit') で後始末する）。
+//   - **つながりが切れたら 'exit'**（computer/service.cjs の releaseAll・computer-overlay.cjs の hideAll が on('exit') で後始末する。つなぎ直しても残る）。
 //     つながりをやめたときも、サーバーに切られたときも、サーバーが終わったときも同じ。exit(code): 0 = 静かに終わった（bye・終了）、1 = 異常（つながりの異常・大きすぎる行など）
 //   - 切れたあとの postMessage は何もせず false（溜めない）。connect() をもう一度呼べば同じ包みでつなぎ直せる（'message' の登録はそのまま残る。
 //     once('exit') は 1 回で消えるので、つなぎ直しのたびに付け直す）

@@ -134,7 +134,8 @@ async function installUpdate() {
       try { updater.quitAndInstall(false, true); } catch { failed(); }
     });
   } catch (e) {
-    quitting = false; if (!handover) worker.postMessage({ type: 'update-unlock' }); throw e;
+    // 更新を取りやめた。main は居続けるので、サーバーの main-leaving（猶予を数えない・切断の上限）を解く
+    quitting = false; worker.postMessage({ type: handover ? 'main-leaving-cancel' : 'update-unlock' }); throw e;
   }
 }
 
