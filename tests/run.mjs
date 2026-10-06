@@ -273,6 +273,8 @@ const SUITES = [
   './unit/attach-no-limit.mjs',
   // 添付を断片で送る（1 件 100MB まで）: 境目・抜け・やめる・切れても続きから・大きな画像は会話にパスだけ
   './unit/attach-chunked.mjs',
+  // 貼り付けた HTML の画像をホストが取りに行く口（ADR 0141）: https・公開アドレスのみ・リダイレクトの検査・大きさ・SVG と画像でない中身・やめる・置き場
+  './unit/image-import.mjs',
   // 入力欄と上端の見直し: 字の欄の上限・チップの字・添付の出どころ・パンくず・規則
   './unit/composer-layout.mjs',
   './unit/unread.mjs',

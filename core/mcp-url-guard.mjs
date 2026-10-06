@@ -79,14 +79,17 @@ const kindLabel = kind => t(`net.addressKind.${kind}`, { defaultValue: kind });
 /**
  * MCP 本体の URL を基準にした検査器。
  * @param {object} o
- * @param {string} o.serverUrl 利用者が登録した MCP の URL
+ * @param {string} [o.serverUrl] 利用者が登録した MCP の URL（publicOnly のときは要らない）
  * @param {(host: string, opts: object) => Promise<Array<{address: string}>>} [o.lookup] 名前解決（テストで差し替える）
+ * @param {boolean} [o.publicOnly] 基準になる MCP が無い（貼り付けた画像の URL など、信頼できない URL を取りに行く）。
+ *   いつでも「公開の側」として扱う: https だけ・解決先が公開アドレスだけ。ループバックの http も許さない（docs/adr/0141）
  */
-export function createUrlGuard({ serverUrl, lookup = dns.lookup }) {
-  const server = new URL(serverUrl);
-  const serverLoopback = isLoopbackHost(server.hostname);
+export function createUrlGuard({ serverUrl, lookup = dns.lookup, publicOnly = false }) {
+  const server = publicOnly ? null : new URL(serverUrl);
+  const serverLoopback = publicOnly ? false : isLoopbackHost(server.hostname);
   let serverPublic;
   async function mcpIsPublic() {
+    if (publicOnly) return true;
     if (serverLoopback) return false;
     // MCP 本体が解決できないときは、厳しい方（公開）に倒す
     serverPublic ??= resolveAll(server.hostname, lookup).then(list => list.every(a => addressKind(a) === 'public'), () => true);

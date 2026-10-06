@@ -1082,6 +1082,10 @@
     "files": {
       "listDirs": { "summary": "このホストのフォルダーの中身（フォルダーの名前と、files: true ならファイルの名前・大きさ・更新時刻）。ファイルの中身は読まない。", "path": "フォルダーのパス。会話から呼ぶときは省くとその会話の作業場所。", "files": "true でファイルも返す。", "limit": "返す件数（既定 30、最大 100）。", "cursor": "前の返り値の next。続きから返す。" }
     },
+    "attachments": {
+      "importImage": { "summary": "貼り付けた HTML の画像（公開アドレスの https）をホストが取りに行き、添付の置き場へ置く。画面の貼り付けだけが呼ぶ。", "url": "画像の URL（https のみ）。", "sessionId": "置き場の分け先の会話の id。", "name": "札の名前（alt の字など）。拡張子は中身から決める。", "importId": "取りやめるための id。" },
+      "cancelImport": { "summary": "取りに行っている途中の画像の取り込みをやめる。", "importId": "取り込みの id。" }
+    },
     "probe": {
       "guarded": {
         "summary": "検査用: 関所を緩める操作の代役（テストでだけ出る）。"
