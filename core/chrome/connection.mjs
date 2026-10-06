@@ -161,7 +161,7 @@ export function createChromeConnection({ locate, os, WebSocketImpl = NodeWebSock
     rnd.finding = true;
     const deadline = clock.now() + opt.dialogWaitMs;
     while (!stale(att, rnd) && rnd.finding) {
-      const ref = await os.findPermissionDialog({ since: rnd.snap });
+      const ref = await os.findPermissionDialog({ since: rnd.snap, port: rnd.port });
       if (stale(att, rnd) || !rnd.finding) return;
       if (ref) { rnd.finding = false; await onDialogFound(att, rnd, ref); return; }
       if (clock.now() >= deadline) { rnd.finding = false; if (att.round === 0) setStatus({ dialog: false }); return; }
@@ -203,7 +203,7 @@ export function createChromeConnection({ locate, os, WebSocketImpl = NodeWebSock
   /** この round が出した確認を閉じる。見つけていなければ探して閉じる（ws だけ閉じると確認が Chrome に残るため） */
   async function sweep(rnd) {
     let ref = rnd.dialog;
-    if (!ref) { try { ref = await os.findPermissionDialog({ since: rnd.snap }); } catch { ref = null; } }
+    if (!ref) { try { ref = await os.findPermissionDialog({ since: rnd.snap, port: rnd.port }); } catch { ref = null; } }
     if (ref) { try { await os.close(ref); } catch { /* 閉じられなければ残るだけ */ } }
     return Boolean(ref);
   }
@@ -345,7 +345,7 @@ export function createChromeConnection({ locate, os, WebSocketImpl = NodeWebSock
       const rnd = att?.cur;
       if (!rnd || status.state !== 'permission') return { ok: false, method: 'none' };
       let ref = rnd.dialog;
-      if (!ref) { ref = await os.findPermissionDialog({ since: rnd.snap }); if (ref) { rnd.dialog = ref; setStatus({ dialog: true }); } }
+      if (!ref) { ref = await os.findPermissionDialog({ since: rnd.snap, port: rnd.port }); if (ref) { rnd.dialog = ref; setStatus({ dialog: true }); } }
       if (!ref) return { ok: false, method: 'none' };
       const result = await os.raise(ref);
       log(`chrome: raise method=${result?.method ?? 'failed'}`);
