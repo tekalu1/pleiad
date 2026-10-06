@@ -71,6 +71,8 @@ import { isAutoRouting, routingLine, routingDetail, pinnedDetail, retryPanel, re
 import { setupDelegationSettings } from './delegation-settings.mjs';
 import { createSide, backendLogo } from "./side.mjs";
 import { setupChannels } from "./channels/index.mjs";
+import { setupVoice } from "./voice/index.mjs";
+import { setupVoiceSettings } from "./voice/settings.mjs";
 import { familiesOf } from "./family.mjs";
 import { createBranches, commonPrefix, nodeKeys } from "./branches.mjs";
 import { retainPlan, syncRequest, joinReply } from "./history-sync.mjs";
@@ -2876,7 +2878,9 @@ function onEvent(ev, replay = false) {
     return;
   }
   // どの口（画面・AI・CLI）から設定を変えても届く。prefs などの既存の配信が無い設定（コンテキストの既定）は、開いている設定の画面がここで取り直す
-  if (ev.type === 'settingsChanged') { window.dispatchEvent(new CustomEvent('ply:settings-changed', { detail: ev })); return; }
+  if (ev.type === 'settingsChanged') { window.dispatchEvent(new CustomEvent('ply:settings-changed', { detail: ev })); voiceSettings.event(ev); if (ev.keys?.includes?.('voice')) voiceUi.refresh(); return; }
+  // 通話のキーの登録・削除（設定 › 通話。core/voice/host.mjs）
+  if (ev.type === 'voiceChanged') { voiceSettings.event(ev); return; }
   // 設定の変更の承認が決着した（どの端末で答えても・取り下げても）。開いているカードを 1 行に畳む（ADR 0088）
   if (ev.type === 'settingApproval') { settleSettingCards(ev); return; }
   // 承認が片付いた（子の会話・別の窓・ターンの終わりや中断で）。開いていない会話の分の覚えと、子の会話のダイアログのカードも畳むので、会話の絞り込みの前に受ける
@@ -5950,8 +5954,11 @@ const viewAddress = createViewAddress({ storage: localStorage,
     await openFromSearch(sessionId, uuid ? { uuid, role: 'assistant', query: '', speaker: 'assistant' } : null);
   },
   openChannels: (detail) => document.dispatchEvent(new CustomEvent('channels:show', { detail })) });
+// 通話モード（承認済み 2026-10-06。web/voice/、docs/voice-call.md）。部品を差し込む口は 1 か所ずつ: Chats の会話はこの下の voiceUi.mount、スレッドは web/channels/thread.mjs
+const voiceUi = setupVoice({ token, invoke: async (op, args = {}) => cmd('invoke', { op, args }), openSettings: () => { onboarding.open('voice'); voiceSettings.load(); }, available: () => state.voice === true });
 // bot・Channels・ルーティンの画面（web/channels/index.mjs。docs/channels.md「画面の口」）。client.mjs が持つのはこの 1 つの口だけ
 const channelsUi = setupChannels({
+  voice: voiceUi,
   cmd: (command, args) => cmd(command, args),
   invoke: async (op, args = {}) => cmd('invoke', { op, args }),
   state, filePreview, side, t,
@@ -5988,6 +5995,24 @@ const notificationInbox = setupNotificationInbox({
 // External resource confirmation is available on every screen.
 const computerSettings = setupComputerSettings({ cmd: (command, args) => cmd(command, args), getPrefs: () => state.prefs, getHostCaps: () => state.hostCaps });
 const browserSettings = setupBrowserSettings({ available: !!browserPanel, cmd: (command, args) => cmd(command, args), getPrefs: () => state.prefs, getAgentLabel: labelOf });
+// 通話モードの差し込み口（Chats の会話）。契約は web/voice/index.mjs の冒頭。入力欄・頭・メインの面へは、ここの 1 か所だけで繋ぐ
+const voiceWraps = new WeakMap();
+voiceUi.mount({
+  id: 'chat',
+  header: document.querySelector('body > main > header.top'), headerBefore: $('tocEntry'),
+  composer: chatComposer.voiceSlot(),
+  main: document.querySelector('body > main'), log: $('log'), overlay: $('logFrame'), replyScope: () => $('log'),
+  tail: {
+    // 本物の行と同じ入れ物（.mw > 筋 + .mw-body。wrap・place が作る）に入れて、同じ列・同じ幅の規則で出す。「止める」の行も同じ列へ（一度だけ包む）
+    place: (node) => place(node.classList.contains('mw') ? node : (voiceWraps.get(node) ?? voiceWraps.set(node, wrap(node)).get(node))), rows: thread,
+    isRow: (node) => node.classList.contains('mw') && Boolean(node.querySelector('.m.user')),   // 会話の列の行は .mw の中に .m.user が入る
+    markHost: (row) => row.querySelector('.m.user > .who > span'),
+    createRow: () => { const m = el('div', 'm user'); m.append(whoLine(t('chat.message.you'), new Date().toISOString(), { actions: false })); const body = el('div', 'body'); m.append(body); return { el: wrap(m), body }; },
+  },
+  target: () => ({ kind: 'chat', sessionId: state.current && state.current !== freshSessionId ? state.current : null }),
+  send: (text) => submitVoiceText(text),
+  follow: () => { const log = $('log'); if (log.scrollHeight - log.scrollTop - log.clientHeight < 160) log.scrollTop = log.scrollHeight; },
+});
 // 会話とプレビューの外部リンクは設定の開き先へ（web/link-open.mjs）
 configureLinkOpen({ getPrefs: () => state.prefs, chooseRemote: (url, openHere) => chooseRemote({ url, openHere }) });
 // 文中の URL・名前付きのリンクの、行き先の一行と右クリックのメニュー（web/link-menu.mjs）
@@ -7674,6 +7699,18 @@ async function clearSentDraft(id, text, attachments) {
   if (state.current === id) { $('prompt').value = ''; state.attached = []; renderAttached(); $('slashHint').textContent = ''; slashSkills.close(); fitPrompt(); }
   await persistDraft(id, { text: '', attached: [], dirty: true });
 }
+/**
+ * 通話で確定した発言を、いまの送信の経路（submit）にそのまま乗せる（web/voice/index.mjs の slot.send）。
+ * 入力欄の書きかけ（字と添付）は退避して、送れたら戻す。送れなかったら発言は欄に残し（書きかけはその後ろ）、投げる
+ */
+async function submitVoiceText(text) {
+  const keep = { text: $('prompt').value, attached: state.attached };
+  $('prompt').value = text; state.attached = []; renderAttached(); fitPrompt();
+  await submit({ at: null });
+  if ($('prompt').value.trim() === '') { $('prompt').value = keep.text; state.attached = keep.attached; renderAttached(); fitPrompt(); return; }
+  $('prompt').value = [text, keep.text].filter(Boolean).join(NL + NL); state.attached = keep.attached; renderAttached(); fitPrompt();
+  throw new Error(t('voice.note.notSent'));
+}
 async function submit({ at = armedSends.get(state.current) } = {}) {
   // 入力欄の `!`: シェルの形なら走らせる。使えない会話の `!` は送らずに理由の一行を光らせる（文として送るのは「文として送る」だけ）
   if (shellComposer.active) return runShellFromComposer();
@@ -7803,6 +7840,8 @@ function connect() {
     const m = JSON.parse(e.data);
 
     if (m.kind === "ready") {
+      // 通話モード（/voice-ws）に対応した接続か（キーを持つこの PC の画面だけ。docs/voice-call.md）
+      state.voice = m.voice === 1; voiceUi.refresh();
       // protocolVersion は必ず gate する。想定外なら黙って誤動作させない
       if (m.protocolVersion !== PROTOCOL) {
         sys(html.t("app.protocolUnsupported", { version: m.protocolVersion }));
@@ -8158,6 +8197,7 @@ setupUsage({ $, cmd, source: usageSource, getBackends: () => state.backends, end
 const remoteSettings = setupRemote({ cmd, page: onboarding.page, openSession: id => { onboarding.close(); select(id); } });
 // 設定 › 通知。この PC の設定とスマホの一覧（スマホの種類・ロック画面の会話名はスマホのアプリで変える）
 const notifySettings = setupNotifySettings({ cmd, page: onboarding.page, onPc: pc => { notifyPc = pc; } });
+const voiceSettings = setupVoiceSettings({ cmd, page: onboarding.page });
 // スマホのアプリの中だけ: 最初の作業が終わったときの帯と、通知から開く会話
 const mobileNotify = setupMobileNotify({ band: $('notifyBand'), openSession: id => select(id) });
 // 手元の窓の中継のカードの「子の会話を見る」で、このリモートの窓の会話を開く（desktop/remote-windows.cjs の openHost）

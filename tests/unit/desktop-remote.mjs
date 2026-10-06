@@ -280,7 +280,7 @@ export default async function (t) {
       residentPrefs: { get: () => ({ keepRunning: false, sleep: 'working' }) },
       botHost: { opsDeps: () => ({ routines: { list: async () => rows } }) },
       locale: { lang: 'ja' }, enabledRoutineCount, residentSignal,
-      LIST_NEUTRAL_EVENTS: new Set(), invalidateSessionLists() {}, streamEvents: new Set(),
+      LIST_NEUTRAL_EVENTS: new Set(), invalidateSessionLists() {}, streamEvents: new Set(), voiceHost: { onEvent() {} },   // 通話の読み上げ（emitGlobal の先頭）。このテストの対象外
       runtime: { turns: new Map() }, P: { EVENT: 'event' }, sendTo: () => true,
     });
     vm.runInContext(`let residentLast = '', residentStatus = null, residentWork = null, residentSeq = 0;

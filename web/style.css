@@ -1273,6 +1273,8 @@ body.inapp-links .present-tools .visualize-expand{display:none}
    差を付けるのは承認モードが YOLO のときだけ: 盾のアイコンを ⚠ に替え、アイコンと字を強い字にする（太字にはしない）。
    足りないときは作業ディレクトリ → モデル名の順に … で詰める（段「high」と承認モードは削らない）。押すと上に浮く面（.cpop）が開く */
 .crow-gap{flex:1 1 0;min-width:0}
+/* 外から差し込む部品（通話のマイク・スピーカー）の枠。中身は行の子と同じに並ぶ（web/composer/composer.mjs の partSlot） */
+.crow-slot{display:contents}
 .chip{display:inline-flex;align-items:center;gap:5px;min-width:0;max-width:100%;height:30px;padding:0 8px;border-radius:var(--r-pill);
   background:transparent;color:var(--ink);font:400 var(--fs)/1.5 var(--font);white-space:nowrap;cursor:pointer;flex:0 1 auto;
   transition:background-color var(--dur-fast) var(--ease-out)}

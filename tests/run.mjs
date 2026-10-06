@@ -555,6 +555,19 @@ const SUITES = [
   './unit/release-ci-gate.mjs',
   // Google Play へ上げるワークフロー: APK の流れと同じ版・同じ鍵、入力と Secrets の確かめ（docs/android-releases.md「Google Play」）
   './unit/android-play-workflow.mjs',
+  // --- 通話モード (core/voice/、web/voice/。docs/voice-call.md) ---
+  // 中核: PCM・WAV・先頭の無音・発話の区切り（無音・短い声・最長・投機・片）・片の重なりの除去・設定の検査・使用量の台帳
+  './unit/voice-core.mjs',
+  // 読み上げる文の切り出し: 文の切れ目・1 文目は読点で早く・コード/表/ログは読まず言い添える・1 ターンの上限・差分を 1 字ずつ入れても同じ
+  './unit/voice-reply-reader.mjs',
+  // OpenRouter の呼び出し（偽の HTTP）: やり直し・429 のとき予備のモデルへ・冷却・片の失敗・投機・順番・キーを文・ログへ出さない・TTS の検査と奇数バイト
+  './unit/voice-openrouter.mjs',
+  // 通話 1 本: hello・ready・限度（1 日・1 回・声が無いまま）・音声フレームから確定まで・エージェントの出来事から読み上げ・ミュート・止める・遅延の内訳
+  './unit/voice-session.mjs',
+  // サーバー越し: キーは human-only・画面へ返さない・/voice-ws の認可・偽の OpenRouter とつないで一巡・ホストの設定（settings.set の voice）・使用量
+  './unit/server-voice.mjs',
+  // 画面の部品: 送信ゲート・PCM の変換・再生キュー・状態機械・吹き出しの差し替え・読む場所の探し方・差し込み口の契約（偽の AudioContext・DOM）
+  './unit/voice-ui.mjs',
 ];
 
 const code = await main({

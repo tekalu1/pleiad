@@ -40,6 +40,9 @@ export const COMMANDS = new Set([
   'setDelegationRouting',       // { settings } -> 同上。prefs.json の delegationRouting に重ねて保存（null の項目は既定に戻す）。不正なら全体を断る
   'setDelegationRoutingKey',    // { service: openrouter|cerebras, key } -> 同上。登録が判定器への外部送信の同意になる
   'deleteDelegationRoutingKey', // { service } -> 同上
+  // 通話モードの OpenRouter のキー（設定 › 通話。core/voice/host.mjs）。キーは返さない。登録が音声の外部送信の同意になる
+  'setVoiceKey',    // { key } -> { hasKey, storage, today, active, check: ok|invalid|unreachable }
+  'deleteVoiceKey', // {} -> { hasKey, storage, today, active }
   'providerUsage', // { backend } -> subscription quota + locally recorded usage（Claude はアカウントを登録していれば quota.accounts にアカウントごと）
   // Claude のアカウント（会話ごとに選ぶ。core/claude-accounts.mjs）。トークンは返さない
   'claudeAccounts',      // {} -> { accounts: [{ id, name, hasToken, usageLogin }], storage: { encrypted, backend, reason? } }
@@ -262,6 +265,7 @@ export const EVENTS = new Set([
   "notificationsChanged", // { unread, waiting } 通知の一覧（ベルのボタン。ADR 0149）の件数が変わった（sessionId は null。リモートの端末にも届く）。中身は notifications.list で取り直す
   "claudeAccountsChanged", // Claude のアカウント一覧が変わった（sessionId は null）。中身は claudeAccounts コマンドで取り直す
   "compatEndpointsChanged", // 互換の接続先の一覧・既定が変わった（sessionId は null）。中身は compatEndpoints コマンドで取り直す
+  "voiceChanged",  // 通話のキーの登録・削除（sessionId は null）。中身は invoke の voice.status で取り直す
   "delegationRoutingChanged", // change: settings|usage（旧送信元では省略）。sessionId は null。中身は delegationRouting コマンドで取り直す
   "claudeLogin",  // { loginId, kind, accountId, phase: url|code|verifying|done|error|cancelled, url?, message? } アカウントの認可の進み具合（sessionId は null）。トークンは載せない
   "remoteStatus",  // { status: RemoteStatus } リモートの設定・中継との接続・承認待ち・端末一覧が変わった（sessionId は null）

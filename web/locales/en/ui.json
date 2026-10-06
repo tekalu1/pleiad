@@ -42,6 +42,7 @@
       "appearance": "Appearance",
       "context": "Plugins",
       "notify": "Notifications",
+      "voice": "Calls",
       "remote": "Remote",
       "about": "About & updates",
       "delegation": "Delegation",
@@ -3927,6 +3928,116 @@
       "sortNewest": "Newest first (press for oldest first)",
       "noMatch": "No matches",
       "noItems": "No messages in this conversation yet"
+    }
+  },
+  "voice": {
+    "call": {
+      "start": "Start a call",
+      "endAt": "End call · {{time}}"
+    },
+    "mic": {
+      "mute": "Mute microphone · {{state}}",
+      "unmute": "Unmute · {{state}}",
+      "denied": "Microphone not allowed · press to try again",
+      "noDevice": "No microphone found · press to try again",
+      "busy": "Microphone in use by another app · press to try again"
+    },
+    "spk": {
+      "mute": "Mute speaker",
+      "unmute": "Unmute speaker",
+      "speaking": " · speaking"
+    },
+    "state": {
+      "starting": "Starting",
+      "listening": "Listening",
+      "hearing": "Hearing you",
+      "thinking": "Thinking",
+      "speaking": "Speaking",
+      "muted": "Muted"
+    },
+    "live": {
+      "starting": "Starting the call",
+      "listening": "Listening",
+      "muted": "Microphone muted",
+      "unmuted": "Unmuted",
+      "denied": "Microphone not allowed",
+      "ended": "Call ended"
+    },
+    "mark": "Spoken message",
+    "openSettings": "Open settings",
+    "hint": {
+      "reading": "Reading aloud",
+      "stop": "Stop",
+      "jump": "Go to the spoken line"
+    },
+    "note": {
+      "denied": "Microphone not allowed ·",
+      "noDevice": "No microphone found ·",
+      "busy": "Microphone in use by another app ·",
+      "nokey": "Calls need an OpenRouter key ·",
+      "dailyLimit": "Today's call limit reached ·",
+      "callLimit": "The call reached its length limit and ended ·",
+      "idle": "The call ended after a long time without hearing anyone",
+      "link": "The call connection was lost",
+      "sttBusy": "Speech recognition is busy. Please say that again",
+      "stt": "Could not hear that. Please say it again",
+      "tts": "Could not read that aloud. See the text on screen",
+      "sendFailed": "Could not send the message: {{error}}",
+      "notSent": "It could not be sent right now, so the message was left in the input box",
+      "start": "Could not start the call ·",
+      "startTimeout": "The call did not get ready in time"
+    },
+    "settings": {
+      "intro": "Talk to the agent: your voice is transcribed and sent to the conversation, and the reply is read aloud. Both go through OpenRouter.",
+      "loadFailed": "Could not load: {{error}}",
+      "saved": "Saved",
+      "failed": "Could not save: {{error}}",
+      "key": {
+        "title": "OpenRouter key",
+        "set": "Registered",
+        "unset": "Not registered",
+        "replace": "Replace",
+        "delete": "Delete",
+        "save": "Register",
+        "show": "Show",
+        "hide": "Hide",
+        "saved": "Key registered",
+        "deleted": "Key deleted",
+        "note": "Only this PC holds the key and it is never shown on screen. Once registered, the audio of calls and the text read aloud are sent to OpenRouter (and the provider of the model you pick).",
+        "encrypted": "The key is stored with the OS encryption.",
+        "plain": "This PC cannot encrypt, so the key is kept as-is in a file with restricted permissions.",
+        "check": {
+          "ok": "The key checked out",
+          "invalid": "OpenRouter did not accept this key",
+          "unreachable": "Could not reach OpenRouter to check",
+          "nokey": ""
+        }
+      },
+      "models": {
+        "title": "Models and voice",
+        "stt": "Speech-to-text (STT) model",
+        "fallback": "Fallback STT model",
+        "fallbackHint": "Used when the main model is busy and turns a request down. Leave empty for no fallback",
+        "tts": "Text-to-speech (TTS) model",
+        "voice": "Voice",
+        "language": "Speech language",
+        "auto": "Auto (the display language)",
+        "ja": "Japanese",
+        "en": "English"
+      },
+      "limits": {
+        "title": "Cost safeguards",
+        "call": "Longest single call (minutes)",
+        "daily": "Longest total call time per day (minutes)",
+        "today": "Today: calls {{minutes}} min · transcribed {{stt}} min · read aloud {{chars}} characters",
+        "note": "A call ends when it reaches a limit (and cannot start once the day's limit is reached). A call that hears nobody for 10 minutes also ends."
+      },
+      "audio": {
+        "title": "Microphone",
+        "echo": "Echo cancellation, noise suppression, auto gain",
+        "echoHint": "A browser feature. It helps avoid picking up sounds other than your voice when you listen on speakers. Turn it off if your voice sounds muffled.",
+        "permission": "If the microphone is not allowed, allow it in the browser's site settings (the lock icon in the address bar) or the OS privacy settings. The desktop app allows microphone use from this screen automatically."
+      }
     }
   }
 }

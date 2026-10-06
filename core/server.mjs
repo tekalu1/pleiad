@@ -80,6 +80,7 @@ import { importNativeMcp } from './mcp-import.mjs';
 import { createMcpConfig } from './mcp-config.mjs';
 import { createHooksConfig, HOOK_AGENTS, applyCodexHooks, trimHookRuns, findNodeOnPath } from './hooks-config.mjs';
 import { finishShutdown } from './shutdown.mjs';
+import { createVoiceHost, VOICE_PATH } from './voice/host.mjs';
 import { createPlyHooks } from './ply-hooks.mjs';
 import { prepareHooksTurn, unifyPreview, importCandidate } from './hooks-unify.mjs';
 import { deliverable, classifyNativeRun } from './hooks-plan.mjs';
@@ -276,6 +277,17 @@ process.on('exit', () => claudeLogin.cancelAll());
 const compatSecrets = createSecretStore({ file: path.join(store.dataDir, 'compat-endpoint-secrets.json'), cipher: secretCipher });
 compatSecrets.migrate().catch(() => {});
 const compatEndpoints = createCompatEndpoints({ dataDir: store.dataDir, secrets: compatSecrets });
+// 通話モード（core/voice/、docs/voice-call.md）。OpenRouter のキーはホストだけが持つ（voice-secrets.json。画面へは返さない）。
+// 音声は /voice-ws（バイナリ）で受け渡し、読み上げは emitGlobal の text.delta から作る
+const voiceHost = createVoiceHost({
+  dataDir: store.dataDir, cipher: secretCipher, getPrefs: () => store.getPrefs(), uiLang: () => currentLocale(), t, isLocal: isLocalRequest,
+  // bot の会話が属するスレッド（スレッドの通話が読み上げる会話を決める）
+  resolveThread: async (sessionId) => {
+    const bot = (await store.get(sessionId).catch(() => null))?.bot;
+    return bot?.kind === 'thread' && bot.channelId && bot.threadId ? { channelId: bot.channelId, threadId: bot.threadId } : null;
+  },
+  log: (line, fields) => console.log(`  ${line}${fields ? ` ${JSON.stringify(fields)}` : ''}`),
+});
 // 同じデータ置き場を別の Pleiad（開発版と配布版）が使っていることがあるので、走っている会話のファイルは消さない（1 日より古いものだけ）
 sweepClaudeFlagSettings(store.dataDir, { olderThanMs: 24 * 60 * 60_000 }).catch(() => {});
 const mcpOAuth = createMcpOAuth({ secrets: mcpSecrets, lockDir: path.join(store.dataDir, 'mcp-locks'),
@@ -1316,11 +1328,12 @@ const wss = new WebSocketServer({ noServer: true });
 
 server.on("upgrade", (req, socket, head) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
-  if (url.pathname !== "/ws") return socket.destroy();
+  if (url.pathname !== "/ws" && url.pathname !== VOICE_PATH) return socket.destroy();
   if (!tokenOk(url.searchParams.get("token"))) {
     socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
     return socket.destroy();
   }
+  if (url.pathname === VOICE_PATH) return voiceHost.upgrade(req, socket, head);   // 通話の音声（バイナリ）。/ws とは別の口
   wss.handleUpgrade(req, socket, head, (ws) => wss.emit("connection", ws, req));
 });
 
@@ -1759,7 +1772,7 @@ const LIST_NEUTRAL_EVENTS = new Set([
   // 入力欄の `!`（core/shell-runs.mjs）。一覧の行は変わらない
   "shell.start", "shell.output", "shell.done", "shell.skip", "shell.handed",
   // チャンネル・bot・記憶・ルーティンの出来事。会話の一覧の行は変わらない（bot の会話の行の変化は sessionsChanged が伝える）
-  "channelsChanged", "channelPost", "channelReaction", "channelThread", "channelRead", "botsChanged", "memoryChanged", "routinesChanged", "channelEvent",
+  "channelsChanged", "channelPost", "channelReaction", "channelThread", "channelRead", "botsChanged", "memoryChanged", "routinesChanged", "channelEvent", "voiceChanged",
   // 通知の一覧の件数（ベルのボタン。ADR 0149）。会話の一覧の行は変わらない
   "notificationsChanged",
 ]);
@@ -1862,6 +1875,7 @@ async function savePref(key, value, backendId) {
 const liveReads = new Set();
 let streamSequence = 0;
 function emitGlobal(event) {
+  voiceHost.onEvent(event);   // 通話が見ている会話の読み上げ（core/voice/host.mjs）
   if (event.type === 'routinesChanged') void postResident();
   // 通知の一覧: 人以外の投稿の @あなた・チャンネルの既読・アーカイブ（ADR 0149）
   if (event.type === 'channelPost' || event.type === 'channelRead' || event.type === 'channelsChanged') void inboxSources.observe(event);
@@ -3726,6 +3740,7 @@ function opsDeps(lng = currentLocale()) {
     conversations: opsConversations,
     agents: opsAgents,
     prefs: () => store.getPrefs(),
+    voice: { status: () => voiceHost.status() },
     compactionSettings: () => compactionSettings,
     statuses: opsStatuses,
     worktrees: opsWorktrees,
@@ -5892,6 +5907,8 @@ wss.on("connection", (ws, req) => {
     startedAt: SERVER_STARTED_AT,
     // 離れた端末への通知（ADR 0086）を受けられる。古いホストにはこの欄が無く、端末は鍵の登録を送らない
     notify: 1,
+    // 通話モード（/voice-ws）に対応している。キーを持つこの PC の画面だけ（中継越しの端末の画面には出さない。docs/voice-call.md）
+    voice: local ? 1 : 0,
     // 画面の言語。setting は設定値（auto|ja|en）、lang は実際に使う言語（ja|en）
     locale,
     // 送信予定の時刻をこの PC の時刻でも添えるため（見ている端末と時刻帯が違うとき。ADR 0103）
@@ -6272,6 +6289,17 @@ wss.on("connection", (ws, req) => {
           }
           emitGlobal({ type: 'delegationRoutingChanged', change: 'settings', sessionId: null });
           return reply(true, await delegationRoutingState());
+        }
+        // 通話の OpenRouter のキー（設定 › 通話）。登録が音声の外部送信の同意になる（キーが無ければ何も送らない）。キーは返さない
+        case 'setVoiceKey':
+        case 'deleteVoiceKey': {
+          if (msg.command === 'deleteVoiceKey') await voiceHost.deleteKey();
+          else {
+            try { await voiceHost.setKey(msg.args?.key); }
+            catch (e) { throw e?.code === 'INVALID_KEY' ? new Error(t('voice.key.invalid')) : e; }
+          }
+          emitGlobal({ type: 'voiceChanged', sessionId: null });
+          return reply(true, { ...(await voiceHost.status()), ...(msg.command === 'setVoiceKey' ? { check: await voiceHost.checkKey() } : {}) });
         }
         case "resolvePermission": {
           const { id, allow, always, scope, message, messageKey, answers, annotations, response, receipt } = msg.args ?? {};
@@ -6787,6 +6815,7 @@ process.parentPort?.on("message", async ({ data }) => {
     process.parentPort.postMessage({ type: 'abort', id: data.id, ...result });
   }
   if (data?.type === "shutdown") {
+    void voiceHost.close();   // 通話の使用量の台帳を書き切る
     try { finishShutdown(store.flushNow, () => runtime.turns.size > 0 || agentTasks.busy); }
     catch (e) {
       console.error('session store shutdown save failed:', e?.code ?? e?.message ?? e);

@@ -100,22 +100,26 @@ export function createComposer({ els, prefix = '', t, attach, isPlain = () => fa
   prompt.addEventListener('input', fit);
   addEventListener('resize', fit);
 
-  // 外から差し込む部品（通話のボタンなど）の置き場。送信の左（中断・再開の前）に 1 つの枠を置き、中に並べる
+  // 外から差し込む部品（通話のマイク・スピーカーなど）の置き場。送信ボタンのすぐ左に 1 つの枠を置き、中に並べる
   let slot = null;
-  function addPart(node) {
+  function partSlot() {
     if (!slot) {
       slot = document.createElement('span');
       slot.className = 'crow-slot';
-      const before = els.abort ?? els.send;
-      before.parentElement.insertBefore(slot, before);
+      els.send.parentElement.insertBefore(slot, els.send);
     }
-    slot.append(node);
+    return slot;
+  }
+  function addPart(node) {
+    partSlot().append(node);
     parts.controls?.fit();
     return () => { node.remove(); parts.controls?.fit(); };
   }
 
   return {
     els, editor, attach: att, wait: composerWait, fit, addPart,
+    /** 通話モードの差し込み口の composer（web/voice/index.mjs の slot.composer）。マイクとスピーカーは送信の左のスロットに入る */
+    voiceSlot: () => ({ root: els.composer, row: partSlot(), before: null, below: els.cbox, refit: () => parts.controls?.fit() }),
     get controls() { return parts.controls ?? null; },
     get sendMenu() { return parts.sendMenu ?? null; },
     get slash() { return parts.slash ?? null; },
