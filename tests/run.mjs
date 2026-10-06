@@ -164,6 +164,8 @@ const SUITES = [
   './unit/agent-tasks-notice.mjs',
   // 追加指示（ply_task_send）を走っている子のターンへ途中送信で渡す: 受理・合図・捨てられた・合図なし・順序・止めた後（ADR 0065）
   './unit/agent-tasks-steer.mjs',
+  // 付け直した委譲の子（無停止の更新 2b-7）: 起動の復元で interrupted にせず、結果の確定を引き継ぐ（手を離した側は書かない・途中送信の claim・あきらめ・取り消し）
+  './unit/agent-tasks-adopt.mjs',
   // 中断で委譲タスクを止める: 届いていない結果を捨てずに返す・取り消したものを返す・cancel は終わったタスクの通知を止めない・再起動で止まったもの
   './unit/agent-tasks-interrupt.mjs',
   './unit/server-delegation-notice.mjs',

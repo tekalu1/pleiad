@@ -2194,24 +2194,31 @@ function makeEmit(turn) {
       trimHookRuns(turn.hookRuns);
       return;
     }
+    // 途中送信の合図（userMessage.delivered / dropped）を待っている控えは 3 つ（札の steers。stage2-server-state.md §3 の 3）。
+    // 付け直しの再生（印から ack まで）でも、札が控えていたものだけは処理する（手を離した後に旧サーバーが読み捨てた合図は、再生の側に来る）。
+    // 控えが無い合図（旧サーバーが処理済み）は再生では何もしない
+    const signal = event?.type === "userMessage.delivered" || event?.type === "userMessage.dropped";
     // 走っているターンへ渡した完了通知（liveNotices）は人間の発言ではない。渡ったら通知の一行にし、捨てられたら送り直す
-    // 途中送信の合図（下の 3 つ）は、再生では走らせない（旧サーバーが処理済み。渡った合図を待つ控えは札で渡す。2b-7）
-    if (!replay && (event?.type === "userMessage.delivered" || event?.type === "userMessage.dropped") && liveNotices.has(event.messageId)) {
+    if (signal && liveNotices.has(event.messageId)) {
       const notice = liveNotices.get(event.messageId);
       liveNotices.delete(event.messageId);
-      if (event.type === "userMessage.delivered") emit({ type: "taskNotice", text: notice.prompt });
+      touchCard(turn);
+      if (event.type === "userMessage.delivered") emit({ type: "taskNotice", text: notice.prompt }, { replay });
       else if (notice.redeliver) notice.redeliver();
       else agentTasks?.renotify(notice.items).catch(() => {});
       return;
     }
     // 子のターンへ途中送信で渡した追加指示（ply_task_send。liveInstructions）の合図。指示の状態を決めてから、画面にも流す
-    if (!replay && (event?.type === "userMessage.delivered" || event?.type === "userMessage.dropped") && liveInstructions.has(event.messageId)) {
+    if (signal && liveInstructions.has(event.messageId)) {
       const sent = liveInstructions.get(event.messageId);
       liveInstructions.delete(event.messageId);
+      touchCard(turn);
       agentTasks?.steered(sent.taskId, sent.instructionIds, event.type === "userMessage.delivered" ? "delivered" : "dropped").catch(() => {});
     }
-    // 受理済みの途中送信が読まれずに捨てられた（userMessage.dropped）。送信待ちへ戻す
-    if (!replay && event?.type === "userMessage.dropped" && turn.info.sessionId && event.messageId) {
+    // 受理済みの途中送信（送信待ちの項目）への合図。捨てられたら送信待ちへ戻す
+    const awaited = signal && event.messageId && turn.pendingSteers?.delete(event.messageId);
+    if (awaited) touchCard(turn);
+    if (event?.type === "userMessage.dropped" && turn.info.sessionId && event.messageId && (!replay || awaited)) {
       outbox.returned(turn.info.sessionId, event.messageId).catch(() => {});
     }
     // 最後の発言の id（通知の一覧の飛び先。ターンの終わりに completionNotices へ渡す）
@@ -4385,7 +4392,8 @@ const outboxWatchers = new Map();
 const taskStopReasons = new Map();
 // 走っている依頼元のターンへ途中送信（control.steer）で渡した完了通知のうち、「渡った」合図（steerConfirms）を待っているもの。
 // 通知の item id -> { owner, prompt, items: [{ taskId, revision }] }。渡れば画面へ通知の一行を出し、
-// 読まれないままターンが死んだら（userMessage.dropped・ターンの終わり）空いたときの経路で送り直す（ADR 0057）
+// 読まれないままターンが死んだら（userMessage.dropped・ターンの終わり）空いたときの経路で送り直す（ADR 0057）。
+// 付け直すターンへは札の steers で渡る（steersOf・restoreSteers。redeliver は関数なので settingNotices から作り直す）
 const liveNotices = new Map();
 // 走っている子のターンへ途中送信（control.steer）で渡した追加指示（ply_task_send）のうち、「渡った」合図（steerConfirms）を待っているもの。
 // 指示の item id（task-send-<指示 ID>） -> { sessionId: 子の会話, taskId, instructionId }。合図で指示の状態を決め、
@@ -4409,7 +4417,19 @@ const outbox = createMessageQueue({
     // 送るのは outbox の item そのもの（本文だけではない）。バックエンドは item.id を
     // 相手に預け、「渡った」合図（userMessage.delivered）でこの id を返してくる
     return { turn, blocked: turn.ac.signal.aborted || Boolean(turn.outcome), phase: turn.info.phase,
-      steer: steer ? item => steer(item) : null };
+      steer: steer ? async item => {
+        // 渡った合図を後から出すバックエンドは、受理の応答より先に合図を出すことがある。受理を待つ前から控える（札の steers。付け直した先が合図を処理する）
+        const confirms = Boolean(turn.control.steerConfirms);
+        if (confirms) { turn.pendingSteers.add(item.id); touchCard(turn); }
+        try {
+          const accepted = await steer(item);
+          if (!accepted && turn.pendingSteers.delete(item.id)) touchCard(turn);
+          return accepted;
+        } catch (err) {
+          if (turn.pendingSteers.delete(item.id)) touchCard(turn);
+          throw err;
+        }
+      } : null };
   },
   start: runTurn,
   changed: (sessionId, messages) => {
@@ -4490,20 +4510,29 @@ function completionNotice(lng, tasks) {
  * 完了通知を、走っているターンへ途中送信（control.steer）で渡す。人間の発言ではないので、outbox は通さず
  * 本文のハッシュを記録して（履歴が通知として描く）、画面へは通知の一行を出す。
  * true=受理 → ok / false=受理できない → requeue（空いてから新しいターンで）/ throw=結果不明 → error（自動で再送しない）。
- * 「渡った」合図を後から出すバックエンド（steerConfirms）では、通知の一行を渡った時点で出し、捨てられたら送り直す（liveNotices）
+ * 「渡った」合図を後から出すバックエンド（steerConfirms）では、通知の一行を渡った時点で出し、捨てられたら送り直す（liveNotices）。
+ * 送り直し先は、タスクの完了通知なら agentTasks.renotify（items）、設定の変更の承認の結果なら台帳へ戻す（settingNotices。付け直す先でも作り直せる形）
  */
-async function steerNotice(turn, owner, prompt, tasks, redeliver = null) {
+async function steerNotice(turn, owner, prompt, tasks, settingNotices = null) {
   await recordTaskNotice(owner, prompt);
   const item = { id: `task-notice-${crypto.randomUUID()}`, args: { prompt } };
   const confirms = Boolean(turn.control.steerConfirms);
   // 合図は受理の応答より先に来ることがある。先に登録しておく
-  if (confirms) liveNotices.set(item.id, { owner, prompt, items: tasks.map(x => ({ taskId: x.taskId, revision: x.revision ?? 0 })), ...(redeliver ? { redeliver } : {}) });
+  if (confirms) {
+    liveNotices.set(item.id, noticeEntry(owner, prompt, tasks.map(x => ({ taskId: x.taskId, revision: x.revision ?? 0 })), settingNotices));
+    touchCard(turn);
+  }
   let accepted;
   try { accepted = await turn.control.steer?.(item); }
-  catch { liveNotices.delete(item.id); return 'error'; }
-  if (!accepted) { liveNotices.delete(item.id); return 'requeue'; }
+  catch { if (liveNotices.delete(item.id)) touchCard(turn); return 'error'; }
+  if (!accepted) { if (liveNotices.delete(item.id)) touchCard(turn); return 'requeue'; }
   if (!confirms) emitGlobal({ type: 'taskNotice', sessionId: owner, text: prompt });
   return 'ok';
+}
+
+/** 渡った合図を待つ完了通知の控え（liveNotices の値）。設定の変更の承認の結果は、台帳へ戻す口を settingNotices から作る */
+function noticeEntry(owner, prompt, items, settingNotices = null) {
+  return { owner, prompt, items, ...(settingNotices ? { settingNotices, redeliver: () => settingApprovals.requeue(settingNotices) } : {}) };
 }
 
 /**
@@ -4529,11 +4558,14 @@ async function steerInstruction(task, instruction) {
   const item = { id: `task-send-${instruction.id}`, args: { prompt: instruction.text } };
   const confirms = Boolean(turn.control.steerConfirms);
   // 合図は受理の応答より先に来ることがある。先に登録しておく
-  if (confirms) liveInstructions.set(item.id, { sessionId: task.sessionId, taskId: task.taskId, instructionIds: instruction.ids ?? [instruction.id] });
+  if (confirms) {
+    liveInstructions.set(item.id, { sessionId: task.sessionId, taskId: task.taskId, instructionIds: instruction.ids ?? [instruction.id] });
+    touchCard(turn);
+  }
   let accepted;
   try { accepted = await turn.control.steer?.(item); }
-  catch { liveInstructions.delete(item.id); return 'error'; }
-  if (!accepted) { liveInstructions.delete(item.id); return 'requeue'; }
+  catch { if (liveInstructions.delete(item.id)) touchCard(turn); return 'error'; }
+  if (!accepted) { if (liveInstructions.delete(item.id)) touchCard(turn); return 'requeue'; }
   emitGlobal({ type: 'userMessage', sessionId: task.sessionId, messageId: item.id, text: instruction.text, at: Date.now(), ...(confirms ? { pending: true } : {}) });
   return confirms ? 'pending' : 'delivered';
 }
@@ -4547,6 +4579,103 @@ async function renewTaskWorktree(task) {
   await store.recordChange(task.sessionId, { by: 'ply', field: 'cwd', from: current, to: made.cwd, ...savedReason('worktreeSplit') });
   emitGlobal({ type: 'cwd', sessionId: task.sessionId, cwd: made.cwd, by: 'ply', ...savedReason('worktreeSplit') });
   return publicWorktree(made.entry);
+}
+
+/** 委譲の子のターンの実行の控え（taskExecutions の値）。makeEmit が出来事を集め、finishChild が結果にする。付け直すターンでは札の delegation から reply・stopped を戻す */
+function newExecution(card = null) {
+  return { outcome: null, error: null, rejections: [], stopped: card?.stopped ?? [], reply: card?.reply ?? null, timer: null, streamed: '', streamEnded: false };
+}
+
+/**
+ * 委譲の子のターンの実行の前半（agentTasks の execute と、付け直し）: 実行の控えを置き、タスクの取り消しで子のターンを止める口をつなぐ。
+ * 戻り値は外す関数（結果を確定したら呼ぶ）
+ */
+function trackChild(task, signal, execution) {
+  taskExecutions.set(task.sessionId, execution);
+  const stopChild = () => {
+    const child = runtime.turns.get(task.sessionId);
+    // 依頼元の会話を止めた理由（abortSessions が置く）。この取り消しが実際に止めるターンにだけ付ける
+    const why = taskStopReasons.get(task.sessionId);
+    taskStopReasons.delete(task.sessionId);
+    if (child && why) child.abortReason ??= why;
+    child?.ac.abort();
+    // タスクの記録の backend は、依頼元が替えた次のターンの値のことがある（ADR 0134）。止めるのは今の会話のエージェント
+    resolveBackendForSession(task.sessionId).then(b => b?.stopSession?.(task.sessionId)).catch(() => {});
+  };
+  signal.addEventListener('abort', stopChild, { once: true });
+  return () => { signal.removeEventListener('abort', stopChild); clearTimeout(execution.timer); if (taskExecutions.get(task.sessionId) === execution) taskExecutions.delete(task.sessionId); };
+}
+
+/**
+ * 委譲の子の実行の後半（execute と、付け直したターンの adoptChild）: 子のターンが終わった（outcome）のを受けて、孫の完了・裏の作業を待ち、
+ * 子の最後の返答と作業場所の状態から、依頼元へ届ける結果（agentTasks の run が書く形）を作る。renewed は、前半で作り直した作業場所
+ */
+async function finishChild(task, signal, execution, outcome, renewed = null) {
+  // A child can itself delegate. Its result is final only after those results
+  // have been delivered and it has finished responding to them.
+  const childrenBusy = () => agentTasks.list(task.sessionId).some(r => ['queued', 'running', 'cancelling'].includes(r.status) || ['pending', 'delivering'].includes(r.notification));
+  // ターンの外に残る端末（Codex）は待たない。終わっても main は再開せず、結果は変わらない（awaitedBackground）
+  while (!signal.aborted && (sessionBusy(task.sessionId) || awaitedBackground(task.sessionId) || childrenBusy())) await waitFree(task.sessionId, 250);
+  // 履歴の読み出しが一時的な SQLite のエラーで失敗したら、間を空けて読み直す（core/history-retry.mjs）。
+  // 読み直しても読めなければ、子の作業は終わっているので失敗にせず、流れてきた最後の返答を注意書き付きで結果にする。
+  // それ以外のエラーは今までどおり投げて失敗にする（docs/agent-delegation.md「子の結果」）
+  let last, historyNote = null;
+  try {
+    last = await readWithRetry(() => lastReply(task.sessionId), {
+      // i18n-ignore: サーバーのログ
+      onRetry: (e, n, ms) => console.error(`  [delegation] 子 ${task.sessionId} の履歴を読めなかったので ${ms}ms 後に読み直す（${n} 回目）:`, String(e?.message ?? e).slice(0, 300)),
+    });
+  } catch (e) {
+    if (!transientStorageError(e)) throw e;
+    // i18n-ignore: サーバーのログ
+    console.error(`  [delegation] 子 ${task.sessionId} の履歴を読み直しても読めなかった。流れてきた返答を結果にする:`, String(e?.message ?? e).slice(0, 300));
+    last = execution.streamed;
+    historyNote = agentT(await agentLocaleFor(task.parentSessionId), 'delegation.historyUnreadable', { error: String(e?.message ?? e).slice(0, 300) });
+  }
+  // 裏の作業を止める前の返答（報告）を残す。止めた後に main が再開して足した一言だけが結果にならないように
+  const text = execution.reply && execution.reply !== last ? [execution.reply, last].filter(Boolean).join('\n\n') : last;
+  // error は完了通知に載って依頼元のエージェントが読む（依頼元の会話の言語）
+  const rejections = execution.rejections.map(peerRejection);
+  const stoppedBackground = execution.stopped.map(peerBackground);
+  const nowCwd = (await store.get(task.sessionId).catch(() => null))?.cwd ?? task.cwd;
+  const git = await taskGitNote({ ...task, cwd: nowCwd });
+  // 子が終わった。変わっていなければ・取り込み済みなら片付け、そうでなければ残す。通知に載せる状態は片付ける前のもの
+  const workspace = await worktreeHost.taskDone({ ...task, worktree: renewed ?? task.worktree }).catch(() => null);
+  const extra = { ...(workspace ? { workspace } : {}), ...(renewed ? { worktree: renewed } : {}) };
+  worktreeSweepSoon();
+  const withNote = error => [error, historyNote].filter(Boolean).join('\n') || null;
+  if (agentTasks.list(task.sessionId).some(r => r.notification === 'unknown')) return { outcome: 'error', text, error: withNote(agentT(await agentLocaleFor(task.parentSessionId), 'delegation.noticeUnknown')), rejections, stoppedBackground, git, ...extra };
+  return { outcome: signal.aborted ? 'aborted' : execution.outcome ?? outcome, text, error: withNote(execution.error), rejections, stoppedBackground, git, ...extra };
+}
+
+/**
+ * 付け直したターンが委譲の子のとき、結果の確定を agentTasks に引き継ぐ（adopt。stage2-server-state.md §3 の 2・S8）。turnPromise は adoptTurn の戻り値
+ * （通常のターンの runTurn と同じ。子のターンが終わると解決する）。引き継げなかった（タスクが終わっている・取り消し済みなど）ときは、
+ * 子の実行の控えだけ外す（結果は書かず、そのターンだけを締める）。引き継げたら true
+ */
+function adoptChild(ctx, turnPromise, { abandon = false } = {}) {
+  const { taskId, execution, sessionId } = ctx;
+  const claims = Object.values(ctx.card.steers).flatMap(entry => entry.waiters.includes('agentTasks') && entry.taskId === taskId && Array.isArray(entry.instructionIds) ? entry.instructionIds : []);
+  // 付け直しをあきらめた（待ち受けのポートが取れない）ときは、今までの起動の復元と同じに interrupted にする（finish を渡さない）
+  const adopted = agentTasks.adoptRun(taskId, abandon ? null : async (task, signal) => {
+    const release = trackChild(task, signal, execution);
+    try {
+      const outcome = await turnPromise;
+      if (outcome === 'requeue') return { requeue: true };
+      // 作業場所を作り直した（追加指示で再開した子）。旧サーバーが結果を書く前に落ちたときも、子の会話の今の作業場所から台帳を引き直す
+      const renewed = await adoptedWorktree(task);
+      return await finishChild(task, signal, execution, outcome, renewed);
+    } finally { release(); }
+  }, { claims });
+  if (!adopted) void turnPromise.finally(() => { if (taskExecutions.get(sessionId) === execution) taskExecutions.delete(sessionId); });
+  return adopted;
+}
+
+/** 付け直した子の作業場所が、前半（renewTaskWorktree）で作り直したものなら公開の形を返す（作り直していなければ null）。台帳の taskId で見分ける */
+async function adoptedWorktree(task) {
+  const cwd = (await store.get(task.sessionId).catch(() => null))?.cwd;
+  const entry = cwd ? await worktreeHost.worktrees.byPath(cwd).catch(() => null) : null;
+  return entry && task.worktree && entry.id !== task.worktree.id && entry.taskId === task.taskId ? publicWorktree(entry) : null;
 }
 
 /** 画面が聞く「この会話の承認モードは書き込みの範囲か」。読むだけの会話には分ける注記を出さない */
@@ -4602,6 +4731,8 @@ const remoteDelegation = createRemoteDelegation({
 });
 agentTasks = await createAgentTasks({
   dataDir: store.dataDir,
+  // 付け直す委譲の子のタスクは、起動の復元で interrupted にしない（結果の確定は adoptChild が引き継ぐ。stage2-server-state.md S8）
+  adopting: adopting.flatMap(a => a.ctx.taskId ? [a.ctx.taskId] : []),
   changed: () => { broadcastRunning(); completionNotices.changed(); remoteTasksChanged(); },
   // 人間の承認を待っているか。承認は core/server.mjs 側にしかないので判定を渡す。
   // 中継の複製も数える（孫が止まっていれば、その子も止まっている）
@@ -4691,60 +4822,17 @@ agentTasks = await createAgentTasks({
     if (sessionBusy(task.sessionId)) return { requeue: true };
     // 子の会話を人が消した（sessions.delete。ADR 0147）。追加の指示・やり直しは、消した会話を作り直さずに失敗で返す
     if (!(await resolveBackendForSession(task.sessionId))) throw new Error(agentT(await agentLocaleFor(task.parentSessionId), 'delegation.childDeleted'));
-    const execution = { outcome: null, error: null, rejections: [], stopped: [], reply: null, timer: null, streamed: '', streamEnded: false };
-    taskExecutions.set(task.sessionId, execution);
-    const stopChild = () => {
-      const child = runtime.turns.get(task.sessionId);
-      // 依頼元の会話を止めた理由（abortSessions が置く）。この取り消しが実際に止めるターンにだけ付ける
-      const why = taskStopReasons.get(task.sessionId);
-      taskStopReasons.delete(task.sessionId);
-      if (child && why) child.abortReason ??= why;
-      child?.ac.abort();
-      // タスクの記録の backend は、依頼元が替えた次のターンの値のことがある（ADR 0134）。止めるのは今の会話のエージェント
-      resolveBackendForSession(task.sessionId).then(b => b?.stopSession?.(task.sessionId)).catch(() => {});
-    };
-    signal.addEventListener('abort', stopChild, { once: true });
+    const execution = newExecution();
+    const release = trackChild(task, signal, execution);
     try {
       // 追加の指示（ply_task_send）で再開した子の作業場所が、前の完了で片付いていたら作り直す（元の場所に書かせない）
       const renewed = await renewTaskWorktree(task).catch(() => null);
-      const outcome = await runTurn({ sessionId: task.sessionId, prompt }, () => {}, { signal });
+      const outcome = await runTurn({ sessionId: task.sessionId, prompt }, () => {}, { signal, taskId: task.taskId });
+      // 子のターンを新しいサーバーへ渡した（handOffTurn）。結果は付け直した先の finishChild が確定する（このサーバーでは何も書かない）
+      if (outcome === 'handedOff') return { handedOff: true };
       if (outcome === 'requeue') return { requeue: true };
-      // A child can itself delegate. Its result is final only after those results
-      // have been delivered and it has finished responding to them.
-      const childrenBusy = () => agentTasks.list(task.sessionId).some(r => ['queued', 'running', 'cancelling'].includes(r.status) || ['pending', 'delivering'].includes(r.notification));
-      // ターンの外に残る端末（Codex）は待たない。終わっても main は再開せず、結果は変わらない（awaitedBackground）
-      while (!signal.aborted && (sessionBusy(task.sessionId) || awaitedBackground(task.sessionId) || childrenBusy())) await waitFree(task.sessionId, 250);
-      // 履歴の読み出しが一時的な SQLite のエラーで失敗したら、間を空けて読み直す（core/history-retry.mjs）。
-      // 読み直しても読めなければ、子の作業は終わっているので失敗にせず、流れてきた最後の返答を注意書き付きで結果にする。
-      // それ以外のエラーは今までどおり投げて失敗にする（docs/agent-delegation.md「子の結果」）
-      let last, historyNote = null;
-      try {
-        last = await readWithRetry(() => lastReply(task.sessionId), {
-          // i18n-ignore: サーバーのログ
-          onRetry: (e, n, ms) => console.error(`  [delegation] 子 ${task.sessionId} の履歴を読めなかったので ${ms}ms 後に読み直す（${n} 回目）:`, String(e?.message ?? e).slice(0, 300)),
-        });
-      } catch (e) {
-        if (!transientStorageError(e)) throw e;
-        // i18n-ignore: サーバーのログ
-        console.error(`  [delegation] 子 ${task.sessionId} の履歴を読み直しても読めなかった。流れてきた返答を結果にする:`, String(e?.message ?? e).slice(0, 300));
-        last = execution.streamed;
-        historyNote = agentT(await agentLocaleFor(task.parentSessionId), 'delegation.historyUnreadable', { error: String(e?.message ?? e).slice(0, 300) });
-      }
-      // 裏の作業を止める前の返答（報告）を残す。止めた後に main が再開して足した一言だけが結果にならないように
-      const text = execution.reply && execution.reply !== last ? [execution.reply, last].filter(Boolean).join('\n\n') : last;
-      // error は完了通知に載って依頼元のエージェントが読む（依頼元の会話の言語）
-      const rejections = execution.rejections.map(peerRejection);
-      const stoppedBackground = execution.stopped.map(peerBackground);
-      const nowCwd = (await store.get(task.sessionId).catch(() => null))?.cwd ?? task.cwd;
-      const git = await taskGitNote({ ...task, cwd: nowCwd });
-      // 子が終わった。変わっていなければ・取り込み済みなら片付け、そうでなければ残す。通知に載せる状態は片付ける前のもの
-      const workspace = await worktreeHost.taskDone({ ...task, worktree: renewed ?? task.worktree }).catch(() => null);
-      const extra = { ...(workspace ? { workspace } : {}), ...(renewed ? { worktree: renewed } : {}) };
-      worktreeSweepSoon();
-      const withNote = error => [error, historyNote].filter(Boolean).join('\n') || null;
-      if (agentTasks.list(task.sessionId).some(r => r.notification === 'unknown')) return { outcome: 'error', text, error: withNote(agentT(await agentLocaleFor(task.parentSessionId), 'delegation.noticeUnknown')), rejections, stoppedBackground, git, ...extra };
-      return { outcome: signal.aborted ? 'aborted' : execution.outcome ?? outcome, text, error: withNote(execution.error), rejections, stoppedBackground, git, ...extra };
-    } finally { signal.removeEventListener('abort', stopChild); clearTimeout(execution.timer); taskExecutions.delete(task.sessionId); }
+      return await finishChild(task, signal, execution, outcome, renewed);
+    } finally { release(); }
   },
   // 依頼元が完了通知を受け取れるか。受け取れない間、委譲の管理は通知の状態を書き換えない（保存を減らす）
   ready: async task => isRemoteOwner(task.parentSessionId) ? remoteAgentPort.online(parseRemoteOwner(task.parentSessionId)?.deviceId) : !(await noticeBlocked(task.parentSessionId)),
@@ -4807,7 +4895,7 @@ settingApprovals = await createSettingApprovals({
     if (!live && await noticeBlocked(sessionId)) return 'requeue';
     const prompt = settingNotice(await ensureAgentLocale(sessionId), notices);
     if (live) {
-      const r = await steerNotice(live, sessionId, prompt, [], () => settingApprovals.requeue(notices));
+      const r = await steerNotice(live, sessionId, prompt, [], notices.map(({ requestId, sessionId, key, op, outcome, error, at }) => ({ requestId, sessionId, key, op, outcome, error, at })));
       return r === 'requeue' ? 'requeue' : r === 'ok' ? 'ok' : 'error';
     }
     return (await runTurn({ sessionId, prompt }, () => {}, { internal: true })) === 'requeue' ? 'requeue' : 'ok';
@@ -5051,6 +5139,8 @@ async function prepareTurn(args, hooks, compactionRevision) {
     subagentOrigins: new Map(),
     presentKey: crypto.randomUUID(),
     presentWrites: [],
+    // 受理した途中送信（送信待ちの項目）のうち、渡った合図（userMessage.delivered / dropped）をまだ待っているものの id（steerConfirms のバックエンドだけ）。札の steers
+    pendingSteers: new Set(),
     ended: false,
     info: {
       sessionId,
@@ -5420,12 +5510,56 @@ async function releaseTurn(sessionId, { adopted = false } = {}) {
 const openWaitIds = sessionId => !sessionId ? [] : [...runtime.waiting]
   .filter(([, w]) => !w.relay && !w.detached && !w.remote && w.payload.sessionId === sessionId).map(([id]) => id);
 
-/** ターンの札（cardOf の { card, secrets }）。会話の口のトークンと出している承認の id を足す。作れなければ投げる */
+/** 完了通知の本文を札に置く文字数の上限。長い結果が載る通知で札が上限を超えないよう、本文は切る（付け直した先の画面の通知の一行が短くなるだけ。ハッシュと元の文字数は残す） */
+const NOTICE_CARD_CHARS = 4000;
+
+/**
+ * 札の途中送信の欄（steers。stage2-server-state.md §3 の 3）: 渡った合図（userMessage.delivered / dropped）を待っている控えを、項目の id ごとに
+ * 「誰が待っているか」（waiters）と一緒にまとめる。送信待ちの項目の受理（pendingSteers）・走っている依頼元へ渡した完了通知（liveNotices）・
+ * 子のターンへ渡した追加指示（liveInstructions と、agentTasks の steers の claim）。bot の liveSteers は bot の会話を付け直さないので入れない。
+ * Claude の pendingSteers（CLI の uuid との組）は 2c が backendCard に足す。付け直す側は restoreSteers で同じ控えを作り直す
+ */
+function steersOf(turn) {
+  const sessionId = turn.info.sessionId;
+  const steers = {};
+  const add = (id, waiter, detail = {}) => { const entry = steers[id] ??= { waiters: [] }; entry.waiters.push(waiter); Object.assign(entry, detail); };
+  for (const id of turn.pendingSteers ?? []) add(id, 'pendingSteers');
+  for (const [id, notice] of liveNotices) {
+    if (notice.owner !== sessionId) continue;
+    add(id, 'liveNotices', { notice: { prompt: notice.prompt.slice(0, NOTICE_CARD_CHARS), promptHash: promptHash(notice.prompt), promptChars: notice.prompt.length,
+      items: notice.items, ...(notice.settingNotices ? { settingNotices: notice.settingNotices } : {}) } });
+  }
+  for (const [id, sent] of liveInstructions) {
+    if (sent.sessionId !== sessionId) continue;
+    add(id, 'liveInstructions', { taskId: sent.taskId, instructionIds: sent.instructionIds });
+    add(id, 'agentTasks');
+  }
+  return steers;
+}
+
+/** 札の steers から、付け直すターンの途中送信の控えを作り直す（steersOf の逆。restoreTurn が呼ぶ）。戻り値は pendingSteers の id の集合 */
+function restoreSteers(sessionId, steers) {
+  const pending = new Set();
+  for (const [id, entry] of Object.entries(steers)) {
+    if (entry.waiters.includes('pendingSteers')) pending.add(id);
+    const notice = entry.waiters.includes('liveNotices') ? entry.notice : null;
+    if (notice && typeof notice.prompt === 'string' && Array.isArray(notice.items)) {
+      liveNotices.set(id, noticeEntry(sessionId, notice.prompt, notice.items.map(x => ({ taskId: String(x?.taskId ?? ''), revision: x?.revision ?? 0 })),
+        Array.isArray(notice.settingNotices) ? notice.settingNotices : null));
+    }
+    if (entry.waiters.includes('liveInstructions') && typeof entry.taskId === 'string' && Array.isArray(entry.instructionIds)) {
+      liveInstructions.set(id, { sessionId, taskId: entry.taskId, instructionIds: entry.instructionIds.filter(x => typeof x === 'string') });
+    }
+  }
+  return pending;
+}
+
+/** ターンの札（cardOf の { card, secrets }）。会話の口のトークン・出している承認の id・途中送信の控え・委譲の子の実行の控えを足す。作れなければ投げる */
 function takeCard(ctx) {
   const { turn } = ctx;
   const entry = agentConnections.get(turn.key);
   return cardOf({ ...ctx, connectionTokens: entry ? connectionTokens(entry) : null, waits: openWaitIds(turn.info.sessionId),
-    stopping: Boolean(turn.info.stopping || turn.ac.signal.aborted) });
+    stopping: Boolean(turn.info.stopping || turn.ac.signal.aborted), steers: steersOf(turn), execution: taskExecutions.get(turn.info.sessionId) ?? null });
 }
 
 /**
@@ -5467,7 +5601,7 @@ function handOffTurn(key) {
  * 札と付け直す元（core/adopt.mjs の source）から、走っているターン（runtime.turns の 1 件と ctx）を組み立てて登録する。
  * 起動時の後片付け（送信待ちの戻し・中断の記録）より前に呼ぶ。口を開き直すのと記録を流すのは、待ち受けの後の adoptTurn。
  * 付け直せない（札が大きすぎる・版が違う・会話の走っている印と合わない・記録に印が無い・切れている・続きを受けられない、
- * 委譲の子・bot の会話・圧縮のターン）ときは投げる。呼び出し側は何もせず、今の起動時の restart の回復（中断）に任せる
+ * bot の会話・圧縮のターン・タスクの id が分からない委譲の子。委譲の子は 2b-7 から付け直す）ときは投げる。呼び出し側は何もせず、今の起動時の restart の回復（中断）に任せる
  */
 async function restoreTurn(card, source) {
   if (Buffer.byteLength(JSON.stringify(card ?? null), 'utf8') > CARD_MAX_BYTES) throw new Error('card too large');
@@ -5482,8 +5616,10 @@ async function restoreTurn(card, source) {
   const meta = await store.get(sessionId);
   // 札が、この会話の走っている印（turnStartedAt）のターンのものか。合わない札は前の版のターンのもの
   if (!meta.turnStartedAt || meta.turnStartedAt !== startedAtMs) throw new Error('turn mismatch');
-  // 委譲の子（execute の後半の付け直しは 2b-7）・bot の会話（O21）・圧縮のターンは付け直さない
-  if (meta.delegation || meta.bot || fields.compactTrigger) throw new Error('not adoptable');
+  // bot の会話（O21）・圧縮のターンは付け直さない。委譲の子は、タスクの id が分かるときだけ（結果の確定は adoptChild が agentTasks へ引き継ぐ。2b-7）
+  if (meta.bot || fields.compactTrigger) throw new Error('not adoptable');
+  const taskId = meta.delegation ? (meta.delegation.taskId ?? null) : null;
+  if (meta.delegation && (!taskId || (fields.taskId && fields.taskId !== taskId))) throw new Error('not adoptable');
   if (!Number.isInteger(source?.state?.marks?.[ADOPT_TURN_MARK])) throw new Error('no turn mark');
   if (source.state.truncated) throw new Error('record truncated');
   if (!source.attachable) throw new Error('child cannot be attached');
@@ -5537,6 +5673,8 @@ async function restoreTurn(card, source) {
     subagentOrigins: new Map(),
     presentKey: fields.presentKey,
     presentWrites: [],
+    // 渡った合図を待つ途中送信の控え。付け直しでは札の steers から作り直す（restoreSteers。作るのは下の登録の前）
+    pendingSteers: new Set(),
     ended: false,
     // id は決まっている（付け直すのは id が決まったターンだけ。T5）。id 決定時の書き込みは済んでいる（T36）
     setup: Promise.resolve(),
@@ -5577,7 +5715,7 @@ async function restoreTurn(card, source) {
   });
   const ctx = {
     args: { sessionId, prompt, messageId: fields.messageId, at: fields.userSentAt, scheduledFor: fields.scheduledFor, sentBy: fields.sentBy },
-    hooks: { internal: fields.internal },
+    hooks: { internal: fields.internal, ...(taskId ? { taskId } : {}) },
     sessionId,
     prompt,
     backend,
@@ -5614,10 +5752,16 @@ async function restoreTurn(card, source) {
     shellHanded: fields.delivery.shellHanded,
     runArgs: null,
     card: fields,
+    // 委譲の子のターン: タスクの id と実行の控え（結果の確定は adoptChild。rejections・streamed は再生の出来事から作り直る。reply・stopped は札）
+    taskId,
+    execution: taskId ? newExecution(fields.delegation) : null,
   };
   bindTurnContext(ctx);
   turnContexts.set(turn, ctx);
   runtime.turns.set(turn.key, turn);
+  // 途中送信の控え（札の steers）。登録の後に作り直す（ここから先は投げない）
+  turn.pendingSteers = restoreSteers(sessionId, fields.steers);
+  if (ctx.execution) taskExecutions.set(sessionId, ctx.execution);
   return ctx;
 }
 
@@ -7516,7 +7660,12 @@ portDeadline = Date.now() + ADOPT_PORT_WAIT_MS;
 server.listen(PORT, HOST, announce);
 await listening;
 // 登録しておいた付け直すターンの口を開き直し、記録を流して締める（待たない。ターンが終わるまで続く）
-for (const { card, source, ctx } of adopting) void adoptTurn(card, source, ctx, { abandon: adoptAbandoned }).catch(err => console.error('  ターンの付け直しに失敗:', String(err?.message ?? err)));
+for (const { card, source, ctx } of adopting) {
+  const turnPromise = adoptTurn(card, source, ctx, { abandon: adoptAbandoned });
+  void turnPromise.catch(err => console.error('  ターンの付け直しに失敗:', String(err?.message ?? err)));
+  // 委譲の子は、結果の確定（execute の後半）を agentTasks へ引き継ぐ。付け直せなければ今までの起動と同じに interrupted にする
+  if (ctx.taskId) adoptChild(ctx, turnPromise, { abandon: Boolean(adoptAbandoned) });
+}
 await schedule.restore().catch(err => console.error('  再開の予定を戻せませんでした:', String(err?.message ?? err)));
 // 解除時刻を過ぎた上限の会話は、予定の行が無くても再開する（Pleiad を閉じている間に過ぎた分）
 await recoverLimitResumes().catch(err => console.error('  上限の会話を見直せませんでした:', String(err?.message ?? err)));

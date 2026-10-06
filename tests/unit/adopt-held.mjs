@@ -10,8 +10,11 @@
 //      B が中断を送り直し、理由は元のまま）。B の固定のポートが塞がっていても、付け直すターンがあるので空くまで待つ（空きポートへ移らない）
 //   4. 準備中（バックエンドを呼ぶ前）: handOffTurn は null・強制終了すると付け直さず restart の中断。固定のポートが上限まで塞がったままなら付け直しをあきらめて
 //      そのターンも restart の中断（B は空きポートへ移る）
-//   5. 後片付け: 保持役・偽の CLI・サーバーが残らない（保持役は detached なので、終わりに shutdown して pid が消えるまで見る）
-//   残りの時点（渡った合図の前・委譲の子）は 2b-7（stage2-server-state.md §6.1）
+//   6. 後片付け: 保持役・偽の CLI・サーバーが残らない（保持役は detached なので、終わりに shutdown して pid が消えるまで見る）
+//   5. 途中送信と委譲の子（2b-7。渡った合図を後から出す台本 AGENT_HOST_FAKE_STEER_CONFIRM_MS）: 札の steers に、受理した途中送信（pendingSteers）・渡った合図を待つ完了通知
+//      （liveNotices）・追加指示（liveInstructions と agentTasks の claim）が載り、B が作り直す。合図が B の再生の側（手を離す前半の後に A が読み捨てて ack）でも続きの側でも、
+//      渡った合図・完了通知の一行・返答が 1 回ずつ。捨てられた合図は送信待ちを保留へ・追加指示を待機へ戻す。委譲の子のターンは B が付け直し、タスクは interrupted にならず、
+//      結果の確定を agentTasks.adoptRun が引き継いで依頼元へ完了通知を 1 回だけ届ける（単体は agent-tasks-adopt）
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
@@ -281,8 +284,8 @@ ${a.tail(15)}`); })).card;
         probe.close();
       }
 
-      // B2: 固定のポートが 1.5 秒塞がっている。付け直すターンがあるので、空きポートへ移らず空くまで待つ
-      const busy = await holdPort(1500);
+      // B2: 固定のポートが 4 秒塞がっている（B の起動より長く。短いと、起動の間に空いて待たずに取れてしまう）。付け直すターンがあるので、空きポートへ移らず空くまで待つ
+      const busy = await holdPort(4000);
       b = await startServer({ env: { ...env, AGENT_HOST_ADOPT_HOLDER: '1', AGENT_HOST_PORT: String(busy.port) }, dataDir, timeoutMs: 30_000 });
       assert.equal(b.port, busy.port, '付け直すターンがあるので、同じポートが空くまで待って取る');
       assert.ok(b.tail(200).includes('付け直すターンがあるので'), b.tail(20));
@@ -384,7 +387,169 @@ ${a.tail(15)}`); })).card;
       await busy.release();
     }
 
-    // 5. 後片付け: 付け直しをあきらめた子など、残った子の記録を含めて保持役を終わらせる
+    // 5. 途中送信と委譲の子（2b-7）。渡った合図を後から出す台本（steerConfirms）で、受理した途中送信・完了通知・追加指示が合図を待っている間に手を離す。
+    //    N: 手を離す前半と後半の間に合図が出る（A が読み捨てて ack し、B の再生の側に来る）。人の途中送信が渡る・完了通知が渡る
+    //    D: 同じ形で、人の途中送信が読まれずに捨てられる（dropped）
+    //    L: 手を離した後、B で合図が出る（B の続きの側）。人の途中送信が渡る・完了通知が渡る
+    //    C1・C2: 委譲の子（held:）のターン。追加指示（ply_task_send）が渡る・捨てられる。結果は B が依頼元へ 1 回だけ届ける
+    {
+      const ply = (toolName, args) => `ply:${JSON.stringify({ name: toolName, arguments: args })}`;
+      const delegate = task => ply('ply_delegate', { kind: 'mechanical', backend: 'fake', task });
+      const env6 = { ...env, AGENT_HOST_FAKE_STEER_CONFIRM_MS: '20' };
+      a = await startServer({ env: env6, dataDir, timeoutMs: 30_000, entry: path.join(ROOT, 'tests', 'lib', 'adopt-server.mjs') });
+      ca = await open({ port: a.port, token: a.token, autoAllow: true });
+      const taskOf = async (client, parent) => (await client.cmd('agentTasks')).find(r => r.parentSessionId === parent) ?? null;
+      const waitTask = (client, parent, check, label) => until(async () => { const r = await taskOf(client, parent); return r && check(r) ? r : null; }, WAIT_MS, label);
+      const stateOf = async (client, task) => (await client.cmd('agentTaskInstructions', { taskId: task.taskId })).instructions.map(x => `${x.text}:${x.state}`).join();
+      const outboxOf = (sessionId, messageId) => sessionMeta(sessionId)?.outbox?.find(m => m.id === messageId) ?? null;
+      const runTurn = async prompt => (await ca.runTurn({ backend: 'fake', cwd: ROOT, prompt }, { ms: WAIT_MS })).sessionId;
+
+      const P = { N: await runTurn(delegate('bg 1 gate:n-child HOLD_CONFIRM:n-notice')), L: await runTurn(delegate('bg 1 gate:l-child HOLD_CONFIRM:l-notice')),
+        D: await runTurn('echo:D'), C1: await runTurn(delegate('held:bg 1 gate:c1-child')), C2: await runTurn(delegate('held:bg 1 gate:c2-child')) };
+      const child = {
+        N: await waitTask(ca, P.N, r => r.status === 'running', 'N の子'), L: await waitTask(ca, P.L, r => r.status === 'running', 'L の子'),
+        C1: await waitTask(ca, P.C1, r => r.status === 'running', 'C1 の子'), C2: await waitTask(ca, P.C2, r => r.status === 'running', 'C2 の子'),
+      };
+      const mark6 = ca.mark();
+      for (const k of ['N', 'L', 'D']) void ca.cmd('sendMessage', { sessionId: P[k], messageId: `${k.toLowerCase()}-turn-0001`, prompt: `held:bg 1 gate:${k.toLowerCase()}-parent` }).catch(() => {});
+      for (const k of ['N', 'L', 'D']) await ca.waitFor(e => e.type === 'phase' && e.sessionId === P[k] && e.state === 'waiting', { ms: WAIT_MS, from: mark6 });
+      // 子のターンは委譲の時点から走っている（phase は流れの出来事ではないので、running で見る）
+      for (const k of ['C1', 'C2']) await until(async () => (await ca.cmd('running')).turns.find(x => x.sessionId === child[k].sessionId)?.phase === 'waiting', WAIT_MS, `${k} の子のターンが待ちに入る`);
+      // 人の途中送信: 偽の CLI が受理して、ゲートが開くまで渡った合図を出さない（D は開いたら読まれずに捨てる）
+      const human = { N: 'echo:HUMAN-N HOLD_CONFIRM:n-hold', L: 'echo:HUMAN-L HOLD_CONFIRM:l-hold', D: 'echo:HUMAN-D HOLD_CONFIRM:d-hold DROP_STEER' };
+      for (const k of ['N', 'L', 'D']) {
+        await ca.cmd('sendMessage', { sessionId: P[k], messageId: `${k.toLowerCase()}-human-0001`, prompt: human[k] });
+        await ca.waitFor(e => e.type === 'userMessage' && e.messageId === `${k.toLowerCase()}-human-0001` && e.pending, { ms: WAIT_MS, from: mark6 });
+        assert.equal(outboxOf(P[k], `${k.toLowerCase()}-human-0001`)?.status, 'sent', `${k}: 受理された途中送信は sent で、渡った合図を待つ`);
+      }
+      // 完了通知: 子が終わると、走っている依頼元のターンへ途中送信で渡る（受理されて、合図を待つ）
+      await gates.open('n-child');
+      await gates.open('l-child');
+      for (const k of ['N', 'L']) await waitTask(ca, P[k], r => r.notification === 'sent', `${k} の完了通知が受理される`);
+      // 追加指示: 子のターンへ途中送信で渡る（受理されて、合図を待つ = sending）
+      const sendAdd = async (k, text) => {
+        await ca.runTurn({ sessionId: P[k], prompt: ply('ply_task_send', { taskId: child[k].taskId, message: text }) }, { ms: WAIT_MS });
+        await until(async () => (await stateOf(ca, child[k])).endsWith(':sending'), WAIT_MS, `${k}: 追加指示が渡った合図を待つ`);
+      };
+      await sendAdd('C1', 'echo:I1 HOLD_CONFIRM:c1-hold');
+      await sendAdd('C2', 'echo:I2 HOLD_CONFIRM:c2-hold DROP_STEER');
+      const usageBefore = Object.fromEntries([['N', P.N], ['L', P.L], ['D', P.D], ['C1', child.C1.sessionId], ['C2', child.C2.sessionId]].map(([k, id]) => [k, usageOfSession(id).length]));
+      const doneBefore = Object.fromEntries(['N', 'L', 'D'].map(k => [k, sessionMeta(P[k]).completedAt]));
+
+      // 手を離す。N・D は前半だけして、合図を出させてから後半（A は合図を読み捨てて ack する）。L・C1・C2 は合図の前に手を離す
+      const cards6 = {};
+      const sessionOf = { N: P.N, L: P.L, D: P.D, C1: child.C1.sessionId, C2: child.C2.sessionId };
+      for (const k of ['N', 'D']) await scene('handOffTurnOnly', { sessionId: sessionOf[k] });
+      for (const gate of ['n-hold', 'n-notice', 'd-hold']) await gates.open(gate);
+      await sleep(1200);   // 偽の CLI が合図を出し、A が読み捨てて ack するまで（出し遅れても、B の続きの側で同じ結果になる）
+      for (const k of ['N', 'D']) cards6[k] = (await scene('handOffDetach', { sessionId: sessionOf[k] })).card;
+      for (const k of ['L', 'C1', 'C2']) cards6[k] = (await scene('handOffHeld', { sessionId: sessionOf[k] }).catch(e => { throw new Error(`${k}: ${e.message}
+${a.tail(25)}`); })).card;
+      const steerOf = (k, waiter) => Object.entries(cards6[k].steers).filter(([, entry]) => entry.waiters.includes(waiter));
+      assert.deepEqual(steerOf('N', 'pendingSteers').map(([id]) => id), ['n-human-0001'], 'N: 札に受理した途中送信');
+      assert.equal(steerOf('N', 'liveNotices').length, 1, 'N: 札に渡った合図を待つ完了通知');
+      assert.deepEqual(steerOf('D', 'pendingSteers').map(([id]) => id), ['d-human-0001'], 'D: 札に受理した途中送信');
+      assert.deepEqual(steerOf('L', 'pendingSteers').map(([id]) => id), ['l-human-0001'], 'L: 札に受理した途中送信');
+      assert.equal(steerOf('L', 'liveNotices').length, 1, 'L: 札に渡った合図を待つ完了通知');
+      for (const k of ['C1', 'C2']) {
+        const [[itemId, entry]] = steerOf(k, 'liveInstructions');
+        assert.ok(itemId.startsWith('task-send-'), `${k}: 札に渡った合図を待つ追加指示`);
+        assert.deepEqual(entry.waiters, ['liveInstructions', 'agentTasks']);
+        assert.equal(entry.taskId, child[k].taskId);
+        assert.equal(cards6[k].input.taskId, child[k].taskId, `${k}: 札に委譲のタスクの id`);
+      }
+      assert.ok(JSON.stringify(cards6.N).length < 8000, '札は小さいまま');
+      await sleep(300);
+      for (const k of Object.keys(sessionOf)) assert.equal(ca.since(mark6).filter(e => e.sessionId === sessionOf[k] && ['turnEnd', 'turnResult'].includes(e.type)).length, 0, `A は ${k} を締めない`);
+      assert.equal((await taskOf(ca, P.C1)).status, 'running', 'C1: 手を離した旧サーバーは子の結果を書かない');
+      assert.equal((await taskOf(ca, P.C1)).notification, 'none');
+      ca.close(); ca = null;
+      await a.stop(); a = null;
+
+      // B: 同じデータ置き場で起こし、保持役の子を付け直す。委譲の子のタスクは interrupted にならない
+      b = await startServer({ env: { ...env6, AGENT_HOST_ADOPT_HOLDER: '1' }, dataDir, timeoutMs: 30_000 });
+      cb = await open({ port: b.port, token: b.token, autoAllow: true });
+      const turnsOf = async () => (await cb.cmd('running')).turns.map(x => x.sessionId);
+      await until(async () => { const ids = await turnsOf(); return Object.values(sessionOf).every(id => ids.includes(id)); }, WAIT_MS, 'B が 5 つのターンを付け直す');
+      for (const k of ['C1', 'C2']) {
+        assert.equal((await taskOf(cb, P[k])).status, 'running', `${k}: 委譲の子のタスクは付け直しても running のまま（interrupted にしない）`);
+        assert.ok((await stateOf(cb, child[k])).endsWith(':sending'), `${k}: 追加指示は渡った合図を待ったまま`);
+      }
+      const liveOf = async sessionId => (await cb.cmd('loadSession', { sessionId, live: true })).stream.events;
+      const countOf = (events, type, messageId = null) => events.filter(e => e.type === type && (messageId == null || e.messageId === messageId)).length;
+      // N: 合図は B の再生の側にあった（A が読み捨てて ack した）。再生は画面へ送らず、実行中のスナップショットだけに積む
+      await until(async () => countOf(await liveOf(P.N), 'taskNotice') === 1, WAIT_MS, 'N: 再生で完了通知の一行が 1 回');
+      assert.equal(countOf(await liveOf(P.N), 'userMessage.delivered', 'n-human-0001'), 1, 'N: 人の途中送信の渡った合図は 1 回');
+      assert.ok(cb.events.filter(e => e.type === 'taskNotice' && e.sessionId === P.N).length <= 1, 'N: 再生の分は画面へ送らない（A が読む前に出ていれば続きの側で 1 回）');
+      // D: 捨てられた合図は、札が控えていた途中送信だけ再生でも処理する。送信待ちへ戻る（保留）
+      await until(() => outboxOf(P.D, 'd-human-0001')?.status === 'paused', WAIT_MS, 'D: 捨てられた途中送信が保留へ戻る');
+      assert.equal(countOf(await liveOf(P.D), 'userMessage.dropped', 'd-human-0001'), 1, 'D: 捨てられた合図は 1 回');
+      // L: 合図はまだ出ていない。出すと B の続きで渡る
+      assert.equal(countOf(await liveOf(P.L), 'taskNotice'), 0);
+      for (const gate of ['l-hold', 'l-notice', 'c1-hold', 'c2-hold']) await gates.open(gate);
+      await cb.waitFor(e => e.type === 'taskNotice' && e.sessionId === P.L, { ms: WAIT_MS });
+      await cb.waitFor(e => e.type === 'userMessage.delivered' && e.messageId === 'l-human-0001', { ms: WAIT_MS });
+      assert.equal((await taskOf(cb, P.L)).notification, 'sent', 'L: 完了通知は sent のまま（送り直さない）');
+      await until(async () => (await stateOf(cb, child.C1)) === 'echo:I1 HOLD_CONFIRM:c1-hold:delivered', WAIT_MS, 'C1: 追加指示が配送済みになる');
+      await until(async () => (await stateOf(cb, child.C2)) === 'echo:I2 HOLD_CONFIRM:c2-hold DROP_STEER:queued', WAIT_MS, 'C2: 捨てられた追加指示が待機へ戻る');
+      // 終わらせる: 子と依頼元のターン
+      for (const gate of ['c1-child', 'c2-child', 'n-parent', 'l-parent', 'd-parent']) await gates.open(gate);
+      for (const id of Object.values(sessionOf)) await cb.waitFor(e => e.type === 'turnEnd' && e.sessionId === id, { ms: WAIT_MS });
+      const done1 = await waitTask(cb, P.C1, r => r.status === 'completed' && r.notification === 'sent', 'C1 が完了し、通知が依頼元へ届く');
+      const done2 = await waitTask(cb, P.C2, r => r.status === 'completed' && r.notification === 'sent', 'C2 が完了し、通知が依頼元へ届く');
+      await sleep(800);
+
+      for (const k of ['N', 'L', 'D', 'C1', 'C2']) {
+        const id = sessionOf[k];
+        const ends = cb.events.filter(e => e.type === 'turnEnd' && e.sessionId === id);
+        assert.equal(ends.length, k === 'C2' ? 2 : 1, `${k}: turnEnd は付け直したターンの 1 回（C2 は捨てられた指示の次のターンの分が加わる）`);
+        assert.equal(ends[0].outcome, 'ok', `${k}: 最後まで流れて ok`);
+        const meta = sessionMeta(id);
+        assert.equal(meta.interrupted ?? null, null, `${k}: restart の中断にならない`);
+        assert.equal(meta.turnStartedAt ?? null, null, `${k}: 走っている印は片付く`);
+        assert.equal(usageOfSession(id).length, usageBefore[k] + (k === 'C2' ? 2 : 1), `${k}: 使用量はこのターンの分が 1 件だけ（C2 は次のターンの分が加わる）`);
+        if (doneBefore[k]) assert.ok(meta.completedAt > doneBefore[k], `${k}: 完了時刻を書く`);
+      }
+      // 人の途中送信: 渡った合図は 1 回、返答は 1 回。N（再生の側）も L（続きの側）も同じ
+      for (const k of ['N', 'L']) {
+        const loaded = await cb.cmd('loadSession', { sessionId: P[k] });
+        const replies = loaded.messages.filter(m => m.role === 'assistant' && String(m.text).includes(`受け取った: ${human[k]}`));
+        assert.equal(replies.length, 1, `${k}: 人の途中送信への返答は 1 回`);
+        assert.equal(outboxOf(P[k], `${k.toLowerCase()}-human-0001`)?.status, 'sent', `${k}: 送信待ちの項目は sent のまま`);
+        // 完了通知: 渡った通知への返答も 1 回で、新しいターンで送り直さない
+        assert.equal(loaded.messages.filter(m => m.role === 'assistant' && String(m.text).includes('受け取った:') && String(m.text).includes(child[k].taskId)).length, 1, `${k}: 完了通知は 1 回だけ届く`);
+        assert.equal((await taskOf(cb, P[k])).notification, 'sent');
+      }
+      assert.equal(cb.events.filter(e => e.type === 'taskNotice' && e.sessionId === P.L).length, 1, 'L: 完了通知の一行は 1 回');
+      assert.equal(cb.events.filter(e => e.type === 'userMessage.delivered' && e.messageId === 'l-human-0001').length, 1, 'L: 渡った合図は 1 回');
+      {
+        const loaded = await cb.cmd('loadSession', { sessionId: P.D });
+        assert.equal(loaded.messages.filter(m => String(m.text).includes('HUMAN-D')).filter(m => m.role === 'assistant').length, 0, 'D: 捨てられた途中送信には返答しない');
+        assert.equal(outboxOf(P.D, 'd-human-0001')?.status, 'paused', 'D: 捨てられた途中送信は保留のまま 1 つ');
+      }
+      // 委譲の子: 結果は B が確定して依頼元へ 1 回だけ届ける
+      {
+        assert.equal(done1.error ?? null, null);
+        assert.ok(done1.result.includes('が終わった'), `C1: 子の最後の返答が結果になる（${done1.result}）`);
+        assert.equal(await stateOf(cb, child.C1), 'echo:I1 HOLD_CONFIRM:c1-hold:delivered', 'C1: 追加指示は配送済み 1 回');
+        const loaded = await cb.cmd('loadSession', { sessionId: child.C1.sessionId });
+        assert.equal(loaded.messages.filter(m => m.role === 'assistant' && String(m.text).includes('受け取った: echo:I1')).length, 1, 'C1: 追加指示への返答は子の履歴に 1 回');
+        assert.equal(cb.events.filter(e => e.type === 'taskNotice' && e.sessionId === P.C1).length, 1, 'C1: 依頼元へ完了通知が 1 回');
+        assert.equal(done2.result, 'I2 HOLD_CONFIRM:c2-hold DROP_STEER', 'C2: 捨てられた追加指示は次のターンで 1 回だけ配送され、結果になる');
+        assert.equal(await stateOf(cb, child.C2), 'echo:I2 HOLD_CONFIRM:c2-hold DROP_STEER:delivered', 'C2: 追加指示は配送済み 1 回');
+        assert.equal(cb.events.filter(e => e.type === 'taskNotice' && e.sessionId === P.C2).length, 1, 'C2: 依頼元へ完了通知が 1 回');
+        const c2 = await cb.cmd('loadSession', { sessionId: child.C2.sessionId });
+        assert.equal(c2.messages.filter(m => m.role === 'user' && m.text === 'echo:I2 HOLD_CONFIRM:c2-hold DROP_STEER').length, 1, 'C2: 追加指示は子の履歴に 1 回');
+      }
+      assert.ok(!b.tail(300).includes('[unhandledRejection]'), b.tail(20));
+      t.ok('渡った合図の前に手を離した（人の途中送信・完了通知）: 合図が B の続きで届き、渡った合図・完了通知の一行・返答が 1 回ずつ。完了通知は送り直さない', true);
+      t.ok('手を離した後に A が読み捨てて ack した合図（B の再生の側）: 札が控えていた途中送信・完了通知は再生でも処理される（渡った合図・完了通知の一行は 1 回、捨てられた途中送信は保留へ戻る）', true);
+      t.ok('委譲の子のターン: B が付け直し、タスクは interrupted にならず、結果の確定を引き継ぐ。追加指示の渡った合図・捨てられた合図を処理し、完了通知は依頼元へ 1 回だけ届く', true);
+      cb.close(); cb = null;
+      await b.stop(); b = null;
+    }
+
+    // 6. 後片付け: 付け直しをあきらめた子など、残った子の記録を含めて保持役を終わらせる
     {
       const probe = await connectHolder({ dataDir, root });
       for (const child of probe.welcome.children) if (child.pid) childPids.add(child.pid);
