@@ -665,7 +665,7 @@ Claude・Codex 共通の `ply_agents` MCP で、Pleiad 管理の子会話を作�
 
 声で話しかけ、返事を読み上げる。理由と決定は [ADR 0150](adr/0150-voice-call.md)、構成・遅延の設計・測り方・確かめ方は `docs/voice-call.md`、見た目は `docs/design-system.md`「通話モード」。
 
-- **通話**: 頭の通話ボタンで始める。ホスト（`core/voice/`）が OpenRouter の STT（既定 `microsoft/mai-transcribe-2`。429 は予備 `assemblyai/universal-3-5-pro`）と TTS（既定 `x-ai/grok-voice-tts-1.0`）を呼ぶ。確定した言葉は画面がまとめ待ちで 1 通にし（最後の声から区切りの長さ。既定 1.2 秒）、今の送信の経路（会話は入力欄を通さず `sendMessage`、スレッドは `channels.post`）へ送り、返事の `text.delta` から読み上げる。コード・表・長い作業ログは読まず「コードは画面に出しました」と言う。読み上げ中も、エコー除去が効いているときは話して止められる（止めた場所に［続きを読む］）。理由は [ADR 0155](adr/0155-voice-call-turns.md)。
+- **通話**: 頭の通話ボタンで始める。ホスト（`core/voice/`）が OpenRouter の STT（既定 `microsoft/mai-transcribe-2`。429 は予備 `assemblyai/universal-3-5-pro`）と TTS（既定 `x-ai/grok-voice-tts-1.0`）を呼ぶ。確定した言葉は画面がまとめ待ちで 1 通にし（最後の声から区切りの長さ。既定 1.2 秒）、今の送信の経路（会話は入力欄を通さず `sendMessage`、スレッドは `channels.post`）へ送り、返事の `text.delta` から読み上げる。コード・表・長い作業ログは読まず「コードは画面に出しました」と言う。読み上げ中も、エコー除去が効いているときは話して止められる（止めた場所に［続きを読む］）。理由は [ADR 0156](adr/0156-voice-call-turns.md)。
 - **`/voice-ws`**: 音声専用の WebSocket（上りは 16kHz s16le のバイナリ + JSON の制御、下りは JSON + `[1][文の id][PCM 24kHz]`）。`/ws` と同じ `token`。**この PC の画面からだけ**（中継越しは 403。`ready.voice` は 0）。プロトコルは `core/voice/session.mjs` の冒頭。
 - **キー**: OpenRouter のキーはホストだけが持つ（`voice-secrets.json`。暗号化。Jev の判定器のキーとは別）。登録・削除は human-only の WS コマンド `setVoiceKey`・`deleteVoiceKey`。画面・ログ・AI の操作の返りへ出さない。登録が音声と読み上げる文章の外部送信の同意。
 - **設定**: `voice`（`settings.set`。聞き取り・予備・読み上げのモデル、声、言語、1 回と 1 日の通話の長さの上限、エコー除去、話の区切り（`turnHold`: short・standard・long）、話して止める（`bargeIn`）、効果音（`sounds`: off・few・all）。上限を上げる向きは AI からは承認カード）。状態は `voice.status`（キーの有無・今日の使用量。キーは返さない）。設定の画面は設定 › 通話。
