@@ -724,6 +724,7 @@ export function createThread(host) {
 
   function close() {
     if (!S.threadId) return;
+    host.noteView?.({ kind: 'channel', id: S.channelId });
     composer.setDraftKey(null);   // 書きかけは持ち主の下書きへ残して、入力欄を空に戻す
     toc.close();
     S.seq++;

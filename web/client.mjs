@@ -56,6 +56,7 @@ import { setupSlashSkills } from "./slash-skills.mjs";
 import { createMarkdownEditor } from "./md-editor.mjs";
 import { attachedImageSrc } from "./composer/attachments.mjs";
 import { createComposer, composerEls, rememberComposerTemplate } from "./composer/composer.mjs";
+import { createViewAddress, readAddress, toShowDetail } from "./view-address.mjs";
 import { openAttachmentList } from "./attachment-list.mjs";
 import { runMark, satMark, stillMark } from "./arc.mjs";
 import { approvalTarget } from "./approval-summary.mjs";
@@ -5939,6 +5940,16 @@ const filePreview = setupFilePreview({
 browserEntry = setupBrowserEntry({ button: $('browserEntry'), browser: browserPanel, preview: filePreview, bridge: window.plyDesktop?.browser,
   getSessionId: () => state.current ?? null, getAgentName: () => labelOf(activeBackendId()),
   blocked: () => document.body.classList.contains('settings') || !!document.querySelector('dialog[open]') });
+// いま見ている場所のアドレス（web/view-address.mjs）。通知の一覧・検索・脇の行・スレッドの開閉はここを通り、見ている場所を 1 つで残す。
+// 前の回に見ていた場所は、会話を開く（select が残す）前に読んでおく（起動時に Channels の面の位置を戻す）
+const savedView = readAddress(localStorage);
+let viewRestored = false;
+const viewAddress = createViewAddress({ storage: localStorage,
+  openSession: async ({ sessionId, uuid }) => {
+    channelsUi.setTab('chats');
+    await openFromSearch(sessionId, uuid ? { uuid, role: 'assistant', query: '', speaker: 'assistant' } : null);
+  },
+  openChannels: (detail) => document.dispatchEvent(new CustomEvent('channels:show', { detail })) });
 // bot・Channels・ルーティンの画面（web/channels/index.mjs。docs/channels.md「画面の口」）。client.mjs が持つのはこの 1 つの口だけ
 const channelsUi = setupChannels({
   cmd: (command, args) => cmd(command, args),
@@ -5948,7 +5959,10 @@ const channelsUi = setupChannels({
   whenOnline,              // 切れている間、つながり直すのを待つ（入力欄の添付の断片の送り手。web/attach-upload.mjs）
   openImage: (src, caption, path, origin) => openLightbox(src, caption, path, origin),   // 添付の画像を大きく見る（会話と同じライトボックス）
   permissionCard: (ev, into) => (ev.kind === 'question' ? questionCard(ev, into) : permissionCard(ev, into)),   // 質問も同じ口（bot の質問）
-  openSession: async (id) => { channelsUi.setTab('chats'); await select(id); },
+  openSession: (id) => viewAddress.go({ sessionId: id }),
+  // 見ている場所が替わった（Channels の面・スレッドの開閉）・Chats の側へ戻った
+  noteView: (view) => viewAddress.note(view),
+  noteChats: () => { if (state.current) viewAddress.note({ sessionId: state.current }); },
   // 委譲の子の様子（スレッドの入口・作業ログの委譲カード）。Chats と同じ部品を使う（docs/design-system.md「バックグラウンド」「委譲カード」）
   background: {
     watch: (ids) => watchSessions(ids),
@@ -7200,6 +7214,7 @@ async function select(id, { keepUpTo, reload = false, fresh = false, retry = fal
     state.contextWindow = null; state.compactionAt = null; state.compactionPhase = null; state.compactions = [];
     paintContextStrip();
     try { localStorage.setItem("agent-host-current", id); } catch {}
+    if (channelsUi.tab !== 'channels') viewAddress.note({ sessionId: id });
     syncWorkEntry();
     state.loadingSession = id;
     if (fresh) freshSessionId = id;
@@ -7232,18 +7247,13 @@ async function openFromSearch(id, jump) {
 }
 
 /**
- * 通知の一覧の行を押した（web/notification-inbox.mjs）。会話なら Chats の会話を開き、発言（uuid）があればその発言へ送って輪を付ける。
- * チャンネルなら channels:show（スレッド・投稿まで。着いた投稿は web/channels/thread.mjs が輪を付ける）
+ * 通知の一覧の行を押した（web/notification-inbox.mjs）。行き先は見ている場所のアドレス（web/view-address.mjs）の go が開く:
+ * 会話なら Chats の会話（発言 uuid があればその発言へ送って輪を付ける）、チャンネルなら channels:show（スレッド・投稿まで。着いた投稿は
+ * web/channels/thread.mjs・feed.mjs が輪を付ける）
  */
-async function openFromNotification({ sessionId, uuid, channelId, threadId, postId }) {
+async function openFromNotification(target) {
   if (narrowView.matches) setDrawer(false);
-  if (channelId) {
-    document.dispatchEvent(new CustomEvent('channels:show', { detail: { kind: 'channel', id: channelId, ...(threadId ? { threadId } : {}), ...(postId ? { postId } : {}) } }));
-    return;
-  }
-  if (!sessionId) return;
-  channelsUi.setTab('chats');
-  await openFromSearch(sessionId, uuid ? { uuid, role: 'assistant', query: '', speaker: 'assistant' } : null);
+  await viewAddress.go(target);
 }
 
 /**
@@ -7344,6 +7354,7 @@ async function paintSession(id, data, { keepUpTo, transition, loaded = false, lo
   paintOutbox();
   refreshOutbox(id).catch(() => {});
   try { localStorage.setItem("agent-host-current", id); } catch {}
+  if (channelsUi.tab !== 'channels') viewAddress.note({ sessionId: id });
   const localDraft = state.drafts.get(id);
   // 読み直しと作ったばかりの会話では、入力欄に今ある字が正本（読んでいる間に書き足した分がサーバーの下書きより新しい）
   const keepComposer = quiet || fresh;
@@ -7839,6 +7850,10 @@ function connect() {
         try { saved = localStorage.getItem("agent-host-current"); } catch {}
         if (saved && state.sessions.some(s => s.id === saved)) await select(saved);
         else await startNew();
+        // Channels の面を見ていたなら、その場所（チャンネル・スレッド・bot のページ）へ戻す（初めの 1 回だけ）
+        const where = toShowDetail(savedView);
+        if (!viewRestored && where && channelsUi.tab === 'channels') viewAddress.go(savedView);
+        viewRestored = true;
       }).catch(e => {
         // 最初の接続の待ち（「接続しています…」）を残さない。開けなかった会話の待ちは select が解く
         if (composerWait.mode === "connect") composerWait.idle();

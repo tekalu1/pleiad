@@ -62,9 +62,9 @@ export function postRows(hits, who = () => '') {
   }));
 }
 
-/** 結果の行から開く先（channels:show の detail）。スレッドの中の投稿ならそのスレッドも開く */
+/** 結果の行から開く先（channels:show の detail）。スレッドの中の投稿ならそのスレッドも開き、投稿の行なら着いたその投稿へ送って輪を付ける */
 export function showDetail(row) {
-  return row.threadId ? { kind: 'channel', id: row.channelId, threadId: row.threadId } : { kind: 'channel', id: row.channelId };
+  return { kind: 'channel', id: row.channelId, ...(row.threadId ? { threadId: row.threadId } : {}), ...(row.postId ? { postId: row.postId } : {}) };
 }
 
 /** 今開いている面（show の view）から、脇で選ばれて見える行。DM は bot の行が受け持つ */
