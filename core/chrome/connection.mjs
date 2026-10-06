@@ -67,6 +67,8 @@ export function createChromeConnection({ locate, os, WebSocketImpl = NodeWebSock
   let closedForGood = false;
 
   const sleep = ms => new Promise(resolve => clock.setTimeout(resolve, ms));
+  /** 待たずに走らせる続き。想定外の例外は処理されない拒否にせず、ログに 1 行だけ出す（Chrome の値は出さない） */
+  const run = promise => { promise.catch(error => log(`chrome: internal error: ${error?.message ?? error}`)); };
   const caps = () => os.capabilities();
 
   /** 公開する状態。OS の層が使えないときは unsupported で固定 */
@@ -123,7 +125,7 @@ export function createChromeConnection({ locate, os, WebSocketImpl = NodeWebSock
       if (att.cur) { await sweep(att.cur); att.cur = null; if (stale(att)) return; }
       setStatus({ state: 'setup', reason: null, dialog: false });
       clearTimer(att, 'pollTimer');
-      att.pollTimer = clock.setTimeout(() => { att.pollTimer = null; if (!stale(att)) void tryPort(att); }, opt.pollMs);
+      att.pollTimer = clock.setTimeout(() => { att.pollTimer = null; if (!stale(att)) run(tryPort(att)); }, opt.pollMs);
       return;
     }
     await startUpgrade(att, info);
@@ -140,18 +142,18 @@ export function createChromeConnection({ locate, os, WebSocketImpl = NodeWebSock
     const ws = new WebSocketImpl(`ws://127.0.0.1:${info.port}${info.path}`, { perMessageDeflate: false });
     rnd.ws = ws;
     setStatus({ state: 'permission', reason: null, dialog: att.round === 0 ? false : status.dialog });
-    ws.on('open', () => { void onOpen(att, rnd); });
+    ws.on('open', () => { run(onOpen(att, rnd)); });
     // 確認を閉じた・「キャンセル」を押したとき、Chrome は HTTP 403 で断る（実機で確認。2026-10-06）。ほかの応答は想定外（protocol）
     ws.on('unexpected-response', (_req, res) => {
       const status = res.statusCode;
       try { res.resume(); } catch { /* 読み捨て */ }
       try { ws.terminate(); } catch { /* 同上 */ }
-      void onFail(att, rnd, { protocol: status !== 403 });
+      run(onFail(att, rnd, { protocol: status !== 403 }));
     });
     ws.on('error', () => {});
-    ws.on('close', () => { void onFail(att, rnd, {}); });
-    rnd.reissueTimer = clock.setTimeout(() => { rnd.reissueTimer = null; void reissue(att, rnd); }, opt.reissueMs);
-    void findDialog(att, rnd);
+    ws.on('close', () => { run(onFail(att, rnd, {})); });
+    rnd.reissueTimer = clock.setTimeout(() => { rnd.reissueTimer = null; run(reissue(att, rnd)); }, opt.reissueMs);
+    run(findDialog(att, rnd));
   }
 
   /** upgrade の後 3 秒まで、新しく出た確認の窓を探す */
@@ -259,7 +261,7 @@ export function createChromeConnection({ locate, os, WebSocketImpl = NodeWebSock
     setStatus({ state: 'connected', reason: null, dialog: false, product });
     const list = [...waiters]; waiters.clear();
     for (const w of list) w.resolve(cdp);
-    cdp.onClose(() => { void onConnectedClosed(cdp, rnd.port); });
+    cdp.onClose(() => { run(onConnectedClosed(cdp, rnd.port)); });
   }
 
   async function onConnectedClosed(cdp, port) {
@@ -277,7 +279,7 @@ export function createChromeConnection({ locate, os, WebSocketImpl = NodeWebSock
     current = null; userStarted = false;
     clearTimer(att, 'pollTimer');
     const rnd = att.cur; att.cur = null;
-    if (rnd) { clearRound(rnd); void sweep(rnd).finally(() => { try { rnd.ws?.terminate(); } catch { /* 同上 */ } }); }
+    if (rnd) { clearRound(rnd); sweep(rnd).catch(() => {}).finally(() => { try { rnd.ws?.terminate(); } catch { /* 同上 */ } }); }
     setStatus({ state: 'off', reason, dialog: false });
     rejectWaiters(error);
   }
@@ -305,7 +307,7 @@ export function createChromeConnection({ locate, os, WebSocketImpl = NodeWebSock
           reject(new ChromeConnectionError('aborted'));
           if (!waiters.size && !userStarted && current) finishAttempt(current, null, new ChromeConnectionError('aborted'));
         }, { once: true });
-        void begin();
+        run(begin());
       });
     },
 

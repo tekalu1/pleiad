@@ -174,7 +174,7 @@ async function boot() {
   // Esc の登録を外す・戻すのは、オーバーレイ（computerOverlay。下で作る）が持つ。Esc を拾ったら、オーバーレイが computerService.escape を呼ぶ
   // koffi（Win32）は 1 回だけ読み、コンピューターの操作と Chrome の OS の層で共有する。読めなかったら両方とも unsupported
   let win32 = null, win32Reason = 'native';
-  try { win32 = loadWin32(); } catch (error) { win32Reason = error.reason ?? 'native'; console.warn('[computer]', `win32 unavailable: ${error.message}`); }
+  try { win32 = loadWin32(); } catch (error) { win32Reason = error.reason ?? 'native'; if (win32Reason !== 'platform') console.warn('[computer]', `win32 unavailable: ${error.message}`); }
   computerService = attachComputerService(worker, { electron: { screen, nativeImage }, app, log: line => console.warn('[computer]', line), win32, reason: win32Reason,
     escape: { suspend: () => computerOverlay?.suspendEscape() ?? (() => {}) } });
   attachChromeOs(worker, { chromeOs: createChromeOs({ platform: process.platform, win32: win32 ? withPerMonitorDpi(win32) : null, reason: win32Reason, log: line => console.warn('[chrome-os]', line) }), log: line => console.warn('[chrome-os]', line) });
