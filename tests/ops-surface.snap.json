@@ -1332,6 +1332,21 @@
       "input": "3e002aa0e25e"
     },
     {
+      "id": "delegation.hostView",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": false,
+        "cli": false
+      },
+      "legacyCommand": null,
+      "input": "d4fe44247a7e"
+    },
+    {
       "id": "delegation.instructions",
       "risk": "read",
       "riskOf": false,

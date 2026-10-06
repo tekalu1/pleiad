@@ -1,11 +1,12 @@
 // 端末（デスクトップ版）のローカルのサーバーの側: この PC の AI から、リモートのホストへ作業を任せる
 // （docs/agent-delegation.md「リモートのホストへ任せる」、docs/remote.md §4.5、ADR 0146）。
 //
-//   parentPortRemoteAgent(port)   main との口。ホストへの依頼（request）・人の答え（answer）・つなぎ直しの同期（sync）と、ホストの便りの受け取り
+//   parentPortRemoteAgent(port)   main との口。ホストへの依頼（request）・人の答え（answer）・経過の読み出し（view）・つなぎ直しの同期（sync）と、ホストの便りの受け取り
 //   createRemoteDelegation(deps)  ply_delegate の host・ホストのタスクの写し（agent-tasks の host の行）の追跡と追いつき・中継された承認のカード
 //
 // 守り: 承認の答え（answer）は、画面（human）の resolvePermission の処理（core/server.mjs）が answerCard を呼んだときだけ作る。
-// AI が呼べる道具（MCP の ply_delegate・ply_task_*）から answer を作る道は無い（taskCall は答えを運ばない）。
+// 経過の読み出し（view）は、画面（human）の操作 delegation.hostView（MCP・CLI には出さない）が view を呼んだときだけ作る。
+// AI が呼べる道具（MCP の ply_delegate・ply_task_*）から answer・view を作る道は無い（taskCall は答えも読み出しも運ばない）。
 import { modePosition } from './modes.mjs';
 
 export const RESULT_PAGE_MAX = 20;   // 完了した結果の続きを読むページ数の上限（16,000 字 × 20）
@@ -28,7 +29,7 @@ export function parentPortRemoteAgent(port, { timeoutMs = 70_000 } = {}) {
   const offline = () => Object.assign(new Error('the host is not available (Pleiad is restarting)'), { code: 'OFFLINE' });
   // 一覧の更新（remote-agent-hosts）は状態の便りより遅れて届くので、状態の便りで先に今の状態を写す
   const setState = (kind, hostId, st) => {
-    hosts = hosts.map(h => (h.hostId === hostId ? { ...h, state: st.state, allowed: st.allowed } : h));
+    hosts = hosts.map(h => (h.hostId === hostId ? { ...h, state: st.state, allowed: st.allowed, ...(st.view !== undefined ? { view: st.view === true } : {}) } : h));
     fire(kind, hostId, st);
   };
   port.on('message', event => {
@@ -44,7 +45,7 @@ export function parentPortRemoteAgent(port, { timeoutMs = 70_000 } = {}) {
       }
       case 'remote-agent-event': fire('event', m.hostId, m.event); return;
       case 'remote-agent-state': case 'remote-agent-ready':
-        setState(m.type === 'remote-agent-ready' ? 'ready' : 'state', m.hostId, { state: m.state, allowed: m.allowed === true, hostName: m.hostName ?? '' });
+        setState(m.type === 'remote-agent-ready' ? 'ready' : 'state', m.hostId, { state: m.state, allowed: m.allowed === true, view: m.view === true, hostName: m.hostName ?? '' });
         return;
       case 'remote-agent-hosts': hosts = Array.isArray(m.hosts) ? m.hosts : []; fire('hosts', hosts); return;
       default:
@@ -74,7 +75,7 @@ export function parentPortRemoteAgent(port, { timeoutMs = 70_000 } = {}) {
   });
   const on = kind => fn => { listeners[kind].add(fn); return () => listeners[kind].delete(fn); };
   return {
-    /** main が最後に知らせたホストの一覧 [{ hostId, name, hostName, agentUse, state, allowed }] */
+    /** main が最後に知らせたホストの一覧 [{ hostId, name, hostName, agentUse, state, allowed, view }]。view はホストが経過の読み出しを知っているか */
     get hosts() { return hosts; },
     refresh: async () => { const r = await call('hosts'); hosts = r.hosts ?? hosts; return hosts; },
     /** 委譲の 6 つの操作のどれか（ホストの答えの result で解決。失敗は code 付きの Error）。ms は main がホストの答えを待つ上限 */
@@ -82,6 +83,8 @@ export function parentPortRemoteAgent(port, { timeoutMs = 70_000 } = {}) {
       (await call('request', { hostId, op, args, requester, timeoutMs: ms }, { signal, timeoutMs: ms + 10_000 })).result,
     /** 承認の中継への人の答え。{ ok, code? } */
     answer: async (hostId, relay) => (await call('answer', { hostId, relay }, { timeoutMs: 30_000 })).result,
+    /** 任せた子の会話の経過の読み出し（ホストの viewed の result）。画面（human）の delegation.hostView からだけ呼ぶ */
+    view: async (hostId, taskId, cursor = null) => (await call('view', { hostId, taskId, cursor }, { timeoutMs: 30_000 })).result,
     sync: async (hostId, taskIds) => (await call('sync', { hostId, taskIds }, { timeoutMs: 15_000 })).result === true,
     onEvent: on('event'), onState: on('state'), onHosts: on('hosts'), onReady: on('ready'),
   };
@@ -112,6 +115,8 @@ export function createRemoteDelegation({ bridge, tasks, agentT, titleOf = async 
   const byCard = new Map();       // cardId → 同じ項目
   const orphans = new Map();      // taskId → { event, at }。adopt より先に届いた便り（res と task の順が入れ替わったとき）
   const syncing = new Set();      // hostId。同期の最中の二重実行を避ける
+  const offlineAt = new Map();    // hostId → 線が使えなくなった時刻。画面の「オフライン · HH:MM までの分」（経過の読み出しが最後に届いた分の目安）
+  const known = new Map();        // 経過の読み出しで知ったホストの子孫の taskId → hostId（読み出しの宛先を引く。端末の台帳には保存しない）
 
   const hostsNow = () => bridge?.hosts ?? [];
   const hostById = hostId => hostsNow().find(h => h.hostId === hostId) ?? null;
@@ -213,6 +218,7 @@ export function createRemoteDelegation({ bridge, tasks, agentT, titleOf = async 
       sessionId: row.parentSessionId, hostId, hostName: host?.name ?? row.host.name, relayId: relay.id, taskId: relay.taskId, kind, hostOnly: kind === 'hostOnly',
       toolName: relay.toolName, input: relay.input, questions: kind === 'question' ? relay.questions : undefined, title: relay.title ?? null, childTitle: row.title || relay.childTitle || '',
       askedAt: relay.askedAt, online: usable(host),
+      ...(typeof relay.childSessionId === 'string' && relay.childSessionId.length <= 200 ? { childSessionId: relay.childSessionId } : {}),
     });
     const entry = { cardId, hostId, relayId: relay.id, taskId: relay.taskId, receipt: relay.receipt, hostOnly: kind === 'hostOnly' };
     open.set(key, entry);
@@ -297,11 +303,12 @@ export function createRemoteDelegation({ bridge, tasks, agentT, titleOf = async 
     unsubscribe = [
       bridge.onEvent(onEvent),
       bridge.onState((hostId, status) => {
+        if (status.state === 'ready') offlineAt.delete(hostId); else if (!offlineAt.has(hostId)) offlineAt.set(hostId, Date.now());
         cards?.online(hostId, status.state === 'ready' && status.allowed);
         const done = stopped(status) ? retire(hostId).catch(e => log(`remote delegation: ${e?.message ?? e}`)) : null;
         Promise.resolve(done).finally(changed);
       }),
-      bridge.onReady((hostId, status) => catchUp(hostId, status).catch(e => log(`remote delegation: ${e?.message ?? e}`))),
+      bridge.onReady((hostId, status) => { offlineAt.delete(hostId); return catchUp(hostId, status).catch(e => log(`remote delegation: ${e?.message ?? e}`)); }),
       // 一覧が変わった。この PC 側で任せる設定を切った・ホストを消したら、そのホストの動いていた写しは追えない（理由つきで終わらせる）
       bridge.onHosts(list => {
         const gone = new Set();
@@ -465,9 +472,41 @@ export function createRemoteDelegation({ bridge, tasks, agentT, titleOf = async 
     return { ok: r?.ok === true, code: r?.code ?? null };
   }
 
+  /**
+   * 経過の読み出し（画面（human）の操作 delegation.hostView からだけ。AI の道具には無い）。taskId は端末の台帳にあるホストのタスク（根）か、
+   * 読み出しで知ったその子孫。見せる範囲の絞り込みはホストがする（この端末が任せた子とその子孫だけ）。
+   * 戻りは { state: 'ok' | 'offline' | 'unsupported' | 'denied' | 'failed', … }。ok のときだけホストの答え（task・messages・descendants など）を載せる
+   */
+  async function view({ taskId, hostId: asked = null, cursor = null }) {
+    const row = tasks()?.get(taskId);
+    const hostId = row?.host?.hostId ?? known.get(taskId) ?? null;
+    if (!hostId || (asked && asked !== hostId)) return { state: 'failed', code: 'NOT_FOUND' };
+    const host = hostById(hostId);
+    if (!host || host.agentUse !== true) return { state: 'failed', code: 'NOT_FOUND' };
+    if (host.state !== 'ready') return { state: 'offline', since: offlineAt.get(hostId) ?? null };
+    if (!host.allowed) return { state: 'denied' };
+    if (host.view !== true) return { state: 'unsupported' };
+    try {
+      const r = await bridge.view(hostId, taskId, cursor);
+      for (const d of r?.descendants ?? []) {
+        if (typeof d?.taskId !== 'string') continue;
+        known.delete(d.taskId); known.set(d.taskId, hostId);
+        if (known.size > 500) known.delete(known.keys().next().value);
+      }
+      return { state: 'ok', ...r };
+    } catch (e) {
+      if (e?.code === 'OFFLINE') return { state: 'offline', since: offlineAt.get(hostId) ?? null };
+      if (e?.code === 'UNSUPPORTED') return { state: 'unsupported' };
+      if (e?.code === 'NOT_ALLOWED') return { state: 'denied' };
+      return { state: 'failed', code: e?.code ?? 'ERROR', error: String(e?.message ?? e).slice(0, 200) };
+    }
+  }
+
   return {
     enabled: Boolean(bridge),
-    start, describe, delegate, taskCall, cancelHost, answerCard, presentList,
+    start, describe, delegate, taskCall, cancelHost, answerCard, presentList, view,
+    /** 線が使えなくなった時刻（使えるなら null。つながっていなかった間に起きたものは分からず null） */
+    offlineSince: hostId => offlineAt.get(hostId) ?? null,
     isRemoteCard: cardId => byCard.has(cardId),
     /** そのタスクが、依頼元の会話に中継された承認を待っているか */
     waitingFor: taskId => [...open.values()].some(e => e.taskId === taskId),

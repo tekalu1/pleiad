@@ -11,6 +11,7 @@ import { createRelay } from '../../relay/server.mjs';
 import { startServer, ROOT } from '../lib/server.mjs';
 import { open, sleep } from '../lib/ws-client.mjs';
 import { createRemoteDevice, createDeviceStore } from '../../core/remote/device.mjs';
+import { viewCursor } from '../../core/remote/agent-view.mjs';
 
 export const name = 'remote-agent-e2e';
 export const title = '端末の AI からホストへ任せる（端末のサーバー → main の橋 → 中継 → ホスト）: 委譲・完了通知・承認の中継と答え・オフライン・追いつき・取り消し';
@@ -111,6 +112,24 @@ export default async function (t) {
     const hostChild = (await hostCmd('listSessions')).find(s => s.id === hostRow.sessionId);
     t.ok('ホストの子の会話に出どころ（どの端末の・どの会話の AI か）が残る', hostChild?.delegation?.remote?.deviceId === deviceId && hostChild.delegation.remote.sessionId === sid);
 
+    // ---- 経過の読み出し（端末の画面 → 端末のサーバー → main の橋 → 中継 → ホスト）。人の操作だけ。AI の道具には無い
+    const hostView = (id, extra = {}) => termCmd('invoke', { op: 'delegation.hostView', args: { taskId: id, hostId, ...extra } });
+    const hv = await hostView(taskId);
+    t.ok('端末の画面（human）の delegation.hostView で、ホストの子の発言（依頼と返答）が読める', hv.state === 'ok' && hv.task.taskId === taskId && hv.messages.some(m => m.role === 'user') && hv.messages.some(m => m.role === 'assistant' && /REMOTE_HELLO/.test(m.text)), JSON.stringify(hv).slice(0, 300));
+    t.ok('ホストが読み出しを知っていることが、ホストの一覧（remoteHosts）にも出る（古いホストは今の 2 つの箱に戻すため）', (await termCmd('running')).remoteHosts?.[hostId]?.view === true);
+    const hv2 = await hostView(taskId, { cursor: viewCursor(hv.from, hv.messages) });
+    t.ok('cursor を付けると続きだけ（変わっていなければ末尾の数発言）', hv2.state === 'ok' && hv2.full === (hv.messages.length <= 3) && hv2.messages.length <= 4, JSON.stringify([hv2.state, hv2.full, hv2.messages?.length]));
+    const hv404 = await hostView('ply-task-nope');
+    t.ok('台帳にもない・任せていないタスクは読めない（NOT_FOUND）', hv404.state === 'failed' && hv404.code === 'NOT_FOUND', JSON.stringify(hv404));
+    const viaControl2 = await (async () => {
+      for (let i = 0; ; i++) {
+        try { return await ct.runTurn({ sessionId: sid, prompt: 'control:' + JSON.stringify({ name: 'call_op', arguments: { op: 'delegation.hostView', args: { taskId, hostId } } }) }, { ms: 60_000 }); }
+        catch (e) { if (i < 40 && /切り替え中/.test(e.message)) { await sleep(250); continue; } throw e; }
+      }
+    })();
+    const viaText = JSON.stringify(viaControl2.events.filter(e => e.type === 'tool.result').map(e => String(e.text)));
+    t.ok('端末の AI は ply_control から経過の読み出し（delegation.hostView）を呼べない（会話の中身は返らない）', !/REMOTE_HELLO/.test(viaText) && viaControl2.events.some(e => e.type === 'tool.result'), viaText.slice(0, 300));
+
     // ---- status・send・list・wait・cancel
     const st = toolResult(await tool(sid, 'ply_task_status', { taskId }));
     t.ok('ply_task_status は同じ taskId でホストの結果を返す', st.json?.result === 'REMOTE_HELLO' && st.json.host === 'desk-test' && st.json.status === 'completed', st.text.slice(0, 200));
@@ -186,6 +205,8 @@ export default async function (t) {
     await within(relay.close(), 5000, '中継の停止');
     await ct.waitFor(e => e.type === 'permissionRelayState' && e.id === card3.id && e.online === false, { from: markOff, ms: 15_000 });
     t.ok('ホストがオフラインの間、中継のカードはオフラインの印になる（permissionRelayState）', (await termCmd('running')).permissions.find(p => p.id === card3.id)?.remote?.online === false);
+    const offView = await hostView(catchStart);
+    t.ok('オフラインの間の読み出しは、待たずに offline と、使えなくなった時刻（since）を返す', offView.state === 'offline' && Number.isFinite(offView.since) && (await termCmd('running')).remoteHosts?.[hostId]?.since === offView.since, JSON.stringify(offView));
     const offAnswer = await termCmd('resolvePermission', { id: card3.id, allow: true }).then(() => null, e => e);
     t.ok('オフラインの間は答えを送れず、理由を返す（カードは残る）', /オフライン/.test(offAnswer?.message ?? '') && (await termCmd('running')).permissions.some(p => p.id === card3.id), offAnswer?.message);
     const t0 = Date.now();
@@ -201,6 +222,8 @@ export default async function (t) {
     await within((async () => { relay = createRelay({ enrollSecret: SECRET, trustProxy: false, logger: () => {} }); await relay.listen(relayPort, '127.0.0.1'); })(), 5000, '中継の立て直し');
     const caught = await until(async () => (await tRows()).find(r => r.taskId === catchStart && r.status === 'completed' && r.result === 'DONE_WHILE_OFFLINE'), 40_000, 'つなぎ直しの追いつき');
     t.ok('つなぎ直すと、状態と結果に追いつく（完了通知も届く）', Boolean(caught));
+    const backView = await until(async () => { const v = await hostView(catchStart); return v.state === 'ok' ? v : null; }, 30_000, 'つなぎ直した後の読み出し');
+    t.ok('つなぎ直すと読み出しが続きを返す（切れている間に進んだ分も読める）。オフラインの印の時刻は消える', backView.messages.some(m => m.role === 'assistant' && /DONE_WHILE_OFFLINE/.test(m.text)) && (await termCmd('running')).remoteHosts?.[hostId]?.since === undefined, JSON.stringify(backView).slice(0, 300));
     await ct.waitFor(e => e.type === 'permissionRelayState' && e.id === card3.id && e.online === true, { from: markOn, ms: 20_000 });
     t.ok('つなぎ直すと、中継のカードがオンラインに戻る', (await termCmd('running')).permissions.find(p => p.id === card3.id)?.remote?.online === true);
     const markAns = ct.mark();

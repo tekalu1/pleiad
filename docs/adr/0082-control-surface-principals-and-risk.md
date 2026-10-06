@@ -2,6 +2,7 @@
 
 - 状態: 承認（2026-10-03）
 - 追記: 主体 agent に、会話に束縛されない `via: remote`（端末の AI。依頼元は端末の会話）を足す。口に出す操作は委譲の 6 つだけで、人の答えは `via: remote-device`・受領証つき（[ADR 0146](0146-remote-agent-delegation.md)）
+- 追記: 端末の画面（人）が、ホストに任せた子の会話の経過を読む（`/agent` の `view`）。主体は答えと同じ `by: human`・`via: remote-device`・`byDevice`。端末側は画面だけの操作 `delegation.hostView`（MCP・CLI には出さない）からだけ作り、端末の AI の道具には無い（[ADR 0146](0146-remote-agent-delegation.md)「経過の読み出し」）
 
 ## 状況
 

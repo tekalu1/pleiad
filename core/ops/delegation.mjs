@@ -164,6 +164,27 @@ export const delegationOps = [
     },
   }),
 
+  // ホストに任せた子の会話の経過を読む（docs/remote.md §4.5「経過の読み出し」、ADR 0146）。詳細を開いている画面（人）だけが呼ぶ。
+  // ホストの口 /agent の view を、端末の main の橋で運ぶ。見せる範囲（この端末が任せた子とその子孫）の絞り込みはホストがする。
+  // AI の道具（MCP・CLI）には出さない: 子の会話の中身は、AI には ply_task_status の結果の要約までしか渡さない
+  defineOp({
+    id: 'delegation.hostView',
+    summary: 'agent:ops.delegation.hostView.summary',
+    risk: 'read',
+    input: z.object({
+      taskId: z.string().min(1).max(200).describe(D('hostView', 'taskId')),
+      hostId: z.string().max(200).optional().describe(D('hostView', 'hostId')),
+      cursor: z.object({ from: z.number().int().min(0), check: z.number() }).nullable().optional().describe(D('hostView', 'cursor')),
+    }),
+    output: z.unknown(),
+    surfaces: { ui: true, mcp: false, cli: false },
+    handler: (ctx) => { throw new OpError('NEEDS_UI', agentT(ctx.locale, 'ops.errors.NEEDS_UI', { id: ctx.op.id })); },
+    uiHandler: (ctx, args) => {
+      if (!ctx.delegation?.hostView) throw new OpError('UNAVAILABLE', agentT(ctx.locale, 'delegation.remote.unavailable'));
+      return ctx.delegation.hostView(args);
+    },
+  }),
+
   // 別の候補で同じ依頼をやり直す（新しい子のタスクを作る）。AI は自分が委譲した子だけ。承認モードが強くなる（依頼元より強い子になる）ときの
   // 確認（approved）と、Claude のアカウントの選択（account）は人だけ: AI が渡すと、または確認が要ると NEEDS_UI で画面へ誘導する
   defineOp({

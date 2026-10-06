@@ -20,7 +20,7 @@ export async function openAgent(device, { timeoutMs = 10_000 } = {}) {
       let raw;
       try { raw = await w.next(60 * 60_000); } catch { return; }
       let m; try { m = JSON.parse(raw); } catch { continue; }
-      if (m.t === 'res' && pending.has(m.id)) { const p = pending.get(m.id); pending.delete(m.id); p.res(m); continue; }
+      if ((m.t === 'res' || m.t === 'viewed') && pending.has(m.id)) { const p = pending.get(m.id); pending.delete(m.id); p.res(m); continue; }
       events.push(m);
       for (const x of [...watchers]) if (x.pred(m)) { watchers.delete(x); x.res(m); }
     }
@@ -46,6 +46,15 @@ export async function openAgent(device, { timeoutMs = 10_000 } = {}) {
         const timer = setTimeout(() => { pending.delete(id); reject(new Error(`${op} の答えが来ない`)); }, ms);
         pending.set(id, { res: m => { clearTimeout(timer); resolve(m); }, rej: e => { clearTimeout(timer); reject(e); } });
         send({ t: 'req', id, op, args, requester }).catch(reject);
+      });
+    },
+    /** 経過の読み出し 1 つ（人の操作。AI の依頼ではない）。{ ok, result } か { ok: false, code, error } */
+    view(taskId, cursor = null, ms = 30_000) {
+      const id = `v${++seq}`;
+      return new Promise((resolve, reject) => {
+        const timer = setTimeout(() => { pending.delete(id); reject(new Error('view の答えが来ない')); }, ms);
+        pending.set(id, { res: m => { clearTimeout(timer); resolve(m); }, rej: e => { clearTimeout(timer); reject(e); } });
+        send({ t: 'view', id, taskId, ...(cursor ? { cursor } : {}) }).catch(reject);
       });
     },
     /** 条件に合う便りを（もう届いていればそれを）待つ */
