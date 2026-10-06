@@ -36,7 +36,7 @@ import { classifySystemMessages } from "../system-messages.mjs";
 import { promptTitle } from "../prompt-title.mjs";
 import { createTurnTracker, createInputQueue, createInputCloser, createHostCalls, createStderrLog, RESUME_GRACE_MS } from "./claude-background.mjs";
 import { COMPUTER_CALL_TIMEOUT_SEC, COMPUTER_SERVER, computerPrompt, isComputerTool } from "./computer-delivery.mjs";
-import { BROWSER_SERVER } from "../browser-profiles.mjs";
+import { BROWSER_SERVER } from "../browser-bridge.mjs";
 import { CONTROL_SERVER } from "../ops/surfaces/mcp.mjs";
 
 const NL = String.fromCharCode(10);
@@ -94,7 +94,9 @@ const MODES = {
 // bypassPermissions は allowDangerouslySkipPermissions: true を同時に渡さないと使えない
 // （sdk.d.ts の Options: "Must be set to `true` when using `permissionMode: 'bypassPermissions'`"。
 // sdk.mjs は真のときだけ CLI へ --allow-dangerously-skip-permissions を足す）。
-// このモードでは CLI が権限判定ごと飛ばすので **canUseTool は呼ばれない**＝承認カードは出ない。
+// このモードでも、Claude Code は安全の検査（中身が空かもしれない変数を使った危ない rm など）に当たる呼び出しだけは
+// 飛ばさず canUseTool で聞いてくる。承認カードが全く出ないとは限らない（bypass の子の `rm -f $OUT/*` で出た）。
+// 受ける側（askPermission）は、モードによらず来た問いを人に回す。
 const SDK_MODES = { bypass: "bypassPermissions" };
 const sdkMode = (mode) => (MODES[mode] ? SDK_MODES[mode] ?? mode : "default");
 
@@ -372,7 +374,7 @@ async function decidePermission(ctx, askPermission, toolName, input, options) {
   if (AUTO_ALLOW.has(toolName)) return { behavior: "allow", updatedInput: input };
   // コンピューターの操作はツールごとに聞かない。アプリ単位の承認は橋（core/computer-bridge.mjs）の中で行う（ADR 0071）
   if (isComputerTool(toolName)) return { behavior: "allow", updatedInput: input };
-  // 内蔵ブラウザーのプロフィールの一覧と切り替えも聞かない。サイトの利用の確認はプロフィールごとに中継が行う（ADR 0078）
+  // ply_browser も聞かない。サイトの利用の確認は中継が行う（ADR 0042）
   if (typeof toolName === "string" && toolName.startsWith(`mcp__${BROWSER_SERVER}__`)) return { behavior: "allow", updatedInput: input };
   // 操作の一覧（ply_control）も聞かない。権限と承認は registry.invoke が会話の承認モードで決める（ADR 0082）
   if (typeof toolName === "string" && toolName.startsWith(`mcp__${CONTROL_SERVER}__`)) return { behavior: "allow", updatedInput: input };
@@ -703,7 +705,7 @@ export const backend = {
     // ply_computer はロックを最長 10 分待つ。HTTP の MCP は既定で 60 秒（と無通信 300 秒）で切れるので、timeout で両方を上げる（実測 2026-10-01）
     const plyServers = { host: buildToolServer(ctx), ...(agentRuntime ? { ply_agents: { type: "http", url: agentRuntime.url, headers: agentRuntime.headers } } : {}), ...(contextRuntime ? { ply_context: { type: 'http', url: contextRuntime.url, headers: contextRuntime.headers } } : {}),
       ...(computerRuntime ? { [COMPUTER_SERVER]: { type: 'http', url: computerRuntime.url, headers: computerRuntime.headers, timeout: COMPUTER_CALL_TIMEOUT_SEC * 1000 } } : {}),
-      // 内蔵ブラウザーのプロフィールの一覧と切り替え（core/browser-profiles.mjs。ADR 0078）
+      // エージェントのブラウザー操作（core/browser-bridge.mjs。ADR 0148）
       ...(browserRuntime ? { [BROWSER_SERVER]: { type: 'http', url: browserRuntime.url, headers: browserRuntime.headers } } : {}),
       // Pleiad の操作の一覧（core/ops/surfaces/control.mjs。ADR 0081）。全会話に渡す
       // 承認が要る呼び出しも待たずに返る（ADR 0088）ので、待ちの上限はほかの Pleiad の MCP と同じ既定
@@ -763,7 +765,8 @@ export const backend = {
         // 互換の接続先は「思考を送る」をオンにした先にだけ送る（決定 4。オフの先は env で thinking・effort を止めてある）
         ...(!endpoint || endpoint.options?.sendThinking ? { thinking: { type: "adaptive" } } : {}),
         // 承認モード。既定は都度確認。切り替えは人間だけができる（server 側で担保）。
-        // SDK 側が先に判断し、なお迷うものだけが canUseTool に来る（bypass では来ない）。
+        // SDK 側が先に判断し、なお迷うものだけが canUseTool に来る（bypass では、ふつうの呼び出しは来ない。
+        // 危ない rm のような安全の検査に当たったものは来る）。
         permissionMode: sdkMode(mode),
         ...(sdkMode(mode) === "bypassPermissions" ? { allowDangerouslySkipPermissions: true } : {}),
         // 未指定なら SDK の既定に任せる（設定を上書きしない）

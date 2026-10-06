@@ -56,11 +56,7 @@
     "computerAppJoin": "」「",
     "browserSite": "{{agent}} が {{site}} を使おうとしています",
     "browserNotes": "（{{notes}}）",
-    "browserProfile": "プロフィール: {{profile}}",
     "browserAccountName": "ログイン済み: {{account}}"
-  },
-  "browserProfiles": {
-    "main": "メイン"
   },
   "quota": {
     "unsupported": "このエージェントは使用枠の取得に対応していません。",
@@ -153,8 +149,7 @@
     "accountNotRegistered": "選択したアカウントは登録されていません",
     "unknownPref": "知らない設定: {{key}}",
     "unknownMode": "知らない承認モード: {{value}}",
-    "unknownModel": "知らないモデル: {{value}}",
-    "unknownPrefValue": "知らない設定の値: {{key}} = {{value}}"
+    "unknownModel": "知らないモデル: {{value}}"
   },
   "send": {
     "messageIdRequired": "送信IDが必要です",

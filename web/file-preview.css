@@ -141,23 +141,6 @@ body.file-preview-wide .file-preview-resize{display:none}
 .file-preview[data-mode=browser] .file-preview-path:empty{display:none}
 .file-preview[data-mode=browser] .file-preview-head{padding-bottom:8px}
 .browser-tabs{display:flex;align-items:center;gap:2px;padding:0 0 8px;min-width:0;container-type:inline-size}
-/* 会話の今のプロフィール（タブの列の左端。ADR 0078）。沈んだ面の pill で、タブ（地のまま / 紙）と形で分ける。色は使わず頭文字のモノグラム */
-.browser-profile-mono{display:inline-grid;place-items:center;width:18px;height:18px;border-radius:50%;background:var(--surface-1);color:var(--ink);
-  font-size:10px;font-weight:600;line-height:1;flex:none}
-.browser-profile-mono.lg{width:26px;height:26px;font-size:var(--fs-s)}
-.browser-profile-pick{display:flex;align-items:center;gap:6px;flex:none;height:28px;max-width:140px;margin-right:6px;padding:0 7px 0 5px;border-radius:var(--r-m);
-  background:var(--surface-2);color:var(--ink);font-size:var(--fs-xs);cursor:pointer;transition:background-color var(--dur-fast) var(--ease-out)}
-.browser-profile-pick:hover,.browser-profile-pick[aria-expanded=true]{background:var(--surface-3)}
-.browser-profile-pick:focus-visible{outline:2px solid var(--line-blue);outline-offset:-2px}
-.browser-profile-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.browser-profile-down{display:grid;place-items:center;flex:none;color:var(--ink-weak)}
-.browser-profile-down svg{width:12px;height:12px}
-@container (max-width:300px){.browser-profile-name{display:none}}
-.pop .li:disabled .browser-profile-mono{opacity:.5}
-/* 切り替えた直後だけ、タブの列が右から 12px 入る。前の列は待たずに消す */
-.browser-tab-list.enter{animation:browser-tabs-in var(--dur) var(--ease-out)}
-@keyframes browser-tabs-in{from{opacity:0;transform:translateX(12px)}}
-@media (prefers-reduced-motion:reduce){.browser-tab-list.enter{animation:none}}
 .browser-tab-list{display:flex;gap:2px;min-width:0;overflow-x:auto;scrollbar-width:none}
 .browser-tab{display:flex;align-items:center;flex:0 1 180px;min-width:72px;max-width:180px;height:28px;border-radius:var(--r-m);color:var(--ink-weak);
   transition:background-color var(--dur-fast) var(--ease-out)}
@@ -213,27 +196,7 @@ body.file-preview-wide .file-preview-resize{display:none}
 .browser-confirm-settings input[role=switch]:checked:before{transform:translateX(14px)}
 .browser-confirm-settings input[role=switch]:focus-visible{outline:2px solid var(--line-blue);outline-offset:3px}
 .browser-site-name{flex:1;min-width:140px;overflow-wrap:anywhere}
-/* 設定 › ブラウザー › プロフィール（ADR 0078）。行: モノグラム・名前と弱い字の「既定」・用途のメモ・大きさ（等幅）・⋯ */
-.pf-list{display:flex;flex-direction:column;gap:2px;margin:0 0 6px}
-.pf-row{display:flex;align-items:center;gap:10px;min-height:42px;padding:4px 4px 4px 6px;border-radius:var(--r-m);min-width:0;
-  transition:background-color var(--dur-fast) var(--ease-out)}
-.pf-row:hover{background:var(--surface-hover)}
-.pf-text{display:flex;flex-direction:column;gap:1px;flex:1;min-width:0}
-.pf-name{display:flex;align-items:baseline;gap:8px;min-width:0}
-.pf-label{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.pf-tag{font-size:var(--fs-xs);color:var(--ink-weak);flex:none}
-.pf-memo{font-size:var(--fs-xs);color:var(--ink-weak);overflow-wrap:anywhere;line-height:1.5}
-.pf-size{font:var(--fs-xs) var(--font-mono);color:var(--ink-weak);flex:none}
-.pf-row .btn-icon{flex:none}
-.pf-field{flex:1;min-width:0;height:28px;padding:0 12px;border:0;border-radius:var(--r-pill);background:var(--surface-1);color:var(--ink);font:inherit;outline:0}
-.pf-field:focus{background:var(--surface-2)}
-.pf-text .pf-field{margin-top:4px}
-.pf-add{margin:2px 0 0 -6px;display:inline-flex;align-items:center;gap:6px}
-.pf-add svg.i{width:14px;height:14px}
-.browser-confirm-settings .pf-new{padding:14px 0 0}
-.pf-new-seg{min-width:300px}
-.pf-new-seg button{padding:4px 14px;white-space:nowrap}
-@media (max-width:520px){.pf-new-seg,.browser-link-open{min-width:0;width:100%}.pf-new-seg button{white-space:normal;padding:4px 8px}}
+@media (max-width:520px){.browser-link-open{min-width:0;width:100%}}
 .preview-blocked{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:8px 12px;color:var(--ink-weak);font-size:var(--fs-s);flex:none}
 .preview-blocked span{flex:1;min-width:160px}
 .preview-blocked button{border:0;background:none;color:var(--ink-blue);font:inherit;cursor:pointer;padding:4px}

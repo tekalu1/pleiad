@@ -30,7 +30,7 @@ import { codexCompatThread, redactSecret } from '../compat-endpoints.mjs';
 import { MAX_RESULT_CHARS } from "./shared.mjs";
 import { codexComputerConfig, codexComputerName, computerFailed, computerPrompt, computerResult, computerToolInput, mcpText } from "./computer-delivery.mjs";
 import { readTurnRejections, rolloutPathOf, rolloutSize } from "./codex-rejections.mjs";
-import { BROWSER_SERVER } from "../browser-profiles.mjs";
+import { BROWSER_SERVER } from "../browser-bridge.mjs";
 import { CONTROL_SERVER } from "../ops/surfaces/mcp.mjs";
 import * as store from '../store.mjs';
 import { t, agentT } from "../i18n.mjs";
@@ -1632,7 +1632,7 @@ export const backend = {
           // Clear the retired built-in connection on already-loaded threads too.
           'mcp_servers.ply': { command: process.execPath, enabled: false, required: false },
           ...(agentRuntime ? { 'mcp_servers.ply_agents': { url: agentRuntime.url, http_headers: agentRuntime.headers, enabled: true, required: true, default_tools_approval_mode: 'approve', startup_timeout_sec: 20, tool_timeout_sec: 60 } } : {}),
-          // 内蔵ブラウザーのプロフィールの一覧と切り替え（core/browser-profiles.mjs。ADR 0078）
+          // エージェントのブラウザー操作（core/browser-bridge.mjs。ADR 0148）
           ...(browserRuntime ? { [`mcp_servers.${BROWSER_SERVER}`]: { url: browserRuntime.url, http_headers: browserRuntime.headers, enabled: true, required: false, default_tools_approval_mode: 'approve', startup_timeout_sec: 20, tool_timeout_sec: 60 } } : {}),
           // Pleiad の操作の一覧（core/ops/surfaces/control.mjs。ADR 0081）。承認は registry.invoke が会話の承認モードで決めるので、ツールごとには聞かない
           ...(controlRuntime ? { [`mcp_servers.${CONTROL_SERVER}`]: { url: controlRuntime.url, http_headers: controlRuntime.headers, enabled: true, required: false, default_tools_approval_mode: 'approve', startup_timeout_sec: 20, tool_timeout_sec: 60 } } : {}),

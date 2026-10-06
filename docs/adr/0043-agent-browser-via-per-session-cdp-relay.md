@@ -25,3 +25,7 @@
 - 中継は CDP の Target・Browser ドメインの一部を自前で実装する。複数タブ・iframe（OOPIF）・ポップアップ・再接続・ページ遷移後の追従は実装時に確かめる。
 - 同じ `persist:pleiad-browser` を使う会話は、タブが分かれてもログイン状態を共有する。
 - 同梱する版は multi-backend.md の版の表と同じく記録する（ADR 0037）。
+
+## 追記（2026-10-06）: 接続先は Chrome の専用の窓
+
+[ADR 0148](0148-agent-browser-in-chrome.md) で、エージェントの接続先は内蔵ブラウザー（`webContents.debugger`）から PC の Chrome の会話ごとの専用の窓になる。agent-browser・会話ごとの鍵付きの loopback の中継・`agent-browser.json`・会話の束縛は保つが、中継は Target 層を偽装する形から「パススルー + 絞り込み」に作り直す。「引き継ぐ」は接続を切るのではなく、中継の一時停止の状態にして、エージェントに伝える。「止める」は今のとおり。サイトの利用の確認のイベントは [ADR 0042](0042-preview-loads-external-by-default.md) の追記のとおり。
