@@ -6,7 +6,8 @@
 //   人（画面）                          → { kind: 'human' }
 //   会話に束縛された AI                  → その会話が bot の会話なら { kind: 'bot', botId }、それ以外は { kind: 'agent', sessionId }
 //   会話に束縛されない CLI・外の MCP      → NEEDS_UI（人として書かせない。画面へ誘導）
-// post・react・stopThread は modeGate: false（読み取り・計画モードの bot も返事・リアクション・停止はできる）。ただし心拍・夜の整理の隠れた会話（sidecar の bot.kind が pulse・learner）からの書き込みは、
+// post・react・stopThread は modeGate: false（読み取り・計画モードの bot も、自分のスレッド・DM への返事・リアクション・停止はできる）。post・react は、読み取り・計画のモードの会話からは
+// その会話自身の居場所（bot の会話のスレッド・DM）の外へは断る（refuseReadOnlyElsewhere。ADR 0137）。心拍・夜の整理の隠れた会話（sidecar の bot.kind が pulse・learner）からの書き込みは、
 // 全部 HIDDEN_CONVERSATION で断る（authorOf と markRead・wake の入口。独り言が投稿に漏れない。ADR 0126）。
 // AI が作業場所（cwd）を決める・変えるのは riskOf で guarded（フォルダーを持たない bot の作業場所になるので、bots.update のフォルダーと同じ重さ）。
 // post は、投稿の主体が AI（bot を含む）で、@ の宛先の bot の承認モードが主体の会話より強い（範囲・自律のどちらかが上）ときは、投稿は残すが起こさず、
@@ -21,6 +22,7 @@ import { groupTargets, expandGroups } from '../channels/group-mentions.mjs';
 import { BUDGET_LIMITS, budgetOf, loosensBudget, normalizeBudget } from '../channels/budget.mjs';
 import { OpError, defineOp } from './registry.mjs';
 import { strongerMode } from '../bots/approval.mjs';
+import { modePosition, scopeRank } from '../modes.mjs';
 
 const D = (id, key) => `agent:ops.channels.${id}.${key}`;
 /** channels.update の後の予算（不正な値は今の予算のまま。検査は service が投げる） */
@@ -44,6 +46,24 @@ async function run(ctx, fn) {
 async function refuseHidden(ctx) {
   const sb = ctx.actor?.sessionId ? await ctx.botOfSession?.(ctx.actor.sessionId) : null;
   if (HIDDEN_BOT_KINDS.has(sb?.kind)) throw new OpError('HIDDEN_CONVERSATION', agentT(ctx.locale, 'ops.errors.HIDDEN_CONVERSATION'));
+}
+
+/**
+ * 読み取り・計画のモードの会話からの書き込み（post・react）は、その会話自身の居場所（bot の会話のスレッド・DM）にだけ許す（ADR 0137）。
+ * modeGate: false のままだと、モードを見ずに通ってしまう（Chats の読み取りの AI も、bot の読み取りのモードも、どのチャンネルにも書けた）。
+ * 居場所の外（別のスレッド・チャンネルの流れ・bot でない AI の会話）は READ_ONLY_MODE で断る。人・読み取りでないモードの会話は何もしない。
+ * where = { channelId, threadId? }（threadId は書く先のスレッドの根の id。DM は見ない）。post は書く先、react は付ける投稿のあるスレッド
+ */
+async function refuseReadOnlyElsewhere(ctx, where) {
+  if (ctx.principal?.by !== 'agent' || !ctx.actor?.sessionId) return;
+  if (scopeRank(modePosition(await ctx.modeOf?.(ctx.actor.sessionId)).scope) > scopeRank('readonly')) return;
+  const sb = await boundBot(ctx);
+  if (sb) {
+    if (sb.threadId && sb.channelId === where.channelId && (where.threadId ?? null) === sb.threadId) return;
+    const channel = await ctx.channels.get({ channelId: where.channelId }).catch(() => null);
+    if (channel?.kind === 'dm' && channel.botId === sb.botId) return;
+  }
+  throw new OpError('READ_ONLY_MODE', agentT(ctx.locale, 'ops.errors.READ_ONLY_CHANNEL', { id: ctx.op?.id ?? 'channels' }));
 }
 
 /** 操作の主体 → 投稿の発言者。隠れた会話（心拍・夜の整理）は断る */
@@ -205,7 +225,7 @@ export const channelOps = [
   }),
   defineOp({
     id: 'channels.post', summary: D('post', 'summary'), risk: 'write', modeGate: false,
-    riskReason: 'Writing a message in a channel is what a human and a bot are for, so it is allowed even from a read-only or plan-mode bot. It only adds a post; an explicit @ may wake another bot, which runs in that bot\'s own approval mode (ADR 0109)',
+    riskReason: 'Writing a message in a channel is what a human and a bot are for, so a read-only or plan-mode bot may reply in its own thread or DM (the handler refuses any other place with READ_ONLY_MODE; ADR 0137). It only adds a post; an explicit @ may wake another bot, which runs in that bot\'s own approval mode (ADR 0109)',
     input: z.object({
       channelId: channelId('post'),
       threadId: z.string().min(1).nullable().optional().describe(D('post', 'threadId')),
@@ -240,6 +260,7 @@ export const channelOps = [
       }
       const target = inThread && threadId === undefined ? sb.threadId : threadId;
       const origin = inThread && target === null ? { channelId: sb.channelId, threadId: sb.threadId } : undefined;
+      await refuseReadOnlyElsewhere(ctx, { channelId: args.channelId, threadId: target });
       // 起こす宛先に強い bot がいれば、投稿は残して起こさず、承認（channels.wake）を出す。人の投稿は確認しない
       const held = author.kind === 'human' ? [] : await run(ctx, () => strongTargets(ctx, args.channelId, args.text, author));
       // 要確認の印は、実行を担う bot（ルーティンの実行を含む）だけが付けられる
@@ -305,7 +326,7 @@ export const channelOps = [
   }),
   defineOp({
     id: 'channels.react', summary: D('react', 'summary'), risk: 'write', modeGate: false,
-    riskReason: 'A reaction is one emoji on a post, added or removed by its own author. It is allowed from a read-only or plan-mode bot like a reply',
+    riskReason: 'A reaction is one emoji on a post, added or removed by its own author. It is allowed from a read-only or plan-mode bot on posts of its own thread or DM, like a reply (ADR 0137)',
     input: z.object({
       channelId: channelId('react'), postId: postId('react'),
       emoji: z.string().min(1).max(32).describe(D('react', 'emoji')),
@@ -313,7 +334,12 @@ export const channelOps = [
     }),
     output: z.unknown(),
     surfaces: { ui: true, mcp: 'catalog', cli: { path: ['channels', 'react'], positional: ['channelId', 'postId', 'emoji'] } },
-    handler: async (ctx, { on = true, ...args }) => run(ctx, async () => ctx.channels.react({ ...args, on }, await authorOf(ctx))),
+    handler: async (ctx, { on = true, ...args }) => run(ctx, async () => {
+      const author = await authorOf(ctx);
+      const post = await ctx.channels.getPost({ channelId: args.channelId, postId: args.postId }).catch(() => null);
+      if (post) await refuseReadOnlyElsewhere(ctx, { channelId: args.channelId, threadId: post.threadId ?? post.id });   // スレッドの根は自分の id がスレッドの id
+      return ctx.channels.react({ ...args, on }, author);
+    }),
   }),
   defineOp({
     id: 'channels.markRead', summary: D('markRead', 'summary'), risk: 'write',
