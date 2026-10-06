@@ -447,6 +447,8 @@ const SUITES = [
   './unit/adopt-finished.mjs',
   // 付け直し（無停止の更新 2b-5）: 保持役の子に載せた台本（fake の held:。別プロセスの偽の CLI）を、サーバーの入れ替えをまたいで途中から引き継ぐ（ツールの実行中・承認待ち・終わった直後）
   './unit/adopt-held.mjs',
+  // 承認のカードの id（無停止の更新 2b-6）: ツールの id と会話の id から決まる値・同じプロセスの 2 回目と、ツールの id が無い承認は乱数
+  './unit/approval-id.mjs',
   // Claude のアカウント切り替え（会話ごとのトークン）。env の組み立てと、server の配線を fake で通す
   './unit/claude-accounts.mjs',
   './unit/server-claude-accounts.mjs',

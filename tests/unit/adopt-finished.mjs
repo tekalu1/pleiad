@@ -4,7 +4,8 @@
 //   2. 旧サーバー A（tests/lib/adopt-server.mjs）: handOffTurn で札を取ったターンは、中断してもバックエンドが返っても締めない（X1）
 //   3. 新しいサーバー B（AGENT_HOST_ADOPT_FROM）: 札と記録から付け直したターンが turnEnd・completedAt・使用量（presentKey）を 1 回だけ残し、
 //      会話の口が同じトークンで戻り、起動時の後片付け（restart の中断・送信待ちの保留）に消されない。
-//      札と記録が合わない（版が違う・記録が切れている）ターンと札の無いターンは、今どおり restart の中断になる
+//      札と記録が合わない（版が違う・記録が切れている）ターンと札の無いターンは、今どおり restart の中断になる。
+//      再生の hooks の漏れの行（hookRun の leak）は、ターンの途中で保存されていた分と重ならない（2b-6）
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -12,7 +13,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { startServer, ROOT } from '../lib/server.mjs';
 import { open, sleep } from '../lib/ws-client.mjs';
-import { readSessions, readUsage, writeUsage } from '../lib/data-store.mjs';
+import { readSessions, readUsage, writeUsage, writeSessions } from '../lib/data-store.mjs';
 import { replayRecord, ADOPT_FILE } from '../../core/adopt.mjs';
 
 export const name = 'adopt-finished';
@@ -120,6 +121,15 @@ export default async function (t) {
     const usage = readUsage(dataDir);
     const template = usage.records.find(r => r.sessionId === ids.Y);
     writeUsage(dataDir, { ...usage, records: [...usage.records, { ...template, id: cards.Y.presentKey }] });
+    // X の会話に、旧サーバーがターンの途中で保存した hooks の漏れの行が 1 つある（このターンの開始より後）。再生は同じ行を 2 回出す
+    {
+      const sessions = readSessions(dataDir);
+      const saved = sessions[ids.X].contextSession ?? {};
+      const leak = { name: 'Stop', event: 'Stop', at: new Date(cards.X.startedAtMs + 1000).toISOString() };
+      const old = { name: 'Stop', event: 'Stop', at: new Date(cards.X.startedAtMs - 60_000).toISOString() };
+      sessions[ids.X] = { ...sessions[ids.X], contextSession: { ...saved, hooks: { ...(saved.hooks ?? {}), owner: 'ply', stopped: [], leaks: [old, leak], unknownNative: [] } } };
+      writeSessions(dataDir, sessions);
+    }
 
     // 「終わっていたターン」の札と記録。X は ack（5）までを旧サーバーが処理していた
     const finished = (k, events, { acked = 0, truncated = false, label = cards[k] } = {}) => ({
@@ -137,6 +147,8 @@ export default async function (t) {
         { type: 'text.delta', text: 'replayed ' },
         { type: 'text.end', uuid: 'adopt-x-u1' },
         { type: 'present', sessionId: ids.X, kind: 'text', caption: 'replay-present', content: 'r' },
+        { type: 'hookRun', phase: 'started', name: 'Stop', event: 'Stop', leak: true },
+        { type: 'hookRun', phase: 'started', name: 'Stop', event: 'Stop', leak: true },
         { type: 'usage', inputTokens: 1000, outputTokens: 200, cachedTokens: 900, costUsd: 0 },
         { type: 'text.delta', text: 'live answer' },
         { type: 'text.end', uuid: 'adopt-x-u2' },
@@ -144,7 +156,7 @@ export default async function (t) {
         { type: 'present', sessionId: ids.X, kind: 'text', caption: 'live-present', content: 'l' },
         { type: 'contextWindow', usedTokens: 1000, windowTokens: 200_000 },
         { type: 'turnResult', outcome: 'ok' },
-      ], { acked: 5 }),
+      ], { acked: 7 }),
       finished('Y', simple('Y')),
       finished('V', simple('V'), { label: { ...cards.V, v: 99 } }),
       finished('T', simple('T'), { truncated: true }),
@@ -180,6 +192,18 @@ export default async function (t) {
     assert.equal((loaded.presents ?? []).find(p => p.caption === 'live-present')?.turnKey, card.presentKey);
     assert.ok(b.tail(200).includes(`ack ${children[0].lines.length}`), `最後の行まで ack する\n${b.tail(10)}`);
     t.ok('再生の道: ack までは画面へ出さず記録し直さない・続きは uuid で 1 回・最後の行まで ack', true);
+
+    // 再生の hooks の漏れの行: 保存済みの 1 つ（開始より後）を使い切ってから積む。再生が 2 回出した分のうち 1 回だけが新しい行（開始より前の古い行は数えない）
+    {
+      // 会話の記録への書き込みは少し遅れる（ターンの締めの saveContext）。増えるのを待ってから、重ならず 1 つだけ増えたことを見る
+      const leakCount = () => sessionMeta(ids.X).contextSession?.hooks?.leaks?.length ?? 0;
+      const leakEnd = Date.now() + 5000;
+      while (Date.now() < leakEnd && leakCount() < 3) await sleep(50);
+      await sleep(300);
+      const leaks = sessionMeta(ids.X).contextSession?.hooks?.leaks ?? [];
+      assert.equal(leaks.length, 3, `漏れの行は、古い行 + 保存済み 1 + 再生の 2 回のうち新しい 1 = 3（重ねると 4）: ${JSON.stringify(leaks)}`);
+    }
+    t.ok('再生の hooks の漏れの行は、ターンの途中で保存されていた分と重ならない', true);
 
     // 会話の口が同じトークンで戻る（URL の道とヘッダーが同じ。ポートが同じかは 2b-6）
     const rpc = (urlPath, token, method) => fetch(`http://127.0.0.1:${b.port}${urlPath}`, { method: 'POST',

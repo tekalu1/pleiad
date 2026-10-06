@@ -103,6 +103,13 @@ export async function startServer({ env = {}, dataDir, timeoutMs = 90_000, entry
     root: ROOT,
     dataDir,
     tail,
+    /** 強制終了（後片付けも保持役への手を離す口も通らない。無停止の更新の「サーバーが落ちた」を作る）。落ちるまで待つ */
+    async kill() {
+      if (child.exitCode !== null || child.signalCode !== null) return;
+      const done = new Promise((r) => child.once("exit", r));
+      child.kill("SIGKILL");
+      await done;
+    },
     async stop() {
       if (child.exitCode !== null || child.signalCode !== null) return;
       const done = new Promise((r) => child.once("exit", r));

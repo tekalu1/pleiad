@@ -920,4 +920,4 @@ export function reset() {
 }
 
 // 台本 "held:" の旧サーバーの手を離す口と、読みを止める口（tests/lib/adopt-server.mjs が呼ぶ。fake-held.mjs）
-export { handOffHeld, pauseHeld } from "./fake-held.mjs";
+export { handOffHeld, pauseHeld, muteHeld } from "./fake-held.mjs";

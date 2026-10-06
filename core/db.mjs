@@ -638,9 +638,9 @@ export function notificationTable(db) {
       prepared(db, 'UPDATE notifications SET resolved_at = ?, read_at = COALESCE(read_at, ?), data = ? WHERE id = ?').run(at, at, jsonOf({ ...JSON.parse(row.data), outcome }), row.id);
       return true;
     },
-    /** 決着していないあなた待ちを全部決着させる（起動時。承認はメモリにしか無く、再起動で消える） */
-    resolveAllWaiting(at, outcome) {
-      const rows = prepared(db, "SELECT id, data FROM notifications WHERE kind = 'wait' AND resolved_at IS NULL").all();
+    /** 決着していないあなた待ちを全部決着させる（起動時。承認はメモリにしか無く、再起動で消える）。except の dedupeKey の行は残す（付け直すターンの承認） */
+    resolveAllWaiting(at, outcome, except = null) {
+      const rows = prepared(db, "SELECT id, dedupe_key, data FROM notifications WHERE kind = 'wait' AND resolved_at IS NULL").all().filter(row => !except?.has(row.dedupe_key));
       for (const row of rows) prepared(db, 'UPDATE notifications SET resolved_at = ?, read_at = COALESCE(read_at, ?), data = ? WHERE id = ?').run(at, at, jsonOf({ ...JSON.parse(row.data), outcome }), row.id);
       return rows.length;
     },

@@ -362,4 +362,15 @@ export default async function (t) {
 
     t.ok('ターンの前の切り口（baseline: count と lastUuid）が正しく機能する', true);
   }
+
+  // 8. 出している承認のカードの id（waits。2b-6）: 往復する・文字列以外と空は落とす・上限を超えたら先頭の 64 件
+  {
+    const { card } = cardOf({ sessionId: 's-waits', backend: 'fake', waits: ['perm-aaa', '', 7, null, 'perm-bbb'] });
+    assert.deepEqual(card.waits, ['perm-aaa', 'perm-bbb']);
+    assert.deepEqual(restoreFields(card).waits, ['perm-aaa', 'perm-bbb']);
+    assert.deepEqual(cardOf({ sessionId: 's-waits', backend: 'fake' }).card.waits, [], '無ければ空');
+    assert.deepEqual(restoreFields({ v: CARD_VERSION, waits: 'x' }).waits, [], '配列でなければ空');
+    assert.equal(cardOf({ sessionId: 's-waits', backend: 'fake', waits: Array.from({ length: 100 }, (_, i) => `perm-${i}`) }).card.waits.length, 64);
+    t.ok('承認のカードの id（waits）が札に載って往復する', true);
+  }
 }
