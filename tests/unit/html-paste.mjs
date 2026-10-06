@@ -69,6 +69,9 @@ export default async function (t) {
   same('字の中の記号は最小限だけ \\ で逃がす（* ` [ ] \\ と、語の外の _）。語の中の _ は逃がさない', '<h4>x</h4><p>a*b `c` [d] \\e snake_case _private x_ ~~f~~</p>', '#### x\na\\*b \\`c\\` \\[d\\] \\\\e snake_case \\_private x\\_ \\~\\~f\\~\\~');
   same('行頭の記号（# - > 1.）は字として残すために逃がす', '<h4>x</h4><p># 見出しではない</p><p>- 項目ではない</p><p>&gt; 引用ではない</p><p>1. 番号ではない</p><p>2024. 年</p>',
     '#### x\n\\# 見出しではない\n\n\\- 項目ではない\n\n\\> 引用ではない\n\n1\\. 番号ではない\n\n2024\\. 年');
+  same('行だけが --- や === の字（横線・見出しの下線になる）は逃がす。行の中の --- ・見出しの下線にならない形はそのまま',
+    '<h4>x</h4><p>題</p><p>---</p><p>===</p><p>--</p><p>-</p><p>a --- b</p><p>-=</p><p>----------</p><div>前<br>---</div>',
+    '#### x\n題\n\n\\---\n\n\\===\n\n\\--\n\n\\-\n\na --- b\n\n-=\n\n\\----------\n前\n\\---');
   same('<p> と <p> の間は空行・div と br は改行・<br> が 2 つ続けば空行 1 つ', '<h4>x</h4><p>一</p><p>二</p><div>三<br>四<br><br>五</div><div>六</div>', '#### x\n一\n\n二\n三\n四\n\n五\n六');
   same('語の間の <span> </span>・改行・連続する空白・nbsp は空白 1 つ', '<h4>x</h4><p>a<span> </span>b\n   c&nbsp;&nbsp;d  <span>  </span> e</p>', '#### x\na b c d e');
 
@@ -110,6 +113,6 @@ export default async function (t) {
     '<h4>x</h4><p>見える<span style="display: none">隠し 1</span><span hidden>隠し 2</span><span aria-hidden="true">隠し 3</span><span style="visibility:hidden">隠し 4</span><script>alert("隠し 5")</script><style>.a{}</style><iframe src="https://example.com/"></iframe><button>隠し 6</button><svg><text>隠し 7</text></svg><input value="隠し 8"><textarea>隠し 9</textarea></p><div hidden><h2>隠し 10</h2></div>',
     '#### x\n見える');
   // 往復
-  const all = [chromeMd, '| 名前 | 値 |\n| --- | --- |\n| a | b |', '- 親\n  - 子1\n    3. 孫', '> 外\n> > 内\n>\n> 二', '\\# 見出しではない\n\n\\- 項目ではない\n\n1\\. 番号ではない', 'a\\*b \\`c\\` \\[d\\] \\\\e snake_case \\_private', '```\na\n\n  b\n```', '[\\[参照\\] 1](https://example.com/a_%28b%29)'];
+  const all = ['題\n\n\\---\n\n\\===\n\\-\n前\n\\---', chromeMd, '| 名前 | 値 |\n| --- | --- |\n| a | b |', '- 親\n  - 子1\n    3. 孫', '> 外\n> > 内\n>\n> 二', '\\# 見出しではない\n\n\\- 項目ではない\n\n1\\. 番号ではない', 'a\\*b \\`c\\` \\[d\\] \\\\e snake_case \\_private', '```\na\n\n  b\n```', '[\\[参照\\] 1](https://example.com/a_%28b%29)'];
   t.ok('往復: 変換結果の Markdown は、入力欄の文書にして戻しても 1 文字も変わらない', all.every(round), all.filter((x) => !round(x)).join(' / '));
 }

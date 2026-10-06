@@ -21,7 +21,8 @@ export function parseHtml(html) { return new DOMParser().parseFromString(String(
 const collapse = (s) => s.replace(/\u00a0/g, ' ').replace(/[ \t\r\n\f]+/g, ' ');
 const escapeText = (s) => s.replace(/[\\`*[\]]/g, '\\$&').replace(/~~/g, '\\~\\~')
   .replace(/(^|[^\p{L}\p{N}])_|_(?=[^\p{L}\p{N}]|$)/gu, (m) => m.replace('_', '\\_'));
-const escapeStart = (s) => s.replace(/^(#{1,6}|[-*+]|>)(?=[ \t])/, '\\$1').replace(/^(\d{1,9})([.)])(?=[ \t])/, '$1\\$2');
+// 行頭の記号（# - > 1.）と、行だけが - または = の並び（--- は横線、直前の行があれば = と - は見出しの下線になる）は、字として残すために逃がす
+const escapeStart = (s) => s.replace(/^(#{1,6}|[-*+]|>)(?=[ \t])/, '\\$1').replace(/^(\d{1,9})([.)])(?=[ \t])/, '$1\\$2').replace(/^([-=])(?=\1*$)/, '\\$1');
 const encodeUrl = (u) => u.replace(/[()\s]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase().padStart(2, '0')}`);
 
 const styleOf = (n, prop) => {
