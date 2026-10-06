@@ -1,0 +1,16 @@
+{
+  "version": "24.21.0",
+  "note": "配布物に同梱する公式の Node（実行場所の pleiad-node.exe になる。docs/zero-downtime-update/design.md §3.1）。版は Electron の Node と同じメジャー版（24）。SHA-256 は nodejs.org/dist/v<version>/SHASUMS256.txt と一致。ビルドは取得したファイルをこの値と照合する（scripts/pack-runtime.cjs）",
+  "win32": {
+    "x64": {
+      "url": "https://nodejs.org/dist/v24.21.0/win-x64/node.exe",
+      "size": 93580104,
+      "sha256": "ba4e6d110e8c1592a1ecd390f6b05f3da124b13871a5be62b341a07a853c6c32"
+    },
+    "arm64": {
+      "url": "https://nodejs.org/dist/v24.21.0/win-arm64/node.exe",
+      "size": 81881416,
+      "sha256": "dff59da18b6ffe1bf1ca99e1d2af4906080c481740619f5b5098c0fca28bd9b7"
+    }
+  }
+}

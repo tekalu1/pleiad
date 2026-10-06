@@ -234,6 +234,8 @@ async function boot() {
   });
   await window.loadURL(`${origin}/?token=${encodeURIComponent(ready.token)}`);
   window.show();
+  // 版ごとの実行場所（docs/zero-downtime-update/plan.md 1-3）を裏で組む。AGENT_HOST_HANDOVER=on のときだけで、サーバーは今のまま utilityProcess で起こす
+  if (process.env.AGENT_HOST_HANDOVER === 'on') void require('./runtime-boot.cjs').prepareRuntime({ resourcesPath: process.resourcesPath, execPath: process.execPath, log: line => console.warn('[runtime]', line) });
   remoteWindows.handleArgv(process.argv);
   const { autoUpdater } = require('electron-updater');
   // 記録は userData/logs/updater.log に残す。トークンと配信の署名付きの URL は伏せて書く（desktop/update-log.cjs）
