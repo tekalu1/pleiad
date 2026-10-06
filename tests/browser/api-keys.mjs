@@ -32,11 +32,12 @@ const fakeOr = await startFakeOpenRouter();
 const compatApi = await startFakeCompatApi({ keys: [A, B, L] });
 let server, browser;
 try {
-  // 古い置き場を仕込む（値の違う OpenRouter: 接続先と判定器は A、通話は B。Cerebras。社内 LiteLLM）
+  // 古い置き場を仕込む。偽の互換 API は 127.0.0.1 なので、接続先は URL のホストが openrouter.ai ではなく、プロバイダーは custom（ホストごとに別の件）。
+  // OpenRouter のキーは判定器（A）と通話（B）の 2 件で値が違う → 案内。接続先は custom の A（OpenRouter 互換）と L（社内 LiteLLM）、Cerebras の C
   const ep = (id, agent, name, preset) => ({ id, agent, name, preset, baseUrl: compatApi.url + (agent === 'codex' ? '/v1' : ''), authMode: 'bearer', auth: 'bearer',
     roles: agent === 'codex' ? { main: 'fake-large' } : { main: 'fake-large', opus: 'fake-large', sonnet: 'fake-large', haiku: 'fake-large' }, options: {}, models: ['fake-large'] });
   fs.writeFileSync(path.join(dataDir, 'compat-endpoints.json'), JSON.stringify({ version: 1, defaults: { claude: '', codex: '' }, endpoints: [
-    ep('ep-111111111111', 'codex', 'OpenRouter', 'openrouter'), ep('ep-333333333333', 'codex', '社内 LiteLLM', 'custom')] }));
+    ep('ep-111111111111', 'codex', 'OpenRouter 互換', 'custom'), ep('ep-333333333333', 'codex', '社内 LiteLLM', 'custom')] }));
   const compat = createSecretStore({ file: path.join(dataDir, 'compat-endpoint-secrets.json'), cipher: plainCipher });
   await compat.set('compat-endpoint:ep-111111111111', { key: A });
   await compat.set('compat-endpoint:ep-333333333333', { key: L });
@@ -65,7 +66,7 @@ try {
   const { ctx, page } = await session();
   await tab(page, 'apiKeysTab');
   const panel = '#apiKeysPanel';
-  check((await page.locator(`${panel} .ak-card`).count()) === 4, '移行: 値の違う OpenRouter は別の件で 4 件（OpenRouter ×2・Cerebras・社内 LiteLLM）');
+  check((await page.locator(`${panel} .ak-card`).count()) === 5, '移行: 5 件（OpenRouter ×2（判定器 A・通話 B）・Cerebras・custom ×2（OpenRouter 互換・社内 LiteLLM）。URL のホストが openrouter.ai でない接続先は OpenRouter のキーにならない）', await page.locator(`${panel} .ak-card strong`).allInnerTexts());
   check((await text(page, panel)).includes('OpenRouter のキーが 2 つあります'), '移行の案内が先頭に 1 回出る');
   check(!(await page.locator(panel).innerHTML()).includes(A) && !(await page.locator(panel).innerHTML()).includes(B), 'DOM にキーの値が無い');
   await shot(page, 'guide');
@@ -75,7 +76,7 @@ try {
   await page.locator(`${panel} input[type=radio][name=ak-keep]`).first().check();
   await page.locator(`${panel} .ak-guide button.btn-primary`).click();
   await page.waitForSelector(`${panel} .ak-result button:has-text("閉じる")`, { timeout: 20000 });
-  check((await page.locator(`${panel} .ak-card`).count()) === 3 && !(await text(page, panel)).includes('キーが 2 つあります'), 'まとめる: 3 件になり、案内は消える');
+  check((await page.locator(`${panel} .ak-card`).count()) === 4 && !(await text(page, panel)).includes('キーが 2 つあります'), 'まとめる: OpenRouter の 2 件が 1 件になって 4 件、案内は消える');
   check((await text(page, `${panel} .ak-result`)).includes('すべてつながりました'), 'まとめた後は使っている所を確かめ直して、結果を並べる');
   await shot(page, 'merged');
   await page.reload({ waitUntil: 'load' });
@@ -86,7 +87,7 @@ try {
   check(!(await text(page, panel)).includes('キーが 2 つあります'), '案内は二度と出ない（再読み込みしても）');
 
   // 差し替え: Esc で閉じて元のボタンへ戻る
-  const orCard = page.locator(`${panel} .ak-card`, { hasText: 'OpenRouter' }).first();
+  const orCard = page.locator(`${panel} .ak-card`, { hasText: 'OpenRouter 互換' }).first();
   await orCard.locator('button[aria-label^="差し替える"]').click();
   await page.waitForTimeout(400);
   check(await page.evaluate(() => document.activeElement?.getAttribute('aria-label')?.includes('新しいキー')), '差し替えの欄を開くと入力へフォーカス');
