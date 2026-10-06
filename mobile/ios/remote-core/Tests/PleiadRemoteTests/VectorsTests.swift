@@ -45,7 +45,7 @@ final class X25519Tests: XCTestCase {
 
 final class NoiseVectorsTests: XCTestCase {
     private func runVector(_ v: JSON) throws {
-        let pattern: Pattern
+        let pattern: PleiadRemote.Pattern
         switch v["protocol_name"]?.string {
         case NoiseConst.PROTOCOL_IK: pattern = .IK
         case NoiseConst.PROTOCOL_IKPSK2: pattern = .IKpsk2
