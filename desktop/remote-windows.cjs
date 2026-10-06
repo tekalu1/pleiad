@@ -211,17 +211,23 @@ function createRemoteWindows(deps) {
 
   function focus(win) { if (win.isMinimized()) win.restore(); win.show(); win.focus(); }
 
-  async function openHost(hostId) {
+  /** sessionId を渡すと、その会話を開く（承認の中継のカードの「子の会話を見る」。docs/remote.md §4.5）。開いている窓へは IPC、新しい窓は URL の ?open= */
+  async function openHost(hostId, { sessionId = null } = {}) {
     if (!HOST_ID.test(String(hostId))) throw Object.assign(new Error(t('remote.hosts.unknown')), { code: 'unknown-host' });
+    const wanted = typeof sessionId === 'string' && sessionId && sessionId.length <= 200 ? sessionId : null;
     const existing = windows.get(hostId);
-    if (existing && !existing.win.isDestroyed()) { focus(existing.win); return; }
+    if (existing && !existing.win.isDestroyed()) {
+      focus(existing.win);
+      if (wanted) existing.win.webContents.send('ply:remote-open-session', wanted);
+      return;
+    }
     if (opening.has(hostId)) return opening.get(hostId);
-    const run = createHostWindow(hostId).finally(() => opening.delete(hostId));
+    const run = createHostWindow(hostId, wanted).finally(() => opening.delete(hostId));
     opening.set(hostId, run);
     return run;
   }
 
-  async function createHostWindow(hostId) {
+  async function createHostWindow(hostId, sessionId = null) {
     const d = await device();
     const rec = (await d.list()).find(h => h.hostId === hostId);
     if (!rec) throw Object.assign(new Error(t('remote.hosts.unknown')), { code: 'unknown-host' });
@@ -272,7 +278,7 @@ function createRemoteWindows(deps) {
       pushHosts();
     });
     pushHosts();
-    try { await win.loadURL(proxy.url); } catch { /* 読み込みの失敗（中断など）でも窓は出す。案内はプロキシが返す */ }
+    try { await win.loadURL(sessionId ? `${proxy.url}&open=${encodeURIComponent(sessionId)}` : proxy.url); } catch { /* 読み込みの失敗（中断など）でも窓は出す。案内はプロキシが返す */ }
     if (!win.isDestroyed()) { setOverlay(win); focus(win); }
   }
 
@@ -324,6 +330,11 @@ function createRemoteWindows(deps) {
   function attach() {
     // ---- ローカルの窓から
     ipcMain.handle('ply:open-remote-hosts', event => { trust.check(event, ['local']); openHostsWindow(); });
+    // 承認の中継のカードの「子の会話を見る」: そのホストのリモートの窓で、ホストの子の会話を開く（見るための補助。docs/remote.md §4.5）
+    ipcMain.handle('ply:open-remote-session', async (event, hostId, sessionId) => {
+      trust.check(event, ['local']);
+      try { await openHost(hostId, { sessionId }); return { ok: true }; } catch (e) { return fail(e); }
+    });
 
     // ---- リモートの窓から（同じ PC のブリッジは無い。帯・通知・接続の状態だけ）
     ipcMain.on('ply:remote-title-bar', (event, colors) => {
@@ -355,7 +366,7 @@ function createRemoteWindows(deps) {
       try {
         const d = await device();
         const storage = await d.store.storageStatus().catch(() => ({ encrypted: false }));
-        return { ok: true, ...bundle(), platform, encrypted: Boolean(storage.encrypted), hosts: await listHosts() };
+        return { ok: true, ...bundle(), platform, deviceName: os.hostname(), encrypted: Boolean(storage.encrypted), hosts: await listHosts() };
       } catch (e) { return { ...fail(e), ...bundle(), platform }; }
     });
     ipcMain.handle('ply:hosts-list', async event => {

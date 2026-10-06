@@ -34,7 +34,9 @@ export class AgentLink extends EventEmitter {
     this.pending = new Map();
     this.seq = 0;
     this.started = false;
-    this.onChannel = ch => this.#open(ch);
+    this.reopenTimer = null;
+    this.reopenAttempt = 0;
+    this.onChannel = ch => { this.reopenAttempt = 0; this.#open(ch); };
     this.onStatus = s => {
       if (s.state === 'revoked') this.#drop('revoked');
       else if (s.state !== 'connected' && s.state !== 'connecting') this.#drop('offline');
@@ -54,9 +56,23 @@ export class AgentLink extends EventEmitter {
     else if (this.link.state === 'revoked') this.#setState('revoked');
   }
 
+  /** 口だけが閉じた（ホストが許可を切った・口を閉じた）。チャネルが生きていれば、間を置いて開き直す（1 秒から 15 秒まで倍々。取り消し・未対応は開き直さない） */
+  #reopenLater() {
+    if (!this.started || this.reopenTimer || this.state === 'revoked' || this.state === 'unsupported') return;
+    const delay = Math.min(15_000, 1000 * 2 ** this.reopenAttempt++);
+    this.reopenTimer = setTimeout(() => {
+      this.reopenTimer = null;
+      const ch = this.link.channel;
+      if (this.started && ch && !ch.closed && !this.stream) this.#open(ch);
+    }, delay);
+    this.reopenTimer.unref?.();
+  }
+
   stop() {
     if (!this.started) return;
     this.started = false;
+    clearTimeout(this.reopenTimer);
+    this.reopenTimer = null;
     this.link.off('channel', this.onChannel);
     this.link.off('status', this.onStatus);
     const s = this.stream;
@@ -104,6 +120,7 @@ export class AgentLink extends EventEmitter {
       this.stream = null;
       this.#failPending(new AgentError('OFFLINE', 'the host is offline'));
       this.#setState(code === RESET_CODE.FORBIDDEN ? 'unsupported' : 'offline', code === RESET_CODE.FORBIDDEN ? { allowed: false } : {});
+      this.#reopenLater();
     });
     s.on('close', (code, reason) => {
       if (!mine()) return;
@@ -111,6 +128,7 @@ export class AgentLink extends EventEmitter {
       this.stream = null;
       this.#failPending(new AgentError('OFFLINE', 'the host closed the agent port'));
       this.#setState(code === 1008 && reason === 'revoked' ? 'revoked' : 'offline', code === 1008 && reason === 'revoked' ? { allowed: false } : {});
+      this.#reopenLater();
     });
     s.on('message', (data, text, release) => {
       release();
@@ -124,6 +142,7 @@ export class AgentLink extends EventEmitter {
   #onMessage(msg) {
     switch (msg.t) {
       case 'ready':
+        this.reopenAttempt = 0;
         if (msg.v !== AGENT_PROTO) { this.log(`remote agent: unknown protocol ${msg.v}`); return this.#drop('unsupported'); }
         this.#setState('ready', { allowed: msg.allowed === true, hostName: typeof msg.hostName === 'string' ? msg.hostName : this.hostName });
         this.emit('ready', this.status);

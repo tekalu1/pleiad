@@ -211,6 +211,14 @@ export default async function (t) {
     const denied = toolResult(await denyTurn);
     t.ok('断ると委譲は失敗し、ホストに子は作られない', denied.isError === true && !(await hRows()).some(r => r.task === 'echo:ESC2'), denied.text.slice(0, 120));
 
+    // ---- ホストが許可を切って入れ直す: 切っている間は任せられず、入れ直すと端末の線が開き直してまた使える
+    await hostCmd('setRemoteDeviceAgent', { id: deviceId, enabled: false });
+    const cut = await until(async () => { const r = toolResult(await tool(sid, 'ply_delegate', { host: 'desk-test', kind: 'mechanical', backend: 'fake', task: 'echo:CUT' })); return r.isError ? r : null; }, 20_000, '許可を切ったホストへは任せられない');
+    t.ok('ホストが許可を切ると、端末の AI は任せられない（host の引数も出なくなる）', cut.isError === true);
+    await hostCmd('setRemoteDeviceAgent', { id: deviceId, enabled: true });
+    const back = await until(async () => { const r = toolResult(await tool(sid, 'ply_delegate', { host: 'desk-test', kind: 'mechanical', backend: 'fake', task: 'echo:BACK_AGAIN' })); return r.isError ? null : r; }, 40_000, '入れ直した後に任せられる');
+    t.ok('ホストが許可を入れ直すと、端末の線が開き直してまた任せられる', /^ply-task-/.test(back.json?.taskId ?? ''), back.text.slice(0, 160));
+
     // ---- 取り消し: 任された作業は止まり、端末の写しはもう追えない
     const slow2 = toolResult(await tool(sid, 'ply_delegate', { host: 'desk-test', kind: 'mechanical', backend: 'fake', task: 'slow' })).json.taskId;
     await until(async () => (await tRows()).find(r => r.taskId === slow2 && r.status === 'running'), 20_000, '取り消し前の実行中');

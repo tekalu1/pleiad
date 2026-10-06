@@ -154,8 +154,23 @@
         "revoke": "取り消す",
         "revokeConfirm": "「{{name}}」を取り消しますか。この端末はすぐに切れ、もう一度ペアリングするまで使えません。",
         "keep": "やめる",
+        "revokeTasks": "この端末の AI から任された作業 {{count}} 件も止めます。",
         "revokeConfirmButton": "取り消す",
         "revoked": "「{{name}}」を取り消しました。"
+      },
+      "agent": {
+      "title": "この端末の AI からの依頼を受ける",
+      "help": "委譲と同じ扱い: 承認モードは依頼元の会話に合わせ、承認は依頼元の会話にも出ます",
+      "confirm": "{{name}} の AI からの依頼を受けますか？",
+      "confirmWarn": "⚠ 依頼元の会話が確認なしのモードなら、この PC でも確認なしで動きます。",
+      "accept": "受ける",
+      "cancel": "やめる",
+      "note": "依頼元の会話が確認なしなら、この PC でも確認なしで動きます。",
+      "tasks": "任された作業 · 動いている {{count}}",
+      "waiting": "承認待ち {{count}}",
+      "open": "最近の会話を開く",
+      "stopAll": "すべて止める",
+      "noTasks": "任された会話はまだありません。"
       },
       "platform": {
         "desktop": "デスクトップ",
@@ -1439,6 +1454,16 @@
       "deny": "拒否",
       "allow": "許可",
       "done": "承認",
+      "relay": {
+      "host": "⇄ {{host}}",
+      "offline": "{{host}} がオフラインのため、答えを送れません。つながり直すと送れます。",
+      "answeredByHost": "{{host}} で{{what}} · {{time}}",
+      "answeredByDevice": "{{device}} で{{what}} · {{time}}",
+      "hostOffline": "ホストがオフライン",
+      "viewChild": "子の会話を見る",
+      "hostCanAnswer": "依頼元の会話（⇄ {{device}}）でも答えられます",
+      "viewChildFailed": "リモートの窓を開けませんでした: {{error}}"
+      },
       "allowedAlways": "常に許可した",
       "allowed": "許可した",
       "denied": "拒否した",
@@ -2021,6 +2046,11 @@
     "parentChat": "親の会話",
     "titleSuggestFailed": "タイトルを考えられなかった: {{error}}",
     "more": "この会話の操作",
+    "remoteOrigin": {
+    "badge": "⇄ {{device}} の AI から",
+    "request": "依頼元の会話「{{title}}」",
+    "mode": "承認モードは依頼元に合わせた"
+    },
     "rowMore": "「{{title}}」の操作",
     "groupMore": "状態「{{status}}」の操作",
     "familyMore": "グループ「{{title}}」の操作"
@@ -2140,6 +2170,7 @@
       "collapse": "たたむ",
       "groupCommands": "コマンド",
       "openChat": "会話として開く",
+      "hostResult": "結果（ホストから）",
       "request": "依頼",
       "noMessages": "まだ発言はありません。",
       "open": "開く",

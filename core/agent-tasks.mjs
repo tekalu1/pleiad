@@ -607,7 +607,7 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
         notification: r.notification, error: r.error ? String(r.error).slice(0, 500) : null,
         pendingMessages: (r.instructions ?? []).filter(x => x.state === 'queued').length, instructionRevision: r.instructionRevision ?? 0,
         worktree: r.worktree ?? null, retryOf: r.routing?.retry?.of ?? null,
-        ...(r.host ? { host: r.host } : {}),
+        ...(r.host ? { host: r.host, remoteSessionId: r.remoteSessionId ?? null, hostWaiting: waitingOf(r) } : {}),
       }));
     },
     get(taskId, offset = 0) { return records[taskId] ? view(records[taskId], offset) : null; },

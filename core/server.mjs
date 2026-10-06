@@ -3697,6 +3697,13 @@ function opsDeps(lng = currentLocale()) {
   };
 }
 
+/** ホストに任せたタスクの印に使う、つないでいるホストの名前とオンラインか（running に載せる。docs/remote.md §4.5） */
+function remoteHostsNow() {
+  const out = {};
+  for (const h of remoteAgentBridge?.hosts ?? []) if (h.agentUse) out[h.hostId] = { name: h.name, online: h.state === 'ready' && h.allowed === true };
+  return out;
+}
+
 async function runningWork() {
   const turns = [...runtime.turns.values()].map((t) => ({ kind: "turn", ...t.info }));
 
@@ -3767,13 +3774,15 @@ async function runningWork() {
       nextSendAt: Math.min(Infinity, ...dueRows.filter(r => r.kind === 'send' && !r.held).map(r => r.at)) },
     tasks,
     background,
+    // ホストに任せたタスクの印（⇄ ホスト名とオンラインか）。docs/remote.md §4.5
+    remoteHosts: remoteHostsNow(),
     // 中継の複製は数えない。1つの承認が会話の数だけ増えて見える
     // サブエージェントは走っている子だけを数える。終わった子はターンが終わるまで一覧に残るので、
     // そのまま数えると更新のゲート（web の count > 0）が閉じたままになる。status が null の子
     // （状態を返せないバックエンド・まだ分からない子）は数える。数えないとゲートを緩めてしまう
     // 設定の変更の承認（detached）は期限なしで残るので数えない（数えると、答えるまで終了も更新もできない）
     count: turns.length + permissions.filter((p) => !p.relay && !p.detached).length
-      + subagents.filter((a) => a.status === "running" || a.status == null).length + tasks.filter(r => ["queued", "running", "cancelling"].includes(r.status) && !runtime.turns.has(r.sessionId)).length,
+      + subagents.filter((a) => a.status === "running" || a.status == null).length + tasks.filter(r => !r.host && ["queued", "running", "cancelling"].includes(r.status) && !runtime.turns.has(r.sessionId)).length,
   };
 }
 
@@ -3953,6 +3962,8 @@ const askPermission = async ({ toolName, input, sessionId, toolUseID, title, sig
       ...(computerApp ? { computerApp } : {}),
       ...(settingChange ? { settingChange } : {}),
       ...(questions ? { questions } : {}),
+      // 端末の AI に任された子の承認。画面は「依頼元の会話（⇄ 端末）でも答えられます」を添える（docs/remote.md §4.5）
+      ...(remoteRoot ? { remoteOrigin: { deviceName: remoteRoot.deviceName || '' } } : {}),
     };
     // 祖先ごとに別の id の複製を作り、どれも同じ settle を指す。
     // web は「id ごとに1つの会話」の前提のまま動き、消せば勝手に片付く
@@ -3991,6 +4002,8 @@ const askPermission = async ({ toolName, input, sessionId, toolUseID, title, sig
         answer: ({ allow, message }) => {
           if (!runtime.waiting.has(cards[0].id)) return false;
           store.recordChange(sessionId, { by: 'human', via: 'remote-device', byDevice: remoteRoot.deviceId, field: 'op', to: 'permission.answer', reason: null }).catch(() => {});
+          // ホストの画面の子のカードを、端末で答えられた 1 行に畳む（permissionRelayEnd。remoteOrigin のカードだけが畳む）
+          emitGlobal({ type: 'permissionRelayEnd', id: cards[0].id, sessionId, by: 'device', allow, peer: remoteRoot.deviceName || '', at: new Date().toISOString() });
           settle({ allow, always: false, scope: 'once', message: message ?? null, ...(!allow && !message ? { messageKey: 'userDenied' } : {}) });
           return true;
         },
@@ -4256,7 +4269,7 @@ const remoteCards = {
     const remote = { hostId: c.hostId, hostName: c.hostName, relayId: c.relayId, taskId: c.taskId, online: c.online !== false };
     const payload = { type: 'permission', kind: 'tool', toolName: c.toolName, input: c.input, sessionId: c.sessionId, toolUseID: undefined,
       title: c.title ? t('permission.relayTitleWith', { child, title: c.title }) : t('permission.relayTitle', { child }), conversationTitle: '',
-      canAlways: false, remote, ...(c.browserSite ? { browserSite: c.browserSite } : {}), ...(c.computerApp ? { computerApp: c.computerApp } : {}) };
+      canAlways: false, remote };
     // settle は使わない（決着はホストの便りか、画面の人の答え。remoteDelegation が closeRelay で消す）
     runtime.waiting.set(id, { settle: () => {}, payload, askedAt: c.askedAt ?? new Date().toISOString(), relay: true, notified: false, detached: false, remote });
     sendTo({ kind: P.EVENT, event: { ...payload, id } });
@@ -4267,14 +4280,14 @@ const remoteCards = {
     const w = runtime.waiting.get(id);
     if (!w) return;
     runtime.waiting.delete(id);
-    emitGlobal({ type: 'permissionRelayEnd', id, sessionId: w.payload.sessionId, by: resolution?.by ?? null, allow: resolution?.allow ?? null, hostName: resolution?.hostName ?? w.remote.hostName, at: new Date().toISOString() });
+    emitGlobal({ type: 'permissionRelayEnd', id, sessionId: w.payload.sessionId, by: resolution?.by ?? null, allow: resolution?.allow ?? null, peer: resolution?.hostName ?? w.remote.hostName, hostName: resolution?.hostName ?? w.remote.hostName, at: new Date().toISOString() });
     permissionsChanged();
   },
   online(hostId, flag) {
     for (const [id, w] of runtime.waiting) {
       if (w.remote?.hostId !== hostId || (w.remote.online !== false) === flag) continue;
       w.remote.online = flag;
-      emitGlobal({ type: 'permissionRelayState', id, sessionId: w.payload.sessionId, online: flag, hostName: w.remote.hostName });
+      emitGlobal({ type: 'permissionRelayState', id, sessionId: w.payload.sessionId, online: flag, hostName: w.remote.hostName, peer: w.remote.hostName });
     }
     if (runtime.waiting.size) broadcastRunning();
   },
