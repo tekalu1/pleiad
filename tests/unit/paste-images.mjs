@@ -11,10 +11,20 @@ const tick = (ms = 5) => new Promise((r) => setTimeout(r, ms));
 
 export default async function (t) {
   const spoken = [];
+  // 読み上げの要素だけを身代わりにする。ほかの suite（同じ worker で動く DOM の身代わり）へ残さないよう、終わりに元へ戻す
+  const hadDocument = Object.hasOwn(globalThis, 'document'), previousDocument = globalThis.document;
   globalThis.document = {
     createElement: () => ({ setAttribute() {}, className: '', set textContent(v) { if (v) spoken.push(v); } }),
     body: { append() {} },
   };
+  try {
+    await body(t, spoken);
+  } finally {
+    if (hadDocument) globalThis.document = previousDocument; else delete globalThis.document;
+  }
+}
+
+async function body(t, spoken) {
 
   /** 身代わりを作る。attachImport は手で終わらせる（pending に溜まる） */
   function rig() {
