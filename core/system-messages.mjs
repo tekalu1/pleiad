@@ -88,7 +88,7 @@ export function splitLeadingNotes(messages) {
     if (!rows.length) { out.push(m); continue; }
     const keep = Boolean(rest.trim() || m.attachments?.length);
     if (!keep) rows[rows.length - 1].uuid = m.uuid;
-    // 分けた行は、元の発言（まとまり）の uuid を全部が持つ。分岐・巻き戻しの切り口をまとまりの先頭に合わせる（兄弟の行を切り口の前に残さない。ADR 9101）
+    // 分けた行は、元の発言（まとまり）の uuid を全部が持つ。分岐・巻き戻しの切り口をまとまりの先頭に合わせる（兄弟の行を切り口の前に残さない。ADR 0157）
     if (m.uuid) for (const row of rows) row.groupUuid = m.uuid;
     out.push(...rows);
     if (keep) out.push({ ...m, text: rest, ...(m.uuid ? { groupUuid: m.uuid } : {}) });

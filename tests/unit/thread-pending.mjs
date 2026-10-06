@@ -1,4 +1,4 @@
-// スレッドの送信待ち（channels.pending・channels.withdrawPending。ADR 9101 の F12）: bot が承認待ちの間に書いた投稿は、bot へ届く前（inbox の pending）。
+// スレッドの送信待ち（channels.pending・channels.withdrawPending。ADR 0157 の F12）: bot が承認待ちの間に書いた投稿は、bot へ届く前（inbox の pending）。
 // 一覧に出し、取り下げると inbox からも外れて、スレッドから消える。届け始めたものは取り下げない。fake バックエンドのサーバー越しに通す。
 import fs from 'node:fs/promises';
 import os from 'node:os';

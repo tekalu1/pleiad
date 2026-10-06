@@ -1,4 +1,4 @@
-// 投稿のメニュー（Chats の発言のメニューと同じ並び。web/message-actions.mjs の messageMenuPlan。ADR 9101）。
+// 投稿のメニュー（Chats の発言のメニューと同じ並び。web/message-actions.mjs の messageMenuPlan。ADR 0157）。
 // あなたの投稿 = コピー・（ここから分岐）・｜・編集して再送信・再送信・（エージェントに渡した原文を見る）・｜・リアクション。bot の返事 = 返答をコピー・（ここから分岐）・｜・リアクション。
 // ここから分岐はスレッドの中だけ（channels.branchThread）。編集して再送信・再送信はスレッドのあなたの返信だけ（channels.resend）。
 // bot の会話はスレッドそのものなので「会話を開く」は置かない（会話は脇・目次・原文から辿る）。

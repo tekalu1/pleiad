@@ -22,7 +22,7 @@ import { CHANNEL_TAG, CHANNEL_THREAD_TAG, MEMORY_CORE_TAG, TURN_CONTEXT_TAG, INN
 
 /** @typedef {{
  *   id: string, kind: 'channel'|'dm', name: string,       // dm は名前 = bot の名前（表示用。正本は bot）
- *   home?: true,                                         // 一時チャット（今の Chats の会話の置き場。1 つだけ。名前は home・画面では「一時チャット」。改名・アーカイブはできない。ADR 9101）
+ *   home?: true,                                         // 一時チャット（今の Chats の会話の置き場。1 つだけ。名前は home・画面では「一時チャット」。改名・アーカイブはできない。ADR 0157）
  *   purpose: string, cwd: string|null,                    // 既定の作業フォルダー
  *   members: string[],                                    // botId の並び（あなたは常に居る）
  *   memo: string,                                         // 「ここでの決まり」
@@ -39,8 +39,8 @@ import { CHANNEL_TAG, CHANNEL_THREAD_TAG, MEMORY_CORE_TAG, TURN_CONTEXT_TAG, INN
  *   state?: 'working'|'waiting'|'done'|'checking'|'failed'|'stopped'|'skipped',  // bot のターンの投稿・ルーティンの実行の根だけ
  *   turn?: { botId: string, sessionId: string },          // bot のターンの投稿（会話を開く → の行き先）
  *   presents?: object[],                                  // そのターンの提示（可視化・添付）の写し。描き方は web/render.mjs の renderPresent
- *   to?: string,                                         // 宛先の bot（人の投稿だけ。入力欄の宛先のチップ。本文の @ が無いときの宛先。ADR 9101）
- *   branchOf?: { channelId, threadId, postId },          // 分けたスレッドの根（channels.branchThread）: 元のスレッドと、分けた投稿。ADR 9101
+ *   to?: string,                                         // 宛先の bot（人の投稿だけ。入力欄の宛先のチップ。本文の @ が無いときの宛先。ADR 0157）
+ *   branchOf?: { channelId, threadId, postId },          // 分けたスレッドの根（channels.branchThread）: 元のスレッドと、分けた投稿。ADR 0157
  *   copyOf?: string,                                     // 分けたスレッドへ写した投稿の、元の投稿の id
  *   clientId?: string,                                   // 入力欄が送るたびに作る id（人の投稿だけ）。同じ id の投稿はもう一度作らない（送り直し・予定の送信）
  *   attachments?: { path: string, name: string, kind: 'image'|'file', mime: string, size: number|null, origin: 'device'|'host' }[],  // 人（と AI）が付けたファイル。本文の `[添付] パス` の行と対（Chats の添付と同じ印。ADR 0116）。bot へは本文の印のまま渡る
@@ -87,7 +87,7 @@ import { CHANNEL_TAG, CHANNEL_THREAD_TAG, MEMORY_CORE_TAG, TURN_CONTEXT_TAG, INN
 
 /** 会話の記録（DB の session_fields）の新しい欄 `bot`（core/store.mjs の setSessionData の許可リスト）
  * @typedef {{
- *   overrides?: { model?: true, effort?: true, mode?: true, cwd?: true },   // このスレッドだけで人が変えた欄（channels.threadSettings）。bot の既定を変えても上書きしない（ADR 9101）
+ *   overrides?: { model?: true, effort?: true, mode?: true, cwd?: true },   // このスレッドだけで人が変えた欄（channels.threadSettings）。bot の既定を変えても上書きしない（ADR 0157）
  *   botId: string, kind: 'thread'|'dm'|'routine'|'learner'|'pulse',   // pulse = 心拍の安いモデルの隠れた会話（ADR 0126。投稿は作らず、channels.* の書き込みは断る）
  *   channelId: string|null, threadId: string|null, routineId?: string, taint?: 'webhook',
  *   memRev: number,                                       // 末尾の差分をどこまで渡したか（memory/log.jsonl の rev）

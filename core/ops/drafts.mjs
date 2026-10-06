@@ -1,4 +1,4 @@
-// drafts.*: 入力欄の書きかけのサーバーの写し（ADR 9101 の F35。core/drafts.mjs）。スレッドの入力欄が端末の写しを追いかけて書く。
+// drafts.*: 入力欄の書きかけのサーバーの写し（ADR 0157 の F35。core/drafts.mjs）。スレッドの入力欄が端末の写しを追いかけて書く。
 // 画面の道具（AI・CLI には出さない）。handler は ctx.drafts（core/server.mjs の opsDeps）を呼ぶ。
 import { z } from 'zod';
 import { OpError, defineOp } from './registry.mjs';

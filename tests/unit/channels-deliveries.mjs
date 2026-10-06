@@ -1,4 +1,4 @@
-// エージェントに渡した原文（channels.deliveries。ADR 9101・docs/channels.md「操作」）: スレッドの各 bot の会話の履歴から、
+// エージェントに渡した原文（channels.deliveries。ADR 0157・docs/channels.md「操作」）: スレッドの各 bot の会話の履歴から、
 // その投稿を運んだ発言を、包みを分ける前の生の本文で返す。聞こえた投稿（heard="true"）はその印。人だけ。
 // 本物のチャンネルのサービス（一時ディレクトリ）と、偽の会話の履歴（rawMessages）で registry.invoke を通す。
 import fs from 'node:fs/promises';

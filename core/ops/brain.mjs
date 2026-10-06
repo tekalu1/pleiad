@@ -26,7 +26,7 @@ async function target(ctx, botId) {
   const id = botId ?? own;
   if (!id || (own && id !== own)) throw new OpError('BOT_NOT_FOUND', agentT(ctx.locale, 'ops.errors.BOT_NOT_FOUND', { id: String(botId ?? '') }));
   const bot = await ctx.bots.get({ botId: id });
-  // 組み込みの bot（bot なし）は頭の中（活動メモ・気がかり・予約）を持たない（ADR 9101）
+  // 組み込みの bot（bot なし）は頭の中（活動メモ・気がかり・予約）を持たない（ADR 0157）
   if (!bot || bot.plain) throw new OpError('BOT_NOT_FOUND', agentT(ctx.locale, 'ops.errors.BOT_NOT_FOUND', { id }));
   return { bot, sb };
 }

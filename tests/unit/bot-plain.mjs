@@ -1,4 +1,4 @@
-// 組み込みの bot（Bot.plain。チャンネルのスレッドの「bot なし」。ADR 9101・docs/channels.md「組み込みの bot」）。
+// 組み込みの bot（Bot.plain。チャンネルのスレッドの「bot なし」。ADR 0157・docs/channels.md「組み込みの bot」）。
 // 人格・記憶・心拍を持たず、名前で @ できない。宛先（to）・スレッドの設定（botId）の 'plain' で選び、無ければ作る。
 // dispatch の経路（スレッドの会話・暗黙の宛先・返事の投稿）は普通の bot と同じ。fake バックエンドのサーバー越しに通す。
 import fs from 'node:fs/promises';

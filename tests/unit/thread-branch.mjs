@@ -1,4 +1,4 @@
-// スレッドの「ここから分岐」（channels.branchThread。ADR 9101 の 4.3・4.4）と、bot の会話のまとまりの切り口。
+// スレッドの「ここから分岐」（channels.branchThread。ADR 0157 の 4.3・4.4）と、bot の会話のまとまりの切り口。
 //   - splitLeadingNotes は 1 つの発言から分けた行に元の uuid（groupUuid）を全部付ける
 //   - bot の会話を発言の手前で分けると、まとまりの先頭で切る（今の Chats から bot の会話を分岐したときも）
 //   - 根から P までを黙って写す（bot は起きない）・bot の会話は P より後の投稿を最初に含むまとまりの手前で分ける・子の sidecar・続きは子の会話で返す

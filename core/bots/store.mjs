@@ -99,7 +99,7 @@ export function normalizeBot(raw, now = Date.now()) {
     pulse: normalizePulse(raw.pulse),
     dmChannelId: str(raw.dmChannelId), dmSessionId: typeof raw.dmSessionId === 'string' && raw.dmSessionId ? raw.dmSessionId : null,
     createdAt: num(raw.createdAt, now), updatedAt: num(raw.updatedAt, num(raw.createdAt, now)),
-    // 組み込みの bot（チャンネルのスレッドの「bot なし」。人格・記憶・心拍を持たず、名前で呼べない。ADR 9101）
+    // 組み込みの bot（チャンネルのスレッドの「bot なし」。人格・記憶・心拍を持たず、名前で呼べない。ADR 0157）
     ...(raw.plain === true ? { plain: true } : {}),
   };
 }

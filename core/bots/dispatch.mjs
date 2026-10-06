@@ -433,7 +433,7 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
         const selfElsewhere = ownBot && extra.bySession ? await writtenElsewhere(extra.bySession, ownBot, channel.id, post.threadId ?? post.id) : false;
         const groupRequested = kind === 'human' && (post.mentions ?? []).some((m) => m === 'here' || m === 'everyone');
         const mentioned = (post.mentions ?? []).filter((m) => !['you', 'here', 'everyone'].includes(m) && (m !== ownBot || selfElsewhere));
-        // 入力欄の宛先のチップで選んだ bot（人の投稿だけ）。本文の @ が先に効き、@ が無いときの宛先になる（ADR 9101）
+        // 入力欄の宛先のチップで選んだ bot（人の投稿だけ）。本文の @ が先に効き、@ が無いときの宛先になる（ADR 0157）
         const chosen = kind === 'human' && typeof post.to === 'string' && post.to ? post.to : null;
         if (post.threadId === null) {
           if (!mentioned.length && !chosen) return;
@@ -596,7 +596,7 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
   }
 
   /**
-   * スレッドの bot の会話の設定を、このスレッドだけ変える（channels.threadSettings。ADR 9101）。会話がまだ無ければ作る。
+   * スレッドの bot の会話の設定を、このスレッドだけ変える（channels.threadSettings。ADR 0157）。会話がまだ無ければ作る。
    * 走っていれば次のターンから（予約 nextSettings）。変えた欄は sidecar の overrides に印を付け、bot の既定を変えても上書きしない
    */
   async function threadSettings({ channelId, threadId, botId, backend, model, effort, mode, cwd }) {
@@ -617,7 +617,7 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
   }
 
   /**
-   * スレッドを atPostId のところで分ける（channels.branchThread。ADR 9101 の 4.4）。
+   * スレッドを atPostId のところで分ける（channels.branchThread。ADR 0157 の 4.4）。
    * bot ごとに、atPostId より後の投稿を最初に含むまとまりの手前で会話を分ける（無ければ末尾まで）。atPostId より後に呼ばれた bot（残す配達が無い）は連れて行かない。
    * 子の会話の sidecar は親の写しで、スレッドは新しい根・postCursor は残した配達のうち最後の投稿の写し（P と後ろの投稿を 1 通にまとめて渡していたら P の前。次のターンで P を渡し直す）。
    * 投稿を黙って写し（channels.branchCopy）、新しいスレッドの状態（会話・利用者の状態）を作る。予算・呼んだ回数・申し送り・止めた印は写さない
@@ -669,7 +669,7 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
   }
 
   /**
-   * スレッドのあなたの投稿 H を送り直す（channels.resend。ADR 9101 の 4.5。ADR 0102 の順: 全部確かめてから変える）。
+   * スレッドのあなたの投稿 H を送り直す（channels.resend。ADR 0157 の 4.5。ADR 0102 の順: 全部確かめてから変える）。
    * bot ごとに、H 以後の投稿を最初に含むまとまりの手前まで会話を巻き戻す（巻き戻せない bot・H 以後に会話が始まった bot はスレッドから外す。
    * 次に呼ばれたら新しい会話で始まる）。走っていれば stopRunning で止める（無ければ SESSION_RUNNING で断る）。届ける前の出来事は捨てる。
    * sidecar を戻し（postCursor = H の直前・snapshotDue）、H とその後ろを取り下げ、新しい本文を人の投稿として書く（宛先は決まり直す）
@@ -727,7 +727,7 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
   }
 
   /**
-   * bot へ届く前の人の投稿（inbox の pending。ADR 9101 の F12）。スレッドの入力欄の上に送信待ちの行として出す。
+   * bot へ届く前の人の投稿（inbox の pending。ADR 0157 の F12）。スレッドの入力欄の上に送信待ちの行として出す。
    * 返り: { items: { postId, botIds }[] }（投稿の順）。届け始めた（delivering）・届いた（sent）ものは入れない
    */
   async function pendingPosts({ channelId, threadId }) {
@@ -1014,7 +1014,7 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
     // 止めたスレッドの、自分が始めたターンは始めない（canStart と turnExtras の間に止められたとき）
     if (pre && key && stoppedKeys.has(key)) { rec.stopped = true; host.abortSessions?.({ sessionId, reason: 'user' }).catch(() => {}); }
     let notes = [];
-    // 組み込みの bot（bot なし）は記憶もスレッドの申し送りも持たない（ADR 9101）
+    // 組み込みの bot（bot なし）は記憶もスレッドの申し送りも持たない（ADR 0157）
     if (!bot.plain) {
       try {
         const tail = await memory.turnContext({ bot, session: sb, sessionId, incomingText: pre?.incomingText ?? turn.stream?.user?.text ?? '', locale: turn.agentLocale });

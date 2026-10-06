@@ -1228,7 +1228,7 @@ export default async function (t) {
     t.ok('明示の @ が無ければ起こさない（人の名前・コード・引用・メールの形・流れへの @ なし投稿・bot が話していないスレッド）', botPost(eRead, owl).length === 0 && botPost(eRead, lynx).length === 0
       && !c.since(mE).some((e) => e.type === 'turnEnd') && (await read(dev.id)).posts.every((p) => !p.turn));
 
-    // ---- 宛先のチップ（to。ADR 9101）: 本文に @ が無いときの宛先。@ があれば @ が先に効く
+    // ---- 宛先のチップ（to。ADR 0157）: 本文に @ が無いときの宛先。@ があれば @ が先に効く
     {
       const rootT = await call('channels.post', { channelId: dev.id, text: 'echo:宛先のチップ', to: lynx.id });
       await until(async () => botPost(await read(dev.id, rootT.id), lynx, 'done').length === 1, { label: 'to で流れから Lynx' });
@@ -1248,7 +1248,7 @@ export default async function (t) {
       t.ok('to: 投稿に宛先が残る（承認の後の起こし直しが使う）', (await read(dev.id, rootT.id)).posts.some((p) => p.to === owl.id));
     }
 
-    // ---- このスレッドだけの設定（channels.threadSettings。ADR 9101）: bot の会話の設定を変え、bot の既定を変えても上書きしない
+    // ---- このスレッドだけの設定（channels.threadSettings。ADR 0157）: bot の会話の設定を変え、bot の既定を変えても上書きしない
     {
       const rootS = await call('channels.post', { channelId: dev.id, text: '@Owl echo:設定の前' });
       await until(async () => botPost(await read(dev.id, rootS.id), owl, 'done').length === 1, { label: '設定の前の Owl' });

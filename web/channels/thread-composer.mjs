@@ -1,4 +1,4 @@
-// スレッドの入力欄（docs/design-system.md「入力欄と上端」「スレッドの空間モデル」、ADR 9101）。Chats の会話の入力欄と同じ部品
+// スレッドの入力欄（docs/design-system.md「入力欄と上端」「スレッドの空間モデル」、ADR 0157）。Chats の会話の入力欄と同じ部品
 // （web/composer/composer.mjs。骨組みは Chats の欄の写しで、id の頭は th: thPrompt・thSend…）に、スレッドの持ち物を足す:
 //   - 宛先のチップ（行の先頭。このスレッドの bot → ほかのメンバー）。選ぶと channels.post の to で送る（本文の @ が先に効く）
 //   - 「@」の補完（mention-complete.mjs）・誰も @ していない文への提案・@here / @everyone の人数の確認（ADR 0121）
@@ -99,7 +99,7 @@ export function createThreadComposer({ host, bucket = () => null, candidates, su
     persistDrafts();
     saveServerDraft();
   }
-  // 下書きのサーバーの写し（drafts.*。ADR 9101 の F35）。端末の写しが先で、ここは 1.5 秒まとめて追いかける。端末に無いスレッドを開いたら読む
+  // 下書きのサーバーの写し（drafts.*。ADR 0157 の F35）。端末の写しが先で、ここは 1.5 秒まとめて追いかける。端末に無いスレッドを開いたら読む
   let serverTimer = 0;
   const saveServerDraft = () => {
     clearTimeout(serverTimer);
@@ -151,7 +151,7 @@ export function createThreadComposer({ host, bucket = () => null, candidates, su
     load: (cwd) => host.cmd('slashSkills', { cwd: cwd || undefined }),
     off: () => c.editor.inCode(),
   });
-  // 欄の `!`: 宛先の bot の、このスレッドの会話の作業場所で走らせる（結果は次の配達に付く。ADR 9101・0054）
+  // 欄の `!`: 宛先の bot の、このスレッドの会話の作業場所で走らせる（結果は次の配達に付く。ADR 0157・0054）
   c.useShell({
     availability: () => (destSession()?.sessionId ? { ok: true } : { ok: false, text: t('channels:thread.shellNoSession') }),
     where: () => ({ cwd: destSession()?.values?.cwd ?? '' }),
@@ -312,7 +312,7 @@ export function createThreadComposer({ host, bucket = () => null, candidates, su
       if (items.length) items.push({ sep: true });
       items.push({ head: d.inThread?.length ? t('channels:thread.dest.others') : t('channels:thread.dest.members') }, ...d.others.map(item));
     }
-    // 組み込みの bot（人格・記憶を持たない。モデル・承認モード・作業場所をチップで直接選ぶ。ADR 9101）
+    // 組み込みの bot（人格・記憶を持たない。モデル・承認モード・作業場所をチップで直接選ぶ。ADR 0157）
     if (d.plain) {
       if (items.length) items.push({ sep: true });
       items.push({ label: t('channels:plain.choose'), hint: t('channels:plain.hint'), checked: bot?.id === d.plain.id, onClick: () => { chosen = d.plain.id; paintDest(); onDestChange(); input.focus(); } });

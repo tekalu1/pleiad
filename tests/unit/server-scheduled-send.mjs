@@ -124,7 +124,7 @@ export default async function (t) {
     const running = await c.cmd('running');
     t.ok('終了の確認に送信予定の件数と次の時刻が載る', running.scheduled.send === 2 && Number.isFinite(running.scheduled.nextSendAt) && running.scheduled.held === 0, JSON.stringify(running.scheduled));
 
-    // ---- スレッドへの返信の予定（channels.schedulePost。kind 'post'。ADR 9101）と、clientId で二重に投稿しない
+    // ---- スレッドへの返信の予定（channels.schedulePost。kind 'post'。ADR 0157）と、clientId で二重に投稿しない
     const ch = await op('channels.create', { name: 'sched-post' });
     const root = await op('channels.post', { channelId: ch.id, text: '根' });
     const once = await op('channels.post', { channelId: ch.id, threadId: root.id, text: '一度だけ', clientId: 'client-0000001' });

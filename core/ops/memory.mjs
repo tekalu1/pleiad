@@ -140,7 +140,7 @@ export const memoryOps = [
     surfaces: { ui: true, mcp: 'catalog', cli: false },
     handler: async (ctx, args) => {
       const who = await whoIs(ctx);
-      // 組み込みの bot（bot なし）は記憶を持たない（ADR 9101）
+      // 組み込みの bot（bot なし）は記憶を持たない（ADR 0157）
       if (who.botId && (await ctx.bots?.get({ botId: who.botId }).catch(() => null))?.plain) throw new OpError('INVALID', agentT(ctx.locale, 'ops.errors.INVALID', { detail: 'the built-in agent has no memory' }));
       const layer = layerOf(ctx, who, args.layer);
       return guarded(ctx, () => ctx.memory.write({ layer, text: args.text, why: args.why, sources: args.sources, kind: args.kind, weight: args.weight, status: args.status },

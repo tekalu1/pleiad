@@ -108,7 +108,7 @@ export function createThread(host) {
     bots: () => S.bots,
     lang: () => document.documentElement.lang || undefined,
   });
-  // 入力欄は Chats の会話と同じ部品（web/channels/thread-composer.mjs。ADR 9101）。先頭に宛先のチップ
+  // 入力欄は Chats の会話と同じ部品（web/channels/thread-composer.mjs。ADR 0157）。先頭に宛先のチップ
   const composer = createThreadComposer({
     host,
     bucket: () => S.channelId,
@@ -317,7 +317,7 @@ export function createThread(host) {
     const live = liveBots();
     const lastSpoke = S.posts.findLast((p) => p.author?.kind === 'bot' && S.bots.has(p.author.botId))?.author.botId ?? null;
     const fallback = live.length === 1 ? live[0].id : lastSpoke ?? threadIds[0] ?? null;
-    // 「bot なし（モデルを直接選ぶ）」: 組み込みの bot（ADR 9101）。このスレッドにまだいなければ選べる（一時チャット・DM には出さない）
+    // 「bot なし（モデルを直接選ぶ）」: 組み込みの bot（ADR 0157）。このスレッドにまだいなければ選べる（一時チャット・DM には出さない）
     const plainHere = threadIds.some((id) => S.bots.get(id)?.plain);
     const plain = !plainHere && S.channel?.kind === 'channel' && !S.channel.home ? { ...plainOption(t), state: 'idle' } : null;
     return { inThread: threadIds.map(asBot), others, fallback, plain };
@@ -707,7 +707,7 @@ export function createThread(host) {
     node?.classList.add('menu-open');
     host.showMenu(x, y, items, title, { alignRight, onClose: () => { more?.setAttribute('aria-expanded', 'false'); node?.classList.remove('menu-open'); } });
   }
-  // ---------------------------------------------------------------- 送り直し（ADR 9101 の 4.5。Chats の送り方の帯と同じ部品。web/resend-band.mjs）
+  // ---------------------------------------------------------------- 送り直し（ADR 0157 の 4.5。Chats の送り方の帯と同じ部品。web/resend-band.mjs）
   let resendOpen = null;
   const resendId = () => `rs-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`;
   async function doResend(p, text, stopRunning) {
@@ -796,7 +796,7 @@ export function createThread(host) {
     if (input) { input.focus(); input.oninput(); } else band?.send.focus({ preventScroll: true });
     (band?.node ?? editor)?.scrollIntoView?.({ block: 'nearest' });
   }
-  // ---------------------------------------------------------------- 送信待ち（ADR 9101 の F12）
+  // ---------------------------------------------------------------- 送信待ち（ADR 0157 の F12）
   let pendingTimer = 0;
   async function refreshPending() {
     clearTimeout(pendingTimer);
@@ -839,7 +839,7 @@ export function createThread(host) {
     afterPosts();
   }
 
-  // ---------------------------------------------------------------- 分岐（ADR 9101 の 4.4）
+  // ---------------------------------------------------------------- 分岐（ADR 0157 の 4.4）
   async function branchFrom(p) {
     try {
       const made = await host.invoke('channels.branchThread', { channelId: S.channelId, threadId: S.threadId, atPostId: p.id });

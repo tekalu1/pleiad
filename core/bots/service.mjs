@@ -25,7 +25,7 @@
 //   --- S4（dispatch）・host が使う口
 //   ensureDm({ botId }): Promise<Bot>             … DM のチャンネルが無ければ作る
 //   ensurePlain(): Promise<Bot>                   … 組み込みの bot（plain: true。チャンネルのスレッドの「bot なし」）。無ければ Chats の既定の backend で作る。
-//                                                   人格・記憶・心拍・DM を持たず、名前で呼べない。update・setMode・remove は断る（ADR 9101）
+//                                                   人格・記憶・心拍・DM を持たず、名前で呼べない。update・setMode・remove は断る（ADR 0157）
 //   ensureDmSession({ botId }): Promise<{ sessionId: string, created: boolean }>   … DM の会話（最初のターンの前に呼ぶ）。backend を変えた bot は新しく作る
 //   createSession({ botId, channel, threadId, kind, routineId?, rootText? }): Promise<{ sessionId, backend, model, effort, cwd, mode }>
 //                                                 … スレッド・ルーティン・学習の会話。ThreadState.sessions への登録は呼び出し側

@@ -42,7 +42,7 @@ export function buildSendRow({ sessionId, messageId, prompt, attachments, cwd, m
 }
 
 /**
- * スレッドへの投稿の予定の行（kind: 'post'。ADR 9101）。本文は送信予定と同じく args.prompt に置く（画面の予定の行が同じ形で描く）。
+ * スレッドへの投稿の予定の行（kind: 'post'。ADR 0157）。本文は送信予定と同じく args.prompt に置く（画面の予定の行が同じ形で描く）。
  * id は投稿の clientId から決まるので、同じ指定を送り直しても 1 件。チャンネル・スレッドの存在と枠の数は呼び出し側が確かめる
  */
 export function buildPostRow({ channelId, threadId, clientId, text, attachments, to, at, by = 'human' }, now = Date.now()) {

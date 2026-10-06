@@ -60,7 +60,7 @@ export function createBotHost(deps) {
   const noteBrain = (post, channel) => { try { pulse?.onPosted(post, channel); } catch (e) { console.error('  pulse:', String(e?.message ?? e)); } };
   const noteEpisode = (post) => { try { episodes.onPosted(post); } catch (e) { console.error('  memory episode:', String(e?.message ?? e)); } };
   const channels = createChannelService({
-    // 組み込みの bot（plain。チャンネルのスレッドの「bot なし」）は名前で呼べない（@ の候補・一時チャットの宛先に入れない。ADR 9101）
+    // 組み込みの bot（plain。チャンネルのスレッドの「bot なし」）は名前で呼べない（@ の候補・一時チャットの宛先に入れない。ADR 0157）
     dir: path.join(dataDir, 'channels'), emit, listBots: async () => (await bots.list()).filter((b) => !b.plain),
     hooks: { posted: async (...args) => { noteEpisode(args[0]); noteBrain(args[0], args[1]); await bots.noteShown(...args); return dispatch.onPosted(...args); },
       edited: async (...args) => { noteEpisode(args[0]); return bots.noteShown(...args); },

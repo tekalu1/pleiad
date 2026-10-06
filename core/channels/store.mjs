@@ -50,7 +50,7 @@ export function foldOp(posts, op) {
     if (op.mentions !== undefined) post.mentions = op.mentions;
     return post;
   }
-  // 取り下げ（channels.resend。ADR 9101）: 送り直した投稿とその後ろ。流れ・スレッド・bot に渡す文脈・宛先の決め方のどれからも消える
+  // 取り下げ（channels.resend。ADR 0157）: 送り直した投稿とその後ろ。流れ・スレッド・bot に渡す文脈・宛先の決め方のどれからも消える
   if (op.op === 'withdraw') {
     if (post.withdrawnAt) return post;
     post.withdrawnAt = op.at;

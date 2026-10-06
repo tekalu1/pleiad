@@ -599,7 +599,7 @@ export function deletedNativeTable(db) {
 // 欠けても失った記録は無い（飛び先の会話・投稿の側が正本）ので後から足す表（LATE_TABLES_SQL）。形式番号は上げない
 const NOTIFICATION_COLUMNS = 'seq, id, dedupe_key, kind, at, session_id, channel_id, read_at, resolved_at, data';
 const notificationRow = (r) => ({ seq: Number(r.seq), id: r.id, dedupeKey: r.dedupe_key, kind: r.kind, at: r.at, sessionId: r.session_id, channelId: r.channel_id, readAt: r.read_at, resolvedAt: r.resolved_at, data: JSON.parse(r.data) });
-// ---- 入力欄の書きかけ（スレッドの欄。ADR 9101 の F35）。持ち主（スレッド）ごとに 1 行。ほかの端末でも続きを書ける ----
+// ---- 入力欄の書きかけ（スレッドの欄。ADR 0157 の F35）。持ち主（スレッド）ごとに 1 行。ほかの端末でも続きを書ける ----
 export function draftTable(db) {
   ensureLateTables(db);
   return {

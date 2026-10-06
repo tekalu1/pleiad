@@ -1,4 +1,4 @@
-// 入力欄の書きかけのサーバーの写し（core/drafts.mjs・drafts.*。ADR 9101 の F35）: 保存・読む・空で消す・古い写しで上書きしない・画面の道具だけ。
+// 入力欄の書きかけのサーバーの写し（core/drafts.mjs・drafts.*。ADR 0157 の F35）: 保存・読む・空で消す・古い写しで上書きしない・画面の道具だけ。
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';

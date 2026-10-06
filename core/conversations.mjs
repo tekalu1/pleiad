@@ -541,7 +541,7 @@ export function wrapBackend(native) {
     // ネイティブが item id を使い回すと、どの発言か決められない（最初に当たった発言で切ると、残すべき履歴まで消える）
     if (full.some((m, i) => i !== at && m.uuid === beforeMessageId)) throw new Error(t("conversations.rewindAmbiguous"));
     const target = full[at];
-    // bot の会話の、包みだけのまとまり（最後の行がチャンネルの出来事）も自分の発言として扱う（スレッドの送り直し。ADR 9101）
+    // bot の会話の、包みだけのまとまり（最後の行がチャンネルの出来事）も自分の発言として扱う（スレッドの送り直し。ADR 0157）
     if ((target.role !== "user" || target.kind) && target.kind !== "channelEvent") throw new Error(t("conversations.rewindNotUser"));
     // 1 つの発言から分けた行（中断の文・記憶・文脈・包み）は、まとまりの先頭で切る。ネイティブの切り口は元の発言の uuid
     const group = target.groupUuid ?? null;

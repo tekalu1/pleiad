@@ -444,7 +444,7 @@ const pushNotifier = createPushNotifier({
 // 通知の一覧（ベルのボタン。ADR 0149）。DB の notifications 表。書く側は core/notification-sources.mjs（ターンの完了・承認・チャンネルの出来事から行を作る）。
 // 件数が変わったら notificationsChanged を全画面へ（リモートの端末にも届く）
 const inbox = createNotifications({ dataDir: store.dataDir, emit: event => emitGlobal({ ...event, sessionId: null }) });
-// スレッドの入力欄の書きかけのサーバーの写し（drafts.*。ADR 9101 の F35）
+// スレッドの入力欄の書きかけのサーバーの写し（drafts.*。ADR 0157 の F35）
 const threadDrafts = createDrafts({ dataDir: store.dataDir });
 const inboxSources = createNotificationSources({
   inbox, store, viewing: sessionId => notifyPresence.viewing(sessionId), titleOf: sessionId => conversationTitleOf(sessionId),
@@ -4070,7 +4070,7 @@ function opsDeps(lng = currentLocale()) {
     worktrees: opsWorktrees,
     notify: opsNotify,
     notifications: inbox,
-    // 入力欄の書きかけのサーバーの写し（drafts.*。ADR 9101 の F35）
+    // 入力欄の書きかけのサーバーの写し（drafts.*。ADR 0157 の F35）
     drafts: threadDrafts,
     compat: opsCompat,
     computer: opsComputer,
@@ -5109,7 +5109,7 @@ botHost = createBotHost({
   createConversation, runTurn, noticeTarget, noticeBlocked, abortSessions, emitGlobal,
   getBackend, listBackends, resolveModel, resolveEffort, agentLocaleFor, agentT, currentLocale, lastReply,
   sessionBusy: id => sessionBusy(id),
-  // スレッドの bot の会話の設定を、このスレッドだけ変える（channels.threadSettings。ADR 9101）。走っていれば次のターンから（nextSettings）
+  // スレッドの bot の会話の設定を、このスレッドだけ変える（channels.threadSettings。ADR 0157）。走っていれば次のターンから（nextSettings）
   reserveTurnSettings: (args) => reserveTurnSettings(args),
   // スレッドを分ける（channels.branchThread）: bot の会話の発言（分けた行）を読み、切り口で会話を分ける
   readMessages: async (id) => { const backend = await resolveBackendForSession(id); return backend?.getMessages ? backend.getMessages(id) : []; },

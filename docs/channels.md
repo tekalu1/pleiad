@@ -24,7 +24,7 @@ bot（名前・人格・記憶・権限を持つ定義）と、人と bot が集
 - **添付つきの投稿**（[ADR 0116](adr/0116-channel-composer-attachments.md)）: 本文に Chats と同じ印の行 `[添付] パス`（画面の言語で `[Attachment]`）を持ち、任意の欄 `Post.attachments: { path, name, kind: 'image'\|'file', mime, size, origin: 'device'\|'host' }[]`（上限 50 件。中身は載せない）が描き方の材料になる。bot へは本文のまま包みの中に入って届く（Chats で添付を渡すのと同じ形）。`@` の解析は印の行を見ない。消した投稿は `attachments` を外す（置き場のファイルは残す）。足すだけの欄なので `DATA_SCHEMA` は上げない。
 - **bot の画像**（[ADR 0124](adr/0124-bot-images.md)）: `bots.json` に任意の `iconImage` を足す。画面で選んだ PNG・JPEG・WebP（10 MiB 以下）はブラウザーで 256×256 の WebP にしてから送る。`bots.create`・`bots.update` で渡したパスは PNG・JPEG・WebP のマジックバイトと 1 MiB の上限を確かめ、縮小せずに置き場の `uploads/bot-icons/` へ写す。画像を外すと従来の `icon`（絵文字）を表示する。古い bot は読み出し時に `iconImage: ''` となる。画像の更新・削除の後、古い写しを消す。
 - `editedAt`（画面の「（編集済み）」）は畳み込み（`foldOp`）が付ける。本文が実際に変わった `edit` だけ。同じ本文での `edit`（`mentions`・`state`・`presents` だけの更新）と、bot のターンの投稿（`turn`）の本文が埋まる更新は付けない。記録は操作の列なので、過去のデータも読み直すだけで直る。
-- **一時チャットの実体**（[ADR 9101](adr/9101-unify-chat-thread.md)（提案））: `home: true` の普通のチャンネル（`kind: 'channel'`）が 1 つだけ。保存の名前は `home`（人のチャンネルの名前とぶつからない）、画面の名前は「一時チャット」/ "Quick chats"。最初に人が bot へ話しかけたとき（`channels.post` の `channelId: 'home'`）にでき、宛先（`to`）の bot はメンバーに足す。改名・アーカイブは断る。心拍・予約の家（`pickHome`）には選ばず、心拍は DM と同じく材料にしない。今の Chats の会話（session）はここに記録を持たない（画面が会話の一覧から合成する）。
+- **一時チャットの実体**（[ADR 0157](adr/0157-unify-chat-thread.md)（提案））: `home: true` の普通のチャンネル（`kind: 'channel'`）が 1 つだけ。保存の名前は `home`（人のチャンネルの名前とぶつからない）、画面の名前は「一時チャット」/ "Quick chats"。最初に人が bot へ話しかけたとき（`channels.post` の `channelId: 'home'`）にでき、宛先（`to`）の bot はメンバーに足す。改名・アーカイブは断る。心拍・予約の家（`pickHome`）には選ばず、心拍は DM と同じく材料にしない。今の Chats の会話（session）はここに記録を持たない（画面が会話の一覧から合成する）。
 - id は `core/channels/types.mjs` の `newId(kind)`（`c_` `p_` `b_` `m_` `r_` `h_` `i_`）。
 - 会話の記録（DB の `session_fields`）の新しい欄: `bot`（`SessionBot`。botId・種類・チャンネル・スレッド・記憶の進み）。代わりの送信の見分けは `sessions.send` の `relayed` を使う（[ADR 0114](adr/0114-send-on-your-behalf.md)）。使用量の記録（DB の `usage_records`）に `sessionId`（足す前の分は無い。`usage.records({ sessionIds, since })` が引く）。一覧の行（`sessionRow`）に `bot: { botId, kind, channelId, threadId } | null`。
 - 会話の言語・題・モード・モデル・エフォートは普通のセッションと同じ（委譲の子の作り方 `prepare` と同じ手順）。
@@ -175,7 +175,7 @@ id は `<領域>.<動詞>`（ドットは 1 つ）。human-only は承認モー�
 本文に包みのタグが紛れても外へ出られない（`escapeBody`）。途中送信（`control.steer`）の道では末尾を付けず、`<pleiad-channel>` だけを渡す。
 `channel` は表示名（`#dev`・DM は bot の名前）、`channel-id` は `channels.post` などの操作へ渡すチャンネルの id（bot が自分で返事を書くのに要る。履歴の行は `channel` だけを持つ）、`thread` は根の投稿の id（DM は無い）、`from` は表示名（人は「あなた」、bot は「🦉 Owl (bot)」）、`at` は現地時刻の分まで。
 
-## 組み込みの bot（チャンネルのスレッドの「bot なし」。[ADR 9101](adr/9101-unify-chat-thread.md)（提案））
+## 組み込みの bot（チャンネルのスレッドの「bot なし」。[ADR 0157](adr/0157-unify-chat-thread.md)（提案））
 
 `bots.json` の `plain: true` の 1 件（保存の名前は Agent、アイコンは ✦、画面の名前は「エージェント」）。人が宛先（`channels.post` の `to`）かスレッドの設定（`channels.threadSettings` の `botId`）に `'plain'` を書くと、無ければ Chats の既定の backend で作る（BotService の `ensurePlain`）。dispatch の経路（inbox → ターン → 返事の投稿・暗黙の宛先・予算・止める）は普通の bot と同じで、違うのは次の所だけ。
 

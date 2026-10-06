@@ -1,4 +1,4 @@
-// 一時チャットの実体（ADR 9101・docs/channels.md「一時チャット」）: home: true のチャンネルは最初に bot へ話しかけたときにでき、
+// 一時チャットの実体（ADR 0157・docs/channels.md「一時チャット」）: home: true のチャンネルは最初に bot へ話しかけたときにでき、
 // op の channelId 'home' がそれを指す。改名・アーカイブはできず、名前 home は人のチャンネルとぶつからない。宛先の bot はメンバーになる。
 // 心拍・予約の「家」には選ばない。サーバーを立てずに、本物のチャンネルのサービス（一時ディレクトリ）で registry.invoke を通す。
 import fs from 'node:fs/promises';

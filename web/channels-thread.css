@@ -71,11 +71,11 @@
 .th-wand.busy{opacity:.5}
 /* 設定のチップのアイコン（Chats の入力欄と同じ線画） */
 .th-composer .crow > .chip > svg.i{width:14px;height:14px;flex:none}
-/* 送信待ち・`!` の行（ADR 9101）。`!` の行は Chats の .m.cmd をそのまま入れ、上に「〜の作業場所で実行」 */
+/* 送信待ち・`!` の行（ADR 0157）。`!` の行は Chats の .m.cmd をそのまま入れ、上に「〜の作業場所で実行」 */
 .th-shells{max-width:820px}
 .th-shell-where{margin:8px 0 2px 46px;font-size:var(--fs-xs);color:var(--ink-weak)}
 .th-band-ctx{white-space:nowrap}
-/* 分岐（ADR 9101 の 4.4）: 枝の頭の「分岐元」の一行。分けた投稿の直後の行は Chats の .branch-row */
+/* 分岐（ADR 0157 の 4.4）: 枝の頭の「分岐元」の一行。分けた投稿の直後の行は Chats の .branch-row */
 .th-branch-from{margin:6px 0 2px 46px;font-size:var(--fs-xs);color:var(--ink-weak)}
 .th-replies > .branch-row,.th-root > .branch-row{max-width:820px}
 /* 投稿の列の入れ物（会話の移動の部品が重なる。web/conversation-nav.css の .log-frame）。地図の筋の分だけ右を空ける */

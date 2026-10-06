@@ -116,7 +116,7 @@ async function ownPost(ctx, args) {
 }
 
 /**
- * 一時チャットの呼び名（channelId: 'home'）を実体の id へ解く（ADR 9101）。make: 無ければ作る（人の投稿。最初に bot へ話しかけたとき）。
+ * 一時チャットの呼び名（channelId: 'home'）を実体の id へ解く（ADR 0157）。make: 無ければ作る（人の投稿。最初に bot へ話しかけたとき）。
  * 無いまま読むと、空の一時チャットとして返す（empty）か、見つからないで断る
  */
 async function homeArgs(ctx, args, { make = false } = {}) {
@@ -125,7 +125,7 @@ async function homeArgs(ctx, args, { make = false } = {}) {
   return home ? { ...args, channelId: home.id } : null;
 }
 const notFound = (ctx, id) => new OpError('CHANNEL_NOT_FOUND', agentT(ctx.locale, 'ops.errors.CHANNEL_NOT_FOUND', { id }));
-/** 組み込みの bot の呼び名（to・botId の 'plain'。チャンネルのスレッドの「bot なし」）。人だけが選べ、無ければ作る（ADR 9101） */
+/** 組み込みの bot の呼び名（to・botId の 'plain'。チャンネルのスレッドの「bot なし」）。人だけが選べ、無ければ作る（ADR 0157） */
 const PLAIN = 'plain';
 async function plainId(ctx, id) {
   if (id !== PLAIN) return id;
@@ -202,7 +202,7 @@ export const channelOps = [
     handler: async (ctx, args) => run(ctx, async () => { await refuseHidden(ctx); return ctx.channels.setThreadTitle(args, await authorOf(ctx)); }),
   }),
   defineOp({
-    // スレッドの bot の会話の設定を、このスレッドだけ変える（入力欄の宛先の bot のチップ。ADR 9101）。承認モードは人だけ（bots.setMode と同じ）
+    // スレッドの bot の会話の設定を、このスレッドだけ変える（入力欄の宛先の bot のチップ。ADR 0157）。承認モードは人だけ（bots.setMode と同じ）
     id: 'channels.threadSettings', summary: D('threadSettings', 'summary'), risk: 'write',
     riskReason: 'Changes how one bot runs in one thread (model, effort, approval mode, working folder) from its next turn. The bot\'s defaults are not changed. The approval mode is human-only like bots.setMode, and the working folder must be one the bot may use',
     input: z.object({
@@ -235,7 +235,7 @@ export const channelOps = [
     }),
   }),
   defineOp({
-    // bot へ届く前の人の投稿（送信待ちの行。ADR 9101 の F12）。画面の道具
+    // bot へ届く前の人の投稿（送信待ちの行。ADR 0157 の F12）。画面の道具
     id: 'channels.pending', summary: D('pending', 'summary'), risk: 'read',
     input: z.object({ channelId: channelId('pending'), threadId: postId('pending', 'threadId') }),
     output: z.object({ items: z.array(z.object({ postId: z.string(), botIds: z.array(z.string()) })) }),
@@ -257,7 +257,7 @@ export const channelOps = [
     },
   }),
   defineOp({
-    // スレッドのあなたの投稿を送り直す（編集して再送信・再送信。ADR 9101 の 4.5・ADR 0102）。その投稿と後ろを取り下げ、
+    // スレッドのあなたの投稿を送り直す（編集して再送信・再送信。ADR 0157 の 4.5・ADR 0102）。その投稿と後ろを取り下げ、
     // スレッドの bot の会話をその手前まで巻き戻してから、新しい本文を書く。画面の道具（人だけ）
     id: 'channels.resend', summary: D('resend', 'summary'), risk: 'write',
     riskReason: 'Withdraws your post and the posts after it in a thread, rewinds the bot conversations of the thread to before it, and posts the new text. Files changed by the bots and posts in other threads are not undone',
@@ -285,7 +285,7 @@ export const channelOps = [
     },
   }),
   defineOp({
-    // スレッドをある投稿のところで分ける（「ここから分岐」。ADR 9101 の 4.4）。根からその投稿までを写した新しいスレッドができ、
+    // スレッドをある投稿のところで分ける（「ここから分岐」。ADR 0157 の 4.4）。根からその投稿までを写した新しいスレッドができ、
     // スレッドの bot の会話もその手前で分ける。写した投稿は bot を起こさない。画面の道具（人だけ）
     id: 'channels.branchThread', summary: D('branchThread', 'summary'), risk: 'write',
     riskReason: 'Copies the posts of a thread up to one post into a new thread and forks the bot conversations of the thread at that point. The copies wake no bot and the original thread is not changed',
@@ -299,7 +299,7 @@ export const channelOps = [
     }),
   }),
   defineOp({
-    // エージェントに渡した原文（ADR 9101。Chats の「エージェントに渡した原文を見る」と同じ）: スレッドの各 bot の会話の履歴から、
+    // エージェントに渡した原文（ADR 0157。Chats の「エージェントに渡した原文を見る」と同じ）: スレッドの各 bot の会話の履歴から、
     // その投稿を運んだ発言を、包み（<pleiad-channel post="P">・<pleiad-channel-thread>）を分ける前の生の本文で返す。人だけ（画面の道具）
     id: 'channels.deliveries', summary: D('deliveries', 'summary'), risk: 'read',
     input: z.object({ channelId: channelId('deliveries'), postId: postId('deliveries') }),
@@ -332,7 +332,7 @@ export const channelOps = [
     }),
   }),
   defineOp({
-    // スレッドへの返信を日時を指定して送る（入力欄の送信の日時。ADR 9101・0103）。AI には作らせない（sessions.scheduleSend と同じ）
+    // スレッドへの返信を日時を指定して送る（入力欄の送信の日時。ADR 0157・0103）。AI には作らせない（sessions.scheduleSend と同じ）
     id: 'channels.schedulePost', summary: D('schedulePost', 'summary'), risk: 'guarded',
     approvalWords: 'schedule',
     confirm: (ctx, args) => agentT(ctx.locale, 'ops.channels.schedulePost.confirm', { thread: args.threadId, at: String(args.at), text: String(args.text ?? '').slice(0, 120) }),

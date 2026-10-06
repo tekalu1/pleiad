@@ -232,7 +232,7 @@ export function createChannelService({ dir, emit = () => {}, hooks = {}, now = D
     return out;
   };
 
-  // ---- 一時チャット（ADR 9101）: 今の Chats の会話の置き場。会話（session）はここに記録を持たず、bot に話しかけた投稿だけがここの投稿になる。
+  // ---- 一時チャット（ADR 0157）: 今の Chats の会話の置き場。会話（session）はここに記録を持たず、bot に話しかけた投稿だけがここの投稿になる。
   // 実体は home: true の普通のチャンネル（kind は channel）。最初に bot へ話しかけたとき（投稿のとき）に作る。op の channelId 'home' はこれの id へ解く
   const findHome = async () => (await store.channels()).find((c) => c.home) ?? null;
   async function ensureHome() {
@@ -493,7 +493,7 @@ export function createChannelService({ dir, emit = () => {}, hooks = {}, now = D
     },
 
     /**
-     * スレッドを、ある投稿（atPostId）のところで分ける（channels.branchThread。ADR 9101）。根から atPostId までの投稿を新しい id で黙って写す
+     * スレッドを、ある投稿（atPostId）のところで分ける（channels.branchThread。ADR 0157）。根から atPostId までの投稿を新しい id で黙って写す
      * （hooks.posted を呼ばない＝写した @ で bot を起こさない）。author・at・text・添付・提示・mentions・ターンは残し、ターンの会話は sessions で付け替える。
      * 新しい根に branchOf、写した投稿に copyOf（元の投稿の id）。作業中だった投稿は stopped で写す。返り: { root, idMap }
      */
