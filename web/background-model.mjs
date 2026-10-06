@@ -23,9 +23,10 @@ export function taskTree(tasks, sessionId) {
   return (byParent.get(sessionId) ?? []).flatMap(root => visit(root, 0, ['queued', 'running', 'cancelling', 'waiting'].includes(root.status)));
 }
 
+// hostStale: ホストの孫の行で、しばらく読めていないもの（走っていたかもしれない・終わったかもしれない）。どちらにも数えない
 export function backgroundTotals(items) {
   return { live: items.filter(item => item.live).length,
-    ended: items.filter(item => item.group === 'agent' && !item.live).length };
+    ended: items.filter(item => item.group === 'agent' && !item.live && !item.hostStale).length };
 }
 
 /** 種類の並び（固定）。数が変わっても、入口の中の位置が入れ替わらない */

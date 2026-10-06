@@ -22,7 +22,7 @@ import { parentPortComputer, fakeComputerDriver } from './computer-use/driver.mj
 import { normalizeComputerUse } from './computer-use/policy.mjs';
 import { appendFileSync } from 'node:fs';
 import { KINDS, JUDGES, TIERS, SIGNALS, normalizeSettings, RETIRED_KEYS, RoutingSettingsError, pinnedRouting, manualRouting, route, candidateStates, settingsWarnings, checkCandidate, selectRetryAccount, parseCandidate, formatSkippedCandidates } from './delegation-routing.mjs';
-import { judgeDifficulty, normalizeKey, SECRET_PREFIX as ROUTING_SECRET_PREFIX, JUDGE_SERVICE, JUDGE_TIMEOUT_MS } from './delegation-judges.mjs';
+import { judgeDifficulty, normalizeKey, SERVICES as ROUTING_JUDGE, JUDGE_SERVICE, JUDGE_TIMEOUT_MS } from './delegation-judges.mjs';
 import { createUsageMonitor } from './delegation-usage.mjs';
 import { canDelegate, resolveDelegatedMode, modePosition, scopeRank, autonomyRank, SCOPES, AUTONOMIES } from './modes.mjs';
 import { createGitActivity } from './git-activity.mjs';
@@ -73,6 +73,7 @@ import { DEFAULT_OWNERS, pathKey, scanDirectory } from './context-settings.mjs';
 import { createContextBridge, CONTEXT_MCP_PATH, connectServer } from './context-bridge.mjs';
 import { createContextSession } from './context-session.mjs';
 import { createSecretStore, defaultCipher } from './secret-store.mjs';
+import { createApiKeys, ApiKeyError, USES as API_KEY_USES } from './api-keys.mjs';
 import { createCompatEndpoints, sweepClaudeFlagSettings, isModelId, redactSecret, CheckError, delegatedEndpoint } from './compat-endpoints.mjs';
 import { createClaudeAccounts, redactToken, normalizeName as normalizeAccountName, fetchTokenOrg, ANTHROPIC_API } from './claude-accounts.mjs';
 import { createPlyMcp } from './ply-mcp.mjs';
@@ -88,6 +89,8 @@ import { prepareHooksTurn, unifyPreview, importCandidate } from './hooks-unify.m
 import { deliverable, classifyNativeRun } from './hooks-plan.mjs';
 import { createRemoteHost } from './remote/connector.mjs';
 import { createAgentPort } from './remote/agent-port.mjs';
+import { viewAnswer, viewInstructions, pickDescendants } from './remote/agent-view.mjs';
+import { streamMessages } from '../web/stream-messages.mjs';
 import { parentPortRemoteAgent, createRemoteDelegation } from './remote-delegation.mjs';
 import { AgentError, remoteOwnerId, isRemoteOwner, parseRemoteOwner, RESULT_PAGE } from './remote/agent-protocol.mjs';
 import { createResidentPrefs, residentSignal, enabledRoutineCount } from './remote/resident.mjs';
@@ -339,11 +342,26 @@ process.on('exit', () => claudeLogin.cancelAll());
 // キーは Claude のアカウント・MCP と同じ暗号化の置き場。前の起動で消し損ねたフラグ設定のファイル（キーを含む）は起動時に片付ける
 const compatSecrets = createSecretStore({ file: path.join(store.dataDir, 'compat-endpoint-secrets.json'), cipher: secretCipher });
 compatSecrets.migrate().catch(() => {});
-const compatEndpoints = createCompatEndpoints({ dataDir: store.dataDir, secrets: compatSecrets });
-// 通話モード（core/voice/、docs/voice-call.md）。OpenRouter のキーはホストだけが持つ（voice-secrets.json。画面へは返さない）。
+// API キーの置き場（設定 › API キー。core/api-keys.mjs、ADR 0155）。接続先・通話・委譲の判定器のキーはここに 1 回だけ登録し、使う側は選ぶだけにする。
+// 古い置き場（compat-endpoint-secrets.json・voice-secrets.json）は移行で消さず、キーを変えるたびに同じ状態を書く（古い版が読む）
+const voiceSecrets = createSecretStore({ file: path.join(store.dataDir, 'voice-secrets.json'), cipher: secretCipher });
+voiceSecrets.migrate().catch(() => {});
+const apiKeySecrets = createSecretStore({ file: path.join(store.dataDir, 'api-key-secrets.json'), cipher: secretCipher });
+apiKeySecrets.migrate().catch(() => {});
+const apiKeys = createApiKeys({
+  dataDir: store.dataDir, secrets: apiKeySecrets, legacy: { compat: compatSecrets, voice: voiceSecrets }, endpoints: () => compatEndpoints,
+  log: (line, fields) => console.log(`  ${line}${fields ? ` ${JSON.stringify(fields)}` : ''}`),
+  onChange: change => apiKeysChanged(change),
+});
+const compatEndpoints = createCompatEndpoints({ dataDir: store.dataDir, secrets: compatSecrets, apiKeys });
+// 古い置き場から API キーへの移行（冪等。暗号化された古いキーを読めない起動では保留して、古い置き場を読み続ける）。
+// 起動は待たない（暗号器は main がつながるまで答えないことがある。使う側は apiKeys の中で移行の終わりを待つ）
+apiKeys.init().catch(() => {});
+// 通話モード（core/voice/、docs/voice-call.md）。使う OpenRouter のキーは設定 › API キーで選んだもの（ホストだけが持つ。画面へは返さない）。
 // 音声は /voice-ws（バイナリ）で受け渡し、読み上げは emitGlobal の text.delta から作る
 const voiceHost = createVoiceHost({
-  dataDir: store.dataDir, cipher: secretCipher, getPrefs: () => store.getPrefs(), uiLang: () => currentLocale(), t, isLocal: isLocalRequest,
+  dataDir: store.dataDir, apiKey: () => apiKeys.useKey('voice'), keyStorage: () => apiKeySecrets.status(),
+  getPrefs: () => store.getPrefs(), uiLang: () => currentLocale(), t, isLocal: isLocalRequest,
   // bot の会話が属するスレッド（スレッドの通話が読み上げる会話を決める）
   resolveThread: async (sessionId) => {
     const bot = (await store.get(sessionId).catch(() => null))?.bot;
@@ -365,6 +383,7 @@ const remoteAgentPort = createAgentPort({
   allowed: deviceId => remote.agentAllowed(deviceId),
   hostName: () => remote.hostInfo()?.hostName ?? os.hostname(),
   invoke: call => remoteAgentInvoke(call),
+  view: call => remoteAgentView(call),
   activeTasks: deviceId => remoteAgentStats(deviceId).active,
   // send が、終わったタスクを起こし直す（動いている数を増やす）か
   wakes: (device, requester, args) => {
@@ -376,6 +395,8 @@ const remoteAgentPort = createAgentPort({
   audit: entry => {
     if (entry.dropped) return console.log(`  端末 ${entry.deviceId} の承認の答えを捨てた: ${entry.dropped}`);
     if (entry.refused) return console.log(`  端末 ${entry.deviceId} の依頼を断った: ${entry.op} ${entry.refused}`);
+    // 経過の読み出し（人の操作。4 秒ごとに来る）は、端末ごと・タスクごとに最初の 1 回だけ変更の記録へ「読んだ」を残す（中身も件数も残さない）
+    if (entry.op === 'view') return remoteViewRecorded(entry);
     const to = entry.op === 'send' ? 'delegation.taskSend' : entry.op === 'cancel' ? 'delegation.taskCancel' : null;
     const sessionId = to ? agentTasks?.get(String(entry.args?.taskId ?? ''))?.sessionId : null;
     if (sessionId) store.recordChange(sessionId, { by: 'agent', via: 'remote', byDevice: entry.deviceId, field: 'op', to, reason: null }).catch(() => {});
@@ -884,6 +905,62 @@ async function remoteDelegate({ device, requester, args, signal, lng, owner, val
   return { task: remoteTaskEvent(stored ?? row) };
 }
 
+// 経過の読み出し（口の view。人の操作）。この端末が任せた子とその子孫だけを読む。残すのは最初の 1 回の「読んだ」だけ（会話の中身は残さない）
+const remoteViewSeen = new Set();   // `${deviceId}:${taskId}`。最初の 1 回だけ子の会話の変更の記録へ残す
+function remoteViewRecorded(entry) {
+  const key = `${entry.deviceId}:${entry.taskId}`;
+  if (remoteViewSeen.has(key)) return;
+  remoteViewSeen.add(key);
+  if (remoteViewSeen.size > 2000) remoteViewSeen.delete(remoteViewSeen.values().next().value);
+  const sessionId = agentTasks?.get(String(entry.taskId))?.sessionId;
+  if (sessionId) store.recordChange(sessionId, { by: 'human', via: 'remote-device', byDevice: entry.deviceId, field: 'op', to: 'delegation.view', reason: null }).catch(() => {});
+}
+/**
+ * 子孫の要約（端末の一覧へ字下げの行で出す分）と、読み出しの答えの task。題・状態・親だけで、結果・作業場所は載せない。
+ * 依頼文も載せないが、題の無い子は依頼文の最初の行（80 字）を題にする（一覧の行の名前。docs/remote.md §4.5）
+ */
+function remoteDescendantEvent(row, parentTaskId) {
+  const ev = remoteTaskEvent(row);
+  const first = String(row.task ?? '').split('\n').find(line => line.trim())?.trim().replace(/\s+/g, ' ') ?? '';
+  return { taskId: ev.taskId, parentTaskId, sessionId: ev.sessionId, title: ev.title ? String(ev.title).slice(0, 200) : (first.slice(0, 80) || null), status: ev.status, rawStatus: ev.rawStatus,
+    backend: ev.backend, model: ev.model, effort: ev.effort, createdAt: ev.createdAt, updatedAt: ev.updatedAt, error: ev.error };
+}
+/**
+ * 端末の画面の経過の読み出し（口の view。docs/remote.md §4.5「経過の読み出し」、ADR 0146）。見せる範囲は、この端末が任せた子（remoteRowsOf）とその子孫だけ。
+ * 読むだけ。末尾 40 発言・ツールの出力 1 つ 2 KB・考えた内容 4 KB・画像と添付は枠だけ・発言 1 件 48 KB・答え全体を口の上限の内側に絞って返す
+ * （core/remote/agent-view.mjs）。task は子孫の要約と同じ形（結果・作業場所は運ばない。端末は一覧の行の状態を替えるだけに使う）。
+ * 走っているターンは、手元の委譲の詳細と同じく履歴＋出来事の畳み込み（streamMessages）を 1 つの発言の並びにして返す。cursor は続きの位置（発言の位置と先頭の署名）
+ */
+async function remoteAgentView({ device, taskId, cursor }) {
+  const tree = remoteTreeOf(device.id);
+  const row = tree.find(r => r.taskId === taskId);
+  if (!row) throw new AgentError('NOT_FOUND', 'no such task');
+  let all = [];
+  const sessionId = row.sessionId;
+  if (sessionId) {
+    const turn = runtime.turns.get(sessionId);
+    if (turn) {
+      const live = turn.stream;
+      all = [...live.messages, ...(live.user ? [live.user] : []), ...streamMessages(live.events, { backend: row.backend, model: row.model, initialMessageId: live.initialMessageId }).messages];
+    } else {
+      all = (await history.loadTranscript(sessionId, await resolveBackendForSession(sessionId))).messages;
+    }
+  }
+  const subs = sessionId ? (agentTasks.descendants([sessionId]) ?? []) : [];
+  const taskBySession = new Map([...tree.filter(r => r.sessionId).map(r => [r.sessionId, r.taskId]), ...subs.map(r => [r.sessionId, r.taskId])]);
+  // 子孫の要約は、走っているもの・新しいものを優先して 40 件まで。省いた件数も返す
+  const picked = pickDescendants(subs, { isLive: r => REMOTE_ACTIVE.has(r.status) });
+  return viewAnswer(all, cursor, {
+    // 根の親は仮の親（remote:<deviceId>:…）なので null になる
+    task: remoteDescendantEvent(row, taskBySession.get(row.parentSessionId) ?? null),
+    sessionId: sessionId ?? null,
+    instructions: viewInstructions(agentTasks.instructions(row.taskId)?.instructions),
+    descendants: picked.rows.map(r => remoteDescendantEvent(r, taskBySession.get(r.parentSessionId) ?? null)),
+    descendantsOmitted: picked.omitted,
+    waiting: remoteWaiting(row),
+  });
+}
+
 /** 端末ごとの、任された作業の数（設定 › リモートの端末の行）。active は動いているもの（任された子の子孫も数える）、waiting はそのうち承認待ち */
 function remoteAgentStats(deviceId) {
   const rows = remoteTreeOf(deviceId).filter(r => REMOTE_ACTIVE.has(r.status));
@@ -921,15 +998,39 @@ const agentBridge = createAgentBridge({ call: async (owner, name, args, { locale
 hosts: () => remoteDelegation?.describe() ?? [] });
 
 // ---- 委譲先の自動振り分け ------------------------------------------------------
-// 設定は prefs.json の delegationRouting（未設定の項目は既定値）。判定器のキーは互換の接続先と同じ秘密の置き場
-// （compat-endpoint-secrets.json）に delegation-routing:<service> で置き、画面へは hasKey だけ返す
+// 設定は prefs.json の delegationRouting（未設定の項目は既定値）。判定器が使うキーは設定 › API キー（core/api-keys.mjs）で選んだもの
+// （uses の judge:jev・judge:cerebras）で、画面へは hasKey と選んだキーの id（keyRef）だけ返す。選ぶまでは何も送らない
 let routingSettingsCache = normalizeSettings((await store.getPrefs()).delegationRouting);
 // Pleiad の指示（core/ply-instructions.mjs）。prefs.json の plyInstructions。まだ無ければ前の版の addedContext（委譲の指示のスイッチ）から作る
 let plyInstructionsCache = await (async () => { const prefs = await store.getPrefs(); return normalizePlyInstructions(prefs.plyInstructions, prefs.addedContext); })();
 /** 設定 › コンテキストの「Pleiad の指示」。文は画面の言語。委譲と連動の項目は今の委譲先の自動選択の有無を反映する */
 const plyInstructionsState = () => plyInstructionsScreen(plyInstructionsCache, currentLocale(), { routing: routingSettingsCache.enabled });
 const ROUTING_SERVICES = Object.values(JUDGE_SERVICE);
-const routingKey = async service => (await compatSecrets.get(ROUTING_SECRET_PREFIX + service))?.key ?? null;
+const routingKey = service => apiKeys.useKey(`judge:${ROUTING_JUDGE[service]}`);
+/** API キー・割り当てが変わったとき（core/api-keys.mjs の onChange）。使う側の画面と通話のキーを更新する */
+function apiKeysChanged(change = {}) {
+  emitGlobal({ type: 'apiKeysChanged', sessionId: null });
+  const uses = change.uses ?? [];
+  if (uses.includes('voice')) { voiceHost.keysChanged().catch(() => {}); emitGlobal({ type: 'voiceChanged', sessionId: null }); }
+  if (uses.some(u => u.startsWith('judge:'))) emitGlobal({ type: 'delegationRoutingChanged', change: 'settings', sessionId: null });
+  if (change.endpoints) emitGlobal({ type: 'compatEndpointsChanged', sessionId: null });
+}
+/**
+ * 古い口（setVoiceKey・setDelegationRoutingKey）の中身。移行済みなら API キーに登録して使うキーに選ぶ（同じ値があれば再利用）、
+ * 移行を保留している間は古い置き場へ直に書く。key が null なら使わない
+ */
+async function legacyUseKey(use, service, key) {
+  if (!(await apiKeys.migrated())) {
+    const store = use === 'voice' ? voiceSecrets : compatSecrets;
+    const name = use === 'voice' ? 'openrouter' : `delegation-routing:${service}`;
+    if (key) await store.set(name, { key }); else await store.delete(name);
+    return;
+  }
+  if (!key) { await apiKeys.setUse(use, null); return; }
+  const provider = use === 'judge:cerebras' ? 'cerebras' : 'openrouter';
+  const id = await apiKeys.findByValue(provider, key) ?? (await apiKeys.add({ provider, label: '', key })).id;
+  await apiKeys.setUse(use, id);
+}
 const lastWarm = new Map();
 const routingUsage = createUsageMonitor({
   backends: listBackends,
@@ -991,10 +1092,11 @@ async function routeDelegation(args, lng, cwd) {
 async function delegationRoutingState() {
   const settings = routingSettingsCache;
   const usage = routingUsage.snapshot();
-  const stored = new Set(await compatSecrets.keys(ROUTING_SECRET_PREFIX).catch(() => []));
-  const storage = await compatSecrets.status().catch(() => null);
+  const has = await Promise.all(ROUTING_SERVICES.map(s => apiKeys.hasUse(`judge:${ROUTING_JUDGE[s]}`).catch(() => false)));
+  const refs = apiKeys.usesState();
+  const storage = await apiKeySecrets.status().catch(() => null);
   return { settings, defaults: normalizeSettings({}), kinds: KINDS, judges: JUDGES, tiers: TIERS, signals: SIGNALS,
-    keys: Object.fromEntries(ROUTING_SERVICES.map(s => [s, { hasKey: stored.has(ROUTING_SECRET_PREFIX + s) }])),
+    keys: Object.fromEntries(ROUTING_SERVICES.map((s, i) => [s, { hasKey: has[i], keyRef: has[i] ? refs[`judge:${ROUTING_JUDGE[s]}`] ?? null : null }])),
     storage: storage ? { encrypted: storage.encrypted, backend: storage.backend, ...(storage.reason ? { reason: storage.reason } : {}) } : null,
     warnings: settingsWarnings({ settings, usage }), candidates: candidateStates({ settings, usage, now: Date.now() }) };
 }
@@ -1912,7 +2014,7 @@ const LIST_NEUTRAL_EVENTS = new Set([
   // 入力欄の `!`（core/shell-runs.mjs）。一覧の行は変わらない
   "shell.start", "shell.output", "shell.done", "shell.skip", "shell.handed",
   // チャンネル・bot・記憶・ルーティンの出来事。会話の一覧の行は変わらない（bot の会話の行の変化は sessionsChanged が伝える）
-  "channelsChanged", "channelPost", "channelReaction", "channelThread", "channelRead", "botsChanged", "memoryChanged", "routinesChanged", "channelEvent", "voiceChanged",
+  "channelsChanged", "channelPost", "channelReaction", "channelThread", "channelRead", "botsChanged", "memoryChanged", "routinesChanged", "channelEvent", "voiceChanged", "apiKeysChanged",
   // 通知の一覧の件数（ベルのボタン。ADR 0149）。会話の一覧の行は変わらない
   "notificationsChanged",
 ]);
@@ -3918,6 +4020,8 @@ function opsDeps(lng = currentLocale()) {
     delegation: { list: (owner) => withWorktreeLive(agentTasks?.list(owner) ?? []), get: (taskId, offset) => agentTasks?.get(taskId, offset) ?? null,
       call: (owner, name, args, locale) => callAgentOp(owner, name, args, { locale }),
       instructions: (taskId) => agentTasks.instructions(taskId),
+      // ホストに任せた子の会話の経過（delegation.hostView。画面の人だけ。core/remote-delegation.mjs の view）
+      hostView: (args) => remoteDelegation.view(args),
       // 画面の「止める」。どの会話の委譲でも止められる（AI は ply_task_cancel で自分の子だけ）
       cancel: async (taskId) => {
         const task = agentTasks.get(taskId);
@@ -3935,7 +4039,9 @@ function opsDeps(lng = currentLocale()) {
     conversations: opsConversations,
     agents: opsAgents,
     prefs: () => store.getPrefs(),
-    voice: { status: () => voiceHost.status() },
+    voice: { status: async () => ({ ...(await voiceHost.status()), keyRef: (await apiKeys.hasUse('voice')) ? apiKeys.usesState().voice : null }) },
+    // 設定 › API キー（core/ops/api-keys.mjs）。キーの値は持たない。入れる・消す・割り当てるのは human-only の WS コマンド（ADR 0155）
+    apiKeys: { list: () => apiKeys.list(), check: id => apiKeys.check(id) },
     compactionSettings: () => compactionSettings,
     statuses: opsStatuses,
     worktrees: opsWorktrees,
@@ -4014,7 +4120,11 @@ function opsDeps(lng = currentLocale()) {
 /** ホストに任せたタスクの印に使う、つないでいるホストの名前とオンラインか（running に載せる。docs/remote.md §4.5） */
 function remoteHostsNow() {
   const out = {};
-  for (const h of remoteAgentBridge?.hosts ?? []) if (h.agentUse) out[h.hostId] = { name: h.name, online: h.state === 'ready' && h.allowed === true };
+  for (const h of remoteAgentBridge?.hosts ?? []) if (h.agentUse) {
+    const online = h.state === 'ready' && h.allowed === true;
+    // since: 線が使えなくなった時刻（画面の「オフライン · HH:MM までの分」）。分からなければ付けない
+    out[h.hostId] = { name: h.name, online, view: h.view === true, ...(!online && remoteDelegation?.offlineSince(h.hostId) ? { since: remoteDelegation.offlineSince(h.hostId) } : {}) };
+  }
   return out;
 }
 
@@ -4335,8 +4445,9 @@ const askPermission = async ({ toolName, input, sessionId, toolUseID, title, sig
       const asked = payload.kind === 'question' ? 'question' : 'tool';
       remoteRelay = remoteAgentPort.relayOpen({
         deviceId: remoteRoot.deviceId, taskId: remoteRoot.taskId, requesterSessionId: remoteRoot.sessionId,
-        payload: hostOnly ? { kind: 'hostOnly', toolName, title: title ?? null, childTitle, canAlways: false }
-          : { kind: asked, toolName, input, ...(asked === 'question' ? { questions } : {}), title: title ?? null, childTitle, canAlways: false },
+        // childSessionId: 承認を求めている子（根か子孫）のホストでの会話。端末が、その子の詳細にだけカードを出すために使う
+        payload: hostOnly ? { kind: 'hostOnly', toolName, title: title ?? null, childTitle, childSessionId: sessionId ?? null, canAlways: false }
+          : { kind: asked, toolName, input, ...(asked === 'question' ? { questions } : {}), title: title ?? null, childTitle, childSessionId: sessionId ?? null, canAlways: false },
         // 端末の人の答え（remote.md §4.5）。ホストが中継した今待っている承認の ID・受領証・1 回だけを照合した後にだけ来る。常に許可は受けない
         answer: hostOnly ? null : ({ allow, message, answers, annotations, response }) => {
           if (!runtime.waiting.has(cards[0].id)) return false;
@@ -4745,7 +4856,8 @@ const remoteCards = {
   open(c) {
     const id = crypto.randomUUID();
     const child = c.childTitle || t('permission.childConversation');
-    const remote = { hostId: c.hostId, hostName: c.hostName, relayId: c.relayId, taskId: c.taskId, online: c.online !== false, ...(c.hostOnly ? { hostOnly: true } : {}) };
+    const remote = { hostId: c.hostId, hostName: c.hostName, relayId: c.relayId, taskId: c.taskId, online: c.online !== false, ...(c.hostOnly ? { hostOnly: true } : {}),
+      ...(c.childSessionId ? { childSessionId: c.childSessionId } : {}) };
     const payload = { type: 'permission', kind: c.kind === 'question' ? 'question' : 'tool', toolName: c.toolName, input: c.input, sessionId: c.sessionId, toolUseID: undefined,
       title: c.title ? t('permission.relayTitleWith', { child, title: c.title }) : t('permission.relayTitle', { child }), conversationTitle: '',
       canAlways: false, remote, ...(c.kind === 'question' ? { questions: c.questions } : {}) };
@@ -7170,30 +7282,38 @@ wss.on("connection", (ws, req) => {
         // settings は prefs.json の delegationRouting に重ねる項目（null の項目は既定に戻す）。全体を検証してから保存する（settings.set の delegationRouting と同じ定義）
         case 'setDelegationRouting':
           return viaOp('settings.set', { key: 'delegationRouting', value: args?.settings }, { shape: () => delegationRoutingState() });
-        // 判定器のキー（service: openrouter = Jev / cerebras）。登録が外部送信の同意になる（キーが無ければ何も送らない）
+        // API キー（設定 › API キー。ADR 0155）。値は返さない。入れる・消す・割り当てるのは人だけ（HUMAN_ONLY の秘密の値）。
+        // 登録しただけでは送らない。送り始めるのは、通話・判定器に使うキーを選んだとき（setApiKeyUse）と、接続先で選んだとき（compatEndpointSave の keyRef）
+        case 'setApiKey': {
+          const a = msg.args ?? {};
+          return reply(true, a.id ? await apiKeys.replace(String(a.id), a.key) : await apiKeys.add({ provider: a.provider, label: a.label, key: a.key }));
+        }
+        case 'deleteApiKey':
+          return reply(true, await apiKeys.remove(String(msg.args?.id ?? '')));
+        // { use: voice | judge:jev | judge:cerebras, id: キーの id | null（使わない）}
+        case 'setApiKeyUse':
+          return reply(true, await apiKeys.setUse(String(msg.args?.use ?? ''), msg.args?.id ?? null));
+        // 移行の案内。{ keep: キーの id }（ほかの同じプロバイダーのキーをまとめる）か { keep: null }（このままにする）。どちらでも案内は二度と出ない
+        case 'resolveApiKeyGuide':
+          return reply(true, await apiKeys.resolveGuide(msg.args?.keep ?? null));
+        // 古い版の口（判定器・通話のキー）。設定 › API キーへ移した後の互換で、同じ値のキーがあればそれを、無ければ登録して、使うキーに選ぶ。後片付けで外す（ADR 0155）
         case 'setDelegationRoutingKey':
         case 'deleteDelegationRoutingKey': {
           const service = String(msg.args?.service ?? '');
           if (!ROUTING_SERVICES.includes(service)) throw new Error(t('routing.key.unknownService', { service }));
-          if (msg.command === 'deleteDelegationRoutingKey') await compatSecrets.delete(ROUTING_SECRET_PREFIX + service);
-          else {
-            const key = normalizeKey(msg.args?.key);
-            if (!key) throw new Error(t('routing.key.invalid'));
-            await compatSecrets.set(ROUTING_SECRET_PREFIX + service, { key });
-          }
-          emitGlobal({ type: 'delegationRoutingChanged', change: 'settings', sessionId: null });
+          const key = msg.command === 'setDelegationRoutingKey' ? normalizeKey(msg.args?.key) : null;
+          if (msg.command === 'setDelegationRoutingKey' && !key) throw new Error(t('routing.key.invalid'));
+          await legacyUseKey(`judge:${ROUTING_JUDGE[service]}`, service, key);
           return reply(true, await delegationRoutingState());
         }
-        // 通話の OpenRouter のキー（設定 › 通話）。登録が音声の外部送信の同意になる（キーが無ければ何も送らない）。キーは返さない
         case 'setVoiceKey':
         case 'deleteVoiceKey': {
-          if (msg.command === 'deleteVoiceKey') await voiceHost.deleteKey();
-          else {
-            try { await voiceHost.setKey(msg.args?.key); }
-            catch (e) { throw e?.code === 'INVALID_KEY' ? new Error(t('voice.key.invalid')) : e; }
-          }
+          const key = msg.command === 'setVoiceKey' ? normalizeKey(msg.args?.key) : null;
+          if (msg.command === 'setVoiceKey' && !key) throw new Error(t('voice.key.invalid'));
+          await legacyUseKey('voice', 'openrouter', key);
+          await voiceHost.keysChanged();
           emitGlobal({ type: 'voiceChanged', sessionId: null });
-          return reply(true, { ...(await voiceHost.status()), ...(msg.command === 'setVoiceKey' ? { check: await voiceHost.checkKey() } : {}) });
+          return reply(true, { ...(await voiceHost.status()), ...(key ? { check: await voiceHost.checkKey() } : {}) });
         }
         case "resolvePermission": {
           const { id, allow, always, scope, message, messageKey, answers, annotations, response, receipt } = msg.args ?? {};

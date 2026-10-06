@@ -163,13 +163,18 @@ function nextPulseAnswer() {
   return typeof answer === 'string' ? answer : JSON.stringify(answer);
 }
 
-/** 通話の確認用の返事（環境変数 AGENT_HOST_FAKE_VOICE_REPLY）。本文が when と一致したら steps: の台本にして返す。無ければ null */
+/**
+ * 通話の確認用の返事（環境変数 AGENT_HOST_FAKE_VOICE_REPLY）。本文が when と一致したら、steps: の台本（steps）か、そのままの台本（script。"bg 1 14" など）にして返す。
+ * ファイルは 1 つの { when, steps | script } か、その配列（発言ごとに別の台本）。無ければ null
+ */
 function voiceReplyFor(text) {
   const file = process.env.AGENT_HOST_FAKE_VOICE_REPLY;
   if (!file) return null;
   try {
-    const spec = JSON.parse(fs.readFileSync(file, "utf8"));
-    return String(text).trim() === spec.when ? `steps:${JSON.stringify({ steps: spec.steps })}` : null;
+    const parsed = JSON.parse(fs.readFileSync(file, "utf8"));
+    const spec = (Array.isArray(parsed) ? parsed : [parsed]).find((x) => String(text).trim() === x.when);
+    if (!spec) return null;
+    return typeof spec.script === "string" ? spec.script : `steps:${JSON.stringify({ steps: spec.steps })}`;
   } catch { return null; }
 }
 

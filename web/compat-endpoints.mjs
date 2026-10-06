@@ -3,7 +3,8 @@
 // 一覧（公式の行＋登録した互換の接続先。既定にする・接続を確認・編集・削除）と、追加・編集の 5 段の流れ
 //   ① 種類（プリセット）→ ② 接続情報 → ③ 接続を確認 → ④ モデル → ⑤ 保存
 // 確認が通るまで保存は出さない（サーバーの受領証。URL・キー・認証を変えたら確認し直し。モデルの欄は変えても確認し直さない）。
-// キーは伏せ字で受け、保存後は表示しない（サーバーも返さない。hasKey だけ）。
+// キーは伏せ字で受け、保存後は表示しない（サーバーも返さない。hasKey と keyRef だけ）。
+// キーの欄は設定 › API キー（承認済み 2026-10-07。docs/design-system.md「設定 › API キー」）に登録済みのキーから選ぶか、「別のキーを入れる」（入れたキーも API キーに並ぶ）。
 // 説明文は最小限（docs/design-system.md「説明文」）。見出し・ラベル・状態で伝わることは書かず、事故になることと失敗の理由だけを短く。
 // 面と部品は Claude のアカウントの設定（web/claude-accounts.mjs）と同じ .mp-*（web/manage-panel.css）。
 // 入力欄のモデルの面（web/composer-controls.mjs）は list() の値を読むだけ。
@@ -12,6 +13,8 @@ import { t, fmt } from './i18n.mjs';
 import { createCombo } from './combo.mjs';
 import { compatModelLabel, modelCandidates, comboModelOptions, ONE_M_TITLE, SHOW_LIMIT } from './compat-models.mjs';
 import { PRESETS, CLAUDE_ROLES, CONTEXT_CANDIDATES, AUTH_LABEL, presetOf, urlCandidates, urlHelp } from './compat-presets.mjs';
+import { keyFitsEndpoint, keyMatchesEndpoint } from './api-keys-model.mjs';
+import { apiKeyList, keySelect, notEncryptedNote, checkParts, manageLink } from './api-key-ui.mjs';
 
 const AGENT_NAME = { claude: 'Claude Code', codex: 'Codex' };
 const STEPS = [t('compat.step.kind'), t('compat.step.connection'), t('compat.step.check'), t('compat.step.model'), t('compat.step.save')];
@@ -19,7 +22,7 @@ const STEPS = [t('compat.step.kind'), t('compat.step.connection'), t('compat.ste
 // 月/日 時:分（ja は「9/23 14:05」）
 const when = (iso) => fmt.dateTime(iso, { month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit' });
 
-export function setupCompatEndpoints({ cmd, openSettings, onChange = () => {}, officialLine = () => '' }) {
+export function setupCompatEndpoints({ cmd, openSettings, openPage = () => {}, onChange = () => {}, officialLine = () => '' }) {
   const $ = id => document.getElementById(id);
   const panel = document.createElement('section');
   panel.className = 'mp-panel'; panel.id = 'compatEndpointsPanel'; panel.hidden = true;
@@ -27,12 +30,15 @@ export function setupCompatEndpoints({ cmd, openSettings, onChange = () => {}, o
   $('agentControls').append(panel);
 
   let endpoints = [], defaults = { claude: '', codex: '' }, storage = null, loaded = null;
+  /** 設定 › API キーの一覧（キーの欄で選ぶ）。取れなければ null（古い置き場の入力欄にする） */
+  let keyData = null;
   let agent = 'claude', view = 'list', confirming = '', checking = '', message = '';
   /** 追加・編集の途中の値。{ id, preset, name, baseUrl, authMode, key, show, phase, result, roles, context, sendThinking, saved, stale } */
   let form = null;
 
   async function load(force = false) {
-    if (!loaded || force) loaded = cmd('compatEndpoints').then(r => { endpoints = r.endpoints ?? []; defaults = r.defaults ?? defaults; storage = r.storage ?? null; return endpoints; })
+    if (!loaded || force) loaded = Promise.all([cmd('compatEndpoints'), apiKeyList(cmd).catch(() => null)])
+      .then(([r, keys]) => { endpoints = r.endpoints ?? []; defaults = r.defaults ?? defaults; storage = r.storage ?? null; keyData = keys; return endpoints; })
       .catch(e => { loaded = null; throw e; });
     return loaded;
   }
@@ -124,13 +130,13 @@ export function setupCompatEndpoints({ cmd, openSettings, onChange = () => {}, o
     const p = presetOf(agent, presetId);
     return { id: '', preset: p.id, name: p.id === 'custom' ? '' : p.name, baseUrl: p.urls[0]?.value ?? '',
       authMode: agent === 'claude' ? (['bearer', 'x-api-key'].includes(p.auth) ? p.auth : 'auto') : (p.auth === 'api-key' ? 'api-key' : 'bearer'),
-      key: '', show: false, hasKey: false, phase: 'edit', result: null, models: [], modelInfo: {}, roles: { ...p.roles }, context: p.context ?? '',
+      key: '', keyRef: '', keyMode: 'registered', show: false, hasKey: false, phase: 'edit', result: null, models: [], modelInfo: {}, roles: { ...p.roles }, context: p.context ?? '',
       sendThinking: Boolean(p.thinking), saved: false, stale: false, error: '' };
   }
   function startForm(e) {
     confirming = ''; message = ''; view = 'form';
     if (!e) form = blankForm('custom' === agent ? 'custom' : PRESETS[agent][0].id);
-    else form = { id: e.id, preset: e.preset, name: e.name, baseUrl: e.baseUrl, authMode: e.authMode, key: '', show: false, hasKey: e.hasKey,
+    else form = { id: e.id, preset: e.preset, name: e.name, baseUrl: e.baseUrl, authMode: e.authMode, key: '', keyRef: e.keyRef ?? '', keyMode: 'registered', show: false, hasKey: e.hasKey,
       phase: 'edit', result: null, models: e.models ?? [], modelInfo: e.modelInfo ?? {}, roles: { ...e.roles }, context: e.options?.contextTokens ? String(e.options.contextTokens) : '',
       sendThinking: Boolean(e.options?.sendThinking), saved: false, stale: false, error: '' };
     draw();
@@ -155,7 +161,10 @@ export function setupCompatEndpoints({ cmd, openSettings, onChange = () => {}, o
   const field = (label, control, help) => { const f = el('label', 'mp-field'); f.append(el('span', null, label), control); if (help) f.append(help); return f; };
   const step = (n, text) => { const s = el('div', 'mp-step'); s.append(`${n}. `, el('b', null, text)); return s; };
   function input() {
-    return { agent, name: form.name, preset: form.preset, baseUrl: form.baseUrl, authMode: form.authMode, key: form.key,
+    const registered = pickedKey();
+    return { agent, name: form.name, preset: form.preset, baseUrl: form.baseUrl, authMode: form.authMode,
+      // 登録済みのキーを選んだときは keyRef（値は画面を通らない）。別のキーを入れるときは key（保存すると API キーに登録される）
+      ...(registered ? { keyRef: registered.id } : { key: form.key }),
       roles: form.roles, options: { contextTokens: form.context, sendThinking: form.sendThinking }, probeModel: form.roles.main || '' };
   }
   function modelCombo(value, onCommit, label, placeholder = t('compat.form.modelId')) {
@@ -165,6 +174,89 @@ export function setupCompatEndpoints({ cmd, openSettings, onChange = () => {}, o
     c.root.querySelector('input').spellcheck = false;
     return c.root;
   }
+  /**
+   * キーの欄で選べる登録済みのキー（この接続先のプロバイダー・URL のホスト用のものだけ。別のホスト用のキーは出さない）。
+   * null は古い置き場の入力欄（移行を保留中・API キーを読めない・キーの要らないプリセット・合うキーが無い）
+   */
+  function candidateKeys(P) {
+    if (!keyData || keyData.migration?.state === 'deferred' || P.nokey) return null;
+    const endpoint = { preset: form.preset, baseUrl: form.baseUrl };
+    const list = keyData.keys.filter(k => keyFitsEndpoint(k, endpoint));
+    return list.length ? list : null;
+  }
+  /**
+   * 「登録済みのキー」を選んでいるときの、選んでいるキー（そうでなければ null）。選んでいるキーが候補から外れた（URL を替えた）ときは、
+   * ホストが確かに合うキーだけを既定にし、無ければ「別のキーを入れる」にする（まだどのホストにも結び付いていないキーは選べるが、既定にしない）
+   */
+  function pickedKey() {
+    const P = presetOf(agent, form.preset);
+    const list = candidateKeys(P);
+    if (!list || form.keyMode !== 'registered') return null;
+    if (!list.some(k => k.id === form.keyRef)) {
+      const endpoint = { preset: form.preset, baseUrl: form.baseUrl };
+      // 人が「登録済みのキー」を選び直したときは、まだ結び付いていないキーも選べる（結び付くのは保存のとき）
+      const sure = list.filter(k => keyMatchesEndpoint(k, endpoint));
+      const pool = sure.length ? sure : form.keyChosen ? list : [];
+      if (!pool.length) { form.keyMode = 'own'; form.keyRef = ''; return null; }
+      form.keyRef = (pool.find(k => k.uses.length) ?? pool[0]).id;
+    }
+    return list.find(k => k.id === form.keyRef);
+  }
+  function keyField(P, editing) {
+    const list = candidateKeys(P);
+    if (list) return registeredKeyField(list);
+    const key = el('input'); key.type = form.show ? 'text' : 'password'; key.value = form.key; key.autocomplete = 'new-password'; key.spellcheck = false;
+    key.placeholder = editing && form.hasKey ? t('compat.form.keyKeep') : P.nokey ? t('compat.auth.none') : t('compat.form.apiKey');
+    key.dataset.field = 'key';
+    key.oninput = () => { form.key = key.value; invalidate(); };
+    const kr = el('div', 'mp-keyrow'); kr.append(key, button(form.show ? t('compat.form.hide') : t('compat.form.show'), () => { form.show = !form.show; draw(); }));
+    // 登録先は API キー（移行を保留している間は古い置き場なので、その一文は出さない）
+    const home = keyData && keyData.migration?.state !== 'deferred' && !P.nokey
+      ? el('small', null, form.preset === 'openrouter' ? t('apiKeys.endpoint.registersOpenrouter') : t('apiKeys.endpoint.registersNamed'))
+      : P.nokey ? null : el('small', null, t('compat.form.keyStored'));
+    const f = field(t('compat.form.apiKey'), kr, home);
+    const warn = keyData ? notEncryptedNote(keyData.storage) : null;
+    if (warn) f.append(warn);
+    return f;
+  }
+  /** 登録済みのキーを選ぶ／別のキーを入れる（ラジオ）。登録済みがあれば既定で選ばれ、貼り直しは要らない */
+  function registeredKeyField(list) {
+    const picked = pickedKey();
+    const own = form.keyMode === 'own';
+    const fs = el('fieldset', 'mp-field ak-pick');
+    fs.append(el('legend', null, t('compat.form.apiKey')));
+    const radio = (mode, label, extra = []) => {
+      const row = el('div', 'ak-radio'); const id = `epkey-${mode}`;
+      const input = el('input'); input.type = 'radio'; input.name = 'epkey'; input.id = id; input.checked = form.keyMode === mode; input.dataset.fk = `rad:${mode}`;
+      input.onchange = () => { form.keyMode = mode; if (mode === 'registered') form.keyChosen = true; focusAfterDraw = `rad:${mode}`; invalidate(); draw(); };
+      const text = el('span', 't'); const lab = el('label'); lab.htmlFor = id; lab.append(label); text.append(lab, ...extra);
+      row.append(input, text); return row;
+    };
+    const uses = picked?.uses.length ?? 0;
+    const one = list.length === 1;
+    const registeredLabel = one ? el('b', null, t('apiKeys.endpoint.registeredOne', { name: picked?.label ?? '' })) : el('b', null, t('apiKeys.endpoint.registered'));
+    const extra = [];
+    if (!one) extra.push(' ', keySelect({ keys: list, current: picked?.id ?? null, label: t('apiKeys.endpoint.selectLabel'), focusKey: 'sel:ep', align: 'left',
+      choose: id => { if (id) form.keyRef = id; form.keyMode = 'registered'; form.keyChosen = true; focusAfterDraw = 'sel:ep'; invalidate(); draw(); } }).element);
+    if (picked) {
+      // 「登録済みのキー」と言った後ろなので、確認の結果（確かめていれば）・使っている数・管理へのリンクだけ続ける
+      const small = el('small'); const check = checkParts(picked);
+      if (check) small.append(check.failed ? el('span', 'mp-warn', check.text) : check.text, ' · ');
+      small.append(`${uses ? t('apiKeys.endpoint.usedBy', { count: uses }) : t('apiKeys.endpoint.unused')} · `, manageLink(openPage));
+      extra.push(small);
+    }
+    fs.append(radio('registered', registeredLabel, extra), radio('own', t('apiKeys.endpoint.own')));
+    if (own) {
+      const key = el('input'); key.type = form.show ? 'text' : 'password'; key.value = form.key; key.autocomplete = 'new-password'; key.spellcheck = false;
+      key.setAttribute('aria-label', t('apiKeys.endpoint.ownAria')); key.dataset.field = 'key'; key.dataset.fk = 'epin';
+      key.oninput = () => { form.key = key.value; invalidate(); };
+      const kr = el('div', 'mp-keyrow'); kr.append(key, button(form.show ? t('compat.form.hide') : t('compat.form.show'), () => { form.show = !form.show; focusAfterDraw = 'epin'; draw(); }));
+      fs.append(kr, el('small', 'ak-cap', t('apiKeys.endpoint.ownCaption')));
+      const warn = notEncryptedNote(keyData.storage); if (warn) fs.append(warn);
+    }
+    return fs;
+  }
+  let focusAfterDraw = null;
   function drawForm() {
     const claude = agent === 'claude'; const P = presetOf(agent, form.preset); const editing = Boolean(form.id);
     const out = [];
@@ -221,12 +313,7 @@ export function setupCompatEndpoints({ cmd, openSettings, onChange = () => {}, o
       seg.append(b);
     }
     authField.append(seg);
-    const key = el('input'); key.type = form.show ? 'text' : 'password'; key.value = form.key; key.autocomplete = 'new-password'; key.spellcheck = false;
-    key.placeholder = editing && form.hasKey ? t('compat.form.keyKeep') : P.nokey ? t('compat.auth.none') : t('compat.form.apiKey');
-    key.dataset.field = 'key';
-    key.oninput = () => { form.key = key.value; invalidate(); };
-    const kr = el('div', 'mp-keyrow'); kr.append(key, button(form.show ? t('compat.form.hide') : t('compat.form.show'), () => { form.show = !form.show; draw(); }));
-    out.push(field(t('compat.form.apiKey'), kr, P.nokey ? null : el('small', null, t('compat.form.keyStored'))));
+    out.push(keyField(P, editing));
     // 認証の送り方は既定（プリセットの値。Claude のカスタムは自動）のまま使うことが多いので、畳んでおく
     const authDefault = blankForm(form.preset).authMode;
     const ad = el('details'); ad.open = form.authMode !== authDefault;
@@ -287,6 +374,8 @@ export function setupCompatEndpoints({ cmd, openSettings, onChange = () => {}, o
     document.activeElement?.blur?.();
     form.error = '';
     if (!form.baseUrl.trim()) { form.error = t('compat.form.urlRequired'); draw(); return; }
+    // 「別のキーを入れる」を選んだのに空のまま確認しない（保存済みのキーのまま確かめて、入れたつもりになるのを避ける）
+    if (form.keyMode === 'own' && candidateKeys(presetOf(agent, form.preset)) && !form.key.trim()) { form.error = t('apiKeys.endpoint.keyRequired'); draw(); return; }
     form.phase = 'checking'; form.result = null; form.stale = false; draw();
     const mine = form;
     try {
@@ -311,7 +400,11 @@ export function setupCompatEndpoints({ cmd, openSettings, onChange = () => {}, o
   }
   function backToList() { view = 'list'; form = null; message = ''; draw(); }
 
-  function draw() { if (view === 'form' && form) drawForm(); else drawList(); }
+  function draw() {
+    if (view === 'form' && form) drawForm(); else drawList();
+    // 選び方を変えた直後は、押した部品へフォーカスを戻す（描き直しで外れるので）
+    if (focusAfterDraw) { panel.querySelector(`[data-fk="${CSS.escape(focusAfterDraw)}"]`)?.focus({ preventScroll: true }); focusAfterDraw = null; }
+  }
   function close() { panel.hidden = true; view = 'list'; form = null; onOpen(''); }
   let onOpen = () => {};
 
@@ -322,6 +415,11 @@ export function setupCompatEndpoints({ cmd, openSettings, onChange = () => {}, o
     defaults: () => ({ ...defaults }),
     get: (id) => endpoints.find(e => e.id === id) ?? null,
     invalidate() { loaded = null; if (!panel.hidden && view === 'list') load(true).then(draw).catch(() => {}); },
+    /** API キーの登録・差し替え・削除が届いたとき。キーの欄の選べるキーを取り直す（入力の途中の値は変えない） */
+    keysChanged() {
+      if (panel.hidden || view !== 'form' || !form) return;
+      apiKeyList(cmd).then(keys => { keyData = keys; if (view === 'form' && form && !panel.contains(document.activeElement)) draw(); }).catch(() => {});
+    },
     /** 設定の「接続先」ボタン。同じエージェントでもう一度押すと閉じる */
     async open(which, { add = false } = {}) {
       if (!panel.hidden && agent === which && !add) { close(); return; }

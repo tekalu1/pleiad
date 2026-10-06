@@ -5,6 +5,8 @@
 //                       429 を受けたら主を「混んでいる」とみなし、Retry-After の間は片を主へ送らず予備へ直接送る（確定と投機は主を先に試す。精度の差が大きい）
 //   createTranscriber   フレームを受け、区切って送り、イベントを出す:
 //     { type: 'speaking', on }                          声が 200ms に届いた / 区切った
+//     { type: 'busy', on, last }                        まだ文字が出そろっていない（話している・区切って認識を待っている）。まとめ待ちは、これが閉じるまで送らない。last = ここまでに振った発話の番号の最大
+//                                                       （まとめ待ちを取り消したとき、認識を待っていた分の確定が後から届いても、last までの番号は捨てる）
 //     { type: 'partial', utt, text }                    片をつないだ途中の文字（前の片と重なった頭を除いたもの）。確定で置き換わる
 //     { type: 'final', utt, text, ... }                 発話全体を 1 回で認識した文字（投機の再利用を含む）。区切った順に出る
 //     { type: 'drop', utt }                             声が短い・文字が空（雑音）。途中の文字があれば消す
@@ -84,12 +86,16 @@ export function createSttClient({ config, model, fallbackModel = '', language = 
 /**
  * @param {{ client: { transcribe: Function }, emit: (event: object) => void, language?: string, cut?: object, now?: () => number, log?: Function }} deps
  */
-export function createTranscriber({ client, emit, language = 'ja', cut = DEFAULT_CUT, now = Date.now, log = () => {} }) {
+export function createTranscriber({ client, emit: emitRaw, language = 'ja', cut = DEFAULT_CUT, now = Date.now, log = () => {} }) {
+  let discardedUpTo = 0;           // discard() の時点までに振った発話の番号。この番号までの partial・final・drop・error は出さない
+  const emit = (event) => { if (event.utt !== undefined && event.utt <= discardedUpTo) return; emitRaw(event); };
   const cutter = createUtteranceCutter(cut, STT_SAMPLE_RATE);
   let order = Promise.resolve();   // 結果を出す順番（区切った順）。前の結果を待たずに次を送るが、出すのは話した順
   let live = null;                 // いま話している発話 { id, text, jobs, inflight, gaveUp, fallback, final, abort, lastVoiceAt }
   let nextId = 0;
   let speakingOn = false;
+  let busyOn = false, busyLast = 0;
+  let inflight = 0;                // 区切って認識に出し、確定・捨て・失敗がまだ出ていない発話の数
   let spec = null;                 // 先に送った見本 { id, promise, abort }
   let closed = false;
   let stallTimer = null;
@@ -165,7 +171,12 @@ export function createTranscriber({ client, emit, language = 'ja', cut = DEFAULT
     const startedAt = now();
     const first = used ? used.promise : client.transcribe(utt.pcm, 'final');
     if (used) log('voice.stt.speculation', { outcome: 'hit' });
+    inflight++;
+    updateBusy();
     order = order.then(async () => {
+      try { await settle(); } finally { inflight--; updateBusy(); }
+    });
+    async function settle() {
       let result = null, error = null;
       try { result = await first; }
       catch (e) {
@@ -188,7 +199,7 @@ export function createTranscriber({ client, emit, language = 'ja', cut = DEFAULT
       // 失敗。出した途中経過があれば、それを確定させる（途中の行が確定せずに残らないように）
       if (l.text) emit({ type: 'final', utt: l.id, text: l.text, reason: utt.reason, degraded: true, speechEndToFinalMs: now() - lastVoiceAt });
       else emit({ type: 'error', utt: l.id, code: 'stt', kind: error?.kind ?? 'transient', status: error?.status ?? null, rateLimited: Boolean(error?.rateLimited) });
-    });
+    }
   }
 
   function onDropped() {
@@ -209,6 +220,13 @@ export function createTranscriber({ client, emit, language = 'ja', cut = DEFAULT
   function updateSpeaking() {
     const on = cutter.speaking() && cutter.voicedMs() >= MIN_VOICED_MS;
     if (on !== speakingOn) { speakingOn = on; emit({ type: 'speaking', on }); }
+    updateBusy();
+  }
+
+  /** 話している間・区切った発話の確定を待っている間は busy。終わったあと、確定の emit より後に閉じる（確定を受けてから「まだ」を解く） */
+  function updateBusy() {
+    const on = !closed && (cutter.speaking() || inflight > 0);
+    if (on !== busyOn || (on && nextId !== busyLast)) { busyOn = on; busyLast = nextId; emit({ type: 'busy', on, last: nextId }); }
   }
 
   return {
@@ -228,6 +246,18 @@ export function createTranscriber({ client, emit, language = 'ja', cut = DEFAULT
     },
     /** 今の発話を終わらせる（ミュート・通話の終わり） */
     finish() { handle(cutter.finish()); clearTimeout(stallTimer); },
+    /**
+     * ここまでの発話を、結果を出さずに捨てる（まとめ待ちの［取り消す］）。話している最中の発話・区切って認識を待っている発話は、返ってきても出さない
+     * （番号が discard() の時点までのものは emit しない）。話している途中の音声と先読みの無音も捨て、取り消したあとの声は新しい発話として始まる
+     */
+    discard() {
+      discardedUpTo = nextId;
+      clearTimeout(stallTimer); stallTimer = null;
+      abortSpec();
+      if (live) { live.final = true; live.abort.abort(); live = null; }
+      cutter.reset();
+      updateSpeaking();
+    },
     /** 閉じる。送っている途中のものは捨てる（先に区切った発話の確定は finish() してから order を待つ） */
     async drain() { await order; },
     close() {

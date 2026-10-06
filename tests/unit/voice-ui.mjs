@@ -155,12 +155,16 @@ export default async function (t) {
     t.ok('声が 2 フレーム続いたら hearing。送るのはプリロールつき', engine.state === 'hearing' && rig.link.audio.length >= 4);
     t.ok('入力レベルは声で上がる（0 でない）', engine.levels().mic > 0.5);
     rig.link.onJson({ t: 'speaking', on: true });
+    rig.link.onJson({ t: 'busy', on: true });
     clock += 600; frame(false);
-    t.ok('声が止まって 350ms 経ち、ホストが発話を認めていたら thinking（確定を待つ）', engine.state === 'thinking');
+    t.ok('声が止まって 350ms 経ち、ホストが文字を出している最中なら hold（まとめ待ち。「考え中」にはしない）', engine.state === 'hold');
     rig.link.onJson({ t: 'partial', utt: 1, text: '鍵は' });
-    t.ok('途中の文字は partial として届く', events.some((e) => e.type === 'partial' && e.text === '鍵は'));
+    t.ok('途中の文字は partial として届き、組み立て中の文（hold の view）にも入る', events.some((e) => e.type === 'partial' && e.text === '鍵は') && events.filter((e) => e.type === 'hold').at(-1)?.view.partial === '鍵は');
     rig.link.onJson({ t: 'final', utt: 1, text: '鍵はどこ？', speechEndToFinalMs: 700 });
-    t.ok('確定: final イベント。確定のあとも、返事が来るまでは thinking のまま（noteSent の前は listening に戻る）', events.some((e) => e.type === 'final' && e.text === '鍵はどこ？') && engine.state === 'listening');
+    rig.link.onJson({ t: 'busy', on: false });
+    t.ok('確定: final イベント。確定が出そろっても、待ち時間（既定 1.2 秒）が過ぎるまで送らず hold のまま（末尾が「？」なので少し短い）', events.some((e) => e.type === 'final' && e.text === '鍵はどこ？') && engine.state === 'hold' && !events.some((e) => e.type === 'turn'));
+    clock += 400; frame(false);
+    t.ok('最後の声から待ち時間が過ぎたら、溜めた言葉を 1 通として turn で出す（hold の view は空になる）', events.filter((e) => e.type === 'turn').length === 1 && events.find((e) => e.type === 'turn').text === '鍵はどこ？' && events.filter((e) => e.type === 'hold').at(-1)?.view.text === '' && engine.state === 'listening');
     engine.noteSent(true);
     t.ok('送ったら、最初の音かターンの終わりまで thinking', engine.state === 'thinking');
     // 読み上げ
@@ -174,10 +178,10 @@ export default async function (t) {
     t.ok('半二重: 読み上げの間はマイクの音声を送らず、聞き取り中にもしない（スピーカーの音を自分の発言と取り違えない）', rig.link.audio.length === audioBefore && engine.state === 'speaking');
     rig.player.busyFlag = false;
     rig.player.onEvent({ type: 'idle' });
-    clock += 300; frame(true); frame(true);
-    t.ok('半二重: 鳴り終わったあとも 700ms は送らない', rig.link.audio.length === audioBefore && engine.state === 'listening');
-    clock += 800; frame(true); frame(true);
-    t.ok('半二重: 700ms が過ぎたらまた聞き取る', rig.link.audio.length > audioBefore && engine.state === 'hearing');
+    clock += 150; frame(true); frame(true);
+    t.ok('半二重: 鳴り終わったあとも 300ms は送らない（残響）', rig.link.audio.length === audioBefore && engine.state === 'listening');
+    clock += 400; frame(true); frame(true);
+    t.ok('半二重: 300ms が過ぎたらまた聞き取る', rig.link.audio.length > audioBefore && engine.state === 'hearing');
 
     // ミュート
     engine.setMuted(true);

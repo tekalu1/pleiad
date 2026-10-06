@@ -74,6 +74,9 @@ export const DATA_WRITES = [
     { name: 'claude-accounts.json', limit: 'Claude のアカウント。ユーザーが数個作る', reason: '設定の台帳' },
     { name: 'claude-usage/<id>/<印>', limit: 'アカウントごとに 1 つ。固定の小ささ', reason: '使用量ログイン済みの印' },
   ] },
+  { file: 'core/api-keys.mjs', sites: 1, targets: [
+    { name: 'api-keys.json', limit: 'API キーの台帳。MAX_KEYS=200 件（キーの値は持たない。値は api-key-secrets.json）', reason: '設定の台帳（ADR 0155）。名前・プロバイダー・確認の結果・割り当てだけ。固定の小ささ' },
+  ] },
   { file: 'core/compat-endpoints.mjs', sites: 3, targets: [
     { name: 'compat-endpoints.json', limit: '互換の接続先。ユーザーが数個作る', reason: '設定の台帳' },
     { name: 'run/claude-compat-<uuid>.json', limit: 'ターンごとに 1 つ。dispose で消す', reason: 'ターン中だけの一時ファイル' },
@@ -89,7 +92,7 @@ export const DATA_WRITES = [
     { name: 'notify.json', limit: '固定', reason: 'この PC の通知設定' },
   ] },
   { file: 'core/secret-store.mjs', sites: 8, targets: [
-    { name: 'mcp-secrets.json・claude-account-secrets.json・compat-endpoint-secrets.json・webhook-secrets.json・remote/secrets.json', limit: 'MCP サーバー・アカウント・接続先・端末の数。ユーザーが数個', reason: '暗号化した秘密。1 件ごとに小さい' },
+    { name: 'mcp-secrets.json・claude-account-secrets.json・compat-endpoint-secrets.json・voice-secrets.json・api-key-secrets.json・webhook-secrets.json・remote/secrets.json', limit: 'MCP サーバー・アカウント・接続先・API キー（MAX_KEYS=200）・端末の数。ユーザーが数個', reason: '暗号化した秘密。1 件ごとに小さい' },
     { name: '<上の秘密ファイル>.lock', limit: '固定の小ささ（pid だけ）', reason: 'ロックファイル' },
   ] },
   { file: 'core/remote/devices.mjs', sites: 2, targets: [
