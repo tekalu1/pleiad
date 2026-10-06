@@ -64,3 +64,16 @@ export function mergeHostTree(rows, descendants, { replace = false } = {}) {
   for (const d of descendants ?? []) if (d && typeof d.taskId === "string") next.set(d.taskId, d);
   return [...next.values()];
 }
+
+const LIVE = new Set(["queued", "running", "cancelling", "waiting"]);
+/** 子孫の行を、読めていないまま「動いている」と見なさない長さ（詳細を開いている間の読み直しは 2.5〜4 秒） */
+export const HOST_ROW_STALE_MS = 20_000;
+/**
+ * 子孫の行が古いか: 走っている印のまま、HOST_ROW_STALE_MS より長く読めていない（seenAt はその行が最後に読み出しの答えに入った時刻）。
+ * 詳細を閉じると読み出しは止まるので、その後にホストで終わった子孫は印が古いまま残る。古い行は「動いている」に数えず、読んだ時刻を添えて出す
+ */
+export function hostRowStale(row, seenAt, now, ms = HOST_ROW_STALE_MS) {
+  return LIVE.has(row?.rawStatus ?? row?.status) && !(seenAt && now - seenAt <= ms);
+}
+/** 子孫の行の状態が走っている（ホストの最後の答えで） */
+export const hostRowRunning = (row) => LIVE.has(row?.rawStatus ?? row?.status);

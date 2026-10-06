@@ -15,7 +15,9 @@ import { checkPath } from '../../core/remote/forward.mjs';
 import { createAgentPort } from '../../core/remote/agent-port.mjs';
 import { viewMessages, viewCursor, trimViewMessage, viewAnswer, viewInstructions, pickDescendants, VIEW_LIMITS } from '../../core/remote/agent-view.mjs';
 import { maskOutput, MASK } from '../../core/ops/registry.mjs';
-import { hostViewCursor, joinHostView, hostTreeRows, mergeHostTree } from '../../web/host-view.mjs';
+import { hostViewCursor, joinHostView, hostTreeRows, mergeHostTree, hostRowStale, hostRowRunning, HOST_ROW_STALE_MS } from '../../web/host-view.mjs';
+import { visibleTaskInstructions } from '../../web/task-instructions.mjs';
+import { createCardRoll } from '../../web/card-roll.mjs';
 import { AGENT_OPS, AGENT_LIMITS, remoteOwnerId, parseRemoteOwner, normalizeRequester, relayReceipt } from '../../core/remote/agent-protocol.mjs';
 
 export const name = 'remote-agent';
@@ -128,13 +130,52 @@ export default async function (t) {
     t.ok('伏せた欄のある発言が続きの照合の位置に来ても、続きがつながる（末尾を読み直さない）', resends === 0 && held.messages.at(-1).text === 'new19', String(resends));
   }
 
-  // ---- 子孫の要約の選び方
+  // ---- 子孫の要約の選び方・差し込み中の指示・孫の行の後始末
   {
     const rows = Array.from({ length: 50 }, (_, i) => ({ taskId: `d${i}`, status: i < 2 ? 'running' : 'completed', updatedAt: i < 2 ? 1 : 1000 + i }));
     const picked = pickDescendants(rows, { isLive: r => r.status === 'running' });
     t.ok('子孫の要約: 走っているもの・新しいものを優先して 40 件、省いた件数を返す（並びは元の順）', picked.rows.length === 40 && picked.omitted === 10
       && picked.rows.some(r => r.taskId === 'd0') && picked.rows.some(r => r.taskId === 'd49') && !picked.rows.some(r => r.taskId === 'd11') && picked.rows[0].taskId === 'd0');
     t.ok('子孫が 40 件以下なら、そのまま（省いた件数は 0）', pickDescendants(rows.slice(0, 5)).omitted === 0);
+    const tail = [{ role: 'assistant', text: 'a' }, { role: 'user', text: 'second' }, { role: 'assistant', text: 'b' }];
+    const sending = [{ id: 'i1', state: 'delivered' }, { id: 'i2', state: 'sending' }];
+    t.ok('差し込み中の指示: 末尾だけの筋でも、会話全体の利用者の発言の数で判定する（筋に入った指示を二重に出さない）',
+      visibleTaskInstructions(sending, tail).some(x => x.id === 'i2') && !visibleTaskInstructions(sending, tail, 3).some(x => x.id === 'i2') && visibleTaskInstructions(sending, tail, 2).some(x => x.id === 'i2'));
+    const tree = [{ taskId: 'g1', rawStatus: 'running' }, { taskId: 'g2', rawStatus: 'completed' }, { taskId: 'g3', rawStatus: 'waiting' }];
+    const now = 1_000_000;
+    t.ok('孫の行: 読んだばかりの走っている行は古くない', !hostRowStale(tree[0], now - 1000, now) && !hostRowStale(tree[2], now - HOST_ROW_STALE_MS, now));
+    t.ok('孫の行: 走っている印のまましばらく読めていない行・一度も読めていない行は古い（「動いている」に数えない）', hostRowStale(tree[0], now - HOST_ROW_STALE_MS - 1, now) && hostRowStale(tree[2], null, now));
+    t.ok('孫の行: 終わった行は、読んだ時刻に関わらず古くない（状態は変わらない）', !hostRowStale(tree[1], null, now) && hostRowRunning(tree[0]) && !hostRowRunning(tree[1]));
+    t.ok('孫の詳細の答えの task で、その行を置き換える', mergeHostTree(tree, [{ taskId: 'g1', rawStatus: 'completed' }]).find(r => r.taskId === 'g1').rawStatus === 'completed');
+  }
+
+  // ---- 承認・質問のカードの名簿（web/card-roll.mjs）: 同じ承認のカードを依頼元の会話と詳細の両方に持つ
+  {
+    const card = (name, log) => {
+      const el = { isConnected: true, classList: { contains: () => false } };
+      return { el, entry: { el, sending: () => false, fold: how => log.push(`${name}:${how.by}`), setOnline: on => log.push(`${name}:${on ? 'on' : 'off'}`) } };
+    };
+    const log = [];
+    const roll = createCardRoll();
+    const conv = card('conv', log), d1 = card('d1', log);
+    roll.add('p1', conv.entry); roll.add('p1', d1.entry);
+    // 詳細の読み直しで前のカードが外れても、依頼元の会話のカードは名簿に残る
+    d1.el.isConnected = false;
+    roll.prune();
+    t.ok('名簿: 外れた詳細のカードだけを外し、依頼元の会話のカードは残す', roll.has('p1') && roll.of('p1').length === 1 && roll.of('p1')[0] === conv.entry);
+    const d2 = card('d2', log);
+    roll.add('p1', d2.entry);
+    for (const e of roll.of('p1')) e.setOnline(false);
+    roll.fold('p1', { by: 'host' });
+    t.ok('名簿: オフラインの便り・決着は、同じ承認のカード全部に届き、畳んだら名簿から消える', log.join() === 'conv:off,d2:off,conv:host,d2:host' && !roll.has('p1'), log.join());
+    const roll2 = createCardRoll();
+    const only = card('x', []);
+    roll2.add('p2', only.entry);
+    for (let i = 0; i < 100; i++) { const c = card(`r${i}`, []); roll2.add('p2', c.entry); c.el.isConnected = false; roll2.prune(); }
+    t.ok('名簿: 詳細の読み直しを繰り返しても、外れたカードを溜め込まない', roll2.of('p2').length === 1);
+    only.el.isConnected = false;
+    roll2.prune();
+    t.ok('名簿: カードが全部外れたら、行ごと外す', !roll2.has('p2'));
   }
 
   // ---- 端末の画面が持つ側（web/host-view.mjs）: 続きをつなぐ・孫の並び
