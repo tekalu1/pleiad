@@ -35,6 +35,7 @@ const FAM = {
   onfill:  n => n === '--on-fill',
   shadow:  n => n === '--shadow',
   diff:    n => n.startsWith('--diff-'),   /* git の差分と状態の文字だけ（ADR 0135）。使える場所は DIFF_FILE */
+  glow:    n => n.startsWith('--glow-'),   /* 通話中のメインの背景（radial-gradient）だけ（ADR 0150）。使える場所は GLOW_FILE */
 };
 /* プロパティごとに許す族。ここに無い族のトークンを色のプロパティに書いたら落とす。 */
 const ALLOW = {
@@ -46,6 +47,8 @@ const ALLOW = {
 };
 /* --diff-* を使ってよいファイル。差分の色は面が彩度を持つので、他の画面に流用させない（design-system §2.1 の例外） */
 const DIFF_FILE = /(^|[\/])git\.css$/;
+/* --glow-* を使ってよいファイル。通話中の背景の光は、面は無彩色という規則の例外なので、色と濃さを radial-gradient に渡すだけに絞る（design-system「通話モード」） */
+const GLOW_FILE = /(^|[\/])voice\.css$/;
 /* 片側だけの線。border-left のような単独指定と、inset の影で片側に置いた線。意味を持たせても
    持たせなくても使わない（選択・待ち・失敗は面の階調・記号・文字で表す）。
    border-top-left-radius のような角丸は線ではないので除く。 */
@@ -427,7 +430,10 @@ export function lint(files, opts) {
         if (group === 'background' && FAM.line(n) && /gradient\(/.test(d.value)) continue;  /* 線から作る階調は許す */
         // This 7px pseudo-element is a graph node, not a UI surface.
         if (group === 'background' && n === '--line-blue' && r.selector === '.thread.branched .mw.node:not(.card) .mw-gutter::before') continue;
-        if (fam === 'diff' && !DIFF_FILE.test(r.file))
+        if (fam === 'glow') {
+          if (!(GLOW_FILE.test(r.file) && group === 'background' && /gradient\(/.test(d.value)))
+            add(r.file, d.line, 'family', `${d.prop} に var(${n})：--glow-* は web/voice.css の通話中の背景（radial-gradient の background）だけで使える`);
+        } else if (fam === 'diff' && !DIFF_FILE.test(r.file))
           add(r.file, d.line, 'family', `${d.prop} に var(${n})：--diff-* は web/git.css（git の差分・変更の一覧）だけで使える`);
         else if (!fam || !ALLOW[group].includes(fam))
           add(r.file, d.line, 'family', `${d.prop} に var(${n})：${group} が使えるのは ${ALLOW[group].map(x => '--' + x + '-*').join(' / ')} だけ`);
@@ -502,6 +508,9 @@ export function selftest(log = console.log) {
       V => V.filter(v => v.rule === 'family').length === 1 && V.find(v => v.rule === 'family').line === 3],
     ['--fill-* の面に --on-fill が無い', [{ name: 'c.css', text: ':root{--fill-primary:#3a499e;--on-fill:#f4f5ff;--ink:#1c2247}\n.b{background:var(--fill-primary);color:var(--ink)}' }], { strict: true },
       V => V.some(v => v.rule === 'fill-without-on-fill')],
+    ['--glow-* は voice.css の gradient の背景だけ（ほかの場所・ほかのプロパティは拒否）',
+      [{ name: 'voice.css', text: ':root{--glow-1:#4b63e8}\n.a{background:radial-gradient(closest-side,var(--glow-1) 0%,transparent 100%)}\n.b{background:var(--glow-1)}' }, { name: 'other.css', text: '.c{background:radial-gradient(var(--glow-1),transparent)}' }], { strict: true },
+      V => V.filter(v => v.rule === 'family').map(v => `${v.file}:${v.line}`).join() === 'voice.css:3,other.css:1'],
     ['color-mix が解決される', [{ name: 'd.css', text: ':root{--surface-x:color-mix(in srgb,#ff0000 30%,#ffffff)}' }], {},
       V => V.some(v => v.rule === 'tinted-surface' && /--surface-x/.test(v.message))],
     ['片側の線（border-left / inset 影）を検出、角丸は拾わない',

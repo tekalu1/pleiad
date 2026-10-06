@@ -217,11 +217,13 @@ async function boot() {
     if (new URL(url).origin !== origin) { event.preventDefault(); external(url); }
   });
   // 権限は断るのが基本。navigator.clipboard.writeText も権限要求（clipboard-sanitized-write）を通るので、
-  // これだけは Pleiad 自身の画面（埋め込みの枠ではなく本体）に限って通す。断るとコピーのボタンが効かない
+  // これだけは Pleiad 自身の画面（埋め込みの枠ではなく本体）に限って通す。断るとコピーのボタンが効かない。
+  // 通話モード（docs/voice-call.md）のマイクも同じ決まり: 本体の画面（メインフレーム・同じ origin）の音声入力（media で audio だけ。映像は断る）に限って通す
   window.webContents.session.setPermissionRequestHandler((_contents, permission, callback, details) => {
     let own = false;
     try { own = details.isMainFrame && new URL(details.requestingUrl).origin === origin; } catch {}
-    callback(permission === 'clipboard-sanitized-write' && own);
+    const audioOnly = permission === 'media' && Array.isArray(details.mediaTypes) && details.mediaTypes.length > 0 && details.mediaTypes.every(type => type === 'audio');
+    callback(own && (permission === 'clipboard-sanitized-write' || audioOnly));
   });
   window.on('close', event => {
     if (quitting) return;

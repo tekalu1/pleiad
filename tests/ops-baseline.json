@@ -4,6 +4,8 @@
     "invoke": "gateway",
     "setDelegationRoutingKey": "human-only",
     "deleteDelegationRoutingKey": "human-only",
+    "setVoiceKey": "human-only",
+    "deleteVoiceKey": "human-only",
     "claudeAccounts": "human-only",
     "saveClaudeAccount": "human-only",
     "deleteClaudeAccount": "human-only",

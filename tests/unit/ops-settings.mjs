@@ -83,7 +83,7 @@ export default async function (t) {
   t.ok('危険度の内訳: human-only は承認モードの既定と既定のアカウントだけ（ADR 0094）。guarded は許可の一覧以外の「全体の構成」',
     settings.filter((s) => s.risk === 'human-only').map((s) => s.key).sort().join() === 'claudeAccount,mode'
     && settings.filter((s) => s.risk === 'guarded').map((s) => s.key).sort().join() === 'addedContext,context.default,delegationRouting,plyInstructions'
-    && settings.filter((s) => s.riskOf).map((s) => s.key).sort().join() === 'agentSitePermissions,computerUse,confirmAgentSites,confirmExternalLoads,externalSitePermissions');
+    && settings.filter((s) => s.riskOf).map((s) => s.key).sort().join() === 'agentSitePermissions,computerUse,confirmAgentSites,confirmExternalLoads,externalSitePermissions,voice');
 
   // ---- riskOf は書いてある例のとおり（関所を緩める向きだけ guarded）
   for (const s of settings.filter((x) => x.riskOf)) {

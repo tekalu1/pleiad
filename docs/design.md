@@ -657,3 +657,14 @@ Claude・Codex 共通の `ply_agents` MCP で、Pleiad 管理の子会話を作�
 ## 会話の圧縮（2026-09-27）
 
 利用者向けには指示・Skills・MCP の入口を「プラグイン」、LLM の窓の占有を「文脈」、会話を縮める操作を「圧縮」と呼ぶ。モデルの「コンテキスト長」は維持する。圧縮のイベントは core が正規化し、結果を sidecar に残して開き直した会話にも区切りを表示する（[ADR 0039](adr/0039-conversation-compaction.md)）。自動圧縮は正常に終わったターン（利用者の送信と、委譲の完了通知などで始まったターン。圧縮のターンと委譲の子の会話を除く）から会話ごとに一回だけ予約する（[ADR 0068](adr/0068-idle-compaction-after-notice-turns.md)）。既定は全体オン、最小 150k トークン（[ADR 0051](adr/0051-auto-compaction-min-150k.md)）、Claude オン・50 分、Codex オフ・有効化時 25 分（[ADR 0046](adr/0046-codex-auto-compaction-25-minutes.md)）。Antigravity は自身の管理に任せる。次の送信・手動圧縮・未送信会話の削除・バックエンド切替・対象外への設定変更・キャンセルで予約を取り消し、画面の会話切替では残す。見えている予約は `compaction-schedule.json` に保存し、再起動後に予定の時刻から 8 分以内のものを戻す（[ADR 0069](adr/0069-idle-compaction-schedule-survives-restart.md)）。
+
+## 通話モード（承認済み（2026-10-06））
+
+声で話しかけ、返事を読み上げる。理由と決定は [ADR 0150](adr/0150-voice-call.md)、構成・遅延の設計・測り方・確かめ方は `docs/voice-call.md`、見た目は `docs/design-system.md`「通話モード」。
+
+- **通話**: 頭の通話ボタンで始める。ホスト（`core/voice/`）が OpenRouter の STT（既定 `microsoft/mai-transcribe-2`。429 は予備 `assemblyai/universal-3-5-pro`）と TTS（既定 `x-ai/grok-voice-tts-1.0`）を呼ぶ。確定した発言は画面が今の送信の経路（会話は `sendMessage`、スレッドは `channels.post`）へ送り、返事の `text.delta` から読み上げる。コード・表・長い作業ログは読まず「コードは画面に出しました」と言う。話して割り込むのは 2 段目で、いまは［ミュート］・スピーカーのミュート・［止める］まで。
+- **`/voice-ws`**: 音声専用の WebSocket（上りは 16kHz s16le のバイナリ + JSON の制御、下りは JSON + `[1][文の id][PCM 24kHz]`）。`/ws` と同じ `token`。**この PC の画面からだけ**（中継越しは 403。`ready.voice` は 0）。プロトコルは `core/voice/session.mjs` の冒頭。
+- **キー**: OpenRouter のキーはホストだけが持つ（`voice-secrets.json`。暗号化。Jev の判定器のキーとは別）。登録・削除は human-only の WS コマンド `setVoiceKey`・`deleteVoiceKey`。画面・ログ・AI の操作の返りへ出さない。登録が音声と読み上げる文章の外部送信の同意。
+- **設定**: `voice`（`settings.set`。聞き取り・予備・読み上げのモデル、声、言語、1 回と 1 日の通話の長さの上限、エコー除去。上限を上げる向きは AI からは承認カード）。状態は `voice.status`（キーの有無・今日の使用量。キーは返さない）。設定の画面は設定 › 通話。
+- **費用の安全弁**: 1 回の通話の長さの上限（既定 30 分）・1 日の上限（既定 120 分。この PC の日付。日ごとの台帳 `voice-usage.json` は直近 31 日）・声が聞こえないまま 10 分で終了・無音と雑音を送らない（送信ゲート・200ms 未満の声・空の結果）。
+- **デスクトップ・モバイル**: Electron は本体の画面（メインフレーム・同じ origin）の音声入力に限って `media` を許可する。macOS は `NSMicrophoneUsageDescription` と audio-input の entitlement、Android は `RECORD_AUDIO` を足した（実機は未確認）。
