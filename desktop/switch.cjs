@@ -17,6 +17,7 @@
 //   asking        作業は終わったが、切り替えで止まるものが残っている。「あとで／止めて切り替え」を聞いている（reason: 'stoppers'）
 //   interrupting  「今すぐ中断して切り替える」: 全部を update で中断している（interrupt: { done, total }）
 //   locking       update-lock を取っている
+//   handing       引き継ぎ（段階 2 の 2d）: S2 を --handover で起こし、S1 に handover を頼んで、S1 が保持役のターンを渡して終わり、S2 が付け直すまで
 //   stopping      S1 の shutdown の終わり（プロセスの終了）を待っている
 //   starting      S2 を起こしている
 //   fallback      S2 が立たなかったので、前の版（S1 の版）で起こし直している
@@ -25,6 +26,10 @@
 //   done          切り替え終わり（previous: true なら前の版で動いている。retry() でやり直せる。stopped は切り替えで止めたもの）
 //   failed        S2 も前の版も起こせなかった
 //   cancelled     main が終わる
+//
+// 引き継ぎ（段階 2 の 2d。core/handover.mjs）: S1 が保持役に載ったターン（running の held）を新しいサーバーへ渡せるとき、そのターンは待たない
+// （作業の最中でも切り替える）。待つのは、載っていないターン・準備中のターンなど running の handover.blocking だけ。新しい版が handover-check で
+// 引き継ぎの形（handover・holder の範囲）を持っていて、S1 の running にも handover があるときだけ。無ければ今までの先送り（update-lock → shutdown → S2）。
 //
 // 待つ作業（switchBlockers）: running の count（ターン・承認待ち・走っているサブエージェント・委譲タスク）。外部の stdio MCP・送信予定・
 // 上限の解除後の再開は数えない。**切り替えで止まるもの**（stoppers: `!` の行と、ターンの外に残っている裏の作業＝Codex の裏の端末など）は
@@ -44,12 +49,18 @@ const CHECK_TIMEOUT_MS = 30_000;
 const INCOMPATIBLE_REASONS = ['schema', 'ipc', 'runtime', 'job', 'check'];
 const RESTART_REASONS = new Set(['runtime', 'job', 'ipc']);
 /** S1 を手放している間（onServerExit の「サーバーが終了しました」を出さない） */
-const REPLACING = new Set(['stopping', 'starting', 'fallback', 'reloading', 'restarting']);
+const REPLACING = new Set(['handing', 'stopping', 'starting', 'fallback', 'reloading', 'restarting']);
 const LIVE_TASK = new Set(['queued', 'running', 'cancelling']);
 /** 切り替えで止まるものの一覧に載せる字の長さの上限（`!` の行のコマンドなど） */
 const LABEL_MAX = 200;
 /** main との口の版（desktop/server-link.cjs の IPC_RANGE と同じ） */
 const MAIN_IPC = [1, 1];
+/** S1 に handover を頼んでから答えが来るまでの上限（S1 の待ち: 短い処理 8 秒・処理中の呼び出し 5 秒、手を離す・DB を書く分を足す） */
+const HANDOVER_REQUEST_MS = 40_000;
+/** S2 がモジュールを読み込んでロックを待つところまで進むのを待つ上限（Defender の遅い最初の読みを見込む） */
+const PRELOAD_TIMEOUT_MS = 5_000;
+/** 引き継ぎを断られた（S1 が忙しい・引き継げない作業が残っている）あとの待ちの間隔。続けて断られたら延ばす（S1 が新しい作業を送信待ちに回す時間を減らす） */
+const DECLINE_BACKOFF_MS = [2_000, 4_000, 10_000];
 
 const errorText = error => (error ? String(error.message ?? error) : null);
 
@@ -67,20 +78,37 @@ const label = value => (value == null ? null : String(value).slice(0, LABEL_MAX)
  * count は running の count（待つ作業の数）。items は表示用の一覧（会話ごとではなく作業ごと）。
  * stoppers は `!` の行（shells）と、ターンの外に残っている裏の作業（background の tasks）。数えず、待たない（asking で聞く）
  */
-function switchBlockers(work) {
+function switchBlockers(work, { handover = false } = {}) {
   if (!work) return null;
   const items = [];
   const turnSessions = new Set();
+  // handover: 保持役に載ったターン（held）とその承認待ち・サブエージェントは、新しいサーバーへ渡すので待たない
+  const skip = x => handover && x.held === true;
   for (const turn of work.turns ?? []) {
     turnSessions.add(turn.sessionId);
-    items.push({ kind: 'turn', sessionId: turn.sessionId ?? null, backend: turn.backend ?? null });
+    if (!skip(turn)) items.push({ kind: 'turn', sessionId: turn.sessionId ?? null, backend: turn.backend ?? null });
   }
-  for (const p of work.permissions ?? []) if (!p.relay && !p.detached) items.push({ kind: 'permission', sessionId: p.sessionId ?? null, toolName: p.toolName ?? null });
-  for (const a of work.subagents ?? []) if (a.status === 'running' || a.status == null) items.push({ kind: 'subagent', sessionId: a.sessionId ?? null, id: a.id, description: a.description ?? null });
+  for (const p of work.permissions ?? []) if (!p.relay && !p.detached && !skip(p)) items.push({ kind: 'permission', sessionId: p.sessionId ?? null, toolName: p.toolName ?? null });
+  for (const a of work.subagents ?? []) if ((a.status === 'running' || a.status == null) && !skip(a)) items.push({ kind: 'subagent', sessionId: a.sessionId ?? null, id: a.id, description: a.description ?? null });
   for (const r of work.tasks ?? []) if (LIVE_TASK.has(r.status) && !turnSessions.has(r.sessionId)) items.push({ kind: 'task', sessionId: r.sessionId ?? null, taskId: r.taskId ?? null });
   const shells = (work.shells ?? []).map(s => ({ kind: 'shell', sessionId: s.sessionId ?? null, runId: s.runId ?? null, command: s.command ?? null, label: label(s.command) }));
   const background = (work.background ?? []).flatMap(b => (b.tasks ?? []).map(x => ({ kind: 'background', sessionId: b.sessionId ?? null, backend: b.backend ?? null, id: x.id, label: label(x.label) })));
-  return { count: Number(work.count) || 0, items, stoppers: [...shells, ...background] };
+  // handover のときの count は、サーバーが数えた待つ作業（blocking）。items と同じ数になるはずだが、数えの違いがあれば items の側を信じず blocking に従う
+  const count = handover ? Number(work.handover?.blocking) || 0 : Number(work.count) || 0;
+  return { count, items, stoppers: [...shells, ...background], ...(handover ? { handover: { held: Number(work.handover?.held) || 0 } } : {}) };
+}
+
+const inRange = (value, range) => Array.isArray(range) && range.length === 2 && Number.isInteger(value) && range[0] <= value && value <= range[1];
+
+/**
+ * 引き継ぎ（保持役に載ったターンを待たずに渡す）で切り替えるか。新しい版が引き継ぎの形と保持役の規約を持っていて（handover-check の handover・holder）、
+ * S1 の running が handover を載せていて（版が範囲に入る）、保持役のターンがあるなら S1 の保持役の世代が新しい版の範囲に入るとき
+ */
+function handoverMode(work, plan) {
+  const mine = work?.handover;
+  if (!mine || !plan?.handover) return false;
+  if (!inRange(mine.v, plan.handover)) return false;
+  return !(mine.held > 0 && mine.holder != null && !inRange(mine.holder, plan.holder));
 }
 
 /** handover-check の出力を、この main と今のデータ置き場で使えるか判定する。{ ok: true } か { ok: false, reason, detail } */
@@ -91,7 +119,8 @@ function judgeCheck(check, { ipc = MAIN_IPC } = {}) {
   if (Number.isInteger(check.dataSchemaFound) && check.dataSchemaFound !== check.dataSchema) {
     return { ok: false, reason: 'schema', detail: `data schema ${check.dataSchemaFound} -> ${check.dataSchema}` };
   }
-  return { ok: true };
+  // 引き継ぎの形（無い版は今までの先送り）
+  return { ok: true, handover: Array.isArray(check.handover) ? check.handover : null, holder: Array.isArray(check.holder) ? check.holder : null };
 }
 
 /**
@@ -105,6 +134,9 @@ function judgeCheck(check, { ipc = MAIN_IPC } = {}) {
  *                          画面が答える（answer）ときは null・undefined を返す（ダイアログを出さない）
  *     running()            → runningWork
  *     abortAll(onProgress) 全部を update で中断し、count が 0 になるまで待つ（main.cjs の abortAll。見るたびに onProgress(work)）
+ *     handover(runtime, mode) 引き継ぎ（S2 を --handover で起こし、S1 に handover を頼む）。{ ready, timing }（S2 が付け直して ready を送った）/
+ *                          { declined: true, reason, detail }（S1 が断った。S1 は元のまま・S2 は止めた）/ { stay: error }（S2 を起こせなかった。S1 は元のまま）/
+ *                          { failed: error }（S1 は渡して終わったのに S2 が立たなかった。前の版で起こし直す）
  *     lock() / unlock()    update-lock（{ ok, reason }）/ update-unlock
  *     stopOld()            S1 に shutdown を送り、プロセスが終わるのを待つ → { ok } / { ok: false, error }
  *     reattachOld()        S1 が終わらなかったとき付け直す → boolean
@@ -118,7 +150,7 @@ function judgeCheck(check, { ipc = MAIN_IPC } = {}) {
  */
 function createSwitch({ server, target, effects, pollMs = POLL_MS, log = () => {}, now = () => Date.now() }) {
   let snap = { state: 'idle', server, target: typeof target === 'function' ? null : target, waiting: null, reason: null, blockedBy: null, error: null, previous: false,
-    since: null, interrupt: null, interruptFailed: false, stopped: [], at: null };
+    since: null, interrupt: null, interruptFailed: false, stopped: [], handover: null, at: null };
   const listeners = new Set();
   let interruptRequested = false;
   // 止まるものだけが残ったときに「あとで」を選んだ（止まるものが無くなる・作業が増えるまで、もう聞かない）
@@ -128,6 +160,9 @@ function createSwitch({ server, target, effects, pollMs = POLL_MS, log = () => {
   let release = null;
   let pendingAnswer = null;
   let running = null;
+  // 引き継ぎ（保持役に載ったターンを待たずに渡す）で切り替えられる版か（事前の確かめの結果）と、続けて断られた回数
+  let handoverPlan = null;
+  let declines = 0;
 
   const emit = patch => {
     snap = { ...snap, ...patch };
@@ -136,9 +171,9 @@ function createSwitch({ server, target, effects, pollMs = POLL_MS, log = () => {
     }
   };
   // 数秒おきに見る。interruptNow・cancel で待たずに戻る
-  const pause = () => new Promise(resolve => {
+  const pause = (ms = pollMs) => new Promise(resolve => {
     poke = resolve;
-    Promise.resolve(effects.delay(pollMs)).then(resolve, resolve);
+    Promise.resolve(effects.delay(ms)).then(resolve, resolve);
   }).finally(() => { poke = null; });
   /** 画面かダイアログの答えを待つ（effects.ask が答えを返さなければ answer() だけを待つ） */
   const askUser = info => new Promise(resolve => {
@@ -150,7 +185,11 @@ function createSwitch({ server, target, effects, pollMs = POLL_MS, log = () => {
   const waiting = blockers => emit({ state: 'waiting', reason: null, waiting: blockers,
     since: ['waiting', 'locking', 'interrupting'].includes(snap.state) && snap.since ? snap.since : now() });
 
-  /** 作業が 0 件（止まるものが無いか、止めてよいとき）で update-lock を取れたら true。main が終わるなら false */
+  /**
+   * 作業が 0 件（止まるものが無いか、止めてよいとき）になったら、切り替え方を返す。main が終わるなら false。
+   *   'handover'  保持役に載ったターンは待たない（引き継ぎ）。update-lock は取らない（サーバーが自分で新しい作業を送信待ちに回して引き継ぐ）
+   *   'legacy'    update-lock を取れた（今までの先送り。S1 を終わらせて S2 を起こす）
+   */
   async function waitIdle() {
     for (;;) {
       if (cancelled) return false;
@@ -174,7 +213,8 @@ function createSwitch({ server, target, effects, pollMs = POLL_MS, log = () => {
       }
       const work = await effects.running().catch(() => null);
       if (cancelled) return false;
-      const blockers = switchBlockers(work);
+      const viaHandover = !interruptRequested && handoverMode(work, handoverPlan);
+      const blockers = switchBlockers(work, { handover: viaHandover });
       if (!work || blockers.count > 0) {
         stoppersLater = false;
         waiting(blockers ?? snap.waiting);
@@ -194,6 +234,10 @@ function createSwitch({ server, target, effects, pollMs = POLL_MS, log = () => {
         emit({ state: 'held', reason: 'stoppers', waiting: blockers });
         await pause();
         continue;
+      }
+      if (viaHandover) {
+        emit({ blockedBy: null, error: null, stopped: blockers.stoppers, waiting: blockers, interrupt: null });
+        return 'handover';
       }
       emit({ state: 'locking', waiting: blockers, interrupt: null, reason: snap.reason === 'stoppers' ? null : snap.reason });
       const lock = await effects.lock().catch(error => ({ ok: false, reason: errorText(error) }));
@@ -215,7 +259,7 @@ function createSwitch({ server, target, effects, pollMs = POLL_MS, log = () => {
       }
       if (still.stoppers.length > 0 && !interruptRequested && !stoppersLater) { effects.unlock(); continue; }
       emit({ blockedBy: null, error: null, stopped: still.stoppers });
-      return true;
+      return 'legacy';
     }
   }
 
@@ -231,6 +275,7 @@ function createSwitch({ server, target, effects, pollMs = POLL_MS, log = () => {
       const check = await Promise.resolve(effects.check(plan.runtime)).catch(error => ({ error: errorText(error) }));
       plan = { ...plan, ...judgeCheck(check) };
     }
+    handoverPlan = plan?.ok ? plan : null;
     if (cancelled) return cancel();
     let restart = false;
     if (!plan?.ok) {
@@ -250,8 +295,27 @@ function createSwitch({ server, target, effects, pollMs = POLL_MS, log = () => {
       restart = RESTART_REASONS.has(reason);
     }
 
+    let handed = null;   // 引き継ぎの結果（{ ready, timing } か { failed }）
+    let stay = null;
     for (;;) {
-      if (!await waitIdle()) return cancel();
+      const how = await waitIdle();
+      if (!how) return cancel();
+      if (how === 'handover') {
+        emit({ state: 'handing', waiting: null });
+        const out = await Promise.resolve(effects.handover(plan.runtime, plan.mode)).catch(error => ({ failed: error }));
+        if (out?.declined) {
+          // S1 が断った（忙しい・引き継げない作業が残っている）。S1 は元のまま。続けて断られたら間を延ばす
+          declines += 1;
+          log(`the handover was declined (${out.reason ?? '?'}${out.detail ? `: ${out.detail}` : ''}); waiting`);
+          emit({ state: 'waiting', blockedBy: out.reason ?? 'handover', error: null });
+          await pause(DECLINE_BACKOFF_MS[Math.min(declines, DECLINE_BACKOFF_MS.length) - 1]);
+          continue;
+        }
+        declines = 0;
+        if (out?.stay) stay = out.stay; else handed = out ?? { failed: new Error('no result') };
+        break;
+      }
+      declines = 0;
       emit({ state: 'stopping', waiting: null });
       const stopped = await Promise.resolve(effects.stopOld()).catch(error => ({ ok: false, error: errorText(error) }));
       if (stopped?.ok) break;
@@ -270,11 +334,24 @@ function createSwitch({ server, target, effects, pollMs = POLL_MS, log = () => {
       await effects.restart();
       return snap;
     }
-    emit({ state: 'starting' });
+    if (stay) {
+      // 新しいサーバーを起こせなかった。S1 は何も渡していないので、そのまま動かし続ける（retry で準備からやり直せる）
+      log(`the new server could not be started; the running one stays: ${errorText(stay)}`);
+      emit({ state: 'done', previous: true, error: errorText(stay), waiting: null, at: now() });
+      await Promise.resolve(effects.fallback(stay)).catch(() => {});
+      return snap;
+    }
     let ready = null;
     let failure = null;
-    try { ready = await effects.startNew(plan.runtime, plan.mode); }
-    catch (error) { failure = error; }
+    if (handed) {
+      ready = handed.ready ?? null;
+      failure = handed.failed ?? null;
+      if (handed.timing) { emit({ handover: handed.timing }); log(`handed over: ${JSON.stringify(handed.timing)}`); }
+    } else {
+      emit({ state: 'starting' });
+      try { ready = await effects.startNew(plan.runtime, plan.mode); }
+      catch (error) { failure = error; }
+    }
     let previous = false;
     if (!ready) {
       log(`the new server did not start: ${errorText(failure)}; starting the previous version again`);
@@ -325,7 +402,8 @@ function createSwitch({ server, target, effects, pollMs = POLL_MS, log = () => {
       if (snap.state !== 'done' || !snap.previous) return false;
       interruptRequested = false;
       stoppersLater = false;
-      emit({ state: 'idle', previous: false, error: null, reason: null, waiting: null, blockedBy: null, since: null, interrupt: null, interruptFailed: false, stopped: [], at: null });
+      declines = 0;
+      emit({ state: 'idle', previous: false, error: null, reason: null, waiting: null, blockedBy: null, since: null, interrupt: null, interruptFailed: false, stopped: [], handover: null, at: null });
       running = run();
       running.catch(error => log(`switching failed: ${errorText(error)}`));
       return true;
@@ -384,8 +462,11 @@ function createSwitchEffects({ link, ready, prepared, dataDir, resourcesPath, ex
   request, runningWork, abortAll, ask, reload, restart, fallback, failed, rearm = () => {}, log = () => {},
   boot = require('./server-boot.cjs'), job = () => require('./job.cjs'), runtimeLib = () => require('./runtime.cjs'), check = runHandoverCheck,
   alive = pid => boot.isAlive(pid), sleep = ms => new Promise(resolve => setTimeout(resolve, ms)), now = () => Date.now(),
-  stopTimeoutMs = STOP_TIMEOUT_MS, readyTimeoutMs = boot.START_TIMEOUT_MS }) {
+  stopTimeoutMs = STOP_TIMEOUT_MS, readyTimeoutMs = boot.START_TIMEOUT_MS, handoverRequestMs = HANDOVER_REQUEST_MS, preloadTimeoutMs = PRELOAD_TIMEOUT_MS,
+  exists = file => require('node:fs').existsSync(file) }) {
   const oldPid = () => link.pid ?? ready.pid ?? null;
+  // S1 が保持役のターンを渡して終わった（以後に起こすサーバーは、データ置き場の持ち主が居なくなるのを待ち、札を読んで付け直す。--handover）
+  let handedOver = false;
 
   async function start(runtime, mode) {
     const env2 = boot.serverEnv({ baseEnv: env, agentBrowserDir: runtime.agentBrowserDir, root: runtime.root, key: runtime.key, logFile: boot.serverLogFile(runtime.root),
@@ -394,7 +475,7 @@ function createSwitchEffects({ link, ready, prepared, dataDir, resourcesPath, ex
     const next = waitForReady(link, readyTimeoutMs);
     try {
       await boot.startAndConnect({ link, dataDir, logFile: boot.serverLogFile(runtime.root), log,
-        launch: async () => (launched = await boot.launchServer({ mode, nodeExe: runtime.nodeExe, args: [path.join(runtime.appDir, 'core', 'server.mjs')], cwd, env: env2 })) });
+        launch: async () => (launched = await boot.launchServer({ mode, nodeExe: runtime.nodeExe, args: [path.join(runtime.appDir, 'core', 'server.mjs'), ...(handedOver ? ['--handover'] : [])], cwd, env: env2 })) });
       rearm();
       const started = await next.promise;
       // 切り替えをやり直すとき（前の版で動いている）の古いサーバーは、今起こしたもの
@@ -411,8 +492,54 @@ function createSwitchEffects({ link, ready, prepared, dataDir, resourcesPath, ex
     }
   }
 
+  /** 引き継ぎ: S2 を --handover で起こし（モジュールを読んでデータ置き場のロックを待つ）、S1 に handover を頼み、S1 が終わったら S2 につなぐ */
+  async function handover(runtime, mode) {
+    const startedAt = now();
+    const env2 = boot.serverEnv({ baseEnv: env, agentBrowserDir: runtime.agentBrowserDir, root: runtime.root, key: runtime.key, logFile: boot.serverLogFile(runtime.root),
+      port: ready.port, token: ready.token, systemLocale, execPath, resourcesPath, stableCliEnv: runtimeLib().stableCliEnv({ execPath, resourcesPath }) });
+    let launched = null;
+    try {
+      launched = await boot.launchServer({ mode, nodeExe: runtime.nodeExe, args: [path.join(runtime.appDir, 'core', 'server.mjs'), '--handover'], cwd, env: env2 });
+    } catch (error) { return { stay: error }; }
+    const stopLaunched = () => { if (launched?.pid && alive(launched.pid)) { try { process.kill(launched.pid); } catch { /* もう居ない */ } } };
+    // S2 がモジュールを読み込んでデータ置き場のロックを待つところまで進むのを待つ（使用中の印ができる。core/server.mjs）。上限を過ぎても頼む（S2 は遅れて追いつく）
+    const mark = path.join(runtime.root, 'run', `${runtime.key}-${launched.pid}.lock.db`);
+    const loadedBy = now() + preloadTimeoutMs;
+    while (!exists(mark) && alive(launched.pid) && now() < loadedBy) await sleep(20);
+    const oldProcess = oldPid();
+    let reply = await request('handover', {}, { timeoutMs: handoverRequestMs }).catch(error => ({ ok: false, reason: 'request', detail: errorText(error) }));
+    // 答えが来なかったが、S1 がもう居ないなら渡して終わったあと（答えが届かなかっただけ）。S2 につなぐ
+    if (!reply?.ok && reply?.reason === 'request' && oldProcess && !alive(oldProcess)) reply = { ok: true, handed: [], aborted: [], droppedCalls: 0 };
+    if (!reply?.ok) {
+      // S1 は元のまま。待たせていた S2 は止める（次に頼むときに起こし直す）
+      stopLaunched();
+      return { declined: true, reason: reply?.reason ?? 'declined', detail: reply?.detail ?? null };
+    }
+    handedOver = true;
+    // S1 はロックを放して終わる。プロセスが居なくなるのを待つ（S2 はロックが取れたら先へ進む。S1 の終わりを待たなくても進むので、上限を過ぎても進む）
+    const until = now() + stopTimeoutMs;
+    while (oldProcess && alive(oldProcess) && now() < until) await sleep(50);
+    if (oldProcess && alive(oldProcess)) log(`the old server (pid ${oldProcess}) is still running ${Math.round(stopTimeoutMs / 1000)}s after handing over`);
+    const next = waitForReady(link, readyTimeoutMs);
+    try {
+      await boot.startAndConnect({ link, dataDir, logFile: boot.serverLogFile(runtime.root), log, launch: async () => launched });
+      rearm();
+      const started = await next.promise;
+      Object.assign(ready, { port: started.port, token: started.token, pid: started.pid, runtimeKey: started.runtimeKey });
+      const timing = { ms: now() - startedAt, old: reply.ms ?? null, handed: reply.handed ?? [], aborted: reply.aborted ?? [], droppedCalls: reply.droppedCalls ?? 0,
+        // S1 がロックを放してから S2 が ready を送るまで（S1 の at と S2 の ready の handover.at は、同じ PC の時計）
+        gapMs: Number.isFinite(reply.at) && Number.isFinite(started.handover?.at) ? started.handover.at - reply.at : null, adopted: started.handover?.adopted ?? null, lockWaitedMs: started.handover?.lockWaitedMs ?? null };
+      return { ready: started, timing };
+    } catch (error) {
+      next.cancel();
+      stopLaunched();
+      return { failed: error };
+    }
+  }
+
   return {
     delay: sleep,
+    handover,
     async prepare() {
       const decision = job().decideLaunch(job().inspectJob());
       if (decision.mode === 'unsupported') return { ok: false, reason: 'job', detail: decision.reason };
@@ -518,6 +645,6 @@ function startSwitch({ linked, ready, resourcesPath, log = () => {}, readManifes
 }
 
 module.exports = {
-  POLL_MS, STOP_TIMEOUT_MS, INCOMPATIBLE_REASONS, RESTART_REASONS, MAIN_IPC,
-  needsSwitch, switchBlockers, judgeCheck, createSwitch, runHandoverCheck, waitForReady, createSwitchEffects, incompatibleDialog, startSwitch,
+  POLL_MS, STOP_TIMEOUT_MS, HANDOVER_REQUEST_MS, DECLINE_BACKOFF_MS, INCOMPATIBLE_REASONS, RESTART_REASONS, MAIN_IPC,
+  needsSwitch, switchBlockers, handoverMode, judgeCheck, createSwitch, runHandoverCheck, waitForReady, createSwitchEffects, incompatibleDialog, startSwitch,
 };

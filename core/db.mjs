@@ -687,6 +687,22 @@ export function acquire(dir, prepare = () => {}) {
   };
 }
 
+/**
+ * この置き場の共有している接続を、持ち主が残っていても閉じる（WAL を本体へ戻してから）。引き継ぎ（無停止の更新 2d）で、データ置き場のロックを放す前に
+ * 呼ぶ: 新しいサーバーがロックを取ってすぐ DB を開くので、旧サーバーの接続が（プロセスの終了まで）開いたままだと、閉じかけの WAL に当たって読めないことがある。
+ * 閉じた後に acquire すれば開き直す。持ち主の release は何もしない
+ */
+export function closeAll(dir) {
+  const key = path.resolve(dir);
+  const slot = open.get(key);
+  if (!slot) return false;
+  open.delete(key);
+  slot.refs = 0;
+  try { slot.db.exec('PRAGMA wal_checkpoint(TRUNCATE)'); } catch { /* 閉じるだけ */ }
+  try { slot.db.close(); } catch { /* 閉じるだけ */ }
+  return true;
+}
+
 /** この置き場の共有している接続の数（0 なら閉じている。データ置き場を消す前の確認・テスト用） */
 export const openCount = dir => open.get(path.resolve(dir))?.refs ?? 0;
 

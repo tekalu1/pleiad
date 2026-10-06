@@ -521,6 +521,16 @@ bot の会話（O21）・圧縮のターン（`hooks.compact`）・Codex/agy（�
   - (3) 付け直しをあきらめた（ポートが取れない）子のタスクは `adoptRun(taskId, null)` で interrupted になるが、依頼元の「止めたもの」（`recordTaskStops`）は書かない。2d で付け直せなかった子の扱いと一緒に決める
   - (4) 子のターンの `restoreTurn` が付け直せなかった（札・記録が読めない）ときは、今までどおり起動の復元が interrupted にして `restored` に載る（`adopting` に入らない）
 
+**2d の実装のメモ（2026-10-07。実装済み。要点は [plan.md](plan.md) の 2d。ここは仕分け・後片付けの側から見た分）**
+
+- **旧サーバーで止める 6 か所（§5.2）の配線**: X1（締め）は `turn.handedOff` のまま（`handoverRun` の札取り → `handOffTurn`）。X2（`runtimeContext.close()`）は手を離したターンでは走らない（`driveTurn` が `'handedOff'` を返す）。X3（フラグ設定のファイル）は Claude を載せる 2c。X4 の `exit` は `process.exit(0)` で走る（`!` の行は `shellRuns.stopAll` で止まる＝main が「止まるもの」として先に聞く。`control.json`・`main-link.json` は自分の pid のものだけ消す）。X6（computer のロック）は引き継ぎでは `computerLock` を触らない（ロックは引き継がない。M37。新サーバーの `computer-ready` が `reset`）。**X5（agy を全部止める）は段階 3**。
+- **起動時の後片付け（§5.1）のうち 2d で動くもの**: S5 は `recover({ adopted, keepQueued })`（`--handover` の起動は旧サーバーが送信待ちに回した `queued` を保留にせず、付け直し・予定の前に kick する）。S14（`CLI_TOKEN`）は預かり物の値で `control.json` を書く（`--handover` で保持役の stash があるときだけ。無ければ新しい乱数）。S6・S7・S8・S9・S12・S13 は 2b-4〜2b-7 のまま（`restoreAdoptedTurns` が本番の起動でも保持役の子を読むようになったので、起動の道が付け直しを見る）。
+- **保持役の子を読む条件**: `restoreAdoptedTurns` は `AGENT_HOST_ADOPT_HOLDER=1`（テスト）か `--handover` か `AGENT_HOST_HANDOVER=on` のとき、実行場所の置き場があれば保持役を読む（居る保持役にだけつなぐ。居なければ空）。保持役が無い起動・`off` は何も変わらない。
+- **`running` の `held`**: ターン（`holdable`）・その承認待ち・サブエージェントに `held: true`、`handover: { v, holder, held, blocking }`。`count` は今までの意味のまま（画面の更新のゲート・main の終了の確認はこれまでどおり全部を数える）。main の切り替えだけが `blocking` を使う。
+- **2b-7 の「2d への注意」の扱い**: (1) 手を離す前の途中送信の受理待ち・完了通知の配送中・`outbox` の kick: **済み**（`handover.critical`・`agentTasks.settling`・`outbox.busy`。送信待ちと完了通知・追加指示は hold 中は新しく渡さない）。(2) 手を離した子のタスクが旧サーバーで running のまま: 旧サーバーは引き継いだらすぐ終わるので問題にならない（新サーバーが `adoptRun` で引き継ぐ）。(3) 付け直しをあきらめた（ポート・札・記録）子のタスクの「止めたもの」: **未**（今までどおり `adoptRun(taskId, null)` で interrupted。依頼元の `recordTaskStops` は書かない）。(4) `restoreTurn` が付け直せなかった子は起動の復元が interrupted にして `restored` に載る: 変えていない。
+- **2b-6 の持ち越しの扱い**: (3)(4)（付け直せなかった子・ポートをあきらめた子が保持役に残る）は**未**（子は保持役で走り続け、次の起動でも読まれて同じ理由で断られる）。引き継ぎでは、ポートは新サーバーが 40 ms 刻みで 10 秒待つので、まず起きない（旧サーバーは待ち受けを閉じてからロックを放す）。
+- **テストの入口**: `tests/lib/adopt-server.mjs` に場面 `slowCall`（処理中の MCP の呼び出しが ms の間続く形。`core/server.mjs` の `handoverState`・`trackIn` を export）、`tests/lib/server.mjs` の `startServer` に `args`・`lazy`（`--handover` の新サーバーはロックを待って待ち受けないので、起こしてすぐ返し、`ready()` で待つ）。
+
 ### 6.1 テストの書き方
 
 **2b-1**（挙動を変えない）: 既存の `npm test` が変えずに通ること。加えて `tests/unit/turn-phases.mjs`（新規）で、fake の台本ごとに `turnEnd` が 1 回・`completedAt` が 1 回・使用量の行が 1 件（`AGENT_HOST_FAKE_USAGE=1`）であることを数える。台本は `echo:`・`fail`・`slow`（中断）・`limit <t>`・`undelivered`・`compact`・`ask`（承認して終わる・却下）・途中送信の `requeue`（`DECLINE_STEER`）・`hook-follow`。`endTurn` を 2 回呼んでも 2 回目が何もしないことは、分けた関数を直に呼ぶ単体で見る

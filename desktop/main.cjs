@@ -74,14 +74,14 @@ if (process.platform === 'win32' && !PACKAGED_IDENTITY) app.setAppUserModelId(AP
 // ローカルの窓の本体フレームで、ローカルのサーバーの画面からの IPC だけを通す（リモートの窓・同梱の窓は別の口）
 function trusted(event) { trust.check(event, ['local']); }
 const switchScreen = createSwitchScreen({ ipcMain, trusted, getWindow: () => window });
-function workerRequest(type, extra = {}) {
+function workerRequest(type, extra = {}, { timeoutMs = 10000 } = {}) {
   return new Promise((resolve, reject) => {
     const id = ++requestId;
     const done = message => {
       if (message.type !== type || message.id !== id) return;
       clearTimeout(timer); messages.off('message', done); resolve(message);
     };
-    const timer = setTimeout(() => { messages.off('message', done); reject(new Error(t('errors.runningCheckFailed'))); }, 10000);
+    const timer = setTimeout(() => { messages.off('message', done); reject(new Error(t('errors.runningCheckFailed'))); }, timeoutMs);
     messages.on('message', done); worker.postMessage({ ...extra, type, id });
   });
 }

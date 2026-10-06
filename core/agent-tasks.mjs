@@ -628,6 +628,8 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
   const timer = setInterval(kick, 500); timer.unref();
   return {
     // ホストに任せたタスクの写しは、ホストで動いている（この PC の更新・終了を止めない）。完了通知がまだ届いていないものだけ数える
+    // 完了通知を渡している最中か（引き継ぎの前に終わるのを待つ。無停止の更新 2d。動いている子そのもの（busy）は、保持役に載った子は新しいサーバーが引き継ぐので数えない）
+    get settling() { return notices.size > 0 || silenceNotices.size > 0 || commandNotices.size > 0 || Object.values(records).some(r => r.notification === 'delivering'); },
     get busy() { return live.size > 0 || notices.size > 0 || silenceNotices.size > 0 || commandNotices.size > 0 || Object.values(records).some(r => (ACTIVE.has(r.status) && !r.host) || r.notification === 'pending'); },
     list(owner) { return Object.values(records).filter(r => !owner || r.parentSessionId === owner).map(r => view(r)); },
     /** sessionIds の会話が作った行と、その子孫の行の view（ホストに任された子の下の孫を数える・止める。docs/remote.md §4.5） */

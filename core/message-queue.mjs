@@ -140,14 +140,15 @@ export function createMessageQueue({ store, active, start, changed, delivered })
     }),
     // adopted: 付け直すターンの会話（無停止の更新 2b-4）→ 札の steers の id。走っているターンの後ろに並んだ送信は保留にせず、
     // 札が控えている途中送信（渡った合図を待つもの。2b-7）は結果不明にしない
-    async recover({ adopted = new Map() } = {}) {
+    // keepQueued: 引き継ぎの起動（無停止の更新 2d）。旧サーバーが送信待ちに回した分（queued）は保留にせず、新しいサーバーが送る
+    async recover({ adopted = new Map(), keepQueued = false } = {}) {
       for (const [id, meta] of Object.entries(await store.getAll())) {
         if (!meta.outbox?.length) continue;
         const items = await list(id);
         const steers = adopted.get(id);
         for (const item of items) {
           if (item.status === 'sending' && !steers?.has(item.id)) item.status = 'unknown';
-          if (item.status === 'queued' && !steers) item.status = 'paused';
+          if (item.status === 'queued' && !steers && !keepQueued) item.status = 'paused';
         }
         await save(id, items);
       }

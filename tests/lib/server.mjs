@@ -21,8 +21,11 @@ const LAUNCHED = /http:\/\/(localhost|[\d.]+|\[[\da-f:]+\]):(\d+)\/\?token=(\S+)
  * @param env サーバプロセスに足す環境変数（AGENT_HOST_GRACE_MS など）
  * @param dataDir sidecar の置き場。使い捨ての場所を渡すこと
  * @param entry 起動するスクリプト（既定は core/server.mjs。parentPort の身代わりを置く tests/lib/parent-port-server.mjs など）
+ * @param args entry の後ろに付ける引数（無停止の更新の新サーバーは `--handover`）
+ * @param lazy 待ち受けるのを待たず、起こしてすぐ返す（`--handover` の新サーバーは、旧サーバーがデータ置き場を放すまで待ち受けない）。
+ *   返り値の ready() が待ち受けるまで待ち、port を決める。起動前に終われば ready() が投げる
  */
-export async function startServer({ env = {}, dataDir, timeoutMs = 90_000, entry = path.join(ROOT, "core", "server.mjs") } = {}) {
+export async function startServer({ env = {}, dataDir, timeoutMs = 90_000, entry = path.join(ROOT, "core", "server.mjs"), args = [], lazy = false } = {}) {
   const token = crypto.randomBytes(12).toString("hex");
   // 夜の記憶整理（core/memory/learn.mjs）は、起動のときに一度「追いつく」実行をし、そのときの会話・投稿を読んで隠れた learner 会話を作る。
   // 負荷で起動直後の読み取りが遅れると、テストが投稿した直後や runTurn の最中にその会話が走り、その session イベントを
@@ -39,7 +42,7 @@ export async function startServer({ env = {}, dataDir, timeoutMs = 90_000, entry
       fs.writeFileSync(file, JSON.stringify({ ...prefs, memoryLearnPaused: true }));
     }
   }
-  const child = spawn(process.execPath, [entry], {
+  const child = spawn(process.execPath, [entry, ...args], {
     cwd: ROOT,
     env: {
       // main がサーバーを起こすときにだけ渡す変数（AGENT_HOST_HANDOVER・SERVER_LOG・RUNTIME_KEY など。core/boot-env.mjs）と、Pleiad が会話のシェルへ渡す
@@ -85,7 +88,7 @@ export async function startServer({ env = {}, dataDir, timeoutMs = 90_000, entry
 
   const tail = (n = 20) => log.slice(-n).join("\n").replaceAll(token, "[redacted]");
 
-  const port = await new Promise((res, rej) => {
+  const waiting = new Promise((res, rej) => {
     const timer = setTimeout(() => rej(new Error(`サーバが ${timeoutMs}ms で起動しなかった\n${tail()}`)), timeoutMs);
     const look = (chunk) => {
       const m = LAUNCHED.exec(String(chunk));
@@ -100,9 +103,15 @@ export async function startServer({ env = {}, dataDir, timeoutMs = 90_000, entry
       rej(new Error(`サーバが起動前に終了した (exit ${code})\n${tail()}`));
     });
   });
+  waiting.catch(() => {});
+  const port = lazy ? null : await waiting;
 
   return {
     port,
+    /** 起こした子（lazy で、待ち受けの前に pid・終了を見るため） */
+    child,
+    /** lazy で起こしたとき、待ち受けるまで待つ。port が決まる */
+    async ready() { this.port = await waiting; return this; },
     token,
     root: ROOT,
     dataDir,
