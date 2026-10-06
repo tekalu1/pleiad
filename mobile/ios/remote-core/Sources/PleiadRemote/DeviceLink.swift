@@ -7,8 +7,8 @@ import Foundation
 //
 // state: connecting | connected | offline | host-offline | revoked | stopped
 // Backoff 0.5 s -> 30 s doubling (±25 % jitter), reset after 10 s connected. Streams never survive a reconnect.
-// iOS suspends the app in the background, which kills the relay socket: the shell calls retryNow() when it comes back
-// to the foreground (ADR 0141), like Android's HostActivity.
+// iOS suspends the app in the background, which kills the relay socket: back in the foreground the proxy calls
+// checkNow() (ADR 0141).
 
 public struct LinkStatus: Equatable {
     public var state: String
@@ -180,20 +180,49 @@ public final class DeviceLink {
 
     /// Reconnect now ("retry", foreground again, or new credentials after re-pairing).
     public func retryNow(_ newCreds: HostCreds? = nil) {
+        loop.exec { [self] in reconnect(newCreds, force: false) }
+    }
+
+    /// Back in the foreground: a link that still reads "connected" may sit on a socket the system killed while the app
+    /// was suspended. PING it; without a PONG within timeoutMs, reconnect at once (instead of waiting for 3 missed
+    /// PINGs, 60 s or more). offline / host-offline reconnect now; revoked and stopped stay as they are.
+    public func checkNow(timeoutMs: Int = 3_000) {
         loop.exec { [self] in
-            if let newCreds { creds = newCreds }
-            if !running { running = true; attempt = 0; connect(); return }
-            if (state == "connecting" || state == "connected") && newCreds == nil { return }
-            generation += 1
-            retryTimer?.cancel(); retryTimer = nil
-            let ch = channel
-            channel = nil
-            ch?.close(ChannelError("closed", "reconnecting"))
-            socket?.close(1000)
-            socket = nil
-            attempt = 0
-            connect()
+            if !running || state == "revoked" || state == "stopped" { return }
+            guard state == "connected", let ch = channel, !ch.closed else { return reconnect(nil, force: false) }
+            var answered = false
+            let dead = { [weak self] in
+                guard let self, self.channel === ch else { return }
+                self.log("remote device: no PONG after resuming, reconnecting")
+                self.reconnect(nil, force: true)
+            }
+            ch.ping { err in
+                if answered { return }
+                answered = true
+                if err != nil { dead() }
+            }
+            loop.schedule(timeoutMs) {
+                if answered { return }
+                answered = true
+                dead()
+            }
         }
+    }
+
+    /// Loop.
+    private func reconnect(_ newCreds: HostCreds?, force: Bool) {
+        if let newCreds { creds = newCreds }
+        if !running { running = true; attempt = 0; connect(); return }
+        if (state == "connecting" || state == "connected") && newCreds == nil && !force { return }
+        generation += 1
+        retryTimer?.cancel(); retryTimer = nil
+        let ch = channel
+        channel = nil
+        ch?.close(ChannelError("closed", "reconnecting"))
+        socket?.close(1000)
+        socket = nil
+        attempt = 0
+        connect()
     }
 
     /// The usable channel: at once when connected, after the attempt when connecting (max ms), otherwise fail at once

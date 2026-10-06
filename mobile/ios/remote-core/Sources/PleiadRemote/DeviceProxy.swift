@@ -19,7 +19,7 @@ import Foundation
 //
 // iOS: the system reclaims the listening socket while the app is suspended. The shell calls resumeForeground() when
 // the app becomes active again: it listens on the same port (same origin, so web/'s localStorage and the cookie stay)
-// and reconnects the link at once (ADR 0141).
+// and checks the link (DeviceLink.checkNow: PING, reconnect without a PONG in 3 s) (ADR 0141).
 
 /// Strings the proxy shows (the app supplies them from its localization).
 public protocol ProxyTexts {
@@ -157,7 +157,7 @@ public final class DeviceProxy {
     }
 
     /// Back in the foreground (iOS reclaims listening sockets of suspended apps): listen again on the same port and
-    /// reconnect now. Returns true when the port had to change (the shell then reloads the WebView with `url`).
+    /// check the link (reconnect now when it is down or does not answer a PING). Returns true when the port had to change (the shell then reloads the WebView with `url`).
     @discardableResult
     public func resumeForeground() throws -> Bool {
         if closed { return false }
@@ -168,7 +168,7 @@ public final class DeviceProxy {
         lock.unlock()
         prev?.close()
         serve(try listen(old))
-        link.retryNow()
+        link.checkNow()
         return port != old
     }
 
@@ -554,8 +554,11 @@ var b=document.getElementById('back-to-hosts');if(typeof window.backToHosts==='f
             s.close()
             // Credit for anything we'll never deliver
             for ev in q.drain() { ev.release() }
-            // Late host messages after this point: release immediately
-            loop.post { if !stream.destroyed { stream.listener = StreamListener() } }
+            // Late host messages after this point: release immediately, and release what got queued before the swap
+            loop.post {
+                if !stream.destroyed { stream.listener = StreamListener() }
+                for ev in q.drain() { ev.release() }
+            }
         }
         do {
             events: while true {

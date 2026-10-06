@@ -20,7 +20,7 @@ iOS はアプリを背面に回すとすぐに止め、そのアプリのソケ�
 
 1. **端末側は Swift に移す。** `mobile/ios/remote-core/` に Swift Package `PleiadRemote` を置き、Android の `remote-core` を 1 対 1 で移す（X25519・Noise・Frames・Channel・Loop・RelaySocket・Pairing・DeviceLink・DeviceProxy + RFC 6455 の小さな実装・LinkPolicy・ResumePolicy・端末の保管）。通知（`Notify*`）は移さない。Capacitor の iOS の殻（第 2 段階。`mobile/ios/App/` に置く予定）はこれをローカルの package として使う。
 2. **画面は A 案（ループバックで待ち受けるプロキシ）。** 背面で止まるのは B 案でも同じなので、A 案は「前面に戻ったら同じポートで待ち受け直し、すぐ張り直す」で足りる。
-   - 殻はアプリが前面に戻ったとき（`sceneDidBecomeActive`）に `RemoteDevice.resumeForeground()` を呼ぶ。開いているプロキシは同じポートで待ち受け直し（POSIX では `SO_REUSEADDR` を付けて、TIME_WAIT が残っていても同じポートに戻れるようにする）、中継への線を待たずに張り直す。画面は既存の再接続（1.5 秒ごと、`ready` のあと読み直し）で追いつく。ストリームは持ち越さない（§4.4）ので、作り直す状態は無い。
+   - 殻はアプリが前面に戻ったとき（`sceneDidBecomeActive`）に `RemoteDevice.resumeForeground()` を呼ぶ。開いているプロキシは同じポートで待ち受け直し（POSIX では `SO_REUSEADDR` を付けて、TIME_WAIT が残っていても同じポートに戻れるようにする）、中継への線を確かめる。「つながっている」のままの線には PING を送り、3 秒で PONG が返らなければすぐ張り直す（OS に切られたソケットに気づくのを、PING 3 回分の 60 秒以上待たない）。切れていると分かっている線（offline・host-offline）はすぐ張り直す。画面は既存の再接続（1.5 秒ごと、`ready` のあと読み直し）で追いつく。ストリームは持ち越さない（§4.4）ので、作り直す状態は無い。
    - 同じポートに戻るので、オリジン（`http://127.0.0.1:<p>`）が変わらず、`web/` の localStorage（最後の会話）とプロキシの Cookie が残る。ほかのアプリがそのポートを取っていたときだけ別のポートへ移り、`resumeForeground()` がそのホストを返すので、殻は新しい URL で読み直す。
    - 背面で線を保つための延長（`beginBackgroundTask` など）はしない。
 3. **待ち受けは Network.framework の `NWListener` ではなく BSD ソケットにする**（§8.3 の表の「Swift は NWListener」を改める）。`127.0.0.1` だけで待ち受ける小さなサーバーには、Network.framework の利点（経路の監視・TLS・Bonjour）が要らない。BSD ソケット（Windows は Winsock）なら同じコードが Windows・Linux・macOS の `swift test` で動き、iOS で動く経路をそのまま手元で試せる。

@@ -160,7 +160,7 @@ public enum JSON: Equatable {
                     try expect(":")
                     skipSpace()
                     let v = try value(depth: depth + 1)
-                    if o[k] == nil { o[k] = v }
+                    o[k] = v   // the last one wins, like JSON.parse
                     skipSpace()
                     guard i < b.count else { throw ParseError() }
                     if b[i] == UInt8(ascii: ",") { i += 1; continue }

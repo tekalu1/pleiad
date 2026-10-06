@@ -65,16 +65,41 @@ private func newSocket() throws -> SocketHandle {
     return s
 }
 
-private func closeHandle(_ s: SocketHandle) {
+/// Wakes threads blocked in recv / send on the handle (the number stays allocated).
+private func shutdownHandle(_ s: SocketHandle) {
     #if os(Windows)
     _ = WinSDK.shutdown(s, Int32(SD_BOTH))
-    _ = closesocket(s)
     #elseif canImport(Darwin)
     _ = Darwin.shutdown(s, SHUT_RDWR)
-    _ = Darwin.close(s)
     #else
     _ = shutdown(s, Int32(SHUT_RDWR))
+    #endif
+}
+
+/// Frees the handle; its number can be reused by the next socket() / accept() right away.
+private func releaseHandle(_ s: SocketHandle) {
+    #if os(Windows)
+    _ = closesocket(s)
+    #elseif canImport(Darwin)
+    _ = Darwin.close(s)
+    #else
     _ = close(s)
+    #endif
+}
+
+private func closeHandle(_ s: SocketHandle) {
+    shutdownHandle(s)
+    releaseHandle(s)
+}
+
+/// Waits until the handle is readable (a listener: a connection is pending, or the listener broke). false on timeout.
+private func pollReadable(_ s: SocketHandle, _ ms: Int32) -> Bool {
+    #if os(Windows)
+    var p = WSAPOLLFD(fd: s, events: Int16(POLLRDNORM), revents: 0)
+    return WSAPoll(&p, 1, ms) != 0
+    #else
+    var p = pollfd(fd: s, events: Int16(POLLIN), revents: 0)
+    return poll(&p, 1, ms) != 0
     #endif
 }
 
@@ -92,10 +117,15 @@ func ipv4Address(_ host: String) -> UInt32? {
     return v
 }
 
+/// A connected socket. close() may come from any thread while another thread reads or writes: it shuts the socket down
+/// at once (waking blocked calls) but frees the handle only when no call is using it, so a reused handle number never
+/// reaches a thread that still holds the old one.
 public final class TcpSocket {
     private let lock = NSLock()
-    private var handle: SocketHandle
+    private let handle: SocketHandle
     private var isClosed = false
+    private var inUse = 0
+    private var released = false
 
     init(_ handle: SocketHandle) { self.handle = handle }
 
@@ -125,50 +155,66 @@ public final class TcpSocket {
         return sock
     }
 
-    private var current: SocketHandle? {
-        lock.lock(); defer { lock.unlock() }
-        return isClosed ? nil : handle
+    /// Run fn with the handle unless closed; the handle is not freed while fn runs.
+    private func using<R>(_ fn: (SocketHandle) -> R) -> R? {
+        lock.lock()
+        if isClosed { lock.unlock(); return nil }
+        inUse += 1
+        lock.unlock()
+        let r = fn(handle)
+        lock.lock()
+        inUse -= 1
+        let free = isClosed && inUse == 0 && !released
+        if free { released = true }
+        lock.unlock()
+        if free { releaseHandle(handle) }
+        return r
     }
 
     func setNoDelay() {
-        guard let s = current else { return }
-        var one: Int32 = 1
-        #if os(Windows)
-        _ = withUnsafePointer(to: &one) {
-            $0.withMemoryRebound(to: CChar.self, capacity: 4) { setsockopt(s, IPPROTO_TCP.rawValue, TCP_NODELAY, $0, 4) }
+        _ = using { s in
+            var one: Int32 = 1
+            #if os(Windows)
+            _ = withUnsafePointer(to: &one) {
+                $0.withMemoryRebound(to: CChar.self, capacity: 4) { setsockopt(s, IPPROTO_TCP.rawValue, TCP_NODELAY, $0, 4) }
+            }
+            #else
+            _ = setsockopt(s, Int32(IPPROTO_TCP), TCP_NODELAY, &one, socklen_t(MemoryLayout<Int32>.size))
+            #endif
         }
-        #else
-        _ = setsockopt(s, Int32(IPPROTO_TCP), TCP_NODELAY, &one, socklen_t(MemoryLayout<Int32>.size))
-        #endif
     }
 
     /// Receive timeout (0 = none). A read that times out throws SocketError(timedOut: true).
     func setReadTimeout(ms: Int) {
-        guard let s = current else { return }
-        #if os(Windows)
-        var v = DWORD(ms)
-        _ = withUnsafePointer(to: &v) {
-            $0.withMemoryRebound(to: CChar.self, capacity: 4) { setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, $0, 4) }
+        _ = using { s in
+            #if os(Windows)
+            var v = DWORD(ms)
+            _ = withUnsafePointer(to: &v) {
+                $0.withMemoryRebound(to: CChar.self, capacity: 4) { setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, $0, 4) }
+            }
+            #else
+            var tv = timeval(tv_sec: ms / 1000, tv_usec: .init((ms % 1000) * 1000))
+            _ = setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))
+            #endif
         }
-        #else
-        var tv = timeval(tv_sec: ms / 1000, tv_usec: .init((ms % 1000) * 1000))
-        _ = setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))
-        #endif
     }
 
     /// Read up to max bytes. 0 = the peer closed. Throws on errors and timeouts.
     func read(_ buf: inout Bytes, max: Int) throws -> Int {
-        guard let s = current else { throw SocketError(description: "socket closed") }
         if buf.count < max { buf = Bytes(repeating: 0, count: max) }
-        let n = buf.withUnsafeMutableBytes { p -> Int in
-            #if os(Windows)
-            Int(recv(s, p.baseAddress!.assumingMemoryBound(to: CChar.self), Int32(max), 0))
-            #else
-            recv(s, p.baseAddress!, max, 0)
-            #endif
+        // (bytes, error), the error read before the handle may be freed
+        let result: (Int, Int32)? = using { s in
+            let n = buf.withUnsafeMutableBytes { p -> Int in
+                #if os(Windows)
+                Int(recv(s, p.baseAddress!.assumingMemoryBound(to: CChar.self), Int32(max), 0))
+                #else
+                recv(s, p.baseAddress!, max, 0)
+                #endif
+            }
+            return (n, n < 0 ? lastError() : 0)
         }
+        guard let (n, e) = result else { throw SocketError(description: "socket closed") }
         if n < 0 {
-            let e = lastError()
             #if os(Windows)
             let timeout = e == WSAETIMEDOUT
             #else
@@ -181,33 +227,40 @@ public final class TcpSocket {
 
     /// Write everything (blocking).
     func write(_ data: Bytes) throws {
-        guard let s = current else { throw SocketError(description: "socket closed") }
-        var off = 0
-        while off < data.count {
-            let n = data.withUnsafeBytes { p -> Int in
-                let base = p.baseAddress! + off
-                let len = Swift.min(data.count - off, 1 << 20)
-                #if os(Windows)
-                return Int(send(s, base.assumingMemoryBound(to: CChar.self), Int32(len), 0))
-                #elseif canImport(Darwin)
-                return send(s, base, len, 0)
-                #else
-                return send(s, base, len, Int32(MSG_NOSIGNAL))
-                #endif
+        // nil = closed; .some(nil) = all written; .some(e) = send failed with e
+        let outcome: Int32?? = using { s in
+            var off = 0
+            while off < data.count {
+                let n = data.withUnsafeBytes { p -> Int in
+                    let base = p.baseAddress! + off
+                    let len = Swift.min(data.count - off, 1 << 20)
+                    #if os(Windows)
+                    return Int(send(s, base.assumingMemoryBound(to: CChar.self), Int32(len), 0))
+                    #elseif canImport(Darwin)
+                    return send(s, base, len, 0)
+                    #else
+                    return send(s, base, len, Int32(MSG_NOSIGNAL))
+                    #endif
+                }
+                if n <= 0 { return Optional(lastError()) }
+                off += n
             }
-            if n <= 0 { throw SocketError(description: "send failed (\(lastError()))") }
-            off += n
+            return Optional<Int32>.none
         }
+        guard let failed = outcome else { throw SocketError(description: "socket closed") }
+        if let e = failed { throw SocketError(description: "send failed (\(e))") }
     }
 
-    /// Close (idempotent, any thread). Wakes a thread blocked in read.
+    /// Close (idempotent, any thread). Wakes a thread blocked in read; the last user frees the handle.
     public func close() {
         lock.lock()
         if isClosed { lock.unlock(); return }
         isClosed = true
-        let s = handle
+        let free = inUse == 0
+        if free { released = true }
         lock.unlock()
-        closeHandle(s)
+        shutdownHandle(handle)
+        if free { releaseHandle(handle) }
     }
 }
 
@@ -248,10 +301,15 @@ final class SocketReader {
 }
 
 /// A listener on 127.0.0.1 (never on other interfaces).
+/// accept() waits in short poll() slices, so close() never frees the handle under a blocked accept() (a reused number
+/// would hand the next listener's connections to the old accept loop). close() waits for the slice to end (<= 250 ms)
+/// and then frees the port, so listening again on the same port right after works.
 final class TcpListener {
-    private let lock = NSLock()
+    private let cond = NSCondition()
     private let handle: SocketHandle
     private var isClosed = false
+    private var accepting = false
+    private var released = false
     let port: Int
 
     /// port 0 = any free port. Throws when the port is taken.
@@ -297,34 +355,58 @@ final class TcpListener {
         self.port = Int(UInt16(bigEndian: bound.sin_port))
     }
 
-    /// The next connection (blocking). Throws once closed.
+    /// The next connection (blocking). Throws once closed, or when the listener broke (iOS reclaims the listening
+    /// sockets of suspended apps).
     func accept() throws -> TcpSocket {
-        lock.lock()
-        let closed = isClosed
-        lock.unlock()
-        if closed { throw SocketError(description: "listener closed") }
-        #if os(Windows)
-        let c = WinSDK.accept(handle, nil, nil)
-        #elseif canImport(Darwin)
-        let c = Darwin.accept(handle, nil, nil)
-        #else
-        let c = Glibc.accept(handle, nil, nil)
-        #endif
-        if c == invalidSocket { throw SocketError(description: "accept failed (\(lastError()))") }
-        #if canImport(Darwin)
-        var one: Int32 = 1
-        _ = setsockopt(c, SOL_SOCKET, SO_NOSIGPIPE, &one, socklen_t(MemoryLayout<Int32>.size))
-        #endif
-        let sock = TcpSocket(c)
-        sock.setNoDelay()
-        return sock
+        while true {
+            cond.lock()
+            if isClosed { cond.unlock(); throw SocketError(description: "listener closed") }
+            accepting = true
+            cond.unlock()
+            var c = invalidSocket
+            var err: Int32 = 0
+            if pollReadable(handle, 250) {
+                #if os(Windows)
+                c = WinSDK.accept(handle, nil, nil)
+                #elseif canImport(Darwin)
+                c = Darwin.accept(handle, nil, nil)
+                #else
+                c = Glibc.accept(handle, nil, nil)
+                #endif
+                if c == invalidSocket { err = lastError() }
+            }
+            cond.lock()
+            accepting = false
+            let closed = isClosed
+            cond.broadcast()
+            cond.unlock()
+            if closed {
+                if c != invalidSocket { closeHandle(c) }
+                throw SocketError(description: "listener closed")
+            }
+            if c == invalidSocket {
+                if err != 0 { throw SocketError(description: "accept failed (\(err))") }
+                continue      // the poll slice ended without a connection
+            }
+            #if canImport(Darwin)
+            var one: Int32 = 1
+            _ = setsockopt(c, SOL_SOCKET, SO_NOSIGPIPE, &one, socklen_t(MemoryLayout<Int32>.size))
+            #endif
+            let sock = TcpSocket(c)
+            sock.setNoDelay()
+            return sock
+        }
     }
 
+    /// Stop listening and free the port (waits for a running accept slice to end, at most about 250 ms).
     func close() {
-        lock.lock()
-        if isClosed { lock.unlock(); return }
+        cond.lock()
+        if isClosed { cond.unlock(); return }
         isClosed = true
-        lock.unlock()
-        closeHandle(handle)
+        while accepting { cond.wait() }
+        let free = !released
+        released = true
+        cond.unlock()
+        if free { closeHandle(handle) }
     }
 }

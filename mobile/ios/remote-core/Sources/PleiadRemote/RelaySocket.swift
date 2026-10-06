@@ -178,11 +178,14 @@ private final class URLSessionRelayDriver: NSObject, RelayDriver, URLSessionWebS
         config.httpCookieStorage = nil
         config.httpShouldSetCookies = false
         config.urlCache = nil
+        // The request timeout may also act as an idle timer on the open socket (a pairing waits minutes for approval
+        // with nothing on the wire), so keep it long: awaitOpen() enforces the opening deadline itself.
+        config.timeoutIntervalForRequest = 7 * 24 * 3600
         let queue = OperationQueue()
         queue.maxConcurrentOperationCount = 1
         // The session holds its delegate (this driver) until it is invalidated when the task ends.
         session = URLSession(configuration: config, delegate: self, delegateQueue: queue)
-        var req = URLRequest(url: url, timeoutInterval: Double(openTimeoutMs) / 1000)
+        var req = URLRequest(url: url, timeoutInterval: 7 * 24 * 3600)
         for (k, v) in headers { req.setValue(v, forHTTPHeaderField: k) }
         task = session.webSocketTask(with: req)
         task.maximumMessageSize = 1 << 20
@@ -222,6 +225,9 @@ private final class URLSessionRelayDriver: NSObject, RelayDriver, URLSessionWebS
 
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
         lock.lock(); let wasOpen = opened; lock.unlock()
+        let code = self.task.closeCode
+        // A close code (4401, 4404, …) settles the opening too: report it before any generic error
+        if code != .invalid { owner?.markClosed(code.rawValue, self.task.closeReason.map { String(decoding: $0, as: UTF8.self) } ?? "") }
         if !wasOpen {
             if let r = task.response as? HTTPURLResponse, r.statusCode != 101 {
                 owner?.settleOpen(OpenResult(status: r.statusCode))
@@ -229,8 +235,7 @@ private final class URLSessionRelayDriver: NSObject, RelayDriver, URLSessionWebS
                 owner?.settleOpen(OpenResult(error: error.map { "\($0)" } ?? "closed"))
             }
         }
-        let code = self.task.closeCode
-        owner?.markClosed(code != .invalid ? code.rawValue : 1006, "")
+        owner?.markClosed(1006, "")      // no-op when already closed above
         session.invalidateAndCancel()
     }
 
