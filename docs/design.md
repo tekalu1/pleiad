@@ -660,7 +660,7 @@ Claude・Codex 共通の `ply_agents` MCP で、Pleiad 管理の子会話を作�
 
 ## 通話モード（承認済み（2026-10-06））
 
-声で話しかけ、返事を読み上げる。理由と決定は [ADR 9103](adr/9103-voice-call.md)、構成・遅延の設計・測り方・確かめ方は `docs/voice-call.md`、見た目は `docs/design-system.md`「通話モード」。
+声で話しかけ、返事を読み上げる。理由と決定は [ADR 0150](adr/0150-voice-call.md)、構成・遅延の設計・測り方・確かめ方は `docs/voice-call.md`、見た目は `docs/design-system.md`「通話モード」。
 
 - **通話**: 頭の通話ボタンで始める。ホスト（`core/voice/`）が OpenRouter の STT（既定 `microsoft/mai-transcribe-2`。429 は予備 `assemblyai/universal-3-5-pro`）と TTS（既定 `x-ai/grok-voice-tts-1.0`）を呼ぶ。確定した発言は画面が今の送信の経路（会話は `sendMessage`、スレッドは `channels.post`）へ送り、返事の `text.delta` から読み上げる。コード・表・長い作業ログは読まず「コードは画面に出しました」と言う。話して割り込むのは 2 段目で、いまは［ミュート］・スピーカーのミュート・［止める］まで。
 - **`/voice-ws`**: 音声専用の WebSocket（上りは 16kHz s16le のバイナリ + JSON の制御、下りは JSON + `[1][文の id][PCM 24kHz]`）。`/ws` と同じ `token`。**この PC の画面からだけ**（中継越しは 403。`ready.voice` は 0）。プロトコルは `core/voice/session.mjs` の冒頭。

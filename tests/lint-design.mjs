@@ -35,7 +35,7 @@ const FAM = {
   onfill:  n => n === '--on-fill',
   shadow:  n => n === '--shadow',
   diff:    n => n.startsWith('--diff-'),   /* git の差分と状態の文字だけ（ADR 0135）。使える場所は DIFF_FILE */
-  glow:    n => n.startsWith('--glow-'),   /* 通話中のメインの背景（radial-gradient）だけ（ADR 9103）。使える場所は GLOW_FILE */
+  glow:    n => n.startsWith('--glow-'),   /* 通話中のメインの背景（radial-gradient）だけ（ADR 0150）。使える場所は GLOW_FILE */
 };
 /* プロパティごとに許す族。ここに無い族のトークンを色のプロパティに書いたら落とす。 */
 const ALLOW = {
