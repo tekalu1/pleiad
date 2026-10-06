@@ -2,6 +2,8 @@
 
 Android 版（`mobile/`、Capacitor 8）の署名済み APK は、`main` への push で Android に効く変更があったときに GitHub Release へ自動で出る。デスクトップのリリース（[desktop-releases.md](desktop-releases.md)）とは別の流れで、別のタグを使う（[ADR 0066](adr/0066-android-release-on-main-push.md)）。ワークフローは `.github/workflows/android-release.yml`。
 
+Google Play へは、同じ鍵・同じ版の決め方の AAB を、手動のワークフロー `.github/workflows/android-play.yml` で上げる（下の「[Google Play](#google-play)」、[ADR 0141](adr/0141-android-play-distribution.md)）。
+
 ## いつ出るか
 
 `main` への push のうち、次のいずれかに変更があるとき。
@@ -64,6 +66,87 @@ PLY_ANDROID_KEY_PASSWORD=…
 離れていても届く通知（[ADR 0086](adr/0086-notifications-through-relay.md)）のため、APK は `POST_NOTIFICATIONS`・`FOREGROUND_SERVICE`・`FOREGROUND_SERVICE_REMOTE_MESSAGING`・`RECEIVE_BOOT_COMPLETED` を宣言する。通知の許可はインストール時には尋ねず、利用者が通知をオンにしたときに尋ねる。前面サービス（`NotifyService`、`remoteMessaging`）は通知がオンの間だけ動き、端末の再起動・アプリの更新の後は `BootReceiver` が戻す。Google Play 開発者サービス（FCM）には依存しない。
 
 `./gradlew :remote-core:test` には通知の試験（`NotifyCryptoTest`: 暗号と Node との突き合わせ、`NotifyPlannerTest`: 束ね方・上書き・取り消し、`NotifyInteropTest`: Node の中継と fake のホストを相手にした登録・受信・溜めて渡す）が入る。`NotifyInteropTest` は `node` が PATH に無いとき（または `-Dpleiad.interop=off`）は飛ばす。
+
+## Google Play
+
+GitHub Release の APK の流れはそのまま残し、Google Play へは同じ鍵（Play App Signing のアプリ署名鍵に今の鍵を登録する）・同じ `versionCode` の決め方の AAB を、人が決めたときに上げる（[ADR 0141](adr/0141-android-play-distribution.md)）。同じ鍵なので、GitHub の APK を入れた端末は入れ直さずに Play の版へ移れる（逆も同じ）。端末は、入っているものより `versionCode` が大きい方から更新を受け取る。
+
+申請に要る資料の下書きは [play-store/](play-store/) にある（掲載文・前面サービスの申告・審査員向けのアクセス方法・データセーフティ・コンテンツのレーティング）。プライバシーポリシーはサイトの `site/privacy/`（https://pleiad.dev/privacy/ ）で、アプリのホスト一覧の下からも開ける。
+
+### ワークフロー（Android Play upload）
+
+Actions の画面で「Android Play upload」を `main` で手動で実行する（`main` 以外では最初の手順で止まる）。push では動かない。
+
+| 入力 | 既定 | 意味 |
+|---|---|---|
+| `track` | `internal` | 上げ先のトラック。`internal`（内部テスト）・`alpha`（既定のクローズドテスト）・自分で作ったクローズドテストのトラックの名前。`production`・`beta`（オープンテスト）・`wear:` などのフォームファクターのトラックは弾く |
+| `status` | `draft` | `draft`（下書き。Play Console で確かめてから公開する）・`completed`（すぐ公開）・`inProgress`（段階公開） |
+| `user_fraction` | 空 | 段階公開で配る割合（0 より大きく 1 より小さい）。`inProgress` のときだけ書く。Google の説明では段階公開は製品版のトラックのもので、テストのトラックでは Play がエラーを返すことがある |
+| `changes_not_sent_for_review` | オフ | 変更を審査へ送らずに残す（Play が「自動では審査に送れない」と返したときに使い、Play Console から送る） |
+
+流れ: 入力と Secrets の確かめ → ルートと `mobile/` の `npm ci` → `npx cap sync android` → `./gradlew :remote-core:test` → 版の決定（APK の流れと同じ行） → 署名付き `bundleRelease` → `jarsigner -verify` と `keytool -printcert -jarfile` で署名と証明書の SHA-256 を照合（AAB は jar の署名なので `apksigner` は使わない） → Google Play Developer API で上げる（`r0adkll/upload-google-play`、版は commit の SHA で固定） → 鍵を消す。リリース名は `versionName`。
+
+| 種類 | 名前 | 内容 |
+|---|---|---|
+| Secret | `PLY_ANDROID_PLAY_SERVICE_ACCOUNT_JSON` | サービスアカウントの鍵の JSON の全文（下の「サービスアカウント」） |
+| Secret・変数 | `PLY_ANDROID_KEYSTORE_*`・`PLY_ANDROID_KEY_*`・`PLY_ANDROID_CERT_SHA256` | APK と同じ署名鍵（上の「署名鍵」）。既定ではこれをアップロード鍵にも使う |
+| Secret・変数（任意） | `PLY_ANDROID_UPLOAD_KEYSTORE_BASE64`・`PLY_ANDROID_UPLOAD_KEYSTORE_PASSWORD`・`PLY_ANDROID_UPLOAD_KEY_ALIAS`・`PLY_ANDROID_UPLOAD_KEY_PASSWORD`・`PLY_ANDROID_UPLOAD_CERT_SHA256` | 別のアップロード鍵を Play に登録したときだけ。5 つ全部あればこちらで署名し、APK の鍵の Secrets は使わない。一部だけなら止まる |
+
+どれかが足りない・サービスアカウントの JSON の形でない・入力の組み合わせがおかしい（`inProgress` に割合が無い、`draft` に割合がある、など）ときは、ビルドの前に `::error::` で名前を出して止まる。Secrets の値はログに出さない（壊れた JSON の例外も出さない）。`tests/unit/android-play-workflow.mjs` が、この確かめを bash で流し、APK の流れと版の決め方・署名鍵の Secrets・アクションの版が同じことを突き合わせる。
+
+注意:
+
+- **まだ一度も公開していないアプリには、下書き（`draft`）しか作れない**（Play の API が拒む）。最初は `draft` で上げ、Play Console で内部テストへロールアウトする。
+- **同じ `versionCode` は二度と上げられない。** 同じコミットでやり直すと Play が拒むので、新しいコミットを `main` に入れてから上げ直す。上げた AAB を別のトラックへ移すときは、Play Console でリリースを昇格させる。
+- 実行は 1 つずつ順に走る（`concurrency: android-play`）。
+
+手元で AAB を作るときは、`mobile/android` で `./gradlew bundleRelease -PplyVersionCode=<整数> -PplyVersionName=<文字列>`。出力は `mobile/android/app/build/outputs/bundle/release/app-release.aab`。署名は APK と同じく `PLY_ANDROID_KEYSTORE` ほかの環境変数があるときだけ付く（無ければ署名なし）。2026-10-06 に JDK 23・Android SDK（platform 36）で、署名なし・使い捨ての鍵での署名つきの両方が通ることを確かめた。
+
+### Play Console でやること（順番）
+
+アカウントの操作は人が行う。鍵の控え・PEPK の出力・サービスアカウントの JSON は、リポジトリ（`temporary/` も含む）に置かない。
+
+1. **開発者アカウントを作る（個人）。** Google アカウントで Play Console に登録し、デベロッパー配布契約に同意して登録料 25 米ドルを払う（18 歳以上）。デベロッパー名・法的な氏名と住所・連絡先のメールと電話番号・デベロッパーのメールを入れる。Google Play に出るのは、法的な氏名・国（住所から）・デベロッパーのメールで、収益化すると住所全体も出る。連絡先の電話番号とメールは出ない。[^start][^info]
+2. **本人確認を済ませる。** 政府発行の身分証で本人確認をし、連絡先の電話とメールを確かめる。新しい個人アカウントは、Play Console のモバイルアプリで実機の Android 端末を持っていることも確かめる（済まないとアプリを公開できない）。[^verify]
+3. **サイトのプライバシーポリシーを公開する。** `main` に入れると Cloudflare がサイトを出し直す（[site/README.md](../site/README.md)）。https://pleiad.dev/privacy/ が開けることを確かめる。
+4. **アプリを作る。** 既定の言語（日本語）・アプリ名「Pleiad」（30 字まで）・アプリ（ゲームではない）・無料・連絡先のメールを入れ、宣言（デベロッパー プログラム ポリシー・米国の輸出法・Play App Signing の利用規約）に同意する。パッケージ名は最初に上げる AAB の `com.procway.pleiad` になり、後から変えられない。[^create]
+5. **アプリのコンテンツ（申告）を埋める。** 下書きは [play-store/](play-store/)。
+   - プライバシーポリシー: https://pleiad.dev/privacy/
+   - 広告: 無し
+   - アプリへのアクセス: [play-store/app-access.md](play-store/app-access.md)（ホストとのペアリングが要るので、審査用のホストを用意する）
+   - コンテンツのレーティング: [play-store/content-rating.md](play-store/content-rating.md)
+   - ターゲット層: 18 歳以上だけ（[play-store/content-rating.md](play-store/content-rating.md)）
+   - データセーフティ: [play-store/data-safety.md](play-store/data-safety.md)
+   - 前面サービス（AAB を上げた後に出る）: [play-store/foreground-service.md](play-store/foreground-service.md)。動画が要る
+   - ニュース・政府・金融・健康などの申告: どれも当てはまらない
+6. **ストアの掲載情報を入れる。** 文は [play-store/listing.md](play-store/listing.md)。アイコン（512×512 の PNG）・フィーチャー グラフィック（1024×500）・スクリーンショット（2 枚以上）が要る。[^listing]
+7. **Play App Signing に今の鍵を登録する（最初のリリースを出す前に）。** 新しいアプリは、既定で Google が作る鍵になる。自分の鍵に変えられるのは、オープンテストか製品版にリリースを出す前まで。[^signing]
+   1. 鍵が条件を満たすか確かめる: `keytool -list -v -storetype PKCS12 -keystore <keystore>`。自分の鍵は RSA 2048 ビット以上が要る（「2048 ビット RSA 鍵」以上と出ること）。証明書の SHA-256 が変数 `PLY_ANDROID_CERT_SHA256` と同じことも見る。
+   2. Play Console の［Google Play による保護］→［Google Play ストアでの配信］→［Play アプリ署名に移動］で［アプリ署名鍵を変更］を押す。
+   3. Java キーストアから鍵を書き出して上げる選択肢（英語の画面では「Export and upload a key from Java keystore」）を選び、画面の PEPK と暗号化の公開鍵を落とす。画面に出るコマンド（`java -jar pepk.jar --keystore=<keystore> --alias=<別名> --output=<出力.zip> --include-cert --rsa-aes-encryption --encryption-key-path=<公開鍵>` の形）を、そのまま手元で実行して鍵を暗号化し、出力の ZIP を上げる。
+   4. アップロード鍵: 既定では同じ鍵を使う（ワークフローは APK の Secrets で署名する）。Google はアプリ署名鍵と別の鍵を勧めている。別にするなら `keytool -genkeypair -storetype PKCS12 -keyalg RSA -keysize 4096 …` で作り、証明書（`keytool -export -rfc …`）を Play に登録し、ワークフローの `PLY_ANDROID_UPLOAD_*` を入れる。アップロード鍵は失くしても Play にリセットを頼めるが、アプリ署名鍵は失くすと戻せない。
+   5. 登録後、Play アプリ署名のページの「アプリ署名鍵の証明書」の SHA-256 が `PLY_ANDROID_CERT_SHA256` と同じことを確かめる。PEPK の出力の ZIP は消す。
+8. **サービスアカウントを作り、Play に招待する。** Play Console の「API アクセス」でプロジェクトをつなぐ手順は要らなくなった。[^api]
+   1. Google Cloud Console でプロジェクトを作り、「Google Play Android Developer API」を有効にする。
+   2. サービスアカウントを作る（Cloud の役割は付けなくてよい）。鍵（JSON）を作って落とす。
+   3. Play Console の「ユーザーと権限」→「新しいユーザーを招待」で、サービスアカウントのメールアドレスを入れ、Pleiad のアプリにテストのトラックへリリースする権限を与える。
+   4. GitHub の Secret `PLY_ANDROID_PLAY_SERVICE_ACCOUNT_JSON` に JSON の全文を入れ、手元の JSON を消す。
+9. **最初の AAB を上げる。** 「Android Play upload」を `track: internal`・`status: draft` で実行する。Play Console で内部テストのテスター（自分のアカウント）を決めてロールアウトする。内部テストは 100 人まで・アプリの設定が終わっていなくても作れる。[^testing] ここで前面サービスの申告が出るので、5 の申告を済ませる。
+10. **鍵が同じことを実機で確かめる。** GitHub の APK が入った端末で、テスターの登録の後に Play から更新し、入れ直し無しで上書きされ、ペアリングしたホストが残ることを見る。
+11. **クローズドテストを 14 日続ける。** 既定のクローズドテストのトラックにテスターのリスト（メールアドレスのリストか Google グループ）を付け、配布する国を選び、ワークフローを `track: alpha` で実行するか内部テストのリリースを昇格させて、審査に出す。テスターは参加用のリンクから参加する。**12 人以上が 14 日続けて参加**している必要があり、途中で抜けて入り直した人は数え直しになる。内部テストは数えない。[^test-req][^testing]
+12. **製品版を申請する。** ダッシュボードの「製品版へのアクセスを申請」で、クローズドテスト（テスターの集め方・使われた機能・フィードバック）・アプリ（対象の利用者・価値・1 年目のインストール数の見込み）・準備（テストで直したこと）について答える。審査はふつう 7 日以内。[^test-req]
+13. **（任意）APK の配布もデベロッパー検証に登録する。** Google は、2026 年 9 月 30 日からブラジル・インドネシア・シンガポール・タイで、2027 年からほかの国でも、認定された端末に入るアプリに登録済みのデベロッパーであることを求める。Play のアプリは Play が登録し、Play の外で配るものは Play Console で登録できる。GitHub の APK は同じパッケージ名・同じ鍵なので、Play Console で登録の状態を確かめる。[^devverify]
+
+[^start]: Google Play Console を使ってみる — https://support.google.com/googleplay/android-developer/answer/6112435
+[^info]: Google Play Console デベロッパー アカウントを作成する場合に必要な情報 — https://support.google.com/googleplay/android-developer/answer/13628312
+[^verify]: デベロッパーの身元確認情報を認証する — https://support.google.com/googleplay/android-developer/answer/10841920
+[^create]: アプリを作成して設定する — https://support.google.com/googleplay/android-developer/answer/9859152
+[^listing]: プレビュー用アセットを追加してアプリをアピールする — https://support.google.com/googleplay/android-developer/answer/9866151
+[^signing]: Play アプリ署名を使用する — https://support.google.com/googleplay/android-developer/answer/9842756
+[^api]: Google Play Developer API のスタートガイド — https://developers.google.com/android-publisher/getting_started 、APK とトラック — https://developers.google.com/android-publisher/tracks
+[^testing]: オープンテスト版、クローズド テスト版、内部テスト版をセットアップする — https://support.google.com/googleplay/android-developer/answer/9845334
+[^test-req]: 新しい個人用デベロッパー アカウント向けのアプリテスト要件 — https://support.google.com/googleplay/android-developer/answer/14151465
+[^devverify]: Android デベロッパーの確認 — https://developer.android.com/developer-verification
 
 ## デスクトップの自動更新と干渉しない理由
 
