@@ -426,8 +426,8 @@ export default async function (t) {
   {
     const fs = require('node:fs');
     const main = fs.readFileSync(new URL('../../desktop/main.cjs', import.meta.url), 'utf8');
-    t.ok('main.cjs: service を worker につなぎ、Esc の登録の解除はオーバーレイの suspendEscape へ渡す', /attachComputerService\(worker,[\s\S]*?escape: \{ suspend: \(\) => computerOverlay\?\.suspendEscape\(\)/.test(main));
-    t.ok('main.cjs: オーバーレイが Esc を拾ったら service.escape（computer-escape はオーバーレイが送る）', /attachComputerOverlay\(worker, \{ onEscape: owner => computerService\?\.escape\(\{ owner, notify: false \}\) \}\)/.test(main));
+    t.ok('main.cjs: service を worker の message の包み（messages）につなぎ、Esc の登録の解除はオーバーレイの suspendEscape へ渡す', /attachComputerService\(messages,[\s\S]*?escape: \{ suspend: \(\) => computerOverlay\?\.suspendEscape\(\)/.test(main));
+    t.ok('main.cjs: オーバーレイが Esc を拾ったら service.escape（computer-escape はオーバーレイが送る）', /attachComputerOverlay\(messages, \{ onEscape: owner => computerService\?\.escape\(\{ owner, notify: false \}\) \}\)/.test(main));
   }
 
   // ===== オーバーレイとつないだ Esc =====

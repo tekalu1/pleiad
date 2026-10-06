@@ -263,7 +263,7 @@
           "note": "If Chrome shows the prompt again, it keeps waiting. This continues until you press “Allow”."
         },
         "denied": {
-          "status": "“Cancel” was pressed in Chrome",
+          "status": "Chrome didn’t allow the connection",
           "retry": "Try again"
         },
         "connected": {

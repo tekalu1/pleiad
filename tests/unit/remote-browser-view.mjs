@@ -295,7 +295,7 @@ export default async function (t) {
     const relay = read('desktop/browser-relay.cjs');
     t.ok('エージェントの中継は、自分で始めていない画面のフレームを流さない', /method === 'Page\.screencastFrame' && !innerSession && !record\.screencast/.test(relay));
     const main = read('desktop/main.cjs');
-    t.ok('デスクトップ版の main が橋をつなぐ', /attachBrowserScreencastBridge\(worker, browserPanel/.test(main));
+    t.ok('デスクトップ版の main が橋をつなぐ', /attachBrowserScreencastBridge\(messages, browserPanel/.test(main));
     const client = read('web/client.mjs');
     t.ok('画面は screencast の知らせを表示へ渡す', /m\.kind === "screencast"\) return remoteBrowser\.onMessage\(m\)/.test(client));
   }
