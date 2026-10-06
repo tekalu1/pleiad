@@ -1,4 +1,4 @@
-# 0141 端末の AI から、リモートのホストへ作業を委譲する
+# 0146 端末の AI から、リモートのホストへ作業を委譲する
 
 - 状態: 提案
 - [ADR 0013](0013-remote-via-relay-with-noise.md) の「リモートのための機能は足さない」「端末は全権限で、端末ごとの権限は入れない」を、**端末の AI という主体を委譲に限って受ける**ことで一部置き換える。主体と危険度は [ADR 0082](0082-control-surface-principals-and-risk.md)、human-only の範囲は [ADR 0094](0094-human-only-five.md)、委譲の規則は [docs/agent-delegation.md](../agent-delegation.md) に合わせる。[ADR 0010](0010-os-actions-only-on-host-screen.md) は変えない

@@ -1,4 +1,4 @@
-// ローカルのサーバー（utilityProcess）と、ホストへの AI 用の線（core/remote/agent-link.mjs）の間の橋（docs/remote.md §4.5、ADR 0141）。
+// ローカルのサーバー（utilityProcess）と、ホストへの AI 用の線（core/remote/agent-link.mjs）の間の橋（docs/remote.md §4.5、ADR 0146）。
 // サーバーの core/remote-delegation.mjs（parentPortRemoteAgent）が相手。メッセージの形は core/remote/agent-service.mjs に書いてある。
 //   worker -> main: { type: 'remote-agent', id, action: 'hosts' | 'request' | 'abort' | 'answer' | 'sync', … }
 //   main -> worker: { type: 'remote-agent', id, ok, … }（応答）・{ type: 'remote-agent-event' | 'remote-agent-state' | 'remote-agent-hosts' | 'remote-agent-ready', … }

@@ -1916,7 +1916,7 @@ body{padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) 0 env(s
   #titleWand{display:none}
 }
 
-/* ==================== 端末の AI からホストへ任せる（docs/remote.md §4.5、ADR 0141） ====================
+/* ==================== 端末の AI からホストへ任せる（docs/remote.md §4.5、ADR 0146） ====================
    「⇄ ホスト名」「⇄ 端末の AI」の印は、リモートのバッジと同じ差しの青（--ink-blue）。枠・片側の線・色地の札は使わない。
    ホストがオフラインの間は、印の丸を中抜きにして字（title・読み上げ名）でも言う */
 .host-mark,.relay-host,.row-remote,.remote-origin{color:var(--ink-blue);font-size:var(--fs-s);font-weight:600;white-space:nowrap}

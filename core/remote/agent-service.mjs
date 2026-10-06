@@ -1,4 +1,4 @@
-// 端末の main の側の橋（docs/remote.md §4.5、ADR 0141）。ローカルのサーバー（utilityProcess）から parentPort で届く
+// 端末の main の側の橋（docs/remote.md §4.5、ADR 0146）。ローカルのサーバー（utilityProcess）から parentPort で届く
 // { type: 'remote-agent', id, action, … } を、ホストへの AI 用の線（agent-link.mjs。device.mjs が持つ）へ渡し、
 // ホストの便りと線の状態を { type: 'remote-agent-event' | 'remote-agent-state' | 'remote-agent-hosts' } でサーバーへ返す。
 // デスクトップ版の main（desktop/remote-agent-bridge.cjs）とテスト（tests/lib/remote-agent-parent-port.mjs）が同じものを使う。

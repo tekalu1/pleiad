@@ -10,7 +10,7 @@ import { taskTable } from './db.mjs';
 const ACTIVE = new Set(['queued', 'running', 'cancelling']);
 // 完了通知がまだ依頼元に届いていない（終わった直後・送る前・送っている最中）。running にはこの間だけ終わったタスクも載せる
 const UNDELIVERED = new Set(['none', 'pending', 'delivering']);
-// 端末の AI から始まった委譲の鎖の深さの上限（docs/remote.md §4.5、ADR 0141。core/remote/agent-protocol.mjs の AGENT_LIMITS.depth と同じ）。
+// 端末の AI から始まった委譲の鎖の深さの上限（docs/remote.md §4.5、ADR 0146。core/remote/agent-protocol.mjs の AGENT_LIMITS.depth と同じ）。
 // 手元の委譲には深さの上限は無い（2026-09-27 に廃止）
 const REMOTE_DEPTH_MAX = 4;
 // ホストの便りから写しの行へ写す項目（agent-tasks の mirror）。結果・状態・どの委譲先で動いているか

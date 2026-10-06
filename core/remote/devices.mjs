@@ -140,7 +140,7 @@ export function createRemoteStore({ dataDir, cipher = plainCipher }) {
         return hit;
       });
     },
-    /** 端末の AI からの依頼を受けるか（docs/remote.md §4.5、ADR 0141）。既定はオフ。変えられるのは人だけ（server の setRemoteDeviceAgent） */
+    /** 端末の AI からの依頼を受けるか（docs/remote.md §4.5、ADR 0146）。既定はオフ。変えられるのは人だけ（server の setRemoteDeviceAgent） */
     async setAgentDelegation(id, enabled) {
       return lockedDevices(async () => {
         const data = await readDevices();

@@ -1,4 +1,4 @@
-// 端末の AI からの委譲の口 /agent の取り決め（docs/remote.md §4.5、ADR 0141）。ホスト（agent-port.mjs）と端末（agent-link.mjs・
+// 端末の AI からの委譲の口 /agent の取り決め（docs/remote.md §4.5、ADR 0146）。ホスト（agent-port.mjs）と端末（agent-link.mjs・
 // ローカルのサーバーの core/remote-delegation.mjs）が同じ定数と検査を使う。純粋な部品だけ。
 import crypto from 'node:crypto';
 
@@ -7,11 +7,11 @@ export const AGENT_PATH = '/agent';
 export const AGENT_PROTO = 1;
 /** AI の依頼として口に出す操作は、委譲の 6 つだけ（任意の操作を呼ぶ道は無い） */
 export const AGENT_OPS = Object.freeze(['delegate', 'status', 'wait', 'send', 'cancel', 'list']);
-/** 端末ごとの上限（ADR 0141）: 動いているタスク・delegate と send の頻度・1 つの便りの大きさ・同時の依頼 */
+/** 端末ごとの上限（ADR 0146）: 動いているタスク・delegate と send の頻度・1 つの便りの大きさ・同時の依頼 */
 export const AGENT_LIMITS = Object.freeze({ active: 8, perMinute: 20, messageBytes: 256 * 1024, pending: 32, depth: 4, portsPerDevice: 4, pendingPerDevice: 64 });
 /** 完了した便りに載せる結果の長さ（ply_task_status の 1 ページと同じ） */
 export const RESULT_PAGE = 16_000;
-/** 仮の親の ID。端末の会話の ID はホストに無いので、この形で「祖先」として扱う（ADR 0141） */
+/** 仮の親の ID。端末の会話の ID はホストに無いので、この形で「祖先」として扱う（ADR 0146） */
 export const REMOTE_OWNER_PREFIX = 'remote:';
 
 export const remoteOwnerId = (deviceId, sessionId) => `${REMOTE_OWNER_PREFIX}${deviceId}:${sessionId}`;

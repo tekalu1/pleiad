@@ -1,4 +1,4 @@
-// 端末の AI からリモートのホストへ任せる、端末 → 中継 → ホストの往復（docs/remote.md §4.5、docs/agent-delegation.md「リモートのホストへ任せる」、ADR 0141）。
+// 端末の AI からリモートのホストへ任せる、端末 → 中継 → ホストの往復（docs/remote.md §4.5、docs/agent-delegation.md「リモートのホストへ任せる」、ADR 0146）。
 // 本物の中継（relay/server.mjs）をこのプロセスで、ホストと端末のローカルのサーバー（どちらも fake バックエンド）を別プロセスで立てる。
 // 端末のサーバーは main の身代わり（tests/lib/remote-agent-parent-port.mjs。本物と同じ橋 core/remote/agent-service.mjs と、本物の端末の部品）を付けて起こす。
 // 端末の fake の会話から ply_delegate { host } を呼び、状態・完了通知・追加指示・取り消し・中継された承認と人の答え・オフラインの即失敗・

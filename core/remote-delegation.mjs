@@ -1,5 +1,5 @@
 // 端末（デスクトップ版）のローカルのサーバーの側: この PC の AI から、リモートのホストへ作業を任せる
-// （docs/agent-delegation.md「リモートのホストへ任せる」、docs/remote.md §4.5、ADR 0141）。
+// （docs/agent-delegation.md「リモートのホストへ任せる」、docs/remote.md §4.5、ADR 0146）。
 //
 //   parentPortRemoteAgent(port)   main との口。ホストへの依頼（request）・人の答え（answer）・つなぎ直しの同期（sync）と、ホストの便りの受け取り
 //   createRemoteDelegation(deps)  ply_delegate の host・ホストのタスクの写し（agent-tasks の host の行）の追跡と追いつき・中継された承認のカード

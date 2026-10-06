@@ -286,7 +286,7 @@ const mcpOAuth = createMcpOAuth({ secrets: mcpSecrets, lockDir: path.join(store.
 const contextBridge = createContextBridge({ plyMcp, oauth: mcpOAuth });
 // リモートの接続口（docs/remote.md §4.2・§6.1）。既定は無効で、有効にするまで中継へはつながない。
 // 端末からのストリームはこのサーバー自身（localOrigin）へ組み立て直し、UI トークンは接続口が差し込む
-// 端末の AI 用の口 /agent（docs/remote.md §4.5、ADR 0141）。委譲の本体は remoteAgentInvoke（下の「端末の AI からの委譲」）
+// 端末の AI 用の口 /agent（docs/remote.md §4.5、ADR 0146）。委譲の本体は remoteAgentInvoke（下の「端末の AI からの委譲」）
 const remoteAgentPort = createAgentPort({
   allowed: deviceId => remote.agentAllowed(deviceId),
   hostName: () => remote.hostInfo()?.hostName ?? os.hostname(),
@@ -679,7 +679,7 @@ async function applyTaskSettings(owner, plan, lng, { message, signal } = {}) {
   return { ...result, settings: { ...after, appliesTo: 'nextTurn', ...(live ? { modelLive: true } : {}) } };
 }
 
-// ---- 端末の AI からの委譲（ホストの側。docs/remote.md §4.5、docs/agent-delegation.md「リモートのホストへ任せる」、ADR 0141）------------
+// ---- 端末の AI からの委譲（ホストの側。docs/remote.md §4.5、docs/agent-delegation.md「リモートのホストへ任せる」、ADR 0146）------------
 // 端末（リモートでつないだデスクトップ版）の会話の AI が、ply_delegate の host と ply_task_* でこのホストの Pleiad に仕事を任せる。
 // 口は接続口の /agent（core/remote/agent-port.mjs。端末ごとの許可・上限はそこ）。ここは口から呼ばれる委譲の本体で、手元の callAgentOp と同じ規則を使う:
 // 子の承認モードは依頼元（端末の会話）の位置までを継ぎ（resolveDelegatedMode）、引き上げが要るときは子を作らずに計画を返して端末で確かめさせる。
@@ -688,7 +688,7 @@ const REMOTE_DELEGATE_KEYS = ['kind', 'task', 'title', 'backend', 'context', 'cw
 const REMOTE_TASK_TOOLS = { status: 'ply_task_status', wait: 'ply_task_wait', send: 'ply_task_send', cancel: 'ply_task_cancel', list: 'ply_task_list' };
 const REMOTE_ACTIVE = new Set(['queued', 'running', 'cancelling']);
 const remoteRowsOf = deviceId => agentTasks?.rowsWhere(r => parseRemoteOwner(r.parentSessionId)?.deviceId === deviceId) ?? [];
-/** 端末から任された子と、その子がホストの中で作った孫・ひ孫（止める・数えるのはこの全部。ADR 0141） */
+/** 端末から任された子と、その子がホストの中で作った孫・ひ孫（止める・数えるのはこの全部。ADR 0146） */
 const remoteTreeOf = deviceId => {
   const roots = remoteRowsOf(deviceId);
   return [...roots, ...(agentTasks?.descendants(roots.map(r => r.sessionId)) ?? [])];
@@ -6065,10 +6065,10 @@ wss.on("connection", (ws, req) => {
         }
         case 'remoteRevoke':
           return reply(true, withResident(await remote.revoke(msg.args?.id)));
-        // この端末の AI からの委譲を受けるか・任された作業をすべて止める（人だけ。docs/remote.md §4.5、ADR 0141）
+        // この端末の AI からの委譲を受けるか・任された作業をすべて止める（人だけ。docs/remote.md §4.5、ADR 0146）
         case 'setRemoteDeviceAgent': {
           const a = msg.args ?? {};
-          // 入れるのはホストの PC の画面だけ（中継越しの端末の画面からは入れられない。両側の許可を片側の判断で崩さない。ADR 0141）。切る・すべて止めるは端末の画面からもできる
+          // 入れるのはホストの PC の画面だけ（中継越しの端末の画面からは入れられない。両側の許可を片側の判断で崩さない。ADR 0146）。切る・すべて止めるは端末の画面からもできる
           if (a.enabled === true && connectionDevices.get(ws)) return reply(false, t('remote.agent.hostScreenOnly'));
           return reply(true, await remote.setDeviceAgent(a.id, { ...(a.enabled !== undefined ? { enabled: a.enabled === true } : {}), ...(a.stopAll === true ? { stopAll: true } : {}) }));
         }

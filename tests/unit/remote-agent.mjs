@@ -1,4 +1,4 @@
-// 端末の AI からの委譲の口 /agent（ホストの側。core/remote/agent-port.mjs、docs/remote.md §4.5、ADR 0141）。
+// 端末の AI からの委譲の口 /agent（ホストの側。core/remote/agent-port.mjs、docs/remote.md §4.5、ADR 0146）。
 // 中継（relay/server.mjs）をこのプロセスで立て、fake バックエンドのサーバーを別プロセスで立て、試験用の端末（tests/lib/remote-device.mjs）から
 // /agent を開く。LLM もネットワークも使わない。許可（既定オフ・デスクトップ版の端末だけ・人だけが変える）・防火壁・委譲と状態と完了・
 // 承認モードの継承と引き上げの確かめ・上限・出どころ・承認の中継と人の答え（受領証・1 回だけ・ほかの端末は答えられない）・取り消しで止まる。

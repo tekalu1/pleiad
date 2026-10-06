@@ -1,4 +1,4 @@
-// 端末（デスクトップ版）の main がホストへ張る、AI 用の線（docs/remote.md §4.5、ADR 0141）。
+// 端末（デスクトップ版）の main がホストへ張る、AI 用の線（docs/remote.md §4.5、ADR 0146）。
 //
 // DeviceLink（中継を通るチャネル。device-link.mjs）の上に /agent の WebSocket のストリームを 1 本開き、決まった便りを交わす:
 //   request(op, args, requester)  委譲の 6 つの操作（delegate・status・wait・send・cancel・list）。ホストの答えで解決する

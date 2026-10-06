@@ -526,7 +526,7 @@ export function createRemoteHost({
 
     async devices() { return (await status()).devices; },
 
-    // ── 端末の AI からの委譲（docs/remote.md §4.5、ADR 0141） ────────
+    // ── 端末の AI からの委譲（docs/remote.md §4.5、ADR 0146） ────────
 
     /** 設定 › リモートの端末の行の材料（任された作業の数など）が変わった。状態を配り直す */
     touchStatus: () => queueStatus(),
@@ -623,7 +623,7 @@ export function createRemoteHost({
     async revoke(id) {
       id = String(id ?? '');
       deviceCache.delete(id);   // 照合は先に止める（消し終わるのを待つ間にハンドシェイクを通さない）
-      // 任された作業も止める（ADR 0141）。口を閉じてから、動いているタスクを止める
+      // 任された作業も止める（ADR 0146）。口を閉じてから、動いているタスクを止める
       agent?.closeDevice(id, 'revoked');
       await agent?.stopTasks?.(id);
       await store.removeDevice(id);

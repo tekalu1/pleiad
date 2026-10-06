@@ -1,4 +1,4 @@
-// ホストの接続口の「端末の AI 用の口」/agent（docs/remote.md §4.5、ADR 0141）。サーバーのプロセスの中で動く。
+// ホストの接続口の「端末の AI 用の口」/agent（docs/remote.md §4.5、ADR 0146）。サーバーのプロセスの中で動く。
 //
 // 端末の AI（端末の会話の ply_delegate の host と ply_task_*）の依頼を受け、ホストのサーバーの委譲の本体（deps.invoke）へ渡す。
 // 主体は agent・via: 'remote'・deviceId。画面（human）の経路 /ws とは別の口で、口の上の便りは決まった種類だけ:

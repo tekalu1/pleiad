@@ -235,7 +235,7 @@ export function createRemoteDevice({ dir, cipher = plainCipher, app = '', name =
     return run;
   }
 
-  // ---- この PC の AI からホストへ任せる線（docs/remote.md §4.5、ADR 0141）。端末の main が持ち、ローカルのサーバーとは parentPort の橋で話す
+  // ---- この PC の AI からホストへ任せる線（docs/remote.md §4.5、ADR 0146）。端末の main が持ち、ローカルのサーバーとは parentPort の橋で話す
 
   /** agentUse のホストの線を張る（窓のプロキシとは別のチャネル）。取り消し済み・資格が無いホストは張らない。張った AgentLink を返す */
   async function agentOpen(hostId) {
