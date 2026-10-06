@@ -64,7 +64,7 @@ core が web へ流すのは正規化イベントだけで、バックエンド�
 - 画面・AI・CLI へ外に出す機能は、WS の case を足すだけにせず `core/ops/` に操作として定義する（ADR 0081）。足し忘れは `npm test` の ops-coverage が落とす（`tests/ops-baseline.json` の `todo` は増やせない）。設定（prefs.json）を足す・変えるときは `core/ops/settings.mjs` の `defineSetting`（危険度・`normalize`・`write`）に書き、`store.setPref` を直に呼ばない（画面の `setPref` も AI の `settings.set` も同じ定義を通る。`ops-coverage` が落とす）。操作の危険度・出す口を変えたら `OPS_UPDATE_SNAPSHOT=1 npm test -- ops-surface` で snapshot を更新し、差分を確認する。
 - 画面・エラー・エージェント向けの文言は辞書（`web/locales/<言語>/<名前空間>.json`）に置き、`t()` で引く（`docs/design.md`「多言語対応」、訳語は `docs/i18n-glossary.md` に従う）。直書きの日本語は `npm test` の lint-i18n が落とす。基準（`tests/i18n-baseline.json`）の更新は減らすときだけ（`node tests/lint-i18n.mjs --update-baseline`）。
   - `web/locales/*/ui.json` は `JSON.stringify(…, null, 2)` の整形と一致しないので、読んで書き直さず、キーは文字の置き換えで足す。`sed '/"connected"/d'` のような行単位の削除は別の節の同じキーまで消すので使わない。
-- コード変更後は `npm test` を実行する。通常テストは実際の LLM を呼び出さない。1 本だけなら `node tests/run.mjs <ケース名>`。
+- コード変更後は `npm test` を実行する。通常テストは実際の LLM を呼び出さない。1 本だけなら `node tests/run.mjs <ケース名>`。Pleiad の会話のシェルから流しても、継いだ Pleiad の変数（`AGENT_HOST_`・`PLEIAD_`・`PLY_`・`AGENT_BROWSER_` で始まるもの）は外して走る（`env -u` は要らない。残る利用者の上書きは `tests/lib/inherited-env.mjs`）。
   - 全件の順次実行は 10 分を超えることがある。長い実行はログへ保存して最後まで待つ。途中で打ち切った結果を通過とみなさない。
   - `npm test -- --jobs 2` で別プロセスの worker 2 本を使う。既定の `--jobs 1` は同じプロセスで登録順に実行する。スイートごとの時間・判定数・skip は `--timings <JSONの保存先>` で記録できる。
   - 分けて流す場合は `node tests/run.mjs --shard 1/3`、`--shard 2/3`、`--shard 3/3` の全分割を同じ版・時間重みで実行し、すべての通過を確認する。`--list --json` は実行対象の一覧。名前で絞る場合は従来どおり部分一致なので、短い名前は別のスイートも選ぶ。
