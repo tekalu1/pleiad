@@ -111,6 +111,8 @@ import { createOrphanGuard } from './orphan-guard.mjs';
 import { createMainAway, createExternalOpener } from './main-away.mjs';
 import { readBuildInfo } from './handover-check.mjs';
 import { markRuntimeInUse } from './runtime-use.mjs';
+import { cardOf, restoreFields, promptHash, CARD_MAX_BYTES } from './turn-card.mjs';
+import { readAdoptSources, ADOPT_TURN_MARK } from './adopt.mjs';
 import { parentPortScreencast, createScreencastHub, screencastCommand } from './browser-screencast.mjs';
 import { createBrowserSiteApprovals } from './browser-confirm.mjs';
 import { createBrowserBridge, BROWSER_MCP_PATH } from './browser-bridge.mjs';
@@ -475,6 +477,8 @@ let botHost;
 let settingApprovals;
 const agentConnections = new Map();
 const taskExecutions = new Map();
+// ターンから ctx を引く（旧サーバーが付け直しに渡すときに札を作る。handOffTurn。無停止の更新 2b-4）
+const turnContexts = new WeakMap();
 // 実行前に拒否されたコマンド（Codex。core/backends/codex-rejections.mjs）を依頼元へ返す形（docs/agent-delegation.md「実行前に拒否されたコマンド」）。
 // 依頼元は別のエージェント・別の提供元のモデルのこともあるので、command・reason・raw は形で秘密を伏せて切る
 const REJECTION_TEXT_MAX = 300;
@@ -2081,7 +2085,11 @@ function clientReason(args) {
  * 並行して複数のターンが走るので、文脈はグローバルではなくターンごとに持つ。
  */
 function makeEmit(turn) {
-  const emit = (event, { recorded = false } = {}) => {
+  // replay: 付け直しの再生（印から ack まで。core/adopt.mjs）。メモリの状態とスナップショットだけを作り、記録への書き込み・
+  // 途中送信の合図・画面への送信は走らせない（docs/zero-downtime-update/stage2-server-state.md §4.4）
+  const emit = (event, { recorded = false, replay = false } = {}) => {
+    // 付け直しに渡したターン（handOffTurn）の出来事は、このサーバーでは流さない（閉じたバックエンドの aborted など）
+    if (turn.handedOff) return;
     if (event?.type) agentTasks?.observe(turn.info.sessionId, event);
     // git でしたこと（PR の作成など）をターンの終わりの要約に使う
     turn.gitCalls?.track(event);
@@ -2089,7 +2097,7 @@ function makeEmit(turn) {
     if (event?.type === 'task.activity' || event?.type === 'task.command') return;
     if (event?.type === 'usage') turn.usage = { ...turn.usage, ...event };
     // bot の会話のターンの出来事（text.end・usage・activity・present・permission・turnResult・userMessage.delivered / dropped）。bot の会話でなければ何もしない
-    botHost?.onTurnEvent(turn, event);
+    if (!replay) botHost?.onTurnEvent(turn, event);
     if (event?.type === 'contextWindow' && Number.isFinite(event.usedTokens) && Number.isFinite(event.windowTokens)) {
       turn.contextWindow = { usedTokens: event.usedTokens, windowTokens: event.windowTokens };
     }
@@ -2113,7 +2121,7 @@ function makeEmit(turn) {
         if (event[key] !== undefined && event[key] !== null) entry[key] = event[key];
       turn.compaction = entry;
       event = { type: 'compaction', ...entry };
-      if (phase !== 'start' && turn.info.sessionId) {
+      if (phase !== 'start' && turn.info.sessionId && !replay) {
         const sessionId = turn.info.sessionId;
         turn.compactionWrite = turn.compactionWrite.then(async () => {
           const previous = (await store.get(sessionId)).compactions ?? [];
@@ -2145,7 +2153,8 @@ function makeEmit(turn) {
       return;
     }
     // 走っているターンへ渡した完了通知（liveNotices）は人間の発言ではない。渡ったら通知の一行にし、捨てられたら送り直す
-    if ((event?.type === "userMessage.delivered" || event?.type === "userMessage.dropped") && liveNotices.has(event.messageId)) {
+    // 途中送信の合図（下の 3 つ）は、再生では走らせない（旧サーバーが処理済み。渡った合図を待つ控えは札で渡す。2b-7）
+    if (!replay && (event?.type === "userMessage.delivered" || event?.type === "userMessage.dropped") && liveNotices.has(event.messageId)) {
       const notice = liveNotices.get(event.messageId);
       liveNotices.delete(event.messageId);
       if (event.type === "userMessage.delivered") emit({ type: "taskNotice", text: notice.prompt });
@@ -2154,13 +2163,13 @@ function makeEmit(turn) {
       return;
     }
     // 子のターンへ途中送信で渡した追加指示（ply_task_send。liveInstructions）の合図。指示の状態を決めてから、画面にも流す
-    if ((event?.type === "userMessage.delivered" || event?.type === "userMessage.dropped") && liveInstructions.has(event.messageId)) {
+    if (!replay && (event?.type === "userMessage.delivered" || event?.type === "userMessage.dropped") && liveInstructions.has(event.messageId)) {
       const sent = liveInstructions.get(event.messageId);
       liveInstructions.delete(event.messageId);
       agentTasks?.steered(sent.taskId, sent.instructionIds, event.type === "userMessage.delivered" ? "delivered" : "dropped").catch(() => {});
     }
     // 受理済みの途中送信が読まれずに捨てられた（userMessage.dropped）。送信待ちへ戻す
-    if (event?.type === "userMessage.dropped" && turn.info.sessionId && event.messageId) {
+    if (!replay && event?.type === "userMessage.dropped" && turn.info.sessionId && event.messageId) {
       outbox.returned(turn.info.sessionId, event.messageId).catch(() => {});
     }
     // 最後の発言の id（通知の一覧の飛び先。ターンの終わりに completionNotices へ渡す）
@@ -2204,10 +2213,11 @@ function makeEmit(turn) {
     if (event?.type === "phase" || event?.type === "background") {
       if (event.type === "phase") turn.info.phase = event.state === "waiting" ? "waiting" : "active";
       else turn.info.background = Array.isArray(event.tasks) ? event.tasks : [];
-      if (event.type === "phase") watchChildBackground(turn);
-      broadcastRunning();
+      // 再生では状態だけ。見張り・配り・送信待ちの流しは、再生の終わりに 1 回（adoptTurn）
+      if (event.type === "phase" && !replay) watchChildBackground(turn);
+      if (!replay) broadcastRunning();
       // 裏だけを待つ間は、次のターンの設定の予約があっても途中送信できる。待っている送信をすぐ流す
-      if (event.type === "phase" && turn.info.phase === "waiting" && turn.info.sessionId) outbox.kick(turn.info.sessionId).catch(() => {});
+      if (!replay && event.type === "phase" && turn.info.phase === "waiting" && turn.info.sessionId) outbox.kick(turn.info.sessionId).catch(() => {});
     }
     // 新規セッションは走り出してから id が決まる。仮キーを本物へ差し替える。
     // sessionId が null の session は「まだ決まっていない」ので差し替えない
@@ -2266,7 +2276,7 @@ function makeEmit(turn) {
       });
     }
 
-    if (event?.type === "present" && event.sessionId && !recorded) {
+    if (event?.type === "present" && event.sessionId && !recorded && !replay) {
       const { type, sessionId, ...payload } = event;
       const pending = history.recordPresent(sessionId, { ...payload, turnKey: turn.presentKey });
       turn.presentWrites.push(pending);
@@ -2274,8 +2284,14 @@ function makeEmit(turn) {
         .catch((err) => console.error("  present の記録に失敗:", String(err?.message ?? err)));
     }
 
-    turn.visualizations?.accept(event);
+    if (replay && event?.type === 'text.end') turn.visualizations?.discard();
+    else turn.visualizations?.accept(event);
 
+    // 再生は実行中のスナップショット（画面がつなぎ直したときに配るもの）に積むだけで、画面へは送らない
+    if (replay) {
+      if (streamEvents.has(event?.type)) turn.stream.events.push({ ...P.stampSessionId(event, turn.info.sessionId), streamSeq: ++streamSequence });
+      return;
+    }
     // どのターンのものか分かるように必ず付ける。クライアントはこれで画面を選り分ける
     emitGlobal(P.stampSessionId(event, turn.info.sessionId));
   };
@@ -4353,10 +4369,14 @@ const outbox = createMessageQueue({
     }
   },
 });
-await outbox.recover();
+// 付け直すターン（無停止の更新 2b-4。stage2-server-state.md §5.1）。後片付け（送信待ちの戻し・中断の記録・worktree の整理）と、
+// ターンを始めうるもの（予定・上限の再開・bot）より前に runtime.turns に載せる。口を開き直して記録を流すのは待ち受けの後
+const adopting = await restoreAdoptedTurns();
+await outbox.recover({ adopted: new Map(adopting.map(a => [a.ctx.sessionId, new Set(Object.keys(a.ctx.card.steers))])) });
 // 前の起動で走っていたのに終わりが記録されていないターン（落ちた・強制終了）を、会話の中断（reason: restart）として残す
 {
-  const recovered = await store.recoverInterruptedTurns(Date.now()).catch(err => { console.error("  中断の記録に失敗:", String(err?.message ?? err)); return []; });
+  const recovered = await store.recoverInterruptedTurns(Date.now(), { except: new Set(adopting.map(a => a.ctx.sessionId)) })
+    .catch(err => { console.error("  中断の記録に失敗:", String(err?.message ?? err)); return []; });
   if (recovered.length) console.log(`  前の起動で終わらなかったターン ${recovered.length} 件を中断として残した`);
 }
 // 前の起動で待っていた承認・質問はメモリにしか無く、再起動で消えた。通知の一覧のあなた待ちも決着させる（ADR 0149）
@@ -5055,7 +5075,14 @@ async function prepareTurn(args, hooks, compactionRevision) {
     shellHanded: false,
     runArgs: null,
   };
+  bindTurnContext(ctx);
+  turnContexts.set(turn, ctx);
+  return ctx;
+}
 
+/** 渡った合図（onPromptDelivered）と文脈の保存（saveContext）を ctx に付ける。準備（prepareTurn）と付け直し（restoreTurn）が使う */
+function bindTurnContext(ctx) {
+  const { args, turn, emit } = ctx;
   ctx.onPromptDelivered = () => {
     if (ctx.interruption && !ctx.interruptionTaken) {
       ctx.interruptionTaken = true;
@@ -5071,12 +5098,12 @@ async function prepareTurn(args, hooks, compactionRevision) {
   };
 
   ctx.saveContext = async () => {
+    // 付け直したターンは、会話に保存済みのコンテキストの記録が無いことがある（記録の無い会話）。そのときは書かない
+    if (!ctx.contextRecord) return;
     await turn.setup;
     if (turn.info.sessionId) await store.setSessionData(turn.info.sessionId, 'contextSession', ctx.contextRecord);
     emit({ type: 'contextUsage', report: structuredClone(ctx.contextRecord.report), plyParts: ctx.contextRecord.plyParts ?? null });
   };
-
-  return ctx;
 }
 
 async function beginTurn(ctx) {
@@ -5150,11 +5177,7 @@ async function beginTurn(ctx) {
     onPromptDelivered: ctx.onPromptDelivered,
     // 拒否・中断の理由をこの会話の言語で返すため、会話の言語を添えて聞く
     askPermission: request => askPermission({ ...request, locale: agentLocale }),
-    hostInvoke: async (op, args) => {
-      const result = await opsRegistry.invoke({ by: 'agent', via: 'mcp', sessionId: args.sessionId }, op, args, opsDeps(agentLocale));
-      if (!result.ok) throw new Error(result.error);
-      return result.result;
-    },
+    hostInvoke: hostInvokeFor(agentLocale),
     signal: turn.ac,
     control: turn.control,
     // エージェントに渡す文（指示・ツールの説明・タイトル生成など）の言語。会話ごとに決めて保存したもの
@@ -5192,6 +5215,15 @@ async function beginTurn(ctx) {
     computer: computerPrompt(runArgs.computerRuntime, { locale: agentLocale, agent: backend.id }), control: runArgs.controlRuntime.instructions });
   if (JSON.stringify(parts) !== JSON.stringify(contextRecord.plyParts ?? null)) { contextRecord.plyParts = parts; await ctx.saveContext(); }
   ctx.runArgs = runArgs;
+}
+
+/** バックエンドの host の口（in-process の MCP）から操作の一覧を呼ぶ。ターンを始めるとき（beginTurn）と付け直すとき（adoptTurn） */
+function hostInvokeFor(agentLocale) {
+  return async (op, args) => {
+    const result = await opsRegistry.invoke({ by: 'agent', via: 'mcp', sessionId: args.sessionId }, op, args, opsDeps(agentLocale));
+    if (!result.ok) throw new Error(result.error);
+    return result.result;
+  };
 }
 
 async function launchTurn(ctx) {
@@ -5235,8 +5267,10 @@ async function afterResult(ctx, result) {
       // 中断の後に添えた文は発言から切り分けてから照らす（history.loadTranscript と同じ）
       const messages = splitLeadingNotes(await ctx.backend.getMessages(turn.info.sessionId));
       let cursor = ctx.baselineLength;
-      for (const attachment of [{ key: turn.presentKey, prompt }, ...(turn.steeredAttachments ?? [])]) {
-        const index = messages.findIndex((m, i) => i >= cursor && m.role === 'user' && m.text === attachment.prompt);
+      // 付け直したターン（restoreTurn）の札は本文の代わりにハッシュを持つ（core/turn-card.mjs）
+      const same = (m, a) => (a.promptHash ? promptHash(m.text) === a.promptHash : m.text === a.prompt);
+      for (const attachment of [{ key: turn.presentKey, ...(ctx.card ? { promptHash: ctx.card.promptHash } : { prompt }) }, ...(turn.steeredAttachments ?? [])]) {
+        const index = messages.findIndex((m, i) => i >= cursor && m.role === 'user' && same(m, attachment));
         if (index < 0) continue;
         cursor = index + 1;
         await history.anchorAttachments(turn.info.sessionId, attachment.key, messages[index].uuid);
@@ -5252,6 +5286,7 @@ async function driveTurn(ctx, start) {
   let beforeInvoke = false;
   try {
     const result = await start();
+    if (turn.handedOff) return 'handedOff';
     if (result?.beforeInvoke) {
       beforeInvoke = true;
       turn.outcome = 'requeue';
@@ -5259,6 +5294,7 @@ async function driveTurn(ctx, start) {
       await afterResult(ctx, result);
     }
   } catch (err) {
+    if (turn.handedOff) return 'handedOff';
     if (hooks.compact && turn.compaction?.phase !== 'complete') emit({ type: 'compaction', phase: 'failed', trigger: hooks.compact,
       reason: String(err?.message ?? err) });
     if (ctx.resolvedContext) { ctx.contextRecord.report.status = 'failed'; await ctx.saveContext().catch(() => {}); }
@@ -5273,30 +5309,37 @@ async function driveTurn(ctx, start) {
     }
     if (!ctx.didStart) throw err;
   } finally {
-    // 渡らずに終わった `!` の行は、また「渡さない」を切り替えられる
-    if (ctx.shellHandoff && !ctx.shellHanded) shellRuns.release(sessionId, ctx.shellHandoff);
-    if (ctx.didStart && turn.outcome !== 'ok' && turn.outcome !== 'requeue') await outbox.pause(sessionId).catch(() => {});
-    await turn.visualizations.close().catch(err => {
-      if (turn.backend.id === 'antigravity') turn.failureReason = { source: 'visualizations.close', error: String(err?.message ?? err).slice(0, 1000) };
-      emit({ type: 'turnResult', outcome: 'error', error: t('turn.visualizationSaveFailed', { error: err.message }) });
-    });
-    await Promise.allSettled([ctx.runtimeContext?.close()]);
-    await ctx.saveContext().catch(() => {
-      if (turn.backend.id === 'antigravity') turn.failureReason = { source: 'saveContext', error: t('turn.contextSaveFailed') };
-      emit({ type: 'turnResult', outcome: 'error', error: t('turn.contextSaveFailed') });
-    });
-    // git の動き（ADR 0085）: ターンの終わりの撮影と、返答の下の 1 行の元。ファイル・コミット・ブランチ・PR のどれかが動いたときだけ会話に残す
-    if (turn.gitSetup && ctx.didStart && turn.outcome !== 'requeue') {
-      const summary = await Promise.race([
-        turn.gitSetup.then(() => (turn.git ? gitActivity.finish(turn.git, turn.info.sessionId, turn.gitCalls.events()) : null)),
-        new Promise(resolve => setTimeout(resolve, GIT_END_WAIT_MS, null).unref?.()),
-      ]).catch(() => null);
-      if (summary && turn.info.sessionId) emit({ type: 'present', kind: 'git', git: summary, by: 'ai', at: new Date().toISOString(), sessionId: turn.info.sessionId });
-    }
-    await endTurn(turn, emit, { record: ctx.didStart });
+    // 付け直しに渡したターン（handOffTurn）は、このサーバーでは締めない（新しいサーバーの adoptTurn が締める。X1・X2）
+    if (!turn.handedOff) await closeTurn(ctx);
     hooks.signal?.removeEventListener("abort", ctx.abortFromTask);
   }
   return beforeInvoke ? 'requeue' : turn.outcome;
+}
+
+/** ターンの締め（driveTurn の後始末）。送信待ち・表示・コンテキスト・git の終わりを書き、endTurn で終える */
+async function closeTurn(ctx) {
+  const { turn, emit, sessionId } = ctx;
+  // 渡らずに終わった `!` の行は、また「渡さない」を切り替えられる
+  if (ctx.shellHandoff && !ctx.shellHanded) shellRuns.release(sessionId, ctx.shellHandoff);
+  if (ctx.didStart && turn.outcome !== 'ok' && turn.outcome !== 'requeue') await outbox.pause(sessionId).catch(() => {});
+  await turn.visualizations.close().catch(err => {
+    if (turn.backend.id === 'antigravity') turn.failureReason = { source: 'visualizations.close', error: String(err?.message ?? err).slice(0, 1000) };
+    emit({ type: 'turnResult', outcome: 'error', error: t('turn.visualizationSaveFailed', { error: err.message }) });
+  });
+  await Promise.allSettled([ctx.runtimeContext?.close()]);
+  await ctx.saveContext().catch(() => {
+    if (turn.backend.id === 'antigravity') turn.failureReason = { source: 'saveContext', error: t('turn.contextSaveFailed') };
+    emit({ type: 'turnResult', outcome: 'error', error: t('turn.contextSaveFailed') });
+  });
+  // git の動き（ADR 0085）: ターンの終わりの撮影と、返答の下の 1 行の元。ファイル・コミット・ブランチ・PR のどれかが動いたときだけ会話に残す
+  if (turn.gitSetup && ctx.didStart && turn.outcome !== 'requeue') {
+    const summary = await Promise.race([
+      turn.gitSetup.then(() => (turn.git ? gitActivity.finish(turn.git, turn.info.sessionId, turn.gitCalls.events()) : null)),
+      new Promise(resolve => setTimeout(resolve, GIT_END_WAIT_MS, null).unref?.()),
+    ]).catch(() => null);
+    if (summary && turn.info.sessionId) emit({ type: 'present', kind: 'git', git: summary, by: 'ai', at: new Date().toISOString(), sessionId: turn.info.sessionId });
+  }
+  await endTurn(turn, emit, { record: ctx.didStart });
 }
 
 async function releaseTurn(sessionId, { adopted = false } = {}) {
@@ -5304,6 +5347,255 @@ async function releaseTurn(sessionId, { adopted = false } = {}) {
   completionNotices.changed(sessionId);
   notifyFree(sessionId);
   await kickQueued();
+}
+
+// ---- 付け直し（無停止の更新 2b-4。docs/zero-downtime-update/stage2-server-state.md §4.2・§5）----------------------
+
+/**
+ * 旧サーバーの口（2d が引き継ぎで呼ぶ）: 走っているターンを付け直しに渡し、保持役に置く札（cardOf の { card, secrets }）を返す。
+ * 渡したターンは、このサーバーでは締めず（driveTurn。X1）出来事も流さない（makeEmit）。detach の後に query を閉じるとバックエンドは
+ * aborted で返るので、そのまま締めると中断の印と completedAt が書かれる。会話の id が決まる前・バックエンドを呼ぶ前のターンと、
+ * 札が作れない（上限を超える）ターンは渡さない（null。今の中断のまま）
+ */
+function handOffTurn(key) {
+  const turn = runtime.turns.get(key);
+  const ctx = turn && turnContexts.get(turn);
+  if (!ctx || turn.ended || turn.handedOff || !turn.info.sessionId || !ctx.backendInvoked) return null;
+  const entry = agentConnections.get(turn.key);
+  let taken;
+  try { taken = cardOf({ ...ctx, connectionTokens: entry ? connectionTokens(entry) : null }); }
+  catch (e) { console.error(`  ターンを付け直しに渡せない（${turn.info.sessionId}）:`, String(e?.message ?? e)); return null; }
+  turn.handedOff = true;
+  return taken;
+}
+
+/**
+ * 札と付け直す元（core/adopt.mjs の source）から、走っているターン（runtime.turns の 1 件と ctx）を組み立てて登録する。
+ * 起動時の後片付け（送信待ちの戻し・中断の記録）より前に呼ぶ。口を開き直すのと記録を流すのは、待ち受けの後の adoptTurn。
+ * 付け直せない（札が大きすぎる・版が違う・会話の走っている印と合わない・記録に印が無い・切れている・続きを受けられない、
+ * 委譲の子・bot の会話・圧縮のターン）ときは投げる。呼び出し側は何もせず、今の起動時の restart の回復（中断）に任せる
+ */
+async function restoreTurn(card, source) {
+  if (Buffer.byteLength(JSON.stringify(card ?? null), 'utf8') > CARD_MAX_BYTES) throw new Error('card too large');
+  const fields = restoreFields(card);
+  if (!fields) throw new Error('unknown card version');
+  const { sessionId, startedAtMs } = fields;
+  if (!sessionId || fields.key !== sessionId) throw new Error('no session id');
+  if (runtime.turns.has(sessionId)) throw new Error('already running');
+  if (!fields.presentKey || !fields.connectionTokens?.context) throw new Error('card is incomplete');
+  const backend = getBackend(fields.backendId);
+  if (!backend?.adoptTurn) throw new Error(`backend cannot adopt: ${fields.backendId}`);
+  const meta = await store.get(sessionId);
+  // 札が、この会話の走っている印（turnStartedAt）のターンのものか。合わない札は前の版のターンのもの
+  if (!meta.turnStartedAt || meta.turnStartedAt !== startedAtMs) throw new Error('turn mismatch');
+  // 委譲の子（execute の後半の付け直しは 2b-7）・bot の会話（O21）・圧縮のターンは付け直さない
+  if (meta.delegation || meta.bot || fields.compactTrigger) throw new Error('not adoptable');
+  if (!Number.isInteger(source?.state?.marks?.[ADOPT_TURN_MARK])) throw new Error('no turn mark');
+  if (source.state.truncated) throw new Error('record truncated');
+  if (!source.attachable) throw new Error('child cannot be attached');
+
+  // ターンの前の履歴（T1）。付け直しの時点の履歴にはこのターンの途中の発言が入っているので、札の切り口で切る。
+  // このターンの present（turnKey）は記録の再生が積むので外す
+  const transcript = await history.loadTranscript(sessionId, backend).catch(() => ({ messages: [], presents: [] }));
+  const lastAt = fields.baseline.lastUuid ? transcript.messages.findIndex(m => m.uuid === fields.baseline.lastUuid) : -1;
+  const count = lastAt >= 0 ? lastAt + 1 : Math.min(fields.baseline.count, transcript.messages.length);
+  const turnKeys = new Set([fields.presentKey, ...fields.steeredAttachments.map(a => a.key)]);
+  const baseline = { ...transcript, messages: transcript.messages.slice(0, count),
+    presents: (transcript.presents ?? []).filter(p => !turnKeys.has(p.turnKey)) };
+  // 発言の本文は札に入れていない（core/turn-card.mjs）。履歴の切り口の後ろか、送信待ちの項目から引き、ハッシュで突き合わせる
+  const queued = fields.messageId ? (await outbox.list(sessionId).catch(() => [])).find(m => m.id === fields.messageId) : null;
+  const prompt = [...transcript.messages.slice(count).filter(m => m.role === 'user').map(m => m.text), queued?.args?.prompt]
+    .find(text => typeof text === 'string' && promptHash(text) === fields.promptHash) ?? '';
+
+  const cwd = meta.cwd ?? fields.cwd;
+  const agentLocale = fields.agentLocale;
+  const contextRecord = meta.contextSession ?? null;
+  const turn = {
+    stream: {
+      ...structuredClone(baseline),
+      user: fields.internal ? null : { role: 'user', text: prompt, at: fields.user?.at ?? new Date(startedAtMs).toISOString(), backend: backend.id },
+      initialMessageId: fields.messageId,
+      events: [],
+    },
+    key: sessionId,
+    ac: new AbortController(),
+    abortReason: fields.abortReason,
+    startedAtMs,
+    userSentAt: fields.userSentAt ?? startedAtMs,
+    backend,
+    agentLocale,
+    control: { handle: null, onReady: () => {
+      outbox.kick(sessionId).catch(() => {});
+      agentTasks?.sendQueued(sessionId).catch(() => {});
+    } },
+    outcome: null,
+    compactTrigger: null,
+    // 予約の版は compactionScheduler のメモリの値。待ち受けの後（adoptTurn）で取り直す（T15）
+    compactionRevision: null,
+    userInitiated: !fields.internal,
+    compaction: null,
+    compactionWrite: Promise.resolve(),
+    contextWindow: null,
+    contextRecord,
+    taskHints: new Map(),
+    pastSubagents: fields.pastSubagents,
+    subagentOrigins: new Map(),
+    presentKey: fields.presentKey,
+    presentWrites: [],
+    ended: false,
+    // id は決まっている（付け直すのは id が決まったターンだけ。T5）。id 決定時の書き込みは済んでいる（T36）
+    setup: Promise.resolve(),
+    ...(fields.steeredAttachments.length ? { steeredAttachments: fields.steeredAttachments } : {}),
+    ...(fields.browserRelayId ? { browserRelayId: fields.browserRelayId } : {}),
+    info: {
+      sessionId,
+      backend: backend.id,
+      startedAt: new Date(startedAtMs).toISOString(),
+      cwd,
+      mode: meta.mode ?? fields.permissionMode,
+      model: meta.model ?? fields.model ?? '',
+      effort: meta.effort ?? fields.effort,
+      endpoint: fields.endpointId,
+      account: fields.accountId,
+      status: null,
+      attachments: fields.attachments,
+      phase: 'active',
+      background: [],
+    },
+  };
+  // 始まりの撮影（T33）。撮れていれば終わりの撮影（closeTurn）に渡す
+  if (fields.git?.activity) { turn.git = fields.git.activity; turn.gitSetup = Promise.resolve(fields.git.activity); }
+  if (fields.git?.late) turn.gitLate = true;
+  turn.ac.signal.addEventListener('abort', () => { turn.stops ??= captureStops(turn); }, { once: true });
+  turn.worktreeId = (await worktreeHost.worktrees.byPath(cwd).catch(() => null))?.id ?? null;
+  turn.gitCalls = createCallTracker();
+  const emit = makeEmit(turn);
+  turn.visualizations = createVisualizationCollector({
+    access: fileAccess,
+    publish: async payload => {
+      const record = await history.recordPresent(sessionId, { ...payload, turnKey: turn.presentKey });
+      emit({ type: 'present', sessionId, ...record }, { recorded: true });
+    },
+  });
+  const ctx = {
+    args: { sessionId, prompt, messageId: fields.messageId, at: fields.userSentAt, scheduledFor: fields.scheduledFor, sentBy: fields.sentBy },
+    hooks: { internal: fields.internal },
+    sessionId,
+    prompt,
+    backend,
+    cwd,
+    account: null,
+    accountId: fields.accountId,
+    endpoint: null,
+    endpointId: fields.endpointId,
+    agentLocale,
+    permissionMode: turn.info.mode,
+    model: turn.info.model,
+    effort: turn.info.effort,
+    attachments: fields.attachments,
+    baselineLength: count,
+    policy: contextRecord?.policy ?? null,
+    plyContext: false,
+    resolvedContext: null,
+    hasContext: false,
+    contextRecord,
+    hooksTurn: null,
+    turn,
+    emit,
+    abortFromTask: () => {},
+    // 付け直すのはバックエンドを呼んだ後のターンだけ（L4）
+    didStart: true,
+    backendInvoked: true,
+    // ply_context の口（contextBridge.open）は開き直していない（runtimeContext）。トークンの束縛は restoreConnection、
+    // 外部 MCP と呼び出しの最中の分は戻らない（R15。生きた子を付け直す 2b-5 以降）
+    runtimeContext: null,
+    initialDelivered: fields.delivery.initialDelivered,
+    interruption: fields.interruption,
+    interruptionTaken: fields.delivery.interruptionTaken,
+    shellHandoff: fields.shellHandoff,
+    shellHanded: fields.delivery.shellHanded,
+    runArgs: null,
+    card: fields,
+  };
+  bindTurnContext(ctx);
+  turnContexts.set(turn, ctx);
+  runtime.turns.set(turn.key, turn);
+  return ctx;
+}
+
+/**
+ * 付け直しの入口（無停止の更新 2b-4）: 札と付け直す元から走っているターンの制御を作り、driveTurn で締める（締めの道は通常のターンと 1 本。R2）。
+ * ctx は restoreTurn の戻り値（起動では、後片付けより前に登録しておき、待ち受けの後にこれを呼ぶ）。無ければここで組み立てる。
+ * 会話の口は札のトークンで開き直す（restoreConnection。待ち受けの後でないと開けない）。記録は backend.adoptTurn が流す
+ * （印から ack までは再生。makeEmit の replay）。付け直せなかったら、そのターンを restart の中断で締める（起動時の後片付けと同じ印）
+ */
+async function adoptTurn(card, source, ctx = null) {
+  ctx ??= await restoreTurn(card, source);
+  const { turn, sessionId, backend, agentLocale, emit } = ctx;
+  const releaseUpdateGate = updateGate.enter();
+  try {
+    turn.compactionRevision = compactionScheduler.revision(sessionId);
+    return await driveTurn(ctx, async () => {
+      // 再生の終わりに 1 回ずつ（makeEmit が再生では走らせない分。§4.4）
+      let replayed = false, settled = false;
+      const settle = () => {
+        if (settled) return;
+        settled = true;
+        watchChildBackground(turn);
+        broadcastRunning();
+        if (turn.info.phase === 'waiting') outbox.kick(sessionId).catch(() => {});
+      };
+      try {
+        restoreConnection({ key: turn.key, sessionId, locale: agentLocale, tokens: ctx.card.connectionTokens, computerBackend: backend.id });
+        broadcastRunning();
+        syncRunningPoll();
+        ctx.runArgs = {
+          sessionId, cwd: ctx.cwd, mode: ctx.permissionMode, model: ctx.model || undefined, effort: ctx.effort,
+          card: ctx.card.backendCard, source,
+          emit: (event, opts) => {
+            if (opts?.replay) replayed = true;
+            else { if (replayed) settle(); if (ANSWER_EVENTS.has(event?.type)) ctx.onPromptDelivered(); }
+            return emit(event, opts);
+          },
+          onPromptDelivered: ctx.onPromptDelivered,
+          askPermission: request => askPermission({ ...request, locale: agentLocale }),
+          hostInvoke: hostInvokeFor(agentLocale),
+          signal: turn.ac,
+          control: turn.control,
+          locale: agentLocale,
+        };
+        const result = await backend.adoptTurn(ctx.runArgs);
+        if (replayed) settle();
+        console.log(`  ターンを付け直した（${sessionId}）: 記録 ${source.state.id}・ack ${source.acked ?? source.state.acked}`);
+        return result;
+      } catch (err) {
+        console.error(`  ターンを付け直せなかったので中断として残す（${sessionId}）:`, String(err?.message ?? err));
+        turn.abortReason = 'restart';
+        emit({ type: 'turnResult', outcome: 'aborted' });
+        return { sessionId };
+      }
+    });
+  } finally {
+    releaseUpdateGate();
+    await releaseTurn(sessionId, { adopted: true });
+  }
+}
+
+/**
+ * 起動で付け直すターンを読み、登録する（restoreTurn）。元は既定で空（保持役の元は 2b-5）。テストだけが AGENT_HOST_ADOPT_FROM に
+ * 「終わっていたターン」の札と記録を置く（core/adopt.mjs）。付け直せない元は何もせず、起動時の restart の回復に任せる
+ */
+async function restoreAdoptedTurns() {
+  const dir = process.env.AGENT_HOST_ADOPT_FROM;
+  if (!dir) return [];
+  const sources = await readAdoptSources(dir).catch(err => { console.error('  付け直す元を読めませんでした:', String(err?.message ?? err)); return []; });
+  const adopted = [];
+  for (const source of sources) {
+    const card = source.state.label;
+    try { adopted.push({ card, source, ctx: await restoreTurn(card, source) }); }
+    catch (err) { console.error(`  ターンを付け直せないので中断として残す（記録 ${source.id}）:`, String(err?.message ?? err)); }
+  }
+  return adopted;
 }
 
 /**
@@ -7080,6 +7372,8 @@ for (const [id, meta] of Object.entries(await store.getAll())) {
 const listening = new Promise(resolve => server.once('listening', resolve));
 server.listen(PORT, HOST, announce);
 await listening;
+// 登録しておいた付け直すターンの口を開き直し、記録を流して締める（待たない。ターンが終わるまで続く）
+for (const { card, source, ctx } of adopting) void adoptTurn(card, source, ctx).catch(err => console.error('  ターンの付け直しに失敗:', String(err?.message ?? err)));
 await schedule.restore().catch(err => console.error('  再開の予定を戻せませんでした:', String(err?.message ?? err)));
 // 解除時刻を過ぎた上限の会話は、予定の行が無くても再開する（Pleiad を閉じている間に過ぎた分）
 await recoverLimitResumes().catch(err => console.error('  上限の会話を見直せませんでした:', String(err?.message ?? err)));
@@ -7088,4 +7382,4 @@ setTimeout(() => { for (const row of schedule.list()) if (row.kind === 'send' &&
 // 届ける前の出来事の戻し・ルーティンの取りこぼし（ターンを始めるので、ポートが決まった後）
 await botHost.start();
 
-export { runTurn, prepareTurn, beginTurn, launchTurn, driveTurn, releaseTurn, endTurn };
+export { runTurn, prepareTurn, beginTurn, launchTurn, driveTurn, releaseTurn, endTurn, handOffTurn, restoreTurn, adoptTurn };
