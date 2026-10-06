@@ -31,7 +31,7 @@ agent-browser 0.38.1 の state ルートには専用の変更変数がない。`
 [ADR 0148](adr/0148-agent-browser-in-chrome.md)・[ADR 0153](adr/0153-chrome-connection-waits-indefinitely-behind-os-layer.md)。PC の Chrome に Pleiad が CDP の接続を 1 本持ち、設定 › ブラウザー › 「エージェントのブラウザー」で**つなぐ・切る**ができる。**エージェントはまだ使わない**（エージェントの操作は上の「エージェントの操作」の内蔵ブラウザーの中継のまま。開発用の環境変数 `AGENT_HOST_AGENT_BROWSER=chrome` のときだけ、下の「Chrome の中継（開発中）」を使う）。
 
 - **対応する OS**: 当面は Windows の Chrome だけ。ほかの OS・koffi を読めない PC・Electron の無いホスト（`npm start`）では「この OS ではまだ使えません」（状態 `unsupported`。ホストの画面の `hostCapabilities.chromeBrowser` は OS の層が使えなければ `unsupported`、Electron の無いホストでは `false` で、後者は節を出さない）。
-- **読むものと送るもの**: Chrome の `User Data`（Windows は `%LOCALAPPDATA%\Google\Chrome\User Data`。テストは `AGENT_HOST_CHROME_USER_DATA`）の `DevToolsActivePort`（1 行目がポート、2 行目が `/devtools/browser/<id>`）だけ。Cookie・履歴・`Local State` は読まない。接続そのものが上りへ送る CDP は `Browser.getVersion` だけ（`Target.*` は送らない。利用者のタブの URL・題を受け取らない）。中継を使うときに送るものは下の「Chrome の中継（開発中）」。
+- **読むものと送るもの**: Chrome の `User Data`（Windows は `%LOCALAPPDATA%\Google\Chrome\User Data`。環境変数 `AGENT_HOST_CHROME_USER_DATA` でこの 1 か所だけに差し替えられる。テストは存在しない一時ディレクトリへ、実機の確かめは `--user-data-dir` を付けて起こした確かめ専用の Chrome へ向ける）の `DevToolsActivePort`（1 行目がポート、2 行目が `/devtools/browser/<id>`）だけ。Cookie・履歴・`Local State` は読まない。接続そのものが上りへ送る CDP は `Browser.getVersion` だけ（`Target.*` は送らない。利用者のタブの URL・題を受け取らない）。中継を使うときに送るものは下の「Chrome の中継（開発中）」。
 - **接続は 1 本で、会話をまたいで使い回す**。許可の確認（「リモート デバッグを許可しますか？」）は接続ごとに出るので、切れたら自動ではつなぎ直さない（次の `demand()` か「つなぐ」で A か B から）。実装は `core/chrome/connection.mjs`（`createChromeConnection`）。サーバーに 1 つ、Electron のあるデスクトップ版だけ。
 
 | 状態 | 意味 | 入る条件 | 出る先 |
@@ -130,7 +130,7 @@ Playwright の Chromium 151（一時のプロフィール。利用者の Chrome 
 |---|---|---|
 | `capabilities()`・`ready()`・`onReady(fn)` | 層が使えるか・どの機能があるか。使えなければ `supported: false` | koffi を読めたか。今ある機能は `dialog`・`raise` |
 | `snapshotWindows()` | 今あるブラウザーの最上位の窓の印（確認の見つけ方の比べ元） | クラス `Chrome_WidgetWin_1` で、実行ファイルが `chrome.exe`・`msedge.exe` の窓（Electron のアプリは除く） |
-| `findPermissionDialog({ since })` | 確認の窓 | `since` に無い・見えている・最小化でない・外形が 1000×700 DIP 以下。題が既知なら優先、無ければブラウザーの窓が持ち主の窓が 1 つだけのとき |
+| `findPermissionDialog({ since, port })` | 確認の窓 | `since` に無い・見えている・最小化でない・外形が 1000×700 DIP 以下。題が既知なら優先、無ければブラウザーの窓が持ち主の窓が 1 つだけのとき。`port`（`DevToolsActivePort` のポート）があれば、そのポートを待ち受けるプロセス（Windows は `GetExtendedTcpTable`）の窓だけ。別の `User Data` の Chrome・Edge・別の `chrome.exe` と取り違えて閉じない（持ち主を引けなければ絞らない） |
 | `raise(ref)` | 窓を前に出す（最小化なら戻す） | `SetForegroundWindow`、前面が変わらなければ `AttachThreadInput`＋`BringWindowToTop`＋`SetForegroundWindow`。`method` は `direct`・`attach`・`failed`・`unknown` |
 | `yieldForeground(ref, { to })` | `ref` が前面を取っていたら `to` に返す | `raise` と同じ手順で `to` へ |
 | `foreground()` | 今の前面の窓（`{ id, browser }`） | `GetForegroundWindow`。`browser` はブラウザー自身の窓か |

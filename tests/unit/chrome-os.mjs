@@ -17,7 +17,7 @@ const NOTEPAD = 'C:\\Windows\\System32\\notepad.exe';
 function fakeWin32({ directForeground = true } = {}) {
   const calls = [];
   const windows = new Map();
-  const exes = new Map([[10, CHROME], [20, CODE], [30, NOTEPAD], [40, EDGE]]);
+  const exes = new Map([[10, CHROME], [11, CHROME], [20, CODE], [30, NOTEPAD], [40, EDGE]]);
   const w = {
     calls, windows,
     fg: 0,
@@ -91,6 +91,23 @@ export default async function (t) {
     t.ok('題が未知で持ち主も無い小さな窓（利用者のポップアップ）は返さない', os4.findPermissionDialog({ since: [] }) === null);
     d4.add(941, { ...DIALOG, title: 'Remote debugging prompt', owner: 0 });
     t.ok('英語の題（remote debugging）は題で見つける', os4.findPermissionDialog({ since: [] })?.id === '941');
+
+    // 別の User Data の Chrome（同じ chrome.exe・同じクラス）が同時に動いていても、ポートの持ち主の窓だけを見る。
+    // pid 10 = 利用者の Chrome、pid 11 = 確かめ専用の Chrome（ポート 9222 を待ち受ける）
+    const d5 = fakeWin32(); const os5 = createWin32ChromeOs({ win32: d5 });
+    d5.listenerPid = port => (port === 9222 ? 11 : null);
+    d5.add(950, { ...DIALOG, pid: 10 });
+    t.ok('ポートの持ち主でない Chrome の確認の窓（題が一致していても）は返さない', os5.findPermissionDialog({ since: [], port: 9222 }) === null);
+    d5.add(951, { ...DIALOG, pid: 11 });
+    t.ok('ポートの持ち主の Chrome の窓だけを返す', os5.findPermissionDialog({ since: [], port: 9222 })?.id === '951');
+    t.ok('port が無ければ今までどおり絞らない（先に見つかる題が一致の窓）', os5.findPermissionDialog({ since: [] })?.id === '950');
+    t.ok('持ち主が分からないポート（待ち受けが無い）は絞らない', os5.findPermissionDialog({ since: [], port: 9333 })?.id === '950');
+    d5.listenerPid = () => { throw new Error('iphlpapi'); };
+    t.ok('持ち主を引けなくても投げない（絞らない）', os5.findPermissionDialog({ since: [], port: 9222 })?.id === '950');
+    t.ok('不正な port（文字列・範囲外）は無視する', os5.findPermissionDialog({ since: [], port: '9222' })?.id === '950' && os5.findPermissionDialog({ since: [], port: 70000 })?.id === '950');
+    const d6 = fakeWin32(); const os6 = createWin32ChromeOs({ win32: d6 });
+    d6.add(960, { ...DIALOG, pid: 10 });
+    t.ok('listenerPid の無い表（古い層）でも動く', os6.findPermissionDialog({ since: [], port: 9222 })?.id === '960');
   }
 
   // ===== raise =====
