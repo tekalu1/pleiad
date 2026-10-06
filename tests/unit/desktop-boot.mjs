@@ -37,7 +37,7 @@ class FakeLink extends EventEmitter {
   }
 }
 
-async function start({ env = {}, packaged = false, choice = 'link', connectError = null, reattach = false, resourcesPath = 'C:\\inst\\resources' } = {}) {
+async function start({ env = {}, packaged = false, choice = 'link', connectError = null, reattach = false, resourcesPath = 'C:\\inst\\resources', quitFails = false } = {}) {
   const calls = { dialogs: [], messages: [], quits: 0, forks: 0, connects: 0, loads: [], left: null, killed: false, chosen: null, reattaches: 0, logs: [], order: [], switches: [], updates: null };
   const link = new FakeLink(calls);
   link.connectError = connectError;
@@ -79,7 +79,7 @@ async function start({ env = {}, packaged = false, choice = 'link', connectError
   };
   // electron-updater の quitAndInstall: インストーラーを起こした後に before-quit-for-update を出して終わる（node_modules/electron-updater の BaseUpdater）
   const autoUpdater = new EventEmitter();
-  autoUpdater.quitAndInstall = () => { calls.order.push('quitAndInstall'); electron.autoUpdater.emit('before-quit-for-update'); };
+  autoUpdater.quitAndInstall = () => { calls.order.push('quitAndInstall'); if (quitFails) throw new Error('installer did not start'); electron.autoUpdater.emit('before-quit-for-update'); };
   const serverBoot = {
     chooseServer: async options => { calls.chosen = options; return choice === 'link' ? { link, logFile: 'C:\\rt\\logs\\server.log', connect: () => link.connect() } : null; },
     describeBootError: (error, t) => `described:${error.code}:${t('server.startTimeout')}`,
@@ -214,6 +214,17 @@ export default async function (t) {
     link.emit('exit', 0);
     await tick();
     t.ok('on の更新: 切った後のつながりの切断で付け直さず、ダイアログも出さない', calls.reattaches === 0 && calls.dialogs.length === 0);
+  }
+  {
+    // 更新を取りやめた（インストーラーが起きなかった）: main-leaving の後に取りやめを知らせ、サーバーの「猶予を数えない」状態を解く。つながりは切らない
+    const { calls, link } = await start({ env: { AGENT_HOST_HANDOVER: 'on' }, packaged: true, reattach: true, quitFails: true });
+    calls.messages.length = 0;
+    const failed = await calls.updates.install().then(() => false, () => true);
+    const types = calls.messages.map(m => m.type);
+    t.ok('on の更新を取りやめたら、main-leaving の後に main-leaving-cancel を送る（つながりは切らず、shutdown もしない）', failed && types.join() === 'main-leaving,main-leaving-cancel' && calls.left === null && calls.killed === false, types.join());
+    link.emit('exit', 1);
+    await tick();
+    t.ok('取りやめの後のつながりの切断は、普通に付け直す（終了の扱いにしない）', calls.reattaches === 1 && calls.quits === 0);
   }
   {
     const { calls, utility } = await start({ env: {} });

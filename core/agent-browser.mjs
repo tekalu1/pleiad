@@ -59,7 +59,7 @@ export function cleanTabState(message) {
 /**
  * main への口 port の上の、内蔵ブラウザーの橋（サーバー側）。
  * main が付け直す口（名前付きパイプ。port.resumable）では、main が居ない間の扱いを持つ（docs/zero-downtime-update/design.md §7.2・plan.md 1-5）:
- *   - 会話ごとの中継の URL（ポートと鍵）と、main が報告したタブの写しを持つ。付け直した main が browser-restore-request で引き、
+ *   - 会話ごとの中継の URL（ポートと鍵）と、main が報告したタブの写しを持つ（報告に中継の写し relay が付いていれば取り込む。切り替えで替わったサーバーへ main が送り直す）。付け直した main が browser-restore-request で引き、
  *     同じポート・鍵で中継を立て直す（タブを先に開き直してから待ち受ける。agent-browser の常駐は同じ URL なら次の呼び出しで戻る）
  *   - endpoint は、main が居ない間は写しで答える（新しい会話の鍵はここで決める。戻った main が同じ値で立てる）。ポートを一度も知らなければ空きポートをここで選ぶ。
  *     選べなかったときは戻るまで待つ（connectWaitMs）
@@ -93,7 +93,7 @@ export function parentPortBrowser(port, { timeoutMs = 10_000, connectWaitMs = 30
         .then(profile => port.postMessage({ type: 'browser-profile-resolve', id: message.id, profile: profile ?? null }));
       return;
     }
-    if (message?.type === 'browser-state-report') { tabState = cleanTabState(message); return; }
+    if (message?.type === 'browser-state-report') { tabState = cleanTabState(message); adoptRelay(message.relay); return; }
     if (message?.type === 'browser-restore-request') {
       port.postMessage({ type: 'browser-restore', ...tabState, relay: relayPort != null && relays.size ? { port: relayPort, entries: [...relays].map(([sessionId, key]) => ({ sessionId, key })) } : null });
       for (const entry of pending.values()) post(entry);   // 新しい main の橋ができる前に送って落ちた依頼を送り直す
@@ -158,6 +158,15 @@ export function parentPortBrowser(port, { timeoutMs = 10_000, connectWaitMs = 30
   function keep(sessionId, key) {
     relays.delete(sessionId); relays.set(sessionId, key);
     if (relays.size > RELAY_MAX) relays.delete(relays.keys().next().value);
+  }
+  /** main が送り直した中継の写し（切り替えで替わったこのサーバーは空から始まる。desktop/agent-browser-bridge.cjs）。main が立てている物が正なので、持っている物に重ねる */
+  function adoptRelay(relay) {
+    const nextPort = Number(relay?.port);
+    if (!Number.isInteger(nextPort) || nextPort < 1 || nextPort > 65535) return;
+    relayPort = nextPort;
+    for (const row of Array.isArray(relay.entries) ? relay.entries : []) {
+      if (typeof row?.sessionId === 'string' && row.sessionId && row.sessionId.length <= 200 && /^[a-f0-9]{48}$/.test(String(row.key))) keep(row.sessionId, row.key);
+    }
   }
   function remember(sessionId, url) {
     const match = RELAY_URL.exec(String(url));

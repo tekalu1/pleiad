@@ -3,6 +3,7 @@
 //   - つながるたびに最新の ready と言語が届く（付け直した main が locale を受け取る）
 //   - main-leaving の後は、画面が居なくても猶予（AGENT_HOST_GRACE_MS）でターンを中断しない。戻った main の窓が付くまでの猶予は戻った時から数え直す
 //   - main-leaving が無いまま切れて戻らなければ、今までどおり猶予で中断する（対照）
+//   - main-leaving の後に main が取りやめた（main-leaving-cancel。更新の失敗）ら、猶予を数える状態に戻り、画面が居なければ中断する
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -14,7 +15,7 @@ const require = createRequire(import.meta.url);
 const { createServerLink, readLinkInfo } = require('../../desktop/server-link.cjs');
 
 export const name = 'main-away-server';
-export const title = 'main が居ない間（サーバー越し）: 付け直しで ready・言語が届く・main-leaving の後は猶予で中断しない・main-leaving が無ければ中断する';
+export const title = 'main が居ない間（サーバー越し）: 付け直しで ready・言語が届く・main-leaving の後は猶予で中断しない・main-leaving が無ければ中断する・取りやめれば中断する';
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 const tempDir = () => fs.mkdtempSync(path.join(os.tmpdir(), 'pleiad-main-away-'));
@@ -114,6 +115,31 @@ export default async function (t) {
           const said = back.events.filter(e => e.type === 'text.delta').map(e => e.text).join('');
           t.ok('対照: main-leaving が無いまま猶予を越えて戻らなければ、今までどおり中断される（待っていた承認は deny）', said.startsWith('拒否された') && (await back.cmd('running')).count === 0, JSON.stringify(said));
         } finally { back.close(); }
+      } finally { try { main.link?.kill(); } catch { /* 終わっていれば何もしない */ } await server.stop(); }
+    }
+
+    // ---- 取りやめ: main-leaving の後に main が更新を取りやめた（つながったまま）。猶予を数えない状態が解け、画面が居なければ今までどおり中断する
+    {
+      const { server, dataDir } = await boot();
+      const main = fakeMain(dataDir);
+      try {
+        const link = main.attach();
+        await link.connect();
+        const turn = await startAskingTurn(server);
+        link.postMessage({ type: 'main-leaving', reason: 'update' });
+        await sleep(100);
+        turn.away.close();
+        // 猶予（300 ms + 保険のタイマー 500 ms）を越えても、main-leaving の間は中断されない
+        await sleep(1000);
+        const held = await open({ port: server.port, token: server.token });
+        t.ok('取りやめの前: main-leaving の間は、画面が猶予を越えて居なくてもターンは残る', (await held.cmd('running')).turns.length === 1);
+        held.close();                     // 画面が居る間は猶予を数えないので、閉じてから取りやめる
+        await sleep(100);
+        link.postMessage({ type: 'main-leaving-cancel' });
+        await sleep(1500);                // 猶予 300 ms + 保険のタイマー 500 ms を越える
+        const after = await open({ port: server.port, token: server.token });
+        try { t.ok('取りやめの後は猶予を数え直し、画面が居なければ今までどおり中断される（main はつながったまま）', (await after.cmd('running')).count === 0 && link.connected === true); }
+        finally { after.close(); }
       } finally { try { main.link?.kill(); } catch { /* 終わっていれば何もしない */ } await server.stop(); }
     }
   } finally {

@@ -217,6 +217,11 @@ function createBrowserRelay(panel, { onActivity = () => {}, navigation, WebSocke
     await ensureListening(want);
     return { port: address.port, moved: want !== 0 && address.port !== want };
   }
+  /** 立っている中継の写し（{ port, entries: [{ sessionId, key }] }）。待ち受けが無い・会話が無ければ null。切り替えで替わったサーバーへ渡す（agent-browser-bridge.cjs） */
+  function snapshot() {
+    if (!address || !entries.size) return null;
+    return { port: address.port, entries: [...entries.values()].map(entry => ({ sessionId: entry.id, key: entry.key })) };
+  }
   function disconnect(sessionId, stop = false) {
     const entry = entries.get(sessionId);
     if (!entry) return;
@@ -241,7 +246,7 @@ function createBrowserRelay(panel, { onActivity = () => {}, navigation, WebSocke
     panel.rebindSession(from, to);
   }
   function close() { for (const id of entries.keys()) disconnect(id, true); wss.close(); server.close(); }
-  return { endpoint, restore, disconnect, resume, rebind, close };
+  return { endpoint, restore, snapshot, disconnect, resume, rebind, close };
 }
 function publicInfo(row) { if (!row) throw new Error('target denied'); const { tab, id, ...info } = row; return { targetId: id, ...info }; }
 function safeUrl(value) { try { const url = new URL(value); return ['http:', 'https:'].includes(url.protocol) && !url.username && !url.password || url.href === 'about:blank'; } catch { return false; } }

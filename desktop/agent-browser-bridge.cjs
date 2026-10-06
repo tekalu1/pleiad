@@ -6,10 +6,13 @@ const { createBrowserNavigation } = require('./browser-navigation.cjs');
 //                   agent-browser-endpoint { …, profile }・browser-profile-resolve の応答 { id, profile }
 //   main -> worker: browser-profile-resolve { id, sessionId }（まだ覚えていない会話の今のプロフィールを引く）
 // 無停止の更新（handover: AGENT_HOST_HANDOVER=on の名前付きパイプの経路。docs/zero-downtime-update/design.md §7.2）:
-//   main -> worker: browser-state-report { tabs, profiles }（タブの写し。変わったときに 1 秒ほどまとめて）・browser-restore-request（付け直した main が起動で 1 回）・
-//                   agent-browser-endpoint-moved { port }（同じポートが取れず別のポートで中継を立て直した）
+//   main -> worker: browser-state-report { tabs, profiles, relay? }（タブの写し。変わったときに 1 秒ほどまとめて。relay は後述の送り直しのときだけ）・
+//                   browser-restore-request（付け直した main が起動で 1 回）・agent-browser-endpoint-moved { port }（同じポートが取れず別のポートで中継を立て直した）
 //   worker -> main: browser-restore { tabs, profiles, relay: { port, entries: [{ sessionId, key }] } | null }（サーバーが持つ前の main の写し）
 // 受けたら、タブを先に開き直してから、同じポート・鍵で中継を立て直す（中継はタブが無いと空のタブを作る）。
+// 切り替え（desktop/switch.cjs）で新しいサーバー（S2）に替わったときは、S2 は写しも中継の URL も持たずに空から始まり、報告は中身が変わらないと送らない。
+// そこで、つなぎ直したサーバーが送る ready（つながるたびに届く）で、写しと中継の URL（{ port, entries }）を 1 回送り直す。
+// browser-restore-request で開き直さないのは、タブと中継は main のもので残っており（S2 の答えは空）、S2 に要るのは写しを持たせることだけだから。
 function attachAgentBrowserBridge(worker, panel, { timeoutMs = 5000, handover = false, reportMs = 1000, restoreWaitMs = 5000 } = {}) {
   const idleTimers = new Map();
   const pending = new Map();
@@ -52,6 +55,17 @@ function attachAgentBrowserBridge(worker, panel, { timeoutMs = 5000, handover = 
     lastReport = key;
     worker.postMessage({ type: 'browser-state-report', ...state });
   };
+  // つなぎ直したサーバーへ、写しと中継の URL を送り直す（上の注記）。復元が済む前の ready は、復元の流れが報告を始めるので何もしない
+  const resend = () => {
+    if (!handover || !reportsOn) return;
+    clearTimeout(reportTimer); reportTimer = null;
+    let state;
+    try { state = panel.exportState?.(); } catch { return; }
+    if (!state) return;
+    lastReport = JSON.stringify(state);
+    const relayState = relay.snapshot?.();
+    worker.postMessage({ type: 'browser-state-report', ...state, ...(relayState ? { relay: relayState } : {}) });
+  };
   const scheduleReport = () => { if (handover && reportsOn && !reportTimer) reportTimer = setTimeout(report, reportMs); };
   const offState = handover ? panel.onStateChanged?.(scheduleReport) : null;
   async function restore(message) {
@@ -70,6 +84,7 @@ function attachAgentBrowserBridge(worker, panel, { timeoutMs = 5000, handover = 
   }
   worker.on('message', async message => {
     if (message?.type === 'browser-restore') { await restore(message); return; }
+    if (message?.type === 'ready') { resend(); return; }
     if (message?.type === 'agent-browser-turn-ended') { navigation.cancel(message.sessionId); return; }
     if (message?.type === 'browser-load-policy') { panel.setLoadPolicy?.({ confirm: message.confirm === true, origins: message.origins }); return; }
     if (message?.type === 'agent-browser-prefs') {

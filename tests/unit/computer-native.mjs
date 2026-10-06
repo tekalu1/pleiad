@@ -406,6 +406,19 @@ export default async function (t) {
     t.ok('Per-Monitor（V1 でも）なら包まない', withPerMonitorDpi(same) === same);
   }
 
+  // ===== 名前付きパイプの口は切れるたびに 'exit' を出す。つなぎ直した包みの次の切断でも後始末が走る（1-6 の切り替えの S2・付け直し）=====
+  {
+    const { attachComputerService } = require('../../desktop/computer/service.cjs');
+    const { EventEmitter } = require('node:events');
+    const worker = new EventEmitter();
+    worker.postMessage = () => {};
+    const svc = attachComputerService(worker, { win32: fakeWin32() });
+    t.ok('attach: exit の見張りを付ける', worker.listenerCount('exit') === 1);
+    worker.emit('exit', 0);
+    t.ok('attach: 1 回目の exit で見張りが消えない（once ではない）', worker.listenerCount('exit') === 1);
+    svc.detach();
+  }
+
   // ===== main.cjs の配線（読んで確かめる。Electron は起こさない）=====
   {
     const fs = require('node:fs');
