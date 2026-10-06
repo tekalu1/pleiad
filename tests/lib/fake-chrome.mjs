@@ -4,7 +4,7 @@
 //   - cancel() は利用者の「キャンセル」: 保留の upgrade を HTTP 403 で断り（実機の見え方）、確認の窓も消す。expire() は Chrome の約 5 分の打ち切り: socket を壊し（見え方は未確認なので 403 とは別の形）、確認の窓は残す
 //   - closeDialog(id) は確認の窓を閉じる（本物の WM_CLOSE と同じに、upgrade は即座に 403 で断られる）
 //   - turnOff() は確認の「[設定] でオフにする」: 壊し、DevToolsActivePort を消し、ポートを閉じる。restart() はポートと経路を変えて書き直す
-//   - CDP は Browser.getVersion だけ答え、ほかは -32601。受けたメソッドは calls に残す
+//   - CDP は tests/lib/fake-chrome-browser.mjs の小さなブラウザー（窓・タブ・flatten のセッション・Fetch）が答える。受けたメソッドは calls に残す
 // 本物の Chrome・本物の LOCALAPPDATA は読まない。
 import http from 'node:http';
 import fs from 'node:fs/promises';
@@ -12,10 +12,11 @@ import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { WebSocketServer } from 'ws';
+import { createFakeBrowser } from './fake-chrome-browser.mjs';
 
 const CRLF = String.fromCharCode(13, 10);
 
-export async function startFakeChrome({ permission = 'auto', product = 'Chrome/154.0.8037.97', userDataDir = null } = {}) {
+export async function startFakeChrome({ permission = 'auto', product = 'Chrome/154.0.8037.97', userDataDir = null, userTabs } = {}) {
   const dir = userDataDir ?? await fs.mkdtemp(path.join(os.tmpdir(), 'ply-fake-chrome-'));
   const ownsDir = !userDataDir;
   const wss = new WebSocketServer({ noServer: true });
@@ -30,18 +31,14 @@ export async function startFakeChrome({ permission = 'auto', product = 'Chrome/1
   let mode = permission;
   let dialogSeq = 0;
   const self = { dir, userDataDir: dir, calls: [], upgrades: 0 };
+  const browser = createFakeBrowser({ product, calls: self.calls, ...(userTabs ? { userTabs } : {}) });
+  self.browser = browser;
 
   const writeFile = () => fs.writeFile(path.join(dir, 'DevToolsActivePort'), `${port}\n${wsPath}\n`);
   const removeFile = () => fs.rm(path.join(dir, 'DevToolsActivePort'), { force: true });
 
   function serve(req, socket) {
-    // CDP: Browser.getVersion だけ
-    socket.on('message', raw => {
-      let message; try { message = JSON.parse(raw.toString()); } catch { return; }
-      self.calls.push({ method: message.method, sessionId: message.sessionId ?? null });
-      if (message.method === 'Browser.getVersion') socket.send(JSON.stringify({ id: message.id, result: { product, protocolVersion: '1.3', userAgent: 'fake', jsVersion: '1' } }));
-      else socket.send(JSON.stringify({ id: message.id, error: { code: -32601, message: `'${message.method}' wasn't found` } }));
-    });
+    browser.serve(socket);
     socket.on('close', () => open.delete(socket));
     open.add(socket);
     void req;

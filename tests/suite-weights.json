@@ -48,6 +48,7 @@
     "channels-store": 2463,
     "chrome-connection": 1000,
     "chrome-os": 300,
+    "chrome-relay": 3230,
     "chrome-settings": 300,
     "claude-accounts": 327,
     "claude-background": 45,
