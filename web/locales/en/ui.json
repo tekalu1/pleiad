@@ -4042,8 +4042,10 @@
       "starting": "Starting",
       "listening": "Listening",
       "hearing": "Hearing you",
+      "hold": "Still listening",
       "thinking": "Thinking",
       "speaking": "Speaking",
+      "speakingLive": "Speaking (say something to stop)",
       "muted": "Muted"
     },
     "live": {
@@ -4052,12 +4054,33 @@
       "muted": "Microphone muted",
       "unmuted": "Unmuted",
       "denied": "Microphone not allowed",
-      "ended": "Call ended"
+      "ended": "Call ended",
+      "sent": "Sent as one message",
+      "stopped": "Stopped reading aloud"
     },
     "mark": "Spoken message",
+    "hold": {
+      "group": "Your voice (waiting to send)",
+      "listening": "Listening",
+      "waiting": "Still listening · sending in {{seconds}} s",
+      "finishing": "Transcribing · sending shortly",
+      "sendNow": "Send now",
+      "cancel": "Discard"
+    },
+    "delivery": {
+      "sent": "Handed to the AI",
+      "pending": "Waiting to slip in · handed over at the next break",
+      "queued": "Queued · sent when this work finishes",
+      "queuedOrder": "Queued · sent after the earlier message",
+      "queuedLimit": "Queued · sent when the limit lifts"
+    },
     "openSettings": "Open settings",
     "hint": {
-      "reading": "Reading aloud",
+      "readingBarge": "Reading aloud · speak to stop",
+      "readingClosed": "Reading aloud · the microphone is closed for now",
+      "readingClosedEcho": "Reading aloud · the microphone is closed for now (echo cancellation is off)",
+      "cut": "Stopped reading aloud here",
+      "resume": "Keep reading",
       "stop": "Stop",
       "jump": "Go to the spoken line"
     },
@@ -4074,7 +4097,7 @@
       "stt": "Could not hear that. Please say it again",
       "tts": "Could not read that aloud. See the text on screen",
       "sendFailed": "Could not send the message: {{error}}",
-      "notSent": "It could not be sent right now, so the message was left in the input box",
+      "notSent": "It could not be sent right now",
       "start": "Could not start the call ·",
       "startTimeout": "The call did not get ready in time"
     },
@@ -4123,10 +4146,37 @@
         "today": "Today: calls {{minutes}} min · transcribed {{stt}} min · read aloud {{chars}} characters",
         "note": "A call ends when it reaches a limit (and cannot start once the day's limit is reached). A call that hears nobody for 10 minutes also ends."
       },
+      "turn": {
+        "title": "Pause before sending",
+        "hint": "How long to wait after you stop talking before the message is sent. A longer wait keeps hesitations in one message; a shorter wait starts the reply sooner.",
+        "label": "Pause length",
+        "short": "Short",
+        "standard": "Standard",
+        "long": "Long",
+        "est": {
+          "short": "Short: sends about 0.7 s after you stop. The reply starts about as fast as before. A short pause can still split a message.",
+          "standard": "Standard: sends about 1.2 s after you stop. Hesitations like \"um, well,\" stay in one message. The reply starts about 0.5 s later than before.",
+          "long": "Long: sends about 2.0 s after you stop. Long pauses stay in one message. The reply starts about 1.3 s later than before."
+        },
+        "tail": "It waits a little longer when your words end with a comma or a connecting word, and a little less when they end a sentence."
+      },
+      "barge": {
+        "title": "Interrupting",
+        "label": "Speak to stop the reading",
+        "hint": "Works with a headset or when echo cancellation is on. Otherwise it turns itself off and the microphone stays closed while the reply is read."
+      },
+      "sounds": {
+        "title": "Sounds",
+        "label": "Sound effects",
+        "hint": "Short sounds so you can follow the call without looking at the screen. Nothing plays while the reply is read aloud (except the sound for stopping it).",
+        "off": "Off",
+        "few": "Few (sent, stopped)",
+        "all": "All"
+      },
       "audio": {
         "title": "Microphone",
         "echo": "Echo cancellation, noise suppression, auto gain",
-        "echoHint": "A browser feature. It helps avoid picking up sounds other than your voice when you listen on speakers. Turn it off if your voice sounds muffled.",
+        "echoHint": "A browser feature. It helps avoid picking up sounds other than your voice when you listen on speakers. Turn it off if your voice sounds muffled. With it off, \"Speak to stop the reading\" is unavailable.",
         "permission": "If the microphone is not allowed, allow it in the browser's site settings (the lock icon in the address bar) or the OS privacy settings. The desktop app allows microphone use from this screen automatically."
       }
     }

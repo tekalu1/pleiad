@@ -21,7 +21,8 @@
 //                 isRow = rows の子が発言の行か、markHost = その行のマイクの印を足す所、createRow = 声の吹き出しの行 { el, body }、
 //                 persistMarks = 行が描き直される場所（印を付け直す。rowKey = 行の識別子。画面を開いている間だけ覚える）
 //   target()      見ている先 { kind: 'chat', sessionId } | { kind: 'thread', channelId, threadId } | null
-//   send(text)    確定した発言を、いまの送信の経路（会話へは sendMessage、スレッドへは channels.post）へ。失敗したら投げる
+//   send(text)    まとめ待ちを終えた 1 通を、いまの送信の経路（会話へは sendMessage で会話の行に置く、スレッドへは channels.post）へ。失敗したら投げる。
+//                 index.mjs が直列に呼ぶ（前の送信が済むまで次を呼ばない）。入力欄は通さない
 //   follow()      足したあと、末尾にいるなら下へ追従させる
 //
 // 通話は 1 度に 1 本。別の slot で始めると前の通話は終わる。見ている会話・スレッドが別のものに変わったら通話は終わる（新しい会話の id が決まっただけなら続ける）。
@@ -29,6 +30,8 @@ import { createCallEngine } from './engine.mjs';
 import { createCallButton, createComposerParts, createGlow, createHint, createJump, createNote } from './view.mjs';
 import { createReadingMark } from './reading-mark.mjs';
 import { createLiveBubble, micMark } from './live-bubble.mjs';
+import { createSounds } from './sounds.mjs';
+import { createSendQueue } from './send-queue.mjs';
 import { t } from '../i18n.mjs';
 
 const fmtTime = (sec) => `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`;
@@ -42,7 +45,8 @@ export function setupVoice({ token, invoke, openSettings, available = () => true
   let deniedRec = null;         // マイクを使えなかった rec（理由は deniedReason）
   let deniedReason = null;
   let startedKey = '';
-  let settings = { echoCancellation: true };
+  let settings = { echoCancellation: true, sounds: 'off', bargeIn: true };
+  const sendQueue = createSendQueue();   // 声で確定した発言を、話した順に 1 通ずつ送る直列のキュー
   let loopOn = false, clock = null, watchTimer = null;
   let said = 'off';
   let lastRec = null;           // 直近に通話していた rec（終わったあとに届く知らせを出す先）
@@ -53,8 +57,11 @@ export function setupVoice({ token, invoke, openSettings, available = () => true
   document.body.append(live);
   const say = (text) => { live.textContent = ''; requestAnimationFrame(() => { live.textContent = text; }); };
 
-  const loadSettings = () => invoke('voice.status', {}).then((s) => { settings = { ...settings, echoCancellation: s?.settings?.echoCancellation !== false }; }).catch(() => {});
+  const loadSettings = () => invoke('voice.status', {}).then((s) => {
+    settings = { ...settings, echoCancellation: s?.settings?.echoCancellation !== false, bargeIn: s?.settings?.bargeIn !== false, sounds: s?.settings?.sounds ?? 'off' };
+  }).catch(() => {});
   loadSettings();
+  const sounds = createSounds({ level: () => settings.sounds, speaking: () => engine.state === 'speaking' });
 
   const supported = () => Boolean(navigator.mediaDevices?.getUserMedia && globalThis.AudioWorkletNode && globalThis.AudioContext);
   const usable = () => available() && supported();
@@ -70,7 +77,8 @@ export function setupVoice({ token, invoke, openSettings, available = () => true
 
   function paint(rec) {
     const on = active === rec && engine.active;
-    const ms = msOf(rec);
+    const base = msOf(rec);
+    const ms = base === 'speaking' && engine.bargeActive ? 'speaking-live' : base;   // 読み上げ中でも聞いている（話すと止まる）
     const time = on ? fmtTime(Math.floor((now() - engine.startedAt) / 1000)) : '';
     rec.call.el.hidden = !usable();
     rec.call.paint({ on, time });
@@ -80,10 +88,10 @@ export function setupVoice({ token, invoke, openSettings, available = () => true
     root.classList.toggle('vc-deny', !on && deniedRec === rec);
     if (wasShown !== (on || (!on && deniedRec === rec))) rec.slot.composer.refit?.();
     const main = rec.slot.main;
-    if (on) { main.setAttribute('data-vc-call', ''); main.dataset.vcCs = engine.state; main.dataset.vcMute = String(engine.muted); }
+    if (on) { main.setAttribute('data-vc-call', ''); main.dataset.vcCs = engine.state === 'hold' ? 'hearing' : engine.state; main.dataset.vcMute = String(engine.muted); }
     else { main.removeAttribute('data-vc-call'); delete main.dataset.vcCs; delete main.dataset.vcMute; }
     // i18n-dynamic: voice.state.
-    const stateWord = ms === 'off' || ms === 'denied' ? '' : t(`voice.state.${ms}`);
+    const stateWord = ms === 'off' || ms === 'denied' ? '' : t(`voice.state.${ms === 'speaking-live' ? 'speakingLive' : ms}`);
     // i18n-dynamic: voice.mic.
     const micLabel = ms === 'denied' ? t(`voice.mic.${deniedReason === 'no-device' ? 'noDevice' : deniedReason === 'busy' ? 'busy' : 'denied'}`)
       : ms === 'off' ? t('voice.call.start')
@@ -91,10 +99,20 @@ export function setupVoice({ token, invoke, openSettings, available = () => true
     rec.parts.paintMic(ms, micLabel);
     const spkLabel = (engine.speakerMuted && on ? t('voice.spk.unmute') : t('voice.spk.mute')) + (on && engine.state === 'speaking' ? t('voice.spk.speaking') : '');
     rec.parts.paintSpeaker(on && engine.speakerMuted, spkLabel);
-    // 返事の下の「止める」は、読み上げている間だけ
+    // 返事の下の一行: 読み上げている間は「止める」、止めたあとは「ここで止めました · 続きを読む」（新しい発言を送るまで）
     const speaking = on && engine.state === 'speaking';
-    if (speaking && rec.hint.hidden) { rec.slot.tail.place(rec.hint); rec.hint.hidden = false; rec.slot.follow(); }
-    else if (!speaking && !rec.hint.hidden) rec.hint.hidden = true;
+    let hintMode = null, hintText = '';
+    if (speaking) {
+      rec.cut = false;
+      hintMode = 'reading';
+      if (engine.bargeActive) hintText = t('voice.hint.readingBarge');
+      else if (settings.bargeIn && !settings.echoCancellation) hintText = t('voice.hint.readingClosedEcho');   // 話して止めるは入っているが、エコー除去が切れているので聞けない
+      else hintText = t('voice.hint.readingClosed');
+    } else if (on && rec.cut) { hintMode = 'cut'; hintText = t('voice.hint.cut'); }
+    if (hintMode) {
+      if (rec.hint.hidden) { rec.slot.tail.place(rec.hint); rec.hint.hidden = false; rec.slot.follow(); }
+      if (rec.hintSig !== `${hintMode}|${hintText}`) { rec.hintSig = `${hintMode}|${hintText}`; rec.hint.paint(hintMode, hintText); }
+    } else if (!rec.hint.hidden) { rec.hint.hidden = true; rec.hintSig = ''; }
     if (rec === active || rec === deniedRec) announce(ms);
   }
   const paintAll = () => { for (const rec of recs) paint(rec); };
@@ -171,6 +189,7 @@ export function setupVoice({ token, invoke, openSettings, available = () => true
     rec.mark.stop();
     rec.jump.hide();
     rec.hint.hidden = true;
+    rec.hintSig = ''; rec.cut = false;
   }
 
   // ---- engine のイベント
@@ -178,13 +197,18 @@ export function setupVoice({ token, invoke, openSettings, available = () => true
     const rec = active;
     switch (ev.type) {
       case 'state': paintAll(); kick(); break;
-      case 'started': paintAll(); break;
+      case 'started': paintAll(); sounds.play('start'); break;
       case 'seg': rec?.mark.seg(ev); break;
       case 'segend': rec?.mark.finish(ev.id); break;
       case 'cancel': rec?.mark.stop(); break;
-      case 'partial': rec?.live.partial(ev.text); break;
-      case 'drop': rec?.live.discard(); break;
-      case 'final': if (rec) onFinal(rec, ev); break;
+      // まとめ待ち: 組み立て中の文を 1 つの吹き出しへ、残り時間はマイクの縁の弧へ（同じ長さで減る）
+      case 'hold': if (rec) { rec.live.update(ev.view); rec.parts.wrap.style.setProperty('--hold-p', (ev.view.active ? ev.view.fraction : 1).toFixed(3)); } break;
+      case 'turn': if (rec) onTurn(rec, ev.text); break;
+      case 'turn.discard': rec?.live.discard(); break;
+      case 'barge': case 'halt':
+        if (rec) { rec.cut = true; say(t('voice.live.stopped')); paint(rec); }
+        if (ev.type === 'barge') sounds.play('barge');
+        break;
       case 'turnEnd': rec?.mark.resetCursor(); break;
       case 'lat': showLatency(ev); break;
       case 'notice': if (rec ?? lastRec) onNotice(rec ?? lastRec, ev.code); break;
@@ -195,25 +219,32 @@ export function setupVoice({ token, invoke, openSettings, available = () => true
         clearInterval(clock); clearInterval(watchTimer);
         paintAll();
         announce('off');
+        sounds.play('end');
         break;
       }
     }
   });
 
-  async function onFinal(rec, ev) {
-    const text = String(ev.text ?? '').trim();
-    if (!text) { rec.live.discard(); return; }
-    rec.live.settle(text);
+  /** まとめ待ちを終えた 1 通。吹き出しは確定の字にして、会話へは直列のキューで送る（本物の行が現れたら吹き出しは消える） */
+  function onTurn(rec, text) {
+    rec.cut = false;
+    rec.live.commit(text);
+    const bubble = rec.live.row;
     engine.noteSent(true);
-    try { await rec.slot.send(text); }
-    catch (e) {
-      engine.noteSent(false);
-      rec.live.remove();
-      rec.note.show(t('voice.note.sendFailed', { error: e?.message ?? String(e) }), { settings: false });
-      return;
-    }
-    // 本物の発言の行が現れなかったとき（別の経路で描かれた）のために、少し待って吹き出しを外す
-    setTimeout(() => { if (rec.live.sending) rec.live.remove(true); }, 600);
+    say(t('voice.live.sent'));
+    sendQueue.push(() => rec.slot.send(text)).then(
+      () => {
+        sounds.play('sent');
+        // 本物の発言の行が現れなかったとき（別の経路で描かれた）のために、少し待って吹き出しを外す
+        setTimeout(() => { if (rec.live.sending && rec.live.row === bubble) rec.live.remove(true); }, 600);
+      },
+      (e) => {
+        engine.noteSent(false);
+        if (rec.live.row === bubble) rec.live.remove();
+        rec.note.show(t('voice.note.sendFailed', { error: e?.message ?? String(e) }), { settings: false });
+        sounds.play('fail');
+      },
+    );
   }
 
   const NOTICE = {
@@ -224,6 +255,7 @@ export function setupVoice({ token, invoke, openSettings, available = () => true
     const [key, settings_] = NOTICE[code] ?? ['start', true];
     // i18n-dynamic: voice.note.
     rec.note.show(t(`voice.note.${key}`), { settings: settings_ });
+    if (['stt', 'stt-busy', 'tts'].includes(code)) sounds.play('fail');
   }
 
   // ---- 開発用の遅延の表示（localStorage の ply-voice-debug = 1）。声の終わり → 確定、確定 → 最初の音
@@ -246,12 +278,14 @@ export function setupVoice({ token, invoke, openSettings, available = () => true
       const parts = createComposerParts();
       const note = createNote({ onSettings: () => openSettings() });
       const glow = createGlow();
-      const hint = createHint({ onStop: () => engine.halt() });
+      const hint = createHint({ onStop: () => engine.halt(), onResume: () => { rec.cut = false; engine.resume(); paintAll(); } });
       let rec = null;
       const jump = createJump({ onJump: () => { rec.mark.reveal(); jump.hide(); } });
       const mark = createReadingMark({ host: slot.log, scope: () => slot.replyScope(), reduced: reducedMotion,
         onOffscreen: (dir) => (dir ? jump.show(dir) : jump.hide()) });
-      const liveBubble = createLiveBubble({ createRow: () => slot.tail.createRow(), place: (row) => slot.tail.place(row), label: t('voice.mark'), reduced: reducedMotion, follow: () => slot.follow() });
+      const liveBubble = createLiveBubble({ createRow: () => slot.tail.createRow(), place: (row) => slot.tail.place(row), label: t('voice.mark'), reduced: reducedMotion, follow: () => slot.follow(),
+        text: { group: t('voice.hold.group'), listening: t('voice.hold.listening'), waiting: (seconds) => t('voice.hold.waiting', { seconds }), finishing: t('voice.hold.finishing'), sendNow: t('voice.hold.sendNow'), cancel: t('voice.hold.cancel') },
+        actions: { sendNow: () => engine.sendNow(), cancel: () => engine.cancelTurn() } });
       rec = { slot, call, parts, note, glow, hint, jump, mark, live: liveBubble };
       recs.add(rec);
 

@@ -44,6 +44,13 @@
 .vc-micwrap[data-ms=thinking] .vc-rs{opacity:1;stroke-dasharray:3 85;stroke-width:3;animation:vc-spin 1.4s linear infinite}
 .vc-micwrap[data-ms=speaking] .vc-mic{background:transparent}
 .vc-micwrap[data-ms=denied] .vc-mbang{display:block}
+/* まとめ待ち: 聞き取り中の塗りを保ったまま、縁の弧が残り時間で短くなる（吹き出しの下の細い線と同じ長さで減る。--hold-p は index.mjs が 0..1 で入れる）。
+   読み上げ中でも聞いている（話して止める）: 地は付けず細い輪を一周。閉じている（半二重）の姿は speaking のまま（弱い字・地なし） */
+.vc-micwrap[data-ms=hold] .vc-mfill{transform:scale(.78);opacity:.3}
+.vc-micwrap[data-ms=hold] .vc-rs{opacity:1;stroke:var(--fill-primary);stroke-width:2.4;stroke-dasharray:calc(var(--hold-p,1) * 88px) 88px;transform:rotate(-90deg);transition:stroke-dasharray .12s linear}
+.vc-micwrap[data-ms=speaking-live] .vc-mic{background:transparent}
+.vc-micwrap[data-ms=speaking-live] .vc-rs{opacity:1;stroke:var(--ink-weak);stroke-width:1.4;stroke-dasharray:88 0}
+.vc-micwrap[data-ms=speaking-live] .vc-mfill{transform:scale(.6);opacity:.12}
 @keyframes vc-spin{to{transform:rotate(360deg)}}
 /* スピーカーのボタン: 音波はボタンの中。読み上げ中は地が付く */
 .vc-spk{background:transparent}
@@ -82,6 +89,30 @@
 .vc-ul{position:absolute;display:block;height:2px;margin-top:1px;background:var(--fill-primary);color:var(--on-fill);transform-origin:left center;transform:scaleX(0);opacity:1;transition:opacity .5s ease;border-radius:1px}
 .vc-hint{display:flex;align-items:center;gap:8px;margin:4px 0 8px;font-size:var(--fs-xs);color:var(--ink-weak)}
 .vc-hint .btn{padding:1px 10px;font-size:var(--fs-xs)}
+.vc-hint[data-mode=cut] svg{display:none}
+
+/* ---- まとめ待ち（あなたの声の吹き出しの下）: 送るまでの残りの細い線と、状態の一行・［いま送る］［取り消す］。話している間は線を満たしたまま ---- */
+.vc-hold{margin-top:8px;min-width:12em}
+.vc-bar{height:3px;border-radius:2px;background:var(--surface-3);overflow:hidden}
+.vc-bar i{display:block;height:100%;width:calc(var(--left,1) * 100%);background:var(--fill-primary);color:var(--on-fill);border-radius:2px;transition:width .12s linear}
+.vc-hold[data-voicing=true] .vc-bar i{background:var(--surface-3)}
+.vc-hrow{display:flex;align-items:center;flex-wrap:wrap;gap:4px 6px;margin-top:6px;min-height:22px;font-size:var(--fs-xs);color:var(--ink-weak)}
+.vc-ht{flex:1;min-width:8em}
+.vc-mini{padding:1px 10px;border-radius:var(--r-pill);font-size:var(--fs-xs);color:var(--ink);background:var(--surface-2);min-height:20px}
+.vc-mini:hover{background:var(--surface-3)}
+.vc-mini-p{background:var(--fill-primary);color:var(--on-fill)}
+.vc-mini-p:hover{background:var(--fill-primary-hover)}
+.vc-mini-q{background:transparent;color:var(--ink-weak)}
+.vc-mini-q:hover{background:var(--surface-2);color:var(--ink)}
+@media (pointer:coarse){.vc-mini,.vc-hint .btn,.vc-dl .btn{min-height:36px;padding:0 14px}}
+
+/* ---- 声で送った発言の配送の一行（web/voice/delivery.mjs）: ✓ 渡しました / 弧 差し込み待ち / 時計 送信待ち ＋ 取り消す。送信待ちは面を一段薄くする ---- */
+.vc-dl{display:flex;align-items:center;flex-wrap:wrap;gap:6px;color:var(--ink);min-height:18px}
+.vc-dl[data-vc-dl=sent]{color:var(--ink-weak)}
+.vc-dl .vc-dl-ico{width:13px;height:13px}
+.vc-dl .btn{padding:1px 10px;font-size:var(--fs-xs)}
+.m.user .body.vc-body,.vc-queued .m.user .body{transition:background-color var(--dur) var(--ease-out)}
+.vc-queued .m.user .body{background:var(--surface-1)}
 .vc-jump{position:absolute;left:50%;bottom:10px;transform:translateX(-50%);z-index:6;display:inline-flex;align-items:center;gap:6px;height:30px;padding:0 14px;border-radius:var(--r-pill);background:var(--surface-1);box-shadow:0 8px 28px var(--shadow);font-size:var(--fs-s);color:var(--ink);white-space:nowrap}
 .vc-jump:hover{background:var(--surface-3)}
 .vc-jump[hidden]{display:none}
@@ -124,6 +155,7 @@
   .vc-live.settle .vc-body{animation:none}
   .vc-spk .a1,.vc-spk .a2,.vc-spk .a3{opacity:.8}
   .vc-ul{transition:none}
+  .vc-bar i,.vc-micwrap[data-ms=hold] .vc-rs{transition:none}
 }
 
 /* 設定 › 通話（web/voice/settings.mjs）。面は .nf-card（--surface-1）に載せる（入力欄は --surface-paper で、面の上で見える） */
@@ -134,3 +166,9 @@
 #voicePanel select{border:0;padding:8px 12px;border-radius:var(--r-pill);background:var(--surface-paper);color:var(--ink);max-width:100%}
 #voicePanel .vc-today{display:block;margin-top:14px}
 #voicePanel .mp-check{display:flex;align-items:center;gap:6px;margin-top:10px}
+#voicePanel .vc-seg{display:inline-flex;gap:2px;padding:2px;margin-top:10px;background:var(--surface-paper);border-radius:var(--r-pill)}
+#voicePanel .vc-seg button{height:28px;padding:0 14px;border-radius:var(--r-pill);font-size:var(--fs-s);color:var(--ink-weak);white-space:nowrap;background:transparent;cursor:pointer}
+#voicePanel .vc-seg button[aria-checked=true]{background:var(--surface-2);color:var(--ink-strong);font-weight:600;box-shadow:0 1px 3px var(--shadow)}
+#voicePanel .vc-seg button:focus-visible{outline:2px solid var(--line-blue);outline-offset:1px}
+#voicePanel .vc-est{margin:8px 0 0;padding:8px 12px;border-radius:var(--r-s);background:var(--surface-paper)}
+#voicePanel .nf-card>small{display:block;margin-top:10px}
