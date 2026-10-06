@@ -118,7 +118,7 @@
 - 握手の最小の部分（版を聞く・引き継ぎを頼む・終わらせる）は、版をまたいで形を変えない。ここで形を決めて固定する（`ipc` の版 1）
 - テスト: `tests/unit/main-link.mjs`（符号化の往復・バイナリー・1 行の上限・行の途中で切れた入力・`secret` の不一致で何も返さず切る・`ipc` の範囲の外・切断と再接続）。本物のパイプで 2 つのプロセスを立てる
 
-### 1-3 実行場所（M）
+### 1-3 実行場所（M。**実装済み 2026-10-06**。下の「実装のメモ」）
 
 design.md §3 のとおり。参考にする動くコード: `scripts/zero-downtime/runtime/runtime-copy.mjs`・`hardlink-start.mjs`（ハッシュ・store・リンク）。
 
@@ -138,6 +138,18 @@ design.md §3 のとおり。参考にする動くコード: `scripts/zero-downt
 - **外の AI に貼る設定**（`cliSetup` → `mcpSetup` の `execPath`・`CLI_SCRIPT`）は、サーバーが実行場所で走ると版ごとのパス（`node\<版>-<sha>\pleiad-node.exe`・`app\<版>\bin\pleiad.mjs`）になり、古い版の掃除で壊れる。貼る設定が指すのは、版に依らない起動口にする（`$INSTDIR` の `Ply.exe` + `resources\app\bin\pleiad.mjs`、または実行場所の版に依らない起動口。1-0 f）
 - ADR 0090（CLI は Ply の内蔵 Node で走らせる）の「内蔵 Node」が、実行場所の `pleiad-node.exe` に変わる。文書は 1-7 で直す
 - テスト: `tests/unit/desktop-runtime.mjs`（一時のフォルダーで、組み立て・ハードリンク（`nlink`）・manifest の不一致・前方一致の判定と移動・使用中の版を消さない掃除・同じ版を 2 回組んでも壊れない・途中で止まった組み立ての後始末）。起動口の試験は `tests/unit/cli-launcher.mjs` に足す
+
+**実装のメモ（2026-10-06。実装済み。1-4 以降が使うときの注意を含む）**
+
+- **新しいファイルにまとめた**（1-2 の `core/main-link.mjs`・`desktop/server-link.cjs` と重ならない）: `desktop/runtime.cjs`（置き場の決め方・組み立て・掃除）・`desktop/runtime-manifest.cjs`（manifest。ビルドと main が共有）・`desktop/runtime-boot.cjs`（main の呼び出し口）・`core/runtime-use.mjs`（使用中の印）・`scripts/pack-runtime.cjs`・`scripts/after-pack.cjs`・`scripts/node-runtime.json`。既存のファイルは、`desktop/main.cjs`（`AGENT_HOST_HANDOVER=on` のときだけ呼ぶ 2 行）・`core/cli-launcher.mjs`（`stableCli`）・`bin/pleiad.cmd`・`bin/pleiad`・`electron-builder.yml`（`afterPack`）・`desktop/agent-browser-bin.cjs`（`runtimeDir`）の数行だけ
+- **単独で merge しても挙動は変わらない**: 実行場所を組むのは `AGENT_HOST_HANDOVER=on` の main だけ（既定 off）。サーバーは今のまま `utilityProcess`。配布物には Node（約 93.6 MB）・`runtime.json`・`manifest.json` が増える
+- **残す版は 3 つ**（今の版・直前の版・さらにもう 1 版）。plan の「`bin` だけをさらに 1 版」は変えた: `bin\pleiad.mjs` は `core\` と `node_modules` を読むので `bin` だけでは動かない。ハードリンクなので木ごと残しても増えるのは変わった分だけ（design.md §3.5 も直した）
+- **組み立て**: 中身ごとに 1 回だけ読む（`store` に同じ SHA-256 の実体が在って大きさが合えば、元を読まない）。読んだときは manifest の SHA-256 と大きさを確かめてから store へ置く。木は `app\.<版>.staging` に作り、組み終えて manifest と突き合わせ（在る・大きさが合う）、印（`.runtime.json`）と `runtime-node.txt` を書いてから `app\<版>` へ rename する。2 回目以降は印と大きさの確かめだけで読み直さない（`verifyTree({ deep: true })` が SHA-256 まで読み直す）。ハードリンクは運命を共にする（変わっていないファイルは全部の版と store が同じ実体）ので、中身が書き換えられると全部の版が壊れる。使うときの確かめ（大きさ）で見つかった版は、store の実体も疑って元から読み直す
+- **使用中の印**: 実行場所で走るプロセスが `core/runtime-use.mjs` の `markRuntimeInUse({ root, key })` を、起動時に呼ぶ。**サーバー・保持役の起動での呼び出しは 1-4・段階 2 で足す**（今は誰も呼ばないので、掃除は今の版の他は 3 版を超えた分だけ消す）。agy の relay・短い `pleiad` CLI は印を持たない（relay は親のサーバーと同じ版・同じ寿命。サーバーの印が覆う）
+- **外の AI に貼る設定**: `mcpSetup` は env の `PLEIAD_CLI_EXEC`・`PLEIAD_CLI_SCRIPT`・`PLEIAD_CLI_ELECTRON` があればそれを指す（`stableCli`）。**1-4 で main がサーバーの env に `stableCliEnv()` を足す**（`$INSTDIR` の `Ply.exe` と `resources\app\bin\pleiad.mjs`）
+- **agy の relay**: サーバーが `pleiad-node.exe` で走れば `process.execPath` が実行場所の Node になり、`electron` が偽なので `ELECTRON_RUN_AS_NODE` は付かない（`tests/unit/cli-launcher.mjs`）。**1-4 では、サーバーの env から `ELECTRON_RUN_AS_NODE` を外すこと**（`desktop/server.cjs` の分は `off` の経路だけ）
+- **1-4 が使うもの**: `resolveRuntimeRoot` → `install`（戻り値 `nodeExe`・`appDir`・`agentBrowserDir`・`key`）→ `nodeExe appDir\core\server.mjs` を `detached` で起こす。PATH には `agentBrowserDir`（`prepareAgentBrowserBin({ runtimeDir })`）と `appDir\bin` を足す。組んだ直後に起こさない順序は `install` が済んでから起こせば守られる（`install` は読み終えてから戻る）
+- **未実施（1-7）**: リリースの CI への Node のキャッシュ（取得と照合はビルドが毎回行う。キャッシュは `PLEIAD_NODE_CACHE` を `actions/cache` に載せる）・arm64 の実機・NSIS のインストーラーをまたいだ実行場所の生き残りの実機の確かめ
 
 ### 1-4 main がサーバーを起こす・見つける・付け直す（M）
 

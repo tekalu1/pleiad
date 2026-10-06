@@ -4,6 +4,8 @@
 //   Ply.exe（mac は Pleiad.app の MacOS/Pleiad）の内蔵 Node で bin/pleiad.mjs を走らせる。リポジトリでは node で走らせる
 // - サーバーは起動時に bin/ を自分の PATH の先頭に足す。会話のシェル（Claude・Codex・Antigravity のプロセスと `!` の行）はそれを継ぐ
 // - 外の AI の MCP の設定は、起動口ではなく実行ファイルと bin/pleiad.mjs を直に指す（Windows の .cmd はシェル無しでは起動できないため）
+// - サーバーが版ごとの実行場所（desktop/runtime.cjs。パスが版ごとに変わり、古い版は掃除で消える）で走るときは、外の AI に貼る設定を
+//   版に依らない起動口（$INSTDIR の Ply.exe と resources/app/bin/pleiad.mjs）に向ける。main が env（PLEIAD_CLI_*）で渡す（stableCli）
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -32,13 +34,25 @@ export function addCliToPath(env = process.env, dir = CLI_DIR) {
 const quoteArg = (s) => (/^[A-Za-z0-9_\-./:=@]+$/.test(s) ? s : `"${s}"`);
 
 /**
+ * 版に依らない pleiad CLI の起動口。実行場所で走るサーバーに main が env で渡す（desktop/runtime.cjs の stableCliEnv）。無ければ null:
+ *   PLEIAD_CLI_EXEC      実行ファイル（$INSTDIR の Ply.exe）
+ *   PLEIAD_CLI_SCRIPT    bin/pleiad.mjs（$INSTDIR の resources/app/bin）
+ *   PLEIAD_CLI_ELECTRON  1 なら EXEC は Electron の内蔵 Node（ELECTRON_RUN_AS_NODE=1 を付ける）
+ */
+export function stableCli(env = process.env) {
+  const execPath = env.PLEIAD_CLI_EXEC;
+  const script = env.PLEIAD_CLI_SCRIPT;
+  return execPath && script ? { execPath, script, electron: env.PLEIAD_CLI_ELECTRON === '1' } : null;
+}
+
+/**
  * 外の AI（Claude Code など）の MCP の設定に貼る pleiad mcp の起動の仕方。
- *   execPath  サーバーを走らせている実行ファイル（デスクトップ版は Ply.exe、npm start は node）
+ *   execPath  サーバーを走らせている実行ファイル（デスクトップ版は Ply.exe、npm start は node）。実行場所で走るときは版に依らない起動口（stableCli）
  *   electron  Electron の内蔵 Node か（ELECTRON_RUN_AS_NODE=1 を付ける）
  *   dataDir   サーバーのデータ置き場。既定（~/.agent-host）と違えば AGENT_HOST_DATA を付ける
  * 返り: { command, args, env, json（mcpServers の JSON の文字列）, claude（claude mcp add のコマンド） }
  */
-export function mcpSetup({ execPath = process.execPath, electron = Boolean(process.versions.electron), dataDir, script = CLI_SCRIPT, home = os.homedir() } = {}) {
+export function mcpSetup({ stable = stableCli(), execPath = stable?.execPath ?? process.execPath, electron = stable ? stable.electron : Boolean(process.versions.electron), dataDir, script = stable?.script ?? CLI_SCRIPT, home = os.homedir() } = {}) {
   const env = {
     ...(electron ? { ELECTRON_RUN_AS_NODE: '1' } : {}),
     ...(dataDir && path.resolve(dataDir) !== path.resolve(home, '.agent-host') ? { AGENT_HOST_DATA: dataDir } : {}),

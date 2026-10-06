@@ -160,6 +160,17 @@ Actionsは `PLY_RELEASE_REPOSITORY` Variableや `PLY_RELEASE_TOKEN` Secretを参
 `pleiad` CLI（`bin/pleiad.mjs`）と起動口（`bin/pleiad.cmd`・`bin/pleiad`）を `resources/app/bin/` に同梱する（electron-builder.yml の `files`）。起動口は Ply の内蔵 Node（`ELECTRON_RUN_AS_NODE=1`）で走らせるので、利用者の PC に Node は要らない。インストーラーは OS の PATH を書き換えない（[ADR 0090](adr/0090-cli-in-desktop-app.md)）。
 確かめ方: `npm run desktop:pack` の `dist-desktop/win-unpacked/resources/app/bin/pleiad.cmd status` が、Pleiad が起動していなければ「起動していません」と終了コード 3 で終わる。
 
+## 同梱する Node と版ごとの実行場所（無停止の更新 段階 1 の 1-3）
+
+[ADR 0137](adr/0137-zero-downtime-update.md)・[設計](zero-downtime-update/design.md) §3。**今は実行場所を組むところまで**で、サーバーは今のまま `utilityProcess` で起こす（`AGENT_HOST_HANDOVER=on` のときだけ main が組む。既定は off。サーバーを実行場所で起こすのは 1-4）。
+
+- **同梱**: Windows の配布物に公式の Node を `resources\runtime\node.exe` として入れる（x64 93.6 MB・arm64 81.9 MB。x64 のインストーラーは 137.8 MiB → 160.3 MiB と約 22.5 MiB 増え、`win-unpacked` は 4,094 ファイル・491.6 MiB → 4,097 ファイル・581.4 MiB になる。2026-10-06 の実測）。版・URL・SHA-256・大きさは `scripts/node-runtime.json` に固定し、ビルド（`electron-builder.yml` の `afterPack` = `scripts/after-pack.cjs` → `scripts/pack-runtime.cjs`）が取得したファイルを照合する（合わなければビルドが失敗し、キャッシュにも置かない）。取得は `PLEIAD_NODE_CACHE`（既定 `~/.cache/pleiad/node-runtime`）にキャッシュする。リリースの CI は、このフォルダーを `actions/cache` に載せると毎回の取得を省ける。Node の版は Electron の Node と同じメジャー版（24）にそろえ、上げるときは `node-runtime.json` の版と SHA-256（nodejs.org の `SHASUMS256.txt`）を一緒に直す
+- 同じビルドで、`resources\runtime\runtime.json`（Node と agent-browser の SHA-256・大きさ）と `resources\app\manifest.json`（ファイルごとの SHA-256・大きさ。`desktop/runtime-manifest.cjs`）を作る。manifest は `resources\app` が出来上がった後に作るので、署名などでそのフォルダーのファイルを書き換える処理を足すときは、`afterPack` より前にする
+- **実行場所**（`desktop/runtime.cjs`）: `%LOCALAPPDATA%\agent-host-runtime`（`$INSTDIR` と同じ文字列で始まるときは `%LOCALAPPDATA%\jp.ply.desktop\runtime`。NSIS は更新で、パスが `$INSTDIR` で始まるプロセスを止めるので、その外に置く）へ、中身の SHA-256 の `store\<sha256>` とハードリンクで `app\<版>-<ビルドの短いハッシュ>` を組む。読むのは 1 回（ハッシュと写しを同じ読みで、16 並列）で、manifest と合わなければ木を作らず失敗する。同じ版を 2 回頼んでも組み直さず、壊れた写し（欠け・大きさの違い）は組み直す。Node は `node\<版>-<sha256 の先頭>\pleiad-node.exe`（名前を `Ply.exe` にしない）、agent-browser は `agent-browser\<版>\`
+- **掃除**: 今の版・直前の版・さらにもう 1 版を残し（使っているシェルの PATH にある `bin\pleiad.mjs` が `core\` を読むので、木ごと残す。ハードリンクなので増えるのは変わった分だけ）、使っているプロセスがある版は消さない。使用中の印は `run\<版>-<pid>.lock.db` の排他ロック（`core/runtime-use.mjs`。OS がプロセスの終了で外す）。main の起動の 1 分後に裏で行う
+- 起動口（`bin/pleiad.cmd`・`bin/pleiad`）は、実行場所の `app\<版>\runtime-node.txt` が指す `pleiad-node.exe` を先に探し、無ければ今のとおり `Ply.exe`、最後に `node`。外の AI に貼る設定（`mcpSetup`）は、実行場所のサーバーが main から受ける `PLEIAD_CLI_EXEC`・`PLEIAD_CLI_SCRIPT`（`$INSTDIR` の `Ply.exe` と `resources\app\bin\pleiad.mjs`）を指す
+- 確かめ方: `npm run desktop:pack` の `dist-desktop/win-unpacked/resources/runtime/node.exe` の SHA-256 が `scripts/node-runtime.json` と一致し、`resources/app/manifest.json` の全ファイルが実際のファイルと一致する（`desktop/runtime-manifest.cjs` の `buildManifest` で作り直して `buildHash` を比べる）。組み立ては、`AGENT_HOST_RUNTIME_DIR` を一時のフォルダーにして `desktop/runtime.cjs` の `install` を `resources` に対して呼ぶ（インストール版の Pleiad・`~/.agent-host` には触れない）
+
 ## Claude Code の実行ファイルは同梱しない
 
 `@anthropic-ai/claude-agent-sdk` の optionalDependencies（`@anthropic-ai/claude-agent-sdk-<os>-<arch>`、win32-x64 で約 238MB）は、electron-builder.yml の `files` で除外する。Pleiad は Claude の起動で必ず `pathToClaudeCodeExecutable` に利用者が入れた claude（`claudeExecutable()`）を渡すので、SDK 同梱の実行ファイルは読まれない（見つからなければ「未インストール」のエラー）。

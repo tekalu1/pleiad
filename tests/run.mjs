@@ -305,6 +305,10 @@ const SUITES = [
   // 開いている会話の宣言（流れの出来事を絞る）と、会話の一覧の使い回し（ADR 0024）
   './unit/server-watch.mjs',
   './unit/desktop-port.mjs',
+  // 版ごとの実行場所（無停止の更新 1-3）: 置き場が $INSTDIR と前方一致しない・ハードリンクで組む・二重に組まない・壊れた写しの検出・掃除・使っている版を消さない・起動口
+  './unit/desktop-runtime.mjs',
+  // 実行場所の材料（afterPack）: 公式の Node の取得と SHA-256 の照合・runtime.json・manifest.json
+  './unit/pack-runtime.mjs',
   // デスクトップ版の端末（リモートの窓）: 窓ごとの信頼・preload の出し分け・バッジ。Electron は起こさない
   './unit/desktop-remote.mjs',
   // スマホの画面（docs/remote.md §8.3・§8.4）: UUID の代わり・長押し・「…」・狭い画面の規則
