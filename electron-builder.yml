@@ -22,6 +22,9 @@ files:
   - skills/visualize/**
   - package.json
   - "!node_modules/agent-browser/bin/**"
+  # Claude Code の実行ファイル（SDK の optionalDependencies の @anthropic-ai/claude-agent-sdk-<os>-<arch>。win32-x64 で約 238MB）は入れない。
+  # Pleiad は query() に必ず pathToClaudeCodeExecutable（利用者が入れた claude。core/cli-installation.mjs の claudeExecutable）を渡し、同梱版は読まない
+  - "!node_modules/@anthropic-ai/claude-agent-sdk-*/**"
   # node-pty のソース・デバッグ情報・使わない ConPTY の DLL は入れない
   - "!node_modules/node-pty/{src,deps,scripts,third_party,typings}/**"
   - "!node_modules/node-pty/**/*.pdb"

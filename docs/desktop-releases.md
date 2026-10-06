@@ -160,6 +160,11 @@ Actionsは `PLY_RELEASE_REPOSITORY` Variableや `PLY_RELEASE_TOKEN` Secretを参
 `pleiad` CLI（`bin/pleiad.mjs`）と起動口（`bin/pleiad.cmd`・`bin/pleiad`）を `resources/app/bin/` に同梱する（electron-builder.yml の `files`）。起動口は Ply の内蔵 Node（`ELECTRON_RUN_AS_NODE=1`）で走らせるので、利用者の PC に Node は要らない。インストーラーは OS の PATH を書き換えない（[ADR 0090](adr/0090-cli-in-desktop-app.md)）。
 確かめ方: `npm run desktop:pack` の `dist-desktop/win-unpacked/resources/app/bin/pleiad.cmd status` が、Pleiad が起動していなければ「起動していません」と終了コード 3 で終わる。
 
+## Claude Code の実行ファイルは同梱しない
+
+`@anthropic-ai/claude-agent-sdk` の optionalDependencies（`@anthropic-ai/claude-agent-sdk-<os>-<arch>`、win32-x64 で約 238MB）は、electron-builder.yml の `files` で除外する。Pleiad は Claude の起動で必ず `pathToClaudeCodeExecutable` に利用者が入れた claude（`claudeExecutable()`）を渡すので、SDK 同梱の実行ファイルは読まれない（見つからなければ「未インストール」のエラー）。
+確かめ方: `npm run desktop:pack` の `dist-desktop/win-unpacked/resources/app/node_modules/@anthropic-ai/` に `claude-agent-sdk` だけが残る。
+
 ## 配布と利用者認証
 
 Releases は public で、ブラウザーからはログインなしで取得できる。評価版は自己署名のため、インストール前に公開証明書の扱いを確認する（下記「自己署名の配布」）。
