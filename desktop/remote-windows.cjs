@@ -13,6 +13,7 @@ const { pathToFileURL } = require('node:url');
 const { t, bundle } = require('./i18n.cjs');
 const { createDesktopNotifications } = require('./notifications.cjs');
 const { originOf } = require('./window-trust.cjs');
+const { stableLauncher } = require('./msix.cjs');
 
 const HOST_ID = /^[a-z2-7]{26}$/;
 const TITLE_BAR_HEIGHT = 40;   // desktop/main.cjs と web/style.css の --bar-h と同じ
@@ -404,7 +405,8 @@ function createRemoteWindows(deps) {
     // リモートの窓のタイトルは言語が決まってから付けるので、ここで OS の入口（ジャンプリスト・Dock）も作る
     try {
       if (platform === 'win32') {
-        app.setUserTasks([{ program: process.execPath, arguments: app.isPackaged ? HOSTS_ARG : `"${app.getAppPath()}" ${HOSTS_ARG}`,
+        // Microsoft Store の版は App Execution Alias から起こす（パッケージの中の実行ファイルを直に起こすと識別子が付かない。desktop/msix.cjs）
+        app.setUserTasks([{ program: stableLauncher(), arguments: app.isPackaged ? HOSTS_ARG : `"${app.getAppPath()}" ${HOSTS_ARG}`,
           title: t('remote.hosts.jumpTask'), description: t('remote.hosts.jumpTaskDescription'), iconPath: process.execPath, iconIndex: 0 }]);
       }
       if (platform === 'darwin' && app.dock && Menu) app.dock.setMenu(Menu.buildFromTemplate([{ label: t('remote.hosts.jumpTask'), click: openHostsWindow }]));

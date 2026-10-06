@@ -30,9 +30,12 @@ export function setupUpdates({ page, open, lock, flush, cmd, work: currentWork =
     lock(applying);
     $('appVersion').textContent = `Pleiad ${state.version || info?.version || ''}`;
     $('updateStatus').textContent = t(`updates.phase.${PHASES.includes(state.phase) ? state.phase : 'idle'}`) + (state.target ? ` · ${state.target}` : '');
+    // Microsoft Store の版は Store が更新する（docs/microsoft-store.md「自動更新」）
+    if (state.store) $('updateStatus').textContent = t('updates.store.status');
     if (progressing) $('updateStatus').textContent = stage;
     $('updateHint').textContent = applying ? t('updates.hint.applying')
       : downloading ? t('updates.hint.downloading')
+      : state.store ? t('updates.store.hint')
       : !state.enabled ? (bridge?.update ? t('updates.hint.noAutoUpdate') : t('updates.hint.browser'))
       : '';
     // リモートの窓: 版はホストが配る画面のもの（release-info.json）。手元のアプリの更新はローカルの窓で（docs/remote.md §7.3）
