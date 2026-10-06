@@ -55,8 +55,8 @@ const SUITES = [
   './unit/agent-browser-relay.mjs',
   // 新規会話の最初のターンの中継のキーを、会話 ID が決まったとき本物へ付け替える（parentPort の身代わり）
   './unit/server-browser-rebind.mjs',
-  // 内蔵ブラウザーのプロフィール（ADR 0078）: 保存領域・会話ごとの今のプロフィール・中継の絞り込み・AI の切り替え（ply_browser）・確認の鍵
-  './unit/browser-profiles.mjs',
+  // ply_browser の骨組み（ADR 0142）: 鍵付きの口・プロフィール（ADR 0078）の削除後の形・agy の束ね
+  './unit/browser-bridge.mjs',
   './unit/browser-confirm.mjs',
   // 設定 › コンピューターの操作: prefs の検査と既定・store の remember/forget・hostCapabilities.computerUse の判定・節の動き・setPref（docs/computer-use.md）
   './unit/computer-settings.mjs',

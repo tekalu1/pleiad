@@ -84,11 +84,11 @@ function fakeBridge() {
 // ---- 偽の electron（desktop/browser-panel.cjs 用）
 let contentsId = 0;
 function fakeElectron() {
-  const log = { external: [], opened: [], openError: '', added: [], removed: [], windows: [], devtools: [] };
+  const log = { external: [], opened: [], openError: '', added: [], removed: [], windows: [], devtools: [], partitions: [] };
   const handlers = { handle: {}, on: {} };
   let permissionRequest, permissionCheck;
   const session = {
-    fromPartition: partition => ({
+    fromPartition: partition => (log.partitions.push(partition), {
       partition,
       setPermissionRequestHandler: fn => { permissionRequest = fn; },
       setPermissionCheckHandler: fn => { permissionCheck = fn; },
@@ -235,7 +235,7 @@ export default async function (t) {
     const settings = setupBrowserSettings({ available: true, cmd: async (c, a) => { sent.push([c, a]); }, getPrefs: () => prefs });
     assert.equal(settingNodes.browserTab.hidden, false);
     const hostText = settingNodes.browserPanel.textContent;
-    assert(hostText.includes('外部の読み込みの確認、ログインを残すプロフィールを選びます') && hostText.includes('内蔵ブラウザーで開いた PC の HTML ファイル') && hostText.includes('HTML ファイルもここで開きます'), hostText);
+    assert(hostText.includes('外部の読み込みの確認を選びます') && !hostText.includes('プロフィール') && hostText.includes('内蔵ブラウザーで開いた PC の HTML ファイル') && hostText.includes('HTML ファイルもここで開きます'), hostText);
     assert(hostText.includes('エージェントのサイト利用'));
     const seg = settingNodes.browserPanel.querySelector('.browser-link-open');
     const [inapp, external] = seg.children;
@@ -295,10 +295,6 @@ export default async function (t) {
     bridge.push({ tabs: [{ id: 't3', url: 'https://example.com/', title: '', loading: false, canGoBack: false, canGoForward: false }], current: 't3', sessionId: 's2' });
     bridge.push({ tabs: [], current: null, sessionId: 's2' });
     assert.equal(emptied, 2, '同じ会話で最後のタブを閉じたら閉じる');
-    // タブの無いプロフィールへ切り替えただけなら閉じない（ADR 0078）
-    bridge.push({ tabs: [{ id: 't4', url: 'https://example.com/', title: '', loading: false, canGoBack: false, canGoForward: false }], current: 't4', sessionId: 's2', profile: 'main' });
-    bridge.push({ tabs: [], current: null, sessionId: 's2', profile: 'pbbbbbbbb' });
-    assert.equal(emptied, 2, 'タブの無いプロフィールへ切り替えてもパネルを閉じない');
   });
   t.ok('画面: openInBrowserPanel は正規化して開き、枠の位置を送り、状態から戻る・進む・印・タブを描き、隠すと外す', true);
 
@@ -373,56 +369,15 @@ export default async function (t) {
     assert.deepEqual(openedWith, { url: 'file:///D:/dev/demo/report/index.html', newTab: true, reuse: true, source: { kind: 'file', label: 'report/index.html' } }, '使い回しの指定と印が main へ渡る');
   });
   t.ok('画面: 止めた件数の一行（http も数える・読み込むは https があるときだけ・写しは書き直す）・アドレス欄の相対パスと「可視化 · 題」・⋯ のファイルの操作は PC のファイルと写しのタブだけ', true);
-  // ---- 画面: タブの列の左端のプロフィール（ADR 0078）
+  // ---- 画面: タブの列にプロフィールの選択は無い（ADR 0078 は ADR 0142 で置換）
   await withWindow({ plyDesktop: { browser: null } }, async () => {
     const bridge = fakeBridge();
     window.plyDesktop.browser = bridge;
-    const menus = [], changed = [], opened = [];
-    const profiles = [{ id: 'main', name: 'メイン' }, { id: 'pbbbbbbbb', name: '仕事' }];
-    const panel = createBrowserPanel({ bridge, getSessionId: () => 's1', getAgentName: () => 'Claude', showMenu: (x, y, items, title, opts) => menus.push({ items, title, opts }),
-      getProfiles: () => profiles, onProfileChanged: (sessionId, profile) => changed.push([sessionId, profile]), openProfiles: options => opened.push(options) });
-    const toast = () => document.body.children.find(n => n.className === 'file-toast')?.textContent ?? '';
-    // 知らせ（web/file-actions.mjs の notify）は画面下の .file-toast を探して使い回す
-    const savedQuery = document.querySelector, savedText = document.createTextNode;
-    document.createTextNode = text => { const n = new N('span'); n.textContent = text; return n; };
-    document.querySelector = sel => sel === '.file-toast' ? document.body.children.find(n => n.className === 'file-toast') ?? null : null;
-    bridge.push({ tabs: [], current: null, sessionId: 's1', profile: 'pbbbbbbbb' });
-    const pick = panel.tabsRow.children[0];
-    assert.equal(pick.className, 'browser-profile-pick', 'タブの列の左端');
-    assert.equal(pick.children[0].textContent, '仕', 'モノグラム'); assert.equal(pick.children[1].textContent, '仕事');
-    assert.equal(pick.getAttribute('aria-label'), 'プロフィール: 仕事');
-    pick.onclick();
-    const menu = menus.at(-1);
-    assert.deepEqual(menu.items.map(i => i.head ?? i.label ?? (i.sep ? '—' : '')), ['Pleiad', 'メイン', '仕事', '—', '新しいプロフィール…', 'プロフィールを管理…']);
-    assert.equal(menu.items.find(i => i.label === '仕事').checked, true); assert.equal(menu.title, undefined);
-    assert.equal(pick.getAttribute('aria-expanded'), 'true'); menu.opts.onClose(); assert.equal(pick.getAttribute('aria-expanded'), 'false');
-    // 選ぶと main に頼み、会話に残すのは呼び出し元。知らせを 1 回出す
-    bridge.command = async (action, args) => { bridge.calls.push([action, args]); return action === 'profile' ? { tabs: [], current: null, sessionId: 's1', profile: args.profile } : {}; };
-    menu.items.find(i => i.label === 'メイン').onClick();
-    await new Promise(r => setTimeout(r, 0));
-    assert.deepEqual(bridge.calls.at(-1), ['profile', { profile: 'main' }]);
-    assert.deepEqual(changed, [['s1', 'main']]);
-    assert.equal(toast(), 'この会話は「メイン」で開きます。エージェントもこのプロフィールを使います。');
-    assert.equal(pick.children[1].textContent, 'メイン');
-    menus.at(-1).items.at(-2).onClick(); menus.at(-1).items.at(-1).onClick();
-    assert.deepEqual(opened, [{ add: true }, { add: false }], '新しいプロフィール…・プロフィールを管理… は設定 › ブラウザーへ');
-    // エージェントが操作中は、メニューの頭に理由を出し、ほかのプロフィールは押せない
-    bridge.push({ tabs: [], current: null, sessionId: 's1', profile: 'main', agent: { sessionId: 's1', tabId: 't1' } });
-    pick.onclick();
-    const locked = menus.at(-1);
-    assert.deepEqual(locked.title, { text: 'エージェントが操作中は切り替えられません。止めてから選びます。', wrap: true });
-    assert.equal(locked.items.find(i => i.label === '仕事').disabled, true); assert.equal(locked.items.find(i => i.label === 'メイン').disabled, false);
-    // エージェントが切り替えた（main の notice）: 今の会話のものだけ 1 回知らせる
-    bridge.push({ tabs: [], current: null, sessionId: 's1', profile: 'pbbbbbbbb', notice: { seq: 1, sessionId: 's1', profile: 'pbbbbbbbb', agent: 'Claude' } });
-    assert.equal(toast(), 'Claude が「仕事」に切り替えました。');
-    document.body.children.find(n => n.className === 'file-toast').textContent = '';
-    bridge.push({ tabs: [], current: null, sessionId: 's1', profile: 'pbbbbbbbb', notice: { seq: 1, sessionId: 's1', profile: 'pbbbbbbbb', agent: 'Claude' } });
-    assert.equal(toast(), '', '同じ知らせは出し直さない');
-    bridge.push({ tabs: [], current: null, sessionId: 's1', profile: 'pbbbbbbbb', notice: { seq: 2, sessionId: 's9', profile: 'main', agent: 'Codex' } });
-    assert.equal(toast(), '', '別の会話の切り替えは出さない');
-    document.querySelector = savedQuery; document.createTextNode = savedText;
+    const panel = createBrowserPanel({ bridge, getSessionId: () => 's1' });
+    bridge.push({ tabs: [{ id: 't1', url: 'https://example.com/', title: '', loading: false, canGoBack: false, canGoForward: false }], current: 't1', sessionId: 's1' });
+    assert(!panel.tabsRow.children.some(n => /profile/.test(n.className ?? '')), 'タブの列の左端にプロフィールの選択を出さない');
   });
-  t.ok('画面: プロフィールはタブの列の左端（モノグラム・名前）・メニューは Pleiad の見出しの下に選択と管理・選ぶと main へ頼み会話に残して知らせる・エージェントが操作中は止める・エージェントの切り替えは 1 回だけ知らせる', true);
+  t.ok('画面: タブの列にプロフィールの選択を出さない', true);
 
   // ---- 頭の行の内蔵ブラウザーのボタン（web/header-entries.mjs）と近道
   await withWindow({ plyDesktop: { browser: null } }, async () => {
@@ -893,61 +848,6 @@ export default async function (t) {
   }
   t.ok('main: サーバーの外部の読み込みの設定を受けて panel に渡す', true);
 
-  // ---- main: プロフィール（ADR 0078）が複数の session を持っても、file: のタブの守りはどの session のタブにも効く
-  {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ply-inapp-profile-guard-'));
-    const data = path.join(dir, 'data');
-    try {
-      fs.mkdirSync(data, { recursive: true });
-      const html = path.join(dir, 'report.html');
-      fs.writeFileSync(html, 'x'); fs.writeFileSync(path.join(data, 'secret.png'), 'x');
-      const fileUrl = file => pathToFileURL(file).href;
-      const WORK = 'p0123456789abcdef';
-      const fx = fakeElectron();
-      const panel = bp.createBrowserPanel({ ...fx.deps, dataDir: data });
-      panel.attach();
-      panel.setProfiles({ ids: ['main', WORK], defaultProfile: 'main' });
-      panel.setLoadPolicy({ confirm: true, origins: [] });
-      const go = (action, args) => fx.handlers.handle['ply:browser'](local$, action, args);
-      const cur = s => s.tabs.find(tab => tab.id === s.current);
-      const verdict = (tabId, url) => new Promise(resolve => {
-        const contents = panel.contentsOf(tabId);
-        const handler = fx.log.requests[contents.sessionPartition];
-        handler({ webContentsId: contents.id, url, resourceType: 'image' }, r => resolve(r.cancel));
-      });
-      await go('context', { sessionId: 's1' });
-      const open = args => go('open', { url: fileUrl(html), newTab: true, reuse: true, source: { kind: 'file', label: 'report.html' }, ...args });
-      let s = await open();
-      const mainTab = s.current;
-      assert.equal(Object.keys(fx.log.requests).length, 1, 'メインの session に張る');
-      // プロフィールを替えると、その session を初めて使うときに webRequest も張る（設定を 1 回だけかけるのと同じ口）
-      s = await go('profile', { profile: WORK });
-      assert.equal(s.tabs.length, 0, '前のプロフィールのタブは今のパネルに出ない');
-      s = await open();
-      const workTab = s.current;
-      assert.notEqual(workTab, mainTab, '使い回しは会話の今のプロフィールのタブの中で探す（別のプロフィールのタブは使わない）');
-      assert.equal(s.reused, undefined);
-      assert.deepEqual(Object.keys(fx.log.requests).sort(), ['persist:pleiad-browser', `persist:pleiad-browser-${WORK}`], 'プロフィールの session にも張る');
-      assert.equal(await verdict(workTab, 'https://x.example/a.png'), true, 'プロフィールのタブでも外部は止める');
-      assert.equal(await verdict(workTab, 'http://127.0.0.1:8080/a.png'), true, 'http も止める');
-      assert.equal(await verdict(workTab, fileUrl(path.join(data, 'secret.png'))), true, 'データ置き場も止める');
-      assert.equal(await verdict(workTab, fileUrl(path.join(dir, 'a.png'))), false, '同じフォルダーは読む');
-      assert.deepEqual(cur(await go('state')).guard, { blocked: 2, origins: ['https://x.example'] }, '件数は今のプロフィールのタブのもの');
-      s = await open();
-      assert.equal(s.reused, workTab); assert.equal(s.tabs.length, 1, '同じプロフィールの同じファイルは使い回す');
-      // メインへ戻す: メインのタブが残っていて、そこでも使い回し・止めるが効く
-      s = await go('profile', { profile: 'main' });
-      assert.equal(s.tabs.length, 1); assert.equal(cur(s).id, mainTab);
-      assert.equal(await verdict(mainTab, 'https://x.example/a.png'), true, 'メインのタブも止める');
-      assert.equal(cur(await go('state')).guard.blocked, 1, 'メインのタブの件数はプロフィールごとのタブのもの');
-      s = await open();
-      assert.equal(s.reused, mainTab, '戻したプロフィールでは、そこのタブを使い回す');
-      // 設定（許可）はプロフィールと関係なく、どちらのタブにも同じに効く
-      panel.setLoadPolicy({ confirm: true, origins: ['https://x.example'] });
-      assert.equal(await verdict(mainTab, 'https://x.example/a.png'), false); assert.equal(await verdict(workTab, 'https://x.example/a.png'), false);
-    } finally { fs.rmSync(dir, { recursive: true, force: true }); }
-  }
-  t.ok('main: プロフィールごとの session にも file: のタブの webRequest が張られる・使い回しは今のプロフィールのタブの中・設定はプロフィールと関係なく効く', true);
 
   // ---- main: パネルの一覧と今のタブは、今の会話のタブと、会話に属さないタブだけ
   {
@@ -961,6 +861,8 @@ export default async function (t) {
 
     const a1 = vp.createFor('conv-a', 'https://a1.example/'), a2 = vp.createFor('conv-a', 'https://a2.example/');
     const b1 = vp.createFor('conv-b', 'https://b1.example/');
+    assert.deepEqual(fv.log.partitions, ['persist:pleiad-browser'], 'session は 1 つだけ（会話・タブが増えても作らない）');
+    assert(vp.tabsFor('conv-a').every(tab => tab.webContents.sessionPartition === 'persist:pleiad-browser'));
     let st = await go('context', { sessionId: 'conv-a' });
     assert.deepEqual(urls(st), ['https://a1.example/', 'https://a2.example/'], '今の会話のタブだけ並べる');
     assert.equal(st.current, a2.id, 'その会話で最後に作った（選んだ）タブ');
@@ -1011,11 +913,16 @@ export default async function (t) {
 
     // 新規会話: 仮のキーで作ったタブが本物の会話 ID へ移ると、その会話を見ている画面に出る
     const fresh = vp.createFor('new:key', 'https://fresh.example/');
+    const later = vp.createFor('new:key', 'https://later.example/');
+    vp.selectFor(fresh.id);   // 仮のキーの会話で、最後に作ったものでないタブを選んだ
     st = await go('context', { sessionId: null });
     assert.equal(st.tabs.length, 0, '仮のキーのタブは会話を決めていない画面には出ない');
     vp.rebindSession('new:key', 'real-id');
+    assert.deepEqual(vp.tabsFor('new:key'), [], '仮のキーにはタブが残らない');
+    assert.deepEqual(vp.tabsFor('real-id').map(tab => tab.id), [fresh.id, later.id], '中継から引くタブも本物の ID へ移る');
     st = await go('context', { sessionId: 'real-id' });
-    assert.deepEqual(urls(st), ['https://fresh.example/']); assert.equal(st.current, fresh.id);
+    assert.deepEqual(urls(st), ['https://fresh.example/', 'https://later.example/']); assert.equal(st.current, fresh.id, '選んでいたタブも本物の ID へ移る');
+    await go('close', { id: later.id });
     // エージェントの操作中の表示は会話ごと。別の会話の操作では今のタブを動かさない
     const other = vp.createFor('conv-a', 'https://agent.example/');
     vp.setAgent('conv-a', other.id);
@@ -1027,7 +934,7 @@ export default async function (t) {
     st = await go('open', { url: 'https://human.example/', newTab: true });
     assert.equal(vp.tabsFor('conv-a').length, 4); assert.equal(st.tabs.at(-1).sessionId, 'conv-a');
   }
-  t.ok('main: パネルの一覧と今のタブは今の会話と会話なしのタブだけ・別の会話のタブを作っても動かない・会話を移ると最後に選んだタブ・閉じた移り先・View を残さない・仮のキーからの付け替え', true);
+  t.ok('main: session は 1 つ・パネルの一覧と今のタブは今の会話と会話なしのタブだけ・別の会話のタブを作っても動かない・会話を移ると最後に選んだタブ・閉じた移り先・View を残さない・仮のキーからの付け替え（タブと選択）', true);
 
   // ---- 補助
   assert.equal(bp.openable('https://a.example/'), 'https://a.example/'); assert.equal(bp.openable('chrome://gpu'), null);
