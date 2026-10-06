@@ -16,7 +16,7 @@ import { fileURLToPath } from 'node:url';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, '../../..');
-const work = path.join(root, 'temporary', 'zdprobe');
+const work = path.join(root, 'temporary', process.env.ZD_WORK_NAME || 'zdprobe');   // build-stub.mjs の出力先（ZD_WORK_NAME で変種を選ぶ）
 const probeRoot = path.join(os.tmpdir(), 'zdprobe');
 const runtimeDir = path.join(process.env.LOCALAPPDATA, 'zdprobe-runtime');
 const instDir = path.join(process.env.LOCALAPPDATA, 'Programs', 'PlyZdProbe');
