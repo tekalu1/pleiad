@@ -17,8 +17,8 @@
 
 - webhook の中継。`/hooks` 以下は接続口の防火壁が通さない。外部からの POST は利用者のトンネルを使う（[webhook の仕様](channels.md#webhook)）。
 
-- **リモートのための機能は足さない。** 通信を中継するだけ。画面はホストが配る `web/` をそのまま使う
-- 端末ごとの権限（閲覧だけ・設定変更不可など）。当面は**全権限**（トークン保持者 = ホストの利用者、という今の信頼モデルのまま）
+- **リモートのための機能は足さない。** 通信を中継するだけ。画面はホストが配る `web/` をそのまま使う。例外は、端末の AI からホストへ作業を委譲する口（§4.5、[ADR 0141](adr/0141-remote-agent-delegation.md)）だけ
+- 端末ごとの権限（閲覧だけ・設定変更不可など）。当面は**全権限**（トークン保持者 = ホストの利用者、という今の信頼モデルのまま）。画面の権限は全権限のままで、端末の AI からの委譲を受けるかだけは端末ごとに決める（既定オフ。§4.5）
 - ブラウザー・PWA からのリモート接続。E2E の中継はアプリ内のプロキシが前提なので、端末はデスクトップ版かモバイル版
 - 複数の利用者で 1 台の中継を共有すること。中継は 1 人の持ち物（§5.4）
 - P2P（WebRTC）、Tailscale・Cloudflare Tunnel（決定済み。第三者のアカウントや TLS 終端を挟まない）
@@ -53,6 +53,7 @@
 | 中継 | `relay/`（独立した `package.json`、依存は `ws` だけ。`Dockerfile`） | Node |
 | 暗号・フレーム・チャネル（共有） | `core/remote/noise.mjs`、`core/remote/frames.mjs`、`core/remote/channel.mjs`（ストリームの多重化と流量の制御。運び手に依存しない） | Node（ESM。デスクトップの main からは `import()`） |
 | ホストの接続口・ペアリング・端末一覧 | `core/remote/connector.mjs`、`core/remote/devices.mjs`。サーバーのプロセス内で動く（`npm start` のホストでも使える） | Node |
+| 端末の AI からの委譲（§4.5） | ホスト: `core/remote/agent-port.mjs`（`/agent` の口・許可・上限・中継する承認）。端末: `core/remote/agent-link.mjs`（main がホストへ張る線）、`desktop/remote-agent-bridge.cjs`（main とローカルのサーバーの橋）、`core/remote-delegation.mjs`（ローカルのサーバーの側。`ply_delegate` の `host`・タスクの追跡・中継の承認） | Node |
 | 端末の資格情報・ペアリング・端末内プロキシ | `core/remote/device.mjs`（置き場・ペアリング・ホストごとのプロキシの管理）、`core/remote/device-link.mjs`（中継への線・張り直し・状態）、`core/remote/device-proxy.mjs`（127.0.0.1 の HTTP と /ws）。デスクトップの main から `import()`、試験からも使う | Node |
 | リモートの窓・ほかのホストにつなぐ窓 | `desktop/remote-windows.cjs`（窓・IPC・印。main プロセス）、`desktop/remote-preload.cjs`（リモートの窓の preload）、`desktop/remote-hosts.html`・`remote-hosts-view.cjs`・`remote-hosts-preload.cjs`（同梱の窓）、`desktop/window-trust.cjs`（窓ごとのオリジンの表）、`desktop/i18n.cjs`（本体の文言）。画面の印は `web/remote-badge.mjs` | Node |
 | 手元のフォルダーを送る（§8.1） | `core/folder-uploads.mjs`（`upload*` コマンドの中身・置き場・パスの検査）、`web/folder-upload.mjs`（送る流れとドロップの問い）、`web/attach-menu.mjs`（添付のボタンのメニュー） | Node / JS |
@@ -174,6 +175,7 @@ stream 0 はチャネル自体。端末が開くストリームは奇数、ホ�
 - HTTP は **GET と HEAD だけ**（今のサーバーの HTTP は読み取りだけで、状態の変更はすべて `/ws` のコマンド）。WebSocket は `/ws` だけ
 - 端末から来た `Cookie`・`Authorization`・`?token=`・`Host`・`Origin`・hop-by-hop のヘッダーを捨て、**ホストの UI トークンを接続口が付ける**（HTTP は Cookie、`/ws` は `?token=`）。接続口はサーバーと同じプロセスにいるので `TOKEN` と実際のポートを知っている
 - 応答の `Set-Cookie`（`agent_host_token`。`core/server.mjs` の静的配信）を捨てる。**ホストの UI トークンは端末に届かない**
+- **WebSocket の `/agent` は接続口が自分で受ける**（ローカルのサーバーへは転送しない。§4.5）。`forward.mjs` は `/agent` を通さない（RESET 3）ので、同じパスがホストのローカルのサーバーに届くことは無い。端末の AI からの依頼は、この口の上の決まった種類の便りだけ
 - 既存サーバーのコード（トークン照合・静的配信・`/ws`）は変えない。変えるのは起動時に接続口を立てる数行だけ
 
 実装（`core/remote/forward.mjs`）では、端末のヘッダーは決まったものだけを通す（`accept`・`accept-language`・`accept-encoding`・`cache-control`・`pragma`・`if-none-match`・`if-modified-since`・`if-range`・`range`・`user-agent`）。パスは WHATWG の URL で読み直し、`/mcp` の判定は小文字にしたものと復号したものの両方で行い、判定した形のまま送る。通さないもの（`/mcp`・`/api/ops`・GET/HEAD 以外・`/ws` 以外の WebSocket）はどれも RESET 3。
@@ -201,6 +203,37 @@ stream 0 はチャネル自体。端末が開くストリームは奇数、ホ�
 - 張り直しを待っている間の要求は待たせずに断る（画面の読み込みは §7.4 の案内、ほかの HTTP と `/ws` は 502）。つないでいる最中に来た要求は結果を最大 10 秒待つ
 - ホストの接続口は中継への制御用の接続を常に張り、切れたら 1 秒から 60 秒まで倍々で張り直し、つながるたびに端末一覧（ハッシュ）を送り直す（§5.2）
 - 中継は両側に 30 秒ごとに WebSocket の ping を送り、返らない接続を捨てる（NAT の半開きの検出。Traefik の無通信切断も防ぐ）
+
+### 4.5 端末の AI からの委譲の口（`/agent`）
+
+端末のデスクトップ版の会話の AI が、ホストの Pleiad に仕事を任せるための口（承認済み（2026-10-06）、[ADR 0141](adr/0141-remote-agent-delegation.md)、issue #57）。使う道具は既存の `ply_delegate`（任意の `host`）と `ply_task_*` で、新しい MCP は足さない（docs/agent-delegation.md「リモートのホストへ任せる」）。
+
+```
+端末の会話の AI ── ply_delegate { host } ──▶ 端末のローカルのサーバー ──parentPort──▶ main ──┐
+                                                                                         │ /agent（WebSocket のストリーム。Noise の中）
+ホストの接続口（agent-port.mjs）◀──────────────── 中継 ◀───────────────────────────────────┘
+   │ 委譲の台帳（agent_tasks）・子の会話・承認の中継 ※ ホストのサーバーのプロセスの中
+   ▼
+ホストの子の会話（ホストの AI が、ホストの PC で作業する）
+```
+
+- **口**: ストリームの WS_OPEN の path が `/agent`（`checkPath` で読み直した結果）のものを、接続口が自分で受ける。`forwardStream`（ローカルのサーバーへの組み立て直し）は通さない。口の上は JSON の文字のメッセージ 1 通 = 1 つの便りで、1 通は 256 KiB まで。形の違う便り・知らない種類は捨てる（ストリームは閉じない）。端末が自分で名乗った `deviceId` は信じず、ハンドシェイクで確かめた端末（`device.id`）を使う。
+- **主体**: agent・`via: 'remote'`・`deviceId`。会話には束縛されない。依頼元は `requester = { sessionId, title, mode }`（端末の会話の ID・題・承認モードの位置）で、ホストのタスクの親は `remote:<deviceId>:<sessionId>` の仮の ID。画面の human の権限は渡さない。
+- **端末 → ホストの便り**（`t` で見分ける）:
+
+  | `t` | 内容 |
+  |---|---|
+  | `req` | `{ id, op, args, requester }`。`op` は `delegate`・`status`・`wait`・`send`・`cancel`・`list` の 6 つだけ（`ply_delegate`・`ply_task_*` と同じ入力）。`delegate` には `confirm`（計画の鍵）を添えて確定できる |
+  | `answer` | `{ id, receipt, allow }`。**人の答え**。端末の画面の `resolvePermission` からだけ作られる（下の「承認」） |
+  | `sync` | `{ taskIds }`。つなぎ直したとき、持っているタスクの今の状態を求める |
+  | `ping` | 生きているかの確かめ |
+
+- **ホスト → 端末の便り**: `ready`（`{ allowed, hostName, limits }`。口を受けた直後と、許可が変わったとき `allowed`）・`res`（`req` への答え。`{ id, ok, result | code, error }`）・`task`（そのタスクの今の状態。状態が変わるたびに、依頼元の端末へ。完了したら結果の最初の 16,000 字も）・`relays`（今待っている中継する承認の全部。`ready` の直後と `sync` の答え）・`relay`（新しい中継する承認）・`relayEnd`（決着。`by` はどこで答えたか: `host`・`device`・`abort`・`stopped`）・`pong`。
+- **許可**: ホストの端末（`devices.json`）ごとの `agentDelegation`（既定オフ。デスクトップ版の端末だけ）。オフの端末の `req` は `NOT_ALLOWED` で断る（`ready.allowed` は `false`）。変えられるのは人だけ（WS コマンド `setRemoteDeviceAgent`。human-only）。端末の取り消しは、任された作業も止める。
+- **上限**: 端末ごとに動いているタスクは 8 件まで（`TOO_MANY_TASKS`）、`delegate`・`send` は 1 分に 20 件まで（`RATE_LIMITED`）。端末の AI から始まった委譲の鎖の深さは 4 まで。
+- **承認**: 子（と、その子孫）の承認は、手元の中継と同じく依頼元へも出す。ホストは `relay`（承認の ID・受領証・見出し・入力。「常に許可」は無し）を端末へ流し、ホストの画面にも子の会話のカードが出る。先に答えた方で決着し、`relayEnd` で端末のカードを畳む。端末の人の答えは、端末の画面の WS の `resolvePermission` → ローカルのサーバー → main → `answer` の 1 本の道だけで運ぶ。ホストは `answer` を、(1) その端末へ中継した今待っている承認の ID、(2) 中継したときの受領証の一致、(3) 1 回だけ、のすべてを満たすときだけ受け、ほかは捨てて記録する（記録は human・`via: remote-device`・`deviceId`）。端末の AI が呼べる道具（MCP・CLI・`ply_task_*`）から `answer` は作れない。
+- **切れたとき**: 端末の main は口を張り直す。オフラインのホストへの `ply_delegate` は即座に失敗する。走っているタスクはホストで続き、つながり直すと端末は `sync` で状態と完了に追いつく。ホストがオフラインの間、端末の中継のカードは答えを送れない（ボタンを止めて理由の 1 行を出す）。つながり直したときホストが `relays` を送り直し、端末はそれに合わせてカードを足し・畳む。
+- ホストの UI トークン・中継の秘密は、この口でも渡さない。
 
 ## 5. 中継サーバー（#12）
 
@@ -311,7 +344,8 @@ Coolify の設定: 新しいリソース → GitHub のリポジトリ → Build
 
 - 「このホストをリモートから使えるようにする」のスイッチ、中継の URL、登録用の秘密（伏せ字。保存後は表示しない）。状態の一行（「中継につながっています」「中継につながりません · 理由」）
 - 「端末を追加」→ QR と残り時間とコードのコピー（§3.3）。承認のダイアログはどの画面にいても出る（承認待ちと同じく差し色の「あなたを待っている」）
-- 端末一覧と「取り消す」（その場の確認）
+- 端末一覧と「取り消す」（その場の確認。この端末の AI から任された作業があれば「任された作業 N 件も止めます」を添える）
+- デスクトップ版の端末の行には「この端末の AI からの依頼を受ける」のスイッチ（既定オフ。§4.5）。入れるときはその場で確かめる（「⚠ 依頼元の会話が確認なしのモードなら、この PC でも確認なしで動きます」）。入れた後は、任された作業の数・承認待ちの数・一覧で見る・すべて止める。スマホの行には出さない
 - ホストとして常駐する設定（§6.3）
 - 画面は既存の管理の面（`.mp-panel` など）を使う。設定の状態はサーバー側（WS コマンド）に置くので、リモートの窓からも見える・触れる（全権限のため）
 
@@ -320,7 +354,7 @@ QR の画像は `web/vendor/qrcode-generator.mjs`（kazuhikoarase/qrcode-generat
 画面（`web/remote.mjs`、2026-09-23）: 設定のメニューに「リモート」。上からスイッチと状態の一行（困っているときだけ強い字）、「中継」の面（URL・登録用の秘密は伏せ字で保存後は「保存済み（変えるときだけ入力）」・ホスト名・「保存」。環境変数を使っているときと暗号化できない起動のときだけ 1 行）、「端末」の面（一覧・「＋ 端末を追加」・ペアリングの面）、ログインはホストの PC での一文、「常駐」の面（デスクトップ版のホストだけ）。スイッチを入れるときは、入力したまま保存していない中継の欄も一緒に送る。
 承認のダイアログは `<dialog>` のモーダルで、`remotePairing` の request（と開いたときの `remoteStatus` の承認待ち）で出す。既定の居場所は「拒否」、Esc では閉じない。承認待ちが消えたら（切れた・期限・ほかの画面で決めた）閉じて、端末の面の下に一言を残す。
 
-WS コマンド（`core/protocol.mjs`）: `remoteStatus`・`setRemoteSettings { enabled?, relayUrl?, enrollSecret?, hostName? }`・`remotePairingStart`（QR の文字列を返す）・`remotePairingCancel`・`remotePairingApprove { id }`・`remotePairingDeny { id }`・`remoteDevices`・`remoteRevoke { id }`。イベントは `remoteStatus { status }`（状態の丸ごと）と `remotePairing { phase, request?, device? }`。登録用の秘密・トークン・鍵は返さない。設定は `<data>/remote/settings.json`（秘密は `secrets.json`）。既定は無効で、有効にするまで鍵も作らない。
+WS コマンド（`core/protocol.mjs`）: `setRemoteDeviceAgent { id, enabled?, stopAll? }`（端末ごとの「AI からの依頼を受ける」。human-only。`stopAll` はその端末から任された作業をすべて止める）・`remoteStatus`・`setRemoteSettings { enabled?, relayUrl?, enrollSecret?, hostName? }`・`remotePairingStart`（QR の文字列を返す）・`remotePairingCancel`・`remotePairingApprove { id }`・`remotePairingDeny { id }`・`remoteDevices`・`remoteRevoke { id }`。イベントは `remoteStatus { status }`（状態の丸ごと）と `remotePairing { phase, request?, device? }`。登録用の秘密・トークン・鍵は返さない。設定は `<data>/remote/settings.json`（秘密は `secrets.json`）。既定は無効で、有効にするまで鍵も作らない。
 
 ### 6.2 画面が離れたとき（#11 を参照）
 
@@ -394,10 +428,10 @@ window.plyDesktop = { platform, setTitleBar, notifyCompletion, onNotificationCli
 
 ### 7.4 ホストへのつなぎ方
 
-- **「ほかのホストにつなぐ」はアプリに同梱の小さな窓**（`desktop/remote-hosts.html`。file: で開き、どのホストからも配らない。2026-09-23 に設定 › リモートの下半分から変更）: ペアリングしたホストの一覧（名前・オンラインかどうか・最後につないだ時刻、「開く」「名前を変える」「削除」）と「ホストを追加」（ペアリングのコードを貼る → 「ホストの画面で承認してください · 確認コード 482 193」と「やめる」）。資格情報を暗号化できない起動では末尾に一文
+- **「ほかのホストにつなぐ」はアプリに同梱の小さな窓**（`desktop/remote-hosts.html`。file: で開き、どのホストからも配らない。2026-09-23 に設定 › リモートの下半分から変更）: ペアリングしたホストの一覧（名前・オンラインかどうか・最後につないだ時刻、「開く」「名前を変える」「削除」）と「ホストを追加」（ペアリングのコードを貼る → 「ホストの画面で承認してください · 確認コード 482 193」と「やめる」）。資格情報を暗号化できない起動では末尾に一文。ホストの行には「この PC の AI から任せる」のスイッチ（既定オフ。`hosts.json` の `agentUse`。§4.5）と、下の 1 行（オフ: 何も出さない／オンでホストが未許可: 「<ホスト> の 設定 › リモートで、この端末（<端末名>）の AI からの依頼を受けると使えます」／両方オン: 「使える · 任せた作業の承認は、この PC の会話でも答えられます」）
   - 理由: 手元のアプリの機能で、ペアリングと窓を開く口は HTTP のオリジンを持つ画面（ローカルのサーバーが配る `web/` も含む）に渡さない方が狭く守れる。ホストの版と画面の版がずれても関係ない。ホスト側の 設定 › リモート（#13）と同じ画面を取り合わない
   - 入口: ローカルの窓の preload にだけ `plyDesktop.openRemoteHosts()`（設定 › リモートの「ほかのホストにつなぐ…」から呼ぶ。リモートの窓には出さない）、Windows のジャンプリスト（`--remote-hosts` で起動 → 2 つ目の起動として受ける）、macOS の Dock のメニュー
-  - 窓の操作は `plyHosts`（`init / list / pair / cancelPair / open / rename / remove / onCode / onChange`）。送り元はその窓の本体フレームで、同梱のファイルであることを `desktop/window-trust.cjs` で確かめる
+  - 窓の操作は `plyHosts`（`init / list / pair / cancelPair / open / rename / remove / setAgentUse / onCode / onChange`）。送り元はその窓の本体フレームで、同梱のファイルであることを `desktop/window-trust.cjs` で確かめる
 - リモートの窓の状態: 画面のバッジが `plyRemote.status()` と `onStatus` で状態を受け、状態を受け取るまでは「· 接続しています…」、つながっていない間は「リモート: desktop-home · ホストがオフライン」と添え（切れた一行も同じ理由の語。design-system.md「接続の状態」）、面に「再試行」（`plyRemote.retry()` = 待ちを飛ばして張り直す）。取り消されたら本体が窓を読み直し、下のプロキシの案内（取り消されました）を出す。読み込みそのものが失敗しているとき（最初の表示・読み直し）はプロキシの案内のページが 5 秒ごとに読み直してつなぎ次第画面に移る
 - ホストがオフライン・取り消し済みなどで最初の読み込みができないときは、プロキシが小さな案内のページを返す（「ホストにつながりません。ホストの Pleiad が起動しているか確かめてください。」「この端末はホストで取り消されました。もう一度ペアリングしてください。」）。中継の close code で分ける: 4401 取り消し・認証失敗、4404 ホストが居ない、それ以外は通信の失敗。
   状態は `connecting`・`connected`・`offline`（中継につながらない）・`host-offline`（4404・4408・ホストの GOAWAY `shutdown`）・`revoked`（4401・GOAWAY `revoked`・ホストの鍵が合わない）。案内のページは 503 で、取り消し以外は 5 秒ごとに読み直してつながり次第画面に移る
@@ -532,13 +566,15 @@ App Store の審査: 殻がホスト一覧・QR ペアリング・Keychain の�
 | 端末の中の他のプロセス・ブラウザーの悪意あるページ | ループバックのプロキシを叩く | プロキシの乱数トークン、`Host` の照合、Cookie は SameSite=Strict・HttpOnly、`/ws` はクエリのトークン必須（今のサーバーと同じ守り） |
 | リモートからエージェント用の内部口を叩く | 委譲・コンテキスト MCP を使う | 接続口が `/mcp/` を通さない。HTTP は GET/HEAD だけ |
 | ホストの UI トークンの漏えい | — | トークンは接続口の外に出ない（差し込みと `Set-Cookie` の除去） |
+| 端末の AI がホストへ仕事を頼む（§4.5） | 手元の委譲と同じ振る舞い: 子の承認モードは依頼元の会話に合わせる。依頼元が確認なしのモードなら、ホストの子も確認なしでホストの PC で動く | 両側とも既定オフ・入れるときの確かめ・出どころの印・任された作業の数・すべて止める・取り消しで止まる・端末ごとの上限・記録（`via: remote`）。任された会話は `host` を指定できない |
+| 端末の AI が承認に答える | 答える道が無い | 承認の答えは、端末の画面（human）の WS から来たものだけを運ぶ。ホストは中継した承認の ID・受領証・1 回だけを照合する。`resolvePermission` は端末でもホストでも human-only |
 | ホストの画面の XSS | リモートからも同じ被害（エージェント経由の任意コマンド） | 今と同じ前提。主画面に CSP を付けるのは別の改善として勧める |
 
 **全権限であることの意味**: ペアリングした端末は、承認モードの変更（YOLO を含む）、MCP の登録、秘密の差し替えまでホストの利用者と同じにできる。つまり端末を失くすことは、ホストの PC で任意のコマンドを実行されうることと同じ。端末一覧と取り消しを見つけやすい場所に置き、ペアリングの画面にもこの一文を出す。
 
 ## 10. 検証
 
-`npm test` で確かめる（LLM は呼ばない）。中継とトンネルは fake バックエンドのホストで、端末 → 中継 → ホストの往復（会話の送信・承認・ファイルの取得・再接続）を自動で確かめる。
+`npm test` で確かめる（LLM は呼ばない）。中継とトンネルは fake バックエンドのホストで、端末 → 中継 → ホストの往復（会話の送信・承認・ファイルの取得・再接続）を自動で確かめる。端末の AI からの委譲（§4.5）は、`tests/unit/remote-agent.mjs`（ホストの `/agent` の口: 許可・上限・委譲・状態・中継する承認と人の答え・取り消しで止まる・防火壁）と `tests/unit/remote-agent-e2e.mjs`（端末のローカルのサーバー → main の橋 → 中継 → ホスト）で確かめる。
 
 ## 11. 未決
 
@@ -553,6 +589,6 @@ App Store の審査: 殻がホスト一覧・QR ペアリング・Keychain の�
    - 中継の寿命: 完了 2 分、返事待ち・失敗・取り消し 10 分
 6. **送信の効率**: フォルダーの送信は base64 の WS コマンド（約 33% 増える）。バイナリのフレームにするかは、実際の速さを見てから
 7. **モバイルのアプリのロック**（生体認証で殻を開く）を最初から入れるか
-8. **端末ごとの記録・権限**: 当面は全権限。入れるときは接続口が `X-Pleiad-Device` を付け、`store.recordChange` の `by` に端末を残す
+8. **端末ごとの記録・権限**: 画面の権限は当面全権限。入れるときは接続口が `X-Pleiad-Device` を付け、`store.recordChange` の `by` に端末を残す。端末の AI からの依頼を受けるかだけは端末ごとに決める（既定オフ。§4.5、ADR 0141）。そのとき残す記録は `by: agent`・`via: remote`・`deviceId`
 9. **ホストの静的鍵を作り直す**操作（漏えいを疑うとき）。全端末のペアリングし直しになるので、画面の置き場を決める
 10. **帯域**: ~~全イベントを全端末に配る~~ 決定（2026-09-26）: 流れの出来事は各端末が開いている会話の分だけ送る（[ADR 0024](adr/0024-watch-open-session-stream.md)）。ターンの終わりとつなぎ直しの `loadSession` は増えた分だけになった（2026-09-29。[ADR 0062](adr/0062-incremental-session-load.md)）。会話を開くときの全量・画像の `dataUri` と、中継での圧縮は残っている（2 MB の会話は gzip で 2〜8 分の 1）
