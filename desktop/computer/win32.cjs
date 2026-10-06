@@ -59,6 +59,7 @@ function createWin32(koffi) {
   const shell32 = koffi.load('shell32.dll');
   const version = koffi.load('version.dll');
   const imm32 = koffi.load('imm32.dll');
+  const iphlpapi = koffi.load('iphlpapi.dll');
   const f = {
     GetSystemMetrics: user32.func('int __stdcall GetSystemMetrics(int index)'),
     EnumDisplayMonitors: user32.func('bool __stdcall EnumDisplayMonitors(intptr_t hdc, void *clip, CU_MonitorEnumProc *cb, intptr_t lParam)'),
@@ -119,6 +120,7 @@ function createWin32(koffi) {
     Process32NextW: kernel32.func('bool __stdcall Process32NextW(intptr_t snap, _Inout_ uint8_t *entry)'),
     OpenProcessToken: advapi32.func('bool __stdcall OpenProcessToken(intptr_t h, uint32_t access, _Out_ intptr_t *token)'),
     GetTokenInformation: advapi32.func('bool __stdcall GetTokenInformation(intptr_t token, int cls, _Out_ uint8_t *info, uint32_t len, _Out_ uint32_t *ret)'),
+    GetExtendedTcpTable: iphlpapi.func('uint32_t __stdcall GetExtendedTcpTable(_Out_ uint8_t *table, _Inout_ uint32_t *size, bool order, uint32_t af, int cls, uint32_t reserved)'),
     ShellExecuteW: shell32.func('intptr_t __stdcall ShellExecuteW(intptr_t hwnd, const char16_t *verb, const char16_t *file, const char16_t *params, const char16_t *dir, int show)'),
     GetFileVersionInfoSizeW: version.func('uint32_t __stdcall GetFileVersionInfoSizeW(const char16_t *path, _Out_ uint32_t *handle)'),
     GetFileVersionInfoW: version.func('bool __stdcall GetFileVersionInfoW(const char16_t *path, uint32_t handle, uint32_t len, _Out_ uint8_t *data)'),
@@ -356,6 +358,26 @@ function createWin32(koffi) {
     ownerOf: hwnd => num(f.GetWindow(hwnd, 4)),
     dpiForWindow(hwnd) { try { return f.GetDpiForWindow(hwnd) || 96; } catch { return 96; } },
     postMessage: (hwnd, msg, wParam = 0, lParam = 0) => !!f.PostMessageW(hwnd, msg, wParam, lParam),
+    /** IPv4 の待ち受けのポート（127.0.0.1 など）を持つプロセスの pid。待ち受けが無い・読めないときは null */
+    listenerPid(port) {
+      const AF_INET = 2, TCP_TABLE_OWNER_PID_LISTENER = 3, ROW = 24;
+      let size = [4096], buf = Buffer.alloc(size[0]);
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const rc = f.GetExtendedTcpTable(buf, size, false, AF_INET, TCP_TABLE_OWNER_PID_LISTENER, 0);
+        if (rc === 0) {
+          const rows = buf.readUInt32LE(0);
+          for (let i = 0; i < rows && 4 + (i + 1) * ROW <= buf.length; i++) {
+            const at = 4 + i * ROW, raw = buf.readUInt32LE(at + 8);   // dwLocalPort は下位 16 bit がネットワーク順
+            if ((((raw & 0xff) << 8) | ((raw >> 8) & 0xff)) === port) return buf.readUInt32LE(at + 20);
+          }
+          return null;
+        }
+        if (rc !== 122) return null;   // ERROR_INSUFFICIENT_BUFFER 以外は読めない
+        buf = Buffer.alloc(size[0] + 1024);
+        size = [buf.length];
+      }
+      return null;
+    },
     /** ShellExecute で開く。引数は渡さない。成功は戻り値 > 32 */
     async shellOpen(target, dir = null) {
       const code = num(await callAsync(f.ShellExecuteW, 0, 'open', target, null, dir, 1));

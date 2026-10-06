@@ -2,7 +2,8 @@
 //
 // 会話をまたいで 1 本を使い回す（許可の確認は接続ごとに出るため、切ってつなぎ直さない）。状態は 5 つ:
 //   off         何もしていない（起動直後・「切る」・「やめる」・接続が切れた後）
-//   setup  (A)  Chrome のトグル（chrome://inspect/#remote-debugging）がオフ。DevToolsActivePort が無い・書かれたポートにつながらない。1 秒ごとに読み直し、時間では打ち切らない
+//   setup  (A)  Chrome のトグル（chrome://inspect/#remote-debugging）がオフ。DevToolsActivePort が無い（reason null）・書かれたポートにつながらない
+//               （reason unreachable。Chrome が起動していないときも。ファイルは Chrome を閉じても残る）。1 秒ごとに読み直し、時間では打ち切らない
 //   permission (B)  Chrome に「リモート デバッグを許可しますか？」が出ている。待ちは無期限。Chrome の約 5 分の打ち切りは、Pleiad が確認を閉じてつなぎ直して覆う
 //   denied (C)  利用者が「キャンセル」を押した（打ち切りでは入らない）
 //   connected (D)  つながった。ws が閉じたら off＋理由。自動ではつなぎ直さない（つなぐたびに確認が出るため）
@@ -123,7 +124,8 @@ export function createChromeConnection({ locate, os, WebSocketImpl = NodeWebSock
     if (!info || !await probePort(info.port)) {
       if (stale(att)) return;
       if (att.cur) { await sweep(att.cur); att.cur = null; if (stale(att)) return; }
-      setStatus({ state: 'setup', reason: null, dialog: false });
+      // ファイルはあるのにつながらない（unreachable）: Chrome が起動していないか、トグルがオフ（どちらでもファイルは残る）。ファイルが無い（null）: トグルを一度もオンにしていない
+      setStatus({ state: 'setup', reason: info ? 'unreachable' : null, dialog: false });
       clearTimer(att, 'pollTimer');
       att.pollTimer = clock.setTimeout(() => { att.pollTimer = null; if (!stale(att)) run(tryPort(att)); }, opt.pollMs);
       return;
@@ -161,7 +163,7 @@ export function createChromeConnection({ locate, os, WebSocketImpl = NodeWebSock
     rnd.finding = true;
     const deadline = clock.now() + opt.dialogWaitMs;
     while (!stale(att, rnd) && rnd.finding) {
-      const ref = await os.findPermissionDialog({ since: rnd.snap });
+      const ref = await os.findPermissionDialog({ since: rnd.snap, port: rnd.port });
       if (stale(att, rnd) || !rnd.finding) return;
       if (ref) { rnd.finding = false; await onDialogFound(att, rnd, ref); return; }
       if (clock.now() >= deadline) { rnd.finding = false; if (att.round === 0) setStatus({ dialog: false }); return; }
@@ -203,7 +205,7 @@ export function createChromeConnection({ locate, os, WebSocketImpl = NodeWebSock
   /** この round が出した確認を閉じる。見つけていなければ探して閉じる（ws だけ閉じると確認が Chrome に残るため） */
   async function sweep(rnd) {
     let ref = rnd.dialog;
-    if (!ref) { try { ref = await os.findPermissionDialog({ since: rnd.snap }); } catch { ref = null; } }
+    if (!ref) { try { ref = await os.findPermissionDialog({ since: rnd.snap, port: rnd.port }); } catch { ref = null; } }
     if (ref) { try { await os.close(ref); } catch { /* 閉じられなければ残るだけ */ } }
     return Boolean(ref);
   }
@@ -345,7 +347,7 @@ export function createChromeConnection({ locate, os, WebSocketImpl = NodeWebSock
       const rnd = att?.cur;
       if (!rnd || status.state !== 'permission') return { ok: false, method: 'none' };
       let ref = rnd.dialog;
-      if (!ref) { ref = await os.findPermissionDialog({ since: rnd.snap }); if (ref) { rnd.dialog = ref; setStatus({ dialog: true }); } }
+      if (!ref) { ref = await os.findPermissionDialog({ since: rnd.snap, port: rnd.port }); if (ref) { rnd.dialog = ref; setStatus({ dialog: true }); } }
       if (!ref) return { ok: false, method: 'none' };
       const result = await os.raise(ref);
       log(`chrome: raise method=${result?.method ?? 'failed'}`);

@@ -131,6 +131,12 @@ import { familyOf } from "./lineage.mjs";
 import {
   getBackend, sessionBackend, listBackends, defaultBackend, describeBackends, resolveBackendForSession,
 } from "./backends/index.mjs";
+import { takeBootEnv } from './boot-env.mjs';
+
+// main が起動の時にだけ渡す変数（AGENT_HOST_HANDOVER・PORT・RUNTIME_KEY・SERVER_LOG など。core/boot-env.mjs）を写して process.env から外す。
+// 子（エージェントの CLI・`!` の行・MCP）は process.env を継ぐので、どれを起こすより前に外す。以後の読み出しはこの写しから。
+// 読み込みの間に読むもの（core/server-log-boot.mjs の出力の向け先・core/i18n.mjs の最初の言語）は、ここより前なので今のまま
+const BOOT_ENV = takeBootEnv(process.env);
 
 // 保存（DB への書き込み）の失敗は例外として返る（ADR 0115）。待たずに呼んで受けていない箇所が残っていると、Node の既定
 // （処理されない Promise の拒否でプロセスが落ちる）では、1 件の保存の失敗でサーバーごと落ち、走っている他の会話のターンまで止まる。
@@ -158,12 +164,12 @@ const APP_VERSION = JSON.parse(await fs.readFile(path.join(HERE, '..', 'package.
 const BUILD = readBuildInfo(path.join(HERE, '..')).build;
 // main への口（core/main-port.mjs）。main の下でない起動（npm start）では、口を受け取る機能は null で無効になる。
 // AGENT_HOST_HANDOVER=on で utilityProcess の下でない起動は、名前付きパイプの口（core/main-link.mjs）を main への口にする
-const mainLink = handoverEnabled() && !process.parentPort ? createMainLink({ dataDir: store.dataDir, appVersion: APP_VERSION,
+const mainLink = handoverEnabled(BOOT_ENV) && !process.parentPort ? createMainLink({ dataDir: store.dataDir, appVersion: APP_VERSION,
   log: line => console.log(`  [main-link] ${line}`) }) : null;
 if (mainLink) setMainPortSource(mainLink.port);
 // 版ごとの実行場所で走っているなら、その版を使っている印を付ける（desktop/runtime.cjs の掃除がこの版を消さない。core/runtime-use.mjs）。
 // 印は閉じない: プロセスの終了で OS が外す
-if (process.env.AGENT_HOST_RUNTIME_ROOT && process.env.AGENT_HOST_RUNTIME_KEY) markRuntimeInUse({ root: process.env.AGENT_HOST_RUNTIME_ROOT, key: process.env.AGENT_HOST_RUNTIME_KEY });
+if (BOOT_ENV.AGENT_HOST_RUNTIME_ROOT && BOOT_ENV.AGENT_HOST_RUNTIME_KEY) markRuntimeInUse({ root: BOOT_ENV.AGENT_HOST_RUNTIME_ROOT, key: BOOT_ENV.AGENT_HOST_RUNTIME_KEY });
 const mainPort = getMainPort();
 const hostedPort = mainPort.hosted ? mainPort : null;
 // main が居ない間（更新）の出来事と、OAuth の同意画面などを開く口（core/main-away.mjs）。機能ごとの扱いは頼む側のモジュールが持つ
@@ -193,8 +199,10 @@ addCliToPath(process.env);
 // このサーバーが起動した時刻。ready で配る。画面は、これより前の更新による中断だけを「更新の後」とみなす（web/interrupt.mjs の updateInterrupted）
 const SERVER_STARTED_AT = Date.now();
 const WEB = path.join(HERE, "..", "web");
-// 画面の言語（設定値と解決後）。起動時と設定を変えたときに決め直す。ready と prefs イベントで配る（docs/design.md「多言語対応」）
-let locale = localeInfo(await store.getPrefs());
+// 画面の言語（設定値と解決後）。起動時と設定を変えたときに決め直す。ready と prefs イベントで配る（docs/design.md「多言語対応」）。
+// main が渡した OS の言語（AGENT_HOST_SYSTEM_LOCALE）は process.env から外したので、写しを重ねて見る
+const localeEnv = () => ({ ...process.env, ...BOOT_ENV });
+let locale = localeInfo(await store.getPrefs(), localeEnv());
 setLocale(locale.lang);
 let compactionSettings;
 try {
@@ -217,9 +225,9 @@ import { createBotHost } from './bots-host.mjs';
 import { channelEventRows, HIDDEN_BOT_KINDS } from './channels/types.mjs';
 import { textForTitleModel } from './prompt-title.mjs';
 
-const PORT = Number(process.env.AGENT_HOST_PORT ?? 7420);
-const HOST = process.env.AGENT_HOST_BIND ?? "127.0.0.1";
-const TOKEN = process.env.AGENT_HOST_TOKEN ?? crypto.randomBytes(16).toString("hex");
+const PORT = Number(BOOT_ENV.AGENT_HOST_PORT ?? 7420);
+const HOST = BOOT_ENV.AGENT_HOST_BIND ?? "127.0.0.1";
+const TOKEN = BOOT_ENV.AGENT_HOST_TOKEN ?? crypto.randomBytes(16).toString("hex");
 
 const NL = String.fromCharCode(10);
 const switching = new Set();
@@ -1972,7 +1980,7 @@ const completionNotices = createCompletionNotices({
 /** 保存した既定を全画面に通知する。セッション閲覧では既定を書き換えない。 */
 async function savePref(key, value, backendId) {
   const prefs = await store.setPref(key, value, backendId);   // ops-allow-setpref: prefs.json への書き込みの出口（設定の一覧 core/ops/settings.mjs と、既定の記憶だけがここを通る）
-  locale = localeInfo(prefs);
+  locale = localeInfo(prefs, localeEnv());
   setLocale(locale.lang);
   // デスクトップ版の main（ダイアログ・通知・更新のエラー文）にも知らせる（desktop/main.cjs）
   mainPort.postMessage({ type: "locale", locale: locale.lang });
@@ -7602,7 +7610,7 @@ async function announce() {
     .catch((err) => console.error('  control.json を書けませんでした:', String(err?.message ?? err)));
   // パイプの口は、main がつながるのが ready より後になりうる。つながるたびに最新の ready を送る
   // appVersion・build・runtimeKey は、付け直した新しい main が版を比べて切り替える・前の版へ戻すのに使う（desktop/switch.cjs）
-  readyMessage = { type: "ready", port, token: TOKEN, locale: locale.lang, pid: process.pid, appVersion: APP_VERSION, build: BUILD, runtimeKey: process.env.AGENT_HOST_RUNTIME_KEY || null };
+  readyMessage = { type: "ready", port, token: TOKEN, locale: locale.lang, pid: process.pid, appVersion: APP_VERSION, build: BUILD, runtimeKey: BOOT_ENV.AGENT_HOST_RUNTIME_KEY || null };
   mainPort.postMessage(readyMessage);
   remote.start().catch(() => {});
   if (routingSettingsCache.enabled && ROUTING_USAGE_AUTO) routingUsage.start();

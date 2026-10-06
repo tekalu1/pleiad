@@ -14,7 +14,8 @@
 // ready()                                → Promise<Capabilities>（main の返事を待つ。返事が無ければ supported: false）
 // onReady(fn)                            → 外す関数。層が作り直された（main の再起動）ときも呼ぶ
 // snapshotWindows()                      → Promise<string[] | null>  今あるブラウザーの最上位の窓の印（findPermissionDialog の比べ元。中身は層だけが解く）
-// findPermissionDialog({ since })        → Promise<WindowRef | null>  since に無い、見えている、小さい（外形が 1000×700 DIP 以下）ブラウザーの窓＝リモート デバッグの確認
+// findPermissionDialog({ since, port })  → Promise<WindowRef | null>  since に無い、見えている、小さい（外形が 1000×700 DIP 以下）ブラウザーの窓＝リモート デバッグの確認。
+//                                          port（DevToolsActivePort のポート）があれば、その待ち受けのプロセスの窓だけ（別の User Data の Chrome と取り違えない）
 // raise(ref)                             → Promise<{ ok: boolean, method: string }>  窓を前に出す（最小化なら戻す）。method は direct・attach・failed など
 // yieldForeground(ref, { to })           → Promise<boolean>  ref が前面を取っていたら to（直前の前面）に返す
 // foreground()                           → Promise<{ id: string, browser: boolean } | null>  今の前面の窓。browser はブラウザー自身の窓か
@@ -104,7 +105,7 @@ export function parentPortChromeOs(port, { timeoutMs = CALL_TIMEOUT_MS, readyWai
     },
     onReady(fn) { listeners.add(fn); return () => listeners.delete(fn); },
     snapshotWindows: () => call('snapshotWindows', {}, null),
-    findPermissionDialog: ({ since } = {}) => call('findPermissionDialog', { since: since ?? [] }, null),
+    findPermissionDialog: ({ since, port } = {}) => call('findPermissionDialog', { since: since ?? [], port: port ?? null }, null),
     raise: ref => call('raise', { ref }, { ok: false, method: 'failed' }),
     yieldForeground: (ref, { to } = {}) => call('yieldForeground', { ref, to }, false),
     foreground: () => call('foreground', {}, null),

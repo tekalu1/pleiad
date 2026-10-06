@@ -1,7 +1,9 @@
 import { startFakeChrome } from '../lib/fake-chrome.mjs';
 import { fakeChromeOs } from '../lib/fake-chrome-os.mjs';
 import { fakeClock } from '../lib/fake-clock.mjs';
+import path from 'node:path';
 import { createChromeConnection, ChromeConnectionError } from '../../core/chrome/connection.mjs';
+import { chromeHomes } from '../../core/chrome/locate.mjs';
 
 export const name = 'chrome-connection';
 export const title = 'Chrome への接続: A〜D の状態機械・無期限の待ち・確認の出し直し・OS の層が無いとき（偽の Chrome と偽の OS の層。ADR 0148・0153）';
@@ -37,7 +39,7 @@ export default async function (t) {
     await r.chrome.turnOff();
     const first = r.conn.demand();
     await until(() => r.conn.state().state === 'setup');
-    t.ok('DevToolsActivePort が無い → setup', r.conn.state().state === 'setup' && r.chrome.upgrades === 0);
+    t.ok('DevToolsActivePort が無い → setup（reason は null。トグルを一度もオンにしていない）', r.conn.state().state === 'setup' && r.conn.state().reason === null && r.chrome.upgrades === 0);
     await r.clock.advance(3_600_000);
     t.ok('時計を 1 時間進めても setup のまま（打ち切らない）', r.conn.state().state === 'setup' && r.os.log.length === 0);
     await r.chrome.turnOn();
@@ -53,6 +55,31 @@ export default async function (t) {
     await r.stop();
   }
 
+  // ===== 0b. 確認の窓を探すときは、DevToolsActivePort のポートを OS の層へ渡す =====
+  {
+    const r = await rig();
+    const first = r.conn.demand();
+    await r.seen();
+    r.chrome.approve();
+    await first;
+    const finds = r.os.calls('findPermissionDialog');
+    t.ok('確認の窓を探すときは DevToolsActivePort のポートを渡す（別の User Data の Chrome の窓と取り違えない）', finds.length > 0 && finds.every(e => e.port === r.chrome.port), JSON.stringify(finds.map(e => e.port)));
+    await r.stop();
+  }
+
+  // ===== 0. User Data の場所: AGENT_HOST_CHROME_USER_DATA があればそれだけ（確かめ・開発用の差し替え） =====
+  {
+    const win = { LOCALAPPDATA: 'C:\\Users\\x\\AppData\\Local' };
+    const def = chromeHomes({ platform: 'win32', env: win });
+    t.ok('既定（Windows）は %LOCALAPPDATA%\\Google\\Chrome\\User Data', def.length === 1 && def[0].browser === 'chrome' && def[0].userDataDir === path.join(win.LOCALAPPDATA, 'Google', 'Chrome', 'User Data'), JSON.stringify(def));
+    const over = chromeHomes({ platform: 'win32', env: { ...win, AGENT_HOST_CHROME_USER_DATA: 'D:\\chrome-test' } });
+    t.ok('AGENT_HOST_CHROME_USER_DATA があれば、それだけを返す（既定の場所は混ぜない）', over.length === 1 && over[0].userDataDir === 'D:\\chrome-test', JSON.stringify(over));
+    const overLinux = chromeHomes({ platform: 'linux', env: { AGENT_HOST_CHROME_USER_DATA: '/tmp/chrome-test' } });
+    t.ok('差し替えは OS に依らない（ほかの OS でも確かめ用に使える）', overLinux.length === 1 && overLinux[0].userDataDir === '/tmp/chrome-test', JSON.stringify(overLinux));
+    t.ok('空文字は差し替えとみなさない', chromeHomes({ platform: 'win32', env: { ...win, AGENT_HOST_CHROME_USER_DATA: '' } })[0].userDataDir === def[0].userDataDir);
+    t.ok('ほかの OS で差し替えが無ければ使えない（空）', chromeHomes({ platform: 'linux', env: {} }).length === 0);
+  }
+
   // ===== 2. 古い DevToolsActivePort（ポートにつながらない）→ setup =====
   {
     const r = await rig();
@@ -63,6 +90,7 @@ export default async function (t) {
     await until(() => r.conn.state().state === 'setup');
     await r.clock.advance(5000);
     t.ok('古いポート（つながらない）→ setup のまま。upgrade は投げない', r.conn.state().state === 'setup' && r.chrome.upgrades === 0);
+    t.ok('ファイルはあるのにつながらない setup は reason unreachable（Chrome を閉じた後もファイルは残るので、閉じているだけかもしれない）', r.conn.state().reason === 'unreachable', JSON.stringify(r.conn.state()));
     r.conn.giveUp();
     t.ok('「やめる」で off/declined、待っていた demand は declined で失敗', r.conn.state().state === 'off' && r.conn.state().reason === 'declined' && await code(p) === 'declined');
     await r.stop();

@@ -2,7 +2,9 @@
 //   - 窓（windowId）とタブ（page のターゲット）。最初は利用者の窓 1 つに利用者のタブ 2 つ（URL・題は中継から漏れてはいけない値）
 //   - flatten のセッション（Target.attachToTarget）。イベントの順は実機に合わせる（targetInfoChanged → attachedToTarget → 応答）
 //   - Target.setDiscoverTargets・getTargets・createTarget（newWindow なら新しい窓、無ければ最後に使われた利用者の窓）・closeTarget・activateTarget
-//   - Fetch.enable したセッションがあるタブの移動は、Fetch.requestPaused で止まり continueRequest / failRequest を待つ（主フレームの Document だけ）
+//   - Fetch.enable したセッションがあるタブの移動は、Fetch.requestPaused で止まり continueRequest / failRequest を待つ（主フレームの Document だけ）。
+//     止められた移動はエラーのページ（chrome-error://chromewebdata/。frameNavigated の unreachableUrl）に移り、targetInfo の URL は断られた URL になる（実機と同じ）
+//   - 履歴（Page.getNavigationHistory・navigateToHistoryEntry）。履歴の移動は bfcache の復元として扱い、要求を出さない（Fetch で止まらない。served に残らない）
 //   - window.open（windowOpen）で開いたタブの最初の要求は止まらない（実機と同じ。served に残る）
 //   - ページはとても小さな型（題と、見出し・リンク・ボタンの並び）。Accessibility.getFullAXTree・DOM.getBoxModel・Input.dispatchMouseEvent で押せる
 // 受けたメソッドは calls（{ method, sessionId, params }）に、サーバーに届いた要求（移動）の URL は served に残す。
@@ -26,8 +28,9 @@ export function createFakeBrowser({ product, calls, userTabs = USER_TABS } = {})
   const pausedFetch = new Map(); // requestId -> resolve(decision)
   const served = [];
   const autoAttachCalls = [];
-  let windowSeq = 100, requestSeq = 0, contextSeq = 0;
+  let windowSeq = 100, requestSeq = 0, contextSeq = 0, entrySeq = 0;
   let lastActive = null;
+  let fetchEnableDelayMs = 0;
 
   const send = (socket, message) => { if (socket.readyState === 1) socket.send(JSON.stringify(message)); };
   const info = t => ({ targetId: t.targetId, type: t.type, title: t.title, url: t.url, attached: [...sessions.values()].some(s => s.targetId === t.targetId), canAccessOpener: false, ...(t.openerId ? { openerId: t.openerId } : {}), browserContextId: 'CTX-DEFAULT' });
@@ -38,7 +41,8 @@ export function createFakeBrowser({ product, calls, userTabs = USER_TABS } = {})
 
   function newWindow(state = 'normal') { const id = ++windowSeq; windows.set(id, { state }); return id; }
   function newTarget({ url = 'about:blank', title, windowId, openerId = null, type = 'page' }) {
-    const t = { targetId: hex(), type, url, title: title ?? (url === 'about:blank' ? '' : pageFor(url).title), windowId, openerId, browserContextId: 'CTX-DEFAULT' };
+    const t = { targetId: hex(), type, url, title: title ?? (url === 'about:blank' ? '' : pageFor(url).title), windowId, openerId, browserContextId: 'CTX-DEFAULT',
+      history: [{ id: ++entrySeq, url }], index: 0 };
     targets.set(t.targetId, t);
     toDiscovering('Target.targetCreated', { targetInfo: info(t) });
     return t;
@@ -73,7 +77,7 @@ export function createFakeBrowser({ product, calls, userTabs = USER_TABS } = {})
   async function navigate(t, url) {
     const loaderId = hex();
     if (await intercept(t, url) === 'fail') {
-      emit(t, 'Page.frameStoppedLoading', { frameId: t.targetId });
+      commitError(t, url, loaderId);
       return { frameId: t.targetId, loaderId, errorText: 'net::ERR_BLOCKED_BY_CLIENT' };
     }
     served.push(url);
@@ -81,7 +85,7 @@ export function createFakeBrowser({ product, calls, userTabs = USER_TABS } = {})
     const redirect = pages.get(url)?.redirect;
     if (redirect) {
       if (await intercept(t, redirect, 'redirect') === 'fail') {
-        emit(t, 'Page.frameStoppedLoading', { frameId: t.targetId });
+        commitError(t, redirect, loaderId);
         return { frameId: t.targetId, loaderId, errorText: 'net::ERR_BLOCKED_BY_CLIENT' };
       }
       served.push(redirect);
@@ -91,11 +95,28 @@ export function createFakeBrowser({ product, calls, userTabs = USER_TABS } = {})
     commit(t, finalUrl, loaderId);
     return { frameId: t.targetId, loaderId };
   }
-  function commit(t, url, loaderId = hex()) {
-    t.url = url; t.title = pageFor(url).title;
+  /** 履歴に積む（今より先の分は捨てる） */
+  function pushHistory(t, url) {
+    t.history = t.history.slice(0, t.index + 1);
+    t.history.push({ id: ++entrySeq, url });
+    t.index = t.history.length - 1;
+  }
+  /** 止められた移動のエラーのページ。frame の URL は chrome-error、targetInfo の URL は断られた URL（実機と同じ） */
+  function commitError(t, url, loaderId = hex()) {
+    t.url = url; t.title = url.replace(/^https?:\/\//, '');
+    pushHistory(t, url);
     emit(t, 'Page.frameStartedLoading', { frameId: t.targetId });
     emit(t, 'Runtime.executionContextsCleared', {});
-    emit(t, 'Page.frameNavigated', { frame: { id: t.targetId, loaderId, url, securityOrigin: originOf(url), mimeType: 'text/html' }, type: 'Navigation' });
+    emit(t, 'Page.frameNavigated', { frame: { id: t.targetId, loaderId, url: 'chrome-error://chromewebdata/', unreachableUrl: url, securityOrigin: '://', mimeType: 'text/html' }, type: 'Navigation' });
+    toDiscovering('Target.targetInfoChanged', { targetInfo: info(t) });
+    emit(t, 'Page.frameStoppedLoading', { frameId: t.targetId });
+  }
+  function commit(t, url, loaderId = hex(), { restore = false } = {}) {
+    t.url = url; t.title = pageFor(url).title;
+    if (!restore) pushHistory(t, url);
+    emit(t, 'Page.frameStartedLoading', { frameId: t.targetId });
+    emit(t, 'Runtime.executionContextsCleared', {});
+    emit(t, 'Page.frameNavigated', { frame: { id: t.targetId, loaderId, url, securityOrigin: originOf(url), mimeType: 'text/html' }, type: restore ? 'BackForwardCacheRestore' : 'Navigation' });
     toDiscovering('Target.targetInfoChanged', { targetInfo: info(t) });
     emit(t, 'Runtime.executionContextCreated', { context: { id: ++contextSeq, origin: originOf(url), name: '', uniqueId: hex(), auxData: { isDefault: true, type: 'default', frameId: t.targetId } } });
     emit(t, 'Page.domContentEventFired', { timestamp: Date.now() / 1000 });
@@ -195,13 +216,22 @@ export function createFakeBrowser({ product, calls, userTabs = USER_TABS } = {})
       case 'Runtime.callFunctionOn': return { result: { type: 'object', subtype: 'null', value: null } };
       case 'Page.getFrameTree': return { frameTree: { frame: { id: t.targetId, loaderId: hex(), url: t.url, securityOrigin: originOf(t.url), mimeType: 'text/html' } } };
       case 'Page.navigate': return navigate(t, params.url);
+      case 'Page.getNavigationHistory': return { currentIndex: t.index, entries: t.history.map(e => ({ id: e.id, url: e.url, userTypedURL: e.url, title: pageFor(e.url).title, transitionType: 'typed' })) };
+      case 'Page.navigateToHistoryEntry': {
+        // bfcache の復元: 要求を出さず（Fetch で止まらない）、移り終える
+        const i = t.history.findIndex(e => e.id === params.entryId);
+        if (i < 0) throw { code: -32000, message: 'No entry with passed id' };
+        t.index = i;
+        commit(t, t.history[i].url, hex(), { restore: true });
+        return {};
+      }
       case 'Page.reload': return navigate(t, t.url).then(() => ({}));
       case 'Page.captureScreenshot': return { data: PNG_1X1 };
       case 'Accessibility.getFullAXTree': return axTree(t);
       case 'DOM.getBoxModel': { const i = Number(params.backendNodeId) - 10; const q = box(i); return { model: { content: q, padding: q, border: q, margin: q, width: 100, height: 24 } }; }
       case 'DOM.resolveNode': return { object: { type: 'object', subtype: 'node', className: 'HTMLElement', description: 'el', objectId: `obj-${params.backendNodeId}` } };
       case 'Input.dispatchMouseEvent': if (params.type === 'mouseReleased') setImmediate(() => click(t, params.x, params.y)); return {};
-      case 'Fetch.enable': s.fetch = true; return {};
+      case 'Fetch.enable': if (fetchEnableDelayMs) await new Promise(resolve => setTimeout(resolve, fetchEnableDelayMs)); s.fetch = true; return {};
       case 'Fetch.disable': s.fetch = false; return {};
       case 'Fetch.continueRequest': { const r = pausedFetch.get(params.requestId); pausedFetch.delete(params.requestId); r?.('continue'); return {}; }
       case 'Fetch.failRequest': { const r = pausedFetch.get(params.requestId); pausedFetch.delete(params.requestId); r?.('fail'); return {}; }
@@ -243,6 +273,9 @@ export function createFakeBrowser({ product, calls, userTabs = USER_TABS } = {})
     sessions: () => [...sessions.values()].map(s => ({ id: s.id, targetId: s.targetId, fetch: s.fetch })),
     pausedCount: () => pausedFetch.size,
     setPage(url, spec) { pages.set(url, { elements: [], ...spec }); },
+    /** Fetch.enable の応答（と効き始め）を ms 遅らせる（確認を ON にした直後の移動を試す） */
+    delayFetchEnable(ms) { fetchEnableDelayMs = ms; },
+    history(targetId) { const t = targets.get(targetId); return t ? { index: t.index, entries: t.history.map(e => ({ ...e })) } : null; },
     /** 利用者がタブを開いた（既定は利用者の窓。windowId を渡すとその窓に。エージェントの窓に人が開いた、など） */
     openUserTab(url, title, windowId = userWindow) { return newTarget({ url, title, windowId }).targetId; },
     windowOpen,

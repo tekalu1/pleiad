@@ -13,6 +13,8 @@ export default async function (t) {
     controlUrl: process.env.PLEIAD_CONTROL_URL ?? null,
     guard: process.env.PLEIAD_TEST_GUARD_HOME ?? null,
     locale: process.env.AGENT_HOST_LOCALE ?? null,
+    // 実行元から継いだ変数のうち、まだ環境に残っているもの（RUNNER_FIXTURE_WATCH は名前の JSON 配列）
+    remaining: JSON.parse(process.env.RUNNER_FIXTURE_WATCH ?? "[]").filter((k) => k in process.env),
   };
   if (out) fs.writeFileSync(path.join(out, `probe-${process.pid}.json`), JSON.stringify(probe));
   t.ok("記録した", !!out);

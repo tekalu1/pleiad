@@ -157,7 +157,19 @@ export default async function (t) {
     const probeDir2 = path.join(tmp, "probe2");
     fs.mkdirSync(probeDir);
     fs.mkdirSync(probeDir2);
-    const ambient = { PLEIAD_CONTROL_TOKEN: "ambient-secret-token", PLEIAD_CONTROL_URL: "http://127.0.0.1:1", AGENT_HOST_PORT: "1" };
+    // インストール版 Pleiad の会話のシェルが渡す変数（無停止の更新の AGENT_HOST_HANDOVER・AGENT_HOST_SERVER_LOG などを含む）。接頭辞で外し、利用者の上書き（KEPT）だけ残る
+    const inheritedNames = [
+      "AGENT_HOST_HANDOVER", "AGENT_HOST_RUNTIME_ROOT", "AGENT_HOST_RUNTIME_KEY", "AGENT_HOST_PORT", "AGENT_HOST_BIND", "AGENT_HOST_SERVER_LOG", "AGENT_HOST_SYSTEM_LOCALE",
+      "PLEIAD_CONTROL_URL", "PLEIAD_CONTROL_TOKEN", "PLEIAD_CLI_EXEC", "PLEIAD_CLI_SCRIPT", "PLEIAD_CLI_ELECTRON",
+      "AGENT_BROWSER_CONFIG", "AGENT_BROWSER_SOCKET_DIR", "AGENT_BROWSER_NAMESPACE", "AGENT_BROWSER_SESSION",
+      "AGENT_HOST_SOME_FUTURE_VARIABLE",
+    ];
+    const keptNames = ["AGENT_HOST_TASK_SILENCE_MINUTES", "AGENT_HOST_CODEX_BIN"];
+    const ambient = {
+      ...Object.fromEntries(inheritedNames.map((k) => [k, k === "PLEIAD_CONTROL_TOKEN" ? "ambient-secret-token" : k === "PLEIAD_CONTROL_URL" ? "http://127.0.0.1:1" : k === "AGENT_HOST_PORT" ? "1" : "ambient"])),
+      ...Object.fromEntries(keptNames.map((k) => [k, "7"])),
+      RUNNER_FIXTURE_WATCH: JSON.stringify([...inheritedNames, ...keptNames]),
+    };
     const j1 = await fixtureRun(GOOD, ["--timings", path.join(tmp, "j1.json")], { RUNNER_FIXTURE_OUT: probeDir, ...ambient });
     const userData = fs.mkdtempSync(path.join(tmp, "user-data-"));
     const j2 = await fixtureRun(GOOD, ["--jobs", "2", "--timings", path.join(tmp, "j2.json")], { RUNNER_FIXTURE_OUT: probeDir2, ...ambient, AGENT_HOST_DATA: userData });
@@ -176,6 +188,8 @@ export default async function (t) {
     const p1 = fs.readdirSync(probeDir).map((f) => read(path.join(probeDir, f)));
     const p2 = fs.readdirSync(probeDir2).map((f) => read(path.join(probeDir2, f)));
     t.ok("--jobs 1: 同じプロセスの中・実行元の制御用の環境変数はテストに届かない（PLEIAD_CONTROL_*）", p1.length === 1 && p1[0].inWorker === false && p1[0].controlToken === null && p1[0].controlUrl === null && j1.stdout.includes("実行元の制御用の環境変数を外した"), JSON.stringify(p1));
+    t.ok("継いだ Pleiad の変数（AGENT_HOST_・PLEIAD_・AGENT_BROWSER_。まだ名前の無い将来の変数も）は --jobs 1・--jobs 2 の両方で外れ、利用者の上書き（KEPT）だけ残る",
+      [p1[0], p2[0]].every((p) => same(p.remaining, keptNames)), JSON.stringify([p1[0]?.remaining, p2[0]?.remaining]));
     t.ok("--jobs 2: worker（子プロセス）の中・制御用の環境変数は届かない・言語は ja・本物の置き場を守る設定が入っている", p2.length === 1 && p2[0].inWorker === true && p2[0].controlToken === null && p2[0].controlUrl === null && p2[0].locale === "ja" && String(p2[0].guard).includes(".agent-host"), JSON.stringify(p2));
     t.ok("--jobs 2: worker の置き場は親が渡した AGENT_HOST_DATA ではなく、worker 専用の一時ディレクトリ（終わると消える）", !!p2[0]?.data && path.resolve(p2[0].data) !== path.resolve(userData) && path.basename(p2[0].data).startsWith("pleiad-test-data-") && p2[0].dataExists === true && !fs.existsSync(p2[0].data), p2[0]?.data);
     t.ok("--jobs 2: 親が渡した AGENT_HOST_DATA（利用者の置き場の代わり）には何も書かれない・消されない", fs.existsSync(userData) && fs.readdirSync(userData).length === 0);
