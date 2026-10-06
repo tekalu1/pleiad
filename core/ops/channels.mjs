@@ -18,7 +18,7 @@ import { z } from 'zod';
 import { agentT } from '../i18n.mjs';
 import { authorKey, HIDDEN_BOT_KINDS } from '../channels/types.mjs';
 import { ChannelError, LIMITS, THREADS_PER_CHANNEL_MAX } from '../channels/service.mjs';
-import { THREAD_STATUS_MAX } from '../channels/threads.mjs';
+import { THREAD_STATUS_MAX, THREAD_TITLE_MAX } from '../channels/threads.mjs';
 import { groupTargets, expandGroups } from '../channels/group-mentions.mjs';
 import { BUDGET_LIMITS, budgetOf, loosensBudget, normalizeBudget } from '../channels/budget.mjs';
 import { OpError, defineOp } from './registry.mjs';
@@ -161,6 +161,17 @@ export const channelOps = [
     output: z.object({ channelId: z.string(), threadId: z.string(), status: z.string() }),
     surfaces: { ui: true, mcp: 'catalog', cli: { path: ['channels', 'thread-status'], positional: ['channelId', 'threadId', 'status'] } },
     handler: async (ctx, args) => run(ctx, async () => { await refuseHidden(ctx); return ctx.channels.setThreadStatus(args, await authorOf(ctx)); }),
+  }),
+  defineOp({
+    id: 'channels.setThreadTitle', summary: D('setThreadTitle', 'summary'), risk: 'write',
+    riskReason: 'Sets or clears the title shown for a thread. The root post is not changed, and clearing it goes back to the first line of the root post. A human can do the same, so an agent is treated the same (ADR 0082)',
+    input: z.object({
+      channelId: channelId('setThreadTitle'), threadId: postId('setThreadTitle', 'threadId'),
+      title: z.string().max(THREAD_TITLE_MAX).describe(D('setThreadTitle', 'title')),
+    }),
+    output: z.object({ channelId: z.string(), threadId: z.string(), title: z.string() }),
+    surfaces: { ui: true, mcp: 'catalog', cli: { path: ['channels', 'thread-title'], positional: ['channelId', 'threadId', 'title'] } },
+    handler: async (ctx, args) => run(ctx, async () => { await refuseHidden(ctx); return ctx.channels.setThreadTitle(args, await authorOf(ctx)); }),
   }),
   defineOp({
     id: 'channels.threadBudget', summary: D('threadBudget', 'summary'), risk: 'read',

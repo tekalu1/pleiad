@@ -53,7 +53,7 @@ import { createControlBridge, CONTROL_MCP_PATH, controlInstructions } from './op
 import { createOpsHttp, OPS_PATH } from './ops/surfaces/http.mjs';
 import { writeControlFile, removeControlFile } from './control-file.mjs';
 import { addCliToPath, mcpSetup } from './cli-launcher.mjs';
-import { parentIdOf } from './ops/sessions.mjs';
+import { parentIdOf, ROOTS_DEFAULT, ROOTS_MAX, ROOT_TEXT_MAX } from './ops/sessions.mjs';
 import * as store from "./store.mjs";
 import * as history from "./history.mjs";
 import { createMessageQueue } from "./message-queue.mjs";
@@ -2534,6 +2534,20 @@ async function createStatusGroup(status, actor) {
 // 操作の一覧（core/ops/）の handler へ渡す、サーバーの状態への口
 const opsApp = {
   searchSessions: (input) => sessionSearch.search(input),
+  // 一時チャットの流れ（sessions.roots）: bot の会話・委譲の子・未送信を除いた会話を新しい順に。頭は検索の写しから（会話の本文を読み直さない）
+  sessionRoots: async ({ before, limit = ROOTS_DEFAULT } = {}) => {
+    const rows = (await sessionList({ limit: 500, track: false })).filter((r) => !r.bot && !r.delegation && !r.unsent && Number.isFinite(r.lastModified))
+      .filter((r) => !before || r.lastModified < before).sort((a, b) => b.lastModified - a.lastModified);
+    const page = rows.slice(0, Math.min(limit, ROOTS_MAX));
+    return {
+      roots: page.map((r) => {
+        const o = sessionSearch.outline(r.id);
+        return { sessionId: r.id, title: r.title && r.title !== '(no title)' ? r.title : '', lastModified: r.lastModified, createdAt: r.createdAt ?? null,
+          first: o?.first ? { uuid: o.first.uuid, at: o.first.at ?? null, text: o.first.text.slice(0, ROOT_TEXT_MAX) } : null, count: o?.count ?? null };
+      }),
+      nextBefore: rows.length > page.length ? page.at(-1).lastModified : null,
+    };
+  },
   status: async () => ({ version: APP_VERSION, protocolVersion: P.PROTOCOL_VERSION, startedAt: SERVER_STARTED_AT, locale: { ...locale }, running: (await runningWork()).count }),
   // 外の AI の MCP の設定に貼る pleiad mcp（app.cliSetup。core/cli-launcher.mjs）
   cliSetup: () => mcpSetup({ dataDir: store.dataDir }),

@@ -18,7 +18,8 @@ export function createSideTabs({ onChange = () => {} } = {}) {
     root.classList.remove('side-channels');
     document.body.classList.toggle('channels', on);
     if (side) side.hidden = true;
-    for (const node of covered()) node.inert = on;
+    // 一時チャットの 2 枚並び（body.home-split）の間は、流れの右に会話の面が見えている（覆わない）
+    for (const node of covered()) node.inert = on && !document.body.classList.contains('home-split');
     if (view) view.inert = !on;
   }
 
@@ -40,6 +41,8 @@ export function createSideTabs({ onChange = () => {} } = {}) {
   return {
     get tab() { return tab; },
     set,
+    /** 塗り直す（一時チャットの 2 枚並びの出入りで、覆う範囲が替わったとき） */
+    paint,
     /** 札の点（札をやめたので何もしない。あなた待ち・未読は脇の行と通知の一覧が示す） */
     setDot() {},
   };

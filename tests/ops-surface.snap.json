@@ -791,6 +791,31 @@
       "input": "6af6007ac39f"
     },
     {
+      "id": "channels.setThreadTitle",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "channels",
+            "thread-title"
+          ],
+          "positional": [
+            "channelId",
+            "threadId",
+            "title"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "7eaa31ca6065"
+    },
+    {
       "id": "channels.stopThread",
       "risk": "write",
       "riskOf": false,
@@ -3132,6 +3157,26 @@
       "input": "8bb0ecf306f5"
     },
     {
+      "id": "sessions.roots",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "sessions",
+            "roots"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "ada168e6072f"
+    },
+    {
       "id": "sessions.schedules",
       "risk": "read",
       "riskOf": false,
@@ -4507,6 +4552,15 @@
       ]
     },
     {
+      "id": "channels.setThreadTitle",
+      "path": "channels thread-title",
+      "positional": [
+        "channelId",
+        "threadId",
+        "title"
+      ]
+    },
+    {
       "id": "channels.threads",
       "path": "channels threads",
       "positional": []
@@ -5174,6 +5228,11 @@
       "positional": [
         "sessionId"
       ]
+    },
+    {
+      "id": "sessions.roots",
+      "path": "sessions roots",
+      "positional": []
     },
     {
       "id": "sessions.scheduleSend",

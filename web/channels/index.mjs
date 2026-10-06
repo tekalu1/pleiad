@@ -86,6 +86,8 @@ export function setupChannels(host) {
     show(view) { tabs.set('channels'); each('show', view); host.noteView(view?.threadId ? view : { kind: view?.kind, id: view?.id }); },
     hide() { each('hide'); tabs.set('chats'); },
     sideTabChanged(tab) { each('sideTabChanged', tab); },
+    /** 会話が増えた・動いた（一時チャットの流れを読み直す。web/channels/feed.mjs） */
+    homeChanged() { each('homeChanged'); },
     /** 右パネルの作業場所の基準。Channels の中の要素でなければ null */
     contextForPanel(anchor) {
       if (!anchor?.closest?.('#channelsView')) return null;

@@ -594,7 +594,7 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
     // 一時チャット: 会話のスレッド（bot の会話・委譲の子は除く）を新しい順。作成中の新しい会話は先頭
     const homeRows = [...(last.pendingNew ? [last.pendingNew] : []),
       ...last.sessions.filter((s) => !s.bot && matchesFilter(s)).sort((a, b) => (b.lastModified ?? 0) - (a.lastModified ?? 0))];
-    wanted.append(channelSection("home", { name: t("channels:side.home"), home: true, rows: homeRows,
+    wanted.append(channelSection("home", { name: t("channels:side.home"), home: true, rows: homeRows, onName: () => onOpenChannel?.("home"),
       onAdd: () => onNew?.({ cwd: filter.dir ?? cwdNow?.() ?? "" }), addLabel: t("channels:side.newHome") }));
     const channels = [...directory.channels.values()].filter((c) => c.kind === "channel" && !c.archivedAt && !c.home)
       .sort((a, b) => String(a.name).localeCompare(String(b.name)));

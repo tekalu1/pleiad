@@ -3,7 +3,10 @@
 // メインの頭（#channelsView > .top）に出す。読み書きはすべて channels.* の操作を invoke で呼ぶ（新しい WS コマンドは足さない）。
 // 出来事 channelPost・channelReaction・channelThread・channelRead・channelsChanged・botsChanged で、その場で描き直す。
 //
-// 部品の口（web/channels/index.mjs）: show({ kind: 'channel', id, threadId? })・hide()・onEvent(ev)。
+// 部品の口（web/channels/index.mjs）: show({ kind: 'channel', id, threadId? })・hide()・onEvent(ev)・homeChanged()。
+// 一時チャット（id 'home'。docs/design-system.md「一時チャットの流れ」）も同じ形で描く: 会話ごとに最初のあなたの発言を根の投稿に見立て
+// （sessions.roots）、要約の行は返信の数・作業中・あなた待ち。押すと会話を開く（host.openHomeThread）。入力欄に書くと新しい会話（host.newHomeThread）。
+// 合成の投稿には、会話に記録の無い操作（リアクション・編集・削除）を出さない。
 // スレッドを開く空間（W3）はここに無い。要約の行・「スレッドで返信」は host.openThread(channelId, threadId) を呼ぶだけ。
 import { el, svgEl } from '../dom.mjs';
 import { botIcon } from './bot-icon.mjs';
@@ -91,7 +94,7 @@ export function createFeed(host) {
   // i18n-dynamic: channels:feed.botState.
   const stateHint = (bot) => (bot.state === 'working' || bot.state === 'waiting' ? t(`channels:feed.botState.${bot.state}`) : '');
   function candidates() {
-    if (!S.channel || S.channel.kind === 'dm') return [];
+    if (!S.channel || S.channel.kind !== 'channel') return [];
     return [
       { id: 'here', name: 'here', icon: '@', hint: t('channels:feed.mention.here') },
       { id: 'everyone', name: 'everyone', icon: '@', hint: t('channels:feed.mention.everyone') },
@@ -101,7 +104,7 @@ export function createFeed(host) {
   }
   /** 誰も呼ばれていない文に勧める bot。この流れで最後に返事をした bot、無ければ先頭のメンバー */
   function suggestion() {
-    if (!S.channel || S.channel.kind === 'dm') return null;
+    if (!S.channel || S.channel.kind !== 'channel') return null;
     const members = memberBots();
     const last = [...S.posts].reverse().find((p) => p.author?.kind === 'bot' && members.some((b) => b.id === p.author.botId));
     return (last && S.bots.get(last.author.botId)) || members[0] || null;
@@ -113,7 +116,8 @@ export function createFeed(host) {
     if (!ch) return;
     // 送信の近道は、指で使う画面には出さない（Chats の入力欄の案内と同じ決まり）
     const keys = window.matchMedia?.('(pointer:coarse)').matches ? '' : ` · ${t('channels:feed.composer.sendKeys')}`;
-    if (ch.kind === 'dm') composer.setPlaceholder(t('channels:feed.composer.dm', { name: ch.name }) + keys);
+    if (ch.kind === 'home') composer.setPlaceholder(t('channels:feed.composer.home') + keys);
+    else if (ch.kind === 'dm') composer.setPlaceholder(t('channels:feed.composer.dm', { name: ch.name }) + keys);
     else if (narrow()) composer.setPlaceholder(t('channels:feed.composer.shortPlaceholder', { name: ch.name }));
     else composer.setPlaceholder(t('channels:feed.composer.placeholder', { name: ch.name }) + keys);
   }
@@ -129,6 +133,7 @@ export function createFeed(host) {
     title.replaceChildren(dmBot ? botIcon(dmBot, 'ch-hash') : el('span', 'ch-hash', '#'), document.createTextNode(ch.name));
     title.title = ch.name;
     const x = (node) => { node.classList.add('ch-head-x'); top.append(node); return node; };
+    if (ch.kind === 'home') { paintPlaceholder(); composer.setDisabled(false); return; }
     x(el('span', 'ch-purpose', ch.kind === 'dm' ? '' : ch.purpose ?? ''));
     const members = el('span', 'ch-members');
     const who = [t('channels:feed.you'), ...memberBots().map((b) => b.name)];
@@ -180,7 +185,7 @@ export function createFeed(host) {
       postEls.set(p.id, node);
       nodes.push(node);
     }
-    if (!S.posts.length) nodes.push(el('p', 'ch-empty-feed', S.channel?.kind === 'dm'
+    if (!S.posts.length) nodes.push(el('p', 'ch-empty-feed', S.channel?.kind === 'home' ? t('channels:feed.emptyHome') : S.channel?.kind === 'dm'
       ? t('channels:feed.emptyDm', { name: S.channel.name }) : t('channels:feed.emptyChannel')));
     log.replaceChildren(...nodes);
   }
@@ -205,11 +210,53 @@ export function createFeed(host) {
   }
 
   // ---------------------------------------------------------------- 読み込み
+  // ---- 一時チャット: 会話の頭（sessions.roots）を根の投稿に見立てる。並びは普通の流れと同じ（古い順・新しいものが下）
+  const HOME = 'home';
+  const homeChannel = () => ({ id: HOME, kind: 'home', name: t('channels:side.home') });
+  /** 会話の頭 → 合成の投稿・要約の行・状態（作業中・あなた待ち） */
+  function homePage(page) {
+    const roots = [...(page.roots ?? [])].reverse();
+    const posts = roots.map((r) => ({
+      id: `s:${r.sessionId}`, sessionId: r.sessionId, home: true, channelId: HOME, threadId: null, author: { kind: 'human' },
+      text: r.first?.text ?? r.title ?? '', mentions: [], reactions: {},
+      at: Date.parse(r.first?.at ?? '') || Date.parse(r.createdAt ?? '') || r.lastModified,
+    }));
+    const summaries = {}, threads = {};
+    for (const r of roots) {
+      const id = `s:${r.sessionId}`;
+      summaries[id] = { count: Math.max(0, (r.count ?? 1) - 1), lastAt: r.lastModified, authors: [] };
+      threads[id] = homeState(r.sessionId);
+    }
+    return { posts, summaries, threads, nextBefore: page.nextBefore ?? null };
+  }
+  /** 会話の今の状態（画面が持つ実行中・あなた待ちの集合）を、要約の行が読む ThreadState の形に */
+  function homeState(sessionId) {
+    const s = host.state;
+    const agentName = host.agentName?.(sessionId) ?? null;
+    const state = s?.waitingIds?.has(sessionId) ? 'waiting' : s?.runningIds?.has(sessionId) ? 'working' : 'idle';
+    return { state, agentName };
+  }
+
   async function load(id) {
     const seq = ++S.seq;
     S.ready = false;
     S.queue = [];
     log.replaceChildren(el('p', 'ch-loading', t('channels:feed.loading')));
+    if (id === HOME) {
+      try {
+        const page = homePage(await host.invoke('sessions.roots', { limit: PAGE }));
+        if (seq !== S.seq) return;
+        Object.assign(S, { channel: homeChannel(), posts: page.posts, index: new Map(page.posts.map((p) => [p.id, p])), summaries: page.summaries,
+          threads: page.threads, nextBefore: page.nextBefore, ready: true });
+        paintHead();
+        paintAll();
+        toBottom();
+      } catch (err) {
+        if (seq !== S.seq) return;
+        log.replaceChildren(el('p', null, t('channels:feed.loadFailed', { error: err?.message ?? String(err) })));
+      }
+      return;
+    }
     try {
       const [channel, page] = await Promise.all([host.invoke('channels.get', { channelId: id }), host.invoke('channels.read', { channelId: id, limit: PAGE }), loadBots()]);
       if (seq !== S.seq) return;
@@ -241,7 +288,8 @@ export function createFeed(host) {
     S.loadingOlder = true;
     const seq = S.seq;
     try {
-      const page = await host.invoke('channels.read', { channelId: S.id, before: S.nextBefore, limit: PAGE });
+      const page = S.id === HOME ? homePage(await host.invoke('sessions.roots', { before: S.nextBefore, limit: PAGE }))
+        : await host.invoke('channels.read', { channelId: S.id, before: S.nextBefore, limit: PAGE });
       if (seq !== S.seq) return;
       const older = (page.posts ?? []).filter((p) => !S.index.has(p.id));
       const before = log.scrollHeight - log.scrollTop;
@@ -262,7 +310,7 @@ export function createFeed(host) {
     clearTimeout(readTimer);
     readTimer = setTimeout(() => {
       const last = S.posts.at(-1);
-      if (!S.id || !last || !active() || !nearBottom() || last.at <= S.readSent) return;
+      if (!S.id || S.id === HOME || !last || !active() || !nearBottom() || last.at <= S.readSent) return;
       S.readSent = last.at;
       host.invoke('channels.markRead', { channelId: S.id, at: last.at }).catch(() => { S.readSent = 0; });
     }, 300);
@@ -271,6 +319,7 @@ export function createFeed(host) {
 
   // ---------------------------------------------------------------- 操作
   async function post({ text, attachments, confirmedWake }) {
+    if (S.id === HOME) { await host.newHomeThread?.({ text, attachments: attachments ?? [] }); return; }
     const made = await host.invoke('channels.post', { channelId: S.id, text, ...(attachments?.length ? { attachments } : {}), ...(confirmedWake ? { confirmedWake } : {}) });
     if (made?.id && !S.index.has(made.id) && !made.threadId) addPost(made);
     toBottom();
@@ -293,9 +342,20 @@ export function createFeed(host) {
     }
   }
 
-  function openThread(p) { host.openThread?.(S.id, p.threadId ?? p.id); }
+  function openThread(p) {
+    if (p.home) { host.openHomeThread?.(p.sessionId); return; }
+    host.openThread?.(S.id, p.threadId ?? p.id);
+  }
 
   function openMenu(p, x, y, anchor) {
+    if (p.home) {
+      host.showMenu(x, y, [
+        { label: t('channels:side.openThread'), onClick: () => openThread(p) },
+        { label: t('channels:feed.copyText'), onClick: () => { navigator.clipboard?.writeText(p.text ?? '').catch(() => {}); } },
+        ...(host.homeStatusItems ? [{ sep: true }, ...host.homeStatusItems(p.sessionId)] : []),
+      ], authorInfo(p.author, ctx).name);
+      return;
+    }
     const items = [
       { label: t('channels:feed.reply'), onClick: () => openThread(p) },
       { label: t('channels:feed.react'), onClick: () => {
@@ -319,6 +379,12 @@ export function createFeed(host) {
     e.preventDefault();
     const r = node.getBoundingClientRect();
     openMenu(p, e.clientX || r.left + 8, e.clientY || r.bottom, node);
+  });
+  log.addEventListener('click', (e) => {
+    if (S.id !== HOME || e.target.closest('a, button, .post-tools')) return;
+    if (String(window.getSelection?.() ?? '').trim()) return;
+    const p = S.index.get(e.target.closest?.('.post')?.dataset.postId);
+    if (p?.home) openThread(p);
   });
   jump.onclick = () => { toBottom(); markRead(); };
   log.addEventListener('scroll', () => {
@@ -392,6 +458,19 @@ export function createFeed(host) {
     },
   };
 
+  // 一時チャットの読み直し: 状態（作業中・あなた待ち）だけなら描き直し、根が増えたら読み直す
+  let homeTimer = 0;
+  async function refreshHome() {
+    try {
+      const page = homePage(await host.invoke('sessions.roots', { limit: PAGE }));
+      if (S.id !== HOME) return;
+      const same = page.posts.length === S.posts.length && page.posts.every((p, i) => p.id === S.posts[i]?.id);
+      const stick = nearBottom();
+      Object.assign(S, { posts: page.posts, index: new Map(page.posts.map((p) => [p.id, p])), summaries: page.summaries, threads: page.threads, nextBefore: page.nextBefore });
+      if (same) repaintAll(); else { paintAll(); if (stick) toBottom(); }
+    } catch { /* 次の動きで読み直す */ }
+  }
+
   /** 流れの投稿へ送って、一瞬（1.2 秒）だけ強調する（通知の一覧から。動きを減らす設定では滑らせず、明滅もしない） */
   function revealPost(postId) {
     const node = postEls.get(postId);
@@ -427,5 +506,11 @@ export function createFeed(host) {
     },
     onEvent(ev) { events[ev?.type]?.(ev); },
     sideTabChanged(tab) { if (tab === 'channels' && S.ready) markRead(); },
+    /** 会話が増えた・動いた（会話の一覧を描くたび）。一時チャットを見ているなら読み直す（まとめて 1 回） */
+    homeChanged() {
+      if (S.id !== HOME || !S.ready || root.hidden) return;
+      clearTimeout(homeTimer);
+      homeTimer = setTimeout(() => { if (S.id === HOME) refreshHome(); }, 400);
+    },
   };
 }

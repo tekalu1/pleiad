@@ -19,6 +19,8 @@ export const threadKey = (channelId, threadId) => `${channelId}/${threadId}`;
 
 /** スレッドの状態の名前の字数の上限（会話の状態と同じ） */
 export const THREAD_STATUS_MAX = 60;
+/** 人が付けるスレッドの題の字数の上限（根の投稿から作る題と同じ） */
+export const THREAD_TITLE_MAX = 120;
 
 /** スレッドの題: 根の投稿の最初の行（先頭の @ の呼びかけは外す）。web/channels/thread.mjs の titleOf と同じ決まり */
 export function threadTitle(text) {
@@ -82,6 +84,12 @@ export function applyThreadPatch(current, patch, now) {
     if (patch.status !== null && !(typeof patch.status === 'string' && [...patch.status.trim()].length <= THREAD_STATUS_MAX)) throw new Error(`status must be null or a string up to ${THREAD_STATUS_MAX} characters`);
     const status = patch.status === null ? '' : patch.status.trim();
     if (status) next.status = status; else delete next.status;
+  }
+  if (patch.title !== undefined) {
+    // 人が付けたスレッドの題（根の投稿は変えない）。空・null は外す（根の投稿の最初の行に戻る）
+    if (patch.title !== null && !(typeof patch.title === 'string' && [...patch.title.trim()].length <= THREAD_TITLE_MAX)) throw new Error(`title must be null or a string up to ${THREAD_TITLE_MAX} characters`);
+    const title = patch.title === null ? '' : patch.title.replace(/\s+/g, ' ').trim();
+    if (title) next.title = title; else delete next.title;
   }
   if (patch.readAt !== undefined) {
     // このスレッドを読んだ時刻（進める向きにだけ動く）

@@ -31,12 +31,13 @@ export function toAddress(input) {
 /** 会話（一時チャットのスレッド）のアドレスか */
 export const isSession = (a) => Boolean(a?.sessionId);
 
-/** チャンネルの面で開くアドレスを channels:show の detail にする。会話なら null */
+/** チャンネルの面で開くアドレスを channels:show の detail にする（一時チャットの流れは id 'home'）。会話なら null */
 export function toShowDetail(a) {
   if (!a) return null;
   if (a.botId) return { kind: 'bot', id: a.botId };
   if (a.routineId) return { kind: 'routine', id: a.routineId };
-  if (isSession(a) || !a.channelId || a.channelId === HOME) return null;
+  if (isSession(a) || !a.channelId) return null;
+  if (a.channelId === HOME) return { kind: 'channel', id: HOME };
   return { kind: 'channel', id: a.channelId, ...(a.threadId ? { threadId: a.threadId } : {}), ...(a.postId ? { postId: a.postId } : {}) };
 }
 

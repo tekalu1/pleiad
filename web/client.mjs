@@ -4096,7 +4096,7 @@ function renderSessions() {
   });
   // 脇で選ばれて見える行: Channels の面ではそのスレッド、会話の面では開いている会話
   const where = (() => { try { return viewAddress.current; } catch { return null; } })();   // 起動の途中（アドレスを作る前）は無い
-  const currentId = surface() === 'channels' ? (where?.threadId ? `thread:${where.channelId}:${where.threadId}` : null)
+  const currentId = surface() === 'channels' && !document.body.classList.contains('home-split') ? (where?.threadId ? `thread:${where.channelId}:${where.threadId}` : null)
     : pendingNewSession && !state.current ? pendingNewSession.id : state.current;
   // 脇が見えていない間の印（web/open-sidebar-mark.mjs）。今の会話は数えない
   paintOpenSidebar($("openSidebar"), attentionCounts(listed, { currentId: state.current, waitingIds: state.waitingIds, unreadIds,
@@ -4121,6 +4121,67 @@ function renderSessions() {
   });
   syncResumeStrip();
   syncResume();
+  paintCrumb();
+  try { channelsUi.homeChanged(); } catch { /* 起動の途中（Channels の面を作る前） */ }
+}
+
+// ---- 一時チャット（docs/design-system.md「一時チャットの流れ」）
+/** 会話の頭のパンくず「# 一時チャット ›」。一時チャットの会話のときだけ（bot の会話・委譲の子・流れの右に並べているときは出さない） */
+function paintCrumb() {
+  const s = state.sessions.find((x) => x.id === state.current);
+  const show = Boolean(s) && !s.bot && !s.delegation && !document.body.classList.contains('home-split');
+  $('crumbHome').hidden = !show;
+  $('crumbSep').hidden = !show;
+}
+$('crumbHome').onclick = () => viewAddress.go({ channelId: 'home' });
+
+/** 流れの右に会話を並べる（幅が 900px 以上で右パネルが閉じているとき）。並べられないときは会話の面へ */
+const homeSplitFits = () => (document.querySelector('body > main')?.clientWidth ?? 0) >= 900 && !document.body.classList.contains('file-preview-open');
+function setHomeSplit(on) {
+  if (document.body.classList.contains('home-split') === on) return;
+  document.body.classList.toggle('home-split', on);
+  try { channelsUi.tabs.paint(); } catch { /* 起動の途中 */ }
+  paintCrumb();
+}
+async function openHomeThread(sessionId) {
+  if (document.body.classList.contains('home-feed') && surface() === 'channels' && homeSplitFits()) {
+    setHomeSplit(true);
+    if (state.current !== sessionId) await select(sessionId);
+    viewAddress.note({ sessionId });
+    renderSessions();
+    return;
+  }
+  setHomeSplit(false);
+  await viewAddress.go({ sessionId });
+}
+// 幅が足りなくなった・右パネルを開いた: 並べるのをやめて会話の面へ
+const dropSplitIfNarrow = () => { if (document.body.classList.contains('home-split') && !homeSplitFits()) { setHomeSplit(false); channelsUi.setTab('chats'); } };
+addEventListener('resize', dropSplitIfNarrow);
+new MutationObserver(dropSplitIfNarrow).observe(document.body, { attributes: true, attributeFilter: ['class'] });
+
+/** 一時チャットの流れの入力欄に書いた: 新しい会話を作って送る（作業ディレクトリ・モデル・承認モードは新しい会話の既定） */
+async function newHomeThread({ text, attachments = [] }) {
+  const split = homeSplitFits();
+  if (split) setHomeSplit(true); else channelsUi.setTab('chats');
+  const id = await startNew();
+  if (!id || state.current !== id) throw new Error(t('chat.send.failed', { error: 'new session' }));
+  $('prompt').value = text;
+  state.attached = attachments.map((a) => ({ path: a.path, name: a.name ?? shortPath(a.path), kind: 'file', mime: a.mime ?? '', from: 'host' }));
+  renderAttached();
+  await submit();
+  viewAddress.note({ sessionId: id });
+}
+
+/** 一時チャットの流れの投稿の ⋯ の「状態を変更」（会話の状態と同じ器） */
+function homeStatusItems(sessionId) {
+  const s = state.sessions.find((x) => x.id === sessionId);
+  const known = [...new Set(state.sessions.map((z) => z.status).filter(Boolean))];
+  return [{ label: t('session.menu.changeStatus'), hint: s?.status || t('session.status.none'), sub: () => [
+    { input: { placeholder: t('session.menu.newStatus'), onCommit: (v) => setStatusOf(sessionId, v) } },
+    ...known.map((k) => ({ label: k, checked: k === s?.status, onClick: () => setStatusOf(sessionId, k) })),
+    { sep: true },
+    { label: t('session.menu.clearStatus'), onClick: () => setStatusOf(sessionId, '') },
+  ] }];
 }
 
 // ---------------------------------------------------------------- 中断と再開（docs/design-system.md「中断と再開」）
@@ -6070,8 +6131,20 @@ const channelsUi = setupChannels({
   permissionCard: (ev, into) => (ev.kind === 'question' ? questionCard(ev, into) : permissionCard(ev, into)),   // 質問も同じ口（bot の質問）
   openSession: (id) => viewAddress.go({ sessionId: id }),
   // 見ている場所が替わった（Channels の面・スレッドの開閉）・Chats の側へ戻った
-  noteView: (view) => { viewAddress.note(view); renderSessions(); },
-  noteChats: () => { if (state.current) viewAddress.note({ sessionId: state.current }); renderSessions(); },
+  noteView: (view) => {
+    viewAddress.note(view);
+    // 一時チャットの流れを見ているか（その右に会話を並べられる）。別の面へ移ったら 2 枚並びをやめる
+    const homeFeed = view?.kind === 'channel' && view.id === 'home' && !view.threadId;
+    document.body.classList.toggle('home-feed', homeFeed);
+    if (!homeFeed) setHomeSplit(false);
+    renderSessions();
+  },
+  // 一時チャットの流れ（web/channels/feed.mjs）: 会話を開く・新しい会話を書く・状態のメニュー・エージェントの名前
+  openHomeThread: (sessionId) => openHomeThread(sessionId),
+  newHomeThread: (draft) => newHomeThread(draft),
+  homeStatusItems: (sessionId) => homeStatusItems(sessionId),
+  agentName: (sessionId) => { const s = state.sessions.find((x) => x.id === sessionId); return s ? labelOf(s.backend) : null; },
+  noteChats: () => { setHomeSplit(false); if (state.current) viewAddress.note({ sessionId: state.current }); renderSessions(); },
   // 委譲の子の様子（スレッドの入口・作業ログの委譲カード）。Chats と同じ部品を使う（docs/design-system.md「バックグラウンド」「委譲カード」）
   background: {
     watch: (ids) => watchSessions(ids),

@@ -232,11 +232,11 @@ export function renderSummary(post, ctx) {
     if (live.length) {
       for (const bot of live.slice(0, 2)) status.append(botIcon(bot, 'ts-bot-icon'));
       status.append(` ${names}`);
-    } else status.append(t('channels:feed.unknownBot'));
+    } else status.append(th?.agentName ?? t('channels:feed.unknownBot'));
     status.append(` ${t('channels:feed.threadWorking')}`, runMark(t('channels:feed.state.working')));
   } else if (th?.state === 'waiting') {
     status.classList.add('waiting');
-    status.append('· ', el('span', 'ts-mark', '◆'), ` ${t('channels:feed.threadWaiting', { name: names || t('channels:feed.unknownBot') })}`);
+    status.append('· ', el('span', 'ts-mark', '◆'), ` ${t('channels:feed.threadWaiting', { name: names || th?.agentName || t('channels:feed.unknownBot') })}`);
   } else if (th?.state === 'failed') {
     status.classList.add('failed');
     status.append('· ', el('span', 'ts-mark', '✕'), ` ${t('channels:feed.state.failed')}`);
@@ -314,8 +314,10 @@ export function fillPost(root, post, ctx) {
     const more = iconButton('more', t('channels:feed.more'), moreIcon());
     more.setAttribute('aria-haspopup', 'menu');
     more.onclick = (e) => { e.stopPropagation(); const r = more.getBoundingClientRect(); ctx.actions.menu(post, r.right, r.bottom + 4, more); };
-    tools.append(quick, add, reply, more);
+    // 一時チャットの合成の投稿（会話の最初の発言）には、会話に記録の無いリアクションを出さない
+    if (post.home) tools.append(reply, more); else tools.append(quick, add, reply, more);
     root.append(tools);
+    if (post.home) root.classList.add('home-root');
   }
   return root;
 }

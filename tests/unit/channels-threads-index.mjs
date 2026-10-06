@@ -61,6 +61,12 @@ export default async function (t) {
     await service.setThreadStatus({ channelId: a, threadId: roots[6], status: 'あとで' }, HUMAN);
     t.ok('状態を持つ根は返信が無くても索引に出る', (await service.threadIndex({ channelId: a, all: true })).threads.some((x) => x.threadId === roots[6] && x.status === 'あとで' && x.count === 0));
 
+    // ---- 題（根の投稿は変えない）
+    const titled = await service.setThreadTitle({ channelId: a, threadId: roots[3], title: '  依存の  更新 ' }, HUMAN);
+    t.ok('題を付けると索引の題が替わる（空白は詰める）', titled.title === '依存の 更新' && (await service.threadIndex({ channelId: a, all: true })).threads.find((x) => x.threadId === roots[3]).title === '依存の 更新');
+    await service.setThreadTitle({ channelId: a, threadId: roots[3], title: '' }, HUMAN);
+    t.ok('空にすると根の投稿の最初の行に戻る', (await service.threadIndex({ channelId: a, all: true })).threads.find((x) => x.threadId === roots[3]).title === '仕事 3');
+
     // ---- スレッドの既読
     const before = (await service.threadIndex({ channelId: a, all: true })).threads.find((x) => x.threadId === roots[0]);
     await service.markRead({ channelId: a, threadId: roots[0], at: clock });

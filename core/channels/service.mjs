@@ -310,7 +310,7 @@ export function createChannelService({ dir, emit = () => {}, hooks = {}, now = D
           const lastAt = Math.max(root.at, r?.lastAt ?? 0);
           const readAt = Math.max(channelRead, th?.readAt ?? 0);
           rows.push({
-            channelId: channel.id, threadId: root.id, title: threadTitle(root.text), rootAt: root.at, lastAt, count: r?.count ?? 0,
+            channelId: channel.id, threadId: root.id, title: th?.title || threadTitle(root.text), rootAt: root.at, lastAt, count: r?.count ?? 0,
             unread: lastAt > readAt && (r?.lastAt ?? 0) > readAt, state: th?.state ?? 'idle', ...(th?.live ? { live: clone(th.live) } : {}),
             ...(th?.status ? { status: th.status } : {}), bots: Object.keys(th?.sessions ?? {}), ...(th?.origin ? { origin: clone(th.origin) } : {}),
             ...(th?.stopped ? { stopped: true } : {}),
@@ -321,6 +321,15 @@ export function createChannelService({ dir, emit = () => {}, hooks = {}, now = D
         threads.push(...(all ? rows : rows.slice(0, per)));
       }
       return { threads, totals };
+    },
+
+    /** スレッドの題を付ける・外す（空にすると根の投稿の最初の行に戻る）。根の投稿は変えない */
+    async setThreadTitle({ channelId, threadId, title }, _author) {
+      const root = await needPost(channelId, threadId);
+      if (root.threadId !== null) throw new ChannelError('POST_NOT_FOUND', { id: String(threadId) });
+      const thread = await threadStore.update(channelId, threadId, { title: title ? String(title) : null });
+      emitThread(thread);
+      return { channelId, threadId, title: thread.title || threadTitle(root.text) };
     },
 
     /** スレッドの状態（脇の「状態」の並べ方のグループ）を付ける・外す（空にすると外す） */

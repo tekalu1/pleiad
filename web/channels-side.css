@@ -28,6 +28,19 @@ body.settings > #sidebar > .side-order,html.side-searching .side-order{display:n
 #groups .row.one .av.xs{flex:none}
 #groups .row.one.more .row-t{color:var(--ink-weak)}
 
+/* ---- 一時チャットの流れの右に会話を並べる（body.home-split。流れ 4 : 会話 6。docs/design-system.md「一時チャットの流れ」） */
+body.channels.home-split:not(.settings){--home-feed-w:40%}
+body.channels.home-split:not(.settings) > main{padding-left:var(--home-feed-w)}
+body.channels.home-split:not(.settings) .channels-view{right:auto;width:var(--home-feed-w)}
+body.channels.home-split:not(.settings) .channels-view::after{content:"";position:absolute;right:0;top:14px;bottom:14px;width:1px;background:var(--surface-2);pointer-events:none}
+/* 合成の根の投稿（一時チャットの会話の最初の発言）は、押すと会話を開く */
+.post.home-root{cursor:pointer}
+/* 会話の頭のパンくず「# 一時チャット ›」 */
+.crumb-home{flex:none;display:inline-flex;align-items:center;gap:2px;padding:4px 6px;font-size:var(--fs-l);color:var(--ink-weak)}
+.crumb-home:hover{color:var(--ink)}
+.crumb-hash{color:var(--ink-weak)}
+.crumb-sep{flex:none;color:var(--ink-weak);margin:0 2px}
+
 /* ---- Bots・ルーティンの節の置き場（#channelsSide）。節はチャンネルの並べ方の間 #groups の末尾へ移るので、置き場そのものは出さない */
 .channels-side{display:none}
 .cs-icon{cursor:default}

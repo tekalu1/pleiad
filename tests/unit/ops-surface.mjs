@@ -132,7 +132,8 @@ export default async function (t) {
       running: async () => ({ count: 0, turns: [], tasks: [], waiting: 0, ...secret }),
       runningWork: async () => ({ count: 0, turns: [], permissions: [], tasks: [], subagents: [], background: [], ...secret }),
       cliSetup: () => ({ command: 'node', args: ['pleiad.mjs', 'mcp'], env: {}, json: '{}', claude: 'claude mcp add', ...secret }),
-      searchSessions: async () => ({ total: 1, partial: false, sessions: [{ sessionId: 's1', title: 't', hits: [], ...secret }] }) },
+      searchSessions: async () => ({ total: 1, partial: false, sessions: [{ sessionId: 's1', title: 't', hits: [], ...secret }] }),
+      sessionRoots: async () => ({ roots: [{ sessionId: 's1', title: 't', lastModified: 1, createdAt: null, first: { uuid: 'u', at: null, text: 'こんにちは' }, count: 2, ...secret }], nextBefore: null }) },
     sessions: {
       list: async () => [{ id: 's1', title: 't', backend: 'x', status: null, claudeAccount: MARKER, compatEndpoint: MARKER, ...secret }],
       get: async () => ({ row: { id: 's1', title: 't', backend: 'x', claudeAccount: MARKER, ...secret }, children: [], history: [{ at: 'a', by: 'agent', field: 'title', from: 'x', to: 'y', ...secret }] }),

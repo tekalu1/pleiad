@@ -12,7 +12,7 @@ export default async function (tt) {
     await setLanguage('ja');
     const wait = { id: 'n1', kind: 'wait', ask: 'approval', actor: { kind: 'bot', name: 'Owl' }, at: 1, unread: true, target: { sessionId: 's1' }, title: '依存の更新' };
     let d = describeNotification(wait, t);
-    tt.ok('あなた待ち（bot）: 「Owl が承認を待っています」・◆・場所は Chats › 会話の題', d.line === 'Owl が承認を待っています' && d.icon === 'wait' && d.place === 'Chats › 依存の更新' && d.open === true && d.outcome === '');
+    tt.ok('あなた待ち（bot）: 「Owl が承認を待っています」・◆・場所は 一時チャット › 会話の題', d.line === 'Owl が承認を待っています' && d.icon === 'wait' && d.place === '一時チャット › 依存の更新' && d.open === true && d.outcome === '');
     d = describeNotification({ ...wait, actor: undefined }, t);
     tt.ok('あなた待ち（bot でない）は「エージェントが承認を待っています」', d.line === 'エージェントが承認を待っています');
     d = describeNotification({ ...wait, ask: 'question' }, t);
@@ -23,10 +23,10 @@ export default async function (tt) {
     d = describeNotification({ id: 'n2', kind: 'failed', actor: { kind: 'bot', name: 'Kit' }, at: 1, unread: true, target: { channelId: 'c1', threadId: 't1' }, channelName: 'design', threadTitle: 'ヘッダーの余白を揃える' }, t);
     tt.ok('bot の失敗は「Kit のターンが失敗しました」・✕・場所は #チャンネル › スレッドの題', d.line === 'Kit のターンが失敗しました' && d.icon === 'failed' && d.place === '#design › ヘッダーの余白を揃える');
     d = describeNotification({ id: 'n3', kind: 'done', at: 1, unread: false, target: { sessionId: 's2' }, title: '控えの題' }, t, (id) => (id === 's2' ? 'いまの題' : ''));
-    tt.ok('完了は「<会話の題> が完了しました」。題は今の会話の題を先に使い（改名に追従）、無ければ控えの題', d.line === 'いまの題 が完了しました' && d.icon === 'done' && d.place === 'Chats › いまの題'
+    tt.ok('完了は「<会話の題> が完了しました」。題は今の会話の題を先に使い（改名に追従）、無ければ控えの題', d.line === 'いまの題 が完了しました' && d.icon === 'done' && d.place === '一時チャット › いまの題'
       && describeNotification({ id: 'n3', kind: 'done', at: 1, unread: false, target: { sessionId: 's2' }, title: '控えの題' }, t).line === '控えの題 が完了しました');
     d = describeNotification({ id: 'n4', kind: 'done', at: 1, unread: false, target: { sessionId: 's2' } }, t);
-    tt.ok('題が無い会話は「会話が完了しました」・場所は無題の名前', d.line === '会話が完了しました' && d.place === 'Chats › 新しいセッション');
+    tt.ok('題が無い会話は「会話が完了しました」・場所は無題の名前', d.line === '会話が完了しました' && d.place === '一時チャット › 新しいセッション');
     d = describeNotification({ id: 'n5', kind: 'mention', actor: { kind: 'bot', name: 'Lynx' }, at: 1, unread: true, target: { channelId: 'c1', threadId: 't1', postId: 'p1' }, channelName: 'release-ci' }, t);
     tt.ok('@あなた は「Lynx が @あなた と書きました」・@・スレッドの題が無ければ #チャンネルだけ', d.line === 'Lynx が @あなた と書きました' && d.icon === 'mention' && d.place === '#release-ci');
     tt.ok('書いた人の名前が無い @あなた は「@あなた 宛ての投稿があります」', describeNotification({ id: 'n6', kind: 'mention', at: 1, unread: true, target: { channelId: 'c1' } }, t).line === '@あなた 宛ての投稿があります');

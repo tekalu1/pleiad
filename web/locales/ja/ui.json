@@ -2793,7 +2793,7 @@
     "place": {
       "thread": "#{{channel}} › {{thread}}",
       "channel": "#{{channel}}",
-      "chat": "Chats › {{title}}"
+      "chat": "一時チャット › {{title}}"
     },
     "outcome": {
       "allowed": "承認済み",

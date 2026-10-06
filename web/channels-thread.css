@@ -19,6 +19,9 @@
 .deck > .ch-thread{will-change:transform}
 @media (prefers-reduced-motion:reduce){.deck{--dur-deck:0ms}}
 /* 板の境目。線ではなく、面の階調の細い棒（上下は余白を空ける） */
+.th-title-edit{cursor:text;border-radius:var(--r-s)}
+.th-title-edit:hover{background:var(--surface-1)}
+.th-title-input{flex:1;min-width:0;font:inherit;font-weight:600;padding:2px 6px;border-radius:var(--r-s);background:var(--surface-1);color:var(--ink)}
 .deck[data-deck=split] > .ch-thread::before{content:"";position:absolute;left:0;top:14px;bottom:14px;width:1px;background:var(--surface-2);pointer-events:none}
 
 /* ---- 流れの板（スレッドと並ぶとき）。見出しの目的は畳み、入力欄は押すまで 1 行（動いている間も畳んだまま） */

@@ -2888,7 +2888,7 @@
     "place": {
       "thread": "#{{channel}} › {{thread}}",
       "channel": "#{{channel}}",
-      "chat": "Chats › {{title}}"
+      "chat": "Quick chats › {{title}}"
     },
     "outcome": {
       "allowed": "Approved",

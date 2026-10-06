@@ -22,6 +22,7 @@ export default async function (t) {
   // ---- channels:show へ戻す
   t.ok('会話は channels:show にしない', toShowDetail(toAddress({ sessionId: 's1' })) === null);
   t.ok('スレッドの投稿は channels:show の detail に戻る', j(toShowDetail(toAddress({ channelId: 'c_1', threadId: 'p_0', postId: 'p_2' }))) === j({ kind: 'channel', id: 'c_1', threadId: 'p_0', postId: 'p_2' }));
+  t.ok('一時チャットの流れは id home のチャンネルとして開く', j(toShowDetail(toAddress({ kind: 'channel', id: 'home' }))) === j({ kind: 'channel', id: 'home' }));
   t.ok('bot・ルーティン', j(toShowDetail({ botId: 'b_1' })) === j({ kind: 'bot', id: 'b_1' }) && j(toShowDetail({ routineId: 'r_1' })) === j({ kind: 'routine', id: 'r_1' }));
 
   // ---- 残す形・同じ場所

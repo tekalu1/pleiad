@@ -111,7 +111,9 @@ export function createThread(host) {
     onSend: (draft) => send(draft),
   });
   const toc = createThreadToc({ host, posts: () => S.posts, ctx: () => ctx, go: (p) => goTo(p) });
-  const head = createThreadHead({ host, onClose: () => close(), onBack: () => close(), onToc: (b) => toc.toggle(b) });
+  const head = createThreadHead({ host, onClose: () => close(), onBack: () => close(), onToc: (b) => toc.toggle(b),
+    // 題を変える（根の投稿は変えない。空にすると根の投稿の最初の行に戻る）
+    onRename: (title) => host.invoke('channels.setThreadTitle', { channelId: S.channelId, threadId: S.threadId, title }).catch((err) => composer.say(t('channels:thread.renameFailed', { error: err?.message ?? String(err) }), true)) });
   root.append(head.el, log, jump, band, subs, composer.el);
   composer.bindDropZone(root);
   wireAttachmentZoom(log, host);
@@ -258,7 +260,8 @@ export function createThread(host) {
 
   // ---------------------------------------------------------------- 見出し・帯
   function paintHead() {
-    head.setTitle({ channel: S.channel?.name ?? '', title: titleOf(S.posts[0]) });
+    // 人が付けた題（channels.setThreadTitle）があればそれ、無ければ根の投稿の最初の行
+    head.setTitle({ channel: S.channel?.name ?? '', title: S.thread?.title || titleOf(S.posts[0]) });
     head.setSession(activeSession());
   }
 
@@ -685,7 +688,9 @@ export function createThread(host) {
       if (ev.channelId !== S.channelId || ev.threadId !== S.threadId || !ev.thread) return;
       if (!S.ready) { S.queue.push(ev); return; }
       const idle = S.thread?.state !== 'idle' && ev.thread.state === 'idle';
+      const retitled = (S.thread?.title ?? '') !== (ev.thread.title ?? '');
       S.thread = ev.thread;
+      if (retitled) paintHead();
       paintBand();
       paintPlaceholder();
       syncSubs();

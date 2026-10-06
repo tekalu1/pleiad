@@ -26,8 +26,9 @@ const svgButton = (cls, label, paths) => {
  * @param {() => void} o.onClose  ✕
  * @param {() => void} o.onBack  チャンネル名（流れに戻る）
  * @param {(button: HTMLElement) => void} o.onToc  目次
+ * @param {(title: string) => void} [o.onRename]  題を変える（題を押すと欄になる。Enter で決め、Esc でやめる）
  */
-export function createThreadHead({ host, onClose, onBack, onToc }) {
+export function createThreadHead({ host, onClose, onBack, onToc, onRename }) {
   const head = el('header', 'th-top');
 
   // 脇を閉じている間の入口（流れの見出しの #chOpenSidebar と同じ働き。スレッドだけが見えているときだけ出す。CSS）
@@ -50,6 +51,39 @@ export function createThreadHead({ host, onClose, onBack, onToc }) {
   title.id = 'chThreadTitle';
   crumb.append(chan, sep, title);
   chan.onclick = onBack;
+  // 題を押すと、その場で欄になる（Chats の頭の題と同じ働き）
+  if (onRename) {
+    title.tabIndex = 0;
+    title.setAttribute('role', 'button');
+    title.classList.add('th-title-edit');
+    const edit = () => {
+      if (head.querySelector('.th-title-input')) return;
+      const input = el('input', 'th-title-input');
+      input.value = title.title || '';
+      input.setAttribute('aria-label', t('channels:thread.rename'));
+      input.maxLength = 120;
+      let done = false;
+      const finish = (commit) => {
+        if (done) return;
+        done = true;
+        const next = input.value.trim();
+        input.replaceWith(title);
+        if (commit && next !== (title.title || '')) { title.textContent = next || title.textContent; onRename(next); }
+        title.focus({ preventScroll: true });
+      };
+      input.onkeydown = (e) => {
+        if (e.isComposing || e.keyCode === 229) return;
+        if (e.key === 'Enter') { e.preventDefault(); finish(true); }
+        else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); finish(false); }
+      };
+      input.onblur = () => finish(true);
+      title.replaceWith(input);
+      input.focus();
+      input.select();
+    };
+    title.onclick = edit;
+    title.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); edit(); } };
+  }
 
   const toc = svgButton('th-toc', t('channels:thread.entry.toc'), [TOC_PATH]);
   toc.setAttribute('aria-expanded', 'false');

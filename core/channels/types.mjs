@@ -63,6 +63,7 @@ import { CHANNEL_TAG, CHANNEL_THREAD_TAG, MEMORY_CORE_TAG, TURN_CONTEXT_TAG, INN
  *   origin?: { channelId: string, threadId: string },     // bot が自分のスレッドからチャンネルの流れへ @ を書いて新しくできたスレッドの、起こした元。[止める] は origin で結ばれた派生のスレッドにも届く
  *   status?: string,                                      // 利用者の状態（脇の「状態」の並べ方のグループ。会話の status と同じ器。60 字まで）
  *   readAt?: number,                                      // このスレッドを読んだ時刻（脇の行の未読。進める向きにだけ動く）
+ *   title?: string,                                       // 人が付けたスレッドの題（120 字まで。無ければ根の投稿の最初の行）
  *   updatedAt: number }} ThreadState */
 
 /** @typedef {{
