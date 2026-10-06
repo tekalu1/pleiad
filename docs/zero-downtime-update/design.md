@@ -1,8 +1,8 @@
 # 更新で走っているターンを止めない（無停止の更新）— 設計
 
-- 状態: 確定（2026-10-06）。段階 0 の実測を反映した。コードは変えていない（実装は [plan.md](plan.md) の段階ごと）
+- 状態: 確定（2026-10-06）。段階 0 の実測と、段階 1 の 1-0（頭の確認）の実測を反映した。コードは変えていない（実装は [plan.md](plan.md) の段階ごと）
 - 決定: [ADR 0137](../adr/0137-zero-downtime-update.md)。段階と作業項目: [plan.md](plan.md)。管理: [issue #54](https://github.com/tekalu1/pleiad/issues/54)
-- 実測の記録: [stage0-claude.md](stage0-claude.md)・[stage0-codex-agy.md](stage0-codex-agy.md)・[stage0-runtime.md](stage0-runtime.md)（測るスクリプトは `scripts/zero-downtime/`）
+- 実測の記録: [stage0-claude.md](stage0-claude.md)・[stage0-codex-agy.md](stage0-codex-agy.md)・[stage0-runtime.md](stage0-runtime.md)・[stage1-0.md](stage1-0.md)（測るスクリプトは `scripts/zero-downtime/`）
 - 関係する決定: [ADR 0036](../adr/0036-interrupt-and-update-while-running.md)（中断して更新。更新の部分を 0137 が置き換える）・[ADR 0115](../adr/0115-records-in-sqlite.md)（データ置き場の単独の持ち主）・[ADR 0019](../adr/0019-rename-ply-to-pleiad-keep-identifiers.md)（識別子を変えない）・[ADR 0043](../adr/0043-agent-browser-via-per-session-cdp-relay.md)（会話ごとの CDP 中継）・[ADR 0083](../adr/0083-control-surface-cli.md)（control.json）・[ADR 0090](../adr/0090-cli-in-desktop-app.md)（CLI の起動口）
 - 印: **【確認】** = コードを読んで確かめた。**【実測】** = 動かして確かめた（記録は stage0-*.md）。**【推測】** = 動かしていない見込み。**【未確認】** = 測れていない（末尾の「未確認の点」）
 
@@ -40,7 +40,7 @@
 - NSIS の `CHECK_APP_RUNNING` は、パスが `$INSTDIR` で始まるプロセスを PowerShell で全部 `Stop-Process` し、PowerShell が無ければ `taskkill /IM Ply.exe` で名前で止める（`node_modules/app-builder-lib/templates/nsis/include/allowOnlyOneInstallerInstance.nsh`）【確認。止まる側は実測。§3.3】
 - npm の `.cmd` シムで入れた `claude`・`codex` は、`process.execPath`（= `$INSTDIR\Ply.exe`）で JS を走らせる（`core/cli-installation.mjs` の `cliCommand`）。**この CLI は NSIS に止められる**【確認】。ネイティブの `claude.exe`（`~/.local/bin`）は `$INSTDIR` の外なので止められない【確認】が、親のサーバーが居なくなる
 - agy の MCP の relay（`core/backends/antigravity-context.mjs` の `agentDefinition`）・Codex の MCP 設定（`core/backends/codex.mjs`・`core/backends/context-options.mjs` の `process.execPath`）・`pleiad.cmd`（`$INSTDIR\resources\app\bin`。会話のシェルの PATH にある。`addCliToPath`）・`agent-browser`（`resources\agent-browser`）も `$INSTDIR` の中で走る【確認】
-- 入れ替えには実測で 55〜70 秒かかる（利用者の実測。試験用アプリでは 17〜19 秒で、本物の内訳は未測定。§3.3）
+- 入れ替えには実測で 55〜70 秒かかる（利用者の実測。本物の配布物の形でインストーラーの区間を測ると 49〜53 秒で、内訳は [stage1-0.md](stage1-0.md) §4。試験用アプリ（Electron 本体のみ）では 17〜19 秒）
 
 **(2) パイプが切れる**
 
@@ -96,12 +96,12 @@
 **公式の Node（`node.exe`）を配布物に同梱し、`pleiad-node.exe` の名前で実行場所へ写して使う**（利用者の承認済み。インストーラーは Node の分だけ大きくなる）。
 
 - サーバーは今も `ELECTRON_RUN_AS_NODE=1` の素の Node として走っていて（`desktop/server.cjs`）、Electron の API は使っていない。main との口は `process.parentPort` だけ【確認】。これは §7.1 で名前付きパイプに替える
-- 本番の依存のネイティブモジュールは koffi と node-pty で、どちらも N-API の prebuild（`electron-builder.yml` の注記、`npmRebuild: false`）【確認】。koffi は Node 24.14.0 で読み込めた【実測】。**node-pty を公式の Node で読み込めるか、サーバーのテスト（`npm test`）を素の Node で通すかは、段階 1 の最初に確かめる**【未確認】
+- 本番の依存のネイティブモジュールは koffi と node-pty で、どちらも N-API の prebuild（`electron-builder.yml` の注記、`npmRebuild: false`）【確認】。koffi は Node 24.14.0 で読み込めた【実測】。**node-pty も公式の Node 24.21.0（x64）で読め、疑似端末が動き、`npm test`（302 本・11,588 判定）が全て通った**【実測。stage1-0 §1。node-pty は配布物と同じ prebuilds だけ】。arm64 は prebuild と公式の `node.exe` が arm64・N-API であることまで確認した【確認】が、動かしていない【未確認】
 - 開発とテストは素の Node（手元は 24.14.0）で `core/server.mjs` を走らせている【確認】ので、素の Node で動くことは毎日確かめられている。Electron 44.5.1 が持つ Node は 24.21.0。**同梱する Node は Electron の Node と同じメジャー版（24）にそろえる**
 - 比べた案: Electron の一式（`Ply.exe` と DLL・pak）を写す。入れた版全体で約 730 MB あり、版ごとに写すのは重い。`Ply.exe` だけでは `ELECTRON_RUN_AS_NODE` でも ICU・snapshot が要るので動かない【推測】
 - 名前を `Ply.exe` にしない。NSIS は PowerShell が無いと `taskkill /IM Ply.exe` で**名前で**止める【確認】。`pleiad-node.exe` は名前が違うので当たらない
 - 署名: 公式の `node.exe` は OpenJS Foundation の署名のまま使う。名前を替えても署名は効く【推測】
-- **CPU の種類**: インストーラーは x64 と arm64 を作る（`electron-builder.yml`）。同梱する Node は各アーキテクチャーの公式の版を、`scripts/pack-agent-browser.cjs` と同じ `afterPack` の枠で入れる（arm64 は未実測。plan.md 実機の確認 13）
+- **CPU の種類**: インストーラーは x64 と arm64 を作る（`electron-builder.yml`）。同梱する Node は各アーキテクチャーの公式の版を、`scripts/pack-agent-browser.cjs` と同じ `afterPack` の枠で入れる（x64 の `node.exe` は 93.6 MB で、圧縮するとインストーラーは約 22 MB 増える【実測】。arm64 は元が 81.9 MB で、動かしていない。plan.md 実機の確認 16）
 
 ### 3.2 起動のしかたと、子の寿命
 
@@ -119,9 +119,9 @@
   | + `BREAKAWAY_OK` | 死ぬ | 生き残る |
   | + `SILENT_BREAKAWAY_OK` | 生き残る | 生き残る |
 
-- インストール版の `Ply.exe` 自身の Job は調べていない（触れない取り決めのため）。同じ Electron・同じ explorer 経由なので同じになる見込み【推測。plan.md 段階 1 の最初に実機で確かめる】
+- **本物の `Ply.exe`（`npm run desktop:pack` の実行ファイル）を explorer 経由で起こしても、`BREAKAWAY_OK` だけの Job に入る**。更新後に NSIS が起こす新しい版の main も同じ。シェルの子・`cmd /c start` では Job に入らない【実測。stage1-0 §2】。インストール版の `Ply.exe` は main・子とも Job に入っている【確認：読み取りだけ】が、制限の中身は読めていない【推測：同じ起動経路なので同じ】。Job は起こす側が作るので、起動のたびに調べて分ける
 - 子にしない理由は「生き残るため」ではない。**今の `utilityProcess` の中から detached で起こしたプロセスも更新をまたいで生き残った**【実測】。サーバーを main と別の寿命・別の版にするため、main の子にしない
-- **サーバーが detached でない子を持つと、サーバーが終わる引き継ぎでその子が止まる**【実測の裏付け】。逆に保持役の子の CLI は、保持役と一緒に止まる（保持役が落ちると CLI も終わる）。引き継ぎをまたいで残したい常駐物は `detached: true` で起こすか、新しいサーバーが起こし直す。段階 1 で、サーバーが起こす子を洗い出して分類する（plan.md 段階 1）
+- **サーバーが detached でない子を持つと、サーバーが終わる引き継ぎでその子が止まる**【実測の裏付け】。逆に保持役の子の CLI は、保持役と一緒に止まる（保持役が落ちると CLI も終わる）。引き継ぎをまたいで残したい常駐物は `detached: true` で起こすか、新しいサーバーが起こし直す。サーバーが起こす子は 1-0 で洗い出した（stage1-0 §6）。**段階 1 で `detached: true` に直すものは無い**（切り替えは作業が 0 件のときだけ）。直の子（Claude の CLI・codex・agy・外部の stdio MCP・`!` の行）は必ず死に、子が libuv で起こした孫も死ぬ。**libuv を使わない子が起こした孫は生き残る**（`agent-browser` の常駐はこれで、サーバーが終わっても生きる）【実測】
 - 標準出力・標準エラーを持たないので、起動の失敗の理由は、サーバーがファイルに書く（`logs\server.log`。トークンは伏せる。1 MB を超えたら `.old` を 1 世代）。main は起動の待ちで終了を見たとき、その末尾を読んで表示する
 
 ### 3.3 置き場と形
@@ -156,9 +156,11 @@ agent-host-runtime\
 - 実行場所のプロセスは `$INSTDIR` の外のパスで、名前も `Ply.exe` ではない → NSIS の `FIND_PROCESS`・`KILL_PROCESS` のどちらにも掛からない。試験用アプリで、`$INSTDIR` の外・名前違いの detached のプロセスは、更新（3 回）・アンインストールで止まらず、新しい版の main からも見えた【実測】。対照として、`$INSTDIR` の中・`$INSTDIR` と同じ文字列で始まる兄弟のフォルダーのものは止められた【実測】
 - 新しい版の main は、古い版のサーバー・保持役を見つけて付け直せる（PID が生き、拍が続いていることが見えた）【実測】
 - 旧版のアンインストーラーも同じマクロ（その版のテンプレートのもの）で止めるが、そこでも止められなかった【実測】
-- `build/installer.nsh` に `customCheckAppRunning` を定義して止める条件を Pleiad の側で固定する案は、定義した場合の NSIS の振る舞いを測っていない【未確認】。既定のままで止められないことは実測済みなので、**試験用アプリで確かめてから入れるか決める**（plan.md 段階 1 の実行場所）。効くのは**その版のインストーラー**から（`docs/desktop-releases.md`「インストーラー画面の手元確認」と同じ理屈。古い版のアンインストーラーは古いテンプレートのまま）
+- `build/installer.nsh` に `customCheckAppRunning` を定義して止める条件を Pleiad の側で固定する案は、**試験用アプリで測って、定義しないことにした**【実測。stage1-0 §5】。定義すると、`$INSTDIR` の中・前方一致のプロセスも止められなくなり、更新が約 7〜11 秒短くなる。しかし何もしない版は普通のアンインストールを壊し（起動中のアプリを止めずファイルが残る）、配布済みの版の旧アンインストーラーは既定のままなので最初の更新では効かない（旧が新の定義を使わない）。実行場所は `$INSTDIR` の外なので、止められないために定義する必要も無い。効くのは**その版のインストーラー**から（`docs/desktop-releases.md`「インストーラー画面の手元確認」と同じ理屈）。速さは別件の最適化
 - 旧版のアンインストールは `$INSTDIR` のファイルを 1 つずつ rename し、掴まれていれば中止する。実行場所の写しは `$INSTDIR` のファイルを開いたままにしない（写し終えたら閉じる）。ハードリンクは `store` の中で張り、`$INSTDIR` のファイルにはリンクしない
 - **CLI の起動を実行場所に寄せる**: npm のシムの CLI（`cliCommand`）・agy の relay・Codex の MCP 設定・`pleiad.cmd` の起動口は `process.execPath` と実行場所のスクリプトのパスを使うようにする。サーバーが実行場所で走れば `process.execPath` は `pleiad-node.exe` になるので、多くはそのまま直る【推測】。素の Node で走るので、`process.versions.electron` による `ELECTRON_RUN_AS_NODE=1` の付与（`agentDefinition`・`mcpSetup`）は付かなくなる【確認】。サーバーの env に `ELECTRON_RUN_AS_NODE` を残さない（`desktop/server.cjs` が付けていた分は不要になり、エージェントの子のシェルへ漏れない）
+- agy の MCP の relay（`core/agy-context-relay.mjs`）は、今は動いているインストール版で `$INSTDIR` の `Ply.exe` を Node として走っている【確認：agy 1 本につき 1 本】。更新で NSIS が止めるのはこれ。サーバーが `pleiad-node.exe` で走れば、`process.execPath` を使う relay も実行場所に移る
+- **外の AI に貼る設定**（`cliSetup` → `mcpSetup` の `execPath`・`CLI_SCRIPT`）は、サーバーが実行場所で走ると版ごとのパスになり、古い版の掃除で壊れる【確認】。貼る設定は版に依らない起動口を指すようにする（plan.md 1-3）
 - `bin/pleiad.cmd` は `%~dp0..\..\..\Ply.exe` を名指しし、無ければ PATH の `node` に落ちる【確認】。実行場所の `app\<版>\bin` から同じ相対パスをたどると `Ply.exe` は無く、利用者の PC に Node が無ければ動かない。起動口に「実行場所の `pleiad-node.exe`」を探す道を足す（ADR 0090 の「Ply の内蔵 Node」が変わる）
 - 会話のシェルの PATH には `app\<版>\bin` と `agent-browser\<版>` を足す。走り続けるシェルは古い版の PATH を持ったままなので、古い版の実行場所は使われている間は消さない（§3.5）
 
@@ -285,6 +287,7 @@ agent-host-runtime\
 
 - 会話ごとの MCP の口（`mcp-bridge.mjs`）のトークンは、ターンを始めるときに札へ入れる（トークンそのものと束縛。保持役のメモリだけ）
 - 新しいサーバーは札から `bindings` を戻し、同じポートで待ち受ける。CLI に渡した URL（`origin + path`）が同じなら、CLI からは何も変わらない。HTTP の口は状態を持たない（MCP のセッション id を使わない。`initialize` もトークンだけで答える）【確認】。Codex は、口が閉じて開き直した後、再 `initialize` なしの `tools/call` だけで成功した【実測】
+- **外部の stdio MCP（利用者が設定した MCP）は、サーバーの直の子として起こされる**（`core/context-bridge.mjs` が MCP SDK の `StdioClientTransport` で起こす。detached でない）【確認。動いているサーバーの下に実在】。束縛を札から戻しても、その先の stdio の子は旧サーバーと一緒に止まり、状態（`node_repl` など）は戻らない。段階 2 で、起こし直す（状態の消失をツールのエラーで返す）か、保持役の子にするかを決める（plan.md R15）
 - **口が数秒つながらないときの 3 つの CLI の振る舞い**【実測】:
 
 | CLI | 口が閉じている間の呼び出し | MCP ごと外されるか |
@@ -395,14 +398,14 @@ agent-host-runtime\
 
 ### 7.2 main が居ない間と、戻ったとき
 
-main が居ない時間は、試験用アプリで 17〜19 秒（Electron 本体のみ・無圧縮）、本物のインストーラーで利用者の実測 55〜70 秒。
+main が居ない時間は、試験用アプリで 17〜19 秒（Electron 本体のみ・無圧縮）、**本物の配布物の形でインストーラーの区間が 49〜53 秒**【実測。stage1-0 §4。確かめ 約 8・旧版の削除 約 8〜11・空き 約 10〜12・展開 18〜21・起動 1.5〜3】、利用者の実測は 55〜70 秒（新しい main の起動・サーバーの起動・窓の描画が加わる）。
 
 | 機能 | 居ない間 | 戻ったとき |
 |---|---|---|
 | secret（safeStorage。`secret-store.mjs`） | 復号は main が戻るまで待たせる（上限 5 分）。復号した値はサーバーのメモリに持ち続け、同じ秘密の 2 回目からは main に頼まない。新しいターンの始まり（アカウントのトークン・MCP の秘密）だけが待つことになる | 待たせていた依頼を流す |
 | computer use（Win32・オーバーレイ・Esc） | **Esc と同じに扱い、使用を止める**（オーバーレイも Esc も無いまま画面を動かさない。ADR 0071・0072。利用者の承認済み）。ツールには「Pleiad の更新中のため止めました」と返す。ターンは止めない | 止めたことはエージェントに伝え済み。次の呼び出しで普通に承認からやり直す |
-| 内蔵ブラウザー（WebContentsView・CDP 中継 `browser-relay.cjs`・screencast） | 窓ごとタブが消え、会話ごとの CDP 中継（ポートと鍵）も消える（**タブの中身は一度切れる**。利用者の承認済み）。`agent-browser` の呼び出しは失敗する | サーバーが中継の一覧（会話・ポート・鍵・プロフィール・開いていた URL）を持ち、新しい main に**同じポートと鍵で**張り直させ、タブを URL で開き直す。ページの中の状態（入力途中のフォームなど）は戻らない。`agent-browser` の常駐側が中継につなぎ直すかは**段階 1 の最初に測る**【未確認】 |
-| トレイ・スリープ抑止（`resident.cjs`） | 無くなる。入れ替えの間にスリープに入る見込みは小さい【推測】。必要ならサーバーが `SetThreadExecutionState`（koffi）で同じ間だけ抑える | サーバーが `resident` を送り直す |
+| 内蔵ブラウザー（WebContentsView・CDP 中継 `browser-relay.cjs`・screencast） | 窓ごとタブが消え、会話ごとの CDP 中継（ポートと鍵）も消える（**タブの中身は一度切れる**。利用者の承認済み）。`agent-browser` の呼び出しは失敗する | サーバーが中継の一覧（会話・ポート・鍵・プロフィール・開いていた URL）を持ち、新しい main に**同じポートと鍵で**張り直させ、タブを URL で開き直す。ページの中の状態（入力途中のフォームなど）は戻らない。**`agent-browser` の常駐は、同じポート・鍵で中継が戻れば次の呼び出しで張り直す**（同じ常駐のまま。約 30 ms）。別のポート・鍵でも、会話ごとの設定ファイルの `cdp` を書き直せば通る。居ない間は約 2 秒でエラー。中継はタブが無いと空のタブを作るので、**タブを開き直してから待ち受ける**【実測。stage1-0 §3】 |
+| トレイ・スリープ抑止（`resident.cjs`） | 無くなる。入れ替えの間（約 50 秒）にスリープに入る見込みは小さい【推測】。必要ならサーバーが `SetThreadExecutionState`（koffi）で同じ間だけ抑える | サーバーが `resident` を送り直す |
 | powerMonitor の wake | 届かない | main が付け直したら必ず 1 回 `wake` を送る（予定の確かめは何度呼んでもよい） |
 | OAuth の openExternal | 非 Electron の開き方（`os-open.mjs` の `defaultOpener` の main が無いときの道）で開く | — |
 | PC の通知 | main が出しているものは出ない | 居ない間に溜まった完了の通知のうち、まだ見られていないものを出す |
@@ -481,6 +484,20 @@ main が居ない時間は、試験用アプリで 17〜19 秒（Electron 本体
 | 実データの起動時間は不明（空の置き場で 0.54〜0.62 秒） | 1.2〜1.3 秒（`ready`）・一覧まで約 1.6 秒。ロックの引き継ぎは最大 18.6 ms | 断の目安を 1〜1.6 秒に（§5.1・§5.2） |
 | 55〜70 秒（入れ替え） | 試験用アプリでは 17〜19 秒。本物の内訳は測っていない | 段階 1 で本物を測る（§7.2） |
 
+### 段階 1 の 1-0 で変わった点（[stage1-0.md](stage1-0.md)）
+
+| 下書き・段階 0 の時点 | 1-0 の結果 | この文書での扱い |
+|---|---|---|
+| node-pty・`npm test` を公式の Node で通せるか未確認 | 通る（Node 24.21.0・x64。302 本・11,588 判定が全て通過） | §3.1 を【実測】に |
+| 本物の `Ply.exe` の Job は未確認 | `BREAKAWAY_OK` だけ（explorer 経由・NSIS が起こす形とも）。インストール版は Job に入っている（制限の中身は読めていない） | §3.2 |
+| `agent-browser` の常駐が戻るかは未確認 | 同じポート・鍵で張り直せば戻る。別の URL でも設定ファイルの書き直しで通る | §7.2 |
+| 本物のインストーラーの内訳は未測定 | 49〜53 秒（確かめ 約 8・旧版の削除 約 8〜11・空き 約 10〜12・展開 18〜21・起動 1.5〜3）。書いた直後の読みは約 7 秒 | §7.2・§1 |
+| `customCheckAppRunning` を定義するか | **定義しない**（旧アンインストーラーが効かない・何もしない版は壊れる） | §3.4 |
+| サーバーの `detached` でない子（`agent-browser` の常駐など）は引き継ぎで止まる | 直の子だけ止まる。常駐は生き残る。段階 1 で `detached` に直すものは無い | §3.2 |
+| （新）外部の stdio MCP はサーバーの直の子 | 引き継ぎで止まり、状態は戻らない | §4.6・plan.md R15 |
+| （新）agy の relay は今 `$INSTDIR` の `Ply.exe` で走っている・外に貼る設定が版ごとのパスになる | 実行場所への移行（1-3）で直す | §3.4 |
+| （新）切り替えの「0 件」に `!` の行・Codex の裏の端末が数えられない | 切り替えで止まる（今の更新・終了と同じ）。1-6 で扱いを決める | plan.md 1-6 |
+
 ---
 
 ## 未確認の点
@@ -490,11 +507,11 @@ main が居ない時間は、試験用アプリで 17〜19 秒（Electron 本体
 - Claude: サブエージェント・裏のコマンド（`background_tasks_changed`）・途中送信（`pendingSteers`）・圧縮（`PreCompact`）・`elicitation`・`request_user_dialog`・`oauth_token_refresh` の最中の付け直し。`host` の `fork` / `set_title` が二重に走ったときの実害。Pleiad の実際のオプション（`systemPrompt` のプリセット・`settingSources`・`skills`・プラグイン・互換の接続先）での付け直し。CLI をつながらない間に新しく起動したときの HTTP MCP の状態。親を殺す瞬間が SDK の内部の行の途中に当たる場合
 - Codex: 本物のモデル・実際の認証での付け直し。承認を数分待たせたとき。サブエージェントが走っているときの付け直し。保持役が読まない状態が続いてパイプが詰まる量のとき
 - agy: 呼び出しの最中に口を切った場合。relay が複数（`--context --computer --browser --control` の束ね）の場合の不通
-- 本物の `Ply.exe` の Job の所属と、explorer 経由の起動で付く Job の作り手
-- `customCheckAppRunning` を定義した場合の NSIS の振る舞い・PowerShell が無い環境の `taskkill` の道・全ユーザー向けのインストール・署名した旧版→新版・Windows ARM64・macOS
+- インストール版の `Ply.exe` の Job の制限の中身（`KILL_ON_JOB_CLOSE` の有無。Job に入っていることだけ確認した）と、explorer 経由の起動で付く Job の作り手
+- PowerShell が無い環境の `taskkill` の道・全ユーザー向けのインストール・署名した旧版→新版・Windows ARM64（node-pty・公式の `node.exe`・koffi を動かしていない）・macOS
 - 旧サーバーが静かに放す形（`flushNow` → ロックを明示して放す）での引き継ぎの時間。強制終了ベースの値しかない。モジュールを先に読み込んでロックを待つ起動の実測
-- node-pty を公式の Node で読み込めるか。`npm test` を素の Node で通せるか
 - 本物のエージェントを起こす経路・ロックを取った後の裏の処理（`warmModels` など）を含む起動の重さ
-- `agent-browser` の常駐側が CDP 中継の切断から戻るか（同じポートと鍵で張り直したとき）
-- 本物のインストーラー（55〜70 秒）の内訳
+- 内蔵ブラウザー: 呼び出しの最中に中継が落ちた場合・立て直す前に同じポートを別のプロセスが取った場合・本物の panel（screencast・プロフィール）を付けた場合
+- 外部の stdio MCP を引き継ぎでどう扱うか（段階 2）・サーバーの孫（Claude の Bash ツールのコマンドなど）が親の CLI の終了で止まるか
+- 本物のインストーラーの内訳のうち、旧版を消してから最初のファイルが出るまでの約 10 秒の中身・サイレント更新・署名した旧版→新版の内訳
 - この PC 以外（企業の EDR・Defender の除外設定がある環境）での、書いた直後の読みの遅さと Job の制限
