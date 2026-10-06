@@ -38,7 +38,7 @@ export default async function(t) {
   t.ok('ADR 0127: 隠れた会話の片付けは、ネイティブの会話を消せるときだけ記録ごと消す（一覧に戻ってこない）', child.stdout.includes('hidden delete contracts passed'), child.stdout + child.stderr);
   t.ok('プロンプトを渡す前に終わったターンの session id は採用を戻し、transcript の無い id の空の会話は新しく始める（本文のある会話は外さない）', child.stdout.includes('abandoned session contracts passed'), child.stdout + child.stderr);
   t.ok('transcript の無い nativeId の会話は、題・状態の変更と削除を Pleiad の記録だけで通す（別の失敗は隠さない）', child.stdout.includes('missing transcript contracts passed'), child.stdout + child.stderr);
-  t.ok('ADR 0143: 送った会話の削除は Pleiad の記録だけを消し、ネイティブの会話は残したまま一覧に戻さない（再起動の後も。ネイティブだけの行も消せる）', child.stdout.includes('delete contracts passed'), child.stdout + child.stderr);
+  t.ok('ADR 0147: 送った会話の削除は Pleiad の記録だけを消し、ネイティブの会話は残したまま一覧に戻さない（再起動の後も。ネイティブだけの行も消せる）', child.stdout.includes('delete contracts passed'), child.stdout + child.stderr);
 }
 
 // Run in a child with its own store: other suites import the store before this test runs.
@@ -221,7 +221,7 @@ export async function hiddenDeleteContracts() {
   assert.equal(await conversation(unsent), null);
 }
 
-// 送った会話の削除（sessions.delete。ADR 0143）。Pleiad の記録（索引・本文のファイル）だけを消し、ネイティブの会話は消さない（deleteSession を呼ばない）。
+// 送った会話の削除（sessions.delete。ADR 0147）。Pleiad の記録（索引・本文のファイル）だけを消し、ネイティブの会話は消さない（deleteSession を呼ばない）。
 // 残したネイティブの会話は、消した印（DB の deleted_natives）で一覧から隠す。再起動（接続の開き直し）の後も隠れたまま
 export async function deleteContracts() {
   const fs = await import('node:fs/promises');

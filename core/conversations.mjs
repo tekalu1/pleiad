@@ -26,7 +26,7 @@ let table = null;
 let handle = null;
 let writes = Promise.resolve();
 const indexSaved = new Map();   // 索引に最後に書けた JSON（id -> 文字列）。変わった会話だけを書くための比べ元
-// 消した会話（deleteConversation）が持っていたネイティブの id。backend -> Set<nativeId>。一覧から隠す（ADR 0143）
+// 消した会話（deleteConversation）が持っていたネイティブの id。backend -> Set<nativeId>。一覧から隠す（ADR 0147）
 const deletedNatives = new Map();
 let deletedTable = null;
 const isDeletedNative = (backend, nativeId) => Boolean(deletedNatives.get(backend)?.has(nativeId));
@@ -221,7 +221,7 @@ function nativesOf(r) {
 }
 
 /**
- * 会話を Pleiad の記録から消す（sessions.delete。送った会話も。ADR 0143）。消したら true、記録が無ければ false。
+ * 会話を Pleiad の記録から消す（sessions.delete。送った会話も。ADR 0147）。消したら true、記録が無ければ false。
  * ネイティブの会話（Claude の transcript・Codex の rollout・Antigravity の控え）は消さない（claude --resume・使用量の調査から見えるように）。
  * 残したネイティブの会話が一覧にネイティブだけの行として戻らないよう、持っていたネイティブの id を DB（deleted_natives）に覚えて隠す。
  * Pleiad の記録を持たない会話（ネイティブだけの行。id がネイティブの id）は、nativeBackend（その行のエージェント）で隠す。
@@ -351,7 +351,7 @@ export function wrapBackend(native) {
   wrapped.listSessions = async (args) => {
     const entries = Object.entries(await all());
     const hidden = new Set(entries.flatMap(([id, r]) => [id, ...r.segments.filter(s => s.backend === native.id).map(s => s.nativeId)]));
-    // 消した会話のネイティブの会話（残してある）も出さない（ADR 0143）
+    // 消した会話のネイティブの会話（残してある）も出さない（ADR 0147）
     const rows = (await native.listSessions(args)).filter(s => !hidden.has(s.sessionId) && !isDeletedNative(native.id, s.sessionId));
     for (const [id, r] of entries) if (r.backend === native.id) rows.push(await wrapped.getSession(id));
     return rows;

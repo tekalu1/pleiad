@@ -116,7 +116,7 @@ export async function createSettingApprovals({ dataDir, deliver, route = null, n
       await save();
       kick().catch(onError);
     },
-    /** 会話を消した（sessions.delete。ADR 0143）。その会話の待っている要求と届ける結果を捨てる（消した会話へ届けて記録を作り直さない） */
+    /** 会話を消した（sessions.delete。ADR 0147）。その会話の待っている要求と届ける結果を捨てる（消した会話へ届けて記録を作り直さない） */
     forget(sessionId) {
       const before = pending.length + notices.length;
       pending = pending.filter((p) => p.sessionId !== sessionId);

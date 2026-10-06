@@ -18,7 +18,7 @@
 //   "limit <resetsAt>" … 指定時刻に解ける使用量の上限（ISO または Unix ミリ秒）
 //   "whoami"       … 渡されたアカウントのトークン（oauthToken）の指紋を本文にする。無ければ account:none
 //   "deleted-natives" … このプロセスで deleteSession に渡されたネイティブの id と、今あるネイティブの会話の id を JSON（{ deleted, live }）で本文にする
-//                    （送った会話の削除がネイティブの会話を消さないことの検査。ADR 0143）
+//                    （送った会話の削除がネイティブの会話を消さないことの検査。ADR 0147）
 //   "context:<json>" … ply_context（contextRuntime）のツールを { name, arguments } で 1 回呼び、返りを本文にする
 //   "computer:<json>" … ply_computer（computerRuntime）のツールを { name, arguments }（配列なら順に）呼び、返りを本文にする。tool.result には印の行から作った images と computer を付ける
 //   "computer-hold:<json>" … "computer:" の後、中断されるまで走り続ける（ロックを持ったままのターン）。"computer-instructions" は ply_computer の指示文を返す

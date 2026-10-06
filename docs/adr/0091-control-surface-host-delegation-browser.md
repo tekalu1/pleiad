@@ -86,4 +86,4 @@
 |---|---|---|
 | `sessions.delete` | guarded | 送った会話も消す（Pleiad の記録だけ。ネイティブの会話は残して一覧から隠す）。無い会話は承認の前に `SESSION_NOT_FOUND`、消せない会話（走っている・承認や裏の作業を待っている・委譲の子が終わっていない・送信待ちがある・bot の会話）は承認の前に `CANNOT_DELETE`、AI の自分の会話は `DELETE_SELF`。 |
 
-`sessions.deleteUnsent` は変えない（送った会話は今も断る）。決定と理由は [ADR 0143](0143-delete-sent-conversations.md)。
+`sessions.deleteUnsent` は変えない（送った会話は今も断る）。決定と理由は [ADR 0147](0147-delete-sent-conversations.md)。

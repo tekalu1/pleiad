@@ -2796,7 +2796,7 @@ function onEvent(ev, replay = false) {
       return;
     case "sessionsChanged":
       if (ev.deleted === state.current) {
-        // 開いていた会話が消えた（未送信の削除・sessions.delete。ADR 0143）。前の会話の文脈のメーター・圧縮の予約も持ち越さない
+        // 開いていた会話が消えた（未送信の削除・sessions.delete。ADR 0147）。前の会話の文脈のメーター・圧縮の予約も持ち越さない
         state.current = null; clearThread(); loadDraft();
         state.messages = []; state.contextWindow = null; state.compactionAt = null; state.compactionPhase = null; state.compactions = [];
         paintContextStrip();
@@ -3807,7 +3807,7 @@ const side = createSide({
 
 function renderSessions() {
   // 委譲された子の会話（Pleiad タスク）は一覧に出さない。開くのは「Pleiad タスク」の一覧から。
-  // 依頼元の会話を消した子（ADR 0143）は、開く口が無くなるので一覧に出す
+  // 依頼元の会話を消した子（ADR 0147）は、開く口が無くなるので一覧に出す
   // bot の会話（Channels のスレッド・DM・ルーティン。ADR 0109）も出さない。あなたを待っている間だけ出る
   const ids = new Set(state.sessions.map(s => s.id));
   const listed = state.sessions.filter(s => (!s.delegation || !ids.has(s.delegation.parentSessionId)) && (!s.bot || state.waitingIds.has(s.id)));
@@ -4443,7 +4443,7 @@ $('workEntryButton').onclick = () => openWork();
 
 /** 委譲された子の会話では、ヘッダーに依頼元の会話へ戻る口を出す（子の会話は脇の一覧に出ないため） */
 function syncParentEntry() {
-  // 依頼元の会話を消した（ADR 0143）なら出さない
+  // 依頼元の会話を消した（ADR 0147）なら出さない
   const parentId = state.sessions.find(s => s.id === state.current)?.delegation?.parentSessionId;
   const parent = parentId && state.sessions.some(s => s.id === parentId) ? parentId : null;
   $('parentChatEntry').hidden = !parent;
@@ -6467,7 +6467,7 @@ function familyMenu(root, members, x, y) {
   ], t("session.menu.groupTitle", { title: rowLabel(root) }));
 }
 
-/** 会話を消す。未送信は deleteUnsentSession、送った会話は deleteSession（sessions.delete。ADR 0143） */
+/** 会話を消す。未送信は deleteUnsentSession、送った会話は deleteSession（sessions.delete。ADR 0147） */
 async function deleteSessionRow(s, command = 'deleteUnsentSession') {
   const pending = { kind: 'delete', text: t('pending.deleting'), visible: false };
   pendingRows.set(s.id, pending);
@@ -6638,7 +6638,7 @@ async function changeStatusName(from, to) {
   } finally { cancel(); }
 }
 
-/** 送った会話を消す前の確かめ。戻せないことと、エージェント側の会話の記録は残ることを書く（ADR 0143） */
+/** 送った会話を消す前の確かめ。戻せないことと、エージェント側の会話の記録は残ることを書く（ADR 0147） */
 function confirmDeleteSession(s, x, y) {
   const title = s.title && s.title !== "(no title)" ? s.title : t("session.untitled");
   showMenu(x, y, [

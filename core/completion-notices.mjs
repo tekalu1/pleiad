@@ -37,7 +37,7 @@ export function createCompletionNotices({ busy, send, ready = () => {} }) {
       if (sessionId) flush(sessionId);
       else for (const id of pending.keys()) flush(id);
     },
-    /** 会話を消した（sessions.delete。ADR 0143）。まだ知らせていない完了を捨てる */
+    /** 会話を消した（sessions.delete。ADR 0147）。まだ知らせていない完了を捨てる */
     forget(sessionId) { pending.delete(sessionId); },
   };
 }

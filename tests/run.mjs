@@ -403,7 +403,7 @@ const SUITES = [
   // 同じ会話で巻き戻して送り直す（sendMessage の rewind。ADR 0102）: バックエンドの形ごと（Claude・拒否・Codex・巻き戻せない）× 実行中・送信待ち・検査。契約は身代わりのネイティブで
   './unit/server-rewind.mjs',
   './unit/server-ux.mjs',
-  // 送った会話の削除（sessions.delete。ADR 0143）: 片付けるデータ・ネイティブの会話は残す・断る条件・承認カード・委譲の親子
+  // 送った会話の削除（sessions.delete。ADR 0147）: 片付けるデータ・ネイティブの会話は残す・断る条件・承認カード・委譲の親子
   './unit/server-session-delete.mjs',
   // 変更の記録: sessionChanges の返す形と、statusByAi（AI が状態を変えたときだけ印。人が変えたら null）
   './unit/server-session-changes.mjs',

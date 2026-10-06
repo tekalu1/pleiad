@@ -558,7 +558,7 @@ export function conversationTable(db) {
   };
 }
 
-// ---- 消した会話のネイティブの id（ADR 0143）。1 つのネイティブの会話 1 行 ------------------------------------
+// ---- 消した会話のネイティブの id（ADR 0147）。1 つのネイティブの会話 1 行 ------------------------------------
 // 送った会話を消しても、ネイティブの会話（Claude の transcript・Codex の rollout など）は残す。残ったものが一覧に
 // ネイティブだけの行として戻ってこないよう、消した会話が持っていたネイティブの id を覚えて一覧から隠す（core/conversations.mjs の wrapBackend）
 export function deletedNativeTable(db) {

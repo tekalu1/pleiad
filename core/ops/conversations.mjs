@@ -187,7 +187,7 @@ export const conversationOps = [
     },
   }),
 
-  // 会話を消す（送った会話も）。Pleiad の記録だけを消し、ネイティブの会話（transcript・rollout）は残す。戻せないので guarded（ADR 0143）。
+  // 会話を消す（送った会話も）。Pleiad の記録だけを消し、ネイティブの会話（transcript・rollout）は残す。戻せないので guarded（ADR 0147）。
   // 走っている・承認や裏の作業を待っている・委譲の子が終わっていない・bot の会話は、サーバーが断る（ctx.conversations.delete）
   defineOp({
     id: 'sessions.delete',

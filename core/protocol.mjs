@@ -151,7 +151,7 @@ export const COMMANDS = new Set([
   "newSession",      // 空のセッションを開始する（最初の runTurn まで id は無い）。draft を渡すと入力欄の下書きとして保存する（送らない。「見直しを頼む」）
   "saveDraft",
   "deleteUnsentSession",
-  "deleteSession",   // { sessionId } -> "deleted"。送った会話も Pleiad の記録から消す（sessions.delete。ネイティブの会話は残す。ADR 0143）
+  "deleteSession",   // { sessionId } -> "deleted"。送った会話も Pleiad の記録から消す（sessions.delete。ネイティブの会話は残す。ADR 0147）
   "setTurnSettings", // durable agent/model/cwd/account choice, applied at the next runTurn（account: '' = ログイン中の Claude アカウント）
   "setStatus",
   "markRead",     // { reads: [[sessionId, completedAt], ...] } -> { reads: 変わった分 }。完了を確認した（ホストに 1 つ・大きい方だけ）。read イベントで全接続へ

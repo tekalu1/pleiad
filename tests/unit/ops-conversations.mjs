@@ -90,7 +90,7 @@ export default async function (t) {
   t.ok('人（画面）はそのまま消せる。無い会話は承認前に SESSION_NOT_FOUND', (await run(human, 'sessions.deleteUnsent', { sessionId: 'draft' })).ok
     && (await run(agent(), 'sessions.deleteUnsent', { sessionId: 'nope' })).code === 'SESSION_NOT_FOUND');
 
-  // ---- sessions.delete: 送った会話も消す。guarded（ADR 0143）
+  // ---- sessions.delete: 送った会話も消す。guarded（ADR 0147）
   const gone = await run(agent(), 'sessions.delete', { sessionId: 'root' });
   t.ok('sessions.delete は AI には承認が要る（承認の口が無ければ NEEDS_APPROVAL。消さない）', !gone.ok && gone.code === 'NEEDS_APPROVAL' && !calls.some((c) => c[0] === 'delete'));
   t.ok('sessions.delete: 束縛されない CLI は NEEDS_UI', (await run({ by: 'agent', via: 'cli' }, 'sessions.delete', { sessionId: 'root' })).code === 'NEEDS_UI' && !calls.some((c) => c[0] === 'delete'));

@@ -2573,7 +2573,7 @@ async function deleteUnsentSessionOf(args) {
 }
 
 /**
- * 会話を消せないなら、理由（code: CANNOT_DELETE）を投げる（sessions.delete の承認カードの前と、消す直前。ADR 0143）。
+ * 会話を消せないなら、理由（code: CANNOT_DELETE）を投げる（sessions.delete の承認カードの前と、消す直前。ADR 0147）。
  * 断るのは、走っている・準備中（切り替え・分岐）・承認や質問を待っている・裏の作業（Codex のバックグラウンド端末・シェルの行）がある・
  * 委譲の子として終わっていない・委譲した子が終わっていない（完了の通知がまだ届いていないものを含む）・送信待ちや送信予定がある会話と、bot の会話
  */
@@ -2592,7 +2592,7 @@ async function refuseDelete(sessionId) {
 }
 
 /**
- * 会話を消す（sessions.delete。WS の deleteSession の中身。送った会話も。ADR 0143）。消すのは Pleiad の記録だけで、
+ * 会話を消す（sessions.delete。WS の deleteSession の中身。送った会話も。ADR 0147）。消すのは Pleiad の記録だけで、
  * ネイティブの会話（Claude の transcript・Codex の rollout・Antigravity の控え）は消さない（バックエンドの deleteSession は呼ばない）。
  * 一緒に消す: sidecar（DB の sessions・session_fields・context_entry_refs）・会話の記録（索引・本文・引き継ぎの写し）・提示の記録（presents）・
  * 撮影（computer use）・git の撮影の ref（refs/pleiad/turn/）・内蔵ブラウザーの設定・自動圧縮と上限の再開の予約・設定の変更の承認の結果・まだ知らせていない完了。
@@ -4227,7 +4227,7 @@ agentTasks = await createAgentTasks({
   execute: async (task, prompt, signal) => {
     if (signal.aborted) { await worktreeHost.taskDone(task).catch(() => {}); return { outcome: 'aborted' }; }
     if (sessionBusy(task.sessionId)) return { requeue: true };
-    // 子の会話を人が消した（sessions.delete。ADR 0143）。追加の指示・やり直しは、消した会話を作り直さずに失敗で返す
+    // 子の会話を人が消した（sessions.delete。ADR 0147）。追加の指示・やり直しは、消した会話を作り直さずに失敗で返す
     if (!(await resolveBackendForSession(task.sessionId))) throw new Error(agentT(await agentLocaleFor(task.parentSessionId), 'delegation.childDeleted'));
     const execution = { outcome: null, error: null, rejections: [], stopped: [], reply: null, timer: null, streamed: '', streamEnded: false };
     taskExecutions.set(task.sessionId, execution);

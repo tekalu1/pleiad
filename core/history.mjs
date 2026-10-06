@@ -195,7 +195,7 @@ export async function keepPresents(sessionId, keep) {
   });
 }
 
-/** 会話を消したときに、その会話の提示（添付・present・可視化の写し）の記録を消す（sessions.delete。ADR 0143） */
+/** 会話を消したときに、その会話の提示（添付・present・可視化の写し）の記録を消す（sessions.delete。ADR 0147） */
 export async function forgetPresents(sessionId) {
   const file = presentFile(sessionId);
   await serialize(file, () => fs.rm(file, { force: true }));

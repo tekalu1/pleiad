@@ -175,7 +175,7 @@ export function createWorktreeHost({ dataDir, store, turns, shellCwds = () => []
       const state = await worktrees.inspect(e, { files: true });
       const kind = worktrees.classify(state);
       if (kind === 'empty' || kind === 'merged' || kind === 'missing') return null;
-      // 取り込みを頼む会話。消した会話（sessions.delete。ADR 0143）は頼めない（画面は「取り込みを頼む」を押せなくする）
+      // 取り込みを頼む会話。消した会話（sessions.delete。ADR 0147）は頼めない（画面は「取り込みを頼む」を押せなくする）
       const mergeSessionId = (e.purpose === 'task' ? e.parentSessionId : e.sessionId) ?? e.sessionId ?? e.parentSessionId ?? null;
       return { id: e.id, branch: e.branch, path: e.path, origin: e.origin, baseBranch: e.baseBranch ?? null, purpose: e.purpose, kept: e.kept,
         files: state.files ?? null, fileNames: state.fileList ?? [], at: state.at ?? e.createdAt, kind, mergeSessionId: mergeSessionId && snapshot[mergeSessionId] ? mergeSessionId : null };

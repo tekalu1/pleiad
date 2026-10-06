@@ -1,4 +1,4 @@
-// 送った会話の削除（sessions.delete。ADR 0143）をサーバー越しに（fake + 一時リポジトリ。LLM は呼ばない）。
+// 送った会話の削除（sessions.delete。ADR 0147）をサーバー越しに（fake + 一時リポジトリ。LLM は呼ばない）。
 //   - 送った会話が一覧から消え、別の接続（端末）にも sessionsChanged の deleted で届く
 //   - 一緒に片付けるデータ（DB の sessions・session_fields・conversations、本文のファイル、presents、git の撮影の ref）が消え、使用量の記録は残る
 //   - ネイティブの会話は消さない（fake の deleteSession が呼ばれず、fake の会話が残る）。残したネイティブの会話は一覧に戻らない
