@@ -18,6 +18,9 @@ export const title = 'ターンの分割と endTurn の 1 回だけの印';
 const ply = (name, args) => 'ply:' + JSON.stringify({ name, arguments: args });
 const delegate = task => ply('ply_delegate', { kind: 'mechanical', backend: 'fake', task });
 
+// 各ターンの待ちの上限（無制限に待って固まらないよう 10 秒に制限）
+const TURN_WAIT_MS = 10_000;
+
 export default async function (t) {
   const scratch = await fs.mkdtemp(path.join(os.tmpdir(), 'ply-turn-phases-'));
   const dataDir = path.join(scratch, 'data');
@@ -53,7 +56,7 @@ export default async function (t) {
     {
       const prevUsage = usageCount();
       const mark = c.mark();
-      const res = await c.runTurn({ backend: 'fake', cwd: ROOT, prompt: 'echo:hello' });
+      const res = await c.runTurn({ backend: 'fake', cwd: ROOT, prompt: 'echo:hello' }, { ms: TURN_WAIT_MS });
       t.ok('echo: 成功', res.outcome === 'ok');
       const turnEnds = c.since(mark).filter(e => e.type === 'turnEnd' && e.sessionId === res.sessionId);
       t.ok('echo: turnEnd は 1 回', turnEnds.length === 1);
@@ -66,7 +69,7 @@ export default async function (t) {
     {
       const prevUsage = usageCount();
       const mark = c.mark();
-      const res = await c.runTurn({ backend: 'fake', cwd: ROOT, prompt: 'fail' });
+      const res = await c.runTurn({ backend: 'fake', cwd: ROOT, prompt: 'fail' }, { ms: TURN_WAIT_MS });
       t.ok('fail: outcome は error', res.outcome === 'error');
       const turnEnds = c.since(mark).filter(e => e.type === 'turnEnd' && e.sessionId === res.sessionId);
       t.ok('fail: turnEnd は 1 回', turnEnds.length === 1);
@@ -80,7 +83,7 @@ export default async function (t) {
       const prevUsage = usageCount();
       const mark = c.mark();
       let ownId = null;
-      const running = c.runTurn({ backend: 'fake', cwd: ROOT, prompt: 'slow' });
+      const running = c.runTurn({ backend: 'fake', cwd: ROOT, prompt: 'slow' }, { ms: TURN_WAIT_MS });
       const ev = await c.waitFor(e => e.type === 'session' && e.sessionId, { from: mark, ms: 5000 });
       ownId = ev.sessionId;
       await c.cmd('abort', { sessionId: ownId });
@@ -97,7 +100,7 @@ export default async function (t) {
     {
       const prevUsage = usageCount();
       const mark = c.mark();
-      const res = await c.runTurn({ backend: 'fake', cwd: ROOT, prompt: 'limit 1000' });
+      const res = await c.runTurn({ backend: 'fake', cwd: ROOT, prompt: 'limit 1000' }, { ms: TURN_WAIT_MS });
       t.ok('limit: outcome は limited', res.outcome === 'limited');
       const turnEnds = c.since(mark).filter(e => e.type === 'turnEnd' && e.sessionId === res.sessionId);
       t.ok('limit: turnEnd は 1 回', turnEnds.length === 1);
@@ -110,7 +113,7 @@ export default async function (t) {
     {
       const prevUsage = usageCount();
       const mark = c.mark();
-      const res = await c.runTurn({ backend: 'fake', cwd: ROOT, prompt: 'undelivered' });
+      const res = await c.runTurn({ backend: 'fake', cwd: ROOT, prompt: 'undelivered' }, { ms: TURN_WAIT_MS });
       t.ok('undelivered: outcome は error', res.outcome === 'error');
       const turnEnds = c.since(mark).filter(e => e.type === 'turnEnd');
       t.ok('undelivered: turnEnd は 1 回', turnEnds.length === 1);
@@ -123,7 +126,7 @@ export default async function (t) {
     {
       const prevUsage = usageCount();
       const mark = c.mark();
-      const res = await c.runTurn({ backend: 'fake', cwd: ROOT, prompt: 'compact' });
+      const res = await c.runTurn({ backend: 'fake', cwd: ROOT, prompt: 'compact' }, { ms: TURN_WAIT_MS });
       t.ok('compact: outcome は ok', res.outcome === 'ok');
       const turnEnds = c.since(mark).filter(e => e.type === 'turnEnd' && e.sessionId === res.sessionId);
       t.ok('compact: turnEnd は 1 回', turnEnds.length === 1);
@@ -136,7 +139,7 @@ export default async function (t) {
     {
       const prevUsage = usageCount();
       const mark = c.mark();
-      const res = await c.runTurn({ backend: 'fake', cwd: ROOT, prompt: 'ask' });
+      const res = await c.runTurn({ backend: 'fake', cwd: ROOT, prompt: 'ask' }, { ms: TURN_WAIT_MS });
       t.ok('ask (allow): outcome は ok', res.outcome === 'ok');
       const turnEnds = c.since(mark).filter(e => e.type === 'turnEnd' && e.sessionId === res.sessionId);
       t.ok('ask (allow): turnEnd は 1 回', turnEnds.length === 1);
@@ -158,7 +161,7 @@ export default async function (t) {
           }
         },
       });
-      const res = await cDecline.runTurn({ backend: 'fake', cwd: ROOT, prompt: 'ask' });
+      const res = await cDecline.runTurn({ backend: 'fake', cwd: ROOT, prompt: 'ask' }, { ms: TURN_WAIT_MS });
       cDecline.close();
       t.ok('ask (deny): outcome は ok', res.outcome === 'ok');
       const turnEnds = c.since(mark).filter(e => e.type === 'turnEnd' && e.sessionId === res.sessionId);
@@ -172,7 +175,7 @@ export default async function (t) {
     {
       const prevUsage = usageCount();
       const mark = c.mark();
-      const res = await c.runTurn({ backend: 'fake', cwd: ROOT, prompt: 'hook-follow test' });
+      const res = await c.runTurn({ backend: 'fake', cwd: ROOT, prompt: 'hook-follow test' }, { ms: TURN_WAIT_MS });
       t.ok('hook-follow: outcome は ok', res.outcome === 'ok');
       const turnEnds = c.since(mark).filter(e => e.type === 'turnEnd' && e.sessionId === res.sessionId);
       t.ok('hook-follow: turnEnd は 1 回', turnEnds.length === 1);
@@ -184,7 +187,7 @@ export default async function (t) {
     // 10. 途中送信の requeue（DECLINE_STEER）
     {
       const tasksOf = async parent => (await c.cmd('agentTasks')).filter(r => r.parentSessionId === parent);
-      const awaitTask = async (parent, fn, ms = 20_000) => {
+      const awaitTask = async (parent, fn, ms = 15_000) => {
         const end = Date.now() + ms;
         while (Date.now() < end) {
           const rows = await tasksOf(parent);
@@ -195,13 +198,13 @@ export default async function (t) {
       };
 
       const markChild = c.mark();
-      const parent = (await c.runTurn({ backend: 'fake', cwd: ROOT, prompt: delegate('bg 1 gate:ph-steer') })).sessionId;
+      const parent = (await c.runTurn({ backend: 'fake', cwd: ROOT, prompt: delegate('bg 1 gate:ph-steer') }, { ms: TURN_WAIT_MS })).sessionId;
       const task = await awaitTask(parent, r => r.status === 'running');
-      await c.waitFor(e => e.type === 'phase' && e.sessionId === task.sessionId && e.state === 'waiting', { from: markChild, ms: 10000 });
+      await c.waitFor(e => e.type === 'phase' && e.sessionId === task.sessionId && e.state === 'waiting', { from: markChild, ms: 10_000 });
 
       // DECLINE_STEER で途中送信を拒否させる
       const prevUsage = usageCount();
-      await c.runTurn({ sessionId: parent, prompt: ply('ply_task_send', { taskId: task.taskId, message: 'echo:LATER DECLINE_STEER' }) });
+      await c.runTurn({ sessionId: parent, prompt: ply('ply_task_send', { taskId: task.taskId, message: 'echo:LATER DECLINE_STEER' }) }, { ms: TURN_WAIT_MS });
 
       // ゲートを開いて子タスクを完了させる
       gates.open('ph-steer');
@@ -250,6 +253,7 @@ export default async function (t) {
           AGENT_HOST_BACKENDS: 'fake',
         },
         encoding: 'utf8',
+        timeout: 10_000,
       });
       const match = out.match(/__RESULT__([\s\S]*?)__RESULT__/);
       t.ok('endTurn の結果が出力される', match !== null);
