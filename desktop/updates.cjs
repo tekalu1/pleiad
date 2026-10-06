@@ -18,7 +18,7 @@ function updaterEnabled({ packaged, pkg, windowsStore, feed }) {
 
 // No Electron dependency: the state machine is tested with a fake updater.
 class Updates extends EventEmitter {
-  // handover: 作業を止めずに更新する（無停止の更新。ADR 0137）。画面は「中断して更新」を出さない（web/updates.mjs）
+  // handover: 作業を止めずに更新する（無停止の更新。ADR 0151）。画面は「中断して更新」を出さない（web/updates.mjs）
   constructor({ updater, version, file, enabled, install, prepareCheck = async () => {}, store = false, handover = false }) {
     super();
     enabled = enabled && !store;

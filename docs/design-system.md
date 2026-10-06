@@ -449,7 +449,7 @@ Pleiad終了後の適用はインストーラーの表示に引き継ぎ、取�
 面は既存surface、補足はink-weak。失敗はその場の文章と再試行で示し、警告色や自動で開くモーダルは使わない。
 更新の設定の下・リリースノートの前に、見出し「外の AI から Pleiad を使う」と `.btn` を 2 つ（「MCP の設定をコピー」「claude mcp add をコピー」。折り返す横並び）。説明文は置かない。押した合図はボタンの文字を 1.8 秒だけ「コピーしました」に替える（リモートの組み合わせのコードのコピーと同じ）。ホストの画面だけに出す（[ADR 0090](adr/0090-cli-in-desktop-app.md)）。
 
-### 切り替えを待つ表示（承認済み（2026-10-06）、[ADR 0148](adr/0148-switch-wait-display.md)、docs/zero-downtime-update/design.md §6.1）
+### 切り替えを待つ表示（承認済み（2026-10-06）、[ADR 0152](adr/0152-switch-wait-display.md)、docs/zero-downtime-update/design.md §6.1）
 
 無停止の更新（`AGENT_HOST_HANDOVER=on`）で、更新の後、窓は新しい版の main のまま、古い版のサーバーの画面を出し、作業が終わってから新しい版へ切り替える。その間（数分〜数時間）の表示。部品は `web/switch-notice.mjs`、状態は main（`desktop/switch-screen.cjs`）が preload の `plyDesktop.switch`（版 1）で渡す。リモート（スマホ）の画面・ブラウザーには出さない（更新はホストの窓の操作。切り替えの瞬間は今のつなぎ直しの表示）。
 

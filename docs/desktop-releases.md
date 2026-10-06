@@ -56,7 +56,7 @@ package.json と package-lock.json の番号を揃え、原稿と生成済み JS
 | Pleiad終了後の適用中 | Windows はインストーラーの進捗バーだけを出して適用し、終わったら起動し直す。入れ先とインストールの種類（自分のみ／全ユーザー）は前回を引き継ぎ、選択と完了の画面は出さない（`build/installer.nsh`）。アプリ内で適用の進捗%を推測しない |
 | 作業・承認待ち | 無停止の更新（既定）は、断らず、作業も止めない（次の行と下の「適用とデータ保護」）。`AGENT_HOST_HANDOVER=off` と、形式番号・口の版が合わない版への更新は、断らずに、止まる作業（会話名・実行中か承認待ちか・バックエンド）を並べ、「あとで」と「中断して更新」を選ばせる。中断して更新は、全部を理由 `update` で中断し、実行中が 0 になるまで「作業を中断しています… N / M」を出して待つ（上限 30 秒。超えたら理由を出して止め、更新ファイルは準備済みのまま）。止まった会話は再起動後に中断として残り、「再開」で続けられる。承認待ちは却下扱いになる（[ADR 0036](adr/0036-interrupt-and-update-while-running.md)） |
 | ロックの失敗 | 中断の後でもロックが取れなければ（委譲の完了通知の配達・途中送信・切り替えの最中）、止めている処理を示す。更新ファイルは準備済みのままで、作業に戻れる。無停止の更新では、ロックは切り替えのとき（作業が 0 件になったとき）に取り、取れなければ（短い処理の最中）待ちに戻る |
-| 切り替えの待ち（無停止の更新） | 更新の後、窓は新しい版の main のまま、古い版のサーバーの画面を出し、脇の下の知らせに「Pleiad <新しい版> への切り替えを待っています」と待っている作業の件数を出す。作業が 0 件になると新しいサーバーに切り替わり、同じ origin で画面が読み直される。「今すぐ中断して切り替える」と、止まるもの（`!` の行・Codex の裏の端末）だけが残ったときの「あとで／止めて切り替え」がある（[ADR 0148](adr/0148-switch-wait-display.md)） |
+| 切り替えの待ち（無停止の更新） | 更新の後、窓は新しい版の main のまま、古い版のサーバーの画面を出し、脇の下の知らせに「Pleiad <新しい版> への切り替えを待っています」と待っている作業の件数を出す。作業が 0 件になると新しいサーバーに切り替わり、同じ origin で画面が読み直される。「今すぐ中断して切り替える」と、止まるもの（`!` の行・Codex の裏の端末）だけが残ったときの「あとで／止めて切り替え」がある（[ADR 0152](adr/0152-switch-wait-display.md)） |
 | 切り替えの失敗 | 新しい版のサーバーが立たなければ、前の版で起こし直して動き続け、その旨と「もう一度試す」を出す。起こし直しにも失敗したときだけ致命的なダイアログを出す |
 | 通信・認証の失敗 | 設定内で理由と「再試行」。現在のアプリはそのまま使える |
 | 署名・整合性の失敗 | 安全性を確認できず適用を中止したことを表示。生の認証エラーは表示しない |
@@ -67,7 +67,7 @@ package.json と package-lock.json の番号を揃え、原稿と生成済み JS
 
 ## 適用とデータ保護
 
-パッケージ版の既定は無停止の更新（`AGENT_HOST_HANDOVER` が無ければ on。[ADR 0137](adr/0137-zero-downtime-update.md)・[設計](zero-downtime-update/design.md) §5.1・§6.1）。NSIS が入れ替えるのは main（Electron）だけで、サーバーは `$INSTDIR` の外の実行場所で走り続け、サーバーの切り替えは作業が終わった後にする。
+パッケージ版の既定は無停止の更新（`AGENT_HOST_HANDOVER` が無ければ on。[ADR 0151](adr/0151-zero-downtime-update.md)・[設計](zero-downtime-update/design.md) §5.1・§6.1）。NSIS が入れ替えるのは main（Electron）だけで、サーバーは `$INSTDIR` の外の実行場所で走り続け、サーバーの切り替えは作業が終わった後にする。
 
 1. 下書き・エージェント設定の保存が成功したことを画面側で確認する。
 2. main がサーバーへ `main-leaving { reason: 'update' }` を送り、`quitAndInstall` する。作業は中断せず、更新用ロックも取らない。実行場所のサーバー（`pleiad-node.exe`）は main の子でなく、名前も場所も NSIS が止める対象（`$INSTDIR` の中・前方一致）に当たらないので、入れ替えをまたいで生き残り、走っているターン・承認待ちはそのまま進む。electron-updater がインストーラーを起こした後に、main はサーバーとのつながりだけを切る。
@@ -178,7 +178,7 @@ Actionsは `PLY_RELEASE_REPOSITORY` Variableや `PLY_RELEASE_TOKEN` Secretを参
 
 ## 同梱する Node と版ごとの実行場所（無停止の更新 段階 1 の 1-3）
 
-[ADR 0137](adr/0137-zero-downtime-update.md)・[設計](zero-downtime-update/design.md) §3。パッケージ版は既定で（`AGENT_HOST_HANDOVER` が無ければ on。`off` で今の `utilityProcess`）、main が実行場所を組み、そこの `pleiad-node.exe` でサーバーを main の子でない形（detached・stdio なし）に起こす・走っているサーバーに名前付きパイプで付け直す（`desktop/server-boot.cjs`）。on でも、main の Job が抜け道を許さない（`KILL_ON_JOB_CLOSE` だけ）・実行場所を組めないときは `utilityProcess` に落ちる（理由は `updater.log` の `[server]` の行）。更新の流れ（作業を止めずに `quitAndInstall`・切り替えの先送り）は上の「適用とデータ保護」。
+[ADR 0151](adr/0151-zero-downtime-update.md)・[設計](zero-downtime-update/design.md) §3。パッケージ版は既定で（`AGENT_HOST_HANDOVER` が無ければ on。`off` で今の `utilityProcess`）、main が実行場所を組み、そこの `pleiad-node.exe` でサーバーを main の子でない形（detached・stdio なし）に起こす・走っているサーバーに名前付きパイプで付け直す（`desktop/server-boot.cjs`）。on でも、main の Job が抜け道を許さない（`KILL_ON_JOB_CLOSE` だけ）・実行場所を組めないときは `utilityProcess` に落ちる（理由は `updater.log` の `[server]` の行）。更新の流れ（作業を止めずに `quitAndInstall`・切り替えの先送り）は上の「適用とデータ保護」。
 
 - **同梱**: Windows の配布物に公式の Node を `resources\runtime\node.exe` として入れる（x64 93.6 MB・arm64 81.9 MB。x64 のインストーラーは 137.8 MiB → 160.3 MiB と約 22.5 MiB 増え、`win-unpacked` は 4,094 ファイル・491.6 MiB → 4,097 ファイル・581.4 MiB になる。2026-10-06 の実測）。版・URL・SHA-256・大きさは `scripts/node-runtime.json` に固定し、ビルド（`electron-builder.yml` の `afterPack` = `scripts/after-pack.cjs` → `scripts/pack-runtime.cjs`）が取得したファイルを照合する（合わなければビルドが失敗し、キャッシュにも置かない）。取得は `PLEIAD_NODE_CACHE`（既定 `~/.cache/pleiad/node-runtime`）にキャッシュする。リリースの CI は、このフォルダーを `actions/cache` に載せると毎回の取得を省ける。Node の版は Electron の Node と同じメジャー版（24）にそろえ、上げるときは `node-runtime.json` の版と SHA-256（nodejs.org の `SHASUMS256.txt`）を一緒に直す
 - 同じビルドで、`resources\runtime\runtime.json`（Node と agent-browser の SHA-256・大きさ）と `resources\app\manifest.json`（ファイルごとの SHA-256・大きさ。`desktop/runtime-manifest.cjs`）を作る。manifest は `resources\app` が出来上がった後に作るので、署名などでそのフォルダーのファイルを書き換える処理を足すときは、`afterPack` より前にする。**manifest は、インストールした後の木と一致していなければならない**: NSIS のインストーラーは、別 CPU の `.exe`・`.dll`（x64 の配布物の中の `node-pty\prebuilds\win32-arm64` の conpty・winpty）を、新しい 7-Zip の ARM64 フィルターで固めるため古い展開器が読めず、黙って落とす（2026-10-06 の実機の確認。落ちると manifest と合わず、実行場所を組めずに `utilityProcess` に落ちる）。動かさない OS・CPU の node-pty の prebuild は `afterPack` が manifest の前に外す（`pruneOtherPrebuilds`）。**ARM64 のインストーラーは、electron 本体の arm64 の `.exe`・`.dll` も同じフィルターで固まり、同じように落ちる恐れがある**【推測。ARM64 の PC で未確認。[stage1-7.md](zero-downtime-update/stage1-7.md) の U8】。リリースのビルドに `ELECTRON_BUILDER_7Z_FILTER=BCJ2`（electron-builder がアーカイブ全体の 7-Zip のフィルターを指定する環境変数）を付ければ避けられる見込み。リリースの確認に「インストール後の `resources\app` が manifest と一致する」を入れる（下の「リリース判定」）

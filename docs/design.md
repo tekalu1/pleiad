@@ -275,7 +275,7 @@ Codex は `model/list` の `supportedReasoningEfforts` を候補として `turn/
 
 Pleiad の画面・サーバー・デスクトップを一つのバージョンとして配布する。
 Electron main が electron-updater と更新設定を持ち、sandbox preload は限定した更新操作と状態通知だけを公開する。
-更新は自動確認・自動ダウンロード（設定でオフにできる）・明示的な再起動に分ける。脇の通知は後回しにでき、詳細と再起動の確認は設定画面で行う。更新時のサーバーロックは処理中コマンド、ターン、承認、送信キューの処理を確認し、新規処理の開始と終了判定の競合を防ぐ。既定は無停止の更新（[ADR 0137](adr/0137-zero-downtime-update.md)。パッケージ版は `AGENT_HOST_HANDOVER` が無ければ on）: 実行中の作業があっても断らず、止めず、main だけを入れ替え、サーバーの切り替えを作業が終わるまで先送りする（「4. アーキテクチャ」の「デスクトップ版の層」、`docs/zero-downtime-update/design.md`、`docs/desktop-releases.md`「適用とデータ保護」）。「中断して更新」（全部を中断して（理由 `update`）止まり終えてから更新する。「中断と再開」、[ADR 0036](adr/0036-interrupt-and-update-while-running.md)）は戻し道で、`AGENT_HOST_HANDOVER=off`・実行場所を組めない環境・データの形式番号や口の版が合わない版への更新・切り替えの待ちの「今すぐ中断して切り替える」だけで使う。
+更新は自動確認・自動ダウンロード（設定でオフにできる）・明示的な再起動に分ける。脇の通知は後回しにでき、詳細と再起動の確認は設定画面で行う。更新時のサーバーロックは処理中コマンド、ターン、承認、送信キューの処理を確認し、新規処理の開始と終了判定の競合を防ぐ。既定は無停止の更新（[ADR 0151](adr/0151-zero-downtime-update.md)。パッケージ版は `AGENT_HOST_HANDOVER` が無ければ on）: 実行中の作業があっても断らず、止めず、main だけを入れ替え、サーバーの切り替えを作業が終わるまで先送りする（「4. アーキテクチャ」の「デスクトップ版の層」、`docs/zero-downtime-update/design.md`、`docs/desktop-releases.md`「適用とデータ保護」）。「中断して更新」（全部を中断して（理由 `update`）止まり終えてから更新する。「中断と再開」、[ADR 0036](adr/0036-interrupt-and-update-while-running.md)）は戻し道で、`AGENT_HOST_HANDOVER=off`・実行場所を組めない環境・データの形式番号や口の版が合わない版への更新・切り替えの待ちの「今すぐ中断して切り替える」だけで使う。
 安定版・先行版と段階配信の公開手順、署名資格情報、データ形式の互換性は `docs/desktop-releases.md`。
 コードと配布先は public リポジトリ `tekalu1/pleiad` にまとめ、自己署名の評価版を Releases で配布する。Actions は自分のリポジトリ（`github.repository`）へ標準の GITHUB_TOKEN でアップロードする。アプリに焼き込む更新フィードはアップロード先と分け、既定は `tekalu1/pleiad`（`PLY_RELEASE_REPOSITORY` で上書き）。自動更新に GitHub のログインは要らない。Electron main は起動環境または GitHub CLI からトークンを毎回探し、あれば付けて（レート制限を避けるため）、無ければ認証ヘッダーなしで同じプロバイダーを使う。トークンは画面・設定保存・サーバーへ渡さない。認証なしの 403/429 はレート制限として案内し、トークンを付けた 401/403 だけ資格情報の確認を案内する。非公開GitHubプロバイダー用のメタデータ名は先行版も `latest*.yml` とする。
 
@@ -402,7 +402,7 @@ host が store を更新して描画。**core は現在のステータスを保�
 人間が UI から変えたときも、host が store を更新して同じイベントを描画する。
 **経路は違っても、通る先は同じ**（思想 2.2）。これでコアを差し替えても host 側の資産が生き残る。
 
-**デスクトップ版の層（無停止の更新 段階 1。[ADR 0137](adr/0137-zero-downtime-update.md)・`docs/zero-downtime-update/design.md` §2）**: パッケージ版は main（Electron）とサーバー（core）の 2 層で、サーバーは main の子でなく、`$INSTDIR` の外の版ごとの実行場所（`%LOCALAPPDATA%\agent-host-runtime`）で公式の Node（`pleiad-node.exe`）として走る。main との間は名前付きパイプ（`core/main-link.mjs`・`desktop/server-link.cjs`。`utilityProcess` の `parentPort` と同じ型のメッセージ）。NSIS が入れ替えるのは main だけなので、更新でサーバーとターンは止まらず、新しい main が付け直す。main が居ない間（本物のインストーラーで約 45〜50 秒）の機能は `docs/zero-downtime-update/design.md` §7.2 の表のとおり（secret は待たせる・computer use は止める・内蔵ブラウザーはタブの写しから張り直す）。サーバーの切り替え（新しい版の core への入れ替え）は作業が終わった後。`AGENT_HOST_HANDOVER=off`・合わない環境では、今までどおり main が `utilityProcess` でサーバーを起こす（保持役は段階 2 以降）。
+**デスクトップ版の層（無停止の更新 段階 1。[ADR 0151](adr/0151-zero-downtime-update.md)・`docs/zero-downtime-update/design.md` §2）**: パッケージ版は main（Electron）とサーバー（core）の 2 層で、サーバーは main の子でなく、`$INSTDIR` の外の版ごとの実行場所（`%LOCALAPPDATA%\agent-host-runtime`）で公式の Node（`pleiad-node.exe`）として走る。main との間は名前付きパイプ（`core/main-link.mjs`・`desktop/server-link.cjs`。`utilityProcess` の `parentPort` と同じ型のメッセージ）。NSIS が入れ替えるのは main だけなので、更新でサーバーとターンは止まらず、新しい main が付け直す。main が居ない間（本物のインストーラーで約 45〜50 秒）の機能は `docs/zero-downtime-update/design.md` §7.2 の表のとおり（secret は待たせる・computer use は止める・内蔵ブラウザーはタブの写しから張り直す）。サーバーの切り替え（新しい版の core への入れ替え）は作業が終わった後。`AGENT_HOST_HANDOVER=off`・合わない環境では、今までどおり main が `utilityProcess` でサーバーを起こす（保持役は段階 2 以降）。
 
 **プロトコル**は procway-code の Host Contract に倣った（procway-code への対応は 2026-09 に終えたが、形はそのまま）。設計をゼロから起こさない。
 

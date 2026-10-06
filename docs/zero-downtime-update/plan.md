@@ -1,7 +1,7 @@
 # 無停止の更新 — 段階に分けた実装計画
 
 - 状態: 確定（2026-10-06）。段階 0 は完了し、その実測で段階 1 以降を直した。**段階 1 は実装・検証済み**（2026-10-06。パッケージ版の既定は on。署名した版・スマホ・利用者の操作が要る確認だけが残り、手順は [stage1-7.md](stage1-7.md) の「利用者に頼む確認」）
-- 設計: [design.md](design.md)。決定: [ADR 0137](../adr/0137-zero-downtime-update.md)。実測の記録: [stage0-claude.md](stage0-claude.md)・[stage0-codex-agy.md](stage0-codex-agy.md)・[stage0-runtime.md](stage0-runtime.md)・[stage1-0.md](stage1-0.md)（段階 1 の 1-0）・[stage1-7.md](stage1-7.md)（段階 1 の 1-7。実機の確認）。管理: [issue #54](https://github.com/tekalu1/pleiad/issues/54)
+- 設計: [design.md](design.md)。決定: [ADR 0151](../adr/0151-zero-downtime-update.md)。実測の記録: [stage0-claude.md](stage0-claude.md)・[stage0-codex-agy.md](stage0-codex-agy.md)・[stage0-runtime.md](stage0-runtime.md)・[stage1-0.md](stage1-0.md)（段階 1 の 1-0）・[stage1-7.md](stage1-7.md)（段階 1 の 1-7。実機の確認）。管理: [issue #54](https://github.com/tekalu1/pleiad/issues/54)
 - 規模の目安: S = 2 日まで、M = 3〜5 日、L = 1〜2 週、XL = 3 週以上（1 人。テストと文書を含む）。段階 0 の前の見積もりを、実測で分かったことに合わせて見直した（下の表）
 
 ## 全体
@@ -21,7 +21,7 @@
 - **段階 2 は増減が相殺する**: 減った — `host` MCP を HTTP に移さない、保持役が JSON-RPC の id を付け替えない・`initialize` の答えを作らない。増えた — `detach` が済んでから SDK の `query` を閉じる順序、走っている hooks・`mcp_message` のハンドラーを待つ引き継ぎ、再生の uuid の冪等、未測定の Claude の場面（サブエージェント・裏のコマンド・途中送信・圧縮）の測定
 - **段階 3 が減った**: Codex は付け直しに握手が要らず（`initialize` を送らない）、id の付け替えも要らない。agy も握手が要らない
 
-**最初に価値が出るのは段階 1**。段階 1 だけで「更新を押しても作業が止まらない」は成り立つ（core の切り替えが作業の終わりまで先送りになるだけ。ADR 0137 で、ADR 0036 の「終わったら更新する」予約とは別のものとして承認済み）。ただし、委譲・bot・ルーティンで作業が絶えない使い方では新しい core がなかなか当たらないので、段階 1 は目的ではなく踏み台で、段階 2・3 までで目的に届く。段階 1 の先送りは、段階 3 の後も戻し道として残る。
+**最初に価値が出るのは段階 1**。段階 1 だけで「更新を押しても作業が止まらない」は成り立つ（core の切り替えが作業の終わりまで先送りになるだけ。ADR 0151 で、ADR 0036 の「終わったら更新する」予約とは別のものとして承認済み）。ただし、委譲・bot・ルーティンで作業が絶えない使い方では新しい core がなかなか当たらないので、段階 1 は目的ではなく踏み台で、段階 2・3 までで目的に届く。段階 1 の先送りは、段階 3 の後も戻し道として残る。
 
 ---
 
@@ -220,7 +220,7 @@ design.md §5.1・§6.1・§8。
   - 切り替えの制御は、`running` の `count`・ロックの取得・サーバーの終了・起動を引数で受ける純粋な状態機械にして、実時間・実プロセスなしでテストする
 - `core/server.mjs`: `ready` に `appVersion`（とビルドのハッシュ。`package.json` の `version` と `manifest.json` の先頭のハッシュ）を足す（`core/protocol.mjs` の `READY` の注記も）。`protocolVersion` は変えない
 - `web/client.mjs`: `ready` の `appVersion` が、自分を配った版（HTML に埋めた版）と違えば、入力欄の下書きを保存して 1 回だけ読み直す（sessionStorage に「この版で読み直した」を残し、繰り返さない）。`protocolVersion` の不一致の扱いは今のまま
-- **切り替えの待ちの表示**（新しい UI。モックは承認済み（2026-10-06）。形は `docs/design-system.md`「切り替えを待つ表示」、決定は [ADR 0148](../adr/0148-switch-wait-display.md)）: 脇の下の更新の知らせの中で一覧を開く。待ちの件数と作業の一覧（今の更新ダイアログの「止まる作業」と同じ行）、止まるもの、「今すぐ中断して切り替える」、切り替えに失敗したときの「もう一度試す」。文言は辞書（`web/locales/{ja,en}/ui.json` の `switch.*`・`updates.handover*`、main のダイアログは `desktop.json` の `switch.*`。訳語は `docs/i18n-glossary.md`）。実装メモは下の「待ちの表示」
+- **切り替えの待ちの表示**（新しい UI。モックは承認済み（2026-10-06）。形は `docs/design-system.md`「切り替えを待つ表示」、決定は [ADR 0152](../adr/0152-switch-wait-display.md)）: 脇の下の更新の知らせの中で一覧を開く。待ちの件数と作業の一覧（今の更新ダイアログの「止まる作業」と同じ行）、止まるもの、「今すぐ中断して切り替える」、切り替えに失敗したときの「もう一度試す」。文言は辞書（`web/locales/{ja,en}/ui.json` の `switch.*`・`updates.handover*`、main のダイアログは `desktop.json` の `switch.*`。訳語は `docs/i18n-glossary.md`）。実装メモは下の「待ちの表示」
 - main が出す文言（ダイアログ）も `web/locales/{ja,en}/desktop.json`（`desktop/i18n.cjs` が読む）
 - 新しい main の preload は、古い画面（先送りの間に出す S1 の画面）が使う名前を 1 版ぶん残す（`desktop/preload.cjs`）
 - テスト: `tests/unit/desktop-switch.mjs`（状態機械: 待ち・ロックが取れない・サーバーの終了の待ち・起動の失敗から前の版へ戻る・形式番号が違う版は自動で切り替えない・「あとで」・「今すぐ中断」・待っている間に新しい作業が始まる）。`tests/unit/web-interrupt.mjs` に読み直しの判定。`handover-check` の出力は `tests/unit/handover-check.mjs`
@@ -242,7 +242,7 @@ design.md §5.1・§6.1・§8。
   - **デスクトップのハーネス**（1 の「切り替えの後に S2 がタブの写しと中継の URL を持つ」。`desktop:pack` の resources を A、A を写して `app\` に 1 ファイル足し manifest を作り直したものを B にして electron を 3 回）7 / 7 通過: A の main で fake の `browser:` のターンとタブ 2 枚 → `main-leaving` と `leave` で離れる → B の main が S1 から写し（タブ 2 枚・中継）を受け取って開き直し、切り替えで S2（別の pid）に替わり、S2 の `ready` の直後にタブ 2 枚と中継の URL つきの `browser-state-report` を送る → 3 つ目の B の main が S2 に付け直すと、S2 の復元の答えにタブ 2 枚と同じポート・会話の鍵が入っている。使い方は dev-verification.md の 1-6 の項
   - **残り**: ホストへ任せる口の実機・本物のインストーラーをまたぐ更新での確認は 1-7。取りやめた後に古いサーバー（`main-leaving-cancel` を知らない版）へ付け直した main は、`leaving` の印を戻せない（次の付け直しで消える。段階 1 の範囲では受け入れる）
 
-**待ちの表示（実装済み 2026-10-06。モックは承認済み。形は design-system.md「切り替えを待つ表示」、決定は ADR 0148）**
+**待ちの表示（実装済み 2026-10-06。モックは承認済み。形は design-system.md「切り替えを待つ表示」、決定は ADR 0152）**
 
 - **誰が描くか**: 待っている間の窓は古い版のサーバー（S1）が配る古い版の `web/` の画面。表示のコードは「N 版の `web/`」（`web/switch-notice.mjs`）に入り、N → N+1 の更新のときに N+1 の main（`desktop/switch-screen.cjs`）が状態を渡して描かせる。**main が描くのではない**（上の古いメモの「main の側で描く」は直した）
 - **main → 画面の受け渡しは版つき**: preload の `plyDesktop.switch`（`version: 1`・`hello()`・`state()`・`onState(listener)`・`act('now' | 'later' | 'retry')`）。状態（payload）は `{ v: 1, phase, target, current, since, items, stoppers, … }`（phase は `waiting`・`asking`・`manual`・`held`・`stopping`・`switching`・`done`・`failed`。形は `desktop/switch-screen.cjs` の `displayState`）。画面は読める版（`SWITCH_BRIDGE_VERSIONS`）だけを読み、知らない版・知らない phase・欠けた項目は何も出さない／空として扱う。口の形を変えるときは `switch2` と `payloadFor` の版を足し、**`switch`（版 1）は新しい main が 1 版ぶん残す**（画面は古い版でも読める）。名前の一覧は `tests/unit/desktop-switch.mjs` が守る
@@ -257,7 +257,7 @@ design.md §5.1・§6.1・§8。
 - デスクトップのハーネス（1〜4）: **通った**。1-4〜1-6 の子が `temporary/` に置いた確認用のスクリプトは残っていなかったので、`desktop:pack` の `electron .` の形ではなく、**試験用のインストーラー（署名なし。appId・名前・場所・ポートを別にした）で本物のインストール版の形**に作り直して流した（`scripts/zero-downtime/stage1-7/`。`AGENT_HOST_HANDOVER` は渡さず既定の on。`AGENT_HOST_RUNTIME_NODE`・`isPackaged` の上書きは要らなかった）。1（main だけ止めて付け直し）・4（居ない間の computer use・secret）= s4、2（切り替えの待ち → 新しいサーバー → 窓の読み直し）= s1・s2、3（立たない版）= s3 --to C
 - 実機（「実機で確かめる項目」の段階 1）: 署名なしの試験用のインストーラーで、本物の NSIS・electron-updater の旧版 → 新版を通し、次を確かめた（結果の数値と手順は stage1-7.md）: 1（fake・Claude `claude.exe`・Codex・agy のターンを走らせたまま更新。中断の印なし。作業が終わった後に切り替わる）・2（承認待ちのまま更新: fake・Claude・Codex は新しい main の窓で承認が 1 つ出て答えられる。agy は承認のモードが無い）・4（待ちの表示・切り替え・窓の読み直し・下書き。「今すぐ中断して切り替える」は押してから 4.3 秒でターンが止まり約 1 秒後に切り替わる）・5 の main が居ない間の停止・6（内蔵ブラウザーのタブと中継）・7 の古い版の掃除（4 版 → 3 版。前方一致の移動は未確認）・8・9・10。**main が居ない時間は 44〜53 秒**。**残り（利用者に頼む確認。手順は stage1-7.md の U1〜U11）**: 署名した版での 1〜2・npm の `claude.cmd`・3（スマホ）・5 の本物の画面操作・7 の前方一致の移動・15（全ユーザー向け）・16（ARM64）・os-open・openExternal の居ない間・ホストへ任せる口・スリープ・リリースの CI の Node のキャッシュ
 - **見つけて直したこと**: 上の 1-3 の「1-7 の結果」（インストーラーが別 CPU の `.exe`・`.dll` を落とし、実行場所を組めなかった）。実行場所を組めない環境で `utilityProcess` に落ちる経路も、そのまま実機で確かめられた（理由が `updater.log` に残る）
-- 文書（実装と同じ変更で書き換えた。ADR 0137「影響」の段階 1 の分）: `docs/desktop-releases.md`（更新UX・適用とデータ保護・同梱する Node と実行場所・リリース判定）・`docs/design.md`（デスクトップの更新・中断と再開・4. アーキテクチャの「デスクトップ版の層」）・`docs/multi-backend.md`（`running` の `count` と切り替え）・`docs/computer-use.md`・`docs/inapp-browser.md`・`docs/remote.md`（1-5・1-6 で書いた）・`docs/design-system.md`（1-6 で書いた）・`docs/dev-verification.md`（本物のインストーラーの確認の作り）・ADR 0090（追記）・`AGENTS.md`（環境変数の表・サーバー起動・確認）
+- 文書（実装と同じ変更で書き換えた。ADR 0151「影響」の段階 1 の分）: `docs/desktop-releases.md`（更新UX・適用とデータ保護・同梱する Node と実行場所・リリース判定）・`docs/design.md`（デスクトップの更新・中断と再開・4. アーキテクチャの「デスクトップ版の層」）・`docs/multi-backend.md`（`running` の `count` と切り替え）・`docs/computer-use.md`・`docs/inapp-browser.md`・`docs/remote.md`（1-5・1-6 で書いた）・`docs/design-system.md`（1-6 で書いた）・`docs/dev-verification.md`（本物のインストーラーの確認の作り）・ADR 0090（追記）・`AGENTS.md`（環境変数の表・サーバー起動・確認）
 - **パッケージ版の `AGENT_HOST_HANDOVER` の既定を `on` にした**（`desktop/main.cjs` の `chooseLinkedServer`。env が無ければ on・`off` で今の `utilityProcess`・on でも空でもない値は off と同じ。開発の `electron .` は `AGENT_HOST_RUNTIME_RESOURCES` つきで `on` を明示したときだけ on）。テストも合わせた。全件の `npm test`（`--jobs 2`）は 335 本・12,950 判定が全て通過した（518 秒。失敗なし）
 
 **段階 1 の完了の条件**: 署名した旧版 → 新版の更新を、fake ではない Claude・Codex・agy のターンを走らせたまま行い、**ターンが中断されずに終わる**（core の切り替えは作業が終わった後）。承認待ちのまま更新しても、新しい main に承認が出て答えられる。npm で入れた `claude` でも同じ。更新の間にスマホから承認・送信ができる。

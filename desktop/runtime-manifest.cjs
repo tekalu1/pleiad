@@ -1,5 +1,5 @@
 // resources/app の manifest（ファイルごとの SHA-256・大きさ）。ビルド時に作り（scripts/pack-runtime.cjs）、
-// 実行場所を組むとき（desktop/runtime.cjs）に、写した木と突き合わせる（docs/zero-downtime-update/design.md §3.3、ADR 0137）。
+// 実行場所を組むとき（desktop/runtime.cjs）に、写した木と突き合わせる（docs/zero-downtime-update/design.md §3.3、ADR 0151）。
 // Node の組み込みだけ。ビルドと main の両方が読む。
 const fs = require('node:fs');
 const fsp = fs.promises;

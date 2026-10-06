@@ -1,4 +1,4 @@
-// 版ごとの実行場所（無停止の更新。docs/zero-downtime-update/design.md §3、plan.md 1-3、ADR 0137）。
+// 版ごとの実行場所（無停止の更新。docs/zero-downtime-update/design.md §3、plan.md 1-3、ADR 0151）。
 //
 // 更新（NSIS）は $INSTDIR のプロセスだけを止める。サーバーを $INSTDIR の外の実行場所で走らせれば、main の入れ替えを越えて生き残れる。
 // この部品は、配布物（resources\app・resources\runtime・resources\agent-browser）から実行場所を組み、使われていない古い版を掃除する。

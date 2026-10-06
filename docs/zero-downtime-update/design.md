@@ -1,9 +1,9 @@
 # 更新で走っているターンを止めない（無停止の更新）— 設計
 
 - 状態: 確定（2026-10-06）。段階 0 の実測と、段階 1 の 1-0（頭の確認）の実測を反映した。コードは変えていない（実装は [plan.md](plan.md) の段階ごと）
-- 決定: [ADR 0137](../adr/0137-zero-downtime-update.md)。段階と作業項目: [plan.md](plan.md)。管理: [issue #54](https://github.com/tekalu1/pleiad/issues/54)
+- 決定: [ADR 0151](../adr/0151-zero-downtime-update.md)。段階と作業項目: [plan.md](plan.md)。管理: [issue #54](https://github.com/tekalu1/pleiad/issues/54)
 - 実測の記録: [stage0-claude.md](stage0-claude.md)・[stage0-codex-agy.md](stage0-codex-agy.md)・[stage0-runtime.md](stage0-runtime.md)・[stage1-0.md](stage1-0.md)・[stage1-7.md](stage1-7.md)（実機の確認。測るスクリプトは `scripts/zero-downtime/`）
-- 関係する決定: [ADR 0036](../adr/0036-interrupt-and-update-while-running.md)（中断して更新。更新の部分を 0137 が置き換える）・[ADR 0115](../adr/0115-records-in-sqlite.md)（データ置き場の単独の持ち主）・[ADR 0019](../adr/0019-rename-ply-to-pleiad-keep-identifiers.md)（識別子を変えない）・[ADR 0043](../adr/0043-agent-browser-via-per-session-cdp-relay.md)（会話ごとの CDP 中継）・[ADR 0083](../adr/0083-control-surface-cli.md)（control.json）・[ADR 0090](../adr/0090-cli-in-desktop-app.md)（CLI の起動口）
+- 関係する決定: [ADR 0036](../adr/0036-interrupt-and-update-while-running.md)（中断して更新。更新の部分を 0151 が置き換える）・[ADR 0115](../adr/0115-records-in-sqlite.md)（データ置き場の単独の持ち主）・[ADR 0019](../adr/0019-rename-ply-to-pleiad-keep-identifiers.md)（識別子を変えない）・[ADR 0043](../adr/0043-agent-browser-via-per-session-cdp-relay.md)（会話ごとの CDP 中継）・[ADR 0083](../adr/0083-control-surface-cli.md)（control.json）・[ADR 0090](../adr/0090-cli-in-desktop-app.md)（CLI の起動口）
 - 印: **【確認】** = コードを読んで確かめた。**【実測】** = 動かして確かめた（記録は stage0-*.md）。**【推測】** = 動かしていない見込み。**【未確認】** = 測れていない（末尾の「未確認の点」）
 
 ---
@@ -150,7 +150,7 @@ agent-host-runtime\
 - 写すのは main（新しい版の main が起動したとき）。インストーラーには足さない（NSIS のスクリプトを増やさない。新規インストールと更新で同じ道を通る）。古いサーバーはその間も走っているので急がない
 - **manifest は、インストールした後の木と一致していなければならない**: NSIS は x64 の配布物の中の別 CPU の `.exe`・`.dll`（node-pty の `win32-arm64` の conpty・winpty）を黙って落とす（新しい 7-Zip の ARM64 フィルターを古い展開器が読めない。2026-10-06 の実機の確認で、実行場所を組めず毎回 `utilityProcess` に落ちていた）ので、動かさない OS・CPU の prebuild は afterPack が manifest の前に外す（`scripts/pack-runtime.cjs` の `pruneOtherPrebuilds`）。インストール後の木が manifest と一致することを、リリースの確認に入れる（`docs/desktop-releases.md`「リリース判定」）。
 - 写した後、`manifest.json`（ビルド時に作る、ファイルごとの SHA-256）と突き合わせる。合わなければその版の実行場所を使わず、今の「中断して更新」に落とす（§6）
-- 全ユーザー向けのインストール（`Program Files`、書けるのは管理者だけ）から、利用者が書ける場所へ実行ファイルを写すことになる。同じ利用者の権限で動くプロセスが書き換えられるようになるが、権限の昇格にはならない（利用者向けのインストールでは `$INSTDIR` も元から利用者が書ける）【推測】。この点も含めて ADR 0137 で承認済み
+- 全ユーザー向けのインストール（`Program Files`、書けるのは管理者だけ）から、利用者が書ける場所へ実行ファイルを写すことになる。同じ利用者の権限で動くプロセスが書き換えられるようになるが、権限の昇格にはならない（利用者向けのインストールでは `$INSTDIR` も元から利用者が書ける）【推測】。この点も含めて ADR 0151 で承認済み
 
 ### 3.4 NSIS に止められないこと
 
@@ -379,7 +379,7 @@ agent-host-runtime\
 保持役に載っていないターンがある間は S1 を残し、新しい main は S1 の画面を出す。作業が 0 件になったら S2 へ切り替え、窓を読み直す（下書きは保存済み）。
 
 - **ADR 0036 が退けた「終わったら更新する」予約とは別のものとして、利用者が承認した**（2026-10-06）。ADR 0036 が退けたのは、作業が終わった直後に**アプリが勝手に再起動する**こと。先送りは、利用者が更新を選んだ後の切り替えで、アプリの再起動を起こさず、止まるものは無く、変わるのは画面の読み直しだけ
-- 窓には「新しい版への切り替えを待っています」と「今すぐ中断して切り替える」を出す。形は承認済み（2026-10-06）: 脇の下の更新の知らせの中で一覧を開く（[design-system.md「切り替えを待つ表示」](../design-system.md)、[ADR 0148](../adr/0148-switch-wait-display.md)）
+- 窓には「新しい版への切り替えを待っています」と「今すぐ中断して切り替える」を出す。形は承認済み（2026-10-06）: 脇の下の更新の知らせの中で一覧を開く（[design-system.md「切り替えを待つ表示」](../design-system.md)、[ADR 0152](../adr/0152-switch-wait-display.md)）
 - 形式番号が変わる版（§5.3）は、先送りの自動の切り替えをせず、「あとで／中断して更新」のダイアログに落とす
 - 段階 1 では全部のターンが「載っていないターン」になる。段階 3 の後も、古い CLI の版のターンなどの戻し道として残る
 

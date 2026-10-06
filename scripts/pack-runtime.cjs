@@ -1,5 +1,5 @@
 // electron-builder の afterPack（scripts/after-pack.cjs から、pack-agent-browser.cjs の後に呼ばれる）。
-// 無停止の更新の「版ごとの実行場所」（docs/zero-downtime-update/design.md §3、ADR 0137）の材料を配布物に入れる:
+// 無停止の更新の「版ごとの実行場所」（docs/zero-downtime-update/design.md §3、ADR 0151）の材料を配布物に入れる:
 //   - resources\runtime\node.exe        公式の Node（scripts/node-runtime.json の版・SHA-256 で固定。実行場所では pleiad-node.exe の名前で使う）
 //   - resources\runtime\runtime.json    その Node と agent-browser の SHA-256・大きさ（main が実行場所へ写すときに突き合わせる）
 //   - resources\app\manifest.json       resources\app のファイルごとの SHA-256・大きさ（desktop/runtime-manifest.cjs）

@@ -137,7 +137,7 @@ export const DATA_WRITES = [
     { name: 'agent-browser-bin/agent-browser(.exe)', limit: '同梱の実行ファイル 1 つ。大きさが違うときだけ写し直す', reason: '開発時（未パッケージ）に実行ファイルを置き場へ写す。書き換えない成果物' },
   ] },
   { file: 'desktop/runtime.cjs', sites: 9, targets: [
-    { name: '(置き場の外) %LOCALAPPDATA%/agent-host-runtime の store/<sha256>・app/<版>（store へのハードリンク）・node/<版>/pleiad-node.exe・agent-browser/<版>', limit: '今の版を含む 3 版（KEEP_TREES）。2 版目からは変わった分だけ増える（約 107 MB・4,000 ファイルが 1 版目、変わった分は数 MB）。使われなくなった版・どの木にもリンクされない実体は掃除（cleanup）が消す', reason: '無停止の更新（ADR 0137）で、更新に止められない版ごとの実行場所を組む。中身のハッシュで 1 度だけ置き、書き換えない成果物（置いてから rename）。データ置き場には書かない' },
+    { name: '(置き場の外) %LOCALAPPDATA%/agent-host-runtime の store/<sha256>・app/<版>（store へのハードリンク）・node/<版>/pleiad-node.exe・agent-browser/<版>', limit: '今の版を含む 3 版（KEEP_TREES）。2 版目からは変わった分だけ増える（約 107 MB・4,000 ファイルが 1 版目、変わった分は数 MB）。使われなくなった版・どの木にもリンクされない実体は掃除（cleanup）が消す', reason: '無停止の更新（ADR 0151）で、更新に止められない版ごとの実行場所を組む。中身のハッシュで 1 度だけ置き、書き換えない成果物（置いてから rename）。データ置き場には書かない' },
     { name: '(置き場の外) 実行場所の app/<版>/.runtime.json・runtime-node.txt', limit: '固定の小ささ（版・ビルド・組んだ時刻・Node の置き場の名前）。版ごとに 1 組', reason: '組み終えた木の印と、起動口（bin/pleiad.cmd）が読む Node の置き場の名前。組み立ての最後に書く' },
   ] },
   { file: 'desktop/server-port.cjs', sites: 1, targets: [

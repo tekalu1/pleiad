@@ -41,7 +41,7 @@ let serverSwitch = null;
 let bootLogger = null;
 const pendingServerLog = [];
 const log = line => { console.warn('[server]', line); if (bootLogger) bootLogger.info?.(`[server] ${line}`); else pendingServerLog.push(line); };
-// 無停止の更新（ADR 0137）のサーバーの起こし方・付け直し。AGENT_HOST_HANDOVER=on のときだけ読む
+// 無停止の更新（ADR 0151）のサーバーの起こし方・付け直し。AGENT_HOST_HANDOVER=on のときだけ読む
 const serverBoot = () => require('./server-boot.cjs');
 // 配布物の resources\。開発の確認用に AGENT_HOST_RUNTIME_RESOURCES（desktop:pack の win-unpacked\resources など）で差し替えられる
 const runtimeResources = () => process.env.AGENT_HOST_RUNTIME_RESOURCES || process.resourcesPath;
@@ -107,7 +107,7 @@ async function abortAll(reason, onProgress) {
 }
 
 async function installUpdate() {
-  // 無停止の更新（パイプのサーバー。ADR 0137）: 作業を中断せず、サーバーをロックしない。サーバーに main-leaving を送り
+  // 無停止の更新（パイプのサーバー。ADR 0151）: 作業を中断せず、サーバーをロックしない。サーバーに main-leaving を送り
   // （main が戻らないまま作業が 0 件で 30 分たったら終わる。core/orphan-guard.mjs）、electron-updater が終わる直前
   // （before-quit-for-update。インストーラーを起こした後）につながりだけを切る。サーバーは走り続け、新しい main が付け直して切り替える（desktop/switch.cjs）
   const handover = Boolean(linked);

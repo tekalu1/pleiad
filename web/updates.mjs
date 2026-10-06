@@ -116,7 +116,7 @@ export function setupUpdates({ page, open, lock, flush, cmd, work: currentWork =
   }
   /** 確認の段: 止まる作業の一覧（名前・実行中/承認待ち・エージェント）と、中断した会話がどう残るかの 1 行 */
   function paintConfirmWork() {
-    // 無停止の更新（state.handover。ADR 0137）では作業を止めないので、止まる作業を並べない
+    // 無停止の更新（state.handover。ADR 0151）では作業を止めないので、止まる作業を並べない
     const rows = confirming && !state?.handover ? workRows(confirmWork) : [];
     const stops = confirming && !state?.handover && (confirmWork?.count ?? 0) > 0;
     // 無停止の更新: 作業は止まらないことを 1 行で。内蔵ブラウザーのタブ・コンピューターの操作があるときだけ、開き直しの注意も
