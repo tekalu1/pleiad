@@ -481,6 +481,7 @@ const SUITES = [
   // @ の無い投稿の宛先と、聞こえた投稿の手がかり（引用した bot が宛先・無ければ最後に話した bot。宛先の名前を包みの to に付ける。ADR 0128 の追記）
   './unit/bot-heard-addressee.mjs',
   './unit/bot-budget.mjs',
+  './unit/thread-budget-ui.mjs',
   // bot の頭の中（ADR 0126）: 欲求・ふるい・返事の読み取り・思考の流れの束・独り言の写り・思考の流れと気がかりの保存
   './unit/brain-core.mjs',
   // 心拍（ふるい → 安いモデル → 引き継ぎ・予算・失敗・止める・下限）と、予算の心拍の分

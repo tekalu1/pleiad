@@ -1105,6 +1105,7 @@
       "react": {"summary": "投稿に絵文字 1 つのリアクションを付ける・外す。", "channelId": "チャンネルの id。", "postId": "投稿の id。", "emoji": "絵文字 1 つ。", "on": "true で付ける（既定）、false で外す。"},
       "markRead": {"summary": "チャンネルを既読にする（進める向きだけ）。", "channelId": "チャンネルの id。", "at": "ここまで読んだ時刻（ミリ秒。省くと今）。"},
       "wake": {"summary": "投稿の @ の宛先の bot を起こす。動くモードが自分の会話より強い bot は、channels.post では起きずにこの操作の承認（起こしますか）になる。", "channelId": "チャンネルの id。", "postId": "bot を @ した投稿の id（DM なら DM への投稿）。", "botId": "起こす bot の id。", "reason": "起こす理由（承認カードに出る）。", "confirm": "{{bot}} は {{mode}} で動きます。起こしますか。"},
+      "threadBudget": {"summary": "スレッドの今日の予算の内訳を返す（このスレッドが使ってよい量と使った量、bot ごとの今日の使用トークン・週の使用枠・休憩中の解除時刻）。チャンネルの予算でなければ null。", "channelId": "チャンネルの id。", "threadId": "スレッドの根の投稿の id。"},
       "stopThread": {"summary": "スレッドで走っている bot のターンを止め、人が次に書くまで bot を起こさない。bot がこのスレッドから起こして新しくできたスレッドも止める。", "channelId": "チャンネルの id。", "threadId": "スレッドの根の投稿の id。"}
     },
     "bots": {

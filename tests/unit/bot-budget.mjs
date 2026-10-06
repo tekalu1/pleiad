@@ -11,6 +11,7 @@ import { createBrainStore } from '../../core/brain/store.mjs';
 import { createResting } from '../../core/bots/resting.mjs';
 import { antigravityLimit } from '../../core/backends/antigravity-limit.mjs';
 import { applyThreadPatch, emptyThread } from '../../core/channels/threads.mjs';
+import { inputWithCache } from '../../core/usage.mjs';
 
 export const name = 'bot-budget';
 export const title = 'チャンネルの予算（週の使用枠の % で数え、使い切ったら bot どうしの呼びかけだけ止める）と、使用量の上限の休憩中';
@@ -127,6 +128,49 @@ export default async function (t) {
       brain.close();
       await fs.rm(dir, { recursive: true, force: true, maxRetries: 5 });
     }
+  }
+
+  // ---------------------------------------------------------------- スレッドの帯の内訳（channels.threadBudget）
+  {
+    const w = world({ windows: [week(37)], budget: { daily: 5, perThread: 50 }, tokens: 740_000 });
+    w.threads['c_1/p_1'] = { channelId: 'c_1', threadId: 'p_1', sessions: { b_a: 's_a', b_b: 's_b' }, spend: { day: dayOf(Date.now()), percent: 0.04 } };
+    w.threads['c_1/p_2'] = { channelId: 'c_1', threadId: 'p_2', sessions: {}, spend: { day: dayOf(Date.now()), percent: 0.5 } };
+    const midnight = new Date(); midnight.setHours(0, 0, 0, 0);
+    const seen = [];
+    w.host.usageStore.records = async ({ sessionIds, since }) => {
+      seen.push({ sessionIds, since });
+      return [
+        { sessionId: 's_a', at: Date.now(), inputTokens: 1000, outputTokens: 100, cachedTokens: 900 },
+        { sessionId: 's_a', at: Date.now(), inputTokens: 500, outputTokens: 50, cachedTokens: 0 },
+        // キャッシュを入力と分けて数えていた頃の Antigravity の記録（cached が input を超える）は足して読む
+        { sessionId: 's_b', at: Date.now(), inputTokens: 100, outputTokens: 20, cachedTokens: 700 },
+        { sessionId: 's_other', at: Date.now(), inputTokens: 9999, outputTokens: 9999, cachedTokens: 0 },
+      ];
+    };
+    const bots = [{ id: 'b_a', backend: 'claude', model: '' }, { id: 'b_b', backend: 'antigravity', model: '' }];
+    const snap = await w.budget.snapshot({ channelId: 'c_1', threadId: 'p_1', bots, restingOf: (bot) => (bot.id === 'b_b' ? 123 : null) });
+    t.ok('分母はこのスレッドの 1 日の配分（1 日 5% × 50% = 2.5%）。使った分は小数のまま（切り捨てない）', snap.allowance === 2.5 && snap.spent === 0.04 && snap.daily === 5 && snap.perThread === 50, JSON.stringify(snap));
+    t.ok('今日の 0 時以降の、このスレッドの会話の記録だけを集める', seen[0].since === midnight.getTime() && seen[0].sessionIds.join() === 's_a,s_b');
+    const a = snap.bots.find((b) => b.botId === 'b_a'), b = snap.bots.find((x) => x.botId === 'b_b');
+    t.ok('bot ごとの今日の使用: 入力はキャッシュ読みを含み、cached はその内訳', a.today.input === 1500 && a.today.output === 150 && a.today.cached === 900, JSON.stringify(a.today));
+    t.ok('古い Antigravity の記録（cached > input）は入力にキャッシュを足して読み、割合が 100% を超えない', b.today.input === 800 && b.today.cached === 700 && inputWithCache({ inputTokens: 100, cachedTokens: 700 }) === 800 && inputWithCache({ inputTokens: 1000, cachedTokens: 900 }) === 1000);
+    t.ok('bot の上限の目安 = 配分 × 週の枠 1% あたりのトークン（740000 ÷ 37 × 2.5）。週の枠と休憩中の解除時刻も返す', a.allowanceTokens === 50000 && a.window.usedPercent === 37 && a.window.resetsAt === later && b.restingUntil === 123 && a.restingUntil === null, JSON.stringify(a));
+    t.ok('チャンネルの今日の分は、スレッド全体の spend の合計', Math.abs(snap.channelSpent - 0.54) < 1e-9 && snap.derived === false);
+    const derived = await w.budget.snapshot({ channelId: 'c_1', threadId: 'p_9', bots });
+    t.ok('1 日の予算が無いチャンネル・DM は、配分が null / スナップショットが null', (await world({ windows: [week(10)], budget: { daily: null, perThread: 50 } }).budget.snapshot({ channelId: 'c_1', threadId: 'p_1', bots })).allowance === null && (await w.budget.snapshot({ channelId: 'c_nope', threadId: 'p_1', bots })) === null && derived.bots.length === 0);
+    const unknown = world({ windows: [], budget: { daily: 5, perThread: 50 } });
+    unknown.threads['c_1/p_1'] = { channelId: 'c_1', threadId: 'p_1', sessions: { b_a: 's_a' } };
+    const none = await unknown.budget.snapshot({ channelId: 'c_1', threadId: 'p_1', bots });
+    t.ok('使用枠を読めない bot は、上限の目安と週の枠が null（0 や NaN にしない）', none.bots[0].allowanceTokens === null && none.bots[0].window === null);
+  }
+
+  // ---------------------------------------------------------------- 動いている bot の印（ThreadState.live）
+  {
+    const th = emptyThread('c', 'p', 1);
+    const on = applyThreadPatch(th, { live: { b_a: 'working', b_b: 'waiting' } }, 2);
+    t.ok('live は bot ごとの working / waiting', on.live.b_a === 'working' && on.live.b_b === 'waiting');
+    t.ok('live は丸ごと置き換える。空で外す', JSON.stringify(applyThreadPatch(on, { live: { b_c: 'working' } }, 3).live) === '{"b_c":"working"}' && applyThreadPatch(on, { live: {} }, 3).live === undefined);
+    t.ok('live の不正な形は断る', [{ b: 'idle' }, [], null, 'x'].every((live) => { try { applyThreadPatch(th, { live }, 2); return false; } catch { return true; } }));
   }
 
   // ---------------------------------------------------------------- 休憩中

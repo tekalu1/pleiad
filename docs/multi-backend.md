@@ -662,7 +662,7 @@ procway-code への対応は 2026-09 に終了した（旧会話は読むだけ�
 | 承認 | **無し**（§下） |
 | 中断 | **無し** → プロセスを落とす。会話は `--conversation` で拾い直せる |
 | 完了 | `result` の `status`（SUCCESS / ERROR / CANCELED / INTERRUPTED / INVALID / WAITING / RUNNING） |
-| 使用量 | `result.usage`（`input_tokens` / `output_tokens` / `cache_read_tokens` / `thinking_tokens`） |
+| 使用量 | `result.usage`（`input_tokens` / `output_tokens` / `cache_read_tokens` / `thinking_tokens`。`total_tokens` = 4 つの和なので、どれも他を含まない）。usage の出来事には Claude・Codex と同じ形にそろえて渡す: `inputTokens` = input + cache_read（入力はキャッシュ読みを含み、`cachedTokens` = cache_read はその内訳）、`outputTokens` = output + thinking。そろえる前（〜2026-10-04）の記録は `cachedTokens` が `inputTokens` を超えるので、読む側は `inputWithCache`（`core/usage.mjs`）で足して読み、キャッシュの割合が 100% に張り付かないようにする |
 | 一覧・履歴 | **無し** → Pleiad が控える（§下） |
 | タイトル・状態タグ・fork | 無し → sidecar / Pleiad の写し（分岐は [message-fork.md の「Antigravity の境界調査」](message-fork.md#antigravity-の境界調査)） |
 | モード | **`--dangerously-skip-permissions` の 1 つだけ**（§下） |

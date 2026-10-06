@@ -177,8 +177,9 @@ export default async function (t) {
       JSON.stringify(starts[0]?.input ?? null));
 
     t.ok("status SUCCESS が turnResult ok になる", first.outcome === "ok", String(first.outcome));
-    t.ok("result の usage がトークン数になる",
-      first.events.some((e) => e.type === "usage" && e.inputTokens === 11 && e.outputTokens === 7),
+    // fake-agy の usage は input 11・output 7・thinking 3・cache_read 2（total 23）。入力はキャッシュ読みを含み、出力は考えた分を含む（Claude・Codex と同じ）
+    t.ok("result の usage がトークン数になる（入力にキャッシュ読み、出力に考えた分を含める）",
+      first.events.some((e) => e.type === "usage" && e.inputTokens === 13 && e.outputTokens === 10 && e.cachedTokens === 2),
       JSON.stringify(first.events.find((e) => e.type === "usage") ?? null));
 
     // ---- 控え。**agy に一覧も履歴も無いので Pleiad が書く**

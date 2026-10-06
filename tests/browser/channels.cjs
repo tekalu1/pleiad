@@ -163,10 +163,15 @@ async page => {
   check((await summary.locator('.ts-count').textContent()) === '💬 1 件の返信', 'a reply adds the thread summary row');
   await deliver({ type: 'channelPost', channelId: ch.id, op: 'add', post: { ...reply, id: 'p_reply2', author: { kind: 'bot', botId: 'b_owl' }, text: '返事', at: Date.now() + 5000 } });
   check((await summary.locator('.ts-count').textContent()) === '💬 2 件の返信', 'a second reply updates the count');
-  await deliver({ type: 'channelThread', channelId: ch.id, threadId: firstId, thread: { channelId: ch.id, threadId: firstId, sessions: { b_owl: 's1' }, state: 'working', tokens: { input: 0, output: 0, cached: 0 }, calls: 1, stopped: null, updatedAt: now } });
+  await deliver({ type: 'channelThread', channelId: ch.id, threadId: firstId, thread: { channelId: ch.id, threadId: firstId, sessions: { b_owl: 's1' }, state: 'working', live: { b_owl: 'working' }, tokens: { input: 0, output: 0, cached: 0 }, calls: 1, stopped: null, updatedAt: now } });
   check((await summary.locator('.ts-status').textContent()).includes('🦉 Owl 作業中') && await summary.locator('.ts-status .run').count() === 1, 'a working thread shows who is working with the arc');
-  await deliver({ type: 'channelThread', channelId: ch.id, threadId: firstId, thread: { channelId: ch.id, threadId: firstId, sessions: { b_owl: 's1' }, state: 'waiting', tokens: { input: 0, output: 0, cached: 0 }, calls: 1, stopped: null, updatedAt: now } });
+  await deliver({ type: 'channelThread', channelId: ch.id, threadId: firstId, thread: { channelId: ch.id, threadId: firstId, sessions: { b_owl: 's1' }, state: 'waiting', live: { b_owl: 'waiting' }, tokens: { input: 0, output: 0, cached: 0 }, calls: 1, stopped: null, updatedAt: now } });
   check((await summary.locator('.ts-status').textContent()).includes('Owl があなたを待っている'), 'a waiting thread says who is waiting for you');
+  // 状態はスレッド全体の集計。名前は live から選ぶ（返信した最後の bot ではない）。複数なら並べ、多ければ「ほか n」
+  await deliver({ type: 'channelThread', channelId: ch.id, threadId: firstId, thread: { channelId: ch.id, threadId: firstId, sessions: { b_owl: 's1', b_lynx: 's2' }, state: 'working', live: { b_lynx: 'working' }, tokens: { input: 0, output: 0, cached: 0 }, calls: 1, stopped: null, updatedAt: now } });
+  check(!(await summary.locator('.ts-status').textContent()).includes('Owl') && (await summary.locator('.ts-status').textContent()).includes('Lynx 作業中'), 'the working name comes from the bots that are working, not the last bot that replied');
+  await deliver({ type: 'channelThread', channelId: ch.id, threadId: firstId, thread: { channelId: ch.id, threadId: firstId, sessions: { b_owl: 's1', b_lynx: 's2' }, state: 'working', live: { b_owl: 'working', b_lynx: 'working' }, tokens: { input: 0, output: 0, cached: 0 }, calls: 1, stopped: null, updatedAt: now } });
+  check((await summary.locator('.ts-status').textContent()).includes('Owl・Lynx 作業中'), 'two working bots are listed together');
   await deliver({ type: 'channelThread', channelId: ch.id, threadId: firstId, thread: { channelId: ch.id, threadId: firstId, sessions: { b_owl: 's1' }, state: 'failed', tokens: { input: 0, output: 0, cached: 0 }, calls: 1, stopped: null, updatedAt: now } });
   check((await summary.locator('.ts-status').textContent()).includes('✕ 失敗'), 'a failed thread shows ✕ 失敗');
   await summary.click();
