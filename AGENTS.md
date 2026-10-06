@@ -120,6 +120,7 @@ core が web へ流すのは正規化イベントだけで、バックエンド�
 - 認証付き URL で画面が取得できることを確認する。認証なしのアクセスは正常でも HTTP 401 になるため、401 だけで画面の動作確認済みとはしない。トークンをコミットや共有ログに含めない。
 - 既存サーバーがある場合は、対象リポジトリのプロセスとポートを確認する。文書のみの変更など、再起動が不要なら既存サーバーの応答確認でよい。
 - インストール版の Pleiad から起動されたエージェントのシェルには、Pleiad 自身の `AGENT_HOST_PORT`・`AGENT_HOST_BIND`・`ELECTRON_RUN_AS_NODE=1` が引き継がれている。そのまま `npm start` すると、既定の `~/.agent-host` を使う 2 台目になるので、データ置き場のロック（`core/data-lock.mjs`）で起動を止める（持ち主の PID を出す。止まらなかった頃は空きポートへ移って 2 台目が立っていた）。ポートの持ち主が `Ply.exe` ならリポジトリのサーバーではないので止めない（無停止の更新が on のインストール版では、サーバーは実行場所の `pleiad-node.exe` で走り main の子でない。`%LOCALAPPDATA%\agent-host-runtime` の下の `pleiad-node.exe` も同じ理由で止めない。このサーバーの env には `ELECTRON_RUN_AS_NODE` は付かない）。main から確かめるなら別ポート・別のデータ置き場で起動する。`electron.exe` は `env -u ELECTRON_RUN_AS_NODE` を付けて起動する（付けないと Node として動く）。`web/` はリクエストごとにディスクから読むため、リポジトリのサーバーなら画面だけの変更に再起動は要らない。
+- インストール版の Pleiad から起動されたシェルには `AGENT_HOST_HANDOVER=on`・`AGENT_HOST_RUNTIME_ROOT`・`AGENT_HOST_RUNTIME_KEY`・`AGENT_HOST_SERVER_LOG` も入っている。`node core/server.mjs` を素で起こすと main のパイプを待って何も出力しないまま止まり、`tests/run.mjs` のサーバー起動も「30000ms で起動しなかった」で落ちる（ランナーが外すのは `AGENT_HOST_PORT` などの一部だけ）。`env -u` でこれらと `AGENT_HOST_PORT`・`AGENT_HOST_BIND`・`PLEIAD_CONTROL_*` を外して流す。
 - **再起動すると実行中のターンが終了する。** 停止前に UI の実行中表示または WebSocket の `running` コマンドで実行中の作業が 0 件であることを確認する。実行中なら完了を待つ。確認できない場合や中断が必要な場合は、理由を伝えてユーザーに確認する。
 - 再起動時は確認済みの対象サーバーだけを停止する。他の Node.js プロセスを一括停止しない。Windows でバックグラウンド起動する場合は `Start-Process -WindowStyle Hidden` を使う。
 
