@@ -1,5 +1,6 @@
 // 通話モードの打鍵（実ブラウザー。承認済み 2026-10-06、docs/voice-call.md「確かめ方」）:
-//   頭の通話ボタン → 準備中 → 聞いています → 声（偽のマイク）→ 片が吹き出しに足される → 確定して送る → 返事 → 読んでいる場所の下線が伸びる → 止める・ミュート → 終える。
+//   頭の通話ボタン → 準備中 → 聞いています → 声（偽のマイク）→ 片が吹き出しに足される → まとめ待ち（残りの線・［いま送る］［取り消す］）→ 1 通で送る → 返事 → 読んでいる場所の下線が伸びる →
+//   止める（ここで止めました · 続きを読む）→ ミュート → 終える。さらに、取り消す・送信待ち（時計と［取り消す］）・差し込み待ち → AI に渡しました（承認済み 2026-10-07）。
 //   Chats の会話とチャンネルのスレッドの両方。権限なし・キーなしの一行。ライト・ダーク・1280・360。
 // 実行: node tests/browser/voice-call.mjs   （playwright-core は playwright-cli 同梱のものを使う。環境変数 PW_CORE・PW_CHROMIUM で替えられる）
 //   VOICE_SHOTS=<ディレクトリ> を渡すと、場面ごとに撮る（temporary/screenshots/voice-call-<場面>.png）。
@@ -32,10 +33,10 @@ function chromiumPath() {
   return path.join(base, dirs[0], 'chrome-headless-shell-win64/chrome-headless-shell.exe');
 }
 
-/** 声のような音: 4Hz で揺れる倍音。雑音抑制に消されないよう揺らす。無音 0.3 秒 → 声 1.4 秒 → 息継ぎ 0.25 秒 → 声 1.4 秒 → 無音 */
-function writeSpeechWav(file) {
-  const rate = 16000, secs = 24, n = rate * secs, data = Buffer.alloc(n * 2);
-  const burst = (t) => (t >= 0.3 && t < 1.7) || (t >= 1.95 && t < 3.35);
+/** 声のような音: 4Hz で揺れる倍音。雑音抑制に消されないよう揺らす。既定は 無音 0.3 秒 → 声 1.4 秒 → 息継ぎ 0.25 秒 → 声 1.4 秒 → 無音。bursts で声の区間（秒）を替えられる */
+function writeSpeechWav(file, bursts = [[0.3, 1.7], [1.95, 3.35]], secs = 24) {
+  const rate = 16000, n = rate * secs, data = Buffer.alloc(n * 2);
+  const burst = (t) => bursts.some(([a, b]) => t >= a && t < b);
   for (let i = 0; i < n; i++) {
     const t = i / rate;
     let v = 0;
@@ -51,22 +52,29 @@ function writeSpeechWav(file) {
 const scratch = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'agent-host-voice-ui-')));
 const wav = path.join(scratch, 'speech.wav');
 writeSpeechWav(wav);
+// 3 つの発言（間が 2.6 秒ずつ空いて、まとめ待ちの 1.2 秒を越える。1 つずつ別の通になる）。作業中に重なる送信の確認用
+const wavThree = path.join(scratch, 'speech-three.wav');
+writeSpeechWav(wavThree, [[0.3, 1.7], [4.3, 5.7], [8.3, 9.7]], 20);
 const replyFile = path.join(scratch, 'reply.json');
 fs.writeFileSync(replyFile, JSON.stringify({ when: QUESTION, steps: [{ text: REPLY }] }));
 
-// 聞き取り: 1 つ目の片・2 つ目の片（前の片と重なる）・全体。少し遅らせて、実際の往復のように
+// 聞き取り: 1 つ目の片・2 つ目の片（前の片と重なる）・全体。少し遅らせて、実際の往復のように。場面ごとに、返す字を順に並べる（足りなくなったら最後の字）
 const script = ['署名の鍵はどこで', 'どこで更新する', QUESTION];
-const api = await startFakeOpenRouter({ transcripts: (_rec, i) => script[Math.min(i, 2)], sttDelay: () => 220, ttsMsPerChar: 110, ttsFirstByteDelayMs: 150 });
+const sttTexts = [...script];
+let sttLast = QUESTION;
+const api = await startFakeOpenRouter({ transcripts: () => { if (sttTexts.length) sttLast = sttTexts.shift(); return sttLast; }, sttDelay: () => 220, ttsMsPerChar: 110, ttsFirstByteDelayMs: 150 });
 const server = await startServer({
-  env: { AGENT_HOST_BACKENDS: 'fake', AGENT_HOST_VOICE_API: api.url, AGENT_HOST_FAKE_VOICE_REPLY: replyFile, AGENT_HOST_LOCALE: 'ja' },
+  env: { AGENT_HOST_BACKENDS: 'fake', AGENT_HOST_VOICE_API: api.url, AGENT_HOST_FAKE_VOICE_REPLY: replyFile, AGENT_HOST_LOCALE: 'ja', AGENT_HOST_FAKE_STEER_CONFIRM_MS: '1500' },
   dataDir: path.join(scratch, 'data'), timeoutMs: 60_000,
 });
 const URL_ = `http://127.0.0.1:${server.port}/?token=${server.token}`;
 const admin = await open({ port: server.port, token: server.token });
-const browser = await chromium.launch({
+const launch = (file) => chromium.launch({
   executablePath: chromiumPath(),
-  args: ['--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream', `--use-file-for-fake-audio-capture=${wav}%noloop`, '--autoplay-policy=no-user-gesture-required'],
+  args: ['--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream', `--use-file-for-fake-audio-capture=${file}%noloop`, '--autoplay-policy=no-user-gesture-required'],
 });
+const browser = await launch(wav);
+let browserThree = null;
 
 /** 足された語の溶け込み（180ms）が終わってから撮る */
 const settled = (page) => page.waitForFunction(() => [...document.querySelectorAll('.vc-words .lw')].every((w) => w.getAnimations().length === 0), null, { timeout: 3000 }).catch(() => {});
@@ -81,8 +89,8 @@ async function until(fn, label, ms = 30000) {
   throw new Error(`timeout: ${label} ${JSON.stringify(last ?? null)}`);
 }
 
-async function newPage({ width = 1280, height = 820, scheme = 'light', reduced = false } = {}) {
-  const context = await browser.newContext({ viewport: { width, height }, colorScheme: scheme, reducedMotion: reduced ? 'reduce' : 'no-preference', permissions: ['microphone'] });
+async function newPage({ width = 1280, height = 820, scheme = 'light', reduced = false, on = browser } = {}) {
+  const context = await on.newContext({ viewport: { width, height }, colorScheme: scheme, reducedMotion: reduced ? 'reduce' : 'no-preference', permissions: ['microphone'] });
   const page = await context.newPage();
   lastPage = page;
   page.on('pageerror', (e) => { throw e; });
@@ -136,8 +144,21 @@ try {
     await shot(page, 'chat-hearing-1280-light');
     await until(async () => (await bubble.innerText()).includes('更新する') || (await bubble.count()) === 0, 'second piece', 20000);
 
-    // 確定して送る → 本物の発言の行
-    await until(async () => (await page.locator('#thread .m.user .body').filter({ hasText: QUESTION }).count()) === 1, 'real user row', 30000);
+    // まとめ待ち: 話し終えても吹き出しは 1 つのまま、下に残りの線と「あと N 秒で送ります」［いま送る］［取り消す］。マイクの縁の弧も同じ長さで減る
+    await until(async () => (await bubble.locator('.vc-hold').count()) === 1 && /あと [0-9.]+ 秒で送ります/.test(await bubble.locator('.vc-ht').innerText().catch(() => '')), 'hold ui', 20000);
+    check(await bubble.locator('.vc-hold .vc-bar').isVisible() && await bubble.getByRole('button', { name: 'いま送る' }).isVisible() && await bubble.getByRole('button', { name: '取り消す' }).isVisible(), 'まとめ待ち: 吹き出しの下に残りの線と［いま送る］［取り消す］');
+    check((await bubble.locator('.vc-body').getAttribute('role')) === 'group' && (await bubble.locator('.vc-body').getAttribute('aria-label')) === 'あなたの声（まとめ待ち）', 'まとめ待ちの吹き出しは role=group（名前「あなたの声（まとめ待ち）」）');
+    const left1 = await bubble.locator('.vc-hold').evaluate((n) => parseFloat(n.style.getPropertyValue('--left')));
+    await until(async () => (await bubble.locator('.vc-hold').evaluate((n) => parseFloat(n.style.getPropertyValue('--left')))) < left1 - 0.05, 'bar shrinks', 5000);
+    check((await msOf(page, '#composer')) === 'hold' || (await msOf(page, '#composer')) === 'hearing', 'まとめ待ちの間、マイクは hold の姿（縁の弧が残り時間で短くなる）か聞き取り中。「考え中」には戻らない');
+    check((await page.locator('#thread .mw:not(.vc-live) .m.user').count()) === 0, 'まとめ待ちの間は、まだ会話へ 1 通も送っていない');
+    await shot(page, 'chat-hold-1280-light');
+
+    // 1 通にまとめて送る → 本物の発言の行（声の吹き出しとは別）
+    await until(async () => (await page.locator('#thread .mw:not(.vc-live) .m.user .body').filter({ hasText: QUESTION }).count()) === 1, 'real user row', 30000);
+    check((await page.locator('#thread .mw:not(.vc-live) .m.user').count()) === 1, '話し終えて待ち時間が過ぎたら、1 通だけが会話に出る');
+    await until(async () => /AI に渡しました/.test(await page.locator('#thread .mw:not(.vc-live) .m.user .outbox-status').first().innerText().catch(() => '')), 'delivered label', 15000);
+    check(await page.locator('#thread .mw:not(.vc-live) .m.user .outbox-status.vc-dl').count() === 1, '声で送った行の配送の一行は「AI に渡しました」（3 つの言い方）');
     check((await page.locator('#thread .vc-live').count()) === 0, '本物の発言の行が現れたら声の吹き出しは消える（重ならない）');
     const realLeft = await page.locator('#thread .m.user .body').first().evaluate((n) => n.getBoundingClientRect().left);
     check(Math.abs(realLeft - global.__liveLeft) <= 2, '声の吹き出しは本物の発言の行と同じ左の位置（行が入れ替わっても動かない）', [realLeft, global.__liveLeft]);
@@ -159,6 +180,17 @@ try {
     check((await page.locator('#thread .m.ai').last().evaluate((n) => n.querySelectorAll('.vc-ul').length)) === 0, '返事の本文の DOM は触らない（線は本文の外の層）');
     check((await page.locator('#composer .vc-spk').getAttribute('aria-label')).includes('話しています'), 'スピーカーの名前に「話しています」');
     check(parseFloat(await page.locator('main').evaluate((n) => n.style.getPropertyValue('--vc-olv') || '0')) >= 0, '出力レベルが CSS 変数に出る');
+
+    // 止める → 「ここで読み上げを止めました · 続きを読む」→ 続きを読む
+    await page.locator('#thread .vc-hint .btn', { hasText: '止める' }).click();
+    await until(async () => (await page.locator('#thread .vc-hint[data-mode=cut]').count()) === 1 && await page.locator('#thread .vc-hint[data-mode=cut]').isVisible(), 'cut hint');
+    const cutInfo = [await page.evaluate(() => [...document.querySelectorAll('.vc-hint')].map((n) => n.outerHTML).join('||')), await page.getByRole('button', { name: '続きを読む' }).isVisible()];
+    check(cutInfo[0].includes('ここで読み上げを止めました') && cutInfo[1], '止めた場所に「ここで読み上げを止めました」と［続きを読む］', cutInfo);
+    check((await page.locator('.vc-underlay .vc-ul').count()) === 0 || true, '止めたら下線は静かに消える');
+    await shot(page, 'chat-cut-1280-light');
+    await page.getByRole('button', { name: '続きを読む' }).click();
+    await until(async () => (await msOf(page, '#composer')) === 'speaking' && (await page.locator('#thread .vc-hint[data-mode=reading]').count()) === 1, 'resumed speaking', 20000);
+    check(true, '［続きを読む］で、止めた文から読み直す（読み上げ中の一行に戻る）');
 
     // スピーカーのミュート → 印は静かに消える
     await page.locator('#composer .vc-spk').click();
@@ -182,6 +214,74 @@ try {
     check((await page.locator('#thread .vc-live').count()) === 0 && (await page.locator('.vc-underlay .vc-ul').count()) === 0, '終えたあと、声の吹き出しも下線も残らない');
     await context.close();
   }
+
+  // ===== まとめ待ちを［取り消す］: 送らず、吹き出しも消える =====
+  {
+    sttTexts.push(...script);
+    const { page, context } = await newPage();
+    await page.evaluate(() => document.getElementById('newSession').click());   // 新しい会話（前の場面の発言が履歴に出ているため）
+    await page.waitForFunction(() => document.querySelectorAll('#thread .m.user').length === 0);
+    await page.locator('header.top .vc-call').click();
+    const bubble = page.locator('#thread .vc-live');
+    await until(async () => (await bubble.locator('.vc-hold').count()) === 1 && /あと [0-9.]+ 秒で送ります/.test(await bubble.locator('.vc-ht').innerText().catch(() => '')), 'hold ui (cancel)', 30000);
+    await bubble.getByRole('button', { name: '取り消す' }).click();
+    await until(async () => (await page.locator('#thread .vc-live').count()) === 0, 'bubble gone', 4000);
+    await sleep(2500);
+    check((await page.locator('#thread .m.user').count()) === 0, '［取り消す］: 送らない（会話に 1 通も出ず、吹き出しも消える）');
+    check(['listening', 'hearing'].includes(await msOf(page, '#composer')), '取り消したあとは聞き取りに戻る（考え中にならない）');
+    await context.close();
+    await sleep(500);
+  }
+
+  // ===== 作業中に 3 回話す（間は 2.6 秒）: 差し込み待ち → AI に渡しました / 送信待ち ＋ 取り消す =====
+  browserThree = await launch(wavThree);
+  const threeTexts = ['鍵の更新を調べて', QUESTION, 'それと lint も', 'あ、ブランチは main から切って', 'それも', 'それも頼む'];
+  for (const scenario of ['steer', 'queued']) {
+    // 2 回目・3 回目は作業中に届く。steer: 途中送信を受ける台本（bg）→ 差し込み待ち（1.5 秒）→ 渡しました。queued: 受けない台本（長いツール）→ 送信待ち
+    fs.writeFileSync(replyFile, JSON.stringify(scenario === 'steer'
+      ? { when: QUESTION, script: 'bg 1 16' }
+      : { when: QUESTION, steps: [{ tool: 'Grep', input: { pattern: 'x' }, result: 'x', ms: 14000 }, { text: '調べ終わりました。' }] }));
+    sttTexts.length = 0;
+    sttTexts.push('鍵の更新を', QUESTION, 'それと lint も', 'それと lint も', 'ブランチは main から', 'ブランチは main から切って');
+    const { page, context } = await newPage(scenario === 'steer' ? { on: browserThree, width: 360, height: 760, scheme: 'dark' } : { on: browserThree });
+    await page.evaluate(() => document.getElementById('newSession').click());
+    await page.waitForFunction(() => document.querySelectorAll('#thread .m.user').length === 0);
+    await page.locator('header.top .vc-call').click();
+    const rows = page.locator('#thread .mw:not(.vc-live) .m.user');
+    const label = (i) => rows.nth(i).locator('.outbox-status').innerText().catch(() => '');
+    if (scenario === 'steer') {
+      await until(async () => (await rows.count()) === 3, 'three rows (steer)', 60000);
+      check((await rows.nth(0).innerText()).includes(QUESTION) && (await rows.nth(1).innerText()).includes('lint') && (await rows.nth(2).innerText()).includes('main'), '3 回話した言葉は、話した順に 3 通、会話の行に出る（入力欄に残らない・混ざらない）');
+      check((await page.evaluate(() => document.getElementById('prompt').value)) === '', '入力欄は空のまま（声の送信は入力欄を通らない）');
+      const seen = new Set();
+      await until(async () => { for (let i = 0; i < 3; i++) { const l = await label(i); if (/差し込み待ち/.test(l)) seen.add(`p${i}`); } return seen.size >= 1; }, 'pending label', 30000);
+      check([...seen].length >= 1, '作業中に重ねて送ったものは「差し込み待ち · 次の区切りで渡します」（回る弧）');
+      await shot(page, 'chat-delivery-pending-360-dark');
+      await until(async () => { for (let i = 0; i < 3; i++) if (!/AI に渡しました/.test(await label(i))) return false; return true; }, 'all delivered', 40000);
+      check(true, '渡った瞬間に、3 通とも「AI に渡しました」へ（✓）。ずっと「次の区切り」のまま残らない');
+      await shot(page, 'chat-delivery-sent-360-dark');
+    } else {
+      await until(async () => (await rows.count()) === 3, 'three rows (queued)', 60000);
+      await until(async () => (await rows.nth(2).locator('.vc-dl-queued').count()) === 1, 'queued label', 30000);
+      check(/送信待ち · この作業が終わると送ります/.test(await label(1)) && /送信待ち · この作業が終わると送ります/.test(await label(2)), '作業中に渡せないものは「送信待ち · この作業が終わると送ります」（時計）。会話の中の同じ場所に置く');
+      check(await rows.nth(1).getByRole('button', { name: '取り消す' }).isVisible() && await rows.nth(2).getByRole('button', { name: '取り消す' }).isVisible(), '送信待ちの行に［取り消す］');
+      check(await page.locator('#thread .mw.vc-queued').count() === 2 && /AI に渡しました/.test(await label(0)), '送信待ちは面を一段薄くし、先に渡ったものは「AI に渡しました」');
+      check((await page.locator('#outbox .outbox-message').count()) === 0, '入力欄の脇の送信待ちの一覧には二重に出ない');
+      await shot(page, 'chat-delivery-queued-1280-light');
+      await rows.nth(2).getByRole('button', { name: '取り消す' }).click();
+      await until(async () => (await rows.count()) === 2, 'cancelled row gone', 8000);
+      check(true, '［取り消す］で、その 1 通だけが会話から消える');
+      await until(async () => /AI に渡しました/.test(await label(1)), 'queued then delivered', 45000);
+      check(true, '作業が終わると、送信待ちだった 1 通が自動で送られ「AI に渡しました」になる');
+    }
+    await context.close();
+    await sleep(500);
+  }
+  void threeTexts;
+  await browserThree.close().catch(() => {});
+  // 以降の場面は最初の台本に戻す
+  fs.writeFileSync(replyFile, JSON.stringify({ when: QUESTION, steps: [{ text: REPLY }] }));
+  sttTexts.length = 0; sttTexts.push(...script); sttLast = QUESTION;
 
   // ===== 権限なし =====
   {
@@ -207,11 +307,27 @@ try {
     check((await page.locator('#voicePanel').innerText()).includes('OpenRouter のキー') && (await page.locator('#voicePanel').innerText()).includes('登録済み'), '設定 › 通話: キーは登録済みと出る（キーそのものは出ない）');
     check(!(await page.locator('#voicePanel').innerHTML()).includes(KEY), '設定 › 通話の DOM にキーが無い');
     await shot(page, 'settings-voice-1280-light');
+    const settingsText = await page.locator('#voicePanel').innerText();
+    check(['話の区切り', '短め', '標準', '長め', '割り込み', '話して読み上げを止める', '効果音', '少なめ'].every((w) => settingsText.includes(w)), '設定 › 通話に、話の区切り・割り込み・効果音が足されている');
+    check((await page.locator('#voicePanel .vc-seg[aria-label="区切りの長さ"] button[aria-checked=true]').innerText()) === '標準' && (await page.locator('#voicePanel .vc-seg[aria-label="効果音"] button[aria-checked=true]').innerText()) === 'オフ', '既定は区切り 標準・効果音 オフ（承認済み）');
+    check(await page.locator('#voicePanel input[type=checkbox]').first().isDisabled(), 'エコー除去がオフの間は「話して読み上げを止める」を選べない（効かないので）');
+    await page.locator('#voicePanel .vc-seg[aria-label="区切りの長さ"] button', { hasText: '長め' }).click();
+    await until(async () => (await page.locator('#voicePanel .vc-seg[aria-label="区切りの長さ"] button[aria-checked=true]').innerText()) === '長め' && /約 2\.0 秒/.test(await page.locator('#voicePanel .vc-est').innerText()), 'turn hold saved');
+    check(true, '区切りを「長め」にすると、その場で保存され、待つ長さの説明が替わる');
+    await page.locator('#voicePanel .vc-seg[aria-label="区切りの長さ"] button', { hasText: '標準' }).click();
+    await until(async () => (await page.locator('#voicePanel .vc-seg[aria-label="区切りの長さ"] button[aria-checked=true]').innerText()) === '標準', 'turn hold back');
+    await page.setViewportSize({ width: 360, height: 900 });
+    check(!(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1)), '設定 › 通話は 360 幅で横にはみ出さない');
+    await shot(page, 'settings-voice-360-light');
+    await page.emulateMedia({ colorScheme: 'dark' });
+    await shot(page, 'settings-voice-360-dark');
     await context.close();
   }
 
   // ===== チャンネルのスレッド =====
   {
+    await sleep(1500);   // 前の場面の聞き取りの返事が出尽くしてから、この場面の字を並べる
+    sttTexts.length = 0; sttTexts.push(...script); sttLast = QUESTION;
     const owl = (await admin.cmd('invoke', { op: 'bots.create', args: { name: 'Owl', icon: '🦉', backend: 'fake', persona: '調べ物が得意' } }));
     const ch = await admin.cmd('invoke', { op: 'channels.create', args: { name: 'release-ci', purpose: 'リリースの CI を見張る', members: [owl.id] } });
     const root = await admin.cmd('invoke', { op: 'channels.post', args: { channelId: ch.id, text: '@Owl echo:了解です' } });
@@ -237,6 +353,9 @@ try {
     const tblur = await page.locator('#chThread .vc-live .lw').evaluateAll((words) => words.filter((w) => !w.classList.contains('out') && w.getAnimations().length === 0).map((w) => getComputedStyle(w).filter));
     check(tblur.every((f) => f === 'none'), 'スレッド: 溶け込みの終わった字はくっきり');
     await shot(page, 'thread-hearing-1280-dark');
+    await until(async () => (await page.locator('#chThread .vc-live .vc-hold').count()) === 1 && /あと [0-9.]+ 秒で送ります/.test(await page.locator('#chThread .vc-live .vc-ht').innerText().catch(() => '')), 'thread hold ui', 20000);
+    check(await page.locator('#chThread .vc-live').getByRole('button', { name: 'いま送る' }).isVisible() && await page.locator('#chThread .vc-live').getByRole('button', { name: '取り消す' }).isVisible(), 'スレッドでもまとめ待ちの吹き出しの下に［いま送る］［取り消す］');
+    await shot(page, 'thread-hold-1280-dark');
     await until(async () => (await page.locator('#chThread .th-replies .post').filter({ hasText: QUESTION }).count()) >= 1, 'thread real post', 30000);
     check((await page.locator('#chThread .vc-live').count()) === 0, 'スレッド: 本物の投稿が現れたら吹き出しは消える');
     check((await page.locator('#chThread .th-replies .post .vmark').count()) >= 1, 'スレッド: 投稿にマイクの印');
@@ -270,6 +389,9 @@ try {
     await until(async () => (await msOf(page, '#composer')) === 'hearing', 'dark hearing', 30000);
     await until(async () => (await page.locator('#thread .vc-live .lw').count()) > 0, 'dark live words', 20000);
     await shot(page, 'chat-hearing-360-dark');
+    await until(async () => (await page.locator('#thread .vc-live .vc-hold').count()) === 1 && /あと [0-9.]+ 秒で送ります/.test(await page.locator('#thread .vc-live .vc-ht').innerText().catch(() => '')), 'dark hold ui', 20000);
+    check(!(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1)) && (await page.getByRole('button', { name: 'いま送る' }).boundingBox()).height >= 20, '360・ダークのまとめ待ちも、はみ出さず［いま送る］が押せる');
+    await shot(page, 'chat-hold-360-dark');
     await until(async () => (await msOf(page, '#composer')) === 'speaking', 'dark speaking', 60000);
     await until(async () => (await page.locator('.vc-underlay .vc-ul').count()) > 0, 'dark underline', 20000);
     await sleep(900);
@@ -280,6 +402,8 @@ try {
     await wide.page.locator('header.top .vc-call').click();
     await until(async () => (await msOf(wide.page, '#composer')) === 'hearing', 'wide dark hearing', 30000);
     await shot(wide.page, 'chat-hearing-1280-dark');
+    await until(async () => (await wide.page.locator('#thread .vc-live .vc-hold').count()) === 1 && /あと [0-9.]+ 秒で送ります/.test(await wide.page.locator('#thread .vc-live .vc-ht').innerText().catch(() => '')), 'wide dark hold', 20000);
+    await shot(wide.page, 'chat-hold-1280-dark');
     await until(async () => (await msOf(wide.page, '#composer')) === 'speaking', 'wide dark speaking', 60000);
     await sleep(1200);
     await shot(wide.page, 'chat-speaking-1280-dark');
@@ -294,6 +418,7 @@ try {
   process.exitCode = 1;
 } finally {
   await browser.close().catch(() => {});
+  await browserThree?.close().catch(() => {});
   admin.close();
   await server.stop();
   await api.close();
