@@ -3,7 +3,7 @@
 // 設計は docs/design.md「互換の接続先」。要点:
 //   - 接続先はエージェントごと（claude: anthropic-messages、codex: openai-responses）。会話ごとに選ぶ（sidecar の endpoint）。
 //   - 置き場: <data>/compat-endpoints.json（一覧・役割のモデル・確認の結果・使うキーの参照 keyRef。秘密は入れない）。
-//             API キーは設定 › API キー（core/api-keys.mjs。api-key-secrets.json）に 1 回だけ登録し、接続先は keyRef で選ぶ（ADR 0154）。
+//             API キーは設定 › API キー（core/api-keys.mjs。api-key-secrets.json）に 1 回だけ登録し、接続先は keyRef で選ぶ（ADR 0155）。
 //             移行が済むまで・古い版のために、<data>/compat-endpoint-secrets.json（core/secret-store.mjs。safeStorage）も同じ値にそろえて書く。
 //   - 保存できるのは「接続の確認」が通った値だけ（確認 → 受領証 receipt → 保存。URL・キー・認証を変えたら確かめ直し）。
 //     確認は本物の 1 リクエスト（Claude: POST {URL}/v1/messages max_tokens 1、Codex: POST {URL}/responses）と、
@@ -528,7 +528,7 @@ export function createCompatEndpoints({ dataDir, secrets, apiKeys = null, fetchI
       const created = id || 'ep-' + crypto.randomBytes(6).toString('hex');
       // 秘密を先に書く。一覧に出た時点でキーがそろっているように。
       // 移行済みなら、入力したキーは API キーに 1 件として登録し（同じ値のキーがあればそれを使う）、接続先は keyRef で持つ。
-      // 古い置き場には同じ値を書く（古い版が読む。ADR 0154）
+      // 古い置き場には同じ値を書く（古い版が読む。ADR 0155）
       let keyRef = c.refs ? (c.keySource.startsWith('ref:') ? c.keySource.slice(4) : null) : undefined;
       let registered = null;
       if (c.refs && c.keySource === 'input') {

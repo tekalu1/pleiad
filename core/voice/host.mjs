@@ -5,7 +5,7 @@
 //   onEvent(event)              server.mjs の emitGlobal から全部の出来事を受け、通話が見ている会話（chat = 会話の id、thread = そのスレッドの bot の会話）の
 //                               text.delta・text.end・userMessage・turnEnd だけを通話へ渡す。まだ見ていない会話の直近 3 秒は覚えておき、見始めたら渡す
 //                               （新しい会話は最初のターンで id が決まるため、見る先の更新が数 ms 遅れても最初の文を落とさない）
-//   status() / checkKey / keysChanged   設定 › 通話。使う OpenRouter のキーは設定 › API キー（core/api-keys.mjs。ADR 0154）で選んだもの（apiKey が返す）で、画面へも返さない
+//   status() / checkKey / keysChanged   設定 › 通話。使う OpenRouter のキーは設定 › API キー（core/api-keys.mjs。ADR 0155）で選んだもの（apiKey が返す）で、画面へも返さない
 import path from 'node:path';
 import { WebSocketServer } from 'ws';
 import { normalizeKey } from '../delegation-judges.mjs';

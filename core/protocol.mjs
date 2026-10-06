@@ -38,7 +38,7 @@ export const COMMANDS = new Set([
   // 委譲先の自動振り分け（core/delegation-routing.mjs。docs/agent-delegation.md「委譲先の自動振り分け」）。判定器のキーは返さない（hasKey だけ）
   'delegationRouting',          // { refresh? } -> { settings, defaults, kinds, judges, tiers, signals, keys: { openrouter|cerebras: { hasKey } }, storage, warnings, candidates }
   'setDelegationRouting',       // { settings } -> 同上。prefs.json の delegationRouting に重ねて保存（null の項目は既定に戻す）。不正なら全体を断る
-  'setApiKey',          // { id?, provider, label?, key } -> { id }（id があれば値の差し替え）。キーは返さない。人だけ（秘密の値。ADR 0154）
+  'setApiKey',          // { id?, provider, label?, key } -> { id }（id があれば値の差し替え）。キーは返さない。人だけ（秘密の値。ADR 0155）
   'deleteApiKey',       // { id } -> { id, affected }。使っていた通話・判定器は「使わない」に、接続先はキー無しになる
   'setApiKeyUse',       // { use: voice|judge:jev|judge:cerebras, id|null } -> { use, id }。使うキーを選んだときから外部へ送り始める
   'resolveApiKeyGuide', // { keep: id|null } -> { merged }。移行の案内への答え（まとめる / このままにする）

@@ -1,4 +1,4 @@
-// API キーの置き場（core/api-keys.mjs。ADR 0154）。LLM は呼ばない。偽の OpenRouter・偽の互換 API とだけ話す。
+// API キーの置き場（core/api-keys.mjs。ADR 0155）。LLM は呼ばない。偽の OpenRouter・偽の互換 API とだけ話す。
 // 移行（同じ値は 1 件・違う値は別の件・通話と判定器は登録済みの所だけ引き継ぐ・冪等・保留）・値を出さない・
 // 差し替え/割り当て/削除が古い置き場にも書かれる・確認・接続先の keyRef を確かめる。
 import fs from 'node:fs/promises';

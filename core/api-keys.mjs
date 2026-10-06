@@ -1,4 +1,4 @@
-// API キーの置き場（ADR 0154。設定 › API キー、docs/design.md「API キー」）。
+// API キーの置き場（ADR 0155。設定 › API キー、docs/design.md「API キー」）。
 //
 // 外部サービスのキーはここ 1 か所に登録し、使う側（互換の接続先・通話・委譲の判定器）は「どのキーを使うか」を選ぶだけにする。
 //   <data>/api-keys.json         秘密でない台帳: { keys: [{ id, provider, label, createdAt, lastCheck }], uses, guide, migration }

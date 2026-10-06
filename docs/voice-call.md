@@ -20,7 +20,7 @@ index.mjs   部品の差し込み（slot の契約）                    ├ rep
 ```
 
 - **別の WebSocket（`/voice-ws`）。** `/ws` は JSON のイベント配信で、大きなイベントと音声の高頻度のバイナリを同じ口に混ぜない。トークンは `/ws` と同じ（URL の `token`）。**キーを持つこの PC の画面からだけ**受ける（中継越しは 403。`ready` の `voice` も中継越しの接続には 0 を返し、通話ボタンを出さない。リモートの通話は今回の範囲外）。
-- **キーはホストだけが持つ。** 設定 › API キー（`api-key-secrets.json`。Electron の safeStorage で暗号化。`npm start` は権限 0600 の平文）に登録した OpenRouter のキーのうち、設定 › 通話の「使うキー」で選んだもの（`setApiKeyUse`。human-only）を使う。**選んだときから音声と読み上げる文章が OpenRouter へ送られ、登録しただけ・「使わない」では何も送らない**（[ADR 0154](adr/0154-api-keys-in-one-place.md)。それまでは「キーの登録が同意」だった）。使うキーを消す・「使わない」にすると通話は切れる（`keysChanged`）。画面・ログ・エラーの文・AI の操作の返りにキーは出ない（`redactKey`。テストが見る）。確認は設定 › API キーの［確かめる］（OpenRouter の `GET /key`）。古い口 `setVoiceKey`・`deleteVoiceKey` は、同じ値のキーを登録して「使うキー」に選ぶ橋渡しとして残してある（後片付けで外す）。
+- **キーはホストだけが持つ。** 設定 › API キー（`api-key-secrets.json`。Electron の safeStorage で暗号化。`npm start` は権限 0600 の平文）に登録した OpenRouter のキーのうち、設定 › 通話の「使うキー」で選んだもの（`setApiKeyUse`。human-only）を使う。**選んだときから音声と読み上げる文章が OpenRouter へ送られ、登録しただけ・「使わない」では何も送らない**（[ADR 0155](adr/0155-api-keys-in-one-place.md)。それまでは「キーの登録が同意」だった）。使うキーを消す・「使わない」にすると通話は切れる（`keysChanged`）。画面・ログ・エラーの文・AI の操作の返りにキーは出ない（`redactKey`。テストが見る）。確認は設定 › API キーの［確かめる］（OpenRouter の `GET /key`）。古い口 `setVoiceKey`・`deleteVoiceKey` は、同じ値のキーを登録して「使うキー」に選ぶ橋渡しとして残してある（後片付けで外す）。
 - **ユーザーの発言は今の送信の経路にそのまま乗せる。** 確定した文字は画面が受け、会話へは `submit`（`sendMessage`）、スレッドへは `channels.post` で送る（ホストは送らない）。返事の読み上げは、ホストが `emitGlobal` の `text.delta`・`text.end`・`userMessage`・`turnEnd` を見て作る。通話が見る会話は、Chats は会話の id、スレッドはそのスレッドの bot の会話（`store.get(id).bot` の `channelId`・`threadId`）。新しい会話は最初のターンで id が決まるので、見ていない会話の直近 3 秒は覚えておき、見始めたら渡す。
 
 ## プロトコル（`/voice-ws`）

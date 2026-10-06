@@ -1,4 +1,4 @@
-// API キーのコマンドをサーバー越しに（偽の OpenRouter・fake バックエンド。ADR 0154）: setApiKey・deleteApiKey・setApiKeyUse・resolveApiKeyGuide の
+// API キーのコマンドをサーバー越しに（偽の OpenRouter・fake バックエンド。ADR 0155）: setApiKey・deleteApiKey・setApiKeyUse・resolveApiKeyGuide の
 // 引数の形とエラー・使う側へのイベント（voiceChanged・delegationRoutingChanged・apiKeysChanged）・通話中のキーの差し替え／「使わない」／削除で通話が切れること・
 // 値が画面・ログ・イベント・エラー文（compatEndpointCheck の失敗文を含む）に出ないこと。
 import fs from 'node:fs/promises';

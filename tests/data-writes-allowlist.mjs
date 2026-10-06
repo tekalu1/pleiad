@@ -75,7 +75,7 @@ export const DATA_WRITES = [
     { name: 'claude-usage/<id>/<印>', limit: 'アカウントごとに 1 つ。固定の小ささ', reason: '使用量ログイン済みの印' },
   ] },
   { file: 'core/api-keys.mjs', sites: 1, targets: [
-    { name: 'api-keys.json', limit: 'API キーの台帳。MAX_KEYS=200 件（キーの値は持たない。値は api-key-secrets.json）', reason: '設定の台帳（ADR 0154）。名前・プロバイダー・確認の結果・割り当てだけ。固定の小ささ' },
+    { name: 'api-keys.json', limit: 'API キーの台帳。MAX_KEYS=200 件（キーの値は持たない。値は api-key-secrets.json）', reason: '設定の台帳（ADR 0155）。名前・プロバイダー・確認の結果・割り当てだけ。固定の小ささ' },
   ] },
   { file: 'core/compat-endpoints.mjs', sites: 3, targets: [
     { name: 'compat-endpoints.json', limit: '互換の接続先。ユーザーが数個作る', reason: '設定の台帳' },

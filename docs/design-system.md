@@ -205,7 +205,7 @@ Channels のスレッドの作業ログに出る委譲ツールも同じカー�
 - 末尾に文字だけの「既定に戻す」（全部既定なら押せない）。押すとその場の `.mp-confirm`「委譲の設定を既定に戻しますか。キーは残ります。」
 - 「試す」画面・影で試す・一致率や応答時間の表示は置かない
 
-### 設定 › API キー（承認済み 2026-10-07、[ADR 0154](adr/0154-api-keys-in-one-place.md)）
+### 設定 › API キー（承認済み 2026-10-07、[ADR 0155](adr/0155-api-keys-in-one-place.md)）
 
 メニューは「エージェント設定」の直下（`web/api-keys-settings.mjs`、部品 `web/api-key-ui.mjs`、スタイル `web/api-keys.css`）。キーはここに 1 回だけ登録し、接続先・通話・委譲は選ぶだけ。面と部品は設定の管理の面（`.mp-panel` / `.mp-card` / `.mp-confirm` / `.mp-result` / `.mp-presets` / `.rt-key-form` / `.nf-section`）で、新しいトークンは無い。「API キー」の名前は、接続先・リモートの「つながり」とまぎれないために。
 

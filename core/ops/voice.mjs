@@ -1,4 +1,4 @@
-// voice.*: 通話モード（core/voice/、docs/voice-call.md）の状態。キーの登録・選び直しは human-only の WS コマンド（setApiKey・setApiKeyUse。秘密の値。ADR 0154）で、ここには出さない。
+// voice.*: 通話モード（core/voice/、docs/voice-call.md）の状態。キーの登録・選び直しは human-only の WS コマンド（setApiKey・setApiKeyUse。秘密の値。ADR 0155）で、ここには出さない。
 // hasKey は通話に使うキーを選んでいるか、keyRef は選んだキーの id（設定 › API キー）。
 // 設定（モデル・声・上限）は settings.set の voice（core/ops/settings.mjs）。
 import { z } from 'zod';

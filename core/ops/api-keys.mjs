@@ -1,4 +1,4 @@
-// apiKeys.*: 設定 › API キー（core/api-keys.mjs。ADR 0154）の状態と、キーそのものの確認。
+// apiKeys.*: 設定 › API キー（core/api-keys.mjs。ADR 0155）の状態と、キーそのものの確認。
 // キーの値は返さない（登録の名前・プロバイダー・確認の結果・使っている所の名前だけ）。
 // キーを入れる・消す・割り当てる（setApiKey・deleteApiKey・setApiKeyUse・resolveApiKeyGuide）は human-only の WS コマンド（秘密の値。ADR 0094）で、ここには出さない。
 // 本体はサーバーが ctx.apiKeys で渡す（core/server.mjs）。
@@ -33,7 +33,7 @@ export const apiKeyOps = [
     id: 'apiKeys.check',
     summary: 'agent:ops.apiKeys.check.summary',
     risk: 'write',
-    riskReason: 'Sends the saved key only to its own provider (OpenRouter GET /key, Cerebras GET /models) to see whether it is accepted, and records the result. Nothing is entered, no feature starts sending, and it costs nothing; a human pressing "check" does the same (ADR 0154)',
+    riskReason: 'Sends the saved key only to its own provider (OpenRouter GET /key, Cerebras GET /models) to see whether it is accepted, and records the result. Nothing is entered, no feature starts sending, and it costs nothing; a human pressing "check" does the same (ADR 0155)',
     input: z.object({ id: z.string().min(1).max(40).describe('agent:ops.apiKeys.check.id') }),
     output: z.object({ id: z.string(), ok: z.boolean().nullable(), code: z.string().optional(), at: z.string().optional() }).passthrough(),
     surfaces: { ui: true, mcp: 'catalog', cli: { path: ['apikeys', 'check'], positional: ['id'] } },

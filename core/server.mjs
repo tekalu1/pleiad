@@ -323,7 +323,7 @@ process.on('exit', () => claudeLogin.cancelAll());
 // キーは Claude のアカウント・MCP と同じ暗号化の置き場。前の起動で消し損ねたフラグ設定のファイル（キーを含む）は起動時に片付ける
 const compatSecrets = createSecretStore({ file: path.join(store.dataDir, 'compat-endpoint-secrets.json'), cipher: secretCipher });
 compatSecrets.migrate().catch(() => {});
-// API キーの置き場（設定 › API キー。core/api-keys.mjs、ADR 0154）。接続先・通話・委譲の判定器のキーはここに 1 回だけ登録し、使う側は選ぶだけにする。
+// API キーの置き場（設定 › API キー。core/api-keys.mjs、ADR 0155）。接続先・通話・委譲の判定器のキーはここに 1 回だけ登録し、使う側は選ぶだけにする。
 // 古い置き場（compat-endpoint-secrets.json・voice-secrets.json）は移行で消さず、キーを変えるたびに同じ状態を書く（古い版が読む）
 const voiceSecrets = createSecretStore({ file: path.join(store.dataDir, 'voice-secrets.json'), cipher: secretCipher });
 voiceSecrets.migrate().catch(() => {});
@@ -3857,7 +3857,7 @@ function opsDeps(lng = currentLocale()) {
     agents: opsAgents,
     prefs: () => store.getPrefs(),
     voice: { status: async () => ({ ...(await voiceHost.status()), keyRef: (await apiKeys.hasUse('voice')) ? apiKeys.usesState().voice : null }) },
-    // 設定 › API キー（core/ops/api-keys.mjs）。キーの値は持たない。入れる・消す・割り当てるのは human-only の WS コマンド（ADR 0154）
+    // 設定 › API キー（core/ops/api-keys.mjs）。キーの値は持たない。入れる・消す・割り当てるのは human-only の WS コマンド（ADR 0155）
     apiKeys: { list: () => apiKeys.list(), check: id => apiKeys.check(id) },
     compactionSettings: () => compactionSettings,
     statuses: opsStatuses,
@@ -6406,7 +6406,7 @@ wss.on("connection", (ws, req) => {
         // settings は prefs.json の delegationRouting に重ねる項目（null の項目は既定に戻す）。全体を検証してから保存する（settings.set の delegationRouting と同じ定義）
         case 'setDelegationRouting':
           return viaOp('settings.set', { key: 'delegationRouting', value: args?.settings }, { shape: () => delegationRoutingState() });
-        // API キー（設定 › API キー。ADR 0154）。値は返さない。入れる・消す・割り当てるのは人だけ（HUMAN_ONLY の秘密の値）。
+        // API キー（設定 › API キー。ADR 0155）。値は返さない。入れる・消す・割り当てるのは人だけ（HUMAN_ONLY の秘密の値）。
         // 登録しただけでは送らない。送り始めるのは、通話・判定器に使うキーを選んだとき（setApiKeyUse）と、接続先で選んだとき（compatEndpointSave の keyRef）
         case 'setApiKey': {
           const a = msg.args ?? {};
@@ -6420,7 +6420,7 @@ wss.on("connection", (ws, req) => {
         // 移行の案内。{ keep: キーの id }（ほかの同じプロバイダーのキーをまとめる）か { keep: null }（このままにする）。どちらでも案内は二度と出ない
         case 'resolveApiKeyGuide':
           return reply(true, await apiKeys.resolveGuide(msg.args?.keep ?? null));
-        // 古い版の口（判定器・通話のキー）。設定 › API キーへ移した後の互換で、同じ値のキーがあればそれを、無ければ登録して、使うキーに選ぶ。後片付けで外す（ADR 0154）
+        // 古い版の口（判定器・通話のキー）。設定 › API キーへ移した後の互換で、同じ値のキーがあればそれを、無ければ登録して、使うキーに選ぶ。後片付けで外す（ADR 0155）
         case 'setDelegationRoutingKey':
         case 'deleteDelegationRoutingKey': {
           const service = String(msg.args?.service ?? '');
