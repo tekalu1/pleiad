@@ -9,6 +9,7 @@
 //   { text }                    本文を書いて内部ターンを終える（result）。台本の最後に置く
 //   { tool, input?, result?, ask?, ms?, gate? }   ツールを呼ぶ。ask は承認（can_use_tool）を待つ。ms・gate（AGENT_HOST_FAKE_GATE_DIR のファイル）はツールの実行の長さ
 //   { mcp: { server, tool, arguments } }          SDK の MCP（in-process の host など）のツールを mcp_message で呼ぶ
+//   { http: { server, tool, arguments } }         --mcp-config の HTTP の MCP（ply_context など）のツールを呼ぶ。tool は説明の頭（"[fixture / count]" など）で探す
 //   { compact: true, gate? }    圧縮: PreCompact のコールバック（gate までは答えを待つ形にする）→ compact_boundary → PostCompact
 //   { bg: { gate } }            裏のコマンドを始める（gate が開くと終わり、main が再開して一言答える）
 // 途中送信（uuid つきの user）は次のツールの区切りで折り込み、isReplay の echo を返し、最後の本文に「受け取った: <本文>」を足す。
@@ -31,6 +32,16 @@ const cwd = process.cwd();
 const configDir = process.env.CLAUDE_CONFIG_DIR;
 const transcript = configDir ? path.join(configDir, 'projects', cwd.replace(/[^A-Za-z0-9]/g, '-'), `${sessionId}.jsonl`) : null;
 const gateDir = process.env.AGENT_HOST_FAKE_GATE_DIR;
+// SDK が渡す MCP の設定（--mcp-config <JSON>。HTTP の Pleiad の口の URL とヘッダー）
+const mcpConfig = (() => { const i = argv.indexOf('--mcp-config'); try { return i >= 0 ? JSON.parse(argv[i + 1]).mcpServers ?? {} : {}; } catch { return {}; } })();
+async function httpMcp(serverName, method, params) {
+  const server = mcpConfig[serverName];
+  if (!server?.url) throw new Error(`no MCP server ${serverName}`);
+  const res = await fetch(server.url, { method: 'POST', headers: { 'content-type': 'application/json', ...(server.headers ?? {}) }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }) });
+  const body = await res.json();
+  if (body.error) throw new Error(typeof body.error === 'string' ? `${res.status} ${body.error}` : body.error.message);
+  return body.result;
+}
 
 let lastWrite = Promise.resolve();
 const out = value => { if (process.env.FAKE_CLAUDE_TRACE) log(`> ${value.type}${value.subtype ? '/' + value.subtype : ''}${value.request?.subtype ? ' ' + value.request.subtype : ''}${value.event?.type ? ' ' + value.event.type : ''}`); const line = `${JSON.stringify(value)}\n`; lastWrite = new Promise(resolve => process.stdout.write(line, resolve)); };
@@ -126,8 +137,10 @@ async function say(text, stop = 'end_turn') {
 
 async function runTool(step) {
   const id = `toolu_${uuid().slice(0, 12)}`;
-  const name = step.mcp ? `mcp__${step.mcp.server}__${step.mcp.tool}` : step.tool;
-  const input = step.mcp ? step.mcp.arguments ?? {} : step.input ?? {};
+  let listError = '';
+  const remote = step.http ? (await httpMcp(step.http.server, 'tools/list', {}).catch(error => { listError = error.message; return { tools: [] }; })).tools.find(x => String(x.description ?? '').startsWith(step.http.tool)) : null;
+  const name = step.mcp ? `mcp__${step.mcp.server}__${step.mcp.tool}` : step.http ? `mcp__${step.http.server}__${remote?.name ?? 'missing'}` : step.tool;
+  const input = step.mcp ? step.mcp.arguments ?? {} : step.http ? step.http.arguments ?? {} : step.input ?? {};
   streamEvent({ type: 'message_start', message: { id: `msg_${uuid().slice(0, 8)}`, role: 'assistant', model: MODEL } });
   const m = msg('assistant', { message: { id: `msg_${uuid().slice(0, 8)}`, type: 'message', role: 'assistant', model: MODEL, content: [{ type: 'tool_use', id, name, input }], stop_reason: 'tool_use', usage: { input_tokens: 100, output_tokens: 20 } } });
   out(m);
@@ -145,6 +158,11 @@ async function runTool(step) {
       .catch(error => ({ mcp_response: { error: { message: error.message } } }));
     const result = response?.mcp_response?.result;
     content = result?.content?.map(c => c.text).join('\n') ?? `mcp error: ${JSON.stringify(response?.mcp_response?.error ?? null)}`;
+    isError = !result || Boolean(result.isError);
+  }
+  if (!isError && step.http) {
+    const result = remote ? await httpMcp(step.http.server, 'tools/call', { name: remote.name, arguments: input }).catch(error => ({ isError: true, content: [{ type: 'text', text: error.message }] })) : null;
+    content = result?.content?.map(c => c.text).join('\n') ?? `no such tool${listError ? ` (${listError})` : ''}`;
     isError = !result || Boolean(result.isError);
   }
   if (!isError) {
@@ -197,7 +215,7 @@ async function turn(item) {
       await fireHook('PostCompact', { trigger: 'manual', compact_summary: 'fake summary' });
     } else if (step.text != null) {
       await say(folded.length ? `${step.text}（受け取った: ${folded.join(' / ')}）` : step.text);
-    } else if (step.tool || step.mcp) {
+    } else if (step.tool || step.mcp || step.http) {
       await runTool(step);
     }
   }

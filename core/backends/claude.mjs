@@ -284,8 +284,12 @@ const TOOL_HINTS = {
  * 説明・引数の説明・返り値はエージェントが読むので、会話の言語（ctx.locale）で引く（agent 名前空間）
  */
 function buildToolServer(ctx) {
-  // 応答は CLI の stdin を通る。走っている間は入力を閉じさせない（claude-background.mjs）
-  const hosted = (name, handler) => (args) => ctx.hostCalls ? ctx.hostCalls.run(name, () => handler(args)) : handler(args);
+  // 応答は CLI の stdin を通る。走っている間は入力を閉じさせない（claude-background.mjs）。
+  // 引き継ぎ（無停止の更新 2d。core/handover.mjs）は、走っている mcp_message のハンドラーが終わるのを上限つきで待つ（ctx.track）
+  const hosted = (name, handler) => (args) => {
+    const work = ctx.hostCalls ? ctx.hostCalls.run(name, () => handler(args)) : handler(args);
+    return ctx.track ? ctx.track(work) : work;
+  };
   return createSdkMcpServer({
     name: "host",
     version: "0.0.0",
@@ -602,6 +606,13 @@ const heldTurns = new Map();
 const SDK_CONSUMED = new Set(["control_request", "control_response", "control_cancel_request", "keep_alive", "transcript_mirror"]);
 const parseLine = (line) => { try { const m = JSON.parse(line); return m && typeof m === "object" ? m : null; } catch { return null; } };
 
+/** hooks のコールバックの表の、どのコールバックの実行も track（server の control.track。引き継ぎが待つ）に数える。track が無ければそのまま */
+function trackedHooks(table, track) {
+  if (typeof track !== "function") return table;
+  return Object.fromEntries(Object.entries(table).map(([event, list]) => [event,
+    list.map((entry) => ({ ...entry, hooks: entry.hooks.map((fn) => (...args) => track(fn(...args))) }))]));
+}
+
 /** 札の途中送信の控え（backendCard.steers）を作り直す。本文は持たない（ハッシュで当てる） */
 function restoredSteers(steers) {
   return (Array.isArray(steers) ? steers : []).filter((p) => typeof p?.uuid === "string" && p.uuid)
@@ -687,7 +698,7 @@ export const backend = {
   // adopt は付け直し（{ source, card }。adoptTurn だけが渡す）。無ければ普通のターン（保持役に載せるかは claude-held.mjs の heldPlan が決める）
   async runTurn({ prompt, sessionId, cwd, mode, model, effort, emit, onPromptDelivered, askPermission, signal, control, hostSessionId, hostBackend, hostInvoke, visualizeInstructions, browserEnv, browserInstructions, browserRuntime = null, contextRuntime, agentRuntime, computerRuntime = null, controlRuntime = null, hooksRuntime = null, oauthToken, endpoint = null, locale, compact, shellAppends = [], notes = [], botInstructions = null, botFolders = null, rewind = null }, adopt = null) {
     // locale は会話の言語（host ツールの説明と承認の deny の理由。core/server.mjs が会話ごとに決めて渡す）
-    const ctx = { sessionId: sessionId ?? null, emit, hostSessionId, hostBackend, hostInvoke, locale };
+    const ctx = { sessionId: sessionId ?? null, emit, hostSessionId, hostBackend, hostInvoke, locale, track: control?.track ?? null };
     // このターンで呼んだ ply_computer の tool_use の id。tool_result に名前は載らないので、印の行を読むのはこの id の結果だけにする
     const computerIds = new Set();
     let releaseContext;
@@ -827,7 +838,11 @@ export const backend = {
     // 札を保持役の子に置く口（server の touchCard が、札の中身が変わるたびに呼ぶ）。最初の 1 回は子を起こした直後・付け直した直後に置く
     const bindHolder = () => {
       if (!control || !held?.source) return;
-      control.holder = { label: card => held.source.client.label(held.id, card) };
+      control.holder = {
+        label: card => held.source.client.label(held.id, card),
+        // 旧サーバーの手を離す口（引き継ぎ。core/handover.mjs）: 札を子に置いて detach し、読みを止めてから query を閉じる（design.md §4.4 の順序）
+        handOff: async card => { await held.handOff(card); try { q?.close(); } catch { /* 既に閉じている */ } },
+      };
       control.backendCard = backendCard;
       control.touch?.();
     };
@@ -1089,7 +1104,8 @@ export const backend = {
         includePartialMessages: true,
         // hooks の発火（hook_started / hook_response）を受け取る。会話の右パネルの「発火の記録」に使う（claude-normalize.mjs）
         includeHookEvents: true,
-        hooks: mergeCallbacks({
+        // 引き継ぎ（2d）は、走っている hooks のコールバックが終わるのを上限つきで待つ（control.track。trackedHooks）
+        hooks: trackedHooks(mergeCallbacks({
           PreCompact: [{ hooks: [async input => {
             emit({ type: 'compaction', phase: 'start', trigger: input.trigger === 'manual' ? 'manual' : 'auto' });
             return {};
@@ -1099,7 +1115,7 @@ export const backend = {
             return {};
           }] }],
         // Pleiad の Hooks の登録。コールバックは Pleiad の中で走るので、発火の記録は自分で出す（hook_started は届かない）
-        }, claudeHookCallbacks(hooksRuntime, { onRun: run => emit({ type: 'hookRun', ...run }) })),
+        }, claudeHookCallbacks(hooksRuntime, { onRun: run => emit({ type: 'hookRun', ...run }) })), control?.track),
         canUseTool: makeCanUseTool(ctx, askPermission),
       },
     }); } catch (e) { if (!adopt) await flag?.dispose(); void held?.finish(); throw undelivered(e); }

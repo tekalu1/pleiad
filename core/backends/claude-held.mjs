@@ -26,7 +26,7 @@ import { ADOPT_TURN_MARK, holderSource } from '../adopt.mjs';
  */
 export const HELD_CLI_VERSIONS = Object.freeze(['2.1.284', '2.1.288']);
 
-/** 保持役に載せる切り替え。段階 2 の引き継ぎ（2d）が入るまでは、明示したときだけ（既定は載せない） */
+/** 保持役に載せる切り替え。明示したときだけ（既定は載せない。AGENT_HOST_HANDOVER=on のパッケージ版でも自動では付けない） */
 export const heldEnabled = (env = process.env) => String(bootEnv('AGENT_HOST_CLAUDE_HOLDER') ?? env.AGENT_HOST_CLAUDE_HOLDER ?? '').toLowerCase() === 'on';
 
 /** CLI の --version の出力から版を取り出す（"2.1.284 (Claude Code)"） */

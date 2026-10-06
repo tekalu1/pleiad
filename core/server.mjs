@@ -34,7 +34,7 @@ import { insideDir, sameDir } from './worktrees.mjs';
 import { createCallTracker, timelineOf } from './git-timeline.mjs';
 import { createUpdateGate } from './update-gate.mjs';
 import { ensureDataSchema } from './data-schema.mjs';
-import { acquireDataLock } from './data-lock.mjs';
+import { acquireDataLock, acquireDataLockWait } from './data-lock.mjs';
 import { localeInfo, setLocale, t, i18n, LOCALE_SETTINGS, agentT, agentLocaleOf, currentLocale } from './i18n.mjs';
 import http from "node:http";
 import crypto from "node:crypto";
@@ -113,6 +113,10 @@ import { readBuildInfo } from './handover-check.mjs';
 import { markRuntimeInUse } from './runtime-use.mjs';
 import { cardOf, restoreFields, promptHash, CARD_MAX_BYTES } from './turn-card.mjs';
 import { readAdoptSources, readHolderSources, ADOPT_TURN_MARK } from './adopt.mjs';
+import { holderLink } from './holder/link.mjs';
+import { HOLDER_PROTOCOL } from './holder/protocol.mjs';
+import { handoverStart, createHandover, stashOf, readStash, retryTransient, HANDOVER_VERSION, LOCK_WAIT_MS } from './handover.mjs';
+import { closeAll as closeDataDb } from './db.mjs';
 import { createApprovalIds } from './approval-id.mjs';
 import { parentPortScreencast, createScreencastHub, screencastCommand } from './browser-screencast.mjs';
 import { createChromeConnection } from './chrome/connection.mjs';
@@ -148,9 +152,22 @@ process.on('unhandledRejection', (reason) => {
 const updateGate = createUpdateGate();
 const quotaCache = createQuotaCache();
 // 書き込みを始める前に、データ置き場をこのプロセスだけが持つようにする（別のプロセスが持っていれば、理由を出して起動を止める。
-// 終了まで持つ。core/data-lock.mjs）。そのうえで形式を確かめ、古ければここで移行する（core/schema-migration.mjs。失敗すれば起動を止める）
-acquireDataLock(store.dataDir);
-const migrated = await ensureDataSchema(store.dataDir);
+// 終了まで持つ。core/data-lock.mjs）。そのうえで形式を確かめ、古ければここで移行する（core/schema-migration.mjs。失敗すれば起動を止める）。
+// 無停止の更新の新サーバー（--handover。core/handover.mjs）は、モジュールの読み込みを済ませたうえで、旧サーバーがデータ置き場を放すのを待って取る（数十 ms 刻み）
+const HANDOVER_START = handoverStart();
+// 版ごとの実行場所で走っているなら、その版を使っている印を付ける（desktop/runtime.cjs の掃除がこの版を消さない。core/runtime-use.mjs）。
+// 印は閉じない: プロセスの終了で OS が外す。データ置き場のロックより前に付ける: 引き継ぎの新サーバー（--handover）は、印ができたら
+// モジュールの読み込みが済んでロックを待っているとみなされ、main が旧サーバーに handover を頼む（desktop/switch.cjs）
+if (BOOT_ENV.AGENT_HOST_RUNTIME_ROOT && BOOT_ENV.AGENT_HOST_RUNTIME_KEY) markRuntimeInUse({ root: BOOT_ENV.AGENT_HOST_RUNTIME_ROOT, key: BOOT_ENV.AGENT_HOST_RUNTIME_KEY });
+const handoverLockFrom = Date.now();
+const releaseDataLock = HANDOVER_START ? await acquireDataLockWait(store.dataDir, { timeoutMs: LOCK_WAIT_MS }) : acquireDataLock(store.dataDir);
+const handoverLockWaitedMs = Date.now() - handoverLockFrom;
+if (HANDOVER_START) console.log(`  [handover] got the data lock after ${handoverLockWaitedMs} ms at=${Date.now()}`);
+// 旧サーバーが保持役に置いた預かり物（画面のトークン・CLI のトークン・ポート）。居る保持役にだけつなぐ（起こさない）。無ければ起動の変数のまま
+const handoverStash = HANDOVER_START && BOOT_ENV.AGENT_HOST_RUNTIME_ROOT
+  ? await holderLink({ dataDir: store.dataDir, root: BOOT_ENV.AGENT_HOST_RUNTIME_ROOT, appVersion: '', launch: false }).then(client => readStash(client.welcome?.stash), () => null)
+  : null;
+const migrated = HANDOVER_START ? await retryTransient(() => ensureDataSchema(store.dataDir)) : await ensureDataSchema(store.dataDir);
 if (migrated) console.log(`  ${t('data.migrated', { backup: migrated.backup })}`);
 const usageStore = createUsageStore(store.dataDir);
 // Claude の記録に入っていた会話の累計を、ターンの分へ一度だけ直す（core/usage-migrations.mjs、ADR 0053）。
@@ -167,9 +184,6 @@ const BUILD = readBuildInfo(path.join(HERE, '..')).build;
 const mainLink = handoverEnabled(BOOT_ENV) && !process.parentPort ? createMainLink({ dataDir: store.dataDir, appVersion: APP_VERSION,
   log: line => console.log(`  [main-link] ${line}`) }) : null;
 if (mainLink) setMainPortSource(mainLink.port);
-// 版ごとの実行場所で走っているなら、その版を使っている印を付ける（desktop/runtime.cjs の掃除がこの版を消さない。core/runtime-use.mjs）。
-// 印は閉じない: プロセスの終了で OS が外す
-if (BOOT_ENV.AGENT_HOST_RUNTIME_ROOT && BOOT_ENV.AGENT_HOST_RUNTIME_KEY) markRuntimeInUse({ root: BOOT_ENV.AGENT_HOST_RUNTIME_ROOT, key: BOOT_ENV.AGENT_HOST_RUNTIME_KEY });
 const mainPort = getMainPort();
 const hostedPort = mainPort.hosted ? mainPort : null;
 // main が居ない間（更新）の出来事と、OAuth の同意画面などを開く口（core/main-away.mjs）。機能ごとの扱いは頼む側のモジュールが持つ
@@ -225,9 +239,9 @@ import { createBotHost } from './bots-host.mjs';
 import { channelEventRows, HIDDEN_BOT_KINDS } from './channels/types.mjs';
 import { textForTitleModel } from './prompt-title.mjs';
 
-const PORT = Number(BOOT_ENV.AGENT_HOST_PORT ?? 7420);
+const PORT = handoverStash?.port ?? Number(BOOT_ENV.AGENT_HOST_PORT ?? 7420);
 const HOST = BOOT_ENV.AGENT_HOST_BIND ?? "127.0.0.1";
-const TOKEN = BOOT_ENV.AGENT_HOST_TOKEN ?? crypto.randomBytes(16).toString("hex");
+const TOKEN = handoverStash?.token ?? BOOT_ENV.AGENT_HOST_TOKEN ?? crypto.randomBytes(16).toString("hex");
 
 const NL = String.fromCharCode(10);
 const switching = new Set();
@@ -1181,7 +1195,7 @@ function browserRuntimeFor(turn) {
 // ply_control: 操作の一覧（core/ops/）を会話に渡す HTTP の MCP（ADR 0081）。会話に束縛し、その会話の承認モードで権限が決まる（ADR 0082）
 const controlBridge = createControlBridge({ registry: opsRegistry, depsFor: opsDeps });
 // CLI 用トークン（control.json に書く。画面のトークンとは別で、効くのは /api/ops だけ。ADR 0083）
-const CLI_TOKEN = crypto.randomBytes(32).toString('hex');
+const CLI_TOKEN = handoverStash?.cliToken ?? crypto.randomBytes(32).toString('hex');
 const cliTokenOk = (given) => { const a = Buffer.from(String(given)), b = Buffer.from(CLI_TOKEN); return a.length === b.length && crypto.timingSafeEqual(a, b); };
 const opsHttp = createOpsHttp({
   registry: opsRegistry, depsFor: opsDeps, serverLocale: currentLocale,
@@ -1319,13 +1333,25 @@ async function resolveSessionFile({ path: requested, sessionId, at, base }, sess
 const openOnHost = defaultOpener();
 const osActionAllowed = createRateLimit({ limit: 5, windowMs: 10_000 });
 
+// 引き継ぎ（無停止の更新 2d。core/handover.mjs）。hold: 新しい作業の開始を送信待ちに回している間（送信待ちは始まらず、完了通知・追加指示は渡さない）。
+// critical: 引き継ぎの前に終わるのを待つ短い処理（途中送信の受理待ち）。inflight: 処理中の HTTP の MCP・in-process の host MCP・hooks のコールバック
+// （待つのは上限つきで、待ち切れなくても進む。その呼び出しは 1 回失敗し、モデルが読んでやり直す）
+const handover = { hold: false, critical: new Set(), inflight: new Set(), droppedCalls: 0 };
+const trackIn = (set, promise) => {
+  const tracked = Promise.resolve(promise);
+  set.add(tracked);
+  const done = () => set.delete(tracked);
+  tracked.then(done, done);
+  return promise;
+};
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
-  if (url.pathname === AGENTS_MCP_PATH) return agentBridge.handle(req, res);
-  if (url.pathname === CONTEXT_MCP_PATH) return contextBridge.handle(req, res);
-  if (url.pathname === COMPUTER_MCP_PATH && computerBridge) return computerBridge.handle(req, res);
-  if (url.pathname === BROWSER_MCP_PATH) return browserBridge.handle(req, res);
-  if (url.pathname === CONTROL_MCP_PATH) return controlBridge.handle(req, res);
+  if (url.pathname === AGENTS_MCP_PATH) return trackIn(handover.inflight, agentBridge.handle(req, res));
+  if (url.pathname === CONTEXT_MCP_PATH) return trackIn(handover.inflight, contextBridge.handle(req, res));
+  if (url.pathname === COMPUTER_MCP_PATH && computerBridge) return trackIn(handover.inflight, computerBridge.handle(req, res));
+  if (url.pathname === BROWSER_MCP_PATH) return trackIn(handover.inflight, browserBridge.handle(req, res));
+  if (url.pathname === CONTROL_MCP_PATH) return trackIn(handover.inflight, controlBridge.handle(req, res));
   // CLI の口。画面のトークンは受けず、CLI 用トークンか会話の接続のトークンだけを受ける（core/ops/surfaces/http.mjs）
   if (url.pathname === OPS_PATH || url.pathname.startsWith(`${OPS_PATH}/`)) return opsHttp(req, res, url);
   // webhook の受け口（P3。/hooks/<id>。画面のトークンの前。ADR 0113）。自分の要求でなければ false
@@ -3993,11 +4019,14 @@ function remoteHostsNow() {
 }
 
 async function runningWork() {
-  const turns = [...runtime.turns.values()].map((t) => ({ kind: "turn", ...t.info }));
+  // 保持役に載っていて新しいサーバーへ渡せるターン（holdable）。切り替えはそれを待たずに引き継ぐ（desktop/switch.cjs）
+  const held = new Set([...runtime.turns.values()].filter(holdable).map(t => t.info.sessionId));
+  const turns = [...runtime.turns.values()].map((t) => ({ kind: "turn", ...t.info, ...(held.has(t.info.sessionId) ? { held: true } : {}) }));
 
   const permissions = [...runtime.waiting].map(([id, w]) => ({
     id,
     kind: "permission",
+    ...(held.has(w.payload.sessionId ?? null) ? { held: true } : {}),
     toolName: w.payload.toolName,
     sessionId: w.payload.sessionId ?? null,
     askedAt: w.askedAt ?? null,
@@ -4038,6 +4067,7 @@ async function runningWork() {
         status: state?.status ?? null,
         startedAt: state?.startedAt ?? null,
         endedAt: state?.endedAt ?? null,
+        ...(held.has(sessionId) ? { held: true } : {}),
       };
     }));
   }));
@@ -4052,6 +4082,11 @@ async function runningWork() {
   const dueRows = schedule.list();
   // 委譲のタスクは、終わっていないものと完了通知が届いていないものだけ（agentTasks.running）。過去の分は会話ごとに delegation.tasks で読む
   const tasks = withWorktreeLive(agentTasks?.running() ?? []);
+  const count = turns.length + permissions.filter((p) => !p.relay && !p.detached).length
+    + subagents.filter((a) => a.status === "running" || a.status == null).length + tasks.filter(r => !r.host && ["queued", "running", "cancelling"].includes(r.status) && !runtime.turns.has(r.sessionId)).length;
+  // 渡せる作業の数（count のうち、保持役に載ったターンとその承認待ち・サブエージェント）。blocking は引き継ぎを待たせる作業（無ければ作業の最中でも切り替わる）
+  const heldCount = turns.filter(x => x.held).length + permissions.filter(p => p.held && !p.relay && !p.detached).length
+    + subagents.filter(a => a.held && (a.status === "running" || a.status == null)).length;
   return {
     turns,
     permissions,
@@ -4071,8 +4106,9 @@ async function runningWork() {
     // そのまま数えると更新のゲート（web の count > 0）が閉じたままになる。status が null の子
     // （状態を返せないバックエンド・まだ分からない子）は数える。数えないとゲートを緩めてしまう
     // 設定の変更の承認（detached）は期限なしで残るので数えない（数えると、答えるまで終了も更新もできない）
-    count: turns.length + permissions.filter((p) => !p.relay && !p.detached).length
-      + subagents.filter((a) => a.status === "running" || a.status == null).length + tasks.filter(r => !r.host && ["queued", "running", "cancelling"].includes(r.status) && !runtime.turns.has(r.sessionId)).length,
+    count,
+    // 引き継ぎ（core/handover.mjs）に対応しているサーバーだけが載せる。main の切り替えは blocking が 0 なら待たずに引き継ぐ
+    handover: { v: HANDOVER_VERSION, holder: HOLDER_PROTOCOL, held: heldCount, blocking: count - heldCount },
   };
 }
 
@@ -4414,6 +4450,8 @@ const outbox = createMessageQueue({
     const limit = limitStates.get(id);
     if (limit && limitHolds(limit))
       return { blocked: true, wait: { reason: 'limit', resetsAt: limit.resetsAt } };
+    // 引き継ぎの間（core/handover.mjs）: 新しい作業の開始も途中送信も送信待ちのまま。新しいサーバー（取りやめなら今のサーバー）が続きを送る
+    if (handover.hold) return { blocked: true, wait: { reason: 'turn', detail: 'handover' } };
     const turn = runtime.turns.get(id);
     if (!turn) {
       if (switching.has(id) || forking.has(id)) return { blocked: true, wait: { reason: 'turn' } };
@@ -4462,7 +4500,7 @@ const adopting = await restoreAdoptedTurns();
 // 前の起動で消し損ねた Claude のフラグ設定のファイル（core/compat-endpoints.mjs）。同じデータ置き場を別の Pleiad（開発版と配布版）が使っていることがあるので、
 // 走っている会話のファイルは消さない（1 日より古いものだけ）。付け直すターンの札が指すファイル（無停止の更新 2c）も消さない（そのターンの終わりに消える）
 sweepClaudeFlagSettings(store.dataDir, { olderThanMs: 24 * 60 * 60_000, except: adopting.map(a => a.ctx.card.backendCard?.flag).filter(Boolean) }).catch(() => {});
-await outbox.recover({ adopted: new Map(adopting.map(a => [a.ctx.sessionId, new Set(Object.keys(a.ctx.card.steers))])) });
+await outbox.recover({ adopted: new Map(adopting.map(a => [a.ctx.sessionId, new Set(Object.keys(a.ctx.card.steers))])), keepQueued: HANDOVER_START });
 // 前の起動で走っていたのに終わりが記録されていないターン（落ちた・強制終了）を、会話の中断（reason: restart）として残す
 {
   const recovered = await store.recoverInterruptedTurns(Date.now(), { except: new Set(adopting.map(a => a.ctx.sessionId)) })
@@ -4482,7 +4520,7 @@ const noticeBlocked = async owner => sessionBusy(owner) || awaitedBackground(own
  * 渡してよい条件は completion-notices.mjs の canSteerNotice
  */
 async function noticeTarget(owner) {
-  const turn = runtime.turns.get(owner);
+  const turn = handover.hold ? null : runtime.turns.get(owner);
   if (!turn) return null;
   const unsent = (await outbox.list(owner)).some(m => !['sent', 'cancelled'].includes(m.status));
   return canSteerNotice(turn, { unsent, nextSettings: (await store.get(owner)).nextSettings }) ? turn : null;
@@ -4532,7 +4570,7 @@ async function steerNotice(turn, owner, prompt, tasks, settingNotices = null) {
     touchCard(turn);
   }
   let accepted;
-  try { accepted = await turn.control.steer?.(item); }
+  try { accepted = await trackIn(handover.critical, turn.control.steer?.(item)); }
   catch { if (liveNotices.delete(item.id)) touchCard(turn); return 'error'; }
   if (!accepted) { if (liveNotices.delete(item.id)) touchCard(turn); return 'requeue'; }
   if (!confirms) emitGlobal({ type: 'taskNotice', sessionId: owner, text: prompt });
@@ -4549,7 +4587,7 @@ function noticeEntry(owner, prompt, items, settingNotices = null) {
  * 渡してよい条件は完了通知と同じ（canSteerNotice。子の会話に人の送信待ちがあれば渡さない）
  */
 async function childTarget(sessionId) {
-  const turn = taskExecutions.has(sessionId) ? runtime.turns.get(sessionId) : null;
+  const turn = taskExecutions.has(sessionId) && !handover.hold ? runtime.turns.get(sessionId) : null;
   if (!turn) return null;
   const unsent = (await outbox.list(sessionId)).some(m => !['sent', 'cancelled'].includes(m.status));
   return canSteerNotice(turn, { unsent, nextSettings: (await store.get(sessionId)).nextSettings }) ? turn : null;
@@ -4572,7 +4610,7 @@ async function steerInstruction(task, instruction) {
     touchCard(turn);
   }
   let accepted;
-  try { accepted = await turn.control.steer?.(item); }
+  try { accepted = await trackIn(handover.critical, turn.control.steer?.(item)); }
   catch { if (liveInstructions.delete(item.id)) touchCard(turn); return 'error'; }
   if (!accepted) { if (liveInstructions.delete(item.id)) touchCard(turn); return 'requeue'; }
   emitGlobal({ type: 'userMessage', sessionId: task.sessionId, messageId: item.id, text: instruction.text, at: Date.now(), ...(confirms ? { pending: true } : {}) });
@@ -5131,7 +5169,7 @@ async function prepareTurn(args, hooks, compactionRevision) {
     userSentAt: toMs(args.at) ?? Date.now(),
     backend,
     agentLocale,
-    control: { handle: null, touch: () => touchCard(turn), onReady: () => {
+    control: { handle: null, touch: () => touchCard(turn), track: promise => trackIn(handover.inflight, promise), onReady: () => {
       outbox.kick(sessionId).catch(() => {});
       agentTasks?.sendQueued(sessionId).catch(() => {});
     } },
@@ -5382,11 +5420,11 @@ async function beginTurn(ctx) {
 
 /** バックエンドの host の口（in-process の MCP）から操作の一覧を呼ぶ。ターンを始めるとき（beginTurn）と付け直すとき（adoptTurn） */
 function hostInvokeFor(agentLocale) {
-  return async (op, args) => {
+  return (op, args) => trackIn(handover.inflight, (async () => {
     const result = await opsRegistry.invoke({ by: 'agent', via: 'mcp', sessionId: args.sessionId }, op, args, opsDeps(agentLocale));
     if (!result.ok) throw new Error(result.error);
     return result.result;
-  };
+  })());
 }
 
 async function launchTurn(ctx) {
@@ -5571,8 +5609,12 @@ function restoreSteers(sessionId, steers, texts = new Map()) {
 function takeCard(ctx) {
   const { turn } = ctx;
   const entry = agentConnections.get(turn.key);
+  // ply_context の口は、会話のあいだ同じ値で開くバックエンド（agy）でなければ、ターンごとの値で開く（launchTurn）。CLI が持つのはその値なので、札にはその値を置く
+  // （付け直す側の adoptTurn が同じ値で開き直す。2c）
+  const live = /^Bearer ([a-f0-9]{64})$/.exec(ctx.runtimeContext?.headers?.Authorization ?? '')?.[1] ?? null;
+  const tokens = entry ? { ...connectionTokens(entry), ...(live ? { context: live } : {}) } : null;
   // バックエンドの欄（backendCard）は、保持役に子を載せるバックエンドが control.backendCard で渡す（Claude の途中送信の控え・費用の基準など。2c）
-  return cardOf({ ...ctx, backendCard: turn.control?.backendCard?.() ?? null, connectionTokens: entry ? connectionTokens(entry) : null, waits: openWaitIds(turn.info.sessionId),
+  return cardOf({ ...ctx, backendCard: turn.control?.backendCard?.() ?? null, connectionTokens: tokens, waits: openWaitIds(turn.info.sessionId),
     stopping: Boolean(turn.info.stopping || turn.ac.signal.aborted), steers: steersOf(turn), execution: taskExecutions.get(turn.info.sessionId) ?? null });
 }
 
@@ -5609,6 +5651,101 @@ function handOffTurn(key) {
   catch (e) { console.error(`  ターンを付け直しに渡せない（${turn.info.sessionId}）:`, String(e?.message ?? e)); return null; }
   turn.handedOff = true;
   return taken;
+}
+
+/**
+ * このターンは、保持役に載っていて新しいサーバーへ渡せるか（引き継ぎ。core/handover.mjs）。札を置く口 control.holder（handOff を持つもの）を渡す
+ * バックエンドの、バックエンドを呼んだ後のターン。bot の会話と圧縮のターンは渡さない（restoreTurn が付け直さない）
+ */
+function holdable(turn) {
+  const ctx = turn && turnContexts.get(turn);
+  if (!ctx || !ctx.backendInvoked || ctx.hooks?.compact || turn.ended || turn.handedOff || !turn.info.sessionId || !turn.control.holder?.handOff) return false;
+  return !store.peek(turn.info.sessionId)?.bot;
+}
+
+/** 旧サーバーの引き継ぎ（core/handover.mjs）。main の handover の依頼で走る。成功すると release の中で main へ答えてロックを放し、このプロセスは終わる */
+let handoverReply = null;
+const handoverRun = createHandover({
+  log: line => console.log(`  [handover] ${line}`),
+  hold: () => { handover.hold = true; },
+  unhold: () => {
+    handover.hold = false;
+    // 送信待ちに回していた分を送る
+    void store.getAll().then(all => { for (const [id, meta] of Object.entries(all)) if (meta.outbox?.length) outbox.kick(id).catch(() => {}); }).catch(() => {});
+  },
+  settled: () => {
+    const busy = [];
+    // switching はターンの間ずっと会話を持つ（releaseTurn が外す）。走っているターンの分は短い処理ではない
+    if ([...switching].some(id => !runtime.turns.has(id))) busy.push('switching');
+    if ([...forking].some(id => !runtime.turns.has(id))) busy.push('forking');
+    if (outbox.busy) busy.push('outbox');
+    if (agentTasks.settling) busy.push('notices');
+    if (handover.critical.size) busy.push('steer');
+    if (schedule.firing) busy.push('schedule');
+    return { ok: busy.length === 0, detail: busy.join(', ') };
+  },
+  blockers: () => {
+    const out = [];
+    const heldIds = new Set();
+    for (const turn of runtime.turns.values()) {
+      if (holdable(turn)) heldIds.add(turn.info.sessionId);
+      else out.push({ kind: 'turn', sessionId: turn.info.sessionId ?? null });
+    }
+    for (const [, w] of runtime.waiting) if (!w.relay && !w.detached && !heldIds.has(w.payload.sessionId ?? null)) out.push({ kind: 'permission', sessionId: w.payload.sessionId ?? null });
+    for (const r of agentTasks.running()) if (!r.host && ['queued', 'running', 'cancelling'].includes(r.status) && !runtime.turns.has(r.sessionId)) out.push({ kind: 'task', sessionId: r.sessionId ?? null });
+    return out;
+  },
+  inflight: () => handover.inflight.size,
+  turns: () => [...runtime.turns.values()].filter(holdable).map(turn => ({ key: turn.key, sessionId: turn.info.sessionId, turn })),
+  stopTimers: () => { schedule.pause(); compactionScheduler.stop(); },
+  resumeTimers: () => { schedule.resume(); compactionScheduler.resume(); },
+  take: item => handOffTurn(item.key),
+  untake: item => { item.turn.handedOff = false; },
+  detach: (item, taken) => item.turn.control.holder.handOff(taken.card),
+  abortOne: item => {
+    // 渡せなかったターンだけ中断する（理由は update。「再開」で続けられる）。このサーバーが締める
+    item.turn.handedOff = false;
+    void abortSessions({ sessionId: item.sessionId, reason: 'update' }).catch(() => {});
+  },
+  ended: item => item.turn.ended || runtime.turns.get(item.key) !== item.turn,
+  // 預かり物（トークン・ポート）を保持役へ置く。居る保持役にだけ（保持役が無ければ、新しいサーバーは main の渡した変数で起動する）
+  stash: async () => {
+    const root = BOOT_ENV.AGENT_HOST_RUNTIME_ROOT;
+    const client = root ? await holderLink({ dataDir: store.dataDir, root, launch: false }).catch(() => null) : null;
+    if (!client) return;
+    client.stash(stashOf({ token: TOKEN, cliToken: CLI_TOKEN, port: server.address().port, appVersion: APP_VERSION }));
+    // 預かり物の書き込みに答えは無い。同じ接続の順序は保たれるので、手を離す依頼（もう離れている）の答えを待てば、預かり物は保持役に届いている
+    await client.detach().catch(() => {});
+  },
+  // DB を書き切り、main へ答えてから、データ置き場のロックを放して終わる（以後このプロセスは何も書かない）
+  release: async result => {
+    await Promise.race([voiceHost.close(), new Promise(resolve => setTimeout(resolve, 2000))]).catch(() => {});
+    chromeRelay?.close();
+    store.flushNow();
+    handoverReply?.({ ...result, at: Date.now(), pid: process.pid });
+    // 答えがパイプへ出るのを待ってから終わる（すぐ終わると、書きかけの答えが main に届かないことがある）
+    await new Promise(resolve => setTimeout(resolve, 60));
+    // 待ち受けのポートも新しいサーバーのために空ける（同じポートで待ち受ける。画面は 1.5 秒ごとのつなぎ直しで戻る）
+    server.close();
+    server.closeAllConnections?.();
+    // bot の DB（別のファイル）を閉じ、データ置き場の DB の接続を持ち主が残っていても全部閉じてから、ロックを放す（新サーバーが取ってすぐ開く）
+    await Promise.race([Promise.resolve(botHost?.close?.()), new Promise(resolve => setTimeout(resolve, 1500))]).catch(() => {});
+    store.closeStore();
+    closeDataDb(store.dataDir);
+    releaseDataLock();
+    console.log(`  [handover] released the data lock at=${Date.now()}`);
+    process.exit(0);
+  },
+});
+
+/** main の handover の依頼（desktop/switch.cjs）。引き継げれば release の中で答えて終わる。引き継げなければ答え（ok: false。サーバーは元のまま）を返す */
+async function handoverToNext(data) {
+  const reply = body => mainPort.postMessage({ type: 'handover', id: data.id, ...body });
+  if (!mainLink) return reply({ ok: false, reason: 'unsupported' });
+  handoverReply = reply;
+  const result = await handoverRun.run({ ...(Number(data.drainMs) > 0 ? { drainMs: Number(data.drainMs) } : {}), ...(Number(data.inflightMs) >= 0 ? { inflightMs: Number(data.inflightMs) } : {}) })
+    .catch(error => ({ ok: false, reason: 'error', detail: String(error?.message ?? error) }));
+  if (!result.ok) reply(result);
 }
 
 /**
@@ -5669,7 +5806,7 @@ async function restoreTurn(card, source) {
     userSentAt: fields.userSentAt ?? startedAtMs,
     backend,
     agentLocale,
-    control: { handle: null, touch: () => touchCard(turn), onReady: () => {
+    control: { handle: null, touch: () => touchCard(turn), track: promise => trackIn(handover.inflight, promise), onReady: () => {
       outbox.kick(sessionId).catch(() => {});
       agentTasks?.sendQueued(sessionId).catch(() => {});
     } },
@@ -5756,8 +5893,7 @@ async function restoreTurn(card, source) {
     // 付け直すのはバックエンドを呼んだ後のターンだけ（L4）
     didStart: true,
     backendInvoked: true,
-    // ply_context の口（contextBridge.open）は開き直していない（runtimeContext）。トークンの束縛は restoreConnection、
-    // 外部 MCP と呼び出しの最中の分は戻らない（R15。生きた子を付け直す 2b-5 以降）
+    // ply_context の口（contextBridge.open）は、待ち受けの後の adoptTurn が札のトークンで開き直す（外部 MCP は起こし直す。呼び出しの最中の分は戻らない。R15）
     runtimeContext: null,
     initialDelivered: fields.delivery.initialDelivered,
     interruption: fields.interruption,
@@ -5813,6 +5949,17 @@ async function adoptTurn(card, source, ctx = null, { abandon = null } = {}) {
         // 記録（contextRecord.hooks）は札の会話の記録のまま。組めなければ渡さない（そのターンの残りで Pleiad の Hooks が動かない）
         const hooksTurn = ctx.card.hooks ? await prepareHooksTurn({ agent: backend.id, cwd: ctx.cwd, ctx: { plyHooks, hooksConfig, dataDir: store.dataDir, findNode: findNodeOnPath,
           context: { owners: ctx.policy?.owners ?? {}, delivered: false } } }).catch(e => { console.error(`  Hooks を組み直せない（${sessionId}）:`, String(e?.message ?? e)); return null; }) : null;
+        // ply_context の口（Pleiad がコンテキストを担当する会話。2c）。札のトークンで開き直し、外部の MCP はこのターンのために起こし直す（R15。ツールの名前は
+        // 項目の id とツールの名前から決まるので同じ。状態は消えるので、起こし直した後の最初の結果にその旨を添える）。開けなければ口の無いまま続ける
+        // （CLI の ply_context の呼び出しが失敗する）。CLI は口の URL・ヘッダーを持っているので、バックエンドには渡さない
+        if (managed(ctx.policy) && acceptsPlyContext(backend, ctx.policy)) {
+          try {
+            const resolved = await resolveRuntime(ctx.policy, { plyServers: await plyMcp.scanInput(), snapshots: CONTEXT_SNAPSHOTS, locale: agentLocale });
+            ctx.runtimeContext = await contextBridge.open({ runtime: resolved, prompt: ctx.prompt, token: ctx.card.connectionTokens.context, restarted: true,
+              origin: localOrigin(), signal: turn.ac.signal, isActive: () => runtime.turns.get(turn.key) === turn && !turn.ac.signal.aborted });
+            console.log(`  ply_context の口を開き直した（${sessionId}）: 外部の MCP ${resolved.servers.length} 件を起こし直した`);
+          } catch (e) { console.error(`  ply_context の口を開き直せない（${sessionId}）:`, String(e?.message ?? e)); }
+        }
         ctx.runArgs = {
           sessionId, cwd: ctx.cwd, mode: ctx.permissionMode, model: ctx.model || undefined, effort: ctx.effort,
           card: ctx.card.backendCard, source,
@@ -5867,7 +6014,7 @@ async function restoreAdoptedTurns() {
   const root = BOOT_ENV.AGENT_HOST_RUNTIME_ROOT;
   const sources = [
     ...(dir ? await readAdoptSources(dir).catch(failed) : []),
-    ...(process.env.AGENT_HOST_ADOPT_HOLDER === '1' && root ? await readHolderSources({ dataDir: store.dataDir, root, appVersion: APP_VERSION }).catch(failed) : []),
+    ...((process.env.AGENT_HOST_ADOPT_HOLDER === '1' || HANDOVER_START || handoverEnabled(BOOT_ENV)) && root ? await readHolderSources({ dataDir: store.dataDir, root, appVersion: APP_VERSION }).catch(failed) : []),
   ];
   const adopted = [];
   for (const source of sources) {
@@ -7561,6 +7708,8 @@ mainPort.on("message", async ({ data }) => {
     mainPort.postMessage({ type: 'update-lock', id: data.id, ok, reason: ok ? null : reason || t('updateLock.other') });
   }
   if (data?.type === 'update-unlock') updateGate.release();
+  // 引き継ぎ（無停止の更新 2d。core/handover.mjs）: 保持役に載ったターンを新しいサーバーへ渡して終わる
+  if (data?.type === 'handover') void handoverToNext(data);
   // main がこれから離れる（更新のためなど）。切れた後に作業が無いまま居続ける上限が決まる（core/orphan-guard.mjs）
   if (data?.type === 'main-leaving') orphanGuard?.leaving(data.reason);
   // 更新を取りやめた（インストーラーが起きなかった・失敗した）。main は居続けるので、猶予を数える状態と切断の上限を元に戻す
@@ -7623,7 +7772,9 @@ async function announce() {
     .catch((err) => console.error('  control.json を書けませんでした:', String(err?.message ?? err)));
   // パイプの口は、main がつながるのが ready より後になりうる。つながるたびに最新の ready を送る
   // appVersion・build・runtimeKey は、付け直した新しい main が版を比べて切り替える・前の版へ戻すのに使う（desktop/switch.cjs）
-  readyMessage = { type: "ready", port, token: TOKEN, locale: locale.lang, pid: process.pid, appVersion: APP_VERSION, build: BUILD, runtimeKey: BOOT_ENV.AGENT_HOST_RUNTIME_KEY || null };
+  readyMessage = { type: "ready", port, token: TOKEN, locale: locale.lang, pid: process.pid, appVersion: APP_VERSION, build: BUILD, runtimeKey: BOOT_ENV.AGENT_HOST_RUNTIME_KEY || null,
+    ...(HANDOVER_START ? { handover: { lockWaitedMs: handoverLockWaitedMs, adopted: adopting.length, at: Date.now() } } : {}) };
+  if (HANDOVER_START) console.log(`  [handover] listening at=${Date.now()} (the data lock came ${handoverLockWaitedMs} ms after the start; adopting ${adopting.length} turn(s))`);
   mainPort.postMessage(readyMessage);
   remote.start().catch(() => {});
   if (routingSettingsCache.enabled && ROUTING_USAGE_AUTO) routingUsage.start();
@@ -7649,12 +7800,14 @@ async function announce() {
 // 付け直したターンの MCP の口の URL はポートを含み、CLI が持っている URL は変えられない（stage2-server-state.md §3 の 9）。上限を過ぎたら付け直しをあきらめ
 // （そのターンは restart の中断。adoptTurn の abandon）、これまでどおり空きポートへ移る
 const ADOPT_PORT_WAIT_MS = Number(process.env.AGENT_HOST_ADOPT_PORT_WAIT_MS) >= 0 ? Number(process.env.AGENT_HOST_ADOPT_PORT_WAIT_MS) : 10_000;
-const ADOPT_PORT_RETRY_MS = 200;
+const ADOPT_PORT_RETRY_MS = HANDOVER_START ? 40 : 200;   // 引き継ぎの起動は、旧サーバーがポートを放すのをすぐ拾う
 let portDeadline = 0, portWaiting = false, adoptAbandoned = null;
+// 引き継ぎの起動（--handover）も、旧サーバーが同じポートを放すのを待つ
+const waitsForPort = () => adopting.length > 0 || (HANDOVER_START && PORT > 0);
 const onListenError = (err) => {
   if (err.code !== "EACCES" && err.code !== "EADDRINUSE") throw err;
-  if (adopting.length && Date.now() < portDeadline) {
-    if (!portWaiting) console.log(`  port ${PORT} は使えない (${err.code})。付け直すターンがあるので空くまで待つ（${ADOPT_PORT_WAIT_MS / 1000} 秒まで）。`);
+  if (waitsForPort() && Date.now() < portDeadline) {
+    if (!portWaiting) console.log(`  port ${PORT} は使えない (${err.code})。${adopting.length ? '付け直すターンがある' : '引き継ぎの起動'}ので空くまで待つ（${ADOPT_PORT_WAIT_MS / 1000} 秒まで）。`);
     portWaiting = true;
     setTimeout(() => { server.once("error", onListenError); server.listen(PORT, HOST); }, ADOPT_PORT_RETRY_MS);
     return;
@@ -7687,6 +7840,8 @@ for (const { card, source, ctx } of adopting) {
   // 委譲の子は、結果の確定（execute の後半）を agentTasks へ引き継ぐ。付け直せなければ今までの起動と同じに interrupted にする
   if (ctx.taskId) adoptChild(ctx, turnPromise, { abandon: Boolean(adoptAbandoned) });
 }
+// 引き継ぎの起動: 旧サーバーが送信待ちに回した分（核心は core/handover.mjs の hold）を送る
+if (HANDOVER_START) for (const [id, meta] of Object.entries(await store.getAll())) if (meta.outbox?.some(m => m.status === 'queued')) outbox.kick(id).catch(() => {});
 await schedule.restore().catch(err => console.error('  再開の予定を戻せませんでした:', String(err?.message ?? err)));
 // 解除時刻を過ぎた上限の会話は、予定の行が無くても再開する（Pleiad を閉じている間に過ぎた分）
 await recoverLimitResumes().catch(err => console.error('  上限の会話を見直せませんでした:', String(err?.message ?? err)));
@@ -7695,4 +7850,4 @@ setTimeout(() => { for (const row of schedule.list()) if (row.kind === 'send' &&
 // 届ける前の出来事の戻し・ルーティンの取りこぼし（ターンを始めるので、ポートが決まった後）
 await botHost.start();
 
-export { runTurn, prepareTurn, beginTurn, launchTurn, driveTurn, releaseTurn, endTurn, handOffTurn, restoreTurn, adoptTurn };
+export { runTurn, prepareTurn, beginTurn, launchTurn, driveTurn, releaseTurn, endTurn, handOffTurn, restoreTurn, adoptTurn, handover as handoverState, trackIn };

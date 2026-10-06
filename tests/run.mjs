@@ -454,6 +454,11 @@ const SUITES = [
   './unit/adopt-claude.mjs',
   // Claude を保持役に載せる部品（無停止の更新 2c）: 版の一覧・npm の包みの解き方・偽の SpawnedProcess の転送と detach・付け直しで流さない行・札のフラグ設定のファイル
   './unit/claude-held.mjs',
+  // 引き継ぎ（無停止の更新 2d）: 旧サーバーが held: のターンを渡して終わり、新サーバー（--handover）が同じトークン・ポートで付け直す。引き継げない作業があれば断る
+  './unit/handover-server.mjs',
+  './unit/handover-core.mjs',
+  // 引き継ぎを main の切り替えの流れごと（無停止の更新 2d）: 作業の最中でも待たずに替わる・S2 が立たなければ前の版で付け直す・引き継げない作業があれば待つ
+  './unit/desktop-handover.mjs',
   // 承認のカードの id（無停止の更新 2b-6）: ツールの id と会話の id から決まる値・同じプロセスの 2 回目と、ツールの id が無い承認は乱数
   './unit/approval-id.mjs',
   // Claude のアカウント切り替え（会話ごとのトークン）。env の組み立てと、server の配線を fake で通す
