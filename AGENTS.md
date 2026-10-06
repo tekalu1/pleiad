@@ -40,7 +40,14 @@ core が web へ流すのは正規化イベントだけで、バックエンド�
 | `PLEIAD_CONTROL_URL` / `PLEIAD_CONTROL_TOKEN` | `pleiad` CLI のつなぎ先。Pleiad が会話のシェルへ渡し、その会話に束縛される（無ければ `AGENT_HOST_DATA` の `control.json`） |
 | `AGENT_HOST_GIT_SNAPSHOTS` | `off` でターンの始まりと終わりの git の撮影（`refs/pleiad/`。ADR 0085）を止める。テストが使う（`tests/lib/server.mjs`） |
 | `AGENT_HOST_WORKTREES` | `off` で worktree（ADR 0136）を作らない。テストが使う（`tests/lib/server.mjs`。このリポジトリが cwd のテストが `<リポジトリ>.pleiad` に残すのを防ぐ）。確かめるテストは一時のリポジトリで `on` を渡す |
+| `AGENT_HOST_HANDOVER` | 無停止の更新（ADR 0151）を使うか。**パッケージ版の既定は `on`**（env が無ければ on）、開発（`npm run desktop`・`electron .`）の既定は `off`。`off` は今の `utilityProcess` の流れ（戻し道。更新は「中断して更新」）。`on` では、main は版ごとの実行場所（`desktop/runtime-boot.cjs`）の `pleiad-node.exe` でサーバーを main の子でない形（detached）に起こす・走っているサーバーに付け直す（`desktop/server-boot.cjs`）。サーバーは `utilityProcess` の代わりに main との名前付きパイプを作る（`core/main-link.mjs`）。開発で `on` を試すなら `AGENT_HOST_RUNTIME_RESOURCES` も要る。main の Job が抜け道を許さない・実行場所を組めないときは `off` と同じ流れに落ちる |
+| `AGENT_HOST_SERVER_LOG` | main の子でない形のサーバー（stdio が無い）が標準出力・標準エラーを書くファイル（`core/server-log.mjs`。1 MB で `.old` へ回す。トークンは伏せる）。`on` の main が実行場所の `logs\server.log` を渡す。無ければ今のとおり標準出力 |
+| `AGENT_HOST_RUNTIME_ROOT` / `AGENT_HOST_RUNTIME_KEY` | サーバーが走っている版ごとの実行場所の置き場と版の名前。サーバーがその版の使用中の印（`core/runtime-use.mjs`）を付ける。`on` の main が渡す |
+| `AGENT_HOST_RUNTIME_RESOURCES` | 実行場所を組む元の `resources\`（既定は `process.resourcesPath`）。パッケージ版でない `electron .` のハーネスが、`npm run desktop:pack` の `dist-desktop\win-unpacked\resources` を指して `AGENT_HOST_HANDOVER=on` を試すためのもの |
+| `AGENT_HOST_RUNTIME_DIR` | 版ごとの実行場所の置き場（既定 `%LOCALAPPDATA%\agent-host-runtime`。`$INSTDIR` と同じ文字列で始まる場所は使えない。テスト・ハーネス用）。`PLEIAD_NODE_CACHE` は、ビルドが取る公式の Node のキャッシュ（既定 `~/.cache/pleiad/node-runtime`） |
 | `AGENT_HOST_IMAGE_IMPORT_TEST_ORIGIN` | 貼り付けた画像の取り込み（ADR 0141）の確認用。`AGENT_HOST_BACKENDS` が `fake` だけのときに限り、origin のホストがループバック（127.0.0.1・::1・localhost）なら効き、検査をやめて、どの https の URL もこの origin へ向け替える。本物のバックエンドと並べたときや、ループバックでない origin は無視する（`tests/unit/image-import.mjs`） |
+| `AGENT_HOST_VOICE_API` | 通話モード（`core/voice/`）の OpenRouter の送り先（既定 `https://openrouter.ai/api/v1`）。テストの偽物用（`tests/lib/fake-openrouter.mjs`）。`tests/lib/server.mjs` は既定で閉じたポートへ向け、本物へは送らない |
+| `AGENT_HOST_FAKE_VOICE_REPLY` | fake バックエンドの通話の確認用。`{ when, steps }` の JSON ファイルを渡すと、本文が `when` と一致した発言に `steps` の台本で返す（声で話した言葉は台本の接頭辞を持てないため。`docs/voice-call.md`） |
 | `AGENT_HOST_WORKTREE_GRACE_MS` | worktree を作ってから、使われていないものとして自動で片付けるまでの猶予（既定 60 秒。ADR 0089）。テストが 0 にする |
 
 デスクトップ版は `npm run desktop`、インストーラーの生成は `npm run desktop:dist`（対象 OS で実行）。リリースの運用は `docs/desktop-releases.md`。
@@ -107,7 +114,7 @@ core が web へ流すのは正規化イベントだけで、バックエンド�
 - 既定のアドレスは `127.0.0.1:7420`。`AGENT_HOST_BIND` と `AGENT_HOST_PORT` で変更でき、指定ポートが使えない場合は空きポートに切り替わるため、実際の URL は起動ログで確認する。
 - 認証付き URL で画面が取得できることを確認する。認証なしのアクセスは正常でも HTTP 401 になるため、401 だけで画面の動作確認済みとはしない。トークンをコミットや共有ログに含めない。
 - 既存サーバーがある場合は、対象リポジトリのプロセスとポートを確認する。文書のみの変更など、再起動が不要なら既存サーバーの応答確認でよい。
-- インストール版の Pleiad から起動されたエージェントのシェルには、Pleiad 自身の `AGENT_HOST_PORT`・`AGENT_HOST_BIND`・`ELECTRON_RUN_AS_NODE=1` が引き継がれている。そのまま `npm start` すると、既定の `~/.agent-host` を使う 2 台目になるので、データ置き場のロック（`core/data-lock.mjs`）で起動を止める（持ち主の PID を出す。止まらなかった頃は空きポートへ移って 2 台目が立っていた）。ポートの持ち主が `Ply.exe` ならリポジトリのサーバーではないので止めない。main から確かめるなら別ポート・別のデータ置き場で起動する。`electron.exe` は `env -u ELECTRON_RUN_AS_NODE` を付けて起動する（付けないと Node として動く）。`web/` はリクエストごとにディスクから読むため、リポジトリのサーバーなら画面だけの変更に再起動は要らない。
+- インストール版の Pleiad から起動されたエージェントのシェルには、Pleiad 自身の `AGENT_HOST_PORT`・`AGENT_HOST_BIND`・`ELECTRON_RUN_AS_NODE=1` が引き継がれている。そのまま `npm start` すると、既定の `~/.agent-host` を使う 2 台目になるので、データ置き場のロック（`core/data-lock.mjs`）で起動を止める（持ち主の PID を出す。止まらなかった頃は空きポートへ移って 2 台目が立っていた）。ポートの持ち主が `Ply.exe` ならリポジトリのサーバーではないので止めない（無停止の更新が on のインストール版では、サーバーは実行場所の `pleiad-node.exe` で走り main の子でない。`%LOCALAPPDATA%\agent-host-runtime` の下の `pleiad-node.exe` も同じ理由で止めない。このサーバーの env には `ELECTRON_RUN_AS_NODE` は付かない）。main から確かめるなら別ポート・別のデータ置き場で起動する。`electron.exe` は `env -u ELECTRON_RUN_AS_NODE` を付けて起動する（付けないと Node として動く）。`web/` はリクエストごとにディスクから読むため、リポジトリのサーバーなら画面だけの変更に再起動は要らない。
 - **再起動すると実行中のターンが終了する。** 停止前に UI の実行中表示または WebSocket の `running` コマンドで実行中の作業が 0 件であることを確認する。実行中なら完了を待つ。確認できない場合や中断が必要な場合は、理由を伝えてユーザーに確認する。
 - 再起動時は確認済みの対象サーバーだけを停止する。他の Node.js プロセスを一括停止しない。Windows でバックグラウンド起動する場合は `Start-Process -WindowStyle Hidden` を使う。
 

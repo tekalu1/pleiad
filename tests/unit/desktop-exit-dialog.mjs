@@ -82,6 +82,7 @@ async function start({ ready = true, work = { count: 0 } } = {}) {
     './computer-overlay.cjs': { attachComputerOverlay: () => ({ close: () => {} }) },
     './agent-browser-bin.cjs': { prepareAgentBrowserBin: () => '' },
     './notifications.cjs': { createDesktopNotifications: () => () => {} },
+    './switch-screen.cjs': { createSwitchScreen: () => ({ attach() {}, reset() {}, supported: () => false, ask: async () => 'later' }) },
     'electron-updater': { autoUpdater: {} },
   };
   const require = id => {

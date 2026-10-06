@@ -42,6 +42,7 @@
       "appearance": "Appearance",
       "context": "Plugins",
       "notify": "Notifications",
+      "voice": "Calls",
       "remote": "Remote",
       "about": "About & updates",
       "delegation": "Delegation",
@@ -1518,6 +1519,7 @@
       "allowedAlways": "Always allowed",
       "allowed": "Allowed",
       "denied": "Denied",
+      "elsewhere": "Handled elsewhere",
       "sending": "Sending “{{action}}”…",
       "sendFailedInline": "Couldn't send “{{action}}” · {{error}}"
     },
@@ -2487,6 +2489,7 @@
       "reasonShort": {
         "escape": "Stopped",
         "stop": "Stopped",
+        "update": "Stopped by update",
         "locked": "Stopped (locked)",
         "forbidden": "Not allowed",
         "denied": "Denied",
@@ -2496,6 +2499,7 @@
       "reason": {
         "escape": "You stopped it with Esc",
         "stop": "You stopped it",
+        "update": "Stopped because Pleiad is updating",
         "locked": "The screen is locked. Unlock it, then ask again.",
         "forbidden": "“{{app}}” can't be controlled. It was declined without asking.",
         "denied": "Control of “{{app}}” was denied.",
@@ -2840,7 +2844,55 @@
     "promptRunning_other": "{{count}} running",
     "promptWaiting_one": "{{count}} waiting for approval",
     "promptWaiting_other": "{{count}} waiting for approval",
-    "promptJoin": " · "
+    "promptJoin": " · ",
+    "handoverWork_one": "{{count}} running task will not be stopped. Pleiad switches to the new version once the work is done.",
+    "handoverWork_other": "{{count}} running tasks will not be stopped. Pleiad switches to the new version once the work is done.",
+    "handoverBrowser": "Tabs in the built-in browser will be reopened."
+  },
+  "switch": {
+    "waiting": "Waiting to switch to Pleiad {{target}}",
+    "view": "View work",
+    "collapse": "Collapse",
+    "interruptNow": "Stop work and switch now",
+    "interruptFailed": "Some work would not stop, so stopping was cancelled. Waiting for the work to finish.",
+    "listTitle": "Work in progress",
+    "since": "since {{time}}",
+    "stoppersTitle": "Will stop when switching",
+    "terminal": "Terminal",
+    "terminalNamed": "Terminal · {{label}}",
+    "unknownSession": "Background work",
+    "openSession": "Open this conversation",
+    "after": "Stopped conversations are kept with {{mark}}, and Resume continues them. Waiting approvals are denied.",
+    "askTitle": "Ready to switch to Pleiad {{target}}",
+    "askSub_one": "Switching will stop {{count}} item",
+    "askSub_other": "Switching will stop {{count}} items",
+    "stopAndSwitch": "Stop and switch",
+    "later": "Later",
+    "manualTitle": "Switching to Pleiad {{target}} stops work",
+    "manualSchema": "The data format changes, so it does not switch by itself",
+    "manualOther": "This update cannot take over while work runs, so it does not switch by itself",
+    "interruptAndSwitch": "Stop and switch",
+    "stopping": "Pleiad {{target}} · Stopping work… {{done}} / {{total}}",
+    "switching": "Switching to Pleiad {{target}}…",
+    "progress": "Switching progress",
+    "failed": "The new version could not start, so Pleiad is running the previous version ({{current}})",
+    "failedMark": "Failed",
+    "retry": "Try again",
+    "dismiss": "Dismiss",
+    "stopped": "Stopped: {{items}}",
+    "stoppedShell_one": "{{count}} ! shell",
+    "stoppedShell_other": "{{count}} ! shells",
+    "stoppedAgent_one": "{{count}} {{agent}} terminal",
+    "stoppedAgent_other": "{{count}} {{agent}} terminals",
+    "stoppedBackground_one": "{{count}} background terminal",
+    "stoppedBackground_other": "{{count}} background terminals",
+    "pageWaiting": "Waiting to switch to the new version · {{target}}",
+    "pageAsking": "Some things will stop when switching · {{target}}",
+    "pageManual": "This update stops work to switch · {{target}}",
+    "pageSwitching": "Switching to {{target}}…",
+    "pageRunning": "Running {{current}}",
+    "pageFailed": "The new version could not start",
+    "pageFailedHint": "Running the previous version ({{current}})"
   },
   "outbox": {
     "status": {
@@ -2870,6 +2922,69 @@
     "loading": "Loading…",
     "moreMatches_one": "{{count}} more. Type to narrow down",
     "moreMatches_other": "{{count}} more. Type to narrow down"
+  },
+  "inbox": {
+    "bell": "Notifications",
+    "bellUnread": "Notifications ({{n}} unread)",
+    "bellWait": "Notifications ({{n}} unread, waiting for you)",
+    "panel": "Notifications",
+    "list": "Notification list",
+    "empty": "No new notifications",
+    "readAll": "Mark all read",
+    "more": "Show more",
+    "unreadMark": "Unread",
+    "filter": {
+      "label": "Filter",
+      "all": "All",
+      "wait": "Needs you",
+      "mention": "@you"
+    },
+    "line": {
+      "approval": {
+        "named": {
+          "open": "{{name}} is waiting for your approval",
+          "closed": "{{name}} was waiting for your approval"
+        },
+        "plain": {
+          "open": "An agent is waiting for your approval",
+          "closed": "An agent was waiting for your approval"
+        }
+      },
+      "question": {
+        "named": {
+          "open": "{{name}} is waiting for your answer",
+          "closed": "{{name}} was waiting for your answer"
+        },
+        "plain": {
+          "open": "An agent is waiting for your answer",
+          "closed": "An agent was waiting for your answer"
+        }
+      },
+      "failed": {
+        "named": "{{name}}'s turn failed",
+        "titled": "{{title}} failed",
+        "plain": "A conversation failed"
+      },
+      "done": {
+        "titled": "{{title}} finished",
+        "plain": "A conversation finished"
+      },
+      "mention": {
+        "named": "{{name}} wrote @you",
+        "plain": "A post mentions @you"
+      }
+    },
+    "place": {
+      "thread": "#{{channel}} › {{thread}}",
+      "channel": "#{{channel}}",
+      "chat": "Chats › {{title}}"
+    },
+    "outcome": {
+      "allowed": "Approved",
+      "answered": "Answered",
+      "denied": "Denied",
+      "cancelled": "Withdrawn"
+    }
   },
   "notify": {
     "completed": "Work finished",
@@ -3902,6 +4017,116 @@
       "sortNewest": "Newest first (press for oldest first)",
       "noMatch": "No matches",
       "noItems": "No messages in this conversation yet"
+    }
+  },
+  "voice": {
+    "call": {
+      "start": "Start a call",
+      "endAt": "End call · {{time}}"
+    },
+    "mic": {
+      "mute": "Mute microphone · {{state}}",
+      "unmute": "Unmute · {{state}}",
+      "denied": "Microphone not allowed · press to try again",
+      "noDevice": "No microphone found · press to try again",
+      "busy": "Microphone in use by another app · press to try again"
+    },
+    "spk": {
+      "mute": "Mute speaker",
+      "unmute": "Unmute speaker",
+      "speaking": " · speaking"
+    },
+    "state": {
+      "starting": "Starting",
+      "listening": "Listening",
+      "hearing": "Hearing you",
+      "thinking": "Thinking",
+      "speaking": "Speaking",
+      "muted": "Muted"
+    },
+    "live": {
+      "starting": "Starting the call",
+      "listening": "Listening",
+      "muted": "Microphone muted",
+      "unmuted": "Unmuted",
+      "denied": "Microphone not allowed",
+      "ended": "Call ended"
+    },
+    "mark": "Spoken message",
+    "openSettings": "Open settings",
+    "hint": {
+      "reading": "Reading aloud",
+      "stop": "Stop",
+      "jump": "Go to the spoken line"
+    },
+    "note": {
+      "denied": "Microphone not allowed ·",
+      "noDevice": "No microphone found ·",
+      "busy": "Microphone in use by another app ·",
+      "nokey": "Calls need an OpenRouter key ·",
+      "dailyLimit": "Today's call limit reached ·",
+      "callLimit": "The call reached its length limit and ended ·",
+      "idle": "The call ended after a long time without hearing anyone",
+      "link": "The call connection was lost",
+      "sttBusy": "Speech recognition is busy. Please say that again",
+      "stt": "Could not hear that. Please say it again",
+      "tts": "Could not read that aloud. See the text on screen",
+      "sendFailed": "Could not send the message: {{error}}",
+      "notSent": "It could not be sent right now, so the message was left in the input box",
+      "start": "Could not start the call ·",
+      "startTimeout": "The call did not get ready in time"
+    },
+    "settings": {
+      "intro": "Talk to the agent: your voice is transcribed and sent to the conversation, and the reply is read aloud. Both go through OpenRouter.",
+      "loadFailed": "Could not load: {{error}}",
+      "saved": "Saved",
+      "failed": "Could not save: {{error}}",
+      "key": {
+        "title": "OpenRouter key",
+        "set": "Registered",
+        "unset": "Not registered",
+        "replace": "Replace",
+        "delete": "Delete",
+        "save": "Register",
+        "show": "Show",
+        "hide": "Hide",
+        "saved": "Key registered",
+        "deleted": "Key deleted",
+        "note": "Only this PC holds the key and it is never shown on screen. Once registered, the audio of calls and the text read aloud are sent to OpenRouter (and the provider of the model you pick).",
+        "encrypted": "The key is stored with the OS encryption.",
+        "plain": "This PC cannot encrypt, so the key is kept as-is in a file with restricted permissions.",
+        "check": {
+          "ok": "The key checked out",
+          "invalid": "OpenRouter did not accept this key",
+          "unreachable": "Could not reach OpenRouter to check",
+          "nokey": ""
+        }
+      },
+      "models": {
+        "title": "Models and voice",
+        "stt": "Speech-to-text (STT) model",
+        "fallback": "Fallback STT model",
+        "fallbackHint": "Used when the main model is busy and turns a request down. Leave empty for no fallback",
+        "tts": "Text-to-speech (TTS) model",
+        "voice": "Voice",
+        "language": "Speech language",
+        "auto": "Auto (the display language)",
+        "ja": "Japanese",
+        "en": "English"
+      },
+      "limits": {
+        "title": "Cost safeguards",
+        "call": "Longest single call (minutes)",
+        "daily": "Longest total call time per day (minutes)",
+        "today": "Today: calls {{minutes}} min · transcribed {{stt}} min · read aloud {{chars}} characters",
+        "note": "A call ends when it reaches a limit (and cannot start once the day's limit is reached). A call that hears nobody for 10 minutes also ends."
+      },
+      "audio": {
+        "title": "Microphone",
+        "echo": "Echo cancellation, noise suppression, auto gain",
+        "echoHint": "A browser feature. It helps avoid picking up sounds other than your voice when you listen on speakers. Turn it off if your voice sounds muffled.",
+        "permission": "If the microphone is not allowed, allow it in the browser's site settings (the lock icon in the address bar) or the OS privacy settings. The desktop app allows microphone use from this screen automatically."
+      }
     }
   }
 }

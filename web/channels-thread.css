@@ -61,9 +61,9 @@
 /* bot の返事の「作業中」「あなた待ち」は帯・進捗の弧・承認のカードが語る。「編集済み」は進捗を同じ投稿で書き換えるので出さない */
 .ch-thread .post-state:is(.working,.waiting){display:none}
 .ch-thread .post[data-author=bot] .post-edited{display:none}
-.ch-thread .post.flash{animation:th-flash 1.4s var(--ease-out)}
+.ch-thread .post.flash,.ch-feed .post.flash{animation:th-flash 1.2s var(--ease-out)}
 @keyframes th-flash{from{background:var(--surface-sel)}}
-@media (prefers-reduced-motion:reduce){.ch-thread .post.flash{animation:none;background:var(--surface-sel)}}
+@media (prefers-reduced-motion:reduce){.ch-thread .post.flash,.ch-feed .post.flash{animation:none;background:var(--surface-sel)}}
 /* システムの投稿（「あなたが止めました」など）。投稿の列の本文の位置に合わせた静かな一行 */
 .th-sys{display:flex;align-items:baseline;gap:8px;margin:4px 10px 4px 52px;font-size:var(--fs-s);color:var(--ink-weak)}
 .th-sys-mark{flex:none;width:14px;text-align:center}

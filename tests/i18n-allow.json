@@ -4,6 +4,7 @@
     "server:codex.subagent.collab",
     "ui:settings.browser.agentBrowser.name",
     "channels:side.tabs.chats",
+    "ui:inbox.place.chat",
     "channels:side.tabs.channels",
     "channels:side.sections.bots",
     "channels:side.dm",

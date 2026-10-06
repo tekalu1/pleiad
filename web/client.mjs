@@ -23,6 +23,7 @@ import { isSearchShortcut } from './session-find.mjs';
 import { captureViewState, restoreViewState } from './view-state.mjs';
 setupCodeCopy();
 import { setupUpdates } from './updates.mjs';
+import { setupSwitchNotice } from './switch-notice.mjs';
 import { setupCliSetup } from './cli-setup.mjs';
 import { setupRemoteBadge, remoteInfo } from './remote-badge.mjs';
 import { setupUsage, createUsageSource } from './usage.mjs';
@@ -69,6 +70,8 @@ import { isAutoRouting, routingLine, routingDetail, pinnedDetail, retryPanel, re
 import { setupDelegationSettings } from './delegation-settings.mjs';
 import { createSide, backendLogo } from "./side.mjs";
 import { setupChannels } from "./channels/index.mjs";
+import { setupVoice } from "./voice/index.mjs";
+import { setupVoiceSettings } from "./voice/settings.mjs";
 import { familiesOf } from "./family.mjs";
 import { createBranches, commonPrefix, nodeKeys } from "./branches.mjs";
 import { retainPlan, syncRequest, joinReply } from "./history-sync.mjs";
@@ -85,7 +88,7 @@ import { createSessionLoads } from "./session-stream.mjs";
 const sessionLoads = createSessionLoads();
 import { createReadCompletions } from "./unread.mjs";
 import { isInterrupted, interruptUnread, interruptReadPoint, interruptLineText, reasonOf, stopMark, pausedCount, resumeLabel,
-  resumeNoteText, resumeVisible, updateInterrupted, limitResumeState, limitLineNote, resumeShortLabel, LIMIT_GRACE_MS } from './interrupt.mjs';
+  resumeNoteText, resumeVisible, updateInterrupted, limitResumeState, limitLineNote, resumeShortLabel, LIMIT_GRACE_MS, versionReload } from './interrupt.mjs';
 import { setupContext } from './context.mjs';
 import { setupSessionContext, chipText } from './session-context.mjs';
 import { budgetOf } from './instruction-amount.mjs';
@@ -97,6 +100,7 @@ import { streamMessages } from './stream-messages.mjs';
 import { createComposerWait } from './composer-wait.mjs';
 import { createConnectionStatus } from './connection-status.mjs';
 import { attentionCounts, paintOpenSidebar } from './open-sidebar-mark.mjs';
+import { setupNotificationInbox } from './notification-inbox.mjs';
 import { createConversationNav } from './conversation-nav-view.mjs';
 import { createConversationRail } from './conversation-rail.mjs';
 import { createConversationToc } from './conversation-toc.mjs';
@@ -195,6 +199,8 @@ const readCompletions = createReadCompletions({ storage: readStorage, send: read
 const displayedCompletions = new Map();
 // 更新の知らせ（web/updates.mjs）。実行中の件数が変わったら脇の知らせの一行を描き直す。setupUpdates が下で入れる
 let updatesUi = null;
+// 更新の後、新しい版への切り替えを待っている間の知らせ（web/switch-notice.mjs）。main が渡す状態を描く。下で入れる
+let switchUi = null;
 
 const token = new URL(location.href).searchParams.get("token") ?? "";
 const $ = (id) => document.getElementById(id);
@@ -242,6 +248,8 @@ let queuedSend = null;
 
 const NL = String.fromCharCode(10);
 const PROTOCOL = 3;
+// この画面を配ったサーバーの版（サーバーが index.html に埋める。web/interrupt.mjs の versionReload）
+const SERVED_BUILD = document.querySelector('meta[name="pleiad-build"]')?.content ?? "";
 // この PC の通知（設定 › 通知 › この PC）。切った種類と、いま見ている会話は出さない（ADR 0086）
 let notifyPc = { done: true, reply: true, failed: true };
 // スマホのアプリの殻が背面に回っている間は、画面が可視でも見ていない（殻が plyremote:stop / plyremote:start を投げる）
@@ -1676,6 +1684,7 @@ function computerApproval(ev, approval, row) {
     } catch (err) {
       clearTimeout(arc);
       onFailed();
+      if (alreadyResolved(err)) { foldElsewhere(ev.id); return false; }
       for (const x of buttons) x.disabled = false;
       res.className = "res fail";
       res.setAttribute("role", "alert");
@@ -1738,6 +1747,7 @@ function computerApproval(ev, approval, row) {
     swapHeight(host, () => { if (details) details.hidden = true; row.append(box); });
     fadeIn(box);
     bundleOf(row)?.reveal(row);
+    openCards.set(ev.id, { el: box, sending: () => Boolean(box.dataset.sending), fold: () => foldApprovalRow(ev.id, { box, row, details, host }) });
     return box;
   }
 
@@ -1760,6 +1770,7 @@ function computerApproval(ev, approval, row) {
       onFailed: () => { delete card.dataset.sending; },
     });
     if (!ran) return;
+    if (card.classList.contains("done")) { state.pendingPerms.delete(ev.id); return; }   // 答えを待つ間に、よそで片付いて畳まれていた
     m.classList.add("done");
     m.closest(".mw")?.classList.add("done");
     card.classList.add("done");
@@ -1775,6 +1786,7 @@ function computerApproval(ev, approval, row) {
   b.always.onclick = () => settle("always");
   b.deny.onclick = () => settle(null);
   placeCard(m, ev, null);
+  registerRelayCard(ev, { m, card, head, code: null, actions, res, buttons: b.all, removeOnFold: [body], desc: approvalHeading(approval) });
   return m;
 }
 
@@ -1851,6 +1863,7 @@ function settingChangeApproval(ev, change) {
     } catch (err) {
       clearTimeout(arc);
       delete card.dataset.sending;
+      if (alreadyResolved(err)) return collapse(t("chat.approval.elsewhere"));
       for (const b of buttons) b.disabled = false;
       res.className = "res fail";
       res.setAttribute("role", "alert");
@@ -1988,6 +2001,7 @@ function questionCard(ev, into = null) {
     } catch (e) {
       clearTimeout(arc);
       delete card.dataset.sending;
+      if (alreadyResolved(e)) return foldElsewhere(ev.id);
       inputs.forEach((b, i) => { b.disabled = was[i]; });
       res.className = "res fail";
       res.setAttribute("role", "alert");
@@ -2012,7 +2026,7 @@ function questionCard(ev, into = null) {
   send.onclick = () => settle(answersNow());
   skip.onclick = () => settle(null);
   placeCard(m, ev, into);
-  if (ev.remote) registerRelayCard(ev, { m, card, head, code: null, actions, res, question: true,
+  registerRelayCard(ev, { m, card, head, code: null, actions, res, question: true,
     get buttons() { return [...card.querySelectorAll("button, input")]; } });
   return m;
 }
@@ -2105,6 +2119,7 @@ function rowApprovalCard(ev, row) {
       delete box.dataset.sending;
       box.classList.remove("sending");
       if (!ok) { delete row.dataset.denied; row.toolChange = change; }
+      if (alreadyResolved(e)) return foldElsewhere(ev.id);
       for (const b of buttons) b.disabled = false;
       res.className = "res fail";
       res.setAttribute("role", "alert");
@@ -2138,7 +2153,22 @@ function rowApprovalCard(ev, row) {
   swapHeight(host, () => { details.hidden = true; row.append(box); });
   fadeIn(box);
   bundleOf(row)?.reveal(row);
+  // よそで片付いた。行へ戻すだけ（どう答えたかは分からない。結果はツールの流れで届く）
+  openCards.set(ev.id, { el: box, sending: () => Boolean(box.dataset.sending), fold: () => foldApprovalRow(ev.id, { box, row, details, host }) });
   return box;
+}
+
+/** ツールの行の中の承認を、答えを待たずに畳んで普通の行へ戻す（rowApprovalCard・computerApproval の行） */
+function foldApprovalRow(id, { box, row, details, host }) {
+  state.pendingPerms.delete(id);
+  if (!box.isConnected) return;   // 答えて、もう行へ戻っている
+  swapHeight(host, () => {
+    box.remove();
+    if (details) { details.hidden = false; fadeIn(details); }
+    row.classList.remove("tc-waiting");
+  });
+  bundleOf(row)?.paint();
+  if (isRunningHere()) activity.show(t("activity.continuing"));
 }
 
 function permissionCard(ev, into = null) {
@@ -2197,6 +2227,8 @@ function permissionCard(ev, into = null) {
     } catch (e) {
       clearTimeout(arc);
       delete card.dataset.sending;
+      // 先によそで片付いていた。失敗ではないので、押す前の形には戻さず畳む
+      if (alreadyResolved(e)) return foldElsewhere(ev.id);
       for (const b of buttons) b.disabled = false;
       res.className = "res fail";
       res.setAttribute("role", "alert");
@@ -2222,7 +2254,7 @@ function permissionCard(ev, into = null) {
   deny.onclick = () => settle(false);
   always.onclick = () => settle(true, true);
   placeCard(m, ev, into);
-  if (ev.remote || ev.remoteOrigin) registerRelayCard(ev, { m, card, head, code, actions, res, buttons });
+  registerRelayCard(ev, { m, card, head, code, actions, res, buttons });
   return m;
 }
 
@@ -2244,12 +2276,54 @@ function hostOnlyCard(ev) {
   return m;
 }
 
-// 承認の中継のカード（permission id → 部品）。端末の会話のカード（ev.remote）はホストのオフラインでボタンを止め、ホストで先に答えられたら 1 行に畳む。
-// ホストの側の子のカード（ev.remoteOrigin）は、端末で答えられたら 1 行に畳む（docs/remote.md §4.5、ADR 0146）
-const relayCards = new Map();
+// 出ている承認・質問のカード（permission id → { el, sending, fold, setOnline? }）。ほかで片付いたときに畳むための名簿。
+// 端末の会話のカード（ev.remote）はホストのオフラインでボタンを止め、ホストで先に答えられたら 1 行に畳む。
+// ホストの側の子のカード（ev.remoteOrigin）は、端末で答えられたら 1 行に畳む（docs/remote.md §4.5、ADR 0146）。
+// どのカードも、別の窓・別の画面（スマホ）・子の会話の側で片付いたら（permissionSettled・running の突き合わせ・ALREADY_RESOLVED）「別の場所で処理されました」に畳む
+const openCards = new Map();
+// 走っている一覧（running の permissions）にもう無いカードを、この間だけ待ってから畳む（承認の便りと一覧の前後を吸収する）
+const SETTLE_RECONCILE_MS = 2500;
+const reconcileTimers = new Map();
+
+/** 片付いた承認への答え（サーバーの ALREADY_RESOLVED）。失敗ではなく、別の場所で処理された知らせ */
+const alreadyResolved = (err) => err?.code === "ALREADY_RESOLVED";
+
+/** そのカードを「別の場所で処理されました」に畳む。出ていなければ何もしない */
+function foldElsewhere(id) {
+  const entry = openCards.get(id);
+  openCards.delete(id);
+  state.pendingPerms.delete(id);
+  entry?.fold({ by: "elsewhere" });
+}
+
+/** permissionSettled。この窓で答えを送っている最中のカードは、答えの応答で畳むのでここでは触らない（「許可した」と出すため） */
+function onPermissionSettled(ev) {
+  state.pendingPerms.delete(ev.id);
+  const entry = openCards.get(ev.id);
+  if (entry && !entry.sending()) foldElsewhere(ev.id);
+}
+
+/**
+ * 取りこぼしに備えて、出ているカードを走っている一覧（running の permissions）と突き合わせる。
+ * 一覧に無いカードは、少し待ってもまだ無ければ畳む（決着の便りを受け取れなかった窓・つなぎ直した画面）。消えた・答え終えたカードは名簿から外す
+ */
+function reconcileOpenCards() {
+  const live = new Set((state.work.permissions ?? []).map((p) => p.id));
+  for (const [id, entry] of openCards) {
+    if (!entry.el.isConnected || entry.el.classList?.contains("done")) { openCards.delete(id); continue; }
+    if (live.has(id) || reconcileTimers.has(id)) continue;
+    reconcileTimers.set(id, setTimeout(() => {
+      reconcileTimers.delete(id);
+      if ((state.work.permissions ?? []).some((p) => p.id === id)) return;
+      const open = openCards.get(id);
+      if (open && !open.sending()) foldElsewhere(id);
+    }, SETTLE_RECONCILE_MS));
+  }
+}
 
 function registerRelayCard(ev, parts) {
-  const { m, card, head, code, actions, res, buttons, question = false, hostOnly = false } = parts;
+  // removeOnFold・desc は、見出しの要約と本文が code の外にあるカード（コンピューターの操作の承認）が、畳むときに本文を外して要約を見出しへ移すため
+  const { m, card, head, code, actions, res, buttons, question = false, hostOnly = false, removeOnFold = [], desc = "" } = parts;
   const blocking = ev.remote ? null : t("chat.approval.blocking");
   if (ev.remote) {
     // 子の会話を見る（見るための補助。手元の窓だけ。ホストのリモートの窓でその会話を開く）
@@ -2278,30 +2352,34 @@ function registerRelayCard(ev, parts) {
     // 誰がどこで答えたか分からない決着（つなぎ直しで消えた・タスクが止まった）は、カードごと下げる
     if (!by) { m.remove(); state.pendingPerms.delete(ev.id); return; }
     const what = question ? t("chat.approval.relay.answered") : allow ? t("chat.approval.allowed") : t("chat.approval.denied");
-    // この端末（の別の窓）で答えた決着は、ふつうの承認と同じ「許可した · 時刻」。ホストで先に答えられたら「ホスト名で…」、ホストの子のカードは「端末名で…」
-    const line = ev.remote ? (by === "device" ? `${what} · ${hhmm(new Date())}` : t("chat.approval.relay.answeredByHost", { host: peer || ev.remote.hostName, what, time: hhmm(new Date()) }))
+    // この端末（の別の窓）で答えた決着は、ふつうの承認と同じ「許可した · 時刻」。ホストで先に答えられたら「ホスト名で…」、ホストの子のカードは「端末名で…」。
+    // 別の場所（別の窓・子の会話の側・ターンの終わりや中断）で片付いたものは、どう答えたかを問わず「別の場所で処理されました · 時刻」
+    const line = by === "elsewhere" ? `${t("chat.approval.elsewhere")} · ${hhmm(new Date())}`
+      : ev.remote ? (by === "device" ? `${what} · ${hhmm(new Date())}` : t("chat.approval.relay.answeredByHost", { host: peer || ev.remote.hostName, what, time: hhmm(new Date()) }))
       : t("chat.approval.relay.answeredByDevice", { device: peer || ev.remoteOrigin?.deviceName || "", what, time: hhmm(new Date()) });
     m.classList.add("done");
     m.closest(".mw")?.classList.add("done");
     card.classList.add("done");
     for (const rest of head.querySelectorAll(".card-kind-rest")) rest.remove();
     head.querySelector(".card-kind").textContent = question ? t("chat.ask.done") : t("chat.approval.done");
+    if (desc) head.append(el("span", "desc", desc));
     head.append(el("span", "res", line));
     card.querySelector(".relay-note")?.remove();
+    for (const n of removeOnFold) n.remove();
     actions.remove();
     if (code && !ev.browserSite) foldSettledCard(card, head, code, approvalTarget(ev.input));
     state.pendingPerms.delete(ev.id);
   };
-  relayCards.set(ev.id, { setOnline, fold });
+  openCards.set(ev.id, { el: m, sending: () => Boolean(card.dataset.sending), setOnline, fold });
   if (ev.remote && ev.remote.online === false) setOnline(false);
 }
 
 /** 中継のカードの決着（permissionRelayEnd）と、ホストの接続の状態（permissionRelayState）。開いていないカードは何もしない */
 function onRelayCardEvent(ev) {
-  const entry = relayCards.get(ev.id);
+  const entry = openCards.get(ev.id);
   if (!entry) return;
-  if (ev.type === "permissionRelayState") entry.setOnline(ev.online !== false);
-  else { entry.fold({ by: ev.by, allow: ev.allow === true, peer: ev.peer ?? ev.hostName }); relayCards.delete(ev.id); }
+  if (ev.type === "permissionRelayState") entry.setOnline?.(ev.online !== false);
+  else { entry.fold({ by: ev.by, allow: ev.allow === true, peer: ev.peer ?? ev.hostName }); openCards.delete(ev.id); }
 }
 
 /**
@@ -2733,6 +2811,7 @@ function syncOutboxRows(messages) {
 function onEvent(ev, replay = false) {
   // bot・Channels・ルーティンの画面（web/channels/）。この画面の出来事ならここで終わる。ほかの出来事（permission など）も部品へ渡る
   if (channelsUi.onEvent(ev, replay)) return;
+  if (ev.type === 'notificationsChanged') { notificationInbox.onEvent(ev); return; }
   if (ev.type?.startsWith('shell.')) return onShellEvent(ev);
   if (ev.type === 'completionReady') {
     completionNotifications.completed(ev, state.sessions.find(s => s.id === ev.sessionId), replay);
@@ -2789,9 +2868,13 @@ function onEvent(ev, replay = false) {
     return;
   }
   // どの口（画面・AI・CLI）から設定を変えても届く。prefs などの既存の配信が無い設定（コンテキストの既定）は、開いている設定の画面がここで取り直す
-  if (ev.type === 'settingsChanged') { window.dispatchEvent(new CustomEvent('ply:settings-changed', { detail: ev })); return; }
+  if (ev.type === 'settingsChanged') { window.dispatchEvent(new CustomEvent('ply:settings-changed', { detail: ev })); voiceSettings.event(ev); if (ev.keys?.includes?.('voice')) voiceUi.refresh(); return; }
+  // 通話のキーの登録・削除（設定 › 通話。core/voice/host.mjs）
+  if (ev.type === 'voiceChanged') { voiceSettings.event(ev); return; }
   // 設定の変更の承認が決着した（どの端末で答えても・取り下げても）。開いているカードを 1 行に畳む（ADR 0088）
   if (ev.type === 'settingApproval') { settleSettingCards(ev); return; }
+  // 承認が片付いた（子の会話・別の窓・ターンの終わりや中断で）。開いていない会話の分の覚えと、子の会話のダイアログのカードも畳むので、会話の絞り込みの前に受ける
+  if (ev.type === 'permissionSettled') { onPermissionSettled(ev); return; }
   if (ev.type === 'compactionSchedule') {
     const row = state.sessions.find(s => s.id === ev.sessionId);
     if (row) row.compactionAt = ev.at;
@@ -3181,6 +3264,7 @@ function applyRunning(work) {
   // 消えた分を覚えたままにすると、次にその会話を開いたとき解決済みのカードが出る
   const unresolved = new Set((state.work.permissions ?? []).map((p) => p.id));
   for (const id of state.pendingPerms.keys()) if (!unresolved.has(id)) state.pendingPerms.delete(id);
+  reconcileOpenCards();
   const behind = new Map();
   for (const t of state.work.turns ?? []) {
     const b = behindOf(t);
@@ -3214,6 +3298,7 @@ function applyRunning(work) {
   paintSettingsNotice();
   if (changed) { renderSessions(); refreshWorktree().catch(() => {}); }
   updatesUi?.workChanged();
+  switchUi?.refresh();
   // バックグラウンドはこの会話の分だけ稼働表示に出す。他所の分は一覧の行に付く
   syncWorkEntry();
   restorePastSubagents(state.current);
@@ -5609,6 +5694,18 @@ function paintLocale() {
 }
 
 /** サーバーから届いた言語を受ける。読み直すなら true */
+/** 版の違うサーバーにつながったら、入力欄の下書きを保存してから読み直す。読み直すなら true（docs/zero-downtime-update/design.md §8） */
+function reloadForVersion(ready) {
+  let done = null;
+  try { done = sessionStorage.getItem("ply-version-reload"); } catch {}
+  const key = versionReload(SERVED_BUILD, ready, done);
+  if (!key) return false;
+  // 印を残せない（保存が禁止されている）と、読み直しを繰り返しうるので読み直さない
+  try { sessionStorage.setItem("ply-version-reload", key); } catch { return false; }
+  Promise.race([saveDraft().catch(() => {}), new Promise((resolve) => setTimeout(resolve, 3000))]).finally(() => location.reload());
+  return true;
+}
+
 function applyLocale(info) {
   if (!info || !["ja", "en"].includes(info.lang)) return false;
   state.locale = { setting: info.setting ?? "auto", lang: info.lang };
@@ -5855,8 +5952,11 @@ const filePreview = setupFilePreview({
 browserEntry = setupBrowserEntry({ button: $('browserEntry'), browser: browserPanel, preview: filePreview, bridge: window.plyDesktop?.browser,
   getSessionId: () => state.current ?? null, getAgentName: () => labelOf(activeBackendId()),
   blocked: () => document.body.classList.contains('settings') || !!document.querySelector('dialog[open]') });
+// 通話モード（承認済み 2026-10-06。web/voice/、docs/voice-call.md）。部品を差し込む口は 1 か所ずつ: Chats の会話はこの下の voiceUi.mount、スレッドは web/channels/thread.mjs
+const voiceUi = setupVoice({ token, invoke: async (op, args = {}) => cmd('invoke', { op, args }), openSettings: () => { onboarding.open('voice'); voiceSettings.load(); }, available: () => state.voice === true });
 // bot・Channels・ルーティンの画面（web/channels/index.mjs。docs/channels.md「画面の口」）。client.mjs が持つのはこの 1 つの口だけ
 const channelsUi = setupChannels({
+  voice: voiceUi,
   cmd: (command, args) => cmd(command, args),
   invoke: async (op, args = {}) => cmd('invoke', { op, args }),
   state, filePreview, side, t,
@@ -5879,9 +5979,35 @@ const channelsUi = setupChannels({
   showMenu: (x, y, items, title) => showMenu(x, y, items, title),
   renderAssistantMarkdown, renderPresent,
 });
+// 通知ボタンと通知の一覧（承認済み 2026-10-06。web/notification-inbox.mjs）。件数は notificationsChanged、一覧は notifications.list
+const notificationInbox = setupNotificationInbox({
+  bell: $('notifBell'), panel: $('notifPanel'), veil: $('notifVeil'),
+  invoke: (op, args = {}) => cmd('invoke', { op, args }), t, relTime,
+  titleOf: id => { const title = state.sessions.find(s => s.id === id)?.title; return title && title !== '(no title)' ? title : ''; },
+  open: target => openFromNotification(target),
+  narrow: narrowView, anchor: () => $('sidebar'),
+});
 // External resource confirmation is available on every screen.
 const computerSettings = setupComputerSettings({ cmd: (command, args) => cmd(command, args), getPrefs: () => state.prefs, getHostCaps: () => state.hostCaps });
 const browserSettings = setupBrowserSettings({ available: !!browserPanel, cmd: (command, args) => cmd(command, args), getPrefs: () => state.prefs, getAgentLabel: labelOf, getHostCaps: () => state.hostCaps });
+// 通話モードの差し込み口（Chats の会話）。契約は web/voice/index.mjs の冒頭。入力欄・頭・メインの面へは、ここの 1 か所だけで繋ぐ
+const voiceWraps = new WeakMap();
+voiceUi.mount({
+  id: 'chat',
+  header: document.querySelector('body > main > header.top'), headerBefore: $('tocEntry'),
+  composer: { root: $('composer'), row: document.querySelector('#cbox .crow'), before: $('send'), below: $('cbox'), refit: () => controls.fit() },
+  main: document.querySelector('body > main'), log: $('log'), overlay: $('logFrame'), replyScope: () => $('log'),
+  tail: {
+    // 本物の行と同じ入れ物（.mw > 筋 + .mw-body。wrap・place が作る）に入れて、同じ列・同じ幅の規則で出す。「止める」の行も同じ列へ（一度だけ包む）
+    place: (node) => place(node.classList.contains('mw') ? node : (voiceWraps.get(node) ?? voiceWraps.set(node, wrap(node)).get(node))), rows: thread,
+    isRow: (node) => node.classList.contains('mw') && Boolean(node.querySelector('.m.user')),   // 会話の列の行は .mw の中に .m.user が入る
+    markHost: (row) => row.querySelector('.m.user > .who > span'),
+    createRow: () => { const m = el('div', 'm user'); m.append(whoLine(t('chat.message.you'), new Date().toISOString(), { actions: false })); const body = el('div', 'body'); m.append(body); return { el: wrap(m), body }; },
+  },
+  target: () => ({ kind: 'chat', sessionId: state.current && state.current !== freshSessionId ? state.current : null }),
+  send: (text) => submitVoiceText(text),
+  follow: () => { const log = $('log'); if (log.scrollHeight - log.scrollTop - log.clientHeight < 160) log.scrollTop = log.scrollHeight; },
+});
 // 会話とプレビューの外部リンクは設定の開き先へ（web/link-open.mjs）
 configureLinkOpen({ getPrefs: () => state.prefs, chooseRemote: (url, openHere) => chooseRemote({ url, openHere }) });
 // 文中の URL・名前付きのリンクの、行き先の一行と右クリックのメニュー（web/link-menu.mjs）
@@ -7435,6 +7561,21 @@ async function openFromSearch(id, jump) {
 }
 
 /**
+ * 通知の一覧の行を押した（web/notification-inbox.mjs）。会話なら Chats の会話を開き、発言（uuid）があればその発言へ送って輪を付ける。
+ * チャンネルなら channels:show（スレッド・投稿まで。着いた投稿は web/channels/thread.mjs が輪を付ける）
+ */
+async function openFromNotification({ sessionId, uuid, channelId, threadId, postId }) {
+  if (narrowView.matches) setDrawer(false);
+  if (channelId) {
+    document.dispatchEvent(new CustomEvent('channels:show', { detail: { kind: 'channel', id: channelId, ...(threadId ? { threadId } : {}), ...(postId ? { postId } : {}) } }));
+    return;
+  }
+  if (!sessionId) return;
+  channelsUi.setTab('chats');
+  await openFromSearch(sessionId, uuid ? { uuid, role: 'assistant', query: '', speaker: 'assistant' } : null);
+}
+
+/**
  * 検索で探した語を会話の中の検索へ引き継ぎ（開かない。Ctrl+F の 1 手で残りの一致へ進める）、その発言へ送って輪（note-flash）を付ける。
  * 発言は uuid で引く（会話の行の data-uuid と、検索の結果の uuid は同じ値）。見つからなければ語だけ引き継ぐ
  */
@@ -7851,6 +7992,18 @@ async function clearSentDraft(id, text, attachments) {
   if (state.current === id) { $('prompt').value = ''; state.attached = []; renderAttached(); $('slashHint').textContent = ''; slashSkills.close(); fitPrompt(); }
   await persistDraft(id, { text: '', attached: [], dirty: true });
 }
+/**
+ * 通話で確定した発言を、いまの送信の経路（submit）にそのまま乗せる（web/voice/index.mjs の slot.send）。
+ * 入力欄の書きかけ（字と添付）は退避して、送れたら戻す。送れなかったら発言は欄に残し（書きかけはその後ろ）、投げる
+ */
+async function submitVoiceText(text) {
+  const keep = { text: $('prompt').value, attached: state.attached };
+  $('prompt').value = text; state.attached = []; renderAttached(); fitPrompt();
+  await submit({ at: null });
+  if ($('prompt').value.trim() === '') { $('prompt').value = keep.text; state.attached = keep.attached; renderAttached(); fitPrompt(); return; }
+  $('prompt').value = [text, keep.text].filter(Boolean).join(NL + NL); state.attached = keep.attached; renderAttached(); fitPrompt();
+  throw new Error(t('voice.note.notSent'));
+}
 async function submit({ at = armedSends.get(state.current) } = {}) {
   // 入力欄の `!`: シェルの形なら走らせる。使えない会話の `!` は送らずに理由の一行を光らせる（文として送るのは「文として送る」だけ）
   if (shellComposer.active) return runShellFromComposer();
@@ -7980,11 +8133,15 @@ function connect() {
     const m = JSON.parse(e.data);
 
     if (m.kind === "ready") {
+      // 通話モード（/voice-ws）に対応した接続か（キーを持つこの PC の画面だけ。docs/voice-call.md）
+      state.voice = m.voice === 1; voiceUi.refresh();
       // protocolVersion は必ず gate する。想定外なら黙って誤動作させない
       if (m.protocolVersion !== PROTOCOL) {
         sys(html.t("app.protocolUnsupported", { version: m.protocolVersion }));
         return ws.close();
       }
+      // 画面を配ったのと違う版のサーバーにつながった（無停止の更新の切り替え）。下書きを保存して 1 回だけ読み直す
+      if (reloadForVersion(m)) return;
       if (m.homeDir) state.homeDir = m.homeDir;
       // サーバーの起動時刻。これより前の更新による中断だけを「更新の後」の一行に数える（syncResumeStrip）
       state.serverStartedAt = Number.isFinite(m.startedAt) ? m.startedAt : null;
@@ -8017,6 +8174,7 @@ function connect() {
       remoteSettings.refresh();
       // この PC の通知の設定。見ている会話を知らせ直す（つなぎ直した接続には、まだ印が無い）
       notifySettings.refresh();
+      notificationInbox.reconnected();
       presenceReporter.reset();
       presenceReporter.report(true);
       return refresh({ sharePending: true }).then(async () => {
@@ -8303,7 +8461,17 @@ const onboarding = setupOnboarding({ cmd, refreshAuth, getAuth: () => state.auth
 // 実行中でも更新できる（ADR 0036）。確認の段で止まる作業を並べ、「中断して更新」で全部を reason update で中断してから保存へ進む。
 // 下の flush の count > 0 の断りは、中断が済んだ後の安全網（サーバーの更新ロックも残る）
 const cliSetup = setupCliSetup({ cmd });
+switchUi = setupSwitchNotice({
+  sessionName: (id) => rowLabel(state.sessions.find(s => s.id === id) ?? {}),
+  agentName: (id) => (id ? labelOf(id) : ''),
+  // 設定のページの一覧から会話を開くときは、設定を閉じてから
+  openSession: (id) => { onboarding.close(); select(id); },
+  onChange: () => updatesUi?.refresh(),
+});
 updatesUi = setupUpdates({ page: onboarding.page, open: onboarding.open, lock: onboarding.lock, cmd,
+  switchUi,
+  // 無停止の更新の確認の段: 内蔵ブラウザーのタブを開いている・コンピューターの操作中なら、開き直しの注意を出す
+  handoverNotes: () => ({ browser: (browserPanel?.state.tabs.length ?? 0) > 0 || state.computerStates.size > 0 }),
   work: () => state.work,
   sessionName: (id) => rowLabel(state.sessions.find(s => s.id === id) ?? {}),
   agentName: (id) => (id ? labelOf(id) : ''),
@@ -8345,6 +8513,7 @@ setupUsage({ $, cmd, source: usageSource, getBackends: () => state.backends, end
 const remoteSettings = setupRemote({ cmd, page: onboarding.page, openSession: id => { onboarding.close(); select(id); } });
 // 設定 › 通知。この PC の設定とスマホの一覧（スマホの種類・ロック画面の会話名はスマホのアプリで変える）
 const notifySettings = setupNotifySettings({ cmd, page: onboarding.page, onPc: pc => { notifyPc = pc; } });
+const voiceSettings = setupVoiceSettings({ cmd, page: onboarding.page });
 // スマホのアプリの中だけ: 最初の作業が終わったときの帯と、通知から開く会話
 const mobileNotify = setupMobileNotify({ band: $('notifyBand'), openSession: id => select(id) });
 // 手元の窓の中継のカードの「子の会話を見る」で、このリモートの窓の会話を開く（desktop/remote-windows.cjs の openHost）

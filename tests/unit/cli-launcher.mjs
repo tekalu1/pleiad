@@ -6,7 +6,8 @@
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { CLI_DIR, CLI_SCRIPT, addCliToPath, mcpSetup, pathKey, prependPath } from '../../core/cli-launcher.mjs';
+import { CLI_DIR, CLI_SCRIPT, addCliToPath, mcpSetup, pathKey, prependPath, stableCli } from '../../core/cli-launcher.mjs';
+import { agentDefinition } from '../../core/backends/antigravity-context.mjs';
 import { startServer, ROOT } from '../lib/server.mjs';
 import { open } from '../lib/ws-client.mjs';
 
@@ -42,11 +43,26 @@ export default async function (t) {
   t.ok('既定のデータ置き場の npm start: env を付けない・script は bin/pleiad.mjs',
     !('env' in JSON.parse(plain.json).mcpServers.pleiad) && plain.args[0] === CLI_SCRIPT, plain.json);
 
+  // ---- 実行場所で走るサーバー（無停止の更新 1-3）: 外の AI に貼る設定は版に依らない起動口を指す
+  t.ok('stableCli: env が無ければ null（npm start・今のデスクトップ版は変わらない）', stableCli({}) === null && stableCli({ PLEIAD_CLI_EXEC: 'x' }) === null);
+  const stableEnv = { PLEIAD_CLI_EXEC: 'C:/Users/me/AppData/Local/Programs/Pleiad/Ply.exe', PLEIAD_CLI_SCRIPT: 'C:/Users/me/AppData/Local/Programs/Pleiad/resources/app/bin/pleiad.mjs', PLEIAD_CLI_ELECTRON: '1' };
+  const stable = mcpSetup({ stable: stableCli(stableEnv), dataDir: path.join(home, '.agent-host'), home });
+  t.ok('実行場所のサーバー: 貼る設定は $INSTDIR の Ply.exe と resources/app/bin/pleiad.mjs・ELECTRON_RUN_AS_NODE（実行場所の版ごとのパスを含まない）',
+    stable.command === stableEnv.PLEIAD_CLI_EXEC && stable.args[0] === stableEnv.PLEIAD_CLI_SCRIPT && JSON.stringify(stable.env) === '{"ELECTRON_RUN_AS_NODE":"1"}' && !/agent-host-runtime|pleiad-node/.test(stable.json), stable.json);
+  const stableNode = mcpSetup({ stable: stableCli({ ...stableEnv, PLEIAD_CLI_ELECTRON: '' }), dataDir: path.join(home, '.agent-host'), home });
+  t.ok('実行場所のサーバー: 起動口が素の Node なら ELECTRON_RUN_AS_NODE は付けない', !('env' in JSON.parse(stableNode.json).mcpServers.pleiad));
+  // agy の relay: サーバーが実行場所の pleiad-node.exe（素の Node）で走ると、relay も同じ実行ファイルで、Electron 用の env は付かない
+  const relayNode = String(agentDefinition({ owners: {}, prompt: 'p', cwd: home, home, execPath: 'C:/rt/node/24.21.0-abc/pleiad-node.exe', electron: false }));
+  t.ok('agy の relay: 実行場所の pleiad-node.exe で走り、ELECTRON_RUN_AS_NODE を付けない', relayNode.includes('pleiad-node.exe') && !relayNode.includes('ELECTRON_RUN_AS_NODE'), relayNode.slice(0, 400));
+  const relayElectron = String(agentDefinition({ owners: {}, prompt: 'p', cwd: home, home, execPath: 'C:/Pleiad/Ply.exe', electron: true }));
+  t.ok('agy の relay: 今のデスクトップ版（Ply.exe）は ELECTRON_RUN_AS_NODE=1 を付ける（変えない）', relayElectron.includes('ELECTRON_RUN_AS_NODE'));
+
   // ---- 起動口と同梱
   const sh = await fs.readFile(path.join(CLI_DIR, 'pleiad'), 'utf8');
   const cmd = await fs.readFile(path.join(CLI_DIR, 'pleiad.cmd'), 'utf8');
   t.ok('起動口: シェルスクリプトは LF（CRLF だと sh が読めない）', sh.startsWith('#!/bin/sh\n') && !sh.includes('\r'));
   t.ok('起動口: .cmd は CRLF・内蔵 Node で走らせる', cmd.split('\n').slice(0, -1).every(line => line.endsWith('\r')) && cmd.includes('ELECTRON_RUN_AS_NODE=1') && cmd.includes('Ply.exe'));
+  t.ok('起動口: 実行場所の版の bin では runtime-node.txt の指す pleiad-node を先に探す（.cmd・sh とも）', cmd.includes('runtime-node.txt') && cmd.includes('pleiad-node.exe') && sh.includes('runtime-node.txt') && sh.includes('pleiad-node'));
   const builder = await fs.readFile(path.join(ROOT, 'electron-builder.yml'), 'utf8');
   t.ok('デスクトップ版に bin/ を同梱する（electron-builder.yml の files）', /^\s*- bin\/\*\*\s*$/m.test(builder));
 

@@ -1,3 +1,5 @@
+// 先頭に置く: AGENT_HOST_SERVER_LOG があれば、他のモジュールの読み込みの失敗も含めて出力をファイルへ向ける（stdio の無い起動）
+import './server-log-boot.mjs';
 import { effortOptions, validateEffort } from './effort.mjs';
 import { listDirs } from './list-dirs.mjs';
 import { createQuotaCache, createUsageStore, agentUsage } from './usage.mjs';
@@ -80,6 +82,7 @@ import { importNativeMcp } from './mcp-import.mjs';
 import { createMcpConfig } from './mcp-config.mjs';
 import { createHooksConfig, HOOK_AGENTS, applyCodexHooks, trimHookRuns, findNodeOnPath } from './hooks-config.mjs';
 import { finishShutdown } from './shutdown.mjs';
+import { createVoiceHost, VOICE_PATH } from './voice/host.mjs';
 import { createPlyHooks } from './ply-hooks.mjs';
 import { prepareHooksTurn, unifyPreview, importCandidate } from './hooks-unify.mjs';
 import { deliverable, classifyNativeRun } from './hooks-plan.mjs';
@@ -90,6 +93,8 @@ import { AgentError, remoteOwnerId, isRemoteOwner, parseRemoteOwner, RESULT_PAGE
 import { createResidentPrefs, residentSignal, enabledRoutineCount } from './remote/resident.mjs';
 import { createPushNotifier } from './notify/notifier.mjs';
 import { createPresence } from './notify/presence.mjs';
+import { createNotifications } from './notifications.mjs';
+import { createNotificationSources } from './notification-sources.mjs';
 import { createNotifySettings } from './notify/settings.mjs';
 import { createFolderUploads } from './folder-uploads.mjs';
 import { createImageImporter, testImportOrigin } from './image-import.mjs';
@@ -100,6 +105,12 @@ import { plyParts } from './instruction-amount.mjs';
 import { computerPrompt } from './backends/computer-delivery.mjs';
 import { MIN_BUDGET, MAX_BUDGET } from '../web/instruction-amount.mjs';
 import { parentPortBrowser, browserEnvironment, browserInstruction, forgetBrowserEnvironment } from './agent-browser.mjs';
+import { getMainPort, setMainPortSource } from './main-port.mjs';
+import { createMainLink, handoverEnabled } from './main-link.mjs';
+import { createOrphanGuard } from './orphan-guard.mjs';
+import { createMainAway, createExternalOpener } from './main-away.mjs';
+import { readBuildInfo } from './handover-check.mjs';
+import { markRuntimeInUse } from './runtime-use.mjs';
 import { parentPortScreencast, createScreencastHub, screencastCommand } from './browser-screencast.mjs';
 import { createChromeConnection } from './chrome/connection.mjs';
 import { chromeHomes } from './chrome/locate.mjs';
@@ -139,9 +150,24 @@ migrateClaudeUsage({ store: usageStore, projects: path.join(process.env.CLAUDE_C
   .catch(err => console.error(`  ${t('usage.migrateFailed')}`, String(err?.message ?? err)));
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const APP_VERSION = JSON.parse(await fs.readFile(path.join(HERE, '..', 'package.json'), 'utf8')).version;
-const agentBrowser = parentPortBrowser(process.parentPort);
+// 版を見分けるビルドの短いハッシュ（実行場所の木・配布物なら有る。開発のリポジトリは null）。ready に載せ、版が変わった画面を読み直させる（docs/zero-downtime-update/design.md §8）
+const BUILD = readBuildInfo(path.join(HERE, '..')).build;
+// main への口（core/main-port.mjs）。main の下でない起動（npm start）では、口を受け取る機能は null で無効になる。
+// AGENT_HOST_HANDOVER=on で utilityProcess の下でない起動は、名前付きパイプの口（core/main-link.mjs）を main への口にする
+const mainLink = handoverEnabled() && !process.parentPort ? createMainLink({ dataDir: store.dataDir, appVersion: APP_VERSION,
+  log: line => console.log(`  [main-link] ${line}`) }) : null;
+if (mainLink) setMainPortSource(mainLink.port);
+// 版ごとの実行場所で走っているなら、その版を使っている印を付ける（desktop/runtime.cjs の掃除がこの版を消さない。core/runtime-use.mjs）。
+// 印は閉じない: プロセスの終了で OS が外す
+if (process.env.AGENT_HOST_RUNTIME_ROOT && process.env.AGENT_HOST_RUNTIME_KEY) markRuntimeInUse({ root: process.env.AGENT_HOST_RUNTIME_ROOT, key: process.env.AGENT_HOST_RUNTIME_KEY });
+const mainPort = getMainPort();
+const hostedPort = mainPort.hosted ? mainPort : null;
+// main が居ない間（更新）の出来事と、OAuth の同意画面などを開く口（core/main-away.mjs）。機能ごとの扱いは頼む側のモジュールが持つ
+const mainAway = createMainAway({ mainPort });
+const openExternal = createExternalOpener({ mainPort, log: line => console.log(`  [main-away] ${line}`) });
+const agentBrowser = parentPortBrowser(hostedPort, { dataDir: store.dataDir });
 // リモートの端末から PC の内蔵ブラウザーを見る（core/browser-screencast.mjs）。デスクトップ版だけ
-const screencastBridge = parentPortScreencast(process.parentPort);
+const screencastBridge = parentPortScreencast(hostedPort);
 const screencastHub = screencastBridge ? createScreencastHub({ bridge: screencastBridge }) : null;
 const screencastClients = new WeakMap();   // ws -> hub に渡す端末
 // エージェントのブラウザー（PC の Chrome）への接続 1 本（core/chrome/connection.mjs、ADR 0148・0153）。デスクトップ版だけ。OS ごとの層は main（desktop/chrome-os）
@@ -237,7 +263,7 @@ const IMAGE_MIME = /^image\//;
 const workspaceRoots = new Set([process.cwd()]);
 const contextSettings = createContextSettings(store.dataDir);
 // 担当が Pleiad の外部 MCP。登録は Pleiad 自身の設定（エージェントの設定ファイルは書き換えない）、秘密は safeStorage で暗号化して置く
-// 暗号器は 1 つを使い回す（parentPort の応答は id で引くので、2 つ作ると同じ id を取り合う）
+// 暗号器は 1 つを使い回す（main の口の応答は id で引くので、2 つ作ると同じ id を取り合う）
 const secretCipher = defaultCipher();
 const mcpSecrets = createSecretStore({ file: path.join(store.dataDir, 'mcp-secrets.json'), cipher: secretCipher });
 const plyMcp = createPlyMcp({ dataDir: store.dataDir, secrets: mcpSecrets });
@@ -272,8 +298,8 @@ const claudeLogin = createClaudeLogin({
     emitGlobal({ type: 'claudeAccountsChanged', sessionId: null });
   },
   scratchDir: path.join(store.dataDir, 'claude-login-tmp'),
-  // デスクトップ版は main に頼んで既定のブラウザーで開く（npm start では画面のリンクから開く）
-  openExternal: url => process.parentPort?.postMessage({ type: 'open-external', url }),
+  // デスクトップ版は main に頼んで既定のブラウザーで開く（main が居ない間は OS に直に頼む。npm start では画面のリンクから開く）
+  openExternal,
 });
 process.on('exit', () => claudeLogin.cancelAll());
 // 互換の接続先（Claude Code の Anthropic 互換 / Codex の Responses 互換。会話ごとに選ぶ。core/compat-endpoints.mjs）。
@@ -281,13 +307,24 @@ process.on('exit', () => claudeLogin.cancelAll());
 const compatSecrets = createSecretStore({ file: path.join(store.dataDir, 'compat-endpoint-secrets.json'), cipher: secretCipher });
 compatSecrets.migrate().catch(() => {});
 const compatEndpoints = createCompatEndpoints({ dataDir: store.dataDir, secrets: compatSecrets });
+// 通話モード（core/voice/、docs/voice-call.md）。OpenRouter のキーはホストだけが持つ（voice-secrets.json。画面へは返さない）。
+// 音声は /voice-ws（バイナリ）で受け渡し、読み上げは emitGlobal の text.delta から作る
+const voiceHost = createVoiceHost({
+  dataDir: store.dataDir, cipher: secretCipher, getPrefs: () => store.getPrefs(), uiLang: () => currentLocale(), t, isLocal: isLocalRequest,
+  // bot の会話が属するスレッド（スレッドの通話が読み上げる会話を決める）
+  resolveThread: async (sessionId) => {
+    const bot = (await store.get(sessionId).catch(() => null))?.bot;
+    return bot?.kind === 'thread' && bot.channelId && bot.threadId ? { channelId: bot.channelId, threadId: bot.threadId } : null;
+  },
+  log: (line, fields) => console.log(`  ${line}${fields ? ` ${JSON.stringify(fields)}` : ''}`),
+});
 // 同じデータ置き場を別の Pleiad（開発版と配布版）が使っていることがあるので、走っている会話のファイルは消さない（1 日より古いものだけ）
 sweepClaudeFlagSettings(store.dataDir, { olderThanMs: 24 * 60 * 60_000 }).catch(() => {});
 const mcpOAuth = createMcpOAuth({ secrets: mcpSecrets, lockDir: path.join(store.dataDir, 'mcp-locks'),
   // Client ID Metadata Document の URL（設定値。既定は無し。公開する文書のひな形は docs/mcp-oauth-client-metadata.json）
   clientMetadataUrl: async () => (await plyMcp.settings().catch(() => ({}))).clientMetadataUrl ?? undefined,
-  // utilityProcess からはブラウザを開けないので main に頼む（desktop/main.cjs）。npm start では画面に出る URL から開く
-  openExternal: url => process.parentPort?.postMessage({ type: 'open-external', url }),
+  // utilityProcess からはブラウザを開けないので main に頼む（desktop/main.cjs。main が居ない間は OS に直に頼む）。npm start では画面に出る URL から開く
+  openExternal,
   emit: event => emitGlobal({ ...event, sessionId: null }) });
 const contextBridge = createContextBridge({ plyMcp, oauth: mcpOAuth });
 // リモートの接続口（docs/remote.md §4.2・§6.1）。既定は無効で、有効にするまで中継へはつながない。
@@ -349,10 +386,18 @@ const pushNotifier = createPushNotifier({
   shortTurnMs: Number.isFinite(Number(process.env.AGENT_HOST_NOTIFY_MIN_TURN_MS)) && process.env.AGENT_HOST_NOTIFY_MIN_TURN_MS !== undefined
     ? Number(process.env.AGENT_HOST_NOTIFY_MIN_TURN_MS) : undefined,
 });
+// 通知の一覧（ベルのボタン。ADR 0149）。DB の notifications 表。書く側は core/notification-sources.mjs（ターンの完了・承認・チャンネルの出来事から行を作る）。
+// 件数が変わったら notificationsChanged を全画面へ（リモートの端末にも届く）
+const inbox = createNotifications({ dataDir: store.dataDir, emit: event => emitGlobal({ ...event, sessionId: null }) });
+const inboxSources = createNotificationSources({
+  inbox, store, viewing: sessionId => notifyPresence.viewing(sessionId), titleOf: sessionId => conversationTitleOf(sessionId),
+  channels: () => botHost?.opsDeps().channels ?? null, bots: () => botHost?.opsDeps().bots ?? null,
+  hiddenKinds: HIDDEN_BOT_KINDS, log: line => console.error(`  ${line}`),
+});
 // ホストとして常駐する設定（docs/remote.md §6.3。core/remote/resident.mjs）。使うのはデスクトップ版のホストだけ（available）。
 // トレイとスリープの抑止は main（desktop/resident.cjs）が持つ。リモート・実行中の作業・ルーティンの変更時に送る
 const residentPrefs = createResidentPrefs({ dataDir: store.dataDir });
-const withResident = status => ({ ...status, resident: { available: Boolean(process.parentPort), ...residentPrefs.get() } });
+const withResident = status => ({ ...status, resident: { available: mainPort.hosted, ...residentPrefs.get() } });
 const remoteStatus = async () => withResident(await remote.status());
 /** 設定 › 通知の材料: この PC の設定と、スマホ（デスクトップ版の端末以外）の一覧。鍵は含まない */
 const notifyStatus = async () => ({
@@ -362,7 +407,7 @@ const notifyStatus = async () => ({
 });
 let residentLast = '', residentStatus = null, residentWork = null, residentSeq = 0;
 async function postResident({ status, work } = {}) {
-  if (!process.parentPort) return;
+  if (!mainPort.hosted) return;
   if (status) residentStatus = status;
   if (work) residentWork = work;
   const seq = ++residentSeq;
@@ -372,7 +417,7 @@ async function postResident({ status, work } = {}) {
   const key = JSON.stringify(signal);
   if (key === residentLast) return;
   residentLast = key;
-  process.parentPort.postMessage({ type: 'resident', state: signal });
+  mainPort.postMessage({ type: 'resident', state: signal });
 }
 // 固定した指示・Skills の開始時の本文（「差分を見る」用。内容のハッシュを名前にして 1 つずつ）
 const CONTEXT_SNAPSHOTS = path.join(store.dataDir, 'context-snapshots');
@@ -1296,7 +1341,9 @@ const server = http.createServer(async (req, res) => {
     const rel = path.normalize(name).split(path.sep).filter(Boolean).join(path.sep);
     const file = path.join(WEB, rel);
     if (!file.startsWith(WEB)) throw new Error("outside web/");
-    const body = await fs.readFile(file);
+    let body = await fs.readFile(file);
+    // 画面を配った版。web/client.mjs が ready の版と比べ、違えば 1 回だけ読み直す（docs/zero-downtime-update/design.md §8）
+    if (rel === 'index.html') body = Buffer.from(String(body).replace('<meta name="pleiad-build" content="">', `<meta name="pleiad-build" content="${APP_VERSION}+${BUILD ?? ''}">`));
     const headers = { "content-type": MIME[path.extname(file)] ?? "application/octet-stream" };
     if (tokenOk(viaQuery)) {
       // HttpOnly なので JS からは読めない。SameSite=Strict で他サイトからは送られない
@@ -1314,11 +1361,12 @@ const wss = new WebSocketServer({ noServer: true });
 
 server.on("upgrade", (req, socket, head) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
-  if (url.pathname !== "/ws") return socket.destroy();
+  if (url.pathname !== "/ws" && url.pathname !== VOICE_PATH) return socket.destroy();
   if (!tokenOk(url.searchParams.get("token"))) {
     socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
     return socket.destroy();
   }
+  if (url.pathname === VOICE_PATH) return voiceHost.upgrade(req, socket, head);   // 通話の音声（バイナリ）。/ws とは別の口
   wss.handleUpgrade(req, socket, head, (ws) => wss.emit("connection", ws, req));
 });
 
@@ -1728,12 +1776,20 @@ const runtime = {
 
 /** host が居ない時間が猶予を超えたか。タイマーに頼らず、その場で判定する。猶予が無効（既定）なら常に false。 */
 function graceExpired() {
-  return HOST_GRACE_MS > 0 && runtime.awaySince !== 0 && Date.now() - runtime.awaySince > HOST_GRACE_MS;
+  return HOST_GRACE_MS > 0 && runtime.awaySince !== 0 && !mainAway.holdsGrace() && Date.now() - runtime.awaySince > HOST_GRACE_MS;
+}
+
+/** main が更新で居ない間（main-leaving の後）は画面が居ないので猶予を数えない。戻った main の窓が付くまでの猶予は、戻った時から数え直す（core/main-away.mjs） */
+function restartGrace() {
+  if (runtime.awaySince === 0) return;
+  runtime.awaySince = Date.now();
+  clearTimeout(runtime.graceTimer);
+  runtime.graceTimer = HOST_GRACE_MS > 0 ? setTimeout(giveUp, HOST_GRACE_MS + 500) : null;
 }
 
 /** 猶予切れの後始末。何度呼ばれても安全。走っているターンは全部止める。猶予が無効なら何もしない。 */
 function giveUp() {
-  if (HOST_GRACE_MS <= 0 || runtime.awaySince === 0) return;
+  if (HOST_GRACE_MS <= 0 || runtime.awaySince === 0 || mainAway.holdsGrace()) return;
   const seconds = Math.round((Date.now() - runtime.awaySince) / 1000);
   runtime.awaySince = 0;
   clearTimeout(runtime.graceTimer);
@@ -1752,12 +1808,14 @@ function giveUp() {
 // 会話の一覧の行を変えない、数の多い出来事。これ以外の出来事ではネイティブ一覧の使い回しを捨てる（nativeSessions）
 const LIST_NEUTRAL_EVENTS = new Set([
   "text.delta", "text.end", "thinking.start", "thinking.delta", "tool.start", "tool.result", "activity",
-  "userMessage.delivered", "running", "permission", "outbox", "mcpAuth", "claudeLogin", "computer.state",
+  "userMessage.delivered", "running", "permission", "permissionSettled", "outbox", "mcpAuth", "claudeLogin", "computer.state",
   "contextWindow", "compaction", "compactionSchedule", "autoCompactionSettings", "conversationAutoCompaction", "settingsChanged", "settingApproval",
   // 入力欄の `!`（core/shell-runs.mjs）。一覧の行は変わらない
   "shell.start", "shell.output", "shell.done", "shell.skip", "shell.handed",
   // チャンネル・bot・記憶・ルーティンの出来事。会話の一覧の行は変わらない（bot の会話の行の変化は sessionsChanged が伝える）
-  "channelsChanged", "channelPost", "channelReaction", "channelThread", "channelRead", "botsChanged", "memoryChanged", "routinesChanged", "channelEvent",
+  "channelsChanged", "channelPost", "channelReaction", "channelThread", "channelRead", "botsChanged", "memoryChanged", "routinesChanged", "channelEvent", "voiceChanged",
+  // 通知の一覧の件数（ベルのボタン。ADR 0149）。会話の一覧の行は変わらない
+  "notificationsChanged",
 ]);
 
 // 接続ごとに、いま開いている会話（loadSession の watch）。宣言した接続には、流れの出来事（streamEvents）を
@@ -1822,6 +1880,7 @@ const GIT_END_WAIT_MS = 6_000;
 process.on('exit', () => shellRuns.stopAll());
 process.on('exit', () => botHost?.stop());
 process.on('exit', () => removeControlFile({ dataDir: store.dataDir }));
+process.on('exit', () => mainLink?.dispose());
 // 端末の Ctrl-C・kill でも 'exit' を通し、control.json を消す
 for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => process.exit(0));
 const completionNotices = createCompletionNotices({
@@ -1829,7 +1888,8 @@ const completionNotices = createCompletionNotices({
   busy: sessionId => sessionBusy(sessionId) || awaitedBackground(sessionId) || hasPendingChild(agentTasks?.list(sessionId) ?? []),
   send: event => sendTo({ kind: P.EVENT, event }),
   // 落ち着いた時点で、画面が居なくてもスマホへ 1 回（委譲の子の完了は endTurn が渡さない。依頼元の完了に含む）
-  ready: ({ sessionId, outcome, completedAt, startedAt }) => {
+  ready: ({ sessionId, outcome, completedAt, startedAt, uuid }) => {
+    void inboxSources.completion({ sessionId, outcome, completedAt, uuid });
     store.get(sessionId).then(async meta => {
       if (meta?.delegation) return;
       botHost?.onSessionDone(sessionId, outcome);
@@ -1848,7 +1908,7 @@ async function savePref(key, value, backendId) {
   locale = localeInfo(prefs);
   setLocale(locale.lang);
   // デスクトップ版の main（ダイアログ・通知・更新のエラー文）にも知らせる（desktop/main.cjs）
-  process.parentPort?.postMessage({ type: "locale", locale: locale.lang });
+  mainPort.postMessage({ type: "locale", locale: locale.lang });
   emitGlobal({ type: "prefs", sessionId: null, prefs, locale });
   return prefs;
 }
@@ -1857,7 +1917,10 @@ async function savePref(key, value, backendId) {
 const liveReads = new Set();
 let streamSequence = 0;
 function emitGlobal(event) {
+  voiceHost.onEvent(event);   // 通話が見ている会話の読み上げ（core/voice/host.mjs）
   if (event.type === 'routinesChanged') void postResident();
+  // 通知の一覧: 人以外の投稿の @あなた・チャンネルの既読・アーカイブ（ADR 0149）
+  if (event.type === 'channelPost' || event.type === 'channelRead' || event.type === 'channelsChanged') void inboxSources.observe(event);
   if (!LIST_NEUTRAL_EVENTS.has(event.type)) invalidateSessionLists();
   if (streamEvents.has(event.type)) event = { ...event, streamSeq: ++streamSequence };
   const live = runtime.turns.get(event.sessionId);
@@ -2061,6 +2124,8 @@ function makeEmit(turn) {
     if (event?.type === "userMessage.dropped" && turn.info.sessionId && event.messageId) {
       outbox.returned(turn.info.sessionId, event.messageId).catch(() => {});
     }
+    // 最後の発言の id（通知の一覧の飛び先。ターンの終わりに completionNotices へ渡す）
+    if (event?.type === "text.end" && typeof event.uuid === "string" && event.uuid) turn.lastUuid = event.uuid;
     if (event?.type === "turnResult") {
       if (turn.compactTrigger) event = { ...event, compact: true };
       if (turn.stream.initialMessageId) event = { ...event, messageId: turn.stream.initialMessageId };
@@ -2796,6 +2861,7 @@ async function deleteSessionOf(sessionId) {
     relayHops.delete(sessionId);
     completionNotices.forget(sessionId);
     pushNotifier.viewed(sessionId);
+    void inboxSources.sessionRemoved(sessionId);
     releaseAgentConnection(sessionId);
     const cleanups = [
       history.forgetPresents(sessionId),
@@ -2965,6 +3031,8 @@ const noteRelayHops = (sessionId, args, { steered = false } = {}) => {
 async function markReads(reads) {
   const changed = await store.markRead(reads);
   if (changed.length) emitGlobal({ type: "read", sessionId: null, reads: changed });
+  // 通知の一覧: 会話の既読が進んだ分の完了・失敗の通知も既読にする（ADR 0149）
+  try { for (const [id, readAt] of changed) inbox.markSession(id, readAt); } catch (e) { console.error('  通知の一覧: 既読にできなかった:', String(e?.message ?? e)); }
   // どこかで見た完了・失敗は、スマホに出ている通知を消す
   for (const [id] of changed) pushNotifier.viewed(id);
   return changed;
@@ -3729,10 +3797,12 @@ function opsDeps(lng = currentLocale()) {
     conversations: opsConversations,
     agents: opsAgents,
     prefs: () => store.getPrefs(),
+    voice: { status: () => voiceHost.status() },
     compactionSettings: () => compactionSettings,
     statuses: opsStatuses,
     worktrees: opsWorktrees,
     notify: opsNotify,
+    notifications: inbox,
     compat: opsCompat,
     computer: opsComputer,
     chrome: opsChrome,
@@ -3880,6 +3950,8 @@ async function runningWork() {
       nextSendAt: Math.min(Infinity, ...dueRows.filter(r => r.kind === 'send' && !r.held).map(r => r.at)) },
     tasks,
     background,
+    // `!` の行。count には入れない（終了・中断して更新では止まる。デスクトップの無停止の切り替えは終わるのを待つ。desktop/switch.cjs）
+    shells: shellRuns.list(),
     // ホストに任せたタスクの印（⇄ ホスト名とオンラインか）。docs/remote.md §4.5
     remoteHosts: remoteHostsNow(),
     // 中継の複製は数えない。1つの承認が会話の数だけ増えて見える
@@ -4088,9 +4160,14 @@ const askPermission = async ({ toolName, input, sessionId, toolUseID, title, sig
       let found = false;
       for (const card of cards) if (runtime.waiting.delete(card.id)) found = true;
       if (!found) return;
+      // 片付いたことを画面へ知らせる。本来のカードも、祖先の会話の中継の複製も、ほかの窓・リモートの画面に残った写しも、これで畳める
+      // （running の permissions から消えるだけでは、開いたままのカードは変わらない）。複製は id ごと・会話ごとに 1 つずつ
+      for (const card of cards) emitGlobal({ type: 'permissionSettled', id: card.id, sessionId: card.payload.sessionId ?? null, allow: answer?.allow === true, reason: answer?.messageKey ?? null });
       remoteRelay?.end(answer?.messageKey === 'aborted' ? 'abort' : 'host', answer?.allow === true);
       // スマホに出ている承認・質問の通知を消す（どの端末で答えても、ターンが終わっても）
       pushNotifier.approvalResolved({ id: cards[0].id, sessionId: payload.sessionId });
+      // 通知の一覧のあなた待ちを決着させる（承認済み・回答済み・却下・取り消し。ADR 0149）
+      void inboxSources.permissionSettled({ id: cards[0].id, answer, kind: payload.kind });
       botHost?.onPermission({ id: cards[0].id, ...payload }, 'settled');
       signal?.removeEventListener?.("abort", onAbort);
       const { messageKey, messageParams, ...rest } = localize(answer);
@@ -4121,6 +4198,8 @@ const askPermission = async ({ toolName, input, sessionId, toolUseID, title, sig
       });
     }
     botHost?.onPermission({ id: cards[0].id, ...payload }, 'open');
+    // 通知の一覧のあなた待ち。委譲の子の承認は、カードが出ている依頼元の会話へ飛ぶ（ADR 0149）
+    if (payload.sessionId) void inboxSources.permissionOpened({ id: cards[0].id, sessionId: payload.sessionId, kind: payload.kind, via: ancestors[0] ?? null });
     signal?.addEventListener?.("abort", onAbort, { once: true });
     // 離れたスマホへ（画面が居るかによらない。委譲の子の承認・質問は子の会話の分だけ。中継の複製は送らない）
     // （会話名を読むあいだに決着していたら送らない。送ると取り消しが先に行ってしまい、通知が残る）
@@ -4165,7 +4244,7 @@ agentBrowser?.loadPolicy(await store.getPrefs());
 // AGENT_HOST_COMPUTER_DRIVER=fake は偽の driver（実画面には何もしない。テスト用）。AGENT_HOST_COMPUTER_LOG にその呼び出しを 1 行ずつ残す
 const computerDriver = process.env.AGENT_HOST_COMPUTER_DRIVER === 'fake'
   ? fakeComputerDriver({ log: process.env.AGENT_HOST_COMPUTER_LOG ? entry => appendFileSync(process.env.AGENT_HOST_COMPUTER_LOG, JSON.stringify(entry) + '\n') : undefined })
-  : parentPortComputer(process.parentPort);
+  : parentPortComputer(hostedPort);
 const computerShots = createComputerShots({ dataDir: store.dataDir });
 const computerLock = createComputerLock({
   waitMs: Number(process.env.AGENT_HOST_COMPUTER_LOCK_WAIT_MS) > 0 ? Number(process.env.AGENT_HOST_COMPUTER_LOCK_WAIT_MS) : undefined,
@@ -4190,6 +4269,8 @@ const computerBridge = computerDriver ? createComputerBridge({
 computerDriver?.onEscape(owner => computerLock.escape(owner));
 // main か core が作り直された。持ち主を外し、待っている先頭に譲る
 computerDriver?.onReady(() => computerLock.reset());
+// main が居なくなった（更新）。オーバーレイも Esc も無いまま画面を動かさないので、Esc と同じに使用を止める。ターンは止めず、ツールには更新のための停止と返す
+computerDriver?.onAway?.(() => computerLock.stopAll('update'));
 
 // 送信待ちの一覧が変わるたびに呼ぶもの（sessionId -> Set<fn(messages)>）。再開の受け付けを、送った項目が出ていくまで保つのに使う
 const outboxWatchers = new Map();
@@ -4248,6 +4329,8 @@ await outbox.recover();
   const recovered = await store.recoverInterruptedTurns(Date.now()).catch(err => { console.error("  中断の記録に失敗:", String(err?.message ?? err)); return []; });
   if (recovered.length) console.log(`  前の起動で終わらなかったターン ${recovered.length} 件を中断として残した`);
 }
+// 前の起動で待っていた承認・質問はメモリにしか無く、再起動で消えた。通知の一覧のあなた待ちも決着させる（ADR 0149）
+try { inbox.settleAllWaiting('cancelled'); } catch (e) { console.error('  通知の一覧: あなた待ちを決着させられなかった:', String(e?.message ?? e)); }
 // 親が走っている・裏の作業が残っている・送信待ちがあるときは完了通知を送らない（docs/agent-delegation.md「完了通知」）
 const noticeBlocked = async owner => sessionBusy(owner) || awaitedBackground(owner) || (await outbox.list(owner)).some(m => !['sent', 'cancelled'].includes(m.status));
 
@@ -4399,7 +4482,7 @@ const remoteCards = {
     if (runtime.waiting.size) broadcastRunning();
   },
 };
-const remoteAgentBridge = parentPortRemoteAgent(process.parentPort);
+const remoteAgentBridge = parentPortRemoteAgent(hostedPort);
 const remoteDelegation = createRemoteDelegation({
   bridge: remoteAgentBridge, tasks: () => agentTasks, agentT, titleOf: async id => (await store.get(id)).title ?? '', cards: remoteCards,
   locale: () => currentLocale(), changed: () => permissionsChanged(), log: line => console.log(`  ${line}`),
@@ -5215,7 +5298,7 @@ async function endTurn(turn, emit, { record = true } = {}) {
   // 空いている間の自動圧縮（idle）は利用者の作業ではないので、完了として知らせない
   // 夜の整理・心拍の隠れた会話（learner・pulse）は、完了も失敗も知らせない（失敗は memory.learnStatus・bot のページで見える。ADR 0127）
   if (!delegated && !HIDDEN_BOT_KINDS.has(botKind) && turn.compactTrigger !== 'idle') completionNotices.finished(turn.info.sessionId,
-    turn.outcome, completedAt, { startedAt: turn.startedAtMs, bot: botKind });
+    turn.outcome, completedAt, { startedAt: turn.startedAtMs, bot: botKind, uuid: turn.lastUuid });
   settingApprovals?.changed();
   // bot の会話なら、ターンの投稿を確定し、たまった出来事を渡す（ターンを手放した後。待たない）
   if (!requeued) void botHost?.onTurnEnd(turn, { outcome: turn.outcome, interrupted, requeued });
@@ -5881,11 +5964,14 @@ wss.on("connection", (ws, req) => {
     kind: P.READY,
     protocolVersion: P.PROTOCOL_VERSION,
     version: APP_VERSION,
+    build: BUILD,
     homeDir: os.homedir(),
     resumedTurn: resumed,
     startedAt: SERVER_STARTED_AT,
     // 離れた端末への通知（ADR 0086）を受けられる。古いホストにはこの欄が無く、端末は鍵の登録を送らない
     notify: 1,
+    // 通話モード（/voice-ws）に対応している。キーを持つこの PC の画面だけ（中継越しの端末の画面には出さない。docs/voice-call.md）
+    voice: local ? 1 : 0,
     // 画面の言語。setting は設定値（auto|ja|en）、lang は実際に使う言語（ja|en）
     locale,
     // 送信予定の時刻をこの PC の時刻でも添えるため（見ている端末と時刻帯が違うとき。ADR 0103）
@@ -6270,10 +6356,22 @@ wss.on("connection", (ws, req) => {
           emitGlobal({ type: 'delegationRoutingChanged', change: 'settings', sessionId: null });
           return reply(true, await delegationRoutingState());
         }
+        // 通話の OpenRouter のキー（設定 › 通話）。登録が音声の外部送信の同意になる（キーが無ければ何も送らない）。キーは返さない
+        case 'setVoiceKey':
+        case 'deleteVoiceKey': {
+          if (msg.command === 'deleteVoiceKey') await voiceHost.deleteKey();
+          else {
+            try { await voiceHost.setKey(msg.args?.key); }
+            catch (e) { throw e?.code === 'INVALID_KEY' ? new Error(t('voice.key.invalid')) : e; }
+          }
+          emitGlobal({ type: 'voiceChanged', sessionId: null });
+          return reply(true, { ...(await voiceHost.status()), ...(msg.command === 'setVoiceKey' ? { check: await voiceHost.checkKey() } : {}) });
+        }
         case "resolvePermission": {
           const { id, allow, always, scope, message, messageKey, answers, annotations, response, receipt } = msg.args ?? {};
           const w = runtime.waiting.get(id);
-          if (!w) return reply(false, t('approval.alreadyResolved'));
+          // 片付いた承認への答え。画面は失敗にせず、そのカードを「別の場所で処理されました」に畳む（code で見分ける）
+          if (!w) return reply(false, t('approval.alreadyResolved'), 'ALREADY_RESOLVED');
           // ホストの子の承認の中継（この PC の会話のカード）。人の答えをホストへ運ぶ（受領証・1 回だけはホストが照合する。docs/remote.md §4.5）。
           // この道は画面（human）の WS のこの処理だけ。AI の道具（MCP・CLI・ply_task_*）からは作れない
           if (w.remote) {
@@ -6315,7 +6413,11 @@ wss.on("connection", (ws, req) => {
           const a = msg.args ?? {};
           const via = connectionDevices.get(ws);
           notifyPresence.set(ws, { deviceId: via?.id ?? null, platform: via?.platform ?? null, visible: a.visible === true, sessionId: a.sessionId });
-          if (a.visible === true && typeof a.sessionId === 'string' && a.sessionId) pushNotifier.viewed(a.sessionId);
+          if (a.visible === true && typeof a.sessionId === 'string' && a.sessionId) {
+            pushNotifier.viewed(a.sessionId);
+            // 開いて見た会話の通知（あなた待ち・完了・失敗）は既読にする（ADR 0149）
+            try { inbox.viewSession(a.sessionId); } catch (e) { console.error('  通知の一覧: 既読にできなかった:', String(e?.message ?? e)); }
+          }
           return reply(true, 'ok');
         }
 
@@ -6764,7 +6866,7 @@ async function readOnboarding() {
   catch { return { setupComplete: false }; }
 }
 
-process.parentPort?.on("message", async ({ data }) => {
+mainPort.on("message", async ({ data }) => {
   if (data?.type === 'wake') { await schedule.check(); await recoverLimitResumes().catch(() => {}); }
   if (data?.type === 'update-lock') {
     // 断るときは何が止めているかを返す。画面に出さないと、見た目に何も動いていないのに更新できない理由が分からない
@@ -6775,17 +6877,22 @@ process.parentPort?.on("message", async ({ data }) => {
       : switching.size || forking.size ? t('updateLock.switching')
       : null;
     const ok = updateGate.acquire(Boolean(reason));
-    process.parentPort.postMessage({ type: 'update-lock', id: data.id, ok, reason: ok ? null : reason || t('updateLock.other') });
+    mainPort.postMessage({ type: 'update-lock', id: data.id, ok, reason: ok ? null : reason || t('updateLock.other') });
   }
   if (data?.type === 'update-unlock') updateGate.release();
-  if (data?.type === "running") process.parentPort.postMessage({ type: "running", work: await runningWork() });
+  // main がこれから離れる（更新のためなど）。切れた後に作業が無いまま居続ける上限が決まる（core/orphan-guard.mjs）
+  if (data?.type === 'main-leaving') orphanGuard?.leaving(data.reason);
+  // 更新を取りやめた（インストーラーが起きなかった・失敗した）。main は居続けるので、猶予を数える状態と切断の上限を元に戻す
+  if (data?.type === 'main-leaving-cancel') orphanGuard?.leavingCancelled();
+  if (data?.type === "running") mainPort.postMessage({ type: "running", work: await runningWork() });
   // デスクトップの「中断して終了」（desktop/main.cjs の closeSafely）。全部を reason 付きで止める。
   // main は running の count が 0 になるのを待ってから終了する
   if (data?.type === 'abort') {
     const result = await abortSessions({ reason: data.reason }).catch(err => ({ error: String(err?.message ?? err) }));
-    process.parentPort.postMessage({ type: 'abort', id: data.id, ...result });
+    mainPort.postMessage({ type: 'abort', id: data.id, ...result });
   }
   if (data?.type === "shutdown") {
+    void voiceHost.close();   // 通話の使用量の台帳を書き切る
     // Chrome に許可の確認を残して終わらない（確認が出ていれば閉じる）。main の返事を待つので、長くても 2 秒まで
     if (chromeConnection) await Promise.race([chromeConnection.close(), new Promise(resolve => setTimeout(resolve, 2000))]).catch(() => {});
     try { finishShutdown(store.flushNow, () => runtime.turns.size > 0 || agentTasks.busy); }
@@ -6796,20 +6903,53 @@ process.parentPort?.on("message", async ({ data }) => {
   }
 });
 
+// 名前付きパイプの main が居ないまま長く居続けない（utilityProcess は main と一緒に終わるので要らない）。作業が 0 件のまま上限を過ぎたら、shutdown と同じに終わる
+const orphanGuard = mainLink ? createOrphanGuard({
+  isBusy: async () => (await runningWork()).count > 0,
+  onExpire: () => {
+    try { finishShutdown(store.flushNow, () => false); }
+    catch (e) { console.error('session store shutdown save failed:', e?.code ?? e?.message ?? e); process.exit(1); }
+  },
+  log: line => console.log(`  [main-link] ${line}`),
+}) : null;
+mainPort.on('disconnect', () => orphanGuard?.disconnected());
+orphanGuard?.disconnected();   // 起こした main が最初につながる前に落ちても、居続けない（最初のつながりで connected になる）
+let readyMessage = null;
+mainAway.onStay(() => restartGrace());
+mainAway.onBack(({ first }) => {
+  // 付け直した main へ、言語を送り直す。居ない間に過ぎた予定（送信・上限の解除後の再開）は、wake と同じに確かめる（powerMonitor の resume は届かなかった）
+  mainPort.postMessage({ type: 'locale', locale: locale.lang });
+  if (!first) { void Promise.resolve(schedule.check()).catch(() => {}); void recoverLimitResumes().catch(() => {}); }
+  restartGrace();
+});
+mainPort.on('connect', () => {
+  orphanGuard?.connected();
+  if (readyMessage) mainPort.postMessage(readyMessage);
+  // 付いた main は常駐の状態を持っていない。同じ内容でも送り直す
+  residentLast = '';
+  void postResident();
+});
+
 async function announce() {
   const { port } = server.address();
   // CLI がつなぎ先を見つける control.json（ADR 0083）。権限 0600。終了時に pid が自分のときだけ消す。
   // 起動の案内（下の URL の行）を見て CLI や検査が動き出すので、その前に書き終える
-  await writeControlFile({ dataDir: store.dataDir, origin: localOrigin(), cliToken: CLI_TOKEN, startedAt: SERVER_STARTED_AT, appVersion: APP_VERSION, kind: process.parentPort ? 'desktop' : 'server' })
+  // main とのパイプは、control.json に名前を書く前に立てる（main-link.json の秘密も一緒に書く）
+  const link = await mainLink?.listen().catch(err => { console.error('  main とのパイプを立てられませんでした:', String(err?.message ?? err)); return null; });
+  await writeControlFile({ dataDir: store.dataDir, origin: localOrigin(), cliToken: CLI_TOKEN, startedAt: SERVER_STARTED_AT, appVersion: APP_VERSION, kind: mainPort.hosted ? 'desktop' : 'server',
+    ...(link ? { mainLink: link } : {}) })
     .catch((err) => console.error('  control.json を書けませんでした:', String(err?.message ?? err)));
-  process.parentPort?.postMessage({ type: "ready", port, token: TOKEN, locale: locale.lang });
+  // パイプの口は、main がつながるのが ready より後になりうる。つながるたびに最新の ready を送る
+  // appVersion・build・runtimeKey は、付け直した新しい main が版を比べて切り替える・前の版へ戻すのに使う（desktop/switch.cjs）
+  readyMessage = { type: "ready", port, token: TOKEN, locale: locale.lang, pid: process.pid, appVersion: APP_VERSION, build: BUILD, runtimeKey: process.env.AGENT_HOST_RUNTIME_KEY || null };
+  mainPort.postMessage(readyMessage);
   remote.start().catch(() => {});
   if (routingSettingsCache.enabled && ROUTING_USAGE_AUTO) routingUsage.start();
   // モデルの一覧を裏で引いておく。新しい会話・モデル選択が、CLI を起こす 10 秒ほどを待たない。
   // 作業場所は新しい会話の既定（ホーム）。取れなければ一覧の要求のときにまた引く（テストは ROUTING_USAGE_AUTO=off で起こさない）
   if (ROUTING_USAGE_AUTO) for (const b of listBackends()) if (b.warmModels && installation(b.id).installed) b.warmModels(os.homedir()).catch(() => {});
   // 起動直後の常駐の状態（リモートが無効でも送る。main はそれを見てトレイを出さない）
-  if (process.parentPort) Promise.all([residentPrefs.loaded, remote.status(), runningWork()])
+  if (mainPort.hosted) Promise.all([residentPrefs.loaded, remote.status(), runningWork()])
     .then(([, status, work]) => postResident({ status: withResident(status), work })).catch(() => {});
   console.log("");
   // 待ち受けがループバックか全アドレスなら、覚えやすい localhost で案内する（開く先は同じ）

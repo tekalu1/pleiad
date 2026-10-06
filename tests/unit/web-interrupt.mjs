@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs';
 import {
   REASONS, reasonOf, isInterrupted, interruptUnread, interruptReadPoint, showsReasonInMeta, interruptLabel, interruptLineText,
   warnMark, pausedCount, resumeLabel, resumeNoteText, resumeVisible, updateInterrupted, workRows, workCounts, interruptProgress,
-  limitResumeState, limitLineNote, limitTime, resumeShortLabel, LIMIT_GRACE_MS,
+  limitResumeState, limitLineNote, limitTime, resumeShortLabel, LIMIT_GRACE_MS, versionReload,
 } from '../../web/interrupt.mjs';
 
 export const name = 'web-interrupt';
@@ -145,4 +145,23 @@ export default function (t) {
   const main = read('desktop/main.cjs');
   const abortAll = main.slice(main.indexOf('async function abortAll'), main.indexOf('async function installUpdate'));
   t.ok('終了: 待つ間は abort {reason} を送り直す', abortAll.indexOf("workerRequest('abort'") > abortAll.indexOf('for (;;)') && abortAll.indexOf('for (;;)') > 0);
+
+  // ---- 版の違うサーバーにつながったときの読み直し（無停止の更新 1-6。docs/zero-downtime-update/design.md §8）
+  t.ok('配った版と同じ版・ビルドなら読み直さない', versionReload('1.0.0+aaaaaaaaaaaa', { version: '1.0.0', build: 'aaaaaaaaaaaa' }) === null);
+  t.ok('ビルドが違えば（版が同じでも）読み直す。印は新しい版', versionReload('1.0.0+aaaaaaaaaaaa', { version: '1.0.0', build: 'bbbbbbbbbbbb' }) === '1.0.0+bbbbbbbbbbbb');
+  t.ok('版が違えば読み直す', versionReload('1.0.0+', { version: '1.0.1', build: null }) === '1.0.1+');
+  t.ok('開発のサーバー（ビルドが null）は版だけで同じと見る', versionReload('0.9.1+', { version: '0.9.1', build: null }) === null);
+  t.ok('このタブで同じ版のために読み直し済みなら、もう読み直さない（繰り返さない）', versionReload('1.0.0+a', { version: '1.0.1', build: 'b' }, '1.0.1+b') === null);
+  t.ok('読み直した後にさらに別の版になれば、もう 1 回読み直す', versionReload('1.0.0+a', { version: '1.0.2', build: 'c' }, '1.0.1+b') === '1.0.2+c');
+  t.ok('配った版が分からない画面（アプリに同梱した画面）は読み直さない（protocolVersion の扱いのまま）', versionReload('', { version: '9.9.9', build: 'z' }) === null && versionReload(undefined, { version: '1' }) === null);
+  const server = read('core/server.mjs');
+  t.ok('サーバーは index.html の pleiad-build に「<版>+<ビルド>」を埋め、ready に build を載せる',
+    html.includes('<meta name="pleiad-build" content="">') && server.includes('<meta name="pleiad-build" content="${APP_VERSION}+${BUILD ?? ') && /version: APP_VERSION,\s*build: BUILD,/.test(server));
+  const readyFn = client.slice(client.indexOf('if (m.kind === "ready")'), client.indexOf('if (m.homeDir) state.homeDir'));
+  t.ok('画面: protocolVersion を確かめた後、初期化の前に読み直しを判定する', readyFn.includes('m.protocolVersion !== PROTOCOL') && readyFn.indexOf('reloadForVersion(m)') > readyFn.indexOf('m.protocolVersion !== PROTOCOL'));
+  const reloadFn = client.slice(client.indexOf('function reloadForVersion('), client.indexOf('function applyLocale('));
+  t.ok('画面: 印を sessionStorage に残してから、下書きを保存して読み直す（印を残せなければ読み直さない）',
+    reloadFn.indexOf('sessionStorage.setItem("ply-version-reload", key)') < reloadFn.indexOf('saveDraft()') && reloadFn.includes('catch { return false; }') && reloadFn.includes('location.reload()'));
+  t.ok('無停止の更新（state.handover）では「中断して更新」をしない（止まる作業を並べない・中断しない）',
+    stopLoop.includes('state?.handover') && updates.includes('confirming && !state?.handover ? workRows(confirmWork)'));
 }

@@ -12,7 +12,12 @@ export const RESULT_PAGE_MAX = 20;   // 完了した結果の続きを読むペ�
 
 // ---- main との口 ------------------------------------------------------------------------------------------------
 
-/** parentPort 越しの口。port が無い（Electron でない）ときは null */
+/**
+ * main への口（core/main-port.mjs）の上の口。port が無い（Electron でない）ときは null。
+ * main が付け直す口（名前付きパイプ。port.resumable）では、main が居ない間（更新・切り替えの間）の扱いを持つ（docs/zero-downtime-update/design.md §7.2）:
+ * ホストへの線は main のものなので居ない間は無く、依頼は待たせずに OFFLINE で失敗にし（ホストがオフラインのときの扱いに乗る）、ホストは全部オフライン扱いにする。
+ * 戻ったときは、main が一覧と、つながっている線の ready を送り直す（desktop/remote-agent-bridge.cjs）ので、追いつき（catchUp）はそれで走る
+ */
 export function parentPortRemoteAgent(port, { timeoutMs = 70_000 } = {}) {
   if (!port) return null;
   const pending = new Map();
@@ -20,6 +25,12 @@ export function parentPortRemoteAgent(port, { timeoutMs = 70_000 } = {}) {
   let hosts = [];
   const listeners = { event: new Set(), state: new Set(), hosts: new Set(), ready: new Set() };
   const fire = (kind, ...args) => { for (const fn of [...listeners[kind]]) { try { fn(...args); } catch { /* 聞き手の失敗で口は止めない */ } } };
+  const offline = () => Object.assign(new Error('the host is not available (Pleiad is restarting)'), { code: 'OFFLINE' });
+  // 一覧の更新（remote-agent-hosts）は状態の便りより遅れて届くので、状態の便りで先に今の状態を写す
+  const setState = (kind, hostId, st) => {
+    hosts = hosts.map(h => (h.hostId === hostId ? { ...h, state: st.state, allowed: st.allowed } : h));
+    fire(kind, hostId, st);
+  };
   port.on('message', event => {
     const m = event?.data ?? event;
     switch (m?.type) {
@@ -32,18 +43,22 @@ export function parentPortRemoteAgent(port, { timeoutMs = 70_000 } = {}) {
         return;
       }
       case 'remote-agent-event': fire('event', m.hostId, m.event); return;
-      // 一覧の更新（remote-agent-hosts）は状態の便りより遅れて届くので、状態の便りで先に今の状態を写す
-      case 'remote-agent-state': case 'remote-agent-ready': {
-        const st = { state: m.state, allowed: m.allowed === true, hostName: m.hostName ?? '' };
-        hosts = hosts.map(h => (h.hostId === m.hostId ? { ...h, state: st.state, allowed: st.allowed } : h));
-        fire(m.type === 'remote-agent-ready' ? 'ready' : 'state', m.hostId, st);
+      case 'remote-agent-state': case 'remote-agent-ready':
+        setState(m.type === 'remote-agent-ready' ? 'ready' : 'state', m.hostId, { state: m.state, allowed: m.allowed === true, hostName: m.hostName ?? '' });
         return;
-      }
       case 'remote-agent-hosts': hosts = Array.isArray(m.hosts) ? m.hosts : []; fire('hosts', hosts); return;
       default:
     }
   });
+  if (port.resumable) {
+    port.on('disconnect', () => {
+      // 答えの待ちは、線ごと無くなった。OFFLINE で返す（ホストの線が切れたときと同じ）
+      for (const [id, p] of [...pending]) { pending.delete(id); clearTimeout(p.timer); p.reject(offline()); }
+      for (const h of hosts) if (h.state !== 'offline') setState('state', h.hostId, { state: 'offline', allowed: h.allowed === true, hostName: h.hostName ?? '' });
+    });
+  }
   const call = (action, payload = {}, { signal, timeoutMs: ms = timeoutMs } = {}) => new Promise((resolve, reject) => {
+    if (port.resumable && port.connected === false) return reject(offline());
     const id = `ra${++seq}`;
     const timer = setTimeout(() => { pending.delete(id); reject(Object.assign(new Error('the host did not answer'), { code: 'TIMEOUT' })); }, ms);
     timer.unref?.();

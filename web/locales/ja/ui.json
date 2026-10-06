@@ -42,6 +42,7 @@
       "appearance": "外観",
       "context": "プラグイン",
       "notify": "通知",
+      "voice": "通話",
       "remote": "リモート",
       "about": "アプリ情報・更新",
       "delegation": "委譲",
@@ -1483,6 +1484,7 @@
       "allowedAlways": "常に許可した",
       "allowed": "許可した",
       "denied": "拒否した",
+      "elsewhere": "別の場所で処理されました",
       "sending": "{{action}}を送っています…",
       "sendFailedInline": "{{action}}を送れませんでした · {{error}}"
     },
@@ -2411,6 +2413,7 @@
       "reasonShort": {
         "escape": "止めた",
         "stop": "止めた",
+        "update": "更新で止めた",
         "locked": "ロックで止まった",
         "forbidden": "操作できない",
         "denied": "拒否した",
@@ -2420,6 +2423,7 @@
       "reason": {
         "escape": "あなたが Esc で止めました",
         "stop": "あなたが止めました",
+        "update": "Pleiad の更新のため止めました",
         "locked": "画面がロックされています。ロックを解除してから、もう一度頼んでください。",
         "forbidden": "「{{app}}」は操作できません。承認を出さずに断りました。",
         "denied": "「{{app}}」の操作は拒否されました。",
@@ -2746,7 +2750,50 @@
     "interruptTimeout": "30 秒待っても止まらない作業がありました。更新は準備済みのまま残ります。",
     "promptRunning_other": "実行中 {{count}} 件",
     "promptWaiting_other": "承認待ち {{count}} 件",
-    "promptJoin": "・"
+    "promptJoin": "・",
+    "handoverWork_other": "実行中の作業 {{count}} 件は止まりません。新しい版へは、作業が終わってから切り替わります。",
+    "handoverBrowser": "内蔵ブラウザーのタブは開き直されます。"
+  },
+  "switch": {
+    "waiting": "Pleiad {{target}} への切り替えを待っています",
+    "view": "作業を見る",
+    "collapse": "たたむ",
+    "interruptNow": "今すぐ中断して切り替える",
+    "interruptFailed": "止まらない作業があったため、中断をやめました。作業が終わるまで待ちます。",
+    "listTitle": "待っている作業",
+    "since": "{{time}} から",
+    "stoppersTitle": "切り替えで止まるもの",
+    "terminal": "端末",
+    "terminalNamed": "端末 · {{label}}",
+    "unknownSession": "バックグラウンドの作業",
+    "openSession": "この会話を開く",
+    "after": "中断した会話は {{mark}} で残り、「再開」で続けられます。承認待ちは却下扱いになります。",
+    "askTitle": "Pleiad {{target}} に切り替える準備ができました",
+    "askSub_other": "切り替えると {{count}} 件が止まります",
+    "stopAndSwitch": "止めて切り替え",
+    "later": "あとで",
+    "manualTitle": "Pleiad {{target}} に切り替えるには作業を中断します",
+    "manualSchema": "データの形式が変わるため、自動では切り替わりません",
+    "manualOther": "作業を続けたまま渡せない更新のため、自動では切り替わりません",
+    "interruptAndSwitch": "中断して切り替え",
+    "stopping": "Pleiad {{target}} · 作業を中断しています… {{done}} / {{total}}",
+    "switching": "Pleiad {{target}} に切り替えています…",
+    "progress": "切り替えの進み",
+    "failed": "新しい版を起動できなかったため、前の版（{{current}}）で動いています",
+    "failedMark": "失敗",
+    "retry": "もう一度試す",
+    "dismiss": "閉じる",
+    "stopped": "止めたもの: {{items}}",
+    "stoppedShell_other": "! のシェル {{count}} 件",
+    "stoppedAgent_other": "{{agent}} の端末 {{count}} 件",
+    "stoppedBackground_other": "裏の端末 {{count}} 件",
+    "pageWaiting": "新しい版への切り替えを待っています · {{target}}",
+    "pageAsking": "切り替えると止まるものがあります · {{target}}",
+    "pageManual": "作業を中断して切り替える更新です · {{target}}",
+    "pageSwitching": "{{target}} に切り替えています…",
+    "pageRunning": "動いているのは {{current}} です",
+    "pageFailed": "新しい版を起動できませんでした",
+    "pageFailedHint": "前の版（{{current}}）で動いています"
   },
   "outbox": {
     "status": {
@@ -2775,6 +2822,69 @@
     "noMatch": "一致なし",
     "loading": "読み込み中…",
     "moreMatches_other": "ほかに {{count}} 件。文字を入れて絞り込んでください"
+  },
+  "inbox": {
+    "bell": "通知",
+    "bellUnread": "通知（未読 {{n}} 件）",
+    "bellWait": "通知（未読 {{n}} 件・あなた待ちあり）",
+    "panel": "通知",
+    "list": "通知の一覧",
+    "empty": "新しい通知はありません",
+    "readAll": "すべて既読",
+    "more": "さらに表示",
+    "unreadMark": "未読",
+    "filter": {
+      "label": "絞り込み",
+      "all": "すべて",
+      "wait": "あなた待ち",
+      "mention": "@あなた"
+    },
+    "line": {
+      "approval": {
+        "named": {
+          "open": "{{name}} が承認を待っています",
+          "closed": "{{name}} が承認を待っていました"
+        },
+        "plain": {
+          "open": "エージェントが承認を待っています",
+          "closed": "エージェントが承認を待っていました"
+        }
+      },
+      "question": {
+        "named": {
+          "open": "{{name}} が質問への答えを待っています",
+          "closed": "{{name}} が質問への答えを待っていました"
+        },
+        "plain": {
+          "open": "エージェントが質問への答えを待っています",
+          "closed": "エージェントが質問への答えを待っていました"
+        }
+      },
+      "failed": {
+        "named": "{{name}} のターンが失敗しました",
+        "titled": "{{title}} が失敗しました",
+        "plain": "会話が失敗しました"
+      },
+      "done": {
+        "titled": "{{title}} が完了しました",
+        "plain": "会話が完了しました"
+      },
+      "mention": {
+        "named": "{{name}} が @あなた と書きました",
+        "plain": "@あなた 宛ての投稿があります"
+      }
+    },
+    "place": {
+      "thread": "#{{channel}} › {{thread}}",
+      "channel": "#{{channel}}",
+      "chat": "Chats › {{title}}"
+    },
+    "outcome": {
+      "allowed": "承認済み",
+      "answered": "回答済み",
+      "denied": "却下",
+      "cancelled": "取り消し"
+    }
   },
   "notify": {
     "completed": "作業が完了しました",
@@ -3791,6 +3901,116 @@
       "sortNewest": "新しい順（押すと古い順）",
       "noMatch": "一致する言葉がありません",
       "noItems": "この会話には、まだ発言がありません"
+    }
+  },
+  "voice": {
+    "call": {
+      "start": "通話を始める",
+      "endAt": "通話を終える · {{time}}"
+    },
+    "mic": {
+      "mute": "マイクをミュート · {{state}}",
+      "unmute": "ミュートを解除 · {{state}}",
+      "denied": "マイクが許可されていません · 押すともう一度試します",
+      "noDevice": "マイクが見つかりません · 押すともう一度試します",
+      "busy": "マイクを使えません（ほかのアプリが使用中） · 押すともう一度試します"
+    },
+    "spk": {
+      "mute": "スピーカーをミュート",
+      "unmute": "スピーカーのミュートを解除",
+      "speaking": " · 話しています"
+    },
+    "state": {
+      "starting": "準備中",
+      "listening": "聞いています",
+      "hearing": "聞き取っています",
+      "thinking": "考え中",
+      "speaking": "話しています",
+      "muted": "ミュート中"
+    },
+    "live": {
+      "starting": "通話を始めています",
+      "listening": "聞いています",
+      "muted": "マイクをミュートしました",
+      "unmuted": "ミュートを解除しました",
+      "denied": "マイクが許可されていません",
+      "ended": "通話を終えました"
+    },
+    "mark": "音声で話した発言",
+    "openSettings": "設定を開く",
+    "hint": {
+      "reading": "読み上げ中",
+      "stop": "止める",
+      "jump": "話している場所へ"
+    },
+    "note": {
+      "denied": "マイクが許可されていません ·",
+      "noDevice": "マイクが見つかりません ·",
+      "busy": "マイクを使えません（ほかのアプリが使用中） ·",
+      "nokey": "通話には OpenRouter のキーが要ります ·",
+      "dailyLimit": "今日の通話の上限に達しました ·",
+      "callLimit": "通話の長さの上限に達したので終えました ·",
+      "idle": "声が聞こえないまま長く経ったので通話を終えました",
+      "link": "通話のつながりが切れました",
+      "sttBusy": "聞き取りが混み合っています。もう一度話してください",
+      "stt": "聞き取れませんでした。もう一度話してください",
+      "tts": "読み上げられませんでした。画面の文字で見てください",
+      "sendFailed": "発言を送れませんでした: {{error}}",
+      "notSent": "いまは送れなかったので、発言は入力欄に残しました",
+      "start": "通話を始められませんでした ·",
+      "startTimeout": "通話の準備が整いませんでした"
+    },
+    "settings": {
+      "intro": "声で話しかけると、聞き取って会話へ送り、返事を読み上げます。聞き取りと読み上げは OpenRouter を通して行います。",
+      "loadFailed": "読み込めませんでした: {{error}}",
+      "saved": "保存しました",
+      "failed": "保存できませんでした: {{error}}",
+      "key": {
+        "title": "OpenRouter のキー",
+        "set": "登録済み",
+        "unset": "未登録",
+        "replace": "差し替える",
+        "delete": "削除",
+        "save": "登録",
+        "show": "表示",
+        "hide": "隠す",
+        "saved": "キーを登録しました",
+        "deleted": "キーを削除しました",
+        "note": "キーはこの PC だけが持ち、画面には表示しません。登録すると、通話中の音声と読み上げる文章が OpenRouter（と、選んだモデルの提供元）へ送られます。",
+        "encrypted": "キーは OS の暗号化で保存されています。",
+        "plain": "この PC では暗号化できないため、キーは権限を絞ったファイルにそのまま置かれます。",
+        "check": {
+          "ok": "キーを確かめました",
+          "invalid": "このキーは OpenRouter に受け付けられませんでした",
+          "unreachable": "OpenRouter に確かめに行けませんでした",
+          "nokey": ""
+        }
+      },
+      "models": {
+        "title": "モデルと声",
+        "stt": "聞き取り（STT）のモデル",
+        "fallback": "聞き取りの予備のモデル",
+        "fallbackHint": "主のモデルが混み合って断られたときに使います。空にすると予備なし",
+        "tts": "読み上げ（TTS）のモデル",
+        "voice": "声",
+        "language": "聞き取りの言語",
+        "auto": "自動（画面の言語）",
+        "ja": "日本語",
+        "en": "英語"
+      },
+      "limits": {
+        "title": "費用の安全弁",
+        "call": "1 回の通話の長さの上限（分）",
+        "daily": "1 日の通話の長さの上限（分）",
+        "today": "今日: 通話 {{minutes}} 分 · 聞き取り {{stt}} 分 · 読み上げ {{chars}} 字",
+        "note": "上限に達すると通話を終えます（1 日の上限に達したあとは始められません）。声が聞こえないまま 10 分たった通話も終えます。"
+      },
+      "audio": {
+        "title": "マイク",
+        "echo": "エコー除去・ノイズ抑制・自動音量",
+        "echoHint": "ブラウザーの機能です。スピーカーで聞くときに、自分の声以外を拾いにくくします。声がこもるときは切ってください。",
+        "permission": "マイクが許可されていないときは、ブラウザーのサイトの設定（アドレス欄の鍵のマーク）か、OS のプライバシーの設定でマイクを許可してください。デスクトップ版は、この画面からのマイクの利用を自動で許可します。"
+      }
     }
   }
 }

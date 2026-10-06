@@ -51,6 +51,8 @@ export async function startServer({ env = {}, dataDir, timeoutMs = 90_000, entry
       // 判定器（OpenRouter の Jev・Cerebras）へは送らない。キーを登録するテストは偽の判定器を渡す
       AGENT_HOST_OPENROUTER_API: "http://127.0.0.1:9",
       AGENT_HOST_CEREBRAS_API: "http://127.0.0.1:9",
+      // 通話モード（core/voice/）の OpenRouter へは送らない。通話を確かめるテストは偽の送り先（tests/lib/fake-openrouter.mjs）を渡す
+      AGENT_HOST_VOICE_API: "http://127.0.0.1:9",
       // ターンの始まりと終わりの git の撮影（refs/pleiad/）はしない。作業場所が開発中のリポジトリのテストが .git に ref を残さないため。
       // 確かめるテスト（server-git）は "on" を渡す
       AGENT_HOST_GIT_SNAPSHOTS: "off",

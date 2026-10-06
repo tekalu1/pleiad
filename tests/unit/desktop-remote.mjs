@@ -13,6 +13,7 @@ import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { N } from '../lib/dom-stub.mjs';
 import { enabledRoutineCount, residentSignal } from '../../core/remote/resident.mjs';
+import { createMainPort } from '../../core/main-port.mjs';
 
 const require = createRequire(import.meta.url);
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -276,11 +277,11 @@ export default async function (t) {
     const sent = [];
     let rows = [{ paused: false }, { paused: true }];
     const context = vm.createContext({
-      process: { parentPort: { postMessage: message => sent.push(message) } },
+      mainPort: createMainPort({ parentPort: { postMessage: message => sent.push(message), on() {} } }),
       residentPrefs: { get: () => ({ keepRunning: false, sleep: 'working' }) },
       botHost: { opsDeps: () => ({ routines: { list: async () => rows } }) },
       locale: { lang: 'ja' }, enabledRoutineCount, residentSignal,
-      LIST_NEUTRAL_EVENTS: new Set(), invalidateSessionLists() {}, streamEvents: new Set(),
+      LIST_NEUTRAL_EVENTS: new Set(), invalidateSessionLists() {}, streamEvents: new Set(), voiceHost: { onEvent() {} },   // 通話の読み上げ（emitGlobal の先頭）。このテストの対象外
       runtime: { turns: new Map() }, P: { EVENT: 'event' }, sendTo: () => true,
     });
     vm.runInContext(`let residentLast = '', residentStatus = null, residentWork = null, residentSeq = 0;
@@ -306,7 +307,7 @@ ${emitSource}`, context);
     context.botHost = null;
     await context.postResident();
     t.ok('bots-host が無ければ従来どおり 0 件として送る', sent.at(-1).state.routines === 0);
-    context.process.parentPort = null;
+    context.mainPort = createMainPort({});
     await context.postResident();
     t.ok('通常のサーバー版にはデスクトップの通知を送らない', sent.length === 4);
   }

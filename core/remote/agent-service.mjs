@@ -56,6 +56,18 @@ export function createRemoteAgentService({ getDevice, post, log = () => {} }) {
     post({ type: 'remote-agent-hosts', hosts: await hostsView() });
   }
 
+  /**
+   * サーバーがつなぎ直した（付け直した・切り替えで新しい版のサーバーに替わった。desktop/remote-agent-bridge.cjs が ready で呼ぶ）。
+   * サーバーは空か古い一覧から始まるので、一覧を送り直し、つながっている線は ready を送り直す（サーバーが動いているタスクと中継する承認を同期し直す）。
+   * 線は main のもので、切り替えの間も張ったまま。ready の便りは線がつながったときしか出ないので、ここで補う
+   */
+  async function resync() {
+    await refresh();
+    for (const h of await hostsView()) {
+      if (h.state === 'ready') post({ type: 'remote-agent-ready', hostId: h.hostId, state: h.state, allowed: h.allowed, hostName: h.hostName });
+    }
+  }
+
   const fail = (id, e) => post({ type: 'remote-agent', id, ok: false, code: e instanceof AgentError || typeof e?.code === 'string' ? e.code : 'ERROR', error: String(e?.message ?? e) });
 
   async function handle(message) {
@@ -101,6 +113,7 @@ export function createRemoteAgentService({ getDevice, post, log = () => {} }) {
     handle: message => { if (message?.type === 'remote-agent') return handle(message); },
     /** agentUse が変わった・ホストが増減した。線を張り直し、一覧をサーバーへ */
     refresh: () => refresh().catch(e => log(`remote agent: ${e?.message ?? e}`)),
+    resync: () => resync().catch(e => log(`remote agent: ${e?.message ?? e}`)),
     hostsView,
     close() { for (const ac of aborts.values()) ac.abort(); aborts.clear(); },
   };

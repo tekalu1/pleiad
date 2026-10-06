@@ -2365,6 +2365,66 @@
       "input": "619d48f70b75"
     },
     {
+      "id": "notifications.count",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "notifications",
+            "count"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "25c7d85c859a"
+    },
+    {
+      "id": "notifications.list",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "notifications",
+            "list"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "2ca572395bf8"
+    },
+    {
+      "id": "notifications.markRead",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "notifications",
+            "mark-read"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "c7f9055022f3"
+    },
+    {
       "id": "notify.setDevice",
       "risk": "write",
       "riskOf": false,
@@ -3711,6 +3771,26 @@
       "input": "6bf6e7291226"
     },
     {
+      "id": "voice.status",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "voice",
+            "status"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "25c7d85c859a"
+    },
+    {
       "id": "worktrees.archive",
       "risk": "write",
       "riskOf": false,
@@ -4030,6 +4110,15 @@
       "prefKeys": [
         "plyInstructions"
       ]
+    },
+    {
+      "key": "voice",
+      "risk": "write",
+      "riskOf": true,
+      "writable": true,
+      "prefKeys": [
+        "voice"
+      ]
     }
   ],
   "settingPolicy": {
@@ -4172,6 +4261,13 @@
       "agent-bound-ask": "guarded=ask",
       "agent-bound-never-full": "guarded=allow",
       "agent-bound-readonly": "guarded=deny:READ_ONLY_MODE"
+    },
+    "voice": {
+      "human": "write=allow guarded=allow",
+      "agent-unbound": "write=allow guarded=deny:NEEDS_UI",
+      "agent-bound-ask": "write=allow guarded=ask",
+      "agent-bound-never-full": "write=allow guarded=allow",
+      "agent-bound-readonly": "write=deny:READ_ONLY_MODE guarded=deny:READ_ONLY_MODE"
     }
   },
   "mcp": [
@@ -4839,6 +4935,21 @@
       ]
     },
     {
+      "id": "notifications.count",
+      "path": "notifications count",
+      "positional": []
+    },
+    {
+      "id": "notifications.list",
+      "path": "notifications list",
+      "positional": []
+    },
+    {
+      "id": "notifications.markRead",
+      "path": "notifications mark-read",
+      "positional": []
+    },
+    {
       "id": "notify.setDevice",
       "path": "notify device",
       "positional": [
@@ -5245,6 +5356,11 @@
         "from",
         "to"
       ]
+    },
+    {
+      "id": "voice.status",
+      "path": "voice status",
+      "positional": []
     },
     {
       "id": "worktrees.archive",

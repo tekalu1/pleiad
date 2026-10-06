@@ -10,7 +10,7 @@ import { botIcon } from './bot-icon.mjs';
 import { t } from '../i18n.mjs';
 import { runMark } from '../arc.mjs';
 import { savedEvent } from '../saved-text.mjs';
-import { renderPost, fillPost, authorInfo, wireAttachmentZoom } from './post.mjs';
+import { renderPost, fillPost, authorInfo, wireAttachmentZoom, whenText } from './post.mjs';
 import { withReaction } from './reactions.mjs';
 import { createChComposer } from './ch-composer.mjs';
 import { threadDraftKey } from './ch-attach-model.mjs';
@@ -116,6 +116,33 @@ export function createThread(host) {
   composer.bindDropZone(root);
   wireAttachmentZoom(log, host);
   const deck = createDeck({ view, body, feed: feedRoot, thread: root, top });
+  // 通話モードの差し込み口（スレッド。承認済み 2026-10-06）。契約は web/voice/index.mjs の冒頭。入力欄・見出し・面へは、ここの 1 か所だけで繋ぐ
+  host.voice?.mount({
+    id: 'thread',
+    header: head.el.querySelector('.th-entries'), headerBefore: head.tocButton,
+    composer: { root: composer.el, row: composer.el.querySelector('.ch-row'), before: composer.el.querySelector('.ch-send'), below: composer.el.querySelector('.ch-box') },
+    main: root, log, overlay: root, replyScope: () => log,
+    tail: {
+      place: (node) => replies.after(node), rows: replies, persistMarks: true,
+      isRow: (node) => node.classList.contains('post'), rowKey: (node) => node.dataset.postId ?? null,
+      markHost: (row) => row.querySelector('.post-head .post-name'),
+      createRow: () => {
+        const row = el('div', 'post mine');
+        const av = el('span', 'post-av you', youInitial());
+        av.setAttribute('aria-hidden', 'true');
+        const main = el('div', 'post-main');
+        const hd = el('div', 'post-head');
+        hd.append(el('b', 'post-name', t('channels:feed.you')), el('time', 'post-when', whenText(Date.now())));
+        const text = el('div', 'post-body');
+        main.append(hd, text);
+        row.append(av, main);
+        return { el: row, body: text };
+      },
+    },
+    target: () => (S.threadId ? { kind: 'thread', channelId: S.channelId, threadId: S.threadId } : null),
+    send: (text) => send({ text, attachments: [] }),
+    follow: () => { if (nearBottom()) log.scrollTop = log.scrollHeight; },
+  });
 
   const nearBottom = () => log.scrollHeight - log.scrollTop - log.clientHeight < NEAR_BOTTOM;
   const toBottom = () => { log.scrollTop = log.scrollHeight; jump.hidden = true; markRead(); };
@@ -386,8 +413,11 @@ export function createThread(host) {
     const old = postEls.get(id);
     if (!p || !old) return;
     if (p.author?.kind === 'system') { const n = sysNode(p); old.replaceWith(n); postEls.set(id, n); return; }
+    // 通知の一覧・目次から着いた直後の強調（flash）は、bot の返事の更新で描き直されても消さない（クラスが書き換わっても同じ動きが続く）
+    const flashing = old.classList.contains('flash');
     fillPost(old, p, ctx);
     decorate(old, p);
+    if (flashing) old.classList.add('flash');
     paintDelegates();
   }
   const repaintTurns = (sessionId) => { for (const p of S.posts) if (p.turn && (!sessionId || p.turn.sessionId === sessionId)) repaint(p.id); };
@@ -466,6 +496,7 @@ export function createThread(host) {
       composer.refresh();
       markSelected();
       if (seq === S.seq) composer.focus();
+      requestAnimationFrame(flushReveal);
     } catch (err) {
       if (seq !== S.seq) return;
       const box = el('div', 'ch-failed');
@@ -545,15 +576,23 @@ export function createThread(host) {
     if (log.scrollTop < 120) loadOlder();
   });
 
-  /** 目次から: 投稿へ送って、一瞬だけ強調する */
+  /** 目次・通知の一覧から: 投稿へ送って、一瞬（1.2 秒）だけ強調する。動きを減らす設定では滑らせず、明滅もしない（CSS の .flash） */
   function goTo(p) {
     const node = postEls.get(p.id);
     if (!node) return;
-    node.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    node.scrollIntoView({ block: 'center', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
     node.classList.remove('flash');
     void node.offsetWidth;
     node.classList.add('flash');
-    setTimeout(() => node.classList.remove('flash'), 1400);
+    setTimeout(() => node.classList.remove('flash'), 1300);
+  }
+  /** 通知の一覧（ADR 0149）から開いたとき、着いたら送って輪を付ける投稿。読み込みが済んでから flushReveal が使う */
+  let revealId = null;
+  function flushReveal() {
+    if (!revealId || !S.ready) return;
+    const p = S.index.get(revealId);
+    revealId = null;
+    if (p) goTo(p);
   }
 
   // ---------------------------------------------------------------- 承認のカード
@@ -687,8 +726,9 @@ export function createThread(host) {
   const feedLog = feedRoot.querySelector('.ch-log');
   if (feedLog) new MutationObserver(() => { if (S.threadId) markSelected(); }).observe(feedLog, { childList: true });
 
-  function open(channelId, threadId) {
+  function open(channelId, threadId, { postId = null } = {}) {
     if (!channelId || !threadId) return;
+    revealId = postId;
     const same = S.channelId === channelId && S.threadId === threadId;
     S.channelId = channelId;
     S.threadId = threadId;
@@ -696,6 +736,7 @@ export function createThread(host) {
     if (same) {
       markSelected();
       composer.focus();
+      flushReveal();
       return;
     }
     S.seq++;

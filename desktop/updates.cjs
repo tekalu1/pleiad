@@ -18,12 +18,13 @@ function updaterEnabled({ packaged, pkg, windowsStore, feed }) {
 
 // No Electron dependency: the state machine is tested with a fake updater.
 class Updates extends EventEmitter {
-  constructor({ updater, version, file, enabled, install, prepareCheck = async () => {}, store = false }) {
+  // handover: 作業を止めずに更新する（無停止の更新。ADR 0151）。画面は「中断して更新」を出さない（web/updates.mjs）
+  constructor({ updater, version, file, enabled, install, prepareCheck = async () => {}, store = false, handover = false }) {
     super();
     enabled = enabled && !store;
     Object.assign(this, { updater, version, file, enabled, install, prepareCheck });
     this.authenticated = false;
-    this.state = { version, enabled, store, phase: enabled ? 'idle' : 'unavailable', channel: version.includes('-') ? 'beta' : 'stable', autoCheck: true, autoDownload: true, notice: false, lastChecked: null };
+    this.state = { version, enabled, store, phase: enabled ? 'idle' : 'unavailable', channel: version.includes('-') ? 'beta' : 'stable', autoCheck: true, autoDownload: true, notice: false, lastChecked: null, handover: Boolean(handover) };
     this.busy = false;
     updater.autoDownload = false;
     updater.autoInstallOnAppQuit = false;

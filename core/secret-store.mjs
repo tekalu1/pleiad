@@ -12,6 +12,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { t } from './i18n.mjs';
+import { getMainPort } from './main-port.mjs';
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
@@ -55,44 +56,90 @@ export const plainCipher = {
 };
 
 /**
- * main プロセスに safeStorage を頼む暗号器。port は utilityProcess の process.parentPort。
+ * main プロセスに safeStorage を頼む暗号器。port は main への口（core/main-port.mjs。parentPort と同じ形の物でもよい）。
  * main 側は { type:'secret', id, op, value } を受けて { type:'secret', id, ok, value | error } を返す。
+ * 名前付きパイプの口（core/main-link.mjs）で main がまだつながっていない間は、依頼を送らずに 'connect' まで待つ（上限 connectWaitMs。
+ * 応答の待ち timeoutMs はつながって送ってから数える）。
+ * 切れても次の main が付け直す口（resumable）では、main が居ない間の扱いを持つ（docs/zero-downtime-update/design.md §7.2）:
+ *   - 送ったのに答えが来ないまま切れた依頼は、つながるまで待つ依頼に戻す（暗号化・復号は何度頼んでも同じ。上限は最初に待ち始めた時から数える）
+ *   - 復号した値はメモリに持ち続け（上限 cacheMax 件）、同じ秘密の 2 回目からは main に頼まない。暗号化した値も同じ組を覚える
+ *   - 暗号化できるかの答えを得られなかった（待ちの上限を過ぎた）ときは、平文扱いに落とさず失敗にし、覚えない
+ *     （main が居ないだけで、鍵束が使えない起動と取り違えて平文で書き始めない）
  */
-export function parentPortCipher(port, { timeoutMs = 10000 } = {}) {
-  const waiting = new Map();
+export function parentPortCipher(port, { timeoutMs = 10000, connectWaitMs = 5 * 60_000, resumable = port.resumable === true, cacheMax = 500 } = {}) {
+  const waiting = new Map();   // id -> { resolve, reject, message, timer（答えの待ち）, waitTimer（つながるまでの待ち）, deadline, sent }
   const instance = crypto.randomUUID(); // 同じ parentPort を使う別の秘密ストアの応答と混ざらない
+  const plain = new Map();     // 暗号文 -> 平文（resumable のときだけ使う）
   let seq = 0, cached = null;
+  const remember = (cipherText, value) => {
+    if (!resumable) return;
+    plain.delete(cipherText);
+    plain.set(cipherText, value);
+    if (plain.size > cacheMax) plain.delete(plain.keys().next().value);
+  };
+  const fail = (id, entry) => { waiting.delete(id); clearTimeout(entry.timer); clearTimeout(entry.waitTimer); entry.reject(new Error(t('secrets.noResponse'))); };
   port.on('message', event => {
     const data = event?.data ?? event;
     if (data?.type !== 'secret' || !waiting.has(data.id)) return;
-    const { resolve, reject, timer } = waiting.get(data.id);
-    waiting.delete(data.id); clearTimeout(timer);
-    if (data.ok) resolve(data.value); else reject(new Error(data.error || t('secrets.cryptoFailed')));
+    const entry = waiting.get(data.id);
+    waiting.delete(data.id); clearTimeout(entry.timer); clearTimeout(entry.waitTimer);
+    if (data.ok) entry.resolve(data.value); else entry.reject(new Error(data.error || t('secrets.cryptoFailed')));
   });
+  // 口が false を返すのは、つながっていないとき（parentPort は何も返さず、いつも送れる）
+  const send = (id, entry) => {
+    if (port.postMessage(entry.message) === false) return false;
+    clearTimeout(entry.waitTimer); entry.waitTimer = null;
+    entry.sent = true;
+    entry.timer = setTimeout(() => fail(id, entry), timeoutMs);
+    return true;
+  };
+  // 待っている依頼を送る（つながったとき）。切れていた間に待ち始めた分も、送ったのに切れた分も同じ
+  const flush = () => { for (const [id, entry] of [...waiting]) if (!entry.sent) send(id, entry); };
+  const requeue = () => {
+    for (const [id, entry] of [...waiting]) {
+      if (!entry.sent) continue;
+      clearTimeout(entry.timer); entry.timer = null; entry.sent = false;
+      entry.waitTimer = setTimeout(() => fail(id, entry), Math.max(0, entry.deadline - Date.now()));
+    }
+  };
+  port.on('connect', flush);
+  if (resumable) port.on('disconnect', requeue);
   const request = (op, value) => new Promise((resolve, reject) => {
     const id = `${instance}:s${++seq}`;
-    const timer = setTimeout(() => { waiting.delete(id); reject(new Error(t('secrets.noResponse'))); }, timeoutMs);
-    waiting.set(id, { resolve, reject, timer });
-    port.postMessage({ type: 'secret', id, op, ...(value === undefined ? {} : { value }) });
+    const entry = { resolve, reject, message: { type: 'secret', id, op, ...(value === undefined ? {} : { value }) }, timer: null, waitTimer: null, deadline: Date.now() + connectWaitMs, sent: false };
+    waiting.set(id, entry);
+    if (send(id, entry)) return;
+    entry.waitTimer = setTimeout(() => fail(id, entry), connectWaitMs);
   });
   return {
     async status() {
       // 暗号化の可否は起動中に変わらない。main が答えない（古い版など）のも同じなので、失敗も覚えて平文扱いにする
       // 覚えるのは答えだけ。既定の理由の文は、言語が途中で変わってもよいよう返すたびに引く
-      cached ??= request('status').then(
-        s => ({ encrypted: Boolean(s?.available), backend: s?.backend ?? 'unknown', ...(s?.available ? {} : { reason: s?.reason }) }),
-        e => ({ encrypted: false, backend: 'unknown', reason: e.message }));
+      // main が付け直す口（resumable）では、答えを得られなかったのは「今 main が居ない」であって「暗号化できない」ではない。失敗は覚えず、投げる
+      const toState = s => ({ encrypted: Boolean(s?.available), backend: s?.backend ?? 'unknown', ...(s?.available ? {} : { reason: s?.reason }) });
+      cached ??= request('status').then(toState, resumable
+        ? e => { cached = null; throw e; }
+        : e => ({ encrypted: false, backend: 'unknown', reason: e.message }));
       const state = await cached;
       return state.encrypted ? state : { ...state, reason: state.reason ?? t('secrets.osUnavailable') };
     },
-    encrypt: value => request('encrypt', value),
-    decrypt: value => request('decrypt', value),
+    async encrypt(value) {
+      const sealed = await request('encrypt', value);
+      remember(sealed, value);
+      return sealed;
+    },
+    async decrypt(value) {
+      if (resumable && plain.has(value)) return plain.get(value);
+      const opened = await request('decrypt', value);
+      remember(value, opened);
+      return opened;
+    },
   };
 }
 
-/** 起動の形に合う暗号器。utilityProcess なら main に頼み、そうでなければ平文 */
-export function defaultCipher() {
-  return process.parentPort ? parentPortCipher(process.parentPort) : plainCipher;
+/** 起動の形に合う暗号器。main の下（utilityProcess）なら main に頼み、そうでなければ平文 */
+export function defaultCipher({ mainPort = getMainPort() } = {}) {
+  return mainPort.hosted ? parentPortCipher(mainPort) : plainCipher;
 }
 
 /**

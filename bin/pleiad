@@ -1,7 +1,8 @@
 #!/bin/sh
 # pleiad CLI launcher (ADR 0090). In the desktop app this file is <resources>/app/bin/pleiad and runs
 # bin/pleiad.mjs with the Node built into the app (Ply.exe, Pleiad.app/Contents/MacOS/Pleiad).
-# In the repository it runs node.
+# In a per-version runtime copy (<runtime>/app/<version>/bin, docs/zero-downtime-update/plan.md 1-3) it runs the
+# pleiad-node that ../runtime-node.txt names. In the repository it runs node.
 self=$0
 # Follow symlinks (e.g. a link placed in ~/.local/bin) to find the real bin directory
 while [ -L "$self" ]; do
@@ -10,6 +11,12 @@ while [ -L "$self" ]; do
 done
 here=$(cd "$(dirname "$self")" && pwd)
 root=$here/../../..
+if [ -f "$here/../runtime-node.txt" ]; then
+  node_dir=$(head -n 1 "$here/../runtime-node.txt" | tr -d '\r')
+  for exe in "$root/node/$node_dir/pleiad-node.exe" "$root/node/$node_dir/pleiad-node"; do
+    if [ -f "$exe" ] && [ -x "$exe" ]; then exec "$exe" "$here/pleiad.mjs" "$@"; fi
+  done
+fi
 for exe in "$root/MacOS/Pleiad" "$root/Ply.exe"; do
   if [ -f "$exe" ] && [ -x "$exe" ]; then
     ELECTRON_RUN_AS_NODE=1 exec "$exe" "$here/pleiad.mjs" "$@"

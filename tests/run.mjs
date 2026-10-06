@@ -74,6 +74,16 @@ const SUITES = [
   './unit/computer-lock.mjs',
   // main への口（parentPort）: computer-* のメッセージの形・id での応答・エラーの code・ハートビート・偽の driver
   './unit/computer-driver.mjs',
+  // main への口（core/main-port.mjs）: parentPort の素通し・main が居ない起動・つながっていない口・差し込める形
+  './unit/main-port.mjs',
+  // main とサーバーを結ぶ名前付きパイプの口（段階 1 の 1-2）: 符号化・行の分け方・握手の拒否・往復と順序・大きなバイナリー・切断と再接続・別プロセスのサーバー
+  './unit/main-link.mjs',
+  // main が居ない間の機能ごとの扱い（段階 1 の 1-5）: secret の待ち・computer use の停止・内蔵ブラウザーの写しと復元・screencast・os-open・openExternal・猶予
+  './unit/main-away.mjs',
+  // 内蔵ブラウザーの付け直し（main 側）: 中継を同じポートと鍵で立て直す・タブの写しの書き出しと開き直し・橋の流れ
+  './unit/main-away-desktop.mjs',
+  // main が居ない間（サーバー越し）: 付け直しで ready・言語が届く・main-leaving の後は猶予で中断しない（偽の main をパイプにつなぐ）
+  './unit/main-away-server.mjs',
   // 橋: MCP の面・座標の基準・ゲートの順・アプリの承認・止める・ロック画面・画像の渡し方（偽の driver）
   './unit/computer-bridge.mjs',
   // サーバー越し: 承認カードの payload・スクショの保存と配信・computer.state・computerStop・委譲の子の承認（fake + 偽の driver）
@@ -158,6 +168,8 @@ const SUITES = [
   // 作業の詳細: 走っている子の出来事（loadSession の live）を仮の発言に畳む・詳細とメインパネルが発言の描き方を共有する
   './unit/stream-messages.mjs',
   './unit/server-agent-tasks.mjs',
+  // 承認が片付いた知らせ（permissionSettled）: 子と中継の複製の id ごと・中断でも・片付いた承認への答えは ALREADY_RESOLVED・画面の配線
+  './unit/server-permission-settled.mjs',
   // 委譲の子に裏の作業が残るとき: 終わらないコマンドも自動停止しない・サブエージェントは止めない・端末は待たない（子にも親にも）
   './unit/server-delegation-background.mjs',
   // 依頼元が子のエージェント・モデル・思考の強さを ply_task_send で替える（走っている子・走っていない子・断る場合・記録）
@@ -296,6 +308,7 @@ const SUITES = [
   './unit/unread.mjs',
   // 中断と再開の画面（web/interrupt.mjs）: 三角の未読・理由の文言・再開ボタン・更新で止めた会話・更新の確認の作業一覧と進み
   './unit/web-interrupt.mjs',
+  './unit/web-switch-notice.mjs',
   // 確認済み（既読）の置き場と、2 本の接続で共有されること（fake バックエンド）
   './unit/read-store.mjs',
   './unit/store-flush.mjs',
@@ -319,6 +332,21 @@ const SUITES = [
   // 開いている会話の宣言（流れの出来事を絞る）と、会話の一覧の使い回し（ADR 0024）
   './unit/server-watch.mjs',
   './unit/desktop-port.mjs',
+  // 版ごとの実行場所（無停止の更新 1-3）: 置き場が $INSTDIR と前方一致しない・ハードリンクで組む・二重に組まない・壊れた写しの検出・掃除・使っている版を消さない・起動口
+  './unit/desktop-runtime.mjs',
+  // main がサーバーを見つける・起こす・付け直す（無停止の更新 1-4）: Job の分岐（desktop/job.cjs）・サーバーの env・ログ・孤児の見張り・別プロセスのサーバーを main を切っても残して付け直す
+  './unit/desktop-job.mjs',
+  './unit/desktop-server-boot.mjs',
+  // main.cjs の boot の選び方（vm）: AGENT_HOST_HANDOVER の既定（パッケージ版は on・開発は off）と off の utilityProcess・パイプの包み・起動の失敗・サーバーが居なくなったとき・更新の流れ
+  './unit/desktop-boot.mjs',
+  // 新しい版のサーバーへの切り替え（無停止の更新 1-6）: 作業が 0 件まで待つ・ロック・S1 の終わり・S2・前の版へ戻す・合わない版は聞く・今すぐ中断。事前の確かめの出力
+  './unit/desktop-switch.mjs',
+  './unit/desktop-switch-screen.mjs',
+  './unit/handover-check.mjs',
+  // 実行場所の材料（afterPack）: 公式の Node の取得と SHA-256 の照合・runtime.json・manifest.json
+  './unit/pack-runtime.mjs',
+  // 実機の確認（scripts/zero-downtime/stage1-7/）の試験用のインストール版が、利用者のインストール版と重ならない
+  './unit/zdtest-isolation.mjs',
   // デスクトップ版の端末（リモートの窓）: 窓ごとの信頼・preload の出し分け・バッジ。Electron は起こさない
   './unit/desktop-remote.mjs',
   // スマホの画面（docs/remote.md §8.3・§8.4）: UUID の代わり・長押し・「…」・狭い画面の規則
@@ -522,6 +550,10 @@ const SUITES = [
   './unit/brain-wakes-server.mjs',
   // bot の会話は Chats の一覧に出さず、あなた待ちのときだけ出す（一覧の行の bot・承認待ち・検索の除外・スマホ通知）
   './unit/bot-sessions-list.mjs',
+  // 通知の一覧（ベルのボタン。ADR 0149）: 重複しない・見ている会話は既読・既読の整合・あなた待ちの決着・再起動で残る・上限・削除で消える・出来事から作る規則
+  './unit/notification-inbox.mjs',
+  './unit/notification-inbox-server.mjs',
+  './unit/notification-inbox-ui.mjs',
   // --- channels-ui: 脇・流れ・スレッド・bot のページ (W1・W2・W3・W4) ---
   // 脇 (W1): Channels の並べ方・bot の状態・タブの点・検索の横断の行と開く先・Chats の木の bot の会話の行の配線（描画は目視と session-list-keys.cjs）
   './unit/channels-side-ui.mjs',
@@ -556,6 +588,19 @@ const SUITES = [
   './unit/release-ci-gate.mjs',
   // Google Play へ上げるワークフロー: APK の流れと同じ版・同じ鍵、入力と Secrets の確かめ（docs/android-releases.md「Google Play」）
   './unit/android-play-workflow.mjs',
+  // --- 通話モード (core/voice/、web/voice/。docs/voice-call.md) ---
+  // 中核: PCM・WAV・先頭の無音・発話の区切り（無音・短い声・最長・投機・片）・片の重なりの除去・設定の検査・使用量の台帳
+  './unit/voice-core.mjs',
+  // 読み上げる文の切り出し: 文の切れ目・1 文目は読点で早く・コード/表/ログは読まず言い添える・1 ターンの上限・差分を 1 字ずつ入れても同じ
+  './unit/voice-reply-reader.mjs',
+  // OpenRouter の呼び出し（偽の HTTP）: やり直し・429 のとき予備のモデルへ・冷却・片の失敗・投機・順番・キーを文・ログへ出さない・TTS の検査と奇数バイト
+  './unit/voice-openrouter.mjs',
+  // 通話 1 本: hello・ready・限度（1 日・1 回・声が無いまま）・音声フレームから確定まで・エージェントの出来事から読み上げ・ミュート・止める・遅延の内訳
+  './unit/voice-session.mjs',
+  // サーバー越し: キーは human-only・画面へ返さない・/voice-ws の認可・偽の OpenRouter とつないで一巡・ホストの設定（settings.set の voice）・使用量
+  './unit/server-voice.mjs',
+  // 画面の部品: 送信ゲート・PCM の変換・再生キュー・状態機械・吹き出しの差し替え・読む場所の探し方・差し込み口の契約（偽の AudioContext・DOM）
+  './unit/voice-ui.mjs',
 ];
 
 const code = await main({

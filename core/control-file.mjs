@@ -1,6 +1,8 @@
 // CLI がつなぎ先を見つけるための <データ置き場>/control.json（ADR 0083）。サーバーが起動時に権限 0600 で書き、
 // 終了時に pid が自分のときだけ消す。同じ置き場で 2 台立てたときは、後から立てた方が勝つ。
-// 中身: { version, pid, origin, cliToken, startedAt, appVersion, kind }。cliToken は画面のトークンとは別の乱数で、効くのは /api/ops だけ。
+// 中身: { version, pid, origin, cliToken, startedAt, appVersion, kind }（AGENT_HOST_HANDOVER=on のときは mainLink: { pipe, ipc } も。
+// main が付けるパイプの名前と口の版の範囲。秘密は main-link.json。core/main-link.mjs。読む側は無いキーを許す）。
+// cliToken は画面のトークンとは別の乱数で、効くのは /api/ops だけ。
 // このファイルは秘密を含むデータ置き場のファイルとして扱う（ADR 0050 の読ませない対象）。
 import fs from 'node:fs';
 import path from 'node:path';
@@ -11,9 +13,9 @@ export const CONTROL_VERSION = 1;
 export const controlFilePath = (dataDir) => path.join(dataDir, CONTROL_FILE);
 
 /** kind: デスクトップ版（utilityProcess）は 'desktop'、`npm start` などは 'server' */
-export async function writeControlFile({ dataDir, origin, cliToken, startedAt, appVersion, kind, pid = process.pid }) {
+export async function writeControlFile({ dataDir, origin, cliToken, startedAt, appVersion, kind, pid = process.pid, mainLink }) {
   await fs.promises.mkdir(dataDir, { recursive: true });
-  await writeAtomic(controlFilePath(dataDir), `${JSON.stringify({ version: CONTROL_VERSION, pid, origin, cliToken, startedAt, appVersion, kind }, null, 2)}\n`, { mode: 0o600 });
+  await writeAtomic(controlFilePath(dataDir), `${JSON.stringify({ version: CONTROL_VERSION, pid, origin, cliToken, startedAt, appVersion, kind, ...(mainLink ? { mainLink } : {}) }, null, 2)}\n`, { mode: 0o600 });
 }
 
 /** 自分（pid が同じ）が書いたものだけ消す。後から立った別のサーバーのファイルは残す。同期（process.on('exit') から呼ぶ） */

@@ -27,6 +27,7 @@
 - **sessions.fork・statuses.setIcon・statuses.create**（write）: `sessions.fork` は画面の「ここから分岐」と同じ `forkConversation` を通り（親の履歴を写した新しい会話ができ、親は変わらない。分岐は親と同じ承認モードで始まる）、`statuses.setIcon`・`statuses.create` は状態のグループのアイコンと空のグループ（`legacyCommand` は `setStatusIcon`・`createStatus`・`fork`）。人間が全部の会話・グループに触れるので、agent も同じ（ADR 0082）。
 - **human-only から外した操作**（[ADR 0094](adr/0094-human-only-five.md)。WS のコマンドは操作を呼ぶ薄い外側。昔のコマンド名は `legacyCommand`）:
   - `worktrees.split`・`keep`・`archive`・`restore`・`discard`（write。worktree。`discard` は変更なし・取り込み済みのときだけ消し、ほかは `action: kept`。`sessionId` も `cwd` も省くと AI は自分の会話の場所。返り値の `id` を `keep` などに渡す）
+  - `notifications.list`・`notifications.count`・`notifications.markRead`（通知の一覧。list・count は read、markRead は write。下の「通知」の「通知の一覧」。ADR 0149）
   - `notify.setPc`・`notify.setDevice`（write。この PC の通知の種類・スマホ 1 台の停止。返すのは変えた値だけで、端末の一覧は返さない。画面のコマンドは続けて `notifyStatus` を返す）
   - `hooks.read`・`hooks.readPly`（read。Hooks の定義 1 つ。AI へのコマンドの文字列は秘密らしい値を伏せる）
   - `compatEndpoints.recheck`（write。保存済みの URL とキーで確かめ直す）・`compatEndpoints.delete`（guarded。キーも消える。承認カードの一文は `server:compat.deleteConfirm`）
@@ -176,6 +177,13 @@ setup-token が発行するトークンの scope は `user:inference` だけで�
 - **スマホ**（`core/notify/`）: ホストが端末ごとに判定し、端末ごとの通知鍵で暗号化して中継の通知の線へ渡す（`docs/remote.md` §5.6・§11-5）。送らない: 端末で切った種類・ホストで止めた端末・その端末自身の画面がその会話を見ている・他の画面（PC・別の端末）が見ていて端末の設定「PC で見ている会話は送らない」（既定オン）・2 分より古い完了・30 秒未満のターンの完了。承認・質問がどこかで決着した（ターンの終わりを含む）ら、出ている通知へ取り消しを送る。完了・失敗の会話をどこかで開いた・既読にしたときも取り消す。会話名は一覧の行と同じ題（無ければ空で、端末が「Pleiad の会話」にする）。
 - **端末の出し方**（Android。`NotifyPlanner`）: 同じ会話は 1 通を上書きし、承認・質問が複数なら件数を添える。完了はホストごとに 2 件目から「N 件の会話が終わりました」に束ねる（1 件に戻れば静かに戻す）。チャンネルは「要対応」（承認・質問・失敗）と「完了」。文面は会話名だけで、ホスト名をサブテキストに出す。ロック画面は既定で汎用の文。押すと `pleiad://open?h=&s=` でそのホストの窓がその会話を開く（束ねた通知は最新の会話）。通知から直接の許可は付けない。
 - **設定**: スマホのアプリの「通知」（受け取る・返事が要るとき・失敗・完了・ロック画面に会話名を出す・PC で見ている会話は送らない）は端末ごとで、変えたらホストへ登録し直す。デスクトップの設定 › 通知 の「スマホ」は、ペアリングしたスマホの一覧（最後に送った時刻・オン/オフ）で、ホスト側で止める切り替えだけを持つ。
+- **通知の一覧**（ベルのボタン。[ADR 0149](adr/0149-notification-inbox.md)）: OS 通知・スマホの通知は出して消えるが、あなた向けの出来事はサーバーの DB（`pleiad.db` の `notifications` 表。1 件 1 行。`LATE_TABLES_SQL` で足す表で、形式番号は上げない。欠けても失う記録は無い）にも残し、画面のベルの面から辿って飛べる。書くのは `core/notification-sources.mjs`（出来事の起きる場所から。`core/notifications.mjs` が表を持つ）。
+  - **載せる種類**: `wait`（あなた待ち。承認・質問。成立で載り、決着で `resolvedAt`・`outcome`（allowed・answered・denied・cancelled）が付いて既読になる。委譲の子の承認は、カードが出ている依頼元の会話へ飛ぶ。隠れた会話は載せない）・`failed`・`done`（ターンの終わり。`completionNotices` が会話を落ち着いてから 1 回出す点で書く。bot の会話は失敗だけ、隠れた会話（learner・pulse）・委譲の子・空き時間の自動圧縮は載せない。今の通知の規則と同じ）・`mention`（人以外の投稿の `@あなた`。投稿の追加・編集で書く）。チャンネルの新着・ルーティンの結果・委譲の完了は載せない。
+  - **飛び先**: 会話の通知は `sessionId` と、ターンの最後の発言の `uuid`（`text.end` の uuid。無いバックエンドは会話の末尾へ）。bot の会話のターン・承認はチャンネルとスレッド（`channelId`・`threadId`）、`@あなた` は加えて `postId`。名前（会話の題・bot・チャンネル・スレッドの題）は載せた時点の控え（画面は会話の題だけ今のものを先に使う）。
+  - **重複しない**: `dedupeKey`（完了・失敗 `done:<会話>:<completedAt>`・`failed:…`、あなた待ち `wait:<承認の id>`、メンション `mention:<投稿の id>`）が同じなら載せない。同じ出来事を何度渡してもよい。
+  - **既読**: 通知ごと（`read_at`）。会話の `markRead`（`readAt` まで）・その会話を見た（`presence`）・チャンネルの `channels.markRead`（`readAt` まで。bot の会話の通知はチャンネルの既読でも）で、対応する通知も既読になる。いま見ている会話で起きたものは最初から既読で載る。
+  - **上限**: 200 件・30 日（`NOTIFICATION_MAX`・`NOTIFICATION_KEEP_MS`。超えたら古い方から、既読を先に捨てる）。会話を消す・チャンネルをアーカイブすると、その行も消す。あなた待ちの承認はメモリにしか無く再起動で消えるので、起動時に決着していないあなた待ちを `cancelled` で決着させる。
+  - **操作**: `notifications.list { filter?: all|wait|mention, before?, limit? }`（新しい順・既定 50 件・最大 100 件。`before` は行の `seq`。未読とあなた待ちの件数も返す）・`notifications.count`（件数だけ。ベルの数）・`notifications.markRead { ids?, all? }`。件数が変わると出来事 `notificationsChanged { unread, waiting }` が全画面へ（リモートの端末にも届く。`waiting` は未読で決着していないあなた待ち）。画面は `web/notification-inbox.mjs`、見た目は [design-system.md](design-system.md)「通知の一覧」。
 - **WS コマンド**: `presence`・`notifyStatus`・`setNotifyPc { done?, reply?, failed? }`・`setNotifyDevice { id, muted }`（操作 `notify.setPc`・`notify.setDevice`。AI も使える）・`notifyRegister { key, settings }`（中継越しの端末の画面からだけ。画面の内部）。変わるたびに `notifyStatus` イベントを全画面へ。`ready` に `notify: 1`。
 
 ## タイトル生成（2026-09-15）
@@ -218,7 +226,7 @@ Codex は `model/list` の `supportedReasoningEfforts` を候補として `turn/
 自動で戻る上限は完了通知と未確認の丸を出さない。自動で戻れなかったとき（再開の送信が失敗した・結果不明の未送信がある）（受け付けた後に送信が失敗して終わったときも含む）だけ、その会話の自動再開を外し、失敗として 1 回通知する（`completionNotices` の `error`）。解除時刻を過ぎて 2 分たっても自動再開の印が残っている会話は、画面が時計をやめて普通の「再開」にする。送信予定の時刻を過ぎて送らなかったら `scheduleMissed` 通知を出す（「送信予定」）。通知の題とロック画面の文には会話本文を含めない。
 
 - 保存: ターンが中断で終わったら（`turnResult` が aborted。止めた後に失敗として終わったものも含む）、sidecar の会話の行に `interrupted: { at, reason }` を書く。`at` は同じターンの `completedAt` と同じ値（確認済みの印 `readAt` は `completedAt` で丸めるので、ずらすと未読から戻れない）。次のターンの開始で `null` にする。始まらなかったターン（開始前の失敗）と requeue は消さない・書かない。
-- 理由（`reason`）: `user`（中断ボタン）・`update`（更新のため）・`quit`（終了のため）・`hostAway`（`AGENT_HOST_GRACE_MS` の猶予切れ）・`restart`（落ちた・強制終了）。
+- 理由（`reason`）: `user`（中断ボタン）・`update`（更新のため。無停止の更新では付かず、戻し道の「中断して更新」だけ）・`quit`（終了のため）・`hostAway`（`AGENT_HOST_GRACE_MS` の猶予切れ）・`restart`（落ちた・強制終了）。
 - 落ちたターン: ターンの開始で `turnStartedAt` を書き、終わりで片付ける。起動時に `turnStartedAt > (completedAt ?? 0)` の会話は `interrupted: { at: 起動時刻, reason: "restart" }` にし、`completedAt` も同じ時刻にする（`store.recoverInterruptedTurns`）。
 - 公開: 一覧の行・`loadSession`・`turnEnd` に `interrupted`（`{ at, reason } | null`）を載せる。実行中の会話は `null`。`turnResult { outcome: "aborted" }` に `reason` を足す。
 - WS `abort { sessionId?, reason? }`: `sessionId` を省略したら全部。`reason` は `user|update|quit` だけを受け、省略・ほかの値は `user`。先に止め始めたターンは最初の理由のまま。1 つの会話を止めたときは、その取り消しで実際に止まる委譲の子の会話のターン（終わっていないタスクの子。孫以下も）にだけ同じ理由を付ける（止める所 `stopChild` で付ける。終わったタスクの子の会話を人が直接動かしているターンは止まらないので付けない）。全部の中断では子の会話も走っているターンとして同じ理由で止まり、個別に再開できる。委譲タスクは今どおり取り消し、親の再開で委譲し直さない（取り消したことは再開後のエージェントに伝える。下の「止めたもの」）。
@@ -231,8 +239,8 @@ Codex は `model/list` の `supportedReasoningEfforts` を候補として `turn/
 - 止めたものを伝える: 次のターン（再開の文・保留の送り直し・中断した会話への新しい送信・完了通知のどれでも。圧縮は除く）の始めに、`stops` を会話の言語の文（`agent:stops.*`。`<pleiad-interruption>` で囲む）にして `runTurn` の `notes` で発言の前に添える。発言の本文は書き換えない（Claude は同じ user メッセージの別の text ブロック、Codex は `turn/start` の別の入力、agy は 1 行 1 ターンなので本文の前につなぐ）。渡った合図（`onPromptDelivered`）で伝えた分を `stops` から消す（`store.takeStops`。渡る前に失敗したら次のターンでまた添える）。止めたものが無ければ何も添えない。文は「何を止めたか」「終わっていた結果は `ply_task_status` で読める」「そのままやり直さず、今の状態を確かめてから委譲し直すか決める」。
 - 画面: 添えたターンでは `interruptionNote { text, messageId? }` を出し、その発言の吹き出しの前に「中断で止めたものをエージェントに伝えました」の開ける 1 行を置く（中身は伝えた文）。履歴は行の先頭の `<pleiad-interruption>` を `kind: interruptionNote` のシステム側の行に分け（`splitInterruptionNotes`。`history.mjs` の `loadTranscript` と `classifySystemMessages`）、続く発言は元の文のまま描く。
 - 委譲の子の会話: 中断はサーバーの子の会話の行にも残るが、脇の一覧は子の会話を並べないので三角は出ない。子の会話はタスクの一覧から開いて（子の会話の画面で）再開する。
-- 更新の後の一行（「更新で中断した会話が N 件あります」）: `ready` の `startedAt`（サーバーの起動時刻）より前の `update` の中断だけを数える（更新で Pleiad が再起動したときだけ。失敗・30 秒で止まらなかったときは出さない）。その画面で更新を進めている間も出さない。
-- デスクトップ: 更新は画面が `abort { reason: "update" }` で止め、`running` の数が 0 になるのを待ってから今の手順へ進む（サーバーの更新ロックは安全網として残す）。終了は main が worker に `{ type: "abort", reason: "quit" }` を送り、同じく待つ（`docs/desktop-releases.md`）。待つ間に始まったターン（別の端末からの送信・委譲の完了の届け・送信待ち）も止めるため、どちらも数が 0 になるまで見るたびに `abort` を送り直す（何度送っても同じ）。
+- 更新の後の一行（「更新で中断した会話が N 件あります」。無停止の更新ではターンが中断されないので出ず、戻し道の更新の後だけ出る）: `ready` の `startedAt`（サーバーの起動時刻）より前の `update` の中断だけを数える（更新で Pleiad が再起動したときだけ。失敗・30 秒で止まらなかったときは出さない）。その画面で更新を進めている間も出さない。
+- デスクトップ: 無停止の更新（既定）の更新は中断しない（main が `main-leaving` を送って入れ替わり、新しい main が `running` の数が 0 になるのを待ってサーバーを切り替える。`desktop/switch.cjs`）。戻し道の更新は画面が `abort { reason: "update" }` で止め、`running` の数が 0 になるのを待ってから今の手順へ進む（サーバーの更新ロックは安全網として残す）。終了は main が worker に `{ type: "abort", reason: "quit" }` を送り、同じく待つ（`docs/desktop-releases.md`）。待つ間に始まったターン（別の端末からの送信・委譲の完了の届け・送信待ち）も止めるため、どちらも数が 0 になるまで見るたびに `abort` を送り直す（何度送っても同じ）。
 
 ## 会話の読み直し（2026-09-29）
 
@@ -268,7 +276,7 @@ Codex は `model/list` の `supportedReasoningEfforts` を候補として `turn/
 
 Pleiad の画面・サーバー・デスクトップを一つのバージョンとして配布する。
 Electron main が electron-updater と更新設定を持ち、sandbox preload は限定した更新操作と状態通知だけを公開する。
-更新は自動確認・自動ダウンロード（設定でオフにできる）・明示的な再起動に分ける。脇の通知は後回しにでき、詳細と再起動の確認は設定画面で行う。更新時のサーバーロックは処理中コマンド、ターン、承認、送信キューの処理を確認し、新規処理の開始と終了判定の競合を防ぐ。実行中の作業があっても断らず、「中断して更新」で全部を中断して（理由 `update`）止まり終えてから更新する（「中断と再開」、[ADR 0036](adr/0036-interrupt-and-update-while-running.md)）。
+更新は自動確認・自動ダウンロード（設定でオフにできる）・明示的な再起動に分ける。脇の通知は後回しにでき、詳細と再起動の確認は設定画面で行う。更新時のサーバーロックは処理中コマンド、ターン、承認、送信キューの処理を確認し、新規処理の開始と終了判定の競合を防ぐ。既定は無停止の更新（[ADR 0151](adr/0151-zero-downtime-update.md)。パッケージ版は `AGENT_HOST_HANDOVER` が無ければ on）: 実行中の作業があっても断らず、止めず、main だけを入れ替え、サーバーの切り替えを作業が終わるまで先送りする（「4. アーキテクチャ」の「デスクトップ版の層」、`docs/zero-downtime-update/design.md`、`docs/desktop-releases.md`「適用とデータ保護」）。「中断して更新」（全部を中断して（理由 `update`）止まり終えてから更新する。「中断と再開」、[ADR 0036](adr/0036-interrupt-and-update-while-running.md)）は戻し道で、`AGENT_HOST_HANDOVER=off`・実行場所を組めない環境・データの形式番号や口の版が合わない版への更新・切り替えの待ちの「今すぐ中断して切り替える」だけで使う。
 安定版・先行版と段階配信の公開手順、署名資格情報、データ形式の互換性は `docs/desktop-releases.md`。
 コードと配布先は public リポジトリ `tekalu1/pleiad` にまとめ、自己署名の評価版を Releases で配布する。Actions は自分のリポジトリ（`github.repository`）へ標準の GITHUB_TOKEN でアップロードする。アプリに焼き込む更新フィードはアップロード先と分け、既定は `tekalu1/pleiad`（`PLY_RELEASE_REPOSITORY` で上書き）。自動更新に GitHub のログインは要らない。Electron main は起動環境または GitHub CLI からトークンを毎回探し、あれば付けて（レート制限を避けるため）、無ければ認証ヘッダーなしで同じプロバイダーを使う。トークンは画面・設定保存・サーバーへ渡さない。認証なしの 403/429 はレート制限として案内し、トークンを付けた 401/403 だけ資格情報の確認を案内する。非公開GitHubプロバイダー用のメタデータ名は先行版も `latest*.yml` とする。
 
@@ -394,6 +402,8 @@ AI がステータスを変える流れ: core のツールが呼ばれる → co
 host が store を更新して描画。**core は現在のステータスを保持しない**。
 人間が UI から変えたときも、host が store を更新して同じイベントを描画する。
 **経路は違っても、通る先は同じ**（思想 2.2）。これでコアを差し替えても host 側の資産が生き残る。
+
+**デスクトップ版の層（無停止の更新 段階 1。[ADR 0151](adr/0151-zero-downtime-update.md)・`docs/zero-downtime-update/design.md` §2）**: パッケージ版は main（Electron）とサーバー（core）の 2 層で、サーバーは main の子でなく、`$INSTDIR` の外の版ごとの実行場所（`%LOCALAPPDATA%\agent-host-runtime`）で公式の Node（`pleiad-node.exe`）として走る。main との間は名前付きパイプ（`core/main-link.mjs`・`desktop/server-link.cjs`。`utilityProcess` の `parentPort` と同じ型のメッセージ）。NSIS が入れ替えるのは main だけなので、更新でサーバーとターンは止まらず、新しい main が付け直す。main が居ない間（本物のインストーラーで約 45〜50 秒）の機能は `docs/zero-downtime-update/design.md` §7.2 の表のとおり（secret は待たせる・computer use は止める・内蔵ブラウザーはタブの写しから張り直す）。サーバーの切り替え（新しい版の core への入れ替え）は作業が終わった後。`AGENT_HOST_HANDOVER=off`・合わない環境では、今までどおり main が `utilityProcess` でサーバーを起こす（保持役は段階 2 以降）。
 
 **プロトコル**は procway-code の Host Contract に倣った（procway-code への対応は 2026-09 に終えたが、形はそのまま）。設計をゼロから起こさない。
 
@@ -650,3 +660,14 @@ Claude・Codex 共通の `ply_agents` MCP で、Pleiad 管理の子会話を作�
 ## 会話の圧縮（2026-09-27）
 
 利用者向けには指示・Skills・MCP の入口を「プラグイン」、LLM の窓の占有を「文脈」、会話を縮める操作を「圧縮」と呼ぶ。モデルの「コンテキスト長」は維持する。圧縮のイベントは core が正規化し、結果を sidecar に残して開き直した会話にも区切りを表示する（[ADR 0039](adr/0039-conversation-compaction.md)）。自動圧縮は正常に終わったターン（利用者の送信と、委譲の完了通知などで始まったターン。圧縮のターンと委譲の子の会話を除く）から会話ごとに一回だけ予約する（[ADR 0068](adr/0068-idle-compaction-after-notice-turns.md)）。既定は全体オン、最小 150k トークン（[ADR 0051](adr/0051-auto-compaction-min-150k.md)）、Claude オン・50 分、Codex オフ・有効化時 25 分（[ADR 0046](adr/0046-codex-auto-compaction-25-minutes.md)）。Antigravity は自身の管理に任せる。次の送信・手動圧縮・未送信会話の削除・バックエンド切替・対象外への設定変更・キャンセルで予約を取り消し、画面の会話切替では残す。見えている予約は `compaction-schedule.json` に保存し、再起動後に予定の時刻から 8 分以内のものを戻す（[ADR 0069](adr/0069-idle-compaction-schedule-survives-restart.md)）。
+
+## 通話モード（承認済み（2026-10-06））
+
+声で話しかけ、返事を読み上げる。理由と決定は [ADR 0150](adr/0150-voice-call.md)、構成・遅延の設計・測り方・確かめ方は `docs/voice-call.md`、見た目は `docs/design-system.md`「通話モード」。
+
+- **通話**: 頭の通話ボタンで始める。ホスト（`core/voice/`）が OpenRouter の STT（既定 `microsoft/mai-transcribe-2`。429 は予備 `assemblyai/universal-3-5-pro`）と TTS（既定 `x-ai/grok-voice-tts-1.0`）を呼ぶ。確定した発言は画面が今の送信の経路（会話は `sendMessage`、スレッドは `channels.post`）へ送り、返事の `text.delta` から読み上げる。コード・表・長い作業ログは読まず「コードは画面に出しました」と言う。話して割り込むのは 2 段目で、いまは［ミュート］・スピーカーのミュート・［止める］まで。
+- **`/voice-ws`**: 音声専用の WebSocket（上りは 16kHz s16le のバイナリ + JSON の制御、下りは JSON + `[1][文の id][PCM 24kHz]`）。`/ws` と同じ `token`。**この PC の画面からだけ**（中継越しは 403。`ready.voice` は 0）。プロトコルは `core/voice/session.mjs` の冒頭。
+- **キー**: OpenRouter のキーはホストだけが持つ（`voice-secrets.json`。暗号化。Jev の判定器のキーとは別）。登録・削除は human-only の WS コマンド `setVoiceKey`・`deleteVoiceKey`。画面・ログ・AI の操作の返りへ出さない。登録が音声と読み上げる文章の外部送信の同意。
+- **設定**: `voice`（`settings.set`。聞き取り・予備・読み上げのモデル、声、言語、1 回と 1 日の通話の長さの上限、エコー除去。上限を上げる向きは AI からは承認カード）。状態は `voice.status`（キーの有無・今日の使用量。キーは返さない）。設定の画面は設定 › 通話。
+- **費用の安全弁**: 1 回の通話の長さの上限（既定 30 分）・1 日の上限（既定 120 分。この PC の日付。日ごとの台帳 `voice-usage.json` は直近 31 日）・声が聞こえないまま 10 分で終了・無音と雑音を送らない（送信ゲート・200ms 未満の声・空の結果）。
+- **デスクトップ・モバイル**: Electron は本体の画面（メインフレーム・同じ origin）の音声入力に限って `media` を許可する。macOS は `NSMicrophoneUsageDescription` と audio-input の entitlement、Android は `RECORD_AUDIO` を足した（実機は未確認）。

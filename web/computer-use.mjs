@@ -30,7 +30,7 @@ export function computerVerb(name) {
 }
 
 const STATES = new Set(["ok", "failed", "stopped", "waiting"]);
-const REASONS = new Set(["escape", "stop", "locked", "forbidden", "denied", "busy"]);
+const REASONS = new Set(["escape", "stop", "update", "locked", "forbidden", "denied", "busy"]);
 
 /**
  * 結果から表示に使う情報を読む。`computer`（印の行から橋が作ったもの）が無ければ isError だけで決める。

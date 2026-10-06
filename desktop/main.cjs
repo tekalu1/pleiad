@@ -15,6 +15,8 @@ let resident;
 // 窓ごとのオリジンの表と、ほかのホストへつなぐ端末の窓（docs/remote.md §7。desktop/remote-windows.cjs）
 const { createWindowTrust } = require('./window-trust.cjs');
 const { createRemoteWindows } = require('./remote-windows.cjs');
+// 無停止の更新の切り替えを待つ表示（desktop/switch-screen.cjs）。画面が表示を持つかを知り、状態を渡し、画面の操作を状態機械へ返す
+const { createSwitchScreen } = require('./switch-screen.cjs');
 // 内蔵ブラウザー（右パネルに重ねる WebContentsView。docs/inapp-browser.md、ADR 0041）。ローカルの窓にだけ置く
 const { createBrowserPanel } = require('./browser-panel.cjs');
 const { attachAgentBrowserBridge } = require('./agent-browser-bridge.cjs');
@@ -35,7 +37,17 @@ const { attachComputerOverlay } = require('./computer-overlay.cjs');
 let computerOverlay;
 const trust = createWindowTrust();
 let remoteWindows;
-let worker, window, origin, updates, quitting = false, closing = false, exitInProgress = false;
+let worker, linked = null, window, origin, updates, quitting = false, closing = false, exitInProgress = false;
+// 無停止の更新で、付け直したサーバーが古い版のときの新しい版への切り替え（desktop/switch.cjs）
+let serverSwitch = null;
+// サーバーの起こし方の記録。updater.log（desktop/update-log.cjs）が出来るまでは溜め、出来たら流す（Job が抜け道を許さず今の流れに落ちた理由などを残す）
+let bootLogger = null;
+const pendingServerLog = [];
+const log = line => { console.warn('[server]', line); if (bootLogger) bootLogger.info?.(`[server] ${line}`); else pendingServerLog.push(line); };
+// 無停止の更新（ADR 0151）のサーバーの起こし方・付け直し。AGENT_HOST_HANDOVER=on のときだけ読む
+const serverBoot = () => require('./server-boot.cjs');
+// 配布物の resources\。開発の確認用に AGENT_HOST_RUNTIME_RESOURCES（desktop:pack の win-unpacked\resources など）で差し替えられる
+const runtimeResources = () => process.env.AGENT_HOST_RUNTIME_RESOURCES || process.resourcesPath;
 const nativeExit = app.exit.bind(app);
 app.exit = (...args) => { exitInProgress = true; return nativeExit(...args); };
 function showFatalError(title, message) {
@@ -55,6 +67,7 @@ if (process.platform === 'win32' && !PACKAGED_IDENTITY) app.setAppUserModelId(AP
 
 // ローカルの窓の本体フレームで、ローカルのサーバーの画面からの IPC だけを通す（リモートの窓・同梱の窓は別の口）
 function trusted(event) { trust.check(event, ['local']); }
+const switchScreen = createSwitchScreen({ ipcMain, trusted, getWindow: () => window });
 function workerRequest(type, extra = {}) {
   return new Promise((resolve, reject) => {
     const id = ++requestId;
@@ -83,12 +96,13 @@ const ABORT_WAIT_MS = 30_000;
  * 待つ間に始まったターン（別の端末からの送信・委譲の完了の届け・送信待ち）も止めるため、残っている間は見るたびに
  * 中断を送り直す（止め始めたものには何もしない。理由も最初のまま）。上限までに止まらなければ、残っている数を理由にして失敗する（終了しない）
  */
-async function abortAll(reason) {
+async function abortAll(reason, onProgress) {
   const until = Date.now() + ABORT_WAIT_MS;
   for (;;) {
     const result = await workerRequest('abort', { reason });
     if (result.error) throw new Error(result.error);
     const work = await runningWork();
+    onProgress?.(work);
     if (work.count === 0) return;
     if (Date.now() >= until) throw new Error(t('quit.abortTimeout', { count: work.count, seconds: ABORT_WAIT_MS / 1000 }));
     await new Promise(resolve => setTimeout(resolve, 500));
@@ -96,9 +110,16 @@ async function abortAll(reason) {
 }
 
 async function installUpdate() {
+  // 無停止の更新（パイプのサーバー。ADR 0151）: 作業を中断せず、サーバーをロックしない。サーバーに main-leaving を送り
+  // （main が戻らないまま作業が 0 件で 30 分たったら終わる。core/orphan-guard.mjs）、electron-updater が終わる直前
+  // （before-quit-for-update。インストーラーを起こした後）につながりだけを切る。サーバーは走り続け、新しい main が付け直して切り替える（desktop/switch.cjs）
+  const handover = Boolean(linked);
   try {
-    const lock = await workerRequest('update-lock');
-    if (!lock.ok) throw new Error(t('update.blocked', { reason: lock.reason }));
+    if (handover) worker.postMessage({ type: 'main-leaving', reason: 'update' });
+    else {
+      const lock = await workerRequest('update-lock');
+      if (!lock.ok) throw new Error(t('update.blocked', { reason: lock.reason }));
+    }
     // The renderer flushes drafts before invoking this operation. The lease now
     // rejects new server commands until shutdown, eliminating the idle-check race.
     const updater = require('electron-updater').autoUpdater;
@@ -113,14 +134,15 @@ async function installUpdate() {
         for (const listener of native.listeners('update-downloaded')) if (!before.has(listener)) native.off('update-downloaded', listener);
         reject(new Error(t('update.applyFailed')));
       };
-      const ready = () => { cleanup(); quitting = true; worker.postMessage({ type: 'shutdown' }); resolve(); };
+      const ready = () => { cleanup(); quitting = true; if (handover) worker.leave('update'); else worker.postMessage({ type: 'shutdown' }); resolve(); };
       updater.once('error', failed); native.once('before-quit-for-update', ready);
       // Windows はインストーラーの進捗バーだけを出して適用し、終わったら起動し直す。
       // 入れ先とインストールの種類は前回を引き継ぎ、選択と完了の画面は出さない（build/installer.nsh）
       try { updater.quitAndInstall(false, true); } catch { failed(); }
     });
   } catch (e) {
-    quitting = false; worker.postMessage({ type: 'update-unlock' }); throw e;
+    // 更新を取りやめた。main は居続けるので、サーバーの main-leaving（猶予を数えない・切断の上限）を解く
+    quitting = false; worker.postMessage({ type: handover ? 'main-leaving-cancel' : 'update-unlock' }); throw e;
   }
 }
 
@@ -149,6 +171,49 @@ function systemLanguage() {
   try { return app.getPreferredSystemLanguages()[0] || app.getLocale() || ''; } catch { return ''; }
 }
 
+/**
+ * パイプでつなぐサーバーを選ぶ。パッケージ版は既定で on（AGENT_HOST_HANDOVER が無ければ on。off で今の utilityProcess）。
+ * 開発（electron .）は既定が off で、on にするなら AGENT_HOST_RUNTIME_RESOURCES つき（desktop:pack の resources を指す確認用）。
+ * 使えなければ null（今の utilityProcess。理由を log に残す）
+ */
+async function chooseLinkedServer(portFile) {
+  const flag = String(process.env.AGENT_HOST_HANDOVER ?? '').trim().toLowerCase();
+  if (flag !== 'on' && !(app.isPackaged && flag === '')) return null;
+  if (!app.isPackaged && !process.env.AGENT_HOST_RUNTIME_RESOURCES) { log('AGENT_HOST_HANDOVER=on needs a packaged app (or AGENT_HOST_RUNTIME_RESOURCES): using the utility process'); return null; }
+  try {
+    return await serverBoot().chooseServer({ resourcesPath: runtimeResources(), execPath: process.execPath, appVersion: app.getVersion(), systemLocale: systemLanguage(), port: savedPort(portFile), cwd: app.getPath('home'),
+      dataDir: serverBoot().resolveDataDir(), log });
+  } catch (error) {
+    log(`zero-downtime update is not used (${error.message}): using the utility process`);
+    return null;
+  }
+}
+
+/** 付け直したサーバーが古い版なら、作業が終わるのを待って新しい版のサーバーへ切り替える（desktop/switch.cjs）。待ちの表示は今は main のログ（[server] switch: …） */
+function startServerSwitch(ready, portFile, onServerExit) {
+  const { startSwitch, incompatibleDialog } = require('./switch.cjs');
+  const control = startSwitch({ linked, ready, resourcesPath: runtimeResources(), execPath: process.execPath, dataDir: serverBoot().resolveDataDir(), systemLocale: systemLanguage(),
+    cwd: app.getPath('home'), request: workerRequest, runningWork, abortAll, log: line => log(`switch: ${line}`),
+    // 画面が切り替えの表示を持つなら画面が答える（switchScreen）。持たない版の画面には、今までのダイアログ
+    ask: info => switchScreen.ask(info, incompatibleDialog({ dialog, getWindow: () => window, t })),
+    // 同じ包みにつなぎ直したので、once('exit') の見張りを付け直す
+    rearm: () => { if (!worker.listeners('exit').includes(onServerExit)) worker.once('exit', onServerExit); },
+    reload: async next => {
+      // 同じポートが取れなかったときは origin が変わる（design.md §8）
+      origin = `http://127.0.0.1:${next.port}`;
+      rememberPort(portFile, next.port);
+      trust.update(window, { origin });
+      if (next.locale) setLocale(next.locale);
+      await window.loadURL(`${origin}/?token=${encodeURIComponent(next.token)}`);
+    },
+    restart: () => { quitting = true; app.relaunch(); app.exit(0); },
+    fallback: () => { if (!switchScreen.supported()) void dialog.showMessageBox(window, { type: 'warning', title: 'Pleiad', message: t('switch.fallback') }).catch(() => {}); },
+    failed: error => { quitting = true; return showFatalError('Pleiad', t('switch.failed', { detail: error?.message ?? '' })).catch(e => console.error(e)).finally(() => app.quit()); },
+  });
+  switchScreen.attach(control);
+  return control;
+}
+
 async function boot() {
   // サーバーが起動するまでは、設定（prefs.json）と OS の言語で決める。起動後はサーバーが解決した言語に合わせる（desktop/i18n.cjs）。
   // main の中のリモートの端末側（core/remote/device.mjs）が引く core/i18n.mjs もここで同じ言語にそろえる
@@ -156,7 +221,10 @@ async function boot() {
   // 開発版と配布版が同時に動いても互いのポートを奪い合わないよう、記録を分ける
   const portFile = path.join(app.getPath('userData'), app.isPackaged ? 'server-port.json' : 'server-port-dev.json');
   const agentBrowserBin = prepareAgentBrowserBin({ packaged: app.isPackaged, resourcesPath: process.resourcesPath, root: path.join(__dirname, '..'), dataDir: app.getPath('userData') });
-  worker = utilityProcess.fork(path.join(__dirname, 'server.cjs'), [], {
+  // AGENT_HOST_HANDOVER=on: サーバーを main の子でない形で起こす・走っているサーバーに付け直す（desktop/server-boot.cjs。名前付きパイプでつなぐ）。
+  // 起こせない環境（Job が抜け道を許さない・実行場所を組めない）では null で、今の utilityProcess に落ちる
+  linked = await chooseLinkedServer(portFile);
+  worker = linked ? linked.link : utilityProcess.fork(path.join(__dirname, 'server.cjs'), [], {
     cwd: app.getPath('home'),
     // OS の言語はサーバーからは確実に取れない（utilityProcess の Intl は OS の表示言語と一致しないことがある）ので、ここで渡す。
     // 画面の言語を「OS に合わせる」ときに使う（core/i18n.mjs）
@@ -164,8 +232,8 @@ async function boot() {
     stdio: 'pipe', serviceName: 'Pleiad server',
   });
   powerMonitor.on('resume', () => worker?.postMessage({ type: 'wake' }));
-  // Consume logs without exposing the private authentication URL.
-  worker.stdout.on('data', () => {});
+  // Consume logs without exposing the private authentication URL.（パイプの経路には stdout・stderr が無い。サーバーが logs\server.log に書く）
+  worker.stdout?.on('data', () => {});
   // 外部 MCP の秘密は safeStorage で暗号化する。safeStorage は main でしか使えないので、サーバーの依頼をここで受ける
   // MCP の OAuth の同意画面も、サーバー（utilityProcess）はブラウザを開けないので頼まれて開く
   attachSecretBridge(worker, { safeStorage, openExternal: url => shell.openExternal(url).catch(() => {}) });
@@ -180,11 +248,13 @@ async function boot() {
   attachChromeOs(worker, { chromeOs: createChromeOs({ platform: process.platform, win32: win32 ? withPerMonitorDpi(win32) : null, reason: win32Reason, log: line => console.warn('[chrome-os]', line) }), log: line => console.warn('[chrome-os]', line) });
   resident = attachResident({ app, worker, icon: path.join(__dirname, 'icon.png'), getWindow: () => window, quit: () => closeSafely() });
   let startupError = '';
-  worker.stderr.on('data', data => { startupError = (startupError + data.toString()).replace(/token=\S+/g, 'token=[redacted]').slice(-2000); });
+  worker.stderr?.on('data', data => { startupError = (startupError + data.toString()).replace(/token=\S+/g, 'token=[redacted]').slice(-2000); });
   const ready = await new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error(t('server.startTimeout'))), 60_000);
     worker.on('message', message => { if (message.type === 'ready') { clearTimeout(timer); resolve(message); } });
-    worker.once('exit', () => { clearTimeout(timer); reject(new Error(t('server.startFailed', { detail: startupError }))); });
+    worker.once('exit', () => { clearTimeout(timer); reject(new Error(t('server.startFailed', { detail: startupError || (linked?.logFile ? serverBoot().readLogTail(linked.logFile) : '') }))); });
+    // パイプの経路は、ここで付け直す・起こす（message の登録は済んでいる。つながった直後に最新の ready が届く）
+    linked?.connect().then(result => log(`server ${result.attached ? 'attached' : 'started'} (pid ${result.pid})`), error => { clearTimeout(timer); reject(new Error(serverBoot().describeBootError(error, t))); });
   });
   if (ready.locale) setLocale(ready.locale);
   // 画面で言語を変えたら、サーバーが解決し直した言語が届く（core/server.mjs の savePref）
@@ -202,13 +272,16 @@ async function boot() {
   }
   window.removeMenu();
   trust.register(window, { kind: 'local', origin });
+  // 読み込み直した画面は別の版かもしれない。切り替えの表示を持つかは、その画面の hello で知る
+  window.webContents.on('did-start-loading', () => switchScreen.reset());
   remoteWindows = createRemoteWindows({ app, BrowserWindow, session, ipcMain, nativeImage, nativeTheme, Notification, Menu, safeStorage, trust,
     icon: path.join(__dirname, 'icon.png'), external });
   remoteWindows.attach();
   remoteWindows.attachWorker(worker);
   browserPanel = createBrowserPanel({ window, WebContentsView, BrowserWindow, session, shell, ipcMain, app, trust, icon: path.join(__dirname, 'icon.png'), agentControl: (action, id) => agentBrowserBridge?.[action]?.(id) });
   browserPanel.attach();
-  agentBrowserBridge = attachAgentBrowserBridge(worker, browserPanel);
+  // 名前付きパイプの経路（無停止の更新）では、タブの写しをサーバーへ渡し、付け直したときにサーバーの写しからタブと中継を立て直す（core/agent-browser.mjs）
+  agentBrowserBridge = attachAgentBrowserBridge(worker, browserPanel, { handover: Boolean(linked) });
   computerOverlay = attachComputerOverlay(worker, { onEscape: owner => computerService?.escape({ owner, notify: false }) });
   browserScreencastBridge = attachBrowserScreencastBridge(worker, browserPanel, {
     agentControl: (action, id) => agentBrowserBridge?.[action]?.(id),
@@ -224,11 +297,13 @@ async function boot() {
     if (new URL(url).origin !== origin) { event.preventDefault(); external(url); }
   });
   // 権限は断るのが基本。navigator.clipboard.writeText も権限要求（clipboard-sanitized-write）を通るので、
-  // これだけは Pleiad 自身の画面（埋め込みの枠ではなく本体）に限って通す。断るとコピーのボタンが効かない
+  // これだけは Pleiad 自身の画面（埋め込みの枠ではなく本体）に限って通す。断るとコピーのボタンが効かない。
+  // 通話モード（docs/voice-call.md）のマイクも同じ決まり: 本体の画面（メインフレーム・同じ origin）の音声入力（media で audio だけ。映像は断る）に限って通す
   window.webContents.session.setPermissionRequestHandler((_contents, permission, callback, details) => {
     let own = false;
     try { own = details.isMainFrame && new URL(details.requestingUrl).origin === origin; } catch {}
-    callback(permission === 'clipboard-sanitized-write' && own);
+    const audioOnly = permission === 'media' && Array.isArray(details.mediaTypes) && details.mediaTypes.length > 0 && details.mediaTypes.every(type => type === 'audio');
+    callback(own && (permission === 'clipboard-sanitized-write' || audioOnly));
   });
   window.on('close', event => {
     if (quitting) return;
@@ -237,22 +312,34 @@ async function boot() {
     closeSafely();
   });
   window.on('session-end', () => { quitting = true; worker.postMessage({ type: 'shutdown' }); });
-  worker.once('exit', () => {
-    if (quitting || exitInProgress) return;
-    quitting = true;
-    void showFatalError('Pleiad', t('server.exited')).catch(e => console.error(e)).finally(() => app.quit());
-  });
+  const onServerExit = () => {
+    // 切り替え（desktop/switch.cjs）が古いサーバーを終わらせている間は、終了の知らせを出さない
+    if (quitting || exitInProgress || serverSwitch?.replacing) return;
+    void (async () => {
+      // 名前付きパイプの経路: 別の main が付け直した（bye 'replaced'）なら静かに終わる。つながりだけが切れたなら（サーバーは居る）付け直す
+      if (linked) {
+        if (worker.exitReason === 'replaced') { quitting = true; app.quit(); return; }
+        if (worker.exitReason !== 'closing' && await serverBoot().reattachServer({ link: worker, dataDir: serverBoot().resolveDataDir(), log })) { worker.once('exit', onServerExit); return; }
+      }
+      if (quitting || exitInProgress) return;
+      quitting = true;
+      await showFatalError('Pleiad', t('server.exited')).catch(e => console.error(e)).finally(() => app.quit());
+    })();
+  };
+  worker.once('exit', onServerExit);
   await window.loadURL(`${origin}/?token=${encodeURIComponent(ready.token)}`);
   window.show();
   remoteWindows.handleArgv(process.argv);
+  if (linked) serverSwitch = startServerSwitch(ready, portFile, onServerExit);
   const { autoUpdater } = require('electron-updater');
   // 記録は userData/logs/updater.log に残す。トークンと配信の署名付きの URL は伏せて書く（desktop/update-log.cjs）
-  autoUpdater.logger = createUpdateLog(path.join(app.getPath('userData'), 'logs', 'updater.log'));
+  autoUpdater.logger = bootLogger = createUpdateLog(path.join(app.getPath('userData'), 'logs', 'updater.log'));
+  for (const line of pendingServerLog.splice(0)) bootLogger.info?.(`[server] ${line}`);
   // Microsoft Store の版は Store が更新する。確認もダウンロードもしない（docs/microsoft-store.md「自動更新」）
   const pkg = require('../package.json');
   updates = new Updates({ updater: autoUpdater, version: app.getVersion(), file: path.join(app.getPath('userData'), 'updates.json'),
     store: isStoreBuild({ pkg, windowsStore: process.windowsStore }),
-    enabled: updaterEnabled({ packaged: app.isPackaged, pkg, windowsStore: process.windowsStore, feed: fs.existsSync(path.join(process.resourcesPath, 'app-update.yml')) }), install: installUpdate,
+    enabled: updaterEnabled({ packaged: app.isPackaged, pkg, windowsStore: process.windowsStore, feed: fs.existsSync(path.join(process.resourcesPath, 'app-update.yml')) }), install: installUpdate, handover: Boolean(linked),
     prepareCheck: () => prepareUpdateCheck(autoUpdater, path.join(process.resourcesPath, 'app-update.yml')) });
   updates.on('state', state => { if (!window.isDestroyed()) window.webContents.send('ply:update-state', state); });
   try { await updates.init(); }
@@ -333,14 +420,16 @@ ipcMain.on('ply:title-bar', (event, colors) => {
 });
 if (!app.requestSingleInstanceLock()) app.quit();
 else {
-  app.on('will-quit', () => { browserScreencastBridge?.close(); agentBrowserBridge?.close(); computerOverlay?.close(); });
+  app.on('will-quit', () => { serverSwitch?.cancel(); browserScreencastBridge?.close(); agentBrowserBridge?.close(); computerOverlay?.close(); });
   app.on('second-instance', (_event, argv) => { if (remoteWindows?.handleArgv(argv)) return; if (window) { window.restore(); window.show(); window.focus(); } });
   app.on('before-quit', event => { exitInProgress = true; if (!quitting && window) { event.preventDefault(); void closeSafely(); } });
   app.on('will-quit', () => { exitInProgress = true; });
   app.whenReady().then(boot).catch(e => {
     console.error(e.message);
     if (quitting || exitInProgress) return;
-    quitting = true; worker?.kill();
+    quitting = true;
+    // パイプの経路のサーバーは main の子でなく、付け直した先は前の main が起こしたもの。止めずに切るだけにする（居続けるのは core/orphan-guard.mjs が終わらせる）
+    if (worker?.leave) worker.leave('boot-failed'); else worker?.kill();
     void showFatalError(t('boot.failedTitle'), e.message).catch(error => console.error(error)).finally(() => app.quit());
   });
 }
