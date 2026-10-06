@@ -56,9 +56,9 @@
 | 端末の資格情報・ペアリング・端末内プロキシ | `core/remote/device.mjs`（置き場・ペアリング・ホストごとのプロキシの管理）、`core/remote/device-link.mjs`（中継への線・張り直し・状態）、`core/remote/device-proxy.mjs`（127.0.0.1 の HTTP と /ws）。デスクトップの main から `import()`、試験からも使う | Node |
 | リモートの窓・ほかのホストにつなぐ窓 | `desktop/remote-windows.cjs`（窓・IPC・印。main プロセス）、`desktop/remote-preload.cjs`（リモートの窓の preload）、`desktop/remote-hosts.html`・`remote-hosts-view.cjs`・`remote-hosts-preload.cjs`（同梱の窓）、`desktop/window-trust.cjs`（窓ごとのオリジンの表）、`desktop/i18n.cjs`（本体の文言）。画面の印は `web/remote-badge.mjs` | Node |
 | 手元のフォルダーを送る（§8.1） | `core/folder-uploads.mjs`（`upload*` コマンドの中身・置き場・パスの検査）、`web/folder-upload.mjs`（送る流れとドロップの問い）、`web/attach-menu.mjs`（添付のボタンのメニュー） | Node / JS |
-| モバイルの殻 | `mobile/`（Capacitor 8。独立した `package.json`）。Android: `mobile/android/remote-core/`（端末側の Kotlin 移植。純粋な JVM で Gradle の試験）、`mobile/android/app/`（殻・ホストの窓・Keystore）、`mobile/www/`（同梱のホスト一覧）、`mobile/scripts/fake-host.mjs`（試験用の中継 + fake のホスト）。iOS は未着手。Android の配布は [android-releases.md](android-releases.md) | Kotlin / JS（iOS は Swift） |
+| モバイルの殻 | `mobile/`（Capacitor 8。独立した `package.json`）。Android: `mobile/android/remote-core/`（端末側の Kotlin 移植。純粋な JVM で Gradle の試験）、`mobile/android/app/`（殻・ホストの窓・Keystore）、`mobile/www/`（同梱のホスト一覧）、`mobile/scripts/fake-host.mjs`（試験用の中継 + fake のホスト）。iOS: `mobile/ios/remote-core/`（端末側の Swift 移植。Swift Package で `swift test`。§8.3）。iOS の殻は未着手。Android の配布は [android-releases.md](android-releases.md) | Kotlin / Swift / JS |
 | 離れた端末への通知（§5.6・§11-5） | ホスト: `core/notify/`（`policy.mjs` 判定・`notifier.mjs` 送る・`crypto.mjs` 暗号・`presence.mjs` 見ている会話・`settings.mjs` この PC の設定）。Android: `mobile/android/remote-core/` の `Notify*.kt`（線・復号・束ね方・鍵の登録）と `mobile/android/app/` の `NotifyService`・`NotifyPresenter`・`NotifyControl`。試験の例は `tests/remote/notify-vectors.json` | Node / Kotlin |
-| 試験ベクトル | `tests/remote/vectors.json`（Noise の公式ベクトル + フレームの例。3 実装が同じものを読む） | — |
+| 試験ベクトル | `tests/remote/vectors.json`（Noise の公式ベクトル + フレームの例。Node・Kotlin・Swift が同じものを読む） | — |
 
 ## 3. 暗号とペアリング
 
@@ -450,14 +450,14 @@ window.plyDesktop = { platform, setTitleBar, notifyCompletion, onNotificationCli
 - ホストを選ぶと、殻がそのホストのプロキシを立てて WebView を `http://127.0.0.1:<p>/?token=…` へ移す。殻のプラグインのブリッジはホストの画面に入れない。代わりに小さなスクリプトで `window.plyRemote = { hostId, hostName, shell: 'mobile', backToHosts() }` だけを入れる（`backToHosts` はメッセージハンドラー経由。送り元がそのプロキシのオリジンの本体フレームのときだけ受ける）
 - 今のホスト名（`⇄ desktop-home`）を出す。押すと `backToHosts()` でホスト一覧へ戻る。2026-09-23 から塗りは使わない（H1 配置・塗りなし）: 700px 以下はタイトルの下の差しの青の添え字、701px 以上（タブレット）は上端の帯（脇と同じ面）の左の「‹ ⇄ ホスト名」で、タイトル行は帯の右に上げる。「…」の中にも「ホスト一覧に戻る」
 - 背面に回るとプロキシとチャネルは OS に止められる。前面に戻ったら張り直し、画面は既存の再接続で追いつく。承認待ちは #11 でホストが待ち続ける
-- 暗号は iOS が CryptoKit、Android が標準の暗号（X25519 は `XDH`、AES-GCM は `javax.crypto` の `AES/GCM/NoPadding`）。どちらも §2.1 の試験ベクトルで Node の実装と突き合わせる。**Android の `XDH` は API 33 から**（developer.android.com の KeyAgreement / KeyFactory の表。当初 31 と書いたのは誤り）なので、最低の版を API 33（Android 13）にした（§11 の 3）
+- 暗号は iOS が CryptoKit（`Curve25519.KeyAgreement`・`AES.GCM`。Windows・Linux の手元の試験では同じ API の swift-crypto）、Android が標準の暗号（X25519 は `XDH`、AES-GCM は `javax.crypto` の `AES/GCM/NoPadding`）。どちらも §2.1 の試験ベクトルで Node の実装と突き合わせる。**Android の `XDH` は API 33 から**（developer.android.com の KeyAgreement / KeyFactory の表。当初 31 と書いたのは誤り）なので、最低の版を API 33（Android 13）にした（§11 の 3）
 - 添付はクリップの「この端末から › ファイル…」（`#fileIn`。カメラも可）と「ホストから › ファイルを選ぶ…」（§8.1）。フォルダーの送信は出さない
 
 ### 8.3 アプリ内でローカルのプロキシを動かす制約（iOS / Android）
 
 | | A 案: ループバックで待ち受ける（推奨） | B 案: スキームハンドラー + WebSocket の差し替え |
 |---|---|---|
-| 仕組み | Swift は `Network.framework` の `NWListener`、Kotlin はソケットで `127.0.0.1:<p>` に小さな HTTP/1.1 + WebSocket のサーバーを置き、WebView はそこを開く（デスクトップと同じ） | iOS は `WKURLSchemeHandler`（`pleiad-host://<hostId>/`）、Android は `shouldInterceptRequest` で HTTP を横取りしてトンネルへ流す。WebSocket はスキームを通らないので、`window.WebSocket` を差し替える JS を入れ、ネイティブのトンネルへ橋渡しする |
+| 仕組み | Swift・Kotlin はソケットで `127.0.0.1:<p>` に小さな HTTP/1.1 + WebSocket のサーバーを置き、WebView はそこを開く（デスクトップと同じ） | iOS は `WKURLSchemeHandler`（`pleiad-host://<hostId>/`）、Android は `shouldInterceptRequest` で HTTP を横取りしてトンネルへ流す。WebSocket はスキームを通らないので、`window.WebSocket` を差し替える JS を入れ、ネイティブのトンネルへ橋渡しする |
 | iOS | 前面にいる間は動く。背面で止まり、戻ったら同じポートで立て直す。ATS に `NSAllowsLocalNetworking`。ループバックは「ローカルネットワーク」の許可ダイアログの対象外 | 待ち受けるソケットが無い |
 | Android | 9 以上は平文が既定で禁止なので、`network_security_config` で `127.0.0.1` だけ平文を許す | `shouldInterceptRequest` は要求の本文を渡さない（今の HTTP は GET だけなので当面は困らない） |
 | secure context | `http://127.0.0.1` は仕様上「信頼できるオリジン」。Android の WebView（Chromium）は確実。WKWebView は実機で確かめる | 独自スキームが secure context と見なされるかは WebView 次第で、`crypto.randomUUID()` などが通らない恐れ |
@@ -466,8 +466,9 @@ window.plyDesktop = { platform, setTitleBar, notifyCompletion, onNotificationCli
 
 **A 案を推奨する。** デスクトップと同じ仕組み・同じ試験で済み、`web/` に手を入れない。B 案は「他のアプリから届かない」利点はあるが、トークンで塞げる危険と引き換えに、WebSocket の再実装と secure context の不確かさを抱える。
 A 案で WKWebView が `127.0.0.1` を secure context と見なさなかった場合に備え、`crypto.randomUUID()`（`web/client.mjs:3123`）には `crypto.getRandomValues` で作る代わりを置いておく（数行。ブラウザー版の LAN 利用でも効く）。それでも詰まる箇所が出たら B 案に切り替える（プロキシの内側 = トンネルとフレームはどちらの案でも同じ）。
+iOS も A 案にした（2026-10-06、[ADR 0141](adr/0141-ios-remote-core-in-swift.md)）。背面で切れるのは中継への線で、これは B 案でも同じく切れるので差にならない。A 案で増えるのは、前面に戻ったときに同じポートで待ち受け直すことだけ。
 
-実装（Android、2026-09-23、issue #16。iOS は Mac と iPhone が無いので後回し）:
+実装（Android、2026-09-23、issue #16）:
 
 - **端末側は Kotlin に移した**（`mobile/android/remote-core/`）。JS のモジュールをアプリの中で動かす案（nodejs-mobile・隠した WebView）は採らない。nodejs-mobile は Node 一式（ABI ごとに数十 MB）を抱え、プロセスに 1 つで作り直せず、Android 15 以降の 16 KB ページの要件を外の prebuild に頼ることになる。隠した WebView は `node:crypto`・`node:http`・`ws` の代わりが要り、待ち受けと中継への線はどのみちネイティブで、フレームごとに JS と行き来する糊の方が本体より大きくなる。iOS も Swift で書き直すので、重なるのは同じ量。取り決めのずれは共有のベクトルと、Node の中継・ホストとの往復の試験で押さえる
 - 移したもの: `X25519.kt`（JCA の `XDH` だけ。生の鍵は noise.mjs と同じ PKCS#8 / SPKI の前置きで出し入れ。RFC 7748 のベクトルで確かめる）、`Noise.kt`、`Frames.kt`、`Channel.kt`（1 本のスレッドの `Loop` に閉じ込める。Node のイベントループの代わり）、`RelaySocket.kt`（OkHttp 4.12.0。届いた順に溜め、聞き手を付けてから流す）、`Pairing.kt`、`DeviceLink.kt`、`DeviceProxy.kt` + `WebSocketFrames.kt`（127.0.0.1 の HTTP/1.1 と RFC 6455 の小さなサーバー。認証・`Host` の照合・GET/HEAD だけ・案内のページはデスクトップと同じ。HTTP の応答はどれも `Connection: close`）、`RemoteDevice.kt`（`hosts.json` はデスクトップと同じ形、秘密は `secrets.bin` に封じる）
@@ -486,6 +487,21 @@ A 案で WKWebView が `127.0.0.1` を secure context と見なさなかった�
 - ビルドと手元の確認: `cd mobile && npm ci && npx cap sync android && cd android && gradlew assembleDebug`（**JDK 21 以上**。Capacitor の `capacitor-android` が Java 21 でコンパイルするため、JDK 19 では「21は無効なソース・リリースです」で落ちる（2026-09-24）。`JAVA_HOME` を 21 以上に向けてから打つ。`local.properties` に `sdk.dir`）。`cap sync` を省くと `capacitor-cordova-android-plugins/cordova.variables.gradle` が無いと言って落ちる。Windows では `cap sync` が追跡中の `app/capacitor.build.gradle` と `capacitor.settings.gradle` を改行だけ書き換えるので、`git checkout --` で戻してからコミットする。本番の中継を使わずに確かめるなら `node mobile/scripts/fake-host.mjs --relay-port 8787` と `adb reverse tcp:8787 tcp:8787` で、端末の `http://127.0.0.1:8787` が手元の中継になる（出てくる `pleiad://pair?...` を `adb shell am start -a android.intent.action.VIEW -d '<それ>'` で渡すか貼り付ける）
   - 画面を押して確かめるときは、ホストの窓の WebView の DevTools の口を使う（2026-09-27）: `adb -s <serial> forward tcp:9333 localabstract:webview_devtools_remote_$(adb -s <serial> shell pidof com.procway.pleiad)` の後、`http://127.0.0.1:9333/json/list` の `webSocketDebuggerUrl` へ CDP でつなぎ、`Runtime.evaluate` で要素の位置を取って `Input.dispatchTouchEvent` で押す（押したことになるので `window.open` も通る）。外へ出たかは `adb logcat` の `START u0` と `dumpsys activity activities` の `topResumedActivity` で見る。`adb` は `-s` を付ける（一時的に「more than one device」で落ちる）。使ったスクリプトは `temporary/scripts/remote-links-*`
   - `fake-host.mjs` は標準入力が閉じると止まるので、バックグラウンドでは `tail -f /dev/null | node mobile/scripts/fake-host.mjs …` で立てる。先頭のコメントにある `login` のコマンドは無い。会話を作ってターンを流すスクリプトは、先に `authLogin { backend: 'fake' }` を送る（送らないと `runTurn` が返らない）
+
+実装（iOS の第 1 段階、2026-10-06。[ADR 0141](adr/0141-ios-remote-core-in-swift.md)）:
+
+- **端末側を Swift に移した**（`mobile/ios/remote-core/`。Swift Package `PleiadRemote`、iOS 16・macOS 13 以上）。Android の `remote-core` と 1 対 1: `X25519.swift`・`Noise.swift`・`Frames.swift`・`Channel.swift`・`Loop.swift`（直列の DispatchQueue。Kotlin の `Loop` の代わり）・`RelaySocket.swift`・`Pairing.swift`・`DeviceLink.swift`・`DeviceProxy.swift` + `WebSocketFrames.swift`・`Socket.swift`・`Policies.swift`（`LinkPolicy`・`ResumePolicy`）・`RemoteDevice.swift`。通知（`Notify*`）は移さない（iOS は通知の対象外。ADR 0086）ので、ホストの `ready` の `notify` は見ず、`notifyRegister` も送らない
+- Android と違うところ:
+  - 待ち受けは BSD ソケット（Windows は Winsock）で `127.0.0.1` だけ。POSIX では `SO_REUSEADDR` を付け、前面に戻ったときに TIME_WAIT が残っていても同じポートで待ち受け直せるようにする（Windows では付けない。ほかのプロセスが同じポートを取れてしまうため）
+  - 中継への線は、Apple の上では `URLSessionWebSocketTask`（Cookie・キャッシュなし、転送は断る）。Apple 以外では `ws://` の IPv4 のループバックだけに張れる小さな RFC 6455 のクライアント（手元の試験のためだけ。書き込みが同期なので `bufferedAmount` は常に 0）
+  - **前面に戻ったら**殻が `RemoteDevice.resumeForeground()` を呼ぶ。開いているプロキシを同じポートで待ち受け直し（iOS は止めたアプリの待ち受けのソケットを回収する）、中継へ待たずに張り直す。ポートを移らざるを得なかったホストを返すので、殻はそのホストの窓を新しい `url` で読み直す
+  - JSON は小さな自前の読み書き（`JSON.swift`。Darwin の NSNumber と Bool の取り違えなど、`JSONSerialization` の癖を避ける）。秘密（端末の静的鍵・中継用トークン）は 1 つの JSON にして `SecretVault` に預ける。試験は `FileVault`、殻は Keychain（第 2 段階）。`hosts.json` は Android・デスクトップと同じ形
+  - ペアリングで名乗る種類は `ios`（ホストの端末一覧では「iPhone」。iPad でも同じ）
+- 試験（`cd mobile/ios/remote-core && swift test`）: ベクトル（RFC 7748、cacophony の IK / IKpsk2、Pleiad の導出、フレーム）、自前の JSON、メモリの管でつないだチャネル、`LinkPolicy`・`ResumePolicy`・案内のページ・QR とつなぎ先の URL（Android の試験と同じ例）、**Node の本物の中継と fake のホストとの往復**（`InteropTests`。Android の `InteropTest` と同じ筋書きに、`resumeForeground()` で同じポートに戻り Cookie がそのまま効くことを足した）と、`cleanLabel`・`normalizeRelayUrl` を同じ入力で `core/remote/pairing.mjs` と突き合わせる試験。往復の試験はルートの `npm ci`（worktree なら `node_modules` のジャンクション）が要る。`node` が無ければ飛ばし、`PLEIAD_INTEROP=on` なら落とす（`off` なら飛ばす）
+  - Windows: Swift の Windows 版の toolchain（`winget install --id Swift.Toolchain`。Visual Studio の C++ のビルドツールと Windows SDK が要る）で、swift-crypto を使って全部通る（2026-10-06、Swift 6.4.0。初回は BoringSSL のビルドで数分）。Git Bash から打つときは `SDKROOT`（ユーザーの環境変数にある）と toolchain・runtime の `usr/bin` を PATH に足す
+  - macOS: `.github/workflows/ios-remote-core.yml`（`macos-15`・Xcode 16.4 に固定）が、CryptoKit・`URLSessionWebSocketTask`・Darwin のソケットの経路の `swift test` と、iOS シミュレーター向けのビルドを回す。`mobile/ios/**`・共有のベクトル・`fake-host.mjs`・`core/remote/**`・`relay/server.mjs` の変更で走る
+- Android とのずれ（2026-10-06 に見つけた。Android 側は直していない）: Kotlin の `PairingCodec.cleanLabel` の `\s+` は java.util.regex の ASCII の空白だけなので、名前の中の U+3000・U+00A0 などの連なりを 1 つの空白に詰めない。Node（JS の `\s` は Unicode の空白）と Swift は詰める。ホストは届いた端末名を自分の `cleanLabel` で整え直すので、違いが残るのは Android の中で付けた名前（名前を変える）の表示だけ
+- まだ無いもの（第 2 段階）: Capacitor の iOS の殻（`mobile/ios/App/`）、Keychain の `SecretVault`、QR の読み取り、ホストの窓（WKWebView・`window.plyRemote`・`resumeForeground()` の呼び出し・戻るの扱い）、ATS の `NSAllowsLocalNetworking`、WKWebView の secure context の実機での確認（§11 の 4）、TestFlight へ出す CI
 
 App Store の審査: 殻がホスト一覧・QR ペアリング・Keychain の保管・接続の案内を持つ「自分のホストのクライアント」として出す（中身の無い殻の扱いを避ける）。審査用に fake バックエンドで動くデモのホストと、ペアリング済みの状態を用意する。
 
@@ -545,7 +561,7 @@ App Store の審査: 殻がホスト一覧・QR ペアリング・Keychain の�
 1. ~~**リモートの帯の色**~~ 決定（2026-09-23）: 塗らない。帯はローカルと同じ面で、差しの青のバッジ・OS の窓タイトル・タスクバーの重ねアイコンで見分ける（§7.2）
 2. ~~**QR を作る部品**~~ 決定（2026-09-23）: `web/vendor/qrcode-generator.mjs`（MIT）を同梱（§6.1）。読み取りはモバイルのネイティブ（Capacitor のバーコードのプラグイン）
 3. ~~**Android の最低版**~~ 決定（2026-09-23）: **API 33（Android 13）以上**。X25519 を標準の `XDH` だけで済ませるため（`XDH` は API 33 から。31–32 のために自前の X25519 を持つ案は採らない。Tink も足さない）
-4. **WKWebView と `127.0.0.1` の secure context**: 実機で確かめる。だめなら §8.3 の代わりの UUID、それでもだめなら B 案
+4. **WKWebView と `127.0.0.1` の secure context**: 実機で確かめる（iOS の殻を作る第 2 段階で）。だめなら §8.3 の代わりの UUID、それでもだめなら B 案
 5. ~~**通知**~~ 決定（2026-10-03）: FCM・APNs は使わず、Android のアプリが前面サービス（`remoteMessaging`）で中継へ軽い通知の線（§5.6）を保つ（[ADR 0086](adr/0086-notifications-through-relay.md)）。
    - 鍵: 端末が 32 バイトの通知鍵を作り、ペアリング済みの E2E の線の中で `notifyRegister { key, settings }` を送ってホストに登録する（設定を変えるたび・6 時間ごとにも登録し直す）。ホストは `ready` の `notify: 1` で対応を示し、無いホスト（古い版）には登録しない。鍵は秘密の置き場の `notify:<deviceId>`、設定・止めたか・最後に送った時刻は `devices.json` の端末の `notify`
    - 暗号: `blob = base64url(nonce 12 || AES-256-GCM(平文 512 バイト) || tag 16)`。平文は `u16(JSON の長さ) || JSON || 0 埋め` で、種類によらず同じ大きさ。AAD は `"pleiad-notify/1\n" + hostId + "\n" + deviceId`。JSON は `{ v: 1, seq, at, kind, hostId, host, session, title, id?, cancel? }`（`kind` は `approval`・`question`・`failed`・`done`・`scheduleMissed`（送信予定の時刻に Pleiad が動いていなかったので送らずに確かめを待っている）・`cancel`。`cancel` は `approval`（決着した）か `seen`（どこかで見た））。会話名とホスト名は収まるまで詰める。Node（`core/notify/crypto.mjs`）と Kotlin（`NotifyCrypto.kt`）は `tests/remote/notify-vectors.json` で突き合わせる
