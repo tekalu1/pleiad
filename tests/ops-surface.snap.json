@@ -2777,6 +2777,29 @@
       "input": "716323b9326b"
     },
     {
+      "id": "sessions.delete",
+      "risk": "guarded",
+      "riskOf": true,
+      "scope": "session",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "sessions",
+            "delete"
+          ],
+          "positional": [
+            "sessionId"
+          ]
+        }
+      },
+      "legacyCommand": "deleteSession",
+      "input": "bb3819255f29"
+    },
+    {
       "id": "sessions.deleteUnsent",
       "risk": "guarded",
       "riskOf": true,
@@ -4981,6 +5004,13 @@
     {
       "id": "sessions.compact",
       "path": "sessions compact",
+      "positional": [
+        "sessionId"
+      ]
+    },
+    {
+      "id": "sessions.delete",
+      "path": "sessions delete",
       "positional": [
         "sessionId"
       ]

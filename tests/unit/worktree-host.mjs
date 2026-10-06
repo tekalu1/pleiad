@@ -111,8 +111,13 @@ export default async function (t) {
     t.ok('完了で残したときも、子の会話の cwd は戻さない（取り込みの間に追加の指示が来ても同じ場所）', sessions.get('child-1').cwd === prepared.cwd);
     // 残りの絞り込み
     taskRows = [{ taskId: 'task-1', status: 'completed', cwd: prepared.cwd, sessionId: 'child-1', pendingMessages: 0 }];
+    sessions.set('owner', { title: '依頼元' });
     const left = await host.leftovers({ cwd: repo });
     t.ok('残っている worktree: 子の分（取り込みを頼む相手は依頼元）・ファイル名・ファイル数', left.length === 1 && left[0].id === prepared.entry.id && left[0].purpose === 'task' && left[0].mergeSessionId === 'owner' && left[0].files === 2 && left[0].fileNames.sort().join() === 'w.txt,w2.txt', JSON.stringify(left));
+    sessions.delete('owner');
+    const orphan = await host.leftovers({ cwd: repo });
+    t.ok('依頼元の会話を消した（ADR 0143）worktree も残りに出し、取り込みを頼む相手は無し（null）', orphan.length === 1 && orphan[0].id === prepared.entry.id && orphan[0].mergeSessionId === null, JSON.stringify(orphan));
+    sessions.set('owner', { title: '依頼元' });
     t.ok('今いる場所は出さない', (await host.leftovers({ cwd: prepared.cwd })).length === 0);
     t.ok('別のリポジトリの分は出さない', (await host.leftovers({ cwd: other })).length === 0);
     taskRows = [{ taskId: 'task-1', status: 'running', cwd: prepared.cwd, sessionId: 'child-1', pendingMessages: 0 }];

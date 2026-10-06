@@ -16,7 +16,8 @@
     "failed": "✕ 操作できませんでした · {{reason}}",
     "newSession": "新しい会話",
     "deleteStatusConfirm": "「{{status}}」を削除しますか。{{count}} 件の会話は「{{destination}}」へ移ります。",
-    "deletedStatus": "「{{status}}」を削除しました"
+    "deletedStatus": "「{{status}}」を削除しました",
+    "deleteSessionConfirm": "「{{title}}」を削除しますか。元に戻せません。エージェント側の会話の記録（Claude Code の transcript など）は残ります。"
   },
   "settings": {
     "appearance": {
@@ -1582,6 +1583,14 @@
         "allowed": "削除を許可した",
         "failed": "削除できなかった",
         "notice": "{{agent}} が会話の削除の許可を待っています"
+      },
+      "conversationDelete": {
+        "label": "会話",
+        "question": "{{agent}} が会話を削除しようとしています",
+        "allow": "削除を許可",
+        "allowed": "削除を許可した",
+        "failed": "削除できなかった",
+        "notice": "{{agent}} が会話の削除の許可を待っています"
       }
     },
     "settingApproval": {
@@ -1705,6 +1714,9 @@
           "allowed": "削除した"
         },
         "sessionDelete": {
+          "allowed": "削除した"
+        },
+        "conversationDelete": {
           "allowed": "削除した"
         },
         "denied": "拒否した",
@@ -2002,6 +2014,8 @@
       "idCopyFailed": "セッション IDのコピーに失敗した",
       "deleteUnsent": "未送信のセッションを削除…",
       "deleteWithDraft": "下書きも削除する",
+      "delete": "セッションを削除…",
+      "deleteConfirm": "削除する",
       "newStatusEllipsis": "新しい状態を作る…",
       "statusName": "状態の名前",
       "createStatusFailed": "状態を作れなかった: {{error}}",

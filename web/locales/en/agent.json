@@ -156,6 +156,7 @@
     "denied": "The delegation was not allowed.",
     "idPending": "The conversation ID is not determined yet.",
     "parentEnded": "The requesting conversation has ended.",
+    "childDeleted": "The delegated child conversation has been deleted. To continue, delegate again.",
     "backendDisabled": "The specified backend is not enabled.",
     "cwdNotDirectory": "cwd must be a directory.",
     "endpointDeleted": "The endpoint of the requesting conversation has been deleted. Choose an endpoint again in the requesting conversation.",
@@ -475,6 +476,11 @@
         "sessionId": "Id of the conversation to delete.",
         "card": "Delete the unsent conversation \"{{title}}\"."
       },
+      "delete": {
+        "summary": "Delete a conversation from Pleiad (sent ones too). It cannot be undone. The agent's own record of the conversation (the Claude Code transcript, the Codex rollout and so on) is kept. A running conversation, one waiting for an approval or background work, one whose delegated child has not finished, and a bot's conversation cannot be deleted. An approval card is shown in the conversation; it is deleted only if the user allows it.",
+        "sessionId": "Id of the conversation to delete.",
+        "card": "Delete the conversation \"{{title}}\" from Pleiad. This cannot be undone. The agent's own record of the conversation is kept."
+      },
       "abort": {
         "summary": "Stop a conversation's running turn. Only conversations running on this host. The stopped turn stays in the conversation as interrupted and a person can resume it. A reason is required and is kept in the stopped conversation's change log.",
         "sessionId": "Id of the conversation to stop. Omit for your own.",
@@ -649,6 +655,7 @@
       "BOT_SEND_DISABLED": "This bot cannot send because sending to other conversations is turned off.",
       "BOT_SEND_TARGET": "{{id}} is not a conversation this bot can send to. Check its send targets on the bot page.",
       "SEND_SELF": "You cannot send to your own conversation.",
+      "DELETE_SELF": "You cannot delete your own conversation.",
       "SEND_TO_CHILD": "Conversation {{id}} is a child this conversation delegated to. Send further instructions with ply_task_send.",
       "SEND_TO_PARENT": "Conversation {{id}} is the one that delegated to this conversation. Your result reaches it automatically when you finish, so do not send to it.",
       "RELAY_LIMIT": "Sends between conversations have continued {{max}} times, so no more can be sent. Ask the user whether to go on.",
@@ -746,6 +753,12 @@
       },
       "sessionDelete": {
         "target": "deleting the unsent conversation",
+        "done": "deleted the conversation",
+        "notDone": "has not deleted the conversation",
+        "failed": "could not delete the conversation"
+      },
+      "conversationDelete": {
+        "target": "deleting the conversation",
         "done": "deleted the conversation",
         "notDone": "has not deleted the conversation",
         "failed": "could not delete the conversation"
