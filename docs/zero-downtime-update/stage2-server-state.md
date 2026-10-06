@@ -1,6 +1,6 @@
 # 段階 2 の 2b: サーバーのメモリの仕分けと、「始める」と「動かす」の切り目
 
-- 状態: 案（2026-10-06）。コードは変えていない。行番号は main の `e9ad556a`（段階 1 を取り込んだ後）の時点
+- 状態: 2b-1 実装済み（2026-10-06）。`runTurnInternal` を分割し `ctx` へ移行、`endTurn` に 1 回印を追加（行番号は分割前の main `e9ad556a` の時点）
 - 正本: [plan.md](plan.md) の 2b とリスク R2・R8・R15、[design.md](design.md) §4（保持役・付け直し・札・記録の再生）・§5（引き継ぎ。§5.4 起動時の後片付けとぶつかる所）
 - 目的: 2b の最初の一歩（R8 の表）。付け直すターンで「何を札に入れ、何を再生で作り、何を捨てるか」を、コードの場所つきで決める。そのうえで `runTurnInternal` の切り目と、2b を小さく取り込む段の順番を決める
 
@@ -272,14 +272,15 @@ adoptTurn(card, source)                              … 付け直しの入口�
 └ finally releaseTurn(card.sessionId, { adopted: true })
 ```
 
-- `driveTurn(ctx, start)` が「出来事を受けて `endTurn` で締める」部分。`start()` が返す Promise は `backend.runTurn` と同じ形（`{ sessionId, requeue?, compactionFailureReason? }`）で、出来事は `ctx.emit` を通る。**付け直しも同じ `driveTurn` を通るので、締め（`endTurn`）の道は 1 本**（R2）
+- `driveTurn(ctx, start)` が「出来事を受けて `endTurn` で締める」部分。通常結果の後処理（圧縮の失敗・requeue・表示の書き込み・添付の照合等）は `afterResult(ctx, result)` に切り出して `driveTurn` から呼ぶ。
+- `prepareTurn`・`beginTurn`・`launchTurn`・`driveTurn`・`releaseTurn`・`endTurn` は後の段（2b-2 や 2b-4）およびテストから呼べるよう export している。`start()` が返す Promise は `backend.runTurn` と同じ形（`{ sessionId, requeue?, compactionFailureReason? }`）で、出来事は `ctx.emit` を通る。**付け直しも同じ `driveTurn` を通るので、締め（`endTurn`）の道は 1 本**（R2）
 - `endTurn` は 1 回だけ走る印（`turn.ended`）を持つ。旧サーバーで手を離したターン（`turn.handedOff`。2d で立てる）は `driveTurn` の締めを丸ごと飛ばす（§5 の X1）
 - `releaseTurn` は付け直しでも `completionNotices.changed`・`notifyFree`・`kickQueued` を呼ぶ（`switching.delete` は付け直しでは何もしない）
 - `updateGate` は、付け直したターンも `enter()` する（今の `update-lock` の判定は `runtime.turns.size` を見るので変わらない）。準備中だけを数える形への見直しは 2d
 
 ### 4.3 `ctx`（ターンの文脈）に入れるもの
 
-`driveTurn`・`afterResult`・catch・finally が閉包から読んでいた値を `ctx` に移す。付け直しでは `restoreTurn` が札から埋める。
+`driveTurn`・`afterResult`・catch・finally が閉包から読んでいた値を `ctx` に移す。また、`prepareTurn` で解決した設定値やバックエンドの起動情報（`cwd`・`account`・`accountId`・`endpoint`・`endpointId`・`agentLocale`・`permissionMode`・`model`・`effort`・`baseline`・`policy`・`plyContext`・`resolvedContext`・`hooksTurn`・`abortFromTask` 等）も、`beginTurn` が `runArgs` を組み立てるために `ctx` に保持する。付け直しでは `restoreTurn` が札から埋める。
 
 | `ctx` の欄 | 今の閉包の値 | 付け直しでの出どころ |
 |---|---|---|
@@ -366,7 +367,7 @@ adoptTurn(card, source)                              … 付け直しの入口�
 
 | 段 | 中身 | 単独で取り込めるか | 規模 |
 |---|---|---|---|
-| 2b-1 | `runTurnInternal` を `prepareTurn`・`beginTurn`・`launchTurn`・`driveTurn`・`releaseTurn` に分ける（§4.2）。`ctx` に閉包の値を移す（§4.3）。`endTurn` に 1 回だけの印 | 取り込める（挙動を変えない） | M |
+| 2b-1 | **済** `runTurnInternal` を `prepareTurn`・`beginTurn`・`launchTurn`・`driveTurn`・`releaseTurn` に分ける（§4.2）。`ctx` に閉包の値を移す（§4.3）。`endTurn` に 1 回だけの印 | 取り込める（挙動を変えない） | M |
 | 2b-2 | 札の形 `core/turn-card.mjs`（純関数）: `cardOf(ctx)`・`restoreFields(card)`・版 `v: 1`・大きさの上限・秘密の欄を分ける。途中送信の控えを 1 つの欄にまとめる形（§3 の 3）。ターンの前の切り口（T1） | 取り込める（使う所が無い） | S |
 | 2b-3 | 会話の MCP の口を同じトークンで開き直す: `agent-bridge`・`computer-bridge`・`browser-bridge`・`mcp-bridge`（ply_control）・`context-bridge` の `open({ token })` と、`server.mjs` の `restoreConnection(entry)` | 取り込める（既定の `open()` は今のまま） | S |
 | 2b-4 | 付け直しの入口 `adoptTurn(card, source)` と `makeEmit` の再生の道（§4.4）、起動の順序（§5.1 の順序）と後片付けの除外（S5-S9・S12・S13）、`backend.adoptTurn` の口。**付け直す元は既定で空**。テスト用に「終わっていたターン」の元（札と記録のファイル。`AGENT_HOST_ADOPT_FROM`、テストだけが付ける）を読める | 取り込める（元が空なら何も変わらない） | M |

@@ -417,6 +417,8 @@ const SUITES = [
   './unit/server-interrupt-resume.mjs',
   // 中断で止めたもの（委譲タスク・届いていない結果・裏のコマンド・承認待ち・再起動）を残し、中断の後の最初のターンで 1 回だけ伝える
   './unit/server-interrupt-stops.mjs',
+  // ターンの分割（prepare/begin/launch/drive/releaseTurn）と endTurn の 1 回だけの印（無停止の更新 2b-1）
+  './unit/turn-phases.mjs',
   // Claude のアカウント切り替え（会話ごとのトークン）。env の組み立てと、server の配線を fake で通す
   './unit/claude-accounts.mjs',
   './unit/server-claude-accounts.mjs',
