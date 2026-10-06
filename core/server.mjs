@@ -4475,7 +4475,7 @@ const remoteCards = {
     if (runtime.waiting.size) broadcastRunning();
   },
 };
-const remoteAgentBridge = parentPortRemoteAgent(process.parentPort);
+const remoteAgentBridge = parentPortRemoteAgent(hostedPort);
 const remoteDelegation = createRemoteDelegation({
   bridge: remoteAgentBridge, tasks: () => agentTasks, agentT, titleOf: async id => (await store.get(id)).title ?? '', cards: remoteCards,
   locale: () => currentLocale(), changed: () => permissionsChanged(), log: line => console.log(`  ${line}`),

@@ -2,6 +2,7 @@
 //   内蔵ブラウザーの中継を同じポートと鍵で立て直す（relay.restore。別のポートに落ちるときは moved）・パネルのタブの写し（exportState / restoreState）・
 //   橋（desktop/agent-browser-bridge.cjs）の流れ: 復元の依頼 → タブを先に開き直す → 中継を立て直す → 写しの報告。既定（handover なし）は何も足さない
 //   切り替えで替わったサーバー（空から始まる）へ、つながった印（ready）で写しと中継の URL を 1 回送り直す（relay.snapshot）
+//   ホストへ任せる橋（remote-agent-bridge）: つなぎ直したサーバーへ、ready で一覧と、つながっている線の ready を送り直す
 import { EventEmitter } from 'node:events';
 import net from 'node:net';
 import { createRequire } from 'node:module';
@@ -11,6 +12,7 @@ const require = createRequire(import.meta.url);
 const { createBrowserRelay } = require('../../desktop/browser-relay.cjs');
 const { attachAgentBrowserBridge } = require('../../desktop/agent-browser-bridge.cjs');
 const bp = require('../../desktop/browser-panel.cjs');
+const { attachRemoteAgentBridge } = require('../../desktop/remote-agent-bridge.cjs');
 
 export const name = 'main-away-desktop';
 export const title = '内蔵ブラウザーの付け直し（main 側）: 中継を同じポートと鍵で立て直す・タブの写しの書き出しと開き直し・橋の流れ';
@@ -204,6 +206,44 @@ export default async function (t) {
     t.ok('restoreState: file:・javascript: は開かない。形の悪いプロフィールは既定に倒す', none === 1 && hostile.panel.exportState().tabs.length === 1 && hostile.panel.exportState().tabs[0].profile === 'main');
     t.ok('restoreState: 空・知らない形でも落ちない', newPanel().panel.restoreState() === 0 && newPanel().panel.restoreState({ tabs: 'x', profiles: 3 }) === 0);
     void electron;
+  }
+
+  // ---- ホストへ任せる橋: つなぎ直したサーバーへ一覧と ready を送り直す
+  {
+    const worker = new EventEmitter();
+    worker.sent = [];
+    worker.postMessage = message => { worker.sent.push(message); };
+    const device = new EventEmitter();
+    const lines = new Map([['h1', new EventEmitter()], ['h2', new EventEmitter()]]);
+    let synced = 0;
+    device.list = async () => [
+      { hostId: 'h1', label: 'Desk', hostName: 'DESK', agentUse: true, agent: { state: 'ready', allowed: true } },
+      { hostId: 'h2', label: 'Lap', hostName: 'LAP', agentUse: true, agent: { state: 'offline', allowed: false } },
+      { hostId: 'h3', label: 'Off', hostName: 'OFF', agentUse: false },
+    ];
+    device.agentSync = async () => { synced++; };
+    device.store = { hosts: async () => [{ hostId: 'h1' }, { hostId: 'h2' }] };
+    device.agent = hostId => lines.get(hostId) ?? null;
+    const bridge = attachRemoteAgentBridge(worker, { getDevice: async () => device });
+    await bridge.refresh();
+    const types = () => worker.sent.map(m => m.type).join();
+    t.ok('起動の refresh: 一覧だけを送る（ready の便りは線がつながったときに出る）', types() === 'remote-agent-hosts' && worker.sent[0].hosts.length === 3 && synced === 1);
+    worker.sent.length = 0;
+    worker.emit('message', { type: 'locale', locale: 'ja' });
+    await sleep(30);
+    t.ok('ready 以外の便りでは何も送らない', worker.sent.length === 0);
+    // 切り替えで新しい版のサーバーに替わった（つながるたびに ready が届く）
+    worker.emit('message', { type: 'ready', port: 7611, token: 't', appVersion: '2.0.0' });
+    await until(() => worker.sent.some(m => m.type === 'remote-agent-ready'));
+    const ready = worker.sent.filter(m => m.type === 'remote-agent-ready');
+    t.ok('ready: 一覧を送り直し、線を張り直す（agentSync）', worker.sent.some(m => m.type === 'remote-agent-hosts' && m.hosts.length === 3) && synced === 2);
+    t.ok('ready: つながっている線（ready のホスト）だけ、サーバーが追いつくための ready を送り直す', ready.length === 1 && ready[0].hostId === 'h1' && ready[0].state === 'ready' && ready[0].allowed === true && ready[0].hostName === 'DESK');
+    // 線の便りはサーバーへ流れ続ける（聞き手は二重に付かない）
+    worker.sent.length = 0;
+    lines.get('h1').emit('event', { t: 'relays', relays: [] });
+    await sleep(10);
+    t.ok('切り替えの後も、ホストの便りはサーバーへ 1 回ずつ届く', worker.sent.filter(m => m.type === 'remote-agent-event').length === 1);
+    await bridge.close();
   }
 
   // ---- 橋の流れ

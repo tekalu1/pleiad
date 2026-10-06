@@ -4,6 +4,7 @@
 //   内蔵ブラウザー（中継の URL の写し・タブの写し・戻った main への復元の答え・別ポート）・screencast（ended away）・os-open と openExternal・
 //   main-leaving（画面の猶予を数えない）・main-leaving-cancel（更新の取りやめで猶予を数える状態に戻す）・既定（utilityProcess の口）は何も変わらない
 //   切り替えで替わったサーバー（空から始まる）: secret は頼み直せば通る・内蔵ブラウザーは main が送り直した写しと中継の URL を取り込む
+//   ホストへ任せる口（remote-agent）: 居ない間はホストを全部オフライン扱いにして依頼を待たせず OFFLINE で失敗・戻ったら main が送り直す一覧と ready で元に戻る
 import { EventEmitter } from 'node:events';
 import fs from 'node:fs/promises';
 import os from 'node:os';
@@ -14,6 +15,7 @@ import { createMainAway, createExternalOpener, openableUrl, urlLaunchPlan } from
 import { parentPortCipher, createSecretStore } from '../../core/secret-store.mjs';
 import { parentPortComputer, ComputerError } from '../../core/computer-use/driver.mjs';
 import { parentPortBrowser, cleanTabState, browserConfigFile } from '../../core/agent-browser.mjs';
+import { parentPortRemoteAgent } from '../../core/remote-delegation.mjs';
 import { parentPortScreencast, createScreencastHub } from '../../core/browser-screencast.mjs';
 import { defaultOpener } from '../../core/os-open.mjs';
 import { createHarness, sleep } from '../lib/computer-harness.mjs';
@@ -220,6 +222,46 @@ export default async function (t) {
       t.ok('S2 は空から始まり、暗号化の可否を頼み直して得る', state.encrypted === true && state.backend === 'dpapi');
       t.ok('S1 が暗号化した値を、S2 が頼み直して復号できる（復号の組を引き継がなくてよい）', await s2.decrypt(sealed) === 'token-1');
       t.ok('S2 は新しい値も暗号化できる', await s2.decrypt(await s2.encrypt('token-2')) === 'token-2');
+    }
+
+    // ---- ホストへ任せる口（サーバー側）: 居ない間は待たせず OFFLINE
+    {
+      const port = linkPort();
+      const bridge = parentPortRemoteAgent(port, { timeoutMs: 5000 });
+      const events = [];
+      bridge.onState((hostId, st) => events.push(`state:${hostId}:${st.state}`));
+      bridge.onReady((hostId, st) => events.push(`ready:${hostId}:${st.state}`));
+      const hosts = [{ hostId: 'h1', name: 'Desk', hostName: 'DESK', agentUse: true, state: 'ready', allowed: true }, { hostId: 'h2', name: 'Lap', hostName: 'LAP', agentUse: true, state: 'offline', allowed: false }];
+      port.say({ type: 'remote-agent-hosts', hosts });
+      const inflight = bridge.request('h1', 'status', {}, null).then(() => 'resolved', error => error.code);
+      t.ok('main が居る間は main に頼む（今のとおり）', port.take('remote-agent').at(-1)?.action === 'request');
+      port.disconnect();
+      t.ok('切れたら、答えを待っていた依頼は OFFLINE で失敗する（待たせない）', await inflight === 'OFFLINE');
+      t.ok('ホストは全部オフライン扱いになる（ready だったものだけ状態の便りが出る。許可の印は残す）', bridge.hosts.every(h => h.state === 'offline') && bridge.hosts[0].allowed === true && events.join() === 'state:h1:offline');
+      const sent = port.sent.length;
+      const later = await bridge.request('h1', 'status', {}, null).then(() => 'resolved', error => error.code);
+      const asked = await bridge.answer('h1', { id: 'r1' }).then(() => 'resolved', error => error.code);
+      t.ok('居ない間の依頼・承認の答え・同期は、main に送らずすぐ OFFLINE で返る', later === 'OFFLINE' && asked === 'OFFLINE' && await bridge.sync('h1', ['x']).then(() => 'resolved', error => error.code) === 'OFFLINE' && port.sent.length === sent);
+      // 戻ったとき: main が一覧と、つながっている線の ready を送り直す
+      port.connect();
+      port.say({ type: 'remote-agent-hosts', hosts });
+      port.say({ type: 'remote-agent-ready', hostId: 'h1', state: 'ready', allowed: true, hostName: 'DESK' });
+      t.ok('戻った main の一覧と ready で、ホストが使える状態に戻る（追いつきの ready が走る）', bridge.hosts[0].state === 'ready' && events.at(-1) === 'ready:h1:ready' && bridge.hosts[1].state === 'offline');
+      const again = bridge.request('h1', 'status', {}, null);
+      const req = port.take('remote-agent').at(-1);
+      port.say({ type: 'remote-agent', id: req.id, ok: true, result: { ok: 1 } });
+      t.ok('戻った後は main に頼んで答えを受け取れる', req.action === 'request' && (await again).ok === 1);
+    }
+    {
+      // 既定（utilityProcess の口: 切れない・resumable でない）は何も変わらない
+      const plain = parentPort();
+      const bridge = parentPortRemoteAgent(plain, { timeoutMs: 5000 });
+      plain.say({ type: 'remote-agent-hosts', hosts: [{ hostId: 'h1', name: 'Desk', agentUse: true, state: 'ready', allowed: true }] });
+      const answer = bridge.request('h1', 'status', {}, null);
+      const req = plain.sent.at(-1);
+      plain.say({ type: 'remote-agent', id: req.id, ok: true, result: { ok: 2 } });
+      t.ok('既定（utilityProcess の口）: 今までどおり main に頼む', req.action === 'request' && (await answer).ok === 2 && bridge.hosts[0].state === 'ready');
+      t.ok('main の口が無い起動（Electron でない）は null のまま', parentPortRemoteAgent(null) === null);
     }
 
     // ---- 内蔵ブラウザー（サーバー側）
