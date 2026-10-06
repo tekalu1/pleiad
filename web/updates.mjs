@@ -103,8 +103,9 @@ export function setupUpdates({ page, open, lock, flush, cmd, work: currentWork =
   }
   /** 確認の段: 止まる作業の一覧（名前・実行中/承認待ち・エージェント）と、中断した会話がどう残るかの 1 行 */
   function paintConfirmWork() {
-    const rows = confirming ? workRows(confirmWork) : [];
-    const stops = confirming && (confirmWork?.count ?? 0) > 0;
+    // 無停止の更新（state.handover。ADR 0137）では作業を止めないので、止まる作業を並べない
+    const rows = confirming && !state?.handover ? workRows(confirmWork) : [];
+    const stops = confirming && !state?.handover && (confirmWork?.count ?? 0) > 0;
     $('updateWork').hidden = !rows.length;
     $('updateWorkAfter').hidden = !stops;
     $('confirmInstallUpdate').textContent = stops ? t('updates.interruptInstall') : t('settings.updates.confirmInstall');
@@ -131,7 +132,7 @@ export function setupUpdates({ page, open, lock, flush, cmd, work: currentWork =
    * （見せていない作業は止めない。後の flush が今までどおり断る）
    */
   async function stopWork() {
-    if (!cmd || !((confirmWork?.count ?? 0) > 0)) return;
+    if (!cmd || state?.handover || !((confirmWork?.count ?? 0) > 0)) return;
     const first = await cmd('running').catch(() => null);
     if (!first || !(first.count > 0)) return;
     const rows = workRows(first).length;

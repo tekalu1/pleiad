@@ -189,9 +189,11 @@ export default async function (t) {
 
     // ---- HTTP
     const index = await fs.readFile(path.join(ROOT, 'web', 'index.html'));
+    // サーバーは pleiad-build に配った版を埋める（web/interrupt.mjs の versionReload）。それ以外はファイルのまま
+    const sameIndex = (body, file) => body.toString('utf8').replace(/<meta name="pleiad-build" content="[^"]*">/, '<meta name="pleiad-build" content="">') === file.toString('utf8');
     const root = await request(port, `/?token=${proxy.token}`, { headers: { accept: 'text/html' } });
     const setCookie = [root.headers['set-cookie'] ?? []].flat().join('\n');
-    t.ok('GET / でホストの画面がそのまま返る', root.status === 200 && root.body.equals(index), `${root.status} ${root.body.length}`);
+    t.ok('GET / でホストの画面がそのまま返る', root.status === 200 && sameIndex(root.body, index), `${root.status} ${root.body.length}`);
     t.ok('?token= で HttpOnly・SameSite=Strict の Cookie を返し、ホストの UI トークンは届かない',
       /pleiad_remote_token=[^;]+; HttpOnly; SameSite=Strict; Path=\//.test(setCookie) && !setCookie.includes('agent_host_token') && !root.body.includes(server.token), setCookie);
     const cookie = `pleiad_remote_token=${encodeURIComponent(proxy.token)}`;

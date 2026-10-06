@@ -4,6 +4,8 @@
 //   - on のパッケージ版: パイプの包みを worker にして、つなぐ前に message を付け、ready のポート・トークンで窓を読み込む。utilityProcess は起こさない
 //   - 起動の失敗: 文は describeBootError。パイプのサーバーは kill（shutdown）せず leave で切る
 //   - サーバーが居なくなったとき: bye 'replaced' なら静かに終わる・つながりだけ切れたなら付け直す・居なければ「サーバーが終了しました」
+//   - 更新（1-6）: on は作業を止めず・ロックせず main-leaving → つながりだけ切る（shutdown しない）、off は今のまま update-lock → shutdown。
+//     付け直した後は切り替え（desktop/switch.cjs）を始め、S1 を手放している間はサーバーの終了を知らせない
 import fs from 'node:fs';
 import path from 'node:path';
 import vm from 'node:vm';
@@ -25,7 +27,7 @@ class FakeLink extends EventEmitter {
     this.connectError = null;
   }
   postMessage(message) { this.calls.messages.push(message); return true; }
-  leave(reason) { this.calls.left = reason; }
+  leave(reason) { this.calls.left = reason; this.calls.order.push(`leave:${reason}`); }
   kill() { this.calls.killed = true; }
   async connect() {
     this.calls.connects++;
@@ -36,13 +38,16 @@ class FakeLink extends EventEmitter {
 }
 
 async function start({ env = {}, packaged = false, choice = 'link', connectError = null, reattach = false, resourcesPath = 'C:\\inst\\resources' } = {}) {
-  const calls = { dialogs: [], messages: [], quits: 0, forks: 0, connects: 0, loads: [], left: null, killed: false, chosen: null, reattaches: 0, logs: [] };
+  const calls = { dialogs: [], messages: [], quits: 0, forks: 0, connects: 0, loads: [], left: null, killed: false, chosen: null, reattaches: 0, logs: [], order: [], switches: [], updates: null };
   const link = new FakeLink(calls);
   link.connectError = connectError;
   const utility = new EventEmitter();
   utility.stdout = new EventEmitter();
   utility.stderr = new EventEmitter();
-  utility.postMessage = message => calls.messages.push(message);
+  utility.postMessage = message => {
+    calls.messages.push(message);
+    if (message.type === 'update-lock') queueMicrotask(() => utility.emit('message', { type: 'update-lock', id: message.id, ok: true }));
+  };
   utility.kill = () => { calls.killed = true; };
   const app = new EventEmitter();
   Object.assign(app, {
@@ -70,7 +75,11 @@ async function start({ env = {}, packaged = false, choice = 'link', connectError
     shell: { openExternal: () => Promise.resolve() },
     ipcMain: { on: () => {}, handle: () => {} },
     Notification: class {}, nativeTheme: { shouldUseDarkColors: false }, safeStorage: {}, session: {}, nativeImage: {}, Menu: {}, powerMonitor: new EventEmitter(),
+    autoUpdater: new EventEmitter(),
   };
+  // electron-updater の quitAndInstall: インストーラーを起こした後に before-quit-for-update を出して終わる（node_modules/electron-updater の BaseUpdater）
+  const autoUpdater = new EventEmitter();
+  autoUpdater.quitAndInstall = () => { calls.order.push('quitAndInstall'); electron.autoUpdater.emit('before-quit-for-update'); };
   const serverBoot = {
     chooseServer: async options => { calls.chosen = options; return choice === 'link' ? { link, logFile: 'C:\\rt\\logs\\server.log', connect: () => link.connect() } : null; },
     describeBootError: (error, t) => `described:${error.code}:${t('server.startTimeout')}`,
@@ -79,7 +88,7 @@ async function start({ env = {}, packaged = false, choice = 'link', connectError
     readLogTail: () => 'tail of the log',
   };
   const modules = {
-    './updates.cjs': { Updates: class { constructor() { this.enabled = false; this.state = { phase: 'idle' }; } on() {} async init() {} snapshot() { return {}; } } },
+    './updates.cjs': { Updates: class { constructor(options) { calls.updates = options; this.enabled = false; this.state = { phase: 'idle' }; } on() {} async init() {} snapshot() { return {}; } } },
     './update-auth.cjs': { prepareUpdateCheck: () => {} },
     './update-log.cjs': { createUpdateLog: () => ({}) },
     './server-port.cjs': { savedPort: () => 7499, rememberPort: (_file, port) => { calls.remembered = port; } },
@@ -87,7 +96,7 @@ async function start({ env = {}, packaged = false, choice = 'link', connectError
     './i18n.cjs': { t: key => key, setLocale: () => {}, resolveLocale: () => 'ja', initDesktopI18n: async () => {} },
     './file-bridge.cjs': { attachFileBridge: () => {} },
     './resident.cjs': { attachResident: () => ({ keepOnClose: () => false }) },
-    './window-trust.cjs': { createWindowTrust: () => ({ register: () => {} }) },
+    './window-trust.cjs': { createWindowTrust: () => ({ register: () => {}, update: (_window, patch) => { calls.trusted = patch.origin; } }) },
     './remote-windows.cjs': { createRemoteWindows: () => ({ attach: () => {}, handleArgv: () => false }) },
     './browser-panel.cjs': { createBrowserPanel: () => ({ attach: () => {} }) },
     './agent-browser-bridge.cjs': { attachAgentBrowserBridge: () => ({ close: () => {} }) },
@@ -97,7 +106,11 @@ async function start({ env = {}, packaged = false, choice = 'link', connectError
     './agent-browser-bin.cjs': { prepareAgentBrowserBin: () => '' },
     './notifications.cjs': { createDesktopNotifications: () => () => {} },
     './server-boot.cjs': serverBoot,
-    'electron-updater': { autoUpdater: {} },
+    './switch.cjs': {
+      startSwitch: options => { const control = { replacing: false, cancelled: false, cancel() { this.cancelled = true; }, options }; calls.switches.push(control); return control; },
+      incompatibleDialog: () => async () => 'later',
+    },
+    'electron-updater': { autoUpdater },
   };
   const require = id => {
     if (id === 'electron') return electron;
@@ -186,5 +199,48 @@ export default async function (t) {
     link.emit('exit', 0);
     await tick();
     t.ok('パイプの経路: app.exit の後のつながりの切断は何もしない', calls.reattaches === 0 && calls.dialogs.length === 0);
+  }
+
+  // ---- 更新の流れ（1-6）
+  {
+    const { calls, link } = await start({ env: { AGENT_HOST_HANDOVER: 'on' }, packaged: true, reattach: true });
+    t.ok('on: 画面の更新の状態に handover（作業を止めない）を渡す', calls.updates?.handover === true);
+    calls.messages.length = 0;
+    await calls.updates.install();
+    const types = calls.messages.map(m => m.type);
+    t.ok('on の更新: 作業を中断せず、ロックもせず、main-leaving（update）を送る', types.join() === 'main-leaving' && calls.messages[0].reason === 'update', types.join());
+    t.ok('on の更新: shutdown を送らず、インストーラーを起こした後につながりだけを切る（サーバーは走り続ける）', calls.order.join() === 'quitAndInstall,leave:update' && calls.killed === false);
+    link.emit('exit', 0);
+    await tick();
+    t.ok('on の更新: 切った後のつながりの切断で付け直さず、ダイアログも出さない', calls.reattaches === 0 && calls.dialogs.length === 0);
+  }
+  {
+    const { calls, utility } = await start({ env: {} });
+    t.ok('off: handover は false', calls.updates?.handover === false);
+    await calls.updates.install();
+    const types = calls.messages.map(m => m.type);
+    t.ok('off の更新は今のまま: update-lock を取ってから shutdown', types.join() === 'update-lock,shutdown' && !types.includes('main-leaving'), types.join());
+    void utility;
+  }
+  {
+    const { calls } = await start({ env: {} });
+    t.ok('off: 切り替えは始めない', calls.switches.length === 0);
+  }
+  {
+    const { calls, link } = await start({ env: { AGENT_HOST_HANDOVER: 'on' }, packaged: true, reattach: true });
+    const control = calls.switches[0];
+    t.ok('on: 付け直した後に切り替えを始め、S1 の ready・resources・main の部品を渡す', calls.switches.length === 1 && control.options.ready.token === 'attached-token' && control.options.resourcesPath === 'C:\\inst\\resources'
+      && typeof control.options.reload === 'function' && typeof control.options.abortAll === 'function' && typeof control.options.request === 'function');
+    control.replacing = true;
+    link.emit('exit', 0);
+    await tick();
+    t.ok('切り替えが S1 を手放している間は、サーバーの終了を知らせず付け直さない', calls.reattaches === 0 && calls.dialogs.length === 0 && calls.quits === 0);
+    control.replacing = false;
+    control.options.rearm();
+    link.emit('exit', 1);
+    await tick();
+    t.ok('S2 につないだ後は（rearm）、次の切断をまた見張る', calls.reattaches === 1);
+    await control.options.reload({ port: 7612, token: 'new-token' });
+    t.ok('読み直し: S2 の ready のトークン・ポートで窓を読み込み、ポートを覚える', calls.loads.at(-1) === 'http://127.0.0.1:7612/?token=new-token' && calls.remembered === 7612 && calls.trusted === 'http://127.0.0.1:7612');
   }
 }

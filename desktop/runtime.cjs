@@ -394,6 +394,23 @@ function cleanup({ root, currentKey, isInUse, sweepLocks, keep = KEEP_TREES, now
 // ---- main からの使い方
 
 /**
+ * 組み終えてある版（app\<key>）を、元（resources\）から組み直さずに使う形で返す。新しい版のサーバーが立たなかったとき、
+ * 前の版で起こし直すため（desktop/switch.cjs）。印（.runtime.json）が無い・Node が無いなら null。戻り値は install と同じ形
+ */
+async function locate({ root, key }) {
+  if (typeof key !== 'string' || !key || key.startsWith('.') || key !== path.basename(key)) return null;
+  const paths = layout(root);
+  const appDir = path.join(paths.app, key);
+  const marker = await readMarker(appDir);
+  if (marker?.state !== 'full' || !marker.node) return null;
+  const nodeDir = path.join(paths.node, marker.node);
+  const nodeExe = path.join(nodeDir, nodeExeName());
+  if (!(await statOr(nodeExe))?.isFile()) return null;
+  const agentBrowserDir = (await statOr(path.join(paths.agentBrowser, key)))?.isDirectory() ? path.join(paths.agentBrowser, key) : null;
+  return { key, appDir, nodeExe, nodeDir, agentBrowserDir, reused: true, root };
+}
+
+/**
  * 実行場所で走るサーバーが、外の AI（Claude Code など）に貼る設定の起動口。実行場所の Node・スクリプトは版ごとのパスで、
  * 古い版の掃除で壊れるので、版に依らない $INSTDIR の起動口（Ply.exe + resources\app\bin\pleiad.mjs）を指す（core/cli-launcher.mjs の stableCli）。
  * サーバーの env に足す
@@ -404,5 +421,5 @@ function stableCliEnv({ execPath = process.execPath, resourcesPath = process.res
 
 module.exports = {
   RuntimeError, RUNTIME_DIR_NAME, FALLBACK_DIR, CONCURRENCY, KEEP_TREES, STALE_MS, MARKER_FILE, NODE_POINTER_FILE, RUNTIME_JSON,
-  nodeExeName, collidesWithInstall, resolveRuntimeRoot, layout, versionKey, verifyTree, removeTree, install, cleanup, stableCliEnv,
+  nodeExeName, collidesWithInstall, resolveRuntimeRoot, layout, versionKey, verifyTree, removeTree, install, cleanup, locate, stableCliEnv,
 };

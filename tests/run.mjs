@@ -310,8 +310,11 @@ const SUITES = [
   // main がサーバーを見つける・起こす・付け直す（無停止の更新 1-4）: Job の分岐（desktop/job.cjs）・サーバーの env・ログ・孤児の見張り・別プロセスのサーバーを main を切っても残して付け直す
   './unit/desktop-job.mjs',
   './unit/desktop-server-boot.mjs',
-  // main.cjs の boot の選び方（vm）: AGENT_HOST_HANDOVER の既定は今の utilityProcess のまま・パイプの包み・起動の失敗・サーバーが居なくなったとき
+  // main.cjs の boot の選び方（vm）: AGENT_HOST_HANDOVER の既定は今の utilityProcess のまま・パイプの包み・起動の失敗・サーバーが居なくなったとき・更新の流れ
   './unit/desktop-boot.mjs',
+  // 新しい版のサーバーへの切り替え（無停止の更新 1-6）: 作業が 0 件まで待つ・ロック・S1 の終わり・S2・前の版へ戻す・合わない版は聞く・今すぐ中断。事前の確かめの出力
+  './unit/desktop-switch.mjs',
+  './unit/handover-check.mjs',
   // 実行場所の材料（afterPack）: 公式の Node の取得と SHA-256 の照合・runtime.json・manifest.json
   './unit/pack-runtime.mjs',
   // デスクトップ版の端末（リモートの窓）: 窓ごとの信頼・preload の出し分け・バッジ。Electron は起こさない

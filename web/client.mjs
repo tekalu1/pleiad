@@ -85,7 +85,7 @@ import { createSessionLoads } from "./session-stream.mjs";
 const sessionLoads = createSessionLoads();
 import { createReadCompletions } from "./unread.mjs";
 import { isInterrupted, interruptUnread, interruptReadPoint, interruptLineText, reasonOf, stopMark, pausedCount, resumeLabel,
-  resumeNoteText, resumeVisible, updateInterrupted, limitResumeState, limitLineNote, resumeShortLabel, LIMIT_GRACE_MS } from './interrupt.mjs';
+  resumeNoteText, resumeVisible, updateInterrupted, limitResumeState, limitLineNote, resumeShortLabel, LIMIT_GRACE_MS, versionReload } from './interrupt.mjs';
 import { setupContext } from './context.mjs';
 import { setupSessionContext, chipText } from './session-context.mjs';
 import { budgetOf } from './instruction-amount.mjs';
@@ -240,6 +240,8 @@ let queuedSend = null;
 
 const NL = String.fromCharCode(10);
 const PROTOCOL = 3;
+// この画面を配ったサーバーの版（サーバーが index.html に埋める。web/interrupt.mjs の versionReload）
+const SERVED_BUILD = document.querySelector('meta[name="pleiad-build"]')?.content ?? "";
 // この PC の通知（設定 › 通知 › この PC）。切った種類と、いま見ている会話は出さない（ADR 0086）
 let notifyPc = { done: true, reply: true, failed: true };
 // スマホのアプリの殻が背面に回っている間は、画面が可視でも見ていない（殻が plyremote:stop / plyremote:start を投げる）
@@ -5363,6 +5365,18 @@ function paintLocale() {
 }
 
 /** サーバーから届いた言語を受ける。読み直すなら true */
+/** 版の違うサーバーにつながったら、入力欄の下書きを保存してから読み直す。読み直すなら true（docs/zero-downtime-update/design.md §8） */
+function reloadForVersion(ready) {
+  let done = null;
+  try { done = sessionStorage.getItem("ply-version-reload"); } catch {}
+  const key = versionReload(SERVED_BUILD, ready, done);
+  if (!key) return false;
+  // 印を残せない（保存が禁止されている）と、読み直しを繰り返しうるので読み直さない
+  try { sessionStorage.setItem("ply-version-reload", key); } catch { return false; }
+  Promise.race([saveDraft().catch(() => {}), new Promise((resolve) => setTimeout(resolve, 3000))]).finally(() => location.reload());
+  return true;
+}
+
 function applyLocale(info) {
   if (!info || !["ja", "en"].includes(info.lang)) return false;
   state.locale = { setting: info.setting ?? "auto", lang: info.lang };
@@ -7689,6 +7703,8 @@ function connect() {
         sys(html.t("app.protocolUnsupported", { version: m.protocolVersion }));
         return ws.close();
       }
+      // 画面を配ったのと違う版のサーバーにつながった（無停止の更新の切り替え）。下書きを保存して 1 回だけ読み直す
+      if (reloadForVersion(m)) return;
       if (m.homeDir) state.homeDir = m.homeDir;
       // サーバーの起動時刻。これより前の更新による中断だけを「更新の後」の一行に数える（syncResumeStrip）
       state.serverStartedAt = Number.isFinite(m.startedAt) ? m.startedAt : null;

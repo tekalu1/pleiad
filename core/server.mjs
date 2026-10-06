@@ -98,6 +98,7 @@ import { parentPortBrowser, browserEnvironment, browserInstruction } from './age
 import { getMainPort, setMainPortSource } from './main-port.mjs';
 import { createMainLink, handoverEnabled } from './main-link.mjs';
 import { createOrphanGuard } from './orphan-guard.mjs';
+import { readBuildInfo } from './handover-check.mjs';
 import { markRuntimeInUse } from './runtime-use.mjs';
 import { parentPortScreencast, createScreencastHub, screencastCommand } from './browser-screencast.mjs';
 import { createBrowserSiteApprovals } from './browser-confirm.mjs';
@@ -136,6 +137,8 @@ migrateClaudeUsage({ store: usageStore, projects: path.join(process.env.CLAUDE_C
   .catch(err => console.error(`  ${t('usage.migrateFailed')}`, String(err?.message ?? err)));
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const APP_VERSION = JSON.parse(await fs.readFile(path.join(HERE, '..', 'package.json'), 'utf8')).version;
+// 版を見分けるビルドの短いハッシュ（実行場所の木・配布物なら有る。開発のリポジトリは null）。ready に載せ、版が変わった画面を読み直させる（docs/zero-downtime-update/design.md §8）
+const BUILD = readBuildInfo(path.join(HERE, '..')).build;
 // main への口（core/main-port.mjs）。main の下でない起動（npm start）では、口を受け取る機能は null で無効になる。
 // AGENT_HOST_HANDOVER=on で utilityProcess の下でない起動は、名前付きパイプの口（core/main-link.mjs）を main への口にする
 const mainLink = handoverEnabled() && !process.parentPort ? createMainLink({ dataDir: store.dataDir, appVersion: APP_VERSION,
@@ -1113,7 +1116,9 @@ const server = http.createServer(async (req, res) => {
     const rel = path.normalize(name).split(path.sep).filter(Boolean).join(path.sep);
     const file = path.join(WEB, rel);
     if (!file.startsWith(WEB)) throw new Error("outside web/");
-    const body = await fs.readFile(file);
+    let body = await fs.readFile(file);
+    // 画面を配った版。web/client.mjs が ready の版と比べ、違えば 1 回だけ読み直す（docs/zero-downtime-update/design.md §8）
+    if (rel === 'index.html') body = Buffer.from(String(body).replace('<meta name="pleiad-build" content="">', `<meta name="pleiad-build" content="${APP_VERSION}+${BUILD ?? ''}">`));
     const headers = { "content-type": MIME[path.extname(file)] ?? "application/octet-stream" };
     if (tokenOk(viaQuery)) {
       // HttpOnly なので JS からは読めない。SameSite=Strict で他サイトからは送られない
@@ -3617,6 +3622,8 @@ async function runningWork() {
       nextSendAt: Math.min(Infinity, ...dueRows.filter(r => r.kind === 'send' && !r.held).map(r => r.at)) },
     tasks,
     background,
+    // `!` の行。count には入れない（終了・中断して更新では止まる。デスクトップの無停止の切り替えは終わるのを待つ。desktop/switch.cjs）
+    shells: shellRuns.list(),
     // 中継の複製は数えない。1つの承認が会話の数だけ増えて見える
     // サブエージェントは走っている子だけを数える。終わった子はターンが終わるまで一覧に残るので、
     // そのまま数えると更新のゲート（web の count > 0）が閉じたままになる。status が null の子
@@ -5507,6 +5514,7 @@ wss.on("connection", (ws, req) => {
     kind: P.READY,
     protocolVersion: P.PROTOCOL_VERSION,
     version: APP_VERSION,
+    build: BUILD,
     homeDir: os.homedir(),
     resumedTurn: resumed,
     startedAt: SERVER_STARTED_AT,
@@ -6427,7 +6435,8 @@ async function announce() {
     ...(link ? { mainLink: link } : {}) })
     .catch((err) => console.error('  control.json を書けませんでした:', String(err?.message ?? err)));
   // パイプの口は、main がつながるのが ready より後になりうる。つながるたびに最新の ready を送る
-  readyMessage = { type: "ready", port, token: TOKEN, locale: locale.lang };
+  // appVersion・build・runtimeKey は、付け直した新しい main が版を比べて切り替える・前の版へ戻すのに使う（desktop/switch.cjs）
+  readyMessage = { type: "ready", port, token: TOKEN, locale: locale.lang, pid: process.pid, appVersion: APP_VERSION, build: BUILD, runtimeKey: process.env.AGENT_HOST_RUNTIME_KEY || null };
   mainPort.postMessage(readyMessage);
   remote.start().catch(() => {});
   if (routingSettingsCache.enabled && ROUTING_USAGE_AUTO) routingUsage.start();

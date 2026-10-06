@@ -5,11 +5,12 @@ const { t } = require('./i18n.cjs');
 
 // No Electron dependency: the state machine is tested with a fake updater.
 class Updates extends EventEmitter {
-  constructor({ updater, version, file, enabled, install, prepareCheck = async () => {} }) {
+  // handover: 作業を止めずに更新する（無停止の更新。ADR 0137）。画面は「中断して更新」を出さない（web/updates.mjs）
+  constructor({ updater, version, file, enabled, install, prepareCheck = async () => {}, handover = false }) {
     super();
     Object.assign(this, { updater, version, file, enabled, install, prepareCheck });
     this.authenticated = false;
-    this.state = { version, enabled, phase: enabled ? 'idle' : 'unavailable', channel: version.includes('-') ? 'beta' : 'stable', autoCheck: true, autoDownload: true, notice: false, lastChecked: null };
+    this.state = { version, enabled, phase: enabled ? 'idle' : 'unavailable', channel: version.includes('-') ? 'beta' : 'stable', autoCheck: true, autoDownload: true, notice: false, lastChecked: null, handover: Boolean(handover) };
     this.busy = false;
     updater.autoDownload = false;
     updater.autoInstallOnAppQuit = false;
