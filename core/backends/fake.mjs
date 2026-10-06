@@ -22,7 +22,7 @@
 //   "context:<json>" … ply_context（contextRuntime）のツールを { name, arguments } で 1 回呼び、返りを本文にする
 //   "computer:<json>" … ply_computer（computerRuntime）のツールを { name, arguments }（配列なら順に）呼び、返りを本文にする。tool.result には印の行から作った images と computer を付ける
 //   "computer-hold:<json>" … "computer:" の後、中断されるまで走り続ける（ロックを持ったままのターン）。"computer-instructions" は ply_computer の指示文を返す
-//   "browser:<json>" … ply_browser（browserRuntime。内蔵ブラウザーのプロフィール）のツールを { name, arguments }（配列なら順に）呼び、返りを本文にする。
+//   "browser:<json>" … ply_browser（browserRuntime）のツールを { name, arguments }（配列なら順に）呼び、返りを本文にする。
 //                     渡っていなければ "browser: unavailable"。"browser-instructions" は渡った内蔵ブラウザーの指示文を返す
 //   "control:<json>" … ply_control（controlRuntime。Pleiad の操作の一覧）のツールを { name, arguments }（配列なら順に）呼び、返りを本文にする。渡っていなければ "control: unavailable"。
 //                     "control-info" は渡った接続の url・指示文・会話のシェルへ渡す環境変数の名前とトークンを JSON で返す
@@ -523,7 +523,7 @@ export const backend = {
           return { sessionId: id };
         }
       } else if (text.startsWith('browser:')) {
-        // ply_browser の呼び出し（ADR 0078）。ほかの MCP と同じく mcp__ply_browser__<ツール> の行で残す
+        // ply_browser の呼び出し（ADR 0148）。ほかの MCP と同じく mcp__ply_browser__<ツール> の行で残す
         if (!browserRuntime) out.text = 'browser: unavailable';
         else {
           out.toolCalls = []; const texts = [];

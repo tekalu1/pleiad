@@ -161,7 +161,6 @@ export const COMMANDS = new Set([
   "markRead",     // { reads: [[sessionId, completedAt], ...] } -> { reads: 変わった分 }。完了を確認した（ホストに 1 つ・大きい方だけ）。read イベントで全接続へ
   "setGrouped",   // { sessionId, ungrouped }。fork のグループから外す / 戻す（§4.1）
   "setTitle",
-  "setBrowserProfile", // { sessionId, profile } 会話の今の内蔵ブラウザーのプロフィール（人が替えた。ADR 0078）
   "fork",
   "resolvePermission", // 承認ダイアログの応答
   "listStatuses",    // 既出の状態一覧（補完候補。強制ではない）
@@ -263,6 +262,7 @@ export const EVENTS = new Set([
   // { rows: [{ role: system, kind: channelEvent | contextNote, … }] } bot の会話へチャンネルの出来事・記憶の包みを渡した（会話の sessionId 付き。
   // 履歴の splitLeadingNotes と同じ行の形で、画面は履歴と同じ描き方をする）
   "channelEvent",
+  "notificationsChanged", // { unread, waiting } 通知の一覧（ベルのボタン。ADR 0149）の件数が変わった（sessionId は null。リモートの端末にも届く）。中身は notifications.list で取り直す
   "claudeAccountsChanged", // Claude のアカウント一覧が変わった（sessionId は null）。中身は claudeAccounts コマンドで取り直す
   "compatEndpointsChanged", // 互換の接続先の一覧・既定が変わった（sessionId は null）。中身は compatEndpoints コマンドで取り直す
   "voiceChanged",  // 通話のキーの登録・削除（sessionId は null）。中身は invoke の voice.status で取り直す
@@ -282,6 +282,9 @@ export const EVENTS = new Set([
   // { requestId, outcome: allowed|denied|failed|superseded|restart } 設定の変更の承認（permission の settingChange）が決着した。カードを 1 行に畳む合図（ADR 0088）
   "settingApproval",
   "permission",   // 承認が要る { id, kind: tool|question, toolName, input, canAlways, questions?, browserSite?, computerApp? }。computerApp は ply_computer のアプリの承認 { agent: { id, label }, apps: [{ id, name, risk: normal|high }], reason?, first }（docs/computer-use.md）
+  // { id, allow, reason? } その承認が片付いた（permission の id ごとに 1 つ。祖先の会話への中継の複製も別の id で 1 つずつ）。
+  // 答えた画面を含む全部の接続へ流す。答えを送っている最中のカードは応答で畳むので、画面はそれ以外の写しをここで「別の場所で処理された」に畳む。reason はエージェントへ返した理由の印（aborted など）
+  "permissionSettled",
   // { state: idle|running|waiting, holder?: { sessionId, title }, since? } コンピューターの操作のロック。running はこの会話のターンが持っている（借りている）、waiting は別の会話が操作中で待っている。承認と同じく全部の接続へ流す
   "computer.state",
   "auth",         // { backend, phase: url|done|error, url?, message? }

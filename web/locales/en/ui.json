@@ -222,43 +222,17 @@
       }
     },
     "browser": {
-      "description": "Choose where links in conversations and previews open, whether to confirm external loads, and the profiles that keep your sign-ins.",
+      "description": "Choose where links in conversations and previews open, and whether to confirm external loads.",
       "descriptionRemote": "Choose whether to confirm external loads. Where links open is chosen on the PC (host) screen.",
       "linkOpen": {
         "title": "Open links in",
         "inapp": "Built-in browser",
         "external": "Default browser",
-        "note": "The built-in browser opens beside the conversation, and HTML files open there too. Sign-ins stay in this app, separately for each profile.",
+        "note": "The built-in browser opens beside the conversation, and HTML files open there too. Sign-ins stay in this app.",
         "shortcuts": "{{key}}+click and middle click always open in the default browser. Right-click to choose either."
       },
       "saveFailed": "Couldn't save: {{error}}",
       "agentOperation": { "title": "Agent operation", "bundled": "agent-browser {{version}} · Bundled" },
-      "profiles": {
-        "title": "Profiles",
-        "default": "Default",
-        "add": "Add profile",
-        "nameLabel": "Profile name",
-        "namePlaceholder": "New profile",
-        "memoLabel": "Usage memo",
-        "memoPlaceholder": "Usage memo (helps agents choose)",
-        "actions": "Actions for {{name}}",
-        "rename": "Rename",
-        "editMemo": "Edit memo",
-        "makeDefault": "Make default",
-        "clear": "Clear sign-ins and data",
-        "delete": "Delete",
-        "defaultCannotDelete": "The default profile can't be deleted.",
-        "mainCannotDelete": "Main can't be deleted. You can clear its sign-ins and data.",
-        "confirmClear": "Clear sign-ins and data for \"{{name}}\"? Open tabs will reload.",
-        "confirmDelete": "Delete \"{{name}}\"? Its tabs close and its sign-ins and data are removed. This can't be undone.",
-        "cancel": "Cancel",
-        "cleared": "Cleared sign-ins and data for \"{{name}}\".",
-        "deleted": "Deleted \"{{name}}\".",
-        "tooMany": "You can have up to {{max}} profiles.",
-        "newConversation": "Profile for new conversations",
-        "newLast": "Last used in the working folder",
-        "newDefault": "Default"
-      },
       "confirm": {
         "title": "External resources",
         "scope": "In visualizations, HTML previews, and PC HTML files opened in the built-in browser, blocks loads (images, scripts, requests, and so on) from sites other than those you allow “Always”. Doesn’t apply to web pages. This setting is shared by all screens.",
@@ -1506,6 +1480,7 @@
       "allowedAlways": "Always allowed",
       "allowed": "Allowed",
       "denied": "Denied",
+      "elsewhere": "Handled elsewhere",
       "sending": "Sending “{{action}}”…",
       "sendFailedInline": "Couldn't send “{{action}}” · {{error}}"
     },
@@ -2859,6 +2834,69 @@
     "moreMatches_one": "{{count}} more. Type to narrow down",
     "moreMatches_other": "{{count}} more. Type to narrow down"
   },
+  "inbox": {
+    "bell": "Notifications",
+    "bellUnread": "Notifications ({{n}} unread)",
+    "bellWait": "Notifications ({{n}} unread, waiting for you)",
+    "panel": "Notifications",
+    "list": "Notification list",
+    "empty": "No new notifications",
+    "readAll": "Mark all read",
+    "more": "Show more",
+    "unreadMark": "Unread",
+    "filter": {
+      "label": "Filter",
+      "all": "All",
+      "wait": "Needs you",
+      "mention": "@you"
+    },
+    "line": {
+      "approval": {
+        "named": {
+          "open": "{{name}} is waiting for your approval",
+          "closed": "{{name}} was waiting for your approval"
+        },
+        "plain": {
+          "open": "An agent is waiting for your approval",
+          "closed": "An agent was waiting for your approval"
+        }
+      },
+      "question": {
+        "named": {
+          "open": "{{name}} is waiting for your answer",
+          "closed": "{{name}} was waiting for your answer"
+        },
+        "plain": {
+          "open": "An agent is waiting for your answer",
+          "closed": "An agent was waiting for your answer"
+        }
+      },
+      "failed": {
+        "named": "{{name}}'s turn failed",
+        "titled": "{{title}} failed",
+        "plain": "A conversation failed"
+      },
+      "done": {
+        "titled": "{{title}} finished",
+        "plain": "A conversation finished"
+      },
+      "mention": {
+        "named": "{{name}} wrote @you",
+        "plain": "A post mentions @you"
+      }
+    },
+    "place": {
+      "thread": "#{{channel}} › {{thread}}",
+      "channel": "#{{channel}}",
+      "chat": "Chats › {{title}}"
+    },
+    "outcome": {
+      "allowed": "Approved",
+      "answered": "Answered",
+      "denied": "Denied",
+      "cancelled": "Withdrawn"
+    }
+  },
   "notify": {
     "completed": "Work finished",
     "waitingReply": "Waiting for your reply",
@@ -3812,16 +3850,6 @@
     "siteDataCleared": "Cleared data for this site.",
     "failed": "The browser action failed.",
     "reloaded": "Reloaded",
-    "profiles": {
-      "pick": "Profile: {{name}}",
-      "main": "Main",
-      "locked": "You can't switch while an agent is operating. Stop it first.",
-      "busy": "You can't switch while an agent is operating.",
-      "new": "New profile…",
-      "manage": "Manage profiles…",
-      "switched": "This conversation now opens in \"{{name}}\". Agents use this profile too.",
-      "switchedBy": "{{agent}} switched to \"{{name}}\"."
-    },
     "remote": {
       "title": "PC browser",
       "backToChat": "Back to conversation",

@@ -4,7 +4,6 @@ import { setupFilePreview } from './file-preview.mjs';
 import { browserPanelAvailable, createBrowserPanel } from './browser-panel.mjs';
 import { isManagedContext, paintContextEntry as paintContextEntryButton, setupBrowserEntry } from './header-entries.mjs';
 import { setupBrowserSettings } from './browser-settings.mjs';
-import { profileList, profileName } from './browser-profiles.mjs';
 import { setupComputerSettings } from './computer-settings.mjs';
 import { configurePreviewConfirmation, refreshPreviewConfirmation } from './preview-confirm.mjs';
 import { configureLinkOpen } from './link-open.mjs';
@@ -100,6 +99,7 @@ import { streamMessages } from './stream-messages.mjs';
 import { createComposerWait } from './composer-wait.mjs';
 import { createConnectionStatus } from './connection-status.mjs';
 import { attentionCounts, paintOpenSidebar } from './open-sidebar-mark.mjs';
+import { setupNotificationInbox } from './notification-inbox.mjs';
 import { createConversationNav } from './conversation-nav-view.mjs';
 import { createConversationRail } from './conversation-rail.mjs';
 import { createConversationToc } from './conversation-toc.mjs';
@@ -1679,6 +1679,7 @@ function computerApproval(ev, approval, row) {
     } catch (err) {
       clearTimeout(arc);
       onFailed();
+      if (alreadyResolved(err)) { foldElsewhere(ev.id); return false; }
       for (const x of buttons) x.disabled = false;
       res.className = "res fail";
       res.setAttribute("role", "alert");
@@ -1741,6 +1742,7 @@ function computerApproval(ev, approval, row) {
     swapHeight(host, () => { if (details) details.hidden = true; row.append(box); });
     fadeIn(box);
     bundleOf(row)?.reveal(row);
+    openCards.set(ev.id, { el: box, sending: () => Boolean(box.dataset.sending), fold: () => foldApprovalRow(ev.id, { box, row, details, host }) });
     return box;
   }
 
@@ -1763,6 +1765,7 @@ function computerApproval(ev, approval, row) {
       onFailed: () => { delete card.dataset.sending; },
     });
     if (!ran) return;
+    if (card.classList.contains("done")) { state.pendingPerms.delete(ev.id); return; }   // 答えを待つ間に、よそで片付いて畳まれていた
     m.classList.add("done");
     m.closest(".mw")?.classList.add("done");
     card.classList.add("done");
@@ -1778,6 +1781,7 @@ function computerApproval(ev, approval, row) {
   b.always.onclick = () => settle("always");
   b.deny.onclick = () => settle(null);
   placeCard(m, ev, null);
+  registerRelayCard(ev, { m, card, head, code: null, actions, res, buttons: b.all, removeOnFold: [body], desc: approvalHeading(approval) });
   return m;
 }
 
@@ -1854,6 +1858,7 @@ function settingChangeApproval(ev, change) {
     } catch (err) {
       clearTimeout(arc);
       delete card.dataset.sending;
+      if (alreadyResolved(err)) return collapse(t("chat.approval.elsewhere"));
       for (const b of buttons) b.disabled = false;
       res.className = "res fail";
       res.setAttribute("role", "alert");
@@ -1991,6 +1996,7 @@ function questionCard(ev, into = null) {
     } catch (e) {
       clearTimeout(arc);
       delete card.dataset.sending;
+      if (alreadyResolved(e)) return foldElsewhere(ev.id);
       inputs.forEach((b, i) => { b.disabled = was[i]; });
       res.className = "res fail";
       res.setAttribute("role", "alert");
@@ -2015,7 +2021,7 @@ function questionCard(ev, into = null) {
   send.onclick = () => settle(answersNow());
   skip.onclick = () => settle(null);
   placeCard(m, ev, into);
-  if (ev.remote) registerRelayCard(ev, { m, card, head, code: null, actions, res, question: true,
+  registerRelayCard(ev, { m, card, head, code: null, actions, res, question: true,
     get buttons() { return [...card.querySelectorAll("button, input")]; } });
   return m;
 }
@@ -2108,6 +2114,7 @@ function rowApprovalCard(ev, row) {
       delete box.dataset.sending;
       box.classList.remove("sending");
       if (!ok) { delete row.dataset.denied; row.toolChange = change; }
+      if (alreadyResolved(e)) return foldElsewhere(ev.id);
       for (const b of buttons) b.disabled = false;
       res.className = "res fail";
       res.setAttribute("role", "alert");
@@ -2141,7 +2148,22 @@ function rowApprovalCard(ev, row) {
   swapHeight(host, () => { details.hidden = true; row.append(box); });
   fadeIn(box);
   bundleOf(row)?.reveal(row);
+  // よそで片付いた。行へ戻すだけ（どう答えたかは分からない。結果はツールの流れで届く）
+  openCards.set(ev.id, { el: box, sending: () => Boolean(box.dataset.sending), fold: () => foldApprovalRow(ev.id, { box, row, details, host }) });
   return box;
+}
+
+/** ツールの行の中の承認を、答えを待たずに畳んで普通の行へ戻す（rowApprovalCard・computerApproval の行） */
+function foldApprovalRow(id, { box, row, details, host }) {
+  state.pendingPerms.delete(id);
+  if (!box.isConnected) return;   // 答えて、もう行へ戻っている
+  swapHeight(host, () => {
+    box.remove();
+    if (details) { details.hidden = false; fadeIn(details); }
+    row.classList.remove("tc-waiting");
+  });
+  bundleOf(row)?.paint();
+  if (isRunningHere()) activity.show(t("activity.continuing"));
 }
 
 function permissionCard(ev, into = null) {
@@ -2200,6 +2222,8 @@ function permissionCard(ev, into = null) {
     } catch (e) {
       clearTimeout(arc);
       delete card.dataset.sending;
+      // 先によそで片付いていた。失敗ではないので、押す前の形には戻さず畳む
+      if (alreadyResolved(e)) return foldElsewhere(ev.id);
       for (const b of buttons) b.disabled = false;
       res.className = "res fail";
       res.setAttribute("role", "alert");
@@ -2225,7 +2249,7 @@ function permissionCard(ev, into = null) {
   deny.onclick = () => settle(false);
   always.onclick = () => settle(true, true);
   placeCard(m, ev, into);
-  if (ev.remote || ev.remoteOrigin) registerRelayCard(ev, { m, card, head, code, actions, res, buttons });
+  registerRelayCard(ev, { m, card, head, code, actions, res, buttons });
   return m;
 }
 
@@ -2247,12 +2271,54 @@ function hostOnlyCard(ev) {
   return m;
 }
 
-// 承認の中継のカード（permission id → 部品）。端末の会話のカード（ev.remote）はホストのオフラインでボタンを止め、ホストで先に答えられたら 1 行に畳む。
-// ホストの側の子のカード（ev.remoteOrigin）は、端末で答えられたら 1 行に畳む（docs/remote.md §4.5、ADR 0146）
-const relayCards = new Map();
+// 出ている承認・質問のカード（permission id → { el, sending, fold, setOnline? }）。ほかで片付いたときに畳むための名簿。
+// 端末の会話のカード（ev.remote）はホストのオフラインでボタンを止め、ホストで先に答えられたら 1 行に畳む。
+// ホストの側の子のカード（ev.remoteOrigin）は、端末で答えられたら 1 行に畳む（docs/remote.md §4.5、ADR 0146）。
+// どのカードも、別の窓・別の画面（スマホ）・子の会話の側で片付いたら（permissionSettled・running の突き合わせ・ALREADY_RESOLVED）「別の場所で処理されました」に畳む
+const openCards = new Map();
+// 走っている一覧（running の permissions）にもう無いカードを、この間だけ待ってから畳む（承認の便りと一覧の前後を吸収する）
+const SETTLE_RECONCILE_MS = 2500;
+const reconcileTimers = new Map();
+
+/** 片付いた承認への答え（サーバーの ALREADY_RESOLVED）。失敗ではなく、別の場所で処理された知らせ */
+const alreadyResolved = (err) => err?.code === "ALREADY_RESOLVED";
+
+/** そのカードを「別の場所で処理されました」に畳む。出ていなければ何もしない */
+function foldElsewhere(id) {
+  const entry = openCards.get(id);
+  openCards.delete(id);
+  state.pendingPerms.delete(id);
+  entry?.fold({ by: "elsewhere" });
+}
+
+/** permissionSettled。この窓で答えを送っている最中のカードは、答えの応答で畳むのでここでは触らない（「許可した」と出すため） */
+function onPermissionSettled(ev) {
+  state.pendingPerms.delete(ev.id);
+  const entry = openCards.get(ev.id);
+  if (entry && !entry.sending()) foldElsewhere(ev.id);
+}
+
+/**
+ * 取りこぼしに備えて、出ているカードを走っている一覧（running の permissions）と突き合わせる。
+ * 一覧に無いカードは、少し待ってもまだ無ければ畳む（決着の便りを受け取れなかった窓・つなぎ直した画面）。消えた・答え終えたカードは名簿から外す
+ */
+function reconcileOpenCards() {
+  const live = new Set((state.work.permissions ?? []).map((p) => p.id));
+  for (const [id, entry] of openCards) {
+    if (!entry.el.isConnected || entry.el.classList?.contains("done")) { openCards.delete(id); continue; }
+    if (live.has(id) || reconcileTimers.has(id)) continue;
+    reconcileTimers.set(id, setTimeout(() => {
+      reconcileTimers.delete(id);
+      if ((state.work.permissions ?? []).some((p) => p.id === id)) return;
+      const open = openCards.get(id);
+      if (open && !open.sending()) foldElsewhere(id);
+    }, SETTLE_RECONCILE_MS));
+  }
+}
 
 function registerRelayCard(ev, parts) {
-  const { m, card, head, code, actions, res, buttons, question = false, hostOnly = false } = parts;
+  // removeOnFold・desc は、見出しの要約と本文が code の外にあるカード（コンピューターの操作の承認）が、畳むときに本文を外して要約を見出しへ移すため
+  const { m, card, head, code, actions, res, buttons, question = false, hostOnly = false, removeOnFold = [], desc = "" } = parts;
   const blocking = ev.remote ? null : t("chat.approval.blocking");
   if (ev.remote) {
     // 子の会話を見る（見るための補助。手元の窓だけ。ホストのリモートの窓でその会話を開く）
@@ -2281,30 +2347,34 @@ function registerRelayCard(ev, parts) {
     // 誰がどこで答えたか分からない決着（つなぎ直しで消えた・タスクが止まった）は、カードごと下げる
     if (!by) { m.remove(); state.pendingPerms.delete(ev.id); return; }
     const what = question ? t("chat.approval.relay.answered") : allow ? t("chat.approval.allowed") : t("chat.approval.denied");
-    // この端末（の別の窓）で答えた決着は、ふつうの承認と同じ「許可した · 時刻」。ホストで先に答えられたら「ホスト名で…」、ホストの子のカードは「端末名で…」
-    const line = ev.remote ? (by === "device" ? `${what} · ${hhmm(new Date())}` : t("chat.approval.relay.answeredByHost", { host: peer || ev.remote.hostName, what, time: hhmm(new Date()) }))
+    // この端末（の別の窓）で答えた決着は、ふつうの承認と同じ「許可した · 時刻」。ホストで先に答えられたら「ホスト名で…」、ホストの子のカードは「端末名で…」。
+    // 別の場所（別の窓・子の会話の側・ターンの終わりや中断）で片付いたものは、どう答えたかを問わず「別の場所で処理されました · 時刻」
+    const line = by === "elsewhere" ? `${t("chat.approval.elsewhere")} · ${hhmm(new Date())}`
+      : ev.remote ? (by === "device" ? `${what} · ${hhmm(new Date())}` : t("chat.approval.relay.answeredByHost", { host: peer || ev.remote.hostName, what, time: hhmm(new Date()) }))
       : t("chat.approval.relay.answeredByDevice", { device: peer || ev.remoteOrigin?.deviceName || "", what, time: hhmm(new Date()) });
     m.classList.add("done");
     m.closest(".mw")?.classList.add("done");
     card.classList.add("done");
     for (const rest of head.querySelectorAll(".card-kind-rest")) rest.remove();
     head.querySelector(".card-kind").textContent = question ? t("chat.ask.done") : t("chat.approval.done");
+    if (desc) head.append(el("span", "desc", desc));
     head.append(el("span", "res", line));
     card.querySelector(".relay-note")?.remove();
+    for (const n of removeOnFold) n.remove();
     actions.remove();
     if (code && !ev.browserSite) foldSettledCard(card, head, code, approvalTarget(ev.input));
     state.pendingPerms.delete(ev.id);
   };
-  relayCards.set(ev.id, { setOnline, fold });
+  openCards.set(ev.id, { el: m, sending: () => Boolean(card.dataset.sending), setOnline, fold });
   if (ev.remote && ev.remote.online === false) setOnline(false);
 }
 
 /** 中継のカードの決着（permissionRelayEnd）と、ホストの接続の状態（permissionRelayState）。開いていないカードは何もしない */
 function onRelayCardEvent(ev) {
-  const entry = relayCards.get(ev.id);
+  const entry = openCards.get(ev.id);
   if (!entry) return;
-  if (ev.type === "permissionRelayState") entry.setOnline(ev.online !== false);
-  else { entry.fold({ by: ev.by, allow: ev.allow === true, peer: ev.peer ?? ev.hostName }); relayCards.delete(ev.id); }
+  if (ev.type === "permissionRelayState") entry.setOnline?.(ev.online !== false);
+  else { entry.fold({ by: ev.by, allow: ev.allow === true, peer: ev.peer ?? ev.hostName }); openCards.delete(ev.id); }
 }
 
 /**
@@ -2736,6 +2806,7 @@ function syncOutboxRows(messages) {
 function onEvent(ev, replay = false) {
   // bot・Channels・ルーティンの画面（web/channels/）。この画面の出来事ならここで終わる。ほかの出来事（permission など）も部品へ渡る
   if (channelsUi.onEvent(ev, replay)) return;
+  if (ev.type === 'notificationsChanged') { notificationInbox.onEvent(ev); return; }
   if (ev.type?.startsWith('shell.')) return onShellEvent(ev);
   if (ev.type === 'completionReady') {
     completionNotifications.completed(ev, state.sessions.find(s => s.id === ev.sessionId), replay);
@@ -2778,7 +2849,7 @@ function onEvent(ev, replay = false) {
     completionNotifications.waiting(ev, state.sessions.find(s => s.id === ev.sessionId), replay);
   }
   if (!replay && sessionLoads.capture(ev, state.current)) return;
-  if (ev.type === "prefs") { state.prefs = ev.prefs ?? {}; applyLocale(ev.locale); paintAutoCompactionSettings(); browserSettings.paint(); browserPanel?.profilesChanged(); computerSettings.paint(); refreshPreviewConfirmation(); filePreview.prefsChanged(); sessionContext.refresh(); return; }
+  if (ev.type === "prefs") { state.prefs = ev.prefs ?? {}; applyLocale(ev.locale); paintAutoCompactionSettings(); browserSettings.paint(); computerSettings.paint(); refreshPreviewConfirmation(); filePreview.prefsChanged(); sessionContext.refresh(); return; }
   if (ev.type === 'autoCompactionSettings') { state.prefs.autoCompaction = ev.settings; paintAutoCompactionSettings(); return; }
   if (ev.type === 'schedules') {
     state.schedules = ev.entries ?? [];
@@ -2797,6 +2868,8 @@ function onEvent(ev, replay = false) {
   if (ev.type === 'voiceChanged') { voiceSettings.event(ev); return; }
   // 設定の変更の承認が決着した（どの端末で答えても・取り下げても）。開いているカードを 1 行に畳む（ADR 0088）
   if (ev.type === 'settingApproval') { settleSettingCards(ev); return; }
+  // 承認が片付いた（子の会話・別の窓・ターンの終わりや中断で）。開いていない会話の分の覚えと、子の会話のダイアログのカードも畳むので、会話の絞り込みの前に受ける
+  if (ev.type === 'permissionSettled') { onPermissionSettled(ev); return; }
   if (ev.type === 'compactionSchedule') {
     const row = state.sessions.find(s => s.id === ev.sessionId);
     if (row) row.compactionAt = ev.at;
@@ -3184,6 +3257,7 @@ function applyRunning(work) {
   // 消えた分を覚えたままにすると、次にその会話を開いたとき解決済みのカードが出る
   const unresolved = new Set((state.work.permissions ?? []).map((p) => p.id));
   for (const id of state.pendingPerms.keys()) if (!unresolved.has(id)) state.pendingPerms.delete(id);
+  reconcileOpenCards();
   const behind = new Map();
   for (const t of state.work.turns ?? []) {
     const b = behindOf(t);
@@ -5826,11 +5900,7 @@ $("draftFailRetry").onclick = () => { $("prompt").focus(); saveDraft().catch(() 
 let browserEntry = null;   // 頭の行のボタン（下の setupBrowserEntry）。状態の知らせが先に届いても落ちないよう先に宣言する
 const browserPanel = browserPanelAvailable()
   ? createBrowserPanel({ showMenu: (x, y, items, title, opts) => showMenu(x, y, items, title, opts), getSessionId: () => state.current ?? null, getAgentName: () => labelOf(activeBackendId()),
-    onChange: () => browserEntry?.paint(),
-    // プロフィール（ADR 0078）: 一覧は設定から。人が切り替えたら会話に残す。「新しいプロフィール…」「プロフィールを管理…」は設定 › ブラウザーへ
-    getProfiles: () => profileList(state.prefs).map(p => ({ id: p.id, name: profileName(p, t('browser.profiles.main')) })),
-    onProfileChanged: (sessionId, profile) => { if (sessionId) cmd('setBrowserProfile', { sessionId, profile }).catch(e => notify(e.message)); },
-    openProfiles: ({ add }) => { onboarding.open('browser'); browserSettings.showProfiles({ add }); } })
+    onChange: () => browserEntry?.paint() })
   : null;
 // ホストの画面ではない端末から、ホストの内蔵ブラウザーを見る（web/remote-browser.mjs）。リンクを押したら開き先を選ぶ（web/link-sheet.mjs）
 const remoteBrowser = createRemoteBrowser({ cmd: (command, args) => cmd(command, args), getSessionId: () => state.current ?? null,
@@ -5889,10 +5959,17 @@ const channelsUi = setupChannels({
   showMenu: (x, y, items, title) => showMenu(x, y, items, title),
   renderAssistantMarkdown, renderPresent,
 });
+// 通知ボタンと通知の一覧（承認済み 2026-10-06。web/notification-inbox.mjs）。件数は notificationsChanged、一覧は notifications.list
+const notificationInbox = setupNotificationInbox({
+  bell: $('notifBell'), panel: $('notifPanel'), veil: $('notifVeil'),
+  invoke: (op, args = {}) => cmd('invoke', { op, args }), t, relTime,
+  titleOf: id => { const title = state.sessions.find(s => s.id === id)?.title; return title && title !== '(no title)' ? title : ''; },
+  open: target => openFromNotification(target),
+  narrow: narrowView, anchor: () => $('sidebar'),
+});
 // External resource confirmation is available on every screen.
 const computerSettings = setupComputerSettings({ cmd: (command, args) => cmd(command, args), getPrefs: () => state.prefs, getHostCaps: () => state.hostCaps });
-const browserSettings = setupBrowserSettings({ available: !!browserPanel, cmd: (command, args) => cmd(command, args), getPrefs: () => state.prefs, getAgentLabel: labelOf,
-  showMenu: (x, y, items, title, opts) => showMenu(x, y, items, title, opts), onProfilesChanged: () => browserPanel?.profilesChanged() });
+const browserSettings = setupBrowserSettings({ available: !!browserPanel, cmd: (command, args) => cmd(command, args), getPrefs: () => state.prefs, getAgentLabel: labelOf });
 // 通話モードの差し込み口（Chats の会話）。契約は web/voice/index.mjs の冒頭。入力欄・頭・メインの面へは、ここの 1 か所だけで繋ぐ
 const voiceWraps = new WeakMap();
 voiceUi.mount({
@@ -7464,6 +7541,21 @@ async function openFromSearch(id, jump) {
 }
 
 /**
+ * 通知の一覧の行を押した（web/notification-inbox.mjs）。会話なら Chats の会話を開き、発言（uuid）があればその発言へ送って輪を付ける。
+ * チャンネルなら channels:show（スレッド・投稿まで。着いた投稿は web/channels/thread.mjs が輪を付ける）
+ */
+async function openFromNotification({ sessionId, uuid, channelId, threadId, postId }) {
+  if (narrowView.matches) setDrawer(false);
+  if (channelId) {
+    document.dispatchEvent(new CustomEvent('channels:show', { detail: { kind: 'channel', id: channelId, ...(threadId ? { threadId } : {}), ...(postId ? { postId } : {}) } }));
+    return;
+  }
+  if (!sessionId) return;
+  channelsUi.setTab('chats');
+  await openFromSearch(sessionId, uuid ? { uuid, role: 'assistant', query: '', speaker: 'assistant' } : null);
+}
+
+/**
  * 検索で探した語を会話の中の検索へ引き継ぎ（開かない。Ctrl+F の 1 手で残りの一致へ進める）、その発言へ送って輪（note-flash）を付ける。
  * 発言は uuid で引く（会話の行の data-uuid と、検索の結果の uuid は同じ値）。見つからなければ語だけ引き継ぐ
  */
@@ -8058,6 +8150,7 @@ function connect() {
       remoteSettings.refresh();
       // この PC の通知の設定。見ている会話を知らせ直す（つなぎ直した接続には、まだ印が無い）
       notifySettings.refresh();
+      notificationInbox.reconnected();
       presenceReporter.reset();
       presenceReporter.report(true);
       return refresh({ sharePending: true }).then(async () => {
