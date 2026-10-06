@@ -1,0 +1,5 @@
+# SwiftPM / Xcode build output (mobile/ios/remote-core and, later, the Capacitor iOS shell)
+.build/
+.swiftpm/
+DerivedData/
+xcuserdata/
