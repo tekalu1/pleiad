@@ -120,7 +120,7 @@ procway-code への対応をやめる代わりに、Claude Code と Codex それ
 
 **形式はエージェントで固定。** Claude Code は Anthropic Messages 互換（CLI が `{URL}/v1/messages` に送る。URL に `/v1` は付けない）、Codex は OpenAI Responses 互換（`{URL}/responses`。codex-cli 0.153 は `wire_api = "chat"` を起動時エラーにするので、Chat Completions だけの先は使えない）。プリセットは Claude: OpenRouter / Z.ai / Kimi / DeepSeek / LiteLLM / Ollama / カスタム、Codex: OpenRouter / Azure OpenAI / Ollama / LM Studio / vLLM / LiteLLM / カスタム（`web/compat-presets.mjs`。Responses に対応していない先は Codex 側に出さない）。
 
-**データ。** 一覧は `<data>/compat-endpoints.json`（`{ version: 1, endpoints: [{ id: 'ep-…', agent, name, preset, baseUrl, authMode, auth, roles, options: { contextTokens?, sendThinking? }, models, modelInfo?, verifiedAt, lastCheck: { ok, at, error?, latencyMs?, modelCount? } }], defaults: { claude, codex } }`）。キーは `<data>/compat-endpoint-secrets.json`（`core/secret-store.mjs`。Claude のアカウント・MCP と同じ safeStorage、使えない起動は 0600 の平文）。キーは画面へ返さない（`hasKey` だけ）、ログ・stderr の記録・イベント・エラー文・sidecar に出さない（`redactSecret`）。Claude の役割は main（会話の既定＝`ANTHROPIC_MODEL`）・opus・sonnet・haiku（背景の処理とタイトル生成）で、空の役割があると保存できない（Claude の名前がそのまま送られて失敗するため）。Codex は main（既定のモデル）だけ。実装は `core/compat-endpoints.mjs`。
+**データ。** 一覧は `<data>/compat-endpoints.json`（`{ version: 1, endpoints: [{ id: 'ep-…', agent, name, preset, baseUrl, authMode, auth, roles, options: { contextTokens?, sendThinking? }, models, modelInfo?, verifiedAt, lastCheck: { ok, at, error?, latencyMs?, modelCount? } }], defaults: { claude, codex } }`）。キーは設定 › API キー（下の「API キー」）に 1 回だけ登録し、各行の `keyRef` で選ぶ（値を持たない。[ADR 0154](adr/0154-api-keys-in-one-place.md)）。古い置き場 `<data>/compat-endpoint-secrets.json`（`core/secret-store.mjs`。safeStorage、使えない起動は 0600 の平文）には移行後も同じ値を書き続ける（古い版が読む）。キーは画面へ返さない（`hasKey` と `keyRef` だけ）、ログ・stderr の記録・イベント・エラー文・sidecar に出さない（`redactSecret`）。Claude の役割は main（会話の既定＝`ANTHROPIC_MODEL`）・opus・sonnet・haiku（背景の処理とタイトル生成）で、空の役割があると保存できない（Claude の名前がそのまま送られて失敗するため）。Codex は main（既定のモデル）だけ。実装は `core/compat-endpoints.mjs`。
 
 **接続の確認。** 保存できるのは確認が通った接続情報だけ（確認 → 受領証 receipt → 保存。receipt は agent・URL・認証の送り方・キーのハッシュ・編集中の id に束縛し 15 分・1 回限り。名前・モデル・詳しい設定は変えても確かめ直さない）。確認は本物の 1 リクエスト: Claude は `POST {URL}/v1/messages`（max_tokens 1）を、認証が自動なら Bearer → x-api-key の順に試して通ったほうに決める。Codex は `POST {URL}/responses`（max_output_tokens 16、stream false、store false）で、404/405 なら本文の無い `POST {URL}/chat/completions` で道の有無だけ確かめ（生成しない）、あれば「Chat Completions にしか対応していない」と理由を付けて断る。401/403 はキー違い、404 は URL 違い、5xx は接続先のエラー、モデルが無いという 4xx は「URL とキーは通っている」として成功にする。あわせて `GET /v1/models?limit=1000`（Codex は `/models`）でモデルの一覧を取る（OpenAI 形式・Anthropic 形式のどちらも `data[].id`。取れなくても失敗にしない）。安全策: http(s) だけ、URL に userinfo・クエリ・フラグメントを入れない、公開のアドレスへの http は断る（ループバック・プライベートは可。名前は解決して確かめる）、リダイレクトは追わない（キーを別の宛先へ送らない）、20 秒で打ち切り、応答は 8MB まで。一覧の「接続を確認」は保存済みの値で確かめ直し、結果を `lastCheck` に記録する。
 
@@ -661,13 +661,23 @@ Claude・Codex 共通の `ply_agents` MCP で、Pleiad 管理の子会話を作�
 
 利用者向けには指示・Skills・MCP の入口を「プラグイン」、LLM の窓の占有を「文脈」、会話を縮める操作を「圧縮」と呼ぶ。モデルの「コンテキスト長」は維持する。圧縮のイベントは core が正規化し、結果を sidecar に残して開き直した会話にも区切りを表示する（[ADR 0039](adr/0039-conversation-compaction.md)）。自動圧縮は正常に終わったターン（利用者の送信と、委譲の完了通知などで始まったターン。圧縮のターンと委譲の子の会話を除く）から会話ごとに一回だけ予約する（[ADR 0068](adr/0068-idle-compaction-after-notice-turns.md)）。既定は全体オン、最小 150k トークン（[ADR 0051](adr/0051-auto-compaction-min-150k.md)）、Claude オン・50 分、Codex オフ・有効化時 25 分（[ADR 0046](adr/0046-codex-auto-compaction-25-minutes.md)）。Antigravity は自身の管理に任せる。次の送信・手動圧縮・未送信会話の削除・バックエンド切替・対象外への設定変更・キャンセルで予約を取り消し、画面の会話切替では残す。見えている予約は `compaction-schedule.json` に保存し、再起動後に予定の時刻から 8 分以内のものを戻す（[ADR 0069](adr/0069-idle-compaction-schedule-survives-restart.md)）。
 
+## API キー（承認済み 2026-10-07）
+
+外部サービスのキーは設定 › API キー（エージェント設定の直下のタブ。`web/api-keys-settings.mjs`）に 1 回だけ登録する。接続先（Claude Code・Codex）・通話・委譲の判定器（Jev・Cerebras）は「どのキーを使うか」を選ぶだけで、キーの入力欄は使う側から無くした（[ADR 0154](adr/0154-api-keys-in-one-place.md)）。
+
+- **置き場**: `<data>/api-keys.json`（秘密でない台帳。`{ keys: [{ id: 'key-…', provider, label, createdAt, lastCheck }], uses: { voice, 'judge:jev', 'judge:cerebras' }, guide, migration }`。200 件まで）と `<data>/api-key-secrets.json`（値。`core/secret-store.mjs`。エントリ `key:<id>`）。接続先の割り当ては `compat-endpoints.json` の各行の `keyRef`。実装は `core/api-keys.mjs`。
+- **同意**: 登録しただけでは、どの機能も外部へ送らない。通話・判定器は「使うキー」を人が選んで初めて送り、「使わない」なら何も送らない（判定器は難しさ `mid` で続ける）。
+- **コマンドと操作**: 入れる・差し替える・消す・割り当てる・案内に答える `setApiKey`・`deleteApiKey`・`setApiKeyUse`・`resolveApiKeyGuide` は human-only（HUMAN_ONLY の「秘密の値」。組は 5 つのまま）。操作の一覧は `apiKeys.list`（read。値を持たず、使っている所の名前だけ）と `apiKeys.check`（write。キーそのものだけを確かめる。OpenRouter `GET /key`・Cerebras `GET /v1/models`）。`voice.status`・`delegation.routing`・`endpoints.list` は `hasKey` を残して `keyRef` を足す。変わったら WS のイベント `apiKeysChanged`（と、使う側の `voiceChanged`・`delegationRoutingChanged`・`compatEndpointsChanged`）。
+- **移行**（起動時・冪等）: 古い置き場（`compat-endpoint-secrets.json`・`voice-secrets.json`）を読み、(プロバイダー, 値の sha256) が同じものは 1 件・違うものは元の場所が分かる名前の別の件にする。通話・判定器は今キーを登録済みの所だけ選んだ状態で引き継ぐ。値の違う同じプロバイダーのキーができたときだけ、設定 › API キーの先頭に案内を一度だけ出す。暗号化された古いキーを読めない起動・台帳が壊れた起動は保留し、古い置き場を読み続ける。古い置き場は消さず、キーを変えるたびに古い方にも書く（後片付けは別のリリース）。
+- **画面**: [design-system.md](design-system.md)「設定 › API キー」。
+
 ## 通話モード（承認済み（2026-10-06））
 
 声で話しかけ、返事を読み上げる。理由と決定は [ADR 0150](adr/0150-voice-call.md)、構成・遅延の設計・測り方・確かめ方は `docs/voice-call.md`、見た目は `docs/design-system.md`「通話モード」。
 
 - **通話**: 頭の通話ボタンで始める。ホスト（`core/voice/`）が OpenRouter の STT（既定 `microsoft/mai-transcribe-2`。429 は予備 `assemblyai/universal-3-5-pro`）と TTS（既定 `x-ai/grok-voice-tts-1.0`）を呼ぶ。確定した発言は画面が今の送信の経路（会話は `sendMessage`、スレッドは `channels.post`）へ送り、返事の `text.delta` から読み上げる。コード・表・長い作業ログは読まず「コードは画面に出しました」と言う。話して割り込むのは 2 段目で、いまは［ミュート］・スピーカーのミュート・［止める］まで。
 - **`/voice-ws`**: 音声専用の WebSocket（上りは 16kHz s16le のバイナリ + JSON の制御、下りは JSON + `[1][文の id][PCM 24kHz]`）。`/ws` と同じ `token`。**この PC の画面からだけ**（中継越しは 403。`ready.voice` は 0）。プロトコルは `core/voice/session.mjs` の冒頭。
-- **キー**: OpenRouter のキーはホストだけが持つ（`voice-secrets.json`。暗号化。Jev の判定器のキーとは別）。登録・削除は human-only の WS コマンド `setVoiceKey`・`deleteVoiceKey`。画面・ログ・AI の操作の返りへ出さない。登録が音声と読み上げる文章の外部送信の同意。
+- **キー**: 通話に使う OpenRouter のキーは設定 › API キーに登録し、設定 › 通話の「使うキー」で選ぶ（`setApiKeyUse`。human-only）。選んだときから音声と読み上げる文章が OpenRouter へ送られ、選ぶまでは何も送らない（[ADR 0154](adr/0154-api-keys-in-one-place.md)）。画面・ログ・AI の操作の返りへ出さない。
 - **設定**: `voice`（`settings.set`。聞き取り・予備・読み上げのモデル、声、言語、1 回と 1 日の通話の長さの上限、エコー除去。上限を上げる向きは AI からは承認カード）。状態は `voice.status`（キーの有無・今日の使用量。キーは返さない）。設定の画面は設定 › 通話。
 - **費用の安全弁**: 1 回の通話の長さの上限（既定 30 分）・1 日の上限（既定 120 分。この PC の日付。日ごとの台帳 `voice-usage.json` は直近 31 日）・声が聞こえないまま 10 分で終了・無音と雑音を送らない（送信ゲート・200ms 未満の声・空の結果）。
 - **デスクトップ・モバイル**: Electron は本体の画面（メインフレーム・同じ origin）の音声入力に限って `media` を許可する。macOS は `NSMicrophoneUsageDescription` と audio-input の entitlement、Android は `RECORD_AUDIO` を足した（実機は未確認）。
