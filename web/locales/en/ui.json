@@ -156,8 +156,23 @@
         "revoke": "Revoke",
         "revokeConfirm": "Revoke \"{{name}}\"? It is disconnected right away and cannot connect until it is paired again.",
         "keep": "Cancel",
+        "revokeTasks": "The {{count}} tasks handed over by this device's AI are also stopped.",
         "revokeConfirmButton": "Revoke",
         "revoked": "Revoked \"{{name}}\"."
+      },
+      "agent": {
+      "title": "Accept requests from this device's AI",
+      "help": "Treated like a delegation: the approval mode follows the requesting conversation, and approvals also appear there",
+      "confirm": "Accept requests from {{name}}'s AI?",
+      "confirmWarn": "⚠ If the requesting conversation runs without confirmation, it also runs without confirmation on this PC.",
+      "accept": "Accept",
+      "cancel": "Cancel",
+      "note": "If the requesting conversation runs without confirmation, it also runs without confirmation on this PC.",
+      "tasks": "Handed-over work · {{count}} running",
+      "waiting": "{{count}} waiting for approval",
+      "open": "Open the latest conversation",
+      "stopAll": "Stop all",
+      "noTasks": "No conversations have been handed over yet."
       },
       "platform": {
         "desktop": "Desktop",
@@ -1475,6 +1490,18 @@
       "deny": "Deny",
       "allow": "Allow",
       "done": "Approval",
+      "relay": {
+      "host": "⇄ {{host}}",
+      "offline": "Can't send the answer because {{host}} is offline. You can send it once the connection returns.",
+      "answeredByHost": "{{what}} on {{host}} · {{time}}",
+      "answeredByDevice": "{{what}} on {{device}} · {{time}}",
+      "hostOnly": "This approval has to be answered on the host. Answer it on the host's screen, or open the child conversation.",
+      "answered": "answered",
+      "hostOffline": "Host offline",
+      "viewChild": "View the child conversation",
+      "hostCanAnswer": "You can also answer in the requesting conversation (⇄ {{device}})",
+      "viewChildFailed": "Could not open the remote window: {{error}}"
+      },
       "allowedAlways": "Always allowed",
       "allowed": "Allowed",
       "denied": "Denied",
@@ -2104,6 +2131,12 @@
     "parentChat": "Parent conversation",
     "titleSuggestFailed": "Couldn't suggest a title: {{error}}",
     "more": "Actions for this conversation",
+    "remoteOrigin": {
+    "badge": "⇄ From {{device}}'s AI",
+    "request": "Requested from \"{{title}}\"",
+    "modeIs": "Approval mode {{mode}} (follows the requester)",
+    "mode": "Approval mode follows the requester"
+    },
     "rowMore": "Actions for \"{{title}}\"",
     "groupMore": "Actions for status \"{{status}}\"",
     "familyMore": "Actions for group \"{{title}}\""
@@ -2224,6 +2257,7 @@
       "collapse": "Collapse",
       "groupCommands": "Commands",
       "openChat": "Open as conversation",
+      "hostResult": "Result (from the host)",
       "request": "Request",
       "noMessages": "No messages yet.",
       "open": "Open",

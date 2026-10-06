@@ -127,10 +127,10 @@ const outboxRow = (m) => {
 };
 
 /** 画面の「変更の記録」が読む形（理由のキーと値も付く） */
-const uiChange = ({ at, by, field, from, to, reason, reasonKey, reasonParams }) =>
-  ({ at, by, field, from: from ?? null, to: to ?? null, reason: reason ?? null, ...(reasonKey ? { reasonKey, ...(reasonParams ? { reasonParams } : {}) } : {}) });
+const uiChange = ({ at, by, via, byDevice, field, from, to, reason, reasonKey, reasonParams }) =>
+  ({ at, by, ...(via ? { via } : {}), ...(byDevice ? { byDevice } : {}), field, from: from ?? null, to: to ?? null, reason: reason ?? null, ...(reasonKey ? { reasonKey, ...(reasonParams ? { reasonParams } : {}) } : {}) });
 
-const change = z.object({ at: z.string(), by: z.string(), via: z.string().optional(), bySession: z.string().optional(), field: z.string(), from: z.unknown(), to: z.unknown(), reason: z.string().nullable() });
+const change = z.object({ at: z.string(), by: z.string(), via: z.string().optional(), bySession: z.string().optional(), byDevice: z.string().optional(), field: z.string(), from: z.unknown(), to: z.unknown(), reason: z.string().nullable() });
 const listItem = z.object({ id: z.string(), title: z.string(), backend: z.string(), status: z.string().nullable(), cwd: z.string().nullable(),
   parent: z.string().nullable(), delegated: z.boolean(), lastModified: z.number().nullable(), createdAt: z.union([z.string(), z.number()]).nullable() });
 

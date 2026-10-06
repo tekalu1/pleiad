@@ -12,7 +12,9 @@ import crypto from 'node:crypto';
 import WebSocket from 'ws';
 import { Handshake, prologueFor, derivePairing, confirmationCode } from './noise.mjs';
 import { Channel } from './channel.mjs';
-import { forwardStream } from './forward.mjs';
+import { forwardStream, checkPath } from './forward.mjs';
+import { RESET_CODE } from './frames.mjs';
+import { AGENT_PATH } from './agent-protocol.mjs';
 import { createRemoteStore } from './devices.mjs';
 import { t } from '../i18n.mjs';
 import { normalizeRelayUrl, relayWsUrl, pairingPayload, cleanLabel, PAIRING_TTL_MS } from './pairing.mjs';
@@ -51,9 +53,18 @@ function publicNotify(d, registered) {
   return { registered, enabled: registered && n.settings?.enabled === true, muted: n.muted === true, lastSentAt: n.lastSentAt ?? null };
 }
 
-function publicDevice(d, connections = 0, registered = false) {
-  return { id: d.id, name: d.name, platform: d.platform, app: d.app ?? null, createdAt: d.createdAt, lastSeenAt: d.lastSeenAt ?? null, connected: connections > 0, connections, notify: publicNotify(d, registered) };
+/** 端末の AI からの委譲（docs/remote.md §4.5）。デスクトップ版の端末だけが対象（スマホには AI が無い）。stats は { active, waiting }（任された作業の数） */
+function publicAgent(d, stats) {
+  const available = d.platform === 'desktop';
+  return { available, enabled: available && d.agentDelegation === true, active: stats?.active ?? 0, waiting: stats?.waiting ?? 0 };
 }
+
+function publicDevice(d, connections = 0, registered = false, agentStats = null) {
+  return { id: d.id, name: d.name, platform: d.platform, app: d.app ?? null, createdAt: d.createdAt, lastSeenAt: d.lastSeenAt ?? null, connected: connections > 0, connections, notify: publicNotify(d, registered), agent: publicAgent(d, agentStats) };
+}
+
+/** この端末の AI からの依頼を受けてよいか（デスクトップ版の端末で、人がオンにしたものだけ） */
+const agentAllowed = d => Boolean(d) && d.platform === 'desktop' && d.agentDelegation === true;
 
 /** デスクトップ版の端末以外（スマホ）。通知を受ける相手。 */
 const isMobile = d => d.platform !== 'desktop';
@@ -76,10 +87,11 @@ function parseJson(buf) {
  * @param appVersion  HELLO の app
  * @param emit        (event) => void。{ type: 'remoteStatus' | 'remotePairing', ... } を画面へ配る
  * @param env         AGENT_HOST_RELAY_URL / AGENT_HOST_RELAY_SECRET（設定が空のときの代わり）
+ * @param agent       端末の AI 用の口 /agent（core/remote/agent-port.mjs と、server が足す stats・stopTasks）。無ければ /agent は受けない
  */
 export function createRemoteHost({
   dataDir, cipher, target, token, appVersion = '', emit = () => {}, env = process.env,
-  backoff = { minMs: 1000, maxMs: 60_000 }, log = () => {},
+  backoff = { minMs: 1000, maxMs: 60_000 }, log = () => {}, agent = null,
 }) {
   const store = createRemoteStore({ dataDir, cipher });
   let cfg = { enabled: false, relayUrl: '', secret: '', hostName: os.hostname(), relayUrlFromEnv: false, secretFromEnv: false };
@@ -291,7 +303,15 @@ export function createRemoteHost({
       if (!channels.has(deviceId)) channels.set(deviceId, new Set());
       channels.get(deviceId).add(entry);
       ws.on('message', b => ch.receive(b));
-      ch.on('stream', s => forwardStream(s, { target, token, device: { id: deviceId, platform: device.platform } }));
+      ch.on('stream', s => {
+        // 端末の AI 用の口は接続口が自分で受ける（ローカルのサーバーへは転送しない。docs/remote.md §4.5）
+        if (s.kind === 'ws' && checkPath(s.request?.path)?.pathname === AGENT_PATH) {
+          const current = deviceCache.get(deviceId);
+          if (!agent || !current) return s.reset(RESET_CODE.FORBIDDEN);
+          return agent.attach(s, { id: deviceId, name: current.name, platform: current.platform });
+        }
+        forwardStream(s, { target, token, device: { id: deviceId, platform: device.platform } });
+      });
       ch.on('close', err => closeWs(ws, err?.code === 'revoked' ? HOST_CLOSE.UNAUTHORIZED : err?.code === 'shutdown' ? HOST_CLOSE.SHUTDOWN : 1000));
       ws.on('close', () => {
         ch.close();
@@ -398,7 +418,7 @@ export function createRemoteHost({
         offer: offer ? { expiresAt: new Date(offer.expiresAt).toISOString() } : null,
         requests: [...requests.values()].map(publicRequest),
       },
-      devices: [...deviceCache.values()].map(d => publicDevice(d, channels.get(d.id)?.size ?? 0, notifyKeys.has(d.id))),
+      devices: [...deviceCache.values()].map(d => publicDevice(d, channels.get(d.id)?.size ?? 0, notifyKeys.has(d.id), agent?.stats?.(d.id))),
       storage: storage ? { encrypted: storage.encrypted, backend: storage.backend, ...(storage.reason ? { reason: storage.reason } : {}) } : null,
     };
   }
@@ -506,12 +526,39 @@ export function createRemoteHost({
 
     async devices() { return (await status()).devices; },
 
+    // ── 端末の AI からの委譲（docs/remote.md §4.5、ADR 0146） ────────
+
+    /** 設定 › リモートの端末の行の材料（任された作業の数など）が変わった。状態を配り直す */
+    touchStatus: () => queueStatus(),
+
+    /** この端末の AI からの依頼を受けてよいか（agent-port が使う） */
+    agentAllowed: deviceId => agentAllowed(deviceCache.get(String(deviceId ?? ''))),
+
+    /**
+     * 端末ごとの「AI からの依頼を受ける」（人だけが変えられる。server の setRemoteDeviceAgent）。stopAll は、この端末から任された作業をすべて止める。
+     * 切ったときも、任された作業は止めない（止めるのは stopAll と取り消し）。口は閉じ、新しい依頼は受けない
+     */
+    async setDeviceAgent(id, { enabled, stopAll } = {}) {
+      id = String(id ?? '');
+      const d = deviceCache.get(id);
+      if (!d) throw new Error(t('remote.pairing.requestGone'));
+      if (enabled !== undefined) {
+        if (enabled === true && d.platform !== 'desktop') throw new Error(t('remote.agent.desktopOnly'));
+        await store.setAgentDelegation(id, enabled === true);
+        if (enabled === true) d.agentDelegation = true; else delete d.agentDelegation;
+        if (enabled === true) agent?.refresh(id); else agent?.closeDevice(id, 'disabled');
+      }
+      if (stopAll === true) await agent?.stopTasks?.(id);
+      queueStatus();
+      return publicDevice(d, channels.get(id)?.size ?? 0, notifyKeys.has(id), agent?.stats?.(id));
+    },
+
     // ── スマホへの通知（ADR 0086） ───────────────────────────────
 
     /** 端末の画面から来た接続（forward.mjs が付ける x-pleiad-device）の端末。一覧にあるものだけ。 */
     deviceInfo(deviceId) {
       const d = deviceCache.get(String(deviceId ?? ''));
-      return d ? { id: d.id, platform: d.platform, mobile: isMobile(d) } : null;
+      return d ? { id: d.id, platform: d.platform, mobile: isMobile(d), agent: agentAllowed(d) } : null;
     },
 
     /** 端末が作った通知鍵と設定を登録する（端末の E2E の線の中のコマンド）。同じ端末なら置き換える。 */
@@ -576,6 +623,9 @@ export function createRemoteHost({
     async revoke(id) {
       id = String(id ?? '');
       deviceCache.delete(id);   // 照合は先に止める（消し終わるのを待つ間にハンドシェイクを通さない）
+      // 任された作業も止める（ADR 0146）。口を閉じてから、動いているタスクを止める
+      agent?.closeDevice(id, 'revoked');
+      await agent?.stopTasks?.(id);
       await store.removeDevice(id);
       sendControl({ type: 'revoke', id });
       notifyKeys.delete(id);

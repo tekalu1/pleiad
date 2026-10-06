@@ -357,7 +357,7 @@ async function resolveFrom(sessionId, entry, field, to, backend) {
  * `from` を渡さない（または null の）場合は直前の値をこちらで補う。
  * `backend` はバックエンドのオブジェクト。from の復元と、行がどこのものかの記録に使う。
  */
-export async function recordChange(sessionId, { by, via, bySession, field, from, to, reason, reasonKey, reasonParams, backend }) {
+export async function recordChange(sessionId, { by, via, bySession, byDevice, field, from, to, reason, reasonKey, reasonParams, backend }) {
   return exclusive(async () => {
     const all = await load();
     const entry = all[sessionId] ?? { history: [] };
@@ -371,6 +371,8 @@ export async function recordChange(sessionId, { by, via, bySession, field, from,
         by,
         ...(via ? { via } : {}),
         ...(bySession ? { bySession } : {}),
+        // 端末の AI からの委譲・端末の人の答え（via: remote・remote-device。docs/remote.md §4.5）の端末
+        ...(byDevice ? { byDevice } : {}),
         field,
         from: resolved ?? null,
         to: to ?? null,

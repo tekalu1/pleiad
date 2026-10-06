@@ -9,6 +9,7 @@
 import http from 'node:http';
 import WebSocket from 'ws';
 import { RESET_CODE } from './frames.mjs';
+import { AGENT_PATH } from './agent-protocol.mjs';
 
 const COOKIE_NAME = 'agent_host_token';
 /** 端末から通す要求のヘッダー（小文字）。これ以外は捨てる。 */
@@ -78,6 +79,8 @@ function sendableCode(code) {
 export function forwardStream(stream, { target, token, device = null }) {
   const head = stream.request ?? {};
   const checked = checkPath(head.path);
+  // /agent は接続口が自分で受ける（connector.mjs → agent-port.mjs）。ローカルのサーバーへは通さない（docs/remote.md §4.5）
+  if (checked?.pathname === AGENT_PATH) return stream.reset(RESET_CODE.FORBIDDEN);
   if (stream.kind === 'http') {
     const method = String(head.method ?? '').toUpperCase();
     if (!checked || (method !== 'GET' && method !== 'HEAD')) return stream.reset(RESET_CODE.FORBIDDEN);

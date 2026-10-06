@@ -45,6 +45,7 @@
     "notRegistered": "That account is not registered."
   },
   "permission": {
+    "delegateEscalationHost": "This delegation runs {{agent}} on {{host}} in \"{{mode}}\" ({{modeId}}).",
     "delegateEscalation": "This delegation runs {{agent}} in \"{{mode}}\" ({{modeId}}).",
     "childConversation": "Delegated conversation",
     "relayTitle": "Delegated task \"{{child}}\"",
@@ -167,10 +168,12 @@
     "delegated": "A delegated conversation cannot be resent in place. Send as a branch instead."
   },
   "delegation": {
+    "retryRemote": "A task handed to a host cannot be retried on this PC.",
     "taskNotFound": "Pleiad task not found."
   },
   "approval": {
     "receiptMismatch": "The receipt does not match this approval. Reopen the card.",
+    "remoteOffline": "Can't send the answer because {{host}} is offline. You can send it once the connection returns.",
     "alreadyResolved": "That approval has already been resolved."
   },
   "title": {
@@ -912,6 +915,10 @@
       "rateLimited": "The relay is temporarily refusing connections (too many failed authentications)",
       "rejected": "The relay refused the connection (HTTP {{status}})",
       "unreachable": "Can't reach the relay ({{reason}})"
+    },
+    "agent": {
+      "hostScreenOnly": "Accepting requests from a device's AI can only be switched on from the host PC's own screen (switching it off and stopping everything also work from the device).",
+      "desktopOnly": "Only a desktop device can hand work over from its AI"
     },
     "unnamedDevice": "Unnamed device",
     "settings": {

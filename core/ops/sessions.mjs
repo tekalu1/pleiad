@@ -96,6 +96,7 @@ export function readWindow(messages, { messageId, before = READ_SIDE_DEFAULT, af
 
 /** 変更の記録の 1 行（新しい方から GET_CHANGES 件）。誰が・どこから・どの会話の AI かを残す */
 export const changeRow = (c) => ({ at: c.at, by: c.by, ...(c.via ? { via: c.via } : {}), ...(c.bySession ? { bySession: c.bySession } : {}),
+  ...(c.byDevice ? { byDevice: c.byDevice } : {}),
   field: c.field, from: c.from ?? null, to: c.to ?? null, reason: c.reason ?? null });
 
 // ---- 操作

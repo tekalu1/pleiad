@@ -446,6 +446,14 @@ const SUITES = [
   './unit/relay.mjs',
   // リモートのホスト側（core/remote/connector.mjs）。中継をこのプロセスで、fake のサーバーを別プロセスで立て、試験用の端末で往復する
   './unit/remote-host.mjs',
+  // 端末の AI からの委譲の口 /agent（ホスト側。core/remote/agent-port.mjs）: 許可・防火壁・委譲と状態・承認モードの継承と引き上げ・上限・承認の中継と人の答え・取り消し
+  './unit/remote-agent.mjs',
+  // 端末の AI からホストへ任せる往復（端末のローカルのサーバー → main の橋の身代わり → 中継 → ホスト）: 委譲・完了通知・承認の中継と答え・オフライン・追いつき・取り消し
+  './unit/remote-agent-e2e.mjs',
+  // ホストに任せたタスクの写し（agent-tasks の host の行）の台帳の規則: adopt の検査・mirror・止める予定・並列の中断・追えなくなった行の復帰・子孫
+  './unit/agent-tasks-remote.mjs',
+  // 端末の AI の口へのレビュー後の守り: 同時数の予約・作りかけの依頼の打ち切り・口の数・質問と「ホストの画面で答える」承認の中継・子孫まで止める
+  './unit/remote-agent-hardening.mjs',
   // 設定 › リモートの部品と常駐（トレイ・スリープ。Electron は差し替える）、setRemoteResident
   './unit/remote-settings.mjs',
   // リモートの端末側（core/remote/device*.mjs）。中継とホストを立て、端末内プロキシの URL を素の HTTP と ws で叩く

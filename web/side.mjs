@@ -823,6 +823,8 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
       meta.append(why);
     }
     if (s.bot) { r.classList.add("botwait"); meta.append(botChannelMark(s)); }
+    // 端末の AI から任された会話の出どころ（⇄ 端末の AI。リモートのバッジと同じ差しの青。docs/remote.md §4.5）
+    if (s.delegation?.remote) meta.append(el("span", "row-remote", t("session.remoteOrigin.badge", { device: s.delegation.remote.deviceName || "" })));
     if (last.waitingIds.has(s.id)) meta.append(el("span", "wait", t("sidebar.waiting")));
     if (pendingRow?.visible) meta.append(pendingLabel(pendingRow.text));
     else if (isStale(s)) meta.append(el("span", "stale", t("sidebar.staleDays", { count: staleDays(s.statusChangedAt) })));

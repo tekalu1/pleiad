@@ -101,7 +101,7 @@ function input({ type = 'text', placeholder = '', autocomplete = 'off' } = {}) {
  * @param cmd  WS コマンド
  * @param page 設定のページを切り替える（onboarding.page）
  */
-export function setupRemote({ cmd, page }) {
+export function setupRemote({ cmd, page, openSession = () => {} }) {
   const $ = id => document.getElementById(id);
   const root = $('remotePanel');
   /** 最後に届いた RemoteStatus */
@@ -110,6 +110,8 @@ export function setupRemote({ cmd, page }) {
   let offer = null, offerEnd = null, tick = null;
   /** message は状態の一行に出す失敗、notice は端末の欄の下に出す知らせ（追加した・取り消した・失敗） */
   let confirming = '', busy = false, message = '', notice = '';
+  /** 端末の AI からの依頼を受けるスイッチを入れる前の確かめ（端末の id）。docs/remote.md §6.1 */
+  let agentConfirming = '';
 
   // ---- 骨組み（一度だけ作る。中身は paint で入れ替える）
   const sw = button('', () => toggle(), 'cx-sw');
@@ -265,9 +267,11 @@ export function setupRemote({ cmd, page }) {
       actions.hidden = confirming === d.id;
       row.append(info, actions);
       card.append(row);
+      if (d.agent?.available) card.append(agentBlock(d));
       if (confirming === d.id) {
         const ask = el('div', 'mp-confirm');
-        ask.append(el('p', null, t('settings.remote.devices.revokeConfirm', { name: d.name || t('settings.remote.devices.unnamed') })));
+        const tasks = d.agent?.active ? ` ${t('settings.remote.devices.revokeTasks', { count: d.agent.active })}` : '';
+        ask.append(el('p', null, t('settings.remote.devices.revokeConfirm', { name: d.name || t('settings.remote.devices.unnamed') }) + tasks));
         const buttons = el('div', 'mp-card-actions');
         buttons.append(button(t('settings.remote.devices.keep'), () => { confirming = ''; paintDevices(); }),
           button(t('settings.remote.devices.revokeConfirmButton'), () => revoke(d)));
@@ -281,6 +285,51 @@ export function setupRemote({ cmd, page }) {
     add.disabled = busy || !connected || Boolean(offer && !offerEnd);
     addHint.textContent = !status?.enabled ? t('settings.remote.pair.needEnable') : !connected ? t('settings.remote.pair.needConnected') : '';
     addRow.hidden = Boolean(offer);
+  }
+
+  /**
+   * 端末の行の下の「この端末の AI からの依頼を受ける」（デスクトップ版の端末だけ。既定オフ。docs/remote.md §4.5・§6.1、ADR 0146）。
+   * 入れるときはその場で確かめる（依頼元が確認なしのモードなら、この PC でも確認なしで動く）。切るときは確かめない。
+   * 入れた後は、同じ趣旨を弱い字で残し、任された作業の数・承認待ち・最近の会話・すべて止めるを出す
+   */
+  function agentBlock(d) {
+    const name = d.name || t('settings.remote.devices.unnamed');
+    const on = d.agent.enabled === true;
+    const box = el('div', 'rm-agent');
+    const row = el('div', 'rm-agent-row');
+    const text = el('span', 'rm-agent-text');
+    text.append(el('b', null, t('settings.remote.agent.title')), el('span', 'rm-agent-help', t('settings.remote.agent.help')));
+    const sw = button('', () => { if (on) setAgent(d, false); else { agentConfirming = d.id; paintDevices(); } }, 'cx-sw');
+    sw.setAttribute('role', 'switch');
+    sw.setAttribute('aria-checked', String(on));
+    sw.setAttribute('aria-label', t('settings.remote.agent.title'));
+    sw.disabled = busy;
+    row.append(text, sw);
+    box.append(row);
+    if (!on && agentConfirming === d.id) {
+      const ask = el('div', 'mp-confirm rm-agent-confirm');
+      ask.append(el('p', 'mp-warn', t('settings.remote.agent.confirm', { name })), el('p', 'rm-agent-warn', t('settings.remote.agent.confirmWarn')));
+      const buttons = el('div', 'mp-card-actions');
+      const accept = button(t('settings.remote.agent.accept'), () => setAgent(d, true), 'btn btn-primary');
+      buttons.append(button(t('settings.remote.agent.cancel'), () => { agentConfirming = ''; paintDevices(); }), accept);
+      ask.append(buttons);
+      box.append(ask);
+      queueMicrotask(() => accept.focus?.());
+    }
+    if (on) {
+      box.append(el('p', 'rm-agent-note', t('settings.remote.agent.note')));
+      const line = el('div', 'rm-agent-tasks');
+      const label = el('span', 'rm-agent-count', t('settings.remote.agent.tasks', { count: d.agent.active ?? 0 }));
+      if (d.agent.waiting) label.append(' · ', el('span', 'rm-agent-waiting', t('settings.remote.agent.waiting', { count: d.agent.waiting })));
+      line.append(label,
+        button(t('settings.remote.agent.open'), () => openLatest(d), 'btn btn-quiet'),
+        button(t('settings.remote.agent.stopAll'), () => setAgent(d, undefined, { stopAll: true }), 'btn btn-quiet'));
+      line.querySelectorAll('button').forEach(b => { b.disabled = busy; });
+      // 止めるものが無いときは押せない（動いている作業が 0 件）
+      line.lastChild.disabled = busy || !(d.agent.active > 0);
+      box.append(line);
+    }
+    return box;
   }
 
   function paintPairing() {
@@ -449,6 +498,22 @@ export function setupRemote({ cmd, page }) {
       confirming = '';
       notice = t('settings.remote.devices.revoked', { name: device.name || '' });
     }, failNotice);
+  }
+  /** この端末の AI からの依頼を受けるか（人だけ。サーバーは human-only の setRemoteDeviceAgent）・任された作業をすべて止める */
+  function setAgent(device, enabled, { stopAll = false } = {}) {
+    agentConfirming = '';
+    return run(async () => {
+      await cmd('setRemoteDeviceAgent', { id: device.id, ...(enabled !== undefined ? { enabled } : {}), ...(stopAll ? { stopAll: true } : {}) });
+    }, failNotice);
+  }
+  /** 任された作業の会話のうち、いちばん新しいものを開く（脇の一覧にも ⇄ の印つきで並ぶ） */
+  async function openLatest(device) {
+    try {
+      const rows = (await cmd('agentTasks')).filter(r => String(r.parentSessionId ?? '').startsWith(`remote:${device.id}:`) && r.sessionId);
+      rows.sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
+      if (rows[0]) openSession(rows[0].sessionId);
+      else { notice = t('settings.remote.agent.noTasks'); paint(); }
+    } catch (e) { notice = e.message; paint(); }
   }
   function setResident(patch) {
     residentState.textContent = '';

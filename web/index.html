@@ -193,6 +193,8 @@
       <button type="button" class="btn btn-icon" id="browserEntry" hidden aria-controls="filePreview" aria-pressed="false"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3c2.6 2.5 3.9 5.5 3.9 9s-1.3 6.5-3.9 9c-2.6-2.5-3.9-5.5-3.9-9s1.3-6.5 3.9-9z"/></svg></button>
       <!-- 委譲された子の会話でだけ出す、依頼元の会話へ戻る口（子の会話は脇の一覧に出ない）。サブエージェント・タスク・裏のコマンドの一覧は会話末尾の「バックグラウンド N」 -->
       <button type="button" class="btn" id="parentChatEntry" hidden data-i18n="dialog.tasks.parent"></button>
+      <!-- 端末の AI から任された会話の出どころ（⇄ 端末の AI から · 依頼元の会話の題）。依頼元の会話は端末にあるので、ここからは開かない -->
+      <span class="remote-origin" id="remoteOriginLine" hidden></span>
       <!-- 使用量のチップ（web/header-usage.mjs、docs/design-system.md「ヘッダーの使用量」）。この会話のエージェントの枠のうち使用率がいちばん高いもの。
            枠を 1 つも持たないエージェント（互換の接続先・未対応）では出さない。押すと全エージェントの一覧（#usagePop） -->
       <button type="button" class="btn usage-chip" id="usageChip" hidden aria-haspopup="dialog" aria-expanded="false" aria-controls="usagePop"></button>
