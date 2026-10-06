@@ -1649,6 +1649,8 @@ export const backend = {
               AGENT_BROWSER_SESSION: browserEnv.AGENT_BROWSER_SESSION,
               AGENT_BROWSER_SOCKET_DIR: browserEnv.AGENT_BROWSER_SOCKET_DIR,
               AGENT_BROWSER_NAMESPACE: browserEnv.AGENT_BROWSER_NAMESPACE,
+              // Chrome の中継の道だけ（core/agent-browser.mjs の chromeRelayBrowser）。agent-browser を自分のタブに縛る
+              ...(browserEnv.AGENT_BROWSER_PIN_TAB ? { AGENT_BROWSER_PIN_TAB: browserEnv.AGENT_BROWSER_PIN_TAB } : {}),
             } : {}),
             ...controlRuntime?.env,
           } } : {}),

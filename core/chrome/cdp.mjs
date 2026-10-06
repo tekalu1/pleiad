@@ -18,6 +18,7 @@ export function createCdp(ws, { timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
   const pending = new Map();
   const listeners = new Map();         // method -> Set<fn(params, sessionId)>
   const sessionListeners = new Map();  // sessionId -> Set<fn(method, params)>
+  const eventListeners = new Set();    // fn(method, params, sessionId)。どのイベントも受ける（中継の配り分け）
   const closeListeners = new Set();
 
   const failAll = error => { for (const [id, item] of [...pending]) { pending.delete(id); clearTimeout(item.timer); item.reject(error); } };
@@ -40,6 +41,7 @@ export function createCdp(ws, { timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
       return;
     }
     if (typeof message?.method !== 'string') return;
+    for (const fn of [...eventListeners]) { try { fn(message.method, message.params ?? {}, message.sessionId); } catch { /* 同上 */ } }
     for (const fn of [...(listeners.get(message.method) ?? [])]) { try { fn(message.params ?? {}, message.sessionId); } catch { /* 同上 */ } }
     if (message.sessionId) for (const fn of [...(sessionListeners.get(message.sessionId) ?? [])]) { try { fn(message.method, message.params ?? {}); } catch { /* 同上 */ } }
   });
@@ -53,11 +55,12 @@ export function createCdp(ws, { timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
   };
 
   return {
-    send(method, params = {}, sessionId) {
+    /** @param {{ timeoutMs?: number }} [options] この呼び出しだけの上限（中継が人の確認を待つ移動など） */
+    send(method, params = {}, sessionId, options = {}) {
       if (closed) return Promise.reject(new CdpError('connection closed', { code: 'closed', method }));
       return new Promise((resolve, reject) => {
         const id = ++next;
-        const timer = setTimeout(() => { pending.delete(id); reject(new CdpError(`${method} timed out`, { code: 'timeout', method })); }, timeoutMs);
+        const timer = setTimeout(() => { pending.delete(id); reject(new CdpError(`${method} timed out`, { code: 'timeout', method })); }, options.timeoutMs ?? timeoutMs);
         pending.set(id, { resolve, reject, timer, method });
         try { ws.send(JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) })); }
         catch (error) { pending.delete(id); clearTimeout(timer); reject(error); }
@@ -66,6 +69,8 @@ export function createCdp(ws, { timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
     /** イベントを受ける。戻り値は外す関数 */
     on: (method, fn) => add(listeners, method, fn),
     onSession: (sessionId, fn) => add(sessionListeners, sessionId, fn),
+    /** すべてのイベント（fn(method, params, sessionId)）。戻り値は外す関数 */
+    onEvent(fn) { eventListeners.add(fn); return () => eventListeners.delete(fn); },
     onClose(fn) { closeListeners.add(fn); return () => closeListeners.delete(fn); },
     close() { try { ws.close(); } catch { /* 閉じていてもよい */ } markClosed(); },
     get closed() { return closed; },
