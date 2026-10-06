@@ -1,4 +1,4 @@
-// bot の予約（ADR 0136）をサーバー越しに。fake バックエンドの bot が自分で ply_control の brain.wakeAdd を呼び、
+// bot の予約（ADR 0140）をサーバー越しに。fake バックエンドの bot が自分で ply_control の brain.wakeAdd を呼び、
 // テストの時計（tests/lib/routines-clock-loader.mjs）を進めると、bot のターンが走っていなくても、予約した会話（スレッド）で起きて話す。
 // Pleiad を止めている間に過ぎた予約は、起動後に 1 回だけ遅れて起きる（同じ会話の分は 1 回にまとめる）。LLM もネットワークも使わない。
 import fs from 'node:fs/promises';

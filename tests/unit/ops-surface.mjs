@@ -215,7 +215,7 @@ export default async function (t) {
       get: async () => null,
     },
     brain: { list: () => [{ seq: 1, botId: 'b_1', at: 1, kind: 'think', text: '考える', ...secret }], loops: () => [{ id: 'l1', status: 'open', text: 'やりかけ', updatedAt: 1, ...secret }], count: () => 1 },   // 頭の中（ADR 0126）
-    wakes: { list: () => [{ id: 'w1', botId: 'b_1', status: 'pending', at: 1, note: 'あとで確かめる', channelId: 'c_1', threadId: null, createdAt: 1, ...secret }], now: () => 1 },   // 予約（ADR 0136）
+    wakes: { list: () => [{ id: 'w1', botId: 'b_1', status: 'pending', at: 1, note: 'あとで確かめる', channelId: 'c_1', threadId: null, createdAt: 1, ...secret }], now: () => 1 },   // 予約（ADR 0140）
     pulse: { status: async () => ({ on: false, paused: false, running: false, nextAt: null, lastBeatAt: null, drives: null, home: null, budget: null, ...secret }) },
     memoryLearner: { status: async () => ({ at: '02:00', paused: false, running: false, lastRunAt: null, nextAt: 2, lastResult: null, skip: null, failure: null, ...secret }) },   // S3
     routines: {     // R1（P2）

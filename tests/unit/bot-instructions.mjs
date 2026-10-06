@@ -56,7 +56,7 @@ export default async function (t) {
     && en.includes(`make the whole text \`${SILENT_MARK}\``) && en.includes('Do not announce your silence'), ja);
   ok('ADR 0109 の追記: 自分の投稿へのリアクションは reaction の包みで届き、問いへの答えのリアクションは人・bot・AI のどれが付けても起こす（bot・AI は予算の内・DM では起こさない。ja・en）', ja.includes('人が付けてもほかの bot・AI が付けてもあなたを起こす') && ja.includes('DM では起こさない')
     && en.includes('whether a person, another bot or an AI put it') && en.includes('never in a DM'), ja);
-  ok('ADR 0136: 後で起きるのは会話の中のタイマーではなく brain.wakeAdd の予約（一覧・取り消しも）（ja・en）', ['brain.wakeAdd', 'brain.wakeList', 'brain.wakeCancel', 'Cron'].every((s) => ja.includes(s) && en.includes(s)), ja);
+  ok('ADR 0140: 後で起きるのは会話の中のタイマーではなく brain.wakeAdd の予約（一覧・取り消しも）（ja・en）', ['brain.wakeAdd', 'brain.wakeList', 'brain.wakeCancel', 'Cron'].every((s) => ja.includes(s) && en.includes(s)), ja);
   ok('ADR 0128: 聞こえた投稿（@ の無い人の投稿）は、ほかの bot がもう答えている・自分に向いていないなら黙ってよい（ja・en）', ja.includes('文章を書かずに終えてよい') && ja.includes('ほかの bot がもう答えている')
     && en.includes('If another bot has already answered or it is not for you, you may finish without writing anything.'), ja);
   ok('ADR 0128 の追記: 包みの to はその bot との話の続き。名指しか欠かせない訂正のほかは、黙る仕組み（文章なし・印）で何も書かずに終える（ja・en。聞こえた投稿の段落）',

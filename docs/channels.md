@@ -307,7 +307,7 @@ bot が呼ばれないときも小さく起き続け、考えたことの続き�
 - **画面**: bot のページの「活動メモ」（`web/channels/brain-panel.mjs`）。心拍のスイッチ・間隔・次の時刻・予算・欲求の数値・気がかり・流れ・［眠らせる］［今すぐ 1 回］［流れを消す］。更新は WS の出来事 `brainChanged { botId }`。
 - **開発中の確かめ**: fake バックエンドの安いモデルは `AGENT_HOST_FAKE_PULSE`（返事の JSON の配列のファイル。1 回ごとに順に使い、尽きたら最後を繰り返す）。間隔の下限・タイマーの確かめる間隔・既定の間隔は `AGENT_HOST_PULSE_FLOOR_MS`・`AGENT_HOST_PULSE_TICK_MS`・`AGENT_HOST_PULSE_EVERY_MS` で縮められる（開発用）。手順は `docs/dev-verification.md`。
 
-### 予約（自分で決めた時刻に起きる。[ADR 0136](adr/0136-bot-wake-reservations.md)）
+### 予約（自分で決めた時刻に起きる。[ADR 0140](adr/0140-bot-wake-reservations.md)）
 
 bot が `brain.wakeAdd` で「この時刻に、この会話で、このメモを持って起きる」と予約できる。会話の中のタイマー（Claude Code の Cron など）は、その会話のターンが止まっている間は鳴らないので、Pleiad 本体（`core/brain/wakes.mjs`）が持つ。心拍の ON・OFF には依らない。bot の指示文（`guide.bot.wake`）で、会話の中のタイマーではなくこれを使うよう案内する。
 

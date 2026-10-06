@@ -1125,7 +1125,7 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
     await refreshThread(rec.channelId, rec.threadId);
     // 使ったトークンをチャンネルの予算に数える（人が呼んだターンも。次の bot を起こす前に）
     // 自分の心拍・予約から起きたターンは、スレッドではなく bot の家のチャンネルの予算に数える（自発の分も数える。ADR 0126）。
-    // 家が無い DM だけの bot の予約は、bot の 1 日のトークンにだけ数える（homeChannelId が null。ADR 0136）
+    // 家が無い DM だけの bot の予約は、bot の 1 日のトークンにだけ数える（homeChannelId が null。ADR 0140）
     if (rec.inner) {
       await budget.chargeBrain({ channelId: rec.inner.homeChannelId, botId: rec.botId, backend: turn.info?.backend, model: turn.info?.model, usage: rec.usage })
         .catch((e) => log('could not charge the brain budget:', errText(e)));
@@ -1214,7 +1214,7 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
   }
 
   /**
-   * 予約した時刻になった bot を、予約した会話で起こす（core/brain/wakes.mjs。ADR 0136）。handoff と同じく、投稿を持たない出来事（inner。kind: 'wake'）を
+   * 予約した時刻になった bot を、予約した会話で起こす（core/brain/wakes.mjs。ADR 0140）。handoff と同じく、投稿を持たない出来事（inner。kind: 'wake'）を
    * inbox に積んでふつうの道に乗せる。承認・強い bot の確認・［止める］はそのまま効き、走っているターンには途中送信しない。
    * 止めたスレッド・その bot の会話でなくなったものは断る。返りは { ok: true, sessionId, channelId, threadId } | { ok: false, reason }（resting・closed は待てば起こせる）
    */

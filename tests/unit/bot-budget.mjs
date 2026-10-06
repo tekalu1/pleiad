@@ -101,7 +101,7 @@ export default async function (t) {
     t.ok('DM（スレッドが無い）は数えない', (await zero.budget.charge({ channelId: 'c_1', threadId: null, backend: 'codex', model: '', usage: { inputTokens: 100 } })) === null);
   }
 
-  // ---------------------------------------------------------------- 自発の分（心拍・予約。ADR 0126・0136）
+  // ---------------------------------------------------------------- 自発の分（心拍・予約。ADR 0126・0140）
   {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'bot-budget-brain-'));
     const brain = createBrainStore({ dataDir: dir });
