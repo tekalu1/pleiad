@@ -152,6 +152,9 @@
   },
   "delegation": {
     "notRunning": "この会話は実行中ではありません",
+    "remote": {
+      "settingsUnsupported": "ホストのタスクには、まだ子の設定（backend・model・effort）を替える機能がありません。message だけ送ってください"
+    },
     "readOnly": "読み取り・計画モードでは Pleiad の子タスクを開始できません",
     "denied": "委譲は許可されませんでした",
     "idPending": "会話IDはまだ確定していません",
@@ -188,6 +191,7 @@
     "worktreeInstruction": "\n\n---\nこの作業は git の worktree で行う。\nworktree: {{path}}（ブランチ {{branch}}。元の場所 {{origin}} から作った）\n作業はこの worktree の中だけで行う。元の場所（{{origin}}）の絶対パスに書かない。\n依存（node_modules など）は入っていない。必要なら自分で入れる。\n終わったら、変更をこのブランチにコミットする。元の場所への取り込みは依頼元がする。",
     "offsetInvalid": "offset は0以上の整数です",
     "secondsInvalid": "seconds は1〜30です",
+    "remoteDepth": "端末の AI から任された作業の委譲は、{{max}} 階層までです",
     "isolateInvalid": "isolate は true か false で指定してください",
     "stopping": "停止処理中です。少し待ってください",
     "modelUnknown": "model_unknown: モデル {{model}} は {{backend}} の今の一覧にありません（選べるもの: {{models}}）。何も変えていません",

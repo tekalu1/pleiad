@@ -433,6 +433,8 @@ const SUITES = [
   './unit/relay.mjs',
   // リモートのホスト側（core/remote/connector.mjs）。中継をこのプロセスで、fake のサーバーを別プロセスで立て、試験用の端末で往復する
   './unit/remote-host.mjs',
+  // 端末の AI からの委譲の口 /agent（ホスト側。core/remote/agent-port.mjs）: 許可・防火壁・委譲と状態・承認モードの継承と引き上げ・上限・承認の中継と人の答え・取り消し
+  './unit/remote-agent.mjs',
   // 設定 › リモートの部品と常駐（トレイ・スリープ。Electron は差し替える）、setRemoteResident
   './unit/remote-settings.mjs',
   // リモートの端末側（core/remote/device*.mjs）。中継とホストを立て、端末内プロキシの URL を素の HTTP と ws で叩く

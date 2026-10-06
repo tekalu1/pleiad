@@ -897,6 +897,9 @@
       "rejected": "The relay refused the connection (HTTP {{status}})",
       "unreachable": "Can't reach the relay ({{reason}})"
     },
+    "agent": {
+      "desktopOnly": "Only a desktop device can hand work over from its AI"
+    },
     "unnamedDevice": "Unnamed device",
     "settings": {
       "needConfig": "Enter the relay URL and the enrollment secret",

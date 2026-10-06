@@ -895,6 +895,9 @@
       "rejected": "中継が接続を受け付けませんでした（HTTP {{status}}）",
       "unreachable": "中継につながりません（{{reason}}）"
     },
+    "agent": {
+      "desktopOnly": "この端末の AI からの依頼は、デスクトップ版の端末だけが受けられます"
+    },
     "unnamedDevice": "名前のない端末",
     "settings": {
       "needConfig": "中継の URL と登録用の秘密を入れてください",

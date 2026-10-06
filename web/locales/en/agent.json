@@ -152,6 +152,9 @@
   },
   "delegation": {
     "notRunning": "This conversation is not running.",
+    "remote": {
+      "settingsUnsupported": "Changing the settings of a task on a host (backend, model, effort) is not supported yet. Send only a message."
+    },
     "readOnly": "Pleiad child tasks cannot be started in read-only or plan mode.",
     "denied": "The delegation was not allowed.",
     "idPending": "The conversation ID is not determined yet.",
@@ -188,6 +191,7 @@
     "worktreeInstruction": "\n\n---\nDo this work in a git worktree.\nWorktree: {{path}} (branch {{branch}}, created from {{origin}})\nWork only inside this worktree. Do not write to absolute paths in the original location ({{origin}}).\nDependencies (node_modules and the like) are not installed. Install them yourself if needed.\nWhen finished, commit your changes to this branch. The requester merges them back.",
     "offsetInvalid": "offset must be an integer of 0 or more.",
     "secondsInvalid": "seconds must be from 1 to 30.",
+    "remoteDepth": "Work handed over from a device's AI can be delegated at most {{max}} levels deep.",
     "isolateInvalid": "isolate must be true or false.",
     "stopping": "The task is stopping. Wait a moment.",
     "modelUnknown": "model_unknown: model {{model}} is not in the current {{backend}} model list (available: {{models}}). Nothing was changed.",
