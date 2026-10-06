@@ -205,14 +205,14 @@ design.md §7.2 の表のとおり。サーバー側が「main に頼むもの�
 - **1-6 へ**: (1) `main-leaving` を送った後に更新を取りやめたとき、サーバーの「猶予を数えない」状態（`leaving`）は main の再接続でしか解けない。取りやめの知らせを足すかを決める。(2) `agentBrowserBridge.close()` は終わる前に最後のタブの写しを送る（`will-quit` で呼ばれる）ので、`installUpdate` から `quitAndInstall` へ進むときの順序は変えなくてよい。(3) 切り替えで新しいサーバーを起こすときは、旧サーバーが持つ内蔵ブラウザーの写し・中継の URL・復号した値は引き継がれない（新しいサーバーは空から始まり、新しい main の復元の依頼は空の答えになる）。タブは main のものなので残るが、写しの報告は次の変化まで届かない。切り替えの直後に main が `browser-state-report` を 1 回送り直す道（または新しいサーバーへの付け直しで `browser-restore-request` を使わず報告だけする）が要る
 - **1-7 へ**: os-open・openExternal の居ない間の実機（署名した旧版 → 新版の更新の最中）。更新の約 50 秒の間に、スリープ抑止の要否（1-0 の d）
 
-### 1-6 更新の流れ・切り替えの先送り・画面の読み直し（M。**実装済み 2026-10-06**（待ちの表示を除く）。下の「実装のメモ」）
+### 1-6 更新の流れ・切り替えの先送り・画面の読み直し（M。**実装済み 2026-10-06**。待ちの表示は承認済み（2026-10-06）で実装済み。下の「実装のメモ」・「待ちの表示」）
 
 design.md §5.1・§6.1・§8。
 
 - `desktop/main.cjs` の `installUpdate`（`AGENT_HOST_HANDOVER=on`）: 作業を止めず・サーバーをロックせず、`main-leaving { reason: 'update' }` を送って `quitAndInstall` する（今の `workerRequest('update-lock')` と `abortAll` を通らない）。`off` では今のまま。画面の「中断して更新」のダイアログ（`web/interrupt.mjs`・`web/client.mjs`）は `off` と、合わない更新のときだけ
 - 新しい main が起動して走っているサーバーに付け直したとき（`--updated` の有無によらず、サーバーの `appVersion` と自分の版・ビルドのハッシュが違えば）、**切り替えの制御**（`desktop/switch.cjs` 新規。純粋な状態機械 + 副作用を注入）を始める:
   1. 事前の確かめ: 新しい版の実行場所へ組み（1-3）、`pleiad-node.exe app\<新>\core\handover-check.mjs` を走らせる（新規 `core/handover-check.mjs`。データの形式番号・`ipc` の範囲を JSON で出す）。データの形式番号が変わる・`ipc` の範囲の外・manifest の不一致 → 自動の切り替えをせず、「あとで／中断して更新」のダイアログ（今の ADR 0036 の形）。「あとで」は S1 のまま動かし続け、勝手には切り替えない
-  2. 待ち: 走っている作業（`running` の `count`）が 0 になるのを、数秒おきに見る（サーバーの `running` の通知がある間はそれも使う）。**`count` は `!` の行（`shellRuns.running()`）・Codex の裏の端末（`runtime.background`）・外部の stdio MCP・予定された送信を数えず、S1 の終了で止まる**（今の更新・終了と同じ。1-0 f）。切り替えで止める・待つ・画面に出すのどれにするかをここで決め、テストに書く。窓の表示は「新しい版への切り替えを待っています（N 件）」と「今すぐ中断して切り替える」（下の 1-6 の表示）
+  2. 待ち: 走っている作業（`running` の `count`）が 0 になるのを、数秒おきに見る（サーバーの `running` の通知がある間はそれも使う）。**`count` は `!` の行（`shellRuns.running()`）・Codex の裏の端末（`runtime.background`）・外部の stdio MCP・予定された送信を数えず、S1 の終了で止まる**（今の更新・終了と同じ。1-0 f）。**止まるものは待たず、黙って止めもしない**: 作業が 0 件になったとき残っていれば、自動では切り替えず「あとで／止めて切り替え」を聞く（下の「待ちの表示」）。窓の表示は「新しい版への切り替えを待っています」と「今すぐ中断して切り替える」
   3. 作業が 0 件になったら `update-lock`（`updateGate.acquire`）を取る。取れなければ（短い処理の最中）待ちに戻る。取れたら、サーバーに `shutdown`（`flushNow`・ロックを放して終わる）を頼み、終わるのを待つ（上限 30 秒）
   4. 新しいサーバーを同じ `AGENT_HOST_TOKEN`・`AGENT_HOST_PORT` で起こし、`ready` を待つ。窓を読み直す（同じ origin ならそのまま `loadURL`。ポートが変われば `window-trust` の origin も登録し直す）
   5. 新しいサーバーが立たなければ、前の版（`app\<旧>`）で起こし直し、窓に「新しい版のサーバーを起動できなかったので、前の版で動いています」。ログを残す
@@ -220,18 +220,18 @@ design.md §5.1・§6.1・§8。
   - 切り替えの制御は、`running` の `count`・ロックの取得・サーバーの終了・起動を引数で受ける純粋な状態機械にして、実時間・実プロセスなしでテストする
 - `core/server.mjs`: `ready` に `appVersion`（とビルドのハッシュ。`package.json` の `version` と `manifest.json` の先頭のハッシュ）を足す（`core/protocol.mjs` の `READY` の注記も）。`protocolVersion` は変えない
 - `web/client.mjs`: `ready` の `appVersion` が、自分を配った版（HTML に埋めた版）と違えば、入力欄の下書きを保存して 1 回だけ読み直す（sessionStorage に「この版で読み直した」を残し、繰り返さない）。`protocolVersion` の不一致の扱いは今のまま
-- **切り替えの待ちの表示**（新しい UI）: `docs/design-system.md` の決まりに従い、ux-improve の手順で AsIs / ToBe のモックを作って承認を取ってから実装する。出すもの: 待ちの件数と、止めている作業の一覧（今の更新ダイアログの「止まる作業」と同じ行）、「今すぐ中断して切り替える」。文言は辞書（`web/locales/{ja,en}/desktop.json`・`ui.json`、訳語は `docs/i18n-glossary.md`）。承認後に形と日付を `docs/design-system.md` に書く
+- **切り替えの待ちの表示**（新しい UI。モックは承認済み（2026-10-06）。形は `docs/design-system.md`「切り替えを待つ表示」、決定は [ADR 0148](../adr/0148-switch-wait-display.md)）: 脇の下の更新の知らせの中で一覧を開く。待ちの件数と作業の一覧（今の更新ダイアログの「止まる作業」と同じ行）、止まるもの、「今すぐ中断して切り替える」、切り替えに失敗したときの「もう一度試す」。文言は辞書（`web/locales/{ja,en}/ui.json` の `switch.*`・`updates.handover*`、main のダイアログは `desktop.json` の `switch.*`。訳語は `docs/i18n-glossary.md`）。実装メモは下の「待ちの表示」
 - main が出す文言（ダイアログ）も `web/locales/{ja,en}/desktop.json`（`desktop/i18n.cjs` が読む）
 - 新しい main の preload は、古い画面（先送りの間に出す S1 の画面）が使う名前を 1 版ぶん残す（`desktop/preload.cjs`）
 - テスト: `tests/unit/desktop-switch.mjs`（状態機械: 待ち・ロックが取れない・サーバーの終了の待ち・起動の失敗から前の版へ戻る・形式番号が違う版は自動で切り替えない・「あとで」・「今すぐ中断」・待っている間に新しい作業が始まる）。`tests/unit/web-interrupt.mjs` に読み直しの判定。`handover-check` の出力は `tests/unit/handover-check.mjs`
 
-**実装のメモ（2026-10-06。実装済み。待ちの表示を除く。流れの全体は design.md §6.1「段階 1 の実装」）**
+**実装のメモ（2026-10-06。実装済み。待ちの表示は下の「待ちの表示」。流れの全体は design.md §6.1「段階 1 の実装」）**
 
 - **新しいファイル**: `desktop/switch.cjs`（状態機械 `createSwitch`・副作用の組み立て `createSwitchEffects`・`startSwitch`・合わない版のダイアログ `incompatibleDialog`）・`core/handover-check.mjs`（事前の確かめ。`readBuildInfo` はサーバーの `ready` も使う）。既存は小さく: `desktop/main.cjs`（`installUpdate` の on・`startServerSwitch`・`onServerExit` の印）・`core/server.mjs`（`ready` の `build`・main への `ready` の `appVersion`・`build`・`pid`・`runtimeKey`・`running` の `shells`・`index.html` の `pleiad-build`）・`core/shell-runs.mjs`（`list`）・`desktop/runtime.cjs`（前の版の場所 `locate`）・`desktop/server-boot.cjs`（`chooseServer` の `prepared`）・`desktop/updates.cjs`（`handover`）・`web/client.mjs`・`web/interrupt.mjs`（`versionReload`）・`web/updates.mjs`・`web/locales/{ja,en}/desktop.json`（`switch.*`）
 - **`main-leaving` → `leave()` の位置**: `main-leaving` は `quitAndInstall` の前に送り、`leave()` は electron-updater がインストーラーを起こした直後（`before-quit-for-update`）にする。`quitAndInstall` が失敗したときに、つながりを切らずに済む（更新を取り消しても `main-leaving` の印はサーバーに残る。1-5 と合わせて扱う）
-- **数えない作業の扱い（決めたこと）**: 外部の stdio MCP は数えない（作業ではなく、走っているターンが 0 件なら呼び出しの途中は無い。S2 が次の呼び出しで起こし直す。状態（`node_repl` など）は今の再起動と同じく消える。数えると切り替わらない）。送信予定・上限の解除後の再開は数えない（行は `schedule.json` に残り S2 が戻す。断の数秒は送信予定の遅れの猶予 1 時間（ADR 0103）に収まる。発火して送信待ちに入った分は `update-lock` が断る）。**`!` の行と Codex の裏の端末は「終わるまで待つ」が仮**（ADR 0137 の 9「止まるものは無い」に合わせた。`!` の行は 10 分の上限で必ず終わるが、裏の端末は終わらないことがある）。待ちの表示のモック（置き場所 A/B/C・止まるものの扱い X/Y/Z）の利用者の判断を受けて、`switchBlockers` と `createSwitch` の待ちを直す。テストは `tests/unit/desktop-switch.mjs`
-- **表示の口**: `onState(snapshot)` と `interruptNow()`（design.md §6.1）。今の表示は main のログ（`[server] switch: …` が updater.log に出る）と、前の版に戻したときのダイアログだけ。**待っている間の窓は S1（古い版）の画面なので、待ちの表示は main の側で描く**
-- **preload**: この版で名前は変えていない。前の版の画面が使う名前の一覧を `tests/unit/desktop-switch.mjs` に持ち、消えたら落とす
+- **数えない作業の扱い（決めたこと）**: 外部の stdio MCP は数えない（作業ではなく、走っているターンが 0 件なら呼び出しの途中は無い。S2 が次の呼び出しで起こし直す。状態（`node_repl` など）は今の再起動と同じく消える。数えると切り替わらない）。送信予定・上限の解除後の再開は数えない（行は `schedule.json` に残り S2 が戻す。断の数秒は送信予定の遅れの猶予 1 時間（ADR 0103）に収まる。発火して送信待ちに入った分は `update-lock` が断る）。**`!` の行と Codex の裏の端末は「切り替えで止まるもの」（stoppers）で、待たない**（利用者の決定「Z」。2026-10-06。終わらないもの（`npm run dev`・裏の端末）があるので、待つと切り替わらず、原因が見えない。待たずに止めると黙って dev サーバーを止める）。`switchBlockers` の `count` は `running` の `count` だけで、stoppers は別に持つ。作業が 0 件になったとき stoppers が残っていれば `asking` で「あとで／止めて切り替え」を聞く。テストは `tests/unit/desktop-switch.mjs`
+- **表示の口**: `onState(snapshot)`・`answer('now' | 'later')`・`interruptNow()`・`retry()`（design.md §6.1）。表示は下の「待ちの表示」
+- **preload**: 名前は変えず、`switch`（版 1）を足した。前の版の画面が使う名前の一覧を `tests/unit/desktop-switch.mjs` に持ち、消えたら落とす
 - **確かめた**: `npm test`（全件）・デスクトップのハーネス（`docs/dev-verification.md`「デスクトップ版（Electron）」。版の違う 3 つの resources で、旧版の main の fake のターン → 更新相当 → 新版の main が付け直して待ち、ターンが中断されずに終わってから同じトークン・ポートで S2 に替わり、窓が読み直される。main が読み直さない別の窓は自分で 1 回だけ読み直す。壊した版では前の版で起こし直し、その旨が出る）
 - **1-7・1-5 への申し送り**: (1) S1 の終わりで `computer/service.cjs`・`computer-overlay.cjs` の `once('exit')` の後始末が使い切られ、S2 には付け直されない。(2) 更新を取り消したとき（`quitAndInstall` の失敗）の `main-leaving` の印。(3) 新しい版が立たないとき、起こしたサーバーの終わりを見てから前の版を起こすまで約 6 秒（`startAndConnect` の付け直しの猶予 5 秒）。(4) 窓は、main の読み直しの前に古い画面が S2 につながると自分でも読み直しを始めうる（どちらかが勝ち、読み込みは 1 回に収まった）
 - **1-5 と 1-6 の合わせ（2026-10-06。上の 1-5 の「1-6 へ」と 1-6 の「申し送り」の分。表は design.md §7.2）**:
@@ -241,6 +241,15 @@ design.md §5.1・§6.1・§8。
   4. **ホストへ任せる口（`remote-agent`。main の 2026-10-06 の取り込みで増えた）**: サーバーが `process.parentPort` を直に見ていたので、パイプの経路ではこの口が無効だった。main への口（`mainPort`）に寄せた。**居ない間は待たせず `OFFLINE` で失敗にする**（線が main のもので居ない間は無い・待たせるとモデルのターンが約 50 秒止まる・作った直後に切れた依頼は二重に作りうる・オフラインの扱いが揃っている）。ホストは全部オフライン扱いにして（一覧・許可の印・台帳の写しは残す）、戻ったら main の橋が `ready` で一覧と、つながっている線の `ready` を送り直し（`resync`）、サーバーの追いつき（`catchUp`）が動いているタスクと中継する承認を同期し直す。付け直しも切り替え（S2。線は main のもので張ったまま）も同じ。テスト: `tests/unit/main-away.mjs`（口の振る舞い）・`main-away-desktop.mjs`（橋の送り直し）。**ホストの実機（本物のホストへ線を張った main で、更新・切り替えをまたぐ）は確かめていない**（ホストと中継が要る。1-7）
   - **デスクトップのハーネス**（1 の「切り替えの後に S2 がタブの写しと中継の URL を持つ」。`desktop:pack` の resources を A、A を写して `app\` に 1 ファイル足し manifest を作り直したものを B にして electron を 3 回）7 / 7 通過: A の main で fake の `browser:` のターンとタブ 2 枚 → `main-leaving` と `leave` で離れる → B の main が S1 から写し（タブ 2 枚・中継）を受け取って開き直し、切り替えで S2（別の pid）に替わり、S2 の `ready` の直後にタブ 2 枚と中継の URL つきの `browser-state-report` を送る → 3 つ目の B の main が S2 に付け直すと、S2 の復元の答えにタブ 2 枚と同じポート・会話の鍵が入っている。使い方は dev-verification.md の 1-6 の項
   - **残り**: ホストへ任せる口の実機・本物のインストーラーをまたぐ更新での確認は 1-7。取りやめた後に古いサーバー（`main-leaving-cancel` を知らない版）へ付け直した main は、`leaving` の印を戻せない（次の付け直しで消える。段階 1 の範囲では受け入れる）
+
+**待ちの表示（実装済み 2026-10-06。モックは承認済み。形は design-system.md「切り替えを待つ表示」、決定は ADR 0148）**
+
+- **誰が描くか**: 待っている間の窓は古い版のサーバー（S1）が配る古い版の `web/` の画面。表示のコードは「N 版の `web/`」（`web/switch-notice.mjs`）に入り、N → N+1 の更新のときに N+1 の main（`desktop/switch-screen.cjs`）が状態を渡して描かせる。**main が描くのではない**（上の古いメモの「main の側で描く」は直した）
+- **main → 画面の受け渡しは版つき**: preload の `plyDesktop.switch`（`version: 1`・`hello()`・`state()`・`onState(listener)`・`act('now' | 'later' | 'retry')`）。状態（payload）は `{ v: 1, phase, target, current, since, items, stoppers, … }`（phase は `waiting`・`asking`・`manual`・`held`・`stopping`・`switching`・`done`・`failed`。形は `desktop/switch-screen.cjs` の `displayState`）。画面は読める版（`SWITCH_BRIDGE_VERSIONS`）だけを読み、知らない版・知らない phase・欠けた項目は何も出さない／空として扱う。口の形を変えるときは `switch2` と `payloadFor` の版を足し、**`switch`（版 1）は新しい main が 1 版ぶん残す**（画面は古い版でも読める）。名前の一覧は `tests/unit/desktop-switch.mjs` が守る
+- **画面が表示を持つかを main が知る**: 画面は読み込むとき `hello()` を送る。main は **hello が来た画面にだけ表示を任せる**（窓を読み込み直すたびに忘れる）。**表示を持たない画面（この機能を持つ最初の版への更新。古い版のサーバーが配る画面）には、最小限の main 側の知らせを出す**: 止まるものが残ったとき・合わない版を聞くときのダイアログ（「あとで／止めて切り替え」「あとで／中断して更新」。`incompatibleDialog`）と、前の版に戻したときのダイアログ。**待っている間は何も出さない**（updater.log にだけ残る。待ちは利用者が選んだ「止まらない更新」の続きで、作業が終われば自動で切り替わる）。窓の読み込み中に聞く場面が来たら hello を 8 秒まで待つ
+- **状態機械の変更**（`desktop/switch.cjs`）: `asking`（止まるものだけが残った）・`held` の reason `stoppers`（あとで。止まるものが無くなる・作業が増えるまで聞き直さない）・`answer()`・`retry()`（前の版で動いているとき、準備からやり直す）・`since`（待ち始めの時刻）・`interrupt`（中断の進み。`abortAll(onProgress)`）・`interruptFailed`・`stopped`（切り替えで止めたもの）
+- **画面**: 脇の下の `#switchNotice`、設定のページの `#switchBox`、⚙ の点、確認の段の 1 行（`state.handover` のとき）、「更新しました」を切り替えまで出さない・止めたものの 1 行（`web/updates.mjs`）。リモートの窓・ブラウザーは `plyDesktop.switch` が無いので何も出ない
+- **確かめた**: `tests/unit/desktop-switch.mjs`（Z・もう一度試す・中断の進み・待ち始め）・`desktop-switch-screen.mjs`（橋・hello・版）・`web-switch-notice.mjs`・`tests/browser/switch-notice.cjs`（実際の画面。橋は偽物。ライト・ダーク・640px・360px）
 
 ### 1-7 テスト・文書・実機・既定を `on` に（M）
 
