@@ -37,6 +37,8 @@
 //   "steps:<json>" または "steps:@<json ファイルの絶対パス>" … ツールと本文を台本どおりに並べる。{"steps":[{"tool":"Grep","input":{…},"result":"…","error":false,"ms":600,"ask":false},{"text":"…"}]}
 //                    ms は結果を返すまでの時間、ask はツールを始めたあと承認（kind:"tool"）を待つ（computerApp を添えるとアプリの承認）、images・computer は ply_computer の結果の画像と印、text は本文を書く（前のツールは同じ発言に入る）、newMessage は発言の切れ目（text.end）だけを出す
 //   "bg <本数> gate:<名前>" … "bg" の時間指定の代わりに、ゲート（下の「ゲート」）が開いたときに裏の子が順に終わる（実時間で待たない）
+//   "held:<台本>"  … <台本>（上のどれか）を別プロセスの偽の CLI（fake-agent.mjs）で走らせ、保持役（core/holder/）の子に載せる。サーバーを入れ替えても CLI は走り続け、
+//                    新しいサーバーが記録を再生して続きを受ける（無停止の更新 2b-5。fake-held.mjs。AGENT_HOST_DATA と AGENT_HOST_RUNTIME_ROOT が要る）
 //   "notes:" / "instructions:" … Pleiad が足した notes（記憶・末尾）／ botInstructions（人格）を JSON で返す（bot の会話の検査用）
 //   それ以外        … prompt をそのまま echo
 // 行頭の <pleiad-channel> などの包み（bot の会話。core/system-messages.mjs の splitLeadingNotes）は外してから台本を選ぶ（scriptOf）。
@@ -53,7 +55,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { undelivered } from "./undelivered.mjs";
-import { replayRecord } from "../adopt.mjs";
+import { runHeld, driveHeld } from "./fake-held.mjs";
 import { computerDisplay, computerToolInput } from "../computer-use/display.mjs";
 
 const sessions = new Map();   // sessionId -> { sessionId, title, cwd, createdAt, lastModified, tag, messages, subagents }
@@ -611,6 +613,12 @@ export const backend = {
         emit({ type: 'compaction', phase: 'failed', trigger: 'auto', reason: '接続が切れました' });
         out.text = 'failed';
         await say(emit, out.text, out.uuid);
+      } else if (text.startsWith("held:")) {
+        // 偽の CLI が出す出来事をそのまま流し、履歴に積む。旧サーバーが手を離したら（handOffHeld）このターンはここで終わる（出来事は server が捨てる）
+        const held = await runHeld({ id, cwd, mode, model, notes, prompt: text.slice(5), userText: [...notes, String(prompt ?? "")].join(""),
+          record: (m) => push(s, m), emit, askPermission, signal, control });
+        if (held.handedOff) emit({ type: "turnResult", outcome: "aborted" });
+        return { sessionId: id };
       } else if (text.startsWith("steps:")) {
         // ツールの続き方（まとまり・入れ替わり・失敗・承認待ち）を画面で確かめるための台本
         // 委譲の子へは、依頼の後ろに Pleiad の指示（「---」の区切りの後ろ）が足されることがある。台本は区切りの前まで
@@ -767,18 +775,12 @@ export const backend = {
     return { sessionId: id };
   },
 
-  // 付け直し（無停止の更新 2b-4。docs/zero-downtime-update/stage2-server-state.md §4.3）。記録の 1 行は fake の出来事そのもの（1 行 1 JSON）。
-  // 印から ack までは再生、続きは普通に流す（core/adopt.mjs の replayRecord）。返答は履歴に積む。台本を別プロセスで走らせる付け直しは 2b-5
-  async adoptTurn({ sessionId, cwd, source, emit, signal }) {
+  // 付け直し（無停止の更新 2b-4・2b-5。docs/zero-downtime-update/stage2-server-state.md §4.3）。記録の 1 行は fake の出来事そのもの（1 行 1 JSON）。
+  // 印から ack までは再生、続きは普通に流す（core/adopt.mjs の replayRecord）。返答は履歴に積む。保持役の子（台本 "held:"）なら、承認の答え・途中送信・中断を
+  // 偽の CLI へ返し、承認待ちは記録から出し直す（fake-held.mjs の driveHeld）。札（backendCard）は持たない: 台本の位置は CLI のプロセスと記録が持つ
+  async adoptTurn({ sessionId, cwd, source, emit, askPermission, signal, control }) {
     const s = ensure(sessionId, cwd);
-    let ended = false, text = '';
-    const { exit } = await replayRecord({ source, signal: signal?.signal, normalize: line => [JSON.parse(line)], emit: (event, opts) => {
-      if (event?.type === 'turnResult') ended = true;
-      if (event?.type === 'text.delta') text += String(event.text ?? '');
-      if (event?.type === 'text.end') { push(s, { role: 'assistant', text, ...(event.uuid ? { uuid: event.uuid } : {}) }); text = ''; }
-      return emit(event, opts);
-    } });
-    if (!ended) throw new Error(`fake: the adopted turn ended without a result (exit ${exit?.code ?? 'none'})`);
+    await driveHeld({ source, record: (m) => push(s, m), emit, askPermission, signal, control, sessionId, recordUser: true });
     return { sessionId };
   },
 
@@ -916,3 +918,6 @@ export function reset() {
   auth.loggedIn = false;
   auth.account = null;
 }
+
+// 台本 "held:" の旧サーバーの手を離す口と、読みを止める口（tests/lib/adopt-server.mjs が呼ぶ。fake-held.mjs）
+export { handOffHeld, pauseHeld } from "./fake-held.mjs";
