@@ -232,7 +232,7 @@ export function createChromeConnection({ locate, os, WebSocketImpl = NodeWebSock
     clearRound(rnd);
     const elapsed = clock.now() - rnd.upgradeAt;
     if (protocol) { await sweep(rnd); finishAttempt(att, 'protocol', new ChromeConnectionError('protocol')); return; }
-    // 失敗の直後に DevToolsActivePort を読み直す（「[設定] でオフにする」・トグルを戻した・Chrome の終了）
+    // 失敗の直後に DevToolsActivePort を読み直す（トグルを戻した・Chrome の終了。確認の「[設定] でオフにする」はトグルを切らないので、ここではキャンセルと同じに見える）
     const info = await readActivePort(home.userDataDir);
     const alive = info ? await probePort(info.port) : false;
     if (stale(att, rnd)) return;

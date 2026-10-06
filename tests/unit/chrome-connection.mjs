@@ -207,7 +207,7 @@ export default async function (t) {
     await r.stop();
   }
 
-  // ===== 9. 確認の「[設定] でオフにする」→ A。トグルを戻すと自動で B（最初の 1 回として前に出す） =====
+  // ===== 9. B の間にトグルをオフにした → A。トグルを戻すと自動で B（最初の 1 回として前に出す） =====
   {
     const r = await rig();
     const p = r.conn.demand(); void p.catch(() => {});
@@ -215,7 +215,7 @@ export default async function (t) {
     t.ok('前提: 1 回目の B で raise 済み', r.os.calls('raise').length === 1);
     await r.chrome.turnOff();
     await until(() => r.conn.state().state === 'setup');
-    t.ok('turnOff()（「[設定] でオフにする」）→ setup。denied にならない', r.conn.state().state === 'setup' && !r.states.includes('denied/cancel'));
+    t.ok('turnOff()（トグルをオフにした）→ setup。denied にならない', r.conn.state().state === 'setup' && !r.states.includes('denied/cancel'));
     await r.chrome.turnOn();
     await r.clock.advance(1000);
     await r.seen();

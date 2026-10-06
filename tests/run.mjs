@@ -339,6 +339,8 @@ const SUITES = [
   './unit/desktop-server-boot.mjs',
   // main.cjs の boot の選び方（vm）: AGENT_HOST_HANDOVER の既定（パッケージ版は on・開発は off）と off の utilityProcess・パイプの包み・起動の失敗・サーバーが居なくなったとき・更新の流れ
   './unit/desktop-boot.mjs',
+  // main の橋の message の受け手を 1 つの listener で配る（MaxListenersExceededWarning を出さない）
+  './unit/desktop-worker-messages.mjs',
   // 新しい版のサーバーへの切り替え（無停止の更新 1-6）: 作業が 0 件まで待つ・ロック・S1 の終わり・S2・前の版へ戻す・合わない版は聞く・今すぐ中断。事前の確かめの出力
   './unit/desktop-switch.mjs',
   './unit/desktop-switch-screen.mjs',

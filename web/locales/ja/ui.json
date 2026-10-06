@@ -262,7 +262,7 @@
           "note": "Chrome が確認を出し直しても、そのまま待ちます。「許可する」を押すまで続きます。"
         },
         "denied": {
-          "status": "Chrome で「キャンセル」が押されました",
+          "status": "Chrome で許可されませんでした",
           "retry": "もう一度"
         },
         "connected": {
