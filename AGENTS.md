@@ -46,6 +46,8 @@ core が web へ流すのは正規化イベントだけで、バックエンド�
 | `AGENT_HOST_RUNTIME_RESOURCES` | 実行場所を組む元の `resources\`（既定は `process.resourcesPath`）。パッケージ版でない `electron .` のハーネスが、`npm run desktop:pack` の `dist-desktop\win-unpacked\resources` を指して `AGENT_HOST_HANDOVER=on` を試すためのもの |
 | `AGENT_HOST_RUNTIME_DIR` | 版ごとの実行場所の置き場（既定 `%LOCALAPPDATA%\agent-host-runtime`。`$INSTDIR` と同じ文字列で始まる場所は使えない。テスト・ハーネス用）。`PLEIAD_NODE_CACHE` は、ビルドが取る公式の Node のキャッシュ（既定 `~/.cache/pleiad/node-runtime`） |
 | `AGENT_HOST_IMAGE_IMPORT_TEST_ORIGIN` | 貼り付けた画像の取り込み（ADR 0141）の確認用。`AGENT_HOST_BACKENDS` が `fake` だけのときに限り、origin のホストがループバック（127.0.0.1・::1・localhost）なら効き、検査をやめて、どの https の URL もこの origin へ向け替える。本物のバックエンドと並べたときや、ループバックでない origin は無視する（`tests/unit/image-import.mjs`） |
+| `AGENT_HOST_VOICE_API` | 通話モード（`core/voice/`）の OpenRouter の送り先（既定 `https://openrouter.ai/api/v1`）。テストの偽物用（`tests/lib/fake-openrouter.mjs`）。`tests/lib/server.mjs` は既定で閉じたポートへ向け、本物へは送らない |
+| `AGENT_HOST_FAKE_VOICE_REPLY` | fake バックエンドの通話の確認用。`{ when, steps }` の JSON ファイルを渡すと、本文が `when` と一致した発言に `steps` の台本で返す（声で話した言葉は台本の接頭辞を持てないため。`docs/voice-call.md`） |
 | `AGENT_HOST_WORKTREE_GRACE_MS` | worktree を作ってから、使われていないものとして自動で片付けるまでの猶予（既定 60 秒。ADR 0089）。テストが 0 にする |
 
 デスクトップ版は `npm run desktop`、インストーラーの生成は `npm run desktop:dist`（対象 OS で実行）。リリースの運用は `docs/desktop-releases.md`。

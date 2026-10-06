@@ -56,11 +56,7 @@
     "computerAppJoin": "\", \"",
     "browserSite": "{{agent}} wants to use {{site}}",
     "browserNotes": " ({{notes}})",
-    "browserProfile": "profile: {{profile}}",
     "browserAccountName": "signed in as {{account}}"
-  },
-  "browserProfiles": {
-    "main": "Main"
   },
   "quota": {
     "unsupported": "This agent cannot report its usage limits.",
@@ -153,8 +149,7 @@
     "accountNotRegistered": "The selected account is not registered.",
     "unknownPref": "Unknown setting: {{key}}",
     "unknownMode": "Unknown approval mode: {{value}}",
-    "unknownModel": "Unknown model: {{value}}",
-    "unknownPrefValue": "Unknown value for {{key}}: {{value}}"
+    "unknownModel": "Unknown model: {{value}}"
   },
   "send": {
     "messageIdRequired": "A message ID is required.",
@@ -1132,5 +1127,15 @@
     "shellRun": "Runs a command in the shell of the conversation \"{{title}}\" ({{cwd}}).",
     "switchBackend": "Switches the agent of the conversation \"{{title}}\" to {{backend}}. The approval mode becomes the first mode of that agent.",
     "everywhere": "every place"
+  },
+  "voice": {
+    "skip": {
+      "code": "The code is on the screen",
+      "table": "The table is on the screen",
+      "log": "The log is on the screen"
+    },
+    "key": {
+      "invalid": "That does not look like an OpenRouter key (empty, too short, or contains whitespace)"
+    }
   }
 }

@@ -25,13 +25,12 @@ const SECTIONS = {
   delegation: () => t("settings.nav.delegation"),
   context: () => t("settings.nav.context"),
 };
-// 設定のキー（computerUse.enabled のような項目の path）→ 設定画面での名前・節・値の種類（flag: オン/オフ、sites・profiles・apps: 一覧）
+// 設定のキー（computerUse.enabled のような項目の path）→ 設定画面での名前・節・値の種類（flag: オン/オフ、sites・apps: 一覧）
 const LABELS = {
   confirmExternalLoads: { section: "browser", name: () => t("settings.browser.confirm.external"), kind: "flag" },
   confirmAgentSites: { section: "browser", name: () => t("settings.browser.confirm.agent"), kind: "flag" },
   externalSitePermissions: { section: "browser", name: () => `${t("settings.browser.confirm.sites")} · ${t("settings.browser.confirm.externalList")}`, kind: "sites" },
   agentSitePermissions: { section: "browser", name: () => `${t("settings.browser.confirm.sites")} · ${t("settings.browser.confirm.agentList")}`, kind: "sites" },
-  browserProfiles: { section: "browser", name: () => t("settings.browser.profiles.title"), kind: "profiles" },
   "computerUse.enabled": { section: "computer", name: () => t("settings.computer.enable"), kind: "flag" },
   "computerUse.allowAllApps": { section: "computer", name: () => t("settings.computer.allowAll"), kind: "flag" },
   "computerUse.alwaysAllowed": { section: "computer", name: () => t("settings.computer.allowedTitle"), kind: "apps" },
@@ -53,7 +52,7 @@ function readJson(text) {
 }
 
 const SITES_SHOWN = 3;
-/** 一覧の 1 件の言い方（サイトは「https://… （常に）」、プロフィール・アプリは名前）。読めなければ null */
+/** 一覧の 1 件の言い方（サイトは「https://… （常に）」、アプリは名前）。読めなければ null */
 function itemText(kind, item) {
   if (!item || typeof item !== "object") return typeof item === "string" ? item : null;
   if (kind === "sites") return hasText(item.origin) ? `${item.origin}${item.mode === "always" ? `（${t("settings.browser.confirm.always")}）` : item.mode === "ask" ? `（${t("settings.browser.confirm.ask")}）` : ""}` : null;
@@ -95,7 +94,7 @@ export function approvalChange(settingChange) {
       const before = typeof r.before === "string" ? r.before : null;
       const after = typeof r.after === "string" ? r.after : null;
       const label = labelOf(String(r.path));
-      const mark = label.kind === "sites" || label.kind === "profiles" || label.kind === "apps" ? { was: listOf(label.kind, before), now: listOf(label.kind, after) } : null;
+      const mark = label.kind === "sites" || label.kind === "apps" ? { was: listOf(label.kind, before), now: listOf(label.kind, after) } : null;
       // 一覧は、前後で増えた件・減った件で言う（件数が多くても、変わった所が見える）。読めない一覧は生の値
       const list = mark?.was && mark?.now ? {
         added: mark.now.filter((x) => !mark.was.includes(x)),

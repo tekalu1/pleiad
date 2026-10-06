@@ -1,8 +1,5 @@
 // 内蔵ブラウザー（docs/inapp-browser.md、ADR 0041）。本体の窓（ローカルの画面）の右パネルの位置に WebContentsView を重ねる。
-//   - 保存領域はプロフィールごと（ADR 0078）。メインは今までの persist:pleiad-browser、ほかは persist:pleiad-browser-<id>。
-//     Pleiad 本体（既定の session）とリモートの窓（persist:remote-<id>）から分ける。権限・UA・ダウンロードの設定は session ごとに 1 回
-//   - 会話は今のプロフィールを 1 つ持つ（正本はサーバーの会話のメタ。ここは resolveProfile で引いて覚える）。
-//     パネルの一覧・中継（tabsFor / createFor）は、会話の今のプロフィールのタブだけ。ほかのプロフィールのタブは閉じずに残す
+//   - 保存領域は persist:pleiad-browser の 1 つ。Pleiad 本体（既定の session）とリモートの窓（persist:remote-<id>）から分ける。権限・UA・ダウンロードの設定は session に 1 回
 //   - タブごとに WebContentsView を 1 つ。窓に載せるのは今のタブだけで、ほかのタブは外したまま裏で動き続ける
 //   - 置く場所は画面が決める（右パネルの本文の枠の位置と大きさを ply:browser-layout で送ってくる）。
 //     ネイティブの View は DOM より上に描かれるので、メニューなどが重なる間は画面が freeze を頼み、写した画像と差し替えて View を外す
@@ -20,31 +17,6 @@ const { fileURLToPath } = require('node:url');
 const { checkRequest } = require('./file-bridge.cjs');
 
 const PARTITION = 'persist:pleiad-browser';
-// プロフィール（web/browser-profiles.mjs と同じ形。main は ESM を同期で読めないので、id の形だけここにも持つ）
-const MAIN_PROFILE = 'main';
-const PROFILE_ID = /^(?:main|p[0-9a-f]{8,32})$/;
-const validProfile = id => typeof id === 'string' && PROFILE_ID.test(id);
-/** プロフィールの保存領域。メインは今までの名前のまま（移行で何も失わない）。ほかは別の接頭辞（persist:pleiad-browser を接頭辞にした列挙をしない） */
-function partitionOf(profile) {
-  return profile === MAIN_PROFILE || !validProfile(profile) ? PARTITION : `${PARTITION}-${profile}`;
-}
-/** <userData>/Partitions の下のディレクトリ名（persist: を外したもの） */
-const partitionDir = profile => partitionOf(profile).slice('persist:'.length);
-/** ディレクトリの大きさ（バイト）。読めないものは数えない */
-async function directorySize(dir) {
-  let total = 0;
-  const walk = async current => {
-    let entries;
-    try { entries = await fs.promises.readdir(current, { withFileTypes: true }); } catch { return; }
-    for (const entry of entries) {
-      const full = path.join(current, entry.name);
-      if (entry.isDirectory()) await walk(full);
-      else if (entry.isFile()) { try { total += (await fs.promises.stat(full)).size; } catch {} }
-    }
-  };
-  await walk(dir);
-  return total;
-}
 // 開いてよい URL。画面の入力は web/browser-address.mjs が http(s) に直してから送る。file: は画面が明示したときだけ（HTML のファイル）
 const OPENABLE = new Set(['http:', 'https:', 'file:']);
 // ページの中から移ってよい先（と about:blank）。file: へはページからは移らせない（Chromium も http(s) からは止める）
@@ -194,20 +166,18 @@ function uniquePath(dir, name, exists = fs.existsSync) {
  *   trust: desktop/window-trust.cjs。icon: 別の窓のアイコン
  */
 function createBrowserPanel({ window, WebContentsView, BrowserWindow, session, shell, ipcMain, app, trust, icon, log = () => {}, agentControl = () => {}, now,
-  resolveProfile = async () => null, userData = null,
   dataDir = process.env.AGENT_HOST_DATA ?? path.join(os.homedir(), '.agent-host'), realpath = fs.realpathSync }) {
-  const tabs = new Map();          // id -> { id, view, sessionId, profile, detached }
+  const tabs = new Map();          // id -> { id, view, sessionId, detached }
   let order = [];                  // タブの並び（id）
   let current = null;              // 今のタブの id
   let attached = null;             // 窓に載せている View（今のタブ）
   let visible = false, frozen = false, rect = null, radius = 0;
-  let context = { sessionId: null, profile: MAIN_PROFILE };   // 画面で今開いている会話と、その会話の今のプロフィール
-  const selected = new Map();      // 会話とプロフィール（selectKey）-> そこで最後に選んだタブの id
+  let context = { sessionId: null };   // 画面で今開いている会話
+  const selected = new Map();      // 会話（selectKey）-> そこで最後に選んだタブの id
   let nextId = 1;
   const tabListeners = new Set();
   const agents = new Map();
   const agentListeners = new Set();
-  const profileListeners = new Set();
   const stateListeners = new Set();
   // リモートの端末が見ているタブ（desktop/browser-screencast.cjs）。窓に載っていないと描かれないので、窓の外に 1px で載せておく
   const pinned = new Set(), parked = new Set();
@@ -215,48 +185,8 @@ function createBrowserPanel({ window, WebContentsView, BrowserWindow, session, s
   const openFileAllowed = createRateLimit({ now });
   const byContents = new Map();    // webContents の id -> タブ（webRequest が要求の持ち主を引く。別の窓に出したタブも残す）
   let loadPolicy = { confirm: false, origins: [] };   // 外部の読み込みの確認（サーバーの設定。setLoadPolicy）
-  // プロフィール: 使える id と既定（サーバーの設定から届く。setProfiles）、会話 -> 今のプロフィール、プロフィール -> session
-  let profileIds = [MAIN_PROFILE], defaultId = MAIN_PROFILE;
-  const profileOf = new Map();
-  const sessions = new Map();
-  // エージェントが切り替えたときの知らせ（画面が 1 回だけ出す。seq で見分ける）
-  let notice = null, noticeSeq = 0, contextSeq = 0;
-  const known = id => profileIds.includes(id);
-  const userDataDir = () => { try { return userData ?? app?.getPath?.('userData') ?? null; } catch { return null; } };
-  const removalFile = () => { const dir = userDataDir(); return dir ? path.join(dir, 'browser-profiles-removed.json') : null; };
-  sweepRemoved();
-  const ses = sessionFor(MAIN_PROFILE);
-
-  /** そのプロフィールの session。初めて使うときに作り、設定を 1 回だけかける */
-  function sessionFor(profile) {
-    const id = validProfile(profile) ? profile : MAIN_PROFILE;
-    let s = sessions.get(id);
-    if (!s) { s = session.fromPartition(partitionOf(id)); setupSession(s); sessions.set(id, s); }
-    return s;
-  }
-  /** 消したプロフィールの保存領域のディレクトリを、次の起動で（まだ session を作る前に）消す。使っている間は Windows が掴んでいて消せない */
-  function sweepRemoved() {
-    const file = removalFile(), dir = userDataDir();
-    if (!file || !dir) return;
-    let names = [];
-    try { names = JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return; }
-    const left = [];
-    for (const name of Array.isArray(names) ? names : []) {
-      if (typeof name !== 'string' || !/^pleiad-browser-p[0-9a-f]{8,32}$/.test(name)) continue;
-      try { fs.rmSync(path.join(dir, 'Partitions', name), { recursive: true, force: true, maxRetries: 2 }); } catch { left.push(name); }
-    }
-    try { if (left.length) fs.writeFileSync(file, JSON.stringify(left)); else fs.rmSync(file, { force: true }); } catch {}
-  }
-  function queueRemoval(profile) {
-    const file = removalFile();
-    if (!file || profile === MAIN_PROFILE) return;
-    let names = [];
-    try { names = JSON.parse(fs.readFileSync(file, 'utf8')); } catch {}
-    const name = partitionDir(profile);
-    if (!Array.isArray(names)) names = [];
-    if (!names.includes(name)) names.push(name);
-    try { fs.writeFileSync(file, JSON.stringify(names)); } catch {}
-  }
+  const ses = session.fromPartition(PARTITION);
+  setupSession(ses);
 
   function setupSession(s) {
     // 権限は既定で断る（カメラ・マイク・位置・通知・クリップボードの読み取りなど）。確認の UI は持たない
@@ -268,7 +198,7 @@ function createBrowserPanel({ window, WebContentsView, BrowserWindow, session, s
     s.on('will-download', (_event, item) => {
       try { item.setSavePath(uniquePath(app.getPath('downloads'), item.getFilename())); } catch {}
     });
-    // 画面が開いた file: のタブの資源を止める。session ごとに 1 度（プロフィールで session が増えても、持ち主は byContents で引く）
+    // 画面が開いた file: のタブの資源を止める。持ち主は byContents で引く
     s.webRequest?.onBeforeRequest((details, callback) => {
       let cancel = false;
       try { cancel = decideRequest(details); } catch {}
@@ -300,53 +230,23 @@ function createBrowserPanel({ window, WebContentsView, BrowserWindow, session, s
 
   const tabOf = id => tabs.get(id) ?? null;
   const currentTab = () => tabOf(current);
-  /** 会話の今のプロフィール。まだ引いていない会話は既定（中継・画面の転送は先に setProfileFor / ensureProfile で覚えさせる） */
-  const profileFor = sessionId => { const p = profileOf.get(sessionId ?? null); return known(p) ? p : defaultId; };
-  /** パネルに出してよいタブ: 今の会話のものと会話に属さないもののうち、今のプロフィールのもの */
-  const isVisible = tab => (tab.sessionId === null || tab.sessionId === context.sessionId) && tab.profile === context.profile;
+  /** パネルに出してよいタブ: 今の会話のものと、会話に属さないもの */
+  const isVisible = tab => tab.sessionId === null || tab.sessionId === context.sessionId;
   const visibleTabs = () => order.map(id => tabs.get(id)).filter(isVisible);
-  // 最後に選んだタブは会話とプロフィールの組ごと（プロフィールを戻すと、そこで選んでいたタブも戻る）
-  const selectKey = (sessionId, profile) => `${sessionId ?? ''}\u0000${profile}`;
+  // 最後に選んだタブは会話ごと
+  const selectKey = sessionId => sessionId ?? '';
   /** そのタブを、その会話で最後に選んだタブとして覚える（会話に属さないタブは今の会話の分） */
-  const remember = tab => { selected.set(selectKey(tab.sessionId ?? context.sessionId, tab.profile), tab.id); };
+  const remember = tab => { selected.set(selectKey(tab.sessionId ?? context.sessionId), tab.id); };
   /** 今のタブが見えないもの（無い・別の会話のもの）になっていたら、見えるタブの先頭へ。無ければ current なし */
   function reconcile() {
     const tab = currentTab();
     if (tab && isVisible(tab)) return;
     current = visibleTabs()[0]?.id ?? null;
   }
-  /** 会話（かプロフィール）を移ったとき: そこで最後に選んだタブ、なければ見えるタブの先頭、なければ current なし */
+  /** 会話を移ったとき: そこで最後に選んだタブ、なければ見えるタブの先頭、なければ current なし */
   function pickForContext() {
-    const last = tabOf(selected.get(selectKey(context.sessionId, context.profile)));
+    const last = tabOf(selected.get(selectKey(context.sessionId)));
     current = (last && isVisible(last) ? last : visibleTabs()[0])?.id ?? null;
-  }
-  /**
-   * 会話の今のプロフィールを替える。画面で開いている会話なら一覧と今のタブも替える。
-   * agent があれば（エージェントが切り替えた）画面へ 1 回だけ知らせる。中継はタブの集合を作り直す（onProfileChanged）
-   */
-  function setProfileFor(sessionId, profile, { agent = null } = {}) {
-    const key = sessionId ?? null;
-    if (!known(profile)) return false;
-    const before = profileFor(key);
-    profileOf.set(key, profile);
-    if (before === profile) return true;
-    if (key === context.sessionId) { context = { ...context, profile }; pickForContext(); place(); }
-    if (agent) notice = { seq: ++noticeSeq, sessionId: key, profile, agent: String(agent).slice(0, 80) };
-    push();
-    for (const listener of profileListeners) listener(key, profile);
-    return true;
-  }
-  /** まだ覚えていない会話のプロフィールをサーバーに引く（画面の会話の切り替え・画面の転送の前） */
-  async function ensureProfile(sessionId) {
-    const key = sessionId ?? null;
-    if (profileOf.has(key) && validProfile(profileOf.get(key))) return profileFor(key);
-    let resolved = null;
-    try { resolved = await resolveProfile(key); } catch {}
-    // 引いている間に別の口（中継の準備・エージェントの切り替え）が決めていれば、そちらを優先する
-    if (profileOf.has(key) && validProfile(profileOf.get(key))) return profileFor(key);
-    // 設定がまだ届いていない（起動の直後）ときも id は覚える。届くまでは profileFor が既定で見せ、届いたら setProfiles が替える
-    profileOf.set(key, validProfile(resolved) ? resolved : defaultId);
-    return profileFor(key);
   }
   function info(tab) {
     const c = tab.view.webContents;
@@ -354,7 +254,7 @@ function createBrowserPanel({ window, WebContentsView, BrowserWindow, session, s
     const loaded = c.isDestroyed() ? '' : c.getURL();
     const url = loaded && loaded !== 'about:blank' ? loaded : tab.requested ?? '';
     return {
-      id: tab.id, sessionId: tab.sessionId, profile: tab.profile, url,
+      id: tab.id, sessionId: tab.sessionId, url,
       title: c.isDestroyed() ? '' : c.getTitle(), loading: !c.isDestroyed() && c.isLoading(),
       canGoBack: !c.isDestroyed() && c.navigationHistory.canGoBack(), canGoForward: !c.isDestroyed() && c.navigationHistory.canGoForward(),
       // 「既定のブラウザーで開く」を押せるか（http・https と、画面が明示して開いた file: の HTML）
@@ -378,8 +278,7 @@ function createBrowserPanel({ window, WebContentsView, BrowserWindow, session, s
     return out;
   }
   function snapshot() {
-    return { tabs: visibleTabs().map(info), current, agent: agents.get(context.sessionId) ?? null, sessionId: context.sessionId, profile: context.profile,
-      ...(notice ? { notice } : {}) };
+    return { tabs: visibleTabs().map(info), current, agent: agents.get(context.sessionId) ?? null, sessionId: context.sessionId };
   }
   let pushTimer = null;
   function push() {
@@ -393,28 +292,25 @@ function createBrowserPanel({ window, WebContentsView, BrowserWindow, session, s
   }
   /**
    * 無停止の更新（docs/zero-downtime-update/design.md §7.2）で、main が居なくなってもサーバーが持てるタブの写し。
-   * タブ（会話・プロフィール・URL・その会話で最後に選んだか）と、会話ごとの今のプロフィール。http(s) のタブだけ（file: の写し・空のタブは戻さない）
+   * タブ（会話・URL・その会話で最後に選んだか）。http(s) のタブだけ（file: の写し・空のタブは戻さない）
    */
   function exportState() {
     const rows = order.map(id => tabs.get(id)).filter(tab => tab && !tab.detached);
     return {
-      tabs: rows.map(tab => ({ sessionId: tab.sessionId, profile: tab.profile, url: externalUrl(info(tab).url), selected: selected.get(selectKey(tab.sessionId, tab.profile)) === tab.id }))
+      tabs: rows.map(tab => ({ sessionId: tab.sessionId, url: externalUrl(info(tab).url), selected: selected.get(selectKey(tab.sessionId)) === tab.id }))
         .filter(row => row.url),
-      profiles: [...profileOf].filter(([, profile]) => validProfile(profile)).map(([sessionId, profile]) => ({ sessionId, profile })),
     };
   }
   /**
-   * exportState の写しからタブを開き直す（付け直した main の最初に 1 回。窓にはまだ載せない）。プロフィールを先に覚えさせる
-   * （使える id は setProfiles で届いた後。知らない id の会話は既定）。会話ごとに最後に選んでいたタブを選び直す。作ったタブの数を返す
+   * exportState の写しからタブを開き直す（付け直した main の最初に 1 回。窓にはまだ載せない）。会話ごとに最後に選んでいたタブを選び直す。作ったタブの数を返す
    */
-  function restoreState({ tabs: rows = [], profiles = [] } = {}) {
-    for (const row of Array.isArray(profiles) ? profiles : []) if (validProfile(row?.profile)) setProfileFor(row.sessionId ?? null, row.profile);
+  function restoreState({ tabs: rows = [] } = {}) {
     let made = 0;
     const chosen = [];
     for (const row of Array.isArray(rows) ? rows : []) {
       const url = externalUrl(row?.url);
       if (!url) continue;
-      const tab = createTab({ url, sessionId: row.sessionId ?? null, profile: validProfile(row.profile) ? row.profile : undefined, select: false });
+      const tab = createTab({ url, sessionId: row.sessionId ?? null, select: false });
       made++;
       if (row.selected === true) chosen.push(tab);
     }
@@ -458,7 +354,7 @@ function createBrowserPanel({ window, WebContentsView, BrowserWindow, session, s
     if (attached !== want) { window.contentView.addChildView(want); attached = want; }
   }
 
-  function setupPopupWindow(c, sessionId, agentFromTab, profile) {
+  function setupPopupWindow(c, sessionId, agentFromTab) {
     // 新しい窓のうち、ポップアップ（disposition: 'new-window'）は opener を保って別の窓で開く
     // 通常の新しいタブ（target=_blank）は内蔵ブラウザーの新しいタブにする（opener なし）
     c.setWindowOpenHandler(({ url: next, disposition, features }) => {
@@ -480,12 +376,12 @@ function createBrowserPanel({ window, WebContentsView, BrowserWindow, session, s
               parent: window,
               width,
               height,
-              // 開いた元のタブ（ポップアップの中から開いたならその窓）の保存領域。ログインのポップアップが別のプロフィールの Cookie で動かないように
+              // 開いた元のタブ（ポップアップの中から開いたならその窓）の保存領域
               webPreferences: { session: c.session ?? ses, contextIsolation: true, sandbox: true, nodeIntegration: false }
             }
           };
         }
-        const open = () => createTab({ url: target, sessionId, profile, select: disposition !== 'background-tab', agentFrom: agentFromTab });
+        const open = () => createTab({ url: target, sessionId, select: disposition !== 'background-tab', agentFrom: agentFromTab });
         if (!navigation?.popup(agentFromTab, target, open)) open();
       }
       return { action: 'deny' };
@@ -495,19 +391,17 @@ function createBrowserPanel({ window, WebContentsView, BrowserWindow, session, s
       const popupTab = { id: `popup-${nextId++}`, sessionId, webContents: popupWin.webContents };
       navigation?.watch(popupTab);
       if (agentFromTab) navigation?.inherit(agentFromTab, popupTab, details.url);
-      setupPopupWindow(popupWin.webContents, sessionId, popupTab, profile);
+      setupPopupWindow(popupWin.webContents, sessionId, popupTab);
       const guard = (event, nextUrl) => { if (!navigable(nextUrl)) event.preventDefault(); };
       popupWin.webContents.on('will-navigate', guard);
       popupWin.webContents.on('will-redirect', guard);
     });
   }
 
-  function createTab({ url = '', sessionId = context.sessionId, profile, select = true, agentFrom = null } = {}) {
-    // プロフィールを指定しなければ、その会話の今のプロフィール（画面の会話なら画面のもの）
-    const use = known(profile) ? profile : (sessionId ?? null) === context.sessionId ? context.profile : profileFor(sessionId);
-    const view = new WebContentsView({ webPreferences: { session: sessionFor(use), contextIsolation: true, sandbox: true, nodeIntegration: false } });
+  function createTab({ url = '', sessionId = context.sessionId, select = true, agentFrom = null } = {}) {
+    const view = new WebContentsView({ webPreferences: { session: ses, contextIsolation: true, sandbox: true, nodeIntegration: false } });
     view.setBackgroundColor?.('#ffffff');
-    const tab = { id: `t${nextId++}`, view, sessionId: sessionId ?? null, profile: use, blank: !url };
+    const tab = { id: `t${nextId++}`, view, sessionId: sessionId ?? null, blank: !url };
     tabs.set(tab.id, tab); order.push(tab.id);
     const c = view.webContents;
     Object.assign(tab, { once: new Set(), blocked: new Map(), source: null, key: null });
@@ -516,7 +410,7 @@ function createBrowserPanel({ window, WebContentsView, BrowserWindow, session, s
     const navigationTab = { id: tab.id, sessionId: tab.sessionId, webContents: c };
     navigation?.watch(navigationTab);
     if (agentFrom) navigation?.inherit(agentFrom, navigationTab, url);
-    setupPopupWindow(c, tab.sessionId, navigationTab, tab.profile);
+    setupPopupWindow(c, tab.sessionId, navigationTab);
     // ページから file: や独自のスキームへは移らない
     const guard = (event, next) => { if (!navigable(next) && !(tab.allowFile && next.startsWith('file:') && !protectedFile(next, dataDir, realpath))) event.preventDefault(); };
     c.on('will-navigate', guard);
@@ -601,8 +495,7 @@ function createBrowserPanel({ window, WebContentsView, BrowserWindow, session, s
     let origin;
     try { origin = new URL(url).origin; } catch { return false; }
     if (!origin || origin === 'null') return false;
-    // そのタブのプロフィールの保存領域を消す（別のプロフィールのタブで押して既定のログインを消さない）
-    const s = tab.view.webContents.session ?? sessionFor(tab.profile);
+    const s = tab.view.webContents.session ?? ses;
     await s.clearStorageData({ origin }).catch(() => {});
     // Cookie はドメイン単位なので、そのページへ送られる Cookie も消す
     const cookies = await s.cookies.get({ url }).catch(() => []);
@@ -614,42 +507,6 @@ function createBrowserPanel({ window, WebContentsView, BrowserWindow, session, s
     return true;
   }
 
-  /** プロフィールのログインとデータを全部消す（設定の「ログインとデータを消す」）。開いているそのプロフィールのタブは読み直す */
-  async function clearProfile(profile) {
-    if (!known(profile)) return false;
-    const s = sessionFor(profile);
-    await s.clearStorageData?.().catch(() => {});
-    await s.clearCache?.().catch(() => {});
-    await s.clearAuthCache?.().catch(() => {});
-    for (const tab of tabs.values()) if (tab.profile === profile && !tab.blank && !tab.view.webContents.isDestroyed()) tab.view.webContents.reload();
-    return true;
-  }
-  /** プロフィールを消す: そのタブを閉じ、保存領域を空にし、ディレクトリは次の起動で消す。そのプロフィールを使っていた会話は既定へ戻る */
-  async function deleteProfile(profile) {
-    if (!validProfile(profile) || profile === MAIN_PROFILE) return false;
-    for (const tab of [...tabs.values()]) if (tab.profile === profile) removeTab(tab.id);
-    if (sessions.has(profile)) {
-      const s = sessions.get(profile);
-      await s.clearStorageData?.().catch(() => {});
-      await s.clearCache?.().catch(() => {});
-      sessions.delete(profile);
-    }
-    queueRemoval(profile);
-    profileIds = profileIds.filter(id => id !== profile);
-    if (defaultId === profile) defaultId = MAIN_PROFILE;
-    for (const [key, value] of [...profileOf]) if (value === profile) setProfileFor(key, defaultId);
-    if (context.profile === profile) { context = { ...context, profile: profileFor(context.sessionId) }; pickForContext(); place(); }
-    push();
-    return true;
-  }
-  /** プロフィールごとの保存領域の大きさ（バイト）。設定の一覧に出す */
-  async function profileSizes() {
-    const dir = userDataDir();
-    const out = {};
-    for (const id of profileIds) out[id] = dir ? await directorySize(path.join(dir, 'Partitions', partitionDir(id))) : 0;
-    return out;
-  }
-
   async function command(action, args = {}) {
     const tab = args.id ? tabOf(args.id) : currentTab();
     switch (action) {
@@ -657,24 +514,9 @@ function createBrowserPanel({ window, WebContentsView, BrowserWindow, session, s
       case 'agentStop': agentControl('stop', context.sessionId); return snapshot();
       case 'agentTakeOver': agentControl('takeOver', context.sessionId); return snapshot();
       case 'context': {
-        const sessionId = typeof args.sessionId === 'string' ? args.sessionId : null;
-        const seq = ++contextSeq;
-        await ensureProfile(sessionId);
-        // 引いている間に画面が別の会話へ移っていたら、後から来た方に任せる
-        if (seq !== contextSeq) return snapshot();
-        context = { sessionId, profile: profileFor(sessionId) };
+        context = { sessionId: typeof args.sessionId === 'string' ? args.sessionId : null };
         pickForContext(); place(); push(); return snapshot();
       }
-      // 人がパネルのメニューで今の会話のプロフィールを替える。エージェントが操作中は替えない（1 会話 1 プロフィール。ADR 0078）
-      case 'profile': {
-        if (!known(args.profile)) throw new Error('unknown-profile');
-        if (agents.has(context.sessionId) && args.profile !== context.profile) return { ...snapshot(), error: 'agent-busy' };
-        setProfileFor(context.sessionId, args.profile);
-        return snapshot();
-      }
-      case 'profileSizes': return { sizes: await profileSizes() };
-      case 'clearProfile': return { ok: await clearProfile(args.profile) };
-      case 'deleteProfile': return { ok: await deleteProfile(args.profile) };
       case 'open': {
         if (tab) navigation?.human({ id: tab.id }, true);
         const url = openable(args.url);
@@ -731,7 +573,7 @@ function createBrowserPanel({ window, WebContentsView, BrowserWindow, session, s
       case 'clearSiteData': return { ok: await clearSiteData(tab) };
       // 重なりの間は、今の見た目を画像にして画面へ返し、View を外す。画面は画像を同じ位置に置く
       case 'freeze': {
-        // 重なりの間に今のタブが替わった（プロフィールの切り替えなど）ときは、窓から外れている今のタブを写す。描かれていなければ写しは出さない
+        // 重なりの間に今のタブが替わった（会話の切り替えなど）ときは、窓から外れている今のタブを写す。描かれていなければ写しは出さない
         const tab = currentTab();
         const shown = attached ?? (tab && !tab.blank && !tab.view.webContents.isDestroyed() ? tab.view : null);
         frozen = true;
@@ -784,33 +626,18 @@ function createBrowserPanel({ window, WebContentsView, BrowserWindow, session, s
     attach, command, layout, snapshot,
     setNavigationGuard: guard => { navigation = guard; for (const tab of tabs.values()) guard.watch({ id: tab.id, sessionId: tab.sessionId, webContents: tab.view.webContents }); },
     // ---- エージェントの操作の中継へ渡す、会話ごとのタブと webContents
-    // 中継と画面の転送には、その会話の今のプロフィールのタブだけを見せる（エージェントにほかのプロフィールのタブは見えない）
-    tabsFor: sessionId => { const profile = profileFor(sessionId); return order.map(id => tabs.get(id)).filter(tab => tab.sessionId === sessionId && tab.profile === profile).map(tab => ({ id: tab.id, profile: tab.profile, webContents: tab.view.webContents })); },
+    tabsFor: sessionId => order.map(id => tabs.get(id)).filter(tab => tab.sessionId === sessionId).map(tab => ({ id: tab.id, webContents: tab.view.webContents })),
     contentsOf: id => tabs.get(id)?.view.webContents ?? null,
-    createFor: (sessionId, url = '') => { const tab = createTab({ sessionId, profile: profileFor(sessionId), url: url || 'about:blank', select: true }); return { id: tab.id, profile: tab.profile, webContents: tab.view.webContents }; },
-    profileOfTab: id => tabs.get(id)?.profile ?? null,
-    // ---- プロフィール（ADR 0078）。setProfiles はサーバーの設定（使える id と既定）、setProfileFor は会話の今のプロフィール
-    setProfiles: ({ ids, defaultProfile } = {}) => {
-      const next = Array.isArray(ids) ? ids.filter(validProfile) : [];
-      profileIds = next.includes(MAIN_PROFILE) ? next : [MAIN_PROFILE, ...next];
-      defaultId = known(defaultProfile) ? defaultProfile : MAIN_PROFILE;
-      // 画面の会話のプロフィールを見直す（消えたものは既定、設定が届いて分かったものはその id）
-      const shownProfile = profileFor(context.sessionId);
-      if (shownProfile !== context.profile) { context = { ...context, profile: shownProfile }; pickForContext(); place(); push(); }
-    },
-    setProfileFor, ensureProfile, profileFor,
-    onProfileChanged: listener => { profileListeners.add(listener); return () => profileListeners.delete(listener); },
+    createFor: (sessionId, url = '') => { const tab = createTab({ sessionId, url: url || 'about:blank', select: true }); return { id: tab.id, webContents: tab.view.webContents }; },
     selectFor: id => { const tab = tabs.get(id); if (!tab) return; remember(tab); if (isVisible(tab)) { current = id; place(); } push(); },
     closeFor: id => removeTab(id),
     rebindSession: (from, to) => {
       for (const tab of tabs.values()) if (tab.sessionId === from) tab.sessionId = to;
-      for (const [key, id] of [...selected]) {
-        if (!key.startsWith(`${from ?? ''}\u0000`)) continue;
-        const moved = selectKey(to, key.slice(key.indexOf('\u0000') + 1));
-        if (!selected.has(moved)) selected.set(moved, id);
-        selected.delete(key);
+      const fromKey = selectKey(from), toKey = selectKey(to);
+      if (selected.has(fromKey)) {
+        if (!selected.has(toKey)) selected.set(toKey, selected.get(fromKey));
+        selected.delete(fromKey);
       }
-      if (profileOf.has(from)) { if (!profileOf.has(to)) profileOf.set(to, profileOf.get(from)); profileOf.delete(from); }
       reconcile(); place();
       if (agents.has(from)) { const active = agents.get(from); agents.delete(from); agents.set(to, { ...active, sessionId: to }); }
       push();
@@ -822,7 +649,7 @@ function createBrowserPanel({ window, WebContentsView, BrowserWindow, session, s
     setAgent: (sessionId, tabId) => {
       const before = agents.get(sessionId)?.tabId ?? null;
       if (tabId) agents.set(sessionId, { sessionId, tabId }); else agents.delete(sessionId);
-      if (tabId && tabs.has(tabId)) selected.set(selectKey(sessionId, tabs.get(tabId).profile), tabId);
+      if (tabId && tabs.has(tabId)) selected.set(selectKey(sessionId), tabId);
       if (tabId && context.sessionId === sessionId && tabs.has(tabId)) { current = tabId; place(); }
       push();
       if (before !== (tabId ?? null)) for (const listener of agentListeners) listener(sessionId);
@@ -832,7 +659,6 @@ function createBrowserPanel({ window, WebContentsView, BrowserWindow, session, s
     onAgentChanged: listener => { agentListeners.add(listener); return () => agentListeners.delete(listener); },
     pin: (id, on) => { if (on && tabs.has(id)) pinned.add(id); else pinned.delete(id); place(); },
     human: id => navigation?.human({ id }, true),
-    // メインのプロフィールの session（テストと、プロフィールを持たない呼び出し元のため）。プロフィールごとは sessionFor
     session: ses,
     /** 外部の読み込みの確認の設定（desktop/agent-browser-bridge.cjs がサーバーから受ける）。もう通る出どころは止めた一覧から外す */
     setLoadPolicy: policy => {
@@ -843,9 +669,8 @@ function createBrowserPanel({ window, WebContentsView, BrowserWindow, session, s
       }
       push();
     },
-    sessionFor,
   };
 }
 
-module.exports = { createBrowserPanel, PARTITION, MAIN_PROFILE, partitionOf, partitionDir, directorySize, openable, navigable, externalUrl, externalFile, cleanRect, plainUserAgent, uniquePath, isPanelShortcut,
+module.exports = { createBrowserPanel, PARTITION, openable, navigable, externalUrl, externalFile, cleanRect, plainUserAgent, uniquePath, isPanelShortcut,
   fileKey, cleanSource, protectedFile, externalVerdict, requestVerdict };

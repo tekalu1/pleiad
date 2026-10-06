@@ -270,9 +270,9 @@ export default async function (t) {
       const port = linkPort();
       const bridge = parentPortBrowser(port, { timeoutMs: 80, connectWaitMs: 300, dataDir });
       const ask = (sessionId, extra) => bridge.endpoint(sessionId, extra);
-      const first = ask('s1', { profile: 'main' });
+      const first = ask('s1');
       const request = port.take('agent-browser-endpoint').at(-1);
-      t.ok('main が居る間は main に頼む（今のとおり）', request.sessionId === 's1' && request.profile === 'main');
+      t.ok('main が居る間は main に頼む（今のとおり）', request.sessionId === 's1');
       port.say({ type: 'agent-browser-endpoint', id: request.id, ok: true, url: urlOf(5555) });
       t.ok('答えの URL', await first === urlOf(5555));
 
@@ -293,15 +293,14 @@ export default async function (t) {
       // タブの写しと復元の答え
       port.connect();
       port.say({ type: 'browser-state-report',
-        tabs: [{ sessionId: 's1', profile: 'main', url: 'https://example.com/a', selected: true }, { sessionId: 's1', profile: 'main', url: 'file:///C:/secret.html', selected: false },
-          { sessionId: null, profile: 'work', url: 'http://localhost:3000/', selected: false }, { sessionId: 'x'.repeat(201), profile: 'main', url: 'https://example.com/long' }, { sessionId: 's1', profile: 'main', url: 'about:blank' }],
-        profiles: [{ sessionId: 's1', profile: 'work' }, { sessionId: null, profile: 'main' }, { sessionId: 'y'.repeat(300), profile: 'main' }] });
+        tabs: [{ sessionId: 's1', url: 'https://example.com/a', selected: true }, { sessionId: 's1', url: 'file:///C:/secret.html', selected: false },
+          { sessionId: null, url: 'http://localhost:3000/', selected: false }, { sessionId: 'x'.repeat(201), url: 'https://example.com/long' }, { sessionId: 's1', url: 'about:blank' }] });
       port.say({ type: 'browser-restore-request' });
       const restore = port.take('browser-restore').at(-1);
-      t.ok('browser-restore: http(s) のタブだけ（file:・空・長すぎる会話の id は落とす）と、プロフィール', restore.tabs.length === 2 && restore.tabs[0].url === 'https://example.com/a' && restore.tabs[0].selected === true && restore.tabs[1].sessionId === null
-        && restore.profiles.length === 2 && restore.profiles[0].profile === 'work');
+      t.ok('browser-restore: http(s) のタブだけ（file:・空・長すぎる会話の id は落とす）', restore.tabs.length === 2 && restore.tabs[0].url === 'https://example.com/a' && restore.tabs[0].selected === true && restore.tabs[1].sessionId === null
+        && !('profile' in restore.tabs[0]) && !('profiles' in restore));
       t.ok('browser-restore: 中継は同じポートと、会話ごとの鍵', restore.relay.port === 5555 && restore.relay.entries.length === 3 && restore.relay.entries.find(row => row.sessionId === 's1').key === KEY);
-      t.ok('cleanTabState: 配列でないものは空', JSON.stringify(cleanTabState({ tabs: 'x', profiles: null })) === '{"tabs":[],"profiles":[]}');
+      t.ok('cleanTabState: 配列でないものは空', JSON.stringify(cleanTabState({ tabs: 'x' })) === '{"tabs":[]}');
 
       // 別のポートで立った（ポートが取れなかった）: 持っている URL と、設定ファイルの cdp を直す
       const configFile = browserConfigFile(dataDir, 's1');
@@ -325,7 +324,7 @@ export default async function (t) {
       // 切り替えで替わったサーバー（空から始まる）: main が送り直した報告のタブの写しと中継の URL を取り込み、居ない間はその URL で答える
       const port = linkPort();
       const bridge = parentPortBrowser(port, { timeoutMs: 80, connectWaitMs: 200 });
-      port.say({ type: 'browser-state-report', tabs: [{ sessionId: 's1', profile: 'main', url: 'https://example.com/a', selected: true }], profiles: [],
+      port.say({ type: 'browser-state-report', tabs: [{ sessionId: 's1', url: 'https://example.com/a', selected: true }],
         relay: { port: 6000, entries: [{ sessionId: 's1', key: KEY }, { sessionId: 's2', key: 'zz' }, { sessionId: '', key: KEY }, null] } });
       port.disconnect();
       t.ok('main が送り直した中継の URL で、居ない間に答える（形の悪い鍵・空の会話は取り込まない）', await bridge.endpoint('s1') === urlOf(6000));
@@ -333,8 +332,8 @@ export default async function (t) {
       port.say({ type: 'browser-restore-request' });
       const restore = port.take('browser-restore').at(-1);
       t.ok('取り込んだ写しは、次に付け直す main への復元の答えにもなる（タブ・中継のポートと鍵）', restore.tabs.length === 1 && restore.relay.port === 6000 && restore.relay.entries.length === 1 && restore.relay.entries[0].key === KEY);
-      port.say({ type: 'browser-state-report', tabs: [], profiles: [], relay: { port: 0, entries: [{ sessionId: 's3', key: KEY }] } });
-      port.say({ type: 'browser-state-report', tabs: [], profiles: [] });
+      port.say({ type: 'browser-state-report', tabs: [], relay: { port: 0, entries: [{ sessionId: 's3', key: KEY }] } });
+      port.say({ type: 'browser-state-report', tabs: [] });
       port.say({ type: 'browser-restore-request' });
       const later = port.take('browser-restore').at(-1);
       t.ok('中継の写しが無い・ポートの形が悪い報告は、持っている中継を変えない（写しの上書きは tabs だけ）', later.tabs.length === 0 && later.relay.port === 6000 && later.relay.entries.length === 1);

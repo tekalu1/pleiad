@@ -80,6 +80,10 @@
 - `delegation.taskCancel`・`delegation.usage` は画面にも出る（`ui: true`）。AI の動きは変わらない。
 - `ply_control` の文は ja 1733 → 1757・en 1632 → 1656 トークン（`prefix` の説明の分）。
 
+## 追記（2026-10-06）: `browser.*` の操作は Chrome のプロフィールへ
+
+内蔵ブラウザーのプロフィールの削除（[ADR 0148](0148-agent-browser-in-chrome.md)）で、`browser.listProfiles`・`browser.useProfile`・`browser.setProfile` は無くなった。`ply_browser` のツール名と渡し方は残り、プロフィールのツールは Chrome のプロフィールを指す形で、`hand_to_user`・`close_browser_window` とともに後の段で載せる。
+
 ## 追記（2026-10-06）: 送った会話を消す
 
 | 操作 | 危険度 | 理由・追加の判定 |

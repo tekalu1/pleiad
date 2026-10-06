@@ -22,7 +22,7 @@
 //   "context:<json>" … ply_context（contextRuntime）のツールを { name, arguments } で 1 回呼び、返りを本文にする
 //   "computer:<json>" … ply_computer（computerRuntime）のツールを { name, arguments }（配列なら順に）呼び、返りを本文にする。tool.result には印の行から作った images と computer を付ける
 //   "computer-hold:<json>" … "computer:" の後、中断されるまで走り続ける（ロックを持ったままのターン）。"computer-instructions" は ply_computer の指示文を返す
-//   "browser:<json>" … ply_browser（browserRuntime。内蔵ブラウザーのプロフィール）のツールを { name, arguments }（配列なら順に）呼び、返りを本文にする。
+//   "browser:<json>" … ply_browser（browserRuntime）のツールを { name, arguments }（配列なら順に）呼び、返りを本文にする。
 //                     渡っていなければ "browser: unavailable"。"browser-instructions" は渡った内蔵ブラウザーの指示文を返す
 //   "control:<json>" … ply_control（controlRuntime。Pleiad の操作の一覧）のツールを { name, arguments }（配列なら順に）呼び、返りを本文にする。渡っていなければ "control: unavailable"。
 //                     "control-info" は渡った接続の url・指示文・会話のシェルへ渡す環境変数の名前とトークンを JSON で返す
@@ -158,6 +158,16 @@ function nextPulseAnswer() {
   const answer = Array.isArray(list) && list.length ? list[Math.min(pulseCalls, list.length - 1)] : { do: 'none' };
   pulseCalls++;
   return typeof answer === 'string' ? answer : JSON.stringify(answer);
+}
+
+/** 通話の確認用の返事（環境変数 AGENT_HOST_FAKE_VOICE_REPLY）。本文が when と一致したら steps: の台本にして返す。無ければ null */
+function voiceReplyFor(text) {
+  const file = process.env.AGENT_HOST_FAKE_VOICE_REPLY;
+  if (!file) return null;
+  try {
+    const spec = JSON.parse(fs.readFileSync(file, "utf8"));
+    return String(text).trim() === spec.when ? `steps:${JSON.stringify({ steps: spec.steps })}` : null;
+  } catch { return null; }
 }
 
 // bot の会話の user の行の先頭に付く包み（core/system-messages.mjs の LEADING_TAGS と同じ）。台本の接頭辞はこれを外してから判定する。
@@ -430,7 +440,8 @@ export const backend = {
     if (!scriptOf(prompt).startsWith("silent:")) onPromptDelivered?.();
     emit({ type: "activity", state: "thinking" });
 
-    const text = scriptOf(prompt);
+    // AGENT_HOST_FAKE_VOICE_REPLY=<JSON ファイル>: { when, steps } の when と同じ本文の発言には steps の台本で返す（通話の確認用。声で話した言葉は台本の接頭辞を持てないため。docs/voice-call.md）
+    const text = voiceReplyFor(scriptOf(prompt)) ?? scriptOf(prompt);
     if (text.startsWith('limit ')) {
       const raw = text.slice(6).trim();
       const resetsAt = /^\d+$/.test(raw) ? Number(raw) : Date.parse(raw);
@@ -512,7 +523,7 @@ export const backend = {
           return { sessionId: id };
         }
       } else if (text.startsWith('browser:')) {
-        // ply_browser の呼び出し（ADR 0078）。ほかの MCP と同じく mcp__ply_browser__<ツール> の行で残す
+        // ply_browser の呼び出し（ADR 0148）。ほかの MCP と同じく mcp__ply_browser__<ツール> の行で残す
         if (!browserRuntime) out.text = 'browser: unavailable';
         else {
           out.toolCalls = []; const texts = [];

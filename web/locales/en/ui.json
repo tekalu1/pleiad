@@ -42,6 +42,7 @@
       "appearance": "Appearance",
       "context": "Plugins",
       "notify": "Notifications",
+      "voice": "Calls",
       "remote": "Remote",
       "about": "About & updates",
       "delegation": "Delegation",
@@ -221,43 +222,17 @@
       }
     },
     "browser": {
-      "description": "Choose where links in conversations and previews open, whether to confirm external loads, and the profiles that keep your sign-ins.",
+      "description": "Choose where links in conversations and previews open, and whether to confirm external loads.",
       "descriptionRemote": "Choose whether to confirm external loads. Where links open is chosen on the PC (host) screen.",
       "linkOpen": {
         "title": "Open links in",
         "inapp": "Built-in browser",
         "external": "Default browser",
-        "note": "The built-in browser opens beside the conversation, and HTML files open there too. Sign-ins stay in this app, separately for each profile.",
+        "note": "The built-in browser opens beside the conversation, and HTML files open there too. Sign-ins stay in this app.",
         "shortcuts": "{{key}}+click and middle click always open in the default browser. Right-click to choose either."
       },
       "saveFailed": "Couldn't save: {{error}}",
       "agentOperation": { "title": "Agent operation", "bundled": "agent-browser {{version}} · Bundled" },
-      "profiles": {
-        "title": "Profiles",
-        "default": "Default",
-        "add": "Add profile",
-        "nameLabel": "Profile name",
-        "namePlaceholder": "New profile",
-        "memoLabel": "Usage memo",
-        "memoPlaceholder": "Usage memo (helps agents choose)",
-        "actions": "Actions for {{name}}",
-        "rename": "Rename",
-        "editMemo": "Edit memo",
-        "makeDefault": "Make default",
-        "clear": "Clear sign-ins and data",
-        "delete": "Delete",
-        "defaultCannotDelete": "The default profile can't be deleted.",
-        "mainCannotDelete": "Main can't be deleted. You can clear its sign-ins and data.",
-        "confirmClear": "Clear sign-ins and data for \"{{name}}\"? Open tabs will reload.",
-        "confirmDelete": "Delete \"{{name}}\"? Its tabs close and its sign-ins and data are removed. This can't be undone.",
-        "cancel": "Cancel",
-        "cleared": "Cleared sign-ins and data for \"{{name}}\".",
-        "deleted": "Deleted \"{{name}}\".",
-        "tooMany": "You can have up to {{max}} profiles.",
-        "newConversation": "Profile for new conversations",
-        "newLast": "Last used in the working folder",
-        "newDefault": "Default"
-      },
       "confirm": {
         "title": "External resources",
         "scope": "In visualizations, HTML previews, and PC HTML files opened in the built-in browser, blocks loads (images, scripts, requests, and so on) from sites other than those you allow “Always”. Doesn’t apply to web pages. This setting is shared by all screens.",
@@ -1505,6 +1480,7 @@
       "allowedAlways": "Always allowed",
       "allowed": "Allowed",
       "denied": "Denied",
+      "elsewhere": "Handled elsewhere",
       "sending": "Sending “{{action}}”…",
       "sendFailedInline": "Couldn't send “{{action}}” · {{error}}"
     },
@@ -2908,6 +2884,69 @@
     "moreMatches_one": "{{count}} more. Type to narrow down",
     "moreMatches_other": "{{count}} more. Type to narrow down"
   },
+  "inbox": {
+    "bell": "Notifications",
+    "bellUnread": "Notifications ({{n}} unread)",
+    "bellWait": "Notifications ({{n}} unread, waiting for you)",
+    "panel": "Notifications",
+    "list": "Notification list",
+    "empty": "No new notifications",
+    "readAll": "Mark all read",
+    "more": "Show more",
+    "unreadMark": "Unread",
+    "filter": {
+      "label": "Filter",
+      "all": "All",
+      "wait": "Needs you",
+      "mention": "@you"
+    },
+    "line": {
+      "approval": {
+        "named": {
+          "open": "{{name}} is waiting for your approval",
+          "closed": "{{name}} was waiting for your approval"
+        },
+        "plain": {
+          "open": "An agent is waiting for your approval",
+          "closed": "An agent was waiting for your approval"
+        }
+      },
+      "question": {
+        "named": {
+          "open": "{{name}} is waiting for your answer",
+          "closed": "{{name}} was waiting for your answer"
+        },
+        "plain": {
+          "open": "An agent is waiting for your answer",
+          "closed": "An agent was waiting for your answer"
+        }
+      },
+      "failed": {
+        "named": "{{name}}'s turn failed",
+        "titled": "{{title}} failed",
+        "plain": "A conversation failed"
+      },
+      "done": {
+        "titled": "{{title}} finished",
+        "plain": "A conversation finished"
+      },
+      "mention": {
+        "named": "{{name}} wrote @you",
+        "plain": "A post mentions @you"
+      }
+    },
+    "place": {
+      "thread": "#{{channel}} › {{thread}}",
+      "channel": "#{{channel}}",
+      "chat": "Chats › {{title}}"
+    },
+    "outcome": {
+      "allowed": "Approved",
+      "answered": "Answered",
+      "denied": "Denied",
+      "cancelled": "Withdrawn"
+    }
+  },
   "notify": {
     "completed": "Work finished",
     "waitingReply": "Waiting for your reply",
@@ -3861,16 +3900,6 @@
     "siteDataCleared": "Cleared data for this site.",
     "failed": "The browser action failed.",
     "reloaded": "Reloaded",
-    "profiles": {
-      "pick": "Profile: {{name}}",
-      "main": "Main",
-      "locked": "You can't switch while an agent is operating. Stop it first.",
-      "busy": "You can't switch while an agent is operating.",
-      "new": "New profile…",
-      "manage": "Manage profiles…",
-      "switched": "This conversation now opens in \"{{name}}\". Agents use this profile too.",
-      "switchedBy": "{{agent}} switched to \"{{name}}\"."
-    },
     "remote": {
       "title": "PC browser",
       "backToChat": "Back to conversation",
@@ -3949,6 +3978,116 @@
       "sortNewest": "Newest first (press for oldest first)",
       "noMatch": "No matches",
       "noItems": "No messages in this conversation yet"
+    }
+  },
+  "voice": {
+    "call": {
+      "start": "Start a call",
+      "endAt": "End call · {{time}}"
+    },
+    "mic": {
+      "mute": "Mute microphone · {{state}}",
+      "unmute": "Unmute · {{state}}",
+      "denied": "Microphone not allowed · press to try again",
+      "noDevice": "No microphone found · press to try again",
+      "busy": "Microphone in use by another app · press to try again"
+    },
+    "spk": {
+      "mute": "Mute speaker",
+      "unmute": "Unmute speaker",
+      "speaking": " · speaking"
+    },
+    "state": {
+      "starting": "Starting",
+      "listening": "Listening",
+      "hearing": "Hearing you",
+      "thinking": "Thinking",
+      "speaking": "Speaking",
+      "muted": "Muted"
+    },
+    "live": {
+      "starting": "Starting the call",
+      "listening": "Listening",
+      "muted": "Microphone muted",
+      "unmuted": "Unmuted",
+      "denied": "Microphone not allowed",
+      "ended": "Call ended"
+    },
+    "mark": "Spoken message",
+    "openSettings": "Open settings",
+    "hint": {
+      "reading": "Reading aloud",
+      "stop": "Stop",
+      "jump": "Go to the spoken line"
+    },
+    "note": {
+      "denied": "Microphone not allowed ·",
+      "noDevice": "No microphone found ·",
+      "busy": "Microphone in use by another app ·",
+      "nokey": "Calls need an OpenRouter key ·",
+      "dailyLimit": "Today's call limit reached ·",
+      "callLimit": "The call reached its length limit and ended ·",
+      "idle": "The call ended after a long time without hearing anyone",
+      "link": "The call connection was lost",
+      "sttBusy": "Speech recognition is busy. Please say that again",
+      "stt": "Could not hear that. Please say it again",
+      "tts": "Could not read that aloud. See the text on screen",
+      "sendFailed": "Could not send the message: {{error}}",
+      "notSent": "It could not be sent right now, so the message was left in the input box",
+      "start": "Could not start the call ·",
+      "startTimeout": "The call did not get ready in time"
+    },
+    "settings": {
+      "intro": "Talk to the agent: your voice is transcribed and sent to the conversation, and the reply is read aloud. Both go through OpenRouter.",
+      "loadFailed": "Could not load: {{error}}",
+      "saved": "Saved",
+      "failed": "Could not save: {{error}}",
+      "key": {
+        "title": "OpenRouter key",
+        "set": "Registered",
+        "unset": "Not registered",
+        "replace": "Replace",
+        "delete": "Delete",
+        "save": "Register",
+        "show": "Show",
+        "hide": "Hide",
+        "saved": "Key registered",
+        "deleted": "Key deleted",
+        "note": "Only this PC holds the key and it is never shown on screen. Once registered, the audio of calls and the text read aloud are sent to OpenRouter (and the provider of the model you pick).",
+        "encrypted": "The key is stored with the OS encryption.",
+        "plain": "This PC cannot encrypt, so the key is kept as-is in a file with restricted permissions.",
+        "check": {
+          "ok": "The key checked out",
+          "invalid": "OpenRouter did not accept this key",
+          "unreachable": "Could not reach OpenRouter to check",
+          "nokey": ""
+        }
+      },
+      "models": {
+        "title": "Models and voice",
+        "stt": "Speech-to-text (STT) model",
+        "fallback": "Fallback STT model",
+        "fallbackHint": "Used when the main model is busy and turns a request down. Leave empty for no fallback",
+        "tts": "Text-to-speech (TTS) model",
+        "voice": "Voice",
+        "language": "Speech language",
+        "auto": "Auto (the display language)",
+        "ja": "Japanese",
+        "en": "English"
+      },
+      "limits": {
+        "title": "Cost safeguards",
+        "call": "Longest single call (minutes)",
+        "daily": "Longest total call time per day (minutes)",
+        "today": "Today: calls {{minutes}} min · transcribed {{stt}} min · read aloud {{chars}} characters",
+        "note": "A call ends when it reaches a limit (and cannot start once the day's limit is reached). A call that hears nobody for 10 minutes also ends."
+      },
+      "audio": {
+        "title": "Microphone",
+        "echo": "Echo cancellation, noise suppression, auto gain",
+        "echoHint": "A browser feature. It helps avoid picking up sounds other than your voice when you listen on speakers. Turn it off if your voice sounds muffled.",
+        "permission": "If the microphone is not allowed, allow it in the browser's site settings (the lock icon in the address bar) or the OS privacy settings. The desktop app allows microphone use from this screen automatically."
+      }
     }
   }
 }

@@ -56,11 +56,7 @@
     "computerAppJoin": "」「",
     "browserSite": "{{agent}} が {{site}} を使おうとしています",
     "browserNotes": "（{{notes}}）",
-    "browserProfile": "プロフィール: {{profile}}",
     "browserAccountName": "ログイン済み: {{account}}"
-  },
-  "browserProfiles": {
-    "main": "メイン"
   },
   "quota": {
     "unsupported": "このエージェントは使用枠の取得に対応していません。",
@@ -153,8 +149,7 @@
     "accountNotRegistered": "選択したアカウントは登録されていません",
     "unknownPref": "知らない設定: {{key}}",
     "unknownMode": "知らない承認モード: {{value}}",
-    "unknownModel": "知らないモデル: {{value}}",
-    "unknownPrefValue": "知らない設定の値: {{key}} = {{value}}"
+    "unknownModel": "知らないモデル: {{value}}"
   },
   "send": {
     "messageIdRequired": "送信IDが必要です",
@@ -1125,5 +1120,15 @@
     "shellRun": "会話「{{title}}」のシェルでコマンドを動かします（{{cwd}}）。",
     "switchBackend": "会話「{{title}}」のエージェントを {{backend}} に切り替えます。承認モードは切り替え先の最初のモードになります。",
     "everywhere": "すべての場所"
+  },
+  "voice": {
+    "skip": {
+      "code": "コードは画面に出しました",
+      "table": "表は画面に出しました",
+      "log": "ログは画面に出しました"
+    },
+    "key": {
+      "invalid": "OpenRouter のキーの形が正しくありません（空・短すぎる・空白や改行を含む）"
+    }
   }
 }

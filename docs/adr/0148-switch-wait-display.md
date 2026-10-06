@@ -1,6 +1,6 @@
 # 0148 無停止の更新の切り替えを待つ表示（脇の下の知らせの中の一覧）と、止まるものは待たず聞く
 
-- 状態: 承認（2026-10-06）。番号は仮（長く並行するブランチの ADR。main に入れる直前に振り直す）
+- 状態: 承認（2026-10-06）
 - 関連: [ADR 0137](0137-zero-downtime-update.md)（9 の「切り替えの先送り」）、[ADR 0036](0036-interrupt-and-update-while-running.md)、docs/zero-downtime-update/design.md §6.1、docs/design-system.md「切り替えを待つ表示」
 
 ## 状況

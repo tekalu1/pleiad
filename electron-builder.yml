@@ -54,6 +54,11 @@ nsis:
 mac:
   icon: desktop/icon.icns
   category: public.app-category.productivity
+  # 通話モード（docs/voice-call.md）のマイク。説明文と、署名・公証した版の entitlement（audio-input）。Mac の実機では確かめていない
+  extendInfo:
+    NSMicrophoneUsageDescription: Pleiad uses the microphone only during a voice call you start, to talk to your agent.
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
   target:
     - target: dmg
       arch: [x64, arm64]

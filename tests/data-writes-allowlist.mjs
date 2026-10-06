@@ -19,7 +19,7 @@ export const DB_ONLY = ['sessions.json', 'agent-tasks.json', 'usage.json', 'conv
 
 export const DATA_WRITES = [
   { file: 'core/store.mjs', sites: 4, targets: [
-    { name: 'prefs.json', limit: '設定。computerUse.alwaysAllowed は COMPUTER_APP_LIMIT=500、browserLastProfiles は 100。agentSitePermissions だけ上限が無い（エージェント×origin×プロフィール）', reason: '設定。読むのは起動時と変更時だけで、通常は数 KB', unbounded: true },
+    { name: 'prefs.json', limit: '設定。computerUse.alwaysAllowed は COMPUTER_APP_LIMIT=500。agentSitePermissions だけ上限が無い（エージェント×origin）', reason: '設定。読むのは起動時と変更時だけで、通常は数 KB', unbounded: true },
     { name: 'statuses.json', limit: '会話の状態グループ。ユーザーが数個作る', reason: '台帳。数十行以下' },
   ] },
   { file: 'core/atomic-file.mjs', sites: 2, targets: [
@@ -53,6 +53,9 @@ export const DATA_WRITES = [
   ] },
   { file: 'core/backends/antigravity-context.mjs', sites: 3, targets: [
     { name: 'antigravity/context/<pid>-<乱数>/…', limit: '1 ターン分の一時の home。数ファイル', reason: '終了時に消す一時ファイル' },
+  ] },
+  { file: 'core/voice/usage.mjs', sites: 1, targets: [
+    { name: 'voice-usage.json', limit: 'KEEP_DAYS=31 日分（1 日 3 つの数）。書くたびに古い日を捨てる', reason: '通話の使用量の台帳（費用の安全弁。docs/voice-call.md）。数秒にまとめて書く。固定の小ささ' },
   ] },
   { file: 'core/schedule.mjs', sites: 1, targets: [
     { name: 'schedule.json', limit: '予約中の再開・送信の件数。実行すると行が消える', reason: '台帳。通常は数件。件数に上限は無い', unbounded: true },
@@ -136,9 +139,6 @@ export const DATA_WRITES = [
   { file: 'desktop/runtime.cjs', sites: 9, targets: [
     { name: '(置き場の外) %LOCALAPPDATA%/agent-host-runtime の store/<sha256>・app/<版>（store へのハードリンク）・node/<版>/pleiad-node.exe・agent-browser/<版>', limit: '今の版を含む 3 版（KEEP_TREES）。2 版目からは変わった分だけ増える（約 107 MB・4,000 ファイルが 1 版目、変わった分は数 MB）。使われなくなった版・どの木にもリンクされない実体は掃除（cleanup）が消す', reason: '無停止の更新（ADR 0137）で、更新に止められない版ごとの実行場所を組む。中身のハッシュで 1 度だけ置き、書き換えない成果物（置いてから rename）。データ置き場には書かない' },
     { name: '(置き場の外) 実行場所の app/<版>/.runtime.json・runtime-node.txt', limit: '固定の小ささ（版・ビルド・組んだ時刻・Node の置き場の名前）。版ごとに 1 組', reason: '組み終えた木の印と、起動口（bin/pleiad.cmd）が読む Node の置き場の名前。組み立ての最後に書く' },
-  ] },
-  { file: 'desktop/browser-panel.cjs', sites: 2, targets: [
-    { name: '(置き場の外) Electron の userData の、消し残したブラウザープロフィールの名前の一覧', limit: 'プロフィールの数。消せたら行が消える', reason: '削除待ちの台帳。通常は 0〜数件' },
   ] },
   { file: 'desktop/server-port.cjs', sites: 1, targets: [
     { name: '(置き場の外) Electron の userData の、前回のポート', limit: '固定（{ port }）', reason: '画面の origin を保つための印' },

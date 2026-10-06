@@ -1,7 +1,7 @@
 // 実機 6（plan.md「実機で確かめる項目」の段階 1）: 内蔵ブラウザーのタブを開いた会話を更新（A→B。作業は 0 件なのですぐ切り替わる）しても、
 // 新しい main がタブを URL で開き直し、同じポート・鍵で中継（CDP）を立て直す。
 //   node scripts/zero-downtime/stage1-7/s6-browser-tabs.mjs [--out temporary/zd17/s6]
-// 会話は fake の `browser:` のターンで作る（agent-browser.json ができる）。タブは窓の plyDesktop.browser で開き、URL は配信元（17499）のファイル。
+// 会話は fake の `browser-instructions` のターンで作る（ターンの始めに agent-browser.json ができる）。タブは窓の plyDesktop.browser で開き、URL は配信元（17499）のファイル。
 // 確かめるのは、更新の前後でタブが同じ数・同じ URL で在ること、agent-browser.json の cdp が同じこと、その cdp の中継に Target.getTargets でつながってタブが見えること
 // （本物の agent-browser の呼び出しは、中継に同じ CDP で話すのと同じ。常駐が同じ pid のまま戻ることは 1-5 のハーネスで確かめた）。
 import fs from 'node:fs';
@@ -43,7 +43,7 @@ try {
   const s1 = app.control;
   const port = new URL(s1.origin).port;
   const client = await wsOpenServer(s1);
-  const turn = await client.runTurn({ backend: 'fake', cwd: path.join(ZD.home, 'work'), prompt: 'browser:[{"name":"list_browser_profiles","arguments":{}}]' }, { ms: 30000 });
+  const turn = await client.runTurn({ backend: 'fake', cwd: path.join(ZD.home, 'work'), prompt: 'browser-instructions' }, { ms: 30000 });
   const sessionId = turn.sessionId;
   tl.mark('browser turn', { sessionId, outcome: turn.outcome });
   const opened = await app.page.eval(`(async () => {

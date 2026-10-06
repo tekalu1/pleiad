@@ -90,19 +90,9 @@ function createBrowserRelay(panel, { onActivity = () => {}, navigation, WebSocke
       if (change === 'destroyed') forget(tab.id);
       else if (change === 'created') queueMicrotask(() => { void announce(tab.id); });
     });
-    // 会話の今のプロフィールが替わった（人のメニュー・エージェントの use_browser_profile。ADR 0078）。
-    // 接続は保ったまま、前のプロフィールのタブはエージェントから外して（操作中のタブの接続も切る）、新しいプロフィールのタブ集合を見せる
-    const unsubscribeProfile = panel.onProfileChanged?.(sessionId => {
-      if (sessionId !== entry.id || ws.readyState !== 1) return;
-      const now = new Set(tabs(entry).map(row => row.id));
-      for (const tabId of new Set([...known.keys(), ...[...attached.values()].map(record => record.tab.id)])) if (!now.has(tabId)) forget(tabId);
-      ensureTab(entry);
-      for (const tabId of now) queueMicrotask(() => { void announce(tabId); });
-    });
     const cleanup = () => {
       entry.sockets.delete(ws);
       unsubscribe?.();
-      unsubscribeProfile?.();
       for (const sid of [...attached.keys()]) detach(sid);
     };
     ws.on('close', cleanup);
@@ -192,10 +182,8 @@ function createBrowserRelay(panel, { onActivity = () => {}, navigation, WebSocke
     listening ??= listenOn(port).catch(error => { if (!port) throw error; return listenOn(0); }).then(value => { address = value; return value; }, error => { listening = null; throw error; });
     return listening;
   }
-  // profile: サーバーが決めた会話の今のプロフィール（ターンの開始で渡る）。中継がタブを作る・絞る前に覚えさせる
-  async function endpoint(sessionId, { profile } = {}) {
+  async function endpoint(sessionId) {
     if (typeof sessionId !== 'string' || !sessionId || sessionId.length > 200) throw new Error('invalid session');
-    if (profile) panel.setProfileFor?.(sessionId, profile);
     await ensureListening(0);
     let entry = entries.get(sessionId);
     if (!entry) { entry = { id: sessionId, key: random(), sockets: new Set(), stopped: false }; entries.set(sessionId, entry); byKey.set(entry.key, entry); }

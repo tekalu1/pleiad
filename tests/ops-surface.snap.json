@@ -515,51 +515,6 @@
       "input": "f08816c821a8"
     },
     {
-      "id": "browser.listProfiles",
-      "risk": "read",
-      "riskOf": false,
-      "scope": "global",
-      "modeGate": true,
-      "hostScreenOnly": false,
-      "surfaces": {
-        "ui": false,
-        "mcp": "catalog",
-        "cli": true
-      },
-      "legacyCommand": null,
-      "input": "25c7d85c859a"
-    },
-    {
-      "id": "browser.setProfile",
-      "risk": "write",
-      "riskOf": false,
-      "scope": "global",
-      "modeGate": true,
-      "hostScreenOnly": false,
-      "surfaces": {
-        "ui": true,
-        "mcp": "catalog",
-        "cli": true
-      },
-      "legacyCommand": "setBrowserProfile",
-      "input": "0c962f58fe1d"
-    },
-    {
-      "id": "browser.useProfile",
-      "risk": "write",
-      "riskOf": false,
-      "scope": "global",
-      "modeGate": false,
-      "hostScreenOnly": false,
-      "surfaces": {
-        "ui": false,
-        "mcp": "catalog",
-        "cli": true
-      },
-      "legacyCommand": null,
-      "input": "974c851ac5dd"
-    },
-    {
       "id": "channels.archive",
       "risk": "write",
       "riskOf": false,
@@ -2345,6 +2300,66 @@
       "input": "619d48f70b75"
     },
     {
+      "id": "notifications.count",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "notifications",
+            "count"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "25c7d85c859a"
+    },
+    {
+      "id": "notifications.list",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "notifications",
+            "list"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "2ca572395bf8"
+    },
+    {
+      "id": "notifications.markRead",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "notifications",
+            "mark-read"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "c7f9055022f3"
+    },
+    {
       "id": "notify.setDevice",
       "risk": "write",
       "riskOf": false,
@@ -3691,6 +3706,26 @@
       "input": "6bf6e7291226"
     },
     {
+      "id": "voice.status",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "voice",
+            "status"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "25c7d85c859a"
+    },
+    {
       "id": "worktrees.archive",
       "risk": "write",
       "riskOf": false,
@@ -3852,33 +3887,6 @@
       ]
     },
     {
-      "key": "browserDefaultProfile",
-      "risk": "write",
-      "riskOf": false,
-      "writable": true,
-      "prefKeys": [
-        "browserDefaultProfile"
-      ]
-    },
-    {
-      "key": "browserNewProfile",
-      "risk": "write",
-      "riskOf": false,
-      "writable": true,
-      "prefKeys": [
-        "browserNewProfile"
-      ]
-    },
-    {
-      "key": "browserProfiles",
-      "risk": "guarded",
-      "riskOf": false,
-      "writable": true,
-      "prefKeys": [
-        "browserProfiles"
-      ]
-    },
-    {
       "key": "claudeAccount",
       "risk": "human-only",
       "riskOf": false,
@@ -4037,6 +4045,15 @@
       "prefKeys": [
         "plyInstructions"
       ]
+    },
+    {
+      "key": "voice",
+      "risk": "write",
+      "riskOf": true,
+      "writable": true,
+      "prefKeys": [
+        "voice"
+      ]
     }
   ],
   "settingPolicy": {
@@ -4053,27 +4070,6 @@
       "agent-bound-ask": "write=allow",
       "agent-bound-never-full": "write=allow",
       "agent-bound-readonly": "write=deny:READ_ONLY_MODE"
-    },
-    "browserDefaultProfile": {
-      "human": "write=allow",
-      "agent-unbound": "write=allow",
-      "agent-bound-ask": "write=allow",
-      "agent-bound-never-full": "write=allow",
-      "agent-bound-readonly": "write=deny:READ_ONLY_MODE"
-    },
-    "browserNewProfile": {
-      "human": "write=allow",
-      "agent-unbound": "write=allow",
-      "agent-bound-ask": "write=allow",
-      "agent-bound-never-full": "write=allow",
-      "agent-bound-readonly": "write=deny:READ_ONLY_MODE"
-    },
-    "browserProfiles": {
-      "human": "guarded=allow",
-      "agent-unbound": "guarded=deny:NEEDS_UI",
-      "agent-bound-ask": "guarded=ask",
-      "agent-bound-never-full": "guarded=allow",
-      "agent-bound-readonly": "guarded=deny:READ_ONLY_MODE"
     },
     "claudeAccount": {
       "human": "human-only=allow",
@@ -4200,6 +4196,13 @@
       "agent-bound-ask": "guarded=ask",
       "agent-bound-never-full": "guarded=allow",
       "agent-bound-readonly": "guarded=deny:READ_ONLY_MODE"
+    },
+    "voice": {
+      "human": "write=allow guarded=allow",
+      "agent-unbound": "write=allow guarded=deny:NEEDS_UI",
+      "agent-bound-ask": "write=allow guarded=ask",
+      "agent-bound-never-full": "write=allow guarded=allow",
+      "agent-bound-readonly": "write=deny:READ_ONLY_MODE guarded=deny:READ_ONLY_MODE"
     }
   },
   "mcp": [
@@ -4351,21 +4354,6 @@
       "positional": [
         "botId"
       ]
-    },
-    {
-      "id": "browser.listProfiles",
-      "path": "browser listProfiles",
-      "positional": []
-    },
-    {
-      "id": "browser.setProfile",
-      "path": "browser setProfile",
-      "positional": []
-    },
-    {
-      "id": "browser.useProfile",
-      "path": "browser useProfile",
-      "positional": []
     },
     {
       "id": "channels.archive",
@@ -4877,6 +4865,21 @@
       ]
     },
     {
+      "id": "notifications.count",
+      "path": "notifications count",
+      "positional": []
+    },
+    {
+      "id": "notifications.list",
+      "path": "notifications list",
+      "positional": []
+    },
+    {
+      "id": "notifications.markRead",
+      "path": "notifications mark-read",
+      "positional": []
+    },
+    {
       "id": "notify.setDevice",
       "path": "notify device",
       "positional": [
@@ -5283,6 +5286,11 @@
         "from",
         "to"
       ]
+    },
+    {
+      "id": "voice.status",
+      "path": "voice status",
+      "positional": []
     },
     {
       "id": "worktrees.archive",

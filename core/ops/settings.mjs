@@ -14,9 +14,9 @@ import { DEFAULT_COMPACTION_SETTINGS, normalizeCompactionSettings } from '../com
 import { DEFAULTS as ROUTING_DEFAULTS, normalizeSettings as normalizeRoutingSettings, RoutingSettingsError, RETIRED_KEYS as ROUTING_RETIRED_KEYS } from '../delegation-routing.mjs';
 import { KINDS as CONTEXT_KINDS, normalizeKind as normalizeContextKind } from '../context-settings.mjs';
 import { MIN_BUDGET, MAX_BUDGET } from '../../web/instruction-amount.mjs';
-import { validProfilePref } from '../../web/browser-profiles.mjs';
 import { validBrowserPref } from '../../web/browser-confirm-policy.mjs';
 import { computerUsePrefs, validComputerUse } from '../../web/computer-prefs.mjs';
+import { DEFAULTS as VOICE_DEFAULTS, normalizeVoiceSettings, VoiceSettingsError, loosensLimits as voiceLoosens } from '../voice/settings.mjs';
 import { defineOp, defineSetting, OpError, stableStringify } from './registry.mjs';
 import { maxRisk } from './policy.mjs';
 
@@ -124,17 +124,6 @@ export const settings = [
     schema: z.array(site), default: [], read: fromPrefs(key),
     normalize: (ctx, v) => { if (!validBrowserPref(key, v)) throw invalid(ctx, `${key}: ${JSON.stringify(v)?.slice(0, 80)}`); return { after: v }; },
     write: (ctx, v) => ctx.writes.browserPref(key, v) })),
-  defineSetting({ key: 'browserProfiles', summary: S('browserProfiles'), risk: 'guarded', schema: z.array(loose), default: [], read: fromPrefs('browserProfiles'),
-    normalize: async (ctx, v) => { if (!validProfilePref('browserProfiles', v, await prefs(ctx))) throw invalid(ctx, 'browserProfiles'); return { after: v }; },
-    write: (ctx, v) => ctx.writes.browserProfiles(v) }),
-  defineSetting({ key: 'browserDefaultProfile', summary: S('browserDefaultProfile'), risk: 'write', riskReason: `The built-in browser's default profile. ${PICK_ABOUT}`,
-    schema: z.string().nullable(), default: null, read: fromPrefs('browserDefaultProfile'),
-    normalize: async (ctx, v) => { if (!validProfilePref('browserDefaultProfile', v, await prefs(ctx))) throw invalid(ctx, `browserDefaultProfile: ${String(v).slice(0, 40)}`); return { after: v }; },
-    write: (ctx, v) => ctx.writes.browserProfiles(v, 'browserDefaultProfile') }),
-  defineSetting({ key: 'browserNewProfile', summary: S('browserNewProfile'), risk: 'write', riskReason: `How a new conversation picks its profile. ${PICK_ABOUT}`,
-    schema: z.string(), default: '', read: fromPrefs('browserNewProfile'),
-    normalize: async (ctx, v) => { if (!validProfilePref('browserNewProfile', v, await prefs(ctx))) throw invalid(ctx, `browserNewProfile: ${String(v).slice(0, 40)}`); return { after: v }; },
-    write: (ctx, v) => ctx.writes.browserProfiles(v, 'browserNewProfile') }),
   // 有効にする・全アプリの許可・常に許可を足す向きは関所を緩めるので guarded
   defineSetting({ key: 'computerUse', summary: S('computerUse'), risk: 'write', riskReason: NARROW_ABOUT,
     riskOf: (before, after) => ((after?.enabled === true && before?.enabled !== true) || (after?.allowAllApps === true && before?.allowAllApps !== true)
@@ -159,6 +148,23 @@ export const settings = [
       if (v !== null && current.computerUse && same(computerUsePrefs(current), v)) return;
       await ctx.writes.pref('computerUse', v);
     } }),
+  // 通話モード（設定 › 通話。docs/voice-call.md）。渡した項目だけを重ねる。OpenRouter のキーは human-only の別の口（setVoiceKey）で、ここには出ない。
+  // 費用の安全弁（1 回・1 日の長さの上限）を上げる向きは関所を緩めるので guarded（下げる向き・モデルと声の選びは write）
+  defineSetting({ key: 'voice', summary: S('voice'), risk: 'write', riskReason: `Models, voice and language for the call mode. ${PICK_ABOUT}. Raising the call length limits loosens the cost gate and is raised to guarded by riskOf`,
+    riskOf: (before, after) => (voiceLoosens(normalizeVoiceSettings(before), normalizeVoiceSettings(after)) ? 'guarded' : 'write'),
+    riskExamples: [
+      { before: { ...VOICE_DEFAULTS }, after: { ...VOICE_DEFAULTS, dailyLimitMinutes: VOICE_DEFAULTS.dailyLimitMinutes + 60 }, risk: 'guarded' },
+      { before: { ...VOICE_DEFAULTS }, after: { ...VOICE_DEFAULTS, maxCallMinutes: VOICE_DEFAULTS.maxCallMinutes - 10 }, risk: 'write' },
+      { before: { ...VOICE_DEFAULTS }, after: { ...VOICE_DEFAULTS, ttsVoice: 'ara' }, risk: 'write' },
+    ],
+    schema: loose, writeSchema: z.record(z.string(), z.unknown()), default: VOICE_DEFAULTS, read: async (ctx) => normalizeVoiceSettings((await prefs(ctx)).voice),
+    normalize: async (ctx, patch, { before }) => {
+      const merged = { ...before };
+      for (const [key, value] of Object.entries(patch)) { if (value === null) delete merged[key]; else merged[key] = value; }   // null の項目は既定に戻す
+      try { return { after: normalizeVoiceSettings(merged, { strict: true }) }; }
+      catch (e) { throw invalid(ctx, e instanceof VoiceSettingsError ? e.message : String(e?.message ?? e)); }
+    },
+    write: (ctx, value) => ctx.writes.pref('voice', value) }),
   // 渡した項目だけを重ねる。null の項目は既定に戻す。判定器のキーは human-only の別の口で、ここには出ない
   defineSetting({ key: 'delegationRouting', summary: S('delegationRouting'), risk: 'guarded', prefKeys: ['delegationRouting'],
     schema: loose, writeSchema: z.record(z.string(), z.unknown()), default: ROUTING_DEFAULTS, read: (ctx) => ctx.routingSettings?.(),

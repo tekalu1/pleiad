@@ -108,9 +108,8 @@ export default async function (t) {
   }
   const readonly = { by: 'agent', via: 'mcp', sessionId: 'own' };
   const compatDeps = { locale: 'ja', modeOf: async () => ({ scope: 'readonly', autonomy: 'ask' }),
-    delegation: { call: async () => ({ stopped: true }) }, browser: { call: async () => ({ changed: true }) } };
+    delegation: { call: async () => ({ stopped: true }) } };
   t.ok('読み取りモードでも自分の子を止められる', (await registry.invoke(readonly, 'delegation.taskCancel', { taskId: 'ply-task-1' }, compatDeps)).result?.stopped === true);
-  t.ok('読み取りモードでも自分のブラウザープロフィールを選べる', (await registry.invoke(readonly, 'browser.useProfile', { profile: 'main' }, compatDeps)).result?.changed === true);
   t.ok('読み取りモードから子に追加指示は送れない', (await registry.invoke(readonly, 'delegation.taskSend', { taskId: 'ply-task-1', message: 'work' }, compatDeps)).code === 'READ_ONLY_MODE');
 
   // ---- T4 文の量: 実際に会話へ渡す指示と tools/list（pleiad mcp と同じ生成器）を数える
@@ -150,6 +149,7 @@ export default async function (t) {
       authStatus: async () => ({ backend: 'x', status: { supported: true, installed: true, loggedIn: true, account: EMAIL, detail: 'ChatGPT / plus', path: MARKER, ...secret } }),
     },
     statuses: { list: async () => [{ status: 'a', count: 1, firstUsedAt: 'a', lastUsedAt: 'b', icon: null, kept: false, ...secret }] },
+    voice: { status: async () => ({ hasKey: true, storage: { encrypted: true, backend: 'fake' }, today: { callSeconds: 0, sttSeconds: 0, ttsChars: 0 }, active: 0 }) },
     prefs: async () => ({ agentSitePermissions: [{ origin: 'o', ...secret }], locale: 'ja' }),
     compactionSettings: () => ({ enabled: true, ...secret }),
     delegation: { list: () => [{ taskId: 't', status: 'completed', ...secret }], get: () => ({ taskId: 't', status: 'completed', result: 'done', ...secret }),
@@ -225,6 +225,11 @@ export default async function (t) {
         mode: 'default', approvalTimeoutMin: 30, paused: false, createdBy: { kind: 'human' }, createdAt: 1, nextAt: 2, ...secret }),
     },
     botOfSession: async () => null,
+    // 通知の一覧（ADR 0149）
+    notifications: {
+      list: () => ({ items: [{ id: 'n_1', seq: 1, kind: 'done', at: 1, unread: true, target: { sessionId: 's1' }, title: 'こんにちは', ...secret }], hasMore: false, unread: 1, waiting: 0 }),
+      counts: () => ({ unread: 1, waiting: 0 }), markRead: () => ({ changed: 0 }),
+    },
   };
   // 人の画面には返すが agent には伏せるもの（引数の秘密・承認の URL・ペアリングの番号・URL のクエリ）は tests/unit/ops-mcp-hooks.mjs
   // 必須の引数がある read 操作に渡す引数（設定は全部の key）

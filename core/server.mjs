@@ -82,6 +82,7 @@ import { importNativeMcp } from './mcp-import.mjs';
 import { createMcpConfig } from './mcp-config.mjs';
 import { createHooksConfig, HOOK_AGENTS, applyCodexHooks, trimHookRuns, findNodeOnPath } from './hooks-config.mjs';
 import { finishShutdown } from './shutdown.mjs';
+import { createVoiceHost, VOICE_PATH } from './voice/host.mjs';
 import { createPlyHooks } from './ply-hooks.mjs';
 import { prepareHooksTurn, unifyPreview, importCandidate } from './hooks-unify.mjs';
 import { deliverable, classifyNativeRun } from './hooks-plan.mjs';
@@ -92,6 +93,8 @@ import { AgentError, remoteOwnerId, isRemoteOwner, parseRemoteOwner, RESULT_PAGE
 import { createResidentPrefs, residentSignal, enabledRoutineCount } from './remote/resident.mjs';
 import { createPushNotifier } from './notify/notifier.mjs';
 import { createPresence } from './notify/presence.mjs';
+import { createNotifications } from './notifications.mjs';
+import { createNotificationSources } from './notification-sources.mjs';
 import { createNotifySettings } from './notify/settings.mjs';
 import { createFolderUploads } from './folder-uploads.mjs';
 import { createImageImporter, testImportOrigin } from './image-import.mjs';
@@ -110,8 +113,7 @@ import { readBuildInfo } from './handover-check.mjs';
 import { markRuntimeInUse } from './runtime-use.mjs';
 import { parentPortScreencast, createScreencastHub, screencastCommand } from './browser-screencast.mjs';
 import { createBrowserSiteApprovals } from './browser-confirm.mjs';
-import { createBrowserProfiles, createBrowserBridge, findProfile, BROWSER_MCP_PATH } from './browser-profiles.mjs';
-import { profileList, profileName, validProfilePref, hasProfile, defaultProfile as defaultBrowserProfile, profileIds as browserProfileIds } from '../web/browser-profiles.mjs';
+import { createBrowserBridge, BROWSER_MCP_PATH } from './browser-bridge.mjs';
 import { validBrowserPref, externalOrigin } from '../web/browser-confirm-policy.mjs';
 import { computerUsePrefs, validComputerUse } from '../web/computer-prefs.mjs';
 import { computerUseCapability } from './computer-use-capability.mjs';
@@ -298,6 +300,17 @@ process.on('exit', () => claudeLogin.cancelAll());
 const compatSecrets = createSecretStore({ file: path.join(store.dataDir, 'compat-endpoint-secrets.json'), cipher: secretCipher });
 compatSecrets.migrate().catch(() => {});
 const compatEndpoints = createCompatEndpoints({ dataDir: store.dataDir, secrets: compatSecrets });
+// 通話モード（core/voice/、docs/voice-call.md）。OpenRouter のキーはホストだけが持つ（voice-secrets.json。画面へは返さない）。
+// 音声は /voice-ws（バイナリ）で受け渡し、読み上げは emitGlobal の text.delta から作る
+const voiceHost = createVoiceHost({
+  dataDir: store.dataDir, cipher: secretCipher, getPrefs: () => store.getPrefs(), uiLang: () => currentLocale(), t, isLocal: isLocalRequest,
+  // bot の会話が属するスレッド（スレッドの通話が読み上げる会話を決める）
+  resolveThread: async (sessionId) => {
+    const bot = (await store.get(sessionId).catch(() => null))?.bot;
+    return bot?.kind === 'thread' && bot.channelId && bot.threadId ? { channelId: bot.channelId, threadId: bot.threadId } : null;
+  },
+  log: (line, fields) => console.log(`  ${line}${fields ? ` ${JSON.stringify(fields)}` : ''}`),
+});
 // 同じデータ置き場を別の Pleiad（開発版と配布版）が使っていることがあるので、走っている会話のファイルは消さない（1 日より古いものだけ）
 sweepClaudeFlagSettings(store.dataDir, { olderThanMs: 24 * 60 * 60_000 }).catch(() => {});
 const mcpOAuth = createMcpOAuth({ secrets: mcpSecrets, lockDir: path.join(store.dataDir, 'mcp-locks'),
@@ -364,6 +377,14 @@ const pushNotifier = createPushNotifier({
   // 試験で待たずに済むよう、短いターンの下限だけ環境変数で変えられる（既定 30 秒）
   shortTurnMs: Number.isFinite(Number(process.env.AGENT_HOST_NOTIFY_MIN_TURN_MS)) && process.env.AGENT_HOST_NOTIFY_MIN_TURN_MS !== undefined
     ? Number(process.env.AGENT_HOST_NOTIFY_MIN_TURN_MS) : undefined,
+});
+// 通知の一覧（ベルのボタン。ADR 0149）。DB の notifications 表。書く側は core/notification-sources.mjs（ターンの完了・承認・チャンネルの出来事から行を作る）。
+// 件数が変わったら notificationsChanged を全画面へ（リモートの端末にも届く）
+const inbox = createNotifications({ dataDir: store.dataDir, emit: event => emitGlobal({ ...event, sessionId: null }) });
+const inboxSources = createNotificationSources({
+  inbox, store, viewing: sessionId => notifyPresence.viewing(sessionId), titleOf: sessionId => conversationTitleOf(sessionId),
+  channels: () => botHost?.opsDeps().channels ?? null, bots: () => botHost?.opsDeps().bots ?? null,
+  hiddenKinds: HIDDEN_BOT_KINDS, log: line => console.error(`  ${line}`),
 });
 // ホストとして常駐する設定（docs/remote.md §6.3。core/remote/resident.mjs）。使うのはデスクトップ版のホストだけ（available）。
 // トレイとスリープの抑止は main（desktop/resident.cjs）が持つ。リモート・実行中の作業・ルーティンの変更時に送る
@@ -1071,38 +1092,8 @@ function computerConnection(turn) {
   return entry.computer;
 }
 
-// ---- 内蔵ブラウザーのプロフィール（docs/inapp-browser.md「プロフィール」、ADR 0078） ----------------------------
-// 会話の今のプロフィールの正本は会話のメタ。ターンは開始時に決めた値を turn.browserProfile に持ち、ply_browser の切り替えはそれを書き換える
-const browserProfiles = createBrowserProfiles({ getPrefs: store.getPrefs, getSession: id => store.get(id), setSessionData: store.setSessionData, rememberLast: store.rememberBrowserProfile });
-/** 中継のキー（新しい会話の最初のターンは仮のキー）か会話 ID から、走っているターン */
-const browserTurn = id => id ? runtime.turns.get(id) ?? [...runtime.turns.values()].find(turn => turn.browserRelayId === id) ?? null : null;
-// ply_browser: エージェントがプロフィールの一覧を読み、会話の今のプロフィールを切り替える。文はエージェントの言語（agent 名前空間）
-async function callBrowserOp(owner, name, args, { locale: lng0 } = {}) {
-  const turn = runtime.turns.get(owner);
-  const lng = turn?.agentLocale ?? lng0;
-  if (!turn || turn.ac.signal.aborted) throw new Error(agentT(lng, 'delegation.notRunning'));
-  const prefs = await store.getPrefs();
-  const mainName = agentT(lng, 'browserProfiles.main');
-  const current = hasProfile(prefs, turn.browserProfile) ? turn.browserProfile : await browserProfiles.resolve(turn.info.sessionId);
-  const row = (p, now = current) => ({ id: p.id, name: profileName(p, mainName), ...(p.id === defaultBrowserProfile(prefs) ? { default: true } : {}),
-    ...(p.id === now ? { current: true } : {}), ...(p.memo ? { memo: p.memo } : {}) });
-  if (name === 'list_browser_profiles') return { current, profiles: profileList(prefs).map(p => row(p)) };
-  const target = findProfile(prefs, args.profile, mainName);
-  if (!target) throw new Error(agentT(lng, 'browserProfiles.unknown', { profile: String(args.profile ?? '').slice(0, 80), names: profileList(prefs).map(p => profileName(p, mainName)).join(', ') }));
-  if (target.id === current) return { profile: row(target), changed: false };
-  turn.browserProfile = target.id;
-  if (turn.info.sessionId) await browserProfiles.set(turn.info.sessionId, target.id, turn.info.cwd);
-  // main はタブの一覧と中継のタブ集合を替え、画面に「<エージェント名> が『…』に切り替えました」を出す
-  agentBrowser?.profile(turn.browserRelayId ?? turn.info.sessionId ?? turn.key, target.id, turn.backend.label);
-  return { profile: row(target, target.id), changed: true, note: agentT(lng, 'browserProfiles.switched') };
-}
-const browserOpIds = { list_browser_profiles: 'browser.listProfiles', use_browser_profile: 'browser.useProfile' };
-const browserBridge = createBrowserBridge({ call: async (owner, name, args, { locale } = {}) => {
-  const sessionId = owner();
-  const result = await opsRegistry.invoke({ by: 'agent', via: 'mcp', sessionId }, browserOpIds[name], args, opsDeps(locale));
-  if (!result.ok) throw new Error(result.error);
-  return result.result;
-} });
+// ---- ply_browser（エージェントのブラウザー操作の口。core/browser-bridge.mjs、ADR 0148）。ツールはまだ載せていない ----------------------------
+const browserBridge = createBrowserBridge();
 /** このターンに渡す ply_browser（url・headers）。会話のあいだ同じ口を使う（agy は起動時にしか渡せない） */
 function browserRuntimeFor(turn) {
   const entry = conversationConnection(turn);
@@ -1362,11 +1353,12 @@ const wss = new WebSocketServer({ noServer: true });
 
 server.on("upgrade", (req, socket, head) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
-  if (url.pathname !== "/ws") return socket.destroy();
+  if (url.pathname !== "/ws" && url.pathname !== VOICE_PATH) return socket.destroy();
   if (!tokenOk(url.searchParams.get("token"))) {
     socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
     return socket.destroy();
   }
+  if (url.pathname === VOICE_PATH) return voiceHost.upgrade(req, socket, head);   // 通話の音声（バイナリ）。/ws とは別の口
   wss.handleUpgrade(req, socket, head, (ws) => wss.emit("connection", ws, req));
 });
 
@@ -1808,12 +1800,14 @@ function giveUp() {
 // 会話の一覧の行を変えない、数の多い出来事。これ以外の出来事ではネイティブ一覧の使い回しを捨てる（nativeSessions）
 const LIST_NEUTRAL_EVENTS = new Set([
   "text.delta", "text.end", "thinking.start", "thinking.delta", "tool.start", "tool.result", "activity",
-  "userMessage.delivered", "running", "permission", "outbox", "mcpAuth", "claudeLogin", "computer.state",
+  "userMessage.delivered", "running", "permission", "permissionSettled", "outbox", "mcpAuth", "claudeLogin", "computer.state",
   "contextWindow", "compaction", "compactionSchedule", "autoCompactionSettings", "conversationAutoCompaction", "settingsChanged", "settingApproval",
   // 入力欄の `!`（core/shell-runs.mjs）。一覧の行は変わらない
   "shell.start", "shell.output", "shell.done", "shell.skip", "shell.handed",
   // チャンネル・bot・記憶・ルーティンの出来事。会話の一覧の行は変わらない（bot の会話の行の変化は sessionsChanged が伝える）
-  "channelsChanged", "channelPost", "channelReaction", "channelThread", "channelRead", "botsChanged", "memoryChanged", "routinesChanged", "channelEvent",
+  "channelsChanged", "channelPost", "channelReaction", "channelThread", "channelRead", "botsChanged", "memoryChanged", "routinesChanged", "channelEvent", "voiceChanged",
+  // 通知の一覧の件数（ベルのボタン。ADR 0149）。会話の一覧の行は変わらない
+  "notificationsChanged",
 ]);
 
 // 接続ごとに、いま開いている会話（loadSession の watch）。宣言した接続には、流れの出来事（streamEvents）を
@@ -1886,7 +1880,8 @@ const completionNotices = createCompletionNotices({
   busy: sessionId => sessionBusy(sessionId) || awaitedBackground(sessionId) || hasPendingChild(agentTasks?.list(sessionId) ?? []),
   send: event => sendTo({ kind: P.EVENT, event }),
   // 落ち着いた時点で、画面が居なくてもスマホへ 1 回（委譲の子の完了は endTurn が渡さない。依頼元の完了に含む）
-  ready: ({ sessionId, outcome, completedAt, startedAt }) => {
+  ready: ({ sessionId, outcome, completedAt, startedAt, uuid }) => {
+    void inboxSources.completion({ sessionId, outcome, completedAt, uuid });
     store.get(sessionId).then(async meta => {
       if (meta?.delegation) return;
       botHost?.onSessionDone(sessionId, outcome);
@@ -1914,7 +1909,10 @@ async function savePref(key, value, backendId) {
 const liveReads = new Set();
 let streamSequence = 0;
 function emitGlobal(event) {
+  voiceHost.onEvent(event);   // 通話が見ている会話の読み上げ（core/voice/host.mjs）
   if (event.type === 'routinesChanged') void postResident();
+  // 通知の一覧: 人以外の投稿の @あなた・チャンネルの既読・アーカイブ（ADR 0149）
+  if (event.type === 'channelPost' || event.type === 'channelRead' || event.type === 'channelsChanged') void inboxSources.observe(event);
   if (!LIST_NEUTRAL_EVENTS.has(event.type)) invalidateSessionLists();
   if (streamEvents.has(event.type)) event = { ...event, streamSeq: ++streamSequence };
   const live = runtime.turns.get(event.sessionId);
@@ -2111,6 +2109,8 @@ function makeEmit(turn) {
     if (event?.type === "userMessage.dropped" && turn.info.sessionId && event.messageId) {
       outbox.returned(turn.info.sessionId, event.messageId).catch(() => {});
     }
+    // 最後の発言の id（通知の一覧の飛び先。ターンの終わりに completionNotices へ渡す）
+    if (event?.type === "text.end" && typeof event.uuid === "string" && event.uuid) turn.lastUuid = event.uuid;
     if (event?.type === "turnResult") {
       if (turn.compactTrigger) event = { ...event, compact: true };
       if (turn.stream.initialMessageId) event = { ...event, messageId: turn.stream.initialMessageId };
@@ -2180,8 +2180,6 @@ function makeEmit(turn) {
           backend: turn.backend.id, cwd, createdAt: turn.info.startedAt, lastModified: Date.now(),
           turnStartedAt: turn.startedAtMs, interrupted: null,
         }),
-        // ターンで使っていた内蔵ブラウザーのプロフィールを会話に残す（ADR 0078）
-        turn.browserProfile ? browserProfiles.set(sessionId, turn.browserProfile, cwd).catch(() => {}) : null,
         store.setMode(sessionId, mode),
           store.setModel(sessionId, model ?? ""),
           store.setSessionData(sessionId, "effort", turn.info.effort ?? ""),
@@ -2418,20 +2416,6 @@ async function applyPlyInstructions(next) {
   await savePref('addedContext', null);
   plyInstructionsCache = next;
   return next;
-}
-
-/** 内蔵ブラウザーのプロフィール（ADR 0078）。一覧・既定・新しい会話の規則。消えたプロフィールの既定と「このサイトは常に」は片付ける。値の検査は呼び出し側 */
-async function applyBrowserProfilePref(key, value) {
-  let prefs = await savePref(key, value);
-  if (key === 'browserProfiles') {
-    const ids = browserProfileIds(prefs);
-    if (prefs.browserDefaultProfile && !ids.includes(prefs.browserDefaultProfile)) prefs = await savePref('browserDefaultProfile', null);
-    const sites = prefs.agentSitePermissions ?? [];
-    const kept = sites.filter(row => !row.profile || ids.includes(row.profile));
-    if (kept.length !== sites.length) prefs = await savePref('agentSitePermissions', kept);
-  }
-  agentBrowser?.prefs(prefs);
-  return prefs;
 }
 
 /** 内蔵ブラウザーの確認と「このサイトは常に」。保存して、走っているブラウザーの方針にも伝える。値の検査は呼び出し側 */
@@ -2683,8 +2667,6 @@ async function createSession(args) {
   const sessionId = await createConversation(backend, info);
   try {
     await store.setMeta(sessionId, { backend: backend.id, ...info, status, unsent: true });
-    // 内蔵ブラウザーのプロフィール: 引き継ぎ元があればそのもの、無ければ作業フォルダーで最後に使ったもの / 既定（ADR 0078）
-    await store.setSessionData(sessionId, 'browserProfile', await browserProfiles.forNew(cwd, source), { durable: true });
     // 互換の接続先（決定 2・3）: 同じエージェントの引き継ぎなら元の会話の接続先（予約中ならそれ）を継ぐ。
     // それ以外は設定で「既定にする」を押した接続先（無ければ公式）。削除済みは継がない
     let endpoint = '';
@@ -2864,6 +2846,7 @@ async function deleteSessionOf(sessionId) {
     relayHops.delete(sessionId);
     completionNotices.forget(sessionId);
     pushNotifier.viewed(sessionId);
+    void inboxSources.sessionRemoved(sessionId);
     releaseAgentConnection(sessionId);
     const cleanups = [
       history.forgetPresents(sessionId),
@@ -3033,6 +3016,8 @@ const noteRelayHops = (sessionId, args, { steered = false } = {}) => {
 async function markReads(reads) {
   const changed = await store.markRead(reads);
   if (changed.length) emitGlobal({ type: "read", sessionId: null, reads: changed });
+  // 通知の一覧: 会話の既読が進んだ分の完了・失敗の通知も既読にする（ADR 0149）
+  try { for (const [id, readAt] of changed) inbox.markSession(id, readAt); } catch (e) { console.error('  通知の一覧: 既読にできなかった:', String(e?.message ?? e)); }
   // どこかで見た完了・失敗は、スマホに出ている通知を消す
   for (const [id] of changed) pushNotifier.viewed(id);
   return changed;
@@ -3788,19 +3773,13 @@ function opsDeps(lng = currentLocale()) {
       providerUsage: (id) => providerUsageOf({ backend: id }) },
     conversations: opsConversations,
     agents: opsAgents,
-    browser: { call: (owner, name, args, locale) => callBrowserOp(owner, name, args, { locale }),
-      setProfile: async (sessionId, profile) => {
-        const meta = await store.get(sessionId);
-        if (!await browserProfiles.set(sessionId, profile, meta.cwd)) throw new OpError('INVALID', t('settings.unknownPrefValue', { key: 'browserProfile', value: String(profile) }));
-        const live = browserTurn(sessionId);
-        if (live) live.browserProfile = profile;
-        return { profile };
-      } },
     prefs: () => store.getPrefs(),
+    voice: { status: () => voiceHost.status() },
     compactionSettings: () => compactionSettings,
     statuses: opsStatuses,
     worktrees: opsWorktrees,
     notify: opsNotify,
+    notifications: inbox,
     compat: opsCompat,
     computer: opsComputer,
     // MCP・Hooks・コンテキスト・リモート・接続先の操作（core/ops/mcp.mjs・hooks.mjs・context.mjs・remote.mjs。ADR 0095）。WS の同じ名前のコマンドがしていた処理
@@ -3835,7 +3814,6 @@ function opsDeps(lng = currentLocale()) {
     writes: {
       pref: (key, value, backendId) => savePref(key, value, backendId),
       browserPref: applyBrowserPref,
-      browserProfiles: (value, key = 'browserProfiles') => applyBrowserProfilePref(key, value),
       compaction: applyAutoCompaction,
       routing: applyRoutingSettings,
       plyInstructions: applyPlyInstructions,
@@ -4158,9 +4136,14 @@ const askPermission = async ({ toolName, input, sessionId, toolUseID, title, sig
       let found = false;
       for (const card of cards) if (runtime.waiting.delete(card.id)) found = true;
       if (!found) return;
+      // 片付いたことを画面へ知らせる。本来のカードも、祖先の会話の中継の複製も、ほかの窓・リモートの画面に残った写しも、これで畳める
+      // （running の permissions から消えるだけでは、開いたままのカードは変わらない）。複製は id ごと・会話ごとに 1 つずつ
+      for (const card of cards) emitGlobal({ type: 'permissionSettled', id: card.id, sessionId: card.payload.sessionId ?? null, allow: answer?.allow === true, reason: answer?.messageKey ?? null });
       remoteRelay?.end(answer?.messageKey === 'aborted' ? 'abort' : 'host', answer?.allow === true);
       // スマホに出ている承認・質問の通知を消す（どの端末で答えても、ターンが終わっても）
       pushNotifier.approvalResolved({ id: cards[0].id, sessionId: payload.sessionId });
+      // 通知の一覧のあなた待ちを決着させる（承認済み・回答済み・却下・取り消し。ADR 0149）
+      void inboxSources.permissionSettled({ id: cards[0].id, answer, kind: payload.kind });
       botHost?.onPermission({ id: cards[0].id, ...payload }, 'settled');
       signal?.removeEventListener?.("abort", onAbort);
       const { messageKey, messageParams, ...rest } = localize(answer);
@@ -4191,6 +4174,8 @@ const askPermission = async ({ toolName, input, sessionId, toolUseID, title, sig
       });
     }
     botHost?.onPermission({ id: cards[0].id, ...payload }, 'open');
+    // 通知の一覧のあなた待ち。委譲の子の承認は、カードが出ている依頼元の会話へ飛ぶ（ADR 0149）
+    if (payload.sessionId) void inboxSources.permissionOpened({ id: cards[0].id, sessionId: payload.sessionId, kind: payload.kind, via: ancestors[0] ?? null });
     signal?.addEventListener?.("abort", onAbort, { once: true });
     // 離れたスマホへ（画面が居るかによらない。委譲の子の承認・質問は子の会話の分だけ。中継の複製は送らない）
     // （会話名を読むあいだに決着していたら送らない。送ると取り消しが先に行ってしまい、通知が残る）
@@ -4225,12 +4210,8 @@ agentBrowser?.configureAuthorization(createBrowserSiteApprovals({
     return turn ? { id: turn.backend.id, label: turn.backend.label, sessionId: turn.info.sessionId || turn.key, signal: turn.ac.signal, locale: turn.agentLocale } : null;
   },
   askPermission, translate: t,
-  // 確認の文に添えるプロフィールの名前（画面の言語）
-  profileLabel: id => browserProfiles.label(id, t('browserProfiles.main')),
   remember: async site => { const prefs = await store.rememberBrowserSite(site); emitGlobal({ type: 'prefs', sessionId: null, prefs, locale }); },
 }));
-// main が覚えていない会話の今のプロフィール。走っているターン（仮のキーを含む）はターンの値、ほかは会話のメタ
-agentBrowser?.configureProfiles(async id => browserTurn(id)?.browserProfile ?? browserProfiles.resolve(id));
 agentBrowser?.prefs(await store.getPrefs());
 agentBrowser?.loadPolicy(await store.getPrefs());
 
@@ -4324,6 +4305,8 @@ await outbox.recover();
   const recovered = await store.recoverInterruptedTurns(Date.now()).catch(err => { console.error("  中断の記録に失敗:", String(err?.message ?? err)); return []; });
   if (recovered.length) console.log(`  前の起動で終わらなかったターン ${recovered.length} 件を中断として残した`);
 }
+// 前の起動で待っていた承認・質問はメモリにしか無く、再起動で消えた。通知の一覧のあなた待ちも決着させる（ADR 0149）
+try { inbox.settleAllWaiting('cancelled'); } catch (e) { console.error('  通知の一覧: あなた待ちを決着させられなかった:', String(e?.message ?? e)); }
 // 親が走っている・裏の作業が残っている・送信待ちがあるときは完了通知を送らない（docs/agent-delegation.md「完了通知」）
 const noticeBlocked = async owner => sessionBusy(owner) || awaitedBackground(owner) || (await outbox.list(owner)).some(m => !['sent', 'cancelled'].includes(m.status));
 
@@ -5034,8 +5017,6 @@ async function runTurnInternal(args, onStarted, hooks) {
         await shellRuns.settled(sessionId, turn.ac.signal);
         if (turn.ac.signal.aborted) throw new Error(t('turn.aborted'));
       }
-      // 内蔵ブラウザーのプロフィール（ADR 0078）。会話の今のもの。中継の準備で main に渡す。ply_browser の切り替えはここを書き換える
-      if (agentBrowser) turn.browserProfile = await (sessionId ? browserProfiles.resolve(sessionId) : browserProfiles.forNew(cwd)).catch(() => null);
       // bot の会話なら、人格（botInstructions）と、ターンの末尾（記憶の核の写し・差分。notes）を足す。bot でなければ空
       const botExtras = await botHost?.turnExtras(turn) ?? { botInstructions: null, notes: [] };
       const notes = [...(interruption ? [interruption.text] : []), ...botExtras.notes];
@@ -5066,9 +5047,9 @@ async function runTurnInternal(args, onStarted, hooks) {
         // エージェントに渡す文（指示・ツールの説明・タイトル生成など）の言語。会話ごとに決めて保存したもの
         locale: agentLocale,
         visualizeInstructions: visualizeInstructions(agentLocale),
-        browserEnv: await browserEnvironment({ bridge: agentBrowser, dataDir: store.dataDir, sessionId: sessionId || turn.key, unlock: turn.userInitiated, profile: turn.browserProfile }).catch(error => { console.error('agent browser unavailable:', error.message); return null; }),
+        browserEnv: await browserEnvironment({ bridge: agentBrowser, dataDir: store.dataDir, sessionId: sessionId || turn.key, unlock: turn.userInitiated }).catch(error => { console.error('agent browser unavailable:', error.message); return null; }),
         browserInstructions: null,
-        // ply_browser（プロフィールの一覧と切り替え）。内蔵ブラウザーを渡すターンだけ（下で入れる）
+        // ply_browser。内蔵ブラウザーを渡すターンだけ（下で入れる）
         browserRuntime: null,
         // ply_computer（url・headers・instructions）。使えない・オフ・対応しないエージェントなら null（computerRuntimeFor）
         computerRuntime: await computerRuntimeFor(turn),
@@ -5293,7 +5274,7 @@ async function endTurn(turn, emit, { record = true } = {}) {
   // 空いている間の自動圧縮（idle）は利用者の作業ではないので、完了として知らせない
   // 夜の整理・心拍の隠れた会話（learner・pulse）は、完了も失敗も知らせない（失敗は memory.learnStatus・bot のページで見える。ADR 0127）
   if (!delegated && !HIDDEN_BOT_KINDS.has(botKind) && turn.compactTrigger !== 'idle') completionNotices.finished(turn.info.sessionId,
-    turn.outcome, completedAt, { startedAt: turn.startedAtMs, bot: botKind });
+    turn.outcome, completedAt, { startedAt: turn.startedAtMs, bot: botKind, uuid: turn.lastUuid });
   settingApprovals?.changed();
   // bot の会話なら、ターンの投稿を確定し、たまった出来事を渡す（ターンを手放した後。待たない）
   if (!requeued) void botHost?.onTurnEnd(turn, { outcome: turn.outcome, interrupted, requeued });
@@ -5965,6 +5946,8 @@ wss.on("connection", (ws, req) => {
     startedAt: SERVER_STARTED_AT,
     // 離れた端末への通知（ADR 0086）を受けられる。古いホストにはこの欄が無く、端末は鍵の登録を送らない
     notify: 1,
+    // 通話モード（/voice-ws）に対応している。キーを持つこの PC の画面だけ（中継越しの端末の画面には出さない。docs/voice-call.md）
+    voice: local ? 1 : 0,
     // 画面の言語。setting は設定値（auto|ja|en）、lang は実際に使う言語（ja|en）
     locale,
     // 送信予定の時刻をこの PC の時刻でも添えるため（見ている端末と時刻帯が違うとき。ADR 0103）
@@ -6346,10 +6329,22 @@ wss.on("connection", (ws, req) => {
           emitGlobal({ type: 'delegationRoutingChanged', change: 'settings', sessionId: null });
           return reply(true, await delegationRoutingState());
         }
+        // 通話の OpenRouter のキー（設定 › 通話）。登録が音声の外部送信の同意になる（キーが無ければ何も送らない）。キーは返さない
+        case 'setVoiceKey':
+        case 'deleteVoiceKey': {
+          if (msg.command === 'deleteVoiceKey') await voiceHost.deleteKey();
+          else {
+            try { await voiceHost.setKey(msg.args?.key); }
+            catch (e) { throw e?.code === 'INVALID_KEY' ? new Error(t('voice.key.invalid')) : e; }
+          }
+          emitGlobal({ type: 'voiceChanged', sessionId: null });
+          return reply(true, { ...(await voiceHost.status()), ...(msg.command === 'setVoiceKey' ? { check: await voiceHost.checkKey() } : {}) });
+        }
         case "resolvePermission": {
           const { id, allow, always, scope, message, messageKey, answers, annotations, response, receipt } = msg.args ?? {};
           const w = runtime.waiting.get(id);
-          if (!w) return reply(false, t('approval.alreadyResolved'));
+          // 片付いた承認への答え。画面は失敗にせず、そのカードを「別の場所で処理されました」に畳む（code で見分ける）
+          if (!w) return reply(false, t('approval.alreadyResolved'), 'ALREADY_RESOLVED');
           // ホストの子の承認の中継（この PC の会話のカード）。人の答えをホストへ運ぶ（受領証・1 回だけはホストが照合する。docs/remote.md §4.5）。
           // この道は画面（human）の WS のこの処理だけ。AI の道具（MCP・CLI・ply_task_*）からは作れない
           if (w.remote) {
@@ -6391,7 +6386,11 @@ wss.on("connection", (ws, req) => {
           const a = msg.args ?? {};
           const via = connectionDevices.get(ws);
           notifyPresence.set(ws, { deviceId: via?.id ?? null, platform: via?.platform ?? null, visible: a.visible === true, sessionId: a.sessionId });
-          if (a.visible === true && typeof a.sessionId === 'string' && a.sessionId) pushNotifier.viewed(a.sessionId);
+          if (a.visible === true && typeof a.sessionId === 'string' && a.sessionId) {
+            pushNotifier.viewed(a.sessionId);
+            // 開いて見た会話の通知（あなた待ち・完了・失敗）は既読にする（ADR 0149）
+            try { inbox.viewSession(a.sessionId); } catch (e) { console.error('  通知の一覧: 既読にできなかった:', String(e?.message ?? e)); }
+          }
           return reply(true, 'ok');
         }
 
@@ -6812,12 +6811,6 @@ wss.on("connection", (ws, req) => {
         case "sessionChanges":
           return viaOp('sessions.changes', args);
 
-        // 会話の今の内蔵ブラウザーのプロフィールを人が替えた（右パネルのメニュー。main のタブの一覧は画面が先に替えている。ADR 0078）。
-        // 会話に残し、作業フォルダーの「最後に使ったもの」と、走っているターン（ply_browser の今のもの）にも伝える
-        case "setBrowserProfile": {
-          const r = await opsRegistry.invoke({ by: 'human', via: 'ui', local }, 'browser.setProfile', msg.args, opsDeps(locale.lang));
-          return r.ok ? reply(true, r.result) : reply(false, r.error, r.code);
-        }
         case "setTitle": {
           const r = await opsRegistry.invoke({ by: 'human', via: 'ui', local }, 'sessions.setTitle', msg.args, opsDeps(locale.lang));
           return r.ok ? reply(true, "ok") : reply(false, r.error, r.code);
@@ -6865,6 +6858,7 @@ mainPort.on("message", async ({ data }) => {
     mainPort.postMessage({ type: 'abort', id: data.id, ...result });
   }
   if (data?.type === "shutdown") {
+    void voiceHost.close();   // 通話の使用量の台帳を書き切る
     try { finishShutdown(store.flushNow, () => runtime.turns.size > 0 || agentTasks.busy); }
     catch (e) {
       console.error('session store shutdown save failed:', e?.code ?? e?.message ?? e);

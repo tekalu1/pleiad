@@ -70,6 +70,11 @@
   /* -- 影。浮いているもの（候補一覧・設定メニュー）にだけ。青みを持たせて地に馴染ませる -- */
   --shadow:rgba(58,73,158,.16);
 
+  /* -- 通話の光（--glow-*）。通話中のメインの背景（web/voice.css の .vc-aurora）だけ。面は無彩色という規則の例外で、radial-gradient の色と濃さにだけ使う（lint-design が場所を絞る）。
+        --glow-ink-* は通話中だけ弱い字・リンクを 1 段濃く（ダークは明るく）して、光の上でも 4.5:1 を保つ。承認済み 2026-10-06（docs/design-system.md「通話モード」） -- */
+  --glow-1:#4b63e8;--glow-2:#b04ee6;--glow-strength:.40;
+  --glow-ink-weak:#454d7a;--glow-ink-blue:#34428f;
+
   /* -- 余白。4 の倍数。数字を等幅にするので、余白も刻みを揃える -- */
   --sp-1:4px;--sp-2:8px;--sp-3:12px;--sp-4:16px;--sp-5:24px;--sp-6:32px;
 
@@ -114,6 +119,7 @@
     --ink-code-comment:#6f7699;--ink-code-string:#b8c4e0;--ink-code-number:#c48fd4;
     --ink-code-keyword:#8fa0e6;--ink-code-fn:#dfe3f2;
     --shadow:rgba(0,0,0,.5);
+    --glow-1:#6e8cff;--glow-2:#c76bff;--glow-strength:.42;--glow-ink-weak:#b4bbdd;--glow-ink-blue:#b0bbea;
     --diff-add-line:#1b3124;--diff-add-word:#2a5838;--diff-add-gutter:#213c2c;
     --diff-del-line:#3a1f26;--diff-del-word:#6a2a36;--diff-del-gutter:#48252f;
     --diff-add-ink:#6fce8f;--diff-del-ink:#f28b98;--diff-mod-ink:#dcb36a;
@@ -134,6 +140,7 @@
   --ink-code-comment:#6f7699;--ink-code-string:#b8c4e0;--ink-code-number:#c48fd4;
   --ink-code-keyword:#8fa0e6;--ink-code-fn:#dfe3f2;
   --shadow:rgba(0,0,0,.5);
+  --glow-1:#6e8cff;--glow-2:#c76bff;--glow-strength:.42;--glow-ink-weak:#b4bbdd;--glow-ink-blue:#b0bbea;
   --diff-add-line:#1b3124;--diff-add-word:#2a5838;--diff-add-gutter:#213c2c;
   --diff-del-line:#3a1f26;--diff-del-word:#6a2a36;--diff-del-gutter:#48252f;
   --diff-add-ink:#6fce8f;--diff-del-ink:#f28b98;--diff-mod-ink:#dcb36a;

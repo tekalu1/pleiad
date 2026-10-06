@@ -20,7 +20,6 @@ export const title = '内蔵ブラウザーの付け直し（main 側）: 中継
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 const until = async (check, ms = 3000) => { const end = Date.now() + ms; while (!check()) { if (Date.now() > end) return false; await sleep(10); } return true; };
 const KEY = 'b'.repeat(48);
-const WORK = 'pbbbbbbbb';
 
 /** 空いているポート（取って離す） */
 function freePort() {
@@ -98,7 +97,6 @@ function newPanel() {
   const electron = fakeElectron();
   const panel = bp.createBrowserPanel({ ...electron.deps, userData: null });
   panel.attach?.();
-  panel.setProfiles({ ids: ['main', WORK], defaultProfile: 'main' });
   const contents = () => [...panel.__tabs ?? []];
   return { panel, electron, contents };
 }
@@ -110,10 +108,9 @@ function bridgeKit() {
   worker.postMessage = message => { worker.sent.push(message); };
   worker.say = message => worker.emit('message', message);
   const base = relayPanel();
-  const log = { restored: [], state: { tabs: [{ sessionId: 's1', profile: 'main', url: 'https://example.com/a', selected: true }], profiles: [{ sessionId: 's1', profile: 'main' }] } };
+  const log = { restored: [], state: { tabs: [{ sessionId: 's1', url: 'https://example.com/a', selected: true }] } };
   const stateListeners = new Set();
-  const panel = { ...base, setNavigationGuard() {}, setAgent() {}, setLoadPolicy() {}, setProfiles() {}, setProfileFor() {}, profileOf: () => 'main', profileOfTab: () => 'main', profileFor: () => 'main',
-    onProfileChanged: () => () => {},
+  const panel = { ...base, setNavigationGuard() {}, setAgent() {}, setLoadPolicy() {},
     exportState: () => structuredClone(log.state),
     restoreState: state => { log.restored.push(state); for (const tab of state.tabs) base.createFor(tab.sessionId, tab.url); return state.tabs.length; },
     onStateChanged: l => { stateListeners.add(l); return () => stateListeners.delete(l); } };
@@ -176,16 +173,14 @@ export default async function (t) {
     panel.createFor('s1', 'https://example.com/b');
     panel.createFor('s1', 'file:///C:/private.html');
     panel.createFor('s1', 'about:blank');
-    panel.setProfileFor('s2', WORK);
     panel.createFor('s2', 'https://work.example.com/');
     panel.createFor(null, 'http://localhost:3000/');
     panel.selectFor(a.id);
     const state = panel.exportState();
     const urls = state.tabs.map(tab => tab.url);
-    t.ok('exportState: http(s) のタブだけ（file:・空のタブは写さない）。会話・プロフィール・URL を持つ', urls.join() === 'https://example.com/a,https://example.com/b,https://work.example.com/,http://localhost:3000/'
-      && state.tabs.find(tab => tab.url.includes('work.example')).profile === WORK && state.tabs.find(tab => tab.url.includes('localhost')).sessionId === null);
+    t.ok('exportState: http(s) のタブだけ（file:・空のタブは写さない）。会話・URL を持つ', urls.join() === 'https://example.com/a,https://example.com/b,https://work.example.com/,http://localhost:3000/'
+      && !('profile' in state.tabs[0]) && state.tabs.find(tab => tab.url.includes('localhost')).sessionId === null);
     t.ok('exportState: 会話ごとに最後に選んだタブに印を付ける', state.tabs.find(tab => tab.url === 'https://example.com/a').selected === true && state.tabs.find(tab => tab.url === 'https://example.com/b').selected === false);
-    t.ok('exportState: 会話ごとの今のプロフィールを持つ', state.profiles.some(row => row.sessionId === 's2' && row.profile === WORK));
     t.ok('exportState の中身は JSON で運べる（クローンでなく文字列にできる）', JSON.parse(JSON.stringify(state)).tabs.length === 4);
     const changes = [];
     panel.onStateChanged(() => changes.push(1));
@@ -198,13 +193,13 @@ export default async function (t) {
     const made = fresh.panel.restoreState(JSON.parse(JSON.stringify(state)));
     t.ok('restoreState: 写しのタブを開き直す（数を返す）', made === 4);
     const again = fresh.panel.exportState();
-    t.ok('開き直したタブの URL・会話・プロフィールは前と同じ', JSON.stringify(again.tabs.map(tab => [tab.sessionId, tab.profile, tab.url])) === JSON.stringify(state.tabs.map(tab => [tab.sessionId, tab.profile, tab.url])));
+    t.ok('開き直したタブの URL・会話は前と同じ', JSON.stringify(again.tabs.map(tab => [tab.sessionId, tab.url])) === JSON.stringify(state.tabs.map(tab => [tab.sessionId, tab.url])));
     t.ok('会話ごとに最後に選んでいたタブを選び直す', again.tabs.find(tab => tab.url === 'https://example.com/a').selected === true && again.tabs.find(tab => tab.url === 'https://example.com/b').selected === false);
-    t.ok('プロフィールの設定が届いた後なら、その会話のプロフィールも戻る（中継のタブの絞り込みがプロフィールで効く）', fresh.panel.profileFor('s2') === WORK && fresh.panel.tabsFor('s2').length === 1 && fresh.panel.tabsFor('s1').length === 2);
+    t.ok('開き直したタブは元の会話に属する（中継のタブの絞り込みが会話で効く）', fresh.panel.tabsFor('s2').length === 1 && fresh.panel.tabsFor('s1').length === 2);
     const hostile = newPanel();
-    const none = hostile.panel.restoreState({ tabs: [{ sessionId: 's1', profile: 'main', url: 'file:///C:/Windows/win.ini' }, { sessionId: 's1', profile: 'main', url: 'javascript:alert(1)' }, { sessionId: 's1', profile: '../x', url: 'https://example.com/ok' }, null, 'x'], profiles: [{ sessionId: 's1', profile: '../x' }] });
-    t.ok('restoreState: file:・javascript: は開かない。形の悪いプロフィールは既定に倒す', none === 1 && hostile.panel.exportState().tabs.length === 1 && hostile.panel.exportState().tabs[0].profile === 'main');
-    t.ok('restoreState: 空・知らない形でも落ちない', newPanel().panel.restoreState() === 0 && newPanel().panel.restoreState({ tabs: 'x', profiles: 3 }) === 0);
+    const none = hostile.panel.restoreState({ tabs: [{ sessionId: 's1', url: 'file:///C:/Windows/win.ini' }, { sessionId: 's1', url: 'javascript:alert(1)' }, { sessionId: 's1', url: 'https://example.com/ok' }, null, 'x'] });
+    t.ok('restoreState: file:・javascript: は開かない', none === 1 && hostile.panel.exportState().tabs.length === 1);
+    t.ok('restoreState: 空・知らない形でも落ちない', newPanel().panel.restoreState() === 0 && newPanel().panel.restoreState({ tabs: 'x' }) === 0);
     void electron;
   }
 
@@ -251,27 +246,27 @@ export default async function (t) {
     const kit = bridgeKit();
     const port = await freePort();
     const bridge = attachAgentBrowserBridge(kit.worker, kit.panel, { handover: true, reportMs: 30, restoreWaitMs: 400 });
-    t.ok('起動で browser-restore-request を送る（プロフィールの設定の依頼より後）', kit.worker.sent.map(m => m.type).join() === 'browser-load-policy-request,agent-browser-prefs-request,browser-restore-request');
+    t.ok('起動で browser-restore-request を送る（今までの 2 つの依頼の後）', kit.worker.sent.map(m => m.type).join() === 'browser-load-policy-request,agent-browser-prefs-request,browser-restore-request');
     kit.changed();
     await sleep(80);
     t.ok('復元の答えが届くまでは報告しない（空の状態でサーバーの写しを上書きしない）', !kit.worker.sent.some(m => m.type === 'browser-state-report'));
-    kit.worker.say({ type: 'browser-restore', tabs: [{ sessionId: 's1', profile: 'main', url: 'https://example.com/a', selected: true }], profiles: [], relay: { port, entries: [{ sessionId: 's1', key: KEY }] } });
+    kit.worker.say({ type: 'browser-restore', tabs: [{ sessionId: 's1', url: 'https://example.com/a', selected: true }], relay: { port, entries: [{ sessionId: 's1', key: KEY }] } });
     await until(() => kit.worker.sent.some(m => m.type === 'browser-state-report'));
     t.ok('browser-restore: タブを先に開き直し、そのあと同じポート・鍵で中継を立てる（前の URL でつながり、タブが見える。moved は送らない）',
       kit.log.restored.length === 1 && kit.panel.tabs.length === 1 && JSON.stringify(await targetsVia(`ws://127.0.0.1:${port}/devtools/browser/${KEY}`)) === '["https://example.com/a"]'
       && !kit.worker.sent.some(m => m.type === 'agent-browser-endpoint-moved'));
     const reports = () => kit.worker.sent.filter(m => m.type === 'browser-state-report');
-    t.ok('復元の後は、写しを報告する（タブ・プロフィール）', reports().length === 1 && reports()[0].tabs[0].url === 'https://example.com/a' && reports()[0].profiles[0].sessionId === 's1');
+    t.ok('復元の後は、写しを報告する（タブ）', reports().length === 1 && reports()[0].tabs[0].url === 'https://example.com/a');
     kit.changed(); kit.changed(); kit.changed();
     await sleep(100);
     t.ok('中身が同じなら報告しない（loading の細かい変化で送り続けない）', reports().length === 1);
-    kit.log.state = { tabs: [...kit.log.state.tabs, { sessionId: 's1', profile: 'main', url: 'https://example.com/b', selected: false }], profiles: kit.log.state.profiles };
+    kit.log.state = { tabs: [...kit.log.state.tabs, { sessionId: 's1', url: 'https://example.com/b', selected: false }] };
     kit.changed(); kit.changed();
     await until(() => reports().length === 2);
     t.ok('変わったら 1 秒ほどまとめて 1 回報告する', reports().length === 2 && reports()[1].tabs.length === 2);
-    kit.worker.say({ type: 'browser-restore', tabs: [{ sessionId: 's9', profile: 'main', url: 'https://again.example.com/' }], profiles: [], relay: null });
+    kit.worker.say({ type: 'browser-restore', tabs: [{ sessionId: 's9', url: 'https://again.example.com/' }], relay: null });
     t.ok('browser-restore が 2 回来ても、タブは開き直さない（重ねない）', kit.log.restored.length === 1);
-    kit.log.state = { tabs: [], profiles: [] };
+    kit.log.state = { tabs: [] };
     bridge.close();
     t.ok('close: 終わる前に最後の写しを渡す', reports().length === 3 && reports()[2].tabs.length === 0);
   }
@@ -283,7 +278,7 @@ export default async function (t) {
     const reports = () => kit.worker.sent.filter(m => m.type === 'browser-state-report');
     kit.worker.say({ type: 'ready', port: 7611, token: 'early' });
     t.ok('復元が済む前の ready では送らない（復元の流れが報告を始める）', reports().length === 0);
-    kit.worker.say({ type: 'browser-restore', tabs: kit.log.state.tabs, profiles: [], relay: { port, entries: [{ sessionId: 's1', key: KEY }] } });
+    kit.worker.say({ type: 'browser-restore', tabs: kit.log.state.tabs, relay: { port, entries: [{ sessionId: 's1', key: KEY }] } });
     await until(() => reports().length === 1);
     t.ok('復元の報告（中継の URL は付けない。同じ main が持つ写しなので）', reports()[0].relay === undefined);
     kit.worker.say({ type: 'ready', port: 7611, token: 'switched' });
@@ -311,7 +306,7 @@ export default async function (t) {
     const taken = await freePort();
     const hold = await blocker(taken);
     attachAgentBrowserBridge(kit.worker, kit.panel, { handover: true, reportMs: 30, restoreWaitMs: 400 });
-    kit.worker.say({ type: 'browser-restore', tabs: [], profiles: [], relay: { port: taken, entries: [{ sessionId: 's1', key: KEY }] } });
+    kit.worker.say({ type: 'browser-restore', tabs: [], relay: { port: taken, entries: [{ sessionId: 's1', key: KEY }] } });
     const moved = await until(() => kit.worker.sent.some(m => m.type === 'agent-browser-endpoint-moved'));
     const message = kit.worker.sent.find(m => m.type === 'agent-browser-endpoint-moved');
     t.ok('ポートが取れなかったら、別のポートで立てて agent-browser-endpoint-moved で知らせる', moved && message.port !== taken && JSON.stringify(await targetsVia(`ws://127.0.0.1:${message.port}/devtools/browser/${KEY}`)) === '["about:blank"]');

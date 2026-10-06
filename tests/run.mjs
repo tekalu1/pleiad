@@ -55,8 +55,8 @@ const SUITES = [
   './unit/agent-browser-relay.mjs',
   // 新規会話の最初のターンの中継のキーを、会話 ID が決まったとき本物へ付け替える（parentPort の身代わり）
   './unit/server-browser-rebind.mjs',
-  // 内蔵ブラウザーのプロフィール（ADR 0078）: 保存領域・会話ごとの今のプロフィール・中継の絞り込み・AI の切り替え（ply_browser）・確認の鍵
-  './unit/browser-profiles.mjs',
+  // ply_browser の骨組み（ADR 0148）: 鍵付きの口・プロフィール（ADR 0078）の削除後の形・agy の束ね
+  './unit/browser-bridge.mjs',
   './unit/browser-confirm.mjs',
   // 設定 › コンピューターの操作: prefs の検査と既定・store の remember/forget・hostCapabilities.computerUse の判定・節の動き・setPref（docs/computer-use.md）
   './unit/computer-settings.mjs',
@@ -160,6 +160,8 @@ const SUITES = [
   // 作業の詳細: 走っている子の出来事（loadSession の live）を仮の発言に畳む・詳細とメインパネルが発言の描き方を共有する
   './unit/stream-messages.mjs',
   './unit/server-agent-tasks.mjs',
+  // 承認が片付いた知らせ（permissionSettled）: 子と中継の複製の id ごと・中断でも・片付いた承認への答えは ALREADY_RESOLVED・画面の配線
+  './unit/server-permission-settled.mjs',
   // 委譲の子に裏の作業が残るとき: 終わらないコマンドも自動停止しない・サブエージェントは止めない・端末は待たない（子にも親にも）
   './unit/server-delegation-background.mjs',
   // 依頼元が子のエージェント・モデル・思考の強さを ply_task_send で替える（走っている子・走っていない子・断る場合・記録）
@@ -540,6 +542,10 @@ const SUITES = [
   './unit/brain-wakes-server.mjs',
   // bot の会話は Chats の一覧に出さず、あなた待ちのときだけ出す（一覧の行の bot・承認待ち・検索の除外・スマホ通知）
   './unit/bot-sessions-list.mjs',
+  // 通知の一覧（ベルのボタン。ADR 0149）: 重複しない・見ている会話は既読・既読の整合・あなた待ちの決着・再起動で残る・上限・削除で消える・出来事から作る規則
+  './unit/notification-inbox.mjs',
+  './unit/notification-inbox-server.mjs',
+  './unit/notification-inbox-ui.mjs',
   // --- channels-ui: 脇・流れ・スレッド・bot のページ (W1・W2・W3・W4) ---
   // 脇 (W1): Channels の並べ方・bot の状態・タブの点・検索の横断の行と開く先・Chats の木の bot の会話の行の配線（描画は目視と session-list-keys.cjs）
   './unit/channels-side-ui.mjs',
@@ -574,6 +580,19 @@ const SUITES = [
   './unit/release-ci-gate.mjs',
   // Google Play へ上げるワークフロー: APK の流れと同じ版・同じ鍵、入力と Secrets の確かめ（docs/android-releases.md「Google Play」）
   './unit/android-play-workflow.mjs',
+  // --- 通話モード (core/voice/、web/voice/。docs/voice-call.md) ---
+  // 中核: PCM・WAV・先頭の無音・発話の区切り（無音・短い声・最長・投機・片）・片の重なりの除去・設定の検査・使用量の台帳
+  './unit/voice-core.mjs',
+  // 読み上げる文の切り出し: 文の切れ目・1 文目は読点で早く・コード/表/ログは読まず言い添える・1 ターンの上限・差分を 1 字ずつ入れても同じ
+  './unit/voice-reply-reader.mjs',
+  // OpenRouter の呼び出し（偽の HTTP）: やり直し・429 のとき予備のモデルへ・冷却・片の失敗・投機・順番・キーを文・ログへ出さない・TTS の検査と奇数バイト
+  './unit/voice-openrouter.mjs',
+  // 通話 1 本: hello・ready・限度（1 日・1 回・声が無いまま）・音声フレームから確定まで・エージェントの出来事から読み上げ・ミュート・止める・遅延の内訳
+  './unit/voice-session.mjs',
+  // サーバー越し: キーは human-only・画面へ返さない・/voice-ws の認可・偽の OpenRouter とつないで一巡・ホストの設定（settings.set の voice）・使用量
+  './unit/server-voice.mjs',
+  // 画面の部品: 送信ゲート・PCM の変換・再生キュー・状態機械・吹き出しの差し替え・読む場所の探し方・差し込み口の契約（偽の AudioContext・DOM）
+  './unit/voice-ui.mjs',
 ];
 
 const code = await main({

@@ -34,8 +34,6 @@ const panel = {
   },
   selectFor() {},
   onTabsChanged(cb) { listeners.add(cb); return () => listeners.delete(cb); },
-  onProfileChanged() { return () => {}; },
-  setProfileFor() {},
   rebindSession() {},
   setAgent() {},
 };

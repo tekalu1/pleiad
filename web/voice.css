@@ -1,0 +1,136 @@
+/* ==================== 通話モード（承認済み 2026-10-06。docs/design-system.md「通話モード」） ====================
+   部品は web/voice/ が差し込む（頭の通話ボタン・入力欄のマイクとスピーカー・背景・あなたの声の吹き出し・読んでいる場所の下線）。
+   class は vc- で始める。通話していないときは、通話ボタン以外は何も出ない。色は tokens.css のトークンだけ（背景は --glow-*）。 */
+
+.vc-sr{position:absolute;width:1px;height:1px;margin:-1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+.vc-host{position:relative}
+
+/* ---- 頭の通話ボタン: 通話していないときは無彩色の電話。通話中は --fill-primary の塗りのピルに受話器を置くアイコンと経過時間（同じ要素が 240ms で替わる） ---- */
+.vc-call{display:inline-flex;align-items:center;justify-content:center;flex:none;height:30px;min-width:30px;padding:0;gap:0;border-radius:var(--r-pill);color:var(--ink-weak);background:transparent;white-space:nowrap;
+  transition:background-color var(--dur) var(--ease-out),color var(--dur) var(--ease-out),padding var(--dur) var(--ease-out),gap var(--dur) var(--ease-out)}
+.vc-call:hover{background:var(--surface-2);color:var(--ink)}
+.vc-call .vc-ci{display:grid;transition:transform var(--dur) var(--ease-out)}
+.vc-call .vc-tm{max-width:0;opacity:0;overflow:hidden;font-size:var(--fs-s);font-weight:600;font-variant-numeric:tabular-nums;transition:max-width var(--dur) var(--ease-out),opacity var(--dur) var(--ease-out)}
+.vc-call.on{background:var(--fill-primary);color:var(--on-fill);padding:0 12px 0 9px;gap:6px}
+.vc-call.on:hover{background:var(--fill-primary-hover);color:var(--on-fill)}
+.vc-call.on .vc-ci{transform:rotate(135deg)}
+.vc-call.on .vc-tm{max-width:48px;opacity:1}
+.vc-call[hidden]{display:none}
+@media (pointer:coarse){.vc-call{min-width:36px;min-height:36px}}
+
+/* ---- 入力欄のマイクとスピーカー（通話中だけ。権限なしのときはマイクだけ） ---- */
+.vc-callonly,.vc-btn.vc-callonly{display:none}
+.vc-in-call .vc-callonly,.vc-deny .vc-micwrap.vc-callonly{display:inline-grid}
+.vc-in-call .vc-btn.vc-callonly{display:grid}
+.vc-micwrap{flex:none;margin:0 4px 0 2px}
+/* マイクのボタン = 状態の表示。表現はすべてボタンの円の中に収める（overflow:hidden）。ぼかし・外への広がりは使わない */
+.vc-btn{position:relative;isolation:isolate;width:32px;height:32px;padding:0;border-radius:50%;overflow:hidden;display:grid;place-items:center;flex:none;background:var(--surface-2);color:var(--ink);
+  transition:background-color var(--dur) var(--ease-out)}
+.vc-btn:hover{background:var(--surface-3)}
+.vc-mic .vc-mfill{position:absolute;inset:0;border-radius:50%;background:var(--fill-primary);color:var(--on-fill);opacity:0;transform:scale(.5)}
+.vc-mic .vc-mring{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
+.vc-mic .vc-mring circle{fill:none;transform-box:view-box;transform-origin:16px 16px}
+.vc-mic .vc-rb{stroke:var(--fill-primary);stroke-width:0}
+.vc-mic .vc-rs{stroke:var(--ink);stroke-width:1.8;stroke-linecap:round;stroke-dasharray:66 22;opacity:0}
+.vc-mic .vc-mico{position:relative;z-index:1;display:grid}
+.vc-mic .vc-mico svg{color:var(--ink-strong)}
+.vc-mic .vc-mbang{position:absolute;right:4px;bottom:4px;z-index:2;display:none;width:11px;height:11px;border-radius:50%;background:var(--fill-primary);color:var(--on-fill);font-size:8px;font-weight:800;line-height:11px;text-align:center}
+.vc-micwrap[data-ms=starting] .vc-rs{opacity:1;animation:vc-spin 1s linear infinite}
+.vc-micwrap[data-ms=starting] .vc-mico svg,.vc-micwrap[data-ms=thinking] .vc-mico svg,.vc-micwrap[data-ms=speaking] .vc-mico svg,.vc-micwrap[data-ms=muted] .vc-mico svg,.vc-micwrap[data-ms=denied] .vc-mico svg{color:var(--ink-weak)}
+.vc-micwrap[data-ms=listening] .vc-mfill{animation:vc-breath 3.2s ease-in-out infinite}
+@keyframes vc-breath{0%,100%{transform:scale(.5);opacity:.14}50%{transform:scale(.92);opacity:.34}}
+.vc-micwrap[data-ms=hearing] .vc-mfill{transform:scale(calc(.5 + var(--vc-lvl,0) * .5));opacity:calc(.22 + var(--vc-lvl,0) * .5);transition:transform .08s linear,opacity .08s linear}
+.vc-micwrap[data-ms=hearing] .vc-rb{stroke-width:calc(1px + var(--vc-lvl,0) * 2.2px);transition:stroke-width .08s linear}
+.vc-micwrap[data-ms=thinking] .vc-rs{opacity:1;stroke-dasharray:3 85;stroke-width:3;animation:vc-spin 1.4s linear infinite}
+.vc-micwrap[data-ms=speaking] .vc-mic{background:transparent}
+.vc-micwrap[data-ms=denied] .vc-mbang{display:block}
+@keyframes vc-spin{to{transform:rotate(360deg)}}
+/* スピーカーのボタン: 音波はボタンの中。読み上げ中は地が付く */
+.vc-spk{background:transparent}
+.vc-spk:hover{background:var(--surface-2)}
+.vc-spk svg{color:var(--ink-weak)}
+[data-vc-cs=speaking] .vc-spk[aria-pressed=false]{background:var(--surface-2)}
+[data-vc-cs=speaking] .vc-spk[aria-pressed=false] svg{color:var(--ink-strong)}
+.vc-spk .a1{opacity:clamp(.25,calc(var(--vc-olv,0) * 6),1)}
+.vc-spk .a2{opacity:clamp(.12,calc(var(--vc-olv,0) * 6 - 1),1)}
+.vc-spk .a3{opacity:clamp(.06,calc(var(--vc-olv,0) * 6 - 2.2),1)}
+/* 通話の失敗の一行（権限なし・キーなし・上限・つながり）。入力欄の下 */
+.vc-note{display:none;align-items:center;gap:8px;padding:6px 14px 0;font-size:var(--fs-s);color:var(--ink)}
+.vc-note.show{display:flex}
+.vc-note svg.i{width:14px;height:14px;color:var(--ink-weak);flex:none}
+.vc-note button{color:var(--ink-blue);padding:2px 8px;border-radius:var(--r-pill);text-decoration:underline;text-decoration-color:var(--line-strong);text-underline-offset:2px}
+.vc-note button:hover{background:var(--surface-2)}
+
+/* ---- あなたの声: 片が足されていく ---- */
+.vc-live .vc-body{display:inline-block}
+.post.vc-live .post-body{display:inline-block;margin-left:-12px;padding:4px 12px;border-radius:var(--r-m);background:transparent;transition:background-color .35s ease}
+.vc-body.live{background:var(--surface-1)}
+.vc-live.settle .vc-body{animation:vc-settle .35s var(--ease-out)}
+.vc-live.gone{opacity:0;transition:opacity .25s ease}
+@keyframes vc-settle{0%{transform:scale(.985)}100%{transform:none}}
+.vmark{display:inline-flex;vertical-align:-3px;margin-right:6px;color:var(--ink-weak)}
+.vc-words .lw{display:inline-block;white-space:pre-wrap;transition:color .45s ease}
+.vc-words .lw.p{color:var(--ink-weak)}
+.vc-words .lw{animation:vc-lwin 180ms var(--ease-out) backwards}   /* 溶け込むのは足された語だけ・180ms の間だけ。終わったら字は常にくっきり */
+.vc-words .lw.out{animation:vc-lwout 140ms var(--ease-out) forwards}
+@keyframes vc-lwin{from{opacity:0;filter:blur(4px);transform:translateY(3px)}}
+@keyframes vc-lwout{to{opacity:0;filter:blur(3px);transform:translateY(-3px)}}
+
+/* ---- いま話している場所: 話している文の下に --fill-primary の 2px の下線が、再生位置に合わせて左から右へ伸びる（行をまたぐと次の行で続く）。
+        返事の本文は触らず、本文の外に重ねた層の線の幅（scaleX）だけを動かす ---- */
+.vc-underlay{position:absolute;left:0;top:0;width:0;height:0;pointer-events:none;z-index:2}
+.vc-ul{position:absolute;display:block;height:2px;margin-top:1px;background:var(--fill-primary);color:var(--on-fill);transform-origin:left center;transform:scaleX(0);opacity:1;transition:opacity .5s ease;border-radius:1px}
+.vc-hint{display:flex;align-items:center;gap:8px;margin:4px 0 8px;font-size:var(--fs-xs);color:var(--ink-weak)}
+.vc-hint .btn{padding:1px 10px;font-size:var(--fs-xs)}
+.vc-jump{position:absolute;left:50%;bottom:10px;transform:translateX(-50%);z-index:6;display:inline-flex;align-items:center;gap:6px;height:30px;padding:0 14px;border-radius:var(--r-pill);background:var(--surface-1);box-shadow:0 8px 28px var(--shadow);font-size:var(--fs-s);color:var(--ink);white-space:nowrap}
+.vc-jump:hover{background:var(--surface-3)}
+.vc-jump[hidden]{display:none}
+
+/* 開発用の遅延の表示（localStorage の ply-voice-debug = 1。docs/voice-call.md「遅延の測り方」） */
+.vc-debug{position:fixed;left:8px;bottom:8px;z-index:200;max-width:calc(100vw - 16px);padding:4px 10px;border-radius:var(--r-m);background:var(--surface-1);color:var(--ink-weak);font:var(--fs-xs) var(--font-mono);pointer-events:none}
+
+/* ---- 背景（案 D 話している間だけ）: 通話中だけ。ふだんはごく薄く、bot が話している間とあなたの声を聞き取っている間だけ 600ms でふわっと強まる。
+        ぼかしではなくグラデーション（radial-gradient の transform だけを動かす）。--glow-* は tokens.css。動きを減らす設定では静止 ---- */
+[data-vc-glow]{isolation:isolate}
+.vc-aurora{position:absolute;inset:0;overflow:hidden;z-index:-1;pointer-events:none;opacity:0;transition:opacity .6s ease}
+[data-vc-call] .vc-aurora{opacity:1}
+.vc-aurora-in{position:absolute;inset:0;opacity:calc(var(--glow-strength) * var(--vc-bgk,.19));transition:opacity .6s ease}
+.vc-blob{position:absolute;width:78%;aspect-ratio:1;border-radius:50%;will-change:transform;animation:vc-aur 26s ease-in-out infinite alternate;animation-play-state:paused}
+[data-vc-call] .vc-blob{animation-play-state:running}
+.vc-blob.b1{background:radial-gradient(closest-side,var(--glow-1) 0%,transparent 100%);left:-22%;top:-26%}
+.vc-blob.b2{background:radial-gradient(closest-side,var(--glow-2) 0%,transparent 100%);right:-28%;top:8%;width:70%;animation-duration:22s;animation-delay:-8s;animation-name:vc-aur2}
+.vc-blob.b3{background:radial-gradient(closest-side,var(--glow-1) 0%,transparent 100%);left:6%;bottom:-38%;width:90%;animation-duration:30s;animation-delay:-14s;animation-name:vc-aur3}
+@keyframes vc-aur{from{transform:translate(0,0) scale(1)}to{transform:translate(48%,26%) scale(1.15)}}
+@keyframes vc-aur2{from{transform:translate(0,0) scale(.95)}to{transform:translate(-42%,34%) scale(1.1)}}
+@keyframes vc-aur3{from{transform:translate(0,0) scale(1)}to{transform:translate(34%,-30%) scale(1.2)}}
+[data-vc-cs=hearing],[data-vc-cs=speaking]{--vc-bgk:.5}
+/* 通話中の弱い字・リンクは、地の光に負けないよう 1 段濃く（ダークは明るく）して 4.5:1 を保つ */
+[data-vc-call]{--ink-weak:var(--glow-ink-weak);--ink-blue:var(--glow-ink-blue)}
+
+@media (prefers-reduced-motion:reduce){
+  .vc-blob{animation:none!important}
+  .vc-aurora{transition:none}
+  .vc-aurora-in{transition:none}
+  .vc-blob.b1{transform:translate(20%,10%)}
+  .vc-blob.b2{transform:translate(-18%,18%)}
+  .vc-blob.b3{transform:translate(14%,-14%)}
+  .vc-mfill{animation:none!important;transition:none!important}
+  .vc-micwrap[data-ms=starting] .vc-rs,.vc-micwrap[data-ms=thinking] .vc-rs{animation:none}
+  .vc-micwrap[data-ms=listening] .vc-mfill{transform:scale(.7);opacity:.22}
+  .vc-micwrap[data-ms=hearing] .vc-mfill{transform:scale(.9);opacity:.5}
+  .vc-micwrap[data-ms=hearing] .vc-rb{stroke-width:2px;transition:none}
+  .vc-btn,.vc-call,.vc-call .vc-ci,.vc-call .vc-tm{transition:none}
+  .vc-words .lw{animation:none!important;filter:none;transition:none}
+  .vc-live.settle .vc-body{animation:none}
+  .vc-spk .a1,.vc-spk .a2,.vc-spk .a3{opacity:.8}
+  .vc-ul{transition:none}
+}
+
+/* 設定 › 通話（web/voice/settings.mjs）。面は .nf-card（--surface-1）に載せる（入力欄は --surface-paper で、面の上で見える） */
+#voicePanel .nf-card{padding:4px 14px 14px;margin:0}
+#voicePanel .nf-card .mp-row{margin-top:10px}
+#voicePanel .nf-card .mp-keyrow,#voicePanel .nf-card .rt-key-form{margin-top:10px}
+#voicePanel .nf-card .mp-keyrow input{min-width:0;padding:10px 14px;border-radius:var(--r-pill);background:var(--surface-paper);color:var(--ink)}
+#voicePanel select{border:0;padding:8px 12px;border-radius:var(--r-pill);background:var(--surface-paper);color:var(--ink);max-width:100%}
+#voicePanel .vc-today{display:block;margin-top:14px}
+#voicePanel .mp-check{display:flex;align-items:center;gap:6px;margin-top:10px}

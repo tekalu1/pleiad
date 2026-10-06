@@ -4,7 +4,6 @@ import crypto from 'node:crypto';
 import os from 'node:os';
 import net from 'node:net';
 import { previewPolicy } from '../web/browser-confirm-policy.mjs';
-import { profileIds, defaultProfile } from '../web/browser-profiles.mjs';
 
 export function browserSocketDirectory(dir, platform = process.platform) {
   const hash = crypto.createHash('sha256').update(path.resolve(dir)).digest('hex').slice(0, 24);
@@ -23,7 +22,7 @@ export function browserConfigFile(dataDir, configSessionId) {
 const RELAY_URL = /^ws:\/\/127\.0\.0\.1:(\d+)\/devtools\/browser\/([a-f0-9]{48})$/;
 const relayUrl = (port, key) => `ws://127.0.0.1:${port}/devtools/browser/${key}`;
 const RELAY_MAX = 500;      // 持つ中継の写し（会話の数）
-const TABS_MAX = 500, PROFILES_MAX = 2000;
+const TABS_MAX = 500;
 
 /** 空いているポートを 1 つ選ぶ（取って離す。戻った main が同じポートを取れなければ、別のポートで立てて agent-browser-endpoint-moved で知らせる） */
 export function pickFreePort() {
@@ -35,25 +34,19 @@ export function pickFreePort() {
 }
 
 /**
- * main が報告した内蔵ブラウザーのタブの写し（{ tabs: [{ sessionId, profile, url, selected }], profiles: [{ sessionId, profile }] }）の形を整える。
+ * main が報告した内蔵ブラウザーのタブの写し（{ tabs: [{ sessionId, url, selected }] }）の形を整える。
  * 戻った main がタブを開き直すのに使う。http(s) の URL だけ（file: のタブ・空のタブは戻さない）
  */
 export function cleanTabState(message) {
   const text = (value, max) => (typeof value === 'string' && value.length <= max ? value : null);
-  const tabs = [], profiles = [];
+  const tabs = [];
   for (const tab of Array.isArray(message?.tabs) ? message.tabs : []) {
-    const url = text(tab?.url, 4096), profile = text(tab?.profile, 64), sessionId = tab?.sessionId == null ? null : text(tab.sessionId, 200);
-    if (!url || !profile || !/^https?:\/\//i.test(url) || (tab.sessionId != null && !sessionId)) continue;
-    tabs.push({ sessionId, profile, url, selected: tab.selected === true });
+    const url = text(tab?.url, 4096), sessionId = tab?.sessionId == null ? null : text(tab.sessionId, 200);
+    if (!url || !/^https?:\/\//i.test(url) || (tab.sessionId != null && !sessionId)) continue;
+    tabs.push({ sessionId, url, selected: tab.selected === true });
     if (tabs.length >= TABS_MAX) break;
   }
-  for (const row of Array.isArray(message?.profiles) ? message.profiles : []) {
-    const profile = text(row?.profile, 64), sessionId = row?.sessionId == null ? null : text(row.sessionId, 200);
-    if (!profile || (row.sessionId != null && !sessionId)) continue;
-    profiles.push({ sessionId, profile });
-    if (profiles.length >= PROFILES_MAX) break;
-  }
-  return { tabs, profiles };
+  return { tabs };
 }
 
 /**
@@ -73,26 +66,17 @@ export function parentPortBrowser(port, { timeoutMs = 10_000, connectWaitMs = 30
   const relays = new Map();       // 会話の id -> 鍵（main が答えた URL の写し。使った順に末尾）
   let relayPort = null;           // 中継の待ち受けのポート（main が答えた URL から。一度も答えが無ければ main が居ない間にここで選ぶ）
   let portPick = null;
-  let tabState = { tabs: [], profiles: [] };   // main が報告した、内蔵ブラウザーのタブの写し
+  let tabState = { tabs: [] };   // main が報告した、内蔵ブラウザーのタブの写し
   let next = 0;
   let authorize = async () => ({ allow: false });
-  let resolveProfile = async () => null;
   let confirmationEnabled = false;
-  // main に知らせるプロフィールの設定（使える id と既定。ADR 0078）
-  let profileState = { profiles: ['main'], defaultProfile: 'main' };
   // 外部の読み込みの確認（内蔵ブラウザーの file: のタブに効かせる。ADR 0079）
   let policyMessage = { type: 'browser-load-policy', confirm: false, origins: [] };
   const approvals = new Map();
   port.on('message', event => {
     const message = event?.data ?? event;
     if (message?.type === 'browser-load-policy-request') { port.postMessage(policyMessage); return; }
-    if (message?.type === 'agent-browser-prefs-request') { port.postMessage({ type: 'agent-browser-prefs', enabled: confirmationEnabled, ...profileState }); return; }
-    // main がまだ覚えていない会話の今のプロフィールを引く（画面の会話の切り替え・画面の転送）
-    if (message?.type === 'browser-profile-resolve') {
-      Promise.resolve().then(() => resolveProfile(message.sessionId ?? null)).catch(() => null)
-        .then(profile => port.postMessage({ type: 'browser-profile-resolve', id: message.id, profile: profile ?? null }));
-      return;
-    }
+    if (message?.type === 'agent-browser-prefs-request') { port.postMessage({ type: 'agent-browser-prefs', enabled: confirmationEnabled }); return; }
     if (message?.type === 'browser-state-report') { tabState = cleanTabState(message); adoptRelay(message.relay); return; }
     if (message?.type === 'browser-restore-request') {
       port.postMessage({ type: 'browser-restore', ...tabState, relay: relayPort != null && relays.size ? { port: relayPort, entries: [...relays].map(([sessionId, key]) => ({ sessionId, key })) } : null });
@@ -115,7 +99,7 @@ export function parentPortBrowser(port, { timeoutMs = 10_000, connectWaitMs = 30
     if (message.ok) { remember(item.sessionId, message.url); item.resolve(message.url); }
     else item.reject(new Error(message.error || 'browser unavailable'));
   });
-  const requestOf = entry => ({ type: 'agent-browser-endpoint', id: entry.id, sessionId: entry.sessionId, unlock: entry.unlock, ...(entry.profile ? { profile: entry.profile } : {}) });
+  const requestOf = entry => ({ type: 'agent-browser-endpoint', id: entry.id, sessionId: entry.sessionId, unlock: entry.unlock });
   /** main へ送る。送れたら答えを待つ（timeoutMs）。口が切れていれば false */
   function post(entry) {
     if (port.postMessage(requestOf(entry)) === false) return false;
@@ -202,17 +186,13 @@ export function parentPortBrowser(port, { timeoutMs = 10_000, connectWaitMs = 30
       policyMessage = { type: 'browser-load-policy', confirm, origins };
       port.postMessage(policyMessage);
     },
-    configureProfiles(handler) { resolveProfile = handler; },
     endTurn(sessionId) { port.postMessage({ type: 'agent-browser-turn-ended', sessionId }); },
     prefs(prefs) {
       confirmationEnabled = prefs.confirmAgentSites === true;
-      profileState = { profiles: profileIds(prefs), defaultProfile: defaultProfile(prefs) };
-      port.postMessage({ type: 'agent-browser-prefs', enabled: confirmationEnabled, ...profileState });
+      port.postMessage({ type: 'agent-browser-prefs', enabled: confirmationEnabled });
     },
-    /** 会話の今のプロフィールが替わったことを main に知らせる。agent は切り替えたエージェントの名前（人が替えたときは付けない） */
-    profile(sessionId, profile, agent = null) { port.postMessage({ type: 'agent-browser-profile', sessionId, profile, ...(agent ? { agent } : {}) }); },
-    endpoint(sessionId, { unlock = false, profile = null } = {}) { return new Promise((resolve, reject) => {
-      const entry = { id: `ab${++next}`, sessionId, unlock, profile, resolve, reject, timer: null, since: Date.now() };
+    endpoint(sessionId, { unlock = false } = {}) { return new Promise((resolve, reject) => {
+      const entry = { id: `ab${++next}`, sessionId, unlock, resolve, reject, timer: null, since: Date.now() };
       pending.set(entry.id, entry);
       if (!post(entry)) lapse(entry);
     }); },
@@ -225,9 +205,9 @@ export function parentPortBrowser(port, { timeoutMs = 10_000, connectWaitMs = 30
   };
 }
 
-export async function browserEnvironment({ bridge, dataDir, sessionId, unlock = false, profile = null }) {
+export async function browserEnvironment({ bridge, dataDir, sessionId, unlock = false }) {
   if (!bridge || !sessionId) return null;
-  const url = await bridge.endpoint(sessionId, { unlock, profile });
+  const url = await bridge.endpoint(sessionId, { unlock });
   // Keep the shell config path and agent-browser namespace stable after a new thread gets its native ID.
   const configSessionId = bridge.configSessionId?.(sessionId) ?? sessionId;
   const file = browserConfigFile(dataDir, configSessionId);
