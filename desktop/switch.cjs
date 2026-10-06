@@ -11,26 +11,29 @@
 //   preparing     新しい版の実行場所（chooseServer が裏で組み始めたもの）を待つ・起こせるか（Job）を見る
 //   checking      事前の確かめ（core/handover-check.mjs）
 //   incompatible  合わない版。「あとで／中断して更新」を聞いている（ADR 0036 の形）。reason は INCOMPATIBLE_REASONS
-//   held          「あとで」。S1 のまま動かし続け、勝手には切り替えない（interruptNow で中断して切り替える。次の起動でまた聞く）
-//   waiting       作業が 0 件になるのを待っている（waiting: { count, items }。blockedBy は update-lock が断った理由）
-//   interrupting  「今すぐ中断して切り替える」: 全部を update で中断している
+//   held          「あとで」。S1 のまま動かし続け、勝手には切り替えない（interruptNow で中断して切り替える。次の起動でまた聞く）。
+//                 reason が 'stoppers' のときは、止まるものだけが残ったときの「あとで」（止まるものが無くなる・作業が増えるまで自動では切り替えない）
+//   waiting       作業が 0 件になるのを待っている（waiting: { count, items, stoppers }。since は待ち始めた時刻。blockedBy は update-lock が断った理由）
+//   asking        作業は終わったが、切り替えで止まるものが残っている。「あとで／止めて切り替え」を聞いている（reason: 'stoppers'）
+//   interrupting  「今すぐ中断して切り替える」: 全部を update で中断している（interrupt: { done, total }）
 //   locking       update-lock を取っている
 //   stopping      S1 の shutdown の終わり（プロセスの終了）を待っている
 //   starting      S2 を起こしている
 //   fallback      S2 が立たなかったので、前の版（S1 の版）で起こし直している
 //   reloading     窓を読み直している
 //   restarting    新しい版を実行場所で起こせない更新: S1 を止めて main を起動し直す（起動で今の utilityProcess に落ちる）
-//   done          切り替え終わり（previous: true なら前の版で動いている）
+//   done          切り替え終わり（previous: true なら前の版で動いている。retry() でやり直せる。stopped は切り替えで止めたもの）
 //   failed        S2 も前の版も起こせなかった
 //   cancelled     main が終わる
 //
-// 待つ作業（switchBlockers）: running の count（ターン・承認待ち・走っているサブエージェント・委譲タスク）に、`!` の行と、
-// ターンの外に残っている裏の作業（Codex の裏の端末など）を足す。外部の stdio MCP・送信予定・上限の解除後の再開は数えない。
-// **`!` の行・裏の作業を「待つ」は仮**（切り替えの待ちの表示のモックで、利用者の判断待ち。plan.md 1-6 の途中のメモ）。
+// 待つ作業（switchBlockers）: running の count（ターン・承認待ち・走っているサブエージェント・委譲タスク）。外部の stdio MCP・送信予定・
+// 上限の解除後の再開は数えない。**切り替えで止まるもの**（stoppers: `!` の行と、ターンの外に残っている裏の作業＝Codex の裏の端末など）は
+// 作業が終わっても止まらず、サーバーが終わると止まる。待たず、黙って止めもしない: 作業が 0 件になったとき、止まるものが残っていれば
+// 自動では切り替えず「あとで／止めて切り替え」を聞く（asking。利用者が承認した「Z」。docs/design-system.md「切り替えを待つ表示」）。
 //
-// 表示の口（新しい表示はモックの承認の後。今は main のログ）: onState(listener) が状態が変わるたびに snapshot を渡す。
-// 待ちの間は { state: 'waiting', waiting: { count, items: [{ kind, sessionId, … }] }, blockedBy }。
-// interruptNow() が「今すぐ中断して切り替える」（held からも効く）。
+// 表示の口: onState(listener) が状態が変わるたびに snapshot を渡す（desktop/switch-screen.cjs が画面へ送る）。
+// answer('now' | 'later') が asking・incompatible の答え、interruptNow() が「今すぐ中断して切り替える」（held からも効く）、
+// retry() が前の版で動いているとき（done・previous）の切り替えのやり直し。
 const path = require('node:path');
 
 const POLL_MS = 2000;
@@ -43,6 +46,8 @@ const RESTART_REASONS = new Set(['runtime', 'job', 'ipc']);
 /** S1 を手放している間（onServerExit の「サーバーが終了しました」を出さない） */
 const REPLACING = new Set(['stopping', 'starting', 'fallback', 'reloading', 'restarting']);
 const LIVE_TASK = new Set(['queued', 'running', 'cancelling']);
+/** 切り替えで止まるものの一覧に載せる字の長さの上限（`!` の行のコマンドなど） */
+const LABEL_MAX = 200;
 /** main との口の版（desktop/server-link.cjs の IPC_RANGE と同じ） */
 const MAIN_IPC = [1, 1];
 
@@ -55,9 +60,12 @@ function needsSwitch(server, target) {
   return String(server.appVersion ?? '') !== String(target.appVersion ?? '');
 }
 
+const label = value => (value == null ? null : String(value).slice(0, LABEL_MAX));
+
 /**
- * 切り替えを待たせる作業。work は core/server.mjs の runningWork。
- * count は running の count に `!` の行（shells）と裏の作業（background の tasks）を足したもの。items は表示用の一覧（会話ごとではなく作業ごと）
+ * 切り替えを待たせる作業と、切り替えで止まるもの。work は core/server.mjs の runningWork。
+ * count は running の count（待つ作業の数）。items は表示用の一覧（会話ごとではなく作業ごと）。
+ * stoppers は `!` の行（shells）と、ターンの外に残っている裏の作業（background の tasks）。数えず、待たない（asking で聞く）
  */
 function switchBlockers(work) {
   if (!work) return null;
@@ -70,10 +78,9 @@ function switchBlockers(work) {
   for (const p of work.permissions ?? []) if (!p.relay && !p.detached) items.push({ kind: 'permission', sessionId: p.sessionId ?? null, toolName: p.toolName ?? null });
   for (const a of work.subagents ?? []) if (a.status === 'running' || a.status == null) items.push({ kind: 'subagent', sessionId: a.sessionId ?? null, id: a.id, description: a.description ?? null });
   for (const r of work.tasks ?? []) if (LIVE_TASK.has(r.status) && !turnSessions.has(r.sessionId)) items.push({ kind: 'task', sessionId: r.sessionId ?? null, taskId: r.taskId ?? null });
-  const shells = (work.shells ?? []).map(s => ({ kind: 'shell', sessionId: s.sessionId ?? null, runId: s.runId ?? null, command: s.command ?? null }));
-  const background = (work.background ?? []).flatMap(b => (b.tasks ?? []).map(x => ({ kind: 'background', sessionId: b.sessionId ?? null, backend: b.backend ?? null, id: x.id, label: x.label ?? null })));
-  items.push(...shells, ...background);
-  return { count: (Number(work.count) || 0) + shells.length + background.length, items };
+  const shells = (work.shells ?? []).map(s => ({ kind: 'shell', sessionId: s.sessionId ?? null, runId: s.runId ?? null, command: s.command ?? null, label: label(s.command) }));
+  const background = (work.background ?? []).flatMap(b => (b.tasks ?? []).map(x => ({ kind: 'background', sessionId: b.sessionId ?? null, backend: b.backend ?? null, id: x.id, label: label(x.label) })));
+  return { count: Number(work.count) || 0, items, stoppers: [...shells, ...background] };
 }
 
 /** handover-check の出力を、この main と今のデータ置き場で使えるか判定する。{ ok: true } か { ok: false, reason, detail } */
@@ -94,9 +101,10 @@ function judgeCheck(check, { ipc = MAIN_IPC } = {}) {
  *   effects  {
  *     prepare()            → { ok: true, runtime, mode } / { ok: false, reason: 'runtime'|'job', detail }
  *     check(runtime)       → handover-check の出力
- *     ask({ reason, waiting }) → 'now' | 'later'（合わない版の「あとで／中断して更新」）
+ *     ask({ reason, waiting }) → 'now' | 'later'（合わない版・止まるものが残ったときの「あとで／中断して更新」）。
+ *                          画面が答える（answer）ときは null・undefined を返す（ダイアログを出さない）
  *     running()            → runningWork
- *     abortAll()           全部を update で中断し、count が 0 になるまで待つ（main.cjs の abortAll）
+ *     abortAll(onProgress) 全部を update で中断し、count が 0 になるまで待つ（main.cjs の abortAll。見るたびに onProgress(work)）
  *     lock() / unlock()    update-lock（{ ok, reason }）/ update-unlock
  *     stopOld()            S1 に shutdown を送り、プロセスが終わるのを待つ → { ok } / { ok: false, error }
  *     reattachOld()        S1 が終わらなかったとき付け直す → boolean
@@ -108,13 +116,17 @@ function judgeCheck(check, { ipc = MAIN_IPC } = {}) {
  *     delay(ms)
  *   }
  */
-function createSwitch({ server, target, effects, pollMs = POLL_MS, log = () => {} }) {
-  let snap = { state: 'idle', server, target: typeof target === 'function' ? null : target, waiting: null, reason: null, blockedBy: null, error: null, previous: false };
+function createSwitch({ server, target, effects, pollMs = POLL_MS, log = () => {}, now = () => Date.now() }) {
+  let snap = { state: 'idle', server, target: typeof target === 'function' ? null : target, waiting: null, reason: null, blockedBy: null, error: null, previous: false,
+    since: null, interrupt: null, interruptFailed: false, stopped: [], at: null };
   const listeners = new Set();
   let interruptRequested = false;
+  // 止まるものだけが残ったときに「あとで」を選んだ（止まるものが無くなる・作業が増えるまで、もう聞かない）
+  let stoppersLater = false;
   let cancelled = false;
   let poke = null;
   let release = null;
+  let pendingAnswer = null;
   let running = null;
 
   const emit = patch => {
@@ -128,20 +140,34 @@ function createSwitch({ server, target, effects, pollMs = POLL_MS, log = () => {
     poke = resolve;
     Promise.resolve(effects.delay(pollMs)).then(resolve, resolve);
   }).finally(() => { poke = null; });
-  const isWaitingOn = (work, blockers) => (interruptRequested ? Number(work.count) > 0 : blockers.count > 0);
+  /** 画面かダイアログの答えを待つ（effects.ask が答えを返さなければ answer() だけを待つ） */
+  const askUser = info => new Promise(resolve => {
+    pendingAnswer = resolve;
+    Promise.resolve(effects.ask?.(info)).then(answer => { if (answer) resolve(answer); }, () => resolve('later'));
+  }).finally(() => { pendingAnswer = null; });
 
-  /** 作業が 0 件で update-lock を取れたら true。main が終わるなら false */
+  /** 待ちの表示。待ち始めた時刻（since）は、待ちでない状態から入ったときに決める（ロックが取れず待ちに戻ったときは変えない） */
+  const waiting = blockers => emit({ state: 'waiting', reason: null, waiting: blockers,
+    since: ['waiting', 'locking', 'interrupting'].includes(snap.state) && snap.since ? snap.since : now() });
+
+  /** 作業が 0 件（止まるものが無いか、止めてよいとき）で update-lock を取れたら true。main が終わるなら false */
   async function waitIdle() {
     for (;;) {
       if (cancelled) return false;
       if (interruptRequested) {
-        emit({ state: 'interrupting' });
-        try { await effects.abortAll(); }
-        catch (error) {
+        const total = snap.waiting?.count ?? 0;
+        emit({ state: 'interrupting', interrupt: { done: 0, total }, interruptFailed: false });
+        try {
+          await effects.abortAll(progress => {
+            const left = switchBlockers(progress)?.count ?? 0;
+            const done = Math.min(total, Math.max(snap.interrupt?.done ?? 0, total - left));
+            if (done !== snap.interrupt?.done) emit({ interrupt: { done, total } });
+          });
+        } catch (error) {
           // 止まらない作業があった（30 秒）。中断はやめて待ちに戻る（もう一度押せる）
           interruptRequested = false;
           log(`interrupting failed: ${errorText(error)}`);
-          emit({ state: 'waiting', error: errorText(error) });
+          emit({ state: 'waiting', error: errorText(error), interruptFailed: true, interrupt: null });
           await pause();
           continue;
         }
@@ -149,12 +175,27 @@ function createSwitch({ server, target, effects, pollMs = POLL_MS, log = () => {
       const work = await effects.running().catch(() => null);
       if (cancelled) return false;
       const blockers = switchBlockers(work);
-      if (!work || isWaitingOn(work, blockers)) {
-        emit({ state: 'waiting', waiting: blockers ?? snap.waiting });
+      if (!work || blockers.count > 0) {
+        stoppersLater = false;
+        waiting(blockers ?? snap.waiting);
         await pause();
         continue;
       }
-      emit({ state: 'locking', waiting: blockers });
+      if (blockers.stoppers.length > 0 && !interruptRequested) {
+        // 作業は終わったが、`!` の行・裏の端末などが残っている。サーバーが終わると止まるので、黙って切り替えず聞く
+        if (!stoppersLater) {
+          emit({ state: 'asking', reason: 'stoppers', waiting: blockers, since: null });
+          const answer = await askUser({ reason: 'stoppers', waiting: blockers });
+          if (cancelled) return false;
+          if (answer === 'now') interruptRequested = true; else stoppersLater = true;
+          continue;
+        }
+        // 「あとで」: 自動では切り替えない。止まるものが無くなる・作業が増える・「止めて切り替え」まで見続ける
+        emit({ state: 'held', reason: 'stoppers', waiting: blockers });
+        await pause();
+        continue;
+      }
+      emit({ state: 'locking', waiting: blockers, interrupt: null, reason: snap.reason === 'stoppers' ? null : snap.reason });
       const lock = await effects.lock().catch(error => ({ ok: false, reason: errorText(error) }));
       if (cancelled) { if (lock?.ok) effects.unlock(); return false; }
       if (!lock?.ok) {
@@ -163,16 +204,17 @@ function createSwitch({ server, target, effects, pollMs = POLL_MS, log = () => {
         await pause();
         continue;
       }
-      // 数えてからロックを取るまでの間に始まった作業（`!` の行など）を、もう一度数える。ロックの後は新しい作業が始まらない
+      // 数えてからロックを取るまでの間に始まった作業・止まるものを、もう一度数える。ロックの後は新しい作業が始まらない
       const again = await effects.running().catch(() => null);
       const still = switchBlockers(again);
-      if (!again || isWaitingOn(again, still)) {
+      if (!again || still.count > 0) {
         effects.unlock();
-        emit({ state: 'waiting', waiting: still ?? blockers });
+        waiting(still ?? blockers);
         await pause();
         continue;
       }
-      emit({ blockedBy: null, error: null });
+      if (still.stoppers.length > 0 && !interruptRequested && !stoppersLater) { effects.unlock(); continue; }
+      emit({ blockedBy: null, error: null, stopped: still.stoppers });
       return true;
     }
   }
@@ -180,8 +222,8 @@ function createSwitch({ server, target, effects, pollMs = POLL_MS, log = () => {
   async function run() {
     const goal = typeof target === 'function' ? await target() : target;
     emit({ target: goal ?? null });
-    if (!needsSwitch(server, goal)) { emit({ state: 'current' }); return snap; }
-    log(`the running server is ${server.appVersion || '?'} (${server.build || '?'}), this version is ${goal.appVersion || '?'} (${goal.build || '?'}): switching when the work is done`);
+    if (!needsSwitch(snap.server, goal)) { emit({ state: 'current' }); return snap; }
+    log(`the running server is ${snap.server.appVersion || '?'} (${snap.server.build || '?'}), this version is ${goal.appVersion || '?'} (${goal.build || '?'}): switching when the work is done`);
     emit({ state: 'preparing' });
     let plan = await Promise.resolve(effects.prepare()).catch(error => ({ ok: false, reason: 'runtime', detail: errorText(error) }));
     if (plan?.ok) {
@@ -196,7 +238,7 @@ function createSwitch({ server, target, effects, pollMs = POLL_MS, log = () => {
       log(`the new version cannot take over while work is running (${reason}${plan?.detail ? `: ${plan.detail}` : ''})`);
       const work = await effects.running().catch(() => null);
       emit({ state: 'incompatible', reason, error: plan?.detail ?? null, waiting: switchBlockers(work) });
-      const answer = await Promise.resolve(effects.ask({ reason, waiting: switchBlockers(work) })).catch(() => 'later');
+      const answer = await askUser({ reason, waiting: switchBlockers(work) });
       if (cancelled) return cancel();
       if (answer !== 'now' && !interruptRequested) {
         emit({ state: 'held' });
@@ -248,7 +290,7 @@ function createSwitch({ server, target, effects, pollMs = POLL_MS, log = () => {
     emit({ state: 'reloading', previous });
     try { await effects.reload(ready); }
     catch (error) { log(`reloading the window failed: ${errorText(error)}`); }
-    emit({ state: 'done', previous, server: { appVersion: ready.appVersion ?? null, build: ready.build ?? null }, waiting: null });
+    emit({ state: 'done', previous, server: { appVersion: ready.appVersion ?? null, build: ready.build ?? null }, waiting: null, at: now() });
     if (previous) await Promise.resolve(effects.fallback(failure)).catch(() => {});
     return snap;
   }
@@ -262,12 +304,30 @@ function createSwitch({ server, target, effects, pollMs = POLL_MS, log = () => {
     run() { running ??= run(); return running; },
     snapshot: () => snap,
     onState(listener) { listeners.add(listener); return () => listeners.delete(listener); },
-    /** 「今すぐ中断して切り替える」。待ち・あとでのときだけ効く */
+    /** 「今すぐ中断して切り替える」（asking の「止めて切り替え」・incompatible の「中断して切り替え」を含む）。待ち・あとで・聞いているときだけ効く */
     interruptNow() {
-      if (!['waiting', 'locking', 'held', 'incompatible', 'interrupting'].includes(snap.state)) return false;
+      if (!['waiting', 'locking', 'held', 'incompatible', 'asking', 'interrupting'].includes(snap.state)) return false;
       interruptRequested = true;
       poke?.();
       release?.();
+      pendingAnswer?.('now');
+      return true;
+    },
+    /** asking・incompatible の答え（画面の「あとで」「止めて切り替え」「中断して切り替え」）。聞いていなければ false */
+    answer(value) {
+      if (value === 'now') return this.interruptNow();
+      if (value !== 'later' || !pendingAnswer) return false;
+      pendingAnswer('later');
+      return true;
+    },
+    /** 前の版で動いているとき（切り替えに失敗した）、切り替えをやり直す。作業が残っていれば、また待つ */
+    retry() {
+      if (snap.state !== 'done' || !snap.previous) return false;
+      interruptRequested = false;
+      stoppersLater = false;
+      emit({ state: 'idle', previous: false, error: null, reason: null, waiting: null, blockedBy: null, since: null, interrupt: null, interruptFailed: false, stopped: [], at: null });
+      running = run();
+      running.catch(error => log(`switching failed: ${errorText(error)}`));
       return true;
     },
     /** main が終わる。待ちをやめる（S1 を手放している途中なら止めない） */
@@ -275,6 +335,7 @@ function createSwitch({ server, target, effects, pollMs = POLL_MS, log = () => {
       cancelled = true;
       poke?.();
       release?.();
+      pendingAnswer?.('later');
     },
     /** S1 を手放している間か（main.cjs の onServerExit が「サーバーが終了しました」を出さない） */
     get replacing() { return REPLACING.has(snap.state); },
@@ -335,7 +396,10 @@ function createSwitchEffects({ link, ready, prepared, dataDir, resourcesPath, ex
       await boot.startAndConnect({ link, dataDir, logFile: boot.serverLogFile(runtime.root), log,
         launch: async () => (launched = await boot.launchServer({ mode, nodeExe: runtime.nodeExe, args: [path.join(runtime.appDir, 'core', 'server.mjs')], cwd, env: env2 })) });
       rearm();
-      return await next.promise;
+      const started = await next.promise;
+      // 切り替えをやり直すとき（前の版で動いている）の古いサーバーは、今起こしたもの
+      Object.assign(ready, { port: started.port, token: started.token, pid: started.pid, runtimeKey: started.runtimeKey });
+      return started;
     } catch (error) {
       next.cancel();
       // 立ちかけたサーバーがデータ置き場を持ったままだと、前の版で起こし直せない。自分が起こしたものだけを止める
@@ -359,7 +423,7 @@ function createSwitchEffects({ link, ready, prepared, dataDir, resourcesPath, ex
     check: runtime => check({ nodeExe: runtime.nodeExe, appDir: runtime.appDir, dataDir, env }),
     ask,
     running: () => runningWork(),
-    abortAll: () => abortAll('update'),
+    abortAll: onProgress => abortAll('update', onProgress),
     lock: () => request('update-lock'),
     unlock: () => { link.postMessage({ type: 'update-unlock' }); },
     async stopOld() {
@@ -392,10 +456,21 @@ function createSwitchEffects({ link, ready, prepared, dataDir, resourcesPath, ex
   };
 }
 
-/** 合わない版の「あとで／中断して更新」（ADR 0036 の形）。effects.ask になる。t は desktop/i18n.cjs の t */
+/**
+ * 「あとで／中断して更新」のダイアログ（ADR 0036 の形）。画面が切り替えの表示を持たないとき（この機能を持たない版の画面。
+ * desktop/switch-screen.cjs）の effects.ask になる。合わない版（reason は INCOMPATIBLE_REASONS）と、作業が終わって止まるものだけが
+ * 残ったとき（reason: 'stoppers'。「あとで／止めて切り替え」）。t は desktop/i18n.cjs の t
+ */
 function incompatibleDialog({ dialog, getWindow, t }) {
   const reasons = { schema: () => t('switch.reasonSchema'), ipc: () => t('switch.reasonIpc'), runtime: () => t('switch.reasonRuntime'), job: () => t('switch.reasonJob'), check: () => t('switch.reasonCheck') };
   return async ({ reason, waiting }) => {
+    if (reason === 'stoppers') {
+      const message = [t('switch.stoppersMessage', { count: waiting?.stoppers?.length ?? 0 }), t('switch.stoppersLater')].join('\n\n');
+      const options = { type: 'info', title: t('switch.stoppersTitle'), message, buttons: [t('switch.later'), t('switch.stopAndSwitch')], defaultId: 0, cancelId: 0, noLink: true };
+      const window = getWindow();
+      const { response } = await (window && !window.isDestroyed() ? dialog.showMessageBox(window, options) : dialog.showMessageBox(options));
+      return response === 1 ? 'now' : 'later';
+    }
     const busy = (waiting?.count ?? 0) > 0;
     const message = [(reasons[reason] ?? reasons.check)(), busy ? t('switch.incompatibleWork', { count: waiting.count }) : null, t('switch.incompatibleLater')].filter(Boolean).join('\n\n');
     const options = { type: 'info', title: t('switch.incompatibleTitle'), message, buttons: [t('switch.later'), busy ? t('switch.interruptAndUpdate') : t('switch.updateNow')], defaultId: 0, cancelId: 0, noLink: true };
@@ -409,7 +484,7 @@ function incompatibleDialog({ dialog, getWindow, t }) {
 function logStates(control, log) {
   let last = '';
   return control.onState(s => {
-    const waiting = s.state === 'waiting' && s.waiting ? ` ${s.waiting.count}: ${s.waiting.items.map(item => `${item.kind}:${item.sessionId ?? '-'}`).join(', ')}` : '';
+    const waiting = ['waiting', 'asking', 'held'].includes(s.state) && s.waiting ? ` ${s.waiting.count}: ${[...s.waiting.items, ...s.waiting.stoppers].map(item => `${item.kind}:${item.sessionId ?? '-'}`).join(', ')}` : '';
     const line = `${s.state}${waiting}${s.blockedBy ? ` (blocked: ${s.blockedBy})` : ''}${s.reason ? ` (${s.reason})` : ''}${s.error ? ` — ${s.error}` : ''}`;
     if (line !== last && s.state !== 'idle') log(line);
     last = line;

@@ -26,6 +26,11 @@
     "later": "Later",
     "interruptAndUpdate": "Stop and update",
     "updateNow": "Update now",
+    "stoppersTitle": "Some things will stop when Pleiad switches",
+    "stoppersMessage_one": "The work is done, but {{count}} thing will stop when Pleiad switches (a ! shell, a Codex terminal, and so on). Stop it and switch?",
+    "stoppersMessage_other": "The work is done, but {{count}} things will stop when Pleiad switches (! shells, Codex terminals, and so on). Stop them and switch?",
+    "stoppersLater": "Later keeps running the version from before the update. Pleiad switches by itself once nothing is left to stop.",
+    "stopAndSwitch": "Stop and switch",
     "fallback": "The new version's server could not start, so Pleiad is running on the previous version.",
     "failed": "Neither the new version's server nor the previous one could start. Restart Pleiad. Your saved conversations are kept.\n{{detail}}"
   },
