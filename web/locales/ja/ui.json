@@ -2124,6 +2124,7 @@
       "stopFailed": "止められなかった: {{error}}",
       "readFailed": "読めなかった: {{error}}",
       "title": "バックグラウンド",
+      "titleSub": "サブエージェント",
       "count": "実行中 {{live}} · 完了 {{ended}}",
       "listLabel": "バックグラウンドの一覧",
       "groupRunning": "動いている",

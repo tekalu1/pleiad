@@ -80,13 +80,15 @@ export const signatureOf = (calls) => calls.map((c) => `${c.id ?? c.name}:${c.re
 
 /**
  * 呼び出しの並びを、まとまり（1 件だけなら行のまま）と委譲に分けた要素にする。走っている最後の呼び出し（結果が無い）は走っている印。
+ * link(card, call) は、カードを作るたびに呼ぶ（委譲のカードを Chats と同じ形に仕上げる口。client.mjs の linkDelegateCard）
  * @returns {{ nodes: HTMLElement[], bundles: Bundle[] }}
  */
-export function toolNodes(calls, { running = false } = {}) {
+export function toolNodes(calls, { running = false, link = null } = {}) {
   const cards = calls.map((c, i) => {
     const card = renderToolCall(c.name, c.input, { id: c.id ?? undefined });
     if (c.result) applyToolResult(card, c.result);
     else if (running && i === calls.length - 1 && c.id) markRunning(card);
+    if (link && isBoundary(card.dataset.tool)) link(card, c);
     return card;
   });
   const nodes = [], bundles = [];

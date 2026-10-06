@@ -191,7 +191,7 @@ export function createTerminalTracker() {
 
 /** Internal observations also reach the host after the originating turn has ended. */
 export function commandActivity(method, params) {
-  if (method === 'item/commandExecution/outputDelta') return [{ type: 'task.activity' }];
+  if (method === 'item/commandExecution/outputDelta') return [{ type: 'task.activity', output: true }];
   if (method === 'item/commandExecution/terminalInteraction') return [{ type: 'task.command', id: params.itemId, processId: params.processId }];
   if (method === 'item/completed' && params.item?.type === 'commandExecution')
     return [{ type: 'task.command', id: params.item.id, state: 'completed' }];

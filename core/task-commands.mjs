@@ -4,6 +4,28 @@ import { redactForPeer } from './redact.mjs';
 const TOOLS = new Set(['run_command', 'Bash', 'PowerShell', 'commandExecution']);
 const DONE = new Set(['completed', 'failed', 'stopped', 'killed', 'declined']);
 
+// 明らかに「待つためのコマンド」（until / while のループ・sleep・gh run watch・--watch など）。子が止まっているのではなく、
+// 何かの終わり（テスト・CI・サーバーの起動）を待っているだけなので、長時間・無音の通知の対象にしない（ADR 0138）。
+const LEAD = String.raw`(?:^|[\s;&|(\x60'"])`;
+const END = String.raw`(?=$|[\s;&|)'"])`;
+const WAITING = new RegExp([
+  String.raw`${LEAD}(?:sleep|start-sleep|wait-process|wait-job|wait-event|wait)${END}`,
+  String.raw`${LEAD}until\s[\s\S]*\bdo\b`,
+  String.raw`${LEAD}while\s[\s\S]*\bdo\b[\s\S]*\b(?:sleep|start-sleep)\b`,
+  String.raw`\bgh\s+(?:run|workflow)\s+watch\b`,
+  String.raw`\bgh\s+pr\s+checks\b[^\n]*--watch\b`,
+  String.raw`--watch${END}`,
+  String.raw`\btail\s+-[fF]\b`,
+  String.raw`\btimeout\s+/t\b`,
+  String.raw`\bping\s+-n\s+\d+`,
+].join('|'), 'i');
+export const isWaitingCommand = text => WAITING.test(String(text ?? ''));
+/** 同じ子の同じコマンドを数える印（空白の違いは同じとみなす。長いコマンドは頭だけ） */
+export const commandKey = text => String(text ?? '').replace(/\s+/g, ' ').trim().slice(0, 300);
+/** 出力が伸びている間（最後の実際の出力から OUTPUT_MOVING_MS 以内）は、待っている先が動いているとみなす */
+export const OUTPUT_MOVING_MS = 60000;
+export const outputMoving = (row, at, window = OUTPUT_MOVING_MS) => row.lastOutputAt != null && at - row.lastOutputAt < window;
+
 // This clock measures observed execution/waiting, never silence. Approval time is excluded.
 export function pauseCommands(row, at, waiting) {
   for (const c of row.activeCommands ?? []) {

@@ -2,7 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { t, agentT } from './i18n.mjs';
-import { observeCommand, pauseCommands, commandElapsed, commandView } from './task-commands.mjs';
+import { observeCommand, pauseCommands, commandElapsed, commandView, isWaitingCommand, commandKey, outputMoving, OUTPUT_MOVING_MS } from './task-commands.mjs';
 import { taskTitle } from './task-title.mjs';
 import { openData } from './data-schema.mjs';
 import { taskTable } from './db.mjs';
@@ -14,6 +14,8 @@ const UNDELIVERED = new Set(['none', 'pending', 'delivering']);
 const RETRY_MAX = 15000;
 // 保存障害の記録（agent-tasks-errors.log）の大きさの上限。超えたら新しい半分だけ残す
 const LOG_MAX = 64 * 1024;
+// 1 タスクに持つ「知らせた」印（同じコマンド・同じ無音の状態を繰り返し知らせないための印）の上限。古いものから捨てる（ADR 0138）
+const NOTICED_MAX = 50;
 // 1 タスクに持つ実行前の拒否（rejections）の上限。超えた分は捨て、rejectionsDropped に数だけ残す
 const MAX_REJECTIONS = 50;
 // これらの通知の状態なら、今の rejections は依頼元へ渡した（か、止めた）。ply_task_send で始まる次の回は新しく数え直す
@@ -215,7 +217,7 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
   };
   // context は「別の候補でやり直す」で同じ依頼を渡し直すために持つだけ（長いので一覧・状態には載せない）
   const view = (r, offset = 0) => {
-    const { result = '', queue, context, instructions, rejections = [], silenceNotifiedAt, activeCommands = [], ...rest } = r;
+    const { result = '', queue, context, instructions, rejections = [], silenceNotifiedAt, noticedCommands, noticedSilence, lastOutputAt, activeCommands = [], ...rest } = r;
     pauseCommands(r, now(), waiting(r.sessionId));
     return { ...rest, activeCommands: activeCommands.map(c => commandView(c, now())), silenceMinutes: r.status === 'running' && !waiting(r.sessionId) && !lockWaiting(r.sessionId) && r.lastActivityAt != null
       ? Math.max(0, Math.floor((now() - r.lastActivityAt) / 60000)) : null,
@@ -455,18 +457,33 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
       });
     } finally { for (const r of rows) notices.delete(r.taskId); noticeOwners.delete(owner); }
   }
+  // 「止まっている可能性」の通知は、待っているだけの子には出さず、出すなら同じ子・同じコマンドで 1 回だけ（ADR 0138）。
+  // 待っている先が動いている（実際の出力が伸びている）間と、明らかに待つためのコマンド（until / sleep / gh run watch など）は控える。
+  // 控えたものは通知済みにしない（待ちが終わって、なお黙っているなら、そのとき 1 回だけ出す）
+  // 裏（background）のコマンドは、子が別の道具や出力で動いている間は、その子の止まっている根拠にしない
+  // 「動いている」とみなす間は 1 分。コマンドの時間を短くした設定（テスト）ではその長さまで縮める
+  const quietMs = Math.min(OUTPUT_MOVING_MS, commandMs || OUTPUT_MOVING_MS);
+  const childBusy = r => r.lastActivityAt != null && now() - r.lastActivityAt < quietMs;
+  const commandFit = (r, c) => c.state !== 'unknown' && !isWaitingCommand(c.command) && !outputMoving(r, now(), quietMs) && !(c.state === 'background' && childBusy(r));
+  const commandNoticed = (r, c) => Boolean(r.noticedCommands?.includes(commandKey(c.command)));
+  const silenceSignature = r => (r.activeCommands ?? []).filter(c => c.state !== 'unknown').map(c => commandKey(c.command)).sort().join('\n');
+  const silenceFit = r => !(r.activeCommands ?? []).some(c => c.state !== 'unknown' && isWaitingCommand(c.command));
+  const remember = (r, field, key) => { const list = r[field] ??= []; if (!list.includes(key)) { list.push(key); if (list.length > NOTICED_MAX) list.shift(); } };
+  const forget = (r, field, key) => { if (r[field]) r[field] = r[field].filter(k => k !== key); };
   async function notifySilence(r) {
     silenceNotices.add(r.taskId);
     const activityAt = r.lastActivityAt;
+    const signature = silenceSignature(r);
     try {
       if (!(await ready(structuredClone(r)).catch(() => false))) return;
-      if (r.status !== 'running' || waiting(r.sessionId) || lockWaiting(r.sessionId) || r.lastActivityAt !== activityAt || r.silenceNotifiedAt === activityAt) return;
+      if (r.status !== 'running' || waiting(r.sessionId) || lockWaiting(r.sessionId) || r.lastActivityAt !== activityAt || r.silenceNotifiedAt === activityAt
+        || !silenceFit(r) || r.noticedSilence?.includes(signature)) return;
       // Mark before delivery, as with completion notices: an uncertain delivery must not be repeated.
-      try { await commit(r.taskId, row => { row.silenceNotifiedAt = activityAt; }, 'silence.notice'); }
+      try { await commit(r.taskId, row => { row.silenceNotifiedAt = activityAt; remember(row, 'noticedSilence', signature); }, 'silence.notice'); }
       catch { return; }
       if (r.status !== 'running' || waiting(r.sessionId) || lockWaiting(r.sessionId) || r.lastActivityAt !== activityAt) return;
       const outcome = await deliverSilence(structuredClone(r), Math.max(1, Math.floor((now() - activityAt) / 60000))).catch(() => 'error');
-      if (outcome === 'requeue' && r.lastActivityAt === activityAt) await record(r.taskId, row => { row.silenceNotifiedAt = null; }, 'silence.requeue');
+      if (outcome === 'requeue' && r.lastActivityAt === activityAt) await record(r.taskId, row => { row.silenceNotifiedAt = null; forget(row, 'noticedSilence', signature); }, 'silence.requeue');
     } finally { silenceNotices.delete(r.taskId); }
   }
   async function notifyCommand(r, command) {
@@ -475,28 +492,32 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
     const current = () => r.activeCommands?.find(c => c.noticeId === id);
     const eligible = () => {
       const c = current();
-      return c && c.state !== 'unknown' && !waiting(r.sessionId) && commandElapsed(c, now()) >= commandMs;
+      return c && commandFit(r, c) && !waiting(r.sessionId) && commandElapsed(c, now()) >= commandMs;
     };
+    // 同じ子で同じコマンドは、もう知らせた（繰り返しの確認・再実行で何度も知らせない）
+    const key = command.command;
+    const release = () => { if (current()) current().notified = false; forget(r, 'noticedCommands', commandKey(key)); };
     try {
-      if (!(await ready(structuredClone(r)).catch(() => false)) || !eligible() || current().notified) return;
+      if (!(await ready(structuredClone(r)).catch(() => false)) || !eligible() || current().notified || commandNoticed(r, current())) return;
       const marked = await serial(async () => {
-        if (!eligible() || current().notified) return false;
+        if (!eligible() || current().notified || commandNoticed(r, current())) return false;
         current().notified = true;
+        remember(r, 'noticedCommands', commandKey(key));
         try { await write([r.taskId]); return true; }
         catch (e) {
-          if (current()) current().notified = false;
+          release();
           failed(e, 'command.notice', r.taskId);
           return false;
         }
       });
       if (!marked) return;
       if (!eligible()) {
-        if (current()) await record(r.taskId, () => { if (current()) current().notified = false; }, 'command.defer');
+        if (current()) await record(r.taskId, release, 'command.defer');
         return;
       }
       const c = current();
       const outcome = await deliverCommand(structuredClone(r), { ...commandView(c, now()), noticeId: id }).catch(() => 'error');
-      if (outcome === 'requeue' && current()) await record(r.taskId, () => { if (current()) current().notified = false; }, 'command.requeue');
+      if (outcome === 'requeue' && current()) await record(r.taskId, release, 'command.requeue');
     } finally { commandNotices.delete(id); }
   }
   // 保存障害の間は、間隔を空けて保存だけをやり直す（1 回に 1 秒ほど待つ保存を、500ms ごとに仕事の数だけ重ねない）。
@@ -514,7 +535,7 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
     for (const r of Object.values(records)) {
       pauseCommands(r, now(), waiting(r.sessionId));
       for (const c of r.activeCommands ?? []) {
-        if (commandMs && c.state !== 'unknown' && !waiting(r.sessionId) && !c.notified
+        if (commandMs && commandFit(r, c) && !waiting(r.sessionId) && !c.notified && !commandNoticed(r, c)
           && commandElapsed(c, now()) >= commandMs && !commandNotices.has(c.noticeId)) {
           spawn(notifyCommand(r, c).catch(e => report({ event: 'unexpected', operation: 'command', taskId: r.taskId, code: e?.code ?? null })));
         }
@@ -529,7 +550,8 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
         }
         else if (silenceWaiting.delete(r.taskId)) { r.lastActivityAt = now(); r.silenceNotifiedAt = null; }
         if (silenceMs && !isWaiting && r.lastActivityAt != null && now() - r.lastActivityAt >= silenceMs
-          && r.silenceNotifiedAt !== r.lastActivityAt && !silenceNotices.has(r.taskId)) {
+          && r.silenceNotifiedAt !== r.lastActivityAt && !silenceNotices.has(r.taskId)
+          && silenceFit(r) && !r.noticedSilence?.includes(silenceSignature(r))) {
           spawn(notifySilence(r).catch(e => report({ event: 'unexpected', operation: 'silence', taskId: r.taskId, code: e?.code ?? null })));
         }
       } else silenceWaiting.delete(r.taskId);
@@ -569,6 +591,7 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
     observe(sessionId, event) {
       const r = bySession.get(sessionId);
       if (!r || !event?.type) return;
+      if (event.type === 'task.activity' && event.output) r.lastOutputAt = now();
       this.activity(sessionId);
       if (!['tool.start', 'tool.result', 'task.command'].includes(event.type)) return;
       observeCommand(r, event, now(), waiting(sessionId));

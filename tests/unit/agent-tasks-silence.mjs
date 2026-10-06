@@ -20,6 +20,7 @@ export default async function(t) {
     deliver: async () => 'ok', deliverSilence: async (task, minutes) => { notices.push({ task, minutes }); return 'ok'; },
     waiting: () => approval, lockWaiting: () => lockWait,
   });
+  const again = n => manager.observe('child', { type: 'tool.start', id: `step-${n}`, name: 'Bash', input: { command: `build step ${n}` } });
   try {
     const task = await manager.call('parent', 'ply_delegate', { backend: 'fake', task: 'work', title: 'Long work' });
     await until(() => release);
@@ -35,10 +36,12 @@ export default async function(t) {
     t.ok('親へ届く文面が英日とも題・経過・確認と停止の口を示す', [ja, en].every(s => s.includes(task.taskId) && s.includes('Long work') && s.includes('15') && s.includes('ply_task_status') && s.includes('ply_task_cancel')));
     clock = 60 * 60000; manager.checkSilence(); await sleep(20);
     t.ok('同じ無音の間は一度だけ', notices.length === 1);
-    manager.activity('child');
+    // 動き出す（別のコマンドを始める。同じ状態の無音は繰り返さないので、状態を変えて数え直しを確かめる）
+    again(1);
     clock = 74 * 60000; manager.checkSilence(); await sleep(20);
     t.ok('動き出した後は数え直す', notices.length === 1 && (await manager.call('parent', 'ply_task_status', { taskId: task.taskId })).silenceMinutes === 14);
     clock = 75 * 60000; manager.checkSilence(); await until(() => notices.length === 2);
+    again(3);
     approval = true; manager.checkSilence();
     clock = 200 * 60000; manager.checkSilence(); await sleep(20);
     t.ok('承認待ちは動きとして記録し、無音を数えない', notices.length === 2
@@ -50,7 +53,7 @@ export default async function(t) {
     t.ok('承認後は待機時間を除いて数え直す', notices.length === 2);
     clock = 215 * 60000; manager.checkSilence(); await until(() => notices.length === 3);
     // コンピューターの操作のロックを待っている間（承認待ちではない）も、無音に数えない。status は waiting にしない
-    manager.activity('child');
+    again(4);
     lockWait = true; manager.checkSilence();
     clock = 400 * 60000; manager.checkSilence(); await sleep(20);
     t.ok('ロック待ちは無音に数えず、承認待ち（status: waiting）にもしない', notices.length === 3
@@ -60,6 +63,15 @@ export default async function(t) {
     clock = 400 * 60000 + 14 * 60000; manager.checkSilence(); await sleep(20);
     t.ok('ロック待ちが終わったら数え直す', notices.length === 3);
     clock = 400 * 60000 + 15 * 60000; manager.checkSilence(); await until(() => notices.length === 4);
+    // 同じ状態（同じコマンド）で動き出して、また黙っても繰り返さない（ADR 0138）
+    manager.activity('child');
+    clock = 500 * 60000; manager.checkSilence(); await sleep(20);
+    t.ok('同じ子・同じ状態の無音は繰り返し知らせない', notices.length === 4);
+    // 待つためのコマンド（until / sleep）を走らせているだけなら、黙っていても止まっているとは言わない
+    manager.observe('child', { type: 'tool.start', id: 'wait', name: 'Bash', input: { command: 'until gh run view 1 --exit-status; do sleep 30; done' } });
+    clock = 600 * 60000; manager.checkSilence(); await sleep(20);
+    t.ok('待つためのコマンドの間は無音を知らせない', notices.length === 4);
+    manager.observe('child', { type: 'tool.result', id: 'wait', text: 'ok' });
     release(); await until(() => manager.get(task.taskId).status === 'completed');
   } finally { await manager.close(); await fs.rm(dir, { recursive: true, force: true }); }
 
