@@ -28,6 +28,8 @@
 //   "bg-shell <本文>" … 本文で返答した後、終わらない裏のコマンド（Claude の local_bash）を抱えて phase: waiting で待つ。
 //                    stopBackground で止めると main が再開して一言返し、ターンが終わる
 //   "term <本文>"  … 本文で返答して終わり、ターンの外に端末（Codex の unified_exec と同じ kind: terminal）を残す
+//   "history-ioerr <回数> <本文>" … 本文で返答して終わり、その後のこの会話の getMessages を <回数> だけ Codex と同じ
+//                    `(code: 1546) disk I/O error` で失敗させる（止めたばかりのターン用の app-server とぶつかった形。core/history-retry.mjs）
 //   "hook-follow <本文>" … 本文で返答した後、Stop フックに止められて続けた形（ToolSearch と load_skill を呼んで「ナレッジ化対象なし」）。
 //                    続きの発言には Claude の履歴と同じ stopHookFollowUp を付ける
 //   "steps:<json>" または "steps:@<json ファイルの絶対パス>" … ツールと本文を台本どおりに並べる。{"steps":[{"tool":"Grep","input":{…},"result":"…","error":false,"ms":600,"ask":false},{"text":"…"}]}
@@ -715,6 +717,11 @@ export const backend = {
         const follow = { uuid: crypto.randomUUID(), role: "assistant", text: "ナレッジ化対象なし", stopHookFollowUp: true };
         await say(emit, follow.text, follow.uuid);
         push(s, follow);
+      } else if (/^history-ioerr(\s|$)/.test(text)) {
+        const [, count, body] = /^history-ioerr\s+(\d+)\s*([\s\S]*)$/.exec(text) ?? [];
+        out.text = body || "報告";
+        await say(emit, out.text, out.uuid);
+        s.historyFailures = Number(count ?? 0);
       } else if (/^term(\s|$)/.test(text)) {
         out.text = text.replace(/^term\s*/, "") || "端末を残した";
         await say(emit, out.text, out.uuid);
@@ -791,7 +798,12 @@ export const backend = {
   },
 
   async getMessages(sessionId) {
-    return (sessions.get(sessionId)?.messages ?? []).map((m) => ({ ...m }));
+    const s = sessions.get(sessionId);
+    if (s?.historyFailures > 0) {
+      s.historyFailures--;
+      throw new Error("codex -32603: failed to list thread history: thread-store internal error: failed to access thread history: error returned from database: (code: 1546) disk I/O error");
+    }
+    return (s?.messages ?? []).map((m) => ({ ...m }));
   },
 
   async setTitle(sessionId, title) {

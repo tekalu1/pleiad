@@ -14,6 +14,7 @@ import { conversationTable } from "./db.mjs";
 import { classifySystemMessages, BOT_RECENT_TAG } from "./system-messages.mjs";
 import { promptTitle } from "./prompt-title.mjs";
 import { WORK_NOTES_VERSION } from "./brain/inner.mjs";
+import { readWithRetry, transientStorageError } from "./history-retry.mjs";
 
 // 会話の索引（本文を除いたメタ情報）は SQLite の conversations（1 会話 1 行。core/db.mjs、ADR 0115）、本文は
 // conversations/<id>.json（会話ごとに 1 ファイル）。索引は変えた会話の行だけを書く。本文はまだ変更のたびに 1 会話分を丸ごと書く
@@ -691,9 +692,21 @@ export function wrapBackend(native) {
       });
     } finally {
       await checkpoint;
-      if (r.nativeId) {
+      // ターンの後の取り込み。一時的な SQLite のエラー（Codex の `(code: 1546) disk I/O error`）なら間を空けて読み直し、
+      // それでも読めなければ取り込みはこの回は見送る（ターンを失敗にしない。次に会話を読むとき getMessages が取り込む）。
+      // 2026-09-27 以降、作業と報告を終えた Codex の委譲の子が、ここで投げたエラーで「失敗」になっていた（core/history-retry.mjs）
+      const nativeMessages = r.nativeId ? await readWithRetry(() => native.getMessages(r.nativeId, { fullResults: true }), {
+        // i18n-ignore: サーバーのログ
+        onRetry: (e, n, ms) => console.error(`  conversations: ターンの後の履歴を読めなかったので ${ms}ms 後に読み直す（${n} 回目）:`, String(e?.message ?? e).slice(0, 300)),
+      }).catch((e) => {
+        if (!transientStorageError(e)) throw e;
+        // i18n-ignore: サーバーのログ
+        console.error("  conversations: ターンの後の履歴を読み直しても読めなかったので、取り込みを次に読むときへ回す:", String(e?.message ?? e).slice(0, 300));
+        return null;
+      }) : null;
+      if (nativeMessages) {
         // 巻き戻しを拒否されたターンは、鎖がまだ古い葉のまま。切ってから取り込む（捨てた発言が戻らないように）
-        const messages = applyRewindMark(await native.getMessages(r.nativeId, { fullResults: true }), mark);
+        const messages = applyRewindMark(nativeMessages, mark);
         if (!messages.length) throw new Error(t("conversations.historyUnreadable"));
         mergeMessages(r, messages, native.id);
         // Preallocated conversations start with a placeholder in the sidecar.
