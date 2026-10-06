@@ -40,7 +40,9 @@ export default async function (t) {
   // 入口（turn-phases-server.mjs）の場面を走らせ、結果を待つ
   const scene = async (name, input = {}) => {
     const done = path.join(phasesDir, `${name}.done`);
-    await fs.writeFile(path.join(phasesDir, `${name}.go`), JSON.stringify(input));
+    // 入口は .go が現れたらすぐ読むので、書きかけ（空のファイル）を読ませないよう、別名で書いてから置く
+    await fs.writeFile(path.join(phasesDir, `${name}.go.tmp`), JSON.stringify(input));
+    await fs.rename(path.join(phasesDir, `${name}.go.tmp`), path.join(phasesDir, `${name}.go`));
     const end = Date.now() + TURN_WAIT_MS;
     while (Date.now() < end) {
       const text = await fs.readFile(done, 'utf8').catch(() => null);
@@ -63,6 +65,10 @@ ${server.tail(10)}`);
       }
     },
   });
+
+  // 別の経路（別の接続・サーバー内の場面）で終わったターンの turnEnd が c に届くのを待つ。同じ接続の中は順序が保たれるので、
+  // 終わった後に c から出した往復の答えが返れば、それより前にサーバーが流したイベントは c に届いている（時間でなく往復で待つ）
+  const caughtUp = () => c.cmd('running');
 
   try {
     const usageCount = () => (readUsage(dataDir)?.records ?? []).length;
@@ -180,6 +186,7 @@ ${server.tail(10)}`);
       });
       const res = await cDecline.runTurn({ backend: 'fake', cwd: ROOT, prompt: 'ask' }, { ms: TURN_WAIT_MS });
       cDecline.close();
+      await caughtUp();
       t.ok('ask (deny): outcome は ok', res.outcome === 'ok');
       const turnEnds = c.since(mark).filter(e => e.type === 'turnEnd' && e.sessionId === res.sessionId);
       t.ok('ask (deny): turnEnd は 1 回', turnEnds.length === 1);
@@ -250,6 +257,7 @@ ${server.tail(10)}`);
       const prevCompleted = sessionMeta(base)?.completedAt;
       const mark = c.mark();
       const out = await scene('canInvoke', { sessionId: base, prompt: 'echo:NEVER' });
+      await caughtUp();
       const turnEnds = c.since(mark).filter(e => e.type === 'turnEnd' && e.sessionId === base);
       t.ok('canInvoke: runTurn は requeue を返す', out.ok && out.value === 'requeue', JSON.stringify(out));
       t.ok('canInvoke: turnEnd は 1 回で requeued', turnEnds.length === 1 && turnEnds[0].requeued === true && turnEnds[0].outcome === 'requeue');
@@ -263,6 +271,7 @@ ${server.tail(10)}`);
       const prevUsage = usageOf(base);
       const mark = c.mark();
       const out = await scene('onStartedThrows', { sessionId: base, prompt: 'echo:NEVER' });
+      await caughtUp();
       const turnEnds = c.since(mark).filter(e => e.type === 'turnEnd' && e.sessionId === base);
       t.ok('onStarted: 投げた例外がそのまま runTurn から出る', !out.ok && out.error === 'onStarted-boom', JSON.stringify(out));
       t.ok('onStarted: 失敗を知らせ、turnEnd は 1 回', turnEnds.length === 1
