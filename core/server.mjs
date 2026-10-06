@@ -1014,7 +1014,15 @@ function conversationConnection(turn) {
   // 持つのは鍵だけにして、呼ばれた時に今走っているターンを引く。
   // 会話の言語は会話を始めたときに決まり、以後は変わらない（runTurn）。橋の instructions・ツールの説明もその言語で開く
   const entry = { key: turn.key, locale: turn.agentLocale, sessionId: turn.info.sessionId ?? null };
-  const binding = agentBridge.open({ origin: localOrigin(), locale: entry.locale,
+  attachAgentsPort(entry);
+  entry.contextToken = crypto.randomBytes(32).toString('hex');
+  agentConnections.set(entry.key, entry);
+  return entry;
+}
+
+/** 会話の橋（ply_agents）を開いて entry に付ける。token があれば、その値で開き直す（restoreConnection） */
+function attachAgentsPort(entry, token) {
+  const binding = agentBridge.open({ origin: localOrigin(), locale: entry.locale, token,
     owner: async () => {
       const live = runtime.turns.get(entry.key);
       if (!live) throw new Error(agentT(entry.locale, 'delegation.notRunning'));
@@ -1024,10 +1032,48 @@ function conversationConnection(turn) {
     } });
   const { close, ...agentRuntime } = binding;
   entry.runtime = agentRuntime;
-  entry.contextToken = crypto.randomBytes(32).toString('hex');
   entry.close = close;
-  agentConnections.set(entry.key, entry);
-  return entry;
+}
+
+/** 札へ入れる、会話の口のトークン（開いていない口は null）。restoreConnection に渡す形 */
+function connectionTokens(entry) {
+  const bearer = (port) => /^Bearer ([a-f0-9]{64})$/.exec(port?.headers?.Authorization ?? '')?.[1] ?? null;
+  return { agents: bearer(entry.runtime), computer: bearer(entry.computer), browser: bearer(entry.browser), control: entry.control?.token ?? null, context: entry.contextToken ?? null };
+}
+
+/**
+ * 札の項目から会話の口を戻す（無停止の更新。新しいサーバーが、CLI の持つ URL・ヘッダーをそのまま通す）。
+ * entry は { key, sessionId, locale, tokens: connectionTokens の形, computerBackend }。開いていなかった口は開かない。
+ * 今ある口は上書きしない（登録済みの key は投げる）。トークンの形が違う・他の会話が使っている値なら、開いた分を閉じて投げる
+ */
+function restoreConnection(entry) {
+  const { key, sessionId = null, locale, tokens = {}, computerBackend } = entry ?? {};
+  if (typeof key !== 'string' || !key) throw new Error('Invalid connection key');
+  if (agentConnections.has(key)) throw new Error('Connection already restored');
+  // ply_context の口は会話のあいだ同じ値で開くので、口の側には衝突の検査が無い。ここで形と他の会話との重なりを見る
+  if (typeof tokens.context !== 'string' || !/^[a-f0-9]{64}$/.test(tokens.context)) throw new Error('Invalid token');
+  for (const other of agentConnections.values()) if (other.contextToken === tokens.context) throw new Error('Token already in use');
+  const restored = { key, locale, sessionId };
+  try {
+    attachAgentsPort(restored, tokens.agents);
+    restored.contextToken = tokens.context;
+    if (tokens.browser) restored.browser = browserBridge.open({ origin: localOrigin(), locale, owner: () => restored.key, token: tokens.browser });
+    if (tokens.control) restored.control = openControlPort(restored, tokens.control);
+    if (tokens.computer) {
+      const backend = getBackend(computerBackend);
+      if (!computerBridge || !backend) throw new Error('Computer use is not available');
+      restored.computerBackend = backend.id;
+      restored.computer = openComputerPort(restored, backend, tokens.computer);
+    }
+  } catch (e) {
+    try { restored.close?.(); } catch {}
+    try { restored.browser?.close(); } catch {}
+    try { restored.control?.close(); } catch {}
+    try { restored.computer?.close(); } catch {}
+    throw e;
+  }
+  agentConnections.set(key, restored);
+  return restored;
 }
 
 /** Pleiad 自身の HTTP の口（子プロセスや中継から呼ばせる先） */
@@ -1077,8 +1123,13 @@ function computerConnection(turn) {
   if (entry.computer && entry.computerBackend === turn.backend.id) return entry.computer;
   try { entry.computer?.close(); } catch {}
   entry.computerBackend = turn.backend.id;
-  entry.computer = computerBridge.open({ origin: localOrigin(), locale: entry.locale, delivery: turn.backend.capabilities?.computerUse || undefined,
-    agent: () => { const live = runtime.turns.get(entry.key) ?? turn; return { id: live.backend.id, label: live.backend.label }; },
+  entry.computer = openComputerPort(entry, turn.backend);
+  return entry.computer;
+}
+/** ply_computer の口を開く。token があれば、その値で開き直す（restoreConnection） */
+function openComputerPort(entry, backend, token) {
+  return computerBridge.open({ origin: localOrigin(), locale: entry.locale, delivery: backend.capabilities?.computerUse || undefined, token,
+    agent: () => { const live = runtime.turns.get(entry.key); const b = live?.backend ?? backend; return { id: b.id, label: b.label }; },
     owner: async () => {
       const live = runtime.turns.get(entry.key);
       if (!live) throw new Error(agentT(entry.locale, 'delegation.notRunning'));
@@ -1089,7 +1140,6 @@ function computerConnection(turn) {
         mode: modePosition(live.backend.modes()[live.info.mode]), signal: live.ac.signal, ancestors: await delegationAncestors(sessionId),
         agent: { id: live.backend.id, label: live.backend.label } };
     } });
-  return entry.computer;
 }
 
 // ---- ply_browser（エージェントのブラウザー操作の口。core/browser-bridge.mjs、ADR 0148）。ツールはまだ載せていない ----------------------------
@@ -1111,10 +1161,9 @@ const opsHttp = createOpsHttp({
   // 会話に束縛した接続のトークン（会話のシェルの環境変数）は、同じ会話に束縛された CLI になる
   authenticate: (token) => { if (cliTokenOk(token)) return {}; const bound = controlBridge.lookup(token); return bound ? { owner: bound.owner, locale: bound.locale } : null; },
 });
-/** このターンに渡す ply_control（url・headers・instructions）と、会話のシェルへ渡す環境変数（CLI を同じ会話に束縛する）。全会話・3 つのエージェントに渡す */
-function controlRuntimeFor(turn) {
-  const entry = conversationConnection(turn);
-  entry.control ??= controlBridge.open({ origin: localOrigin(), locale: entry.locale,
+/** ply_control の口を開く。token があれば、その値で開き直す（restoreConnection） */
+function openControlPort(entry, token) {
+  return controlBridge.open({ origin: localOrigin(), locale: entry.locale, token,
     // 会話の id が決まるまでは束縛を決められない。束縛なしの主体として通すと、読み取りの会話からの書き込みを断れなくなるので投げる
     owner: async () => {
       const live = runtime.turns.get(entry.key);
@@ -1122,6 +1171,11 @@ function controlRuntimeFor(turn) {
       else if (entry.sessionId) return entry.sessionId;
       throw new Error(agentT(entry.locale, 'delegation.idPending'));
     } });
+}
+/** このターンに渡す ply_control（url・headers・instructions）と、会話のシェルへ渡す環境変数（CLI を同じ会話に束縛する）。全会話・3 つのエージェントに渡す */
+function controlRuntimeFor(turn) {
+  const entry = conversationConnection(turn);
+  entry.control ??= openControlPort(entry);
   return { url: entry.control.url, headers: entry.control.headers, instructions: controlInstructions(entry.locale),
     env: { PLEIAD_CONTROL_URL: localOrigin(), PLEIAD_CONTROL_TOKEN: entry.control.token } };
 }

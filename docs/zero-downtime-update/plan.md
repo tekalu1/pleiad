@@ -295,7 +295,7 @@ design.md §5.1・§6.1・§8。
 |---|---|---|
 | 2b-1 | `runTurnInternal` を `prepareTurn`・`beginTurn`・`launchTurn`・`driveTurn`（出来事を受けて `endTurn` で締める）・`releaseTurn` に分ける。閉包の値を `ctx` に移す。`endTurn` に 1 回だけの印 | M |
 | 2b-2 | 札の形（`core/turn-card.mjs`。純関数・版つき・秘密の欄を分ける・途中送信の控えを 1 つの欄に） | S |
-| 2b-3 | 会話の MCP の口（ply_agents・ply_computer・ply_browser・ply_control・ply_context）を同じトークンで開き直す `open({ token })` | S |
+| 2b-3 | 会話の MCP の口（ply_agents・ply_computer・ply_browser・ply_control・ply_context）を同じトークンで開き直す `open({ token })`。**実装済み 2026-10-06**（トークンの検査は `core/mcp-token.mjs`、`server.mjs` に `restoreConnection(entry)`。まだ呼ばない。要点と 2b-4 への注意は [stage2-server-state.md](stage2-server-state.md) の「2b-3 の実装のメモ」） | S |
 | 2b-4 | 付け直しの入口 `adoptTurn(card, source)`・`makeEmit` の再生の道・起動の順序と後片付けの除外・`backend.adoptTurn` の口。元は既定で空。テストは「終わっていたターン」の札と記録から | M |
 | 2b-5 | fake の `adoptTurn`（台本を別プロセスの偽の CLI で走らせ、保持役の子に載せる） | M |
 | 2b-6 | スナップショットと承認を再生で作る（ack・uuid の冪等・承認のカードの id を決まった値に・中断の送り直し・ポートが取れないとき） | M |

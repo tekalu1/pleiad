@@ -6,10 +6,11 @@
 //     call(binding, name, args, { locale, signal }) ツールの本体。文字列か { text, isError } を返す（投げれば isError の文になる）。
 //                                          signal は呼び出した側が切断したら中断される（承認を待つ呼び出しが取り下げるのに使う）
 //     instructions(locale)                 initialize の instructions。無ければ返さない（指示を別の経路で渡す会話の二重を避ける）
-//   bridge.open({ origin, locale, ...bound }) → { url, headers, token, close }   bound は call と tools に渡る束縛（owner など）
+//   bridge.open({ origin, locale, token?, ...bound }) → { url, headers, token, close }   bound は call と tools に渡る束縛（owner など）。
+//                                          token を渡すと、その値で開き直す（形が違う・使用中なら投げる。省略なら新しく作る）
 //   bridge.lookup(token)                 そのトークンの束縛（無ければ undefined）。同じトークンで CLI（/api/ops）を束縛するのに使う
 //   bridge.handle(req, res)              POST だけ受ける。トークンが無い・知らないものは 401
-import crypto from 'node:crypto';
+import { claimToken } from './mcp-token.mjs';
 
 const TOKEN = /^Bearer ([a-f0-9]{64})$/;
 
@@ -58,8 +59,8 @@ export function createMcpBridge({ path, serverName, version = '1.0.0', instructi
 
   return {
     path,
-    open({ origin, locale, ...bound }) {
-      const token = crypto.randomBytes(32).toString('hex');
+    open({ origin, locale, token: fixed, ...bound }) {
+      const token = claimToken(bindings, fixed);
       bindings.set(token, { ...bound, locale });
       return { url: origin + path, headers: { Authorization: `Bearer ${token}` }, token, close: () => bindings.delete(token) };
     },
