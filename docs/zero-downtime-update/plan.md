@@ -205,7 +205,7 @@ design.md §7.2 の表のとおり。サーバー側が「main に頼むもの�
 - **1-6 へ**: (1) `main-leaving` を送った後に更新を取りやめたとき、サーバーの「猶予を数えない」状態（`leaving`）は main の再接続でしか解けない。取りやめの知らせを足すかを決める。(2) `agentBrowserBridge.close()` は終わる前に最後のタブの写しを送る（`will-quit` で呼ばれる）ので、`installUpdate` から `quitAndInstall` へ進むときの順序は変えなくてよい。(3) 切り替えで新しいサーバーを起こすときは、旧サーバーが持つ内蔵ブラウザーの写し・中継の URL・復号した値は引き継がれない（新しいサーバーは空から始まり、新しい main の復元の依頼は空の答えになる）。タブは main のものなので残るが、写しの報告は次の変化まで届かない。切り替えの直後に main が `browser-state-report` を 1 回送り直す道（または新しいサーバーへの付け直しで `browser-restore-request` を使わず報告だけする）が要る
 - **1-7 へ**: os-open・openExternal の居ない間の実機（署名した旧版 → 新版の更新の最中）。更新の約 50 秒の間に、スリープ抑止の要否（1-0 の d）
 
-### 1-6 更新の流れ・切り替えの先送り・画面の読み直し（M）
+### 1-6 更新の流れ・切り替えの先送り・画面の読み直し（M。**実装済み 2026-10-06**（待ちの表示を除く）。下の「実装のメモ」）
 
 design.md §5.1・§6.1・§8。
 
@@ -224,6 +224,16 @@ design.md §5.1・§6.1・§8。
 - main が出す文言（ダイアログ）も `web/locales/{ja,en}/desktop.json`（`desktop/i18n.cjs` が読む）
 - 新しい main の preload は、古い画面（先送りの間に出す S1 の画面）が使う名前を 1 版ぶん残す（`desktop/preload.cjs`）
 - テスト: `tests/unit/desktop-switch.mjs`（状態機械: 待ち・ロックが取れない・サーバーの終了の待ち・起動の失敗から前の版へ戻る・形式番号が違う版は自動で切り替えない・「あとで」・「今すぐ中断」・待っている間に新しい作業が始まる）。`tests/unit/web-interrupt.mjs` に読み直しの判定。`handover-check` の出力は `tests/unit/handover-check.mjs`
+
+**実装のメモ（2026-10-06。実装済み。待ちの表示を除く。流れの全体は design.md §6.1「段階 1 の実装」）**
+
+- **新しいファイル**: `desktop/switch.cjs`（状態機械 `createSwitch`・副作用の組み立て `createSwitchEffects`・`startSwitch`・合わない版のダイアログ `incompatibleDialog`）・`core/handover-check.mjs`（事前の確かめ。`readBuildInfo` はサーバーの `ready` も使う）。既存は小さく: `desktop/main.cjs`（`installUpdate` の on・`startServerSwitch`・`onServerExit` の印）・`core/server.mjs`（`ready` の `build`・main への `ready` の `appVersion`・`build`・`pid`・`runtimeKey`・`running` の `shells`・`index.html` の `pleiad-build`）・`core/shell-runs.mjs`（`list`）・`desktop/runtime.cjs`（前の版の場所 `locate`）・`desktop/server-boot.cjs`（`chooseServer` の `prepared`）・`desktop/updates.cjs`（`handover`）・`web/client.mjs`・`web/interrupt.mjs`（`versionReload`）・`web/updates.mjs`・`web/locales/{ja,en}/desktop.json`（`switch.*`）
+- **`main-leaving` → `leave()` の位置**: `main-leaving` は `quitAndInstall` の前に送り、`leave()` は electron-updater がインストーラーを起こした直後（`before-quit-for-update`）にする。`quitAndInstall` が失敗したときに、つながりを切らずに済む（更新を取り消しても `main-leaving` の印はサーバーに残る。1-5 と合わせて扱う）
+- **数えない作業の扱い（決めたこと）**: 外部の stdio MCP は数えない（作業ではなく、走っているターンが 0 件なら呼び出しの途中は無い。S2 が次の呼び出しで起こし直す。状態（`node_repl` など）は今の再起動と同じく消える。数えると切り替わらない）。送信予定・上限の解除後の再開は数えない（行は `schedule.json` に残り S2 が戻す。断の数秒は送信予定の遅れの猶予 1 時間（ADR 0103）に収まる。発火して送信待ちに入った分は `update-lock` が断る）。**`!` の行と Codex の裏の端末は「終わるまで待つ」が仮**（ADR 0137 の 9「止まるものは無い」に合わせた。`!` の行は 10 分の上限で必ず終わるが、裏の端末は終わらないことがある）。待ちの表示のモック（置き場所 A/B/C・止まるものの扱い X/Y/Z）の利用者の判断を受けて、`switchBlockers` と `createSwitch` の待ちを直す。テストは `tests/unit/desktop-switch.mjs`
+- **表示の口**: `onState(snapshot)` と `interruptNow()`（design.md §6.1）。今の表示は main のログ（`[server] switch: …` が updater.log に出る）と、前の版に戻したときのダイアログだけ。**待っている間の窓は S1（古い版）の画面なので、待ちの表示は main の側で描く**
+- **preload**: この版で名前は変えていない。前の版の画面が使う名前の一覧を `tests/unit/desktop-switch.mjs` に持ち、消えたら落とす
+- **確かめた**: `npm test`（全件）・デスクトップのハーネス（`docs/dev-verification.md`「デスクトップ版（Electron）」。版の違う 3 つの resources で、旧版の main の fake のターン → 更新相当 → 新版の main が付け直して待ち、ターンが中断されずに終わってから同じトークン・ポートで S2 に替わり、窓が読み直される。main が読み直さない別の窓は自分で 1 回だけ読み直す。壊した版では前の版で起こし直し、その旨が出る）
+- **1-7・1-5 への申し送り**: (1) S1 の終わりで `computer/service.cjs`・`computer-overlay.cjs` の `once('exit')` の後始末が使い切られ、S2 には付け直されない。(2) 更新を取り消したとき（`quitAndInstall` の失敗）の `main-leaving` の印。(3) 新しい版が立たないとき、起こしたサーバーの終わりを見てから前の版を起こすまで約 6 秒（`startAndConnect` の付け直しの猶予 5 秒）。(4) 窓は、main の読み直しの前に古い画面が S2 につながると自分でも読み直しを始めうる（どちらかが勝ち、読み込みは 1 回に収まった）
 
 ### 1-7 テスト・文書・実機・既定を `on` に（M）
 

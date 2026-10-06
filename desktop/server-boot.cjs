@@ -187,7 +187,8 @@ function describeBootError(error, t) {
 /**
  * どのサーバーを使うかを決める。戻り値:
  *   null（今の utilityProcess に落とす。log に理由）か、
- *   { link, connect, logFile, root }  link は worker と同じ形の包み（まだつながっていない）。connect() で付け直す・起こす
+ *   { link, connect, logFile, root, prepared }  link は worker と同じ形の包み（まだつながっていない）。connect() で付け直す・起こす。
+ *     prepared はこの版の実行場所（prepareRuntime の結果。組めなければ null）の Promise
  *     connect() の戻り値 { attached, pid, welcome }。失敗は ServerBootError（describeBootError で文にする）
  * 引数:
  *   resourcesPath・execPath  配布物の resources\ と main の実行ファイル（process.resourcesPath・process.execPath）。1-3 の実行場所を組む
@@ -205,11 +206,12 @@ async function chooseServer({ resourcesPath, execPath, dataDir = resolveDataDir(
   const logFile = root ? serverLogFile(root) : null;
   const alive = await probe({ dataDir, readLink });
   let plan = null;
+  let prepared;
   if (alive) {
     const control = readControl(dataDir);
     log(`a server is running${control ? ` (pid ${control.pid}, version ${control.appVersion || '?'})` : ''}`);
-    // 居るサーバーに付け直す。この版の実行場所は裏で組む（無停止の切り替えで使う）。待たない
-    Promise.resolve(prepareRuntime(prepareOptions)).catch(() => {});
+    // 居るサーバーに付け直す。この版の実行場所は裏で組む（無停止の切り替え desktop/switch.cjs が prepared で受ける）。待たない
+    prepared = Promise.resolve(prepareRuntime(prepareOptions)).catch(() => null);
   } else {
     const job = decideLaunch(inspectJob());
     log(`job: ${job.mode} (${job.reason})`);
@@ -217,10 +219,11 @@ async function chooseServer({ resourcesPath, execPath, dataDir = resolveDataDir(
     const runtime = await prepareRuntime(prepareOptions);
     if (!runtime) { log('zero-downtime update is not used: the runtime location could not be prepared; falling back to the utility process'); return null; }
     plan = { mode: job.mode, runtime };
+    prepared = Promise.resolve(runtime);
   }
   const serverLink = link ?? createLink({ appVersion, log: line => log(`link: ${line}`) });
   return {
-    link: serverLink, logFile, root,
+    link: serverLink, logFile, root, prepared,
     async connect() {
       const attached = await attachRunning({ link: serverLink, dataDir, readLink, log });
       if (attached.attached) return attached;

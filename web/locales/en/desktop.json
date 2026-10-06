@@ -13,6 +13,22 @@
   "boot": {
     "failedTitle": "Pleiad failed to start"
   },
+  "switch": {
+    "incompatibleTitle": "This update needs to stop running work",
+    "reasonSchema": "The new version changes the data format, so it cannot take over while work keeps running.",
+    "reasonIpc": "The new version's server cannot talk to this version of Pleiad, so it cannot take over while work keeps running.",
+    "reasonRuntime": "The files to run the new version could not be prepared, so it cannot take over while work keeps running.",
+    "reasonJob": "Pleiad was started in a way that does not let the new version take over while work keeps running.",
+    "reasonCheck": "The new version could not be checked, so it cannot take over while work keeps running.",
+    "incompatibleWork_one": "{{count}} task is running. If you stop it and update, the stopped conversation is kept with ⚠, and Resume continues from where it left off. Waiting approvals are denied.",
+    "incompatibleWork_other": "{{count}} tasks are running. If you stop them and update, the stopped conversations are kept with ⚠, and Resume continues from where they left off. Waiting approvals are denied.",
+    "incompatibleLater": "Later keeps running the version from before the update. Pleiad asks again the next time it starts.",
+    "later": "Later",
+    "interruptAndUpdate": "Stop and update",
+    "updateNow": "Update now",
+    "fallback": "The new version's server could not start, so Pleiad is running on the previous version.",
+    "failed": "Neither the new version's server nor the previous one could start. Restart Pleiad. Your saved conversations are kept.\n{{detail}}"
+  },
   "quit": {
     "scheduledTitle": "Quit Pleiad?",
     "scheduledSend_one": "{{count}} scheduled message{{next}}",

@@ -382,6 +382,19 @@ agent-host-runtime\
 - 形式番号が変わる版（§5.3）は、先送りの自動の切り替えをせず、「あとで／中断して更新」のダイアログに落とす
 - 段階 1 では全部のターンが「載っていないターン」になる。段階 3 の後も、古い CLI の版のターンなどの戻し道として残る
 
+**段階 1 の実装（`desktop/switch.cjs`。plan.md 1-6）**
+
+- 「再起動して更新」（`AGENT_HOST_HANDOVER=on`）: main は作業を中断せず、`update-lock` も取らない。`main-leaving { reason: 'update' }` を送り、electron-updater がインストーラーを起こした直後（`before-quit-for-update`）につながりだけを切って終わる。サーバーは走り続ける（`main-leaving` の後は、作業が 0 件のまま 30 分で終わる見張り。`core/orphan-guard.mjs`）。画面の更新の確認は止まる作業を並べず、中断もしない（更新の状態の `handover`）
+- 新しい main は S1 に付け直し、S1 の `ready` の `appVersion`・`build`（ビルドの短いハッシュ）を、自分の `resources\app\manifest.json` と比べる。ビルドが両方分かればビルドで、分からなければ版で比べ、違えば切り替えを始める
+- 流れ: 新しい版の実行場所を組む（`chooseServer` が裏で組み始めたもの）・Job が起こすのを許すか → 事前の確かめ（`core/handover-check.mjs` を新しい版の `pleiad-node.exe` で走らせる。データ置き場の `data-schema.json` を読むだけで DB・ロックを開かない）→ 待ち（2 秒おきに `running`）→ 0 件で `update-lock`、取れたらもう一度数える（数えてから取るまでに始まった作業があれば放して待ちに戻る）→ S1 に `shutdown`、プロセスが終わるのを待つ（30 秒。終わらなければ付け直して待ちに戻る）→ 同じトークン・ポートで S2 を起こし、同じ `ServerLink` につなぐ → 窓を読み直す（ポートが変わっていれば `window-trust` の origin も替える）
+- 待つ作業: `running` の `count`（ターン・承認待ち・走っているサブエージェント・委譲タスク）に、`!` の行と、ターンの外に残っている裏の作業（Codex の裏の端末など）を足す（**この 2 つを待つのは仮**。待ちの表示と一緒に利用者が決める）。外部の stdio MCP は数えない（作業ではなく、0 件なら呼び出しの途中は無い。S2 が次の呼び出しで起こし直す）。送信予定・上限の解除後の再開も数えない（S2 が予定を戻す。断の数秒は送信予定の遅れの猶予 1 時間に収まる。発火して送信待ちに入った分は `update-lock` が断る）
+- 合わない版（形式番号が変わる・main との口の版の範囲の外・確かめが走らない・実行場所を組めない・Job が起こすのを許さない）: 「あとで／中断して更新」（作業が無ければ「今すぐ更新」）。「あとで」は S1 のまま動かし、次に main を起動したときにもう一度聞く。中断して更新は、全部を `update` で中断してから同じ流れで替える。実行場所で起こせない理由（実行場所・Job・口の版）のときは、S1 を止めて main を起動し直す（起動で今の `utilityProcess` に落ちる）
+- S2 が立たない（起動の途中で終わる・時間切れ）: 起こした S2 を止め、S1 の版（`ready` の `runtimeKey` の実行場所）で同じトークン・ポートで起こし直し、窓に「新しい版のサーバーを起動できなかったので、前の版で動いています」。それも駄目なら「起動し直してください」で終わる
+- 「今すぐ中断して切り替える」（`interruptNow`）: 全部を `update` で中断し、`count` が 0 になれば `!` の行・裏の作業が残っていても替える（S1 と一緒に止まる）
+- S1 を手放している間（S1 の終わりから読み直しまで）は、main の「サーバーが終了しました」を出さない
+- 画面: `index.html` の `pleiad-build` に、配ったサーバーが「<版>+<ビルド>」を埋める。WS の `ready` の `version`・`build` と違えば、入力欄の下書きを保存して 1 回だけ読み直す（sessionStorage の印で繰り返さない。`pleiad-build` が空の画面＝アプリに同梱した画面は読み直さない）
+- 待ちの表示の口: `onState(snapshot)`（`{ state, waiting: { count, items: [{ kind: turn|permission|subagent|task|shell|background, sessionId, … }] }, blockedBy, reason, error, previous }`）と `interruptNow()`。待っている間の窓は S1（古い版）の画面なので、表示は main の側で描く（新しい版の `web/` に足しても出ない）
+
 ---
 
 ## 7. main に頼む機能を、新しい main に付け直す

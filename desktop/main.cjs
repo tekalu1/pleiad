@@ -32,6 +32,8 @@ let computerOverlay;
 const trust = createWindowTrust();
 let remoteWindows;
 let worker, linked = null, window, origin, updates, quitting = false, closing = false, exitInProgress = false;
+// 無停止の更新で、付け直したサーバーが古い版のときの新しい版への切り替え（desktop/switch.cjs）
+let serverSwitch = null;
 // サーバーの起こし方の記録。updater.log（desktop/update-log.cjs）が出来るまでは溜め、出来たら流す（Job が抜け道を許さず今の流れに落ちた理由などを残す）
 let bootLogger = null;
 const pendingServerLog = [];
@@ -97,9 +99,16 @@ async function abortAll(reason) {
 }
 
 async function installUpdate() {
+  // 無停止の更新（パイプのサーバー。ADR 0137）: 作業を中断せず、サーバーをロックしない。サーバーに main-leaving を送り
+  // （main が戻らないまま作業が 0 件で 30 分たったら終わる。core/orphan-guard.mjs）、electron-updater が終わる直前
+  // （before-quit-for-update。インストーラーを起こした後）につながりだけを切る。サーバーは走り続け、新しい main が付け直して切り替える（desktop/switch.cjs）
+  const handover = Boolean(linked);
   try {
-    const lock = await workerRequest('update-lock');
-    if (!lock.ok) throw new Error(t('update.blocked', { reason: lock.reason }));
+    if (handover) worker.postMessage({ type: 'main-leaving', reason: 'update' });
+    else {
+      const lock = await workerRequest('update-lock');
+      if (!lock.ok) throw new Error(t('update.blocked', { reason: lock.reason }));
+    }
     // The renderer flushes drafts before invoking this operation. The lease now
     // rejects new server commands until shutdown, eliminating the idle-check race.
     const updater = require('electron-updater').autoUpdater;
@@ -114,14 +123,14 @@ async function installUpdate() {
         for (const listener of native.listeners('update-downloaded')) if (!before.has(listener)) native.off('update-downloaded', listener);
         reject(new Error(t('update.applyFailed')));
       };
-      const ready = () => { cleanup(); quitting = true; worker.postMessage({ type: 'shutdown' }); resolve(); };
+      const ready = () => { cleanup(); quitting = true; if (handover) worker.leave('update'); else worker.postMessage({ type: 'shutdown' }); resolve(); };
       updater.once('error', failed); native.once('before-quit-for-update', ready);
       // Windows はインストーラーの進捗バーだけを出して適用し、終わったら起動し直す。
       // 入れ先とインストールの種類は前回を引き継ぎ、選択と完了の画面は出さない（build/installer.nsh）
       try { updater.quitAndInstall(false, true); } catch { failed(); }
     });
   } catch (e) {
-    quitting = false; worker.postMessage({ type: 'update-unlock' }); throw e;
+    quitting = false; if (!handover) worker.postMessage({ type: 'update-unlock' }); throw e;
   }
 }
 
@@ -164,6 +173,28 @@ async function chooseLinkedServer(portFile) {
     log(`zero-downtime update is not used (${error.message}): using the utility process`);
     return null;
   }
+}
+
+/** 付け直したサーバーが古い版なら、作業が終わるのを待って新しい版のサーバーへ切り替える（desktop/switch.cjs）。待ちの表示は今は main のログ（[server] switch: …） */
+function startServerSwitch(ready, portFile, onServerExit) {
+  const { startSwitch, incompatibleDialog } = require('./switch.cjs');
+  return startSwitch({ linked, ready, resourcesPath: runtimeResources(), execPath: process.execPath, dataDir: serverBoot().resolveDataDir(), systemLocale: systemLanguage(),
+    cwd: app.getPath('home'), request: workerRequest, runningWork, abortAll, log: line => log(`switch: ${line}`),
+    ask: incompatibleDialog({ dialog, getWindow: () => window, t }),
+    // 同じ包みにつなぎ直したので、once('exit') の見張りを付け直す
+    rearm: () => { if (!worker.listeners('exit').includes(onServerExit)) worker.once('exit', onServerExit); },
+    reload: async next => {
+      // 同じポートが取れなかったときは origin が変わる（design.md §8）
+      origin = `http://127.0.0.1:${next.port}`;
+      rememberPort(portFile, next.port);
+      trust.update(window, { origin });
+      if (next.locale) setLocale(next.locale);
+      await window.loadURL(`${origin}/?token=${encodeURIComponent(next.token)}`);
+    },
+    restart: () => { quitting = true; app.relaunch(); app.exit(0); },
+    fallback: () => { void dialog.showMessageBox(window, { type: 'warning', title: 'Pleiad', message: t('switch.fallback') }).catch(() => {}); },
+    failed: error => { quitting = true; return showFatalError('Pleiad', t('switch.failed', { detail: error?.message ?? '' })).catch(e => console.error(e)).finally(() => app.quit()); },
+  });
 }
 
 async function boot() {
@@ -258,7 +289,8 @@ async function boot() {
   });
   window.on('session-end', () => { quitting = true; worker.postMessage({ type: 'shutdown' }); });
   const onServerExit = () => {
-    if (quitting || exitInProgress) return;
+    // 切り替え（desktop/switch.cjs）が古いサーバーを終わらせている間は、終了の知らせを出さない
+    if (quitting || exitInProgress || serverSwitch?.replacing) return;
     void (async () => {
       // 名前付きパイプの経路: 別の main が付け直した（bye 'replaced'）なら静かに終わる。つながりだけが切れたなら（サーバーは居る）付け直す
       if (linked) {
@@ -274,12 +306,13 @@ async function boot() {
   await window.loadURL(`${origin}/?token=${encodeURIComponent(ready.token)}`);
   window.show();
   remoteWindows.handleArgv(process.argv);
+  if (linked) serverSwitch = startServerSwitch(ready, portFile, onServerExit);
   const { autoUpdater } = require('electron-updater');
   // 記録は userData/logs/updater.log に残す。トークンと配信の署名付きの URL は伏せて書く（desktop/update-log.cjs）
   autoUpdater.logger = bootLogger = createUpdateLog(path.join(app.getPath('userData'), 'logs', 'updater.log'));
   for (const line of pendingServerLog.splice(0)) bootLogger.info?.(`[server] ${line}`);
   updates = new Updates({ updater: autoUpdater, version: app.getVersion(), file: path.join(app.getPath('userData'), 'updates.json'),
-    enabled: app.isPackaged && require('../package.json').plyRelease === true && fs.existsSync(path.join(process.resourcesPath, 'app-update.yml')), install: installUpdate,
+    enabled: app.isPackaged && require('../package.json').plyRelease === true && fs.existsSync(path.join(process.resourcesPath, 'app-update.yml')), install: installUpdate, handover: Boolean(linked),
     prepareCheck: () => prepareUpdateCheck(autoUpdater, path.join(process.resourcesPath, 'app-update.yml')) });
   updates.on('state', state => { if (!window.isDestroyed()) window.webContents.send('ply:update-state', state); });
   try { await updates.init(); }
@@ -360,7 +393,7 @@ ipcMain.on('ply:title-bar', (event, colors) => {
 });
 if (!app.requestSingleInstanceLock()) app.quit();
 else {
-  app.on('will-quit', () => { browserScreencastBridge?.close(); agentBrowserBridge?.close(); computerOverlay?.close(); });
+  app.on('will-quit', () => { serverSwitch?.cancel(); browserScreencastBridge?.close(); agentBrowserBridge?.close(); computerOverlay?.close(); });
   app.on('second-instance', (_event, argv) => { if (remoteWindows?.handleArgv(argv)) return; if (window) { window.restore(); window.show(); window.focus(); } });
   app.on('before-quit', event => { exitInProgress = true; if (!quitting && window) { event.preventDefault(); void closeSafely(); } });
   app.on('will-quit', () => { exitInProgress = true; });
