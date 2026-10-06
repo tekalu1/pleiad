@@ -31,7 +31,7 @@ agent-browser 0.38.1 の state ルートには専用の変更変数がない。`
 [ADR 0148](adr/0148-agent-browser-in-chrome.md)・[ADR 0153](adr/0153-chrome-connection-waits-indefinitely-behind-os-layer.md)。PC の Chrome に Pleiad が CDP の接続を 1 本持ち、設定 › ブラウザー › 「エージェントのブラウザー」で**つなぐ・切る**ができる。**エージェントはまだ使わない**（エージェントの操作は上の「エージェントの操作」の内蔵ブラウザーの中継のまま。開発用の環境変数 `AGENT_HOST_AGENT_BROWSER=chrome` のときだけ、下の「Chrome の中継（開発中）」を使う）。
 
 - **対応する OS**: 当面は Windows の Chrome だけ。ほかの OS・koffi を読めない PC・Electron の無いホスト（`npm start`）では「この OS ではまだ使えません」（状態 `unsupported`。ホストの画面の `hostCapabilities.chromeBrowser` は OS の層が使えなければ `unsupported`、Electron の無いホストでは `false` で、後者は節を出さない）。
-- **読むものと送るもの**: Chrome の `User Data`（Windows は `%LOCALAPPDATA%\Google\Chrome\User Data`。環境変数 `AGENT_HOST_CHROME_USER_DATA` でこの 1 か所だけに差し替えられる。テストは存在しない一時ディレクトリへ、実機の確かめは `--user-data-dir` を付けて起こした確かめ専用の Chrome へ向ける）の `DevToolsActivePort`（1 行目がポート、2 行目が `/devtools/browser/<id>`）だけ。Cookie・履歴・`Local State` は読まない。接続そのものが上りへ送る CDP は `Browser.getVersion` だけ（`Target.*` は送らない。利用者のタブの URL・題を受け取らない）。中継を使うときに送るものは下の「Chrome の中継（開発中）」。
+- **読むものと送るもの**: Chrome の `User Data`（Windows は `%LOCALAPPDATA%\Google\Chrome\User Data`。環境変数 `AGENT_HOST_CHROME_USER_DATA` でこの 1 か所だけに差し替えられる。テストは存在しない一時ディレクトリへ、実機の確かめは `--user-data-dir` を付けて起こした確かめ専用の Chrome へ向ける）の `DevToolsActivePort`（1 行目がポート、2 行目が `/devtools/browser/<id>`）だけ。Cookie・履歴は読まない。`Local State` は、専用の窓を開くプロフィールを決める `profile.last_used` の 1 項目だけ（プロフィール名・アカウント・設定は取り出さず、ログにも出さない）。接続そのものが上りへ送る CDP は `Browser.getVersion` だけ（`Target.*` は送らない。利用者のタブの URL・題を受け取らない）。中継を使うときに送るものは下の「Chrome の中継（開発中）」。
 - **接続は 1 本で、会話をまたいで使い回す**。許可の確認（「リモート デバッグを許可しますか？」）は接続ごとに出るので、切れたら自動ではつなぎ直さない（次の `demand()` か「つなぐ」で A か B から）。実装は `core/chrome/connection.mjs`（`createChromeConnection`）。サーバーに 1 つ、Electron のあるデスクトップ版だけ。
 
 | 状態 | 意味 | 入る条件 | 出る先 |
@@ -79,7 +79,7 @@ agent-browser 0.38.1 の state ルートには専用の変更変数がない。`
 
 範囲は会話の窓（`windowId`）の集合。中継が作った窓のタブと、範囲のタブが開いたタブ（`openerId`。`popup` 指定の `window.open` の別窓は、その窓も範囲に足す）。ほかの経路でその窓に入ったタブは `Browser.getWindowForTarget` で見つける（会話の窓が 1 つも無い間は問い合わせない）。`sessionId` はどのエージェントの接続が attach したものかを覚え（`Target.attachedToTarget` は応答より先に届くので、待っている attach に結ぶ）、ほかの接続・ほかの会話の `sessionId` は断る。セッションの自動 attach で付いた子（iframe・worker）は親と同じ接続のもの。
 
-**窓（仮）**: `Target.createTarget` は、context・`newWindow` などの指定を捨てて、`scope.openTab` で会話の窓に作る。第 3 段の `scope` は仮の窓で、`Target.createTarget({ newWindow: true, background: true })`＋`Browser.setWindowBounds({ windowState: 'minimized' })`。CDP の `createTarget` には窓を選ぶ引数が無いので、**2 つ目以降のタブも別の窓**になる（同じ会話の範囲には入る）。第 4 段で専用の窓（`chrome.exe --profile-directory`）と、その窓にタブを足す方法に差し替える。
+**窓**: `Target.createTarget` は、context・`newWindow` などの指定を捨てて、`scope.openTab`（`core/chrome/windows.mjs`。下の「専用の窓」）で会話の窓に作る。CDP の `createTarget` には窓を選ぶ引数が無いので、**2 つ目以降のタブは別の窓**になる（同じ会話の範囲には入る）。窓は最小化せず、画面の外の見えない窓に置く。窓を前に出す `Page.bringToFront`・`Target.activateTarget` は、Chrome へ送らずに成功で返す（範囲の外の `targetId` は今までどおり断る）。
 
 | | メソッド（ブラウザーの上） |
 |---|---|
@@ -122,6 +122,22 @@ Playwright の Chromium 151（一時のプロフィール。利用者の Chrome 
 - **ブラウザー全体の `Target.setAutoAttach` は送らない。** `AGENT_BROWSER_PIN_TAB=1` では、つないだ最初に自分のタブを `Target.createTarget`（`about:blank`、`newWindow` なし）で作る。範囲のタブが 0 の新しい会話では最初に 2 つ作る（1 つ目は `about:blank` のまま残る。仮の窓では窓が 2 つ）。
 - **`close` は外の Chrome に何も送らない**（`Browser.close` を送らず、中継との接続を切るだけ）。`tab close` は `Target.closeTarget`。`set viewport` は `Emulation.setDeviceMetricsOverride` と `Browser.getWindowForTarget`＋`Browser.setContentsSize`。`cookies` はセッションの `Network.getCookies`（`urls` なし）。
 
+### 専用の窓（ADR 0154。第 4 段）
+
+会話ごとの窓は `core/chrome/windows.mjs`（`createChromeWindows`。中継の `scope`）が開く。窓は**最小化しない**（最小化の窓は描画が止まり、`set viewport` が失敗する）。代わりに、画面の外（仮想デスクトップの右の外）・タスクバーと Alt+Tab から外す（`WS_EX_TOOLWINDOW`、`WS_EX_APPWINDOW` は外す）・透明度 0（`WS_EX_LAYERED`）・マウスの素通し（`WS_EX_TRANSPARENT`）に置く（OS の層の `conceal`）。窓の大きさは Pleiad が決める（`Browser.setWindowBounds` で 1100×720 DIP）。
+
+- **会話の最初の窓**: `chrome.exe --profile-directory=<Local State の profile.last_used> --new-window <題に nonce を持つ data: のページ>`。`AGENT_HOST_CHROME_USER_DATA` があるときは `--user-data-dir=<その値>` を必ず付ける（付けないと既定の Chrome に窓が開く。既定の User Data のときは付けない）。`chrome.exe` の場所は OS の層（Windows はレジストリの App Paths の HKCU → HKLM、無ければ Program Files・Program Files (x86)・LOCALAPPDATA の既定の位置）。題の nonce で HWND を見つけて（20 ms ごと、上限 3 秒）隠し、前面を取っていたら窓を開く前の前面へ返す。そのあと Chrome の側のタブ（nonce のページ）を頼まれた URL へ移す。題で見つからなければ窓の外形（`Browser.getWindowForTarget` の bounds）で探し、それでも見つからなければ「隠せなかった」とログに出して続ける。`chrome.exe` が見つからない・起こせないときは、次の `createTarget` の道に落とす（プロフィールは選べない）。`--window-position`・`--window-size` は付けない（起動中の Chrome に渡す新しい窓では無視される。実機）。
+- **2 枚目からのタブ**: 新しい窓（`Target.createTarget({ newWindow: true, background: true, left, top, width, height })`。画面の外の位置を渡し、題の nonce で見つけて隠す）。同じ窓へ足すと、裏のタブは hidden になって描画が間引かれ、`bringToFront` を握りつぶしているので前へ出せないため、タブごとに窓を持つ。
+- **window.open**: タブは同じ窓に入る。popup の別窓は、中継が範囲に足したあと（`openerId`）、窓の外形（`Browser.getWindowBounds`）で見つけて同じ置き方にする（`scope.adoptPopup`）。
+- **専用の窓だけが閉じられた**: 窓の最後のタブが消えたら窓の記録を捨て（`scope.windowClosed`）、次に窓が要るときに黙って開き直す。**Chrome が閉じた**: 接続が `off`（`chrome-closed`）になり、窓の記録を全部捨てる（`scope.reset`）。会話ごとの `openTab` は順に流す（同時に最初の窓を 2 つ開かない）。
+- **前面の見張り**（OS の層）: 隠している窓があるあいだ 100 ms ごとに前面を見て、隠した窓が前面を取ったら、**その窓が前面を取る直前の前面**へすぐ返す（隠した直後にも 1 回見る。引き継ぎは第 6 段なので、今は常に返す）。隠した窓が持ち主の窓（翻訳の確認・権限の確認などの吹き出しは別の最上位の窓として今の画面の位置に出て、前面まで取る）も一緒に隠す。
+- **画面の構成の変化**（モニターの増減・解像度・DPI・スリープ復帰）: `desktop/main.cjs` が Electron の `screen` の `display-added`・`display-removed`・`display-metrics-changed` と `powerMonitor` の `resume` で `reconceal` を呼び、隠している窓（吹き出しの窓を含む）を置き直す。Chrome が画面の中へ寄せても、透明度 0・マウス素通しなので見えない。
+- **focus emulation**: エージェントのターンの間（`endpoint` を渡してから `endTurn`・止める・消すまで）、会話の窓のタブすべてに、中継自身のセッションで `Emulation.setFocusEmulationEnabled(true)` を保つ（タブが増えたら足す。ターンが終わったら外してセッションも外す）。エージェントのセッションの付け外しでは切れない。Chrome の側で外されたら、ターンの間は付け直す。外すと隠れた窓のページは `hidden`・描画停止に戻る（CPU を使い続けない）。右パネルで映像を見ている間の FE は第 5 段。
+
+実機（確かめ専用の Chrome 154。2026-10-07。agent-browser 0.38.1）: `open`・`snapshot`・`screenshot`・`click`・`fill`・`scroll`・`set viewport`・`tab new`・`tab tN`・`window.open` の tab と popup が各 3 回とも効き、25〜110 ms（`tab new` は約 350 ms、`window.open` を押す操作は 0.1〜1 秒）。`screenshot` は白紙でない。最初の窓が画面に見えるのは約 95〜110 ms で、前面を取るのは約 125 ms（そのあと開く前の前面へ返す）。2 枚目からの窓は 0〜16 ms。popup は約 60 ms 画面に見え、約 100 ms 前面を取って返す。受け入れで見た「screenshot が 30 秒止まる」は、`chrome.exe --new-window` の窓（90 秒置いても screenshot 約 100 ms）でも、それを最小化した旧設計の窓（screenshot 2.3〜2.7 秒、click 約 0.5 秒）でも再現しなかった。
+
+**既知の制約**: `window.open`（`target="_blank"`）のタブは同じ窓に入り、元のタブが裏になる。agent-browser が元のタブへ `tab tN` で戻しても `bringToFront` は握りつぶすので裏のまま、描画が間引かれて（`requestAnimationFrame` が約 2 fps）`screenshot` が 2.3〜2.5 秒、`click` が約 0.5 秒かかる（効きはする）。前に出す `Target.activateTarget` は窓を前面に出し（約 30〜110 ms で見張りが返す）、Chrome が隠した窓を画面の中へ寄せることがある（透明度 0 なので見えない）。`WS_EX_NOACTIVATE` を付けても前面は取られた。
+
 ## OS ごとの層
 
 窓を前に出す・確認の窓を見つけて閉じる、といった OS で違う操作は、`core/chrome/os.mjs` の口（core から見た約束）の向こうの、Electron main の `desktop/chrome-os/<os>.cjs` に閉じ込める（ADR 0153）。`core/chrome/` のほかのファイルは OS の値（窓のハンドルなど）を持たず、窓は不透明な `WindowRef = { id }` で扱う。core と main は parentPort の `chrome-os`（`{ id, action, args }`）⇔ `chrome-os-result`（`{ id, ok, result | error }`）と、`chrome-os-ready { supported, reason, features }`（起動時と `chrome-os-ready-request` への返事）でつなぐ。
@@ -135,10 +151,15 @@ Playwright の Chromium 151（一時のプロフィール。利用者の Chrome 
 | `yieldForeground(ref, { to })` | `ref` が前面を取っていたら `to` に返す | `raise` と同じ手順で `to` へ |
 | `foreground()` | 今の前面の窓（`{ id, browser }`） | `GetForegroundWindow`。`browser` はブラウザー自身の窓か |
 | `close(ref)` | 確認の窓を閉じる | `PostMessageW(WM_CLOSE)`。層が確認として出した `ref` で、同じ実行ファイルの窓のときだけ |
+| `locateBrowser({ product })` | ブラウザーの実行ファイル（`{ id, product }`。パスは返さない） | レジストリの App Paths（HKCU → HKLM）、無ければ既定の 3 か所。`chrome.exe` で、ファイルがあるものだけ |
+| `launchWindow({ browser, profileDir, url, nonce, userDataDir?, position?, size? })` | `--profile-directory --new-window` で窓を開く | 層が出した `browser` の id だけ。プロフィール・nonce・`data:` の URL・`userDataDir`（絶対パス）を検査し、`--user-data-dir` は `userDataDir` があるときだけ付ける。切り離して起こす |
+| `findWindowByNonce(nonce)`・`findWindowByBounds({ bounds })` | エージェントの窓を見つける | 題に nonce を持つブラウザーの窓。外形（DIP。DPI で換算、許容 16 DIP）が合う、まだ出していない見えている窓がちょうど 1 つのとき |
+| `hiddenSpot()` | 仮想デスクトップの右の外 | 全モニターの右端 + 1000 物理画素（取れなければ 20000） |
+| `conceal(ref)`・`reveal(ref, { near })`・`release(ref)` | 隠す・見える形に戻す・記録を捨てる | `conceal` は上の置き方（最初の拡張スタイルを覚え、何度でもかけ直せる。隠して出し直すのはスタイルが変わったときだけ）。`reveal` は付けたスタイルだけを外して元に戻し、`near` のあるモニターの中へ（前には出さない）。エージェントの窓として出した `ref` だけ |
 
 どの口も、使えない OS・使えない機能・時間切れでは投げずに `null` / `false` を返す。層は自分が出した `ref` だけを覚え、**知らない値には何もしない**（ほかのアプリの窓を前に出す・閉じることが起きない）。koffi を読むのは `desktop/computer/win32.cjs` だけで、`desktop/main.cjs` が 1 回だけ読み、コンピューターの操作と Chrome の OS の層で表を共有する。読めなければ両方が unsupported。
 
-ほかの OS を足すとき: `desktop/chrome-os/<os>.cjs` を書いて `index.cjs` の `createChromeOs` で選ぶ（口の表の全部）。`core/chrome/locate.mjs` の `chromeHomes` の表に、その OS の Chrome の `User Data` を 1 行足す。接続・状態機械・設定の画面は変えない。第 4〜9 段で足す口（`locateBrowser`・`launchWindow`・`findWindowByNonce`・`minimize`・`watch`・`bounds`）は `capabilities().features` で有無を示す。
+ほかの OS を足すとき: `desktop/chrome-os/<os>.cjs` を書いて `index.cjs` の `createChromeOs` で選ぶ（口の表の全部）。`core/chrome/locate.mjs` の `chromeHomes` の表に、その OS の Chrome の `User Data` を 1 行足す。接続・状態機械・設定の画面は変えない。機能の有無は `capabilities().features`（`dialog`・`raise`・`launch`・`conceal`・`watch`・`bounds`）で示す。画面の構成が変わったときの置き直し（`reconceal`）は core から呼ぶ口ではなく、main が Electron のイベントで層を直に呼ぶ。
 
 ## 使える場所
 
