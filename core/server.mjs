@@ -93,6 +93,7 @@ import { plyParts } from './instruction-amount.mjs';
 import { computerPrompt } from './backends/computer-delivery.mjs';
 import { MIN_BUDGET, MAX_BUDGET } from '../web/instruction-amount.mjs';
 import { parentPortBrowser, browserEnvironment, browserInstruction } from './agent-browser.mjs';
+import { getMainPort } from './main-port.mjs';
 import { parentPortScreencast, createScreencastHub, screencastCommand } from './browser-screencast.mjs';
 import { createBrowserSiteApprovals } from './browser-confirm.mjs';
 import { createBrowserProfiles, createBrowserBridge, findProfile, BROWSER_MCP_PATH } from './browser-profiles.mjs';
@@ -130,9 +131,12 @@ migrateClaudeUsage({ store: usageStore, projects: path.join(process.env.CLAUDE_C
   .catch(err => console.error(`  ${t('usage.migrateFailed')}`, String(err?.message ?? err)));
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const APP_VERSION = JSON.parse(await fs.readFile(path.join(HERE, '..', 'package.json'), 'utf8')).version;
-const agentBrowser = parentPortBrowser(process.parentPort);
+// main への口（core/main-port.mjs）。main の下でない起動（npm start）では、口を受け取る機能は null で無効になる
+const mainPort = getMainPort();
+const hostedPort = mainPort.hosted ? mainPort : null;
+const agentBrowser = parentPortBrowser(hostedPort);
 // リモートの端末から PC の内蔵ブラウザーを見る（core/browser-screencast.mjs）。デスクトップ版だけ
-const screencastBridge = parentPortScreencast(process.parentPort);
+const screencastBridge = parentPortScreencast(hostedPort);
 const screencastHub = screencastBridge ? createScreencastHub({ bridge: screencastBridge }) : null;
 const screencastClients = new WeakMap();   // ws -> hub に渡す端末
 // A nested server may inherit another conversation's shell environment; only this process's bridge can issue browser access.
@@ -212,7 +216,7 @@ const IMAGE_MIME = /^image\//;
 const workspaceRoots = new Set([process.cwd()]);
 const contextSettings = createContextSettings(store.dataDir);
 // 担当が Pleiad の外部 MCP。登録は Pleiad 自身の設定（エージェントの設定ファイルは書き換えない）、秘密は safeStorage で暗号化して置く
-// 暗号器は 1 つを使い回す（parentPort の応答は id で引くので、2 つ作ると同じ id を取り合う）
+// 暗号器は 1 つを使い回す（main の口の応答は id で引くので、2 つ作ると同じ id を取り合う）
 const secretCipher = defaultCipher();
 const mcpSecrets = createSecretStore({ file: path.join(store.dataDir, 'mcp-secrets.json'), cipher: secretCipher });
 const plyMcp = createPlyMcp({ dataDir: store.dataDir, secrets: mcpSecrets });
@@ -248,7 +252,7 @@ const claudeLogin = createClaudeLogin({
   },
   scratchDir: path.join(store.dataDir, 'claude-login-tmp'),
   // デスクトップ版は main に頼んで既定のブラウザーで開く（npm start では画面のリンクから開く）
-  openExternal: url => process.parentPort?.postMessage({ type: 'open-external', url }),
+  openExternal: url => mainPort.postMessage({ type: 'open-external', url }),
 });
 process.on('exit', () => claudeLogin.cancelAll());
 // 互換の接続先（Claude Code の Anthropic 互換 / Codex の Responses 互換。会話ごとに選ぶ。core/compat-endpoints.mjs）。
@@ -262,7 +266,7 @@ const mcpOAuth = createMcpOAuth({ secrets: mcpSecrets, lockDir: path.join(store.
   // Client ID Metadata Document の URL（設定値。既定は無し。公開する文書のひな形は docs/mcp-oauth-client-metadata.json）
   clientMetadataUrl: async () => (await plyMcp.settings().catch(() => ({}))).clientMetadataUrl ?? undefined,
   // utilityProcess からはブラウザを開けないので main に頼む（desktop/main.cjs）。npm start では画面に出る URL から開く
-  openExternal: url => process.parentPort?.postMessage({ type: 'open-external', url }),
+  openExternal: url => mainPort.postMessage({ type: 'open-external', url }),
   emit: event => emitGlobal({ ...event, sessionId: null }) });
 const contextBridge = createContextBridge({ plyMcp, oauth: mcpOAuth });
 // リモートの接続口（docs/remote.md §4.2・§6.1）。既定は無効で、有効にするまで中継へはつながない。
@@ -297,7 +301,7 @@ const pushNotifier = createPushNotifier({
 // ホストとして常駐する設定（docs/remote.md §6.3。core/remote/resident.mjs）。使うのはデスクトップ版のホストだけ（available）。
 // トレイとスリープの抑止は main（desktop/resident.cjs）が持つ。リモート・実行中の作業・ルーティンの変更時に送る
 const residentPrefs = createResidentPrefs({ dataDir: store.dataDir });
-const withResident = status => ({ ...status, resident: { available: Boolean(process.parentPort), ...residentPrefs.get() } });
+const withResident = status => ({ ...status, resident: { available: mainPort.hosted, ...residentPrefs.get() } });
 const remoteStatus = async () => withResident(await remote.status());
 /** 設定 › 通知の材料: この PC の設定と、スマホ（デスクトップ版の端末以外）の一覧。鍵は含まない */
 const notifyStatus = async () => ({
@@ -307,7 +311,7 @@ const notifyStatus = async () => ({
 });
 let residentLast = '', residentStatus = null, residentWork = null, residentSeq = 0;
 async function postResident({ status, work } = {}) {
-  if (!process.parentPort) return;
+  if (!mainPort.hosted) return;
   if (status) residentStatus = status;
   if (work) residentWork = work;
   const seq = ++residentSeq;
@@ -317,7 +321,7 @@ async function postResident({ status, work } = {}) {
   const key = JSON.stringify(signal);
   if (key === residentLast) return;
   residentLast = key;
-  process.parentPort.postMessage({ type: 'resident', state: signal });
+  mainPort.postMessage({ type: 'resident', state: signal });
 }
 // 固定した指示・Skills の開始時の本文（「差分を見る」用。内容のハッシュを名前にして 1 つずつ）
 const CONTEXT_SNAPSHOTS = path.join(store.dataDir, 'context-snapshots');
@@ -1649,7 +1653,7 @@ async function savePref(key, value, backendId) {
   locale = localeInfo(prefs);
   setLocale(locale.lang);
   // デスクトップ版の main（ダイアログ・通知・更新のエラー文）にも知らせる（desktop/main.cjs）
-  process.parentPort?.postMessage({ type: "locale", locale: locale.lang });
+  mainPort.postMessage({ type: "locale", locale: locale.lang });
   emitGlobal({ type: "prefs", sessionId: null, prefs, locale });
   return prefs;
 }
@@ -3844,7 +3848,7 @@ agentBrowser?.loadPolicy(await store.getPrefs());
 // AGENT_HOST_COMPUTER_DRIVER=fake は偽の driver（実画面には何もしない。テスト用）。AGENT_HOST_COMPUTER_LOG にその呼び出しを 1 行ずつ残す
 const computerDriver = process.env.AGENT_HOST_COMPUTER_DRIVER === 'fake'
   ? fakeComputerDriver({ log: process.env.AGENT_HOST_COMPUTER_LOG ? entry => appendFileSync(process.env.AGENT_HOST_COMPUTER_LOG, JSON.stringify(entry) + '\n') : undefined })
-  : parentPortComputer(process.parentPort);
+  : parentPortComputer(hostedPort);
 const computerShots = createComputerShots({ dataDir: store.dataDir });
 const computerLock = createComputerLock({
   waitMs: Number(process.env.AGENT_HOST_COMPUTER_LOCK_WAIT_MS) > 0 ? Number(process.env.AGENT_HOST_COMPUTER_LOCK_WAIT_MS) : undefined,
@@ -6348,7 +6352,7 @@ async function readOnboarding() {
   catch { return { setupComplete: false }; }
 }
 
-process.parentPort?.on("message", async ({ data }) => {
+mainPort.on("message", async ({ data }) => {
   if (data?.type === 'wake') { await schedule.check(); await recoverLimitResumes().catch(() => {}); }
   if (data?.type === 'update-lock') {
     // 断るときは何が止めているかを返す。画面に出さないと、見た目に何も動いていないのに更新できない理由が分からない
@@ -6359,15 +6363,15 @@ process.parentPort?.on("message", async ({ data }) => {
       : switching.size || forking.size ? t('updateLock.switching')
       : null;
     const ok = updateGate.acquire(Boolean(reason));
-    process.parentPort.postMessage({ type: 'update-lock', id: data.id, ok, reason: ok ? null : reason || t('updateLock.other') });
+    mainPort.postMessage({ type: 'update-lock', id: data.id, ok, reason: ok ? null : reason || t('updateLock.other') });
   }
   if (data?.type === 'update-unlock') updateGate.release();
-  if (data?.type === "running") process.parentPort.postMessage({ type: "running", work: await runningWork() });
+  if (data?.type === "running") mainPort.postMessage({ type: "running", work: await runningWork() });
   // デスクトップの「中断して終了」（desktop/main.cjs の closeSafely）。全部を reason 付きで止める。
   // main は running の count が 0 になるのを待ってから終了する
   if (data?.type === 'abort') {
     const result = await abortSessions({ reason: data.reason }).catch(err => ({ error: String(err?.message ?? err) }));
-    process.parentPort.postMessage({ type: 'abort', id: data.id, ...result });
+    mainPort.postMessage({ type: 'abort', id: data.id, ...result });
   }
   if (data?.type === "shutdown") {
     try { finishShutdown(store.flushNow, () => runtime.turns.size > 0 || agentTasks.busy); }
@@ -6382,16 +6386,16 @@ async function announce() {
   const { port } = server.address();
   // CLI がつなぎ先を見つける control.json（ADR 0083）。権限 0600。終了時に pid が自分のときだけ消す。
   // 起動の案内（下の URL の行）を見て CLI や検査が動き出すので、その前に書き終える
-  await writeControlFile({ dataDir: store.dataDir, origin: localOrigin(), cliToken: CLI_TOKEN, startedAt: SERVER_STARTED_AT, appVersion: APP_VERSION, kind: process.parentPort ? 'desktop' : 'server' })
+  await writeControlFile({ dataDir: store.dataDir, origin: localOrigin(), cliToken: CLI_TOKEN, startedAt: SERVER_STARTED_AT, appVersion: APP_VERSION, kind: mainPort.hosted ? 'desktop' : 'server' })
     .catch((err) => console.error('  control.json を書けませんでした:', String(err?.message ?? err)));
-  process.parentPort?.postMessage({ type: "ready", port, token: TOKEN, locale: locale.lang });
+  mainPort.postMessage({ type: "ready", port, token: TOKEN, locale: locale.lang });
   remote.start().catch(() => {});
   if (routingSettingsCache.enabled && ROUTING_USAGE_AUTO) routingUsage.start();
   // モデルの一覧を裏で引いておく。新しい会話・モデル選択が、CLI を起こす 10 秒ほどを待たない。
   // 作業場所は新しい会話の既定（ホーム）。取れなければ一覧の要求のときにまた引く（テストは ROUTING_USAGE_AUTO=off で起こさない）
   if (ROUTING_USAGE_AUTO) for (const b of listBackends()) if (b.warmModels && installation(b.id).installed) b.warmModels(os.homedir()).catch(() => {});
   // 起動直後の常駐の状態（リモートが無効でも送る。main はそれを見てトレイを出さない）
-  if (process.parentPort) Promise.all([residentPrefs.loaded, remote.status(), runningWork()])
+  if (mainPort.hosted) Promise.all([residentPrefs.loaded, remote.status(), runningWork()])
     .then(([, status, work]) => postResident({ status: withResident(status), work })).catch(() => {});
   console.log("");
   // 待ち受けがループバックか全アドレスなら、覚えやすい localhost で案内する（開く先は同じ）

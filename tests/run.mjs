@@ -66,6 +66,8 @@ const SUITES = [
   './unit/computer-lock.mjs',
   // main への口（parentPort）: computer-* のメッセージの形・id での応答・エラーの code・ハートビート・偽の driver
   './unit/computer-driver.mjs',
+  // main への口（core/main-port.mjs）: parentPort の素通し・main が居ない起動・つながっていない口・差し込める形
+  './unit/main-port.mjs',
   // 橋: MCP の面・座標の基準・ゲートの順・アプリの承認・止める・ロック画面・画像の渡し方（偽の driver）
   './unit/computer-bridge.mjs',
   // サーバー越し: 承認カードの payload・スクショの保存と配信・computer.state・computerStop・委譲の子の承認（fake + 偽の driver）
