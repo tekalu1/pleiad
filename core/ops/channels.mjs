@@ -167,7 +167,7 @@ export const channelOps = [
   }),
   defineOp({
     id: 'channels.update', summary: D('update', 'summary'), risk: 'write',
-    riskReason: 'Edits a channel\'s name, purpose, default folder, members, house rules or budget. Members only decide who is listed there; waking a bot still needs an explicit @ in a post. A human can do the same, so an agent is treated the same (ADR 0082), except three changes riskOf raises to guarded for an AI: changing the default folder (it becomes the working place of bots that have no folders of their own), writing house rules (they are handed to every bot working in the channel), and loosening the budget (removing it or raising the daily budget or the thread share), since the budget is what stops bots from calling each other (ADR 0119)',
+    riskReason: 'Edits a channel\'s name, purpose, default folder, members, house rules or budget. Members only decide who is listed there; waking a bot still needs an explicit @ in a post. A human can do the same, so an agent is treated the same (ADR 0082), except two changes riskOf raises to guarded for an AI: changing the default folder (it becomes the working place of bots that have no folders of their own) and loosening the budget (removing it or raising the daily budget or the thread share), since the budget is what stops bots from calling each other (ADR 0119)',
     input: z.object({
       channelId: channelId('update'),
       name: z.string().trim().min(1).max(LIMITS.name + 1).optional().describe(D('update', 'name')),
@@ -182,10 +182,8 @@ export const channelOps = [
     }),
     output: z.unknown(),
     riskOf: async (ctx, args) => {
-      if (ctx.principal?.by !== 'agent' || (args.cwd === undefined && args.budget === undefined && args.memo === undefined)) return 'write';
+      if (ctx.principal?.by !== 'agent' || (args.cwd === undefined && args.budget === undefined)) return 'write';
       const channel = await run(ctx, () => ctx.channels.get({ channelId: args.channelId }));
-      // ここでの決まりは、そのチャンネルで動く bot のターンに渡る（core/bots/dispatch.mjs）ので、AI が足す・書き換えるのは人の確認を挟む。空にする・同じ値は広げないので write
-      if (args.memo !== undefined && args.memo.trim() && args.memo !== (channel.memo ?? '')) return 'guarded';
       if (args.cwd !== undefined && args.cwd && args.cwd !== (channel.cwd ?? null)) return 'guarded';   // 外す（null）・同じ値は広げないので write
       // 予算を外す・上げるのは、bot どうしの呼びかけの歯止めを緩める向き（ADR 0119）
       if (args.budget !== undefined && channel.kind === 'channel' && loosensBudget(channel.budget, nextBudget(channel, args.budget))) return 'guarded';
@@ -195,7 +193,6 @@ export const channelOps = [
       const channel = await run(ctx, () => ctx.channels.get({ channelId: args.channelId }));
       const rows = [];
       if (args.cwd !== undefined) rows.push({ path: 'cwd', before: channel.cwd ?? null, after: args.cwd || null });
-      if (args.memo !== undefined) rows.push({ path: 'memo', before: channel.memo || null, after: args.memo || null });
       if (args.budget !== undefined) {
         const before = budgetOf(channel), after = nextBudget(channel, args.budget);
         rows.push({ path: 'budget.daily', before: before.daily, after: after.daily }, { path: 'budget.perThread', before: before.perThread, after: after.perThread });

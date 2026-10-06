@@ -306,16 +306,15 @@ export default async function (t) {
         && (await call(agent('s_chat'), 'channels.create', { name: 'with-cwd', cwd: path.join(tmp, 'work') })).pending === true
         && (await call(agent('s_chat'), 'channels.create', { name: 'without-cwd' })).ok === true);
 
-      // ここでの決まり（memo）は bot のターンに渡る（core/bots/dispatch.mjs）ので、AI が足す・書き換えるのは承認。空にする・同じ値・人は承認なし
+      // ここでの決まり（memo）は人も AI も同じく承認なしで書ける（ADR 0137）。bot のターンへは書いた者に依らず同じに包んで渡る
       const memoMark = asked.length;
-      const memoAsk = await call(agent('s_chat'), 'channels.update', { channelId: made.id, memo: '返事は 3 行まで' });
-      t.ok('memo: AI が channels.update で決まりを書くのは承認（memo の行）。許可前は変わらない', memoAsk.pending === true && asked.length === memoMark + 1 && asked.at(-1).change.rows.some((r) => r.path === 'memo' && r.after === '返事は 3 行まで')
-        && !(await reviewChannels.get({ channelId: made.id })).memo);
-      await asked.at(-1).proceed();
-      t.ok('memo: 許可されたら変わる。同じ値・空にする・人が書くのは承認なし', (await reviewChannels.get({ channelId: made.id })).memo === '返事は 3 行まで'
-        && (await call(agent('s_chat'), 'channels.update', { channelId: made.id, memo: '返事は 3 行まで' })).ok === true && asked.length === memoMark + 1
+      const memoWrite = await call(agent('s_chat'), 'channels.update', { channelId: made.id, memo: '返事は 3 行まで' });
+      t.ok('memo: AI が channels.update で決まりを書いても承認なしで変わる', memoWrite.ok === true && memoWrite.pending !== true && asked.length === memoMark
+        && (await reviewChannels.get({ channelId: made.id })).memo === '返事は 3 行まで');
+      t.ok('memo: 書き換え・空にする・人が書くのも承認なし', (await call(agent('s_chat'), 'channels.update', { channelId: made.id, memo: '別の決まり' })).ok === true
+        && (await reviewChannels.get({ channelId: made.id })).memo === '別の決まり'
         && (await call(HUMAN, 'channels.update', { channelId: made.id, memo: '人が書いた決まり' })).ok === true
-        && (await call(agent('s_chat'), 'channels.update', { channelId: made.id, memo: '' })).ok === true && asked.length === memoMark + 1);
+        && (await call(agent('s_chat'), 'channels.update', { channelId: made.id, memo: '' })).ok === true && asked.length === memoMark);
 
       // ADR 0119: 予算は channels.get が既定を埋めて返す。AI が外す・上げるのは承認、下げるのは承認なし。人はどちらも承認なし
       const shownBudget = await reviewChannels.get({ channelId: made.id });
