@@ -423,7 +423,15 @@ main が居ない時間は、試験用アプリで 17〜19 秒（Electron 本体
 | OAuth の openExternal・os-open（エクスプローラーで表示・ブラウザーで開く） | 非 Electron の開き方で開く（**実装**: 口が切れていて、main の下の起動なら、サーバーが explorer.exe などを絶対パスで直に起こす。`core/main-away.mjs` の `createExternalOpener`・`core/os-open.mjs` の `defaultOpener`。OAuth の URL は https とループバックの http だけ） | — |
 | PC の通知 | main が出しているものは出ない | 画面が居ない間の完了・失敗・返事待ちは、既存の溜め（`runtime.buffer`・`completionNotices`）が戻った窓へ届け、窓の通知の処理（`web/notifications.mjs`）が出す。新しい仕組みは足さない（スマホなど別の画面がつながっていた間の分は、その画面へ届いた扱い） |
 | 言語（`locale`） | — | 付け直しのたびに送り直す（サーバー） |
-| `main-leaving` | — | 受けた後は、戻るまで画面の猶予（`AGENT_HOST_GRACE_MS`）を数えない（`core/main-away.mjs` の `holdsGrace`）。戻ったら猶予は戻った時から数え直す |
+| ホストへ任せる口（`remote-agent`。この PC の AI からリモートのホストへ。`core/remote-delegation.mjs`・`desktop/remote-agent-bridge.cjs`。docs/remote.md §4.5） | ホストへの線は main のもので、居ない間は無い。**待たせず失敗にする**（`OFFLINE`）。**実装**: サーバー（`parentPortRemoteAgent`）は口が切れたら、答えを待っていた依頼を `OFFLINE` で失敗にし、ホストを全部オフライン扱いにする（一覧は消さず、許可の印は残す。中継する承認のカードは「オフライン」の表示になる）。居ない間の依頼・承認の答え・同期は main に送らずすぐ `OFFLINE`。`ply_delegate`・`ply_task_*` は今のオフラインの扱い（待たずに失敗・status と wait は最後の写しを返す・止めるは予定を残す）にそのまま乗る。動いているホストのタスクの写し（台帳の行）は消さない。待たせない理由: 線が無く、待っても約 50 秒は何も進まない・待たせるとモデルのターンが止まる・作った直後に切れた依頼の結果は分からず、待って送り直すと二重に作りうる（失敗を返してモデルに任せる）・ホストがオフラインのときの扱いが揃っている | サーバーがつなぎ直すたびに送る `ready` で、main の橋が一覧と、つながっている線の `ready`（`remote-agent-ready`）を送り直す（`resync`）。サーバーは追いつき（`catchUp`）で、動いているタスクの今の状態と中継する承認を求め直す（承認のカードも作り直す）。線は main のものなので、切り替え（S2）の間も張ったまま。**パイプの経路では、サーバーが `process.parentPort` を直に見ていてこの口が無効だったので、main への口（`mainPort`）に寄せた** |
+| `main-leaving` | — | 受けた後は、戻るまで画面の猶予（`AGENT_HOST_GRACE_MS`）を数えない（`core/main-away.mjs` の `holdsGrace`）。戻ったら猶予は戻った時から数え直す。**更新を取りやめた**（インストーラーが起きなかった・失敗した。main は居続ける）ときは、main が `main-leaving-cancel` を送り、猶予を数える状態と、切断の上限（30 分 → 3 分。`core/orphan-guard.mjs`）を元に戻す（つながりは切らない）。古いサーバーは知らない型を読み捨てるので、取りやめの印は戻らない（次の付け直しで消える） |
+
+**切り替え（S2）に替わったとき**（1-5 と 1-6 の合わせ。main は同じで、サーバーだけが空から始まる）: S2 は、内蔵ブラウザーのタブの写し・中継の URL・復号した値の組・ホストの一覧を持たない。
+
+- **内蔵ブラウザー**: S2 がつながるたびに送る `ready` で、main の橋（`agent-browser-bridge.cjs`）が `browser-state-report` を 1 回送り直す（中身が変わらなくても。中継の `{ port, entries }` つき。サーバーは `adoptRelay` で取り込む）。`browser-restore-request` で開き直す道にしなかったのは、タブと中継は main のものでそのまま残っており（S2 の答えは空）、S2 に要るのは写しを持たせることだけだから。S2 の復元の答えはその後、次に付け直す main への答えになる
+- **secret**: 頼み直せば足りる。safeStorage は main のもので、暗号文はデータ置き場にあり、サーバーが持つ「復号した値の組」は写しにすぎない。S2 は空の組から始めて main に頼む（暗号化できるかの `status` も頼み直す）
+- **computer use の後始末の見張り**（`desktop/computer/service.cjs` の `releaseAll`・`desktop/computer-overlay.cjs` の `hideAll`）: つながりが切れるたびに `exit` が出るので、`once` ではなく `on` で付ける（S2 への付け直し・切れた後の付け直しの後も効く）
+- **ホストへ任せる口**: 上の表のとおり、`ready` で一覧と線の `ready` を送り直す
 
 ---
 
