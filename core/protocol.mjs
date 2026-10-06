@@ -156,7 +156,6 @@ export const COMMANDS = new Set([
   "markRead",     // { reads: [[sessionId, completedAt], ...] } -> { reads: 変わった分 }。完了を確認した（ホストに 1 つ・大きい方だけ）。read イベントで全接続へ
   "setGrouped",   // { sessionId, ungrouped }。fork のグループから外す / 戻す（§4.1）
   "setTitle",
-  "setBrowserProfile", // { sessionId, profile } 会話の今の内蔵ブラウザーのプロフィール（人が替えた。ADR 0078）
   "fork",
   "resolvePermission", // 承認ダイアログの応答
   "listStatuses",    // 既出の状態一覧（補完候補。強制ではない）

@@ -36,7 +36,7 @@ import { classifySystemMessages } from "../system-messages.mjs";
 import { promptTitle } from "../prompt-title.mjs";
 import { createTurnTracker, createInputQueue, createInputCloser, createHostCalls, createStderrLog, RESUME_GRACE_MS } from "./claude-background.mjs";
 import { COMPUTER_CALL_TIMEOUT_SEC, COMPUTER_SERVER, computerPrompt, isComputerTool } from "./computer-delivery.mjs";
-import { BROWSER_SERVER } from "../browser-profiles.mjs";
+import { BROWSER_SERVER } from "../browser-bridge.mjs";
 import { CONTROL_SERVER } from "../ops/surfaces/mcp.mjs";
 
 const NL = String.fromCharCode(10);
@@ -372,7 +372,7 @@ async function decidePermission(ctx, askPermission, toolName, input, options) {
   if (AUTO_ALLOW.has(toolName)) return { behavior: "allow", updatedInput: input };
   // コンピューターの操作はツールごとに聞かない。アプリ単位の承認は橋（core/computer-bridge.mjs）の中で行う（ADR 0071）
   if (isComputerTool(toolName)) return { behavior: "allow", updatedInput: input };
-  // 内蔵ブラウザーのプロフィールの一覧と切り替えも聞かない。サイトの利用の確認はプロフィールごとに中継が行う（ADR 0078）
+  // ply_browser も聞かない。サイトの利用の確認は中継が行う（ADR 0042）
   if (typeof toolName === "string" && toolName.startsWith(`mcp__${BROWSER_SERVER}__`)) return { behavior: "allow", updatedInput: input };
   // 操作の一覧（ply_control）も聞かない。権限と承認は registry.invoke が会話の承認モードで決める（ADR 0082）
   if (typeof toolName === "string" && toolName.startsWith(`mcp__${CONTROL_SERVER}__`)) return { behavior: "allow", updatedInput: input };
@@ -703,7 +703,7 @@ export const backend = {
     // ply_computer はロックを最長 10 分待つ。HTTP の MCP は既定で 60 秒（と無通信 300 秒）で切れるので、timeout で両方を上げる（実測 2026-10-01）
     const plyServers = { host: buildToolServer(ctx), ...(agentRuntime ? { ply_agents: { type: "http", url: agentRuntime.url, headers: agentRuntime.headers } } : {}), ...(contextRuntime ? { ply_context: { type: 'http', url: contextRuntime.url, headers: contextRuntime.headers } } : {}),
       ...(computerRuntime ? { [COMPUTER_SERVER]: { type: 'http', url: computerRuntime.url, headers: computerRuntime.headers, timeout: COMPUTER_CALL_TIMEOUT_SEC * 1000 } } : {}),
-      // 内蔵ブラウザーのプロフィールの一覧と切り替え（core/browser-profiles.mjs。ADR 0078）
+      // エージェントのブラウザー操作（core/browser-bridge.mjs。ADR 0142）
       ...(browserRuntime ? { [BROWSER_SERVER]: { type: 'http', url: browserRuntime.url, headers: browserRuntime.headers } } : {}),
       // Pleiad の操作の一覧（core/ops/surfaces/control.mjs。ADR 0081）。全会話に渡す
       // 承認が要る呼び出しも待たずに返る（ADR 0088）ので、待ちの上限はほかの Pleiad の MCP と同じ既定
