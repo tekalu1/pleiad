@@ -3,7 +3,7 @@ import { N } from '../lib/dom-stub.mjs';
 import { setupBrowserSettings, chromeLabel } from '../../web/browser-settings.mjs';
 
 export const name = 'chrome-settings';
-export const title = '設定 › ブラウザー › エージェントのブラウザー: 状態ごとの字とボタン・使えない環境（DOM の代役。ADR 0148・0149）';
+export const title = '設定 › ブラウザー › エージェントのブラウザー: 状態ごとの字とボタン・使えない環境（DOM の代役。ADR 0148・0153）';
 
 const buttonsOf = section => section.querySelectorAll('button').map(b => b.textContent);
 const statusOf = section => section.querySelectorAll('.stt')[0]?.textContent;

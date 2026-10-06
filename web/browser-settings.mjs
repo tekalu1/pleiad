@@ -116,7 +116,7 @@ export function setupBrowserSettings({ available, cmd, getPrefs, getAgentLabel =
   }
   onBlockedPreviewOrigins(paintConfirmation);
 
-  // ---- エージェントのブラウザー（PC の Chrome）への接続。状態はサーバーの chromeBrowser イベントで替わる（docs/inapp-browser.md「Chrome への接続」、ADR 0148・0149）
+  // ---- エージェントのブラウザー（PC の Chrome）への接続。状態はサーバーの chromeBrowser イベントで替わる（docs/inapp-browser.md「Chrome への接続」、ADR 0148・0153）
   let chrome = null;   // { state, reason, dialog, product } | null（まだ分からない）
   let copied = false, copyFailed = false, copyTimer = null;
   const chromeError = el('p', 'browser-setting-note browser-chrome-error'); chromeError.setAttribute('role', 'status');

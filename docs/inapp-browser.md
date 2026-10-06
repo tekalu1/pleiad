@@ -26,7 +26,7 @@ agent-browser 0.38.1 の state ルートには専用の変更変数がない。`
 
 ## Chrome への接続（エージェントのブラウザー）
 
-[ADR 0148](adr/0148-agent-browser-in-chrome.md)・[ADR 0149](adr/0149-chrome-connection-waits-indefinitely-behind-os-layer.md)。PC の Chrome に Pleiad が CDP の接続を 1 本持ち、設定 › ブラウザー › 「エージェントのブラウザー」で**つなぐ・切る**ができる。**今はつなぐだけで、エージェントはまだ使わない**（エージェントの操作は上の「エージェントの操作」の内蔵ブラウザーの中継のまま。環境変数も設定も、道を切り替えるものは無い）。
+[ADR 0148](adr/0148-agent-browser-in-chrome.md)・[ADR 0153](adr/0153-chrome-connection-waits-indefinitely-behind-os-layer.md)。PC の Chrome に Pleiad が CDP の接続を 1 本持ち、設定 › ブラウザー › 「エージェントのブラウザー」で**つなぐ・切る**ができる。**今はつなぐだけで、エージェントはまだ使わない**（エージェントの操作は上の「エージェントの操作」の内蔵ブラウザーの中継のまま。環境変数も設定も、道を切り替えるものは無い）。
 
 - **対応する OS**: 当面は Windows の Chrome だけ。ほかの OS・koffi を読めない PC・Electron の無いホスト（`npm start`）では「この OS ではまだ使えません」（状態 `unsupported`。ホストの画面の `hostCapabilities.chromeBrowser` は OS の層が使えなければ `unsupported`、Electron の無いホストでは `false` で、後者は節を出さない）。
 - **読むものと送るもの**: Chrome の `User Data`（Windows は `%LOCALAPPDATA%\Google\Chrome\User Data`。テストは `AGENT_HOST_CHROME_USER_DATA`）の `DevToolsActivePort`（1 行目がポート、2 行目が `/devtools/browser/<id>`）だけ。Cookie・履歴・`Local State` は読まない。上りへ送る CDP は `Browser.getVersion` だけ（`Target.*` は送らない。利用者のタブの URL・題を受け取らない）。
@@ -42,7 +42,7 @@ agent-browser 0.38.1 の state ルートには専用の変更変数がない。`
 
 `off` の `reason` は `chrome-closed`・`revoked`・`disconnected`（自分で切った）・`declined`（「やめる」）・`protocol`（想定外の HTTP の応答）。`unsupported` の `reason` は `platform`（Windows でない）・`native`（koffi を読めない）・`no-desktop`（Electron が無い）。
 
-**待ちは無期限**（ADR 0149）。Chrome は確認を約 5 分で打ち切るので、Pleiad が確認を出してから 270 秒（`reissueMs`）で、利用者に見せずに古い確認を `WM_CLOSE` で閉じ、すぐ upgrade し直す（新しい確認が出る。確認は常に 1 つ。画面の状態は B のまま変わらない）。印の無い失敗が確認を出してから 290 秒（`cancelBeforeMs`）より前なら「キャンセル」（`denied`）、以降なら Chrome の打ち切りとして残った確認を閉じて出し直す。失敗の直後に `DevToolsActivePort` を読み直し、無い・つながらないなら `setup`。確認の窓を見つけられていないとき（`dialog: false`）も、出し直しで探して閉じる（**ws だけ閉じても確認は Chrome に残る**ため）。
+**待ちは無期限**（ADR 0153）。Chrome は確認を約 5 分で打ち切るので、Pleiad が確認を出してから 270 秒（`reissueMs`）で、利用者に見せずに古い確認を `WM_CLOSE` で閉じ、すぐ upgrade し直す（新しい確認が出る。確認は常に 1 つ。画面の状態は B のまま変わらない）。印の無い失敗が確認を出してから 290 秒（`cancelBeforeMs`）より前なら「キャンセル」（`denied`）、以降なら Chrome の打ち切りとして残った確認を閉じて出し直す。失敗の直後に `DevToolsActivePort` を読み直し、無い・つながらないなら `setup`。確認の窓を見つけられていないとき（`dialog: false`）も、出し直しで探して閉じる（**ws だけ閉じても確認は Chrome に残る**ため）。
 
 **前に出す頻度**: Pleiad が確認を前に出す（`raise`）のは、B に入って最初に見つけた 1 回と、「ダイアログを前に出す」だけ。出し直した確認は前に出さず、前面を取っていたら（1 秒の間 200 ms ごとに見る）、直前の前面がブラウザーの窓でなければ `yieldForeground` で返す。「やめる」・「切る」・Pleiad の終了（`shutdown` を受けたとき。2 秒まで）は、出ている確認を閉じてから終える（Chrome に確認を残さない）。
 
@@ -63,7 +63,7 @@ agent-browser 0.38.1 の state ルートには専用の変更変数がない。`
 
 ## OS ごとの層
 
-窓を前に出す・確認の窓を見つけて閉じる、といった OS で違う操作は、`core/chrome/os.mjs` の口（core から見た約束）の向こうの、Electron main の `desktop/chrome-os/<os>.cjs` に閉じ込める（ADR 0149）。`core/chrome/` のほかのファイルは OS の値（窓のハンドルなど）を持たず、窓は不透明な `WindowRef = { id }` で扱う。core と main は parentPort の `chrome-os`（`{ id, action, args }`）⇔ `chrome-os-result`（`{ id, ok, result | error }`）と、`chrome-os-ready { supported, reason, features }`（起動時と `chrome-os-ready-request` への返事）でつなぐ。
+窓を前に出す・確認の窓を見つけて閉じる、といった OS で違う操作は、`core/chrome/os.mjs` の口（core から見た約束）の向こうの、Electron main の `desktop/chrome-os/<os>.cjs` に閉じ込める（ADR 0153）。`core/chrome/` のほかのファイルは OS の値（窓のハンドルなど）を持たず、窓は不透明な `WindowRef = { id }` で扱う。core と main は parentPort の `chrome-os`（`{ id, action, args }`）⇔ `chrome-os-result`（`{ id, ok, result | error }`）と、`chrome-os-ready { supported, reason, features }`（起動時と `chrome-os-ready-request` への返事）でつなぐ。
 
 | 口 | 意味 | Windows の実装（`desktop/chrome-os/win32.cjs`） |
 |---|---|---|

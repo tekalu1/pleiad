@@ -1,4 +1,4 @@
-// OS ごとの層の口（docs/inapp-browser.md「OS ごとの層」、ADR 0149）。
+// OS ごとの層の口（docs/inapp-browser.md「OS ごとの層」、ADR 0153）。
 //
 // 窓を前に出す・確認の窓を見つけて閉じる、といった OS で違う操作は、すべてこの口の向こう（Electron main の desktop/chrome-os/<os>.cjs）に
 // 閉じ込める。core/chrome/ のほかのファイルは OS の値（窓のハンドルなど）を解釈せず、この口だけを呼ぶ。

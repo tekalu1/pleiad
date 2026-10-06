@@ -1,4 +1,4 @@
-// Chrome の User Data の場所と、DevToolsActivePort の読み取り（docs/inapp-browser.md「Chrome への接続」、ADR 0148・0149）。
+// Chrome の User Data の場所と、DevToolsActivePort の読み取り（docs/inapp-browser.md「Chrome への接続」、ADR 0148・0153）。
 // OS で違うのは場所の表だけ。ほかの OS を足すときはここの表に 1 行足す（層の実装は desktop/chrome-os/<os>.cjs）。
 // Pleiad が読む Chrome のファイルは DevToolsActivePort だけ（Local State は第 4 段・第 10 段でプロフィール名の項目だけ）。
 import fs from 'node:fs/promises';

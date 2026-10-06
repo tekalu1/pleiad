@@ -24,7 +24,7 @@ const { prepareAgentBrowserBin } = require('./agent-browser-bin.cjs');
 // コンピューターの操作（Windows）の Win32 の層: 撮影・入力・アプリの特定（docs/computer-use.md、desktop/computer/service.cjs）
 const { attachComputerService, withPerMonitorDpi } = require('./computer/service.cjs');
 const { loadWin32 } = require('./computer/win32.cjs');
-// Chrome への接続（エージェントのブラウザー）の OS の層: 確認の窓を見つけて前に出す・閉じる（docs/inapp-browser.md「OS ごとの層」、ADR 0149）
+// Chrome への接続（エージェントのブラウザー）の OS の層: 確認の窓を見つけて前に出す・閉じる（docs/inapp-browser.md「OS ごとの層」、ADR 0153）
 const { createChromeOs, attachChromeOs } = require('./chrome-os/index.cjs');
 let computerService;
 let browserPanel;

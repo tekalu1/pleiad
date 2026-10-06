@@ -1,4 +1,4 @@
-// PC の Chrome への CDP 接続 1 本の持ち主（docs/inapp-browser.md「Chrome への接続」、ADR 0148・0149）。
+// PC の Chrome への CDP 接続 1 本の持ち主（docs/inapp-browser.md「Chrome への接続」、ADR 0148・0153）。
 //
 // 会話をまたいで 1 本を使い回す（許可の確認は接続ごとに出るため、切ってつなぎ直さない）。状態は 5 つ:
 //   off         何もしていない（起動直後・「切る」・「やめる」・接続が切れた後）

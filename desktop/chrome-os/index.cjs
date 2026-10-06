@@ -1,5 +1,5 @@
 'use strict';
-// Chrome への接続の OS の層（docs/inapp-browser.md「OS ごとの層」、ADR 0149）を選び、core の parentPort の依頼につなぐ。
+// Chrome への接続の OS の層（docs/inapp-browser.md「OS ごとの層」、ADR 0153）を選び、core の parentPort の依頼につなぐ。
 // 実装があるのは Windows（win32.cjs）だけ。ほかの OS・koffi を読めないときは「使えない」を返す層（どの口も null / false）。
 // core は main の `chrome-os-ready { supported, reason, features }` を見て、エージェントのブラウザーを出すか決める。
 const { createWin32ChromeOs } = require('./win32.cjs');

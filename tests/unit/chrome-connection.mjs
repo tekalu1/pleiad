@@ -4,7 +4,7 @@ import { fakeClock } from '../lib/fake-clock.mjs';
 import { createChromeConnection, ChromeConnectionError } from '../../core/chrome/connection.mjs';
 
 export const name = 'chrome-connection';
-export const title = 'Chrome への接続: A〜D の状態機械・無期限の待ち・確認の出し直し・OS の層が無いとき（偽の Chrome と偽の OS の層。ADR 0148・0149）';
+export const title = 'Chrome への接続: A〜D の状態機械・無期限の待ち・確認の出し直し・OS の層が無いとき（偽の Chrome と偽の OS の層。ADR 0148・0153）';
 
 const until = async (cond, ms = 5000, what = '') => {
   const end = Date.now() + ms;

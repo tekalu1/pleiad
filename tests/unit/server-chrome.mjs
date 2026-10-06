@@ -8,7 +8,7 @@ import { startFakeChrome } from '../lib/fake-chrome.mjs';
 import { registry } from '../../core/ops/index.mjs';
 
 export const name = 'server-chrome';
-export const title = 'Chrome への接続（サーバー越し）: browser.chrome* の操作・chromeBrowser イベントはホストの画面だけ・使えない OS / Electron の無いホスト（偽の Chrome・parentPort の身代わり。ADR 0148・0149）';
+export const title = 'Chrome への接続（サーバー越し）: browser.chrome* の操作・chromeBrowser イベントはホストの画面だけ・使えない OS / Electron の無いホスト（偽の Chrome・parentPort の身代わり。ADR 0148・0153）';
 
 const until = async (cond, ms = 8000, what = '') => {
   const end = Date.now() + ms;

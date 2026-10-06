@@ -1,5 +1,5 @@
 'use strict';
-// Chrome への接続の OS の層（Windows）。core/chrome/os.mjs の口の実装（docs/inapp-browser.md「OS ごとの層」、ADR 0149）。
+// Chrome への接続の OS の層（Windows）。core/chrome/os.mjs の口の実装（docs/inapp-browser.md「OS ごとの層」、ADR 0153）。
 // koffi は desktop/computer/win32.cjs の表（createWin32 の戻り値）だけが読む。ここは表の関数を呼ぶだけで、テストは偽の表で動かす。
 //
 // WindowRef = { id: string }（窓のハンドルの 10 進）。自分が出した ref だけを Map で覚え、知らない値には何もしない

@@ -6,7 +6,7 @@ const { createWin32ChromeOs, WM_CLOSE } = require('../../desktop/chrome-os/win32
 const { createChromeOs, attachChromeOs } = require('../../desktop/chrome-os/index.cjs');
 
 export const name = 'chrome-os';
-export const title = 'Chrome への接続の OS の層（Windows）: 確認の窓の見つけ方・前面化・返す・閉じる・使えない OS（偽の Win32 の表。本物の窓には触らない。ADR 0149）';
+export const title = 'Chrome への接続の OS の層（Windows）: 確認の窓の見つけ方・前面化・返す・閉じる・使えない OS（偽の Win32 の表。本物の窓には触らない。ADR 0153）';
 
 const CHROME = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
 const EDGE = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe';

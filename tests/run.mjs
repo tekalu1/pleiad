@@ -57,7 +57,7 @@ const SUITES = [
   './unit/server-browser-rebind.mjs',
   // ply_browser の骨組み（ADR 0148）: 鍵付きの口・プロフィール（ADR 0078）の削除後の形・agy の束ね
   './unit/browser-bridge.mjs',
-  // Chrome への接続（ADR 0148・0149）: A〜D の状態機械・無期限の待ち・確認の出し直し・OS の層が無いとき（偽の Chrome・偽の OS の層・偽の時計）
+  // Chrome への接続（ADR 0148・0153）: A〜D の状態機械・無期限の待ち・確認の出し直し・OS の層が無いとき（偽の Chrome・偽の OS の層・偽の時計）
   './unit/chrome-connection.mjs',
   // Chrome への接続の OS の層（Windows）: 確認の窓の見つけ方・前面化・閉じる・使えない OS・parentPort の往復（偽の Win32 の表）
   './unit/chrome-os.mjs',

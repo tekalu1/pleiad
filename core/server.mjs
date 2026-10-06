@@ -144,7 +144,7 @@ const agentBrowser = parentPortBrowser(process.parentPort);
 const screencastBridge = parentPortScreencast(process.parentPort);
 const screencastHub = screencastBridge ? createScreencastHub({ bridge: screencastBridge }) : null;
 const screencastClients = new WeakMap();   // ws -> hub に渡す端末
-// エージェントのブラウザー（PC の Chrome）への接続 1 本（core/chrome/connection.mjs、ADR 0148・0149）。デスクトップ版だけ。OS ごとの層は main（desktop/chrome-os）
+// エージェントのブラウザー（PC の Chrome）への接続 1 本（core/chrome/connection.mjs、ADR 0148・0153）。デスクトップ版だけ。OS ごとの層は main（desktop/chrome-os）
 const chromeConnection = process.parentPort
   ? createChromeConnection({ locate: chromeHomes()[0] ?? null, os: parentPortChromeOs(process.parentPort), log: line => console.log(`  ${line}`) })
   : null;

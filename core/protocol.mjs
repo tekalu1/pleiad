@@ -215,7 +215,7 @@ export const COMMANDS = new Set([
   'browserScreencastAgent',  // { sessionId, action: stop|takeOver } -> {}。エージェントの接続を止める・引き継ぐ
   // コンピューターの操作（docs/computer-use.md）。ホストの OS を操作する命令ではなく止める側なので、リモートの端末からも受ける
   'computerStop',            // { sessionId } -> { stopped }。その会話の走っているターン（貸している先の子のターンも）に止めた印を付け、main へ computer-stop を送る
-  // エージェントのブラウザー（PC の Chrome）への接続（docs/inapp-browser.md「Chrome への接続」、ADR 0148・0149）。つなぐ・切る・前に出すはホストの PC の画面だけ（browser.chrome*）
+  // エージェントのブラウザー（PC の Chrome）への接続（docs/inapp-browser.md「Chrome への接続」、ADR 0148・0153）。つなぐ・切る・前に出すはホストの PC の画面だけ（browser.chrome*）
   'chromeStatus',            // {} -> { state: off|setup|permission|denied|connected|unsupported, reason, dialog, product }。変わったら chromeBrowser イベント
   'chromeConnect',           // {} -> 状態。つなぐ（denied のときは「もう一度」）
   'chromeDisconnect',        // {} -> 状態。切る・やめる（確認が出ていれば閉じる）
