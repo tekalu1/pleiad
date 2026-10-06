@@ -1,11 +1,12 @@
 // 端末の画面が、ホストに任せた子の会話の経過を読むための部品（docs/remote.md §4.5「経過の読み出し」、ADR 0146）。純粋な関数だけ。
 // ホスト（core/server.mjs の remoteAgentView）が、読んだ会話を「運ぶ前に絞る」ために使う。端末は messageSig（web/history-sync.mjs）で続きの位置を確かめる。
 import { messageSig } from '../../web/history-sync.mjs';
+import { RESEND, hostViewCursor } from '../../web/host-view.mjs';
 
 /** 運ぶ量の上限（提案値ではなく、決めた値。docs/remote.md §4.5）。1 通は口の上限（AGENT_LIMITS.messageBytes）の内側に収める */
 export const VIEW_LIMITS = Object.freeze({
   tail: 40,                 // 初回に運ぶ末尾の発言数（これより古い分は省く）
-  resend: 3,                // 続きの読み出しで、持っている末尾のうち取り直す発言数（末尾の発言は後から中身が変わる）
+  resend: RESEND,           // 続きの読み出しで、持っている末尾のうち取り直す発言数（末尾の発言は後から中身が変わる。端末の画面と同じ数）
   bodyBytes: 192 * 1024,    // 1 通の大きさ
   text: 16 * 1024,          // 発言の本文
   thinking: 4 * 1024,       // 考えた内容
@@ -76,12 +77,8 @@ export function viewMessages(messages, cursor = null, { limits = VIEW_LIMITS } =
   return { messages: slice, from, total, full };
 }
 
-/** 端末が持っている発言（base から並ぶ list）の、次の読み出しの続きの位置。持っているのが少なければ null（末尾から読み直す） */
-export function viewCursor(base, list, sigs = null) {
-  const keep = Math.max(0, list.length - VIEW_LIMITS.resend);
-  if (!keep) return null;
-  return { from: base + keep, check: sigs ? sigs[keep - 1] : messageSig(list[keep - 1]) };
-}
+/** 端末が持っている発言（held: { base, messages, sigs }）の、次の読み出しの続きの位置（端末の画面の計算と同じもの） */
+export const viewCursor = (base, list, sigs = null) => hostViewCursor({ base, messages: list, sigs });
 
 /** 追加の指示（端末が AI から受けた分の表示用）。本文を絞る */
 export const viewInstructions = (list) => (Array.isArray(list) ? list : []).slice(-VIEW_LIMITS.instructions)

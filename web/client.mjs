@@ -62,6 +62,7 @@ import { approvalTarget } from "./approval-summary.mjs";
 import { isComputerTool, approvalApps, approvalBody, approvalHeading, approvalSaid, lockWaitBox, relayLabel } from "./computer-use.mjs";
 import { approvalChange, changeBody, changeHeading, changeWord } from "./setting-change.mjs";
 import { backgroundTitle, taskTree, backgroundTotals, groupByOwner, visibleRows } from './background-model.mjs';
+import { hostViewCursor, joinHostView, hostTreeRows, mergeHostTree } from './host-view.mjs';
 import { mergeTasks, tasksToFetch, staleTasks, treeSessions } from './task-cards.mjs';
 import { createBackgroundChip } from './background-chip.mjs';
 import { overlaySessions, rollbackSessions, currentRows } from './pending-sidebar.mjs';
@@ -2259,7 +2260,7 @@ function permissionCard(ev, into = null) {
 }
 
 /** ホストの画面でしか答えられない承認の知らせ（答えるボタンは無い。「子の会話を見る」はホストのリモートの窓で開く補助） */
-function hostOnlyCard(ev) {
+function hostOnlyCard(ev, into = null) {
   const m = el("div", "m card");
   const card = el("div", "card");
   m.append(card);
@@ -2271,7 +2272,7 @@ function hostOnlyCard(ev) {
   const res = el("span", "res");
   actions.append(res);
   card.append(actions);
-  placeCard(m, ev, null);
+  placeCard(m, ev, into);
   registerRelayCard(ev, { m, card, head, code: null, actions, res, buttons: [], hostOnly: true });
   return m;
 }
@@ -2325,19 +2326,12 @@ function registerRelayCard(ev, parts) {
   // removeOnFold・desc は、見出しの要約と本文が code の外にあるカード（コンピューターの操作の承認）が、畳むときに本文を外して要約を見出しへ移すため
   const { m, card, head, code, actions, res, buttons, question = false, hostOnly = false, removeOnFold = [], desc = "" } = parts;
   const blocking = ev.remote ? null : t("chat.approval.blocking");
-  if (ev.remote) {
-    // 子の会話を見る（見るための補助。手元の窓だけ。ホストのリモートの窓でその会話を開く）
-    const open = window.plyDesktop?.openRemoteSession;
-    const childId = (state.work.tasks ?? []).find(x => x.taskId === ev.remote.taskId)?.remoteSessionId;
-    if (open && !window.plyRemote && childId && !question) {
-      const view = el("button", "btn btn-quiet", t("chat.approval.relay.viewChild"));
-      view.type = "button";
-      view.onclick = async () => {
-        const r = await open(ev.remote.hostId, childId).catch(e => ({ ok: false, message: e.message }));
-        if (r && r.ok === false) { res.className = "res fail"; res.replaceChildren(`✕ ${t("chat.approval.relay.viewChildFailed", { error: r.message ?? "" })}`); }
-      };
-      actions.prepend(view);
-    }
+  if (ev.remote && !detailCardMode) {
+    // 詳細を見る（作業の窓のそのタスクの詳細。経過・同じカードで答えられる。どの端末の画面でも開ける）。詳細の中のカードには出さない
+    const view = el("button", "btn btn-quiet", t("chat.approval.relay.viewDetail"));
+    view.type = "button";
+    view.onclick = () => openWork(`t:${ev.remote.taskId}`);
+    actions.prepend(view);
   }
   const setOnline = (online) => {
     if (hostOnly || card.classList.contains("done") || card.dataset.sending) return;
@@ -2370,7 +2364,12 @@ function registerRelayCard(ev, parts) {
     if (code && !ev.browserSite) foldSettledCard(card, head, code, approvalTarget(ev.input));
     state.pendingPerms.delete(ev.id);
   };
-  openCards.set(ev.id, { el: m, sending: () => Boolean(card.dataset.sending), setOnline, fold });
+  const entry = { el: m, sending: () => Boolean(card.dataset.sending), setOnline, fold };
+  // 同じ承認のカードが依頼元の会話と詳細の両方に出ることがある。先に答えた方で決まり、残りは同じ決着で畳む
+  const prev = openCards.get(ev.id);
+  if (ev.remote && prev?.el.isConnected && prev.el !== m) {
+    openCards.set(ev.id, { el: prev.el, sending: () => prev.sending() || entry.sending(), setOnline: (online) => { prev.setOnline?.(online); entry.setOnline(online); }, fold: (x) => { prev.fold(x); entry.fold(x); } });
+  } else openCards.set(ev.id, entry);
   if (ev.remote && ev.remote.online === false) setOnline(false);
 }
 
@@ -4510,6 +4509,21 @@ function hostMark(host) {
   return mark;
 }
 
+// ---- ホストに任せた子の経過（docs/remote.md §4.5「経過の読み出し」、docs/design-system.md「バックグラウンド」） ----
+// 詳細を開いている間だけ、ホストの子の会話を delegation.hostView で読む（今の読み直し refreshDetail と同じ作り。購読は持たない）。
+/** 根のタスク id → 読み出しで知ったホストの子孫の要約。一覧へ字下げの行で出す（端末の台帳には保存しない。詳細を一度でも開いた後に出る） */
+const hostTree = new Map();
+/** タスク id → 最後に読み出しが届いた時刻（オフラインの「HH:MM までの分」の目安） */
+const hostSeen = new Map();
+const hostChildKey = (sessionId) => `hs:${sessionId}`;
+const hostInfo = (hostId) => state.work.remoteHosts?.[hostId] ?? null;
+const hostOnlineNow = (hostId) => hostInfo(hostId)?.online !== false;
+/** オフラインの間の「ここまでの分」の時刻（ms）。線が使えなくなった時刻、無ければ最後に読めた時刻・台帳の更新 */
+const hostUntil = (hostId, taskId, updatedAt) => hostInfo(hostId)?.since ?? hostSeen.get(taskId) ?? (timeOf(updatedAt) || null);
+const clockOf = (ms) => (ms ? hhmm(new Date(ms)) : "");
+/** 詳細の中に置く中継のカード（registerRelayCard が「詳細を見る」を出さない・同じ id のカードを重ねて持つ） */
+let detailCardMode = false;
+
 const KIND_SUB = {
   terminal: t("dialog.work.kind.terminal"),
   agent: t("dialog.work.kind.agent"),
@@ -4584,16 +4598,26 @@ function backgroundItems(scope = null) {
   for (const { task, depth, rootLive, childCount } of trees) {
     const live = TASK_LIVE.has(task.status);
     const waiting = live && taskWaiting(task);
-    items.push({
+    const hostOffline = Boolean(task.host) && live && !hostOnlineNow(task.host.hostId);
+    const item = {
       key: `t:${task.taskId}`, group: 'agent', source: 'task', title: backgroundTitle(task), request: task.task,
       depth, rootLive, childCount, parentSessionId: task.parentSessionId, backend: task.backend,
       model: task.model || null, effort: task.effort || null, status: TASK_MARK[task.status] ?? null,
       taskStatus: waiting ? 'waiting' : task.status, live, waiting, startedAt: task.createdAt ?? null, endedAt: live ? null : task.updatedAt ?? null,
       childId: task.sessionId, taskId: task.taskId, error: task.error, notification: task.notification, routing: task.routing ?? null,
       pendingMessages: task.pendingMessages ?? 0, instructionRevision: task.instructionRevision ?? 0,
-      worktree: task.worktree ?? null,
-      ...(task.host ? { host: task.host, remoteSessionId: task.remoteSessionId ?? null } : {}),
-    });
+      worktree: task.worktree ?? null, updatedAt: task.updatedAt ?? null,
+      // ホストに任せたタスク: 子の会話はホストにある（childId はホストでの会話の印。孫の行の親子に使う）。オフラインの間は経過を止める
+      ...(task.host ? { host: task.host, remoteSessionId: task.remoteSessionId ?? null, childId: task.remoteSessionId ? hostChildKey(task.remoteSessionId) : null,
+        hostOffline, hostUntil: hostOffline ? hostUntil(task.host.hostId, task.taskId, task.updatedAt) : null } : {}),
+    };
+    items.push(item);
+    // ホストで孫に任せた分は、詳細を読んだ後、手元と同じ字下げの行で出す（端末の台帳には無い。読み出しの答えの子孫の要約）
+    if (task.host && hostTree.has(task.taskId)) {
+      const subs = hostTreeRows(task.taskId, task.remoteSessionId, hostTree.get(task.taskId), hostChildKey);
+      item.childCount = subs.filter(x => x.depth === 1).length;
+      for (const sub of subs) items.push(hostDescendantItem(item, sub));
+    }
   }
   for (const { task, entry } of here ? [] : backgroundHere()) items.push({
     key: `c:${entry.sessionId}:${task.id}`, group: 'command', title: task.label || task.id, kindLabel: KIND_SUB[task.kind] ?? KIND_SUB.other,
@@ -4694,11 +4718,20 @@ function elapsedText(item) {
     return `${date.getMonth() + 1}/${date.getDate()}`;
   }
   const start = timeOf(item.startedAt);
+  // ホストがオフラインの間は、知らないことを進めない（最後に届いた時刻までで止める）
+  if (item.hostOffline) return start && item.hostUntil ? clockText(item.hostUntil - start) : '';
   return start ? clockText(Date.now() - start) : '';
 }
 
 /** 行・詳細の頭の状態の印。字は出さないので、名前（読み上げ・title）は印が持つ。Pleiad タスクはタスクの状態の語（待機中・承認待ち…） */
 function markOf(item) {
+  // ホストがオフラインの間は、走っている弧の代わりに衛星（「裏で待っている」の既存の印）。時計も止める（elapsedText）
+  if (item.hostOffline && item.live && !item.waiting) {
+    const sat = satMark(1, t('dialog.work.hostOfflineMark'));
+    sat.setAttribute('role', 'img');
+    sat.setAttribute('aria-label', t('dialog.work.hostOfflineMark'));
+    return sat;
+  }
   const mark = item.waiting ? stateMark('running') : stateMark(item.status);
   if (!mark) return mark;
   if (item.waiting) mark.classList.add('waiting');
@@ -4731,6 +4764,7 @@ function listRow(item) {
     if (model) meta.append(el('span', 'bg-model', model));
     const status = statusText(item);
     if (status) meta.append(el('span', item.waiting ? 'bg-waiting' : null, status));
+    if (item.hostOffline) meta.append(el('span', null, item.hostUntil ? t('dialog.work.hostOfflineRow', { time: clockOf(item.hostUntil) }) : t('chat.approval.relay.hostOffline')));
     if (item.source === 'task' && item.pendingMessages > 0) meta.append(el('span', null, t('dialog.work.instructionsWaiting', { count: item.pendingMessages })));
     if (item.childCount) meta.append(el('span', null, t('dialog.work.delegated', { count: item.childCount })));
   } else {
@@ -4804,7 +4838,10 @@ function renderBackground() {
   paintDetailHead(item);
   const changed = item?.source === 'task' && bg.view.instructionRevision !== item.instructionRevision;
   const becameIdle = bg.view.wasLive && !item?.live;
-  if (item?.live || becameIdle || changed) refreshDetail({ force: changed || becameIdle });
+  // ホストの線がオフライン・オンラインに変わったら、すぐ読み直す（筋の末尾の「ホストがオフライン」の行を替える・追いつく）
+  const hostFlipped = Boolean(item?.host) && bg.view.hostOffline !== undefined && bg.view.hostOffline !== item.hostOffline;
+  if (hostFlipped) bg.view.hostOffline = item.hostOffline;
+  if (item?.live || becameIdle || changed || hostFlipped) refreshDetail({ force: changed || becameIdle || hostFlipped });
 }
 
 function selectBackground(key) {
@@ -4865,7 +4902,8 @@ function paintDetailHead(item) {
   const status = statusText(item);
   if (status) meta.append(el('span', item.waiting ? 'bg-waiting' : null, status));
   const elapsed = elapsedText(item);
-  if (elapsed) meta.append(el('span', 'bg-elapsed', elapsed));
+  if (item.hostOffline) meta.append(el('span', 'bg-elapsed', item.hostUntil ? t('dialog.work.hostOfflineUntil', { time: clockOf(item.hostUntil) }) : t('dialog.work.hostOfflineThread')));
+  else if (elapsed) meta.append(el('span', 'bg-elapsed', elapsed));
   title.append(h, meta);
   head.append(back, title);
   const actions = el('div', 'bg-dt-actions');
@@ -4877,17 +4915,17 @@ function paintDetailHead(item) {
     open.setAttribute('aria-label', t('dialog.work.openChat'));
     open.append(icon(GO_PATH));
     open.onclick = () => { const scope = bg.scope; $('workDialog').close(); if (scope) scope.openSession(item.childId); else select(item.childId); };
-    // ホストに任せたタスクの子の会話はホストにある。手元の窓なら、そのホストのリモートの窓で開く（見るための補助）
+    // ホストに任せたタスクの子の会話はホストにある。経過はこの詳細で読めるので、手元の窓なら、そのホストのリモートの窓で開く入口を残す（ホストで続きを見る・指示を送る）
     if (item.host) {
-      const view = window.plyDesktop?.openRemoteSession;
-      if (view && !window.plyRemote && item.remoteSessionId) {
-        open.title = open.ariaLabel = t('chat.approval.relay.viewChild');
-        open.setAttribute('aria-label', t('chat.approval.relay.viewChild'));
-        open.onclick = () => { view(item.host.hostId, item.remoteSessionId).catch(() => {}); };
+      if (window.plyDesktop?.openRemoteSession && !window.plyRemote && item.remoteSessionId) {
+        open.title = t('dialog.work.openOnHost');
+        open.setAttribute('aria-label', t('dialog.work.openOnHost'));
+        open.onclick = () => openOnHost(item);
         actions.append(open);
       }
     } else actions.append(open);
-    if (['queued', 'running'].includes(item.taskStatus) || item.waiting) {
+    // 止めるのは根のタスク（止めれば孫も止まる。ホストの「すべて止める」と同じ）。読み出しで知った孫には出さない
+    if (!item.hostDescendant && (['queued', 'running'].includes(item.taskStatus) || item.waiting)) {
       const stop = el('button', 'btn btn-quiet', t('dialog.work.stop'));
       stop.type = 'button';
       stop.setAttribute('aria-label', t('dialog.work.stopLabel', { name: item.title }));
@@ -4913,7 +4951,7 @@ function detailNote(text) {
 /** 詳細を描く。項目の種類ごとに読み方が違うだけで、描く部品は会話と同じ */
 function openDetail(item) {
   const body = $('workBody');
-  bg.view = item ? { key: item.key, item, busy: false, wasLive: item.live, at: 0 } : null;
+  bg.view = item ? { key: item.key, item, busy: false, wasLive: item.live, at: 0, hostOffline: item.host ? item.hostOffline : undefined } : null;
   body.replaceChildren();
   delete body.dataset.sessionId;
   paintDetailHead(item);
@@ -4988,10 +5026,91 @@ function requestOf(toolId) {
  * （web/stream-messages.mjs。Antigravity はターンが終わるまで履歴に何も書かない）。
  * watch は付けない（付けると、この接続がメインパネルで見ている会話が子へ書き換わる）
  */
-/** ホストに任せたタスクの詳細。子の会話はホストにあるので、依頼と結果（ホストの便りで写した分）だけを出す */
+/** ホストの子の会話を、そのホストのリモートの窓で開く（手元の窓だけ。見るための補助） */
+function openOnHost(item) {
+  const view = window.plyDesktop?.openRemoteSession;
+  if (!view || window.plyRemote || !item.remoteSessionId) return;
+  view(item.host.hostId, item.remoteSessionId)
+    .then((r) => { if (r && r.ok === false) detailNote(t('chat.approval.relay.viewChildFailed', { error: r.message ?? '' })); })
+    .catch((e) => detailNote(t('chat.approval.relay.viewChildFailed', { error: e?.message ?? '' })));
+}
+
+/** 読み出しで知ったホストの孫の行（一覧へ字下げで出す）。根と同じ「⇄ ホスト名」・オフラインの扱い */
+function hostDescendantItem(root, { row, depth, parentKey, childCount }) {
+  const raw = row.rawStatus ?? row.status;
+  const live = TASK_LIVE.has(raw);
+  const waiting = live && row.status === 'waiting';
+  const hostOffline = live && root.hostOffline === true;
+  return {
+    key: `t:${row.taskId}`, group: 'agent', source: 'task', title: row.title || row.taskId, request: undefined,
+    depth: (root.depth ?? 0) + depth, rootLive: root.rootLive, childCount, parentSessionId: parentKey,
+    backend: row.backend, model: row.model || null, effort: row.effort || null, status: TASK_MARK[raw] ?? null,
+    taskStatus: waiting ? 'waiting' : raw, live, waiting, startedAt: row.createdAt ?? null, endedAt: live ? null : row.updatedAt ?? null, updatedAt: row.updatedAt ?? null,
+    childId: row.sessionId ? hostChildKey(row.sessionId) : null, taskId: row.taskId, error: row.error ?? null, notification: null, routing: null,
+    pendingMessages: 0, instructionRevision: 0, worktree: null,
+    host: root.host, remoteSessionId: row.sessionId ?? null, hostDescendant: true, rootTaskId: root.rootTaskId ?? root.taskId,
+    hostOffline, hostUntil: hostOffline ? root.hostUntil : null,
+  };
+}
+
+/**
+ * ホストに任せたタスクの詳細（docs/remote.md §4.5「経過の読み出し」）。子の会話はホストにあるので、端末のサーバーが /agent 越しに読み、
+ * 手元の委譲と同じ筋（readonlyThread）で描く。読み出しは詳細を開いている間だけ（refreshDetail の読み直しに乗る）。続きは cursor から、
+ * 終わったタスクは 1 回読んで止まる。読めないホスト（古い版・許可が無い）や読めなかったときは、依頼と結果の 2 つの箱に戻して 1 行添える
+ */
 async function hostTaskThread(item) {
+  const view = bg.view;
+  const held = view.host ??= { base: 0, messages: [], sigs: [], total: 0, instructions: [], ok: false, lastOk: 0 };
+  // 読み出しを知らない古いホストは、ready の view で先に分かる（読み出しの往復を待たずに、今の 2 つの箱）
+  const info = hostInfo(item.host.hostId);
+  if (!held.ok && info?.online && info.view !== true) return hostTaskBoxes(item, t('dialog.work.hostViewUnsupported'));
+  const args = { taskId: item.taskId, hostId: item.host.hostId };
+  const cursor = held.ok ? hostViewCursor(held) : null;
+  const r = await cmd('invoke', { op: 'delegation.hostView', args: cursor ? { ...args, cursor } : args }).catch((e) => ({ state: 'failed', error: e.message }));
+  if (r.state === 'ok') {
+    Object.assign(held, joinHostView(held, r), { ok: true, instructions: r.instructions ?? [], lastOk: Date.now() });
+    hostSeen.set(item.taskId, Date.now());
+    const rootId = item.hostDescendant ? item.rootTaskId : item.taskId;
+    const before = JSON.stringify(hostTree.get(rootId) ?? []);
+    const rows = mergeHostTree(hostTree.get(rootId), r.descendants, { replace: !item.hostDescendant });
+    if (rows.length || hostTree.has(rootId)) hostTree.set(rootId, rows);
+    if (JSON.stringify(rows) !== before) setTimeout(() => repaintTasks(), 0);
+  } else if (r.state !== 'offline' && (!held.ok || r.state === 'unsupported' || r.state === 'denied')) {
+    // 読めない（古いホスト・許可が無い・読めなかった）。今の 2 つの箱に戻し、読めなかった旨の 1 行
+    held.ok = false;
+    const why = r.state === 'unsupported' ? t('dialog.work.hostViewUnsupported') : r.state === 'denied' ? t('dialog.work.hostViewDenied') : r.error || r.code || '';
+    return hostTaskBoxes(item, why);
+  }
+  const offline = item.live && (item.hostOffline || r.state === 'offline');
+  const until = (r.state === 'offline' ? r.since : null) ?? item.hostUntil ?? held.lastOk;
+  const messages = held.messages;
+  const th = readonlyThread(messages, { backend: item.backend, prompt: held.base === 0 ? item.request : null, live: item.live, item,
+    instructions: visibleTaskInstructions(held.instructions, messages),
+    hostOffline: offline ? { time: clockOf(until) } : null, omitted: held.base > 0 ? { count: held.base, item } : null });
+  // 承認・質問は、依頼元の会話の中継のカードと同じカード・同じ答えの道で、ここでも答えられる（常に許可は出さない）。
+  // 根の詳細にはホストの木の分すべて、孫の詳細にはその子の分だけ。ホストの画面でしか答えられない承認は知らせの 1 行
+  detailCardMode = true;
+  try {
+    const rootId = item.hostDescendant ? item.rootTaskId : item.taskId;
+    for (const pending of state.pendingPerms.values()) {
+      if (pending.type !== 'permission' || pending.remote?.taskId !== rootId) continue;
+      if (item.hostDescendant && pending.remote.childSessionId !== item.remoteSessionId) continue;
+      if (th.querySelector(`.mw[data-key="perm:${CSS.escape(pending.id)}"]`)) continue;
+      const ev = { ...pending, remote: { ...pending.remote, online: hostOnlineNow(pending.remote.hostId) } };
+      const card = ev.remote.hostOnly ? hostOnlyCard(ev, th) : ev.kind === 'question' ? questionCard(ev, th) : permissionCard(ev, th);
+      if (card) th.querySelector('.mw.activity')?.before(card.closest('.mw'));
+    }
+  } finally { detailCardMode = false; }
+  if (r.state === 'failed' && held.ok) th.append(wrap(el('div', 'm sys', t('dialog.work.readFailed', { error: r.error || r.code || '' }))));
+  if (item.error) th.append(wrap(el('div', 'm sys', item.error)));
+  return th;
+}
+
+/** 経過を読めないホストの詳細: 依頼と結果（ホストの便りで写した分）の 2 つの箱。why は読めなかった理由の 1 行 */
+async function hostTaskBoxes(item, why) {
   const r = await cmd('invoke', { op: 'delegation.status', args: { taskId: item.taskId } }).catch(() => null);
   const th = el('div', 'thread bg-thread bg-host-task');
+  if (why) th.append(el('div', 'work-head', t('dialog.work.readFailed', { error: why })));
   const section = (label, text) => {
     const box = el('div', 'rt-request');
     const body = el('div', 'rt-request-text');
@@ -5032,12 +5151,23 @@ async function taskThread(item) {
  * 発言者の語だけ「依頼」「追加の指示」にする。まだ子に渡っていない追加の指示は、差し込み待ち（sending）ならメインパネルの作業中の送信と同じ状態の行、
  * 待機（queued。途中送信できない子）なら末尾に時計の印、届かず終わったもの（dropped）は弱い字（ADR 0067。docs/design-system.md「バックグラウンド」）
  */
-function readonlyThread(messages, { presents = [], backend, prompt = null, live = false, item, instructions = [], sessionId = null } = {}) {
+function readonlyThread(messages, { presents = [], backend, prompt = null, live = false, item, instructions = [], sessionId = null, hostOffline = null, omitted = null } = {}) {
   messages = mergeToolTurns(messages);
   const th = el('div', 'thread bg-thread');
   const spine = svgEl('svg', { class: 'spine', 'aria-hidden': 'true' });
   spine.append(svgEl('line', { x1: 20, y1: 0, x2: 20, y2: '100%' }));
   th.append(spine);
+  // ホストの子の長い会話は末尾だけ運ぶ。省いた分は先頭に 1 行（デスクトップ版は「ホストで開く」で全文へ）
+  if (omitted) {
+    const note = el('div', 'work-head omitted', t('dialog.work.hostOmitted', { count: omitted.count }));
+    if (window.plyDesktop?.openRemoteSession && !window.plyRemote && omitted.item?.remoteSessionId) {
+      const open = el('button', 'btn btn-quiet', t('dialog.work.openOnHost'));
+      open.type = 'button';
+      open.onclick = () => openOnHost(omitted.item);
+      note.append(open);
+    }
+    th.append(note);
+  }
   const put = (node, key) => { const w = wrap(node, key); th.append(w); return w; };
   const parentMsg = (text, at, word) => {
     const m = stripActions(userMsg(text, { at }));
@@ -5085,12 +5215,13 @@ function readonlyThread(messages, { presents = [], backend, prompt = null, live 
   for (const instruction of instructions.filter(x => x.state === 'sending')) th.append(pendingNode(instruction));
   if (live) {
     const act = el('div', 'm activity');
-    if (item?.waiting) act.append(el('span', 'txt', t('activity.waitingApproval')));
+    if (hostOffline) act.append(el('span', 'txt', t('dialog.work.hostOfflineThread')), el('span', 'el', hostOffline.time ? t('dialog.work.hostOfflineCatchUp', { time: hostOffline.time }) : t('dialog.work.hostOfflineCatchUpNoTime')));
+    else if (item?.waiting) act.append(el('span', 'txt', t('activity.waitingApproval')));
     const w = put(act, 'activity');
     const tip = el('span', 'activity-tip');
-    const mark = runMark(t('activity.turnRunning'));
+    const mark = hostOffline ? satMark(1, t('dialog.work.hostOfflineMark')) : runMark(t('activity.turnRunning'));
     mark.setAttribute('role', 'img');
-    mark.setAttribute('aria-label', t('activity.turnRunning'));
+    mark.setAttribute('aria-label', hostOffline ? t('dialog.work.hostOfflineMark') : t('activity.turnRunning'));
     tip.append(mark);
     w.querySelector('.mw-gutter').append(tip);
   }
@@ -5493,6 +5624,8 @@ function paintDelegateCardsIn(root, scope) {
  */
 function delegateStateOf(item) {
   if (item.waiting) return { key: 'waiting', text: TASK_STATUS.waiting };
+  // ホストがオフライン: 時計を止め、衛星と「HH:MM まで」（知らないことを進めない）
+  if (item.live && item.hostOffline) return { key: 'offline', mark: markOf(item), when: item.hostUntil ? t('dialog.work.hostUntil', { time: clockOf(item.hostUntil) }) : '' };
   if (item.live) return { key: 'running', mark: markOf(item), start: timeOf(item.startedAt) };
   const when = elapsedText(item);
   if (item.status === 'completed') return { key: 'done', mark: markOf(item), when };
