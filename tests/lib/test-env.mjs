@@ -6,24 +6,19 @@
 //    子プロセス（サーバー・worker）は環境変数を引き継ぐ。テストが自分の置き場を指定するときは、そちらが使われる。
 // 2) PLEIAD_TEST_GUARD_HOME に本物の置き場（os.homedir()/.agent-host）を入れる。値がある間、core/test-guard.mjs が、その中を
 //    DB・ロック・形式の移行・設定の JSON で開こうとすると例外にする。AGENT_HOST_DATA を本物に向けても、サーバーを子プロセスで立てても効く。
-// 3) 実行元（Pleiad の会話のシェルなど）が渡した制御系の環境変数を外す（下の SCRUBBED_ENV）。残すと、会話に束縛された CLI の接続情報が
-//    テストの中の Claude の env へ引き継がれて control-delivery が落ち、ops-cli などが走っている本物の Pleiad につながりうる。
+// 3) 実行元（Pleiad の会話のシェルなど）から継いだ Pleiad の環境変数（AGENT_HOST_・PLEIAD_・PLY_・AGENT_BROWSER_ で始まるもの）を外す
+//    （tests/lib/inherited-env.mjs。テストの実行に要る利用者の変数だけ残す）。残すと、会話に束縛された CLI の接続情報が
+//    テストの中の Claude の env へ引き継がれて control-delivery が落ち、ops-cli などが走っている本物の Pleiad につながり、
+//    AGENT_HOST_SERVER_LOG でテストのサーバーの出力がインストール版の server.log へ流れて起動の合図が見えなくなる。
 //    CI（これらが無い）と同じ条件にそろえる。テストが自分で渡す値（子プロセスの env へ明示するもの）は、ここより後なので影響を受けない。
 //    tests/run.mjs の子プロセス worker も、最初にこのファイルを読むので同じ。
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { scrubInheritedEnv } from './inherited-env.mjs';
 
-/** 実行元が渡してくる制御系の環境変数（Pleiad の会話のシェル・内蔵ブラウザー・親の Pleiad のサーバーの値）。AGENT_HOST_CLAUDE_BIN などの利用者が試験用に渡す上書きは、外さない */
-export const SCRUBBED_ENV = [
-  'PLEIAD_CONTROL_URL', 'PLEIAD_CONTROL_TOKEN', 'PLY_CONTROL_URL', 'PLY_CONTROL_AUTHORIZATION',
-  'PLY_COMPUTER_URL', 'PLY_COMPUTER_AUTHORIZATION',
-  'AGENT_BROWSER_CONFIG', 'AGENT_BROWSER_NAMESPACE', 'AGENT_BROWSER_SESSION', 'AGENT_BROWSER_SOCKET_DIR',
-  'AGENT_HOST_PORT', 'AGENT_HOST_BIND', 'AGENT_HOST_TOKEN',
-];
 /** 実際に外したもの（名前だけ。値は持たない） */
-export const scrubbedEnv = SCRUBBED_ENV.filter((k) => process.env[k] !== undefined);
-for (const k of scrubbedEnv) delete process.env[k];
+export const scrubbedEnv = scrubInheritedEnv(process.env);
 
 const guarded = new Set(String(process.env.PLEIAD_TEST_GUARD_HOME ?? '').split(path.delimiter).map(s => s.trim()).filter(Boolean));
 guarded.add(path.join(os.homedir(), '.agent-host'));

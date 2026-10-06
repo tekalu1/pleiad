@@ -930,7 +930,7 @@
       "stop": { "summary": "会話のコンピューターの操作（この PC のマウスとキーボード）を止める。始める・許可することはできない。", "sessionId": "会話の id。省くとこの会話。" }
     },
     "browser": {
-      "chromeStatus": { "summary": "エージェントのブラウザー（この PC の Chrome）への接続の状態を返す。state は off（未接続）・setup（Chrome でリモートデバッグをオンにする準備が要る）・permission（Chrome に許可の確認が出ている）・denied（Chrome で許可されなかった。確認の「キャンセル」か「[設定] でオフにする」）・connected（つながっている）・unsupported（この OS ではまだ使えない）。", "state": "接続の状態。", "reason": "理由。off になった理由は chrome-closed・revoked・disconnected・declined・protocol、denied は cancel。", "dialog": "Chrome の許可の確認の窓を見つけているか。", "product": "つながっている Chrome の版（例: Chrome/154.0.8037.97）。" },
+      "chromeStatus": { "summary": "エージェントのブラウザー（この PC の Chrome）への接続の状態を返す。state は off（未接続）・setup（Chrome でリモートデバッグをオンにする準備が要る）・permission（Chrome に許可の確認が出ている）・denied（Chrome で許可されなかった。確認の「キャンセル」か「[設定] でオフにする」）・connected（つながっている）・unsupported（この OS ではまだ使えない）。", "state": "接続の状態。", "reason": "理由。off になった理由は chrome-closed・revoked・disconnected・declined・protocol、denied は cancel、setup は unreachable（DevToolsActivePort はあるがつながらない。Chrome が起動していないか、リモートデバッグがオフ）。", "dialog": "Chrome の許可の確認の窓を見つけているか。", "product": "つながっている Chrome の版（例: Chrome/154.0.8037.97）。" },
       "chromeConnect": { "summary": "Chrome への接続を始める（Chrome が許可の確認を出す）。ホストの PC の画面だけから呼べる。" },
       "chromeDisconnect": { "summary": "Chrome への接続を切る・許可待ちをやめる（出ている確認は閉じる）。ホストの PC の画面だけから呼べる。" },
       "chromeRaiseDialog": { "summary": "Chrome の許可の確認を前に出す（答えは出さない）。ホストの PC の画面だけから呼べる。" }

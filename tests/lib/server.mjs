@@ -9,6 +9,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { assertNotGuarded } from "../../core/test-guard.mjs";
+import { serverBaseEnv } from "./inherited-env.mjs";
 
 export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 
@@ -41,7 +42,10 @@ export async function startServer({ env = {}, dataDir, timeoutMs = 90_000, entry
   const child = spawn(process.execPath, [entry], {
     cwd: ROOT,
     env: {
-      ...process.env,
+      // main がサーバーを起こすときにだけ渡す変数（AGENT_HOST_HANDOVER・SERVER_LOG・RUNTIME_KEY など。core/boot-env.mjs）と、Pleiad が会話のシェルへ渡す
+      // PLEIAD_CLI_*・PLEIAD_CONTROL_* などは、実行元から継がない（tests/lib/inherited-env.mjs の serverBaseEnv）。test-env を読まずに startServer を使う入口
+      // （tests/browser/*）でも、インストール版の実行場所・server.log・Ply.exe へ向かない。確かめるテストは env で渡す
+      ...serverBaseEnv(process.env),
       AGENT_HOST_PORT: "0",
       AGENT_HOST_TOKEN: token,
       // Claude のトークンの持ち主の確認（api.anthropic.com）へは送らない。確かめるテストは偽の送り先を渡す
