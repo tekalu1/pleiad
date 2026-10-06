@@ -14,7 +14,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { t } from './i18n.mjs';
-import { createUrlGuard } from './mcp-url-guard.mjs';
+import { createUrlGuard, isLoopbackHost } from './mcp-url-guard.mjs';
 import { pinnedFetch } from './pinned-fetch.mjs';
 
 export const IMPORT_MAX_BYTES = 10 * 1024 * 1024;
@@ -24,6 +24,19 @@ export const IMPORT_MAX_WAITING = 100;   // 枠が空くのを待てる数（超
 const IMPORT_MEMORY = 500;             // やめられた id・取れて置いた id を覚えておく数
 export const IMPORT_SMALL_PX = 32;   // 縦横とも これ以下の画像（指定が無くても実寸で分かる追跡ピクセル・絵文字）は札にしない（web/html-paste.mjs の SMALL_IMAGE_PX と同じ）
 const USER_AGENT = 'Mozilla/5.0 (compatible; Pleiad)';
+
+/**
+ * テスト専用の向け替え先（AGENT_HOST_IMAGE_IMPORT_TEST_ORIGIN）。バックエンドが fake だけ（本物のバックエンドと並べたら効かない）で、
+ * origin のホストがループバック（127.0.0.1・::1・localhost）のときだけ origin を返す。それ以外は null（検査も向け替えもしない）
+ */
+export function testImportOrigin(env = process.env) {
+  const backends = String(env.AGENT_HOST_BACKENDS ?? '').split(',').map(s => s.trim()).filter(Boolean);
+  if (backends.length !== 1 || backends[0] !== 'fake') return null;
+  try {
+    const u = new URL(String(env.AGENT_HOST_IMAGE_IMPORT_TEST_ORIGIN ?? ''));
+    return /^https?:$/.test(u.protocol) && isLoopbackHost(u.hostname) ? u.origin : null;
+  } catch { return null; }
+}
 
 /** 取れなかった。code は理由の種類（画面には出さない。ログとテストが見分ける） */
 export class ImportFailed extends Error {

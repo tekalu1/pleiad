@@ -40,7 +40,7 @@ core が web へ流すのは正規化イベントだけで、バックエンド�
 | `PLEIAD_CONTROL_URL` / `PLEIAD_CONTROL_TOKEN` | `pleiad` CLI のつなぎ先。Pleiad が会話のシェルへ渡し、その会話に束縛される（無ければ `AGENT_HOST_DATA` の `control.json`） |
 | `AGENT_HOST_GIT_SNAPSHOTS` | `off` でターンの始まりと終わりの git の撮影（`refs/pleiad/`。ADR 0085）を止める。テストが使う（`tests/lib/server.mjs`） |
 | `AGENT_HOST_WORKTREES` | `off` で worktree（ADR 0136）を作らない。テストが使う（`tests/lib/server.mjs`。このリポジトリが cwd のテストが `<リポジトリ>.pleiad` に残すのを防ぐ）。確かめるテストは一時のリポジトリで `on` を渡す |
-| `AGENT_HOST_IMAGE_IMPORT_TEST_ORIGIN` | 貼り付けた画像の取り込み（ADR 0141）の確認用。fake バックエンドを有効にしたときだけ効き、検査をやめて、どの https の URL もこの origin（127.0.0.1 のテスト用サーバー）へ向け替える。本番では効かない（`tests/unit/image-import.mjs`） |
+| `AGENT_HOST_IMAGE_IMPORT_TEST_ORIGIN` | 貼り付けた画像の取り込み（ADR 0141）の確認用。`AGENT_HOST_BACKENDS` が `fake` だけのときに限り、origin のホストがループバック（127.0.0.1・::1・localhost）なら効き、検査をやめて、どの https の URL もこの origin へ向け替える。本物のバックエンドと並べたときや、ループバックでない origin は無視する（`tests/unit/image-import.mjs`） |
 | `AGENT_HOST_WORKTREE_GRACE_MS` | worktree を作ってから、使われていないものとして自動で片付けるまでの猶予（既定 60 秒。ADR 0089）。テストが 0 にする |
 
 デスクトップ版は `npm run desktop`、インストーラーの生成は `npm run desktop:dist`（対象 OS で実行）。リリースの運用は `docs/desktop-releases.md`。

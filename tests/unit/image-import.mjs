@@ -8,7 +8,7 @@ import fs from 'node:fs/promises';
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
-import { createImageImporter, sniffImage, imageSize, IMPORT_MAX_BYTES, IMPORT_MAX_ACTIVE, ImportFailed } from '../../core/image-import.mjs';
+import { createImageImporter, testImportOrigin, sniffImage, imageSize, IMPORT_MAX_BYTES, IMPORT_MAX_ACTIVE, ImportFailed } from '../../core/image-import.mjs';
 import { createUrlGuard } from '../../core/mcp-url-guard.mjs';
 import { pinnedFetch } from '../../core/pinned-fetch.mjs';
 import { startServer, ROOT } from '../lib/server.mjs';
@@ -61,6 +61,19 @@ export default async function (t) {
     t.ok('先頭のバイト: SVG・HTML・短すぎるもの・HEIC（avif でない ftyp）は画像にしない',
       sniffImage(SVG) === null && sniffImage(HTML) === null && sniffImage(Buffer.alloc(0)) === null && sniffImage(Buffer.from([0x89, 0x50])) === null && sniffImage(avif('heic')) === null);
 
+    // ---- テスト専用の向け替え先（本番では効かない）
+    const env = (backends, origin) => ({ AGENT_HOST_BACKENDS: backends, AGENT_HOST_IMAGE_IMPORT_TEST_ORIGIN: origin });
+    t.ok('テスト専用の向け替え先: fake だけ・ループバックの origin のときだけ効く（127.0.0.1・localhost・[::1]。origin に整える）',
+      testImportOrigin(env('fake', 'http://127.0.0.1:8123/x')) === 'http://127.0.0.1:8123' && testImportOrigin(env(' fake ', 'http://localhost:9')) === 'http://localhost:9'
+      && testImportOrigin(env('fake', 'http://[::1]:7')) === 'http://[::1]:7' && testImportOrigin(env('fake', 'https://127.0.0.2')) === 'https://127.0.0.2');
+    t.ok('テスト専用の向け替え先: 本物のバックエンドと並べたら効かない（fake,claude・claude・未設定・空）',
+      testImportOrigin(env('fake,claude', 'http://127.0.0.1:1')) === null && testImportOrigin(env('claude,codex,antigravity', 'http://127.0.0.1:1')) === null
+      && testImportOrigin(env(undefined, 'http://127.0.0.1:1')) === null && testImportOrigin(env('', 'http://127.0.0.1:1')) === null && testImportOrigin(env('fake,fake', 'http://127.0.0.1:1')) === null);
+    t.ok('テスト専用の向け替え先: ループバックでない origin・URL でない値・ftp は無視する（公開アドレス・私設アドレス・名前）',
+      testImportOrigin(env('fake', 'http://example.com')) === null && testImportOrigin(env('fake', 'http://10.0.0.8:80')) === null && testImportOrigin(env('fake', 'http://192.168.1.2')) === null
+      && testImportOrigin(env('fake', 'http://169.254.169.254')) === null && testImportOrigin(env('fake', 'not a url')) === null && testImportOrigin(env('fake', '')) === null
+      && testImportOrigin(env('fake', undefined)) === null && testImportOrigin(env('fake', 'ftp://127.0.0.1')) === null && testImportOrigin(env('fake', 'http://127.0.0.1.example.com')) === null);
+
     // ---- 大きさ（先頭のヘッダー）。縦横とも 32px 以下の画像（追跡ピクセル・絵文字）は置かない
     const sizeOf = (buf) => JSON.stringify(imageSize(buf, sniffImage(buf)));
     t.ok('大きさ: PNG・GIF・JPEG（APP0 の後の SOF）・WebP（VP8X・VP8L・VP8）・AVIF（ispe）のヘッダーから縦横を読む',
@@ -97,6 +110,9 @@ export default async function (t) {
       t.ok(`断る: ${label}`, c === 'rejected', c);
     }
     t.ok('断ったものは、1 度も接続しない', calls.length === 0, String(calls.length));
+    const why = await strict.importImage({ url: 'https://inside.example.com/a.png' }).catch((e) => e.message);
+    const whyRedirect = await importerWith({ table, dir, fetchFn: async () => redirect('https://10.0.0.8/x.png') }).importImage({ url: 'https://img.example.com/r.png' }).catch((e) => e.message);
+    t.ok('断った理由の文は取り込み用の文言（MCP の探索用の文言は出さない）', /取り込め/.test(why) && !/MCP/.test(why) && /取り込め/.test(whyRedirect) && !/MCP/.test(whyRedirect), `${why} / ${whyRedirect}`);
 
     // ---- 取れる: 接続を解決した答えに固定し、Cookie・Referer・認証を付けない
     calls = [];
