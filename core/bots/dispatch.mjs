@@ -726,6 +726,30 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
     return channels.post({ channelId, threadId, text, ...(attachments?.length ? { attachments } : {}), ...(clientId ? { clientId } : {}), ...(to ? { to } : {}) }, { kind: 'human' });
   }
 
+  /**
+   * bot へ届く前の人の投稿（inbox の pending。ADR 9101 の F12）。スレッドの入力欄の上に送信待ちの行として出す。
+   * 返り: { items: { postId, botIds }[] }（投稿の順）。届け始めた（delivering）・届いた（sent）ものは入れない
+   */
+  async function pendingPosts({ channelId, threadId }) {
+    const items = (await inbox.list({ channelId, threadId })).filter((i) => i.postId && !i.reaction && !i.inner && !i.heard);
+    const byPost = new Map();
+    for (const i of items) {
+      const cur = byPost.get(i.postId) ?? { postId: i.postId, botIds: [], pending: true };
+      if (i.status !== 'pending') cur.pending = false;
+      if (!cur.botIds.includes(i.botId)) cur.botIds.push(i.botId);
+      byPost.set(i.postId, cur);
+    }
+    return { items: [...byPost.values()].filter((x) => x.pending).map(({ postId, botIds }) => ({ postId, botIds })) };
+  }
+  /** 送信待ちの投稿を取り下げる（［取り消し］・［編集］）。どの bot にもまだ届け始めていないときだけ。届ける前の出来事も捨てる */
+  async function withdrawPending({ channelId, postId }) {
+    const items = (await inbox.list({ channelId })).filter((i) => i.postId === postId && !i.reaction);
+    if (!items.length || items.some((i) => i.status !== 'pending')) throw Object.assign(new Error('the post is already on its way to a bot'), { code: 'INVALID' });
+    await inbox.remove(items.map((i) => i.id));
+    await channels.withdraw({ channelId, postIds: [postId] });
+    return { withdrawn: true };
+  }
+
   /** この bot の、このスレッド（DM なら DM）の会話。無ければ作る */
   async function sessionFor({ bot, channel, threadId, post, backend = null, cwd = null }) {
     if (channel.kind === 'dm') return (await bots.ensureDmSession({ botId: bot.id })).sessionId;
@@ -1557,7 +1581,7 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
 
   return {
     channels, bots, memory, host, emit, now, inbox, budget,
-    start, stop, onPosted, onReacted, claimPost, wake, wakePost, handoff, wakeReserved, stopThread, turnExtras, onTurnEvent, onTurnEnd, onPermission, onCompacted, threadSettings, branchThread, resendThread,
+    start, stop, onPosted, onReacted, claimPost, wake, wakePost, handoff, wakeReserved, stopThread, turnExtras, onTurnEvent, onTurnEnd, onPermission, onCompacted, threadSettings, branchThread, resendThread, pendingPosts, withdrawPending,
     /** テスト・診断用: 走っている bot のターンの数 */
     activeCount: () => active.size,
     /** 使用量の上限で休んでいれば解除の時刻（ms）。bots.overview の restingUntil（ADR 0119） */

@@ -25,6 +25,7 @@ import { sessionWorkOps } from './session-work.mjs';
 import { fileOps } from './files.mjs';
 import { attachmentOps } from './attachments.mjs';
 import { channelOps } from './channels.mjs';
+import { draftOps } from './drafts.mjs';
 import { botOps } from './bots.mjs';
 import { memoryOps } from './memory.mjs';
 import { brainOps } from './brain.mjs';
@@ -38,7 +39,7 @@ const withProbe = String(process.env.AGENT_HOST_BACKENDS ?? '').split(',').map((
 export const registry = createRegistry({
   ops: [...appOps, ...sessionOps, ...resumeOps, ...conversationOps, ...agentOps, ...statusOps, ...settingOps, ...delegationOps,
     ...worktreeOps, ...notifyOps, ...hookOps, ...compatOps, ...computerOps, ...browserOps, ...mcpOps, ...contextOps, ...remoteOps,
-    ...gitOps, ...shellOps, ...sessionWorkOps, ...fileOps, ...attachmentOps, ...channelOps, ...botOps, ...memoryOps, ...brainOps, ...routineOps, ...notificationOps, ...voiceOps, ...(withProbe ? probeOps : [])],
+    ...gitOps, ...shellOps, ...sessionWorkOps, ...fileOps, ...attachmentOps, ...channelOps, ...draftOps, ...botOps, ...memoryOps, ...brainOps, ...routineOps, ...notificationOps, ...voiceOps, ...(withProbe ? probeOps : [])],
   settings: [...settings],
 });
 

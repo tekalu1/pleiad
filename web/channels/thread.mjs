@@ -65,6 +65,7 @@ export function createThread(host) {
   const S = {
     channelId: null, threadId: null, channel: null, posts: [], index: new Map(), thread: null, bots: new Map(),
     nextBefore: null, ready: false, seq: 0, queue: [], loadingOlder: false,
+    pending: [],   // bot へ届く前のあなたの投稿（channels.pending。送信待ちの行）
   };
   const toolCache = new Map();  // postId -> { sig, wrap, bundles }（道具の行。同じなら作り直さず、開いた状態を保つ）
   const cards = new Map();      // 承認の id -> .mw
@@ -120,6 +121,8 @@ export function createThread(host) {
     onDestChange: () => paintPlaceholder(),
     settings: (botId) => botSettings(botId),
     schedules: () => (host.state?.schedules ?? []).filter((r) => r.kind === 'post' && r.channelId === S.channelId && r.threadId === S.threadId).sort((a, b) => a.at - b.at),
+    pending: () => S.pending.map((x) => ({ id: x.postId, text: S.index.get(x.postId)?.text ?? '' })).filter((x) => x.text),
+    withdrawPending: (postId) => host.invoke('channels.withdrawPending', { channelId: S.channelId, postId }).then(() => refreshPending()),
     compact: (sessionId) => host.invoke('sessions.compact', { sessionId }),
     onSettings: async (botId, patch) => {
       // 組み込みの bot の最初の設定は、Chats の既定の backend で会話を作る（作った後は backend を変えない）
@@ -374,7 +377,11 @@ export function createThread(host) {
     const stopped = !working && Boolean(th?.stopped);
     const calls = Math.max(0, (th?.calls ?? 0) - 1);
     const budget = meterOf(S.channel?.kind === 'channel' ? S.channel.budget : null, th);
-    const sig = JSON.stringify([working, waiting, stopped, total, calls, live.map((b) => b.id), th?.tokens, stopBusy, budget]);
+    // 宛先の bot の、このスレッドの会話の文脈の量（Chats の文脈のメーターと同じ数。会話の一覧の行の contextWindow）
+    const destId = composer.dest?.bot?.id;
+    const cw = destId ? host.state?.sessions?.find((s) => s.id === S.thread?.sessions?.[destId])?.contextWindow : null;
+    const ctxRate = cw?.windowTokens ? Math.min(100, Math.max(0, Math.round(100 * cw.usedTokens / cw.windowTokens))) : null;
+    const sig = JSON.stringify([working, waiting, stopped, total, calls, live.map((b) => b.id), th?.tokens, stopBusy, budget, ctxRate, destId]);
     if (sig === bandSig) return;
     bandSig = sig;
     if (!total && !working && !stopped) { band.hidden = true; band.replaceChildren(); meter.update(null, null); return; }
@@ -403,6 +410,11 @@ export function createThread(host) {
       else tok.append(el('span', 'th-tok-aux', full.slice(0, at)), el('span', 'th-tok-num', num), el('span', 'th-tok-aux', full.slice(at + num.length)));
       tok.title = t('channels:thread.band.tokensTitle', { input: split.fresh, output: split.output, cached: split.cached });
       pieces.push(tok);
+    }
+    if (ctxRate !== null) {
+      const ctx = el('span', 'th-band-ctx', t('channels:thread.band.context', { rate: ctxRate }));
+      ctx.title = t('channels:thread.band.contextTitle', { name: composer.dest?.bot?.name ?? '', rate: ctxRate });
+      pieces.push(ctx);
     }
     pieces.forEach((p, i) => { if (i) text.append(el('span', 'th-band-dot', '·')); text.append(p); });
     band.replaceChildren(text, meter.el);
@@ -552,7 +564,7 @@ export function createThread(host) {
 
   // ---------------------------------------------------------------- 読み込み
   function reset() {
-    Object.assign(S, { channel: null, posts: [], index: new Map(), thread: null, nextBefore: null, ready: false, queue: [], loadingOlder: false });
+    Object.assign(S, { channel: null, posts: [], index: new Map(), thread: null, nextBefore: null, ready: false, queue: [], loadingOlder: false, pending: [] });
     postEls.clear(); toolCache.clear(); cards.clear(); tools.forget();
     perms.replaceChildren();
     rootSlot.replaceChildren(); replies.replaceChildren(); rdiv.textContent = '';
@@ -590,6 +602,7 @@ export function createThread(host) {
       syncSubs();
       for (const ev of S.queue.splice(0)) events[ev.type]?.(ev);
       paintPendingPerms();
+      refreshPending();
       toBottom();
       for (const sid of new Set([...windows.values()].map((w) => w.sessionId))) tools.refresh(sid, { force: true });
       composer.setDisabled(Boolean(S.channel?.archivedAt), t('channels:feed.archived'));
@@ -777,6 +790,37 @@ export function createThread(host) {
     if (input) { input.focus(); input.oninput(); } else band?.send.focus({ preventScroll: true });
     (band?.node ?? editor)?.scrollIntoView?.({ block: 'nearest' });
   }
+  // ---------------------------------------------------------------- 送信待ち（ADR 9101 の F12）
+  let pendingTimer = 0;
+  async function refreshPending() {
+    clearTimeout(pendingTimer);
+    if (!S.threadId) return;
+    const key = `${S.channelId}/${S.threadId}`;
+    try {
+      const got = await host.invoke('channels.pending', { channelId: S.channelId, threadId: S.threadId });
+      if (`${S.channelId}/${S.threadId}` !== key) return;
+      S.pending = got?.items ?? [];
+    } catch { S.pending = []; }
+    composer.paintSchedules();
+  }
+  const refreshPendingSoon = () => { clearTimeout(pendingTimer); pendingTimer = setTimeout(refreshPending, 250); };
+
+  // ---------------------------------------------------------------- `!` の行（宛先の bot の会話のシェル。Chats と同じ行の部品）
+  const shells = el('div', 'th-shells');
+  perms.after(shells);   // 投稿の列の末尾の目印（会話の移動の部品）より前に置く
+  function onShellStart(ev) {
+    if (!Object.values(S.thread?.sessions ?? {}).includes(ev.sessionId) || !host.shellRow) return;
+    const bot = S.bots.get(Object.entries(S.thread.sessions).find(([, sid]) => sid === ev.sessionId)?.[0]);
+    const node = host.shellRow({ role: 'user', kind: 'shell', text: `! ${ev.command}`, command: ev.command, stdout: '', stderr: '', at: ev.at, backend: ev.backend,
+      runId: ev.runId, pending: true, running: true, live: true });
+    if (!node) return;
+    const wrap = el('div', 'th-shell');
+    if (bot) wrap.append(el('p', 'th-shell-where', t('channels:thread.shellWhere', { name: bot.name })));
+    wrap.append(node);
+    shells.append(wrap);
+    if (nearBottom()) toBottom();
+  }
+
   /** 取り下げた投稿（送り直し）を、列から消す */
   function withdrawPost(id) {
     const node = postEls.get(id);
@@ -947,12 +991,14 @@ export function createThread(host) {
   });
 
   const events = {
+    'shell.start': (ev) => { if (S.ready) onShellStart(ev); },
     channelPost(ev) {
       if (ev.channelId !== S.channelId || !S.threadId) return;
       if (!S.ready) { S.queue.push(ev); return; }
       const p = ev.post;
       if (!p) return;
-      if (ev.op === 'withdraw') { if (p.threadId === S.threadId) withdrawPost(p.id); return; }
+      if (ev.op === 'withdraw') { if (p.threadId === S.threadId) { withdrawPost(p.id); refreshPendingSoon(); } return; }
+      if (p.threadId === S.threadId) refreshPendingSoon();
       if (p.threadId === S.threadId) onReply(ev.op, p);
       else if (!p.threadId && p.id === S.threadId) onRoot(ev.op, p);
       // このスレッド（の元）から新しい枝ができた: 分岐の行を描き直す

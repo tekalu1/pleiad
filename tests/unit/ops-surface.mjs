@@ -200,6 +200,8 @@ export default async function (t) {
     limitResume: { messages: () => [], schedules: () => [] },
     // bot・Channels・ルーティン（docs/channels.md）。read の操作を足すパッケージが、自分の領域の返り（秘密の目印を入れたもの）をここに足し、
     // 必須の引数がある操作は下の samples にも足す。足したパッケージの区画以外は触らない
+    // 入力欄の書きかけのサーバーの写し（drafts.*）
+    drafts: { load: () => ({ text: 'こんにちは', at: 1 }), save: () => ({ saved: true, at: 1 }) },
     channels: {     // S1
       list: async () => [{ id: 'c_000000000aaaaaa', kind: 'channel', name: 'general', unread: 0, mentions: 0, threadsWorking: 0, ...secret }],
       get: async () => ({ id: 'c_000000000aaaaaa', kind: 'channel', name: 'general', ...secret }),
@@ -251,6 +253,8 @@ export default async function (t) {
     'channels.wakePreview': [{ channelId: 'c_000000000aaaaaa', text: '@everyone' }],
     'channels.threadBudget': [{ channelId: 'c_000000000aaaaaa', threadId: 'p_000000000bbbbbb' }],
     'channels.deliveries': [{ channelId: 'c_000000000aaaaaa', postId: 'p_000000000aaaaaa' }],
+    'channels.pending': [{ channelId: 'c_000000000aaaaaa', threadId: 'p_000000000aaaaaa' }],
+    'drafts.load': [{ key: 'thread:c_000000000aaaaaa:p_000000000aaaaaa' }],
     'memory.list': [{ layer: 'user' }], 'memory.search': [{ query: 'PR' }],
     'git.commit': [{ hash: 'abc1234' }], 'git.worktree': [{ worktree: 'C:/r' }],
     'bots.get': [{ botId: 'b_1' }], 'brain.view': [{ botId: 'b_1' }], 'brain.wakeList': [{ botId: 'b_1' }],

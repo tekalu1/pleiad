@@ -94,6 +94,7 @@ import { createResidentPrefs, residentSignal, enabledRoutineCount } from './remo
 import { createPushNotifier } from './notify/notifier.mjs';
 import { createPresence } from './notify/presence.mjs';
 import { createNotifications } from './notifications.mjs';
+import { createDrafts } from './drafts.mjs';
 import { createNotificationSources } from './notification-sources.mjs';
 import { createNotifySettings } from './notify/settings.mjs';
 import { createFolderUploads } from './folder-uploads.mjs';
@@ -397,6 +398,8 @@ const pushNotifier = createPushNotifier({
 // 通知の一覧（ベルのボタン。ADR 0149）。DB の notifications 表。書く側は core/notification-sources.mjs（ターンの完了・承認・チャンネルの出来事から行を作る）。
 // 件数が変わったら notificationsChanged を全画面へ（リモートの端末にも届く）
 const inbox = createNotifications({ dataDir: store.dataDir, emit: event => emitGlobal({ ...event, sessionId: null }) });
+// スレッドの入力欄の書きかけのサーバーの写し（drafts.*。ADR 9101 の F35）
+const threadDrafts = createDrafts({ dataDir: store.dataDir });
 const inboxSources = createNotificationSources({
   inbox, store, viewing: sessionId => notifyPresence.viewing(sessionId), titleOf: sessionId => conversationTitleOf(sessionId),
   channels: () => botHost?.opsDeps().channels ?? null, bots: () => botHost?.opsDeps().bots ?? null,
@@ -3831,6 +3834,8 @@ function opsDeps(lng = currentLocale()) {
     worktrees: opsWorktrees,
     notify: opsNotify,
     notifications: inbox,
+    // 入力欄の書きかけのサーバーの写し（drafts.*。ADR 9101 の F35）
+    drafts: threadDrafts,
     compat: opsCompat,
     computer: opsComputer,
     chrome: opsChrome,

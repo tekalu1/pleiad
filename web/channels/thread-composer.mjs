@@ -20,7 +20,7 @@ const PREFIX = 'th';
 const SAVE_WAIT_MS = 400;
 /** スレッドではまだ使わない部品（段ごとに開ける） */
 const UNUSED = ['armedChip', 'draftSaved', 'abort', 'resume', 'contextStrip', 'nextSettings',
-  'shellHead', 'resumeNote', 'armedNote', 'draftFail', 'connNote'];
+  'resumeNote', 'armedNote', 'draftFail', 'connNote'];
 
 /**
  * @param {object} o
@@ -38,9 +38,11 @@ const UNUSED = ['armedChip', 'draftSaved', 'abort', 'resume', 'contextStrip', 'n
  * @param {(botId: string, patch: object) => Promise<void>} [o.onSettings] 設定を変えた（このスレッドだけ）
  * @param {() => object[]} [o.schedules] このスレッドへの返信の予定（schedule.json の kind post。時刻順）
  * @param {(sessionId: string) => Promise<void>} [o.compact] 宛先の bot の会話を圧縮する（/compact）
+ * @param {() => { id: string, text: string }[]} [o.pending] bot へ届く前のあなたの投稿（送信待ちの行。投稿の順）
+ * @param {(postId: string) => Promise<void>} [o.withdrawPending] 送信待ちの投稿を取り下げる（［取り消し］・［編集］）
  */
 export function createThreadComposer({ host, bucket = () => null, candidates, suggest = () => null, backendLabel, wakePreview, onSend, dest = () => ({ inThread: [], others: [], fallback: null }), onDestChange = () => {},
-  settings = () => null, onSettings = async () => {}, schedules = () => [], compact = async () => {} }) {
+  settings = () => null, onSettings = async () => {}, schedules = () => [], compact = async () => {}, pending = () => [], withdrawPending = async () => {} }) {
   const form = buildComposer(PREFIX);
   form.classList.add('th-composer');
   form.noValidate = true;
@@ -94,7 +96,25 @@ export function createThreadComposer({ host, bucket = () => null, candidates, su
     const d = { text: input.value ?? '', attached: c.attach.items, at: Date.now() };
     if (!d.text.trim() && !d.attached.length) draftStore().delete(draftKey); else draftStore().set(draftKey, d);
     persistDrafts();
+    saveServerDraft();
   }
+  // 下書きのサーバーの写し（drafts.*。ADR 9101 の F35）。端末の写しが先で、ここは 1.5 秒まとめて追いかける。端末に無いスレッドを開いたら読む
+  let serverTimer = 0;
+  const saveServerDraft = () => {
+    clearTimeout(serverTimer);
+    const key = draftKey;
+    if (!key) return;
+    const text = input.value;
+    serverTimer = setTimeout(() => { host.invoke('drafts.save', { key, text, at: Date.now() }).catch(() => {}); }, 1500);
+  };
+  async function loadServerDraft(key) {
+    if (!key || input.value.trim()) return;
+    const got = await host.invoke('drafts.load', { key }).catch(() => null);
+    if (draftKey !== key || input.value.trim() || !got?.text) return;
+    input.value = got.text;
+    c.fit();
+  }
+
   const saveDraftSoon = () => { if (saveTimer === null) saveTimer = setTimeout(saveDraft, SAVE_WAIT_MS); };
   function adopt(owner, item) {
     const d = draftStore().get(owner) ?? { text: '', attached: [], at: 0 };
@@ -130,6 +150,24 @@ export function createThreadComposer({ host, bucket = () => null, candidates, su
     load: (cwd) => host.cmd('slashSkills', { cwd: cwd || undefined }),
     off: () => c.editor.inCode(),
   });
+  // 欄の `!`: 宛先の bot の、このスレッドの会話の作業場所で走らせる（結果は次の配達に付く。ADR 9101・0054）
+  c.useShell({
+    availability: () => (destSession()?.sessionId ? { ok: true } : { ok: false, text: t('channels:thread.shellNoSession') }),
+    where: () => ({ cwd: destSession()?.values?.cwd ?? '' }),
+    touch: () => matchMedia('(pointer:coarse)').matches,
+    onAsText: () => submit(),
+    onChange: () => c.fit(),
+  });
+  async function runShell() {
+    const command = input.value;
+    const s = destSession();
+    if (!command.trim() || !s?.sessionId) return;
+    input.value = '';
+    c.shell.exit();
+    saveDraft();
+    try { await host.cmd('runShell', { sessionId: s.sessionId, runId: `th-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`, command, ...(s.values?.cwd ? { cwd: s.values.cwd } : {}) }); say(''); }
+    catch (err) { c.shell.enter(); input.value = command; say(t('chat.shell.runFailed', { error: err?.message ?? String(err) }), true); }
+  }
   // このスレッドへの返信の予定の行（送信待ちの行と同じ部品。今すぐ送る・編集・取り消す）
   const scheduleActions = {
     now: async (entry) => { await host.invoke('sessions.sendScheduledNow', { id: entry.id }); },
@@ -143,7 +181,16 @@ export function createThreadComposer({ host, bucket = () => null, candidates, su
       saveDraft();
     },
   };
-  function paintSchedules() { renderOutbox(els.outbox, [], async () => {}, new Set(), { schedules: schedules(), scheduleActions }); }
+  // 送信待ち（bot へ届く前のあなたの投稿）の行。［編集］は取り下げて本文を入力欄へ戻す、［取り消し］は取り下げる
+  const pendingAction = async (postId, name) => {
+    const row = pending().find((p) => p.id === postId);
+    await withdrawPending(postId);
+    if (name === 'edit' && row) { input.value = input.value.trim() ? `${row.text}\n\n${input.value}` : row.text; input.focus(); saveDraft(); }
+  };
+  function paintSchedules() {
+    const queued = pending().map((p) => ({ id: p.id, status: 'queued', args: { prompt: p.text } }));
+    renderOutbox(els.outbox, queued, pendingAction, new Set(), { schedules: schedules(), scheduleActions, editQueued: true });
+  }
 
   // クリップ: この端末のファイルを選ぶ（出どころの面はチャンネルには無い。ADR 0116）
   els.attach.addEventListener('pointerdown', att.rememberAt, true);
@@ -323,6 +370,8 @@ export function createThreadComposer({ host, bucket = () => null, candidates, su
   }
   async function submit({ at = null } = {}) {
     if (busy || disabled || pendingWake) return;
+    if (c.shell?.active) return runShell();
+    if (c.shell?.blocked) return c.shell.flash?.();
     c.slash?.close();
     const body = att.compose(input.value);
     if (!body.text.trim() && !body.attachments.length) return;
@@ -405,6 +454,7 @@ export function createThreadComposer({ host, bucket = () => null, candidates, su
       const d = key ? draftStore().get(key) : null;
       att.restore(d?.attached);
       input.value = d?.text ?? '';
+      if (!d) void loadServerDraft(key);   // この端末に写しが無い: サーバーの写しを読む（ほかの端末で書いた続き）
       say('');
       paintHint();
       paintDest();

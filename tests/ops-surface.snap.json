@@ -766,6 +766,21 @@
       "input": "f25fa1c1b8ce"
     },
     {
+      "id": "channels.pending",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": false,
+        "cli": false
+      },
+      "legacyCommand": null,
+      "input": "fe0290b8eca3"
+    },
+    {
       "id": "channels.post",
       "risk": "write",
       "riskOf": false,
@@ -1105,6 +1120,21 @@
       },
       "legacyCommand": null,
       "input": "6d11fb613445"
+    },
+    {
+      "id": "channels.withdrawPending",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": false,
+        "cli": false
+      },
+      "legacyCommand": null,
+      "input": "cf23b66b70a2"
     },
     {
       "id": "compatEndpoints.delete",
@@ -1652,6 +1682,36 @@
       },
       "legacyCommand": "providerUsage",
       "input": "e713b07977ab"
+    },
+    {
+      "id": "drafts.load",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": false,
+        "cli": false
+      },
+      "legacyCommand": null,
+      "input": "043c86825a75"
+    },
+    {
+      "id": "drafts.save",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": false,
+        "cli": false
+      },
+      "legacyCommand": null,
+      "input": "8fc51142aa80"
     },
     {
       "id": "endpoints.list",

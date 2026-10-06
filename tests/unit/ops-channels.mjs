@@ -21,7 +21,9 @@ export default async function (t) {
   const tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'ops-channels-'));
   try {
     // ---- 定義
-    t.ok('操作は 24 個（集団宛ての wakePreview・スレッドの予算の内訳 threadBudget・スレッドの索引 threads と状態 setThreadStatus・題 setThreadTitle・設定 threadSettings・返信の予定 schedulePost・原文 deliveries・分岐 branchThread・送り直し resend を含む）', IDS.every((id) => registry.get(id)) && registry.ops.filter((o) => o.id.startsWith('channels.')).length === 24);
+    t.ok('操作は 26 個（集団宛ての wakePreview・スレッドの予算の内訳 threadBudget・スレッドの索引 threads と状態 setThreadStatus・題 setThreadTitle・設定 threadSettings・返信の予定 schedulePost・原文 deliveries・分岐 branchThread・送り直し resend・送信待ち pending と withdrawPending を含む）', IDS.every((id) => registry.get(id)) && registry.ops.filter((o) => o.id.startsWith('channels.')).length === 26);
+    t.ok('送信待ち pending（読む）・withdrawPending（書く）は画面の道具だけ', registry.get('channels.pending').risk === 'read' && registry.get('channels.withdrawPending').risk === 'write'
+      && [registry.get('channels.pending'), registry.get('channels.withdrawPending')].every((o) => o.surfaces.mcp === false && !o.surfaces.cli));
     t.ok('送り直し resend は書き込みで、画面の道具だけ（MCP・CLI に出さない。人だけ）', registry.get('channels.resend').risk === 'write' && registry.get('channels.resend').surfaces.mcp === false && !registry.get('channels.resend').surfaces.cli);
     t.ok('分岐 branchThread は書き込みで、画面の道具だけ（MCP・CLI に出さない。人だけ）', registry.get('channels.branchThread').risk === 'write' && registry.get('channels.branchThread').surfaces.mcp === false && !registry.get('channels.branchThread').surfaces.cli);
     t.ok('原文 deliveries は読み取りで、画面の道具だけ（MCP・CLI に出さない。人だけ）', registry.get('channels.deliveries').risk === 'read' && registry.get('channels.deliveries').surfaces.ui === true

@@ -235,6 +235,28 @@ export const channelOps = [
     }),
   }),
   defineOp({
+    // bot へ届く前の人の投稿（送信待ちの行。ADR 9101 の F12）。画面の道具
+    id: 'channels.pending', summary: D('pending', 'summary'), risk: 'read',
+    input: z.object({ channelId: channelId('pending'), threadId: postId('pending', 'threadId') }),
+    output: z.object({ items: z.array(z.object({ postId: z.string(), botIds: z.array(z.string()) })) }),
+    surfaces: { ui: true, mcp: false, cli: false },
+    handler: async (ctx, args) => (ctx.pendingPosts ? ctx.pendingPosts(args) : { items: [] }),
+  }),
+  defineOp({
+    // 送信待ちのあなたの投稿を取り下げる（［取り消し］・［編集］で本文を入力欄へ戻す）。どの bot にもまだ届け始めていないときだけ
+    id: 'channels.withdrawPending', summary: D('withdrawPending', 'summary'), risk: 'write',
+    riskReason: 'Takes back your own post before any bot has received it. Nothing has been delivered yet, so nothing else changes',
+    input: z.object({ channelId: channelId('withdrawPending'), postId: postId('withdrawPending') }),
+    output: z.object({ withdrawn: z.boolean() }),
+    surfaces: { ui: true, mcp: false, cli: false },
+    handler: async (ctx, args) => {
+      if (ctx.principal?.by !== 'human' || !ctx.withdrawPending) throw new OpError('NEEDS_UI', agentT(ctx.locale, 'ops.errors.NEEDS_UI'));
+      await ownPost(ctx, args);
+      try { return await ctx.withdrawPending(args); }
+      catch (e) { if (e?.code === 'INVALID') throw new OpError('INVALID', agentT(ctx.locale, 'ops.errors.INVALID', { detail: e.message })); throw e; }
+    },
+  }),
+  defineOp({
     // スレッドのあなたの投稿を送り直す（編集して再送信・再送信。ADR 9101 の 4.5・ADR 0102）。その投稿と後ろを取り下げ、
     // スレッドの bot の会話をその手前まで巻き戻してから、新しい本文を書く。画面の道具（人だけ）
     id: 'channels.resend', summary: D('resend', 'summary'), risk: 'write',

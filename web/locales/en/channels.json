@@ -182,7 +182,11 @@
     "stop": "Stop",
     "stopping": "Stopping…",
     "stopFailed": "Could not stop: {{error}}",
+    "shellNoSession": "The bot has no conversation in this thread yet. Talk to it first, then run the command",
+    "shellWhere": "Run in {{name}}'s working folder",
     "band": {
+      "context": "Context {{rate}}%",
+      "contextTitle": "{{name}}'s conversation in this thread uses {{rate}}% of its context",
       "working": "{{who}} is working",
       "waiting": "{{who}} is waiting for you",
       "someone": "A bot",

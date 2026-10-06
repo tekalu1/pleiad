@@ -1425,7 +1425,8 @@ function scheduleShellRow(runId) {
 
 /** shell.* の出来事（core/shell-runs.mjs）。開いている会話の分だけ描く */
 function onShellEvent(ev) {
-  if (ev.sessionId !== state.current) return;
+  // 開いている会話の分と、スレッドに出している行（宛先の bot の会話の `!`。web/channels/thread.mjs）の分を描く
+  if (ev.sessionId !== state.current && !(ev.type !== 'shell.start' && shellRows.get(ev.runId)?.node.isConnected)) return;
   if (ev.type === 'shell.start') {
     if (shellRows.get(ev.runId)?.node.isConnected) return;
     const m = { role: 'user', kind: 'shell', text: `! ${ev.command}`, command: ev.command, stdout: '', stderr: '', at: ev.at, backend: ev.backend,
@@ -6192,6 +6193,8 @@ const channelsUi = setupChannels({
     paint: () => paintDelegateCards(),
   },
   openSidebar: () => setSidebar(true),
+  // スレッドの `!` の行（宛先の bot の会話のシェル）。Chats の行と同じ部品で、出力・終わりは onShellEvent が描き直す
+  shellRow: (m) => commandMsg(m),
   showMenu: (x, y, items, title, opts) => showMenu(x, y, items, title, opts),
   renderAssistantMarkdown, renderPresent,
 });

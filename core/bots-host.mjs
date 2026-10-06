@@ -112,7 +112,10 @@ export function createBotHost(deps) {
       // スレッドを投稿のところで分ける（channels.branchThread）。失敗は呼び出し側へ返す（画面が一行で知らせる）
       branchThread: (args) => dispatch.branchThread(args),
       // スレッドの投稿を送り直す（channels.resend）
-      resendThread: (args) => dispatch.resendThread(args) }),
+      resendThread: (args) => dispatch.resendThread(args),
+      // 送信待ちの投稿（channels.pending・channels.withdrawPending）
+      pendingPosts: (args) => dispatch.pendingPosts(args),
+      withdrawPending: (args) => dispatch.withdrawPending(args) }),
     // 人格とフォルダーは bots（S2）、末尾の notes は dispatch（S4。記憶の差分など）。bot の会話でなければどちらも空
     turnExtras: guard('turnExtras', async (turn) => {
       const setup = await bots.turnSetup(turn);

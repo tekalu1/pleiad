@@ -178,7 +178,11 @@
     "stop": "止める",
     "stopping": "止めています…",
     "stopFailed": "止められませんでした: {{error}}",
+    "shellNoSession": "宛先の bot のこのスレッドの会話がまだありません。先に話しかけてから実行してください",
+    "shellWhere": "{{name}} の作業場所で実行",
     "band": {
+      "context": "文脈 {{rate}}%",
+      "contextTitle": "{{name}} のこのスレッドの会話の文脈 {{rate}}%",
       "working": "{{who}} が作業中",
       "waiting": "{{who}} があなたを待っています",
       "someone": "bot",
