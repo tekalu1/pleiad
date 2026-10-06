@@ -255,8 +255,8 @@
 ```
 runTurn(args, onStarted, hooks)                     … 今のまま（updateGate）
 └ runTurnInternal(args, onStarted, hooks)
-    ├ 断る検査・switching.add                        … 4722-4730
-    ├ ctx = await prepareTurn(args, hooks)           … 4733-4970。ctx を返す（登録まで）
+    ├ 断る検査・compactionRevision・switching.add    … 4722-4730
+    ├ ctx = await prepareTurn(args, hooks, compactionRevision) … 4733-4970。ctx を返す（登録まで）
     ├ return await driveTurn(ctx, async () => {      … 「動かす」。try / catch / finally と endTurn を持つ
     │     await onStarted(); ctx.didStart = true
     │     await beginTurn(ctx)                        … 4974-5082
@@ -273,14 +273,16 @@ adoptTurn(card, source)                              … 付け直しの入口�
 ```
 
 - `driveTurn(ctx, start)` が「出来事を受けて `endTurn` で締める」部分。通常結果の後処理（圧縮の失敗・requeue・表示の書き込み・添付の照合等）は `afterResult(ctx, result)` に切り出して `driveTurn` から呼ぶ。
-- `prepareTurn`・`beginTurn`・`launchTurn`・`driveTurn`・`releaseTurn`・`endTurn` は後の段（2b-2 や 2b-4）およびテストから呼べるよう export している。`start()` が返す Promise は `backend.runTurn` と同じ形（`{ sessionId, requeue?, compactionFailureReason? }`）で、出来事は `ctx.emit` を通る。**付け直しも同じ `driveTurn` を通るので、締め（`endTurn`）の道は 1 本**（R2）
+- `prepareTurn`・`beginTurn`・`launchTurn`・`driveTurn`・`releaseTurn`・`endTurn` は後の段（2b-2 や 2b-4）およびテストから呼べるよう export している（テストの入口 `tests/lib/turn-phases-server.mjs` が画面から入れない道を通すため `runTurn` も）。`start()` が返す Promise は、バックエンドを呼んだときは `backend.runTurn` と同じ形（`{ sessionId, requeue?, compactionFailureReason? }`）、呼ぶ前に `canInvoke` で戻したときは `{ requeue: true, beforeInvoke: true }`。後者では `driveTurn` が `turn.outcome = 'requeue'` にして `afterResult` を飛ばし、後始末で `turn.outcome` が変わっても `'requeue'` を返す（分割前の try の中の `return 'requeue'` と同じ）。出来事は `ctx.emit` を通る。**付け直しも同じ `driveTurn` を通るので、締め（`endTurn`）の道は 1 本**（R2）
 - `endTurn` は 1 回だけ走る印（`turn.ended`）を持つ。旧サーバーで手を離したターン（`turn.handedOff`。2d で立てる）は `driveTurn` の締めを丸ごと飛ばす（§5 の X1）
 - `releaseTurn` は付け直しでも `completionNotices.changed`・`notifyFree`・`kickQueued` を呼ぶ（`switching.delete` は付け直しでは何もしない）
 - `updateGate` は、付け直したターンも `enter()` する（今の `update-lock` の判定は `runtime.turns.size` を見るので変わらない）。準備中だけを数える形への見直しは 2d
 
 ### 4.3 `ctx`（ターンの文脈）に入れるもの
 
-`driveTurn`・`afterResult`・catch・finally が閉包から読んでいた値を `ctx` に移す。また、`prepareTurn` で解決した設定値やバックエンドの起動情報（`cwd`・`account`・`accountId`・`endpoint`・`endpointId`・`agentLocale`・`permissionMode`・`model`・`effort`・`baseline`・`policy`・`plyContext`・`resolvedContext`・`hooksTurn`・`abortFromTask` 等）も、`beginTurn` が `runArgs` を組み立てるために `ctx` に保持する。付け直しでは `restoreTurn` が札から埋める。
+`driveTurn`・`afterResult`・catch・finally が閉包から読んでいた値を `ctx` に移す。また、`prepareTurn` で解決した設定値やバックエンドの起動情報（`cwd`・`account`・`accountId`・`endpoint`・`endpointId`・`agentLocale`・`permissionMode`・`model`・`effort`・`policy`・`plyContext`・`resolvedContext`・`hooksTurn`・`abortFromTask` 等）も、`beginTurn` が `runArgs` を組み立てるために `ctx` に保持する。付け直しでは `restoreTurn` が札から埋める。
+
+`ctx` には秘密が入る（`account.token`・`endpoint` のキー）。2b-2 の `cardOf(ctx)` はこれらを札の本体に写さず、秘密の欄に分ける（付け直しでは L11・L12 のとおり取り直す）。
 
 | `ctx` の欄 | 今の閉包の値 | 付け直しでの出どころ |
 |---|---|---|

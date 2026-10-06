@@ -4780,13 +4780,16 @@ async function runTurnInternal(args, onStarted, hooks) {
   // 同じセッションの二重実行は防ぐ。別のセッションなら並行して回してよい
   if (sessionId && runtime.turns.has(sessionId)) throw new Error(t('session.running'));
   if (sessionId && hooks.compact !== 'idle') compactionScheduler.cancel(sessionId);
+  const compactionRevision = sessionId ? compactionScheduler.revision(sessionId) : null;
   if (sessionId) switching.add(sessionId);
   try {
-    const ctx = await prepareTurn(args, hooks);
+    const ctx = await prepareTurn(args, hooks, compactionRevision);
     return await driveTurn(ctx, async () => {
       await onStarted();
       ctx.didStart = true;
       await beginTurn(ctx);
+      // Preparation can await context and settings. A send or cancellation may have invalidated
+      // an idle reservation since the first check; do not invoke the backend in that case.
       if (hooks.canInvoke && !hooks.canInvoke()) return { requeue: true, beforeInvoke: true };
       return await launchTurn(ctx);
     });
@@ -4795,9 +4798,8 @@ async function runTurnInternal(args, onStarted, hooks) {
   }
 }
 
-async function prepareTurn(args, hooks) {
+async function prepareTurn(args, hooks, compactionRevision) {
   const { prompt, sessionId = null } = args ?? {};
-  const compactionRevision = sessionId ? compactionScheduler.revision(sessionId) : null;
 
   // 行き先が決まらないターンは始めない。断るのは登録する前。
   await settingsWrites.get(sessionId);
@@ -5032,7 +5034,6 @@ async function prepareTurn(args, hooks) {
     model,
     effort,
     attachments,
-    baseline,
     baselineLength: baseline.messages.length,
     policy,
     plyContext,
@@ -5047,6 +5048,7 @@ async function prepareTurn(args, hooks) {
     backendInvoked: false,
     runtimeContext: null,
     initialDelivered: false,
+    // 中断で止めたもの（stops）を伝える文。このターンの発言の前に 1 回だけ添え、渡ったら会話から消す（docs/design.md「中断と再開」）
     interruption: null,
     interruptionTaken: false,
     shellHandoff,
@@ -5214,7 +5216,7 @@ async function launchTurn(ctx) {
 }
 
 async function afterResult(ctx, result) {
-  const { turn, emit, hooks, sessionId, attachments, baseline, prompt } = ctx;
+  const { turn, emit, hooks, sessionId, attachments, prompt } = ctx;
   if (hooks.compact && !turn.compaction?.phase?.match(/^complete$/)) {
     emit({ type: 'compaction', phase: 'failed', trigger: hooks.compact,
       reason: result?.compactionFailureReason || turn.compaction?.reason || t('compaction.noCompletion') });
@@ -5232,7 +5234,7 @@ async function afterResult(ctx, result) {
       await Promise.all(turn.presentWrites);
       // 中断の後に添えた文は発言から切り分けてから照らす（history.loadTranscript と同じ）
       const messages = splitLeadingNotes(await ctx.backend.getMessages(turn.info.sessionId));
-      let cursor = ctx.baselineLength ?? baseline.messages.length;
+      let cursor = ctx.baselineLength;
       for (const attachment of [{ key: turn.presentKey, prompt }, ...(turn.steeredAttachments ?? [])]) {
         const index = messages.findIndex((m, i) => i >= cursor && m.role === 'user' && m.text === attachment.prompt);
         if (index < 0) continue;
@@ -5246,9 +5248,12 @@ async function afterResult(ctx, result) {
 
 async function driveTurn(ctx, start) {
   const { turn, emit, hooks, sessionId, args } = ctx;
+  // バックエンドを呼ぶ前に戻した（canInvoke）。後始末の失敗で turn.outcome が変わっても 'requeue' を返す
+  let beforeInvoke = false;
   try {
     const result = await start();
     if (result?.beforeInvoke) {
+      beforeInvoke = true;
       turn.outcome = 'requeue';
     } else {
       await afterResult(ctx, result);
@@ -5291,7 +5296,7 @@ async function driveTurn(ctx, start) {
     await endTurn(turn, emit, { record: ctx.didStart });
     hooks.signal?.removeEventListener("abort", ctx.abortFromTask);
   }
-  return turn.outcome;
+  return beforeInvoke ? 'requeue' : turn.outcome;
 }
 
 async function releaseTurn(sessionId, { adopted = false } = {}) {
@@ -7083,4 +7088,4 @@ setTimeout(() => { for (const row of schedule.list()) if (row.kind === 'send' &&
 // 届ける前の出来事の戻し・ルーティンの取りこぼし（ターンを始めるので、ポートが決まった後）
 await botHost.start();
 
-export { prepareTurn, beginTurn, launchTurn, driveTurn, releaseTurn, endTurn };
+export { runTurn, prepareTurn, beginTurn, launchTurn, driveTurn, releaseTurn, endTurn };
