@@ -610,6 +610,7 @@ const SUITES = [
   './unit/server-voice.mjs',
   // 画面の部品: 送信ゲート・PCM の変換・再生キュー・状態機械・吹き出しの差し替え・読む場所の探し方・差し込み口の契約（偽の AudioContext・DOM）
   './unit/voice-ui.mjs',
+  './unit/voice-turns.mjs',
 ];
 
 const code = await main({

@@ -153,7 +153,55 @@ export function setupVoiceSettings({ cmd, page, openPage = () => {} }) {
     return sec;
   }
 
+  /** 丸い台の選び方（通知の一覧の「すべて | あなた待ち」と同じ形。role=radiogroup）。choices: [[値, 字]] */
+  function segmented(name, current, choices, onPick) {
+    const group = el('div', 'vc-seg');
+    group.setAttribute('role', 'radiogroup');
+    group.setAttribute('aria-label', name);
+    for (const [value, label] of choices) {
+      const b = el('button', null, label);
+      b.type = 'button';
+      b.setAttribute('role', 'radio');
+      b.setAttribute('aria-checked', String(value === current));
+      b.dataset.value = value;
+      b.onclick = () => onPick(value);
+      group.append(b);
+    }
+    return group;
+  }
+
+  /** 話の区切り（まとめ待ち）・割り込み・効果音（承認済み 2026-10-07）と、マイク */
   function audioSection(v) {
+    const out = document.createDocumentFragment();
+    const turn = el('section', 'nf-section');
+    turn.append(el('h4', null, t('voice.settings.turn.title')));
+    const turnCard = el('div', 'nf-card');
+    // i18n-dynamic: voice.settings.turn.
+    const turnChoices = ['short', 'standard', 'long'].map((k) => [k, t(`voice.settings.turn.${k}`)]);
+    const est = el('p', 'mp-note vc-est', t(`voice.settings.turn.est.${v.turnHold}`));
+    est.setAttribute('role', 'status');
+    turnCard.append(el('small', null, t('voice.settings.turn.hint')), segmented(t('voice.settings.turn.label'), v.turnHold, turnChoices, (k) => save({ turnHold: k })), est, el('small', null, t('voice.settings.turn.tail')));
+    turn.append(turnCard);
+
+    const barge = el('section', 'nf-section');
+    barge.append(el('h4', null, t('voice.settings.barge.title')));
+    const bargeCard = el('div', 'nf-card');
+    const bargeLabel = el('label', 'mp-check');
+    const bargeBox = el('input');
+    bargeBox.type = 'checkbox'; bargeBox.checked = v.bargeIn; bargeBox.disabled = !v.echoCancellation;
+    bargeBox.onchange = () => save({ bargeIn: bargeBox.checked });
+    bargeLabel.append(bargeBox, el('span', null, ` ${t('voice.settings.barge.label')}`));
+    bargeCard.append(bargeLabel, el('small', null, t('voice.settings.barge.hint')));
+    barge.append(bargeCard);
+
+    const sounds = el('section', 'nf-section');
+    sounds.append(el('h4', null, t('voice.settings.sounds.title')));
+    const soundsCard = el('div', 'nf-card');
+    // i18n-dynamic: voice.settings.sounds.
+    const soundChoices = ['off', 'few', 'all'].map((k) => [k, t(`voice.settings.sounds.${k}`)]);
+    soundsCard.append(segmented(t('voice.settings.sounds.label'), v.sounds, soundChoices, (k) => save({ sounds: k })), el('small', null, t('voice.settings.sounds.hint')));
+    sounds.append(soundsCard);
+
     const sec = el('section', 'nf-section');
     sec.append(el('h4', null, t('voice.settings.audio.title')));
     const card = el('div', 'nf-card');
@@ -164,7 +212,9 @@ export function setupVoiceSettings({ cmd, page, openPage = () => {} }) {
     label.append(box, el('span', null, ` ${t('voice.settings.audio.echo')}`));
     card.append(label, el('small', null, t('voice.settings.audio.echoHint')));
     sec.append(card, el('p', 'mp-note', t('voice.settings.audio.permission')));
-    return sec;
+    // 区切り・話して止める・エコー除去は、通話を始めるときに決まる（録音の制約・ready で渡す値）。通話中に替えたら次の通話から効く
+    out.append(turn, barge, sounds, sec, el('p', 'mp-note vc-nextcall', t('voice.settings.nextCall')));
+    return out;
   }
 
   function paint() {

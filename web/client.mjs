@@ -71,6 +71,8 @@ import { setupDelegationSettings } from './delegation-settings.mjs';
 import { createSide, backendLogo } from "./side.mjs";
 import { setupChannels } from "./channels/index.mjs";
 import { setupVoice } from "./voice/index.mjs";
+import { createVoiceDelivery } from "./voice/delivery.mjs";
+import { createChatVoiceSender } from "./voice/chat-send.mjs";
 import { setupVoiceSettings } from "./voice/settings.mjs";
 import { setupApiKeysSettings } from "./api-keys-settings.mjs";
 import { familiesOf } from "./family.mjs";
@@ -2722,6 +2724,8 @@ function isMine(ev) {
 // 回る弧と一言を出す（docs/design-system.md §6。印は待っている間しか DOM に置かない）。
 // 渡ったら「AIへ送信済み」に戻し、渡らないままターンが終わったら、次のターンで答えることを言う。
 const deliveredEarly = new Set();   // 吹き出しより先に届いた配達の合図
+// 声で送った発言の配送の一行（3 つの言い方。web/voice/delivery.mjs）。入力欄から送った発言の言い方は変えない
+const voiceDelivery = createVoiceDelivery({ cancel: (item) => cmd('messageAction', { sessionId: state.current, messageId: item.id, action: 'cancel' }) });
 const deliveryTimers = new WeakMap();
 const DELIVERY = {
   sending: t('chat.delivery.sending'),
@@ -2741,6 +2745,7 @@ function markDelivery(row, kind) {
   if (kind === 'sending') row.dataset.deliverySending = '1';
   else delete row.dataset.deliverySending;
   const waiting = kind === 'pending' || kind === 'sending';
+  if (voiceDelivery.isVoice(row) && voiceDelivery.mark(row, kind)) return;
   status.replaceChildren(DELIVERY[kind]);
   status.classList.remove('outbox-status-failed');
   status.classList.toggle('outbox-status-mark', waiting);
@@ -2757,6 +2762,7 @@ function ensureMessageRow(messageId, text, at, sentBy = null) {
     provisionalByMessage.delete(messageId);
     row = append(userMsg(text, { at, presents, sentBy }), `live:${++liveSeq}`);
     row.dataset.messageId = messageId;
+    if (voiceDelivery.owns(messageId)) voiceDelivery.adopt(row);
   } else if (sentBy) markSentBy(row.querySelector('.m.user') ?? row, sentBy);
   if (!row.querySelector('.outbox-status')) row.querySelector('.m').append(el('div', 'outbox-status'));
   return row;
@@ -2789,6 +2795,8 @@ function syncOutboxRows(messages) {
   let withdrawn = false;
   for (const item of messages ?? []) {
     const row = messageRow(item.id);
+    // 声で送った発言は、送信待ちでも会話の行に残す（時計の一行と［取り消す］。入力欄の脇の一覧にも出さない）
+    if (item.status === 'queued' && (item.waiting || row?.dataset.messageStarted) && voiceDelivery.isVoice(row)) { voiceDelivery.queued(row, item); continue; }
     if ((item.status === 'queued' && (item.waiting || row?.dataset.messageStarted))
       || ['paused', 'unknown', 'cancelled'].includes(item.status)) {
       if (row) { row.remove(); withdrawn = true; }
@@ -7997,17 +8005,19 @@ async function clearSentDraft(id, text, attachments) {
   await persistDraft(id, { text: '', attached: [], dirty: true });
 }
 /**
- * 通話で確定した発言を、いまの送信の経路（submit）にそのまま乗せる（web/voice/index.mjs の slot.send）。
- * 入力欄の書きかけ（字と添付）は退避して、送れたら戻す。送れなかったら発言は欄に残し（書きかけはその後ろ）、投げる
+ * 通話で確定した発言を会話へ送る（web/voice/index.mjs の slot.send）。入力欄を通さず、sendMessage へ直に渡して会話の行に置く
+ * （状態は声の 3 つの言い方。web/voice/chat-send.mjs・delivery.mjs）。入力欄の書きかけには触れない
  */
-async function submitVoiceText(text) {
-  const keep = { text: $('prompt').value, attached: state.attached };
-  $('prompt').value = text; state.attached = []; renderAttached(); fitPrompt();
-  await submit({ at: null });
-  if ($('prompt').value.trim() === '') { $('prompt').value = keep.text; state.attached = keep.attached; renderAttached(); fitPrompt(); return; }
-  $('prompt').value = [text, keep.text].filter(Boolean).join(NL + NL); state.attached = keep.attached; renderAttached(); fitPrompt();
-  throw new Error(t('voice.note.notSent'));
-}
+const submitVoiceText = createChatVoiceSender({
+  state, cmd: (command, args) => cmd(command, args), randomId, freshId: () => freshSessionId, delivery: voiceDelivery,
+  ensureSession: async () => { const created = await (creatingSession ?? startNew()); return created && state.current === created ? created : null; },
+  settingsSettled: async () => { await settingsWrite.catch(() => {}); await modeWrite; },
+  place: (sessionId, messageId, text) => {
+    if (messageRow(messageId)) return;
+    markDelivery(ensureMessageRow(messageId, text, new Date().toISOString()), 'sending');
+    syncOutboxRows(outboxes.get(sessionId) ?? []);
+  },
+});
 async function submit({ at = armedSends.get(state.current) } = {}) {
   // 入力欄の `!`: シェルの形なら走らせる。使えない会話の `!` は送らずに理由の一行を光らせる（文として送るのは「文として送る」だけ）
   if (shellComposer.active) return runShellFromComposer();
