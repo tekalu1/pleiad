@@ -382,6 +382,18 @@ export default async function (t) {
     t.ok('同じ置き場で 2 つ目のパイプは立てられない', (await settled(other.listen())).error?.code === 'EADDRINUSE');
     removeLinkFile({ dataDir: env.dataDir, pid: process.pid + 1 });
     t.ok('removeLinkFile: 他のプロセスのファイルは消さない', readLinkFile(env.dataDir) !== null);
+    if (process.platform !== 'win32') {
+      // unix ソケットはファイル: 持ち主が居れば立てられず、居ない（落ちて残った）ファイルは消して立て直す。生きている持ち主のソケットは横取りしない
+      const client = clientFor(env.link);
+      t.ok('unix ソケット: 2 つ目が失敗した後も、先のソケットにつながる', await settled(client.connect()).then(r => !r.error));
+      client.leave();
+      const staleDir = tempDir();
+      const stale = createMainLink({ dataDir: staleDir });
+      fs.writeFileSync(stale.pipe, '');
+      t.ok('unix ソケット: 持ち主の居ない古いファイルは消して立てる', (await settled(stale.listen())).error === undefined);
+      await stale.close();
+      fs.rmSync(staleDir, { recursive: true, force: true });
+    }
     env.link.dispose();
     t.ok('dispose: 自分のファイルは同期で消す', !fs.existsSync(path.join(env.dataDir, LINK_FILE)));
     await env.stop();

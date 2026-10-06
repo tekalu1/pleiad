@@ -51,6 +51,21 @@ export function mainLinkPipeName(dataDir, { platform = process.platform, user = 
   return platform === 'win32' ? `\\\\.\\pipe\\pleiad-main-${hash}` : path.join(tmpdir, `pleiad-main-${hash}.sock`);
 }
 
+/**
+ * unix ソケットのパスを使えるようにする。Windows の名前付きパイプは持ち主が居る間は同じ名前で立てられない（EADDRINUSE）が、
+ * unix ソケットはファイルなので、消して立て直すと生きている持ち主のソケットを横取りする。つながる相手が居れば EADDRINUSE、
+ * 居なければ（プロセスが落ちて残った）古いファイルなので消す
+ */
+async function claimSocketPath(socketPath) {
+  const alive = await new Promise(resolve => {
+    const probe = net.connect(socketPath);
+    probe.once('connect', () => { probe.destroy(); resolve(true); });
+    probe.once('error', () => resolve(false));
+  });
+  if (alive) throw Object.assign(new Error(`listen EADDRINUSE: address already in use ${socketPath}`), { code: 'EADDRINUSE' });
+  await fs.promises.rm(socketPath, { force: true });
+}
+
 function safeUser() {
   try { return os.userInfo().username; } catch { return ''; }
 }
@@ -195,7 +210,7 @@ export function createMainLink({ dataDir, appVersion = '', ipc = IPC_RANGE, secr
     /** パイプを作って待ち受け、main-link.json を書く。2 回目以降は何もしない。パイプが取れなければ投げる */
     async listen() {
       if (server) return info();
-      if (platform !== 'win32') await fs.promises.rm(pipe, { force: true });
+      if (platform !== 'win32') await claimSocketPath(pipe);
       const created = net.createServer(onConnection);
       await new Promise((resolve, reject) => { created.once('error', reject); created.listen(pipe, () => { created.off('error', reject); resolve(); }); });
       created.on('error', error => log(`pipe error: ${error?.message ?? error}`));
