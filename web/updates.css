@@ -33,6 +33,44 @@
 .update-work-after { font-size: 12px; color: var(--ink-weak); margin: 0 2px 4px; }
 .update-work-after .warn-mark { vertical-align: -2px; margin: 0 1px; }
 .update-acts { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+/* 切り替えを待つ表示（web/switch-notice.mjs）。脇の知らせの中で一覧を開く。行は確認の段の作業の行と同じ形（ボタンは会話を開く） */
+.switch-title { display: block; overflow-wrap: anywhere; outline: none; }
+.switch-notice.fail .switch-title { display: flex; gap: 6px; align-items: flex-start; }
+.switch-notice.fail .warn-mark { margin-top: 3px; }
+.switch-notice progress { width: 100%; display: block; margin-top: 8px; }
+.switch-notice progress[hidden] { display: none; }
+.switch-wd { display: grid; grid-template-rows: 0fr; transition: grid-template-rows var(--dur) var(--ease-out); }
+.switch-wd.open { grid-template-rows: 1fr; }
+.switch-wd[hidden] { display: none; }
+.switch-wd > div { overflow: hidden; min-height: 0; }
+.switch-notice .update-work { margin: 10px 0 0; max-height: 240px; overflow: auto; }
+.switch-notice .update-work-after { margin: 8px 2px 0; }
+.switch-list[hidden], .switch-grp[hidden] { display: none; }
+/* 設定のページに同じ一覧がある。設定を開いている間は脇の知らせを出さない（モックの承認。web/switch-notice.mjs） */
+body.settings > #sidebar > .switch-notice { display: none; }
+.switch-grp + .switch-grp { margin-top: 8px; }
+.switch-grp h4 { display: flex; justify-content: space-between; gap: 8px; }
+.switch-grp h4 small { font-weight: 400; font-size: 11px; }
+.switch-list .update-work-row { width: calc(100% + 12px); margin: 0 -6px; padding: 4px 6px; border-radius: 8px; overflow: hidden; max-height: 34px; text-align: left;
+  transition: max-height var(--dur) var(--ease-out), opacity var(--dur) var(--ease-out), padding var(--dur) var(--ease-out), background-color var(--dur-fast); }
+.switch-list button.update-work-row { background: none; border: 0; color: inherit; font: inherit; cursor: pointer; }
+.switch-list button.update-work-row:hover { background: var(--surface-1); }
+.switch-list .update-work-row.leaving { max-height: 0; opacity: 0; padding-top: 0; padding-bottom: 0; }
+.switch-list .update-work-row.stop { color: var(--ink-weak); }
+.switch-list .update-work-row.stop .update-work-state { max-width: 70%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.update-work-state.mono { font-family: var(--font-mono); }
+.switch-list .update-work-state { max-width: 50%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.update-work-after[hidden] { display: none; }
+.switch-acts { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 8px; margin-left: -12px; }
+.switch-acts.end { justify-content: flex-end; margin-left: 0; }
+.switch-acts:empty { display: none; }
+.switch-acts .btn { margin-top: 0; }
+#switchBox { padding: 16px; margin: 16px 0; background: var(--surface-1); border-radius: 14px; }
+#switchBox .update-work { margin: 0 0 10px; }
+#switchBox .update-work-after { margin: 0 2px 4px; }
+#switchBox progress { width: 100%; }
+#switchBox .update-acts:empty { display: none; }
+@media (prefers-reduced-motion: reduce) { .switch-wd, .switch-list .update-work-row { transition: none; } }
 /* 外の AI の MCP に pleiad mcp を登録する設定のコピー（web/cli-setup.mjs、ADR 0090） */
 #cliSetup { margin: 20px 0; }
 .cli-setup-acts { display: flex; gap: 8px; flex-wrap: wrap; }

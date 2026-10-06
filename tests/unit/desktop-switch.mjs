@@ -521,7 +521,9 @@ export default async function (t) {
   {
     // 新しい main は、切り替えを待つ間、古い版のサーバーの画面を出す（design.md §7.1・§8）。名前を変えるときは、前の名前をこの一覧ごと 1 版残す
     const PREVIOUS_NAMES = ['platform', 'setTitleBar', 'notifyCompletion', 'onNotificationClick', 'chooseFolder', 'openRemoteHosts', 'update', 'onUpdate',
-      'browser.command', 'browser.layout', 'browser.onState', 'browser.onShortcut'];
+      'browser.command', 'browser.layout', 'browser.onState', 'browser.onShortcut',
+      // 切り替えを待つ表示（版 1。web/switch-notice.mjs。desktop/switch-screen.cjs の頭の注記: 口の形を変えるときは switch2 を足し、この switch は 1 版残す）
+      'switch.version', 'switch.hello', 'switch.state', 'switch.onState', 'switch.act'];
     const exposed = {};
     const electron = { contextBridge: { exposeInMainWorld: (key, api) => { exposed[key] = api; } }, ipcRenderer: { send() {}, invoke() {}, on() {}, removeListener() {} } };
     const source = fs.readFileSync(new URL('../../desktop/preload.cjs', import.meta.url), 'utf8');

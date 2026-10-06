@@ -27,7 +27,7 @@ const pickList = list => (list ?? []).slice(0, LIST_MAX).map(pickItem);
  *   manual     合わない版。「あとで／中断して切り替え」を聞いている（reason は schema・ipc・runtime・job・check。items・stoppers）
  *   held       「あとで」の後（kind: 'stoppers' | 'manual'）。脇の知らせは閉じ、⚙ の点と設定のページに残す
  *   stopping   「今すぐ中断して切り替える」で中断している（interrupt: { done, total }）
- *   switching  S1 を終わらせ、S2 を起こし、窓を読み直している（1〜2 秒）
+ *   switching  ロックを取り、S1 を終わらせ、S2 を起こし、窓を読み直している（1〜2 秒）
  *   done       切り替えが済んだ（stopped は切り替えで止めたもの）。読み直した後の新しい画面が受ける
  *   failed     新しい版が起こせず、前の版で動いている（current が動いている版）。「もう一度試す」
  */
@@ -35,7 +35,7 @@ function displayState(snap) {
   const base = { v: 1, phase: 'none', target: snap?.target?.appVersion ?? null, current: snap?.server?.appVersion ?? null };
   const lists = () => ({ items: pickList(snap.waiting?.items), stoppers: pickList(snap.waiting?.stoppers) });
   switch (snap?.state) {
-    case 'waiting': case 'locking':
+    case 'waiting':
       return { ...base, phase: 'waiting', since: snap.since ?? null, interruptFailed: snap.interruptFailed === true, ...lists() };
     case 'asking':
       return { ...base, phase: 'asking', ...lists() };
@@ -45,7 +45,8 @@ function displayState(snap) {
       return { ...base, phase: 'held', kind: snap.reason === 'stoppers' ? 'stoppers' : 'manual', reason: snap.reason, ...lists() };
     case 'interrupting':
       return (snap.interrupt?.total ?? 0) > 0 ? { ...base, phase: 'stopping', interrupt: snap.interrupt } : { ...base, phase: 'switching' };
-    case 'stopping': case 'starting': case 'fallback': case 'reloading':
+    // locking は作業が 0 件（止まるものも無いか止めてよい）になった後。ロックが取れなければ待ちに戻るが、ほとんどはそのまま切り替わる
+    case 'locking': case 'stopping': case 'starting': case 'fallback': case 'reloading':
       return { ...base, phase: 'switching' };
     case 'done':
       return snap.previous ? { ...base, phase: 'failed', at: snap.at ?? null } : { ...base, phase: 'done', at: snap.at ?? null, stopped: pickList(snap.stopped) };
@@ -94,7 +95,7 @@ function createSwitchScreen({ ipcMain, trusted, getWindow, helloWaitMs = HELLO_W
     if (action === 'state') return payloadFor(control?.snapshot() ?? null, Number(value) || 1);
     if (action !== 'act' || !control) return false;
     if (value === 'retry') return control.retry();
-    return control.answer(value);
+    return value === 'now' || value === 'later' ? control.answer(value) : false;
   });
 
   return {

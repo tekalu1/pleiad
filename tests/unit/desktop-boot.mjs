@@ -107,6 +107,7 @@ async function start({ env = {}, packaged = false, choice = 'link', connectError
     './agent-browser-bin.cjs': { prepareAgentBrowserBin: () => '' },
     './notifications.cjs': { createDesktopNotifications: () => () => {} },
     './server-boot.cjs': serverBoot,
+    './switch-screen.cjs': { createSwitchScreen: () => ({ attach: control => { calls.screenAttached = control; }, reset() {}, supported: () => false, ask: async () => 'later' }) },
     './switch.cjs': {
       startSwitch: options => { const control = { replacing: false, cancelled: false, cancel() { this.cancelled = true; }, options }; calls.switches.push(control); return control; },
       incompatibleDialog: () => async () => 'later',
@@ -243,6 +244,7 @@ export default async function (t) {
     const control = calls.switches[0];
     t.ok('on: 付け直した後に切り替えを始め、S1 の ready・resources・main の部品を渡す', calls.switches.length === 1 && control.options.ready.token === 'attached-token' && control.options.resourcesPath === 'C:\\inst\\resources'
       && typeof control.options.reload === 'function' && typeof control.options.abortAll === 'function' && typeof control.options.request === 'function');
+    t.ok('on: 状態機械を切り替えの表示の橋（desktop/switch-screen.cjs）へつなぎ、聞くのは橋を通す（表示を持たない画面にだけダイアログ）', calls.screenAttached === control && await control.options.ask({ reason: 'schema', waiting: { count: 0 } }) === 'later');
     control.replacing = true;
     link.emit('exit', 0);
     await tick();

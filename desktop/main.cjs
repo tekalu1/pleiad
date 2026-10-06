@@ -15,6 +15,8 @@ let resident;
 // 窓ごとのオリジンの表と、ほかのホストへつなぐ端末の窓（docs/remote.md §7。desktop/remote-windows.cjs）
 const { createWindowTrust } = require('./window-trust.cjs');
 const { createRemoteWindows } = require('./remote-windows.cjs');
+// 無停止の更新の切り替えを待つ表示（desktop/switch-screen.cjs）。画面が表示を持つかを知り、状態を渡し、画面の操作を状態機械へ返す
+const { createSwitchScreen } = require('./switch-screen.cjs');
 // 内蔵ブラウザー（右パネルに重ねる WebContentsView。docs/inapp-browser.md、ADR 0041）。ローカルの窓にだけ置く
 const { createBrowserPanel } = require('./browser-panel.cjs');
 const { attachAgentBrowserBridge } = require('./agent-browser-bridge.cjs');
@@ -62,6 +64,7 @@ if (process.platform === 'win32' && !PACKAGED_IDENTITY) app.setAppUserModelId(AP
 
 // ローカルの窓の本体フレームで、ローカルのサーバーの画面からの IPC だけを通す（リモートの窓・同梱の窓は別の口）
 function trusted(event) { trust.check(event, ['local']); }
+const switchScreen = createSwitchScreen({ ipcMain, trusted, getWindow: () => window });
 function workerRequest(type, extra = {}) {
   return new Promise((resolve, reject) => {
     const id = ++requestId;
@@ -90,12 +93,13 @@ const ABORT_WAIT_MS = 30_000;
  * 待つ間に始まったターン（別の端末からの送信・委譲の完了の届け・送信待ち）も止めるため、残っている間は見るたびに
  * 中断を送り直す（止め始めたものには何もしない。理由も最初のまま）。上限までに止まらなければ、残っている数を理由にして失敗する（終了しない）
  */
-async function abortAll(reason) {
+async function abortAll(reason, onProgress) {
   const until = Date.now() + ABORT_WAIT_MS;
   for (;;) {
     const result = await workerRequest('abort', { reason });
     if (result.error) throw new Error(result.error);
     const work = await runningWork();
+    onProgress?.(work);
     if (work.count === 0) return;
     if (Date.now() >= until) throw new Error(t('quit.abortTimeout', { count: work.count, seconds: ABORT_WAIT_MS / 1000 }));
     await new Promise(resolve => setTimeout(resolve, 500));
@@ -183,9 +187,10 @@ async function chooseLinkedServer(portFile) {
 /** 付け直したサーバーが古い版なら、作業が終わるのを待って新しい版のサーバーへ切り替える（desktop/switch.cjs）。待ちの表示は今は main のログ（[server] switch: …） */
 function startServerSwitch(ready, portFile, onServerExit) {
   const { startSwitch, incompatibleDialog } = require('./switch.cjs');
-  return startSwitch({ linked, ready, resourcesPath: runtimeResources(), execPath: process.execPath, dataDir: serverBoot().resolveDataDir(), systemLocale: systemLanguage(),
+  const control = startSwitch({ linked, ready, resourcesPath: runtimeResources(), execPath: process.execPath, dataDir: serverBoot().resolveDataDir(), systemLocale: systemLanguage(),
     cwd: app.getPath('home'), request: workerRequest, runningWork, abortAll, log: line => log(`switch: ${line}`),
-    ask: incompatibleDialog({ dialog, getWindow: () => window, t }),
+    // 画面が切り替えの表示を持つなら画面が答える（switchScreen）。持たない版の画面には、今までのダイアログ
+    ask: info => switchScreen.ask(info, incompatibleDialog({ dialog, getWindow: () => window, t })),
     // 同じ包みにつなぎ直したので、once('exit') の見張りを付け直す
     rearm: () => { if (!worker.listeners('exit').includes(onServerExit)) worker.once('exit', onServerExit); },
     reload: async next => {
@@ -197,9 +202,11 @@ function startServerSwitch(ready, portFile, onServerExit) {
       await window.loadURL(`${origin}/?token=${encodeURIComponent(next.token)}`);
     },
     restart: () => { quitting = true; app.relaunch(); app.exit(0); },
-    fallback: () => { void dialog.showMessageBox(window, { type: 'warning', title: 'Pleiad', message: t('switch.fallback') }).catch(() => {}); },
+    fallback: () => { if (!switchScreen.supported()) void dialog.showMessageBox(window, { type: 'warning', title: 'Pleiad', message: t('switch.fallback') }).catch(() => {}); },
     failed: error => { quitting = true; return showFatalError('Pleiad', t('switch.failed', { detail: error?.message ?? '' })).catch(e => console.error(e)).finally(() => app.quit()); },
   });
+  switchScreen.attach(control);
+  return control;
 }
 
 async function boot() {
@@ -256,6 +263,8 @@ async function boot() {
   }
   window.removeMenu();
   trust.register(window, { kind: 'local', origin });
+  // 読み込み直した画面は別の版かもしれない。切り替えの表示を持つかは、その画面の hello で知る
+  window.webContents.on('did-start-loading', () => switchScreen.reset());
   remoteWindows = createRemoteWindows({ app, BrowserWindow, session, ipcMain, nativeImage, nativeTheme, Notification, Menu, safeStorage, trust,
     icon: path.join(__dirname, 'icon.png'), external });
   remoteWindows.attach();
