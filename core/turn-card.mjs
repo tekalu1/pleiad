@@ -6,6 +6,7 @@
 //   - 途中送信の控えを 1 つの欄（steers）にまとめる形（項目の id ごとに「誰が待っているか」）。
 //   - ターンの前の切り口（T1: baseline の発言数と最後の uuid）。
 //   - 会話の口のトークン（connectionTokens: { agents, computer, browser, control, context }）。
+//   - 出している承認のカードの id（waits。2b-6）。付け直す新しいサーバーが、起動時の通知の一覧の後片付けでその行を残すのに使う。
 //   - 札の大きさの上限（CARD_MAX_BYTES = 64 KB）。超えたら失敗。
 //   - 本文（発言・途中送信の本文・中断の文・`!` の行）は札に入れない（2b-4）。発言は sha256 と文字数だけを置き、付け直しは保存済みの発言
 //     （履歴のターンの前の切り口の次・送信待ちの messageId）から引いてハッシュで突き合わせる。長い貼り付けでも札が上限を超えないため
@@ -16,6 +17,9 @@ export const CARD_VERSION = 1;
 
 /** 札の大きさの上限（64 KB）。保持役のパイプとメモリの肥大化を防ぐ */
 export const CARD_MAX_BYTES = 64 * 1024;
+
+/** 札に置く承認のカードの id の数の上限（1 つのターンが同時に待つ承認は少ない） */
+const WAITS_MAX = 64;
 
 /** 途中送信の控えを待つ 5 か所の識別子（stage2-server-state.md §3 の 3） */
 export const STEER_WAITERS = Object.freeze([
@@ -200,6 +204,9 @@ export function cardOf(ctx, options = {}) {
   // 11. バックエンド固有の札 (2c, 2b-5 で足す)
   const backendCard = ctx.backendCard ?? ctx.turn?.backendCard ?? null;
 
+  // 12. 出している承認のカードの id (A3, S7。2b-6)。付け直す新しいサーバーが、起動の後片付けで通知の一覧のあなた待ちを決着させるときに外す
+  const waits = (Array.isArray(ctx.waits) ? ctx.waits : []).filter(id => typeof id === 'string' && id).slice(0, WAITS_MAX);
+
   // 札本体 (card)
   const card = {
     v: CARD_VERSION,
@@ -246,6 +253,7 @@ export function cardOf(ctx, options = {}) {
     hooks,
     abort,
     backendCard,
+    waits,
   };
 
   // 秘密の欄 (secrets) - 札本体には入れず、別に返す（保持役の預かり物に置く想定）
@@ -348,5 +356,8 @@ export function restoreFields(card) {
 
     // バックエンド固有
     backendCard: card.backendCard ?? null,
+
+    // 出している承認のカードの id（2b-6）
+    waits: Array.isArray(card.waits) ? card.waits.filter(id => typeof id === 'string' && id).slice(0, WAITS_MAX) : [],
   };
 }

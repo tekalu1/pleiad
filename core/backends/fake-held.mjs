@@ -6,7 +6,8 @@
 //                    cli.steer-result { id, accepted }・cli.log { text }（fake の合図 fake-signal: の出力）
 //   バックエンド -> 偽の CLI の stdin  start { prompt, userText, sessionId, cwd, mode, model, notes }・permission.answer { requestId, answer }・
 //                    steer { item }・interrupt {}
-// 承認待ちは記録から作る: 付け直したサーバーは、cli.ask のうち cli.settled が無いものだけ、承認の画面へ出し直す（同じ id。ただし id を渡る札にするのは 2b-6）。
+// 承認待ちは記録から作る: 付け直したサーバーは、cli.ask のうち cli.settled が無いものだけ、承認の画面へ出し直す（ツールの id = requestId から決まる同じ承認の id。
+// core/approval-id.mjs）。札は子の label に置く: ターンの始まりと札の中身が変わるたび（サーバーの touchCard が control.holder.label を呼ぶ）、手を離すときも。
 // 保持役の場所は AGENT_HOST_DATA（データ置き場）と AGENT_HOST_RUNTIME_ROOT（実行場所の置き場）。無ければ台本はエラーにする
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -78,7 +79,7 @@ export async function driveHeld({ source, record, emit, askPermission, signal, c
   let stopped = false;
   const asked = new Set();
   const steers = new Map();
-  const send = value => { if (!stopped && source.write) source.write(lineOf(value)); };
+  const send = value => { if (!stopped && !source.muted && source.write) source.write(lineOf(value)); };
   const onAbort = () => send({ type: 'interrupt' });
   if (signal?.signal?.aborted) onAbort(); else signal?.signal?.addEventListener?.('abort', onAbort, { once: true });
   if (control && source.write) {
@@ -87,6 +88,11 @@ export async function driveHeld({ source, record, emit, askPermission, signal, c
       send({ type: 'steer', item: { id: item?.id, args: { prompt: item?.args?.prompt } } });
     });
     control.onReady?.();
+  }
+  // 札を保持役の子に置く口（サーバーの touchCard が札の中身が変わるたびに呼ぶ）。最初の 1 回は今置く（落ちたときの付け直しの元）
+  if (control && source.client) {
+    control.holder = { label: card => source.client.label(source.id, card) };
+    control.touch?.();
   }
 
   let ended = false;
@@ -112,15 +118,17 @@ export async function driveHeld({ source, record, emit, askPermission, signal, c
     return emit(event, opts);
   };
   try {
-    const result = await replayRecord({ source, signal: signal?.signal, normalize: line => { const m = parse(line); return m ? [m] : []; }, emit: handle });
+    const result = await replayRecord({ source, normalize: line => { const m = parse(line); return m ? [m] : []; }, emit: handle });
     if (result.exit?.handedOff) { stopped = true; return { handedOff: true }; }
     stopped = true;
+    if (control) control.holder = null;
     history.finish();
     if (!ended) throw new Error(`fake: the adopted turn ended without a result (exit ${result.exit?.code ?? 'none'})`);
     source.release?.();
     return { exit: result.exit };
   } finally {
     stopped = true;
+    if (control) control.holder = null;
     for (const resolve of steers.values()) resolve(false);
     signal?.signal?.removeEventListener?.('abort', onAbort);
     source.dispose?.();
@@ -149,6 +157,14 @@ export async function handOffHeld(sessionId, card) {
   await source.client.detach(source.id);
   source.stop();
   return { childId: source.id };
+}
+
+/** テスト用: 偽の CLI への書き込み（承認の答え・途中送信・中断）を止める／戻す。中断が子に届かないまま手を離す・落ちる形を作る（止めている間の書き込みは捨てる） */
+export function muteHeld(sessionId, muted) {
+  const source = helds.get(sessionId);
+  if (!source) throw new Error(`fake: no held turn (${sessionId})`);
+  source.muted = Boolean(muted);
+  return true;
 }
 
 /** テスト用: 読みを止める（偽の CLI の出力は保持役に溜まり、このサーバーは処理も ack もしない）／再開する */

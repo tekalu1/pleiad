@@ -1,6 +1,6 @@
 # 段階 2 の 2b: サーバーのメモリの仕分けと、「始める」と「動かす」の切り目
 
-- 状態: 2b-1・2b-3 実装済み、2b-2 実装済み（2026-10-06）。札の形 `core/turn-card.mjs`（純関数、版 `v: 1`、秘密の分離、途中送信の枠組み、T1、connectionTokens、上限）。2b-4 実装済み（2026-10-07）。付け直しの入口 `restoreTurn`・`adoptTurn`、旧サーバーの口 `handOffTurn`、再生の道 `core/adopt.mjs`、起動の順序と後片付けの除外（下の「2b-4 の実装のメモ」）。2b-5 実装済み（2026-10-07）。fake の台本 `held:`（別プロセスの偽の CLI `core/backends/fake-agent.mjs` を保持役の子に載せる）と、保持役の元からの付け直し。「途中で引き継ぐ」台本（ツールの実行中・承認待ち・終わった直後）のテスト `tests/unit/adopt-held.mjs`（下の「2b-5 の実装のメモ」）
+- 状態: 2b-1・2b-3 実装済み、2b-2 実装済み（2026-10-06）。札の形 `core/turn-card.mjs`（純関数、版 `v: 1`、秘密の分離、途中送信の枠組み、T1、connectionTokens、上限）。2b-4 実装済み（2026-10-07）。付け直しの入口 `restoreTurn`・`adoptTurn`、旧サーバーの口 `handOffTurn`、再生の道 `core/adopt.mjs`、起動の順序と後片付けの除外（下の「2b-4 の実装のメモ」）。2b-5 実装済み（2026-10-07）。fake の台本 `held:`（別プロセスの偽の CLI `core/backends/fake-agent.mjs` を保持役の子に載せる）と、保持役の元からの付け直し。「途中で引き継ぐ」台本（ツールの実行中・承認待ち・終わった直後）のテスト `tests/unit/adopt-held.mjs`（下の「2b-5 の実装のメモ」）。2b-6 実装済み（2026-10-07）。承認のカードの id が決まった値（`core/approval-id.mjs`）・札の置き直し（強制終了でも付け直せる）・止め始めていたターンの中断の送り直し・待ち受けのポートの待ち（下の「2b-6 の実装のメモ」）
 - 正本: [plan.md](plan.md) の 2b とリスク R2・R8・R15、[design.md](design.md) §4（保持役・付け直し・札・記録の再生）・§5（引き継ぎ。§5.4 起動時の後片付けとぶつかる所）
 - 目的: 2b の最初の一歩（R8 の表）。付け直すターンで「何を札に入れ、何を再生で作り、何を捨てるか」を、コードの場所つきで決める。そのうえで `runTurnInternal` の切り目と、2b を小さく取り込む段の順番を決める
 
@@ -48,7 +48,7 @@
 |---|---|---|---|---|---|
 | A1 | `runtime.sockets`（画面の WS） | 1751 | `attach` 3976・`detach` 3996・`sendTo` 1825 | 捨てる | 画面は 1.5 秒ごとのつなぎ直しで新しいサーバーに入る（design.md §8） |
 | A2 | `runtime.turns`（走っているターン） | 1752 | 登録 4923・2170、外す 5245・2166、`sessionBusy` 5310・`outbox` の `active` 4273・MCP の口の `owner` 1019・1083・1120・`loadSession` 6407・`runningWork` | 再生 | 1 件ずつ `restoreTurn`（札 + 再生）で作り直す（T 表）。**起動時の後片付け・待ち受け・予定の戻しより前に登録する**（2b-4。§5 の順序） |
-| A3 | `runtime.waiting`（承認待ち） | 1753 | 置く 4154、決着 4137、聞き直し 3987、`settleAll` 4023、`captureStops` 5556、`loadSession` 6452、`blockingWaits` 4013 | 再生 | Claude は 2 回目の `initialize` の `pending_permission_requests` が `canUseTool` → `askPermission` を呼び直す（2c）。**カードの id が `crypto.randomUUID()`（4124）で替わる**ので、画面・スマホの通知・通知の一覧（ADR 0149）が二重になる → id を `toolUseID`（無ければ requestId）から決まる値にする（2b-6）。中継の複製（祖先の会話）は同じ呼び直しで作られる |
+| A3 | `runtime.waiting`（承認待ち） | 1753 | 置く 4154、決着 4137、聞き直し 3987、`settleAll` 4023、`captureStops` 5556、`loadSession` 6452、`blockingWaits` 4013 | 再生 | Claude は 2 回目の `initialize` の `pending_permission_requests` が `canUseTool` → `askPermission` を呼び直す（2c）。**カードの id が `crypto.randomUUID()`（4124）で替わる**ので、画面・スマホの通知・通知の一覧（ADR 0149）が二重になる → id を `toolUseID`（無ければ requestId）から決まる値にする（**2b-6 で済**。`core/approval-id.mjs`）。中継の複製（祖先の会話）は同じ呼び直しで作られる |
 | A4 | `runtime.waiting` の detached（設定の変更の承認） | 3640（`askSettingChange`） | 3632 の `settingCards`・台帳 `settingApprovals` | 保存済み | 台帳（`setting-approvals`）にある。今の起動は「取り下げ」（`setting-approvals.mjs:35-41`）にするが、引き継ぎではカードを出し直す（§5 の S11） |
 | A5 | `runtime.waiting` の remote（ホストへ任せた子の承認） | 4440（`remoteCards.open`） | `remoteCards` 4431-4460 | 捨てる | ホストの線は main のもの。新しいサーバーは `remoteDelegation` の追いつき（`catchUp`）で作り直す（1-6 の申し送り 4 と同じ） |
 | A6 | `runtime.buffer`（画面が居ない間の出来事） | 1754 | 溜め 1923、流す 3981 | 捨てる | 走っているターンの流れは再生で作る。**画面が居ない間に終わった別のターンの `turnEnd` が消え、PC の通知が 1 回欠けうる**（完了は保存済みの `completedAt` から一覧には出る）。R8 の「通知の重複・欠け」に数える |
@@ -346,7 +346,7 @@ handOffTurn(key)                                     … 旧サーバーの口�
 | S4 | 4247 `computerLock.reset()`（`computer-ready`） | ロックを空にする | そのまま（ロックは引き継がない。M37） |
 | S5 | 4302 `outbox.recover()`（`message-queue.mjs:140-150`） | 全会話の `sending` → `unknown`、`queued` → `paused` | 付け直す会話を外す。`sending` は札の途中送信（O5）が決める。`queued` は保留にしない（走っているターンの後ろに並んだまま） |
 | S6 | 4305 `store.recoverInterruptedTurns`（`store.mjs:502-521`） | `turnStartedAt` が残る会話を `restart` の中断にし、`completedAt` を書く | 付け直す会話を外す（`except: [sessionId]` を足す）。札の `startedAtMs`（T8）と `turnStartedAt` が合うものだけ外す |
-| S7 | 4309 `inbox.settleAllWaiting('cancelled')` | 通知の一覧のあなた待ちを全部決着 | 付け直すターンの承認（決まった id。A3）は外す |
+| S7 | 4309 `inbox.settleAllWaiting('cancelled')` | 通知の一覧のあなた待ちを全部決着 | 付け直すターンの承認（決まった id。A3）は外す（**2b-6 で済**。札の `waits` の id を `except` で渡す。止め始めていたターンは承認を出し直さないので外さない） |
 | S8 | 4466 `createAgentTasks` の復元（`agent-tasks.mjs:215-227`） | 動いていたタスクを `interrupted`、`sending` の指示を `delivered`、`delivering` の通知を `unknown` | 子の会話を付け直すタスク・札に `liveNotices` があるタスクを外す（引数で渡す） |
 | S9 | 4659 `recordTaskStops(agentTasks.restored, 'restart')` | 依頼元の会話の「止めたもの」に書く | S8 で外したものは `restored` に入らないので書かれない |
 | S10 | 4661 `remoteDelegation.start()` | ホストの便りを聞く | そのまま |
@@ -380,7 +380,7 @@ handOffTurn(key)                                     … 旧サーバーの口�
 | 2b-3 | 会話の MCP の口を同じトークンで開き直す: `agent-bridge`・`computer-bridge`・`browser-bridge`・`mcp-bridge`（ply_control）・`context-bridge` の `open({ token })` と、`server.mjs` の `restoreConnection(entry)`。**実装済み 2026-10-06**（下の「2b-3 の実装のメモ」） | 取り込める（既定の `open()` は今のまま） | S |
 | 2b-4 | **済** 付け直しの入口 `adoptTurn(card, source)` と `makeEmit` の再生の道（§4.4）、起動の順序（§5.1 の順序）と後片付けの除外（S5-S9・S12・S13）、`backend.adoptTurn` の口。**付け直す元は既定で空**。テスト用に「終わっていたターン」の元（札と記録のファイル。`AGENT_HOST_ADOPT_FROM`、テストだけが付ける）を読める。**実装済み 2026-10-07**（下の「2b-4 の実装のメモ」） | 取り込める（元が空なら何も変わらない） | M |
 | 2b-5 | **済** fake の `adoptTurn`: fake の台本を別プロセスの偽の CLI（`core/backends/fake-agent.mjs`。1 行 1 JSON の出来事を出し、stdin で承認の答え・途中送信を受ける）で走らせる台本 `held:<台本>` と、保持役（2a）の子に載せる道。付け直す元に保持役を足した（`AGENT_HOST_ADOPT_HOLDER=1`）。札は台本の位置のつもりだったが、位置は CLI と記録が持つので札には入れない。**実装済み 2026-10-07**（下の「2b-5 の実装のメモ」） | 2a の後 | M |
-| 2b-6 | 実行中のスナップショットと承認を再生で作る: ack の位置、uuid で冪等、承認のカードの id を決まった値に（A3）、止め始めていたターンの中断の送り直し（T7）、待ち受けのポートが取れないときの扱い（§3 の 9） | 2b-5 の後 | M |
+| 2b-6 | **済** 実行中のスナップショットと承認を再生で作る: ack の位置、uuid で冪等、承認のカードの id を決まった値に（A3）、札の置き直しの配線（強制終了の付け直し）、止め始めていたターンの中断の送り直し（T7）、待ち受けのポートが取れないときの扱い（§3 の 9）。**実装済み 2026-10-07**（下の「2b-6 の実装のメモ」） | 2b-5 の後 | M |
 | 2b-7 | 途中送信と委譲の付け直し: 札の途中送信の欄を埋める（`liveNotices`・`liveInstructions`・`agentTasks` の `steers`）、`execute` を分けて `agentTasks.adopt(taskId, turnPromise)`、S8 の除外 | 2b-6 の後 | M |
 
 bot の会話（O21）・圧縮のターン（`hooks.compact`）・Codex/agy（段階 3）は 2b では付け直さず、先送り（段階 1 の切り替え）か中断のまま。2b-4 の除外の一覧に入れ、`running` の `stoppers` と同じく待ちの表示に出す。
@@ -468,13 +468,33 @@ bot の会話（O21）・圧縮のターン（`hooks.compact`）・Codex/agy（�
   - 終わった子は、終わりの記録を処理し終えてから `release`（保持役の記録を捨てる）。付け直した後の保持役の子は 0 になる
 - テスト: `tests/unit/adopt-held.mjs`（6 判定）。サーバー A（`tests/lib/adopt-server.mjs` の場面 `handOffHeld`・`pauseHeld`）と B（同じデータ置き場・`AGENT_HOST_ADOPT_HOLDER=1`）を `startServer` の隔離で起こす。保持役は先にテストが `ensureHolder` で起こし（idle 20 秒）、終わりに `shutdown` して保持役と偽の CLI の pid が消えるまで見る。時点（stage2-server-state.md §6.1 の表）: **ツールの実行中**（`steps` の 6 秒のツールの途中。A は途中まで ack、B が再生と続きで流す）・**承認待ち**（B に承認が 1 つだけ出て、答えると続く）・**終わった直後**（`pauseHeld` で A が偽の CLI の出力を読まないうちに CLI が終わる。B が記録だけで締める）。どれも `turnEnd`・`completedAt`・使用量（`presentKey` の id）・本文・ツールの結果が 1 回だけ、`restart` の中断にならない。入れ替えなしの `held:` の承認と途中送信（`bg` のゲート）も通す。**残りの時点は 2b-6・2b-7**（準備中・渡った合図の前・裏の作業の待ち・委譲の子・中断の最中）
 - 2b-6 以降への注意:
-  - (1) **承認のカードの id はまだ乱数**（A3）。`cli.ask` の `requestId` は偽の CLI のツールの id なので、2b-6 は `askPermission` の呼び出しに決まった id を渡す形にして、S7（`inbox.settleAllWaiting`）の除外と、A の旧カードと B の新カードが同じ id になることをテストに足す（今は「B に承認が 1 つだけ」まで）
-  - (2) **札の置き直しは配線していない**。札を子に置くのは手を離すときだけなので、**A を強制終了する形（2e。`how: 'crash'`）では B が付け直せない**（札の無い子は読まれない）。ターンの始まりと、渡った合図・途中送信・`turnStartedAt` が変わるたびに `label` を置き直す配線が 2b-6 以降に要る（2b-4 の注意 (2) のまま）。札の置き直しを足すと、`readHolderSources` が拾う子が増える（札を持つ終わらない子を、付け直せなかったときに誰が `release` するかも決める。今は子が保持役に残る）
+  - (1) **2b-6 で済**。元の注意: 承認のカードの id はまだ乱数（A3）。`cli.ask` の `requestId` は偽の CLI のツールの id なので、2b-6 は `askPermission` の呼び出しに決まった id を渡す形にして、S7（`inbox.settleAllWaiting`）の除外と、A の旧カードと B の新カードが同じ id になることをテストに足す（今は「B に承認が 1 つだけ」まで）
+  - (2) **2b-6 で配線した（`touchCard`）**。元の注意: 札の置き直しは配線していない。札を子に置くのは手を離すときだけなので、**A を強制終了する形（2e。`how: 'crash'`）では B が付け直せない**（札の無い子は読まれない）。ターンの始まりと、渡った合図・途中送信・`turnStartedAt` が変わるたびに `label` を置き直す配線が 2b-6 以降に要る（2b-4 の注意 (2) のまま）。札の置き直しを足すと、`readHolderSources` が拾う子が増える（札を持つ終わらない子を、付け直せなかったときに誰が `release` するかも決める。今は子が保持役に残る）
   - (3) 保持役の接続は `holderLink` に 1 本。サーバーの起動で `connectHolder` した接続が、そのまま 2c の `spawn` にも使われる。**旧サーバーが `detach` した後に新サーバーが `hello` する順**にしないと取り合う（テストは A を止めてから B を起こす）。複数のターンを持つ旧サーバーは、全部の `detach` を済ませてから接続を閉じる
   - (4) 再生の `cli.ask` は旧サーバーが ack 済みの行なので、`makeEmit` の再生の道（`replay: true`）には届かず `driveHeld` が直に処理する（承認の画面は再生の道ではなく通常の `askPermission`）。2c の Claude は 2 回目の `initialize` の `pending_permission_requests` が呼び直すので、同じ「記録の答え済みを出し直さない」判定を（`control_response` の行から）作る
   - (5) 実時間の待ち（`steps` の `ms`）に頼った時点は、B の起動より前に CLI が終わっても通る形にしてある（再生と続きのどちらでも同じ結果）。ツールの途中で止めたいときは、`ms` を A の `handOffHeld` までより長くする（今は 6 秒）。時間に依らない合図が要るなら、ゲート（`AGENT_HOST_FAKE_GATE_DIR`）を `steps` に足す
   - (6) 偽の CLI に渡す env は `process.env` から `AGENT_HOST_TOKEN` と `ELECTRON_RUN_AS_NODE` を外した全部。`held:` の台本の中の `ply_context` などの口（`agentRuntime` 等）は CLI に渡していない（HTTP の口は 2b-6 以降。`runArgs` に `hooksRuntime`・`browserRuntime`・`computerRuntime` を入れていないのは 2b-4 のまま）
   - (7) 台本 `held:` は保持役を起こす（detached・Windows では残る）ので、テストは終わりに必ず `shutdown` して pid が消えるのを見る。`tests/unit/adopt-held.mjs` の `finally` を型にする
+
+**2b-6 の実装のメモ（2026-10-07。実装済み。2b-7 以降が使うときの注意を含む）**
+
+- **承認のカードの id（A3）**: `core/approval-id.mjs`。ツールの id（`toolUseID`。fake の held は CLI の `requestId`）があれば `perm-<sha256(会話の id \0 ツールの id) の先頭 32 桁>`、無ければ乱数のまま（設定の変更・ply_delegate の確認・内蔵ブラウザーのサイト確認など）。委譲の子の承認を祖先へ中継する複製も、祖先の会話の id との組から同じ規則で決まる。**同じプロセスで同じ（会話・ツール）の 2 回目は乱数**（覚える数に上限 4096）: カードが上書きされず、通知の一覧の行（dedupeKey = `wait:<id>`）が重複として落ちない。旧サーバーと新サーバーは別プロセスなので、付け直しの 1 回目は同じ id になる
+- **承認の id を変える影響（洗い出した結果）**: 画面（`web/client.mjs`・`pendingPerms`・`permissionSettled`・`running` の permissions）・通知の一覧（`wait:<id>`。`core/notification-sources.mjs`）・スマホの通知（`core/notify/notifier.mjs` の `approval`・`approvalResolved`）・bot（`onPermission`）・承認の中継（`resolvePermission` が id で引く）はどれも id を不透明な文字列として使い、UUID の形を仮定していない。変えたのは生成の 1 か所（`askPermission`）だけ。既存のテスト（`server-permission-settled`・`approval-card`・`relay`・`notification-inbox*`・`remote-*` など）は変更なしで通った
+- **S7**: `inbox.settleAllWaiting('cancelled', { except })`（`core/notifications.mjs`・`core/db.mjs` の `resolveAllWaiting`）。除外するのは付け直すターンの札の `waits`（出している承認のカードの id。`core/turn-card.mjs` に足した欄。中継の複製・設定の変更の承認・ホストの子の承認は入れない）。**止め始めていたターンは外さない**（承認を出し直さず、新しいサーバーは中断を送り直すだけなので、行が残らないように）。付け直しが終わったとき（`adoptTurn` の `finally`）に、札の `waits` の行のうち決着していないものを `cancelled` で畳む（答えが旧サーバーの手を離す前後で記録に入って出し直されなかった承認・付け直しをあきらめたターンの分。決着済みの行には何もしない）。**残る隙**: 承認を出した直後（数 ms）にサーバーが強制終了されると札にその id が無く、行が決着してしまう。新しい承認の行は同じ dedupeKey で載らない（カードと通知はそのまま出る。一覧の行だけ欠ける）
+- **札の置き直しの配線**: サーバーの `touchCard(turn)`（`core/server.mjs`）。保持役に子を載せるバックエンドが `turn.control.holder = { label(card) }` を渡し（fake の held は `driveHeld`。付け直しも起こした直後も同じ道）、`turn.control.touch()` で最初の 1 回を置く。以後、札の中身が変わるたびにサーバーが `touchCard` を呼ぶ: 渡った合図（`onPromptDelivered`）・承認の出入り（`askPermission` の登録と決着）・中断の始まり（`turn.ac` の abort の listener。理由は abort の前に付くので、同じ tick の置き直しが拾う）・途中送信の添付（`steeredAttachments`）・git の撮影（`turn.git`・`gitLate`）。同じ tick の呼び出しは `setImmediate` で 1 回にまとめる。バックエンドを呼ぶ前・手を離した後・終わった後は置かない。札は `takeCard(ctx)`（`handOffTurn` と共通。口のトークン・`waits`・`stopping`（`info.stopping` か `ac.signal.aborted`）を足す）。保持役の `label` は子に触れる前の接続（attach 前）でも通るので、付け直した新しいサーバーも同じ口で置き直す。`turnStartedAt` は札の `startedAtMs` が固定なので置き直しは要らない（ターンの始まりで札が子に載っていればよい）
+- **付け直した後の `holderSource.write`**: attach の前の書き込みは保持役が捨てる（subscribe していない親は子に触れない）ので、`holderSource` が attach の後まで溜めて順に送る（付け直す側が最初に出す中断の送り直し）
+- **止め始めていたターンの中断の送り直し（T7）**: 札の `abort`（`reason`・`stopping`）から、`restoreTurn` が `abortReason`・`info.stopping` を戻し、`adoptTurn` が `backend.adoptTurn` の前に `turn.ac.abort()` と `activity: stopping` を出す。fake の held は `signal` の abort で `interrupt` を子へ書く（旧サーバーの中断が子に届いていても重ねて送って害は無い）。**記録の再生は中断でも止めない**（`replayRecord` の `signal` を外した。実行中のスナップショットは印から全部作る）。理由は元のまま（`interrupted.reason`）。旧サーバーが控えていた「止めたもの」（`turn.stops`）は札に無く、新しいサーバーが中断の時点に抱えているものから取り直す（承認待ちは再生で出し直した分だけ）
+- **待ち受けのポート（§3 の 9）**: 付け直すターンがあるときは、固定のポートが `EADDRINUSE`・`EACCES` でも空きポートへ移らず 200 ms ごとに取り直す（上限 `AGENT_HOST_ADOPT_PORT_WAIT_MS`。既定 10 秒）。上限を過ぎたら付け直しをあきらめ、これまでどおり空きポートへ移り、付け直すターンは `adoptTurn` の `abandon` で `restart` の中断にする（保持役の子はそのまま残る）。付け直すターンが無いときの動きは変えていない
+- **実行中のスナップショット**: ack の位置・uuid の冪等は 2b-4・2b-5 の `replayRecord` のまま。2b-6 は、B の `loadSession`（live）が A と同じ（承認・ツールと本文の出来事・このターンの人の発言）ことをテストで固めた。**直した不具合 1: `restoreTurn` が会話の記録の `contextSession`（`store.get` が返す記録そのもの）をそのまま `contextRecord` に持っていた**ので、付け直したターンの途中の変更（hooks の漏れの行・`report`）が `saveContext` の「変わっていない」の判定（`isDeepStrictEqual`）で DB に書かれなかった。`structuredClone` にした。**hooks の漏れの行（2b-4 の注意 (5)）**: 会話に保存済みの、このターンの開始以後の漏れの行を鍵（name・event・source）ごとに数え、再生が同じ行を出すたびに 1 つずつ消費して重ねない（`turn.savedHookLeaks`）
+- テスト: `tests/unit/adopt-held.mjs`（13 判定。A を `kill`（SIGKILL）する道具を `tests/lib/server.mjs` に、場面 `handOffNow`・`muteHeld` を `tests/lib/adopt-server.mjs` に足した）、`tests/unit/approval-id.mjs`（4 判定）、`turn-card`（waits の往復）、`adopt-finished`（漏れの行）。強制終了の形は、ターンの始まりと札の中身が変わるたびの置き直しだけで B が付け直す（承認待ち・ツールの実行中・裏の作業の待ち・中断の最中の 4 つ）。通知の一覧の行が同じまま 1 つ・B の `loadSession` が A と同じ・固定のポートが 1.5 秒塞がっていても同じポートで付け直す・上限まで塞がっていたら restart・準備中（外部の MCP が答えない）は手を離さず（`null`）強制終了で restart
+- 2b-7 以降への注意:
+  - (1) **スマホの通知は id が同じことでしか見ていない**（push の送り先は無いので、`notifier.approval`・`approvalResolved` が同じ id で呼ばれることまで）。実機の端末では、新しいサーバーの `approval` が同じ id の通知を置き換えるかを 2d の実機の確かめで見る
+  - (2) **札の置き直しは `control.holder` を渡すバックエンドだけ**（今は fake の held）。2c の Claude は、`spawn` で子を起こした直後に同じ口を渡し、`control.touch()` を呼ぶこと。札の中身が増える段（2b-7 の `steers`・`liveNotices` など）は、変わる所で `touchCard(turn)` を呼ぶ（`ctx.steers` を埋めるのと同じ場所）
+  - (3) 札を持つ終わらない子を付け直せなかったときの `release` は誰もしない（今は保持役に残り、次の起動でも読まれて同じ理由で断られる）。2d の「付け直せなかった子」の扱いで決める
+  - (4) 付け直しをあきらめた（ポート）ターンは、子が保持役で走り続ける（記録は残る）。2d で `kill` するか決める
+  - (5) 承認を出した直後の強制終了で、通知の一覧の行が欠ける隙がある（上の S7）。2d で気になるなら、`permissionOpened` を札の置き直しの後にする
+  - (6) fake の履歴はプロセスのメモリなので、B の実行中のスナップショットの `messages` に前のターンまでの発言は無い（Claude は transcript から戻る）。テストは「このターンの人の発言」だけを比べる
+  - (7) テストの道具: 保持役の接続は A が落ちた後に B が `hello` するだけで取り合わない。強制終了のテストは、札の置き直しが保持役へ届くのを 600 ms 待つ（`touchCard` は同じ tick にまとめて置く）。A の中断を子に届かせない形は `muteHeld`
 
 ### 6.1 テストの書き方
 
@@ -500,13 +520,13 @@ run.assertOnce(sessionId);                            // turnEnd・completedAt�
 
 | 台本 | 引き継ぐ時点 | 確かめること | 段 |
 |---|---|---|---|
-| 準備中 | `backendInvoked` の前（`context:` の外部 MCP の接続を遅らせる） | 付け直さず `restart`（2d の後は「待ってから引き継ぐ」） | 2b-6（`handOffTurn` が `null` を返し、付け直さず restart になること。引き継ぎでの扱いは 2d） |
-| 承認待ち | `ask` の最中 | B に承認が 1 つ（同じ id）、答えると続く。スマホの通知が 2 通にならない | 2b-5 は「B に承認が 1 つ・答えると続く」まで（済）。同じ id・通知は 2b-6 |
-| ツールの実行中 | `steps:` の `ms` の途中 | ツールの結果と本文が欠けず重ならない（uuid）。`loadSession` のスナップショットが A と同じ | 2b-5 は「結果と本文が 1 回ずつ・turnEnd・completedAt・使用量が 1 回」まで（済）。スナップショットが A と同じは 2b-6 |
+| 準備中 | `backendInvoked` の前（`context:` の外部 MCP の接続を遅らせる） | 付け直さず `restart`（2d の後は「待ってから引き継ぐ」） | 2b-6（**済**。`handOffTurn` が `null` を返し、強制終了すると付け直さず restart になること。引き継ぎでの扱いは 2d） |
+| 承認待ち | `ask` の最中 | B に承認が 1 つ（同じ id）、答えると続く。スマホの通知が 2 通にならない | 2b-5 は「B に承認が 1 つ・答えると続く」まで。2b-6 で済（同じ id・通知の一覧の行が 1 つのまま。手を離す形と強制終了の形の両方。スマホの通知は id が同じことで見る） |
+| ツールの実行中 | `steps:` の `ms` の途中 | ツールの結果と本文が欠けず重ならない（uuid）。`loadSession` のスナップショットが A と同じ | 2b-5 は「結果と本文が 1 回ずつ・turnEnd・completedAt・使用量が 1 回」まで。2b-6 で済（強制終了の形も。スナップショットが A と同じは承認待ちの時点で見る） |
 | 渡った合図の前 | `HOLD_CONFIRM:<名前>` の途中送信を受けた後、合図の前 | 合図が B に届き、送信待ちが `sent`。`liveNotices` の完了通知が二重にも欠けにもならない | 2b-7 |
-| 裏の作業の待ち | `bg <n> gate:<名前>`（phase: waiting） | B で `phase`・`background` が戻り、ゲートを開くと終わる | 2b-6 |
+| 裏の作業の待ち | `bg <n> gate:<名前>`（phase: waiting） | B で `phase`・`background` が戻り、ゲートを開くと終わる | 2b-6（**済**。強制終了の形。`phase`・`background` は流れの出来事ではないので `running` の turns で見る） |
 | 委譲の子 | 子が `slow` の最中に A を落とす | 子のタスクが `interrupted` にならず、子が終わると依頼元へ完了通知が 1 回 | 2b-7 |
-| 中断の最中 | `slow` に中断を送った直後 | B で中断が送り直され、`interrupted.reason` が元の理由 | 2b-6 |
+| 中断の最中 | `slow` に中断を送った直後 | B で中断が送り直され、`interrupted.reason` が元の理由 | 2b-6（**済**。A の中断が子に届かないまま落ちる形を `muteHeld` で作り、理由は `update`） |
 | 終わった直後 | 偽の CLI が `exit` した後、A が締める前 | B が再生だけで締める（2b-4 の形）。記録が 1 回 | 2b-5（済。`pauseHeld` で A の読みを止めて作る） |
 
 fake の偽の CLI の出来事の行は fake の正規化（今の `emit` の出来事の形）をそのまま運ぶので、保持役の記録と再生の確かめは正規化を含まない。Claude の正規化を含む確かめは 2c の fake の CLI（stream-json を話す偽物）で行う。

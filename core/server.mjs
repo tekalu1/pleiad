@@ -113,6 +113,7 @@ import { readBuildInfo } from './handover-check.mjs';
 import { markRuntimeInUse } from './runtime-use.mjs';
 import { cardOf, restoreFields, promptHash, CARD_MAX_BYTES } from './turn-card.mjs';
 import { readAdoptSources, readHolderSources, ADOPT_TURN_MARK } from './adopt.mjs';
+import { createApprovalIds } from './approval-id.mjs';
 import { parentPortScreencast, createScreencastHub, screencastCommand } from './browser-screencast.mjs';
 import { createChromeConnection } from './chrome/connection.mjs';
 import { chromeHomes } from './chrome/locate.mjs';
@@ -2103,6 +2104,22 @@ function clientReason(args) {
   return reasonOf(args?.reason);
 }
 
+/** hooks の漏れの行（contextRecord.hooks.leaks・unknownNative）の同一判定の鍵 */
+const hookLeakKey = ({ name, event, source }) => `${name}\0${event}\0${source ?? ''}`;
+/** 会話に保存済みの漏れの行のうち、このターンの開始以後のものの数（付け直しの再生が重ねないため。鍵ごと） */
+function savedHookLeaks(hooksRecord, startedAtMs) {
+  const count = list => {
+    const map = new Map();
+    for (const row of list ?? []) {
+      if (!(Date.parse(row?.at) >= startedAtMs)) continue;
+      const key = hookLeakKey(row);
+      map.set(key, (map.get(key) ?? 0) + 1);
+    }
+    return map;
+  };
+  return { leaks: count(hooksRecord?.leaks), unknownNative: count(hooksRecord?.unknownNative) };
+}
+
 /**
  * ターンに属するイベントを流す。ついでにそのターンの文脈を拾う。
  * 並行して複数のターンが走るので、文脈はグローバルではなくターンごとに持つ。
@@ -2166,8 +2183,10 @@ function makeEmit(turn) {
       // Claude の通知には出どころが無い（hook_name は「イベント:matcher」）。止めたはずの定義と同じイベント・matcher のものだけ漏れとし、
       // ほかは出どころの分からないネイティブの発火（管理者の hooks は止めない契約なので、それを漏れと言わない）
       const { leak, unknownNative } = classifyNativeRun({ record: hooksRecord, backend: turn.backend.id, pleiad, name, event: hookEvent, leak: event.leak });
-      if (leak && phase === 'started' && hooksRecord.leaks.length < HOOK_LEAKS_MAX) hooksRecord.leaks.push({ name, event: hookEvent, ...(source ? { source } : {}), at: new Date().toISOString() });
-      if (unknownNative && phase === 'started' && (hooksRecord.unknownNative ??= []).length < HOOK_LEAKS_MAX) hooksRecord.unknownNative.push({ name, event: hookEvent, at: new Date().toISOString() });
+      // 付け直しの再生（印から ack まで）は、ターンの途中で保存されていた漏れの行と重なる。同じ行を 1 つずつ使い切ってから積む（restoreTurn の savedHookLeaks）
+      const saved = (map, key) => replay && map?.get(key) > 0 && map.set(key, map.get(key) - 1);
+      if (leak && phase === 'started' && !saved(turn.savedHookLeaks?.leaks, hookLeakKey({ name, event: hookEvent, source })) && hooksRecord.leaks.length < HOOK_LEAKS_MAX) hooksRecord.leaks.push({ name, event: hookEvent, ...(source ? { source } : {}), at: new Date().toISOString() });
+      if (unknownNative && phase === 'started' && !saved(turn.savedHookLeaks?.unknownNative, hookLeakKey({ name, event: hookEvent })) && (hooksRecord.unknownNative ??= []).length < HOOK_LEAKS_MAX) hooksRecord.unknownNative.push({ name, event: hookEvent, at: new Date().toISOString() });
       // 多いときは新しいほうを残す（ターンの最後の Stop などが記録から落ちないように）
       turn.hookRuns.push({ phase, hookId, name, event: hookEvent, ...(outcome ? { outcome } : {}), ...(Number.isInteger(exitCode) ? { exitCode } : {}),
         ...(pleiad ? { pleiad: true, ...(id ? { id } : {}) } : {}), ...(source ? { source } : {}), ...(leak ? { leak: true } : {}), ...(unknownNative ? { unknownNative: true } : {}),
@@ -4190,6 +4209,7 @@ async function delegationRoot(sessionId) {
  * 人間は最上位の会話に居るので、1段だけ上げても誰も見ない場所に出るだけになる。
  * どれか1つで答えれば全部が決着し、残りは消える。
  */
+const approvalIds = createApprovalIds();
 const askPermission = async ({ toolName, input, sessionId, toolUseID, title, signal, canAlways, kind, questions, locale, browserSite, computerApp, settingChange, detached = false }) => {
   const { chain: ancestors, remote: remoteRoot } = sessionId ? await delegationRoot(sessionId) : { chain: [], remote: null };
   // 中継先の見出しは「どの会話の承認か」。委譲したときの info.title を使う
@@ -4225,8 +4245,9 @@ const askPermission = async ({ toolName, input, sessionId, toolUseID, title, sig
     };
     // 祖先ごとに別の id の複製を作り、どれも同じ settle を指す。
     // web は「id ごとに1つの会話」の前提のまま動き、消せば勝手に片付く
-    const cards = [{ id: crypto.randomUUID(), payload, relay: false }, ...ancestors.map((ancestor) => ({
-      id: crypto.randomUUID(),
+    // 承認の id は、ツールの id があれば会話の id との組から決まる値（付け直しで旧サーバーと同じ id になる。core/approval-id.mjs）
+    const cards = [{ id: approvalIds.next(sessionId, toolUseID), payload, relay: false }, ...ancestors.map((ancestor) => ({
+      id: approvalIds.next(ancestor, toolUseID),
       relay: true,
       // Tool-wide grants stay in the child. Browser and computer grants show the specific agent
       // and origin / app, so the same choices are available to ancestors.
@@ -4240,6 +4261,7 @@ const askPermission = async ({ toolName, input, sessionId, toolUseID, title, sig
       let found = false;
       for (const card of cards) if (runtime.waiting.delete(card.id)) found = true;
       if (!found) return;
+      touchCard(runtime.turns.get(sessionId));
       // 片付いたことを画面へ知らせる。本来のカードも、祖先の会話の中継の複製も、ほかの窓・リモートの画面に残った写しも、これで畳める
       // （running の permissions から消えるだけでは、開いたままのカードは変わらない）。複製は id ごと・会話ごとに 1 つずつ
       for (const card of cards) emitGlobal({ type: 'permissionSettled', id: card.id, sessionId: card.payload.sessionId ?? null, allow: answer?.allow === true, reason: answer?.messageKey ?? null });
@@ -4256,6 +4278,7 @@ const askPermission = async ({ toolName, input, sessionId, toolUseID, title, sig
     };
 
     for (const card of cards) runtime.waiting.set(card.id, { settle, payload: card.payload, askedAt: new Date().toISOString(), relay: card.relay, notified: false, detached });
+    touchCard(runtime.turns.get(sessionId));   // 札の waits（出している承認の id）が変わった
     // 承認・質問は端末へ中継して、そこで答えられる。設定の変更の承認（受領証つきで、決着が別の台帳へ届く）など、ターンを止めない承認（detached）は、
     // 端末の画面と AI に「ホストの画面で答えてください」と知らせるだけ（答えるボタンは無く、口からの答えも受けない。docs/remote.md §4.5）
     if (remoteRoot && remoteRoot.taskId) {
@@ -4402,6 +4425,7 @@ const outbox = createMessageQueue({
     noteRelayHops(sessionId, item.args, { steered: true });
     if (item.args.attachments?.length) {
       (turn.steeredAttachments ??= []).push({ key: item.id, prompt: item.args.prompt });
+      touchCard(turn);
       await presentAttachments(sessionId, item.args.attachments, makeEmit({ ...turn, presentKey: item.id }));
     }
   },
@@ -4417,7 +4441,9 @@ await outbox.recover({ adopted: new Map(adopting.map(a => [a.ctx.sessionId, new 
   if (recovered.length) console.log(`  前の起動で終わらなかったターン ${recovered.length} 件を中断として残した`);
 }
 // 前の起動で待っていた承認・質問はメモリにしか無く、再起動で消えた。通知の一覧のあなた待ちも決着させる（ADR 0149）
-try { inbox.settleAllWaiting('cancelled'); } catch (e) { console.error('  通知の一覧: あなた待ちを決着させられなかった:', String(e?.message ?? e)); }
+// 付け直すターンの出している承認（札の waits。止め始めていたターンは承認を出し直さないので外さない）の行は残す。承認の id が決まった値（core/approval-id.mjs）なので、
+// 付け直しで出し直す承認が同じ行になる（決着の行が dedupeKey で居座って新しい行が載らない、を防ぐ）
+try { inbox.settleAllWaiting('cancelled', { except: adopting.flatMap(a => a.ctx.card.stopping ? [] : a.ctx.card.waits) }); } catch (e) { console.error('  通知の一覧: あなた待ちを決着させられなかった:', String(e?.message ?? e)); }
 // 親が走っている・裏の作業が残っている・送信待ちがあるときは完了通知を送らない（docs/agent-delegation.md「完了通知」）
 const noticeBlocked = async owner => sessionBusy(owner) || awaitedBackground(owner) || (await outbox.list(owner)).some(m => !['sent', 'cancelled'].includes(m.status));
 
@@ -5008,7 +5034,7 @@ async function prepareTurn(args, hooks, compactionRevision) {
     userSentAt: toMs(args.at) ?? Date.now(),
     backend,
     agentLocale,
-    control: { handle: null, onReady: () => {
+    control: { handle: null, touch: () => touchCard(turn), onReady: () => {
       outbox.kick(sessionId).catch(() => {});
       agentTasks?.sendQueued(sessionId).catch(() => {});
     } },
@@ -5045,7 +5071,7 @@ async function prepareTurn(args, hooks, compactionRevision) {
   };
   // 止めた瞬間に、このターンが抱えていたもの（裏の作業・承認待ち）を控える。中断で終わったら会話の「止めたもの」に残す（endTurn）。
   // 承認待ちの却下（settleAll）より先に走るよう、ほかの abort の受け手より前に付ける
-  turn.ac.signal.addEventListener('abort', () => { turn.stops ??= captureStops(turn); }, { once: true });
+  turn.ac.signal.addEventListener('abort', () => { turn.stops ??= captureStops(turn); touchCard(turn); }, { once: true });
   if (hooks.signal?.aborted) turn.ac.abort();
   const abortFromTask = () => turn.ac.abort();
   hooks.signal?.addEventListener('abort', abortFromTask, { once: true });
@@ -5121,6 +5147,7 @@ async function prepareTurn(args, hooks, compactionRevision) {
 function bindTurnContext(ctx) {
   const { args, turn, emit } = ctx;
   ctx.onPromptDelivered = () => {
+    touchCard(turn);   // 札の渡った合図の印（delivery）が変わりうる
     if (ctx.interruption && !ctx.interruptionTaken) {
       ctx.interruptionTaken = true;
       store.takeStops(ctx.sessionId, ctx.interruption.keys, { dropped: ctx.interruption.dropped }).catch(e => console.error('  中断で止めたものを伝えた記録に失敗:', String(e?.message ?? e)));
@@ -5271,12 +5298,13 @@ async function launchTurn(ctx) {
     turn.gitSetup = gitActivity.begin({ cwd }).then(g => {
       if (turn.gitLate) return null;
       turn.git = g;
+      touchCard(turn);
       return g && turn.info.sessionId ? gitActivity.attach(g, turn.info.sessionId) : null;
     }).catch(() => {});
     let began = false;
     await Promise.race([turn.gitSetup.then(() => { began = true; }), new Promise(resolve => setTimeout(resolve, GIT_BEGIN_WAIT_MS).unref?.())]);
     // 間に合わなかった。エージェントが動き出した後の撮影は基準にならないので、このターンは撮らない
-    if (!began) turn.gitLate = true;
+    if (!began) { turn.gitLate = true; touchCard(turn); }
   }
   ctx.backendInvoked = true;
   return hooks.compact && backend.compact
@@ -5388,6 +5416,36 @@ async function releaseTurn(sessionId, { adopted = false } = {}) {
 
 // ---- 付け直し（無停止の更新 2b-4。docs/zero-downtime-update/stage2-server-state.md §4.2・§5）----------------------
 
+/** 出している承認のカード（中継の複製・設定の変更の承認・ホストへ任せた子の承認を除く）の id。札の waits */
+const openWaitIds = sessionId => !sessionId ? [] : [...runtime.waiting]
+  .filter(([, w]) => !w.relay && !w.detached && !w.remote && w.payload.sessionId === sessionId).map(([id]) => id);
+
+/** ターンの札（cardOf の { card, secrets }）。会話の口のトークンと出している承認の id を足す。作れなければ投げる */
+function takeCard(ctx) {
+  const { turn } = ctx;
+  const entry = agentConnections.get(turn.key);
+  return cardOf({ ...ctx, connectionTokens: entry ? connectionTokens(entry) : null, waits: openWaitIds(turn.info.sessionId),
+    stopping: Boolean(turn.info.stopping || turn.ac.signal.aborted) });
+}
+
+/**
+ * 札の置き直し（無停止の更新 2b-6）。保持役に子を載せるバックエンドは、ターンの control に holder: { label(card) } を渡す（置き直す口）。
+ * 札の中身が変わるたび（ターンの始まり・渡った合図・承認の出入り・中断の始まり・途中送信の添付・git の撮影）にここへ来て、保持役の子の札（label）を
+ * 置き直す。サーバーが強制終了された（2e）とき、新しいサーバーが付け直すのは、この札を読んで（旧サーバーが手を離す handOffTurn を経ない）。
+ * 同じ tick の呼び出しは 1 回にまとめる（変わった後の値を置く）。バックエンドを呼ぶ前・会話の id が決まる前・手を離した後・終わった後は置かない
+ */
+function touchCard(turn) {
+  if (!turn?.control?.holder || turn.cardPending || turn.handedOff || turn.ended) return;
+  turn.cardPending = true;
+  setImmediate(() => {
+    turn.cardPending = false;
+    const ctx = turnContexts.get(turn);
+    if (!ctx || turn.handedOff || turn.ended || !turn.info.sessionId || !ctx.backendInvoked) return;
+    try { turn.control.holder.label(takeCard(ctx).card); }
+    catch (e) { console.error(`  札を保持役に置き直せない（${turn.info.sessionId}）:`, String(e?.message ?? e)); }
+  });
+}
+
 /**
  * 旧サーバーの口（2d が引き継ぎで呼ぶ）: 走っているターンを付け直しに渡し、保持役に置く札（cardOf の { card, secrets }）を返す。
  * 渡したターンは、このサーバーでは締めず（driveTurn。X1）出来事も流さない（makeEmit）。detach の後に query を閉じるとバックエンドは
@@ -5398,9 +5456,8 @@ function handOffTurn(key) {
   const turn = runtime.turns.get(key);
   const ctx = turn && turnContexts.get(turn);
   if (!ctx || turn.ended || turn.handedOff || !turn.info.sessionId || !ctx.backendInvoked) return null;
-  const entry = agentConnections.get(turn.key);
   let taken;
-  try { taken = cardOf({ ...ctx, connectionTokens: entry ? connectionTokens(entry) : null }); }
+  try { taken = takeCard(ctx); }
   catch (e) { console.error(`  ターンを付け直しに渡せない（${turn.info.sessionId}）:`, String(e?.message ?? e)); return null; }
   turn.handedOff = true;
   return taken;
@@ -5446,7 +5503,8 @@ async function restoreTurn(card, source) {
 
   const cwd = meta.cwd ?? fields.cwd;
   const agentLocale = fields.agentLocale;
-  const contextRecord = meta.contextSession ?? null;
+  // 会話の記録の写し（store.get は記録そのものを返す。そのまま持つと、ターンの途中の変更が saveContext の「変わっていない」の判定で書かれない）
+  const contextRecord = structuredClone(meta.contextSession ?? null);
   const turn = {
     stream: {
       ...structuredClone(baseline),
@@ -5461,7 +5519,7 @@ async function restoreTurn(card, source) {
     userSentAt: fields.userSentAt ?? startedAtMs,
     backend,
     agentLocale,
-    control: { handle: null, onReady: () => {
+    control: { handle: null, touch: () => touchCard(turn), onReady: () => {
       outbox.kick(sessionId).catch(() => {});
       agentTasks?.sendQueued(sessionId).catch(() => {});
     } },
@@ -5500,10 +5558,13 @@ async function restoreTurn(card, source) {
       background: [],
     },
   };
+  // 止め始めていたターン（T7）。中断をもう一度送るのは adoptTurn
+  if (fields.stopping) turn.info.stopping = true;
+  turn.savedHookLeaks = savedHookLeaks(contextRecord?.hooks, startedAtMs);
   // 始まりの撮影（T33）。撮れていれば終わりの撮影（closeTurn）に渡す
   if (fields.git?.activity) { turn.git = fields.git.activity; turn.gitSetup = Promise.resolve(fields.git.activity); }
   if (fields.git?.late) turn.gitLate = true;
-  turn.ac.signal.addEventListener('abort', () => { turn.stops ??= captureStops(turn); }, { once: true });
+  turn.ac.signal.addEventListener('abort', () => { turn.stops ??= captureStops(turn); touchCard(turn); }, { once: true });
   turn.worktreeId = (await worktreeHost.worktrees.byPath(cwd).catch(() => null))?.id ?? null;
   turn.gitCalls = createCallTracker();
   const emit = makeEmit(turn);
@@ -5566,7 +5627,7 @@ async function restoreTurn(card, source) {
  * 会話の口は札のトークンで開き直す（restoreConnection。待ち受けの後でないと開けない）。記録は backend.adoptTurn が流す
  * （印から ack までは再生。makeEmit の replay）。付け直せなかったら、そのターンを restart の中断で締める（起動時の後片付けと同じ印）
  */
-async function adoptTurn(card, source, ctx = null) {
+async function adoptTurn(card, source, ctx = null, { abandon = null } = {}) {
   ctx ??= await restoreTurn(card, source);
   const { turn, sessionId, backend, agentLocale, emit } = ctx;
   const releaseUpdateGate = updateGate.enter();
@@ -5583,6 +5644,8 @@ async function adoptTurn(card, source, ctx = null) {
         if (turn.info.phase === 'waiting') outbox.kick(sessionId).catch(() => {});
       };
       try {
+        // 待ち受けのポートが取れず付け直しをあきらめた（起動の待ち受け。MCP の口の URL が変わるので付け直せない。§3 の 9）
+        if (abandon) throw new Error(abandon);
         restoreConnection({ key: turn.key, sessionId, locale: agentLocale, tokens: ctx.card.connectionTokens, computerBackend: backend.id });
         broadcastRunning();
         syncRunningPoll();
@@ -5601,6 +5664,12 @@ async function adoptTurn(card, source, ctx = null) {
           control: turn.control,
           locale: agentLocale,
         };
+        // 止め始めていたターン（T7）は、中断をもう一度送る（旧サーバーの中断が子に届いたか分からない。届いていても重ねて送って害は無い）。理由は札のまま。
+        // 記録の再生は止めない（実行中のスナップショットは印から全部作る）。子への書き込みは付け直した後に出る（core/adopt.mjs の holderSource）
+        if (ctx.card.stopping) {
+          turn.ac.abort();
+          emit({ type: 'activity', state: 'stopping' });
+        }
         const result = await backend.adoptTurn(ctx.runArgs);
         if (replayed) settle();
         console.log(`  ターンを付け直した（${sessionId}）: 記録 ${source.state.id}・ack ${source.acked ?? source.state.acked}`);
@@ -5614,6 +5683,9 @@ async function adoptTurn(card, source, ctx = null) {
     });
   } finally {
     releaseUpdateGate();
+    // 札の承認のうち、出し直されず決着の行も付かなかったもの（答えが旧サーバーの手を離す前後で記録に入った・付け直しをあきらめた）の通知の一覧の行を畳む。
+    // 決着済みの行には何もしない（出し直して答えた承認は、その答えで決着している）
+    for (const id of ctx.card.waits) void inboxSources.permissionSettled({ id, answer: { messageKey: 'turnEnded' } });
     await releaseTurn(sessionId, { adopted: true });
   }
 }
@@ -7408,14 +7480,28 @@ async function announce() {
 // Windows は Hyper-V / WSL が TCP ポート範囲を予約するため、固定ポートが EACCES で落ちることがある。
 // `netsh interface ipv4 show excludedportrange protocol=tcp` で確認できる。範囲は再起動で動く。
 // 落ちるくらいなら空きポートへ逃がし、実際の URL を出す。
-server.once("error", (err) => {
+// 付け直すターンがあるときは、固定のポートが塞がっていても空きポートへ移らず取れるまで待つ（上限 ADOPT_PORT_WAIT_MS。旧サーバーがポートを手放すのを待つ）:
+// 付け直したターンの MCP の口の URL はポートを含み、CLI が持っている URL は変えられない（stage2-server-state.md §3 の 9）。上限を過ぎたら付け直しをあきらめ
+// （そのターンは restart の中断。adoptTurn の abandon）、これまでどおり空きポートへ移る
+const ADOPT_PORT_WAIT_MS = Number(process.env.AGENT_HOST_ADOPT_PORT_WAIT_MS) >= 0 ? Number(process.env.AGENT_HOST_ADOPT_PORT_WAIT_MS) : 10_000;
+const ADOPT_PORT_RETRY_MS = 200;
+let portDeadline = 0, portWaiting = false, adoptAbandoned = null;
+const onListenError = (err) => {
   if (err.code !== "EACCES" && err.code !== "EADDRINUSE") throw err;
-  console.log(`  port ${PORT} は使えない (${err.code})。空きポートに切り替える。`);
+  if (adopting.length && Date.now() < portDeadline) {
+    if (!portWaiting) console.log(`  port ${PORT} は使えない (${err.code})。付け直すターンがあるので空くまで待つ（${ADOPT_PORT_WAIT_MS / 1000} 秒まで）。`);
+    portWaiting = true;
+    setTimeout(() => { server.once("error", onListenError); server.listen(PORT, HOST); }, ADOPT_PORT_RETRY_MS);
+    return;
+  }
+  if (adopting.length) adoptAbandoned = `port ${PORT} is not available (${err.code})`;
+  console.log(`  port ${PORT} は使えない (${err.code})。空きポートに切り替える。${adopting.length ? '付け直すターンは中断として残す。' : ''}`);
   // listen(port, host, cb) の cb は once("listening") として登録される。
   // 失敗しても外れないので、外してから張り直さないと起動メッセージが二重に出る。
   server.removeListener("listening", announce);
   server.listen(0, HOST, announce);
-});
+};
+server.once("error", onListenError);
 // 設定とバックエンドが揃った後に、前の起動の放置圧縮の予約を戻す
 // 検索の写しは、起動の混み合いが落ち着いてから裏で作る（探されたときは待たずに読めた分で答える）
 setTimeout(() => sessionSearch.start().catch(() => {}), 3000).unref();
@@ -7426,10 +7512,11 @@ for (const [id, meta] of Object.entries(await store.getAll())) {
 }
 // Restored sends can start a turn and use localOrigin(), which needs a bound port.
 const listening = new Promise(resolve => server.once('listening', resolve));
+portDeadline = Date.now() + ADOPT_PORT_WAIT_MS;
 server.listen(PORT, HOST, announce);
 await listening;
 // 登録しておいた付け直すターンの口を開き直し、記録を流して締める（待たない。ターンが終わるまで続く）
-for (const { card, source, ctx } of adopting) void adoptTurn(card, source, ctx).catch(err => console.error('  ターンの付け直しに失敗:', String(err?.message ?? err)));
+for (const { card, source, ctx } of adopting) void adoptTurn(card, source, ctx, { abandon: adoptAbandoned }).catch(err => console.error('  ターンの付け直しに失敗:', String(err?.message ?? err)));
 await schedule.restore().catch(err => console.error('  再開の予定を戻せませんでした:', String(err?.message ?? err)));
 // 解除時刻を過ぎた上限の会話は、予定の行が無くても再開する（Pleiad を閉じている間に過ぎた分）
 await recoverLimitResumes().catch(err => console.error('  上限の会話を見直せませんでした:', String(err?.message ?? err)));

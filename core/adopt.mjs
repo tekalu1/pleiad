@@ -59,6 +59,9 @@ export function holderSource(client, state, { spawned = false } = {}) {
   const id = String(state.id);
   const queue = [];
   let wake = null, stopped = false;
+  // attach の前の write は保持役が捨てる（subscribe していない親は子に触れない）。attach の後に順に送る（付け直す側が最初に出す中断など）
+  let attached = spawned;
+  const early = [];
   const poke = () => { const w = wake; wake = null; w?.(); };
   const onOut = frame => { if (frame.id === id && !frame.redelivered) { queue.push({ seq: frame.seq, line: frame.line }); poke(); } };
   const onExit = frame => { if (frame.id === id) { queue.push({ exit: { code: frame.code ?? null, signal: frame.signal ?? null, error: frame.error ?? null } }); poke(); } };
@@ -80,6 +83,8 @@ export function holderSource(client, state, { spawned = false } = {}) {
     },
     async *attach(from) {
       if (!spawned) await client.attach(id, { from });
+      attached = true;
+      for (const data of early.splice(0)) client.write(id, data);
       for (;;) {
         while (!stopped && (source.paused || !queue.length)) await new Promise(resolve => { wake = resolve; });
         if (stopped) { yield { exit: { handedOff: true } }; return; }
@@ -92,7 +97,7 @@ export function holderSource(client, state, { spawned = false } = {}) {
       }
     },
     ack(seq) { if (seq > source.acked) { source.acked = seq; client.ack(id, seq); } },
-    write(data) { return client.write(id, data); },
+    write(data) { if (attached) return client.write(id, data); early.push(data); return true; },
     release() { return client.release(id); },
     stop() { stopped = true; poke(); },
     pause(flag) { source.paused = Boolean(flag); poke(); },
@@ -128,7 +133,7 @@ function eventKey(event) {
  * - uuid・ツールの id で冪等（重なって届いた発言の終わり・ツールの始まりと結果は 1 回だけ。終わった発言の text.delta も捨てる）
  * 戻り値は { exit, replayed, live, acked }。exit は子の終わり（記録に exit が無いまま列が尽きたら null）
  */
-export async function replayRecord({ source, normalize, emit, signal }) {
+export async function replayRecord({ source, normalize, emit }) {
   const from = source.state.marks?.[ADOPT_TURN_MARK];
   if (!Number.isInteger(from)) throw new Error('adopt: the record has no turn mark');
   // 印より前の ack は前のターンのもの。このターンの再生は印から
@@ -144,8 +149,8 @@ export async function replayRecord({ source, normalize, emit, signal }) {
       await emit(event, replay ? { replay: true } : undefined);
     }
   };
+  // 再生は中断（signal）でも止めない: 止め始めていたターンの付け直し（T7）でも、実行中のスナップショットは印から全部作る
   if (acked >= from) for (const [, line] of await source.replay(from, acked)) {
-    if (signal?.aborted) break;
     await pass(line, true);
     replayed++;
   }
