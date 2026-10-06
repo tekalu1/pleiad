@@ -1,8 +1,8 @@
 // 偽の Chrome（第 3 段以降も育てる）。リモートデバッグのトグルがオンの Chrome の見え方だけを真似る。
 //   - 一時の User Data に DevToolsActivePort を書き、loopback の動的ポートで /devtools/browser/<id> の upgrade だけ受ける（/json/version は 404）
 //   - permission: 'hold' のとき、upgrade は approve() まで保留する。保留ごとに偽の確認の窓（dialogs()）を作る
-//   - cancel() は利用者の「キャンセル」: 保留の socket を壊し、確認の窓も消す。expire() は Chrome の約 5 分の打ち切り: socket を壊し、確認の窓は残す
-//   - closeDialog(id) は確認の窓を閉じる（本物の WM_CLOSE と同じに、socket は即座に 1006 で壊れる）
+//   - cancel() は利用者の「キャンセル」: 保留の upgrade を HTTP 403 で断り（実機の見え方）、確認の窓も消す。expire() は Chrome の約 5 分の打ち切り: socket を壊し（見え方は未確認なので 403 とは別の形）、確認の窓は残す
+//   - closeDialog(id) は確認の窓を閉じる（本物の WM_CLOSE と同じに、upgrade は即座に 403 で断られる）
 //   - turnOff() は確認の「[設定] でオフにする」: 壊し、DevToolsActivePort を消し、ポートを閉じる。restart() はポートと経路を変えて書き直す
 //   - CDP は Browser.getVersion だけ答え、ほかは -32601。受けたメソッドは calls に残す
 // 本物の Chrome・本物の LOCALAPPDATA は読まない。
@@ -12,6 +12,8 @@ import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { WebSocketServer } from 'ws';
+
+const CRLF = String.fromCharCode(13, 10);
 
 export async function startFakeChrome({ permission = 'auto', product = 'Chrome/154.0.8037.97', userDataDir = null } = {}) {
   const dir = userDataDir ?? await fs.mkdtemp(path.join(os.tmpdir(), 'ply-fake-chrome-'));
@@ -48,14 +50,18 @@ export async function startFakeChrome({ permission = 'auto', product = 'Chrome/1
     wss.handleUpgrade(entry.req, entry.socket, entry.head, ws => serve(entry.req, ws));
   }
   function removeDialog(entry) { dialogs.delete(entry.dialogId); }
+  /** 本物の Chrome が、拒否された upgrade に返す応答 */
+  function deny(entry) { try { entry.socket.end('HTTP/1.1 403 Forbidden\r\nContent-Type: text/html\r\nContent-Length: 19\r\nConnection: close\r\n\r\nForbidden request.\n'); } catch { entry.socket.destroy(); } }
 
   async function listen() {
     server = http.createServer((req, res) => { res.writeHead(404); res.end('not found'); });
-    server.on('connection', s => { sockets.add(s); s.on('close', () => sockets.delete(s)); });
+    server.on('connection', s => { sockets.add(s); s.on('error', () => {}); s.on('close', () => sockets.delete(s)); });
     server.on('upgrade', (req, socket, head) => {
       if (new URL(req.url, 'http://x').pathname !== wsPath) { socket.destroy(); return; }
       self.upgrades += 1;
       if (mode === 'auto') { accept({ req, socket, head }); return; }
+      // 想定外の応答（403 以外の HTTP）
+      if (mode === 'error') { socket.end('HTTP/1.1 500 Internal Server Error' + CRLF + 'Content-Length: 0' + CRLF + 'Connection: close' + CRLF + CRLF); return; }
       const entry = { req, socket, head, dialogId: `dlg${++dialogSeq}` };
       pending.push(entry);
       dialogs.set(entry.dialogId, { stale: false });
@@ -91,14 +97,14 @@ export async function startFakeChrome({ permission = 'auto', product = 'Chrome/1
     /** 「許可する」。保留中を全部通す */
     approve() { for (const e of pending.splice(0)) { removeDialog(e); accept(e); } },
     /** 「キャンセル」: 保留を壊し、確認の窓も消える */
-    cancel() { for (const e of pending.splice(0)) { removeDialog(e); e.socket.destroy(); } },
+    cancel() { for (const e of pending.splice(0)) { removeDialog(e); deny(e); } },
     /** Chrome の打ち切り: 保留を壊すが、確認の窓は残る */
     expire() { for (const e of pending.splice(0)) { dialogs.get(e.dialogId).stale = true; e.socket.destroy(); } },
     /** 確認の窓を閉じる（WM_CLOSE）。保留が壊れる。閉じたのが残っていた窓なら窓だけ消える */
     closeDialog(id) {
       if (!dialogs.has(id)) return false;
       const i = pending.findIndex(e => e.dialogId === id);
-      if (i >= 0) { const [e] = pending.splice(i, 1); e.socket.destroy(); }
+      if (i >= 0) { const [e] = pending.splice(i, 1); dialogs.delete(id); deny(e); }
       dialogs.delete(id);
       return true;
     },

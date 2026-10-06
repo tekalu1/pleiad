@@ -62,6 +62,9 @@ function fakeWin32(over = {}) {
     captureRect: async rect => ({ width: rect.width, height: rect.height, bgra: Buffer.alloc(rect.width * rect.height * 4) }),
     shellOpen: async () => ({ ok: true, code: 33 }),
     activate: () => true,
+    // Chrome の OS の層（desktop/chrome-os）が使う表の関数（tests/unit/chrome-os.mjs が状態つきの偽物で動かす）
+    setForeground: () => true, showWindow: () => true, bringToTop: () => true, windowThread: () => 0, currentThread: () => 1,
+    attachThreadInput: () => true, ownerOf: () => 0, dpiForWindow: () => 96, postMessage: () => true,
     ...over,
   };
   return w;

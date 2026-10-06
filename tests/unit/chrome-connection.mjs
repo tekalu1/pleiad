@@ -127,6 +127,14 @@ export default async function (t) {
     await r.stop();
   }
 
+  // ===== 5b. 想定外の応答（403 以外の HTTP）は protocol。確認を残さない =====
+  {
+    const r = await rig({ permission: 'error' });
+    const p = r.conn.demand();
+    t.ok('403 以外の HTTP の応答は protocol で失敗し、off / protocol（denied にはしない）', await code(p) === 'protocol' && r.conn.state().state === 'off' && r.conn.state().reason === 'protocol', JSON.stringify(r.conn.state()));
+    await r.stop();
+  }
+
   // ===== 6. 出し直し: 270 秒ごとに確認を閉じてつなぎ直す。denied にならず、字は変わらない =====
   {
     const r = await rig();

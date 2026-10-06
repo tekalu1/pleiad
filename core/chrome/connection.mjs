@@ -141,7 +141,13 @@ export function createChromeConnection({ locate, os, WebSocketImpl = NodeWebSock
     rnd.ws = ws;
     setStatus({ state: 'permission', reason: null, dialog: att.round === 0 ? false : status.dialog });
     ws.on('open', () => { void onOpen(att, rnd); });
-    ws.on('unexpected-response', (_req, res) => { try { res.resume(); } catch { /* 読み捨て */ } void onFail(att, rnd, { protocol: true }); });
+    // 確認を閉じた・「キャンセル」を押したとき、Chrome は HTTP 403 で断る（実機で確認。2026-10-06）。ほかの応答は想定外（protocol）
+    ws.on('unexpected-response', (_req, res) => {
+      const status = res.statusCode;
+      try { res.resume(); } catch { /* 読み捨て */ }
+      try { ws.terminate(); } catch { /* 同上 */ }
+      void onFail(att, rnd, { protocol: status !== 403 });
+    });
     ws.on('error', () => {});
     ws.on('close', () => { void onFail(att, rnd, {}); });
     rnd.reissueTimer = clock.setTimeout(() => { rnd.reissueTimer = null; void reissue(att, rnd); }, opt.reissueMs);
