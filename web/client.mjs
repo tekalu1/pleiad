@@ -55,7 +55,7 @@ import { formatBytes } from "./folder-upload.mjs";
 import { modelRowIds, modelDisplayName } from "./composer-labels.mjs";
 import { setupSlashSkills } from "./slash-skills.mjs";
 import { createMarkdownEditor } from "./md-editor.mjs";
-import { createPasteImages } from "./paste-images.mjs";
+import { createComposerAttachments, attachedImageSrc } from "./composer/attachments.mjs";
 import { openAttachmentList } from "./attachment-list.mjs";
 import { runMark, satMark, stillMark } from "./arc.mjs";
 import { approvalTarget } from "./approval-summary.mjs";
@@ -215,19 +215,26 @@ for (const [name, text] of [["untitled", t("session.untitled")], ["default", t("
 // 以降のコードは今までどおり $("prompt").value などで触る。添付は字の間の 1 行の印（[添付] パス）が原子になり、実体の情報は state.attached、
 // 送っている途中のものは uploads（仮の ID）が持つ。シェルの形の間は整形も文中の添付もしない（composerPlain）
 let composerPlain = false, composerShellMode = null;
-const uploads = new Map();
-const composerEditor = createMarkdownEditor($("prompt"), {
-  resolve: (path) => attachedInfo(path),
-  pending: (pid) => pendingUpload(pid),
-  // 貼り付けた HTML の画像（data: はその場で、https はホストが取りに行く）。書けない待ちの間は取り込まない
-  importImages: (images) => (composerWait.accepts() ? pasteImages.start(images) : []),
+// 添付（web/composer/attachments.mjs）。実体は state.attached に置き、持ち主は今の会話（作っている間は null）。
+// 書けない待ちの間は積まない（開いた会話の下書きで消されるか、予約した送信に紛れる）。札の出入りだけでは下書きを保存しない（字の入力で保存される）
+const chatAttach = createComposerAttachments({
+  host: { cmd: (command, args) => cmd(command, args), whenOnline: (err) => whenOnline(err), openImage: (src, name, path) => openLightbox(src, name, path),
+    filePreview: { open: (...a) => filePreview.open(...a) } },
+  owner: () => state.current ?? null,
+  store: { get: () => state.attached, set: (items) => { state.attached = items; } },
+  accepts: () => composerWait.accepts(),
+  say: (text) => composerError(text),
+  notify: (text) => notify(text),
+  onChange: () => { saveDraft().catch(() => {}); },
+  changeOnAtoms: false,
+  onRender: () => syncRunState(),
+  adopt: (owner, item) => adoptAttachment(owner, item),
+  strip: $("attached"),
+  thumbnails: true,
   locale: () => composerAgentLang(),
-  isPlain: () => composerPlain,
-  onAtoms: (change) => onComposerAtoms(change),
-  onZoom: (info) => openLightbox(attachedImageSrc(info), info.name, info.path),
-  onOpenFile: (info, anchor) => filePreview.open({ path: info.path, line: null }, anchor),
-  onAtomAction: (act, key) => onComposerAtomAction(act, key),
 });
+const composerEditor = createMarkdownEditor($("prompt"), { ...chatAttach.editorOptions, isPlain: () => composerPlain });
+chatAttach.bind(composerEditor, $("prompt"));
 
 // 入力欄の待ち（web/composer-wait.mjs）。書けない待ちは disabled ではなく readonly + aria-busy。
 // 初めて接続して会話を開くまでは「接続しています…」（その間に書いた字は、開いた会話の下書きで上書きされるため）
@@ -5807,7 +5814,7 @@ function loadDraft() {
   shellComposer.reset();
   // 添付の実体を先に置く（本文の印は、ここにあるものだけが札になる。無い印・古い下書きの添付は「文末に付く」）
   state.attached = Array.isArray(d?.attached) ? d.attached.slice() : [];
-  for (const [id, u] of uploads) if (u.cancelled || u.failed) uploads.delete(id);
+  chatAttach.dropFailed();
   $("prompt").value = typeof d?.text === "string" ? d.text : "";
   fitPrompt();
   renderAttached();
@@ -5897,26 +5904,9 @@ configurePreviewConfirmation({ getPrefs: () => state.prefs, openSettings: () => 
   const heading = $('browserAllowedSites'); heading?.focus({ preventScroll: true }); heading?.scrollIntoView({ block: 'start' });
 } });
 
-/**
- * ホストのファイルをパスのまま添付に積む（送らない。ファイルプレビューの「会話で使う」とホストのファイルの面）。
- * 字の欄の、クリップを開く前の位置（無ければ今のキャレット）に札を置く。件数の上限は無い。同じパスは 1 つだけ。積めたら true
- */
-function attachHostFiles(files, { at = takeAttachAt() } = {}) {
-  if ($('prompt').disabled || !composerWait.accepts()) return false;
-  let added = 0, already = 0;
-  for (const file of files) {
-    if (!file?.path) continue;
-    const existing = attachedByPath(file.path);
-    // 同じパスは札を増やさず、画面下の短い知らせで伝える。文中に置いていない添付（文末に付く）は、ここで位置に置く
-    if (existing && composerEditor.hasAttachment(attachedKey(file.path))) { already++; continue; }
-    if (!existing) state.attached.push({ path: file.path, name: file.name, kind: 'file', mime: file.mime ?? '', from: 'host', ...(Number.isFinite(file.size) ? { size: file.size } : {}) });
-    composerEditor.insertAttachment({ path: file.path }, { at });
-    at = null;
-    added++;
-  }
-  if (added) { renderAttached(); saveDraft().catch(() => {}); }
-  if (already && !added) notify(t("chat.attach.already"));
-  return true;
+/** ホストのファイルをパスのまま添付に積む（送らない。ファイルプレビューの「会話で使う」とホストのファイルの面）。積めたら true */
+function attachHostFiles(files, o) {
+  return chatAttach.attachHost(files, o);
 }
 $("prompt").addEventListener("input", saveDraftSoon);
 $("prompt").addEventListener("blur", flushDraft);
@@ -5928,214 +5918,53 @@ addEventListener("pagehide", () => saveDraft().catch(() => {}));
 // 添付は字の欄の、置いた位置の 1 行の印（[添付] パス）として持つ（web/md-editor.mjs、ADR 0060）。state.attached が添付の実体
 // （パス・名前・出どころ）、文中の位置は本文が持つ。文中に無い添付（古い下書き・平文の間に足したもの）は「文末に付く」で、
 // 送るときに末尾へ印を足す。会話に載るのは送信のとき（runTurn の attachments → present）。
+// 札・入口・一覧・送っている途中のものは入力欄の部品（web/composer/attachments.mjs の chatAttach）が持つ。
 
 /** 添付で出どころを選ばせるか（null ならクリップはすぐファイルを選ぶ）。composer-layout.mjs の attachSources */
 const currentAttachSources = () => attachSources({ remote: window.plyRemote, osActions: state.hostCaps?.osActions });
 
 const attachedKey = (path) => `p:${normalizeAttachmentPath(path)}`;
-function attachedByPath(path) {
-  const key = attachedKey(path);
-  return state.attached.find(a => attachedKey(a.path) === key) ?? null;
-}
-/** 字の欄の札に出す添付の情報（同じ名前の札には見分けのフォルダー hint を添える） */
-function attachedInfo(path) {
-  const a = attachedByPath(path);
-  if (!a) return null;
-  return { ...a, hint: attachFolderHints(state.attached, { deviceLabel: t("chat.attach.deviceFolder") })[state.attached.indexOf(a)] || "" };
-}
+const attachedByPath = (path) => chatAttach.byPath(path);
 /** 添付の印の言語（会話の言語。まだ決まっていない会話は画面の言語） */
 const composerAgentLang = () => state.sessions.find(s => s.id === state.current)?.agentLocale ?? uiLang;
 
-/** 送っている途中の添付（仮の ID）の見え方。札が進み具合（%）と失敗の理由を出す */
-function pendingUpload(pid) {
-  const u = uploads.get(pid);
-  if (!u) return null;
-  // ホストが取りに行っている画像（貼り付けの HTML）。失敗の札は無い（取れなければ札ごと静かに消える）
-  if (u.import) return { name: u.name, state: 'importing', host: u.import.host };
-  const failed = u.failed || u.cancelled;
-  return { name: u.name, size: u.size, state: failed ? 'failed' : 'sending', percent: u.size ? Math.floor((u.sent / u.size) * 100) : 0,
-    error: u.failed ?? (u.cancelled ? t('chat.composerAtt.cancelled') : '') };
-}
 /**
  * この会話の、まだ届いていない添付（送信中・失敗）。札を外した（やめた）ものは数えない。
- * 新しい会話を作っている間（state.current が null）に始めたものは sessionId が null で、会話ができたら adoptUploads がその id へ付け替える
+ * 新しい会話を作っている間（state.current が null）に始めたものは持ち主が null で、会話ができたら adoptUploads がその id へ付け替える
  */
 function uploadsHere() {
-  return [...uploads.values()].filter(u => !u.gone && u.sessionId === (state.current ?? null)
-    && (!u.cancelled || composerEditor.hasAttachment(`i:${u.id}`)));
+  return chatAttach.here();
 }
 /**
- * 新しい会話の欄（sessionId が null）で始めた添付の持ち主を、できた会話 id にする。会話を開く（select の fresh）のと同時に呼ぶので、
+ * 新しい会話の欄（持ち主が null）で始めた添付の持ち主を、できた会話 id にする。会話を開く（select の fresh）のと同時に呼ぶので、
  * 作成中から作成後へ変わる間も「送っている途中の添付がある」判定（uploadsHere・uploadBlockReason）が途切れない
  */
 function adoptUploads(id) {
-  for (const u of uploads.values()) if (u.sessionId === null) u.sessionId = id;
+  chatAttach.adoptOwner(null, id);
 }
 /** 送れない理由（送信中・失敗の添付があるとき）。無ければ null */
 function uploadBlockReason() {
-  const here = uploadsHere();
-  if (here.some(u => u.failed || u.cancelled)) return t('chat.composerAtt.blockFailed');
-  if (!here.length) return null;
-  return here.every(u => u.import) ? t('chat.composerAtt.blockImporting') : t('chat.composerAtt.blockSending');
+  return chatAttach.blockReason();
 }
 /** 添付を字の欄の位置の順に並べる。文中に無いものは後ろ（文末に付く） */
 function orderedAttachments() {
-  const order = [...composerEditor.attachmentKeys()];
-  const rank = (a) => { const i = order.indexOf(attachedKey(a.path)); return i < 0 ? order.length : i; };
-  return state.attached.map((a, i) => ({ a, i })).sort((x, y) => rank(x.a) - rank(y.a) || x.i - y.i).map(x => x.a);
+  return chatAttach.ordered();
 }
-const removedAttached = new Map();   // 元に戻すで札が戻ったとき、添付の実体も戻す
-/** 利用者の操作（Backspace・切り取り・元に戻す・やり直し・一覧の「外す」）で字の欄の添付が出入りした */
-function onComposerAtoms({ added, removed }) {
-  for (const key of removed) {
-    if (key.startsWith('p:')) {
-      const i = state.attached.findIndex(a => attachedKey(a.path) === key);
-      if (i >= 0) removedAttached.set(key, state.attached.splice(i, 1)[0]);
-    } else {
-      const u = uploads.get(key.slice(2));
-      if (u?.import) pasteImages.cancel(u);   // 取り込み中の札を外した・元に戻した: 取得もやめる
-      else if (u && !u.failed) u.cancelled = true;
-    }
-  }
-  for (const key of added) {
-    if (key.startsWith('p:')) {
-      const a = removedAttached.get(key);
-      if (a && !attachedByPath(a.path)) { state.attached.push(a); removedAttached.delete(key); }
-    }
-  }
-  renderAttached();
-}
-function onComposerAtomAction(act, key) {
-  if (act === 'retry') { const u = uploads.get(key.slice(2)); if (u) runUpload(u); return; }
-  removeComposerAttachment(key);
-}
-/** 添付を外す（札があれば札ごと。文末に付くものは実体だけ）。送っている途中ならやめる */
-function removeComposerAttachment(key) {
-  if (composerEditor.removeAttachment(key)) return;
-  if (key.startsWith('p:')) {
-    const i = state.attached.findIndex(a => attachedKey(a.path) === key);
-    if (i >= 0) state.attached.splice(i, 1);
-  } else {
-    const u = uploads.get(key.slice(2));
-    if (u) { u.cancelled = true; if (u.failed) uploads.delete(u.id); }
-  }
-  renderAttached();
-  saveDraft().catch(() => {});
-}
-
-// 添付の入口「添付 N 件 ▾」（字の欄の上の 1 行。0 件なら出さない）。状態（送信中・失敗）は同じ行に
-const PAPERCLIP = 'M21.4 11.05l-9.2 9.2a6 6 0 0 1-8.5-8.5l9.9-9.9a4 4 0 0 1 5.66 5.66l-9.9 9.9a2 2 0 0 1-2.83-2.83l9.2-9.2';
-let attachEntry = null, attachList = null, attachHintSig = "";
+/** 添付の入口「添付 N 件 ▾」を描き直す（字の欄の上の 1 行。0 件なら出さない）。描いた後に送信ボタンの状態を合わせる */
 function renderAttached() {
-  const strip = $("attached");
-  const here = uploadsHere();
-  const failed = here.filter(u => u.failed || u.cancelled).length, importing = here.filter(u => u.import).length, sending = here.length - failed - importing;
-  const total = state.attached.length + here.length;
-  strip.hidden = total === 0;
-  if (!attachEntry) {
-    const b = el("button", "att-entry");
-    b.type = "button";
-    b.setAttribute("aria-haspopup", "dialog");
-    b.setAttribute("aria-expanded", "false");
-    const count = el("span", "att-count"), state_ = el("span", "att-state");
-    state_.setAttribute("role", "status");
-    const caret = el("span", null, "▾");
-    caret.setAttribute("aria-hidden", "true");
-    b.append(icon(PAPERCLIP), count, caret, state_);
-    b.onclick = openAttachList;
-    attachEntry = { b, count, state: state_ };
-    strip.append(b);
-  }
-  attachEntry.count.textContent = t("chat.attachList.count", { count: total });
-  attachEntry.state.textContent = [failed ? t("chat.composerAtt.entryFailed", { count: failed }) : "", sending ? t("chat.composerAtt.entrySending", { count: sending }) : "",
-    importing ? t("chat.composerAtt.entryImporting", { count: importing }) : ""].filter(Boolean).map(s => ` · ${s}`).join("");
-  attachEntry.b.dataset.state = failed ? "failed" : sending || importing ? "sending" : "";
-  // 同じ名前の添付が増えた・減った: 札に添える見分けのフォルダーが変わるので札を描き直す
-  const hints = attachFolderHints(state.attached, { deviceLabel: t("chat.attach.deviceFolder") })
-    .map((h, i) => (h ? `${attachedKey(state.attached[i].path)}=${h}` : "")).filter(Boolean).join("|");
-  if (hints !== attachHintSig) { attachHintSig = hints; composerEditor.refresh(); }
-  if (!total) attachList?.close();
-  else attachList?.update(attachListRows(), t("chat.attachList.count", { count: total }));   // 見出しの件数も合わせる
-  syncRunState();
-}
-
-/** 一覧の面の行: 文中の添付（位置の順）→ 文末に付く。送っている途中は進み具合を出す */
-function attachListRows() {
-  const inDoc = composerEditor.attachmentKeys();
-  const inline = t("chat.attachList.section.inline"), tail = t("chat.attachList.section.tail");
-  const hints = attachFolderHints(state.attached, { deviceLabel: t("chat.attach.deviceFolder") });
-  const attached = (a, section) => ({
-    id: attachedKey(a.path), kind: a.kind === "image" ? "image" : "file", name: a.name, path: a.path || "", hint: hints[state.attached.indexOf(a)] || null,
-    thumb: a.kind === "image" ? attachedImageSrc(a) : null, origin: a.from === "host" || a.from === "device" ? a.from : null,
-    size: Number.isFinite(a.size) ? a.size : null, status: a.from === "host" ? t("chat.attachList.byPath") : t("chat.attachList.sent"), section });
-  const upload = (u, section) => {
-    const p = pendingUpload(u.id);
-    if (p.state === "importing") return { id: `i:${u.id}`, kind: "image", name: u.name, path: "", origin: null, size: null, section, status: t("chat.attachList.importing"), progress: null };
-    return { id: `i:${u.id}`, kind: "file", name: u.name, path: "", origin: "device", size: u.size, section,
-      status: p.state === "failed" ? p.error : t("chat.composerAtt.entrySending", { count: 1 }), progress: p.state === "sending" ? p.percent : null };
-  };
-  const rows = [];
-  for (const key of inDoc) {
-    const a = key.startsWith("p:") ? state.attached.find(x => attachedKey(x.path) === key) : null;
-    const u = key.startsWith("i:") ? uploads.get(key.slice(2)) : null;
-    if (a) rows.push(attached(a, inline)); else if (u) rows.push(upload(u, inline));
-  }
-  for (const a of state.attached) if (!inDoc.has(attachedKey(a.path))) rows.push(attached(a, tail));
-  for (const u of uploadsHere()) if (!inDoc.has(`i:${u.id}`)) rows.push(upload(u, tail));
-  return rows;
-}
-function openAttachList() {
-  const at = composerEditor.rememberCaret();
-  const b = attachEntry.b;
-  b.setAttribute("aria-expanded", "true");
-  attachList = openAttachmentList({
-    anchor: b, title: t("chat.attachList.count", { count: state.attached.length + uploadsHere().length }), items: attachListRows(),
-    // 全部外して入口ごと隠れたときは、フォーカスが <body> に落ちないよう入力欄へ
-    onClose: () => { attachList = null; b.setAttribute("aria-expanded", "false"); if (!document.activeElement || document.activeElement === document.body) $("prompt").focus?.({ preventScroll: true }); },
-    actions: (item) => {
-      const key = item.id;
-      if (key.startsWith("i:")) {
-        const p = pendingUpload(key.slice(2));
-        return p?.state === "importing"
-          ? [{ label: t("chat.paste.cancelImport"), run: () => removeComposerAttachment(key), keepOpen: true }]
-          : p?.state === "sending"
-          ? [{ label: t("chat.attach.cancelSending"), run: () => removeComposerAttachment(key), keepOpen: true }]
-          : [{ label: t("chat.composerAtt.retry"), run: () => onComposerAtomAction("retry", key), keepOpen: true },
-             { label: t("chat.attach.remove"), run: () => removeComposerAttachment(key), keepOpen: true }];
-      }
-      const placed = composerEditor.hasAttachment(key);
-      return [
-        placed ? { label: t("chat.attachList.jump"), run: () => composerEditor.reveal(key) }
-          : { label: t("chat.attachList.insert"), run: () => { const a = state.attached.find(x => attachedKey(x.path) === key); if (a) { composerEditor.insertAttachment({ path: a.path }, { at }); renderAttached(); saveDraft().catch(() => {}); composerEditor.reveal(key); } } },
-        { label: t("chat.attach.remove"), run: () => removeComposerAttachment(key), keepOpen: true },
-      ];
-    },
-  });
+  chatAttach.render();
 }
 function flashAttachEntry() {
-  const b = attachEntry?.b;
-  if (!b) return;
-  b.classList.remove("flash");
-  void b.offsetWidth;
-  b.classList.add("flash");
-  b.addEventListener("animationend", () => b.classList.remove("flash"), { once: true });
+  chatAttach.flash();
 }
-
-// クリップを押した時点の字の欄の位置。メニューやファイルの選択の間にフォーカスが移っても、そこへ置く（2 分で忘れる）
-let attachAtMemo = null;
-const rememberAttachAt = () => { attachAtMemo = { at: composerEditor.rememberCaret(), time: Date.now() }; };
-function takeAttachAt() {
-  const memo = attachAtMemo;
-  attachAtMemo = null;
-  return memo && Date.now() - memo.time < 120_000 ? memo.at : null;
-}
-
-// ---- 送っている途中の添付（attach-upload.mjs）。字の欄の札に進み具合（%）を出し、中止・再試行・外すを置く。終わったら普通の札になる
-function paintUpload(u) {
-  composerEditor.updatePending(u.id);
-  const pct = u.size ? Math.floor((u.sent / u.size) * 100) : 0;
-  const row = attachList?.dialog.querySelector(`.att-list-row[data-id="${CSS.escape(`i:${u.id}`)}"] .att-list-bar`);
-  if (row) { row.style.setProperty("--p", `${pct}%`); row.setAttribute("aria-valuenow", String(pct)); }
+/**
+ * 送っている間に別の会話へ移った添付を、その会話の下書きに積む（位置は持たない: 文末に付く）。"" は持ち主の会話が無い欄の下書き。
+ * 保存できなければ例外のまま返す（部品が札を消さず、本当の理由つきの失敗にする）
+ */
+async function adoptAttachment(owner, item) {
+  const key = owner ?? "";
+  const draft = state.drafts.get(key) ?? { text: "", attached: [] };
+  await persistDraft(key, { ...draft, attached: [...(draft.attached ?? []), item], version: 2, dirty: true });
 }
 
 // 切れている間に待っている断片の送り手。ready で起こす（attach-upload.mjs の online）
@@ -6148,22 +5977,6 @@ function whenOnline(err) {
     onlineWaiters.add(done);
   });
 }
-
-/** 画像の添付の縮小（入力欄の札に出す 112px）。下書きに残すので小さく作る。作れなければ null */
-async function thumbnailOf(file) {
-  if (typeof createImageBitmap !== "function") return null;
-  const bmp = await createImageBitmap(file);
-  try {
-    const k = Math.min(1, 112 / Math.max(bmp.width, bmp.height));
-    const c = document.createElement("canvas");
-    c.width = Math.max(1, Math.round(bmp.width * k)); c.height = Math.max(1, Math.round(bmp.height * k));
-    c.getContext("2d").drawImage(bmp, 0, 0, c.width, c.height);
-    // 縦横は、送った直後の吹き出しの枠の大きさに使う（web/attachment-frame.mjs）
-    return { dataUri: c.toDataURL("image/jpeg", 0.85), width: bmp.width, height: bmp.height };
-  } finally { bmp.close?.(); }
-}
-/** 添付の置き場の画像を大きく見る URL（/local-file。認証はクッキー）。パスが無ければ縮小の data URI */
-const attachedImageSrc = (a) => (a.path ? `/local-file?path=${encodeURIComponent(a.path)}` : a.dataUri);
 
 /**
  * 画像を大きく見る。会話の present・生成画像・本文の画像も入力欄の添付も同じ。
@@ -6191,101 +6004,10 @@ function openLightbox(src, caption, path, origin) {
   d.showModal();
 }
 
-/**
- * この端末のファイルを添付として送る（ドロップ・貼り付け・クリップの「ファイル…」）。1 件 100MB まで・件数の上限は無い。
- * 字の欄の、カーソル（ドロップは落とした位置、クリップは開く前の位置）に、仮の札を先に置く。中身は断片で送り（web/attach-upload.mjs）、
- * 札が進み具合（%）を出す。終わったらその札がパスを持つ普通の札になる
- */
-async function attachFiles(files, { at = takeAttachAt() } = {}) {
-  // 書けない待ち（会話を開いている・送信を予約した）の間に積むと、開いた会話の下書きで消されるか予約した送信に紛れる
-  if (!composerWait.accepts()) return;
-  const sessionId = state.current ?? null;
-  const queue = [];
-  for (const file of files) {
-    if (file.size > ATTACH_MAX_BYTES) {
-      composerError(t("chat.attach.tooLarge", { name: file.name, limit: formatBytes(ATTACH_MAX_BYTES) }));
-      continue;
-    }
-    const u = { id: randomId(), file, name: file.name, size: file.size, sent: 0, sessionId, cancelled: false, failed: null, placed: false };
-    uploads.set(u.id, u);
-    u.placed = composerEditor.insertAttachment({ pid: u.id }, { at }) === "inserted";
-    at = null;
-    queue.push(u);
-  }
-  renderAttached();
-  for (const u of queue) await runUpload(u);
+/** この端末のファイルを添付として送る（ドロップ・貼り付け・クリップの「ファイル…」）。web/composer/attachments.mjs の attachFiles */
+function attachFiles(files, o) {
+  return chatAttach.attachFiles(files, o);
 }
-
-/** 1 件を送る（最初と「再試行」）。仮の札を、届いたパスを持つ札に替える */
-async function runUpload(u) {
-  u.failed = null; u.cancelled = false; u.sent = 0;
-  composerEditor.updatePending(u.id);
-  renderAttached();
-  const { file } = u;
-  try {
-    const isImage = /^image\//.test(file.type);
-    const [r, thumb] = await Promise.all([
-      sendAttachment({ cmd, file, sessionId: u.sessionId, cancelled: () => u.cancelled, online: whenOnline,
-        onProgress: (sent) => { u.sent = sent; paintUpload(u); } }),
-      isImage ? thumbnailOf(file).catch(() => null) : null,
-    ]);
-    if (!r || u.cancelled) { u.cancelled = true; renderAttached(); return false; }   // やめた（札は外れている）
-    const item = { name: file.name, path: r.path, kind: r.kind, mime: file.type, from: "device", size: file.size,
-      ...(thumb ? { dataUri: thumb.dataUri, width: thumb.width, height: thumb.height } : {}) };
-    await settleUpload(u, item);
-    // エージェントは画像をパスから自分の道具で読む。大きな画像は画像として読めないことがある（Claude の API は 1 枚 5MB まで）
-    if (isImage && file.size > IMAGE_READ_HINT_BYTES) composerError(t("chat.attach.largeImage", { name: file.name, size: formatBytes(file.size) }));
-    return true;
-  } catch (e) {
-    u.failed = e?.message ?? String(e);
-    // 札が字の欄にあれば札に理由・再試行・外すを出す。札の無い（平文の間など）失敗は入力欄の上の一行で
-    if (u.placed && composerEditor.hasAttachment(`i:${u.id}`)) composerEditor.updatePending(u.id);
-    else { uploads.delete(u.id); composerError(t("chat.attach.failed", { name: file.name, error: u.failed })); }
-    renderAttached();
-    return false;
-  }
-}
-/**
- * 届いた添付（item）を、持ち主の下書きへ入れて、仮の札をパスの札に替える（ファイルの送信・貼り付けた画像の取り込みが使う）。
- * 持ち主は届いた時点で読む（新しい会話を作っている間に始めたものは、できた会話の id に付け替わっている: adoptUploads）
- */
-async function settleUpload(u, item) {
-  const owner = u.sessionId;
-  if (state.current === owner) {
-    uploads.delete(u.id);
-    state.attached.push(item);
-    composerEditor.resolvePending(u.id, item.path);
-    renderAttached();
-    saveDraft().catch(() => {});
-  } else {
-    // 送っている間に別の会話へ移った。その会話の下書きに積む（位置は持たない: 文末に付く）。"" は持ち主の会話が無い欄の下書き。
-    // 保存できたら札を消す（できなければ呼び出し側が本当の理由つきの失敗にする）
-    const key = owner ?? "";
-    const draft = state.drafts.get(key) ?? { text: "", attached: [] };
-    await persistDraft(key, { ...draft, attached: [...(draft.attached ?? []), item], version: 2, dirty: true });
-    uploads.delete(u.id);
-    renderAttached();
-  }
-}
-
-/** 貼り付けた HTML の画像の取り込み（web/paste-images.mjs。ADR 0141）。送信中の一覧（uploads）に載せ、送れない間・入口の件数・下書きは添付と同じ扱い */
-const pasteImages = createPasteImages({
-  cmd: (command, args) => cmd(command, args),
-  editor: () => composerEditor,
-  entry: (base) => {
-    const u = { sent: 0, sessionId: state.current ?? null, cancelled: false, failed: null, placed: true, ...base };
-    uploads.set(u.id, u);
-    return u;
-  },
-  bucketOf: (u) => u.sessionId,
-  uploadFile: (u) => runUpload(u),
-  finished: async (u, r) => {
-    await settleUpload(u, { name: r.name, path: r.path, kind: "image", mime: r.mime, from: "import", size: r.bytes });
-    if (r.bytes > IMAGE_READ_HINT_BYTES) composerError(t("chat.attach.largeImage", { name: r.name, size: formatBytes(r.bytes) }));
-  },
-  dropped: (u) => { uploads.delete(u.id); renderAttached(); },
-  registered: () => renderAttached(),
-});
 /**
  * 入力欄の高さの上限を決める。1 行から始めて中身に合わせて伸び（CSS）、上限はマウス 10 行・タッチ 6 行（promptMaxLines）。
  * その先は欄の中でスクロールする（送信の行は常に見える）。画面が低いとき（キーボードが出ている）は画面の 40% でも止める
@@ -6308,8 +6030,8 @@ function wireDropZone() {
     attachHost: (files) => { if (attachHostFiles(files)) $("prompt").focus(); },
   });
   // クリップを押す前の字の欄の位置を覚える（メニューやファイルの選択でフォーカスが移っても、そこへ札を置く）
-  $("attach").addEventListener("pointerdown", rememberAttachAt, true);
-  $("attach").addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") rememberAttachAt(); }, true);
+  $("attach").addEventListener("pointerdown", chatAttach.rememberAt, true);
+  $("attach").addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") chatAttach.rememberAt(); }, true);
   $("attach").addEventListener("click", () => { if (!currentAttachSources()) $("fileIn").click(); });
   syncAttachButton();
   $("fileIn").onchange = () => { attachFiles([...$("fileIn").files]); $("fileIn").value = ""; };
@@ -6367,13 +6089,7 @@ function wireDropZone() {
     // 字の欄の上に落としたら、その位置へ。それ以外はキャレットの位置
     attachFiles([...e.dataTransfer.files], { at: composerEditor.posFromPoint(e.clientX, e.clientY) });
   });
-  // 貼り付けでも渡せるようにする。スクショを撮ってそのまま貼る動線が一番短い
-  $("prompt").addEventListener("paste", (e) => {
-    const files = [...(e.clipboardData?.files ?? [])];
-    if (!files.length) return;
-    e.preventDefault();
-    attachFiles(files);
-  });
+  // 貼り付けで渡すファイル（スクショを撮ってそのまま貼る動線）は、部品が字の欄で受ける（chatAttach.bind）
 }
 
 /** リモートの窓に落としたフォルダー（最初のフォルダーを送る。添付はフォルダーの中のファイルと、一緒に落としたファイル） */
@@ -7401,7 +7117,7 @@ async function select(id, { keepUpTo, reload = false, fresh = false, retry = fal
     if (!fresh) saveDraft().catch(() => {});
     // 新しい会話の欄で始めた添付: できた会話へ付け替える。作っていないのに別の会話へ移るなら、その欄の持ち物として "" に切り離す
     // （後で作る別の会話に紛れ込まない。届いたら "" の下書きに積む）
-    if (state.current === null && !fresh && !creatingSession) for (const u of uploads.values()) if (u.sessionId === null) u.sessionId = "";
+    if (state.current === null && !fresh && !creatingSession) chatAttach.adoptOwner(null, "");
     state.current = id;
     if (fresh) adoptUploads(id);
     state.contextWindow = null; state.compactionAt = null; state.compactionPhase = null; state.compactions = [];

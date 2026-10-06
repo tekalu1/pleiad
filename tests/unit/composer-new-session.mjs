@@ -12,13 +12,14 @@ import vm from 'node:vm';
 import { N } from '../lib/dom-stub.mjs';
 import { createSessionLoads } from '../../web/session-stream.mjs';
 import { createComposerWait } from '../../web/composer-wait.mjs';
+import { createComposerAttachments } from '../../web/composer/attachments.mjs';
 import { syncRequest, joinReply, retainPlan } from '../../web/history-sync.mjs';
 
 export const name = 'composer-new-session';
 export const title = '新しい会話を作っている間に書いた字が消えない・作成中の送信の予約・作成中の作業場所と設定の反映・読み込み失敗で欄が戻る';
 
 const FUNCTIONS = ['startNew', 'select', 'loadHistory', 'loadAndPaint', 'paintSession', 'saveDraft', 'persistDraft', 'dropBlankDraft', 'loadDraft',
-  'syncRunState', 'submit', 'clearSentDraft', 'uploadsHere', 'adoptUploads', 'uploadBlockReason', 'attachFiles', 'runUpload', 'settleUpload', 'saveDraftSoon', 'flushDraft',
+  'syncRunState', 'submit', 'clearSentDraft', 'uploadsHere', 'adoptUploads', 'uploadBlockReason', 'attachFiles', 'adoptAttachment', 'saveDraftSoon', 'flushDraft',
   'reserveSettings', 'applyCwd', 'chooseSettings', 'justCreated', 'noteDraftChange', 'draftView', 'sendDraftSettings'];
 
 export default async function (t) {
@@ -91,13 +92,12 @@ export default async function (t) {
     shellComposer: { active: false, blocked: false, draftText: () => prompt.value, reset: noop },
     completionNotifications: { requestPermission: noop }, slashSkills: { close: noop }, uiLang: 'ja', attachmentLine: (l, p) => p,
     // 入力欄の編集欄（web/md-editor.mjs）と添付（文中の札・送っている途中）。このテストでは添付は使わない
-    composerEditor: { attachmentKeys: () => new Set(), hasAttachment: () => false }, uploads: new Map(), composerShellMode: null,
+    composerEditor: { attachmentKeys: () => new Set(), hasAttachment: () => false }, chatAttach: null, composerShellMode: null,
     uploadBlockReason: () => null, orderedAttachments: () => state.attached.slice(), attachedKey: p => `p:${p}`, notify: noop, flashAttachEntry: noop,
     receipts: new Map(), saveReceipts: noop, messageRow: () => true, ensureMessageRow: noop, markDelivery: noop,
     createComposerWait,
     // 添付を送る（runUpload）。sendAttachment は手で終わらせる
-    sendAttachment: (o) => new Promise((res, rej) => uploading.push({ o, res, rej })), thumbnailOf: async () => null, whenOnline: async () => {},
-    ATTACH_MAX_BYTES: 1e9, IMAGE_READ_HINT_BYTES: 1e9, formatBytes: String, paintUpload: noop, takeAttachAt: () => null,
+    whenOnline: async () => {},
     // 中断と再開（web/interrupt.mjs・client.mjs の syncResume / paintInterruptLine）。ここでは中断していない会話だけ
     syncResume: noop, paintInterruptLine: noop, isInterrupted: () => false, interruptReadPoint: () => 0, resumeSettled: () => false,
     // 送信予定（日時を指定した送信。web/client.mjs の submit が引く）。このテストは日時を指定しない
@@ -108,6 +108,14 @@ export default async function (t) {
     busyLine: $('composerBusy'), busyText: $('composerBusyText'), t: k => k, runMark: () => { const s = new N('span'); s.className = 'run'; return s; },
     onChange: () => context.syncRunState(),
     setTimer: (fn) => { const h = { fn }; timers.push(h); return h; }, clearTimer: (h) => { timers = timers.filter(x => x !== h); } });
+  // 添付（web/composer/attachments.mjs）は client.mjs と同じ引数で作る。断片の送り手は手で終わらせる
+  context.chatAttach = createComposerAttachments({
+    host: { cmd }, owner: () => state.current ?? null, store: { get: () => state.attached, set: (items) => { state.attached = items; } },
+    accepts: () => context.composerWait.accepts(), say: noop, onChange: () => { context.saveDraft().catch(() => {}); }, changeOnAtoms: false,
+    onRender: () => context.syncRunState(), adopt: (owner, item) => context.adoptAttachment(owner, item),
+    sendFile: (o) => new Promise((res, rej) => uploading.push({ o, res, rej })),
+  });
+  context.uploads = context.chatAttach.uploads;
   const run = (js) => vm.runInContext(js, context);
   const prompt = $('prompt');
   // 打鍵: 欄が受け付けるときだけ字が増える（readonly・disabled なら捨てられる）。input で下書きを保存する（client.mjs と同じ）
@@ -187,7 +195,8 @@ export default async function (t) {
   const resolved = [], pendingTouched = [], notices = [];
   let inserted = 0;
   context.composerEditor = { attachmentKeys: () => new Set(), hasAttachment: () => true, insertAttachment: () => { inserted++; return 'inserted'; },
-    updatePending: (pid) => pendingTouched.push(pid), resolvePending: (pid, path) => resolved.push({ pid, path }) };
+    updatePending: (pid) => pendingTouched.push(pid), resolvePending: (pid, path) => resolved.push({ pid, path }), refresh: noop };
+  context.chatAttach.bind(context.composerEditor, prompt);
   context.sys = (text) => notices.push(text);
   context.notify = noop;
   state.attached = [];
@@ -200,7 +209,7 @@ export default async function (t) {
   releaseRefresh(); releaseRefresh = null;
   for (let k = 0; k < 5; k++) await new Promise(setImmediate);
   const upload = [...context.uploads.values()][0];
-  t.ok('会話ができたら持ち主がその会話になり、送っている途中の判定が途切れない', state.current === 'up1' && upload.sessionId === 'up1' && context.uploadsHere().length === 1 && Boolean(context.uploadBlockReason()));
+  t.ok('会話ができたら持ち主がその会話になり、送っている途中の判定が途切れない', state.current === 'up1' && upload.owner === 'up1' && context.uploadsHere().length === 1 && Boolean(context.uploadBlockReason()));
   run('syncRunState()');
   t.ok('会話ができた後も送信ボタンは押せない', $('send').disabled === true);
   await reply('loadSession', { messages: [], presents: [], draft: { text: '', attached: [] } });
