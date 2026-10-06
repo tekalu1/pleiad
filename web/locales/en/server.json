@@ -45,6 +45,7 @@
     "notRegistered": "That account is not registered."
   },
   "permission": {
+    "delegateEscalationHost": "This delegation runs {{agent}} on {{host}} in \"{{mode}}\" ({{modeId}}).",
     "delegateEscalation": "This delegation runs {{agent}} in \"{{mode}}\" ({{modeId}}).",
     "childConversation": "Delegated conversation",
     "relayTitle": "Delegated task \"{{child}}\"",
@@ -167,6 +168,7 @@
   },
   "approval": {
     "receiptMismatch": "The receipt does not match this approval. Reopen the card.",
+    "remoteOffline": "Can't send the answer because {{host}} is offline. You can send it once the connection returns.",
     "alreadyResolved": "That approval has already been resolved."
   },
   "title": {

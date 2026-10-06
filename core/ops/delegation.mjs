@@ -103,6 +103,7 @@ export const delegationOps = [
       model: z.string().optional().describe(D('delegate', 'model')),
       effort: z.string().optional().describe(D('delegate', 'effort')),
       isolate: z.boolean().optional().describe(D('delegate', 'isolate')),
+      host: z.string().max(200).optional().describe(D('delegate', 'host')),
     }) },
     { id: 'taskStatus', tool: 'ply_task_status', risk: 'read', input: z.object({ taskId: z.string().min(1).describe(D('taskStatus', 'taskId')),
       offset: z.number().int().min(0).optional().describe(D('taskStatus', 'offset')) }) },

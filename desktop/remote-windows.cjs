@@ -76,7 +76,9 @@ function publicStatus(status, connectedAt = null) {
 function hostRow(rec, { windowOpen = false } = {}) {
   return { hostId: rec.hostId, name: displayName(rec), hostName: rec.hostName ?? '', label: rec.label ?? '',
     relay: relayLabel(rec.relayUrl), state: rec.revokedAt && rec.state !== 'connected' ? 'revoked' : rec.state ?? 'closed',
-    lastConnectedAt: rec.lastConnectedAt ?? null, pairedAt: rec.pairedAt ?? null, windowOpen };
+    lastConnectedAt: rec.lastConnectedAt ?? null, pairedAt: rec.pairedAt ?? null, windowOpen,
+    // この PC の AI から任せる（docs/remote.md §4.5）: 端末側のスイッチと、ホスト側の許可（線がつながっているときの ready の allowed）
+    agentUse: rec.agentUse === true, agentAllowed: rec.agent?.allowed === true, agentState: rec.agent?.state ?? 'offline' };
 }
 
 const SNAPSHOT_PATH = '/visualization-snapshot';
@@ -151,7 +153,7 @@ function createRemoteWindows(deps) {
   const windows = new Map();       // hostId -> { win, name, origin, notify, state }
   const opening = new Map();       // hostId -> Promise（2 度押しで 2 枚開かない）
   const connectedAt = new Map();   // hostId -> 最後につながった時刻（ms）
-  let devicePromise = null, hostsWindow = null, pairing = null, pushTimer = null;
+  let devicePromise = null, hostsWindow = null, pairing = null, pushTimer = null, agentBridge = null;
 
   function device() {
     devicePromise ??= (async () => {
@@ -163,6 +165,7 @@ function createRemoteWindows(deps) {
         cipher: safeStorageCipher({ safeStorage, platform }), app: app.getVersion(), name: os.hostname(), platform: 'desktop',
       });
       d.on('status', onStatus);
+      d.on('agent-state', pushHosts);
       return d;
     })();
     devicePromise.catch(() => { devicePromise = null; });
@@ -391,11 +394,23 @@ function createRemoteWindows(deps) {
         return { ok: true };
       } catch (e) { return fail(e); }
     });
+    // この PC の AI からそのホストへ任せるか（人だけが変えられる。ローカルのサーバーの設定・AI の操作の一覧には置かない。remote.md §4.5）
+    ipcMain.handle('ply:hosts-agent-use', async (event, hostId, enabled) => {
+      trust.check(event, ['hosts']);
+      try {
+        if (!HOST_ID.test(String(hostId))) throw Object.assign(new Error(t('remote.hosts.unknown')), { code: 'unknown-host' });
+        await (await device()).setAgentUse(hostId, enabled === true);
+        await agentBridge?.refresh();
+        pushHosts();
+        return { ok: true };
+      } catch (e) { return fail(e); }
+    });
     ipcMain.handle('ply:hosts-remove', async (event, hostId) => {
       trust.check(event, ['hosts']);
       try {
         windows.get(hostId)?.win.close();
         await (await device()).remove(hostId);
+        await agentBridge?.refresh();
         pushHosts();
         return { ok: true };
       } catch (e) { return fail(e); }
@@ -419,7 +434,16 @@ function createRemoteWindows(deps) {
     return true;
   }
 
-  return { attach, openHostsWindow, openHost, handleArgv, listHosts, windows };
+  /** ローカルのサーバー（utilityProcess）との橋。この PC の AI がホストへ任せる口（remote.md §4.5） */
+  function attachWorker(worker) {
+    const { attachRemoteAgentBridge } = require('./remote-agent-bridge.cjs');
+    agentBridge = attachRemoteAgentBridge(worker, { getDevice: device, log: line => console.warn('[remote-agent]', line) });
+    // agentUse のホストへ線を張り、一覧をサーバーへ送る（サーバーはこの便りで「任せられるホスト」を知る）
+    agentBridge.refresh();
+    return agentBridge;
+  }
+
+  return { attach, attachWorker, openHostsWindow, openHost, handleArgv, listHosts, windows };
 }
 
 module.exports = {

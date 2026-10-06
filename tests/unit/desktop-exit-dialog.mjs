@@ -71,7 +71,7 @@ async function start({ ready = true, work = { count: 0 } } = {}) {
     './file-bridge.cjs': { attachFileBridge: () => {} },
     './resident.cjs': { attachResident: () => ({ keepOnClose: () => false }) },
     './window-trust.cjs': { createWindowTrust: () => ({ register: () => {} }) },
-    './remote-windows.cjs': { createRemoteWindows: () => ({ attach: () => {}, handleArgv: () => false }) },
+    './remote-windows.cjs': { createRemoteWindows: () => ({ attach: () => {}, attachWorker: () => {}, handleArgv: () => false }) },
     './browser-panel.cjs': { createBrowserPanel: () => ({ attach: () => {} }) },
     './agent-browser-bridge.cjs': { attachAgentBrowserBridge: () => ({ close: () => {} }) },
     './computer/service.cjs': { attachComputerService: () => ({}) },

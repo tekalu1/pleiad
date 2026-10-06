@@ -135,6 +135,8 @@
       "ply_task_list": "この会話が作った Pleiad タスクだけを一覧にする。ネイティブのサブエージェントのジョブは含まない。",
       "ply_usage": "サブスクリプションの使用枠（usedPercent, resetsAt）をバックエンドごとに読む。backend を省くと、使えるバックエンドすべて。重い委譲や並列の委譲の前に呼び、上限に近いバックエンドは避ける。値は最大 60 秒前のもの。"
     },
+    "hostOffline": "オフライン",
+    "hosts": "host にホストの Pleiad の名前を書くと、そのホストに任せる（そこの AI が、そのホストの PC で作業する）。使えるホスト: {{hosts}}。cwd・isolate はホストのパスとホストの規則で解釈する（cwd を省けばホストのホーム）。backend を省けばホストが委譲先を選ぶ。ホストの子の承認は、この会話にも出る（利用者が答える。あなたは答えられない）。オフラインのホストへは、待たずに失敗する。ply_task_status・ply_task_wait・ply_task_send・ply_task_cancel は同じ taskId でホストのタスクにも使える（ホストのタスクへは message だけ送れる）。host を省けばこの PC で動かす。",
     "invalidTool": "不正なツールまたは引数です",
     "kindsIntro": "kind（仕事の種類）:",
     "kinds": {
@@ -153,6 +155,17 @@
   "delegation": {
     "notRunning": "この会話は実行中ではありません",
     "remote": {
+      "unavailable": "この PC の Pleiad はホストへ任せる口を持っていません（デスクトップ版の端末だけが使えます）",
+      "nested": "ホストに任された会話からは、さらにホストへ任せられません",
+      "hostUnknown": "host「{{host}}」は、この PC がつないでいるホストにありません。使えるホスト: {{hosts}}",
+      "hostAmbiguous": "host「{{host}}」に当たるホストが複数あります。名前を変えるか、ホストの ID で指定してください",
+      "hostNotEnabled": "ホスト「{{host}}」は、この PC の AI から任せる設定がオフです（利用者が「ほかのホストにつなぐ」の窓で変えられます）",
+      "hostNotAllowed": "ホスト「{{host}}」は、この端末の AI からの依頼を受ける設定がオフです（利用者がホストの 設定 › リモートで変えられます）",
+      "hostOffline": "ホスト「{{host}}」がオフラインです（待たずに失敗しました）。ホストの Pleiad が起動していて中継につながっているか、利用者に確かめてもらってください",
+      "hostStopped": "ホスト「{{host}}」がこの端末の AI からの依頼を受けなくなったので、追えなくなりました（ホストの作業は止まっているか、ホストの画面で確かめられます）",
+      "planChanged": "ホストの状態が変わったので、委譲をやめました。もう一度試してください",
+      "badResponse": "ホスト「{{host}}」の答えが読めませんでした",
+      "statusOffline": "ホスト「{{host}}」がオフラインです。最後に分かっている状態を返します（つながり直すと追いつきます）",
       "settingsUnsupported": "ホストのタスクには、まだ子の設定（backend・model・effort）を替える機能がありません。message だけ送ってください"
     },
     "readOnly": "読み取り・計画モードでは Pleiad の子タスクを開始できません",
@@ -830,7 +843,7 @@
         "taskId": "タスクの id。",
         "offset": "結果の読み始めの位置（前の返り値の nextOffset）。"
       },
-      "delegate": { "summary": "子の会話へ仕事を委譲する。", "kind": "仕事の種類。", "task": "子への依頼。", "title": "子の短い題。", "backend": "委譲先のエージェント。", "context": "子へ渡す背景情報。", "cwd": "作業場所。", "model": "委譲先のモデル。", "effort": "推論の強さ。", "isolate": "子を worktree で走らせるか（ユーザーが指示したときだけ true）。" },
+      "delegate": { "summary": "子の会話へ仕事を委譲する。", "kind": "仕事の種類。", "task": "子への依頼。", "title": "子の短い題。", "backend": "委譲先のエージェント。", "context": "子へ渡す背景情報。", "cwd": "作業場所。", "model": "委譲先のモデル。", "effort": "推論の強さ。", "isolate": "子を worktree で走らせるか（ユーザーが指示したときだけ true）。", "host": "任せ先のホスト（リモートでつないだ別の PC の Pleiad）の名前。省けばこの PC。" },
       "taskStatus": { "summary": "自分が委譲した子の状態と結果を読む。", "taskId": "子のタスク id。", "offset": "結果の読み始めの位置。" },
       "taskWait": { "summary": "自分が委譲した子を最大 30 秒待つ。", "taskId": "子のタスク id。", "seconds": "待つ秒数（最大 30）。" },
       "taskSend": { "summary": "自分が委譲した子へ追加の指示を送る。子のエージェント・モデル・思考の強さも替えられる。", "taskId": "子のタスク id。", "message": "追加の指示。設定だけ替えるなら省ける。",

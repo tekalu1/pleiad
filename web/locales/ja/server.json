@@ -45,6 +45,7 @@
     "notRegistered": "そのアカウントは登録されていません"
   },
   "permission": {
+    "delegateEscalationHost": "この委譲は {{host}} で {{agent}} を「{{mode}}（{{modeId}}）」で動かします",
     "delegateEscalation": "この委譲は {{agent}} を「{{mode}}（{{modeId}}）」で動かします",
     "childConversation": "委譲した子の会話",
     "relayTitle": "委譲先「{{child}}」",
@@ -167,6 +168,7 @@
   },
   "approval": {
     "receiptMismatch": "この承認の受領証が合いません。カードを開き直してください",
+    "remoteOffline": "{{host}} がオフラインのため、答えを送れません。つながり直すと送れます。",
     "alreadyResolved": "この承認はすでに処理されています"
   },
   "title": {

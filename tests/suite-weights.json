@@ -189,6 +189,7 @@
     "remote-device": 6907,
     "remote-frames": 52,
     "remote-agent": 6000,
+    "remote-agent-e2e": 40000,
     "remote-host": 1668,
     "remote-links": 52,
     "remote-noise": 71,
