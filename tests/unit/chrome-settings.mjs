@@ -40,6 +40,12 @@ export default async function (t) {
       && section.querySelectorAll('code')[0].textContent === 'chrome://inspect/#remote-debugging', text);
     t.ok('setup: 主のボタンは「アドレスをコピー」、もう 1 つは「やめる」', buttonsOf(section).join() === 'アドレスをコピー,やめる' && section.querySelectorAll('button')[0].className.includes('btn-primary'));
     t.ok('setup: 「オンになったら自動で進みます」を弱い字で', text.includes('オンになったら自動で進みます'));
+    t.ok('setup（ファイルが無い）は「Chrome の準備が要ります」', text.includes('Chrome の準備が要ります') && !text.includes('起動していない'));
+    settings.chromeEvent({ state: 'setup', reason: 'unreachable', dialog: false, product: null });
+    const unreachable = section.textContent;
+    t.ok('setup（ファイルはあるがつながらない）は、Chrome が起動していない場合にも合う字と、起動すれば進むことの説明。手順は残す', unreachable.includes('Chrome が起動していないか、リモート デバッグがオフです')
+      && unreachable.includes('起動すると自動で進みます') && unreachable.includes('次のアドレスをコピーします') && !unreachable.includes('Chrome の準備が要ります'), unreachable);
+    settings.chromeEvent({ state: 'setup', reason: null, dialog: false, product: null });
     section.querySelectorAll('button')[1].onclick();
     t.ok('「やめる」は chromeDisconnect を送る', sent.at(-1) === 'chromeDisconnect');
 

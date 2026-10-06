@@ -151,7 +151,10 @@ export function setupBrowserSettings({ available, cmd, getPrefs, getAgentLabel =
     if (state === 'unsupported') {
       status.textContent = t(reason === 'platform' ? `${k}unsupportedOs` : `${k}unsupportedEnv`);
     } else if (state === 'setup') {
-      status.textContent = t(`${k}setup.status`);
+      // ファイルはあるのにつながらない（unreachable）ときは、Chrome が閉じているだけのこともある（ファイルは Chrome を閉じても残る）
+      const unreachable = reason === 'unreachable';
+      status.textContent = t(unreachable ? `${k}setup.unreachable` : `${k}setup.status`);
+      if (unreachable) details.push(note(t(`${k}setup.unreachableNote`)));
       const steps = el('ol', 'browser-conn-steps');
       const one = el('li'); one.append(el('span', 'n', '1'), el('span', null, t(`${k}setup.step1`)), el('code', null, CHROME_INSPECT_ADDRESS));
       const two = el('li'); two.append(el('span', 'n', '2'), el('span', null, t(`${k}setup.step2`)));
