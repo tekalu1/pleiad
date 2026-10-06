@@ -113,12 +113,14 @@ export default async function(t) {
   assert((await authorize({ sessionId: 'codex', url: 'https://example.org/a' })).allow); assert.equal(asked.length, 0);
   sitePrefs.confirmAgentSites = true;
   assert(!(await authorize({ sessionId: 'codex', url: 'https://example.org/a' })).allow);
-  answer = { allow: true }; assert((await authorize({ sessionId: 'codex', url: 'https://example.org/a', account: 'alice' })).allow); assert(asked.at(-1).title.includes('alice'));
+  // 「ログイン済み」（アカウント名）は出さない（ADR 0153）。渡されても題・payload に載せない
+  answer = { allow: true }; assert((await authorize({ sessionId: 'codex', url: 'https://example.org/a', account: 'alice' })).allow);
+  assert(!asked.at(-1).title.includes('alice') && !('account' in asked.at(-1).browserSite));
   await authorize({ sessionId: 'codex', url: 'https://example.org/b' }); assert.equal(asked.length, 3);
   answer = { allow: true, always: true }; await authorize({ sessionId: 'codex', url: 'https://example.org/' });
   await authorize({ sessionId: 'codex', url: 'https://example.org/next' }); assert.equal(asked.length, 4);
   await authorize({ sessionId: 'claude', url: 'https://example.org/' }); assert.equal(asked.length, 5);
-  t.ok('Site approvals: deny, once, persistent agent × origin, account only when known', true);
+  t.ok('Site approvals: deny, once, persistent agent × origin, never an account name', true);
 
   let enabled = true, resolve, askedCount = 0, sent = 0, url = 'https://one.example';
   const c = new EventEmitter(); c.getURL = () => url; c.isDestroyed = () => false; c.loadURL = async next => { url = next; c.emit('did-navigate', {}, next); };
