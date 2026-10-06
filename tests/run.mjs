@@ -268,6 +268,8 @@ const SUITES = [
   // Claude の巻き戻し（resumeSessionAt・resumeDropsTurn を resume に添える。拒否は呼び出し側へ）: SDK の query を身代わりに
   './unit/claude-rewind.mjs',
   './unit/md-doc.mjs',
+  // 貼り付けの HTML → 入力欄の形（ADR 0141）: 書式・リスト・引用・コード・リンク・表・画像の振り分け・構造の無い HTML は対象外・往復
+  './unit/html-paste.mjs',
   './unit/prompt-title.mjs',
   // 添付の件数に上限が無い（下書き・送信）。出どころの印。1 件 8MB の上限は残る
   './unit/attach-no-limit.mjs',

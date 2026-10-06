@@ -90,6 +90,7 @@ import { createNotifySettings } from './notify/settings.mjs';
 import { createFolderUploads } from './folder-uploads.mjs';
 import { createImageImporter } from './image-import.mjs';
 import { createUrlGuard } from './mcp-url-guard.mjs';
+import { pinnedFetch } from './pinned-fetch.mjs';
 import { createVisualizationCollector, visualizeInstructions, snapshotResponse, writeSnapshotFile } from './visualize.mjs';
 import { plyParts } from './instruction-amount.mjs';
 import { computerPrompt } from './backends/computer-delivery.mjs';
@@ -210,13 +211,16 @@ function attachTarget(sessionId, name) {
   return { bucket, dir: path.join(UPLOAD_DIR, bucket), rel: `${stamp}_${safe}` };
 }
 // 貼り付けた HTML の画像を取りに行く口（core/image-import.mjs、docs/adr/0141）。置き場と名前の決め方は添付と同じ。
-// 本番では公開アドレスの https だけ。テスト専用の緩め: fake バックエンドを有効にしたときだけ、AGENT_HOST_IMAGE_IMPORT_LOOPBACK=1 で
-// 127.0.0.1 の http のテスト用サーバーへ向けられる（本物の外へは出ない。ブラウザーでの確認用）
-const imageImportRelaxed = process.env.AGENT_HOST_IMAGE_IMPORT_LOOPBACK === "1"
-  && String(process.env.AGENT_HOST_BACKENDS ?? "").split(",").map(s => s.trim()).includes("fake");
+// 本番では公開アドレスの https だけ。テスト専用の緩め: fake バックエンドを有効にしたときだけ、AGENT_HOST_IMAGE_IMPORT_TEST_ORIGIN=<http://127.0.0.1:ポート>
+// を渡すと、検査をやめ、どの https の URL も、パスと問い合わせだけを残してそのテスト用サーバーへ向ける（本物の外へは出ない。ブラウザーでの確認用）
+const imageImportTestOrigin = String(process.env.AGENT_HOST_BACKENDS ?? "").split(",").map(s => s.trim()).includes("fake")
+  ? process.env.AGENT_HOST_IMAGE_IMPORT_TEST_ORIGIN || null : null;
 const imageImporter = createImageImporter({
   target: (sessionId, name) => attachTarget(sessionId, name),
-  ...(imageImportRelaxed ? { guard: createUrlGuard({ serverUrl: "http://127.0.0.1" }) } : {}),
+  ...(imageImportTestOrigin ? {
+    guard: createUrlGuard({ serverUrl: "http://127.0.0.1" }),
+    fetchFn: (url, init) => { const u = new URL(url); return pinnedFetch(new URL(`${u.pathname}${u.search}`, imageImportTestOrigin), init); },
+  } : {}),
 });
 const IMAGE_MIME = /^image\//;
 // Native sessions opened outside this host may not have sidecar metadata yet.

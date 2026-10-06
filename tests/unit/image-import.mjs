@@ -191,22 +191,23 @@ export default async function (t) {
       strictServer = await startServer({ dataDir, env: { AGENT_HOST_BACKENDS: 'fake' } });
       c1 = await open({ port: strictServer.port, token: strictServer.token, autoAllow: true });
       const denied = await c1.cmd('attachImport', { url: `${webBase}/ok.png`, name: 'x' }).then(() => null, (e) => e.message);
-      t.ok('サーバー（既定）: 127.0.0.1 の http は断る（緩めの環境変数が無ければ、テスト用のサーバーにも届かない）', Boolean(denied), String(denied));
+      t.ok('サーバー（既定）: 127.0.0.1 の http は断る', Boolean(denied), String(denied));
+
       const denied2 = await c1.cmd('attachImport', { url: 'https://127.0.0.1:1/ok.png' }).then(() => null, (e) => e.message);
       t.ok('サーバー（既定）: 127.0.0.1 の https も断る', Boolean(denied2), String(denied2));
       await c1.close?.();
       await strictServer.stop?.();
-      relaxedServer = await startServer({ dataDir, env: { AGENT_HOST_BACKENDS: 'fake', AGENT_HOST_IMAGE_IMPORT_LOOPBACK: '1' } });
+      relaxedServer = await startServer({ dataDir, env: { AGENT_HOST_BACKENDS: 'fake', AGENT_HOST_IMAGE_IMPORT_TEST_ORIGIN: webBase } });
       c2 = await open({ port: relaxedServer.port, token: relaxedServer.token, autoAllow: true });
       const { sessionId } = await c2.cmd('newSession', { backend: 'fake', cwd: ROOT });
-      const r = await c2.cmd('attachImport', { url: `${webBase}/ok.png`, sessionId, name: '構成図', importId: 'imp-1' });
-      t.ok('サーバー（緩め）: 取れて、添付の置き場（会話ごと）に置く。返す形は { path, bytes, kind }（+ mime・name）',
+      const r = await c2.cmd('attachImport', { url: 'https://cdn.example.com/ok.png', sessionId, name: '構成図', importId: 'imp-1' });
+      t.ok('サーバー（緩め）: https の URL をテスト用サーバーへ向け替えて取れて、添付の置き場（会話ごと）に置く。返す形は { path, bytes, kind }（+ mime・name）',
         r.kind === 'image' && r.bytes === PNG.length && r.name === '構成図.png' && path.dirname(r.path) === path.join(dataDir, 'uploads', sessionId) && (await fs.readFile(r.path)).equals(PNG), JSON.stringify(r));
-      const notImg = await c2.cmd('attachImport', { url: `${webBase}/page`, sessionId }).then(() => null, (e) => e.message);
+      const notImg = await c2.cmd('attachImport', { url: 'https://cdn.example.com/page', sessionId }).then(() => null, (e) => e.message);
       t.ok('サーバー: 画像でない中身は失敗（置き場にも残さない）', Boolean(notImg) && (await fs.readdir(path.join(dataDir, 'uploads', sessionId))).length === 1);
       const bad = await c2.cmd('attachImport', { url: '' }).then(() => null, (e) => e.message);
       t.ok('サーバー: 入力の検査（空の URL は断る）', Boolean(bad));
-      const slow2 = c2.cmd('attachImport', { url: `${webBase}/slow.png`, sessionId, importId: 'imp-2' }).then(() => 'done', () => 'failed');
+      const slow2 = c2.cmd('attachImport', { url: 'https://cdn.example.com/slow.png', sessionId, importId: 'imp-2' }).then(() => 'done', () => 'failed');
       await new Promise((res) => setTimeout(res, 300));
       const cancelled = await c2.cmd('attachImportCancel', { importId: 'imp-2' });
       t.ok('サーバー: attachImportCancel で取りに行っている途中のものをやめる（取り込みは失敗で返る）', cancelled.cancelled === true && await slow2 === 'failed');

@@ -12,12 +12,13 @@ import { el } from './dom.mjs';
 import { t } from './i18n.mjs';
 import { formatBytes } from './folder-upload.mjs';
 import { attachmentHtml } from './user-message.mjs';
+import { richFromClipboard } from './html-paste.mjs';
 import { baseName } from './file-reference.mjs';
 import {
   markdownToDoc, docToMarkdown, mergeRuns, runsText, runsLength, newMark, fenceRoles, normalizeFences, ensureShape, emptyBlock,
   caret, isCollapsed, orderSel, deleteSelection, insertText, enter, backspaceAtStart, deleteAtEnd, insertAtom, removeAtoms, newAtom,
   atomKey, atomKeys, normalizeAttachmentPath, pasteText, applyTriggers, toggleMark, marksInRange, selectionMarkdown, createHistory,
-  posToOffset, offsetToPos, insertPlain, docLayout, memoRaw,
+  posToOffset, offsetToPos, insertPlain, docLayout, memoRaw, pasteRich, removeAtomsTidy,
 } from './md-doc.mjs';
 
 const KINDS = new Set(['p', 'h', 'ul', 'ol', 'quote', 'code', 'att']);
@@ -56,7 +57,8 @@ export function htmlToText(html) {
  * @param {HTMLElement} root 編集欄にする要素（#prompt）
  * @param {object} o
  * @param {(path:string) => object|null} o.resolve 添付のパス → { path, name, kind, dataUri, from }（無ければ null）
- * @param {(pid:string) => object|null} [o.pending] 送っている途中の添付の仮の ID → { name, state: 'sending'|'failed', percent, error }
+ * @param {(pid:string) => object|null} [o.pending] 送っている途中の添付の仮の ID → { name, state: 'sending'|'failed'|'importing', percent, error, host }
+ * @param {(images:{src:string, alt:string, kind:'data'|'https'}[]) => (string|null)[]} [o.importImages] 貼り付けた HTML の画像を取り込み始める（画像ごとの仮の ID。null は札にしない）。取れなければ forgetPending で札を外す
  * @param {() => string} [o.locale] 添付の印の言語（'ja' | 'en'）
  * @param {() => boolean} [o.isPlain] 整形も添付もしない平文の間か（シェルの形）
  * @param {(change:{added:Set<string>, removed:Set<string>}) => void} [o.onAtoms] 利用者の操作で添付の出入りがあった（キーは p:パス / i:仮の ID）
@@ -65,7 +67,7 @@ export function htmlToText(html) {
  * @param {(action:string, key:string) => void} [o.onAtomAction] 送信中・失敗の札のボタン（cancel / retry / remove）
  */
 export function createMarkdownEditor(root, o) {
-  const opts = { pending: () => null, locale: () => 'ja', isPlain: () => false, onAtoms: () => {}, onZoom: () => {}, onOpenFile: () => {}, onAtomAction: () => {}, ...o };
+  const opts = { pending: () => null, importImages: () => [], locale: () => 'ja', isPlain: () => false, onAtoms: () => {}, onZoom: () => {}, onOpenFile: () => {}, onAtomAction: () => {}, ...o };
   const resolve = (path) => opts.resolve(path);
   const plain = () => Boolean(opts.isPlain());
   const history = createHistory();
@@ -302,8 +304,18 @@ export function createMarkdownEditor(root, o) {
       return;
     }
     const pend = opts.pending(b.pid) ?? { name: '', state: 'failed', error: t('chat.composerAtt.cancelled') };
-    div.dataset.state = pend.state === 'sending' ? 'sending' : 'failed';
+    div.dataset.state = pend.state === 'sending' || pend.state === 'importing' ? pend.state : 'failed';
     const box = el('div', 'md-att-up');
+    if (pend.state === 'importing') {
+      // ホストが取りに行っている画像（貼り付けの HTML。ADR 0141）。進み具合は分からないので細い棒の中を光が往復する
+      box.dataset.state = 'importing';
+      box.title = t('chat.paste.importingTitle', { name: pend.name, host: pend.host ?? '' });
+      box.append(el('span', 'md-att-up-name', pend.name));
+      if (pend.host) box.append(el('span', 'md-att-up-host', pend.host));
+      box.append(el('span', 'md-att-up-pct', t('chat.paste.importing')), el('span', 'md-att-up-bar'), actionButton('cancel', t('chat.paste.cancelImport')));
+      div.append(box);
+      return;
+    }
     if (pend.state === 'sending') box.title = t('chat.attach.sendingTitle', { name: pend.name, size: formatBytes(pend.size ?? 0) });
     box.append(el('span', 'md-att-up-name', pend.name));
     if (pend.state === 'sending') {
@@ -379,7 +391,23 @@ export function createMarkdownEditor(root, o) {
     const after = tail ? old.at(-tail) : null;
     for (let i = head; i < old.length - tail; i++) old[i].remove();
     for (const d of fresh) root.insertBefore(d, after);
+    markGalleries();
     syncEmpty();
+  }
+
+  /** 隣り合う画像の札（と取り込み中の札）が 3 つ以上続くところだけ、小さなタイルにして横へ並べる（data-gal。見た目だけで、1 行 = 1 つの札は変わらない）。1・2 枚は今の大きさ */
+  function markGalleries() {
+    let run = [];
+    const settle = () => {
+      for (const d of run) { if (run.length >= 3) { if (d.dataset.gal === undefined) d.dataset.gal = ''; } else if (d.dataset.gal !== undefined) delete d.dataset.gal; }
+      run = [];
+    };
+    for (const d of root.children) {
+      if (!d.classList?.contains('md-b')) continue;
+      if (d.dataset.k === 'att' && (d.querySelector('.msg-att-img') || d.dataset.state === 'importing')) run.push(d);
+      else { settle(); if (d.dataset.gal !== undefined) delete d.dataset.gal; }
+    }
+    settle();
   }
 
   function syncEmpty() {
@@ -523,6 +551,32 @@ export function createMarkdownEditor(root, o) {
     const a = r && domToPos(r.startContainer, r.startOffset), b = r && domToPos(r.endContainer, r.endOffset);
     return a && b ? orderSel(a, b) : null;
   }
+  /**
+   * クリップボードに構造のある HTML（見出し・リスト・引用・コード・太字・リンク・画像・表など）があれば、text/plain があっても HTML を優先し、
+   * 入力欄の形にして入れる（書式は Markdown に、画像は文中の札に。docs/adr/0141）。入れたら true。
+   * 構造の無い HTML（色付きの span だけの VS Code・ターミナルなど）・シェルの形・コードの中は対象外で、text/plain を使う。
+   * HTML は DOM に入れない（DOMParser で読むだけ。外の画像は読み込まれない）。Ctrl+Shift+V は text/plain だけが届くので平文になる
+   */
+  function pasteRichFrom(dt) {
+    if (plain()) return false;
+    const rich = richFromClipboard(dt);
+    if (!rich) return false;
+    if (endTimer !== null) finishComposition();
+    const s = getState();
+    if (s.blocks[s.sel.s.b]?.kind === 'code' || editor.inCode()) return false;
+    const images = rich.lines.filter(l => l.image).map(l => l.image);
+    const pids = images.length ? opts.importImages(images) : [];
+    let k = 0;
+    const parts = [];
+    for (const l of rich.lines) {
+      if (l.md !== undefined) { parts.push({ md: l.md }); continue; }
+      const pid = pids[k++];
+      if (pid) parts.push({ atom: newAtom({ pid, locale: opts.locale() }) });
+    }
+    if (parts.length) apply(pasteRich(s, parts, { resolve }), 'paste');
+    return true;
+  }
+
   /** クリップボード・ドロップの中身を字にする。text/plain があればそれ、無ければ text/html の字（ブロックごとに改行。HTML は入れない） */
   function clipboardText(dt) {
     const plainText = dt?.getData('text/plain');
@@ -546,6 +600,7 @@ export function createMarkdownEditor(root, o) {
     // 貼り付け（クリップボードの中身は paste が字にして入れる。ここに来るのは paste で止めなかった経路）。HTML はそのまま入れない
     if (type === 'insertFromPaste' || type === 'insertFromPasteAsQuotation' || (type === 'insertReplacementText' && e.dataTransfer)) {
       e.preventDefault();
+      if (type === 'insertFromPaste' && e.data == null && pasteRichFrom(e.dataTransfer)) return;
       const text = e.data ?? clipboardText(e.dataTransfer);
       if (!text) return;
       const s0 = st();
@@ -701,8 +756,10 @@ export function createMarkdownEditor(root, o) {
   root.addEventListener('paste', (e) => {
     // ファイル（画像）は client.mjs の paste が添付にする
     if (e.clipboardData?.files?.length) return;
-    // HTML だけのクリップボード（ブラウザー・Word・メールなど）も字にして入れる。HTML そのものは入れない（外の画像を読みに行かせない）
+    // 構造のある HTML は書式・画像ごと入れる（pasteRichFrom）。そうでなければ字にして入れる（HTML だけのクリップボードも）。
+    // どちらも HTML そのものは入れない（外の画像を読みに行かせない）
     e.preventDefault();
+    if (pasteRichFrom(e.clipboardData)) return;
     const text = clipboardText(e.clipboardData);
     if (!text) return;
     if (endTimer !== null) finishComposition();
@@ -919,7 +976,7 @@ export function createMarkdownEditor(root, o) {
       const div = root.querySelector(`.md-att[data-pid="${CSS.escape(String(pid))}"]`);
       if (!div) return;
       const p = opts.pending(pid);
-      const same = div.dataset.state === (p?.state === 'sending' ? 'sending' : p ? 'failed' : 'failed');
+      const same = div.dataset.state === (p?.state === 'sending' || p?.state === 'importing' ? p.state : 'failed');
       if (same && p?.state === 'sending') {
         const pct = p.percent ?? 0;
         const label = div.querySelector('.md-att-up-pct'), bar = div.querySelector('.md-att-up-bar');
@@ -931,6 +988,36 @@ export function createMarkdownEditor(root, o) {
       const i = blockDivs().indexOf(div);
       if (i < 0) return;
       div.replaceWith(renderBlock(blocks[i], i, []));
+      markGalleries();
+    },
+    /**
+     * 取れなかった取り込みの札を、何も残さずに外す（失敗の札・知らせは出さない）。札は 160ms で薄れて外れる（動きを減らす設定なら即座）。
+     * 戻す・やり直しの記録からも消す（札の無い貼り付けとして残る）。外れたら解決する
+     */
+    forgetPending(pid) {
+      const pred = (b) => b.pid === pid && !b.path;
+      const key = `i:${pid}`;
+      return new Promise((done) => {
+        const finish = () => {
+          if (whenIdle(finish)) return;   // 変換中なら、終わってから
+          const s = getState();
+          if (atomKeys(s.blocks).has(key)) {
+            const next = removeAtomsTidy(s, pred);
+            clearAtomSel();
+            paint(next.blocks);
+            if (hasFocus()) setDomSel(next.sel); else lastSel = next.sel;
+            history.rewrite((state) => removeAtomsTidy(state, pred));
+            history.touch(next.sel);
+            report();
+            fire();
+          } else history.rewrite((state) => removeAtomsTidy(state, pred));
+          done();
+        };
+        const div = root.querySelector(`.md-att[data-pid="${CSS.escape(String(pid))}"]`);
+        if (!div || globalThis.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches) { finish(); return; }
+        div.classList.add('leave');
+        setTimeout(finish, 170);
+      });
     },
     /** 添付を外す（キーは p:パス / i:仮の ID）。外したら true */
     removeAttachment(key) {
@@ -971,6 +1058,7 @@ export function createMarkdownEditor(root, o) {
       // 描き直すのは添付の札だけ（字の行は触らない。キャレットも変換中の字もそのまま）
       const blocks = readDoc();
       blockDivs().forEach((div, i) => { if (div.dataset.k === 'att') div.replaceWith(renderBlock(blocks[i], i, [])); });
+      markGalleries();
     },
   };
   root.editor = editor;
