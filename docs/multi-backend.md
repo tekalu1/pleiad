@@ -135,7 +135,7 @@ web はこれを見て、一覧の行・畳んだ見出し・稼働表示の弧�
 （web の `count > 0`）が閉じたままになる。`null` を数えるのは、状態を出さないバックエンドでゲートを緩めないため。
 `turnEnd` は `{ completedAt, outcome, interrupted, requeued?, delegated? }`。`requeued: true` は完了ではない（§2.7 の requeue。`completedAt` は `null`）。
 `interrupted` は中断で終わったターンなら `{ at, reason }`（`at` は `completedAt` と同じ）、それ以外は `null`（design.md「中断と再開」）。
-`running` の `count` が 0 になるのを、更新とデスクトップの終了の「中断して…」が待つ（ADR 0036）。
+`running` の `count` が 0 になるのを、更新とデスクトップの終了の「中断して…」が待つ（ADR 0036）。無停止の更新（ADR 0137。パッケージ版の既定）の切り替えも、新しい版のサーバーへ替える前に `count` が 0 になるのを待つ（`desktop/switch.cjs`。`!` の行・Codex の裏の端末・外部の stdio MCP・送信予定は `count` に入らず、待たない。`!` の行と Codex の裏の端末は「切り替えで止まるもの」として別に持ち、残っていれば「あとで／止めて切り替え」を聞く）。更新で main が入れ替わる間もサーバーとターンは止まらない（段階 1。ターンは作業が終わるまで古い版のサーバーで走る）。
 
 Claude の判定は `core/backends/claude-background.mjs`（SDK 非依存、`tests/unit/claude-background.mjs`）。
 実測（`output/bg-tasks/claude-report.md` §3、2026-09、SDK 0.3.258 / Claude Code 2.1.268）に沿う:

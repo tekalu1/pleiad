@@ -1,6 +1,7 @@
 # 0090 pleiad CLI はデスクトップ版に同梱し、Ply の内蔵 Node で走らせる。PATH は会話のシェルにだけ足す
 
 - 状態: 承認（2026-10-03）
+- 追記（2026-10-06）: 無停止の更新（[ADR 0137](0137-zero-downtime-update.md)。パッケージ版の既定）では、サーバーが版ごとの実行場所の `pleiad-node.exe`（公式の Node）で走るので、「Ply の内蔵 Node」は、起動口（`bin/pleiad.cmd`・`bin/pleiad`）が先に探す実行場所の `pleiad-node.exe` に替わる（無ければ今の `Ply.exe`、最後に `node`）。サーバーの env に `ELECTRON_RUN_AS_NODE` は付かない。外の AI に貼る設定は、版ごとの実行場所が掃除で消えても壊れないよう、版に依らない `$INSTDIR` の `Ply.exe` と `resources\app\bin\pleiad.mjs` を指す（`PLEIAD_CLI_EXEC`・`PLEIAD_CLI_SCRIPT`）。
 
 ## 状況
 

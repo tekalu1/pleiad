@@ -2,7 +2,7 @@
 
 - 状態: 確定（2026-10-06）。段階 0 の実測と、段階 1 の 1-0（頭の確認）の実測を反映した。コードは変えていない（実装は [plan.md](plan.md) の段階ごと）
 - 決定: [ADR 0137](../adr/0137-zero-downtime-update.md)。段階と作業項目: [plan.md](plan.md)。管理: [issue #54](https://github.com/tekalu1/pleiad/issues/54)
-- 実測の記録: [stage0-claude.md](stage0-claude.md)・[stage0-codex-agy.md](stage0-codex-agy.md)・[stage0-runtime.md](stage0-runtime.md)・[stage1-0.md](stage1-0.md)（測るスクリプトは `scripts/zero-downtime/`）
+- 実測の記録: [stage0-claude.md](stage0-claude.md)・[stage0-codex-agy.md](stage0-codex-agy.md)・[stage0-runtime.md](stage0-runtime.md)・[stage1-0.md](stage1-0.md)・[stage1-7.md](stage1-7.md)（実機の確認。測るスクリプトは `scripts/zero-downtime/`）
 - 関係する決定: [ADR 0036](../adr/0036-interrupt-and-update-while-running.md)（中断して更新。更新の部分を 0137 が置き換える）・[ADR 0115](../adr/0115-records-in-sqlite.md)（データ置き場の単独の持ち主）・[ADR 0019](../adr/0019-rename-ply-to-pleiad-keep-identifiers.md)（識別子を変えない）・[ADR 0043](../adr/0043-agent-browser-via-per-session-cdp-relay.md)（会話ごとの CDP 中継）・[ADR 0083](../adr/0083-control-surface-cli.md)（control.json）・[ADR 0090](../adr/0090-cli-in-desktop-app.md)（CLI の起動口）
 - 印: **【確認】** = コードを読んで確かめた。**【実測】** = 動かして確かめた（記録は stage0-*.md）。**【推測】** = 動かしていない見込み。**【未確認】** = 測れていない（末尾の「未確認の点」）
 
@@ -148,6 +148,7 @@ agent-host-runtime\
 - **写す→起こす の順を守る**。新しく写した直後に起こすと遅い（上）。更新の流れは「写す（ハードリンクで組む）→ manifest と突き合わせる → 事前の確かめ → 起こす」
 - **`$INSTDIR` の前方一致に掛からないことを毎回確かめる**。NSIS は `Path.StartsWith('$INSTDIR', 大小文字を無視)` で選ぶ【確認】ので、文字列の前方一致になる。`$INSTDIR` の中・`$INSTDIR` と同じ文字列で始まる兄弟のフォルダー（例 `…\Programs\Ply` と `…\Programs\Ply-runtime`）の実行ファイルは、更新で止められた【実測】。`$INSTDIR` は利用者が選べる（`allowToChangeInstallationDirectory: true`）。実行場所が `$INSTDIR` の下か、`$INSTDIR` と同じ文字列で始まるときは、別の場所（`%LOCALAPPDATA%\jp.ply.desktop\runtime`）に移す
 - 写すのは main（新しい版の main が起動したとき）。インストーラーには足さない（NSIS のスクリプトを増やさない。新規インストールと更新で同じ道を通る）。古いサーバーはその間も走っているので急がない
+- **manifest は、インストールした後の木と一致していなければならない**: NSIS は x64 の配布物の中の別 CPU の `.exe`・`.dll`（node-pty の `win32-arm64` の conpty・winpty）を黙って落とす（新しい 7-Zip の ARM64 フィルターを古い展開器が読めない。2026-10-06 の実機の確認で、実行場所を組めず毎回 `utilityProcess` に落ちていた）ので、動かさない OS・CPU の prebuild は afterPack が manifest の前に外す（`scripts/pack-runtime.cjs` の `pruneOtherPrebuilds`）。インストール後の木が manifest と一致することを、リリースの確認に入れる（`docs/desktop-releases.md`「リリース判定」）。
 - 写した後、`manifest.json`（ビルド時に作る、ファイルごとの SHA-256）と突き合わせる。合わなければその版の実行場所を使わず、今の「中断して更新」に落とす（§6）
 - 全ユーザー向けのインストール（`Program Files`、書けるのは管理者だけ）から、利用者が書ける場所へ実行ファイルを写すことになる。同じ利用者の権限で動くプロセスが書き換えられるようになるが、権限の昇格にはならない（利用者向けのインストールでは `$INSTDIR` も元から利用者が書ける）【推測】。この点も含めて ADR 0137 で承認済み
 
