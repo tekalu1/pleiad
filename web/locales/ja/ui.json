@@ -2652,6 +2652,10 @@
       "noAutoUpdate": "この評価版は自動更新に対応していません。新しいインストーラーで更新してください。",
       "browser": "ブラウザー版では更新履歴を確認できます。"
     },
+    "store": {
+      "status": "Microsoft Store から更新されます",
+      "hint": "新しいバージョンは Microsoft Store が配ります。すぐに確かめるときは、Microsoft Store の「ライブラリ」で「更新プログラムを取得する」を押してください。"
+    },
     "lastChecked": "最終確認：{{when}}",
     "retry": "再試行",
     "settingsHasUpdate": "設定・更新があります",

@@ -196,6 +196,7 @@ const SUITES = [
   // データ置き場を共有する 2 つのプロセス。本物の子プロセスを 2 本起動する
   './unit/mcp-oauth-processes.mjs',
   './unit/desktop-updates.mjs',
+  './unit/desktop-store.mjs',
   './unit/desktop-exit-dialog.mjs',
   './unit/message-queue.mjs',
   // 送り終わった outbox は刈らない: 古い項目でも returned・undelivered・同じ ID の再試行が見つかる（ADR 0115）
