@@ -4773,7 +4773,7 @@ async function runTurn(args, onStarted = () => {}, hooks = {}) {
 const ANSWER_EVENTS = new Set(['text.delta', 'text.end', 'thinking.delta', 'tool.start']);
 
 async function runTurnInternal(args, onStarted, hooks) {
-  const { prompt, sessionId = null } = args ?? {};
+  const { sessionId = null } = args ?? {};
   if (hooks.canStart && !hooks.canStart()) return 'cancelled';
   if ((hooks.internal || hooks.signal) && (sessionBusy(sessionId))) return 'requeue';
   if (switching.has(sessionId) || forking.has(sessionId)) throw new Error(t('agents.switching'));
@@ -4783,450 +4783,527 @@ async function runTurnInternal(args, onStarted, hooks) {
   const compactionRevision = sessionId ? compactionScheduler.revision(sessionId) : null;
   if (sessionId) switching.add(sessionId);
   try {
-
-    // 行き先が決まらないターンは始めない。断るのは登録する前。
-    await settingsWrites.get(sessionId);
-    let backend = refuseRetired(await pickBackend(sessionId, args?.backend));
-    const reserved = sessionId ? (await store.get(sessionId)).nextSettings : null;
-    let { cwd, changedFrom } = await resolveCwd(sessionId, reserved?.cwd ?? args?.cwd, backend);
-    // Claude のアカウント。削除済み・トークンが読めないものを選んでいる会話は、ここで止める
-    // （黙ってログイン中のアカウントで走らせない）。予約の切り替えより前に確かめる
-    const accountBackend = (reserved && getBackend(reserved.backend)) || backend;
-    // 互換の接続先（'' = 公式）。削除済み・確認に失敗している・キーを読めないものを選んでいる会話は、ここで止める
-    // （黙って公式で走らせない。アカウントと同じ扱い）。新しい会話は、設定で「既定にする」を押した接続先（無ければ公式）
-    const endpointId = !endpointCapable(accountBackend) ? ''
-      : reserved?.endpoint !== undefined ? reserved.endpoint
-      : sessionId ? (await store.get(sessionId)).compatEndpoint ?? ''
-      : typeof args?.endpoint === 'string' ? args.endpoint : await compatEndpoints.defaultFor(accountBackend.id);
-    const endpoint = endpointId ? await compatEndpoints.resolve(endpointId, accountBackend.id) : null;
-    const endpointInfo = endpointId ? await endpointRow(endpointId) : null;
-    // Claude のアカウント。互換の接続先では使わない（接続先のキーで送る）ので引かない
-    const accountId = reserved?.account !== undefined ? reserved.account : sessionId ? (await store.get(sessionId)).claudeAccount ?? "" : "";
-    const account = !endpoint && accountBackend.capabilities?.claudeAccounts ? await claudeAccounts.resolve(accountId) : null;
-    if (reserved) {
-      const target = getBackend(reserved.backend);
-      if (!target || !await validModel(target, reserved.model, cwd, endpointId) || (reserved.mode !== undefined && !target.modes()[reserved.mode])) throw new Error(t('turn.reservedInvalid'));
-      await validateEffort(target, reserved.effort ?? '', reserved.model, cwd, endpointInfo);
-      if (target.id !== backend.id) {
-        await switchBackend(sessionId, backend, target);
-        await shellRuns.switched(sessionId, backend, target);
-      }
-      backend = target;
-    }
-    await backend.prepareTurn?.(sessionId);
-    // Reject before marking the conversation sent or consuming its pending handoff.
-    if (hooks.compact && backend.compact) {
-      const record = await conversation(sessionId);
-      if (record && !record.nativeId) throw new Error(t('compaction.notStarted'));
-    }
-    // 再開のセッションの作業ディレクトリを人が変えた。status / title と同じく履歴に残し、一覧と会話に知らせる。
-    // エージェントが新しい cwd でセッションを見つけられるかはエージェント次第（claude は init の id で確かめる）
-    if (changedFrom) {
-      await store.recordChange(sessionId, { by: "human", field: "cwd", from: changedFrom, to: cwd, ...savedReason('resumeCwd'), backend });
-      emitGlobal({ type: "cwd", sessionId, cwd, by: "human", ...savedReason('cwdFrom', { from: changedFrom }) });
-    }
-    // 会話の言語（エージェントに渡す文の言語）。記録にあればそれ、無ければ今の画面の言語で決めて保存する（新規は id が決まったとき）
-    const agentLocale = sessionId ? await ensureAgentLocale(sessionId) : currentLocale();
-    const permissionMode = await resolveMode(sessionId, reserved ? reserved.mode : args?.mode, backend);
-    const model = await resolveModel(sessionId, reserved ? reserved.model : args?.model, backend, cwd, endpointId);
-    const effort = await resolveEffort(sessionId, reserved ? reserved.effort ?? "" : args?.effort, backend, model, cwd, endpointInfo);
-    // worktree（ADR 0089）。使う場所が worktree の中なら控える（片付けの印・取り込みを頼む相手）。片付けている最中の場所では始めない。
-    const worktreeEntry = await worktreeHost.worktrees.byPath(cwd);
-    if (worktreeEntry && worktreeEntry.state !== 'ready') throw new Error(t('worktree.cleaning'));
-    if (sessionId) {
-      if (!hooks.compact) await store.setSessionData(sessionId, 'compacted', false);
-      await store.setModel(sessionId, model);
-      await store.setSessionData(sessionId, "effort", effort);
-      if (reserved?.account !== undefined) await store.setSessionData(sessionId, 'claudeAccount', reserved.account);
-      if (reserved?.endpoint !== undefined) await store.setSessionData(sessionId, 'compatEndpoint', reserved.endpoint);
-      await store.setMode(sessionId, permissionMode);
-      await store.setMeta(sessionId, { cwd, unsent: false, lastModified: Date.now() });
-      if (reserved) {
-        await store.setSessionData(sessionId, "nextSettings", null, { durable: true });
-        emitGlobal({ type: "backend", sessionId, backend: backend.id, applied: true });
-        emitGlobal({ type: "nextSettings", sessionId, nextSettings: null });
-      }
-      // 委譲の子なら、タスクの記録を実際に走る値に合わせる（依頼元が替えた予約を人が取り消した・替えたとき。ADR 0134）
-      const synced = await agentTasks?.sync(sessionId, { backend: backend.id, model, effort, mode: permissionMode }).catch(() => null);
-      if (synced) emitGlobal({ type: 'agentTaskChanged', sessionId: null, taskId: synced });
-    }
-
-    if (changedFrom) settleWorktreeAt(changedFrom).catch(() => {});
-    // 新規のときだけ効く状態。再開したセッションの状態は setStatus で変える
-    const status = !sessionId && typeof args?.status === "string" && args.status.trim()
-      ? args.status.trim() : null;
-    // 入力欄に溜めていた添付（attachFile が置いたもの）。送信と一緒に会話へ載せる
-    const attachments = Array.isArray(args?.attachments) ? args.attachments : [];
-    const baseline = await history.loadTranscript(sessionId, backend);
-    // 前のターンまでのサブエージェント。listSubagents は全期間の分を返すので、実行中一覧から外すために覚える。
-    // CLI を起こす前に取る（後で取ると、このターンで生まれた分まで前の分に数えてしまう）
-    const pastSubagents = new Set(sessionId && backend.listSubagents
-      ? await backend.listSubagents(sessionId).catch(() => []) : []);
-    const previousContext = sessionId ? (await store.get(sessionId)).contextSession : null;
-    // 方針（担当・探索の計画）はターンごとに今の設定と作業場所で解き直す。設定の変更は始まっている会話にも次のターンから効く。
-    // 「この会話では外す」MCP と開始時刻は会話の方針として引き継ぐ（followSettings）。コンテキストの記録が無いまま送信済みの会話
-    // （この機能より前の会話）はエージェント任せのまま。作業場所を変えたときの探し直しは下の読み込み直し（refreshedContext）で知らせる
-    const { policy: followed, changed: settingsChanged } = followSettings(previousContext?.policy ?? null, await contextSettings.get(cwd),
-      { keepNative: !previousContext && baseline.messages.length > 0 });
-    let policy = followed;
-    // Pleiad 担当のコンテキストを受け取れないバックエンド（antigravity）では、担当が Pleiad でもエージェント任せとして扱う。
-    // 開いても届かない上に、外部 MCP へ無駄に接続（stdio なら起動）してしまう
-    const plyContext = managed(policy) && acceptsPlyContext(backend, policy);
-    const resolvedContext = plyContext ? await resolveRuntime(policy, { plyServers: await plyMcp.scanInput(), snapshots: CONTEXT_SNAPSHOTS, locale: agentLocale }) : null;
-    // 開始時の固定と違う＝指示・Skills が変わった。止めずに今の内容で続ける（resolvedContext が今のファイルで解き直した結果なので、
-    // 記録も pin も自動で新しくなる）。指示本文は毎ターン指示欄へ渡し直し、Skills はカタログしか渡していないので技術的な制約は無い。
-    // 右パネルの「渡したもの」との食い違いだけが問題なので、読み込み直したことを履歴と会話に残す
-    const refreshedContext = Boolean(plyContext && previousContext?.pin && resolvedContext?.pin !== previousContext.pin);
-    // コンテキストの設定の変更（担当・探す範囲・外部 MCP の登録や有効／無効）を、このターンから反映した
-    const appliedSettings = Boolean(previousContext && settingsChanged.length);
-    // instructions_for_path / load_skill で渡し済みの本文の控え（行の id → 本文のハッシュ）。会話の記録に残して
-    // 次のターンへ持ち越し、同じものを頼まれたら短い一行だけを返す（core/context-runtime.mjs の contextTools）。
-    // 履歴を引き継ぎの文で渡し直すターン（バックエンドの切り替え・ホスト側で写した分岐）と、記録した相手と違うバックエンドでは捨てる。
-    // 渡した本文が相手の手元に残っているとは限らないため
-    const handoff = await pendingHandoff(sessionId).catch(() => true);
-    const delivered = !handoff && previousContext?.delivered?.backend === backend.id ? { ...previousContext.delivered.entries } : {};
-    if (resolvedContext) resolvedContext.delivered = delivered;
-    // エージェント任せにしたターンでも固定（pin）は捨てない。Pleiad 担当を受け取れるエージェントへ戻したときに突き合わせる
-    const contextRecord = { policy: refreshedContext || appliedSettings ? { ...policy, refreshedAt: new Date().toISOString() } : policy,
-      pin: resolvedContext?.pin ?? (plyContext ? null : previousContext?.pin ?? null), report: resolvedContext?.report ?? nativeContextReport(policy, cwd, backend),
-      delivered: { backend: backend.id, entries: delivered },
-      // Pleiad が足した文の量（ADR 0056）。渡す文が出そろった所（下の runArgs の後）で数え直す。それまでは前のターンの値を見せる
-      ...(previousContext?.plyParts ? { plyParts: previousContext.plyParts } : {}) };
-    // Pleiad の指示（core/ply-instructions.mjs）。担当によらず、ターンごとに今の設定・モード・子かどうか・エージェントで決める。
-    // 渡すのは ply_agents の instructions の後ろ（下の agentRuntime）。項目ごとに入れたか（入れなかった理由）を会話の記録に残し、右パネルに出す
-    const added = turnInstructions({ list: plyInstructionsCache, locale: agentLocale, routing: routingSettingsCache.enabled,
-      child: Boolean(sessionId && (await store.get(sessionId)).delegation), supported: Boolean(backend.capabilities?.plyAgents),
-      canDelegate: canDelegate(backend.modes()[permissionMode]), agent: INSTRUCTION_AGENTS.includes(backend.id) ? backend.id : null });
-    if (added) contextRecord.added = added;
-    // Hooks の担当が Pleiad の場所（ADR 0049）。このエージェントへ渡す登録・止めるネイティブ・渡せないものを組み立て、会話の記録に残す。
-    // 組み立てられなければ送らない（ネイティブと登録が二重に動くか、どちらも動かないため）
-    let hooksTurn = null;
-    try { hooksTurn = await prepareHooksTurn({ agent: backend.id, cwd, ctx: { plyHooks, hooksConfig, dataDir: store.dataDir, findNode: findNodeOnPath,
-      context: { owners: policy.owners, delivered: plyContext } } }); }
-    catch (e) { throw new Error(t('hooksUnify.prepareFailed', { error: String(e?.message ?? e) })); }
-    if (hooksTurn) contextRecord.hooks = hooksTurn.record;
-    if (appliedSettings) {
-      await store.recordChange(sessionId, { by: 'ply', field: 'context', from: previousContext.pin ?? null, to: contextRecord.pin,
-        ...savedReason('contextSettingsApplied'), backend });
-      emitGlobal({ type: 'contextRefreshed', sessionId, settings: true, kinds: settingsChanged, names: [], count: 0 });
-    } else if (refreshedContext) {
-      // 何が変わったかは前の記録と今の記録の突き合わせで出す（pinChanges を呼ぶと同じターンで探索がもう一度走る）
-      const changed = pinnedChanges(previousContext.report?.entries ?? [], resolvedContext.report.entries);
-      const names = changed.map(c => c.name || path.basename(c.path ?? '')).filter(Boolean).slice(0, 3);
-      const reason = !names.length ? savedReason('contextReloaded')
-        : changed.length > names.length ? savedReason('contextChangedMore', { names, count: changed.length - names.length })
-        : savedReason('contextChanged', { names });
-      await store.recordChange(sessionId, { by: 'ply', field: 'context', from: previousContext.pin, to: resolvedContext.pin, ...reason, backend });
-      emitGlobal({ type: 'contextRefreshed', sessionId, names, count: changed.length });
-    }
-    const turn = {
-      stream: {
-        ...structuredClone(baseline),
-        user: hooks.internal || hooks.compact ? null : { role: "user", text: String(prompt ?? ""), at: new Date().toISOString(), backend: backend.id },
-        initialMessageId: args.messageId ?? null,
-        events: [],
-      },
-      key: sessionId ?? `new:${crypto.randomUUID()}`,
-      ac: new AbortController(),
-      // 中断の理由（abortSessions / giveUp が止める前に付ける。無いまま中断で終わったら user）
-      abortReason: null,
-      startedAtMs: Date.now(),
-      userSentAt: toMs(args.at) ?? Date.now(),
-      backend,
-      agentLocale,
-      control: { handle: null, onReady: () => {
-        outbox.kick(sessionId).catch(() => {});
-        agentTasks?.sendQueued(sessionId).catch(() => {});
-      } },
-      outcome: null,
-      compactTrigger: hooks.compact ?? null,
-      compactionRevision,
-      userInitiated: !hooks.internal && !hooks.compact,
-      compaction: null,
-      compactionWrite: Promise.resolve(),
-      contextWindow: null,
-      contextRecord,
-      taskHints: new Map(),
-      pastSubagents,
-      subagentOrigins: new Map(),
-      presentKey: crypto.randomUUID(),
-      presentWrites: [],
-      info: {
-        sessionId,
-        backend: backend.id,
-        startedAt: new Date().toISOString(),
-        cwd,
-        mode: permissionMode,
-        model: model || "",
-        effort,
-        endpoint: endpointId,
-        account: accountId,
-        status,
-        attachments,
-        // active = main が動いている / waiting = main は返答済みで、裏の subagent などを待っている
-        phase: "active",
-        background: [],
-      },
-    };
-    // 止めた瞬間に、このターンが抱えていたもの（裏の作業・承認待ち）を控える。中断で終わったら会話の「止めたもの」に残す（endTurn）。
-    // 承認待ちの却下（settleAll）より先に走るよう、ほかの abort の受け手より前に付ける
-    turn.ac.signal.addEventListener('abort', () => { turn.stops ??= captureStops(turn); }, { once: true });
-    if (hooks.signal?.aborted) turn.ac.abort();
-    const abortFromTask = () => turn.ac.abort();
-    hooks.signal?.addEventListener('abort', abortFromTask, { once: true });
-    runtime.turns.set(turn.key, turn);
-    // 送信待ちから始まったターン（人の発言・別の会話からの発言）で、送信の連鎖の数を決め直す（sessions.send の歯止め）
-    if (args.messageId) noteRelayHops(sessionId, args);
-    for (const read of liveReads) if (read.sessionId === sessionId) read.turn = turn;
-    // worktree を使うターン。会話の id が決まったら台帳に控える
-    turn.worktreeId = worktreeEntry?.id ?? null;
-    if (turn.worktreeId && sessionId) worktreeHost.worktrees.update(turn.worktreeId, { sessionId }).catch(() => {});
-    turn.gitCalls = createCallTracker();
-    const emit = makeEmit(turn);
-    turn.visualizations = createVisualizationCollector({
-      access: fileAccess,
-      publish: async payload => {
-        await turn.setup;
-        const id = turn.info.sessionId;
-        if (!id) throw new Error(t('agentRuntime.visualizeNotStarted'));
-        const record = await history.recordPresent(id, { ...payload, turnKey: turn.presentKey });
-        emit({ type: 'present', sessionId: id, ...record }, { recorded: true });
-      },
-    });
-
-    let didStart = false, backendInvoked = false, runtimeContext;
-    let initialDelivered = false;
-    // 中断で止めたもの（stops）を伝える文。このターンの発言の前に 1 回だけ添え、渡ったら会話から消す（docs/design.md「中断と再開」）
-    let interruption = null, interruptionTaken = false;
-    // 入力欄の `!` の結果（ADR 0054）。人の発言のターンでだけ、発言と一緒に渡す（完了通知で再開するターン・圧縮では渡さない）。
-    // 'host' の会話は未送の追記を shouldQuery: false の行で先に渡す。'native'（Codex）はエージェントの会話に既に入っている。
-    // 「渡さない」の行は渡さず、渡った後に会話に残す行へ移す（ADR 0055）
-    const shellHandoff = sessionId && !hooks.internal && !hooks.compact && shellMode(backend)
-      ? (shellMode(backend) === 'host' ? await shellRuns.appendsFor(sessionId) : { ids: [], skipped: [], lines: [] }) : null;
-    let shellHanded = false;
-    const onPromptDelivered = () => {
-      if (interruption && !interruptionTaken) {
-        interruptionTaken = true;
-        store.takeStops(sessionId, interruption.keys, { dropped: interruption.dropped }).catch(e => console.error('  中断で止めたものを伝えた記録に失敗:', String(e?.message ?? e)));
-      }
-      if (shellHandoff && !shellHanded) {
-        shellHanded = true;
-        shellRuns.delivered(sessionId, shellHandoff.ids, shellHandoff.skipped).catch(e => console.error('  shell: 渡した記録に失敗:', String(e?.message ?? e)));
-      }
-      if (initialDelivered || !args.messageId) return;
-      initialDelivered = true;
-      emit({ type: 'userMessage.delivered', messageId: args.messageId });
-    };
-    const saveContext = async () => {
-      await turn.setup;
-      if (turn.info.sessionId) await store.setSessionData(turn.info.sessionId, 'contextSession', contextRecord);
-      emit({ type: 'contextUsage', report: structuredClone(contextRecord.report), plyParts: contextRecord.plyParts ?? null });
-    };
-    try {
+    const ctx = await prepareTurn(args, hooks, compactionRevision);
+    return await driveTurn(ctx, async () => {
       await onStarted();
-      didStart = true;
-      // 次のターンが始まったので中断の印を消し、走っている印を付ける（新しい会話は id が決まったとき。makeEmit の session）
-      if (sessionId) limitStates.delete(sessionId);
-      if (sessionId) await store.setMeta(sessionId, { turnStartedAt: turn.startedAtMs, interrupted: null }).catch(err => {
-        console.error("  ターンの開始の記録に失敗:", String(err?.message ?? err));
-      });
-      // 中断で止めたものがあれば、エージェントの言語で文にして発言の前に添える（圧縮のターンでは添えない）。
-      // 画面には、何を伝えたかを開ける 1 行で出す（履歴は system-messages.mjs の splitInterruptionNotes が同じ行にする）。
-      // 発言の吹き出しの後に送り、画面は messageId の吹き出しの前へ置く（履歴と同じ並び）
-      if (sessionId && !hooks.compact) {
-        const stops = (await store.get(sessionId).catch(() => null))?.stops;
-        interruption = interruptionNote(agentLocale, stops, stops?.reason);
-      }
-      if (args.messageId) emit({ type: "userMessage", messageId: args.messageId, text: String(prompt ?? ""), at: args.at, initial: true, pending: true,
-        ...(args.scheduledFor ? { scheduledFor: args.scheduledFor } : {}),
-        ...(args.sentBy ? { sentBy: publicSender(args.sentBy) } : {}) });
-      if (interruption) emit({ type: 'interruptionNote', text: interruption.body, ...(args.messageId ? { messageId: args.messageId } : {}) });
-      broadcastRunning();
-      syncRunningPoll();
-      if (resolvedContext?.servers.length) emit({ type: 'activity', state: 'preparing' });
-      if (hooks.internal) {
-        await recordTaskNotice(sessionId, prompt);
-        // bot の会話へ渡すチャンネルの出来事・記憶の包みは、履歴と同じ行の形で出す（splitLeadingNotes）。それ以外は、本文も載せる。
-        // 画面の「タスクの結果で再開」の 1 行を開くと読める（ADR 0053）
-        const rows = channelEventRows(prompt);
-        if (rows.length) emit({ type: 'channelEvent', rows });
-        else emit({ type: 'taskNotice', text: String(prompt ?? '') });
-      }
-      await saveContext();
-      // agy のように会話のあいだ 1 本のプロセスを生かすバックエンドには、会話ごとの同じトークンで開く（起動時にしか渡せない）
-      if (resolvedContext) runtimeContext = await contextBridge.open({ runtime: resolvedContext, prompt,
-        ...(backend.capabilities?.plyContext === 'conversation' ? { token: conversationConnection(turn).contextToken } : {}),
-        origin: localOrigin(), signal: turn.ac.signal,
-        isActive: () => runtime.turns.get(turn.key) === turn && !turn.ac.signal.aborted, changed: saveContext,
-        progress: ({ current, total }) => emit({ type: 'activity', state: 'preparing', current, total }),
-        authorize: backend.id === 'codex' && !['full','yolo'].includes(permissionMode)
-          ? async (serverName, toolName, input) => Boolean((await askPermission({ toolName: `${serverName} / ${toolName}`, input, sessionId: turn.info.sessionId, signal: turn.ac.signal, kind: 'tool', canAlways: false, locale: agentLocale }))?.allow)
-          : undefined });
-      if (resolvedContext?.servers.length) emit({ type: 'activity', state: 'thinking' });
-      // 再開なら id が分かっているので先に載せる。新規は session イベントで id が決まった瞬間に（makeEmit）
-      if (sessionId && attachments.length) await presentAttachments(sessionId, attachments, emit);
-      if (hooks.signal?.aborted) throw new Error(t('turn.aborted'));
-      // Codex は走っている `!` のターンに発言を入れ、返答しないまま閉じる。終わるまで待ってから始める（ADR 0054）
-      if (sessionId && shellMode(backend) === 'native' && shellRuns.runningIn(sessionId)) {
-        await shellRuns.settled(sessionId, turn.ac.signal);
-        if (turn.ac.signal.aborted) throw new Error(t('turn.aborted'));
-      }
-      // bot の会話なら、人格（botInstructions）と、ターンの末尾（記憶の核の写し・差分。notes）を足す。bot でなければ空
-      const botExtras = await botHost?.turnExtras(turn) ?? { botInstructions: null, notes: [] };
-      const notes = [...(interruption ? [interruption.text] : []), ...botExtras.notes];
-      const runArgs = {
-        prompt,
-        ...(shellHandoff?.lines.length ? { shellAppends: shellHandoff.lines } : {}),
-        ...(notes.length ? { notes } : {}),
-        ...(botExtras.botInstructions ? { botInstructions: botExtras.botInstructions } : {}),
-        ...(botExtras.folders ? { botFolders: botExtras.folders } : {}),
-        ...(hooks.compact ? { compact: hooks.compact } : {}),
-        sessionId,
-        cwd,
-        mode: permissionMode,
-        model: model || undefined,
-        effort,
-        // 渡った合図（onPromptDelivered）を呼ばないバックエンド（antigravity）もある。返答の中身が届いたら渡ったとみなす
-        emit: (event, opts) => { if (ANSWER_EVENTS.has(event?.type)) onPromptDelivered(); return emit(event, opts); },
-        onPromptDelivered,
-        // 拒否・中断の理由をこの会話の言語で返すため、会話の言語を添えて聞く
-        askPermission: request => askPermission({ ...request, locale: agentLocale }),
-        hostInvoke: async (op, args) => {
-          const result = await opsRegistry.invoke({ by: 'agent', via: 'mcp', sessionId: args.sessionId }, op, args, opsDeps(agentLocale));
-          if (!result.ok) throw new Error(result.error);
-          return result.result;
-        },
-        signal: turn.ac,
-        control: turn.control,
-        // エージェントに渡す文（指示・ツールの説明・タイトル生成など）の言語。会話ごとに決めて保存したもの
-        locale: agentLocale,
-        visualizeInstructions: visualizeInstructions(agentLocale),
-        browserEnv: await browserEnvironment({ bridge: agentBrowser, dataDir: store.dataDir, sessionId: sessionId || turn.key, unlock: turn.userInitiated }).catch(error => { console.error('agent browser unavailable:', error.message); return null; }),
-        browserInstructions: null,
-        // ply_browser。内蔵ブラウザーを渡すターンだけ（下で入れる）
-        browserRuntime: null,
-        // ply_computer（url・headers・instructions）。使えない・オフ・対応しないエージェントなら null（computerRuntimeFor）
-        computerRuntime: await computerRuntimeFor(turn),
-        // ply_control（操作の一覧）。全会話に渡す。env は会話のシェルへ渡す CLI の接続情報
-        controlRuntime: controlRuntimeFor(turn),
-        addedInstructions: !backend.capabilities?.plyAgents ? withAdded(null, contextRecord.added) : null,
-        contextRuntime: runtimeContext,
-        // Hooks を Pleiad がそろえるターンだけ（担当がエージェントなら渡さない。エージェントの設定の hooks がそのまま動く）
-        ...(hooksTurn?.runtime ? { hooksRuntime: hooksTurn.runtime } : {}),
-        // 橋は会話ごとに使い回すので、Pleiad の指示はターンごとにここで足す（設定の変更が始まっている会話にも次のターンから効く）
-        agentRuntime: (runtime => ({ ...runtime, instructions: withAdded(runtime.instructions, contextRecord.added) }))(agentConnection(turn)),
-        // 会話で選んだアカウントのトークン。この会話の query() の env にだけ入る（core/claude-accounts.mjs）
-        ...(account ? { oauthToken: account.token } : {}),
-        // 互換の接続先（キーを含む。backend の中でだけ使い、ログ・イベントには出さない。core/compat-endpoints.mjs）
-        ...(endpoint ? { endpoint } : {}),
-      };
-      if (runArgs.browserEnv) {
-        // 中継へ渡したキー。新規会話の id 決定での付け替え（rebind）と、承認の問い合わせ（getAgent）がこれで照合する
-        turn.browserRelayId = sessionId || turn.key;
-        // i18n-dynamic: agent:browser.instructions
-        runArgs.browserInstructions = browserInstruction(runArgs.browserEnv, agentLocale, agentT);
-        runArgs.browserRuntime = browserRuntimeFor(turn);
-      }
-      // Pleiad が足した文の量（右パネルの「指示の量」。ADR 0056）。このターンで渡す文が出そろったここで数え、変わったときだけ記録し直す
-      const parts = plyParts({ plyAgents: Boolean(backend.capabilities?.plyAgents), context: runtimeContext?.sections ?? null,
-        visualize: runArgs.visualizeInstructions, browser: runArgs.browserInstructions, agents: agentConnection(turn).instructions, added: contextRecord.added,
-        computer: computerPrompt(runArgs.computerRuntime, { locale: agentLocale, agent: backend.id }), control: runArgs.controlRuntime.instructions });
-      if (JSON.stringify(parts) !== JSON.stringify(contextRecord.plyParts ?? null)) { contextRecord.plyParts = parts; await saveContext(); }
+      ctx.didStart = true;
+      await beginTurn(ctx);
       // Preparation can await context and settings. A send or cancellation may have invalidated
       // an idle reservation since the first check; do not invoke the backend in that case.
-      if (hooks.canInvoke && !hooks.canInvoke()) {
-        turn.outcome = 'requeue';
-        return 'requeue';
-      }
-      // git の作業場所なら、ターンの始まりの状態を隠し ref に撮る（書き込みの範囲のターンだけ。圧縮では撮らない。ADR 0085）。
-      // 撮影が遅いときは待たずに始める（その回は撮影なし）
-      if (GIT_SNAPSHOTS && !hooks.compact && scopeRank(modePosition(backend.modes()?.[permissionMode]).scope) > scopeRank('readonly')) {
-        turn.gitSetup = gitActivity.begin({ cwd }).then(g => {
-          if (turn.gitLate) return null;
-          turn.git = g;
-          return g && turn.info.sessionId ? gitActivity.attach(g, turn.info.sessionId) : null;
-        }).catch(() => {});
-        let began = false;
-        await Promise.race([turn.gitSetup.then(() => { began = true; }), new Promise(resolve => setTimeout(resolve, GIT_BEGIN_WAIT_MS).unref?.())]);
-        // 間に合わなかった。エージェントが動き出した後の撮影は基準にならないので、このターンは撮らない
-        if (!began) turn.gitLate = true;
-      }
-      backendInvoked = true;
-      const result = hooks.compact && backend.compact
-        ? await backend.compact({ ...runArgs, trigger: hooks.compact })
-        : await backend.runTurn(runArgs);
-      if (hooks.compact && !turn.compaction?.phase?.match(/^complete$/)) {
-        emit({ type: 'compaction', phase: 'failed', trigger: hooks.compact,
-          reason: result?.compactionFailureReason || turn.compaction?.reason || t('compaction.noCompletion') });
-      }
-      if (hooks.compact && turn.outcome == null) emit({ type: 'turnResult', outcome: 'ok' });
-      // 相手が別のターンを走らせていて、何も届かなかった。
-      // 完了ではない。送信待ちへ戻し（message-queue）、そのターンが終わってから送り直す
-      if (result?.requeue) turn.outcome = "requeue";
-      await turn.visualizations.close();
-      // Complete any accepted steering write before releasing the live snapshot.
-      if (sessionId) await outbox.list(sessionId);
-      if (turn.info.sessionId) {
-        await turn.setup;
-        if (attachments.length || turn.steeredAttachments?.length) {
-          await Promise.all(turn.presentWrites);
-          // 中断の後に添えた文は発言から切り分けてから照らす（history.loadTranscript と同じ）
-          const messages = splitLeadingNotes(await backend.getMessages(turn.info.sessionId));
-          let cursor = baseline.messages.length;
-          for (const attachment of [{ key: turn.presentKey, prompt }, ...(turn.steeredAttachments ?? [])]) {
-            const index = messages.findIndex((m, i) => i >= cursor && m.role === 'user' && m.text === attachment.prompt);
-            if (index < 0) continue;
-            cursor = index + 1;
-            await history.anchorAttachments(turn.info.sessionId, attachment.key, messages[index].uuid);
-          }
-        }
-        await store.setMeta(turn.info.sessionId, { lastModified: Date.now() }).catch(() => {});
-      }
-    } catch (err) {
-      if (hooks.compact && turn.compaction?.phase !== 'complete') emit({ type: 'compaction', phase: 'failed', trigger: hooks.compact,
-        reason: String(err?.message ?? err) });
-      if (resolvedContext) { contextRecord.report.status = 'failed'; await saveContext().catch(() => {}); }
-      if (!turn.errorShown) {
-        if (turn.backend.id === 'antigravity') turn.failureReason = { source: 'server.catch', error: String(err?.message ?? err).slice(0, 1000) };
-        emit({ type: "turnResult", outcome: "error", error: String(err?.message ?? err) });
-      }
-      // プロンプトを渡す前に失敗した（backends/undelivered.mjs）。送信済みにしたままだと、本文がどこにも残らず消える。
-      // 送信待ちの「失敗」に戻し、利用者に再送か取り消しを選ばせる
-      if ((err?.undelivered || !backendInvoked) && sessionId && args.messageId) {
-        await outbox.undelivered(sessionId, args.messageId, String(err?.message ?? err)).catch(() => {});
-      }
-      if (!didStart) throw err;
-    } finally {
-      // 渡らずに終わった `!` の行は、また「渡さない」を切り替えられる
-      if (shellHandoff && !shellHanded) shellRuns.release(sessionId, shellHandoff);
-      if (didStart && turn.outcome !== 'ok' && turn.outcome !== 'requeue') await outbox.pause(sessionId).catch(() => {});
-      await turn.visualizations.close().catch(err => {
-        if (turn.backend.id === 'antigravity') turn.failureReason = { source: 'visualizations.close', error: String(err?.message ?? err).slice(0, 1000) };
-        emit({ type: 'turnResult', outcome: 'error', error: t('turn.visualizationSaveFailed', { error: err.message }) });
-      });
-      await Promise.allSettled([runtimeContext?.close()]);
-      await saveContext().catch(() => {
-        if (turn.backend.id === 'antigravity') turn.failureReason = { source: 'saveContext', error: t('turn.contextSaveFailed') };
-        emit({ type: 'turnResult', outcome: 'error', error: t('turn.contextSaveFailed') });
-      });
-      // git の動き（ADR 0085）: ターンの終わりの撮影と、返答の下の 1 行の元。ファイル・コミット・ブランチ・PR のどれかが動いたときだけ会話に残す
-      if (turn.gitSetup && didStart && turn.outcome !== 'requeue') {
-        const summary = await Promise.race([
-          turn.gitSetup.then(() => (turn.git ? gitActivity.finish(turn.git, turn.info.sessionId, turn.gitCalls.events()) : null)),
-          new Promise(resolve => setTimeout(resolve, GIT_END_WAIT_MS, null).unref?.()),
-        ]).catch(() => null);
-        if (summary && turn.info.sessionId) emit({ type: 'present', kind: 'git', git: summary, by: 'ai', at: new Date().toISOString(), sessionId: turn.info.sessionId });
-      }
-      await endTurn(turn, emit, { record: didStart });
-      hooks.signal?.removeEventListener("abort", abortFromTask);
-    }
-    return turn.outcome;
+      if (hooks.canInvoke && !hooks.canInvoke()) return { requeue: true, beforeInvoke: true };
+      return await launchTurn(ctx);
+    });
   } finally {
-    switching.delete(sessionId);
-    completionNotices.changed(sessionId);
-    notifyFree(sessionId);
-    await kickQueued();
+    await releaseTurn(sessionId);
   }
+}
+
+async function prepareTurn(args, hooks, compactionRevision) {
+  const { prompt, sessionId = null } = args ?? {};
+
+  // 行き先が決まらないターンは始めない。断るのは登録する前。
+  await settingsWrites.get(sessionId);
+  let backend = refuseRetired(await pickBackend(sessionId, args?.backend));
+  const reserved = sessionId ? (await store.get(sessionId)).nextSettings : null;
+  let { cwd, changedFrom } = await resolveCwd(sessionId, reserved?.cwd ?? args?.cwd, backend);
+  // Claude のアカウント。削除済み・トークンが読めないものを選んでいる会話は、ここで止める
+  // （黙ってログイン中のアカウントで走らせない）。予約の切り替えより前に確かめる
+  const accountBackend = (reserved && getBackend(reserved.backend)) || backend;
+  // 互換の接続先（'' = 公式）。削除済み・確認に失敗している・キーを読めないものを選んでいる会話は、ここで止める
+  // （黙って公式で走らせない。アカウントと同じ扱い）。新しい会話は、設定で「既定にする」を押した接続先（無ければ公式）
+  const endpointId = !endpointCapable(accountBackend) ? ''
+    : reserved?.endpoint !== undefined ? reserved.endpoint
+    : sessionId ? (await store.get(sessionId)).compatEndpoint ?? ''
+    : typeof args?.endpoint === 'string' ? args.endpoint : await compatEndpoints.defaultFor(accountBackend.id);
+  const endpoint = endpointId ? await compatEndpoints.resolve(endpointId, accountBackend.id) : null;
+  const endpointInfo = endpointId ? await endpointRow(endpointId) : null;
+  // Claude のアカウント。互換の接続先では使わない（接続先のキーで送る）ので引かない
+  const accountId = reserved?.account !== undefined ? reserved.account : sessionId ? (await store.get(sessionId)).claudeAccount ?? "" : "";
+  const account = !endpoint && accountBackend.capabilities?.claudeAccounts ? await claudeAccounts.resolve(accountId) : null;
+  if (reserved) {
+    const target = getBackend(reserved.backend);
+    if (!target || !await validModel(target, reserved.model, cwd, endpointId) || (reserved.mode !== undefined && !target.modes()[reserved.mode])) throw new Error(t('turn.reservedInvalid'));
+    await validateEffort(target, reserved.effort ?? '', reserved.model, cwd, endpointInfo);
+    if (target.id !== backend.id) {
+      await switchBackend(sessionId, backend, target);
+      await shellRuns.switched(sessionId, backend, target);
+    }
+    backend = target;
+  }
+  await backend.prepareTurn?.(sessionId);
+  // Reject before marking the conversation sent or consuming its pending handoff.
+  if (hooks.compact && backend.compact) {
+    const record = await conversation(sessionId);
+    if (record && !record.nativeId) throw new Error(t('compaction.notStarted'));
+  }
+  // 再開のセッションの作業ディレクトリを人が変えた。status / title と同じく履歴に残し、一覧と会話に知らせる。
+  // エージェントが新しい cwd でセッションを見つけられるかはエージェント次第（claude は init の id で確かめる）
+  if (changedFrom) {
+    await store.recordChange(sessionId, { by: "human", field: "cwd", from: changedFrom, to: cwd, ...savedReason('resumeCwd'), backend });
+    emitGlobal({ type: "cwd", sessionId, cwd, by: "human", ...savedReason('cwdFrom', { from: changedFrom }) });
+  }
+  // 会話の言語（エージェントに渡す文の言語）。記録にあればそれ、無ければ今の画面の言語で決めて保存する（新規は id が決まったとき）
+  const agentLocale = sessionId ? await ensureAgentLocale(sessionId) : currentLocale();
+  const permissionMode = await resolveMode(sessionId, reserved ? reserved.mode : args?.mode, backend);
+  const model = await resolveModel(sessionId, reserved ? reserved.model : args?.model, backend, cwd, endpointId);
+  const effort = await resolveEffort(sessionId, reserved ? reserved.effort ?? "" : args?.effort, backend, model, cwd, endpointInfo);
+  // worktree（ADR 0089）。使う場所が worktree の中なら控える（片付けの印・取り込みを頼む相手）。片付けている最中の場所では始めない。
+  const worktreeEntry = await worktreeHost.worktrees.byPath(cwd);
+  if (worktreeEntry && worktreeEntry.state !== 'ready') throw new Error(t('worktree.cleaning'));
+  if (sessionId) {
+    if (!hooks.compact) await store.setSessionData(sessionId, 'compacted', false);
+    await store.setModel(sessionId, model);
+    await store.setSessionData(sessionId, "effort", effort);
+    if (reserved?.account !== undefined) await store.setSessionData(sessionId, 'claudeAccount', reserved.account);
+    if (reserved?.endpoint !== undefined) await store.setSessionData(sessionId, 'compatEndpoint', reserved.endpoint);
+    await store.setMode(sessionId, permissionMode);
+    await store.setMeta(sessionId, { cwd, unsent: false, lastModified: Date.now() });
+    if (reserved) {
+      await store.setSessionData(sessionId, "nextSettings", null, { durable: true });
+      emitGlobal({ type: "backend", sessionId, backend: backend.id, applied: true });
+      emitGlobal({ type: "nextSettings", sessionId, nextSettings: null });
+    }
+    // 委譲の子なら、タスクの記録を実際に走る値に合わせる（依頼元が替えた予約を人が取り消した・替えたとき。ADR 0134）
+    const synced = await agentTasks?.sync(sessionId, { backend: backend.id, model, effort, mode: permissionMode }).catch(() => null);
+    if (synced) emitGlobal({ type: 'agentTaskChanged', sessionId: null, taskId: synced });
+  }
+
+  if (changedFrom) settleWorktreeAt(changedFrom).catch(() => {});
+  // 新規のときだけ効く状態。再開したセッションの状態は setStatus で変える
+  const status = !sessionId && typeof args?.status === "string" && args.status.trim()
+    ? args.status.trim() : null;
+  // 入力欄に溜めていた添付（attachFile が置いたもの）。送信と一緒に会話へ載せる
+  const attachments = Array.isArray(args?.attachments) ? args.attachments : [];
+  const baseline = await history.loadTranscript(sessionId, backend);
+  // 前のターンまでのサブエージェント。listSubagents は全期間の分を返すので、実行中一覧から外すために覚える。
+  // CLI を起こす前に取る（後で取ると、このターンで生まれた分まで前の分に数えてしまう）
+  const pastSubagents = new Set(sessionId && backend.listSubagents
+    ? await backend.listSubagents(sessionId).catch(() => []) : []);
+  const previousContext = sessionId ? (await store.get(sessionId)).contextSession : null;
+  // 方針（担当・探索の計画）はターンごとに今の設定と作業場所で解き直す。設定の変更は始まっている会話にも次のターンから効く。
+  // 「この会話では外す」MCP と開始時刻は会話の方針として引き継ぐ（followSettings）。コンテキストの記録が無いまま送信済みの会話
+  // （この機能より前の会話）はエージェント任せのまま。作業場所を変えたときの探し直しは下の読み込み直し（refreshedContext）で知らせる
+  const { policy: followed, changed: settingsChanged } = followSettings(previousContext?.policy ?? null, await contextSettings.get(cwd),
+    { keepNative: !previousContext && baseline.messages.length > 0 });
+  let policy = followed;
+  // Pleiad 担当のコンテキストを受け取れないバックエンド（antigravity）では、担当が Pleiad でもエージェント任せとして扱う。
+  // 開いても届かない上に、外部 MCP へ無駄に接続（stdio なら起動）してしまう
+  const plyContext = managed(policy) && acceptsPlyContext(backend, policy);
+  const resolvedContext = plyContext ? await resolveRuntime(policy, { plyServers: await plyMcp.scanInput(), snapshots: CONTEXT_SNAPSHOTS, locale: agentLocale }) : null;
+  // 開始時の固定と違う＝指示・Skills が変わった。止めずに今の内容で続ける（resolvedContext が今のファイルで解き直した結果なので、
+  // 記録も pin も自動で新しくなる）。指示本文は毎ターン指示欄へ渡し直し、Skills はカタログしか渡していないので技術的な制約は無い。
+  // 右パネルの「渡したもの」との食い違いだけが問題なので、読み込み直したことを履歴と会話に残す
+  const refreshedContext = Boolean(plyContext && previousContext?.pin && resolvedContext?.pin !== previousContext.pin);
+  // コンテキストの設定の変更（担当・探す範囲・外部 MCP の登録や有効／無効）を、このターンから反映した
+  const appliedSettings = Boolean(previousContext && settingsChanged.length);
+  // instructions_for_path / load_skill で渡し済みの本文の控え（行の id → 本文のハッシュ）。会話の記録に残して
+  // 次のターンへ持ち越し、同じものを頼まれたら短い一行だけを返す（core/context-runtime.mjs の contextTools）。
+  // 履歴を引き継ぎの文で渡し直すターン（バックエンドの切り替え・ホスト側で写した分岐）と、記録した相手と違うバックエンドでは捨てる。
+  // 渡した本文が相手の手元に残っているとは限らないため
+  const handoff = await pendingHandoff(sessionId).catch(() => true);
+  const delivered = !handoff && previousContext?.delivered?.backend === backend.id ? { ...previousContext.delivered.entries } : {};
+  if (resolvedContext) resolvedContext.delivered = delivered;
+  // エージェント任せにしたターンでも固定（pin）は捨てない。Pleiad 担当を受け取れるエージェントへ戻したときに突き合わせる
+  const contextRecord = { policy: refreshedContext || appliedSettings ? { ...policy, refreshedAt: new Date().toISOString() } : policy,
+    pin: resolvedContext?.pin ?? (plyContext ? null : previousContext?.pin ?? null), report: resolvedContext?.report ?? nativeContextReport(policy, cwd, backend),
+    delivered: { backend: backend.id, entries: delivered },
+    // Pleiad が足した文の量（ADR 0056）。渡す文が出そろった所（下の runArgs の後）で数え直す。それまでは前のターンの値を見せる
+    ...(previousContext?.plyParts ? { plyParts: previousContext.plyParts } : {}) };
+  // Pleiad の指示（core/ply-instructions.mjs）。担当によらず、ターンごとに今の設定・モード・子かどうか・エージェントで決める。
+  // 渡すのは ply_agents の instructions の後ろ（下の agentRuntime）。項目ごとに入れたか（入れなかった理由）を会話の記録に残し、右パネルに出す
+  const added = turnInstructions({ list: plyInstructionsCache, locale: agentLocale, routing: routingSettingsCache.enabled,
+    child: Boolean(sessionId && (await store.get(sessionId)).delegation), supported: Boolean(backend.capabilities?.plyAgents),
+    canDelegate: canDelegate(backend.modes()[permissionMode]), agent: INSTRUCTION_AGENTS.includes(backend.id) ? backend.id : null });
+  if (added) contextRecord.added = added;
+  // Hooks の担当が Pleiad の場所（ADR 0049）。このエージェントへ渡す登録・止めるネイティブ・渡せないものを組み立て、会話の記録に残す。
+  // 組み立てられなければ送らない（ネイティブと登録が二重に動くか、どちらも動かないため）
+  let hooksTurn = null;
+  try { hooksTurn = await prepareHooksTurn({ agent: backend.id, cwd, ctx: { plyHooks, hooksConfig, dataDir: store.dataDir, findNode: findNodeOnPath,
+    context: { owners: policy.owners, delivered: plyContext } } }); }
+  catch (e) { throw new Error(t('hooksUnify.prepareFailed', { error: String(e?.message ?? e) })); }
+  if (hooksTurn) contextRecord.hooks = hooksTurn.record;
+  if (appliedSettings) {
+    await store.recordChange(sessionId, { by: 'ply', field: 'context', from: previousContext.pin ?? null, to: contextRecord.pin,
+      ...savedReason('contextSettingsApplied'), backend });
+    emitGlobal({ type: 'contextRefreshed', sessionId, settings: true, kinds: settingsChanged, names: [], count: 0 });
+  } else if (refreshedContext) {
+    // 何が変わったかは前の記録と今の記録の突き合わせで出す（pinChanges を呼ぶと同じターンで探索がもう一度走る）
+    const changed = pinnedChanges(previousContext.report?.entries ?? [], resolvedContext.report.entries);
+    const names = changed.map(c => c.name || path.basename(c.path ?? '')).filter(Boolean).slice(0, 3);
+    const reason = !names.length ? savedReason('contextReloaded')
+      : changed.length > names.length ? savedReason('contextChangedMore', { names, count: changed.length - names.length })
+      : savedReason('contextChanged', { names });
+    await store.recordChange(sessionId, { by: 'ply', field: 'context', from: previousContext.pin, to: resolvedContext.pin, ...reason, backend });
+    emitGlobal({ type: 'contextRefreshed', sessionId, names, count: changed.length });
+  }
+  const turn = {
+    stream: {
+      ...structuredClone(baseline),
+      user: hooks.internal || hooks.compact ? null : { role: "user", text: String(prompt ?? ""), at: new Date().toISOString(), backend: backend.id },
+      initialMessageId: args.messageId ?? null,
+      events: [],
+    },
+    key: sessionId ?? `new:${crypto.randomUUID()}`,
+    ac: new AbortController(),
+    // 中断の理由（abortSessions / giveUp が止める前に付ける。無いまま中断で終わったら user）
+    abortReason: null,
+    startedAtMs: Date.now(),
+    userSentAt: toMs(args.at) ?? Date.now(),
+    backend,
+    agentLocale,
+    control: { handle: null, onReady: () => {
+      outbox.kick(sessionId).catch(() => {});
+      agentTasks?.sendQueued(sessionId).catch(() => {});
+    } },
+    outcome: null,
+    compactTrigger: hooks.compact ?? null,
+    compactionRevision,
+    userInitiated: !hooks.internal && !hooks.compact,
+    compaction: null,
+    compactionWrite: Promise.resolve(),
+    contextWindow: null,
+    contextRecord,
+    taskHints: new Map(),
+    pastSubagents,
+    subagentOrigins: new Map(),
+    presentKey: crypto.randomUUID(),
+    presentWrites: [],
+    ended: false,
+    info: {
+      sessionId,
+      backend: backend.id,
+      startedAt: new Date().toISOString(),
+      cwd,
+      mode: permissionMode,
+      model: model || "",
+      effort,
+      endpoint: endpointId,
+      account: accountId,
+      status,
+      attachments,
+      // active = main が動いている / waiting = main は返答済みで、裏の subagent などを待っている
+      phase: "active",
+      background: [],
+    },
+  };
+  // 止めた瞬間に、このターンが抱えていたもの（裏の作業・承認待ち）を控える。中断で終わったら会話の「止めたもの」に残す（endTurn）。
+  // 承認待ちの却下（settleAll）より先に走るよう、ほかの abort の受け手より前に付ける
+  turn.ac.signal.addEventListener('abort', () => { turn.stops ??= captureStops(turn); }, { once: true });
+  if (hooks.signal?.aborted) turn.ac.abort();
+  const abortFromTask = () => turn.ac.abort();
+  hooks.signal?.addEventListener('abort', abortFromTask, { once: true });
+  runtime.turns.set(turn.key, turn);
+  // 送信待ちから始まったターン（人の発言・別の会話からの発言）で、送信の連鎖の数を決め直す（sessions.send の歯止め）
+  if (args.messageId) noteRelayHops(sessionId, args);
+  for (const read of liveReads) if (read.sessionId === sessionId) read.turn = turn;
+  // worktree を使うターン。会話の id が決まったら台帳に控える
+  turn.worktreeId = worktreeEntry?.id ?? null;
+  if (turn.worktreeId && sessionId) worktreeHost.worktrees.update(turn.worktreeId, { sessionId }).catch(() => {});
+  turn.gitCalls = createCallTracker();
+  const emit = makeEmit(turn);
+  turn.visualizations = createVisualizationCollector({
+    access: fileAccess,
+    publish: async payload => {
+      await turn.setup;
+      const id = turn.info.sessionId;
+      if (!id) throw new Error(t('agentRuntime.visualizeNotStarted'));
+      const record = await history.recordPresent(id, { ...payload, turnKey: turn.presentKey });
+      emit({ type: 'present', sessionId: id, ...record }, { recorded: true });
+    },
+  });
+
+  // 入力欄の `!` の結果（ADR 0054）。人の発言のターンでだけ、発言と一緒に渡す（完了通知で再開するターン・圧縮では渡さない）。
+  // 'host' の会話は未送の追記を shouldQuery: false の行で先に渡す。'native'（Codex）はエージェントの会話に既に入っている。
+  // 「渡さない」の行は渡さず、渡った後に会話に残す行へ移す（ADR 0055）
+  const shellHandoff = sessionId && !hooks.internal && !hooks.compact && shellMode(backend)
+    ? (shellMode(backend) === 'host' ? await shellRuns.appendsFor(sessionId) : { ids: [], skipped: [], lines: [] }) : null;
+
+  const ctx = {
+    args,
+    hooks,
+    sessionId,
+    prompt,
+    backend,
+    cwd,
+    account,
+    accountId,
+    endpoint,
+    endpointId,
+    agentLocale,
+    permissionMode,
+    model,
+    effort,
+    attachments,
+    baselineLength: baseline.messages.length,
+    policy,
+    plyContext,
+    resolvedContext,
+    hasContext: Boolean(resolvedContext),
+    contextRecord,
+    hooksTurn,
+    turn,
+    emit,
+    abortFromTask,
+    didStart: false,
+    backendInvoked: false,
+    runtimeContext: null,
+    initialDelivered: false,
+    // 中断で止めたもの（stops）を伝える文。このターンの発言の前に 1 回だけ添え、渡ったら会話から消す（docs/design.md「中断と再開」）
+    interruption: null,
+    interruptionTaken: false,
+    shellHandoff,
+    shellHanded: false,
+    runArgs: null,
+  };
+
+  ctx.onPromptDelivered = () => {
+    if (ctx.interruption && !ctx.interruptionTaken) {
+      ctx.interruptionTaken = true;
+      store.takeStops(ctx.sessionId, ctx.interruption.keys, { dropped: ctx.interruption.dropped }).catch(e => console.error('  中断で止めたものを伝えた記録に失敗:', String(e?.message ?? e)));
+    }
+    if (ctx.shellHandoff && !ctx.shellHanded) {
+      ctx.shellHanded = true;
+      shellRuns.delivered(ctx.sessionId, ctx.shellHandoff.ids, ctx.shellHandoff.skipped).catch(e => console.error('  shell: 渡した記録に失敗:', String(e?.message ?? e)));
+    }
+    if (ctx.initialDelivered || !args.messageId) return;
+    ctx.initialDelivered = true;
+    emit({ type: 'userMessage.delivered', messageId: args.messageId });
+  };
+
+  ctx.saveContext = async () => {
+    await turn.setup;
+    if (turn.info.sessionId) await store.setSessionData(turn.info.sessionId, 'contextSession', ctx.contextRecord);
+    emit({ type: 'contextUsage', report: structuredClone(ctx.contextRecord.report), plyParts: ctx.contextRecord.plyParts ?? null });
+  };
+
+  return ctx;
+}
+
+async function beginTurn(ctx) {
+  const { args, hooks, sessionId, prompt, backend, cwd, account, endpoint, agentLocale,
+    permissionMode, model, effort, attachments, contextRecord, hooksTurn, turn, emit,
+    resolvedContext, shellHandoff } = ctx;
+
+  // 次のターンが始まったので中断の印を消し、走っている印を付ける（新しい会話は id が決まったとき。makeEmit の session）
+  if (sessionId) limitStates.delete(sessionId);
+  if (sessionId) await store.setMeta(sessionId, { turnStartedAt: turn.startedAtMs, interrupted: null }).catch(err => {
+    console.error("  ターンの開始の記録に失敗:", String(err?.message ?? err));
+  });
+  // 中断で止めたものがあれば、エージェントの言語で文にして発言の前に添える（圧縮のターンでは添えない）。
+  // 画面には、何を伝えたかを開ける 1 行で出す（履歴は system-messages.mjs の splitInterruptionNotes が同じ行にする）。
+  // 発言の吹き出しの後に送り、画面は messageId の吹き出しの前へ置く（履歴と同じ並び）
+  if (sessionId && !hooks.compact) {
+    const stops = (await store.get(sessionId).catch(() => null))?.stops;
+    ctx.interruption = interruptionNote(agentLocale, stops, stops?.reason);
+  }
+  if (args.messageId) emit({ type: "userMessage", messageId: args.messageId, text: String(prompt ?? ""), at: args.at, initial: true, pending: true,
+    ...(args.scheduledFor ? { scheduledFor: args.scheduledFor } : {}),
+    ...(args.sentBy ? { sentBy: publicSender(args.sentBy) } : {}) });
+  if (ctx.interruption) emit({ type: 'interruptionNote', text: ctx.interruption.body, ...(args.messageId ? { messageId: args.messageId } : {}) });
+  broadcastRunning();
+  syncRunningPoll();
+  if (resolvedContext?.servers.length) emit({ type: 'activity', state: 'preparing' });
+  if (hooks.internal) {
+    await recordTaskNotice(sessionId, prompt);
+    // bot の会話へ渡すチャンネルの出来事・記憶の包みは、履歴と同じ行の形で出す（splitLeadingNotes）。それ以外は、本文も載せる。
+    // 画面の「タスクの結果で再開」の 1 行を開くと読める（ADR 0053）
+    const rows = channelEventRows(prompt);
+    if (rows.length) emit({ type: 'channelEvent', rows });
+    else emit({ type: 'taskNotice', text: String(prompt ?? '') });
+  }
+  await ctx.saveContext();
+  // agy のように会話のあいだ 1 本のプロセスを生かすバックエンドには、会話ごとの同じトークンで開く（起動時にしか渡せない）
+  if (resolvedContext) ctx.runtimeContext = await contextBridge.open({ runtime: resolvedContext, prompt,
+    ...(backend.capabilities?.plyContext === 'conversation' ? { token: conversationConnection(turn).contextToken } : {}),
+    origin: localOrigin(), signal: turn.ac.signal,
+    isActive: () => runtime.turns.get(turn.key) === turn && !turn.ac.signal.aborted, changed: ctx.saveContext,
+    progress: ({ current, total }) => emit({ type: 'activity', state: 'preparing', current, total }),
+    authorize: backend.id === 'codex' && !['full','yolo'].includes(permissionMode)
+      ? async (serverName, toolName, input) => Boolean((await askPermission({ toolName: `${serverName} / ${toolName}`, input, sessionId: turn.info.sessionId, signal: turn.ac.signal, kind: 'tool', canAlways: false, locale: agentLocale }))?.allow)
+      : undefined });
+  if (resolvedContext?.servers.length) emit({ type: 'activity', state: 'thinking' });
+  // 再開なら id が分かっているので先に載せる。新規は session イベントで id が決まった瞬間に（makeEmit）
+  if (sessionId && attachments.length) await presentAttachments(sessionId, attachments, emit);
+  if (hooks.signal?.aborted) throw new Error(t('turn.aborted'));
+  // Codex は走っている `!` のターンに発言を入れ、返答しないまま閉じる。終わるまで待ってから始める（ADR 0054）
+  if (sessionId && shellMode(backend) === 'native' && shellRuns.runningIn(sessionId)) {
+    await shellRuns.settled(sessionId, turn.ac.signal);
+    if (turn.ac.signal.aborted) throw new Error(t('turn.aborted'));
+  }
+  // bot の会話なら、人格（botInstructions）と、ターンの末尾（記憶の核の写し・差分。notes）を足す。bot でなければ空
+  const botExtras = await botHost?.turnExtras(turn) ?? { botInstructions: null, notes: [] };
+  const notes = [...(ctx.interruption ? [ctx.interruption.text] : []), ...botExtras.notes];
+  const runArgs = {
+    prompt,
+    ...(shellHandoff?.lines.length ? { shellAppends: shellHandoff.lines } : {}),
+    ...(notes.length ? { notes } : {}),
+    ...(botExtras.botInstructions ? { botInstructions: botExtras.botInstructions } : {}),
+    ...(botExtras.folders ? { botFolders: botExtras.folders } : {}),
+    ...(hooks.compact ? { compact: hooks.compact } : {}),
+    sessionId,
+    cwd,
+    mode: permissionMode,
+    model: model || undefined,
+    effort,
+    // 渡った合図（onPromptDelivered）を呼ばないバックエンド（antigravity）もある。返答の中身が届いたら渡ったとみなす
+    emit: (event, opts) => { if (ANSWER_EVENTS.has(event?.type)) ctx.onPromptDelivered(); return emit(event, opts); },
+    onPromptDelivered: ctx.onPromptDelivered,
+    // 拒否・中断の理由をこの会話の言語で返すため、会話の言語を添えて聞く
+    askPermission: request => askPermission({ ...request, locale: agentLocale }),
+    hostInvoke: async (op, args) => {
+      const result = await opsRegistry.invoke({ by: 'agent', via: 'mcp', sessionId: args.sessionId }, op, args, opsDeps(agentLocale));
+      if (!result.ok) throw new Error(result.error);
+      return result.result;
+    },
+    signal: turn.ac,
+    control: turn.control,
+    // エージェントに渡す文（指示・ツールの説明・タイトル生成など）の言語。会話ごとに決めて保存したもの
+    locale: agentLocale,
+    visualizeInstructions: visualizeInstructions(agentLocale),
+    browserEnv: await browserEnvironment({ bridge: agentBrowser, dataDir: store.dataDir, sessionId: sessionId || turn.key, unlock: turn.userInitiated }).catch(error => { console.error('agent browser unavailable:', error.message); return null; }),
+    browserInstructions: null,
+    // ply_browser。内蔵ブラウザーを渡すターンだけ（下で入れる）
+    browserRuntime: null,
+    // ply_computer（url・headers・instructions）。使えない・オフ・対応しないエージェントなら null（computerRuntimeFor）
+    computerRuntime: await computerRuntimeFor(turn),
+    // ply_control（操作の一覧）。全会話に渡す。env は会話のシェルへ渡す CLI の接続情報
+    controlRuntime: controlRuntimeFor(turn),
+    addedInstructions: !backend.capabilities?.plyAgents ? withAdded(null, contextRecord.added) : null,
+    contextRuntime: ctx.runtimeContext,
+    // Hooks を Pleiad がそろえるターンだけ（担当がエージェントなら渡さない。エージェントの設定の hooks がそのまま動く）
+    ...(hooksTurn?.runtime ? { hooksRuntime: hooksTurn.runtime } : {}),
+    // 橋は会話ごとに使い回すので、Pleiad の指示はターンごとにここで足す（設定の変更が始まっている会話にも次のターンから効く）
+    agentRuntime: (runtime => ({ ...runtime, instructions: withAdded(runtime.instructions, contextRecord.added) }))(agentConnection(turn)),
+    // 会話で選んだアカウントのトークン。この会話の query() の env にだけ入る（core/claude-accounts.mjs）
+    ...(account ? { oauthToken: account.token } : {}),
+    // 互換の接続先（キーを含む。backend の中でだけ使い、ログ・イベントには出さない。core/compat-endpoints.mjs）
+    ...(endpoint ? { endpoint } : {}),
+  };
+  if (runArgs.browserEnv) {
+    // 中継へ渡したキー。新規会話の id 決定での付け替え（rebind）と、承認の問い合わせ（getAgent）がこれで照合する
+    turn.browserRelayId = sessionId || turn.key;
+    // i18n-dynamic: agent:browser.instructions
+    runArgs.browserInstructions = browserInstruction(runArgs.browserEnv, agentLocale, agentT);
+    runArgs.browserRuntime = browserRuntimeFor(turn);
+  }
+  // Pleiad が足した文の量（右パネルの「指示の量」。ADR 0056）。このターンで渡す文が出そろったここで数え、変わったときだけ記録し直す
+  const parts = plyParts({ plyAgents: Boolean(backend.capabilities?.plyAgents), context: ctx.runtimeContext?.sections ?? null,
+    visualize: runArgs.visualizeInstructions, browser: runArgs.browserInstructions, agents: agentConnection(turn).instructions, added: contextRecord.added,
+    computer: computerPrompt(runArgs.computerRuntime, { locale: agentLocale, agent: backend.id }), control: runArgs.controlRuntime.instructions });
+  if (JSON.stringify(parts) !== JSON.stringify(contextRecord.plyParts ?? null)) { contextRecord.plyParts = parts; await ctx.saveContext(); }
+  ctx.runArgs = runArgs;
+}
+
+async function launchTurn(ctx) {
+  const { turn, backend, hooks, cwd, permissionMode, runArgs } = ctx;
+  // git の作業場所なら、ターンの始まりの状態を隠し ref に撮る（書き込みの範囲のターンだけ。圧縮では撮らない。ADR 0085）。
+  // 撮影が遅いときは待たずに始める（その回は撮影なし）
+  if (GIT_SNAPSHOTS && !hooks.compact && scopeRank(modePosition(backend.modes()?.[permissionMode]).scope) > scopeRank('readonly')) {
+    turn.gitSetup = gitActivity.begin({ cwd }).then(g => {
+      if (turn.gitLate) return null;
+      turn.git = g;
+      return g && turn.info.sessionId ? gitActivity.attach(g, turn.info.sessionId) : null;
+    }).catch(() => {});
+    let began = false;
+    await Promise.race([turn.gitSetup.then(() => { began = true; }), new Promise(resolve => setTimeout(resolve, GIT_BEGIN_WAIT_MS).unref?.())]);
+    // 間に合わなかった。エージェントが動き出した後の撮影は基準にならないので、このターンは撮らない
+    if (!began) turn.gitLate = true;
+  }
+  ctx.backendInvoked = true;
+  return hooks.compact && backend.compact
+    ? await backend.compact({ ...runArgs, trigger: hooks.compact })
+    : await backend.runTurn(runArgs);
+}
+
+async function afterResult(ctx, result) {
+  const { turn, emit, hooks, sessionId, attachments, prompt } = ctx;
+  if (hooks.compact && !turn.compaction?.phase?.match(/^complete$/)) {
+    emit({ type: 'compaction', phase: 'failed', trigger: hooks.compact,
+      reason: result?.compactionFailureReason || turn.compaction?.reason || t('compaction.noCompletion') });
+  }
+  if (hooks.compact && turn.outcome == null) emit({ type: 'turnResult', outcome: 'ok' });
+  // 相手が別のターンを走らせていて、何も届かなかった。
+  // 完了ではない。送信待ちへ戻し（message-queue）、そのターンが終わってから送り直す
+  if (result?.requeue) turn.outcome = "requeue";
+  await turn.visualizations.close();
+  // Complete any accepted steering write before releasing the live snapshot.
+  if (sessionId) await outbox.list(sessionId);
+  if (turn.info.sessionId) {
+    await turn.setup;
+    if (attachments.length || turn.steeredAttachments?.length) {
+      await Promise.all(turn.presentWrites);
+      // 中断の後に添えた文は発言から切り分けてから照らす（history.loadTranscript と同じ）
+      const messages = splitLeadingNotes(await ctx.backend.getMessages(turn.info.sessionId));
+      let cursor = ctx.baselineLength;
+      for (const attachment of [{ key: turn.presentKey, prompt }, ...(turn.steeredAttachments ?? [])]) {
+        const index = messages.findIndex((m, i) => i >= cursor && m.role === 'user' && m.text === attachment.prompt);
+        if (index < 0) continue;
+        cursor = index + 1;
+        await history.anchorAttachments(turn.info.sessionId, attachment.key, messages[index].uuid);
+      }
+    }
+    await store.setMeta(turn.info.sessionId, { lastModified: Date.now() }).catch(() => {});
+  }
+}
+
+async function driveTurn(ctx, start) {
+  const { turn, emit, hooks, sessionId, args } = ctx;
+  // バックエンドを呼ぶ前に戻した（canInvoke）。後始末の失敗で turn.outcome が変わっても 'requeue' を返す
+  let beforeInvoke = false;
+  try {
+    const result = await start();
+    if (result?.beforeInvoke) {
+      beforeInvoke = true;
+      turn.outcome = 'requeue';
+    } else {
+      await afterResult(ctx, result);
+    }
+  } catch (err) {
+    if (hooks.compact && turn.compaction?.phase !== 'complete') emit({ type: 'compaction', phase: 'failed', trigger: hooks.compact,
+      reason: String(err?.message ?? err) });
+    if (ctx.resolvedContext) { ctx.contextRecord.report.status = 'failed'; await ctx.saveContext().catch(() => {}); }
+    if (!turn.errorShown) {
+      if (turn.backend.id === 'antigravity') turn.failureReason = { source: 'server.catch', error: String(err?.message ?? err).slice(0, 1000) };
+      emit({ type: "turnResult", outcome: "error", error: String(err?.message ?? err) });
+    }
+    // プロンプトを渡す前に失敗した（backends/undelivered.mjs）。送信済みにしたままだと、本文がどこにも残らず消える。
+    // 送信待ちの「失敗」に戻し、利用者に再送か取り消しを選ばせる
+    if ((err?.undelivered || !ctx.backendInvoked) && sessionId && args.messageId) {
+      await outbox.undelivered(sessionId, args.messageId, String(err?.message ?? err)).catch(() => {});
+    }
+    if (!ctx.didStart) throw err;
+  } finally {
+    // 渡らずに終わった `!` の行は、また「渡さない」を切り替えられる
+    if (ctx.shellHandoff && !ctx.shellHanded) shellRuns.release(sessionId, ctx.shellHandoff);
+    if (ctx.didStart && turn.outcome !== 'ok' && turn.outcome !== 'requeue') await outbox.pause(sessionId).catch(() => {});
+    await turn.visualizations.close().catch(err => {
+      if (turn.backend.id === 'antigravity') turn.failureReason = { source: 'visualizations.close', error: String(err?.message ?? err).slice(0, 1000) };
+      emit({ type: 'turnResult', outcome: 'error', error: t('turn.visualizationSaveFailed', { error: err.message }) });
+    });
+    await Promise.allSettled([ctx.runtimeContext?.close()]);
+    await ctx.saveContext().catch(() => {
+      if (turn.backend.id === 'antigravity') turn.failureReason = { source: 'saveContext', error: t('turn.contextSaveFailed') };
+      emit({ type: 'turnResult', outcome: 'error', error: t('turn.contextSaveFailed') });
+    });
+    // git の動き（ADR 0085）: ターンの終わりの撮影と、返答の下の 1 行の元。ファイル・コミット・ブランチ・PR のどれかが動いたときだけ会話に残す
+    if (turn.gitSetup && ctx.didStart && turn.outcome !== 'requeue') {
+      const summary = await Promise.race([
+        turn.gitSetup.then(() => (turn.git ? gitActivity.finish(turn.git, turn.info.sessionId, turn.gitCalls.events()) : null)),
+        new Promise(resolve => setTimeout(resolve, GIT_END_WAIT_MS, null).unref?.()),
+      ]).catch(() => null);
+      if (summary && turn.info.sessionId) emit({ type: 'present', kind: 'git', git: summary, by: 'ai', at: new Date().toISOString(), sessionId: turn.info.sessionId });
+    }
+    await endTurn(turn, emit, { record: ctx.didStart });
+    hooks.signal?.removeEventListener("abort", ctx.abortFromTask);
+  }
+  return beforeInvoke ? 'requeue' : turn.outcome;
+}
+
+async function releaseTurn(sessionId, { adopted = false } = {}) {
+  if (!adopted && sessionId) switching.delete(sessionId);
+  completionNotices.changed(sessionId);
+  notifyFree(sessionId);
+  await kickQueued();
 }
 
 /**
@@ -5234,6 +5311,8 @@ async function runTurnInternal(args, onStarted, hooks) {
  * requeue（相手が別のターンを走らせていて何も届かなかった）は完了ではないので、使用量も完了時刻も残さない。
  */
 async function endTurn(turn, emit, { record = true } = {}) {
+  if (turn.ended) return;
+  turn.ended = true;
   const requeued = turn.outcome === "requeue";
   const completedAt = requeued ? null : Date.now();
   // 中断で終わった（バックエンドが aborted を返した。止めた後に失敗として終わったものも含む）なら、会話に中断として残す。
@@ -7008,3 +7087,5 @@ await recoverLimitResumes().catch(err => console.error('  上限の会話を見�
 setTimeout(() => { for (const row of schedule.list()) if (row.kind === 'send' && row.held && !row.notified) notifyScheduleMissed(row); }, 15_000).unref();
 // 届ける前の出来事の戻し・ルーティンの取りこぼし（ターンを始めるので、ポートが決まった後）
 await botHost.start();
+
+export { runTurn, prepareTurn, beginTurn, launchTurn, driveTurn, releaseTurn, endTurn };
