@@ -3,6 +3,7 @@
 // どちらも同じ形の driver を返す:
 //   state()                    { supported, reason?, displays, displaysVersion } | null（main の computer-ready をまだ受けていない）
 //   onReady(cb) / onDisplays(cb) / onEscape(cb)   main からの便り。戻り値は外す関数
+//   onAway(cb)                 main が切れた（更新で居なくなった）。Esc と同じに使用を止めるのに使う（docs/zero-downtime-update/design.md §7.2）
 //   call(owner, op, args)      main に操作を頼む（op は契約の表）。失敗は ComputerError（code, message）
 //   arm(owner)                 ロックの持ち主が変わった（null で持ち主なし）。持ち主がいる間は 10 秒ごとに computer-heartbeat も送る
 //   overlay(message)           computer-overlay。message は { owner, state, display, agent, title, cursor? }
@@ -19,11 +20,11 @@ const HEARTBEAT_MS = 10_000;
 const CALL_TIMEOUT_MS = 20_000;
 const LAUNCH_TIMEOUT_MS = 25_000;
 
-/** parentPort 越しの driver。port が無い（Electron でない）ときは null */
+/** parentPort 越しの driver。port が無い（Electron でない）ときは null。つながっていない間（port.connected が false）の call は away で返る */
 export function parentPortComputer(port, { timeoutMs = CALL_TIMEOUT_MS, launchTimeoutMs = LAUNCH_TIMEOUT_MS, heartbeatMs = HEARTBEAT_MS } = {}) {
   if (!port) return null;
   const pending = new Map();
-  const listeners = { ready: new Set(), displays: new Set(), escape: new Set() };
+  const listeners = { ready: new Set(), displays: new Set(), escape: new Set(), away: new Set() };
   let ready = null;
   let next = 0;
   let heartbeat = null;
@@ -64,6 +65,12 @@ export function parentPortComputer(port, { timeoutMs = CALL_TIMEOUT_MS, launchTi
   // 名前付きパイプの口（core/main-link.mjs）は main が後からつながる・付け直すので、つながるたびに頼み直す
   // （main の service は computer-ready-request で「core が作り直された」として状態を捨てる。utilityProcess の口では 'connect' は来ない）
   port.on('connect', () => port.postMessage({ type: 'computer-ready-request' }));
+  // main が居なくなった（更新）。オーバーレイも Esc も無いまま画面を動かさないので、待っていた呼び出しは失敗にし、使用を止めさせる（Esc と同じ。ADR 0071・0072）。
+  // ready は残す（戻った main の computer-ready まで、ツールを渡す・渡さないの判定を変えない）。戻った main には止めたことを送り直さない
+  port.on('disconnect', () => {
+    failAll(new ComputerError('away', 'main is away'));
+    fire(listeners.away);
+  });
 
   return {
     kind: 'electron',
@@ -71,8 +78,10 @@ export function parentPortComputer(port, { timeoutMs = CALL_TIMEOUT_MS, launchTi
     onReady: cb => listen(listeners.ready, cb),
     onDisplays: cb => listen(listeners.displays, cb),
     onEscape: cb => listen(listeners.escape, cb),
+    onAway: cb => listen(listeners.away, cb),
     call(owner, op, args = {}) {
       if (ready && !ready.supported) return Promise.reject(new ComputerError('unsupported', `computer use is not supported (${ready.reason ?? 'unknown'})`));
+      if (port.connected === false) return Promise.reject(new ComputerError('away', 'main is away'));
       return new Promise((resolve, reject) => {
         const id = `cu${++next}`;
         const limit = op === 'launch' ? launchTimeoutMs : timeoutMs;
@@ -123,11 +132,11 @@ const FAKE_DISPLAYS = [
  */
 export function fakeComputerDriver({ supported = true, reason, displays = FAKE_DISPLAYS, delayMs = 0, log = null } = {}) {
   let ready = { supported, ...(reason ? { reason } : {}), displays: structuredClone(displays), displaysVersion: 1 };
-  const listeners = { ready: new Set(), displays: new Set(), escape: new Set() };
+  const listeners = { ready: new Set(), displays: new Set(), escape: new Set(), away: new Set() };
   const listen = (set, cb) => { set.add(cb); return () => set.delete(cb); };
   const fire = (set, ...args) => { for (const cb of [...set]) cb(...args); };
   const failures = [];
-  let locked = false;
+  let locked = false, away = false;
   let foreground = FAKE_APPS.notepad;
   let cursor = { x: 100, y: 100 };
   const running = new Set([FAKE_APPS.notepad.id]);
@@ -140,6 +149,7 @@ export function fakeComputerDriver({ supported = true, reason, displays = FAKE_D
     onReady: cb => listen(listeners.ready, cb),
     onDisplays: cb => listen(listeners.displays, cb),
     onEscape: cb => listen(listeners.escape, cb),
+    onAway: cb => listen(listeners.away, cb),
     fail(op, code = 'failed', message) { failures.push({ op, code, message }); },
     setLocked(v) { locked = Boolean(v); },
     setForeground(a) { foreground = a; },
@@ -147,6 +157,9 @@ export function fakeComputerDriver({ supported = true, reason, displays = FAKE_D
     /** ディスプレイの構成が変わったことにする（displaysVersion が 1 進む） */
     changeDisplays(next) { ready = { ...ready, displays: next ?? ready.displays, displaysVersion: ready.displaysVersion + 1 }; fire(listeners.displays, ready); },
     pressEscape(owner) { fire(listeners.escape, owner); },
+    /** main が居なくなったことにする（更新）。以後の call は away で失敗する（comeBack で戻る） */
+    goAway() { away = true; fire(listeners.away); },
+    comeBack() { away = false; },
     arm(owner) { self.arms.push(owner ?? null); note({ kind: 'arm', owner: owner ?? null }); },
     overlay(message) { self.overlays.push(message); note({ kind: 'overlay', ...message }); },
     stop(owner) { self.stops.push(owner); note({ kind: 'stop', owner }); },
@@ -155,6 +168,7 @@ export function fakeComputerDriver({ supported = true, reason, displays = FAKE_D
       self.calls.push({ owner, op, args: structuredClone(args) });
       note({ kind: 'call', owner, op, args });
       if (delayMs) await new Promise(r => setTimeout(r, delayMs));
+      if (away) throw new ComputerError('away', 'fake: main is away');
       if (!ready.supported) throw new ComputerError('unsupported', 'fake: unsupported');
       const i = failures.findIndex(f => f.op === op);
       if (i >= 0) { const f = failures.splice(i, 1)[0]; throw new ComputerError(f.code, f.message ?? `fake: ${f.code}`); }

@@ -70,6 +70,12 @@ const SUITES = [
   './unit/main-port.mjs',
   // main とサーバーを結ぶ名前付きパイプの口（段階 1 の 1-2）: 符号化・行の分け方・握手の拒否・往復と順序・大きなバイナリー・切断と再接続・別プロセスのサーバー
   './unit/main-link.mjs',
+  // main が居ない間の機能ごとの扱い（段階 1 の 1-5）: secret の待ち・computer use の停止・内蔵ブラウザーの写しと復元・screencast・os-open・openExternal・猶予
+  './unit/main-away.mjs',
+  // 内蔵ブラウザーの付け直し（main 側）: 中継を同じポートと鍵で立て直す・タブの写しの書き出しと開き直し・橋の流れ
+  './unit/main-away-desktop.mjs',
+  // main が居ない間（サーバー越し）: 付け直しで ready・言語が届く・main-leaving の後は猶予で中断しない（偽の main をパイプにつなぐ）
+  './unit/main-away-server.mjs',
   // 橋: MCP の面・座標の基準・ゲートの順・アプリの承認・止める・ロック画面・画像の渡し方（偽の driver）
   './unit/computer-bridge.mjs',
   // サーバー越し: 承認カードの payload・スクショの保存と配信・computer.state・computerStop・委譲の子の承認（fake + 偽の driver）

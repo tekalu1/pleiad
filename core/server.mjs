@@ -98,6 +98,7 @@ import { parentPortBrowser, browserEnvironment, browserInstruction } from './age
 import { getMainPort, setMainPortSource } from './main-port.mjs';
 import { createMainLink, handoverEnabled } from './main-link.mjs';
 import { createOrphanGuard } from './orphan-guard.mjs';
+import { createMainAway, createExternalOpener } from './main-away.mjs';
 import { markRuntimeInUse } from './runtime-use.mjs';
 import { parentPortScreencast, createScreencastHub, screencastCommand } from './browser-screencast.mjs';
 import { createBrowserSiteApprovals } from './browser-confirm.mjs';
@@ -146,7 +147,10 @@ if (mainLink) setMainPortSource(mainLink.port);
 if (process.env.AGENT_HOST_RUNTIME_ROOT && process.env.AGENT_HOST_RUNTIME_KEY) markRuntimeInUse({ root: process.env.AGENT_HOST_RUNTIME_ROOT, key: process.env.AGENT_HOST_RUNTIME_KEY });
 const mainPort = getMainPort();
 const hostedPort = mainPort.hosted ? mainPort : null;
-const agentBrowser = parentPortBrowser(hostedPort);
+// main が居ない間（更新）の出来事と、OAuth の同意画面などを開く口（core/main-away.mjs）。機能ごとの扱いは頼む側のモジュールが持つ
+const mainAway = createMainAway({ mainPort });
+const openExternal = createExternalOpener({ mainPort, log: line => console.log(`  [main-away] ${line}`) });
+const agentBrowser = parentPortBrowser(hostedPort, { dataDir: store.dataDir });
 // リモートの端末から PC の内蔵ブラウザーを見る（core/browser-screencast.mjs）。デスクトップ版だけ
 const screencastBridge = parentPortScreencast(hostedPort);
 const screencastHub = screencastBridge ? createScreencastHub({ bridge: screencastBridge }) : null;
@@ -263,8 +267,8 @@ const claudeLogin = createClaudeLogin({
     emitGlobal({ type: 'claudeAccountsChanged', sessionId: null });
   },
   scratchDir: path.join(store.dataDir, 'claude-login-tmp'),
-  // デスクトップ版は main に頼んで既定のブラウザーで開く（npm start では画面のリンクから開く）
-  openExternal: url => mainPort.postMessage({ type: 'open-external', url }),
+  // デスクトップ版は main に頼んで既定のブラウザーで開く（main が居ない間は OS に直に頼む。npm start では画面のリンクから開く）
+  openExternal,
 });
 process.on('exit', () => claudeLogin.cancelAll());
 // 互換の接続先（Claude Code の Anthropic 互換 / Codex の Responses 互換。会話ごとに選ぶ。core/compat-endpoints.mjs）。
@@ -277,8 +281,8 @@ sweepClaudeFlagSettings(store.dataDir, { olderThanMs: 24 * 60 * 60_000 }).catch(
 const mcpOAuth = createMcpOAuth({ secrets: mcpSecrets, lockDir: path.join(store.dataDir, 'mcp-locks'),
   // Client ID Metadata Document の URL（設定値。既定は無し。公開する文書のひな形は docs/mcp-oauth-client-metadata.json）
   clientMetadataUrl: async () => (await plyMcp.settings().catch(() => ({}))).clientMetadataUrl ?? undefined,
-  // utilityProcess からはブラウザを開けないので main に頼む（desktop/main.cjs）。npm start では画面に出る URL から開く
-  openExternal: url => mainPort.postMessage({ type: 'open-external', url }),
+  // utilityProcess からはブラウザを開けないので main に頼む（desktop/main.cjs。main が居ない間は OS に直に頼む）。npm start では画面に出る URL から開く
+  openExternal,
   emit: event => emitGlobal({ ...event, sessionId: null }) });
 const contextBridge = createContextBridge({ plyMcp, oauth: mcpOAuth });
 // リモートの接続口（docs/remote.md §4.2・§6.1）。既定は無効で、有効にするまで中継へはつながない。
@@ -1545,12 +1549,20 @@ const runtime = {
 
 /** host が居ない時間が猶予を超えたか。タイマーに頼らず、その場で判定する。猶予が無効（既定）なら常に false。 */
 function graceExpired() {
-  return HOST_GRACE_MS > 0 && runtime.awaySince !== 0 && Date.now() - runtime.awaySince > HOST_GRACE_MS;
+  return HOST_GRACE_MS > 0 && runtime.awaySince !== 0 && !mainAway.holdsGrace() && Date.now() - runtime.awaySince > HOST_GRACE_MS;
+}
+
+/** main が更新で居ない間（main-leaving の後）は画面が居ないので猶予を数えない。戻った main の窓が付くまでの猶予は、戻った時から数え直す（core/main-away.mjs） */
+function restartGrace() {
+  if (runtime.awaySince === 0) return;
+  runtime.awaySince = Date.now();
+  clearTimeout(runtime.graceTimer);
+  runtime.graceTimer = HOST_GRACE_MS > 0 ? setTimeout(giveUp, HOST_GRACE_MS + 500) : null;
 }
 
 /** 猶予切れの後始末。何度呼ばれても安全。走っているターンは全部止める。猶予が無効なら何もしない。 */
 function giveUp() {
-  if (HOST_GRACE_MS <= 0 || runtime.awaySince === 0) return;
+  if (HOST_GRACE_MS <= 0 || runtime.awaySince === 0 || mainAway.holdsGrace()) return;
   const seconds = Math.round((Date.now() - runtime.awaySince) / 1000);
   runtime.awaySince = 0;
   clearTimeout(runtime.graceTimer);
@@ -3886,6 +3898,8 @@ const computerBridge = computerDriver ? createComputerBridge({
 computerDriver?.onEscape(owner => computerLock.escape(owner));
 // main か core が作り直された。持ち主を外し、待っている先頭に譲る
 computerDriver?.onReady(() => computerLock.reset());
+// main が居なくなった（更新）。オーバーレイも Esc も無いまま画面を動かさないので、Esc と同じに使用を止める。ターンは止めず、ツールには更新のための停止と返す
+computerDriver?.onAway?.(() => computerLock.stopAll('update'));
 
 // 送信待ちの一覧が変わるたびに呼ぶもの（sessionId -> Set<fn(messages)>）。再開の受け付けを、送った項目が出ていくまで保つのに使う
 const outboxWatchers = new Map();
@@ -6409,6 +6423,12 @@ const orphanGuard = mainLink ? createOrphanGuard({
 mainPort.on('disconnect', () => orphanGuard?.disconnected());
 orphanGuard?.disconnected();   // 起こした main が最初につながる前に落ちても、居続けない（最初のつながりで connected になる）
 let readyMessage = null;
+mainAway.onBack(({ first }) => {
+  // 付け直した main へ、言語を送り直す。居ない間に過ぎた予定（送信・上限の解除後の再開）は、wake と同じに確かめる（powerMonitor の resume は届かなかった）
+  mainPort.postMessage({ type: 'locale', locale: locale.lang });
+  if (!first) { void Promise.resolve(schedule.check()).catch(() => {}); void recoverLimitResumes().catch(() => {}); }
+  restartGrace();
+});
 mainPort.on('connect', () => {
   orphanGuard?.connected();
   if (readyMessage) mainPort.postMessage(readyMessage);

@@ -227,7 +227,8 @@ async function boot() {
     // 会話の今のプロフィール（正本はサーバーの会話のメタ。ADR 0078）
     resolveProfile: sessionId => agentBrowserBridge?.resolveProfile(sessionId) ?? Promise.resolve(null) });
   browserPanel.attach();
-  agentBrowserBridge = attachAgentBrowserBridge(worker, browserPanel);
+  // 名前付きパイプの経路（無停止の更新）では、タブの写しをサーバーへ渡し、付け直したときにサーバーの写しからタブと中継を立て直す（core/agent-browser.mjs）
+  agentBrowserBridge = attachAgentBrowserBridge(worker, browserPanel, { handover: Boolean(linked) });
   computerOverlay = attachComputerOverlay(worker, { onEscape: owner => computerService?.escape({ owner, notify: false }) });
   browserScreencastBridge = attachBrowserScreencastBridge(worker, browserPanel, {
     agentControl: (action, id) => agentBrowserBridge?.[action]?.(id),

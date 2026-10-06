@@ -6,8 +6,8 @@ import { decideApp, autoGrantKind, normalizeComputerUse, isUnattendedMode } from
 import { ComputerError } from './driver.mjs';
 import { BATCHABLE, MAX_BATCH, MAX_SECONDS } from './tools.mjs';
 
-/** 止めた・ロック・禁止・拒否・待ちの上限は、画面で失敗に数えない（state: stopped）。それ以外は failed */
-const STOPPED_REASONS = new Set(['escape', 'stop', 'locked', 'forbidden', 'denied', 'busy']);
+/** 止めた・ロック・禁止・拒否・待ちの上限・更新で main が居ないための停止は、画面で失敗に数えない（state: stopped）。それ以外は failed */
+const STOPPED_REASONS = new Set(['escape', 'stop', 'update', 'locked', 'forbidden', 'denied', 'busy']);
 export const stateOfReason = reason => (STOPPED_REASONS.has(reason) ? 'stopped' : 'failed');
 
 export class ToolFail extends Error {
@@ -57,6 +57,8 @@ export function createActions({ driver, shots, access, askPermission, translate 
     catch (e) {
       if (!(e instanceof ComputerError)) fail('failed', { message: String(e?.message ?? e) });
       if (e.code === 'stopped') { ctx.t.stopped ??= { reason: 'escape', at: Date.now() }; fail(ctx.t.stopped.reason); }
+      // main が居ない（Pleiad の更新中）。Esc と同じに、このターンの操作を止める（core/computer-use/lock.mjs の stopAll と同じ印）
+      if (e.code === 'away') { ctx.t.stopped ??= { reason: 'update', at: Date.now() }; fail(ctx.t.stopped.reason); }
       if (['locked', 'uipi', 'self', 'windows_key', 'outside', 'not_found', 'timeout', 'unsupported'].includes(e.code)) fail(e.code, { message: e.message });
       fail('failed', { message: e.message });
     }

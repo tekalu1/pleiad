@@ -5,6 +5,7 @@
 // 口は parentPort と同じ形（on('message', ({ data }) => …)・postMessage）に、つながっているかを足したもの。
 //   hosted    main の下で動く起動か（デスクトップ版）。起動の形で決まり、途中で切れても変わらない
 //   connected 今 main に届くか。utilityProcess の parentPort は hosted と同じ（つながったまま）
+//   resumable 切れても次の main が付け直すか（パイプの口だけ true。main が居ない間の扱いを持つのは resumable の口だけ。core/main-away.mjs）
 //   postMessage(message)  送れたら true。main が居ない（hosted でない・切れている）なら何もせず false（溜めない）。
 //                         実体の postMessage が false を返したとき（パイプの口が行の上限などで捨てたとき）も false
 //   on / off  'message'（parentPort と同じ { data }）・'connect'・'disconnect'（つながり直し・切れたとき）
@@ -19,6 +20,8 @@ export function createMainPort({ parentPort = null } = {}) {
   return {
     hosted: Boolean(port),
     get connected() { return Boolean(port) && port.connected !== false; },
+    /** 切れても main が付け直して戻る口か（名前付きパイプの口。utilityProcess の parentPort は切れたら戻らない） */
+    get resumable() { return Boolean(port) && port.resumable === true; },
     postMessage(message) {
       if (!port || port.connected === false) return false;
       return port.postMessage(message) !== false;

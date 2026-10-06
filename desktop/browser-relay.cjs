@@ -11,7 +11,7 @@ function createBrowserRelay(panel, { onActivity = () => {}, navigation, WebSocke
   const byKey = new Map();
   const wss = new WebSocketServerImpl({ noServer: true });
   const server = http.createServer((_req, response) => { response.writeHead(404); response.end(); });
-  let address = null;
+  let address = null, listening = null;
   server.on('upgrade', (request, socket, head) => {
     const key = /^\/devtools\/browser\/([a-f0-9]{48})$/.exec(request.url || '')?.[1];
     const entry = byKey.get(key);
@@ -180,14 +180,42 @@ function createBrowserRelay(panel, { onActivity = () => {}, navigation, WebSocke
       } catch (error) { send({ id, error: { code: -32000, message: error.message }, ...(sid ? { sessionId: sid } : {}) }); }
     });
   }
+  function listenOn(port) {
+    return new Promise((resolve, reject) => {
+      const onError = error => reject(error);
+      server.once('error', onError);
+      server.listen(port, '127.0.0.1', () => { server.off('error', onError); resolve(server.address()); });
+    });
+  }
+  /** 待ち受けを始める（1 回だけ。同時に呼んでも 1 つ）。port が取れなければ別のポート */
+  function ensureListening(port) {
+    listening ??= listenOn(port).catch(error => { if (!port) throw error; return listenOn(0); }).then(value => { address = value; return value; }, error => { listening = null; throw error; });
+    return listening;
+  }
   // profile: サーバーが決めた会話の今のプロフィール（ターンの開始で渡る）。中継がタブを作る・絞る前に覚えさせる
   async function endpoint(sessionId, { profile } = {}) {
     if (typeof sessionId !== 'string' || !sessionId || sessionId.length > 200) throw new Error('invalid session');
     if (profile) panel.setProfileFor?.(sessionId, profile);
-    if (!address) address = await new Promise((resolve, reject) => server.listen(0, '127.0.0.1', () => resolve(server.address())).once('error', reject));
+    await ensureListening(0);
     let entry = entries.get(sessionId);
     if (!entry) { entry = { id: sessionId, key: random(), sockets: new Set(), stopped: false }; entries.set(sessionId, entry); byKey.set(entry.key, entry); }
     return `ws://127.0.0.1:${address.port}/devtools/browser/${entry.key}`;
+  }
+  /**
+   * 付け直した main が、前の main の中継を同じポートと鍵で立て直す（無停止の更新。docs/zero-downtime-update/design.md §7.2）。
+   * 呼ぶ前に、タブを開き直しておくこと（中継はタブが無い会話に空のタブを作るので、先に待ち受けると agent-browser の最初の getTargets が about:blank を見る）。
+   * ポートが取れなければ別のポートで立てる。戻り値の moved が true なら、サーバーが持つ URL と設定ファイルの cdp を新しいポートへ直す。
+   * 鍵は、24 バイトの 16 進の形で、まだ無い会話だけ足す（すでに endpoint で作った会話の鍵は替えない）
+   */
+  async function restore({ port = 0, entries: rows = [] } = {}) {
+    for (const row of Array.isArray(rows) ? rows : []) {
+      if (typeof row?.sessionId !== 'string' || !row.sessionId || row.sessionId.length > 200 || !/^[a-f0-9]{48}$/.test(String(row.key)) || entries.has(row.sessionId) || byKey.has(row.key)) continue;
+      const entry = { id: row.sessionId, key: row.key, sockets: new Set(), stopped: false };
+      entries.set(entry.id, entry); byKey.set(entry.key, entry);
+    }
+    const want = Number.isInteger(port) && port > 0 && port < 65536 ? port : 0;
+    await ensureListening(want);
+    return { port: address.port, moved: want !== 0 && address.port !== want };
   }
   function disconnect(sessionId, stop = false) {
     const entry = entries.get(sessionId);
@@ -213,7 +241,7 @@ function createBrowserRelay(panel, { onActivity = () => {}, navigation, WebSocke
     panel.rebindSession(from, to);
   }
   function close() { for (const id of entries.keys()) disconnect(id, true); wss.close(); server.close(); }
-  return { endpoint, disconnect, resume, rebind, close };
+  return { endpoint, restore, disconnect, resume, rebind, close };
 }
 function publicInfo(row) { if (!row) throw new Error('target denied'); const { tab, id, ...info } = row; return { targetId: id, ...info }; }
 function safeUrl(value) { try { const url = new URL(value); return ['http:', 'https:'].includes(url.protocol) && !url.username && !url.password || url.href === 'about:blank'; } catch { return false; } }
