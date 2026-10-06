@@ -590,7 +590,7 @@ export function deletedNativeTable(db) {
   };
 }
 
-// ---- 通知の一覧（受信箱。ADR 9102）。1 件 1 行。件数・日数の上限は core/notifications.mjs（NOTIFICATION_MAX・NOTIFICATION_KEEP_MS） ----
+// ---- 通知の一覧（受信箱。ADR 0149）。1 件 1 行。件数・日数の上限は core/notifications.mjs（NOTIFICATION_MAX・NOTIFICATION_KEEP_MS） ----
 // 欠けても失った記録は無い（飛び先の会話・投稿の側が正本）ので後から足す表（LATE_TABLES_SQL）。形式番号は上げない
 const NOTIFICATION_COLUMNS = 'seq, id, dedupe_key, kind, at, session_id, channel_id, read_at, resolved_at, data';
 const notificationRow = (r) => ({ seq: Number(r.seq), id: r.id, dedupeKey: r.dedupe_key, kind: r.kind, at: r.at, sessionId: r.session_id, channelId: r.channel_id, readAt: r.read_at, resolvedAt: r.resolved_at, data: JSON.parse(r.data) });

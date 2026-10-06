@@ -1,4 +1,4 @@
-// notifications.*: 通知の一覧（受信箱。ADR 9102）。通知ボタンの面が読む・既読にする。
+// notifications.*: 通知の一覧（受信箱。ADR 0149）。通知ボタンの面が読む・既読にする。
 // 載せる種類・上限・既読の整合は core/notifications.mjs。handler は `ctx.notifications`（core/server.mjs の opsDeps）を呼ぶ。
 // 画面・AI・CLI が同じ本体を通る。書くのは既読の印だけ（通知そのものは出来事から core が作る）。
 import { z } from 'zod';

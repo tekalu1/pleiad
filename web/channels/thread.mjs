@@ -559,7 +559,7 @@ export function createThread(host) {
     node.classList.add('flash');
     setTimeout(() => node.classList.remove('flash'), 1300);
   }
-  /** 通知の一覧（ADR 9102）から開いたとき、着いたら送って輪を付ける投稿。読み込みが済んでから flushReveal が使う */
+  /** 通知の一覧（ADR 0149）から開いたとき、着いたら送って輪を付ける投稿。読み込みが済んでから flushReveal が使う */
   let revealId = null;
   function flushReveal() {
     if (!revealId || !S.ready) return;

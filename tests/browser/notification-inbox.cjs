@@ -1,5 +1,5 @@
 // playwright-cli run-code --filename=tests/browser/notification-inbox.cjs
-// 通知ボタンと通知の一覧（docs/design-system.md「通知の一覧」、ADR 9102）: 空・ベルの件数と ◆・面（絞り込み・すべて既読・↑↓ Enter Esc）・
+// 通知ボタンと通知の一覧（docs/design-system.md「通知の一覧」、ADR 0149）: 空・ベルの件数と ◆・面（絞り込み・すべて既読・↑↓ Enter Esc）・
 // 行を押して会話の発言へ（輪）・チャンネルのスレッドの投稿へ（輪）・動きを減らす設定・360 幅のシート・開いている間に届く通知。
 // Open an isolated AGENT_HOST_BACKENDS=fake server first (port 7434, token inbox-test, fresh data dir). Never run against live data.
 // 通知の元は本物の操作で作る（会話の完了・失敗・承認は fake の台本 echo / fail / ask を別の会話で走らせる。@あなた は bot の投稿）。

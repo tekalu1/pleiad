@@ -1326,7 +1326,7 @@ Esc と「会話に戻る」で会話へ戻り、元の設定ボタンへフォ�
 
 ## 通知の一覧（承認済み 2026-10-06）
 
-見逃した通知を後から辿り、押してその場所へ飛べる（[ADR 9102](adr/9102-notification-inbox.md)、仕様は `docs/design.md`「通知」の「通知の一覧」）。`web/notification-inbox.mjs`・`web/notification-inbox.css`。
+見逃した通知を後から辿り、押してその場所へ飛べる（[ADR 0149](adr/0149-notification-inbox.md)、仕様は `docs/design.md`「通知」の「通知の一覧」）。`web/notification-inbox.mjs`・`web/notification-inbox.css`。
 
 - **ベルのボタン**: 脇の頭、ロゴの右の ＋・⚙・⇤ の並びの先頭（`#notifBell`）。未読があれば右上に件数の札（`.bell-badge`。紙の面に強い字、99 件を超えたら `99+`）。未読のあなた待ちがあれば、件数の前に ◆（`--ink-mark`）を付ける。件数はベルの名前（`aria-label`）にも入れる（「通知（未読 3 件・あなた待ちあり）」）。設定を開いている間は隠す（＋・⚙ と同じ）。
 - **面**: 広い幅は脇の頭の下に浮くポップ（幅 360px・最大 520px・`--r-m`・影。幕は敷かない）。700px 以下は下からのシート（左右いっぱい・最大 74vh・上の角だけ `--r-l`・つまみ・後ろに幕 `--surface-veil`）。動きは `--dur`（動きを減らす設定では無し）。面の外を押す・Esc・幕を押すと閉じる（Esc でベルへ焦点を戻す）。

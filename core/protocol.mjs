@@ -260,7 +260,7 @@ export const EVENTS = new Set([
   // { rows: [{ role: system, kind: channelEvent | contextNote, … }] } bot の会話へチャンネルの出来事・記憶の包みを渡した（会話の sessionId 付き。
   // 履歴の splitLeadingNotes と同じ行の形で、画面は履歴と同じ描き方をする）
   "channelEvent",
-  "notificationsChanged", // { unread, waiting } 通知の一覧（ベルのボタン。ADR 9102）の件数が変わった（sessionId は null。リモートの端末にも届く）。中身は notifications.list で取り直す
+  "notificationsChanged", // { unread, waiting } 通知の一覧（ベルのボタン。ADR 0149）の件数が変わった（sessionId は null。リモートの端末にも届く）。中身は notifications.list で取り直す
   "claudeAccountsChanged", // Claude のアカウント一覧が変わった（sessionId は null）。中身は claudeAccounts コマンドで取り直す
   "compatEndpointsChanged", // 互換の接続先の一覧・既定が変わった（sessionId は null）。中身は compatEndpoints コマンドで取り直す
   "delegationRoutingChanged", // change: settings|usage（旧送信元では省略）。sessionId は null。中身は delegationRouting コマンドで取り直す

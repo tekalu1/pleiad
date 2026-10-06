@@ -9,7 +9,7 @@ export const hasPendingChild = tasks => tasks.some(r =>
  * ターンの終わりを、会話が落ち着いてから 1 回だけ知らせる。正常終了（ok）と失敗（error）が対象で、中断は知らせない。
  * send は画面へ（届け先が居なければ false を返し、次に誰かがつながったとき届ける）。
  * ready は離れた端末への通知用で、画面が居るかによらず、落ち着いた時点で 1 回だけ呼ぶ（ADR 0086）。
- * info.startedAt は 30 秒未満のターンを通知から外すために ready へ渡す。info.uuid はターンの最後の発言の id で、通知の一覧の飛び先（ADR 9102）として ready へ渡す。info.bot は bot の会話の種類（sidecar の bot.kind）で、画面への completionReady に `bot` として載せる。
+ * info.startedAt は 30 秒未満のターンを通知から外すために ready へ渡す。info.uuid はターンの最後の発言の id で、通知の一覧の飛び先（ADR 0149）として ready へ渡す。info.bot は bot の会話の種類（sidecar の bot.kind）で、画面への completionReady に `bot` として載せる。
  */
 export function createCompletionNotices({ busy, send, ready = () => {} }) {
   const pending = new Map();
