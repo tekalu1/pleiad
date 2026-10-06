@@ -107,14 +107,28 @@ export function createGlow() {
   return root;
 }
 
-/** 返事の下の一行「読み上げ中 · [止める]」（話して割り込む 2 段目までは、ボタンで止める） */
-export function createHint({ onStop }) {
+/**
+ * 返事の下の一行（承認済み 2026-10-07）。paint(mode, message) で出し分ける:
+ *   reading  「読み上げ中 · 話すと止まります」［止める］（話して止めるが効かないときは、いまはマイクを閉じている理由）
+ *   cut      「ここで読み上げを止めました」［続きを読む］（止めた場所。新しい発言を送るまで残る）
+ */
+export function createHint({ onStop, onResume }) {
   const root = el('div', 'vc-hint');
   root.hidden = true;
+  const text = el('span');
   const stop = el('button', 'btn', t('voice.hint.stop'));
   stop.type = 'button';
   stop.onclick = onStop;
-  root.append(svg('<path d="M4 9v6h4l5 4V5L8 9z"/><path d="M16.5 8.5a5 5 0 0 1 0 7"/>', 'i s'), el('span', null, t('voice.hint.reading')), stop);
+  const resume = el('button', 'btn', t('voice.hint.resume'));
+  resume.type = 'button';
+  resume.onclick = onResume;
+  root.append(svg('<path d="M4 9v6h4l5 4V5L8 9z"/><path d="M16.5 8.5a5 5 0 0 1 0 7"/>', 'i s'), text, stop, resume);
+  root.paint = (mode, message) => {
+    root.dataset.mode = mode;
+    text.textContent = message;
+    stop.hidden = mode !== 'reading';
+    resume.hidden = mode !== 'cut';
+  };
   return root;
 }
 

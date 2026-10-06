@@ -150,6 +150,9 @@ export default async function (t) {
     },
     statuses: { list: async () => [{ status: 'a', count: 1, firstUsedAt: 'a', lastUsedAt: 'b', icon: null, kept: false, ...secret }] },
     voice: { status: async () => ({ hasKey: true, storage: { encrypted: true, backend: 'fake' }, today: { callSeconds: 0, sttSeconds: 0, ttsChars: 0 }, active: 0 }) },
+    // API キー（ADR 0155）。値は持たない（名前・プロバイダー・確認の結果・使っている所だけ）
+    apiKeys: { list: async () => ({ migration: { state: 'done' }, storage: { encrypted: true, backend: 'fake' }, keys: [{ id: 'key-aaaaaaaaaaaa', provider: 'openrouter', label: 'OpenRouter', uses: [{ kind: 'voice' }], ...secret }], uses: { voice: 'key-aaaaaaaaaaaa', 'judge:jev': null, 'judge:cerebras': null }, guide: null }),
+      check: async (id) => ({ id, ok: true, at: 'a' }) },
     prefs: async () => ({ agentSitePermissions: [{ origin: 'o', ...secret }], locale: 'ja' }),
     compactionSettings: () => ({ enabled: true, ...secret }),
     delegation: { list: () => [{ taskId: 't', status: 'completed', ...secret }], get: () => ({ taskId: 't', status: 'completed', result: 'done', ...secret }),

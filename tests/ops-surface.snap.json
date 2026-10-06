@@ -101,6 +101,49 @@
       "input": "d9721654ab73"
     },
     {
+      "id": "apiKeys.check",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "apikeys",
+            "check"
+          ],
+          "positional": [
+            "id"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "31a4e5ef5b83"
+    },
+    {
+      "id": "apiKeys.list",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "apikeys",
+            "list"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "25c7d85c859a"
+    },
+    {
       "id": "app.cliSetup",
       "risk": "read",
       "riskOf": false,
@@ -4339,6 +4382,18 @@
     {
       "id": "agents.modes",
       "path": "agents modes",
+      "positional": []
+    },
+    {
+      "id": "apiKeys.check",
+      "path": "apikeys check",
+      "positional": [
+        "id"
+      ]
+    },
+    {
+      "id": "apiKeys.list",
+      "path": "apikeys list",
       "positional": []
     },
     {

@@ -4,7 +4,8 @@
 // OpenRouter の音声認識（POST /audio/transcriptions）は同期で、送った音声の全文を返すだけ。ストリーミングも途中結果も無い。
 // だから「どこまでを 1 回で送るか」をこちらで決める。純粋な状態機械で、動かすのは届いたフレームの長さの積算（音声の時計）だけ（壁時計は見ない）。
 //
-//   発話   声 + 無音 endSilenceMs（既定 600ms。縮めても確定は早くならず、行が割れる）か最長 15 秒で区切る。声が 200ms に届かなければ捨てる
+//   発話   声 + 無音 endSilenceMs（既定 600ms。縮めても確定は早くならず、行が割れる）か最長 30 秒で区切る。声が 200ms に届かなければ捨てる。
+//          「話の区切り」（言いよどみを 1 通にまとめる待ち）はここではなくクライアント（web/voice/turn-hold.mjs）が持つ。発話はここで細かく区切って先に認識に回し、まとめ待ちの間に確定が揃うようにする
 //   投機   最後の声のあと無音 300ms（フレーム単位で 341ms）で、区切ったときと同じ音声を先に送る見本を作る（speculate）。往復を無音の待ちに隠す。声が戻れば捨てる
 //   片     話しながら文字を出すため、発話の途中で短く切って先に送る。声の頭から 1.0 秒を超えたあと無音 171ms（息継ぎ）か 2.5 秒（強制）で切る。
 //          頭に直前の 2 秒を付けて送り、返った文字から前の片と重なる頭を除く（piece-text.mjs）。確定は発話全体を 1 回で認識した結果
@@ -24,7 +25,7 @@ const FRAME_EPSILON_MS = 0.01;    // フレームの長さを足し合わせた�
 
 export const DEFAULT_CUT = Object.freeze({
   endSilenceMs: 600,
-  maxUtteranceMs: 15000,
+  maxUtteranceMs: 30000,
   speculativeSilenceMs: 300,
   pieces: Object.freeze({ minMs: 1000, silenceMs: 170, maxMs: 2500, contextMs: 2000 }),
 });
@@ -174,6 +175,8 @@ export function createUtteranceCutter(config, sampleRate) {
       return cutOff === null ? null : { kind: 'piece', piece: cutOff };
     },
     finish: () => cut('finish'),
+    /** いま話している発話と、頭に付ける無音の溜めを、何も出さずに捨てる（まとめ待ちの取り消し）。音声の時計（streamMs）は進めたまま */
+    reset() { speech = null; preroll = []; prerollMs = 0; },
     speaking: () => speech !== null,
     voicedMs: () => speech?.voicedMs ?? 0,
     /** 区切る前に先に送る見本。無音が speculativeSilenceMs に届いた最初の 1 回だけ返す（声が戻れば、次の無音でまた 1 回） */

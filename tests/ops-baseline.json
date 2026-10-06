@@ -2,6 +2,10 @@
   "_comment": "WS のコマンドのうち操作の一覧（core/ops/）に載っていないものと、その理由の種類。todo は増やせない。縮めるときだけ node tests/lint-ops.mjs --update-baseline。docs/design.md「操作の一覧」",
   "commands": {
     "invoke": "gateway",
+    "setApiKey": "human-only",
+    "deleteApiKey": "human-only",
+    "setApiKeyUse": "human-only",
+    "resolveApiKeyGuide": "human-only",
     "setDelegationRoutingKey": "human-only",
     "deleteDelegationRoutingKey": "human-only",
     "setVoiceKey": "human-only",

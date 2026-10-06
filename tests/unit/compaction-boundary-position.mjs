@@ -91,7 +91,7 @@ export default async function (t) {
     activity: { el: null },   // 稼働表示の行（place が使う）。このテストは稼働表示を出さない
     messageRow: (id) => thread.querySelectorAll('.mw').find(w => w.dataset.messageId === id) ?? null,
     closeTurnEl: noop, plainTextHtml: x => x, hhmm: x => x, markDelivery: noop, syncOutboxRows: noop, outboxes: new Map(),
-    deliveredEarly: new Set(), document: { createTextNode: x => x },
+    deliveredEarly: new Set(), voiceDelivery: { owns: () => false, adopt: noop }, document: { createTextNode: x => x },
   });
   vm.runInContext(functions, context);
   vm.runInContext(`function onUserMessage(ev, replay = false) {\n${userMessage}\n}`, context);

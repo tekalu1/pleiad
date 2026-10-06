@@ -73,7 +73,10 @@ import { setupDelegationSettings } from './delegation-settings.mjs';
 import { createSide, backendLogo } from "./side.mjs";
 import { setupChannels } from "./channels/index.mjs";
 import { setupVoice } from "./voice/index.mjs";
+import { createVoiceDelivery } from "./voice/delivery.mjs";
+import { createChatVoiceSender } from "./voice/chat-send.mjs";
 import { setupVoiceSettings } from "./voice/settings.mjs";
+import { setupApiKeysSettings } from "./api-keys-settings.mjs";
 import { familiesOf } from "./family.mjs";
 import { createBranches, commonPrefix, nodeKeys } from "./branches.mjs";
 import { retainPlan, syncRequest, joinReply } from "./history-sync.mjs";
@@ -2716,6 +2719,8 @@ function isMine(ev) {
 // 回る弧と一言を出す（docs/design-system.md §6。印は待っている間しか DOM に置かない）。
 // 渡ったら「AIへ送信済み」に戻し、渡らないままターンが終わったら、次のターンで答えることを言う。
 const deliveredEarly = new Set();   // 吹き出しより先に届いた配達の合図
+// 声で送った発言の配送の一行（3 つの言い方。web/voice/delivery.mjs）。入力欄から送った発言の言い方は変えない
+const voiceDelivery = createVoiceDelivery({ cancel: (item) => cmd('messageAction', { sessionId: state.current, messageId: item.id, action: 'cancel' }) });
 const deliveryTimers = new WeakMap();
 const DELIVERY = {
   sending: t('chat.delivery.sending'),
@@ -2735,6 +2740,7 @@ function markDelivery(row, kind) {
   if (kind === 'sending') row.dataset.deliverySending = '1';
   else delete row.dataset.deliverySending;
   const waiting = kind === 'pending' || kind === 'sending';
+  if (voiceDelivery.isVoice(row) && voiceDelivery.mark(row, kind)) return;
   status.replaceChildren(DELIVERY[kind]);
   status.classList.remove('outbox-status-failed');
   status.classList.toggle('outbox-status-mark', waiting);
@@ -2751,6 +2757,7 @@ function ensureMessageRow(messageId, text, at, sentBy = null) {
     provisionalByMessage.delete(messageId);
     row = append(userMsg(text, { at, presents, sentBy }), `live:${++liveSeq}`);
     row.dataset.messageId = messageId;
+    if (voiceDelivery.owns(messageId)) voiceDelivery.adopt(row);
   } else if (sentBy) markSentBy(row.querySelector('.m.user') ?? row, sentBy);
   if (!row.querySelector('.outbox-status')) row.querySelector('.m').append(el('div', 'outbox-status'));
   return row;
@@ -2783,6 +2790,8 @@ function syncOutboxRows(messages) {
   let withdrawn = false;
   for (const item of messages ?? []) {
     const row = messageRow(item.id);
+    // 声で送った発言は、送信待ちでも会話の行に残す（時計の一行と［取り消す］。入力欄の脇の一覧にも出さない）
+    if (item.status === 'queued' && (item.waiting || row?.dataset.messageStarted) && voiceDelivery.isVoice(row)) { voiceDelivery.queued(row, item); continue; }
     if ((item.status === 'queued' && (item.waiting || row?.dataset.messageStarted))
       || ['paused', 'unknown', 'cancelled'].includes(item.status)) {
       if (row) { row.remove(); withdrawn = true; }
@@ -2864,8 +2873,10 @@ function onEvent(ev, replay = false) {
   }
   // どの口（画面・AI・CLI）から設定を変えても届く。prefs などの既存の配信が無い設定（コンテキストの既定）は、開いている設定の画面がここで取り直す
   if (ev.type === 'settingsChanged') { window.dispatchEvent(new CustomEvent('ply:settings-changed', { detail: ev })); voiceSettings.event(ev); if (ev.keys?.includes?.('voice')) voiceUi.refresh(); return; }
-  // 通話のキーの登録・削除（設定 › 通話。core/voice/host.mjs）
-  if (ev.type === 'voiceChanged') { voiceSettings.event(ev); return; }
+  // 通話に使うキーの選び直し・差し替え・削除（設定 › 通話。core/voice/host.mjs）
+  if (ev.type === 'voiceChanged') { voiceSettings.event(ev); voiceUi.refresh(); return; }
+  // API キーの登録・差し替え・削除・割り当て・確認の結果（設定 › API キー。core/api-keys.mjs）。キーを選ぶ 3 つの画面も取り直す
+  if (ev.type === 'apiKeysChanged') { apiKeysSettings.event(ev); voiceSettings.event(ev); delegationSettings.event(ev); compatEndpoints.keysChanged(); return; }
   // 設定の変更の承認が決着した（どの端末で答えても・取り下げても）。開いているカードを 1 行に畳む（ADR 0088）
   if (ev.type === 'settingApproval') { settleSettingCards(ev); return; }
   // 承認が片付いた（子の会話・別の窓・ターンの終わりや中断で）。開いていない会話の分の覚えと、子の会話のダイアログのカードも畳むので、会話の絞り込みの前に受ける
@@ -3790,6 +3801,7 @@ async function syncAccount(s, bid) {
 // 互換の接続先の設定（web/compat-endpoints.mjs）。入力欄の面が候補を引くので、controls より先に作る
 const compatEndpoints = setupCompatEndpoints({ cmd,
   openSettings: () => { if ($('onboardingDialog').open) $('onboardingDialog').close(); onboarding.open(); },
+  openPage: name => $(`${name}Tab`)?.click(),
   onChange: () => { syncTopbar().catch(() => {}); },
   officialLine: (agent) => { const st = state.auth.get(agent); return st?.loggedIn ? (st.account || t('settings.agents.loggedIn')) : ''; } });
 compatEndpoints.onOpen(() => renderAuth());
@@ -8179,17 +8191,19 @@ async function clearSentDraft(id, text, attachments) {
   await persistDraft(id, { text: '', attached: [], dirty: true });
 }
 /**
- * 通話で確定した発言を、いまの送信の経路（submit）にそのまま乗せる（web/voice/index.mjs の slot.send）。
- * 入力欄の書きかけ（字と添付）は退避して、送れたら戻す。送れなかったら発言は欄に残し（書きかけはその後ろ）、投げる
+ * 通話で確定した発言を会話へ送る（web/voice/index.mjs の slot.send）。入力欄を通さず、sendMessage へ直に渡して会話の行に置く
+ * （状態は声の 3 つの言い方。web/voice/chat-send.mjs・delivery.mjs）。入力欄の書きかけには触れない
  */
-async function submitVoiceText(text) {
-  const keep = { text: $('prompt').value, attached: state.attached };
-  $('prompt').value = text; state.attached = []; renderAttached(); fitPrompt();
-  await submit({ at: null });
-  if ($('prompt').value.trim() === '') { $('prompt').value = keep.text; state.attached = keep.attached; renderAttached(); fitPrompt(); return; }
-  $('prompt').value = [text, keep.text].filter(Boolean).join(NL + NL); state.attached = keep.attached; renderAttached(); fitPrompt();
-  throw new Error(t('voice.note.notSent'));
-}
+const submitVoiceText = createChatVoiceSender({
+  state, cmd: (command, args) => cmd(command, args), randomId, freshId: () => freshSessionId, delivery: voiceDelivery,
+  ensureSession: async () => { const created = await (creatingSession ?? startNew()); return created && state.current === created ? created : null; },
+  settingsSettled: async () => { await settingsWrite.catch(() => {}); await modeWrite; },
+  place: (sessionId, messageId, text) => {
+    if (messageRow(messageId)) return;
+    markDelivery(ensureMessageRow(messageId, text, new Date().toISOString()), 'sending');
+    syncOutboxRows(outboxes.get(sessionId) ?? []);
+  },
+});
 async function submit({ at = armedSends.get(state.current) } = {}) {
   // 入力欄の `!`: シェルの形なら走らせる。使えない会話の `!` は送らずに理由の一行を光らせる（文として送るのは「文として送る」だけ）
   if (shellComposer.active) return runShellFromComposer();
@@ -8699,7 +8713,9 @@ setupUsage({ $, cmd, source: usageSource, getBackends: () => state.backends, end
 const remoteSettings = setupRemote({ cmd, page: onboarding.page, openSession: id => { onboarding.close(); select(id); } });
 // 設定 › 通知。この PC の設定とスマホの一覧（スマホの種類・ロック画面の会話名はスマホのアプリで変える）
 const notifySettings = setupNotifySettings({ cmd, page: onboarding.page, onPc: pc => { notifyPc = pc; } });
-const voiceSettings = setupVoiceSettings({ cmd, page: onboarding.page });
+const voiceSettings = setupVoiceSettings({ cmd, page: onboarding.page, openPage: name => $(`${name}Tab`)?.click() });
+// 設定 › API キー。使っている所のリンクは、接続先は設定 › エージェント設定の接続先の面、通話・委譲はそのページへ
+const apiKeysSettings = setupApiKeysSettings({ cmd, page: onboarding.page, openEndpoints: agent => { if (compatEndpoints.openAgent !== agent) compatEndpoints.open(agent); else $('setupTab').click(); } });
 // スマホのアプリの中だけ: 最初の作業が終わったときの帯と、通知から開く会話
 const mobileNotify = setupMobileNotify({ band: $('notifyBand'), openSession: id => select(id) });
 // 手元の窓の中継のカードの「子の会話を見る」で、このリモートの窓の会話を開く（desktop/remote-windows.cjs の openHost）
@@ -8714,7 +8730,7 @@ presenceReporter.start();
 // 設定 › 委譲（委譲先の自動振り分け）。モデルの名前は入力欄と同じ語彙から
 const delegationSettings = setupDelegationSettings({ cmd, page: onboarding.page, showMenu, labelOf: routingNames.backend, logo: routingLogo,
   modelsOf: async (id) => (state.backends.some((b) => b.id === id) ? (await loadVocab(id)).models : null),
-  modelName: (backend, model) => routingNames.model(backend, model) });
+  modelName: (backend, model) => routingNames.model(backend, model), openPage: name => $(`${name}Tab`)?.click() });
 clearThread();
 initTheme();
 initLocale();

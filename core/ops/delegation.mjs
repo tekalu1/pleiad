@@ -225,7 +225,7 @@ export const delegationOps = [
       limit: z.number().int().min(1).max(PAGE_MAX).optional().describe(D('routing', 'limit')),
       cursor: z.string().max(400).optional().describe(D('routing', 'cursor')),
     }),
-    output: z.object({ settings: z.unknown(), warnings: z.array(z.unknown()), keys: z.record(z.string(), z.object({ hasKey: z.boolean() })), total: z.number().int(), candidates: z.array(z.unknown()), next: z.string().nullable() }),
+    output: z.object({ settings: z.unknown(), warnings: z.array(z.unknown()), keys: z.record(z.string(), z.object({ hasKey: z.boolean(), keyRef: z.string().nullable().optional() })), total: z.number().int(), candidates: z.array(z.unknown()), next: z.string().nullable() }),
     surfaces: { ui: true, mcp: 'catalog', cli: { path: ['delegation', 'routing'] } },
     legacyCommand: 'delegationRouting',
     handler: async (ctx, { refresh, ...page }) => {
