@@ -66,10 +66,17 @@ function createWin32ChromeOs({ win32, log = () => {} }) {
    * 「リモート デバッグを許可しますか？」の確認の窓。since に無い・見えている・小さい（外形が 1000×700 DIP 以下）ブラウザーの窓。
    * 題が既知の文言なら優先し、無ければ「ブラウザーの窓に所有された」新しい窓が 1 つだけのときに限る
    * （実機の確認の窓は WS_POPUP でブラウザーの窓が持ち主。ふつうの窓は持ち主が無い）
+   * port（DevToolsActivePort のポート）が分かれば、そのポートを待ち受けているプロセスの窓だけを見る。
+   * 別の User Data の Chrome・Edge・別の chrome.exe が同時に動いていても、取り違えて閉じない。持ち主が分からなければ絞らない。
    */
-  function findPermissionDialog({ since = [] } = {}) {
+  function findPermissionDialog({ since = [], port = null } = {}) {
     const before = new Set((Array.isArray(since) ? since : []).map(String));
+    let ownerPid = null;
+    if (Number.isInteger(port) && port > 0 && port < 65536) {
+      try { ownerPid = win32.listenerPid?.(port) || null; } catch { ownerPid = null; }
+    }
     const candidates = browserWindows().filter(({ hwnd, info }) => {
+      if (ownerPid && info.pid !== ownerPid) return false;
       if (before.has(String(hwnd)) || !info.visible || info.iconic || info.cloaked) return false;
       const size = dipSize(hwnd, info.rect);
       return size && size.width <= MAX_DIALOG_DIP.width && size.height <= MAX_DIALOG_DIP.height;

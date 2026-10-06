@@ -22,8 +22,8 @@ export function fakeChromeOs({ chrome = null, supported = true, reason = 'platfo
     ready: async () => caps,
     onReady(fn) { listeners.add(fn); return () => listeners.delete(fn); },
     async snapshotWindows() { note({ op: 'snapshotWindows' }); return [...windows.keys(), ...(chrome?.dialogs().map(d => d.id) ?? [])]; },
-    async findPermissionDialog({ since = [] } = {}) {
-      note({ op: 'findPermissionDialog', since });
+    async findPermissionDialog({ since = [], port = null } = {}) {
+      note({ op: 'findPermissionDialog', since, port });
       if (hideDialogs || !chrome) return null;
       const d = chrome.dialogs().find(x => !since.includes(x.id));
       return d ? { id: d.id } : null;

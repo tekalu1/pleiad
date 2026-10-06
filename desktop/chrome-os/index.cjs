@@ -39,7 +39,7 @@ function attachChromeOs(worker, { chromeOs, log = () => {} }) {
       const a = args ?? {};
       let result;
       switch (action) {
-        case 'findPermissionDialog': result = chromeOs.findPermissionDialog({ since: a.since }); break;
+        case 'findPermissionDialog': result = chromeOs.findPermissionDialog({ since: a.since, port: a.port }); break;
         case 'raise': result = chromeOs.raise(a.ref); break;
         case 'yieldForeground': result = chromeOs.yieldForeground(a.ref, { to: a.to }); break;
         case 'close': result = chromeOs.close(a.ref); break;
