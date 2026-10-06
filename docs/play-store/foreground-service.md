@@ -16,7 +16,7 @@ Pleiad の使い方（[ADR 0086](../adr/0086-notifications-through-relay.md)）:
 | 常駐の通知 | 重要度が最小のチャンネル「接続」に 1 行（「Pleiad · 通知を受け取っています」）。音・振動なし | `NotifyService.onStartCommand` |
 | 止められたとき | 中継は端末が切れている間、暗号化した知らせを端末あたり 16 件・最大 15 分までメモリに溜め、つながったら渡す | `relay/server.mjs`（`notifyQueueMax`・`notifyMaxTtlMs`） |
 
-`dataSync` にしないのは、Android がそれを 24 時間に 6 時間までしか動かさないため。FCM を使わない理由は ADR 0086（利用者が自分で立てた中継から送るには、配布元の送信用の資格情報を配るか、配布元が送り口のサーバーを置く必要がある）。差し戻されたときの案は [ADR 0142](../adr/0142-play-foreground-service-fallback.md)。
+`dataSync` にしないのは、Android がそれを 24 時間に 6 時間までしか動かさないため。FCM を使わない理由は ADR 0086（利用者が自分で立てた中継から送るには、配布元の送信用の資格情報を配るか、配布元が送り口のサーバーを置く必要がある）。差し戻されたときの案は [ADR 0143](../adr/0143-play-foreground-service-fallback.md)。
 
 ## 申告の文
 

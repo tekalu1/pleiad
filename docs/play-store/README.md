@@ -1,6 +1,6 @@
 # Google Play の申請の資料
 
-Android 版を Google Play に出すときに Play Console へ入れるものの下書き。流れと Play Console での手順は [android-releases.md](../android-releases.md)「Google Play」、決定は [ADR 0141](../adr/0141-android-play-distribution.md)。
+Android 版を Google Play に出すときに Play Console へ入れるものの下書き。流れと Play Console での手順は [android-releases.md](../android-releases.md)「Google Play」、決定は [ADR 0142](../adr/0142-android-play-distribution.md)。
 
 | ファイル | 中身 |
 |---|---|

@@ -1,4 +1,4 @@
-# 0141 Android 版を Google Play にも出す: APK と同じ鍵・同じ版の AAB を、手動のワークフローで上げる
+# 0142 Android 版を Google Play にも出す: APK と同じ鍵・同じ版の AAB を、手動のワークフローで上げる
 
 - 状態: 提案
 
@@ -34,4 +34,4 @@ Android 版は、`main` への push で署名済み APK を GitHub Release に�
 - Play に登録した鍵は、Play の上では後から別の鍵へ替えにくい（鍵の更新の手順が要る）。鍵を失えば、APK・Play の両方で上書き更新ができなくなる。控えの保管は今まで以上に大事になる。
 - 同じ `versionCode` は Play に二度と上げられない。同じコミットでワークフローをやり直すと、Play が拒む（新しいコミットを `main` に入れてから上げ直す）。
 - GitHub の APK と Play の版は、同じコミットなら同じ `versionCode` になる。端末は、入っているものより `versionCode` が大きい方から更新を受け取る。
-- Play の申請に要る資料（掲載文・前面サービスの申告・審査員向けのアクセス方法・データセーフティ・コンテンツのレーティング）は `docs/play-store/`、プライバシーポリシーは `site/privacy/`。前面サービスが差し戻されたときの案は [ADR 0142](0142-play-foreground-service-fallback.md)。
+- Play の申請に要る資料（掲載文・前面サービスの申告・審査員向けのアクセス方法・データセーフティ・コンテンツのレーティング）は `docs/play-store/`、プライバシーポリシーは `site/privacy/`。前面サービスが差し戻されたときの案は [ADR 0143](0143-play-foreground-service-fallback.md)。

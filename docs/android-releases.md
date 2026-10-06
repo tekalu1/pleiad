@@ -2,7 +2,7 @@
 
 Android 版（`mobile/`、Capacitor 8）の署名済み APK は、`main` への push で Android に効く変更があったときに GitHub Release へ自動で出る。デスクトップのリリース（[desktop-releases.md](desktop-releases.md)）とは別の流れで、別のタグを使う（[ADR 0066](adr/0066-android-release-on-main-push.md)）。ワークフローは `.github/workflows/android-release.yml`。
 
-Google Play へは、同じ鍵・同じ版の決め方の AAB を、手動のワークフロー `.github/workflows/android-play.yml` で上げる（下の「[Google Play](#google-play)」、[ADR 0141](adr/0141-android-play-distribution.md)）。
+Google Play へは、同じ鍵・同じ版の決め方の AAB を、手動のワークフロー `.github/workflows/android-play.yml` で上げる（下の「[Google Play](#google-play)」、[ADR 0142](adr/0142-android-play-distribution.md)）。
 
 ## いつ出るか
 
@@ -69,7 +69,7 @@ PLY_ANDROID_KEY_PASSWORD=…
 
 ## Google Play
 
-GitHub Release の APK の流れはそのまま残し、Google Play へは同じ鍵（Play App Signing のアプリ署名鍵に今の鍵を登録する）・同じ `versionCode` の決め方の AAB を、人が決めたときに上げる（[ADR 0141](adr/0141-android-play-distribution.md)）。同じ鍵なので、GitHub の APK を入れた端末は入れ直さずに Play の版へ移れる（逆も同じ）。端末は、入っているものより `versionCode` が大きい方から更新を受け取る。
+GitHub Release の APK の流れはそのまま残し、Google Play へは同じ鍵（Play App Signing のアプリ署名鍵に今の鍵を登録する）・同じ `versionCode` の決め方の AAB を、人が決めたときに上げる（[ADR 0142](adr/0142-android-play-distribution.md)）。同じ鍵なので、GitHub の APK を入れた端末は入れ直さずに Play の版へ移れる（逆も同じ）。端末は、入っているものより `versionCode` が大きい方から更新を受け取る。
 
 申請に要る資料の下書きは [play-store/](play-store/) にある（掲載文・前面サービスの申告・審査員向けのアクセス方法・データセーフティ・コンテンツのレーティング）。プライバシーポリシーはサイトの `site/privacy/`（https://pleiad.dev/privacy/ ）で、アプリのホスト一覧の下からも開ける。
 

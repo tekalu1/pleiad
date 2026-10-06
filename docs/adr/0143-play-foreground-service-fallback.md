@@ -1,4 +1,4 @@
-# 0142 Google Play で前面サービス（remoteMessaging）が差し戻されたときの代わり
+# 0143 Google Play で前面サービス（remoteMessaging）が差し戻されたときの代わり
 
 - 状態: 提案（決定は差し戻されたときに行う）
 

@@ -1,5 +1,5 @@
 # Android の AAB を Google Play のテストのトラック（内部テスト・クローズドテスト）へ上げる
-# （docs/android-releases.md「Google Play」、ADR 0141）。
+# （docs/android-releases.md「Google Play」、ADR 0142）。
 #
 # 手動の起動（workflow_dispatch）だけで、main の上でしか動かない。GitHub Release へ APK を出す
 # android-release.yml とは別の流れで、版の決め方（versionCode = git rev-list --count HEAD）と
