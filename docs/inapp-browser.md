@@ -136,7 +136,7 @@ Playwright の Chromium 151（一時のプロフィール。利用者の Chrome 
 
 実機（確かめ専用の Chrome 154。2026-10-07。agent-browser 0.38.1）: `open`・`snapshot`・`screenshot`・`click`・`fill`・`scroll`・`set viewport`・`tab new`・`tab tN`・`window.open` の tab と popup が各 3 回とも効き、25〜110 ms（`tab new` は約 350 ms、`window.open` を押す操作は 0.1〜1 秒）。`screenshot` は白紙でない。最初の窓が画面に見えるのは約 95〜110 ms で、前面を取るのは約 125 ms（そのあと開く前の前面へ返す）。2 枚目からの窓は 0〜16 ms。popup は約 60 ms 画面に見え、約 100 ms 前面を取って返す。受け入れで見た「screenshot が 30 秒止まる」は、`chrome.exe --new-window` の窓（90 秒置いても screenshot 約 100 ms）でも、それを最小化した旧設計の窓（screenshot 2.3〜2.7 秒、click 約 0.5 秒）でも再現しなかった。
 
-**既知の制約**: `window.open`（`target="_blank"`）のタブは同じ窓に入り、元のタブが裏になる。agent-browser が元のタブへ `tab tN` で戻しても `bringToFront` は握りつぶすので裏のまま、描画が間引かれて（`requestAnimationFrame` が約 2 fps）`screenshot` が 2.3〜2.5 秒、`click` が約 0.5 秒かかる（効きはする）。前に出す `Target.activateTarget` は窓を前面に出し（約 30〜110 ms で見張りが返す）、Chrome が隠した窓を画面の中へ寄せることがある（透明度 0 なので見えない）。`WS_EX_NOACTIVATE` を付けても前面は取られた。
+**既知の制約**: `window.open`（`target="_blank"`）のタブは同じ窓に入り、元のタブが裏になる。agent-browser が元のタブへ `tab tN` で戻しても `bringToFront` は握りつぶすので裏のまま、描画が間引かれて（`requestAnimationFrame` が約 2 fps）`screenshot` が 2.3〜2.5 秒、`click` が約 0.5 秒かかる（効きはする）。前に出す `Target.activateTarget` は窓を前面に出す（約 30〜110 ms で見張りが返す）。`WS_EX_NOACTIVATE` を付けても前面は取られた。
 
 ## OS ごとの層
 
