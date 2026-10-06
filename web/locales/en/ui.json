@@ -4146,6 +4146,7 @@
         "today": "Today: calls {{minutes}} min · transcribed {{stt}} min · read aloud {{chars}} characters",
         "note": "A call ends when it reaches a limit (and cannot start once the day's limit is reached). A call that hears nobody for 10 minutes also ends."
       },
+      "nextCall": "Pause length, speaking to stop the reading, and echo cancellation are fixed when a call starts. If you change them during a call, they take effect from the next call (sound effects apply right away).",
       "turn": {
         "title": "Pause before sending",
         "hint": "How long to wait after you stop talking before the message is sent. A longer wait keeps hesitations in one message; a shorter wait starts the reply sooner.",

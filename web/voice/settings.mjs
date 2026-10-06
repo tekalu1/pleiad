@@ -208,7 +208,8 @@ export function setupVoiceSettings({ cmd, page }) {
     label.append(box, el('span', null, ` ${t('voice.settings.audio.echo')}`));
     card.append(label, el('small', null, t('voice.settings.audio.echoHint')));
     sec.append(card, el('p', 'mp-note', t('voice.settings.audio.permission')));
-    out.append(turn, barge, sounds, sec);
+    // 区切り・話して止める・エコー除去は、通話を始めるときに決まる（録音の制約・ready で渡す値）。通話中に替えたら次の通話から効く
+    out.append(turn, barge, sounds, sec, el('p', 'mp-note vc-nextcall', t('voice.settings.nextCall')));
     return out;
   }
 

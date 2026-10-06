@@ -62,6 +62,8 @@ export function setupVoice({ token, invoke, openSettings, available = () => true
   }).catch(() => {});
   loadSettings();
   const sounds = createSounds({ level: () => settings.sounds, speaking: () => engine.state === 'speaking' });
+  // 声で送った発言が送信待ちに入った（web/voice/delivery.mjs が会話の行に時計の一行を出したとき）: 「待ち」の音（効果音「すべて」のとき）
+  window.addEventListener('ply:voice-queued', () => { if (engine.active) sounds.play('wait'); });
 
   const supported = () => Boolean(navigator.mediaDevices?.getUserMedia && globalThis.AudioWorkletNode && globalThis.AudioContext);
   const usable = () => available() && supported();
@@ -106,7 +108,7 @@ export function setupVoice({ token, invoke, openSettings, available = () => true
       rec.cut = false;
       hintMode = 'reading';
       if (engine.bargeActive) hintText = t('voice.hint.readingBarge');
-      else if (settings.bargeIn && !settings.echoCancellation) hintText = t('voice.hint.readingClosedEcho');   // 話して止めるは入っているが、エコー除去が切れているので聞けない
+      else if (engine.bargeEnabled && !engine.echoCancellation) hintText = t('voice.hint.readingClosedEcho');   // 話して止めるは入っているが、この通話はエコー除去なしで始めたので聞けない（通話中に設定を替えても変わらない）
       else hintText = t('voice.hint.readingClosed');
     } else if (on && rec.cut) { hintMode = 'cut'; hintText = t('voice.hint.cut'); }
     if (hintMode) {
