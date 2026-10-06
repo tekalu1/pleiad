@@ -112,7 +112,7 @@ import { createMainAway, createExternalOpener } from './main-away.mjs';
 import { readBuildInfo } from './handover-check.mjs';
 import { markRuntimeInUse } from './runtime-use.mjs';
 import { cardOf, restoreFields, promptHash, CARD_MAX_BYTES } from './turn-card.mjs';
-import { readAdoptSources, ADOPT_TURN_MARK } from './adopt.mjs';
+import { readAdoptSources, readHolderSources, ADOPT_TURN_MARK } from './adopt.mjs';
 import { parentPortScreencast, createScreencastHub, screencastCommand } from './browser-screencast.mjs';
 import { createBrowserSiteApprovals } from './browser-confirm.mjs';
 import { createBrowserBridge, BROWSER_MCP_PATH } from './browser-bridge.mjs';
@@ -5582,18 +5582,24 @@ async function adoptTurn(card, source, ctx = null) {
 }
 
 /**
- * 起動で付け直すターンを読み、登録する（restoreTurn）。元は既定で空（保持役の元は 2b-5）。テストだけが AGENT_HOST_ADOPT_FROM に
- * 「終わっていたターン」の札と記録を置く（core/adopt.mjs）。付け直せない元は何もせず、起動時の restart の回復に任せる
+ * 起動で付け直すターンを読み、登録する（restoreTurn）。元は既定で空。テストだけが付ける: AGENT_HOST_ADOPT_FROM は
+ * 「終わっていたターン」の札と記録（ファイルの元）、AGENT_HOST_ADOPT_HOLDER=1 は保持役の子（2b-5。実行場所の置き場は AGENT_HOST_RUNTIME_ROOT。
+ * 旧サーバーが手を離すときに札を置いた子だけ。保持役に子を載せるバックエンドは fake の台本 held: だけ）。core/adopt.mjs。
+ * 付け直せない元は何もせず、起動時の restart の回復に任せる
  */
 async function restoreAdoptedTurns() {
+  const failed = err => { console.error('  付け直す元を読めませんでした:', String(err?.message ?? err)); return []; };
   const dir = process.env.AGENT_HOST_ADOPT_FROM;
-  if (!dir) return [];
-  const sources = await readAdoptSources(dir).catch(err => { console.error('  付け直す元を読めませんでした:', String(err?.message ?? err)); return []; });
+  const root = process.env.AGENT_HOST_RUNTIME_ROOT;
+  const sources = [
+    ...(dir ? await readAdoptSources(dir).catch(failed) : []),
+    ...(process.env.AGENT_HOST_ADOPT_HOLDER === '1' && root ? await readHolderSources({ dataDir: store.dataDir, root, appVersion: APP_VERSION }).catch(failed) : []),
+  ];
   const adopted = [];
   for (const source of sources) {
     const card = source.state.label;
     try { adopted.push({ card, source, ctx: await restoreTurn(card, source) }); }
-    catch (err) { console.error(`  ターンを付け直せないので中断として残す（記録 ${source.id}）:`, String(err?.message ?? err)); }
+    catch (err) { source.dispose?.(); console.error(`  ターンを付け直せないので中断として残す（記録 ${source.id}）:`, String(err?.message ?? err)); }
   }
   return adopted;
 }

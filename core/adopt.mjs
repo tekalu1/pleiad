@@ -7,9 +7,11 @@
 //   replay(from, to) … 記録の [seq, line] の配列
 //   attach(from)     … from 以降の { seq, line } を順に、最後に { exit: { code, signal, error } } を返す非同期の列
 //   ack(seq)         … アプリのループで処理し終えた最後の行
-// 保持役につないだ元は 2b-5 で足す。今あるのは、テストが「終わっていたターン」を置くファイルの元（AGENT_HOST_ADOPT_FROM）だけ。
+// 元は 2 つ: 保持役の子につないだ元（holderSource・readHolderSources。2b-5。接続は core/holder/link.mjs の共有の口）と、
+// テストが「終わっていたターン」を置くファイルの元（readAdoptSources。AGENT_HOST_ADOPT_FROM）。
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { holderLink } from './holder/link.mjs';
 
 /** ターンの始まりの印の名前（保持役の mark。再生はここから） */
 export const ADOPT_TURN_MARK = 'turn';
@@ -44,6 +46,72 @@ function fileSource(child) {
     ack(seq) { if (seq > source.acked) source.acked = seq; },
   };
   return source;
+}
+
+/**
+ * 保持役の子 1 つ分の元（core/holder/client.mjs の HolderClient を包む）。state は保持役の子の状態（welcome.children の 1 件か、自分で起こした子の見込み）。
+ * 生きた子も続きを受けられる。attach(from) は out・exit をキューへ溜めて順に返す（attach の答えの直後の行を取りこぼさないよう、出来事の購読は
+ * ここで先に始める）。spawned: true は、自分が spawn した子（spawn で最初から親に付いている。attach を送り直さない）。
+ * 付け直す側の取り分は write（子の stdin へ。承認の答え・途中送信）・release（終わった子の記録を捨てる。終わりの記録を処理し終えた後）・dispose（購読をやめる）。
+ * stop() は手を離すとき（旧サーバーの detach の後）に、読みの列を { exit: { handedOff: true } } で終わらせる。paused はテスト用（読みを止めて、保持役に溜めさせる）
+ */
+export function holderSource(client, state, { spawned = false } = {}) {
+  const id = String(state.id);
+  const queue = [];
+  let wake = null, stopped = false;
+  const poke = () => { const w = wake; wake = null; w?.(); };
+  const onOut = frame => { if (frame.id === id && !frame.redelivered) { queue.push({ seq: frame.seq, line: frame.line }); poke(); } };
+  const onExit = frame => { if (frame.id === id) { queue.push({ exit: { code: frame.code ?? null, signal: frame.signal ?? null, error: frame.error ?? null } }); poke(); } };
+  const onDisconnect = reason => { queue.push({ lost: String(reason ?? 'closed') }); poke(); };
+  client.on('out', onOut);
+  client.on('exit', onExit);
+  client.on('disconnect', onDisconnect);
+  const source = {
+    id,
+    client,
+    state: { ...state, acked: Number.isInteger(state.acked) ? state.acked : 0, marks: state.marks ?? {} },
+    attachable: true,
+    acked: Number.isInteger(state.acked) ? state.acked : 0,
+    paused: false,
+    async replay(from, to) {
+      const { lines, truncated } = await client.replay(id, from, to);
+      if (truncated) throw new Error('adopt: the record was truncated');
+      return lines.map(({ seq, line }) => [seq, line]);
+    },
+    async *attach(from) {
+      if (!spawned) await client.attach(id, { from });
+      for (;;) {
+        while (!stopped && (source.paused || !queue.length)) await new Promise(resolve => { wake = resolve; });
+        if (stopped) { yield { exit: { handedOff: true } }; return; }
+        const item = queue.shift();
+        if (item.lost) throw new Error(`adopt: the holder connection was lost (${item.lost})`);
+        if (item.exit) { yield item; return; }
+        if (item.seq < from) continue;                       // 自分で起こした子の最初の記録と、attach の送り直しの重なり
+        from = item.seq + 1;
+        yield item;
+      }
+    },
+    ack(seq) { if (seq > source.acked) { source.acked = seq; client.ack(id, seq); } },
+    write(data) { return client.write(id, data); },
+    release() { return client.release(id); },
+    stop() { stopped = true; poke(); },
+    pause(flag) { source.paused = Boolean(flag); poke(); },
+    dispose() { client.off('out', onOut); client.off('exit', onExit); client.off('disconnect', onDisconnect); },
+  };
+  return source;
+}
+
+/**
+ * 起動で付け直す、保持役の子の元（無停止の更新 2b-5）。居る保持役にだけつなぐ（起こさない）。付け直せるのは、札（label）と
+ * ターンの印を持つ子だけ（旧サーバーが手を離すときに置く。stage2-server-state.md §6 の 2b-5 の実装のメモ）。居なければ空
+ */
+export async function readHolderSources({ dataDir, root, appVersion = '', log = () => {} } = {}) {
+  let client;
+  try { client = await holderLink({ dataDir, root, appVersion, launch: false, log }); }
+  catch (error) { if (error?.code === 'HOLDER_NONE') return []; throw error; }
+  return (client.welcome?.children ?? [])
+    .filter(child => child.label && Number.isInteger(child.marks?.[ADOPT_TURN_MARK]))
+    .map(child => holderSource(client, child));
 }
 
 /** 重なって届いた出来事を見分ける鍵（uuid・ツールの id を持つものだけ） */
