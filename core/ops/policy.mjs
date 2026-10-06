@@ -33,8 +33,8 @@ export const DECISIONS = ['allow', 'ask', 'deny', 'hidden'];
 export const HUMAN_ONLY = Object.freeze({
   // 承認モード。AI が自分の関所を緩められると承認フローが意味を失う（design.md §8.5）。承認カードへの応答も同じ。bot の承認モード（bots.setMode。ADR 0109）も
   mode: { commands: ['setMode', 'resolvePermission'], settings: ['mode'], ops: ['bots.setMode'] },
-  // 秘密の値を入れる・消す・認可する（委譲の判定器のキー・通話の OpenRouter のキー・互換の接続先のキー・MCP の OAuth）
-  secrets: { commands: ['setDelegationRoutingKey', 'deleteDelegationRoutingKey', 'setVoiceKey', 'deleteVoiceKey', 'compatEndpointCheck', 'compatEndpointSave', 'mcpAuthStart', 'mcpAuthLogout'], settings: [], ops: ['routines.rotateSecret'] },
+  // 秘密の値を入れる・消す・認可する・割り当てる（API キー: 入れる・差し替える・消す・通話と判定器に使うキーを選ぶ・移行の案内の答え。互換の接続先のキー・MCP の OAuth。古い口の委譲の判定器・通話のキー）
+  secrets: { commands: ['setApiKey', 'deleteApiKey', 'setApiKeyUse', 'resolveApiKeyGuide', 'setDelegationRoutingKey', 'deleteDelegationRoutingKey', 'setVoiceKey', 'deleteVoiceKey', 'compatEndpointCheck', 'compatEndpointSave', 'mcpAuthStart', 'mcpAuthLogout'], settings: [], ops: ['routines.rotateSecret'] },
   // アカウント（契約・課金の主体）。一覧も含む
   accounts: { commands: ['saveClaudeAccount', 'deleteClaudeAccount', 'claudeLoginStart', 'claudeLoginCode', 'claudeLoginCancel', 'authLogin', 'authLogout', 'authSubmit', 'claudeAccounts'], settings: ['claudeAccount'] },
   // 新しい会話の接続先の既定（会話の送り先を、人が確かめていない先へ黙って替えない）

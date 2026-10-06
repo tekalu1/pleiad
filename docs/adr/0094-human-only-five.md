@@ -1,6 +1,6 @@
 # 0094 人だけ（human-only）の操作を 5 つに限る
 
-- 状態: 承認（2026-10-03）。設定 limitResume を write にする決定は置換（0132）
+- 状態: 承認（2026-10-03）。設定 limitResume を write にする決定は置換（0132）。「秘密の値」の組に API キーのコマンド（`setApiKey`・`deleteApiKey`・`setApiKeyUse`・`resolveApiKeyGuide`）を足した（0155。組の数は 5 のまま）
 - 置き換えられた: 0132（設定 limitResume）
 - 追記: 端末ごとの「AI からの依頼を受ける」（`setRemoteDeviceAgent`）は 5 つのうちの「リモートのペアリング」の組に入れる。5 つの数は変わらない（[ADR 0146](0146-remote-agent-delegation.md)）
 

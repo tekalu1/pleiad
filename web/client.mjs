@@ -72,6 +72,7 @@ import { createSide, backendLogo } from "./side.mjs";
 import { setupChannels } from "./channels/index.mjs";
 import { setupVoice } from "./voice/index.mjs";
 import { setupVoiceSettings } from "./voice/settings.mjs";
+import { setupApiKeysSettings } from "./api-keys-settings.mjs";
 import { familiesOf } from "./family.mjs";
 import { createBranches, commonPrefix, nodeKeys } from "./branches.mjs";
 import { retainPlan, syncRequest, joinReply } from "./history-sync.mjs";
@@ -2869,8 +2870,10 @@ function onEvent(ev, replay = false) {
   }
   // どの口（画面・AI・CLI）から設定を変えても届く。prefs などの既存の配信が無い設定（コンテキストの既定）は、開いている設定の画面がここで取り直す
   if (ev.type === 'settingsChanged') { window.dispatchEvent(new CustomEvent('ply:settings-changed', { detail: ev })); voiceSettings.event(ev); if (ev.keys?.includes?.('voice')) voiceUi.refresh(); return; }
-  // 通話のキーの登録・削除（設定 › 通話。core/voice/host.mjs）
-  if (ev.type === 'voiceChanged') { voiceSettings.event(ev); return; }
+  // 通話に使うキーの選び直し・差し替え・削除（設定 › 通話。core/voice/host.mjs）
+  if (ev.type === 'voiceChanged') { voiceSettings.event(ev); voiceUi.refresh(); return; }
+  // API キーの登録・差し替え・削除・割り当て・確認の結果（設定 › API キー。core/api-keys.mjs）。キーを選ぶ 3 つの画面も取り直す
+  if (ev.type === 'apiKeysChanged') { apiKeysSettings.event(ev); voiceSettings.event(ev); delegationSettings.event(ev); compatEndpoints.keysChanged(); return; }
   // 設定の変更の承認が決着した（どの端末で答えても・取り下げても）。開いているカードを 1 行に畳む（ADR 0088）
   if (ev.type === 'settingApproval') { settleSettingCards(ev); return; }
   // 承認が片付いた（子の会話・別の窓・ターンの終わりや中断で）。開いていない会話の分の覚えと、子の会話のダイアログのカードも畳むので、会話の絞り込みの前に受ける
@@ -3795,6 +3798,7 @@ async function syncAccount(s, bid) {
 // 互換の接続先の設定（web/compat-endpoints.mjs）。入力欄の面が候補を引くので、controls より先に作る
 const compatEndpoints = setupCompatEndpoints({ cmd,
   openSettings: () => { if ($('onboardingDialog').open) $('onboardingDialog').close(); onboarding.open(); },
+  openPage: name => $(`${name}Tab`)?.click(),
   onChange: () => { syncTopbar().catch(() => {}); },
   officialLine: (agent) => { const st = state.auth.get(agent); return st?.loggedIn ? (st.account || t('settings.agents.loggedIn')) : ''; } });
 compatEndpoints.onOpen(() => renderAuth());
@@ -8513,7 +8517,9 @@ setupUsage({ $, cmd, source: usageSource, getBackends: () => state.backends, end
 const remoteSettings = setupRemote({ cmd, page: onboarding.page, openSession: id => { onboarding.close(); select(id); } });
 // 設定 › 通知。この PC の設定とスマホの一覧（スマホの種類・ロック画面の会話名はスマホのアプリで変える）
 const notifySettings = setupNotifySettings({ cmd, page: onboarding.page, onPc: pc => { notifyPc = pc; } });
-const voiceSettings = setupVoiceSettings({ cmd, page: onboarding.page });
+const voiceSettings = setupVoiceSettings({ cmd, page: onboarding.page, openPage: name => $(`${name}Tab`)?.click() });
+// 設定 › API キー。使っている所のリンクは、接続先は設定 › エージェント設定の接続先の面、通話・委譲はそのページへ
+const apiKeysSettings = setupApiKeysSettings({ cmd, page: onboarding.page, openEndpoints: agent => { if (compatEndpoints.openAgent !== agent) compatEndpoints.open(agent); else $('setupTab').click(); } });
 // スマホのアプリの中だけ: 最初の作業が終わったときの帯と、通知から開く会話
 const mobileNotify = setupMobileNotify({ band: $('notifyBand'), openSession: id => select(id) });
 // 手元の窓の中継のカードの「子の会話を見る」で、このリモートの窓の会話を開く（desktop/remote-windows.cjs の openHost）
@@ -8528,7 +8534,7 @@ presenceReporter.start();
 // 設定 › 委譲（委譲先の自動振り分け）。モデルの名前は入力欄と同じ語彙から
 const delegationSettings = setupDelegationSettings({ cmd, page: onboarding.page, showMenu, labelOf: routingNames.backend, logo: routingLogo,
   modelsOf: async (id) => (state.backends.some((b) => b.id === id) ? (await loadVocab(id)).models : null),
-  modelName: (backend, model) => routingNames.model(backend, model) });
+  modelName: (backend, model) => routingNames.model(backend, model), openPage: name => $(`${name}Tab`)?.click() });
 clearThread();
 initTheme();
 initLocale();

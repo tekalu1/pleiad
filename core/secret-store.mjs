@@ -157,7 +157,7 @@ export function createSecretStore({ file, cipher = plainCipher }) {
     } catch (e) {
       if (e.code === 'ENOENT') return { version: 1, entries: {} };
       // 壊れたファイルを黙って空で上書きしない（トークンを失うより、止まって知らせる方がよい）
-      throw new Error(t('secrets.fileBroken'));
+      throw Object.assign(new Error(t('secrets.fileBroken')), { code: 'SECRET_FILE_BROKEN' });
     }
   }
   async function writeFile(data) {

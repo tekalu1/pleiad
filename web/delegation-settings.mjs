@@ -2,7 +2,8 @@
 //
 // - 先頭のスイッチ「委譲先を自動で選ぶ」
 // - 「難しさの判定」: 種類ごとの判定器（Jev / Cerebras / 判定しない）の表と「Jev が迷ったら Cerebras に聞き直す」
-// - 「判定器のキー」: OpenRouter（Jev）と Cerebras。登録・変更・削除。キーは返ってこない（hasKey だけ）。送る内容の 1 行
+// - 「判定器が使うキー」: OpenRouter（Jev）と Cerebras それぞれに「使うキー」を設定 › API キー（承認済み 2026-10-07）から選ぶ（WS の setApiKeyUse）。
+//   選ぶまでは何も送らない。未登録ならその場で登録でき（登録先は API キー）、キーは返ってこない（hasKey と keyRef だけ）。送る内容の 1 行
 // - 「詳しい設定」（details）: 段ごとの候補（並べ替え・追加・外す、各候補の今の使用量と使えるかどうか）・種類 × 難しさの表・使用量の方針
 // - 末尾の「既定に戻す」（その場の確認。キーは残る）
 //
@@ -13,6 +14,7 @@
 import { el } from './dom.mjs';
 import { t, fmt } from './i18n.mjs';
 import { kindText, difficultyText, tierText, tierShortText, judgeText, skipText, usageSummary, splitCandidate } from './delegation-routing-view.mjs';
+import { apiKeyList, keySelect, registerForm, statusLine, manageLink } from './api-key-ui.mjs';
 
 const SERVICES = ['openrouter', 'cerebras'];
 const SERVICE_JUDGE = { openrouter: 'jev', cerebras: 'cerebras' };
@@ -53,11 +55,12 @@ function button(text, onclick, className = 'btn') {
  * @param logo       エージェントのロゴ（backend -> 要素）
  * @param modelsOf   そのエージェントのモデルの一覧（backend -> Promise<{ [id]: { label } }>）
  * @param modelName  モデルの表示名（backend, model -> 文字）
+ * @param openPage   設定のほかのページへ移る（API キー）
  */
-export function setupDelegationSettings({ cmd, page, showMenu, labelOf, logo, modelsOf, modelName }) {
+export function setupDelegationSettings({ cmd, page, showMenu, labelOf, logo, modelsOf, modelName, openPage = () => {} }) {
   const $ = id => document.getElementById(id);
   const root = $('delegationPanel');
-  let data = null, committed = null, message = '', editingKey = '', confirmingKey = '', confirmingReset = false, refreshing = false;
+  let data = null, committed = null, message = '', registering = '', keyList = null, confirmingReset = false, refreshing = false;
   const pending = [];
   let saving = false, refreshSerial = 0;
   // 判定器の面で押した部品（`${kind}:${judge}` か 'escalate'）。描き直したときにフォーカスを戻す
@@ -97,6 +100,8 @@ export function setupDelegationSettings({ cmd, page, showMenu, labelOf, logo, mo
       committed = latest;
       data = { ...latest, settings: pending.reduce((s, patch) => applyPatch(s, patch, latest.defaults), latest.settings) };
       message = '';
+      // 選べるキー。取れなくても判定器の設定は見せる（選ぶ欄だけ使えない）
+      keyList = await apiKeyList(cmd).catch(() => null);
     }
     catch (e) { message = t('routing.settings.loadFailed', { error: e.message }); }
     // 候補の名前は語彙から。まだ読んでいないエージェントの分を読んでから描く
@@ -141,7 +146,7 @@ export function setupDelegationSettings({ cmd, page, showMenu, labelOf, logo, mo
     // 入力の途中（欄にフォーカス）で描き直すと打った値が消えるので、そのときは面ごとに飛ばす。
     // 判定器の面には打つ欄が無いので常に描き直す（押したボタンにフォーカスが残り、選び直しが画面に出なかった）
     paintJudges();
-    if (!keys.contains(document.activeElement) || !editingKey) paintKeys();
+    if (!keys.contains(document.activeElement) || !registering) paintKeys();
     if (!advancedBody.contains(document.activeElement) || !document.activeElement.matches('input')) paintAdvanced();
     paintReset();
   }
@@ -206,7 +211,7 @@ export function setupDelegationSettings({ cmd, page, showMenu, labelOf, logo, mo
         const judge = SERVICE_JUDGE[service];
         if (data.keys[service]?.hasKey || !Object.values(s.judgeByKind).includes(judge)) continue;
         lines.push(effLine(t('routing.settings.effective.noKey', { service: t(`routing.settings.service.${service}`), judge: judgeText(judge) }),
-          t('routing.settings.effective.addKey'), () => goKey(service)));
+          t('apiKeys.delegation.selectKey'), () => goKey(service)));
       }
       if (!data.candidates.some(c => c.usable))
         lines.push(effLine(t('routing.settings.effective.noCandidates'), t('routing.settings.effective.viewCandidates'), goCandidates));
@@ -219,12 +224,12 @@ export function setupDelegationSettings({ cmd, page, showMenu, labelOf, logo, mo
     p.append(button(action, onClick, 'btn link'));
     return p;
   }
-  /** 判定器のキーのカードへ移り、登録の欄を開いてフォーカス */
+  /** 判定器が使うキーのカードへ移り、「使うキー」の選択を開いてフォーカス */
   function goKey(service) {
-    editingKey = service; confirmingKey = '';
-    paintKeys();
+    const select = keys.querySelector(`[data-fk="sel:${service}"]`);
     keys.scrollIntoView({ block: 'start', behavior: 'smooth' });
-    keys.querySelector('.rt-key-form input')?.focus({ preventScroll: true });
+    select?.focus({ preventScroll: true });
+    select?.click();
   }
   /** 「詳しい設定」を開いて段ごとの候補へ */
   function goCandidates() {
@@ -234,65 +239,54 @@ export function setupDelegationSettings({ cmd, page, showMenu, labelOf, logo, mo
   }
 
   function paintKeys() {
-    const out = [el('h3', null, t('routing.settings.keysTitle'))];
+    const out = [el('h3', null, t('apiKeys.delegation.title'))];
+    const deferred = keyList?.migration?.state === 'deferred';
     for (const service of SERVICES) {
-      const has = data.keys[service]?.hasKey;
       const name = t(`routing.settings.service.${service}`);
+      const choices = (keyList?.keys ?? []).filter(k => k.provider === service);
+      const current = choices.find(k => k.id === data.keys[service]?.keyRef) ?? null;
       const card = el('div', 'mp-card rt-key');
       const row = el('div', 'mp-row');
       const info = el('div', 'mp-card-info');
-      info.append(el('strong', null, name), el('small', null, has ? t('routing.settings.keySaved') : t('routing.settings.keyNone')));
-      const actions = el('div', 'mp-card-actions');
-      actions.append(button(has ? t('routing.settings.keyChange') : t('routing.settings.keyAdd'), () => { editingKey = service; confirmingKey = ''; paintKeys(); keys.querySelector('.rt-key-form input')?.focus(); }));
-      if (has) actions.append(button(t('routing.settings.keyDelete'), () => { confirmingKey = service; editingKey = ''; paintKeys(); }));
-      actions.hidden = editingKey === service || confirmingKey === service;
-      row.append(info, actions);
-      card.append(row);
-      if (editingKey === service) card.append(keyForm(service, name));
-      if (confirmingKey === service) {
-        const ask = el('div', 'mp-confirm');
-        ask.append(el('p', null, t('routing.settings.keyDeleteConfirm', { service: name })));
-        const buttons = el('div', 'mp-card-actions');
-        buttons.append(button(t('routing.settings.keyCancel'), () => { confirmingKey = ''; paintKeys(); }),
-          button(t('routing.settings.keyDelete'), () => keyCommand('deleteDelegationRoutingKey', { service })));
-        ask.append(buttons);
-        card.append(ask);
+      info.append(el('strong', null, name));
+      if (deferred) info.append(el('small', null, data.keys[service]?.hasKey ? t('apiKeys.deferredInUse') : t('apiKeys.deferredShort')));
+      else if (current) { const small = statusLine(current); small.append(' · ', manageLink(openPage)); info.append(small); }
+      else info.append(el('small', null, t('apiKeys.delegation.unset')));
+      row.append(info);
+      // 移行を保留している間は選び直せない（古い置き場のまま使う。設定 › API キーに理由）
+      if (keyList && !deferred) {
+        const actions = el('div', 'mp-card-actions ak-sels');
+        actions.append(el('span', 'ak-sel-l', t('apiKeys.useKey')), keySelect({ keys: choices, current: current?.id ?? null, label: t('apiKeys.delegation.selectLabel', { service: name }), focusKey: `sel:${service}`,
+          provider: service, choose: id => chooseKey(service, id), register: () => { registering = service; paintKeys(); keys.querySelector('.rt-key-form input')?.focus(); } }).element);
+        row.append(actions);
       }
+      card.append(row);
+      if (registering === service && keyList) card.append(registerForm({ provider: service, label: t('routing.settings.keyInput', { service: name }), storage: keyList.storage ?? data.storage, focusKey: `regin:${service}`,
+        onSubmit: value => registerKey(service, value), onCancel: () => { registering = ''; paintKeys(); keys.querySelector(`[data-fk="sel:${service}"]`)?.focus(); } }));
       out.push(card);
     }
-    // 外部送信の同意はキーの登録（知らないと事故になるので 1 行だけ）。暗号化できない起動のときだけ ⚠
-    out.push(el('p', 'mp-note', t('routing.settings.keySend')));
-    if (data.storage?.encrypted === false) out.push(el('p', 'mp-warn', `⚠ ${t('routing.settings.notEncrypted')}`));
+    // 外部送信の同意はキーを選ぶこと（知らないと事故になるので 1 行だけ）。暗号化の注意は設定 › API キーへ移った
+    out.push(el('p', 'mp-note', t('apiKeys.delegation.note')));
     keys.replaceChildren(...out);
   }
-  function keyForm(service, name) {
-    const form = el('form', 'rt-key-form');
-    const row = el('div', 'mp-keyrow');
-    const input = el('input');
-    input.type = 'password'; input.autocomplete = 'off'; input.spellcheck = false;
-    input.setAttribute('aria-label', t('routing.settings.keyInput', { service: name }));
-    const show = button(t('routing.settings.keyShow'), () => {
-      input.type = input.type === 'password' ? 'text' : 'password';
-      show.textContent = input.type === 'password' ? t('routing.settings.keyShow') : t('routing.settings.keyHide');
-    });
-    row.append(input, show);
-    const actions = el('div', 'mp-card-actions');
-    const submit = el('button', 'btn btn-primary', t('routing.settings.keySave'));
-    submit.type = 'submit';
-    actions.append(button(t('routing.settings.keyCancel'), () => { editingKey = ''; paintKeys(); }), submit);
-    form.append(row, actions);
-    form.onsubmit = e => { e.preventDefault(); if (input.value.trim()) keyCommand('setDelegationRoutingKey', { service, key: input.value.trim() }); };
-    return form;
+  /** 判定器に使うキーを選ぶ（null は使わない）。選んだときから送り始める */
+  async function chooseKey(service, id) {
+    message = '';
+    try { await cmd('setApiKeyUse', { use: `judge:${SERVICE_JUDGE[service]}`, id }); await refresh(); }
+    catch (e) { message = t('routing.settings.saveFailed', { error: e.message }); paint(); }
+    keys.querySelector(`[data-fk="sel:${service}"]`)?.focus({ preventScroll: true });
   }
-  async function keyCommand(command, args) {
+  /** その場で登録して、判定器に使う（登録先は API キー） */
+  async function registerKey(service, value) {
     message = '';
     try {
-      committed = await cmd(command, args);
-      data = { ...committed, settings: pending.reduce((s, patch) => applyPatch(s, patch, committed.defaults), committed.settings) };
-      editingKey = ''; confirmingKey = '';
-    }
-    catch (e) { message = t('routing.settings.saveFailed', { error: e.message }); }
-    finally { paint(); }
+      const { id } = await cmd('setApiKey', { provider: service, label: '', key: value });
+      await cmd('setApiKeyUse', { use: `judge:${SERVICE_JUDGE[service]}`, id });
+      registering = '';
+      await cmd('invoke', { op: 'apiKeys.check', args: { id } }).catch(() => null);
+      await refresh();
+    } catch (e) { message = t('routing.settings.saveFailed', { error: e.message }); paint(); }
+    keys.querySelector(`[data-fk="sel:${service}"]`)?.focus({ preventScroll: true });
   }
 
   // ---- 詳しい設定

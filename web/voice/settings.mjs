@@ -1,9 +1,11 @@
 // 設定 › 通話（承認済み 2026-10-06。docs/voice-call.md「設定とキー」）。
-// OpenRouter のキーはホストだけが持つ（登録・削除は WS の setVoiceKey・deleteVoiceKey。画面にはキーを返さず、登録済みかだけを見せる）。
+// 使う OpenRouter のキーは設定 › API キー（承認済み 2026-10-07。docs/design-system.md「設定 › API キー」）で選ぶ（WS の setApiKeyUse。画面にはキーを返さない）。
+// 選んだときから音声と読み上げる文章が OpenRouter へ送られ、選ぶまでは何も送らない。未登録ならその場で登録でき、登録先は API キー。
 // モデル・声・言語・上限・エコー除去は設定の一覧の voice（settings.set。値の検査・保存はホストが同じ定義を通す）。変えたらその場で保存する。
 // 状態はホストが持つ（invoke の voice.status と、変わるたびに届く voiceChanged・settingsChanged）。面と部品は設定の管理の面（web/manage-panel.css の .mp-*）。
 import { el } from '../dom.mjs';
 import { t } from '../i18n.mjs';
+import { apiKeyList, keySelect, registerForm, statusLine, manageLink } from '../api-key-ui.mjs';
 
 const DEFAULTS = { sttModel: 'microsoft/mai-transcribe-2', sttFallbackModel: 'assemblyai/universal-3-5-pro', ttsModel: 'x-ai/grok-voice-tts-1.0', ttsVoice: 'eve' };
 const minutes = (seconds) => Math.round(seconds / 60);
@@ -12,19 +14,22 @@ const minutes = (seconds) => Math.round(seconds / 60);
  * @param {object} o
  * @param {(command: string, args?: object) => Promise<any>} o.cmd  WS コマンド
  * @param {(page: string) => void} o.page  設定のページを切り替える（onboarding.page）
+ * @param {(name: string) => void} [o.openPage]  設定のほかのページへ移る（API キー）
  */
-export function setupVoiceSettings({ cmd, page }) {
+export function setupVoiceSettings({ cmd, page, openPage = () => {} }) {
   const $ = (id) => document.getElementById(id);
   const root = $('voicePanel');
   const tab = $('voiceTab');
   if (!root || !tab) return { event() {}, load() {} };
-  let status = null, message = '', checkText = '', busy = false, keyOpen = false;
+  let status = null, keys = null, message = '', busy = false, registering = false, focusKey = null;
 
   const invoke = (op, args = {}) => cmd('invoke', { op, args });
   const say = (text) => { message = text; const line = root.querySelector('.vc-status'); if (line) line.textContent = text; };
 
   async function load() {
     try { status = await invoke('voice.status'); } catch (e) { status = null; say(t('voice.settings.loadFailed', { error: e?.message ?? String(e) })); }
+    // 選べるキー。取れなくても通話の設定は見せる（選ぶ欄だけ使えない）
+    keys = await apiKeyList(cmd).catch(() => null);
     paint();
   }
 
@@ -37,24 +42,29 @@ export function setupVoiceSettings({ cmd, page }) {
     await load();
   }
 
-  async function setKey(value) {
+  /** 通話に使うキーを選ぶ（null は使わない）。選んだときから送り始める */
+  async function chooseKey(id) {
     if (busy) return;
-    busy = true;
+    busy = true; focusKey = 'sel:voice';
     try {
-      const res = await cmd('setVoiceKey', { key: value });
-      // i18n-dynamic: voice.settings.key.check.
-      checkText = t(`voice.settings.key.check.${res?.check ?? 'unreachable'}`);
-      keyOpen = false;
-      say(t('voice.settings.key.saved'));
+      await cmd('setApiKeyUse', { use: 'voice', id });
+      say(id ? t('apiKeys.voice.chosen') : t('apiKeys.voice.unchosen'));
     } catch (e) { say(t('voice.settings.failed', { error: e?.message ?? String(e) })); }
     busy = false;
     await load();
   }
-  async function deleteKey() {
+  /** その場で登録して、通話に使う（登録先は API キー） */
+  async function registerKey(value) {
     if (busy) return;
-    busy = true;
-    try { await cmd('deleteVoiceKey', {}); checkText = ''; say(t('voice.settings.key.deleted')); }
-    catch (e) { say(t('voice.settings.failed', { error: e?.message ?? String(e) })); }
+    busy = true; focusKey = 'sel:voice';
+    try {
+      const { id } = await cmd('setApiKey', { provider: 'openrouter', label: '', key: value });
+      await cmd('setApiKeyUse', { use: 'voice', id });
+      registering = false;
+      // 登録の直後に確かめる（キーそのもの。料金はかからない）。確かめられなくても登録はできている
+      await invoke('apiKeys.check', { id }).catch(() => null);
+      say(t('apiKeys.voice.registered'));
+    } catch (e) { say(t('voice.settings.failed', { error: e?.message ?? String(e) })); }
     busy = false;
     await load();
   }
@@ -86,31 +96,25 @@ export function setupVoiceSettings({ cmd, page }) {
     const card = el('div', 'nf-card');
     const row = el('div', 'mp-row');
     const info = el('div', 'mp-card-info');
-    info.append(el('strong', null, s.hasKey ? t('voice.settings.key.set') : t('voice.settings.key.unset')));
-    if (checkText) info.append(el('small', null, checkText));
-    const actions = el('div', 'mp-card-actions');
-    if (s.hasKey) actions.append(button(t('voice.settings.key.replace'), () => { keyOpen = !keyOpen; paint(); }), button(t('voice.settings.key.delete'), deleteKey));
-    row.append(info, actions);
-    card.append(row);
-    if (!s.hasKey || keyOpen) {
-      const form = el('form', 'rt-key-form');
-      const keyrow = el('div', 'mp-keyrow');
-      const input = el('input');
-      input.type = 'password'; input.autocomplete = 'off'; input.spellcheck = false; input.placeholder = 'sk-or-…';
-      input.setAttribute('aria-label', t('voice.settings.key.title'));
-      const show = button(t('voice.settings.key.show'), () => { input.type = input.type === 'password' ? 'text' : 'password'; show.textContent = input.type === 'password' ? t('voice.settings.key.show') : t('voice.settings.key.hide'); });
-      keyrow.append(input, show);
-      const submit = el('button', 'btn btn-primary', t('voice.settings.key.save'));
-      submit.type = 'submit';
-      const formActions = el('div', 'mp-card-actions');
-      formActions.append(submit);
-      form.append(keyrow, formActions);
-      form.onsubmit = (e) => { e.preventDefault(); if (input.value.trim()) setKey(input.value); };
-      card.append(form);
+    info.append(el('strong', null, t('apiKeys.useKey')));
+    const openrouter = (keys?.keys ?? []).filter(k => k.provider === 'openrouter');
+    const current = openrouter.find(k => k.id === s.keyRef) ?? null;
+    if (keys?.migration?.state === 'deferred') info.append(el('small', null, s.hasKey ? t('apiKeys.deferredInUse') : t('apiKeys.deferredShort')));
+    else if (current) { const small = statusLine(current); small.append(' · ', manageLink(openPage)); info.append(small); }
+    else info.append(el('small', null, t('apiKeys.voice.unset')));
+    row.append(info);
+    // 移行を保留している間は、選び直せない（古い置き場のまま使う。設定 › API キーに理由）
+    if (keys && keys.migration?.state !== 'deferred') {
+      const actions = el('div', 'mp-card-actions ak-sels');
+      actions.append(keySelect({ keys: openrouter, current: current?.id ?? null, label: t('apiKeys.voice.selectLabel'), focusKey: 'sel:voice', provider: 'openrouter', choose: chooseKey,
+        register: () => { registering = true; focusKey = 'regin'; paint(); } }).element);
+      row.append(actions);
     }
+    card.append(row);
+    if (registering && keys) card.append(registerForm({ provider: 'openrouter', label: t('voice.settings.key.title'), storage: keys.storage ?? s.storage, focusKey: 'regin', onSubmit: registerKey,
+      onCancel: () => { registering = false; focusKey = 'sel:voice'; paint(); } }));
     sec.append(card);
-    sec.append(el('p', 'mp-note', t('voice.settings.key.note')));
-    if (s.storage) sec.append(el('p', 'mp-note', s.storage.encrypted ? t('voice.settings.key.encrypted') : t('voice.settings.key.plain')));
+    if (keys?.migration?.state !== 'deferred') sec.append(el('p', 'mp-note', t('apiKeys.voice.note')));
     return sec;
   }
 
@@ -166,6 +170,8 @@ export function setupVoiceSettings({ cmd, page }) {
   function paint() {
     const focused = root.contains(document.activeElement) ? document.activeElement : null;
     const keep = focused?.getAttribute?.('aria-label') ?? null;
+    const keepFk = focusKey ?? focused?.dataset?.fk ?? null;
+    focusKey = null;
     root.replaceChildren();
     root.append(el('p', null, t('voice.settings.intro')));
     if (status) {
@@ -174,13 +180,14 @@ export function setupVoiceSettings({ cmd, page }) {
     const line = el('p', 'mp-state vc-status', message);
     line.setAttribute('role', 'status');
     root.append(line);
-    if (keep) root.querySelector(`[aria-label="${CSS.escape(keep)}"]`)?.focus();
+    if (keepFk) root.querySelector(`[data-fk="${CSS.escape(keepFk)}"]`)?.focus({ preventScroll: true });
+    else if (keep) root.querySelector(`[aria-label="${CSS.escape(keep)}"]`)?.focus();
   }
 
   tab.onclick = () => { page('voice'); load(); };
   return {
     /** voiceChanged・settingsChanged（voice）が届いたとき。開いているときだけ取り直す */
-    event(ev) { if (!root.hidden && (ev?.type === 'voiceChanged' || ev?.keys?.includes?.('voice'))) load(); },
+    event(ev) { if (!root.hidden && (ev?.type === 'voiceChanged' || ev?.type === 'apiKeysChanged' || ev?.keys?.includes?.('voice'))) load(); },
     load,
   };
 }

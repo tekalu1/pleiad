@@ -213,6 +213,25 @@
     "switching": "Switching or branching a conversation.",
     "other": "Another operation is in progress."
   },
+  "apiKeys": {
+    "errors": {
+      "INVALID_KEY": "The API key is not valid (empty, too long, or contains spaces or line breaks). Paste only the value",
+      "NOT_FOUND": "That key is not registered",
+      "PROVIDER_MISMATCH": "This key can't be used here. Choose a {{provider}} key",
+      "MIGRATION_PENDING": "Moving the keys from the old storage is on hold (the old encrypted keys can't be read in this launch). Open Pleiad in a launch that can decrypt (the desktop app) to move them",
+      "TOO_MANY": "You can register up to {{max}} keys. Delete keys you don't use",
+      "UNKNOWN_USE": "Unknown use: {{use}}",
+      "FILE_BROKEN": "The API keys file (api-keys.json) can't be read. Fix or move the file"
+    },
+    "origin": {
+      "endpoint": "key used by the {{agent}} endpoint",
+      "voice": "key used by voice calls",
+      "judge": "key used by the delegation judge",
+      "labeled": "{{name}} ({{origin}})",
+      "unnamed": "Unnamed key"
+    },
+    "endpointKeyDeleted": "The key this endpoint used was deleted. Choose another key and check the connection again"
+  },
   "compat": {
     "redactedKey": "[key]",
     "deleteConfirm": "Delete the compatible endpoint \"{{name}}\". Its saved key is deleted too, and the key has to be entered again to use it. Conversations on this endpoint can no longer continue.",
@@ -235,6 +254,8 @@
       "control": "The name can't contain line breaks or other control characters."
     },
     "key": {
+      "hostMismatch": "The selected key is not for this endpoint's URL (host). Choose a key for this URL or enter another key",
+      "refMissing": "The selected key was not found. Check it in API keys",
       "invalid": "The API key contains spaces or line breaks. Paste only the value.",
       "unreadable": "Can't read the saved key."
     },
@@ -290,6 +311,7 @@
       "deleted": "This conversation's endpoint has been deleted. Choose another endpoint from the model panel in the input area.",
       "wrongAgent": "This conversation's endpoint \"{{name}}\" is for {{agent}}. Choose another endpoint.",
       "failed": "The last check of endpoint \"{{name}}\" failed. Check it again under Settings › Agents › Endpoints, or choose another endpoint.",
+      "keyMissing": "No key is selected for the endpoint \"{{name}}\". Register one in Settings › API keys and choose it when editing the endpoint.",
       "keyUnreadable": "Can't read the key for endpoint \"{{name}}\"."
     }
   },
