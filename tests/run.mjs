@@ -156,6 +156,9 @@ const SUITES = [
   './unit/server-delegation-settings.mjs',
   // 委譲の結果に選ぶ返答: Stop フックの続き（調べものだけ）は飛ばす・中身の仕事をした続きは選ぶ（Claude の transcript の印）
   './unit/delegation-result.mjs',
+  // 委譲の子の履歴が一時的に読めない（Codex の 1546 disk I/O error）: 0.5・1・2 秒で読み直す・読めなければ流れた返答で注意書き付きの完了・ターン用の app-server の終わりを待つ
+  './unit/history-retry.mjs',
+  './unit/server-delegation-history-retry.mjs',
   // 委譲先の自動振り分け: 規則・段・使用量で飛ばす・Claude のアカウント・判定器（偽の fetch）・使用量の取り置き
   './unit/delegation-routing.mjs',
   // 同じくサーバー全体: kind の検査・自動で選んで子を作る・記録・設定とキーの口（偽の判定器と偽の agy）

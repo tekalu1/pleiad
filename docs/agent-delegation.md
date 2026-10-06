@@ -292,6 +292,17 @@ OS の完了通知は依頼元の会話に出す。依頼元のターン後も�
 理由: 2026-09-27、Claude の子が報告を書いた後に、ナレッジの棚卸しを促す Stop フックで ToolSearch と load_skill を呼んで「ナレッジ化対象なし」と書いて終わり、その一言が依頼元への結果になって報告が届かなかった。フックの出力は isMeta の user として transcript にだけ残り、会話の記録からは続きだと分からない。本文で見分けると、フックの文面や子の言い回しが変わるたびに外れる。続きで直して報告し直した（フックが不備を指摘する型）なら、そちらが本当の結果なので選ぶ。
 子の会話そのもの（画面）には続きの返答も残る。
 
+### 履歴が一時的に読めないとき
+
+子のターンの後には、履歴を 2 回読む。ターンの後の取り込み（`core/conversations.mjs` の `runOnce`。ネイティブの履歴を会話の記録へ入れる）と、結果の読み出し（`core/server.mjs` の `execute` の `lastReply`）。
+どちらも、一時的な SQLite のエラー（I/O エラー・ロック中。`core/history-retry.mjs` の `transientStorageError`）なら 0.5・1・2 秒の間を空けて 3 回まで読み直す。それ以外のエラーはこれまでどおり投げる。
+
+- 取り込みが読み直しても読めなければ、この回の取り込みは見送り、ターンは失敗にしない（次に会話を読むときに `getMessages` が取り込む）。
+- 結果の読み出しが読み直しても読めなければ、タスクは失敗にせず `completed` にする。結果は実行中に流れてきた最後の返答（`text.delta` を `text.end` で区切った最後の分）で、`error` に注意書き（`agent:delegation.historyUnreadable`。元のエラーを含む）を載せる。完了通知にも載る。
+- Codex のターン用の app-server（Pleiad が担当する会話。ターンごとに起こす）は、止めたプロセスが終わるまで待ってからターンを返す（`CodexRpc.stop()` の返り。上限 3 秒）。返った直後に共有の app-server が同じ履歴の DB を読むため。
+
+理由: 2026-09-27〜10-05 に、作業と報告を終えた Codex の子が 5 件、取り込みの `codex -32603: … (code: 1546) disk I/O error`（SQLITE_IOERR_TRUNCATE）で `failed` になった。履歴の DB は壊れておらず、少し後に読み直すと読める。止めたばかりのターン用の app-server（またはウイルス対策ソフト）と、WAL の切り詰めがぶつかったとみられる（openai/codex #49605 も Windows で同じ形）。
+
 ## 子に残った裏の作業
 
 子の結果は、子のターンが終わり、子が待つ裏の作業と子が作った Pleiad タスクが片付いてから確定する（`execute`）。**main がまだ結果を待っているコマンドは、5 分で知らせるだけで自動停止しない。完了報告後の裏の作業は、10 分待って片付ける。** この片付けは委譲の子だけに適用し、ユーザーの会話では行わない（[ADR 0048](adr/0048-delegation-silence-notice.md)）。
@@ -379,6 +390,7 @@ Windows では、別のプロセス（ウイルス対策・PowerShell の `Get-C
 保存障害は `tests/unit/agent-tasks-storage.mjs`（rename に EPERM を差し込む。回復・閉じない・障害中の読み取りと断り・requeue を書かない・再起動後の送り直し）。
 実行前の拒否は `tests/unit/codex-rejections.mjs`（rollout の解析・読む範囲・伏せ方）と `tests/unit/server-codex-rejections.mjs`（身代わりの Codex が rollout に拒否を書き、会話・`ply_task_status`・完了通知・`ply_task_send` の次の回まで）。
 子に残った裏の作業と子の結果は `tests/unit/server-delegation-background.mjs`（fake の台本 `bg-shell` / `active-shell` / `bg` / `term` / `hook-follow` で、報告後のコマンドを上限まで待って止める・台帳を閉じて完了通知に載せる・結果に止める前の報告を残す・返答前とユーザーの会話では止めない・サブエージェントは止めない・端末は子でも親でも待たない・Stop フックの続きの一言を結果にしない）と `tests/unit/delegation-result.mjs`（2026-09-27 の transcript と同じ行の形で、続きの印・中身の仕事をした続き・区切り・結果の選び方）と `tests/unit/claude-turn-end.mjs`（SDK の身代わりで、Stop フックの続きではターンが終わり、裏へ回ったまま終わらないコマンドがあると終わらず、`stopTask` で終わる）。
+履歴が一時的に読めないときは `tests/unit/history-retry.mjs`（見分け・0.5・1・2 秒の読み直し・一時的でないエラーはすぐ投げる・`CodexRpc.stop()` がプロセスの終わりを待つ）と `tests/unit/server-delegation-history-retry.mjs`（fake の台本 `history-ioerr <回数>` で、読み直して読める・取り込みを見送っても結果は読める・読めないままなら流れた返答で注意書き付きの `completed`）。
 振り分けは `tests/unit/delegation-routing.mjs`（規則・段・使用量・アカウント。判定器は偽の fetch）と `tests/unit/server-delegation-routing.mjs`（偽の Jev と偽の agy でサーバー全体。別の候補でやり直す・承認モードの確かめ・動いている元のタスク・完了通知の一行も）、画面の文と並びは `tests/unit/delegation-routing-view.mjs`。テストのサーバーは使用量を定期的に取らず（`AGENT_HOST_ROUTING_USAGE=off`）、判定器の送り先を手元に向ける（`AGENT_HOST_OPENROUTER_API` / `AGENT_HOST_CEREBRAS_API`。本物へは送らない）。
 子の設定を替えるのは `tests/unit/server-delegation-settings.mjs`（fake・身代わりの Codex と agy で、走っている子のモデル・思考の強さ、message なしと一緒、無いモデル・選べない思考の強さ、走っていない子のエージェントの切り替えと引き継ぎ、親より緩くなる切り替えの承認、他人のタスク、変更の記録）。
 `npm run test:e2e -- agent-delegation` は実サービスを呼び、Claude → Codex、Codex → Claude と結果通知による再開を確認する。
