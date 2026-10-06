@@ -485,11 +485,12 @@ export function renderMode({ pop, target: d, on, hide }) {
  * @param {(command:string, args?:object) => Promise<any>} o.cmd
  * @param {() => object} o.get 今の値と候補（client.mjs の状態を読む）
  * @param {object} o.on 変更を返す口 { cwd, backend, model, effort, account, mode }。openModel はモデルの面を開いたとき
+ * @param {{ chips?: { cwd, model, mode }, pops?: { cwd, model, mode } }} [o.els] チップと面の要素。省けば Chats の入力欄の固定の id
  */
-export function setupComposerControls({ cmd, get, on }) {
+export function setupComposerControls({ cmd, get, on, els = {} }) {
   const $ = (id) => document.getElementById(id);
-  const chips = { cwd: $("cwdChip"), model: $("modelChip"), mode: $("modeChip") };
-  const pops = { cwd: $("cwdPop"), model: $("modelPop"), mode: $("modePop") };
+  const chips = els.chips ?? { cwd: $("cwdChip"), model: $("modelChip"), mode: $("modeChip") };
+  const pops = els.pops ?? { cwd: $("cwdPop"), model: $("modelPop"), mode: $("modePop") };
 
   // チップの骨組み（アイコン + 字 + ▾）。3 つとも同じ形（docs/design-system.md「入力欄の設定」）
   const cwdName = el("span", "v");
@@ -793,7 +794,15 @@ export function setupComposerControls({ cmd, get, on }) {
     cwd.style.minWidth = ""; mdl.style.minWidth = "";
   }
   window.addEventListener("resize", fitRow);
-  if (typeof ResizeObserver === "function") new ResizeObserver(() => fitRow()).observe(chips.cwd.parentElement);
+  const rowObserver = typeof ResizeObserver === "function" ? new ResizeObserver(() => fitRow()) : null;
+  rowObserver?.observe(chips.cwd.parentElement);
 
-  return { paint, fit: fitRow, close: () => openPanel?.hide(false), panels: { folder, model, mode }, typeCwd };
+  /** 入力欄を外すとき。開いている面がこの入力欄のものなら閉じ、行の見張りを外す */
+  function destroy() {
+    window.removeEventListener("resize", fitRow);
+    rowObserver?.disconnect();
+    if (openPanel && Object.values(pops).includes(openPanel.pop)) openPanel.hide(false);
+  }
+
+  return { paint, fit: fitRow, close: () => openPanel?.hide(false), panels: { folder, model, mode }, typeCwd, destroy };
 }

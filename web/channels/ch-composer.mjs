@@ -123,6 +123,7 @@ export function createChComposer({ id, host, bucket = () => null, candidates, su
     form.style.setProperty('--ch-input-max', `${promptMaxHeight({ line, pad, touch: matchMedia('(pointer:coarse)').matches, viewport: innerHeight })}px`);
   }
   addEventListener('resize', fit);
+  const onHidden = () => { if (document.visibilityState === 'hidden') saveDraft(); };
   form.addEventListener('focusin', fit);
 
   function paintHint() {
@@ -200,7 +201,7 @@ export function createChComposer({ id, host, bucket = () => null, candidates, su
   });
   input.addEventListener('input', () => { dismissWake(); if (note.textContent && !busy) say(''); paintHint(); saveDraftSoon(); });
   input.addEventListener('blur', saveDraft);
-  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') saveDraft(); });
+  document.addEventListener('visibilitychange', onHidden);
   addEventListener('pagehide', saveDraft);
   // 箱のどこを押しても字の欄へ（Chats の入力欄と同じ）
   box.addEventListener('pointerdown', (e) => {
@@ -249,5 +250,13 @@ export function createChComposer({ id, host, bucket = () => null, candidates, su
     saveDraft,
     /** zone（流れ・スレッドの板）に落としたファイルをこの入力欄の添付にする */
     bindDropZone: (zone) => attach.bindDropZone(zone),
+    /** 入力欄を外すとき。書きかけを残し、窓・文書に付けた見張りを外す */
+    destroy() {
+      saveDraft();
+      removeEventListener('resize', fit);
+      document.removeEventListener('visibilitychange', onHidden);
+      removeEventListener('pagehide', saveDraft);
+      editor.destroy?.();
+    },
   };
 }

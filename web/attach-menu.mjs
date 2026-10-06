@@ -34,15 +34,16 @@ const NEXT = 'M9 6l6 6-6 6';
  * @param {() => string} o.hostName 見出しに出すホストの名前
  * @param {() => string} o.startDir ホストのファイルを最初に開くフォルダー（作業ディレクトリ。空ならホーム）
  * @param {(files: Array<{path:string,name:string}>) => void} o.attachHost ホストのパスのまま添付に積む
+ * @param {string} [o.id] 面の id（入力欄ごとに違える）
+ * @param {Element|null} [o.anchor] 面をこの要素の前に置く（省けば Chats の入力欄の作業ディレクトリの面の前）
  */
-export function setupAttachMenu({ button, sources, upload = null, pickFiles, recent = () => [], cmd, hostName = () => '', startDir = () => '', attachHost }) {
+export function setupAttachMenu({ button, sources, upload = null, pickFiles, recent = () => [], cmd, hostName = () => '', startDir = () => '', attachHost, id = 'attachPop', anchor = document.getElementById('cwdPop') }) {
   const pop = el('div', 'pop cpop fu-pop at-pop');
-  pop.id = 'attachPop';
+  pop.id = id;
   pop.hidden = true;
   pop.tabIndex = -1;
   pop.setAttribute('role', 'dialog');
   pop.setAttribute('aria-label', t('upload.menu.label'));
-  const anchor = document.getElementById('cwdPop');
   if (anchor) anchor.before(pop); else document.body.append(pop);
   button.setAttribute('aria-controls', pop.id);
 

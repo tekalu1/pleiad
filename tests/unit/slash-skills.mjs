@@ -16,7 +16,7 @@ const SKILLS = [
   { name: "daily-report", description: "進捗報告の下書きを作る。レビュー観点も添える", hint: "<日付>", from: "プロジェクト" },
 ];
 
-function mount({ cwd = "D:/work", load, now, canCompact = () => true } = {}) {
+function mount({ cwd = "D:/work", load, now, canCompact = () => true, idPrefix } = {}) {
   const input = el("textarea");
   input.value = "";
   input.setSelectionRange = (start, end) => { input.selectionStart = start; input.selectionEnd = end; };
@@ -25,7 +25,7 @@ function mount({ cwd = "D:/work", load, now, canCompact = () => true } = {}) {
   const hint = el("div", "slash-hint");
   const calls = [];
   const slash = setupSlashSkills({
-    input, list, hint, cwd: () => cwd, now, canCompact,
+    input, list, hint, cwd: () => cwd, now, canCompact, idPrefix,
     load: async (key) => { calls.push(key); return load ? load(key) : SKILLS; },
   });
   const type = (value, caret = value.length) => { input.value = value; input.setSelectionRange(caret, caret); input.dispatchEvent({ type: "input" }); };
@@ -203,4 +203,13 @@ export default async function (t) {
   t.ok("token の範囲だけを置き換える（setRangeText）・欄の値の全体は書き換えない",
     ranges.length === 1 && ranges[0][0] === "/visualize " && ranges[0][1] === 15 && ranges[0][2] === 18 && ranges[0][3] === "end" && m5.input.value === "先に **太字** を書いて /visualize ",
     JSON.stringify(ranges));
+
+  // ---- 入力欄が 2 つあるとき（Chats とスレッド）、候補の id がぶつからない
+  const chat = mount(), thread = mount({ idPrefix: "thSlash" });
+  chat.type("/"); thread.type("/");
+  await chat.settle();
+  t.ok("候補の id は入力欄ごとの頭を持つ（既定は今の slash-option）",
+    chat.options()[0].id === "slash-option-0" && thread.options()[0].id === "thSlash-0"
+      && thread.input.getAttribute("aria-activedescendant") === "thSlash-0",
+    `${chat.options()[0]?.id} ${thread.options()[0]?.id}`);
 }
