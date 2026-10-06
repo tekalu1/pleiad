@@ -3,7 +3,7 @@
 //   - 子の stdout・stderr は、親が居ても居なくても、親が読んでいなくても**常に読む**（読まないと CLI が止まる。stage0-claude §5）。行ごとに通番を振って記録する
 //   - 記録は、印（mark）と ack より前を捨てる。上限（maxRecordBytes）を超えたら古い行から捨てて truncated を立てる
 //   - 親へは記録のカーソルから送る。親が読まなければ書いたまま溜めず（highWaterBytes）、drain まで待つ（保持役のメモリは記録の上限で止まる）
-//   - 答えていない依頼の控え（policy）: claude-control は control_request を request_id で控え、付け直した親へ渡し直すのは mcp_message だけ。
+//   - 答えていない依頼の控え（policy）: claude-control は control_request を request_id で控え、付け直した親へ渡し直すのは mcp_message と elicitation だけ。
 //     jsonrpc は id と method を持つ依頼を控える。none は行だけ
 //   - detach の後は、その親からの write・end・kill を転送しない。親が切れても子の stdin は閉じない。親の書き込みが行の途中で切れたら、その行は捨てる
 // やらないこと: エージェントのプロトコルの解釈（上の見分け以外）・JSON-RPC の id の付け替え・initialize の答え・HTTP・データ置き場への書き込み。
@@ -24,6 +24,9 @@ import {
 const PUMP_BATCH_BYTES = 1024 * 1024;
 const REPLAY_CHUNK_BYTES = 1024 * 1024;
 const MAX_PENDING = 1000;
+/** claude-control で付け直した親へ渡し直す control_request の種類。CLI が再送しないもの（in-process の MCP と stdio の MCP の elicitation）だけ。
+ *  can_use_tool は再 initialize の pending_permission_requests で戻り、hook_callback は CLI が自分で取り消す */
+const REDELIVER_SUBTYPES = new Set(['mcp_message', 'elicitation']);
 
 const sameSecret = (a, b) => {
   const left = crypto.createHash('sha256').update(String(a)).digest();
@@ -124,8 +127,8 @@ export function createHolder({ pipe, secret = crypto.randomBytes(32).toString('h
       if (m && m.id !== undefined && m.id !== null && m.method === undefined) c.pending.delete(JSON.stringify(m.id));
     }
   }
-  /** 付け直した親へ渡し直す控え。claude-control は mcp_message だけ（can_use_tool は再 initialize で戻り、hook_callback は CLI が自分で打ち切る） */
-  const redeliverable = c => [...c.pending.values()].filter(p => c.policy === 'jsonrpc' || p.subtype === 'mcp_message').sort((a, b) => a.seq - b.seq);
+  /** 付け直した親へ渡し直す控え。claude-control は REDELIVER_SUBTYPES だけ */
+  const redeliverable = c => [...c.pending.values()].filter(p => c.policy === 'jsonrpc' || REDELIVER_SUBTYPES.has(p.subtype)).sort((a, b) => a.seq - b.seq);
 
   function snapshotOf(c) {
     return {
