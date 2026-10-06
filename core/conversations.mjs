@@ -198,6 +198,19 @@ export async function deleteUnsentConversation(id) {
 }
 
 /**
+ * ネイティブ側に transcript が無くて、会話そのものを読み書き・削除できなかった失敗か。
+ * Claude の SDK（@anthropic-ai/claude-agent-sdk 0.3.288）は `~/.claude/projects` 配下の `<id>.jsonl` が無いか 0 バイトのとき、
+ * renameSession・tagSession・deleteSession が `Session <id> not found in any project directory`（dir 指定時は `... not found in project directory for <dir>`）を投げる（2026-10-06）。
+ * 失敗の種類を示す印が文面しか無いので、ここだけ文面に頼る。ネイティブに書く物が無いだけなので、Pleiad 側の記録（題・状態・会話）は通してよい
+ */
+function nativeSessionMissing(e) {
+  return /not found in (?:any )?project directory/.test(String(e?.message ?? e));
+}
+async function tolerateMissing(call) {
+  try { await call(); } catch (e) { if (!nativeSessionMissing(e)) throw e; }
+}
+
+/**
  * 人に見せない隠れた会話（夜の整理・心拍。ADR 0127）を、ネイティブの会話ごと消す。消したら true。
  * ネイティブの会話を消せないバックエンド（deleteSession を持たない）なら何もせず false。host の記録だけを消すと、
  * 隠していたネイティブの会話が一覧に出てくる（wrapBackend の listSessions は、host の記録が持つネイティブの id だけを隠す）。
@@ -210,7 +223,8 @@ export async function deleteHiddenConversation(id, backendOf) {
   if (r.nativeId) natives.set(r.nativeId, r.backend);
   natives.delete(null); natives.delete(undefined);
   for (const backendId of natives.values()) if (typeof backendOf(backendId)?.deleteSession !== "function") return false;
-  for (const [nativeId, backendId] of natives) await backendOf(backendId).deleteSession(nativeId);
+  // transcript の無いネイティブの会話は、消す物が無いので消せたとみなす（nativeSessionMissing）
+  for (const [nativeId, backendId] of natives) await tolerateMissing(() => backendOf(backendId).deleteSession(nativeId));
   delete records[id];
   try {
     await save();
@@ -367,7 +381,8 @@ export function wrapBackend(native) {
       const r = entries[id];
       if (!r) return native[method](id, value);
       await store.setMeta(id, { [field]: value });
-      if (r.nativeId) await native[method](r.nativeId, value);
+      // Pleiad 側の記録（上の setMeta）は書けている。transcript の無いネイティブの会話には書く物が無いので、その失敗は見せない（nativeSessionMissing）
+      if (r.nativeId) await tolerateMissing(() => native[method](r.nativeId, value));
     };
   }
   for (const method of ["listSubagents", "getSubagentMessages", "getSubagentOrigin", "getSubagentState"]) {
@@ -633,6 +648,13 @@ export function wrapBackend(native) {
       }
     }
   };
+  // resume の前に、nativeId の transcript が無いと言い切れるか。読めなかった（例外・不明）ときは「ある」側に倒す（外すと履歴が消えたように見える）
+  async function nativeTranscriptMissing(nativeId) {
+    const history = await native.getMessages?.(nativeId, { fullResults: true }).catch(() => null);
+    if (!Array.isArray(history) || history.length) return false;
+    if (typeof native.getSession !== "function") return true;
+    return !(await native.getSession(nativeId).catch(() => "unknown"));
+  }
   async function runOnce(args) {
     const id = args.sessionId;
     await wrapped.prepareTurn(id);
@@ -644,6 +666,18 @@ export function wrapBackend(native) {
     const rewind = mark ? { at: mark.at, drops: mark.drops } : undefined;
     if (!r) return native.runTurn(rewind ? { ...args, rewind } : args);
     if (r.backend !== native.id) throw new Error(t("conversations.backendMismatch"));
+    // 存在しない nativeId を resume し続ける会話の救済。Claude Code は transcript の無い id の resume を `No conversation found with session ID` で断り、
+    // 戻る道が無いまま毎回失敗する（下の finally が採用を戻すようになる前に作られた会話。2026-10-06）。
+    // 失敗の文面には頼らず、resume の前に transcript があるか確かめる。本文（r.messages）がある会話の nativeId は外さない（履歴が消えたように見えるので、失敗を見せる）。
+    // 外した後に採用される id は新しいので、送り直しは 1 度で済む（また空なら finally が戻す）
+    if (r.nativeId && native.id === "claude" && !r.messages.length && await nativeTranscriptMissing(r.nativeId)) {
+      // i18n-ignore: サーバーのログ
+      console.error("  conversations: transcript の無い nativeId を外して新しく始める:", r.nativeId);
+      r.segments = (r.segments ?? []).filter(seg => seg.nativeId !== r.nativeId);
+      r.nativeId = null;
+      r._dirty = true;
+      await save();
+    }
     let prompt = args.prompt;
     if (!r.nativeId && r.contextStart) {
       const recent = classifySystemMessages(r.messages.slice(0, r.contextStart))
@@ -675,6 +709,9 @@ export function wrapBackend(native) {
       r.injected = prompt;
       r.original = String(args.prompt ?? "");
     }
+    // このターンの中で初めて nativeId を採用したか（ターン前に nativeId が無かった）。採用した id の transcript が無ければ戻す（finally）
+    const before = { nativeId: r.nativeId, segments: r.segments?.length ?? 0 };
+    let turnFailed = false;
     try {
       return await native.runTurn({ ...args, prompt, sessionId: r.nativeId, ...(rewind ? { rewind } : {}),
         hostSessionId: id, hostBackend: wrapped,
@@ -690,6 +727,9 @@ export function wrapBackend(native) {
           args.emit(hostEvent(ev, id, r.nativeId));
         },
       });
+    } catch (e) {
+      turnFailed = true;
+      throw e;
     } finally {
       await checkpoint;
       // ターンの後の取り込み。一時的な SQLite のエラー（Codex の `(code: 1546) disk I/O error`）なら間を空けて読み直し、
@@ -704,7 +744,26 @@ export function wrapBackend(native) {
         console.error("  conversations: ターンの後の履歴を読み直しても読めなかったので、取り込みを次に読むときへ回す:", String(e?.message ?? e).slice(0, 300));
         return null;
       }) : null;
-      if (nativeMessages) {
+      // プロンプトを渡す前に中断・失敗したターンでも、CLI は session_id 付きのメッセージを先に返す（2026-10-06、@anthropic-ai/claude-agent-sdk 0.3.288。
+      // 遅らせたプロンプトを渡す前に abort すると、session_id は届くのに ~/.claude/projects/<cwd>/<id>.jsonl は作られない）。
+      // その id を採用したままだと、次のターンが無い transcript を resume して毎回落ちる。
+      // このターンで初めて採用した id の transcript が無いときは、採用をターン前に戻して保存する。
+      // 失敗・中断で終わったターンは元の結果をそのまま返す（historyUnreadable で上書きしない）。成功したのに transcript が無いのだけが historyUnreadable
+      const unadopted = Boolean(nativeMessages && !nativeMessages.length && r.nativeId && !before.nativeId);
+      if (unadopted) {
+        r.nativeId = null;
+        r.segments.length = before.segments;
+        // i18n-ignore: サーバーのログ
+        console.error("  conversations: このターンで採用した nativeId の transcript が無いので、採用を戻した");
+        // server は AbortController（turn.ac）を渡す。バックエンドと同じく .signal を見る
+        if (!turnFailed && !(args.signal?.signal ?? args.signal)?.aborted) {
+          r._dirty = true;
+          await save();
+          throw new Error(t("conversations.historyUnreadable"));
+        }
+      }
+      // 失敗したターンの後に transcript が空なのは、失敗の結果（例: 無い id の resume を断られた）。取り込まず、元の失敗を historyUnreadable で上書きしない
+      if (nativeMessages && !unadopted && !(turnFailed && !nativeMessages.length)) {
         // 巻き戻しを拒否されたターンは、鎖がまだ古い葉のまま。切ってから取り込む（捨てた発言が戻らないように）
         const messages = applyRewindMark(nativeMessages, mark);
         if (!messages.length) throw new Error(t("conversations.historyUnreadable"));
