@@ -33,7 +33,10 @@ function fakePanel() {
       if (method === 'Page.navigate') { url = params.url; return { frameId: `frame-${id}` }; }
       return {};
     };
-    const tab = { id, sessionId, webContents: { debugger: debuggerApi, isDestroyed: () => false, getTitle: () => id, getURL: () => url } };
+    // 本物の webContents は、破棄された後に debugger を読むと TypeError: Object has been destroyed を投げる
+    let destroyed = false;
+    const webContents = { get debugger() { if (destroyed) throw new TypeError('Object has been destroyed'); return debuggerApi; }, isDestroyed: () => destroyed, destroy() { destroyed = true; }, getTitle: () => id, getURL: () => url };
+    const tab = { id, sessionId, webContents };
     tabs.push(tab);
     for (const listener of listeners) listener('created', tab);
     return tab;
@@ -152,6 +155,23 @@ export default async function (t) {
     while (!approve) await new Promise(resolve => setTimeout(resolve, 5));
     approve({ allow: false }); t.ok('new targets also wait for site approval and denied tabs are removed', !!(await creating).error && confirmPanel.tabsFor('confirm').length === 1);
   } finally { confirmWs?.terminate(); confirmRelay.close(); }
+
+  // 窓を閉じると（終了・アップデート）タブの webContents が先に破棄され、その後で destroyed の知らせが届く（desktop/browser-panel.cjs の 'destroyed'）
+  const closingPanel = fakePanel();
+  const closingRelay = createBrowserRelay(closingPanel);
+  let closingWs;
+  try {
+    closingWs = await open(await closingRelay.endpoint('closing'));
+    const [tab] = closingPanel.tabsFor('closing');
+    const sid = (await ask(closingWs, 'Target.attachToTarget', { targetId: 'frame-' + tab.id })).result.sessionId;
+    const events = [];
+    closingWs.on('message', raw => { const msg = JSON.parse(raw.toString()); if (msg.method) events.push(msg); });
+    tab.webContents.destroy();
+    let thrown = null;
+    try { closingPanel.closeFor(tab.id); } catch (error) { thrown = error; }
+    t.ok('破棄済みのタブが閉じられても、つないでいた接続を例外なしで外す', thrown === null);
+    t.ok('外したことをエージェントへ知らせる', await until(() => events.some(event => event.method === 'Target.detachedFromTarget' && event.params.sessionId === sid)));
+  } finally { closingWs?.terminate(); closingRelay.close(); }
 
   const port = new EventEmitter();
   let endpointUrl = 'ws://127.0.0.1:1234/devtools/browser/key';

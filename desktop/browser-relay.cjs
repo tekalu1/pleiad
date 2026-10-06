@@ -65,7 +65,9 @@ function createBrowserRelay(panel, { onActivity = () => {}, navigation, WebSocke
     function detach(sid) {
       const record = attached.get(sid);
       if (!record) return;
-      record.tab.webContents.debugger.off('message', record.listener);
+      // 窓が閉じて webContents が先に破棄されたタブ（終了・アップデート）は、debugger を読むだけで Electron が投げる
+      const c = record.tab.webContents;
+      if (!c.isDestroyed()) c.debugger.off('message', record.listener);
       attached.delete(sid);
       send({ method: 'Target.detachedFromTarget', params: { sessionId: sid, targetId: record.targetId } });
     }
