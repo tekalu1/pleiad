@@ -89,9 +89,19 @@ async function until(fn, label, ms = 30000) {
   throw new Error(`timeout: ${label} ${JSON.stringify(last ?? null)}`);
 }
 
-async function newPage({ width = 1280, height = 820, scheme = 'light', reduced = false, on = browser } = {}) {
+async function newPage({ width = 1280, height = 820, scheme = 'light', reduced = false, on = browser, beeps = false } = {}) {
   const context = await on.newContext({ viewport: { width, height }, colorScheme: scheme, reducedMotion: reduced ? 'reduce' : 'no-preference', permissions: ['microphone'] });
   const page = await context.newPage();
+  // 効果音の確認: 鳴らした音の高さ（効果音は OscillatorNode。周波数の列）を window.__beeps に控える
+  if (beeps) await page.addInitScript(() => {
+    const create = AudioContext.prototype.createOscillator;
+    AudioContext.prototype.createOscillator = function () {
+      const osc = create.call(this);
+      const set = osc.frequency.setValueAtTime.bind(osc.frequency);
+      osc.frequency.setValueAtTime = (value, at) => { (window.__beeps ||= []).push(value); return set(value, at); };
+      return osc;
+    };
+  });
   lastPage = page;
   page.on('pageerror', (e) => { throw e; });
   if (process.env.VOICE_DEBUG_DOM) page.on('console', (m) => { if (m.type() === 'error' || m.type() === 'warning') console.error('console:', m.text()); });
@@ -170,6 +180,12 @@ try {
     await until(async () => (await msOf(page, '#composer')) === 'speaking', 'speaking', 30000);
     check((await page.locator('#thread .m.ai').last().innerText()).includes('署名の鍵は'), '返事の文字は通話していないときと同じ出方で表示される');
     check(await page.locator('#thread .vc-hint').isVisible(), '読み上げ中は返事の下に［止める］の一行');
+    check((await page.locator('#thread .vc-hint').innerText()).includes('エコー除去がオフ'), 'エコー除去なしで始めた通話では、ヒントは「いまはマイクを閉じています（エコー除去がオフのとき）」');
+    // 通話中にエコー除去を入れても、この通話の録音の制約は変わらない。ヒントも変わらず（割り込みが有効に見えない）、次の通話から効く
+    await admin.cmd('invoke', { op: 'settings.set', args: { key: 'voice', value: { echoCancellation: true } } });
+    await sleep(700);
+    check((await page.locator('#thread .vc-hint').innerText()).includes('エコー除去がオフ') && (await msOf(page, '#composer')) === 'speaking', '通話中に設定のエコー除去を入れても、この通話の表示（閉じている）は変わらない');
+    await admin.cmd('invoke', { op: 'settings.set', args: { key: 'voice', value: { echoCancellation: false } } });
     await until(async () => (await page.locator('.vc-underlay .vc-ul').count()) > 0, 'underline', 15000);
     const widths = [];
     for (let i = 0; i < 4; i++) { widths.push(await page.locator('.vc-underlay .vc-ul').first().evaluate((n) => new DOMMatrix(getComputedStyle(n).transform).a)); await sleep(350); }
@@ -186,7 +202,8 @@ try {
     await until(async () => (await page.locator('#thread .vc-hint[data-mode=cut]').count()) === 1 && await page.locator('#thread .vc-hint[data-mode=cut]').isVisible(), 'cut hint');
     const cutInfo = [await page.evaluate(() => [...document.querySelectorAll('.vc-hint')].map((n) => n.outerHTML).join('||')), await page.getByRole('button', { name: '続きを読む' }).isVisible()];
     check(cutInfo[0].includes('ここで読み上げを止めました') && cutInfo[1], '止めた場所に「ここで読み上げを止めました」と［続きを読む］', cutInfo);
-    check((await page.locator('.vc-underlay .vc-ul').count()) === 0 || true, '止めたら下線は静かに消える');
+    await until(async () => (await page.locator('.vc-underlay .vc-ul').count()) === 0, 'underline gone after stop', 3000);
+    check(true, '止めたら下線は静かに消える（500ms の消え方のあと、線が 1 本も残らない）');
     await shot(page, 'chat-cut-1280-light');
     await page.getByRole('button', { name: '続きを読む' }).click();
     await until(async () => (await msOf(page, '#composer')) === 'speaking' && (await page.locator('#thread .vc-hint[data-mode=reading]').count()) === 1, 'resumed speaking', 20000);
@@ -243,7 +260,9 @@ try {
       : { when: QUESTION, steps: [{ tool: 'Grep', input: { pattern: 'x' }, result: 'x', ms: 14000 }, { text: '調べ終わりました。' }] }));
     sttTexts.length = 0;
     sttTexts.push('鍵の更新を', QUESTION, 'それと lint も', 'それと lint も', 'ブランチは main から', 'ブランチは main から切って');
-    const { page, context } = await newPage(scenario === 'steer' ? { on: browserThree, width: 360, height: 760, scheme: 'dark' } : { on: browserThree });
+    // 効果音: steer の場面はオフ（鳴らない）、queued の場面は「すべて」（待ちの音が鳴る）
+    await admin.cmd('invoke', { op: 'settings.set', args: { key: 'voice', value: { sounds: scenario === 'queued' ? 'all' : 'off' } } });
+    const { page, context } = await newPage(scenario === 'steer' ? { on: browserThree, width: 360, height: 760, scheme: 'dark', beeps: true } : { on: browserThree, beeps: true });
     await page.evaluate(() => document.getElementById('newSession').click());
     await page.waitForFunction(() => document.querySelectorAll('#thread .m.user').length === 0);
     await page.locator('header.top .vc-call').click();
@@ -260,9 +279,12 @@ try {
       await until(async () => { for (let i = 0; i < 3; i++) if (!/AI に渡しました/.test(await label(i))) return false; return true; }, 'all delivered', 40000);
       check(true, '渡った瞬間に、3 通とも「AI に渡しました」へ（✓）。ずっと「次の区切り」のまま残らない');
       await shot(page, 'chat-delivery-sent-360-dark');
+      check((await page.evaluate(() => window.__beeps ?? [])).length === 0, '効果音がオフ（既定）なら、通話の開始も送信も何も鳴らさない');
     } else {
       await until(async () => (await rows.count()) === 3, 'three rows (queued)', 60000);
       await until(async () => (await rows.nth(2).locator('.vc-dl-queued').count()) === 1, 'queued label', 30000);
+      const beeps = await page.evaluate(() => window.__beeps ?? []);
+      check(beeps.filter((v) => v === 400).length >= 2 && beeps.includes(520) && beeps.includes(660), '効果音「すべて」: 送信待ちに入ったら「待ち」（同じ 400Hz を 2 回）、送ったら「送った」（520Hz）、通話の開始（660→880Hz）が鳴る', beeps);
       check(/送信待ち · この作業が終わると送ります/.test(await label(1)) && /送信待ち · この作業が終わると送ります/.test(await label(2)), '作業中に渡せないものは「送信待ち · この作業が終わると送ります」（時計）。会話の中の同じ場所に置く');
       check(await rows.nth(1).getByRole('button', { name: '取り消す' }).isVisible() && await rows.nth(2).getByRole('button', { name: '取り消す' }).isVisible(), '送信待ちの行に［取り消す］');
       check(await page.locator('#thread .mw.vc-queued').count() === 2 && /AI に渡しました/.test(await label(0)), '送信待ちは面を一段薄くし、先に渡ったものは「AI に渡しました」');
@@ -277,6 +299,7 @@ try {
     await context.close();
     await sleep(500);
   }
+  await admin.cmd('invoke', { op: 'settings.set', args: { key: 'voice', value: { sounds: 'off' } } });
   void threeTexts;
   await browserThree.close().catch(() => {});
   // 以降の場面は最初の台本に戻す
