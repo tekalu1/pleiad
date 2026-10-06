@@ -3,6 +3,7 @@
 //   - 公式の Node の取得: キャッシュ・SHA-256 と大きさの照合（合わなければ置かない・壊れたキャッシュは取り直す）
 //   - resources\runtime と resources\app\manifest.json の中身（x64・arm64・Windows 以外）
 //   - 固定の値（版・SHA-256 の形）と、afterPack の順序
+//   - 動かさない OS・CPU の node-pty の prebuild は manifest の前に外す（NSIS が別 CPU の .exe・.dll を落とす。2026-10-06）
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import os from 'node:os';
@@ -68,6 +69,12 @@ export default async function (t) {
         await fsp.mkdir(path.dirname(path.join(app, rel)), { recursive: true });
         await fsp.writeFile(path.join(app, rel), content);
       }
+      for (const prebuild of ['win32-x64', 'win32-arm64', 'darwin-arm64']) {
+        const dir = path.join(app, 'node_modules', 'node-pty', 'prebuilds', prebuild);
+        await fsp.mkdir(path.join(dir, 'conpty'), { recursive: true });
+        await fsp.writeFile(path.join(dir, 'pty.node'), prebuild);
+        await fsp.writeFile(path.join(dir, 'conpty', 'conpty.dll'), prebuild);
+      }
       if (agent) { await fsp.mkdir(path.join(out, 'resources', 'agent-browser'), { recursive: true }); await fsp.writeFile(path.join(out, 'resources', 'agent-browser', 'agent-browser.exe'), 'agent-bin'); }
       return out;
     };
@@ -82,10 +89,13 @@ export default async function (t) {
       && runtimeJson.node.size === good.length && runtimeJson.agentBrowser.sha256 === sha('agent-bin') && runtimeJson.agentBrowser.size === 9 && runtimeJson.agentBrowser.dir === 'agent-browser');
     const manifest = await manifestLib.readManifest(path.join(out, 'resources', 'app'));
     t.ok('afterPack: resources\\app\\manifest.json は読めて、全ファイルが一致する（自身を含まない・版は package.json のもの）', manifest.appVersion === '7.1.0' && packed.manifest.buildHash === manifest.buildHash
-      && Object.keys(manifest.files).join() === 'core/server.mjs,package.json,web/a.js' && (await runtime.verifyTree(path.join(out, 'resources', 'app'), manifest, { deep: true })).ok);
+      && Object.keys(manifest.files).join() === 'core/server.mjs,node_modules/node-pty/prebuilds/win32-x64/conpty/conpty.dll,node_modules/node-pty/prebuilds/win32-x64/pty.node,package.json,web/a.js' && (await runtime.verifyTree(path.join(out, 'resources', 'app'), manifest, { deep: true })).ok);
+    const prebuilds = dir => fs.readdirSync(path.join(dir, 'resources', 'app', 'node_modules', 'node-pty', 'prebuilds')).sort().join();
+    t.ok('afterPack（x64）: 動かさない node-pty の prebuild（win32-arm64・darwin-arm64）は manifest の前に外し、win32-x64 は残す', packed.pruned.join() === 'darwin-arm64,win32-arm64' && prebuilds(out) === 'win32-x64');
     const outArm = await makeOut('out-arm64');
     await packRuntime.packRuntime({ electronPlatformName: 'win32', arch: 3, appOutDir: outArm }, { config: testConfig, cacheDir, download: downloader });
     t.ok('afterPack（arm64）: arm64 の Node を入れる', fs.readFileSync(path.join(outArm, 'resources', 'runtime', 'node.exe')).equals(armBytes) && JSON.parse(fs.readFileSync(path.join(outArm, 'resources', 'runtime', 'runtime.json'), 'utf8')).node.arch === 'arm64');
+    t.ok('afterPack（arm64）: arm64 の prebuild だけを残す', prebuilds(outArm) === 'win32-arm64');
     const outNoAgent = await makeOut('out-noagent', { agent: false });
     await packRuntime.packRuntime({ electronPlatformName: 'win32', arch: 1, appOutDir: outNoAgent }, { config: testConfig, cacheDir, download: downloader });
     t.ok('afterPack: agent-browser が無ければ runtime.json に載せない', !('agentBrowser' in JSON.parse(fs.readFileSync(path.join(outNoAgent, 'resources', 'runtime', 'runtime.json'), 'utf8'))));
