@@ -173,9 +173,11 @@ const attrs = (obj) => Object.entries(obj).filter(([, v]) => v !== null && v !==
  * from は表示名（bot は `🦉 Owl (bot)`）、at は ISO の分まで（呼び出し側が決める）。
  * reply: `reply="true"`。呼んだ bot（@ で起こした相手）の返事（bot の会話でそのターンの終わりに返す。ADR 0109）
  * heard: `heard="true"`。あなたに @ していない人の投稿で、スレッドのほかの bot（宛先）も受けている。返事をするかは bot が決める（ADR 0128）
+ * to: `to="🦉 Owl (bot)"`。聞こえた投稿（heard）が、その bot との話の続き（その bot への返事・引用）であること（ADR 0128 の追記）。bot の名前だけを入れる
+ * reaction: `reaction="👍"`。from が、この bot の投稿（post）にそのリアクションを付けた（本文はリアクションの説明と投稿の書き出し。ADR 0109 の追記）
  */
-export function channelEnvelope({ channel, channelId, thread, post, from, at, reply, heard, text }) {
-  return `<${CHANNEL_TAG}${attrs({ channel, 'channel-id': channelId, thread, post, from, reply, heard, at })}>${escapeBody(text)}</${CHANNEL_TAG}>`;
+export function channelEnvelope({ channel, channelId, thread, post, from, at, reply, heard, to, reaction, text }) {
+  return `<${CHANNEL_TAG}${attrs({ channel, 'channel-id': channelId, thread, post, from, reply, heard, to, reaction, at })}>${escapeBody(text)}</${CHANNEL_TAG}>`;
 }
 /** 初回に渡す、スレッドのそれまでの投稿。posts は channelEnvelope の引数の並び */
 export function channelThreadEnvelope({ channel, channelId, thread, posts }) {

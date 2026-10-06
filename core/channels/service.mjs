@@ -10,6 +10,7 @@
 //                                    botPost が返したターンの投稿に返事を入れたときも呼ぶ（extra.filled: true）
 //     edited(post, channel)     … 人の本文の編集後。送れる会話の参照を解決する（bot は起こさない）
 //     removed(post, channel)    … 投稿の削除後。エピソード要約を更新する（bot は起こさない）
+//     reacted(post, channel, { emoji, on, by }) … リアクションを付けた・外した後（待たない）。bot の投稿なら、その bot へ渡すか・起こすかを S4（dispatch.onReacted）が決める
 //     stopThread(args, author)    … [止める]（待つ。投げたら stopThread も投げる）。走っているターンを止めるのは S4（dispatch.stopThread）
 //     botPost({ channelId, threadId, botId, sessionId }) → { postId } | undefined
 //                                 … bot の post の前（同期）。postId があればその投稿（ターンの投稿）の本文に入れ、null なら新しい投稿。undefined なら下の既定（S4 の dispatch.claimPost）
@@ -43,7 +44,7 @@
 //          hooks.botPost が決めない（undefined）ときは、new が無く、同じスレッド・会話（bySession があれば一致）にその bot の作業中の投稿があれば置き換える。人の投稿は、そのスレッドの stopped を外す
 //   edit({ channelId, postId, text?, state?, presents?, mentions? }, author): Promise<Post>      … 自分の投稿だけ（検査は ops）。text を変えたら mentions も解き直す
 //   remove({ channelId, postId }, author): Promise<void>
-//   react({ channelId, postId, emoji, on }, author): Promise<{ reactions: Post['reactions'] }>
+//   react({ channelId, postId, emoji, on }, author): Promise<{ reactions: Post['reactions'] }>   … bot の投稿なら hooks.reacted へ渡す
 //   markRead({ channelId, at }): Promise<{ readAt: number }>      … 進める向きにだけ動く（別の端末が先に進めていたら戻さない）
 //   stopThread({ channelId, threadId }, author): Promise<ThreadState>
 //        … stopped: { by, at } を残して channelThread を出し、hooks.stopThread へ渡す（ターンを止める・システムの投稿は S4）
@@ -430,6 +431,10 @@ export function createChannelService({ dir, emit = () => {}, hooks = {}, now = D
       if (on && !post.reactions[emoji] && Object.keys(post.reactions).length >= LIMITS.reactionKinds) throw invalid(`a post can have at most ${LIMITS.reactionKinds} kinds of reactions`);
       const saved = await store.append(channelId, { op: 'react', id: postId, emoji, by: clone(author), on: Boolean(on), at: now() });
       emit({ type: 'channelReaction', channelId, postId, reactions: saved.reactions });
+      if (saved.author?.kind === 'bot') {
+        const change = { emoji, on: Boolean(on), by: clone(author) };
+        Promise.resolve().then(async () => hooks.reacted?.(clone(saved), clone(await need(channelId)), change)).catch((e) => console.error('  channels: reacted の後処理に失敗:', String(e?.message ?? e)));
+      }
       return { reactions: saved.reactions };
     },
 
