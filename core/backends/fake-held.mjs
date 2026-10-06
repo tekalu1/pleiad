@@ -87,6 +87,8 @@ export async function driveHeld({ source, record, emit, askPermission, signal, c
       steers.set(item?.id, resolve);
       send({ type: 'steer', item: { id: item?.id, args: { prompt: item?.args?.prompt } } });
     });
+    // 渡った合図を後から出す台本（偽の CLI の fake も同じ env で steerConfirms を立てる）のとき、サーバーにも合図を待つ途中送信として扱わせる（札の steers）
+    if (Number(process.env.AGENT_HOST_FAKE_STEER_CONFIRM_MS) > 0) control.steerConfirms = true;
     control.onReady?.();
   }
   // 札を保持役の子に置く口（サーバーの touchCard が札の中身が変わるたびに呼ぶ）。最初の 1 回は今置く（落ちたときの付け直しの元）
@@ -128,7 +130,7 @@ export async function driveHeld({ source, record, emit, askPermission, signal, c
     return { exit: result.exit };
   } finally {
     stopped = true;
-    if (control) control.holder = null;
+    if (control) { control.holder = null; control.steerConfirms = false; }
     for (const resolve of steers.values()) resolve(false);
     signal?.signal?.removeEventListener?.('abort', onAbort);
     source.dispose?.();

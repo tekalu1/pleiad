@@ -138,7 +138,7 @@ export function createMessageQueue({ store, active, start, changed, delivered })
       item.status = 'paused';
       await save(id, items);
     }),
-    // adopted: 付け直すターンの会話（無停止の更新 2b-4）→ 札が持つ途中送信の id。走っているターンの後ろに並んだ送信は保留にせず、
+    // adopted: 付け直すターンの会話（無停止の更新 2b-4）→ 札の steers の id。走っているターンの後ろに並んだ送信は保留にせず、
     // 札が控えている途中送信（渡った合図を待つもの。2b-7）は結果不明にしない
     async recover({ adopted = new Map() } = {}) {
       for (const [id, meta] of Object.entries(await store.getAll())) {

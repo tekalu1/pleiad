@@ -7,6 +7,7 @@
 //   - ターンの前の切り口（T1: baseline の発言数と最後の uuid）。
 //   - 会話の口のトークン（connectionTokens: { agents, computer, browser, control, context }）。
 //   - 出している承認のカードの id（waits。2b-6）。付け直す新しいサーバーが、起動時の通知の一覧の後片付けでその行を残すのに使う。
+//   - 委譲の子のターンの実行の控え（delegation。2b-7）: 裏の作業を止める前の返答と、止めた裏の作業。再生では作れないもの（stage2-server-state.md M3）。
 //   - 札の大きさの上限（CARD_MAX_BYTES = 64 KB）。超えたら失敗。
 //   - 本文（発言・途中送信の本文・中断の文・`!` の行）は札に入れない（2b-4）。発言は sha256 と文字数だけを置き、付け直しは保存済みの発言
 //     （履歴のターンの前の切り口の次・送信待ちの messageId）から引いてハッシュで突き合わせる。長い貼り付けでも札が上限を超えないため
@@ -21,13 +22,17 @@ export const CARD_MAX_BYTES = 64 * 1024;
 /** 札に置く承認のカードの id の数の上限（1 つのターンが同時に待つ承認は少ない） */
 const WAITS_MAX = 64;
 
+/** 委譲の子の実行の控え（delegation）: 裏の作業を止める前の返答の文字数・止めた裏の作業の件数の上限（大きいと札が上限を超える） */
+const DELEGATION_REPLY_MAX = 16000;
+const DELEGATION_STOPPED_MAX = 20;
+
 /** 途中送信の控えを待つ 5 か所の識別子（stage2-server-state.md §3 の 3） */
 export const STEER_WAITERS = Object.freeze([
   'pendingSteers',    // Claude の折り込み待ち (O5)
   'liveNotices',      // 完了通知の控え (M4)
   'liveInstructions', // 追加指示の控え (M5)
   'agentTasks',       // agentTasks の steers (O16)
-  'botLiveSteers',    // bot の liveSteers (O21)
+  'botLiveSteers',    // bot の liveSteers (O21)。bot の会話のターンは付け直さないので、今は埋めない（2b-7）
 ]);
 
 const TOKEN_PATTERN = /^[a-f0-9]{64}$/;
@@ -207,6 +212,12 @@ export function cardOf(ctx, options = {}) {
   // 12. 出している承認のカードの id (A3, S7。2b-6)。付け直す新しいサーバーが、起動の後片付けで通知の一覧のあなた待ちを決着させるときに外す
   const waits = (Array.isArray(ctx.waits) ? ctx.waits : []).filter(id => typeof id === 'string' && id).slice(0, WAITS_MAX);
 
+  // 13. 委譲の子のターンの実行の控え (M3。2b-7)。止める前の返答（reply）と止めた裏の作業（stopped）。拒否されたコマンド（rejections）は再生の出来事から作り直る
+  const delegation = ctx.execution ? {
+    reply: typeof ctx.execution.reply === 'string' ? ctx.execution.reply.slice(0, DELEGATION_REPLY_MAX) : null,
+    stopped: (Array.isArray(ctx.execution.stopped) ? ctx.execution.stopped : []).slice(0, DELEGATION_STOPPED_MAX).map(x => ({ ...x })),
+  } : null;
+
   // 札本体 (card)
   const card = {
     v: CARD_VERSION,
@@ -254,6 +265,7 @@ export function cardOf(ctx, options = {}) {
     abort,
     backendCard,
     waits,
+    delegation,
   };
 
   // 秘密の欄 (secrets) - 札本体には入れず、別に返す（保持役の預かり物に置く想定）
@@ -359,5 +371,11 @@ export function restoreFields(card) {
 
     // 出している承認のカードの id（2b-6）
     waits: Array.isArray(card.waits) ? card.waits.filter(id => typeof id === 'string' && id).slice(0, WAITS_MAX) : [],
+
+    // 委譲の子の実行の控え（2b-7）
+    delegation: card.delegation && typeof card.delegation === 'object' ? {
+      reply: typeof card.delegation.reply === 'string' ? card.delegation.reply : null,
+      stopped: Array.isArray(card.delegation.stopped) ? card.delegation.stopped.filter(x => x && typeof x === 'object').map(x => ({ ...x })) : [],
+    } : null,
   };
 }
