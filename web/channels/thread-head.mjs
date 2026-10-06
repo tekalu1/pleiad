@@ -144,8 +144,9 @@ export function createThreadHead({ host, onClose, onBack, onToc, onRename }) {
   return {
     el: head,
     tocButton: toc,
-    setTitle({ channel, title: text }) {
-      chan.replaceChildren(el('span', 'th-hash', '#'), document.createTextNode(channel ?? ''));
+    setTitle({ channel, home = false, title: text }) {
+      // 一時チャットの頭は # を付けない（チャンネルの名前ではなく置き場の名前）
+      chan.replaceChildren(...(home ? [] : [el('span', 'th-hash', '#')]), document.createTextNode(channel ?? ''));
       chan.title = t('channels:thread.back', { name: channel ?? '' });
       chan.setAttribute('aria-label', t('channels:thread.back', { name: channel ?? '' }));
       title.textContent = text || t('channels:thread.untitled');

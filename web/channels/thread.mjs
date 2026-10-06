@@ -306,7 +306,7 @@ export function createThread(host) {
   // ---------------------------------------------------------------- 見出し・帯
   function paintHead() {
     // 人が付けた題（channels.setThreadTitle）があればそれ、無ければ根の投稿の最初の行
-    head.setTitle({ channel: S.channel?.name ?? '', title: S.thread?.title || titleOf(S.posts[0]) });
+    head.setTitle({ channel: S.channel?.home ? t('channels:side.home') : S.channel?.name ?? '', home: Boolean(S.channel?.home), title: S.thread?.title || titleOf(S.posts[0]) });
     head.setSession(activeSession());
   }
 

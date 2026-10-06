@@ -34,9 +34,10 @@ export function describeNotification(n, t, titleOf = () => '') {
   } else {
     line = name ? t('inbox.line.mention.named', { name }) : t('inbox.line.mention.plain');
   }
-  // 場所: チャンネルのスレッドは「#チャンネル › スレッドの題」、それ以外は「Chats › 会話の題」
+  // 場所: チャンネルのスレッドは「#チャンネル › スレッドの題」、一時チャット（会話・bot に話しかけたスレッド）は「一時チャット › 題」
   let place = '';
-  if (n.target?.channelId) {
+  if (n.target?.channelId && n.home) place = t('inbox.place.chat', { title: n.threadTitle || t('session.untitled') });
+  else if (n.target?.channelId) {
     place = n.channelName
       ? (n.threadTitle ? t('inbox.place.thread', { channel: n.channelName, thread: n.threadTitle }) : t('inbox.place.channel', { channel: n.channelName }))
       : (n.threadTitle || '');

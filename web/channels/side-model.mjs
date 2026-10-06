@@ -5,7 +5,7 @@ import { fold } from '../session-find.mjs';
 /** 脇に出すチャンネル（DM は bot の行が受け持つので出さない）。アーカイブしたものは後ろに弱く。中は名前順 */
 export function sideChannels(channels) {
   const byName = (a, b) => String(a.name ?? '').localeCompare(String(b.name ?? ''), undefined, { numeric: true, sensitivity: 'base' });
-  return (channels ?? []).filter((c) => c && c.kind !== 'dm')
+  return (channels ?? []).filter((c) => c && c.kind !== 'dm' && !c.home)   // 一時チャットは脇の先頭の節（web/side.mjs）
     .sort((a, b) => (Boolean(a.archivedAt) - Boolean(b.archivedAt)) || byName(a, b));
 }
 

@@ -43,6 +43,7 @@ export default async function (t) {
     channelsUi: { onEvent: () => false },
     // 見ている場所のアドレス（web/view-address.mjs）。会話を開くと残す。このテストの対象外
     viewAddress: { note: noop },
+    homeDest: { bot: null, paint: noop, reset: noop, botsChanged: noop },
     // 脇のスレッドの行の読み直し（channels.threads）。このテストの対象外
     THREAD_INDEX_EVENTS: new Set(), loadThreadIndexSoon: noop,
     paintContextStrip: noop, paintCompactions: noop,

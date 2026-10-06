@@ -1,4 +1,5 @@
 {
+  "homeDest": { "title": "Send to", "none": "No bot", "noneHint": "Talk to the AI directly", "noneLabel": "Send to: no bot (talk to the AI directly; change)", "label": "Send to: {{name}} (talk in Quick chats; change)", "bots": "Talk to a bot" },
   "side": {
     "tabs": { "channels": "Channels" },
     "sections": { "channels": "Channels", "bots": "Bots", "routines": "Routines" },

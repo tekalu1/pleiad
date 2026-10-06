@@ -66,6 +66,9 @@ export const LIMITS = Object.freeze({ name: 60, purpose: 300, memo: 4000, cwd: 1
 export const WORKING_EDIT_INTERVAL_MS = 1000;
 /** スレッドの索引（threads）の、チャンネルごとの既定の件数と上限（脇の「最近のスレッド」） */
 export const THREADS_PER_CHANNEL = 5;
+/** 一時チャットの、op での呼び名（channelId: 'home'）と保存の名前 */
+export const HOME_ALIAS = 'home';
+const HOME_NAME = 'home';
 export const THREADS_PER_CHANNEL_MAX = 50;
 
 export class ChannelError extends Error {
@@ -164,7 +167,8 @@ export function createChannelService({ dir, emit = () => {}, hooks = {}, now = D
     return cwd;
   }
   async function checkNameFree(name, exceptId) {
-    const taken = (await store.channels()).some((c) => c.kind === 'channel' && !c.archivedAt && c.id !== exceptId && foldName(c.name) === foldName(name));
+    // 一時チャット（home: true）の保存の名前 home は、人の作るチャンネルの名前とぶつからない（画面では「一時チャット」）
+    const taken = (await store.channels()).some((c) => c.kind === 'channel' && !c.home && !c.archivedAt && c.id !== exceptId && foldName(c.name) === foldName(name));
     if (taken) throw new ChannelError('CHANNEL_NAME_TAKEN', { name });
   }
   /** 外へ返すチャンネル: 予算は既定を埋め、今日使った分を付ける（ADR 0119）。DM は予算を持たない。threads は読み済みならそれを使う */
@@ -228,8 +232,22 @@ export function createChannelService({ dir, emit = () => {}, hooks = {}, now = D
     return out;
   };
 
+  // ---- 一時チャット（ADR 9101）: 今の Chats の会話の置き場。会話（session）はここに記録を持たず、bot に話しかけた投稿だけがここの投稿になる。
+  // 実体は home: true の普通のチャンネル（kind は channel）。最初に bot へ話しかけたとき（投稿のとき）に作る。op の channelId 'home' はこれの id へ解く
+  const findHome = async () => (await store.channels()).find((c) => c.home) ?? null;
+  async function ensureHome() {
+    const known = await findHome();
+    if (known) return known;
+    const t = now();
+    return saveChannel({ id: newId('channel', t), kind: 'channel', home: true, name: HOME_NAME, purpose: '', cwd: null, members: [], memo: '', createdAt: t, lastPostAt: t });
+  }
+
   const service = {
     dir, emit, hooks, now,
+    /** 一時チャットのチャンネル（無ければ作る） */
+    ensureHome,
+    /** 一時チャットのチャンネル（無ければ null） */
+    home: findHome,
     async start() { await store.channels(); await threadStore.load(); },
     stop() { for (const timer of timers) clearTimeout(timer); timers.clear(); edits.clear(); },
     /** stop に加えて、スレッドの状態の DB の接続を離す（データ置き場を消す前。テストの後片付け用） */
@@ -378,6 +396,7 @@ export function createChannelService({ dir, emit = () => {}, hooks = {}, now = D
     },
     async update({ channelId, name, purpose, cwd, members, memo, budget }, _author) {
       const channel = await need(channelId);
+      if (channel.home && name !== undefined) throw invalid('the Quick chats channel cannot be renamed');
       const patch = {};
       if (name !== undefined) {
         patch.name = channel.kind === 'dm' ? String(name).trim() : normalizeChannelName(name);
@@ -396,6 +415,7 @@ export function createChannelService({ dir, emit = () => {}, hooks = {}, now = D
     },
     async archive({ channelId, on }, _author) {
       const channel = await need(channelId);
+      if (channel.home) throw invalid('the Quick chats channel cannot be archived');
       if (!on && channel.kind === 'channel') await checkNameFree(channel.name, channel.id);
       return patchChannel(channelId, (c) => {
         const next = { ...c };
@@ -446,6 +466,11 @@ export function createChannelService({ dir, emit = () => {}, hooks = {}, now = D
       }
 
       const at = now();
+      // 一時チャットで宛先に選んだ bot は、メンバーに足す（@ の候補・流れの頭の並びに出る）
+      if (channel.home && to && !(channel.members ?? []).includes(to)) {
+        if (!(await bots()).some((b) => b.id === to)) throw invalid('to must be a bot id');
+        await patchChannel(channelId, (c) => ({ ...c, members: [...(c.members ?? []), to] }));
+      }
       const post = {
         id: newId('post', at), channelId, threadId, author: clone(author), text, mentions: resolved, at,
         ...(state !== undefined ? { state } : {}), ...(turn ? { turn: clone(turn) } : {}), ...(presents ? { presents: clone(presents) } : {}),

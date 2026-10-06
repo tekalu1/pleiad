@@ -56,6 +56,7 @@ import { setupSlashSkills } from "./slash-skills.mjs";
 import { createMarkdownEditor } from "./md-editor.mjs";
 import { attachedImageSrc } from "./composer/attachments.mjs";
 import { createComposer, composerEls, rememberComposerTemplate } from "./composer/composer.mjs";
+import { createHomeDest } from "./composer/home-dest.mjs";
 import { createViewAddress, readAddress, toShowDetail } from "./view-address.mjs";
 import { openAttachmentList } from "./attachment-list.mjs";
 import { runMark, satMark, stillMark } from "./arc.mjs";
@@ -251,6 +252,9 @@ const chatComposer = createComposer({
   onSchedule: () => sendMenu.open(),
 });
 const chatAttach = chatComposer.attach, composerEditor = chatComposer.editor, composerWait = chatComposer.wait;
+// まだ送っていない会話の宛先（bot なし / bot）。bot を選んだ最初の送信は、一時チャットでその bot に話しかける投稿になる（sendToHomeBot）
+const homeDest = createHomeDest({ anchor: $("attach"), t, invoke: (op, args) => cmd("invoke", { op, args }), showMenu: (...a) => showMenu(...a),
+  visible: () => unsentHere() });
 // 接続の状態（web/connection-status.mjs）。切れた一行は 1.5 秒続いてから、トークンが古いと分かったら案内に替えて再接続をやめる
 const connStatus = createConnectionStatus({ note: $("connNote"), sideLine: $("connLost"), live: $("connLive"), t, runMark,
   time: (ms) => fmt.time(ms), check: checkToken, reconnect: () => connect(), onChange: () => syncRunState() });
@@ -2824,6 +2828,7 @@ function onEvent(ev, replay = false) {
   // bot・Channels・ルーティンの画面（web/channels/）。この画面の出来事ならここで終わる。ほかの出来事（permission など）も部品へ渡る
   // スレッドが動いた・投稿が増えた・既読が進んだ: 脇のスレッドの行を読み直す（まとめて 1 回）
   if (THREAD_INDEX_EVENTS.has(ev.type)) loadThreadIndexSoon();
+  if (ev.type === 'botsChanged') homeDest.botsChanged();
   if (channelsUi.onEvent(ev, replay)) return;
   if (ev.type === 'notificationsChanged') { notificationInbox.onEvent(ev); return; }
   if (ev.type?.startsWith('shell.')) return onShellEvent(ev);
@@ -7077,6 +7082,7 @@ function selectedMode(s, bid, modes, chosen = null) {
 }
 async function syncTopbar() {
   syncParentEntry();
+  homeDest.paint();
   const version = ++topbarVersion;
   const s = state.sessions.find((x) => x.id === state.current);
   const on = Boolean(state.current);
@@ -7897,6 +7903,41 @@ async function submitVoiceText(text) {
   $('prompt').value = [text, keep.text].filter(Boolean).join(NL + NL); state.attached = keep.attached; renderAttached(); fitPrompt();
   throw new Error(t('voice.note.notSent'));
 }
+/** まだ送っていない会話を開いている（新しい会話の欄・作ったばかり・未送信の会話）。bot の会話は除く */
+function unsentHere() {
+  if (!state.current || state.current === freshSessionId) return true;
+  const s = state.sessions.find((x) => x.id === state.current);
+  return Boolean(s?.unsent) && !s.bot;
+}
+
+/**
+ * 新しい会話の宛先に bot を選んだ最初の送信: 一時チャットの実体のチャンネルへ、その bot 宛ての投稿を置き（channels.post の to）、
+ * そのスレッドを開く。空の会話（未送信）は残さず消す。送り直しても同じ投稿を二重に作らない（clientId）
+ */
+let homeAttempt = null;
+async function sendToHomeBot(bot) {
+  const text = $('prompt').value;
+  const attachments = orderedAttachments().map(a => ({ path: a.path, name: a.name, mime: a.mime ?? '' }));
+  if (!text.trim() && !attachments.length) return;
+  const key = JSON.stringify([bot.id, text, attachments]);
+  if (homeAttempt?.key !== key) homeAttempt = { key, clientId: `home-${randomId()}` };
+  try {
+    const post = await cmd('invoke', { op: 'channels.post', args: { channelId: 'home', text, ...(attachments.length ? { attachments } : {}), to: bot.id, clientId: homeAttempt.clientId } });
+    homeAttempt = null;
+    const empty = state.sessions.find(s => s.id === state.current && s.unsent && !s.bot) ?? null;
+    $('prompt').value = '';
+    state.attached = [];
+    renderAttached();
+    fitPrompt();
+    homeDest.reset();
+    $('settingsError').textContent = '';
+    viewAddress.go({ channelId: post.channelId, threadId: post.id });
+    if (empty) deleteSessionRow(empty).catch(() => {});
+  } catch (e) {
+    $('settingsError').textContent = t('chat.send.failed', { error: e.message });
+  }
+}
+
 async function submit({ at = armedSends.get(state.current) } = {}) {
   // 入力欄の `!`: シェルの形なら走らせる。使えない会話の `!` は送らずに理由の一行を光らせる（文として送るのは「文として送る」だけ）
   if (shellComposer.active) return runShellFromComposer();
@@ -7907,6 +7948,7 @@ async function submit({ at = armedSends.get(state.current) } = {}) {
   // 送っている途中・失敗の添付があるうちは送らない（欠けた添付を前提にエージェントが作業を始めないように）。札が理由と外す・再試行を持つ
   const upBlock = uploadBlockReason();
   if (upBlock) { notify(upBlock); flashAttachEntry(); return; }
+  if (homeDest.bot) return sendToHomeBot(homeDest.bot);
   if (!state.current || state.current === freshSessionId) {
     // 新しい会話を作っている間の送信は予約する（docs/design-system.md「入力欄の待ち」）。欄は readonly にして字を保ち、
     // 150ms を越えたら送信ボタンに弧、欄の上に「会話ができしだい送ります · 取り消す」。できしだい下の続きで送る

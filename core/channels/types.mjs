@@ -22,6 +22,7 @@ import { CHANNEL_TAG, CHANNEL_THREAD_TAG, MEMORY_CORE_TAG, TURN_CONTEXT_TAG, INN
 
 /** @typedef {{
  *   id: string, kind: 'channel'|'dm', name: string,       // dm は名前 = bot の名前（表示用。正本は bot）
+ *   home?: true,                                         // 一時チャット（今の Chats の会話の置き場。1 つだけ。名前は home・画面では「一時チャット」。改名・アーカイブはできない。ADR 9101）
  *   purpose: string, cwd: string|null,                    // 既定の作業フォルダー
  *   members: string[],                                    // botId の並び（あなたは常に居る）
  *   memo: string,                                         // 「ここでの決まり」

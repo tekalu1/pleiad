@@ -69,6 +69,8 @@ export default async function (t) {
   const context = vm.createContext({
     // Chats の面か（web/channels/index.mjs）と、見ている場所のアドレス（web/view-address.mjs）。会話を開くと残す。このテストの対象外
     channelsUi: { tab: 'chats', onEvent: () => false }, viewAddress: { note: () => {} },
+    // まだ送っていない会話の宛先のチップ（web/composer/home-dest.mjs）。このテストは bot なし（ふつうの会話）だけ
+    homeDest: { bot: null, paint: noop, reset: noop, botsChanged: noop },
     state, $, cmd, refresh, syncRequest, joinReply, retainPlan, retainThread: noop, holdReading: noop, t: (k, params) => params?.error ? `${k}: ${params.error}` : k, html: { t: k => k }, sys: noop, escText: x => x, NL: '\n',
     creatingSession: null, pendingNewSession: null, freshSessionId: null, draftTimer: null, draftSavedAt: 0, DRAFT_THROTTLE_MS: 400, queuedSend: null, settingsFailure: null, syncSettingsHold: noop,
     failedSettingsPatch: null, failedSettingsError: '', cwdSaving: 0, stagedNext: new Map(),

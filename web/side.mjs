@@ -591,9 +591,11 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
   }
 
   function buildChannelOrder(wanted) {
-    // 一時チャット: 会話のスレッド（bot の会話・委譲の子は除く）を新しい順。作成中の新しい会話は先頭
+    // 一時チャット: 会話のスレッド（bot の会話・委譲の子は除く）と、一時チャットで bot に話しかけたスレッドを新しい順。作成中の新しい会話は先頭
+    const homeIds = new Set([...directory.channels.values()].filter((c) => c.home).map((c) => c.id));
     const homeRows = [...(last.pendingNew ? [last.pendingNew] : []),
-      ...last.sessions.filter((s) => !s.bot && matchesFilter(s)).sort((a, b) => (b.lastModified ?? 0) - (a.lastModified ?? 0))];
+      ...[...last.sessions.filter((s) => !s.bot && matchesFilter(s)), ...last.threads.filter((s) => homeIds.has(s.thread.channelId) && matchesFilter(s))]
+        .sort((a, b) => (b.lastModified ?? 0) - (a.lastModified ?? 0))];
     wanted.append(channelSection("home", { name: t("channels:side.home"), home: true, rows: homeRows, onName: () => onOpenChannel?.("home"),
       onAdd: () => onNew?.({ cwd: filter.dir ?? cwdNow?.() ?? "" }), addLabel: t("channels:side.newHome") }));
     const channels = [...directory.channels.values()].filter((c) => c.kind === "channel" && !c.archivedAt && !c.home)
@@ -777,7 +779,8 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
       mark.append(av);
     }
     const name = channel?.name ?? (s.thread ? "" : botTitleParts(s).channel);   // 一覧をまだ読めていなければ会話の題から（id は出さない）
-    const where = s.bot.kind === "dm" || channel?.kind === "dm" ? t("channels:side.dm") : name ? `#${name}` : "";
+    // 一時チャットは置き場の名前（# を付けない）
+    const where = s.bot.kind === "dm" || channel?.kind === "dm" ? t("channels:side.dm") : channel?.home ? name : name ? `#${name}` : "";
     mark.append(el("span", "row-ch-name", where));
     if (bot) mark.title = where ? `${bot.name} · ${where}` : bot.name;
     return mark;
@@ -1697,7 +1700,8 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
     },
     /** チャンネルと bot の一覧（bot の会話の行の印・検索のチャンネル名）。Channels の脇が読むたびに渡す */
     setDirectory({ channels = [], bots = [] } = {}) {
-      directory = { channels: new Map(channels.map((c) => [c.id, c])), bots: new Map(bots.map((b) => [b.id, b])) };
+      // 一時チャット（home: true）の保存の名前は home。脇・行の出どころでは画面の名前で書く
+      directory = { channels: new Map(channels.map((c) => [c.id, c.home ? { ...c, name: t("channels:side.home") } : c])), bots: new Map(bots.map((b) => [b.id, b])) };
       if (remote) remote.sig = null;   // 検索中ならチャンネルの当たりも取り直す
       render();
     },

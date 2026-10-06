@@ -1,4 +1,5 @@
 {
+  "homeDest": { "title": "宛先", "none": "bot なし", "noneHint": "AI と直接話す", "noneLabel": "宛先: bot なし（AI と直接話す。選び直す）", "label": "宛先: {{name}}（一時チャットで話しかける。選び直す）", "bots": "bot に話しかける" },
   "side": {
     "tabs": { "channels": "Channels" },
     "sections": { "channels": "チャンネル", "bots": "Bots", "routines": "ルーティン" },

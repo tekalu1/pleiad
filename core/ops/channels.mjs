@@ -17,7 +17,7 @@
 import { z } from 'zod';
 import { agentT } from '../i18n.mjs';
 import { authorKey, HIDDEN_BOT_KINDS } from '../channels/types.mjs';
-import { ChannelError, LIMITS, THREADS_PER_CHANNEL_MAX } from '../channels/service.mjs';
+import { ChannelError, HOME_ALIAS, LIMITS, THREADS_PER_CHANNEL_MAX } from '../channels/service.mjs';
 import { THREAD_STATUS_MAX, THREAD_TITLE_MAX } from '../channels/threads.mjs';
 import { groupTargets, expandGroups } from '../channels/group-mentions.mjs';
 import { BUDGET_LIMITS, budgetOf, loosensBudget, normalizeBudget } from '../channels/budget.mjs';
@@ -115,6 +115,17 @@ async function ownPost(ctx, args) {
   return author;
 }
 
+/**
+ * 一時チャットの呼び名（channelId: 'home'）を実体の id へ解く（ADR 9101）。make: 無ければ作る（人の投稿。最初に bot へ話しかけたとき）。
+ * 無いまま読むと、空の一時チャットとして返す（empty）か、見つからないで断る
+ */
+async function homeArgs(ctx, args, { make = false } = {}) {
+  if (args.channelId !== HOME_ALIAS) return args;
+  const home = make ? await ctx.channels.ensureHome() : await ctx.channels.home?.();
+  return home ? { ...args, channelId: home.id } : null;
+}
+const notFound = (ctx, id) => new OpError('CHANNEL_NOT_FOUND', agentT(ctx.locale, 'ops.errors.CHANNEL_NOT_FOUND', { id }));
+
 export const channelOps = [
   defineOp({
     id: 'channels.list', summary: D('list', 'summary'), risk: 'read', input: z.object({}),
@@ -126,7 +137,11 @@ export const channelOps = [
     id: 'channels.get', summary: D('get', 'summary'), risk: 'read',
     input: z.object({ channelId: channelId('get') }), output: z.unknown(),
     surfaces: { ui: true, mcp: 'catalog', cli: { path: ['channels', 'get'], positional: ['channelId'] } },
-    handler: (ctx, args) => run(ctx, () => ctx.channels.get(args)),
+    handler: async (ctx, args) => {
+      const where = await homeArgs(ctx, args);
+      if (!where) throw notFound(ctx, args.channelId);
+      return run(ctx, () => ctx.channels.get(where));
+    },
   }),
   defineOp({
     id: 'channels.read', summary: D('read', 'summary'), risk: 'read',
@@ -138,7 +153,12 @@ export const channelOps = [
     }),
     output: z.object({ posts: z.array(z.unknown()), threads: z.array(z.unknown()), summaries: z.unknown(), nextBefore: z.string().nullable() }),
     surfaces: { ui: true, mcp: 'catalog', cli: { path: ['channels', 'read'], positional: ['channelId'] } },
-    handler: (ctx, args) => run(ctx, () => ctx.channels.read(args)),
+    handler: async (ctx, args) => {
+      const where = await homeArgs(ctx, args);
+      // 一時チャットにまだ投稿が無い（実体を作っていない）: 空の流れ
+      if (!where) return { posts: [], threads: [], summaries: {}, nextBefore: null };
+      return run(ctx, () => ctx.channels.read(where));
+    },
   }),
   defineOp({
     // スレッドの索引: チャンネルごとの最近のスレッド（題・最後の動き・返信の数・未読・状態・作業中の bot）。脇の 2 つの並べ方の材料
@@ -330,8 +350,10 @@ export const channelOps = [
     }),
     output: z.unknown(),
     surfaces: { ui: true, mcp: 'catalog', cli: { path: ['channels', 'post'], positional: ['channelId', 'text'] } },
-    handler: async (ctx, { state, threadId, attachments, confirmedWake, to, clientId, ...args }) => {
+    handler: async (ctx, { state, threadId, attachments, confirmedWake, to, clientId, ...input }) => {
       const author = await authorOf(ctx);
+      const args = await homeArgs(ctx, input, { make: author.kind === 'human' });
+      if (!args) throw notFound(ctx, input.channelId);
       if (clientId && author.kind !== 'human') throw new OpError('INVALID', agentT(ctx.locale, 'ops.errors.INVALID', { detail: 'clientId is only for a human post' }));
       if (clientId) args.clientId = clientId;
       // 宛先のチップ（to）は人だけ。bot・AI は本文の @ で呼ぶ（強さの確認が @ を数える）

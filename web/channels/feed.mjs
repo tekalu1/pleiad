@@ -31,6 +31,7 @@ export function createFeed(host) {
 
   const S = {
     id: null, channel: null, posts: [], index: new Map(), summaries: {}, threads: {}, nextBefore: null,
+    homeId: null, homeBefore: null,   // 一時チャット: 実体のチャンネル（bot に話しかけた投稿の置き場）の id と、その投稿の続きの印
     bots: new Map(), loadingOlder: false, seq: 0, readSent: 0, ready: false,
     queue: [],   // 読み込んでいる間に届いた出来事。読み終えてから順に当てる（読んだ写しが古くても取りこぼさない）
   };
@@ -229,6 +230,28 @@ export function createFeed(host) {
     }
     return { posts, summaries, threads, nextBefore: page.nextBefore ?? null };
   }
+  /**
+   * 一時チャットの 1 ページ: 会話の頭（合成の根）と、実体のチャンネル（channelId 'home'）で bot に話しかけた投稿を時刻順に混ぜる。
+   * 続きの印は 2 つ（rootsBefore・postsBefore）。first は最初の読み込み（実体の id も読む）
+   */
+  async function homeRead({ first = false, rootsBefore = null, postsBefore = null } = {}) {
+    const [roots, channel, real] = await Promise.all([
+      first || rootsBefore ? host.invoke('sessions.roots', { limit: PAGE, ...(rootsBefore ? { before: rootsBefore } : {}) }) : null,
+      first ? host.invoke('channels.get', { channelId: HOME }).catch(() => null) : null,
+      first || postsBefore ? host.invoke('channels.read', { channelId: HOME, limit: PAGE, ...(postsBefore ? { before: postsBefore } : {}) }).catch(() => null) : null,
+      first ? loadBots() : null,
+    ]);
+    const page = roots ? homePage(roots) : { posts: [], summaries: {}, threads: {}, nextBefore: null };
+    return {
+      posts: [...page.posts, ...(real?.posts ?? [])].sort((a, b) => a.at - b.at),
+      summaries: { ...page.summaries, ...(real?.summaries ?? {}) },
+      threads: { ...page.threads, ...Object.fromEntries((real?.threads ?? []).map((th) => [th.threadId, th])) },
+      rootsBefore: roots ? page.nextBefore : null, postsBefore: real?.nextBefore ?? null, homeId: channel?.id ?? null,
+    };
+  }
+  /** 一時チャットの流れの投稿がある場所（合成の根は会話・実体の投稿はチャンネル） */
+  const isHere = (channelId) => channelId === S.id || (S.id === HOME && Boolean(S.homeId) && channelId === S.homeId);
+
   /** 会話の今の状態（画面が持つ実行中・あなた待ちの集合）を、要約の行が読む ThreadState の形に */
   function homeState(sessionId) {
     const s = host.state;
@@ -244,13 +267,15 @@ export function createFeed(host) {
     log.replaceChildren(el('p', 'ch-loading', t('channels:feed.loading')));
     if (id === HOME) {
       try {
-        const page = homePage(await host.invoke('sessions.roots', { limit: PAGE }));
+        const page = await homeRead({ first: true });
         if (seq !== S.seq) return;
         Object.assign(S, { channel: homeChannel(), posts: page.posts, index: new Map(page.posts.map((p) => [p.id, p])), summaries: page.summaries,
-          threads: page.threads, nextBefore: page.nextBefore, ready: true });
+          threads: page.threads, nextBefore: page.rootsBefore, homeBefore: page.postsBefore, homeId: page.homeId, ready: true });
         paintHead();
         paintAll();
+        for (const ev of S.queue.splice(0)) events[ev.type]?.(ev);
         toBottom();
+        markRead();
       } catch (err) {
         if (seq !== S.seq) return;
         log.replaceChildren(el('p', null, t('channels:feed.loadFailed', { error: err?.message ?? String(err) })));
@@ -260,6 +285,13 @@ export function createFeed(host) {
     try {
       const [channel, page] = await Promise.all([host.invoke('channels.get', { channelId: id }), host.invoke('channels.read', { channelId: id, limit: PAGE }), loadBots()]);
       if (seq !== S.seq) return;
+      // 一時チャットの実体の id で開いた（スレッドの頭の「戻る」・通知）: 一時チャットの流れとして描く
+      if (channel?.home) {
+        S.id = HOME;
+        composer.setDraftKey(feedDraftKey(HOME));
+        if (!S.viewThread) host.noteView?.({ kind: 'channel', id: HOME });   // スレッドを開くなら、場所はそのスレッド
+        return load(HOME);
+      }
       S.channel = channel;
       S.posts = page.posts ?? [];
       S.index = new Map(S.posts.map((p) => [p.id, p]));
@@ -284,12 +316,26 @@ export function createFeed(host) {
   }
 
   async function loadOlder() {
-    if (S.loadingOlder || !S.nextBefore || !S.ready) return;
+    if (S.loadingOlder || !(S.nextBefore || (S.id === HOME && S.homeBefore)) || !S.ready) return;
     S.loadingOlder = true;
     const seq = S.seq;
     try {
-      const page = S.id === HOME ? homePage(await host.invoke('sessions.roots', { before: S.nextBefore, limit: PAGE }))
-        : await host.invoke('channels.read', { channelId: S.id, before: S.nextBefore, limit: PAGE });
+      if (S.id === HOME) {
+        const page = await homeRead({ rootsBefore: S.nextBefore, postsBefore: S.homeBefore });
+        if (seq !== S.seq) return;
+        const before = log.scrollHeight - log.scrollTop;
+        const older = page.posts.filter((p) => !S.index.has(p.id));
+        for (const p of older) S.index.set(p.id, p);
+        S.posts = [...older, ...S.posts].sort((a, b) => a.at - b.at);
+        Object.assign(S.summaries, page.summaries);
+        Object.assign(S.threads, page.threads);
+        S.nextBefore = page.rootsBefore;
+        S.homeBefore = page.postsBefore;
+        paintAll();
+        log.scrollTop = log.scrollHeight - before;
+        return;
+      }
+      const page = await host.invoke('channels.read', { channelId: S.id, before: S.nextBefore, limit: PAGE });
       if (seq !== S.seq) return;
       const older = (page.posts ?? []).filter((p) => !S.index.has(p.id));
       const before = log.scrollHeight - log.scrollTop;
@@ -309,10 +355,12 @@ export function createFeed(host) {
   function markRead() {
     clearTimeout(readTimer);
     readTimer = setTimeout(() => {
-      const last = S.posts.at(-1);
-      if (!S.id || S.id === HOME || !last || !active() || !nearBottom() || last.at <= S.readSent) return;
+      const home = S.id === HOME;
+      const last = home ? S.posts.filter((p) => !p.home).at(-1) : S.posts.at(-1);
+      const channelId = home ? S.homeId : S.id;
+      if (!channelId || !last || !active() || !nearBottom() || last.at <= S.readSent) return;
       S.readSent = last.at;
-      host.invoke('channels.markRead', { channelId: S.id, at: last.at }).catch(() => { S.readSent = 0; });
+      host.invoke('channels.markRead', { channelId, at: last.at }).catch(() => { S.readSent = 0; });
     }, 300);
   }
   document.addEventListener('visibilitychange', () => { if (active()) markRead(); });
@@ -333,7 +381,7 @@ export function createFeed(host) {
     p.reactions = withReaction(prev, emoji, on);
     repaint(p.id);
     try {
-      const got = await host.invoke('channels.react', { channelId: S.id, postId: p.id, emoji, on });
+      const got = await host.invoke('channels.react', { channelId: p.channelId ?? S.id, postId: p.id, emoji, on });
       if (got?.reactions) { p.reactions = got.reactions; repaint(p.id); }
     } catch (err) {
       p.reactions = prev;
@@ -344,7 +392,7 @@ export function createFeed(host) {
 
   function openThread(p) {
     if (p.home) { host.openHomeThread?.(p.sessionId); return; }
-    host.openThread?.(S.id, p.threadId ?? p.id);
+    host.openThread?.(p.channelId ?? S.id, p.threadId ?? p.id);
   }
 
   function openMenu(p, x, y, anchor) {
@@ -384,7 +432,7 @@ export function createFeed(host) {
     if (S.id !== HOME || e.target.closest('a, button, .post-tools')) return;
     if (String(window.getSelection?.() ?? '').trim()) return;
     const p = S.index.get(e.target.closest?.('.post')?.dataset.postId);
-    if (p?.home) openThread(p);
+    if (p && !p.deletedAt) openThread(p);
   });
   jump.onclick = () => { toBottom(); markRead(); };
   log.addEventListener('scroll', () => {
@@ -430,18 +478,19 @@ export function createFeed(host) {
   function onChannelsChanged(ev) {
     if (ev.removed === S.id) { S.id = null; S.channel = null; root.hidden = true; composer.setDraftKey(null); clearHead(); if (emptyNote) emptyNote.hidden = false; return; }
     if (ev.channel?.id === S.id) { S.channel = ev.channel; paintHead(); }
+    if (ev.channel?.home && S.id === HOME) S.homeId = ev.channel.id;   // 一時チャットの実体ができた（最初に bot へ話しかけた）
   }
 
   const events = {
-    channelPost: (ev) => { if (ev.channelId === S.id) { if (S.ready) onPost(ev); else S.queue.push(ev); } },
+    channelPost: (ev) => { if (isHere(ev.channelId)) { if (S.ready) onPost(ev); else S.queue.push(ev); } },
     channelReaction: (ev) => {
-      if (ev.channelId !== S.id) return;
+      if (!isHere(ev.channelId)) return;
       if (!S.ready) { S.queue.push(ev); return; }
       const p = S.index.get(ev.postId);
       if (p) { p.reactions = ev.reactions ?? {}; repaint(p.id); }
     },
     channelThread: (ev) => {
-      if (ev.channelId !== S.id || !ev.thread) return;
+      if (!isHere(ev.channelId) || !ev.thread) return;
       if (!S.ready) { S.queue.push(ev); return; }
       S.threads[ev.threadId] = ev.thread;
       repaint(ev.threadId);
@@ -462,11 +511,12 @@ export function createFeed(host) {
   let homeTimer = 0;
   async function refreshHome() {
     try {
-      const page = homePage(await host.invoke('sessions.roots', { limit: PAGE }));
+      const page = await homeRead({ first: true });
       if (S.id !== HOME) return;
       const same = page.posts.length === S.posts.length && page.posts.every((p, i) => p.id === S.posts[i]?.id);
       const stick = nearBottom();
-      Object.assign(S, { posts: page.posts, index: new Map(page.posts.map((p) => [p.id, p])), summaries: page.summaries, threads: page.threads, nextBefore: page.nextBefore });
+      Object.assign(S, { posts: page.posts, index: new Map(page.posts.map((p) => [p.id, p])), summaries: page.summaries, threads: page.threads,
+        nextBefore: page.rootsBefore, homeBefore: page.postsBefore, homeId: page.homeId });
       if (same) repaintAll(); else { paintAll(); if (stick) toBottom(); }
     } catch { /* 次の動きで読み直す */ }
   }
@@ -487,6 +537,7 @@ export function createFeed(host) {
       if (view?.kind !== 'channel' || !view.id) { this.hide(); return; }
       const same = S.id === view.id && S.ready;
       S.id = view.id;
+      S.viewThread = view.threadId ?? null;
       composer.setDraftKey(feedDraftKey(view.id));   // 書きかけはチャンネルごと（別のチャンネルへ移っても残り、戻ると出る）
       root.hidden = false;
       if (emptyNote) emptyNote.hidden = true;
