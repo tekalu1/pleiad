@@ -369,7 +369,7 @@ export default async function (t) {
     assert.deepEqual(openedWith, { url: 'file:///D:/dev/demo/report/index.html', newTab: true, reuse: true, source: { kind: 'file', label: 'report/index.html' } }, '使い回しの指定と印が main へ渡る');
   });
   t.ok('画面: 止めた件数の一行（http も数える・読み込むは https があるときだけ・写しは書き直す）・アドレス欄の相対パスと「可視化 · 題」・⋯ のファイルの操作は PC のファイルと写しのタブだけ', true);
-  // ---- 画面: タブの列にプロフィールの選択は無い（ADR 0078 は ADR 0142 で置換）
+  // ---- 画面: タブの列にプロフィールの選択は無い（ADR 0078 は ADR 0148 で置換）
   await withWindow({ plyDesktop: { browser: null } }, async () => {
     const bridge = fakeBridge();
     window.plyDesktop.browser = bridge;

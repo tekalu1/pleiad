@@ -22,7 +22,7 @@ agent-browser 0.38.1 の state ルートには専用の変更変数がない。`
 
 `ply_browser`（`core/browser-bridge.mjs`、`/mcp/browser`）は、エージェントのブラウザー操作の MCP の口の骨組み。内蔵ブラウザーを渡すターン（デスクトップ版で中継がある）にだけ渡す: Claude は `mcpServers`（ツールごとの承認は出さない）、Codex は `mcp_servers`（自動で承認）、Antigravity は stdio の中継 `core/agy-context-relay.mjs --browser`（`PLY_BROWSER_URL`・`PLY_BROWSER_AUTHORIZATION`）。agy は agent.md の `mcpServers` の先頭 1 本しか起こさない（1.2.14 で実測）ので、ply_context・ply_computer と一緒に渡すときは旗を並べた 1 本の中継に束ねる（`--context --computer --browser`。ツール名で振り分ける）。口は会話ごとに鍵付きで開き、会話のあいだ同じ値。
 
-今は載せるツールが無い（`tools/list` は空で、呼び出しは断る）。エージェントの操作を PC の Chrome の専用の窓に移す段で、ツール（Chrome のプロフィールの一覧と切り替え・`hand_to_user`・`close_browser_window`）を足す（[ADR 0142](adr/0142-agent-browser-in-chrome.md)。提案）。内蔵ブラウザーのプロフィール（保存領域を名前付きで分ける機能。[ADR 0078](adr/0078-inapp-browser-profiles.md)）は ADR 0142 で削除した。古い `prefs.json` の `browserProfiles` などの値と、メイン以外の保存領域のディレクトリが残っていても読まない。
+今は載せるツールが無い（`tools/list` は空で、呼び出しは断る）。エージェントの操作を PC の Chrome の専用の窓に移す段で、ツール（Chrome のプロフィールの一覧と切り替え・`hand_to_user`・`close_browser_window`）を足す（[ADR 0148](adr/0148-agent-browser-in-chrome.md)。提案）。内蔵ブラウザーのプロフィール（保存領域を名前付きで分ける機能。[ADR 0078](adr/0078-inapp-browser-profiles.md)）は ADR 0148 で削除した。古い `prefs.json` の `browserProfiles` などの値と、メイン以外の保存領域のディレクトリが残っていても読まない。
 
 ## 使える場所
 

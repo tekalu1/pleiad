@@ -841,7 +841,7 @@ function computerConnection(turn) {
   return entry.computer;
 }
 
-// ---- ply_browser（エージェントのブラウザー操作の口。core/browser-bridge.mjs、ADR 0142）。ツールはまだ載せていない ----------------------------
+// ---- ply_browser（エージェントのブラウザー操作の口。core/browser-bridge.mjs、ADR 0148）。ツールはまだ載せていない ----------------------------
 const browserBridge = createBrowserBridge();
 /** このターンに渡す ply_browser（url・headers）。会話のあいだ同じ口を使う（agy は起動時にしか渡せない） */
 function browserRuntimeFor(turn) {

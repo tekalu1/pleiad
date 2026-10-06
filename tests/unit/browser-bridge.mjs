@@ -1,4 +1,4 @@
-// ply_browser（エージェントのブラウザー操作の口。core/browser-bridge.mjs、ADR 0142）の骨組みと、内蔵ブラウザーのプロフィール（ADR 0078）を削除した後の形。
+// ply_browser（エージェントのブラウザー操作の口。core/browser-bridge.mjs、ADR 0148）の骨組みと、内蔵ブラウザーのプロフィール（ADR 0078）を削除した後の形。
 //   - 口: 会話ごとの Bearer の鍵・origin の検査・initialize / tools/list / tools/call（載せるツールは無いので呼び出しは断る）
 //   - サーバー越し（fake + parentPort の身代わり）: 設定・中継の準備・新しい会話にプロフィールが無い。ply_browser は渡るが、エージェントへの指示にプロフィールの段落が無い
 //   - agy: 2 つ以上のサーバーは 1 本の中継に束ねる（agy は agent.md の mcpServers の先頭 1 本しか起こさない。1.2.14 で実測）

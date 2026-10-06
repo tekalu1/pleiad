@@ -82,4 +82,4 @@
 
 ## 追記（2026-10-06）: `browser.*` の操作は Chrome のプロフィールへ
 
-内蔵ブラウザーのプロフィールの削除（[ADR 0142](0142-agent-browser-in-chrome.md)）で、`browser.listProfiles`・`browser.useProfile`・`browser.setProfile` は無くなった。`ply_browser` のツール名と渡し方は残り、プロフィールのツールは Chrome のプロフィールを指す形で、`hand_to_user`・`close_browser_window` とともに後の段で載せる。
+内蔵ブラウザーのプロフィールの削除（[ADR 0148](0148-agent-browser-in-chrome.md)）で、`browser.listProfiles`・`browser.useProfile`・`browser.setProfile` は無くなった。`ply_browser` のツール名と渡し方は残り、プロフィールのツールは Chrome のプロフィールを指す形で、`hand_to_user`・`close_browser_window` とともに後の段で載せる。

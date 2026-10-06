@@ -40,4 +40,4 @@
 
 ## 追記（2026-10-06）: プロフィールの段落は無くなる
 
-内蔵ブラウザーのプロフィール（[ADR 0078](0078-inapp-browser-profiles.md)）は削除された（[ADR 0142](0142-agent-browser-in-chrome.md)）。上の「影響」のプロフィールの段落は、保存領域が `persist:pleiad-browser` の 1 つに戻ることで読み替える。また、開いた `file:` のタブはエージェントから見えない（エージェントは内蔵ブラウザーを触らない）。
+内蔵ブラウザーのプロフィール（[ADR 0078](0078-inapp-browser-profiles.md)）は削除された（[ADR 0148](0148-agent-browser-in-chrome.md)）。上の「影響」のプロフィールの段落は、保存領域が `persist:pleiad-browser` の 1 つに戻ることで読み替える。また、開いた `file:` のタブはエージェントから見えない（エージェントは内蔵ブラウザーを触らない）。

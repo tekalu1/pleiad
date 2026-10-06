@@ -28,4 +28,4 @@
 
 ## 追記（2026-10-06）: エージェントの操作は Chrome へ
 
-[ADR 0142](0142-agent-browser-in-chrome.md) で、エージェントのブラウザー操作は PC の Chrome の専用の窓に移る。内蔵ブラウザーは**人が見るだけのビューア**として残り、エージェントは触らない（「エージェントの操作は ADR 0043」「同じ `persist:pleiad-browser` をエージェントと共有」はこの範囲で置き換わる）。保存領域は `persist:pleiad-browser` の 1 つ（人のログイン用）。「ユーザーの Chrome につなぐ」は採らなかった案だったが、ADR 0142 で採る（Cookie は写さず、Chrome へ直接つなぐ）。
+[ADR 0148](0148-agent-browser-in-chrome.md) で、エージェントのブラウザー操作は PC の Chrome の専用の窓に移る。内蔵ブラウザーは**人が見るだけのビューア**として残り、エージェントは触らない（「エージェントの操作は ADR 0043」「同じ `persist:pleiad-browser` をエージェントと共有」はこの範囲で置き換わる）。保存領域は `persist:pleiad-browser` の 1 つ（人のログイン用）。「ユーザーの Chrome につなぐ」は採らなかった案だったが、ADR 0148 で採る（Cookie は写さず、Chrome へ直接つなぐ）。

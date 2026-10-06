@@ -1,5 +1,5 @@
 // ply_browser: エージェントのブラウザー操作のための MCP の口（core/agent-bridge.mjs と同じ型。会話ごとに Bearer の付いた HTTP）。
-// 内蔵ブラウザーを渡すターン（デスクトップ版で中継がある）にだけ渡す。ADR 0142 でエージェントの接続先が Chrome の専用の窓に移るまでの骨組みで、
+// 内蔵ブラウザーを渡すターン（デスクトップ版で中継がある）にだけ渡す。ADR 0148 でエージェントの接続先が Chrome の専用の窓に移るまでの骨組みで、
 // 載せるツール（Chrome のプロフィールの一覧・hand_to_user・close_browser_window）は browserTools に足す。
 // 今は空で、3 つのバックエンドへの渡し方・Bearer の鍵・agy の中継への束ねだけを保つ
 import crypto from 'node:crypto';
