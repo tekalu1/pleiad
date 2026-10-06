@@ -207,17 +207,18 @@ agent-host-runtime\
 
 | 向き | 種類 | 中身 |
 |---|---|---|
-| 親→ | `hello` | `{ secret, protocol: [min, max], role: 'server', pid, appVersion }`。`secret` は保持役が起動時に作り、`run\` の利用者だけが読めるファイルに書いたもの。合わなければ何も返さず切る |
-| ←保持役 | `welcome` | `{ protocol, generation, children: [{ id, pid, alive, exitCode, label, seq, acked, marks, truncated, pendingRequests }], stash }` |
-| 親→ | `spawn` | `{ id, command, args, cwd, env, framing: 'lines', policy: 'claude-control' \| 'jsonrpc' \| 'none', label }`。`policy` は答えていない依頼の見分け方だけを決める（`claude-control` は stream-json の `control_request` を `request_id` で控え、渡し直すのは `mcp_message` だけ。`jsonrpc` は `id` を持つ依頼を控える。`none` は行だけ） |
-| 親→ | `attach` | `{ id }` 既存の子に付ける（`spawn` と同じく SDK の最初の stdin の書き込みより前に送る。§4.4） |
-| 親→ | `write` / `end` / `kill` | `{ id, data }` / `{ id }`（stdin を閉じる）/ `{ id, tree: true }` |
-| 親→ | `ack` / `mark` / `unmark` / `label` | 受け取った通番 / 印を付ける・外す / 札を置き直す |
-| 親→ | `replay` | `{ id, from, to }` 記録の一部を読み直す（組み立て直し用。§4.5） |
-| 親→ | `stash` / `detach` | 預かり物を置く / 手を離す（以後はその親からの `write`・`end`・`kill` を転送せず、記録だけを溜める） |
-| ←保持役 | `out` / `err` / `exit` / `overflow` | `{ id, seq, line }` / `{ id, chunk }` / `{ id, code, signal }` / `{ id }` |
+| 親→ | `hello` | `{ secret, protocol: [min, max], role: 'server', pid, appVersion }`。`secret` は保持役が起動時に作り、`run\` の利用者だけが読めるファイルに書いたもの。合わなければ何も返さず切る。合ったうえで版が合わなければ `reject { reason: 'protocol', range, generation, appVersion, pid }` を返して切る |
+| ←保持役 | `welcome` | `{ protocol, generation, range, appVersion, pid, children: [{ id, pid, alive, exitCode, signal, error, label, policy, seq, first, acked, marks, truncated, pendingRequests: [{ requestId, seq, subtype }], stderr }], stash }` |
+| 親→ | `spawn` | `{ id, command, args, cwd, env, framing: 'lines', policy: 'claude-control' \| 'jsonrpc' \| 'none', label }`。`policy` は答えていない依頼の見分け方だけを決める（`claude-control` は stream-json の `control_request` を `request_id` で控え、渡し直すのは `mcp_message` だけ。`jsonrpc` は `id` と `method` を持つ依頼を控える。`none` は行だけ）。起こせなければ `exit { error }` で届く |
+| 親→ | `attach` | `{ id, from? }` 既存の子に付ける（`spawn` と同じく SDK の最初の stdin の書き込みより前に送る。§4.4）。`from` の既定は ack の次。答えは `attached`（子の状態）で、続けて `from` より前にある控えの渡し直し（`out` の `redelivered: true`）→ 記録の続き |
+| 親→ | `write` / `end` / `kill` | `{ id, data }`（行になった分だけ子へ渡す）/ `{ id }`（stdin を閉じる）/ `{ id, tree: true }` |
+| 親→ | `ack` / `mark` / `unmark` / `label` | 受け取った通番 `{ id, seq }` / 印を付ける・外す `{ id, name, seq? }`（位置の既定は次の行）/ 札を置き直す `{ id, label }` |
+| 親→ | `replay` | `{ id, from, to, reqId }` 記録の一部を読み直す（組み立て直し用。§4.5）。答えは `replay { reqId, lines: [[seq, line]], done, first, last, truncated }`（1 MB ごとに分けて、最後に `done: true`） |
+| 親→ | `stash` / `detach` / `release` / `shutdown` | 預かり物を置く `{ stash }`（全体の値）/ 手を離す `{ id? }`（id 無しは全部。以後はその親からの `write`・`end`・`kill`・`ack` などを子へ転送せず、記録だけを溜める。答えは `detached`）/ 終わった子の記録を捨てる `{ id }` / 子を木ごと止めて終わる |
+| ←保持役 | `out` / `err` / `exit` / `overflow` | `{ id, seq, line, redelivered? }` / `{ id, chunk }` / `{ id, code, signal, error? }`（out を全部流した後に 1 回）/ `{ id, reason: 'record' \| 'line', first?, bytes? }`（記録から落ちた分・長すぎて捨てた行） |
+| ←保持役 | `attached` / `detached` / `error` / `bye` | `attach` と `detach` の答え / 断った依頼 `{ id?, op, reason }` / `{ reason: 'replaced' \| 'closing' }` |
 
-- 保持役の起動はサーバー（必要になったとき。§3.2 の detached の起動）。子が 1 つも無く、親が 10 分つながっていなければ終わる
+- 保持役の起動はサーバー（必要になったとき。§3.2 の detached の起動）。生きている子が 1 つも無く、親が 10 分つながっていなければ終わる。実装は `core/holder/`（plan.md 2a の実装のメモ）。親の接続は常に 1 つ（後から合格した親が勝つ）。記録は親が読まなくても溜め、親へは記録のカーソルから流す（読まない親には書き溜めない）
 - 保持役が抱える子の env には秘密（OAuth のトークン・接続先のキー）が入る。パイプはメモリの中だけを通し、記録（`logs\holder.log`）には書かない
 - パイプの既定の DACL は同じ利用者以外にも読みの接続を許す【推測】ので、`hello` の `secret` が合うまで何も送らない。可能なら `GetNamedPipeClientProcessId` で相手の利用者も確かめる（koffi が使える）
 

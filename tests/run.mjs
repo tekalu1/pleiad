@@ -72,6 +72,12 @@ const SUITES = [
   './unit/main-port.mjs',
   // main とサーバーを結ぶ名前付きパイプの口（段階 1 の 1-2）: 符号化・行の分け方・握手の拒否・往復と順序・大きなバイナリー・切断と再接続・別プロセスのサーバー
   './unit/main-link.mjs',
+  // ターンの保持役の本体（段階 2 の 2a）: 切断と付け直し・控えの渡し直し・読まない親でも詰まらない・detach 後は転送しない・記録の上限・印と ack・終わり方・木ごとの強制終了・idle
+  './unit/holder-core.mjs',
+  // ターンの保持役の握手と名前（段階 2 の 2a）: secret・規約の版の不一致・握手前の操作・世代の並走・二重起動の防止・launchHolder の Job の分岐
+  './unit/holder-handshake.mjs',
+  // ターンの保持役の本物のプロセス（段階 2 の 2a）: 起こした側が終わっても残る・秘密のファイルとログ・同時に起こしても 1 つ・shutdown・idle・後に残らない
+  './unit/holder-process.mjs',
   // main が居ない間の機能ごとの扱い（段階 1 の 1-5）: secret の待ち・computer use の停止・内蔵ブラウザーの写しと復元・screencast・os-open・openExternal・猶予
   './unit/main-away.mjs',
   // 内蔵ブラウザーの付け直し（main 側）: 中継を同じポートと鍵で立て直す・タブの写しの書き出しと開き直し・橋の流れ
