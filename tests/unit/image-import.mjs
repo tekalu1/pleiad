@@ -8,7 +8,7 @@ import fs from 'node:fs/promises';
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
-import { createImageImporter, sniffImage, IMPORT_MAX_BYTES, IMPORT_MAX_ACTIVE, ImportFailed } from '../../core/image-import.mjs';
+import { createImageImporter, sniffImage, imageSize, IMPORT_MAX_BYTES, IMPORT_MAX_ACTIVE, ImportFailed } from '../../core/image-import.mjs';
 import { createUrlGuard } from '../../core/mcp-url-guard.mjs';
 import { pinnedFetch } from '../../core/pinned-fetch.mjs';
 import { startServer, ROOT } from '../lib/server.mjs';
@@ -22,6 +22,16 @@ const JPEG = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.alloc(
 const GIF = Buffer.concat([Buffer.from('GIF89a'), Buffer.alloc(40, 3)]);
 const WEBP = Buffer.concat([Buffer.from('RIFF'), Buffer.from([40, 0, 0, 0]), Buffer.from('WEBP'), Buffer.alloc(40, 4)]);
 const avif = (brand) => { const b = Buffer.alloc(24); b.writeUInt32BE(24, 0); b.write('ftyp', 4, 'latin1'); b.write(brand, 8, 'latin1'); b.write('mif1', 16, 'latin1'); return b; };
+// 先頭のヘッダーだけを持つ、大きさ（w×h）つきの画像
+const pngOf = (w, h) => { const b = Buffer.alloc(33); Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(b); b.writeUInt32BE(13, 8); b.write('IHDR', 12, 'latin1'); b.writeUInt32BE(w, 16); b.writeUInt32BE(h, 20); return b; };
+const gifOf = (w, h) => { const b = Buffer.alloc(13); b.write('GIF89a', 0, 'latin1'); b.writeUInt16LE(w, 6); b.writeUInt16LE(h, 8); return b; };
+const u16 = (n) => { const b = Buffer.alloc(2); b.writeUInt16BE(n); return b; };
+const jpegOf = (w, h) => Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10]), Buffer.alloc(14), Buffer.from([0xff, 0xc0, 0x00, 0x11, 0x08]), u16(h), u16(w), Buffer.alloc(12)]);
+const webpHead = (fmt) => { const b = Buffer.alloc(40); b.write('RIFF', 0, 'latin1'); b.writeUInt32LE(32, 4); b.write('WEBP', 8, 'latin1'); b.write(fmt, 12, 'latin1'); return b; };
+const webpX = (w, h) => { const b = webpHead('VP8X'); b.writeUIntLE(w - 1, 24, 3); b.writeUIntLE(h - 1, 27, 3); return b; };
+const webpL = (w, h) => { const b = webpHead('VP8L'); b[20] = 0x2f; b.writeUInt32LE((w - 1) | ((h - 1) << 14), 21); return b; };
+const webpLossy = (w, h) => { const b = webpHead('VP8 '); b.set([0x9d, 0x01, 0x2a], 23); b.writeUInt16LE(w, 26); b.writeUInt16LE(h, 28); return b; };
+const avifOf = (w, h) => { const ispe = Buffer.alloc(20); ispe.writeUInt32BE(20, 0); ispe.write('ispe', 4, 'latin1'); ispe.writeUInt32BE(w, 12); ispe.writeUInt32BE(h, 16); return Buffer.concat([avif('avif'), ispe]); };
 const SVG = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><script>alert(1)</script></svg>');
 const HTML = Buffer.from('<!doctype html><title>x</title>');
 
@@ -50,6 +60,15 @@ export default async function (t) {
       && sniffImage(avif('avif'))?.mime === 'image/avif' && sniffImage(avif('avis'))?.ext === 'avif');
     t.ok('先頭のバイト: SVG・HTML・短すぎるもの・HEIC（avif でない ftyp）は画像にしない',
       sniffImage(SVG) === null && sniffImage(HTML) === null && sniffImage(Buffer.alloc(0)) === null && sniffImage(Buffer.from([0x89, 0x50])) === null && sniffImage(avif('heic')) === null);
+
+    // ---- 大きさ（先頭のヘッダー）。縦横とも 32px 以下の画像（追跡ピクセル・絵文字）は置かない
+    const sizeOf = (buf) => JSON.stringify(imageSize(buf, sniffImage(buf)));
+    t.ok('大きさ: PNG・GIF・JPEG（APP0 の後の SOF）・WebP（VP8X・VP8L・VP8）・AVIF（ispe）のヘッダーから縦横を読む',
+      sizeOf(pngOf(640, 400)) === '{"width":640,"height":400}' && sizeOf(gifOf(20, 10)) === '{"width":20,"height":10}' && sizeOf(jpegOf(300, 200)) === '{"width":300,"height":200}'
+      && sizeOf(webpX(1024, 768)) === '{"width":1024,"height":768}' && sizeOf(webpL(33, 7)) === '{"width":33,"height":7}' && sizeOf(webpLossy(500, 250)) === '{"width":500,"height":250}'
+      && sizeOf(avifOf(1200, 630)) === '{"width":1200,"height":630}');
+    t.ok('大きさ: 短すぎる・SOF が無い JPEG・ispe が無い AVIF は null', imageSize(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0]), { ext: 'png' }) === null
+      && imageSize(Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x04, 0, 0]), Buffer.alloc(30, 7)]), { ext: 'jpg' }) === null && imageSize(avif('avif'), { ext: 'avif' }) === null);
 
     // ---- 行き先の検査（取りに行く前に断る。fetch は 1 度も呼ばれない）
     let calls = [];
@@ -133,6 +152,15 @@ export default async function (t) {
     t.ok('404・500 は取れなかったことにする', await code(importerWith({ table, dir, fetchFn: async () => respond('no', { status: 404 }) }).importImage({ url: 'https://img.example.com/n.png' })) === 'http-status'
       && await code(importerWith({ table, dir, fetchFn: async () => respond('no', { status: 500 }) }).importImage({ url: 'https://img.example.com/n.png' })) === 'http-status');
     t.ok('接続できない（fetch が例外）は取れなかったことにする', await code(importerWith({ table, dir, fetchFn: async () => { throw new TypeError('fetch failed'); } }).importImage({ url: 'https://img.example.com/o.png' })) === 'network');
+
+    const small = (buf) => importerWith({ table, dir, fetchFn: async () => respond(buf) });
+    t.ok('縦横とも 32px 以下の画像は置かない（1×1・32×32。置き場にも残さない）', await code(small(pngOf(1, 1)).importImage({ url: 'https://img.example.com/px.png', sessionId: 'tiny' })) === 'too-small'
+      && await code(small(pngOf(32, 32)).importImage({ url: 'https://img.example.com/e.png', sessionId: 'tiny' })) === 'too-small'
+      && await code(small(jpegOf(16, 16)).importImage({ url: 'https://img.example.com/e.jpg', sessionId: 'tiny' })) === 'too-small'
+      && await code(small(gifOf(1, 1)).importImage({ url: 'https://img.example.com/e.gif', sessionId: 'tiny' })) === 'too-small'
+      && await fs.readdir(path.join(dir, 'tiny')).catch(() => []).then((l) => l.length === 0));
+    t.ok('どちらかが 33px 以上なら置く（33×32・32×300・大きさが読めないもの）', (await small(pngOf(33, 32)).importImage({ url: 'https://img.example.com/a.png' })).bytes === 33
+      && (await small(pngOf(32, 300)).importImage({ url: 'https://img.example.com/b.png' })).kind === 'image' && (await small(PNG).importImage({ url: 'https://img.example.com/c.png' })).bytes === PNG.length);
 
     // ---- 時間切れ・やめる・同時の上限
     const hang = (url, init) => new Promise((_, rej) => init.signal.addEventListener('abort', () => rej(init.signal.reason), { once: true }));

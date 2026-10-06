@@ -182,6 +182,7 @@
       "label": "貼り付けた画像の URL",
       "tooLarge": "画像が大きすぎます（上限 10MB）",
       "notImage": "画像（PNG・JPEG・GIF・WebP・AVIF）ではありません",
+      "tooSmall": "小さな画像（縦横 32px 以下）は取り込みません",
       "status": "画像の取得先が HTTP {{status}} を返しました",
       "timeout": "画像の取得が時間内に終わりませんでした",
       "network": "画像を取得できませんでした",

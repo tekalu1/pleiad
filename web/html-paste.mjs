@@ -37,7 +37,7 @@ const hidden = (n) => {
 
 /** 幅・高さの指定（属性・style）の小さい方が SMALL_IMAGE_PX 以下（em・rem は 2 以下）か */
 function smallImage(n) {
-  if (/(?:^|[\s_-])emoji(?:$|[\s_-])/i.test(n.getAttribute('class') ?? '') || n.getAttribute('data-stringify-emoji')) return true;
+  if (/(?:^|[\s_-])emoji(?:$|[\s_-])/i.test(n.getAttribute('class') ?? '')) return true;
   const sizes = [];
   for (const raw of [n.getAttribute('width'), n.getAttribute('height'), styleOf(n, 'width'), styleOf(n, 'height')]) {
     const m = /^\s*(\d+(?:\.\d+)?)\s*(px|em|rem)?\s*$/i.exec(raw ?? '');

@@ -29,7 +29,7 @@ export default async function (t) {
   t.ok('往復: 変換した Markdown を入力欄の文書にして戻しても 1 文字も変わらない', round(chromeMd));
 
   // ---- チャット風（Slack の HTML の形。専用の処理は無い）
-  const chat = `<div aria-roledescription="message"><span><strong>Aoi</strong><span> 10:32</span></span><div>デプロイ前に<span> </span><img alt=":eyes:" data-stringify-emoji=":eyes:" src="https://cdn.example.com/emoji/eyes@2x.png" style="height:1.2em;width:1.2em"><span> </span>お願いします<a href="https://chat.example.com/team/U0000" style="background: #e8f5fa">@Ren</a>。本番は今夜 22:00 です。</div>`
+  const chat = `<div aria-roledescription="message"><span><strong>Aoi</strong><span> 10:32</span></span><div>デプロイ前に<span> </span><img alt=":eyes:" src="https://cdn.example.com/emoji/eyes@2x.png" style="height:1.2em;width:1.2em"><span> </span>お願いします<a href="https://chat.example.com/team/U0000" style="background: #e8f5fa">@Ren</a>。本番は今夜 22:00 です。</div>`
     + `<blockquote style="border-left: 4px solid #ccc">先に<b>ステージング</b>を見ておく</blockquote><pre style="background: #f8f8f8">./deploy.sh --env prod</pre>`
     + `<a class="thumbnailWrapper" href="https://files.example.com/files-pri/T0000-F0000/image.png"><div style="height: 120px; width: 200px;"></div></a></div>`;
   same('チャット風の HTML: 名前の太字・絵文字の画像は alt の字・メンションはリンクのまま・引用・pre。認証付きの空の枠は何も残さない', chat,

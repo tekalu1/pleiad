@@ -19,6 +19,7 @@ import { pinnedFetch } from './pinned-fetch.mjs';
 export const IMPORT_MAX_BYTES = 10 * 1024 * 1024;
 export const IMPORT_TIMEOUT_MS = 15_000;
 export const IMPORT_MAX_ACTIVE = 6;
+export const IMPORT_SMALL_PX = 32;   // 縦横とも これ以下の画像（指定が無くても実寸で分かる追跡ピクセル・絵文字）は札にしない（web/html-paste.mjs の SMALL_IMAGE_PX と同じ）
 const USER_AGENT = 'Mozilla/5.0 (compatible; Pleiad)';
 
 /** 取れなかった。code は理由の種類（画面には出さない。ログとテストが見分ける） */
@@ -42,6 +43,41 @@ export function sniffImage(buf) {
     if (brands.some(x => x === 'avif' || x === 'avis')) return { mime: 'image/avif', ext: 'avif' };
   }
   return null;
+}
+
+/** 画像の大きさ（縦横の画素）。先頭のヘッダーだけを見る。読めなければ null */
+export function imageSize(buf, kind) {
+  try {
+    switch (kind.ext) {
+      case 'png': return buf.length >= 24 ? { width: buf.readUInt32BE(16), height: buf.readUInt32BE(20) } : null;
+      case 'gif': return buf.length >= 10 ? { width: buf.readUInt16LE(6), height: buf.readUInt16LE(8) } : null;
+      case 'jpg': {
+        // SOF のマーカー（FF C0〜CF。C4・C8・CC は別の印）: 長さ 2・精度 1・高さ 2・幅 2
+        let i = 2;
+        while (i + 9 < buf.length) {
+          if (buf[i] !== 0xff) { i++; continue; }
+          const m = buf[i + 1];
+          if (m === 0xff) { i++; continue; }
+          if (m >= 0xc0 && m <= 0xcf && m !== 0xc4 && m !== 0xc8 && m !== 0xcc) return { width: buf.readUInt16BE(i + 7), height: buf.readUInt16BE(i + 5) };
+          if (m === 0xd8 || (m >= 0xd0 && m <= 0xd7) || m === 0x01) { i += 2; continue; }
+          i += 2 + buf.readUInt16BE(i + 2);
+        }
+        return null;
+      }
+      case 'webp': {
+        const fmt = buf.toString('latin1', 12, 16);
+        if (fmt === 'VP8X' && buf.length >= 30) return { width: 1 + buf.readUIntLE(24, 3), height: 1 + buf.readUIntLE(27, 3) };
+        if (fmt === 'VP8 ' && buf.length >= 30) return { width: buf.readUInt16LE(26) & 0x3fff, height: buf.readUInt16LE(28) & 0x3fff };
+        if (fmt === 'VP8L' && buf.length >= 25) { const bits = buf.readUInt32LE(21); return { width: (bits & 0x3fff) + 1, height: ((bits >>> 14) & 0x3fff) + 1 }; }
+        return null;
+      }
+      case 'avif': {
+        const at = buf.indexOf('ispe', 0, 'latin1');   // 箱: 種類 4・版と旗 4・幅 4・高さ 4
+        return at > 0 && at + 16 <= buf.length ? { width: buf.readUInt32BE(at + 8), height: buf.readUInt32BE(at + 12) } : null;
+      }
+      default: return null;
+    }
+  } catch { return null; }
 }
 
 /** 札の名前になる字（alt など）から、置き場のファイル名の元を作る。拡張子は中身から決めるので落とす */
@@ -123,6 +159,8 @@ export function createImageImporter({ target, lookup, fetchFn = pinnedFetch, gua
       }
       const kind = sniffImage(buf);
       if (!kind) throw new ImportFailed('not-image', t('attach.import.notImage'));
+      const size = imageSize(buf, kind);
+      if (size && size.width <= IMPORT_SMALL_PX && size.height <= IMPORT_SMALL_PX) throw new ImportFailed('too-small', t('attach.import.tooSmall'));
       if (signal.aborted) throw stopped();
       const fileName = `${baseNameOf(name)}.${kind.ext}`;
       const { dir, rel } = target(sessionId, fileName);
