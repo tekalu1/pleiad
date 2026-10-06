@@ -13,6 +13,9 @@ const LOCK_SUFFIX = '.lock.db';
 /** ファイル名 <版>-<pid>.lock.db の分解（版にも - が入る: 0.9.1-0123456789ab） */
 const LOCK_NAME = /^(.+)-(\d+)\.lock\.db$/;
 
+/** 付けている印の接続。呼び出し側が外す関数を捨てても、接続（=ロック）が GC で閉じないよう、外すまでここで持つ（core/data-lock.mjs の held と同じ） */
+const held = new Set();
+
 const isBusy = e => e?.errcode === 5 || e?.errcode === 6 || /database is locked|SQLITE_BUSY|SQLITE_LOCKED/i.test(String(e?.message ?? ''));
 
 export const runtimeLockFile = (root, key, pid = process.pid) => path.join(root, RUN_DIR, `${key}-${pid}${LOCK_SUFFIX}`);
@@ -36,7 +39,7 @@ function lockDatabase(file) {
 
 /**
  * root の版 key を使っている印を付ける。戻り値は外す関数（何度呼んでもよい）。プロセスが終われば OS が外す。
- * 印を付けられなくても（書き込めない置き場など）起動は止めず、null を返す
+ * 印を付けられなくても（書き込めない置き場など）起動は止めず、null を返す。戻り値を捨てても印は外れない（接続はモジュールが持つ）
  */
 export function markRuntimeInUse({ root, key, pid = process.pid }) {
   let db;
@@ -44,10 +47,12 @@ export function markRuntimeInUse({ root, key, pid = process.pid }) {
     fs.mkdirSync(path.join(root, RUN_DIR), { recursive: true });
     db = lockDatabase(runtimeLockFile(root, key, pid));
   } catch { return null; }
+  held.add(db);
   let released = false;
   return () => {
     if (released) return;
     released = true;
+    held.delete(db);
     try { db.close(); } catch { /* 閉じるだけ */ }
     try { fs.rmSync(runtimeLockFile(root, key, pid), { force: true }); } catch { /* 残っても次の掃除が拾う */ }
   };

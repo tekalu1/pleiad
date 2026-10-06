@@ -315,6 +315,14 @@ export default async function (t) {
       child.kill();   // 強制終了（Windows は TerminateProcess）。OS がロックを外す
       await closed;
       t.ok('使用中の印: プロセスが強制終了されても OS が外し、残った印のファイルは掃除で消える（PID の生死は見ない）', isRuntimeInUse({ root: lockRoot, key }) === false && listRuntimeLockKeys(lockRoot).length === 0);
+      // 外す関数を捨てても（サーバーは捨てる）、GC で印は外れない
+      const dropper = spawn(process.execPath, [path.join(ROOT, 'tests', 'lib', 'runtime-lock-holder.mjs'), lockRoot, key, 'drop'], { stdio: ['pipe', 'pipe', 'inherit'] });
+      const dropped = await new Promise((resolve, reject) => { dropper.stdout.once('data', d => resolve(String(d).trim())); dropper.once('error', reject); dropper.once('exit', () => resolve('exit')); });
+      t.ok('使用中の印: 外す関数を捨てて GC が回っても、持っている間は使用中', dropped === 'held' && isRuntimeInUse({ root: lockRoot, key }) === true);
+      const droppedClosed = new Promise(resolve => dropper.once('exit', resolve));
+      dropper.kill();
+      await droppedClosed;
+      isRuntimeInUse({ root: lockRoot, key });
       // 壊れた印のファイル（SQLite でない）は持ち主のいない印として消す
       fs.mkdirSync(path.join(lockRoot, 'run'), { recursive: true });
       fs.writeFileSync(path.join(lockRoot, 'run', `${key}-999999.lock.db`), 'not a database');
