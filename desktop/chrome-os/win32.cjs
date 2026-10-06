@@ -27,7 +27,7 @@ const SWP_NOSIZE = 0x1, SWP_NOMOVE = 0x2, SWP_NOZORDER = 0x4, SWP_NOACTIVATE = 0
 /** 仮想デスクトップの右の端からの余白（物理画素）。窓がどのモニターにも入らない */
 const HIDDEN_MARGIN = 1000;
 const HIDDEN_X_MAX = 30000;
-const GUARD_MS = 150;
+const GUARD_MS = 100;
 
 const PRODUCTS = {
   chrome: {
@@ -324,6 +324,7 @@ function createWin32ChromeOs({ win32, log = () => {}, spawn = childProcess.spawn
       }
       entry.concealed = true;
       startGuard();
+      guardTick();   // 隠した窓がもう前面を取っていたら、すぐ返す
       return true;
     } catch (error) {
       log(`conceal failed: ${error.message}`);
@@ -388,33 +389,69 @@ function createWin32ChromeOs({ win32, log = () => {}, spawn = childProcess.spawn
   }
 
   // ---- 前面の見張り -------------------------------------------------------------------------------
-  // 隠している窓が前面を取ったら（window.open・Chrome 自身の前面化）、すぐ直前の前面へ返す。隠している窓があるあいだだけ動く
+  // 隠している窓が前面を取ったら（window.open・Chrome 自身の前面化）、すぐ「その窓が前面を取る直前の前面」へ返す。隠している窓があるあいだだけ動く。
+  // 直前の前面は、周期ごとの前面の移り変わり（before: 窓 → その窓が前面になる前の前面）で覚える。まだ隠していない新しい窓（popup）が先に前面を取り、
+  // 隠した後に見張りが気づく順でも、その窓の直前の前面（利用者の窓）へ返せる（実機で、直前の前面を「今の前面」と覚えて返せなかった: 2026-10-07）
+  /**
+   * 隠した窓が持ち主の窓（Chrome の吹き出し: 「このページを翻訳しますか？」・権限の確認・パスワードの保存など）も隠す。
+   * 吹き出しは持ち主の窓の外へ出るのでなく、別の最上位の窓として今の画面の位置に出て、前面まで取る（実機で、翻訳の確認が画面に出て前面を取った）。
+   * ブラウザーの窓だけ（持ち主が、隠している窓のとき）。隠している窓が見張りの間に増えるので、周期ごとに探す
+   */
+  function concealOwned(hidden) {
+    let handles = [];
+    try { handles = win32.topLevelWindows(); } catch { return; }
+    for (const hwnd of handles) {
+      if (hidden.has(hwnd) || refs.get(String(hwnd))?.kind === 'agent') continue;
+      let owner = 0;
+      try { owner = win32.ownerOf(hwnd); } catch { continue; }
+      if (!owner || !hidden.has(owner)) continue;
+      let info;
+      try { info = win32.windowInfo(hwnd); } catch { continue; }
+      if (info.className !== BROWSER_CLASS || !BROWSER_EXES.has(exeName(win32.processPath(info.pid))) || !info.visible) continue;
+      const ref = rememberAgent(hwnd);
+      if (conceal(ref)) { hidden.add(hwnd); log('conceal owned window'); }
+    }
+  }
   let guard = null;
-  let lastForeground = 0;
+  let current = 0;
+  const before = new Map();
+  let ticking = false;
   function guardTick() {
+    if (ticking) return;   // conceal の最後の guardTick から、見張りの中の conceal を呼び直さない
+    ticking = true;
+    try { guardBody(); } finally { ticking = false; }
+  }
+  function guardBody() {
     let fg = 0;
     try { fg = win32.foreground(); } catch { return; }
-    const hidden = [];
+    const hidden = new Set();
     for (const [id, entry] of [...refs]) {
       if (entry.kind !== 'agent' || !entry.concealed) continue;
       if (!alive(entry.hwnd)) { refs.delete(id); continue; }
-      hidden.push(entry);
+      hidden.add(entry.hwnd);
     }
-    if (!hidden.length) { stopGuard(); return; }
+    if (!hidden.size) { stopGuard(); return; }
+    concealOwned(hidden);
     if (!fg) return;
-    if (!hidden.some(entry => entry.hwnd === fg)) { lastForeground = fg; return; }
-    // 隠した窓が前面を取った。直前の前面（隠した窓でも、最小化された窓でもない）へ返す
-    const target = lastForeground;
-    if (!target || target === fg || !alive(target)) return;
+    if (fg !== current) {
+      if (current) { before.set(fg, current); if (before.size > 64) before.delete(before.keys().next().value); }
+      current = fg;
+    }
+    if (!hidden.has(fg)) return;
+    // 隠した窓が前面を取った。直前の前面（隠した窓でも、最小化・閉じた窓でもない）へ返す。直前も隠した窓なら、その前をたどる
+    let target = before.get(fg);
+    for (let hop = 0; target && hop < 4 && (hidden.has(target) || !alive(target)); hop += 1) target = before.get(target);
+    if (!target || target === fg || hidden.has(target) || !alive(target)) return;
     try {
       if (win32.windowInfo(target).iconic) return;
       const method = bring(target);
       log(`guard yield method=${method}`);
+      if (method !== 'failed') current = target;
     } catch (error) { log(`guard failed: ${error.message}`); }
   }
   function startGuard() {
     if (guard) return;
-    try { lastForeground = win32.foreground(); } catch { lastForeground = 0; }
+    try { current = win32.foreground(); } catch { current = 0; }
     guard = timers.setInterval(guardTick, guardMs);
     guard?.unref?.();
   }

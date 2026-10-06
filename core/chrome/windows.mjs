@@ -14,7 +14,7 @@ import { readLastUsedProfile } from './locate.mjs';
 
 /** 窓の大きさ（DIP）。右パネルの映像（第 5 段）の元の大きさ */
 export const WINDOW_DIP = Object.freeze({ width: 1100, height: 720 });
-const DEFAULT_TIMING = { hwndWaitMs: 3000, hwndPollMs: 50, targetWaitMs: 8000, targetPollMs: 50, popupWaitMs: 3000, navigateMs: 15_000 };
+const DEFAULT_TIMING = { hwndWaitMs: 3000, hwndPollMs: 20, targetWaitMs: 8000, targetPollMs: 50, popupWaitMs: 3000, navigateMs: 15_000 };
 
 /** 題に nonce を持つ小さなページ。窓の題が nonce になるので、層が HWND を見つけられる */
 export const nonceUrl = nonce => `data:text/html,<title>PLY-${nonce}</title>`;
@@ -89,7 +89,7 @@ export function createChromeWindows({ os, locate, log = () => {}, random = () =>
       if (found) {
         const profileDir = await readLastUsedProfile(locate?.userDataDir);
         const result = await os.launchWindow({ browser: found, profileDir, url: nonceUrl(nonce), nonce,
-          ...(locate?.custom ? { userDataDir: locate.userDataDir } : {}), ...(spot ? { position: spot, size: WINDOW_DIP } : {}) });
+          ...(locate?.custom ? { userDataDir: locate.userDataDir } : {}) });   // --window-position・--window-size は付けない（起動中の Chrome に渡す新しい窓では無視される。実機）
         launched = result?.ok === true;
         if (!launched) log('chrome-windows: launching chrome.exe failed (opens the window with createTarget)');
       }

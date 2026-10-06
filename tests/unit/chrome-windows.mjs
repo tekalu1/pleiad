@@ -89,10 +89,10 @@ export default async function (t) {
       const args = launches[0]?.args ?? {};
       t.ok('AGENT_HOST_CHROME_USER_DATA があるとき（locate.custom）は --user-data-dir にその User Data を渡す', args.userDataDir === r.chrome.userDataDir, JSON.stringify(args));
       t.ok('プロフィールは Local State が無ければ Default', args.profileDir === 'Default');
-      t.ok('窓の位置・大きさは、仮想デスクトップの右の外と決めた大きさ（DIP）を渡す（一瞬見えるのを避ける）', args.position?.x === 6000 && args.size?.width === WINDOW_DIP.width && args.size?.height === WINDOW_DIP.height, JSON.stringify(args));
+      t.ok('--window-position・--window-size は付けない（起動中の Chrome に渡す新しい窓では無視されることを実機で確かめた）', args.position == null && args.size == null, JSON.stringify(args));
       t.ok('URL は題に nonce を持つ data: のページで、nonce が渡される', args.url === nonceUrl(args.nonce) && /^[a-f0-9]{16}$/.test(args.nonce), String(args.url));
       const tab = tabInfo(r, tabId);
-      t.ok('窓は最小化せず、画面の外の決めた大きさ', r.fake.windows().find(w => w.windowId === tab?.windowId)?.state === 'normal' && r.fake.windowBounds(tab.windowId).left === 6000 && r.fake.windowBounds(tab.windowId).width === 1100);
+      t.ok('窓は最小化せず、決めた大きさ（Browser.setWindowBounds。画面の外へは conceal が動かす）', r.fake.windows().find(w => w.windowId === tab?.windowId)?.state === 'normal' && r.fake.windowBounds(tab.windowId).width === WINDOW_DIP.width && r.fake.windowBounds(tab.windowId).height === WINDOW_DIP.height);
       const hw = hwndOf(r, tab?.windowId);
       t.ok('題の nonce で窓を見つけて隠す（画面の外・タスクバーと Alt+Tab から外す・透明度 0・マウスの素通し）', concealedOk(hw) && hw.agent, JSON.stringify(hw));
       t.ok('最初のタブは nonce のページでなく、頼まれた URL（about:blank）', tab?.url === 'about:blank' && !a.raw.some(text => text.includes('PLY-')) && !r.logs.some(line => line.includes(args.nonce)));

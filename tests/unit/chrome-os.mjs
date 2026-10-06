@@ -461,6 +461,46 @@ export default async function (t) {
     t.ok('前面の窓の記録が溢れても、隠している窓の ref は残る', os.reveal(ref) === true);
   }
 
+  {
+    // 前面の見張り: まだ隠していない新しい窓（popup）が先に前面を取り、見張りがそれを見た後に隠した → その窓の直前の前面（利用者の窓）へ返す
+    // （直前の前面を「今の前面」と覚えると、隠した窓自身を直前と取り違えて返せなかった。実機: 2026-10-07）
+    const w = winWith();
+    w.add(501, { title: 'about:blank - Google Chrome', rect: { left: 0, top: 0, right: 486, bottom: 447 } });   // popup（150%: 324×298 DIP）
+    const os = createWin32ChromeOs({ win32: w, timers: { setInterval: () => 1, clearInterval: () => {} } });
+    os.conceal(os.findWindowByNonce(NONCE));
+    w.fg = 700; os.guardTick();
+    w.fg = 501; os.guardTick();   // popup が前面を取った。まだ隠していないので見張りは何もしない
+    t.ok('隠していない窓が前面を取っただけでは、見張りは返さない', w.fg === 501);
+    const popup = os.findWindowByBounds({ bounds: { left: 0, top: 0, width: 324, height: 298 } });
+    t.ok('popup の窓を隠すと、その窓が前面なら直前の前面（メモ帳）へすぐ返す（次の周期を待たない）', os.conceal(popup) === true && w.fg === 700, String(w.fg));
+    // 見張りが前面を取った窓を一度も見ないまま隠した場合も、その窓が前面になる前の前面（最後に見た前面）へ返す
+    w.add(502, { title: 'about:blank - Google Chrome', rect: { left: 10, top: 10, right: 496, bottom: 457 } });
+    w.fg = 502;
+    const second = os.findWindowByBounds({ bounds: { left: 7, top: 7, width: 324, height: 298 } });
+    t.ok('見張りが前面の移り変わりを見る前に隠した窓も、直前の前面へ返す', os.conceal(second) === true && w.fg === 700, String(w.fg));
+    // 直前の前面が隠した窓なら、その前までさかのぼる
+    w.fg = 500; os.guardTick();   // 隠した窓同士の移り変わり（700 → 500）
+    t.ok('隠した窓が前面を取れば返す（さかのぼる先は隠していない窓）', w.fg === 700);
+  }
+
+  {
+    // 隠した窓が持ち主の窓（翻訳の確認・権限の確認などの吹き出し）も隠す。実機で、翻訳の確認が画面に出て前面を取った（2026-10-07）
+    const w = winWith();
+    w.add(520, { title: 'このページを翻訳しますか？', owner: 500, rect: { left: 300, top: 150, right: 900, bottom: 400 } });   // 持ち主 = 隠す窓
+    w.add(521, { title: 'ほかの Chrome の吹き出し', owner: 700, rect: { left: 400, top: 150, right: 900, bottom: 400 } });   // 持ち主が隠す窓でない
+    w.add(522, { title: 'IME', className: 'IME', owner: 500 });                                                          // ブラウザーの窓でない
+    const os = createWin32ChromeOs({ win32: w, timers: { setInterval: () => 1, clearInterval: () => {} } });
+    os.conceal(os.findWindowByNonce(NONCE));
+    const bubble = w.windows.get(520);
+    t.ok('持ち主が隠した窓のブラウザーの窓（吹き出し）も、隠した直後の見張りで隠す（画面の外・透明・タスクバーから外す）', bubble.rect.left === 5480 && bubble.alpha === 0 && (bubble.exStyle & WS_EX_TOOLWINDOW) && (bubble.exStyle & WS_EX_LAYERED) && (bubble.exStyle & WS_EX_TRANSPARENT), JSON.stringify(bubble.rect));
+    t.ok('持ち主が隠した窓でない窓・ブラウザーの窓でない窓は触らない', w.windows.get(521).rect.left === 400 && w.windows.get(521).alpha === undefined && w.windows.get(522).alpha === undefined);
+    w.add(523, { title: '権限の確認', owner: 500, rect: { left: 350, top: 200, right: 800, bottom: 400 } });
+    os.guardTick();
+    t.ok('後から出た吹き出しも、次の周期で隠す', w.windows.get(523).rect.left === 5480 && w.windows.get(523).alpha === 0);
+    w.displays = [{ handle: 1, x: 0, y: 0, width: 1920, height: 1080, primary: true, dpi: 96 }];
+    t.ok('置き直し（reconceal）は吹き出しの窓も対象（親の窓と合わせて 3 つ）', os.reconceal() === 3 && w.windows.get(520).rect.left === 2920);
+  }
+
   // ===== 往復（core ⇄ main ⇄ 偽の Win32）: エージェントの窓の口 =====
   {
     const w = winWith();
