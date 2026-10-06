@@ -517,6 +517,7 @@ const SUITES = [
   // 通知の一覧（ベルのボタン。ADR 9102）: 重複しない・見ている会話は既読・既読の整合・あなた待ちの決着・再起動で残る・上限・削除で消える・出来事から作る規則
   './unit/notification-inbox.mjs',
   './unit/notification-inbox-server.mjs',
+  './unit/notification-inbox-ui.mjs',
   // --- channels-ui: 脇・流れ・スレッド・bot のページ (W1・W2・W3・W4) ---
   // 脇 (W1): Channels の並べ方・bot の状態・タブの点・検索の横断の行と開く先・Chats の木の bot の会話の行の配線（描画は目視と session-list-keys.cjs）
   './unit/channels-side-ui.mjs',

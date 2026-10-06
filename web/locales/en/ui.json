@@ -2858,6 +2858,69 @@
     "moreMatches_one": "{{count}} more. Type to narrow down",
     "moreMatches_other": "{{count}} more. Type to narrow down"
   },
+  "inbox": {
+    "bell": "Notifications",
+    "bellUnread": "Notifications ({{n}} unread)",
+    "bellWait": "Notifications ({{n}} unread, waiting for you)",
+    "panel": "Notifications",
+    "list": "Notification list",
+    "empty": "No new notifications",
+    "readAll": "Mark all read",
+    "more": "Show more",
+    "unreadMark": "Unread",
+    "filter": {
+      "label": "Filter",
+      "all": "All",
+      "wait": "Needs you",
+      "mention": "@you"
+    },
+    "line": {
+      "approval": {
+        "named": {
+          "open": "{{name}} is waiting for your approval",
+          "closed": "{{name}} was waiting for your approval"
+        },
+        "plain": {
+          "open": "An agent is waiting for your approval",
+          "closed": "An agent was waiting for your approval"
+        }
+      },
+      "question": {
+        "named": {
+          "open": "{{name}} is waiting for your answer",
+          "closed": "{{name}} was waiting for your answer"
+        },
+        "plain": {
+          "open": "An agent is waiting for your answer",
+          "closed": "An agent was waiting for your answer"
+        }
+      },
+      "failed": {
+        "named": "{{name}}'s turn failed",
+        "titled": "{{title}} failed",
+        "plain": "A conversation failed"
+      },
+      "done": {
+        "titled": "{{title}} finished",
+        "plain": "A conversation finished"
+      },
+      "mention": {
+        "named": "{{name}} wrote @you",
+        "plain": "A post mentions @you"
+      }
+    },
+    "place": {
+      "thread": "#{{channel}} › {{thread}}",
+      "channel": "#{{channel}}",
+      "chat": "Chats › {{title}}"
+    },
+    "outcome": {
+      "allowed": "Approved",
+      "answered": "Answered",
+      "denied": "Denied",
+      "cancelled": "Withdrawn"
+    }
+  },
   "notify": {
     "completed": "Work finished",
     "waitingReply": "Waiting for your reply",

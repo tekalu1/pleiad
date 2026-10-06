@@ -466,6 +466,7 @@ export function createThread(host) {
       composer.refresh();
       markSelected();
       if (seq === S.seq) composer.focus();
+      requestAnimationFrame(flushReveal);
     } catch (err) {
       if (seq !== S.seq) return;
       const box = el('div', 'ch-failed');
@@ -545,15 +546,23 @@ export function createThread(host) {
     if (log.scrollTop < 120) loadOlder();
   });
 
-  /** 目次から: 投稿へ送って、一瞬だけ強調する */
+  /** 目次・通知の一覧から: 投稿へ送って、一瞬（1.2 秒）だけ強調する。動きを減らす設定では滑らせず、明滅もしない（CSS の .flash） */
   function goTo(p) {
     const node = postEls.get(p.id);
     if (!node) return;
-    node.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    node.scrollIntoView({ block: 'center', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
     node.classList.remove('flash');
     void node.offsetWidth;
     node.classList.add('flash');
-    setTimeout(() => node.classList.remove('flash'), 1400);
+    setTimeout(() => node.classList.remove('flash'), 1300);
+  }
+  /** 通知の一覧（ADR 9102）から開いたとき、着いたら送って輪を付ける投稿。読み込みが済んでから flushReveal が使う */
+  let revealId = null;
+  function flushReveal() {
+    if (!revealId || !S.ready) return;
+    const p = S.index.get(revealId);
+    revealId = null;
+    if (p) goTo(p);
   }
 
   // ---------------------------------------------------------------- 承認のカード
@@ -687,8 +696,9 @@ export function createThread(host) {
   const feedLog = feedRoot.querySelector('.ch-log');
   if (feedLog) new MutationObserver(() => { if (S.threadId) markSelected(); }).observe(feedLog, { childList: true });
 
-  function open(channelId, threadId) {
+  function open(channelId, threadId, { postId = null } = {}) {
     if (!channelId || !threadId) return;
+    revealId = postId;
     const same = S.channelId === channelId && S.threadId === threadId;
     S.channelId = channelId;
     S.threadId = threadId;
@@ -696,6 +706,7 @@ export function createThread(host) {
     if (same) {
       markSelected();
       composer.focus();
+      flushReveal();
       return;
     }
     S.seq++;

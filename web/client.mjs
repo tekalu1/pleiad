@@ -98,6 +98,7 @@ import { streamMessages } from './stream-messages.mjs';
 import { createComposerWait } from './composer-wait.mjs';
 import { createConnectionStatus } from './connection-status.mjs';
 import { attentionCounts, paintOpenSidebar } from './open-sidebar-mark.mjs';
+import { setupNotificationInbox } from './notification-inbox.mjs';
 import { createConversationNav } from './conversation-nav-view.mjs';
 import { createConversationRail } from './conversation-rail.mjs';
 import { createConversationToc } from './conversation-toc.mjs';
@@ -2734,6 +2735,7 @@ function syncOutboxRows(messages) {
 function onEvent(ev, replay = false) {
   // bot・Channels・ルーティンの画面（web/channels/）。この画面の出来事ならここで終わる。ほかの出来事（permission など）も部品へ渡る
   if (channelsUi.onEvent(ev, replay)) return;
+  if (ev.type === 'notificationsChanged') { notificationInbox.onEvent(ev); return; }
   if (ev.type?.startsWith('shell.')) return onShellEvent(ev);
   if (ev.type === 'completionReady') {
     completionNotifications.completed(ev, state.sessions.find(s => s.id === ev.sessionId), replay);
@@ -5882,6 +5884,14 @@ const channelsUi = setupChannels({
   showMenu: (x, y, items, title) => showMenu(x, y, items, title),
   renderAssistantMarkdown, renderPresent,
 });
+// 通知ボタンと通知の一覧（承認済み 2026-10-06。web/notification-inbox.mjs）。件数は notificationsChanged、一覧は notifications.list
+const notificationInbox = setupNotificationInbox({
+  bell: $('notifBell'), panel: $('notifPanel'), veil: $('notifVeil'),
+  invoke: (op, args = {}) => cmd('invoke', { op, args }), t, relTime,
+  titleOf: id => { const title = state.sessions.find(s => s.id === id)?.title; return title && title !== '(no title)' ? title : ''; },
+  open: target => openFromNotification(target),
+  narrow: narrowView, anchor: () => $('sidebar'),
+});
 // External resource confirmation is available on every screen.
 const computerSettings = setupComputerSettings({ cmd: (command, args) => cmd(command, args), getPrefs: () => state.prefs, getHostCaps: () => state.hostCaps });
 const browserSettings = setupBrowserSettings({ available: !!browserPanel, cmd: (command, args) => cmd(command, args), getPrefs: () => state.prefs, getAgentLabel: labelOf,
@@ -7439,6 +7449,21 @@ async function openFromSearch(id, jump) {
 }
 
 /**
+ * 通知の一覧の行を押した（web/notification-inbox.mjs）。会話なら Chats の会話を開き、発言（uuid）があればその発言へ送って輪を付ける。
+ * チャンネルなら channels:show（スレッド・投稿まで。着いた投稿は web/channels/thread.mjs が輪を付ける）
+ */
+async function openFromNotification({ sessionId, uuid, channelId, threadId, postId }) {
+  if (narrowView.matches) setDrawer(false);
+  if (channelId) {
+    document.dispatchEvent(new CustomEvent('channels:show', { detail: { kind: 'channel', id: channelId, ...(threadId ? { threadId } : {}), ...(postId ? { postId } : {}) } }));
+    return;
+  }
+  if (!sessionId) return;
+  channelsUi.setTab('chats');
+  await openFromSearch(sessionId, uuid ? { uuid, role: 'assistant', query: '', speaker: 'assistant' } : null);
+}
+
+/**
  * 検索で探した語を会話の中の検索へ引き継ぎ（開かない。Ctrl+F の 1 手で残りの一致へ進める）、その発言へ送って輪（note-flash）を付ける。
  * 発言は uuid で引く（会話の行の data-uuid と、検索の結果の uuid は同じ値）。見つからなければ語だけ引き継ぐ
  */
@@ -8019,6 +8044,7 @@ function connect() {
       remoteSettings.refresh();
       // この PC の通知の設定。見ている会話を知らせ直す（つなぎ直した接続には、まだ印が無い）
       notifySettings.refresh();
+      notificationInbox.reconnected();
       presenceReporter.reset();
       presenceReporter.report(true);
       return refresh({ sharePending: true }).then(async () => {
