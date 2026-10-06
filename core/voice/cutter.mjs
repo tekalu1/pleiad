@@ -175,6 +175,8 @@ export function createUtteranceCutter(config, sampleRate) {
       return cutOff === null ? null : { kind: 'piece', piece: cutOff };
     },
     finish: () => cut('finish'),
+    /** いま話している発話と、頭に付ける無音の溜めを、何も出さずに捨てる（まとめ待ちの取り消し）。音声の時計（streamMs）は進めたまま */
+    reset() { speech = null; preroll = []; prerollMs = 0; },
     speaking: () => speech !== null,
     voicedMs: () => speech?.voicedMs ?? 0,
     /** 区切る前に先に送る見本。無音が speculativeSilenceMs に届いた最初の 1 回だけ返す（声が戻れば、次の無音でまた 1 回） */

@@ -182,6 +182,30 @@ export default async function (t) {
     await waitFor(() => noise.some((e) => e.type === 'drop'));
     t.ok('busy: 声が短すぎて捨てられたら drop のあとに off（まとめ待ちが「まだ」のまま残らない）', noise.filter((e) => ['busy', 'drop'].includes(e.type)).map((e) => (e.type === 'busy' ? `busy:${e.on}` : 'drop')).join() === 'busy:true,drop,busy:false', JSON.stringify(noise.map((e) => e.type)));
     tr.close(); tr2.close();
+
+    // ［取り消す］（discard）: 話している最中の発話も、区切って認識を待っている発話も、結果を出さずに捨てる。取り消したあとの声は新しい発話
+    const gone = [];
+    let slow = true, said = 0;
+    const slowClient = { cooling: () => false, hasFallback: false, transcribe: async () => { if (slow) await sleep(120); return { text: `言葉${++said}`, model: 'm', tookMs: 1, audioMs: 1000, route: 'primary', fallback: false }; } };
+    const tr3 = createTranscriber({ client: slowClient, language: 'ja', emit: (e) => gone.push(e), cut: { endSilenceMs: 600, maxUtteranceMs: 30000, speculativeSilenceMs: 0 } });
+    for (let i = 0; i < 8; i++) tr3.push(toneFrame(true));          // 話している最中（まだ区切っていない）
+    tr3.discard();
+    for (let i = 0; i < 9; i++) tr3.push(toneFrame(false));         // 無音が続いても、捨てた発話は区切られて出てこない
+    await sleep(250);
+    t.ok('discard（話している最中）: 取り消した発話の確定・途中の文字・捨てた合図を出さない。busy は閉じる', !gone.some((e) => ['final', 'partial', 'drop', 'error'].includes(e.type)) && gone.filter((e) => e.type === 'busy').at(-1)?.on === false, JSON.stringify(gone.map((e) => e.type)));
+    for (let i = 0; i < 8; i++) tr3.push(toneFrame(true));
+    for (let i = 0; i < 9; i++) tr3.push(toneFrame(false));
+    await waitFor(() => gone.some((e) => e.type === 'final'));
+    t.ok('discard のあとの声は新しい発話として、ふつうに確定する（番号は取り消した発話より後）', gone.find((e) => e.type === 'final')?.utt === 2, JSON.stringify(gone.filter((e) => e.type === 'final')));
+    // 区切って認識を待っている最中に取り消す
+    gone.length = 0;
+    for (let i = 0; i < 8; i++) tr3.push(toneFrame(true));
+    for (let i = 0; i < 9; i++) tr3.push(toneFrame(false));          // 区切った（認識の返事を 120ms 待っている）
+    t.ok('discard（認識待ち）の前: 区切った発話の確定を待っている間は busy', gone.filter((e) => e.type === 'busy').at(-1)?.on === true);
+    tr3.discard();
+    await sleep(300);
+    t.ok('discard（認識待ち）: 返ってきた確定は出さない。busy は閉じる', !gone.some((e) => e.type === 'final') && gone.filter((e) => e.type === 'busy').at(-1)?.on === false, JSON.stringify(gone.map((e) => e.type)));
+    tr3.close();
   }
 
   // ---- 状態機械: まとめ待ち・割り込み・半二重（偽の録音・接続・再生）
@@ -247,9 +271,16 @@ export default async function (t) {
     t.ok('［いま送る］: 待ち時間を待たずに turn', turns().length === 2 && turns()[1].text === '急ぎです');
     for (let i = 0; i < 6; i++) { clock += 85; frame(0.2); }
     J({ t: 'busy', on: true }); J({ t: 'final', utt: 5, text: '間違い' }); J({ t: 'busy', on: false });
+    const audioBeforeCancel = rig.link.audio.length;
     engine.cancelTurn();
+    t.ok('［取り消す］: ホストへ discard を送る（話している最中・認識待ちの発話を捨てさせる）', rig.link.sent.at(-1)?.t === 'discard');
+    clock += 85; frame(0.001);
+    t.ok('［取り消す］: 送信ゲートを初期化する。ハングオーバーに残っていた無音も、取り消したあとはホストへ流さない', rig.link.audio.length === audioBeforeCancel);
+    clock += 85; frame(0.2);
+    const reopened = rig.link.audio.length - audioBeforeCancel;
+    t.ok('［取り消す］のあとの声は、取り消す前の音（先読み）を付けずに開く。付くのは取り消したあとの 1 フレーム（無音）と声の 1 フレームだけ', reopened === 2, String(reopened));
     clock += 5000; frame(0.001);
-    t.ok('［取り消す］: 送らず、組み立て中の文を空にする', turns().length === 2 && events.filter((e) => e.type === 'hold').at(-1)?.view.text === '');
+    t.ok('［取り消す］: 送らず、組み立て中の文を空にする（文字が出ないまま待ち時間が過ぎた声は静かに閉じる）', turns().length === 2 && events.filter((e) => e.type === 'hold').at(-1)?.view.text === '');
     for (let i = 0; i < 6; i++) { clock += 85; frame(0.2); }
     J({ t: 'busy', on: true }); J({ t: 'final', utt: 6, text: 'ミュートします' }); J({ t: 'busy', on: false });
     engine.setMuted(true);
@@ -294,6 +325,14 @@ export default async function (t) {
       t.ok(`半二重（${label}）: 鳴り終わって 300ms 以内は送らない。過ぎたらまた聞く（700ms から短縮）`, rig.link.audio.length === before && (clock += 300, frame(0.5), frame(0.5), rig.link.audio.length > before));
       engine.end('user');
     }
+
+    // 通話中にエコー除去の設定を替えても、この通話の値（始めたときの echoCancellation・ready の bargeIn）は変わらない
+    await boot({ echoCancellation: false }, { bargeIn: true });
+    t.ok('この通話の値: エコー除去なしで始めた通話は、話して止めるが入っていても効かない。画面のヒントはこの 2 つの値で理由を出す', engine.echoCancellation === false && engine.bargeEnabled === true && engine.bargeActive === false);
+    engine.end('user');
+    await boot({ echoCancellation: true }, { bargeIn: true });
+    t.ok('この通話の値: エコー除去ありで始めれば割り込みが効く。通話を始め直さない限り変わらない', engine.echoCancellation === true && engine.bargeActive === true);
+    engine.end('user');
 
     // 止めるボタン: 鳴っている文の番号を送り、halt を出す
     await boot({ echoCancellation: true });

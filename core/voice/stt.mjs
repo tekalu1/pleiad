@@ -86,7 +86,9 @@ export function createSttClient({ config, model, fallbackModel = '', language = 
 /**
  * @param {{ client: { transcribe: Function }, emit: (event: object) => void, language?: string, cut?: object, now?: () => number, log?: Function }} deps
  */
-export function createTranscriber({ client, emit, language = 'ja', cut = DEFAULT_CUT, now = Date.now, log = () => {} }) {
+export function createTranscriber({ client, emit: emitRaw, language = 'ja', cut = DEFAULT_CUT, now = Date.now, log = () => {} }) {
+  let discardedUpTo = 0;           // discard() の時点までに振った発話の番号。この番号までの partial・final・drop・error は出さない
+  const emit = (event) => { if (event.utt !== undefined && event.utt <= discardedUpTo) return; emitRaw(event); };
   const cutter = createUtteranceCutter(cut, STT_SAMPLE_RATE);
   let order = Promise.resolve();   // 結果を出す順番（区切った順）。前の結果を待たずに次を送るが、出すのは話した順
   let live = null;                 // いま話している発話 { id, text, jobs, inflight, gaveUp, fallback, final, abort, lastVoiceAt }
@@ -244,6 +246,18 @@ export function createTranscriber({ client, emit, language = 'ja', cut = DEFAULT
     },
     /** 今の発話を終わらせる（ミュート・通話の終わり） */
     finish() { handle(cutter.finish()); clearTimeout(stallTimer); },
+    /**
+     * ここまでの発話を、結果を出さずに捨てる（まとめ待ちの［取り消す］）。話している最中の発話・区切って認識を待っている発話は、返ってきても出さない
+     * （番号が discard() の時点までのものは emit しない）。話している途中の音声と先読みの無音も捨て、取り消したあとの声は新しい発話として始まる
+     */
+    discard() {
+      discardedUpTo = nextId;
+      clearTimeout(stallTimer); stallTimer = null;
+      abortSpec();
+      if (live) { live.final = true; live.abort.abort(); live = null; }
+      cutter.reset();
+      updateSpeaking();
+    },
     /** 閉じる。送っている途中のものは捨てる（先に区切った発話の確定は finish() してから order を待つ） */
     async drain() { await order; },
     close() {

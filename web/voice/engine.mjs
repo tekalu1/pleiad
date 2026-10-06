@@ -292,10 +292,24 @@ export function createCallEngine({ token, now = () => performance.now(), AudioCo
     resume() { if (active) link.send({ t: 'resume' }); },
     /** まとめ待ちを待たずに送る（確定が出そろうのは待つ） */
     sendNow() { if (!active) return; hold.sendNow(); pumpHold(); },
-    /** まとめ待ちの言葉を捨てる（送らない） */
-    cancelTurn() { if (!active) return; hold.cancel(); holdSig = ''; emit({ type: 'hold', view: hold.view(now()) }); refresh(); },
+    /** まとめ待ちの言葉を捨てる（送らない）。ホストにも知らせ、話している最中・認識待ちの発話も捨てさせる */
+    cancelTurn() {
+      if (!active) return;
+      hold.cancel(); holdSig = '';
+      // 送信ゲートの先読み・ハングオーバーに残った音も、ホストの区切りの途中の発話・認識待ちの発話も捨てる（取り消した言葉の続きが、新しい発話として届かないように）
+      gate.reset(); voicedRun = 0; hearingUntil = 0;
+      link.send({ t: 'discard' });
+      emit({ type: 'hold', view: hold.view(now()) });
+      refresh();
+    },
     /** 話して止める（barge）が、いま効いているか */
     get bargeActive() { return active && bargeArmed(); },
+    /**
+     * この通話で効いているエコー除去（始めたときの値）と、話して止めるが入っているか（ready で受けた値）。通話中に設定を替えても、
+     * 録音の制約（getUserMedia）も ready の値も変わらないので、画面（ヒントの一行）はこの値で理由を出す（設定の今の値ではなく）
+     */
+    get echoCancellation() { return echoOn; },
+    get bargeEnabled() { return bargeConfigured; },
     /** まとめ待ちの区切りの長さ（ms） */
     get holdMs() { return hold.holdMs; },
     /** 見ている会話・スレッドが変わった（新しい会話の id が決まった）。通話の宛先は変えず、読み上げる会話の対象だけを更新する */
