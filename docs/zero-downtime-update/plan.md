@@ -81,11 +81,11 @@
 
 出力: 各項目の結果を `docs/zero-downtime-update/stage1-checks.md` に 1 行ずつ書く（stage0-*.md と同じ印）。
 
-### 1-1 「main への口」に寄せる（S。単独で merge できる）
+### 1-1 「main への口」に寄せる（S。単独で merge できる。実装済み）
 
 `process.parentPort` を直に触っている所を、`mainPort`（`on('message', ({ data }) => …)` と `postMessage` を持つ、parentPort と同じ形の口）1 つに寄せる。`utilityProcess` の経路では `process.parentPort` をそのまま入れるので、挙動は変わらない。
 
-- 新規 `core/main-port.mjs`: `createMainPort({ parentPort })`。つながっているか（`connected`）・切れた・戻ったを知らせる口（1-2・1-5 で使う）。今は常に「つながっている」
+- 新規 `core/main-port.mjs`: `createMainPort({ parentPort })`。つながっているか（`connected`）・切れた・戻ったを知らせる口（1-2・1-5 で使う）。今は常に「つながっている」。実装は、起動の形（main の下か）を表す `hosted`（切れても変わらない。`process.parentPort` の有無の置き換え）と、今届くかの `connected` を分け、`postMessage` は送れたかを返す（居ない・切れているときは何もせず `false`）。`getMainPort()` が `process.parentPort` を包んだ口を返す。1-2 は、パイプの口（`connected` と `connect`・`disconnect` を足した同じ形）を `createMainPort({ parentPort })` に渡す
 - 触るファイル: `core/server.mjs`（`parentPortBrowser`・`parentPortScreencast` の引数、`openExternal`、`withResident`・`postResident`、`locale` の送信、computer の driver、`parentPort.on('message')` の受け口、`announce` の `ready`、`kind: process.parentPort ? 'desktop' : 'server'`）・`core/secret-store.mjs`（`defaultCipher`）・`core/os-open.mjs`（`defaultOpener`）。`core/agent-browser.mjs`・`core/browser-screencast.mjs`・`core/computer-use/driver.mjs` は `port` を受け取る作りなので変えない
 - 画面・WS・CLI の挙動は変えない。`desktop/` は変えない
 - テスト: 既存の `tests/lib/parent-port-server.mjs`（`process.parentPort` の身代わりを置いて `core/server.mjs` を起こす入口）を使う試験・`tests/unit/desktop-*.mjs` が変えずに通ること。`mainPort` の単体（つながっていない口に送っても落ちない）を `tests/unit/main-port.mjs` に足す

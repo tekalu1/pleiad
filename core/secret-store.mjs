@@ -12,6 +12,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { t } from './i18n.mjs';
+import { getMainPort } from './main-port.mjs';
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
@@ -55,7 +56,7 @@ export const plainCipher = {
 };
 
 /**
- * main プロセスに safeStorage を頼む暗号器。port は utilityProcess の process.parentPort。
+ * main プロセスに safeStorage を頼む暗号器。port は main への口（core/main-port.mjs。parentPort と同じ形の物でもよい）。
  * main 側は { type:'secret', id, op, value } を受けて { type:'secret', id, ok, value | error } を返す。
  */
 export function parentPortCipher(port, { timeoutMs = 10000 } = {}) {
@@ -90,9 +91,9 @@ export function parentPortCipher(port, { timeoutMs = 10000 } = {}) {
   };
 }
 
-/** 起動の形に合う暗号器。utilityProcess なら main に頼み、そうでなければ平文 */
-export function defaultCipher() {
-  return process.parentPort ? parentPortCipher(process.parentPort) : plainCipher;
+/** 起動の形に合う暗号器。main の下（utilityProcess）なら main に頼み、そうでなければ平文 */
+export function defaultCipher({ mainPort = getMainPort() } = {}) {
+  return mainPort.hosted ? parentPortCipher(mainPort) : plainCipher;
 }
 
 /**

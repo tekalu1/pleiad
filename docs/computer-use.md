@@ -48,7 +48,7 @@ Windows の arm64 は実機で未確認。ワークフローで arm64 の koffi 
 
 ### core と main（parentPort）
 
-`agent-browser-*` と同じく `{ type, … }` の JSON を `parentPort.postMessage` で送る。画像は `Uint8Array`（構造化複製で通る）。座標はすべて**物理画素の仮想デスクトップ座標**（左上のモニターが負になりうる）。DIP に直すのはオーバーレイに描くときの main だけ。
+`agent-browser-*` と同じく `{ type, … }` の JSON を `parentPort.postMessage` で送る（core は `process.parentPort` を直に触らず、`core/main-port.mjs` の「main への口」を通す。今の口は parentPort をそのまま包んだもの）。画像は `Uint8Array`（構造化複製で通る）。座標はすべて**物理画素の仮想デスクトップ座標**（左上のモニターが負になりうる）。DIP に直すのはオーバーレイに描くときの main だけ。
 
 `owner` は core が決めるロックの持ち主の印（ターンごとに一意の文字列）。main は中身を解釈しない。
 
