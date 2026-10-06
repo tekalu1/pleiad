@@ -11,6 +11,7 @@
 // 保持役の場所は AGENT_HOST_DATA（データ置き場）と AGENT_HOST_RUNTIME_ROOT（実行場所の置き場）。無ければ台本はエラーにする
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
+import { bootEnv } from '../boot-env.mjs';
 import { holderLink } from '../holder/link.mjs';
 import { ADOPT_TURN_MARK, holderSource, replayRecord } from '../adopt.mjs';
 
@@ -24,7 +25,7 @@ const helds = new Map();
 /** 偽の CLI を保持役の子として起こし、ターンの印を置いて start を書く。戻り値は付け直し元と同じ形の source */
 export async function spawnHeld({ sessionId, cwd, start }) {
   const dataDir = process.env.AGENT_HOST_DATA;
-  const root = process.env.AGENT_HOST_RUNTIME_ROOT;
+  const root = bootEnv('AGENT_HOST_RUNTIME_ROOT');
   if (!dataDir || !root) throw new Error('fake: held: needs AGENT_HOST_DATA and AGENT_HOST_RUNTIME_ROOT');
   const client = await holderLink({ dataDir, root, mode: 'detached' });
   const id = `fake-held-${crypto.randomUUID().slice(0, 8)}`;

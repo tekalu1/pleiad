@@ -5851,7 +5851,7 @@ async function adoptTurn(card, source, ctx = null, { abandon = null } = {}) {
 async function restoreAdoptedTurns() {
   const failed = err => { console.error('  付け直す元を読めませんでした:', String(err?.message ?? err)); return []; };
   const dir = process.env.AGENT_HOST_ADOPT_FROM;
-  const root = process.env.AGENT_HOST_RUNTIME_ROOT;
+  const root = BOOT_ENV.AGENT_HOST_RUNTIME_ROOT;
   const sources = [
     ...(dir ? await readAdoptSources(dir).catch(failed) : []),
     ...(process.env.AGENT_HOST_ADOPT_HOLDER === '1' && root ? await readHolderSources({ dataDir: store.dataDir, root, appVersion: APP_VERSION }).catch(failed) : []),
