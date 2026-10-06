@@ -13,7 +13,8 @@ import { pairDevice, connectDevice } from '../lib/remote-device.mjs';
 import { openAgent, requesterOf } from '../lib/remote-agent-client.mjs';
 import { checkPath } from '../../core/remote/forward.mjs';
 import { createAgentPort } from '../../core/remote/agent-port.mjs';
-import { AGENT_LIMITS, remoteOwnerId, parseRemoteOwner, normalizeRequester, relayReceipt } from '../../core/remote/agent-protocol.mjs';
+import { viewMessages, viewCursor, trimViewMessage, VIEW_LIMITS } from '../../core/remote/agent-view.mjs';
+import { AGENT_OPS, AGENT_LIMITS, remoteOwnerId, parseRemoteOwner, normalizeRequester, relayReceipt } from '../../core/remote/agent-protocol.mjs';
 
 export const name = 'remote-agent';
 export const title = '端末の AI からの委譲の口（/agent）: 許可・防火壁・委譲と状態・承認モード・上限・承認の中継と人の答え・取り消し';
@@ -45,6 +46,61 @@ export default async function (t) {
       && a !== relayReceipt({ id: '1', taskId: 't', toolName: 'x', input: { a: 1 }, salt: 'z' });
   })());
   t.ok('防火壁: /agent は接続口が自分で受ける（checkPath は通すが、forwardStream はローカルへ通さない）', checkPath('/agent')?.pathname === '/agent');
+
+  // ---- 経過の読み出しの絞り込み（運ぶ前に絞る。docs/remote.md §4.5）
+  {
+    const big = 'x'.repeat(10_000);
+    const trimmed = trimViewMessage({ role: 'assistant', text: 'a'.repeat(20_000), thinking: big, uuid: 'u1', toolCalls: [{ id: 'c1', name: 'Bash', input: { command: big, n: 1, nested: { img: 'data:image/png;base64,AAAA' } }, result: { text: big, isError: false, secret: 'drop-me' } }],
+      attachments: [{ name: 'a.png', mime: 'image/png', data: 'data:image/png;base64,ZZZZ' }] });
+    t.ok('発言の絞り込み: 本文は 16 KB・考えた内容は 4 KB・ツールの入力と出力は 1 つ 2 KB まで', trimmed.text.length <= VIEW_LIMITS.text + 1 && trimmed.thinking.length <= VIEW_LIMITS.thinking + 1
+      && trimmed.toolCalls[0].input.command.length <= VIEW_LIMITS.field + 1 && trimmed.toolCalls[0].result.text.length <= VIEW_LIMITS.field + 1 && trimmed.toolCalls[0].result.truncated === true && trimmed.toolCalls[0].input.n === 1);
+    t.ok('画像は枠だけ（data URI・添付の中身は運ばない）、ツールの出力の余計な項目も落とす', trimmed.toolCalls[0].input.nested.img === '' && trimmed.attachments[0].omitted === true && trimmed.attachments[0].data === undefined && trimmed.toolCalls[0].result.secret === undefined);
+    const many = Array.from({ length: 100 }, (_, i) => ({ role: i % 2 ? 'assistant' : 'user', text: `m${i}`, uuid: `u${i}` }));
+    const first = viewMessages(many);
+    t.ok('初回は末尾 40 発言（古い分は省き、from がその位置・total が総数）', first.messages.length === 40 && first.from === 60 && first.total === 100 && first.full === true && first.messages[0].text === 'm60');
+    const cursor = viewCursor(first.from, first.messages);
+    t.ok('続きの位置は、持っている末尾の数発言を取り直す位置（その前の 1 件の署名つき）', cursor.from === 60 + 40 - VIEW_LIMITS.resend && Number.isFinite(cursor.check));
+    const grown = viewMessages([...many, { role: 'assistant', text: 'new1' }, { role: 'user', text: 'new2' }], cursor);
+    t.ok('続きは cursor から先の発言だけ（全量ではない）', grown.full === false && grown.from === cursor.from && grown.messages.length === 102 - cursor.from && grown.messages.at(-1).text === 'new2', JSON.stringify([grown.full, grown.from, grown.messages.length]));
+    const rewritten = viewMessages(many.map((m, i) => (i === cursor.from - 1 ? { ...m, text: 'changed' } : m)), cursor);
+    t.ok('持っている先頭と署名が合わなければ、末尾から読み直す（full）', rewritten.full === true && rewritten.from === 60);
+    const stale = viewMessages(many, { from: 10, check: 1 });
+    t.ok('古すぎる位置（省いた範囲）も末尾から読み直す', stale.full === true && stale.from === 60);
+    const heavy = viewMessages(Array.from({ length: 60 }, () => ({ role: 'assistant', text: 'y'.repeat(16_000) })));
+    t.ok('1 通は 192 KB に収め、収まらない分は古い方から省く', Buffer.byteLength(JSON.stringify(heavy.messages)) <= VIEW_LIMITS.bodyBytes && heavy.from > 20 && heavy.messages.length < 40 && heavy.full === true, JSON.stringify([heavy.from, heavy.messages.length]));
+    t.ok('端末の AI の依頼（AGENT_OPS）に読み出しは入っていない', !AGENT_OPS.includes('view') && AGENT_OPS.length === 6);
+  }
+
+  // ---- 経過の読み出しの口だけの部品（サーバーなし）: 許可・未対応・件数だけの記録・口の種類
+  {
+    const sent = [];
+    const handlers = {};
+    const stream = { kind: 'ws', destroyed: false, localDone: false, on: (n, f) => { handlers[n] = f; }, accept: () => Promise.resolve(), send: m => { sent.push(JSON.parse(m)); return Promise.resolve(); }, close: () => Promise.resolve(), reset() {} };
+    const audits = [];
+    let permit = true;
+    const calls = [];
+    const port = createAgentPort({ allowed: () => permit, hostName: () => 'h', invoke: async () => ({}), audit: e => audits.push(e),
+      view: async call => { calls.push(call); return { messages: [{ role: 'user', text: 'SECRET-BODY' }, { role: 'assistant', text: 'x' }], from: 0, total: 2, full: true }; } });
+    port.attach(stream, { id: 'dV', name: 'v', platform: 'desktop' });
+    await sleep(10);
+    const ask = async (msg) => { const before = sent.length; handlers.message(Buffer.from(JSON.stringify(msg)), true, () => {}); await sleep(30); return sent.slice(before).find(m => m.t === 'viewed'); };
+    t.ok('ready に view: true（読み出しを知っているホスト）が載る', sent.find(m => m.t === 'ready')?.view === true);
+    const ok = await ask({ t: 'view', id: 'v1', taskId: 'ply-task-1', cursor: { from: 2, check: 7, extra: 'x' } });
+    t.ok('許可のある端末の読み出しは、deps.view に端末・taskId・cursor（from・check だけ）で渡る', ok.ok === true && calls[0].device.id === 'dV' && calls[0].taskId === 'ply-task-1' && JSON.stringify(calls[0].cursor) === JSON.stringify({ from: 2, check: 7 }));
+    const rec = audits.find(a => a.op === 'view');
+    t.ok('記録は件数だけ（by: human・via: remote-device・件数。会話の中身は残さない）', rec?.by === 'human' && rec.via === 'remote-device' && rec.count === 2 && !JSON.stringify(rec).includes('SECRET-BODY'), JSON.stringify(rec));
+    t.ok('taskId の無い・形の違う読み出しは BAD_REQUEST', (await ask({ t: 'view', id: 'v2', taskId: '' })).code === 'BAD_REQUEST' && (await ask({ t: 'view', id: 'v3' })).code === 'BAD_REQUEST');
+    permit = false;
+    const off = await ask({ t: 'view', id: 'v4', taskId: 'ply-task-1' });
+    t.ok('「AI からの依頼を受ける」がオフなら読めない（NOT_ALLOWED。deps.view は呼ばれない）', off.ok === false && off.code === 'NOT_ALLOWED' && calls.length === 1);
+    const old = createAgentPort({ allowed: () => true, hostName: () => 'h', invoke: async () => ({}) });
+    const sent2 = []; const h2 = {};
+    old.attach({ kind: 'ws', destroyed: false, localDone: false, on: (n, f) => { h2[n] = f; }, accept: () => Promise.resolve(), send: m => { sent2.push(JSON.parse(m)); return Promise.resolve(); }, close: () => Promise.resolve(), reset() {} }, { id: 'dO', name: 'o', platform: 'desktop' });
+    await sleep(10);
+    h2.message(Buffer.from(JSON.stringify({ t: 'view', id: 'v5', taskId: 'x' })), true, () => {});
+    await sleep(30);
+    t.ok('読み出しを持たない口は ready に view が無く、読み出しは UNSUPPORTED', sent2.find(m => m.t === 'ready')?.view === false && sent2.find(m => m.t === 'viewed')?.code === 'UNSUPPORTED');
+  }
 
   // ---- 口だけの部品（サーバーなし）: 頻度の上限
   {
@@ -151,6 +207,26 @@ export default async function (t) {
     const sync1 = await (async () => { await a0.send({ t: 'sync', taskIds: [taskId] }); return a0.next(e => e.t === 'relays', 5000, 'sync の答え'); })();
     t.ok('sync でタスクの今の状態と、待っている中継する承認の一覧が返る', Boolean(sync1) && a0.events.filter(e => e.t === 'task' && e.task.taskId === taskId).length >= 3);
 
+    // ---- 経過の読み出し: この端末が任せた子とその子孫だけ・続きは cursor から・孫の要約
+    const v1 = await a0.view(taskId);
+    t.ok('読み出し: 任せた子の発言（依頼と返答）・タスクの形・追加の指示が返る', v1.ok && v1.result.task.taskId === taskId && v1.result.sessionId === row1.sessionId && v1.result.messages.some(m => m.role === 'user')
+      && v1.result.messages.some(m => m.role === 'assistant' && /AGAIN/.test(m.text)) && v1.result.full === true && v1.result.total === v1.result.from + v1.result.messages.length, JSON.stringify(v1).slice(0, 400));
+    const cur1 = viewCursor(v1.result.from, v1.result.messages);
+    const v1b = await a0.view(taskId, cur1);
+    t.ok('cursor を付けた読み出しは続きだけ（変わっていなければ末尾の数発言）', v1b.ok && v1b.result.full === false && v1b.result.from === (cur1?.from ?? v1b.result.from) && v1b.result.messages.length <= VIEW_LIMITS.resend + 1, JSON.stringify([v1b.result?.full, v1b.result?.from, v1b.result?.messages?.length]));
+    const v404 = await a0.view('ply-task-nope');
+    t.ok('任せていない（知らない）タスクは読めない（NOT_FOUND）', v404.ok === false && v404.code === 'NOT_FOUND');
+    const viaReq = await a0.call('view', { taskId }, req1);
+    t.ok('読み出しは AI の依頼（req）では呼べない（BAD_REQUEST）', viaReq.ok === false && viaReq.code === 'BAD_REQUEST');
+    const grandTask = 'ply:' + JSON.stringify({ name: 'ply_delegate', arguments: { kind: 'mechanical', backend: 'fake', task: 'echo:GRANDCHILD', title: '孫の作業' } });
+    const mid = await a0.call('delegate', { kind: 'mechanical', backend: 'fake', task: grandTask, title: '子の作業' }, requesterOf('conv-G'));
+    const midId = mid.result.task.taskId;
+    const withGrand = await within((async () => { for (;;) { const v = await a0.view(midId); if (v.ok && v.result.descendants.length && v.result.descendants.every(d => d.rawStatus === 'completed')) return v; await sleep(150); } })(), 20_000, '孫の完了');
+    const grand = withGrand.result.descendants[0];
+    t.ok('子がホストで任せた孫が、子孫の要約（題・状態・親・深さの元）で返る（依頼文・結果は載せない）', grand.title === '孫の作業' && grand.parentTaskId === midId && grand.rawStatus === 'completed' && grand.result === undefined && grand.task === undefined, JSON.stringify(grand));
+    const gv = await a0.view(grand.taskId);
+    t.ok('孫の経過も、同じ口・同じ範囲（この端末が任せた木の中）で読める', gv.ok && gv.result.messages.some(m => m.role === 'assistant' && /GRANDCHILD/.test(m.text)), JSON.stringify(gv).slice(0, 300));
+
     // ---- 読み取り・計画モードの依頼元・引き上げ
     const ro = await a0.call('delegate', { kind: 'mechanical', backend: 'fake', task: 'echo:NO' }, requesterOf('conv-RO', { scope: 'readonly' }));
     t.ok('読み取り・計画モードの依頼元からは委譲できない（READ_ONLY_MODE）', ro.ok === false && ro.code === 'READ_ONLY_MODE', JSON.stringify(ro));
@@ -197,6 +273,10 @@ export default async function (t) {
     const desk2 = await pair('desk2', 'desktop');
     await cmd('setRemoteDeviceAgent', { id: desk2.id, enabled: true });
     const ax = await agent(desk2);
+    const otherView = await ax.view(taskId);
+    t.ok('別の端末が任せた子（laptop のタスク）は、許可のある端末でも読めない（NOT_FOUND）', otherView.ok === false && otherView.code === 'NOT_FOUND', JSON.stringify(otherView));
+    const otherGrand = await ax.view(grand.taskId);
+    t.ok('別の端末が任せた子の孫も読めない', otherGrand.ok === false && otherGrand.code === 'NOT_FOUND');
     const reqP = requesterOf('conv-P', { title: '承認を試す会話' });
     const ask1 = await ax.call('delegate', { kind: 'mechanical', backend: 'fake', task: 'ask' }, reqP);
     const askTask = ask1.result.task.taskId;
@@ -264,6 +344,7 @@ export default async function (t) {
     const closedCode = await within(ax.closed, 8000, '許可を切ったときの口');
     t.ok('許可を切ると口が閉じる（1008）', closedCode.code === 1008, JSON.stringify(closedCode));
     const aAgain = await agent(desk2);
+    t.ok('許可を切ると読み出しも止まる（NOT_ALLOWED）', (await aAgain.view(ask3Id)).code === 'NOT_ALLOWED');
     t.ok('切った後に開いた口は allowed: false で、依頼は NOT_ALLOWED', aAgain.ready.allowed === false && (await aAgain.call('list', {}, reqP)).code === 'NOT_ALLOWED');
     await aAgain.send({ t: 'answer', id: relay3.id, receipt: relay3.receipt, allow: true });
     t.ok('許可が無い端末の答えは受けない', (await aAgain.fresh(e => e.t === 'answered' && e.id === relay3.id, 5000, '許可なしの答え')).ok === false);

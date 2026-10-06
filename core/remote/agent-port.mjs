@@ -2,10 +2,11 @@
 //
 // 端末の AI（端末の会話の ply_delegate の host と ply_task_*）の依頼を受け、ホストのサーバーの委譲の本体（deps.invoke）へ渡す。
 // 主体は agent・via: 'remote'・deviceId。画面（human）の経路 /ws とは別の口で、口の上の便りは決まった種類だけ:
-//   端末 → ホスト   req（委譲の 6 つの操作）・answer（人の答え。承認の中継の答え）・sync・ping
-//   ホスト → 端末   ready・allowed・res・task・relays・relay・relayEnd・answered・pong
+//   端末 → ホスト   req（委譲の 6 つの操作）・answer（人の答え。承認の中継の答え）・view（人の読み出し。任せた子の会話の経過）・sync・ping
+//   ホスト → 端末   ready・allowed・res・task・relays・relay・relayEnd・answered・viewed・pong
 // 許可は端末ごと（deps.allowed）。承認の答えは、ホストが中継した今待っている承認の ID・受領証・1 回だけを照合してから受ける。
-// 端末の AI が呼べる道具からは answer を作れない（端末側の守りと、口の種類の分離。docs/remote.md §4.5）。
+// 経過の読み出しは、この端末が任せた子とその子孫だけを返し（deps.view）、許可を切れば止まる。
+// 端末の AI が呼べる道具からは answer・view を作れない（端末側の守りと、口の種類の分離。docs/remote.md §4.5）。
 import crypto from 'node:crypto';
 import { RESET_CODE } from './frames.mjs';
 import { AGENT_OPS, AGENT_LIMITS, AGENT_PROTO, AgentError, normalizeRequester, normalizeAnswerExtras, relayReceipt, sameReceipt } from './agent-protocol.mjs';
@@ -16,12 +17,13 @@ const idOk = v => typeof v === 'string' && v.length >= 1 && v.length <= 64 && !/
  * @param deps.allowed(deviceId)        この端末の AI からの依頼を受けてよいか（devices.json の agentDelegation。デスクトップ版の端末だけ）
  * @param deps.hostName()               ready に載せるホストの名前
  * @param deps.invoke(call)             委譲の本体。call = { device, requester, op, args, signal }。結果の JSON を返すか AgentError を投げる
- * @param deps.activeTasks(deviceId)    この端末から任された、動いているタスクの数（任された子の子孫も数える。上限の判定）
+ * @param deps.view(call)               経過の読み出し。call = { device, taskId, cursor }。この端末が任せた子とその子孫だけを読み、結果の JSON を返すか AgentError を投げる。無ければ読み出しを受けない（古い版と同じ）
+ * @param deps.activeTasks(deviceId)   この端末から任された、動いているタスクの数（任された子の子孫も数える。上限の判定）
  * @param deps.wakes(device, requester, args)  send が、終わっているタスクを起こし直す（動いている数を増やす）か。起こすなら 1 枠の予約が要る
  * @param deps.tasksFor(deviceId, ids)  sync の答え。ids のタスクの今の公開の形（task の便りの形）の配列
  * @param deps.audit(entry)             記録（by・via・deviceId・種類）。失敗しても口は止めない
  */
-export function createAgentPort({ allowed = () => false, hostName = () => '', invoke, activeTasks = () => 0, wakes = () => false, tasksFor = () => [], audit = () => {}, log = () => {}, limits = {}, now = Date.now } = {}) {
+export function createAgentPort({ allowed = () => false, hostName = () => '', invoke, view = null, activeTasks = () => 0, wakes = () => false, tasksFor = () => [], audit = () => {}, log = () => {}, limits = {}, now = Date.now } = {}) {
   const lim = { ...AGENT_LIMITS, ...limits };
   const conns = new Map();         // deviceId → Set<conn>
   const relays = new Map();        // relayId → { id, deviceId, taskId, requesterSessionId, receipt, payload, answer, answered }
@@ -118,6 +120,30 @@ export function createAgentPort({ allowed = () => false, hostName = () => '', in
     sendTo(conn, { t: 'answered', id: msg.id, ok: true });
   }
 
+  /**
+   * 経過の読み出し（端末の画面が、任せた子の会話を読む。人の操作。answer と同じく端末の AI の道具からは作れない）。
+   * 端末・許可を確かめた後、deps.view がこの端末が任せた子とその子孫だけを返す（それ以外は NOT_FOUND）。記録は件数だけ（中身は残さない）
+   */
+  async function onView(conn, msg) {
+    const deviceId = conn.device.id;
+    const reply = body => sendTo(conn, { t: 'viewed', id: msg.id, ...body });
+    const fail = (code, error) => { audit({ by: 'human', via: 'remote-device', deviceId, op: 'view', refused: code }); return reply({ ok: false, code, error }); };
+    if (!allowed(deviceId)) return fail('NOT_ALLOWED', 'this device is not allowed to read this host');
+    if (typeof view !== 'function') return fail('UNSUPPORTED', 'the host cannot show progress');
+    if (!idOk(msg.taskId)) return fail('BAD_REQUEST', 'bad request');
+    if (conn.views >= lim.viewsPerConn) return fail('RATE_LIMITED', 'too many reads in flight');
+    conn.views++;
+    const cursor = msg.cursor && typeof msg.cursor === 'object' && !Array.isArray(msg.cursor) ? { from: msg.cursor.from, check: msg.cursor.check } : null;
+    try {
+      const result = await view({ device: conn.device, taskId: msg.taskId, cursor });
+      if (!allowed(deviceId)) return reply({ ok: false, code: 'NOT_ALLOWED', error: 'this device is no longer allowed to read this host' });
+      audit({ by: 'human', via: 'remote-device', deviceId, op: 'view', taskId: msg.taskId, count: result?.messages?.length ?? 0 });
+      if (!reply({ ok: true, result })) reply({ ok: false, code: 'TOO_LARGE', error: 'the progress is too large to send' });
+    } catch (e) {
+      reply({ ok: false, code: e instanceof AgentError ? e.code : 'ERROR', error: String(e?.message ?? e) });
+    } finally { conn.views--; }
+  }
+
   function onMessage(conn, data, text) {
     if (!text || data.length > lim.messageBytes) return;
     let msg;
@@ -127,6 +153,7 @@ export function createAgentPort({ allowed = () => false, hostName = () => '', in
       case 'ping': sendTo(conn, { t: 'pong' }); return;
       case 'req': if (idOk(msg.id)) onReq(conn, msg).catch(e => log(`remote agent: ${e?.message ?? e}`)); return;
       case 'answer': onAnswer(conn, msg).catch(e => log(`remote agent: ${e?.message ?? e}`)); return;
+      case 'view': if (idOk(msg.id)) onView(conn, msg).catch(e => log(`remote agent: ${e?.message ?? e}`)); return;
       case 'sync': {
         const ids = Array.isArray(msg.taskIds) ? msg.taskIds.filter(x => typeof x === 'string' && x.length <= 100).slice(0, 100) : [];
         const known = new Set();
@@ -144,7 +171,7 @@ export function createAgentPort({ allowed = () => false, hostName = () => '', in
     /** 端末のストリーム 1 本（WebSocket の /agent）を受ける。device は { id, name, platform }（ハンドシェイクで確かめた端末） */
     attach(stream, device) {
       if (stream.kind !== 'ws') return stream.reset(RESET_CODE.FORBIDDEN);
-      const conn = { stream, device: { id: device.id, name: device.name ?? '', platform: device.platform ?? '' }, pending: new Set() };
+      const conn = { stream, device: { id: device.id, name: device.name ?? '', platform: device.platform ?? '' }, pending: new Set(), views: 0 };
       // 端末 1 台の口の数に上限（待つ依頼を口ごとに積ませない）。多すぎる口は、受けてすぐ閉じる（端末の線は間を置いて開き直す）
       if (connsOf(device.id).size >= lim.portsPerDevice) { stream.accept().then(() => stream.close(1013, 'too many ports')).catch(() => {}); return; }
       if (!conns.has(device.id)) conns.set(device.id, new Set());
@@ -161,7 +188,7 @@ export function createAgentPort({ allowed = () => false, hostName = () => '', in
       stream.on('reset', drop);
       stream.accept().then(() => {
         const ok = allowed(device.id);
-        sendTo(conn, { t: 'ready', v: AGENT_PROTO, allowed: ok, hostName: hostName(), limits: { active: lim.active, perMinute: lim.perMinute } });
+        sendTo(conn, { t: 'ready', v: AGENT_PROTO, allowed: ok, hostName: hostName(), view: typeof view === 'function', limits: { active: lim.active, perMinute: lim.perMinute } });
         if (ok) sendTo(conn, { t: 'relays', relays: relaysOf(device.id) });
       }).catch(() => drop());
     },

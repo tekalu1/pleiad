@@ -88,6 +88,8 @@ import { prepareHooksTurn, unifyPreview, importCandidate } from './hooks-unify.m
 import { deliverable, classifyNativeRun } from './hooks-plan.mjs';
 import { createRemoteHost } from './remote/connector.mjs';
 import { createAgentPort } from './remote/agent-port.mjs';
+import { viewMessages, viewInstructions, VIEW_LIMITS } from './remote/agent-view.mjs';
+import { streamMessages } from '../web/stream-messages.mjs';
 import { parentPortRemoteAgent, createRemoteDelegation } from './remote-delegation.mjs';
 import { AgentError, remoteOwnerId, isRemoteOwner, parseRemoteOwner, RESULT_PAGE } from './remote/agent-protocol.mjs';
 import { createResidentPrefs, residentSignal, enabledRoutineCount } from './remote/resident.mjs';
@@ -342,6 +344,7 @@ const remoteAgentPort = createAgentPort({
   allowed: deviceId => remote.agentAllowed(deviceId),
   hostName: () => remote.hostInfo()?.hostName ?? os.hostname(),
   invoke: call => remoteAgentInvoke(call),
+  view: call => remoteAgentView(call),
   activeTasks: deviceId => remoteAgentStats(deviceId).active,
   // send が、終わったタスクを起こし直す（動いている数を増やす）か
   wakes: (device, requester, args) => {
@@ -353,6 +356,8 @@ const remoteAgentPort = createAgentPort({
   audit: entry => {
     if (entry.dropped) return console.log(`  端末 ${entry.deviceId} の承認の答えを捨てた: ${entry.dropped}`);
     if (entry.refused) return console.log(`  端末 ${entry.deviceId} の依頼を断った: ${entry.op} ${entry.refused}`);
+    // 経過の読み出し（人の操作。4 秒ごとに来る）は、端末ごと・タスクごとに最初の 1 回だけ変更の記録へ残す（中身は残さない。件数は口の側で数える）
+    if (entry.op === 'view') return remoteViewRecorded(entry);
     const to = entry.op === 'send' ? 'delegation.taskSend' : entry.op === 'cancel' ? 'delegation.taskCancel' : null;
     const sessionId = to ? agentTasks?.get(String(entry.args?.taskId ?? ''))?.sessionId : null;
     if (sessionId) store.recordChange(sessionId, { by: 'agent', via: 'remote', byDevice: entry.deviceId, field: 'op', to, reason: null }).catch(() => {});
@@ -857,6 +862,53 @@ async function remoteDelegate({ device, requester, args, signal, lng, owner, val
   if (routingSettingsCache.enabled && ROUTING_USAGE_AUTO) routingUsage.refresh().catch(() => {});
   const stored = agentTasks.get(row.taskId);
   return { task: remoteTaskEvent(stored ?? row) };
+}
+
+// 経過の読み出し（口の view。人の操作）。この端末が任せた子とその子孫だけを読む。残すのは「読んだ」記録の件数だけ（会話の中身は残さない）
+const remoteViewSeen = new Set();   // `${deviceId}:${taskId}`。最初の 1 回だけ子の会話の変更の記録へ残す
+function remoteViewRecorded(entry) {
+  const key = `${entry.deviceId}:${entry.taskId}`;
+  if (remoteViewSeen.has(key)) return;
+  remoteViewSeen.add(key);
+  if (remoteViewSeen.size > 2000) remoteViewSeen.delete(remoteViewSeen.values().next().value);
+  const sessionId = agentTasks?.get(String(entry.taskId))?.sessionId;
+  if (sessionId) store.recordChange(sessionId, { by: 'human', via: 'remote-device', byDevice: entry.deviceId, field: 'op', to: 'delegation.view', reason: null }).catch(() => {});
+}
+/** 子孫の要約（端末の一覧へ字下げの行で出す分）。依頼文・結果は載せず、題・状態・親だけ */
+function remoteDescendantEvent(row, parentTaskId) {
+  const ev = remoteTaskEvent(row);
+  const first = String(row.task ?? '').split('\n').find(line => line.trim())?.trim().replace(/\s+/g, ' ') ?? '';
+  return { taskId: ev.taskId, parentTaskId, sessionId: ev.sessionId, title: ev.title ?? (first.slice(0, 80) || null), status: ev.status, rawStatus: ev.rawStatus,
+    backend: ev.backend, model: ev.model, effort: ev.effort, createdAt: ev.createdAt, updatedAt: ev.updatedAt, error: ev.error };
+}
+/**
+ * 端末の画面の経過の読み出し（口の view。docs/remote.md §4.5「経過の読み出し」、ADR 0146）。見せる範囲は、この端末が任せた子（remoteRowsOf）とその子孫だけ。
+ * 読むだけ。末尾 40 発言・ツールの出力 1 つ 2 KB・考えた内容 4 KB・画像と添付は枠だけ・1 通 192 KB までに絞って返す（core/remote/agent-view.mjs）。
+ * 走っているターンは、手元の委譲の詳細と同じく履歴＋出来事の畳み込み（streamMessages）を 1 つの発言の並びにして返す。cursor は続きの位置（発言の位置と先頭の署名）
+ */
+async function remoteAgentView({ device, taskId, cursor }) {
+  const row = remoteTreeOf(device.id).find(r => r.taskId === taskId);
+  if (!row) throw new AgentError('NOT_FOUND', 'no such task');
+  let all = [];
+  const sessionId = row.sessionId;
+  if (sessionId) {
+    const turn = runtime.turns.get(sessionId);
+    if (turn) {
+      const live = turn.stream;
+      all = [...live.messages, ...(live.user ? [live.user] : []), ...streamMessages(live.events, { backend: row.backend, model: row.model, initialMessageId: live.initialMessageId }).messages];
+    } else {
+      all = (await history.loadTranscript(sessionId, await resolveBackendForSession(sessionId))).messages;
+    }
+  }
+  const subs = sessionId ? (agentTasks.descendants([sessionId]) ?? []) : [];
+  const taskBySession = new Map([[sessionId, row.taskId], ...subs.map(r => [r.sessionId, r.taskId])]);
+  const shown = viewMessages(all, cursor);
+  return {
+    task: remoteTaskEvent(row), sessionId: sessionId ?? null, ...shown,
+    instructions: viewInstructions(agentTasks.instructions(row.taskId)?.instructions),
+    descendants: subs.slice(0, VIEW_LIMITS.descendants).map(r => remoteDescendantEvent(r, taskBySession.get(r.parentSessionId) ?? null)),
+    waiting: remoteWaiting(row),
+  };
 }
 
 /** 端末ごとの、任された作業の数（設定 › リモートの端末の行）。active は動いているもの（任された子の子孫も数える）、waiting はそのうち承認待ち */
@@ -3790,6 +3842,8 @@ function opsDeps(lng = currentLocale()) {
     delegation: { list: (owner) => withWorktreeLive(agentTasks?.list(owner) ?? []), get: (taskId, offset) => agentTasks?.get(taskId, offset) ?? null,
       call: (owner, name, args, locale) => callAgentOp(owner, name, args, { locale }),
       instructions: (taskId) => agentTasks.instructions(taskId),
+      // ホストに任せた子の会話の経過（delegation.hostView。画面の人だけ。core/remote-delegation.mjs の view）
+      hostView: (args) => remoteDelegation.view(args),
       // 画面の「止める」。どの会話の委譲でも止められる（AI は ply_task_cancel で自分の子だけ）
       cancel: async (taskId) => {
         const task = agentTasks.get(taskId);
@@ -3886,7 +3940,11 @@ function opsDeps(lng = currentLocale()) {
 /** ホストに任せたタスクの印に使う、つないでいるホストの名前とオンラインか（running に載せる。docs/remote.md §4.5） */
 function remoteHostsNow() {
   const out = {};
-  for (const h of remoteAgentBridge?.hosts ?? []) if (h.agentUse) out[h.hostId] = { name: h.name, online: h.state === 'ready' && h.allowed === true };
+  for (const h of remoteAgentBridge?.hosts ?? []) if (h.agentUse) {
+    const online = h.state === 'ready' && h.allowed === true;
+    // since: 線が使えなくなった時刻（画面の「オフライン · HH:MM までの分」）。分からなければ付けない
+    out[h.hostId] = { name: h.name, online, view: h.view === true, ...(!online && remoteDelegation?.offlineSince(h.hostId) ? { since: remoteDelegation.offlineSince(h.hostId) } : {}) };
+  }
   return out;
 }
 
@@ -4193,8 +4251,9 @@ const askPermission = async ({ toolName, input, sessionId, toolUseID, title, sig
       const asked = payload.kind === 'question' ? 'question' : 'tool';
       remoteRelay = remoteAgentPort.relayOpen({
         deviceId: remoteRoot.deviceId, taskId: remoteRoot.taskId, requesterSessionId: remoteRoot.sessionId,
-        payload: hostOnly ? { kind: 'hostOnly', toolName, title: title ?? null, childTitle, canAlways: false }
-          : { kind: asked, toolName, input, ...(asked === 'question' ? { questions } : {}), title: title ?? null, childTitle, canAlways: false },
+        // childSessionId: 承認を求めている子（根か子孫）のホストでの会話。端末が、その子の詳細にだけカードを出すために使う
+        payload: hostOnly ? { kind: 'hostOnly', toolName, title: title ?? null, childTitle, childSessionId: sessionId ?? null, canAlways: false }
+          : { kind: asked, toolName, input, ...(asked === 'question' ? { questions } : {}), title: title ?? null, childTitle, childSessionId: sessionId ?? null, canAlways: false },
         // 端末の人の答え（remote.md §4.5）。ホストが中継した今待っている承認の ID・受領証・1 回だけを照合した後にだけ来る。常に許可は受けない
         answer: hostOnly ? null : ({ allow, message, answers, annotations, response }) => {
           if (!runtime.waiting.has(cards[0].id)) return false;
@@ -4469,7 +4528,8 @@ const remoteCards = {
   open(c) {
     const id = crypto.randomUUID();
     const child = c.childTitle || t('permission.childConversation');
-    const remote = { hostId: c.hostId, hostName: c.hostName, relayId: c.relayId, taskId: c.taskId, online: c.online !== false, ...(c.hostOnly ? { hostOnly: true } : {}) };
+    const remote = { hostId: c.hostId, hostName: c.hostName, relayId: c.relayId, taskId: c.taskId, online: c.online !== false, ...(c.hostOnly ? { hostOnly: true } : {}),
+      ...(c.childSessionId ? { childSessionId: c.childSessionId } : {}) };
     const payload = { type: 'permission', kind: c.kind === 'question' ? 'question' : 'tool', toolName: c.toolName, input: c.input, sessionId: c.sessionId, toolUseID: undefined,
       title: c.title ? t('permission.relayTitleWith', { child, title: c.title }) : t('permission.relayTitle', { child }), conversationTitle: '',
       canAlways: false, remote, ...(c.kind === 'question' ? { questions: c.questions } : {}) };

@@ -883,6 +883,12 @@
         "limit": "How many to return (default 30, max 100).",
         "cursor": "The next of the previous result. Continues from there."
       },
+      "hostView": {
+        "summary": "Read the progress of a child delegated to a host (messages, tools, follow-up instructions and a summary of descendants). The host returns only the children this device delegated and their descendants. Used only by the screen (a person) while a detail is open.",
+        "taskId": "Id of the task delegated to the host (the root, or a descendant learned from an earlier read).",
+        "hostId": "Id of the host the task was delegated to.",
+        "cursor": "Where the messages you hold continue (computed from the previous answer). Omit to read from the end."
+      },
       "retry": {
         "summary": "Redo the same request as a new child task on another candidate. Only a child you delegated. If the child would get a stronger approval mode than the requester, you get NEEDS_UI (the user must confirm).",
         "taskId": "Id of the task to redo.",
