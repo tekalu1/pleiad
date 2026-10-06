@@ -88,7 +88,8 @@ async function start({ env = {}, packaged = false, choice = 'link', connectError
     readLogTail: () => 'tail of the log',
   };
   const modules = {
-    './updates.cjs': { Updates: class { constructor(options) { calls.updates = options; this.enabled = false; this.state = { phase: 'idle' }; } on() {} async init() {} snapshot() { return {}; } } },
+    './updates.cjs': { Updates: class { constructor(options) { calls.updates = options; this.enabled = false; this.state = { phase: 'idle' }; } on() {} async init() {} snapshot() { return {}; } }, isStoreBuild: () => false, updaterEnabled: () => false },
+    './msix.cjs': { packagedIdentity: () => false },
     './update-auth.cjs': { prepareUpdateCheck: () => {} },
     './update-log.cjs': { createUpdateLog: () => ({}) },
     './server-port.cjs': { savedPort: () => 7499, rememberPort: (_file, port) => { calls.remembered = port; } },
@@ -97,7 +98,7 @@ async function start({ env = {}, packaged = false, choice = 'link', connectError
     './file-bridge.cjs': { attachFileBridge: () => {} },
     './resident.cjs': { attachResident: () => ({ keepOnClose: () => false }) },
     './window-trust.cjs': { createWindowTrust: () => ({ register: () => {}, update: (_window, patch) => { calls.trusted = patch.origin; } }) },
-    './remote-windows.cjs': { createRemoteWindows: () => ({ attach: () => {}, handleArgv: () => false }) },
+    './remote-windows.cjs': { createRemoteWindows: () => ({ attach: () => {}, attachWorker: () => {}, handleArgv: () => false }) },
     './browser-panel.cjs': { createBrowserPanel: () => ({ attach: () => {} }) },
     './agent-browser-bridge.cjs': { attachAgentBrowserBridge: () => ({ close: () => {} }) },
     './computer/service.cjs': { attachComputerService: () => ({}) },
