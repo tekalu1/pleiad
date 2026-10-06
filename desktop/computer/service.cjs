@@ -258,7 +258,8 @@ function attachComputerService(worker, { electron = {}, app = null, escape = nul
   worker.on('message', message => { if (typeof message?.type === 'string' && message.type.startsWith('computer-')) service.handleMessage(message); });
   const screenEvents = ['display-added', 'display-removed', 'display-metrics-changed'];
   for (const event of screenEvents) electron.screen?.on(event, service.onDisplaysChanged);
-  worker.once?.('exit', () => service.releaseAll());
+  // on（once ではない）: 名前付きパイプの口（desktop/server-link.cjs）は切れるたびに 'exit' を出し、同じ包みにつなぎ直す（切り替えの S2・付け直し）。つなぎ直した後も見張りが残る
+  worker.on?.('exit', () => service.releaseAll());
   app?.on?.('will-quit', () => service.dispose());
   service.startWatchdog();
   return Object.assign(service, {

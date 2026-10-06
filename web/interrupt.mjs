@@ -171,6 +171,19 @@ export function workCounts(work) {
   return { running: rows.filter((r) => r.state === "running").length, waiting: rows.filter((r) => r.state === "waiting").length };
 }
 
+/**
+ * 版の違うサーバーにつながったとき（無停止の更新の切り替え。docs/zero-downtime-update/design.md §8）、画面を 1 回だけ読み直すか。
+ * served は画面を配ったサーバーの版（index.html の pleiad-build。サーバーが「<版>+<ビルド>」を埋める）。空なら
+ * アプリに同梱した画面（スマホ）なので読み直さない（版ずれは今どおり protocolVersion で見る）。
+ * done はこのタブで読み直した版の印（sessionStorage）。同じ版のためには 2 度読み直さない。
+ * 戻り値: 読み直すなら新しい版の印（読み直す前に done として残す）、読み直さないなら null
+ */
+export function versionReload(served, ready, done = null) {
+  if (!served) return null;
+  const key = `${ready?.version ?? ""}+${ready?.build ?? ""}`;
+  return key === served || key === done ? null : key;
+}
+
 /** 中断の進み。total は押した時点の件数、count は今の件数。done は止まった数（戻らない） */
 export function interruptProgress(total, count, prevDone = 0) {
   const all = Math.max(0, Number(total) || 0);

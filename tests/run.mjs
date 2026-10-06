@@ -66,6 +66,16 @@ const SUITES = [
   './unit/computer-lock.mjs',
   // main への口（parentPort）: computer-* のメッセージの形・id での応答・エラーの code・ハートビート・偽の driver
   './unit/computer-driver.mjs',
+  // main への口（core/main-port.mjs）: parentPort の素通し・main が居ない起動・つながっていない口・差し込める形
+  './unit/main-port.mjs',
+  // main とサーバーを結ぶ名前付きパイプの口（段階 1 の 1-2）: 符号化・行の分け方・握手の拒否・往復と順序・大きなバイナリー・切断と再接続・別プロセスのサーバー
+  './unit/main-link.mjs',
+  // main が居ない間の機能ごとの扱い（段階 1 の 1-5）: secret の待ち・computer use の停止・内蔵ブラウザーの写しと復元・screencast・os-open・openExternal・猶予
+  './unit/main-away.mjs',
+  // 内蔵ブラウザーの付け直し（main 側）: 中継を同じポートと鍵で立て直す・タブの写しの書き出しと開き直し・橋の流れ
+  './unit/main-away-desktop.mjs',
+  // main が居ない間（サーバー越し）: 付け直しで ready・言語が届く・main-leaving の後は猶予で中断しない（偽の main をパイプにつなぐ）
+  './unit/main-away-server.mjs',
   // 橋: MCP の面・座標の基準・ゲートの順・アプリの承認・止める・ロック画面・画像の渡し方（偽の driver）
   './unit/computer-bridge.mjs',
   // サーバー越し: 承認カードの payload・スクショの保存と配信・computer.state・computerStop・委譲の子の承認（fake + 偽の driver）
@@ -290,6 +300,7 @@ const SUITES = [
   './unit/unread.mjs',
   // 中断と再開の画面（web/interrupt.mjs）: 三角の未読・理由の文言・再開ボタン・更新で止めた会話・更新の確認の作業一覧と進み
   './unit/web-interrupt.mjs',
+  './unit/web-switch-notice.mjs',
   // 確認済み（既読）の置き場と、2 本の接続で共有されること（fake バックエンド）
   './unit/read-store.mjs',
   './unit/store-flush.mjs',
@@ -313,6 +324,21 @@ const SUITES = [
   // 開いている会話の宣言（流れの出来事を絞る）と、会話の一覧の使い回し（ADR 0024）
   './unit/server-watch.mjs',
   './unit/desktop-port.mjs',
+  // 版ごとの実行場所（無停止の更新 1-3）: 置き場が $INSTDIR と前方一致しない・ハードリンクで組む・二重に組まない・壊れた写しの検出・掃除・使っている版を消さない・起動口
+  './unit/desktop-runtime.mjs',
+  // main がサーバーを見つける・起こす・付け直す（無停止の更新 1-4）: Job の分岐（desktop/job.cjs）・サーバーの env・ログ・孤児の見張り・別プロセスのサーバーを main を切っても残して付け直す
+  './unit/desktop-job.mjs',
+  './unit/desktop-server-boot.mjs',
+  // main.cjs の boot の選び方（vm）: AGENT_HOST_HANDOVER の既定（パッケージ版は on・開発は off）と off の utilityProcess・パイプの包み・起動の失敗・サーバーが居なくなったとき・更新の流れ
+  './unit/desktop-boot.mjs',
+  // 新しい版のサーバーへの切り替え（無停止の更新 1-6）: 作業が 0 件まで待つ・ロック・S1 の終わり・S2・前の版へ戻す・合わない版は聞く・今すぐ中断。事前の確かめの出力
+  './unit/desktop-switch.mjs',
+  './unit/desktop-switch-screen.mjs',
+  './unit/handover-check.mjs',
+  // 実行場所の材料（afterPack）: 公式の Node の取得と SHA-256 の照合・runtime.json・manifest.json
+  './unit/pack-runtime.mjs',
+  // 実機の確認（scripts/zero-downtime/stage1-7/）の試験用のインストール版が、利用者のインストール版と重ならない
+  './unit/zdtest-isolation.mjs',
   // デスクトップ版の端末（リモートの窓）: 窓ごとの信頼・preload の出し分け・バッジ。Electron は起こさない
   './unit/desktop-remote.mjs',
   // スマホの画面（docs/remote.md §8.3・§8.4）: UUID の代わり・長押し・「…」・狭い画面の規則

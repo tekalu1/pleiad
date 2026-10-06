@@ -104,8 +104,10 @@ export default async function (t) {
     devices.push(dA);
     t.ok('IK でつながり、HELLO にホスト名が来る', dA.hello.hostName === 'desk-test' && dA.hello.proto === 1);
     const index = await fs.readFile(path.join(ROOT, 'web', 'index.html'));
+    // サーバーは pleiad-build に配った版を埋める（web/interrupt.mjs の versionReload）。それ以外はファイルのまま
+    const sameIndex = (body, file) => body.toString('utf8').replace(/<meta name="pleiad-build" content="[^"]*">/, '<meta name="pleiad-build" content="">') === file.toString('utf8');
     const root = await dA.get('/');
-    t.ok('GET / でホストの画面が返る（トークンは接続口が付ける）', root.status === 200 && root.body.equals(index), `${root.status ?? 'reset ' + root.reset}`);
+    t.ok('GET / でホストの画面が返る（トークンは接続口が付ける）', root.status === 200 && sameIndex(root.body, index), `${root.status ?? 'reset ' + root.reset}`);
     const withToken = await dA.get(`/?token=${server.token}`, { headers: { cookie: 'agent_host_token=wrong', authorization: 'Bearer x', origin: 'http://evil' } });
     t.ok('端末の Cookie・Authorization・Origin・?token= は捨て、Set-Cookie は返さない',
       withToken.status === 200 && !Object.keys(withToken.headers).some(k => k.toLowerCase() === 'set-cookie'), JSON.stringify(withToken.headers));

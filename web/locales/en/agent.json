@@ -67,6 +67,7 @@
     "errors": {
       "escape": "The user stopped the computer operation. Do not call the computer tools in this turn, and tell the user in your final reply that it was stopped.",
       "stop": "The user stopped the computer operation. Do not call the computer tools in this turn, and tell the user in your final reply that it was stopped.",
+      "update": "The computer operation was stopped because Pleiad is updating. Do not call the computer tools in this turn, and tell the user in your final reply that the update stopped it.",
       "locked": "The screen is locked, or an administrator confirmation screen is showing. Unlock it and continue.",
       "forbidden": "\"{{app}}\" cannot be operated (terminals, password managers, security software, agents themselves and Pleiad are never operated). Use another way.",
       "denied": "The user did not allow operating \"{{app}}\". The same app will not be asked again in this turn.",

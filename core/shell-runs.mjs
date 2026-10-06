@@ -155,6 +155,8 @@ export function createShellRuns({ store, emit, timeoutMs = Number(process.env.AG
   }
   /** この会話で走っている分 */
   const runningIn = (sessionId) => [...runs.values()].some(r => r.sessionId === sessionId);
+  /** 走っている分の一覧（running の shells。デスクトップの切り替えが待つ作業に数える。desktop/switch.cjs） */
+  const list = () => [...runs.values()].map(r => ({ sessionId: r.sessionId, runId: r.runId, command: String(r.command ?? '').slice(0, 200), at: r.at }));
   /** 走っているシェルの作業ディレクトリ（worktree を消してよいかの確かめに使う。ADR 0089） */
   const cwds = () => [...runs.values()].map(r => r.cwd).filter(Boolean);
   /**
@@ -312,5 +314,5 @@ export function createShellRuns({ store, emit, timeoutMs = Number(process.env.AG
     return out;
   }
 
-  return { start, wait, stop, setSkip, stopSession, stopAll, runningIn, cwds, settled, appendsFor, release, delivered, switched, discard, rows, placeKept, decorate, running: () => runs.size };
+  return { start, wait, stop, setSkip, stopSession, stopAll, runningIn, cwds, settled, appendsFor, release, delivered, switched, discard, rows, placeKept, decorate, list, running: () => runs.size };
 }

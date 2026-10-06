@@ -471,7 +471,7 @@ export class Bundle {
       // 失敗は ✕ の数、止めたもの（Esc・止める・ロック・禁止・拒否）は失敗に数えず、最後の理由を短い字で
       const sum = computerSummary(items);
       // Esc・「止める」で止まったら、もう止めるものは無い
-      const halted = items.some((x) => x.stopped && (x.reason === "escape" || x.reason === "stop"));
+      const halted = items.some((x) => x.stopped && (x.reason === "escape" || x.reason === "stop" || x.reason === "update"));
       if (this.stopEl) this.stopEl.hidden = halted;
       this.mixEl.textContent = this.live || (this.stopEl && !halted) ? t("timeline.computer.bundle.running") : t("timeline.computer.bundle.done");
       this.xmEl.textContent = [st.errors ? t("timeline.bundle.failed", { count: st.errors, n: st.errors }) : "", sum.stopped ? reasonShort(sum.stopped) : ""].filter(Boolean).join(" · ");

@@ -98,6 +98,12 @@ export const DATA_WRITES = [
   { file: 'core/control-file.mjs', sites: 1, targets: [
     { name: 'control.json', limit: '固定', reason: '起動中ホストの接続情報' },
   ] },
+  { file: 'core/main-link.mjs', sites: 1, targets: [
+    { name: 'main-link.json', limit: '固定', reason: 'main がパイプにつなぐための名前・秘密（権限 0600。起動ごとに書き直し、終了で消す）' },
+  ] },
+  { file: 'core/server-log.mjs', sites: 1, targets: [
+    { name: '(置き場の外) 版ごとの実行場所（AGENT_HOST_SERVER_LOG）の logs/server.log と、1 世代前の server.log.old', limit: 'SERVER_LOG_MAX_BYTES=1MB を超えたら .old へ回す（2 つで約 2MB まで）', reason: 'main の子でない形で起こしたサーバー（stdio が無い）の標準出力・標準エラー。起動の失敗の理由を main が末尾から読む。追記だけで、回すときは名前を替えるだけ', appendOnly: true },
+  ] },
   { file: 'core/backend-shape-diagnostics.mjs', sites: 1, targets: [
     { name: 'backend-shape-errors.log', limit: 'MAX_BYTES=64KiB。超えたら新しい半分だけ残す。同じ組は重複させない', reason: '非公開形式の変化の記録' },
   ] },
@@ -111,8 +117,8 @@ export const DATA_WRITES = [
   { file: 'core/visualize.mjs', sites: 1, targets: [
     { name: 'visualization-snapshots/<key>.html', limit: '1 つ 1 ファイル。24 時間で掃除する', reason: '可視化の写し。書き換えない' },
   ] },
-  { file: 'core/agent-browser.mjs', sites: 1, targets: [
-    { name: 'agent-browser/<hash>/agent-browser.json', limit: '固定（{ cdp }）', reason: '内蔵ブラウザーの接続先。ターンごとに上書き' },
+  { file: 'core/agent-browser.mjs', sites: 2, targets: [
+    { name: 'agent-browser/<hash>/agent-browser.json', limit: '固定（{ cdp }）', reason: '内蔵ブラウザーの接続先。ターンごとに上書き。付け直した main が別のポートで中継を立てたときも、ある会話のものだけ書き直す（無停止の更新 1-5）' },
   ] },
   { file: 'core/hooks-unify.mjs', sites: 2, targets: [
     { name: 'hooks-runtime/hook-adapter-<hash>.mjs', limit: 'アダプターごとに 1 つ。コードの複製', reason: '生成したコード' },
@@ -129,6 +135,10 @@ export const DATA_WRITES = [
   ] },
   { file: 'desktop/agent-browser-bin.cjs', sites: 1, targets: [
     { name: 'agent-browser-bin/agent-browser(.exe)', limit: '同梱の実行ファイル 1 つ。大きさが違うときだけ写し直す', reason: '開発時（未パッケージ）に実行ファイルを置き場へ写す。書き換えない成果物' },
+  ] },
+  { file: 'desktop/runtime.cjs', sites: 9, targets: [
+    { name: '(置き場の外) %LOCALAPPDATA%/agent-host-runtime の store/<sha256>・app/<版>（store へのハードリンク）・node/<版>/pleiad-node.exe・agent-browser/<版>', limit: '今の版を含む 3 版（KEEP_TREES）。2 版目からは変わった分だけ増える（約 107 MB・4,000 ファイルが 1 版目、変わった分は数 MB）。使われなくなった版・どの木にもリンクされない実体は掃除（cleanup）が消す', reason: '無停止の更新（ADR 0151）で、更新に止められない版ごとの実行場所を組む。中身のハッシュで 1 度だけ置き、書き換えない成果物（置いてから rename）。データ置き場には書かない' },
+    { name: '(置き場の外) 実行場所の app/<版>/.runtime.json・runtime-node.txt', limit: '固定の小ささ（版・ビルド・組んだ時刻・Node の置き場の名前）。版ごとに 1 組', reason: '組み終えた木の印と、起動口（bin/pleiad.cmd）が読む Node の置き場の名前。組み立ての最後に書く' },
   ] },
   { file: 'desktop/server-port.cjs', sites: 1, targets: [
     { name: '(置き場の外) Electron の userData の、前回のポート', limit: '固定（{ port }）', reason: '画面の origin を保つための印' },

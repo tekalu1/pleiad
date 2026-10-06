@@ -2,6 +2,9 @@
 // サーバーの core/remote-delegation.mjs（parentPortRemoteAgent）が相手。メッセージの形は core/remote/agent-service.mjs に書いてある。
 //   worker -> main: { type: 'remote-agent', id, action: 'hosts' | 'request' | 'abort' | 'answer' | 'sync', … }
 //   main -> worker: { type: 'remote-agent', id, ok, … }（応答）・{ type: 'remote-agent-event' | 'remote-agent-state' | 'remote-agent-hosts' | 'remote-agent-ready', … }
+// 無停止の更新（名前付きパイプの経路）: サーバーがつなぎ直すたびに（付け直し・切り替えで新しい版のサーバーに替わったとき）届く ready で、
+// 一覧と、つながっている線の ready を送り直す（resync）。サーバーは main が居ない間はホストを全部オフライン扱いにして依頼を待たせず失敗にする
+// （docs/zero-downtime-update/design.md §7.2）。utilityProcess の経路では ready は起動で 1 回しか来ず、この橋ができる前に済んでいる
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 
@@ -14,6 +17,7 @@ function attachRemoteAgentBridge(worker, { getDevice, log = () => {} }) {
     .then(({ createRemoteAgentService }) => createRemoteAgentService({ getDevice, post: message => { try { worker.postMessage(message); } catch { /* サーバーが終わった */ } }, log }));
   service.catch(e => log(`remote agent bridge: ${e?.message ?? e}`));
   worker.on('message', async message => {
+    if (message?.type === 'ready') { try { await (await service).resync(); } catch (e) { log(`remote agent bridge: ${e?.message ?? e}`); } return; }
     if (message?.type !== 'remote-agent') return;
     try { (await service).handle(message); } catch (e) { log(`remote agent bridge: ${e?.message ?? e}`); }
   });

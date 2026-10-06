@@ -19,7 +19,7 @@ export function stampSessionId(event, fallback) {
 }
 
 // server -> client
-export const READY = "ready";   // { protocolVersion, version, homeDir, resumedTurn, startedAt（サーバーの起動時刻 ms）, locale, notify（スマホへの通知に対応していれば 1） }
+export const READY = "ready";   // { protocolVersion, version（アプリの版）, build（ビルドの短いハッシュ。開発は null）, homeDir, resumedTurn, startedAt（サーバーの起動時刻 ms）, locale, notify（スマホへの通知に対応していれば 1） }。version・build が画面を配った版と違えば、画面は 1 回だけ読み直す（protocolVersion は変えない）
 export const EVENT = "event";
 export const RESPONSE = "response";
 export const ERROR = "error";

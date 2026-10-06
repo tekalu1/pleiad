@@ -6,7 +6,9 @@
 
 デスクトップ版では、会話ごとに鍵付きの loopback WebSocket CDP 中継を開く（[ADR 0043](adr/0043-agent-browser-via-per-session-cdp-relay.md)）。中継は `webContents.debugger` を使い、その会話の内蔵ブラウザーのタブだけを `Target` として返す。Pleiad 本体の画面や別会話のタブは返さない。接続先の準備（ターンの開始）ではタブを作らず、エージェントが実際に WebSocket でつないだときに、その会話のタブが 0 枚なら空のタブを 1 枚作る（使わないターンや委譲した子の会話で空のタブが増えない）。`Target.createTarget` はその会話の新しいタブを作り、`Browser.close` などブラウザー全体に効くコマンドは拒否する。Electron の `--remote-debugging-port` は開かない。
 
-utilityProcess のサーバーは parentPort でメインプロセスに接続先を頼む。`<data>/agent-browser/<会話の初期 ID の SHA-256>/agent-browser.json` に `cdp` URL を書き、エージェントのシェルへ `AGENT_BROWSER_CONFIG` と `AGENT_BROWSER_SESSION` を渡す。デスクトップ版でない `npm start` には渡さない。Claude は SDK の会話別 env、Codex は共有 app-server の `thread/start`・`thread/resume` に渡す会話別の `shell_environment_policy.set`、Antigravity は会話別プロセスの env を使う。接続方法は会話のエージェント向け指示にも入る。`agent-browser` は同梱した OS のネイティブ本体を PATH から呼ぶ。
+サーバー（`utilityProcess`、無停止の更新の既定では実行場所の `pleiad-node.exe`）は main への口（parentPort か名前付きパイプ）でメインプロセスに接続先を頼む。`<data>/agent-browser/<会話の初期 ID の SHA-256>/agent-browser.json` に `cdp` URL を書き、エージェントのシェルへ `AGENT_BROWSER_CONFIG` と `AGENT_BROWSER_SESSION` を渡す。デスクトップ版でない `npm start` には渡さない。Claude は SDK の会話別 env、Codex は共有 app-server の `thread/start`・`thread/resume` に渡す会話別の `shell_environment_policy.set`、Antigravity は会話別プロセスの env を使う。接続方法は会話のエージェント向け指示にも入る。`agent-browser` は同梱した OS のネイティブ本体を PATH から呼ぶ。
+
+main の入れ替わり（無停止の更新。パイプの口）: 中継とタブは main のもので、main が居ない間（本物のインストーラーで約 45〜50 秒）は中継が無く、`agent-browser` の呼び出しは約 2 秒でエラーになる（モデルの再試行に任せる）。サーバーが会話ごとの URL・タブの写しと中継の `{ port, 鍵 }` を持ち（main がタブの変化を報告する）、新しい main が付け直したら、写しからタブを URL で開き直し、**同じポートと鍵で**中継を立て直す（`agent-browser` の常駐は同じ pid のまま次の呼び出しで戻る）。中継の待ち受けは、タブを開き直した後（先に待ち受けると、常駐の最初の `getTargets` が `about:blank` を見る）。同じポートが取れなければ別のポートと鍵にして、`agent-browser.json` の `cdp` を書き直す。サーバーの切り替え（新しい版のサーバー）の後も、main が写しと中継の URL を 1 回送り直す。タブの写しはプロフィールを持たない（[ADR 0148](adr/0148-agent-browser-in-chrome.md) で削除）。エージェントの操作が Chrome の専用の窓に移った後の扱いは `docs/zero-downtime-update/design.md` §7.2。
 
 中継を使うと右パネルを開き、操作中のタブに印を付け、道具の列の下に「<エージェント名> が操作中」と「止める」「引き継ぐ」を数秒表示する。「止める」は接続を切り、次の人の送信まで再接続を拒否する。「引き継ぐ」は接続を切って表示を消し、再接続は許す。会話のツール履歴はシェル実行として残る。
 

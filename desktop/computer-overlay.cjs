@@ -409,7 +409,8 @@ function attachComputerOverlay(worker, options = {}) {
   const t = options.t ?? require('./i18n.cjs').t;
   const overlay = createComputerOverlay({ ...options, electron, t, post: message => worker.postMessage(message) });
   worker.on('message', message => { overlay.handleMessage(message); });
-  worker.once('exit', () => overlay.hideAll());
+  // on（once ではない）: つなぎ直した包み（切り替えの S2・付け直し。desktop/server-link.cjs）でも、次の切断で片付ける
+  worker.on('exit', () => overlay.hideAll());
   return overlay;
 }
 
