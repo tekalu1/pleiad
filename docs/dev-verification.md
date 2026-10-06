@@ -85,6 +85,8 @@
 ## デスクトップ版（Electron）
 
 - 実機で確かめる入口は、`app.setPath('userData', <一時ディレクトリ>)`・`AGENT_HOST_DATA`・`AGENT_HOST_BACKENDS=fake` を決め、`shell.openExternal` を記録だけに差し替えてから `desktop/main.cjs` を require する小さな `.cjs` にすると、本物のデータとインストール版に触れず、窓は `executeJavaScript` で操作できる（2026-09-27 に内蔵ブラウザーで使ったものは `temporary/scripts/inapp-browser/harness.cjs`）。起動は `env -u ELECTRON_RUN_AS_NODE <repo>/node_modules/electron/dist/electron.exe <入口>`。
+- main とサーバー（utilityProcess）の間のメッセージを確かめるなら、ハーネスで `require('electron').utilityProcess.fork` を包んでから `desktop/main.cjs` を require する（main は `const { utilityProcess } = require('electron')` で分割代入するので、require の前に差し替える）。返ってきた worker に `on('message')` を付けて両方向の `type` を記録し、`worker.postMessage({ type: 'update-lock', id })`・`running`・`abort` を直に打てば、main の窓の操作なしで update-lock・終了の経路を確かめられる。`shell.showItemInFolder` と `shell.openExternal` を記録だけの関数に差し替えれば、os-open・open-external も本物の窓を開かずに往復を見られる（2026-10-06、`core/main-port.mjs` の確認）。
+- ハーネスの終了の確認（worker の exit code・`control.json` の削除）は、`app.quit()` の後ろに書かない。main が終わると後ろのコードは走らない。`worker.once('exit')` と `process.on('exit')` の中で同期的にログへ書く（2026-10-06）。
 - 確認用スクリプトの終わりは `app.quit()` を使い、起動したプロセスは必ず上限時間付きで待つ（`Start-Process -Wait` を上限なしで使わない）。`app.exit()` はサーバー終了時の同期通知で止まったことがあり、無期限の待機は調査自体を止めるため。
 - 本体の窓を持たない確認用ハーネス（オーバーレイの窓だけを出す、など）は `app.on('window-all-closed', () => {})` を付ける。付けないと、最後の窓を `destroy()` した時点でアプリが終わり、次の場面が走らずログも途中で切れる（2026-10-01、`temporary/scripts/computer-use-impl-overlay/harness.cjs`）。
   - 窓が撮影から外れているかは、`Graphics.CopyFromScreen`（BitBlt。エージェントの撮影と同じ経路）で縁の 1 画素を読み、`contentProtection: false` の対照と並べて確かめる。対照が写らなければ、写らなかった結果に意味が無い。
