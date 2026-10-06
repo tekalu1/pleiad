@@ -668,6 +668,64 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
     return { channelId, threadId: root.id };
   }
 
+  /**
+   * スレッドのあなたの投稿 H を送り直す（channels.resend。ADR 9101 の 4.5。ADR 0102 の順: 全部確かめてから変える）。
+   * bot ごとに、H 以後の投稿を最初に含むまとまりの手前まで会話を巻き戻す（巻き戻せない bot・H 以後に会話が始まった bot はスレッドから外す。
+   * 次に呼ばれたら新しい会話で始まる）。走っていれば stopRunning で止める（無ければ SESSION_RUNNING で断る）。届ける前の出来事は捨てる。
+   * sidecar を戻し（postCursor = H の直前・snapshotDue）、H とその後ろを取り下げ、新しい本文を人の投稿として書く（宛先は決まり直す）
+   */
+  async function resendThread({ channelId, threadId, postId, text, attachments, stopRunning = false, clientId, to }) {
+    const all = [];
+    let before;
+    do {
+      const page = await channels.read({ channelId, threadId, ...(before ? { before } : {}), limit: 100 });
+      all.unshift(...page.posts);
+      before = page.nextBefore;
+    } while (before);
+    const at = all.findIndex((p) => p.id === postId);
+    if (at <= 0) throw Object.assign(new Error(`not a reply in this thread: ${postId}`), { code: 'POST_NOT_FOUND' });
+    const order = new Map(all.map((p, i) => [p.id, i]));
+    const th = await channels.threads.get(channelId, threadId).catch(() => null);
+    const plans = [];   // { botId, sessionId, cut | null（外す） }
+    for (const [botId, sessionId] of Object.entries(th?.sessions ?? {})) {
+      const messages = await host.readMessages(sessionId);
+      let cut = null, kept = 0;
+      for (const m of messages) {
+        if (m?.kind !== 'channelEvent') continue;
+        const ids = m.history ? [...String(m.body ?? '').matchAll(/post="([^"]+)"/g)].map((x) => x[1]) : [m.postId].filter(Boolean);
+        if (ids.some((id) => (order.get(id) ?? -1) >= at)) { cut = m.groupUuid ?? m.uuid ?? null; break; }
+        kept++;
+      }
+      if (!cut) continue;                                         // H を受けていない: そのまま
+      if (!kept) { plans.push({ botId, sessionId, cut: null }); continue; }   // H 以後に始まった会話: 外す
+      try { await host.rewindPlan({ sessionId, beforeMessageId: cut }); plans.push({ botId, sessionId, cut }); }
+      catch (e) { log('a bot conversation cannot be rewound; it leaves the thread:', errText(e)); plans.push({ botId, sessionId, cut: null }); }
+    }
+    const running = plans.filter((p) => host.sessionBusy?.(p.sessionId));
+    if (running.length && !stopRunning) throw Object.assign(new Error('a bot is still working in this thread'), { code: 'SESSION_RUNNING' });
+    const cursor = all[at - 1].id;
+    const leave = [];
+    for (const plan of plans) {
+      const pending = await inbox.list({ sessionId: plan.sessionId });
+      const drop = pending.filter((i) => i.status === 'pending' || i.status === 'delivering').map((i) => i.id);
+      if (drop.length) await inbox.remove(drop);
+      if (!plan.cut) {
+        if (host.sessionBusy?.(plan.sessionId)) await host.abortSessions?.({ sessionId: plan.sessionId, reason: 'user' }).catch(() => {});
+        leave.push(plan.botId);
+        continue;
+      }
+      await host.rewindSession({ sessionId: plan.sessionId, beforeMessageId: plan.cut, stopRunning });
+      await updateSidecar(plan.sessionId, (sb) => {
+        const next = { ...sb, postCursor: cursor, snapshotDue: true, delivered: [] };
+        delete next.memoKey; delete next.personaKey; delete next.recentDelivered;
+        return next;
+      });
+    }
+    if (leave.length) await channels.threads.update(channelId, threadId, { sessions: Object.fromEntries(leave.map((botId) => [botId, null])) });
+    await channels.withdraw({ channelId, postIds: all.slice(at).map((p) => p.id) });
+    return channels.post({ channelId, threadId, text, ...(attachments?.length ? { attachments } : {}), ...(clientId ? { clientId } : {}), ...(to ? { to } : {}) }, { kind: 'human' });
+  }
+
   /** この bot の、このスレッド（DM なら DM）の会話。無ければ作る */
   async function sessionFor({ bot, channel, threadId, post, backend = null, cwd = null }) {
     if (channel.kind === 'dm') return (await bots.ensureDmSession({ botId: bot.id })).sessionId;
@@ -1499,7 +1557,7 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
 
   return {
     channels, bots, memory, host, emit, now, inbox, budget,
-    start, stop, onPosted, onReacted, claimPost, wake, wakePost, handoff, wakeReserved, stopThread, turnExtras, onTurnEvent, onTurnEnd, onPermission, onCompacted, threadSettings, branchThread,
+    start, stop, onPosted, onReacted, claimPost, wake, wakePost, handoff, wakeReserved, stopThread, turnExtras, onTurnEvent, onTurnEnd, onPermission, onCompacted, threadSettings, branchThread, resendThread,
     /** テスト・診断用: 走っている bot のターンの数 */
     activeCount: () => active.size,
     /** 使用量の上限で休んでいれば解除の時刻（ms）。bots.overview の restingUntil（ADR 0119） */

@@ -1,6 +1,6 @@
 // 投稿のメニュー（Chats の発言のメニューと同じ並び。web/message-actions.mjs の messageMenuPlan。ADR 9101）。
 // あなたの投稿 = コピー・（エージェントに渡した原文を見る）・｜・リアクション。bot の返事 = 返答をコピー・｜・リアクション。
-// ここから分岐はスレッドの中だけ（channels.branchThread）。編集して再送信・再送信は送り直しの段で足す。「会話を開く」は仕上げの段で消す（それまで残す）。
+// ここから分岐はスレッドの中だけ（channels.branchThread）。編集して再送信・再送信はスレッドのあなたの返信だけ（channels.resend）。「会話を開く」は仕上げの段で消す（それまで残す）。
 // 右クリック・長押し・Shift+F10・メニューキーは setupMessageMenu（Chats と同じ口）で受ける。
 import { messageMenuPlan, copyToClipboard, hoverless, setupMessageMenu } from '../message-actions.mjs';
 
@@ -17,12 +17,14 @@ import { messageMenuPlan, copyToClipboard, hoverless, setupMessageMenu } from '.
  * @param {(() => void)|null} [o.source] エージェントに渡した原文を見る（bot が受けた人の投稿だけ）
  * @param {(() => void)|null} [o.openSession] 会話を開く（仕上げの段まで残す）
  * @param {(() => void)|null} [o.fork] ここから分岐（スレッドの中だけ）
+ * @param {(() => void)|null} [o.edit] 編集して再送信（スレッドのあなたの返信だけ）
+ * @param {(() => void)|null} [o.resend] 再送信（同じ）
  * @returns {{ items: object[], title: string|undefined }}
  */
-export function postMenu({ post, t, name, time, copyButton = null, react, reply = null, source = null, openSession = null, fork = null }) {
+export function postMenu({ post, t, name, time, copyButton = null, react, reply = null, source = null, openSession = null, fork = null, edit = null, resend = null }) {
   const kind = post.author?.kind === 'human' ? 'user' : 'ai';
-  const plan = messageMenuPlan({ kind, canFork: Boolean(fork), editable: false, source: kind === 'user' && Boolean(source) });
-  const run = { copy: () => copyToClipboard(post.text ?? '', copyButton), source: () => source?.(), fork: () => fork?.() };
+  const plan = messageMenuPlan({ kind, canFork: Boolean(fork), editable: Boolean(edit && resend), source: kind === 'user' && Boolean(source) });
+  const run = { copy: () => copyToClipboard(post.text ?? '', copyButton), source: () => source?.(), fork: () => fork?.(), edit: () => edit?.(), resend: () => resend?.() };
   const items = [
     ...(reply ? [{ label: t('channels:feed.reply'), onClick: reply }] : []),
     ...plan.map((p) => (p.sep ? { sep: true } : { label: p.label, onClick: run[p.key] })),

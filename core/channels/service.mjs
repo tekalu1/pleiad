@@ -547,6 +547,15 @@ export function createChannelService({ dir, emit = () => {}, hooks = {}, now = D
       if (text !== undefined && saved.author.kind === 'human') await hooks.edited?.(clone(saved), clone(await need(channelId)));
       return saved;
     },
+    /** 投稿を取り下げる（送り直し。channels.resend）。出来事は op 'withdraw'（画面は消す） */
+    async withdraw({ channelId, postIds }) {
+      await need(channelId);
+      for (const id of postIds) {
+        const saved = await store.append(channelId, { op: 'withdraw', id, at: now() });
+        if (saved) emit({ type: 'channelPost', channelId, op: 'withdraw', post: { ...clone(saved), withdrawnAt: saved.withdrawnAt } });
+      }
+    },
+
     async remove({ channelId, postId }, _author) {
       const post = await needPost(channelId, postId);
       if (post.deletedAt) return;

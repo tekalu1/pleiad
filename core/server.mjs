@@ -4760,6 +4760,9 @@ botHost = createBotHost({
   // スレッドを分ける（channels.branchThread）: bot の会話の発言（分けた行）を読み、切り口で会話を分ける
   readMessages: async (id) => { const backend = await resolveBackendForSession(id); return backend?.getMessages ? backend.getMessages(id) : []; },
   forkSession: ({ sessionId, beforeMessageId }) => forkConversation({ sessionId, ...(beforeMessageId ? { beforeMessageId } : {}), reason: 'branch' }, { by: 'human' }),
+  // スレッドの送り直し（channels.resend）: 巻き戻せるかを先に全部確かめ、確かめた後で巻き戻す（ADR 0102 の順）
+  rewindPlan: async ({ sessionId, beforeMessageId }) => (await pickBackend(sessionId)).rewindPlan(sessionId, { beforeMessageId }),
+  rewindSession: (args) => rewindConversation(args),
   // 隠れた会話（夜の整理・心拍）をネイティブの会話ごと消す。消せないバックエンド・走っている会話は残して false（ADR 0127）
   deleteHidden: async id => {
     if (sessionBusy(id) || !HIDDEN_BOT_KINDS.has((await store.get(id)).bot?.kind)) return false;

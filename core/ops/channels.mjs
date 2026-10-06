@@ -235,6 +235,34 @@ export const channelOps = [
     }),
   }),
   defineOp({
+    // スレッドのあなたの投稿を送り直す（編集して再送信・再送信。ADR 9101 の 4.5・ADR 0102）。その投稿と後ろを取り下げ、
+    // スレッドの bot の会話をその手前まで巻き戻してから、新しい本文を書く。画面の道具（人だけ）
+    id: 'channels.resend', summary: D('resend', 'summary'), risk: 'write',
+    riskReason: 'Withdraws your post and the posts after it in a thread, rewinds the bot conversations of the thread to before it, and posts the new text. Files changed by the bots and posts in other threads are not undone',
+    input: z.object({
+      channelId: channelId('resend'), postId: postId('resend'),
+      text: z.string().min(1).max(LIMITS.text).describe(D('resend', 'text')),
+      attachments: z.array(z.object({ path: z.string().min(1), name: z.string().optional(), mime: z.string().optional() })).max(LIMITS.attachments).optional().describe(D('resend', 'attachments')),
+      stopRunning: z.boolean().optional().describe(D('resend', 'stopRunning')),
+      clientId: z.string().min(8).max(100).optional().describe(D('resend', 'clientId')),
+    }),
+    output: z.unknown(),
+    surfaces: { ui: true, mcp: false, cli: false },
+    handler: async (ctx, args) => {
+      if (ctx.principal?.by !== 'human' || !ctx.resendThread) throw new OpError('NEEDS_UI', agentT(ctx.locale, 'ops.errors.NEEDS_UI'));
+      await ownPost(ctx, args);
+      const post = await run(ctx, () => ctx.channels.getPost({ channelId: args.channelId, postId: args.postId }));
+      if (!post.threadId) throw new OpError('INVALID', agentT(ctx.locale, 'ops.errors.INVALID', { detail: 'the root of a thread cannot be resent; branch instead' }));
+      const files = args.attachments?.length ? await describeFiles(ctx, args.attachments) : undefined;
+      try {
+        return await run(ctx, () => ctx.resendThread({ ...args, threadId: post.threadId, ...(files ? { attachments: files } : {}) }));
+      } catch (e) {
+        if (e?.code === 'SESSION_RUNNING') throw new OpError('SESSION_RUNNING', agentT(ctx.locale, 'ops.errors.INVALID', { detail: 'a bot is still working in this thread; pass stopRunning to stop it' }));
+        throw e;
+      }
+    },
+  }),
+  defineOp({
     // スレッドをある投稿のところで分ける（「ここから分岐」。ADR 9101 の 4.4）。根からその投稿までを写した新しいスレッドができ、
     // スレッドの bot の会話もその手前で分ける。写した投稿は bot を起こさない。画面の道具（人だけ）
     id: 'channels.branchThread', summary: D('branchThread', 'summary'), risk: 'write',

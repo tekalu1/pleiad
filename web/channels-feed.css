@@ -103,6 +103,10 @@
 .post.sys .post-tools{display:none}
 /* あなたの投稿の添付の行（📎 N ▾。Chats の .msg-tools） */
 .post-main > .msg-tools{margin-top:4px}
+/* 送り直すと消える投稿（Chats の .mw.doomed と同じ薄さ）。編集中の投稿は本文の代わりに編集欄 */
+.post.doomed{opacity:.42;transition-duration:var(--dur-fast)}
+.post.editing .post-main > .message-editor{margin-top:4px}
+.post-main > .resend-band{margin-top:8px;max-width:680px}
 /* コピーの ✓（Chats の発言のコピーと同じ） */
 .post-tool.copy .ok{display:none}
 .post-tool.copy.done .cp{display:none}

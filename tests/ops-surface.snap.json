@@ -838,6 +838,21 @@
       "input": "11de5b77aa28"
     },
     {
+      "id": "channels.resend",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": false,
+        "cli": false
+      },
+      "legacyCommand": null,
+      "input": "873b7aa6d019"
+    },
+    {
       "id": "channels.schedulePost",
       "risk": "guarded",
       "riskOf": false,

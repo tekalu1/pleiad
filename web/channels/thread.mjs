@@ -19,6 +19,7 @@ import { openEmojiPicker } from '../emoji-picker.mjs';
 import { postMenu, setupPostMenu, menuPoint } from './post-menu.mjs';
 import { openSourceDialog } from '../message-actions.mjs';
 import { makeBranchRow } from '../branch-view.mjs';
+import { buildBand, resendKeys, sendGlyph } from '../resend-band.mjs';
 import { createDeck } from './deck.mjs';
 import { createThreadHead } from './thread-head.mjs';
 import { createConversationNav } from '../conversation-nav-view.mjs';
@@ -679,12 +680,115 @@ export function createThread(host) {
       source: received ? () => showSource(p, more ?? anchor) : null,
       // ここから分岐: 根からこの投稿までを写した新しいスレッド（bot の会話もこの手前で分ける）
       fork: S.channel?.kind === 'dm' || p.state === 'working' ? null : () => branchFrom(p),
+      // 編集して再送信・再送信: あなたの返信だけ（根は分岐して送る）
+      ...(p.author?.kind === 'human' && p.threadId && S.channel?.kind !== 'dm' ? { edit: () => openResend(p, true), resend: () => openResend(p, false) } : {}),
       openSession: p.turn?.sessionId ? () => host.openSession(p.turn.sessionId) : null,
     });
     more?.setAttribute('aria-expanded', 'true');
     node?.classList.add('menu-open');
     host.showMenu(x, y, items, title, { alignRight, onClose: () => { more?.setAttribute('aria-expanded', 'false'); node?.classList.remove('menu-open'); } });
   }
+  // ---------------------------------------------------------------- 送り直し（ADR 9101 の 4.5。Chats の送り方の帯と同じ部品。web/resend-band.mjs）
+  let resendOpen = null;
+  const resendId = () => `rs-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`;
+  async function doResend(p, text, stopRunning) {
+    try {
+      await host.invoke('channels.resend', { channelId: S.channelId, postId: p.id, text, stopRunning, clientId: resendId() });
+      return true;
+    } catch (err) { composer.say(t('channels:thread.resend.failed', { error: err?.message ?? String(err) }), true); return false; }
+  }
+  /** 分岐して送る: H の直前で分けた新しいスレッドに、新しい本文を書く */
+  async function branchAndSend(prev, text) {
+    try {
+      const made = await host.invoke('channels.branchThread', { channelId: S.channelId, threadId: S.threadId, atPostId: prev.id });
+      await host.invoke('channels.post', { channelId: made.channelId, threadId: made.threadId, text, clientId: resendId() });
+      document.dispatchEvent(new CustomEvent('channels:show', { detail: { kind: 'channel', id: made.channelId, threadId: made.threadId } }));
+      return true;
+    } catch (err) { composer.say(t('channels:thread.branch.failed', { error: err?.message ?? String(err) }), true); return false; }
+  }
+  /** 編集して再送信（edit）・再送信。後ろに消えるもの（投稿・作業中の返事）があれば、投稿の直下に送り方の帯。押した時点では何も消さない */
+  function openResend(p, edit) {
+    resendOpen?.close();
+    const node = postEls.get(p.id);
+    const idx = S.posts.findIndex((x) => x.id === p.id);
+    if (!node || idx <= 0) return;
+    const after = S.posts.slice(idx + 1).filter((x) => !x.deletedAt);
+    const running = liveBots().length > 0;
+    // bot のターン（作業）が後ろにあれば、ファイルの変更は戻らないことを帯の 2 行目に書く（中身までは見ない）
+    const tail = { saved: after.length, users: after.filter((x) => x.author?.kind === 'human').length, files: after.some((x) => x.turn), running, forkOnly: false, any: after.length > 0 || running };
+    if (!edit && !tail.any) { void doResend(p, p.text ?? '', false); return; }
+    const body = node.querySelector('.post-body');
+    for (const x of after) postEls.get(x.id)?.classList.add('doomed');
+    let editor = null, input = null, band = null, ownSend = null, sending = false;
+    const current = () => (input ? input.value : p.text ?? '');
+    const close = () => {
+      for (const n of log.querySelectorAll('.post.doomed')) n.classList.remove('doomed');
+      band?.node.remove();
+      if (editor) { editor.remove(); body.hidden = false; node.classList.remove('editing'); }
+      if (resendOpen?.p === p) resendOpen = null;
+    };
+    const busy = (on) => { sending = on; band?.busy(on); if (input) input.disabled = on; if (ownSend) ownSend.disabled = on; };
+    const send = async () => {
+      if (sending || !current().trim()) return;
+      busy(true);
+      const ok = await doResend(p, current(), tail.running);
+      busy(false);
+      if (ok) close();
+    };
+    const branch = async () => {
+      if (sending || !current().trim()) return;
+      busy(true);
+      const ok = await branchAndSend(S.posts[idx - 1], current());
+      busy(false);
+      if (ok) close();
+    };
+    const cancel = () => { if (!sending) close(); };
+    const keys = (event) => { resendKeys(event, { send, branch, cancel }); };
+    if (edit) {
+      editor = el('div', 'message-editor');
+      input = el('textarea', 'message-edit-input');
+      input.value = p.text ?? '';
+      input.setAttribute('aria-label', t('chat.message.editLabel'));
+      editor.append(input);
+      if (!tail.any) {
+        const controls = el('div', 'message-edit-controls');
+        const cancelButton = el('button', 'btn', t('chat.resend.cancel'));
+        ownSend = el('button', 'btn btn-primary');
+        cancelButton.type = ownSend.type = 'button';
+        ownSend.append(sendGlyph(), el('span', null, t('chat.resend.send')));
+        cancelButton.onclick = cancel;
+        ownSend.onclick = send;
+        controls.append(cancelButton, ownSend);
+        editor.append(controls);
+      }
+      body.hidden = true;
+      body.after(editor);
+      node.classList.add('editing');
+      input.onkeydown = keys;
+      input.oninput = () => { input.style.height = 'auto'; input.style.height = `${input.scrollHeight}px`; };
+    }
+    if (tail.any) {
+      band = buildBand({ tail, onSend: send, onBranch: branch, onCancel: cancel, texts: { running: t('channels:thread.resend.running') } });
+      band.node.onkeydown = keys;
+      node.querySelector('.post-main')?.append(band.node);
+      input?.setAttribute('aria-describedby', `${band.node.id}t`);
+    }
+    resendOpen = { p, close };
+    if (input) { input.focus(); input.oninput(); } else band?.send.focus({ preventScroll: true });
+    (band?.node ?? editor)?.scrollIntoView?.({ block: 'nearest' });
+  }
+  /** 取り下げた投稿（送り直し）を、列から消す */
+  function withdrawPost(id) {
+    const node = postEls.get(id);
+    node?.remove();
+    postEls.delete(id);
+    const i = S.posts.findIndex((p) => p.id === id);
+    if (i >= 0) S.posts.splice(i, 1);
+    S.index.delete(id);
+    paintRdiv();
+    afterPosts();
+  }
+
   // ---------------------------------------------------------------- 分岐（ADR 9101 の 4.4）
   async function branchFrom(p) {
     try {
@@ -848,6 +952,7 @@ export function createThread(host) {
       if (!S.ready) { S.queue.push(ev); return; }
       const p = ev.post;
       if (!p) return;
+      if (ev.op === 'withdraw') { if (p.threadId === S.threadId) withdrawPost(p.id); return; }
       if (p.threadId === S.threadId) onReply(ev.op, p);
       else if (!p.threadId && p.id === S.threadId) onRoot(ev.op, p);
       // このスレッド（の元）から新しい枝ができた: 分岐の行を描き直す

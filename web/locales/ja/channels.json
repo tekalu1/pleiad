@@ -158,6 +158,7 @@
     "dest": { "title": "宛先", "label": "宛先: {{name}}（選び直す）", "auto": "宛先", "inThread": "このスレッドの bot", "others": "ほかのメンバー", "members": "メンバー" },
     "renameFailed": "題を変えられませんでした: {{error}}",
     "noSource": "この投稿を受けた bot の会話はまだありません",
+    "resend": { "running": "作業中の返事は、送り直すと止まります。分岐して送ると、このスレッドで続きます。", "failed": "送り直せませんでした: {{error}}" },
     "branch": { "original": "オリジナル", "nth": "枝 {{n}}", "from": "分岐元: 「{{title}}」の発言から", "failed": "分岐できませんでした: {{error}}" },
     "sourceFailed": "原文を読めませんでした: {{error}}",
     "heardMark": "聞こえた投稿",

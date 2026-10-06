@@ -44,9 +44,10 @@ let seq = 0;
  * 帯を作る。onSend は［送り直す］、onBranch は［分岐して送る］、onCancel は［取り消し］（どれも押した直後に呼ぶ。
  * 送っている間は busy(true) で全部のボタンを止める）。返り値の node を発言の直下へ置く。
  * 開いている間に状況が変わったとき（走り出した）は update(tail) で文とボタンの名前を作り直す
- * @param {{ tail: ReturnType<typeof tailInfo>, onSend: () => void, onBranch: () => void, onCancel: () => void }} o
+ * texts は文の差し替え（チャンネルのスレッドは「元の会話」を「このスレッド」に。web/channels/thread.mjs）: { running? }
+ * @param {{ tail: ReturnType<typeof tailInfo>, onSend: () => void, onBranch: () => void, onCancel: () => void, texts?: { running?: string } }} o
  */
-export function buildBand({ tail, onSend, onBranch, onCancel }) {
+export function buildBand({ tail, onSend, onBranch, onCancel, texts = {} }) {
   const node = el('div', 'resend-band');
   node.id = `resendBand${++seq}`;
   node.setAttribute('role', 'group');
@@ -78,7 +79,7 @@ export function buildBand({ tail, onSend, onBranch, onCancel }) {
     if (next.forkOnly) lines.push(t('chat.resend.delegated'));
     else {
       if (next.saved > 0) lines.push(next.users > 0 ? t('chat.resend.removeUsers', { count: next.users }) : t('chat.resend.removeReplies'));
-      if (next.running) lines.push(t('chat.resend.running'));
+      if (next.running) lines.push(texts.running ?? t('chat.resend.running'));
       if (next.files) lines.push(t('chat.resend.files'));
     }
     lines.forEach((text, i) => node.insertBefore(el('div', i === 0 ? 'rb-t' : 'rb-sub', text), acts));

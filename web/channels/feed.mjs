@@ -456,6 +456,8 @@ export function createFeed(host) {
   function onPost(ev) {
     const { op, post: p } = ev;
     if (!p) return;
+    // 取り下げた返信（スレッドの送り直し）は、要約の行の件数から外す（数え直しは次の読み込み）
+    if (op === 'withdraw') { if (p.threadId) onReply('delete', p); return; }
     if (p.threadId) return onReply(op, p);
     if (op === 'add') {
       if (S.index.has(p.id)) { Object.assign(S.index.get(p.id), p); repaint(p.id); return; }
