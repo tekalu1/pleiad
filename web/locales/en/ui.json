@@ -250,6 +250,8 @@
         },
         "setup": {
           "status": "Chrome needs setting up",
+          "unreachable": "Chrome isn’t running, or remote debugging is off",
+          "unreachableNote": "If Chrome is closed, it continues on its own once you start Chrome. If Chrome is running and nothing happens, turn it on with these steps.",
           "step1": "Copy this address",
           "step2": "Paste it into Chrome’s address bar, open it, and turn on “Allow remote debugging for this browser instance”",
           "note": "It continues on its own once the setting is on (no need to press again). You only do this once; it stays on after Chrome restarts.",

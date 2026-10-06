@@ -37,12 +37,12 @@ agent-browser 0.38.1 の state ルートには専用の変更変数がない。`
 | 状態 | 意味 | 入る条件 | 出る先 |
 |---|---|---|---|
 | `off` | 何もしていない | 起動直後・「切る」・「やめる」・接続が切れた後 | 「つなぐ」→ `setup` か `permission` |
-| `setup`（A） | Chrome のトグルがオフ | `DevToolsActivePort` が無い、または書かれたポートにつながらない | 1 秒ごとに読み直し、つながれば自動で `permission`。時間では打ち切らない |
+| `setup`（A） | Chrome のトグルがオフか、Chrome が起動していない | `DevToolsActivePort` が無い（`reason` は `null`）、または書かれたポートにつながらない（`reason` は `unreachable`。トグルをオフにしても Chrome を閉じてもファイルは残るので、この 2 つは見分けない） | 1 秒ごとに読み直し、つながれば自動で `permission`。時間では打ち切らない |
 | `permission`（B） | 許可の確認が出ている | ws の upgrade を投げた。`dialog` は確認の窓を見つけたか | 許可で `connected`。「キャンセル」・確認の「[設定] でオフにする」で `denied`。トグルを戻した（ポートが閉じた）で `setup` |
 | `denied`（C） | Chrome で許可されなかった | 確認が 290 秒より前に断られ、ポートが生きている（「キャンセル」と確認の「[設定] でオフにする」。打ち切りでは入らない） | 「もう一度」→ `setup` / `permission`。「やめる」→ `off`（`declined`） |
 | `connected`（D） | つながった | upgrade 成功と `Browser.getVersion` | ws が閉じたら `off` と理由（`chrome-closed`: ファイルが消えた・ポートが変わった・つながらない、`revoked`: ポートは生きている） |
 
-`off` の `reason` は `chrome-closed`・`revoked`・`disconnected`（自分で切った）・`declined`（「やめる」）・`protocol`（想定外の HTTP の応答）。`unsupported` の `reason` は `platform`（Windows でない）・`native`（koffi を読めない）・`no-desktop`（Electron が無い）。
+`off` の `reason` は `chrome-closed`・`revoked`・`disconnected`（自分で切った）・`declined`（「やめる」）・`protocol`（想定外の HTTP の応答）。`setup` の `reason` は上の `unreachable` か `null`。`unsupported` の `reason` は `platform`（Windows でない）・`native`（koffi を読めない）・`no-desktop`（Electron が無い）。
 
 **待ちは無期限**（ADR 0153）。Chrome は確認を約 5 分で打ち切るので、Pleiad が確認を出してから 270 秒（`reissueMs`）で、利用者に見せずに古い確認を `WM_CLOSE` で閉じ、すぐ upgrade し直す（新しい確認が出る。確認は常に 1 つ。画面の状態は B のまま変わらない）。印の無い失敗が確認を出してから 290 秒（`cancelBeforeMs`）より前なら「キャンセル」（`denied`）、以降なら Chrome の打ち切りとして残った確認を閉じて出し直す。失敗の直後に `DevToolsActivePort` を読み直し、無い・つながらないなら `setup`。確認の窓を見つけられていないとき（`dialog: false`）も、出し直しで探して閉じる（**ws だけ閉じても確認は Chrome に残る**ため）。
 
@@ -62,7 +62,7 @@ agent-browser 0.38.1 の state ルートには専用の変更変数がない。`
 
 ### 画面と操作
 
-- 設定 › ブラウザーの「エージェントのブラウザー」（`web/browser-settings.mjs`。「エージェントの操作」の行の上）。1 行目は Chrome の印・「Chrome」・状態の字（`role=status`）・右にボタン。`off`: 「つながっていません」＋「つなぐ」（切れた理由があれば 1 行）。`setup`: 手順 2 つ（アドレス `chrome://inspect/#remote-debugging` をコピー → Chrome のアドレス欄に貼り付けて開き「Allow remote debugging for this browser instance」をオン）＋主のボタン「アドレスをコピー」＋「やめる」、弱い字で「オンになったら自動で進みます」。`permission`: 「Chrome に許可の確認が出ています」＋「ダイアログを前に出す」＋「やめる」、弱い字で「Chrome が確認を出し直しても、そのまま待ちます」（出し直しでは字を変えない）。`denied`: 「Chrome で許可されませんでした」＋「もう一度」＋「やめる」（「キャンセル」と確認の「[設定] でオフにする」を見分けられないので、どちらとも取れる字。2026-10-06）。`connected`: 「つながっています · Chrome 154」＋「切る」、弱い字で、つないでいる間は Chrome の窓に「自動テスト ソフトウェアによって制御されています」の帯が出ることがあること。`unsupported`: 「この OS ではまだ使えません」だけ（OS 以外の理由は「この環境ではまだ使えません」）。承認済み（2026-10-06。UX モックの 09）。
+- 設定 › ブラウザーの「エージェントのブラウザー」（`web/browser-settings.mjs`。「エージェントの操作」の行の上）。1 行目は Chrome の印・「Chrome」・状態の字（`role=status`）・右にボタン。`off`: 「つながっていません」＋「つなぐ」（切れた理由があれば 1 行）。`setup`: 手順 2 つ（アドレス `chrome://inspect/#remote-debugging` をコピー → Chrome のアドレス欄に貼り付けて開き「Allow remote debugging for this browser instance」をオン）＋主のボタン「アドレスをコピー」＋「やめる」、弱い字で「オンになったら自動で進みます」。状態の字は、ファイルが無いときは「Chrome の準備が要ります」、ファイルはあるのにつながらない（`unreachable`）ときは「Chrome が起動していないか、リモート デバッグがオフです」と、手順の前に「Chrome を閉じているなら、起動すると自動で進みます」（Chrome を閉じた後の次の接続でトグルの案内だけが出て合わなかったため。2026-10-07）。`permission`: 「Chrome に許可の確認が出ています」＋「ダイアログを前に出す」＋「やめる」、弱い字で「Chrome が確認を出し直しても、そのまま待ちます」（出し直しでは字を変えない）。`denied`: 「Chrome で許可されませんでした」＋「もう一度」＋「やめる」（「キャンセル」と確認の「[設定] でオフにする」を見分けられないので、どちらとも取れる字。2026-10-06）。`connected`: 「つながっています · Chrome 154」＋「切る」、弱い字で、つないでいる間は Chrome の窓に「自動テスト ソフトウェアによって制御されています」の帯が出ることがあること。`unsupported`: 「この OS ではまだ使えません」だけ（OS 以外の理由は「この環境ではまだ使えません」）。承認済み（2026-10-06。UX モックの 09）。
 - 操作（`core/ops/browser.mjs`）: `browser.chromeStatus`（read。MCP の catalog・CLI の `pleiad browser status` にも出る）。`browser.chromeConnect`・`browser.chromeDisconnect`・`browser.chromeRaiseDialog`（write。画面だけ・ホストの PC の画面だけ。`hostScreenOnly`）。WS のコマンドは `chromeStatus`・`chromeConnect`・`chromeDisconnect`・`chromeRaiseDialog`（`legacyCommand`）。つなぐ・切る・前に出すを `human-only` にしないのは、`human-only` が ADR 0094 の 5 つだけだから（画面だけに出すのは `surfaces` で決める）。
 - 状態の便りは `chromeBrowser` イベント（`{ state, reason, dialog, product }`、`sessionId: null`）。**ホストの PC の画面（`isLocalRequest`）にだけ**流し、リモートの端末には送らない。つないだ画面には今の状態を最初に 1 回送る。
 
@@ -70,7 +70,7 @@ agent-browser 0.38.1 の state ルートには専用の変更変数がない。`
 
 [ADR 0148](adr/0148-agent-browser-in-chrome.md)・[ADR 0153](adr/0153-chrome-connection-waits-indefinitely-behind-os-layer.md) の第 3 段。エージェントの agent-browser を、上の「Chrome への接続」の 1 本の上で、**会話の窓の範囲にだけ絞った CDP** につなぐ中継（`core/chrome/relay.mjs`）。**環境変数 `AGENT_HOST_AGENT_BROWSER=chrome` のときだけ**使う（開発と実機の確かめ用。設定にも画面にも出さない）。値が無い・ほかの値のときは、上の「エージェントの操作」の内蔵ブラウザーの道のまま何も変わらない。Electron の無いホスト（`npm start`）では値があっても使わない（接続が無いので内蔵ブラウザーの道のまま）。第 7 段の切り替えで環境変数を消し、この道だけにする。
 
-- **使い方**: `AGENT_HOST_AGENT_BROWSER=chrome npm run desktop`。先に設定 › ブラウザー › 「エージェントのブラウザー」で「つなぐ」を押して許可しておく。エージェントが接続の無いままつなぐと、中継は接続を求めて（Chrome に許可の確認が出る）約 20 秒（`connectWaitMs`）だけ待ち、つながらなければ「まだつながっていない」の失敗を返して待ちを外す（ほかに待つ人がいなければ確認も閉じる）。操作待ちのカード・`hand_to_user` で無期限に待つ形は第 7 段。
+- **使い方**: `AGENT_HOST_AGENT_BROWSER=chrome npm run desktop`。先に設定 › ブラウザー › 「エージェントのブラウザー」で「つなぐ」を押して許可しておく。エージェントが接続の無いままつなぐと、中継は接続を求めて（Chrome に許可の確認が出る）約 20 秒（`connectWaitMs`）だけ待ち、つながらなければ「まだつながっていない」の失敗を返して待ちを外す（ほかに待つ人がいなければ確認も閉じる）。そのとき接続が `setup` なら「Chrome が起動していないか、リモート デバッグがオフ」、それ以外は「許可を待っている」の文で返す。操作待ちのカード・`hand_to_user` で無期限に待つ形は第 7 段。
 - **渡し方**: ターンの開始（`browserEnvironment`）で、端点を parentPort の往復なしに core の中継から取る（`core/agent-browser.mjs` の `chromeRelayBrowser`）。`agent-browser.json` の `cdp`・環境変数は内蔵ブラウザーの道と同じで、`AGENT_BROWSER_PIN_TAB=1` を足す（agent-browser を自分のタブに縛る。3 つのバックエンドの env に入る。Codex は `shell_environment_policy.set` に、この値があるときだけ足す）。端点は `ws://127.0.0.1:<port>/devtools/browser/<鍵 48 桁>`（内蔵ブラウザーの中継と同じ形）。待ち受けのポートは中継に 1 つ、鍵は会話ごと。`Host` が `127.0.0.1:<port>` でない・相手が loopback でない・鍵が違う接続は断る。
 - **止める**: `stop(sessionId)` はつないでいる接続を閉じ、次の人の送信（`unlock` の `endpoint`。鍵を作り直す）まで再接続を断る。ターンの終わり（`endTurn`）は、そのタブで出ている確認を取り下げ、エージェントが動かしている印を外す。会話を消すと鍵を捨てる（窓を閉じるのは第 8 段）。画面から止める口（`browser.chromeStop`）は第 6 段。
 - **上りへ送るもの**: 最初のエージェントの接続で `Target.setDiscoverTargets` を 1 回だけ送り、範囲を知るのに使う（利用者のタブの `targetCreated`・`targetInfoChanged` も届くが、範囲の外のものは URL・題を覚えず、ログにも出さず、エージェントへ送らない）。**ブラウザー全体の `Target.setAutoAttach` は一度も送らない**（利用者の全タブに attach するため。エージェントが送ったものは中継の中で範囲のタブにだけ attach して真似る）。エージェントの接続が閉じたら、その接続が attach したセッションを上りで外す。上りが切れたら（Chrome が閉じた・許可の取り消し・「切る」）、エージェントの接続も閉じる（1011）。
@@ -88,13 +88,31 @@ agent-browser 0.38.1 の state ルートには専用の変更変数がない。`
 | 真似る（上りへ送らない・送り方を変える） | `Target.setDiscoverTargets`（範囲のタブの `targetCreated` を配る）・`Target.getTargets`（範囲のタブだけ）・`Target.setAutoAttach`（範囲のタブにだけ attach）・`Target.getBrowserContexts`（空）・`Target.createTarget`（会話の窓に作る） |
 | 断る | 上のどれでもないもの全部。`Browser.close`・`Browser.crash`・`Browser.setDownloadBehavior`・`Browser.setWindowBounds`（窓を戻すと前面を取りうる）・`Browser.grantPermissions` など、`Storage.*`、`Network.getAllCookies`、`Target.createBrowserContext`・`disposeBrowserContext`・`exposeDevToolsProtocol`・`setRemoteLocations`・`sendMessageToTarget`、`SystemInfo.*` |
 
-セッションの上（タブ・iframe・worker）は通すのが既定で、`Target.*`（`Target.setAutoAttach` は iframe のために通す）・`Browser.*`・`Storage.*`・`Extensions.*`・`PWA.*`・`Autofill.*`・`Cast.*`・`SystemInfo.*`・`Tethering.*`・`Network.getAllCookies`・`Network.clearBrowserCookies`・`Network.clearBrowserCache`・`Page.setDownloadBehavior`・`Security.setIgnoreCertificateErrors` は断る。`Page.navigate` は http(s)（認証情報なし）と `about:blank` だけ。`Network.getCookies` は `urls` を外して今のページの分だけにする。`Network.setCookie`・`setCookies`・`deleteCookies` は今のページのホスト（とその親のドメイン）の Cookie だけ。
+セッションの上（タブ・iframe・worker）は通すのが既定（agent-browser が使うコマンドを壊さないため。許す一覧の外を断る形には、今は替えない）。**断る一覧の考え方**: ブラウザー全体に効くものに加えて、ドメインとしては通すものでも、**引数でほかの origin・`storageKey`・url を指せて、自分のタブの外に届くコマンドは断る**（内蔵ブラウザーは Pleiad 専用のパーティションで中身が空だったので害が無かったが、利用者の Chrome のプロフィールでは、ほかのサイトの保存データ・ログインに届く）。足すときは Chromium の `/json/protocol` の引数名（`securityOrigin`・`storageKey`・`storageId`・`origin`・`url`・`scopeURL`）から洗う（2026-10-07 に Chromium 151 で洗った）。
+
+| | セッションの上で断るもの |
+|---|---|
+| ブラウザー全体 | `Target.*`（`Target.setAutoAttach` は iframe のために通す）・`Browser.*`・`Storage.*`・`Extensions.*`・`PWA.*`・`Autofill.*`・`Cast.*`・`SystemInfo.*`・`Tethering.*`・`Network.getAllCookies`・`Network.clearBrowserCookies`・`Network.clearBrowserCache`・`Page.setDownloadBehavior`・`Security.setIgnoreCertificateErrors` |
+| ほかの origin の保存データ | `DOMStorage.*`（`storageId.securityOrigin`）・`IndexedDB.*`・`CacheStorage.*`（`securityOrigin`・`storageKey`）・`Database.*`・`FileSystem.*`（`storageKey`）・`ServiceWorker.*`（`origin`・`scopeURL`）・`BackgroundService.*`（記録が全 origin の分） |
+| ほかのサイトの Cookie・資格情報・接続 | `Page.deleteCookie`（任意の url）・`Network.loadNetworkResource`（資格情報つきでほかの origin を取れ、サイトの確認を通らない）・`Network.getCertificate`（任意の origin）・`Network.enableDeviceBoundSessions`・`Network.deleteDeviceBoundSession`（全サイトの分） |
+| 送り先の差し替え | `Network.setRequestInterception`・`Network.continueInterceptedRequest`（古い横取り。agent-browser は `Fetch` を使う）。`Fetch.continueRequest` の `url` は、止まった要求と同じ origin のときだけ通す（ほかの origin へ替えると、確認を通らずにそのサイトへ届く） |
+
+書き換え・制限: `Page.navigate` は http(s)（認証情報なし）と `about:blank` だけ（ブラウザーの上の `Target.createTarget` の `url` も同じ規則）。`Network.getCookies` は `urls` を外して今のページの分だけにする。`Network.setCookie`・`setCookies`・`deleteCookies` は今のページのホスト（とその親のドメイン）の Cookie だけで、`url` と `domain` は**渡されたものを両方とも**見る（Chrome は `domain` を `url` より優先して使うことがある）。確認が ON の間の「今のページ」は、下の移り終えた先の origin（断った先のエラーのページはどのホストでもない）。
+
+残したもの（洗った上で通す）: `DOM.setFileInputFiles`・`Input.dispatchDragEvent` の `files`（ファイルのアップロードは正当な使い方で、エージェントは元々シェルでローカルのファイルを読める）。`Page.getResourceContent`・`searchInResource`（自分のフレームの資源だけ）、`Network.fetchSchemefulSite`（計算だけ）、`Debugger.setBreakpointByUrl`・`DOMDebugger.setXHRBreakpoint`（自分のページ）、`WebAuthn.*`（仮想の認証器はそのタブだけ）、`FedCm.*`（そのタブに出た画面の操作）、`Tracing.*`（agent-browser の記録が使う）。
 
 ### サイトの利用の確認（Chrome）
 
-`confirmAgentSites` が ON のとき、中継が範囲のタブに**自分の**セッションを attach して `Fetch.enable({ patterns: [{ urlPattern: '*', resourceType: 'Document', requestStage: 'Request' }] })` し、主フレームの要求（クリック・リダイレクト・スクリプト・`Page.navigate`）を**要求を出す前に**止めて、内蔵ブラウザーと同じ `createBrowserSiteApprovals`（`core/browser-confirm.mjs`）で聞く。許可で `Fetch.continueRequest`、断られたら `Fetch.failRequest('BlockedByClient')`。聞かないのは、iframe・同じ origin・そのタブで許可済みの origin・**エージェントが動かしていないタブ**（`Input.*`・`Runtime.evaluate`・`callFunctionOn`・`Page.navigate`・`reload`・`navigateToHistoryEntry` を送るまで。ターンの終わりで外れる＝人の操作には確認を挟まない）。許可は移った先の origin の分だけ残す。断られた移動は、`Page.navigate` と、確認が済む前に応答が返った操作のコマンドに、断られた文（確認の答えの文、無ければ「サイトへの移動が許可されませんでした。」）の失敗として返す。URL つきの `Target.createTarget` は、空のタブを作ってから確認を通して移り、断られたら閉じる。OFF にすると中継のセッションを外す（止めている要求は通す）。
+`confirmAgentSites` が ON のとき、中継が範囲のタブに**自分の**セッションを attach して `Page.enable` と `Fetch.enable({ patterns: [{ urlPattern: '*', resourceType: 'Document', requestStage: 'Request' }] })` をし、主フレームの要求（クリック・リダイレクト・スクリプト・`Page.navigate`）を**要求を出す前に**止めて、内蔵ブラウザーと同じ `createBrowserSiteApprovals`（`core/browser-confirm.mjs`）で聞く。許可で `Fetch.continueRequest`、断られたら `Fetch.failRequest('BlockedByClient')`。OFF にすると中継のセッションを外す（止めている要求は通す）。
 
-**`window.open` のタブの最初の要求は止められない**（実機。開いた側のセッションの `Fetch` は新しいタブに効かず、後から attach しても間に合わない）。範囲のタブが開いたタブ（`openerId`）は、URL が付いた時点（最初の要求の後）で、開いたタブと同じ origin・許可済みでなければ聞き、断られたら `Target.closeTarget` で閉じる。ON にした人への「Chrome では一部の移動を止められません」の注記は第 7 段で設定に出す。
+- **今の origin は、移り終えた先**: 中継のセッションの `Page.frameNavigated`（主フレーム）の `frame.securityOrigin` で持つ（付けたときは `Page.getFrameTree`）。http(s) だけで、エラーのページ（`unreachableUrl` がある）・`about:blank`・`data:` などは「どの origin でもない」。`targetInfo` の URL は、断った後のエラーのページでも断った URL を指すので使わない（それで比べていた頃は、断った直後に同じ origin へもう一度移ると聞かずに通った。2026-10-07 の受け入れの不具合 4）。
+- **聞かないもの**: iframe（**確認はトップフレームの単位**。範囲のタブの中のクロス origin の iframe には聞かずに入る。iframe を読ませないのは各サイトの `X-Frame-Options`・`frame-ancestors` に頼る。内蔵ブラウザーも同じ）・今の origin と同じ・同じ移動（リダイレクトの続き）の中で許可済みの origin・**エージェントが動かしていないタブ**。許可は移り終えた移動にだけ付く（許可したまま移り終えなかった分は、次の新しい移動で捨てる）。
+- **エージェントが動かしている印**: エージェントが作ったタブと、エージェントの接続が有効化（`*.enable`・`*.disable`）・`Runtime.runIfWaitingForDebugger`・`Target.setAutoAttach` 以外のコマンドを送ったタブ（DOM の書き換え・`Runtime.runScript`・`Debugger.*` などでも移動はできるため）。ターンの終わりで外れる＝ターンの外の人の操作には確認を挟まない。
+- **確認を ON にした直後**: 中継のセッションの準備（`Page.enable`・`Fetch.enable`）が済むまで、エージェントの移動のコマンド（`Input.*`・`Runtime.evaluate`・`callFunctionOn`・`Page.navigate`・`reload`・`navigateToHistoryEntry`）を待たせる（待たずに送ると止まらずに移っていた）。
+- **要求を出さずに移ったとき**（`Page.navigateToHistoryEntry`・戻る・進むの bfcache の復元など、`Fetch` が鳴らない移動）: 移り終えた `frameNavigated` で、今の origin と違い確認を通っていない origin なら、**移った後に**聞く。答えを待つ間は、そのタブへのエージェントのコマンドを待たせ（戻ったページを読ませない）、断られたら `about:blank` へ移してから放す。`navigateToHistoryEntry` の応答は、移り終えるのを最長 1 秒待ってから確認の答えを見る。
+- **断られた移動の返し方**: `Page.navigate` と、確認が済む前に応答が返った操作のコマンドに、断られた文（確認の答えの文、無ければ「サイトへの移動が許可されませんでした。」）の失敗として返す。断りは、断られた時点で最後に送られていた操作のコマンドに返す（並んで送られたほかの操作には返さない）。URL つきの `Target.createTarget` は、空のタブを作ってから確認を通して移り、断られたら閉じる。
+
+**`window.open` のタブの最初の要求は止められない**（実機。開いた側のセッションの `Fetch` は新しいタブに効かず、後から attach しても間に合わない）。範囲のタブが開いたタブ（`openerId`）は、URL が付いた時点（最初の要求の後）か最初に移り終えた時点の早いほうで、開いたタブの今の origin（移り終えた先）と同じでなければ聞く。答えを待つ間はそのタブへのコマンドを待たせ、断られたら `Target.closeTarget` で閉じる。ON にした人への「Chrome では一部の移動を止められません」の注記は第 7 段で設定に出す。
 
 ### agent-browser 0.38.1 の見え方（2026-10-06）
 
