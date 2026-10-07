@@ -7393,7 +7393,7 @@ async function syncTopbar() {
   syncTitleControls();
 
   if (bid) state.shownBackend = bid;
-  // ヘッダーの使用量のチップは、この会話（予約があれば次のターン）のエージェントとアカウントの枠を出す
+  // 帯の使用量の札は、この会話（予約があれば次のターン）のエージェントとアカウントの枠を出す
   headerUsage.show({ backend: bid, account: homeBot ? '' : s?.nextSettings?.account ?? s?.claudeAccount ?? "", endpoint: homeBot ? '' : endpointOf(s) });
 
   // 予約があれば次のターンの作業場所を表示する。

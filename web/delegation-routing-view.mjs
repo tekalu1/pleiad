@@ -277,7 +277,7 @@ export function routingFailureParts(failure, { names = defaultNames, open = () =
 
 // ---------------------------------------------------------------- DOM
 
-/** 使用量の行（枠の名前・棒・率）。ヘッダーの使用量の面と同じ部品（web/usage.css の .usage-rows） */
+/** 使用量の行（枠の名前・棒・率）。使用量の札の面と同じ部品（web/usage.css の .usage-rows） */
 export function usageRows(windows, { avoidPercent = 80 } = {}) {
   const rows = el('div', 'usage-rows rt-usage');
   for (const w of windows ?? []) {
