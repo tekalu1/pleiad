@@ -294,6 +294,7 @@ async function runGateTurn(t, turnId, text) {
   const started = { id: `it_g${++seq}`, type: "commandExecution", command: "build", commandActions: [], cwd: t.cwd ?? ".", status: "inProgress" };
   notify("item/started", { threadId: t.id, turnId, startedAtMs: Date.now(), item: started });
   await gate(name);
+  record({ method: "gate-done", gate: name, threadId: t.id });
   const done = { ...started, status: "completed", aggregatedOutput: "built", exitCode: 0, durationMs: 1 };
   notify("item/completed", { threadId: t.id, turnId, completedAtMs: Date.now(), item: done });
   notify("item/agentMessage/delta", { threadId: t.id, turnId, itemId: "it_m1", delta: body });
@@ -305,6 +306,7 @@ async function runGateTurn(t, turnId, text) {
     { id: `it_u${++seq}`, type: "userMessage", content: [{ type: "text", text }] }, done, { id: "it_m1", type: "agentMessage", text: `start ${body}` }] });
   t.updatedAt = secs();
   notify("turn/completed", { threadId: t.id, turn: { id: turnId, items: [], status: "completed", startedAt: secs(), completedAt: secs() } });
+  record({ method: "gate-completed", gate: name, threadId: t.id });
 }
 
 /**

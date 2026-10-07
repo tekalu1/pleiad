@@ -239,11 +239,15 @@ export async function acquireHeldAppServer(config = {}) {
   const client = await holderLink({ dataDir, root, key: bootEnv('AGENT_HOST_RUNTIME_KEY') ?? '' });
   const known = (client.welcome?.children ?? []).find(child => child.id === CODEX_CHILD);
   if (known?.alive) {
-    // 札を持たずに残っていた app-server（引き継ぎで誰のターンも運んでいなかった）。付けて、記録は次の行から読む（誰のターンも持たないので、再生は要らない）
+    // 札を持たずに残っていた app-server（引き継ぎで誰のターンも運んでいなかった）。付けて、記録は次の行から読む（誰のターンも持たないので、再生は要らない）。
+    // つないだ時の一覧は古いことがある（その後に終わっていた・保持役が作り直された）ので、付けた答えで確かめる
     const held = new HeldAppServer({ client, state: known, spawned: false, from: (known.seq ?? 0) + 1, meta: known.label });
-    await held.open();
-    current = held;
-    return held;
+    const state = await held.open().catch(error => (error?.reason === 'unknown' ? null : Promise.reject(error)));
+    if (state?.alive) {
+      current = held;
+      return held;
+    }
+    held.dispose();
   }
   if (known) client.release(CODEX_CHILD);   // 終わった子の記録は、同じ id で起こす前に捨てる
   const [command, ...prefix] = argv;
@@ -311,8 +315,16 @@ async function expand({ client, child, log }) {
 
 registerChildExpander(CODEX_LABEL_KIND, expand);
 
-// このサーバーが終わるときは、手を離していない app-server を止める（保持役の子は、サーバーが終わっても残るため。手を離したときは新しいサーバーが引き継ぐ）。
-// 'exit' の中なので同期で送れるものだけ（kill の frame を書く）。取りこぼしても、親が居ない間の保険（keepMs）が止める
+/**
+ * このサーバーが終わるときに、手を離していない app-server を止めて、終わるのを待つ（保持役の子は、サーバーが終わっても残るため。手を離したときは新しいサーバーが引き継ぐ）。
+ * server の shutdown の流れが、終わると決めてから（process.exit の前に）呼ぶ
+ */
+export async function stopHeldAppServer() {
+  const held = pendingAdopt ?? current;
+  if (held && !held.detached && !held.closed) await held.stop({ waitMs: 2000 });
+}
+
+// 上の流れを通らない終わり方（シグナル）の保険: 'exit' の中なので、同期で送れるもの（kill の frame を書く）だけ。取りこぼしても、親が居ない間の保険（keepMs）が止める
 process.once('exit', () => {
   const held = pendingAdopt ?? current;
   if (held && !held.detached && !held.closed) held.kill();

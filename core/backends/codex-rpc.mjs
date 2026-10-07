@@ -277,8 +277,6 @@ export class CodexRpc {
           lost: (reason) => die(String(reason)),
           handedOff: () => this.#handedOff(),
         });
-        // 付け直した子は initialize 済み（段階 0: 2 回目の initialize は Already initialized を返すだけ。送らない）
-        if (held.adopted) return { adopted: true };
       } else {
         proc.stdout.setEncoding("utf8");
         proc.stdout.on("data", (chunk) => this.#feed(chunk));
@@ -291,6 +289,8 @@ export class CodexRpc {
         proc.on("error", (err) => die(String(err?.message ?? err)));
       }
       for (const fn of [...this.starts]) { try { fn(held); } catch {} }
+      // 付け直した子は initialize 済み（段階 0: 2 回目の initialize は Already initialized を返すだけ。送らない）
+      if (held?.adopted) return { adopted: true };
 
       // initialize -> notification initialized。この 2 手を踏まないと以降が通らない。
       const info = await this.#request("initialize", {

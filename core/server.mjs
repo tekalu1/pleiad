@@ -83,6 +83,7 @@ import { importNativeMcp } from './mcp-import.mjs';
 import { createMcpConfig } from './mcp-config.mjs';
 import { createHooksConfig, HOOK_AGENTS, applyCodexHooks, trimHookRuns, findNodeOnPath } from './hooks-config.mjs';
 import { finishShutdown } from './shutdown.mjs';
+import { stopHeldAppServer } from './backends/codex-held.mjs';
 import { createVoiceHost, VOICE_PATH } from './voice/host.mjs';
 import { createPlyHooks } from './ply-hooks.mjs';
 import { prepareHooksTurn, unifyPreview, importCandidate } from './hooks-unify.mjs';
@@ -6145,6 +6146,7 @@ async function adoptTurn(card, source, ctx = null, { abandon = null } = {}) {
         return result;
       } catch (err) {
         console.error(`  ターンを付け直せなかったので中断として残す（${sessionId}）:`, String(err?.message ?? err));
+        source.dispose?.();   // 付け直しの待ちを外す（Codex は共有の app-server の frame を預かっている。バックエンドを呼ぶ前に諦めたとき）
         turn.abortReason = 'restart';
         emit({ type: 'turnResult', outcome: 'aborted' });
         return { sessionId };
@@ -7917,7 +7919,7 @@ mainPort.on("message", async ({ data }) => {
     // Chrome に許可の確認を残して終わらない（確認が出ていれば閉じる）。main の返事を待つので、長くても 2 秒まで
     chromeRelay?.close();
     if (chromeConnection) await Promise.race([chromeConnection.close(), new Promise(resolve => setTimeout(resolve, 2000))]).catch(() => {});
-    try { finishShutdown(store.flushNow, () => runtime.turns.size > 0 || agentTasks.busy); }
+    try { finishShutdown(store.flushNow, () => runtime.turns.size > 0 || agentTasks.busy, exitAfterStoppingHeld); }
     catch (e) {
       console.error('session store shutdown save failed:', e?.code ?? e?.message ?? e);
       process.exitCode = 1;
@@ -7925,11 +7927,16 @@ mainPort.on("message", async ({ data }) => {
   }
 });
 
+/** 終わる（main の shutdown・孤児の見張り）。手を離していない保持役の子の app-server は、止めてから終わる（保持役の子は、サーバーが終わっても残るため。無停止の更新 段階 3） */
+function exitAfterStoppingHeld(code) {
+  void Promise.race([stopHeldAppServer(), new Promise(resolve => setTimeout(resolve, 2500))]).catch(() => {}).finally(() => process.exit(code));
+}
+
 // 名前付きパイプの main が居ないまま長く居続けない（utilityProcess は main と一緒に終わるので要らない）。作業が 0 件のまま上限を過ぎたら、shutdown と同じに終わる
 const orphanGuard = mainLink ? createOrphanGuard({
   isBusy: async () => (await runningWork()).count > 0,
   onExpire: () => {
-    try { finishShutdown(store.flushNow, () => false); }
+    try { finishShutdown(store.flushNow, () => false, exitAfterStoppingHeld); }
     catch (e) { console.error('session store shutdown save failed:', e?.code ?? e?.message ?? e); process.exit(1); }
   },
   log: line => console.log(`  [main-link] ${line}`),
