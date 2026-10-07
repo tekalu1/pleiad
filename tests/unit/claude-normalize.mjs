@@ -204,6 +204,20 @@ export default function (t) {
       attachment: { type: "queued_command", prompt: "迷子", commandMode: "prompt" } }]).length === entries.length);
   t.ok("差し込みが無ければ元の配列をそのまま返す", mergeQueuedCommands(entries, []) === entries);
 
+  // 新しい CLI・SDK は折り込まれた発言を user エントリとして返す。attachment の uuid か source_uuid（流し込んだメッセージの uuid）が
+  // entries にあれば足さない（足すと開き直した会話で差し込んだ発言が 2 行並ぶ）。形は手元の transcript（2026-10）から写した
+  const withEcho = [...entries.slice(0, 3), { type: "user", uuid: "e1", message: { role: "user", content: "ちなみに 1+1 は？" } }, entries[3]];
+  const echoed = [...rows.slice(0, 2),
+    { type: "attachment", uuid: "q1", parentUuid: "x2", attachment: { type: "queued_command", prompt: "ちなみに 1+1 は？", commandMode: "prompt", source_uuid: "e1" } },
+    rows[3]];
+  t.ok("SDK が差し込みの user エントリを返すとき（source_uuid が合う）は足さない",
+    mergeQueuedCommands(withEcho, echoed) === withEcho
+      && transcriptToMessages(mergeQueuedCommands(withEcho, echoed)).filter((m) => m.role === "user" && m.text === "ちなみに 1+1 は？").length === 1);
+  const sameUuid = [...entries.slice(0, 3), { type: "user", uuid: "q1", message: { role: "user", content: "ちなみに 1+1 は？" } }, entries[3]];
+  t.ok("attachment と同じ uuid の user エントリが返っているときも足さない", mergeQueuedCommands(sameUuid, rows) === sameUuid);
+  const mixed = mergeQueuedCommands(withEcho, [...echoed, { type: "attachment", uuid: "q9", parentUuid: "x2", attachment: { type: "queued_command", prompt: "もう 1 通", commandMode: "prompt", source_uuid: "e9" } }]);
+  t.ok("返っていない分だけを足す", mixed.map((e) => e.uuid).join(",") === "u1,a1,u2,q9,e1,a2", mixed.map((e) => e.uuid).join(","));
+
   // ---- サブエージェントの transcript。CLI は鎖の間に attachment 行を挟む（2026-09-18 の実データの形）
   const row = (type, uuid, parentUuid, content) => JSON.stringify({ type, uuid, parentUuid, isSidechain: true,
     sessionId: "s1", timestamp: `2026-09-18T00:00:0${uuid.slice(1)}Z`,

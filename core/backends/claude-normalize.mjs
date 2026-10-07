@@ -536,6 +536,10 @@ export function stopHookFollowUps(text) {
  * 折り込まれずにターンが終わった発言は dequeue されて普通の user 行になる（＝ここには来ない）ので、
  * 同じ発言が二重に並ぶことはない（実測。両方が残る形は観測していない）。
  *
+ * 新しい CLI・SDK（実測 2026-10、SDK 0.3.288）は、折り込まれた発言を getSessionMessages が user エントリとして返す。
+ * attachment の uuid か source_uuid（流し込んだ user メッセージの uuid）が entries にあれば、もう並んでいるので足さない
+ * （足すと開き直した会話で、差し込んだ発言が 2 行並ぶ。手元の transcript の折り込み 334 件のうち 236 件がこの形だった）。
+ *
  * @param entries getSessionMessages が返すエントリ。この並びが正
  * @param rows transcript の attachment 行（uuid / parentUuid / attachment を持つもの）
  * @returns 差し戻した新しい配列。差すものが無ければ entries をそのまま返す
@@ -550,13 +554,16 @@ export function mergeQueuedCommands(entries, rows) {
     && typeof r.attachment.prompt === "string" && r.attachment.prompt.trim());
   if (!queued.length) return list;
 
+  const known = new Set(list.map((e) => e?.uuid).filter(Boolean));
+  const missing = queued.filter((r) => !known.has(r.uuid) && !known.has(r.attachment.source_uuid));
+  if (!missing.length) return list;
+
   const parentOf = new Map();
   for (const r of rows) if (r?.uuid) parentOf.set(r.uuid, r.parentUuid ?? null);
-  const known = new Set(list.map((e) => e?.uuid).filter(Boolean));
 
   // 祖先の uuid -> その直後に差す行（同じ区切りに 2 件以上が折り込まれることがある）
   const after = new Map();
-  for (const row of queued) {
+  for (const row of missing) {
     let cursor = row.parentUuid ?? null;
     // 鎖が壊れている（祖先が見つからない）分は黙って落とす。今までどおり履歴から消えるだけで、
     // 見当違いの場所へ差すより害が小さい
