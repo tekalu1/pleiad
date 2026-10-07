@@ -1973,7 +1973,10 @@ body{padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) 0 env(s
   main > .top,:root.remote-mobile main > .top{padding-top:2px;padding-bottom:0}
   .title-sub{display:flex;align-items:center;gap:4px;min-width:0;height:24px;overflow:hidden;padding-left:5px;color:var(--ink-weak);font-size:var(--fs-xs);white-space:nowrap}
   .title-sub > *{order:0;flex:0 1 auto;min-width:0;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .title-sub > button{height:24px;line-height:24px}
+  .title-sub > button{display:block;height:24px;line-height:24px;text-align:left}
+  /* 縮めるのは長い題を持つ語（依頼元・端末の AI から）から。所属とホスト名は残す */
+  .title-sub > :is(#crumbHome,.host-sub){flex-shrink:0;max-width:50%}
+  .title-sub > :is(#parentChatEntry,#remoteOriginLine){flex-shrink:10}
   .title-sub .host-sub{height:24px}
   /* 語の間は「 · 」 */
   .title-sub > :not([hidden]):not(#crumbSep) ~ :not([hidden]):not(#crumbSep)::before{content:"·";margin-right:4px;color:var(--ink-weak)}

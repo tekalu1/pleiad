@@ -6964,7 +6964,8 @@ function rowMenu(s, x, y, lead = []) {
   const mode = vocab ? selectedMode(s, s.nextSettings?.backend ?? s.backend, vocab.modes) : '';
   const items = [
     ...lead, ...(lead.length ? [{ sep: true }] : []),
-    { label: t("session.menu.open"), onClick: () => select(s.id) },
+    // 頭の「…」（開いている会話。先頭に「開く」の見出しを足したとき）では、同じ語の「開く」（この会話を開く）を出さない
+    ...(lead.length && s.id === state.current ? [] : [{ label: t("session.menu.open"), onClick: () => select(s.id) }]),
     ...(s.parent?.sessionId ? [{ label: t("session.menu.openParent"), hint: sessionLabel(s.parent.sessionId).slice(0, 20), onClick: () => select(s.parent.sessionId) }] : []),
     ...(hasKin ? [{ label: t("session.menu.branches"), sub: kinItems }] : []),
     { label: t("session.menu.rename"), sub: () => [
