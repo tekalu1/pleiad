@@ -2512,6 +2512,7 @@
       "botSetup": "{{name}}の動かし方",
       "botRuns": "{{name}} の既定で動きます: {{setup}}。送った後、スレッドの中で変えられます。",
       "openBot": "bot のページで既定を変える ›",
+      "locked": "{{name}} の既定で動きます（送った後、スレッドの中で変えられます）",
       "changedAria": "このスレッドだけ変更あり",
       "fixedAfterSend": "送った後は変えられません",
       "resetBot": "bot の既定に戻す",

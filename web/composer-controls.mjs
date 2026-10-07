@@ -185,12 +185,39 @@ export function panel(chip, pop, { align = "left", render, onShow, onHide, width
   pop.addEventListener("keydown", (e) => {
     if (isComposingKey(e)) return;
     if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); self.hide(); return; }
+    const after = (a, b) => Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
+    // 宛先の札（宛先とモデルの面の上）: ←→ で札の間を移り、↓ で札の下の最初の部品（エージェント・モデルの一覧）へ
+    const pill = e.target.closest?.(".destination-option");
+    if (pill) {
+      const pills = [...pop.querySelectorAll(".destination-option")];
+      const i = pills.indexOf(pill);
+      if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+        e.preventDefault();
+        pills[Math.max(0, Math.min(pills.length - 1, i + (e.key === "ArrowRight" ? 1 : -1)))]?.focus();
+      } else if (e.key === "ArrowDown") {
+        const last = pills[pills.length - 1];
+        const next = [...pop.querySelectorAll("[role=option]:not(:disabled), .seg button, input, button.clink")].find((n) => after(last, n));
+        if (next) { e.preventDefault(); next.focus(); }
+      }
+      return;
+    }
+    // エージェントの区切り（宛先とモデルの面）: ←→ で区切りの中を移り、↑ で選んでいる宛先の札へ、↓ で次の一覧へ
+    const segButton = e.target.closest?.(".cseg button");
+    if (segButton && ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(e.key)) {
+      const buttons = [...segButton.parentElement.querySelectorAll("button:not(:disabled)")];
+      const i = buttons.indexOf(segButton);
+      let to = null;
+      if (e.key === "ArrowLeft" || e.key === "ArrowRight") to = buttons[Math.max(0, Math.min(buttons.length - 1, i + (e.key === "ArrowRight" ? 1 : -1)))];
+      else if (e.key === "ArrowUp") to = pop.querySelector(".destination-option.on") ?? [...pop.querySelectorAll(".destination-option")].pop();
+      else to = [...pop.querySelectorAll("[role=listbox]:not([hidden]) [role=option]:not(:disabled), input:not([type=range])")].find((n) => after(segButton.parentElement, n));
+      if (to) { e.preventDefault(); to.focus(); }
+      return;
+    }
     if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
     // 一覧の中を移る。入力欄からは ↓ で入力欄より後ろにある最初の一覧の先頭へ（互換の接続先のモデルの欄は
-    // 接続先の一覧の下にあるので、面の最初の一覧ではなく直下のモデルの候補へ）。一覧の先頭で ↑ は直前の入力欄へ
+    // 接続先の一覧の下にあるので、面の最初の一覧ではなく直下のモデルの候補へ）。一覧の先頭で ↑ は直前の入力欄、無ければ選んでいる宛先の札へ
     const from = e.target.closest?.("[role=option]");
     const list = from?.closest("[role=listbox]");
-    const after = (a, b) => Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
     if (!from && e.target.matches?.("input:not([type=range])") && e.key === "ArrowDown") {
       const first = [...pop.querySelectorAll("[role=listbox]:not([hidden]) [role=option]:not(:disabled)")].find((o) => after(e.target, o));
       if (first) { e.preventDefault(); first.focus(); }
@@ -200,7 +227,12 @@ export function panel(chip, pop, { align = "left", render, onShow, onHide, width
     e.preventDefault();
     const rows = [...list.querySelectorAll("[role=option]:not(:disabled)")];
     const i = rows.indexOf(from) + (e.key === "ArrowDown" ? 1 : -1);
-    if (i < 0) { [...pop.querySelectorAll("input:not([type=range])")].filter((n) => after(n, list)).pop()?.focus(); return; }
+    if (i < 0) {
+      const input = [...pop.querySelectorAll("input:not([type=range])")].filter((n) => after(n, list)).pop();
+      const seg = [...pop.querySelectorAll(".cseg button.on")].filter((n) => after(n, list)).pop();
+      (input ?? seg ?? pop.querySelector(".destination-option.on") ?? [...pop.querySelectorAll(".destination-option")].pop())?.focus();
+      return;
+    }
     rows[Math.min(i, rows.length - 1)]?.focus();
   });
   return self;
@@ -251,6 +283,12 @@ function listbox(label, rows) {
 }
 
 const head = (text) => el("div", "chead", text);
+
+/** チップの title と読み上げに一言を足す（押せない理由など） */
+const addNote = (chip, note) => {
+  chip.title = `${chip.title} · ${note}`;
+  chip.setAttribute("aria-label", `${chip.getAttribute("aria-label")} · ${note}`);
+};
 
 /**
  * フォルダーの簡易ブラウザー（ブラウザー版の「フォルダーを選ぶ…」。docs/design-system.md「入力欄の設定」）。
@@ -895,6 +933,7 @@ export function setupComposerControls({ cmd, get, on, els = {} }) {
     chips.cwd.setAttribute("aria-label", t("composer.cwd.chipAria", { cwd: cwd || t("composer.cwd.unset") }));
     chips.cwd.dataset.value = cwd;
     chips.cwd.disabled = Boolean(d.cwdDisabled);
+    if (d.cwdDisabled && d.lockedNote) addNote(chips.cwd, d.lockedNote);
     // ブランチ。名前は title と読み上げにも足す
     const gitName = d.git ? (d.git.branch ?? (d.git.head ? t("git.detached", { hash: d.git.head }) : "")) : "";
     gitBranch.hidden = !gitName || Boolean(split);
@@ -940,6 +979,7 @@ export function setupComposerControls({ cmd, get, on, els = {} }) {
     chips.mode.setAttribute("aria-label", (danger ? t("composer.mode.chipAriaDanger", { mode: m?.label ?? d.mode ?? "" }) : t("composer.mode.chipAria", { mode: m?.label ?? d.mode ?? "" })));
     chips.mode.dataset.value = d.mode ?? "";
     chips.mode.disabled = Boolean(d.modeDisabled);
+    if (d.modeDisabled && d.lockedNote) addNote(chips.mode, d.lockedNote);
     // 開いている面も描き直す。触っていた部品へフォーカスを戻す（data-key で引き直す）。
     // 作業ディレクトリの面は打ち込み中・辿っている途中を消さないよう、位置だけ合わせる
     for (const p of [model, mode]) {

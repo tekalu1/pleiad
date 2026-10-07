@@ -3963,6 +3963,8 @@ const controls = chatComposer.useControls({
       endpoint: bot ? null : endpointView(bid),
       modes: state.modes, mode: state.mode,
       modeDisabled: Boolean(bot),
+      // 押せない理由（作業ディレクトリ・承認モードのチップの title と読み上げに足す）
+      lockedNote: bot ? t('composer.destination.locked', { name: bot.name }) : '',
       destination: {
         sent, bot, selected: homeDest.selected, readOnlyBot: bot, fixedAfterSend: true,
         botSetup: bot ? homeBotSetup(bot) : '',

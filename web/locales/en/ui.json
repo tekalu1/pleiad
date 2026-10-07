@@ -2595,6 +2595,7 @@
       "botSetup": "How {{name}} runs",
       "botRuns": "{{name}} runs with its defaults: {{setup}}. You can change them in the thread after sending.",
       "openBot": "Change the defaults on the bot page ›",
+      "locked": "Runs with {{name}}'s defaults (you can change it in the thread after sending)",
       "changedAria": "changed for this thread only",
       "fixedAfterSend": "Can't be changed after sending",
       "resetBot": "Reset to bot defaults",
