@@ -1,7 +1,7 @@
 // 段階 2 の 2c: 保持役に載せた Claude の CLI（stream-json を話す偽物 tests/lib/fake-claude-cli.mjs）を、サーバーの入れ替えをまたいで付け直す
 // （docs/zero-downtime-update/plan.md「2c」。載せ方は core/backends/claude-held.mjs、付け直しは claude.mjs の adoptTurn）。
-//   1. 載せるかの切り替え: 既定（AGENT_HOST_CLAUDE_HOLDER 無し）と、付け直しを確かめていない CLI の版では、CLI は保持役の子にならない（今の流れ）。
-//      on で確かめた版なら保持役の子になり、入れ替えなしの承認も通る
+//   1. 載せるかの切り替え: 実行場所の置き場が無い（開発・テストのサーバー）・AGENT_HOST_CLAUDE_HOLDER=off・確かめた下限より古い／major が違う CLI の版では、
+//      CLI は保持役の子にならない（今の流れ）。置き場があり、確かめた版なら既定で保持役の子になり、入れ替えなしの承認も通る
 //   2. 途中で引き継ぐ（2d の形: handOffTurn → 札を子に置いて detach → query を閉じる。tests/lib/adopt-server.mjs）。A を止め、同じデータ置き場で B が付け直す。
 //      時点: 承認待ち（B に A と同じ id の承認が 1 つだけ出て、答えると続く）・ツールの実行中に受理した途中送信（B で折り込まれ、渡った合図が 1 回）・
 //      裏の作業の待ち（phase: waiting が戻り、ゲートを開くと終わる）・hooks（PreCompact）のコールバックの答えが CLI に届かないまま（CLI が取り消して圧縮を続ける）・
@@ -72,15 +72,21 @@ export default async function (t) {
   const starts = async () => (await fs.readFile(cliLog, 'utf8').catch(() => '')).split('\n')
     .map(line => /^\S+ (\d+) start (\S+) resume=\S+ ppid=(\d+)/.exec(line)).filter(Boolean).map(m => ({ pid: Number(m[1]), session: m[2], ppid: Number(m[3]) }));
   const base = { AGENT_HOST_BACKENDS: 'claude', ...fake.env, CLAUDE_CONFIG_DIR: path.join(scratch, 'claude'), FAKE_CLAUDE_LOG: cliLog, ...gates.env };
-  const env = { ...base, AGENT_HOST_CLAUDE_HOLDER: 'on', AGENT_HOST_RUNTIME_ROOT: root, ADOPT_SCENES_DIR: scenesDir };
+  // AGENT_HOST_CLAUDE_HOLDER は付けない（既定で載る。実行場所の置き場があるときだけ）
+  const env = { ...base, AGENT_HOST_RUNTIME_ROOT: root, ADOPT_SCENES_DIR: scenesDir };
   let a = null, b = null, ca = null, cb = null, m1 = null, m2 = null, holderPid = null;
   try {
     const found = await ensureHolder({ dataDir, root, mode: 'detached', idleMs: 20_000, timeoutMs: 20_000 });
     holderPid = found.pid;
     found.client.close();
 
-    // 1. 切り替え: 既定と、確かめていない版は保持役に載せない
-    for (const [label, extra] of [['既定（AGENT_HOST_CLAUDE_HOLDER 無し）', { AGENT_HOST_RUNTIME_ROOT: root }], ['確かめていない版（2.1.290）', { ...env, FAKE_CLAUDE_VERSION: '2.1.290' }]]) {
+    // 1. 切り替え: 実行場所の置き場が無い（開発・テストのサーバー）・off の明示・確かめた下限より古い版・major が違う版は保持役に載せない
+    for (const [label, extra] of [
+      ['実行場所の置き場が無い（既定）', {}],
+      ['off の明示（AGENT_HOST_CLAUDE_HOLDER=off）', { ...env, AGENT_HOST_CLAUDE_HOLDER: 'off' }],
+      ['下限より古い版（2.1.267）', { ...env, FAKE_CLAUDE_VERSION: '2.1.267' }],
+      ['major が違う版（3.0.0）', { ...env, FAKE_CLAUDE_VERSION: '3.0.0' }],
+    ]) {
       const s = await startServer({ env: { ...base, ...extra }, dataDir, timeoutMs: 30_000 });
       const c = await open({ port: s.port, token: s.token });
       try {
@@ -90,7 +96,7 @@ export default async function (t) {
         assert.ok(mine.length && mine.every(x => x.ppid !== holderPid), `${label}: CLI は保持役の子にならない`);
       } finally { c.close(); await s.stop(); }
     }
-    t.ok('切り替え: 既定と、付け直しを確かめていない CLI の版では保持役に載せない（今の流れ）', true);
+    t.ok('切り替え: 置き場が無い・off の明示・下限より古い／major が違う CLI の版では保持役に載せない（今の流れ）', true);
 
     a = await startServer({ env, dataDir, timeoutMs: 30_000, entry: path.join(ROOT, 'tests', 'lib', 'adopt-server.mjs') });
     const scene = async (sceneName, input = {}) => {
@@ -121,10 +127,10 @@ export default async function (t) {
       const end = await ca.waitFor(e => e.type === 'turnEnd' && e.sessionId === ids.P, { ms: WAIT_MS, from });
       assert.equal(end.outcome, 'ok');
       const mine = (await starts()).filter(x => x.session === nativeOf('P'));
-      assert.ok(mine.length >= 2 && mine.every(x => x.ppid === holderPid), 'on: CLI は保持役の子として起きる');
+      assert.ok(mine.length >= 2 && mine.every(x => x.ppid === holderPid), '既定: CLI は保持役の子として起きる');
       const loaded = await ca.cmd('loadSession', { sessionId: ids.P });
       assert.equal(loaded.messages.filter(m => m.role === 'assistant' && m.text === 'final P').length, 1);
-      t.ok('on（確かめた版）: CLI は保持役の子として起き、承認待ち → 答えると続く', true);
+      t.ok('既定（置き場があり、確かめた版）: CLI は保持役の子として起き、承認待ち → 答えると続く', true);
     }
 
     // 2. 途中で引き継ぐ
