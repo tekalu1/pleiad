@@ -76,7 +76,8 @@ const label = value => (value == null ? null : String(value).slice(0, LABEL_MAX)
 /**
  * 切り替えを待たせる作業と、切り替えで止まるもの。work は core/server.mjs の runningWork。
  * count は running の count（待つ作業の数）。items は表示用の一覧（会話ごとではなく作業ごと）。
- * stoppers は `!` の行（shells）と、ターンの外に残っている裏の作業（background の tasks）。数えず、待たない（asking で聞く）
+ * stoppers は `!` の行（shells）と、ターンの外に残っている裏の作業（background の tasks）。数えず、待たない（asking で聞く）。
+ * handover のときは、保持役に載った `!` の行（held。無停止の更新 段階 3）は新しいサーバーへ渡すので、止まるものに入れない
  */
 function switchBlockers(work, { handover = false } = {}) {
   if (!work) return null;
@@ -91,7 +92,7 @@ function switchBlockers(work, { handover = false } = {}) {
   for (const p of work.permissions ?? []) if (!p.relay && !p.detached && !skip(p)) items.push({ kind: 'permission', sessionId: p.sessionId ?? null, toolName: p.toolName ?? null });
   for (const a of work.subagents ?? []) if ((a.status === 'running' || a.status == null) && !skip(a)) items.push({ kind: 'subagent', sessionId: a.sessionId ?? null, id: a.id, description: a.description ?? null });
   for (const r of work.tasks ?? []) if (LIVE_TASK.has(r.status) && !turnSessions.has(r.sessionId)) items.push({ kind: 'task', sessionId: r.sessionId ?? null, taskId: r.taskId ?? null });
-  const shells = (work.shells ?? []).map(s => ({ kind: 'shell', sessionId: s.sessionId ?? null, runId: s.runId ?? null, command: s.command ?? null, label: label(s.command) }));
+  const shells = (work.shells ?? []).filter(s => !skip(s)).map(s => ({ kind: 'shell', sessionId: s.sessionId ?? null, runId: s.runId ?? null, command: s.command ?? null, label: label(s.command) }));
   const background = (work.background ?? []).flatMap(b => (b.tasks ?? []).map(x => ({ kind: 'background', sessionId: b.sessionId ?? null, backend: b.backend ?? null, id: x.id, label: label(x.label) })));
   // handover のときの count は、サーバーが数えた待つ作業（blocking）。items と同じ数になるはずだが、数えの違いがあれば items の側を信じず blocking に従う
   const count = handover ? Number(work.handover?.blocking) || 0 : Number(work.count) || 0;

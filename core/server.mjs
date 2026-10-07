@@ -238,6 +238,7 @@ try {
 import { installation, cliCommand } from "./cli-installation.mjs";
 import { createClaudeLogin } from './claude-login.mjs';
 import { createShellRuns, shellMode } from './shell-runs.mjs';
+import { createShellHolder } from './shell-held.mjs';
 import { createHostSessionSearch } from './session-search-host.mjs';
 import { taskStop, backgroundStop, approvalStop, interruptionNote } from './interrupt-stops.mjs';
 import { splitLeadingNotes } from './system-messages.mjs';
@@ -2048,8 +2049,9 @@ function sendTo(frame) {
   }
   return sent;
 }
-// 入力欄の `!`（シェルの行。ADR 0054）。走っている子のプロセスはサーバーの終わりに止める
-const shellRuns = createShellRuns({ store, emit: event => emitGlobal(event) });
+// 入力欄の `!`（シェルの行。ADR 0054）。走っている子のプロセスはサーバーの終わりに止める。保持役があれば保持役の子に載せ、引き継ぎで渡す（無停止の更新 段階 3）
+const shellHolder = createShellHolder({ dataDir: store.dataDir, root: BOOT_ENV.AGENT_HOST_RUNTIME_ROOT, key: BOOT_ENV.AGENT_HOST_RUNTIME_KEY ?? '', appVersion: APP_VERSION });
+const shellRuns = createShellRuns({ store, emit: event => emitGlobal(event), holder: shellHolder });
 // git の動き（ADR 0085）。状態・ターンの始まりと終わりの隠し ref・変更の一覧と差分。git が無い・git 管理外は null
 const gitActivity = createGitActivity();
 // worktree（ADR 0089）。台帳・作成・片付けと、ぶつかり・委譲の判定。使っているもの（走っているターン・シェル・委譲の子）を見てから消す
@@ -4243,7 +4245,7 @@ async function runningWork() {
       nextSendAt: Math.min(Infinity, ...dueRows.filter(r => r.kind === 'send' && !r.held).map(r => r.at)) },
     tasks,
     background,
-    // `!` の行。count には入れない（終了・中断して更新では止まる。デスクトップの無停止の切り替えは終わるのを待つ。desktop/switch.cjs）
+    // `!` の行。count には入れない（終了・中断して更新では止まる。デスクトップの無停止の切り替えは終わるのを待つ。保持役に載った行（held）は待たずに渡す。desktop/switch.cjs）
     shells: shellRuns.list(),
     // ホストに任せたタスクの印（⇄ ホスト名とオンラインか）。docs/remote.md §4.5
     remoteHosts: remoteHostsNow(),
@@ -4644,6 +4646,11 @@ const outbox = createMessageQueue({
 // 付け直すターン（無停止の更新 2b-4。stage2-server-state.md §5.1）。後片付け（送信待ちの戻し・中断の記録・worktree の整理）と、
 // ターンを始めうるもの（予定・上限の再開・bot）より前に runtime.turns に載せる。口を開き直して記録を流すのは待ち受けの後
 const adopting = await restoreAdoptedTurns();
+// 前のサーバーが保持役に残した `!` の行（無停止の更新 段階 3。core/shell-held.mjs）も引き取る。元を読む条件はターンと同じ
+if ((process.env.AGENT_HOST_ADOPT_HOLDER === '1' || HANDOVER_START || handoverEnabled(BOOT_ENV)) && BOOT_ENV.AGENT_HOST_RUNTIME_ROOT) {
+  const adoptedShells = shellRuns.adopt(await shellHolder.adoptable().catch(err => { console.error('  `!` の行を引き取れませんでした:', String(err?.message ?? err)); return []; }));
+  if (adoptedShells) console.log(`  \`!\` の行 ${adoptedShells} 件を引き取った`);
+}
 // 前の起動で消し損ねた Claude のフラグ設定のファイル（core/compat-endpoints.mjs）。同じデータ置き場を別の Pleiad（開発版と配布版）が使っていることがあるので、
 // 走っている会話のファイルは消さない（1 日より古いものだけ）。付け直すターンの札が指すファイル（無停止の更新 2c）も消さない（そのターンの終わりに消える）
 sweepClaudeFlagSettings(store.dataDir, { olderThanMs: 24 * 60 * 60_000, except: adopting.map(a => a.ctx.card.backendCard?.flag).filter(Boolean) }).catch(() => {});
@@ -5868,6 +5875,8 @@ const handoverRun = createHandover({
   stash: async () => {
     // ターンの無い（idle の）保持役の子（agy は会話のあいだ 1 本を生かす）は、新しいサーバーが知らない（札が無い）。次の detach で触れなくなる前に止める（段階 3）
     for (const backend of listBackends()) { try { await backend.releaseIdle?.(); } catch (error) { console.error('  idle の子を止められない:', String(error?.message ?? error)); } }
+    // 保持役に載った `!` の行も手を離す（無停止の更新 段階 3。終わりで止めない。新しいサーバーが引き取る）
+    await shellRuns.handOff();
     const root = BOOT_ENV.AGENT_HOST_RUNTIME_ROOT;
     const client = root ? await holderLink({ dataDir: store.dataDir, root, launch: false }).catch(() => null) : null;
     if (!client) return;
