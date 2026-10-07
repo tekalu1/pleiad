@@ -8,6 +8,8 @@
 // - エージェントは返答しない。送信待ち（outbox）にも送り直しの控え（receipts）にも積まない。同じ runId は 2 度走らせない
 // - 'host' の会話では、行ごとに「渡さない」を選べる（ADR 0055）。渡さなかった行は次の発言の後、会話の記録の shellKept に移して会話に残す
 // - 出来事: shell.start / shell.output / shell.done / shell.skip / shell.handed（全部の接続へ）
+// - 'host' の行は、保持役があれば保持役の子に載せる（無停止の更新 段階 3。core/shell-held.mjs）。サーバーを入れ替えても走り続け、新しいサーバーが adopt で引き取って
+//   出力の続きと終わりを受ける。引き継ぎ（core/handover.mjs）の旧サーバーは handOff で手を離し、終わりでは止めない
 import { messageShellKey, runHostShell, shellKey, shellLines } from './host-shell.mjs';
 
 export const SHELL_TIMEOUT_MS = 10 * 60 * 1000;
@@ -29,9 +31,10 @@ export const shellMode = (backend) => {
  * @param store core/store.mjs（get / setSessionData）
  * @param emit 出来事を全部の接続へ流す（server の emitGlobal）
  * @param timeoutMs 上限。既定 10 分（AGENT_HOST_SHELL_TIMEOUT_MS で短くできる。テスト用）
+ * @param holder 保持役の口（core/shell-held.mjs の createShellHolder）。無ければ 'host' の行はいつもサーバーの子
  */
-export function createShellRuns({ store, emit, timeoutMs = Number(process.env.AGENT_HOST_SHELL_TIMEOUT_MS) || SHELL_TIMEOUT_MS, runHost = runHostShell }) {
-  const runs = new Map();          // runId -> 走っている分 { sessionId, runId, command, cwd, at, backend, stdout, stderr, ac, mode }
+export function createShellRuns({ store, emit, timeoutMs = Number(process.env.AGENT_HOST_SHELL_TIMEOUT_MS) || SHELL_TIMEOUT_MS, runHost = runHostShell, holder = null }) {
+  const runs = new Map();          // runId -> 走っている分 { sessionId, runId, command, cwd, at, backend, stdout, stderr, ac, mode, held? }
   const nativeDone = new Map();    // sessionId -> Set<runId>  エージェントが走らせて終わった分（次の発言で「渡した」にする）
   const seen = new Set();          // 受け付けた runId（同じコマンドを 2 度走らせない。プロセスの寿命だけ）
   const writes = new Map();        // sessionId -> 書き込みの鎖（shellPending の読み書きを並べる）
@@ -57,16 +60,39 @@ export function createShellRuns({ store, emit, timeoutMs = Number(process.env.AG
     const run = { sessionId, runId, command, cwd, at: new Date().toISOString(), backend: backend.id, mode, stdout: '', stderr: '', skip: false, ac: new AbortController() };
     runs.set(runId, run);
     emit({ type: 'shell.start', sessionId, runId, command, cwd, at: run.at, backend: backend.id, mode });
-    const onOutput = (stream, text) => {
-      if (!text) return;
-      run[stream] += text;
-      emit({ type: 'shell.output', sessionId, runId, stream, text });
-    };
+    const onOutput = outputOf(run);
     const work = mode === 'host'
-      ? runHost({ command, cwd, timeoutMs, signal: run.ac.signal, onOutput })
+      ? hostWork(run, onOutput)
       : backend.shell({ sessionId, command, cwd, timeoutMs, signal: run.ac.signal, onOutput });
-    run.done = Promise.resolve(work).then(result => finish(run, result), error => finish(run, { error: String(error?.message ?? error), exitCode: null }));
+    run.done = Promise.resolve(work).then(result => settle(run, result), error => finish(run, { error: String(error?.message ?? error), exitCode: null }));
     return { runId };
+  }
+
+  const outputOf = (run) => (stream, text) => {
+    if (!text) return;
+    run[stream] += text;
+    emit({ type: 'shell.output', sessionId: run.sessionId, runId: run.runId, stream, text });
+  };
+
+  /** 'host' の行を走らせる。保持役に載せられれば保持役の子、載せられなければ今の流れ（サーバーの子） */
+  async function hostWork(run, onOutput) {
+    const held = holder && !run.ac.signal.aborted ? await holder.start(run, { timeoutMs }).catch(e => { console.error('shell: 保持役に載せられなかった:', e?.message ?? e); return null; }) : null;
+    if (!held) return runHost({ command: run.command, cwd: run.cwd, timeoutMs, signal: run.ac.signal, onOutput });
+    return driveHeld(run, held, onOutput);
+  }
+  /** 保持役の子の記録を読む。ack 済みの出力（付け直す前のサーバーが流した分）は組み立てるだけで流さない */
+  function driveHeld(run, held, onOutput) {
+    run.held = held;
+    return held.drive({ signal: run.ac.signal, onOutput: (stream, text, replay) => { if (!replay) onOutput(stream, text); else if (text) run[stream] += text; } });
+  }
+  /** 走り終えた（保持役の子は、手を離した・前のサーバーが記録し終えていた分を締めない。記録し終えたら子の記録を捨てる） */
+  async function settle(run, result) {
+    if (result?.handedOff || result?.already) {
+      if (runs.get(run.runId) === run) runs.delete(run.runId);
+      if (result.already) run.held.finished();
+      return;
+    }
+    try { await finish(run, result); } finally { run.held?.finished(); }
   }
 
   async function finish(run, result) {
@@ -128,7 +154,7 @@ export function createShellRuns({ store, emit, timeoutMs = Number(process.env.AG
       const claim = claims.get(sessionId);
       if (claim && (claim.ids.includes(runId) || claim.skipped.includes(runId))) return 'handing';
       const run = runs.get(runId) ?? closing.get(runId);
-      if (run?.sessionId === sessionId && !run.finishing) { run.skip = want; return 'ok'; }
+      if (run?.sessionId === sessionId && !run.finishing) { run.skip = want; run.held?.label(run); return 'ok'; }
       const list = (await store.get(sessionId)).shellPending ?? [];
       if (!list.some(e => e.runId === runId)) return 'gone';
       await store.setSessionData(sessionId, 'shellPending', list.map(e => {
@@ -143,20 +169,43 @@ export function createShellRuns({ store, emit, timeoutMs = Number(process.env.AG
     emit({ type: 'shell.skip', sessionId, runId, skip: want });
     return { runId, skip: want };
   }
+  /**
+   * 引き継ぎ（core/server.mjs の handoverRun）: 保持役に載った分の手を離す。走っている分は一覧から外し、このサーバーの終わりで止めない。
+   * 終わりを記録に書いている最中の分は、書き終えるのを待つ（新しいサーバーが同じ終わりをもう一度書かない）
+   */
+  async function handOff() {
+    const held = [...runs.values(), ...closing.values()].filter(r => r.held);
+    for (const run of held) if (runs.get(run.runId) === run) runs.delete(run.runId);
+    await Promise.all(held.map(run => run.held.handOff().catch(e => console.error('shell: 手を離せなかった:', e?.message ?? e))));
+    return held.length;
+  }
+  /** 起動: 前のサーバーが保持役に残した行を引き取る（core/shell-held.mjs の adoptable の { card, held }）。出力の続きと終わりをこのサーバーが受ける */
+  function adopt(items) {
+    let n = 0;
+    for (const { card, held } of items) {
+      if (seen.has(card.runId) || runs.has(card.runId)) continue;
+      seen.add(card.runId);
+      const run = { ...card, mode: 'host', stdout: '', stderr: '', ac: new AbortController() };
+      runs.set(run.runId, run);
+      run.done = driveHeld(run, held, outputOf(run)).then(result => settle(run, result), error => finish(run, { error: String(error?.message ?? error), exitCode: null }));
+      n++;
+    }
+    return n;
+  }
   /** 会話の分を全部止める（エージェントの切り替え・会話の削除） */
   function stopSession(sessionId) {
     let n = 0;
     for (const run of runs.values()) if (run.sessionId === sessionId) { run.ac.abort(); n++; }
     return n;
   }
-  /** 全部止める（サーバーの終わり） */
+  /** 全部止める（サーバーの終わり。同期）。保持役の子は札を外して止める（次の起動が引き取らない） */
   function stopAll() {
-    for (const run of runs.values()) run.ac.abort();
+    for (const run of runs.values()) { if (run.held) run.held.abandon(); else run.ac.abort(); }
   }
   /** この会話で走っている分 */
   const runningIn = (sessionId) => [...runs.values()].some(r => r.sessionId === sessionId);
-  /** 走っている分の一覧（running の shells。デスクトップの切り替えが待つ作業に数える。desktop/switch.cjs） */
-  const list = () => [...runs.values()].map(r => ({ sessionId: r.sessionId, runId: r.runId, command: String(r.command ?? '').slice(0, 200), at: r.at }));
+  /** 走っている分の一覧（running の shells。デスクトップの切り替えが待つ作業に数える。desktop/switch.cjs）。held は保持役に載っていて、引き継ぎで新しいサーバーへ渡せる分（待たない） */
+  const list = () => [...runs.values()].map(r => ({ sessionId: r.sessionId, runId: r.runId, command: String(r.command ?? '').slice(0, 200), at: r.at, ...(r.held ? { held: true } : {}) }));
   /** 走っているシェルの作業ディレクトリ（worktree を消してよいかの確かめに使う。ADR 0089） */
   const cwds = () => [...runs.values()].map(r => r.cwd).filter(Boolean);
   /**
@@ -314,5 +363,5 @@ export function createShellRuns({ store, emit, timeoutMs = Number(process.env.AG
     return out;
   }
 
-  return { start, wait, stop, setSkip, stopSession, stopAll, runningIn, cwds, settled, appendsFor, release, delivered, switched, discard, rows, placeKept, decorate, list, running: () => runs.size };
+  return { start, wait, stop, setSkip, stopSession, stopAll, handOff, adopt, runningIn, cwds, settled, appendsFor, release, delivered, switched, discard, rows, placeKept, decorate, list, running: () => runs.size };
 }
