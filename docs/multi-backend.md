@@ -182,9 +182,10 @@ main の開始は 2 回目以降の `system/init` とトップレベルの `mess
   答えは同じ Pleiad ターンの中で流れる。本文だけで照合していたころはこれを取りこぼし、答えが返っても「渡します」が残った。
   保険として本文の一致・つないだ本文の分解でも拾い、それでも残った分は `result` の後の `system/init`（次の内部ターン）で渡ったことにする
 - 折り込まれた発言は transcript に `attachment`（`{ type:'queued_command', prompt, commandMode:'prompt' }`）として残り、
-  `getSessionMessages` は返さない（`includeSystemMessages` でも返さない）。`timestamp` は流し込んだ時刻で直前の行より古く、
+  古い CLI・SDK の `getSessionMessages` は返さない（`includeSystemMessages` でも返さない）。新しいもの（2026-10、SDK 0.3.288）は user エントリとして返し、
+  その uuid が attachment の `uuid` か `source_uuid`（流し込んだ user メッセージの uuid）に当たる。`timestamp` は流し込んだ時刻で直前の行より古く、
   時刻では並べ直せない。Pleiad は `parentUuid` の鎖を遡って `getSessionMessages` に出ている最初の祖先を探し、その直後へ差し戻す
-  （`claude-normalize.mjs` の `mergeQueuedCommands`）。区切りが来ないままターンが終わった分は待ち行列から外れ、
+  （`claude-normalize.mjs` の `mergeQueuedCommands`。返っている分は足さない）。区切りが来ないままターンが終わった分は待ち行列から外れ、
   普通の user 行として残って次のターンで答えられる（両方に残る形は観測していない＝二重にならない）
 - 入力を閉じた後も、CLI は stdin で受け取り済みのメッセージを処理してから終わる。閉じる判定で「取りかかった」と早めに数えても取りこぼさない
 - 中断は `Query.interrupt({ cancelQueued: true })`（Esc と同じ。d.ts の型に引数は無いが SDK 0.3.258 の実装は受ける）。stdin を閉じるだけでは
