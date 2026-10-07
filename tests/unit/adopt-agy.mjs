@@ -316,8 +316,10 @@ export default async function (t) {
 
     // 6. 後片付け
     {
-      const pids = new Set(await spawned());
+      // 終わりを待つのは、保持役が今生きていると言う子だけ。起動の記録の pid を全部待つと、とっくに終わって別のプロセスへ使い回された pid
+      // （Windows は早く使い回す）を「終わらない」と取り違える
       const probe = await connectHolder({ dataDir, root });
+      const pids = new Set(probe.welcome.children.filter(c => c.pid && c.alive).map(c => c.pid));
       probe.shutdown();
       probe.close();
       await until(() => !alive(holderPid), 10_000, '保持役が終わる');
