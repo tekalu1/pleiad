@@ -248,8 +248,9 @@ export default async function (t) {
   }
 
   // ---- 終わり方・stderr・長すぎる行
+  // exit から stdout の最後のかたまりまでの猶予（試験の既定 300 ms）は、遅い CI では足りず改行の無い最後の行を落とす。ここは本番（2 秒）より長くする
   {
-    const h = await startHolder({ maxLineBytes: 4096 });
+    const h = await startHolder({ maxLineBytes: 4096, exitGraceMs: 5000 });
     try {
       const a = await h.connect();
       a.client.spawn(fakeChild('e1', 'tail'));
