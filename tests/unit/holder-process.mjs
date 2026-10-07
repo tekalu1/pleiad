@@ -77,14 +77,18 @@ export default async function (t) {
     ]);
     pids.add(x.pid); pids.add(y.pid);
     t.ok('同時に起こしても、2 つの親が同じ保持役につながる（2 つ目に起こされた方は何も書かずに終わる）', x.pid === y.pid && x.client.welcome.pid === y.client.welcome.pid && isAlive(x.pid));
-    await waitFor(() => (fs.readFileSync(log, 'utf8').match(/listening \(generation/g) ?? []).length === 2, 8000, 'second listening').catch(() => {});
+    // 負けた方が「既に居る」と書いて終わるまで待つ（遅れて起きた方は、先の保持役が shutdown した後だと、新しい保持役として立ってしまう）
+    await waitFor(() => { const text = fs.readFileSync(log, 'utf8'); return (text.match(/listening \(generation/g) ?? []).length === 2 && text.includes('a holder is already running'); }, 8000, 'second listening and the loser exit').catch(() => {});
     const starts = fs.readFileSync(log, 'utf8');
     const listens = (starts.match(/listening \(generation/g) ?? []).length;
     // 1 つ目の保持役（shutdown 済み）の分が 1 回、今の保持役の分が 1 回。負けた方が書くのは「既に居る」だけ
     t.ok('起こされたのに負けた保持役は「待ち受け」を書かない（今の保持役の分の 1 回だけが増える）', listens === 2, `${listens} listening lines`);
-    x.client.shutdown();
-    await gone(x.pid, 'second holder gone');
+    // つながっている親は常に 1 つ（後から合格した方が勝ち、先の親の依頼は届かない）。x と y のどちらが勝ったかは決まっていないので、新しくつないだ親から止める
     x.client.close(); y.client.close();
+    const closer = await connectHolder({ dataDir, root });
+    closer.shutdown();
+    t.ok('shutdown: 2 つ目の保持役も終わる', await gone(x.pid, 'second holder gone'));
+    closer.close();
 
     // idle: 子が無く親も居なければ、idleMs の後に終わる
     const idle = await ensureHolder({ dataDir, root, appVersion: 'idle', mode: 'detached', idleMs: 800 });

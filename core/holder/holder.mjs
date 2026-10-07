@@ -434,13 +434,21 @@ export function createHolder({ pipe, secret = crypto.randomBytes(32).toString('h
     /** パイプを作って待ち受け、名前と秘密のファイルを書く。既に保持役が居れば code 'HOLDER_RUNNING' で投げる（ファイルには触れない） */
     async listen() {
       if (server) return info();
-      if (platform !== 'win32') {
-        if (await probe(pipe)) throw Object.assign(new Error('a holder is already running'), { code: 'HOLDER_RUNNING' });
+      const running = () => Object.assign(new Error('a holder is already running'), { code: 'HOLDER_RUNNING' });
+      const bind = () => {
+        const candidate = net.createServer(onConnection);
+        return new Promise((resolve, reject) => { candidate.once('error', reject); candidate.listen(pipe, () => { candidate.off('error', reject); resolve(candidate); }); });
+      };
+      let created;
+      try { created = await bind(); } catch (error) {
+        if (error?.code !== 'EADDRINUSE') throw error;
+        // unix ソケットはファイルなので、残っていても持ち主が居るとは限らない。つながる持ち主が居れば使用中、居なければ（落ちて残った）古いファイルなので消して立て直す。
+        // 先に消してから立てると、同時に起きた保持役が先に立てたソケットを消して 2 つとも待ち受けてしまう（bind を先にして、ファイルが残っていたときだけ消す）。
+        // 残った古いファイルを同時に 2 つが拾う競合だけは残る（片方が probe の後・rm の前に立てたとき）
+        if (platform === 'win32' || await probe(pipe)) throw running();
         await fs.promises.rm(pipe, { force: true });
+        created = await bind().catch(retry => { throw retry?.code === 'EADDRINUSE' ? running() : retry; });
       }
-      const created = net.createServer(onConnection);
-      await new Promise((resolve, reject) => { created.once('error', reject); created.listen(pipe, () => { created.off('error', reject); resolve(); }); })
-        .catch(error => { throw error?.code === 'EADDRINUSE' ? Object.assign(new Error('a holder is already running'), { code: 'HOLDER_RUNNING' }) : error; });
       created.on('error', error => log(`pipe error: ${error?.message ?? error}`));
       server = created;
       if (platform !== 'win32') await fs.promises.chmod(pipe, 0o600).catch(() => {});

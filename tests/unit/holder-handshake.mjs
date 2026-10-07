@@ -112,6 +112,26 @@ export default async function (t) {
       await again.listen();
       t.ok('閉じた後は、同じパイプでもう一度立てられる', readHolderFile(h.file)?.appVersion === 'again');
       await again.close();
+      // 同時に立てようとしても、立てられるのは 1 つだけ（unix ソケットは、先に居るかを確かめてから消して立てると、先に立てた方のソケットを消して 2 つとも立ててしまう）
+      let both = 0;
+      for (let i = 0; i < 20; i++) {
+        const x = createHolder({ pipe: h.pipe, file: null, idleMs: 0 });
+        const y = createHolder({ pipe: h.pipe, file: null, idleMs: 0 });
+        const settled = await Promise.allSettled([x.listen(), y.listen()]);
+        const lost = settled.filter(r => r.status === 'rejected');
+        if (lost.length !== 1 || lost[0].reason?.code !== 'HOLDER_RUNNING') both++;
+        await x.close({ killChildren: false });
+        await y.close({ killChildren: false });
+      }
+      t.ok('同時に立てようとした 2 つのうち、立てられるのは 1 つだけ（もう 1 つは HOLDER_RUNNING）', both === 0, `${both} / 20 rounds`);
+      if (process.platform !== 'win32') {
+        // 落ちて残った古いソケット（つながる持ち主が居ないファイル）は、使用中とせず消して立て直す
+        fs.writeFileSync(h.pipe, '');
+        const revived = createHolder({ pipe: h.pipe, file: h.file, appVersion: 'revived', idleMs: 0 });
+        await revived.listen();
+        t.ok('持ち主の居ない古いソケットのファイルが残っていても、消して立てられる（unix ソケット）', readHolderFile(h.file)?.appVersion === 'revived');
+        await revived.close();
+      }
     } finally { await h.stop(); }
   }
   {
