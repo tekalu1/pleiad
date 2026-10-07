@@ -99,6 +99,8 @@ export default async function (t) {
     const names = JSON.parse(/ENV=(\[.*\])/.exec(shell.stdout)?.[1] ?? 'null');
     t.ok('`!` の行のシェル（runHostShell）に入らない', Array.isArray(names) && names.length > 0 && leaked(names).length === 0, JSON.stringify(Array.isArray(names) ? leaked(names) : shell.stdout + shell.stderr));
   } finally {
+    // 外した値（bootEnv が読む）を空に戻してから env を戻す。残すと、同じプロセスで後に走る本が置き場のある起動と取り違える（shell-held の切り替え）
+    takeBootEnv(process.env);
     for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
   }
 
