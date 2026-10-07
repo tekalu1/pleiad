@@ -139,7 +139,8 @@ export default async function (t) {
       const r = await w.service.create(base(w, { name: '毎分のまとめ', prompt: 'まとめて' }), { kind: 'human' });
       t.ok('予約: 作っただけでは動かない（次の分の頭まで）', (await w.roots()).length === 0 && w.mc.pending() === 1);
       await w.mc.advance(at(2026, 10, 5, 10, 1));
-      const root1 = (await until(async () => (await w.roots())[0], { label: '1 回目の根の投稿' }));
+      // 根の投稿は会話を作って bot を起こす前に書かれる。起こし（wake）まで待ってから確かめる
+      const root1 = (await until(async () => (w.wakes.length >= 1 ? (await w.roots())[0] : null), { label: '1 回目の根の投稿と起こし' }));
       const posts1 = await w.roots();
       t.ok('発火: 根の投稿は author.kind: routine・本文は名前と指示・state working・routine { routineId, runId }（missed でない）', posts1.length === 1 && root1.author.routineId === r.id && root1.text === '毎分のまとめ\nまとめて' && root1.state === 'working'
         && root1.routine.routineId === r.id && /^run_/.test(root1.routine.runId) && !root1.routine.missed && root1.threadId === null, JSON.stringify(root1));
@@ -151,7 +152,7 @@ export default async function (t) {
       await w.endTurn(root1);
       t.ok('終わり: ok なら根の投稿は done（緑の「成功」ではなく「終了」）・last も done', await until(async () => (await w.stateOf(root1)) === 'done', { label: 'done' }) && (await w.service.get({ routineId: r.id })).last.state === 'done');
       await w.mc.advance(at(2026, 10, 5, 10, 2));
-      const two = await until(async () => ((await w.roots()).length === 2 ? await w.roots() : null), { label: '2 回目' });
+      const two = await until(async () => ((await w.roots()).length === 2 && w.wakes.length >= 2 ? await w.roots() : null), { label: '2 回目' });
       t.ok('次の分でもう 1 回: 実行ごとに新しいスレッド（根の投稿が増える）・新しい会話', two[0].id !== two[1].id && w.bots.sessions.length === 2 && w.bots.sessions[1].threadId === two[1].id);
       // 走っている間に来た発火（3 分目）はスキップ。スキップの投稿は 1 つの走っている間に 1 回だけ
       await w.mc.advance(at(2026, 10, 5, 10, 3));
@@ -163,7 +164,7 @@ export default async function (t) {
       await w.endTurn(two[1], { outcome: 'ok', interrupted: null });
       await until(async () => (await w.stateOf(two[1])) === 'done', { label: '2 回目 done' });
       await w.mc.advance(at(2026, 10, 5, 10, 5));
-      await until(async () => (await w.roots()).length === 4, { label: '走り終えた後はまた動く' });
+      await until(async () => (await w.roots()).length === 4 && w.wakes.length >= 3, { label: '走り終えた後はまた動く' });
       t.ok('走り終えた後の発火は、また走る（4 つ目のスレッドと会話）', w.bots.sessions.length === 3);
 
       w.service.stop();
