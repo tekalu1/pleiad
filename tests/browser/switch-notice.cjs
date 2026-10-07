@@ -11,6 +11,7 @@ async page => {
     window.__switchStub = true;
     window.__acts = [];
     window.__helloed = 0;
+    window.__updateCalls = [];
     window.__bridgeState = null;
     let listener = null;
     window.__switch = (payload) => { window.__bridgeState = payload; listener?.(payload); };
@@ -19,7 +20,7 @@ async page => {
     window.__setUpdate = (patch) => { window.__update = { ...window.__update, ...patch }; updateListener?.({ ...window.__update }); };
     window.plyDesktop = {
       onUpdate: (fn) => { updateListener = fn; },
-      update: async () => ({ ...window.__update }),
+      update: async (name) => { if (name) window.__updateCalls.push(name); return { ...window.__update }; },
       switch: {
         version: 1,
         hello: () => { window.__helloed++; },
@@ -155,6 +156,14 @@ async page => {
   await page.evaluate(() => { document.documentElement.dataset.theme = 'dark'; });
   await page.locator('#updateConfirm').screenshot({ path: `${shots}-confirm-handover-dark.png` });
   await page.evaluate(() => { document.documentElement.dataset.theme = 'light'; });
+  // 押すと、作業が走っていても断らずに main へ install を渡す（切り替えは main が待つ）
+  await page.evaluate(() => { window.__updateCalls.length = 0; });
+  await page.locator('#confirmInstallUpdate').click();
+  await page.waitForFunction(() => window.__updateCalls.includes('install'), null, { timeout: 5000 }).catch(() => {});
+  const installed = await page.evaluate(() => ({ calls: window.__updateCalls.slice(), error: document.querySelector('#updateError').textContent }));
+  check('確認の段（無停止）: 作業が走っていても「保存して再起動」は断らずに install を渡す', installed.calls.includes('install') && !installed.error, JSON.stringify(installed));
+  await page.locator('#installUpdate').click();
+  await wait(500);
   // 内蔵ブラウザーのタブがあるときだけ注意が出る（画面の browserPanel は無いので、computer の状態を差し込む代わりに関数を直接確かめる）
   await page.evaluate(() => window.__setUpdate({ handover: false }));
   await wait(200);

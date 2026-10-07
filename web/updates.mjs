@@ -185,7 +185,7 @@ export function setupUpdates({ page, open, lock, flush, cmd, work: currentWork =
     if (busy) return;
     busy = true; failure = ''; if (state) paint(state);
     try {
-      if (name === 'install') { confirming = false; installing = true; paint(state); await stopWork(); paint(state); await flush(); }
+      if (name === 'install') { confirming = false; installing = true; paint(state); await stopWork(); paint(state); await flush({ handover: Boolean(state?.handover) }); }
       paint(await bridge.update(name, value));
     } catch (e) {
       // Electron は invoke の失敗に「Error invoking remote method …」を前置きする。利用者に要るのは本文だけ

@@ -8646,9 +8646,10 @@ updatesUi = setupUpdates({ page: onboarding.page, open: onboarding.open, lock: o
   work: () => state.work,
   sessionName: (id) => rowLabel(state.sessions.find(s => s.id === id) ?? {}),
   agentName: (id) => (id ? labelOf(id) : ''),
-  flush: async () => {
+  // 無停止の更新（handover）では作業があっても断らない。切り替えは保持役に載らない作業が終わるのを main が待つ（desktop/switch.cjs）
+  flush: async ({ handover = false } = {}) => {
   const work = await cmd('running');
-  if (work.count > 0) {
+  if (!handover && work.count > 0) {
     // どの会話が止めているかを名前で出す。数だけだと、どこを待てばよいか探し回ることになる
     const ids = [...new Set([...work.turns, ...work.permissions.filter(p => !p.relay), ...work.subagents].map(w => w.sessionId).filter(Boolean))];
     const titles = ids.slice(0, 3).map(id => rowLabel(state.sessions.find(s => s.id === id) ?? {}));
