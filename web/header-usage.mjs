@@ -149,6 +149,13 @@ export function setupHeaderUsage({ $, source, getBackends, onUsageLogin, openSet
     const fill = el('i'); fill.style.width = `${Math.max(0, Math.min(100, used ?? 0))}%`;
     bar.append(fill); return bar;
   };
+  // 文脈のメーターと同じ ▾（480px 以下は usage.css が隠す）
+  const caret = () => {
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('class', 'i caret'); svg.setAttribute('viewBox', '0 0 24 24'); svg.setAttribute('aria-hidden', 'true');
+    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path'); path.setAttribute('d', 'M7 10l5 5 5-5');
+    svg.append(path); return svg;
+  };
   const staleNote = entry => entry?.failed && entry.quota?.checkedAt ? t('usage.header.stale', { when: fmt.relative(entry.quota.checkedAt) }) : '';
 
   function paintChip() {
@@ -163,7 +170,7 @@ export function setupHeaderUsage({ $, source, getBackends, onUsageLogin, openSet
     chip.className = 'usage-chip' + (state.high ? ' high' : '') + (state.kind !== 'value' || entry.failed ? ' dim' : '');
     if (state.kind !== 'value') {
       const text = state.kind === 'auth' ? t('usage.header.unauthorized') : t('usage.unknown');
-      chip.replaceChildren(el('span', 'lb', t('usage.header.title')), mini(0), el('span', 'pc', '—'));
+      chip.replaceChildren(el('span', 'lb', t('usage.header.title')), mini(0), el('span', 'pc', '—'), caret());
       chip.setAttribute('aria-label', t('usage.header.chipLabel', { agent, text }));
       chip.title = [state.kind === 'auth' ? row.message || text : text, stale].filter(Boolean).join(' · ');
       return;
@@ -175,10 +182,10 @@ export function setupHeaderUsage({ $, source, getBackends, onUsageLogin, openSet
       text = t('usage.header.limitUntil', { time });
       const pc = el('span', 'pc');
       pc.append(el('span', 'long', text), el('span', 'short', t('usage.header.limitShort', { time })));
-      chip.replaceChildren(el('span', 'lb', label), mini(state.used), pc);
+      chip.replaceChildren(el('span', 'lb', label), mini(state.used), pc, caret());
     } else {
       text = percentText(state.used);
-      chip.replaceChildren(el('span', 'lb', label), mini(state.used), el('span', 'pc', text));
+      chip.replaceChildren(el('span', 'lb', label), mini(state.used), el('span', 'pc', text), caret());
     }
     chip.setAttribute('aria-label', t('usage.header.chipLabel', { agent, text: state.limit ? text : `${label} ${text}` }));
     chip.title = [t('usage.header.chipTitle', { agent, label: w.label, percent: percentText(state.used), reset: resetText(w) }), stale].filter(Boolean).join(' · ');

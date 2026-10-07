@@ -24,6 +24,9 @@
 .usage-chip[hidden]{display:none}
 .usage-chip::before{content:"";position:absolute;inset:-4px -2px}
 .usage-chip:hover{background:var(--surface-2)}
+/* 棒は文脈のメーター（compaction.css の .context-meter-bar）と同じ 47×5 */
+.usage-chip .usage-mini{width:47px;height:5px}
+.usage-chip svg.caret{width:12px;height:12px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;color:var(--ink-weak);margin-left:-2px;flex:none}
 .usage-chip[aria-expanded=true]{background:var(--surface-2)}
 .usage-chip .lb{color:var(--ink-weak)}
 .usage-chip .short{display:none}
@@ -68,7 +71,9 @@
   .usage-chip .long{display:none}
   .usage-chip .short{display:inline}
 }
+/* 480px 以下は ▾ を省く。自動圧縮の予約（文脈のメーターの「◷ 17:57」）があるときは棒も外して「5時間 66%」だけにする（帯を折り返さない） */
 @media (max-width:480px){
-  .usage-chip .usage-mini{display:none}
+  .usage-chip svg.caret{display:none}
+  .context-strip:has(.context-meter-clock) .usage-chip .usage-mini{display:none}
   .usage-chip{gap:5px;padding:0 8px}
 }
