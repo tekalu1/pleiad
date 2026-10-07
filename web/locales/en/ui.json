@@ -2151,6 +2151,8 @@
     "parentChat": "Parent conversation",
     "titleSuggestFailed": "Couldn't suggest a title: {{error}}",
     "more": "Actions for this conversation",
+    "parentLine": "↖ Requested by: {{title}}",
+    "parentLineAria": "Back to the requesting conversation \"{{title}}\"",
     "remoteOrigin": {
     "badge": "⇄ From {{device}}'s AI",
     "request": "Requested from \"{{title}}\"",
@@ -2321,7 +2323,6 @@
         "cancelled": "Stopped",
         "interrupted": "Interrupted"
       },
-      "parent": "Requesting conversation",
       "notificationUnknown": "It's unknown whether the completion notice was delivered. Check the result in the child conversation."
     }
   },
@@ -2592,10 +2593,10 @@
       "plainAria": "Recipient and model: no bot · {{backend}} · {{model}}{{effort}}",
       "optionAria": "{{name}} ({{backend}}{{state}})",
       "botSetup": "How {{name}} runs",
-      "botModel": "Model: {{model}}",
-      "botEffort": "Effort: {{effort}}",
-      "botMode": "Approval mode: {{mode}}",
-      "botReadOnly": "{{name}} uses its defaults. You can change them in the thread after sending.",
+      "botRuns": "{{name}} runs with its defaults: {{setup}}. You can change them in the thread after sending.",
+      "openBot": "Change the defaults on the bot page ›",
+      "changedAria": "changed for this thread only",
+      "fixedAfterSend": "Can't be changed after sending",
       "resetBot": "Reset to bot defaults",
       "openUsage": "Usage ›"
     },

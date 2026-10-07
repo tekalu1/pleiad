@@ -1308,9 +1308,11 @@ body.inapp-links .present-tools .visualize-expand{display:none}
 .crow.fit-cwd-icon .chip.folder :is(.v,.caret,.cv,.git-br,.wt-sfx){display:none}
 .crow.fit-mode-icon .chip.mode :is(.v,.caret,.cv){display:none}
 .crow.fit-model-icon .chip.model :is(.v,.caret){display:none}
+.chip.model{position:relative}
 .chip.model .av{flex:none}
+.chip.model .av.xs{width:18px;height:18px;display:inline-grid;place-items:center;font-size:12px;line-height:1}
 .chip.model .row-be{flex:none;width:16px;height:16px}
-.chip.model.changed .entry-dot{left:17px;right:auto;top:1px}
+.crow > .chip.model.changed > .entry-dot{position:absolute;left:17px;right:auto;top:1px}
 .destination-sent,.destination-fact{margin:4px 8px;color:var(--ink-weak);font-size:var(--fs-s)}
 .destination-agent{display:flex;align-items:center;gap:5px;padding:12px 8px 4px;color:var(--ink-weak);font-size:var(--fs-s)}
 .destination-agent b{margin-right:auto;color:var(--ink);font-weight:600}
@@ -1322,6 +1324,19 @@ body.inapp-links .present-tools .visualize-expand{display:none}
 .destination-option .destination-check{color:var(--ink-blue)}
 .destination-option .destination-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .destination-option .destination-wait{color:var(--ink-mark);font-size:var(--fs-xs)}
+.destination-option .run{flex:none}
+.destination-option .row-be{flex:none;width:16px;height:16px}
+/* 宛先とモデルの面のエージェントの区切り: 名前の前にロゴ */
+.cpop .cseg button{display:inline-flex;align-items:center;justify-content:center;gap:6px;min-width:0}
+.cpop .cseg button .row-be{flex:none;width:15px;height:15px}
+.cpop .chead.destination-head{display:flex;align-items:baseline;gap:8px}
+.destination-head-note{margin-left:auto;letter-spacing:0}
+/* 宛先のエージェントの使用量の 1 行（「▬ 5時間 66% ▬ 週次 31% … 使用量 ›」） */
+.destination-usage{display:flex;align-items:center;gap:12px;padding:2px 8px 6px;font-size:var(--fs-xs);color:var(--ink-weak);font-variant-numeric:tabular-nums}
+.destination-usage-item{display:inline-flex;align-items:center;gap:5px;white-space:nowrap}
+.destination-usage .clink{margin-left:auto;font-size:var(--fs-xs)}
+.destination-agent .av.xs{width:18px;height:18px;display:inline-grid;place-items:center;font-size:12px;line-height:1;flex:none}
+.cpop > .clink:is(.destination-bot-link,.destination-reset){display:block;margin:4px 8px 6px}
 /* 縮める前の幅を測る間だけ（fitRow）。「保存済み」は測らない（入らなければ消えるだけ） */
 .crow.measuring > *{flex-shrink:0}
 .crow.measuring > .draft-saved{display:none}

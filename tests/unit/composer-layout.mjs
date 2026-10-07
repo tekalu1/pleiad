@@ -65,7 +65,10 @@ export default async function (t) {
     /\.crow\.fit-short \.chip\.mode \.v \.short\{display:inline\}/.test(css) && /\.crow\.fit-noef \.chip \.v \.ef\{display:none\}/.test(css)
       && /\.crow\.measuring > \*\{flex-shrink:0\}/.test(css) && /\.chip\.model\{flex-shrink:20\}/.test(css) && /\.chip\.folder\{flex-shrink:1\}/.test(css) && /\.chip\.mode\{flex-shrink:0\}/.test(css));
   const controlsSrc = fs.readFileSync(new URL('../../web/composer-controls.mjs', import.meta.url), 'utf8');
-  t.ok('名前の最小の幅は作業ディレクトリ 9 字・モデル 6 字から段々に下げる', /\[\[9, 6\], \[7, 4\], \[5, 3\], \[3, 2\]\]/.test(controlsSrc) && /fit-short/.test(controlsSrc) && /fit-noef/.test(controlsSrc));
+  t.ok('名前の最小の幅は作業ディレクトリ 9 → 7 字・宛先とモデル 6 字（bot なしのモデル名は 4 字）まで。それより削らず、作業ディレクトリ → 承認モード → 宛先とモデルの順にアイコンだけ',
+    /\[\[9, 6\], \[7, bot \? 6 : 4\]\]/.test(controlsSrc) && /fit-short/.test(controlsSrc) && /fit-noef/.test(controlsSrc) && /fit-nomodel/.test(controlsSrc)
+      && /\["fit-cwd-icon", "fit-mode-icon", "fit-model-icon"\]/.test(controlsSrc));
+  t.ok('スレッドの入力欄も同じ詰め方（fitComposerRow）', /fitComposerRow\(destChip\.parentElement/.test(fs.readFileSync(new URL('../../web/channels/thread-composer.mjs', import.meta.url), 'utf8')));
   const hideFn = controlsSrc.slice(controlsSrc.indexOf('hide(returnFocus = true) {'), controlsSrc.indexOf('place() {'));
   t.ok('面を閉じたら（Esc・面の外・チップのどれでも hide を通る）onHide を呼ぶ', /onHide\?\.\(\);/.test(hideFn)
     && /export function panel\(chip, pop, \{[^}]*onHide[^}]*\}\)/.test(controlsSrc) && /if \(e\.key === "Escape"\) \{[^}]*self\.hide\(\)/.test(controlsSrc) && /openPanel\.hide\(false\)/.test(controlsSrc));

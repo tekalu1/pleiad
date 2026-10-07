@@ -9,7 +9,7 @@
 // 口は流れの入力欄（createChComposer）と同じ形にしてある（thread.mjs がそのまま使う）。
 import { buildComposer, composerEls, createComposer } from '../composer/composer.mjs';
 import { renderOutbox } from '../outbox.mjs';
-import { chipGlyph, destinationUsage, panel, paintWhoChip, renderModel } from '../composer-controls.mjs';
+import { chipCaret, chipGlyph, defaultModeOf, destinationUsage, fitComposerRow, panel, paintWhoChip, renderModel, resolvedModel } from '../composer-controls.mjs';
 import { setupMentionComplete } from './mention-complete.mjs';
 import { draftStore, persistDrafts } from './ch-composer.mjs';
 import { runMark } from '../arc.mjs';
@@ -216,35 +216,7 @@ export function createThreadComposer({ host, bucket = () => null, candidates, su
   let destinationPanel = null;
   let effortKey = '', threadEfforts = {};
   const quotaCache = new Map();
-  function fitThreadRow() {
-    const row = destChip.parentElement;
-    if (!row?.isConnected || !row.offsetParent) return;
-    row.classList.remove('fit-short', 'fit-noef', 'fit-nomodel', 'fit-cwd-icon', 'fit-mode-icon', 'fit-model-icon');
-    destChip.style.minWidth = ''; chips.cwd.style.minWidth = '';
-    const fits = () => {
-      const last = [...row.children].reverse().find(node => node.offsetParent);
-      return !last || last.getBoundingClientRect().right <= row.getBoundingClientRect().right + .01;
-    };
-    row.classList.add('measuring');
-    if (!fits()) row.classList.add('fit-short');
-    if (!fits()) row.classList.add('fit-noef');
-    if (!fits() && destChip.classList.contains('with-bot')) row.classList.add('fit-nomodel');
-    row.classList.remove('measuring');
-    if (fits()) return;
-    const size = node => [node.getBoundingClientRect().width, node.getBoundingClientRect().width - (node.querySelector('.v')?.getBoundingClientRect().width ?? 0)];
-    const cwdSize = size(chips.cwd), destSize = size(destChip);
-    const min = ([whole, frame], chars) => `min(${whole}px, calc(${frame}px + ${chars}ch))`;
-    for (const [cwdChars, destChars] of [[7, 6], [5, 5], [3, 4]]) {
-      chips.cwd.style.minWidth = min(cwdSize, cwdChars);
-      destChip.style.minWidth = min(destSize, destChars);
-      if (fits()) return;
-    }
-    chips.cwd.style.minWidth = ''; destChip.style.minWidth = '';
-    for (const cls of ['fit-cwd-icon', 'fit-mode-icon', 'fit-model-icon']) {
-      row.classList.add(cls);
-      if (fits()) return;
-    }
-  }
+  const fitThreadRow = () => fitComposerRow(destChip.parentElement, { cwd: chips.cwd, who: destChip });
   addEventListener('resize', fitThreadRow);
   const rowObserver = typeof ResizeObserver === 'function' ? new ResizeObserver(fitThreadRow) : null;
   rowObserver?.observe(destChip.parentElement);
@@ -258,7 +230,7 @@ export function createThreadComposer({ host, bucket = () => null, candidates, su
   const leaf = (path) => String(path ?? '').split(/[\\/]/).filter(Boolean).at(-1) ?? '';
   const chipKind = (chip) => (chip === chips.cwd ? 'cwd' : chip === chips.model ? 'model' : 'mode');
   const chipBody = (chip, text, changed) => {
-    chip.replaceChildren(chipGlyph(chipKind(chip)), el('span', 'v', text), el('span', 'cv', '▾'));
+    chip.replaceChildren(chipGlyph(chipKind(chip)), el('span', 'v', text), chipCaret());
     if (changed) { const dot = el('span', 'entry-dot'); dot.setAttribute('aria-hidden', 'true'); chip.append(dot); }
     chip.classList.toggle('changed', Boolean(changed));
   };
@@ -274,13 +246,15 @@ export function createThreadComposer({ host, bucket = () => null, candidates, su
     }
     loadVocab(s.backend);
     const v = s.values, d = s.defaults;
-    const modelLabel = vocab.models?.[v.model]?.label ?? (v.model || t('chat.model.default'));
+    // 既定に従うモデルは、Chats のチップと同じく実際に当たるモデルの名前で出す
+    const modelLabel = (vocab.models?.[v.model] ? resolvedModel(vocab.models, v.model).label : '') || v.model || t('chat.model.default');
     const changed = { model: (v.model ?? '') !== (d.model ?? '') || (v.effort ?? '') !== (d.effort ?? ''), mode: (v.mode ?? '') !== (d.mode ?? '') };
     chipBody(chips.cwd, leaf(v.cwd) || '~', false);
     chips.cwd.title = v.cwd ?? '';
     paintWhoChip(destChip, { bot: bot.plain ? null : bot, backend: s.backend, backendLabel: backendLabel?.(s.backend) ?? s.backend,
-      model: modelLabel, effort: v.effort, changed: changed.model });
-    const modeLabel = vocab.modes?.[v.mode]?.label ?? v.mode ?? '';
+      model: modelLabel, effort: v.effort || resolvedModel(vocab.models, v.model).entry?.defaultEffort || '', changed: changed.model });
+    // 承認モードを決めていない（bot なしで会話を作る前）は、エージェントの既定の承認モード
+    const modeLabel = vocab.modes?.[v.mode || defaultModeOf(vocab.modes)]?.label ?? v.mode ?? '';
     chipBody(chips.mode, modeLabel, changed.mode);
     const modeValue = chips.mode.querySelector('.v');
     modeValue.replaceChildren(el('span', 'full', modeLabel), el('span', 'short', modeLabel.slice(0, 2)));
@@ -289,11 +263,15 @@ export function createThreadComposer({ host, bucket = () => null, candidates, su
     chips.mode.setAttribute('aria-label', `${t('chat.composer.mode')}: ${chips.mode.title}. ${note}`);
     chips.cwd.setAttribute('aria-label', `${t('chat.composer.cwd')}: ${v.cwd ?? ''}`);
     fitThreadRow();
-    if (destinationPanel?.open) {
-      const key = els.modelPop.contains(document.activeElement) ? document.activeElement.dataset?.key : null;
-      destinationPanel.render(); destinationPanel.place();
-      if (key) els.modelPop.querySelector(`[data-key="${CSS.escape(key)}"]`)?.focus();
-    }
+    if (destinationPanel?.open) loadPanelData();
+    repaintPanel();
+  }
+  /** 開いている面を描き直す。触っていた部品へフォーカスを戻す（data-key で引き直す） */
+  function repaintPanel() {
+    if (!destinationPanel?.open) return;
+    const key = els.modelPop.contains(document.activeElement) ? document.activeElement.dataset?.key : null;
+    destinationPanel.render(); destinationPanel.place();
+    if (key) els.modelPop.querySelector(`[data-key="${CSS.escape(key)}"]`)?.focus();
   }
   const apply = async (patch) => {
     const bot = destNow().bot;
@@ -303,16 +281,22 @@ export function createThreadComposer({ host, bucket = () => null, candidates, su
   };
   const menuAt = (chip, items, title) => { const r = chip.getBoundingClientRect(); host.showMenu(r.left, r.top - 4, items, title); };
   const noteItem = () => ({ head: t('channels:thread.settings.note'), wrap: true });
+  // i18n-dynamic: channels:side.botState.
   const stateText = (b) => t(`channels:side.botState.${['working', 'waiting', 'resting'].includes(b.state) ? b.state : 'idle'}`);
   function modelTarget() {
     const { bot, d } = destNow();
     const s = bot && settings(bot.id);
-    const options = (list) => list.map((b) => ({ id: b.id, name: b.name, bot: b.plain ? null : b,
-      backend: b.backend, backendLabel: backendLabel?.(b.backend) ?? b.backend, state: stateText(b), waiting: b.state === 'waiting' }));
+    // 組み込みの bot（このスレッドで話した後も）は「bot なし」と、そのスレッドで動くエージェントのロゴ
+    const options = (list) => list.map((b) => {
+      const backend = b.plain ? settings(b.id)?.backend ?? b.backend : b.backend;
+      return { id: b.id, name: b.plain ? t('channels:homeDest.none') : b.name, bot: b.plain ? null : b,
+        backend, backendLabel: backendLabel?.(backend) ?? backend, state: stateText(b), waiting: b.state === 'waiting', working: b.state === 'working' };
+    });
     const groups = [];
     if (d.inThread?.length) groups.push({ heading: t('channels:thread.dest.inThread'), options: options(d.inThread) });
     if (d.others?.length) groups.push({ heading: d.inThread?.length ? t('channels:thread.dest.others') : t('channels:thread.dest.members'), options: options(d.others) });
-    if (d.plain) groups.push({ options: [{ id: d.plain.id, name: t('channels:thread.dest.auto'), bot: null }] });
+    // bot なし: そのとき動くエージェントのロゴ（選んでいなければ Chats の既定）
+    if (d.plain) groups.push({ options: [{ id: d.plain.id, name: t('channels:homeDest.none'), bot: null, backend: settings(d.plain.id)?.backend }] });
     const pick = (id) => { chosen = id; paintDest(); onDestChange(); };
     if (!s) return { destination: { selected: null, groups, chooseOnly: true, onPick: pick } };
     const changed = !bot.plain && ((s.values.model ?? '') !== (s.defaults.model ?? '') || (s.values.effort ?? '') !== (s.defaults.effort ?? ''));
@@ -320,7 +304,7 @@ export function createThreadComposer({ host, bucket = () => null, candidates, su
       backend: s.backend, backends: host.state?.backends ?? [], backendSwitchable: Boolean(bot.plain && !s.sessionId && (host.state?.backends?.length ?? 0) > 1),
       models: vocab.models, model: s.values.model, efforts: threadEfforts, effort: s.values.effort,
       effortDisabled: Object.keys(threadEfforts).length <= 1,
-      destination: { selected: bot.id, groups, bot: bot.plain ? null : bot, threadPlain: Boolean(bot.plain),
+      destination: { selected: bot.id, groups, bot: bot.plain ? null : bot, threadPlain: Boolean(bot.plain), defaults: s.defaults,
         backendLabel: (id) => backendLabel?.(id) ?? id,
         usage: destinationUsage(quotaCache.get(s.backend), { open: host.openUsage }),
         changed, onReset: () => apply({ model: s.defaults.model ?? '', effort: s.defaults.effort ?? '' }),
@@ -332,19 +316,22 @@ export function createThreadComposer({ host, bucket = () => null, candidates, su
     render: () => { const target = modelTarget(); if (target) renderModel({ pop: els.modelPop, target,
       on: { backend: v => apply({ backend: v, model: '', effort: '' }), model: v => apply({ model: v }), effort: v => apply({ effort: v }) },
       hide: () => destinationPanel.hide() }); },
-    onShow: () => {
-      const s = destNow().bot && settings(destNow().bot.id);
-      if (!s) return;
-      const key = `${s.backend}:${s.values.model}:${s.values.cwd}`;
-      if (key !== effortKey) {
-        effortKey = key; threadEfforts = {};
-        const request = host.efforts?.({ backend: s.backend, model: s.values.model ?? '', cwd: s.values.cwd || undefined });
-        request?.then(value => { if (effortKey === key) { threadEfforts = value ?? {}; if (destinationPanel.open) destinationPanel.render(); } }).catch(() => {});
-      }
-      const quota = host.quota?.(s.backend);
-      quota?.then(value => { quotaCache.set(s.backend, value); if (destinationPanel.open) destinationPanel.render(); }).catch(() => {});
-    },
+    onShow: () => loadPanelData(true),
   });
+  /** 面のエフォートの段と使用量を取る。宛先・エージェント・モデルが替わったら取り直す（使用量は開くたび） */
+  function loadPanelData(opening = false) {
+    const s = destNow().bot && settings(destNow().bot.id);
+    if (!s) return;
+    const key = `${s.backend}:${s.values.model}:${s.values.cwd}`;
+    if (key !== effortKey) {
+      effortKey = key; threadEfforts = {};
+      const request = host.efforts?.({ backend: s.backend, model: s.values.model ?? '', cwd: s.values.cwd || undefined });
+      request?.then(value => { if (effortKey === key) { threadEfforts = value ?? {}; repaintPanel(); } }).catch(() => {});
+    }
+    if (!opening && quotaCache.has(s.backend)) return;
+    const quota = host.quota?.(s.backend);
+    quota?.then(value => { quotaCache.set(s.backend, value); repaintPanel(); }).catch(() => {});
+  }
   chips.mode.onclick = async () => {
     const bot = destNow().bot;
     const s = bot && settings(bot.id);

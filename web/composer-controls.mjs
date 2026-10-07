@@ -33,6 +33,54 @@ const MODEL = ["M8 6h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V8a2 2 0 0 1
 const CARET = "M7 10l5 5 5-5";
 /** チップのアイコン（作業フォルダー・モデル・承認モード。スレッドの欄も同じ絵を使う。web/channels/thread-composer.mjs） */
 export const chipGlyph = (kind) => glyph(...(kind === "cwd" ? [FOLDER] : kind === "model" ? MODEL : kind === "danger" ? WARN : [SHIELD]));
+/** チップの ▾（480px 以下は CSS が消す） */
+export function chipCaret() {
+  const caret = glyph(CARET);
+  caret.classList.add("caret");
+  return caret;
+}
+
+const FIT_CLASSES = ["fit-nosplit", "fit-nobranch", "fit-short", "fit-noef", "fit-nomodel", "fit-cwd-icon", "fit-mode-icon", "fit-model-icon"];
+/**
+ * 入力欄の下の行を 1 行に収める（Chats とスレッドで同じ。docs/design-system.md「入力欄の設定」）。
+ * ① ブランチ・段を外す・承認モードを短い名前に ② bot なら「· モデル」を外して名前だけ
+ * ③ 作業ディレクトリ 9 → 7 字・宛先とモデル 6 字（bot なしのモデル名は 4 字）まで … で詰める
+ * ④ それでも入らなければ 作業ディレクトリ → 承認モード → 宛先とモデル の順にアイコンだけ。送信は常に右端
+ */
+export function fitComposerRow(row, { cwd, who }) {
+  if (!row || !row.isConnected || !row.offsetParent) return;
+  row.classList.remove(...FIT_CLASSES);
+  cwd.style.minWidth = ""; who.style.minWidth = "";
+  row.classList.add("measuring");
+  // 最後の部品（送信）の右端が行の右端に収まるか（scrollWidth は整数に丸められ、1px 足りないのを見逃す）
+  const fits = () => {
+    const last = [...row.children].reverse().find((n) => n.offsetParent);
+    return !last || last.getBoundingClientRect().right <= row.getBoundingClientRect().right + 0.01;
+  };
+  for (const cls of ["fit-nosplit", "fit-nobranch", "fit-short", "fit-noef"]) if (!fits()) row.classList.add(cls);
+  const bot = who.classList.contains("with-bot");
+  if (!fits() && bot) row.classList.add("fit-nomodel");
+  let size = null;
+  if (!fits()) {
+    const w = (n) => n.getBoundingClientRect().width;
+    const v = (n) => w(n.querySelector(".v") ?? n);
+    size = { cwd: [w(cwd), w(cwd) - v(cwd)], who: [w(who), w(who) - v(who)] };
+  }
+  row.classList.remove("measuring");
+  if (!size) return;
+  // 名前の最小の幅は字の幅（ch）で決める。もともと短い名前はそのまま
+  const min = ([whole, frame], ch) => `min(${whole}px, calc(${frame}px + ${ch}ch))`;
+  for (const [a, b] of [[9, 6], [7, bot ? 6 : 4]]) {
+    cwd.style.minWidth = min(size.cwd, a);
+    who.style.minWidth = min(size.who, b);
+    if (fits()) return;
+  }
+  cwd.style.minWidth = ""; who.style.minWidth = "";
+  for (const cls of ["fit-cwd-icon", "fit-mode-icon", "fit-model-icon"]) {
+    row.classList.add(cls);
+    if (fits()) return;
+  }
+}
 
 // git のブランチの線画（円 3 つと線。glyph は path だけなので別に作る）
 function branchGlyph() {
@@ -95,7 +143,7 @@ export function panel(chip, pop, { align = "left", render, onShow, onHide, width
       render();
       self.place();
       onShow?.();
-      if (focus) (pop.querySelector('[aria-selected="true"]') ?? pop.querySelector(".cpath") ?? pop.querySelector("input:not([type=range]):not(:disabled), button:not(:disabled), [tabindex='0']"))?.focus();
+      if (focus) (pop.querySelector('.destination-option[aria-pressed="true"]') ?? pop.querySelector('[aria-selected="true"]') ?? pop.querySelector(".cpath") ?? pop.querySelector("input:not([type=range]):not(:disabled), button:not(:disabled), [tabindex='0']"))?.focus();
     },
     hide(returnFocus = true) {
       if (pop.hidden) return;
@@ -306,16 +354,25 @@ export function paintWhoChip(chip, { bot = null, backend, backendLabel = backend
   const label = sent ? t('composer.destination.sentAria', { backend: backendLabel, model: modelName, effort: effortPart })
     : bot ? t('composer.destination.botAria', { name: bot.name, backend: backendLabel, model: modelName, effort: effortPart })
       : t('composer.destination.plainAria', { backend: backendLabel, model: modelName, effort: effortPart });
-  const full = changed ? `${label} · ${t('channels:thread.settings.changed')}` : label;
+  const full = changed ? `${label} · ${t('composer.destination.changedAria')}` : label;
   chip.title = full;
   chip.setAttribute('aria-label', full);
 }
+
+const botMark = (bot) => { const mark = botIcon(bot, 'av xs'); mark.setAttribute('aria-hidden', 'true'); return mark; };
 
 function destinationTop(d) {
   const dest = d.destination;
   if (!dest) return [];
   if (dest.sent) return [el('p', 'destination-sent', t('composer.destination.sent'))];
-  const parts = [head(t('composer.destination.title'))];
+  // 見出しの無い一覧（Chats の未送信）だけ「宛先」の見出しを置き、右に「送った後は変えられません」
+  const parts = [];
+  if (!dest.groups?.[0]?.heading) {
+    const top = head(t('composer.destination.title'));
+    top.classList.add('destination-head');
+    if (dest.fixedAfterSend) top.append(el('span', 'destination-head-note', t('composer.destination.fixedAfterSend')));
+    parts.push(top);
+  }
   for (const group of dest.groups ?? []) {
     if (group.heading) parts.push(head(group.heading));
     const box = el('div', 'destination-options');
@@ -330,9 +387,12 @@ function destinationTop(d) {
       const state = option.state ? ` · ${option.state}` : '';
       button.setAttribute('aria-label', option.bot ? t('composer.destination.optionAria', { name: option.name, backend: option.backendLabel ?? option.backend ?? '', state }) : option.name);
       if (picked) button.append(el('span', 'destination-check', '✓'));
-      if (option.bot) { const mark = botIcon(option.bot, 'av xs'); mark.setAttribute('aria-hidden', 'true'); button.append(mark); }
+      // bot はアイコン、bot なしはそのとき動くエージェントのロゴ
+      const mark = option.bot ? botIcon(option.bot, 'av xs') : option.backend ? logo(option.backend) : null;
+      if (mark) { mark.setAttribute('aria-hidden', 'true'); button.append(mark); }
       button.append(el('span', 'destination-name', option.name));
       if (option.waiting) button.append(el('span', 'destination-wait', '◆'));
+      else if (option.working) button.append(runMark());
       button.onclick = () => { if (!picked) dest.onPick(option.id); };
       box.append(button);
     }
@@ -348,19 +408,28 @@ export function renderModel({ pop, target: d, on, hide }) {
   if (d.destination?.readOnlyBot) {
     const bot = d.destination.readOnlyBot;
     const agent = el('div', 'destination-agent');
-    agent.append(el('b', null, t('composer.destination.botSetup', { name: bot.name })), logo(bot.backend), el('span', null, d.destination.backendLabel(bot.backend)));
+    agent.append(botMark(bot), el('b', null, t('composer.destination.botSetup', { name: bot.name })), logo(bot.backend), el('span', null, d.destination.backendLabel(bot.backend)));
     parts.push(agent);
     if (d.destination.usage) parts.push(d.destination.usage);
-    parts.push(el('p', 'destination-fact', t('composer.destination.botModel', { model: bot.model || t('chat.model.default') })));
-    parts.push(el('p', 'destination-fact', t('composer.destination.botEffort', { effort: bot.effort || t('chat.model.default') })));
-    parts.push(el('p', 'destination-fact', t('composer.destination.botMode', { mode: d.modes?.[bot.mode]?.label ?? bot.mode ?? t('chat.model.default') })));
-    parts.push(el('p', 'cnote', t('composer.destination.botReadOnly', { name: bot.name })));
+    // その bot の既定で動く（ここでは変えない。送った後、スレッドの中で変える）
+    parts.push(el('p', 'destination-fact', t('composer.destination.botRuns', { name: bot.name, setup: d.destination.botSetup })));
+    if (d.destination.openBot) {
+      const link = el('button', 'clink destination-bot-link', t('composer.destination.openBot'));
+      link.type = 'button'; link.dataset.key = 'destination:openBot';
+      link.onclick = () => { hide(false); d.destination.openBot(bot.id); };
+      parts.push(link);
+    }
     pop.replaceChildren(...parts);
     return;
   }
-  if (d.destination?.bot || d.destination?.threadPlain) {
+  // 宛先の動かし方の見出し: bot は「<アイコン> <名前> の動かし方 … <ロゴ> エージェント」（エージェントは bot のページで替える）。
+  // bot なしでエージェントを選べないとき（会話を作った後のスレッド）は、見出しにエージェントを出すだけ
+  const agentHead = d.destination?.bot || (d.destination?.threadPlain && !d.backendSwitchable);
+  if (agentHead) {
     const agent = el('div', 'destination-agent');
-    agent.append(el('b', null, d.destination.bot ? t('composer.destination.botSetup', { name: d.destination.bot.name }) : t('composer.agent')),
+    const bot = d.destination.bot;
+    if (bot) agent.append(botMark(bot));
+    agent.append(el('b', null, bot ? t('composer.destination.botSetup', { name: bot.name }) : t('composer.agent')),
       logo(d.backend), el('span', null, d.destination.backendLabel(d.backend)));
     parts.push(agent);
     if (d.destination.usage) parts.push(d.destination.usage);
@@ -371,7 +440,8 @@ export function renderModel({ pop, target: d, on, hide }) {
     seg.setAttribute("role", "group");
     seg.setAttribute("aria-label", t("composer.agent"));
     for (const b of d.backends) {
-      const btn = el("button", b.id === d.backend ? "on" : "", b.label);
+      const btn = el("button", b.id === d.backend ? "on" : "");
+      btn.append(logo(b.id), b.label);   // ロゴは脇の行・発言者の行と同じ（読み上げは名前だけ）
       btn.type = "button";
       btn.dataset.key = `backend:${b.id}`;
       btn.setAttribute("aria-pressed", String(b.id === d.backend));
@@ -380,7 +450,7 @@ export function renderModel({ pop, target: d, on, hide }) {
     }
     parts.push(seg);
   }
-  if (!d.destination?.bot && !d.destination?.threadPlain && d.destination?.usage) parts.push(d.destination.usage);
+  if (!agentHead && d.destination?.usage) parts.push(d.destination.usage);
   // 互換の接続先（Claude Code・Codex）。先頭は「公式」、下に登録した接続先。選んでいる間は使えないものを短い一行で出す
   const ep = d.endpoint;
   if (ep) parts.push(...endpointSection(d, on));
@@ -506,11 +576,15 @@ function officialModelSection(d, on) {
     on: !d.model, main: models[""]?.resolvedLabel ?? models[""]?.label ?? t("chat.next.useDefault"), sub: models[""]?.note, tag: DEFAULT_TAG(),
     key: "model:", onPick: () => d.model && on.model(""),
   }));
+  // 宛先が bot なら、bot の既定のモデルに「<名前> の既定」の札（エージェントの既定の札は出さない）
+  const botDefault = d.destination?.bot && d.destination.defaults ? d.destination.defaults.model || def : null;
+  const tagOf = (id) => botDefault !== null ? (id === botDefault ? t("channels:thread.settings.botDefault", { name: d.destination.bot.name }) : "")
+    : holdsDefault(models, id) ? DEFAULT_TAG() : "";
   for (const id of ids) {
     const m = models[id];
     rows.push(row({
       on: id === resolved || Boolean(m.family && m.family === current?.family),
-      main: m.label ?? id, sub: m.note, tag: holdsDefault(models, id) ? DEFAULT_TAG() : "", key: `model:${id}`,
+      main: m.label ?? id, sub: m.note, tag: tagOf(id), key: `model:${id}`,
       // 既定の行を選ぶと '' を保存する（既定が変われば追従する）。選んでいる系統の行は何もしない
       onPick: () => { const v = id === def ? "" : id; if (v !== d.model && id !== resolved) on.model(v); },
     }));
@@ -871,45 +945,7 @@ export function setupComposerControls({ cmd, get, on, els = {} }) {
    *   3. モデル名を … で詰める（「Smart…」くらいまで）  4. 作業ディレクトリの名前を … で詰める（9 字くらいまでは残す）
    * 縮める前の幅は、チップを縮めない状態（.measuring）で測る。行の幅・中身が変わるたびに呼ぶ（paint・窓の幅・中断の出入り）
    */
-  function fitRow() {
-    const row = chips.cwd.parentElement;
-    if (!row || !row.isConnected || !row.offsetParent) return;
-    const cwd = chips.cwd, mdl = chips.model;
-    row.classList.remove("fit-nosplit", "fit-nobranch", "fit-short", "fit-noef", "fit-nomodel", "fit-cwd-icon", "fit-mode-icon", "fit-model-icon");
-    cwd.style.minWidth = ""; mdl.style.minWidth = "";
-    row.classList.add("measuring");
-    // 最後の部品（送信）の右端が行の右端に収まるか（scrollWidth は整数に丸められ、1px 足りないのを見逃す）
-    const fits = () => {
-      const last = [...row.children].reverse().find((n) => n.offsetParent);
-      return !last || last.getBoundingClientRect().right <= row.getBoundingClientRect().right + 0.01;
-    };
-    if (!fits()) row.classList.add("fit-nosplit");
-    if (!fits()) row.classList.add("fit-nobranch");
-    if (!fits()) row.classList.add("fit-short");
-    if (!fits()) row.classList.add("fit-noef");
-    if (!fits() && mdl.classList.contains('with-bot')) row.classList.add('fit-nomodel');
-    let size = null;
-    if (!fits()) {
-      const w = (n) => n.getBoundingClientRect().width;
-      const v = (n) => w(n.querySelector(".v"));
-      size = { cwd: [w(cwd), w(cwd) - v(cwd)], mdl: [w(mdl), w(mdl) - v(mdl)] };
-    }
-    row.classList.remove("measuring");
-    if (!size) return;
-    // 名前の最小の幅は字の幅（ch）で決める（作業ディレクトリ 9 字・モデル 6 字）。もともと短い名前はそのまま。
-    // それでも入らない（とても狭い・中断が出ている）ときは、両方の最小を段々に下げる
-    const min = ([whole, frame], ch) => `min(${whole}px, calc(${frame}px + ${ch}ch))`;
-    for (const [a, b] of [[9, 6], [7, 4], [5, 3], [3, 2]]) {
-      cwd.style.minWidth = min(size.cwd, a);
-      mdl.style.minWidth = min(size.mdl, b);
-      if (fits()) return;
-    }
-    cwd.style.minWidth = ""; mdl.style.minWidth = "";
-    for (const cls of ['fit-cwd-icon', 'fit-mode-icon', 'fit-model-icon']) {
-      row.classList.add(cls);
-      if (fits()) return;
-    }
-  }
+  function fitRow() { fitComposerRow(chips.cwd.parentElement, { cwd: chips.cwd, who: chips.model }); }
   window.addEventListener("resize", fitRow);
   const rowObserver = typeof ResizeObserver === "function" ? new ResizeObserver(() => fitRow()) : null;
   rowObserver?.observe(chips.cwd.parentElement);

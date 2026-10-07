@@ -2093,6 +2093,8 @@
     "parentChat": "親の会話",
     "titleSuggestFailed": "タイトルを考えられなかった: {{error}}",
     "more": "この会話の操作",
+    "parentLine": "↖ 依頼元: {{title}}",
+    "parentLineAria": "依頼元の会話「{{title}}」へ戻る",
     "remoteOrigin": {
     "badge": "⇄ {{device}} の AI から",
     "request": "依頼元の会話「{{title}}」",
@@ -2259,7 +2261,6 @@
         "cancelled": "停止済み",
         "interrupted": "中断"
       },
-      "parent": "依頼元の会話",
       "notificationUnknown": "完了通知の配送結果は不明です。子の会話で結果を確認してください。"
     }
   },
@@ -2509,10 +2510,10 @@
       "plainAria": "宛先とモデル: bot なし · {{backend}} · {{model}}{{effort}}",
       "optionAria": "{{name}}（{{backend}}{{state}}）",
       "botSetup": "{{name}}の動かし方",
-      "botModel": "モデル: {{model}}",
-      "botEffort": "エフォート: {{effort}}",
-      "botMode": "承認モード: {{mode}}",
-      "botReadOnly": "{{name}}の既定で動きます。送った後、スレッドで変えられます。",
+      "botRuns": "{{name}} の既定で動きます: {{setup}}。送った後、スレッドの中で変えられます。",
+      "openBot": "bot のページで既定を変える ›",
+      "changedAria": "このスレッドだけ変更あり",
+      "fixedAfterSend": "送った後は変えられません",
       "resetBot": "bot の既定に戻す",
       "openUsage": "使用量 ›"
     },

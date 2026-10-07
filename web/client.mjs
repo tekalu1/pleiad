@@ -46,7 +46,7 @@ import { createContextMenu } from "./context-menu.mjs";
 import { setupLongPress } from "./long-press.mjs";
 import { whenText, timeText } from './schedule-times.mjs';
 import { setupSendMenu } from './send-menu.mjs';
-import { setupComposerControls, resolvedModel, folderBrowser, destinationUsage } from "./composer-controls.mjs";
+import { setupComposerControls, resolvedModel, folderBrowser, destinationUsage, modelChipLabel } from "./composer-controls.mjs";
 import { createFolderUpload, canSendFolders, entriesFromDirectory, summarize, askDroppedFolder } from "./folder-upload.mjs";
 import { setupAttachMenu } from "./attach-menu.mjs";
 import { promptMaxHeight, attachSources, attachFolderHints } from "./composer-layout.mjs";
@@ -369,6 +369,8 @@ function closeMeterPop(focus = false) {
 /** 入力欄の上の帯の左（文脈）が描いたか。右端のバックグラウンドの入口（syncWorkEntry）と合わせて、帯ごと出すか決める */
 let contextShown = false;
 const stripNarrow = matchMedia('(max-width:480px)');
+// 480px 以下: 頭に残すのは通話・目次・「…」だけ（プラグインと git は「…」の先頭）。docs/design-system.md「会話の頭の行のアイコン」
+const phoneView = stripNarrow;
 function syncStripVisible() {
   const strip = $('contextStrip');
   strip.hidden = !contextShown && $('usageChip').hidden && $('workEntry').hidden;
@@ -467,7 +469,7 @@ function paintMeterMenu(narrow, amounts, time, scheduled) {
     if (cancel.textContent !== label) cancel.textContent = label;
   } else cancel?.remove();
 }
-stripNarrow.addEventListener('change', () => paintContextStrip());
+stripNarrow.addEventListener('change', () => { paintContextStrip(); paintMoreEntry(); });
 function showCompactionError(error) { state.compactionPhase = { phase: 'failed', reason: String(error?.message ?? error) }; paintContextStrip(); }
 async function showRowCompactionError(session, error, setting = false) {
   // i18n-dynamic: compaction.settingFailed
@@ -3930,6 +3932,19 @@ function syncAttachButton() {
 
 // 入力欄の設定のチップ（web/composer-controls.mjs）。値は state に持ち、チップは get() で毎回読む
 const composerQuota = new Map();
+/** 未送信の会話で「bot なし」のときに動くエージェント（bot を選んでいる間も、bot なしの札にはこちらを出す） */
+function homeBackend() {
+  const s = state.sessions.find(x => x.id === state.current);
+  const chosen = !s || justCreated() ? draftView(state.draft.changes) : null;
+  return chosen?.backend ?? s?.nextSettings?.backend ?? activeBackendId();
+}
+/** Chats の未送信で選んだ bot の動かし方（表示だけ）。「Codex · Fake 1 · medium · 都度確認」 */
+function homeBotSetup(bot) {
+  // チップと同じ字（syncTopbar が bot の既定を state.model・effort・mode に入れている）
+  const mode = state.modes?.[state.mode]?.label ?? state.mode ?? '';
+  return [labelOf(bot.backend), modelChipLabel(state.models, state.model, state.efforts, state.effort), mode].filter(Boolean).join(' · ');
+}
+// i18n-dynamic: channels:side.botState.
 const controls = chatComposer.useControls({
   cmd,
   get: () => {
@@ -3937,7 +3952,8 @@ const controls = chatComposer.useControls({
     const bot = homeDest.bot;
     const sent = !unsentHere();
     return {
-      cwd: bot?.folders?.[0]?.path ?? state.cwd, recent: cwdOptions(), cwdDisabled: Boolean(bot),
+      // bot を選んだ未送信の会話は、bot が実際に使う値を表示だけ（一時チャットには作業場所が無いので、bot の最初のフォルダーかホーム。core/bots/sessions.mjs の pickCwd）
+      cwd: bot ? bot.folders?.[0]?.path || state.homeDir || state.cwd : state.cwd, recent: cwdOptions(), cwdDisabled: Boolean(bot),
       backends: state.backends, backend: bid,
       // エージェントが 1 つしか無ければ選ぶ口を出さない
       backendSwitchable: state.backends.length > 1,
@@ -3948,13 +3964,17 @@ const controls = chatComposer.useControls({
       modes: state.modes, mode: state.mode,
       modeDisabled: Boolean(bot),
       destination: {
-        sent, bot, selected: homeDest.selected, readOnlyBot: bot,
+        sent, bot, selected: homeDest.selected, readOnlyBot: bot, fixedAfterSend: true,
+        botSetup: bot ? homeBotSetup(bot) : '',
+        openBot: id => document.dispatchEvent(new CustomEvent('channels:show', { detail: { kind: 'bot', id } })),
         backendLabel: labelOf, onPick: id => homeDest.choose(id),
         usage: destinationUsage(composerQuota.get(bid), { account: bot ? '' : state.account,
           open: () => { onboarding.open('usage'); $('usageTab').click(); } }),
         groups: sent ? [] : [{ options: [
-          { id: null, name: t('channels:homeDest.none') },
-          ...homeDest.bots.map(b => ({ id: b.id, name: b.name, bot: b, backend: b.backend, backendLabel: labelOf(b.backend) })),
+          { id: null, name: t('channels:homeDest.none'), backend: homeBackend() },
+          ...homeDest.bots.map(b => ({ id: b.id, name: b.name, bot: b, backend: b.backend, backendLabel: labelOf(b.backend),
+            state: b.state ? t(`channels:side.botState.${['working', 'waiting', 'resting'].includes(b.state) ? b.state : 'idle'}`) : '',
+            waiting: b.state === 'waiting', working: b.state === 'working' })),
         ] }],
       },
       git: state.git.data,
@@ -4893,8 +4913,13 @@ function syncParentEntry() {
   // 依頼元の会話を消した（ADR 0147）なら出さない。端末の AI から任された会話の依頼元は端末にあるので、戻る口は出さない
   const parentId = remote ? null : delegation?.parentSessionId;
   const parent = parentId && state.sessions.some(s => s.id === parentId) ? parentId : null;
-  $('parentChatEntry').hidden = !parent;
-  $('parentChatEntry').onclick = parent ? () => select(parent) : null;
+  const back = $('parentChatEntry');
+  back.hidden = !parent;
+  back.onclick = parent ? () => select(parent) : null;
+  // 題の下の行（700px 以下）・題の右（広い幅）に「↖ 依頼元: 題」
+  const parentTitle = parent ? state.sessions.find(s => s.id === parent)?.title || t('session.untitled') : '';
+  back.textContent = parent ? t('session.parentLine', { title: parentTitle }) : '';
+  if (parent) { back.setAttribute('aria-label', t('session.parentLineAria', { title: parentTitle })); back.title = parentTitle; }
   const origin = $('remoteOriginLine');
   origin.hidden = !remote;
   origin.textContent = remote ? [t('session.remoteOrigin.badge', { device: remote.deviceName || '' }),
@@ -6233,7 +6258,7 @@ function initSidebar() {
     setDrawer(false);
   });
   // 広い画面へ戻ったら引き出しの印を外す（幕が残らないように）
-  narrowView.addEventListener("change", () => { setDrawer(false, { refocus: false }); side.redraw(); });
+  narrowView.addEventListener("change", () => { setDrawer(false, { refocus: false }); side.redraw(); paintMoreEntry(); });
   // Ctrl+B（macOS は ⌘B）。入力欄でも太字などの既定の意味は無いので、どこからでも効かせる。
   // macOS の Ctrl+B は入力欄で「1 文字戻る」なので奪わない
   const mac = /Mac/.test(navigator.platform);
@@ -6991,7 +7016,8 @@ function rowMenu(s, x, y, lead = []) {
         onClick: () => cmd("setTurnSettings", { sessionId: s.id, effort, rememberEffort: true })
           .then(refresh).catch(e => sideNote(t("session.menu.effortFailed", { error: e.message }))),
       })) },
-    ...(s.id === state.current && narrowView.matches && state.git.data ? [{ label: t('git.entry'), hint: branchLabel(state.git.data), onClick: () => gitPanel?.open($('sessionMore')) }] : []),
+    // 480px 以下は「…」の先頭の「開く」行に出す（sessionMoreLead）
+    ...(s.id === state.current && narrowView.matches && !phoneView.matches && state.git.data ? [{ label: t('git.entry'), hint: branchLabel(state.git.data), onClick: () => gitPanel?.open($('sessionMore')) }] : []),
     { label: t("session.menu.copyCwd"), hint: s.cwd ?? "", onClick: () => copy(s.cwd, t("session.menu.cwdCopied"), t("session.menu.cwdCopyFailed")) },
     { label: t("session.menu.copyId"), onClick: () => copy(s.id, t("session.menu.idCopied"), t("session.menu.idCopyFailed")) },
     ...(s.unsent ? [{ label: t("session.menu.deleteUnsent"), sub: () => [
@@ -7114,9 +7140,10 @@ function paintContextEntry() {
     summary: chipText(state.contextInfo), changed: !!state.contextInfo?.changed?.differs });
   paintMoreEntry();
 }
+/** 「…」の右上の変更ありの点。「…」へ逃がしたものだけを見る（480px 以下のプラグイン・700px 以下の git） */
 function paintMoreEntry() {
   const button = $('sessionMore');
-  const changed = !!state.contextInfo?.changed?.differs || (state.git.data?.dirty ?? 0) > 0;
+  const changed = (phoneView.matches && !!state.contextInfo?.changed?.differs) || (narrowView.matches && !!state.current && (state.git.data?.dirty ?? 0) > 0);
   const dot = button.querySelector('.entry-dot');
   if (changed && !dot) { const mark = el('span', 'entry-dot'); mark.setAttribute('aria-hidden', 'true'); button.append(mark); }
   else if (!changed) dot?.remove();
@@ -8589,7 +8616,7 @@ $("sessionMore").onclick = () => {
 function sessionMoreLead() {
   if (!narrowView.matches) return [];
   const lead = [];
-  if (matchMedia('(max-width:480px)').matches) {
+  if (phoneView.matches) {
     lead.push({ head: t('session.menu.open') });
     if (!$('contextEntry').hidden) lead.push({ label: $('contextEntry').getAttribute('aria-label'),
       onClick: () => sessionContext.open($('sessionMore')) });
