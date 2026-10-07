@@ -68,6 +68,8 @@ export default async function (t) {
   t.ok('名前の最小の幅は作業ディレクトリ 9 → 7 字・宛先とモデル 6 字（bot なしのモデル名は 4 字）まで。それより削らず、作業ディレクトリ → 承認モード → 宛先とモデルの順にアイコンだけ',
     /\[\[9, 6\], \[7, bot \? 6 : 4\]\]/.test(controlsSrc) && /fit-short/.test(controlsSrc) && /fit-noef/.test(controlsSrc) && /fit-nomodel/.test(controlsSrc)
       && /\["fit-cwd-icon", "fit-mode-icon", "fit-model-icon"\]/.test(controlsSrc));
+  t.ok('名前の最小の幅は先頭 N 字と … を実際の書体で測る（ch では「Smart 3.5」の 4 字が「Sm…」になり、アイコンだけにする段へ進まなかった。画面の順は tests/browser/composer-fit.cjs）',
+    /measureText\(`\$\{chars\.slice\(0, n\)\.join\(""\)\}…`\)/.test(controlsSrc) && !/calc\(\$\{frame\}px \+ \$\{ch\}ch\)/.test(controlsSrc));
   t.ok('スレッドの入力欄も同じ詰め方（fitComposerRow）', /fitComposerRow\(destChip\.parentElement/.test(fs.readFileSync(new URL('../../web/channels/thread-composer.mjs', import.meta.url), 'utf8')));
   const hideFn = controlsSrc.slice(controlsSrc.indexOf('hide(returnFocus = true) {'), controlsSrc.indexOf('place() {'));
   t.ok('面を閉じたら（Esc・面の外・チップのどれでも hide を通る）onHide を呼ぶ', /onHide\?\.\(\);/.test(hideFn)

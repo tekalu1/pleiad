@@ -40,6 +40,25 @@ export function chipCaret() {
   return caret;
 }
 
+/** エージェントの区切りの短い名前（製品名なので訳さない）。無いものは正式名 */
+const AGENT_SHORT = { claude: "Claude", codex: "Codex", antigravity: "Antigravity" };
+
+let measureCtx = null;
+/** チップの幅と、名前の先頭 N 字（と …）の幅を返す。frame は名前以外（アイコン・余白・▾・札） */
+function nameBox(chip) {
+  const name = chip.querySelector(".v .mn") ?? chip.querySelector(".v") ?? chip;
+  const whole = chip.getBoundingClientRect().width;
+  const frame = whole - name.getBoundingClientRect().width;
+  const chars = [...(name.textContent ?? "").trim()];
+  const font = getComputedStyle(name).font;
+  return { whole, frame, prefix(n) {
+    if (chars.length <= n) return Infinity;
+    measureCtx ??= document.createElement("canvas").getContext("2d");
+    measureCtx.font = font;
+    return measureCtx.measureText(`${chars.slice(0, n).join("")}…`).width + 1;
+  } };
+}
+
 const FIT_CLASSES = ["fit-nosplit", "fit-nobranch", "fit-short", "fit-noef", "fit-nomodel", "fit-cwd-icon", "fit-mode-icon", "fit-model-icon"];
 /**
  * 入力欄の下の行を 1 行に収める（Chats とスレッドで同じ。docs/design-system.md「入力欄の設定」）。
@@ -61,15 +80,12 @@ export function fitComposerRow(row, { cwd, who }) {
   const bot = who.classList.contains("with-bot");
   if (!fits() && bot) row.classList.add("fit-nomodel");
   let size = null;
-  if (!fits()) {
-    const w = (n) => n.getBoundingClientRect().width;
-    const v = (n) => w(n.querySelector(".v") ?? n);
-    size = { cwd: [w(cwd), w(cwd) - v(cwd)], who: [w(who), w(who) - v(who)] };
-  }
+  if (!fits()) size = { cwd: nameBox(cwd), who: nameBox(who) };
   row.classList.remove("measuring");
   if (!size) return;
-  // 名前の最小の幅は字の幅（ch）で決める。もともと短い名前はそのまま
-  const min = ([whole, frame], ch) => `min(${whole}px, calc(${frame}px + ${ch}ch))`;
+  // 名前の最小の幅は、名前の先頭 N 字と … を実際の書体で測った幅（ch では日本語・プロポーショナルの字の幅に合わない）。
+  // もともと N 字以下の名前は削らない
+  const min = (box, chars) => `${Math.ceil(Math.min(box.whole, box.frame + box.prefix(chars)))}px`;
   for (const [a, b] of [[9, 6], [7, bot ? 6 : 4]]) {
     cwd.style.minWidth = min(size.cwd, a);
     who.style.minWidth = min(size.who, b);
@@ -491,7 +507,10 @@ export function renderModel({ pop, target: d, on, hide }) {
     seg.setAttribute("aria-label", t("composer.agent"));
     for (const b of d.backends) {
       const btn = el("button", b.id === d.backend ? "on" : "");
-      btn.append(logo(b.id), b.label);   // ロゴは脇の行・発言者の行と同じ（読み上げは名前だけ）
+      // ロゴは脇の行・発言者の行と同じ。字は区切りを 1 行に収める短い名前で、読み上げと title は正式名
+      btn.append(logo(b.id), el("span", "seg-name", AGENT_SHORT[b.id] ?? b.label));
+      btn.setAttribute("aria-label", b.label);
+      btn.title = b.label;
       btn.type = "button";
       btn.dataset.key = `backend:${b.id}`;
       btn.setAttribute("aria-pressed", String(b.id === d.backend));

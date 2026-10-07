@@ -1330,6 +1330,7 @@ body.inapp-links .present-tools .visualize-expand{display:none}
 /* 宛先とモデルの面のエージェントの区切り: 名前の前にロゴ */
 .cpop .cseg button{display:inline-flex;align-items:center;justify-content:center;gap:6px;min-width:0}
 .cpop .cseg button .row-be{flex:none;width:15px;height:15px}
+.cpop .cseg button .seg-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .cpop .chead.destination-head{display:flex;align-items:baseline;gap:8px}
 .destination-head-note{margin-left:auto;letter-spacing:0}
 /* 宛先のエージェントの使用量の 1 行（「▬ 5時間 66% ▬ 週次 31% … 使用量 ›」） */
