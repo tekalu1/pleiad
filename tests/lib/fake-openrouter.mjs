@@ -1,6 +1,6 @@
 // 通話モード（core/voice/）の確認用の偽の OpenRouter。本物へは送らない（AGENT_HOST_VOICE_API にこの URL を渡す）。
 //   POST /audio/transcriptions  WAV（JSON の input_audio）を受け、台本の文字を返す。受けた長さ・モデル・キーを records に残す
-//   POST /audio/speech          文字の長さに比例した正弦波の PCM（24kHz s16le）を、実時間より速く逐次で返す
+//   POST /audio/speech          文字の長さに比例した正弦波の PCM（24kHz s16le）を、実時間より速く逐次で返す（speechStatus が 200 でなければその状態で失敗する。関数なら呼ぶたびに決める）
 //   GET  /key                   キーの確認（既定は 200。keyStatus で 401 などにできる）
 // 台本: transcripts は (request, index) => text | { status, retryAfter } を返す関数か、順に返す文字の配列（尽きたら最後を繰り返す）。
 import http from 'node:http';
@@ -42,7 +42,8 @@ export async function startFakeOpenRouter({ transcripts = ['こんにちは'], s
       if (url.pathname === '/audio/speech') {
         const rec = { model: body?.model, voice: body?.voice, format: body?.response_format, input: body?.input, auth, at: Date.now() };
         records.tts.push(rec);
-        if (speechStatus !== 200) { res.writeHead(speechStatus, { 'content-type': 'application/json' }); return res.end('{"error":"scripted"}'); }
+        const failStatus = typeof speechStatus === 'function' ? speechStatus() : speechStatus;
+        if (failStatus !== 200) { res.writeHead(failStatus, { 'content-type': 'application/json' }); return res.end('{"error":"scripted"}'); }
         res.writeHead(200, { 'content-type': speechContentType });
         if (ttsFirstByteDelayMs) await new Promise((r) => setTimeout(r, ttsFirstByteDelayMs));
         const ms = Math.max(200, String(body?.input ?? '').length * ttsMsPerChar);

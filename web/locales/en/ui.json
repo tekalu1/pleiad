@@ -4257,6 +4257,7 @@
       "stopped": "Stopped reading aloud"
     },
     "mark": "Spoken message",
+    "markMissed": "Speech that could not be heard",
     "hold": {
       "group": "Your voice (waiting to send)",
       "listening": "Listening",
@@ -4278,6 +4279,7 @@
       "readingClosed": "Reading aloud · the microphone is closed for now",
       "readingClosedEcho": "Reading aloud · the microphone is closed for now (echo cancellation is off)",
       "cut": "Stopped reading aloud here",
+      "fail": "Could not read that aloud · you can read it on screen",
       "resume": "Keep reading",
       "stop": "Stop",
       "jump": "Go to the spoken line"
@@ -4293,6 +4295,14 @@
       "link": "The call connection was lost",
       "sttBusy": "Speech recognition is busy. Please say that again",
       "stt": "Could not hear that. Please say it again",
+      "sttMissing": "Part of that could not be heard · please say it again",
+      "sttRepeat": "Could not hear that {{n}} times in a row",
+      "sttRepeatHint": "Check the microphone's direction and volume, and your connection.",
+      "sttBusyRepeat": "Speech recognition is busy ({{n}} times in a row)",
+      "sttBusyHint": "Add a fallback speech recognition model in Settings › Calls, and calls switch to it when it is busy.",
+      "sttKey": "The speech recognition key was not accepted",
+      "sttKeyHint": "Check it in Settings › API keys.",
+      "close": "Close",
       "tts": "Could not read that aloud. See the text on screen",
       "sendFailed": "Could not send the message: {{error}}",
       "notSent": "It could not be sent right now",

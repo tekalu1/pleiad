@@ -9,9 +9,10 @@ import { captureErrorReason } from '../../web/voice/capture.mjs';
 import { normalizeSentence } from '../../web/voice/reading-mark.mjs';
 import { tokensOf } from '../../web/voice/live-bubble.mjs';
 import { createLink, BINARY_AUDIO } from '../../web/voice/link.mjs';
+import { classifyListenFailure, createNotices, sameConversation, STATUS_NOTES } from '../../web/voice/notices.mjs';
 
 export const name = 'voice-ui';
-export const title = '通話の画面側: 送信ゲート・PCM の変換・再生キュー・状態機械（偽の録音・接続・再生）・読む場所の正規化・差し込み口は 1 か所ずつ';
+export const title = '通話の画面側: 送信ゲート・PCM の変換・再生キュー・状態機械（偽の録音・接続・再生）・失敗の知らせの出し方と消える条件・読む場所の正規化・差し込み口は 1 か所ずつ';
 
 const read = (p) => readFileSync(new URL(`../../${p}`, import.meta.url), 'utf8');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -261,6 +262,103 @@ export default async function (t) {
   {
     t.ok('読む場所: 句読点・空白・大小・全角半角の違いを吸収して突き合わせる', normalizeSentence('署名の鍵は、 SIGNING_KEY です。') === '署名の鍵はsigning_keyです' && normalizeSentence('ＡＢＣ　abc.') === 'abcabc');
     t.ok('吹き出し: 語に割る（日本語は語ごと・英語は空白も 1 語）。割れば連結で元に戻る', tokensOf('鍵はどこで更新する？').join('') === '鍵はどこで更新する？' && tokensOf('hello world').length >= 3 && tokensOf('').length === 0);
+  }
+
+  // ---- 失敗の知らせ（承認済み 2026-10-07。docs/design-system.md「通話モード」）: 出し分けと消える条件。DOM は持たず、画面への口の呼ばれ方を見る
+  {
+    const rig = () => {
+      const log = { listen: [], status: [], tts: [] };
+      let bubble = false;
+      const n = createNotices({
+        listen: (v) => log.listen.push(v), status: (v) => log.status.push(v), ttsFail: (on) => log.tts.push(on), bubbleActive: () => bubble,
+      });
+      return { n, log, setBubble: (on) => { bubble = on; } };
+    };
+    t.ok('分類: 401・403 はキーの拒否、429・stt-busy は混み合い、ほかは聞き取れなかった', classifyListenFailure({ code: 'stt', status: 401 }) === 'key' && classifyListenFailure({ code: 'stt', status: 403 }) === 'key'
+      && classifyListenFailure({ code: 'stt-busy', status: 429 }) === 'busy' && classifyListenFailure({ code: 'stt-busy' }) === 'busy' && classifyListenFailure({ code: 'stt', status: 500 }) === 'stt' && classifyListenFailure({ code: 'stt' }) === 'stt');
+
+    // (a) 聞き取れなかった: 会話の末尾の行。次に話し始めたら畳み、通話を終えたら消える
+    const a = rig();
+    a.n.listenFailed({ code: 'stt', kind: 'transient', status: 500 });
+    t.ok('聞き取れなかった: 1 回目は会話の末尾の行（where: row・回数 1）', a.log.listen.length === 1 && a.log.listen[0].where === 'row' && a.log.listen[0].kind === 'stt' && a.log.listen[0].count === 1 && a.n.listening !== null);
+    a.n.speaking();
+    t.ok('聞き取れなかった: 次に話し始めたら畳む（行は null で消え、続けて失敗した回数は残る）', a.log.listen.at(-1) === null && a.n.listening === null && a.n.misses === 1);
+    a.n.speaking();
+    t.ok('聞き取れなかった: 出ていないときに話し始めても何も呼ばない', a.log.listen.length === 2);
+    a.n.listenFailed({ code: 'stt', kind: 'transient', status: 500 });
+    t.ok('続けて 2 回目: 回数が 2 になる（畳んでいたので新しく出る）', a.log.listen.at(-1).count === 2 && a.n.misses === 2);
+    a.n.listenFailed({ code: 'stt', kind: 'transient', status: 500 });
+    t.ok('続けて 3 回目: 畳む前なら同じ行のまま回数だけが替わる（行を積まない。where=row の更新）', a.log.listen.at(-1).count === 3 && a.log.listen.at(-1).where === 'row');
+    a.n.callEnded();
+    t.ok('通話を終えたら、行は消え、回数は 0 に戻る（時間では消さない）', a.log.listen.at(-1) === null && a.n.listening === null && a.n.misses === 0);
+    a.n.listenFailed({ code: 'stt' });
+    a.n.heard();
+    a.n.speaking();
+    a.n.listenFailed({ code: 'stt' });
+    t.ok('何か 1 つ聞き取れたら、続けて失敗した回数は 0 に戻る（次の失敗は 1 回目）', a.log.listen.at(-1).count === 1);
+    a.n.callStarted();
+    t.ok('次の通話を始めたら、聞き取れなかった行は消える', a.n.listening === null && a.n.misses === 0);
+
+    // 聞き取りの種類
+    const k = rig();
+    k.n.listenFailed({ code: 'stt', kind: 'permanent', status: 401 });
+    t.ok('キーが拒否された（401）: 1 回目から kind: key', k.log.listen[0].kind === 'key' && k.log.listen[0].count === 1);
+    k.n.speaking();
+    k.n.listenFailed({ code: 'stt-busy', status: 429 });
+    t.ok('混み合い（429）: kind: busy。回数は種類をまたいで数える', k.log.listen.at(-1).kind === 'busy' && k.log.listen.at(-1).count === 2);
+
+    // 別の発話の吹き出しが出ているあいだは、その吹き出しの中
+    const b = rig();
+    b.setBubble(true);
+    b.n.listenFailed({ code: 'stt' });
+    t.ok('吹き出しが出ているあいだに別の発話が聞き取れなかった: 吹き出しの中に出す（where: bubble。末尾に行を足さない）', b.log.listen[0].where === 'bubble');
+    b.n.speaking();
+    t.ok('吹き出しの中の 1 行も、次に話し始めたら消える', b.log.listen.at(-1) === null);
+
+    // (a) 読み上げ
+    const tts = rig();
+    tts.n.ttsFail();
+    tts.n.ttsFail();
+    t.ok('読み上げられなかった: 返事の下の一行を出す（1 つの返事で何度失敗しても 1 回）', tts.log.tts.join() === 'true' && tts.n.ttsFailed);
+    tts.n.turnSent();
+    t.ok('読み上げの失敗: 次の発言を送ったら消える', tts.log.tts.join() === 'true,false' && !tts.n.ttsFailed);
+    tts.n.ttsFail();
+    tts.n.callEnded();
+    t.ok('読み上げの失敗: 通話を終えても消える', tts.log.tts.join() === 'true,false,true,false');
+
+    // (b) 通話の状態: 原因が解けたら・×・次の通話で消える。時間では消さない
+    const stateCodes = ['no-key', 'daily-limit', 'limit-daily', 'denied', 'no-device', 'busy', 'start', 'start-timeout'];
+    const endedCodes = ['limit-call', 'limit-idle', 'link'];
+    t.ok('状態の表: 全部の code が辞書の語・設定を開く・種類・消える条件を持つ（文言は voice.note.*）', [...stateCodes, ...endedCodes].every((c) => STATUS_NOTES[c]?.key && typeof STATUS_NOTES[c].settings === 'boolean' && ['state', 'ended'].includes(STATUS_NOTES[c].tone) && Array.isArray(STATUS_NOTES[c].clears)));
+    const clearedBy = (code, event) => { const x = rig(); x.n.showStatus(code, 'chat:s1'); return x.n.clear(event) && x.n.status === null; };
+    t.ok('マイクが許可されていない: 許可が下りたら消える（機器の変化・設定の変化では消えない）', clearedBy('denied', 'fixed-permission') && !clearedBy('denied', 'fixed-device') && !clearedBy('denied', 'fixed-settings'));
+    t.ok('マイクが見つからない: 機器の変化（devicechange）で消える', clearedBy('no-device', 'fixed-device') && !clearedBy('no-device', 'fixed-permission'));
+    t.ok('キーが無い・1 日の上限: 設定が変わったら消える', ['no-key', 'daily-limit', 'limit-daily'].every((c) => clearedBy(c, 'fixed-settings')) && !clearedBy('no-key', 'fixed-permission') && !clearedBy('no-key', 'moved'));
+    t.ok('マイクが使用中・始められない: 解けたことは分からない（再試行・×で消える）。自動では消えない', ['busy', 'start', 'start-timeout'].every((c) => !clearedBy(c, 'fixed-settings') && !clearedBy(c, 'fixed-permission') && !clearedBy(c, 'fixed-device') && !clearedBy(c, 'moved')));
+    t.ok('終わった理由（上限・声が聞こえず終了・つながり）: 別の会話へ移ったら消える。設定の変化・許可では消えない', endedCodes.every((c) => clearedBy(c, 'moved') && !clearedBy(c, 'fixed-settings') && !clearedBy(c, 'fixed-permission')));
+    t.ok('どの知らせも ×（close）と次の通話（start）で消える', [...stateCodes, ...endedCodes].every((c) => clearedBy(c, 'close') && clearedBy(c, 'start')));
+    const w = rig();
+    w.n.showStatus('link', 'chat:s1');
+    t.ok('終わった理由は、見ていた会話を基準に持つ（通話が終わったあとも見張る）。状態は基準を持たない', w.n.anchor === 'chat:s1' && (w.n.showStatus('no-key', 'chat:s1'), w.n.anchor === null));
+    w.n.showStatus('link', 'chat:s1');
+    t.ok('同じ会話を見ている間は消えない', w.n.watch('chat:s1') === false && w.n.status !== null);
+    t.ok('別の会話へ移ったら消える', w.n.watch('chat:s2') === true && w.n.status === null && w.log.status.at(-1) === null && w.n.anchor === null);
+    const fresh = rig();
+    fresh.n.showStatus('limit-call', 'chat:');
+    t.ok('新しい会話の id が決まっただけ（chat: → chat:<id>）は別の会話に移ったことにしない', fresh.n.watch('chat:abc') === false && sameConversation('chat:', 'chat:abc') && !sameConversation('chat:abc', 'chat:') && !sameConversation('chat:a', 'thread:c:t'));
+    const th = rig();
+    th.n.showStatus('link', 'thread:c1:t1');
+    t.ok('スレッドから出た・別のスレッドへ移ったら消える（見ているスレッドが無い = 空の識別子も別）', th.n.watch('thread:c1:t1') === false && th.n.watch('') === true);
+    t.ok('通話の状態の一行を出す・消すは、画面の口へ 1 回ずつ（同じ出来事で繰り返し呼ばない）', (() => { const x = rig(); x.n.showStatus('link', 'chat:1'); x.n.clear('close'); x.n.clear('close'); return x.log.status.length === 2 && x.log.status[0].key === 'link' && x.log.status[1] === null; })());
+    t.ok('次の通話を始めたら、通話の状態の一行も消える', (() => { const x = rig(); x.n.showStatus('no-key'); x.n.callStarted(); return x.n.status === null; })());
+    t.ok('通話を終えても、通話の状態の一行は残る（終わった理由を読めるように）', (() => { const x = rig(); x.n.showStatus('link', 'chat:1'); x.n.callEnded(); return x.n.status?.code === 'link'; })());
+    t.ok('時間では消さない（判定のモジュールに時計・タイマーが無い）', !/setTimeout|setInterval|Date\.now|performance\.now/.test(read('web/voice/notices.mjs')));
+    const view = read('web/voice/view.mjs'), index = read('web/voice/index.mjs'), css = read('web/voice.css');
+    t.ok('状態の一行: × に名前（閉じる。aria-label と title）が付く', /vc-nx/.test(view) && /voice\.note\.close/.test(view) && /onClose/.test(index));
+    t.ok('配線: 通話を終えたら聞き取れなかった行・読み上げの失敗を消し、次の通話を始めたら状態の一行を消す', /r\.board\.callEnded\(\)/.test(index) && /r\.board\.callStarted\(\)/.test(index));
+    t.ok('配線: 次に話し始めた（聞き取り中・吹き出しが出た）で畳み、何か聞き取れたら回数を戻し、次の発言を送ったら読み上げの失敗を消す', /board\.speaking\(\)/.test(index) && /board\.heard\(\)/.test(index) && /board\.turnSent\(\)/.test(index));
+    t.ok('配線: 終わった理由は通話が終わったあとも見張る（別の会話へ移ったら消える）。設定が変わったら（refresh の changed）キー・上限の一行が消える', /function syncWatch/.test(index) && /board\.watch\(/.test(index) && /fixed\('fixed-settings'\)/.test(index) && /voiceUi\.refresh\(\{ changed: true \}\)/.test(read('web/client.mjs')));
+    t.ok('動き: 行の出入りは 240ms（--dur）、状態の一行は出る 180ms・畳む 240ms。動きを減らす設定では瞬時（JS の reduced と CSS の両方）', /vc-ghost\.in\{animation:vc-ghost-in var\(--dur\)/.test(css) && /\.vc-notew\.on\{[^}]*grid-template-rows:1fr/.test(css) && /opacity 180ms/.test(css) && /vc-ghost\.out\{[^}]*height var\(--dur\)/.test(css) && /reduced\(\)\) \{ r\.remove\(\)/.test(view));
   }
 
   // ---- マイクの権限（Electron・macOS・Android。実機の確認はできていない）

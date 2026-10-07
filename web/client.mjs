@@ -2898,9 +2898,9 @@ function onEvent(ev, replay = false) {
     return;
   }
   // どの口（画面・AI・CLI）から設定を変えても届く。prefs などの既存の配信が無い設定（コンテキストの既定）は、開いている設定の画面がここで取り直す
-  if (ev.type === 'settingsChanged') { window.dispatchEvent(new CustomEvent('ply:settings-changed', { detail: ev })); voiceSettings.event(ev); if (ev.keys?.includes?.('voice')) voiceUi.refresh(); return; }
+  if (ev.type === 'settingsChanged') { window.dispatchEvent(new CustomEvent('ply:settings-changed', { detail: ev })); voiceSettings.event(ev); if (ev.keys?.includes?.('voice')) voiceUi.refresh({ changed: true }); return; }
   // 通話に使うキーの選び直し・差し替え・削除（設定 › 通話。core/voice/host.mjs）
-  if (ev.type === 'voiceChanged') { voiceSettings.event(ev); voiceUi.refresh(); return; }
+  if (ev.type === 'voiceChanged') { voiceSettings.event(ev); voiceUi.refresh({ changed: true }); return; }
   // API キーの登録・差し替え・削除・割り当て・確認の結果（設定 › API キー。core/api-keys.mjs）。キーを選ぶ 3 つの画面も取り直す
   if (ev.type === 'apiKeysChanged') { apiKeysSettings.event(ev); voiceSettings.event(ev); delegationSettings.event(ev); compatEndpoints.keysChanged(); return; }
   // 設定の変更の承認が決着した（どの端末で答えても・取り下げても）。開いているカードを 1 行に畳む（ADR 0088）

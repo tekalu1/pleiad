@@ -61,12 +61,45 @@
 .vc-spk .a1{opacity:clamp(.25,calc(var(--vc-olv,0) * 6),1)}
 .vc-spk .a2{opacity:clamp(.12,calc(var(--vc-olv,0) * 6 - 1),1)}
 .vc-spk .a3{opacity:clamp(.06,calc(var(--vc-olv,0) * 6 - 2.2),1)}
-/* 通話の失敗の一行（権限なし・キーなし・上限・つながり）。入力欄の下 */
-.vc-note{display:none;align-items:center;gap:8px;padding:6px 14px 0;font-size:var(--fs-s);color:var(--ink)}
-.vc-note.show{display:flex}
+/* 通話の状態の一行（権限なし・キーなし・上限・つながりの切れ・始められない・声が聞こえず終了。承認済み 2026-10-07）。入力欄の下。面（--surface-2）と ×。
+   出入りは高さごと（出る 180ms・畳む 240ms。畳むときは visibility を 240ms 遅らせて中身を見せたまま畳む）。消える条件は web/voice/notices.mjs */
+.vc-notew{display:grid;grid-template-rows:0fr;visibility:hidden;transition:grid-template-rows var(--dur) var(--ease-out),visibility 0s var(--dur)}
+.vc-notew.on{grid-template-rows:1fr;visibility:visible;transition:grid-template-rows var(--dur) var(--ease-out),visibility 0s}
+.vc-notew>div{min-height:0;overflow:hidden}
+.vc-note{display:flex;align-items:center;gap:8px;margin:6px 6px 0;padding:3px 4px 3px 12px;min-height:36px;border-radius:var(--r-m);background:var(--surface-2);font-size:var(--fs-s);color:var(--ink);
+  opacity:0;transform:translateY(-4px);transition:opacity 120ms ease,transform var(--dur) var(--ease-out)}
+.vc-notew.on .vc-note{opacity:1;transform:none;transition:opacity 180ms ease,transform var(--dur) var(--ease-out)}
 .vc-note svg.i{width:14px;height:14px;color:var(--ink-weak);flex:none}
-.vc-note button{color:var(--ink-blue);padding:2px 8px;border-radius:var(--r-pill);text-decoration:underline;text-decoration-color:var(--line-strong);text-underline-offset:2px}
-.vc-note button:hover{background:var(--surface-2)}
+.vc-note .vc-nt{flex:1;min-width:0}
+.vc-nb{color:var(--ink-blue);background:transparent;padding:2px 8px;border-radius:var(--r-pill);text-decoration:underline;text-decoration-color:var(--line-strong);text-underline-offset:2px;font-size:var(--fs-s);white-space:nowrap}
+.vc-nb:hover{background:var(--surface-3)}
+.vc-nb[hidden]{display:none}
+.vc-note .vc-nx{display:grid;place-items:center;width:28px;height:28px;border-radius:50%;color:var(--ink-weak);flex:none}
+.vc-note .vc-nx:hover{background:var(--surface-3);color:var(--ink)}
+.vc-note .vc-nx svg.i{color:inherit}
+@media (pointer:coarse){.vc-note .vc-nx{width:36px;height:36px}}
+
+/* ---- 聞き取れなかった行（会話の末尾。声の吹き出しが出るはずだった場所。承認済み 2026-10-07）: 吹き出しではない。面を塗らず、字と記号だけ。
+        行頭の印は斜線のマイク。続けて失敗したら同じ行の字が替わる。出る 240ms・畳む 240ms（高さごと）。動きを減らす設定では瞬時 ---- */
+.vc-ghost .vc-ghost-body,.vc-ghost .m.user .vc-ghost-body,.vc-ghost .post-body.vc-ghost-body{display:block;max-width:none;margin:0;padding:0;border-radius:0;background:transparent;white-space:normal}
+.vc-ghost .who .when,.vc-ghost .post-when{display:none}
+.vc-ghost .vmark{margin-right:0;margin-left:4px;vertical-align:-3px}
+.vc-ghost.in{animation:vc-ghost-in var(--dur) var(--ease-out)}
+.vc-ghost.out{overflow:hidden;opacity:0;margin-top:0!important;margin-bottom:0!important;pointer-events:none;
+  transition:height var(--dur) var(--ease-out),opacity var(--dur) var(--ease-out),margin var(--dur) var(--ease-out)}
+.vc-ghost.settle .vc-gl{animation:vc-settle .35s var(--ease-out)}
+@keyframes vc-ghost-in{from{opacity:0;transform:translateY(6px)}}
+.vc-gl{display:flex;align-items:flex-start;gap:8px;padding:2px 0;font-size:var(--fs-s);line-height:1.6;color:var(--ink)}
+.vc-gl>svg.i{width:14px;height:14px;margin-top:3px;color:var(--ink-weak);flex:none}
+.vc-gl .vc-gx{display:grid;gap:2px;min-width:0}
+.vc-gl .vc-gsub{font-size:var(--fs-xs);color:var(--ink-weak);line-height:1.5}
+.vc-gl .vc-gb{display:flex;flex-wrap:wrap;gap:4px 6px;margin-top:2px}
+.vc-gl .vc-gb:has(.vc-nb[hidden]){display:none}
+.vc-gl .vc-nb{margin-left:-8px;font-size:var(--fs-xs)}
+.vc-gl .vc-nb:hover{background:var(--surface-2)}
+/* 別の発話の吹き出しが出ているあいだに、もう 1 つが聞き取れなかったとき: 吹き出しの中の弱い字の 1 行 */
+.vc-lfail{display:flex;align-items:center;gap:6px;margin-top:6px;font-size:var(--fs-xs);color:var(--ink-weak)}
+.vc-lfail svg.i{width:13px;height:13px;flex:none}
 
 /* ---- あなたの声: 片が足されていく ---- */
 .vc-live .vc-body{display:inline-block}
@@ -90,6 +123,9 @@
 .vc-hint{display:flex;align-items:center;gap:8px;margin:4px 0 8px;font-size:var(--fs-xs);color:var(--ink-weak)}
 .vc-hint .btn{padding:1px 10px;font-size:var(--fs-xs)}
 .vc-hint[data-mode=cut] svg{display:none}
+.vc-hint svg.off{display:none}
+.vc-hint[data-mode=fail] svg:not(.off){display:none}
+.vc-hint[data-mode=fail] svg.off{display:inline-block}
 
 /* ---- まとめ待ち（あなたの声の吹き出しの下）: 送るまでの残りの細い線と、状態の一行・［いま送る］［取り消す］。話している間は線を満たしたまま ---- */
 .vc-hold{margin-top:8px;min-width:12em}
@@ -156,6 +192,8 @@
   .vc-spk .a1,.vc-spk .a2,.vc-spk .a3{opacity:.8}
   .vc-ul{transition:none}
   .vc-bar i,.vc-micwrap[data-ms=hold] .vc-rs{transition:none}
+  .vc-notew,.vc-note,.vc-notew.on .vc-note,.vc-ghost.out{transition:none}
+  .vc-ghost.in,.vc-ghost.settle .vc-gl{animation:none}
 }
 
 /* 設定 › 通話（web/voice/settings.mjs）。面は .nf-card（--surface-1）に載せる（入力欄は --surface-paper で、面の上で見える） */

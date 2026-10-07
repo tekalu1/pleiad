@@ -80,20 +80,131 @@ export function createComposerParts() {
   };
 }
 
-/** 通話の失敗の一行（入力欄の下。role=status）。権限なし・キーなし・上限・つながり。設定が関わるときだけ「設定を開く」 */
-export function createNote({ onSettings }) {
+/**
+ * 通話の状態の一行（入力欄の下。role=status。承認済み 2026-10-07）。権限なし・キーなし・上限・つながりの切れ・始められない・声が聞こえず終了。
+ * 面（--surface-2）と × つき。設定が関わるときだけ「設定を開く」。出入りは高さごと（出る 180ms・畳む 240ms。動きを減らす設定では瞬時）。消える条件は notices.mjs
+ */
+export function createNote({ onSettings, onClose }) {
+  const wrap = el('div', 'vc-notew');
+  wrap.setAttribute('aria-hidden', 'true');
+  const inner = el('div');
   const root = el('div', 'vc-note');
   root.setAttribute('role', 'status');
-  const text = el('span');
-  const open = el('button', null, t('voice.openSettings'));
+  const text = el('span', 'vc-nt');
+  const message = document.createTextNode('');
+  const open = el('button', 'vc-nb', t('voice.openSettings'));
   open.type = 'button';
   open.onclick = onSettings;
-  root.append(svg(WARN), text, open);
+  text.append(message, open);
+  const close = el('button', 'vc-nx');
+  close.type = 'button';
+  close.title = t('voice.note.close');
+  close.setAttribute('aria-label', t('voice.note.close'));
+  close.append(svg('<path d="M6 6l12 12M18 6L6 18"/>'));
+  close.onclick = onClose;
+  root.append(svg(WARN), text, close);
+  inner.append(root);
+  wrap.append(inner);
   return {
-    el: root,
-    show(message, { settings = true } = {}) { text.textContent = message; open.hidden = !settings; root.classList.add('show'); },
-    hide() { root.classList.remove('show'); text.textContent = ''; },
+    el: wrap,
+    show(msg, { settings = true } = {}) {
+      message.data = settings ? `${msg} ` : msg;
+      open.hidden = !settings;
+      root.classList.add('show');
+      wrap.classList.add('on');
+      wrap.removeAttribute('aria-hidden');
+    },
+    hide() {
+      root.classList.remove('show');
+      wrap.classList.remove('on');
+      wrap.setAttribute('aria-hidden', 'true');
+    },
     get visible() { return root.classList.contains('show'); },
+  };
+}
+
+/** 「聞き取れなかった」の行頭の印（斜線のマイク。送られた発言ではないと分かる） */
+export function micOffMark(label) {
+  const mark = el('span', 'vmark');
+  mark.title = label;
+  mark.setAttribute('role', 'img');
+  mark.setAttribute('aria-label', label);
+  mark.append(svg(MIC_OFF, 'i s'));
+  return mark;
+}
+
+/**
+ * 聞き取れなかった行（会話の末尾。声の吹き出しが出るはずだった場所。承認済み 2026-10-07）。吹き出しではなく、面を塗らない 1 行（警告の記号＋字）。
+ * 続けて失敗したら同じ行を更新する（sub = 手がかり、［設定を開く］）。畳むのは次に話し始めたとき・通話を終えたとき。出入りは 240ms（動きを減らす設定では瞬時）。
+ * @param {object} o
+ * @param {() => { el: HTMLElement, body: HTMLElement }} o.createRow  この場所の発言の行（吹き出しと同じ入れ物。見た目はこの行の CSS が吹き出しでなくす）
+ * @param {(row: HTMLElement) => void} o.place
+ * @param {(row: HTMLElement) => HTMLElement | null} o.markHost  行頭の印を足す所
+ * @param {string} o.label  斜線のマイクの名前（聞き取れなかった発話）
+ * @param {() => boolean} o.reduced
+ * @param {() => void} o.follow
+ * @param {() => void} o.onSettings
+ */
+export function createListenFail({ createRow, place, markHost, label, reduced = () => false, follow = () => {}, onSettings }) {
+  let row = null, textEl = null, subEl = null, open = null;
+  const OUT_MS = 240;
+  function build() {
+    const made = createRow();
+    row = made.el;
+    row.classList.add('vc-ghost');
+    row.dataset.vcGhost = '';
+    const body = made.body;
+    body.classList.add('vc-ghost-body');
+    const line = el('div', 'vc-gl');
+    line.setAttribute('role', 'status');
+    textEl = el('span');
+    subEl = el('span', 'vc-gsub');
+    open = el('button', 'vc-nb', t('voice.openSettings'));
+    open.type = 'button';
+    open.onclick = onSettings;
+    const wrapEl = el('span', 'vc-gx');
+    const bwrap = el('span', 'vc-gb');
+    bwrap.append(open);
+    wrapEl.append(textEl, subEl, bwrap);
+    line.append(svg(WARN), wrapEl);
+    body.append(line);
+    const host = markHost(row);
+    if (host) host.append(micOffMark(label));
+    place(row);
+    if (!reduced()) row.classList.add('in');
+    follow();
+  }
+  return {
+    get row() { return row; },
+    get shown() { return row !== null; },
+    /** 出す・更新する。同じ行のまま字だけが替わる（積まない） */
+    show({ text, sub = '', settings = false }) {
+      const fresh = row === null;
+      if (fresh) build();
+      // 読み上げ領域（role=status）は、出たあとに字を入れると確実に読まれる
+      const apply = () => {
+        if (!row) return;
+        textEl.textContent = text;
+        subEl.textContent = sub;
+        subEl.hidden = !sub;
+        open.hidden = !settings;
+      };
+      if (fresh) requestAnimationFrame(apply); else apply();
+      if (!fresh && !reduced()) { row.classList.remove('settle'); void row.offsetWidth; row.classList.add('settle'); }
+      follow();
+    },
+    /** 畳む（高さごと 240ms）。動きを減らす設定では瞬時 */
+    hide() {
+      const r = row;
+      row = null; textEl = subEl = open = null;
+      if (!r) return;
+      if (reduced()) { r.remove(); return; }
+      r.style.height = `${r.offsetHeight}px`;
+      void r.offsetHeight;
+      r.classList.add('out');
+      r.style.height = '0px';
+      setTimeout(() => r.remove(), OUT_MS + 40);
+    },
   };
 }
 
@@ -111,6 +222,7 @@ export function createGlow() {
  * 返事の下の一行（承認済み 2026-10-07）。paint(mode, message) で出し分ける:
  *   reading  「読み上げ中 · 話すと止まります」［止める］（話して止めるが効かないときは、いまはマイクを閉じている理由）
  *   cut      「ここで読み上げを止めました」［続きを読む］（止めた場所。新しい発言を送るまで残る）
+ *   fail     「読み上げられませんでした · 文字で読めます」（失敗した返事の下。新しい発言を送るまで残る。承認済み 2026-10-07）
  */
 export function createHint({ onStop, onResume }) {
   const root = el('div', 'vc-hint');
@@ -122,7 +234,7 @@ export function createHint({ onStop, onResume }) {
   const resume = el('button', 'btn', t('voice.hint.resume'));
   resume.type = 'button';
   resume.onclick = onResume;
-  root.append(svg('<path d="M4 9v6h4l5 4V5L8 9z"/><path d="M16.5 8.5a5 5 0 0 1 0 7"/>', 'i s'), text, stop, resume);
+  root.append(svg('<path d="M4 9v6h4l5 4V5L8 9z"/><path d="M16.5 8.5a5 5 0 0 1 0 7"/>', 'i s'), svg(SPK_OFF, 'i s off'), text, stop, resume);
   root.paint = (mode, message) => {
     root.dataset.mode = mode;
     text.textContent = message;

@@ -33,6 +33,7 @@ export function micMark(label) {
 export function createLiveBubble({ createRow, place, label, text = {}, actions = { sendNow() {}, cancel() {} }, reduced = () => false, follow = () => {} }) {
   let row = null, words = null, tokens = [], state = 'idle';   // idle | live | sending
   let hold = null;                                              // { root, bar, text }
+  let failEl = null;                                            // 別の発話が聞き取れなかったときの 1 行（吹き出しの中。承認済み 2026-10-07）
 
   function ensure() {
     if (row) return;
@@ -50,6 +51,7 @@ export function createLiveBubble({ createRow, place, label, text = {}, actions =
     hold = buildHold();
     body.append(hold.root);
     tokens = [];
+    failEl = null;
     place(row);
     state = 'live';
     follow();
@@ -116,6 +118,19 @@ export function createLiveBubble({ createRow, place, label, text = {}, actions =
   return {
     get active() { return state !== 'idle'; },
     get row() { return row; },
+    /** 別の発話が聞き取れなかった（吹き出しの下には並べず、中に弱い字の 1 行）。null で外す。吹き出しが消えれば一緒に消える */
+    setFail(message) {
+      if (!row) return;
+      if (!message) { failEl?.remove(); failEl = null; return; }
+      if (!failEl) {
+        failEl = document.createElement('div');
+        failEl.className = 'vc-lfail';
+        failEl.setAttribute('role', 'status');
+        failEl.innerHTML = '<svg class="i s" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l10 18H2z"/><path d="M12 10v5M12 18v.01"/></svg><span></span>';
+        row.querySelector('.vc-body')?.insertBefore(failEl, hold?.root ?? null);
+      }
+      failEl.lastElementChild.textContent = message;
+    },
     /** まとめ待ちの組み立て中の文と残り時間（engine の hold イベントの view）。文字が出ていなければ吹き出しは作らず、出ていた文字が消えたら（捨てられた）外す */
     update(view) {
       if (state === 'sending') { if (!view?.text) return; this.remove(); }   // 前の発言の本物の行が現れる前に、次の話が始まった
@@ -141,7 +156,7 @@ export function createLiveBubble({ createRow, place, label, text = {}, actions =
     /** 本物の発言の行が現れた・送れなかった。吹き出しを外す */
     remove(fade = false) {
       const r = row;
-      row = null; words = null; tokens = []; hold = null; state = 'idle';
+      row = null; words = null; tokens = []; hold = null; failEl = null; state = 'idle';
       if (!r) return;
       if (fade && !reduced()) { r.classList.add('gone'); setTimeout(() => r.remove(), 260); } else r.remove();
     },

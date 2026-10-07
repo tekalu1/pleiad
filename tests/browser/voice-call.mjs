@@ -3,6 +3,7 @@
 //   止める（ここで止めました · 続きを読む）→ ミュート → 終える。さらに、取り消す・送信待ち（時計と［取り消す］）・差し込み待ち → AI に渡しました（承認済み 2026-10-07）。
 //   待っている間の声（受け取りの一言・待ちの実況）と、通話を終えたときのまとめ待ち（［切る］・会話を移る。ADR 0158）。
 //   Chats の会話とチャンネルのスレッドの両方。権限なし・キーなしの一行。ライト・ダーク・1280・360。
+//   失敗の知らせ（承認済み 2026-10-07）: 聞き取れなかった行（会話の末尾 → 話し始めて畳む・続けて N 回・キーの拒否・通話を終えて消える）・読み上げの失敗（返事の下）・通話の状態の一行（× ・キーを入れると消える・会話を移ると消える）。
 // 実行: node tests/browser/voice-call.mjs   （playwright-core は playwright-cli 同梱のものを使う。環境変数 PW_CORE・PW_CHROMIUM で替えられる）
 //   VOICE_SHOTS=<ディレクトリ> を渡すと、場面ごとに撮る（temporary/screenshots/voice-call-<場面>.png）。
 // 本物のサーバー（fake バックエンド・一時のデータ置き場・別ポート）と偽の OpenRouter（tests/lib/fake-openrouter.mjs）を立て、Chromium の
@@ -56,6 +57,9 @@ writeSpeechWav(wav);
 // 3 つの発言（間が 2.6 秒ずつ空いて、まとめ待ちの 1.2 秒を越える。1 つずつ別の通になる）。作業中に重なる送信の確認用
 const wavThree = path.join(scratch, 'speech-three.wav');
 writeSpeechWav(wavThree, [[0.3, 1.7], [4.3, 5.7], [8.3, 9.7]], 20);
+// 2 つの発話（間が 5.3 秒空く）。失敗の知らせの確認用: 1 つ目が失敗 → 2 つ目を話し始めると行が畳まれる
+const wavFar = path.join(scratch, 'speech-far.wav');
+writeSpeechWav(wavFar, [[0.3, 1.7], [7.0, 8.4]], 24);
 const replyFile = path.join(scratch, 'reply.json');
 fs.writeFileSync(replyFile, JSON.stringify({ when: QUESTION, steps: [{ text: REPLY }] }));
 
@@ -63,7 +67,8 @@ fs.writeFileSync(replyFile, JSON.stringify({ when: QUESTION, steps: [{ text: REP
 const script = ['署名の鍵はどこで', 'どこで更新する', QUESTION];
 const sttTexts = [...script];
 let sttLast = QUESTION;
-const api = await startFakeOpenRouter({ transcripts: () => { if (sttTexts.length) sttLast = sttTexts.shift(); return sttLast; }, sttDelay: () => 220, ttsMsPerChar: 110, ttsFirstByteDelayMs: 150 });
+let ttsStatus = 200;   // 読み上げの失敗の場面だけ 500 にする
+const api = await startFakeOpenRouter({ speechStatus: () => ttsStatus, transcripts: () => { if (sttTexts.length) sttLast = sttTexts.shift(); return sttLast; }, sttDelay: () => 220, ttsMsPerChar: 110, ttsFirstByteDelayMs: 150 });
 const server = await startServer({
   env: { AGENT_HOST_BACKENDS: 'fake', AGENT_HOST_VOICE_API: api.url, AGENT_HOST_FAKE_VOICE_REPLY: replyFile, AGENT_HOST_LOCALE: 'ja', AGENT_HOST_FAKE_STEER_CONFIRM_MS: '1500' },
   dataDir: path.join(scratch, 'data'), timeoutMs: 60_000,
@@ -75,7 +80,7 @@ const launch = (file) => chromium.launch({
   args: ['--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream', `--use-file-for-fake-audio-capture=${file}%noloop`, '--autoplay-policy=no-user-gesture-required'],
 });
 const browser = await launch(wav);
-let browserThree = null;
+let browserThree = null, browserFar = null;
 
 /** 足された語の溶け込み（180ms）が終わってから撮る */
 const settled = (page) => page.waitForFunction(() => [...document.querySelectorAll('.vc-words .lw')].every((w) => w.getAnimations().length === 0), null, { timeout: 3000 }).catch(() => {});
@@ -390,6 +395,140 @@ try {
   fs.writeFileSync(replyFile, JSON.stringify({ when: QUESTION, steps: [{ text: REPLY }] }));
   sttTexts.length = 0; sttTexts.push(...script); sttLast = QUESTION;
 
+  // ===== 失敗の知らせ（承認済み 2026-10-07。docs/design-system.md「通話モード」）=====
+  browserFar = await launch(wavFar);
+  const ghostText = (page) => page.locator('#thread .vc-ghost .vc-gl').innerText().then((x) => x.replace(/\s+/g, ' ').trim()).catch(() => '');
+  const failAll = (status) => { sttTexts.length = 0; sttTexts.push({ status }); sttLast = { status }; };
+  const noteShown = (page) => page.locator('#composer .vc-note.show').count();
+  {
+    // 聞き取れなかった: 会話の末尾に 1 行（入力欄の下ではない）→ 次に話し始めたら畳んで声の吹き出しに替わる → 送られると跡は残らない
+    failAll(500);
+    const { page, context } = await newPage({ on: browserFar });
+    await page.locator('header.top .vc-call').click();
+    await until(async () => (await msOf(page, '#composer')) === 'listening', 'fail listening');
+    await until(async () => await page.locator('#thread .vc-ghost').count(), 'listen fail row', 30000);
+    await sleep(350);
+    check((await ghostText(page)).includes('聞き取れませんでした。もう一度話してください'), '聞き取れなかった: 会話の末尾に 1 行（面を塗らない警告の行）');
+    check((await noteShown(page)) === 0, '聞き取れなかった: 入力欄の下には出ない（通話の状態だけの欄）');
+    check(await page.locator('#thread > .vc-ghost:last-child').count() === 1 && await page.locator('#thread .vc-ghost [role=status]').count() === 1, '聞き取れなかった: 会話の末尾の行・読み上げ領域（role=status）');
+    check((await page.locator('#thread .vc-ghost .vmark').getAttribute('aria-label')) === '聞き取れなかった発話' && (await page.locator('#thread .vc-ghost .vc-ghost-body').evaluate((n) => getComputedStyle(n).backgroundColor)) === 'rgba(0, 0, 0, 0)', '聞き取れなかった: 行頭は斜線のマイク。吹き出しではない（面を塗らない）');
+    check((await page.locator('#thread .m.user:not(.vc-ghost .m)').evaluateAll((ns) => ns.filter((n) => !n.closest('.vc-ghost')).length)) === 0, '聞き取れなかった: 送られた発言の行は 1 つも無い');
+    await shot(page, 'chat-listen-fail-1280-light');
+    // 次の発話は聞き取れる（1 つの発話なので、どの問い合わせにも全文を返す）
+    sttTexts.length = 0; sttLast = QUESTION;
+    await until(async () => (await page.locator('#thread .vc-live .lw').count()) > 0, 'bubble after fail', 30000);
+    await until(async () => (await page.locator('#thread .vc-ghost').count()) === 0, 'ghost folded', 5000);
+    check(true, '次に話し始めたら、行は畳まれて声の吹き出しに替わる');
+    await shot(page, 'chat-listen-fail-folded-1280-light');
+    await until(async () => (await page.locator('#thread .mw:not(.vc-live) .m.user').filter({ hasText: QUESTION }).count()) >= 1, 'sent after fail', 40000);
+    check((await page.locator('#thread .vc-ghost').count()) === 0 && (await noteShown(page)) === 0, '送られたあとに、失敗の跡（行・入力欄の下の一行）は残らない');
+    await page.locator('header.top .vc-call').click();
+    await context.close();
+    await sleep(400);
+  }
+  {
+    // 続けて 2 回: 同じ行が「続けて 2 回」に更新され、手がかりと［設定を開く］が付く。通話を終えたら消える（360・ダーク）
+    failAll(500);
+    const { page, context } = await newPage({ on: browserFar, width: 360, height: 760, scheme: 'dark' });
+    await page.locator('header.top .vc-call').click();
+    await until(async () => await page.locator('#thread .vc-ghost').count(), 'first miss', 30000);
+    await until(async () => (await page.locator('#thread .vc-ghost').count()) === 0, 'first miss folded', 20000);
+    await until(async () => /続けて 2 回/.test(await ghostText(page)), 'second miss', 30000);
+    await until(async () => (await page.locator('#thread .vc-ghost').count()) === 1, 'one row only', 3000);
+    await sleep(400);
+    check(/続けて 2 回、聞き取れませんでした/.test(await ghostText(page)) && /確かめてください/.test(await ghostText(page)) && await page.locator('#thread .vc-ghost .vc-nb').isVisible(), '続けて 2 回目: 同じ 1 行が「続けて 2 回」に替わり、手がかりと［設定を開く］が付く（行は積まない）');
+    check(!(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1)), '360 幅でも横にはみ出さない');
+    await shot(page, 'chat-listen-fail-twice-360-dark');
+    await page.locator('#thread .vc-ghost .vc-nb').click();
+    await page.locator('#voicePanel').waitFor({ state: 'visible', timeout: 8000 }).catch(() => {});
+    check(await page.locator('#voicePanel').isVisible(), '行の［設定を開く］で設定 › 通話が開く');
+    await page.evaluate(() => document.querySelector('header.top .vc-call')?.click());   // 設定の面が頭を覆っている
+    await until(async () => (await page.locator('#thread .vc-ghost').count()) === 0, 'ghost gone on end', 3000);
+    check((await noteShown(page)) === 0, '通話を終えたら、聞き取れなかった行は消える（時間では消えない）');
+    await context.close();
+    await sleep(400);
+  }
+  {
+    // キーが拒否された（401）: 1 回目から「待っても直らない」文と行き先（動きを減らす設定では瞬時）
+    failAll(401);
+    const { page, context } = await newPage({ on: browserFar, scheme: 'dark', reduced: true });
+    await page.locator('header.top .vc-call').click();
+    await until(async () => await page.locator('#thread .vc-ghost').count(), 'key rejected row', 30000);
+    check(/聞き取りのキーが受け付けられませんでした/.test(await ghostText(page)) && /API キーで確かめてください/.test(await ghostText(page)) && await page.locator('#thread .vc-ghost .vc-nb').isVisible(), 'キーが拒否された（401）: 1 回目から「聞き取れませんでした」ではなくキーの問題として出す');
+    check((await page.locator('#thread .vc-ghost').evaluate((n) => n.getAnimations().length)) === 0, '動きを減らす設定では、行は動かずに出る');
+    await shot(page, 'chat-listen-fail-key-1280-dark-reduced');
+    await page.locator('header.top .vc-call').click();
+    await until(async () => (await page.locator('#thread .vc-ghost').count()) === 0, 'key row gone', 3000);
+    check(true, '動きを減らす設定では、通話を終えると行はすぐ消える');
+    await context.close();
+    await sleep(400);
+  }
+  {
+    // 読み上げられなかった: 返事の下の一行（入力欄の下ではない）。通話を終えたら消える
+    sttTexts.length = 0; sttTexts.push(...script); sttLast = QUESTION;
+    ttsStatus = 500;
+    const { page, context } = await newPage();
+    await page.locator('header.top .vc-call').click();
+    await until(async () => await page.locator('#thread .vc-hint[data-mode=fail]').count(), 'tts fail hint', 60000);
+    await sleep(300);
+    check((await page.locator('#thread .vc-hint[data-mode=fail]').innerText()).includes('読み上げられませんでした') && (await noteShown(page)) === 0, '読み上げの失敗: 返事の下の一行に出る（入力欄の下ではない）');
+    check(await page.locator('#thread .m.ai').count() >= 1 && await page.locator('#thread .vc-hint[data-mode=fail] .btn:visible').count() === 0, '読み上げの失敗: 返事は画面に出ていて、止める・続きを読むは出ない');
+    await shot(page, 'chat-tts-fail-1280-light');
+    await page.locator('header.top .vc-call').click();
+    await until(async () => (await page.locator('#thread .vc-hint:not([hidden])').count()) === 0, 'tts hint gone', 3000);
+    ttsStatus = 200;
+    check(true, '読み上げの失敗: 通話を終えたら消える');
+    await context.close();
+    await sleep(400);
+  }
+  {
+    // 通話の状態（キーなし）: 入力欄の下の 1 行に × 。キーを入れる（設定が変わる）と消える。もう一度出して × で閉じる
+    await admin.cmd('deleteVoiceKey', {});
+    const { page, context } = await newPage();
+    await page.locator('header.top .vc-call').click();
+    await until(async () => await noteShown(page), 'no key note', 15000);
+    await sleep(350);
+    check((await page.locator('#composer .vc-note').innerText()).includes('OpenRouter のキーが要ります') && await page.locator('#composer .vc-note .vc-nb').isVisible() && await page.locator('#composer .vc-note').getByRole('button', { name: '閉じる' }).isVisible(), 'キーなし: 入力欄の下の一行に［設定を開く］と ×');
+    check(await page.locator('#thread .vc-ghost').count() === 0, 'キーなし: 会話には何も足さない');
+    await shot(page, 'chat-note-nokey-1280-light');
+    await admin.cmd('setVoiceKey', { key: KEY });
+    await until(async () => (await noteShown(page)) === 0, 'note cleared by key', 6000);
+    check(true, 'キーを登録する（設定が変わる）と、キーなしの一行は消える');
+    await admin.cmd('deleteVoiceKey', {});
+    await page.locator('header.top .vc-call').click();
+    await until(async () => await noteShown(page), 'no key note again', 15000);
+    await page.locator('#composer .vc-note').getByRole('button', { name: '閉じる' }).click();
+    await until(async () => (await noteShown(page)) === 0, 'note closed by x', 3000);
+    check((await page.locator('#composer .vc-notew').getAttribute('aria-hidden')) === 'true', '× で一行が閉じる（読み上げの対象からも外れる）');
+    await admin.cmd('setVoiceKey', { key: KEY });
+    await context.close();
+    await sleep(400);
+  }
+  {
+    // 終わった理由（つながりの切れ）: 通話を終えたあとも残り、別の会話へ移ると消える
+    sttTexts.length = 0; sttTexts.push(...script); sttLast = QUESTION;
+    const { page, context } = await newPage();
+    await page.addInitScript(() => { const W = window.WebSocket; window.__ws = []; window.WebSocket = function (...a) { const w = new W(...a); window.__ws.push(w); return w; }; window.WebSocket.prototype = W.prototype; Object.assign(window.WebSocket, { CONNECTING: 0, OPEN: 1, CLOSING: 2, CLOSED: 3 }); });
+    await page.reload();
+    await page.getByRole('button', { name: 'あとで', exact: true }).click({ timeout: 3000 }).catch(() => {});
+    await page.waitForFunction(() => document.querySelector('.vc-call'));
+    await page.locator('header.top .vc-call').click();
+    await until(async () => (await msOf(page, '#composer')) === 'listening', 'link listening');
+    await page.evaluate(() => window.__ws.filter((w) => w.url.includes('voice-ws')).forEach((w) => w.close()));
+    await until(async () => await noteShown(page), 'link note', 10000);
+    check((await page.locator('#composer .vc-note').innerText()).includes('通話のつながりが切れました') && !(await page.locator('header.top .vc-call').evaluate((n) => n.classList.contains('on'))), 'つながりの切れ: 通話は終わり、一行が出る');
+    await sleep(1600);
+    check((await noteShown(page)) === 1, 'つながりの切れ: 同じ会話を見ている間は、時間がたっても残る');
+    await shot(page, 'chat-note-link-1280-light');
+    await page.evaluate(() => document.getElementById('newSession').click());
+    await until(async () => (await noteShown(page)) === 0, 'link note cleared by moving', 4000);
+    check(true, 'つながりの切れ: 別の会話へ移ると消える（通話が終わったあとも見張っている）');
+    await context.close();
+    await sleep(400);
+  }
+  await browserFar.close().catch(() => {});
+  sttTexts.length = 0; sttTexts.push(...script); sttLast = QUESTION;
+
   // ===== 権限なし =====
   {
     const context = await browser.newContext({ viewport: { width: 1280, height: 820 } });
@@ -402,12 +541,13 @@ try {
     await page.waitForFunction(() => document.querySelector('.vc-call'));
     await page.locator('header.top .vc-call').click();
     await until(async () => await page.locator('#composer .vc-note.show').count(), 'deny note');
-    check((await page.locator('#composer .vc-note').innerText()).includes('マイクが許可されていません') && await page.locator('#composer .vc-note button').isVisible(), '権限なし: 入力欄の下に 1 行「マイクが許可されていません · 設定を開く」');
+    check((await page.locator('#composer .vc-note').innerText()).includes('マイクが許可されていません') && await page.locator('#composer .vc-note .vc-nb').isVisible(), '権限なし: 入力欄の下に 1 行「マイクが許可されていません · 設定を開く」');
+    check(await page.locator('#composer .vc-note').getByRole('button', { name: '閉じる' }).isVisible(), '権限なし: 一行に × （名前は「閉じる」）');
     check((await msOf(page, '#composer')) === 'denied' && await page.locator('#composer .vc-micwrap .vc-mbang').isVisible(), '権限なし: 斜線のマイクに「!」');
     check(!(await page.locator('#composer .vc-spk').isVisible()), '権限なし: スピーカーは出ない');
     check(!(await page.locator('header.top .vc-call').evaluate((n) => n.classList.contains('on'))), '権限なし: 通話は始まらない');
     await shot(page, 'chat-denied-1280-light');
-    await page.locator('#composer .vc-note button').click();
+    await page.locator('#composer .vc-note .vc-nb').click();
     await page.locator('#voicePanel').waitFor({ state: 'visible', timeout: 8000 }).catch(() => {});
     check(await page.locator('#voicePanel').isVisible(), '「設定を開く」で設定 › 通話が開く');
     await page.waitForSelector('#voicePanel .nf-card', { timeout: 8000 }).catch(async (e) => { console.error(await page.locator('#voicePanel').innerHTML()); throw e; });
@@ -471,6 +611,17 @@ try {
     await sleep(900);
     await shot(page, 'thread-speaking-1280-dark');
     await call.click();
+    // スレッドでも、聞き取れなかった行は末尾（返信の列の後）に出て、通話を終えると消える
+    await sleep(600);
+    failAll(500);
+    await call.click();
+    await until(async () => await page.locator('#chThread .vc-ghost').count(), 'thread listen fail row', 30000);
+    await sleep(350);
+    check(/聞き取れませんでした。もう一度話してください/.test(await page.locator('#chThread .vc-ghost').innerText()) && !(await page.locator('#chThread .vc-ghost .post-when').isVisible()) && (await page.locator('#thComposer .vc-note.show').count()) === 0, 'スレッド: 聞き取れなかった行が末尾に出る（入力欄の下には出ない）');
+    await shot(page, 'thread-listen-fail-1280-dark');
+    await call.click();
+    await until(async () => (await page.locator('#chThread .vc-ghost').count()) === 0, 'thread ghost gone', 3000);
+    sttTexts.length = 0; sttTexts.push(...script); sttLast = QUESTION;
     await context.close();
   }
 
@@ -526,6 +677,7 @@ try {
 } finally {
   await browser.close().catch(() => {});
   await browserThree?.close().catch(() => {});
+  await browserFar?.close().catch(() => {});
   admin.close();
   await server.stop();
   await api.close();
