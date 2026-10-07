@@ -146,7 +146,7 @@
 | M15 | `streamSequence` | 1910 | 1917、`loadSession` 6459・6463 | 捨てる | サーバーごとの番号。画面は読み直しのたびに `streamCursor` を受け取る（`web/session-stream.mjs:31`） |
 | M16 | `runningSeq`・`runningSent` | 3956 | `broadcastRunning` 3957-3964 | 捨てる | |
 | M17 | `limitPoll`（時刻の分からない上限の確かめの間隔） | 5729 | `endTurn` 5194-5198、5862-5866 | 捨てる | 間隔の伸びが元に戻るだけ |
-| M18 | `limitReleaseTimers` | 5779 | 5772-5790 | 捨てる | 起動の `recoverLimitResumes` が作り直す |
+| M18 | `limitReleaseTimers` | 5779 | 5772-5790 | 捨てる | 起動の `recoverLimitResumes`（今は `recoverLimitWaits`）が作り直す |
 | M19 | `compactionSaveTimer`・`compactionSaveChain` | 5313-5314 | `saveCompactionSchedule` 5315 | 捨てる | 旧サーバーは書き切ってから離す（2d） |
 | M20 | `TOKEN`（画面のトークン） | 204 | `ready` 6908・リモート 347・認証 1151 | 札 | 預かり物（design.md §8。段階 1 は main が env で渡す） |
 | M21 | 待ち受けのポート（`PORT` と実際の `server.address().port`） | 202・6948 | `localOrigin` 1035 | 札 | 預かり物。**MCP の口の URL がこれに依る**ので、取れなければ付け直したターンの MCP が全部切れる（design.md §8 の「空きポートに移る」は付け直すターンがあるときは使えない。2d） |
@@ -352,7 +352,7 @@ handOffTurn(key)                                     … 旧サーバーの口�
 | S10 | 4661 `remoteDelegation.start()` | ホストの便りを聞く | そのまま |
 | S11 | 4664 `createSettingApprovals`（`setting-approvals.mjs:35-41`） | 待っていた設定の変更の承認を「再起動で取り下げ」にし、送っている途中の結果を捨てる | 引き継ぎの起動ではカードを出し直す（A4）。ターンには縛られないが同じ引き継ぎで欠ける |
 | S12 | 4681 `worktrees.reconcile()`・4684 `worktreeSweepSoon()` | 作成の途中の worktree を巻き戻し、使っていないものを消す（`runtime.turns`・シェル・タスクで判定） | 付け直すターンを登録した後に走らせる |
-| S13 | 6941 `restoreCompactionSchedule`・6942-6945 `limitStates`・6950 `schedule.restore()`・6952 `recoverLimitResumes()`・6956 `botHost.start()`（`bots/dispatch.mjs` の `start`: `delivering` → `unknown`・作業中の印の片付け） | 予定・上限の解除後の再開・bot の出来事の配り直しでターンを始めうる | 付け直す会話が `sessionBusy` で真になってから。bot の会話は付け直さない（O21）ので、dispatch の片付けはそのまま |
+| S13 | 6941 `restoreCompactionSchedule`・6942-6945 `limitStates`・6950 `schedule.restore()`・6952 `recoverLimitResumes()`（今は `recoverLimitWaits()`。上限の会話を再開せず、送信待ちを流すだけ。ADR 0160）・6956 `botHost.start()`（`bots/dispatch.mjs` の `start`: `delivering` → `unknown`・作業中の印の片付け） | 予定・上限の解除時刻に流す送信待ち・bot の出来事の配り直しでターンを始めうる | 付け直す会話が `sessionBusy` で真になってから。bot の会話は付け直さない（O21）ので、dispatch の片付けはそのまま |
 | S14 | 6903 `writeControlFile` | 新しい `CLI_TOKEN` を書く | 預かり物の `CLI_TOKEN`（M22）で書く |
 | S15 | 6871-6880 `orphanGuard`・`announce` の `ready` | 孤児の見張り・main への `ready` | そのまま（段階 1） |
 
@@ -436,7 +436,7 @@ bot の会話（O21）・圧縮のターン（`hooks.compact`）・Codex/agy（�
   - `core/adopt.mjs`: 付け直す元（source）の形（`state`＝保持役の子の状態・`attachable`・`replay(from, to)`・`attach(from)`＝`{ seq, line }` と最後の `{ exit }` の非同期の列・`ack(seq)`）、印の名前 `ADOPT_TURN_MARK = 'turn'`、再生の道 `replayRecord({ source, normalize, emit, signal })`（印から ack までは `emit(event, { replay: true })`、続きは普通に流して行ごとに ack、`text.end` の uuid・ツールの id で冪等。終わった発言の `text.delta` も捨てる）、ファイルの元 `readAdoptSources(dir)`（`AGENT_HOST_ADOPT_FROM` の `children.json` = 保持役の `welcome.children` の形に子ごとの `lines` を足したもの。読むだけ。終わった子だけ `attachable`）
   - fake の `adoptTurn`: 記録の 1 行を fake の出来事そのものとして `replayRecord` に流し、返答を履歴に積む。`turnResult` が無ければ投げる
   - `makeEmit` の `replay`: §4.4 の表のとおり。present の記録・圧縮の記録・bot・途中送信の合図・見張り/配り/送信待ちの流しは走らせず、スナップショット（`stream.events`）に積むだけで画面へ送らない。表示の参照は再生の `text.end` で書かずに捨てる（`visualizations.discard()`。旧サーバーが書き終えている）。再生では渡った合図（`onPromptDelivered`）を呼ばない（札の `delivery` が正）
-- 起動の順序（`core/server.mjs` の頭から）: `restoreAdoptedTurns()`（`restoreTurn` を元ごとに）→ S5 `outbox.recover({ adopted })` → S6 `recoverInterruptedTurns(now, { except })` → S7 → S8・S9 → S11 → S12 → … → 待ち受け → `adoptTurn`（待たない）→ S13 の予定・上限の再開・bot。付け直すターンは S5 より前に登録されるので、S12・S13 は `sessionBusy` で避ける
+- 起動の順序（`core/server.mjs` の頭から）: `restoreAdoptedTurns()`（`restoreTurn` を元ごとに）→ S5 `outbox.recover({ adopted })` → S6 `recoverInterruptedTurns(now, { except })` → S7 → S8・S9 → S11 → S12 → … → 待ち受け → `adoptTurn`（待たない）→ S13 の予定・上限の送信待ち・bot。付け直すターンは S5 より前に登録されるので、S12・S13 は `sessionBusy` で避ける
 - 後片付けの除外: S5 は付け直す会話の `queued` を保留にせず、`sending` は札の `steers` にある id だけ残す（ほかは今どおり結果不明。`steers` を埋めるのは 2b-7）。S6 は `except`。S7 は今のまま（下の 2）。S8・S9 は委譲の子を付け直さないので影響が無い。S1（Claude のフラグ設定）は 2c、S14（`CLI_TOKEN`）は 2d
 - 付け直さない（今の起動時の restart の中断に落ちる。`restoreTurn` が投げ、S6 が扱う）: 札が 64 KB を超える・版が違う・会話の id が無い・`presentKey` か ply_context のトークンが無い・バックエンドが `adoptTurn` を持たない・会話の `turnStartedAt` が札の `startedAtMs` と違う・タスクの id が分からない委譲の子（委譲の子は 2b-7 から付け直す）・bot の会話（O21）・圧縮のターン・記録に印が無い・記録が切れている（`truncated`。表示の途中の状態をあきらめて動かし続けるのは生きた子の 2b-6）・続きを受けられない（ファイルの元の生きた子）。登録の後で失敗した（口を開けない・記録を流せない）ときは、`adoptTurn` が `abortReason: 'restart'` の `turnResult: aborted` で締める（同じ restart の中断になる）。どちらも理由をサーバーのログに出す
 - **決めたこと 1: 発言の本文は札に入れない**。2b-2 の札は `input.prompt` に本文を入れていたので、上限（64 KB）を超える貼り付けのターンは札が作れず付け直せなかった。本文は CLI に渡し済みで、付け直しで要るのは実行中のスナップショットの発言（`stream.user`）と終わりの添付の照合だけなので、札には `promptHash`（sha256。`history.mjs` の `taskNotices` と同じ）と `promptChars` を置き、`restoreTurn` が履歴の切り口の後ろの人の発言か送信待ちの項目（`messageId`）から、ハッシュが合う本文を引く（見つからなければ空）。添付の照合（`afterResult`）はハッシュで突き合わせる。同じ理由で `stream.user` の `text`・中断の文（`interruption` の `text`・`body`）・`!` の行（`shellHandoff.lines`）も外し、途中送信の添付は `{ key, promptHash }` にした。上限を超えうるのは本文以外（前のターンまでのサブエージェントの一覧 `pastSubagents` など）だけになり、そのときは `handOffTurn` が渡さない（今の中断）
