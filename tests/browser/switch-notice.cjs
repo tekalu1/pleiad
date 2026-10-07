@@ -146,8 +146,8 @@ async page => {
     wait: { hidden: document.querySelector('#updateHandoverWait').hidden, text: document.querySelector('#updateHandoverWait').textContent }, browser: document.querySelector('#updateHandoverBrowser').hidden,
     list: document.querySelector('#updateWork').hidden, after: document.querySelector('#updateWorkAfter').hidden, ok: document.querySelector('#confirmInstallUpdate').textContent, later: document.querySelector('#cancelInstallUpdate').textContent }));
   // この確認の作業は保持役に載らない fake のターンなので、「待つ」の 1 行も出る（載ったターンだけなら出ない。tests/unit/web-interrupt.mjs の handoverWaits）
-  check('確認の段（無停止）: 「実行中の作業 N 件は止めずに切り替わります」・引き継げない分は待つ・一覧と中断の注意は出ない・「保存して再起動」', !confirmTo.work.hidden && /実行中の作業 \d+ 件は止めずに切り替わります。/.test(confirmTo.work.text)
-    && !confirmTo.wait.hidden && /うち \d+ 件は引き継げないため、その作業が終わるまで切り替えを待ちます。/.test(confirmTo.wait.text)
+  check('確認の段（無停止）: 「実行中の作業 N 件は止まりません」・引き継げない分は待つ・一覧と中断の注意は出ない・「保存して再起動」', !confirmTo.work.hidden && /実行中の作業 \d+ 件は止まりません。/.test(confirmTo.work.text)
+    && !confirmTo.wait.hidden && /うち \d+ 件は新しい版へ引き継げないため、その作業が終わってから切り替わります。/.test(confirmTo.wait.text)
     && confirmTo.list && confirmTo.after && confirmTo.ok === '保存して再起動' && confirmTo.later === 'あとで', JSON.stringify(confirmTo));
   check('確認の段: 内蔵ブラウザーのタブ・コンピューターの操作が無ければ注意の 1 行は出ない', confirmTo.browser);
   await page.evaluate(() => { document.documentElement.dataset.theme = 'light'; });
