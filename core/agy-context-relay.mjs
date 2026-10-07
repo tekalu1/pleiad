@@ -67,14 +67,31 @@ function incoming(up, method, body) {
   return { ...body, result: { ...body.result, tools: body.result.tools.map(tool => ({ ...tool, name: prefix + tool.name })) } };
 }
 
+// Pleiad のサーバーが入れ替わる間（無停止の更新。口が閉じて開き直すまで 1〜2 秒、長くても数秒）は、つながらない失敗を数秒だけやり直す。
+// 呼び出しは agy の側で 3 分まで待つので、数秒の再試行で時間切れにならない。**つながる前の失敗だけ**やり直す: 送った後の切れ（ECONNRESET など）は
+// 呼び出しが二重に走りうるので、そのままエラーにする。待つ上限は PLY_RELAY_RETRY_MS（0 で再試行しない。試験が短くするのに使う）
+const RETRY_MS = Number.isFinite(Number(process.env.PLY_RELAY_RETRY_MS)) && process.env.PLY_RELAY_RETRY_MS !== '' ? Number(process.env.PLY_RELAY_RETRY_MS) : 6_000;
+const RETRY_STEP_MS = 150;
+const NOT_CONNECTED = new Set(['ECONNREFUSED', 'EHOSTUNREACH', 'ENETUNREACH', 'ENOTFOUND', 'EAI_AGAIN', 'UND_ERR_CONNECT_TIMEOUT']);
+const notConnected = error => NOT_CONNECTED.has(error?.cause?.code ?? error?.code);
+
+async function connect(up, message) {
+  const signal = AbortSignal.timeout(up.timeoutMs);
+  const body = JSON.stringify(outgoing(up, message));
+  const started = Date.now();
+  for (;;) {
+    try {
+      return await fetch(up.url, { method: 'POST', headers: { authorization: up.authorization, 'content-type': 'application/json', accept: 'application/json' }, body, signal });
+    } catch (error) {
+      if (!notConnected(error) || Date.now() - started >= RETRY_MS) throw error;
+      await new Promise(resolve => setTimeout(resolve, RETRY_STEP_MS));
+    }
+  }
+}
+
 /** 1 つの接続先へ POST する。通知（id なし）は返事を待たず null。失敗は { error: [code, message] } */
 async function post(up, message) {
-  const response = await fetch(up.url, {
-    method: 'POST',
-    headers: { authorization: up.authorization, 'content-type': 'application/json', accept: 'application/json' },
-    body: JSON.stringify(outgoing(up, message)),
-    signal: AbortSignal.timeout(up.timeoutMs),
-  });
+  const response = await connect(up, message);
   if (message.id === undefined) { await response.body?.cancel().catch(() => {}); return null; }
   if (response.status === 401) return { error: [-32001, agentT(locale, 'relay.inactive')] };
   if (!response.ok) return { error: [-32603, agentT(locale, 'relay.unreachableStatus', { status: response.status })] };

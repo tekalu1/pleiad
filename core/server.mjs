@@ -5866,6 +5866,8 @@ const handoverRun = createHandover({
   ended: item => item.turn.ended || runtime.turns.get(item.key) !== item.turn,
   // 預かり物（トークン・ポート）を保持役へ置く。居る保持役にだけ（保持役が無ければ、新しいサーバーは main の渡した変数で起動する）
   stash: async () => {
+    // ターンの無い（idle の）保持役の子（agy は会話のあいだ 1 本を生かす）は、新しいサーバーが知らない（札が無い）。次の detach で触れなくなる前に止める（段階 3）
+    for (const backend of listBackends()) { try { await backend.releaseIdle?.(); } catch (error) { console.error('  idle の子を止められない:', String(error?.message ?? error)); } }
     const root = BOOT_ENV.AGENT_HOST_RUNTIME_ROOT;
     const client = root ? await holderLink({ dataDir: store.dataDir, root, launch: false }).catch(() => null) : null;
     if (!client) return;

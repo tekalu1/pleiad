@@ -460,6 +460,12 @@ const SUITES = [
   './unit/adopt-claude.mjs',
   // Claude を保持役に載せる部品（無停止の更新 2c）: 版の一覧・npm の包みの解き方・偽の SpawnedProcess の転送と detach・付け直しで流さない行・札のフラグ設定のファイル
   './unit/claude-held.mjs',
+  // 付け直し（無停止の更新 段階 3）: 保持役に載せた agy（偽物）を、ツールの実行中・終わった直後・強制終了・引き継ぎ（idle の agy を旧サーバーが止める）で引き継ぐ。切り替え（置き場があれば既定で載る）
+  './unit/adopt-agy.mjs',
+  // agy を保持役に載せる部品（無停止の更新 段階 3）: 切り替え・agent の置き場（held-*）の掃除・付け直し（再生と続き・終わった子・札に無い発言）
+  './unit/antigravity-held.mjs',
+  // agy の中継の再試行（無停止の更新 段階 3）: 口が数秒つながらなくても、つながる前の失敗だけやり直す。送った後の切れは二重に走らせない
+  './unit/agy-relay-retry.mjs',
   // 引き継ぎ（無停止の更新 2d）: 旧サーバーが held: のターンを渡して終わり、新サーバー（--handover）が同じトークン・ポートで付け直す。引き継げない作業があれば断る
   './unit/handover-server.mjs',
   './unit/handover-core.mjs',

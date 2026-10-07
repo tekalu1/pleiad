@@ -211,7 +211,7 @@
 | O22 | computer use の `turns`・`holder`・`lenders`・`queue`・`armed` と driver の `pending` | `computer-use/lock.mjs:25-29`・`driver.mjs:26` | `endTurn` `server.mjs:5266` | 捨てる | M37 |
 | O23 | fake のバックエンドの `sessions`・`shells`・`terminals` | `backends/fake.mjs:58`・`:62-63` | 全部 | 捨てる | 会話をプロセスのメモリに持つ（`:7-8`）ので、サーバーをまたげない。付け直しの台本は別のプロセスの偽の CLI で走らせる（§6 の 2b-5） |
 | O24 | Codex の `CodexRpc`（`pending`・`threads`・`claims`・`held`・`parents`・`agents`）と `codex.mjs` の `trackers`・`liveSubagents` | `codex-rpc.mjs:55-71`・`codex.mjs:503-508`・`:967` | | 再生 | 段階 3（design.md §4.4。親子は `thread/read` の `parentThreadId` から引き直す） |
-| O25 | agy の `live`（会話ごとのプロセス）と `pids.json` | `antigravity.mjs:105`・`antigravity-pids.mjs:26` | `reap` `:80-100` | 保存済み | 段階 3。`pids.json` の `owner` を新しいサーバーに書き換えないと、後の `reap` が付け直した agy を止める |
+| O25 | agy の `live`（会話ごとのプロセス）と `pids.json` | `antigravity.mjs:105`・`antigravity-pids.mjs:26` | `reap` `:80-100` | 保存済み | 段階 3。**済（agy。[stage3-agy.md](stage3-agy.md)）**: 保持役の子は pid を持たず `pids.json` に控えないので、`owner` の書き換えは要らない（`reap` は付け直した agy に触れない）。idle の子は `releaseIdle`・`sweepIdle` で止める |
 
 ---
 
@@ -342,7 +342,7 @@ handOffTurn(key)                                     … 旧サーバーの口�
 |---|---|---|---|
 | S1 | 315 `sweepClaudeFlagSettings` | 24 時間より古い `run/claude-compat-*.json` を消す | 札にあるパス（O4）は消さない |
 | S2 | `store.mjs:100` `sweepEntries`（最初の読み込み） | 記録の掃除 | 影響なし（確かめた範囲。2b-4 で `turnStartedAt` を消さないことをテストに入れる） |
-| S3 | `antigravity.mjs:109` `pids.reap()`・`:111` `sweep()`（読み込み時） | `owner` が死んでいる agy を止め、作業フォルダーを消す | 段階 3。`owner` を書き換えてから |
+| S3 | `antigravity.mjs:109` `pids.reap()`・`:111` `sweep()`（読み込み時） | `owner` が死んでいる agy を止め、作業フォルダーを消す | 段階 3。**済（agy。[stage3-agy.md](stage3-agy.md)）**: 保持役に載せる agy の置き場は `held-*`（`sweep()` は触れない。`sweepHeldHomes` が前のサーバーの分だけ消す） |
 | S4 | 4247 `computerLock.reset()`（`computer-ready`） | ロックを空にする | そのまま（ロックは引き継がない。M37） |
 | S5 | 4302 `outbox.recover()`（`message-queue.mjs:140-150`） | 全会話の `sending` → `unknown`、`queued` → `paused` | 付け直す会話を外す。`sending` は札の途中送信（O5）が決める。`queued` は保留にしない（走っているターンの後ろに並んだまま） |
 | S6 | 4305 `store.recoverInterruptedTurns`（`store.mjs:502-521`） | `turnStartedAt` が残る会話を `restart` の中断にし、`completedAt` を書く | 付け直す会話を外す（`except: [sessionId]` を足す）。札の `startedAtMs`（T8）と `turnStartedAt` が合うものだけ外す |
@@ -364,7 +364,7 @@ handOffTurn(key)                                     … 旧サーバーの口�
 | X2 | 5153 `runtimeContext.close()` | ply_context の口と外部 MCP を閉じる | 口の束縛（トークン）は閉じない。外部 MCP の子はプロセスと一緒に止まる（R15） |
 | X3 | `claude.mjs:1054` `flag.dispose()` | フラグ設定のファイルを消す | 消さない（O4） |
 | X4 | 1872-1875 の `exit`（`shellRuns.stopAll`・`botHost.stop`・`removeControlFile`・`mainLink.dispose`） | 終わりに止める・消す | `control.json` は自分の pid のものだけ消す作り（そのまま）。`!` の行は段階 3 まで止まる |
-| X5 | `antigravity.mjs:786` の `exit` | agy を全部止める | 段階 3 |
+| X5 | `antigravity.mjs:786` の `exit` | agy を全部止める | 段階 3。**済（agy。[stage3-agy.md](stage3-agy.md)）**: 手を離した子は止めず、idle の子は止める（`HolderClient.sendBatch` の 1 回の書き込み）。引き継ぎでは `handoverRun.stash` の先頭の `releaseIdle` |
 | X6 | `computerLock`（M37） | ターンの終わりにロックを解く | 手を離す前に `stopAll('update')` |
 
 ---
@@ -550,7 +550,7 @@ bot の会話（O21）・圧縮のターン（`hooks.compact`）・Codex/agy（�
 
 **2d の実装のメモ（2026-10-07。実装済み。要点は [plan.md](plan.md) の 2d。ここは仕分け・後片付けの側から見た分）**
 
-- **旧サーバーで止める 6 か所（§5.2）の配線**: X1（締め）は `turn.handedOff` のまま（`handoverRun` の札取り → `handOffTurn`）。X2（`runtimeContext.close()`）は手を離したターンでは走らない（`driveTurn` が `'handedOff'` を返す）。X3（フラグ設定のファイル）は Claude を載せる 2c。X4 の `exit` は `process.exit(0)` で走る（`!` の行は `shellRuns.stopAll` で止まる＝main が「止まるもの」として先に聞く。`control.json`・`main-link.json` は自分の pid のものだけ消す）。X6（computer のロック）は引き継ぎでは `computerLock` を触らない（ロックは引き継がない。M37。新サーバーの `computer-ready` が `reset`）。**X5（agy を全部止める）は段階 3**。
+- **旧サーバーで止める 6 か所（§5.2）の配線**: X1（締め）は `turn.handedOff` のまま（`handoverRun` の札取り → `handOffTurn`）。X2（`runtimeContext.close()`）は手を離したターンでは走らない（`driveTurn` が `'handedOff'` を返す）。X3（フラグ設定のファイル）は Claude を載せる 2c。X4 の `exit` は `process.exit(0)` で走る（`!` の行は `shellRuns.stopAll` で止まる＝main が「止まるもの」として先に聞く。`control.json`・`main-link.json` は自分の pid のものだけ消す）。X6（computer のロック）は引き継ぎでは `computerLock` を触らない（ロックは引き継がない。M37。新サーバーの `computer-ready` が `reset`）。**X5（agy を全部止める）は段階 3**（agy は済。[stage3-agy.md](stage3-agy.md)）。
 - **起動時の後片付け（§5.1）のうち 2d で動くもの**: S5 は `recover({ adopted, keepQueued })`（`--handover` の起動は旧サーバーが送信待ちに回した `queued` を保留にせず、付け直し・予定の前に kick する）。S14（`CLI_TOKEN`）は預かり物の値で `control.json` を書く（`--handover` で保持役の stash があるときだけ。無ければ新しい乱数）。S6・S7・S8・S9・S12・S13 は 2b-4〜2b-7 のまま（`restoreAdoptedTurns` が本番の起動でも保持役の子を読むようになったので、起動の道が付け直しを見る）。
 - **保持役の子を読む条件**: `restoreAdoptedTurns` は `AGENT_HOST_ADOPT_HOLDER=1`（テスト）か `--handover` か `AGENT_HOST_HANDOVER=on` のとき、実行場所の置き場があれば保持役を読む（居る保持役にだけつなぐ。居なければ空）。保持役が無い起動・`off` は何も変わらない。
 - **`running` の `held`**: ターン（`holdable`）・その承認待ち・サブエージェントに `held: true`、`handover: { v, holder, held, blocking }`。`count` は今までの意味のまま（画面の更新のゲート・main の終了の確認はこれまでどおり全部を数える）。main の切り替えだけが `blocking` を使う。
