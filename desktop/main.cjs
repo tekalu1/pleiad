@@ -392,17 +392,14 @@ async function boot() {
   }
 }
 
-/** 終了の確認に足す、動かなくなる予定の文（送信予定の件数と次の時刻・上限の解除後の再開の件数）。無ければ null */
+/** 終了の確認に足す、動かなくなる予定の文（送信予定の件数と次の時刻）。無ければ null */
 function scheduledText(scheduled) {
   const send = Number(scheduled?.send) || 0;
-  const resume = Number(scheduled?.resume) || 0;
-  if (!send && !resume) return null;
+  if (!send) return null;
   const next = Number.isFinite(scheduled?.nextSendAt)
     ? t('quit.scheduledSendNext', { time: new Date(scheduled.nextSendAt).toLocaleString(undefined, { month: 'numeric', day: 'numeric', weekday: 'short', hour: 'numeric', minute: '2-digit' }) }) : '';
-  const parts = [send ? t('quit.scheduledSend', { count: send, next }) : '', resume ? t('quit.scheduledResume', { count: resume }) : ''].filter(Boolean);
-  // 送信予定は終了している間は送られない。上限の解除後の再開は、次に開いたときに（時刻を過ぎていても）再開する（ADR 0132）
-  const tail = send && resume ? t('quit.scheduledTailBoth') : resume ? t('quit.scheduledTailResume') : t('quit.scheduledTail');
-  return parts.join(t('quit.scheduledJoin')) + tail + (send ? t('quit.scheduledLate') : '');
+  // 送信予定は終了している間は送られない
+  return t('quit.scheduledSend', { count: send, next }) + t('quit.scheduledTail') + t('quit.scheduledLate');
 }
 
 async function closeSafely() {
@@ -414,7 +411,7 @@ async function closeSafely() {
     const waiting = scheduledText(work.scheduled);
     if (work.count > 0) {
       // 「作業に戻る」か「中断して終了」（reason: quit。中断した会話は次の起動で残り、「再開」で続けられる。ADR 0036）。
-      // 送信予定・上限の解除後の再開があれば、終了している間は動かないことも添える
+      // 送信予定があれば、終了している間は動かないことも添える
       const { response } = await dialog.showMessageBox(window, { type: 'info', title: t('quit.busyTitle'),
         message: waiting ? `${t('quit.busyMessage')}
 
@@ -423,7 +420,7 @@ ${waiting}` : t('quit.busyMessage'),
       if (response !== 1) return;
       await abortAll('quit');
     } else if (waiting) {
-      // 作業が無くても、送信予定や再開の予定があれば確かめる（終了している間は送られない。ADR 0103）
+      // 作業が無くても、送信予定があれば確かめる（終了している間は送られない。ADR 0103）
       const { response } = await dialog.showMessageBox(window, { type: 'info', title: t('quit.scheduledTitle'), message: waiting,
         buttons: [t('quit.backToWork'), t('quit.quitAnyway')], defaultId: 0, cancelId: 0, noLink: true });
       if (response !== 1) return;

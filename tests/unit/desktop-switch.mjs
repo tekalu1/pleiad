@@ -34,7 +34,7 @@ export const title = '新しい版のサーバーへの切り替え: 作業が 0
 const tick = () => new Promise(resolve => setImmediate(resolve));
 const OLD = { appVersion: '1.0.0', build: 'aaaaaaaaaaaa' };
 const NEW = { appVersion: '1.0.1', build: 'bbbbbbbbbbbb' };
-const idle = (extra = {}) => ({ count: 0, turns: [], permissions: [], subagents: [], tasks: [], background: [], shells: [], scheduled: { send: 0, resume: 0 }, ...extra });
+const idle = (extra = {}) => ({ count: 0, turns: [], permissions: [], subagents: [], tasks: [], background: [], shells: [], scheduled: { send: 0 }, ...extra });
 const busy = () => idle({ count: 1, turns: [{ sessionId: 's1', backend: 'fake' }] });
 
 /** 偽の副作用。works は running() が順に返す値（尽きたら最後の値） */
@@ -96,7 +96,7 @@ export default async function (t) {
     tasks: [{ sessionId: 'a', taskId: 't1', status: 'running' }],
     shells: [{ sessionId: 'd', runId: 'r1', command: 'npm run dev' }],
     background: [{ sessionId: 'e', backend: 'codex', tasks: [{ id: 'b1', kind: 'terminal', label: 'vite' }, { id: 'b2', kind: 'terminal', label: 'tsc -w' }] }],
-    scheduled: { send: 4, resume: 2, held: 0, nextSendAt: 1 },
+    scheduled: { send: 4, held: 0, nextSendAt: 1 },
   });
   const blockers = sw.switchBlockers(work);
   t.ok('待つ作業の数は running の count（`!` の行・裏の作業は足さない）', blockers.count === 3, JSON.stringify(blockers));
@@ -105,7 +105,7 @@ export default async function (t) {
   t.ok('止まるものの字は長さに上限がある', sw.switchBlockers(idle({ shells: [{ sessionId: 'd', runId: 'r', command: 'x'.repeat(1000) }] })).stoppers[0].label.length === 200);
   t.ok('中継の複製・設定の変更の承認・終わったサブエージェントは一覧に出さない', !blockers.items.some(i => i.kind === 'permission' && i.sessionId !== 'b') && !blockers.items.some(i => i.id === 'y'));
   t.ok('ターンの走っている会話の委譲タスクは重ねて出さない', !blockers.items.some(i => i.kind === 'task'));
-  t.ok('送信予定・上限の解除後の再開は数えない（S2 が予定を戻す。断の数秒は送信の猶予 1 時間に収まる）', sw.switchBlockers(idle({ scheduled: { send: 3, resume: 1, held: 0, nextSendAt: Date.now() + 1000 } })).count === 0);
+  t.ok('送信予定は数えない（S2 が予定を戻す。断の数秒は送信の猶予 1 時間に収まる）', sw.switchBlockers(idle({ scheduled: { send: 3, held: 0, nextSendAt: Date.now() + 1000 } })).count === 0);
   t.ok('外部の stdio MCP は running に無く、数えない（作業が 0 件なら呼び出しの途中のものは無い。S2 が次に起こし直す）', sw.switchBlockers(idle()).count === 0);
   t.ok('running が取れなければ null（待ちを続ける）', sw.switchBlockers(null) === null);
 
@@ -210,7 +210,7 @@ export default async function (t) {
     t.ok('待ち始めの時刻（since）は待っている間・ロックの取り直しで変わらない', sinces.length >= 2 && new Set(sinces).size === 1 && Number.isFinite(sinces[0]), JSON.stringify(sinces));
   }
   {
-    const { control, calls } = machine({ works: [idle({ scheduled: { send: 2, resume: 1 } })] });
+    const { control, calls } = machine({ works: [idle({ scheduled: { send: 2 } })] });
     await control.run();
     t.ok('送信予定があっても待たない', calls.filter(c => c === 'running').length === 2 && calls.includes('startNew:new:detached'));
   }

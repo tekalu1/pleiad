@@ -31,8 +31,8 @@
 // （作業の最中でも切り替える）。待つのは、載っていないターン・準備中のターンなど running の handover.blocking だけ。新しい版が handover-check で
 // 引き継ぎの形（handover・holder の範囲）を持っていて、S1 の running にも handover があるときだけ。無ければ今までの先送り（update-lock → shutdown → S2）。
 //
-// 待つ作業（switchBlockers）: running の count（ターン・承認待ち・走っているサブエージェント・委譲タスク）。外部の stdio MCP・送信予定・
-// 上限の解除後の再開は数えない。**切り替えで止まるもの**（stoppers: `!` の行と、ターンの外に残っている裏の作業＝Codex の裏の端末など）は
+// 待つ作業（switchBlockers）: running の count（ターン・承認待ち・走っているサブエージェント・委譲タスク）。外部の stdio MCP・送信予定は
+// 数えない。**切り替えで止まるもの**（stoppers: `!` の行と、ターンの外に残っている裏の作業＝Codex の裏の端末など）は
 // 作業が終わっても止まらず、サーバーが終わると止まる。待たず、黙って止めもしない: 作業が 0 件になったとき、止まるものが残っていれば
 // 自動では切り替えず「あとで／止めて切り替え」を聞く（asking。利用者が承認した「Z」。docs/design-system.md「切り替えを待つ表示」）。
 //
