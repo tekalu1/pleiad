@@ -38,6 +38,7 @@ class RpcError extends Error {
 }
 
 let nextServerId = 0;
+let initialized = false;
 const serverPending = new Map();   // server -> client request の応答待ち
 
 /** server -> client の request を出して応答を待つ（承認・質問）。 */
@@ -268,6 +269,63 @@ async function runSlowTurn(t, turnId, text) {
     threadId: t.id,
     turn: { id: turnId, items: [], status: "interrupted", startedAt: record.startedAt, completedAt: record.completedAt },
   });
+}
+
+/**
+ * ゲート（AGENT_HOST_FAKE_GATE_DIR のファイル。tests/lib/fake-gate.mjs と同じ置き場）が現れるまで待つ。ツールが走っている最中を、時間でなくテストの合図で作る。
+ * 置き場が無ければ待たない
+ */
+async function gate(name) {
+  const dir = process.env.AGENT_HOST_FAKE_GATE_DIR;
+  if (!dir) return;
+  const file = path.join(dir, name);
+  while (!fs.existsSync(file)) await wait(20);
+}
+
+/**
+ * ツールが走っている最中のターン（"gate:<名前>"。ゲートが開くまでツールが終わらない。承認は求めない）。
+ * 本文 "start" → commandExecution の item/started → （ゲート）→ item/completed → 本文 "end <ゲートの名前>" → turn/completed。保持役の付け直しの確かめに使う
+ */
+async function runGateTurn(t, turnId, text) {
+  const name = text.slice("gate:".length).split(/\s/)[0];
+  notify("turn/started", { threadId: t.id, turn: { id: turnId, items: [], status: "inProgress" } });
+  const body = `end ${name}`;
+  notify("item/agentMessage/delta", { threadId: t.id, turnId, itemId: "it_m1", delta: "start " });
+  const started = { id: `it_g${++seq}`, type: "commandExecution", command: "build", commandActions: [], cwd: t.cwd ?? ".", status: "inProgress" };
+  notify("item/started", { threadId: t.id, turnId, startedAtMs: Date.now(), item: started });
+  await gate(name);
+  record({ method: "gate-done", gate: name, threadId: t.id });
+  const done = { ...started, status: "completed", aggregatedOutput: "built", exitCode: 0, durationMs: 1 };
+  notify("item/completed", { threadId: t.id, turnId, completedAtMs: Date.now(), item: done });
+  notify("item/agentMessage/delta", { threadId: t.id, turnId, itemId: "it_m1", delta: body });
+  notify("item/completed", { threadId: t.id, turnId, completedAtMs: Date.now(), item: { id: "it_m1", type: "agentMessage", text: `start ${body}` } });
+  notify("thread/tokenUsage/updated", { threadId: t.id, turnId, tokenUsage: {
+    last: { cachedInputTokens: 0, inputTokens: 10, outputTokens: 5, reasoningOutputTokens: 0, totalTokens: 15 },
+    total: { cachedInputTokens: 0, inputTokens: 10, outputTokens: 5, reasoningOutputTokens: 0, totalTokens: 15 }, modelContextWindow: 200000 } });
+  t.turns.push({ id: turnId, status: "completed", startedAt: secs(), completedAt: secs(), items: [
+    { id: `it_u${++seq}`, type: "userMessage", content: [{ type: "text", text }] }, done, { id: "it_m1", type: "agentMessage", text: `start ${body}` }] });
+  t.updatedAt = secs();
+  notify("turn/completed", { threadId: t.id, turn: { id: turnId, items: [], status: "completed", startedAt: secs(), completedAt: secs() } });
+  record({ method: "gate-completed", gate: name, threadId: t.id });
+}
+
+/**
+ * 裏の端末（unified_exec）を 1 本起こして、ターンは終わる（"bgterm"）。端末は走ったまま（thread/backgroundTerminals/list に載る）。
+ * thread/backgroundTerminals/terminate で止めると、端末を起こしたターンの turnId のまま item/completed（failed）が届く（codex-cli 0.160.0 の実測）
+ */
+const terminals = new Map();   // itemId -> { threadId, turnId, itemId, processId, command, cwd }
+async function runBgTermTurn(t, turnId, text) {
+  notify("turn/started", { threadId: t.id, turn: { id: turnId, items: [], status: "inProgress" } });
+  const processId = String(40000 + ++seq);
+  const item = { id: `it_bg${seq}`, type: "commandExecution", command: "npm run dev", commandActions: [], cwd: t.cwd ?? ".", status: "inProgress", processId, source: "unifiedExecStartup" };
+  terminals.set(item.id, { threadId: t.id, turnId, itemId: item.id, processId, command: item.command, cwd: item.cwd });
+  notify("item/started", { threadId: t.id, turnId, startedAtMs: Date.now(), item });
+  const body = `端末を起こした: ${text}`;
+  notify("item/agentMessage/delta", { threadId: t.id, turnId, itemId: "it_m1", delta: body });
+  notify("item/completed", { threadId: t.id, turnId, completedAtMs: Date.now(), item: { id: "it_m1", type: "agentMessage", text: body } });
+  t.turns.push({ id: turnId, status: "completed", startedAt: secs(), completedAt: secs(), items: [{ id: "it_m1", type: "agentMessage", text: body }] });
+  t.updatedAt = secs();
+  notify("turn/completed", { threadId: t.id, turn: { id: turnId, items: [], status: "completed", startedAt: secs(), completedAt: secs() } });
 }
 
 /** 質問（item/tool/requestUserInput）を出すターン。回答を本文にして返す。 */
@@ -583,6 +641,9 @@ async function handle(method, params) {
 
     case "initialize":
       record({ method, args: process.argv.slice(2) });
+      // 本物は 2 回目の initialize に Already initialized を返すだけ（codex-cli 0.160.0。接続は無事）
+      if (initialized) throw new RpcError("Already initialized", -32600);
+      initialized = true;
       return { userAgent: "fake-codex/0.0.0" };
 
     case "thread/start": {
@@ -660,6 +721,8 @@ async function handle(method, params) {
         : text.startsWith("question") ? runQuestionTurn(t, turnId)
         : text.startsWith("subagent-slow") ? runSubagentTurn(t, turnId, { slow: true })
         : text.startsWith("subagent") ? runSubagentTurn(t, turnId)
+        : text.startsWith("gate:") ? runGateTurn(t, turnId, text)
+        : text.startsWith("bgterm") ? runBgTermTurn(t, turnId, text)
         : text.startsWith("reject") ? runRejectTurn(t, turnId, text)
         : text.startsWith("computer:") ? runComputerTurn(t, turnId, text)
         : runTurn(t, turnId, text);
@@ -727,6 +790,18 @@ async function handle(method, params) {
     }
 
     case "fake/hooks": return { launch: LAUNCH_HOOKS };
+    // 裏の端末の一覧と停止（codex-cli 0.160.0。要素は { itemId, processId, command, cwd, osPid, cpuPercent, rssKb }）
+    case "thread/backgroundTerminals/list":
+      return { data: [...terminals.values()].filter((x) => x.threadId === params?.threadId)
+        .map(({ itemId, processId, command, cwd }) => ({ itemId, processId, command, cwd, osPid: null, cpuPercent: null, rssKb: null })), nextCursor: null };
+    case "thread/backgroundTerminals/terminate": {
+      const hit = [...terminals.values()].find((x) => x.threadId === params?.threadId && x.processId === String(params?.processId));
+      if (!hit) return { terminated: false };
+      terminals.delete(hit.itemId);
+      setTimeout(() => notify("item/completed", { threadId: hit.threadId, turnId: hit.turnId, completedAtMs: Date.now(),
+        item: { id: hit.itemId, type: "commandExecution", command: hit.command, commandActions: [], cwd: hit.cwd, status: "failed", processId: hit.processId, source: "unifiedExecStartup", aggregatedOutput: "", exitCode: null } }), 20);
+      return { terminated: true };
+    }
     case "thread/unsubscribe": {
       const gone = threads.get(params?.threadId);
       // FAKE_CODEX_CONTROL のファイルに sticky があれば、外したと答えてもロードしたまま（接続先の変更を無視する本物の場面の再現）。

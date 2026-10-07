@@ -174,9 +174,31 @@ export class HolderClient extends EventEmitter {
     return true;
   }
 
-  /** 子を起こさせる。policy は 'claude-control' | 'jsonrpc' | 'none'。env は子の環境変数の全部（保持役の環境は渡さない）。出力は out・exit の出来事で届く */
-  spawn({ id, command, args = [], cwd, env, policy = 'none', label = null }) {
-    return this.send({ t: 'spawn', id, command, args, cwd, env, framing: 'lines', policy, label });
+  /**
+   * 複数の依頼を 1 回の書き込みで送る。プロセスの終わりの間際（process.exit の直前）に使う: 続けて write すると、前の書き込みが終わるまで後のものが待たされ、
+   * 終わる前に最初の 1 つしか出ないことがある（Windows の名前付きパイプ）。送れたら true
+   */
+  sendBatch(frames) {
+    const socket = this.socket;
+    if (!this.connected || !socket || socket.destroyed || !socket.writable) return false;
+    let text = '';
+    for (const frame of frames) {
+      try {
+        const line = `${encodeLine(frame)}
+`;
+        if (Buffer.byteLength(line) - 1 <= this.options.maxFrameBytes) text += line;
+      } catch (error) { this.options.log(`unsendable frame: ${error?.message ?? error}`); }
+    }
+    if (text) socket.write(text);
+    return true;
+  }
+
+  /**
+   * 子を起こさせる。policy は 'claude-control' | 'jsonrpc' | 'none'。env は子の環境変数の全部（保持役の環境は渡さない）。出力は out・exit の出来事で届く。
+   * keepMs: 親が居ない状態がこれだけ続いたら、保持役が子を木ごと止める（終わらない子の保険。古い保持役は知らない欄で、読み捨てる）
+   */
+  spawn({ id, command, args = [], cwd, env, policy = 'none', label = null, keepMs = 0 }) {
+    return this.send({ t: 'spawn', id, command, args, cwd, env, framing: 'lines', policy, label, ...(keepMs > 0 ? { keepMs } : {}) });
   }
   /** 既存の子に付ける。from（既定は ack の次）から記録を流し直す。答えは子の状態。控えの渡し直し（redelivered の out）と記録の続きが、その後に続く */
   attach(id, { from } = {}) {

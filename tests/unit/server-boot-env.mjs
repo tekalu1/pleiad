@@ -17,6 +17,7 @@ import { mcpTransportConfig } from '../../core/context-runtime.mjs';
 import { runHostShell } from '../../core/host-shell.mjs';
 import { linkFilePath } from '../../core/main-link.mjs';
 import { RUN_DIR } from '../../core/runtime-use.mjs';
+import { ensureHolder, connectHolder } from '../../core/holder/client.mjs';
 import { startServer, ROOT } from '../lib/server.mjs';
 import { serverBaseEnv } from '../lib/inherited-env.mjs';
 import { open } from '../lib/ws-client.mjs';
@@ -31,6 +32,13 @@ const { stableCliEnv } = require('../../desktop/runtime.cjs');
 // 子へ渡すために main が付けるもの（外さない）
 const FOR_CHILDREN = new Set(['PATH', 'PLEIAD_CLI_EXEC', 'PLEIAD_CLI_SCRIPT', 'PLEIAD_CLI_ELECTRON']);
 const leaked = (names) => names.filter(isBootEnvName);
+const alive = pid => { try { process.kill(pid, 0); return true; } catch (error) { return error.code === 'EPERM'; } };
+/** 保持役が終わるのを待つ（上限 10 秒。過ぎたら止める） */
+async function waitGone(pid) {
+  const end = Date.now() + 10_000;
+  while (alive(pid) && Date.now() < end) await new Promise(resolve => setTimeout(resolve, 50));
+  if (alive(pid)) { try { process.kill(pid); } catch { /* 既に終わっている */ } }
+}
 
 // 起動用の変数を一通り付けた env（値は偽物。実行場所は一時ディレクトリ）
 const bootValues = (scratch) => ({
@@ -38,6 +46,7 @@ const bootValues = (scratch) => ({
   AGENT_HOST_SYSTEM_LOCALE: 'en', AGENT_HOST_SERVER_LOG: path.join(scratch, 'server.log'),
   AGENT_HOST_RUNTIME_ROOT: path.join(scratch, 'runtime'), AGENT_HOST_RUNTIME_KEY: 'test-key',
   AGENT_HOST_RUNTIME_RESOURCES: path.join(scratch, 'resources'), AGENT_HOST_RUNTIME_DIR: path.join(scratch, 'runtime-dir'),
+  AGENT_HOST_SHELL_HOLDER: 'on',
 });
 
 export default async function (t) {
@@ -90,6 +99,8 @@ export default async function (t) {
     const names = JSON.parse(/ENV=(\[.*\])/.exec(shell.stdout)?.[1] ?? 'null');
     t.ok('`!` の行のシェル（runHostShell）に入らない', Array.isArray(names) && names.length > 0 && leaked(names).length === 0, JSON.stringify(Array.isArray(names) ? leaked(names) : shell.stdout + shell.stderr));
   } finally {
+    // 外した値（bootEnv が読む）を空に戻してから env を戻す。残すと、同じプロセスで後に走る本が置き場のある起動と取り違える（shell-held の切り替え）
+    takeBootEnv(process.env);
     for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
   }
 
@@ -107,6 +118,10 @@ export default async function (t) {
   delete values.AGENT_HOST_PORT;   // startServer が 0 を渡す
   delete values.AGENT_HOST_TOKEN;
   await fs.mkdir(values.AGENT_HOST_RUNTIME_ROOT, { recursive: true });
+  // 実行場所の置き場があるので `!` の行は保持役の子に載る（無停止の更新 段階 3）。保持役はテストが先に起こし（detached）、終わりに止める
+  // （サーバーが起こした保持役は、止めるまで実行場所のファイルを持ち、一時ディレクトリを消せない）
+  const holder = await ensureHolder({ dataDir, root: values.AGENT_HOST_RUNTIME_ROOT, mode: 'detached', idleMs: 20_000, timeoutMs: 20_000 });
+  holder.client.close();
   const server = await startServer({
     env: { ...values, AGENT_HOST_BACKENDS: 'fake,codex', AGENT_HOST_CODEX_BIN: `node "${codexWrapper}"`, FAKE_CODEX_LOG: path.join(scratch, 'codex.log') },
     dataDir, timeoutMs: 60_000,
@@ -132,6 +147,10 @@ export default async function (t) {
   } finally {
     await c.close?.();
     await server.stop();
+    const probe = await connectHolder({ dataDir, root: values.AGENT_HOST_RUNTIME_ROOT }).catch(() => null);
+    probe?.shutdown();
+    probe?.close();
+    await waitGone(holder.pid);
     await fs.rm(scratch, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }).catch(() => {});
   }
 }

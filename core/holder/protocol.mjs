@@ -5,7 +5,7 @@
 //   親 -> 保持役                                              保持役 -> 親
 //   hello   { secret, protocol: [min, max], role: 'server', pid, appVersion }   welcome { protocol, generation, range, appVersion, pid, children: [<子の状態>], stash }
 //                                                                    reject  { reason: 'protocol', range, generation, appVersion, pid }（秘密が合ったうえで版が合わないときだけ。秘密が合わなければ何も返さず切る）
-//   spawn   { id, command, args, cwd, env, framing: 'lines', policy, label }    out     { id, seq, line, redelivered? }（記録の 1 行。通番は子ごとに 1 から）
+//   spawn   { id, command, args, cwd, env, framing: 'lines', policy, label, keepMs? }  out     { id, seq, line, redelivered? }（記録の 1 行。通番は子ごとに 1 から。keepMs = 親が居ない間の保険）
 //   attach  { id, from? }  既存の子に付ける。from の既定は acked + 1       err     { id, chunk }（stderr のかたまり）
 //   write   { id, data }  / end { id } / kill { id, tree? }                 exit    { id, code, signal, error? }（その子の out を全部流した後に 1 回）
 //   ack     { id, seq }  アプリのループで処理し終えた最後の行               overflow{ id, reason: 'record' | 'line', first?, bytes? }（記録から落ちた分・長すぎて捨てた行）

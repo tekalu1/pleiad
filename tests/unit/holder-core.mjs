@@ -1,7 +1,7 @@
 // ターンの保持役の本体（core/holder/holder.mjs・client.mjs。無停止の更新 段階 2 の 2a）。同じプロセスに保持役を立て、本物の子（偽の CLI）を起こす。
 // 起こす→最初の書き込み・切断と付け直し（stdin を閉じない・通番の続き）・答えていない依頼の控えの渡し直し（claude-control は mcp_message と elicitation だけ・jsonrpc・取り消し）・
 // stdout を読まない親でも子が詰まらない（3 MB）・detach の後は write・end・kill を転送しない・行の途中の書き込みは捨てる・記録の上限（truncated）・印と ack の捨て方・
-// 終わり方（最後の行・終了コード・起こせない・stderr）・長すぎる行・木ごとの強制終了・後から来た親が勝つ・札と預かり物・idle
+// 終わり方（最後の行・終了コード・起こせない・stderr）・長すぎる行・木ごとの強制終了・後から来た親が勝つ・札と預かり物・idle・keepMs（親が居ない間の保険）
 import { startHolder, fakeChild, waitFor, sleep, isAlive, rawConnect, hello } from '../lib/holder-harness.mjs';
 
 export const name = 'holder-core';
@@ -327,6 +327,28 @@ export default async function (t) {
       await waitFor(() => b.events.exit.length === 1, 8000, 'i1 exit');
       b.client.close();
       t.ok('idle: 子が全部終わり親も居なければ、idleMs の後に終わる（1 回）', await waitFor(() => idle >= 1, 3000, 'idle after').then(() => true, () => false));
+    } finally { await h.stop(); }
+  }
+
+  // ---- keepMs: 親が居ない状態が続いたら、その子を木ごと止める（終わらない子の保険。Codex の共有の app-server）
+  {
+    const h = await startHolder();
+    try {
+      const a = await h.connect();
+      a.client.spawn({ ...fakeChild('k1', 'echo'), keepMs: 700 });
+      a.client.spawn(fakeChild('k2', 'echo'));
+      await waitFor(() => a.events.lines('k1').some(l => l.ready) && a.events.lines('k2').some(l => l.ready), 8000, 'k1 k2 ready');
+      a.client.close();
+      await waitFor(() => !h.holder.snapshot().connected, 8000, 'a gone');
+      // 親が戻れば止めない（引き継ぎ・落ちた後の起こし直しの間は数秒）
+      await sleep(350);
+      const b = await h.connect();
+      await sleep(1000);
+      t.ok('keepMs: 親が戻れば止めない（待つ時間は親が居ない間だけ数える）', childOf(h, 'k1').alive && childOf(h, 'k2').alive);
+      b.client.close();
+      await waitFor(() => !h.holder.snapshot().connected, 8000, 'b gone');
+      await waitFor(() => childOf(h, 'k1').alive === false, 8000, 'k1 stopped');
+      t.ok('keepMs: 親が居ない状態が続くと、その子だけを木ごと止める（keepMs の無い子は残る）', childOf(h, 'k1').alive === false && childOf(h, 'k2').alive === true);
     } finally { await h.stop(); }
   }
 }

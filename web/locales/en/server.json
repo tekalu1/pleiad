@@ -589,6 +589,7 @@
       "appServerDied": "codex app-server exited: {{why}}",
       "timeout": "codex {{method}} did not respond within {{ms}} ms.",
       "notConnected": "Not connected to codex app-server.",
+      "handedOff": "The app-server was handed over to the new server, so this server can no longer use it",
       "noHandler": "Nothing is listening for {{method}}.",
       "hooksList": "Codex's hook list (hooks/list) was incomplete, so the message was not sent (the hooks to turn off could not be decided): {{detail}}",
       "hooksUnsubscribeFailed": "Could not switch how hooks are passed (codex could not unload the conversation: {{reason}}). Continuing would run hooks twice or not at all, so the message was not sent. Stop any terminal running in the background, then send again",
