@@ -29,8 +29,8 @@ const SETTLE_WAIT_MS = 5_000;
 const lineOf = value => `${JSON.stringify(value)}\n`;
 const parse = line => { try { const value = JSON.parse(line); return value && typeof value === 'object' ? value : null; } catch { return null; } };
 
-/** 保持役に載せるか。`off` なら載せない。それ以外は実行場所の置き場があるとき（既定 on） */
-export const shellHolderEnabled = (env = process.env) => String(bootEnv('AGENT_HOST_SHELL_HOLDER') ?? env.AGENT_HOST_SHELL_HOLDER ?? '').toLowerCase() !== 'off'
+/** 保持役に載せる切り替え。既定は載せる（実行場所の置き場があるとき）。AGENT_HOST_SHELL_HOLDER=off で載せない（戻し道） */
+export const shellHolderEnabled = (env = process.env) => String(bootEnv('AGENT_HOST_SHELL_HOLDER') ?? env.AGENT_HOST_SHELL_HOLDER ?? '').trim().toLowerCase() !== 'off'
   && Boolean(bootEnv('AGENT_HOST_RUNTIME_ROOT'));
 
 /** 走っている行の札 */
