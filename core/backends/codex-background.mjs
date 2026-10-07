@@ -170,6 +170,23 @@ export function createTerminalTracker() {
       return { changed, understood: true };
     },
 
+    /**
+     * `thread/backgroundTerminals/list` の `data` から、裏の端末を作り直す（保持役の子の app-server を引き継いだ新しいサーバー。無停止の更新 段階 3）。
+     * 要素の形は { itemId, processId, command, cwd, ... }（codex-cli 0.160.0 を実測。docs/zero-downtime-update/stage3-codex.md）。出力は付け直した後の分から。
+     * 作り直した件数を返す
+     */
+    restore(entries) {
+      let count = 0;
+      for (const e of Array.isArray(entries) ? entries : []) {
+        const id = typeof e?.itemId === "string" && e.itemId ? e.itemId : null;
+        if (!id || bg.has(id)) continue;
+        bg.set(id, { id, type: "commandExecution", status: "inProgress", command: String(e.command ?? ""), cwd: String(e.cwd ?? ""),
+          processId: e.processId == null ? null : String(e.processId), aggregatedOutput: "" });
+        count += 1;
+      }
+      return count;
+    },
+
     /** 全部消す。消したものがあれば true。 */
     clear() {
       live.clear();

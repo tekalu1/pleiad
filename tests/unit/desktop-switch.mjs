@@ -393,6 +393,10 @@ export default async function (t) {
     const asBlockers = sw.switchBlockers(blockedWork(), { handover: true });
     t.ok('引き継ぎ: 待つ作業は held でないものだけ（count は blocking。保持役に載ったターンとその承認待ちは待たない）', asBlockers.count === 1 && asBlockers.items.length === 1 && asBlockers.items[0].sessionId === 'x1' && asBlockers.handover.held === 2, JSON.stringify(asBlockers));
     t.ok('引き継ぎでなければ今までどおり全部数える（held の印は見ない）', sw.switchBlockers(blockedWork()).count === 3 && sw.switchBlockers(blockedWork()).items.length === 3);
+    // 保持役の子の app-server が持つ Codex の裏の端末（held: 引き継ぎで止まらない）は、止まるものとして聞かない（段階 3）
+    const bgWork = () => idle({ background: [{ sessionId: 'e', backend: 'codex', held: true, tasks: [{ id: 'b1', label: 'vite' }] }, { sessionId: 'f', backend: 'codex', tasks: [{ id: 'b2', label: 'tsc -w' }] }], handover: { v: 1, holder: 1, held: 0, blocking: 0 } });
+    t.ok('引き継ぎ: 保持役に載った Codex の裏の端末（held）は止まるものに入れない。載っていない裏の作業は止まるもの', sw.switchBlockers(bgWork(), { handover: true }).stoppers.map(x => x.id).join() === 'b2', JSON.stringify(sw.switchBlockers(bgWork(), { handover: true }).stoppers));
+    t.ok('引き継ぎでなければ held の印は見ず、裏の端末は全部止まるもの', sw.switchBlockers(bgWork()).stoppers.map(x => x.id).join() === 'b1,b2');
     t.ok('引き継ぎで切り替えるか: 新しい版の handover の範囲に旧サーバーの版が入る・旧サーバーが載せている保持役の世代が新しい版の範囲に入る',
       sw.handoverMode(heldWork(), { handover: [1, 2], holder: [1, 1] }) === true
       && sw.handoverMode(heldWork(), { handover: [2, 3], holder: [1, 1] }) === false

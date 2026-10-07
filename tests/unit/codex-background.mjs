@@ -156,6 +156,25 @@ export default async function (t) {
     t.ok("空で呼んでも変わったとは言わない", !bg.clear());
   }
 
+  // ---- 7b. 保持役の子の app-server を引き継いだ新しいサーバー（無停止の更新 段階 3）: thread/backgroundTerminals/list の要素から追跡器を作り直す
+  {
+    const bg = createTerminalTracker();
+    const n = bg.restore([
+      { itemId: "call_a", processId: "29667", command: "npm run dev", cwd: "D:\work", osPid: null, cpuPercent: null, rssKb: null },
+      { itemId: "call_b", processId: 29668, command: "python -m http.server", cwd: "D:\work" },
+      { processId: "1" },        // itemId の無い要素は数えない
+      null,
+    ]);
+    t.ok("一覧の要素から裏の端末を作り直す（itemId の無い要素は数えない）", n === 2 && bg.size === 2 && ids(bg) === "call_a,call_b", ids(bg));
+    t.ok("processId は文字列にそろえ、止める（terminate）に使える", bg.processIdOf("call_a") === "29667" && bg.processIdOf("call_b") === "29668");
+    t.ok("作り直した端末の詳細（コマンド・作業場所）が出る", bg.detail("call_a")?.command === "npm run dev" && bg.detail("call_a")?.cwd === "D:\work");
+    t.ok("同じ itemId を 2 回戻しても重ならない", bg.restore([{ itemId: "call_a" }]) === 0 && bg.size === 2);
+    // 引き継いだ後に遅れて届く item/completed（端末を起こしたターンの turnId のまま）で、結果が出て一覧から消える
+    const done = { ...cmd("call_a", "npm run dev", { processId: "29667", status: "failed", exitCode: null }), status: "failed" };
+    const r = bg.observe("item/completed", { threadId: "th", turnId: "old-turn", item: done });
+    t.ok("作り直した端末も、遅れて届く item/completed で引かれて結果が出る", r.changed && r.finished?.id === "call_a" && bg.size === 1, ids(bg));
+  }
+
   // ---- 8. 見出しの整え方
   t.ok("空のコマンドにも見出しを付ける", terminalLabel("") === "バックグラウンド端末");
   t.ok("改行と連続する空白は 1 つに畳む", terminalLabel("npm  run\n  dev") === "npm run dev");

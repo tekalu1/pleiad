@@ -6,6 +6,8 @@
 //   - 答えていない依頼の控え（policy）: claude-control は control_request を request_id で控え、付け直した親へ渡し直すのは mcp_message と elicitation だけ。
 //     jsonrpc は id と method を持つ依頼を控える。none は行だけ
 //   - detach の後は、その親からの write・end・kill を転送しない。親が切れても子の stdin は閉じない。親の書き込みが行の途中で切れたら、その行は捨てる
+//   - spawn の keepMs（任意）: 親が居ない状態が keepMs 続いたら、その子を木ごと止める。ターンが終われば終わる子（Claude の CLI）と違い、終わらない子
+//     （Codex の共有の app-server）が、Pleiad を終えた後も保持役と一緒に残り続けないための保険
 // やらないこと: エージェントのプロトコルの解釈（上の見分け以外）・JSON-RPC の id の付け替え・initialize の答え・HTTP・データ置き場への書き込み。
 import net from 'node:net';
 import fs from 'node:fs';
@@ -180,9 +182,20 @@ export function createHolder({ pipe, secret = crypto.randomBytes(32).toString('h
     if (c.bytes > maxRecordBytes) trim(c);
   }
 
+  /** 親が居ない間の保険（spawn の keepMs）。親が付くか、子が終われば外れる */
+  function armKeep(c) {
+    clearTimeout(c.keepTimer);
+    c.keepTimer = null;
+    if (!c.keepMs || c.exit || current) return;
+    c.keepTimer = setTimeout(() => { log(`child ${c.id}: no parent for ${c.keepMs} ms; stopping it`); killChild(c, true); }, c.keepMs);
+    c.keepTimer.unref?.();
+  }
+  const armKeepAll = () => { for (const c of children.values()) armKeep(c); };
+
   function finish(c) {
     if (c.exit) return;
     clearTimeout(c.exitTimer);
+    clearTimeout(c.keepTimer);
     c.reader.push(Buffer.from('\n'));    // 改行の来なかった最後の行
     c.exit = c.exitInfo ?? { code: null, signal: null };
     log(`child ${c.id}: exited (code ${c.exit.code}, signal ${c.exit.signal}${c.exit.error ? `, ${c.exit.error}` : ''})`);
@@ -196,6 +209,7 @@ export function createHolder({ pipe, secret = crypto.randomBytes(32).toString('h
     const c = {
       id, label: f.label ?? null, policy: f.policy, command: path.basename(String(f.command)), proc: null, pid: null, seq: 0, entries: [], start: 0, bytes: 0, acked: 0,
       marks: new Map(), truncated: false, pending: new Map(), exit: null, exitInfo: null, exitTimer: null, stderr: '', reader: null, resolveDone: null,
+      keepMs: Number.isFinite(f.keepMs) && f.keepMs > 0 ? f.keepMs : 0, keepTimer: null,
     };
     c.done = new Promise(resolve => { c.resolveDone = resolve; });
     c.reader = createLineReader({
@@ -237,6 +251,7 @@ export function createHolder({ pipe, secret = crypto.randomBytes(32).toString('h
     // exit は stdout を読み終える前に来ることがある。close（stdio が全部閉じた）か、孫が stdout を握っているときは猶予の後に締める
     proc.on('exit', (code, signal) => { c.exitInfo = { code, signal }; c.exitTimer = setTimeout(() => finish(c), exitGraceMs); c.exitTimer.unref?.(); });
     proc.on('close', () => finish(c));
+    armKeep(c);
     proc.on('error', error => {
       if (c.pid) return void log(`child ${id}: ${error?.message ?? error}`);   // 起こした後の失敗（kill の失敗など）
       c.exitInfo = { code: null, signal: null, error: error?.code ?? String(error?.message ?? error) };
@@ -403,6 +418,7 @@ export function createHolder({ pipe, secret = crypto.randomBytes(32).toString('h
         current = null;
       }
       current = conn;
+      armKeepAll();
       conn.peer = { pid: hello.pid, appVersion: typeof hello.appVersion === 'string' ? hello.appVersion : '' };
       send(conn, { t: 'welcome', protocol: Math.min(hello.protocol[1], range[1]), ...base, children: [...children.values()].map(snapshotOf), stash });
       log(`parent connected (pid ${conn.peer.pid}, version ${conn.peer.appVersion || '?'})`);
@@ -417,7 +433,7 @@ export function createHolder({ pipe, secret = crypto.randomBytes(32).toString('h
       reader.reset();
       conns.delete(conn);
       conn.subs.clear();      // 親の途中の行（inbuf）はここで捨てる。子の stdin は閉じない
-      if (current === conn) { current = null; log('parent disconnected'); checkIdle(); }
+      if (current === conn) { current = null; log('parent disconnected'); armKeepAll(); checkIdle(); }
     });
   }
 
