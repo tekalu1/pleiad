@@ -221,6 +221,8 @@ GitHub Release の prerelease 属性とアプリの先行版設定で選別し�
 ## リリース手順
 
 リリースごとに [外部エージェントの版の表](multi-backend.md#外部エージェントの版) を見直し、検証した版と非公開形式の依存を更新する。検証した版は `core/backend-shape-diagnostics.mjs` の `VERIFIED` にもあるので、両方をそろえる。
+Claude の CLI は既定で保持役に載るので（無停止の更新。[ADR 0151](adr/0151-zero-downtime-update.md)）、新しい CLI の版が出ていたら、`scripts/zero-downtime/claude/held-server.mjs` の実機の確かめ（承認待ちを A → B で付け直す）をその版でやり直す。
+載せる版の条件は `core/backends/claude-held.mjs` の `HELD_CLI_MIN_VERSION`（確かめた最も古い版。以上で同じ major を載せる）。付け直しに要る口（`pending_permission_requests` など）が無い版・合わなくなった版が出たときだけ、下限を上げるか上限を足す。
 
 ### 自己署名の配布（現在の運用）
 
