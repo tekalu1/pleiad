@@ -70,6 +70,17 @@ export default async function (t) {
     const undone = await c.cmd("listSessions");
     const u = (id) => undone.find((s) => s.id === id)?.status;
     t.ok("alone なら根を動かしても広がらない", u(root) === "進行中" && u(grand) === "レビュー待ち", `${u(root)} / ${u(grand)}`);
+
+    // ---- チャンネルのスレッドの状態も同じ器に数える（脇の「状態」の並べ方。channels.setThreadStatus） ----
+    const invoke = (op, args = {}) => c.cmd("invoke", { op, args });
+    const ch = await invoke("channels.create", { name: "groups-thread" });
+    const rootPost = await invoke("channels.post", { channelId: ch.id, text: "根" });
+    await invoke("channels.post", { channelId: ch.id, threadId: rootPost.id, text: "返信" });
+    await invoke("channels.setThreadStatus", { channelId: ch.id, threadId: rootPost.id, status: "スレッドだけの状態" });
+    const groups = await c.cmd("listStatuses");
+    t.ok("スレッドだけに付いた状態も状態の一覧に出る", groups.some((g) => g.status === "スレッドだけの状態" && g.count === 1), JSON.stringify(groups.map((g) => g.status)));
+    const index = await invoke("channels.threads", { channelId: ch.id });
+    t.ok("スレッドの索引にも状態が出る", index.threads[0]?.status === "スレッドだけの状態" && index.totals[ch.id] === 1, JSON.stringify(index));
   } finally {
     c.close();
     await server.stop().catch(() => {});

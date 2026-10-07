@@ -28,6 +28,8 @@ const WARN = ["M12 3.5l9.5 16.5h-19z", "M12 10v4.5M12 17.2v.3"];
 // モデルのアイコン（チップの形を 3 つそろえるため。2026-09-23 に足した）
 const MODEL = ["M8 6h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2z", "M10 3v3M14 3v3M10 18v3M14 18v3M3 10h3M3 14h3M18 10h3M18 14h3"];
 const CARET = "M7 10l5 5 5-5";
+/** チップのアイコン（作業フォルダー・モデル・承認モード。スレッドの欄も同じ絵を使う。web/channels/thread-composer.mjs） */
+export const chipGlyph = (kind) => glyph(...(kind === "cwd" ? [FOLDER] : kind === "model" ? MODEL : kind === "danger" ? WARN : [SHIELD]));
 
 // git のブランチの線画（円 3 つと線。glyph は path だけなので別に作る）
 function branchGlyph() {
@@ -144,13 +146,13 @@ export function panel(chip, pop, { align = "left", render, onShow, onHide, width
   return self;
 }
 
-// 面の外を押したら閉じる。チップ自身は click で開け閉めするので除く
-document.addEventListener("pointerdown", (e) => {
+// 面の外を押したら閉じる。チップ自身は click で開け閉めするので除く（画面の無い所で読み込まれても落ちない: 単体テストが部品を読む）
+globalThis.document?.addEventListener?.("pointerdown", (e) => {
   if (!openPanel) return;
   if (openPanel.pop.contains(e.target) || openPanel.chip.contains(e.target)) return;
   openPanel.hide(false);
 }, true);
-window.addEventListener("resize", () => openPanel?.place());
+globalThis.addEventListener?.("resize", () => openPanel?.place());
 
 /** 一覧の行。main（名前）+ sub（補足）+ right（札・時刻）。選ばれていれば ✓ */
 function row({ on, main, sub, right, tag, mono, danger, onPick, title, key, disabled, badge }) {
@@ -485,11 +487,12 @@ export function renderMode({ pop, target: d, on, hide }) {
  * @param {(command:string, args?:object) => Promise<any>} o.cmd
  * @param {() => object} o.get 今の値と候補（client.mjs の状態を読む）
  * @param {object} o.on 変更を返す口 { cwd, backend, model, effort, account, mode }。openModel はモデルの面を開いたとき
+ * @param {{ chips?: { cwd, model, mode }, pops?: { cwd, model, mode } }} [o.els] チップと面の要素。省けば Chats の入力欄の固定の id
  */
-export function setupComposerControls({ cmd, get, on }) {
+export function setupComposerControls({ cmd, get, on, els = {} }) {
   const $ = (id) => document.getElementById(id);
-  const chips = { cwd: $("cwdChip"), model: $("modelChip"), mode: $("modeChip") };
-  const pops = { cwd: $("cwdPop"), model: $("modelPop"), mode: $("modePop") };
+  const chips = els.chips ?? { cwd: $("cwdChip"), model: $("modelChip"), mode: $("modeChip") };
+  const pops = els.pops ?? { cwd: $("cwdPop"), model: $("modelPop"), mode: $("modePop") };
 
   // チップの骨組み（アイコン + 字 + ▾）。3 つとも同じ形（docs/design-system.md「入力欄の設定」）
   const cwdName = el("span", "v");
@@ -793,7 +796,15 @@ export function setupComposerControls({ cmd, get, on }) {
     cwd.style.minWidth = ""; mdl.style.minWidth = "";
   }
   window.addEventListener("resize", fitRow);
-  if (typeof ResizeObserver === "function") new ResizeObserver(() => fitRow()).observe(chips.cwd.parentElement);
+  const rowObserver = typeof ResizeObserver === "function" ? new ResizeObserver(() => fitRow()) : null;
+  rowObserver?.observe(chips.cwd.parentElement);
 
-  return { paint, fit: fitRow, close: () => openPanel?.hide(false), panels: { folder, model, mode }, typeCwd };
+  /** 入力欄を外すとき。開いている面がこの入力欄のものなら閉じ、行の見張りを外す */
+  function destroy() {
+    window.removeEventListener("resize", fitRow);
+    rowObserver?.disconnect();
+    if (openPanel && Object.values(pops).includes(openPanel.pop)) openPanel.hide(false);
+  }
+
+  return { paint, fit: fitRow, close: () => openPanel?.hide(false), panels: { folder, model, mode }, typeCwd, destroy };
 }

@@ -141,6 +141,11 @@ CREATE TABLE IF NOT EXISTS notifications (
 CREATE INDEX IF NOT EXISTS notifications_at ON notifications (at);
 CREATE INDEX IF NOT EXISTS notifications_session ON notifications (session_id);
 CREATE INDEX IF NOT EXISTS notifications_channel ON notifications (channel_id);
+CREATE TABLE IF NOT EXISTS drafts (
+  owner_key TEXT PRIMARY KEY,
+  data TEXT NOT NULL,
+  at REAL NOT NULL
+) WITHOUT ROWID;
 `;
 const lateEnsured = new WeakSet();
 function ensureLateTables(db) {
@@ -594,6 +599,16 @@ export function deletedNativeTable(db) {
 // 欠けても失った記録は無い（飛び先の会話・投稿の側が正本）ので後から足す表（LATE_TABLES_SQL）。形式番号は上げない
 const NOTIFICATION_COLUMNS = 'seq, id, dedupe_key, kind, at, session_id, channel_id, read_at, resolved_at, data';
 const notificationRow = (r) => ({ seq: Number(r.seq), id: r.id, dedupeKey: r.dedupe_key, kind: r.kind, at: r.at, sessionId: r.session_id, channelId: r.channel_id, readAt: r.read_at, resolvedAt: r.resolved_at, data: JSON.parse(r.data) });
+// ---- 入力欄の書きかけ（スレッドの欄。ADR 0157 の F35）。持ち主（スレッド）ごとに 1 行。ほかの端末でも続きを書ける ----
+export function draftTable(db) {
+  ensureLateTables(db);
+  return {
+    get(key) { const row = prepared(db, 'SELECT data, at FROM drafts WHERE owner_key = ?').get(key); return row ? { ...JSON.parse(row.data), at: row.at } : null; },
+    put(key, data, at) { prepared(db, 'INSERT INTO drafts (owner_key, data, at) VALUES (?, ?, ?) ON CONFLICT(owner_key) DO UPDATE SET data = excluded.data, at = excluded.at').run(key, jsonOf(data), at); },
+    remove(key) { prepared(db, 'DELETE FROM drafts WHERE owner_key = ?').run(key); },
+  };
+}
+
 export function notificationTable(db) {
   ensureLateTables(db);
   /** kinds が空なら全部。['a','b'] → "AND kind IN (?,?)" */

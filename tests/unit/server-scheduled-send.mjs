@@ -123,6 +123,27 @@ export default async function (t) {
     t.ok('予定のある未送信の会話は消せない', await c.cmd('deleteUnsentSession', { sessionId: sleeper }).then(() => false, () => true));
     const running = await c.cmd('running');
     t.ok('終了の確認に送信予定の件数と次の時刻が載る', running.scheduled.send === 2 && Number.isFinite(running.scheduled.nextSendAt) && running.scheduled.held === 0, JSON.stringify(running.scheduled));
+
+    // ---- スレッドへの返信の予定（channels.schedulePost。kind 'post'。ADR 0157）と、clientId で二重に投稿しない
+    const ch = await op('channels.create', { name: 'sched-post' });
+    const root = await op('channels.post', { channelId: ch.id, text: '根' });
+    const once = await op('channels.post', { channelId: ch.id, threadId: root.id, text: '一度だけ', clientId: 'client-0000001' });
+    const twice = await op('channels.post', { channelId: ch.id, threadId: root.id, text: '一度だけ', clientId: 'client-0000001' });
+    const replies = async () => (await op('channels.read', { channelId: ch.id, threadId: root.id })).posts.filter((p) => p.threadId === root.id);
+    t.ok('同じ clientId の投稿は 2 つ目を作らず、最初の投稿を返す', once.id === twice.id && (await replies()).length === 1);
+    const postAt = Date.now() + 1500;
+    const placedPost = await op('channels.schedulePost', { channelId: ch.id, threadId: root.id, text: 'あとで送る返信', at: postAt, clientId: 'client-0000002' });
+    t.ok('返信の予定を置くと id と時刻が返り、予定の一覧に kind post で載る', placedPost.id === 'post:client-0000002'
+      && (await op('sessions.schedules', {})).some((r) => r.kind === 'post' && r.threadId === root.id && r.args.prompt === 'あとで送る返信'));
+    t.ok('時刻の前は投稿しない', (await replies()).length === 1);
+    t.ok('時刻が来ると人の投稿として 1 回だけ投稿される', await until(async () => (await replies()).some((p) => p.text === 'あとで送る返信' && p.author.kind === 'human' && p.clientId === 'client-0000002')));
+    t.ok('投稿したら予定の一覧から消える', !(await op('sessions.schedules', {})).some((r) => r.id === 'post:client-0000002'));
+    await op('channels.schedulePost', { channelId: ch.id, threadId: root.id, text: '取り消す返信', at: Date.now() + 5 * HOUR, clientId: 'client-0000003' });
+    const takenPost = await op('sessions.cancelSchedule', { id: 'post:client-0000003' });
+    t.ok('返信の予定も取り消すと取り出して返す（入力欄へ戻せる）', takenPost.cancelled && takenPost.entry?.args.prompt === '取り消す返信');
+    await op('channels.schedulePost', { channelId: ch.id, threadId: root.id, text: '今すぐの返信', at: Date.now() + 5 * HOUR, clientId: 'client-0000004' });
+    await op('sessions.sendScheduledNow', { id: 'post:client-0000004' });
+    t.ok('返信の予定も「今すぐ送る」で投稿できる', (await replies()).some((p) => p.text === '今すぐの返信'));
   } finally {
     c.close(); await server.stop();
     if (path.resolve(scratch).startsWith(path.resolve(os.tmpdir()) + path.sep)) await fs.rm(scratch, { recursive: true, force: true });

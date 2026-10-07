@@ -560,5 +560,18 @@ export function createSessionSearch({ listSessions, readStored = async () => nul
 
   function stop() { stopped = true; waiting.length = 0; settleIdle(); }
 
-  return { search, status, start, ingest, refresh, idle, stop };
+  /**
+   * 会話の頭（一時チャットの流れの根の投稿。core/ops/sessions.mjs の sessions.roots）: 最初の人の発言・発言の数・最後の発言の時刻。
+   * まだ写していない会話は null を返し、裏で読み込みを頼む（読めたら次に引いたときに出る）
+   */
+  function outline(id) {
+    const c = copies.get(id);
+    if (!c) { if (!failed.has(id)) request(id); return null; }
+    const first = c.msgs.find((m) => m.role === 'user' && m.text) ?? null;
+    let lastAt = null;
+    for (const m of c.msgs) if (m.at && (!lastAt || m.at > lastAt)) lastAt = m.at;
+    return { first: first ? { uuid: first.uuid, at: first.at, text: first.text } : null, count: c.msgs.length, lastAt };
+  }
+
+  return { search, status, start, ingest, refresh, idle, stop, outline };
 }

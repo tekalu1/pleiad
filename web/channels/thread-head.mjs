@@ -1,6 +1,6 @@
 // スレッドの見出し（.th-top）。左に「# チャンネル名 › スレッドの題」、右に Chats の頭と同じ入口（目次・git・内蔵ブラウザー）と閉じる ✕。
 // 左にチャンネルの流れが見えている間（split）はチャンネル名を出さず「› スレッドの題」だけ（CSS が .deck[data-deck] で出し分ける）。
-// 入口は右パネルの道具: 目次はスレッドの投稿の一覧（thread-toc.mjs）、git は bot の会話の作業場所の git（既存の ply-git-open）、
+// 入口は右パネルの道具: 目次は会話と同じ目次と検索（web/conversation-toc.mjs）、git は bot の会話の作業場所の git（既存の ply-git-open）、
 // 内蔵ブラウザーは右パネルのブラウザー。どれも bot の会話（そのスレッドで最後に動いた bot）を基準にする。
 import { el, svgEl } from '../dom.mjs';
 import { t } from '../i18n.mjs';
@@ -26,8 +26,10 @@ const svgButton = (cls, label, paths) => {
  * @param {() => void} o.onClose  ✕
  * @param {() => void} o.onBack  チャンネル名（流れに戻る）
  * @param {(button: HTMLElement) => void} o.onToc  目次
+ * @param {(title: string) => void} [o.onRename]  題を変える（題を押すと欄になる。Enter で決め、Esc でやめる）
+ * @param {() => Promise<string|null>} [o.suggestTitle]  ✦ 題の候補（スレッドの bot の会話から。欄に入れて選ばせる）
  */
-export function createThreadHead({ host, onClose, onBack, onToc }) {
+export function createThreadHead({ host, onClose, onBack, onToc, onRename, suggestTitle = null }) {
   const head = el('header', 'th-top');
 
   // 脇を閉じている間の入口（流れの見出しの #chOpenSidebar と同じ働き。スレッドだけが見えているときだけ出す。CSS）
@@ -50,6 +52,52 @@ export function createThreadHead({ host, onClose, onBack, onToc }) {
   title.id = 'chThreadTitle';
   crumb.append(chan, sep, title);
   chan.onclick = onBack;
+  // 題を押すと、その場で欄になる（Chats の頭の題と同じ働き）
+  if (onRename) {
+    title.tabIndex = 0;
+    title.setAttribute('role', 'button');
+    title.classList.add('th-title-edit');
+    const edit = (value = null) => {
+      if (head.querySelector('.th-title-input')) return;
+      const input = el('input', 'th-title-input');
+      input.value = value ?? (title.title || '');
+      input.setAttribute('aria-label', t('channels:thread.rename'));
+      input.maxLength = 120;
+      let done = false;
+      const finish = (commit) => {
+        if (done) return;
+        done = true;
+        const next = input.value.trim();
+        input.replaceWith(title);
+        if (commit && next !== (title.title || '')) { title.textContent = next || title.textContent; onRename(next); }
+        title.focus({ preventScroll: true });
+      };
+      input.onkeydown = (e) => {
+        if (e.isComposing || e.keyCode === 229) return;
+        if (e.key === 'Enter') { e.preventDefault(); finish(true); }
+        else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); finish(false); }
+      };
+      input.onblur = () => finish(true);
+      title.replaceWith(input);
+      input.focus();
+      input.select();
+    };
+    title.onclick = () => edit();
+    title.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); edit(); } };
+    if (suggestTitle) {
+      const wand = el('button', 'btn btn-icon th-wand', '✦');
+      wand.type = 'button';
+      wand.title = t('session.titleWand');
+      wand.setAttribute('aria-label', t('session.titleWand'));
+      wand.onclick = async () => {
+        wand.disabled = true;
+        wand.classList.add('busy');
+        try { const next = await suggestTitle(); if (next) edit(next); }
+        finally { wand.disabled = false; wand.classList.remove('busy'); }
+      };
+      crumb.append(wand);
+    }
+  }
 
   const toc = svgButton('th-toc', t('channels:thread.entry.toc'), [TOC_PATH]);
   toc.setAttribute('aria-expanded', 'false');
@@ -110,8 +158,9 @@ export function createThreadHead({ host, onClose, onBack, onToc }) {
   return {
     el: head,
     tocButton: toc,
-    setTitle({ channel, title: text }) {
-      chan.replaceChildren(el('span', 'th-hash', '#'), document.createTextNode(channel ?? ''));
+    setTitle({ channel, home = false, title: text }) {
+      // 一時チャットの頭は # を付けない（チャンネルの名前ではなく置き場の名前）
+      chan.replaceChildren(...(home ? [] : [el('span', 'th-hash', '#')]), document.createTextNode(channel ?? ''));
       chan.title = t('channels:thread.back', { name: channel ?? '' });
       chan.setAttribute('aria-label', t('channels:thread.back', { name: channel ?? '' }));
       title.textContent = text || t('channels:thread.untitled');

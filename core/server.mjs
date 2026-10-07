@@ -55,13 +55,13 @@ import { createControlBridge, CONTROL_MCP_PATH, controlInstructions } from './op
 import { createOpsHttp, OPS_PATH } from './ops/surfaces/http.mjs';
 import { writeControlFile, removeControlFile } from './control-file.mjs';
 import { addCliToPath, mcpSetup } from './cli-launcher.mjs';
-import { parentIdOf } from './ops/sessions.mjs';
+import { parentIdOf, ROOTS_DEFAULT, ROOTS_MAX, ROOT_TEXT_MAX } from './ops/sessions.mjs';
 import * as store from "./store.mjs";
 import * as history from "./history.mjs";
 import { createMessageQueue } from "./message-queue.mjs";
 import { createSchedule } from './schedule.mjs';
 import { pollInterval, resumePlan, limitHolds, limitOpen } from './limit-resume.mjs';
-import { buildSendRow, decideFire, sendArgs, decorateScheduled, addRecord, MAX_PER_SESSION, MAX_TOTAL } from './send-schedule.mjs';
+import { buildSendRow, buildPostRow, decideFire, sendArgs, decorateScheduled, addRecord, MAX_PER_SESSION, MAX_TOTAL } from './send-schedule.mjs';
 import { createCompactionScheduler, idleCompactionGuards } from './compaction-scheduler.mjs';
 import { normalizeCompactionSettings } from './compaction-settings.mjs';
 import { mergeCompactionHistory, attachCompactSummaries } from './compaction-history.mjs';
@@ -97,6 +97,7 @@ import { createResidentPrefs, residentSignal, enabledRoutineCount } from './remo
 import { createPushNotifier } from './notify/notifier.mjs';
 import { createPresence } from './notify/presence.mjs';
 import { createNotifications } from './notifications.mjs';
+import { createDrafts } from './drafts.mjs';
 import { createNotificationSources } from './notification-sources.mjs';
 import { createNotifySettings } from './notify/settings.mjs';
 import { createFolderUploads } from './folder-uploads.mjs';
@@ -443,6 +444,8 @@ const pushNotifier = createPushNotifier({
 // 通知の一覧（ベルのボタン。ADR 0149）。DB の notifications 表。書く側は core/notification-sources.mjs（ターンの完了・承認・チャンネルの出来事から行を作る）。
 // 件数が変わったら notificationsChanged を全画面へ（リモートの端末にも届く）
 const inbox = createNotifications({ dataDir: store.dataDir, emit: event => emitGlobal({ ...event, sessionId: null }) });
+// スレッドの入力欄の書きかけのサーバーの写し（drafts.*。ADR 0157 の F35）
+const threadDrafts = createDrafts({ dataDir: store.dataDir });
 const inboxSources = createNotificationSources({
   inbox, store, viewing: sessionId => notifyPresence.viewing(sessionId), titleOf: sessionId => conversationTitleOf(sessionId),
   channels: () => botHost?.opsDeps().channels ?? null, bots: () => botHost?.opsDeps().bots ?? null,
@@ -2824,6 +2827,20 @@ async function createStatusGroup(status, actor) {
 // 操作の一覧（core/ops/）の handler へ渡す、サーバーの状態への口
 const opsApp = {
   searchSessions: (input) => sessionSearch.search(input),
+  // 一時チャットの流れ（sessions.roots）: bot の会話・委譲の子・未送信を除いた会話を新しい順に。頭は検索の写しから（会話の本文を読み直さない）
+  sessionRoots: async ({ before, limit = ROOTS_DEFAULT } = {}) => {
+    const rows = (await sessionList({ limit: 500, track: false })).filter((r) => !r.bot && !r.delegation && !r.unsent && Number.isFinite(r.lastModified))
+      .filter((r) => !before || r.lastModified < before).sort((a, b) => b.lastModified - a.lastModified);
+    const page = rows.slice(0, Math.min(limit, ROOTS_MAX));
+    return {
+      roots: page.map((r) => {
+        const o = sessionSearch.outline(r.id);
+        return { sessionId: r.id, title: r.title && r.title !== '(no title)' ? r.title : '', lastModified: r.lastModified, createdAt: r.createdAt ?? null,
+          first: o?.first ? { uuid: o.first.uuid, at: o.first.at ?? null, text: o.first.text.slice(0, ROOT_TEXT_MAX) } : null, count: o?.count ?? null };
+      }),
+      nextBefore: rows.length > page.length ? page.at(-1).lastModified : null,
+    };
+  },
   status: async () => ({ version: APP_VERSION, protocolVersion: P.PROTOCOL_VERSION, startedAt: SERVER_STARTED_AT, locale: { ...locale }, running: (await runningWork()).count }),
   // 外の AI の MCP の設定に貼る pleiad mcp（app.cliSetup。core/cli-launcher.mjs）
   cliSetup: () => mcpSetup({ dataDir: store.dataDir }),
@@ -3368,7 +3385,8 @@ async function changeModel(sessionId, model, { actor, reason, backend: given } =
   if (!(await validModel(backend, model, undefined, endpointId))) throw new OpError('INVALID', t('settings.unknownModel', { value: model }));
   const from = (await store.get(sessionId)).model ?? "";
   await store.setModel(sessionId, model);
-  if (!endpointId && who.by === 'human') await savePref("model", model, backend.id);
+  // bot の会話（スレッドだけの設定）で選んだものは、Chats の新しい会話の既定にしない
+  if (!endpointId && who.by === 'human' && !(await store.get(sessionId)).bot) await savePref("model", model, backend.id);
   await store.recordChange(sessionId, { ...who, field: "model", from, to: model, ...reason, backend });
   let live = false;
   const liveTurn = runtime.turns.get(sessionId);
@@ -3385,7 +3403,9 @@ const opsStatuses = {
   setIcon: setStatusIconOf,
   create: createStatusGroup,
   // 既出の状態一覧。事前定義ではなく補完候補（設計メモ §6）
-  list: () => history.listStatuses(listBackends(), { list: nativeSessions }),
+  // スレッドの状態（channels.setThreadStatus）も同じ器に数える
+  list: async () => history.listStatuses(listBackends(), { list: nativeSessions,
+    extra: ((await botHost?.opsDeps().channels?.threads.list().catch(() => [])) ?? []).filter((th) => th.status).map((th) => ({ status: th.status, at: th.updatedAt })) }),
   rename: (from, to, actor) => renameStatusGroup({ from, to }, actor),
 };
 
@@ -3995,17 +4015,18 @@ function opsDeps(lng = currentLocale()) {
       scheduleSend: (input, by) => scheduleSendMessage(input, by),
       // 「今すぐ送る」。取り出した予定を同じ入口で送る。送れなければ予定に戻す（失っても二重にもしない）
       sendScheduledNow: async id => {
-        if (schedule.get(id)?.kind !== 'send') throw new Error(t('schedule.notFound'));
+        const kind = schedule.get(id)?.kind;
+        if (kind !== 'send' && kind !== 'post') throw new Error(t('schedule.notFound'));
         const taken = await schedule.take(id);
         if (!taken) throw new Error(t('schedule.notFound'));
-        try { await sendScheduledNow(taken); }
+        try { if (kind === 'post') await postScheduled(taken); else await sendScheduledNow(taken); }
         catch (e) { await schedule.put(taken).catch(() => {}); throw e; }
-        return { sent: true, sessionId: taken.sessionId, messageId: taken.messageId };
+        return kind === 'post' ? { sent: true, sessionId: '', messageId: taken.clientId } : { sent: true, sessionId: taken.sessionId, messageId: taken.messageId };
       },
       cancel: async id => {
         const row = schedule.list().find(entry => entry.id === id);
-        // 送信予定は取り出して返す（画面の「編集」は本文を入力欄へ戻す。取り出したものは時刻が来ても動かない）
-        if (row?.kind === 'send') {
+        // 送信予定・投稿の予定は取り出して返す（画面の「編集」は本文を入力欄へ戻す。取り出したものは時刻が来ても動かない）
+        if (row?.kind === 'send' || row?.kind === 'post') {
           const taken = await schedule.take(id);
           return { cancelled: Boolean(taken), ...(taken ? { entry: taken } : {}) };
         }
@@ -4049,6 +4070,8 @@ function opsDeps(lng = currentLocale()) {
     worktrees: opsWorktrees,
     notify: opsNotify,
     notifications: inbox,
+    // 入力欄の書きかけのサーバーの写し（drafts.*。ADR 0157 の F35）
+    drafts: threadDrafts,
     compat: opsCompat,
     computer: opsComputer,
     chrome: opsChrome,
@@ -4101,6 +4124,17 @@ function opsDeps(lng = currentLocale()) {
     contextDefaults: () => contextSettings.get(os.homedir(), { level: 'default' }),
     // channels・bots・memory・routines・botOfSession（ops の handler が ctx.channels などで呼ぶ）
     ...botHost?.opsDeps(),
+    // スレッドへの返信の予定（channels.schedulePost。kind 'post'）
+    schedulePost: (args) => schedulePost(args),
+    // 会話の発言を、包みを分ける前の生の本文で読む（channels.deliveries。エージェントに渡した原文）
+    // Pleiad が持つ会話（bot の会話）は、読み込んで最新の行を記録へ足してから、記録の生の行を返す（getMessages の返りは包みを分けた後の形）
+    rawMessages: async (sessionId) => {
+      const backend = await resolveBackendForSession(sessionId);
+      if (!backend?.getMessages) return [];
+      const shown = await backend.getMessages(sessionId);
+      const record = await conversation(sessionId).catch(() => null);
+      return Array.isArray(record?.messages) ? record.messages : shown;
+    },
     describeAttachments,
     modeOf: async (sessionId) => {
       try {
@@ -5075,6 +5109,14 @@ botHost = createBotHost({
   createConversation, runTurn, noticeTarget, noticeBlocked, abortSessions, emitGlobal,
   getBackend, listBackends, resolveModel, resolveEffort, agentLocaleFor, agentT, currentLocale, lastReply,
   sessionBusy: id => sessionBusy(id),
+  // スレッドの bot の会話の設定を、このスレッドだけ変える（channels.threadSettings。ADR 0157）。走っていれば次のターンから（nextSettings）
+  reserveTurnSettings: (args) => reserveTurnSettings(args),
+  // スレッドを分ける（channels.branchThread）: bot の会話の発言（分けた行）を読み、切り口で会話を分ける
+  readMessages: async (id) => { const backend = await resolveBackendForSession(id); return backend?.getMessages ? backend.getMessages(id) : []; },
+  forkSession: ({ sessionId, beforeMessageId }) => forkConversation({ sessionId, ...(beforeMessageId ? { beforeMessageId } : {}), reason: 'branch' }, { by: 'human' }),
+  // スレッドの送り直し（channels.resend）: 巻き戻せるかを先に全部確かめ、確かめた後で巻き戻す（ADR 0102 の順）
+  rewindPlan: async ({ sessionId, beforeMessageId }) => (await pickBackend(sessionId)).rewindPlan(sessionId, { beforeMessageId }),
+  rewindSession: (args) => rewindConversation(args),
   // 隠れた会話（夜の整理・心拍）をネイティブの会話ごと消す。消せないバックエンド・走っている会話は残して false（ADR 0127）
   deleteHidden: async id => {
     if (sessionBusy(id) || !HIDDEN_BOT_KINDS.has((await store.get(id)).bot?.kind)) return false;
@@ -6815,6 +6857,7 @@ const schedule = createSchedule({ file: path.join(store.dataDir, 'schedule.json'
   changed: entries => emitGlobal({ type: 'schedules', sessionId: null, entries }),
   fire: async row => {
     if (row.kind === 'send') return fireScheduledSend(row);
+    if (row.kind === 'post') return fireScheduledPost(row);
     if (row.kind !== 'resume') throw new Error(`Unsupported schedule kind: ${row.kind}`);
     const meta = await store.get(row.sessionId);
     const stopped = meta.interrupted;
@@ -6870,6 +6913,31 @@ async function sendScheduledNow(row) {
 }
 
 /** 予定を置く。会話ごと・全体の数を絞り、同じ messageId の置き直しは 1 件のまま（二重の予定を作らない） */
+/** スレッドへの返信の予定（channels.schedulePost。kind 'post'）。人の投稿として、同じ clientId で 1 回だけ投稿する */
+async function schedulePost(input) {
+  const channels = botHost?.opsDeps().channels;
+  if (!channels) throw new Error(t('schedule.notFound'));
+  const root = await channels.getPost({ channelId: input.channelId, postId: input.threadId });
+  if (!root || root.threadId !== null) throw new Error(t('schedule.notFound'));
+  const row = buildPostRow({ ...input, by: 'human' });
+  const rows = schedule.list().filter((r) => r.kind === 'post' || r.kind === 'send');
+  const existing = rows.find((r) => r.id === row.id);
+  if (existing) return { id: existing.id, at: existing.at };
+  if (rows.filter((r) => r.kind === 'post' && r.threadId === input.threadId).length >= MAX_PER_SESSION || rows.length >= MAX_TOTAL)
+    throw new Error(t('schedule.full', { max: MAX_PER_SESSION }));
+  await schedule.put(row);
+  return { id: row.id, at: row.at };
+}
+/** 予定の時刻が来た投稿。遅れすぎていれば送らずに確かめさせる（送信予定と同じ決まり） */
+async function fireScheduledPost(row) {
+  const decision = decideFire(row);
+  if (decision.action === 'hold') return { hold: 'late' };
+  await postScheduled(row);
+  return undefined;
+}
+const postScheduled = (row) => botHost.opsDeps().channels.post({ channelId: row.channelId, threadId: row.threadId, text: row.args.prompt,
+  ...(row.args.attachments?.length ? { attachments: row.args.attachments } : {}), ...(row.args.to ? { to: row.args.to } : {}), clientId: row.clientId }, { kind: 'human' });
+
 async function scheduleSendMessage(input, by = 'human') {
   const { sessionId } = input ?? {};
   if (!sessionId || !refuseRetired(await resolveBackendForSession(sessionId))) throw new Error(t('session.notFound'));
@@ -7738,8 +7806,8 @@ wss.on("connection", (ws, req) => {
           if (!backend.modes()[mode]) return reply(false, t('settings.unknownMode', { value: mode }));
           const from = (await store.get(sessionId)).mode ?? "default";
           await store.setMode(sessionId, mode);
-          // 人間が選んだものを、次に新しく始めるときの既定にする
-          await savePref("mode", mode, backend.id);
+          // 人間が選んだものを、次に新しく始めるときの既定にする（bot の会話のモードは、その会話だけのもの。既定にしない）
+          if (!(await store.get(sessionId)).bot) await savePref("mode", mode, backend.id);
           await store.recordChange(sessionId, {
             by: "human", field: "mode", from, to: mode, ...clientReason(msg.args), backend,
           });

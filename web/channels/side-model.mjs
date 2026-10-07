@@ -5,7 +5,7 @@ import { fold } from '../session-find.mjs';
 /** 脇に出すチャンネル（DM は bot の行が受け持つので出さない）。アーカイブしたものは後ろに弱く。中は名前順 */
 export function sideChannels(channels) {
   const byName = (a, b) => String(a.name ?? '').localeCompare(String(b.name ?? ''), undefined, { numeric: true, sensitivity: 'base' });
-  return (channels ?? []).filter((c) => c && c.kind !== 'dm')
+  return (channels ?? []).filter((c) => c && c.kind !== 'dm' && !c.home)   // 一時チャットは脇の先頭の節（web/side.mjs）
     .sort((a, b) => (Boolean(a.archivedAt) - Boolean(b.archivedAt)) || byName(a, b));
 }
 
@@ -62,9 +62,9 @@ export function postRows(hits, who = () => '') {
   }));
 }
 
-/** 結果の行から開く先（channels:show の detail）。スレッドの中の投稿ならそのスレッドも開く */
+/** 結果の行から開く先（channels:show の detail）。スレッドの中の投稿ならそのスレッドも開き、投稿の行なら着いたその投稿へ送って輪を付ける */
 export function showDetail(row) {
-  return row.threadId ? { kind: 'channel', id: row.channelId, threadId: row.threadId } : { kind: 'channel', id: row.channelId };
+  return { kind: 'channel', id: row.channelId, ...(row.threadId ? { threadId: row.threadId } : {}), ...(row.postId ? { postId: row.postId } : {}) };
 }
 
 /** 今開いている面（show の view）から、脇で選ばれて見える行。DM は bot の行が受け持つ */

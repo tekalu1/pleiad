@@ -50,6 +50,12 @@ export function foldOp(posts, op) {
     if (op.mentions !== undefined) post.mentions = op.mentions;
     return post;
   }
+  // 取り下げ（channels.resend。ADR 0157）: 送り直した投稿とその後ろ。流れ・スレッド・bot に渡す文脈・宛先の決め方のどれからも消える
+  if (op.op === 'withdraw') {
+    if (post.withdrawnAt) return post;
+    post.withdrawnAt = op.at;
+    return post;
+  }
   if (op.op === 'delete') {
     if (post.deletedAt) return post;
     post.deletedAt = op.at;
@@ -193,7 +199,7 @@ export function createChannelStore({ dir, now = Date.now } = {}) {
       const post = foldOp(entry.posts, op);
       return post ? structuredClone(post) : null;
     }),
-    snapshot: (channelId) => serial(`log:${channelId}`, async () => [...(await loadLog(channelId)).posts.values()]),
+    snapshot: (channelId) => serial(`log:${channelId}`, async () => [...(await loadLog(channelId)).posts.values()].filter((p) => !p.withdrawnAt)),
     stats: (channelId) => serial(`log:${channelId}`, async () => { const e = await loadLog(channelId); return { posts: e.posts.size, skipped: e.skipped }; }),
     now,
   };

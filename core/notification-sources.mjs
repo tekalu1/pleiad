@@ -31,7 +31,9 @@ export function createNotificationSources({ inbox, store, viewing = () => false,
     const channels = getChannels();
     const channel = await channels?.get({ channelId }).catch(() => null);
     const root = threadId ? await channels?.getPost({ channelId, postId: threadId }).catch(() => null) : null;
-    return { ...(channel?.kind === 'channel' && channel.name ? { channelName: channel.name } : {}), ...(root ? { threadTitle: firstLine(root.text) } : {}) };
+    // 一時チャット（home: true）は名前でなく印を持たせる（画面が「一時チャット › 題」と書く）
+    const named = channel?.kind === 'channel' && channel.name ? (channel.home ? { home: true } : { channelName: channel.name }) : {};
+    return { ...named, ...(root ? { threadTitle: firstLine(root.text) } : {}) };
   };
 
   /** 会話の通知の「どこで・誰が」。bot の会話はチャンネル・スレッドへ飛ぶ（会話そのものはサイドバーに出ない） */
@@ -53,7 +55,7 @@ export function createNotificationSources({ inbox, store, viewing = () => false,
       // 会話の通知は at = completedAt（会話の既読 readAt と同じ時刻で突き合わせる）
       return inbox.add({
         kind, dedupeKey: `${kind === 'failed' ? 'failed' : 'done'}:${sessionId}:${completedAt}`, at: completedAt, sessionId, channelId: place.channelId, viewing: viewing(sessionId),
-        data: { uuid: place.channelId ? null : uuid, threadId: place.threadId, actor: place.actor, title: place.title, channelName: place.channelName, threadTitle: place.threadTitle },
+        data: { uuid: place.channelId ? null : uuid, threadId: place.threadId, actor: place.actor, title: place.title, channelName: place.channelName, home: place.home, threadTitle: place.threadTitle },
       });
     }),
 
@@ -64,7 +66,7 @@ export function createNotificationSources({ inbox, store, viewing = () => false,
       if (place.sb && hiddenKinds.has(place.sb.kind)) return null;
       return inbox.add({
         kind: 'wait', dedupeKey: `wait:${id}`, sessionId: target, channelId: place.channelId, viewing: viewing(target),
-        data: { ask: kind === 'question' ? 'question' : 'approval', threadId: place.threadId, actor: place.actor, title: place.title, channelName: place.channelName, threadTitle: place.threadTitle },
+        data: { ask: kind === 'question' ? 'question' : 'approval', threadId: place.threadId, actor: place.actor, title: place.title, channelName: place.channelName, home: place.home, threadTitle: place.threadTitle },
       });
     }),
     permissionSettled: guard('permission settled', async ({ id, answer, kind = 'tool' }) => inbox.settle(`wait:${id}`, permissionOutcome(answer, { kind }))),

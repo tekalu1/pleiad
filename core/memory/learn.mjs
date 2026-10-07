@@ -305,7 +305,9 @@ export function createMemoryLearner({ dataDir, channels, bots, memory, host, clo
       const sources = [...refs.map((n) => sourceOf(items[n])), ...refs.flatMap((n) => items[n].aiContext ? [sourceOf(items[n].aiContext)] : [])].slice(0, 8);
       const layer = candidate.layer === 'user' ? 'user' : candidate.layer;
       if (onlyBot && layer !== onlyBot) continue;
-      if (layer !== 'user' && !(await bots.get({ botId: layer }).catch(() => null))) continue;
+      // 組み込みの bot（bot なし）の層は作らない（ADR 0157）
+      const layerBot = layer === 'user' ? null : await bots.get({ botId: layer }).catch(() => null);
+      if (layer !== 'user' && (!layerBot || layerBot.plain)) continue;
       // 候補の重みは memory.write / edit の capWeight が人の根拠に照らして最終決定する。
       const tags = {
         ...(isMemoryKind(candidate.kind) ? { kind: candidate.kind } : {}),

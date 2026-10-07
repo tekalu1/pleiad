@@ -55,7 +55,7 @@ export default async function (t) {
   const box = html.slice(html.indexOf('class="cbox"'), html.indexOf('id="cwdPop"'));
   t.ok('箱の中に 添付 → 字の欄 → チップと送信の行', box.indexOf('id="attached"') < box.indexOf('id="prompt"') && box.indexOf('id="prompt"') < box.indexOf('class="crow"')
     && ['id="attach"', 'id="cwdChip"', 'id="modelChip"', 'id="modeChip"', 'id="abort"', 'id="send"', 'id="draftSaved"'].every(k => box.includes(k)));
-  t.ok('字の欄は 1 行から（編集欄の最小の高さは 1 行。上限は fitPrompt が max-height で決める）', /<div id="prompt"/.test(html) && /#prompt\{[^}]*min-height:calc\(1\.6em \+ 12px\)/.test(css) && /#prompt\{[^}]*overflow-y:auto/.test(css));
+  t.ok('字の欄は 1 行から（編集欄の最小の高さは 1 行。上限は fitPrompt が max-height で決める）', /<div id="prompt"/.test(html) && /:is\(#prompt,#thPrompt\)\{[^}]*min-height:calc\(1\.6em \+ 12px\)/.test(css) && /:is\(#prompt,#thPrompt\)\{[^}]*overflow-y:auto/.test(css));
   t.ok('作業ディレクトリのチップは等幅にしない（逸脱 a）', /id="cwdChip"/.test(html) && !/class="chip mono/.test(html) && !/\.chip\.mono\{/.test(css));
   t.ok('チップの行は折り返さない（700px 以下の flex-wrap:wrap を外した）', /\.crow\{[^}]*flex-wrap:nowrap/.test(css) && !/\.crow\{flex-wrap:wrap\}/.test(css));
   const chip = /\n\.chip\{([^}]*)\}/.exec(css)?.[1] ?? '';

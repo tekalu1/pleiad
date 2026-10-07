@@ -60,7 +60,8 @@ export function createBotHost(deps) {
   const noteBrain = (post, channel) => { try { pulse?.onPosted(post, channel); } catch (e) { console.error('  pulse:', String(e?.message ?? e)); } };
   const noteEpisode = (post) => { try { episodes.onPosted(post); } catch (e) { console.error('  memory episode:', String(e?.message ?? e)); } };
   const channels = createChannelService({
-    dir: path.join(dataDir, 'channels'), emit, listBots: () => bots.list(),
+    // 組み込みの bot（plain。チャンネルのスレッドの「bot なし」）は名前で呼べない（@ の候補・一時チャットの宛先に入れない。ADR 0157）
+    dir: path.join(dataDir, 'channels'), emit, listBots: async () => (await bots.list()).filter((b) => !b.plain),
     hooks: { posted: async (...args) => { noteEpisode(args[0]); noteBrain(args[0], args[1]); await bots.noteShown(...args); return dispatch.onPosted(...args); },
       edited: async (...args) => { noteEpisode(args[0]); return bots.noteShown(...args); },
       removed: noteEpisode, reacted: lazy(() => dispatch.onReacted), stopThread: lazy(() => dispatch.stopThread), botPost: lazy(() => dispatch.claimPost) },
@@ -105,7 +106,16 @@ export function createBotHost(deps) {
   };
 
   return {
-    opsDeps: () => ({ channels, bots, memory, memoryLearner: learner, brain, pulse, wakes, routines, botOfSession, wake: guard('wake', (args) => dispatch.wakePost(args), { woken: false, reason: 'failed' }), threadBudget: guard('threadBudget', (args) => dispatch.threadBudget(args), null) }),
+    opsDeps: () => ({ channels, bots, memory, memoryLearner: learner, brain, pulse, wakes, routines, botOfSession, wake: guard('wake', (args) => dispatch.wakePost(args), { woken: false, reason: 'failed' }), threadBudget: guard('threadBudget', (args) => dispatch.threadBudget(args), null),
+      // スレッドの bot の会話の設定（channels.threadSettings）。失敗は呼び出し側へ返す（画面が理由を出す）
+      threadSettings: (args) => dispatch.threadSettings(args),
+      // スレッドを投稿のところで分ける（channels.branchThread）。失敗は呼び出し側へ返す（画面が一行で知らせる）
+      branchThread: (args) => dispatch.branchThread(args),
+      // スレッドの投稿を送り直す（channels.resend）
+      resendThread: (args) => dispatch.resendThread(args),
+      // 送信待ちの投稿（channels.pending・channels.withdrawPending）
+      pendingPosts: (args) => dispatch.pendingPosts(args),
+      withdrawPending: (args) => dispatch.withdrawPending(args) }),
     // 人格とフォルダーは bots（S2）、末尾の notes は dispatch（S4。記憶の差分など）。bot の会話でなければどちらも空
     turnExtras: guard('turnExtras', async (turn) => {
       const setup = await bots.turnSetup(turn);

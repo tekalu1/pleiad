@@ -71,7 +71,7 @@ async page => {
   const name = 'checkout-perf' + String(Date.now()).slice(-5);
   const ch = await rpc('channels.create', { name, purpose: 'チェックアウトの p95 を 300ms 以下に戻す' });
   const members = ['b_owl', 'b_lynx', 'b_kit'];
-  await page.locator('#tabChannels').click();
+  await page.locator('#sideOrder [data-order="channel"]').click();
   await page.evaluate((id) => document.dispatchEvent(new CustomEvent('channels:show', { detail: { kind: 'channel', id } })), ch.id);
   await page.locator('#chFeed').waitFor();
   await page.waitForFunction(() => !document.querySelector('#chFeed .ch-loading'));
@@ -272,7 +272,7 @@ async page => {
   await page.reload();
   await later.click({ timeout: 5000 }).catch(() => {});
   await page.waitForFunction(() => window.__sockets?.at(-1)?.readyState === 1);
-  await page.locator('#tabChannels').click();
+  await page.locator('#sideOrder [data-order="channel"]').click();
   await page.evaluate((id) => document.dispatchEvent(new CustomEvent('channels:show', { detail: { kind: 'channel', id } })), ch.id);
   await page.locator('.post .thread-summary').first().waitFor();
   const again = page.locator('.post').first();

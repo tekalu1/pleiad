@@ -42,6 +42,22 @@ export function buildSendRow({ sessionId, messageId, prompt, attachments, cwd, m
 }
 
 /**
+ * スレッドへの投稿の予定の行（kind: 'post'。ADR 0157）。本文は送信予定と同じく args.prompt に置く（画面の予定の行が同じ形で描く）。
+ * id は投稿の clientId から決まるので、同じ指定を送り直しても 1 件。チャンネル・スレッドの存在と枠の数は呼び出し側が確かめる
+ */
+export function buildPostRow({ channelId, threadId, clientId, text, attachments, to, at, by = 'human' }, now = Date.now()) {
+  if (typeof clientId !== 'string' || !MESSAGE_ID.test(clientId)) throw new Error(t('send.messageIdRequired'));
+  if (typeof text !== 'string' || !text.trim()) throw new Error(t('send.messageRequired'));
+  if (attachments !== undefined && !Array.isArray(attachments)) throw new Error(t('send.invalidAttachments'));
+  const when = parseAt(at);
+  if (!Number.isFinite(when)) throw new Error(t('schedule.invalidTime'));
+  if (when < now + MIN_AHEAD_MS) throw new Error(t('schedule.past'));
+  if (when - now > MAX_AHEAD_MS) throw new Error(t('schedule.tooFar'));
+  const args = { prompt: text, ...(attachments?.length ? { attachments } : {}), ...(to ? { to } : {}) };
+  return { id: `post:${clientId}`, kind: 'post', channelId, threadId, clientId, at: Math.round(when), createdAt: now, by, args };
+}
+
+/**
  * 時刻が来た送信予定をどうするか。
  * send = 送る（lateMs は遅れ。0 に近ければ時刻どおり）、hold = 遅れすぎているので送らず確かめさせる
  */

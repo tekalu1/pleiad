@@ -54,8 +54,9 @@ export default function (t) {
   const posts = postRows(hits, (a) => (a.kind === 'bot' ? 'Owl' : 'あなた'));
   t.ok('投稿の行: 誰の発言か・抜粋・時刻・スレッド', posts[0].who === 'Owl' && posts[1].who === 'あなた' && posts[0].snippet === '…N+1 を直した'
     && posts[0].lastModified === 9 && posts[0].threadId === 'p_0' && posts[1].threadId === null && posts[0].id === 'post:c_2:p_1');
-  t.ok('開く先: スレッドの中の投稿はスレッドも開く（channels:show の detail）', JSON.stringify(showDetail(posts[0])) === '{"kind":"channel","id":"c_2","threadId":"p_0"}'
-    && JSON.stringify(showDetail(posts[1])) === '{"kind":"channel","id":"c_1"}' && JSON.stringify(showDetail(rows[0])) === '{"kind":"channel","id":"c_2"}');
+  t.ok('開く先: スレッドの中の投稿はスレッドも開き、投稿の行は着いたその投稿へ送る（channels:show の detail）',
+    JSON.stringify(showDetail(posts[0])) === '{"kind":"channel","id":"c_2","threadId":"p_0","postId":"p_1"}'
+    && JSON.stringify(showDetail(posts[1])) === '{"kind":"channel","id":"c_1","postId":"p_2"}' && JSON.stringify(showDetail(rows[0])) === '{"kind":"channel","id":"c_2"}');
 
   // ---- 脇で選ばれて見える行
   const bots = [{ id: 'b_owl', dmChannelId: 'c_d' }];

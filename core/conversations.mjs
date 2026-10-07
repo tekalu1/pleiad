@@ -465,10 +465,14 @@ export function wrapBackend(native) {
     if (!allMessages.length) throw new Error(t("conversations.forkEmpty"));
     let messages = allMessages;
     let presents = await wrapped.getPresents(id);
-    const beforeAt = before === undefined ? -1 : messages.findIndex(m => m.uuid === before);
+    let beforeAt = before === undefined ? -1 : messages.findIndex(m => m.uuid === before);
     if (before !== undefined && beforeAt < 0) throw new Error(options.snapshot
       ? t('conversations.messageNotSaved')
       : t('conversations.forkMessageNotFound'));
+    // bot の会話は 1 つの発言を記憶・文脈・包みの行に分けて持つ（core/system-messages.mjs の groupUuid）。
+    // 発言の手前で切るときは、そのまとまりの先頭で切る（分けた兄弟の行を、切り口の前に残さない）
+    const group = beforeAt > 0 ? messages[beforeAt].groupUuid : null;
+    if (group) beforeAt = Math.max(0, messages.findIndex(m => m.groupUuid === group));
     const cutId = before === undefined ? options.upToMessageId : messages[beforeAt - 1]?.uuid;
     const boundary = cutId ?? messages.at(-1)?.uuid;
     // A live turn may already have published attachments while its messages are
@@ -532,17 +536,21 @@ export function wrapBackend(native) {
     const existing = await conversation(id);
     if (existing && existing.backend !== native.id) throw new Error(t("conversations.backendMismatch"));
     const full = await wrapped.getMessages(id, { fullResults: true });
-    const at = full.findIndex(m => m.uuid === beforeMessageId);
+    let at = full.findIndex(m => m.uuid === beforeMessageId);
     if (at < 0) throw new Error(t("conversations.rewindMessageNotFound"));
     // ネイティブが item id を使い回すと、どの発言か決められない（最初に当たった発言で切ると、残すべき履歴まで消える）
     if (full.some((m, i) => i !== at && m.uuid === beforeMessageId)) throw new Error(t("conversations.rewindAmbiguous"));
     const target = full[at];
-    if (target.role !== "user" || target.kind) throw new Error(t("conversations.rewindNotUser"));
+    // bot の会話の、包みだけのまとまり（最後の行がチャンネルの出来事）も自分の発言として扱う（スレッドの送り直し。ADR 0157）
+    if ((target.role !== "user" || target.kind) && target.kind !== "channelEvent") throw new Error(t("conversations.rewindNotUser"));
+    // 1 つの発言から分けた行（中断の文・記憶・文脈・包み）は、まとまりの先頭で切る。ネイティブの切り口は元の発言の uuid
+    const group = target.groupUuid ?? null;
+    if (group) at = Math.max(0, full.findIndex(m => m.groupUuid === group));
     const presents = await wrapped.getPresents(id);
     const keep = keptPresentIndexes(full, presents, at - 1);
     const nativeId = existing ? existing.nativeId : id;
     const rawOf = uuid => (existing ? nativeUuid(uuid, native.id, nativeId) : uuid);
-    const rawTarget = rawOf(target.uuid), rawBefore = at > 0 ? rawOf(full[at - 1].uuid) : null;
+    const rawTarget = rawOf(group ?? target.uuid), rawBefore = at > 0 ? rawOf(full[at - 1].groupUuid ?? full[at - 1].uuid) : null;
     const how = native.capabilities?.rewind;
     // Claude の切り口は「残す最後の発言」の uuid。ツール呼びだけの発言は連続するエントリを 1 つに束ねて先頭の uuid を持つので、
     // その後ろが落ちて中途半端な枝から続く。本文のある返答が切り口のときだけ使う（ほかはホスト管理）

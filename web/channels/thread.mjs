@@ -12,12 +12,19 @@ import { runMark } from '../arc.mjs';
 import { savedEvent } from '../saved-text.mjs';
 import { renderPost, fillPost, authorInfo, wireAttachmentZoom, whenText } from './post.mjs';
 import { withReaction } from './reactions.mjs';
-import { createChComposer } from './ch-composer.mjs';
+import { createThreadComposer } from './thread-composer.mjs';
+import { PLAIN, plainOption, shownBot } from './plain-bot.mjs';
 import { threadDraftKey } from './ch-attach-model.mjs';
 import { openEmojiPicker } from '../emoji-picker.mjs';
+import { postMenu, setupPostMenu, menuPoint } from './post-menu.mjs';
+import { openSourceDialog } from '../message-actions.mjs';
+import { makeBranchRow } from '../branch-view.mjs';
+import { buildBand, resendKeys, sendGlyph } from '../resend-band.mjs';
 import { createDeck } from './deck.mjs';
 import { createThreadHead } from './thread-head.mjs';
-import { createThreadToc } from './thread-toc.mjs';
+import { createConversationNav } from '../conversation-nav-view.mjs';
+import { createConversationRail } from '../conversation-rail.mjs';
+import { createConversationToc } from '../conversation-toc.mjs';
 import { createBackgroundChip } from '../background-chip.mjs';
 import { createBudgetMeter, meterOf, tokenSplit } from './thread-budget.mjs';
 import { createToolSource, turnWindows, logInWindow, signatureOf, toolNodes } from './thread-tools.mjs';
@@ -58,6 +65,7 @@ export function createThread(host) {
   const S = {
     channelId: null, threadId: null, channel: null, posts: [], index: new Map(), thread: null, bots: new Map(),
     nextBefore: null, ready: false, seq: 0, queue: [], loadingOlder: false,
+    pending: [],   // bot へ届く前のあなたの投稿（channels.pending。送信待ちの行）
   };
   const toolCache = new Map();  // postId -> { sig, wrap, bundles }（道具の行。同じなら作り直さず、開いた状態を保つ）
   const cards = new Map();      // 承認の id -> .mw
@@ -79,9 +87,9 @@ export function createThread(host) {
   const replies = el('div', 'th-replies');
   const perms = el('div', 'th-perms bg-thread');   // 承認のカード（Chats の .mw.card をそのまま入れる。--gut は CSS で投稿の本文の位置に合わせる）
   log.append(older, rootSlot, rdiv, replies, perms);
-  const jump = el('button', 'ch-jump th-jump', t('channels:feed.newer'));
-  jump.type = 'button';
-  jump.hidden = true;
+  // 会話の移動（残る問い・最新へ・地図・目次と検索・Alt+↑↓・End）の部品が重なる、投稿の列の入れ物（Chats の #logFrame と同じ役）
+  const frame = el('div', 'log-frame th-frame');
+  frame.append(log);
   const band = el('div', 'th-band');
   band.hidden = true;
   band.setAttribute('role', 'status');
@@ -100,8 +108,8 @@ export function createThread(host) {
     bots: () => S.bots,
     lang: () => document.documentElement.lang || undefined,
   });
-  const composer = createChComposer({
-    id: 'chThreadComposer',
+  // 入力欄は Chats の会話と同じ部品（web/channels/thread-composer.mjs。ADR 0157）。先頭に宛先のチップ
+  const composer = createThreadComposer({
     host,
     bucket: () => S.channelId,
     candidates: () => candidates(),
@@ -109,10 +117,50 @@ export function createThread(host) {
     wakePreview: (text) => host.invoke('channels.wakePreview', { channelId: S.channelId, threadId: S.threadId, text }),
     backendLabel: (id) => host.state?.backends?.find((b) => b.id === id)?.label ?? id,
     onSend: (draft) => send(draft),
+    dest: () => destOptions(),
+    onDestChange: () => paintPlaceholder(),
+    settings: (botId) => botSettings(botId),
+    schedules: () => (host.state?.schedules ?? []).filter((r) => r.kind === 'post' && r.channelId === S.channelId && r.threadId === S.threadId).sort((a, b) => a.at - b.at),
+    pending: () => S.pending.map((x) => ({ id: x.postId, text: S.index.get(x.postId)?.text ?? '' })).filter((x) => x.text),
+    withdrawPending: (postId) => host.invoke('channels.withdrawPending', { channelId: S.channelId, postId }).then(() => refreshPending()),
+    compact: (sessionId) => host.invoke('sessions.compact', { sessionId }),
+    onSettings: async (botId, patch) => {
+      // 組み込みの bot の最初の設定は、Chats の既定の backend で会話を作る（作った後は backend を変えない）
+      const first = botId === PLAIN && !Object.values(S.thread?.sessions ?? {}).length;
+      const s = botSettings(botId);
+      const got = await host.invoke('channels.threadSettings', { channelId: S.channelId, threadId: S.threadId, botId, ...patch,
+        ...(botId === PLAIN && first && s?.backend ? { backend: s.backend } : {}), ...(botId === PLAIN && patch.cwd === undefined && s?.values?.cwd ? { cwd: s.values.cwd } : {}) });
+      settingsSeen.set(botId, got);
+    },
   });
-  const toc = createThreadToc({ host, posts: () => S.posts, ctx: () => ctx, go: (p) => goTo(p) });
-  const head = createThreadHead({ host, onClose: () => close(), onBack: () => close(), onToc: (b) => toc.toggle(b) });
-  root.append(head.el, log, jump, band, subs, composer.el);
+  // 宛先の bot の、このスレッドの会話の設定（channels.threadSettings が返した値を先に使う。会話の一覧が追い付くまでの間も出す）
+  const settingsSeen = new Map();
+  function botSettings(botId) {
+    // 組み込みの bot をまだ作っていない（「bot なし」を選んだだけ）: Chats の新しい会話の既定から
+    const bot = S.bots.get(botId) ?? (botId === PLAIN ? { ...plainOption(t), backend: host.state?.prefs?.backend ?? host.state?.backendId ?? '', model: '', effort: '', mode: '', folders: [] } : null);
+    if (!bot) return null;
+    const sessionId = S.thread?.sessions?.[botId] ?? null;
+    const row = sessionId ? host.state?.sessions?.find((s) => s.id === sessionId) : null;
+    const seen = settingsSeen.get(botId) ?? (bot.plain ? settingsSeen.get(PLAIN) : undefined);
+    const next = row?.nextSettings ?? {};
+    const values = seen && (!row || seen.sessionId === sessionId) ? seen
+      : { model: next.model ?? row?.model ?? bot.model ?? '', effort: next.effort ?? row?.effort ?? bot.effort ?? '', mode: next.mode ?? row?.mode ?? bot.mode ?? '', cwd: next.cwd ?? row?.cwd ?? S.channel?.cwd ?? bot.folders?.[0]?.path ?? '' };
+    // 組み込みの bot はフォルダーを持たない: チャンネルの作業場所と、Chats の今の作業場所から選ぶ
+    const folders = [...new Set([...(bot.folders ?? []).map((f) => f.path), ...(S.channel?.cwd ? [S.channel.cwd] : []), ...(bot.plain && host.state?.cwd ? [host.state.cwd] : [])])];
+    return { backend: bot.backend, sessionId, values, defaults: { model: bot.model ?? '', effort: bot.effort ?? '', mode: bot.mode ?? '' }, folders };
+  }
+  // 目次のボタンは会話の目次（web/conversation-toc.mjs）が自分で受ける
+  const head = createThreadHead({ host, onClose: () => close(), onBack: () => close(), onToc: () => {},
+    // 題を変える（根の投稿は変えない。空にすると根の投稿の最初の行に戻る）
+    onRename: (title) => host.invoke('channels.setThreadTitle', { channelId: S.channelId, threadId: S.threadId, title }).catch((err) => composer.say(t('channels:thread.renameFailed', { error: err?.message ?? String(err) }), true)),
+    // ✦ 題の候補: このスレッドで最後に動いた bot の会話から（Chats の suggestTitle と同じ。bot の会話がまだ無ければ出さない）
+    suggestTitle: async () => {
+      const sessionId = activeSession();
+      if (!sessionId) { composer.say(t('channels:thread.titleNoSession')); return null; }
+      try { return (await host.cmd('suggestTitle', { sessionId }))?.title ?? null; }
+      catch (err) { composer.say(t('session.titleSuggestFailed', { error: err?.message ?? String(err) }), true); return null; }
+    } });
+  root.append(head.el, frame, band, subs, composer.el);
   composer.bindDropZone(root);
   wireAttachmentZoom(log, host);
   const deck = createDeck({ view, body, feed: feedRoot, thread: root, top });
@@ -120,7 +168,7 @@ export function createThread(host) {
   host.voice?.mount({
     id: 'thread',
     header: head.el.querySelector('.th-entries'), headerBefore: head.tocButton,
-    composer: { root: composer.el, row: composer.el.querySelector('.ch-row'), before: composer.el.querySelector('.ch-send'), below: composer.el.querySelector('.ch-box') },
+    composer: composer.voiceSlot(),
     main: root, log, overlay: root, replyScope: () => log,
     tail: {
       place: (node) => replies.after(node), rows: replies, persistMarks: true,
@@ -145,7 +193,43 @@ export function createThread(host) {
   });
 
   const nearBottom = () => log.scrollHeight - log.scrollTop - log.clientHeight < NEAR_BOTTOM;
-  const toBottom = () => { log.scrollTop = log.scrollHeight; jump.hidden = true; markRead(); };
+  const toBottom = () => { log.scrollTop = log.scrollHeight; markRead(); };
+
+  // ---------------------------------------------------------------- 会話の移動（Chats と同じ部品。docs/design-system.md「会話の移動」）
+  // 発言の並びは、投稿の列のあなたの投稿（根と返信）。吹き出しは .post-body（あなたの投稿は dataset.raw に原文）
+  const narrow = matchMedia('(max-width: 700px)');
+  const nav = createConversationNav({
+    frame, log, thread: log, narrow, scrollToEnd: () => toBottom(), isRunning: () => liveBots().length > 0,
+    rows: {
+      users: (box) => [...box.querySelectorAll('.post[data-author="human"]:not(.deleted)')],
+      rowOf: (user) => user,
+      bodyOf: (user) => user.querySelector('.post-body'),
+      whenOf: (user) => user.querySelector('.post-when')?.textContent ?? '',
+      subtree: true,
+    },
+  });
+  createConversationRail({ frame, log, thread: log, nav, narrow });
+  const toc = createConversationToc({
+    thread: log, log, nav, preview: host.filePreview, narrow, button: head.tocButton,
+    // 項目: あなたの投稿 = 発言、bot・AI の投稿 = 返答、投稿の中のツールのカード = ツール
+    entriesOf: ({ turns, kinds, turnInfo }) => {
+      const turnOf = new Map(turns.map((x, i) => [x.row, i]));
+      const out = [];
+      let turn = -1;
+      for (const node of log.querySelectorAll('.post:not(.deleted)')) {
+        const body = node.querySelector('.post-body');
+        const at = node.querySelector('.post-when')?.textContent ?? '';
+        if (turnOf.has(node)) {
+          turn = turnOf.get(node);
+          out.push({ kind: 'user', turn, row: node, el: node, bodies: [body].filter(Boolean), at: turnInfo(turns[turn]).at, pending: kinds[turn] === 'pending' });
+          continue;
+        }
+        if (body?.textContent.trim()) out.push({ kind: 'answer', turn, row: node, el: node, bodies: [body], at });
+        for (const card of node.querySelectorAll('.tc')) if (!card.parentElement.closest('.tc')) out.push({ kind: 'tool', turn, row: node, el: card, at });
+      }
+      return out;
+    },
+  });
 
   // 既読: スレッドを見ていて末尾にいる間は、返信までチャンネルの既読を進める（流れの既読は流れの投稿だけを見るので、スレッドの返信が未読のまま残らないように）
   let readTimer = null, readSent = 0;
@@ -179,7 +263,7 @@ export function createThread(host) {
   async function loadBots() {
     try {
       const got = await host.invoke('bots.list');
-      S.bots = new Map((got?.bots ?? []).map((b) => [b.id, b]));
+      S.bots = new Map((got?.bots ?? []).map((b) => [b.id, shownBot(b, t)]));
     } catch { /* 定義が引けなくても投稿は出る */ }
   }
   const youInitial = () => [...t('channels:feed.you')][0] ?? '?';
@@ -211,7 +295,32 @@ export function createThread(host) {
     const live = liveBots();
     // 送信の近道は、指で使う画面には出さない（Chats の入力欄と同じ）
     const keys = window.matchMedia?.('(pointer:coarse)').matches ? '' : ` · ${t('channels:feed.composer.sendKeys')}`;
-    composer.setPlaceholder((live.length === 1 ? t('channels:thread.composer.working', { name: live[0].name }) : t('channels:thread.composer.placeholder')) + keys);
+    // 宛先に追従する: 宛先の bot が作業中なら「作業中でも届きます」、そうでなければ「〜に届きます」
+    const to = composer.dest?.bot ?? null;
+    const text = to && live.some((b) => b.id === to.id) ? t('channels:thread.composer.working', { name: to.name })
+      : to ? t('channels:thread.composer.to', { name: to.name })
+        : live.length === 1 ? t('channels:thread.composer.working', { name: live[0].name }) : t('channels:thread.composer.placeholder');
+    composer.setPlaceholder(text + keys);
+    composer.refresh();
+  }
+
+  /**
+   * 宛先のチップの候補: このスレッドの bot（会話を持つ bot。作業中・あなた待ちの状態つき）→ ほかのメンバー。
+   * 選んでいないときの宛先は、このスレッドの決まり（作業中の bot が 1 体ならそれ、無ければ最後に話した bot。ADR 0117）
+   */
+  function destOptions() {
+    const stateOf = new Map();
+    for (const p of S.posts) if (p.turn?.botId && LIVE.has(p.state) && !p.deletedAt) stateOf.set(p.turn.botId, p.state);
+    const asBot = (id) => ({ ...(S.bots.get(id) ?? { id, name: t('channels:feed.unknownBot'), icon: '🤖' }), state: stateOf.get(id) ?? 'idle' });
+    const threadIds = Object.keys(S.thread?.sessions ?? {}).filter((id) => S.bots.has(id));
+    const others = memberBots().filter((b) => !threadIds.includes(b.id)).map((b) => asBot(b.id));
+    const live = liveBots();
+    const lastSpoke = S.posts.findLast((p) => p.author?.kind === 'bot' && S.bots.has(p.author.botId))?.author.botId ?? null;
+    const fallback = live.length === 1 ? live[0].id : lastSpoke ?? threadIds[0] ?? null;
+    // 「bot なし（モデルを直接選ぶ）」: 組み込みの bot（ADR 0157）。このスレッドにまだいなければ選べる（一時チャット・DM には出さない）
+    const plainHere = threadIds.some((id) => S.bots.get(id)?.plain);
+    const plain = !plainHere && S.channel?.kind === 'channel' && !S.channel.home ? { ...plainOption(t), state: 'idle' } : null;
+    return { inThread: threadIds.map(asBot), others, fallback, plain };
   }
 
   /** そのスレッドの bot の会話（右パネルの作業場所の基準・git・ブラウザー）。最後に動いた bot の会話 */
@@ -258,7 +367,8 @@ export function createThread(host) {
 
   // ---------------------------------------------------------------- 見出し・帯
   function paintHead() {
-    head.setTitle({ channel: S.channel?.name ?? '', title: titleOf(S.posts[0]) });
+    // 人が付けた題（channels.setThreadTitle）があればそれ、無ければ根の投稿の最初の行
+    head.setTitle({ channel: S.channel?.home ? t('channels:side.home') : S.channel?.name ?? '', home: Boolean(S.channel?.home), title: S.thread?.title || titleOf(S.posts[0]) });
     head.setSession(activeSession());
   }
 
@@ -274,7 +384,11 @@ export function createThread(host) {
     const stopped = !working && Boolean(th?.stopped);
     const calls = Math.max(0, (th?.calls ?? 0) - 1);
     const budget = meterOf(S.channel?.kind === 'channel' ? S.channel.budget : null, th);
-    const sig = JSON.stringify([working, waiting, stopped, total, calls, live.map((b) => b.id), th?.tokens, stopBusy, budget]);
+    // 宛先の bot の、このスレッドの会話の文脈の量（Chats の文脈のメーターと同じ数。会話の一覧の行の contextWindow）
+    const destId = composer.dest?.bot?.id;
+    const cw = destId ? host.state?.sessions?.find((s) => s.id === S.thread?.sessions?.[destId])?.contextWindow : null;
+    const ctxRate = cw?.windowTokens ? Math.min(100, Math.max(0, Math.round(100 * cw.usedTokens / cw.windowTokens))) : null;
+    const sig = JSON.stringify([working, waiting, stopped, total, calls, live.map((b) => b.id), th?.tokens, stopBusy, budget, ctxRate, destId]);
     if (sig === bandSig) return;
     bandSig = sig;
     if (!total && !working && !stopped) { band.hidden = true; band.replaceChildren(); meter.update(null, null); return; }
@@ -303,6 +417,11 @@ export function createThread(host) {
       else tok.append(el('span', 'th-tok-aux', full.slice(0, at)), el('span', 'th-tok-num', num), el('span', 'th-tok-aux', full.slice(at + num.length)));
       tok.title = t('channels:thread.band.tokensTitle', { input: split.fresh, output: split.output, cached: split.cached });
       pieces.push(tok);
+    }
+    if (ctxRate !== null) {
+      const ctx = el('span', 'th-band-ctx', t('channels:thread.band.context', { rate: ctxRate }));
+      ctx.title = t('channels:thread.band.contextTitle', { name: composer.dest?.bot?.name ?? '', rate: ctxRate });
+      pieces.push(ctx);
     }
     pieces.forEach((p, i) => { if (i) text.append(el('span', 'th-band-dot', '·')); text.append(p); });
     band.replaceChildren(text, meter.el);
@@ -452,12 +571,12 @@ export function createThread(host) {
 
   // ---------------------------------------------------------------- 読み込み
   function reset() {
-    Object.assign(S, { channel: null, posts: [], index: new Map(), thread: null, nextBefore: null, ready: false, queue: [], loadingOlder: false });
+    Object.assign(S, { channel: null, posts: [], index: new Map(), thread: null, nextBefore: null, ready: false, queue: [], loadingOlder: false, pending: [] });
     postEls.clear(); toolCache.clear(); cards.clear(); tools.forget();
     perms.replaceChildren();
     rootSlot.replaceChildren(); replies.replaceChildren(); rdiv.textContent = '';
     bandSig = ''; band.hidden = true; band.replaceChildren(); meter.update(null, null);
-    jump.hidden = true;
+    nav.reset(); toc.reset();
     readSent = 0;
     host.background?.watch([]);
     paintSubs();
@@ -490,6 +609,7 @@ export function createThread(host) {
       syncSubs();
       for (const ev of S.queue.splice(0)) events[ev.type]?.(ev);
       paintPendingPerms();
+      refreshPending();
       toBottom();
       for (const sid of new Set([...windows.values()].map((w) => w.sessionId))) tools.refresh(sid, { force: true });
       composer.setDisabled(Boolean(S.channel?.archivedAt), t('channels:feed.archived'));
@@ -497,6 +617,7 @@ export function createThread(host) {
       markSelected();
       if (seq === S.seq) composer.focus();
       requestAnimationFrame(flushReveal);
+      paintBranches();
     } catch (err) {
       if (seq !== S.seq) return;
       const box = el('div', 'ch-failed');
@@ -527,8 +648,13 @@ export function createThread(host) {
   }
 
   // ---------------------------------------------------------------- 操作
-  async function send({ text, attachments, confirmedWake }) {
-    const made = await host.invoke('channels.post', { channelId: S.channelId, threadId: S.threadId, text, ...(attachments?.length ? { attachments } : {}), ...(confirmedWake ? { confirmedWake } : {}) });
+  async function send({ text, attachments, confirmedWake, to, clientId, at }) {
+    // 日時を指定した返信は予定として置く（時刻が来たら人の投稿として投稿される。channels.schedulePost）
+    if (at) {
+      await host.invoke('channels.schedulePost', { channelId: S.channelId, threadId: S.threadId, text, at, clientId, ...(attachments?.length ? { attachments } : {}), ...(to ? { to } : {}) });
+      return;
+    }
+    const made = await host.invoke('channels.post', { channelId: S.channelId, threadId: S.threadId, text, ...(attachments?.length ? { attachments } : {}), ...(confirmedWake ? { confirmedWake } : {}), ...(to ? { to } : {}), ...(clientId ? { clientId } : {}) });
     if (made?.id && !S.index.has(made.id) && made.threadId === S.threadId) { addPost(made); afterPosts(); }
     toBottom();
   }
@@ -548,31 +674,235 @@ export function createThread(host) {
     }
   }
 
-  function openMenu(p, x, y, anchor) {
-    const items = [
-      { label: t('channels:feed.react'), onClick: () => {
-        const at = postEls.get(p.id)?.querySelector('.post-tool.add') ?? anchor;
-        openEmojiPicker({ anchor: at, title: t('channels:feed.reactPicker'), onPick: (emoji) => react(p, emoji, true, (p.reactions?.[emoji] ?? []).some((a) => a.kind === 'human')) });
-      } },
-      { sep: true },
-      { label: t('channels:feed.copyText'), onClick: () => { navigator.clipboard?.writeText(p.text ?? '').catch(() => {}); } },
-    ];
-    if (p.turn?.sessionId) items.splice(1, 0, { label: t('channels:feed.openSession'), onClick: () => host.openSession(p.turn.sessionId) });
-    host.showMenu(x, y, items, authorInfo(p.author, ctx).name);
+  /** エージェントに渡した原文（channels.deliveries）。bot ごとに切り替えて見る（聞こえた投稿はその印つき） */
+  async function showSource(p, opener) {
+    try {
+      const got = await host.invoke('channels.deliveries', { channelId: S.channelId, postId: p.id });
+      const list = got?.deliveries ?? [];
+      if (!list.length) { composer.say(t('channels:thread.noSource')); return; }
+      openSourceDialog({ opener, variants: list.map((d) => ({
+        label: `${S.bots.get(d.botId)?.name ?? t('channels:feed.unknownBot')}${d.heard ? ` · ${t('channels:thread.heardMark')}` : ''}`,
+        text: d.text, at: d.at ? whenText(Date.parse(d.at)) : '' })) });
+    } catch (err) { composer.say(t('channels:thread.sourceFailed', { error: err?.message ?? String(err) }), true); }
   }
-  log.addEventListener('contextmenu', (e) => {
-    const node = e.target.closest?.('.post');
-    if (!node || e.target.closest('a, button, .present')) return;
-    if (String(window.getSelection?.() ?? '').trim()) return;
+  function openMenu(p, x, y, anchor, alignRight = false) {
+    const node = postEls.get(p.id);
+    const more = node?.querySelector('.post-tool.more') ?? null;
+    // 原文は、このスレッド（DM）で bot が受けた人の投稿だけ
+    const received = p.author?.kind === 'human' && (S.channel?.kind === 'dm' || Object.keys(S.thread?.sessions ?? {}).length > 0);
+    const { items, title } = postMenu({
+      post: p, t, name: authorInfo(p.author, ctx).name, time: node?.querySelector('.post-when')?.textContent ?? '',
+      copyButton: node?.querySelector('.post-tool.copy') ?? null,
+      react: () => {
+        const at = node?.querySelector('.post-tool.add') ?? anchor;
+        openEmojiPicker({ anchor: at, title: t('channels:feed.reactPicker'), onPick: (emoji) => react(p, emoji, true, (p.reactions?.[emoji] ?? []).some((a) => a.kind === 'human')) });
+      },
+      source: received ? () => showSource(p, more ?? anchor) : null,
+      // ここから分岐: 根からこの投稿までを写した新しいスレッド（bot の会話もこの手前で分ける）
+      fork: S.channel?.kind === 'dm' || p.state === 'working' ? null : () => branchFrom(p),
+      // 編集して再送信・再送信: あなたの返信だけ（根は分岐して送る）
+      ...(p.author?.kind === 'human' && p.threadId && S.channel?.kind !== 'dm' ? { edit: () => openResend(p, true), resend: () => openResend(p, false) } : {}),
+    });
+    more?.setAttribute('aria-expanded', 'true');
+    node?.classList.add('menu-open');
+    host.showMenu(x, y, items, title, { alignRight, onClose: () => { more?.setAttribute('aria-expanded', 'false'); node?.classList.remove('menu-open'); } });
+  }
+  // ---------------------------------------------------------------- 送り直し（ADR 0157 の 4.5。Chats の送り方の帯と同じ部品。web/resend-band.mjs）
+  let resendOpen = null;
+  const resendId = () => `rs-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`;
+  async function doResend(p, text, stopRunning) {
+    try {
+      await host.invoke('channels.resend', { channelId: S.channelId, postId: p.id, text, stopRunning, clientId: resendId() });
+      return true;
+    } catch (err) { composer.say(t('channels:thread.resend.failed', { error: err?.message ?? String(err) }), true); return false; }
+  }
+  /** 分岐して送る: H の直前で分けた新しいスレッドに、新しい本文を書く */
+  async function branchAndSend(prev, text) {
+    try {
+      const made = await host.invoke('channels.branchThread', { channelId: S.channelId, threadId: S.threadId, atPostId: prev.id });
+      await host.invoke('channels.post', { channelId: made.channelId, threadId: made.threadId, text, clientId: resendId() });
+      document.dispatchEvent(new CustomEvent('channels:show', { detail: { kind: 'channel', id: made.channelId, threadId: made.threadId } }));
+      return true;
+    } catch (err) { composer.say(t('channels:thread.branch.failed', { error: err?.message ?? String(err) }), true); return false; }
+  }
+  /** 編集して再送信（edit）・再送信。後ろに消えるもの（投稿・作業中の返事）があれば、投稿の直下に送り方の帯。押した時点では何も消さない */
+  function openResend(p, edit) {
+    resendOpen?.close();
+    const node = postEls.get(p.id);
+    const idx = S.posts.findIndex((x) => x.id === p.id);
+    if (!node || idx <= 0) return;
+    const after = S.posts.slice(idx + 1).filter((x) => !x.deletedAt);
+    const running = liveBots().length > 0;
+    // bot のターン（作業）が後ろにあれば、ファイルの変更は戻らないことを帯の 2 行目に書く（中身までは見ない）
+    const tail = { saved: after.length, users: after.filter((x) => x.author?.kind === 'human').length, files: after.some((x) => x.turn), running, forkOnly: false, any: after.length > 0 || running };
+    if (!edit && !tail.any) { void doResend(p, p.text ?? '', false); return; }
+    const body = node.querySelector('.post-body');
+    for (const x of after) postEls.get(x.id)?.classList.add('doomed');
+    let editor = null, input = null, band = null, ownSend = null, sending = false;
+    const current = () => (input ? input.value : p.text ?? '');
+    const close = () => {
+      for (const n of log.querySelectorAll('.post.doomed')) n.classList.remove('doomed');
+      band?.node.remove();
+      if (editor) { editor.remove(); body.hidden = false; node.classList.remove('editing'); }
+      if (resendOpen?.p === p) resendOpen = null;
+    };
+    const busy = (on) => { sending = on; band?.busy(on); if (input) input.disabled = on; if (ownSend) ownSend.disabled = on; };
+    const send = async () => {
+      if (sending || !current().trim()) return;
+      busy(true);
+      const ok = await doResend(p, current(), tail.running);
+      busy(false);
+      if (ok) close();
+    };
+    const branch = async () => {
+      if (sending || !current().trim()) return;
+      busy(true);
+      const ok = await branchAndSend(S.posts[idx - 1], current());
+      busy(false);
+      if (ok) close();
+    };
+    const cancel = () => { if (!sending) close(); };
+    const keys = (event) => { resendKeys(event, { send, branch, cancel }); };
+    if (edit) {
+      editor = el('div', 'message-editor');
+      input = el('textarea', 'message-edit-input');
+      input.value = p.text ?? '';
+      input.setAttribute('aria-label', t('chat.message.editLabel'));
+      editor.append(input);
+      if (!tail.any) {
+        const controls = el('div', 'message-edit-controls');
+        const cancelButton = el('button', 'btn', t('chat.resend.cancel'));
+        ownSend = el('button', 'btn btn-primary');
+        cancelButton.type = ownSend.type = 'button';
+        ownSend.append(sendGlyph(), el('span', null, t('chat.resend.send')));
+        cancelButton.onclick = cancel;
+        ownSend.onclick = send;
+        controls.append(cancelButton, ownSend);
+        editor.append(controls);
+      }
+      body.hidden = true;
+      body.after(editor);
+      node.classList.add('editing');
+      input.onkeydown = keys;
+      input.oninput = () => { input.style.height = 'auto'; input.style.height = `${input.scrollHeight}px`; };
+    }
+    if (tail.any) {
+      band = buildBand({ tail, onSend: send, onBranch: branch, onCancel: cancel, texts: { running: t('channels:thread.resend.running') } });
+      band.node.onkeydown = keys;
+      node.querySelector('.post-main')?.append(band.node);
+      input?.setAttribute('aria-describedby', `${band.node.id}t`);
+    }
+    resendOpen = { p, close };
+    if (input) { input.focus(); input.oninput(); } else band?.send.focus({ preventScroll: true });
+    (band?.node ?? editor)?.scrollIntoView?.({ block: 'nearest' });
+  }
+  // ---------------------------------------------------------------- 送信待ち（ADR 0157 の F12）
+  let pendingTimer = 0;
+  async function refreshPending() {
+    clearTimeout(pendingTimer);
+    if (!S.threadId) return;
+    const key = `${S.channelId}/${S.threadId}`;
+    try {
+      const got = await host.invoke('channels.pending', { channelId: S.channelId, threadId: S.threadId });
+      if (`${S.channelId}/${S.threadId}` !== key) return;
+      S.pending = got?.items ?? [];
+    } catch { S.pending = []; }
+    composer.paintSchedules();
+  }
+  const refreshPendingSoon = () => { clearTimeout(pendingTimer); pendingTimer = setTimeout(refreshPending, 250); };
+
+  // ---------------------------------------------------------------- `!` の行（宛先の bot の会話のシェル。Chats と同じ行の部品）
+  const shells = el('div', 'th-shells');
+  perms.after(shells);   // 投稿の列の末尾の目印（会話の移動の部品）より前に置く
+  function onShellStart(ev) {
+    if (!Object.values(S.thread?.sessions ?? {}).includes(ev.sessionId) || !host.shellRow) return;
+    const bot = S.bots.get(Object.entries(S.thread.sessions).find(([, sid]) => sid === ev.sessionId)?.[0]);
+    const node = host.shellRow({ role: 'user', kind: 'shell', text: `! ${ev.command}`, command: ev.command, stdout: '', stderr: '', at: ev.at, backend: ev.backend,
+      runId: ev.runId, pending: true, running: true, live: true });
+    if (!node) return;
+    const wrap = el('div', 'th-shell');
+    if (bot) wrap.append(el('p', 'th-shell-where', t('channels:thread.shellWhere', { name: bot.name })));
+    wrap.append(node);
+    shells.append(wrap);
+    if (nearBottom()) toBottom();
+  }
+
+  /** 取り下げた投稿（送り直し）を、列から消す */
+  function withdrawPost(id) {
+    const node = postEls.get(id);
+    node?.remove();
+    postEls.delete(id);
+    const i = S.posts.findIndex((p) => p.id === id);
+    if (i >= 0) S.posts.splice(i, 1);
+    S.index.delete(id);
+    paintRdiv();
+    afterPosts();
+  }
+
+  // ---------------------------------------------------------------- 分岐（ADR 0157 の 4.4）
+  async function branchFrom(p) {
+    try {
+      const made = await host.invoke('channels.branchThread', { channelId: S.channelId, threadId: S.threadId, atPostId: p.id });
+      document.dispatchEvent(new CustomEvent('channels:show', { detail: { kind: 'channel', id: made.channelId, threadId: made.threadId } }));
+    } catch (err) { composer.say(t('channels:thread.branch.failed', { error: err?.message ?? String(err) }), true); }
+  }
+  /**
+   * 分けた投稿の直後に「オリジナル / 枝 N」の行（Chats の分岐の行と同じ部品。web/branch-view.mjs）。兄弟は同じ branchOf を持つスレッド。
+   * 枝の中では、頭に「分岐元」の一行と、写した分けた投稿の直後に同じ行。押すとそのスレッドへ
+   */
+  let branchSeq = 0;
+  async function paintBranches() {
+    const seq = ++branchSeq;
+    const rootPost = S.posts[0];
+    if (!S.threadId || !rootPost || S.channel?.kind === 'dm') { for (const n of log.querySelectorAll('.th-branch')) n.remove(); return; }
+    const origin = rootPost.branchOf?.threadId ?? S.threadId;
+    let roots;
+    try { roots = (await host.invoke('channels.read', { channelId: S.channelId, limit: 100 })).posts ?? []; } catch { return; }
+    const points = new Map();
+    for (const r of roots) if (r.branchOf?.threadId === origin && !r.deletedAt) (points.get(r.branchOf.postId) ?? points.set(r.branchOf.postId, []).get(r.branchOf.postId)).push(r);
+    const here = rootPost.branchOf ? [{ postId: rootPost.branchOf.postId, anchor: S.posts.find((p) => p.copyOf === rootPost.branchOf.postId) }]
+      : [...points.keys()].map((postId) => ({ postId, anchor: S.index.get(postId) }));
+    const rows = [];
+    for (const { postId, anchor } of here) {
+      if (!anchor) continue;
+      const ids = [origin, ...(points.get(postId) ?? []).sort((a, b) => (a.id < b.id ? -1 : 1)).map((r) => r.id)];
+      // 続きの件数: 分けた投稿（枝では写した投稿）より後ろの投稿の数
+      const counts = await Promise.all(ids.map(async (id) => {
+        try {
+          const page = await host.invoke('channels.read', { channelId: S.channelId, threadId: id, limit: 100 });
+          const i = page.posts.findIndex((p) => (id === origin ? p.id === postId : p.copyOf === postId));
+          return i >= 0 ? page.posts.length - i - 1 : 0;
+        } catch { return 0; }
+      }));
+      const entries = ids.map((id, i) => ({ id, name: i === 0 ? t('channels:thread.branch.original') : t('channels:thread.branch.nth', { n: i }), n: counts[i] }));
+      rows.push({ anchor, entries });
+    }
+    if (seq !== branchSeq) return;
+    for (const n of log.querySelectorAll('.th-branch')) n.remove();
+    if (rootPost.branchOf) {
+      const from = roots.find((r) => r.id === origin);
+      const line = el('p', 'th-branch th-branch-from', t('channels:thread.branch.from', { title: from ? titleOf(from) : t('channels:thread.untitled') }));
+      rootSlot.before(line);
+    }
+    for (const { anchor, entries } of rows) {
+      const row = makeBranchRow(`b:${anchor.id}`, entries, S.threadId, (id) => document.dispatchEvent(new CustomEvent('channels:show', { detail: { kind: 'channel', id: S.channelId, threadId: id } })));
+      row.classList.add('th-branch');
+      const node = postEls.get(anchor.id);
+      if (!node) continue;
+      node.after(row);
+      row.layout();
+    }
+  }
+
+  // 右クリック・長押し・Shift+F10・メニューキー（Chats の発言と同じ口。web/message-actions.mjs の setupMessageMenu）
+  setupPostMenu(log, (node, at) => {
     const p = S.index.get(node.dataset.postId);
     if (!p || p.deletedAt) return;
-    e.preventDefault();
-    const r = node.getBoundingClientRect();
-    openMenu(p, e.clientX || r.left + 8, e.clientY || r.bottom, node);
+    const pt = menuPoint(node, at);
+    openMenu(p, pt.x, pt.y, node, pt.alignRight);
   });
-  jump.onclick = () => toBottom();
   log.addEventListener('scroll', () => {
-    if (nearBottom()) { jump.hidden = true; markRead(); }
+    if (nearBottom()) markRead();
     if (log.scrollTop < 120) loadOlder();
   });
 
@@ -604,7 +934,7 @@ export function createThread(host) {
     const wrap = m?.closest?.('.mw') ?? perms.querySelector(`[data-key="perm:${CSS.escape(ev.id)}"]`);
     if (!wrap) return;
     cards.set(ev.id, wrap);
-    if (stick) toBottom(); else jump.hidden = false;
+    if (stick) toBottom(); else nav.replyArrived();
   }
   function paintPendingPerms() {
     for (const ev of host.state?.pendingPerms?.values?.() ?? []) showCard(ev);
@@ -627,7 +957,7 @@ export function createThread(host) {
     paintBand();
     paintPlaceholder();
     composer.refresh();
-    toc.refresh();
+    toc.refresh(); nav.refresh(); nav.syncRunning();
     head.setSession(activeSession());
     syncSubs();
   }
@@ -647,7 +977,7 @@ export function createThread(host) {
     afterPosts();
     // 走っている間の道具の行は、投稿の更新（1 秒に 1 回まで）に合わせて取り直す（間隔は thread-tools の REFRESH_MS）
     if (p.turn?.sessionId && (LIVE.has(p.state) || op === 'add')) tools.refresh(p.turn.sessionId, { force: op === 'add' });
-    if (stick || p.author?.kind === 'human') toBottom(); else jump.hidden = false;
+    if (stick || p.author?.kind === 'human') toBottom(); else nav.replyArrived();
   }
 
   function onRoot(op, p) {
@@ -656,7 +986,7 @@ export function createThread(host) {
     Object.assign(cur, p, op === 'delete' ? { deletedAt: p.deletedAt ?? Date.now() } : {});
     repaint(p.id);
     paintHead();
-    toc.refresh();
+    toc.refresh(); nav.refresh(); nav.syncRunning();
   }
 
   tools.onLoaded((sessionId) => {
@@ -667,13 +997,18 @@ export function createThread(host) {
   });
 
   const events = {
+    'shell.start': (ev) => { if (S.ready) onShellStart(ev); },
     channelPost(ev) {
       if (ev.channelId !== S.channelId || !S.threadId) return;
       if (!S.ready) { S.queue.push(ev); return; }
       const p = ev.post;
       if (!p) return;
+      if (ev.op === 'withdraw') { if (p.threadId === S.threadId) { withdrawPost(p.id); refreshPendingSoon(); } return; }
+      if (p.threadId === S.threadId) refreshPendingSoon();
       if (p.threadId === S.threadId) onReply(ev.op, p);
       else if (!p.threadId && p.id === S.threadId) onRoot(ev.op, p);
+      // このスレッド（の元）から新しい枝ができた: 分岐の行を描き直す
+      else if (!p.threadId && p.branchOf && ev.op === 'add') paintBranches();
     },
     channelReaction(ev) {
       if (ev.channelId !== S.channelId || !S.threadId) return;
@@ -685,7 +1020,9 @@ export function createThread(host) {
       if (ev.channelId !== S.channelId || ev.threadId !== S.threadId || !ev.thread) return;
       if (!S.ready) { S.queue.push(ev); return; }
       const idle = S.thread?.state !== 'idle' && ev.thread.state === 'idle';
+      const retitled = (S.thread?.title ?? '') !== (ev.thread.title ?? '');
       S.thread = ev.thread;
+      if (retitled) paintHead();
       paintBand();
       paintPlaceholder();
       syncSubs();
@@ -699,7 +1036,7 @@ export function createThread(host) {
     },
     botsChanged(ev) {
       if (ev.removed) S.bots.delete(ev.removed);
-      if (ev.bot) S.bots.set(ev.bot.id, ev.bot);
+      if (ev.bot) S.bots.set(ev.bot.id, shownBot(ev.bot, t));
       if (!S.threadId || !S.ready) return;
       for (const id of postEls.keys()) repaint(id);
       bandSig = '';
@@ -751,6 +1088,7 @@ export function createThread(host) {
 
   function close() {
     if (!S.threadId) return;
+    host.noteView?.({ kind: 'channel', id: S.channelId });
     composer.setDraftKey(null);   // 書きかけは持ち主の下書きへ残して、入力欄を空に戻す
     toc.close();
     S.seq++;
@@ -771,6 +1109,8 @@ export function createThread(host) {
     },
     hide() { /* スレッドは開いたまま（Chats へ移って戻っても同じ所から） */ },
     onEvent(ev) { events[ev?.type]?.(ev); },
+    /** 予定（schedule.json）が動いた: このスレッドへの返信の予定の行を描き直す */
+    schedulesChanged() { composer.paintSchedules(); },
     contextForPanel(anchor) {
       if (!anchor?.closest?.('#chThread')) return null;
       return { sessionId: activeSession(), at: undefined };

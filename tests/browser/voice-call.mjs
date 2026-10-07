@@ -360,13 +360,13 @@ try {
       await sleep(150);
     }
     const { page, context } = await newPage({ width: 1280, height: 820, scheme: 'dark' });
-    await page.locator('#tabChannels').click();
+    await page.locator('#sideOrder [data-order="channel"]').click();
     await page.evaluate(([id, threadId]) => document.dispatchEvent(new CustomEvent('channels:show', { detail: { kind: 'channel', id, threadId } })), [ch.id, root.id]);
     await page.waitForSelector('#chThread .th-top .vc-call', { timeout: 15000 });
     const call = page.locator('#chThread .th-top .vc-call');
     check(await call.isVisible(), 'スレッドの頭にも通話ボタン（目次の前）');
     await call.click();
-    await until(async () => (await msOf(page, '#chThreadComposer')) === 'listening', 'thread listening');
+    await until(async () => (await msOf(page, '#thComposer')) === 'listening', 'thread listening');
     check(await page.locator('#chThread[data-vc-call]').count() === 1, 'スレッドの面に背景の印');
     await shot(page, 'thread-listening-1280-dark');
     await until(async () => (await page.locator('#chThread .vc-live .lw').count()) > 0, 'thread live words', 20000);
@@ -382,7 +382,7 @@ try {
     await until(async () => (await page.locator('#chThread .th-replies .post').filter({ hasText: QUESTION }).count()) >= 1, 'thread real post', 30000);
     check((await page.locator('#chThread .vc-live').count()) === 0, 'スレッド: 本物の投稿が現れたら吹き出しは消える');
     check((await page.locator('#chThread .th-replies .post .vmark').count()) >= 1, 'スレッド: 投稿にマイクの印');
-    await until(async () => (await msOf(page, '#chThreadComposer')) === 'speaking', 'thread speaking', 40000);
+    await until(async () => (await msOf(page, '#thComposer')) === 'speaking', 'thread speaking', 40000);
     await until(async () => (await page.locator('#chThread .vc-underlay .vc-ul').count()) > 0, 'thread underline', 20000);
     await sleep(900);
     await shot(page, 'thread-speaking-1280-dark');

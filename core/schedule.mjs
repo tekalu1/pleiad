@@ -1,12 +1,17 @@
 // Durable timed actions. The payload is data, never a closure, so startup and
 // wake from sleep use the same check. kind 'resume' continues a conversation after a usage limit,
-// kind 'send' is a message the user scheduled (core/send-schedule.mjs).
+// kind 'send' is a message the user scheduled (core/send-schedule.mjs), kind 'post' is a thread reply the user scheduled
+// (a channel post; it has channelId and threadId instead of sessionId).
 // fire() may return { hold } to keep a due row without firing it again (a send that is too late
 // to send unattended); the row stays in the list until a person sends or cancels it.
 // fire() may return { reschedule: at, patch? } to keep the row (with patch merged in) and fire it again at that time
 // (a usage limit whose reset time is unknown is checked again after 30 minutes or more).
 import fs from 'node:fs/promises';
 import { writeAtomic } from './atomic-file.mjs';
+
+/** A row the schedule can keep: a conversation action (resume, send) or a channel post (post) */
+const validRow = (row) => typeof row?.id === 'string' && Number.isFinite(row.at)
+  && (['resume', 'send'].includes(row.kind) ? typeof row.sessionId === 'string' : row.kind === 'post' && typeof row.channelId === 'string' && typeof row.threadId === 'string');
 
 export function createSchedule({ file, fire, changed = () => {}, now = Date.now,
   setTimer = setTimeout, clearTimer = clearTimeout }) {
@@ -61,16 +66,13 @@ export function createSchedule({ file, fire, changed = () => {}, now = Date.now,
     async restore() {
       const saved = await fs.readFile(file, 'utf8').then(text => JSON.parse(text), () => null).catch(() => null);
       if (saved?.version === 1 && Array.isArray(saved.entries)) {
-        for (const row of saved.entries)
-          if (typeof row?.id === 'string' && ['resume', 'send'].includes(row.kind)
-            && typeof row.sessionId === 'string' && Number.isFinite(row.at)) rows.set(row.id, row);
+        for (const row of saved.entries) if (validRow(row)) rows.set(row.id, row);
       }
       arm();
       await check();
     },
     async put(row) {
-      if (typeof row?.id !== 'string' || !['resume', 'send'].includes(row.kind)
-        || typeof row.sessionId !== 'string' || !Number.isFinite(row.at)) throw new Error('Invalid schedule');
+      if (!validRow(row)) throw new Error('Invalid schedule');
       rows.set(row.id, { ...row, createdAt: row.createdAt ?? now() });
       await save(); changed(list()); arm();
       return row;

@@ -646,6 +646,21 @@
       "input": "d2c542cd9935"
     },
     {
+      "id": "channels.branchThread",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": false,
+        "cli": false
+      },
+      "legacyCommand": null,
+      "input": "6cddb5a34e55"
+    },
+    {
       "id": "channels.create",
       "risk": "write",
       "riskOf": true,
@@ -691,6 +706,21 @@
       },
       "legacyCommand": null,
       "input": "df30662261e2"
+    },
+    {
+      "id": "channels.deliveries",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": false,
+        "cli": false
+      },
+      "legacyCommand": null,
+      "input": "5650092e1f2f"
     },
     {
       "id": "channels.edit",
@@ -776,7 +806,22 @@
         }
       },
       "legacyCommand": null,
-      "input": "1845196c0c2c"
+      "input": "f25fa1c1b8ce"
+    },
+    {
+      "id": "channels.pending",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": false,
+        "cli": false
+      },
+      "legacyCommand": null,
+      "input": "fe0290b8eca3"
     },
     {
       "id": "channels.post",
@@ -800,7 +845,7 @@
         }
       },
       "legacyCommand": null,
-      "input": "a55e45280bf7"
+      "input": "a63c4c735e57"
     },
     {
       "id": "channels.react",
@@ -851,6 +896,46 @@
       "input": "11de5b77aa28"
     },
     {
+      "id": "channels.resend",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": false,
+        "cli": false
+      },
+      "legacyCommand": null,
+      "input": "873b7aa6d019"
+    },
+    {
+      "id": "channels.schedulePost",
+      "risk": "guarded",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": false,
+        "cli": {
+          "path": [
+            "channels",
+            "schedule-post"
+          ],
+          "positional": [
+            "channelId",
+            "threadId",
+            "text"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "e59f6456fa40"
+    },
+    {
       "id": "channels.search",
       "risk": "read",
       "riskOf": false,
@@ -872,6 +957,56 @@
       },
       "legacyCommand": null,
       "input": "5fb08bd9af74"
+    },
+    {
+      "id": "channels.setThreadStatus",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "channels",
+            "thread-status"
+          ],
+          "positional": [
+            "channelId",
+            "threadId",
+            "status"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "6af6007ac39f"
+    },
+    {
+      "id": "channels.setThreadTitle",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "channels",
+            "thread-title"
+          ],
+          "positional": [
+            "channelId",
+            "threadId",
+            "title"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "7eaa31ca6065"
     },
     {
       "id": "channels.stopThread",
@@ -920,6 +1055,51 @@
       },
       "legacyCommand": null,
       "input": "a4332e367d65"
+    },
+    {
+      "id": "channels.threads",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "channels",
+            "threads"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "d0c50b27cff0"
+    },
+    {
+      "id": "channels.threadSettings",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "channels",
+            "thread-settings"
+          ],
+          "positional": [
+            "channelId",
+            "threadId",
+            "botId"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "96f81ac19d49"
     },
     {
       "id": "channels.update",
@@ -983,6 +1163,21 @@
       },
       "legacyCommand": null,
       "input": "6d11fb613445"
+    },
+    {
+      "id": "channels.withdrawPending",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": false,
+        "cli": false
+      },
+      "legacyCommand": null,
+      "input": "cf23b66b70a2"
     },
     {
       "id": "compatEndpoints.delete",
@@ -1545,6 +1740,36 @@
       },
       "legacyCommand": "providerUsage",
       "input": "e713b07977ab"
+    },
+    {
+      "id": "drafts.load",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": false,
+        "cli": false
+      },
+      "legacyCommand": null,
+      "input": "043c86825a75"
+    },
+    {
+      "id": "drafts.save",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": false,
+        "cli": false
+      },
+      "legacyCommand": null,
+      "input": "8fc51142aa80"
     },
     {
       "id": "endpoints.list",
@@ -3210,6 +3435,26 @@
       "input": "8bb0ecf306f5"
     },
     {
+      "id": "sessions.roots",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "sessions",
+            "roots"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "ada168e6072f"
+    },
+    {
       "id": "sessions.schedules",
       "risk": "read",
       "riskOf": false,
@@ -4570,6 +4815,15 @@
       ]
     },
     {
+      "id": "channels.schedulePost",
+      "path": "channels schedule-post",
+      "positional": [
+        "channelId",
+        "threadId",
+        "text"
+      ]
+    },
+    {
       "id": "channels.search",
       "path": "channels search",
       "positional": [
@@ -4591,6 +4845,38 @@
         "channelId",
         "threadId"
       ]
+    },
+    {
+      "id": "channels.threadSettings",
+      "path": "channels thread-settings",
+      "positional": [
+        "channelId",
+        "threadId",
+        "botId"
+      ]
+    },
+    {
+      "id": "channels.setThreadStatus",
+      "path": "channels thread-status",
+      "positional": [
+        "channelId",
+        "threadId",
+        "status"
+      ]
+    },
+    {
+      "id": "channels.setThreadTitle",
+      "path": "channels thread-title",
+      "positional": [
+        "channelId",
+        "threadId",
+        "title"
+      ]
+    },
+    {
+      "id": "channels.threads",
+      "path": "channels threads",
+      "positional": []
     },
     {
       "id": "channels.update",
@@ -5255,6 +5541,11 @@
       "positional": [
         "sessionId"
       ]
+    },
+    {
+      "id": "sessions.roots",
+      "path": "sessions roots",
+      "positional": []
     },
     {
       "id": "sessions.scheduleSend",

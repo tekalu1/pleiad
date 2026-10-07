@@ -1228,6 +1228,48 @@ export default async function (t) {
     t.ok('明示の @ が無ければ起こさない（人の名前・コード・引用・メールの形・流れへの @ なし投稿・bot が話していないスレッド）', botPost(eRead, owl).length === 0 && botPost(eRead, lynx).length === 0
       && !c.since(mE).some((e) => e.type === 'turnEnd') && (await read(dev.id)).posts.every((p) => !p.turn));
 
+    // ---- 宛先のチップ（to。ADR 0157）: 本文に @ が無いときの宛先。@ があれば @ が先に効く
+    {
+      const rootT = await call('channels.post', { channelId: dev.id, text: 'echo:宛先のチップ', to: lynx.id });
+      await until(async () => botPost(await read(dev.id, rootT.id), lynx, 'done').length === 1, { label: 'to で流れから Lynx' });
+      t.ok('to: 流れの @ の無い投稿でも、宛先の bot がその投稿を根に返事をする', botPost(await read(dev.id, rootT.id), owl).length === 0);
+      await settled(rootT);
+      await call('channels.post', { channelId: dev.id, threadId: rootT.id, text: 'echo:Owl へ', to: owl.id });
+      const tRead = await until(async () => { const r = await read(dev.id, rootT.id); return botPost(r, owl, 'done').length === 1 ? r : null; }, { label: 'to でスレッドの Owl' });
+      t.ok('to: スレッドでは、最後に話した bot（Lynx）より宛先（Owl）が受ける', botPost(tRead, owl, 'done')[0].text === 'Owl へ', JSON.stringify(tRead.posts.map((p) => [p.author.botId, p.text])));
+      await settled(rootT);
+      await sleep(300);
+      const owlBefore = botPost(await read(dev.id, rootT.id), owl, 'done').length;
+      await call('channels.post', { channelId: dev.id, threadId: rootT.id, text: '@Lynx echo:@ が先', to: owl.id });
+      await until(async () => botPost(await read(dev.id, rootT.id), lynx, 'done').length === 2, { label: 'to より @ が先' });
+      await settled(rootT);
+      await sleep(300);
+      t.ok('to: 本文の @ があれば @ が先に効く（宛先の bot は起こさない）', botPost(await read(dev.id, rootT.id), owl, 'done').length === owlBefore);
+      t.ok('to: 投稿に宛先が残る（承認の後の起こし直しが使う）', (await read(dev.id, rootT.id)).posts.some((p) => p.to === owl.id));
+    }
+
+    // ---- このスレッドだけの設定（channels.threadSettings。ADR 0157）: bot の会話の設定を変え、bot の既定を変えても上書きしない
+    {
+      const rootS = await call('channels.post', { channelId: dev.id, text: '@Owl echo:設定の前' });
+      await until(async () => botPost(await read(dev.id, rootS.id), owl, 'done').length === 1, { label: '設定の前の Owl' });
+      await settled(rootS);
+      const sOwl = (await threadOf(rootS)).sessions[owl.id];
+      const r1 = await call('channels.threadSettings', { channelId: dev.id, threadId: rootS.id, botId: owl.id, model: 'fast' });
+      t.ok('threadSettings: このスレッドの Owl の会話のモデルを変える（返りは今の値）', r1.sessionId === sOwl && r1.model === 'fast', JSON.stringify(r1));
+      const r2 = await call('channels.threadSettings', { channelId: dev.id, threadId: rootS.id, botId: lynx.id, model: 'tiny' });
+      t.ok('threadSettings: 会話がまだ無い bot（Lynx）は、会話を作ってから入れる', Boolean(r2.sessionId) && (await threadOf(rootS)).sessions[lynx.id] === r2.sessionId && r2.model === 'tiny', JSON.stringify(r2));
+      await call('channels.post', { channelId: dev.id, threadId: rootS.id, text: '@Owl echo:設定の後' });
+      await until(async () => botPost(await read(dev.id, rootS.id), owl, 'done').length === 2, { label: '設定の後の Owl' });
+      await settled(rootS);
+      const rowOf = async (id) => (await c.cmd('listSessions')).find((s) => s.id === id);
+      t.ok('threadSettings: 次のターンからそのモデルで走る', (await rowOf(sOwl))?.model === 'fast', JSON.stringify(await rowOf(sOwl)));
+      await call('bots.update', { botId: owl.id, persona: '調べ物が得意。直した' });
+      await sleep(300);
+      t.ok('threadSettings: bot の既定を変えても、このスレッドで変えたモデルは上書きしない', (await rowOf(sOwl))?.model === 'fast', String((await rowOf(sOwl))?.model));
+      const prefs = await fs.readFile(path.join(dataDir, 'prefs.json'), 'utf8').catch(() => '{}');
+      t.ok('threadSettings: Chats の新しい会話の既定（モデル）は変えない', !prefs.includes('"fast"'), prefs.slice(0, 200));
+    }
+
     // ---- G: スレッドで @ の無い人の投稿は、そのスレッドで最後に話した bot が受ける（ADR 0117）。bot の @ の無い返事は誰も起こさない
     {
       const rootG = await call('channels.post', { channelId: dev.id, text: '@Owl echo:G1' });

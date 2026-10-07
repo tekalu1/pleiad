@@ -1834,6 +1834,7 @@
       "copied": "Copied",
       "more": "Message actions",
       "sentAt": "Sent at {{time}}",
+      "sourceFor": "Which agent received it",
       "sourceTitle": "What was sent to the agent",
       "editResend": "Edit and resend",
       "resend": "Resend",
@@ -3006,7 +3007,7 @@
     "place": {
       "thread": "#{{channel}} › {{thread}}",
       "channel": "#{{channel}}",
-      "chat": "Chats › {{title}}"
+      "chat": "Quick chats › {{title}}"
     },
     "outcome": {
       "allowed": "Approved",

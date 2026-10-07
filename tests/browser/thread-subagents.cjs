@@ -64,7 +64,7 @@ async page => {
   const B = await rpc('channels.post', { channelId: ch.id, text: '@Lynx ok' });   // 委譲しないスレッド
   await until(async () => (await turns(B.id)).length >= 1, 'plain thread turn');
 
-  await page.locator('#tabChannels').click();
+  await page.locator('#sideOrder [data-order="channel"]').click();
   await page.evaluate((id) => document.dispatchEvent(new CustomEvent('channels:show', { detail: { kind: 'channel', id } })), ch.id);
   await page.locator('#chFeed .post .thread-summary').first().waitFor();
   const open = async (id) => {
@@ -79,7 +79,7 @@ async page => {
   await until(async () => (await chip.count()) === 1 && await page.locator('#chThread .th-subs').isVisible(), 'chip visible');
   const place = await page.evaluate(() => {
     const r = (s) => document.querySelector(s)?.getBoundingClientRect();
-    return { chip: r('#chThread .th-subs'), composer: r('#chThread .ch-composer') ?? r('#chThreadComposer') };
+    return { chip: r('#chThread .th-subs'), composer: r('#chThread .ch-composer') ?? r('#thComposer') };
   });
   check(place.chip && place.composer && place.chip.bottom <= place.composer.top + 1 && place.chip.right > place.composer.right - 40, 'the subagent chip is at the right end just above the thread composer', place);
   check(/一覧を開く/.test(await chip.getAttribute('aria-label')) && await chip.getAttribute('aria-controls') === 'workDialog', 'the chip has the same spoken name as the Chats chip and controls the work dialog');
@@ -119,7 +119,7 @@ async page => {
   check(await page.locator('#parentChatEntry').isVisible(), 'the child conversation is opened in Chats (with the way back to the parent)');
 
   // ---- カードの矢印から: スレッドの一覧で、その子を選んだ状態で開く
-  await page.locator('#tabChannels').click();
+  await page.locator('#sideOrder [data-order="channel"]').click();
   await page.evaluate((id) => document.dispatchEvent(new CustomEvent('channels:show', { detail: { kind: 'channel', id } })), ch.id);
   await page.locator('#chThread .post').first().waitFor();
   await sleep(1500);
@@ -138,7 +138,9 @@ async page => {
   check(none.hidden === true && none.shown === 0, 'a thread whose bots delegated nothing shows no subagent chip', none);
 
   // ================================================================ Chats のダイアログは従来どおり（題は「バックグラウンド」）
-  await page.locator('#tabChats').click();
+  // 会話の面へ戻る（脇の札はやめた。状態の並べ方の会話の行を押す）
+  await page.locator('#sideOrder [data-order="status"]').click();
+  await page.locator('#groups .row[data-session]:not([data-thread])').first().click();
   const entry = page.locator('#workEntryButton');
   if (await entry.isVisible().catch(() => false)) {
     await entry.click();

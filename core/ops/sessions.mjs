@@ -11,6 +11,10 @@ const D = (id, key) => `agent:ops.sessions.${id}.${key}`;
 // ---- 上限（定義に書く。AI が 1 回の呼び出しで読む量を抑える）
 export const LIST_DEFAULT = 30;
 export const LIST_MAX = 100;
+/** sessions.roots: 1 回の件数（既定・上限）と、根の本文の字数 */
+export const ROOTS_DEFAULT = 30;
+export const ROOTS_MAX = 100;
+export const ROOT_TEXT_MAX = 2_000;
 /** sessions.read: messageId の前後それぞれの件数の上限 */
 export const READ_SIDE_MAX = 20;
 export const READ_SIDE_DEFAULT = 4;
@@ -170,6 +174,20 @@ const searchOps = [
         throw e;
       }
     },
+  }),
+  // 一時チャットの流れ（docs/design-system.md「一時チャットの流れ」）: 会話ごとに、最初のあなたの発言を根の投稿に見立てた行。新しい順に limit 件
+  defineOp({
+    id: 'sessions.roots',
+    summary: 'agent:ops.sessions.roots.summary',
+    risk: 'read',
+    input: z.object({
+      before: z.number().int().positive().optional().describe(D('roots', 'before')),
+      limit: z.number().int().min(1).max(ROOTS_MAX).optional().describe(D('roots', 'limit')),
+    }),
+    output: z.object({ roots: z.array(z.object({ sessionId: z.string(), title: z.string(), lastModified: z.number(), createdAt: z.union([z.string(), z.number()]).nullable(),
+      first: z.object({ uuid: z.string(), at: z.string().nullable(), text: z.string() }).nullable(), count: z.number().int().nullable() })), nextBefore: z.number().nullable() }),
+    surfaces: { ui: true, mcp: 'catalog', cli: { path: ['sessions', 'roots'] } },
+    handler: (ctx, args) => ctx.app.sessionRoots(args),
   }),
 ];
 

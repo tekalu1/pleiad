@@ -17,10 +17,12 @@
 import { z } from 'zod';
 import { agentT } from '../i18n.mjs';
 import { authorKey, HIDDEN_BOT_KINDS } from '../channels/types.mjs';
-import { ChannelError, LIMITS } from '../channels/service.mjs';
+import { ChannelError, HOME_ALIAS, LIMITS, THREADS_PER_CHANNEL_MAX } from '../channels/service.mjs';
+import { THREAD_STATUS_MAX, THREAD_TITLE_MAX } from '../channels/threads.mjs';
 import { groupTargets, expandGroups } from '../channels/group-mentions.mjs';
 import { BUDGET_LIMITS, budgetOf, loosensBudget, normalizeBudget } from '../channels/budget.mjs';
 import { OpError, defineOp } from './registry.mjs';
+import { humanOnlyFields } from './host.mjs';
 import { strongerMode } from '../bots/approval.mjs';
 import { modePosition, scopeRank } from '../modes.mjs';
 
@@ -113,6 +115,24 @@ async function ownPost(ctx, args) {
   return author;
 }
 
+/**
+ * 一時チャットの呼び名（channelId: 'home'）を実体の id へ解く（ADR 0157）。make: 無ければ作る（人の投稿。最初に bot へ話しかけたとき）。
+ * 無いまま読むと、空の一時チャットとして返す（empty）か、見つからないで断る
+ */
+async function homeArgs(ctx, args, { make = false } = {}) {
+  if (args.channelId !== HOME_ALIAS) return args;
+  const home = make ? await ctx.channels.ensureHome() : await ctx.channels.home?.();
+  return home ? { ...args, channelId: home.id } : null;
+}
+const notFound = (ctx, id) => new OpError('CHANNEL_NOT_FOUND', agentT(ctx.locale, 'ops.errors.CHANNEL_NOT_FOUND', { id }));
+/** 組み込みの bot の呼び名（to・botId の 'plain'。チャンネルのスレッドの「bot なし」）。人だけが選べ、無ければ作る（ADR 0157） */
+const PLAIN = 'plain';
+async function plainId(ctx, id) {
+  if (id !== PLAIN) return id;
+  if (ctx.principal?.by !== 'human') throw new OpError('INVALID', agentT(ctx.locale, 'ops.errors.INVALID', { detail: 'only a human chooses the built-in agent' }));
+  return (await ctx.bots.ensurePlain()).id;
+}
+
 export const channelOps = [
   defineOp({
     id: 'channels.list', summary: D('list', 'summary'), risk: 'read', input: z.object({}),
@@ -124,7 +144,11 @@ export const channelOps = [
     id: 'channels.get', summary: D('get', 'summary'), risk: 'read',
     input: z.object({ channelId: channelId('get') }), output: z.unknown(),
     surfaces: { ui: true, mcp: 'catalog', cli: { path: ['channels', 'get'], positional: ['channelId'] } },
-    handler: (ctx, args) => run(ctx, () => ctx.channels.get(args)),
+    handler: async (ctx, args) => {
+      const where = await homeArgs(ctx, args);
+      if (!where) throw notFound(ctx, args.channelId);
+      return run(ctx, () => ctx.channels.get(where));
+    },
   }),
   defineOp({
     id: 'channels.read', summary: D('read', 'summary'), risk: 'read',
@@ -136,7 +160,197 @@ export const channelOps = [
     }),
     output: z.object({ posts: z.array(z.unknown()), threads: z.array(z.unknown()), summaries: z.unknown(), nextBefore: z.string().nullable() }),
     surfaces: { ui: true, mcp: 'catalog', cli: { path: ['channels', 'read'], positional: ['channelId'] } },
-    handler: (ctx, args) => run(ctx, () => ctx.channels.read(args)),
+    handler: async (ctx, args) => {
+      const where = await homeArgs(ctx, args);
+      // 一時チャットにまだ投稿が無い（実体を作っていない）: 空の流れ
+      if (!where) return { posts: [], threads: [], summaries: {}, nextBefore: null };
+      return run(ctx, () => ctx.channels.read(where));
+    },
+  }),
+  defineOp({
+    // スレッドの索引: チャンネルごとの最近のスレッド（題・最後の動き・返信の数・未読・状態・作業中の bot）。脇の 2 つの並べ方の材料
+    id: 'channels.threads', summary: D('threads', 'summary'), risk: 'read',
+    input: z.object({
+      channelId: z.string().min(1).optional().describe(D('threads', 'channelId')),
+      perChannel: z.number().int().min(1).max(THREADS_PER_CHANNEL_MAX).optional().describe(D('threads', 'perChannel')),
+      all: z.boolean().optional().describe(D('threads', 'all')),
+    }),
+    output: z.object({ threads: z.array(z.unknown()), totals: z.record(z.string(), z.number().int()) }),
+    surfaces: { ui: true, mcp: 'catalog', cli: { path: ['channels', 'threads'] } },
+    handler: (ctx, args) => run(ctx, () => ctx.channels.threadIndex(args)),
+  }),
+  defineOp({
+    id: 'channels.setThreadStatus', summary: D('setThreadStatus', 'summary'), risk: 'write',
+    riskReason: 'Sets or clears the status label of a thread (the same status groups as conversations). It only changes how the sidebar groups the thread; no post or bot is touched. A human can do the same, so an agent is treated the same (ADR 0082)',
+    input: z.object({
+      channelId: channelId('setThreadStatus'), threadId: postId('setThreadStatus', 'threadId'),
+      status: z.string().trim().max(THREAD_STATUS_MAX).describe(D('setThreadStatus', 'status')),
+    }),
+    output: z.object({ channelId: z.string(), threadId: z.string(), status: z.string() }),
+    surfaces: { ui: true, mcp: 'catalog', cli: { path: ['channels', 'thread-status'], positional: ['channelId', 'threadId', 'status'] } },
+    handler: async (ctx, args) => run(ctx, async () => { await refuseHidden(ctx); return ctx.channels.setThreadStatus(args, await authorOf(ctx)); }),
+  }),
+  defineOp({
+    id: 'channels.setThreadTitle', summary: D('setThreadTitle', 'summary'), risk: 'write',
+    riskReason: 'Sets or clears the title shown for a thread. The root post is not changed, and clearing it goes back to the first line of the root post. A human can do the same, so an agent is treated the same (ADR 0082)',
+    input: z.object({
+      channelId: channelId('setThreadTitle'), threadId: postId('setThreadTitle', 'threadId'),
+      title: z.string().max(THREAD_TITLE_MAX).describe(D('setThreadTitle', 'title')),
+    }),
+    output: z.object({ channelId: z.string(), threadId: z.string(), title: z.string() }),
+    surfaces: { ui: true, mcp: 'catalog', cli: { path: ['channels', 'thread-title'], positional: ['channelId', 'threadId', 'title'] } },
+    handler: async (ctx, args) => run(ctx, async () => { await refuseHidden(ctx); return ctx.channels.setThreadTitle(args, await authorOf(ctx)); }),
+  }),
+  defineOp({
+    // スレッドの bot の会話の設定を、このスレッドだけ変える（入力欄の宛先の bot のチップ。ADR 0157）。承認モードは人だけ（bots.setMode と同じ）
+    id: 'channels.threadSettings', summary: D('threadSettings', 'summary'), risk: 'write',
+    riskReason: 'Changes how one bot runs in one thread (model, effort, approval mode, working folder) from its next turn. The bot\'s defaults are not changed. The approval mode is human-only like bots.setMode, and the working folder must be one the bot may use',
+    input: z.object({
+      channelId: channelId('threadSettings'), threadId: postId('threadSettings', 'threadId'),
+      botId: z.string().min(1).describe(D('threadSettings', 'botId')),
+      backend: z.string().max(40).optional().describe(D('threadSettings', 'backend')),
+      model: z.string().max(200).optional().describe(D('threadSettings', 'model')),
+      effort: z.string().max(40).optional().describe(D('threadSettings', 'effort')),
+      mode: z.string().max(40).optional().describe(D('threadSettings', 'mode')),
+      cwd: z.string().max(LIMITS.cwd).optional().describe(D('threadSettings', 'cwd')),
+    }),
+    output: z.object({ sessionId: z.string(), backend: z.string(), model: z.string(), effort: z.string(), mode: z.string(), cwd: z.string() }),
+    surfaces: { ui: true, mcp: 'catalog', cli: { path: ['channels', 'thread-settings'], positional: ['channelId', 'threadId', 'botId'] } },
+    handler: async (ctx, input) => run(ctx, async () => {
+      await refuseHidden(ctx);
+      humanOnlyFields(ctx, input, ['mode']);
+      const args = { ...input, botId: await plainId(ctx, input.botId) };
+      const plain = Boolean((await ctx.bots.get({ botId: args.botId }))?.plain);
+      // backend を選べるのは組み込みの bot だけ（会話を作るときの 1 回。人の bot は bot の backend のまま）。作業場所も人だけが選ぶ（フォルダーを持たない）
+      if (args.backend !== undefined && !plain) throw new OpError('INVALID', agentT(ctx.locale, 'ops.errors.INVALID', { detail: 'backend can only be chosen for the built-in agent' }));
+      if (plain) humanOnlyFields(ctx, args, ['backend', 'cwd']);
+      if (args.cwd !== undefined && !plain) {
+        const bot = await ctx.bots.get({ botId: args.botId });
+        const channel = await ctx.channels.get({ channelId: args.channelId });
+        const allowed = [...(bot?.folders ?? []).map((f) => f.path), ...(channel?.cwd ? [channel.cwd] : [])];
+        const norm = (p) => String(p ?? '').split(String.fromCharCode(92)).join('/').replace(/[/]+$/, '').toLowerCase();
+        if (allowed.length && !allowed.some((p) => norm(p) === norm(args.cwd))) throw new OpError('INVALID', agentT(ctx.locale, 'ops.errors.INVALID', { detail: 'cwd must be one of the bot\'s folders or the channel folder' }));
+      }
+      return ctx.threadSettings(args);
+    }),
+  }),
+  defineOp({
+    // bot へ届く前の人の投稿（送信待ちの行。ADR 0157 の F12）。画面の道具
+    id: 'channels.pending', summary: D('pending', 'summary'), risk: 'read',
+    input: z.object({ channelId: channelId('pending'), threadId: postId('pending', 'threadId') }),
+    output: z.object({ items: z.array(z.object({ postId: z.string(), botIds: z.array(z.string()) })) }),
+    surfaces: { ui: true, mcp: false, cli: false },
+    handler: async (ctx, args) => (ctx.pendingPosts ? ctx.pendingPosts(args) : { items: [] }),
+  }),
+  defineOp({
+    // 送信待ちのあなたの投稿を取り下げる（［取り消し］・［編集］で本文を入力欄へ戻す）。どの bot にもまだ届け始めていないときだけ
+    id: 'channels.withdrawPending', summary: D('withdrawPending', 'summary'), risk: 'write',
+    riskReason: 'Takes back your own post before any bot has received it. Nothing has been delivered yet, so nothing else changes',
+    input: z.object({ channelId: channelId('withdrawPending'), postId: postId('withdrawPending') }),
+    output: z.object({ withdrawn: z.boolean() }),
+    surfaces: { ui: true, mcp: false, cli: false },
+    handler: async (ctx, args) => {
+      if (ctx.principal?.by !== 'human' || !ctx.withdrawPending) throw new OpError('NEEDS_UI', agentT(ctx.locale, 'ops.errors.NEEDS_UI'));
+      await ownPost(ctx, args);
+      try { return await ctx.withdrawPending(args); }
+      catch (e) { if (e?.code === 'INVALID') throw new OpError('INVALID', agentT(ctx.locale, 'ops.errors.INVALID', { detail: e.message })); throw e; }
+    },
+  }),
+  defineOp({
+    // スレッドのあなたの投稿を送り直す（編集して再送信・再送信。ADR 0157 の 4.5・ADR 0102）。その投稿と後ろを取り下げ、
+    // スレッドの bot の会話をその手前まで巻き戻してから、新しい本文を書く。画面の道具（人だけ）
+    id: 'channels.resend', summary: D('resend', 'summary'), risk: 'write',
+    riskReason: 'Withdraws your post and the posts after it in a thread, rewinds the bot conversations of the thread to before it, and posts the new text. Files changed by the bots and posts in other threads are not undone',
+    input: z.object({
+      channelId: channelId('resend'), postId: postId('resend'),
+      text: z.string().min(1).max(LIMITS.text).describe(D('resend', 'text')),
+      attachments: z.array(z.object({ path: z.string().min(1), name: z.string().optional(), mime: z.string().optional() })).max(LIMITS.attachments).optional().describe(D('resend', 'attachments')),
+      stopRunning: z.boolean().optional().describe(D('resend', 'stopRunning')),
+      clientId: z.string().min(8).max(100).optional().describe(D('resend', 'clientId')),
+    }),
+    output: z.unknown(),
+    surfaces: { ui: true, mcp: false, cli: false },
+    handler: async (ctx, args) => {
+      if (ctx.principal?.by !== 'human' || !ctx.resendThread) throw new OpError('NEEDS_UI', agentT(ctx.locale, 'ops.errors.NEEDS_UI'));
+      await ownPost(ctx, args);
+      const post = await run(ctx, () => ctx.channels.getPost({ channelId: args.channelId, postId: args.postId }));
+      if (!post.threadId) throw new OpError('INVALID', agentT(ctx.locale, 'ops.errors.INVALID', { detail: 'the root of a thread cannot be resent; branch instead' }));
+      const files = args.attachments?.length ? await describeFiles(ctx, args.attachments) : undefined;
+      try {
+        return await run(ctx, () => ctx.resendThread({ ...args, threadId: post.threadId, ...(files ? { attachments: files } : {}) }));
+      } catch (e) {
+        if (e?.code === 'SESSION_RUNNING') throw new OpError('SESSION_RUNNING', agentT(ctx.locale, 'ops.errors.INVALID', { detail: 'a bot is still working in this thread; pass stopRunning to stop it' }));
+        throw e;
+      }
+    },
+  }),
+  defineOp({
+    // スレッドをある投稿のところで分ける（「ここから分岐」。ADR 0157 の 4.4）。根からその投稿までを写した新しいスレッドができ、
+    // スレッドの bot の会話もその手前で分ける。写した投稿は bot を起こさない。画面の道具（人だけ）
+    id: 'channels.branchThread', summary: D('branchThread', 'summary'), risk: 'write',
+    riskReason: 'Copies the posts of a thread up to one post into a new thread and forks the bot conversations of the thread at that point. The copies wake no bot and the original thread is not changed',
+    input: z.object({ channelId: channelId('branchThread'), threadId: postId('branchThread', 'threadId'), atPostId: postId('branchThread', 'atPostId') }),
+    output: z.object({ channelId: z.string(), threadId: z.string() }),
+    surfaces: { ui: true, mcp: false, cli: false },
+    handler: async (ctx, args) => run(ctx, async () => {
+      if (ctx.principal?.by !== 'human') throw new OpError('NEEDS_UI', agentT(ctx.locale, 'ops.errors.NEEDS_UI'));
+      if (!ctx.branchThread) throw new OpError('NEEDS_UI', agentT(ctx.locale, 'ops.errors.NEEDS_UI'));
+      return ctx.branchThread(args);
+    }),
+  }),
+  defineOp({
+    // エージェントに渡した原文（ADR 0157。Chats の「エージェントに渡した原文を見る」と同じ）: スレッドの各 bot の会話の履歴から、
+    // その投稿を運んだ発言を、包み（<pleiad-channel post="P">・<pleiad-channel-thread>）を分ける前の生の本文で返す。人だけ（画面の道具）
+    id: 'channels.deliveries', summary: D('deliveries', 'summary'), risk: 'read',
+    input: z.object({ channelId: channelId('deliveries'), postId: postId('deliveries') }),
+    output: z.object({ deliveries: z.array(z.object({ botId: z.string(), sessionId: z.string(), at: z.string().nullable(), heard: z.boolean(), text: z.string() })) }),
+    surfaces: { ui: true, mcp: false, cli: false },
+    handler: async (ctx, args) => run(ctx, async () => {
+      if (ctx.principal?.by !== 'human') throw new OpError('NEEDS_UI', agentT(ctx.locale, 'ops.errors.NEEDS_UI'));
+      const post = await ctx.channels.getPost(args);
+      if (!post) throw new OpError('POST_NOT_FOUND', agentT(ctx.locale, 'ops.errors.POST_NOT_FOUND', { id: args.postId }));
+      const channel = await ctx.channels.get({ channelId: args.channelId });
+      const sessions = new Map();
+      if (channel.kind === 'dm') {
+        const bot = channel.botId ? await ctx.bots?.get({ botId: channel.botId }) : null;
+        if (bot?.dmSessionId) sessions.set(bot.id, bot.dmSessionId);
+      } else {
+        const th = await ctx.channels.threads.get(args.channelId, post.threadId ?? post.id).catch(() => null);
+        for (const [botId, sessionId] of Object.entries(th?.sessions ?? {})) sessions.set(botId, sessionId);
+      }
+      const mark = `post="${post.id}"`;
+      const heardRe = new RegExp(`<pleiad-channel\\b[^>]*\\spost="${post.id}"[^>]*\\sheard="true"|<pleiad-channel\\b[^>]*\\sheard="true"[^>]*\\spost="${post.id}"`);
+      const deliveries = [];
+      for (const [botId, sessionId] of sessions) {
+        const messages = await ctx.rawMessages?.(sessionId).catch(() => []) ?? [];
+        for (const m of messages) {
+          if (m?.role !== 'user' || typeof m.text !== 'string' || !m.text.includes(mark)) continue;
+          deliveries.push({ botId, sessionId, at: m.at ?? null, heard: heardRe.test(m.text), text: m.text });
+        }
+      }
+      return { deliveries };
+    }),
+  }),
+  defineOp({
+    // スレッドへの返信を日時を指定して送る（入力欄の送信の日時。ADR 0157・0103）。AI には作らせない（sessions.scheduleSend と同じ）
+    id: 'channels.schedulePost', summary: D('schedulePost', 'summary'), risk: 'guarded',
+    approvalWords: 'schedule',
+    confirm: (ctx, args) => agentT(ctx.locale, 'ops.channels.schedulePost.confirm', { thread: args.threadId, at: String(args.at), text: String(args.text ?? '').slice(0, 120) }),
+    input: z.object({
+      channelId: channelId('schedulePost'), threadId: postId('schedulePost', 'threadId'),
+      text: z.string().min(1).max(LIMITS.text).describe(D('schedulePost', 'text')),
+      at: z.union([z.number(), z.string()]).describe(D('schedulePost', 'at')),
+      clientId: z.string().min(8).max(100).describe(D('schedulePost', 'clientId')),
+      attachments: z.array(z.object({ path: z.string().min(1), name: z.string().optional(), mime: z.string().optional() })).max(LIMITS.attachments).optional().describe(D('schedulePost', 'attachments')),
+      to: z.string().min(1).max(80).optional().describe(D('schedulePost', 'to')),
+    }),
+    output: z.object({ id: z.string(), at: z.number() }),
+    surfaces: { ui: true, mcp: false, cli: { path: ['channels', 'schedule-post'], positional: ['channelId', 'threadId', 'text'] } },
+    handler: async (ctx, args) => run(ctx, async () => {
+      if ((await authorOf(ctx)).kind !== 'human') throw new OpError('NEEDS_UI', agentT(ctx.locale, 'ops.errors.NEEDS_UI'));
+      const files = args.attachments?.length ? await describeFiles(ctx, args.attachments) : undefined;
+      return ctx.schedulePost({ ...args, ...(files ? { attachments: files } : {}) });
+    }),
   }),
   defineOp({
     id: 'channels.threadBudget', summary: D('threadBudget', 'summary'), risk: 'read',
@@ -241,11 +455,20 @@ export const channelOps = [
       new: z.boolean().optional().describe(D('post', 'new')),
       state: z.enum(['checking']).optional().describe(D('post', 'state')),
       confirmedWake: z.array(z.string()).optional().describe(D('post', 'confirmedWake')),
+      to: z.string().min(1).max(80).optional().describe(D('post', 'to')),
+      clientId: z.string().min(8).max(100).optional().describe(D('post', 'clientId')),
     }),
     output: z.unknown(),
     surfaces: { ui: true, mcp: 'catalog', cli: { path: ['channels', 'post'], positional: ['channelId', 'text'] } },
-    handler: async (ctx, { state, threadId, attachments, confirmedWake, ...args }) => {
+    handler: async (ctx, { state, threadId, attachments, confirmedWake, to, clientId, ...input }) => {
       const author = await authorOf(ctx);
+      const args = await homeArgs(ctx, input, { make: author.kind === 'human' });
+      if (!args) throw notFound(ctx, input.channelId);
+      if (clientId && author.kind !== 'human') throw new OpError('INVALID', agentT(ctx.locale, 'ops.errors.INVALID', { detail: 'clientId is only for a human post' }));
+      if (clientId) args.clientId = clientId;
+      // 宛先のチップ（to）は人だけ。bot・AI は本文の @ で呼ぶ（強さの確認が @ を数える）
+      if (to && author.kind !== 'human') throw new OpError('INVALID', agentT(ctx.locale, 'ops.errors.INVALID', { detail: 'to is only for a human post; write @name in the text instead' }));
+      if (to) args.to = await plainId(ctx, to);
       const files = attachments?.length ? await describeFiles(ctx, attachments) : null;
       let groupMentions;
       if (author.kind === 'human') {
@@ -351,11 +574,12 @@ export const channelOps = [
   defineOp({
     id: 'channels.markRead', summary: D('markRead', 'summary'), risk: 'write',
     riskReason: 'Moves the read position of a channel forward (never back). It only changes unread badges and does not touch any post',
-    input: z.object({ channelId: channelId('markRead'), at: z.number().int().positive().optional().describe(D('markRead', 'at')) }),
+    input: z.object({ channelId: channelId('markRead'), threadId: z.string().min(1).optional().describe(D('markRead', 'threadId')),
+      at: z.number().int().positive().optional().describe(D('markRead', 'at')) }),
     output: z.unknown(),
     surfaces: { ui: true, mcp: 'catalog', cli: { path: ['channels', 'mark-read'], positional: ['channelId'] } },
     // at は今を超えない（既読の位置は進める向きにしか動かないので、未来の時刻を 1 回入れられると、そのチャンネルの未読の印が二度と付かなくなる）
-    handler: (ctx, { channelId: id, at }) => run(ctx, async () => { await refuseHidden(ctx); return ctx.channels.markRead({ channelId: id, at: Math.min(at ?? Date.now(), Date.now()) }); }),
+    handler: (ctx, { channelId: id, threadId, at }) => run(ctx, async () => { await refuseHidden(ctx); return ctx.channels.markRead({ channelId: id, threadId, at: Math.min(at ?? Date.now(), Date.now()) }); }),
   }),
   defineOp({
     id: 'channels.stopThread', summary: D('stopThread', 'summary'), risk: 'write', modeGate: false,

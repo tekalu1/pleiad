@@ -1,4 +1,4 @@
-/* ==================== スレッドと空間モデル（W3。web/channels/deck.mjs・thread.mjs・thread-head.mjs・thread-toc.mjs） ====================
+/* ==================== スレッドと空間モデル（W3。web/channels/deck.mjs・thread.mjs・thread-head.mjs） ====================
    .deck[data-deck=feed|split|solo]・#chFeed・#chThread。3 枚［流れ 4｜スレッド 6｜右パネルの道具 4］を 2 枚分の窓で見る（右パネルは body の 3 列目）。
    板の位置は CSS（cqw）で決め、状態が替わるときの滑りは deck.mjs が transform で付ける（--dur-deck。動きを減らす設定では 0）。
    面は --surface-* / --fill-*、字は --ink-*、枠線なし（tests/lint-design.mjs） */
@@ -19,6 +19,20 @@
 .deck > .ch-thread{will-change:transform}
 @media (prefers-reduced-motion:reduce){.deck{--dur-deck:0ms}}
 /* 板の境目。線ではなく、面の階調の細い棒（上下は余白を空ける） */
+/* スレッドの入力欄（Chats の入力欄と同じ部品。web/channels/thread-composer.mjs）。先頭の宛先のチップ。
+   Chats の入力欄の、まだ送っていない会話の宛先のチップ（web/composer/home-dest.mjs）も同じ形 */
+:is(.th-composer,#composer) .chip.dest{display:inline-flex;align-items:center;gap:5px;min-width:0;max-width:40%}
+:is(.th-composer,#composer) .chip.dest[hidden]{display:none}
+:is(.th-composer,#composer) .chip.dest .av.xs{width:18px;height:18px;flex:none;display:inline-grid;place-items:center;font-size:12px;line-height:1}
+:is(.th-composer,#composer) .chip.dest .v{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+:is(.th-composer,#composer) .chip.dest .cv{flex:none;color:var(--ink-weak);font-size:10px}
+/* 宛先の bot の設定のチップ。bot の既定と違えば「変更あり」の点（チップの右上） */
+.th-composer .crow > .chip{position:relative}
+.th-composer .chip .cv{flex:none;color:var(--ink-weak);font-size:10px}
+.th-composer .chip > .entry-dot{position:absolute;top:3px;right:3px}
+.th-title-edit{cursor:text;border-radius:var(--r-s)}
+.th-title-edit:hover{background:var(--surface-1)}
+.th-title-input{flex:1;min-width:0;font:inherit;font-weight:600;padding:2px 6px;border-radius:var(--r-s);background:var(--surface-1);color:var(--ink)}
 .deck[data-deck=split] > .ch-thread::before{content:"";position:absolute;left:0;top:14px;bottom:14px;width:1px;background:var(--surface-2);pointer-events:none}
 
 /* ---- 流れの板（スレッドと並ぶとき）。見出しの目的は畳み、入力欄は押すまで 1 行（動いている間も畳んだまま） */
@@ -52,6 +66,21 @@
 :root.side-closed .deck[data-deck=solo] .th-side{display:inline-flex;margin-left:-6px}
 
 /* ---- 投稿の列 */
+/* 頭の ✦（題の候補）。考えている間は弱い字 */
+.th-wand{flex:none;width:28px;height:28px;font-size:13px;color:var(--ink-weak)}
+.th-wand.busy{opacity:.5}
+/* 設定のチップのアイコン（Chats の入力欄と同じ線画） */
+.th-composer .crow > .chip > svg.i{width:14px;height:14px;flex:none}
+/* 送信待ち・`!` の行（ADR 0157）。`!` の行は Chats の .m.cmd をそのまま入れ、上に「〜の作業場所で実行」 */
+.th-shells{max-width:820px}
+.th-shell-where{margin:8px 0 2px 46px;font-size:var(--fs-xs);color:var(--ink-weak)}
+.th-band-ctx{white-space:nowrap}
+/* 分岐（ADR 0157 の 4.4）: 枝の頭の「分岐元」の一行。分けた投稿の直後の行は Chats の .branch-row */
+.th-branch-from{margin:6px 0 2px 46px;font-size:var(--fs-xs);color:var(--ink-weak)}
+.th-replies > .branch-row,.th-root > .branch-row{max-width:820px}
+/* 投稿の列の入れ物（会話の移動の部品が重なる。web/conversation-nav.css の .log-frame）。地図の筋の分だけ右を空ける */
+.th-frame > .th-log{height:100%;padding-right:34px}
+.th-frame .nav-sticky{padding-left:52px}
 .th-log{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;padding:2px 10px 12px;scrollbar-width:thin;scrollbar-color:var(--surface-thumb) transparent}
 .th-log:focus-visible{outline:none}
 .th-root,.th-rdiv,.th-replies,.th-perms{max-width:820px}
@@ -154,25 +183,12 @@
 .th-bp-line.weak{font-size:var(--fs-xs);color:var(--ink-weak)}
 .th-bp-note{margin:10px 0 0;font-size:var(--fs-xs);line-height:1.6;color:var(--ink-weak)}
 
-/* ---- 目次（右パネルの本文） */
-.th-toc{display:flex;flex-direction:column;gap:8px;min-height:0;height:100%}
-.th-toc-search{width:100%;padding:7px 12px;border-radius:var(--r-m);background:var(--surface-1);color:var(--ink);font:inherit;outline:none}
-.th-toc-search:focus{background:var(--surface-2)}
-.th-toc-list{flex:1;min-height:0;overflow-y:auto;display:flex;flex-direction:column;gap:2px;scrollbar-width:thin;scrollbar-color:var(--surface-thumb) transparent}
-.th-toc-row{display:grid;grid-template-columns:20px auto minmax(0,1fr) auto;align-items:baseline;gap:6px;padding:6px 8px;border-radius:var(--r-s);background:transparent;color:var(--ink);font-size:var(--fs-s);text-align:left;cursor:pointer;
-  transition:background-color var(--dur-fast) var(--ease-out)}
-.th-toc-row:hover{background:var(--surface-hover)}
-.th-toc-name{font-weight:600;white-space:nowrap}
-.th-toc-text{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ink-weak)}
-.th-toc-row small{color:var(--ink-weak);font-size:var(--fs-xs)}
-.th-toc-empty{margin:24px 12px;color:var(--ink-weak);font-size:var(--fs-s);text-align:center}
-
 /* ---- 狭い幅。スレッドだけが全画面（幅 900px 未満は solo）。見出しの入口は目次と ✕ だけ（git・ブラウザーは Chats と同じく狭い幅では出さない） */
 @media (max-width:700px){
   .th-top{padding-left:6px}
   .th-crumb{font-size:var(--fs)}
   .th-git,.th-browser{display:none}
-  .th-log{padding:2px 6px 10px}
+  .th-log,.th-frame > .th-log{padding:2px 22px 10px 6px}
   .th-sys{margin-left:44px}
   .th-perms{--gut:44px}
   .th-band{margin:0 10px 6px}

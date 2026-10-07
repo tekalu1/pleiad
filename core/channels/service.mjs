@@ -57,13 +57,19 @@ import path from 'node:path';
 import { EMOJI_RE } from '../../web/emoji.mjs';
 import { authorKey, isAuthor, isId, newId, POST_STATES } from './types.mjs';
 import { createChannelStore } from './store.mjs';
-import { createThreadStore, emptyThread } from './threads.mjs';
+import { createThreadStore, emptyThread, threadTitle } from './threads.mjs';
 import { parseMentions } from './mentions.mjs';
 import { budgetOf, normalizeBudget, spentToday, dayOf } from './budget.mjs';
 
 export const LIMITS = Object.freeze({ name: 60, purpose: 300, memo: 4000, cwd: 1000, text: 20000, attachments: 50, members: 50, reactionKinds: 30, readDefault: 50, readMax: 100, searchDefault: 20, searchMax: 50 });
 /** 作業中の投稿の更新を全接続へ配る間隔（ms。ADR 0108。リモートの端末の通信量のため） */
 export const WORKING_EDIT_INTERVAL_MS = 1000;
+/** スレッドの索引（threads）の、チャンネルごとの既定の件数と上限（脇の「最近のスレッド」） */
+export const THREADS_PER_CHANNEL = 5;
+/** 一時チャットの、op での呼び名（channelId: 'home'）と保存の名前 */
+export const HOME_ALIAS = 'home';
+const HOME_NAME = 'home';
+export const THREADS_PER_CHANNEL_MAX = 50;
 
 export class ChannelError extends Error {
   constructor(code, params = {}, message) {
@@ -161,7 +167,8 @@ export function createChannelService({ dir, emit = () => {}, hooks = {}, now = D
     return cwd;
   }
   async function checkNameFree(name, exceptId) {
-    const taken = (await store.channels()).some((c) => c.kind === 'channel' && !c.archivedAt && c.id !== exceptId && foldName(c.name) === foldName(name));
+    // 一時チャット（home: true）の保存の名前 home は、人の作るチャンネルの名前とぶつからない（画面では「一時チャット」）
+    const taken = (await store.channels()).some((c) => c.kind === 'channel' && !c.home && !c.archivedAt && c.id !== exceptId && foldName(c.name) === foldName(name));
     if (taken) throw new ChannelError('CHANNEL_NAME_TAKEN', { name });
   }
   /** 外へ返すチャンネル: 予算は既定を埋め、今日使った分を付ける（ADR 0119）。DM は予算を持たない。threads は読み済みならそれを使う */
@@ -225,8 +232,22 @@ export function createChannelService({ dir, emit = () => {}, hooks = {}, now = D
     return out;
   };
 
+  // ---- 一時チャット（ADR 0157）: 今の Chats の会話の置き場。会話（session）はここに記録を持たず、bot に話しかけた投稿だけがここの投稿になる。
+  // 実体は home: true の普通のチャンネル（kind は channel）。最初に bot へ話しかけたとき（投稿のとき）に作る。op の channelId 'home' はこれの id へ解く
+  const findHome = async () => (await store.channels()).find((c) => c.home) ?? null;
+  async function ensureHome() {
+    const known = await findHome();
+    if (known) return known;
+    const t = now();
+    return saveChannel({ id: newId('channel', t), kind: 'channel', home: true, name: HOME_NAME, purpose: '', cwd: null, members: [], memo: '', createdAt: t, lastPostAt: t });
+  }
+
   const service = {
     dir, emit, hooks, now,
+    /** 一時チャットのチャンネル（無ければ作る） */
+    ensureHome,
+    /** 一時チャットのチャンネル（無ければ null） */
+    home: findHome,
     async start() { await store.channels(); await threadStore.load(); },
     stop() { for (const timer of timers) clearTimeout(timer); timers.clear(); edits.clear(); },
     /** stop に加えて、スレッドの状態の DB の接続を離す（データ置き場を消す前。テストの後片付け用） */
@@ -276,6 +297,69 @@ export function createChannelService({ dir, emit = () => {}, hooks = {}, now = D
       return { posts: clone(page), threads, summaries: summariesOf(all, ids), nextBefore: start > 0 ? page[0].id : null };
     },
 
+    /**
+     * スレッドの索引（脇の 2 つの並べ方の材料）。チャンネル（DM・アーカイブを除く。channelId を渡せばそのチャンネルだけ）ごとに、
+     * 返信があるか状態を持つ根を、最後の動きの新しい順に perChannel 件（all なら全部）。total はそのチャンネルのスレッドの数
+     */
+    async threadIndex({ channelId, perChannel = THREADS_PER_CHANNEL, all = false } = {}) {
+      if (channelId) await need(channelId);
+      const channels = (await store.channels()).filter((c) => (channelId ? c.id === channelId : c.kind === 'channel' && !c.archivedAt));
+      const [reads, states] = await Promise.all([store.allReadStates(), threadStore.list()]);
+      const byKey = new Map(states.map((th) => [`${th.channelId}\n${th.threadId}`, th]));
+      const per = Math.min(Math.max(1, Math.floor(perChannel) || THREADS_PER_CHANNEL), THREADS_PER_CHANNEL_MAX);
+      const threads = [], totals = {};
+      for (const channel of channels) {
+        const all_ = await store.snapshot(channel.id);
+        const replies = new Map();
+        for (const p of all_) {
+          if (!p.threadId || p.deletedAt) continue;
+          const r = replies.get(p.threadId) ?? { count: 0, lastAt: 0, mentions: 0 };
+          r.count++;
+          r.lastAt = Math.max(r.lastAt, p.at);
+          replies.set(p.threadId, r);
+        }
+        const channelRead = reads[channel.id]?.readAt ?? 0;
+        const rows = [];
+        for (const root of all_) {
+          if (root.threadId !== null || root.deletedAt) continue;
+          const th = byKey.get(`${channel.id}\n${root.id}`) ?? null;
+          const r = replies.get(root.id);
+          if (!r && !th) continue;
+          const lastAt = Math.max(root.at, r?.lastAt ?? 0);
+          const readAt = Math.max(channelRead, th?.readAt ?? 0);
+          rows.push({
+            channelId: channel.id, threadId: root.id, title: th?.title || threadTitle(root.text), rootAt: root.at, lastAt, count: r?.count ?? 0,
+            unread: lastAt > readAt && (r?.lastAt ?? 0) > readAt, state: th?.state ?? 'idle', ...(th?.live ? { live: clone(th.live) } : {}),
+            ...(th?.status ? { status: th.status } : {}), bots: Object.keys(th?.sessions ?? {}), ...(th?.origin ? { origin: clone(th.origin) } : {}),
+            ...(th?.stopped ? { stopped: true } : {}),
+            // 分けたスレッド（枝）の元・bot ごとの会話（脇の行の「枝」の札・作業フォルダーのコピー）
+            ...(root.branchOf ? { branchOf: clone(root.branchOf) } : {}), sessions: clone(th?.sessions ?? {}),
+          });
+        }
+        rows.sort((a, b) => b.lastAt - a.lastAt);
+        totals[channel.id] = rows.length;
+        threads.push(...(all ? rows : rows.slice(0, per)));
+      }
+      return { threads, totals };
+    },
+
+    /** スレッドの題を付ける・外す（空にすると根の投稿の最初の行に戻る）。根の投稿は変えない */
+    async setThreadTitle({ channelId, threadId, title }, _author) {
+      const root = await needPost(channelId, threadId);
+      if (root.threadId !== null) throw new ChannelError('POST_NOT_FOUND', { id: String(threadId) });
+      const thread = await threadStore.update(channelId, threadId, { title: title ? String(title) : null });
+      emitThread(thread);
+      return { channelId, threadId, title: thread.title || threadTitle(root.text) };
+    },
+
+    /** スレッドの状態（脇の「状態」の並べ方のグループ）を付ける・外す（空にすると外す） */
+    async setThreadStatus({ channelId, threadId, status }, _author) {
+      await needPost(channelId, threadId);
+      const thread = await threadStore.update(channelId, threadId, { status: status ? String(status) : null });
+      emitThread(thread);
+      return { channelId, threadId, status: thread.status ?? '' };
+    },
+
     async search({ query, channelId, limit = LIMITS.searchDefault }) {
       const q = foldName(query).trim();
       if (!q) return { hits: [] };
@@ -314,6 +398,7 @@ export function createChannelService({ dir, emit = () => {}, hooks = {}, now = D
     },
     async update({ channelId, name, purpose, cwd, members, memo, budget }, _author) {
       const channel = await need(channelId);
+      if (channel.home && name !== undefined) throw invalid('the Quick chats channel cannot be renamed');
       const patch = {};
       if (name !== undefined) {
         patch.name = channel.kind === 'dm' ? String(name).trim() : normalizeChannelName(name);
@@ -332,6 +417,7 @@ export function createChannelService({ dir, emit = () => {}, hooks = {}, now = D
     },
     async archive({ channelId, on }, _author) {
       const channel = await need(channelId);
+      if (channel.home) throw invalid('the Quick chats channel cannot be archived');
       if (!on && channel.kind === 'channel') await checkNameFree(channel.name, channel.id);
       return patchChannel(channelId, (c) => {
         const next = { ...c };
@@ -340,14 +426,22 @@ export function createChannelService({ dir, emit = () => {}, hooks = {}, now = D
       });
     },
 
-    async post({ channelId, threadId = null, text, new: forceNew = false, state, presents, attachments, turn, taint, routine, mentions, hold, origin, bySession }, author) {
+    async post({ channelId, threadId = null, text, new: forceNew = false, state, presents, attachments, turn, taint, routine, mentions, hold, origin, bySession, to, clientId }, author) {
       if (!isAuthor(author)) throw invalid('author is invalid');
       const channel = await need(channelId);
       if (channel.archivedAt) throw new ChannelError('CHANNEL_ARCHIVED', { id: channel.id });
       const files = normalizeAttachments(attachments);
       checkText(text, { allowEmpty: (Array.isArray(presents) && presents.length > 0) || files.length > 0 });
       if (state !== undefined && !POST_STATES.includes(state)) throw invalid(`state must be one of ${POST_STATES.join(' / ')}`);
+      // 宛先（入力欄の宛先のチップで選んだ bot。人の投稿だけ）。本文の @ が先に効き、@ が無いときの宛先になる
+      if (to !== undefined && to !== null && !(author.kind === 'human' && typeof to === 'string' && to)) throw invalid('to must be a bot id on a human post');
       const all = await store.snapshot(channelId);
+      // 同じ clientId（入力欄が送るたびに作る id。応答が届かず送り直した・予定が送った）の人の投稿はもうある: 二重に投稿しない
+      if (clientId !== undefined) {
+        if (!(author.kind === 'human' && typeof clientId === 'string' && /^[a-zA-Z0-9:_-]{8,100}$/.test(clientId))) throw invalid('clientId must be 8-100 id characters on a human post');
+        const known = [...all].reverse().find((p) => p.clientId === clientId);
+        if (known) return clone(known);
+      }
       if (threadId !== null) {
         const root = all.find((p) => p.id === threadId);
         if (!root) throw new ChannelError('POST_NOT_FOUND', { id: String(threadId) });
@@ -374,10 +468,16 @@ export function createChannelService({ dir, emit = () => {}, hooks = {}, now = D
       }
 
       const at = now();
+      // 一時チャットで宛先に選んだ bot は、メンバーに足す（@ の候補・流れの頭の並びに出る）
+      if (channel.home && to && !(channel.members ?? []).includes(to)) {
+        if (!(await bots()).some((b) => b.id === to)) throw invalid('to must be a bot id');
+        await patchChannel(channelId, (c) => ({ ...c, members: [...(c.members ?? []), to] }));
+      }
       const post = {
         id: newId('post', at), channelId, threadId, author: clone(author), text, mentions: resolved, at,
         ...(state !== undefined ? { state } : {}), ...(turn ? { turn: clone(turn) } : {}), ...(presents ? { presents: clone(presents) } : {}),
         ...(files.length ? { attachments: files } : {}), reactions: {}, ...(taint ? { taint } : {}), ...(routine ? { routine: clone(routine) } : {}), proxy: null,
+        ...(to ? { to } : {}), ...(clientId ? { clientId } : {}),
       };
       const saved = await store.append(channelId, { op: 'post', post });
       const updated = await store.updateChannel(channelId, (c) => ({ ...c, lastPostAt: Math.max(c.lastPostAt ?? 0, at) })) ?? channel;
@@ -390,6 +490,41 @@ export function createChannelService({ dir, emit = () => {}, hooks = {}, now = D
       const extra = { ...(Array.isArray(hold) ? { hold: [...hold], checked: true } : {}), ...(origin ? { origin: clone(origin) } : {}), ...(bySession ? { bySession } : {}) };
       Promise.resolve().then(() => hooks.posted?.(clone(saved), clone(updated), extra)).catch((e) => console.error('  channels: posted の後処理に失敗:', String(e?.message ?? e)));
       return saved;
+    },
+
+    /**
+     * スレッドを、ある投稿（atPostId）のところで分ける（channels.branchThread。ADR 0157）。根から atPostId までの投稿を新しい id で黙って写す
+     * （hooks.posted を呼ばない＝写した @ で bot を起こさない）。author・at・text・添付・提示・mentions・ターンは残し、ターンの会話は sessions で付け替える。
+     * 新しい根に branchOf、写した投稿に copyOf（元の投稿の id）。作業中だった投稿は stopped で写す。返り: { root, idMap }
+     */
+    async branchCopy({ channelId, threadId, atPostId, sessions = {} }) {
+      const channel = await need(channelId);
+      if (channel.kind === 'dm') throw invalid('a DM has no threads to branch');
+      const all = (await store.snapshot(channelId)).filter((p) => p.id === threadId || p.threadId === threadId);
+      if (!all.length || all[0].id !== threadId) throw new ChannelError('POST_NOT_FOUND', { id: String(threadId) });
+      const at = all.findIndex((p) => p.id === atPostId);
+      if (at < 0) throw new ChannelError('POST_NOT_FOUND', { id: String(atPostId) });
+      const idMap = new Map();
+      let root = null;
+      for (const p of all.slice(0, at + 1)) {
+        if (p.deletedAt && p.id !== threadId) continue;
+        const id = newId('post', now());
+        idMap.set(p.id, id);
+        const state = p.state === undefined ? undefined : ['working', 'waiting', 'checking'].includes(p.state) ? 'stopped' : p.state;
+        const copy = {
+          id, channelId, threadId: root ? root.id : null, author: clone(p.author), text: p.text, mentions: clone(p.mentions ?? []), at: p.at,
+          reactions: {}, proxy: null, copyOf: p.id,
+          ...(state !== undefined ? { state } : {}),
+          ...(p.attachments ? { attachments: clone(p.attachments) } : {}), ...(p.presents ? { presents: clone(p.presents) } : {}),
+          ...(p.turn ? { turn: { ...clone(p.turn), ...(sessions[p.turn.sessionId] ? { sessionId: sessions[p.turn.sessionId] } : {}) } } : {}),
+          ...(p.taint ? { taint: p.taint } : {}), ...(p.routine ? { routine: clone(p.routine) } : {}), ...(p.to ? { to: p.to } : {}),
+          ...(root ? {} : { branchOf: { channelId, threadId, postId: atPostId } }),
+        };
+        const saved = await store.append(channelId, { op: 'post', post: copy });
+        if (!root) root = saved;
+        emit({ type: 'channelPost', channelId, op: 'add', post: saved });
+      }
+      return { root: clone(root), idMap };
     },
 
     async edit({ channelId, postId, text, state, presents, attachments, mentions, taint, failedWithBody }, _author) {
@@ -414,6 +549,15 @@ export function createChannelService({ dir, emit = () => {}, hooks = {}, now = D
       if (text !== undefined && saved.author.kind === 'human') await hooks.edited?.(clone(saved), clone(await need(channelId)));
       return saved;
     },
+    /** 投稿を取り下げる（送り直し。channels.resend）。出来事は op 'withdraw'（画面は消す） */
+    async withdraw({ channelId, postIds }) {
+      await need(channelId);
+      for (const id of postIds) {
+        const saved = await store.append(channelId, { op: 'withdraw', id, at: now() });
+        if (saved) emit({ type: 'channelPost', channelId, op: 'withdraw', post: { ...clone(saved), withdrawnAt: saved.withdrawnAt } });
+      }
+    },
+
     async remove({ channelId, postId }, _author) {
       const post = await needPost(channelId, postId);
       if (post.deletedAt) return;
@@ -438,9 +582,14 @@ export function createChannelService({ dir, emit = () => {}, hooks = {}, now = D
       return { reactions: saved.reactions };
     },
 
-    async markRead({ channelId, at }) {
+    async markRead({ channelId, threadId, at }) {
       await need(channelId);
       if (!Number.isFinite(at)) throw invalid('at must be a number');
+      // スレッドを読んだ: そのスレッドの既読も進める（脇の行の未読。チャンネルの既読は今までどおり同じ値を進める）
+      if (threadId) {
+        await needPost(channelId, threadId);
+        emitThread(await threadStore.update(channelId, threadId, { readAt: at }));
+      }
       const state = await store.setReadState(channelId, { readAt: at, mentionAt: at });
       emit({ type: 'channelRead', channelId, readAt: state.readAt });
       return { readAt: state.readAt };

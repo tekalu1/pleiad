@@ -62,7 +62,7 @@ async page => {
   const suffix = String(Date.now()).slice(-5);
   const ch = await rpc('channels.create', { name: 'attach' + suffix, purpose: '添付の確認' });
   const ch2 = await rpc('channels.create', { name: 'other' + suffix });
-  await page.locator('#tabChannels').click();
+  await page.locator('#sideOrder [data-order="channel"]').click();
   await show(ch.id);
   await page.locator('#chFeed').waitFor();
   await page.waitForFunction(() => !document.querySelector('#chFeed .ch-loading'));
@@ -138,7 +138,7 @@ async page => {
   await page.reload();
   await later.click({ timeout: 4000 }).catch(() => {});
   await page.waitForFunction(() => window.__sockets?.at(-1)?.readyState === 1 && document.getElementById('channelsView'));
-  await page.locator('#tabChannels').click();
+  await page.locator('#sideOrder [data-order="channel"]').click();
   await show(ch.id);
   await page.waitForFunction((n) => !document.querySelector('#chFeed .ch-loading') && document.getElementById('channelsPageTitle').textContent === `#${n}`, 'attach' + suffix);
   await page.waitForTimeout(400);
@@ -146,13 +146,13 @@ async page => {
 
   // ---- スレッドの入力欄も同じ
   await page.evaluate(([c, t]) => document.dispatchEvent(new CustomEvent('channels:show', { detail: { kind: 'channel', id: c, threadId: t } })), [ch.id, first.id]);
-  await page.locator('#chThreadComposerInput').waitFor();
+  await page.locator('#thPrompt').waitFor();
   await page.waitForFunction(() => document.querySelector('#chThread .th-log .post'));
-  await page.locator('#chThreadComposerInput').click();
+  await page.locator('#thPrompt').click();
   await page.keyboard.type('スレッドの返信');
-  await paste('#chThreadComposerInput', 'reply.png', '#37a');
-  await page.waitForFunction(() => document.querySelectorAll('#chThreadComposer .md-b.md-att img').length === 1, null, { timeout: 8000 });
-  check(await page.locator('#chThreadComposer .att-count').textContent() === '添付 1 件', 'the thread composer takes attachments too');
+  await paste('#thPrompt', 'reply.png', '#37a');
+  await page.waitForFunction(() => document.querySelectorAll('#thComposer .md-b.md-att img').length === 1, null, { timeout: 8000 });
+  check(await page.locator('#thComposer .att-count').textContent() === '添付 1 件', 'the thread composer takes attachments too');
   await page.keyboard.press('Control+Enter');
   await page.waitForFunction(() => document.querySelectorAll('#chThread .th-replies .post .msg-att-img').length === 1, null, { timeout: 8000 });
   const reply = (await rpc('channels.read', { channelId: ch.id, threadId: first.id })).posts.at(-1);
@@ -161,18 +161,18 @@ async page => {
 
   // ---- 送っている途中の添付があるうちは送らない（欠けた添付を前提に bot が動き出さないように）。届いたら送れる
   await page.evaluate(() => { window.__stall = true; });
-  await page.locator('#chThreadComposerInput').click();
+  await page.locator('#thPrompt').click();
   await page.keyboard.type('待ちの返信');
-  await paste('#chThreadComposerInput', 'slow.png', '#555');
-  await page.waitForFunction(() => document.querySelector('#chThreadComposer .md-att-up'), null, { timeout: 8000 });
-  check(/送信中/.test(await page.locator('#chThreadComposer .att-state').textContent()), 'the strip says the attachment is being sent');
+  await paste('#thPrompt', 'slow.png', '#555');
+  await page.waitForFunction(() => document.querySelector('#thComposer .md-att-up'), null, { timeout: 8000 });
+  check(/送信中/.test(await page.locator('#thComposer .att-state').textContent()), 'the strip says the attachment is being sent');
   const before = (await rpc('channels.read', { channelId: ch.id, threadId: first.id })).posts.length;
   const shown = await page.locator('#chThread .th-replies .post').count();
   await page.keyboard.press('Control+Enter');
   await page.waitForTimeout(400);
-  check((await rpc('channels.read', { channelId: ch.id, threadId: first.id })).posts.length === before && (await page.locator('#chThreadComposer .ch-note').textContent()).length > 0, 'sending is refused with a reason while an attachment is still being sent');
+  check((await rpc('channels.read', { channelId: ch.id, threadId: first.id })).posts.length === before && (await page.locator('#thComposer .settings-error').textContent()).length > 0, 'sending is refused with a reason while an attachment is still being sent');
   await page.evaluate(() => window.__release());
-  await page.waitForFunction(() => !document.querySelector('#chThreadComposer .md-att-up') && document.querySelectorAll('#chThreadComposer .md-b.md-att img').length === 1, null, { timeout: 8000 });
+  await page.waitForFunction(() => !document.querySelector('#thComposer .md-att-up') && document.querySelectorAll('#thComposer .md-b.md-att img').length === 1, null, { timeout: 8000 });
   await page.keyboard.press('Control+Enter');
   await page.waitForFunction((n) => document.querySelectorAll('#chThread .th-replies .post').length === n + 1, shown, { timeout: 8000 });
   check(true, 'once it has arrived the post goes out');

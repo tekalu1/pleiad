@@ -67,7 +67,8 @@ export function createEpisodes({ channels, bots, summarize, localeOf = () => 'ja
     }
     for (const botId of Object.keys(thread.sessions)) {
       if (closed) return;
-      if (!(await bots.get({ botId }).catch(() => null))) continue;
+      const bot = await bots.get({ botId }).catch(() => null);
+      if (!bot || bot.plain) continue;   // 組み込みの bot（bot なし）はエピソードを持たない（ADR 0157）
       const recent = episodePosts(page.posts, threadId, botId);
       if (!recent.some((p) => p.author?.kind === 'human')) continue;
       const currentFingerprint = fingerprint(recent);

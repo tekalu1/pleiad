@@ -599,6 +599,15 @@ const SUITES = [
   // --- channels-ui: 脇・流れ・スレッド・bot のページ (W1・W2・W3・W4) ---
   // 脇 (W1): Channels の並べ方・bot の状態・タブの点・検索の横断の行と開く先・Chats の木の bot の会話の行の配線（描画は目視と session-list-keys.cjs）
   './unit/channels-side-ui.mjs',
+  './unit/view-address.mjs',
+  './unit/channels-threads-index.mjs',
+  './unit/home-channel.mjs',
+  './unit/bot-plain.mjs',
+  './unit/channels-deliveries.mjs',
+  './unit/thread-branch.mjs',
+  './unit/thread-resend.mjs',
+  './unit/thread-pending.mjs',
+  './unit/drafts-store.mjs',
   // 流れ (W2): @ の補完の判定・候補の絞り込み・リアクションの札と先取り・時刻の文言・スレッドを開く口の配線（描画とキーは tests/browser/channels.cjs）
   './unit/channels-feed-ui.mjs',
   // 入力欄を Chats に揃えた分 (ADR 0116): 送る本文と添付の印・書きかけの保存と上限・添付つきの投稿の描き方・配線。画面の打鍵は tests/browser/channels-composer.cjs

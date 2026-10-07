@@ -69,8 +69,9 @@ export function filterSkills(skills, q) {
  * @param {(cwd:string) => Promise<Array<object>>} o.load 候補を取りに行く（cwd は今の作業ディレクトリ）
  * @param {() => string} [o.cwd] 今の作業ディレクトリ
  * @param {() => number} [o.now] 取得した時刻の測り方（テストのためだけに差し替えられる）
+ * @param {string} [o.idPrefix] 候補の行の id の頭（入力欄ごとに違える）
  */
-export function setupSlashSkills({ input, list, hint, load, cwd = () => "", canCompact = () => true, now = () => Date.now(), off = () => false }) {
+export function setupSlashSkills({ input, list, hint, load, cwd = () => "", canCompact = () => true, now = () => Date.now(), off = () => false, idPrefix = "slash-option" }) {
   // 同じ作業ディレクトリなら使い回す。ただし古くなったら取り直す（編集中に足したスキルを拾う）
   const FRESH_MS = 60_000;
   let skills = [], skillsKey = null, skillsAt = 0, loadingKey = null;
@@ -110,7 +111,7 @@ export function setupSlashSkills({ input, list, hint, load, cwd = () => "", canC
     items.forEach((s, i) => {
       if (!s.command && i > 0 && items[i - 1]?.command) list.append(skillHead());
       const li = el("li", "it" + (i === active ? " on" : ""));
-      li.id = `slash-option-${i}`;
+      li.id = `${idPrefix}-${i}`;
       li.setAttribute("role", "option");
       li.setAttribute("aria-selected", String(i === active));
       if (s.command && !canCompact()) li.setAttribute('aria-disabled', 'true');
@@ -125,8 +126,8 @@ export function setupSlashSkills({ input, list, hint, load, cwd = () => "", canC
     });
     list.hidden = false;
     input.removeAttribute("aria-activedescendant");
-    if (items.length) input.setAttribute("aria-activedescendant", `slash-option-${active}`);
-    list.querySelector(`#slash-option-${active}`)?.scrollIntoView?.({ block: "nearest" });
+    if (items.length) input.setAttribute("aria-activedescendant", `${idPrefix}-${active}`);
+    list.querySelector(`#${idPrefix}-${active}`)?.scrollIntoView?.({ block: "nearest" });
   };
 
   const render = (q) => {

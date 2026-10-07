@@ -41,9 +41,14 @@ import { createRoutineSheet } from './routine-sheet.mjs';
 
 export function setupChannels(host) {
   const parts = [];
+  // 見ている場所（web/view-address.mjs）。部品が host.noteView で知らせ、Channels の側へ戻ったときに知らせ直せるよう最後の 1 つを持つ
+  let lastView = null;
+  const noteOuter = host.noteView;
+  host.noteView = (view) => { lastView = view; noteOuter?.(view); };
   // スレッドを開く口。投稿の要約の行・「スレッドで返信」が呼ぶ（部品の openThread(channelId, threadId)。W3 が受ける。受ける部品が無ければ何も起きない）
   host.openThread ??= (channelId, threadId, opts) => {
     each('openThread', channelId, threadId, opts);
+    host.noteView({ kind: 'channel', id: channelId, threadId });
     document.dispatchEvent(new CustomEvent('channels:openthread', { detail: { channelId, threadId } }));   // 部品を持たない画面・テストが聞ける
   };
 
@@ -65,7 +70,10 @@ export function setupChannels(host) {
   parts.push(createRoutineSheet(host));
 
   const each = (name, ...args) => { for (const part of parts) part[name]?.(...args); };
-  const tabs = createSideTabs({ onChange: (tab) => each('sideTabChanged', tab) });
+  const tabs = createSideTabs({ onChange: (tab) => {
+    each('sideTabChanged', tab);
+    if (tab === 'channels') { if (lastView) host.noteView(lastView); } else host.noteChats?.();
+  } });
   // 狭い画面で脇を閉じている間の入口（#openSidebar と同じ働き。メインの頭が Channels の見出しに替わっている間だけ見える）
   document.getElementById('chOpenSidebar')?.addEventListener('click', () => host.openSidebar());
 
@@ -75,9 +83,13 @@ export function setupChannels(host) {
       each('onEvent', ev, replay);
       return CHANNEL_EVENTS.has(ev?.type);
     },
-    show(view) { tabs.set('channels'); each('show', view); },
+    show(view) { tabs.set('channels'); each('show', view); host.noteView(view?.threadId ? view : { kind: view?.kind, id: view?.id }); },
     hide() { each('hide'); tabs.set('chats'); },
     sideTabChanged(tab) { each('sideTabChanged', tab); },
+    /** 会話が増えた・動いた（一時チャットの流れを読み直す。web/channels/feed.mjs） */
+    homeChanged() { each('homeChanged'); },
+    /** 予定（schedule.json）が動いた（スレッドへの返信の予定の行。web/channels/thread.mjs） */
+    schedulesChanged() { each('schedulesChanged'); },
     /** 右パネルの作業場所の基準。Channels の中の要素でなければ null */
     contextForPanel(anchor) {
       if (!anchor?.closest?.('#channelsView')) return null;

@@ -12,6 +12,7 @@ import { t } from '../i18n.mjs';
 import { runMark } from '../arc.mjs';
 import { backendLogo } from '../side.mjs';
 import { sideChannels, botState, tabDots, channelNameRows, postRows, showDetail, selectedRow } from './side-model.mjs';
+import { shownBot } from './plain-bot.mjs';
 import { getRoutineStore } from './routine-store.mjs';
 import { sortForSide, SIDE_LIMIT, lastFailed } from './routine-model.mjs';
 import { openRoutine, whenText, stateText } from './routine-entry.mjs';
@@ -102,7 +103,7 @@ export function createSidebar(host, getTabs) {
       try {
         const [c, b] = await Promise.all([host.invoke('channels.list', {}), host.invoke('bots.list', {})]);
         S.channels = c?.channels ?? [];
-        S.bots = b?.bots ?? [];
+        S.bots = (b?.bots ?? []).map((x) => shownBot(x, t));
         S.loaded = true;
         side?.setDirectory?.({ channels: S.channels, bots: S.bots });
         paint();
@@ -175,7 +176,8 @@ export function createSidebar(host, getTabs) {
     if (!box) return;
     const now = live();
     const label = (id) => host.state?.backends?.find((b) => b.id === id)?.label ?? id;
-    const nodes = S.bots.map((b) => {
+    // 組み込みの bot（bot なし）は Bots の節に出さない（スレッドの宛先の面でだけ選ぶ）
+    const nodes = S.bots.filter((b) => !b.plain).map((b) => {
       const state = botState(b, now);
       // i18n-dynamic: channels:side.botState.
       const stateText = t(`channels:side.botState.${state}`);
@@ -317,7 +319,8 @@ export function createSidebar(host, getTabs) {
   }
 
   // ---------------------------------------------------------------- キーボード（一覧は Tab 1 回で入り、↑↓ で行を移る）
-  const rowNodes = () => [...panel.querySelectorAll('.cs-row')];
+  // 行は節（Bots・ルーティン）の中から引く。節はチャンネルの並べ方の間 #groups へ移る（web/side.mjs の channelExtras）
+  const rowNodes = () => Object.values(secs).filter(Boolean).flatMap((sec) => [...sec.querySelectorAll('.cs-row')]);
   const keyOf = (n) => `${n.dataset.kind}:${n.dataset.id}`;
   function roving(refocus) {
     const nodes = rowNodes();
@@ -334,7 +337,7 @@ export function createSidebar(host, getTabs) {
     node.focus();
     node.scrollIntoView({ block: 'nearest' });
   }
-  panel.addEventListener('keydown', (e) => {
+  const onRowKey = (e) => {
     const row = e.target.closest?.('.cs-row');
     if (!row) return;
     const nodes = rowNodes();
@@ -355,8 +358,13 @@ export function createSidebar(host, getTabs) {
         break;
       default:
     }
-  });
-  panel.addEventListener('focusin', (e) => { const row = e.target.closest?.('.cs-row'); if (row) S.focusKey = keyOf(row); });
+    e.stopPropagation();   // 移った先の一覧（#groups のツリー）のキー操作に渡さない
+  };
+  for (const sec of Object.values(secs)) {
+    if (!sec) continue;
+    sec.addEventListener('keydown', onRowKey);
+    sec.addEventListener('focusin', (e) => { const row = e.target.closest?.('.cs-row'); if (row) S.focusKey = keyOf(row); });
+  }
 
   // ---------------------------------------------------------------- タブの点
   function paintDots() {

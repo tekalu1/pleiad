@@ -41,6 +41,11 @@ export default async function (t) {
     filePreview: { sessionChanged: noop },
     // bot・Channels・ルーティンの画面（web/channels/）。onEvent の先頭で出来事を渡す。このテストの対象外
     channelsUi: { onEvent: () => false },
+    // 見ている場所のアドレス（web/view-address.mjs）。会話を開くと残す。このテストの対象外
+    viewAddress: { note: noop },
+    homeDest: { bot: null, paint: noop, reset: noop, botsChanged: noop },
+    // 脇のスレッドの行の読み直し（channels.threads）。このテストの対象外
+    THREAD_INDEX_EVENTS: new Set(), loadThreadIndexSoon: noop,
     paintContextStrip: noop, paintCompactions: noop,
     // 狭い画面の引き出し（client.mjs の setDrawer）。会話を開くと閉じる。このテストの対象外
     setDrawer: noop,

@@ -41,10 +41,12 @@ const collapse = (text) => String(text ?? '').replace(/\s+/g, ' ').trim();
 const usable = (node) => !node.parentElement?.closest('button,summary,.code-copy');
 
 /**
- * @param {{ thread:HTMLElement, log:HTMLElement, nav:object, preview:object, narrow:MediaQueryList, button:HTMLElement }} o
+ * @param {{ thread:HTMLElement, log:HTMLElement, nav:object, preview:object, narrow:MediaQueryList, button:HTMLElement, entriesOf?:Function }} o
  *   preview は web/file-preview.mjs の返り値（openPanel・close・panelOpen）。button は見出しの目次のボタン
+ *   entriesOf は項目の作り方（既定は Chats の会話の筋）。チャンネルのスレッドは投稿の列から作る（web/channels/thread.mjs）:
+ *   ({ turns, kinds, turnInfo }) → { kind: 'user'|'answer'|'tool', turn, row, el, bodies?, at, pending? }[]（bodies は探す対象の要素）
  */
-export function createConversationToc({ thread, log, nav, preview, narrow, button }) {
+export function createConversationToc({ thread, log, nav, preview, narrow, button, entriesOf = null }) {
   // ---- 状態（会話を開いている間は保つ。会話を替えたら reset）
   let query = '', scope = 'user', newestFirst = false, hitIndex = -1, total = 0;
   let entries = [], entriesDirty = true, opened = false, sheet = null, opener = null, typing = 0, active = -1;
@@ -115,6 +117,11 @@ export function createConversationToc({ thread, log, nav, preview, narrow, butto
   function build() {
     const turns = nav.turns();
     const kinds = turnKinds(thread, turns);
+    if (entriesOf) {
+      entries = entriesOf({ turns, kinds, turnInfo: nav.turnInfo }).map((e, id) => ({ ...e, id, ...(e.kind === 'user' ? { turnObj: turns[e.turn] } : {}), hits: 0, hitStart: -1, marks: [] }));
+      entriesDirty = false;
+      return;
+    }
     const turnOf = new Map(turns.map((turn, i) => [turn.row, i]));
     const out = [];
     let turn = -1;
@@ -143,7 +150,7 @@ export function createConversationToc({ thread, log, nav, preview, narrow, butto
     entriesDirty = false;
   }
   /** 項目の中で探す・印を付ける対象の要素 */
-  const targets = (entry) => (entry.kind === 'user' ? [entry.el.querySelector(':scope > .body')].filter(Boolean)
+  const targets = (entry) => (entry.bodies && entry.kind !== 'tool' ? entry.bodies : entry.kind === 'user' ? [entry.el.querySelector(':scope > .body')].filter(Boolean)
     : entry.kind === 'answer' ? entry.bodies : [...entry.el.querySelectorAll('.tc-output')]);
   const textNodes = (target) => {
     const walker = document.createTreeWalker(target, NodeFilter.SHOW_TEXT);

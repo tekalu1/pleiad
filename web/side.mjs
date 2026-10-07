@@ -29,6 +29,7 @@ import { timeText } from "./schedule-times.mjs";
 import { warnMark, interruptLabel, showsReasonInMeta, resumeLabel, limitResumeState } from "./interrupt.mjs";
 import { aiMarkTitle } from "./change-log.mjs";
 import { branchIcon } from "./icons.mjs";
+import { captureRows, playRows } from "./flip.mjs";
 import { parseTerms, matchLocal, findRanges, localOrder, periodSince, pushRecentSearch, searchShortcutLabel, searchShortcutAria } from "./session-find.mjs";
 
 const backendLogos = {
@@ -116,6 +117,8 @@ const SORT_POLL_MS = 2000;   // 一覧が動いたときの取り直しの下限
 const PERIODS = [0, 1, 7, 30];   // 期間の絞り込み（日数。0 = すべて、1 = 今日）
 
 const PLUS = "M12 5v14M5 12h14";
+// 一時チャットの見出しのアイコン（吹き出し）
+const HOME = "M21 12a8 8 0 0 1-11.8 7L4 20l1-4.5A8 8 0 1 1 21 12z";
 // 既定のアイコン。アイコン未設定のグループはフォルダ（他のアイコンと同じ線幅 1.6・丸端）
 const FOLDER = "M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z";
 
@@ -133,9 +136,11 @@ function loadPrefs() {
       collapsed: new Set(Array.isArray(p.collapsed) ? p.collapsed : []),
       expanded: new Set(Array.isArray(p.expanded) ? p.expanded : []),
       sort: p.sort === "recent" ? "recent" : "relevance",
+      chCollapsed: new Set(Array.isArray(p.chCollapsed) ? p.chCollapsed : []),
+      chMore: new Set(Array.isArray(p.chMore) ? p.chMore : []),
     };
   } catch {
-    return { filter: { backends: [], dir: null, status: undefined, period: 0 }, collapsed: new Set(), expanded: new Set(), sort: "relevance" };
+    return { filter: { backends: [], dir: null, status: undefined, period: 0 }, collapsed: new Set(), expanded: new Set(), sort: "relevance", chCollapsed: new Set(), chMore: new Set() };
   }
 }
 
@@ -162,9 +167,13 @@ function loadRecentSearches() {
  * @param {(root: object, status: string) => void} [o.onMoveGroup]  グループごと別の状態へ移す
  * @param {(x: number, y: number) => void} [o.onListContext]  一覧の空白の右クリック
  * @param {() => string} o.cwdNow  入力欄の今の作業ディレクトリ（絞っていないときの引き継ぎ元）
+ * @param {(channelId: string) => void} [o.onOpenChannel]  チャンネルの並べ方の見出しの名前を押した（流れを開く）
+ * @param {(channelId: string) => void} [o.onNewInChannel]  チャンネルの見出しの ＋（そのチャンネルの流れの入力欄へ）
+ * @param {() => Element[]} [o.channelExtras]  チャンネルの並べ方の末尾に置く節（Bots・ルーティン。web/channels/sidebar.mjs が描く）
  */
 export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, onGroupContext, onFamilyContext,
-                             onSetGrouped, onJoinGroup, onMoveGroup, onListContext, onSettings, onSearch, cwdNow, visible: isVisible = () => true }) {
+                             onSetGrouped, onJoinGroup, onMoveGroup, onListContext, onSettings, onSearch, cwdNow, visible: isVisible = () => true,
+                             onOpenChannel, onNewInChannel, channelExtras = () => [] }) {
   const $ = (id) => document.getElementById(id);
   const root = $("groups");
   const prefs = loadPrefs();
@@ -179,9 +188,12 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
   const filter = prefs.filter;                 // { dir: string|null, status: string|null|undefined }
   const collapsed = prefs.collapsed;
   const expanded = prefs.expanded;              // 開いている家族（根の sessionId）。既定は畳んだ状態
+  const chCollapsed = prefs.chCollapsed;        // チャンネルの並べ方で畳んだ見出し（"home" かチャンネルの id）
+  const chMore = prefs.chMore;                  // チャンネルの並べ方で「ほか n 件」を開いた見出し
+  let drawnOrder = null;                        // 前に描いた並べ方（切り替えたときだけ行を滑らせる）
   const decided = new Set();                    // 人が開閉を決めた家族。決めるまで、今いる会話の器は開いたまま
   const made = new Set();                       // この画面で作った（まだ誰も付いていない）仮の状態
-  let last = { sessions: [], statuses: [], currentId: null, runningIds: new Set(), waitingIds: new Set(), unreadIds: new Set(), interrupted: new Map(), schedules: new Map(), draft: null, backendLabels: null, pendingRows: new Map(), pendingStatuses: new Map(), pendingNew: null };
+  let last = { sessions: [], statuses: [], currentId: null, runningIds: new Set(), waitingIds: new Set(), unreadIds: new Set(), interrupted: new Map(), schedules: new Map(), draft: null, backendLabels: null, pendingRows: new Map(), pendingStatuses: new Map(), pendingNew: null, threads: [], order: "status" };
   // Channels（web/channels/sidebar.mjs）から借りるもの。bot の会話の行の印（アイコン・#チャンネル）と、検索の横断
   let directory = { channels: new Map(), bots: new Map() };   // id → Channel / Bot
   let channelsLink = null;                      // connectChannels() の口。無ければ Chats だけを探す
@@ -254,6 +266,8 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
         filter: { backends: filter.backends, dir: filter.dir, ...(filter.status === undefined ? {} : { status: filter.status }), ...(filter.period ? { period: filter.period } : {}) },
         sort: sortMode,
         collapsed: [...collapsed],
+        chCollapsed: [...chCollapsed],
+        chMore: [...chMore],
         // 消えたセッションの id は溜めない（一覧を受け取る前は間引かない）
         expanded: last.sessions.length ? [...expanded].filter((id) => last.sessions.some((s) => s.id === id)) : [...expanded],
       }));
@@ -272,7 +286,7 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
    * 作った仮のもの）を足し、最後に「状態なし」
    */
   function groupOrder() {
-    const inUse = new Set(last.sessions.map(statusKey).filter(Boolean));
+    const inUse = new Set([...last.sessions, ...last.threads].map(statusKey).filter(Boolean));
     const known = [...new Set(last.statuses.filter((x) => inUse.has(x.status) || x.kept).map((x) => x.status))];
     const extra = new Set(inUse);
     if (last.draft?.status) extra.add(last.draft.status);
@@ -297,10 +311,33 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
     resetRemote();
     const wanted = document.createElement('div');
     nextRows = new Map();
+    // 並べ方を切り替えたときだけ、行を元の位置から今の位置へ滑らせる（FLIP。web/flip.mjs）
+    const from = drawnOrder && drawnOrder !== last.order ? captureRows(root) : null;
+    if (last.order === "channel") buildChannelOrder(wanted); else buildStatusOrder(wanted);
+    root.dataset.order = last.order;
+
+    const old = new Map([...root.querySelectorAll('[data-side-key]')].map((n) => [n.dataset.sideKey, n]));
+    // Bots・ルーティンの節（web/channels/sidebar.mjs が描く）は、チャンネルの並べ方の間だけこの一覧の末尾に入る
+    for (const node of channelExtras()) if (node?.dataset.sideKey) old.set(node.dataset.sideKey, node);
+    reconcile(root, wanted, old);
+    renderedRows = nextRows;
+    dirty = false;
+    drawnOrder = last.order;
+    if (from) playRows(root, from);
+
+    $("filterBtn").classList.toggle("on", filtering());
+    renderChips();
+    paintActive();
+  }
+
+  /** 状態の並べ方: 会話とスレッドを利用者の状態のグループで。先頭に「あなたを待っている」 */
+  function buildStatusOrder(wanted) {
     const visible = last.sessions.filter(matchesFilter);
-    // あなたを待っている bot の会話（client があなた待ちの間だけ渡す。ADR 0109）。状態を持たないので利用者の状態のグループには入れず、
-    // 一覧の先頭（全グループの上）に短い見出しを付けて置く（計画 §7.2-4: いちばん上で目に入る位置）
-    const botWaits = visible.filter((s) => s.bot).sort((a, b) => (b.lastModified ?? 0) - (a.lastModified ?? 0));
+    const threads = last.threads.filter(matchesFilter);
+    // あなたを待っているもの（bot の DM の会話・bot のスレッド）。利用者の状態のグループには入れず、
+    // 一覧の先頭（全グループの上）に短い見出しを付けて置く（いちばん上で目に入る位置）
+    const botWaits = [...visible.filter((s) => s.bot), ...threads.filter((s) => last.waitingIds.has(s.id))]
+      .sort((a, b) => (b.lastModified ?? 0) - (a.lastModified ?? 0));
     if (botWaits.length) {
       const sec = keyed(el("section", "grp bot-waits"), "bot-waits", true);
       sec.setAttribute("role", "none");
@@ -331,6 +368,13 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
       if (!byGroup.has(k)) byGroup.set(k, []);
       byGroup.get(k).push(fam);
       if (fam.kin.length) for (const s of members(fam)) inFamily.add(s.id);
+    }
+    // bot のスレッドは 1 スレッド 1 行で、自分の状態のグループに入る（あなた待ちの間は先頭の節だけに出る）
+    for (const s of threads) {
+      if (last.waitingIds.has(s.id)) continue;
+      const k = statusKey(s);
+      if (!byGroup.has(k)) byGroup.set(k, []);
+      byGroup.get(k).push({ root: s, kin: [] });
     }
 
     for (const st of visibleGroups) {
@@ -438,15 +482,141 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
       wanted.append(sec);
     }
     if (!wanted.childElementCount) wanted.append(el("div", "empty", filtering() ? t("sidebar.noMatch") : t("sidebar.empty")));
+  }
 
-    const old = new Map([...root.querySelectorAll('[data-side-key]')].map((n) => [n.dataset.sideKey, n]));
-    reconcile(root, wanted, old);
-    renderedRows = nextRows;
-    dirty = false;
+  // ---- チャンネルの並べ方 ---------------------------------------------------
+  // 一時チャット（会話のスレッド）を先頭に、チャンネルごとに開閉できる見出し・最近のスレッド・「ほか n 件」。続けて Bots・ルーティン（channelExtras）
 
-    $("filterBtn").classList.toggle("on", filtering());
-    renderChips();
-    paintActive();
+  const CHANNEL_RECENT = 3;   // 見出しの下に出す最近のスレッドの数（開いているものは数えずに足す）
+
+  /** 1 行の行（チャンネルの並べ方）: 印（弧・◆・青い丸）・題・時刻 */
+  function oneRow(s, level) {
+    const key = `one:${s.id ?? ''}`;
+    const signature = JSON.stringify([s.id, s.title, s.lastModified, level, s.id === last.currentId, last.runningIds.has(s.id), last.waitingIds.has(s.id),
+      last.unreadIds.has(s.id), last.bgWaiting.get(s.id), document.documentElement.lang, Math.floor(Date.now() / 60000), s.bot?.botId ? directory.bots.get(s.bot.botId)?.icon : null]);
+    const cached = renderedRows.get(key);
+    if (cached?.signature === signature && cached.node.isConnected) {
+      nextRows.set(key, cached);
+      const keep = keyed(el('span'), key);
+      keep.dataset.sideKeep = '1';
+      return keep;
+    }
+    const open = s.id != null && s.id === last.currentId;
+    const r = keyed(el("div", "row one" + (open ? " sel" : "")), key);
+    nextRows.set(key, { signature, node: r });
+    treeItem(r, `s:${s.id ?? ""}`, level, {
+      open: () => { if (!open) onOpen?.(s.id); },
+      menu: onContext && s.id != null && ((x, y) => onContext(s, x, y)),
+    });
+    r.setAttribute("aria-selected", String(open));
+    if (open) r.setAttribute("aria-current", "page");
+    r.dataset.session = s.id ?? "";
+    if (s.thread) r.dataset.thread = `${s.thread.channelId}:${s.thread.threadId}`;
+    const glyph = el("span", "one-mark");
+    const behind = last.bgWaiting.get(s.id);
+    if (last.waitingIds.has(s.id)) { const m = el("span", "wait only", ""); m.setAttribute("role", "img"); m.setAttribute("aria-label", t("sidebar.waiting")); glyph.append(m); }
+    else if (last.runningIds.has(s.id)) glyph.append(behind ? satMark(behind, t("activity.behindCount", { count: behind })) : runMark(t("activity.turnRunning")));
+    else if (last.unreadIds.has(s.id)) glyph.append(unreadMark());
+    const title = el("span", "row-t", titleOf(s) || t("session.untitled"));
+    const when = el("span", "row-when", s.id == null ? fmt.justNow() : relTime(s.lastModified));
+    r.append(glyph, title, when);
+    if (s.thread && s.bot?.botId) {
+      const av = botIcon(directory.bots.get(s.bot.botId), 'av xs', '🤖');
+      av.setAttribute("aria-hidden", "true");
+      r.insertBefore(av, when);
+    }
+    r.setAttribute("aria-label", [titleOf(s) || t("session.untitled"), spoken([glyph, when])].filter(Boolean).join(", "));
+    r.onclick = () => { if (!open) onOpen?.(s.id); };
+    r.oncontextmenu = (e) => { if (!onContext || s.id == null) return; e.preventDefault(); onContext(s, e.clientX, e.clientY); };
+    return r;
+  }
+
+  /** 見出しの節: chevron・アイコン（一時チャットは家、チャンネルは #）・名前・畳んだ間の印・＋。key は "home" かチャンネルの id */
+  function channelSection(key, { name, home = false, unread = false, mentions = 0, rows, onName, onAdd, addLabel }) {
+    const sec = keyed(el("section", "grp chsec"), `chsec:${key}`, true);
+    sec.setAttribute("role", "none");
+    const isCollapsed = chCollapsed.has(key);
+    if (isCollapsed) sec.classList.add("collapsed");
+    const head = el("div", "grp-head chsec-head");
+    const setOpen = (open) => { if (open) chCollapsed.delete(key); else chCollapsed.add(key); save(); render(); };
+    treeItem(head, `c:${key}`, 1, { expanded: !isCollapsed, open: () => (onName ? onName() : setOpen(isCollapsed)), expand: setOpen });
+    const chev = el("button", "chsec-chev");
+    chev.type = "button";
+    chev.tabIndex = -1;
+    chev.setAttribute("aria-hidden", "true");
+    chev.append(chevron());
+    chev.onclick = (e) => { e.stopPropagation(); setOpen(isCollapsed); };
+    const ic = el("span", "chsec-ic" + (home ? " home" : ""), home ? "" : "#");
+    if (home) ic.append(icon(HOME));
+    ic.setAttribute("aria-hidden", "true");
+    const label = el("span", "grp-name chsec-name" + (unread ? " unread" : ""), name);
+    label.setAttribute("role", "button");
+    label.onclick = () => (onName ? onName() : setOpen(isCollapsed));
+    head.append(chev, ic, label);
+    if (mentions) head.append(el("span", "mc", String(mentions)));
+    // 畳んだ中の様子（あなた待ち → 弧 → 未読の順に強い）
+    if (isCollapsed) {
+      if (rows.some((s) => last.waitingIds.has(s.id))) head.append(waitMark(1));
+      else if (rows.some((s) => last.runningIds.has(s.id))) head.append(runMark(t("sidebar.somethingRunning")));
+      else if (rows.some((s) => last.unreadIds.has(s.id))) head.append(unreadMark());
+    }
+    if (onAdd) {
+      const add = el("button", "btn btn-icon grp-add");
+      add.type = "button";
+      add.tabIndex = -1;
+      add.title = addLabel;
+      add.setAttribute("aria-label", addLabel);
+      add.append(icon(PLUS));
+      add.onclick = (e) => { e.stopPropagation(); onAdd(); };
+      head.append(add);
+    }
+    head.setAttribute("aria-label", spoken([label, ...[...head.children].filter((c) => c.tagName !== "BUTTON" && c !== label)]));
+    sec.append(head);
+    const rowsEl = keyed(el("div", "rows"), `chrows:${key}`, true);
+    rowsEl.setAttribute("role", "group");
+    const all = chMore.has(key);
+    const shown = all ? rows : rows.filter((s, i) => i < CHANNEL_RECENT || s.id === last.currentId);
+    for (const s of shown) rowsEl.append(oneRow(s, 2));
+    if (rows.length > CHANNEL_RECENT) {
+      const more = keyed(el("div", "row one more"), `chmore:${key}`);
+      const text = all ? t("channels:side.less") : t("channels:side.more", { count: rows.length - shown.length });
+      treeItem(more, `m:${key}`, 2, { open: () => { if (all) chMore.delete(key); else chMore.add(key); save(); render(); } });
+      more.append(el("span", "one-mark"), el("span", "row-t", text));
+      more.onclick = () => more.treeOpen();
+      rowsEl.append(more);
+    }
+    if (!rows.length) rowsEl.append(el("div", "empty", t("channels:side.noThreads")));
+    sec.append(rowsEl);
+    return sec;
+  }
+
+  function buildChannelOrder(wanted) {
+    // 一時チャット: 会話のスレッド（bot の会話・委譲の子は除く）と、一時チャットで bot に話しかけたスレッドを新しい順。作成中の新しい会話は先頭
+    const homeIds = new Set([...directory.channels.values()].filter((c) => c.home).map((c) => c.id));
+    const homeRows = [...(last.pendingNew ? [last.pendingNew] : []),
+      ...[...last.sessions.filter((s) => !s.bot && matchesFilter(s)), ...last.threads.filter((s) => homeIds.has(s.thread.channelId) && matchesFilter(s))]
+        .sort((a, b) => (b.lastModified ?? 0) - (a.lastModified ?? 0))];
+    wanted.append(channelSection("home", { name: t("channels:side.home"), home: true, rows: homeRows, onName: () => onOpenChannel?.("home"),
+      onAdd: () => onNew?.({ cwd: filter.dir ?? cwdNow?.() ?? "" }), addLabel: t("channels:side.newHome") }));
+    const channels = [...directory.channels.values()].filter((c) => c.kind === "channel" && !c.archivedAt && !c.home)
+      .sort((a, b) => String(a.name).localeCompare(String(b.name)));
+    const byChannel = new Map();
+    for (const s of last.threads) {
+      if (!byChannel.has(s.thread.channelId)) byChannel.set(s.thread.channelId, []);
+      byChannel.get(s.thread.channelId).push(s);
+    }
+    for (const c of channels) {
+      const rows = (byChannel.get(c.id) ?? []).sort((a, b) => (b.lastModified ?? 0) - (a.lastModified ?? 0));
+      wanted.append(channelSection(c.id, { name: c.name, unread: (c.unread ?? 0) > 0, mentions: c.mentions ?? 0, rows,
+        onName: () => onOpenChannel?.(c.id), onAdd: onNewInChannel && (() => onNewInChannel(c.id)), addLabel: t("channels:side.newInChannel", { name: c.name }) }));
+    }
+    for (const node of channelExtras()) {
+      if (!node) continue;
+      node.dataset.sideKey ??= `extra:${node.dataset.sec ?? ''}`;
+      const keep = keyed(el("span"), node.dataset.sideKey);
+      keep.dataset.sideKeep = '1';
+      wanted.append(keep);
+    }
   }
 
   // ---- キーボード（一覧をひとつのツリーとして扱う。web/tree.mjs と同じ規則） ----------------------
@@ -583,7 +753,7 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
   const members = (fam) => [fam.root, ...[...fam.kin].sort(rowOrder)];
   const famWhen = (fam) => Math.max(...members(fam).map((s) => s.lastModified ?? 0));
   const famStale = (fam) => (members(fam).some(isStale) ? 1 : 0);
-  const titleOf = (s) => (s.bot ? botTitle(s) : s.title === "(no title)" ? "" : (s.title ?? ""));
+  const titleOf = (s) => (s.thread ? (s.title ?? "") : s.bot ? botTitle(s) : s.title === "(no title)" ? "" : (s.title ?? ""));
   /**
    * bot の会話の題。会話の題は「🦉 Owl · #checkout-perf › 根の投稿の頭」（core/bots/sessions.mjs の sessionTitle）で、
    * bot とチャンネルは行の印（.row-ch）が示すので、題には根の投稿の頭だけを出す。頭が無ければ bot の名前
@@ -602,11 +772,18 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
     const bot = directory.bots.get(s.bot.botId);
     const channel = s.bot.channelId ? directory.channels.get(s.bot.channelId) : null;
     const mark = el("span", "row-ch");
-    const av = botIcon(bot, 'av xs', String(s.title ?? '').split(/\s/, 1)[0] || '🤖');
-    av.setAttribute("aria-hidden", "true");
-    const name = channel?.name ?? botTitleParts(s).channel;   // 一覧をまだ読めていなければ会話の題から（id は出さない）
-    const where = s.bot.kind === "dm" || channel?.kind === "dm" ? t("channels:side.dm") : name ? `#${name}` : "";
-    mark.append(av, el("span", "row-ch-name", where));
+    // スレッドの行は、話している bot がいればそのアイコン（人だけのスレッドはアイコンを出さない）。名前は一覧から（題から推さない）
+    if (!s.thread || s.bot.botId) {
+      const av = botIcon(bot, 'av xs', s.thread ? '🤖' : String(s.title ?? '').split(/\s/, 1)[0] || '🤖');
+      av.setAttribute("aria-hidden", "true");
+      mark.append(av);
+    }
+    const name = channel?.name ?? (s.thread ? "" : botTitleParts(s).channel);   // 一覧をまだ読めていなければ会話の題から（id は出さない）
+    // 一時チャットは置き場の名前（# を付けない）
+    const where = s.bot.kind === "dm" || channel?.kind === "dm" ? t("channels:side.dm") : channel?.home ? name : name ? `#${name}` : "";
+    mark.append(el("span", "row-ch-name", where));
+    // 分けたスレッド（枝。channels.branchThread）は「分岐」の札（元のスレッドと同じ題が並ぶので見分ける）
+    if (s.thread?.branch) mark.append(el("span", "row-branch", t("channels:feed.branch")));
     if (bot) mark.title = where ? `${bot.name} · ${where}` : bot.name;
     return mark;
   }
@@ -786,6 +963,7 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
     r.setAttribute("aria-selected", String(open));
     if (open) r.setAttribute("aria-current", "page");
     r.dataset.session = s.id ?? "";
+    if (s.thread) r.dataset.thread = `${s.thread.channelId}:${s.thread.threadId}`;
     const title = el("div", "row-title");
     // fork で生まれた会話の印。グループから外しても状態を変えても消えない（§4.1）
     if (s.parent?.sessionId) title.append(forkMark());
@@ -1094,7 +1272,7 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
     }
     const meta = el("div", "row-meta");
     // チャンネルも探しているときは出どころを添える（「Chats」か「#チャンネル」）
-    if (sources) meta.append(el("span", "row-src", t("channels:side.tabs.chats")));
+    if (sources) meta.append(el("span", "row-src", t("channels:side.home")));
     meta.append(el("span", "row-when", relTime(r.lastModified)));
     if (last.backendLabels && r.backend) meta.append(backendLogo(r.backend, last.backendLabels[r.backend] ?? r.backend));
     if (r.status) meta.append(el("span", "row-st", r.status));
@@ -1504,6 +1682,10 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
         pendingRows: o.pendingRows ?? new Map(),
         pendingStatuses: o.pendingStatuses ?? new Map(),
         pendingNew: o.pendingNew ?? null,
+        // bot のスレッドの行（会話に似た形: id "thread:<チャンネル>:<根>"・thread・bot・title・status・lastModified）
+        threads: o.threads ?? [],
+        // 並べ方: "status"（利用者の状態のグループ）| "channel"（一時チャット・チャンネル・Bots・ルーティン）
+        order: o.order === "channel" ? "channel" : "status",
       };
       // 使われなくなった仮のグループは捨てる。使われ始めたものは statuses 側に移る
       for (const k of made) if (sessions.some((s) => statusKey(s) === k)) made.delete(k);
@@ -1520,7 +1702,8 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
     },
     /** チャンネルと bot の一覧（bot の会話の行の印・検索のチャンネル名）。Channels の脇が読むたびに渡す */
     setDirectory({ channels = [], bots = [] } = {}) {
-      directory = { channels: new Map(channels.map((c) => [c.id, c])), bots: new Map(bots.map((b) => [b.id, b])) };
+      // 一時チャット（home: true）の保存の名前は home。脇・行の出どころでは画面の名前で書く
+      directory = { channels: new Map(channels.map((c) => [c.id, c.home ? { ...c, name: t("channels:side.home") } : c])), bots: new Map(bots.map((b) => [b.id, b])) };
       if (remote) remote.sig = null;   // 検索中ならチャンネルの当たりも取り直す
       render();
     },

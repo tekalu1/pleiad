@@ -63,8 +63,9 @@ function scheduleRow(entry, actions, now) {
  * @param {object} [extra]
  * @param {object[]} [extra.schedules] この会話の送信予定（schedule.json の kind: 'send'。時刻順）
  * @param {{ now: Function, edit: Function, cancel: Function }} [extra.scheduleActions]
+ * @param {boolean} [extra.editQueued] 送信待ちの行に［編集］（取り下げて本文を入力欄へ戻す。チャンネルのスレッド）
  */
-export function renderOutbox(root, messages, action, shown = new Set(), { schedules = [], scheduleActions = null } = {}) {
+export function renderOutbox(root, messages, action, shown = new Set(), { schedules = [], scheduleActions = null, editQueued = false } = {}) {
   root.replaceChildren();
   for (const item of messages.filter(m => !['sent', 'cancelled'].includes(m.status) && !shown.has(m.id))) {
     const row = document.createElement('div');
@@ -89,7 +90,7 @@ export function renderOutbox(root, messages, action, shown = new Set(), { schedu
       row.append(hint);
     }
     for (const [name, label] of item.status === 'sending' ? [] : [
-      ...(item.status !== 'queued' ? [['retry', t('outbox.retry')]] : []), ['cancel', t('outbox.cancel')],
+      ...(item.status !== 'queued' ? [['retry', t('outbox.retry')]] : []), ...(editQueued && item.status === 'queued' ? [['edit', t('schedule.rowEdit')]] : []), ['cancel', t('outbox.cancel')],
     ]) {
       const button = document.createElement('button');
       button.type = 'button';

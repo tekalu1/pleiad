@@ -3,7 +3,7 @@
 async page => {
   await page.goto('http://127.0.0.1:7433/?token=channels-test');
   await page.getByRole('button', { name: 'あとで', exact: true }).click().catch(() => {});
-  await page.getByRole('tab', { name: 'Channels' }).click();
+  await page.getByRole('radio', { name: 'チャンネル' }).click();
   const shown = await page.evaluate(async () => {
     const { renderPost } = await import('/channels/post.mjs');
     const host = { state: { backends: [] }, renderAssistantMarkdown: (text) => `<p>${text}</p>` };

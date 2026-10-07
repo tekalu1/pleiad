@@ -24,7 +24,7 @@
 //     settleAllWaiting(outcome, { except? })・removeSession(id)・removeChannel(id)・close()
 //   emit({ type: 'notificationsChanged', unread, waiting }) … 件数が変わったとき（画面のベルの数。リモートの端末にも届く）
 //   行（公開）: { id, seq, kind, at, unread, resolvedAt?, outcome?, target: { sessionId?, uuid?, channelId?, threadId?, postId? },
-//                actor?: { kind: 'bot' | 'agent', name, icon? }, ask?: 'approval' | 'question', title?, channelName?, threadTitle? }
+//                actor?: { kind: 'bot' | 'agent', name, icon? }, ask?: 'approval' | 'question', title?, channelName?, home?: true（一時チャット）, threadTitle? }
 import crypto from 'node:crypto';
 import { openData } from './data-schema.mjs';
 import { notificationTable } from './db.mjs';
@@ -41,7 +41,7 @@ export const NOTIFICATION_PAGE_MAX = 100;
 const FILTERS = { all: null, wait: ['wait'], mention: ['mention'] };
 
 const clip = (s, n) => [...String(s ?? '').replace(/\s+/g, ' ').trim()].slice(0, n).join('');
-const DATA_KEYS = ['uuid', 'threadId', 'postId', 'actor', 'ask', 'title', 'channelName', 'threadTitle', 'outcome'];
+const DATA_KEYS = ['uuid', 'threadId', 'postId', 'actor', 'ask', 'title', 'channelName', 'home', 'threadTitle', 'outcome'];
 
 export function createNotifications({ dataDir, emit = () => {}, now = Date.now } = {}) {
   let handle = null, table = null;
@@ -60,7 +60,7 @@ export function createNotifications({ dataDir, emit = () => {}, now = Date.now }
       ...(r.channelId ? { channelId: r.channelId } : {}), ...(r.data.threadId ? { threadId: r.data.threadId } : {}), ...(r.data.postId ? { postId: r.data.postId } : {}),
     },
     ...(r.data.actor ? { actor: r.data.actor } : {}), ...(r.data.ask ? { ask: r.data.ask } : {}),
-    ...(r.data.title ? { title: r.data.title } : {}), ...(r.data.channelName ? { channelName: r.data.channelName } : {}), ...(r.data.threadTitle ? { threadTitle: r.data.threadTitle } : {}),
+    ...(r.data.title ? { title: r.data.title } : {}), ...(r.data.channelName ? { channelName: r.data.channelName } : {}), ...(r.data.home ? { home: true } : {}), ...(r.data.threadTitle ? { threadTitle: r.data.threadTitle } : {}),
   });
 
   const api = {

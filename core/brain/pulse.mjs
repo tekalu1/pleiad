@@ -50,7 +50,7 @@ const clip = (s, n) => [...String(s ?? '').replace(/\s+/g, ' ').trim()].slice(0,
 
 /** 予算を引く「家」のチャンネル: Bot.pulse.channelId（有効なチャンネルなら）、無ければ入っている最初のチャンネル。list は channels.list() の返り。予約（wakes.mjs）も使う */
 export function pickHome(bot, list) {
-  const usable = (c) => c.kind === 'channel' && !c.archivedAt;
+  const usable = (c) => c.kind === 'channel' && !c.archivedAt && !c.home;
   const chosen = bot.pulse?.channelId ? list.find((c) => c.id === bot.pulse.channelId && usable(c)) : null;
   return chosen ?? list.filter((c) => usable(c) && c.members?.includes(bot.id)).sort((a, b) => (a.createdAt ?? 0) - (b.createdAt ?? 0))[0] ?? null;
 }
@@ -104,8 +104,8 @@ export function createPulse({ dataDir, brain, channels, bots, host, budget, disp
     for (const channel of list) {
       const page = await channels.read({ channelId: channel.id, limit: SCAN_LIMIT }).catch(() => null);
       if (!page) continue;
-      if (channel.kind === 'dm') {
-        // DM は人が bot に直接話しかける場所（ふつうの道で賢いモデルが答える）。心拍の材料にはせず、人が最後に話した時刻だけ見る
+      if (channel.kind === 'dm' || channel.home) {
+        // DM・一時チャットは人が bot に直接話しかける場所（ふつうの道で賢いモデルが答える）。心拍の材料にはせず、人が最後に話した時刻だけ見る
         for (const p of page.posts) if (p.author?.kind === 'human' && !p.deletedAt && p.at > since) lastHumanAt = Math.max(lastHumanAt ?? 0, p.at);
         continue;
       }

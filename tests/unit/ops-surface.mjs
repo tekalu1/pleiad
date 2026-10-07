@@ -132,7 +132,8 @@ export default async function (t) {
       running: async () => ({ count: 0, turns: [], tasks: [], waiting: 0, ...secret }),
       runningWork: async () => ({ count: 0, turns: [], permissions: [], tasks: [], subagents: [], background: [], ...secret }),
       cliSetup: () => ({ command: 'node', args: ['pleiad.mjs', 'mcp'], env: {}, json: '{}', claude: 'claude mcp add', ...secret }),
-      searchSessions: async () => ({ total: 1, partial: false, sessions: [{ sessionId: 's1', title: 't', hits: [], ...secret }] }) },
+      searchSessions: async () => ({ total: 1, partial: false, sessions: [{ sessionId: 's1', title: 't', hits: [], ...secret }] }),
+      sessionRoots: async () => ({ roots: [{ sessionId: 's1', title: 't', lastModified: 1, createdAt: null, first: { uuid: 'u', at: null, text: 'こんにちは' }, count: 2, ...secret }], nextBefore: null }) },
     sessions: {
       list: async () => [{ id: 's1', title: 't', backend: 'x', status: null, claudeAccount: MARKER, compatEndpoint: MARKER, ...secret }],
       get: async () => ({ row: { id: 's1', title: 't', backend: 'x', claudeAccount: MARKER, ...secret }, children: [], history: [{ at: 'a', by: 'agent', field: 'title', from: 'x', to: 'y', ...secret }] }),
@@ -203,12 +204,18 @@ export default async function (t) {
     limitResume: { messages: () => [], schedules: () => [] },
     // bot・Channels・ルーティン（docs/channels.md）。read の操作を足すパッケージが、自分の領域の返り（秘密の目印を入れたもの）をここに足し、
     // 必須の引数がある操作は下の samples にも足す。足したパッケージの区画以外は触らない
+    // 入力欄の書きかけのサーバーの写し（drafts.*）
+    drafts: { load: () => ({ text: 'こんにちは', at: 1 }), save: () => ({ saved: true, at: 1 }) },
     channels: {     // S1
       list: async () => [{ id: 'c_000000000aaaaaa', kind: 'channel', name: 'general', unread: 0, mentions: 0, threadsWorking: 0, ...secret }],
       get: async () => ({ id: 'c_000000000aaaaaa', kind: 'channel', name: 'general', ...secret }),
       mentionsOf: async () => ['everyone'],
       read: async () => ({ posts: [{ id: 'p_000000000aaaaaa', text: 'こんにちは', ...secret }], threads: [{ threadId: 'p_000000000aaaaaa', ...secret }], summaries: {}, nextBefore: null }),
       search: async () => ({ hits: [{ postId: 'p_000000000aaaaaa', snippet: 'こんにちは', ...secret }] }),
+      threadIndex: async () => ({ threads: [{ channelId: 'c_000000000aaaaaa', threadId: 'p_000000000aaaaaa', title: 'こんにちは', ...secret }], totals: { c_000000000aaaaaa: 1 } }),
+      // エージェントに渡した原文（channels.deliveries）: 投稿とスレッドの bot の会話
+      getPost: async () => ({ id: 'p_000000000aaaaaa', threadId: null, text: 'こんにちは' }),
+      threads: { get: async () => ({ sessions: { b_1: 's1' } }) },
     },
     bots: { get: async ({ botId }) => ({ id: botId, name: 'Owl', icon: '🦉', pulse: { on: false, everyMin: 10, backend: '', model: '', channelId: '' } }), overview: async ({ botId } = {}) => [{ id: botId ?? 'b_1', name: 'Owl', icon: '🦉', persona: '', backend: 'fake', model: '', effort: '', mode: 'default',
       folders: [], sendToOthers: true, sendTargets: [], pulse: { on: false, everyMin: 10, backend: '', model: '', channelId: '' }, dmChannelId: 'c_1', dmSessionId: null, createdAt: 0, updatedAt: 0,
@@ -249,6 +256,9 @@ export default async function (t) {
     'channels.get': [{ channelId: 'c_000000000aaaaaa' }], 'channels.read': [{ channelId: 'c_000000000aaaaaa' }], 'channels.search': [{ query: 'こんにちは' }],
     'channels.wakePreview': [{ channelId: 'c_000000000aaaaaa', text: '@everyone' }],
     'channels.threadBudget': [{ channelId: 'c_000000000aaaaaa', threadId: 'p_000000000bbbbbb' }],
+    'channels.deliveries': [{ channelId: 'c_000000000aaaaaa', postId: 'p_000000000aaaaaa' }],
+    'channels.pending': [{ channelId: 'c_000000000aaaaaa', threadId: 'p_000000000aaaaaa' }],
+    'drafts.load': [{ key: 'thread:c_000000000aaaaaa:p_000000000aaaaaa' }],
     'memory.list': [{ layer: 'user' }], 'memory.search': [{ query: 'PR' }],
     'git.commit': [{ hash: 'abc1234' }], 'git.worktree': [{ worktree: 'C:/r' }],
     'bots.get': [{ botId: 'b_1' }], 'brain.view': [{ botId: 'b_1' }], 'brain.wakeList': [{ botId: 'b_1' }],

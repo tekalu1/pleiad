@@ -96,7 +96,29 @@
 .post-tool:hover,.post-tool[aria-expanded=true]{background:var(--surface-2);color:var(--ink)}
 .post-tool svg.i{width:16px;height:16px}
 .post-tool.add{opacity:1}
-@media (hover:none){.post-tools{display:none}}
+/* システム側の投稿（Pleiad の知らせ）: 名前・アイコンを出さず、弱い字の 1 行（Chats のシステム側の行と同じ見え方） */
+.post.sys{padding-top:2px;padding-bottom:2px}
+.post.sys .post-av,.post.sys .post-head .post-name{visibility:hidden}
+.post.sys .post-body{color:var(--ink-weak);font-size:var(--fs-s)}
+.post.sys .post-tools{display:none}
+/* あなたの投稿の添付の行（📎 N ▾。Chats の .msg-tools） */
+.post-main > .msg-tools{margin-top:4px}
+/* 送り直すと消える投稿（Chats の .mw.doomed と同じ薄さ）。編集中の投稿は本文の代わりに編集欄 */
+.post.doomed{opacity:.42;transition-duration:var(--dur-fast)}
+.post.editing .post-main > .message-editor{margin-top:4px}
+.post-main > .resend-band{margin-top:8px;max-width:680px}
+/* コピーの ✓（Chats の発言のコピーと同じ） */
+.post-tool.copy .ok{display:none}
+.post-tool.copy.done .cp{display:none}
+.post-tool.copy.done .ok{display:block}
+.post-tool.copy svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+.post-tool.copy.done{color:var(--ink)}
+/* タッチ（ホバーが無い）: ⋯ だけを薄く常に出す（36px）。ほかの道具は長押しのメニューから */
+@media (hover:none){
+  .post-tools{opacity:.6;pointer-events:auto;background:transparent;box-shadow:none;top:0;right:4px}
+  .post-tool:not(.more){display:none}
+  .post-tool.more{width:36px;height:36px}
+}
 
 /* ---- 入力欄。1 つの角丸の箱（--surface-1・--r-l）。Chats の入力欄と同じ作り（チップは無い） */
 .ch-composer{position:relative;flex:none;padding:4px 16px 12px;min-width:0}

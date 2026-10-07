@@ -23,11 +23,13 @@ import { WORK_NOTES_VERSION } from '../brain/inner.mjs';
 
 /** bot の名前・本人の人格・操作の要点・予算の残りの届き方。区切りは空行 1 つ、末尾の改行なし */
 export function botInstructions(bot, locale) {
-  const persona = String(bot?.persona ?? '').replace(/\r\n/g, '\n').trim();
+  const persona = bot?.plain ? '' : String(bot?.persona ?? '').replace(/\r\n/g, '\n').trim();
   return [
-    agentT(locale, 'guide.bot.heading', { icon: bot?.icon ?? '', name: bot?.name ?? '' }),
+    // 組み込みの bot（bot なし）は名前・人格を持たない。チャンネルのスレッドで人と直接話すエージェントとして書く
+    bot?.plain ? agentT(locale, 'guide.bot.plainHeading') : agentT(locale, 'guide.bot.heading', { icon: bot?.icon ?? '', name: bot?.name ?? '' }),
     persona || null,
-    agentT(locale, 'guide.bot.tools'),
+    // 組み込みの bot（bot なし）は記憶・予約を持たない（memory.write・brain.* を断る）。道具の文もそれを書かない
+    bot?.plain ? agentT(locale, 'guide.bot.plainTools') : agentT(locale, 'guide.bot.tools'),
     // 黙る自由（ADR 0119）: 文章を書かずに終えたターンは投稿を残さない（core/bots/dispatch.mjs の finalizePost）
     agentT(locale, 'guide.bot.quiet'),
     // @ の無い人の投稿は、スレッドのほかの bot にも聞こえた投稿として届く（ADR 0128）。答えるかは bot が決める
@@ -37,7 +39,7 @@ export function botInstructions(bot, locale) {
     // 自分の投稿へのリアクションは reaction の包みで届き、問いへの答えのリアクションは、付けたのが人でも bot・AI でも起こす（ADR 0109 の追記）
     agentT(locale, 'guide.bot.reaction'),
     // 後で起きるのは会話の中のタイマーではなく Pleiad の予約（brain.wakeAdd。ADR 0140）。会話の中のタイマーはターンが止まっている間は鳴らない
-    agentT(locale, 'guide.bot.wake'),
+    bot?.plain ? null : agentT(locale, 'guide.bot.wake'),
   ].filter(Boolean).join('\n\n');
 }
 
@@ -111,8 +113,9 @@ export function sessionTitle(bot, channel, rootText) {
 export function createBotSessions({ host, now = Date.now } = {}) {
   const lang = () => host.currentLocale?.() ?? 'ja';
 
-  async function resolve(bot, channel, cwdHint) {
-    const backend = host.getBackend(bot.backend);
+  async function resolve(bot, channel, cwdHint, backendHint = null) {
+    // backendHint: スレッドで選んだ backend（組み込みの bot だけ。channels.threadSettings の backend）
+    const backend = host.getBackend((bot.plain && backendHint) || bot.backend);
     if (!backend) throw new Error(agentT(lang(), 'delegation.backendDisabled'));
     const modes = backend.modes();
     const mode = modes[bot.mode] ? bot.mode : defaultMode(modes);
@@ -123,8 +126,8 @@ export function createBotSessions({ host, now = Date.now } = {}) {
   }
 
   return {
-    async create({ bot, channel = null, threadId = null, kind, routineId, rootText = '', cwd: cwdHint = null }) {
-      const { backend, mode, cwd, model, effort } = await resolve(bot, channel, cwdHint);
+    async create({ bot, channel = null, threadId = null, kind, routineId, rootText = '', cwd: cwdHint = null, backend: backendHint = null }) {
+      const { backend, mode, cwd, model, effort } = await resolve(bot, channel, cwdHint, backendHint);
       const info = { title: sessionTitle(bot, channel, rootText), cwd, createdAt: now(), lastModified: now() };
       const sessionId = await host.createConversation(backend, info);
       const sidecar = {
@@ -150,18 +153,21 @@ export function createBotSessions({ host, now = Date.now } = {}) {
     },
 
     async sync(sessionId, bot) {
+      if (bot.plain) return false;   // 組み込みの bot の会話の設定は、スレッドごとに人が選んだもの（bot の既定を持たない）
       const backend = host.getBackend(bot.backend);
       const meta = await host.store.get(sessionId);
       if (!backend || meta.backend !== backend.id) return false;   // backend を変えた bot の古い会話は、次の新しい会話から（そのままにする）
       const modes = backend.modes();
       // ルーティンの会話の承認モードはルーティンの mode（core/routines/runner.mjs）。人が bot のモードを変えても、実行中・過去の実行の強さは変えない
       // 心拍の会話は読み取りのモードで作る（ADR 0126）。人が bot のモードを変えても替えない
-      if (modes[bot.mode] && meta.mode !== bot.mode && meta.bot?.kind !== 'routine' && meta.bot?.kind !== 'pulse') await host.store.setMode(sessionId, bot.mode);
+      // このスレッドだけで変えた欄（sidecar の overrides。channels.threadSettings）は、bot の既定を変えても上書きしない（ADR 0157）
+      const own = meta.bot?.overrides ?? {};
+      if (!own.mode && modes[bot.mode] && meta.mode !== bot.mode && meta.bot?.kind !== 'routine' && meta.bot?.kind !== 'pulse') await host.store.setMode(sessionId, bot.mode);
       const cwd = meta.cwd ?? bot.folders?.[0]?.path ?? os.homedir();
-      const model = await host.resolveModel(null, bot.model || undefined, backend, cwd, '');
-      if (meta.model !== model) await host.store.setModel(sessionId, model);
+      const model = own.model ? meta.model : await host.resolveModel(null, bot.model || undefined, backend, cwd, '');
+      if (!own.model && meta.model !== model) await host.store.setModel(sessionId, model);
       const effort = await host.resolveEffort(null, bot.effort || undefined, backend, model, cwd, null);
-      if (meta.effort !== effort) await host.store.setSessionData(sessionId, 'effort', effort);
+      if (!own.effort && meta.effort !== effort) await host.store.setSessionData(sessionId, 'effort', effort);
       return true;
     },
   };
@@ -184,5 +190,7 @@ export async function botTurnSetup({ host, bots, turn }) {
   const modeEntry = backend?.modes?.()[meta.mode ?? bot.mode];
   const locale = turn.agentLocale ?? meta.agentLocale ?? host.currentLocale?.() ?? 'ja';
   if (meta.bot.kind === 'pulse') return { botInstructions: pulseInstructions(bot, locale), folders: null };
+  // 組み込みの bot（bot なし）: 人格を入れず、投稿の決まりだけ。作業場所は会話の cwd 1 つ（フォルダーを持たない）
+  if (bot.plain) return { botInstructions: botInstructions(bot, locale), folders: null };
   return { botInstructions: botInstructions(bot, locale), folders: folderPlan(bot, modeEntry, turn.info?.cwd ?? meta.cwd ?? null) };
 }

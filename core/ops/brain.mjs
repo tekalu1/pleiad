@@ -26,7 +26,8 @@ async function target(ctx, botId) {
   const id = botId ?? own;
   if (!id || (own && id !== own)) throw new OpError('BOT_NOT_FOUND', agentT(ctx.locale, 'ops.errors.BOT_NOT_FOUND', { id: String(botId ?? '') }));
   const bot = await ctx.bots.get({ botId: id });
-  if (!bot) throw new OpError('BOT_NOT_FOUND', agentT(ctx.locale, 'ops.errors.BOT_NOT_FOUND', { id }));
+  // 組み込みの bot（bot なし）は頭の中（活動メモ・気がかり・予約）を持たない（ADR 0157）
+  if (!bot || bot.plain) throw new OpError('BOT_NOT_FOUND', agentT(ctx.locale, 'ops.errors.BOT_NOT_FOUND', { id }));
   return { bot, sb };
 }
 
@@ -133,6 +134,7 @@ export const brainOps = [
       if (!sb?.botId || (sb.kind !== 'thread' && sb.kind !== 'dm')) throw new OpError('WAKE_CONVERSATION', agentT(ctx.locale, 'ops.errors.WAKE_CONVERSATION'));
       const bot = await ctx.bots.get({ botId: sb.botId });
       if (!bot) throw new OpError('BOT_NOT_FOUND', agentT(ctx.locale, 'ops.errors.BOT_NOT_FOUND', { id: sb.botId }));
+      if (bot.plain) throw new OpError('WAKE_CONVERSATION', agentT(ctx.locale, 'ops.errors.WAKE_CONVERSATION'));
       const now = ctx.wakes.now();
       const when = inMin != null ? now + inMin * 60_000 : parseTime(at, now);
       if (when == null) throw new OpError('INVALID', agentT(ctx.locale, 'ops.errors.INVALID', { detail: 'at (ISO / HH:MM) or inMin' }));

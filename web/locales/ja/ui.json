@@ -1794,6 +1794,7 @@
       "more": "この発言の操作",
       "sentAt": "{{time}} に送信",
       "sourceTitle": "エージェントに渡した原文",
+      "sourceFor": "どのエージェントに渡した原文か",
       "editResend": "編集して再送信",
       "resend": "再送信",
       "notSaved": "この発言はまだ保存されていません。少し待って再試行してください",
@@ -2903,7 +2904,7 @@
     "place": {
       "thread": "#{{channel}} › {{thread}}",
       "channel": "#{{channel}}",
-      "chat": "Chats › {{title}}"
+      "chat": "一時チャット › {{title}}"
     },
     "outcome": {
       "allowed": "承認済み",

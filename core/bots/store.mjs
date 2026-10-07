@@ -99,6 +99,8 @@ export function normalizeBot(raw, now = Date.now()) {
     pulse: normalizePulse(raw.pulse),
     dmChannelId: str(raw.dmChannelId), dmSessionId: typeof raw.dmSessionId === 'string' && raw.dmSessionId ? raw.dmSessionId : null,
     createdAt: num(raw.createdAt, now), updatedAt: num(raw.updatedAt, num(raw.createdAt, now)),
+    // 組み込みの bot（チャンネルのスレッドの「bot なし」。人格・記憶・心拍を持たず、名前で呼べない。ADR 0157）
+    ...(raw.plain === true ? { plain: true } : {}),
   };
 }
 
@@ -112,7 +114,8 @@ export function createBotStore({ file } = {}) {
   const guard = () => { if (broken) throw broken; };
   // 名前はチャンネルを通して一意。直列化の中で確かめるので、同時の作成でも重ならない
   const taken = (bot) => {
-    if (bots.some((x) => x.id !== bot.id && nameKey(x.name) === nameKey(bot.name))) throw new BotStoreError('BOT_NAME_TAKEN', `the name is already used: ${bot.name}`, { name: bot.name });
+    if (bot.plain) return;   // 組み込みの bot は名前で呼ばれない（人の bot と同じ名前でもよい）
+    if (bots.some((x) => x.id !== bot.id && !x.plain && nameKey(x.name) === nameKey(bot.name))) throw new BotStoreError('BOT_NAME_TAKEN', `the name is already used: ${bot.name}`, { name: bot.name });
   };
   const save = async () => {
     await fs.mkdir(path.dirname(file), { recursive: true });
@@ -149,7 +152,7 @@ export function createBotStore({ file } = {}) {
     },
     list: () => bots.map(copy),
     get: (id) => { const b = bots.find((x) => x.id === id); return b ? copy(b) : null; },
-    byName: (name) => { const key = nameKey(name); const b = key ? bots.find((x) => nameKey(x.name) === key) : null; return b ? copy(b) : null; },
+    byName: (name) => { const key = nameKey(name); const b = key ? bots.find((x) => !x.plain && nameKey(x.name) === key) : null; return b ? copy(b) : null; },
     put(bot) {
       return serial(async () => {
         guard();

@@ -33,9 +33,11 @@ export function splitInterruptionNotes(messages) {
   for (const m of Array.isArray(messages) ? messages : []) {
     const note = m?.role === "user" && !m.kind && typeof m.text === "string" ? splitInterruptionNote(m.text) : null;
     if (!note) { out.push(m); continue; }
-    const rest = (note.rest.trim() || m.attachments?.length) ? { ...m, text: note.rest } : null;
+    // 分けた行は元の発言の uuid（groupUuid）を持つ（splitLeadingNotes と同じ。分岐・巻き戻しの切り口をまとまりの先頭に合わせる）
+    const group = m.uuid ? { groupUuid: m.uuid } : {};
+    const rest = (note.rest.trim() || m.attachments?.length) ? { ...m, text: note.rest, ...group } : null;
     out.push({ role: "system", kind: "interruptionNote", text: "", body: note.body, at: m.at ?? null,
-      ...(rest ? {} : { uuid: m.uuid }), ...(m.backend ? { backend: m.backend } : {}) });
+      ...(rest ? {} : { uuid: m.uuid }), ...(m.backend ? { backend: m.backend } : {}), ...group });
     if (rest) out.push(rest);
   }
   return out;
@@ -86,8 +88,10 @@ export function splitLeadingNotes(messages) {
     if (!rows.length) { out.push(m); continue; }
     const keep = Boolean(rest.trim() || m.attachments?.length);
     if (!keep) rows[rows.length - 1].uuid = m.uuid;
+    // 分けた行は、元の発言（まとまり）の uuid を全部が持つ。分岐・巻き戻しの切り口をまとまりの先頭に合わせる（兄弟の行を切り口の前に残さない。ADR 0157）
+    if (m.uuid) for (const row of rows) row.groupUuid = m.uuid;
     out.push(...rows);
-    if (keep) out.push({ ...m, text: rest });
+    if (keep) out.push({ ...m, text: rest, ...(m.uuid ? { groupUuid: m.uuid } : {}) });
   }
   return out;
 }

@@ -781,14 +781,15 @@ export function createMarkdownEditor(root, o) {
   });
 
   // ------------------------------------------------------------ 選択の追跡と書式バー
-  document.addEventListener('selectionchange', () => {
+  const onSelectionChange = () => {
     const s = getSelection();
     if (!s?.rangeCount || !root.contains(s.anchorNode)) { hideBar(); return; }
     const sel = getSel();
     if (sel) lastSel = sel;
     if (selAtom !== null && !root.classList.contains('md-atom-sel')) clearAtomSel();
     requestAnimationFrame(updateBar);
-  });
+  };
+  document.addEventListener('selectionchange', onSelectionChange);
 
   function hideBar() { if (bar) bar.hidden = true; }
 
@@ -1060,6 +1061,8 @@ export function createMarkdownEditor(root, o) {
       blockDivs().forEach((div, i) => { if (div.dataset.k === 'att') div.replaceWith(renderBlock(blocks[i], i, [])); });
       markGalleries();
     },
+    /** 入力欄を外すとき。文書全体に付けた見張りを外す */
+    destroy() { document.removeEventListener('selectionchange', onSelectionChange); hideBar(); },
   };
   root.editor = editor;
 
