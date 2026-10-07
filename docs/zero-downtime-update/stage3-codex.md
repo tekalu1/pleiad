@@ -54,3 +54,21 @@
 - ターン 1（1 から 40 まで 1 行ずつ出させる）: 21 個目の差分の直後に A を外し、2 秒後に B を付ける。B が `turn/completed`。A + B の差分をつなぐと最終の本文と一致（110 文字）
 - ターン 2（`node --version` を 1 回走らせる）: B が承認の依頼を受けた直後に A 相当を外し、10 秒おいて C から答える。コマンドは `v24.14.0` で `completed`、ターンは `completed`、`thread/tokenUsage/updated` も届く
 - 後始末: 作ったスレッド 1 本（`01a11432-a7a8-7e41-8d19-2ea8d93421c1`）を `thread/delete` で消し、`~/.codex/sessions/2026/10/07/` の rollout が無いことを確かめた（`archived_sessions` にも残っていない）。ほかのスレッドには触れていない
+
+## 実装（Codex を保持役に載せる）
+
+実装の要点・共有のファイルへの変更の一覧は [plan.md](plan.md)「段階 3」の「Codex の実装のメモ」。ここには、測定から決めたことと確かめた結果を書く。
+
+- **子は 1 つ・ターンは札のターン**: Claude の CLI は 1 ターン 1 プロセスだが、共有の app-server は全会話の出力を 1 本の記録に混ぜる。ターンごとに印（mark `turn:<threadId>`）と札（子の label の `turns`）を置き、再生は印からの記録を、そのスレッドとサブエージェントの子孫の分だけ選んで流す（`CodexRpc.adoptThread`）。答えが残っている依頼は、付け直しの `attach` の答えの `pendingRequests`（保持役の控えの鍵）にあるものだけを同じ id で出し直す
+- **測定が決めたこと**: (a) 子の `thread/started` が出ないので、親子は再生の通知から学び、印より前に生まれた子は `thread/list { parentThreadId }` で引き直す。(b) 承認の打ち切りは無いので、付け直しの待ち（預かる frame の上限・1 分の放棄）は承認の長さと無関係に決められる。(c) 裏の端末の一覧の形が分かったので、札に端末の中身を置かず、新しいサーバーが app-server に聞き直す。(d) 本物の依頼の id は整数 0 から。控えの鍵は `JSON.stringify(id)` で、新しいサーバーの id は `<pid>.<起動の時刻>.<連番>` の文字列
+- **ack**: 引き取る前の frame を ack すると、次のサーバーが落ちたときに失う。全部のスレッドを引き取る（または放棄する）まで ack しない。手を離す側は、処理し終えた最後の行まで ack を進めてから札を置いて detach する（以後読まない）。ack は同じ tick の分をまとめて送る
+- **サーバーが終わるとき**: 終わらない子（app-server）は、保持役に載せると、サーバーが終わっても残る。main の shutdown・孤児の見張りが、手を離していない app-server を止めてから終わる（`stopHeldAppServer`）。`exit` の中の kill は Windows で流れ切らないことがある（実測。pid が残った）ので、終わると決めた後・`process.exit` の前に待つ形にした。保険として spawn の `keepMs`（既定 10 分。親が居ない間だけ数える）
+- **ロード済みのスレッドの設定の控え**: 新しいサーバーが忘れると、ロード済みのスレッドの接続先・指示・hooks の変更が resume で黙って無視される（既存の `loadedProvider`・`loadedInstructions`・`loadedHooks` が守っていたこと）。札の `loaded` に置く（指示は長いので sha256 の指紋）
+
+### テスト
+
+- `tests/unit/adopt-codex.mjs`（9 判定）: 偽の app-server（`tests/lib/fake-codex.mjs` にゲートのターン `gate:<名前>`・裏の端末 `bgterm`・2 回目の initialize の失敗を足した）を保持役に載せ、サーバー A で始めたターンを B が引き取る。切り替え（off）・サーバーが終わるとき app-server を止める・既定が保持役の子・**1 回の入れ替えで 3 つのターン**（承認待ち・サブエージェントの子の承認待ち・ツールの実行中）・終わった直後（A が app-server の出力を読まないうちに終わる）・強制終了（札の置き直し）・本物の引き継ぎ（偽の main の `handover`。承認待ちとツールの実行中を待たせず渡し、裏の端末は止まらないもの `held`・新しいサーバーが数え直し、止めると消える）・後片付け。どれも承認は同じ id で 1 つ、`turnEnd`・`completedAt`・使用量は 1 回、restart の中断なし、`initialize` は送らない
+- `tests/unit/codex-held.mjs`（6 判定）: 載せるかの切り替え・世代つきの id・付け直すスレッドの預かりと再生（スレッドごとに選ぶ・同じ id で出し直す・親子を通知から学ぶ・引き取るまで ack しない）・手を離す・`HeldAppServer` の札と ack → label → detach の順
+- `tests/unit/holder-core.mjs`（keepMs 2 判定）・`codex-background.mjs`（`restore` 5 判定）・`desktop-switch.mjs`（held の裏の端末 2 判定）
+- **Linux（WSL Ubuntu-24.04・Node 22.17.0・unix ソケット）**: `adopt-codex`・`codex-held`・`holder-core` が全て通る（`adopt-codex` 9 / 9）。Linux は `stop()` のシグナルでサーバーの `exit` が走り、手を離していない app-server も止まる（Windows は強制終了で残る）ので、前の節の app-server が残っている前提の確かめは、fake の会話を `FAKE_CODEX_STATE_DIR` に置いて両方で通る形にした
+- 実時間の待ちは使わない（承認・ゲート・fake の記録・holder の状態を待つ）。残った時間の待ちは、札の置き直しが保持役へ届くまでの 400 ms と、強制終了の前の 600 ms だけ（Claude の試験と同じ。`touchCard` が同じ tick の呼び出しを 1 回にまとめて置くため）
