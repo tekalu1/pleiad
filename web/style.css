@@ -1312,6 +1312,7 @@ body.inapp-links .present-tools .visualize-expand{display:none}
 .chip.model .av{flex:none}
 .chip.model .av.xs{width:18px;height:18px;display:inline-grid;place-items:center;font-size:12px;line-height:1}
 .chip.model .row-be{flex:none;width:16px;height:16px}
+.chip.model .compat-mark{display:inline-grid;place-items:center;color:var(--ink-weak);font-size:13px;line-height:1}
 .crow > .chip.model.changed > .entry-dot{position:absolute;left:17px;right:auto;top:1px}
 .destination-sent,.destination-fact{margin:4px 8px;color:var(--ink-weak);font-size:var(--fs-s)}
 .destination-agent{display:flex;align-items:center;gap:5px;padding:12px 8px 4px;color:var(--ink-weak);font-size:var(--fs-s)}

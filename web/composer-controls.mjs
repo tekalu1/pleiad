@@ -336,14 +336,17 @@ export function destinationUsage(result, { account = '', open = null } = {}) {
 }
 
 /** Chats とスレッドで同じ「宛先とモデル」のチップを描く。 */
-export function paintWhoChip(chip, { bot = null, backend, backendLabel = backend, model, effort = '', changed = false, sent = false }) {
-  const icon = bot ? botIcon(bot, 'av xs') : logo(backend);
+export function paintWhoChip(chip, { bot = null, backend, backendLabel = backend, model, effort = '', changed = false, sent = false, endpoint = false, oneM = false, title = null }) {
+  // bot はアイコン、互換の接続先は ◇（バックグラウンドの札と同じ）、それ以外はエージェントのロゴ
+  const icon = bot ? botIcon(bot, 'av xs') : endpoint ? el('span', 'row-be compat-mark', '◇') : logo(backend);
   icon.setAttribute('aria-hidden', 'true');
   const name = el('span', 'v split');
   const modelName = model || t('chat.model.default');
   const effortName = String(effort).replace(/^\s*·\s*/, '').trim();
   if (bot) name.append(el('span', 'mn', bot.name), el('span', 'mdl', ` · ${modelName}`));
   else name.append(el('span', 'mn', modelName));
+  // 互換の接続先の 1M のモデルは名前の横に札（web/compat-models.mjs）
+  if (oneM) { const badge = el('span', 'cbadge', '1M'); badge.title = ONE_M_TITLE; name.append(badge); }
   if (effortName) name.append(el('span', 'ef', ` · ${effortName}`));
   const caret = glyph(CARET); caret.classList.add('caret');
   chip.replaceChildren(icon, name, caret);
@@ -355,7 +358,7 @@ export function paintWhoChip(chip, { bot = null, backend, backendLabel = backend
     : bot ? t('composer.destination.botAria', { name: bot.name, backend: backendLabel, model: modelName, effort: effortPart })
       : t('composer.destination.plainAria', { backend: backendLabel, model: modelName, effort: effortPart });
   const full = changed ? `${label} · ${t('composer.destination.changedAria')}` : label;
-  chip.title = full;
+  chip.title = title ?? full;
   chip.setAttribute('aria-label', full);
 }
 
@@ -908,7 +911,9 @@ export function setupComposerControls({ cmd, get, on, els = {} }) {
     paintWhoChip(chips.model, { bot: d.destination?.bot, backend: d.backend,
       backendLabel: d.destination?.backendLabel?.(d.backend) ?? d.backend,
       model: epLabel ? epLabel.head : modelHead, effort: epLabel ? epLabel.tail : modelTail,
-      sent: Boolean(d.destination?.sent) });
+      sent: Boolean(d.destination?.sent), endpoint: Boolean(row), oneM: Boolean(epLabel && epModel.oneM),
+      // 互換の接続先は送る ID を含む全体を title に
+      title: epLabel ? t("composer.model.chipTitle", { label: full }) : null });
     chips.model.dataset.value = d.model ?? "";
     chips.model.dataset.backend = d.backend ?? "";
     // 承認モード
