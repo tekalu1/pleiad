@@ -132,6 +132,7 @@ export async function readHolderSources({ dataDir, root, appVersion = '', log = 
   for (const child of client.welcome?.children ?? []) {
     // 1 つの子が複数のターンを運ぶバックエンド（Codex の共有の app-server）は、子の札の種類（label.k）で登録した口が、ターンごとの元に分ける
     const expand = typeof child.label?.k === 'string' ? childExpanders.get(child.label.k) : null;
+    // i18n-ignore: サーバーのログ
     if (expand) sources.push(...await expand({ client, child, log }).catch(error => { log(`  付け直す元を読めない（${child.id}）: ${error?.message ?? error}`); return []; }));
     else if (child.label && Number.isInteger(child.marks?.[ADOPT_TURN_MARK])) sources.push(holderSource(client, child, { redelivered: true }));
   }
