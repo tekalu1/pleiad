@@ -258,8 +258,9 @@ agent-host-runtime\
 - **付け直しに握手は要らない**: 新しいクライアントは `initialize` も `thread/resume` も送らずに続きの通知を受け取り、続けて `turn/start` も通せた（本文の差分 16 個で重複も欠けも無い）。`initialize` を送っても `{"code":-32600,"message":"Already initialized"}` が返るだけで接続は無事。→ 付け直した `CodexRpc` は `initialize` を送らないか、送って `Already initialized` を成功とみなす
 - **承認の依頼**（`item/commandExecution/requestApproval`）: (a) 古い親に届いて答えないまま入れ替えた、(b) 入れ替えの間に来た、のどちらも、再生された依頼に新しい親が答えるとコマンドが走ってターンが `completed`。古い親が同じ id に答えても無害（app-server が警告を出すだけ）
 - **id**: 子から親への依頼の id（codex が付ける）と、親から子への依頼の id（クライアントが付ける）は別の空間。codex は**文字列の id をそのまま返す**ので、新しいサーバーが世代つきの文字列の id（例 `g2-17`）を使い、古い世代の応答は捨てる。保持役は id を付け替えない
-- 付け直した `CodexRpc` が持つ内部の対応表（`parents`・`agents` = サブエージェントの親子、`claims`・`held`）は、再生がターンの印より前を含まないと欠ける。親子は `thread/read` / `thread/list` の `parentThreadId` から引き直せる（`codex.mjs` がすでに使っている）ので、再生の始点は「ターンの始まりの印」で足りる【推測。サブエージェントが走っているときの付け直しは未確認】
-- 承認を何分も待たせたときの app-server 側の打ち切りは、3 秒ほどしか測っていない【未確認】
+- 付け直した `CodexRpc` が持つ内部の対応表（`parents`・`agents` = サブエージェントの親子、`claims`・`held`）は、再生がターンの印より前を含まないと欠ける。親子は `thread/read` / `thread/list` の `parentThreadId` から引き直せる（`codex.mjs` がすでに使っている）ので、再生の始点は「ターンの始まりの印」で足りる【実測。サブエージェントが走っている最中の付け直しも通った。0.160.0 は子の `thread/started` を出さず、親の `collabAgentToolCall` の `receiverThreadIds` が子の id を運ぶ。[stage3-codex.md](stage3-codex.md)】
+- 承認を何分も待たせたときの app-server 側の打ち切りは無い【実測。240 秒（その間に 2 回入れ替え）。[stage3-codex.md](stage3-codex.md)】。本物のモデルでの付け直しも通った【実測】
+- **実装した形**（段階 3。[plan.md](plan.md)「Codex の実装のメモ」）: 子は 1 つ（`codex-app-server`）。ターンごとの印（mark `turn:<threadId>`）と札（子の label の `turns`）。記録は全部のスレッドが混ざるので、再生はスレッドごとに（子孫のサブエージェントを含めて）選ぶ。依頼の id は `<pid>.<起動の時刻>.<連番>`。ロード済みのスレッドの設定の控えと裏の端末を数えているスレッドも札に置く（裏の端末は `thread/backgroundTerminals/list` から作り直す）
 
 **Antigravity（agy）**（agy 1.2.17 を本物の LLM で【実測】）
 
@@ -533,7 +534,7 @@ main が居ない時間は、試験用アプリで 17〜19 秒（Electron 本体
 ## 未確認の点
 
 - Claude: `host` の `fork` / `set_title` が二重に走ったときの実害。CLI をつながらない間に新しく起動したときの HTTP MCP の状態。親を殺す瞬間が SDK の内部の行の途中に当たる場合。`PreToolUse`・`PreCompact` 以外の hooks の最中。TS 以外の MCP のサーバーの 2 回目の `initialize`（段階 2-0 で測ったものは [stage2-claude.md](stage2-claude.md)）
-- Codex: 本物のモデル・実際の認証での付け直し。承認を数分待たせたとき。サブエージェントが走っているときの付け直し。保持役が読まない状態が続いてパイプが詰まる量のとき
+- Codex: 本物のサーバー（Pleiad）を通した本物の Codex の付け直し（本物のモデル・承認を数分待たせたとき・サブエージェント・裏の端末の入れ替えは、保持役の身代わりで【実測】済み。stage3-codex.md）。保持役が読まない状態が続いてパイプが詰まる量のとき
 - agy: 呼び出しの最中に口を切った場合。relay が複数（`--context --computer --browser --control` の束ね）の場合の不通
 - インストール版の `Ply.exe` の Job の制限の中身（`KILL_ON_JOB_CLOSE` の有無。Job に入っていることだけ確認した）と、explorer 経由の起動で付く Job の作り手
 - PowerShell が無い環境の `taskkill` の道・全ユーザー向けのインストール・署名した旧版→新版・Windows ARM64（node-pty・公式の `node.exe`・koffi を動かしていない）・macOS

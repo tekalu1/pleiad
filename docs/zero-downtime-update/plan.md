@@ -1,6 +1,6 @@
 # 無停止の更新 — 段階に分けた実装計画
 
-- 状態: 確定（2026-10-06）。段階 0 は完了し、その実測で段階 1 以降を直した。**段階 1 は実装・検証済み**（2026-10-06。パッケージ版の既定は on。署名した版・スマホ・利用者の操作が要る確認だけが残り、手順は [stage1-7.md](stage1-7.md) の「利用者に頼む確認」）
+- 状態: 確定（2026-10-06）。段階 0 は完了し、その実測で段階 1 以降を直した。**段階 1 は実装・検証済み**（2026-10-06。パッケージ版の既定は on。署名した版・スマホ・利用者の操作が要る確認だけが残り、手順は [stage1-7.md](stage1-7.md) の「利用者に頼む確認」） **段階 2 は実装済み**（2026-10-07。0.12.0-beta.3。Claude を保持役に載せるのは既定で on）。**段階 3 は実装済み**（2026-10-07。Codex・agy・`!` の行。既定で on。本物のインストーラーをまたぐ確認はまだ）
 - 設計: [design.md](design.md)。決定: [ADR 0151](../adr/0151-zero-downtime-update.md)。実測の記録: [stage0-claude.md](stage0-claude.md)・[stage0-codex-agy.md](stage0-codex-agy.md)・[stage0-runtime.md](stage0-runtime.md)・[stage1-0.md](stage1-0.md)（段階 1 の 1-0）・[stage1-7.md](stage1-7.md)（段階 1 の 1-7。実機の確認）。管理: [issue #54](https://github.com/tekalu1/pleiad/issues/54)
 - 規模の目安: S = 2 日まで、M = 3〜5 日、L = 1〜2 週、XL = 3 週以上（1 人。テストと文書を含む）。段階 0 の前の見積もりを、実測で分かったことに合わせて見直した（下の表）
 
@@ -11,7 +11,7 @@
 | 0 | 実測 | なし | M → **完了** |
 | 1 | 実行場所を `$INSTDIR` の外へ。サーバーを main から切り離す。新しい main が古いサーバーに付け直す。サーバーの切り替えは作業が終わるまで先送り | **更新を押しても作業が止まらない**（core の切り替えは作業が終わってから。design.md §6.1） | L（2〜3 週）→ **L〜XL（4〜5 週）** → **実装・検証済み**（署名・スマホの確認を除く） |
 | 2 | 保持役 + Claude。引き継ぎ。付け直し（再生） | **Claude の作業は core の切り替えでも止まらない**。サーバーが落ちても Claude の作業が続く | XL（4〜6 週）→ XL（4〜6 週。増減が相殺） |
-| 3 | Codex・agy・`!` の行を保持役へ | 全部のバックエンドで止まらない。先送りが要らなくなる | L（2〜3 週）→ **M〜L（2 週前後）** |
+| 3 | Codex・agy・`!` の行を保持役へ | 全部のバックエンドで止まらない。先送りが要らなくなる | L（2〜3 週）→ **M〜L（2 週前後）** → **実装済み**（実機の更新の確認を除く） |
 | 4 | （測って要れば）待ち受けを保持役が持つ | 引き継ぎの 1 秒前後の間の MCP の呼び出しも落ちない | M（段階 2 の実機の数え方しだい） |
 | 5 | （任意）Electron を再起動しない core だけの更新 | 内蔵ブラウザー・computer use も切れない。更新が数秒で終わる | L + 署名の設計 |
 
@@ -388,13 +388,47 @@ design.md §5.1・§6.1・§8。
 
 ---
 
-## 段階 3: Codex・agy・`!` の行（M〜L）
+## 段階 3: Codex・agy・`!` の行（M〜L。**実装済み 2026-10-07**。下の各項と実装のメモ）
 
-- Codex（M）: 共有の app-server を保持役の子に（`policy: 'jsonrpc'`）。`CodexRpc` の付け直しの始まり方（`initialize` を送らない。送って `Already initialized` を成功とみなしてもよい）。**新しいサーバーの JSON-RPC の id を世代つきの文字列にし、古い世代の応答は捨てる**。スレッドごとの印（ターンの始まり）と再生。サブエージェントの親子は `thread/read` の `parentThreadId` から引き直す。バックグラウンドの端末（`codex-background.mjs`）。**`thread/start` は HTTP の口が立ってから**（口が閉じていると `required: true` で失敗、`false` なら MCP を持たないスレッドになる）
-- agy（M）: 会話ごとのプロセスを保持役の子に（`policy: 'none'`）。ターンの印を最初の行に付ける。孤児の掃除と終了時の片付けから外す。`core/agy-context-relay.mjs` に数秒の再試行を足す（段階 0 では動かしていないので、足すときに口を閉じて確かめる）
-- `!` の行（S）: `shell-runs.mjs` のシェルを保持役の子に
-- 先送りが要らなくなる（保持役に載っていないターンは、古い CLI の版のものだけ）
-- 段階 3 の最初に、サブエージェントが走っている Codex の付け直し・承認を数分待たせたとき・本物のモデルでの付け直しを測る（stage0-codex-agy の未確認）
+- Codex（M。**実装済み 2026-10-07**。測定は [stage3-codex.md](stage3-codex.md)、下の「Codex の実装のメモ」）: 共有の app-server を保持役の子に（`policy: 'jsonrpc'`）。`CodexRpc` の付け直しの始まり方（`initialize` を送らない。送って `Already initialized` を成功とみなしてもよい）。**新しいサーバーの JSON-RPC の id を世代つきの文字列にし、古い世代の応答は捨てる**。スレッドごとの印（ターンの始まり）と再生。サブエージェントの親子は `thread/read` の `parentThreadId` から引き直す。バックグラウンドの端末（`codex-background.mjs`）。**`thread/start` は HTTP の口が立ってから**（口が閉じていると `required: true` で失敗、`false` なら MCP を持たないスレッドになる）
+- agy（M。**実装済み 2026-10-07**。下の「agy の実装のメモ」・[stage3-agy.md](stage3-agy.md)）: 会話ごとのプロセスを保持役の子に（`policy: 'none'`）。ターンの印を最初の行に付ける。孤児の掃除と終了時の片付けから外す。`core/agy-context-relay.mjs` に数秒の再試行を足す（段階 0 では動かしていないので、足すときに口を閉じて確かめる）
+- `!` の行（S）: `shell-runs.mjs` のシェルを保持役の子に。**実装済み 2026-10-07**（下の実装のメモ）
+  - **今の作りと pty**: `!` の行は node-pty ではなく `core/host-shell.mjs` の `runHostShell`（child_process の pipe。stdin は `ignore`。stdout・stderr はそれぞれ 256 KB まで・上限 10 分・止めるのは木ごと（Windows は `taskkill /T /F`、ほかはプロセスグループ））。保持役（Node の組み込みだけ）でもそのまま持てる。**色・対話は今と同じ**（TTY でないので色を出さないコマンドは出さない。標準入力は閉じていて、`read` などは待たずに終わる）
+  - **載せ方**: 保持役の子は包み `core/shell-held-child.mjs`（policy `none`。このプロセスの node で起こし、始めの行 `{ t: 'run', command, cwd, timeoutMs }` を受けて、シェルを `runHostShell` で自分の子として走らせる）。保持役の記録は行ごとで stderr を残さないので、包みが stdout・stderr のかたまりと終わりを 1 行 1 JSON（`{ t: 'o' | 'e', x }`・`{ t: 'done', exitCode, signal, durationMs, timedOut, stopped, truncated }`）にする。上限の時間は包みが数える（サーバーが入れ替わっても続く）。止めるのは stdin の `{ t: 'stop' }`（包みがシェルの木を止めて `stopped` の終わりを書く）。サーバー側は `core/shell-held.mjs`（`createShellHolder` の `start`・`adoptable`）と `core/shell-runs.mjs`（`hostWork`・`handOff`・`adopt`）
+  - **札・印・ack**: 札は子の label `{ kind: 'shell', v: 1, sessionId, runId, command, cwd, at, backend, skip }`（起こすときに置き、「渡さない」を変えたら置き直す。落ちたサーバーの後でも付け直せる）。印 `shell` を通番 1 に置き、記録を捨てさせない（出力の上限で大きさは決まる）。ターンの印 `turn` は置かないので、`readHolderSources` はターンとして拾わない。ack は画面へ流し終えた出力の行。付け直したサーバーは通番 1 から読み、ack までは出力の組み立てだけ（流さない）、その先を流す。終わりの行は会話の記録（`shellPending`）に書き終えてから ack し、子の記録を捨てる（`release`）。ack 済みの終わりは付け直しても書き直さない（子の記録だけ捨てる）
+  - **引き継ぎ**: 旧サーバーは `handoverRun` の預かり物を置く段の頭で `shellRuns.handOff()`。走っている行は読みを止めてから `detach`（止めた後の行は ack しないので、新しいサーバーが流す。取りこぼし・重なりが無い）し、一覧から外す（終わりで止めない）。終わりを記録に書いている最中の行は、書き終えて子の記録を捨てるまで待つ（上限 5 秒）。新しいサーバーは起動で `restoreAdoptedTurns` の後に `shellRuns.adopt(await shellHolder.adoptable())`（元を読む条件はターンと同じ: `--handover`・`AGENT_HOST_HANDOVER=on`・`AGENT_HOST_ADOPT_HOLDER=1`）。引き取った行に `shell.start` は出し直さない（開き直した画面は `rows` の走っている行と、続きの `shell.output` で見る）
+  - **サーバーの終わり**（引き継ぎでない終了・切り替えの先送りの `shutdown`）: `stopAll` が保持役の子の札を外して `stop` を書く（同期）。今までどおり止まり、次の起動は付け直さない。落ちた（2e）ときは札が残るので、起こし直したサーバーが引き取る
+  - **切り替え**（`desktop/switch.cjs`）: 変えたのは `switchBlockers` の 1 行だけ — 引き継ぎのとき（`handover: true`）、`running` の `shells` のうち `held: true`（保持役に載った行。`shellRuns.list()` が付ける）を止まるもの（`stoppers`）に入れない。`count`・`handover.blocking` の数え方は変えていない（`!` の行はもともと数えない）。載っていない行と、引き継ぎでない切り替えは今までどおり止まるもの（聞く）
+  - **切り替えの口**: `AGENT_HOST_SHELL_HOLDER`（`core/boot-env.mjs` の一覧に足した）。`off` で今の流れ。既定は実行場所の置き場（`AGENT_HOST_RUNTIME_ROOT`）があれば載せる（パッケージ版の `AGENT_HOST_HANDOVER=on`）。保持役につなげない・起こせない（抜け道の無い Job）・札が 64 KB を超えるときも今の流れ
+  - **直した不具合**（今の流れにもあった）: Git Bash のループを止めると、40 回に 1 回ほど、`taskkill /T` の間に fork の途中だった子が親を失って止まったまま出力のパイプを握り、`close` が来ずに行が「走っている」に残っていた。止めた・上限のときは、シェルが終わってから 1 秒待って締める（`runHostShell`）
+  - **テスト**: `tests/unit/adopt-shell.mjs`（本物の 2 サーバー + 保持役 + 偽の main。`off` は今の流れ・載せた行の stdin と stderr と終了コード・止める・出力の途中で引き継ぐ（引き継ぎの間の出力も S2 が流す）・S1 が離れた後で S2 が起きる前に終わった行・止めるのを頼んだ直後に引き継ぐ・切り替えの数え方・S2 の次の発言で渡る・子の記録を捨てる。9 判定）、`tests/unit/shell-held.mjs`（部品。切り替え・札・書いている最中の手離し・ack 済みの終わり・サーバーの終わりで札を外す。5 判定）。待ちはゲートのファイルと出来事で進める
+  - **残り**: (1) POSIX では、保持役の `shutdown`・木ごとの `kill` は包みのプロセスグループだけを止め、シェル（`runHostShell` が別のグループにする）は残る（`stop` の行なら包みがシェルのグループを止める）。(2) 上の直した不具合の、止まったまま残る Git Bash の子（CPU を使わない）は消せないまま（保持役の Job にも入らない）。(3) 包みは起こしたサーバーの版の実行場所（`pleiad-node.exe` と `core/`）で走り続けるので、その版の実行場所は包みが終わるまで（上限 10 分）消し切れないことがある（fake の `held:` の偽の CLI と同じ）。(4) パッケージ版・本物の更新での確認はまだ（この環境の確認は上のテストだけ）
+- 先送りが要らなくなる（保持役に載っていないターンは、古い CLI の版のものだけ）。**実装の後に残る先送り**（2026-10-07）: 保持役に載らない作業だけを待つ — 付け直しを確かめた下限より古い Claude の CLI、圧縮・bot のターン、Pleiad がコンテキストを担当する会話の専用の Codex の app-server、shell が要る agy（`.cmd`）、保持役につなげない・起こせないとき、`AGENT_HOST_*_HOLDER=off`。更新の確認の文は、その数だけを「終わってから切り替わる」と出す（`web/interrupt.mjs` の `handoverWaits`）
+- 段階 3 の最初に、サブエージェントが走っている Codex の付け直し・承認を数分待たせたとき・本物のモデルでの付け直しを測る（stage0-codex-agy の未確認）。**Codex の分は済み（2026-10-07）**: どれも通った（[stage3-codex.md](stage3-codex.md)。裏の端末が走っている最中も測り、`thread/backgroundTerminals/list` の要素の形が分かった）
+
+**Codex の実装のメモ（2026-10-07。実装済み。詳細・テストは [stage3-codex.md](stage3-codex.md)）**
+
+- **新しいファイル**: `core/backends/codex-held.mjs`（保持役の口 `HeldAppServer`・載せるかの切り替え `codexHeldEnabled`・起動で子を引き継ぐ `expand`・サーバーが終わるときに止める `stopHeldAppServer`）。既存は `core/backends/codex-rpc.mjs`（保持役の口を `ChildProcess` のように使う・世代つきの文字列の id・付け直すスレッドの預かりと再生 `expect` / `adoptThread` / `unexpect`）・`core/backends/codex.mjs`（`runTurn` の付け直しの引数 `adopt`・`adoptTurn`・札と印・手を離す口・ロード済みのスレッドの設定の控え・裏の端末の引き直し）・`core/backends/codex-background.mjs`（追跡器の `restore`）・`core/adopt.mjs`（`holderSource.open`・子の札の種類ごとの展開口 `registerChildExpander`）・`core/holder/`（spawn の `keepMs`）
+- **子は 1 つ（`codex-app-server`）で、ターンは札のターン**: Claude は 1 ターン 1 プロセスだが、共有の app-server は全会話の分を 1 本の記録に混ぜる。ターンごとに**印**（保持役の mark `turn:<threadId>`。`turn/start` の直前。同じ接続の順序で書き込みより前に届く）と**札**（子の label の `turns.<threadId>`）を置く。label は `{ k: 'codex-app-server', v: 1, turns, loaded, watch }`。`ack` は子ごとに 1 つ（処理し終えた最後の行。まとめて送る）。付け直す側の起動（`readHolderSources`）が子の札の種類で `expand` を呼び、**札のターンの数だけ付け直す元を作る**（`restoreTurn` が読む形。`state.marks.turn` はそのターンの印）
+- **載せるか**: `AGENT_HOST_CODEX_HOLDER`（起動用の変数。`core/boot-env.mjs`）が `off` なら今の流れ。それ以外は、実行場所の置き場（`AGENT_HOST_RUNTIME_ROOT`）があれば載せる（**何も書かなければ置き場があるとき = パッケージ版・`AGENT_HOST_HANDOVER=on` の起動で既定 on**）。codex が直に起こせない（npm の `.cmd` の包みで JS に解けない）・保持役につなげないときは今の流れ。専用の app-server（`contextRuntime` の会話・プローブ・圧縮の専用）は載せない（毎回起こして終わる。ターンは `holdable` でないので、引き継ぎはそれが終わるまで待つ）
+- **付け直し**: 起動で `expand` が子に付けて（attach の答えの `pendingRequests` = 控えの鍵まで先に済ませる）、`CodexRpc` を子につなぎ（**`initialize` は送らない**）、札のスレッドを `expect`（ハンドラーが付くまで、行き先の分からない frame を預かる。上限 10 万件）。`adoptTurn`（待ち受けの後）が、`thread/list { parentThreadId }` で子（孫まで 3 段）の親子を引き直し、印から ack までの記録をそのスレッドと子孫の分だけ選んで再生し（通知は `emit` を replay にして実行中のスナップショットだけを作り、答えが残っている依頼だけを同じ id で `onRequest` に出し直す）、預かっていた続きを渡す（`adoptThread` は同期で、再生と引き渡しの間に新しい frame が割り込まない）。**全部のスレッドを引き取るまで ack しない**（次のサーバーが落ちても失わない）。1 分たっても引き取られないスレッドは `unexpect`（預かった依頼にはエラーを返す。app-server を待たせたままにしない）
+- **id**: 載せたときの依頼の id は `<pid>.<起動の時刻>.<連番>`。前のサーバーの依頼の応答（記録に残る数値・別の世代の文字列）は、待っている依頼に無いので捨てる。保持役は id を付け替えない
+- **手を離す**: `control.holder.handOff(card)`。同じ tick に来た全部のターンの札を待ち（`handoverRun` は全ターンを同じ tick に呼ぶ）、読みを止め、処理し終えた最後の行まで ack し、札を全部置き、1 回だけ `detach`（以後このサーバーは読まない・書かない・`stop` も子を止めない）。待っている依頼は断り、`runTurn` は `handedOff` で終わる。札の置き直し `touchCard` は共有の子の label にまとめて載る（強制終了の付け直し用）
+- **札に置く控え**: ターンの札 = `control.backendCard`（`turnId`・途中送信の合図を待つ id・承認を求めた id・実行前の拒否を読む rollout の位置）。子の札 = ロード済みのスレッドの設定の控え `loaded`（接続先・指示の指紋・hooks の指紋。**忘れると、新しいサーバーは resume が無視する設定の変更に気づかない**。指示は長いので `loadedInstructions` を sha256 の指紋にした）・裏の端末を数えているスレッドと報告先の会話 `watch`
+- **裏の端末**: app-server が生きているので端末も生き残る。新しいサーバーは `watch` のスレッドごとに `thread/backgroundTerminals/list` を引いて追跡器を作り直し（`attachHost` の後）、遅れて届く `item/completed` で数える。`running` の `background` に `held: true`（`backend.holdsBackground()`）を付け、**切り替え（`desktop/switch.cjs`）は止まるものとして聞かない**（保持役に載った Codex の裏の端末は、止まらない）。出力は付け直した後の分から
+- **サーバーが終わるとき**: 手を離していない app-server は止める（保持役の子は、サーバーが終わっても残る）。main の shutdown・孤児の見張りの終わりが `exitAfterStoppingHeld`（kill を送って終わるのを待ってから `process.exit`）を通る。シグナルで終わるときは `exit` の中で kill を書くだけ（流れ切らないことがある）。取りこぼしても、`spawn` の `keepMs`（既定 10 分）で、親が居ない状態が続いた子を保持役が止める
+- **`thread/start` は HTTP の口が立ってから**: 引き継ぎの新しいサーバーは待ち受けてから付け直し・新しい作業を始める（2d の順序）ので、そのまま満たす。起動の早い所で走るのは子につなぐこと（`rpc.start`）だけで、スレッドもターンも始めない
+- **共有のファイルへの変更**（並行の子と合わせるときの一覧）: `core/server.mjs` — `import { stopHeldAppServer }`・`exitAfterStoppingHeld`（`finishShutdown` の exit に渡す 2 か所）・`runningWork` の `background` に `held`（`getBackend(b.backend)?.holdsBackground?.()`）・付け直しをあきらめたときの `source.dispose?.()`（1 行）。`desktop/switch.cjs` — `switchBlockers` の `background` から `held` を外す（1 行。数え方の変更はこれだけ）。`core/boot-env.mjs` に `AGENT_HOST_CODEX_HOLDER`。`web/locales/{ja,en}/server.json` に `codex.errors.handedOff`
+- **残り**: (1) 本物の Codex を保持役に載せたサーバーを、本物のインストーラーをまたぐ更新で確かめる（この環境の確認は fake の app-server と、`scripts/zero-downtime/codex/83-real-model-swap.mjs` の保持役の身代わり）。(2) 専用の app-server のターンは載せていない（Pleiad がコンテキストを担当する会話。付け直し前にそのターンが終わるまで引き継ぎが待つ）。(3) `!` の行（Codex の `thread/shellCommand`）は app-server が走っていても結果を待つ側が居なくなるので、今までどおり切り替えで止まるもの。(4) 親が居ないまま長く走り続ける app-server の保険は `keepMs` の 10 分だけ。(5) 記録の上限（32 MB）を超える長いターンは付け直せず `restart` の中断（Claude と同じ）。(6) Linux（unix ソケット）は WSL で流した結果を stage3-codex.md に書く
+
+**agy の実装のメモ（2026-10-07。実装済み。測定・実装・テスト・共有ファイルの変更は [stage3-agy.md](stage3-agy.md)）**
+
+- **測定（最初に）**: 本物の agy 1.3.0 を本物の保持役に載せ、ツールの実行中に親 A が手を離し親 B が付け直す。印〜ack の再生（`init` を含む）と続きで `result` まで届き、ツールの結果も欠けず 1 回。2 ターン目は印を打ち直すだけで同じ子に書ける。中継の再試行は、本物の agy で「口を閉じたまま送って 4.5 秒後に開き直す」が、再試行なしは `Cannot reach Pleiad context`、再試行ありは通る
+- **載せ方**（`core/backends/antigravity-held.mjs`）: 会話ごとの agy を保持役の子（policy `none`）に。印はターンごとに最初の行の直前（子は会話のあいだ生きる）。読みは行ごとに処理し終えてから ack（本文の無い SUCCESS の確定待ちは Promise で待つ）。付け直しは印から ack までを `handle(ev, { replay: true })` で再生し、続きを普通に流す（`antigravity.mjs` の `adoptTurn`。札の欄は `{ held, agy: { sentAt, resumed, sentHash, home, keys, hookRuns } }`。本文は札に入れず控えから引く。`keys` はトークンをダイジェストにした「起動時にしか渡せないものの印」）
+- **idle の子**（ターンが終わった agy）: 札と印を外す（1 回の書き込み）。引き継ぎは旧サーバーが `releaseIdle` で止める（`core/server.mjs` の `handoverRun.stash` の先頭から全バックエンドを呼ぶ。`stash` の `detach()` の後は書き込みが転送されない）・普通の終了は `process.once('exit')` が `HolderClient.sendBatch` の 1 回の書き込みで止める（続けて write すると最初の 1 つしか出ない）・落ちた後は次の起動の最初の保持役の使用が札か印の欠けた子を止める（`sweepIdle`）。孤児の掃除（`pids.json`）は保持役の子を控えない。agent の置き場は `held-*`（`sweep()` の pid での掃除の対象にしない）
+- **切り替え**: `desktop/switch.cjs` は変更なし（`holdable` → `held` / `blocking` が agy にも効く）。`AGENT_HOST_AGY_HOLDER`（`on`・`off`・無ければ `AGENT_HOST_RUNTIME_ROOT` があるとき on。起動用の変数）。Claude の既定 on は別の作業が直している
+- **テスト**: `adopt-agy`（ツールの実行中・終わった直後・中断・強制終了・引き継ぎ・普通の終了）・`antigravity-held`・`agy-relay-retry`。WSL（Linux）でも通る。実機: `scripts/zero-downtime/agy/held-server.mjs`（本物の agy を載せたサーバー A → B）
+- **残り**: agy を使わないまま終わると落ちたサーバーの idle の子が残る（次に agy を使う起動が止める）・`result` を処理して札と印を外した直後の強制終了は `restart` の中断・stderr は再生されない・委譲の子・Hooks つきの agy のサーバーを通した確かめ
 
 ## 段階 4: 待ち受けを保持役が持つ（M。段階 2 の実機の結果しだい）
 

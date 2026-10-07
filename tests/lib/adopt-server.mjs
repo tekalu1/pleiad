@@ -5,7 +5,10 @@
 // pauseHeld（held: のターンの読みを止める／再開）・muteHeld（held: のターンの偽の CLI への書き込みを止める／戻す。2b-6）・
 // handOffTurnOnly / handOffDetach（手を離す前半と後半を分ける。間に偽の CLI の出力が来ても、このサーバーは締めず読み捨てて ack する。
 // 渡った合図が B の再生の側に来る形。2b-7）・slowCall（処理中の MCP の呼び出しが ms の間続く形。引き継ぎの 2d）・handOffClaude（保持役に載せた Claude のターンを、札を取って保持役に detach し query を閉じて手を離す。2c）・
-// muteClaude（保持役に載せた Claude のターンの CLI への書き込みを止める／戻す。答えが CLI に届かないまま手を離す形。2c）
+// muteClaude（保持役に載せた Claude のターンの CLI への書き込みを止める／戻す。答えが CLI に届かないまま手を離す形。2c）・
+// handOffAgy（保持役に載せた agy のターンを、札を取って保持役に detach して手を離す。段階 3）・pauseAgy（agy の出力の読みを止める／再開。終わった直後の形）
+// handOffCodex（保持役に載せた Codex の共有の app-server を、札を取って（sessionIds の全部を同じ tick に）保持役に detach して手を離す。段階 3）・
+// pauseCodex（共有の app-server の読みを止める／再開する）
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -15,6 +18,8 @@ const { handOffTurn, handoverState, trackIn } = await import('../../core/server.
 const { handOffHeld, pauseHeld, muteHeld } = await import('../../core/backends/fake.mjs');
 const { conversation } = await import('../../core/conversations.mjs');
 const { handOffClaude, muteClaudeHeld } = await import('../../core/backends/claude.mjs');
+const { handOffAgy, pauseAgyHeld } = await import('../../core/backends/antigravity.mjs');
+const { handOffCodex, pauseCodexHeld } = await import('../../core/backends/codex.mjs');
 
 // 走っているターンを付け直しに渡し、札（{ card, secrets }）を返す。バックエンドを呼ぶ前なら呼ぶまで待つ（上限 5 秒）
 async function handOff({ sessionId }) {
@@ -61,6 +66,22 @@ const scenes = {
     return taken;
   },
   muteClaude: async ({ sessionId, muted }) => muteClaudeHeld(await nativeIdOf(sessionId), muted),
+  // agy（段階 3）: サーバーの手を離す → 札を保持役の子に置いて detach（agy の会話の id は会話の id と同じ）
+  handOffAgy: async input => {
+    const taken = await handOff(input);
+    await handOffAgy(await nativeIdOf(input.sessionId), taken.card);
+    return taken;
+  },
+  pauseAgy: async ({ sessionId, paused }) => pauseAgyHeld(await nativeIdOf(sessionId), paused),
+  // Codex（段階 3）: サーバーの手を離す（全部のターンの札を先に取る）→ 同じ tick に全部の handOff を呼ぶ（共有の app-server を 1 回だけ detach する。本番の handoverRun と同じ形）
+  handOffCodex: async ({ sessionIds }) => {
+    const taken = [];
+    for (const sessionId of sessionIds) taken.push([sessionId, await handOff({ sessionId })]);
+    const natives = await Promise.all(taken.map(([sessionId]) => nativeIdOf(sessionId)));
+    await Promise.all(taken.map(([, one], i) => handOffCodex(natives[i], one.card)));
+    return Object.fromEntries(taken.map(([sessionId, one]) => [sessionId, one]));
+  },
+  pauseCodex: async ({ paused }) => pauseCodexHeld(paused),
   // 処理中の MCP の呼び出しが ms の間続いている形を作る（引き継ぎの前に終わるのを待つ上限の確かめ。2d）
   slowCall: async ({ ms }) => { trackIn(handoverState.inflight, new Promise(resolve => setTimeout(resolve, ms))); return handoverState.inflight.size; },
   pauseHeld: async ({ sessionId, paused }) => pauseHeld(sessionId, paused),

@@ -458,11 +458,24 @@ const SUITES = [
   './unit/adopt-held.mjs',
   // 付け直し（無停止の更新 2c）: 保持役に載せた Claude の CLI（stream-json を話す偽物）を、承認待ち・途中送信・裏の作業・hooks・mcp_message の最中に引き継ぐ。切り替えと版の一覧
   './unit/adopt-claude.mjs',
+  // 付け直し（無停止の更新 段階 3）: 保持役に載せた Codex の共有の app-server（fake の app-server）を、承認待ち・ツールの実行中・サブエージェント・裏の端末の最中に引き継ぐ
+  './unit/adopt-codex.mjs',
+  // Codex の app-server を保持役に載せる部品（無停止の更新 段階 3）: 載せるかの切り替え・世代つきの id・付け直すスレッドの再生と預かり・手を離す
+  './unit/codex-held.mjs',
   // Claude を保持役に載せる部品（無停止の更新 2c）: 版の一覧・npm の包みの解き方・偽の SpawnedProcess の転送と detach・付け直しで流さない行・札のフラグ設定のファイル
   './unit/claude-held.mjs',
+  // 付け直し（無停止の更新 段階 3）: 保持役に載せた agy（偽物）を、ツールの実行中・終わった直後・強制終了・引き継ぎ（idle の agy を旧サーバーが止める）で引き継ぐ。切り替え（置き場があれば既定で載る）
+  './unit/adopt-agy.mjs',
+  // agy を保持役に載せる部品（無停止の更新 段階 3）: 切り替え・agent の置き場（held-*）の掃除・付け直し（再生と続き・終わった子・札に無い発言）
+  './unit/antigravity-held.mjs',
+  // agy の中継の再試行（無停止の更新 段階 3）: 口が数秒つながらなくても、つながる前の失敗だけやり直す。送った後の切れは二重に走らせない
+  './unit/agy-relay-retry.mjs',
   // 引き継ぎ（無停止の更新 2d）: 旧サーバーが held: のターンを渡して終わり、新サーバー（--handover）が同じトークン・ポートで付け直す。引き継げない作業があれば断る
   './unit/handover-server.mjs',
   './unit/handover-core.mjs',
+  // `!` の行を保持役に載せる（無停止の更新 段階 3）: 引き継ぎで新サーバーが引き取る（出力の途中・終わった直後・止める最中）。出力と終わりが 1 回だけ。切り替えの数え方
+  './unit/adopt-shell.mjs',
+  './unit/shell-held.mjs',
   // 引き継ぎを main の切り替えの流れごと（無停止の更新 2d）: 作業の最中でも待たずに替わる・S2 が立たなければ前の版で付け直す・引き継げない作業があれば待つ
   './unit/desktop-handover.mjs',
   // 承認のカードの id（無停止の更新 2b-6）: ツールの id と会話の id から決まる値・同じプロセスの 2 回目と、ツールの id が無い承認は乱数

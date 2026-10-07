@@ -83,6 +83,7 @@ import { importNativeMcp } from './mcp-import.mjs';
 import { createMcpConfig } from './mcp-config.mjs';
 import { createHooksConfig, HOOK_AGENTS, applyCodexHooks, trimHookRuns, findNodeOnPath } from './hooks-config.mjs';
 import { finishShutdown } from './shutdown.mjs';
+import { stopHeldAppServer } from './backends/codex-held.mjs';
 import { createVoiceHost, VOICE_PATH } from './voice/host.mjs';
 import { createPlyHooks } from './ply-hooks.mjs';
 import { prepareHooksTurn, unifyPreview, importCandidate } from './hooks-unify.mjs';
@@ -238,6 +239,7 @@ try {
 import { installation, cliCommand } from "./cli-installation.mjs";
 import { createClaudeLogin } from './claude-login.mjs';
 import { createShellRuns, shellMode } from './shell-runs.mjs';
+import { createShellHolder } from './shell-held.mjs';
 import { createHostSessionSearch } from './session-search-host.mjs';
 import { taskStop, backgroundStop, approvalStop, interruptionNote } from './interrupt-stops.mjs';
 import { splitLeadingNotes } from './system-messages.mjs';
@@ -2048,8 +2050,9 @@ function sendTo(frame) {
   }
   return sent;
 }
-// 入力欄の `!`（シェルの行。ADR 0054）。走っている子のプロセスはサーバーの終わりに止める
-const shellRuns = createShellRuns({ store, emit: event => emitGlobal(event) });
+// 入力欄の `!`（シェルの行。ADR 0054）。走っている子のプロセスはサーバーの終わりに止める。保持役があれば保持役の子に載せ、引き継ぎで渡す（無停止の更新 段階 3）
+const shellHolder = createShellHolder({ dataDir: store.dataDir, root: BOOT_ENV.AGENT_HOST_RUNTIME_ROOT, key: BOOT_ENV.AGENT_HOST_RUNTIME_KEY ?? '', appVersion: APP_VERSION });
+const shellRuns = createShellRuns({ store, emit: event => emitGlobal(event), holder: shellHolder });
 // git の動き（ADR 0085）。状態・ターンの始まりと終わりの隠し ref・変更の一覧と差分。git が無い・git 管理外は null
 const gitActivity = createGitActivity();
 // worktree（ADR 0089）。台帳・作成・片付けと、ぶつかり・委譲の判定。使っているもの（走っているターン・シェル・委譲の子）を見てから消す
@@ -4221,8 +4224,9 @@ async function runningWork() {
 
   // ターンの外で裏に残っている作業（Codex のバックグラウンド端末など）。
   // count には入れない: デスクトップは count > 0 の間は終了させないが、これは Pleiad から止める口が無い
+  // held: 引き継ぎで止まらない作業（保持役の子の app-server の裏の端末。Codex。新しいサーバーが app-server に聞き直して数え直す。無停止の更新 段階 3）。切り替えは止まるものとして聞かない
   const background = [...runtime.background.values()].map((b) => ({
-    kind: "background", ...b, tasks: b.tasks.map((x) => ({ ...x })),
+    kind: "background", ...b, tasks: b.tasks.map((x) => ({ ...x })), ...(getBackend(b.backend)?.holdsBackground?.() ? { held: true } : {}),
   }));
 
   const dueRows = schedule.list();
@@ -4243,7 +4247,7 @@ async function runningWork() {
       nextSendAt: Math.min(Infinity, ...dueRows.filter(r => r.kind === 'send' && !r.held).map(r => r.at)) },
     tasks,
     background,
-    // `!` の行。count には入れない（終了・中断して更新では止まる。デスクトップの無停止の切り替えは終わるのを待つ。desktop/switch.cjs）
+    // `!` の行。count には入れない（終了・中断して更新では止まる。デスクトップの無停止の切り替えは終わるのを待つ。保持役に載った行（held）は待たずに渡す。desktop/switch.cjs）
     shells: shellRuns.list(),
     // ホストに任せたタスクの印（⇄ ホスト名とオンラインか）。docs/remote.md §4.5
     remoteHosts: remoteHostsNow(),
@@ -4644,6 +4648,11 @@ const outbox = createMessageQueue({
 // 付け直すターン（無停止の更新 2b-4。stage2-server-state.md §5.1）。後片付け（送信待ちの戻し・中断の記録・worktree の整理）と、
 // ターンを始めうるもの（予定・上限の再開・bot）より前に runtime.turns に載せる。口を開き直して記録を流すのは待ち受けの後
 const adopting = await restoreAdoptedTurns();
+// 前のサーバーが保持役に残した `!` の行（無停止の更新 段階 3。core/shell-held.mjs）も引き取る。元を読む条件はターンと同じ
+if ((process.env.AGENT_HOST_ADOPT_HOLDER === '1' || HANDOVER_START || handoverEnabled(BOOT_ENV)) && BOOT_ENV.AGENT_HOST_RUNTIME_ROOT) {
+  const adoptedShells = shellRuns.adopt(await shellHolder.adoptable().catch(err => { console.error('  `!` の行を引き取れませんでした:', String(err?.message ?? err)); return []; }));
+  if (adoptedShells) console.log(`  \`!\` の行 ${adoptedShells} 件を引き取った`);
+}
 // 前の起動で消し損ねた Claude のフラグ設定のファイル（core/compat-endpoints.mjs）。同じデータ置き場を別の Pleiad（開発版と配布版）が使っていることがあるので、
 // 走っている会話のファイルは消さない（1 日より古いものだけ）。付け直すターンの札が指すファイル（無停止の更新 2c）も消さない（そのターンの終わりに消える）
 sweepClaudeFlagSettings(store.dataDir, { olderThanMs: 24 * 60 * 60_000, except: adopting.map(a => a.ctx.card.backendCard?.flag).filter(Boolean) }).catch(() => {});
@@ -5866,6 +5875,10 @@ const handoverRun = createHandover({
   ended: item => item.turn.ended || runtime.turns.get(item.key) !== item.turn,
   // 預かり物（トークン・ポート）を保持役へ置く。居る保持役にだけ（保持役が無ければ、新しいサーバーは main の渡した変数で起動する）
   stash: async () => {
+    // ターンの無い（idle の）保持役の子（agy は会話のあいだ 1 本を生かす）は、新しいサーバーが知らない（札が無い）。次の detach で触れなくなる前に止める（段階 3）
+    for (const backend of listBackends()) { try { await backend.releaseIdle?.(); } catch (error) { console.error('  idle の子を止められない:', String(error?.message ?? error)); } }
+    // 保持役に載った `!` の行も手を離す（無停止の更新 段階 3。終わりで止めない。新しいサーバーが引き取る）
+    await shellRuns.handOff();
     const root = BOOT_ENV.AGENT_HOST_RUNTIME_ROOT;
     const client = root ? await holderLink({ dataDir: store.dataDir, root, launch: false }).catch(() => null) : null;
     if (!client) return;
@@ -6144,6 +6157,7 @@ async function adoptTurn(card, source, ctx = null, { abandon = null } = {}) {
         return result;
       } catch (err) {
         console.error(`  ターンを付け直せなかったので中断として残す（${sessionId}）:`, String(err?.message ?? err));
+        source.dispose?.();   // 付け直しの待ちを外す（Codex は共有の app-server の frame を預かっている。バックエンドを呼ぶ前に諦めたとき）
         turn.abortReason = 'restart';
         emit({ type: 'turnResult', outcome: 'aborted' });
         return { sessionId };
@@ -7916,7 +7930,7 @@ mainPort.on("message", async ({ data }) => {
     // Chrome に許可の確認を残して終わらない（確認が出ていれば閉じる）。main の返事を待つので、長くても 2 秒まで
     chromeRelay?.close();
     if (chromeConnection) await Promise.race([chromeConnection.close(), new Promise(resolve => setTimeout(resolve, 2000))]).catch(() => {});
-    try { finishShutdown(store.flushNow, () => runtime.turns.size > 0 || agentTasks.busy); }
+    try { finishShutdown(store.flushNow, () => runtime.turns.size > 0 || agentTasks.busy, exitAfterStoppingHeld); }
     catch (e) {
       console.error('session store shutdown save failed:', e?.code ?? e?.message ?? e);
       process.exitCode = 1;
@@ -7924,11 +7938,16 @@ mainPort.on("message", async ({ data }) => {
   }
 });
 
+/** 終わる（main の shutdown・孤児の見張り）。手を離していない保持役の子の app-server は、止めてから終わる（保持役の子は、サーバーが終わっても残るため。無停止の更新 段階 3） */
+function exitAfterStoppingHeld(code) {
+  void Promise.race([stopHeldAppServer(), new Promise(resolve => setTimeout(resolve, 2500))]).catch(() => {}).finally(() => process.exit(code));
+}
+
 // 名前付きパイプの main が居ないまま長く居続けない（utilityProcess は main と一緒に終わるので要らない）。作業が 0 件のまま上限を過ぎたら、shutdown と同じに終わる
 const orphanGuard = mainLink ? createOrphanGuard({
   isBusy: async () => (await runningWork()).count > 0,
   onExpire: () => {
-    try { finishShutdown(store.flushNow, () => false); }
+    try { finishShutdown(store.flushNow, () => false, exitAfterStoppingHeld); }
     catch (e) { console.error('session store shutdown save failed:', e?.code ?? e?.message ?? e); process.exit(1); }
   },
   log: line => console.log(`  [main-link] ${line}`),

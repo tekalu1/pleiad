@@ -88,10 +88,15 @@ export function holderSource(client, state, { spawned = false, redelivered = fal
       return lines.map(({ seq, line }) => [seq, line]);
     },
     attachedState: null,
-    async *attach(from) {
-      if (!spawned) source.attachedState = await client.attach(id, { from });
+    /** attach の答えまで先に済ませる（付け直す側が、答えの pendingRequests を見てから記録を読み直すため）。attach(from) はこの後なら送り直さない */
+    async open(from) {
+      if (!spawned && !source.attachedState) source.attachedState = await client.attach(id, { from });
       attached = true;
       for (const data of early.splice(0)) client.write(id, data);
+      return source.attachedState;
+    },
+    async *attach(from) {
+      await source.open(from);
       for (;;) {
         while (!stopped && (source.paused || !queue.length)) await new Promise(resolve => { wake = resolve; });
         if (stopped) { yield { exit: { handedOff: true } }; return; }
@@ -123,10 +128,23 @@ export async function readHolderSources({ dataDir, root, appVersion = '', log = 
   let client;
   try { client = await holderLink({ dataDir, root, appVersion, launch: false, log }); }
   catch (error) { if (error?.code === 'HOLDER_NONE') return []; throw error; }
-  return (client.welcome?.children ?? [])
-    .filter(child => child.label && Number.isInteger(child.marks?.[ADOPT_TURN_MARK]))
-    .map(child => holderSource(client, child, { redelivered: true }));
+  const sources = [];
+  for (const child of client.welcome?.children ?? []) {
+    // 1 つの子が複数のターンを運ぶバックエンド（Codex の共有の app-server）は、子の札の種類（label.k）で登録した口が、ターンごとの元に分ける
+    const expand = typeof child.label?.k === 'string' ? childExpanders.get(child.label.k) : null;
+    // i18n-ignore: サーバーのログ
+    if (expand) sources.push(...await expand({ client, child, log }).catch(error => { log(`  付け直す元を読めない（${child.id}）: ${error?.message ?? error}`); return []; }));
+    else if (child.label && Number.isInteger(child.marks?.[ADOPT_TURN_MARK])) sources.push(holderSource(client, child, { redelivered: true }));
+  }
+  return sources;
 }
+
+/**
+ * 子の札の種類（label.k）ごとの、子 → ターンごとの元の展開（Codex の共有の app-server。core/backends/codex-held.mjs が登録する）。
+ * expand({ client, child, log }) は、付け直す元（restoreTurn が読む state・attachable・dispose を持つもの）の配列を返す
+ */
+const childExpanders = new Map();
+export const registerChildExpander = (kind, expand) => { childExpanders.set(kind, expand); };
 
 /** 重なって届いた出来事を見分ける鍵（uuid・ツールの id を持つものだけ） */
 function eventKey(event) {

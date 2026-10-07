@@ -22,6 +22,8 @@ import { createTerminalTracker } from "./codex-background.mjs";
 import { codexContextRpc } from './context-options.mjs';
 import { promptTitle } from '../prompt-title.mjs';
 import { CodexRpc } from './codex-rpc.mjs';
+import { configureCodexHeld, heldAppServer } from './codex-held.mjs';
+import { ADOPT_TURN_MARK } from '../adopt.mjs';
 import { codexHooksState, codexListProblem } from '../hooks-plan.mjs';
 import { maskText } from '../hooks-config.mjs';
 import crypto from 'node:crypto';
@@ -37,6 +39,9 @@ import { t, agentT } from "../i18n.mjs";
 import { stripInjectedContext } from "../system-messages.mjs";
 
 const NL = String.fromCharCode(10);
+
+// 共有の app-server を保持役の子に載せるときの置き場（core/backends/codex-held.mjs）。データ置き場は store が持つ
+configureCodexHeld({ dataDir: () => store.dataDir });
 
 /**
  * 承認モード。approvalPolicy × sandbox の組に id を付けたもの（docs/multi-backend.md §2.5）。
@@ -619,6 +624,40 @@ const loadedInstructions = new Map();
 const loadedHooks = new Map();
 nativeRpc.onDown(() => { loadedProvider.clear(); loadedInstructions.clear(); loadedHooks.clear(); });
 
+// 指示の指紋（loadedInstructions の値。指示は長いので、保持役の札に控えを置くときも指紋だけにする）
+const fingerprint = (text) => crypto.createHash('sha256').update(String(text)).digest('hex').slice(0, 24);
+const markLoaded = (threadId, provider, instructions, hooks) => {
+  loadedProvider.set(threadId, provider); loadedInstructions.set(threadId, instructions); loadedHooks.set(threadId, hooks);
+  heldAppServer()?.touchLabel();
+};
+const forgetLoaded = (threadId) => {
+  loadedProvider.delete(threadId); loadedInstructions.delete(threadId); loadedHooks.delete(threadId);
+  heldAppServer()?.touchLabel();
+};
+
+/**
+ * 保持役の子（共有の app-server）の札に置く、新しいサーバーが引き継ぐ控え（無停止の更新 段階 3。core/backends/codex-held.mjs）:
+ * loaded = ロード済みのスレッドの設定（接続先・指示の指紋・hooks の指紋。上の 3 つの表）、watch = 裏の端末を数えているスレッドと報告先の会話の id。
+ * 忘れると、新しいサーバーは「ロード済みのスレッドの設定は同じ」とみなし、変えた設定が resume で黙って無視される
+ */
+function heldMeta() {
+  const loaded = {};
+  for (const id of new Set([...loadedProvider.keys(), ...loadedInstructions.keys(), ...loadedHooks.keys()])) {
+    loaded[id] = [loadedProvider.get(id) ?? null, loadedInstructions.get(id) ?? null, loadedHooks.get(id) ?? null];
+  }
+  const watch = {};
+  for (const [id, w] of trackers) if (w.tracker.size > 0) watch[id] = w.sessionId;
+  return { loaded, watch };
+}
+function restoreHeldMeta(meta) {
+  for (const [id, row] of Object.entries(meta?.loaded ?? {})) {
+    if (!validId(id) || !Array.isArray(row)) continue;
+    if (typeof row[0] === 'string') loadedProvider.set(id, row[0]);
+    if (typeof row[1] === 'string') loadedInstructions.set(id, row[1]);
+    if (typeof row[2] === 'string') loadedHooks.set(id, row[2]);
+  }
+}
+
 /**
  * スレッドを hooks の config（指紋 hooksKey。'' は渡さない）で読み直せるように外す。共有の app-server だけ（専用の app-server は毎回新しい）。
  * 追跡している（loadedHooks にある）スレッドは指紋が違うときだけ外す。追跡していないスレッドは、圧縮・分岐など別の経路で
@@ -633,7 +672,7 @@ async function unloadForHooks(rpc, threadId, hooksKey) {
   if (out?.error || !['unsubscribed', 'notLoaded', 'notSubscribed'].includes(out?.status)) {
     throw new Error(t('codex.errors.hooksUnsubscribeFailed', { reason: out?.error?.message ?? out?.status ?? t('codex.errors.noResponse') }));
   }
-  loadedProvider.delete(threadId); loadedInstructions.delete(threadId); loadedHooks.delete(threadId);
+  forgetLoaded(threadId);
   return true;
 }
 
@@ -1003,17 +1042,20 @@ const report = (w) => {
   for (const x of w.tracker.list()) host?.event?.(w.sessionId, { type: "task.command", id: x.id, state: "background" });
   host?.background?.(w.sessionId, w.tracker.list());
   syncReconcile();
+  heldAppServer()?.touchLabel();   // 保持役の札の watch（裏の端末を数えているスレッド）
 };
 
 /** 裏で終わった端末の結果を、終わったターンのツールカードへ差し込む。 */
 const reportFinished = (w, item) =>
   host?.event?.(w.sessionId, { type: "tool.result", id: item.id, commandCompleted: true, ...toolResult(item) });
 
-function onWatchedNotification(method, params) {
+function onWatchedNotification(method, params, info = null) {
   const threadId = params?.threadId;
   const w = threadId ? trackers.get(threadId) : null;
   if (!w) return;
   const { changed, finished } = w.tracker.observe(method, params);
+  // 付け直しの記録の再生（info.replay）は、追跡器の状態だけ作る。旧サーバーが出した印・結果は出し直さない
+  if (info?.replay) return;
   for (const event of commandActivity(method, params)) host?.event?.(w.sessionId, event);
   if (finished) reportFinished(w, finished);
   if (changed) report(w);
@@ -1035,6 +1077,33 @@ function watchThread(threadId, sessionId) {
   return w;
 }
 
+// 保持役の子の app-server につながった。このサーバーが札の控えを持つ口を渡し、引き継いだ子なら、前のサーバーの控えを戻す
+// （ロード済みのスレッドの設定。裏の端末は app-server に聞き直して追跡器を作り直す。ターンの付け直しは adoptTurn）
+let heldTerminalWatch = null;    // 付け直した子の札の watch（threadId -> 報告先の会話の id）。attachHost の後に端末を引き直す
+nativeRpc.onStart(() => {
+  const server = heldAppServer();
+  if (!server) return;
+  server.metaSnapshot = heldMeta;
+  if (!server.adopted) return;
+  restoreHeldMeta(server.meta);
+  heldTerminalWatch = server.meta?.watch && typeof server.meta.watch === 'object' ? server.meta.watch : null;
+  void restoreTerminals();
+});
+
+async function restoreTerminals() {
+  if (!host || !heldTerminalWatch) return;
+  const watch = heldTerminalWatch;
+  heldTerminalWatch = null;
+  for (const [threadId, sessionId] of Object.entries(watch)) {
+    if (!validId(threadId)) continue;
+    let entries;
+    try { entries = await listTerminals(threadId); } catch { continue; }
+    if (!entries?.length) continue;
+    const w = watchThread(threadId, typeof sessionId === 'string' ? sessionId : threadId);
+    if (w.tracker.restore(entries)) report(w);
+  }
+}
+
 /**
  * ターンが終わった。`turn/completed` が来ない終わり方（error 通知・中断）でも裏へ回す。
  * 端末が 1 本も残らなければ見張りを畳む（次のターンでまた張る）。
@@ -1043,7 +1112,7 @@ function endTurn(threadId) {
   const w = threadId ? trackers.get(threadId) : null;
   if (!w) return;
   if (w.tracker.endTurn()) report(w);
-  if (!w.tracker.size) trackers.delete(threadId);
+  if (!w.tracker.size) { trackers.delete(threadId); heldAppServer()?.touchLabel(); }
   syncReconcile();
 }
 
@@ -1142,6 +1211,44 @@ export function codexCompactionEvent(method, params) {
   return null;
 }
 
+// 保持役に載せたターン: threadId -> control.holder。テストの入口（tests/lib/adopt-server.mjs）が、サーバーの手を離す（handOffTurn）の後に子を手放すのに使う。
+// 本番の手を離す口は server の handoverRun が control.holder.handOff を直に呼ぶ
+const heldTurns = new Map();
+export async function handOffCodex(threadId, card) {
+  const holder = heldTurns.get(threadId);
+  if (!holder) throw new Error(`codex: no held turn to hand off (${threadId})`);
+  await holder.handOff(card);
+}
+/** テスト用: 共有の app-server の読みを止める／再開する（app-server の出力は保持役に溜まり、このサーバーは処理も ack もしない） */
+export function pauseCodexHeld(paused) {
+  const server = heldAppServer();
+  if (!server) throw new Error('codex: the app-server is not on the holder');
+  server.source.pause(paused);
+  return true;
+}
+
+/**
+ * 付け直し: 印より前に生まれて走っている子（サブエージェント）の親子を、thread/list { parentThreadId } から引き直す（孫まで 3 段）。
+ * 子の thread/started は出ない版（0.160.0）があり、親の通知（collabAgentToolCall の receiverThreadIds）は印の後の分しか再生に無い。
+ * 子の承認は親の会話へ回す（codex-rpc.mjs の #target）ので、親子が分からないと子の依頼が断られる
+ */
+async function relearnChildren(rpc, root) {
+  const queue = [[root, 0]];
+  const seen = new Set([root]);
+  while (queue.length) {
+    const [parent, depth] = queue.shift();
+    if (depth >= 3) continue;
+    const res = await rpc.request('thread/list', { parentThreadId: parent, limit: SUBAGENT_LIST_LIMIT }, 15_000).catch(() => null);
+    for (const row of res?.data ?? []) {
+      if (!validId(row?.id) || seen.has(row.id)) continue;
+      seen.add(row.id);
+      const spawn = row.source?.subAgent?.thread_spawn;
+      rpc.learnChild(row.id, parent, { nickname: row.agentNickname ?? spawn?.agent_nickname, path: spawn?.agent_path, role: row.agentRole ?? spawn?.agent_role });
+      queue.push([row.id, depth + 1]);
+    }
+  }
+}
+
 export const backend = {
   async usage() { return codexQuota(await rpc.request('account/rateLimits/read', {}, 15_000)); },
   /**
@@ -1191,7 +1298,7 @@ export const backend = {
       const hooksKey = hooks?.key ?? '';
       await unloadForHooks(rpc, sessionId, hooksKey);
       await rpc.request('thread/resume', { threadId: sessionId, ...(hooks ? { config: { hooks: hooks.config } } : {}) });
-      if (rpc === nativeRpc) loadedHooks.set(sessionId, hooksKey);
+      if (rpc === nativeRpc) { loadedHooks.set(sessionId, hooksKey); heldAppServer()?.touchLabel(); }
       const completed = new Promise((resolve, reject) => {
         timer = setTimeout(() => reject(new Error('Compaction timed out')), 300_000);
         timer.unref?.();
@@ -1293,6 +1400,7 @@ export const backend = {
     if (watching) return;
     watching = true;
     nativeRpc.onNotify(onWatchedNotification);
+    void restoreTerminals();
     // app-server が落ちた・入れ替わった。走っていた端末は道連れなので、数えたままにしない
     nativeRpc.onDown(() => {
       for (const [, w] of [...trackers]) {
@@ -1336,6 +1444,9 @@ export const backend = {
     return { stopped: res?.terminated !== false };
   },
 
+  /** 裏の端末が、サーバーの入れ替えで止まらないか（共有の app-server が保持役の子のとき。新しいサーバーが app-server に聞き直して数え直す）。server の running の held */
+  holdsBackground() { return Boolean(heldAppServer()); },
+
   modes: () => Object.fromEntries(Object.entries(MODES).map(([id, m]) => [id, vocab(m)])),
 
   /**
@@ -1360,12 +1471,17 @@ export const backend = {
 
   // ---- 実行 ---------------------------------------------------------------
 
-  async runTurn({ prompt, sessionId, hostSessionId, cwd, mode, model, effort, emit, onPromptDelivered, askPermission, signal, control, ephemeral = false, visualizeInstructions, browserEnv, browserInstructions, browserRuntime = null, contextRuntime, agentRuntime, computerRuntime = null, controlRuntime = null, hooksRuntime = null, endpoint = null, locale, notes = [], botInstructions = null, botFolders = null }) {
+  async runTurn({ prompt, sessionId, hostSessionId, cwd, mode, model, effort, emit, onPromptDelivered, askPermission, signal, control, ephemeral = false, visualizeInstructions, browserEnv, browserInstructions, browserRuntime = null, contextRuntime, agentRuntime, computerRuntime = null, controlRuntime = null, hooksRuntime = null, endpoint = null, locale, notes = [], botInstructions = null, botFolders = null }, adopt = null) {
+    // adopt は付け直し（{ source, card }。adoptTurn だけが渡す。無停止の更新 段階 3）。保持役の子の app-server が持つ走っているターンを、記録の再生で引き取る
+    // 再生の間の emit は replay（実行中のスナップショットとメモリの状態だけを作り、画面へは流さない。server の makeEmit）
+    const emitOut = emit;
+    let replaying = false;
+    emit = (event, opts) => emitOut(event, replaying && !opts?.replay ? { ...opts, replay: true } : opts);
     const rpc = contextRuntime ? await codexContextRpc(contextRuntime, cwd, nativeRpc).catch(e => { throw undelivered(e); }) : nativeRpc;
     // Hooks を Pleiad がそろえる会話。止める key はこのターンの直前に作り直す（起動の後に足された定義も、次のターンからは止まる）。
     // 作れなければターンを始めない（ネイティブと Pleiad の登録が二重に動くか、どちらも動かないため）
     let hooks = null;
-    if (hooksRuntime) {
+    if (hooksRuntime && !adopt) {
       try { hooks = await codexHooksConfig(hooksRuntime, rpc, cwd); }
       catch (e) { if (rpc !== nativeRpc) rpc.stop(); throw undelivered(e); }
     }
@@ -1427,6 +1543,15 @@ export const backend = {
     };
 
     const meter = createCodexMeter();
+    // 付け直しの札（backendCard）から、記録の再生では戻らない控えを戻す（途中送信の合図を待つ id・承認を求めた id・実行前の拒否を読む rollout の位置）
+    if (adopt) {
+      const card = adopt.card ?? {};
+      turnId = typeof card.turnId === 'string' ? card.turnId : null;
+      for (const id of Array.isArray(card.steered) ? card.steered : []) if (typeof id === 'string') steered.add(id);
+      for (const id of Array.isArray(card.asked) ? card.asked : []) if (typeof id === 'string') asked.add(id);
+      rolloutPath = typeof card.rollout?.path === 'string' ? card.rollout.path : null;
+      rolloutFrom = Number.isFinite(card.rollout?.from) ? card.rollout.from : null;
+    }
     const failureResult = async (error, turns = null) => {
       const message = hide(String(error?.message ?? error?.type ?? error ?? t('codex.errors.failed')));
       if (!codexLimitError(error)) return { type: 'turnResult', outcome: 'error', error: message, turns };
@@ -1618,8 +1743,27 @@ export const backend = {
     // thread/start の応答が返る前に通知が来ても落とさないよう、先に受け皿を張る。
     // 受け皿は見知らぬ threadId の frame を預かるだけで、渡すのは adopt で id が一致したものだけ
     let threadId = sessionId ?? null;
-    let detach = threadId ? rpc.attach(threadId, handlers) : rpc.claimOrphan(handlers);
-    let promptSent = false;
+    // 付け直しは adoptThread が（記録の再生の後に）付ける。先に付けると、続きの frame が再生より前に届く
+    let detach = adopt ? () => {} : threadId ? rpc.attach(threadId, handlers) : rpc.claimOrphan(handlers);
+    let promptSent = Boolean(adopt);
+    // 保持役に載っている共有の app-server のターン（札と印を置く。手を離す口 control.holder）
+    let heldServer = null;
+    let handedOff = false;
+    const bindHeld = (fresh) => {
+      if (rpc !== nativeRpc || ephemeral || !control) return;
+      heldServer = heldAppServer();
+      if (!heldServer) return;
+      // 札のバックエンドの欄（server の takeCard が読む）: 付け直す側の記録の再生では戻らない控え
+      control.backendCard = () => ({ held: true, turnId, steered: [...steered], asked: [...asked], rollout: { path: rolloutPath, from: rolloutFrom } });
+      control.holder = {
+        label: card => heldServer.putCard(threadId, card),
+        // 旧サーバーの手を離す口: 札を置いて保持役へ detach し（全部のターンをまとめて 1 回）、このターンは終える（締めるのは付け直したサーバー）
+        handOff: async card => { heldServer.putCard(threadId, card); await heldServer.handOff(); handedOff = true; settleTurn?.(); },
+      };
+      heldTurns.set(threadId, control.holder);
+      if (fresh) heldServer.markTurn(threadId);
+      control.touch?.();
+    };
 
     try {
       if (browserEnv && m.sandbox === 'read-only') {
@@ -1671,11 +1815,23 @@ export const backend = {
       const instructionsKey = (common.developerInstructions ?? '') + (computerRuntime ? `\0${computerRuntime.url} ${computerRuntime.headers?.Authorization ?? ''}` : '')
         + (browserRuntime ? `\0${browserRuntime.url} ${browserRuntime.headers?.Authorization ?? ''}` : '')
         + (controlRuntime ? `\0${controlRuntime.url} ${controlRuntime.headers?.Authorization ?? ''}` : '');
-      if (threadId) {
+      if (adopt) {
+        // 付け直し: 印より前に生まれて走っている子の親子を引き直し、印から ack までの記録を再生して状態を作る（通知は全部 replay）。
+        // 答えが残っている承認の依頼（保持役の控えの鍵）は、再生で onRequest が出し直す（承認の id はツールの id から決まる同じ値）。続きは預かっていた frame から
+        const mark = adopt.source.state.marks?.[ADOPT_TURN_MARK];
+        const acked = Math.max(mark - 1, adopt.source.state.acked ?? 0);
+        await relearnChildren(rpc, threadId);
+        const lines = acked >= mark ? await adopt.source.replay(mark, acked) : [];
+        watchThread(threadId, hostSessionId ?? threadId);
+        replaying = true;
+        try { detach = rpc.adoptThread(threadId, handlers, { lines, pendingKeys: adopt.source.pendingKeys }); }
+        finally { replaying = false; }
+        bindHeld(false);
+      } else if (threadId) {
         // 接続先が変わった（互換 ↔ 公式、別の互換、キーや URL の変更）ロード済みのスレッドは、いったん外してから読み直す。
         // 外さずに resume すると前の接続先のまま走る（スパイクで確認）
         const known = rpc === nativeRpc ? loadedProvider.get(threadId) : undefined;
-        const instructionsChanged = rpc === nativeRpc && loadedInstructions.has(threadId) && loadedInstructions.get(threadId) !== instructionsKey;
+        const instructionsChanged = rpc === nativeRpc && loadedInstructions.has(threadId) && loadedInstructions.get(threadId) !== fingerprint(instructionsKey);
         // hooks は追跡していないロード済みのスレッド（圧縮・分岐でロードされたもの）も外す（unloadForHooks と同じ判断）
         const hooksChanged = rpc === nativeRpc && (loadedHooks.has(threadId) ? loadedHooks.get(threadId) !== hooksKey : hooksKey !== '');
         if ((known !== undefined && (known !== providerKey || instructionsChanged)) || hooksChanged) {
@@ -1690,7 +1846,7 @@ export const backend = {
           if (!unloaded && hooksChanged) {
             throw new Error(t("codex.errors.hooksUnsubscribeFailed", { reason: out?.error?.message ?? out?.status ?? t("codex.errors.noResponse") }));
           }
-          if (unloaded) { loadedProvider.delete(threadId); loadedInstructions.delete(threadId); loadedHooks.delete(threadId); }
+          if (unloaded) forgetLoaded(threadId);
         }
         // 互換から公式へ戻すときは公式の provider を明示する（スレッドに記録された互換の provider を使わせない）
         const back = !compat && known !== undefined && known !== 'default' ? { modelProvider: await defaultProvider(rpc, cwd) } : {};
@@ -1699,13 +1855,13 @@ export const backend = {
         const expected = compat ? compat.modelProvider : back.modelProvider;
         if (expected && typeof resumed?.modelProvider === 'string' && resumed.modelProvider !== expected) {
           // 実際にロードされている接続先を覚えておく（次の送信でもう一度外してから読み直す）
-          if (rpc === nativeRpc) loadedProvider.set(threadId, resumed.modelProvider.startsWith('ply_') ? resumed.modelProvider : 'default');
+          if (rpc === nativeRpc) { loadedProvider.set(threadId, resumed.modelProvider.startsWith('ply_') ? resumed.modelProvider : 'default'); heldAppServer()?.touchLabel(); }
           throw new Error(t("codex.errors.stillOldEndpoint"));
         }
         effectiveSandbox = resumed?.sandbox;
         effectiveModel = resumed?.model;
         if (!ephemeral) rolloutPath = rolloutPathOf(resumed);
-        if (rpc === nativeRpc && !ephemeral) { loadedProvider.set(threadId, providerKey); loadedInstructions.set(threadId, instructionsKey); loadedHooks.set(threadId, hooksKey); }
+        if (rpc === nativeRpc && !ephemeral) markLoaded(threadId, providerKey, fingerprint(instructionsKey), hooksKey);
       } else {
         const started = await rpc.request("thread/start", { ...common, ...(ephemeral ? { ephemeral: true } : {}) });
         effectiveSandbox = started?.sandbox;
@@ -1713,7 +1869,7 @@ export const backend = {
         if (!ephemeral) rolloutPath = rolloutPathOf(started);
         threadId = started?.thread?.id ?? null;
         if (!threadId) throw new Error(t("codex.errors.noThreadId", { method: "thread/start" }));
-        if (rpc === nativeRpc && !ephemeral) { loadedProvider.set(threadId, providerKey); loadedInstructions.set(threadId, instructionsKey); loadedHooks.set(threadId, hooksKey); }
+        if (rpc === nativeRpc && !ephemeral) markLoaded(threadId, providerKey, fingerprint(instructionsKey), hooksKey);
         // 受け皿を取り下げる前に attach する。逆にすると、預かっていた自分の通知が捨てられる
         detach = rpc.adopt(threadId, handlers);
         // **これを出さないと web が id を受け取れない**（P1 §5.1）。turn/start より前に出す。
@@ -1730,7 +1886,7 @@ export const backend = {
       // contextRuntime のターンはターンの終わりに app-server ごと落とす（端末も道連れ）。
       // ephemeral（タイトル生成）はそもそも会話ではないので数えない
       if (!contextRuntime && !ephemeral) watchThread(threadId, hostSessionId ?? threadId);
-      if (computerRuntime) checkBundledComputerUse(rpc, threadId);
+      if (computerRuntime && !adopt) checkBundledComputerUse(rpc, threadId);
 
       if (control) control.handle = { threadId, get turnId() { return turnId; } };
 
@@ -1742,6 +1898,7 @@ export const backend = {
       if (signal?.signal?.aborted) interrupt();
       else signal?.signal?.addEventListener?.("abort", interrupt, { once: true });
 
+      if (!adopt) {
       // Loaded threads retain overrides. Resolve the native default explicitly on reset.
       let effectiveEffort = effort;
       // 互換の接続先の既定の段は分からない（公式の model/list・config の段を持ち込まない）。'' なら段を送らない
@@ -1753,6 +1910,8 @@ export const backend = {
       }
       emit({ type: "activity", state: "thinking" });
       rolloutFrom = await rolloutSize(rolloutPath);
+      // 印はターンの始まり（turn/start の書き込みより前）。札はここから置く（落ちたとき・手を離すとき、新しいサーバーが付け直す）
+      bindHeld(true);
       // ここから先の失敗は、プロンプトが渡ったかどうか分からない（応答だけ失われた場合がある）
       promptSent = true;
       const res = await rpc.request("turn/start", {
@@ -1771,6 +1930,7 @@ export const backend = {
       });
       turnId ??= res?.turn?.id ?? null;
       onPromptDelivered?.();
+      }
       // 「渡った」合図（userMessage.delivered）を後から出せる。server は渡るまでを pending として画面に出す
       if (control) control.steerConfirms = true;
       if (control) control.steer = async (item) => {
@@ -1804,6 +1964,8 @@ export const backend = {
         emit({ type: "turnResult", outcome: "aborted" });
         return { sessionId: threadId };
       }
+      // 付け直せなかった（記録が読めない・子が居ない）ときは投げる。server が restart の中断で締める
+      if (adopt) throw err;
       emit({ type: "turnResult", outcome: "error", error: hide(String(err?.message ?? err)) });
       const thrown = endpoint?.key && String(err?.message ?? '').includes(endpoint.key) ? new Error(hide(err.message)) : err;
       throw promptSent ? thrown : undelivered(thrown);
@@ -1812,13 +1974,28 @@ export const backend = {
       // turn/completed が来ない終わり方（error 通知・中断）でも、走ったままの端末を裏へ回す
       if (!contextRuntime && !ephemeral) endTurn(threadId);
       if (ephemeral && threadId) await rpc.request("thread/unsubscribe", { threadId }).catch(() => {});
-      if (control) { control.handle = null; control.steer = null; control.steerConfirms = false; }
+      // 保持役の札と印を外す（手を離したターンは、新しいサーバーの札のまま。HeldAppServer は detach 済みなので何も送らない）
+      if (heldServer) heldServer.endTurn(threadId);
+      if (heldTurns.get(threadId) === control?.holder || !control) heldTurns.delete(threadId);
+      if (adopt) adopt.source.dispose();
+      if (control) { control.handle = null; control.steer = null; control.steerConfirms = false; control.holder = null; control.backendCard = null; }
       // ターン用の app-server は終わるまで待ってから返す。返った直後に共有の app-server が同じ履歴の DB を読むので
       // （委譲の結果・画面の履歴）、止めたプロセスが DB を開いたままだとぶつかる（core/history-retry.mjs）
       if (rpc !== nativeRpc) await rpc.stop();
     }
 
-    return { sessionId: threadId };
+    return { sessionId: threadId, ...(handedOff ? { handedOff: true } : {}) };
+  },
+
+  /**
+   * 付け直し（無停止の更新 段階 3。codex-held.mjs）: 保持役の子の app-server（共有の 1 本）が持つ、このスレッドの走っているターンを引き取る。
+   * card は runTurn が札に置いた分（control.backendCard の { held, turnId, steered, asked, rollout }）、source は core/backends/codex-held.mjs の付け直す元
+   * （札のターン 1 つ分。記録の再生・控えの鍵）。sessionId はネイティブの threadId（会話の層 core/conversations.mjs が訳す）。
+   * turn/start も thread/resume も送らない（app-server は走ったまま、initialize も済んでいる）
+   */
+  async adoptTurn(args) {
+    if (!args.card?.held || !args.source?.held) throw new Error('codex: the turn was not on the holder');
+    return backend.runTurn(args, { source: args.source, card: args.card });
   },
 
   /**
