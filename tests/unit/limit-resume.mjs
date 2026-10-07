@@ -21,7 +21,7 @@ export default async function (t) {
   t.ok('Codex の上限の失敗文だけを拾う', codexLimitError({ message: "You've hit your usage limit" })
     && !codexLimitError({ message: 'Tool failed: invalid argument' }));
 
-  // ---- 予定: 自動再開の予定（kind: resume。ADR 0160 で廃止）は戻さない。送信予定は戻す
+  // ---- 予定: 自動再開の予定（kind: resume。ADR 0161 で廃止）は戻さない。送信予定は戻す
   const scratch = await fs.mkdtemp(path.join(os.tmpdir(), 'ply-limit-schedule-'));
   const file = path.join(scratch, 'schedule.json');
   let fired = 0;

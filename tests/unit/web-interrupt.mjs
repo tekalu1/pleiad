@@ -43,7 +43,7 @@ export default function (t) {
   t.ok('保留の未送信だけを数える', pausedCount([{ status: 'paused' }, { status: 'queued' }, { status: 'paused' }, null]) === 2 && pausedCount(undefined) === 0);
   t.ok('保留が無ければ「再開」、あれば「保留中の N 件を送って再開」', resumeLabel(0) === '再開' && resumeLabel(2) === '保留中の 2 件を送って再開');
   t.ok('欄の下の一行: 保留があれば「保留中の N 件の後に」', resumeNoteText(0) === '送ると、この指示で続けます' && resumeNoteText(3) === '送ると、保留中の 3 件の後にこの指示で続けます');
-  // 上限で止まった会話（docs/design-system.md「中断と再開」）。自動では再開しない（ADR 0160）。解除前は押せない時計、解除の後と時刻不明は普通の「再開」
+  // 上限で止まった会話（docs/design-system.md「中断と再開」）。自動では再開しない（ADR 0161）。解除前は押せない時計、解除の後と時刻不明は普通の「再開」
   const nowMs = Date.parse('2026-10-04T10:00:00');
   const soon = nowMs + 2 * 3600_000;
   const week = Date.parse('2026-10-07T09:00:00');

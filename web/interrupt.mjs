@@ -75,7 +75,7 @@ export const pausedCount = (messages) => (messages ?? []).filter((m) => m?.statu
 export const limitTime = (at, now = Date.now()) => Number.isFinite(at) ? whenText(at, now) : null;
 
 /**
- * 上限で止まった会話の、入力欄の再開の状態（docs/design-system.md「中断と再開」）。上限で止まった会話は自動では再開しない（ADR 0160）。
+ * 上限で止まった会話の、入力欄の再開の状態（docs/design-system.md「中断と再開」）。上限で止まった会話は自動では再開しない（ADR 0161）。
  * release = 解除前（押せない時計）、ready = 解除の後・解除時刻が分からない上限で、普通の「再開」。上限でなければ null
  */
 export function limitResumeState(interrupted, now = Date.now()) {

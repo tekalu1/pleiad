@@ -6200,7 +6200,7 @@ async function endTurn(turn, emit, { record = true } = {}) {
   // 時刻は completedAt と同じ値にする（確認済みの印 readAt は completedAt で丸めるので、ずらすと未読から戻れない）
   const limited = !requeued && turn.outcome === 'limited';
   const stopped = !requeued && (limited || turn.outcome === "aborted" || (turn.ac.signal.aborted && turn.outcome !== "ok"));
-  // 上限で止まった会話は自動では再開しない（ADR 0160）。解除時刻がもう過ぎている（取得元が古い）なら、分からないものとして残す
+  // 上限で止まった会話は自動では再開しない（ADR 0161）。解除時刻がもう過ぎている（取得元が古い）なら、分からないものとして残す
   const interrupted = limited ? { at: completedAt, reason: 'limit', ...turn.limit, resetsAt: limitResetsAt(turn.limit?.resetsAt, completedAt) }
     : stopped ? { at: completedAt, reason: turn.abortReason ?? "user" } : null;
   if (record && !requeued) await usageStore.record({ ...turn.usage, id: turn.presentKey, backend: turn.backend.id, sessionId: turn.info.sessionId })

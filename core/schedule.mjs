@@ -4,7 +4,7 @@
 // fire() may return { hold } to keep a due row without firing it again (a send that is too late
 // to send unattended); the row stays in the list until a person sends or cancels it.
 // fire() may return { reschedule: at, patch? } to keep the row (with patch merged in) and fire it again at that time.
-// Rows of kind 'resume' (the automatic resume after a usage limit, removed by ADR 0160) are not valid: restore drops
+// Rows of kind 'resume' (the automatic resume after a usage limit, removed by ADR 0161) are not valid: restore drops
 // them, and the next save leaves them out of the file.
 import fs from 'node:fs/promises';
 import { writeAtomic } from './atomic-file.mjs';

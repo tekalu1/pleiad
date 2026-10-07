@@ -352,7 +352,7 @@ handOffTurn(key)                                     … 旧サーバーの口�
 | S10 | 4661 `remoteDelegation.start()` | ホストの便りを聞く | そのまま |
 | S11 | 4664 `createSettingApprovals`（`setting-approvals.mjs:35-41`） | 待っていた設定の変更の承認を「再起動で取り下げ」にし、送っている途中の結果を捨てる | 引き継ぎの起動ではカードを出し直す（A4）。ターンには縛られないが同じ引き継ぎで欠ける |
 | S12 | 4681 `worktrees.reconcile()`・4684 `worktreeSweepSoon()` | 作成の途中の worktree を巻き戻し、使っていないものを消す（`runtime.turns`・シェル・タスクで判定） | 付け直すターンを登録した後に走らせる |
-| S13 | 6941 `restoreCompactionSchedule`・6942-6945 `limitStates`・6950 `schedule.restore()`・6952 `recoverLimitResumes()`（今は `recoverLimitWaits()`。上限の会話を再開せず、送信待ちを流すだけ。ADR 0160）・6956 `botHost.start()`（`bots/dispatch.mjs` の `start`: `delivering` → `unknown`・作業中の印の片付け） | 予定・上限の解除時刻に流す送信待ち・bot の出来事の配り直しでターンを始めうる | 付け直す会話が `sessionBusy` で真になってから。bot の会話は付け直さない（O21）ので、dispatch の片付けはそのまま |
+| S13 | 6941 `restoreCompactionSchedule`・6942-6945 `limitStates`・6950 `schedule.restore()`・6952 `recoverLimitResumes()`（今は `recoverLimitWaits()`。上限の会話を再開せず、送信待ちを流すだけ。ADR 0161）・6956 `botHost.start()`（`bots/dispatch.mjs` の `start`: `delivering` → `unknown`・作業中の印の片付け） | 予定・上限の解除時刻に流す送信待ち・bot の出来事の配り直しでターンを始めうる | 付け直す会話が `sessionBusy` で真になってから。bot の会話は付け直さない（O21）ので、dispatch の片付けはそのまま |
 | S14 | 6903 `writeControlFile` | 新しい `CLI_TOKEN` を書く | 預かり物の `CLI_TOKEN`（M22）で書く |
 | S15 | 6871-6880 `orphanGuard`・`announce` の `ready` | 孤児の見張り・main への `ready` | そのまま（段階 1） |
 
