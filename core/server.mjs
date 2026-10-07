@@ -4221,8 +4221,9 @@ async function runningWork() {
 
   // ターンの外で裏に残っている作業（Codex のバックグラウンド端末など）。
   // count には入れない: デスクトップは count > 0 の間は終了させないが、これは Pleiad から止める口が無い
+  // held: 引き継ぎで止まらない作業（保持役の子の app-server の裏の端末。Codex。新しいサーバーが app-server に聞き直して数え直す。無停止の更新 段階 3）。切り替えは止まるものとして聞かない
   const background = [...runtime.background.values()].map((b) => ({
-    kind: "background", ...b, tasks: b.tasks.map((x) => ({ ...x })),
+    kind: "background", ...b, tasks: b.tasks.map((x) => ({ ...x })), ...(getBackend(b.backend)?.holdsBackground?.() ? { held: true } : {}),
   }));
 
   const dueRows = schedule.list();

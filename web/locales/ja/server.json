@@ -587,6 +587,7 @@
       "appServerDied": "codex app-server が落ちた: {{why}}",
       "timeout": "codex {{method}} が {{ms}}ms で応答しなかった",
       "notConnected": "codex app-server につながっていない",
+      "handedOff": "新しいサーバーへ引き継いだので、この app-server には送れない",
       "noHandler": "{{method}} を受け取る相手が居ない",
       "hooksList": "Codex の hooks の一覧（hooks/list）がそろわなかったので、送信を止めました（止める hooks を決められないため）: {{detail}}",
       "hooksUnsubscribeFailed": "Hooks の渡し方を切り替えられませんでした（codex が会話を外せませんでした: {{reason}}）。そのまま続けると hooks が二重に動くか動かないので、送信を止めました。裏で動いている端末があれば止めてから、もう一度送ってください",

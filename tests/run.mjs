@@ -458,6 +458,8 @@ const SUITES = [
   './unit/adopt-held.mjs',
   // 付け直し（無停止の更新 2c）: 保持役に載せた Claude の CLI（stream-json を話す偽物）を、承認待ち・途中送信・裏の作業・hooks・mcp_message の最中に引き継ぐ。切り替えと版の一覧
   './unit/adopt-claude.mjs',
+  // 付け直し（無停止の更新 段階 3）: 保持役に載せた Codex の共有の app-server（fake の app-server）を、承認待ち・ツールの実行中・サブエージェント・裏の端末の最中に引き継ぐ
+  './unit/adopt-codex.mjs',
   // Claude を保持役に載せる部品（無停止の更新 2c）: 版の一覧・npm の包みの解き方・偽の SpawnedProcess の転送と detach・付け直しで流さない行・札のフラグ設定のファイル
   './unit/claude-held.mjs',
   // 引き継ぎ（無停止の更新 2d）: 旧サーバーが held: のターンを渡して終わり、新サーバー（--handover）が同じトークン・ポートで付け直す。引き継げない作業があれば断る

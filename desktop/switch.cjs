@@ -92,7 +92,8 @@ function switchBlockers(work, { handover = false } = {}) {
   for (const a of work.subagents ?? []) if ((a.status === 'running' || a.status == null) && !skip(a)) items.push({ kind: 'subagent', sessionId: a.sessionId ?? null, id: a.id, description: a.description ?? null });
   for (const r of work.tasks ?? []) if (LIVE_TASK.has(r.status) && !turnSessions.has(r.sessionId)) items.push({ kind: 'task', sessionId: r.sessionId ?? null, taskId: r.taskId ?? null });
   const shells = (work.shells ?? []).map(s => ({ kind: 'shell', sessionId: s.sessionId ?? null, runId: s.runId ?? null, command: s.command ?? null, label: label(s.command) }));
-  const background = (work.background ?? []).flatMap(b => (b.tasks ?? []).map(x => ({ kind: 'background', sessionId: b.sessionId ?? null, backend: b.backend ?? null, id: x.id, label: label(x.label) })));
+  // handover のとき、引き継ぎで止まらない裏の作業（保持役の子の app-server が持つ Codex の裏の端末。held）は止まるものに入れない
+  const background = (work.background ?? []).filter(b => !skip(b)).flatMap(b => (b.tasks ?? []).map(x => ({ kind: 'background', sessionId: b.sessionId ?? null, backend: b.backend ?? null, id: x.id, label: label(x.label) })));
   // handover のときの count は、サーバーが数えた待つ作業（blocking）。items と同じ数になるはずだが、数えの違いがあれば items の側を信じず blocking に従う
   const count = handover ? Number(work.handover?.blocking) || 0 : Number(work.count) || 0;
   return { count, items, stoppers: [...shells, ...background], ...(handover ? { handover: { held: Number(work.handover?.held) || 0 } } : {}) };
