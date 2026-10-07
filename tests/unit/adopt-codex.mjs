@@ -65,7 +65,7 @@ export default async function (t) {
   const work = path.join(scratch, 'work');
   const home = path.join(scratch, 'home');
   const codexLog = path.join(scratch, 'codex.log');
-  await Promise.all([scenesDir, work, home].map(dir => fs.mkdir(dir, { recursive: true })));
+  await Promise.all([scenesDir, work, home, path.join(scratch, 'codex-state')].map(dir => fs.mkdir(dir, { recursive: true })));
   const gates = await createFakeGates(scratch);
   const fake = path.join(ROOT, 'tests', 'lib', 'fake-codex.mjs');
   const sessionMeta = id => readSessions(dataDir)[id] ?? null;
@@ -76,6 +76,8 @@ export default async function (t) {
   const base = {
     AGENT_HOST_BACKENDS: 'codex', HOME: home, USERPROFILE: home, CODEX_HOME: path.join(home, '.codex'), CLAUDE_CONFIG_DIR: path.join(home, '.claude'),
     AGENT_HOST_CODEX_BIN: `node "${fake}"`, FAKE_CODEX_LOG: codexLog, ...gates.env,
+    // fake の app-server の会話は、app-server が替わっても残す（Linux は stop() のシグナルで終わる server が app-server も止めるので、前の節の会話を次の節が使うには要る）
+    FAKE_CODEX_STATE_DIR: path.join(scratch, 'codex-state'),
   };
   const env = { ...base, AGENT_HOST_RUNTIME_ROOT: root, ADOPT_SCENES_DIR: scenesDir };
   const holderChildren = async () => {
@@ -331,6 +333,7 @@ ${b.tail(20)}`); });
         assert.ok(running.permissions.find(p => p.id === askH.id)?.held, '承認待ちも held');
       }
       await sleep(400);   // 札の置き直しが保持役へ届くまで
+      const initsAtHandover = await initializes();
       b = await startServer({ env: envH, dataDir, timeoutMs: 60_000, args: ['--handover'], lazy: true });
       await sleep(800);
       const reply = await m1.request('handover');
@@ -355,7 +358,7 @@ ${b.tail(20)}`); });
         assertEndedOnce(cb, ids[k], doneBefore[k], k);
         assert.equal(readUsage(dataDir).records.filter(r => r.sessionId === ids[k]).length, usageBefore[k] + 1, `${k}: 使用量はこのターンの分が 1 件`);
       }
-      assert.equal(await initializes(), 3, '引き継ぎでも initialize は送らない');
+      assert.equal(await initializes(), initsAtHandover, '引き継ぎでも initialize は送らない');
       // 裏の端末: S2（新しいサーバー）が app-server に聞き直して数え直している。止めると item/completed が届いて消える
       {
         const running = await until(async () => { const r = await cb.cmd('running'); return bgOf(r)?.tasks?.length === 1 ? r : null; }, WAIT_MS, '裏の端末が新しいサーバーで数え直される');
@@ -379,7 +382,7 @@ ${b.tail(20)}`); });
     // 7. 後片付け: 保持役に shutdown を送り、保持役の子（fake の app-server）が全部終わる
     {
       const pids = (await holderChildren()).filter(x => x.alive && x.pid).map(x => x.pid);
-      assert.ok(pids.length >= 1, '保持役の子（app-server）が残っている');
+      // Windows は stop() の強制終了で server の 'exit' が走らず、手を離していない app-server が残る。Linux はシグナルで終わる server が止める（残っていなくてよい）
       const probe = await connectHolder({ dataDir, root });
       probe.shutdown();
       probe.close();

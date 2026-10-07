@@ -214,6 +214,7 @@ export class HeldAppServer {
       this.detached = true;
       this.source.stop();
       if (current === this) current = null;
+      this.dispose();
       this.sink?.handedOff();
     })();
     return this.handing;
