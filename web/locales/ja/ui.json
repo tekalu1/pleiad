@@ -2501,6 +2501,21 @@
     }
   },
   "composer": {
+    "destination": {
+      "title": "宛先",
+      "sent": "宛先: この会話（AI と直接）· 送った後は変えられません",
+      "sentAria": "モデル: {{backend}} · {{model}}{{effort}}（宛先はこの会話）",
+      "botAria": "宛先とモデル: {{name}}（{{backend}} · {{model}}{{effort}}）",
+      "plainAria": "宛先とモデル: bot なし · {{backend}} · {{model}}{{effort}}",
+      "optionAria": "{{name}}（{{backend}}{{state}}）",
+      "botSetup": "{{name}}の動かし方",
+      "botModel": "モデル: {{model}}",
+      "botEffort": "エフォート: {{effort}}",
+      "botMode": "承認モード: {{mode}}",
+      "botReadOnly": "{{name}}の既定で動きます。送った後、スレッドで変えられます。",
+      "resetBot": "bot の既定に戻す",
+      "openUsage": "使用量 ›"
+    },
     "cwd": {
       "placeholder": "作業ディレクトリのパス",
       "inputLabel": "作業ディレクトリのパス（Enter で決める）",

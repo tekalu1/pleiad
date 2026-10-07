@@ -2584,6 +2584,21 @@
     }
   },
   "composer": {
+    "destination": {
+      "title": "Recipient",
+      "sent": "Recipient: this conversation (direct AI) · Cannot be changed after sending",
+      "sentAria": "Model: {{backend}} · {{model}}{{effort}} (recipient: this conversation)",
+      "botAria": "Recipient and model: {{name}} ({{backend}} · {{model}}{{effort}})",
+      "plainAria": "Recipient and model: no bot · {{backend}} · {{model}}{{effort}}",
+      "optionAria": "{{name}} ({{backend}}{{state}})",
+      "botSetup": "How {{name}} runs",
+      "botModel": "Model: {{model}}",
+      "botEffort": "Effort: {{effort}}",
+      "botMode": "Approval mode: {{mode}}",
+      "botReadOnly": "{{name}} uses its defaults. You can change them in the thread after sending.",
+      "resetBot": "Reset to bot defaults",
+      "openUsage": "Usage ›"
+    },
     "cwd": {
       "placeholder": "Working directory path",
       "inputLabel": "Working directory path (Enter to set)",

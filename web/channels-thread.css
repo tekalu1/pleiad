@@ -21,7 +21,8 @@
 /* 板の境目。線ではなく、面の階調の細い棒（上下は余白を空ける） */
 /* スレッドの入力欄（Chats の入力欄と同じ部品。web/channels/thread-composer.mjs）。先頭の宛先のチップ。
    Chats の入力欄の、まだ送っていない会話の宛先のチップ（web/composer/home-dest.mjs）も同じ形 */
-:is(.th-composer,#composer) .chip.dest{display:inline-flex;align-items:center;gap:5px;min-width:0;max-width:40%}
+:is(.th-composer,#composer) .chip.dest{display:inline-flex;align-items:center;gap:5px;min-width:0;max-width:100%;flex:0 1 auto}
+.th-composer .chip.dest{flex-shrink:20}
 :is(.th-composer,#composer) .chip.dest[hidden]{display:none}
 :is(.th-composer,#composer) .chip.dest .av.xs{width:18px;height:18px;flex:none;display:inline-grid;place-items:center;font-size:12px;line-height:1}
 :is(.th-composer,#composer) .chip.dest .v{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -30,6 +31,7 @@
 .th-composer .crow > .chip{position:relative}
 .th-composer .chip .cv{flex:none;color:var(--ink-weak);font-size:10px}
 .th-composer .chip > .entry-dot{position:absolute;top:3px;right:3px}
+.th-composer .chip.dest > .entry-dot{top:1px;right:auto;left:17px}
 .th-title-edit{cursor:text;border-radius:var(--r-s)}
 .th-title-edit:hover{background:var(--surface-1)}
 .th-title-input{flex:1;min-width:0;font:inherit;font-weight:600;padding:2px 6px;border-radius:var(--r-s);background:var(--surface-1);color:var(--ink)}

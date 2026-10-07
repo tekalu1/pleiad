@@ -126,10 +126,10 @@ export function createThread(host) {
     compact: (sessionId) => host.invoke('sessions.compact', { sessionId }),
     onSettings: async (botId, patch) => {
       // 組み込みの bot の最初の設定は、Chats の既定の backend で会話を作る（作った後は backend を変えない）
-      const first = botId === PLAIN && !Object.values(S.thread?.sessions ?? {}).length;
+      const first = botId === PLAIN && !S.thread?.sessions?.[botId];
       const s = botSettings(botId);
       const got = await host.invoke('channels.threadSettings', { channelId: S.channelId, threadId: S.threadId, botId, ...patch,
-        ...(botId === PLAIN && first && s?.backend ? { backend: s.backend } : {}), ...(botId === PLAIN && patch.cwd === undefined && s?.values?.cwd ? { cwd: s.values.cwd } : {}) });
+        ...(botId === PLAIN && first && patch.backend === undefined && s?.backend ? { backend: s.backend } : {}), ...(botId === PLAIN && patch.cwd === undefined && s?.values?.cwd ? { cwd: s.values.cwd } : {}) });
       settingsSeen.set(botId, got);
     },
   });
@@ -147,7 +147,8 @@ export function createThread(host) {
       : { model: next.model ?? row?.model ?? bot.model ?? '', effort: next.effort ?? row?.effort ?? bot.effort ?? '', mode: next.mode ?? row?.mode ?? bot.mode ?? '', cwd: next.cwd ?? row?.cwd ?? S.channel?.cwd ?? bot.folders?.[0]?.path ?? '' };
     // 組み込みの bot はフォルダーを持たない: チャンネルの作業場所と、Chats の今の作業場所から選ぶ
     const folders = [...new Set([...(bot.folders ?? []).map((f) => f.path), ...(S.channel?.cwd ? [S.channel.cwd] : []), ...(bot.plain && host.state?.cwd ? [host.state.cwd] : [])])];
-    return { backend: bot.backend, sessionId, values, defaults: { model: bot.model ?? '', effort: bot.effort ?? '', mode: bot.mode ?? '' }, folders };
+    return { backend: seen?.backend ?? next.backend ?? row?.backend ?? bot.backend, sessionId, values,
+      defaults: { model: bot.model ?? '', effort: bot.effort ?? '', mode: bot.mode ?? '' }, folders };
   }
   // 目次のボタンは会話の目次（web/conversation-toc.mjs）が自分で受ける
   const head = createThreadHead({ host, onClose: () => close(), onBack: () => close(), onToc: () => {},

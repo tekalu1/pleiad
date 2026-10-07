@@ -1,6 +1,6 @@
 {
-  "plain": { "name": "エージェント", "choose": "bot なし（モデルを直接選ぶ）", "hint": "人格・記憶を持たない。モデル・承認モード・作業フォルダーを選んで話す" },
-  "homeDest": { "title": "宛先", "none": "bot なし", "noneHint": "AI と直接話す", "noneLabel": "宛先: bot なし（AI と直接話す。選び直す）", "label": "宛先: {{name}}（一時チャットで話しかける。選び直す）", "bots": "bot に話しかける" },
+  "plain": { "name": "エージェント" },
+  "homeDest": { "none": "bot なし" },
   "side": {
     "tabs": { "channels": "Channels" },
     "sections": { "channels": "チャンネル", "bots": "Bots", "routines": "ルーティン" },
@@ -153,8 +153,8 @@
     "untitled": "スレッド",
     "rename": "スレッドの題",
     "compactNoSession": "宛先の bot はこのスレッドでまだ話していないので、圧縮するものがありません",
-    "settings": { "note": "このスレッドだけに効きます。bot の既定は bot のページで変えます。", "changed": "変更あり", "botDefault": "{{name}} の既定", "failed": "設定を変えられませんでした: {{error}}", "effort": "エフォート" },
-    "dest": { "title": "宛先", "label": "宛先: {{name}}（選び直す）", "auto": "宛先", "inThread": "このスレッドの bot", "others": "ほかのメンバー", "members": "メンバー" },
+    "settings": { "note": "このスレッドだけに効きます。bot の既定は bot のページで変えます。", "changed": "変更あり", "botDefault": "{{name}} の既定", "failed": "設定を変えられませんでした: {{error}}" },
+    "dest": { "auto": "宛先", "inThread": "このスレッドの bot", "others": "ほかのメンバー", "members": "メンバー" },
     "renameFailed": "題を変えられませんでした: {{error}}",
     "noSource": "この投稿を受けた bot の会話はまだありません",
     "resend": { "running": "作業中の返事は、送り直すと止まります。分岐して送ると、このスレッドで続きます。", "failed": "送り直せませんでした: {{error}}" },

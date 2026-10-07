@@ -46,7 +46,7 @@ import { createContextMenu } from "./context-menu.mjs";
 import { setupLongPress } from "./long-press.mjs";
 import { whenText, timeText } from './schedule-times.mjs';
 import { setupSendMenu } from './send-menu.mjs';
-import { setupComposerControls, resolvedModel, folderBrowser } from "./composer-controls.mjs";
+import { setupComposerControls, resolvedModel, folderBrowser, destinationUsage } from "./composer-controls.mjs";
 import { createFolderUpload, canSendFolders, entriesFromDirectory, summarize, askDroppedFolder } from "./folder-upload.mjs";
 import { setupAttachMenu } from "./attach-menu.mjs";
 import { promptMaxHeight, attachSources, attachFolderHints } from "./composer-layout.mjs";
@@ -261,8 +261,8 @@ const chatComposer = createComposer({
 });
 const chatAttach = chatComposer.attach, composerEditor = chatComposer.editor, composerWait = chatComposer.wait;
 // まだ送っていない会話の宛先（bot なし / bot）。bot を選んだ最初の送信は、一時チャットでその bot に話しかける投稿になる（sendToHomeBot）
-const homeDest = createHomeDest({ anchor: $("attach"), t, invoke: (op, args) => cmd("invoke", { op, args }), showMenu: (...a) => showMenu(...a),
-  visible: () => unsentHere() });
+const homeDest = createHomeDest({ invoke: (op, args) => cmd("invoke", { op, args }),
+  visible: () => unsentHere(), onChange: () => { syncTopbar().catch(() => {}); } });
 // 接続の状態（web/connection-status.mjs）。切れた一行は 1.5 秒続いてから、トークンが古いと分かったら案内に替えて再接続をやめる
 const connStatus = createConnectionStatus({ note: $("connNote"), sideLine: $("connLost"), live: $("connLive"), t, runMark,
   time: (ms) => fmt.time(ms), check: checkToken, reconnect: () => connect(), onChange: () => syncRunState() });
@@ -371,7 +371,7 @@ let contextShown = false;
 const stripNarrow = matchMedia('(max-width:480px)');
 function syncStripVisible() {
   const strip = $('contextStrip');
-  strip.hidden = !contextShown && $('workEntry').hidden;
+  strip.hidden = !contextShown && $('usageChip').hidden && $('workEntry').hidden;
   if (strip.hidden) closeMeterPop();
 }
 /** 狭い画面（480px 以下）は、メーターを「文脈 ▬ 30% · ◷ 17:57」に縮め、数値と予約のキャンセルはメニューの頭へ移す。圧縮中・失敗はメーターの位置に出す */
@@ -3929,20 +3929,34 @@ function syncAttachButton() {
 }
 
 // 入力欄の設定のチップ（web/composer-controls.mjs）。値は state に持ち、チップは get() で毎回読む
+const composerQuota = new Map();
 const controls = chatComposer.useControls({
   cmd,
   get: () => {
     const bid = state.shownBackend ?? activeBackendId();
+    const bot = homeDest.bot;
+    const sent = !unsentHere();
     return {
-      cwd: state.cwd, recent: cwdOptions(),
+      cwd: bot?.folders?.[0]?.path ?? state.cwd, recent: cwdOptions(), cwdDisabled: Boolean(bot),
       backends: state.backends, backend: bid,
       // エージェントが 1 つしか無ければ選ぶ口を出さない
       backendSwitchable: state.backends.length > 1,
       models: state.models, model: state.model,
       efforts: state.efforts, effort: state.effort, effortDisabled: state.effortDisabled,
-      accounts: state.accountShown ? accountOptions() : null, account: state.account,
-      endpoint: endpointView(bid),
+      accounts: !bot && state.accountShown ? accountOptions() : null, account: state.account,
+      endpoint: bot ? null : endpointView(bid),
       modes: state.modes, mode: state.mode,
+      modeDisabled: Boolean(bot),
+      destination: {
+        sent, bot, selected: homeDest.selected, readOnlyBot: bot,
+        backendLabel: labelOf, onPick: id => homeDest.choose(id),
+        usage: destinationUsage(composerQuota.get(bid), { account: bot ? '' : state.account,
+          open: () => { onboarding.open('usage'); $('usageTab').click(); } }),
+        groups: sent ? [] : [{ options: [
+          { id: null, name: t('channels:homeDest.none') },
+          ...homeDest.bots.map(b => ({ id: b.id, name: b.name, bot: b, backend: b.backend, backendLabel: labelOf(b.backend) })),
+        ] }],
+      },
       git: state.git.data,
       worktree: state.worktree.data,
       // 別の会話が同じリポジトリに書き込み中なら { who }。チップと面に知らせる
@@ -3978,7 +3992,11 @@ const controls = chatComposer.useControls({
       modeWrite.catch(e => composerError(t("chat.sys.modeSaveFailed", { error: e.message })));
     },
     // モデルの面を開いた。候補を裏で取り直し、変わっていたら描き直す
-    openModel: () => revalidateVocab(state.shownBackend ?? activeBackendId()),
+    openModel: () => {
+      const backend = state.shownBackend ?? activeBackendId();
+      revalidateVocab(backend);
+      usageSource.load(backend).catch(() => {});
+    },
   },
 });
 
@@ -6388,6 +6406,8 @@ const channelsUi = setupChannels({
   agentName: (sessionId) => { const s = state.sessions.find((x) => x.id === sessionId); return s ? labelOf(s.backend) : null; },
   // スレッドの入力欄の設定のチップ（web/channels/thread-composer.mjs）: エージェントのモデル・承認モードの語彙と、エフォートの段
   vocab: (backend) => loadVocab(backend),
+  quota: (backend) => usageSource.load(backend),
+  openUsage: () => { onboarding.open('usage'); $('usageTab').click(); },
   // 送信の日時の面の一言（窓を閉じても動き続けるか・ホストの時刻帯）。会話の入力欄と同じ材料
   scheduleEnvironment: async () => {
     const status = await cmd('remoteStatus').catch(() => null);
@@ -7092,6 +7112,15 @@ function openContextPage() {
 function paintContextEntry() {
   paintContextEntryButton($('contextEntry'), { visible: !!state.current, report: state.contextInfo?.report,
     summary: chipText(state.contextInfo), changed: !!state.contextInfo?.changed?.differs });
+  paintMoreEntry();
+}
+function paintMoreEntry() {
+  const button = $('sessionMore');
+  const changed = !!state.contextInfo?.changed?.differs || (state.git.data?.dirty ?? 0) > 0;
+  const dot = button.querySelector('.entry-dot');
+  if (changed && !dot) { const mark = el('span', 'entry-dot'); mark.setAttribute('aria-hidden', 'true'); button.append(mark); }
+  else if (!changed) dot?.remove();
+  button.setAttribute('aria-label', changed ? `${t('session.more')} · ${t('session.context.changed')}` : t('session.more'));
 }
 /** 今のセッションの読み込み記録を取り直す。固定された会話ではサーバが今のファイルと突き合わせる */
 async function refreshContextEntry({ force = false } = {}) {
@@ -7118,6 +7147,7 @@ let gitTicket = 0;
 function paintGitEntry() {
   const button = $('gitEntry');
   const data = state.current ? state.git.data : null;
+  paintMoreEntry();
   button.hidden = !data;
   if (!data) return;
   const dirty = data.dirty > 0;
@@ -7328,7 +7358,8 @@ async function syncTopbar() {
   // 新しい会話の欄（まだ会話が無い）と、作ったばかりの会話（startNew が予約を流し終えるまで）は、そこで選んだ設定を見せる。
   // 流している途中に来た一覧の読み直しは書く前の予約を持つことがあり、そのまま見せるとチップが一瞬戻る（chooseSettings）
   const chosen = !s || justCreated() ? draftView(state.draft.changes) : null;
-  const bid = chosen?.backend ?? s?.nextSettings?.backend ?? activeBackendId();
+  const homeBot = unsentHere() ? homeDest.bot : null;
+  const bid = homeBot?.backend ?? chosen?.backend ?? s?.nextSettings?.backend ?? activeBackendId();
   const caps = capsOf(activeBackendId());
 
   $("titleEdit").value = s?.title === "(no title)" ? "" : (s?.title ?? "");
@@ -7336,7 +7367,7 @@ async function syncTopbar() {
 
   if (bid) state.shownBackend = bid;
   // ヘッダーの使用量のチップは、この会話（予約があれば次のターン）のエージェントとアカウントの枠を出す
-  headerUsage.show({ backend: bid, account: s?.nextSettings?.account ?? s?.claudeAccount ?? "", endpoint: endpointOf(s) });
+  headerUsage.show({ backend: bid, account: homeBot ? '' : s?.nextSettings?.account ?? s?.claudeAccount ?? "", endpoint: homeBot ? '' : endpointOf(s) });
 
   // 予約があれば次のターンの作業場所を表示する。
   if (s) state.cwd = (justCreated() && state.draft.cwd) || (s.nextSettings?.cwd ?? s.cwd ?? state.homeDir ?? "");
@@ -7352,15 +7383,16 @@ async function syncTopbar() {
   state.models = models;
   if (s) { state.mode = s.mode ?? "default"; state.model = chosen?.model ?? s.nextSettings?.model ?? s.model ?? ""; }
   else { const prefs = (state.prefs.backends ? state.prefs.backends[bid] : state.prefs) ?? {}; state.mode = prefs.mode ?? "default"; state.model = chosen.model ?? prefs.model ?? ""; }
-  state.mode = selectedMode(s, bid, modes, chosen);
+  state.mode = homeBot?.mode ?? selectedMode(s, bid, modes, chosen);
   await syncEndpoint(s, bid);
   if (state.current !== id || version !== topbarVersion) return;
   // 互換の接続先のモデルは接続先の一覧＋自由入力なので、公式の一覧に無くても戻さない
+  if (homeBot) state.model = homeBot.model ?? '';
   if (!state.endpoint && !(state.model in models)) state.model = "" in models ? "" : Object.keys(models)[0] ?? "";
   const efforts = await cmd('efforts', { backend: bid, model: state.model, cwd: s?.nextSettings?.cwd || s?.cwd || undefined, ...(state.endpoint ? { endpoint: state.endpoint } : {}) }).catch(() => ({ '': { label: t('chat.next.useDefault') } }));
   if (state.current !== id || version !== topbarVersion) return;
   state.efforts = efforts;
-  state.effort = chosen?.effort ?? s?.nextSettings?.effort ?? s?.effort ?? '';
+  state.effort = homeBot?.effort ?? chosen?.effort ?? s?.nextSettings?.effort ?? s?.effort ?? '';
   state.effortDisabled = Object.keys(efforts).length <= 1;
   controls.paint();
   await syncAccount(s, bid);
@@ -8557,6 +8589,13 @@ $("sessionMore").onclick = () => {
 function sessionMoreLead() {
   if (!narrowView.matches) return [];
   const lead = [];
+  if (matchMedia('(max-width:480px)').matches) {
+    lead.push({ head: t('session.menu.open') });
+    if (!$('contextEntry').hidden) lead.push({ label: $('contextEntry').getAttribute('aria-label'),
+      onClick: () => sessionContext.open($('sessionMore')) });
+    if (!$('gitEntry').hidden) lead.push({ label: $('gitEntry').getAttribute('aria-label'),
+      hint: branchLabel(state.git.data), onClick: () => gitPanel?.open($('sessionMore')) });
+  }
   const wand = $("titleWand");
   if (!wand.hidden) lead.push({ label: t("session.titleWand"), disabled: wand.disabled, onClick: () => { if (!wand.disabled) wand.onclick(); } });
   const info = remoteInfo(window.plyRemote);
@@ -8676,10 +8715,11 @@ function watchRemoteReason() {
 }
 // 使用量の取得は設定の「使用量」とヘッダーのチップで共有する（同じエージェントの取得が走っていれば相乗り）
 const usageSource = createUsageSource(cmd);
+usageSource.onResult((backend, result) => { composerQuota.set(backend, result); if (controls.panels.model.open) controls.paint(); });
 // 使用量の認可が済んでいないアカウントの「使用量の表示を認可」。アカウントの画面を開いて、そのまま認可を始める
 const usageLogin = accountId => claudeAccounts.open({ usageLogin: accountId });
 const headerUsage = setupHeaderUsage({ $, source: usageSource, getBackends: () => state.backends, onUsageLogin: usageLogin,
-  openSettings: () => { onboarding.open('usage'); $('usageTab').click(); } });
+  openSettings: () => { onboarding.open('usage'); $('usageTab').click(); }, onVisibility: syncStripVisible });
 setupUsage({ $, cmd, source: usageSource, getBackends: () => state.backends, endpoints: async (agent) => (await compatEndpoints.load(true)).filter((e) => e.agent === agent), page: onboarding.page, isOpen: onboarding.isOpen,
   onUsageLogin: usageLogin });
 const remoteSettings = setupRemote({ cmd, page: onboarding.page, openSession: id => { onboarding.close(); select(id); } });

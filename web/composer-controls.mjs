@@ -16,6 +16,9 @@ import { compatModelLabel, modelCandidates, searchModels, resolveTyped, moreText
 import { t } from "./i18n.mjs";
 import { splitChipLabel } from "./composer-layout.mjs";
 import { runMark } from "./arc.mjs";
+import { botIcon } from "./channels/bot-icon.mjs";
+import { backendLogo } from "./side.mjs";
+import { quotaOf, shortLabel, percentText, usedOf } from "./header-usage.mjs";
 
 /** 一覧の「既定」の札 */
 const DEFAULT_TAG = () => t("chat.model.default");
@@ -256,8 +259,110 @@ export function folderBrowser({ cmd, box, err, onChoose, onAt = () => {}, closed
  *   保存後、更新した target で描き直す。既定に戻す model/effort は空文字を渡す。
  * @param {(returnFocus?: boolean) => void} o.hide 接続先の管理へ移るとき、面を閉じる
  */
+function logo(id) {
+  const mark = backendLogo(id, '');
+  mark.removeAttribute('title');
+  mark.setAttribute('aria-hidden', 'true');
+  for (const node of mark.querySelectorAll('[aria-label],[alt]')) {
+    node.removeAttribute('aria-label');
+    if (node.tagName === 'IMG') node.alt = '';
+  }
+  return mark;
+}
+
+/** 宛先の面に置く、選んだエージェントの使用量の一行。 */
+export function destinationUsage(result, { account = '', open = null } = {}) {
+  const windows = quotaOf(result?.quota, account)?.windows ?? [];
+  if (!windows.length) return null;
+  const line = el('div', 'destination-usage');
+  for (const w of windows.slice(0, 2)) {
+    const used = usedOf(w);
+    const item = el('span', 'destination-usage-item');
+    const bar = el('span', 'usage-mini'); bar.setAttribute('aria-hidden', 'true');
+    const fill = el('i'); fill.style.width = `${Math.min(100, Math.max(0, used ?? 0))}%`; bar.append(fill);
+    item.append(bar, `${shortLabel(w)} ${percentText(used)}`);
+    line.append(item);
+  }
+  if (open) { const button = el('button', 'clink', t('composer.destination.openUsage')); button.type = 'button'; button.onclick = open; line.append(button); }
+  return line;
+}
+
+/** Chats とスレッドで同じ「宛先とモデル」のチップを描く。 */
+export function paintWhoChip(chip, { bot = null, backend, backendLabel = backend, model, effort = '', changed = false, sent = false }) {
+  const icon = bot ? botIcon(bot, 'av xs') : logo(backend);
+  icon.setAttribute('aria-hidden', 'true');
+  const name = el('span', 'v split');
+  const modelName = model || t('chat.model.default');
+  if (bot) name.append(el('span', 'mn', bot.name), el('span', 'mdl', ` · ${modelName}`));
+  else name.append(el('span', 'mn', modelName));
+  if (effort) name.append(el('span', 'ef', ` · ${effort}`));
+  const caret = glyph(CARET); caret.classList.add('caret');
+  chip.replaceChildren(icon, name, caret);
+  if (changed) { const dot = el('span', 'entry-dot'); dot.setAttribute('aria-hidden', 'true'); chip.append(dot); }
+  chip.classList.toggle('changed', changed);
+  chip.classList.toggle('with-bot', Boolean(bot));
+  const effortPart = effort ? ` · ${effort}` : '';
+  const label = sent ? t('composer.destination.sentAria', { backend: backendLabel, model: modelName, effort: effortPart })
+    : bot ? t('composer.destination.botAria', { name: bot.name, backend: backendLabel, model: modelName, effort: effortPart })
+      : t('composer.destination.plainAria', { backend: backendLabel, model: modelName, effort: effortPart });
+  const full = changed ? `${label} · ${t('channels:thread.settings.changed')}` : label;
+  chip.title = full;
+  chip.setAttribute('aria-label', full);
+}
+
+function destinationTop(d) {
+  const dest = d.destination;
+  if (!dest) return [];
+  if (dest.sent) return [el('p', 'destination-sent', t('composer.destination.sent'))];
+  const parts = [head(t('composer.destination.title'))];
+  for (const group of dest.groups ?? []) {
+    if (group.heading) parts.push(head(group.heading));
+    const box = el('div', 'destination-options');
+    box.setAttribute('role', 'group');
+    box.setAttribute('aria-label', group.heading || t('composer.destination.title'));
+    for (const option of group.options) {
+      const picked = option.id === dest.selected;
+      const button = el('button', `destination-option${picked ? ' on' : ''}`);
+      button.type = 'button';
+      button.dataset.key = `destination:${option.id ?? 'none'}`;
+      button.setAttribute('aria-pressed', String(picked));
+      const state = option.state ? ` · ${option.state}` : '';
+      button.setAttribute('aria-label', option.bot ? t('composer.destination.optionAria', { name: option.name, backend: option.backendLabel ?? option.backend ?? '', state }) : option.name);
+      if (picked) button.append(el('span', 'destination-check', '✓'));
+      if (option.bot) { const mark = botIcon(option.bot, 'av xs'); mark.setAttribute('aria-hidden', 'true'); button.append(mark); }
+      button.append(el('span', 'destination-name', option.name));
+      if (option.waiting) button.append(el('span', 'destination-wait', '◆'));
+      button.onclick = () => { if (!picked) dest.onPick(option.id); };
+      box.append(button);
+    }
+    parts.push(box);
+  }
+  return parts;
+}
+
 export function renderModel({ pop, target: d, on, hide }) {
   const parts = [];
+  parts.push(...destinationTop(d));
+  if (d.destination?.readOnlyBot) {
+    const bot = d.destination.readOnlyBot;
+    const agent = el('div', 'destination-agent');
+    agent.append(el('b', null, t('composer.destination.botSetup', { name: bot.name })), logo(bot.backend), el('span', null, d.destination.backendLabel(bot.backend)));
+    parts.push(agent);
+    if (d.destination.usage) parts.push(d.destination.usage);
+    parts.push(el('p', 'destination-fact', t('composer.destination.botModel', { model: bot.model || t('chat.model.default') })));
+    parts.push(el('p', 'destination-fact', t('composer.destination.botEffort', { effort: bot.effort || t('chat.model.default') })));
+    parts.push(el('p', 'destination-fact', t('composer.destination.botMode', { mode: d.modes?.[bot.mode]?.label ?? bot.mode ?? t('chat.model.default') })));
+    parts.push(el('p', 'cnote', t('composer.destination.botReadOnly', { name: bot.name })));
+    pop.replaceChildren(...parts);
+    return;
+  }
+  if (d.destination?.bot || d.destination?.threadPlain) {
+    const agent = el('div', 'destination-agent');
+    agent.append(el('b', null, d.destination.bot ? t('composer.destination.botSetup', { name: d.destination.bot.name }) : t('composer.agent')),
+      logo(d.backend), el('span', null, d.destination.backendLabel(d.backend)));
+    parts.push(agent);
+    if (d.destination.usage) parts.push(d.destination.usage);
+  }
   if (d.backendSwitchable) {
     parts.push(head(t("composer.agent")));
     const seg = el("div", "seg cseg");
@@ -273,6 +378,7 @@ export function renderModel({ pop, target: d, on, hide }) {
     }
     parts.push(seg);
   }
+  if (!d.destination?.bot && !d.destination?.threadPlain && d.destination?.usage) parts.push(d.destination.usage);
   // 互換の接続先（Claude Code・Codex）。先頭は「公式」、下に登録した接続先。選んでいる間は使えないものを短い一行で出す
   const ep = d.endpoint;
   if (ep) parts.push(...endpointSection(d, on));
@@ -287,7 +393,7 @@ export function renderModel({ pop, target: d, on, hide }) {
     if (off) parts.push(el("p", "cnote", t("composer.account.compatOff")));
     parts.push(listbox(t("composer.account.title"), d.accounts.map((a) => row({
       on: !off && a.value === d.account, main: a.label, right: off ? "" : a.hint, tag: !off && a.value === "" ? DEFAULT_TAG() : "", key: `account:${a.value}`, disabled: off,
-      onPick: () => { if (!off && a.value !== d.account) on.account(a.value); },
+      onPick: () => { if (!off && a.value !== d.account) on.account?.(a.value); },
     }))));
   }
   if (ep) {
@@ -298,6 +404,14 @@ export function renderModel({ pop, target: d, on, hide }) {
     manage.onclick = () => { hide(false); ep.manage(); };
     foot.append(manage);
     parts.push(foot);
+  }
+  if (d.destination?.threadPlain || d.destination?.bot) {
+    parts.push(el('p', 'cnote', t('channels:thread.settings.note')));
+    if (d.destination.changed && d.destination.onReset) {
+      const reset = el('button', 'clink destination-reset', t('composer.destination.resetBot'));
+      reset.type = 'button'; reset.onclick = d.destination.onReset;
+      parts.push(reset);
+    }
   }
   pop.replaceChildren(...parts);
 }
@@ -670,6 +784,7 @@ export function setupComposerControls({ cmd, get, on, els = {} }) {
   const mode = panel(chips.mode, pops.mode, {
     align: "right",
     render: () => renderMode({ pop: pops.mode, target: get(), on, hide: () => mode.hide() }),
+    when: () => !get().modeDisabled,
   });
 
   /** チップの字を今の値に合わせる。開いている面も描き直す（値が変わった・候補が届いた） */
@@ -713,19 +828,11 @@ export function setupComposerControls({ cmd, get, on, els = {} }) {
     const epLabel = row ? endpointChipLabel({ connection: row.name, model: epModel.text, fullModel: epModel.id, effort: effortStops(d.efforts, d.effort).current }) : null;
     const label = epLabel ? epLabel.text : modelChipLabel(d.models, d.model, d.efforts, d.effort);
     const full = epLabel ? epLabel.full : label;
-    if (epLabel && epModel.oneM) {
-      const b = el("span", "cbadge", "1M");
-      b.title = ONE_M_TITLE;
-      modelName.classList.remove("split");
-      modelName.replaceChildren(epLabel.head, b, epLabel.tail ? ` · ${epLabel.tail}` : "");
-    } else {
-      // 狭いときは名前だけを … で詰め、「 · 段」は残す
-      const { head, tail } = splitChipLabel(label);
-      modelName.classList.add("split");
-      modelName.replaceChildren(el("span", "mn", head), ...(tail ? [el("span", "ef", tail)] : []));
-    }
-    chips.model.title = t("composer.model.chipTitle", { label: full });
-    chips.model.setAttribute("aria-label", t("composer.model.chipAria", { label: full }));
+    const { head: modelHead, tail: modelTail } = splitChipLabel(label);
+    paintWhoChip(chips.model, { bot: d.destination?.bot, backend: d.backend,
+      backendLabel: d.destination?.backendLabel?.(d.backend) ?? d.backend,
+      model: epLabel ? epLabel.head : modelHead, effort: epLabel ? epLabel.tail : modelTail,
+      sent: Boolean(d.destination?.sent) });
     chips.model.dataset.value = d.model ?? "";
     chips.model.dataset.backend = d.backend ?? "";
     // 承認モード
@@ -742,6 +849,7 @@ export function setupComposerControls({ cmd, get, on, els = {} }) {
     chips.mode.title = danger ? t("composer.mode.dangerTitle") : t("chat.composer.mode");
     chips.mode.setAttribute("aria-label", (danger ? t("composer.mode.chipAriaDanger", { mode: m?.label ?? d.mode ?? "" }) : t("composer.mode.chipAria", { mode: m?.label ?? d.mode ?? "" })));
     chips.mode.dataset.value = d.mode ?? "";
+    chips.mode.disabled = Boolean(d.modeDisabled);
     // 開いている面も描き直す。触っていた部品へフォーカスを戻す（data-key で引き直す）。
     // 作業ディレクトリの面は打ち込み中・辿っている途中を消さないよう、位置だけ合わせる
     for (const p of [model, mode]) {
@@ -765,7 +873,7 @@ export function setupComposerControls({ cmd, get, on, els = {} }) {
     const row = chips.cwd.parentElement;
     if (!row || !row.isConnected || !row.offsetParent) return;
     const cwd = chips.cwd, mdl = chips.model;
-    row.classList.remove("fit-nosplit", "fit-nobranch", "fit-short", "fit-noef");
+    row.classList.remove("fit-nosplit", "fit-nobranch", "fit-short", "fit-noef", "fit-nomodel", "fit-cwd-icon", "fit-mode-icon", "fit-model-icon");
     cwd.style.minWidth = ""; mdl.style.minWidth = "";
     row.classList.add("measuring");
     // 最後の部品（送信）の右端が行の右端に収まるか（scrollWidth は整数に丸められ、1px 足りないのを見逃す）
@@ -777,6 +885,7 @@ export function setupComposerControls({ cmd, get, on, els = {} }) {
     if (!fits()) row.classList.add("fit-nobranch");
     if (!fits()) row.classList.add("fit-short");
     if (!fits()) row.classList.add("fit-noef");
+    if (!fits() && mdl.classList.contains('with-bot')) row.classList.add('fit-nomodel');
     let size = null;
     if (!fits()) {
       const w = (n) => n.getBoundingClientRect().width;
@@ -794,6 +903,10 @@ export function setupComposerControls({ cmd, get, on, els = {} }) {
       if (fits()) return;
     }
     cwd.style.minWidth = ""; mdl.style.minWidth = "";
+    for (const cls of ['fit-cwd-icon', 'fit-mode-icon', 'fit-model-icon']) {
+      row.classList.add(cls);
+      if (fits()) return;
+    }
   }
   window.addEventListener("resize", fitRow);
   const rowObserver = typeof ResizeObserver === "function" ? new ResizeObserver(() => fitRow()) : null;

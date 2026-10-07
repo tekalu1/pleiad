@@ -142,7 +142,7 @@ function setupHostBar({ info, remote, doc, back }) {
     const arrows = icon(ARROWS);
     arrows.setAttribute('aria-hidden', 'true');
     sub.append(arrows, subHost, subState);
-    col.append(sub);
+    (col.querySelector('.title-sub') ?? col).append(sub);
   }
 
   let view = badgeView(info, null);

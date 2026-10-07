@@ -133,7 +133,7 @@ export function createBackgroundChip(button) {
         if (!quiet) animate(node, 'in');
       }
       let count = node.querySelector('.bgc-n');
-      if (g.n >= 2) {
+      if (g.n >= 1) {
         if (!count) { count = el('span', 'bgc-n'); node.append(count); }
         if (count.textContent !== String(g.n)) { count.textContent = String(g.n); if (!quiet) animate(count, 'bump'); }
       } else count?.remove();
