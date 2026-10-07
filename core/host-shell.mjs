@@ -13,6 +13,8 @@ import { classifySystemMessages } from './system-messages.mjs';
 
 /** 出力を貯める上限（stdout・stderr それぞれ）。越えた分は捨て、truncated を立てる */
 export const OUTPUT_LIMIT = 256 * 1024;
+/** 止めた・上限のシェルが終わってから、出力のパイプが閉じるのを待つ上限 */
+const KILLED_CLOSE_GRACE_MS = 1000;
 
 const argsFor = (file, command) => {
   const base = path.basename(file).toLowerCase().replace(/\.exe$/, '');
@@ -79,6 +81,12 @@ export function runHostShell({ command, cwd, timeoutMs, signal, onOutput = () =>
     }
     child.on('error', e => finish({ startError: String(e?.message ?? e) }));
     child.on('close', (code, sig) => finish(stopped || timedOut ? {} : { exitCode: code, signal: sig ?? null }));
+    // 止めたシェルが終わっても、出力のパイプを握った子が残って close が来ないことがある（Git Bash のループを止めたとき、fork の途中の子が親を失って
+    // 止まったまま残る。40 回に 1 回ほど）。止めた・上限のときは、シェルが終わってから少し待って締める
+    child.on('exit', () => {
+      if (!stopped && !timedOut) return;
+      setTimeout(() => { child.stdout?.destroy(); child.stderr?.destroy(); finish({}); }, KILLED_CLOSE_GRACE_MS).unref?.();
+    });
   });
 }
 
