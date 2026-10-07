@@ -5,6 +5,8 @@
 //   SLOW:<n>   n 秒かけて本文を少しずつ流す（走っているターンを作る）
 //   SHELL      承認が要るシェルを 1 回呼ぶ（function_call → 結果が返ったら完了の本文）
 //   MCPCALL:<server>:<tool>   MCP のツールを 1 回呼ぶ（結果が返ったら、その中身を本文に写す）
+//   SPAWN:<依頼文>   サブエージェントを 1 本起こす（multi_agent_v1.spawn_agent。子の最初の発言が <依頼文>）。結果が返ったら親は SPAWN_PARENT_SLOW 秒（既定 6）かけて本文を流す
+//   BGTERM    裏の端末を 1 本起こす（exec_command が数百 ms で応答を返し、プロセスは走ったまま。ターンはすぐ終わる）
 //   それ以外    "ok" と返す
 // 受けたリクエストは requests に残す（/__requests で読める）。
 import http from 'node:http';
@@ -34,7 +36,32 @@ export function startMockModel({ port = 0, log = () => {} } = {}) {
     const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     req.on('close', () => log('model request closed', id));
 
-    // ツールの結果が返ってきた回
+    const spawn = /SPAWN:(.*)$/m.exec(userText);
+    const toolBack = lastItem && /function_call_output|custom_tool_call_output/.test(lastItem.type);
+    if (spawn && !toolBack) {
+      const call = { id: `fc_${++seq}`, type: 'function_call', call_id: `call_${seq}`, name: 'spawn_agent', namespace: 'multi_agent_v1', arguments: JSON.stringify({ message: spawn[1].trim() }), status: 'completed' };
+      sse(res, [['response.output_item.added', { output_index: 0, item: call }], ['response.output_item.done', { output_index: 0, item: call }]]);
+      return finish([call]);
+    }
+    if (/BGTERM/.test(userText) && !toolBack) {
+      const args = { cmd: 'node -e "setInterval(() => console.log(Date.now()), 500)"', yield_time_ms: 300 };
+      const call = { id: `fc_${++seq}`, type: 'function_call', call_id: `call_${seq}`, name: 'exec_command', arguments: JSON.stringify(args), status: 'completed' };
+      sse(res, [['response.output_item.added', { output_index: 0, item: call }], ['response.output_item.done', { output_index: 0, item: call }]]);
+      return finish([call]);
+    }
+    // ツールの結果が返ってきた回（SPAWN の親は、子が走っている間ターンを続ける）
+    const spawnWait = spawn && toolBack ? Number(process.env.SPAWN_PARENT_SLOW ?? 6) : 0;
+    if (spawnWait) {
+      const t = text('');
+      sse(res, [['response.output_item.added', { output_index: 0, item: { ...t, content: [] } }]]);
+      for (let i = 0; i < spawnWait * 2; i++) {
+        await sleep(500);
+        sse(res, [['response.output_text.delta', { item_id: t.id, output_index: 0, content_index: 0, delta: `parent${i} ` }]]);
+      }
+      const done = text(Array.from({ length: spawnWait * 2 }, (_, i) => `parent${i} `).join(''));
+      sse(res, [['response.output_item.done', { output_index: 0, item: done }]]);
+      return finish([done]);
+    }
     if (lastItem && /function_call_output|custom_tool_call_output/.test(lastItem.type)) {
       const out = typeof lastItem.output === 'string' ? lastItem.output : JSON.stringify(lastItem.output);
       const t = text(`TOOL_RESULT: ${out.slice(0, 400)}`);
