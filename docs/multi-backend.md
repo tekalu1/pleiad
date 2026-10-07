@@ -745,6 +745,10 @@ AI の発言はツールの完了ごと（本文は `AGENT_HOST_AGY_SAVE_MS`、�
 - **他の Pleiad が使っているものは孤児ではない。** 控えは `AGENT_HOST_DATA` ごとに 1 つなので、
   Pleiad を 2 つ動かす（worktree ごとの開発サーバなど）と、後から起きた方が先の agy を落としかねない。
   控えには起こした Pleiad の pid（`owner`）も残し、**それが生きているうちは触らない**
+- **保持役に載せた agy は、この掃除の対象に入らない**（無停止の更新 段階 3。`core/backends/antigravity-held.mjs`・[stage3-agy.md](zero-downtime-update/stage3-agy.md)）。
+  `AGENT_HOST_AGY_HOLDER`（既定は実行場所の置き場があるとき on）で、会話ごとの agy が保持役の子になり、サーバーが入れ替わっても走り続けて、新しいサーバーが付け直す。
+  保持役の子は pid を控えず、終了時（`process.once("exit")`）は手を離していない子だけを止める。ターンの間の子（idle）は引き継ぎのとき旧サーバーが止め、
+  落ちた後は次の起動の最初の保持役の使用が止める
 
 実行ファイルは `AGENT_HOST_AGY_BIN`（既定 `agy`）。
 `--print-timeout` の値は `AGENT_HOST_AGY_PRINT_TIMEOUT`（既定 `24h`。**Go の duration 文字列**）。

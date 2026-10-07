@@ -391,10 +391,19 @@ design.md §5.1・§6.1・§8。
 ## 段階 3: Codex・agy・`!` の行（M〜L）
 
 - Codex（M）: 共有の app-server を保持役の子に（`policy: 'jsonrpc'`）。`CodexRpc` の付け直しの始まり方（`initialize` を送らない。送って `Already initialized` を成功とみなしてもよい）。**新しいサーバーの JSON-RPC の id を世代つきの文字列にし、古い世代の応答は捨てる**。スレッドごとの印（ターンの始まり）と再生。サブエージェントの親子は `thread/read` の `parentThreadId` から引き直す。バックグラウンドの端末（`codex-background.mjs`）。**`thread/start` は HTTP の口が立ってから**（口が閉じていると `required: true` で失敗、`false` なら MCP を持たないスレッドになる）
-- agy（M）: 会話ごとのプロセスを保持役の子に（`policy: 'none'`）。ターンの印を最初の行に付ける。孤児の掃除と終了時の片付けから外す。`core/agy-context-relay.mjs` に数秒の再試行を足す（段階 0 では動かしていないので、足すときに口を閉じて確かめる）
+- agy（M。**実装済み 2026-10-07**。下の「agy の実装のメモ」・[stage3-agy.md](stage3-agy.md)）: 会話ごとのプロセスを保持役の子に（`policy: 'none'`）。ターンの印を最初の行に付ける。孤児の掃除と終了時の片付けから外す。`core/agy-context-relay.mjs` に数秒の再試行を足す（段階 0 では動かしていないので、足すときに口を閉じて確かめる）
 - `!` の行（S）: `shell-runs.mjs` のシェルを保持役の子に
 - 先送りが要らなくなる（保持役に載っていないターンは、古い CLI の版のものだけ）
 - 段階 3 の最初に、サブエージェントが走っている Codex の付け直し・承認を数分待たせたとき・本物のモデルでの付け直しを測る（stage0-codex-agy の未確認）
+
+**agy の実装のメモ（2026-10-07。実装済み。測定・実装・テスト・共有ファイルの変更は [stage3-agy.md](stage3-agy.md)）**
+
+- **測定（最初に）**: 本物の agy 1.3.0 を本物の保持役に載せ、ツールの実行中に親 A が手を離し親 B が付け直す。印〜ack の再生（`init` を含む）と続きで `result` まで届き、ツールの結果も欠けず 1 回。2 ターン目は印を打ち直すだけで同じ子に書ける。中継の再試行は、本物の agy で「口を閉じたまま送って 4.5 秒後に開き直す」が、再試行なしは `Cannot reach Pleiad context`、再試行ありは通る
+- **載せ方**（`core/backends/antigravity-held.mjs`）: 会話ごとの agy を保持役の子（policy `none`）に。印はターンごとに最初の行の直前（子は会話のあいだ生きる）。読みは行ごとに処理し終えてから ack（本文の無い SUCCESS の確定待ちは Promise で待つ）。付け直しは印から ack までを `handle(ev, { replay: true })` で再生し、続きを普通に流す（`antigravity.mjs` の `adoptTurn`。札の欄は `{ held, agy: { sentAt, resumed, sentHash, home, keys, hookRuns } }`。本文は札に入れず控えから引く。`keys` はトークンをダイジェストにした「起動時にしか渡せないものの印」）
+- **idle の子**（ターンが終わった agy）: 札と印を外す（1 回の書き込み）。引き継ぎは旧サーバーが `releaseIdle` で止める（`core/server.mjs` の `handoverRun.stash` の先頭から全バックエンドを呼ぶ。`stash` の `detach()` の後は書き込みが転送されない）・普通の終了は `process.once('exit')` が `HolderClient.sendBatch` の 1 回の書き込みで止める（続けて write すると最初の 1 つしか出ない）・落ちた後は次の起動の最初の保持役の使用が札か印の欠けた子を止める（`sweepIdle`）。孤児の掃除（`pids.json`）は保持役の子を控えない。agent の置き場は `held-*`（`sweep()` の pid での掃除の対象にしない）
+- **切り替え**: `desktop/switch.cjs` は変更なし（`holdable` → `held` / `blocking` が agy にも効く）。`AGENT_HOST_AGY_HOLDER`（`on`・`off`・無ければ `AGENT_HOST_RUNTIME_ROOT` があるとき on。起動用の変数）。Claude の既定 on は別の作業が直している
+- **テスト**: `adopt-agy`（ツールの実行中・終わった直後・中断・強制終了・引き継ぎ・普通の終了）・`antigravity-held`・`agy-relay-retry`。WSL（Linux）でも通る。実機: `scripts/zero-downtime/agy/held-server.mjs`（本物の agy を載せたサーバー A → B）
+- **残り**: agy を使わないまま終わると落ちたサーバーの idle の子が残る（次に agy を使う起動が止める）・`result` を処理して札と印を外した直後の強制終了は `restart` の中断・stderr は再生されない・委譲の子・Hooks つきの agy のサーバーを通した確かめ
 
 ## 段階 4: 待ち受けを保持役が持つ（M。段階 2 の実機の結果しだい）
 
