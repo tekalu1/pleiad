@@ -165,6 +165,18 @@ export function workRows(work) {
   return [...rows.values()];
 }
 
+/**
+ * 無停止の更新（ADR 0151）で、新しい版へ引き継げず、終わるのを待つ作業の数。保持役に載ったターンとその承認待ち（held）は待たない。
+ * workRows と同じく会話ごとに数える。ターンの無い作業（委譲のタスクなど）だけが待つときは、サーバーが数えた handover.blocking
+ */
+export function handoverWaits(work) {
+  const waiting = new Set();
+  for (const x of [...(work?.turns ?? []), ...(work?.permissions ?? [])]) {
+    if (x?.sessionId && !x.relay && !x.detached && !x.held) waiting.add(x.sessionId);
+  }
+  return waiting.size || Number(work?.handover?.blocking) || 0;
+}
+
 /** 脇の更新の知らせに足す件数（実行中 N 件・承認待ち M 件） */
 export function workCounts(work) {
   const rows = workRows(work);

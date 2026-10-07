@@ -2778,7 +2778,8 @@
     "promptRunning_other": "実行中 {{count}} 件",
     "promptWaiting_other": "承認待ち {{count}} 件",
     "promptJoin": "・",
-    "handoverWork_other": "実行中の作業 {{count}} 件は止まりません。新しい版へは、作業が終わってから切り替わります。",
+    "handoverWork_other": "実行中の作業 {{count}} 件は止めずに切り替わります。",
+    "handoverWait_other": "うち {{count}} 件は引き継げないため、その作業が終わるまで切り替えを待ちます。",
     "handoverBrowser": "内蔵ブラウザーのタブは開き直されます。"
   },
   "switch": {
