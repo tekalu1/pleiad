@@ -16,7 +16,8 @@ engine.mjs  状態機械                                      host.mjs     /voic
 index.mjs   部品の差し込み（slot の契約）                    ├ wait-voice.mjs    受け取りの一言・待ちの実況（決まった文。時計は渡される）
                                                  ├ phrase-cache.mjs  決まった文の音を通話の中で 1 回だけ合成して使い回す
                                                  └ speaker.mjs   文ごとに合成を並行・中断
- ├ view.mjs        通話ボタン・マイク・スピーカー・一行
+ ├ view.mjs        通話ボタン・マイク・スピーカー・状態の一行（×）・聞き取れなかった行・返事の下の一行
+ ├ notices.mjs     失敗の知らせの出し分けと消える条件（DOM なし）
  ├ live-bubble.mjs あなたの声の吹き出し（組み立て中の文・まとめ待ちの線）
  ├ send-queue.mjs  声で確定した発言の直列の送信
  ├ chat-send.mjs / delivery.mjs  Chats へ入力欄を通さず送る・配送の一行（3 つの言い方）
@@ -32,7 +33,7 @@ index.mjs   部品の差し込み（slot の契約）                    ├ wai
 ## プロトコル（`/voice-ws`）
 
 上り: 音声フレーム（バイナリ。16kHz s16le モノラル）と JSON `hello`（見る先）・`target`・`mute`・`spk`・`halt`（`barge`＝話して割り込んだとき。同じ扱い。止めたとき鳴っていた文の `id` つき）・`resume`（続きを読む）・`discard`（まとめ待ちの取り消し。ここまでの発話を、話している最中・認識待ちのものも結果を出さずに捨てる）・`lat`・`handed`（声で送った 1 通が AI に渡った。受け取りの一言の起点）。
-下り: JSON `ready`（区切りの長さ `turnHoldMs`・話して止める `bargeIn` を含む）・`error`・`limit`・`speaking`・`busy`（文字がまだ出そろっていない。`last` = 振った発話の番号の最大）・`partial`・`final`・`drop`・`seg`（読む文の始まり。`skip` = 言い添えの種類 `code`・`table`・`log`、決まった文（一言・実況）は `notice`）・`seg.end`・`seg.fail`・`cancel`・`turn.end`・`lat`、バイナリ `[1][文の id uint32 LE][PCM 24kHz s16le]`。詳しい項目は `core/voice/session.mjs` の冒頭。
+下り: JSON `ready`（区切りの長さ `turnHoldMs`・話して止める `bargeIn` を含む）・`error`（`code`・致命か。聞き取りの失敗は `utt` と、失敗の種類 `kind`・HTTP の `status` だけを添える。本文・キーは渡さない）・`limit`・`speaking`・`busy`（文字がまだ出そろっていない。`last` = 振った発話の番号の最大）・`partial`・`final`・`drop`・`seg`（読む文の始まり。`skip` = 言い添えの種類 `code`・`table`・`log`、決まった文（一言・実況）は `notice`）・`seg.end`・`seg.fail`・`cancel`・`turn.end`・`lat`、バイナリ `[1][文の id uint32 LE][PCM 24kHz s16le]`。詳しい項目は `core/voice/session.mjs` の冒頭。
 
 ## 聞き取り
 
@@ -104,6 +105,23 @@ OpenRouter の `POST /audio/transcriptions` は**同期のみ**（ストリー�
 | 待ち（同じ音 2 回） | 声の発言が送信待ちに入ったとき | すべてのみ |
 | 失敗（下がる 2 音） | 送れなかった・聞き取れなかった・読み上げられなかった | すべてのみ |
 
+## 失敗の知らせ（承認済み 2026-10-07、[ADR 0159](adr/0159-voice-call-notices.md)。見た目は [design-system.md](design-system.md)「通話モード」）
+
+失敗は **その場の失敗**と **通話の状態**に分かれる。画面（`web/voice/index.mjs`）は engine の `notice`（`code`・`kind`・`status`）を `web/voice/notices.mjs` の判定へ渡し、判定が出す・消すを部品へ伝える。
+
+| 失敗 | 出る所 | 消える時 |
+|---|---|---|
+| 聞き取れなかった（`stt`・`stt-busy`） | 会話の末尾の 1 行。別の発話の吹き出しが出ているあいだは、その吹き出しの中 | 次に話し始めた（聞き取り中・吹き出しが出た）・通話を終えた。続けて失敗したら同じ行が「続けて N 回」に替わる（何か聞き取れたら 0 に戻る）。キーの拒否（401・403）は 1 回目から別の文 |
+| 読み上げられなかった（`tts`） | 返事の下の一行（`.vc-hint` の `fail`） | 次の発言を送った・通話を終えた |
+| 権限なし・マイクが見つからない | 入力欄の下の 1 行（×） | 許可が下りた・マイクが繋がった（`devicechange`）・×・次の通話 |
+| キー不足・1 日の上限（`no-key`・`daily-limit`・`limit-daily`） | 同上 | 設定が変わった（`voiceChanged`・`settingsChanged` の voice）・×・次の通話 |
+| マイクが使用中・始められない（`start`・`start-timeout`） | 同上 | ×・次の通話 |
+| 通話の長さの上限・声が聞こえず終了・つながりの切れ（`limit-call`・`limit-idle`・`link`） | 同上 | 別の会話へ移った（通話が終わったあとも 500ms ごとに見る）・×・次の通話 |
+
+- ホストが渡すのは失敗の種類だけ: `error { code, utt, kind, status }`（`kind` = `timeout`・`permanent`・`transient`、`status` = OpenRouter の HTTP の状態。本文・キー・応答の中身は渡さない）。`401`・`403` は「キーが拒否された」、`429` は「混み合い」。
+- 時間では消さない。読む時間は人によるため、目を離している間に終わった通話の理由も、戻って読める。
+- 範囲外: 声で送った発言が送れなかったとき（`sendFailed`）は、これまでどおり入力欄の下の一行（×だけが付く）。
+
 ## 読み上げ
 
 - **逐次の PCM。** `POST /audio/speech` に `response_format: "pcm"`（24kHz mono s16le）。応答が PCM でない・レートが違うなら 1 バイトも流さずに失敗させる。奇数バイトは持ち越し、先頭の無音（0〜320ms）は声の 80ms 前まで詰める。
@@ -141,7 +159,7 @@ OpenRouter の `POST /audio/transcriptions` は**同期のみ**（ストリー�
 ## 確かめ方
 
 - 単体: `node tests/run.mjs voice`（`voice-core`・`voice-reply-reader`・`voice-openrouter`・`voice-session`・`server-voice`・`voice-ui`・`voice-turns`・`voice-wait`）。`voice-wait` は、受け取りの一言（1.5 秒・返事が先なら言わない・渡っていなければ言わない・割り込み）・待ちの実況（無音・間隔・回数・種類）・決まった文の音のキャッシュを、時計を差し替えて確かめる。`voice-turns` は、まとめ待ち（言いよどみの結合・末尾の規則・確定待ち・取り消し・通話の終わりの残り）・直列の送信・話して止める（閾値・半二重への切り替え）・効果音・聞き取りの `busy` を、決めた入力（時刻・音量・確定の文字）で確かめる。偽の OpenRouter は `tests/lib/fake-openrouter.mjs`（`AGENT_HOST_VOICE_API` で向ける。`tests/lib/server.mjs` は既定で閉じたポートを向け、本物へは送らない）。
-- 実ブラウザー: `node tests/browser/voice-call.mjs`（`VOICE_SHOTS=<ディレクトリ>` で場面ごとに撮る）。fake バックエンド・一時のデータ置き場・偽の OpenRouter・Chromium の `--use-fake-device-for-media-stream`・`--use-fake-ui-for-media-stream`・`--use-file-for-fake-audio-capture`（声のような WAV）で、頭のボタン → 準備中 → 聞いています → 片が足される → 送信 → 返事 → 下線が伸びる → ミュート・止める → 終える、権限なし、スレッド、360・ライト・ダーク・動きを減らすを通す。fake が声の言葉に台本の返事をするには `AGENT_HOST_FAKE_VOICE_REPLY=<{ when, steps | script } の JSON（配列なら発言ごと）>`（`script` は `bg 1 14` のようなそのままの台本。途中送信を受ける台本と `AGENT_HOST_FAKE_STEER_CONFIRM_MS` で「差し込み待ち」を、受けない長いツールの台本で「送信待ち」を作る）。まとめ待ちの確認（吹き出しの下の線・［取り消す］・3 回話して 1 通ずつ会話の行に出る・配送の 3 つの言い方・止める → 続きを読む）もこのテストが通す。
+- 実ブラウザー: `node tests/browser/voice-call.mjs`（`VOICE_SHOTS=<ディレクトリ>` で場面ごとに撮る）。fake バックエンド・一時のデータ置き場・偽の OpenRouter・Chromium の `--use-fake-device-for-media-stream`・`--use-fake-ui-for-media-stream`・`--use-file-for-fake-audio-capture`（声のような WAV）で、頭のボタン → 準備中 → 聞いています → 片が足される → 送信 → 返事 → 下線が伸びる → ミュート・止める → 終える、失敗の知らせ（聞き取れなかった行が次の発話で畳まれる・続けて 2 回・キーの拒否・読み上げの失敗・キーなしの一行が×とキーの登録で消える・つながりの切れが会話を移ると消える。偽の OpenRouter に 500・401 を返させる）、権限なし、スレッド、360・ライト・ダーク・動きを減らすを通す。fake が声の言葉に台本の返事をするには `AGENT_HOST_FAKE_VOICE_REPLY=<{ when, steps | script } の JSON（配列なら発言ごと）>`（`script` は `bg 1 14` のようなそのままの台本。途中送信を受ける台本と `AGENT_HOST_FAKE_STEER_CONFIRM_MS` で「差し込み待ち」を、受けない長いツールの台本で「送信待ち」を作る）。まとめ待ちの確認（吹き出しの下の線・［取り消す］・3 回話して 1 通ずつ会話の行に出る・配送の 3 つの言い方・止める → 続きを読む）もこのテストが通す。
 - エコー除去（ブラウザーの標準）は、偽のマイクの音を消すことがあるので、確かめるときは設定で切る。
 
 ## 前提と未確認
