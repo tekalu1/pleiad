@@ -6433,6 +6433,7 @@ voiceUi.mount({
   },
   target: () => ({ kind: 'chat', sessionId: state.current && state.current !== freshSessionId ? state.current : null }),
   send: (text) => submitVoiceText(text),
+  sendTo: (target, text) => submitVoiceText(text, target),
   follow: () => { const log = $('log'); if (log.scrollHeight - log.scrollTop - log.clientHeight < 160) log.scrollTop = log.scrollHeight; },
 });
 // 会話とプレビューの外部リンクは設定の開き先へ（web/link-open.mjs）

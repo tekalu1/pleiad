@@ -51,7 +51,11 @@ export function createVoiceDelivery({ cancel }) {
       status.classList.add('vc-dl');
       status.classList.toggle('outbox-status-mark', kind !== 'sent');
       status.dataset.vcDl = kind;
-      if (kind === 'sent') status.replaceChildren(icon('check'), document.createTextNode(t('voice.delivery.sent')));
+      if (kind === 'sent') {
+        status.replaceChildren(icon('check'), document.createTextNode(t('voice.delivery.sent')));
+        // AI に渡った: 受け取りの一言（ホスト）の起点（index.mjs が messageId で突き合わせて handed を送る）
+        window.dispatchEvent(new CustomEvent('ply:voice-delivered', { detail: { messageId: row.dataset.messageId ?? null } }));
+      }
       else status.replaceChildren(runMark(), document.createTextNode(kind === 'pending' ? t('voice.delivery.pending') : t('chat.delivery.sending')));
       return true;
     },

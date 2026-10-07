@@ -170,7 +170,7 @@ export function setupVoiceSettings({ cmd, page, openPage = () => {} }) {
     return group;
   }
 
-  /** 話の区切り（まとめ待ち）・割り込み・効果音（承認済み 2026-10-07）と、マイク */
+  /** 話の区切り（まとめ待ち）・割り込み・待っている間の声・効果音（承認済み 2026-10-07）と、マイク */
   function audioSection(v) {
     const out = document.createDocumentFragment();
     const turn = el('section', 'nf-section');
@@ -194,6 +194,22 @@ export function setupVoiceSettings({ cmd, page, openPage = () => {} }) {
     bargeCard.append(bargeLabel, el('small', null, t('voice.settings.barge.hint')));
     barge.append(bargeCard);
 
+    // 待っている間の声: 受け取りの一言・待ちの実況（承認済み 2026-10-07。どちらも既定はオン）
+    const waiting = el('section', 'nf-section');
+    waiting.append(el('h4', null, t('voice.settings.wait.title')));
+    const waitingCard = el('div', 'nf-card');
+    for (const [key, label, hint] of [['ackPhrase', 'ack', 'ackHint'], ['narration', 'narration', 'narrationHint']]) {
+      const row = el('label', 'mp-check');
+      const box = el('input');
+      box.type = 'checkbox'; box.checked = v[key] !== false;
+      box.onchange = () => save({ [key]: box.checked });
+      // i18n-dynamic: voice.settings.wait.
+      row.append(box, el('span', null, ` ${t(`voice.settings.wait.${label}`)}`));
+      // i18n-dynamic: voice.settings.wait.
+      waitingCard.append(row, el('small', null, t(`voice.settings.wait.${hint}`)));
+    }
+    waiting.append(waitingCard);
+
     const sounds = el('section', 'nf-section');
     sounds.append(el('h4', null, t('voice.settings.sounds.title')));
     const soundsCard = el('div', 'nf-card');
@@ -213,7 +229,7 @@ export function setupVoiceSettings({ cmd, page, openPage = () => {} }) {
     card.append(label, el('small', null, t('voice.settings.audio.echoHint')));
     sec.append(card, el('p', 'mp-note', t('voice.settings.audio.permission')));
     // 区切り・話して止める・エコー除去は、通話を始めるときに決まる（録音の制約・ready で渡す値）。通話中に替えたら次の通話から効く
-    out.append(turn, barge, sounds, sec, el('p', 'mp-note vc-nextcall', t('voice.settings.nextCall')));
+    out.append(turn, barge, waiting, sounds, sec, el('p', 'mp-note vc-nextcall', t('voice.settings.nextCall')));
     return out;
   }
 
