@@ -186,7 +186,7 @@ export class HeldAppServer {
   }
 
   labelObject({ withMeta = true } = {}) {
-    return { k: CODEX_LABEL_KIND, v: 1, turns: Object.fromEntries(this.cards), ...(withMeta ? this.metaSnapshot?.() ?? {} : {}) };
+    return { k: CODEX_LABEL_KIND, v: 1, turns: Object.fromEntries(this.cards), ...(withMeta ? this.metaSnapshot?.() ?? { loaded: this.meta.loaded ?? {}, watch: this.meta.watch ?? {} } : {}) };
   }
 
   #sendLabel() {
@@ -245,6 +245,9 @@ export async function acquireHeldAppServer(config = {}) {
     const held = new HeldAppServer({ client, state: known, spawned: false, from: (known.seq ?? 0) + 1, meta: known.label });
     const state = await held.open().catch(error => (error?.reason === 'unknown' ? null : Promise.reject(error)));
     if (state?.alive) {
+      // 付け直されなかったターンの印（前のサーバーが置いたまま）は外す（外さないと、記録が印より前を捨てられず溜まる）。札はこのサーバーのターンだけにする
+      for (const name of Object.keys(known.marks ?? {})) if (name.startsWith('turn:')) client.unmark(CODEX_CHILD, name);
+      held.touchLabel();
       current = held;
       return held;
     }
