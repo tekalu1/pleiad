@@ -22,7 +22,10 @@
 //                 persistMarks = 行が描き直される場所（印を付け直す。rowKey = 行の識別子。画面を開いている間だけ覚える）
 //   target()      見ている先 { kind: 'chat', sessionId } | { kind: 'thread', channelId, threadId } | null
 //   send(text)    まとめ待ちを終えた 1 通を、いまの送信の経路（会話へは sendMessage で会話の行に置く、スレッドへは channels.post）へ。失敗したら投げる。
-//                 index.mjs が直列に呼ぶ（前の送信が済むまで次を呼ばない）。入力欄は通さない
+//                 index.mjs が直列に呼ぶ（前の送信が済むまで次を呼ばない）。入力欄は通さない。会話の id を返す口（{ sessionId, messageId }）なら、
+//                 messageId が「AI に渡しました」になったとき（delivery.mjs の ply:voice-delivered）に受け取りの一言の時計を始める。何も返さない口（スレッド）は、送れた時点で渡ったとする
+//   sendTo?(target, text)  通話を終えたとき、話していた会話から別の会話へ移っていた場合の送り先指定の送信（まとめ待ちの残りを、話していた会話へ）。
+//                 無ければ、スレッドは channels.post、会話は送れない扱い
 //   follow()      足したあと、末尾にいるなら下へ追従させる
 //
 // 通話は 1 度に 1 本。別の slot で始めると前の通話は終わる。見ている会話・スレッドが別のものに変わったら通話は終わる（新しい会話の id が決まっただけなら続ける）。
@@ -45,8 +48,25 @@ export function setupVoice({ token, invoke, openSettings, available = () => true
   let deniedRec = null;         // マイクを使えなかった rec（理由は deniedReason）
   let deniedReason = null;
   let startedKey = '';
+  let startedTarget = null;     // 通話が見ている先（始めたとき・新しい会話の id が決まったときに更新）。終えたとき、まとめ待ちの残りをここへ送る
   let settings = { echoCancellation: true, sounds: 'off', bargeIn: true };
   const sendQueue = createSendQueue();   // 声で確定した発言を、話した順に 1 通ずつ送る直列のキュー
+  // 声で送った発言が「AI に渡しました」になった（web/voice/delivery.mjs）。送る側の応答（messageId）より先に届くことがあるので、どちらが先でも突き合わせる
+  const deliveredIds = new Set();
+  const awaitingDelivered = new Set();
+  window.addEventListener('ply:voice-delivered', (e) => {
+    const id = e.detail?.messageId;
+    if (!id) return;
+    if (awaitingDelivered.delete(id)) engine.noteHanded();
+    else { deliveredIds.add(id); if (deliveredIds.size > 200) deliveredIds.delete(deliveredIds.values().next().value); }
+  });
+  /** 送れた。渡ったことを知らせる（ホストの受け取りの一言の起点）。渡っていない（送信待ち・差し込み待ち）なら、渡るまで待つ */
+  function noteHanded(result) {
+    const id = result?.messageId;
+    if (!id || deliveredIds.delete(id)) { engine.noteHanded(); return; }
+    awaitingDelivered.add(id);
+    if (awaitingDelivered.size > 200) awaitingDelivered.delete(awaitingDelivered.values().next().value);
+  }
   let loopOn = false, clock = null, watchTimer = null;
   let said = 'off';
   let lastRec = null;           // 直近に通話していた rec（終わったあとに届く知らせを出す先）
@@ -153,7 +173,8 @@ export function setupVoice({ token, invoke, openSettings, available = () => true
     active = rec;
     deniedRec = null; deniedReason = null;
     rec.note.hide();
-    startedKey = keyOf(rec.slot.target());
+    startedTarget = rec.slot.target();
+    startedKey = keyOf(startedTarget);
     paintAll();
     const ok = await engine.start(rec.slot.target(), { echoCancellation: settings.echoCancellation });
     if (!ok) {
@@ -182,7 +203,7 @@ export function setupVoice({ token, invoke, openSettings, available = () => true
     const key = keyOf(active.slot.target());
     if (key === startedKey) return;
     const was = startedKey;
-    if (was === 'chat:' && key.startsWith('chat:') && key !== 'chat:') { startedKey = key; engine.setTarget(active.slot.target()); return; }
+    if (was === 'chat:' && key.startsWith('chat:') && key !== 'chat:') { startedKey = key; startedTarget = active.slot.target(); engine.setTarget(startedTarget); return; }
     engine.end('moved');
   }
 
@@ -205,7 +226,7 @@ export function setupVoice({ token, invoke, openSettings, available = () => true
       case 'cancel': rec?.mark.stop(); break;
       // まとめ待ち: 組み立て中の文を 1 つの吹き出しへ、残り時間はマイクの縁の弧へ（同じ長さで減る）
       case 'hold': if (rec) { rec.live.update(ev.view); rec.parts.wrap.style.setProperty('--hold-p', (ev.view.active ? ev.view.fraction : 1).toFixed(3)); } break;
-      case 'turn': if (rec) onTurn(rec, ev.text); break;
+      case 'turn': if (rec) onTurn(rec, ev.text, ev.ended === true); break;
       case 'turn.discard': rec?.live.discard(); break;
       case 'barge': case 'halt':
         if (rec) { rec.cut = true; say(t('voice.live.stopped')); paint(rec); }
@@ -228,14 +249,16 @@ export function setupVoice({ token, invoke, openSettings, available = () => true
   });
 
   /** まとめ待ちを終えた 1 通。吹き出しは確定の字にして、会話へは直列のキューで送る（本物の行が現れたら吹き出しは消える） */
-  function onTurn(rec, text) {
+  function onTurn(rec, text, ended = false) {
+    if (ended) { onLeaveTurn(rec, text); return; }
     rec.cut = false;
     rec.live.commit(text);
     const bubble = rec.live.row;
     engine.noteSent(true);
     say(t('voice.live.sent'));
     sendQueue.push(() => rec.slot.send(text)).then(
-      () => {
+      (result) => {
+        noteHanded(result);
         sounds.play('sent');
         // 本物の発言の行が現れなかったとき（別の経路で描かれた）のために、少し待って吹き出しを外す
         setTimeout(() => { if (rec.live.sending && rec.live.row === bubble) rec.live.remove(true); }, 600);
@@ -247,6 +270,29 @@ export function setupVoice({ token, invoke, openSettings, available = () => true
         sounds.play('fail');
       },
     );
+  }
+
+  /**
+   * 通話を終えたとき、まとめ待ちに残っていた言葉（engine が ended: true で出す。言いよどみだけなら来ない）。話していた会話へ送る。
+   * まだその会話を見ているなら普通の送り方（会話の行に配送の一行が出る）。別の会話へ移っていたら送り先を指定して送る（その会話には行を出せないので、読み上げの通知で知らせる）
+   * 通話は終わっているので、吹き出し・考え中・受け取りの一言の起点（渡った合図）には触れない
+   */
+  function onLeaveTurn(rec, text) {
+    const target = startedTarget;
+    const here = !target || keyOf(target) === keyOf(rec.slot.target());
+    say(t('voice.live.sent'));
+    sendQueue.push(() => (here ? rec.slot.send(text) : sendTo(rec, target, text))).then(
+      () => { sounds.play('sent'); if (!here) say(t('voice.note.sentOnLeave')); },
+      (e) => {
+        rec.note.show(t('voice.note.sendFailed', { error: e?.message ?? String(e) }), { settings: false });
+        sounds.play('fail');
+      },
+    );
+  }
+  function sendTo(rec, target, text) {
+    if (rec.slot.sendTo) return rec.slot.sendTo(target, text);
+    if (target.kind === 'thread') return invoke('channels.post', { channelId: target.channelId, threadId: target.threadId, text });
+    return Promise.reject(new Error(t('voice.note.notSent')));
   }
 
   const NOTICE = {

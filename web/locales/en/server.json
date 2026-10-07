@@ -1155,6 +1155,25 @@
       "table": "The table is on the screen",
       "log": "The log is on the screen"
     },
+    "wait": {
+      "ack": {
+        "1": "Okay, let me check",
+        "2": "One moment, please",
+        "3": "Got it, working on it",
+        "4": "Let me take a look"
+      },
+      "tool": {
+        "read": "Reading files",
+        "search": "Searching",
+        "command": "Running a command",
+        "web": "Looking at the web",
+        "delegate": "Handing this to another agent",
+        "edit": "Editing files",
+        "computer": "Using the screen",
+        "other": "Working on it",
+        "still": "Still working"
+      }
+    },
     "key": {
       "invalid": "That does not look like an OpenRouter key (empty, too short, or contains whitespace)"
     }

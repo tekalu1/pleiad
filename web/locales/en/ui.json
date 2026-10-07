@@ -4295,6 +4295,7 @@
       "tts": "Could not read that aloud. See the text on screen",
       "sendFailed": "Could not send the message: {{error}}",
       "notSent": "It could not be sent right now",
+      "sentOnLeave": "When the call ended, the words still waiting to be sent went to the conversation you were speaking in",
       "start": "Could not start the call ·",
       "startTimeout": "The call did not get ready in time"
     },
@@ -4325,7 +4326,7 @@
         "today": "Today: calls {{minutes}} min · transcribed {{stt}} min · read aloud {{chars}} characters",
         "note": "A call ends when it reaches a limit (and cannot start once the day's limit is reached). A call that hears nobody for 10 minutes also ends."
       },
-      "nextCall": "Pause length, speaking to stop the reading, and echo cancellation are fixed when a call starts. If you change them during a call, they take effect from the next call (sound effects apply right away).",
+      "nextCall": "Pause length, speaking to stop the reading, echo cancellation, the acknowledgement phrase, and the waiting narration are fixed when a call starts. If you change them during a call, they take effect from the next call (sound effects apply right away).",
       "turn": {
         "title": "Pause before sending",
         "hint": "How long to wait after you stop talking before the message is sent. A longer wait keeps hesitations in one message; a shorter wait starts the reply sooner.",
@@ -4344,6 +4345,13 @@
         "title": "Interrupting",
         "label": "Speak to stop the reading",
         "hint": "Works with a headset or when echo cancellation is on. Otherwise it turns itself off and the microphone stays closed while the reply is read."
+      },
+      "wait": {
+        "title": "Voice while waiting",
+        "ack": "Acknowledgement phrase",
+        "ackHint": "After you send by voice, if no reply starts within 1.5 seconds, a short fixed phrase such as \"Okay, let me check\" is read. Nothing is read if the reply starts first.",
+        "narration": "Waiting narration",
+        "narrationHint": "When tools are running and 6 seconds of silence pass, a fixed phrase such as \"Reading files\" is read (at most every 12 seconds, up to 4 times per reply). File names and command contents are never read."
       },
       "sounds": {
         "title": "Sounds",

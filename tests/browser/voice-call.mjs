@@ -1,6 +1,7 @@
 // 通話モードの打鍵（実ブラウザー。承認済み 2026-10-06、docs/voice-call.md「確かめ方」）:
 //   頭の通話ボタン → 準備中 → 聞いています → 声（偽のマイク）→ 片が吹き出しに足される → まとめ待ち（残りの線・［いま送る］［取り消す］）→ 1 通で送る → 返事 → 読んでいる場所の下線が伸びる →
 //   止める（ここで止めました · 続きを読む）→ ミュート → 終える。さらに、取り消す・送信待ち（時計と［取り消す］）・差し込み待ち → AI に渡しました（承認済み 2026-10-07）。
+//   待っている間の声（受け取りの一言・待ちの実況）と、通話を終えたときのまとめ待ち（［切る］・会話を移る。ADR 0158）。
 //   Chats の会話とチャンネルのスレッドの両方。権限なし・キーなしの一行。ライト・ダーク・1280・360。
 // 実行: node tests/browser/voice-call.mjs   （playwright-core は playwright-cli 同梱のものを使う。環境変数 PW_CORE・PW_CHROMIUM で替えられる）
 //   VOICE_SHOTS=<ディレクトリ> を渡すと、場面ごとに撮る（temporary/screenshots/voice-call-<場面>.png）。
@@ -116,7 +117,8 @@ try {
   // ---- 準備: fake のログイン・キー・設定（エコー除去を切って、偽のマイクの音を素通しにする）
   await admin.cmd('authLogin', { backend: 'fake' }).catch(() => {});
   await admin.cmd('setVoiceKey', { key: KEY });
-  await admin.cmd('invoke', { op: 'settings.set', args: { key: 'voice', value: { echoCancellation: false } } });
+  // 受け取りの一言・待ちの実況は、読み上げの間はマイクを閉じる（半二重。エコー除去を切っているため）ので、時刻で話す偽のマイクの場面では切る。専用の場面（下）で入れる
+  await admin.cmd('invoke', { op: 'settings.set', args: { key: 'voice', value: { echoCancellation: false, ackPhrase: false, narration: false } } });
 
   // ===== Chats の会話 =====
   {
@@ -270,7 +272,10 @@ try {
     const label = (i) => rows.nth(i).locator('.outbox-status').innerText().catch(() => '');
     if (scenario === 'steer') {
       await until(async () => (await rows.count()) === 3, 'three rows (steer)', 60000);
-      check((await rows.nth(0).innerText()).includes(QUESTION) && (await rows.nth(1).innerText()).includes('lint') && (await rows.nth(2).innerText()).includes('main'), '3 回話した言葉は、話した順に 3 通、会話の行に出る（入力欄に残らない・混ざらない）');
+      // 行は先に置かれ、本文が入るのが少し遅れることがある（空の行を読まないよう、そろうまで待つ）
+      let texts3 = [];
+      await until(async () => { texts3 = await rows.allInnerTexts(); return texts3.length === 3 && texts3.every((x) => x.trim() !== ''); }, 'three rows with text (steer)', 10000);
+      check(texts3[0].includes(QUESTION) && texts3[1].includes('lint') && texts3[2].includes('main'), '3 回話した言葉は、話した順に 3 通、会話の行に出る（入力欄に残らない・混ざらない）', texts3);
       check((await page.evaluate(() => document.getElementById('prompt').value)) === '', '入力欄は空のまま（声の送信は入力欄を通らない）');
       const seen = new Set();
       await until(async () => { for (let i = 0; i < 3; i++) { const l = await label(i); if (/差し込み待ち/.test(l)) seen.add(`p${i}`); } return seen.size >= 1; }, 'pending label', 30000);
@@ -302,6 +307,85 @@ try {
   await admin.cmd('invoke', { op: 'settings.set', args: { key: 'voice', value: { sounds: 'off' } } });
   void threeTexts;
   await browserThree.close().catch(() => {});
+
+  // ===== 待っている間の声（ADR 0158）: 受け取りの一言・待ちの実況 =====
+  // 受け取りの一言・待ちの実況は読み上げの間マイクを閉じる（このテストはエコー除去を切った半二重）ので、声を話し終えたあとの場面だけで入れる
+  {
+    const ttsFrom = api.records.tts.length;
+    fs.writeFileSync(replyFile, JSON.stringify({ when: QUESTION, steps: [{ tool: 'Grep', input: { pattern: 'secret-pattern-xyz' }, result: 'x', ms: 16000 }, { text: '調べ終わりました。' }] }));
+    sttTexts.length = 0; sttTexts.push(...script); sttLast = QUESTION;
+    await admin.cmd('invoke', { op: 'settings.set', args: { key: 'voice', value: { ackPhrase: true, narration: true } } });
+    const { page, context } = await newPage();
+    await page.evaluate(() => document.getElementById('newSession').click());
+    await page.waitForFunction(() => document.querySelectorAll('#thread .m.user').length === 0);
+    await page.locator('header.top .vc-call').click();
+    const states = [];
+    let underlined = false;
+    await until(async () => {
+      const s = await msOf(page, '#composer');
+      if (states.at(-1) !== s) states.push(s);
+      if (s === 'speaking' && (await page.locator('.vc-underlay .vc-ul').count()) > 0 && !(await page.locator('#thread .m.ai').filter({ hasText: '調べ終わりました' }).count())) underlined = true;
+      return (await page.locator('#thread .m.ai').filter({ hasText: '調べ終わりました' }).count()) > 0;
+    }, 'reply after tool', 70000);
+    const flow = states.join(',');
+    check(/thinking,speaking,thinking,speaking/.test(flow), '返事が始まらないあいだ、受け取りの一言 → 「考え中」のまま → 待ちの実況の順に読む（読んだあとも「考え中」へ戻る）', flow);
+    check(!underlined, '一言・実況は返事ではないので、読んでいる場所の下線は出ない');
+    const said = api.records.tts.slice(ttsFrom).map((r) => r.input);
+    const ACK_TEXTS = ['はい、確認します', '少し待ってくださいね', 'はい、承知しました', 'ちょっと見てみますね'];
+    check(said.some((s) => ACK_TEXTS.includes(s)) && said.includes('調べています'), '読み上げに出た文: 決まった一言と、ツールの種類（Grep → 調べています）の文', said);
+    check(!said.some((s) => /secret-pattern-xyz|Grep/.test(s)), 'ツールの引数・名前は読み上げの文に出ない', said);
+    check(said.filter((s) => ACK_TEXTS.includes(s)).length === 1 && said.filter((s) => s === '調べています').length === 1, '一言は 1 回、実況は無音の間隔（12 秒）のあいだに 1 回だけ', said);
+    await context.close();
+    await admin.cmd('invoke', { op: 'settings.set', args: { key: 'voice', value: { ackPhrase: false, narration: false } } });
+    fs.writeFileSync(replyFile, JSON.stringify({ when: QUESTION, steps: [{ text: REPLY }] }));
+    await sleep(500);
+  }
+
+  // ===== 通話を終えたとき、まとめ待ちに残っていた言葉（ADR 0158）=====
+  {
+    // [切る] で終える: その会話へ送られ、声の行（配送の一行）に出る
+    sttTexts.length = 0; sttTexts.push(...script); sttLast = QUESTION;
+    const { page, context } = await newPage();
+    await page.evaluate(() => document.getElementById('newSession').click());
+    await page.waitForFunction(() => document.querySelectorAll('#thread .m.user').length === 0);
+    const call = page.locator('header.top .vc-call');
+    await call.click();
+    const bubble = page.locator('#thread .vc-live');
+    await until(async () => (await bubble.locator('.vc-hold').count()) === 1 && (await bubble.locator('.lw').count()) > 0, 'hold with words (leave)', 30000);
+    await call.click();
+    check(!(await call.evaluate((n) => n.classList.contains('on'))), '［切る］で通話が終わる');
+    const rows = page.locator('#thread .mw:not(.vc-live) .m.user');
+    await until(async () => (await rows.count()) === 1, 'leftover row', 20000);
+    check((await rows.nth(0).innerText()).includes('署名の鍵') && (await page.locator('#thread .vc-live').count()) === 0, '通話を終えたとき、まとめ待ちに残っていた言葉が会話へ送られ、声の行に出る（捨てられない）', await rows.allInnerTexts());
+    await until(async () => /AI に渡しました/.test(await rows.nth(0).locator('.outbox-status').innerText().catch(() => '')), 'leftover delivered', 20000);
+    check((await page.evaluate(() => document.getElementById('prompt').value)) === '', '入力欄は空のまま（通話を終えたときの送信も入力欄を通らない）');
+    await context.close();
+    await sleep(500);
+  }
+  {
+    // 会話を移って終える: 話していた会話へ送る（移った先の会話には出ない）
+    sttTexts.length = 0; sttTexts.push(...script); sttLast = QUESTION;
+    const { page, context } = await newPage();
+    await page.evaluate(() => document.getElementById('newSession').click());
+    await page.waitForFunction(() => document.querySelectorAll('#thread .m.user').length === 0);
+    const mark = admin.mark();
+    await page.fill('#prompt', '前の会話です');
+    await page.click('#send');
+    const userEvent = await until(async () => admin.since(mark).find((e) => e.type === 'userMessage' && String(e.text).includes('前の会話です')), 'first message of the old conversation', 20000);
+    await until(async () => (await page.locator('#thread .m.ai').count()) >= 1, 'old conversation reply', 30000);
+    const oldId = userEvent.sessionId;
+    const before = admin.mark();
+    await page.locator('header.top .vc-call').click();
+    const bubble = page.locator('#thread .vc-live');
+    await until(async () => (await bubble.locator('.vc-hold').count()) === 1 && (await bubble.locator('.lw').count()) > 0, 'hold with words (moved)', 30000);
+    await page.evaluate(() => document.getElementById('newSession').click());
+    await until(async () => !(await page.locator('header.top .vc-call').evaluate((n) => n.classList.contains('on'))), 'call ended by moving', 6000);
+    const sent = await until(async () => admin.since(before).find((e) => e.type === 'userMessage' && String(e.text).includes('署名の鍵')), 'leftover to the old conversation', 20000);
+    check(sent.sessionId === oldId, '会話を移って終えたとき、まとめ待ちに残っていた言葉は、話していた会話（移る前）へ送られる', { sent: sent.sessionId, oldId });
+    check((await page.locator('#thread .m.user').count()) === 0, '移った先の会話には、その言葉の行も吹き出しも出ない');
+    await context.close();
+    await sleep(500);
+  }
   // 以降の場面は最初の台本に戻す
   fs.writeFileSync(replyFile, JSON.stringify({ when: QUESTION, steps: [{ text: REPLY }] }));
   sttTexts.length = 0; sttTexts.push(...script); sttLast = QUESTION;
@@ -331,7 +415,7 @@ try {
     check(!(await page.locator('#voicePanel').innerHTML()).includes(KEY), '設定 › 通話の DOM にキーが無い');
     await shot(page, 'settings-voice-1280-light');
     const settingsText = await page.locator('#voicePanel').innerText();
-    check(['話の区切り', '短め', '標準', '長め', '割り込み', '話して読み上げを止める', '効果音', '少なめ'].every((w) => settingsText.includes(w)), '設定 › 通話に、話の区切り・割り込み・効果音が足されている');
+    check(['話の区切り', '短め', '標準', '長め', '割り込み', '話して読み上げを止める', '効果音', '少なめ', '受け取りの一言', '待ちの実況'].every((w) => settingsText.includes(w)), '設定 › 通話に、話の区切り・割り込み・効果音が足されている');
     check((await page.locator('#voicePanel .vc-seg[aria-label="区切りの長さ"] button[aria-checked=true]').innerText()) === '標準' && (await page.locator('#voicePanel .vc-seg[aria-label="効果音"] button[aria-checked=true]').innerText()) === 'オフ', '既定は区切り 標準・効果音 オフ（承認済み）');
     check(await page.locator('#voicePanel input[type=checkbox]').first().isDisabled(), 'エコー除去がオフの間は「話して読み上げを止める」を選べない（効かないので）');
     await page.locator('#voicePanel .vc-seg[aria-label="区切りの長さ"] button', { hasText: '長め' }).click();

@@ -13,6 +13,8 @@ export const DEFAULTS = Object.freeze({
   turnHold: 'standard',                                 // 話の区切り（まとめ待ち）。最後の声から送るまでの待ち。short・standard・long（TURN_HOLD_MS）
   bargeIn: true,                                        // 話して読み上げを止める。エコー除去が効いているときだけ働く（効かなければ半二重のまま）
   sounds: 'off',                                        // 効果音。off・few（送った音と止めた音だけ）・all
+  ackPhrase: true,                                      // 受け取りの一言。声で送った 1 通が AI に渡って 1.5 秒たっても返事が始まらないとき、決まった一言を読む（docs/voice-call.md「待ちの声」）
+  narration: true,                                      // 待ちの実況。ツールを使っている無音が続くとき、ツールの種類から決まった短い文を読む
 });
 
 /** 区切り（まとめ待ち）の長さ（ms）。最後の声から数える。標準は考えながら話す人が 1 通にまとまる長さ（docs/voice-call.md「まとめ待ち」） */
@@ -64,6 +66,11 @@ export function normalizeVoiceSettings(raw, { strict = false } = {}) {
   }
   if (Object.hasOwn(src, 'turnHold') && src.turnHold !== undefined) {
     if (typeof src.turnHold === 'string' && Object.hasOwn(TURN_HOLD_MS, src.turnHold)) out.turnHold = src.turnHold; else bad('turnHold', Object.keys(TURN_HOLD_MS).join('|'));
+  }
+  for (const key of ['ackPhrase', 'narration']) {
+    if (Object.hasOwn(src, key) && src[key] !== undefined) {
+      if (typeof src[key] === 'boolean') out[key] = src[key]; else bad(key, 'boolean');
+    }
   }
   if (Object.hasOwn(src, 'sounds') && src.sounds !== undefined) {
     if (SOUND_LEVELS.includes(src.sounds)) out.sounds = src.sounds; else bad('sounds', SOUND_LEVELS.join('|'));

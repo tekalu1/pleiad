@@ -26,8 +26,17 @@ export function createChatVoiceSender({ state, cmd, randomId, freshId, ensureSes
     for (let waited = 0; (state.busy || state.loadingSession) && waited < READY_MAX_MS; waited += READY_POLL_MS) await sleep(READY_POLL_MS);
   }
 
-  /** 送る。受理されたら返る。送れなかったら投げる（発言は入力欄へ戻さない。画面は失敗の一行を出す） */
-  return async function send(text) {
+  /**
+   * 送る。受理されたら返る。送れなかったら投げる（発言は入力欄へ戻さない。画面は失敗の一行を出す）。
+   * to = { sessionId }: 通話を終えたとき、別の会話へ移っていたときの、話していた会話への送り（いま見ている会話の行・設定には触れない）
+   */
+  return async function send(text, to = null) {
+    if (to) {
+      if (!to.sessionId) throw new Error(t('voice.note.notSent'));
+      const messageId = randomId();
+      await cmd('sendMessage', { sessionId: to.sessionId, messageId, prompt: text });
+      return { sessionId: to.sessionId, messageId };
+    }
     let sessionId = state.current;
     if (!sessionId || sessionId === freshId()) sessionId = await ensureSession();
     if (!sessionId) throw new Error(t('voice.note.notSent'));

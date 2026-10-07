@@ -14,9 +14,11 @@
 // ミュートは音声フレームを送らないだけで、トラックは止めない（止めると録音中の表示が消えて再開が遅い）。通話を終えるとトラックを止める。
 //
 // 確定した言葉はここで 1 通にまとめる（web/voice/turn-hold.mjs）。送る時が来たら turn を出し、画面（index.mjs）が会話へ送る。
+// 通話を終えたとき、まとめ待ちに残っていた言葉（言いよどみだけなら捨てる）も turn（ended: true）で出す（切る・会話を移る・つながりが切れる、どれでも。ADR 0158）。
+// 決まった文（受け取りの一言・待ちの実況）の seg は skip: 'notice'。返事ではないので、鳴っても「考え中」を終わらせず、最初の音の遅延にも数えない。
 //
 // events（subscribe）: { type: 'state' } / { type: 'partial' | 'final' | 'drop', utt, text? } / { type: 'hold', view }（まとめ待ちの組み立て中の文・残り時間）/
-//   { type: 'turn', text }（まとめて 1 通を送る）/ { type: 'turn.discard' }（言いよどみだけだった）/ { type: 'barge', id }（話して読み上げを止めた）/ { type: 'halt', id }（止めるボタン）/
+//   { type: 'turn', text, ended? }（まとめて 1 通を送る。ended = 通話を終えたときのまとめ待ちの残り）/ { type: 'turn.discard' }（言いよどみだけだった）/ { type: 'barge', id }（話して読み上げを止めた）/ { type: 'halt', id }（止めるボタン）/
 //   { type: 'seg', id, text, first, skip? } / { type: 'segstart' | 'segend' | 'segfail', id } /
 //   { type: 'cancel' } / { type: 'turnEnd', spoke } / { type: 'notice', code } / { type: 'ended', reason } / { type: 'lat', ... }
 import { createCapture } from './capture.mjs';
@@ -49,6 +51,7 @@ export function createCallEngine({ token, now = () => performance.now(), AudioCo
   let awaitingReply = false, replySince = 0;
   let hearingUntil = 0, voicedRun = 0, halfUntil = 0, micLevel = 0, lastFinalAt = 0, latSent = true;
   let bargeConfigured = false, echoOn = true, bargeMs = 0, bargeRing = [], lastSegId = null;
+  const noticeSegs = new Set();     // 決まった文（受け取りの一言・待ちの実況）の文の id
   const gate = createSendGate();
   const hold = createTurnHold();
   let holdSig = '';
@@ -134,7 +137,7 @@ export function createCallEngine({ token, now = () => performance.now(), AudioCo
         pumpHold();
         break;
       case 'drop': hold.drop(msg.utt); emit({ type: 'drop', utt: msg.utt }); pumpHold(); break;
-      case 'seg': player.seg(msg.id, msg); emit({ type: 'seg', id: msg.id, text: msg.text, first: msg.first, skip: msg.skip }); break;
+      case 'seg': if (msg.skip === 'notice') noticeSegs.add(msg.id); player.seg(msg.id, msg); emit({ type: 'seg', id: msg.id, text: msg.text, first: msg.first, skip: msg.skip }); break;
       case 'seg.end': player.end(msg.id); break;
       case 'seg.fail': player.fail(msg.id); break;
       case 'cancel': player.cancel(); lastSegId = null; break;
@@ -161,8 +164,9 @@ export function createCallEngine({ token, now = () => performance.now(), AudioCo
   const onPlayer = (event) => {
     if (event.type === 'segstart') {
       lastSegId = event.id;
-      awaitingReply = false;
-      if (!latSent && lastFinalAt) { latSent = true; const sinceFinalMs = now() - lastFinalAt; link?.send({ t: 'lat', sinceFinalMs }); emit({ type: 'lat', soundMs: Math.round(sinceFinalMs) }); }
+      const notice = noticeSegs.delete(event.id);
+      if (!notice) awaitingReply = false;
+      if (!notice && !latSent && lastFinalAt) { latSent = true; const sinceFinalMs = now() - lastFinalAt; link?.send({ t: 'lat', sinceFinalMs }); emit({ type: 'lat', soundMs: Math.round(sinceFinalMs) }); }
     }
     if (event.type === 'segfail') emit({ type: 'notice', code: 'tts' });
     emit(event);
@@ -183,15 +187,18 @@ export function createCallEngine({ token, now = () => performance.now(), AudioCo
     awaitingReply = false;
     hearingUntil = voicedRun = halfUntil = 0;
     micLevel = 0;
-    bargeConfigured = false; bargeMs = 0; bargeRing = []; lastSegId = null; holdSig = '';
+    bargeConfigured = false; bargeMs = 0; bargeRing = []; lastSegId = null; holdSig = ''; noticeSegs.clear();
     hold.reset();
     gate.reset();
   }
 
   function finish(reason) {
     if (!active && !starting) return;
+    // まとめ待ちに残った言葉（言いよどみだけなら null）。cleanup が溜めた文字を捨てる前に取る。ended の前に出し、画面が送る先を決められるようにする
+    const rest = active ? hold.leftover() : null;
     cleanup();
     refresh();
+    if (rest) emit({ type: 'turn', text: rest, ended: true });
     emit({ type: 'ended', reason });
   }
 
@@ -314,6 +321,8 @@ export function createCallEngine({ token, now = () => performance.now(), AudioCo
     get holdMs() { return hold.holdMs; },
     /** 見ている会話・スレッドが変わった（新しい会話の id が決まった）。通話の宛先は変えず、読み上げる会話の対象だけを更新する */
     setTarget(target) { if (active) link.send({ t: 'target', target }); },
+    /** 声で送った発言が AI に渡った（画面が「AI に渡しました」にしたとき）。ホストが受け取りの一言の時計を始める */
+    noteHanded() { if (active) link.send({ t: 'handed' }); },
     /** 確定した発言を、画面が会話へ送った（送れなかったら ok: false）。送れたら、最初の音かターンの終わりまで「考え中」 */
     noteSent(ok) {
       if (!active) return;

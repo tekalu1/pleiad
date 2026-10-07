@@ -118,6 +118,16 @@ export function createTurnHold({ holdMs = 1200, join = joinText } = {}) {
     sendNow() { if (active) { flush = true; touch(); } },
     /** 取り消す（溜めた文字を捨てる） */
     cancel() { entries.clear(); ignoreUpTo = lastUtt; active = false; flush = false; touch(); },
+    /**
+     * 通話を終えるとき、まだ送っていない言葉。言いよどみだけ・空なら null。画面に出ている文字（確定と途中）をそのまま送る
+     * （吹き出しに見えていた言葉が、黙って消えないように）。送ったら溜めた文字は空になる
+     */
+    leftover() {
+      const text = fullText().trim();
+      if (!active || !text || isFillerOnly(text)) return null;
+      this.cancel();
+      return text;
+    },
     /** 通話の終わり・初期化 */
     reset() { this.cancel(); busy = false; lastVoiceAt = -Infinity; lastUtt = ignoreUpTo = 0; },
     /**

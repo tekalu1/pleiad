@@ -3,7 +3,7 @@
 //   upgrade(req, socket, head)  /voice-ws への接続（トークンは呼び出し側が確かめ済み）。音声はバイナリ、制御は JSON。/ws とは別の口（音声の高頻度のバイナリを、
 //                               大きなイベントの JSON と同じ口に混ぜない）。キーを持つこの PC の画面からだけ受ける（リモートの端末からは受けない）
 //   onEvent(event)              server.mjs の emitGlobal から全部の出来事を受け、通話が見ている会話（chat = 会話の id、thread = そのスレッドの bot の会話）の
-//                               text.delta・text.end・userMessage・turnEnd だけを通話へ渡す。まだ見ていない会話の直近 3 秒は覚えておき、見始めたら渡す
+//                               text.delta・text.end・tool.start・userMessage・turnEnd だけを通話へ渡す（tool.start は名前だけ。引数・コマンド・ファイル名は通話へ渡さない。待ちの実況の種類を決めるため）。まだ見ていない会話の直近 3 秒は覚えておき、見始めたら渡す
 //                               （新しい会話は最初のターンで id が決まるため、見る先の更新が数 ms 遅れても最初の文を落とさない）
 //   status() / checkKey / keysChanged   設定 › 通話。使う OpenRouter のキーは設定 › API キー（core/api-keys.mjs。ADR 0155）で選んだもの（apiKey が返す）で、画面へも返さない
 import path from 'node:path';
@@ -12,10 +12,11 @@ import { normalizeKey } from '../delegation-judges.mjs';
 import { createVoiceSession } from './session.mjs';
 import { createVoiceUsage } from './usage.mjs';
 import { normalizeVoiceSettings } from './settings.mjs';
+import { ACK_COUNT, TOOL_KINDS } from './wait-voice.mjs';
 import { redactKey, voiceBaseUrl } from './openrouter.mjs';
 
 export const VOICE_PATH = '/voice-ws';
-const AGENT_EVENTS = new Set(['text.delta', 'text.end', 'userMessage', 'turnEnd']);
+const AGENT_EVENTS = new Set(['text.delta', 'text.end', 'tool.start', 'userMessage', 'turnEnd']);
 const RECENT_MS = 3000;
 const RECENT_SESSIONS = 8;
 const RECENT_EVENTS = 400;
@@ -98,6 +99,7 @@ export function createVoiceHost({ dataDir, apiKey, keyStorage = async () => null
 
   function onEvent(ev) {
     if (!sessions.size || !ev?.sessionId || !AGENT_EVENTS.has(ev.type)) return;
+    if (ev.type === 'tool.start') ev = { type: ev.type, sessionId: ev.sessionId, name: String(ev.name ?? '').slice(0, 80) };
     const waiting = resolving.get(ev.sessionId);
     if (waiting) { waiting.push(ev); return; }
     if (!threadOf.has(ev.sessionId) && [...sessions].some((s) => s.target?.kind === 'thread')) {
@@ -126,7 +128,16 @@ export function createVoiceHost({ dataDir, apiKey, keyStorage = async () => null
         const lang = uiLang();
         return {
           settings, config: apiKey ? config(apiKey) : null, uiLang: lang, usage,
-          phrases: { code: t('voice.skip.code', { lng: lang }), table: t('voice.skip.table', { lng: lang }), log: t('voice.skip.log', { lng: lang }) },
+          phrases: {
+            code: t('voice.skip.code', { lng: lang }), table: t('voice.skip.table', { lng: lang }), log: t('voice.skip.log', { lng: lang }),
+            // 受け取りの一言・待ちの実況の決まった文（core/voice/wait-voice.mjs）
+            wait: {
+              // i18n-dynamic: voice.wait.ack.
+              ack: Array.from({ length: ACK_COUNT }, (_, i) => t(`voice.wait.ack.${i + 1}`, { lng: lang })),
+              // i18n-dynamic: voice.wait.tool.
+              tool: Object.fromEntries([...TOOL_KINDS, 'still'].map((k) => [k, t(`voice.wait.tool.${k}`, { lng: lang })])),
+            },
+          },
           todayCallSeconds: (await usage.today()).callSeconds,
         };
       },

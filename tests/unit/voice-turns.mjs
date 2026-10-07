@@ -342,6 +342,64 @@ export default async function (t) {
     engine.resume();
     t.ok('続きを読む: resume をホストへ送る', rig.link.sent.at(-1)?.t === 'resume');
     engine.end('user');
+
+    // 通話を終えたときのまとめ待ち（ADR 0158）: 言いよどみだけでなければ、ended の前に turn（ended: true）で出す
+    const order = () => events.filter((e) => e.type === 'turn' || e.type === 'ended').map((e) => (e.type === 'turn' ? `turn:${e.text}:${e.ended === true}` : 'ended'));
+    await boot({ echoCancellation: true });
+    for (let i = 0; i < 6; i++) { clock += 85; frame(0.2); }
+    J({ t: 'busy', on: true }); J({ t: 'final', utt: 1, text: '今のうちに送って' }); J({ t: 'busy', on: false });
+    t.ok('通話を終える（前提）: まとめ待ちに言葉が残っていて、まだ送っていない', turns().length === 0);
+    engine.end('user');
+    t.ok('通話を終える: まとめ待ちに残っていた言葉を 1 通として出す（ended: true）。ended より先', JSON.stringify(order()) === JSON.stringify(['turn:今のうちに送って:true', 'ended']), JSON.stringify(order()));
+
+    await boot({ echoCancellation: true });
+    for (let i = 0; i < 6; i++) { clock += 85; frame(0.2); }
+    J({ t: 'busy', on: true }); J({ t: 'final', utt: 1, text: '確定の文。' }); J({ t: 'partial', utt: 2, text: '途中の文' });
+    engine.end('moved');
+    t.ok('通話を終える（会話を移った）: 画面に出ていた文字（確定と途中）をそのまま 1 通にする。理由（切る・移る）で扱いを変えない', JSON.stringify(order()) === JSON.stringify(['turn:確定の文。途中の文:true', 'ended']), JSON.stringify(order()));
+
+    await boot({ echoCancellation: true });
+    for (let i = 0; i < 6; i++) { clock += 85; frame(0.2); }
+    J({ t: 'busy', on: true }); J({ t: 'final', utt: 1, text: 'えーと、あのー、' }); J({ t: 'busy', on: false });
+    engine.end('user');
+    t.ok('通話を終える: 言いよどみだけなら送らずに捨てる（turn を出さない）', JSON.stringify(order()) === JSON.stringify(['ended']), JSON.stringify(order()));
+
+    await boot({ echoCancellation: true });
+    engine.end('user');
+    t.ok('通話を終える: まとめ待ちに何も無ければ何も出さない', JSON.stringify(order()) === JSON.stringify(['ended']));
+
+    await boot({ echoCancellation: true });
+    for (let i = 0; i < 6; i++) { clock += 85; frame(0.2); }
+    J({ t: 'busy', on: true }); J({ t: 'final', utt: 1, text: '取り消した言葉' }); J({ t: 'busy', on: false });
+    engine.cancelTurn();
+    engine.end('user');
+    t.ok('通話を終える: ［取り消す］で捨てた言葉は、終えるときにも送らない', JSON.stringify(order()) === JSON.stringify(['ended']), JSON.stringify(order()));
+
+    // 受け取りの一言: 渡った合図をホストへ（handed）。決まった文（skip: notice）は「考え中」を終わらせず、遅延の計測にも数えない
+    await boot({ echoCancellation: true });
+    engine.noteHanded();
+    t.ok('渡った合図: 画面が「AI に渡しました」にしたら、ホストへ handed を送る', rig.link.sent.at(-1)?.t === 'handed');
+    engine.end('user');
+    const before = rig.link.sent.length;
+    engine.noteHanded();
+    t.ok('渡った合図: 通話が終わっていれば送らない', rig.link.sent.length === before);
+
+    await boot({ echoCancellation: true });
+    for (let i = 0; i < 6; i++) { clock += 85; frame(0.2); }
+    J({ t: 'busy', on: true }); J({ t: 'final', utt: 1, text: '調べてください' }); J({ t: 'busy', on: false });
+    for (let i = 0; i < 14; i++) { clock += 85; frame(0.001); }
+    engine.noteSent(true);
+    const latSent = () => rig.link.sent.filter((m) => m.t === 'lat').length;
+    J({ t: 'seg', id: 1, text: 'はい、確認します', first: false, skip: 'notice' });
+    rig.player.onEvent({ type: 'segstart', id: 1 });
+    rig.player.onEvent({ type: 'segend', id: 1 });
+    rig.player.busyFlag = false;
+    t.ok('決まった文（一言・実況）が鳴っても、「考え中」は続き、返事の最初の音の遅延（lat）は送らない', engine.state === 'thinking' && latSent() === 0, `${engine.state} ${latSent()}`);
+    J({ t: 'seg', id: 2, text: '見ました。', first: true });
+    rig.player.onEvent({ type: 'segstart', id: 2 });
+    rig.player.busyFlag = false;
+    t.ok('返事の文が鳴り始めたら、「考え中」を終わらせて遅延（lat）を送る', engine.state !== 'thinking' && latSent() === 1);
+    engine.end('user');
   }
 
   // ---- 割り込みの閾値（通常の声の 3 倍。承認済みの値）
