@@ -75,8 +75,10 @@ export function fitComposerRow(row, { cwd, who }) {
     who.style.minWidth = min(size.who, b);
     if (fits()) return;
   }
-  cwd.style.minWidth = ""; who.style.minWidth = "";
+  // アイコンだけにする段でも、宛先とモデルの名前は 6 字（bot なしは 4 字）より削らない（自分がアイコンだけになるまで）
+  cwd.style.minWidth = "";
   for (const cls of ["fit-cwd-icon", "fit-mode-icon", "fit-model-icon"]) {
+    if (cls === "fit-model-icon") who.style.minWidth = "";
     row.classList.add(cls);
     if (fits()) return;
   }
