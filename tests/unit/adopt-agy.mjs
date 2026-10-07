@@ -123,7 +123,7 @@ export default async function (t) {
     };
     ca = await open({ port: a.port, token: a.token });
     const ids = {};
-    for (const k of ['T', 'F', 'K', 'R', 'I']) {
+    for (const k of ['T', 'F', 'K', 'R', 'I', 'X']) {
       const res = await ca.runTurn({ backend: 'antigravity', cwd: work, prompt: `hello ${k}` }, { ms: WAIT_MS });
       assert.equal(res.outcome, 'ok', a.tail(10));
       ids[k] = res.sessionId;
@@ -195,6 +195,30 @@ export default async function (t) {
 
     cb.close(); cb = null;
     await b.stop(); b = null;
+
+    // 中断（引き継ぎとは別: 保持役に載った agy のターンを止める）: agy は木ごと止まり、保持役の子の記録は捨てられ、会話の次のターンは agy を起こし直して続く
+    {
+      a = await startServer({ env, dataDir, timeoutMs: 30_000 });
+      ca = await open({ port: a.port, token: a.token });
+      const markX = ca.mark();
+      void ca.cmd('sendMessage', { sessionId: ids.X, messageId: 'abort-X-0001', prompt: 'gated:x-never' }).catch(() => {});
+      await ca.waitFor(e => e.type === 'tool.start' && e.sessionId === ids.X, { ms: WAIT_MS, from: markX });
+      const xPid = (await spawned()).at(-1);
+      assert.ok(alive(xPid));
+      await ca.cmd('abort', { sessionId: ids.X });
+      const end = await ca.waitFor(e => e.type === 'turnEnd' && e.sessionId === ids.X, { ms: WAIT_MS, from: markX });
+      assert.equal(end.outcome, 'aborted', '中断で終わる');
+      await until(() => !alive(xPid), 10_000, '中断した agy が止まる');
+      const spawnedBefore = (await spawned()).length;
+      const again = await ca.runTurn({ backend: 'antigravity', sessionId: ids.X, cwd: work, prompt: 'after abort X' }, { ms: WAIT_MS });
+      assert.equal(again.outcome, 'ok', a.tail(10));
+      assert.equal((await spawned()).length, spawnedBefore + 1, '中断した会話の次のターンは agy を起こし直す');
+      t.ok('中断: 保持役に載った agy は止まり、記録が捨てられ、次のターンは起こし直して続く', true);
+      ca.close(); ca = null;
+      await a.stop(); a = null;
+      // サーバーが動いている間に保持役へつなぐと、その親の座を取ってしまう（A の読みが切れる）ので、止めた子の記録が捨てられたかは A が終わってから見る
+      assert.ok(!(await heldChildren()).some(c => c.pid === xPid), '止めた子の記録は保持役から捨てられている');
+    }
 
     // 3. 強制終了: ツールの実行中のまま A2 を落とす。札は agy を起こした直後に置いてある（A2 がツールの出来事を受け取る前に、保持役へ届いている）
     {
@@ -282,7 +306,7 @@ export default async function (t) {
         await until(() => b.child.exitCode !== null, 20_000, 'S2 が終わる');
         b = null;
         for (const pid of pids) await until(() => !alive(pid), 10_000, `idle の agy（${pid}）が終わる`);
-        await until(async () => (await heldChildren()).every(c => !c.alive), 10_000, 'サーバーが普通に終わると、idle の agy は保持役に残らない（子の終わりが保持役に届く）');
+        await until(async () => (await heldChildren()).every(c => !c.alive), 10_000, 'サーバーが普通に終わると、idle の agy は保持役に残らない（子の終わりが保持役に届く）').catch(async e => { throw new Error(`${e.message} ${JSON.stringify((await heldChildren()).filter(c => c.alive).map(c => [c.id, c.pid, c.marks, c.label?.sessionId]))} pids=${JSON.stringify(pids)} spawned=${JSON.stringify(await spawned())}`); });
         t.ok('サーバーが普通に終わる（main の shutdown）: idle の agy は止まり、保持役に残らない', true);
       }
       try { m1.link.kill(); } catch { /* S1 は終わっている */ }

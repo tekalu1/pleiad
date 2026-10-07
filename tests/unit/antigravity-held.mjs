@@ -93,7 +93,9 @@ export default async function (t) {
       ];
       const sourceOf = ({ acked, exitAfter = false, alive = true }) => {
         const calls = { acks: [], released: 0, disposed: 0, labels: [], unmarks: [], kills: 0 };
-        const client = { on() {}, off() {}, label: (id, label) => calls.labels.push(label), unmark: (id, name) => calls.unmarks.push(name), mark() {}, end() {}, kill: () => { calls.kills++; } };
+        const client = { on() {}, off() {}, label: (id, label) => calls.labels.push(label), unmark: (id, name) => calls.unmarks.push(name), mark() {}, end() {}, kill: () => { calls.kills++; },
+          // ターンの終わりの札と印の取り外しは 1 回の書き込みで送る
+          sendBatch(frames) { for (const frame of frames) { if (frame.t === 'label') calls.labels.push(frame.label); if (frame.t === 'unmark') calls.unmarks.push(frame.name); } return true; } };
         const source = {
           id: 'agy-unit', client, attachable: true, acked, state: { id: 'agy-unit', alive, marks: { turn: 1 }, acked, seq: lines.length, truncated: false },
           async replay(from, to) { return lines.map((text, i) => [i + 1, text]).filter(([seq]) => seq >= from && seq <= to); },

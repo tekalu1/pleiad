@@ -159,8 +159,8 @@ export function createHeldAgy({ client = null, source = null } = {}) {
     endTurn() {
       if (!source || detached || exited) return;
       idle = true;
-      source.client.label(id, null);
-      source.client.unmark(id, ADOPT_TURN_MARK);
+      // 1 回の書き込みで送る（札だけ外れて印が残る・その逆、を避ける。サーバーがすぐ落ちても半端にならない）
+      source.client.sendBatch([{ t: 'label', id, label: null }, { t: 'unmark', id, name: ADOPT_TURN_MARK }]);
     },
 
     /** プロセスが終わる間際に子を止める依頼（stdin を閉じ、木ごと止める）。続けて write せず、client.sendBatch で 1 回にまとめて送る。手を離した子・終わった子は空 */
@@ -179,7 +179,7 @@ export function createHeldAgy({ client = null, source = null } = {}) {
 
 let swept = false;
 /**
- * このプロセスの最初の保持役の使用で 1 回だけ、前のサーバーが残した agy の子を片付ける: **ターンの印の無い**（idle の）agy の子は止める
+ * このプロセスの最初の保持役の使用で 1 回だけ、前のサーバーが残した agy の子を片付ける: **札か印の欠けた**（idle の）agy の子は止める
  * （旧サーバーの落ち・強制終了で、止める人が居なくなった）。札と印を持つ子は付け直し（server の restoreAdoptedTurns）が読むので触れない。
  * agent の置き場（held-*）も、生きている子が指していないものを消す。この呼び出しの前に保持役へつないでいた自分の子（ids）は止めない
  */
@@ -189,7 +189,8 @@ export async function sweepIdle(client, { ids = new Set() } = {}) {
   const children = (client.welcome?.children ?? []).filter(child => String(child.id).startsWith(AGY_CHILD_PREFIX) && !ids.has(child.id));
   const stopped = [];
   for (const child of children) {
-    if (Number.isInteger(child.marks?.[ADOPT_TURN_MARK])) continue;
+    // 付け直せる子（札と印の両方がある。server の restoreAdoptedTurns と同じ条件）には触れない。どちらかが欠けたものは、止める人が居ない idle の子
+    if (child.label && Number.isInteger(child.marks?.[ADOPT_TURN_MARK])) continue;
     try {
       await client.attach(child.id, { from: (child.seq ?? 0) + 1 });
       if (child.alive) client.kill(child.id, { tree: true }); else client.release(child.id);
@@ -197,7 +198,7 @@ export async function sweepIdle(client, { ids = new Set() } = {}) {
       stopped.push(child.id);
     } catch { /* つながりが切れた・子が消えた */ }
   }
-  const referenced = new Set(children.filter(child => child.alive && Number.isInteger(child.marks?.[ADOPT_TURN_MARK])).map(child => child.label?.backendCard?.agy?.home).filter(Boolean));
+  const referenced = new Set(children.filter(child => child.alive && child.label && Number.isInteger(child.marks?.[ADOPT_TURN_MARK])).map(child => child.label?.backendCard?.agy?.home).filter(Boolean));
   sweepHeldHomes(referenced);
   return stopped;
 }

@@ -87,7 +87,7 @@ export class AgySession {
     this.stderr = [];
     this.exited = null;        // 落ちた理由（Error）。落ちていなければ null
 
-    this.onEvent = null;       // (event) => void
+    this.onEvent = null;       // (event, opts) => void | Promise（Promise なら保持役の読みは終わるまで ack しない。opts は再生の印 { replay: true }）
     this.onShapeMismatch = null;
     this.onAuthUrl = null;     // (url) => void
     this.onPrintTimeout = null; // () => void
