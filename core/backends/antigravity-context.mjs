@@ -99,8 +99,12 @@ export function agentDefinition({ owners, prompt, cwd, home, locale, contextEnab
  * `--add-dir <home> --agent ply-context` で agy に見せ、env を agy の環境変数に足す。agy が終わったら cleanup で消す。
  * computer は ply_computer の接続先（{ url, authorization }）。あれば 2 本目の中継を書き、env で渡す
  */
-export async function prepareAgent({ owners, prompt, cwd, url, authorization, locale, context = true, hooks = null, computer = null, browser = null, control = null }) {
-  const home = path.join(root(), `${process.pid}-${crypto.randomBytes(6).toString('hex')}`);
+export async function prepareAgent({ owners, prompt, cwd, url, authorization, locale, context = true, hooks = null, computer = null, browser = null, control = null, held = false }) {
+  // 保持役に載せる agy（無停止の更新 段階 3）の置き場は held-<乱数>。持ち主はサーバーの pid ではなく、走っている agy（サーバーが入れ替わっても残る）なので、
+  // 持ち主の pid での掃除（sweep）の対象にしない。会話が終わる（cleanup）か、前のサーバーが残したものを sweepHeldHomes が消す
+  const name = held ? `held-${crypto.randomBytes(6).toString('hex')}` : `${process.pid}-${crypto.randomBytes(6).toString('hex')}`;
+  const home = path.join(root(), name);
+  if (held) ownHomes.add(name);
   await fs.promises.mkdir(path.join(home, '.agents'), { recursive: true, mode: 0o700 });
   // context: カスタムエージェント（agent.md）を書くか（Pleiad のコンテキストかブラウザーの指示を渡すとき）。ply_context の中継は url があるときだけ
   if (context) {
@@ -129,8 +133,33 @@ export async function prepareAgent({ owners, prompt, cwd, url, authorization, lo
       // PLY_CONTROL_* は中継の接続先（MCP の URL）。PLEIAD_CONTROL_* は会話のシェルの pleiad CLI を同じ会話に束縛する接続情報（ADR 0083）
       ...(control?.url ? { PLY_CONTROL_URL: control.url, PLY_CONTROL_AUTHORIZATION: control.authorization, ...control.env } : {}),
       ...(locale ? { PLY_CONTEXT_LOCALE: locale } : {}) },
-    cleanup: () => fs.rmSync(home, { recursive: true, force: true, maxRetries: 3 }),
+    cleanup: () => { ownHomes.delete(name); fs.rmSync(home, { recursive: true, force: true, maxRetries: 3 }); },
   };
+}
+
+/** 保持役に載せる agy の置き場（held-*）のうち、このプロセスが作った・付け直して引き継いだもの。掃除から外す */
+const ownHomes = new Set();
+
+/** 付け直した agy の置き場（札の home）を、このプロセスのものにする。agy が終わったら消す関数を返す（置き場が root() の held-* でなければ null） */
+export function adoptHome(home) {
+  const name = typeof home === 'string' ? path.basename(home) : '';
+  if (!/^held-[0-9a-f]+$/.test(name) || path.resolve(path.dirname(home)) !== path.resolve(root())) return null;
+  ownHomes.add(name);
+  return () => { ownHomes.delete(name); fs.rmSync(path.join(root(), name), { recursive: true, force: true, maxRetries: 3 }); };
+}
+
+/**
+ * 前のサーバーが残した、保持役に載せた agy の置き場（held-*）を消す。残すのは、このプロセスのもの（ownHomes）と、生きている子の札が指すもの（referenced。
+ * 付け直す子の置き場）。sweep（持ち主の pid での掃除）は held-* に触れない
+ */
+export function sweepHeldHomes(referenced = new Set()) {
+  let names = [];
+  try { names = fs.readdirSync(root()); } catch { return; }
+  const keep = new Set([...referenced].map(home => path.basename(String(home))));
+  for (const name of names) {
+    if (!name.startsWith('held-') || ownHomes.has(name) || keep.has(name)) continue;
+    try { fs.rmSync(path.join(root(), name), { recursive: true, force: true }); } catch {}
+  }
 }
 
 /** 前の起動が残した置き場を消す（持ち主の Pleiad が居ないものだけ）。強制終了では cleanup が走らないため */
@@ -138,6 +167,7 @@ export function sweep() {
   let names = [];
   try { names = fs.readdirSync(root()); } catch { return; }
   for (const name of names) {
+    if (name.startsWith('held-')) continue;   // 保持役に載せた agy の置き場（sweepHeldHomes が消す）
     const owner = Number(/^(\d+)-/.exec(name)?.[1]);
     if (owner === process.pid) continue;
     if (Number.isInteger(owner) && owner > 0) {

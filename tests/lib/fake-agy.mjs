@@ -283,6 +283,27 @@ async function runTurn(text) {
     });
   }
 
+  // ゲートで止める台本（gated:<名前>。無停止の更新 段階 3 の付け直しの試験）: 前置きの本文 → ツールの実行中（ACTIVE）で、ゲートが開くまで待つ →
+  // ツールの完了 → 本文 → result。実時間でなく、テストがゲートのファイル（FAKE_AGY_GATE_DIR/<名前>）を作ったときに進む
+  const gated = /^gated:(\S+)/.exec(text);
+  if (gated) {
+    step({ step_index: ++stepIndex, state: "ACTIVE", step_type: "agent_response", text_delta: "前置き。" });
+    step({ step_index: stepIndex, state: "DONE", step_type: "agent_response" });
+    const toolStep = ++stepIndex;
+    const tool = { name: "run_command", parameters: { CommandLine: `echo ${gated[1]}` } };
+    step({ step_index: toolStep, state: "ACTIVE", step_type: "tool", tool_name: "run_command", tool_info: tool });
+    const gate = path.join(process.env.FAKE_AGY_GATE_DIR ?? "", gated[1]);
+    while (!fs.existsSync(gate)) await new Promise((r) => setTimeout(r, 20));
+    step({ step_index: toolStep, state: "DONE", step_type: "tool", tool_name: "run_command", tool_info: { ...tool, output: `out-${gated[1]}` } });
+    const body = `終わり: ${gated[1]}`;
+    step({ step_index: ++stepIndex, state: "ACTIVE", step_type: "agent_response", text_delta: body });
+    step({ step_index: stepIndex, state: "DONE", step_type: "agent_response" });
+    // result を書き出した後に印を置く（テストが、読む側が居ない間に agy が終わったことを見るのに使う）
+    process.stdout.write(JSON.stringify({ event: "result", result: { conversation_id: conversationId, status: "SUCCESS", response: body, duration_seconds: 0.2, num_turns: 1,
+      usage: { input_tokens: 11, output_tokens: 7, thinking_tokens: 3, cache_read_tokens: 2, total_tokens: 23 } } }) + NL, () => fs.writeFileSync(`${gate}.done`, ""));
+    return;
+  }
+
   // ターンの途中の控えを測る台本（partial / partial-fail / partial-exit / partial-ok）。本文とツールを 1 つずつ出した後、
   // partial は result を出さない（中断を待つ）。ほかは FAKE_AGY_PARTIAL_HOLD_MS だけ待ってから、
   // -fail は ERROR、-exit はプロセスごと落ち、-ok は本文を足して SUCCESS で終わる

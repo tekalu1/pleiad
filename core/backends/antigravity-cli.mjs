@@ -66,7 +66,7 @@ export function invalidAgyEvent(msg) {
 }
 
 export class AgySession {
-  constructor({ cwd, conversationId = null, model, effort, mode, skipPermissions, addDirs = [], agent = null, env = null, onGone = null }) {
+  constructor({ cwd, conversationId = null, model, effort, mode, skipPermissions, addDirs = [], agent = null, env = null, onGone = null, held = null }) {
     this.cwd = cwd;
     this.conversationId = conversationId;
     this.model = model;
@@ -77,6 +77,9 @@ export class AgySession {
     this.agent = agent;        // `--agent`。Pleiad のコンテキストを渡すときのカスタムエージェント（antigravity-context.mjs）
     this.env = env;            // agy に足す環境変数（ply_context の接続先とトークン）
     this.onGone = onGone;      // プロセスが終わった・落とした後の片付け（1 回だけ呼ぶ）
+    // 保持役の子として起こす・付け直す口（antigravity-held.mjs の createHeldAgy。無停止の更新 段階 3）。あれば agy は保持役が持ち（pid は無い）、
+    // 出力の行は feedLine へ、stderr は onStderr へ届く。サーバーが入れ替わっても agy は走り続け、新しいサーバーが同じ子に付け直す
+    this.held = held;
 
     this.proc = null;
     this.pid = null;           // 起こした agy の pid。**落とした後も残す**（孤児の掃除に使う）
@@ -112,28 +115,23 @@ export class AgySession {
 
   start() {
     if (this.proc) return;
-    const proc = spawnCli(cliCommand("antigravity"), this.args(), {
-      cwd: this.cwd,
-      stdio: ["pipe", "pipe", "pipe"],
-      ...(this.env ? { env: { ...process.env, ...this.env } } : {}),
-    });
+    const proc = this.held
+      ? this.held.start({ argv: cliCommand("antigravity"), args: this.args(), cwd: this.cwd, env: { ...process.env, ...(this.env ?? {}) },
+        onLine: (text, opts) => this.feedLine(text, opts), onStderr: (text) => this.#stderr(text) })
+      : spawnCli(cliCommand("antigravity"), this.args(), {
+        cwd: this.cwd,
+        stdio: ["pipe", "pipe", "pipe"],
+        ...(this.env ? { env: { ...process.env, ...this.env } } : {}),
+      });
     this.proc = proc;
     this.pid = proc.pid ?? null;
 
-    proc.stdout.setEncoding("utf8");
-    proc.stdout.on("data", (chunk) => this.#feed(chunk));
-
-    proc.stderr.setEncoding("utf8");
-    proc.stderr.on("data", (chunk) => {
-      const text = String(chunk);
-      this.stderr.push(text);
-      if (this.stderr.length > 60) this.stderr.shift();
-      // 未ログインのときはここに OAuth の URL が出る。認可コードは stdin で受ける
-      const hit = AUTH_URL_RE.exec(text);
-      if (hit) this.onAuthUrl?.(hit[1]);
-      // 打ち切られた。この後の `result` は SUCCESS でも信じてはいけない
-      if (PRINT_TIMEOUT_RE.test(text)) this.onPrintTimeout?.();
-    });
+    if (!this.held) {
+      proc.stdout.setEncoding("utf8");
+      proc.stdout.on("data", (chunk) => this.#feed(chunk));
+      proc.stderr.setEncoding("utf8");
+      proc.stderr.on("data", (chunk) => this.#stderr(String(chunk)));
+    }
 
     const die = (why) => {
       if (this.proc !== proc) return;
@@ -152,6 +150,16 @@ export class AgySession {
   /** 片付けを今すぐ走らせる（サーバの終了時。exit を待てないため）。2 回目以降は何もしない */
   cleanup() {
     this.#gone();
+  }
+
+  #stderr(text) {
+    this.stderr.push(text);
+    if (this.stderr.length > 60) this.stderr.shift();
+    // 未ログインのときはここに OAuth の URL が出る。認可コードは stdin で受ける
+    const hit = AUTH_URL_RE.exec(text);
+    if (hit) this.onAuthUrl?.(hit[1]);
+    // 打ち切られた。この後の `result` は SUCCESS でも信じてはいけない
+    if (PRINT_TIMEOUT_RE.test(text)) this.onPrintTimeout?.();
   }
 
   #gone() {
@@ -193,25 +201,35 @@ export class AgySession {
     this.buf += chunk;
     let i;
     while ((i = this.buf.indexOf(NL)) >= 0) {
-      const line = this.buf.slice(0, i).trim();
+      const line = this.buf.slice(0, i);
       this.buf = this.buf.slice(i + 1);
-      if (!line) continue;
-      let msg;
-      try {
-        msg = JSON.parse(line);
-      } catch {
-        // JSON でない行（バナー・更新の案内）は落とす。止まる理由にはしない
-        continue;
+      this.feedLine(line);
+    }
+  }
+
+  /**
+   * 出力の 1 行を処理する。onEvent が Promise を返したら（本文の無い SUCCESS の確定待ちなど）それを返す。保持役の読みは、これを待ってから ack する
+   * （処理し終えていない行を ack すると、手を離したときに新しいサーバーの再生から落ちる）。opts は onEvent へそのまま渡す（再生の印 { replay: true }）
+   */
+  feedLine(text, opts) {
+    const line = String(text).trim();
+    if (!line) return;
+    let msg;
+    try {
+      msg = JSON.parse(line);
+    } catch {
+      // JSON でない行（バナー・更新の案内）は落とす。止まる理由にはしない
+      return;
+    }
+    try {
+      if (invalidAgyEvent(msg)) {
+        this.onShapeMismatch?.();
+        return;
       }
-      try {
-        if (invalidAgyEvent(msg)) {
-          this.onShapeMismatch?.();
-          continue;
-        }
-        this.onEvent?.(msg);
-      } catch (err) {
-        console.error("  agy イベントの処理で例外:", String(err?.message ?? err));
-      }
+      const done = this.onEvent?.(msg, opts);
+      return done && typeof done.then === "function" ? done.catch((err) => console.error("  agy イベントの処理で例外:", String(err?.message ?? err))) : undefined;
+    } catch (err) {
+      console.error("  agy イベントの処理で例外:", String(err?.message ?? err));
     }
   }
 }

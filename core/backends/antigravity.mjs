@@ -19,13 +19,14 @@
 // (b) それでも打ち切られたら失敗として畳み、その agy を落とす（onPrintTimeout）。
 import { cliCommand, spawnCli } from "../cli-installation.mjs";
 import { AgySession, START_TIMEOUT_MS } from "./antigravity-cli.mjs";
-import { AGENT_NAME, contextRefusal, prepareAgent, sweep } from "./antigravity-context.mjs";
+import { AGENT_NAME, adoptHome, contextRefusal, prepareAgent, sweep } from "./antigravity-context.mjs";
 import * as pids from "./antigravity-pids.mjs";
 import * as transcript from "./antigravity-store.mjs";
 import { AGY_LEVELS, agyTarget, buildAgyModels, defaultLabelFromLog, parseAgyModels } from "./antigravity-models.mjs";
 import { MAX_RESULT_CHARS } from "./shared.mjs";
 import { antigravityLimit } from "./antigravity-limit.mjs";
 import { AGY_WAIT_SLICE_MS, agyComputerName, computerFailed, computerPrompt, computerResult, computerToolInput } from "./computer-delivery.mjs";
+import { createHeldAgy, heldPlan, sweepIdle } from "./antigravity-held.mjs";
 import { t } from "../i18n.mjs";
 import crypto from "node:crypto";
 import fs from "node:fs";
@@ -208,10 +209,29 @@ const toolName = (name) => (name && Object.hasOwn(TOOL_HINTS, name) ? name : nam
 
 // ---------------------------------------------------------------- backend
 
+const digest = (value) => (value == null ? null : crypto.createHash("sha256").update(String(value)).digest("hex").slice(0, 32));
+
+/**
+ * 起動時にしか渡せないもの（Pleiad のコンテキスト・ブラウザー・Hooks・ply_computer・ply_control・bot の人格）の印。起動時と違う渡し方になる次のターンは agy を起こし直す。
+ * トークンを含むものは頭の文字列ではなくダイジェストで持つ: 保持役に載せた agy の札（server の takeCard）にそのまま置いても秘密が出ず、付け直した先が同じ印で比べられる
+ */
+function keysOf({ contextKey, contextShape, browserEnv, hooksShape, computerKey, browserKey, controlKey, botKey }) {
+  return { context: digest(contextKey), shape: contextShape ?? null, browser: browserEnv?.AGENT_BROWSER_CONFIG ?? null, hooks: hooksShape ?? null,
+    computer: digest(computerKey), browserTool: digest(browserKey), control: digest(controlKey), bot: botKey ?? null };
+}
+const sameKeys = (a, b) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+
 /** bot の起こし直しの判定の印: 人格の文のハッシュとフォルダー。bot の会話でなければ null */
 function botSessionKey(botInstructions, botFolders) {
   if (!botInstructions) return null;
   return crypto.createHash('sha256').update(`${botInstructions}\0${(botFolders?.additionalDirectories ?? []).join('\0')}`).digest('hex').slice(0, 32);
+}
+
+/** 付け直しの発言の本文。旧サーバーが控えに書いた発言（uuid は送信の時刻から決まる）から引く。ハッシュが合わなければ null（控えの発言を書き換えない） */
+async function adoptedSent(conversationId, sentAt, hash) {
+  const record = await transcript.getRecord(conversationId).catch(() => null);
+  const text = record?.messages?.find((m) => m.uuid === `${conversationId}:u${sentAt}`)?.text;
+  return typeof text === "string" && (!hash || digest(text) === hash) ? text : null;
 }
 
 export const backend = {
@@ -258,8 +278,10 @@ export const backend = {
 
   // ---- 実行 ---------------------------------------------------------------
 
-  async runTurn({ prompt, sessionId, cwd, mode, model, effort, emit, signal, control, contextRuntime, browserEnv, browserInstructions, browserRuntime = null, addedInstructions, computerRuntime = null, controlRuntime = null, hooksRuntime = null, locale, notes = [], botInstructions = null, botFolders = null }) {
+  // adopt は付け直し（{ source, card }。adoptTurn だけが渡す）。無ければ普通のターン（保持役に載せるかは antigravity-held.mjs の heldPlan が決める）
+  async runTurn({ prompt, sessionId, cwd, mode, model, effort, emit, signal, control, contextRuntime, browserEnv, browserInstructions, browserRuntime = null, addedInstructions, computerRuntime = null, controlRuntime = null, hooksRuntime = null, locale, notes = [], botInstructions = null, botFolders = null }, adopt = null) {
     const m = MODES[modeFor(mode)];
+    const k = adopt?.card?.agy ?? null;   // 付け直しの札のバックエンドの欄（backendCard）
 
     // **控えはターンの途中から書き足すが、ユーザー発言の時刻は送信の時刻で打つ。**
     // AI の発言は書くたびにその時刻、終わりで完了の時刻に打ち直す。
@@ -267,13 +289,14 @@ export const backend = {
     // ターンの途中で出た提示（visualization は生成時刻を持つ）がユーザー発言より前に並ぶ。
     // その並びは分岐の切り口にそのまま効く（core/conversations.mjs の buildItems）ので、
     // ユーザー発言で切った枝に、まだ走っていないはずの成果物が入り込む。
-    const sentAt = Date.now();
-    // 中断の後に Pleiad が添える文（core/interrupt-stops.mjs）。agy は 1 行 1 ターンで入力を分けられないので、本文の前に置く
-    const sent = [...notes, String(prompt ?? "")].join("");
+    const sentAt = k ? Number(k.sentAt) || Date.now() : Date.now();
+    // 中断の後に Pleiad が添える文（core/interrupt-stops.mjs）。agy は 1 行 1 ターンで入力を分けられないので、本文の前に置く。
+    // 付け直しは、旧サーバーが控えに書いた発言（同じ uuid）から引く。引けなければ null（控えの発言を書き換えない）
+    const sent = k ? await adoptedSent(sessionId, sentAt, k.sentHash) : [...notes, String(prompt ?? "")].join("");
 
     let conversationId = sessionId ?? null;
     // 再開した会話の途中の書き込みでは控えを作らない（--conversation が撥ねられて forget した控えを作り直さない）
-    const resumed = Boolean(sessionId);
+    const resumed = k ? Boolean(k.resumed) : Boolean(sessionId);
     let sawText = false;
     let text = "";                 // 控えに残す本文
     let finishedReply = false;     // agent_response の DONE。途中までの文とは分ける
@@ -290,13 +313,15 @@ export const backend = {
     // ---- 控え。**ターンの途中から書き足す**（agy に履歴の取り出し口が無い。antigravity-store.mjs 冒頭）
     // ユーザー発言は id が分かって本文を渡したら、AI の発言はツールの完了ごと・本文は間を空けて、同じ uuid で差し替える。
     // 失敗・中断・打ち切りでも、終わりにそこまでの分を書く。書き込みは 1 本ずつ（控えの read-modify-write を重ねない）
-    let delivered = false;         // プロンプトを渡した（渡せなかったターンは控えに残さない）
+    let delivered = Boolean(adopt);   // プロンプトを渡した（渡せなかったターンは控えに残さない）。付け直しは旧サーバーが渡し済み
+    let handedOff = false;         // 旧サーバーが新しいサーバーへ手を離した（以後、このサーバーは控えに書かない・締めない）
+    let handingOff = false;        // 手を離している最中（札を子に置いて detach する）
     let writes = Promise.resolve();
     let queued = false;            // 積んだまま、まだ始まっていない書き込みがある（次のを積まない。始まるときに最新を読む）
     let final = null;              // 終わりに書く分（畳んだ後に遅れて届いた出来事を混ぜない）
     let textTimer = null;
     const snapshot = (at) => [
-      { role: "user", text: sent, uuid: `${conversationId}:u${sentAt}`, at: new Date(sentAt).toISOString() },
+      ...(sent === null ? [] : [{ role: "user", text: sent, uuid: `${conversationId}:u${sentAt}`, at: new Date(sentAt).toISOString() }]),
       // uuid はターンの間変えない（送信の時刻から作る）。変えると控えにも写しの会話（core/conversations.mjs の mergeMessages）にも二重に並ぶ
       ...(text || toolCalls.length ? [{
         role: "assistant", text, uuid: `${conversationId}:a${sentAt}`, at: new Date(at).toISOString(),
@@ -305,7 +330,7 @@ export const backend = {
     ];
     const save = ({ last = false } = {}) => {
       // 畳んだ後は終わりの分（seal）だけを書く。遅れて届いた出来事で書き直さない
-      if (!delivered || !conversationId || queued || (final && !last)) return writes;
+      if (!delivered || !conversationId || queued || handedOff || (final && !last)) return writes;
       queued = true;
       writes = writes.then(() => {
         queued = false;
@@ -324,14 +349,14 @@ export const backend = {
     /** ターンの終わりの分を書く。成功なら完了の時刻で、控えが無ければ作る（今までどおり） */
     const seal = ({ ok }) => {
       clearTimeout(textTimer);
-      if (final || !delivered) return writes;
+      if (final || !delivered || handedOff) return writes;
       final = { messages: snapshot(Date.now()), create: ok || !resumed,
         turnResult: resultTrace ? { sentAt, at: new Date().toISOString(), ...resultTrace } : null };
       return save({ last: true });
     };
 
     // 生きているプロセスを使い回す。落ちていれば立て直す（会話は --conversation で拾える）
-    let session = conversationId ? live.get(conversationId) : null;
+    let session = !adopt && conversationId ? live.get(conversationId) : null;
     if (session && !session.proc) { live.delete(conversationId); session = null; }
     // Pleiad のコンテキストは起動時にしか渡せない（エージェント定義と env）。起動時と違う渡し方になるなら起こし直す。
     // 担当や渡すツール（shape）が変わったときも同じ（コンテキストの設定の変更を次のターンから効かせる。会話は --conversation で続く）
@@ -348,13 +373,23 @@ export const backend = {
     // bot の人格（エージェント定義の本文）と触れてよいフォルダー（--add-dir）も起動時にしか渡せない。人格を直した・フォルダーを変えたら起こし直す。
     // 起動中のプロセスは指示の文そのものを比べないので、人格のハッシュで判定する（bot でなければ null で、今までと同じ）
     const botKey = botSessionKey(botInstructions, botFolders);
-    if (session && ((session.contextKey ?? null) !== contextKey || (session.contextShape ?? null) !== contextShape
-      || (session.browserConfig ?? null) !== (browserEnv?.AGENT_BROWSER_CONFIG ?? null) || (session.hooksShape ?? null) !== hooksShape
-      || (session.computerKey ?? null) !== computerKey || (session.browserKey ?? null) !== browserKey || (session.controlKey ?? null) !== controlKey
-      || (session.botKey ?? null) !== botKey)) { session.kill(); release(conversationId, session); session = null; }
+    const keys = keysOf({ contextKey, contextShape, browserEnv, hooksShape, computerKey, browserKey, controlKey, botKey });
+    if (session && !sameKeys(session.keys, keys)) { session.kill(); release(conversationId, session); session = null; }
 
-    const fresh = !session;
+    const fresh = !session && !adopt;
+    if (adopt) {
+      // 付け直す子（保持役が持つ agy）。起動の引数・env は要らない（子はもう走っている）。agent の置き場は札の home。次のターンの印の比べは札の keys
+      if (!conversationId) throw new Error("antigravity: the card has no conversation id");
+      session = new AgySession({ cwd, conversationId, held: createHeldAgy({ source: adopt.source }), onGone: adoptHome(k.home) });
+      session.keys = k.keys ?? null;
+      session.home = k.home ?? null;
+      session.hookRuns = k.hookRuns ?? null;
+      session.onShapeMismatch = () => { void recordBackendShapeMismatch({ dataDir: store.dataDir, backend: 'antigravity', kind: 'stream-json-shape', detectedVersion: null }); };
+    }
     if (fresh) {
+      // 保持役に載せるか（antigravity-held.mjs）。載せるなら、前のサーバーが残した idle の子を最初に 1 回片付けてから起こす
+      const plan = await heldPlan({ dataDir: store.dataDir, argv: cliCommand("antigravity"), bot: Boolean(botInstructions) });
+      if (plan) await sweepIdle(plan.client);
       // 会話ごとのエージェント定義（Pleiad の置き場）と、中継に渡す接続先・トークン（env）
       // カスタムエージェントを使うのは、Pleiad のコンテキスト・ブラウザーの指示・委譲の子への指示を渡すときだけ。
       // Hooks だけを Pleiad がそろえるときは、置き場（--add-dir）だけを作る（既定のエージェントのまま。inheritCustomizations に頼らない）
@@ -365,7 +400,7 @@ export const backend = {
         prompt: [contextRuntime?.prompt, browserInstructions, addedInstructions, computerInstructions, controlRuntime?.instructions, botInstructions].filter(Boolean).join('\n\n'), cwd, url: contextRuntime?.url, authorization: contextKey, locale: contextRuntime?.locale ?? locale,
         context: useAgent, hooks: hooksRuntime, computer: computerRuntime ? { url: computerRuntime.url, authorization: computerRuntime.headers?.Authorization } : null,
         browser: browserRuntime ? { url: browserRuntime.url, authorization: browserRuntime.headers?.Authorization } : null,
-        control: controlRuntime ? { url: controlRuntime.url, authorization: controlRuntime.headers?.Authorization, env: controlRuntime.env } : null }) : null;
+        control: controlRuntime ? { url: controlRuntime.url, authorization: controlRuntime.headers?.Authorization, env: controlRuntime.env } : null, held: Boolean(plan) }) : null;
       session = new AgySession({
         cwd,
         conversationId,
@@ -377,22 +412,19 @@ export const backend = {
         addDirs: [...(cwd ? [cwd] : []), ...botDirs],
         ...(agent ? { addDirs: [...(cwd ? [cwd] : []), ...botDirs, agent.home], ...(useAgent ? { agent: AGENT_NAME } : {}), env: { ...agent.env, ...browserEnv }, onGone: agent.cleanup }
           : browserEnv ? { env: browserEnv } : {}),
+        ...(plan ? { held: createHeldAgy({ client: plan.client }) } : {}),
       });
-      session.hooksShape = hooksShape;
       session.hookRuns = agent?.runs ? { file: agent.runs, offset: 0 } : null;
+      session.home = plan && agent ? agent.home : null;
       session.onShapeMismatch = () => { void recordBackendShapeMismatch({ dataDir: store.dataDir, backend: 'antigravity', kind: 'stream-json-shape', detectedVersion: null }); };
-      session.contextKey = contextKey;
-      session.contextShape = contextShape;
-      session.browserConfig = browserEnv?.AGENT_BROWSER_CONFIG ?? null;
-      session.computerKey = computerKey;
-      session.browserKey = browserKey;
-      session.controlKey = controlKey;
-      session.botKey = botKey;
+      session.keys = keys;
     }
 
-    const handle = (ev) => {
+    // opts は feedLine から来る（付け直しの再生の行は { replay: true }。server の makeEmit が画面へ流さず、実行中のスナップショットとメモリの状態だけを作る）
+    const handle = (ev, opts) => {
+      const out = (event) => emit(event, opts?.replay ? { replay: true } : undefined);
       // Step updates without a history entry still show that the child is active.
-      emit({ type: 'task.activity', output: true });
+      out({ type: 'task.activity', output: true });
       switch (ev?.event) {
         case "init": {
           const id = ev.conversation_id ?? ev.init?.conversation_id ?? null;
@@ -403,7 +435,7 @@ export const backend = {
           if (isNew) {
             // **これを出さないと web が id を受け取れない。**`first: true` は
             // 「id が確定した最初の1本」の印で、再開ターンでは出さない
-            emit({
+            out({
               type: "session", sessionId: id, first: true,
               ...(ev.init?.model ? { model: ev.init.model } : {}),
             });
@@ -419,11 +451,11 @@ export const backend = {
             if (String(s.state ?? "").toUpperCase() === "DONE" && (replyTextSinceTool.trim() || String(s.text_delta ?? '').trim())) finishedReply = true;
             const delta = s.text_delta;
             if (!delta) return;
-            if (!sawText) { sawText = true; emit({ type: "activity", state: "writing" }); }
+            if (!sawText) { sawText = true; out({ type: "activity", state: "writing" }); }
             text += delta;
             replyTextSinceTool += delta;
             saveSoon();
-            return emit({ type: "text.delta", text: String(delta) });
+            return out({ type: "text.delta", text: String(delta) });
           }
           if (s.step_type === "tool") {
             finishedReply = false; // 返事の後に道具が続けば、その返事はまだ最終文ではない
@@ -449,15 +481,15 @@ export const backend = {
 
             if (!started.has(id)) {
               started.set(id, { name, input, computer });
-              emit({ type: "activity", state: "running", label: t("activity.tool", { label: TOOL_HINTS[name]?.label ?? name }) });
-              emit({ type: "tool.start", id, name, input });
+              out({ type: "activity", state: "running", label: t("activity.tool", { label: TOOL_HINTS[name]?.label ?? name }) });
+              out({ type: "tool.start", id, name, input });
             }
             if (!done) return;
             const raw = typeof output === "string" ? output : JSON.stringify(output ?? "");
             // ply_computer: 画像を退避した行を除き、印の行から images と computer を作る。控えにもその形で残す（読み直しで印を読み直さない）
             const r = computer ? computerResult(raw, cut) : cut(raw);
             const isError = computer ? computerFailed(r.computer) : false;
-            emit({ type: "tool.result", id, ...r, isError });
+            out({ type: "tool.result", id, ...r, isError });
             toolCalls.push({ id, name, input, result: { ...r, isError } });
             save();
             return;
@@ -472,19 +504,19 @@ export const backend = {
           const r = ev.result ?? {};
           // 本文の無い SUCCESS は、打ち切り（onPrintTimeout）と見分けがつかない。印が遅れて
           // 届く分だけ待ってから確定する。その間に印が来れば onPrintTimeout が失敗として畳む
-          if (!ev[LATE] && !sawText && !r.response && String(r.status ?? "").toUpperCase() === "SUCCESS") {
-            setTimeout(() => handle({ ...ev, [LATE]: true }), EMPTY_SUCCESS_GRACE_MS);
-            return;
+          if (!ev[LATE] && !opts?.replay && !sawText && !r.response && String(r.status ?? "").toUpperCase() === "SUCCESS") {
+            // 保持役の読みは、確定するまで ack しない（待つ間に手を離しても、新しいサーバーが同じ result を読み直す）
+            return new Promise((resolve) => setTimeout(() => resolve(handle({ ...ev, [LATE]: true }, opts)), EMPTY_SUCCESS_GRACE_MS));
           }
           conversationId ||= r.conversation_id || null;
-          if (sawText) emit({ type: "text.end" });
+          if (sawText) out({ type: "text.end" });
           const usage = usageFor(r.usage);
-          if (usage) emit(usage);
+          if (usage) out(usage);
           const outcome = turnResultFor(r, { finishedReply });
           resultTrace = { source: "result", status: String(r.status ?? "").slice(0, 100), outcome: outcome.outcome,
             ...(r.error ? { error: String(r.error).slice(0, 1000) } : {}) };
           if (outcome.outcome === "error") failed = new Error(outcome.error);
-          emit(outcome);
+          out(outcome);
           return settle?.();
         }
 
@@ -562,21 +594,60 @@ export const backend = {
     }, START_TIMEOUT_MS);
     timer.unref?.();
 
+    /**
+     * 札のバックエンドの欄（保持役に載せたターンだけ。core/server.mjs の takeCard が control.backendCard から読み、付け直す側の adoptTurn の card になる）。
+     * 付け直しに要る、再生では作れないものだけ: 発言の時刻（控えの発言の uuid）・再開した会話か・発言のハッシュ（控えから本文を引く）・agent の置き場・
+     * 次のターンの印の比べ（keys。トークンはダイジェスト）・hooks の発火の記録の読み位置。ツール・本文・会話の id は印からの再生と札の sessionId で戻る
+     */
+    const backendCard = () => ({ held: true, agy: { sentAt, resumed, sentHash: sent === null ? null : digest(sent), home: session.home ?? null, keys: session.keys ?? null,
+      hookRuns: session.hookRuns ? { file: session.hookRuns.file, offset: session.hookRuns.offset,
+        old: session.hookRuns.old ? { file: session.hookRuns.old.file, offset: session.hookRuns.old.offset } : null } : null } });
+    // 札を保持役の子に置く口（server の touchCard が、札の中身が変わるたびに呼ぶ）と、旧サーバーの手を離す口（core/handover.mjs の detach）
+    const bindHolder = () => {
+      const held = session.held;
+      if (!control || !held) return;
+      control.holder = {
+        label: (card) => held.label(card),
+        handOff: async (card) => {
+          // 手を離す最中に結果が届いてターンが終わっても、札と印は外さない（終わった直後のターンを付け直す側が、記録の結果から締める）
+          handingOff = true;
+          await save();   // 控え（会話の記録）を最新にしてから手を離す。新しいサーバーは同じ uuid で書き直す
+          await held.handOff(card);
+          handedOff = true;
+          clearTimeout(textTimer);
+          settle?.();
+        },
+      };
+      session.holder = control.holder;   // テストの入口（handOffAgy）が引く
+      control.backendCard = backendCard;
+      control.touch?.();
+    };
+
     try {
-      if (fresh) {
+      if (adopt) {
+        // 付け直した子は会話の次のターンも使う。印から ack までの再生と続きは、start が始める読みが handle へ流す（子が終わっていれば記録だけで締まる）
+        live.set(conversationId, session);
+        session.start();
+      } else if (fresh) {
         await reaped;   // 前の孤児を掃除し終えてから起こす（自分のを巻き込まない）
         session.start();
-        // 強制終了で取り残されたときに、次の起動が掃除できるように控える
+        // 強制終了で取り残されたときに、次の起動が掃除できるように控える（保持役の子は pid を持たず、控えない）
         pids.remember(session.pid);
       }
+      bindHolder();
       if (control) control.handle = { get conversationId() { return conversationId; } };
       control?.onReady?.();
-      emit({ type: "activity", state: "thinking" });
-      session.prompt(sent);
-      // 渡せた。再開した会話は id が分かっているので、ユーザー発言をここで書く（新しい会話は init で）
-      delivered = true;
-      save();
+      if (!adopt) {
+        emit({ type: "activity", state: "thinking" });
+        session.held?.markTurn();   // 印は最初の行の直前（再生はここから）
+        session.prompt(sent);
+        // 渡せた。再開した会話は id が分かっているので、ユーザー発言をここで書く（新しい会話は init で）
+        delivered = true;
+        save();
+      }
       await finished;
+      // 旧サーバーが手を離した。このターンはここで終わる（出来事は server が捨てる。締めるのは付け直したサーバー）
+      if (handedOff) { emit({ type: "turnResult", outcome: "aborted" }); return { sessionId: conversationId, handedOff: true }; }
       await reportHookRuns(session, hooksRuntime, emit);
 
       // 終わりの分を書く（時刻は発言ごとに変える: ユーザーは送信時、AI は完了時。提示はこの間に入る）。
@@ -591,6 +662,7 @@ export const backend = {
       }
       if (failed) throw failed;
     } catch (err) {
+      if (handedOff) { emit({ type: "turnResult", outcome: "aborted" }); return { sessionId: conversationId, handedOff: true }; }
       if (resultTrace?.outcome === "ok") resultTrace = { ...resultTrace, source: "postResultException", outcome: "error",
         error: String(err?.message ?? err).slice(0, 1000) };
       else resultTrace ??= { source: "exception", status: null, outcome: "error", error: String(err?.message ?? err).slice(0, 1000) };
@@ -598,12 +670,41 @@ export const backend = {
     } finally {
       clearTimeout(timer);
       // 途中で投げた（seal まで来なかった）ときも、そこまでの分を書いてから返す。
-      // 積んだ書き込みを待つ（server はターンの後に控えを読む。次のターンの書き込みとも重ねない）
+      // 積んだ書き込みを待つ（server はターンの後に控えを読む。次のターンの書き込みとも重ねない）。手を離したターンは新しいサーバーが書く
       await seal({ ok: false });
-      if (control) { control.handle = null; control.steer = null; }
+      // 保持役の子はターンが終わっても会話のあいだ生きる（idle）。札と印を外し、付け直す対象から外す。手を離した子には触れない
+      if (!handedOff && !handingOff) session.held?.endTurn();
+      if (control) { control.handle = null; control.steer = null; control.holder = null; control.backendCard = null; }
     }
 
     return { sessionId: conversationId };
+  },
+
+  /**
+   * 付け直し（無停止の更新 段階 3。antigravity-held.mjs）: 保持役が持つ走っている agy の続きを受ける。card は runTurn が札に置いた分
+   * （control.backendCard の { held, agy }）、source は保持役の子（core/adopt.mjs の holderSource）。印から ack までは記録を読み直して状態（本文・ツール・結果）を作り
+   * （emit の replay）、続きは普通に流して行ごとに ack する。agy に握手は要らない（stage0-codex-agy.md §3）。sessionId は agy の会話の id
+   */
+  async adoptTurn(args) {
+    if (!args.card?.held || !args.card.agy || typeof args.source?.write !== "function") throw new Error("antigravity: the turn was not on the holder");
+    return backend.runTurn(args, { source: args.source, card: args.card });
+  },
+
+  /**
+   * 引き継ぎ（core/server.mjs の handoverRun。旧サーバーが手を離した後、預かり物を置く前）: ターンの無い（idle の）保持役の agy を止める。
+   * 走っているターンは手を離して新しいサーバーが付け直すが、idle の子は新しいサーバーが知らない（札が無い）ので、残すと止める人が居なくなる。
+   * 次のターンは agy を起こし直す（会話は --conversation で続く）。止めた数を返す
+   */
+  releaseIdle() {
+    let stopped = 0;
+    for (const [id, session] of [...live]) {
+      if (!session.held || session.held.handedOff) continue;
+      try { session.kill(); } catch {}
+      release(id, session);
+      session.cleanup();
+      stopped++;
+    }
+    return stopped;
   },
 
   // ---- セッション管理 -----------------------------------------------------
@@ -785,14 +886,49 @@ function rememberModels(list) {
 // 既定の終了挙動を変えないため、`exit` の範囲に留める）。
 process.once("exit", () => {
   const gone = [];
+  const frames = new Map();   // 保持役の子を止める依頼を、保持役への接続ごとに 1 回の書き込みにまとめる（続けて write すると、終わる前に最初の 1 つしか出ない）
   for (const session of live.values()) {
-    try { session.kill(); } catch {}
+    // 保持役に手を離した子は保持役が持つ（新しいサーバーが付け直す）。agent の置き場も残す
+    if (session.held?.handedOff) continue;
+    if (session.held) {
+      const client = session.held.client;
+      if (client) frames.set(client, [...(frames.get(client) ?? []), ...session.held.exitFrames()]);
+      session.proc = null;
+    } else try { session.kill(); } catch {}
     // Pleiad のコンテキストを渡したエージェント定義も消す（agy の exit はもう受け取れない）
     session.cleanup();
     if (session.pid) gone.push(session.pid);
   }
   live.clear();
   pids.forget(...gone);
+  for (const [client, list] of frames) { try { client.sendBatch(list); } catch {} }
 });
+
+/**
+ * 旧サーバーの手を離す口（テストの入口 tests/lib/adopt-server.mjs が呼ぶ。本番は core/handover.mjs が control.holder.handOff を呼ぶ）: 札（server の handOffTurn の card）を
+ * 保持役の子に置いて detach する。sessionId は agy の会話の id
+ */
+export async function handOffAgy(sessionId, card) {
+  const session = live.get(sessionId);
+  if (!session?.holder) throw new Error(`antigravity: no held turn to hand off (${sessionId})`);
+  await session.holder.handOff(card);
+  return { childId: session.held.id };
+}
+
+/** テスト用: 保持役の子への書き込みを止める／戻す。止めている間の書き込みは捨てる */
+export function muteAgyHeld(sessionId, muted) {
+  const session = live.get(sessionId);
+  if (!session?.held) throw new Error(`antigravity: no held session (${sessionId})`);
+  session.held.mute(muted);
+  return true;
+}
+
+/** テスト用: 読みを止める（agy の出力は保持役に溜まり、このサーバーは処理も ack もしない）／再開する */
+export function pauseAgyHeld(sessionId, paused) {
+  const session = live.get(sessionId);
+  if (!session?.held) throw new Error(`antigravity: no held session (${sessionId})`);
+  session.held.pause(paused);
+  return true;
+}
 
 export { MODES, TOOL_HINTS, botSessionKey, turnResultFor, usageFor };
