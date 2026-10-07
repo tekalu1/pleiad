@@ -96,7 +96,10 @@ export default async function (t) {
         const seen = fs.existsSync(out) ? JSON.parse(fs.readFileSync(out, 'utf8')) : null;
         t.ok('本物: 子が動き、PID・渡した環境（日本語を含む）・引数（空白を含む）が届く', seen?.pid === started.pid && seen.marker === 'こんにちは' && seen.args.join('|') === 'with space|plain', JSON.stringify(seen));
         t.ok('本物: 渡した環境のとおり（親の process.env を書き換えていない）', process.env.PLEIAD_JOB_MARKER === undefined);
-      } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+        // 子は書いた後もまだ dir を作業場所に持っている。終わるのを待ってから消す（待たないと rmdir が EBUSY）
+        const gone = Date.now() + 10_000;
+        while (Date.now() < gone) { try { process.kill(started.pid, 0); } catch { break; } await sleep(50); }
+      } finally { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
     }
     const failing = (() => { try { job.launchBreakaway({ exe: path.join(os.tmpdir(), 'pleiad-no-such-node.exe'), args: [], env: process.env, koffi }); return null; } catch (error) { return error; } })();
     t.ok('本物: 起こせなければ CREATE_PROCESS_FAILED と GetLastError が付く', failing?.code === 'CREATE_PROCESS_FAILED' && Number.isInteger(failing.winError), String(failing));
