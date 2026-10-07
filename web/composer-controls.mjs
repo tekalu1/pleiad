@@ -163,9 +163,16 @@ export function panel(chip, pop, { align = "left", render, onShow, onHide, width
       const width = Math.min(typeof wantWidth === "function" ? wantWidth() : wantWidth, vw - 16);
       pop.style.width = `${width}px`;
       const want = align === "right" ? r.right - width : r.left;
-      pop.style.left = `${Math.round(Math.max(8, Math.min(want, vw - 8 - width)))}px`;
-      pop.style.bottom = `${Math.round(window.innerHeight - r.top + 6)}px`;
+      const left = Math.round(Math.max(8, Math.min(want, vw - 8 - width)));
+      const bottom = Math.round(window.innerHeight - r.top + 6);
+      pop.style.left = `${left}px`;
+      pop.style.bottom = `${bottom}px`;
       pop.style.maxHeight = `${Math.max(160, Math.round(r.top - 12))}px`;
+      // 変形した祖先（スレッドの板の transform）の中では、fixed の位置がその祖先に対して決まる。ずれた分を戻す
+      const got = pop.getBoundingClientRect();
+      const dx = got.left - left, dy = got.bottom - (window.innerHeight - bottom);
+      if (Math.abs(dx) > 0.5) pop.style.left = `${Math.round(left - dx)}px`;
+      if (Math.abs(dy) > 0.5) pop.style.bottom = `${Math.round(bottom + dy)}px`;
     },
     render,
   };
