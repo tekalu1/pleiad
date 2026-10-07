@@ -2208,7 +2208,8 @@
     "authNeed": "Sign in to {{agents}}",
     "protocolUnsupported": "Unsupported protocolVersion: {{version}}",
     "initFailed": "Couldn't start: {{error}}",
-    "disconnected": "Disconnected"
+    "disconnected": "Disconnected",
+    "noReply": "No reply from the server"
   },
   "dialog": {
     "onboarding": {

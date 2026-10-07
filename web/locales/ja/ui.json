@@ -2149,7 +2149,8 @@
     "authNeed": "{{agents}} にログインが要る",
     "protocolUnsupported": "未対応の protocolVersion: {{version}}",
     "initFailed": "初期化に失敗: {{error}}",
-    "disconnected": "切断"
+    "disconnected": "切断",
+    "noReply": "サーバーから返事がありません"
   },
   "dialog": {
     "onboarding": {

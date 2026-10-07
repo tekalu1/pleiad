@@ -3351,11 +3351,17 @@ const sameSet = (a, b) => a.size === b.size && [...a].every((x) => b.has(x));
 
 // ---------------------------------------------------------------- コマンド
 
-function cmd(command, args = {}) {
+/** timeoutMs を渡すと、その間に返事が無ければ失敗にする（返事を待ち続けて後の処理まで止めないため。refresh） */
+function cmd(command, args = {}, { timeoutMs = 0 } = {}) {
   const id = String(++seq);
   return new Promise((res, rej) => {
     if (!ws || ws.readyState !== WebSocket.OPEN) return rej(new Error(t("app.notConnected")));
-    pending.set(id, { res, rej });
+    if (!timeoutMs) { pending.set(id, { res, rej }); }
+    else {
+      const timer = setTimeout(() => { pending.delete(id); rej(new Error(t("app.noReply"))); }, timeoutMs);
+      const done = (fn) => (v) => { clearTimeout(timer); fn(v); };
+      pending.set(id, { res: done(res), rej: done(rej) });
+    }
     ws.send(JSON.stringify({ kind: "command", command, id, args }));
   });
 }
@@ -7391,12 +7397,16 @@ function refresh({ sharePending = false } = {}) {
 }
 
 let refreshVersion = 0;
+// 取り直しの返事を待つ上限。後の refresh() は走っている分の終わりを待つので、返事が来ないと一覧が二度と更新されず、
+// それを待つ操作（脇の移動の「移動中」・新しい会話の最初の送信）も止まったままになる
+const REFRESH_REPLY_TIMEOUT_MS = 60_000;
 async function runRefresh() {
   const version = ++refreshVersion;
+  const wait = { timeoutMs: REFRESH_REPLY_TIMEOUT_MS };
   const [sessions, statuses, prefs] = await Promise.all([
-    cmd("listSessions"),
-    cmd("listStatuses").catch(() => []),
-    cmd("prefs").catch(() => ({})),
+    cmd("listSessions", {}, wait),
+    cmd("listStatuses", {}, wait).catch(() => []),
+    cmd("prefs", {}, wait).catch(() => ({})),
   ]);
   refreshSnapshotReady = true;
   if (version !== refreshVersion) return;

@@ -1758,7 +1758,8 @@ async function sessionList({ limit = 100, track = true } = {}) {
   const rows = new Map();
 
   backends.forEach((b, i) => {
-    for (const s of lists[i]) rows.set(s.sessionId, withWorktree(sessionRow(b, s, side[s.sessionId])));
+    // 欠けた行（sessionId の無いもの）は飛ばす。1 行のせいで一覧全体を失敗させない
+    for (const s of lists[i]) if (s?.sessionId) rows.set(s.sessionId, withWorktree(sessionRow(b, s, side[s.sessionId])));
   });
 
   // sidecar にしか無い行。どのエージェントのものか分からないもの（v1 から引き継いだ行で
@@ -7026,8 +7027,14 @@ wss.on("connection", (ws, req) => {
       const then = typeof second === 'function' ? second : shape;
       const input = typeof second === 'function' || second === undefined ? known(id, msg.args)
         : Object.fromEntries(Object.entries(second ?? {}).filter(([, v]) => v !== null && v !== undefined));
-      const r = await opsRegistry.invoke({ by: 'human', via: 'ui', local }, id, input, { ...opsDeps(locale.lang), scanLock: wsScanLock });
-      return r.ok ? reply(true, await then(r.result)) : reply(false, r.error, r.code === FAILED ? undefined : r.code, r.issues ? { issues: r.issues } : undefined);
+      // 操作が投げても必ず返事をする。返事が無いと画面の cmd は待ち続け、一覧の取り直し（refresh）が後の分まで止まる
+      try {
+        const r = await opsRegistry.invoke({ by: 'human', via: 'ui', local }, id, input, { ...opsDeps(locale.lang), scanLock: wsScanLock });
+        return r.ok ? reply(true, await then(r.result)) : reply(false, r.error, r.code === FAILED ? undefined : r.code, r.issues ? { issues: r.issues } : undefined);
+      } catch (err) {
+        console.error(`  [command ${msg.command}]`, String(err?.stack ?? err));
+        return reply(false, String(err?.message ?? err), typeof err?.code === 'string' ? err.code : undefined);
+      }
     };
 
     let releaseUpdateGate;
@@ -7100,15 +7107,15 @@ wss.on("connection", (ws, req) => {
           return await viaOp('worktrees.check');
         // 作成・片付け・残す・退避・元に戻すは worktrees.*（core/ops/worktrees.mjs。AI も同じ操作を呼ぶ）
         case 'worktreeSplit':
-          return viaOp('worktrees.split');
+          return await viaOp('worktrees.split');
         case 'worktreeDiscard':
-          return viaOp('worktrees.discard');
+          return await viaOp('worktrees.discard');
         case 'worktreeKeep':
-          return viaOp('worktrees.keep');
+          return await viaOp('worktrees.keep');
         case 'worktreeArchive':
-          return viaOp('worktrees.archive');
+          return await viaOp('worktrees.archive');
         case 'worktreeRestore':
-          return viaOp('worktrees.restore');
+          return await viaOp('worktrees.restore');
         case 'setSessionMcp':
           return await viaOp('context.setSessionMcp');
         case 'agentMcp':
@@ -7123,7 +7130,7 @@ wss.on("connection", (ws, req) => {
         case 'scanHooks':
           return await viaOp('hooks.scan');
         case 'readHook':
-          return viaOp('hooks.read');
+          return await viaOp('hooks.read');
         case 'hookTargets':
           return reply(true, await hooksConfig.targets(msg.args ?? {}));
         case 'saveHooks':
@@ -7136,7 +7143,7 @@ wss.on("connection", (ws, req) => {
         case 'plyHooks':
           return await viaOp('hooks.list');
         case 'readPlyHook':
-          return viaOp('hooks.readPly');
+          return await viaOp('hooks.readPly');
         case 'savePlyHook':
           return await viaOp('hooks.save');
         case 'removePlyHook':
@@ -7162,7 +7169,7 @@ wss.on("connection", (ws, req) => {
         case 'slashSkills':
           return await viaOp('context.skills');
         case "listSessions":
-          return viaOp('sessions.list', args);
+          return await viaOp('sessions.list', args);
 
         // リモート（ホスト側）。秘密・トークンは返さない（core/remote/connector.mjs）
         case 'remoteStatus':
@@ -7187,9 +7194,9 @@ wss.on("connection", (ws, req) => {
           return await viaOp('notify.status');
         // この PC の通知・スマホごとの切り替えは notify.*（AI も同じ操作を呼ぶ。ADR 0094）。画面には設定 › 通知の材料を返す
         case 'setNotifyPc':
-          return viaOp('notify.setPc', () => notifyStatus());
+          return await viaOp('notify.setPc', () => notifyStatus());
         case 'setNotifyDevice':
-          return viaOp('notify.setDevice', () => notifyStatus());
+          return await viaOp('notify.setDevice', () => notifyStatus());
         case 'notifyRegister': {
           const via = connectionDevices.get(ws);
           if (!via?.mobile) throw new Error(t('notify.error.notDevice'));
@@ -7222,9 +7229,9 @@ wss.on("connection", (ws, req) => {
         }
         // 保存済みの接続先の確認し直しと削除は compatEndpoints.*（キーを入力しない。AI も同じ操作を呼ぶ。ADR 0094）
         case 'compatEndpointRecheck':
-          return viaOp('compatEndpoints.recheck');
+          return await viaOp('compatEndpoints.recheck');
         case 'compatEndpointDelete':
-          return viaOp('compatEndpoints.delete', () => compatEndpoints.list());
+          return await viaOp('compatEndpoints.delete', () => compatEndpoints.list());
         case 'compatEndpointDefault': {
           await compatEndpoints.setDefault(String(msg.args?.agent ?? ''), String(msg.args?.id ?? ''));
           emitGlobal({ type: 'compatEndpointsChanged', sessionId: null });
@@ -7260,12 +7267,12 @@ wss.on("connection", (ws, req) => {
 
         // 使えるエージェントと、その語彙・出し分けの材料
         case 'providerUsage':
-          return viaOp('delegation.usage', args);
+          return await viaOp('delegation.usage', args);
         case "backends":
-          return viaOp('agents.list', args);
+          return await viaOp('agents.list', args);
 
         case "setTurnSettings":
-          return viaOp('sessions.setTurnSettings', args);
+          return await viaOp('sessions.setTurnSettings', args);
 
         case "saveDraft": {
           const { sessionId, text = "", attached = [], version } = msg.args ?? {};
@@ -7286,9 +7293,9 @@ wss.on("connection", (ws, req) => {
         }
 
         case "deleteUnsentSession":
-          return viaOp('sessions.deleteUnsent', args, { shape: () => "deleted" });
+          return await viaOp('sessions.deleteUnsent', args, { shape: () => "deleted" });
         case "deleteSession":
-          return viaOp('sessions.delete', args, { shape: () => "deleted" });
+          return await viaOp('sessions.delete', args, { shape: () => "deleted" });
 
         // エージェントの切り替え（sessions.switchBackend。ADR 0105）
         case "switchBackend":
@@ -7317,41 +7324,41 @@ wss.on("connection", (ws, req) => {
         case 'skipShell':
           return await viaOp('shell.skip');
         case 'compactConversation':
-          return viaOp('sessions.compact', args);
+          return await viaOp('sessions.compact', args);
         case 'cancelCompaction':
-          return viaOp('sessions.cancelCompaction', args);
+          return await viaOp('sessions.cancelCompaction', args);
         case 'setConversationAutoCompaction':
-          return viaOp('sessions.setAutoCompaction', args);
+          return await viaOp('sessions.setAutoCompaction', args);
         case 'messageAction':
-          return viaOp('sessions.messageAction', args);
+          return await viaOp('sessions.messageAction', args);
         case 'listMessages':
-          return viaOp('sessions.listMessages', args);
+          return await viaOp('sessions.listMessages', args);
 
         // { sessionId?, reason? }。sessionId を省略したら全部止める。reason は user|update|quit（ほかは user）。操作では reason は理由の文で、この種類は kind
         case "abort":
-          return viaOp('sessions.abort', { sessionId: args?.sessionId, kind: ['user', 'update', 'quit'].includes(args?.reason) ? args.reason : undefined });
+          return await viaOp('sessions.abort', { sessionId: args?.sessionId, kind: ['user', 'update', 'quit'].includes(args?.reason) ? args.reason : undefined });
 
         // 中断した会話を続ける（docs/design.md「中断と再開」）。{ sessionId } -> { sent: "outbox"|"text", count }
         case "resume":
-          return viaOp('sessions.resume', args);
+          return await viaOp('sessions.resume', args);
 
         case 'agentTasks':
-          return viaOp('delegation.tasks', { parentSessionId: args?.sessionId, tree: args?.tree, taskIds: args?.taskIds });
+          return await viaOp('delegation.tasks', { parentSessionId: args?.sessionId, tree: args?.tree, taskIds: args?.taskIds });
         case 'agentTaskInstructions':
-          return viaOp('delegation.instructions', args);
+          return await viaOp('delegation.instructions', args);
         case 'cancelAgentTask':
-          return viaOp('delegation.taskCancel', args);
+          return await viaOp('delegation.taskCancel', args);
         // 委譲カードの「別の候補でやり直す」。{ taskId, candidate, stop?, approved? } -> { task } か、承認モードが強くなるときは { confirm }
         case 'retryAgentTask':
-          return viaOp('delegation.retry', args);
+          return await viaOp('delegation.retry', args);
 
         // 委譲先の自動振り分けの設定（設定 › 委譲）。タスクごとの振り分けの記録は agentTasks の各行の routing。
         // キーは返さない（hasKey だけ）。refresh: true なら使用量を取り直してから返す
         case 'delegationRouting':
-          return viaOp('delegation.routing', args);
+          return await viaOp('delegation.routing', args);
         // settings は prefs.json の delegationRouting に重ねる項目（null の項目は既定に戻す）。全体を検証してから保存する（settings.set の delegationRouting と同じ定義）
         case 'setDelegationRouting':
-          return viaOp('settings.set', { key: 'delegationRouting', value: args?.settings }, { shape: () => delegationRoutingState() });
+          return await viaOp('settings.set', { key: 'delegationRouting', value: args?.settings }, { shape: () => delegationRoutingState() });
         // API キー（設定 › API キー。ADR 0155）。値は返さない。入れる・消す・割り当てるのは人だけ（HUMAN_ONLY の秘密の値）。
         // 登録しただけでは送らない。送り始めるのは、通話・判定器に使うキーを選んだとき（setApiKeyUse）と、接続先で選んだとき（compatEndpointSave の keyRef）
         case 'setApiKey': {
@@ -7511,18 +7518,18 @@ wss.on("connection", (ws, req) => {
 
         // Allocate the host identity before the native engine has a first turn.
         case "newSession":
-          return viaOp('sessions.new', args);
+          return await viaOp('sessions.new', args);
 
         // 既出の状態一覧。事前定義ではなく補完候補（設計メモ §6）。
         case "listStatuses":
-          return viaOp('statuses.list', args);
+          return await viaOp('statuses.list', args);
 
         case "modes":
-          return viaOp('agents.modes', args);
+          return await viaOp('agents.modes', args);
         case "efforts":
-          return viaOp('agents.efforts', args);
+          return await viaOp('agents.efforts', args);
         case "models":
-          return viaOp('agents.models', args);
+          return await viaOp('agents.models', args);
         // 作業ディレクトリを選ぶ簡易ブラウザー（ブラウザー版の入力欄）。フォルダーの名前だけを返す
         // files は true のときだけ（ほかの値はファイルを付けない。今までどおり）
         case "listDirs":
@@ -7556,12 +7563,12 @@ wss.on("connection", (ws, req) => {
             computerUse: computerUseCapability({ hasParentPort: Boolean(computerDriver), platform: computerDriver?.kind === 'fake' ? 'win32' : undefined, ready: computerDriver?.state() ?? null }) });
         // コンピューターの操作を止める（docs/computer-use.md「computerStop」）。ホストの OS を操作する命令ではなく、止める側なので、リモートの端末からも受ける（computer.stop）
         case "computerStop":
-          return viaOp('computer.stop');
+          return await viaOp('computer.stop');
         // エージェントのブラウザー（PC の Chrome）への接続。つなぐ・切る・前に出すはホストの PC の画面だけ（browser.chrome*。ops が断る）
-        case 'chromeStatus': return viaOp('browser.chromeStatus');
-        case 'chromeConnect': return viaOp('browser.chromeConnect');
-        case 'chromeDisconnect': return viaOp('browser.chromeDisconnect');
-        case 'chromeRaiseDialog': return viaOp('browser.chromeRaiseDialog');
+        case 'chromeStatus': return await viaOp('browser.chromeStatus');
+        case 'chromeConnect': return await viaOp('browser.chromeConnect');
+        case 'chromeDisconnect': return await viaOp('browser.chromeDisconnect');
+        case 'chromeRaiseDialog': return await viaOp('browser.chromeRaiseDialog');
         case "resolvePath": case "revealPath": case "openPath": {
           const hostAction = msg.command !== 'resolvePath';
           if (hostAction && !local) return reply(false, t('files.remoteOnly'));
@@ -7609,7 +7616,7 @@ wss.on("connection", (ws, req) => {
         // 認証はエージェントごとに持ち方が違う。持たないものは supported:false を返す
         // （web はボタンごと隠す。「押せるのに何も起きない」を作らない）。
         case "authStatus":
-          return viaOp('agents.authStatus', args);
+          return await viaOp('agents.authStatus', args);
 
         case "authLogin": {
           const backend = await pickBackend(null, msg.args?.backend);
@@ -7641,7 +7648,7 @@ wss.on("connection", (ws, req) => {
         }
 
         case "running":
-          return viaOp('app.running', args);
+          return await viaOp('app.running', args);
 
         // 操作の一覧（core/ops/）の汎用の口。画面は新しい機能をここから呼ぶ（protocol.mjs を触らずに増やせる。ADR 0080）
         case 'invoke': {
@@ -7678,7 +7685,7 @@ wss.on("connection", (ws, req) => {
         }
         // 設定 › 自動圧縮。settings.set の compaction.auto と同じ定義を通る
         case 'setAutoCompaction':
-          return viaOp('settings.set', { key: 'compaction.auto', value: args?.settings }, { shape: (r) => r.value });
+          return await viaOp('settings.set', { key: 'compaction.auto', value: args?.settings }, { shape: (r) => r.value });
 
         /**
          * AI にタイトルを考えてもらう。
@@ -7686,7 +7693,7 @@ wss.on("connection", (ws, req) => {
          * 生成はエージェントの仕事、整形（前後の記号を落とす）はここ。
          */
         case "suggestTitle":
-          return viaOp('sessions.suggestTitle', args);
+          return await viaOp('sessions.suggestTitle', args);
 
         /**
          * 人間が会話へファイルを渡す。present の逆方向（設計メモ §7）。
@@ -7777,7 +7784,7 @@ wss.on("connection", (ws, req) => {
         // 状態は事前定義しないので「グループ」は実体を持たず、付いているセッションの集合でしかない。
         // だから改名も削除も、対象セッションの状態を書き換えるだけで足りる。
         case "renameStatus":
-          return viaOp('statuses.rename', args);
+          return await viaOp('statuses.rename', args);
 
         // 詳細の読み出しは停止から独立した操作。
         case "loadBackground":
@@ -7797,7 +7804,7 @@ wss.on("connection", (ws, req) => {
 
         // モデルの切り替え（sessions.setModel）。AI も同じ操作を呼ぶ（ADR 0094）。承認モードは人間だけ（下の setMode）
         case "setModel":
-          return viaOp('sessions.setModel', (r) => ({ live: r.live }));
+          return await viaOp('sessions.setModel', (r) => ({ live: r.live }));
 
         // 承認モードの切り替えは人間の操作からしか来ない。AI にツールは生やさない。
         case "setMode": {
@@ -7833,7 +7840,7 @@ wss.on("connection", (ws, req) => {
         // 1 件（{ sessionId, at }）は sessions.markRead。画面がまとめて送る形（{ reads: [[sessionId, at], …] }）は同じ markReads を直に通す
         case "markRead": {
           const a = msg.args ?? {};
-          if (!Array.isArray(a.reads)) return viaOp('sessions.markRead', { sessionId: a.sessionId, at: a.at });
+          if (!Array.isArray(a.reads)) return await viaOp('sessions.markRead', { sessionId: a.sessionId, at: a.at });
           return reply(true, { reads: await markReads(a.reads.slice(0, 5000)) });
         }
 
@@ -7857,11 +7864,11 @@ wss.on("connection", (ws, req) => {
          * 家族の分だけエージェントへ聞き直すことはしない。
          */
         case "lineage":
-          return viaOp('sessions.lineage', args);
+          return await viaOp('sessions.lineage', args);
 
         // 会話の変更の記録（時刻・誰が・前 → 後・理由）。脇の会話の行の「変更の記録」が読む
         case "sessionChanges":
-          return viaOp('sessions.changes', args);
+          return await viaOp('sessions.changes', args);
 
         case "setTitle": {
           const r = await opsRegistry.invoke({ by: 'human', via: 'ui', local }, 'sessions.setTitle', msg.args, opsDeps(locale.lang));

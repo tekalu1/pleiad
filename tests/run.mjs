@@ -43,6 +43,7 @@ const SUITES = [
   // 右パネルの枠（web/side-panel.mjs）: モードごとの部品・渡さない部品は隠す・可視化の ⋯
   './unit/side-panel.mjs',
   './unit/refresh-batch.mjs',
+  './unit/command-reply.mjs',
   // 内蔵ブラウザー: 右パネルの表・アドレス欄・リンクの開き先・使える画面・main のタブと位置（偽の electron）
   './unit/inapp-browser.mjs',
 
