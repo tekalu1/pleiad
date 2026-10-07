@@ -170,6 +170,12 @@ class HostActivity : ComponentActivity() {
             javaScriptCanOpenWindowsAutomatically = false
             mediaPlaybackRequiresUserGesture = true
         }
+        // The page never scrolls as a whole (only #log and the like inside it). With a fractional density the layout viewport
+        // rounds up to whole CSS px, so the WebView's own scroll range can exceed its size by a physical px or two: the View's
+        // native scroll bars showed on the right and bottom edges and the whole WebView could move. Turn those off (docs/remote.md §8.2).
+        w.isVerticalScrollBarEnabled = false
+        w.isHorizontalScrollBarEnabled = false
+        w.overScrollMode = View.OVER_SCROLL_NEVER
         CookieManager.getInstance().setAcceptCookie(true)
         CookieManager.getInstance().setAcceptThirdPartyCookies(w, false)
         injectRemote(w, origin, px)
