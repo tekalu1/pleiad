@@ -805,16 +805,13 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 .m.sys code{font-size:var(--fs-xs)}
 /* 「■ 中断しました · 14:32」。保存された中断から描く一行（client.mjs の paintInterruptLine） */
 .m.sys.interrupted{display:flex;align-items:center;gap:6px}
-/* 上限のための中断は 1 行目に「■ 中断しました（private · 5 時間枠）· 01:43」、2 行目（字の左を 1 行目の字に揃える）に自動で再開する旨とリンク */
+/* 上限のための中断は 1 行目に「■ 中断しました（private · 5 時間枠）· 01:43」、2 行目（字の左を 1 行目の字に揃える）に解除の時刻 */
 .m.sys.interrupted.limit{display:block}
 .limit-interrupt-head{display:block;padding-left:20px;text-indent:-20px}
 .limit-interrupt-head .stop-mark{display:inline-block;vertical-align:-2px;margin-right:6px;text-indent:0}
 .limit-interrupt-head .sep,.limit-interrupt-head .t{margin-left:6px}
 .limit-interrupt-sub{margin-top:6px;padding-left:20px;display:flex;flex-wrap:wrap;gap:4px 12px;align-items:center;color:var(--ink-weak)}
 .m.sys .stop-mark{width:14px;height:14px;flex:none;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linejoin:round}
-/* 一行の中から画面を開く（コンテキストの記録の「中身を見る」）。押すのはボタン、見た目はリンク */
-.m.sys .lnk{padding:0;border:0;background:transparent;font-size:var(--fs-xs);color:var(--ink-blue);text-decoration:underline;text-decoration-color:var(--line-strong);text-underline-offset:2px}
-.m.sys .lnk:hover{background:transparent;color:var(--ink-blue);text-decoration-color:var(--line-blue)}
 /* 開ける出来事の一行（別のセッションからのメッセージ・Pleiad の完了通知。web/system-messages.mjs の sysFold）。
    開閉は会話の中の折りたたみ（tools.css の .tc-fold）と同じ ▸ の回転。既定は閉じた状態 */
 .m.sys .sys-fold>summary{list-style:none;cursor:pointer;user-select:none;display:flex;align-items:baseline;gap:6px}

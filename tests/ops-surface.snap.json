@@ -3589,29 +3589,6 @@
       "input": "46ccb253749e"
     },
     {
-      "id": "sessions.setAutoResume",
-      "risk": "write",
-      "riskOf": false,
-      "scope": "session",
-      "modeGate": true,
-      "hostScreenOnly": false,
-      "surfaces": {
-        "ui": true,
-        "mcp": false,
-        "cli": {
-          "path": [
-            "sessions",
-            "set-auto-resume"
-          ],
-          "positional": [
-            "sessionId"
-          ]
-        }
-      },
-      "legacyCommand": null,
-      "input": "918aa1c61e4e"
-    },
-    {
       "id": "sessions.setGrouped",
       "risk": "write",
       "riskOf": false,
@@ -5579,13 +5556,6 @@
       "path": "sessions send-scheduled-now",
       "positional": [
         "id"
-      ]
-    },
-    {
-      "id": "sessions.setAutoResume",
-      "path": "sessions set-auto-resume",
-      "positional": [
-        "sessionId"
       ]
     },
     {

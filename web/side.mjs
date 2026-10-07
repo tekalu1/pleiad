@@ -26,7 +26,7 @@ import { botIcon } from './channels/bot-icon.mjs';
 import { fmt, t } from "./i18n.mjs";
 import { familiesOf } from "./family.mjs";
 import { timeText } from "./schedule-times.mjs";
-import { warnMark, interruptLabel, showsReasonInMeta, resumeLabel, limitResumeState } from "./interrupt.mjs";
+import { warnMark, interruptLabel, showsReasonInMeta } from "./interrupt.mjs";
 import { aiMarkTitle } from "./change-log.mjs";
 import { branchIcon } from "./icons.mjs";
 import { captureRows, playRows } from "./flip.mjs";
@@ -977,14 +977,11 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
     // 中断した会話は注意の三角（未読は --ink、開いた後は --ink-weak）。次のターンが始まるまで残る。走っていればそちらが先
     const stopped = last.interrupted.get(s.id);
     const moving = last.runningIds.has(s.id) || behind;
-    // 解除の後に自動で再開する会話は、人の手が要らないので三角ではなく時計（「◷ 2:30 に再開」。解除時刻が分からないときは「◷ 解除を確認中」。経過の時間は出さない）
-    const resumeAt = !moving && limitResumeState(stopped) === 'auto';
     // 送信予定（時刻が先にある）は時計と「9:00 に送信」。過ぎて送らなかった予定は三角と「送信予定を過ぎた」
     const sched = last.schedules.get(s.id);
-    const sendAt = !moving && !resumeAt && !stopped && !sched?.missed && Number.isFinite(sched?.next) ? sched.next : null;
+    const sendAt = !moving && !stopped && !sched?.missed && Number.isFinite(sched?.next) ? sched.next : null;
     const missed = !moving && !stopped && Boolean(sched?.missed);
     if (moving) meta.append(behind ? satMark(behind, t("activity.behindCount", { count: behind })) : runMark(t("activity.turnRunning")));
-    else if (resumeAt) meta.append(scheduleMark(resumeLabel(0, stopped)));
     else if (stopped) meta.append(warnMark(interruptLabel(stopped), { read: !stopped.unread }));
     else if (missed) meta.append(warnMark(t('schedule.sideMissed')));
     else if (sendAt) meta.append(scheduleMark(t('schedule.sideSend', { time: timeText(sendAt) })));
@@ -1006,7 +1003,7 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
     if (last.waitingIds.has(s.id)) meta.append(el("span", "wait", t("sidebar.waiting")));
     if (pendingRow?.visible) meta.append(pendingLabel(pendingRow.text));
     else if (isStale(s)) meta.append(el("span", "stale", t("sidebar.staleDays", { count: staleDays(s.statusChangedAt) })));
-    else if (!resumeAt && !sendAt && !missed) meta.append(el("span", "row-when", s.id == null ? fmt.justNow() : relTime(s.lastModified)));
+    else if (!sendAt && !missed) meta.append(el("span", "row-when", s.id == null ? fmt.justNow() : relTime(s.lastModified)));
     // 状態を最後に変えたのが AI のときだけ小さな「AI」の印（理由は title。誰がいつ変えたかは行のメニューの「変更の記録」）
     if (s.status && s.statusByAi) {
       const ai = el("span", "row-ai", t("changeLog.aiMark"));

@@ -48,11 +48,4 @@ export const resumeOps = [
     output: z.object({ sent: z.boolean(), sessionId: z.string(), messageId: z.string() }),
     surfaces: uiCli(['sessions', 'send-scheduled-now'], ['id']),
     handler: (ctx, args) => ctx.limitResume.sendScheduledNow(args.id) }),
-  // 上限で止まった会話の自動再開を会話ごとに入れる・外す（会話末尾の［再開しない］。ADR 0132）
-  defineOp({ id: 'sessions.setAutoResume', summary: 'agent:ops.sessions.setAutoResume.summary', risk: 'write', scope: 'session',
-    riskReason: 'Only the screen and CLI expose this human initiated action.',
-    input: z.object({ sessionId: id.describe('agent:ops.sessions.setAutoResume.sessionId'), enabled: z.boolean().describe('agent:ops.sessions.setAutoResume.enabled') }),
-    output: z.object({ sessionId: z.string(), enabled: z.boolean() }),
-    surfaces: uiCli(['sessions', 'set-auto-resume'], ['sessionId']),
-    handler: (ctx, args) => ctx.limitResume.setAuto(args.sessionId, args.enabled) }),
 ];

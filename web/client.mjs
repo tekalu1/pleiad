@@ -96,7 +96,7 @@ import { createSessionLoads } from "./session-stream.mjs";
 const sessionLoads = createSessionLoads();
 import { createReadCompletions } from "./unread.mjs";
 import { isInterrupted, interruptUnread, interruptReadPoint, interruptLineText, reasonOf, stopMark, pausedCount, resumeLabel,
-  resumeNoteText, resumeVisible, updateInterrupted, limitResumeState, limitLineNote, resumeShortLabel, LIMIT_GRACE_MS, versionReload } from './interrupt.mjs';
+  resumeNoteText, resumeVisible, updateInterrupted, limitResumeState, limitLineNote, resumeShortLabel, versionReload } from './interrupt.mjs';
 import { setupContext } from './context.mjs';
 import { setupSessionContext, chipText } from './session-context.mjs';
 import { budgetOf } from './instruction-amount.mjs';
@@ -2891,12 +2891,6 @@ function onEvent(ev, replay = false) {
     channelsUi.schedulesChanged();   // スレッドへの返信の予定（kind post）の行
     return;
   }
-  if (ev.type === 'limitResumeChanged') {
-    const s = state.sessions.find(s => s.id === ev.sessionId);
-    if (s) s.interrupted = ev.interrupted;
-    renderSessions(); if (ev.sessionId === state.current) { paintInterruptLine(); syncResume(); }
-    return;
-  }
   // どの口（画面・AI・CLI）から設定を変えても届く。prefs などの既存の配信が無い設定（コンテキストの既定）は、開いている設定の画面がここで取り直す
   if (ev.type === 'settingsChanged') { window.dispatchEvent(new CustomEvent('ply:settings-changed', { detail: ev })); voiceSettings.event(ev); if (ev.keys?.includes?.('voice')) voiceUi.refresh({ changed: true }); return; }
   // 通話に使うキーの選び直し・差し替え・削除（設定 › 通話。core/voice/host.mjs）
@@ -4253,21 +4247,15 @@ function paintInterruptLine(live) {
   m.dataset.interrupted = reasonOf(interrupted);
   const at = Number(interrupted.at);
   if (reasonOf(interrupted) === 'limit') {
-    // 1 行目は「■ 使用量の上限に達したため中断しました（private · 5 時間枠）· 01:43」。2 行目に自動で再開する旨とリンク
+    // 1 行目は「■ 使用量の上限に達したため中断しました（private · 5 時間枠）· 01:43」。2 行目に解除の時刻
     const scope = [capsOf(interrupted.backend).claudeAccounts ? accountLabel(interrupted.account) : '',
       interrupted.window === 'five_hour' ? t('interrupt.limitWindowFiveHour') : interrupted.window ?? ''].filter(Boolean).join(' · ');
     // ■・本文・時刻は 1 つの流れの文にする（狭い幅でも ■ は本文の 1 文字目の前に付いたまま、時刻は本文の末尾に続く）
     const head = el('span', 'limit-interrupt-head');
     head.append(stopMark(), el('span', null, scope ? t('interrupt.limitHead', { line: interruptLineText(interrupted), scope }) : interruptLineText(interrupted)));
     if (Number.isFinite(at) && at > 0) head.append(el('span', 'sep', '·'), el('span', 't', hhmm(at)));
-    const auto = interrupted.autoResume === true;
-    // i18n-dynamic: interrupt.limitStopAuto
-    // i18n-dynamic: interrupt.limitStartAuto
     const sub = el('span', 'limit-interrupt-sub');
     sub.append(el('span', null, limitLineNote(interrupted)));
-    const toggle = el('button', 'lnk', t(auto ? 'interrupt.limitStopAuto' : 'interrupt.limitStartAuto')); toggle.type = 'button';
-    toggle.onclick = () => setLimitAuto(!auto).catch(e => { $('settingsError').textContent = e.message; });
-    sub.append(toggle);
     m.classList.add('limit');
     m.replaceChildren(head, sub);
   } else {
@@ -4302,14 +4290,14 @@ function syncResume() {
   }
   // 480px 以下の上限の時計は時刻だけ（全文は title と読み上げ名に残る）
   $('resumeShort').textContent = resumeShortLabel(s?.interrupted);
-  // 上限の会話の時計（自動で戻る・解除前）は押せない表示。解除の後（自動を外した会話）は普通の「再開」
-  const waitingClock = limitState === 'auto' || limitState === 'release';
+  // 上限の解除前の時計は押せない表示。解除の後（解除時刻が分からない上限も）は普通の「再開」
+  const waitingClock = limitState === 'release';
   button.classList.toggle('is-limit', waitingClock);
   button.disabled = resuming.has(state.current) || waitingClock;
   clearTimeout(limitClockTimer);
-  // 時計が切り替わる時刻（自動を外した会話は解除時刻、自動で戻る会話は解除の後の待ちの終わり）に描き直す
-  if ((limitState === 'release' || limitState === 'auto') && Number.isFinite(s.interrupted.resetsAt)) {
-    const switchAt = s.interrupted.resetsAt + (limitState === 'auto' ? LIMIT_GRACE_MS : 0) + 500;
+  // 解除時刻に時計から「再開」へ描き直す
+  if (waitingClock) {
+    const switchAt = s.interrupted.resetsAt + 500;
     limitClockTimer = setTimeout(() => { syncResume(); renderSessions(); }, Math.min(2_147_000_000, Math.max(1000, switchAt - Date.now())));
   }
   const note = $('resumeNote');
@@ -4350,7 +4338,6 @@ async function resumeSession(sessionId) {
 }
 
 $('resume').onclick = () => {
-  if (limitResumeState(currentSession()?.interrupted, Date.now()) === 'auto') return;
   const sessionId = state.current;
   completionNotifications.requestPermission();
   $('settingsError').textContent = '';
@@ -4358,13 +4345,6 @@ $('resume').onclick = () => {
 };
 
 const limitOp = (op, args = {}) => cmd('invoke', { op, args });
-/** 会話末尾の［再開しない］／［自動で再開する］（上限の自動再開を、その会話だけ入れる・外す） */
-async function setLimitAuto(enabled) {
-  await limitOp('sessions.setAutoResume', { sessionId: state.current, enabled });
-  const s = currentSession();
-  if (s?.interrupted?.reason === 'limit') s.interrupted.autoResume = enabled;
-  paintInterruptLine(); syncResume(); renderSessions();
-}
 
 /** 脇の下の「更新で中断した会話が N 件あります［まとめて再開］［×］」。× は閉じたときの最大の at を覚える */
 const RESUME_STRIP_KEY = 'ply-update-interrupts-dismissed';
