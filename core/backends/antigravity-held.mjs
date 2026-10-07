@@ -24,11 +24,11 @@ export const AGY_CHILD_PREFIX = 'agy-';
  * 保持役に載せる切り替え（AGENT_HOST_AGY_HOLDER）。`on` は載せる・`off` は載せない（今の流れ）。**無ければ、実行場所の置き場（AGENT_HOST_RUNTIME_ROOT。
  * パッケージ版の main が渡す）があるときだけ載せる**。置き場の無い起動（`npm start`・テスト）は何も変わらない。起動用の変数（core/boot-env.mjs）
  */
-export function heldEnabled(env = process.env) {
-  const value = String(bootEnv('AGENT_HOST_AGY_HOLDER') ?? env.AGENT_HOST_AGY_HOLDER ?? '').toLowerCase();
+export function heldEnabled(env = process.env, boot = bootEnv) {
+  const value = String(boot('AGENT_HOST_AGY_HOLDER') ?? env.AGENT_HOST_AGY_HOLDER ?? '').toLowerCase();
   if (value === 'on') return true;
   if (value === 'off') return false;
-  return Boolean(bootEnv('AGENT_HOST_RUNTIME_ROOT') ?? env.AGENT_HOST_RUNTIME_ROOT);
+  return Boolean(boot('AGENT_HOST_RUNTIME_ROOT') ?? env.AGENT_HOST_RUNTIME_ROOT);
 }
 
 /** 保持役に起こさせるコマンド。保持役は command と args を解釈せず shell: false で起こす。shell が要る .cmd・.bat は null（載せない） */
