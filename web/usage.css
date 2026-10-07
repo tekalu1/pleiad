@@ -26,6 +26,7 @@
 .usage-chip:hover{background:var(--surface-2)}
 /* 棒は文脈のメーター（compaction.css の .context-meter-bar）と同じ 47×5 */
 .usage-chip .usage-mini{width:47px;height:5px}
+.usage-chip .usage-mini i{transition:width var(--dur) var(--ease-out)}
 .usage-chip svg.caret{width:12px;height:12px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;color:var(--ink-weak);margin-left:-2px;flex:none}
 .usage-chip[aria-expanded=true]{background:var(--surface-2)}
 .usage-chip .lb{color:var(--ink-weak)}

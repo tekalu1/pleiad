@@ -1318,7 +1318,7 @@ body.inapp-links .present-tools .visualize-expand{display:none}
 .destination-agent b{margin-right:auto;color:var(--ink);font-weight:600}
 .destination-agent .row-be{width:16px;height:16px}
 .destination-options{display:flex;flex-wrap:wrap;gap:5px;padding:4px 6px 8px}
-.destination-option{display:inline-flex;align-items:center;gap:5px;max-width:100%;min-height:36px;padding:4px 9px;border:0;border-radius:var(--r-pill);background:var(--surface-1);color:var(--ink);font:inherit;cursor:pointer}
+.destination-option{display:inline-flex;align-items:center;gap:5px;max-width:100%;min-height:36px;padding:4px 9px;border:0;border-radius:var(--r-pill);background:var(--surface-1);color:var(--ink);font:inherit;cursor:pointer;transition:background-color var(--dur-fast) var(--ease-out)}
 .destination-option:hover{background:var(--surface-2)}
 .destination-option.on{background:var(--surface-sel);font-weight:600}
 .destination-option .destination-check{color:var(--ink-blue)}
@@ -1968,8 +1968,14 @@ body{padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) 0 env(s
   .title-col{flex-direction:column;align-items:stretch;gap:0}
   .title-col .title-field{flex:0 1 auto;min-width:0}
   .title-col .title-field input{width:100%;min-width:0;padding:1px 5px}
-  .title-sub{display:flex;align-items:center;gap:4px;min-width:0;height:22px;overflow:hidden;padding-left:5px;color:var(--ink-weak);font-size:var(--fs-xs);white-space:nowrap}
+  /* 頭の高さは 1 行のときと同じ 50px（上 2px + 題 24px + 2 行目 24px）。2 行目の語は押せる高さ 24px（WCAG 2.5.8） */
+  main > .top,:root.remote-mobile main > .top{padding-top:2px;padding-bottom:0}
+  .title-sub{display:flex;align-items:center;gap:4px;min-width:0;height:24px;overflow:hidden;padding-left:5px;color:var(--ink-weak);font-size:var(--fs-xs);white-space:nowrap}
   .title-sub > *{order:0;flex:0 1 auto;min-width:0;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .title-sub > button{height:24px;line-height:24px}
+  .title-sub .host-sub{height:24px}
+  /* 語の間は「 · 」 */
+  .title-sub > :not([hidden]):not(#crumbSep) ~ :not([hidden]):not(#crumbSep)::before{content:"·";margin-right:4px;color:var(--ink-weak)}
   .title-sub #crumbSep{display:none}
   .title-sub .crumb-home{padding:0;color:var(--ink-weak);font-size:inherit}
   .title-sub .host-sub{padding:0;font-size:inherit;align-self:center}
