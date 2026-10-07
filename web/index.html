@@ -196,12 +196,18 @@
       <!-- 脇を閉じている間だけ出る。閉じるボタンと同じ絵。名前（aria-label）は件数を入れて client.mjs が書く（web/open-sidebar-mark.mjs）。
            data-i18n-aria-label は置かない（訳し直しで件数の無い名前に戻るため） -->
       <button type="button" class="btn btn-icon side-toggle" id="openSidebar" data-i18n-title="app.openSidebarTitle" aria-controls="sidebar" aria-keyshortcuts="Control+B"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="4"/><path d="M9.5 4v16"/></svg></button>
-      <!-- タイトルの列。モバイル版の殻の 700px 以下では、タイトルの下に差しの青の「⇄ ホスト名」（押すとホスト一覧へ。web/remote-badge.mjs）を置く -->
-      <!-- パンくず「# 一時チャット ›」（一時チャットの会話のとき。押すと一時チャットの流れ。流れの右に並べているときは出さない） -->
-      <button type="button" class="btn crumb-home" id="crumbHome" hidden data-i18n-title="channels:side.openHome"><span class="crumb-hash" aria-hidden="true">#</span><span data-i18n="channels:side.home"></span></button>
-      <span class="crumb-sep" id="crumbSep" hidden aria-hidden="true">›</span>
+      <!-- タイトルの列（docs/design-system.md「会話の頭（狭い画面）」）。題と、所属・出どころの行（#titleSub）。
+           701px 以上は 1 行で、#titleSub（パンくず「# 一時チャット ›」）を題の左に置く。700px 以下は 2 行で、題の下に
+           「# 一時チャット · ⇄ ホスト名」（モバイル版の殻。web/remote-badge.mjs）・「↖ 依頼元の会話」・「⇄ 端末の AI から」を弱い字で並べる -->
       <div class="title-col">
         <span class="title-field" id="titleField"><input id="titleEdit" data-i18n-placeholder="session.untitled" data-i18n-aria-label="session.titleLabel" autocomplete="off" disabled></span>
+        <div class="title-sub" id="titleSub">
+          <!-- パンくず（一時チャットの会話のとき。押すと一時チャットの流れ。流れの右に並べているときは出さない） -->
+          <button type="button" class="btn crumb-home" id="crumbHome" hidden data-i18n-title="channels:side.openHome"><span class="crumb-hash" aria-hidden="true">#</span><span data-i18n="channels:side.home"></span></button>
+          <span class="crumb-sep" id="crumbSep" hidden aria-hidden="true">›</span>
+          <button type="button" class="btn" id="parentChatEntry" hidden></button>
+          <span class="remote-origin" id="remoteOriginLine" hidden></span>
+        </div>
       </div>
       <button type="button" class="btn btn-icon" id="titleWand" data-i18n-title="session.titleWand" disabled><svg class="i" viewBox="0 0 24 24"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8zM19 16l.8 2.2L22 19l-2.2.8L19 22l-.8-2.2L16 19l2.2-.8z"/></svg></button>
       <!-- 右パネルを開くアイコンボタン（docs/design-system.md「会話の頭の行のアイコン」）。目次・プラグイン・内蔵ブラウザーの順に同じ大きさで並べる -->
@@ -215,13 +221,7 @@
       <!-- 内蔵ブラウザー（web/header-entries.mjs）。デスクトップ版のホストの画面だけに出す。名前・title・押されている状態・操作中の印は header-entries.mjs が書く -->
       <button type="button" class="btn btn-icon" id="browserEntry" hidden aria-controls="filePreview" aria-pressed="false"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3c2.6 2.5 3.9 5.5 3.9 9s-1.3 6.5-3.9 9c-2.6-2.5-3.9-5.5-3.9-9s1.3-6.5 3.9-9z"/></svg></button>
       <!-- 委譲された子の会話でだけ出す、依頼元の会話へ戻る口（子の会話は脇の一覧に出ない）。サブエージェント・タスク・裏のコマンドの一覧は会話末尾の「バックグラウンド N」 -->
-      <button type="button" class="btn" id="parentChatEntry" hidden data-i18n="dialog.tasks.parent"></button>
       <!-- 端末の AI から任された会話の出どころ（⇄ 端末の AI から · 依頼元の会話の題）。依頼元の会話は端末にあるので、ここからは開かない -->
-      <span class="remote-origin" id="remoteOriginLine" hidden></span>
-      <!-- 使用量のチップ（web/header-usage.mjs、docs/design-system.md「ヘッダーの使用量」）。この会話のエージェントの枠のうち使用率がいちばん高いもの。
-           枠を 1 つも持たないエージェント（互換の接続先・未対応）では出さない。押すと全エージェントの一覧（#usagePop） -->
-      <button type="button" class="btn usage-chip" id="usageChip" hidden aria-haspopup="dialog" aria-expanded="false" aria-controls="usagePop"></button>
-      <div class="pop usage-pop" id="usagePop" role="dialog" data-i18n-aria-label="usage.header.title" hidden></div>
       <!-- この会話の操作（脇の行の右クリックと同じメニュー）。狭い画面・タッチのときだけ出す（脇が引き出しで隠れているため） -->
       <button type="button" class="btn btn-icon more-btn" id="sessionMore" hidden aria-haspopup="menu" data-i18n-title="session.more" data-i18n-aria-label="session.more"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.2"/><circle cx="12" cy="12" r="1.2"/><circle cx="19" cy="12" r="1.2"/></svg></button>
     </header>
@@ -240,6 +240,8 @@
             <button type="button" class="li" role="menuitem" id="meterSettings" data-i18n="compaction.settings"></button>
           </div></div>
         <div class="context-strip-status" id="contextStripStatus"><span class="context-strip-text" id="contextStripText" role="status"></span></div>
+        <!-- エージェントの使用量。文脈と同じ帯の札に置く -->
+        <button type="button" class="usage-chip" id="usageChip" hidden aria-haspopup="dialog" aria-expanded="false" aria-controls="usagePop"></button>
         <div class="work-entry" id="workEntry" hidden><button type="button" class="strip-chip bg-chip" id="workEntryButton" aria-controls="workDialog"></button></div>
       </div>
       <div id="outbox" class="outbox" aria-live="polite" hidden></div>
@@ -273,14 +275,14 @@
                どこで（作業ディレクトリ）・誰が・どれだけ考えて（エージェント・モデル・エフォート・アカウント）・どこまで任せるか（承認モード）。
                3 つとも同じ書体・大きさ・太さ・高さ・余白・アイコン・▾。チップは実際に使う値を出す。中身は押すと上に浮く面で選ぶ。
                1 行に並べ、折り返さない。足りなければ作業ディレクトリ → モデル名の順に … で詰める（送信は常に右端） -->
+          <button type="button" class="chip model" id="modelChip" aria-controls="modelPop"></button>
           <button type="button" class="chip folder" id="cwdChip" aria-controls="cwdPop"></button>
           <span class="crow-gap"></span>
           <!-- 「保存済み」: 行の空きに弱い字で。700px 以下では出さない（保存の失敗は上の #draftFail） -->
           <button type="button" class="btn draft-saved" id="draftSaved" aria-live="polite"></button>
           <!-- 日時を指定した送信（編集で戻したもの）の時刻。× で外せばふつうの送信になる -->
           <span class="chip armed" id="armedChip" hidden><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8"/><path d="M12 7v5l3 2"/></svg><span class="v" id="armedText"></span><button type="button" class="x" id="armedRemove" data-i18n-aria-label="schedule.armedRemove" data-i18n-title="schedule.armedRemove"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button></span>
-          <!-- 接続先（互換の接続先）はモデルのチップの面の中で選ぶ（入力欄の行に専用の欄は置かない） -->
-          <button type="button" class="chip model" id="modelChip" aria-controls="modelPop"></button>
+          <!-- 接続先（互換の接続先）は宛先とモデルのチップの面の中で選ぶ -->
           <!-- 承認モード。人間だけが変えられる（AI 用のツールは生やさない） -->
           <button type="button" class="chip mode" id="modeChip" aria-controls="modePop"></button>
           <!-- 中断。狭い幅（480px 以下）では四角のアイコンだけにする -->
@@ -301,6 +303,7 @@
       <div class="pop cpop send-pop" id="sendPop" role="menu" data-i18n-aria-label="schedule.menuTitle" hidden></div>
       <div class="send-veil" id="sendVeil" hidden></div>
     </form>
+    <div class="pop usage-pop" id="usagePop" role="dialog" data-i18n-aria-label="usage.header.title" hidden></div>
 
     <!-- ==================== 設定（会話と入れ替わる。脇は settingsNav になる） ==================== -->
     <section class="settings-view" id="settingsView" aria-labelledby="settingsPageTitle">

@@ -9,6 +9,9 @@ import { open, sleep } from '../lib/ws-client.mjs';
 import { normalizeBot } from '../../core/bots/store.mjs';
 import { botInstructions } from '../../core/bots/sessions.mjs';
 import { registry } from '../../core/ops/index.mjs';
+import { fileURLToPath } from 'node:url';
+
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 
 export const name = 'bot-plain';
 export const title = '組み込みの bot（bot なし）: plain で選んで作る・人格と記憶を渡さない・@ で呼べない・暗黙の宛先には入る・変えられない・一覧の印';
@@ -40,7 +43,9 @@ export default async function (t) {
   const tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'bot-plain-'));
   let server = null, c = null;
   try {
-    server = await startServer({ env: { AGENT_HOST_BACKENDS: 'fake' }, dataDir: path.join(tmp, 'data'), timeoutMs: 60_000 });
+    // 「bot なし」でエージェントを選ぶ確かめに、2 つ目のエージェント（偽の Codex）も立てる
+    server = await startServer({ env: { AGENT_HOST_BACKENDS: 'fake,codex', AGENT_HOST_CODEX_BIN: `"${process.execPath}" "${path.join(ROOT, 'tests', 'lib', 'fake-codex.mjs')}"` },
+      dataDir: path.join(tmp, 'data'), timeoutMs: 60_000 });
     c = await open({ port: server.port, token: server.token });
     const call = (op, args) => c.cmd('invoke', { op, args });
     const fails = async (op, args) => { try { await call(op, args); return false; } catch { return true; } };
@@ -90,6 +95,13 @@ export default async function (t) {
     t.ok('threadSettings の botId plain: 同じ組み込みの bot の会話をこのスレッドに作る', Boolean(s2.sessionId) && (await threadOf(root2)).sessions[agent.id] === s2.sessionId
       && (await call('bots.list', {})).bots.filter((b) => b.plain).length === 1, JSON.stringify(s2));
     t.ok('ふつうの bot の backend は変えられない', await fails('channels.threadSettings', { channelId: dev.id, threadId: root2.id, botId: owl.id, backend: 'fake' }));
+    // 組み込みの bot の既定と違うエージェントで作った会話は、作業場所などの設定を変えても、そのエージェントのまま（組み込みの bot の既定へ予約し直さない）
+    const other = agent.backend === 'codex' ? 'fake' : 'codex';
+    const root3 = await call('channels.post', { channelId: dev.id, text: 'エージェントを選ぶスレッド' });
+    const s3 = await call('channels.threadSettings', { channelId: dev.id, threadId: root3.id, botId: 'plain', backend: other, cwd: tmp });
+    const row3 = (await call('sessions.list', {})).find((x) => x.id === s3.sessionId);
+    t.ok('threadSettings の backend: 選んだエージェントで会話を作り、作業場所を添えても既定のエージェントへ予約しない', s3.backend === other && row3?.backend === other
+      && (row3?.nextSettings?.backend ?? other) === other, JSON.stringify({ s3, backend: row3?.backend, next: row3?.nextSettings }));
 
     // ---- 変えられない・消せない
     t.ok('bots.update は断る', await fails('bots.update', { botId: agent.id, persona: '人格を足す' }));

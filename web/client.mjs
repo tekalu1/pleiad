@@ -46,7 +46,7 @@ import { createContextMenu } from "./context-menu.mjs";
 import { setupLongPress } from "./long-press.mjs";
 import { whenText, timeText } from './schedule-times.mjs';
 import { setupSendMenu } from './send-menu.mjs';
-import { setupComposerControls, resolvedModel, folderBrowser } from "./composer-controls.mjs";
+import { setupComposerControls, resolvedModel, folderBrowser, destinationUsage, modelChipLabel } from "./composer-controls.mjs";
 import { createFolderUpload, canSendFolders, entriesFromDirectory, summarize, askDroppedFolder } from "./folder-upload.mjs";
 import { setupAttachMenu } from "./attach-menu.mjs";
 import { promptMaxHeight, attachSources, attachFolderHints } from "./composer-layout.mjs";
@@ -261,8 +261,8 @@ const chatComposer = createComposer({
 });
 const chatAttach = chatComposer.attach, composerEditor = chatComposer.editor, composerWait = chatComposer.wait;
 // まだ送っていない会話の宛先（bot なし / bot）。bot を選んだ最初の送信は、一時チャットでその bot に話しかける投稿になる（sendToHomeBot）
-const homeDest = createHomeDest({ anchor: $("attach"), t, invoke: (op, args) => cmd("invoke", { op, args }), showMenu: (...a) => showMenu(...a),
-  visible: () => unsentHere() });
+const homeDest = createHomeDest({ invoke: (op, args) => cmd("invoke", { op, args }),
+  visible: () => unsentHere(), onChange: () => { syncTopbar().catch(() => {}); } });
 // 接続の状態（web/connection-status.mjs）。切れた一行は 1.5 秒続いてから、トークンが古いと分かったら案内に替えて再接続をやめる
 const connStatus = createConnectionStatus({ note: $("connNote"), sideLine: $("connLost"), live: $("connLive"), t, runMark,
   time: (ms) => fmt.time(ms), check: checkToken, reconnect: () => connect(), onChange: () => syncRunState() });
@@ -369,9 +369,11 @@ function closeMeterPop(focus = false) {
 /** 入力欄の上の帯の左（文脈）が描いたか。右端のバックグラウンドの入口（syncWorkEntry）と合わせて、帯ごと出すか決める */
 let contextShown = false;
 const stripNarrow = matchMedia('(max-width:480px)');
+// 480px 以下: 頭に残すのは通話・目次・「…」だけ（プラグインと git は「…」の先頭）。docs/design-system.md「会話の頭の行のアイコン」
+const phoneView = stripNarrow;
 function syncStripVisible() {
   const strip = $('contextStrip');
-  strip.hidden = !contextShown && $('workEntry').hidden;
+  strip.hidden = !contextShown && $('usageChip').hidden && $('workEntry').hidden;
   if (strip.hidden) closeMeterPop();
 }
 /** 狭い画面（480px 以下）は、メーターを「文脈 ▬ 30% · ◷ 17:57」に縮め、数値と予約のキャンセルはメニューの頭へ移す。圧縮中・失敗はメーターの位置に出す */
@@ -467,7 +469,7 @@ function paintMeterMenu(narrow, amounts, time, scheduled) {
     if (cancel.textContent !== label) cancel.textContent = label;
   } else cancel?.remove();
 }
-stripNarrow.addEventListener('change', () => paintContextStrip());
+stripNarrow.addEventListener('change', () => { paintContextStrip(); paintMoreEntry(); });
 function showCompactionError(error) { state.compactionPhase = { phase: 'failed', reason: String(error?.message ?? error) }; paintContextStrip(); }
 async function showRowCompactionError(session, error, setting = false) {
   // i18n-dynamic: compaction.settingFailed
@@ -3923,20 +3925,54 @@ function syncAttachButton() {
 }
 
 // 入力欄の設定のチップ（web/composer-controls.mjs）。値は state に持ち、チップは get() で毎回読む
+const composerQuota = new Map();
+/** 未送信の会話で「bot なし」のときに動くエージェント（bot を選んでいる間も、bot なしの札にはこちらを出す） */
+function homeBackend() {
+  const s = state.sessions.find(x => x.id === state.current);
+  const chosen = !s || justCreated() ? draftView(state.draft.changes) : null;
+  return chosen?.backend ?? s?.nextSettings?.backend ?? activeBackendId();
+}
+/** Chats の未送信で選んだ bot の動かし方（表示だけ）。「Codex · Fake 1 · medium · 都度確認」 */
+function homeBotSetup(bot) {
+  // チップと同じ字（syncTopbar が bot の既定を state.model・effort・mode に入れている）
+  const mode = state.modes?.[state.mode]?.label ?? state.mode ?? '';
+  return [labelOf(bot.backend), modelChipLabel(state.models, state.model, state.efforts, state.effort), mode].filter(Boolean).join(' · ');
+}
+// i18n-dynamic: channels:side.botState.
 const controls = chatComposer.useControls({
   cmd,
   get: () => {
     const bid = state.shownBackend ?? activeBackendId();
+    const bot = homeDest.bot;
+    const sent = !unsentHere();
     return {
-      cwd: state.cwd, recent: cwdOptions(),
+      // bot を選んだ未送信の会話は、bot が実際に使う値を表示だけ（一時チャットには作業場所が無いので、bot の最初のフォルダーかホーム。core/bots/sessions.mjs の pickCwd）
+      cwd: bot ? bot.folders?.[0]?.path || state.homeDir || state.cwd : state.cwd, recent: cwdOptions(), cwdDisabled: Boolean(bot),
       backends: state.backends, backend: bid,
       // エージェントが 1 つしか無ければ選ぶ口を出さない
       backendSwitchable: state.backends.length > 1,
       models: state.models, model: state.model,
       efforts: state.efforts, effort: state.effort, effortDisabled: state.effortDisabled,
-      accounts: state.accountShown ? accountOptions() : null, account: state.account,
-      endpoint: endpointView(bid),
+      accounts: !bot && state.accountShown ? accountOptions() : null, account: state.account,
+      endpoint: bot ? null : endpointView(bid),
       modes: state.modes, mode: state.mode,
+      modeDisabled: Boolean(bot),
+      // 押せない理由（作業ディレクトリ・承認モードのチップの title と読み上げに足す）
+      lockedNote: bot ? t('composer.destination.locked', { name: bot.name }) : '',
+      destination: {
+        sent, bot, selected: homeDest.selected, readOnlyBot: bot, fixedAfterSend: true,
+        botSetup: bot ? homeBotSetup(bot) : '',
+        openBot: id => document.dispatchEvent(new CustomEvent('channels:show', { detail: { kind: 'bot', id } })),
+        backendLabel: labelOf, onPick: id => homeDest.choose(id),
+        usage: destinationUsage(composerQuota.get(bid), { account: bot ? '' : state.account,
+          open: () => { onboarding.open('usage'); $('usageTab').click(); } }),
+        groups: sent ? [] : [{ options: [
+          { id: null, name: t('channels:homeDest.none'), backend: homeBackend() },
+          ...homeDest.bots.map(b => ({ id: b.id, name: b.name, bot: b, backend: b.backend, backendLabel: labelOf(b.backend),
+            state: b.state ? t(`channels:side.botState.${['working', 'waiting', 'resting'].includes(b.state) ? b.state : 'idle'}`) : '',
+            waiting: b.state === 'waiting', working: b.state === 'working' })),
+        ] }],
+      },
       git: state.git.data,
       worktree: state.worktree.data,
       // 別の会話が同じリポジトリに書き込み中なら { who }。チップと面に知らせる
@@ -3972,7 +4008,11 @@ const controls = chatComposer.useControls({
       modeWrite.catch(e => composerError(t("chat.sys.modeSaveFailed", { error: e.message })));
     },
     // モデルの面を開いた。候補を裏で取り直し、変わっていたら描き直す
-    openModel: () => revalidateVocab(state.shownBackend ?? activeBackendId()),
+    openModel: () => {
+      const backend = state.shownBackend ?? activeBackendId();
+      revalidateVocab(backend);
+      usageSource.load(backend).catch(() => {});
+    },
   },
 });
 
@@ -4855,8 +4895,13 @@ function syncParentEntry() {
   // 依頼元の会話を消した（ADR 0147）なら出さない。端末の AI から任された会話の依頼元は端末にあるので、戻る口は出さない
   const parentId = remote ? null : delegation?.parentSessionId;
   const parent = parentId && state.sessions.some(s => s.id === parentId) ? parentId : null;
-  $('parentChatEntry').hidden = !parent;
-  $('parentChatEntry').onclick = parent ? () => select(parent) : null;
+  const back = $('parentChatEntry');
+  back.hidden = !parent;
+  back.onclick = parent ? () => select(parent) : null;
+  // 題の下の行（700px 以下）・題の右（広い幅）に「↖ 依頼元: 題」
+  const parentTitle = parent ? state.sessions.find(s => s.id === parent)?.title || t('session.untitled') : '';
+  back.textContent = parent ? t('session.parentLine', { title: parentTitle }) : '';
+  if (parent) { back.setAttribute('aria-label', t('session.parentLineAria', { title: parentTitle })); back.title = parentTitle; }
   const origin = $('remoteOriginLine');
   origin.hidden = !remote;
   origin.textContent = remote ? [t('session.remoteOrigin.badge', { device: remote.deviceName || '' }),
@@ -6195,7 +6240,7 @@ function initSidebar() {
     setDrawer(false);
   });
   // 広い画面へ戻ったら引き出しの印を外す（幕が残らないように）
-  narrowView.addEventListener("change", () => { setDrawer(false, { refocus: false }); side.redraw(); });
+  narrowView.addEventListener("change", () => { setDrawer(false, { refocus: false }); side.redraw(); paintMoreEntry(); });
   // Ctrl+B（macOS は ⌘B）。入力欄でも太字などの既定の意味は無いので、どこからでも効かせる。
   // macOS の Ctrl+B は入力欄で「1 文字戻る」なので奪わない
   const mac = /Mac/.test(navigator.platform);
@@ -6368,6 +6413,8 @@ const channelsUi = setupChannels({
   agentName: (sessionId) => { const s = state.sessions.find((x) => x.id === sessionId); return s ? labelOf(s.backend) : null; },
   // スレッドの入力欄の設定のチップ（web/channels/thread-composer.mjs）: エージェントのモデル・承認モードの語彙と、エフォートの段
   vocab: (backend) => loadVocab(backend),
+  quota: (backend) => usageSource.load(backend),
+  openUsage: () => { onboarding.open('usage'); $('usageTab').click(); },
   // 送信の日時の面の一言（窓を閉じても動き続けるか・ホストの時刻帯）。会話の入力欄と同じ材料
   scheduleEnvironment: async () => {
     const status = await cmd('remoteStatus').catch(() => null);
@@ -6899,7 +6946,8 @@ function rowMenu(s, x, y, lead = []) {
   const mode = vocab ? selectedMode(s, s.nextSettings?.backend ?? s.backend, vocab.modes) : '';
   const items = [
     ...lead, ...(lead.length ? [{ sep: true }] : []),
-    { label: t("session.menu.open"), onClick: () => select(s.id) },
+    // 頭の「…」（開いている会話。先頭に「開く」の見出しを足したとき）では、同じ語の「開く」（この会話を開く）を出さない
+    ...(lead.length && s.id === state.current ? [] : [{ label: t("session.menu.open"), onClick: () => select(s.id) }]),
     ...(s.parent?.sessionId ? [{ label: t("session.menu.openParent"), hint: sessionLabel(s.parent.sessionId).slice(0, 20), onClick: () => select(s.parent.sessionId) }] : []),
     ...(hasKin ? [{ label: t("session.menu.branches"), sub: kinItems }] : []),
     { label: t("session.menu.rename"), sub: () => [
@@ -6951,7 +6999,8 @@ function rowMenu(s, x, y, lead = []) {
         onClick: () => cmd("setTurnSettings", { sessionId: s.id, effort, rememberEffort: true })
           .then(refresh).catch(e => sideNote(t("session.menu.effortFailed", { error: e.message }))),
       })) },
-    ...(s.id === state.current && narrowView.matches && state.git.data ? [{ label: t('git.entry'), hint: branchLabel(state.git.data), onClick: () => gitPanel?.open($('sessionMore')) }] : []),
+    // 480px 以下は「…」の先頭の「開く」行に出す（sessionMoreLead）
+    ...(s.id === state.current && narrowView.matches && !phoneView.matches && state.git.data ? [{ label: t('git.entry'), hint: branchLabel(state.git.data), onClick: () => gitPanel?.open($('sessionMore')) }] : []),
     { label: t("session.menu.copyCwd"), hint: s.cwd ?? "", onClick: () => copy(s.cwd, t("session.menu.cwdCopied"), t("session.menu.cwdCopyFailed")) },
     { label: t("session.menu.copyId"), onClick: () => copy(s.id, t("session.menu.idCopied"), t("session.menu.idCopyFailed")) },
     ...(s.unsent ? [{ label: t("session.menu.deleteUnsent"), sub: () => [
@@ -7072,6 +7121,16 @@ function openContextPage() {
 function paintContextEntry() {
   paintContextEntryButton($('contextEntry'), { visible: !!state.current, report: state.contextInfo?.report,
     summary: chipText(state.contextInfo), changed: !!state.contextInfo?.changed?.differs });
+  paintMoreEntry();
+}
+/** 「…」の右上の変更ありの点。「…」へ逃がしたものだけを見る（480px 以下のプラグイン・700px 以下の git） */
+function paintMoreEntry() {
+  const button = $('sessionMore');
+  const changed = (phoneView.matches && !!state.contextInfo?.changed?.differs) || (narrowView.matches && !!state.current && (state.git.data?.dirty ?? 0) > 0);
+  const dot = button.querySelector('.entry-dot');
+  if (changed && !dot) { const mark = el('span', 'entry-dot'); mark.setAttribute('aria-hidden', 'true'); button.append(mark); }
+  else if (!changed) dot?.remove();
+  button.setAttribute('aria-label', changed ? `${t('session.more')} · ${t('session.context.changed')}` : t('session.more'));
 }
 /** 今のセッションの読み込み記録を取り直す。固定された会話ではサーバが今のファイルと突き合わせる */
 async function refreshContextEntry({ force = false } = {}) {
@@ -7098,6 +7157,7 @@ let gitTicket = 0;
 function paintGitEntry() {
   const button = $('gitEntry');
   const data = state.current ? state.git.data : null;
+  paintMoreEntry();
   button.hidden = !data;
   if (!data) return;
   const dirty = data.dirty > 0;
@@ -7308,15 +7368,16 @@ async function syncTopbar() {
   // 新しい会話の欄（まだ会話が無い）と、作ったばかりの会話（startNew が予約を流し終えるまで）は、そこで選んだ設定を見せる。
   // 流している途中に来た一覧の読み直しは書く前の予約を持つことがあり、そのまま見せるとチップが一瞬戻る（chooseSettings）
   const chosen = !s || justCreated() ? draftView(state.draft.changes) : null;
-  const bid = chosen?.backend ?? s?.nextSettings?.backend ?? activeBackendId();
+  const homeBot = unsentHere() ? homeDest.bot : null;
+  const bid = homeBot?.backend ?? chosen?.backend ?? s?.nextSettings?.backend ?? activeBackendId();
   const caps = capsOf(activeBackendId());
 
   $("titleEdit").value = s?.title === "(no title)" ? "" : (s?.title ?? "");
   syncTitleControls();
 
   if (bid) state.shownBackend = bid;
-  // ヘッダーの使用量のチップは、この会話（予約があれば次のターン）のエージェントとアカウントの枠を出す
-  headerUsage.show({ backend: bid, account: s?.nextSettings?.account ?? s?.claudeAccount ?? "", endpoint: endpointOf(s) });
+  // 帯の使用量の札は、この会話（予約があれば次のターン）のエージェントとアカウントの枠を出す
+  headerUsage.show({ backend: bid, account: homeBot ? '' : s?.nextSettings?.account ?? s?.claudeAccount ?? "", endpoint: homeBot ? '' : endpointOf(s) });
 
   // 予約があれば次のターンの作業場所を表示する。
   if (s) state.cwd = (justCreated() && state.draft.cwd) || (s.nextSettings?.cwd ?? s.cwd ?? state.homeDir ?? "");
@@ -7332,15 +7393,16 @@ async function syncTopbar() {
   state.models = models;
   if (s) { state.mode = s.mode ?? "default"; state.model = chosen?.model ?? s.nextSettings?.model ?? s.model ?? ""; }
   else { const prefs = (state.prefs.backends ? state.prefs.backends[bid] : state.prefs) ?? {}; state.mode = prefs.mode ?? "default"; state.model = chosen.model ?? prefs.model ?? ""; }
-  state.mode = selectedMode(s, bid, modes, chosen);
+  state.mode = homeBot?.mode ?? selectedMode(s, bid, modes, chosen);
   await syncEndpoint(s, bid);
   if (state.current !== id || version !== topbarVersion) return;
   // 互換の接続先のモデルは接続先の一覧＋自由入力なので、公式の一覧に無くても戻さない
+  if (homeBot) state.model = homeBot.model ?? '';
   if (!state.endpoint && !(state.model in models)) state.model = "" in models ? "" : Object.keys(models)[0] ?? "";
   const efforts = await cmd('efforts', { backend: bid, model: state.model, cwd: s?.nextSettings?.cwd || s?.cwd || undefined, ...(state.endpoint ? { endpoint: state.endpoint } : {}) }).catch(() => ({ '': { label: t('chat.next.useDefault') } }));
   if (state.current !== id || version !== topbarVersion) return;
   state.efforts = efforts;
-  state.effort = chosen?.effort ?? s?.nextSettings?.effort ?? s?.effort ?? '';
+  state.effort = homeBot?.effort ?? chosen?.effort ?? s?.nextSettings?.effort ?? s?.effort ?? '';
   state.effortDisabled = Object.keys(efforts).length <= 1;
   controls.paint();
   await syncAccount(s, bid);
@@ -8537,6 +8599,13 @@ $("sessionMore").onclick = () => {
 function sessionMoreLead() {
   if (!narrowView.matches) return [];
   const lead = [];
+  if (phoneView.matches) {
+    lead.push({ head: t('session.menu.open') });
+    if (!$('contextEntry').hidden) lead.push({ label: $('contextEntry').getAttribute('aria-label'),
+      onClick: () => sessionContext.open($('sessionMore')) });
+    if (!$('gitEntry').hidden) lead.push({ label: $('gitEntry').getAttribute('aria-label'),
+      hint: branchLabel(state.git.data), onClick: () => gitPanel?.open($('sessionMore')) });
+  }
   const wand = $("titleWand");
   if (!wand.hidden) lead.push({ label: t("session.titleWand"), disabled: wand.disabled, onClick: () => { if (!wand.disabled) wand.onclick(); } });
   const info = remoteInfo(window.plyRemote);
@@ -8656,10 +8725,11 @@ function watchRemoteReason() {
 }
 // 使用量の取得は設定の「使用量」とヘッダーのチップで共有する（同じエージェントの取得が走っていれば相乗り）
 const usageSource = createUsageSource(cmd);
+usageSource.onResult((backend, result) => { composerQuota.set(backend, result); if (controls.panels.model.open) controls.paint(); });
 // 使用量の認可が済んでいないアカウントの「使用量の表示を認可」。アカウントの画面を開いて、そのまま認可を始める
 const usageLogin = accountId => claudeAccounts.open({ usageLogin: accountId });
 const headerUsage = setupHeaderUsage({ $, source: usageSource, getBackends: () => state.backends, onUsageLogin: usageLogin,
-  openSettings: () => { onboarding.open('usage'); $('usageTab').click(); } });
+  openSettings: () => { onboarding.open('usage'); $('usageTab').click(); }, onVisibility: syncStripVisible });
 setupUsage({ $, cmd, source: usageSource, getBackends: () => state.backends, endpoints: async (agent) => (await compatEndpoints.load(true)).filter((e) => e.agent === agent), page: onboarding.page, isOpen: onboarding.isOpen,
   onUsageLogin: usageLogin });
 const remoteSettings = setupRemote({ cmd, page: onboarding.page, openSession: id => { onboarding.close(); select(id); } });

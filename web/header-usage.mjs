@@ -1,4 +1,4 @@
-// 会話のヘッダーの使用量のチップ（docs/design-system.md「ヘッダーの使用量」）。
+// 使用量の札（入力欄の上の帯。docs/design-system.md「使用量の札」）。
 // この会話のエージェント（新しい会話は入力欄で選んだもの）の枠のうち、使用率がいちばん高いものを 1 つだけ出す。
 // 押すと全エージェントの一覧（浮く面）。トークン数・費用などの詳しい数字は、これまでどおり設定の「使用量」で見る。
 //
@@ -111,7 +111,7 @@ export function resetText(w, now = Date.now()) {
     : t('usage.header.resetIn', { duration: duration(left) });
 }
 
-export function setupHeaderUsage({ $, source, getBackends, onUsageLogin, openSettings }) {
+export function setupHeaderUsage({ $, source, getBackends, onUsageLogin, openSettings, onVisibility = () => {} }) {
   const chip = $('usageChip'), pop = $('usagePop');
   // エージェントごとの最後の値。{ label, quota, failed }。failed は直前の取得に失敗した（quota はその前の値）
   const data = new Map();
@@ -149,6 +149,13 @@ export function setupHeaderUsage({ $, source, getBackends, onUsageLogin, openSet
     const fill = el('i'); fill.style.width = `${Math.max(0, Math.min(100, used ?? 0))}%`;
     bar.append(fill); return bar;
   };
+  // 文脈のメーターと同じ ▾（480px 以下は usage.css が隠す）
+  const caret = () => {
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('class', 'i caret'); svg.setAttribute('viewBox', '0 0 24 24'); svg.setAttribute('aria-hidden', 'true');
+    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path'); path.setAttribute('d', 'M7 10l5 5 5-5');
+    svg.append(path); return svg;
+  };
   const staleNote = entry => entry?.failed && entry.quota?.checkedAt ? t('usage.header.stale', { when: fmt.relative(entry.quota.checkedAt) }) : '';
 
   function paintChip() {
@@ -157,12 +164,13 @@ export function setupHeaderUsage({ $, source, getBackends, onUsageLogin, openSet
     // 互換の接続先で動く会話はサブスクの枠を使わない
     const state = shown.endpoint ? null : chipState(row);
     chip.hidden = !state;
+    onVisibility();
     if (!state) { close(); return; }
     const agent = labelOf(shown.backend), stale = staleNote(entry);
-    chip.className = 'btn usage-chip' + (state.high ? ' high' : '') + (state.kind !== 'value' || entry.failed ? ' dim' : '');
+    chip.className = 'usage-chip' + (state.high ? ' high' : '') + (state.kind !== 'value' || entry.failed ? ' dim' : '');
     if (state.kind !== 'value') {
       const text = state.kind === 'auth' ? t('usage.header.unauthorized') : t('usage.unknown');
-      chip.replaceChildren(mini(0), el('span', 'lb', t('usage.header.title')), el('span', 'pc', '—'));
+      chip.replaceChildren(el('span', 'lb', t('usage.header.title')), mini(0), el('span', 'pc', '—'), caret());
       chip.setAttribute('aria-label', t('usage.header.chipLabel', { agent, text }));
       chip.title = [state.kind === 'auth' ? row.message || text : text, stale].filter(Boolean).join(' · ');
       return;
@@ -174,10 +182,10 @@ export function setupHeaderUsage({ $, source, getBackends, onUsageLogin, openSet
       text = t('usage.header.limitUntil', { time });
       const pc = el('span', 'pc');
       pc.append(el('span', 'long', text), el('span', 'short', t('usage.header.limitShort', { time })));
-      chip.replaceChildren(mini(state.used), pc);
+      chip.replaceChildren(el('span', 'lb', label), mini(state.used), pc, caret());
     } else {
       text = percentText(state.used);
-      chip.replaceChildren(mini(state.used), el('span', 'lb', label), el('span', 'pc', text));
+      chip.replaceChildren(el('span', 'lb', label), mini(state.used), el('span', 'pc', text), caret());
     }
     chip.setAttribute('aria-label', t('usage.header.chipLabel', { agent, text: state.limit ? text : `${label} ${text}` }));
     chip.title = [t('usage.header.chipTitle', { agent, label: w.label, percent: percentText(state.used), reset: resetText(w) }), stale].filter(Boolean).join(' · ');
@@ -242,6 +250,11 @@ export function setupHeaderUsage({ $, source, getBackends, onUsageLogin, openSet
 
   function open() {
     pop.hidden = false; chip.setAttribute('aria-expanded', 'true');
+    const r = chip.getBoundingClientRect();
+    const width = Math.min(340, document.documentElement.clientWidth - 16);
+    pop.style.left = `${Math.max(8, Math.min(r.left, document.documentElement.clientWidth - width - 8))}px`;
+    pop.style.bottom = `${Math.round(window.innerHeight - r.top + 6)}px`;
+    pop.style.width = `${width}px`;
     paintPop(); refresh();
   }
   function close(focus = false) {

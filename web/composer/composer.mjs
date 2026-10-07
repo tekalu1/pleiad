@@ -17,7 +17,7 @@ import { createShellComposer } from '../shell-composer.mjs';
 import { isComposingKey } from '../keyboard.mjs';
 
 /** 入力欄の中の要素の役割（id は頭 + 役割。頭が空なら役割そのもの） */
-export const COMPOSER_PARTS = ['composer', 'contextStrip', 'contextMeterWrap', 'contextMeter', 'contextMeterPop', 'meterCompact', 'meterSettings',
+export const COMPOSER_PARTS = ['composer', 'contextStrip', 'contextMeterWrap', 'contextMeter', 'contextMeterPop', 'meterCompact', 'meterSettings', 'usageChip',
   'contextStripStatus', 'contextStripText', 'workEntry', 'workEntryButton', 'outbox', 'nextSettings', 'nextSettingsText', 'nextSettingsBehind',
   'nextHandoff', 'cancelSettings', 'settingsError', 'skillList', 'composerNote', 'connNote', 'cbox', 'attached', 'shellHead', 'prompt', 'composerBusy',
   'composerBusyText', 'slashHint', 'draftFail', 'draftFailText', 'draftFailRetry', 'attach', 'fileIn', 'cwdChip', 'draftSaved', 'armedChip', 'armedText',

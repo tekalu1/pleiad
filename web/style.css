@@ -1081,7 +1081,7 @@ body.inapp-links .present-tools .visualize-expand{display:none}
    帯のチップは見た目 28px・押せる範囲 36px（::before で上下 4px 広げる）。種類ごとのロゴを 6px 空けて並べ、数は右下、承認待ちは右上の ◆ */
 .work-entry{display:flex;flex:none;margin-left:auto;min-width:0}
 .work-entry[hidden]{display:none}
-.strip-chip{position:relative;display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 8px;border:0;border-radius:var(--r-pill);background:transparent;color:var(--ink-weak);
+.strip-chip{position:relative;display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 8px;border:0;border-radius:var(--r-pill);background:var(--surface-1);color:var(--ink-weak);
   font:inherit;font-size:var(--fs-xs);font-variant-numeric:tabular-nums;white-space:nowrap;cursor:pointer;transition:background-color var(--dur-fast) var(--ease-out),color var(--dur-fast) var(--ease-out)}
 .strip-chip::before{content:"";position:absolute;inset:-4px -2px}
 .strip-chip:hover{background:var(--surface-2);color:var(--ink)}
@@ -1290,6 +1290,7 @@ body.inapp-links .present-tools .visualize-expand{display:none}
 .chip .v.split{display:flex}   /* モデル: 名前（.mn）だけを … で詰め、「 · 段」（.ef）は残す */
 .chip .v .mn{min-width:0;overflow:hidden;text-overflow:ellipsis}
 .chip .v .ef{flex:none;white-space:pre}
+.chip .v .mdl{flex:none;white-space:pre}
 .chip svg.i{width:15px;height:15px;color:var(--ink-weak);flex:none}
 .chip svg.caret{width:12px;height:12px}
 /* 縮めるのはモデル → 作業ディレクトリの順（最小の幅は composer-controls.mjs の fitRow が決める）。承認モードは縮めない */
@@ -1300,6 +1301,41 @@ body.inapp-links .present-tools .visualize-expand{display:none}
 .crow.fit-short .chip.mode .v .full:has(+ .short){display:none}
 .crow.fit-short .chip.mode .v .short{display:inline}
 .crow.fit-noef .chip .v .ef{display:none}
+.crow.fit-nomodel .chip.model.with-bot .mdl{display:none}
+.crow.fit-cwd-icon .chip.folder :is(.v,.caret,.cv,.git-br,.wt-sfx){display:none}
+.crow.fit-mode-icon .chip.mode :is(.v,.caret,.cv){display:none}
+.crow.fit-model-icon .chip.model :is(.v,.caret){display:none}
+.chip.model{position:relative}
+.chip.model .av{flex:none}
+.chip.model .av.xs{width:18px;height:18px;display:inline-grid;place-items:center;font-size:12px;line-height:1}
+.chip.model .row-be{flex:none;width:16px;height:16px}
+.chip.model .compat-mark{display:inline-grid;place-items:center;color:var(--ink-weak);font-size:13px;line-height:1}
+.crow > .chip.model.changed > .entry-dot{position:absolute;left:17px;right:auto;top:1px}
+.destination-sent,.destination-fact{margin:4px 8px;color:var(--ink-weak);font-size:var(--fs-s)}
+.destination-agent{display:flex;align-items:center;gap:5px;padding:12px 8px 4px;color:var(--ink-weak);font-size:var(--fs-s)}
+.destination-agent b{margin-right:auto;color:var(--ink);font-weight:600}
+.destination-agent .row-be{width:16px;height:16px}
+.destination-options{display:flex;flex-wrap:wrap;gap:5px;padding:4px 6px 8px}
+.destination-option{display:inline-flex;align-items:center;gap:5px;max-width:100%;min-height:36px;padding:4px 9px;border:0;border-radius:var(--r-pill);background:var(--surface-1);color:var(--ink);font:inherit;cursor:pointer;transition:background-color var(--dur-fast) var(--ease-out)}
+.destination-option:hover{background:var(--surface-2)}
+.destination-option.on{background:var(--surface-sel);font-weight:600}
+.destination-option .destination-check{color:var(--ink-blue)}
+.destination-option .destination-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.destination-option .destination-wait{color:var(--ink-mark);font-size:var(--fs-xs)}
+.destination-option .run{flex:none}
+.destination-option .row-be{flex:none;width:16px;height:16px}
+/* 宛先とモデルの面のエージェントの区切り: 名前の前にロゴ */
+.cpop .cseg button{display:inline-flex;align-items:center;justify-content:center;gap:6px;min-width:0}
+.cpop .cseg button .row-be{flex:none;width:15px;height:15px}
+.cpop .cseg button .seg-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cpop .chead.destination-head{display:flex;align-items:baseline;gap:8px}
+.destination-head-note{margin-left:auto;letter-spacing:0}
+/* 宛先のエージェントの使用量の 1 行（「▬ 5時間 66% ▬ 週次 31% … 使用量 ›」） */
+.destination-usage{display:flex;align-items:center;gap:12px;padding:2px 8px 6px;font-size:var(--fs-xs);color:var(--ink-weak);font-variant-numeric:tabular-nums}
+.destination-usage-item{display:inline-flex;align-items:center;gap:5px;white-space:nowrap}
+.destination-usage .clink{margin-left:auto;font-size:var(--fs-xs)}
+.destination-agent .av.xs{width:18px;height:18px;display:inline-grid;place-items:center;font-size:12px;line-height:1;flex:none}
+.cpop > .clink:is(.destination-bot-link,.destination-reset){display:block;margin:4px 8px 6px}
 /* 縮める前の幅を測る間だけ（fitRow）。「保存済み」は測らない（入らなければ消えるだけ） */
 .crow.measuring > *{flex-shrink:0}
 .crow.measuring > .draft-saved{display:none}
@@ -1892,8 +1928,11 @@ body{padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) 0 env(s
    - 700px 以下（スマホ）: 帯は置かない。タイトル行 1 本に、タイトルの下の差しの青の添え字「⇄ ホスト名」（等幅。押すとホスト一覧へ）
    - 701px 以上（タブレット）: 上端に帯（脇と同じ面）。左（脇の列の上）に「‹ ⇄ ホスト名」、右（会話の列の上）にタイトル行を上げる */
 .host-bar,.host-sub{display:none}
-.title-col{flex:1;min-width:0;display:flex;flex-direction:column;justify-content:center}
-.title-col .title-field{flex:none}
+.title-col{flex:1;min-width:0;display:flex;align-items:center;justify-content:center}
+.title-col .title-field{flex:1;min-width:0}
+.title-sub{display:contents}
+.title-sub > *{order:-1;flex:none}
+.title-sub > :is(#parentChatEntry,#remoteOriginLine){order:0}
 .host-sub{align-items:center;gap:4px;align-self:flex-start;min-width:0;max-width:100%;padding:0 10px;border-radius:var(--r-pill);background:transparent;
   color:var(--ink-blue);font:500 var(--fs-s)/1.45 var(--font-mono);white-space:nowrap;cursor:pointer}
 .host-sub:hover{background:var(--surface-1)}
@@ -1921,9 +1960,36 @@ body{padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) 0 env(s
   :root.remote-mobile .file-preview{top:var(--top-inset)}
   :root.remote-mobile dialog:modal{max-height:calc(100dvh - var(--top-inset) - 16px)}
 }
-/* ---- 700px 以下のタイトル行: ✦（タイトルを生成）は「…」の中へ。目次・プラグイン・内蔵ブラウザーのアイコンは「…」へ逃がさない ---- */
+/* ---- 700px 以下のタイトル行: 題の下に所属と出どころを置く ---- */
 @media (max-width:700px){
   #titleWand{display:none}
+  main > .top{min-width:0;overflow:hidden}
+  .title-col{flex-direction:column;align-items:stretch;gap:0}
+  .title-col .title-field{flex:0 1 auto;min-width:0}
+  /* 題は 24px に固定する（タッチでは字が 16px になるので、行の高さで決めると 26px に伸びる） */
+  .title-col .title-field input{width:100%;min-width:0;padding:1px 5px;height:24px;line-height:22px;box-sizing:border-box}
+  /* 頭の高さは 1 行のときと同じ 50px（上 2px + 題 24px + 2 行目 24px）。2 行目の語は押せる高さ 24px（WCAG 2.5.8） */
+  main > .top,:root.remote-mobile main > .top{padding-top:2px;padding-bottom:0}
+  .title-sub{display:flex;align-items:center;gap:4px;min-width:0;height:24px;overflow:hidden;padding-left:5px;color:var(--ink-weak);font-size:var(--fs-xs);white-space:nowrap}
+  .title-sub > *{order:0;flex:0 1 auto;min-width:0;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .title-sub > button{display:block;height:24px;line-height:24px;text-align:left}
+  /* 縮めるのは長い題を持つ語（依頼元・端末の AI から）から。所属とホスト名は残す */
+  .title-sub > :is(#crumbHome,.host-sub){flex-shrink:0;max-width:50%}
+  .title-sub > :is(#parentChatEntry,#remoteOriginLine){flex-shrink:10}
+  .title-sub .host-sub{height:24px}
+  /* 語の間は「 · 」 */
+  .title-sub > :not([hidden]):not(#crumbSep) ~ :not([hidden]):not(#crumbSep)::before{content:"·";margin-right:4px;color:var(--ink-weak)}
+  .title-sub #crumbSep{display:none}
+  .title-sub .crumb-home{padding:0;color:var(--ink-weak);font-size:inherit}
+  .title-sub .crumb-hash{margin-right:3px}
+  .title-sub .host-sub{padding:0;font-size:inherit;align-self:center}
+  .title-sub .remote-origin{font-size:inherit;flex-basis:auto;order:0;white-space:nowrap}
+  .title-sub #parentChatEntry{padding:0;color:var(--ink-weak);font-size:inherit}
+}
+@media (max-width:480px){
+  main > .top{gap:4px}
+  main > .top :is(#contextEntry,#gitEntry,#browserEntry){display:none}
+  #sessionMore{position:relative}
 }
 
 /* ==================== 端末の AI からホストへ任せる（docs/remote.md §4.5、ADR 0146） ====================

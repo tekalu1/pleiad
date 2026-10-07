@@ -1,6 +1,6 @@
 {
-  "plain": { "name": "Agent", "choose": "No bot (choose the model directly)", "hint": "No persona or memory. Choose the model, approval mode, and folder" },
-  "homeDest": { "title": "Send to", "none": "No bot", "noneHint": "Talk to the AI directly", "noneLabel": "Send to: no bot (talk to the AI directly; change)", "label": "Send to: {{name}} (talk in Quick chats; change)", "bots": "Talk to a bot" },
+  "plain": { "name": "Agent" },
+  "homeDest": { "none": "No bot" },
   "side": {
     "tabs": { "channels": "Channels" },
     "sections": { "channels": "Channels", "bots": "Bots", "routines": "Routines" },
@@ -156,8 +156,8 @@
     "untitled": "Thread",
     "rename": "Thread title",
     "compactNoSession": "The selected bot has not talked in this thread yet, so there is nothing to compact",
-    "settings": { "note": "Applies to this thread only. Change the bot's defaults on its page.", "changed": "changed", "botDefault": "{{name}}'s default", "failed": "Couldn't change the setting: {{error}}", "effort": "Effort" },
-    "dest": { "title": "Send to", "label": "Send to: {{name}} (change)", "auto": "Send to", "inThread": "Bots in this thread", "others": "Other members", "members": "Members" },
+    "settings": { "note": "Applies to this thread only. Change the bot's defaults on its page.", "changed": "changed", "botDefault": "{{name}}'s default", "failed": "Couldn't change the setting: {{error}}" },
+    "dest": { "inThread": "Bots in this thread", "others": "Other members", "members": "Members" },
     "noSource": "No bot conversation has received this post yet",
     "resend": { "running": "A reply in progress stops if you resend. If you branch and send, it continues in this thread.", "failed": "Could not resend: {{error}}" },
     "branch": { "original": "Original", "nth": "Branch {{n}}", "from": "Branched from a post in “{{title}}”", "failed": "Could not branch: {{error}}" },

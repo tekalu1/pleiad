@@ -125,16 +125,26 @@ export function createThread(host) {
     withdrawPending: (postId) => host.invoke('channels.withdrawPending', { channelId: S.channelId, postId }).then(() => refreshPending()),
     compact: (sessionId) => host.invoke('sessions.compact', { sessionId }),
     onSettings: async (botId, patch) => {
-      // 組み込みの bot の最初の設定は、Chats の既定の backend で会話を作る（作った後は backend を変えない）
-      const first = botId === PLAIN && !Object.values(S.thread?.sessions ?? {}).length;
+      // 組み込みの bot の最初の設定は、選んだエージェント（無ければ Chats の既定）で会話を作る（作った後は backend を変えない）
+      const plain = isPlain(botId);
+      const first = plain && !plainSession(botId);
+      // エージェントだけを選んだ間は会話を作らず手元に持つ（選び直せるように）。最初の設定か最初の送信で会話を作る
+      if (first && patch.backend !== undefined && Object.keys(patch).every((k) => k === 'backend' || patch[k] === '')) {
+        plainBackend = patch.backend;
+        return;
+      }
       const s = botSettings(botId);
       const got = await host.invoke('channels.threadSettings', { channelId: S.channelId, threadId: S.threadId, botId, ...patch,
-        ...(botId === PLAIN && first && s?.backend ? { backend: s.backend } : {}), ...(botId === PLAIN && patch.cwd === undefined && s?.values?.cwd ? { cwd: s.values.cwd } : {}) });
+        ...(first && patch.backend === undefined && s?.backend ? { backend: s.backend } : {}), ...(plain && patch.cwd === undefined && s?.values?.cwd ? { cwd: s.values.cwd } : {}) });
       settingsSeen.set(botId, got);
     },
   });
   // 宛先の bot の、このスレッドの会話の設定（channels.threadSettings が返した値を先に使う。会話の一覧が追い付くまでの間も出す）
   const settingsSeen = new Map();
+  // このスレッドの「bot なし」で選んだエージェント（会話を作るまで。作った後は会話の backend）
+  let plainBackend = null;
+  const isPlain = (botId) => botId === PLAIN || Boolean(S.bots.get(botId)?.plain);
+  const plainSession = (botId) => S.thread?.sessions?.[botId] ?? settingsSeen.get(botId)?.sessionId ?? null;
   function botSettings(botId) {
     // 組み込みの bot をまだ作っていない（「bot なし」を選んだだけ）: Chats の新しい会話の既定から
     const bot = S.bots.get(botId) ?? (botId === PLAIN ? { ...plainOption(t), backend: host.state?.prefs?.backend ?? host.state?.backendId ?? '', model: '', effort: '', mode: '', folders: [] } : null);
@@ -144,10 +154,12 @@ export function createThread(host) {
     const seen = settingsSeen.get(botId) ?? (bot.plain ? settingsSeen.get(PLAIN) : undefined);
     const next = row?.nextSettings ?? {};
     const values = seen && (!row || seen.sessionId === sessionId) ? seen
-      : { model: next.model ?? row?.model ?? bot.model ?? '', effort: next.effort ?? row?.effort ?? bot.effort ?? '', mode: next.mode ?? row?.mode ?? bot.mode ?? '', cwd: next.cwd ?? row?.cwd ?? S.channel?.cwd ?? bot.folders?.[0]?.path ?? '' };
+      : { model: next.model ?? row?.model ?? bot.model ?? '', effort: next.effort ?? row?.effort ?? bot.effort ?? '', mode: next.mode ?? row?.mode ?? bot.mode ?? '', cwd: next.cwd ?? row?.cwd ?? S.channel?.cwd ?? bot.folders?.[0]?.path ?? host.state?.homeDir ?? '' };
     // 組み込みの bot はフォルダーを持たない: チャンネルの作業場所と、Chats の今の作業場所から選ぶ
     const folders = [...new Set([...(bot.folders ?? []).map((f) => f.path), ...(S.channel?.cwd ? [S.channel.cwd] : []), ...(bot.plain && host.state?.cwd ? [host.state.cwd] : [])])];
-    return { backend: bot.backend, sessionId, values, defaults: { model: bot.model ?? '', effort: bot.effort ?? '', mode: bot.mode ?? '' }, folders };
+    const made = sessionId ?? seen?.sessionId ?? null;
+    return { backend: seen?.backend ?? next.backend ?? row?.backend ?? ((bot.plain && !made && plainBackend) || bot.backend), sessionId: made, values,
+      defaults: { model: bot.model ?? '', effort: bot.effort ?? '', mode: bot.mode ?? '' }, folders };
   }
   // 目次のボタンは会話の目次（web/conversation-toc.mjs）が自分で受ける
   const head = createThreadHead({ host, onClose: () => close(), onBack: () => close(), onToc: () => {},
@@ -572,6 +584,7 @@ export function createThread(host) {
   // ---------------------------------------------------------------- 読み込み
   function reset() {
     Object.assign(S, { channel: null, posts: [], index: new Map(), thread: null, nextBefore: null, ready: false, queue: [], loadingOlder: false, pending: [] });
+    plainBackend = null;
     postEls.clear(); toolCache.clear(); cards.clear(); tools.forget();
     perms.replaceChildren();
     rootSlot.replaceChildren(); replies.replaceChildren(); rdiv.textContent = '';
@@ -649,6 +662,12 @@ export function createThread(host) {
 
   // ---------------------------------------------------------------- 操作
   async function send({ text, attachments, confirmedWake, to, clientId, at }) {
+    // 「bot なし」でエージェントだけ選んだまま送る: 先にそのエージェントで会話を作る（投稿で作ると bot の既定のエージェントになる）
+    const plainTo = to && isPlain(to) && plainBackend && !plainSession(to) ? to : null;
+    if (plainTo) {
+      const s = botSettings(plainTo);
+      settingsSeen.set(plainTo, await host.invoke('channels.threadSettings', { channelId: S.channelId, threadId: S.threadId, botId: plainTo, backend: plainBackend, ...(s?.values?.cwd ? { cwd: s.values.cwd } : {}) }));
+    }
     // 日時を指定した返信は予定として置く（時刻が来たら人の投稿として投稿される。channels.schedulePost）
     if (at) {
       await host.invoke('channels.schedulePost', { channelId: S.channelId, threadId: S.threadId, text, at, clientId, ...(attachments?.length ? { attachments } : {}), ...(to ? { to } : {}) });

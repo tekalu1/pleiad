@@ -19,16 +19,9 @@
 .deck > .ch-thread{will-change:transform}
 @media (prefers-reduced-motion:reduce){.deck{--dur-deck:0ms}}
 /* 板の境目。線ではなく、面の階調の細い棒（上下は余白を空ける） */
-/* スレッドの入力欄（Chats の入力欄と同じ部品。web/channels/thread-composer.mjs）。先頭の宛先のチップ。
-   Chats の入力欄の、まだ送っていない会話の宛先のチップ（web/composer/home-dest.mjs）も同じ形 */
-:is(.th-composer,#composer) .chip.dest{display:inline-flex;align-items:center;gap:5px;min-width:0;max-width:40%}
-:is(.th-composer,#composer) .chip.dest[hidden]{display:none}
-:is(.th-composer,#composer) .chip.dest .av.xs{width:18px;height:18px;flex:none;display:inline-grid;place-items:center;font-size:12px;line-height:1}
-:is(.th-composer,#composer) .chip.dest .v{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-:is(.th-composer,#composer) .chip.dest .cv{flex:none;color:var(--ink-weak);font-size:10px}
-/* 宛先の bot の設定のチップ。bot の既定と違えば「変更あり」の点（チップの右上） */
+/* スレッドの入力欄（Chats の入力欄と同じ部品。web/channels/thread-composer.mjs）。先頭は宛先とモデルのチップ（Chats の #modelChip と同じ形。style.css）。
+   作業フォルダー・承認モードのチップは、宛先の bot の既定と違えば「変更あり」の点（チップの右上） */
 .th-composer .crow > .chip{position:relative}
-.th-composer .chip .cv{flex:none;color:var(--ink-weak);font-size:10px}
 .th-composer .chip > .entry-dot{position:absolute;top:3px;right:3px}
 .th-title-edit{cursor:text;border-radius:var(--r-s)}
 .th-title-edit:hover{background:var(--surface-1)}

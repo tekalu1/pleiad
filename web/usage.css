@@ -17,11 +17,17 @@
   .usage-table { font-size: 11px; }
 }
 
-/* ==================== 会話のヘッダーの使用量（web/header-usage.mjs。docs/design-system.md「ヘッダーの使用量」） ====================
-   短い横棒（22×6。輪は読み込み中の回転に見えるので使わない）＋ 枠の名前（弱い字）＋ 率。
+/* ==================== 使用量の札（入力欄の上の帯。web/header-usage.mjs。docs/design-system.md「使用量の札」） ====================
+   枠の名前（弱い字）＋ 文脈のメーターと同じ 47×5 の棒（輪は読み込み中の回転に見えるので使わない）＋ 率 ＋ ▾。
    80% 以上は字と棒を強い字の色にする。太字にはしない。差し色（--ink-mark）は「あなたを待っている」専用なので使わない */
-main > .top{position:relative}
-.usage-chip{flex:none;padding:4px 10px;font-size:var(--fs-s);color:var(--ink)}
+.usage-chip{position:relative;display:inline-flex;align-items:center;gap:6px;flex:none;height:28px;min-width:0;max-width:100%;padding:0 10px;border:0;border-radius:var(--r-pill);background:var(--surface-1);font:inherit;font-size:var(--fs-xs);color:var(--ink-weak);white-space:nowrap;cursor:pointer}
+.usage-chip[hidden]{display:none}
+.usage-chip::before{content:"";position:absolute;inset:-4px -2px}
+.usage-chip:hover{background:var(--surface-2)}
+/* 棒は文脈のメーター（compaction.css の .context-meter-bar）と同じ 47×5 */
+.usage-chip .usage-mini{width:47px;height:5px}
+.usage-chip .usage-mini i{transition:width var(--dur) var(--ease-out)}
+.usage-chip svg.caret{width:12px;height:12px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;color:var(--ink-weak);margin-left:-2px;flex:none}
 .usage-chip[aria-expanded=true]{background:var(--surface-2)}
 .usage-chip .lb{color:var(--ink-weak)}
 .usage-chip .short{display:none}
@@ -34,7 +40,7 @@ main > .top{position:relative}
 .usage-chip.dim,.usage-chip.dim .lb{color:var(--ink-weak)}
 .usage-chip.dim .usage-mini i{opacity:.5}
 
-.usage-pop{top:calc(100% - 2px);right:10px;width:min(340px,calc(100vw - 20px));max-height:min(70vh,560px);overflow-y:auto;padding:12px 14px}
+.usage-pop{position:fixed;top:auto;right:auto;max-height:min(70vh,560px);overflow-y:auto;padding:12px 14px;z-index:60}
 .usage-pop-head{display:flex;align-items:baseline;gap:8px;margin-bottom:6px}
 .usage-pop-head b{font-size:var(--fs)}
 .usage-pop-head .when{margin-left:auto;font-size:var(--fs-xs);color:var(--ink-weak)}
@@ -62,8 +68,13 @@ main > .top{position:relative}
 .usage-pop .foot button:hover{text-decoration:underline;text-decoration-color:var(--line-blue)}
 /* 狭い画面: 枠の名前を外して棒と数字だけ。上限は「上限 14:30」 */
 @media (max-width:700px){
-  .usage-chip{padding:0 8px;min-height:36px}
-  .usage-chip .lb,.usage-chip .long{display:none}
+  .usage-chip{padding:0 8px}
+  .usage-chip .long{display:none}
   .usage-chip .short{display:inline}
-  .usage-pop{right:6px}
+}
+/* 480px 以下は ▾ を省く。自動圧縮の予約（文脈のメーターの「◷ 17:57」）があるときは棒も外して「5時間 66%」だけにする（帯を折り返さない） */
+@media (max-width:480px){
+  .usage-chip svg.caret{display:none}
+  .context-strip:has(.context-meter-clock) .usage-chip .usage-mini{display:none}
+  .usage-chip{gap:5px;padding:0 8px}
 }

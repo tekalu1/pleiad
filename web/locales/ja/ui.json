@@ -2093,6 +2093,8 @@
     "parentChat": "親の会話",
     "titleSuggestFailed": "タイトルを考えられなかった: {{error}}",
     "more": "この会話の操作",
+    "parentLine": "↖ 依頼元: {{title}}",
+    "parentLineAria": "依頼元の会話「{{title}}」へ戻る",
     "remoteOrigin": {
     "badge": "⇄ {{device}} の AI から",
     "request": "依頼元の会話「{{title}}」",
@@ -2259,7 +2261,6 @@
         "cancelled": "停止済み",
         "interrupted": "中断"
       },
-      "parent": "依頼元の会話",
       "notificationUnknown": "完了通知の配送結果は不明です。子の会話で結果を確認してください。"
     }
   },
@@ -2501,6 +2502,22 @@
     }
   },
   "composer": {
+    "destination": {
+      "title": "宛先",
+      "sent": "宛先: この会話（AI と直接）· 送った後は変えられません",
+      "sentAria": "モデル: {{backend}} · {{model}}{{effort}}（宛先はこの会話）",
+      "botAria": "宛先とモデル: {{name}}（{{backend}} · {{model}}{{effort}}）",
+      "plainAria": "宛先とモデル: bot なし · {{backend}} · {{model}}{{effort}}",
+      "optionAria": "{{name}}（{{backend}}{{state}}）",
+      "botSetup": "{{name}}の動かし方",
+      "botRuns": "{{name}} の既定で動きます: {{setup}}。送った後、スレッドの中で変えられます。",
+      "openBot": "bot のページで既定を変える ›",
+      "locked": "{{name}} の既定で動きます（送った後、スレッドの中で変えられます）",
+      "changedAria": "このスレッドだけ変更あり",
+      "fixedAfterSend": "送った後は変えられません",
+      "resetBot": "bot の既定に戻す",
+      "openUsage": "使用量 ›"
+    },
     "cwd": {
       "placeholder": "作業ディレクトリのパス",
       "inputLabel": "作業ディレクトリのパス（Enter で決める）",

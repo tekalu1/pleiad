@@ -2151,6 +2151,8 @@
     "parentChat": "Parent conversation",
     "titleSuggestFailed": "Couldn't suggest a title: {{error}}",
     "more": "Actions for this conversation",
+    "parentLine": "↖ Requested by: {{title}}",
+    "parentLineAria": "Back to the requesting conversation \"{{title}}\"",
     "remoteOrigin": {
     "badge": "⇄ From {{device}}'s AI",
     "request": "Requested from \"{{title}}\"",
@@ -2321,7 +2323,6 @@
         "cancelled": "Stopped",
         "interrupted": "Interrupted"
       },
-      "parent": "Requesting conversation",
       "notificationUnknown": "It's unknown whether the completion notice was delivered. Check the result in the child conversation."
     }
   },
@@ -2584,6 +2585,22 @@
     }
   },
   "composer": {
+    "destination": {
+      "title": "Recipient",
+      "sent": "Recipient: this conversation (direct AI) · Cannot be changed after sending",
+      "sentAria": "Model: {{backend}} · {{model}}{{effort}} (recipient: this conversation)",
+      "botAria": "Recipient and model: {{name}} ({{backend}} · {{model}}{{effort}})",
+      "plainAria": "Recipient and model: no bot · {{backend}} · {{model}}{{effort}}",
+      "optionAria": "{{name}} ({{backend}}{{state}})",
+      "botSetup": "How {{name}} runs",
+      "botRuns": "{{name}} runs with its defaults: {{setup}}. You can change them in the thread after sending.",
+      "openBot": "Change the defaults on the bot page ›",
+      "locked": "Runs with {{name}}'s defaults (you can change it in the thread after sending)",
+      "changedAria": "changed for this thread only",
+      "fixedAfterSend": "Can't be changed after sending",
+      "resetBot": "Reset to bot defaults",
+      "openUsage": "Usage ›"
+    },
     "cwd": {
       "placeholder": "Working directory path",
       "inputLabel": "Working directory path (Enter to set)",

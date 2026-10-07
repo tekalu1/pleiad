@@ -142,7 +142,10 @@ function setupHostBar({ info, remote, doc, back }) {
     const arrows = icon(ARROWS);
     arrows.setAttribute('aria-hidden', 'true');
     sub.append(arrows, subHost, subState);
-    col.append(sub);
+    // 題の下の 2 行目では「# 一時チャット」の次（依頼元・端末の AI からの前）に置く
+    const line = col.querySelector('.title-sub');
+    const after = line?.querySelector('#crumbSep');
+    if (after) after.after(sub); else (line ?? col).append(sub);
   }
 
   let view = badgeView(info, null);
