@@ -653,6 +653,8 @@ const SUITES = [
   // 画面の部品: 送信ゲート・PCM の変換・再生キュー・状態機械・吹き出しの差し替え・読む場所の探し方・差し込み口の契約（偽の AudioContext・DOM）
   './unit/voice-ui.mjs',
   './unit/voice-turns.mjs',
+  // 待っている間の声: 受け取りの一言（1.5 秒・返事が先なら言わない・渡っていなければ言わない）・待ちの実況（無音・間隔・回数・種類）・割り込み・音声のキャッシュ・設定
+  './unit/voice-wait.mjs',
 ];
 
 const code = await main({

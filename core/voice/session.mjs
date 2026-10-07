@@ -10,19 +10,22 @@
 //   { t: 'halt', id? }            読み上げを止める（このターンの残りは「続きを読む」まで読まない）。barge は話して割り込んだとき（同じ扱い）。id = 止めたとき鳴っていた文（resume の始まり）
 //   { t: 'resume' }               止めた場所から読み直す（止めた文と、止めている間に届いた文）。新しい発言が来るまで使える
 //   { t: 'lat', sinceFinalMs }    クライアントが測った「確定を受けてから最初の音が鳴るまで」（ログ・開発用の表示のため）
+//   { t: 'handed' }               声で送った 1 通が AI に渡った（画面が「AI に渡しました」にしたとき。送信待ち・差し込み待ちの間は送らない）。受け取りの一言の起点（wait-voice.mjs）
 // 下り（ホスト → クライアント）
 //   JSON  ready { sttModel, ttsModel, rate, limits, turnHoldMs, bargeIn } / error { code, fatal? } / limit { reason } / speaking { on } / busy { on, last }（文字がまだ出そろっていない。まとめ待ちが送るのを待つ。last = 振った発話の番号の最大）/
 //         partial { utt, text } / final { utt, text, ... } / drop { utt }
-//         seg { id, text, first, skip? }（読む文の始まり。音より先）/ seg.end { id, audioMs, partial? } / seg.fail { id } / cancel（再生中・順番待ちの音を捨てる）
+//         seg { id, text, first, skip? }（読む文の始まり。音より先。skip = 言い添えの種類 code・table・log、決まった文（受け取りの一言・待ちの実況）は notice）/ seg.end { id, audioMs, partial? } / seg.fail { id } / cancel（再生中・順番待ちの音を捨てる）
 //         turn.end { spoke }（返事のターンが終わった。読んだ文が無ければ spoke: false）/ lat { ... }（遅延の内訳）
 //   バイナリ  [BINARY_AUDIO(1 バイト)][文の id(uint32 LE)][PCM 24kHz s16le]
 //
-// エージェントの出来事（text.delta・text.end・userMessage・turnEnd）は host.mjs が、この通話が見ている会話の分だけ onAgentEvent に渡す。
+// エージェントの出来事（text.delta・text.end・tool.start・userMessage・turnEnd）は host.mjs が、この通話が見ている会話の分だけ onAgentEvent に渡す。
 // 遅延の測り方（docs/voice-call.md）: 声の終わり → 確定（speechEndToFinalMs）、確定 → 最初の文が閉じる → 最初の音（finalToFirstAudioMs と内訳）をログ（voice.latency）と lat で出す。
 import { createSttClient, createTranscriber } from './stt.mjs';
 import { createReplyReader } from './reply-reader.mjs';
 import { createSpeaker } from './speaker.mjs';
 import { createTtsClient, TTS_SAMPLE_RATE } from './tts.mjs';
+import { createPhraseCache } from './phrase-cache.mjs';
+import { createWaitVoice } from './wait-voice.mjs';
 import { languageOf, turnHoldMsOf } from './settings.mjs';
 
 export const BINARY_AUDIO = 1;
@@ -30,6 +33,7 @@ const IDLE_END_MS = 10 * 60_000;   // 聞き取った言葉も読み上げも無
 const TICK_MS = 5000;
 const MAX_JSON_BYTES = 64 * 1024;
 const HELD_MAX = 40;       // 止めている間に届いた文を、続きを読むために覚えておく数（1 ターンの読み上げの上限 1500 字に対して十分）
+const WAIT_TICK_MS = 250;  // 受け取りの一言・待ちの実況の時計（一言は 1.5 秒後なので、TICK_MS（5 秒）とは別に細かく回す）
 
 const targetOf = (raw) => {
   if (raw?.kind === 'thread' && typeof raw.channelId === 'string' && typeof raw.threadId === 'string') return { kind: 'thread', channelId: raw.channelId, threadId: raw.threadId };
@@ -46,9 +50,11 @@ const targetOf = (raw) => {
  * @param {(line: string, fields?: object) => void} [d.log]
  * @param {{ stt?: object, tts?: object }} [d.clients]  テスト用の差し替え
  */
-export function createVoiceSession({ send, sendBinary, close, hello, log = () => {}, now = Date.now, clients = {}, idleEndMs = IDLE_END_MS, tickMs = TICK_MS, onTarget = () => {} }) {
+export function createVoiceSession({ send, sendBinary, close, hello, log = () => {}, now = Date.now, clients = {}, idleEndMs = IDLE_END_MS, tickMs = TICK_MS, waitTickMs = WAIT_TICK_MS, onTarget = () => {} }) {
   let ctx = null;            // hello で引いたもの
   let stt = null, speaker = null, reader = null;
+  let wait = null, waitTimer = null;   // 受け取りの一言・待ちの実況（設定でどちらもオフ・辞書が無ければ null）
+  const noticeIds = new Set();         // 決まった文（一言・実況）の文の id。返事の遅延の計測・「返事を読んだ」に数えない
   let target = null;
   let started = false, closed = false;
   let muted = false, spkMuted = false, halted = false;
@@ -67,11 +73,25 @@ export function createVoiceSession({ send, sendBinary, close, hello, log = () =>
     if (lat && !lat.firstSentenceAt) lat.firstSentenceAt = now();
     const id = speaker.speak(text, { first: info.first, ...(info.skip ? { skip: info.skip } : {}) });
     if (id !== null && spoken.length < HELD_MAX * 2) spoken.push({ id, text, info });
+    if (id !== null) wait?.replySpoke(text);
+  };
+
+  /**
+   * 決まった文（受け取りの一言・待ちの実況）を読む。返事ではないので、読み直し（spoken）・「読んだ」（turnSpoke）・遅延の計測には入れず、
+   * 画面へは skip: 'notice' で送る（読んでいる場所の下線を探さない・「考え中」を終わらせない）。止めている・ミュート中は出さない（false）
+   */
+  const speakNotice = (text) => {
+    if (spkMuted || closed || halted || !speaker) return false;
+    const id = speaker.speak(text, { first: false, skip: 'notice' });
+    if (id === null) return false;
+    noticeIds.add(id);
+    return true;
   };
 
   /** 止める（ボタン・話して割り込む）。止めた文と、まだ読んでいない文は覚えておき、resume で読み直せる */
   const halt = (id) => {
     halted = true;
+    wait?.halt();
     cutId = Number.isInteger(id) ? id : null;
     speaker.cancel();
     send({ t: 'cancel' });
@@ -120,8 +140,13 @@ export function createVoiceSession({ send, sendBinary, close, hello, log = () =>
       onSeconds: (sttSeconds) => { usage.add({ sttSeconds }).catch(() => {}); } });
     const ttsClient = clients.tts ?? createTtsClient({ config: ctx.config, model: settings.ttsModel, voice: settings.ttsVoice, now, log });
     stt = createTranscriber({ client: sttClient, language, now, log, emit: onStt });
+    // 受け取りの一言・待ちの実況（辞書が無い・どちらもオフなら作らない）。決まった文の音は通話の中で 1 回だけ合成して使い回す
+    const waitPhrases = phrases?.wait;
+    const ackOn = settings.ackPhrase !== false, narrateOn = settings.narration !== false;
+    const hasWait = Boolean(waitPhrases?.ack?.length && waitPhrases.tool) && (ackOn || narrateOn);
+    const speakTts = hasWait ? createPhraseCache(ttsClient, [...waitPhrases.ack, ...Object.values(waitPhrases.tool)]) : ttsClient;
     speaker = createSpeaker({
-      tts: ttsClient, log,
+      tts: speakTts, log,
       send: {
         seg: (id, text, meta) => send({ t: 'seg', id, text, ...meta }),
         chunk: (id, bytes) => {
@@ -129,7 +154,7 @@ export function createVoiceSession({ send, sendBinary, close, hello, log = () =>
           frame[0] = BINARY_AUDIO;
           frame.writeUInt32LE(id, 1);
           frame.set(bytes, 5);
-          markAudioSent();
+          if (!noticeIds.has(id)) markAudioSent();   // 一言の音は「返事の最初の音」ではない
           sendBinary(frame);
         },
         end: (id, info) => send({ t: 'seg.end', id, ...info }),
@@ -138,6 +163,11 @@ export function createVoiceSession({ send, sendBinary, close, hello, log = () =>
       onMetric: (m) => { usage.add({ ttsChars: m.chars }).catch(() => {}); },
     });
     reader = createReplyReader({ say: speak, phrases });
+    if (hasWait) {
+      wait = createWaitVoice({ speak: speakNotice, now, phrases: waitPhrases, ack: ackOn, narrate: narrateOn, language });
+      waitTimer = setInterval(() => wait.tick(), waitTickMs);
+      waitTimer.unref?.();
+    }
     target = targetOf(msg.target);
     started = true;
     lastTick = lastActivityAt = now();
@@ -154,7 +184,7 @@ export function createVoiceSession({ send, sendBinary, close, hello, log = () =>
     if (closed) return;
     switch (ev.type) {
       case 'speaking': send({ t: 'speaking', on: ev.on }); break;
-      case 'busy': send({ t: 'busy', on: ev.on, last: ev.last }); break;
+      case 'busy': wait?.setHearing(ev.on); send({ t: 'busy', on: ev.on, last: ev.last }); break;
       case 'partial': send({ t: 'partial', utt: ev.utt, text: ev.text }); break;
       case 'drop': send({ t: 'drop', utt: ev.utt }); break;
       case 'final':
@@ -184,6 +214,7 @@ export function createVoiceSession({ send, sendBinary, close, hello, log = () =>
     if (closed) return;
     closed = true;
     clearInterval(timer);
+    clearInterval(waitTimer);
     if (started) {
       // 最後の tick から終わりまでの端数を台帳へ
       ctx.usage.add({ callSeconds: Math.max(0, (now() - lastTick) / 1000) }).catch(() => {});
@@ -216,6 +247,7 @@ export function createVoiceSession({ send, sendBinary, close, hello, log = () =>
         case 'spk': if (started) { spkMuted = msg.on === true; if (spkMuted) { speaker.cancel(); send({ t: 'cancel' }); } } break;
         case 'halt': case 'barge': if (started) halt(msg.id); break;
         case 'resume': if (started) resume(); break;
+        case 'handed': if (started) wait?.handed(); break;
         case 'lat': if (lat && Number.isFinite(msg.sinceFinalMs)) log('voice.latency_client', { finalToSoundMs: Math.round(msg.sinceFinalMs), speechEndToFinalMs: lat.speechEndToFinalMs ?? null }); break;
       }
     },
@@ -225,14 +257,17 @@ export function createVoiceSession({ send, sendBinary, close, hello, log = () =>
       switch (ev.type) {
         case 'userMessage':
           reader.reset(); speaker.cancel(); halted = false; turnSpoke = false; spoken = []; held = []; cutId = null;
+          wait?.userMessage();
           send({ t: 'cancel' });
           break;
         case 'text.delta':
           if (lat && !lat.firstTextAt) lat.firstTextAt = now();
+          wait?.textDelta();
           reader.push(ev.text);
           break;
         case 'text.end': reader.end(); break;
-        case 'turnEnd': reader.end(); send({ t: 'turn.end', spoke: turnSpoke }); break;
+        case 'tool.start': wait?.toolStart(ev.name); break;
+        case 'turnEnd': reader.end(); wait?.turnEnd(); send({ t: 'turn.end', spoke: turnSpoke }); break;
       }
     },
     /** この見ている先に、あとから加わった会話（新しい会話の id）の分を受けるため、見ている先を更新する */
