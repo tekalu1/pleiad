@@ -609,7 +609,8 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
     // 組み込みの bot の会話は、最初の設定（backend・作業場所）で作る。backend は作った後は変えない
     const sessionId = await sessionFor({ bot, channel, threadId, post: root, ...(bot.plain ? { backend, cwd } : {}) });
     const patch = { ...(model !== undefined ? { model } : {}), ...(effort !== undefined ? { effort } : {}), ...(mode !== undefined ? { mode } : {}), ...(cwd !== undefined ? { cwd } : {}) };
-    if (Object.keys(patch).length) await host.reserveTurnSettings({ sessionId, backend: bot.backend, ...patch });
+    // 組み込みの bot の会話は、スレッドで選んだエージェントのまま（bot.backend は Chats の既定。予約で替えない）
+    if (Object.keys(patch).length) await host.reserveTurnSettings({ sessionId, ...(bot.plain ? {} : { backend: bot.backend }), ...patch });
     await updateSidecar(sessionId, (sb) => ({ ...sb, overrides: { ...(sb.overrides ?? {}), ...Object.fromEntries(Object.keys(patch).map((k) => [k, true])) } }));
     const meta = await host.store.get(sessionId);
     const next = meta.nextSettings ?? {};
