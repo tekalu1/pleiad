@@ -1,5 +1,5 @@
 // Claude を保持役に載せる部品（無停止の更新 段階 2 の 2c。core/backends/claude-held.mjs）。サーバーも CLI も起こさない:
-//   - 付け直しを確かめた CLI の版の一覧と、--version の読み方・実体ごとに 1 回だけ聞く
+//   - 付け直しを確かめた CLI の版の下限（以上・同じ major）・載せる切り替えの既定（off で載せない）と、--version の読み方・実体ごとに 1 回だけ聞く
 //   - 保持役に起こさせるコマンド: npm の包み（claude.cmd）は中身の bin/claude.exe に解く（全体に入れた形・手元の .bin の形）。解けない .cmd は載せない。"node" はこのプロセスの node
 //   - 偽の SpawnedProcess: spawn と印を SDK の最初の書き込みより前に送る・stdin の書き込みを保持役へ写す・ack は処理し終えた uuid の行・
 //     手を離した（detach）後は write・end・kill を転送しない
@@ -10,12 +10,12 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { EventEmitter } from 'node:events';
-import { HELD_CLI_VERSIONS, parseCliVersion, heldCommand, heldEnabled, cliVersion, createHeldCli } from '../../core/backends/claude-held.mjs';
+import { HELD_CLI_MIN_VERSION, heldVersionOk, parseCliVersion, heldCommand, heldEnabled, cliVersion, createHeldCli } from '../../core/backends/claude-held.mjs';
 import { holderSource } from '../../core/adopt.mjs';
 import { adoptClaudeFlagSettings, sweepClaudeFlagSettings } from '../../core/compat-endpoints.mjs';
 
 export const name = 'claude-held';
-export const title = 'Claude を保持役に載せる部品: 版の一覧・npm の包みの解き方・偽の SpawnedProcess・付け直しで流さない行・札のフラグ設定';
+export const title = 'Claude を保持役に載せる部品: 版の下限・既定・npm の包みの解き方・偽の SpawnedProcess・付け直しで流さない行・札のフラグ設定';
 
 const tick = () => new Promise(resolve => setImmediate(resolve));
 
@@ -46,8 +46,9 @@ export default async function (t) {
   try {
     // 版の一覧と --version
     {
-      assert.ok(HELD_CLI_VERSIONS.includes('2.1.284') && HELD_CLI_VERSIONS.includes('2.1.288'));
-      assert.ok(!HELD_CLI_VERSIONS.includes('2.1.267'), 'pending_permission_requests より前の版は無い');
+      assert.equal(HELD_CLI_MIN_VERSION, '2.1.284', '確かめた最も古い版が下限');
+      for (const ok of ['2.1.284', '2.1.288', '2.1.290', '2.2.0', '2.10.1', '2.1.1000']) assert.ok(heldVersionOk(ok), `${ok} は載せる（下限以上・同じ major）`);
+      for (const no of ['2.1.283', '2.1.267', '2.0.999', '1.9.9', '3.0.0', '3.1.284', null, '', 'nope', '2.1', '2.1.284-beta']) assert.ok(!heldVersionOk(no), `${no} は載せない`);
       assert.equal(parseCliVersion('2.1.284 (Claude Code)\n'), '2.1.284');
       assert.equal(parseCliVersion('nope'), null);
       const exe = path.join(scratch, 'claude.exe');
@@ -63,11 +64,15 @@ export default async function (t) {
       assert.equal(await cliVersion(path.join(scratch, 'missing.exe'), { run }), null);
       const saved = process.env.AGENT_HOST_CLAUDE_HOLDER;
       delete process.env.AGENT_HOST_CLAUDE_HOLDER;
-      assert.equal(heldEnabled(), false, '既定は載せない');
-      process.env.AGENT_HOST_CLAUDE_HOLDER = 'on';
-      assert.equal(heldEnabled(), true);
+      assert.equal(heldEnabled(), true, '既定は載せる');
+      for (const [value, expected] of [['on', true], ['ON', true], ['', true], ['off', false], [' OFF ', false]]) {
+        process.env.AGENT_HOST_CLAUDE_HOLDER = value;
+        assert.equal(heldEnabled(), expected, `AGENT_HOST_CLAUDE_HOLDER=${JSON.stringify(value)}`);
+      }
+      delete process.env.AGENT_HOST_CLAUDE_HOLDER;
+      assert.equal(heldEnabled({ AGENT_HOST_CLAUDE_HOLDER: 'off' }), false, '渡した env も読む');
       if (saved === undefined) delete process.env.AGENT_HOST_CLAUDE_HOLDER; else process.env.AGENT_HOST_CLAUDE_HOLDER = saved;
-      t.ok('版の一覧（2.1.284・2.1.288）・--version は実体ごとに 1 回・切り替えの既定は載せない', true);
+      t.ok('版の下限（2.1.284 以上・同じ major）・--version は実体ごとに 1 回・切り替えの既定は載せる（off で載せない）', true);
     }
 
     // npm の包みの解き方

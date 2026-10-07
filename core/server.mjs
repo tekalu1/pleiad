@@ -6161,7 +6161,7 @@ async function adoptTurn(card, source, ctx = null, { abandon = null } = {}) {
 /**
  * 起動で付け直すターンを読み、登録する（restoreTurn）。元は既定で空。テストだけが付ける: AGENT_HOST_ADOPT_FROM は
  * 「終わっていたターン」の札と記録（ファイルの元）、AGENT_HOST_ADOPT_HOLDER=1 は保持役の子（2b-5。実行場所の置き場は AGENT_HOST_RUNTIME_ROOT。
- * 旧サーバーが手を離すときに札を置いた子だけ。保持役に子を載せるバックエンドは fake の台本 held: と、AGENT_HOST_CLAUDE_HOLDER=on の Claude。2c）。core/adopt.mjs。
+ * 旧サーバーが手を離すときに札を置いた子だけ。保持役に子を載せるバックエンドは fake の台本 held: と、Claude（既定で載る。AGENT_HOST_CLAUDE_HOLDER=off で載せない）。2c）。core/adopt.mjs。
  * 付け直せない元は何もせず、起動時の restart の回復に任せる
  */
 async function restoreAdoptedTurns() {

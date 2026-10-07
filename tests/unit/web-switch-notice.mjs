@@ -62,7 +62,7 @@ export default function (t) {
 
   // ---- 配線（文字列）
   const html = read('web/index.html');
-  for (const id of ['switchNotice', 'switchTitle', 'switchSub', 'switchProgress', 'switchDetail', 'switchList', 'switchAfter', 'switchActs', 'switchBox', 'switchPageList', 'switchPageAfter', 'switchPageProgress', 'switchPageActs', 'updateNoticeStopped', 'updateHandoverWork', 'updateHandoverBrowser']) {
+  for (const id of ['switchNotice', 'switchTitle', 'switchSub', 'switchProgress', 'switchDetail', 'switchList', 'switchAfter', 'switchActs', 'switchBox', 'switchPageList', 'switchPageAfter', 'switchPageProgress', 'switchPageActs', 'updateNoticeStopped', 'updateHandoverWork', 'updateHandoverWait', 'updateHandoverBrowser']) {
     t.ok(`index.html に #${id}`, html.includes(`id="${id}"`));
   }
   t.ok('脇の知らせは更新の知らせ（#updatePrompt）の次、設定のページの箱は更新の状態の下', html.indexOf('id="switchNotice"') > html.indexOf('id="updatePrompt"') && html.indexOf('id="switchBox"') > html.indexOf('id="updateStatus"'));
@@ -73,7 +73,7 @@ export default function (t) {
     && client.includes('switchUi?.refresh();'));
   const updates = read('web/updates.mjs');
   t.ok('updates.mjs: 待っている間の字・⚙ の点・「更新しました」を出さない・止めたもの・無停止の確認の 1 行', updates.includes('switchUi?.page()') && updates.includes('switchUi?.pending') && updates.includes('!switchUi?.holdsNotice') && updates.includes('switchUi?.stoppedText()')
-    && updates.includes("t('updates.handoverWork'") && updates.includes('state?.handover'));
+    && updates.includes("t('updates.handoverWork'") && updates.includes("t('updates.handoverWait'") && updates.includes('state?.handover'));
   const css = read('web/updates.css');
   t.ok('CSS: 設定のページを開いている間は脇の知らせを出さない・一覧の動きは reduced-motion で止まる', css.includes('body.settings > #sidebar > .switch-notice { display: none; }') && /prefers-reduced-motion: reduce\) \{ \.switch-wd/.test(css));
 

@@ -142,9 +142,12 @@ async page => {
   await page.evaluate(() => window.__setUpdate({ phase: 'downloaded', target: '0.8.0', version: '0.7.4', handover: true }));
   await page.locator('#installUpdate').click();
   await wait(500);
-  const confirmTo = await page.evaluate(() => ({ work: { hidden: document.querySelector('#updateHandoverWork').hidden, text: document.querySelector('#updateHandoverWork').textContent }, browser: document.querySelector('#updateHandoverBrowser').hidden,
+  const confirmTo = await page.evaluate(() => ({ work: { hidden: document.querySelector('#updateHandoverWork').hidden, text: document.querySelector('#updateHandoverWork').textContent },
+    wait: { hidden: document.querySelector('#updateHandoverWait').hidden, text: document.querySelector('#updateHandoverWait').textContent }, browser: document.querySelector('#updateHandoverBrowser').hidden,
     list: document.querySelector('#updateWork').hidden, after: document.querySelector('#updateWorkAfter').hidden, ok: document.querySelector('#confirmInstallUpdate').textContent, later: document.querySelector('#cancelInstallUpdate').textContent }));
-  check('確認の段（無停止）: 「実行中の作業 N 件は止まりません」・一覧と中断の注意は出ない・「保存して再起動」', !confirmTo.work.hidden && /実行中の作業 \d+ 件は止まりません。新しい版へは、作業が終わってから切り替わります。/.test(confirmTo.work.text)
+  // この確認の作業は保持役に載らない fake のターンなので、「待つ」の 1 行も出る（載ったターンだけなら出ない。tests/unit/web-interrupt.mjs の handoverWaits）
+  check('確認の段（無停止）: 「実行中の作業 N 件は止めずに切り替わります」・引き継げない分は待つ・一覧と中断の注意は出ない・「保存して再起動」', !confirmTo.work.hidden && /実行中の作業 \d+ 件は止めずに切り替わります。/.test(confirmTo.work.text)
+    && !confirmTo.wait.hidden && /うち \d+ 件は引き継げないため、その作業が終わるまで切り替えを待ちます。/.test(confirmTo.wait.text)
     && confirmTo.list && confirmTo.after && confirmTo.ok === '保存して再起動' && confirmTo.later === 'あとで', JSON.stringify(confirmTo));
   check('確認の段: 内蔵ブラウザーのタブ・コンピューターの操作が無ければ注意の 1 行は出ない', confirmTo.browser);
   await page.evaluate(() => { document.documentElement.dataset.theme = 'light'; });
@@ -155,7 +158,7 @@ async page => {
   // 内蔵ブラウザーのタブがあるときだけ注意が出る（画面の browserPanel は無いので、computer の状態を差し込む代わりに関数を直接確かめる）
   await page.evaluate(() => window.__setUpdate({ handover: false }));
   await wait(200);
-  const asis = await page.evaluate(() => ({ work: document.querySelector('#updateHandoverWork').hidden, list: document.querySelector('#updateWork').hidden, ok: document.querySelector('#confirmInstallUpdate').textContent }));
+  const asis = await page.evaluate(() => ({ work: document.querySelector('#updateHandoverWork').hidden && document.querySelector('#updateHandoverWait').hidden, list: document.querySelector('#updateWork').hidden, ok: document.querySelector('#confirmInstallUpdate').textContent }));
   check('確認の段（off）: 今のまま（止まらないの 1 行は出ず、中断して更新）', asis.work && asis.ok === '中断して更新', JSON.stringify(asis));
   await page.locator('#updateConfirm').screenshot({ path: `${shots}-confirm-asis-light.png` });
   await page.locator('#cancelInstallUpdate').click();

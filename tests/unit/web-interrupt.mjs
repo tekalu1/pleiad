@@ -4,7 +4,7 @@
 import { readFileSync } from 'node:fs';
 import {
   REASONS, reasonOf, isInterrupted, interruptUnread, interruptReadPoint, showsReasonInMeta, interruptLabel, interruptLineText,
-  warnMark, pausedCount, resumeLabel, resumeNoteText, resumeVisible, updateInterrupted, workRows, workCounts, interruptProgress,
+  warnMark, pausedCount, resumeLabel, resumeNoteText, resumeVisible, updateInterrupted, workRows, workCounts, handoverWaits, interruptProgress,
   limitResumeState, limitLineNote, limitTime, resumeShortLabel, LIMIT_GRACE_MS, versionReload,
 } from '../../web/interrupt.mjs';
 
@@ -104,6 +104,12 @@ export default function (t) {
   t.ok('中継の複製は承認待ちに数えない', rows.find(r => r.sessionId === 's1').state === 'running');
   t.ok('脇の知らせの件数（実行中 2・承認待ち 2）', JSON.stringify(workCounts(work)) === '{"running":2,"waiting":2}');
   t.ok('running が無くても落ちない', workRows(null).length === 0 && JSON.stringify(workCounts(undefined)) === '{"running":0,"waiting":0}');
+  // 無停止の更新で待つ作業: 保持役に載ったもの（held）は待たない。会話ごとに数え、中継の複製・detached は数えない
+  t.ok('待つ作業は、保持役に載っていない会話の数（s1 が載り、s2・s3・s4 が載っていない → 3）', handoverWaits({
+    turns: [{ sessionId: 's1', held: true }, { sessionId: 's2' }, { sessionId: 's3' }], permissions: [{ sessionId: 's3' }, { sessionId: 's4' }, { sessionId: 's1', held: true }, { sessionId: 's5', relay: true }, { sessionId: 's6', detached: true }],
+  }) === 3);
+  t.ok('全部が保持役に載っていれば待たない（blocking 0）', handoverWaits({ turns: [{ sessionId: 's1', held: true }], permissions: [{ sessionId: 's1', held: true }], handover: { blocking: 0 } }) === 0);
+  t.ok('ターンの無い作業（委譲のタスクなど）だけが待つときは handover.blocking', handoverWaits({ turns: [{ sessionId: 's1', held: true }], handover: { blocking: 2 } }) === 2 && handoverWaits(null) === 0 && handoverWaits({}) === 0);
 
   // ---- 中断の進み（N / M）
   t.ok('止まった数を数える', JSON.stringify(interruptProgress(3, 1)) === '{"done":2,"total":3,"finished":false}');

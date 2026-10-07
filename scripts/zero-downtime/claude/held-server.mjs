@@ -1,4 +1,4 @@
-// 無停止の更新 段階 2 の 2c の実機の確かめ: 本物の Claude Code CLI を Pleiad のサーバーから保持役に載せ（AGENT_HOST_CLAUDE_HOLDER=on）、
+// 無停止の更新 段階 2 の 2c の実機の確かめ: 本物の Claude Code CLI を Pleiad のサーバーから保持役に載せ（置き場 AGENT_HOST_RUNTIME_ROOT を渡す。載せるのは既定）、
 // 承認待ちのターンをサーバー A → B で付け直す（2d の形: handOffTurn → 札を子に置いて detach → query を閉じる。tests/lib/adopt-server.mjs）。
 // B に A と同じ id の承認が 1 つだけ出て、答えるとターンが続き、turnEnd・completedAt・使用量が 1 回だけ残ることを見る。LLM は haiku で 1 ターン（数セント）。
 //
@@ -32,7 +32,7 @@ const until = async (check, ms, label) => {
   for (;;) { const v = await check(); if (v) return v; if (Date.now() > end) throw new Error(`timeout: ${label}`); await sleep(50); }
 };
 
-const env = { AGENT_HOST_BACKENDS: 'claude', AGENT_HOST_CLAUDE_HOLDER: 'on', AGENT_HOST_RUNTIME_ROOT: root, ADOPT_SCENES_DIR: scenesDir };
+const env = { AGENT_HOST_BACKENDS: 'claude', AGENT_HOST_RUNTIME_ROOT: root, ADOPT_SCENES_DIR: scenesDir };
 let a = null, b = null, ca = null, cb = null, holderPid = null, nativeId = null;
 const result = { ok: false };
 try {

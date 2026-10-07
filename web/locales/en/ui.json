@@ -2875,8 +2875,10 @@
     "promptWaiting_one": "{{count}} waiting for approval",
     "promptWaiting_other": "{{count}} waiting for approval",
     "promptJoin": " · ",
-    "handoverWork_one": "{{count}} running task will not be stopped. Pleiad switches to the new version once the work is done.",
-    "handoverWork_other": "{{count}} running tasks will not be stopped. Pleiad switches to the new version once the work is done.",
+    "handoverWork_one": "{{count}} running task will not be stopped when Pleiad switches to the new version.",
+    "handoverWork_other": "{{count}} running tasks will not be stopped when Pleiad switches to the new version.",
+    "handoverWait_one": "{{count}} of them cannot be carried over, so Pleiad waits for it to finish before switching.",
+    "handoverWait_other": "{{count}} of them cannot be carried over, so Pleiad waits for them to finish before switching.",
     "handoverBrowser": "Tabs in the built-in browser will be reopened."
   },
   "switch": {

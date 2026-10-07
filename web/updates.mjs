@@ -2,7 +2,7 @@ import { renderMarkdown } from './render.mjs';
 import { fmt, t } from './i18n.mjs';
 import { runMark } from './arc.mjs';
 import { el } from './dom.mjs';
-import { warnMark, workRows, workCounts, interruptProgress } from './interrupt.mjs';
+import { warnMark, workRows, workCounts, handoverWaits, interruptProgress } from './interrupt.mjs';
 
 // i18n-dynamic: updates.phase.
 const PHASES = ['idle', 'checking', 'current', 'available', 'downloading', 'downloaded', 'installing', 'error', 'unavailable'];
@@ -119,10 +119,14 @@ export function setupUpdates({ page, open, lock, flush, cmd, work: currentWork =
     // 無停止の更新（state.handover。ADR 0151）では作業を止めないので、止まる作業を並べない
     const rows = confirming && !state?.handover ? workRows(confirmWork) : [];
     const stops = confirming && !state?.handover && (confirmWork?.count ?? 0) > 0;
-    // 無停止の更新: 作業は止まらないことを 1 行で。内蔵ブラウザーのタブ・コンピューターの操作があるときだけ、開き直しの注意も
-    const running = confirming && state?.handover ? workRows(confirmWork).length || (confirmWork?.count ?? 0) : 0;
+    // 無停止の更新: 作業は止まらないことを 1 行で。保持役に載らない作業（待つもの）があれば、その数も。
+    // 内蔵ブラウザーのタブ・コンピューターの操作があるときだけ、開き直しの注意も
+    const waits = confirming && state?.handover ? handoverWaits(confirmWork) : 0;
+    const running = confirming && state?.handover ? Math.max(workRows(confirmWork).length || (confirmWork?.count ?? 0), waits) : 0;
     $('updateHandoverWork').hidden = !running;
     if (running) $('updateHandoverWork').textContent = t('updates.handoverWork', { count: running });
+    $('updateHandoverWait').hidden = !waits;
+    if (waits) $('updateHandoverWait').textContent = t('updates.handoverWait', { count: waits });
     $('updateHandoverBrowser').hidden = !(confirming && state?.handover && handoverNotes().browser);
     $('updateWork').hidden = !rows.length;
     $('updateWorkAfter').hidden = !stops;

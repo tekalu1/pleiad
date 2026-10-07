@@ -2,7 +2,8 @@
 // SDK の spawnClaudeCodeProcess に偽の SpawnedProcess を渡し、CLI の起動と stdin・stdout を保持役のパイプへ回す。サーバーを入れ替えても CLI は走り続け、
 // 新しいサーバーが同じ CLI に query を作り直して付け直す（claude.mjs の adoptTurn。空の入力の流れで 2 回目の initialize を送り、
 // CLI が pending_permission_requests で承認待ちを canUseTool へ回し直す）。
-//   載せるか（heldPlan）: AGENT_HOST_CLAUDE_HOLDER=on・実行場所の置き場（AGENT_HOST_RUNTIME_ROOT）がある・CLI の版が HELD_CLI_VERSIONS にある・
+//   載せるか（heldPlan）: AGENT_HOST_CLAUDE_HOLDER が off でない（既定は載せる）・実行場所の置き場（AGENT_HOST_RUNTIME_ROOT。パッケージ版の main が
+//     起こしたサーバーだけにある。開発の npm start・テストのサーバーは無いので今の流れ）・CLI の版が下限以上（heldVersionOk）・
 //     npm の包み（claude.cmd）なら中身の bin/claude.exe に解ける・保持役につなげる。どれかが外れたら今の流れ（SDK が CLI を自分で起こす）
 //   記録の読み: 子の stdout の行をそのまま SDK の stdout へ流す。ack は、ループで処理し終えた SDK のメッセージの uuid の行
 //     （uuid の無い制御の行は、その後の uuid の行の ack で覆われる。答えていない依頼は保持役の控えと CLI の送り直しで戻る）
@@ -20,14 +21,27 @@ import { holderLink } from '../holder/link.mjs';
 import { ADOPT_TURN_MARK, holderSource } from '../adopt.mjs';
 
 /**
- * 付け直しを確かめた CLI の版（backend-shape-diagnostics.mjs の VERIFIED とは別。あちらは記録の形を確かめた版）。
+ * 付け直しを確かめた CLI の版の下限（backend-shape-diagnostics.mjs の VERIFIED とは別。あちらは記録の形を確かめた版）。
  * 2.1.284（ネイティブ・npm の包み）・2.1.288 で、承認待ち・サブエージェント・裏の作業・途中送信・圧縮・elicitation の最中の付け直しを
- * 確かめた（stage0-claude.md・stage2-claude.md）。pending_permission_requests は 2.1.268 から。ここに無い版のターンは保持役に載せない
+ * 確かめた（stage0-claude.md・stage2-claude.md）。頼っている CLI の口（2 回目の initialize の pending_permission_requests・付け直し直後の
+ * background_tasks_changed・resume での cost-state の読み戻し）は、確かめた最も古い版 2.1.284 までに揃っている。
+ * 既定で載せるので、利用者の CLI が更新されるたびに黙って外れないよう、完全一致ではなく「この版以上で同じ major」にする。
+ * 外れる版（下限より古い・major が違う）のターンは保持役に載せない。リリースごとに新しい版で実機の確かめをやり直す（docs/desktop-releases.md）
  */
-export const HELD_CLI_VERSIONS = Object.freeze(['2.1.284', '2.1.288']);
+export const HELD_CLI_MIN_VERSION = '2.1.284';
 
-/** 保持役に載せる切り替え。明示したときだけ（既定は載せない。AGENT_HOST_HANDOVER=on のパッケージ版でも自動では付けない） */
-export const heldEnabled = (env = process.env) => String(bootEnv('AGENT_HOST_CLAUDE_HOLDER') ?? env.AGENT_HOST_CLAUDE_HOLDER ?? '').toLowerCase() === 'on';
+const versionParts = text => /^(\d+)\.(\d+)\.(\d+)$/.exec(String(text ?? ''))?.slice(1).map(Number) ?? null;
+
+/** この CLI の版を保持役に載せてよいか（HELD_CLI_MIN_VERSION 以上で、major が同じ） */
+export function heldVersionOk(version) {
+  const have = versionParts(version), min = versionParts(HELD_CLI_MIN_VERSION);
+  if (!have || have[0] !== min[0]) return false;
+  for (let i = 1; i < 3; i++) if (have[i] !== min[i]) return have[i] > min[i];
+  return true;
+}
+
+/** 保持役に載せる切り替え。既定は載せる（2026-10-07 の利用者の決定）。AGENT_HOST_CLAUDE_HOLDER=off で載せない（戻し道） */
+export const heldEnabled = (env = process.env) => String(bootEnv('AGENT_HOST_CLAUDE_HOLDER') ?? env.AGENT_HOST_CLAUDE_HOLDER ?? '').trim().toLowerCase() !== 'off';
 
 /** CLI の --version の出力から版を取り出す（"2.1.284 (Claude Code)"） */
 export const parseCliVersion = text => /^\s*v?(\d+\.\d+\.\d+)\b/.exec(String(text ?? ''))?.[1] ?? null;
@@ -86,7 +100,7 @@ export async function heldPlan({ dataDir, executable, compact = false, bot = fal
   const root = bootEnv('AGENT_HOST_RUNTIME_ROOT');
   if (!dataDir || !root || !executable || !commandOf(executable)) return null;
   const version = await cliVersion(executable);
-  if (!HELD_CLI_VERSIONS.includes(version)) return null;
+  if (!heldVersionOk(version)) return null;
   try {
     return { client: await holderLink({ dataDir, root, key: bootEnv('AGENT_HOST_RUNTIME_KEY') ?? '' }), version };
   } catch (error) {
