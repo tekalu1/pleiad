@@ -12,7 +12,7 @@
 //   { t: 'lat', sinceFinalMs }    クライアントが測った「確定を受けてから最初の音が鳴るまで」（ログ・開発用の表示のため）
 //   { t: 'handed' }               声で送った 1 通が AI に渡った（画面が「AI に渡しました」にしたとき。送信待ち・差し込み待ちの間は送らない）。受け取りの一言の起点（wait-voice.mjs）
 // 下り（ホスト → クライアント）
-//   JSON  ready { sttModel, ttsModel, rate, limits, turnHoldMs, bargeIn } / error { code, fatal? } / limit { reason } / speaking { on } / busy { on, last }（文字がまだ出そろっていない。まとめ待ちが送るのを待つ。last = 振った発話の番号の最大）/
+//   JSON  ready { sttModel, ttsModel, rate, limits, turnHoldMs, bargeIn } / error { code, fatal?, utt?, kind?, status? }（聞き取りの失敗は kind = timeout|permanent|transient と HTTP の status。本文は渡さない） / limit { reason } / speaking { on } / busy { on, last }（文字がまだ出そろっていない。まとめ待ちが送るのを待つ。last = 振った発話の番号の最大）/
 //         partial { utt, text } / final { utt, text, ... } / drop { utt }
 //         seg { id, text, first, skip? }（読む文の始まり。音より先。skip = 言い添えの種類 code・table・log、決まった文（受け取りの一言・待ちの実況）は notice）/ seg.end { id, audioMs, partial? } / seg.fail { id } / cancel（再生中・順番待ちの音を捨てる）
 //         turn.end { spoke }（返事のターンが終わった。読んだ文が無ければ spoke: false）/ lat { ... }（遅延の内訳）
@@ -193,7 +193,8 @@ export function createVoiceSession({ send, sendBinary, close, hello, log = () =>
         log('voice.final', { utt: ev.utt, chars: ev.text.length, reason: ev.reason, audioMs: ev.audioMs ?? null, sttTookMs: ev.tookMs ?? null, speechEndToFinalMs: ev.speechEndToFinalMs, model: ev.model, route: ev.route, speculative: ev.speculative, degraded: ev.degraded ?? false });
         send({ t: 'final', utt: ev.utt, text: ev.text, speechEndToFinalMs: ev.speechEndToFinalMs, ...(ev.degraded ? { degraded: true } : {}) });
         break;
-      case 'error': send({ t: 'error', code: ev.rateLimited ? 'stt-busy' : 'stt', utt: ev.utt }); break;
+      // 失敗の種類（kind・status）だけ渡す。本文・キー・応答の中身は渡さない（画面は 401/403 をキーの問題として出す）
+      case 'error': send({ t: 'error', code: ev.rateLimited ? 'stt-busy' : 'stt', utt: ev.utt, kind: ev.kind ?? null, status: Number.isInteger(ev.status) ? ev.status : null }); break;
     }
   };
 

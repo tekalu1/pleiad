@@ -20,7 +20,7 @@
 // events（subscribe）: { type: 'state' } / { type: 'partial' | 'final' | 'drop', utt, text? } / { type: 'hold', view }（まとめ待ちの組み立て中の文・残り時間）/
 //   { type: 'turn', text, ended? }（まとめて 1 通を送る。ended = 通話を終えたときのまとめ待ちの残り）/ { type: 'turn.discard' }（言いよどみだけだった）/ { type: 'barge', id }（話して読み上げを止めた）/ { type: 'halt', id }（止めるボタン）/
 //   { type: 'seg', id, text, first, skip? } / { type: 'segstart' | 'segend' | 'segfail', id } /
-//   { type: 'cancel' } / { type: 'turnEnd', spoke } / { type: 'notice', code } / { type: 'ended', reason } / { type: 'lat', ... }
+//   { type: 'cancel' } / { type: 'turnEnd', spoke } / { type: 'notice', code, kind?, status? }（聞き取りの失敗は、ホストが渡した失敗の種類 kind・HTTP の status）/ { type: 'ended', reason } / { type: 'lat', ... }
 import { createCapture } from './capture.mjs';
 import { createLink } from './link.mjs';
 import { createPlayer } from './player.mjs';
@@ -124,7 +124,7 @@ export function createCallEngine({ token, now = () => performance.now(), AudioCo
         break;
       case 'error':
         if (msg.fatal) { readyReject?.(Object.assign(new Error(msg.code), { code: msg.code })); if (active) finish(`error:${msg.code}`); }
-        else { if (Number.isInteger(msg.utt)) { hold.drop(msg.utt); pumpHold(); } emit({ type: 'notice', code: msg.code }); }
+        else { if (Number.isInteger(msg.utt)) { hold.drop(msg.utt); pumpHold(); } emit({ type: 'notice', code: msg.code, kind: msg.kind ?? null, status: msg.status ?? null }); }
         break;
       case 'limit': emit({ type: 'notice', code: `limit-${msg.reason}` }); finish(`limit-${msg.reason}`); break;
       case 'speaking': break;

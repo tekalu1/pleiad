@@ -2,6 +2,7 @@
 import { BINARY_AUDIO, createVoiceSession } from '../../core/voice/session.mjs';
 import { normalizeVoiceSettings } from '../../core/voice/settings.mjs';
 import { toneFrame } from '../lib/fake-openrouter.mjs';
+import { VoiceHttpError } from '../../core/voice/openrouter.mjs';
 
 export const name = 'voice-session';
 export const title = '通話 1 本: hello と限度（キー・1 日・1 回・声が無いまま）・声から確定まで・返事の読み上げ（seg と音）・ミュート・止める・遅延の内訳・キーを出さない';
@@ -11,11 +12,11 @@ const PHRASES = { code: 'コードは画面に出しました', table: '表は�
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 async function waitFor(fn, ms = 3000) { const end = Date.now() + ms; while (Date.now() < end) { if (fn()) return true; await sleep(5); } return fn(); }
 
-function harness({ settings = {}, today = 0, withKey = true, clients = true, idleEndMs, tickMs = 10 } = {}) {
+function harness({ settings = {}, today = 0, withKey = true, clients = true, idleEndMs, tickMs = 10, sttFail = null } = {}) {
   const sent = [], binary = [], logs = [], usageAdds = [];
   let closed = 0, clock = 1_000_000, n = 0;
   const usage = { add: async (d) => { usageAdds.push(d); }, flush: async () => {}, today: async () => ({ callSeconds: today, sttSeconds: 0, ttsChars: 0 }) };
-  const stt = { cooling: () => false, hasFallback: false, transcribe: async (pcm, kind) => ({ text: `聞き取った言葉${n++}`, model: 'stt/m', tookMs: 4, audioMs: 1000, route: 'primary', fallback: false, kind }) };
+  const stt = { cooling: () => false, hasFallback: false, transcribe: async (pcm, kind) => (sttFail ? Promise.reject(sttFail) : { text: `聞き取った言葉${n++}`, model: 'stt/m', tookMs: 4, audioMs: 1000, route: 'primary', fallback: false, kind }) };
   const tts = { sampleRate: 24000, synthesize: async (text, { onChunk, signal }) => {
     await sleep(2);
     if (signal.aborted) throw Object.assign(new Error('aborted'), { kind: 'transient' });
@@ -239,6 +240,23 @@ export default async function (t) {
     await waitFor(() => types(idle).includes('limit'));
     t.ok('聞き取った言葉も読み上げも無いまま放っておかれた通話は終える（limit: idle）', idle.sent.find((m) => m.t === 'limit')?.reason === 'idle');
     t.ok('通話の長さは台帳へ足す（tick ごと・終わりの端数）', h.usageAdds.some((a) => a.callSeconds > 0) && idle.usageAdds.some((a) => a.callSeconds > 0));
+  }
+
+  // ---- 聞き取りの失敗は、種類（kind・status）だけを画面へ渡す（承認済み 2026-10-07。画面は 401/403 をキーの問題として出す。本文・キーは渡さない）
+  {
+    const rejected = harness({ sttFail: new VoiceHttpError(`401 ${KEY}`, 'permanent', { status: 401 }) });
+    await rejected.hello();
+    rejected.frames(true, 8); rejected.frames(false, 8);
+    await waitFor(() => rejected.sent.some((m) => m.t === 'error' && !m.fatal));
+    const e1 = rejected.sent.find((m) => m.t === 'error' && !m.fatal);
+    t.ok('聞き取りの失敗（401）: code stt に kind・status を添えて送る（utt も）', e1?.code === 'stt' && e1.kind === 'permanent' && e1.status === 401 && Number.isInteger(e1.utt), JSON.stringify(e1));
+    t.ok('聞き取りの失敗: 渡すのは種類と HTTP の状態だけ（メッセージ・キーは出ない）', !JSON.stringify(rejected.sent).includes(KEY) && Object.keys(e1).sort().join() === 'code,kind,status,t,utt', Object.keys(e1).join());
+    const busy = harness({ sttFail: new VoiceHttpError('busy', 'transient', { status: 429 }) });
+    await busy.hello();
+    busy.frames(true, 8); busy.frames(false, 8);
+    await waitFor(() => busy.sent.some((m) => m.t === 'error' && !m.fatal), 6000);
+    const e2 = busy.sent.find((m) => m.t === 'error' && !m.fatal);
+    t.ok('聞き取りの失敗（429）: code stt-busy に status 429 を添える', e2?.code === 'stt-busy' && e2.status === 429 && e2.kind === 'transient', JSON.stringify(e2));
   }
 
   // ---- キーを出さない
