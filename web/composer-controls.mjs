@@ -293,15 +293,16 @@ export function paintWhoChip(chip, { bot = null, backend, backendLabel = backend
   icon.setAttribute('aria-hidden', 'true');
   const name = el('span', 'v split');
   const modelName = model || t('chat.model.default');
+  const effortName = String(effort).replace(/^\s*·\s*/, '').trim();
   if (bot) name.append(el('span', 'mn', bot.name), el('span', 'mdl', ` · ${modelName}`));
   else name.append(el('span', 'mn', modelName));
-  if (effort) name.append(el('span', 'ef', ` · ${effort}`));
+  if (effortName) name.append(el('span', 'ef', ` · ${effortName}`));
   const caret = glyph(CARET); caret.classList.add('caret');
   chip.replaceChildren(icon, name, caret);
   if (changed) { const dot = el('span', 'entry-dot'); dot.setAttribute('aria-hidden', 'true'); chip.append(dot); }
   chip.classList.toggle('changed', changed);
   chip.classList.toggle('with-bot', Boolean(bot));
-  const effortPart = effort ? ` · ${effort}` : '';
+  const effortPart = effortName ? ` · ${effortName}` : '';
   const label = sent ? t('composer.destination.sentAria', { backend: backendLabel, model: modelName, effort: effortPart })
     : bot ? t('composer.destination.botAria', { name: bot.name, backend: backendLabel, model: modelName, effort: effortPart })
       : t('composer.destination.plainAria', { backend: backendLabel, model: modelName, effort: effortPart });
@@ -343,6 +344,7 @@ function destinationTop(d) {
 export function renderModel({ pop, target: d, on, hide }) {
   const parts = [];
   parts.push(...destinationTop(d));
+  if (d.destination?.chooseOnly) { pop.replaceChildren(...parts); return; }
   if (d.destination?.readOnlyBot) {
     const bot = d.destination.readOnlyBot;
     const agent = el('div', 'destination-agent');

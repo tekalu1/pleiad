@@ -266,7 +266,12 @@ export function createThreadComposer({ host, bucket = () => null, candidates, su
     const bot = destNow().bot;
     const s = bot ? settings(bot.id) : null;
     for (const chip of [chips.cwd, chips.mode]) chip.hidden = !s;
-    if (!s) return;
+    if (!s) {
+      destChip.replaceChildren(chipGlyph('model'), el('span', 'v', t('composer.destination.title')));
+      destChip.setAttribute('aria-label', t('composer.destination.title'));
+      fitThreadRow();
+      return;
+    }
     loadVocab(s.backend);
     const v = s.values, d = s.defaults;
     const modelLabel = vocab.models?.[v.model]?.label ?? (v.model || t('chat.model.default'));
@@ -302,14 +307,15 @@ export function createThreadComposer({ host, bucket = () => null, candidates, su
   function modelTarget() {
     const { bot, d } = destNow();
     const s = bot && settings(bot.id);
-    if (!s) return null;
-    const changed = !bot.plain && ((s.values.model ?? '') !== (s.defaults.model ?? '') || (s.values.effort ?? '') !== (s.defaults.effort ?? ''));
     const options = (list) => list.map((b) => ({ id: b.id, name: b.name, bot: b.plain ? null : b,
       backend: b.backend, backendLabel: backendLabel?.(b.backend) ?? b.backend, state: stateText(b), waiting: b.state === 'waiting' }));
     const groups = [];
     if (d.inThread?.length) groups.push({ heading: t('channels:thread.dest.inThread'), options: options(d.inThread) });
     if (d.others?.length) groups.push({ heading: d.inThread?.length ? t('channels:thread.dest.others') : t('channels:thread.dest.members'), options: options(d.others) });
     if (d.plain) groups.push({ options: [{ id: d.plain.id, name: t('channels:thread.dest.auto'), bot: null }] });
+    const pick = (id) => { chosen = id; paintDest(); onDestChange(); };
+    if (!s) return { destination: { selected: null, groups, chooseOnly: true, onPick: pick } };
+    const changed = !bot.plain && ((s.values.model ?? '') !== (s.defaults.model ?? '') || (s.values.effort ?? '') !== (s.defaults.effort ?? ''));
     return {
       backend: s.backend, backends: host.state?.backends ?? [], backendSwitchable: Boolean(bot.plain && !s.sessionId && (host.state?.backends?.length ?? 0) > 1),
       models: vocab.models, model: s.values.model, efforts: threadEfforts, effort: s.values.effort,
@@ -318,7 +324,7 @@ export function createThreadComposer({ host, bucket = () => null, candidates, su
         backendLabel: (id) => backendLabel?.(id) ?? id,
         usage: destinationUsage(quotaCache.get(s.backend), { open: host.openUsage }),
         changed, onReset: () => apply({ model: s.defaults.model ?? '', effort: s.defaults.effort ?? '' }),
-        onPick: (id) => { chosen = id; paintDest(); onDestChange(); } },
+        onPick: pick },
     };
   }
   destinationPanel = panel(destChip, els.modelPop, {
