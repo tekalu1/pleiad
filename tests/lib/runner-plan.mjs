@@ -4,19 +4,22 @@
 //   - 登録の検査（重複・読めない名前・ファイルが無い・tests/unit に有るのに登録していない）。落とすのは、走らない suite を黙って作らないため
 //   - 時間の重み（tests/suite-weights.json）と、その重みでの決定的な分割（LPT）・worker に配る順
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import crypto from "node:crypto";
 
 export class ArgError extends Error {}
 
 export const MAX_JOBS = 32;
+// ローカルの 8・12・16 worker の全件実測から、32 コアの上限を 16 にする。
+export const DEFAULT_JOBS = Math.min(16, Math.max(1, os.availableParallelism()));
 export const MAX_SHARDS = 256;
 export const MAX_RETRY = 1;
 
 export const USAGE = `使い方: node tests/run.mjs [絞り込み…] [オプション]
 
   絞り込み           suite 名の部分一致（複数なら OR）。無ければ全部
-  --jobs N, -j N     子プロセスの worker を N 本使う（1〜${MAX_JOBS}。既定 1 = 従来どおり同じプロセスで順に）
+  --jobs N, -j N     子プロセスの worker を N 本使う（1〜${MAX_JOBS}。既定は利用可能な CPU 数（最大 16）。1 は同じプロセスで順に）
   --shard k/N        N 分割したうちの k 番目だけ走らせる（時間の重みで決定的に分ける。k は 1〜N）
   --timings <path>   suite ごとの時間・判定数・skip・worker を JSON で書く
   --weights <path>   時間の重みの JSON（既定 tests/suite-weights.json）
@@ -33,7 +36,7 @@ const intIn = (name, text, min, max) => {
 
 /** argv（node tests/run.mjs の後ろ）を解釈する。おかしければ ArgError */
 export function parseArgs(argv) {
-  const o = { names: [], jobs: 1, shard: null, timings: null, weights: null, retryFailed: 0, list: false, json: false, help: false };
+  const o = { names: [], jobs: DEFAULT_JOBS, shard: null, timings: null, weights: null, retryFailed: 0, list: false, json: false, help: false };
   const seen = new Set();
   const once = (key) => {
     if (seen.has(key)) throw new ArgError(`${key} が 2 回指定されている`);

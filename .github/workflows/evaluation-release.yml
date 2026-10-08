@@ -103,7 +103,7 @@ jobs:
       # test.yml と同じく、落ちた suite だけを 1 回流し直す（--retry-failed 1。流し直したことは注釈とまとめに残る）。PowerShell は `npm test -- …` の `--` を食べるので node を直に呼ぶ
       - name: Full test (main CI result not reusable)
         if: needs.ci-gate.outputs.decision != 'reuse'
-        run: node tests/run.mjs --retry-failed 1
+        run: node tests/run.mjs --jobs 2 --retry-failed 1
       # CI に無い release だけの差は、npm ci の後に --force で足した koffi の arm64 本体。足した後の node_modules でネイティブを読めるかと、
       # 配布の手順（desktop-updates）・本物の koffi の構造体の配置（computer-native）を確かめる
       - name: Release environment smoke (main CI result reused)

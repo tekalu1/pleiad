@@ -29,7 +29,7 @@ jobs:
           foreach ($arch in 'x64', 'arm64') {
             if (!(Test-Path -LiteralPath "node_modules/@koromix/koffi-win32-$arch/win32_$arch/koffi.node")) { throw "Missing koffi binary for win32-$arch" }
           }
-      - run: npm test
+      - run: node tests/run.mjs --jobs 2
       - run: npm run desktop:dist -- --publish never
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
