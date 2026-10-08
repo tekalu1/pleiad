@@ -1,3 +1,4 @@
+import net from 'node:net';
 import { startFakeChrome } from '../lib/fake-chrome.mjs';
 import { fakeChromeOs } from '../lib/fake-chrome-os.mjs';
 import { fakeClock } from '../lib/fake-clock.mjs';
@@ -90,6 +91,8 @@ export default async function (t) {
       chrome.approve();
       await d;
       t.ok('縁が切れたまま: 許可で connected', c.conn.state().state === 'connected');
+      const pipeAlive = await new Promise(resolve => { const sk = net.connect(c.link.pipe); sk.on('connect', () => { sk.destroy(); resolve(true); }); sk.on('error', () => resolve(false)); });
+      t.ok('縁が切れたまま: 内の ws に落ちるとき、接続の子は終わらせる（古い ws を持ったまま残らない）', !pipeAlive);
       await c.conn.close();
     }
 

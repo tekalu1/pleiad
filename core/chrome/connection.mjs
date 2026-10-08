@@ -146,6 +146,8 @@ export function createChromeConnection({ locate, os, WebSocketImpl = NodeWebSock
     const rnd = { n: att.round, snap: snap ?? [], prevFg: fg, ws: null, dialog: null, opened: false, selfClose: false, upgradeAt: clock.now(), port: info.port, path: info.path,
       reissueTimer: null, guardTimer: null, yieldTimer: null, finding: false };
     att.cur = rnd;
+    // 接続の子との縁が途中で切れていたら、子が持つ古い ws を終わらせてから、このサーバーの中で張る（二重の接続・二重の確認にしない）
+    if (link && !link.alive) { await link.retireChild?.(); if (stale(att)) return; }
     const ws = new (wsImpl())(`ws://127.0.0.1:${info.port}${info.path}`, { perMessageDeflate: false });
     rnd.ws = ws;
     setStatus({ state: 'permission', reason: null, dialog: att.round === 0 ? false : status.dialog });

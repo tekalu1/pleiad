@@ -230,7 +230,7 @@ export default async function (t) {
 
     // ===== 12. carry: 一時停止・停止の印は debounce せずすぐ届く。大きすぎる carry は古いものを残さず「無効」の印にする =====
     {
-      const crash = async link => { await sleep(40); link.socket.destroy(); await sleep(60); };
+      const crash = async link => { await sleep(40); link.ended = true; link.socket.destroy(); await sleep(60); };   // サーバーが落ちた真似（途中で切れた扱いにならないよう ended を立てる）
       const attach = async () => openChromeLink({ holder: (await holder.connect()).client, runtimeRoot: root, runtimeKey: 'k1' });
       const a = await attach();
       a.setCarry({ v: 1, port: 7001, entries: [] }, { now: true });
@@ -251,6 +251,27 @@ export default async function (t) {
       const e = await attach();
       t.ok('その後に有効な carry が届けば、無効の印は消える', e.welcome.carry?.port === 7004 && e.welcome.carryInvalid !== true, JSON.stringify(e.welcome));
       await e.quit();
+    }
+
+    // ===== 13. パイプが途中で切れる（handOff・quit を経ない）: 接続の子を終わらせ、ws を持ったまま残さない =====
+    {
+      const parentX = await holder.connect();
+      let gone = 0;
+      const linkX = await openChromeLink({ holder: parentX.client, runtimeRoot: root, runtimeKey: 'k1', onGone: () => { gone += 1; } });
+      const pipeX = linkX.pipe;
+      const wsX = new linkX.WebSocketImpl(wsUrl(chrome));
+      await opened(wsX);
+      const upgradesX = chrome.upgrades;
+      linkX.socket.destroy();   // 途中で切れた
+      await waitFor(() => gone === 1, 5000, 'onGone');
+      const reachableX = () => new Promise(resolve => { const s = net.connect(pipeX); s.on('connect', () => { s.destroy(); resolve(true); }); s.on('error', () => resolve(false)); });
+      const childAlive = async () => linkChildren((await holder.connect()).client).some(c => c.id === linkX.childId && c.alive);
+      t.ok('縁が切れただけでは子は残る（落ちた後に起動する次のサーバーが拾えるように）', await reachableX());
+      await linkX.retireChild();
+      t.ok('このサーバーが内の ws に落ちるとき（retireChild）、接続の子を終わらせる（ws を持ったまま残らない）', !(await reachableX()) && !(await childAlive()));
+      await linkX.retireChild();
+      t.ok('retireChild は何度呼んでも壊れない', true);
+      void upgradesX;
     }
   } finally {
     for (const fn of cleanups) { try { await fn(); } catch { /* 片付け */ } }
