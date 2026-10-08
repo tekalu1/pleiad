@@ -202,7 +202,7 @@ const screencastHub = screencastBridge ? createScreencastHub({ bridge: screencas
 const screencastClients = new WeakMap();   // ws -> hub に渡す端末
 // エージェントのブラウザー（PC の Chrome）への接続 1 本（core/chrome/connection.mjs、ADR 0148・0153）。デスクトップ版だけ。OS ごとの層は main（desktop/chrome-os）
 const chromeLocate = chromeHomes()[0] ?? null;
-const chromeOs = process.parentPort ? parentPortChromeOs(process.parentPort) : null;
+const chromeOs = hostedPort ? parentPortChromeOs(hostedPort) : null;
 const chromeConnection = chromeOs
   ? createChromeConnection({ locate: chromeLocate, os: chromeOs, log: line => console.log(`  ${line}`) })
   : null;
