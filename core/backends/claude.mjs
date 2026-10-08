@@ -345,6 +345,13 @@ function buildToolServer(ctx) {
 }
 
 /**
+ * 委譲の子（Claude）に使わせない組み込みの道具。定義だけで約 12,300 トークンあり、子の最初のリクエストを膨らませる（ADR 0169）。
+ * Workflow は子が更に多段のエージェントを組む道具、ScheduleWakeup は /loop 用、ReportFindings は code-review 用、ListAgents は SendMessage の宛先の一覧で、
+ * いずれも子の仕事（依頼元へ結果を返す）には要らない。AskUserQuestion・Agent・Bash・PowerShell は残す。
+ */
+export const DELEGATED_CHILD_DISALLOWED_TOOLS = ['Workflow', 'ScheduleWakeup', 'ReportFindings', 'ListAgents'];
+
+/**
  * 読み取り専用のフォルダーの deny ルール。Claude Code の `Edit(...)` は Edit・Write・NotebookEdit などファイルを書き換える道具に掛かる。
  * パスは `//` で始めるとファイルシステムの根からの絶対パス。Windows は 'C:\a\b' を '//c/a/b' にそろえる（Claude Code の照合の形）
  */
@@ -699,7 +706,7 @@ export const backend = {
    * 新規セッションは走り出すまで id が無いので、確定した時点で `session` イベントを出す。
    */
   // adopt は付け直し（{ source, card }。adoptTurn だけが渡す）。無ければ普通のターン（保持役に載せるかは claude-held.mjs の heldPlan が決める）
-  async runTurn({ prompt, sessionId, cwd, mode, model, effort, emit, onPromptDelivered, askPermission, signal, control, hostSessionId, hostBackend, hostInvoke, visualizeInstructions, browserEnv, browserInstructions, browserRuntime = null, contextRuntime, agentRuntime, computerRuntime = null, controlRuntime = null, hooksRuntime = null, oauthToken, endpoint = null, autoCompactWindow = null, locale, compact, shellAppends = [], notes = [], botInstructions = null, botFolders = null, rewind = null }, adopt = null) {
+  async runTurn({ prompt, sessionId, cwd, mode, model, effort, emit, onPromptDelivered, askPermission, signal, control, hostSessionId, hostBackend, hostInvoke, visualizeInstructions, browserEnv, browserInstructions, browserRuntime = null, delegatedChild = false, contextRuntime, agentRuntime, computerRuntime = null, controlRuntime = null, hooksRuntime = null, oauthToken, endpoint = null, autoCompactWindow = null, locale, compact, shellAppends = [], notes = [], botInstructions = null, botFolders = null, rewind = null }, adopt = null) {
     // locale は会話の言語（host ツールの説明と承認の deny の理由。core/server.mjs が会話ごとに決めて渡す）
     const ctx = { sessionId: sessionId ?? null, emit, hostSessionId, hostBackend, hostInvoke, locale, track: control?.track ?? null };
     // このターンで呼んだ ply_computer の tool_use の id。tool_result に名前は載らないので、印の行を読むのはこの id の結果だけにする
@@ -1060,6 +1067,8 @@ export const backend = {
       for (let i = 0; i < (Number.isInteger(adopt.card.pushed) ? adopt.card.pushed : 0); i++) tracker.pushed();
     }
 
+    // 外す道具: bot の読み取り専用フォルダーの deny ルール + 委譲の子が使わない組み込みの道具（DELEGATED_CHILD_DISALLOWED_TOOLS）
+    const disallowedTools = [...(botFolders?.readOnlyRoots?.length ? readOnlyDenyRules(botFolders.readOnlyRoots) : []), ...(delegatedChild ? DELEGATED_CHILD_DISALLOWED_TOOLS : [])];
     const claudeExtraEnv = { CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS: "0", ...(autoCompactWindow ? { [AUTO_COMPACT_WINDOW_ENV]: String(autoCompactWindow) } : {}) };
     // query の組み立てで例外になっても、鍵を含むフラグ設定のファイルを残さない（ターンの終わりの finally まで届かないため）
     if (!finished) try { q = sdk.query({
@@ -1099,7 +1108,7 @@ export const backend = {
         ...((visualizeInstructions || browserInstructions || contextRuntime?.prompt || agentRuntime?.instructions || computerInstructions || controlRuntime?.instructions || botInstructions) ? { systemPrompt: { type: 'preset', preset: 'claude_code', append: [contextRuntime?.prompt, visualizeInstructions, browserInstructions, agentRuntime?.instructions, computerInstructions, controlRuntime?.instructions, botInstructions].filter(Boolean).join('\n\n'), ...(botInstructions ? { snapshot: false } : {}) } } : {}),
         // bot の触れてよいフォルダー（cwd の外の分）。読み取り専用（ro）のフォルダーは、acceptEdits が聞かずに通す編集を deny ルールで断る（シェルの書き込みは断れない。docs/channels.md）
         ...(botFolders?.additionalDirectories?.length ? { additionalDirectories: botFolders.additionalDirectories } : {}),
-        ...(botFolders?.readOnlyRoots?.length ? { disallowedTools: readOnlyDenyRules(botFolders.readOnlyRoots) } : {}),
+        ...(disallowedTools.length ? { disallowedTools } : {}),
         // adaptive = モデルが必要な分だけ考える。
         // 注意: このモデルの thinking ブロックは署名だけで平文が入らない（2026-08 時点、
         // display の有無を問わず `thinking` は空文字）。したがって思考の中身は表示できない。

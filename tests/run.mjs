@@ -29,6 +29,7 @@ const SUITES = [
   './unit/server-compaction.mjs',
   // 委譲の子だけ自動圧縮の窓（CLAUDE_CODE_AUTO_COMPACT_WINDOW = 閾値 + 33000）を渡す: 親・0（オフ）・利用者の環境変数が先、では渡さない
   './unit/server-compaction-delegated.mjs',
+  './unit/claude-delegated-child.mjs',
   './unit/limit-resume.mjs',
   './unit/server-limit-resume.mjs',
   './unit/send-schedule.mjs',
@@ -70,6 +71,8 @@ const SUITES = [
   './unit/chrome-os.mjs',
   // Chrome への接続（サーバー越し）: browser.chrome* の操作・chromeBrowser イベントはホストの画面だけ・使えない OS / Electron の無いホスト（偽の Chrome・parentPort の身代わり）
   './unit/server-chrome.mjs',
+  // Chrome の OS の層をパイプの経路（無停止の更新）で作る: parentPort が無くても層ができる・chrome-os の依頼が main に届く・付け直しで求め直す・main が居ない間は失敗で返す
+  './unit/chrome-os-link.mjs',
   // 設定 › ブラウザー › エージェントのブラウザー: 状態ごとの字とボタン・使えない環境（DOM の代役）
   './unit/chrome-settings.mjs',
   './unit/browser-confirm.mjs',

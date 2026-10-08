@@ -202,7 +202,7 @@ const screencastHub = screencastBridge ? createScreencastHub({ bridge: screencas
 const screencastClients = new WeakMap();   // ws -> hub に渡す端末
 // エージェントのブラウザー（PC の Chrome）への接続 1 本（core/chrome/connection.mjs、ADR 0148・0153）。デスクトップ版だけ。OS ごとの層は main（desktop/chrome-os）
 const chromeLocate = chromeHomes()[0] ?? null;
-const chromeOs = process.parentPort ? parentPortChromeOs(process.parentPort) : null;
+const chromeOs = hostedPort ? parentPortChromeOs(hostedPort) : null;
 const chromeConnection = chromeOs
   ? createChromeConnection({ locate: chromeLocate, os: chromeOs, log: line => console.log(`  ${line}`) })
   : null;
@@ -5546,6 +5546,8 @@ async function beginTurn(ctx) {
   const notes = [...(ctx.interruption ? [ctx.interruption.text] : []), ...botExtras.notes];
   // 委譲の子の Claude だけ、CLI の自動圧縮の閾値を「固定の部分 + 空き」に下げる（親・bot は CLI の既定のまま。docs/design.md「自動圧縮」、ADR 0166）
   const autoCompactWindow = await delegatedCompaction(ctx);
+  // 委譲の子は、可視化（出力は依頼元が受け取る）と ply_control の指示を渡さず、Claude は使わない組み込みの道具も外す（ADR 0169）
+  const delegatedChild = Boolean(sessionId && (await store.get(sessionId).catch(() => null))?.delegation);
   const runArgs = {
     prompt,
     ...(shellHandoff?.lines.length ? { shellAppends: shellHandoff.lines } : {}),
@@ -5568,7 +5570,8 @@ async function beginTurn(ctx) {
     control: turn.control,
     // エージェントに渡す文（指示・ツールの説明・タイトル生成など）の言語。会話ごとに決めて保存したもの
     locale: agentLocale,
-    visualizeInstructions: visualizeInstructions(agentLocale),
+    visualizeInstructions: delegatedChild ? null : visualizeInstructions(agentLocale),
+    ...(delegatedChild ? { delegatedChild: true } : {}),
     browserEnv: await browserEnvironment({ bridge: agentBrowserEndpoints, dataDir: store.dataDir, sessionId: sessionId || turn.key, unlock: turn.userInitiated }).catch(error => { console.error('agent browser unavailable:', error.message); return null; }),
     browserInstructions: null,
     // ply_browser。内蔵ブラウザーを渡すターンだけ（下で入れる）
@@ -5576,7 +5579,8 @@ async function beginTurn(ctx) {
     // ply_computer（url・headers・instructions）。使えない・オフ・対応しないエージェントなら null（computerRuntimeFor）
     computerRuntime: await computerRuntimeFor(turn),
     // ply_control（操作の一覧）。全会話に渡す。env は会話のシェルへ渡す CLI の接続情報
-    controlRuntime: controlRuntimeFor(turn),
+    // 委譲の子には指示（約 0.2k）だけ渡さない。MCP は残す: 子の設定変更の承認を依頼元へ中継する口（ADR 0088）が ply_control を通るため
+    controlRuntime: delegatedChild ? { ...controlRuntimeFor(turn), instructions: null } : controlRuntimeFor(turn),
     addedInstructions: !backend.capabilities?.plyAgents ? withAdded(null, contextRecord.added) : null,
     contextRuntime: ctx.runtimeContext,
     // Hooks を Pleiad がそろえるターンだけ（担当がエージェントなら渡さない。エージェントの設定の hooks がそのまま動く）
@@ -5599,7 +5603,7 @@ async function beginTurn(ctx) {
   // Pleiad が足した文の量（右パネルの「指示の量」。ADR 0056）。このターンで渡す文が出そろったここで数え、変わったときだけ記録し直す
   const parts = plyParts({ plyAgents: Boolean(backend.capabilities?.plyAgents), context: ctx.runtimeContext?.sections ?? null,
     visualize: runArgs.visualizeInstructions, browser: runArgs.browserInstructions, agents: agentConnection(turn).instructions, added: contextRecord.added,
-    computer: computerPrompt(runArgs.computerRuntime, { locale: agentLocale, agent: backend.id }), control: runArgs.controlRuntime.instructions });
+    computer: computerPrompt(runArgs.computerRuntime, { locale: agentLocale, agent: backend.id }), control: runArgs.controlRuntime?.instructions ?? null });
   if (JSON.stringify(parts) !== JSON.stringify(contextRecord.plyParts ?? null)) { contextRecord.plyParts = parts; await ctx.saveContext(); }
   ctx.runArgs = runArgs;
 }

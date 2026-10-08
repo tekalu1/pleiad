@@ -75,7 +75,7 @@ export default async function (t) {
       const out = await (await rpc(before.url, before.headers, 'tools/call', { name: 'ply_usage', arguments: {} })).json();
       assert.equal(out.result.isError, undefined);
       assert.deepEqual(calls.at(-1), { owner: 'conv-1', tool: 'ply_usage', args: {} });
-      assert.match((await (await rpc(before.url, before.headers, 'initialize', {})).json()).result.instructions, /\S/, '会話の言語の instructions も返る');
+      assert.equal((await (await rpc(before.url, before.headers, 'initialize', {})).json()).result.instructions, undefined, 'initialize では instructions を返さない（append だけ。ADR 0169）');
       assert.throws(() => agents.open({ origin, owner, locale: 'ja', token: TOKEN_A }), /already in use/, '使用中は断る');
       assert.throws(() => agents.open({ origin, owner, locale: 'ja', token: 'zz' }), /Invalid token/);
       assert.equal(await status(before), 200, '断った後も元の口は生きている');
