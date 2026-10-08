@@ -2222,7 +2222,7 @@ function browserHandoffCard(ev, into = null) {
   head.append(el("span", "desc", view.summary()));
   card.append(head, view.body, actions);
   placeCard(m, ev, into);
-  registerRelayCard(ev, { m, card, head, code: null, actions, res: view.res, buttons: [], removeOnFold: [view.body], desc: view.summary(),
+  registerRelayCard(ev, { m, card, head, code: null, actions, res: view.res, buttons: [], removeOnFold: [view.body],
     settled: (settledEv) => handoffSettledLine(t, settledEv), onUpdate: (patch) => view.update(patch.browserHandoff) });
   return m;
 }
@@ -2360,8 +2360,12 @@ function onPermissionSettled(ev) {
   state.pendingPerms.delete(ev.id);
   if (!openCards.has(ev.id) || openCards.sending(ev.id)) return;
   // Chrome の操作待ちは、戻した・つながった・断った・中断をカードの字にする（別の場所で処理された、とは言わない）
-  if (handoff) openCards.fold(ev.id, { by: "handoff", settled: ev });
-  else foldElsewhere(ev.id);
+  if (handoff) {
+    openCards.fold(ev.id, { by: "handoff", settled: ev });
+    // 状態の一行を「承認を待っている」から戻す。ターンが終わった後に済みになったなら、残っている一行を下げる
+    if (isRunningHere()) activity.show(t("activity.continuing"));
+    else if (!activity.idleOnly()) activity.hide();
+  } else foldElsewhere(ev.id);
 }
 
 /**

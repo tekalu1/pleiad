@@ -107,10 +107,12 @@ function committedOrigin(frame) {
  * @param [deps.authorize] サイトの利用の確認（core/browser-confirm.mjs の createBrowserSiteApprovals）。({ sessionId, url }, signal) → { allow, message? }
  * @param [deps.deniedMessage] 確認で断られた移動をエージェントへ返す文
  * @param [deps.handoff]  操作待ち（core/chrome/handoff.mjs）。接続が無いまま待つとき connect(sessionId) で許可待ちのカードを出す（20 秒の待ちが外れても試行は続く）
+ * @param [deps.turnLive] (sessionId) => その会話のターンが走っているか。無い・false のとき、つながっていなければ確認を出さずに断る（頼んだ人が居ない）
+ * @param [deps.turnSignal] (sessionId) => 走っているターンの中断の合図。人の「止める」で、その会話の接続待ちを外す
  * @param [deps.connectWaitText] (sessionId) => 20 秒待ってもつながらないときに（setup・permission で）エージェントへ返す文。会話の言語。無ければ英語の固定
  */
 export function createChromeRelay({ connection, os, locate, log = () => {}, scope = createChromeWindows({ os, locate, log }), authorize = async () => ({ allow: false }), deniedMessage = () => 'navigation denied',
-  connectWaitMs = CONNECT_WAIT_MS, commandTimeoutMs = COMMAND_TIMEOUT_MS, handoff = null, connectWaitText = null } = {}) {
+  connectWaitMs = CONNECT_WAIT_MS, commandTimeoutMs = COMMAND_TIMEOUT_MS, handoff = null, connectWaitText = null, turnLive = null, turnSignal = () => undefined } = {}) {
   const entries = new Map();   // 会話の id -> entry
   const byKey = new Map();
   const wss = new WebSocketServer({ noServer: true, perMessageDeflate: false });
@@ -171,10 +173,16 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, scop
   async function upFor(client) {
     if (up && !up.cdp.closed) return up;
     client.upWait ??= (async () => {
+      // ターンの外で呼ばれた（終わったターンの後ろに残った agent-browser など）。人に頼む相手が居ないので、Chrome の確認も出さない
+      if (turnLive && !turnLive(client.entry.id)) throw new RelayError('the agent browser (Chrome) is not connected, and cannot ask the user outside of a turn. Try again within a conversation turn');
       const ac = new AbortController();
       client.upAbort = ac;
       let waitingAtGiveUp = null;   // 待ちを外すと試行が止まって off に戻るので、外す直前の状態を覚える
       const timer = setTimeout(() => { waitingAtGiveUp = connection.state?.().state; ac.abort(); }, connectWaitMs);
+      // 人の「止める」でこの会話の待ちを外す。ほかに待つ人（設定の「つなぐ」・別の会話）が居なければ、Chrome の確認もすぐ閉じる
+      const turn = turnSignal(client.entry.id);
+      const onTurnAbort = () => { waitingAtGiveUp = connection.state?.().state; ac.abort(); };
+      if (turn?.aborted) onTurnAbort(); else turn?.addEventListener('abort', onTurnAbort, { once: true });
       // 接続を待つあいだ、人に許可を頼むカードを出す。カードは自分の試行を持つので、この待ちが外れても Chrome の確認は出たまま
       try { handoff?.connect(client.entry.id); } catch (error) { log(`chrome: handoff connect failed: ${error?.message ?? error}`); }
       try {
@@ -191,7 +199,7 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, scop
         // A（setup）は、Chrome が起動していないか、リモート デバッグがオフ（DevToolsActivePort は Chrome を閉じても残るので見分けない）
         if (waiting === 'setup') throw new RelayError('Chrome is not running, or remote debugging is off in Chrome (waiting for the user). Try again later');
         throw new RelayError('Chrome is not connected yet (waiting for the user to allow remote debugging in Chrome). Try again later');
-      } finally { clearTimeout(timer); client.upWait = null; client.upAbort = null; }
+      } finally { clearTimeout(timer); turn?.removeEventListener('abort', onTurnAbort); client.upWait = null; client.upAbort = null; }
     })();
     return client.upWait;
   }
