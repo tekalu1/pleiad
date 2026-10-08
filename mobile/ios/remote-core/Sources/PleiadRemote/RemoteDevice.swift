@@ -214,7 +214,8 @@ public final class RemoteDevice {
     public let loop = Loop()
     private let lock = NSRecursiveLock()
     private var proxies: [String: DeviceProxy] = [:]
-    private var listeners: [(String, LinkStatus) -> Void] = []
+    private var listeners: [Int: (String, LinkStatus) -> Void] = [:]
+    private var nextListener = 0
 
     public init(store: DeviceStore, app: String, name: String, platform: String = "ios", texts: ProxyTexts = DefaultTexts(),
                 backoff: Backoff = Backoff(), connectTimeoutMs: Int = 15_000, requestWaitMs: Int = 10_000,
@@ -230,8 +231,17 @@ public final class RemoteDevice {
         self.log = log
     }
 
-    public func onStatus(_ fn: @escaping (_ hostId: String, _ status: LinkStatus) -> Void) {
-        lock.lock(); listeners.append(fn); lock.unlock()
+    /// 状態の購読を登録し、offStatus で解除するための番号を返す。
+    @discardableResult
+    public func onStatus(_ fn: @escaping (_ hostId: String, _ status: LinkStatus) -> Void) -> Int {
+        lock.lock(); defer { lock.unlock() }
+        nextListener += 1
+        listeners[nextListener] = fn
+        return nextListener
+    }
+
+    public func offStatus(_ token: Int) {
+        lock.lock(); listeners[token] = nil; lock.unlock()
     }
 
     /// Host list with the live state (nil when no proxy is open).
@@ -273,7 +283,7 @@ public final class RemoteDevice {
                 self.log("remote device: \(error)")
             }
             self.lock.lock()
-            let ls = self.listeners
+            let ls = self.listeners.sorted { $0.key < $1.key }.map(\.value)
             self.lock.unlock()
             for l in ls { l(hostId, s) }
         }
@@ -295,7 +305,9 @@ public final class RemoteDevice {
         px?.close()
     }
 
-    public func rename(_ hostId: String, _ label: String) throws {
+    /// 未登録のホストなら nil。
+    @discardableResult
+    public func rename(_ hostId: String, _ label: String) throws -> HostRecord? {
         try store.updateHost(hostId) { $0.label = PairingCodec.cleanLabel(label) }
     }
 

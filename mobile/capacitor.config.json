@@ -6,5 +6,9 @@
     "allowMixedContent": false,
     "captureInput": false,
     "webContentsDebuggingEnabled": false
+  },
+  "ios": {
+    "includePlugins": ["@capacitor/app"],
+    "webContentsDebuggingEnabled": false
   }
 }
