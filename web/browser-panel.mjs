@@ -69,7 +69,8 @@ export function createBrowserPanel({ bridge = window.plyDesktop?.browser, showMe
   // tabMenu(tab): ⋯ の先頭に足すファイルの操作（PC のファイル・可視化の写しのタブだけ。web/file-preview.mjs）。
   // rewriteSnapshot(rewrite): 写しの「読み込む」で、一時の許可付きの写しを書き直して同じタブで開く。onPaint(state): 状態が変わった
   // canOpenInChrome() / openInChrome({ sessionId, url }): ⋯「Chrome で開く（エージェントの窓へ）」（web/client.mjs が入れる。出すのは Chrome の層が使えるホストだけ）
-  let hooks = { openPanel: () => {}, onEmpty: () => {}, tabMenu: () => [], rewriteSnapshot: async () => {}, onPaint: () => {}, canOpenInChrome: () => false, openInChrome: () => {} };
+  let hooks = { openPanel: () => {}, onEmpty: () => {}, tabMenu: () => [], rewriteSnapshot: async () => {}, onPaint: () => {}, canOpenInChrome: () => false, openInChrome: () => {},
+    chromeAvailable: () => false, chromeOpen: () => false, chromeCount: () => 0, chromeOperating: () => false, chromeName: () => 'Claude', openChrome: () => {} };
   const current = () => state.tabs.find(tab => tab.id === state.current) ?? null;
   const run = (action, args) => bridge.command(action, args).then(next => { if (next?.tabs) paint(next); return next; });
   const failed = () => notify(t('browser.failed'));
@@ -77,7 +78,7 @@ export function createBrowserPanel({ bridge = window.plyDesktop?.browser, showMe
   // ---- タブの列（小さく。閉じる・新しいタブ）
   const tabsRow = el('div', 'browser-tabs'); tabsRow.hidden = true;
   const tabList = el('div', 'browser-tab-list'); tabList.setAttribute('role', 'tablist'); tabList.setAttribute('aria-label', t('browser.tabs'));
-  const newTab = button(ICON.plus, t('browser.newTab'), () => run('newTab').then(() => focusAddress()).catch(failed), 'btn btn-icon browser-new-tab');
+  const newTab = button(ICON.plus, t('browser.newTab'), () => { hooks.openPanel(); run('newTab').then(() => focusAddress()).catch(failed); }, 'btn btn-icon browser-new-tab');
   tabsRow.append(tabList, newTab);
 
   // ---- 止めた件数の一行（画面が開いた PC のファイルのタブで、外部の読み込みの確認が ON のとき。プレビューと同じ語彙）。
@@ -183,8 +184,28 @@ export function createBrowserPanel({ bridge = window.plyDesktop?.browser, showMe
     });
   }
   function paintTabs() {
-    tabList.replaceChildren(...state.tabs.map(tab => {
-      const selected = tab.id === state.current;
+    const chromeSelected = hooks.chromeOpen();
+    const chromeAvailable = hooks.chromeAvailable();
+    const items = state.tabs.map(tab => ({ tab, chrome: false }));
+    if (chromeAvailable) items.unshift({ chrome: true });
+    tabList.replaceChildren(...items.map((entry, position) => {
+      const tab = entry.tab;
+      const selected = entry.chrome ? chromeSelected : !chromeSelected && tab.id === state.current;
+      if (entry.chrome) {
+        const item = el('div', 'browser-tab browser-tab-chrome' + (selected ? ' on' : ''));
+        const pick = el('button', 'browser-tab-pick'); pick.type = 'button';
+        pick.setAttribute('role', 'tab'); pick.setAttribute('aria-selected', String(selected)); pick.tabIndex = selected ? 0 : -1;
+        pick.title = t('browser.chromeWindow.fixedTab', { name: hooks.chromeName() });
+        const mark = el('span', 'browser-tab-mark'); mark.innerHTML = svg('<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3.6"/><path d="M12 8.4h8.4M9 13.8l-4.2 7.2M15 13.8l-4.2-7.2"/>');
+        pick.append(mark, el('span', 'browser-tab-name', t('browser.chromeWindow.tab', { name: hooks.chromeName() })));
+        const count = hooks.chromeCount();
+        if (count > 1) pick.append(el('span', 'browser-tab-count', String(count)));
+        if (hooks.chromeOperating()) pick.append(runMark(t('browser.chromeWindow.entryWorking', { name: hooks.chromeName() })));
+        pick.onclick = () => hooks.openChrome();
+        pick.onkeydown = event => moveTab(event, position);
+        item.append(pick);
+        return item;
+      }
       const label = tabLabel(tab) || t('browser.untitled');
       const item = el('div', 'browser-tab' + (selected ? ' on' : '')); item.dataset.tab = tab.id;
       const pick = el('button', 'browser-tab-pick'); pick.type = 'button';
@@ -193,20 +214,23 @@ export function createBrowserPanel({ bridge = window.plyDesktop?.browser, showMe
       const ic = el('span', 'browser-tab-mark');
       if (tab.loading) ic.append(runMark(t('browser.loading'))); else ic.innerHTML = ICON[addressParts(tab.url).kind] ?? ICON.blank;
       pick.append(ic, el('span', 'browser-tab-name', label));
-      pick.onclick = () => run('select', { id: tab.id }).catch(failed);
-      pick.onkeydown = event => {
-        const step = { ArrowRight: 1, ArrowLeft: -1 }[event.key];
-        if (!step) return;
-        event.preventDefault();
-        const index = state.tabs.findIndex(x => x.id === tab.id);
-        const next = state.tabs[(index + step + state.tabs.length) % state.tabs.length];
-        run('select', { id: next.id }).then(() => tabList.querySelector('[aria-selected=true]')?.focus()).catch(failed);
-      };
+      pick.onclick = () => { hooks.openPanel(); run('select', { id: tab.id }).catch(failed); };
+      pick.onkeydown = event => moveTab(event, position);
       const close = button(closeIcon, t('browser.closeTab', { title: label }), () => run('close', { id: tab.id }).catch(failed), 'btn btn-icon browser-tab-close');
       close.tabIndex = -1;
       item.append(pick, close);
       return item;
     }));
+  }
+  function moveTab(event, position) {
+    const keys = { ArrowRight: 1, ArrowLeft: -1, Home: -Infinity, End: Infinity };
+    if (!(event.key in keys)) return;
+    event.preventDefault();
+    const picks = [...tabList.querySelectorAll('[role=tab]')];
+    const step = keys[event.key];
+    const next = step === -Infinity ? 0 : step === Infinity ? picks.length - 1 : (position + step + picks.length) % picks.length;
+    picks[next]?.click();
+    requestAnimationFrame(() => tabList.querySelector('[aria-selected=true]')?.focus());
   }
 
   function paint(next) {
@@ -298,6 +322,7 @@ export function createBrowserPanel({ bridge = window.plyDesktop?.browser, showMe
   const api = {
     buttons: { back, forward, reloadPage: reload, address, openExternal, browserMore: more },
     tabsRow, guardRow, body,
+    refreshTabs: paintTabs,
     /** file-preview がパネルを開く関数と、最後のタブを閉じたときの関数を入れる */
     connect(next) { hooks = { ...hooks, ...next }; },
     /** パネルがブラウザーのモードで見えるようになった・隠れた */

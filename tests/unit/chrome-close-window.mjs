@@ -95,15 +95,17 @@ export default async function (t) {
     try {
       let panelOpen = false;
       const commands = [];
+      let menuItems = [];
       const windows = createWindowTable();
-      windows.apply({ sessionId: 'panel', windows: 1 });
+      windows.apply({ sessionId: 'panel', windows: 1, windowIds: [41], currentWindowId: 41 });
+      t.ok('窓の一覧は実際の窓と表示中の印を保持する', windows.count('panel') === 1 && windows.list('panel')[0].current);
       const panel = setupChromePanel({ cmd: async (name, args) => { commands.push([name, args]); return { closed: true }; },
-        preview: { openPanel: () => { panelOpen = true; }, panelOpen: () => panelOpen, close: () => { panelOpen = false; } },
+        showMenu: (_x, _y, items) => { menuItems = items; },
+        preview: { openPanel: (options) => { panelOpen = true; options.toolbar[2].getBoundingClientRect = () => ({ left:0, bottom:0 }); options.toolbar[2].onclick(); }, panelOpen: () => panelOpen, close: () => { panelOpen = false; } },
         session: () => 'panel', windows });
       panel.open();
-      const button = panel.statusSlot.parent.querySelector('.cp-close');
-      await button.onclick();
-      t.ok('右パネルの「窓を閉じる」は自分の会話 ID で chromeCloseWindow を送る', button.textContent === '窓を閉じる' && commands.some(([name, args]) => name === 'chromeCloseWindow' && args.sessionId === 'panel'));
+      await menuItems.find(item => item.label === '窓を閉じる').onClick();
+      t.ok('⋯ の「窓を閉じる」は自分の会話 ID で chromeCloseWindow を送る', menuItems[0].label === '窓 1 · 表示中' && commands.some(([name, args]) => name === 'chromeCloseWindow' && args.sessionId === 'panel'));
     } finally { globalThis.requestAnimationFrame = oldFrame; N.prototype.toggleAttribute = oldToggle; }
 
     const bridgeCalls = [];

@@ -59,25 +59,25 @@ async page => {
   check(!!sessionId, 'a conversation exists');
 
   // ============ 1. 窓が無い会話には入口を出さない。窓ができたら出る
-  check(await page.locator('#chromeEntry').isHidden(), 'no entry without a Chrome window');
+  check(await page.locator('#browserEntry').isHidden(), 'no entry without a Chrome window');
   await page.evaluate((id) => window.__event({ type: 'chromeWindow', sessionId: id, windows: 1, operating: false }), sessionId);
-  await page.locator('#chromeEntry').waitFor({ state: 'visible' });
-  const label = await page.locator('#chromeEntry').getAttribute('aria-label');
-  check(/の Chrome の窓$/.test(label), `entry name: ${label}`);
-  check(await page.locator('#chromeEntry .entry-run').count() === 0, 'no arc while idle');
+  await page.locator('#browserEntry').waitFor({ state: 'visible' });
+  const label = await page.locator('#browserEntry').getAttribute('aria-label');
+  check(label === 'ブラウザー', `entry name: ${label}`);
+  check(await page.locator('#browserEntry .entry-run').count() === 0, 'no arc while idle');
   await page.evaluate((id) => window.__event({ type: 'chromeWindow', sessionId: id, windows: 1, operating: true }), sessionId);
-  await page.locator('#chromeEntry .entry-run').waitFor();
-  check(/操作中$/.test(await page.locator('#chromeEntry').getAttribute('aria-label')), 'arc and name while the agent operates');
+  await page.locator('#browserEntry .entry-run').waitFor();
+  check(/Chrome を操作中$/.test(await page.locator('#browserEntry').getAttribute('aria-label')), 'arc and name while the agent operates');
   await page.evaluate((id) => window.__event({ type: 'chromeWindow', sessionId: id, windows: 1, operating: false }), sessionId);
-  await page.waitForFunction(() => !document.querySelector('#chromeEntry .entry-run'));
+  await page.waitForFunction(() => !document.querySelector('#browserEntry .entry-run'));
   // ほかの会話の知らせでは出ない
   await page.evaluate(() => window.__event({ type: 'chromeWindow', sessionId: 'someone-else', windows: 1, operating: true }));
-  check(await page.locator('#chromeEntry .entry-run').count() === 0, 'other conversations do not change this entry');
+  check(await page.locator('#browserEntry .entry-run').count() === 0, 'other conversations do not change this entry');
 
   // ============ 2. 開く: 右パネルのモード・映像の名前・状態の一行の差し込み口・始める依頼
-  await page.locator('#chromeEntry').click();
+  await page.locator('#browserEntry').click();
   await page.locator('#filePreview[data-panel="chrome-window"]').waitFor();
-  check(await page.locator('#chromeEntry').getAttribute('aria-expanded') === 'true', 'entry is pressed while open');
+  check(await page.locator('#browserEntry').getAttribute('aria-expanded') === 'true', 'entry is pressed while open');
   const screen = page.locator('.cp-screen');
   await screen.waitFor();
   check(/の Chrome の窓の映像（見るだけ）$/.test(await screen.getAttribute('aria-label')) && await screen.getAttribute('role') === 'img', 'the video is named and read-only');
@@ -150,14 +150,14 @@ async page => {
 
   // ============ 9. 閉じると停止を送る。別の会話へ移ってもパネルは残らない
   await page.keyboard.press('Escape').catch(() => {});
-  if (await page.locator('#filePreview[data-panel="chrome-window"]').isVisible()) await page.locator('#chromeEntry').click();
+  if (await page.locator('#filePreview[data-panel="chrome-window"]').isVisible()) await page.locator('#browserEntry').click();
   await page.waitForFunction(() => !document.querySelector('#filePreview[data-panel="chrome-window"]:not([hidden])'));
   const stops = await sent('browserScreencastStop');
   check(stops.length >= 1 && stops.at(-1).args.source === 'chrome' && stops.at(-1).args.sessionId === sessionId, 'closing sends a stop for the chrome source');
-  check(await page.locator('#chromeEntry').getAttribute('aria-expanded') === 'false', 'entry is released after closing');
+  check(await page.locator('#browserEntry').getAttribute('aria-expanded') === 'false', 'entry is released after closing');
   // 窓が無くなったら入口も消える
   await page.evaluate((id) => window.__event({ type: 'chromeWindow', sessionId: id, windows: 0, operating: false }), sessionId);
-  await page.locator('#chromeEntry').waitFor({ state: 'hidden' });
+  await page.locator('#browserEntry').waitFor({ state: 'hidden' });
   check(true, 'the entry goes away with the window');
 
   return results.join('\n');

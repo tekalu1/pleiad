@@ -26,7 +26,7 @@ const SEND_KEYS = new Set(['Enter', 'Backspace', 'Delete', 'ArrowLeft', 'ArrowUp
 
 /** 会話の Chrome の窓の知らせ（サーバーの chromeWindow イベント）を会話ごとに覚える。入口の表示と弧が読む */
 export function createWindowTable() {
-  const rows = new Map();   // sessionId -> { windows, operating }
+  const rows = new Map();   // sessionId -> { windows, operating, windowIds, currentWindowId }
   return {
     /** イベントを当てる。変わったら true */
     apply(ev) {
@@ -34,11 +34,21 @@ export function createWindowTable() {
       if (typeof id !== 'string' || !id) return false;
       const before = rows.get(id);
       if (!(ev.windows > 0)) { rows.delete(id); return Boolean(before); }
-      const next = { windows: Number(ev.windows), operating: ev.operating === true };
+      const next = { windows: Number(ev.windows), operating: ev.operating === true,
+        windowIds: Array.isArray(ev.windowIds) ? ev.windowIds.filter(Number.isSafeInteger) : [],
+        currentWindowId: Number.isSafeInteger(ev.currentWindowId) ? ev.currentWindowId : null };
       rows.set(id, next);
-      return !before || before.windows !== next.windows || before.operating !== next.operating;
+      return !before || before.windows !== next.windows || before.operating !== next.operating ||
+        before.currentWindowId !== next.currentWindowId || before.windowIds.join(',') !== next.windowIds.join(',');
     },
     has: id => (rows.get(id)?.windows ?? 0) > 0,
+    count: id => rows.get(id)?.windows ?? 0,
+    list(id) {
+      const row = rows.get(id);
+      if (!row) return [];
+      const ids = row.windowIds.length ? row.windowIds : Array.from({ length: row.windows }, () => null);
+      return ids.map((windowId, index) => ({ number: index + 1, current: windowId !== null && windowId === row.currentWindowId }));
+    },
     operating: id => rows.get(id)?.operating === true,
     clear() { rows.clear(); },
   };
@@ -50,9 +60,9 @@ export function createWindowTable() {
  * @param session   今の会話の id
  * @param getAgentName エージェントの名前（映像の名前に入れる）
  */
-export function setupChromePanel({ cmd, preview, session = () => null, getAgentName = () => 'Claude', windows = createWindowTable(), touch = null } = {}) {
+export function setupChromePanel({ cmd, preview, browser = null, showMenu = null, session = () => null, getAgentName = () => 'Claude', windows = createWindowTable(), touch = null } = {}) {
   let root = null, parts = null, sessionId = null, state = null, frameMeta = null, quality = 'auto', ended = false, connecting = false, hintTimer = 0, observer = null, lastBox = null, resizeTimer = 0;
-  let opener = null, onOpenChange = () => {}, operating = false, waiting = null;   // waiting: ⋯「Chrome で開く」で、窓ができるのを待っている会話と字
+  let opener = null, onOpenChange = () => {}, operating = false, waiting = null, closing = false;   // waiting: ⋯「Chrome で開く」で、窓ができるのを待っている会話と字
   const alwaysHint = touch ?? (() => { try { return matchMedia('(hover: none), (pointer: coarse)').matches; } catch { return false; } });
 
   function build() {
@@ -66,17 +76,30 @@ export function setupChromePanel({ cmd, preview, session = () => null, getAgentN
     const empty = el('div', 'cp-empty'); empty.hidden = true;
     const foot = el('div', 'cp-foot weak small');
     const status = el('span', 'cp-fps');
-    const closeWindow = el('button', 'btn cp-close', t('browser.chromeWindow.close'));
-    closeWindow.type = 'button';
-    closeWindow.onclick = async () => {
+    const closeCurrentWindow = async () => {
       const id = sessionId;
-      if (!id || !windows.has(id)) return;
-      closeWindow.disabled = true;
+      if (!id || !windows.has(id) || closing) return;
+      closing = true;
       try { const result = await cmd('chromeCloseWindow', { sessionId: id }); if (result?.failed) notify(t('browser.chromeWindow.closeFailed')); }
       catch (error) { notify(error?.message || t('browser.chromeWindow.closeFailed')); }
-      finally { closeWindow.disabled = false; }
+      finally { closing = false; }
     };
-    foot.append(status, closeWindow);
+    foot.append(status);
+    // 第 10 段のプロフィール pill をここへ差し込む。空の間は幅を取らない。
+    const profileSlot = el('div', 'cp-profile-slot'); profileSlot.dataset.slot = 'chrome-profile';
+    const windowMenu = el('button', 'btn btn-icon cp-window-menu', '⋯'); windowMenu.type = 'button';
+    windowMenu.setAttribute('aria-label', t('browser.chromeWindow.windowActions'));
+    windowMenu.title = t('browser.chromeWindow.windowActions');
+    windowMenu.setAttribute('aria-haspopup', 'menu');
+    windowMenu.onclick = () => {
+      const list = windows.list(sessionId);
+      const r = windowMenu.getBoundingClientRect();
+      const items = list.map(({ number, current }) => ({ label: t('browser.chromeWindow.windowNumber', { n: number }) +
+        (current ? ` · ${t('browser.chromeWindow.windowCurrent')}` : ''), disabled: true }));
+      if (items.length) items.push({ sep: true });
+      items.push({ label: t('browser.chromeWindow.close'), disabled: !list.length || closing, onClick: closeCurrentWindow });
+      showMenu?.(r.left, r.bottom + 4, items, t('browser.chromeWindow.windowActions'));
+    };
     // 端末から操作する間の文字の欄と添え書き
     const text = el('div', 'cp-text'); text.hidden = true;
     const textInput = el('input'); textInput.setAttribute('aria-label', t('browser.remote.textLabel')); textInput.placeholder = t('browser.remote.textPlaceholder');
@@ -85,7 +108,7 @@ export function setupChromePanel({ cmd, preview, session = () => null, getAgentN
     text.append(textInput, textSend);
     const note = el('p', 'cp-note weak small', t('browser.chromeWindow.deviceNote')); note.hidden = true;
     const node = el('div', 'cp');
-    node.append(slot, screen, empty, text, note, foot);
+    node.append(screen, empty, text, note, foot);
     const sink = createFrameSink({ img, onAck: seq => { if (sessionId) cmd('browserScreencastAck', { sessionId, source: 'chrome', seq }).catch(() => {}); } });
     const fit = metadata => {
       // 映像の箱を窓の縦横比に合わせる（余白のない映像にする）。最初のフレームと、窓の形が変わったときだけ
@@ -158,7 +181,7 @@ export function setupChromePanel({ cmd, preview, session = () => null, getAgentN
       if (event.key === 'Enter') { event.preventDefault(); sendText(true); }
       else if (event.key === 'Backspace' && !textInput.value) { event.preventDefault(); send({ type: 'key', key: 'Backspace' }); }
     });
-    return { node, slot, screen, img, veil, veilText, hint, empty, text, textInput, note, foot, status, closeWindow, sink, fit, touched: false };
+    return { node, slot, profileSlot, windowMenu, screen, img, veil, veilText, hint, empty, text, textInput, note, foot, status, sink, fit, touched: false };
   }
 
   const nameOf = () => getAgentName() || 'Claude';
@@ -198,7 +221,6 @@ export function setupChromePanel({ cmd, preview, session = () => null, getAgentN
     parts.veil.hidden = !state?.suspended || ended;
     parts.veilText.textContent = t('browser.chromeWindow.suspended');
     parts.screen.classList.toggle('ended', ended);
-    parts.closeWindow.hidden = !windows.has(sessionId);
     const noWindow = !windows.has(sessionId) && !connecting;
     parts.screen.hidden = noWindow; parts.empty.hidden = !noWindow;
     parts.empty.textContent = waiting?.sessionId === sessionId ? waiting.text : t('browser.chromeWindow.none');
@@ -253,17 +275,19 @@ export function setupChromePanel({ cmd, preview, session = () => null, getAgentN
     parts.sink.reset();
     opener = element;
     const label = t('browser.chromeWindow.panel');
-    preview.openPanel({ key: KEY, title: label, subtitle: '', label, element, body: root, wide: true, onClose: () => { stopWatching(); opener?.setAttribute?.('aria-expanded', 'false'); onOpenChange(false); } });
+    preview.openPanel({ key: KEY, title: label, subtitle: '', label, element, body: root, wide: true,
+      toolbar: [parts.slot, parts.profileSlot, parts.windowMenu],
+      onClose: () => { stopWatching(); opener?.setAttribute?.('aria-expanded', 'false'); onOpenChange(false); } });
     onOpenChange(true);
   }
 
   function open(element = null) {
     const id = session();
-    if (!id || !windows.has(id)) return;
+    if (!id || (!browser && !windows.has(id))) return;
     show(id, element);
     connecting = true;
     paint();
-    watch(id);
+    if (windows.has(id)) watch(id);
   }
 
   /** 映像を受け始める（パネルを開いた次の描画で、箱の大きさが決まってから） */
@@ -318,12 +342,14 @@ export function setupChromePanel({ cmd, preview, session = () => null, getAgentN
       return width > 0 && height > 0 ? { width, height } : null;
     },
     get statusSlot() { if (!parts) { parts = build(); root = parts.node; } return parts.slot; },
+    /** 第 10 段がプロフィール pill を差し込む口。Chrome のタブの道具の列に置く */
+    get profileSlot() { if (!parts) { parts = build(); root = parts.node; } return parts.profileSlot; },
     windows,
     /** サーバーの chromeWindow イベント。表示中の会話の窓が無くなったら閉じた表示にする */
     windowEvent(ev) {
       const changed = windows.apply(ev);
       if (changed && isOpen() && ev.sessionId === sessionId && !(ev.windows > 0)) { ended = true; paint(); }
-      else if (waiting && isOpen() && ev.sessionId === sessionId && waiting.sessionId === sessionId && ev.windows > 0) {
+      else if (isOpen() && ev.sessionId === sessionId && ev.windows > 0 && !parts?.sink.frame && !connecting) {
         waiting = null; connecting = true; paint(); watch(sessionId);
       }
       return changed;

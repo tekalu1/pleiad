@@ -1,6 +1,6 @@
 // 会話の頭の行の、右パネルを開くアイコンボタン（docs/design-system.md「会話の頭の行のアイコン」）。
 //   - プラグイン（#contextEntry）: 件数は画面に出さず、title と読み上げの名前にだけ入れる。「変更あり」は右上の点
-//   - 内蔵ブラウザー（#browserEntry）: デスクトップ版のホストの画面だけ。右パネルをブラウザーにする・閉じる。
+//   - ブラウザー（#browserEntry）: ホストではビューアと Chrome、リモートでは窓がある会話の Chrome を開閉する。
 //     近道は Ctrl+Shift+B（macOS は ⌘⇧B）。内蔵ブラウザーのページにフォーカスがあるときは main が拾って知らせる
 import { t } from './i18n.mjs';
 import { runMark } from './arc.mjs';
@@ -52,34 +52,69 @@ export function isBrowserShortcut(event, mac = isMac()) {
 /** ツールチップに添える近道の書き方 */
 export const browserShortcutLabel = (mac = isMac()) => (mac ? '⌘⇧B' : 'Ctrl+Shift+B');
 
+/** 角の印は一つ。操作の依頼を最優先し、次に人の操作、最後にエージェントの操作 */
+export const browserEntryMark = ({ requested = false, paused = false, working = false } = {}) =>
+  requested ? 'requested' : paused ? 'paused' : working ? 'working' : '';
+
+/** 開く瞬間に選ぶ中身。開いた後の状態変化では呼ばない */
+export const browserViewToOpen = ({ viewer = false, chrome = false, urgent = false, last = null } = {}) =>
+  chrome && (urgent || last === 'chrome' || !viewer) ? 'chrome' : viewer ? 'viewer' : null;
+
 /**
- * 内蔵ブラウザーのボタン。browser は web/browser-panel.mjs の createBrowserPanel の返り値（使えない画面では null）、
+ * 統合したブラウザーのボタン。browser は web/browser-panel.mjs の createBrowserPanel の返り値（使えない画面では null）、
  * preview は web/file-preview.mjs の返り値（openBrowser・browserOpen・close）。
  * bridge は preload の plyDesktop.browser（ページにフォーカスがあるときの近道）。blocked() が true の間は近道を効かせない（設定・ダイアログ）。
- * 使えない画面ではボタンを出さず null を返す
+ * ビューアも Chrome の窓も無い画面では隠す
  */
-export function setupBrowserEntry({ button, browser, preview, mac = isMac(), bridge = null, blocked = () => false }) {
+export function setupBrowserEntry({ button, browser, preview, chrome = () => null, windows = null, getSessionId = () => null,
+  getAgentName = () => 'Claude', getChromeState = () => 'idle', waiting = () => false, chromeAvailable = () => false,
+  mac = isMac(), bridge = null, blocked = () => false, mark: makeMark = runMark }) {
   if (!button) return null;
-  if (!browser) { button.hidden = true; return null; }
-  button.hidden = false;
-  button.title = t('browser.entry', { keys: browserShortcutLabel(mac) });
+  if (!browser && !windows) { button.hidden = true; return null; }
   button.setAttribute('aria-keyshortcuts', mac ? 'Meta+Shift+B' : 'Control+Shift+B');
+  const lastView = new Map();
+  const activeId = () => getSessionId() ?? null;
+  const chromeOpen = () => chrome()?.isOpen() === true;
+  const open = () => preview.browserOpen() || chromeOpen();
 
   function paint() {
-    const open = !!preview.browserOpen();
-    button.setAttribute('aria-pressed', String(open));
-    button.classList.toggle('on', open);
-    button.setAttribute('aria-label', t('browser.entryLabel'));
+    const id = activeId();
+    const hasWindow = Boolean(id && chromeAvailable() && windows?.has(id));
+    button.hidden = !browser && !hasWindow;
+    button.toggleAttribute('data-mobile-chrome', hasWindow);
+    if (button.hidden) return;
+    if (id && chromeOpen()) lastView.set(id, 'chrome');
+    else if (id && preview.browserOpen()) lastView.set(id, 'viewer');
+    const requested = Boolean(id && chromeAvailable() && waiting(id));
+    const paused = Boolean(id && chromeAvailable() && getChromeState(id) === 'paused');
+    const working = Boolean(id && chromeAvailable() && (windows?.operating(id) || getChromeState(id) === 'running'));
+    const state = browserEntryMark({ requested, paused, working });
+    const label = [t('browser.unifiedEntryLabel'), state ? t(`browser.entryState.${state}`, { name: getAgentName() || 'Claude' }) : ''].filter(Boolean).join(' · ');
+    button.title = `${label}（${browserShortcutLabel(mac)}）`;
+    button.setAttribute('aria-label', label);
+    button.setAttribute('aria-expanded', String(open()));
+    button.classList.toggle('on', open());
+    button.querySelector('.entry-browser-mark')?.remove();
+    if (state) {
+      const mark = state === 'working' ? makeMark() : document.createElement('span');
+      mark.classList.add('entry-browser-mark', state === 'working' ? 'entry-run' : `entry-${state}`);
+      mark.setAttribute('aria-hidden', 'true');
+      button.append(mark);
+    }
   }
 
-  /** 右パネルがブラウザーなら閉じ、そうでなければブラウザーにする。前のタブがあればそのまま、無ければ空の新しいタブ */
+  /** 開いたときだけ、Chrome の動き・依頼待ちを優先する。開いている間の切り替えはタブから行う */
   function toggle() {
-    if (preview.browserOpen()) {
+    if (open()) {
       preview.close(false);
       button.focus({ preventScroll: true });
     } else {
-      preview.openBrowser(button);
-      browser.open();
+      const id = activeId();
+      const state = id ? getChromeState(id) : 'idle';
+      const urgent = id && (waiting(id) || windows?.operating(id) || state === 'running' || state === 'paused');
+      const view = browserViewToOpen({ viewer: !!browser, chrome: chromeAvailable() && !!id, urgent, last: lastView.get(id) });
+      if (view === 'chrome') chrome()?.open(button);
+      else if (view === 'viewer') { preview.openBrowser(button); browser.open(); }
     }
     paint();
   }
@@ -93,40 +128,5 @@ export function setupBrowserEntry({ button, browser, preview, mac = isMac(), bri
   // 内蔵ブラウザーのページにフォーカスがあるときの近道（desktop/browser-panel.cjs の before-input-event）
   bridge?.onShortcut?.(() => { if (!button.hidden && !blocked()) toggle(); });
   paint();
-  return { paint, toggle };
-}
-
-/**
- * エージェントの Chrome の窓のボタン（右パネル「Chrome の窓」を開閉する。web/chrome-panel.mjs）。会話に窓があるときだけ出し、
- * エージェントが操作中の間は右上に走っている弧を置く（内蔵ブラウザーの入口と同じ web/arc.mjs）。リモートの端末の画面にも出す（映像は見るだけ）
- * panel は setupChromePanel の返り値（windows・open・toggle・isOpen）。available() が false の間（Chrome の窓の映像が無いホスト）は出さない
- */
-export function setupChromeEntry({ button, panel, getSessionId = () => null, getAgentName = () => 'Claude', available = () => true, mark: makeMark = runMark }) {
-  if (!button) return null;
-  function paint() {
-    const id = getSessionId();
-    const visible = Boolean(id) && available() && panel.windows.has(id);
-    button.hidden = !visible;
-    if (!visible) return;
-    const name = getAgentName() || 'Claude';
-    const working = panel.windows.operating(id);
-    const label = working ? t('browser.chromeWindow.entryWorking', { name }) : t('browser.chromeWindow.entry', { name });
-    button.title = label;
-    button.setAttribute('aria-label', label);
-    const open = panel.isOpen();
-    button.setAttribute('aria-expanded', String(open));
-    button.classList.toggle('on', open);
-    // 走っている印は操作中の間だけ DOM に置く
-    const run = button.querySelector('.entry-run');
-    if (working && !run) {
-      const arc = makeMark();
-      arc.classList.add('entry-run');
-      arc.setAttribute('aria-hidden', 'true');
-      button.append(arc);
-    } else if (!working && run) run.remove();
-  }
-  button.addEventListener('click', () => panel.toggle(button));
-  panel.onOpenChange(paint);
-  paint();
-  return { paint };
+  return { paint, toggle, lastView };
 }

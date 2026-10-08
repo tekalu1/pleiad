@@ -2279,17 +2279,24 @@ async function recordChromeWindowClose(sessionId, payload) {
  * 会話の Chrome の窓の知らせ（右パネルの Chrome の入口。窓のある会話だけに出し、操作中は弧を出す）。リモートの端末にも流す。
  * 取りこぼしても次の知らせで足りるので溜めない。変わったときだけ送る。接続したての端末には chromeWindowFrames で今の分を送る
  */
-const chromeWindowFrame = (sessionId, summary) => ({ kind: P.EVENT, event: { type: 'chromeWindow', sessionId, windows: summary.windows, operating: summary.operating } });
-const chromeWindowSent = new Map();   // 会話の id -> 最後に送った { windows, operating }
+function chromeWindowState(sessionId) {
+  const summary = chromeRelay.view.summary(sessionId);
+  const tabs = chromeRelay.view.tabs(sessionId);
+  const windowIds = [...new Set(tabs.map(tab => tab.windowId).filter(id => id != null))];
+  const currentWindowId = tabs.find(tab => tab.targetId === chromeRelay.view.current(sessionId))?.windowId ?? null;
+  return { windows: summary.windows, operating: summary.operating, windowIds, currentWindowId };
+}
+const chromeWindowFrame = (sessionId, snapshot) => ({ kind: P.EVENT, event: { type: 'chromeWindow', sessionId, ...snapshot } });
+const chromeWindowSent = new Map();   // 会話の id -> 最後に送った窓の状態
 function chromeWindowFrames() {
-  return chromeRelay ? chromeRelay.view.sessions().map(id => JSON.stringify(chromeWindowFrame(id, chromeRelay.view.summary(id)))) : [];
+  return chromeRelay ? chromeRelay.view.sessions().map(id => JSON.stringify(chromeWindowFrame(id, chromeWindowState(id)))) : [];
 }
 chromeRelay?.view.onChange((sessionId, kind, from) => {
   const ids = kind === 'rebind' ? [from, sessionId] : [sessionId];
   for (const id of ids) {
-    const summary = chromeRelay.view.summary(id);
+    const summary = chromeWindowState(id);
     const last = chromeWindowSent.get(id);
-    if (last ? last.windows === summary.windows && last.operating === summary.operating : !summary.windows) continue;
+    if (last ? JSON.stringify(last) === JSON.stringify(summary) : !summary.windows) continue;
     if (summary.windows) chromeWindowSent.set(id, summary); else chromeWindowSent.delete(id);
     const text = JSON.stringify(chromeWindowFrame(id, summary));
     for (const ws of runtime.sockets) if (ws.readyState === ws.OPEN) ws.send(text);

@@ -90,6 +90,7 @@ export default async function (t) {
     t.ok('エージェントが窓を開けた（偽の Chrome にタブができた）', !!opened && chrome.browser.targets().some(x => x.targetId === opened));
     const hostEvent = await until(() => c.events.filter(e => e.type === 'chromeWindow' && e.windows > 0).at(-1), 10000, 'chromeWindow (host)');
     t.ok('ホストの画面に chromeWindow（窓 1 つ・操作中）が届く', hostEvent.windows === 1 && hostEvent.operating === true && typeof hostEvent.sessionId === 'string', JSON.stringify(hostEvent));
+    t.ok('窓の一覧と表示中の窓が知らせに入る', hostEvent.windowIds?.length === 1 && hostEvent.currentWindowId === hostEvent.windowIds[0], JSON.stringify(hostEvent));
     const remoteEvent = await until(() => remote.windowEvents().filter(e => e.windows > 0).at(-1), 10000, 'chromeWindow (remote)');
     t.ok('リモートの端末にも同じ chromeWindow が届く', remoteEvent.sessionId === hostEvent.sessionId && remoteEvent.windows === 1 && remoteEvent.operating === true, JSON.stringify(remoteEvent));
     const id = hostEvent.sessionId;

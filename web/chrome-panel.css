@@ -1,13 +1,17 @@
-/* 右パネル「Chrome の窓」と頭の行の入口（docs/design-system.md「Chrome の窓」、ADR 0148）。
+/* ブラウザーの固定タブ／リモート端末で見る Chrome の窓（docs/design-system.md「Chrome の窓」、ADR 0148）。
    エージェントの専用の Chrome の窓の映像を縮めて映すだけ（見るだけ）。色は面（surface）・文字（ink）・線（line）の既存の族だけ。
    動きは --dur・--ease-out。動きを減らす設定では出し入れだけにする。 */
 
-/* ---------- 頭の行のアイコン ---------- */
-#chromeEntry{position:relative}
-@media (max-width:480px){#chromeEntry{display:none}}
-
 /* ---------- パネルの中身 ---------- */
 .file-preview[data-panel="chrome-window"] .file-preview-content{background:var(--surface-paper);border-radius:var(--r-l)}
+.file-preview[data-panel="chrome-window"] .file-preview-toolbar{align-items:center;gap:6px;min-height:36px}
+.file-preview[data-panel="chrome-window"] .cp-slot{flex:1;min-width:0}
+.file-preview[data-panel="chrome-window"] .cp-slot .cc{flex-wrap:nowrap;overflow:hidden}
+.file-preview[data-panel="chrome-window"] .cp-slot .cc-status{flex:1 1 auto}
+.file-preview[data-panel="chrome-window"] .cp-slot .cc-btn{flex:none}
+.cp-profile-slot:empty{display:none}
+.cp-window-menu{margin-left:auto}
+@media (max-width:480px){.file-preview[data-panel="chrome-window"] .cp-slot .cc{flex-wrap:wrap}}
 .cp{display:flex;flex-direction:column;gap:8px;padding:8px}
 /* 状態の一行の差し込み口（第 6 段の web/chrome-control.mjs）。空の間は場所を取らない */
 .cp-slot:empty,.cp-slot:not(:has(> :not([hidden]))){display:none}
@@ -34,8 +38,6 @@
 .cp-empty[hidden]{display:none}
 .cp-foot{display:flex;align-items:center;min-height:20px;padding:0 4px;color:var(--ink-weak)}
 .cp-fps{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.cp-close{margin-left:auto}
-.cp-close[hidden]{display:none}
 /* 端末から操作する間（第 7 段）: 指の動きはページへ送る（パネルをスクロールしない）。文字の欄は web/remote-browser.css の .rb-text と同じ形 */
 .cp-screen[data-operating]{touch-action:none;cursor:pointer}
 .cp-text{display:flex;gap:8px}

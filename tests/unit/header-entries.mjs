@@ -6,7 +6,7 @@
 import fs from 'node:fs';
 import assert from 'node:assert/strict';
 import { N } from '../lib/dom-stub.mjs';
-import { contextTotal, isManagedContext, contextEntryText, paintContextEntry, isBrowserShortcut, browserShortcutLabel, setupBrowserEntry } from '../../web/header-entries.mjs';
+import { contextTotal, isManagedContext, contextEntryText, paintContextEntry, isBrowserShortcut, browserShortcutLabel, browserEntryMark, browserViewToOpen, setupBrowserEntry } from '../../web/header-entries.mjs';
 
 export const name = 'header-entries';
 export const title = '会話の頭の行: プラグインの件数と変更ありの出し方・内蔵ブラウザーの近道と出す画面';
@@ -63,6 +63,16 @@ export default async function (t) {
   assert.equal(browserShortcutLabel(true), '⌘⇧B');
   t.ok('近道: Ctrl+Shift+B（macOS は ⌘⇧B）。Ctrl+B・Alt 付き・IME の変換中は取らない', true);
 
+  assert.equal(browserEntryMark({ requested:true, paused:true, working:true }), 'requested');
+  assert.equal(browserEntryMark({ paused:true, working:true }), 'paused');
+  assert.equal(browserEntryMark({ working:true }), 'working');
+  assert.equal(browserEntryMark({}), '');
+  assert.equal(browserViewToOpen({ viewer:true, chrome:true, urgent:true, last:'viewer' }), 'chrome');
+  assert.equal(browserViewToOpen({ viewer:true, chrome:true, last:'viewer' }), 'viewer');
+  assert.equal(browserViewToOpen({ viewer:true, chrome:true, last:'chrome' }), 'chrome');
+  assert.equal(browserViewToOpen({ viewer:false, chrome:true }), 'chrome');
+  t.ok('統合した入口: 依頼待ち・人の操作・エージェントの操作の順。開くときだけ状態と最後に見た方を使う', true);
+
   // ---- 出す画面（ブラウザーの部品が無い画面では出さない）
   const hiddenButton = new N('button'); hiddenButton.hidden = false;
   assert.equal(setupBrowserEntry({ button: hiddenButton, browser: null, preview: {} }), null);
@@ -77,6 +87,8 @@ export default async function (t) {
   assert(order.every((i) => i > 0) && order[0] < order[1] && order[1] < order[2], '目次・プラグイン・ブラウザーの順');
   for (const id of ['tocEntry', 'contextEntry', 'browserEntry']) assert.match(header, new RegExp(`class="btn btn-icon" id="${id}"`), `${id} は 30px のアイコンボタン`);
   assert.match(header, /id="browserEntry" hidden/, 'ブラウザーは使える画面でだけ出す（既定は隠す）');
+  assert.doesNotMatch(header, /id="chromeEntry"/, '頭の行のブラウザー入口は地球の一つ');
+  assert.match(header, /id="browserEntry"[^>]*aria-controls="filePreview" aria-expanded="false"/, '開閉の ARIA を揃える');
   assert.doesNotMatch(header, /contextEntryCount|contextEntryChanged|data-i18n="session\.context\.label"/, 'プラグインの字・件数・変更ありの字は置かない');
   assert.match(header, /id="contextEntry"[^>]*><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 3v4M15 3v4"\/>/, 'プラグインは縦向きの差し込みプラグ');
   const css = fs.readFileSync(new URL('../../web/style.css', import.meta.url), 'utf8');
