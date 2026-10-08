@@ -5,7 +5,7 @@ import { startServer, ROOT } from '../lib/server.mjs';
 import { open, sleep } from '../lib/ws-client.mjs';
 
 export const name = 'server-compaction-delegated';
-export const title = '委譲の子の Claude だけ自動圧縮の窓（閾値 + 33000）を渡す。親・設定オフ・利用者の環境変数ではそのまま（ADR 0162）';
+export const title = '委譲の子の Claude だけ自動圧縮の窓（閾値 + 33000）を渡す。親・設定オフ・利用者の環境変数ではそのまま（ADR 0163）';
 const ply = (name, args) => 'ply:' + JSON.stringify({ name, arguments: args });
 const VARIABLE = 'CLAUDE_CODE_AUTO_COMPACT_WINDOW';
 

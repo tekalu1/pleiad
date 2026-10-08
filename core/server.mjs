@@ -5518,7 +5518,7 @@ async function beginTurn(ctx) {
   // bot の会話なら、人格（botInstructions）と、ターンの末尾（記憶の核の写し・差分。notes）を足す。bot でなければ空
   const botExtras = await botHost?.turnExtras(turn) ?? { botInstructions: null, notes: [] };
   const notes = [...(ctx.interruption ? [ctx.interruption.text] : []), ...botExtras.notes];
-  // 委譲の子の Claude だけ、CLI の自動圧縮の閾値を下げる（親・bot は CLI の既定のまま。docs/design.md「自動圧縮」、ADR 0162）
+  // 委譲の子の Claude だけ、CLI の自動圧縮の閾値を下げる（親・bot は CLI の既定のまま。docs/design.md「自動圧縮」、ADR 0163）
   const autoCompactWindow = backend.capabilities?.autoCompactWindow && sessionId && (await store.get(sessionId)).delegation
     ? delegatedCompactWindow(compactionSettings) : null;
   const runArgs = {

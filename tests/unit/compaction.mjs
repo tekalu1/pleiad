@@ -55,7 +55,7 @@ export default async function (t) {
   t.ok('設定の入切・待ち時間を保持する', normalizeCompactionSettings({ codex: { enabled: true, delayMinutes: 12 } }).codex.delayMinutes === 12);
   t.ok('不正な設定を拒否する', (() => { try { normalizeCompactionSettings({ minTokens: -1 }); return false; } catch { return true; } })());
 
-  // 委譲の子の閾値（delegatedTokens。ADR 0162）: 既定 150k・0 はオフ・0 以外は 70k 以上（窓の下限 100k − 余白 33k）
+  // 委譲の子の閾値（delegatedTokens。ADR 0163）: 既定 150k・0 はオフ・0 以外は 70k 以上（窓の下限 100k − 余白 33k）
   const rejects = (input) => { try { normalizeCompactionSettings(input); return false; } catch { return true; } };
   t.ok('委譲の子の閾値は既定 150k で、保存済みの設定（項目なし）にも既定が入る',
     defaults.delegatedTokens === 150000 && normalizeCompactionSettings({ enabled: false, minTokens: 60000 }).delegatedTokens === 150000);
