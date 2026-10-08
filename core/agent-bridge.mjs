@@ -62,7 +62,7 @@ export function createAgentBridge({ call, hosts = () => [] }) {
       if (m?.jsonrpc !== '2.0' || typeof m.method !== 'string') return reply(400);
       if (m.id === undefined) return reply(202);
       let result;
-      if (m.method === 'initialize') result = { protocolVersion: '2025-03-26', capabilities: { tools: {} }, serverInfo: { name: 'ply_agents', version: '1.0.0' }, instructions: agentInstructions(locale) };
+      if (m.method === 'initialize') result = { protocolVersion: '2025-03-26', capabilities: { tools: {} }, serverInfo: { name: 'ply_agents', version: '1.0.0' } };  // instructions は systemPrompt の append だけで渡す（二重にしない。ADR 0167）
       else if (m.method === 'ping') result = {};
       else if (m.method === 'tools/list') result = { tools: agentTools(locale, hosts()) };
       else if (m.method === 'tools/call') {
