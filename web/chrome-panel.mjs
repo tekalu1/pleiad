@@ -182,7 +182,7 @@ export function setupChromePanel({ cmd, preview, session = () => null, getAgentN
   function paint() {
     if (!parts) return;
     const name = nameOf();
-    parts.screen.setAttribute('aria-label', t(operating ? 'browser.chromeWindow.screenOperating' : 'browser.chromeWindow.screen', { name }));
+    parts.screen.setAttribute('aria-label', operating ? t('browser.chromeWindow.screenOperating', { name }) : t('browser.chromeWindow.screen', { name }));
     parts.screen.toggleAttribute('data-operating', operating);
     parts.text.hidden = !operating; parts.note.hidden = !operating;
     parts.veil.hidden = !state?.suspended || ended;

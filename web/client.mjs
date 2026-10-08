@@ -8585,7 +8585,7 @@ browserPanel?.connect({
   canOpenInChrome: () => state.hostCaps?.chromeBrowser === 'available',
   openInChrome: async ({ sessionId, url }) => {
     const status = await cmd('chromeStatus').catch(() => null);
-    chromePanel.openWaiting(t(status?.state === 'connected' ? 'browser.chromeWindow.connecting' : 'browser.chromeWindow.waitingPermission'));
+    chromePanel.openWaiting(status?.state === 'connected' ? t('browser.chromeWindow.connecting') : t('browser.chromeWindow.waitingPermission'));
     try { await cmd('chromeOpen', { sessionId, url }); }
     catch (error) { chromePanel.cancelWaiting(); notify(error?.message || t('browser.chromeWindow.openFailed')); }
   },
