@@ -111,7 +111,12 @@ export function browserHandoffView(ev, { el, t, cmd, onChange = () => {}, operat
     }
     if (h.waitingTasks?.length > 1) {
       const list = el('ul', 'bh-waiting-tasks');
-      for (const task of h.waitingTasks) list.append(el('li', null, task.title || task.taskId || ''));
+      for (const task of h.waitingTasks) {
+        const item = el('li', task.current ? 'current' : null, task.title || task.taskId || '');
+        // 操作に開く窓は一つだけ。どの子の窓かを字でも示す（終わると次の子の窓に替わる）
+        if (task.current) item.append(el('small', 'bh-current', ` · ${t(`${K}waitingCurrent`)}`));
+        list.append(item);
+      }
       body.append(list);
     }
     if (h.windowTitle) body.append(el('small', 'bh-window', h.windowTitle));

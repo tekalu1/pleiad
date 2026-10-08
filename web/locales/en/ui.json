@@ -1718,6 +1718,7 @@
       "operate": "Operate in Chrome",
       "operateHere": "Operate on this device",
       "operateOnPc": "Operate on the PC",
+      "waitingCurrent": "this window opens",
       "operatingOnDevice": "Work in the Chrome window on the right, then press \"Return to Claude\" when you are done.",
       "noWindow": "Couldn't open the Chrome window",
       "resume": "Return to Claude",

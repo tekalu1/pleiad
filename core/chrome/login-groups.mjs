@@ -15,6 +15,10 @@ export function createChromeLoginGroups() {
       groups.set(key, group);
       return { group, joined: false };
     },
+    /** カードに出す待ちの一覧。操作に開く窓（target）の子に current を付ける（どの子の窓かが分かるように） */
+    tasks(group, target) {
+      return [...group.members.values()].map(({ sessionId, taskId, title }) => ({ taskId, title, current: sessionId === target }));
+    },
     finish(key, group, sessionId, answer) {
       if (!key || groups.get(key) !== group) return null;
       if (answer?.allow === true || answer?.messageKey === 'userDenied') {

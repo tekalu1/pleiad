@@ -348,3 +348,4 @@ dialog.tc-shot-dlg::backdrop{background:var(--surface-veil)}
 .tc-shot-dlg .img img{display:block;width:100%;height:auto;border-radius:var(--r-s)}
 .tc-shot-dlg .img .tc-shot-gone{display:block;padding:48px 0;text-align:center}
 .tc-shot-dlg .btn:disabled{opacity:.4;pointer-events:none}
+.bh-waiting-tasks li.current{font-weight:600}

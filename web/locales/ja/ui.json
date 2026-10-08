@@ -1682,6 +1682,7 @@
       "operate": "Chrome で操作する",
       "operateHere": "この端末で操作する",
       "operateOnPc": "PC で操作する",
+      "waitingCurrent": "この窓を開きます",
       "operatingOnDevice": "右の「Chrome の窓」で操作して、終わったら「Claude に戻す」を押してください。",
       "noWindow": "Chrome の窓を開けませんでした",
       "resume": "Claude に戻す",

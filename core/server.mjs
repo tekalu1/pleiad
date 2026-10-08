@@ -4714,7 +4714,7 @@ const askPermission = async ({ toolName, input, sessionId, toolUseID, title, sig
       if (!joinedLoginGroup) loginGroup.parentCardId = cards.find(card => card.payload.sessionId === directParent)?.id ?? null;
       const parentCard = runtime.waiting.get(loginGroup.parentCardId);
       if (parentCard) {
-        const waitingTasks = [...loginGroup.members.values()].map(({ taskId, title }) => ({ taskId, title }));
+        const waitingTasks = chromeLoginGroups.tasks(loginGroup, parentCard.payload.targetSessionId ?? sessionId);
         parentCard.payload.browserHandoff = { ...parentCard.payload.browserHandoff, waitingTasks };
         emitGlobal({ type: 'permissionUpdate', id: loginGroup.parentCardId, sessionId: directParent, browserHandoff: parentCard.payload.browserHandoff });
       }
@@ -4746,14 +4746,14 @@ const askPermission = async ({ toolName, input, sessionId, toolUseID, title, sig
           waiting.origin = nextLogin.sessionId;
           waiting.payload.targetSessionId = nextLogin.sessionId;
           waiting.payload.browserHandoff = { ...nextWait?.payload.browserHandoff, targetSessionId: nextLogin.sessionId,
-            waitingTasks: [...loginGroup.members.values()].map(({ taskId, title }) => ({ taskId, title })) };
+            waitingTasks: chromeLoginGroups.tasks(loginGroup, nextLogin.sessionId) };
           emitGlobal({ type: 'permissionUpdate', id: parentCard.id, sessionId: directParent, browserHandoff: waiting.payload.browserHandoff });
         }
       } else if (loginGroup && nextLogin) {
         const waiting = runtime.waiting.get(loginGroup.parentCardId);
         if (waiting) {
           waiting.payload.browserHandoff = { ...waiting.payload.browserHandoff,
-            waitingTasks: [...loginGroup.members.values()].map(({ taskId, title }) => ({ taskId, title })) };
+            waitingTasks: chromeLoginGroups.tasks(loginGroup, waiting.payload.targetSessionId ?? waiting.payload.browserHandoff?.targetSessionId) };
           emitGlobal({ type: 'permissionUpdate', id: loginGroup.parentCardId, sessionId: directParent, browserHandoff: waiting.payload.browserHandoff });
         }
       }

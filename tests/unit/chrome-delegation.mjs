@@ -60,9 +60,19 @@ export default async function (t) {
     setAttribute() {}, removeAttribute() {} });
   const commands = [];
   const handoffCard = browserHandoffView({ id: 'parent-card', sessionId: 'parent', targetSessionId: 'a',
-    browserHandoff: { reason: 'login', state: 'asked', waitingTasks: [{ taskId: 'ta', title: 'A' }, { taskId: 'tb', title: 'B' }] } },
+    browserHandoff: { reason: 'login', state: 'asked', waitingTasks: [{ taskId: 'ta', title: 'A', current: true }, { taskId: 'tb', title: 'B', current: false }] } },
   { el, t: key => key, cmd: async (name, args) => { commands.push([name, args]); } });
-  assert.deepEqual(handoffCard.body.children.find(child => child.tag === 'ul')?.children.map(child => child.textContent), ['A', 'B']);
+  const waitingList = handoffCard.body.children.find(child => child.tag === 'ul');
+  assert.deepEqual(waitingList?.children.map(child => child.textContent), ['A', 'B']);
+  assert.deepEqual(waitingList.children.map(child => child.className), ['current', null], 'どの子の窓を開くかを行で示す');
+  assert.deepEqual(waitingList.children.map(child => child.children.length), [1, 0], '開く窓の行にだけ「この窓を開きます」を添える');
+  assert.equal(waitingList.children[0].children[0].className, 'bh-current');
+  const taskGroups = createChromeLoginGroups();
+  const taskGroup = taskGroups.prepare(taskGroups.key({ parent: 'parent', profile: { browser: 'chrome', dir: 'Default' }, origin: 'https://site.example', reason: 'login' })).group;
+  taskGroup.members.set('a', { sessionId: 'a', taskId: 'ta', title: 'A' });
+  taskGroup.members.set('b', { sessionId: 'b', taskId: 'tb', title: 'B' });
+  assert.deepEqual(taskGroups.tasks(taskGroup, 'a'), [{ taskId: 'ta', title: 'A', current: true }, { taskId: 'tb', title: 'B', current: false }]);
+  assert.deepEqual(taskGroups.tasks(taskGroup, 'b').map(task => task.current), [false, true], '操作する窓が次の子に替われば current も替わる');
   await handoffCard.buttons.at(-1).onclick();
   handoffCard.update({ state: 'operating' });
   await handoffCard.buttons.at(-1).onclick();
