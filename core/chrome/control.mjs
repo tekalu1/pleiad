@@ -13,12 +13,18 @@
 // 撮影を断る（右パネルの映像。core/chrome/screencast.mjs の suspend / resume）: paused に入った時に同期で suspend し、paused が解けた時に resume する。
 // 解け方（戻す・止める・Chrome が閉じた・会話の削除・id の付け替え）に依らず、中継の状態の変化から対にする（付け替え・削除で消えた会話の分は次の変化で resume して片付ける。
 // 映像の側も、会話の削除・接続の切断で断りを自分で消し、id の付け替えで新しい id へ移す）。
-// 状態の便り（onChange）は { sessionId, state, since, error } の形（since: paused の始まりの時刻 ms。それ以外は null。error: 戻せなかった理由 'conceal-failed'（paused のまま）。無ければ null）。ログには窓の題・URL を出さない。
+// 状態の便り（onChange）は { sessionId, state, since, error, by } の形（since: paused の始まりの時刻 ms。それ以外は null。error: 戻せなかった理由 'conceal-failed'（paused のまま）。無ければ null。
+// by: 誰が引き継いだか（'pc' | 'device'。paused のときだけ。それ以外は null））。ログには窓の題・URL を出さない。
+//
+// 端末から引き継ぐ（第 7 段。takeOver(sessionId, { by: 'device', width, height, scale })）: 窓は見せない（PC の画面に出さない）。エージェントの接続は同じく切るが、
+// 映像は止めず（端末はその映像を見て操作する）、入力は映像のセッションで送り、ページの大きさを端末の映像の箱に合わせる（capture.operate）。戻すと大きさを戻してから解く。
+// 引き継ぎは早い者勝ち: すでに paused なら、後から押したほう（PC でも端末でも）は今の状態を返すだけ。
+import { deviceViewport } from './input.mjs';
 
 export const CONTROL_STATES = Object.freeze(['running', 'idle', 'stopped', 'paused']);
 
 export class ChromeControlError extends Error {
-  /** code: NO_WINDOW（引き継げる窓が無い）・NOT_CONNECTED */
+  /** code: NO_WINDOW（引き継げる窓が無い）・NOT_CONNECTED・INVALID（端末の映像の箱の大きさが無い） */
   constructor(code, message) { super(message); this.code = code; }
 }
 
@@ -35,21 +41,27 @@ export function createChromeControl({ relay, os, now = Date.now, record = async 
   const queues = new Map();    // 会話の id -> 操作の順番待ち（同じ会話の引き継ぎ・戻す・止めるを順に流す）
 
   const errors = new Map();    // 会話の id -> 戻せなかった理由（'conceal-failed'。paused のまま画面へ返す。paused でなくなれば消す）
+  const devices = new Map();   // 会話の id -> 端末の映像の箱（端末が引き継いでいる間。paused でなくなれば消す）
 
   function stateOf(sessionId) {
     const s = relay.state(sessionId);
-    if (!s) return { sessionId, state: 'idle', since: null, error: null };
+    if (!s) return { sessionId, state: 'idle', since: null, error: null, by: null };
     const state = s.paused ? 'paused' : s.stopped ? 'stopped' : s.turn ? 'running' : 'idle';
-    return { sessionId, state, since: s.paused?.at ?? null, error: s.paused ? errors.get(sessionId) ?? null : null };
+    return { sessionId, state, since: s.paused?.at ?? null, error: s.paused ? errors.get(sessionId) ?? null : null, by: s.paused ? (devices.has(sessionId) ? 'device' : 'pc') : null };
   }
-  const mark = state => `${state.state}:${state.since ?? ''}:${state.error ?? ''}`;
+  const mark = state => `${state.state}:${state.since ?? ''}:${state.error ?? ''}:${state.by ?? ''}`;
 
   const suspended = new Set();   // 撮影を断っている会話の id（paused の間）
   const safe = (what, fn) => { try { fn(); } catch (error) { log(`chrome-control: ${what} failed: ${error?.message ?? error}`); } };
-  /** paused に合わせて撮影を断る・解く。suspend は同期で効く（relay.pause の中から呼ばれる）。中継から消えた会話（削除・付け替え）の分は resume して片付ける */
+  /**
+   * paused に合わせて撮影を断る・解く。suspend は同期で効く（relay.pause の中から呼ばれる）。中継から消えた会話（削除・付け替え）の分は resume して片付ける。
+   * 端末が引き継いでいる間は断らない（端末はその映像で操作する）。paused でなくなった（Chrome が閉じた・会話の削除など）端末の引き継ぎは、大きさを戻して片付ける
+   */
   function syncCapture(sessionId) {
+    if (!relay.state(sessionId)?.paused && devices.has(sessionId)) { devices.delete(sessionId); safe('operate', () => capture?.operate?.(sessionId, null)); }
+    for (const id of [...devices.keys()]) if (!relay.state(id)) { devices.delete(id); safe('operate', () => capture?.operate?.(id, null)); }
     if (!capture) return;
-    const paused = Boolean(relay.state(sessionId)?.paused);
+    const paused = Boolean(relay.state(sessionId)?.paused) && !devices.has(sessionId);
     if (paused && !suspended.has(sessionId)) { suspended.add(sessionId); safe('suspend', () => capture.suspend(sessionId)); }
     else if (!paused && suspended.has(sessionId)) { suspended.delete(sessionId); safe('resume', () => capture.resume(sessionId)); }
     for (const id of [...suspended]) if (!relay.state(id)) { suspended.delete(id); safe('resume', () => capture.resume(id)); }
@@ -76,10 +88,11 @@ export function createChromeControl({ relay, os, now = Date.now, record = async 
     return run;
   };
 
-  async function doTakeOver(sessionId) {
+  async function doTakeOver(sessionId, { by = 'pc', width, height, scale } = {}) {
     const before = relay.state(sessionId);
     if (!before) throw new ChromeControlError('NO_WINDOW', 'no agent browser window to hand over');
     if (before.paused) return stateOf(sessionId);
+    if (by === 'device') return takeOverByDevice(sessionId, deviceViewport({ width, height, scale }));
     // 見せられる窓が無ければ、一時停止にしない（一時停止はエージェントの接続を切るので、窓が無いのに切らない）
     if (!relay.scope.windows?.(sessionId).some(window => window.ref)) throw new ChromeControlError('NO_WINDOW', 'no agent browser window to hand over');
     relay.pause(sessionId, now());   // 先に断つ（窓が見える間に、エージェントが操作を続けない。接続も切る）
@@ -97,8 +110,24 @@ export function createChromeControl({ relay, os, now = Date.now, record = async 
     return stateOf(sessionId);
   }
 
+  /** 端末から引き継ぐ: 窓は見せず、接続を切って、映像の大きさを端末に合わせる（映像は止めない） */
+  async function takeOverByDevice(sessionId, viewport) {
+    if (!viewport) throw new ChromeControlError('INVALID', 'the size of the device view is needed');
+    if (!relay.view?.tabs?.(sessionId)?.length) throw new ChromeControlError('NO_WINDOW', 'no agent browser window to hand over');
+    devices.set(sessionId, viewport);   // pause の中の同期の syncCapture が、映像を断らないように先に立てる
+    relay.pause(sessionId, now());
+    await Promise.resolve(capture?.operate?.(sessionId, viewport)).catch(error => log(`chrome-control: operate failed: ${error?.message ?? error}`));
+    return stateOf(sessionId);
+  }
+
   async function doResume(sessionId) {
     if (!relay.state(sessionId)?.paused) return stateOf(sessionId);
+    if (devices.has(sessionId)) {
+      // 端末の引き継ぎ: 窓は見せていないので隠す必要は無い。ページの大きさを戻してから解く（解くまで devices に残し、間の便りで映像を断らない）
+      await Promise.resolve(capture?.operate?.(sessionId, null)).catch(error => log(`chrome-control: operate failed: ${error?.message ?? error}`));
+      devices.delete(sessionId);
+      return unpause(sessionId);
+    }
     // 窓を隠してから解く（見えている間は、エージェントのコマンドを通さない）。引き継ぎの間に人が窓を作り替えた（タブを引き離した）分は先に取り込む
     await relay.refreshWindows(sessionId).catch(error => log(`chrome-control: refreshWindows failed: ${error?.message ?? error}`));
     let result = { concealed: 0, failed: 0 };
@@ -112,6 +141,11 @@ export function createChromeControl({ relay, os, now = Date.now, record = async 
       return stateOf(sessionId);
     }
     errors.delete(sessionId);
+    return unpause(sessionId);
+  }
+
+  /** 一時停止を解き、引き継いでいた長さを会話へ残す */
+  async function unpause(sessionId) {
     const at = relay.unpause(sessionId);
     if (at != null) {
       const seconds = Math.max(0, Math.round((now() - at) / 1000));
@@ -134,14 +168,15 @@ export function createChromeControl({ relay, os, now = Date.now, record = async 
     state: stateOf,
     /** 中継が知っている会話すべての今の状態（待機中のものは除く。画面がつなぎ直したとき） */
     snapshot: () => relay.sessionIds().map(stateOf).filter(state => state.state !== 'idle'),
-    takeOver: sessionId => serial(sessionId, () => doTakeOver(sessionId)),
+    /** options: { by: 'pc' | 'device', width, height, scale }（by: 'device' は端末の映像の箱の大きさ（CSS px と倍率）を付ける） */
+    takeOver: (sessionId, options) => serial(sessionId, () => doTakeOver(sessionId, options)),
     resume: sessionId => serial(sessionId, () => doResume(sessionId)),
     stop: sessionId => serial(sessionId, () => doStop(sessionId)),
     /** 映像・撮影を断るか（引き継ぎ中。第 5 段の映像が呼ぶ） */
-    captureBlocked: sessionId => Boolean(relay.state(sessionId)?.paused),
+    captureBlocked: sessionId => Boolean(relay.state(sessionId)?.paused) && !devices.has(sessionId),
     onChange(fn) { listeners.add(fn); return () => listeners.delete(fn); },
     /** エージェントが押した位置（{ sessionId, x, y, windowId }。右パネルの輪の元） */
     onTap: fn => relay.onTap(fn),
-    close() { offChange(); listeners.clear(); for (const id of [...suspended]) { suspended.delete(id); safe('resume', () => capture?.resume(id)); } },
+    close() { offChange(); listeners.clear(); for (const id of [...devices.keys()]) { devices.delete(id); safe('operate', () => capture?.operate?.(id, null)); } for (const id of [...suspended]) { suspended.delete(id); safe('resume', () => capture?.resume(id)); } },
   };
 }

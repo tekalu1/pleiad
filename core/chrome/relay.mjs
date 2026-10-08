@@ -888,6 +888,25 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, scop
       if (!entry.stopped && !entry.turn) { entry.turn = true; changed(entry); if (up) syncFocus(up, entry); }
       return `ws://127.0.0.1:${address.port}/devtools/browser/${entry.key}`;
     },
+    /**
+     * 人がビューアの⋯から、会話の窓に URL を開く（browser.chromeOpen）。エージェントには知らせない（タブは範囲に入るので、次の tab list で見える）。
+     * 会話の記録が無ければ作る（ターンは始めない）。接続が無ければ Chrome の許可を待つ（接続の案内のカードは出さない。signal で待ちをやめる）。
+     * 人が開くので、サイトの利用の確認は通さない。開いたタブを今のタブにする（右パネルの映像が追う）
+     */
+    async openForConversation(sessionId, url, { signal } = {}) {
+      if (closed) throw new Error('relay closed');
+      if (typeof sessionId !== 'string' || !sessionId || sessionId.length > 200) throw new Error('invalid session');
+      if (typeof url !== 'string' || !/^https?:/i.test(url) || !safeUrl(url)) throw denied('navigation');
+      await ensureListening();
+      let entry = entries.get(sessionId);
+      if (!entry) { entry = { id: sessionId, key: random(), stopped: false, clients: new Set(), windows: new Set(), turn: false, current: null, operating: false }; entries.set(sessionId, entry); byKey.set(entry.key, entry); }
+      const state = up && !up.cdp.closed ? up : await bind(await connection.demand({ signal }));
+      const { targetId, windowId } = await scope.openTab({ cdp: state.cdp, url, entryId: entry.id });
+      const fresh = await state.cdp.send('Target.getTargetInfo', { targetId }).catch(() => null);
+      const tab = adopt(state, entry, fresh?.targetInfo ?? { targetId, type: 'page', title: '', url, attached: false, canAccessOpener: false }, { windowId });
+      touch(tab);
+      return { targetId };
+    },
     /** 止める: 接続を閉じ、次の人の送信（resume）まで再接続を断る */
     stop(sessionId) {
       const entry = entries.get(sessionId);

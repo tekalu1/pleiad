@@ -131,12 +131,13 @@ export function createChromeControlStore() {
         if (!CONTROL_STATES.includes(ev.state)) return;
         const was = states.get(ev.sessionId);
         const before = was?.state ?? 'idle';
-        if (ev.state === 'idle') states.delete(ev.sessionId); else states.set(ev.sessionId, { state: ev.state, since: ev.since ?? null, error: ev.error ?? null });
-        if (before !== ev.state || (was?.error ?? null) !== (ev.error ?? null)) fire(changes, ev.sessionId, ev.state, ev.since ?? null);
+        const by = ev.state === 'paused' && (ev.by === 'device' || ev.by === 'pc') ? ev.by : null;
+        if (ev.state === 'idle') states.delete(ev.sessionId); else states.set(ev.sessionId, { state: ev.state, since: ev.since ?? null, error: ev.error ?? null, by });
+        if (before !== ev.state || (was?.error ?? null) !== (ev.error ?? null) || (was?.by ?? null) !== by) fire(changes, ev.sessionId, ev.state, ev.since ?? null);
       } else if (ev.type === 'chromeTap') fire(taps, { sessionId: ev.sessionId, x: ev.x, y: ev.y, windowId: ev.windowId ?? null });
     },
-    /** 会話の今の状態（イベントが無い会話は idle） */
-    get: sessionId => states.get(sessionId) ?? { state: 'idle', since: null, error: null },
+    /** 会話の今の状態（イベントが無い会話は idle）。by は一時停止中に誰が操作しているか（pc・device。第 7 段） */
+    get: sessionId => states.get(sessionId) ?? { state: 'idle', since: null, error: null, by: null },
     onChange(fn) { changes.add(fn); return () => changes.delete(fn); },
     onTap(fn) { taps.add(fn); return () => taps.delete(fn); },
     /** 全部の会話の状態を捨てる（接続し直したとき。サーバーは続けて今の分を送る）。持っていた状態は idle として聞き手へ知らせる */

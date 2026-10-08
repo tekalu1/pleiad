@@ -1705,6 +1705,10 @@
       "operatingNote": "Work in the Chrome window, then press \"Return to Claude\" when you are done.",
       "operatingByDevice": "Another device is operating. Press \"Return to Claude\" when you are done.",
       "operate": "Operate in Chrome",
+      "operateHere": "Operate on this device",
+      "operateOnPc": "Operate on the PC",
+      "operatingOnDevice": "Work in the Chrome window on the right, then press \"Return to Claude\" when you are done.",
+      "noWindow": "Couldn't open the Chrome window",
       "resume": "Return to Claude",
       "resumeContinue": "Return to Claude and continue",
       "decline": "Decline",
@@ -4229,6 +4233,7 @@
     "menu": {
       "devtools": "DevTools",
       "detach": "Move to new window",
+      "openInChrome": "Open in Chrome (agent window)",
       "clearSiteData": "Clear data for this site"
     },
     "kind": {
@@ -4258,7 +4263,12 @@
       "fps": "Video · {{fps}} fps",
       "ended": "The Chrome window was closed",
       "none": "This conversation has no Chrome window",
-      "failed": "Couldn't open the Chrome window video."
+      "failed": "Couldn't open the Chrome window video.",
+      "screenOperating": "Video of {{name}}'s Chrome window (operating from this device)",
+      "deviceNote": "Password managers and passkeys can't be used from this device",
+      "inputFailed": "Couldn't send that to the Chrome window",
+      "waitingPermission": "Waiting for Chrome to allow the connection",
+      "openFailed": "Couldn't open it in Chrome"
     },
     "remote": {
       "title": "PC browser",

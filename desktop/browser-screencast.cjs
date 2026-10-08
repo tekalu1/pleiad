@@ -4,20 +4,12 @@
 //   - フレームは変化があったときだけ Chromium が出す。次のフレームは ack の後なので、間引きは ack を遅らせて行う（worker が決める）
 //   - 見ている間はビューポートを端末の表示の大きさにする（Emulation.setDeviceMetricsOverride）。端末で読める幅になり、
 //     タブが窓に載っていない・窓が最小化されていても描かれる（窓に載せる必要はある。panel.pin が窓の外に 1px で載せる）
-//   - 入力は Input.dispatch*。内蔵ブラウザーは人が見るもの（エージェントの操作は PC の Chrome）なので、常に通る
+//   - 入力は Input.dispatch*。内蔵ブラウザーは人が見るもの（エージェントの操作は PC の Chrome）なので、常に通る。
+//     入力の変換は core/chrome/input.mjs（端末から操作する PC の Chrome の窓と共有）
 const { navigable } = require('./browser-panel.cjs');
 
-const KEYS = {
-  Enter: { code: 'Enter', keyCode: 13, text: '\r' },
-  Backspace: { code: 'Backspace', keyCode: 8 },
-  Tab: { code: 'Tab', keyCode: 9 },
-  Escape: { code: 'Escape', keyCode: 27 },
-  Delete: { code: 'Delete', keyCode: 46 },
-  ArrowLeft: { code: 'ArrowLeft', keyCode: 37 },
-  ArrowUp: { code: 'ArrowUp', keyCode: 38 },
-  ArrowRight: { code: 'ArrowRight', keyCode: 39 },
-  ArrowDown: { code: 'ArrowDown', keyCode: 40 },
-};
+let inputModule = null;
+const loadInput = () => (inputModule ??= import('../core/chrome/input.mjs'));
 const clamp = (value, min, max, fallback) => Number.isFinite(value) ? Math.min(max, Math.max(min, value)) : fallback;
 
 /** 端末の表示の大きさと画質を、送ってよい範囲に丸める */
@@ -26,38 +18,6 @@ function screencastSettings({ width, height, scale, quality } = {}) {
   const h = Math.round(clamp(height, 240, 2400, 700));
   const s = clamp(scale, 1, 2, 1);
   return { width: w, height: h, scale: s, quality: Math.round(clamp(quality, 20, 80, 50)), maxWidth: Math.round(w * s), maxHeight: Math.round(h * s) };
-}
-
-/** 端末からの入力を CDP のコマンドの列にする。座標はページの CSS px（端末が表示の倍率から変換済み）。知らない入力は空 */
-function inputCommands(input, { width = 1600, height = 2400 } = {}) {
-  if (!input || typeof input !== 'object') return [];
-  const x = clamp(input.x, 0, width, 0), y = clamp(input.y, 0, height, 0);
-  switch (input.type) {
-    case 'tap': return [
-      ['Input.dispatchMouseEvent', { type: 'mouseMoved', x, y, button: 'none', buttons: 0 }],
-      ['Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button: 'left', buttons: 1, clickCount: 1 }],
-      ['Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button: 'left', buttons: 0, clickCount: 1 }],
-    ];
-    case 'scroll': {
-      const deltaX = clamp(input.dx, -4000, 4000, 0), deltaY = clamp(input.dy, -4000, 4000, 0);
-      if (!deltaX && !deltaY) return [];
-      return [['Input.dispatchMouseEvent', { type: 'mouseWheel', x, y, deltaX, deltaY }]];
-    }
-    case 'text': {
-      if (typeof input.text !== 'string' || !input.text || input.text.length > 2000) return [];
-      return [['Input.insertText', { text: input.text }]];
-    }
-    case 'key': {
-      const key = KEYS[input.key];
-      if (!key) return [];
-      const base = { key: input.key, code: key.code, windowsVirtualKeyCode: key.keyCode, nativeVirtualKeyCode: key.keyCode };
-      return [
-        ['Input.dispatchKeyEvent', { type: key.text ? 'keyDown' : 'rawKeyDown', ...base, ...(key.text ? { text: key.text, unmodifiedText: key.text } : {}) }],
-        ['Input.dispatchKeyEvent', { type: 'keyUp', ...base }],
-      ];
-    }
-    default: return [];
-  }
 }
 
 /**
@@ -187,6 +147,7 @@ function createBrowserScreencast(panel, { post = () => {} } = {}) {
   async function input(sessionId, value) {
     const entry = sessions.get(sessionId);
     if (!entry || entry.contents.isDestroyed()) throw new Error('not-watching');
+    const { inputCommands } = await loadInput();
     const commands = inputCommands(value, entry.settings);
     if (!commands.length) throw new Error('invalid-input');
     for (const [method, params] of commands) await entry.contents.debugger.sendCommand(method, params);
@@ -214,4 +175,4 @@ function createBrowserScreencast(panel, { post = () => {} } = {}) {
   return { start, stop, ack, input, navigate, state, close, watching: () => [...sessions.keys()] };
 }
 
-module.exports = { createBrowserScreencast, inputCommands, screencastSettings, KEYS };
+module.exports = { createBrowserScreencast, screencastSettings };

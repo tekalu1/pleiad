@@ -588,6 +588,21 @@
       "input": "25c7d85c859a"
     },
     {
+      "id": "browser.chromeOpen",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": true,
+      "surfaces": {
+        "ui": true,
+        "mcp": false,
+        "cli": false
+      },
+      "legacyCommand": "chromeOpen",
+      "input": "e312d5bb93ff"
+    },
+    {
       "id": "browser.chromeRaiseDialog",
       "risk": "write",
       "riskOf": false,
@@ -665,7 +680,7 @@
         "cli": false
       },
       "legacyCommand": "chromeTakeOver",
-      "input": "7f7ac791e818"
+      "input": "6b5db096dd25"
     },
     {
       "id": "channels.archive",

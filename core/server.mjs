@@ -221,11 +221,10 @@ const chromeConnection = chromeOs
   ? createChromeConnection({ locate: chromeLocate, os: chromeOs, link: chromeLink, log: line => console.log(`  ${line}`) })
   : null;
 // 人を待つ場面の台帳（接続の許可の案内・ログインなどの依頼。core/chrome/handoff.mjs、ADR 0148・0168）。待ちは askPermission の outlivesTurn で出す。
-// control は第 6 段の core/chrome/control.mjs の口（{ state, onChange }）を差し込む所。まだ無いので null（人が先に引き継いだ状態は見ない）
+// control は第 6 段の core/chrome/control.mjs（{ state, onChange }）。中継の後に作られるので、下の chromeControl を作った所で useControl で差し込む
 const chromeHandoffs = chromeConnection ? createChromeHandoffs({
   askPermission: request => askPermission(request),
   connection: chromeConnection,
-  control: null,
   sessionBusy: id => sessionBusy(id),
   turnLive: id => liveTurn(id),
   // 人の「止める」・子の取り消しで待ちを片付ける合図。ターンが普通に終わっても abort されない（ターンの AbortController は中断のときだけ引く）
@@ -257,6 +256,8 @@ const chromeScreencast = chromeRelay ? createChromeScreencast({ host: chromeRela
 const chromeScreencastHub = chromeScreencast ? createScreencastHub({ bridge: chromeScreencast, source: 'chrome' }) : null;
 // エージェントの Chrome の窓の止める・引き継ぐ・戻す（core/chrome/control.mjs、ADR 0148・0154）。戻したときの会話の行は recordChromeHandover
 const chromeControl = chromeRelay ? createChromeControl({ relay: chromeRelay, os: chromeOs, capture: chromeScreencast, log: line => console.log(`  ${line}`), record: ({ sessionId, seconds }) => recordChromeHandover(sessionId, seconds) }) : null;
+// 人への依頼のカードは、この引き継ぐ・戻すの変化で「あなたが操作中」になり、戻したときに決着する
+chromeHandoffs?.useControl(chromeControl);
 // 会話の端点を出す口（ターンの開始・新しい会話の id の付け替え・ターンの終わり・会話の削除）。Chrome の中継があるホスト（デスクトップ版）だけ。Windows 以外（unsupported）では渡さない（下の browserEnv）
 const agentBrowserEndpoints = chromeRelay ? chromeRelayBrowser(chromeRelay) : null;
 // A nested server may inherit another conversation's shell environment; only this process's bridge can issue browser access.
@@ -3616,7 +3617,7 @@ const opsCompat = {
 
 // エージェントのブラウザー（PC の Chrome）への接続（browser.chrome*。core/ops/browser.mjs）。状態は chromeBrowser イベントでホストの画面へ流す
 const opsChromeControl = chromeControl ? {
-  takeOver: sessionId => chromeControl.takeOver(sessionId),
+  takeOver: (sessionId, options) => chromeControl.takeOver(sessionId, options),
   resume: sessionId => chromeControl.resume(sessionId),
   stop: sessionId => chromeControl.stop(sessionId),
 } : null;
@@ -3625,6 +3626,8 @@ const opsChrome = chromeConnection ? {
   connect: async () => { await chromeConnection.connect(); return chromeConnection.state(); },
   disconnect: () => { chromeConnection.disconnect(); return chromeConnection.state(); },
   raiseDialog: async () => { const result = await chromeConnection.raiseDialog(); return { raised: result.ok === true, method: String(result.method ?? 'none') }; },
+  // ビューアの⋯「Chrome で開く」。つながっていなければ Chrome の許可を待つ（カードは出さない）
+  open: chromeRelay ? (sessionId, url) => chromeRelay.openForConversation(sessionId, url) : null,
 } : null;
 
 // コンピューターの操作を止める（computer.stop。docs/computer-use.md「computerStop」）。止める側なので、リモートの端末からも AI からも受ける
@@ -7706,6 +7709,7 @@ wss.on("connection", (ws, req) => {
         case 'chromeTakeOver': return await viaOp('browser.chromeTakeOver');
         case 'chromeResume': return await viaOp('browser.chromeResume');
         case 'chromeStop': return await viaOp('browser.chromeStop');
+        case 'chromeOpen': return await viaOp('browser.chromeOpen');
         case "resolvePath": case "revealPath": case "openPath": {
           const hostAction = msg.command !== 'resolvePath';
           if (hostAction && !local) return reply(false, t('files.remoteOnly'));

@@ -2216,7 +2216,9 @@ function browserHandoffCard(ev, into = null) {
   const head = el("div", "card-head");
   head.append(...markedHead(t("chat.approval.heading", { mark: MARK }), t("chat.browserHandoff.headingMark")));
   const actions = el("div", "card-actions");
-  const view = browserHandoffView(ev, { el, t, cmd, onChange: (buttons, res) => actions.replaceChildren(res, ...buttons) });
+  // リモートの端末では「この端末で操作する」（右パネルの Chrome の窓で操作する）を足す
+  const operateHere = window.plyRemote ? async () => (await chromePanel?.measure()) ?? null : null;
+  const view = browserHandoffView(ev, { el, t, cmd, operateHere, onChange: (buttons, res) => actions.replaceChildren(res, ...buttons) });
   head.append(el("span", "desc", view.summary()));
   card.append(head, view.body, actions);
   placeCard(m, ev, into);
@@ -8574,7 +8576,20 @@ function paintChromeControl() {
   const id = state.current ?? null;
   const row = id ? chromeControlStore.get(id) : null;
   chromeControlView?.apply(row && (row.state === 'paused' || chromeWindows.has(id)) ? row : null);
+  // 端末から操作する（by: 'device' の一時停止）間は、リモートの端末の映像から入力を送る（ホストの画面は見るだけのまま）
+  chromePanel?.setOperating(Boolean(window.plyRemote) && row?.state === 'paused' && row.by === 'device');
 }
+// 内蔵ブラウザーの⋯「Chrome で開く（エージェントの窓へ）」（browser.chromeOpen）。開いたら右パネルを Chrome の窓の映像に替える。
+// つながっていなければ Chrome の許可を待つ（カードは出さない。パネルに「Chrome の許可を待っています」）。エージェントには知らせない
+browserPanel?.connect({
+  canOpenInChrome: () => state.hostCaps?.chromeBrowser === 'available',
+  openInChrome: async ({ sessionId, url }) => {
+    const status = await cmd('chromeStatus').catch(() => null);
+    chromePanel.openWaiting(status?.state === 'connected' ? t('browser.chromeWindow.connecting') : t('browser.chromeWindow.waitingPermission'));
+    try { await cmd('chromeOpen', { sessionId, url }); }
+    catch (error) { chromePanel.cancelWaiting(); notify(error?.message || t('browser.chromeWindow.openFailed')); }
+  },
+});
 chromeControlStore.onChange((id) => { if (id === state.current) paintChromeControl(); });
 chromeControlStore.onTap((tap) => { if (tap.sessionId === state.current && chromePanel.isOpen()) chromeControlView?.ring(tap.x, tap.y, chromePanel.frameSize()); });
 document.addEventListener('ply-git-open', (event) => {

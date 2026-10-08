@@ -9,8 +9,9 @@
 //
 // control の形（差し込む口。第 6 段の core/chrome/control.mjs が合わせる）:
 //   state(sessionId) -> { state: 'running'|'idle'|'stopped'|'paused', by?: 'pc'|'device', url?, title? }
-//   onChange(fn(sessionId)) -> off
+//   onChange(fn(sessionId | { sessionId, ... })) -> off（core/chrome/control.mjs は状態そのものを配る）
 //   takeOver(sessionId, opts)・resume(sessionId) はカードのボタンが ops から呼ぶので、ここでは使わない
+// control は中継の後に作られる（中継はこの台帳を受け取る）ので、後から useControl(control) で差し込める。
 import crypto from 'node:crypto';
 
 export const HANDOFF_REASONS = ['login', 'captcha', 'two_factor', 'payment', 'other'];
@@ -39,7 +40,7 @@ const cleanMessage = value => {
  * @param deps.continueTurn   (sessionId, { kind, messageId }) => Promise。会話へ「続けてください」を送る（outbox.accept）
  * @param [deps.titleFor]     ({ reason, message }) => カードの題（通知の一覧・端末の通知に出る）
  */
-export function createChromeHandoffs({ askPermission, connection, control = null, sessionBusy, turnLive = sessionBusy, turnSignal = () => undefined, continueTurn, titleFor = () => '', now = () => new Date(), log = () => {} }) {
+export function createChromeHandoffs({ askPermission, connection, control: initialControl = null, sessionBusy, turnLive = sessionBusy, turnSignal = () => undefined, continueTurn, titleFor = () => '', now = () => new Date(), log = () => {} }) {
   const open = new Map();      // sessionId -> Handoff（決着するまで）
   const unclaimed = new Map(); // sessionId -> 決着した答え（ターンの中で、まだ誰にも返していないもの）
   let closed = false;
@@ -130,7 +131,10 @@ export function createChromeHandoffs({ askPermission, connection, control = null
     }
   });
 
-  const offControl = control?.onChange?.(sessionId => {
+  let control = null;
+  let offControl = null;
+  const onControlChange = change => {
+    const sessionId = typeof change === 'string' ? change : change?.sessionId;
     const h = open.get(sessionId);
     if (!h || h.done || h.reason === 'connect') return;
     const status = control.state(sessionId) ?? {};
@@ -141,9 +145,18 @@ export function createChromeHandoffs({ askPermission, connection, control = null
     } else if (h.operating) {
       resolveWith(h, 'resumed');
     }
-  });
+  };
+  /** control を差し込む・差し替える（前の聞き手は外す） */
+  const useControl = next => {
+    offControl?.();
+    control = next ?? null;
+    offControl = control?.onChange?.(onControlChange) ?? null;
+  };
+  useControl(initialControl);
 
   return {
+    useControl(next) { if (!closed) useControl(next); },
+
     /** 接続の案内を出す（開いていれば何もしない。つながっていれば出さない）。中継の upFor から */
     connect(sessionId) {
       if (closed || !sessionId) return null;
