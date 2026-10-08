@@ -74,9 +74,11 @@ async page => {
   await page.locator('.browser-tab-chrome [role=tab]').focus();
   await page.keyboard.press('ArrowRight');
   await page.locator('.browser-address').waitFor({ state:'visible' });
-  await page.locator('.browser-tab-list [role=tab][aria-selected=true]').focus();
+  // 列が作り直されても、フォーカスは選ばれたタブに残っている（ここで focus() し直さずに次のキーを押せる）
+  check(await page.evaluate(() => document.activeElement?.getAttribute('aria-selected') === 'true' && !!document.activeElement.closest('.browser-tab-list')), 'focus stays on the selected tab after ArrowRight');
   await page.keyboard.press('Home');
   await page.locator('.cp-screen').waitFor({ state:'visible' });
+  check(await page.evaluate(() => document.activeElement?.closest('.browser-tab-chrome') !== null), 'focus stays on the Chrome tab after Home');
   await entry.click();
   check(await entry.getAttribute('aria-expanded') === 'false', 'entry closes either tab');
   await entry.click();

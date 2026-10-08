@@ -402,6 +402,36 @@ export default async function (t) {
   });
   t.ok('画面: Chrome のタブに依頼待ち（点）と人の操作中（二本線）を別の形で出し、片付いたら消す', true);
 
+  // ---- タブの列を作り直しても、列の中にあったフォーカスは選ばれたタブに残る（外にあったフォーカスは奪わない）
+  await withWindow({ plyDesktop: { browser: null } }, async () => {
+    const bridge = fakeBridge();
+    window.plyDesktop.browser = bridge;
+    const savedFocus = N.prototype.focus, savedActive = Object.getOwnPropertyDescriptor(document, 'activeElement');
+    N.prototype.focus = function () { document.activeElement = this; };
+    try {
+      let chromeOpen = false;
+      const panel = createBrowserPanel({ bridge, getSessionId: () => 's1' });
+      panel.connect({ chromeAvailable: () => true, chromeOpen: () => chromeOpen, chromeName: () => 'Claude' });
+      bridge.push({ tabs: [{ id: 't1', url: 'https://example.com/' }], current: 't1', sessionId: 's1' });
+      const walk = (node, out = []) => { out.push(node); for (const child of node.children ?? []) walk(child, out); return out; };
+      const picks = () => walk(panel.tabsRow).filter(n => n.getAttribute?.('role') === 'tab');
+      const selected = () => picks().find(n => n.getAttribute('aria-selected') === 'true');
+      selected().focus();
+      const before = document.activeElement;
+      chromeOpen = true; panel.refreshTabs();
+      assert.notEqual(document.activeElement, before, '列を作り直したので古い要素ではない');
+      assert.equal(document.activeElement, selected(), '作り直したあとも、フォーカスは選ばれたタブにある');
+      assert(panel.tabsRow.contains(document.activeElement), '列の中にある');
+      const outside = new N('input'); outside.focus();
+      chromeOpen = false; panel.refreshTabs();
+      assert.equal(document.activeElement, outside, '列の外にあったフォーカスは奪わない');
+    } finally {
+      N.prototype.focus = savedFocus;
+      if (savedActive) Object.defineProperty(document, 'activeElement', savedActive); else delete document.activeElement;
+    }
+  });
+  t.ok('画面: タブの列を作り直しても、列の中にあったフォーカスは選ばれたタブへ戻る・外のフォーカスは奪わない', true);
+
   // ---- 頭の行の内蔵ブラウザーのボタン（web/header-entries.mjs）と近道
   await withWindow({ plyDesktop: { browser: null } }, async () => {
     const bridge = fakeBridge();

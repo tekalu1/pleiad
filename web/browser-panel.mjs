@@ -188,6 +188,9 @@ export function createBrowserPanel({ bridge = window.plyDesktop?.browser, showMe
     const chromeAvailable = hooks.chromeAvailable();
     const items = state.tabs.map(tab => ({ tab, chrome: false }));
     if (chromeAvailable) items.unshift({ chrome: true });
+    // 列を作り直すと、押した・矢印で移したタブのフォーカスが消える（キー操作が続けられない）。列の中にあったときだけ、選ばれたタブへ戻す
+    const hadFocus = tabList.contains(document.activeElement);
+    let selectedPick = null;
     tabList.replaceChildren(...items.map((entry, position) => {
       const tab = entry.tab;
       const selected = entry.chrome ? chromeSelected : !chromeSelected && tab.id === state.current;
@@ -211,6 +214,7 @@ export function createBrowserPanel({ bridge = window.plyDesktop?.browser, showMe
         if (hooks.chromeOperating()) pick.append(runMark(t('browser.chromeWindow.entryWorking', { name: hooks.chromeName() })));
         pick.onclick = () => { hooks.noteView('chrome'); hooks.openChrome(); };
         pick.onkeydown = event => moveTab(event, position);
+        if (selected) selectedPick = pick;
         item.append(pick);
         return item;
       }
@@ -224,11 +228,13 @@ export function createBrowserPanel({ bridge = window.plyDesktop?.browser, showMe
       pick.append(ic, el('span', 'browser-tab-name', label));
       pick.onclick = () => { hooks.noteView('viewer'); hooks.openPanel(); run('select', { id: tab.id }).catch(failed); };
       pick.onkeydown = event => moveTab(event, position);
+      if (selected) selectedPick = pick;
       const close = button(closeIcon, t('browser.closeTab', { title: label }), () => run('close', { id: tab.id }).catch(failed), 'btn btn-icon browser-tab-close');
       close.tabIndex = -1;
       item.append(pick, close);
       return item;
     }));
+    if (hadFocus) selectedPick?.focus({ preventScroll: true });
   }
   function moveTab(event, position) {
     const keys = { ArrowRight: 1, ArrowLeft: -1, Home: -Infinity, End: Infinity };
@@ -237,8 +243,9 @@ export function createBrowserPanel({ bridge = window.plyDesktop?.browser, showMe
     const picks = [...tabList.querySelectorAll('[role=tab]')];
     const step = keys[event.key];
     const next = step === -Infinity ? 0 : step === Infinity ? picks.length - 1 : (position + step + picks.length) % picks.length;
+    // 先にフォーカスを移してから選ぶ。選んだあとの列の作り直しは、選ばれたタブへフォーカスを戻す（paintTabs）
+    picks[next]?.focus();
     picks[next]?.click();
-    requestAnimationFrame(() => tabList.querySelector('[aria-selected=true]')?.focus());
   }
 
   function paint(next) {

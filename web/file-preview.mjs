@@ -517,7 +517,8 @@ export function setupFilePreview({ getContext, useFile, onLayout, showMenu, cmd,
     show({ title, subtitle, note:'', body, ...(statusText !== undefined ? { status:statusText, statusTitle:'' } : {}) });
     clearCurrent();
     if (element) element.setAttribute('aria-expanded', 'true');
-    layout(); panel.focus({ preventScroll:true });
+    // パネルの中（ブラウザーのタブの列）から切り替えたときは、押したタブのフォーカスを奪わない
+    layout(); if (!panel.contains(document.activeElement)) panel.focus({ preventScroll:true });
   }
   /** 開いている自前の中身を差し替える（スクロール位置は保つ）。別の中身・閉じているときは何もしない */
   function updatePanel(key, { title, subtitle, body, status: statusText } = {}) {
