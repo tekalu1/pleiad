@@ -26,7 +26,7 @@ const CLIENT_BACKLOG_BYTES = 64 * 1024 * 1024;
 export function startLinkChild({ pipe, secret, root = '', key = '', log = () => {} } = {}) {
   if (!pipe || !secret) throw new Error('link child needs pipe and secret');
   const releaseUse = root && key ? markRuntimeInUse({ root, key }) : null;
-  const state = { phase: 'idle', gen: 0, ws: null, port: null, path: null, upgradeAt: null, maxId: 0, sessions: new Map(), carry: null };
+  const state = { phase: 'idle', gen: 0, ws: null, port: null, path: null, upgradeAt: null, maxId: 0, sessions: new Map(), carry: null, carryInvalid: false };
   let client = null;   // 今のつなぎ手のソケット
   const pending = new Map();   // 今のつなぎ手に流して、答え（continue・fail・fulfill…）がまだ来ていない requestPaused: requestId -> sessionId
   const bound = new Set();     // 今のつなぎ手が Fetch.enable したセッション（sessionId。ブラウザー全体は ''）
@@ -34,7 +34,7 @@ export function startLinkChild({ pipe, secret, root = '', key = '', log = () => 
 
   const writeControl = (socket, name, value) => { if (socket && !socket.destroyed) socket.write(controlLine(name, value)); };
   const toClient = (name, value) => writeControl(client, name, value);
-  const resetWs = () => { state.phase = 'idle'; state.ws = null; state.port = null; state.path = null; state.upgradeAt = null; state.sessions.clear(); state.carry = null; pending.clear(); bound.clear(); };
+  const resetWs = () => { state.phase = 'idle'; state.ws = null; state.port = null; state.path = null; state.upgradeAt = null; state.sessions.clear(); state.carry = null; state.carryInvalid = false; pending.clear(); bound.clear(); };
 
   // ---- Chrome からの行 ----------------------------------------------------------------------
   function trackSession(method, buf) {
@@ -153,8 +153,12 @@ export function startLinkChild({ pipe, secret, root = '', key = '', log = () => 
     if (name === 'close') { closeWs(); return; }
     if (name === 'carry') {
       const carry = value?.carry;
+      // 預けられなかった（大きすぎる）ときは、古い carry を残さず「無効」の印にする（新しいサーバーは、古い一時停止・停止の印を信じずに全部止めて始める）
+      if (value?.invalid === true) { state.carry = null; state.carryInvalid = true; return; }
+      state.carryInvalid = false;
       if (carry === undefined || carry === null) state.carry = null;
       else if (Buffer.byteLength(JSON.stringify(carry), 'utf8') <= CARRY_MAX_BYTES) state.carry = carry;
+      else { state.carry = null; state.carryInvalid = true; }
       return;
     }
     if (name === 'quit') { quit(); }
@@ -164,7 +168,7 @@ export function startLinkChild({ pipe, secret, root = '', key = '', log = () => 
     firstId = state.maxId + ID_GAP;
     writeControl(socket, 'welcome', {
       v: LINK_VERSION, phase: state.phase, gen: state.gen, port: state.port, path: state.path, upgradeAt: state.upgradeAt, firstId,
-      sessions: [...state.sessions].map(([sessionId, targetId]) => ({ sessionId, targetId })), carry: state.carry,
+      sessions: [...state.sessions].map(([sessionId, targetId]) => ({ sessionId, targetId })), carry: state.carry, carryInvalid: state.carryInvalid,
     });
     // 新しい番号の空間は firstId から。以後このつなぎ手が振る番号が maxId に届くので、ここで追いつかせる
     state.maxId = Math.max(state.maxId, firstId - 1);

@@ -32,6 +32,7 @@ import http from 'node:http';
 import crypto from 'node:crypto';
 import { WebSocketServer } from 'ws';
 import { createChromeWindows } from './windows.mjs';
+import { CARRY_MAX_BYTES } from './link-wire.mjs';
 
 const KEY_PATH = /^\/devtools\/browser\/([a-f0-9]{48})$/;
 const random = () => crypto.randomBytes(24).toString('hex');
@@ -120,6 +121,7 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, scop
   let up = null;               // 上り（Chrome への接続 1 本）の上の状態
   let binding = null;
   let closed = false;
+  let invalidCarry = false;    // 前のサーバーの預かり物が無効だった（会話の端点を、人が送るまで止めたものとして作る）
   let handedOff = false;       // 引き継ぎで出ていく（窓も接続も閉じない。handOff）
   let staleSessions = [];      // 前のサーバーが Chrome の接続に付けたまま残したセッション（restore で受け、最初の bind で外す）
   const orphans = new Set();   // 層が引き継げなかった窓の windowId（Chrome の接続が付いたら、その窓のタブを CDP で閉じる）
@@ -131,12 +133,19 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, scop
   const notifyView = (entryId, kind, extra) => { for (const fn of [...viewers]) { try { fn(entryId, kind, extra); } catch { /* 聞き手の失敗は中継を壊さない */ } } };
   /** 更新を越えて持ち越す状態（接続の子へ預ける carry）。端点（会話の id・鍵・待ち受けのポート）と、隠した窓の印 */
   function snapshot() {
-    return {
+    const windows = scope.snapshot?.() ?? [];
+    const carry = {
       v: 1,
       port: address?.port ?? null,
       entries: [...entries.values()].map(entry => ({ id: entry.id, key: entry.key, stopped: entry.stopped, paused: entry.paused ? { ...entry.paused } : null })),
-      windows: scope.snapshot?.() ?? [],
+      windows,
     };
+    // 大きすぎて預けられないときは、窓も止めた印も一時停止も無い古い会話（端点だけ）から落とす。それでも大きければ、link が「無効」の印にする
+    if (Buffer.byteLength(JSON.stringify(carry), 'utf8') > CARRY_MAX_BYTES) {
+      const keep = new Set(windows.filter(item => item?.windows?.length).map(item => item.id));
+      carry.entries = carry.entries.filter(item => item.stopped || item.paused || keep.has(item.id));
+    }
+    return carry;
   }
   /** carry の一時停止の印を戻す。at は時刻 ms、by は control が付けた印（文字列）、viewport は端末が引き継いだときの映像の箱（数だけ受ける） */
   const restoredPause = saved => {
@@ -147,14 +156,18 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, scop
     return mark;
   };
   /** 持ち越す状態が変わった。聞き手（server.mjs → link.setCarry。200 ms でまとめる）へ今の状態を渡す */
-  let lastCarry = '';
+  let lastCarry = '', lastMarks = '';
   function carryChanged() {
     if (closed || handedOff || !carryListeners.size) return;
     const carry = snapshot();
     const text = JSON.stringify(carry);
     if (text === lastCarry) return;
     lastCarry = text;
-    for (const fn of [...carryListeners]) { try { fn(carry); } catch { /* 聞き手の失敗は中継を壊さない */ } }
+    // 一時停止・止めた印が替わったときは、まとめずにすぐ預ける（人が操作中の窓を、落ちた後の新しいサーバーが動かさないため）
+    const marks = JSON.stringify(carry.entries.map(item => [item.id, item.stopped, item.paused]));
+    const now = marks !== lastMarks;
+    lastMarks = marks;
+    for (const fn of [...carryListeners]) { try { fn(carry, { now }); } catch { /* 聞き手の失敗は中継を壊さない */ } }
   }
   scope.onChange?.(carryChanged);
   /** 窓のタブをすべて閉じる（CDP）。層が窓を引き継げなかった・層が居ない間に閉じるとき */
@@ -884,8 +897,8 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, scop
       if (typeof sessionId !== 'string' || !sessionId || sessionId.length > 200) throw new Error('invalid session');
       await ensureListening();
       let entry = entries.get(sessionId);
-      if (!entry) { entry = { id: sessionId, key: random(), stopped: false, clients: new Set(), windows: new Set(), turn: false, current: null, operating: false }; entries.set(sessionId, entry); byKey.set(entry.key, entry); carryChanged(); }
-      if (unlock) this.resume(sessionId);
+      if (!entry) { entry = { id: sessionId, key: random(), stopped: invalidCarry && !unlock, clients: new Set(), windows: new Set(), turn: false, current: null, operating: false }; entries.set(sessionId, entry); byKey.set(entry.key, entry); carryChanged(); }
+      if (unlock) { this.resume(sessionId); invalidCarry = false; }   // 人が送った: 無効だった預かり物の代わりに、ここから始める
       // 端点を渡すのはターンの始まり（core/agent-browser.mjs の browserEnvironment）。ターンの間、窓のタブに focus emulation を保つ
       if (!entry.stopped && !entry.turn) { entry.turn = true; changed(entry); if (up) syncFocus(up, entry); }
       return `ws://127.0.0.1:${address.port}/devtools/browser/${entry.key}`;
@@ -1024,8 +1037,10 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, scop
      * @param [options.staleSessions] 前のサーバーが Chrome の接続に付けたまま残したセッション（welcome.sessions）。最初の bind で外す
      * @returns {Promise<boolean>} 何かを戻したか
      */
-    async restore(carry, { staleSessions: stale = [] } = {}) {
+    async restore(carry, { staleSessions: stale = [], invalid = false } = {}) {
       if (closed) return false;
+      // 預かり物が無効（大きすぎて預けられなかった）: 古い止めた印・一時停止の印を信じられない。人が送るまで、端点は止めたものとして渡す
+      if (invalid) { invalidCarry = true; log('chrome-relay: previous carry was invalid, conversations start stopped'); }
       staleSessions = stale.map(item => (typeof item === 'string' ? item : item?.sessionId)).filter(id => typeof id === 'string' && id);
       let restored = false;
       if (carry && carry.v === 1 && Array.isArray(carry.entries)) {

@@ -240,9 +240,9 @@ const chromeRelay = chromeConnection
   : null;
 // 接続の子が預かっていた状態を受ける（端点・鍵・ポート・隠した窓の印）。前のサーバーの接続（確認待ちも）を引き継ぎ、以後の変化を預け直す
 if (chromeLink && chromeRelay) {
-  await chromeRelay.restore(chromeLink.welcome.carry, { staleSessions: chromeLink.welcome.sessions }).catch(error => console.error('  chrome-link: restore failed:', String(error?.message ?? error)));
+  await chromeRelay.restore(chromeLink.welcome.carry, { staleSessions: chromeLink.welcome.sessions, invalid: chromeLink.welcome.carryInvalid === true }).catch(error => console.error('  chrome-link: restore failed:', String(error?.message ?? error)));
   await chromeConnection.adopt().catch(error => console.error('  chrome-link: adopt failed:', String(error?.message ?? error)));
-  chromeRelay.onCarry(carry => chromeLink.setCarry(carry));
+  chromeRelay.onCarry((carry, options) => chromeLink.setCarry(carry, options));
 }
 // 隠した窓は main の層（desktop/chrome-os）が引き継ぐ。層が戻ったら（main の入れ替わり後を含む）記録を作り直す。引き継げなかった窓は CDP で閉じる
 if (chromeRelay && chromeOs) {

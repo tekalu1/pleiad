@@ -4,7 +4,7 @@ import { startFakeChrome } from '../lib/fake-chrome.mjs';
 import { startHolder, waitFor, sleep } from '../lib/holder-harness.mjs';
 import { createCdp } from '../../core/chrome/cdp.mjs';
 import { openChromeLink, chromeLinkEnabled, readLinkCard, LINK_CARD_KIND, LINK_VERSION } from '../../core/chrome/link.mjs';
-import { LineReader, peekLine, parseControl, controlLine, linkPipeName } from '../../core/chrome/link-wire.mjs';
+import { LineReader, peekLine, parseControl, controlLine, linkPipeName, CARRY_MAX_BYTES } from '../../core/chrome/link-wire.mjs';
 
 const OLD_CHILD = fileURLToPath(new URL('../lib/link-old-child.mjs', import.meta.url));
 
@@ -225,6 +225,31 @@ export default async function (t) {
         t.ok('版の不一致: 古い子は残らない', !linkChildren((await holder.connect()).client).some(c => c.id === 'chrome-link-old'));
         await link7?.quit();
       }
+    }
+
+    // ===== 12. carry: 一時停止・停止の印は debounce せずすぐ届く。大きすぎる carry は古いものを残さず「無効」の印にする =====
+    {
+      const crash = async link => { await sleep(40); link.socket.destroy(); await sleep(60); };
+      const attach = async () => openChromeLink({ holder: (await holder.connect()).client, runtimeRoot: root, runtimeKey: 'k1' });
+      const a = await attach();
+      a.setCarry({ v: 1, port: 7001, entries: [] }, { now: true });
+      await crash(a);
+      const b = await attach();
+      t.ok('now: true の carry は、直後にサーバーが落ちても子に届いている', b.welcome.carry?.port === 7001, JSON.stringify(b.welcome.carry));
+      t.ok('届いた carry は有効（carryInvalid は立たない）', b.welcome.carryInvalid !== true);
+      b.setCarry({ v: 1, port: 7002, entries: [] });
+      await crash(b);
+      const c = await attach();
+      t.ok('now なしの carry は debounce の間に落ちると届かない（前の carry のまま）', c.welcome.carry?.port === 7001, JSON.stringify(c.welcome.carry));
+      c.setCarry({ v: 1, port: 7003, entries: [], pad: 'x'.repeat(CARRY_MAX_BYTES + 10) }, { now: true });
+      await crash(c);
+      const d = await attach();
+      t.ok('大きすぎる carry: 古い carry を残さず捨て、carryInvalid を立てる', d.welcome.carry === null && d.welcome.carryInvalid === true, JSON.stringify({ carry: d.welcome.carry, invalid: d.welcome.carryInvalid }));
+      d.setCarry({ v: 1, port: 7004, entries: [] }, { now: true });
+      await crash(d);
+      const e = await attach();
+      t.ok('その後に有効な carry が届けば、無効の印は消える', e.welcome.carry?.port === 7004 && e.welcome.carryInvalid !== true, JSON.stringify(e.welcome));
+      await e.quit();
     }
   } finally {
     for (const fn of cleanups) { try { await fn(); } catch { /* 片付け */ } }

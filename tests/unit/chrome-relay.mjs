@@ -395,6 +395,30 @@ export default async function (t) {
     } finally { a?.close(); await r.stop(); }
   }
 
+  // ===== 4b. carry: 止める・一時停止の印はすぐ預ける。無効の預かり物から始めると、会話は止めたまま =====
+  {
+    const r = await rig();
+    try {
+      const seen = [];
+      r.relay.onCarry((carry, options) => seen.push({ marks: carry.entries.map(e => `${e.id}:${e.stopped}:${!!e.paused}`).join(','), now: options?.now === true }));
+      await r.relay.endpoint('c1');
+      r.relay.stop('c1');
+      t.ok('止めた印が替わった carry は now: true で預ける', seen.at(-1)?.now === true && /c1:true/.test(seen.at(-1)?.marks), JSON.stringify(seen));
+      r.relay.pause('c1');
+      t.ok('一時停止の印が替わった carry も now: true', seen.at(-1)?.now === true && /c1:true:true/.test(seen.at(-1)?.marks), JSON.stringify(seen.at(-1)));
+    } finally { await r.stop(); }
+    const r2 = await rig();
+    try {
+      await r2.relay.restore(null, { invalid: true });
+      const url = await r2.relay.endpoint('inv');
+      t.ok('無効の預かり物から始めると、新しい会話は止めたまま（再接続を断る）', await refused(url));
+      const fresh = await r2.relay.endpoint('inv', { unlock: true });
+      t.ok('人の送信（unlock）で始まれば、つなげる', !(await refused(fresh)));
+      const other = await r2.relay.endpoint('inv2');
+      t.ok('unlock の後は、ほかの会話も止めたままにしない', !(await refused(other)));
+    } finally { await r2.stop(); }
+  }
+
   // ===== 5. 上りが無い・切れたとき =====
   {
     const r = await rig({ permission: 'hold', connectWaitMs: 300 });
