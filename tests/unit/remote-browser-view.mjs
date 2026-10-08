@@ -12,12 +12,13 @@ import { createScreencastHub, screencastCommand, parentPortScreencast, QUALITY }
 import { COMMANDS, SCREENCAST } from '../../core/protocol.mjs';
 import { containRect, toPageCoords, toPageDelta, framesPerSecond } from '../../web/remote-browser.mjs';
 import { linkChoices } from '../../web/link-sheet.mjs';
+import { inputCommands } from '../../core/chrome/input.mjs';
 import { watchHostOnlyLinks } from '../../web/host-only-links.mjs';
 
 const require = createRequire(import.meta.url);
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const read = p => fs.readFileSync(path.join(ROOT, p), 'utf8');
-const { createBrowserScreencast, inputCommands, screencastSettings } = require('../../desktop/browser-screencast.cjs');
+const { createBrowserScreencast, screencastSettings } = require('../../desktop/browser-screencast.cjs');
 
 export const name = 'remote-browser-view';
 export const title = 'リモートから PC の内蔵ブラウザーを見る: 間引き・止める条件・断る条件・入力の変換・シートの出し分け';

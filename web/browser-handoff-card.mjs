@@ -2,6 +2,8 @@
 // 接続の案内（reason: connect。setup / permission / denied）と、人への依頼（asked → operating）の 2 種類を 1 枚で描く。
 // client.mjs は枠（見出し・置き場・名簿への登録）を作り、中身とボタンはここが持つ。
 // 決着（戻した・つながった・断った・中断）はサーバーの permissionSettled で届き、畳む字は settledLine が決める。
+// リモートの端末（client が operateHere を渡す）では「Chrome で操作する」を「この端末で操作する」（右パネルの Chrome の窓で操作する。by: 'device'）と
+// 「PC で操作する」に分ける（第 7 段）。
 
 const CHROME_INSPECT_ADDRESS = 'chrome://inspect/#remote-debugging';
 // i18n-dynamic: ui:chat.browserHandoff.
@@ -29,13 +31,14 @@ export function settledLine(t, ev) {
 
 /**
  * 本文とボタンを作る。
- *   view = browserHandoffView(ev, { el, t, cmd })
+ *   view = browserHandoffView(ev, { el, t, cmd, operateHere })
  *   view.body      … 本文の要素（差し替えで中身が替わる）
  *   view.buttons   … 今のボタン（actions へ並べる）。replaceButtons の呼び出しで並べ直す
  *   view.update(h) … permissionUpdate の browserHandoff を渡して描き直す
- * onChange(buttons, res) は描き直すたびに呼ばれ、client が actions を並べ直す
+ * onChange(buttons, res) は描き直すたびに呼ばれ、client が actions を並べ直す。
+ * operateHere() はリモートの端末だけ: 右パネルの Chrome の窓を開き、映像の箱の大きさ（{ width, height, scale }。開けなければ null）を返す
  */
-export function browserHandoffView(ev, { el, t, cmd, onChange = () => {} }) {
+export function browserHandoffView(ev, { el, t, cmd, onChange = () => {}, operateHere = null }) {
   let h = ev.browserHandoff;
   const body = el('div', 'bh-body');
   const res = el('span', 'res');
@@ -94,16 +97,24 @@ export function browserHandoffView(ev, { el, t, cmd, onChange = () => {} }) {
     const lead = el('div', 'bh-lead');
     if (h.state === 'operating') {
       lead.textContent = t(`${K}operating`);
-      const where = h.by === 'device' ? t(`${K}operatingByDevice`) : t(`${K}operatingNote`);
+      const where = h.by !== 'device' ? t(`${K}operatingNote`) : operateHere ? t(`${K}operatingOnDevice`) : t(`${K}operatingByDevice`);
       body.replaceChildren(lead, note(where));
       buttons = [button(t(h.turnLive === false ? `${K}resumeContinue` : `${K}resume`), () => cmd('chromeResume', { sessionId: ev.sessionId }), 'btn btn-primary')];
     } else {
       lead.textContent = t(`${K}askedLead`, { reason: reasonLabel(t, h.reason) });
       body.replaceChildren(lead);
       if (h.message) body.append(el('p', 'bh-message', h.message));
-      buttons = [decline(), button(t(`${K}operate`), () => cmd('chromeTakeOver', { sessionId: ev.sessionId }), 'btn btn-primary')];
+      buttons = operateHere
+        ? [decline(), button(t(`${K}operateOnPc`), () => cmd('chromeTakeOver', { sessionId: ev.sessionId })), button(t(`${K}operateHere`), takeOverHere, 'btn btn-primary')]
+        : [decline(), button(t(`${K}operate`), () => cmd('chromeTakeOver', { sessionId: ev.sessionId }), 'btn btn-primary')];
     }
     if (h.windowTitle) body.append(el('small', 'bh-window', h.windowTitle));
+  }
+
+  async function takeOverHere() {
+    const size = await operateHere();
+    if (!size) throw new Error(t(`${K}noWindow`));
+    await cmd('chromeTakeOver', { sessionId: ev.sessionId, by: 'device', ...size });
   }
 
   function paint() {

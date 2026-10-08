@@ -1669,6 +1669,10 @@
       "operatingNote": "Chrome の窓で操作して、終わったら「Claude に戻す」を押してください。",
       "operatingByDevice": "別の端末で操作しています。終わったら「Claude に戻す」を押してください。",
       "operate": "Chrome で操作する",
+      "operateHere": "この端末で操作する",
+      "operateOnPc": "PC で操作する",
+      "operatingOnDevice": "右の「Chrome の窓」で操作して、終わったら「Claude に戻す」を押してください。",
+      "noWindow": "Chrome の窓を開けませんでした",
       "resume": "Claude に戻す",
       "resumeContinue": "Claude に戻して続ける",
       "decline": "断る",
@@ -4110,6 +4114,7 @@
     "menu": {
       "devtools": "DevTools",
       "detach": "別の窓に出す",
+      "openInChrome": "Chrome で開く（エージェントの窓へ）",
       "clearSiteData": "このサイトのデータを消す"
     },
     "kind": {
@@ -4139,7 +4144,12 @@
       "fps": "映像 · {{fps}} fps",
       "ended": "Chrome の窓が閉じました",
       "none": "この会話には Chrome の窓がありません",
-      "failed": "Chrome の窓の映像を開けませんでした。"
+      "failed": "Chrome の窓の映像を開けませんでした。",
+      "screenOperating": "{{name}} の Chrome の窓の映像（この端末で操作中）",
+      "deviceNote": "パスワード管理・パスキーは、この端末からは使えません",
+      "inputFailed": "Chrome の窓へ送れませんでした",
+      "waitingPermission": "Chrome の許可を待っています",
+      "openFailed": "Chrome で開けませんでした"
     },
     "remote": {
       "title": "PC のブラウザー",
