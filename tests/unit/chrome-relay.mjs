@@ -431,6 +431,25 @@ export default async function (t) {
         t.ok('作り直した鍵ではつながり、古い鍵は断る', !(await refused(url)) && await refused(url.replace(/[a-f0-9]{48}$/, oldKey)));
       } finally { await r3.stop(); await new Promise(resolve => squatter.close(resolve)); }
     }
+    // 持ち越した窓は、つないだ Chrome のものだけ生かす（windowId は Chrome の起動ごとに 1 から振り直される。別の Chrome の windowId は利用者の窓を指す）
+    for (const same of [true, false]) {
+      const r4 = await rig();
+      let a4;
+      try {
+        let last = null;
+        r4.relay.onCarry(carry => { last = carry; });
+        const carried = { v: 1, port: 0, chrome: same ? r4.chrome.wsPath : '/devtools/browser/00000000-0000-0000-0000-000000000000',
+          entries: [{ id: 'k2', key: 'cd'.repeat(24), stopped: false, paused: null }], windows: [{ id: 'k2', windows: [{ windowId: 101, role: 'main', token: 'fake:hw101' }] }] };
+        await r4.relay.restore(carried);
+        a4 = await agent(await r4.relay.endpoint('k2'));
+        await a4.cmd('Browser.getVersion');
+        await until(() => last?.chrome === r4.chrome.wsPath);
+        const kept = last.windows.some(item => item.id === 'k2' && item.windows.some(w => w.windowId === 101));
+        t.ok(same ? '同じ Chrome に付いたら、持ち越した窓はそのまま' : '別の Chrome に付いたら、持ち越した窓を捨てる',
+          same ? kept : !kept, JSON.stringify(last));
+        t.ok('carry は今つないでいる Chrome の印を載せる', last.chrome === r4.chrome.wsPath, String(last.chrome));
+      } finally { a4?.close(); await r4.stop(); }
+    }
   }
 
   // ===== 5. 上りが無い・切れたとき =====

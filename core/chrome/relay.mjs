@@ -125,6 +125,7 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, scop
   let handedOff = false;       // 引き継ぎで出ていく（窓も接続も閉じない。handOff）
   let staleSessions = [];      // 前のサーバーが Chrome の接続に付けたまま残したセッション（restore で受け、最初の bind で外す）
   const orphans = new Set();   // 層が引き継げなかった窓の windowId（Chrome の接続が付いたら、その窓のタブを CDP で閉じる）
+  let chromeId = null;         // 持ち越した窓・orphans の持ち主の Chrome（ws のパスの GUID）。windowId は Chrome の起動ごとに 1 から振り直されるので、別の Chrome の windowId で利用者の窓を触らないための印
   const carryListeners = new Set();
   const changeListeners = new Set(), tapListeners = new Set();
   const fire = (set, ...args) => { for (const fn of [...set]) { try { fn(...args); } catch (error) { log(`chrome-relay: listener failed: ${error?.message ?? error}`); } } };
@@ -137,6 +138,7 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, scop
     const carry = {
       v: 1,
       port: address?.port ?? null,
+      chrome: chromeId,
       entries: [...entries.values()].map(entry => ({ id: entry.id, key: entry.key, stopped: entry.stopped, paused: entry.paused ? { ...entry.paused } : null })),
       windows,
     };
@@ -194,6 +196,10 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, scop
     if (up?.cdp === cdp) return Promise.resolve(up);
     if (binding?.cdp === cdp) return binding.promise;
     const state = { cdp, tabs: new Map(), windows: new Map(), sessions: new Map(), attaching: new Map(), offs: [] };
+    // 持ち越した窓が、今つなぐ Chrome のものでなければ（Chrome が起動し直された）、その windowId は今の Chrome の別の窓を指す。捨てる
+    const browserId = typeof cdp.browserId === 'string' && cdp.browserId ? cdp.browserId : null;
+    if (browserId && chromeId && browserId !== chromeId) forgetCarriedWindows('another chrome');
+    if (browserId && browserId !== chromeId) { chromeId = browserId; carryChanged(); }
     state.offs.push(cdp.onEvent((method, params, sessionId) => { if (up === state) onUpEvent(state, method, params, sessionId); }));
     state.offs.push(cdp.onClose(() => teardown(state)));
     // 持ち越した窓（restore）。Target.setDiscoverTargets が返す既存のタブのうち、この窓にあるものを、会話の範囲に戻す（onTargetCreated の窓の経路）
@@ -211,13 +217,24 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, scop
     return promise;
   }
 
+  /** 持ち越した窓の記録・閉じ待ち（orphans）・古いセッションを捨てる。層の隠した窓は閉じる（Chrome が別なら、窓はもう無い） */
+  function forgetCarriedWindows(why) {
+    log(`chrome-relay: dropped carried windows (${why})`);
+    orphans.clear(); staleSessions = [];
+    scope.reset?.();
+    for (const entry of entries.values()) {
+      entry.windows.clear();
+      if (entry.paused) { entry.paused = null; changed(entry); }   // 引き継ぎ中の窓ももう無い
+    }
+  }
+
   /** 上りが切れた（Chrome が閉じた・許可の取り消し・切る）。エージェントの接続も閉じる（次の接続でつなぎ直す） */
   function teardown(state) {
     if (up !== state) return;
     up = null;
     for (const off of state.offs) off();
     for (const tab of state.tabs.values()) { tab.controller.abort(); tab.fe = null; }
-    if (!handedOff) scope.reset?.();   // Chrome が閉じた。窓はもう無い
+    if (!handedOff) { scope.reset?.(); orphans.clear(); chromeId = null; }   // Chrome が閉じた。窓はもう無い（閉じ待ちの windowId も、次の Chrome では別の窓を指す）
     for (const entry of entries.values()) {
       entry.windows.clear();
       if (entry.paused) { entry.paused = null; changed(entry); }   // Chrome が閉じた。窓はもう無いので、引き継ぎも解く
@@ -1041,6 +1058,7 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, scop
       if (closed) return false;
       // 預かり物が無効（大きすぎて預けられなかった）: 古い止めた印・一時停止の印を信じられない。人が送るまで、端点は止めたものとして渡す
       if (invalid) { invalidCarry = true; log('chrome-relay: previous carry was invalid, conversations start stopped'); }
+      chromeId = typeof carry?.chrome === 'string' && carry.chrome.length <= 300 ? carry.chrome : null;
       staleSessions = stale.map(item => (typeof item === 'string' ? item : item?.sessionId)).filter(id => typeof id === 'string' && id);
       let restored = false, fellBack = false;
       if (carry && carry.v === 1 && Array.isArray(carry.entries)) {

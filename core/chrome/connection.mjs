@@ -143,7 +143,7 @@ export function createChromeConnection({ locate, os, WebSocketImpl = NodeWebSock
     // 確認の窓の見つけ方の比べ元と、出し直しで前面を返す先は、upgrade を投げる直前に写す
     const [snap, fg] = await Promise.all([os.snapshotWindows(), os.foreground()]);
     if (stale(att)) return;
-    const rnd = { n: att.round, snap: snap ?? [], prevFg: fg, ws: null, dialog: null, opened: false, selfClose: false, upgradeAt: clock.now(), port: info.port,
+    const rnd = { n: att.round, snap: snap ?? [], prevFg: fg, ws: null, dialog: null, opened: false, selfClose: false, upgradeAt: clock.now(), port: info.port, path: info.path,
       reissueTimer: null, guardTimer: null, yieldTimer: null, finding: false };
     att.cur = rnd;
     const ws = new (wsImpl())(`ws://127.0.0.1:${info.port}${info.path}`, { perMessageDeflate: false });
@@ -264,6 +264,7 @@ export function createChromeConnection({ locate, os, WebSocketImpl = NodeWebSock
     clearRound(rnd);
     const cdp = createCdp(rnd.ws, { firstId: firstId() });
     cdp.port = rnd.port;   // 窓を外形で探す層（core/chrome/windows.mjs）が、つないだ Chrome のプロセスを引くのに使う
+    cdp.browserId = rnd.path ?? null;   // /devtools/browser/<GUID>。Chrome の起動ごとに変わる（中継が、持ち越した窓の持ち主の Chrome かを確かめる）
     let product = null;
     try { product = (await cdp.send('Browser.getVersion')).product ?? null; }
     catch { cdp.close(); if (!stale(att)) finishAttempt(att, 'protocol', new ChromeConnectionError('protocol')); return; }
@@ -377,6 +378,7 @@ export function createChromeConnection({ locate, os, WebSocketImpl = NodeWebSock
       if (welcome.phase === 'open') {
         const cdp = createCdp(socket, { firstId: welcome.firstId });
         cdp.port = welcome.port;
+        cdp.browserId = welcome.path ?? null;
         let product = null;
         try { product = (await cdp.send('Browser.getVersion')).product ?? null; }
         catch { if (!closedForGood) cdp.close(); return false; }
@@ -389,7 +391,7 @@ export function createChromeConnection({ locate, os, WebSocketImpl = NodeWebSock
       const att = { id: ++seq, stopped: false, cur: null, round: 0, pollTimer: null };
       current = att; userStarted = true; bEntry = { raised: true };   // 確認は前の main が前に出した。出し直しの前面は返さない
       const upgradeAt = Number(welcome.upgradeAt) || clock.now();
-      const rnd = { n: 0, snap: [], prevFg: null, ws: socket, dialog: null, opened: false, selfClose: false, upgradeAt, port: welcome.port,
+      const rnd = { n: 0, snap: [], prevFg: null, ws: socket, dialog: null, opened: false, selfClose: false, upgradeAt, port: welcome.port, path: welcome.path,
         reissueTimer: null, guardTimer: null, yieldTimer: null, finding: false };
       att.cur = rnd;
       setStatus({ state: 'permission', reason: null, dialog: false });
