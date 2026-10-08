@@ -111,6 +111,7 @@ import { plyParts } from './instruction-amount.mjs';
 import { computerPrompt } from './backends/computer-delivery.mjs';
 import { MIN_BUDGET, MAX_BUDGET } from '../web/instruction-amount.mjs';
 import { browserEnvironment, browserInstruction, forgetBrowserEnvironment, chromeRelayBrowser } from './agent-browser.mjs';
+import { createChromeWindowCloser } from './chrome/close-window.mjs';
 import { parentPortViewer } from './browser-viewer.mjs';
 import { getMainPort, setMainPortSource } from './main-port.mjs';
 import { createMainLink, handoverEnabled } from './main-link.mjs';
@@ -256,6 +257,8 @@ const chromeScreencast = chromeRelay ? createChromeScreencast({ host: chromeRela
 const chromeScreencastHub = chromeScreencast ? createScreencastHub({ bridge: chromeScreencast, source: 'chrome' }) : null;
 // エージェントの Chrome の窓の止める・引き継ぐ・戻す（core/chrome/control.mjs、ADR 0148・0154）。戻したときの会話の行は recordChromeHandover
 const chromeControl = chromeRelay ? createChromeControl({ relay: chromeRelay, os: chromeOs, capture: chromeScreencast, log: line => console.log(`  ${line}`), record: ({ sessionId, seconds }) => recordChromeHandover(sessionId, seconds) }) : null;
+const chromeWindowCloser = chromeRelay ? createChromeWindowCloser({ relay: chromeRelay, screencast: chromeScreencast, handoffs: chromeHandoffs,
+  dataDir: store.dataDir, record: recordChromeWindowClose, log: line => console.log(`  ${line}`) }) : null;
 // 人への依頼のカードは、この引き継ぐ・戻すの変化で「あなたが操作中」になり、戻したときに決着する
 chromeHandoffs?.useControl(chromeControl);
 // 会話の端点を出す口（ターンの開始・新しい会話の id の付け替え・ターンの終わり・会話の削除）。Chrome の中継があるホスト（デスクトップ版）だけ。Windows 以外（unsupported）では渡さない（下の browserEnv）
@@ -1365,8 +1368,8 @@ function openComputerPort(entry, backend, token) {
     } });
 }
 
-// ---- ply_browser（エージェントのブラウザー操作の口。core/browser-bridge.mjs、ADR 0148）。ツールはまだ載せていない ----------------------------
-const browserBridge = createBrowserBridge({ handoffs: chromeHandoffs });
+// ---- ply_browser（エージェントのブラウザー操作の口。core/browser-bridge.mjs、ADR 0148） ----------------------------
+const browserBridge = createBrowserBridge({ handoffs: chromeHandoffs, closeWindow: sessionId => chromeWindowCloser?.close(sessionId) });
 /**
  * hand_to_user の呼び出しの時点の会話（ply_computer の owner と同じ形）。ターンの中断の合図と、そのエージェントの待つ長さの区切り
  * （agy は MCP の呼び出しを 3 分で切るので 150 秒、Claude・Codex は 600 秒。core/browser-bridge.mjs の BROWSER_WAIT_SLICE_MS）を返す
@@ -2252,6 +2255,10 @@ chromeControl?.onTap(tap => chromeControlSend({ type: 'chromeTap', ...tap }));
 /** 引き継いで戻したときの会話の行（present kind: 'chromeHandover'）。ターンの外でも出すので、記録して全部の接続へ流す */
 async function recordChromeHandover(sessionId, seconds) {
   const record = await history.recordPresent(sessionId, { kind: 'chromeHandover', chromeHandover: { seconds } });
+  emitGlobal({ type: 'present', sessionId, ...record });
+}
+async function recordChromeWindowClose(sessionId, payload) {
+  const record = await history.recordPresent(sessionId, payload);
   emitGlobal({ type: 'present', sessionId, ...record });
 }
 
@@ -3244,6 +3251,8 @@ async function deleteSessionOf(sessionId) {
     compactionScheduler.cancel(sessionId);
     queuedCompactions.delete(sessionId);
     shellRuns.stopSession(sessionId);
+    try { await chromeWindowCloser?.forget(sessionId); } // 保存中の静止画も待ち、会話の記録を消した後に増やさない
+    catch (error) { console.error('  消す会話の Chrome の窓を閉じられない:', String(error?.message ?? error)); }
     await deleteConversation(sessionId, backend.id);
     await store.removeSession(sessionId);
     deleted = true;
@@ -3269,6 +3278,7 @@ async function deleteSessionOf(sessionId) {
     emitGlobal({ type: "sessionsChanged", sessionId: null, deleted: sessionId });
     return "deleted";
   } finally {
+    if (!deleted) chromeWindowCloser?.revive(sessionId);
     switching.delete(sessionId);
     if (!deleted) completionNotices.changed(sessionId);
   }
@@ -3641,6 +3651,7 @@ const opsChrome = chromeConnection ? {
   raiseDialog: async () => { const result = await chromeConnection.raiseDialog(); return { raised: result.ok === true, method: String(result.method ?? 'none') }; },
   // ビューアの⋯「Chrome で開く」。つながっていなければ Chrome の許可を待つ（カードは出さない）
   open: chromeRelay ? (sessionId, url) => chromeRelay.openForConversation(sessionId, url) : null,
+  closeWindow: chromeWindowCloser ? sessionId => chromeWindowCloser.close(sessionId, { by: 'human' }) : null,
 } : null;
 
 // コンピューターの操作を止める（computer.stop。docs/computer-use.md「computerStop」）。止める側なので、リモートの端末からも AI からも受ける
@@ -6129,6 +6140,7 @@ const handoverRun = createHandover({
   // DB を書き切り、main へ答えてから、データ置き場のロックを放して終わる（以後このプロセスは何も書かない）
   release: async result => {
     await Promise.race([voiceHost.close(), new Promise(resolve => setTimeout(resolve, 2000))]).catch(() => {});
+    chromeWindowCloser?.stop();
     chromeScreencast?.close();
     chromeHandoffs?.close();
     chromeRelay?.close();
@@ -7714,6 +7726,7 @@ wss.on("connection", (ws, req) => {
         case 'chromeResume': return await viaOp('browser.chromeResume');
         case 'chromeStop': return await viaOp('browser.chromeStop');
         case 'chromeOpen': return await viaOp('browser.chromeOpen');
+        case 'chromeCloseWindow': return await viaOp('browser.chromeCloseWindow');
         case "resolvePath": case "revealPath": case "openPath": {
           const hostAction = msg.command !== 'resolvePath';
           if (hostAction && !local) return reply(false, t('files.remoteOnly'));
@@ -8066,6 +8079,7 @@ mainPort.on("message", async ({ data }) => {
   if (data?.type === "shutdown") {
     void voiceHost.close();   // 通話の使用量の台帳を書き切る
     // Chrome に許可の確認を残して終わらない（確認が出ていれば閉じる）。main の返事を待つので、長くても 2 秒まで
+    chromeWindowCloser?.stop();
     chromeScreencast?.close();
     chromeHandoffs?.close();
     chromeRelay?.close();

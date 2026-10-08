@@ -66,7 +66,17 @@ export function setupChromePanel({ cmd, preview, session = () => null, getAgentN
     const empty = el('div', 'cp-empty'); empty.hidden = true;
     const foot = el('div', 'cp-foot weak small');
     const status = el('span', 'cp-fps');
-    foot.append(status);
+    const closeWindow = el('button', 'btn cp-close', t('browser.chromeWindow.close'));
+    closeWindow.type = 'button';
+    closeWindow.onclick = async () => {
+      const id = sessionId;
+      if (!id || !windows.has(id)) return;
+      closeWindow.disabled = true;
+      try { const result = await cmd('chromeCloseWindow', { sessionId: id }); if (result?.failed) notify(t('browser.chromeWindow.closeFailed')); }
+      catch (error) { notify(error?.message || t('browser.chromeWindow.closeFailed')); }
+      finally { closeWindow.disabled = false; }
+    };
+    foot.append(status, closeWindow);
     // 端末から操作する間の文字の欄と添え書き
     const text = el('div', 'cp-text'); text.hidden = true;
     const textInput = el('input'); textInput.setAttribute('aria-label', t('browser.remote.textLabel')); textInput.placeholder = t('browser.remote.textPlaceholder');
@@ -148,7 +158,7 @@ export function setupChromePanel({ cmd, preview, session = () => null, getAgentN
       if (event.key === 'Enter') { event.preventDefault(); sendText(true); }
       else if (event.key === 'Backspace' && !textInput.value) { event.preventDefault(); send({ type: 'key', key: 'Backspace' }); }
     });
-    return { node, slot, screen, img, veil, veilText, hint, empty, text, textInput, note, foot, status, sink, fit, touched: false };
+    return { node, slot, screen, img, veil, veilText, hint, empty, text, textInput, note, foot, status, closeWindow, sink, fit, touched: false };
   }
 
   const nameOf = () => getAgentName() || 'Claude';
@@ -188,6 +198,7 @@ export function setupChromePanel({ cmd, preview, session = () => null, getAgentN
     parts.veil.hidden = !state?.suspended || ended;
     parts.veilText.textContent = t('browser.chromeWindow.suspended');
     parts.screen.classList.toggle('ended', ended);
+    parts.closeWindow.hidden = !windows.has(sessionId);
     const noWindow = !windows.has(sessionId) && !connecting;
     parts.screen.hidden = noWindow; parts.empty.hidden = !noWindow;
     parts.empty.textContent = waiting?.sessionId === sessionId ? waiting.text : t('browser.chromeWindow.none');

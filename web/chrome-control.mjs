@@ -163,4 +163,23 @@ export function renderChromeHandoverLine(ev) {
   return row;
 }
 
+/** 窓を閉じた行と、最後の静止画。画像が無いときも行は残す。 */
+export function renderChromeClosedLine(ev) {
+  // i18n-dynamic: chromeControl.closed.
+  const box = el('div', 'cc-closed');
+  const by = ev?.chromeClosed?.by === 'agent' ? 'agent' : 'human';
+  const row = el('div', 'cc-line');
+  row.append(el('span', 'cc-line-t', t(`chromeControl.closed.${by}`, { name: agentName() })));
+  box.append(row);
+  if (typeof ev?.path === 'string' && ev.path) {
+    const shot = el('img', 'cc-closed-shot');
+    shot.src = `/local-file?path=${encodeURIComponent(ev.path)}`;
+    shot.alt = t('chromeControl.closed.image');
+    shot.loading = 'lazy';
+    shot.dataset.filePath = ev.path;
+    box.append(shot);
+  }
+  return box;
+}
+
 export const chromeControlStore = createChromeControlStore();

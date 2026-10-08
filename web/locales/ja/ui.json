@@ -4092,6 +4092,7 @@
     "banner": "一時停止中 · あなたが Chrome で操作しています",
     "error": { "concealFailed": "窓を隠せなかったので、一時停止のままです。もう一度「戻す」を押してください" },
     "handover": "あなたが引き継ぎ · {{name}} に戻しました · {{duration}}",
+    "closed": { "agent": "{{name}} が窓を閉じました", "human": "Chrome の窓が閉じました", "image": "閉じた窓の最後の画面" },
     "duration": { "minutes": "{{m}} 分 {{s}} 秒", "seconds": "{{s}} 秒" }
   },
   "browser": {
@@ -4149,7 +4150,8 @@
       "deviceNote": "パスワード管理・パスキーは、この端末からは使えません",
       "inputFailed": "Chrome の窓へ送れませんでした",
       "waitingPermission": "Chrome の許可を待っています",
-      "openFailed": "Chrome で開けませんでした"
+      "openFailed": "Chrome で開けませんでした",
+      "close": "窓を閉じる", "closeFailed": "Chrome の窓を閉じられませんでした"
     },
     "remote": {
       "title": "PC のブラウザー",
