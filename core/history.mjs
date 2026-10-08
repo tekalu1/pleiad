@@ -132,6 +132,8 @@ export async function recordPresent(sessionId, payload) {
     ...(payload.kind === 'git' ? { git: payload.git ?? null } : {}),
     // worktree で始めた印の行（ADR 0089）: { id, branch, origin, conflicts: [別の会話の題], count }
     ...(payload.kind === 'worktree' ? { worktree: payload.worktree ?? null } : {}),
+    // 引き継いで戻した行（core/chrome/control.mjs）: { seconds }（引き継いでいた秒数）
+    ...(payload.kind === 'chromeHandover' ? { chromeHandover: { seconds: Number.isFinite(payload.chromeHandover?.seconds) ? Math.max(0, Math.round(payload.chromeHandover.seconds)) : 0 } } : {}),
   };
 
   const inline =

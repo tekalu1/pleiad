@@ -117,6 +117,7 @@ import { createConversationToc } from './conversation-toc.mjs';
 import { setupGitPanel } from './git-panel.mjs';
 import { renderDelegateGit, branchLabel } from './git-view.mjs';
 import { busyPlan, paintWorktreeLine, setWorktreeLineMode, askText, shortPath } from './worktree-ui.mjs';
+import { chromeControlStore, createChromeControlView, setChromeHandoverAgentName } from './chrome-control.mjs';
 import { branchIcon } from './icons.mjs';
 const outboxes = new Map();
 const turnErrorRows = new Map();
@@ -2983,8 +2984,10 @@ function onEvent(ev, replay = false) {
   if (ev.type === 'computer.state') { onComputerState(ev); return; }
   // エージェントのブラウザー（PC の Chrome）への接続の状態。ホストの画面だけに届く（設定 › ブラウザー）
   if (ev.type === 'chromeBrowser') { browserSettings.chromeEvent(ev); return; }
+  // エージェントの Chrome の窓の状態（会話ごと。running・idle・stopped・paused）と、エージェントが押した位置。右パネルの「Chrome の窓」が置き場から引く（web/chrome-control.mjs）
+  if (ev.type === 'chromeControl' || ev.type === 'chromeTap') { chromeControlStore.event(ev); return; }
   // 会話の Chrome の窓の有無と、エージェントが操作中か（リモートの端末にも届く）
-  if (ev.type === 'chromeWindow') { if (chromePanel ? chromePanel.windowEvent(ev) : chromeWindows.apply(ev)) chromeEntry?.paint(); return; }
+  if (ev.type === 'chromeWindow') { if (chromePanel ? chromePanel.windowEvent(ev) : chromeWindows.apply(ev)) { chromeEntry?.paint(); paintChromeControl(); } return; }
   if (!isMine(ev)) {
     // 一覧に効くものだけは取り込む（画面には出さない）。セッションに紐づかないもの（statusIcon 等）はここへ来ない
     if (["status", "group", "title", "fork", "mode", "model", "cwd", "backend", "nextSettings"].includes(ev.type)) {
@@ -6391,11 +6394,13 @@ function loadDraft() {
 $("draftSaved").onclick = () => saveDraft().catch(() => {});
 // 狭い幅の「再試行」。押すと一行は「保存中…」で消えるので、フォーカスは入力欄へ（失敗すれば一行が出直す）
 $("draftFailRetry").onclick = () => { $("prompt").focus(); saveDraft().catch(() => {}); };
+// 引き継いで戻した行（present kind: 'chromeHandover'）の「Claude に戻しました」の名前
+setChromeHandoverAgentName(() => labelOf(activeBackendId()));
 // 内蔵ブラウザー（web/browser-panel.mjs）。デスクトップ版のホストの画面だけ。右パネルの 1 つのモードになる
 let browserEntry = null;   // 頭の行のボタン（下の setupBrowserEntry）。状態の知らせが先に届いても落ちないよう先に宣言する
 // エージェントの Chrome の窓（右パネル「Chrome の窓」。web/chrome-panel.mjs）。会話ごとの窓の有無はサーバーの chromeWindow イベントで届く。知らせが先に届いても受けられるよう表を先に作る
 const chromeWindows = createWindowTable();
-let chromePanel = null, chromeEntry = null;
+let chromePanel = null, chromeEntry = null, chromeControlView = null;   // 状態の知らせが先に届いても落ちないよう先に宣言する
 const browserPanel = browserPanelAvailable()
   ? createBrowserPanel({ showMenu: (x, y, items, title, opts) => showMenu(x, y, items, title, opts), getSessionId: () => state.current ?? null,
     onChange: () => browserEntry?.paint() })
@@ -7174,7 +7179,7 @@ function openContextPage() {
 }
 /** タイトル行の右の入口。押すと右パネル「この会話のコンテキスト」を開閉する。セッションを選んでいないときは出さない */
 function paintContextEntry() {
-  chromePanel?.reset(); chromeEntry?.paint();   // 会話が替わった: Chrome の窓の入口と、開いている別の会話の映像
+  chromePanel?.reset(); chromeEntry?.paint(); paintChromeControl();   // 会話が替わった: Chrome の窓の入口と、開いている別の会話の映像
   paintContextEntryButton($('contextEntry'), { visible: !!state.current, report: state.contextInfo?.report,
     summary: chipText(state.contextInfo), changed: !!state.contextInfo?.changed?.differs });
   paintMoreEntry();
@@ -8433,7 +8438,7 @@ function connect() {
       folderUpload?.online();
       for (const wake of [...onlineWaiters]) wake();
       // Chrome の窓の表はつなぎ直しで作り直す（サーバーは続けて今の分を送る）
-      chromeWindows.clear(); chromeEntry?.paint();
+      chromeWindows.clear(); chromeControlStore.clear(); chromeEntry?.paint(); paintChromeControl();
       // 設定 › アプリ情報の「外の AI から Pleiad を使う」。ホストの画面でだけ取れて、取れたら出す（web/cli-setup.mjs）
       cliSetup.load();
       // OS の操作（エクスプローラー・ブラウザーで開く）を出してよいか。接続元を見てサーバーが答える（遠隔なら false）
@@ -8555,6 +8560,23 @@ $('gitEntry').onclick = () => gitPanel.toggle($('gitEntry'));
 chromePanel = setupChromePanel({ cmd, preview: filePreview, session: () => state.current ?? null, getAgentName: () => labelOf(activeBackendId()), windows: chromeWindows });
 chromeEntry = setupChromeEntry({ button: $('chromeEntry'), panel: chromePanel, getSessionId: () => state.current ?? null, getAgentName: () => labelOf(activeBackendId()),
   available: () => state.hostCaps?.chromeWindow === true });
+// エージェントの Chrome の窓の状態の一行・止める・引き継ぐ・戻す（web/chrome-control.mjs。ADR 0154）。状態の一行は右パネルの映像の上の差し込み口、押した位置の輪は映像の上、
+// 一時停止中の帯は会話の側（入力欄の上）。撮影を断っている間の幕は映像の側が出す。窓があるか一時停止中の会話だけに出す
+chromeControlView = createChromeControlView({
+  getName: () => labelOf(activeBackendId()),
+  run: (action) => cmd({ takeOver: 'chromeTakeOver', resume: 'chromeResume', stop: 'chromeStop' }[action], { sessionId: state.current }),
+  onError: (error) => notify(error?.message || t('chromeControl.failed')),
+});
+chromePanel.mountStatus(chromeControlView.root);
+chromePanel.mountOverlay(chromeControlView.overlay);
+$('chromeBanner').append(chromeControlView.banner);
+function paintChromeControl() {
+  const id = state.current ?? null;
+  const row = id ? chromeControlStore.get(id) : null;
+  chromeControlView?.apply(row && (row.state === 'paused' || chromeWindows.has(id)) ? row : null);
+}
+chromeControlStore.onChange((id) => { if (id === state.current) paintChromeControl(); });
+chromeControlStore.onTap((tap) => { if (tap.sessionId === state.current && chromePanel.isOpen()) chromeControlView?.ring(tap.x, tap.y, chromePanel.frameSize()); });
 document.addEventListener('ply-git-open', (event) => {
   const sessionId = event.detail?.sessionId ?? null;
   if (!sessionId && !state.current) return;

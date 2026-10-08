@@ -54,9 +54,10 @@ const isInt = v => Number.isInteger(v) && Math.abs(v) < 100000;
  * @param [deps.env] 場所の既定の展開に使う環境変数
  * @param [deps.exists] ファイルがあるか（既定は fs.existsSync）
  * @param [deps.timers] 前面の見張りの周期（既定は setInterval / clearInterval）
+ * @param [deps.appHwnd] Pleiad 自身の窓（main の BrowserWindow）のハンドルを返す関数。引き継ぎで窓を戻す画面を、押した時の前面でなく Pleiad の窓のある画面にするのに使う
  */
 function createWin32ChromeOs({ win32, log = () => {}, spawn = childProcess.spawn, env = process.env, exists = fs.existsSync,
-  timers = { setInterval: (fn, ms) => setInterval(fn, ms), clearInterval: handle => clearInterval(handle) }, guardMs = GUARD_MS, now = Date.now }) {
+  timers = { setInterval: (fn, ms) => setInterval(fn, ms), clearInterval: handle => clearInterval(handle) }, guardMs = GUARD_MS, now = Date.now, appHwnd = null }) {
   const refs = new Map();   // id -> { hwnd, kind: 'dialog' | 'foreign' | 'agent', ex0?, concealed? }
   const browsers = new Map();   // id -> { path, product }
   let browserSeq = 0;
@@ -188,6 +189,14 @@ function createWin32ChromeOs({ win32, log = () => {}, spawn = childProcess.spawn
       if (win32.foreground() !== entry.hwnd) return false;
       return bring(target.hwnd) !== 'failed';
     } catch { return false; }
+  }
+
+  /** Pleiad 自身の窓（引き継ぎで窓を戻す画面の手がかり。リモートの端末から押したときも、PC の Pleiad の窓のある画面を指す）。無い・閉じていれば null */
+  function appWindow() {
+    let hwnd = 0;
+    try { hwnd = appHwnd ? Number(appHwnd()) || 0 : 0; } catch { hwnd = 0; }
+    if (!hwnd || !alive(hwnd)) return null;
+    return remember(hwnd, 'foreign');
   }
 
   function foreground() {
@@ -379,6 +388,14 @@ function createWin32ChromeOs({ win32, log = () => {}, spawn = childProcess.spawn
         const x = monitor.x + Math.max(0, Math.round((monitor.width - width) / 2)), y = monitor.y + Math.max(0, Math.round((monitor.height - height) / 2));
         win32.setWindowPos(entry.hwnd, x, y, width, height, SWP_NOZORDER | SWP_NOACTIVATE);
       }
+      // 隠していたときに一緒に隠した持ち主つきの窓（Chrome の吹き出し: 許可の確認・パスワードの保存など）も見える形に戻す
+      // （引き継ぎの間に出す吹き出しを人が見て答えられるように。戻すときは見張りがまた隠す）
+      for (const [id, other] of [...refs]) {
+        if (other === entry || other.kind !== 'agent' || !other.concealed) continue;
+        let owner = 0;
+        try { owner = win32.ownerOf(other.hwnd); } catch { continue; }
+        if (owner === entry.hwnd) reveal({ id }, { near });
+      }
       return true;
     } catch (error) {
       log(`reveal failed: ${error.message}`);
@@ -435,9 +452,9 @@ function createWin32ChromeOs({ win32, log = () => {}, spawn = childProcess.spawn
 
   /**
    * exportAgent の印から、隠している窓の記録を作り直す（新しい main）。窓がもう無い・ブラウザーの窓でない印には null（窓には触らない）。
-   * 作り直した窓は隠しているものとして前面の見張りに入る
+   * 作り直した窓は隠しているものとして前面の見張りに入る（revealed: true の窓は人が操作中なので、隠さず見張りにも入れない）
    */
-  function adoptAgent(token) {
+  function adoptAgent(token, { revealed = false } = {}) {
     const match = /^(\d{1,20}):(\d{1,10})$/.exec(String(token ?? ''));
     if (!match) return null;
     const hwnd = Number(match[1]);
@@ -450,9 +467,10 @@ function createWin32ChromeOs({ win32, log = () => {}, spawn = childProcess.spawn
       if (!ref) return null;
       const entry = refs.get(ref.id);
       entry.ex0 = Number(match[2]) >>> 0;
-      entry.concealed = true;
+      // 人が操作している窓（revealed）は隠さない・見張らない（戻すときの conceal が元のスタイルで隠す）
+      entry.concealed = !revealed;
       entry.closeAt = 0;
-      startGuard();
+      if (!revealed) startGuard();
       return ref;
     } catch (error) {
       log(`adopt agent failed: ${error.message}`);
@@ -485,8 +503,9 @@ function createWin32ChromeOs({ win32, log = () => {}, spawn = childProcess.spawn
     let handles = [];
     try { handles = win32.topLevelWindows(); } catch { return; }
     for (const hwnd of handles) {
-      const kind = refs.get(String(hwnd))?.kind;
-      if (hidden.has(hwnd) || kind === 'agent' || kind === 'dialog') continue;
+      const known_ = refs.get(String(hwnd));
+      // すでに隠した窓・確認の窓は対象外。引き継ぎで見える形に戻した吹き出し（kind は agent のまま）は、持ち主をまた隠したときに隠し直す
+      if (hidden.has(hwnd) || known_?.kind === 'dialog' || (known_?.kind === 'agent' && known_.concealed)) continue;
       let owner = 0;
       try { owner = win32.ownerOf(hwnd); } catch { continue; }
       if (!owner || !hidden.has(owner)) continue;
@@ -557,7 +576,7 @@ function createWin32ChromeOs({ win32, log = () => {}, spawn = childProcess.spawn
 
   return {
     capabilities: () => ({ supported: true, reason: null, features: FEATURES }),
-    snapshotWindows, findPermissionDialog, raise, yieldForeground, foreground, close,
+    snapshotWindows, findPermissionDialog, raise, yieldForeground, foreground, appWindow, close,
     locateBrowser, launchWindow, findWindowByNonce, findWindowByBounds, hiddenSpot, conceal, reveal, release, closeAgent,
     exportAgent, adoptAgent, reconceal, closeAllAgents,
     /** テスト用: 見張りを 1 回だけ回す・止める */

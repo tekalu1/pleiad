@@ -5,7 +5,7 @@
 const { createWin32ChromeOs } = require('./win32.cjs');
 
 const FEATURES_NONE = Object.freeze({ dialog: false, raise: false, launch: false, conceal: false, watch: false, bounds: false });
-const ACTIONS = new Set(['snapshotWindows', 'findPermissionDialog', 'raise', 'yieldForeground', 'foreground', 'close',
+const ACTIONS = new Set(['snapshotWindows', 'findPermissionDialog', 'raise', 'yieldForeground', 'foreground', 'appWindow', 'close',
   'locateBrowser', 'launchWindow', 'findWindowByNonce', 'findWindowByBounds', 'hiddenSpot', 'conceal', 'reveal', 'release', 'closeAgent', 'exportAgent', 'adoptAgent']);
 
 /**
@@ -22,6 +22,7 @@ function createChromeOs({ platform = process.platform, win32 = null, reason = 'n
     raise: () => ({ ok: false, method: 'unsupported' }),
     yieldForeground: () => false,
     foreground: () => null,
+    appWindow: () => null,
     close: () => false,
     locateBrowser: () => null,
     launchWindow: () => ({ ok: false, reason: 'unsupported' }),
@@ -66,7 +67,7 @@ function attachChromeOs(worker, { chromeOs, log = () => {} }) {
         case 'release': result = chromeOs.release(a.ref); break;
         case 'closeAgent': result = chromeOs.closeAgent(a.ref); break;
         case 'exportAgent': result = chromeOs.exportAgent(a.ref); break;
-        case 'adoptAgent': result = chromeOs.adoptAgent(a.token); break;
+        case 'adoptAgent': result = chromeOs.adoptAgent(a.token, { revealed: a.revealed === true }); break;
         default: result = chromeOs[action](); break;
       }
       post({ type: 'chrome-os-result', id, ok: true, result });

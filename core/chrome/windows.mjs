@@ -13,6 +13,8 @@
 //   - 更新（ADR 0167）: 隠した窓は閉じずに持ち越す。窓ごとの印（os.exportAgent）を snapshot() で接続の子に預け（relay の carry）、新しいサーバーが
 //     restore() で受けて、main の層が戻ったら readopt()（os.adoptAgent）で記録を作り直す。層が窓を引き継げなかった窓は readopt() の返り値で relay に渡し、CDP で閉じる
 //     main が居ない間（層が pending）に窓を開く・採用する依頼は、readyWaitMs だけ待ち、それでも戻らなければ「更新中」で失敗させる
+// 引き継ぎ（ADR 0154。control.mjs が呼ぶ）: reveal は会話の窓を見える形に戻して（Pleiad の窓のある画面の中へ）前に出し、conceal は画面の外の見えない窓に戻す。
+// 見えている間は、層の前面の見張りがその窓を見ない（層の reveal が窓の隠した印を外す）。見えている間に開いた popup は隠さず、戻すときに探して隠す
 // 窓の大きさ（DIP）は Pleiad が決める（Browser.setWindowBounds）。窓の ref は層が出した値で、core は覚えて返すだけ。
 // ログには窓の題・URL・プロフィール名を出さない。
 import crypto from 'node:crypto';
@@ -207,6 +209,7 @@ export function createChromeWindows({ os, locate, log = () => {}, random = () =>
       try { await osReady(); } catch (error) { log(`chrome-windows: ${error.message}`); return; }
       const features = os.capabilities().features;
       if (!features.conceal || !features.bounds) return;
+      if (entry.revealed) return;   // 人が引き継いでいる間。人の窓を画面の外へ動かさない（戻すときに探して隠す）
       const ref = await findByBounds(cdp, windowId, baseline, { waitMs: time.popupWaitMs });
       if (!ref) { log('chrome-windows: popup window not found, so it was not hidden'); return; }
       if (entry.windows.get(windowId) !== record) { await os.closeAgent(ref).catch(() => {}); return; }   // 先に閉じられた
@@ -215,6 +218,61 @@ export function createChromeWindows({ os, locate, log = () => {}, random = () =>
       record.token = await os.exportAgent(ref);
       changed();
     },
+
+    /**
+     * 引き継ぎ: 会話の窓を見える形に戻し、near（層が出した ref。Pleiad の窓）のある画面の中へ置き、front（windowId。無ければ最初の窓）を前に出す。
+     * 見える形に戻せた窓が無ければ revealed: 0（呼び出し側が引き継ぎをやめる）
+     * @returns {Promise<{ revealed: number, raised: boolean }>}
+     */
+    async reveal({ entryId, near = null, front = null } = {}) {
+      const entry = entries.get(entryId);
+      if (!entry) return { revealed: 0, raised: false };
+      const records = [...entry.windows.entries()].filter(([, record]) => record.ref);
+      if (!records.length) return { revealed: 0, raised: false };
+      entry.near = near;
+      entry.revealed = true;
+      const shown = [];
+      for (const [windowId, record] of records) if (await os.reveal(record.ref, { near })) shown.push([windowId, record]);
+      if (!shown.length) { entry.revealed = false; entry.near = null; return { revealed: 0, raised: false }; }
+      const target = (shown.find(([windowId]) => windowId === front) ?? shown.find(([, record]) => record.role === 'main') ?? shown[0])[1];
+      const raised = (await os.raise(target.ref))?.ok === true;
+      changed();   // 見せている窓の印を預け直す（サーバーが入れ替わっても、人が操作している窓を隠さない）
+      return { revealed: shown.length, raised };
+    },
+
+    /**
+     * 引き継ぎを終える: 窓を画面の外の見えない窓に戻す。人が前面に置いていた窓が前面のままにならないよう、今の前面（隠す窓でなければ。
+     * 隠す窓なら引き継ぎを始めたときの前面）へ返す。見えている間に開いた popup（人がタブを引き離して作った窓も含む）は、ここで探して隠す。cdp は popup を探すのに使う
+     * @returns {Promise<{ concealed: number, failed: number }>} failed: 隠せなかった窓（隠す処理が失敗した・popup の窓を見つけられなかった）の数。0 でなければ、呼び出し側は引き継ぎを解かない
+     */
+    async conceal({ entryId, cdp = null } = {}) {
+      const entry = entries.get(entryId);
+      if (!entry) return { concealed: 0, failed: 0 };
+      entry.revealed = false;
+      const near = entry.near ?? null;
+      entry.near = null;
+      const records = [...entry.windows];
+      const own = new Set(records.filter(([, record]) => record.ref).map(([, record]) => record.ref.id));
+      const fg = await os.foreground();
+      const to = fg && !own.has(fg.id) ? fg : near;
+      const features = os.capabilities().features;
+      let concealed = 0, failed = 0;
+      for (const [windowId, record] of records) {
+        if (record.ref) {
+          if (await hide(record.ref, to)) concealed += 1; else failed += 1;
+        } else if (record.role === 'popup') {
+          const ref = cdp && features.conceal && features.bounds ? await findByBounds(cdp, windowId, baseline, { waitMs: time.popupWaitMs }).catch(() => null) : null;
+          if (!ref) { log('chrome-windows: popup window not found, so it was not hidden'); failed += 1; continue; }
+          record.ref = ref;
+          if (await hide(ref, to)) { concealed += 1; record.token = await os.exportAgent(ref); } else failed += 1;
+        }
+      }
+      changed();
+      return { concealed, failed };
+    },
+
+    /** 見える形に戻してあるか（引き継ぎ中） */
+    isRevealed(entryId) { return entries.get(entryId)?.revealed === true; },
 
     /** 窓のタブがすべて無くなった（窓だけ閉じられた）。窓の記録を捨てる。次のタブは、窓が無ければ開き直す */
     windowClosed(entryId, windowId) {
@@ -242,6 +300,7 @@ export function createChromeWindows({ os, locate, log = () => {}, random = () =>
       for (const entry of entries.values()) {
         for (const record of entry.windows.values()) if (record.ref) os.closeAgent(record.ref).catch(() => {});
         entry.windows.clear();
+        entry.revealed = false; entry.near = null;   // 引き継ぎ中だった窓ももう無い
       }
       changed();
     },
@@ -256,8 +315,9 @@ export function createChromeWindows({ os, locate, log = () => {}, random = () =>
     snapshot() {
       const out = [];
       for (const [id, entry] of entries) {
-        const windows = [...entry.windows].filter(([, record]) => record.token).map(([windowId, record]) => ({ windowId, role: record.role, token: record.token }));
-        if (windows.length) out.push({ id, windows });
+        // 見せている間に開いた popup は、まだ層の印が無い（戻すときに外形で探して隠す）。窓の ID だけ預けて、新しいサーバーでも範囲に戻す
+        const windows = [...entry.windows].filter(([, record]) => record.token || record.role === 'popup').map(([windowId, record]) => ({ windowId, role: record.role, token: record.token ?? null }));
+        if (windows.length) out.push({ id, ...(entry.revealed ? { revealed: true } : {}), windows });
       }
       return out;
     },
@@ -267,9 +327,11 @@ export function createChromeWindows({ os, locate, log = () => {}, random = () =>
       for (const item of Array.isArray(saved) ? saved : []) {
         if (typeof item?.id !== 'string' || !Array.isArray(item.windows)) continue;
         const entry = entryOf(item.id);
+        if (item.revealed === true) entry.revealed = true;   // 人が操作している窓。隠さない・戻すまで popup も隠さない
         for (const w of item.windows) {
-          if (!Number.isSafeInteger(w?.windowId) || typeof w.token !== 'string' || entry.windows.has(w.windowId)) continue;
-          entry.windows.set(w.windowId, { ref: null, nonce: null, role: typeof w.role === 'string' ? w.role : 'extra', token: w.token });
+          const popup = w?.role === 'popup' && w.token == null;
+          if (!Number.isSafeInteger(w?.windowId) || (typeof w.token !== 'string' && !popup) || entry.windows.has(w.windowId)) continue;
+          entry.windows.set(w.windowId, { ref: null, nonce: null, role: typeof w.role === 'string' ? w.role : 'extra', token: popup ? null : w.token });
         }
       }
     },
@@ -284,9 +346,10 @@ export function createChromeWindows({ os, locate, log = () => {}, random = () =>
       for (const [entryId, entry] of [...entries]) {
         for (const [windowId, record] of [...entry.windows]) {
           if (!record.token) continue;
-          const ref = await os.adoptAgent(record.token).catch(() => null);
+          // 見せている窓は、層に「隠していない窓」として引き継がせる（前面の見張りが人の窓を画面の外へ戻さない）
+          const ref = await os.adoptAgent(record.token, { revealed: entry.revealed === true }).catch(() => null);
           if (ref) record.ref = ref;
-          else { entry.windows.delete(windowId); lost.push({ entryId, windowId }); }
+          else { entry.windows.delete(windowId); lost.push({ entryId, windowId, revealed: entry.revealed === true }); }
         }
       }
       if (lost.length) { log(`chrome-windows: ${lost.length} window(s) could not be taken over`); changed(); }

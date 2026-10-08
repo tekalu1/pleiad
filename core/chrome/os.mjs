@@ -19,6 +19,7 @@
 // raise(ref)                             → Promise<{ ok: boolean, method: string }>  窓を前に出す（最小化なら戻す）。method は direct・attach・failed など
 // yieldForeground(ref, { to })           → Promise<boolean>  ref が前面を取っていたら to（直前の前面）に返す
 // foreground()                           → Promise<{ id: string, browser: boolean } | null>  今の前面の窓。browser はブラウザー自身の窓か
+// appWindow()                            → Promise<WindowRef | null>  Pleiad 自身の窓（Electron main の窓）。引き継ぎで窓を戻す画面を、押した時の前面でなく Pleiad の窓のある画面にする
 // close(ref)                             → Promise<boolean>  確認の窓を閉じる（層が確認として出した ref だけ）
 //
 // エージェントの専用の窓（ADR 0154。core/chrome/windows.mjs が使う）。層が出した ref・browser 以外には何もしない
@@ -40,7 +41,7 @@
 //                                          （画面の外・透明のまま誰にも戻せない窓を残さない）。Chrome との接続が切れたとき・窓の開きかけの失敗に使う。
 //                                          main は Pleiad の終了でも、隠している窓を全部これと同じに片付ける（closeAllAgents。main の中だけの口で、core からは呼ばない）
 // exportAgent(ref)                      → Promise<string | null>  隠している窓を main の入れ替わりを越えて渡す印にする（窓は閉じない・戻さない。ADR 0167）。隠していない窓には null
-// adoptAgent(token)                      → Promise<WindowRef | null>  印から窓の記録を作り直す（新しい main の層）。窓がもう無い・ブラウザーの窓でなければ null。作った窓は隠しているものとして見張る
+// adoptAgent(token, { revealed })        → Promise<WindowRef | null>  印から窓の記録を作り直す（新しい main の層）。窓がもう無い・ブラウザーの窓でなければ null。作った窓は隠しているものとして見張る（revealed: true は人が操作中の見せている窓。隠さず見張らない）
 // 画面の構成が変わったときの置き直し（reconceal）は main が Electron の screen のイベントで呼ぶので、core から呼ぶ口は無い
 
 const FEATURES_NONE = Object.freeze({ dialog: false, raise: false, launch: false, conceal: false, watch: false, bounds: false });
@@ -58,6 +59,7 @@ export function unsupportedChromeOs(reason = 'platform') {
     raise: async () => ({ ok: false, method: 'unsupported' }),
     yieldForeground: async () => false,
     foreground: async () => null,
+    appWindow: async () => null,
     close: async () => false,
     locateBrowser: async () => null,
     launchWindow: async () => ({ ok: false }),
@@ -153,6 +155,7 @@ export function parentPortChromeOs(port, { timeoutMs = CALL_TIMEOUT_MS, readyWai
     raise: ref => call('raise', { ref }, { ok: false, method: 'failed' }),
     yieldForeground: (ref, { to } = {}) => call('yieldForeground', { ref, to }, false),
     foreground: () => call('foreground', {}, null),
+    appWindow: () => call('appWindow', {}, null),
     close: ref => call('close', { ref }, false),
     locateBrowser: ({ product = 'chrome' } = {}) => call('locateBrowser', { product }, null),
     launchWindow: ({ browser, profileDir, url, nonce, userDataDir = null, position = null, size = null } = {}) =>
@@ -165,6 +168,6 @@ export function parentPortChromeOs(port, { timeoutMs = CALL_TIMEOUT_MS, readyWai
     release: ref => call('release', { ref }, false),
     closeAgent: ref => call('closeAgent', { ref }, false),
     exportAgent: ref => call('exportAgent', { ref }, null),
-    adoptAgent: token => call('adoptAgent', { token }, null),
+    adoptAgent: (token, options = {}) => call('adoptAgent', { token, revealed: options.revealed === true }, null),
   };
 }

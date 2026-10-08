@@ -29,12 +29,13 @@ export function changedRatio(a, b, delta = SETTLE.pixelDelta) {
 }
 
 /**
- * 静止まで待つ。戻りは { settled: true, sawChange } か、締め切りを過ぎたら { settled: false, sawChange }。
- * allowAlreadyStill なら、firstChangeMs の間に変化が無いとき最初から静止していたことにする（sawChange: false）
+ * 静止まで待つ。戻りは { settled: true, sawChange, last } か、締め切りを過ぎたら { settled: false, sawChange, last }（last は最後に撮ったコマ）。
+ * allowAlreadyStill なら、firstChangeMs の間に変化が無いとき最初から静止していたことにする（sawChange: false）。
+ * base があれば、それを最初のコマとして比べる（聞いている間に変わった画面を見落とさない）
  */
-async function untilStill({ grab, deadline, allowAlreadyStill, now, sleep, check, o }) {
+async function untilStill({ grab, base, deadline, allowAlreadyStill, now, sleep, check, o }) {
   const start = now();
-  let prev = await grab();
+  let prev = base ?? await grab();
   let lastChange = null;
   let next = start + o.intervalMs;
   for (;;) {
@@ -42,15 +43,15 @@ async function untilStill({ grab, deadline, allowAlreadyStill, now, sleep, check
     if (wait > 0) await sleep(Math.min(wait, Math.max(0, deadline - now())));
     check();
     const t = now();
-    if (t >= deadline) return { settled: false, sawChange: lastChange !== null };
+    if (t >= deadline) return { settled: false, sawChange: lastChange !== null, last: prev };
     next = Math.max(next + o.intervalMs, t);
     const frame = await grab();
     check();
     const at = now();
     if (changedRatio(prev, frame, o.pixelDelta) >= o.changedRatio) lastChange = at;
     prev = frame;
-    if (lastChange !== null && at - lastChange >= o.stillMs) return { settled: true, sawChange: true };
-    if (lastChange === null && allowAlreadyStill && at - start >= o.firstChangeMs) return { settled: true, sawChange: false };
+    if (lastChange !== null && at - lastChange >= o.stillMs) return { settled: true, sawChange: true, last: prev };
+    if (lastChange === null && allowAlreadyStill && at - start >= o.firstChangeMs) return { settled: true, sawChange: false, last: prev };
   }
 }
 
@@ -70,10 +71,10 @@ export async function settle({ grab, ask = null, timeoutMs, now = Date.now, slee
   const o = { ...SETTLE, ...options };
   const start = now();
   const deadline = start + timeoutMs;
-  let asks = 0, p = null, sawChange = false, allowAlreadyStill = true;
+  let asks = 0, p = null, sawChange = false, allowAlreadyStill = true, base = null;
   const out = (done, end, extra = {}) => ({ done, end, waitedMs: Math.max(0, Math.round(now() - start)), asks, p, sawChange, ...extra });
   for (;;) {
-    const s = await untilStill({ grab, deadline, allowAlreadyStill, now, sleep, check, o });
+    const s = await untilStill({ grab, base, deadline, allowAlreadyStill, now, sleep, check, o });
     sawChange ||= s.sawChange;
     if (!s.settled) return out(false, 'timeout');
     if (!ask) return out(true, 'still');
@@ -84,8 +85,10 @@ export async function settle({ grab, ask = null, timeoutMs, now = Date.now, slee
     if (!r.ok) return out(false, 'ask_failed', { code: r.code });
     p = r.p;
     if (p >= o.doneAt) return out(true, 'yes');
-    // いいえ: 次の変化と静止を待って聞き直す（今の静止をもう一度数えない）
+    // いいえ: 次の変化と静止を待って聞き直す（今の静止をもう一度数えない）。
+    // 比べる元は聞く前の静止したコマ。聞いている間（往復の数百 ms）に変わって止まった画面も、次の変化として数える
     allowAlreadyStill = false;
+    base = s.last;
     if (now() >= deadline) return out(false, 'timeout');
   }
 }

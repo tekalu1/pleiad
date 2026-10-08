@@ -502,6 +502,34 @@ export default async function (t) {
     t.ok('置き直し（reconceal）は吹き出しの窓も対象（親の窓と合わせて 3 つ）', os.reconceal() === 3 && w.windows.get(520).rect.left === 2920);
   }
 
+  // ===== 見直しの修正（第 6 段）: 引き継ぎで窓を戻すとき、隠していた吹き出し（持ち主つきの窓）も見える形に戻す。Pleiad 自身の窓を引ける =====
+  {
+    const w = winWith();
+    w.add(520, { title: 'このページを翻訳しますか？', owner: 500, rect: { left: 300, top: 150, right: 900, bottom: 400 } });   // 持ち主 = 隠す窓
+    w.add(521, { title: 'ほかの Chrome の吹き出し', owner: 700, rect: { left: 400, top: 150, right: 900, bottom: 400 } });   // 持ち主が隠す窓でない
+    const os = createWin32ChromeOs({ win32: w, timers: { setInterval: () => 1, clearInterval: () => {} }, appHwnd: () => 700 });
+    const ref = os.findWindowByNonce(NONCE);
+    os.conceal(ref);
+    t.ok('前提: 吹き出しは隠れている', w.windows.get(520).alpha === 0 && w.windows.get(520).rect.left === 5480);
+    const app = os.appWindow();
+    t.ok('appWindow は Pleiad の窓の ref（層が覚えた窓。知らない値には何もしない）', app?.id === '700' && os.raise({ id: '999' }).method === 'unknown');
+    t.ok('reveal の near に appWindow を渡せる（その窓のあるモニターの中へ戻す）', os.reveal(ref, { near: app }) === true && w.windows.get(500).rect.left >= 2560);
+    const bubble = w.windows.get(520);
+    t.ok('隠していた吹き出しも見える形に戻す（不透明・タスクバー・マウスを受ける）。画面の中へ', bubble.alpha === 255 && !(bubble.exStyle & WS_EX_TOOLWINDOW) && !(bubble.exStyle & WS_EX_TRANSPARENT) && bubble.rect.left < 5480, JSON.stringify(bubble.rect));
+    t.ok('持ち主が隠す窓でない窓は触らない', w.windows.get(521).alpha === undefined && w.windows.get(521).rect.left === 400);
+    os.guardTick();
+    t.ok('見えている間は、見張りが吹き出しをまた隠さない', bubble.alpha === 255 && bubble.rect.left < 5480);
+    t.ok('戻すと、親の窓と一緒に吹き出しもまた隠す', os.conceal(ref) === true && (os.guardTick(), bubble.alpha === 0 && bubble.rect.left === 5480));
+    os.stopGuard();
+    const none = createWin32ChromeOs({ win32: winWith(), timers: { setInterval: () => 1, clearInterval: () => {} } });
+    t.ok('appHwnd が無ければ appWindow は null', none.appWindow() === null);
+    const gone = createWin32ChromeOs({ win32: winWith(), timers: { setInterval: () => 1, clearInterval: () => {} }, appHwnd: () => 424242 });
+    t.ok('窓がもう無ければ appWindow は null（投げない）', gone.appWindow() === null);
+    const bad = createWin32ChromeOs({ win32: winWith(), timers: { setInterval: () => 1, clearInterval: () => {} }, appHwnd: () => { throw new Error('boom'); } });
+    t.ok('appHwnd が投げても appWindow は null', bad.appWindow() === null);
+  }
+
+
   // ===== 見直しの修正: 外形で窓を探すときの絞り込み（つないだ Chrome のプロセス・開く前の写し・許容） =====
   {
     const BOUNDS = { left: 0, top: 0, width: 324, height: 298 };
@@ -725,6 +753,21 @@ export default async function (t) {
       const again = next.adoptAgent(token);
       t.ok('新しい層が印から記録を作り直す（隠したまま・元のスタイルも引き継ぐ）', again?.id === '500' && w.windows.get(500).alpha === 0 && next.reveal(again) === true && w.windows.get(500).alpha === 255 && w.windows.get(500).exStyle === 0x200000, JSON.stringify(w.windows.get(500)));
       t.ok('壊れた印・知らない窓・窓の無い印は null（窓には触らない）', next.adoptAgent('x') === null && next.adoptAgent('500') === null && next.adoptAgent('999:0') === null && next.adoptAgent(null) === null && next.adoptAgent('0:0') === null);
+      {
+        // 人が操作中の窓（引き継ぎ中）を新しい層が引き継ぐ: 見える形のまま。隠した窓として見張らず、戻すときの conceal で隠せる
+        const w2 = winWith();
+        const o1 = createWin32ChromeOs({ win32: w2, timers: noTimers().timers });
+        const r1 = o1.findWindowByNonce(NONCE);
+        o1.conceal(r1);
+        const tok = o1.exportAgent(r1);
+        o1.reveal(r1);
+        const visible = { ...w2.windows.get(500) };
+        const o2 = createWin32ChromeOs({ win32: w2, timers: noTimers().timers });
+        const shown = o2.adoptAgent(tok, { revealed: true });
+        t.ok('見せている窓の印は、隠さずに引き継ぐ（人の窓を画面の外へ戻さない。隠した窓ではないので exportAgent は null）',
+          shown?.id === '500' && w2.windows.get(500).alpha === visible.alpha && w2.windows.get(500).exStyle === visible.exStyle && o2.exportAgent(shown) === null && o2.reveal(shown) === false);
+        t.ok('引き継いだ見せている窓は、戻すときの conceal で隠せる', o2.conceal(shown) === true && w2.windows.get(500).alpha === 0 && /^500:\d+$/.test(o2.exportAgent(shown)));
+      }
       const dialogW = fakeWin32(); dialogW.add(910, DIALOG);
       const dialogOs = createWin32ChromeOs({ win32: dialogW });
       const dialogRef = dialogOs.findPermissionDialog({ since: [] });
@@ -736,6 +779,28 @@ export default async function (t) {
       const unsupported = createChromeOs({ platform: 'linux' });
       t.ok('使えない OS の closeAgent・closeAllAgents は何もしない', unsupported.closeAgent({ id: '1' }) === false && unsupported.closeAllAgents() === 0);
     }
+  }
+
+  // ===== 引き継ぎの往復（ADR 0154。第 6 段）: 隠す → 戻して前に出す（見張りは返さない）→ 隠し直す（また見張る）=====
+  {
+    const w = winWith();
+    const os = createWin32ChromeOs({ win32: w, timers: { setInterval: () => 1, clearInterval: () => {} } });
+    const ref = os.findWindowByNonce(NONCE);
+    os.conceal(ref);
+    const pleiad = os.foreground();   // 押された直後の前面（メモ帳の代わり）
+    w.fg = 700;
+    t.ok('引き継ぐ: 戻す → 前に出す（直接の SetForegroundWindow が通れば direct）', os.reveal(ref, { near: pleiad }) === true && os.raise(ref).ok === true && w.fg === 500 && w.windows.get(500).alpha === 255);
+    os.guardTick(); os.guardTick();
+    t.ok('見えている間は見張りが前面を返さない（引き継いだ窓が前面のまま）', w.fg === 500, String(w.fg));
+    w.fg = 700; os.guardTick(); w.fg = 500; os.guardTick();
+    t.ok('人が窓を行き来しても返さない', w.fg === 500);
+    w.fg = 700; os.guardTick();   // 人が Pleiad に戻った（「Claude に戻す」を押す）
+    t.ok('戻す: 隠し直せる（スタイルを取り直しても元の状態に戻る）', os.conceal(ref) === true && w.windows.get(500).alpha === 0 && (w.windows.get(500).exStyle & WS_EX_TOOLWINDOW) !== 0 && w.windows.get(500).rect.left >= 5480);
+    w.fg = 500; os.guardTick();
+    t.ok('隠し直したあとは、また見張る（隠した窓が前面を取ったら返す）', w.fg === 700, String(w.fg));
+    os.reveal(ref);
+    t.ok('もう一度戻すと元のスタイル（APPWINDOW でなく元の拡張スタイル）へ戻る', w.windows.get(500).exStyle === WS_NOREDIRECTION && w.windows.get(500).alpha === 255, w.windows.get(500).exStyle.toString(16));
+    os.stopGuard();
   }
 
   // ===== 往復（core ⇄ main ⇄ 偽の Win32）: エージェントの窓の口 =====
@@ -751,6 +816,7 @@ export default async function (t) {
     await core.ready();
     const browser = await core.locateBrowser({ product: 'chrome' });
     t.ok('locateBrowser の往復', browser?.product === 'chrome' && typeof browser.id === 'string');
+    t.ok('appWindow の往復（Pleiad の窓の手がかりが無ければ null）', await core.appWindow() === null);
     const launched = await core.launchWindow({ browser, profileDir: 'Default', url: NONCE_URL, nonce: NONCE, userDataDir: 'C:\\t\\ud', position: { x: 1, y: 2 }, size: { width: 3, height: 4 } });
     t.ok('launchWindow の往復（引数が chrome.exe の引数になる）', launched.ok === true && spawned.at(-1).args.includes('--user-data-dir=C:\\t\\ud') && spawned.at(-1).args.includes('--window-position=1,2'));
     const ref = await core.findWindowByNonce(NONCE);

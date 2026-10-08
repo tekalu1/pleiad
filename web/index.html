@@ -27,6 +27,7 @@
 <link rel="stylesheet" href="/git.css">
 <link rel="stylesheet" href="/chrome-panel.css">
 <link rel="stylesheet" href="/worktree.css">
+<link rel="stylesheet" href="/chrome-control.css">
 <link rel="stylesheet" href="/channels-side.css">
 <link rel="stylesheet" href="/channels-feed.css">
 <link rel="stylesheet" href="/channels-thread.css">
@@ -246,6 +247,8 @@
         <button type="button" class="usage-chip" id="usageChip" hidden aria-haspopup="dialog" aria-expanded="false" aria-controls="usagePop"></button>
         <div class="work-entry" id="workEntry" hidden><button type="button" class="strip-chip bg-chip" id="workEntryButton" aria-controls="workDialog"></button></div>
       </div>
+      <!-- エージェントの Chrome の窓を引き継いでいる間の帯（web/chrome-control.mjs。ADR 0154） -->
+      <div id="chromeBanner"></div>
       <div id="outbox" class="outbox" aria-live="polite" hidden></div>
       <div class="next-settings" id="nextSettings" role="status" hidden><div><b data-i18n="chat.next.title"></b><div id="nextSettingsText"></div><div class="next-behind" id="nextSettingsBehind" hidden></div><details class="next-handoff" id="nextHandoff" hidden></details></div><button type="button" class="btn" id="cancelSettings" data-i18n="chat.next.cancel"></button></div>
       <div class="settings-error" id="settingsError" role="alert"></div>
