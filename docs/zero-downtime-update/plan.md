@@ -1,5 +1,7 @@
 # 無停止の更新 — 段階に分けた実装計画
 
+> ブラウザーの記述について（2026-10-08）: この文書に残る内蔵ブラウザーのエージェント操作・CDP の中継・中継の復元の計画と計測は、Chrome へ移す前の記録。ADR 0148 の第 7 段で `desktop/browser-relay.cjs`・`browser-navigation.cjs`・`agent-browser-bridge.cjs` と `AGENT_HOST_AGENT_BROWSER` は削除した。現在のエージェント操作は Chrome の中継だけで、ビューアのタブの写しと読み込みの方針は `core/browser-viewer.mjs` と `desktop/browser-viewer-bridge.cjs` が扱う。現在の動きは [ブラウザー](../inapp-browser.md) を参照。
+
 - 状態: 確定（2026-10-06）。段階 0 は完了し、その実測で段階 1 以降を直した。**段階 1 は実装・検証済み**（2026-10-06。パッケージ版の既定は on。署名した版・スマホ・利用者の操作が要る確認だけが残り、手順は [stage1-7.md](stage1-7.md) の「利用者に頼む確認」） **段階 2 は実装済み**（2026-10-07。0.12.0-beta.3。Claude を保持役に載せるのは既定で on）。**段階 3 は実装済み**（2026-10-07。Codex・agy・`!` の行。既定で on。本物のインストーラーをまたぐ確認はまだ）
 - 設計: [design.md](design.md)。決定: [ADR 0151](../adr/0151-zero-downtime-update.md)。実測の記録: [stage0-claude.md](stage0-claude.md)・[stage0-codex-agy.md](stage0-codex-agy.md)・[stage0-runtime.md](stage0-runtime.md)・[stage1-0.md](stage1-0.md)（段階 1 の 1-0）・[stage1-7.md](stage1-7.md)（段階 1 の 1-7。実機の確認）。管理: [issue #54](https://github.com/tekalu1/pleiad/issues/54)
 - 規模の目安: S = 2 日まで、M = 3〜5 日、L = 1〜2 週、XL = 3 週以上（1 人。テストと文書を含む）。段階 0 の前の見積もりを、実測で分かったことに合わせて見直した（下の表）
