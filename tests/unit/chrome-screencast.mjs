@@ -215,4 +215,123 @@ export default async function (t) {
     a1?.close();
     await r.stop();
   }
+  await scenarios(t);
+}
+
+/** ターンの無い会話 s1 に窓のタブが 1 つあり、まだ誰も見ていない状態（focus emulation はどの理由も無いので外れている） */
+async function fresh() {
+  const r = await rig();
+  const a = await agent(await r.relay.endpoint('s1'));
+  const tab = (await a.cmd('Target.createTarget', { url: 'about:blank' })).result.targetId;
+  r.relay.endTurn('s1');
+  await until(() => !r.fake.focusEmulated(tab));
+  const bridge = createChromeScreencast({ host: r.relay.view });
+  const hub = createScreencastHub({ bridge, source: 'chrome' });
+  const messages = [];
+  const client = { send: message => messages.push(message) };
+  return { r, a, tab, bridge, hub, messages, client, fake: r.fake, async done() { bridge.close(); a.close(); await r.stop(); } };
+}
+const size = { width: 400, height: 300 };
+
+/** 見直しの指摘（第 5 段）の競合・後始末。それぞれ別の偽の Chrome で流す */
+async function scenarios(t) {
+  // ---- 1. 閉じてすぐ開き直しても、focus emulation は外れない（古い見張りの「手放す」が新しい見張りの理由を消さない）----
+  {
+    const x = await fresh();
+    try {
+      await x.hub.watch(x.client, 's1', size);
+      let bad = 0;
+      for (let i = 0; i < 6; i++) {
+        const off = x.hub.unwatch(x.client, 's1');
+        const on = x.hub.watch(x.client, 's1', size);   // 待たずに続けて呼ぶ（Stop と Start が続けて届く）
+        await Promise.all([off, on]);
+        await sleep(30);
+        if (!(x.fake.screencasting(x.tab) && x.fake.focusEmulated(x.tab))) bad++;
+      }
+      t.ok('閉じてすぐ開き直す（Stop → Start を待たずに 6 回）と、映像も focus emulation も残る', bad === 0, `${bad} 回、外れた`);
+      await x.hub.unwatch(x.client, 's1');
+      t.ok('最後に閉じれば、どちらも外れる', await until(() => !x.fake.screencasting(x.tab) && !x.fake.focusEmulated(x.tab)));
+    } finally { await x.done(); }
+  }
+
+  // ---- 2. 会話の id が替わる（rebind）・会話を消す（forget）と、映像の理由が残らない ----
+  {
+    const x = await fresh();
+    try {
+      await x.hub.watch(x.client, 's1', size);
+      t.ok('（前提）見ている間は focus emulation が付いている', x.fake.focusEmulated(x.tab));
+      x.r.relay.rebind('s1', 's9');
+      t.ok('rebind: 映像は ended(closed) になり、focus emulation も外れる（理由が古い id に取り残されない）',
+        await until(() => x.messages.some(m => m.type === 'ended' && m.reason === 'closed')) && await until(() => !x.fake.focusEmulated(x.tab) && !x.fake.screencasting(x.tab)),
+        JSON.stringify(x.fake.sessions()));
+    } finally { await x.done(); }
+    const y = await fresh();
+    try {
+      await y.hub.watch(y.client, 's1', size);
+      y.r.relay.forget('s1');
+      t.ok('forget: 映像は ended(closed) になり、focus emulation が外れる', await until(() => y.messages.some(m => m.type === 'ended')) && await until(() => !y.fake.focusEmulated(y.tab) && !y.fake.screencasting(y.tab)));
+    } finally { await y.done(); }
+  }
+
+  // ---- 3. Chrome の側で映像のセッションが外れた: 付け直し、理由は 1 つのまま ----
+  {
+    const x = await fresh();
+    try {
+      await x.hub.watch(x.client, 's1', size);
+      const old = x.fake.sessions().find(s => s.screencast);
+      x.fake.detachSession(old.id);
+      t.ok('Chrome の側で映像のセッションが外れても、タブが残っていれば付け直して映像を続ける（focus emulation も付いたまま）',
+        await until(() => x.fake.sessions().some(s => s.screencast && s.id !== old.id) && x.fake.focusEmulated(x.tab)), JSON.stringify(x.fake.sessions()));
+      await x.hub.unwatch(x.client, 's1');
+      t.ok('付け直した後でも、見るのをやめれば全部外れる（理由が重ならない）', await until(() => !x.fake.focusEmulated(x.tab) && !x.fake.screencasting(x.tab)));
+    } finally { await x.done(); }
+  }
+
+  // ---- 4. 撮影を断つ ----
+  {
+    const x = await fresh();
+    try {
+      // 見る前に断つ: 付けない・state.suspended が立つ・focus emulation は付けない
+      await x.bridge.suspend('s1');
+      const watched = await x.hub.watch(x.client, 's1', size);
+      t.ok('見る前に断っていると、見始めても screencast を付けず、state.suspended が立つ（focus emulation も付けない）',
+        watched.state?.suspended === true && !x.fake.screencasting(x.tab) && !x.fake.focusEmulated(x.tab), JSON.stringify(watched));
+      await x.bridge.resume('s1');
+      t.ok('戻すと始まる', await until(() => x.fake.screencasting(x.tab) && x.fake.focusEmulated(x.tab)));
+      await x.hub.unwatch(x.client, 's1');
+    } finally { await x.done(); }
+    const y = await fresh();
+    try {
+      y.fake.delayScreencastStart(300);   // 開始の応答が遅い（その間は順番待ちの中）
+      // 付ける途中で断つ: 断った後のフレームは流れない（順番待ちが終わる前でも）
+      const watching = y.hub.watch(y.client, 's1', size);
+      await until(() => y.fake.screencasting(y.tab));
+      const n = y.messages.filter(m => m.type === 'frame').length;
+      const pending = y.bridge.suspend('s1');   // 呼んだ時に同期で効く
+      const sent = y.fake.screencastFrame(y.tab);   // 外す処理が終わる前（セッションはまだある）に Chrome がフレームを送った
+      await Promise.all([watching, pending]);
+      await sleep(100);
+      t.ok('断った後に届いたフレームは、付け替え・開始の順番待ちの中でも流さない', sent !== null && y.messages.filter(m => m.type === 'frame').length === n, `${y.messages.filter(m => m.type === 'frame').length - n} 枚`);
+      t.ok('断ったら screencast は止まる', await until(() => !y.fake.screencasting(y.tab)));
+      await y.hub.unwatch(y.client, 's1');
+    } finally { await y.done(); }
+    const z = await fresh();
+    try {
+      // 断りは会話の寿命と結ぶ
+      await z.bridge.suspend('s1'); await z.bridge.suspend('s1', 77);
+      await z.bridge.resume('s1');
+      t.ok('窓を指さない resume は、その会話の窓ごとの断りも全部外す', !z.bridge.isSuspended('s1') && !z.bridge.isSuspended('s1', 77));
+      await z.bridge.suspend('s1'); await z.bridge.suspend('s1', 77);
+      z.r.relay.rebind('s1', 's9');
+      t.ok('rebind: 断りは新しい id へ付け替わる（古い id には残らない）', z.bridge.isSuspended('s9') && z.bridge.isSuspended('s9', 77) && !z.bridge.isSuspended('s1') && !z.bridge.isSuspended('s1', 77));
+      z.r.relay.forget('s9');
+      t.ok('forget: 断りも消える（会話が無くなったのに断りだけが残らない）', !z.bridge.isSuspended('s9') && !z.bridge.isSuspended('s9', 77));
+    } finally { await z.done(); }
+    const w = await fresh();
+    try {
+      await w.bridge.suspend('s1');
+      await w.r.chrome.turnOff();
+      t.ok('Chrome との接続が切れると、断りも消える', await until(() => !w.bridge.isSuspended('s1')));
+    } finally { await w.done(); }
+  }
 }

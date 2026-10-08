@@ -41,6 +41,7 @@ export function createFakeBrowser({ product, calls, userTabs = USER_TABS } = {})
   let lastActive = null;
   let fetchEnableDelayMs = 0;
   let frameSeq = 0;
+  let screencastStartDelayMs = 0;   // Page.startScreencast の応答を遅らせる（始まった印は先に付く。開始の途中を試す）
 
   const send = (socket, message) => { if (socket.readyState === 1) socket.send(JSON.stringify(message)); };
   const info = t => ({ targetId: t.targetId, type: t.type, title: t.title, url: t.url, attached: [...sessions.values()].some(s => s.targetId === t.targetId), canAccessOpener: false, ...(t.openerId ? { openerId: t.openerId } : {}), browserContextId: 'CTX-DEFAULT' });
@@ -253,7 +254,7 @@ export function createFakeBrowser({ product, calls, userTabs = USER_TABS } = {})
       case 'DOM.resolveNode': return { object: { type: 'object', subtype: 'node', className: 'HTMLElement', description: 'el', objectId: `obj-${params.backendNodeId}` } };
       case 'Input.dispatchMouseEvent': if (params.type === 'mouseReleased') setImmediate(() => click(t, params.x, params.y)); return {};
       case 'Emulation.setFocusEmulationEnabled': s.fe = params.enabled === true; t.focusOn = s.fe; return {};
-      case 'Page.startScreencast': s.screencast = { ...params }; return {};
+      case 'Page.startScreencast': s.screencast = { ...params }; if (screencastStartDelayMs) await new Promise(resolve => setTimeout(resolve, screencastStartDelayMs)); return {};
       case 'Page.stopScreencast': s.screencast = null; return {};
       case 'Page.screencastFrameAck': return {};
       case 'Fetch.enable': if (fetchEnableDelayMs) await new Promise(resolve => setTimeout(resolve, fetchEnableDelayMs)); s.fetch = true; return {};
@@ -296,6 +297,8 @@ export function createFakeBrowser({ product, calls, userTabs = USER_TABS } = {})
     windows: () => [...windows].map(([windowId, w]) => ({ windowId, state: w.state, bounds: { ...w.bounds } })),
     targets: () => [...targets.values()].map(t => ({ ...t })),
     sessions: () => [...sessions.values()].map(s => ({ id: s.id, targetId: s.targetId, fetch: s.fetch, fe: s.fe, screencast: Boolean(s.screencast) })),
+    /** Page.startScreencast の応答を ms 遅らせる（始まった印は先に付く） */
+    delayScreencastStart(ms) { screencastStartDelayMs = ms; },
     /** そのタブで Page.startScreencast を回しているセッションが今あるか */
     screencasting: targetId => [...sessions.values()].some(s => s.targetId === targetId && s.screencast),
     screencastParams: targetId => [...sessions.values()].find(s => s.targetId === targetId && s.screencast)?.screencast ?? null,

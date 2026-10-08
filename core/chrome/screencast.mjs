@@ -6,7 +6,10 @@
 //     ターンの間と映像を見ている間の両方が無くなったときだけ Chrome から外す（Chrome は 1 つのセッションが外すとほかが有効にしていても外れるため。ADR 0154 の実機）
 //   - 今のタブが替わったら（エージェントが別のタブに触れた・タブが閉じた）付け替える
 //   - 撮影を断つ口: suspend(sessionId[, windowId]) / resume。断っている間は screencast を止め（フレームを撮らない・流さない）、focus emulation も外す。
-//     第 6 段の「あなたが操作中」が呼ぶ。状態に { suspended: true } を載せて見る側に知らせる
+//     第 6 段の「あなたが操作中」が呼ぶ。状態に { suspended: true } を載せて見る側に知らせる。
+//     **suspend と resume は呼ぶ側が対にする**（断りは会話の寿命と結ぶ: 会話を消す・Chrome の接続が切れると消え、id が替わると新しい id へ付け替える。
+//     windowId なしの resume は、その会話の窓ごとの断りも全部外す）。suspend は呼んだ時に同期で効く（順番待ちの中の付け替え・開始の途中でもフレームを流さない）
+//   - focus emulation の理由は、映像の見張り（watch）ごとの札で数える（relay の view.focus の owner）。閉じてすぐ開き直しても、古い見張りの「手放す」が新しい見張りの理由を消さない
 // core/browser-screencast.mjs の createScreencastHub の bridge の形（ready・request・ack・onFrame・onState・onEnded・onAway）で使う。
 // 見る側の入力（タップ・文字・移動）は受けない（見るだけ）。URL・題は状態に載せない。
 const clamp = (value, min, max, fallback) => Number.isFinite(value) ? Math.min(max, Math.max(min, value)) : fallback;
@@ -26,18 +29,28 @@ export function chromeScreencastSettings({ width, height, scale, quality } = {})
  * @param deps.host  core/chrome/relay.mjs の view（onChange・summary・tabs・current・attach）
  */
 export function createChromeScreencast({ host, log = () => {} } = {}) {
-  const watches = new Map();   // 会話の id -> { settings, view, tabId, generation, queue, suspended: boolean }
+  const watches = new Map();   // 会話の id -> { settings, view, tabId, generation, queue, suspended: boolean, announced: boolean（端末へ知らせた suspended） }
   const suspended = new Set(); // 'sessionId' か 'sessionId#windowId'
   const listeners = { frame: new Set(), state: new Set(), ended: new Set(), away: new Set() };
   const emit = (kind, ...args) => { for (const fn of [...listeners[kind]]) { try { fn(...args); } catch { /* 聞き手の失敗は映像を壊さない */ } } };
 
   const isSuspended = (sessionId, windowId = null) => suspended.has(sessionId) || (windowId != null && suspended.has(`${sessionId}#${windowId}`));
+  const windowOf = (sessionId, tabId) => (tabId ? host.tabs(sessionId).find(tab => tab.targetId === tabId)?.windowId ?? null : null);
+  const keysOf = sessionId => [...suspended].filter(key => key === sessionId || key.startsWith(`${sessionId}#`));
+  /** 会話の断りを全部消す（会話を消した・Chrome の接続が切れた） */
+  const dropSuspension = sessionId => { for (const key of keysOf(sessionId)) suspended.delete(key); };
+  /** 会話の id が替わった: 断りも新しい id へ付け替える */
+  const moveSuspension = (from, to) => { for (const key of keysOf(from)) { suspended.delete(key); suspended.add(`${to}${key.slice(from.length)}`); } };
 
   function stateOf(sessionId, watch) {
     const summary = host.summary(sessionId);
     return { tabId: watch.tabId ?? null, agent: summary.operating, suspended: watch.suspended, tabs: summary.tabs };
   }
-  const pushState = (sessionId, watch) => { if (watches.get(sessionId) === watch) emit('state', sessionId, stateOf(sessionId, watch)); };
+  const pushState = (sessionId, watch) => {
+    if (watches.get(sessionId) !== watch) return;
+    watch.announced = watch.suspended;   // 端末へ知らせた断りの状態（suspend が同期で立てた分も、follow が知らせる）
+    emit('state', sessionId, stateOf(sessionId, watch));
+  };
 
   /** 映像のセッションを外す（screencast を止め、focus emulation を外してから detach） */
   async function release(watch, sessionId) {
@@ -46,7 +59,7 @@ export function createChromeScreencast({ host, log = () => {} } = {}) {
     if (!view) return;
     await view.send('Page.stopScreencast').catch(() => {});
     await view.detach().catch(() => {});
-    await host.focus(sessionId, tabId, false).catch(() => {});   // ターンの間なら、ターンの分は残る
+    await host.focus(sessionId, tabId, false, watch).catch(() => {});   // ターンの間・ほかの見張りがいれば、その分は残る
   }
 
   async function attachTo(sessionId, watch, targetId) {
@@ -55,12 +68,12 @@ export function createChromeScreencast({ host, log = () => {} } = {}) {
     if (watches.get(sessionId) !== watch || watch.generation !== generation) { await view.detach().catch(() => {}); return; }   // 待つ間に止められた・付け替えられた
     watch.view = view; watch.tabId = targetId;
     try {
-      await host.focus(sessionId, targetId, true);
+      await host.focus(sessionId, targetId, true, watch);
       await view.send('Page.startScreencast', { format: 'jpeg', quality: watch.settings.quality, maxWidth: watch.settings.maxWidth, maxHeight: watch.settings.maxHeight, everyNthFrame: 1 });
     } catch (error) {
       if (watch.view === view) { watch.view = null; watch.tabId = null; }
       await view.detach().catch(() => {});
-      await host.focus(sessionId, targetId, false).catch(() => {});
+      await host.focus(sessionId, targetId, false, watch).catch(() => {});
       throw error;
     }
   }
@@ -68,13 +81,16 @@ export function createChromeScreencast({ host, log = () => {} } = {}) {
   function onViewEvent(sessionId, watch, generation, method, params) {
     if (watches.get(sessionId) !== watch || watch.generation !== generation) return;
     if (method === 'Page.screencastFrame') {
-      if (watch.suspended || typeof params.data !== 'string') return;   // 撮影を断っている間は流さない
+      // 撮影を断っている間は流さない（順番待ちの外でも、断りの鍵を直に見る）
+      if (watch.suspended || isSuspended(sessionId, windowOf(sessionId, watch.tabId)) || typeof params.data !== 'string') return;
       const m = params.metadata ?? {};
       emit('frame', sessionId, { id: params.sessionId, data: params.data,
         metadata: { deviceWidth: m.deviceWidth, deviceHeight: m.deviceHeight, pageScaleFactor: m.pageScaleFactor, offsetTop: m.offsetTop, scrollOffsetX: m.scrollOffsetX, scrollOffsetY: m.scrollOffsetY } });
     } else if (method === 'Target.detachedFromTarget') {
-      // Chrome の側で外れた（タブが閉じた・移った）。タブが残っていれば付け直す
+      // Chrome の側で外れた（タブが閉じた・移った）。このタブの映像の理由を手放してから、タブが残っていれば付け直す（付け直せばまた理由を持つ）
+      const gone = watch.tabId;
       watch.view = null; watch.tabId = null; watch.generation += 1;
+      if (gone) host.focus(sessionId, gone, false, watch).catch(() => {});
       follow(sessionId, watch).catch(() => {});
     }
   }
@@ -86,7 +102,7 @@ export function createChromeScreencast({ host, log = () => {} } = {}) {
       const targetId = host.current(sessionId);
       const windowId = targetId ? host.tabs(sessionId).find(tab => tab.targetId === targetId)?.windowId ?? null : null;
       const hold = isSuspended(sessionId, windowId);
-      const changed = hold !== watch.suspended;
+      const changed = hold !== watch.announced;
       watch.suspended = hold;
       if (!targetId) { await release(watch, sessionId); pushState(sessionId, watch); return; }   // 窓が無い間は待つ（タブが増えたら付く）
       if (hold) { await release(watch, sessionId); if (changed) pushState(sessionId, watch); return; }
@@ -108,8 +124,8 @@ export function createChromeScreencast({ host, log = () => {} } = {}) {
   }
 
   const off = host.onChange((sessionId, kind, extra) => {
-    if (kind === 'reset' || kind === 'forget') { end(sessionId, 'closed'); return; }
-    if (kind === 'rebind') { end(extra, 'closed'); return; }
+    if (kind === 'reset' || kind === 'forget') { dropSuspension(sessionId); end(sessionId, 'closed'); return; }
+    if (kind === 'rebind') { moveSuspension(extra, sessionId); end(extra, 'closed'); return; }
     const watch = watches.get(sessionId);
     if (!watch) return;
     if (kind === 'operating') { pushState(sessionId, watch); return; }
@@ -132,7 +148,7 @@ export function createChromeScreencast({ host, log = () => {} } = {}) {
         await view.send('Page.startScreencast', { format: 'jpeg', quality: settings.quality, maxWidth: settings.maxWidth, maxHeight: settings.maxHeight, everyNthFrame: 1 }).catch(() => {});
       }
     } else {
-      watch = { settings, view: null, tabId: null, generation: 0, queue: Promise.resolve(), suspended: false };
+      watch = { settings, view: null, tabId: null, generation: 0, queue: Promise.resolve(), suspended: false, announced: false };
       watches.set(sessionId, watch);
     }
     try { await follow(sessionId, watch); }
@@ -168,8 +184,16 @@ export function createChromeScreencast({ host, log = () => {} } = {}) {
      * 撮影を断つ（第 6 段の「あなたが操作中」）。windowId があればその窓が今のタブの窓のときだけ、無ければ会話の窓すべて。
      * 断っている間は screencast を止めて focus emulation も外し、フレームを流さない。見ている端末には state.suspended を送る
      */
-    suspend(sessionId, windowId = null) { suspended.add(windowId == null ? sessionId : `${sessionId}#${windowId}`); return refollow(sessionId); },
-    resume(sessionId, windowId = null) { suspended.delete(windowId == null ? sessionId : `${sessionId}#${windowId}`); return refollow(sessionId); },
+    suspend(sessionId, windowId = null) {
+      suspended.add(windowId == null ? sessionId : `${sessionId}#${windowId}`);
+      const watch = watches.get(sessionId);
+      if (watch && isSuspended(sessionId, windowOf(sessionId, watch.tabId))) watch.suspended = true;   // 順番待ちを待たずに、今から流さない
+      return refollow(sessionId);
+    },
+    resume(sessionId, windowId = null) {
+      if (windowId == null) dropSuspension(sessionId); else suspended.delete(`${sessionId}#${windowId}`);
+      return refollow(sessionId);
+    },
     isSuspended,
     watching: () => [...watches.keys()],
     close() { off(); for (const sessionId of [...watches.keys()]) end(sessionId, 'closed'); },
