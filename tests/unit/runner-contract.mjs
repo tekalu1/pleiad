@@ -54,7 +54,7 @@ export default async function (t) {
       const a = parseArgs(["--jobs=3", "--shard=2/2", "x"]);
       t.ok("--jobs=N・--shard=k/N の形", a.jobs === 3 && same(a.shard, { index: 2, total: 2 }) && same(a.names, ["x"]), JSON.stringify(a));
       t.ok("-jN・-j N の形", parseArgs(["-j4"]).jobs === 4 && parseArgs(["-j", "5"]).jobs === 5);
-      t.ok("既定は利用可能な CPU 数（最大 16）・shard なし・絞り込みなし", DEFAULT_JOBS === Math.min(16, Math.max(1, os.availableParallelism())) && same(parseArgs([]), { names: [], jobs: DEFAULT_JOBS, shard: null, timings: null, weights: null, retryFailed: 0, list: false, json: false, help: false }));
+      t.ok("既定は利用可能な CPU 数（最大 12）・shard なし・絞り込みなし", DEFAULT_JOBS === Math.min(12, Math.max(1, os.availableParallelism())) && same(parseArgs([]), { names: [], jobs: DEFAULT_JOBS, shard: null, timings: null, weights: null, retryFailed: 0, list: false, json: false, help: false }));
       t.ok("--retry-failed n・--retry-failed=n（0 か 1）。値は suite 名にならない。既定は 0", parseArgs(["--retry-failed", "1", "x"]).retryFailed === 1 && same(parseArgs(["--retry-failed", "1", "x"]).names, ["x"]) && parseArgs(["--retry-failed=0"]).retryFailed === 0 && parseArgs([]).retryFailed === 0);
       t.ok("-- の後ろは全部 suite 名（npm test -- … の形）", same(parseArgs(["--", "--jobs", "2"]).names, ["--jobs", "2"]));
       const bad = [

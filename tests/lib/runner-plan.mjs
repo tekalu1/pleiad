@@ -11,15 +11,15 @@ import crypto from "node:crypto";
 export class ArgError extends Error {}
 
 export const MAX_JOBS = 32;
-// ローカルの 8・12・16 worker の全件実測から、32 コアの上限を 16 にする。
-export const DEFAULT_JOBS = Math.min(16, Math.max(1, os.availableParallelism()));
+// 32 コアでは 16 worker が最速だったが、繰り返すと負荷で suite が揺れた。全件が安定して 3 分以内に収まる 12 を上限にする。
+export const DEFAULT_JOBS = Math.min(12, Math.max(1, os.availableParallelism()));
 export const MAX_SHARDS = 256;
 export const MAX_RETRY = 1;
 
 export const USAGE = `使い方: node tests/run.mjs [絞り込み…] [オプション]
 
   絞り込み           suite 名の部分一致（複数なら OR）。無ければ全部
-  --jobs N, -j N     子プロセスの worker を N 本使う（1〜${MAX_JOBS}。既定は利用可能な CPU 数（最大 16）。1 は同じプロセスで順に）
+  --jobs N, -j N     子プロセスの worker を N 本使う（1〜${MAX_JOBS}。既定は利用可能な CPU 数（最大 12）。1 は同じプロセスで順に）
   --shard k/N        N 分割したうちの k 番目だけ走らせる（時間の重みで決定的に分ける。k は 1〜N）
   --timings <path>   suite ごとの時間・判定数・skip・worker を JSON で書く
   --weights <path>   時間の重みの JSON（既定 tests/suite-weights.json）

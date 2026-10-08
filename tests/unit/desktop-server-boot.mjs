@@ -26,7 +26,7 @@ export const title = 'サーバーを見つける・起こす・付け直す（J
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 const tempDir = () => fs.mkdtempSync(path.join(os.tmpdir(), 'pleiad-server-boot-'));
-const rm = dir => fs.rmSync(dir, { recursive: true, force: true });
+const rm = dir => fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 const settled = promise => promise.then(value => ({ value }), error => ({ error }));
 
 async function waitFor(check, ms = 10_000, label = 'condition') {

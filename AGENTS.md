@@ -77,7 +77,7 @@ core が web へ流すのは正規化イベントだけで、バックエンド�
   - `web/locales/*/ui.json` は `JSON.stringify(…, null, 2)` の整形と一致しないので、読んで書き直さず、キーは文字の置き換えで足す。`sed '/"connected"/d'` のような行単位の削除は別の節の同じキーまで消すので使わない。
 - コード変更後は `npm test` を実行する。通常テストは実際の LLM を呼び出さない。1 本だけなら `node tests/run.mjs <ケース名>`。Pleiad の会話のシェルから流しても、継いだ Pleiad の変数（`AGENT_HOST_`・`PLEIAD_`・`PLY_`・`AGENT_BROWSER_` で始まるもの）は外して走る（`env -u` は要らない。残る利用者の上書きは `tests/lib/inherited-env.mjs`）。test-env を読まない入口でも、`tests/lib/server.mjs` はテストのサーバーへ起動用の変数（`core/boot-env.mjs`）と `PLEIAD_CLI_*`・`PLEIAD_CONTROL_*` を継がない。
   - 全件の順次実行は 10 分を超えることがある。長い実行はログへ保存して最後まで待つ。途中で打ち切った結果を通過とみなさない。
-  - `npm test` は利用可能な CPU 数に応じて最大 16 worker を使う（32 コアの Windows で 8 / 12 / 16 worker を全件測り、16 が最速）。`node tests/run.mjs --jobs 1` は従来どおり同じプロセスで登録順に実行する。`--jobs N` で本数を指定できる。スイートごとの時間・判定数・skip は `--timings <JSONの保存先>` で記録できる。CI は共有ランナーの負荷を抑えるため `--jobs 2` を明示する。
+  - `npm test` は利用可能な CPU 数に応じて最大 12 worker を使う（32 コアの Windows で 8 / 12 / 16 worker を全件測定。16 は最速だが繰り返し実行で suite が揺れ、12 は 3 分以内で通過）。`node tests/run.mjs --jobs 1` は従来どおり同じプロセスで登録順に実行する。`--jobs N` で本数を指定できる。スイートごとの時間・判定数・skip は `--timings <JSONの保存先>` で記録できる。CI は共有ランナーの負荷を抑えるため `--jobs 2` を明示する。
   - `--retry-failed 1` は、落ちた suite だけを新しい worker で 1 回流し直し、通れば緑にする。**CI のワークフロー（`test.yml`・release の fallback）だけが付ける**。手元の `npm test` は既定の 0 で流し直さない（手元で通ったのに揺れる試験を隠さないため）。流し直したことは、端末・`--timings` の `retried`・Actions の警告の注釈とジョブのまとめに必ず残る。ランナーの整合の失敗（worker の死・名前の不一致・worktree の漏れ）は流し直さない（ADR 0162）。
   - 分けて流す場合は `node tests/run.mjs --shard 1/3`、`--shard 2/3`、`--shard 3/3` の全分割を同じ版・時間重みで実行し、すべての通過を確認する。`--list --json` は実行対象の一覧。名前で絞る場合は従来どおり部分一致なので、短い名前は別のスイートも選ぶ。
 - `npm run test:e2e` は実際の LLM を呼び出すため、実サービスとの接続確認が必要な変更で実行する。
