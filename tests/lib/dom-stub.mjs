@@ -9,6 +9,8 @@ const ESC = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ESC[c]);
 const VOID = new Set(["br", "hr", "img", "input", "meta", "link"]);
 
+const textNode = (s) => ({ textContent: s, outerHTML: esc(s), shown: s, children: [], parent: null, matches: () => false, remove() { if (this.parent) this.parent.children = this.parent.children.filter((c) => c !== this); } });
+
 export class N {
   constructor(tag) {
     this.tagName = tag.toUpperCase();
@@ -60,7 +62,8 @@ export class N {
   addEventListener(type, fn) { (this.on ??= {})[type] = [...(this.on[type] ?? []), fn]; }
   removeEventListener(type, fn) { if (this.on?.[type]) this.on[type] = this.on[type].filter((f) => f !== fn); }
   dispatchEvent(ev) { for (const fn of this.on?.[ev.type] ?? []) fn(ev); return true; }
-  append(...n) { for (const c of n) { c.parent = this; this.children.push(c); } }
+  // 文字列は本物の append と同じに文字のノードとして足す
+  append(...n) { for (const x of n) { const c = typeof x === 'string' ? textNode(x) : x; c.parent = this; this.children.push(c); } }
   replaceChildren(...n) { this._text = null; this._html = null; this.children = []; this.append(...n); }
   prepend(...n) { for (const c of n.reverse()) { c.parent = this; this.children.unshift(c); } }
   remove() { if (this.parent) this.parent.children = this.parent.children.filter((c) => c !== this); }

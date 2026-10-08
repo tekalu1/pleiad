@@ -198,6 +198,8 @@
 | 段（委譲の候補の段 t1〜t4） | tier |
 | 候補（委譲先の候補） | candidate |
 | 判定器 / 判定しない | judge / Don't judge |
+| 決定モデル（wait_until の問いに答えるモデル。判定器とは別） | decision model |
+| 問い（wait_until の until） | question |
 | 手がかり（難しさの） | signal |
 | 飛ばした（候補） | skipped |
 | 別の候補でやり直す | Retry with another candidate |

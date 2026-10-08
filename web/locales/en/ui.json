@@ -3238,6 +3238,7 @@
       "endpoint": "{{agent}} endpoint \"{{name}}\"",
       "voice": "Voice calls",
       "judge": "Delegation judge {{judge}}",
+      "computer": "wait_until questions",
       "more": "{{count}} more",
       "less": "Show fewer",
       "open": "Open Settings › {{page}}"
@@ -3245,6 +3246,7 @@
     "effect": {
       "endpoint": "Conversations that use it must choose again",
       "voice": "Voice calls stop working",
+      "computer": "wait_until stops asking and waits by screen changes only",
       "judge": "This judge is no longer used"
     },
     "list": {
@@ -3303,6 +3305,15 @@
       "chosen": "Using the OpenRouter key for voice calls.",
       "unchosen": "Voice calls no longer use a key.",
       "registered": "Registered the OpenRouter key and using it for voice calls."
+    },
+    "computer": {
+      "title": "Key for wait_until questions",
+      "note": "When wait_until has a question, the captured screen is sent to OpenRouter (Perplexity).",
+      "unset": "Until you choose a key, questions are not used and it waits by screen changes only",
+      "selectLabel": "Key for wait_until questions",
+      "chosen": "Using the OpenRouter key for wait_until questions.",
+      "unchosen": "wait_until questions no longer use a key.",
+      "registered": "Registered the OpenRouter key and using it for wait_until questions."
     },
     "delegation": {
       "title": "Keys the judges use",

@@ -87,6 +87,7 @@
     "computer-policy": 83,
     "computer-settings": 910,
     "computer-use-ui": 61,
+    "computer-wait-until": 3000,
     "connection-status": 566,
     "context-findings": 630,
     "context-review": 606,

@@ -2911,7 +2911,7 @@ function onEvent(ev, replay = false) {
   // 通話に使うキーの選び直し・差し替え・削除（設定 › 通話。core/voice/host.mjs）
   if (ev.type === 'voiceChanged') { voiceSettings.event(ev); voiceUi.refresh({ changed: true }); return; }
   // API キーの登録・差し替え・削除・割り当て・確認の結果（設定 › API キー。core/api-keys.mjs）。キーを選ぶ 3 つの画面も取り直す
-  if (ev.type === 'apiKeysChanged') { apiKeysSettings.event(ev); voiceSettings.event(ev); delegationSettings.event(ev); compatEndpoints.keysChanged(); return; }
+  if (ev.type === 'apiKeysChanged') { apiKeysSettings.event(ev); voiceSettings.event(ev); delegationSettings.event(ev); computerSettings.event(ev); compatEndpoints.keysChanged(); return; }
   // 設定の変更の承認が決着した（どの端末で答えても・取り下げても）。開いているカードを 1 行に畳む（ADR 0088）
   if (ev.type === 'settingApproval') { settleSettingCards(ev); return; }
   // 承認が片付いた（子の会話・別の窓・ターンの終わりや中断で）。開いていない会話の分の覚えと、子の会話のダイアログのカードも畳むので、会話の絞り込みの前に受ける
@@ -6472,7 +6472,7 @@ const notificationInbox = setupNotificationInbox({
   narrow: narrowView, anchor: () => $('sidebar'),
 });
 // External resource confirmation is available on every screen.
-const computerSettings = setupComputerSettings({ cmd: (command, args) => cmd(command, args), getPrefs: () => state.prefs, getHostCaps: () => state.hostCaps });
+const computerSettings = setupComputerSettings({ cmd: (command, args) => cmd(command, args), getPrefs: () => state.prefs, getHostCaps: () => state.hostCaps, openPage: name => $(`${name}Tab`)?.click() });
 const browserSettings = setupBrowserSettings({ available: !!browserPanel, cmd: (command, args) => cmd(command, args), getPrefs: () => state.prefs, getAgentLabel: labelOf, getHostCaps: () => state.hostCaps });
 // 通話モードの差し込み口（Chats の会話）。契約は web/voice/index.mjs の冒頭。入力欄・頭・メインの面へは、ここの 1 か所だけで繋ぐ
 const voiceWraps = new WeakMap();

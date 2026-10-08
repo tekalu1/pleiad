@@ -4,7 +4,7 @@
 //   <data>/api-keys.json         秘密でない台帳: { keys: [{ id, provider, label, createdAt, lastCheck }], uses, guide, migration }
 //   <data>/api-key-secrets.json  キーの値（core/secret-store.mjs。エントリ key:<id>。Claude のアカウント・MCP と同じ暗号化）
 //   接続先の割り当ては compat-endpoints.json の各行の keyRef（値を持たない。書くのは compatEndpointSave・このモジュールの削除・まとめ）。
-//   通話・判定器の割り当ては uses（voice・judge:jev・judge:cerebras）。prefs の voice は AI も書ける設定なので、割り当てはそこに置かない。
+//   通話・判定器・wait_until の問いの割り当ては uses（voice・judge:jev・judge:cerebras・computer:decider）。prefs の voice は AI も書ける設定なので、割り当てはそこに置かない。
 // 登録しただけでは、どの機能も外部に送らない。送るのは「使うキー」を人が選んだときから（ADR 0022・0150 の「キーの登録＝同意」を選ぶ操作へ移した）。
 // キーの値は返り値・ログ・エラー文に出さない（list は値を持たず、使っている所の名前だけを返す）。
 //
@@ -33,7 +33,9 @@ export const LEGACY_ENDPOINT_PREFIX = 'compat-endpoint:';
 const LEGACY_VOICE_KEY = 'openrouter';
 
 /** キーを割り当てる先（接続先は keyRef で、ここには入らない） */
-export const USES = Object.freeze(['voice', 'judge:jev', 'judge:cerebras']);
+export const USES = Object.freeze(['voice', 'judge:jev', 'judge:cerebras', 'computer:decider']);
+/** 古い置き場を持たない割り当て（ADR 0155 の後に足したもの。移行・古い置き場への書き写しの対象にしない） */
+const NO_LEGACY = new Set(['computer:decider']);
 const USE_JUDGE = Object.freeze({ 'judge:jev': 'jev', 'judge:cerebras': 'cerebras' });
 const SERVICE_OF_USE = Object.freeze({ 'judge:jev': JUDGE_SERVICE.jev, 'judge:cerebras': JUDGE_SERVICE.cerebras });
 
@@ -126,6 +128,7 @@ export function createApiKeys({ dataDir, secrets, legacy = {}, endpoints = () =>
     catch (e) { log('apikeys.legacy_write_failed', { target: key.split(':')[0], code: String(e?.code ?? '') }); }
   }
   async function mirrorUse(use) {
+    if (NO_LEGACY.has(use)) return;
     const id = state.uses[use];
     const value = id ? await keyValue(id).catch(() => null) : null;
     if (use === 'voice') await mirror(legacy.voice, LEGACY_VOICE_KEY, value);
@@ -144,6 +147,7 @@ export function createApiKeys({ dataDir, secrets, legacy = {}, endpoints = () =>
     return (await secrets.get(SECRET_PREFIX + id))?.key ?? null;
   }
   async function legacyUse(use) {
+    if (NO_LEGACY.has(use)) return null;
     const entry = use === 'voice' ? await legacy.voice?.get(LEGACY_VOICE_KEY) : await legacy.compat?.get(JUDGE_PREFIX + SERVICE_OF_USE[use]);
     return normalizeApiKey(entry?.key);
   }
@@ -262,6 +266,7 @@ export function createApiKeys({ dataDir, secrets, legacy = {}, endpoints = () =>
     for (const e of (await eps()?.keyUsers?.()) ?? []) if (e.keyRef === id) out.push({ kind: 'endpoint', id: e.id, agent: e.agent, name: e.name });
     if (state.uses.voice === id) out.push({ kind: 'voice' });
     for (const u of ['judge:jev', 'judge:cerebras']) if (state.uses[u] === id) out.push({ kind: 'judge', judge: USE_JUDGE[u] });
+    if (state.uses['computer:decider'] === id) out.push({ kind: 'computer' });
     return out;
   }
 
@@ -306,7 +311,7 @@ export function createApiKeys({ dataDir, secrets, legacy = {}, endpoints = () =>
     },
     /** 値（無ければ null）。接続先の送信・確認が使う。暗号化された値を読めない起動は SECRET_LOCKED を投げる */
     async keyValue(id) { await ensure(); return keyValue(String(id ?? '')); },
-    /** 使う側（通話・判定器）が送るときのキー。「使わない」・未登録は null（何も送らない） */
+    /** 使う側（通話・判定器・wait_until の問い）が送るときのキー。「使わない」・未登録は null（何も送らない） */
     async useKey(use) {
       await ensure();
       if (!USES.includes(use)) return null;
@@ -319,6 +324,7 @@ export function createApiKeys({ dataDir, secrets, legacy = {}, endpoints = () =>
       await ensure();
       if (!USES.includes(use)) return false;
       if (migrated()) return Boolean(state.uses[use]) && (await secrets.keys(SECRET_PREFIX).catch(() => [])).includes(SECRET_PREFIX + state.uses[use]);
+      if (NO_LEGACY.has(use)) return false;
       const names = use === 'voice' ? await legacy.voice?.keys(LEGACY_VOICE_KEY).catch(() => []) : await legacy.compat?.keys(JUDGE_PREFIX + SERVICE_OF_USE[use]).catch(() => []);
       return (names ?? []).length > 0;
     },
@@ -351,7 +357,7 @@ export function createApiKeys({ dataDir, secrets, legacy = {}, endpoints = () =>
       emit({ keys: true, uses: USES.filter(u => state.uses[u] === id), endpoints: true });
       return { id, uses: await usersOf(id) };
     },
-    /** 消す。使っていた通話・判定器は「使わない」に、接続先はキー無し（確認に失敗した扱い。黙って公式に戻らない）になる */
+    /** 消す。使っていた通話・判定器・wait_until の問いは「使わない」に、接続先はキー無し（確認に失敗した扱い。黙って公式に戻らない）になる */
     async remove(id) {
       await writable();
       const key = known(id);
@@ -370,7 +376,7 @@ export function createApiKeys({ dataDir, secrets, legacy = {}, endpoints = () =>
       emit({ keys: true, uses: usesBefore, endpoints: detached.length > 0 });
       return { id, affected };
     },
-    /** 通話・判定器に使うキーを選ぶ（id が null なら使わない）。選んだときから外部へ送り始める */
+    /** 通話・判定器・wait_until の問いに使うキーを選ぶ（id が null なら使わない）。選んだときから外部へ送り始める */
     async setUse(use, id) {
       await writable();
       if (!USES.includes(use)) throw new ApiKeyError('UNKNOWN_USE', { use: String(use) });

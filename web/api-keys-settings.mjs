@@ -78,14 +78,15 @@ export function setupApiKeysSettings({ cmd, page, openEndpoints = () => {} }) {
   function useLabel(u) {
     if (u.kind === 'endpoint') return t('apiKeys.uses.endpoint', { agent: AGENT_NAME[u.agent] ?? u.agent, name: u.name });
     if (u.kind === 'voice') return t('apiKeys.uses.voice');
+    if (u.kind === 'computer') return t('apiKeys.uses.computer');
     return t('apiKeys.uses.judge', { judge: JUDGE_NAME[u.judge] ?? u.judge });
   }
   // i18n-dynamic: apiKeys.effect.
-  const useEffect = u => t(`apiKeys.effect.${u.kind === 'endpoint' || u.kind === 'voice' ? u.kind : 'judge'}`);
-  const navOf = u => (u.kind === 'voice' ? 'voice' : u.kind === 'judge' ? 'delegation' : 'agents');
+  const useEffect = u => t(`apiKeys.effect.${['endpoint', 'voice', 'computer'].includes(u.kind) ? u.kind : 'judge'}`);
+  const navOf = u => (u.kind === 'voice' ? 'voice' : u.kind === 'judge' ? 'delegation' : u.kind === 'computer' ? 'computer' : 'agents');
   function openUse(u) {
     if (u.kind === 'endpoint') { openEndpoints(u.agent); return; }
-    $(u.kind === 'voice' ? 'voiceTab' : 'delegationTab')?.click();
+    $(u.kind === 'voice' ? 'voiceTab' : u.kind === 'computer' ? 'computerTab' : 'delegationTab')?.click();
   }
 
   function usesBlock(k) {

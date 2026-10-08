@@ -5,8 +5,8 @@
 export const PROVIDER_NAMES = Object.freeze({ openrouter: 'OpenRouter', cerebras: 'Cerebras', zai: 'Z.ai (GLM)', kimi: 'Kimi', deepseek: 'DeepSeek', azure: 'Azure OpenAI', litellm: 'LiteLLM', vllm: 'vLLM' });
 export const providerName = provider => PROVIDER_NAMES[provider] ?? '';
 
-/** 通話・判定器に割り当てられるキーのプロバイダー（通話と Jev は OpenRouter、Cerebras の判定器は Cerebras） */
-export const USE_PROVIDER = Object.freeze({ voice: 'openrouter', 'judge:jev': 'openrouter', 'judge:cerebras': 'cerebras' });
+/** 通話・判定器・wait_until の問いに割り当てられるキーのプロバイダー（通話・Jev・wait_until の問い（pplx-decider）は OpenRouter、Cerebras の判定器は Cerebras） */
+export const USE_PROVIDER = Object.freeze({ voice: 'openrouter', 'judge:jev': 'openrouter', 'judge:cerebras': 'cerebras', 'computer:decider': 'openrouter' });
 
 const PRESET = /^[a-z0-9-]{1,32}$/;
 

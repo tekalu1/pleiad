@@ -130,6 +130,60 @@ export default async function (t) {
     t.ok('hostCapabilities が届く前は使えるものとして描く', mainSwitch.disabled === false && all('.cu-unsupported')[0].hidden === true);
   } finally { document.getElementById = get; }
 
+  // ---- wait_until の問いに使うキー（設定 › API キーの割り当て computer:decider） ----
+  const keyNodes = { computerPanel: new N('section'), computerTab: new N('button') };
+  document.getElementById = id => keyNodes[id];
+  const docAdd = document.addEventListener, docRemove = document.removeEventListener;
+  document.addEventListener = () => {}; document.removeEventListener = () => {};
+  const hadCss = 'CSS' in globalThis;
+  if (!hadCss) globalThis.CSS = { escape: v => String(v) };
+  const OR1 = { id: 'k1', provider: 'openrouter', label: '', lastCheck: { ok: true, at: '2026-10-07T00:00:00.000Z' } };
+  const CB = { id: 'k2', provider: 'cerebras', label: '' };
+  let list = { migration: { state: 'done' }, storage: 'safeStorage', keys: [OR1, CB], uses: { voice: null, 'judge:jev': null, 'judge:cerebras': null, 'computer:decider': null } };
+  const keyCalls = [];
+  const opened = [];
+  try {
+    const kv = setupComputerSettings({
+      getPrefs: () => ({ computerUse: { enabled: true } }), getHostCaps: () => ({ computerUse: { supported: true } }), openPage: name => opened.push(name),
+      cmd: async (command, args) => {
+        keyCalls.push([command, args]);
+        if (command === 'invoke' && args.op === 'apiKeys.list') return structuredClone(list);
+        if (command === 'setApiKeyUse') { list.uses[args.use] = args.id; return { ok: true }; }
+        return {};
+      },
+    });
+    const q = sel => keyNodes.computerPanel.querySelectorAll(sel);
+    const flush = async () => { for (let i = 0; i < 5; i++) await new Promise(r => setImmediate(r)); };
+    t.ok('開く前はキーを読まない（何も送らない）', keyCalls.length === 0);
+    keyNodes.computerTab.on.click.forEach(fn => fn());
+    await flush();
+    const note = q('.mp-note').map(n => n.textContent);
+    t.ok('ページを開くとキーを読み、見出し・「使うキー」・未選択の文・注意書きを出す（通話と同じ部品）',
+      keyCalls.some(([c, a]) => c === 'invoke' && a.op === 'apiKeys.list') && q('.nf-section')[0]?.querySelectorAll('h4')[0]?.textContent === 'wait_until の問いに使うキー'
+      && q('.mp-card-info')[0]?.querySelectorAll('strong')[0]?.textContent === '使うキー' && q('.mp-card-info')[0]?.querySelectorAll('small')[0]?.textContent.includes('キーを選ぶまで')
+      && note.includes('wait_until に問いを付けたとき、撮った画面が OpenRouter（Perplexity）へ送られます'), JSON.stringify(note));
+    const btn = q('.ak-selbtn')[0];
+    t.ok('選ぶ欄は OpenRouter のキーだけで、未選択は「使わない」', btn?.getAttribute('aria-label')?.startsWith('wait_until の問いに使うキー: '));
+    btn.onclick();
+    const options = q('.li');
+    t.ok('候補は OpenRouter のキーと「使わない」（Cerebras は出さない）', options.length === 2);
+    options[0].onclick();
+    await flush();
+    t.ok('選ぶと setApiKeyUse { use: computer:decider, id } を送り、状態の行と管理へのリンクが出る',
+      keyCalls.some(([c, a]) => c === 'setApiKeyUse' && a.use === 'computer:decider' && a.id === 'k1') && q('.ak-link').length === 1 && q('p').some(n => n.getAttribute('role') === 'status' && n.textContent.includes('wait_until の問いに使います')));
+    q('.ak-link')[0].onclick();
+    t.ok('「管理」から設定 › API キーへ移る', opened.join() === 'apiKeys');
+    list = { ...list, uses: { ...list.uses, 'computer:decider': null } };
+    const before = keyCalls.length;
+    kv.event({ type: 'apiKeysChanged' });
+    await flush();
+    t.ok('apiKeysChanged で読み直す（ほかで外されたら未選択に戻る）', keyCalls.length > before && q('.ak-link').length === 0 && q('.mp-card-info')[0]?.querySelectorAll('small')[0]?.textContent.includes('キーを選ぶまで'));
+    list = { ...list, migration: { state: 'deferred' } };
+    kv.event({ type: 'apiKeysChanged' });
+    await flush();
+    t.ok('移行を保留している間は選べない（選ぶ欄と注意書きを出さない）', q('.ak-selbtn').length === 0 && q('.mp-note').length === 0);
+  } finally { document.getElementById = get; document.addEventListener = docAdd; document.removeEventListener = docRemove; if (!hadCss) delete globalThis.CSS; }
+
   // ---- サーバー越し ----
   const scratch = await fs.mkdtemp(path.join(os.tmpdir(), 'ply-computer-e-'));
   const server = await startServer({ dataDir: path.join(scratch, 'data'), env: { AGENT_HOST_BACKENDS: 'fake' }, timeoutMs: 30_000 });

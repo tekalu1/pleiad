@@ -15,8 +15,9 @@ export const BYPASS_MODE = { scope: 'full', autonomy: 'never' };
 /**
  * @param waitMs ロックを待つ上限（テストは縮める）
  * @param answers 承認カードの答え。関数（request, index）か配列。既定は「この会話で許可」
+ * @param decider wait_until の問いの口 { key(), ask? }（既定はキーを選んでいない）
  */
-export async function createHarness({ waitMs = 5000, prefs = {}, answers, driverOptions } = {}) {
+export async function createHarness({ waitMs = 5000, prefs = {}, answers, driverOptions, decider } = {}) {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'ply-computer-'));
   const driver = fakeComputerDriver(driverOptions);
   const states = [], arms = [], stops = [];
@@ -37,7 +38,7 @@ export async function createHarness({ waitMs = 5000, prefs = {}, answers, driver
     const a = typeof answers === 'function' ? await answers(request, asked.length - 1) : Array.isArray(answers) ? answers[asked.length - 1] : undefined;
     return a ?? { allow: true, scope: 'session' };
   };
-  const bridge = createComputerBridge({ driver, lock, shots, access, askPermission, translate: (key, params) => `${key}:${JSON.stringify(params)}` });
+  const bridge = createComputerBridge({ driver, lock, shots, access, askPermission, translate: (key, params) => `${key}:${JSON.stringify(params)}`, decider });
 
   const connect = ({ sessionId = 's1', turnId = `turn-${sessionId}`, title = '会話', mode = ASK_MODE, agent = { id: 'claude', label: 'Claude' }, ancestors = [], delivery, locale = 'ja' } = {}) => {
     const ac = new AbortController();

@@ -4643,6 +4643,8 @@ const computerBridge = computerDriver ? createComputerBridge({
       if (!current.introduced) await savePref('computerUse', { ...current, introduced: true });
     },
   },
+  // wait_until の問い（ADR 0165）。キーは設定 › API キーで人が選んだもの（computer:decider）。選ぶまでは null で、画面を送らない
+  decider: { key: () => apiKeys.useKey('computer:decider') },
 }) : null;
 // 物理の Esc（main が離す・隠すまで済ませて知らせる）。ロックの持ち主と、貸し借りでつながるターン全部に止めた印を付ける
 computerDriver?.onEscape(owner => computerLock.escape(owner));
@@ -7382,14 +7384,14 @@ wss.on("connection", (ws, req) => {
         case 'setDelegationRouting':
           return await viaOp('settings.set', { key: 'delegationRouting', value: args?.settings }, { shape: () => delegationRoutingState() });
         // API キー（設定 › API キー。ADR 0155）。値は返さない。入れる・消す・割り当てるのは人だけ（HUMAN_ONLY の秘密の値）。
-        // 登録しただけでは送らない。送り始めるのは、通話・判定器に使うキーを選んだとき（setApiKeyUse）と、接続先で選んだとき（compatEndpointSave の keyRef）
+        // 登録しただけでは送らない。送り始めるのは、通話・判定器・wait_until の問いに使うキーを選んだとき（setApiKeyUse）と、接続先で選んだとき（compatEndpointSave の keyRef）
         case 'setApiKey': {
           const a = msg.args ?? {};
           return reply(true, a.id ? await apiKeys.replace(String(a.id), a.key) : await apiKeys.add({ provider: a.provider, label: a.label, key: a.key }));
         }
         case 'deleteApiKey':
           return reply(true, await apiKeys.remove(String(msg.args?.id ?? '')));
-        // { use: voice | judge:jev | judge:cerebras, id: キーの id | null（使わない）}
+        // { use: voice | judge:jev | judge:cerebras | computer:decider, id: キーの id | null（使わない）}
         case 'setApiKeyUse':
           return reply(true, await apiKeys.setUse(String(msg.args?.use ?? ''), msg.args?.id ?? null));
         // 移行の案内。{ keep: キーの id }（ほかの同じプロバイダーのキーをまとめる）か { keep: null }（このままにする）。どちらでも案内は二度と出ない

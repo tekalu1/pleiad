@@ -128,6 +128,7 @@ const FAKE_DISPLAYS = [
  * 点の下のアプリ（appAt）は物理座標で決める: y ≥ 1000 は Windows Terminal（禁止）、y ≥ 900 はエクスプローラー（高リスク）、
  * x ≥ 3000 は管理者権限のアプリ（uipi）、x ≥ 1920 は電卓、それ以外はメモ帳。前面（foreground）は既定でメモ帳（setForeground で替える）。
  * 失敗の注入: fail(op, code) で次の 1 回を失敗にする。setLocked(true) で撮影と入力が locked になる。pressEscape(owner) で main の Esc を真似る。
+ * wait_until の灰色のコマ（screenshot の gray）は setFrames(fn) で決める。fn(n) は n 回目（0 から）のコマの明るさ（0〜255 の数か、画素の Uint8Array）。既定はずっと同じ明るさ（静止）。
  * log は、呼ばれた操作と core から main への便り（arm・overlay・stop・turnEnded）を 1 件ずつ受ける関数（サーバー越しのテストが別プロセスの記録を読む）。
  */
 export function fakeComputerDriver({ supported = true, reason, displays = FAKE_DISPLAYS, delayMs = 0, log = null } = {}) {
@@ -139,6 +140,7 @@ export function fakeComputerDriver({ supported = true, reason, displays = FAKE_D
   let locked = false, away = false;
   let foreground = FAKE_APPS.notepad;
   let cursor = { x: 100, y: 100 };
+  let frames = () => 128, frameCount = 0;
   const running = new Set([FAKE_APPS.notepad.id]);
   const note = entry => { try { log?.(entry); } catch { /* 記録は確認用 */ } };
   const self = {
@@ -153,6 +155,7 @@ export function fakeComputerDriver({ supported = true, reason, displays = FAKE_D
     fail(op, code = 'failed', message) { failures.push({ op, code, message }); },
     setLocked(v) { locked = Boolean(v); },
     setForeground(a) { foreground = a; },
+    setFrames(fn) { frames = fn; frameCount = 0; },
     setSupported(v, why) { ready = { ...ready, supported: Boolean(v), ...(why ? { reason: why } : {}) }; fire(listeners.ready, ready); },
     /** ディスプレイの構成が変わったことにする（displaysVersion が 1 進む） */
     changeDisplays(next) { ready = { ...ready, displays: next ?? ready.displays, displaysVersion: ready.displaysVersion + 1 }; fire(listeners.displays, ready); },
@@ -182,6 +185,12 @@ export function fakeComputerDriver({ supported = true, reason, displays = FAKE_D
           let scale = fitScale(r.width, r.height, limits);
           // zoom（upscale）は上限まで拡大してよい
           if (args.upscale) scale = Math.min(Math.sqrt(limits.maxPixels / (r.width * r.height)), limits.maxEdge / Math.max(r.width, r.height));
+          const width = Math.max(1, Math.floor(r.width * scale)), height = Math.max(1, Math.floor(r.height * scale));
+          if (args.gray) {
+            const v = frames(frameCount++);
+            const gray = v instanceof Uint8Array ? v : new Uint8Array(width * height).fill(Number(v) || 0);
+            return { gray, width, height, scale, origin: { x: r.x, y: r.y }, displaysVersion: ready.displaysVersion };
+          }
           return { jpeg: new Uint8Array(FAKE_JPEG), width: Math.max(1, Math.floor(r.width * scale)), height: Math.max(1, Math.floor(r.height * scale)), scale, origin: { x: r.x, y: r.y }, displaysVersion: ready.displaysVersion };
         }
         case 'appAt': {
