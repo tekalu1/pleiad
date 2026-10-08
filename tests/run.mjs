@@ -65,6 +65,10 @@ const SUITES = [
   './unit/chrome-connection.mjs',
   // Chrome の絞り込みの中継（ADR 0148・0153）: 会話の窓の範囲・断る／真似る一覧・sessionId の持ち主・サイトの利用の確認（Fetch・window.open）・止める・鍵・agent-browser の本物の通し（偽の Chrome）
   './unit/chrome-relay.mjs',
+  // Chrome の窓の映像（ADR 0148 第 5 段）: 今のタブへの付け外し・ack の間引き・focus emulation の理由の数え方（ターンと映像。閉じてすぐ開き直しても残る）・タブの付け替え・rebind／forget／Chrome 側の detach・撮影を断つ口（suspend。見る前・開始の途中・会話の寿命）・見るだけ（偽の Chrome）
+  './unit/chrome-screencast.mjs',
+  // Chrome の窓の映像（サーバー越し）: chromeWindow イベントがホストの画面にもリモートの端末にも届く・接続の直後に今の分・hostCapabilities.chromeWindow・source: chrome の映像と view-only（偽の Chrome・parentPort の身代わり）
+  './unit/server-chrome-screencast.mjs',
   // 会話ごとの専用の Chrome の窓（ADR 0154）: chrome.exe の最初の窓・画面の外の隠した窓・前面を返す・窓だけ閉じられた／Chrome が閉じた・popup・bringToFront の握りつぶし・focus emulation（ターンの間だけ）（偽の OS の層・偽の Chrome）
   './unit/chrome-windows.mjs',
   // Chrome への接続の OS の層（Windows）: 確認の窓の見つけ方・前面化・閉じる・使えない OS・parentPort の往復（偽の Win32 の表）
@@ -194,6 +198,8 @@ const SUITES = [
   './unit/server-agent-tasks.mjs',
   // 承認が片付いた知らせ（permissionSettled）: 子と中継の複製の id ごと・中断でも・片付いた承認への答えは ALREADY_RESOLVED・画面の配線
   './unit/server-permission-settled.mjs',
+  // ターンを越えて残る承認の待ち（outlivesTurn。ADR 0168）と中身の差し替え（permissionUpdate）
+  './unit/server-permission-update.mjs',
   // 委譲の子に裏の作業が残るとき: 終わらないコマンドも自動停止しない・サブエージェントは止めない・端末は待たない（子にも親にも）
   './unit/server-delegation-background.mjs',
   // 依頼元が子のエージェント・モデル・思考の強さを ply_task_send で替える（走っている子・走っていない子・断る場合・記録）

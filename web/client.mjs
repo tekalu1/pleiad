@@ -2,7 +2,8 @@ import { isComposingKey } from "./keyboard.mjs";
 import { createCompletionNotifications } from './notifications.mjs';
 import { setupFilePreview } from './file-preview.mjs';
 import { browserPanelAvailable, createBrowserPanel } from './browser-panel.mjs';
-import { isManagedContext, paintContextEntry as paintContextEntryButton, setupBrowserEntry } from './header-entries.mjs';
+import { isManagedContext, paintContextEntry as paintContextEntryButton, setupBrowserEntry, setupChromeEntry } from './header-entries.mjs';
+import { setupChromePanel, createWindowTable } from './chrome-panel.mjs';
 import { setupBrowserSettings } from './browser-settings.mjs';
 import { setupComputerSettings } from './computer-settings.mjs';
 import { configurePreviewConfirmation, refreshPreviewConfirmation } from './preview-confirm.mjs';
@@ -2395,7 +2396,7 @@ function registerRelayCard(ev, parts) {
     state.pendingPerms.delete(ev.id);
   };
   // 同じ承認のカードが依頼元の会話と詳細の両方に出ることがある。先に答えた方で決まり、残りは同じ決着で畳む（名簿は id ごとの集合）
-  openCards.add(ev.id, { el: m, sending: () => Boolean(card.dataset.sending), setOnline, fold });
+  openCards.add(ev.id, { el: m, sending: () => Boolean(card.dataset.sending), setOnline, fold, update: (patch) => parts.onUpdate?.(patch) });
   if (ev.remote && ev.remote.online === false) setOnline(false);
 }
 
@@ -2404,6 +2405,16 @@ function onRelayCardEvent(ev) {
   if (!openCards.has(ev.id)) return;
   if (ev.type === "permissionRelayState") for (const entry of openCards.of(ev.id)) entry.setOnline?.(ev.online !== false);
   else openCards.fold(ev.id, { by: ev.by, allow: ev.allow === true, peer: ev.peer ?? ev.hostName });
+}
+
+/**
+ * permissionUpdate（ADR 0168）。決着していない承認の中身の差し替え。つなぎ直したときに描き直せるよう pendingPerms の写しも書き替え、
+ * 出ているカードには update(ev) を渡す（種類ごとの描き方は、そのカードの parts.onUpdate が持つ。無ければ何もしない）
+ */
+function onPermissionUpdate(ev) {
+  const pending = state.pendingPerms.get(ev.id);
+  if (pending) state.pendingPerms.set(ev.id, { ...pending, browserHandoff: ev.browserHandoff });
+  openCards.update(ev.id, ev);
 }
 
 /**
@@ -2940,6 +2951,8 @@ function onEvent(ev, replay = false) {
   if (ev.type === 'computer.state') { onComputerState(ev); return; }
   // エージェントのブラウザー（PC の Chrome）への接続の状態。ホストの画面だけに届く（設定 › ブラウザー）
   if (ev.type === 'chromeBrowser') { browserSettings.chromeEvent(ev); return; }
+  // 会話の Chrome の窓の有無と、エージェントが操作中か（リモートの端末にも届く）
+  if (ev.type === 'chromeWindow') { if (chromePanel ? chromePanel.windowEvent(ev) : chromeWindows.apply(ev)) chromeEntry?.paint(); return; }
   if (!isMine(ev)) {
     // 一覧に効くものだけは取り込む（画面には出さない）。セッションに紐づかないもの（statusIcon 等）はここへ来ない
     if (["status", "group", "title", "fork", "mode", "model", "cwd", "backend", "nextSettings"].includes(ev.type)) {
@@ -3180,6 +3193,9 @@ function onEvent(ev, replay = false) {
     case "permissionRelayEnd":
     case "permissionRelayState":
       return onRelayCardEvent(ev);
+
+    case "permissionUpdate":
+      return onPermissionUpdate(ev);
 
     case "session":
       if (ev.sessionId && state.current !== ev.sessionId) {
@@ -6345,6 +6361,9 @@ $("draftSaved").onclick = () => saveDraft().catch(() => {});
 $("draftFailRetry").onclick = () => { $("prompt").focus(); saveDraft().catch(() => {}); };
 // 内蔵ブラウザー（web/browser-panel.mjs）。デスクトップ版のホストの画面だけ。右パネルの 1 つのモードになる
 let browserEntry = null;   // 頭の行のボタン（下の setupBrowserEntry）。状態の知らせが先に届いても落ちないよう先に宣言する
+// エージェントの Chrome の窓（右パネル「Chrome の窓」。web/chrome-panel.mjs）。会話ごとの窓の有無はサーバーの chromeWindow イベントで届く。知らせが先に届いても受けられるよう表を先に作る
+const chromeWindows = createWindowTable();
+let chromePanel = null, chromeEntry = null;
 const browserPanel = browserPanelAvailable()
   ? createBrowserPanel({ showMenu: (x, y, items, title, opts) => showMenu(x, y, items, title, opts), getSessionId: () => state.current ?? null, getAgentName: () => labelOf(activeBackendId()),
     onChange: () => browserEntry?.paint() })
@@ -7124,6 +7143,7 @@ function openContextPage() {
 }
 /** タイトル行の右の入口。押すと右パネル「この会話のコンテキスト」を開閉する。セッションを選んでいないときは出さない */
 function paintContextEntry() {
+  chromePanel?.reset(); chromeEntry?.paint();   // 会話が替わった: Chrome の窓の入口と、開いている別の会話の映像
   paintContextEntryButton($('contextEntry'), { visible: !!state.current, report: state.contextInfo?.report,
     summary: chipText(state.contextInfo), changed: !!state.contextInfo?.changed?.differs });
   paintMoreEntry();
@@ -8140,7 +8160,7 @@ function isRunningHere() {
 }
 
 // 設定の変更の承認（detached）はターンを止めていない。中断しても残るので、中断・再開の判断には数えない（ADR 0088）
-const isWaitingHere = () => (state.work.permissions ?? []).some((p) => !p.detached && belongsHere(p));
+const isWaitingHere = () => (state.work.permissions ?? []).some((p) => (p.blocking ?? !p.detached) && belongsHere(p));
 /** いま表示している会話の中断を受け付けて、止まり終えるのを待っているか */
 function stoppingHere() {
   return Boolean(state.current) && state.stopping.has(state.current);
@@ -8381,6 +8401,8 @@ function connect() {
       // 切れて止まっていたフォルダーの送信・添付の送信を、受け取り済みの位置から続ける
       folderUpload?.online();
       for (const wake of [...onlineWaiters]) wake();
+      // Chrome の窓の表はつなぎ直しで作り直す（サーバーは続けて今の分を送る）
+      chromeWindows.clear(); chromeEntry?.paint();
       // 設定 › アプリ情報の「外の AI から Pleiad を使う」。ホストの画面でだけ取れて、取れたら出す（web/cli-setup.mjs）
       cliSetup.load();
       // OS の操作（エクスプローラー・ブラウザーで開く）を出してよいか。接続元を見てサーバーが答える（遠隔なら false）
@@ -8395,6 +8417,8 @@ function connect() {
         syncAttachButton();
         renderAttached();
         remoteBrowser.reconnected();
+        chromePanel?.reconnected();
+        chromeEntry?.paint();
       }).catch(() => {});
       // 開く前から承認待ちがあれば、ここでダイアログに出す
       remoteSettings.refresh();
@@ -8427,7 +8451,7 @@ function connect() {
     // 保存される文言（変更の理由・添付の見出し）を今の言語に（web/saved-text.mjs）
     if (m.kind === "event") return onEvent(savedEvent(m.event));
     // PC の内蔵ブラウザーの画面（見ている接続にだけ届く）
-    if (m.kind === "screencast") return remoteBrowser.onMessage(m);
+    if (m.kind === "screencast") return m.source === 'chrome' ? chromePanel?.onMessage(m) : remoteBrowser.onMessage(m);
 
     if (m.kind === "response") {
       const p = pending.get(m.id);
@@ -8496,6 +8520,10 @@ gitPanel = setupGitPanel({ cmd, preview: filePreview, session: () => ({ id: stat
   onState: (git, { foreign }) => { if (!foreign) { state.git.data = git; paintGit(); } } });
 gitPanel.onOpenChange(paintGitEntry);
 $('gitEntry').onclick = () => gitPanel.toggle($('gitEntry'));
+// 会話の右パネル「Chrome の窓」（ADR 0148 第 5 段）。窓のある会話の頭の行の入口から開く。映像は見るだけ（ホストの画面もリモートの端末も）
+chromePanel = setupChromePanel({ cmd, preview: filePreview, session: () => state.current ?? null, getAgentName: () => labelOf(activeBackendId()), windows: chromeWindows });
+chromeEntry = setupChromeEntry({ button: $('chromeEntry'), panel: chromePanel, getSessionId: () => state.current ?? null, getAgentName: () => labelOf(activeBackendId()),
+  available: () => state.hostCaps?.chromeWindow === true });
 document.addEventListener('ply-git-open', (event) => {
   const sessionId = event.detail?.sessionId ?? null;
   if (!sessionId && !state.current) return;
@@ -8610,6 +8638,7 @@ function sessionMoreLead() {
       onClick: () => sessionContext.open($('sessionMore')) });
     if (!$('gitEntry').hidden) lead.push({ label: $('gitEntry').getAttribute('aria-label'),
       hint: branchLabel(state.git.data), onClick: () => gitPanel?.open($('sessionMore')) });
+    if (!$('chromeEntry').hidden) lead.push({ label: $('chromeEntry').getAttribute('aria-label'), onClick: () => chromePanel?.open($('sessionMore')) });
   }
   const wand = $("titleWand");
   if (!wand.hidden) lead.push({ label: t("session.titleWand"), disabled: wand.disabled, onClick: () => { if (!wand.disabled) wand.onclick(); } });
