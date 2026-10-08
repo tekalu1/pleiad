@@ -1,5 +1,13 @@
-# SwiftPM / Xcode build output (mobile/ios/remote-core and, later, the Capacitor iOS shell)
+# SwiftPM・Xcode の生成物
 .build/
 .swiftpm/
 DerivedData/
 xcuserdata/
+App/build
+App/output
+
+# cap sync ios が www と設定からコピーするもの
+App/App/public
+App/App/capacitor.config.json
+App/App/config.xml
+capacitor-cordova-ios-plugins

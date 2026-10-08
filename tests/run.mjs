@@ -595,6 +595,7 @@ const SUITES = [
   './unit/remote-upload.mjs',
   // モバイルの殻（mobile/）の取り決め: plyRemote の形・平文はループバックだけ・依存の版の固定・殻の辞書
   './unit/mobile-shell.mjs',
+  './unit/ios-shell.mjs',
   // リモートでリンクを押したときの行き先（localhost の知らせ・写しはアプリの中・Web は端末のブラウザー）
   './unit/remote-links.mjs',
   // リモートから PC の内蔵ブラウザーを見る: フレームの間引き・止める条件・ローカルとエージェント操作中の断り・入力の変換・シートの出し分け
