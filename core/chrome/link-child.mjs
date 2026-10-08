@@ -13,12 +13,16 @@
 //   - ほかのイベントと答えは捨てる。Target.attachedToTarget・detachedFromTarget だけは見て、セッションの一覧を保つ（新しいサーバーが外して付け直す）
 // 新しいつなぎ手には firstId = （前のつなぎ手が振った最大の id）+ ID_GAP を渡し、それ未満の id の答えは流さない。
 import net from 'node:net';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocket } from 'ws';
 import { markRuntimeInUse } from '../runtime-use.mjs';
 import { LINK_VERSION, BIG_LINE_BYTES, CARRY_MAX_BYTES, HELLO_TIMEOUT_MS, ID_GAP, NEWLINE, LineReader, controlLine, parseControl, peekLine } from './link-wire.mjs';
+
+/** 挨拶（秘密）を済ませる前の接続を同時に受ける数の上限 */
+const MAX_PENDING_CONNECTIONS = 8;
 
 /** つなぎ手に溜まって書けない量の上限（超えたらつなぎ手を切る。サーバーが読まなくなったときに、このプロセスのメモリを増やさない） */
 const CLIENT_BACKLOG_BYTES = 64 * 1024 * 1024;
@@ -174,16 +178,27 @@ export function startLinkChild({ pipe, secret, root = '', key = '', log = () => 
     state.maxId = Math.max(state.maxId, firstId - 1);
   }
 
+  /** 秘密が合うまで（挨拶前）の接続の数。上限を超えた接続は黙って切る（パイプは同じ利用者以外にも開いているかもしれない） */
+  let ungreeted = 0;
+  const sameSecret = (a, b) => {
+    const hash = value => crypto.createHash('sha256').update(String(value)).digest();
+    return crypto.timingSafeEqual(hash(a), hash(b));
+  };
   const server = net.createServer(socket => {
     let greeted = false;
+    if (ungreeted >= MAX_PENDING_CONNECTIONS) { socket.destroy(); return; }
+    ungreeted += 1;
+    let counted = true;
+    const settle = () => { if (counted) { counted = false; ungreeted -= 1; } };
+    socket.on('close', settle);
     const timer = setTimeout(() => { if (!greeted) socket.destroy(); }, HELLO_TIMEOUT_MS);
     socket.setNoDelay?.(true);
     const reader = new LineReader({
       onLine(line) {
         const control = parseControl(line);
         if (!greeted) {
-          if (control?.name !== 'hello' || control.value?.secret !== secret) { socket.destroy(); return; }
-          greeted = true; clearTimeout(timer);
+          if (control?.name !== 'hello' || typeof control.value?.secret !== 'string' || !sameSecret(control.value.secret, secret)) { socket.destroy(); return; }
+          greeted = true; clearTimeout(timer); settle();
           // 版が合わないときも挨拶は受ける（welcome.v で相手が見分け、quit を送ってくる）
           if (client && client !== socket) { dropClientState(); client.destroy(); }   // 新しいつなぎ手が古いほうを切る
           client = socket;

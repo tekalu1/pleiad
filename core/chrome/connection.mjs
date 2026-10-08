@@ -346,6 +346,8 @@ export function createChromeConnection({ locate, os, WebSocketImpl = NodeWebSock
     /** 「やめる」: 試行を止め、待っている人へ declined を返す。確認が出ていれば閉じる */
     giveUp() { if (current) finishAttempt(current, 'declined', new ChromeConnectionError('declined')); },
     /** 「切る」と「やめる」。つながっていれば切り、試行中なら止める */
+    // 接続の子には quit を送らず !close（子は ws を閉じて idle に戻る）で済ませる。quit だと子が終わり、「もう一度つなぐ」が
+    // 次の起動まで内の ws になって、更新をまたいで持てなくなる。窓は cdp.close の前に relay が片付ける。Pleiad の終了は server.mjs が quit する
     disconnect() {
       if (connected) {
         const c = connected; connected = null;

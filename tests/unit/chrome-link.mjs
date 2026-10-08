@@ -294,6 +294,31 @@ export default async function (t) {
       t.ok('接続の子しか居なければ、保持役に shutdown を送る（待つのは timeoutMs まで）', await shutdownHolderIfIdle(alone, { timeoutMs: 100 }) === true && shutdowns() === 1, String(shutdowns()));
       t.ok('つながっていないクライアントには何もしない', await shutdownHolderIfIdle(null) === false);
     }
+
+    // ===== 15. 挨拶（秘密）の前の接続は数を抑える。間違った秘密は切る =====
+    {
+      const parentY = await holder.connect();
+      const linkY = await openChromeLink({ holder: parentY.client, runtimeRoot: root, runtimeKey: 'k1', onGone: () => {} });
+      cleanups.push(() => linkY.quit());
+      const dial = () => new Promise(resolve => {
+        const socket = net.connect(linkY.pipe);
+        const state = { socket, closed: false };
+        socket.on('connect', () => resolve(state));
+        socket.on('error', () => { state.closed = true; resolve(state); });
+        socket.on('close', () => { state.closed = true; });
+      });
+      const idle = [];
+      for (let i = 0; i < 14; i += 1) idle.push(await dial());
+      await sleep(400);
+      const survivors = idle.filter(c => !c.closed).length;
+      t.ok('挨拶の前の接続は同時に 8 本まで（超えた分は切る）', survivors > 0 && survivors <= 8, `survivors=${survivors}`);
+      for (const c of idle) c.socket.destroy();
+      await sleep(200);
+      const wrong = await dial();
+      wrong.socket.write(controlLine('hello', { secret: 'x'.repeat(5), v: LINK_VERSION, firstId: 1 }));
+      await waitFor(() => wrong.closed, 3000).catch(() => {});
+      t.ok('間違った秘密の挨拶は切る（上限の枠も戻っている）', wrong.closed === true);
+    }
   } finally {
     for (const fn of cleanups) { try { await fn(); } catch { /* 片付け */ } }
     await chrome.stop();
