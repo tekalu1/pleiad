@@ -669,6 +669,7 @@
       "TASK_NOT_FOUND": "委譲のタスク「{{id}}」が見つかりません。",
       "sessionRequired": "sessionId を指定してください（この会話を指す場合を除き、省けません）。",
       "chromeUnsupported": "エージェントのブラウザー（Chrome）は、この OS・この環境ではまだ使えません。",
+      "chromeNoWindow": "引き継げる Chrome の窓がありません（この会話はまだブラウザーを使っていないか、窓が閉じられています）。",
       "badCursor": "cursor が正しくありません。前の返り値の next をそのまま渡してください。",
       "DENIED": "ユーザーが {{id}} の変更を許可しませんでした。やり直さず、ユーザーに理由を尋ねてください。",
       "STALE": "承認のあとも値が変わり続けたので、{{id}} は行っていません。settings.get で今の値を確かめてからやり直してください。",
@@ -945,7 +946,11 @@
       "chromeStatus": { "summary": "エージェントのブラウザー（この PC の Chrome）への接続の状態を返す。state は off（未接続）・setup（Chrome でリモートデバッグをオンにする準備が要る）・permission（Chrome に許可の確認が出ている）・denied（Chrome で許可されなかった。確認の「キャンセル」か「[設定] でオフにする」）・connected（つながっている）・unsupported（この OS ではまだ使えない）。", "state": "接続の状態。", "reason": "理由。off になった理由は chrome-closed・revoked・disconnected・declined・protocol、denied は cancel、setup は unreachable（DevToolsActivePort はあるがつながらない。Chrome が起動していないか、リモートデバッグがオフ）。", "dialog": "Chrome の許可の確認の窓を見つけているか。", "product": "つながっている Chrome の版（例: Chrome/154.0.8037.97）。" },
       "chromeConnect": { "summary": "Chrome への接続を始める（Chrome が許可の確認を出す）。ホストの PC の画面だけから呼べる。" },
       "chromeDisconnect": { "summary": "Chrome への接続を切る・許可待ちをやめる（出ている確認は閉じる）。ホストの PC の画面だけから呼べる。" },
-      "chromeRaiseDialog": { "summary": "Chrome の許可の確認を前に出す（答えは出さない）。ホストの PC の画面だけから呼べる。" }
+      "chromeRaiseDialog": { "summary": "Chrome の許可の確認を前に出す（答えは出さない）。ホストの PC の画面だけから呼べる。" },
+      "chromeTakeOver": { "summary": "エージェントの Chrome の窓を人が引き継ぐ。窓を見える形に戻して前に出し、エージェントのコマンドは「人が操作中」で断る（一時停止）。画面とリモートの端末からだけ呼べる。" },
+      "chromeResume": { "summary": "引き継いだ Chrome の窓をエージェントに戻す。窓は画面の外の見えない窓に戻り、一時停止が解ける。会話に引き継ぎの行が残る。画面とリモートの端末からだけ呼べる。" },
+      "chromeStop": { "summary": "エージェントの Chrome の操作を止める。接続を閉じ、次の人の送信まで再接続を断る。画面とリモートの端末からだけ呼べる。" },
+      "chromeControl": { "sessionId": "会話の id。", "state": "窓の状態。running（エージェントのターンの間）・idle（待機中）・stopped（止めた）・paused（人が引き継いでいる）。", "since": "paused の始まりの時刻（ミリ秒）。paused でなければ null。" }
     },
     "control": {
       "instructions": "Pleiad の機能と設定は ply_control から使えます。\nまず list_ops で操作を探し（id を渡すと入力の JSON Schema が分かります）、call_op で呼びます。検索・読み出し・設定の get/set は直に呼べます。\nPleiad の状態を変える操作はこの会話の承認モードに従います。関所を緩める変更はユーザーに承認カードを出し、待たずに status: pending で返ります（結果は後でこの会話に届きます）。code が NEEDS_UI・NEEDS_APPROVAL・READ_ONLY_MODE で返ったら、やり直さずユーザーに伝えてください。",

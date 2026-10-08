@@ -1,4 +1,6 @@
 // browser.*: エージェントのブラウザー（PC の Chrome）への接続（docs/inapp-browser.md「Chrome への接続」、ADR 0148・0153）。
+// 引き継ぐ・戻す・止める（chromeTakeOver・chromeResume・chromeStop。core/chrome/control.mjs）は会話の窓ごとの操作で、画面とリモートの端末から呼ぶ（MCP・CLI には出さない。
+// human-only は ADR 0094 の 5 つに限るので write。エージェントが自分の窓を引き継ぐ・戻す意味は無い）。
 // 状態を読む操作（chromeStatus）だけが AI・CLI にも出る。つなぐ・切る・確認を前に出すは、設定 › ブラウザーの画面の操作で、
 // ホストの PC の画面だけから呼べる（エージェントがつなぐ道は core の接続の案内 chromeConnection.demand が持つ）。
 import { z } from 'zod';
@@ -21,6 +23,26 @@ const mustBeSupported = (ctx) => {
   if (chrome.status().state === 'unsupported') unavailable(ctx);
   return chrome;
 };
+
+const controlShape = z.object({
+  sessionId: z.string().describe('agent:ops.browser.chromeControl.sessionId'),
+  state: z.enum(['running', 'idle', 'stopped', 'paused']).describe('agent:ops.browser.chromeControl.state'),
+  since: z.number().nullable().describe('agent:ops.browser.chromeControl.since'),
+});
+const controlInput = z.object({ sessionId: z.string().min(1).max(200).describe('agent:ops.browser.chromeControl.sessionId') });
+/** 会話の窓の操作（引き継ぐ・戻す・止める）。Chrome の層が使えなければ UNSUPPORTED、引き継げる窓が無ければ NO_WINDOW */
+const controlOf = (ctx) => {
+  const control = ctx.chromeControl;
+  if (!control || ctx.chrome?.status().state === 'unsupported') unavailable(ctx);
+  return control;
+};
+async function controlRun(ctx, action, sessionId) {
+  try { return await controlOf(ctx)[action](sessionId); }
+  catch (error) {
+    if (error?.code === 'NO_WINDOW') throw new OpError('NO_WINDOW', agentT(ctx.locale, 'ops.errors.chromeNoWindow'));
+    throw error;
+  }
+}
 
 export const browserOps = [
   defineOp({
@@ -68,5 +90,38 @@ export const browserOps = [
     hostScreenOnly: true,
     legacyCommand: 'chromeRaiseDialog',
     handler: (ctx) => mustBeSupported(ctx).raiseDialog(),
+  }),
+  defineOp({
+    id: 'browser.chromeTakeOver',
+    summary: 'agent:ops.browser.chromeTakeOver.summary',
+    risk: 'write',
+    riskReason: 'Shows the Chrome window of the conversation to the user and pauses the browser commands of the agent until it is handed back; it never grants anything or touches the user own windows. Screen and remote devices only (not on MCP or CLI)',
+    input: controlInput,
+    output: controlShape,
+    surfaces: { ui: true, mcp: false, cli: false },
+    legacyCommand: 'chromeTakeOver',
+    handler: (ctx, { sessionId }) => controlRun(ctx, 'takeOver', sessionId),
+  }),
+  defineOp({
+    id: 'browser.chromeResume',
+    summary: 'agent:ops.browser.chromeResume.summary',
+    risk: 'write',
+    riskReason: 'Hides the Chrome window of the conversation again and lets the browser commands of the agent through; it only ends a pause the user started. Screen and remote devices only (not on MCP or CLI)',
+    input: controlInput,
+    output: controlShape,
+    surfaces: { ui: true, mcp: false, cli: false },
+    legacyCommand: 'chromeResume',
+    handler: (ctx, { sessionId }) => controlRun(ctx, 'resume', sessionId),
+  }),
+  defineOp({
+    id: 'browser.chromeStop',
+    summary: 'agent:ops.browser.chromeStop.summary',
+    risk: 'write',
+    riskReason: 'Closes the connection of the agent to its Chrome window and refuses reconnecting until the next message from the user; stopping is always safe. Screen and remote devices only (not on MCP or CLI)',
+    input: controlInput,
+    output: controlShape,
+    surfaces: { ui: true, mcp: false, cli: false },
+    legacyCommand: 'chromeStop',
+    handler: (ctx, { sessionId }) => controlRun(ctx, 'stop', sessionId),
   }),
 ];

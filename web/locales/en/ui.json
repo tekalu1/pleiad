@@ -4149,6 +4149,17 @@
       "repairGo": "Remove and save again"
     }
   },
+  "chromeControl": {
+    "label": "Chrome window status",
+    "status": { "running": "{{name}} is operating", "idle": "Idle", "paused": "You are operating", "stopped": "Stopped" },
+    "stop": "Stop",
+    "takeOver": "Take over",
+    "resume": "Hand back to {{name}}",
+    "banner": "Paused · you are operating Chrome",
+    "veil": "Paused",
+    "handover": "You took over · handed back to {{name}} · {{duration}}",
+    "duration": { "minutes": "{{m}} min {{s}} s", "seconds": "{{s}} s" }
+  },
   "browser": {
     "agent": { "working": "Agent operating", "status": "{{name}} is operating", "stop": "Stop", "takeOver": "Take over" },
     "panel": "Browser",

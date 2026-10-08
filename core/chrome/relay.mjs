@@ -16,6 +16,9 @@
 //   - エージェントのターンの間、会話の窓のタブすべてに中継の自分のセッションで Emulation.setFocusEmulationEnabled(true) を保つ（隠した窓の描画・入力を保つため）。
 //     エージェントのセッションの付け外しでは切れない。ターンが終わったら外す
 //   - 範囲のタブが window.open の popup で開いた別窓にも、同じ置き方を当てる（scope.adoptPopup）
+// 引き継ぎ（一時停止。ADR 0148・0154。状態機械は core/chrome/control.mjs）: pause() の間は接続を切らず、エージェントのコマンドを全部 PAUSED_MESSAGE で断る
+// （人が窓を操作している。エージェントは hand_to_user で戻るのを待つ）。unpause() で解く。Chrome との接続が切れたときも解く
+//   - onChange(fn): 会話の状態（ターンの間か・止めた・一時停止）が変わるたびに sessionId を渡す。onTap(fn): エージェントが押した位置（Input.dispatchMouseEvent の mousePressed）
 import http from 'node:http';
 import crypto from 'node:crypto';
 import { WebSocketServer } from 'ws';
@@ -64,6 +67,10 @@ const BROWSER_ALLOWED = new Set([
   'Browser.getWindowForTarget', 'Browser.getWindowBounds', 'Browser.setContentsSize',
 ]);
 
+/** 一時停止中のコマンドを断る文（agent-browser の画面にそのまま出る）。日本語と英語を並べる */
+// i18n-ignore: エージェントへの断りの文。会話の言語に依らず、日本語と英語を並べる（中継は言語を持たない）
+export const PAUSED_MESSAGE = 'The user is operating the Chrome window now (paused). Call hand_to_user and wait until they hand it back. / 人が Chrome の窓を操作中です（一時停止）。hand_to_user を呼んで、戻るのを待ってください';
+
 class RelayError extends Error {
   constructor(message, code = -32000) { super(message); this.code = code; }
 }
@@ -102,6 +109,9 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, scop
   let up = null;               // 上り（Chrome への接続 1 本）の上の状態
   let binding = null;
   let closed = false;
+  const changeListeners = new Set(), tapListeners = new Set();
+  const fire = (set, ...args) => { for (const fn of [...set]) { try { fn(...args); } catch (error) { log(`chrome-relay: listener failed: ${error?.message ?? error}`); } } };
+  const changed = entry => fire(changeListeners, entry.id);
 
   server.on('upgrade', (request, socket, head) => {
     const key = KEY_PATH.exec(request.url || '')?.[1];
@@ -137,6 +147,7 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, scop
     scope.reset?.();   // Chrome が閉じた。窓はもう無い
     for (const entry of entries.values()) {
       entry.windows.clear();
+      if (entry.paused) { entry.paused = null; changed(entry); }   // Chrome が閉じた。窓はもう無いので、引き継ぎも解く
       for (const client of [...entry.clients]) { try { client.ws.close(1011, 'chrome disconnected'); } catch { /* 閉じていてもよい */ } }
     }
   }
@@ -205,6 +216,7 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, scop
     if (tab.windowId != null && ![...state.tabs.values()].some(other => other.windowId === tab.windowId)) {
       state.windows.delete(tab.windowId);
       tab.entry.windows.delete(tab.windowId);
+      if (tab.entry.lastWindowId === tab.windowId) tab.entry.lastWindowId = null;
       scope.windowClosed?.(tab.entry.id, tab.windowId);   // 窓だけ閉じられた。次に使うときに黙って開き直す
     }
   }
@@ -520,9 +532,11 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, scop
     if (!Number.isInteger(id) || typeof method !== 'string') return;
     if (client.entry.stopped) { try { client.ws.close(1008, 'stopped'); } catch { /* 閉じていてもよい */ } return; }
     const reply = body => send(client, { id, ...body, ...(sessionId ? { sessionId } : {}) });
+    if (client.entry.paused) { reply({ error: { code: -32000, message: PAUSED_MESSAGE } }); return; }   // 引き継ぎ中は全部断る（接続は切らない）
     try {
       const state = await upFor(client);
       if (client.closed) return;
+      if (client.entry.paused) throw new RelayError(PAUSED_MESSAGE);   // 待っている間に引き継がれた
       const result = sessionId ? await sessionCommand(state, client, method, params ?? {}, sessionId) : await browserCommand(state, client, method, params ?? {});
       reply({ result: result ?? {} });
     } catch (error) {
@@ -551,7 +565,7 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, scop
       client.paused.delete(params.requestId);
     } else if (method === 'Fetch.failRequest' || method === 'Fetch.fulfillRequest') client.paused.delete(params.requestId);
     // エージェントが動かしているタブの印（人の操作と区別する。ターンの終わりで外れる）
-    if (!PASSIVE.test(method)) tab.active = true;
+    if (!PASSIVE.test(method)) { tab.active = true; if (tab.windowId != null) tab.entry.lastWindowId = tab.windowId; }
     // 移った後の確認の答えを待つ間は、このタブへのコマンドを待たせる（断られたページを読ませない）
     while (tab.gate) await tab.gate.promise;
     // 窓を前に出して前面を取る命令は、Chrome へ送らずに成功で返す。agent-browser の「今のタブ」は自分の側で持つので操作は変わらず、
@@ -582,6 +596,10 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, scop
     }
     const commits = tab.commits;
     const result = await state.cdp.send(method, forward, sessionId, { timeoutMs: commandTimeoutMs });
+    // 押した位置（右パネルの輪）。座標だけで、URL・題は渡さない
+    if (method === 'Input.dispatchMouseEvent' && params.type === 'mousePressed' && Number.isFinite(params.x) && Number.isFinite(params.y)) {
+      fire(tapListeners, { sessionId: tab.entry.id, x: params.x, y: params.y, windowId: tab.windowId });
+    }
     if (operates && confirm) {
       // 履歴の移動は要求を出さないこと（bfcache）があり、応答が移り終える前に返る。移り終えるのを少し待ってから答えを見る
       if (method === 'Page.navigateToHistoryEntry') await commitAfter(tab, commits, HISTORY_COMMIT_WAIT_MS);
@@ -684,7 +702,9 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, scop
   }
   /** 会話のタブの確認の待ちを取り下げ、エージェントが動かしている印を外す（ターンの終わり・止める） */
   function settleEntry(entry) {
+    const wasTurn = entry.turn;
     entry.turn = false;   // ターンが終わった（止める・消す）。focus emulation を外す
+    if (wasTurn) changed(entry);
     if (!up) return;
     for (const tab of tabsOf(up, entry)) {
       tab.active = false; tab.approved.clear(); tab.denial = null;
@@ -703,7 +723,7 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, scop
       if (!entry) { entry = { id: sessionId, key: random(), stopped: false, clients: new Set(), windows: new Set(), turn: false }; entries.set(sessionId, entry); byKey.set(entry.key, entry); }
       if (unlock) this.resume(sessionId);
       // 端点を渡すのはターンの始まり（core/agent-browser.mjs の browserEnvironment）。ターンの間、窓のタブに focus emulation を保つ
-      if (!entry.stopped && !entry.turn) { entry.turn = true; if (up) syncFocus(up, entry); }
+      if (!entry.stopped && !entry.turn) { entry.turn = true; changed(entry); if (up) syncFocus(up, entry); }
       return `ws://127.0.0.1:${address.port}/devtools/browser/${entry.key}`;
     },
     /** 止める: 接続を閉じ、次の人の送信（resume）まで再接続を断る */
@@ -713,6 +733,7 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, scop
       entry.stopped = true;
       settleEntry(entry);
       closeClients(entry, 1000, 'stopped');
+      changed(entry);
     },
     resume(sessionId) {
       const entry = entries.get(sessionId);
@@ -721,13 +742,42 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, scop
       entry.key = random();
       byKey.set(entry.key, entry);
       entry.stopped = false;
+      changed(entry);
     },
+    /** 引き継ぎ（一時停止）にする。接続は切らず、以後のコマンドを PAUSED_MESSAGE で断る。at は一時停止の始まり（戻したときの経過時間に使う） */
+    pause(sessionId, at = Date.now()) {
+      const entry = entries.get(sessionId);
+      if (!entry || entry.paused) return false;
+      entry.paused = { at };
+      changed(entry);
+      return true;
+    },
+    /** 一時停止を解く。解く前の始まりの時刻を返す（一時停止でなければ null） */
+    unpause(sessionId) {
+      const entry = entries.get(sessionId);
+      if (!entry?.paused) return null;
+      const { at } = entry.paused;
+      entry.paused = null;
+      changed(entry);
+      return at;
+    },
+    /** 会話の今の状態。会話が中継に無ければ null。lastWindowId は、エージェントが最後に操作したタブの窓（引き継ぎで前に出す窓） */
+    state(sessionId) {
+      const entry = entries.get(sessionId);
+      return entry ? { turn: entry.turn, stopped: entry.stopped, paused: entry.paused ? { ...entry.paused } : null, lastWindowId: entry.lastWindowId ?? null } : null;
+    },
+    /** 窓の作り方（core/chrome/windows.mjs。control が引き継ぎで窓を見える形に戻す・隠し直すのに使う） */
+    get scope() { return scope; },
+    get cdp() { return up && !up.cdp.closed ? up.cdp : null; },
+    onChange(fn) { changeListeners.add(fn); return () => changeListeners.delete(fn); },
+    onTap(fn) { tapListeners.add(fn); return () => tapListeners.delete(fn); },
     /** 新しい会話の id が決まった（turn.key → 本物の id） */
     rebind(from, to) {
       const entry = entries.get(from);
       if (!entry || entries.has(to)) return;
       entries.delete(from); entry.id = to; entries.set(to, entry);
       scope.rebind?.(from, to);
+      changed(entry);
     },
     endTurn(sessionId) { const entry = entries.get(sessionId); if (entry) settleEntry(entry); },
     /** 会話を消した。接続を閉じて鍵を捨てる（窓を閉じるのは第 8 段） */
@@ -739,7 +789,10 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, scop
       closeClients(entry, 1000, 'forgotten');
       scope.forget?.(sessionId);
       entries.delete(sessionId); byKey.delete(entry.key);
+      fire(changeListeners, sessionId);   // 会話がもう中継に無い（state が null → 待機中）
     },
+    /** 中継が知っている会話の id（画面がつなぎ直したときに、今の状態を配るため） */
+    sessionIds() { return [...entries.keys()]; },
     /** サイトの利用の確認（confirmAgentSites）。ON なら範囲のタブに確認の Fetch を付け、OFF なら外す（止めている要求は通す） */
     setConfirm(enabled) {
       const next = enabled === true;

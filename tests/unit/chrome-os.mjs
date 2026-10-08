@@ -718,6 +718,28 @@ export default async function (t) {
     }
   }
 
+  // ===== 引き継ぎの往復（ADR 0154。第 6 段）: 隠す → 戻して前に出す（見張りは返さない）→ 隠し直す（また見張る）=====
+  {
+    const w = winWith();
+    const os = createWin32ChromeOs({ win32: w, timers: { setInterval: () => 1, clearInterval: () => {} } });
+    const ref = os.findWindowByNonce(NONCE);
+    os.conceal(ref);
+    const pleiad = os.foreground();   // 押された直後の前面（メモ帳の代わり）
+    w.fg = 700;
+    t.ok('引き継ぐ: 戻す → 前に出す（直接の SetForegroundWindow が通れば direct）', os.reveal(ref, { near: pleiad }) === true && os.raise(ref).ok === true && w.fg === 500 && w.windows.get(500).alpha === 255);
+    os.guardTick(); os.guardTick();
+    t.ok('見えている間は見張りが前面を返さない（引き継いだ窓が前面のまま）', w.fg === 500, String(w.fg));
+    w.fg = 700; os.guardTick(); w.fg = 500; os.guardTick();
+    t.ok('人が窓を行き来しても返さない', w.fg === 500);
+    w.fg = 700; os.guardTick();   // 人が Pleiad に戻った（「Claude に戻す」を押す）
+    t.ok('戻す: 隠し直せる（スタイルを取り直しても元の状態に戻る）', os.conceal(ref) === true && w.windows.get(500).alpha === 0 && (w.windows.get(500).exStyle & WS_EX_TOOLWINDOW) !== 0 && w.windows.get(500).rect.left >= 5480);
+    w.fg = 500; os.guardTick();
+    t.ok('隠し直したあとは、また見張る（隠した窓が前面を取ったら返す）', w.fg === 700, String(w.fg));
+    os.reveal(ref);
+    t.ok('もう一度戻すと元のスタイル（APPWINDOW でなく元の拡張スタイル）へ戻る', w.windows.get(500).exStyle === WS_NOREDIRECTION && w.windows.get(500).alpha === 255, w.windows.get(500).exStyle.toString(16));
+    os.stopGuard();
+  }
+
   // ===== 往復（core ⇄ main ⇄ 偽の Win32）: エージェントの窓の口 =====
   {
     const w = winWith();

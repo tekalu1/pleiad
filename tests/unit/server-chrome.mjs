@@ -117,6 +117,67 @@ export default async function (t) {
     } finally { p?.close(); await s.stop(); }
   }
 
+  // ---- エージェントの Chrome の窓の止める・引き継ぐ・戻す（chromeTakeOver・chromeResume・chromeStop。AGENT_HOST_AGENT_BROWSER=chrome の中継があるとき）
+  {
+    await fs.mkdir(dirs('data4'));
+    const s = await startServer({ env: { AGENT_HOST_BACKENDS: 'fake', AGENT_HOST_AGENT_BROWSER: 'chrome', AGENT_HOST_CHROME_USER_DATA: chrome.userDataDir }, dataDir: dirs('data4'), entry });
+    let u, v;
+    try {
+      u = await open({ port: s.port, token: s.token, autoAllow: true });
+      const noWindow = await fail(u.cmd('chromeTakeOver', { sessionId: 'nobody' }));
+      t.ok('引き継げる窓が無ければ NO_WINDOW（画面の言語の文で断る）', noWindow?.code === 'NO_WINDOW' && /引き継げる Chrome の窓がありません/.test(noWindow.message), JSON.stringify(noWindow));
+      const stopped = await u.cmd('chromeStop', { sessionId: 'nobody' });
+      t.ok('止めるものが無ければ idle（投げない）', stopped.state === 'idle' && stopped.sessionId === 'nobody', JSON.stringify(stopped));
+      const resumed = await u.cmd('chromeResume', { sessionId: 'nobody' });
+      t.ok('戻すものが無ければ idle', resumed.state === 'idle');
+      t.ok('sessionId が無ければ入力の検査で断る', (await fail(u.cmd('chromeTakeOver', {})))?.code === 'INVALID');
+
+      // ターンを走らせると中継の端点が渡される → 会話ごとの状態の便り（running → idle）が全部の接続へ届く
+      const turn = await u.runTurn({ backend: 'fake', cwd: ROOT, prompt: 'ok' });
+      const ofTurn = () => u.events.filter(e => e.type === 'chromeControl' && e.sessionId === turn.sessionId).map(e => e.state);
+      await until(() => ofTurn().at(-1) === 'idle', 8000, 'chromeControl idle');
+      t.ok('ターンの間は running、終わると idle の便りが会話の id つき（付け替えた後の本物の id）で届く', ofTurn().includes('running') && ofTurn().at(-1) === 'idle', ofTurn().join());
+
+      // リモートの接続（x-forwarded-for）にも便りが届き、操作は受ける（ホストの画面だけではない）
+      v = new WebSocket(`ws://127.0.0.1:${s.port}/ws?token=${s.token}`, { headers: { 'x-forwarded-for': '203.0.113.9' } });
+      const frames = [];
+      v.on('message', raw => { try { frames.push(JSON.parse(raw.toString())); } catch { /* 無視 */ } });
+      await new Promise((resolve, reject) => { v.once('open', resolve); v.once('error', reject); });
+      const ask = (command, args) => new Promise(resolve => {
+        const id = `r${Math.random()}`;
+        const on = raw => { const m = JSON.parse(raw.toString()); if (m.kind === 'response' && m.id === id) { v.off('message', on); resolve(m); } };
+        v.on('message', on);
+        v.send(JSON.stringify({ kind: 'command', command, id, args }));
+      });
+      const remote = await ask('chromeTakeOver', { sessionId: 'nobody' });
+      t.ok('リモートの端末からも受ける（ホストの画面だけではない）。窓が無いので NO_WINDOW', remote.ok === false && remote.code === 'NO_WINDOW', JSON.stringify(remote));
+      await u.runTurn({ backend: 'fake', cwd: ROOT, sessionId: turn.sessionId, prompt: 'again' });
+      await until(() => frames.some(f => f.kind === 'event' && f.event?.type === 'chromeControl'), 8000, 'remote chromeControl');
+      t.ok('リモートの接続にも会話ごとの状態の便りが届く', frames.some(f => f.kind === 'event' && f.event?.type === 'chromeControl' && f.event.sessionId === turn.sessionId));
+
+      // 操作の面: 人だけ（MCP・CLI には出さない）
+      const agent = { by: 'agent', via: 'mcp', sessionId: null };
+      for (const id of ['browser.chromeTakeOver', 'browser.chromeResume', 'browser.chromeStop']) {
+        const r = await registry.invoke(agent, id, { sessionId: 'x' }, { locale: 'ja' });
+        t.ok(`${id} は MCP からは見つからない（画面とリモートの端末だけ）`, r.ok === false && r.code === 'NOT_FOUND' && registry.get(id).risk === 'write' && registry.get(id).surfaces.mcp === false && registry.get(id).surfaces.cli === false && registry.get(id).hostScreenOnly === false);
+      }
+    } finally { v?.terminate(); u?.close(); await s.stop(); }
+  }
+
+  // ---- 中継が無い（AGENT_HOST_AGENT_BROWSER=chrome でない）→ 操作は UNSUPPORTED、便りは出ない
+  {
+    await fs.mkdir(dirs('data5'));
+    const s = await startServer({ env: { AGENT_HOST_BACKENDS: 'fake', AGENT_HOST_CHROME_USER_DATA: chrome.userDataDir }, dataDir: dirs('data5'), entry });
+    let u;
+    try {
+      u = await open({ port: s.port, token: s.token, autoAllow: true });
+      const take = await fail(u.cmd('chromeTakeOver', { sessionId: 'x' }));
+      t.ok('中継が無ければ chromeTakeOver は UNSUPPORTED', take?.code === 'UNSUPPORTED', JSON.stringify(take));
+      await u.runTurn({ backend: 'fake', cwd: ROOT, prompt: 'ok' });
+      t.ok('chromeControl の便りは出さない（内蔵ブラウザーの道のまま）', !u.events.some(e => e.type === 'chromeControl'));
+    } finally { u?.close(); await s.stop(); }
+  }
+
   await chrome.stop();
   await fs.rm(scratch, { recursive: true, force: true });
 }

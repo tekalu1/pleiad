@@ -14,6 +14,7 @@ import { copyIcon, downloadIcon, sidePanelIcon, openInBrowserIcon, moreIcon } fr
 import { copyPathText } from './file-actions.mjs';
 import { renderGitSummary } from './git-view.mjs';
 import { renderWorktreeLine } from './worktree-ui.mjs';
+import { renderChromeHandoverLine } from './chrome-control.mjs';
 import { COMPUTER_PREFIX, isComputerTool, computerToolName, computerVerb, computerInfo, reasonShort, reasonLong, shotsOf, shotButton, stopMark } from './computer-use.mjs';
 
 // ---------------------------------------------------------------- エスケープ
@@ -594,6 +595,8 @@ export function renderPresent(ev) {
   if (e.kind === 'git') return renderGitSummary(e) ?? el('div', 'git-sum-row');
   // worktree で始めた印の行（ADR 0089）
   if (e.kind === 'worktree') return renderWorktreeLine(e);
+  // 引き継いで戻した行（エージェントの Chrome の窓。ADR 0154）
+  if (e.kind === 'chromeHandover') return renderChromeHandoverLine(e);
   const kind = ["image", "html", "text", "file", "visualization"].includes(e.kind) ? e.kind : "text";
   const card = el("figure", `present present-${kind}`);
 

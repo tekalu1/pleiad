@@ -72,7 +72,7 @@ agent-browser 0.38.1 の state ルートには専用の変更変数がない。`
 
 - **使い方**: `AGENT_HOST_AGENT_BROWSER=chrome npm run desktop`。先に設定 › ブラウザー › 「エージェントのブラウザー」で「つなぐ」を押して許可しておく。エージェントが接続の無いままつなぐと、中継は接続を求めて（Chrome に許可の確認が出る）約 20 秒（`connectWaitMs`）だけ待ち、つながらなければ「まだつながっていない」の失敗を返して待ちを外す（ほかに待つ人がいなければ確認も閉じる）。そのとき接続が `setup` なら「Chrome が起動していないか、リモート デバッグがオフ」、それ以外は「許可を待っている」の文で返す。操作待ちのカード・`hand_to_user` で無期限に待つ形は第 7 段。
 - **渡し方**: ターンの開始（`browserEnvironment`）で、端点を parentPort の往復なしに core の中継から取る（`core/agent-browser.mjs` の `chromeRelayBrowser`）。`agent-browser.json` の `cdp`・環境変数は内蔵ブラウザーの道と同じで、`AGENT_BROWSER_PIN_TAB=1` を足す（agent-browser を自分のタブに縛る。3 つのバックエンドの env に入る。Codex は `shell_environment_policy.set` に、この値があるときだけ足す）。端点は `ws://127.0.0.1:<port>/devtools/browser/<鍵 48 桁>`（内蔵ブラウザーの中継と同じ形）。待ち受けのポートは中継に 1 つ、鍵は会話ごと。`Host` が `127.0.0.1:<port>` でない・相手が loopback でない・鍵が違う接続は断る。
-- **止める**: `stop(sessionId)` はつないでいる接続を閉じ、次の人の送信（`unlock` の `endpoint`。鍵を作り直す）まで再接続を断る。ターンの終わり（`endTurn`）は、そのタブで出ている確認を取り下げ、エージェントが動かしている印を外す。会話を消すと鍵を捨てる（窓を閉じるのは第 8 段）。画面から止める口（`browser.chromeStop`）は第 6 段。
+- **止める**: `stop(sessionId)` はつないでいる接続を閉じ、次の人の送信（`unlock` の `endpoint`。鍵を作り直す）まで再接続を断る。ターンの終わり（`endTurn`）は、そのタブで出ている確認を取り下げ、エージェントが動かしている印を外す。会話を消すと鍵を捨てる（窓を閉じるのは第 8 段）。画面から止める口は `browser.chromeStop`（下の「止める・引き継ぐ・戻す」）。
 - **上りへ送るもの**: 最初のエージェントの接続で `Target.setDiscoverTargets` を 1 回だけ送り、範囲を知るのに使う（利用者のタブの `targetCreated`・`targetInfoChanged` も届くが、範囲の外のものは URL・題を覚えず、ログにも出さず、エージェントへ送らない）。**ブラウザー全体の `Target.setAutoAttach` は一度も送らない**（利用者の全タブに attach するため。エージェントが送ったものは中継の中で範囲のタブにだけ attach して真似る）。エージェントの接続が閉じたら、その接続が attach したセッションを上りで外す。上りが切れたら（Chrome が閉じた・許可の取り消し・「切る」）、エージェントの接続も閉じる（1011）。
 
 ### 範囲
@@ -132,13 +132,35 @@ Playwright の Chromium 151（一時のプロフィール。利用者の Chrome 
 - **外形で窓を探すとき**（popup・題で見つからない最初の窓）: 利用者の窓・Edge の窓・別の Chrome の窓を取り違えて隠さないよう、(a) つないだ Chrome のプロセス（`DevToolsActivePort` のポートの待ち受け）の窓だけを、窓を開く前の写し（`snapshotWindows`）に無いものに絞る。プロセスを引けなければ採用しない（隠さない）。(b) 探す前に CDP の `Browser.setWindowBounds` でその窓を一意な位置（画面の外。同時に探す窓同士がぶつからないよう位置を揺らす。最初の窓は大きさにも端数を付ける）へ置き、その外形を狭い許容（2 DIP）で探す。置けなければ、今の外形を (a) の絞り込みのうえで 16 DIP で探す。複数合えば曖昧として隠さない。
 - **専用の窓だけが閉じられた**: 窓の最後のタブが消えたら窓の記録を捨て（`scope.windowClosed`）、次に窓が要るときに黙って開き直す。**接続が切れた**（Chrome が閉じた・許可の取り消し・利用者が切った）: 窓の記録を全部捨て（`scope.reset`）、そのとき**隠した窓を閉じる**（`closeAgent`。画面の外・透明・マウス素通しの窓は、記録を捨てると誰にも戻せないため。エージェント専用の窓なので、残すより閉じるほうが利用者の驚きが少ない）。Chrome が本当に落ちていて窓がもう無ければ、記録を捨てるだけ。閉じる依頼が出せなければ見える形へ戻し、依頼を出したのに 3 秒経っても残る窓（離れる確認など）も見える形へ戻す。窓を開く途中（隠した後）の失敗も同じく窓を閉じる。会話ごとの `openTab` は順に流す（同時に最初の窓を 2 つ開かない）。
 - **Pleiad の終了**: `desktop/main.cjs` が `will-quit`（と、`will-quit` を通らない `app.exit`）で、隠している窓を全部片付ける（`closeAllAgents`。閉じられなければ見える形へ戻す。引き継いだ窓は閉じない）。
-- **前面の見張り**（OS の層）: 隠している窓があるあいだ 100 ms ごとに前面を見て、隠した窓が前面を取ったら、**その窓が前面を取る直前の前面**へすぐ返す（隠した直後にも 1 回見る。引き継ぎは第 6 段なので、今は常に返す）。隠した窓が持ち主の窓（翻訳の確認・権限の確認などの吹き出しは別の最上位の窓として今の画面の位置に出て、前面まで取る）も一緒に隠す。ただし「リモート デバッグを許可しますか？」の確認の窓（層が確認として出した窓・題が既知で小さい窓）は隠さない（利用者が見て、Pleiad が閉じる）。周期の中の失敗はログに残して見張りを続ける。
+- **前面の見張り**（OS の層）: 隠している窓があるあいだ 100 ms ごとに前面を見て、隠した窓が前面を取ったら、**その窓が前面を取る直前の前面**へすぐ返す（隠した直後にも 1 回見る。引き継いで見える形に戻した窓は見ない。下の「止める・引き継ぐ・戻す」）。隠した窓が持ち主の窓（翻訳の確認・権限の確認などの吹き出しは別の最上位の窓として今の画面の位置に出て、前面まで取る）も一緒に隠す。ただし「リモート デバッグを許可しますか？」の確認の窓（層が確認として出した窓・題が既知で小さい窓）は隠さない（利用者が見て、Pleiad が閉じる）。周期の中の失敗はログに残して見張りを続ける。
 - **画面の構成の変化**（モニターの増減・解像度・DPI・スリープ復帰）: `desktop/main.cjs` が Electron の `screen` の `display-added`・`display-removed`・`display-metrics-changed` と `powerMonitor` の `resume` で `reconceal` を呼び、隠している窓（吹き出しの窓を含む）を置き直す。Chrome が画面の中へ寄せても、透明度 0・マウス素通しなので見えない。
 - **focus emulation**: エージェントのターンの間（`endpoint` を渡してから `endTurn`・止める・消すまで）、会話の窓のタブすべてに、中継自身のセッションで `Emulation.setFocusEmulationEnabled(true)` を保つ（タブが増えたら足す。ターンが終わったら外してセッションも外す）。エージェントのセッションの付け外しでは切れない。Chrome の側で外されたら、ターンの間は付け直す。外すと隠れた窓のページは `hidden`・描画停止に戻る（CPU を使い続けない）。右パネルで映像を見ている間の FE は第 5 段。
 
 実機（確かめ専用の Chrome 154。2026-10-07。agent-browser 0.38.1）: `open`・`snapshot`・`screenshot`・`click`・`fill`・`scroll`・`set viewport`・`tab new`・`tab tN`・`window.open` の tab と popup が各 3 回とも効き、25〜110 ms（`tab new` は約 350 ms、`window.open` を押す操作は 0.1〜1 秒）。`screenshot` は白紙でない。最初の窓が画面に見えるのは約 95〜110 ms で、前面を取るのは約 125 ms（そのあと開く前の前面へ返す）。2 枚目からの窓は 0〜16 ms。popup は約 60 ms 画面に見え、約 100 ms 前面を取って返す。受け入れで見た「screenshot が 30 秒止まる」は、`chrome.exe --new-window` の窓（90 秒置いても screenshot 約 100 ms）でも、それを最小化した旧設計の窓（screenshot 2.3〜2.7 秒、click 約 0.5 秒）でも再現しなかった。
 
 **既知の制約**: `window.open`（`target="_blank"`）のタブは同じ窓に入り、元のタブが裏になる。agent-browser が元のタブへ `tab tN` で戻しても `bringToFront` は握りつぶすので裏のまま、描画が間引かれて（`requestAnimationFrame` が約 2 fps）`screenshot` が 2.3〜2.5 秒、`click` が約 0.5 秒かかる（効きはする）。`Page.bringToFront`・`Target.activateTarget` は中継が握りつぶすので窓は前面に出ない。隠した窓が前面を取るのは、Chrome 自身の前面化と `window.open` の popup で、約 30〜110 ms で見張りが返す。`WS_EX_NOACTIVATE` を付けても前面は取られた。Pleiad の終了で閉じる依頼（`WM_CLOSE`）は、依頼を出すだけで窓が閉じたかは待たない（離れる確認が出る窓は隠れたまま残りうる。Pleiad が終わった後なので戻せない）。
+
+### 止める・引き継ぐ・戻す（ADR 0148・0154。第 6 段）
+
+窓（会話）ごとの状態は `core/chrome/control.mjs`（`createChromeControl`）が 4 つに分ける。
+
+| 状態 | 意味 |
+|---|---|
+| `running` | エージェントのターンの間（`endpoint` を渡してから `endTurn` まで。focus emulation の付け外しと同じ合図） |
+| `idle` | ターンの外（待機中） |
+| `stopped` | 「止める」。接続を閉じ、次の人の送信（`unlock` の `endpoint`）まで再接続を断つ（中継の `stop`。ターンの開始で鍵を作り直す） |
+| `paused` | 「引き継ぐ」。接続は切らず、エージェントのコマンドは全部断る |
+
+状態は中継の会話の記録（`turn`・`stopped`・`paused`）が持ち、変わるたびに `relay.onChange(sessionId)` が呼ばれる。control は同じ状態を重ねて配らない。`paused` は `stopped` より優先して見せる。
+
+- **引き継ぐ**（`browser.chromeTakeOver`。画面とリモートの端末から。`takeOver`）: (1) OS の層で押された直後の前面（Pleiad の窓）を覚える（`foreground`）。(2) 中継を `pause`（以後のコマンドは全部 `PAUSED_MESSAGE`「人が Chrome の窓を操作中です（一時停止）。`hand_to_user` を呼んで、戻るのを待ってください」と英語の同じ文で断る。ブラウザーの口でもセッションの口でも、つなぎ直した接続でも）。(3) 会話の窓を全部、見える形に戻し（`reveal`。付けたスタイルだけを外し、覚えた Pleiad の窓のあるモニターの中へ動かす）、エージェントが最後に操作したタブの窓を前に出す（`raise`。押された直後の main の前面の権利、通らなければ `AttachThreadInput`）。見える形に戻した窓が 1 つも無ければ（窓がまだ無い・隠せていなかった）、一時停止を戻して `NO_WINDOW`。(4) 映像・撮影を断る（`captureBlocked(sessionId)`。第 5 段の映像が呼ぶ）。見えている間は、OS の層の前面の見張りがその窓を見ない（`reveal` が隠した印を外す）ので、人が前面に置いたままにできる。窓が複数あれば全部見える形に戻す（前に出すのは最後に操作した窓）。
+- **戻す**（`browser.chromeResume`。「Claude に戻す」）: 窓を画面の外の見えない窓に戻し（`conceal`）、そのあとで一時停止を解く（見えている間はコマンドを通さない）。人が前面に置いていた窓が前面のままにならないよう、今の前面（隠す窓でなければ）か引き継ぎを始めたときの前面（Pleiad の窓）へ返す。引き継いでいる間に開いた popup の窓は動かさず（人の窓を画面の外へ動かさない）、戻すときに外形で探して隠す。会話に「あなたが引き継ぎ · Claude に戻しました · 1 分 12 秒」の行（`present` の `kind: 'chromeHandover'`、`chromeHandover: { seconds }`）を残す。
+- **止める**（`browser.chromeStop`）: 中継の `stop`。引き継いでいるときは、窓を戻してから止める。
+- 同じ会話の操作は順に流す（同時に引き継ぐ・戻すが窓を二重に動かさない）。
+- **窓を × で閉じられた**: `paused` のまま（エージェントのコマンドは断る）。「戻す」で解け、次に使うとき第 4 段のとおり黙って開き直す。**Chrome ごと閉じた**: 接続が off になり、中継が `paused` も解く。
+- **自動の一時停止は作らない**（ADR 0154。窓が見えるのは引き継ぎのときだけ）。待機中の「Chrome で開く」も置かず、見せるなら引き継ぎ（一時停止）にする。「Claude に戻して続ける」（戻したときにターンが終わっていれば人の送信を送る）と `hand_to_user` は第 7 段。
+- **便り**: 状態は `chromeControl` イベント（`{ sessionId, state, since }`。`since` は `paused` の始まりの時刻 ms）、エージェントが押した位置は `chromeTap`（`{ sessionId, x, y, windowId }`。`Input.dispatchMouseEvent` の `mousePressed` の座標だけ）。どちらも会話ごとに全部の接続（ホストの画面とリモートの端末）へ流し、再送の置き場には積まない。画面がつなぎ直したときは、待機中でない会話の今の状態を配る。操作は WS の `chromeTakeOver`・`chromeResume`・`chromeStop`（`{ sessionId }`。`risk: 'write'`、`surfaces` は ui だけで MCP・CLI には出さない。ホストの画面だけには限らない。human-only は [ADR 0094](adr/0094-human-only-five.md) の 5 つに限る）。
+- **画面の部品**: `web/chrome-control.mjs`（状態の一行・一時停止中の帯・映像の上の層・押した位置の輪、状態の置き場 `chromeControlStore`、会話の行）。右パネルの「Chrome の窓」への差し込みは第 5 段の `web/chrome-panel.mjs` の側で、差し込み口は `createChromeControlView({ run, getName, onError })` の `root`（状態の一行）・`banner`（会話の帯）・`overlay`（映像の上。`ring(x, y, { width, height })` で輪）と、`apply({ state, since })`。状態は `chromeControlStore.get(sessionId)`・`onChange`・`onTap` で引く。
 
 ## OS ごとの層
 

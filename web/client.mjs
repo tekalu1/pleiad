@@ -115,6 +115,7 @@ import { createConversationToc } from './conversation-toc.mjs';
 import { setupGitPanel } from './git-panel.mjs';
 import { renderDelegateGit, branchLabel } from './git-view.mjs';
 import { busyPlan, paintWorktreeLine, setWorktreeLineMode, askText, shortPath } from './worktree-ui.mjs';
+import { chromeControlStore, setChromeHandoverAgentName } from './chrome-control.mjs';
 import { branchIcon } from './icons.mjs';
 const outboxes = new Map();
 const turnErrorRows = new Map();
@@ -2940,6 +2941,8 @@ function onEvent(ev, replay = false) {
   if (ev.type === 'computer.state') { onComputerState(ev); return; }
   // エージェントのブラウザー（PC の Chrome）への接続の状態。ホストの画面だけに届く（設定 › ブラウザー）
   if (ev.type === 'chromeBrowser') { browserSettings.chromeEvent(ev); return; }
+  // エージェントの Chrome の窓の状態（会話ごと。running・idle・stopped・paused）と、エージェントが押した位置。右パネルの「Chrome の窓」が置き場から引く（web/chrome-control.mjs）
+  if (ev.type === 'chromeControl' || ev.type === 'chromeTap') { chromeControlStore.event(ev); return; }
   if (!isMine(ev)) {
     // 一覧に効くものだけは取り込む（画面には出さない）。セッションに紐づかないもの（statusIcon 等）はここへ来ない
     if (["status", "group", "title", "fork", "mode", "model", "cwd", "backend", "nextSettings"].includes(ev.type)) {
@@ -6340,6 +6343,8 @@ function loadDraft() {
 $("draftSaved").onclick = () => saveDraft().catch(() => {});
 // 狭い幅の「再試行」。押すと一行は「保存中…」で消えるので、フォーカスは入力欄へ（失敗すれば一行が出直す）
 $("draftFailRetry").onclick = () => { $("prompt").focus(); saveDraft().catch(() => {}); };
+// 引き継いで戻した行（present kind: 'chromeHandover'）の「Claude に戻しました」の名前
+setChromeHandoverAgentName(() => labelOf(activeBackendId()));
 // 内蔵ブラウザー（web/browser-panel.mjs）。デスクトップ版のホストの画面だけ。右パネルの 1 つのモードになる
 let browserEntry = null;   // 頭の行のボタン（下の setupBrowserEntry）。状態の知らせが先に届いても落ちないよう先に宣言する
 const browserPanel = browserPanelAvailable()

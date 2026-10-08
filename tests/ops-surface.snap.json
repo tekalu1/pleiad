@@ -603,6 +603,21 @@
       "input": "25c7d85c859a"
     },
     {
+      "id": "browser.chromeResume",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": false,
+        "cli": false
+      },
+      "legacyCommand": "chromeResume",
+      "input": "7f7ac791e818"
+    },
+    {
       "id": "browser.chromeStatus",
       "risk": "read",
       "riskOf": false,
@@ -621,6 +636,36 @@
       },
       "legacyCommand": "chromeStatus",
       "input": "25c7d85c859a"
+    },
+    {
+      "id": "browser.chromeStop",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": false,
+        "cli": false
+      },
+      "legacyCommand": "chromeStop",
+      "input": "7f7ac791e818"
+    },
+    {
+      "id": "browser.chromeTakeOver",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": false,
+        "cli": false
+      },
+      "legacyCommand": "chromeTakeOver",
+      "input": "7f7ac791e818"
     },
     {
       "id": "channels.archive",
