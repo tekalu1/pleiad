@@ -4,8 +4,16 @@
 import { el, svgEl } from './dom.mjs';
 import { t } from './i18n.mjs';
 import { isComposingKey } from './keyboard.mjs';
+import { openExternalLink } from './link-open.mjs';
 
 export const COPIED_MS = 1200;
+export function aiReportUrl() {
+  return 'https://github.com/tekalu1/pleiad/issues/new?' + new URLSearchParams({
+    title: t('chat.message.reportTitle'), body: t('chat.message.reportBody'),
+  });
+}
+
+export function reportAiContent() { return openExternalLink(aiReportUrl(), { external: true }); }
 
 const svg = (paths, extra = {}) => {
   const s = svgEl('svg', { viewBox: '0 0 24 24', 'aria-hidden': 'true', ...extra });
@@ -103,6 +111,7 @@ export function messageMenuPlan({ kind = 'user', part = false, canFork = true, s
     if (editable) items.push({ key: 'sep', sep: true }, { key: 'edit', label: t('chat.message.editResend') }, { key: 'resend', label: t('chat.message.resend') });
     if (source) items.push(...(editable ? [] : [{ key: 'sep', sep: true }]), { key: 'source', label: t('chat.message.showSource') });
   }
+  if (kind === 'ai') items.push({ key: 'sep', sep: true }, { key: 'report', label: t('chat.message.reportAi') });
   return items;
 }
 

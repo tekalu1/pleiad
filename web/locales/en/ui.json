@@ -1875,6 +1875,9 @@
       "forkPart": "Branch from this message",
       "copy": "Copy",
       "copyReply": "Copy reply",
+      "reportAi": "Report inappropriate AI content",
+      "reportTitle": "Inappropriate AI content shown in Pleiad",
+      "reportBody": "Describe the problematic response, which AI CLI produced it, and why it is concerning. Include only the excerpts you choose to share. Remove personal information, credentials, and private project data before submitting. Pleiad does not attach conversation content automatically.",
       "copied": "Copied",
       "more": "Message actions",
       "sentAt": "Sent at {{time}}",
@@ -4232,6 +4235,7 @@
     "banner": "Paused · you are operating Chrome",
     "error": { "concealFailed": "The window could not be hidden, so it is still paused. Press hand back again" },
     "handover": "You took over · handed back to {{name}} · {{duration}}",
+    "closed": { "agent": "{{name}} closed the window", "human": "The Chrome window closed", "image": "Last image of the closed window" },
     "duration": { "minutes": "{{m}} min {{s}} s", "seconds": "{{s}} s" }
   },
   "browser": {
@@ -4289,7 +4293,8 @@
       "deviceNote": "Password managers and passkeys can't be used from this device",
       "inputFailed": "Couldn't send that to the Chrome window",
       "waitingPermission": "Waiting for Chrome to allow the connection",
-      "openFailed": "Couldn't open it in Chrome"
+      "openFailed": "Couldn't open it in Chrome",
+      "close": "Close window", "closeFailed": "Couldn't close the Chrome window"
     },
     "remote": {
       "title": "PC browser",

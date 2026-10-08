@@ -258,7 +258,7 @@ var b=document.getElementById('back-to-hosts');if(typeof window.backToHosts==='f
 
     // ── connection ──
 
-    private sealed class Ev {
+    internal sealed class Ev {
         class Ready(val ch: Channel?, val err: LinkUnavailable?) : Ev()
         class Opened(val stream: Stream?, val err: Exception?) : Ev()
         class Response(val head: JSONObject) : Ev()
@@ -546,11 +546,21 @@ var b=document.getElementById('back-to-hosts');if(typeof window.backToHosts==='f
             synchronized(inflightLock) { inflightLock.notifyAll() }
             try { s.close() } catch (_: IOException) {}
             // Credit for anything we'll never deliver
-            while (true) { val ev = q.poll() ?: break; if (ev is Ev.Message) ev.release() }
+            releaseQueuedWsMessages(q)
             // Late host messages after this point: release immediately
             loop.post {
                 if (!stream.destroyed) stream.listener = object : StreamListener {}
+                // A callback already in flight can enqueue after the first drain but before listener replacement.
+                // The stream callbacks run on the loop, so swapping the listener and this drain close that race.
+                releaseQueuedWsMessages(q)
             }
         }
+    }
+}
+
+internal fun releaseQueuedWsMessages(q: LinkedBlockingQueue<DeviceProxy.Ev>) {
+    while (true) {
+        val ev = q.poll() ?: return
+        if (ev is DeviceProxy.Ev.Message) ev.release()
     }
 }

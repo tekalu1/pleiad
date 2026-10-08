@@ -232,6 +232,7 @@ export const COMMANDS = new Set([
   'chromeResume',            // 戻す: 窓を画面の外の見えない窓に戻し、paused を解く（会話に「あなたが引き継ぎ · Claude に戻しました」の行）
   'chromeStop',              // 止める: 接続を閉じ、次の人の送信まで再接続を断る（stopped）
   'chromeOpen',              // { sessionId, url } -> { sessionId, targetId }。ビューアの⋯「Chrome で開く」。会話の窓に開く（つながっていなければ許可を待つ）。ホストの PC の画面だけ
+  'chromeCloseWindow',       // { sessionId } -> { closed }。会話の専用窓を閉じ、最後の画面を残す。画面とリモートの端末から
 ]);
 
 // event.type の一覧（server -> client の EVENT ペイロード）。

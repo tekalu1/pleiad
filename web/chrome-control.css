@@ -31,3 +31,4 @@
 .cc-line-ic{display:inline-flex;flex:none}
 .cc-line-ic svg.i{width:13px;height:13px}
 .cc-line-t{min-width:0;flex:1 1 200px}
+.cc-closed-shot{display:block;max-width:min(100%,480px);max-height:320px;object-fit:contain;border-radius:var(--r-s);margin:6px 0}

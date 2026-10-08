@@ -34,6 +34,8 @@
 .cp-empty[hidden]{display:none}
 .cp-foot{display:flex;align-items:center;min-height:20px;padding:0 4px;color:var(--ink-weak)}
 .cp-fps{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cp-close{margin-left:auto}
+.cp-close[hidden]{display:none}
 /* 端末から操作する間（第 7 段）: 指の動きはページへ送る（パネルをスクロールしない）。文字の欄は web/remote-browser.css の .rb-text と同じ形 */
 .cp-screen[data-operating]{touch-action:none;cursor:pointer}
 .cp-text{display:flex;gap:8px}

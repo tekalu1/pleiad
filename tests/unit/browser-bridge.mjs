@@ -33,7 +33,7 @@ export default async function (t) {
       const init = await (await rpc('initialize', {})).json();
       assert.equal(init.result.serverInfo.name, 'ply_browser');
       assert.deepEqual((await (await rpc('tools/list', {})).json()).result.tools, [], '操作待ちの台帳が無いホストは hand_to_user を載せない');
-      assert.deepEqual(browserTools('en').map(x => x.name), ['hand_to_user']);
+      assert.deepEqual(browserTools('en').map(x => x.name), ['hand_to_user', 'close_browser_window']);
       const call = await (await rpc('tools/call', { name: 'use_browser_profile', arguments: { profile: 'x' } })).json();
       assert.equal(call.result.isError, true, '載せていないツールの呼び出しは断る');
       assert.match(call.result.content[0].text, /ply_browser/);
@@ -64,7 +64,7 @@ export default async function (t) {
       const call = async (binding, name, args) => (await (await fetch(binding.url, { method: 'POST', headers: { ...binding.headers, 'content-type': 'application/json' }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: args } }) })).json()).result;
       const ja = open('ja');
       const list = (await (await fetch(ja.url, { method: 'POST', headers: { ...ja.headers, 'content-type': 'application/json' }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }) })).json()).result.tools;
-      t.ok('tools/list に hand_to_user（reason は列挙・message と一緒に必須）', list.length === 1 && list[0].name === 'hand_to_user' && list[0].inputSchema.required.join() === 'reason,message'
+      t.ok('tools/list に hand_to_user（reason は列挙・message と一緒に必須）と close_browser_window', list.length === 2 && list[0].name === 'hand_to_user' && list[1].name === 'close_browser_window' && list[0].inputSchema.required.join() === 'reason,message'
         && list[0].inputSchema.properties.reason.enum.join() === 'login,captcha,two_factor,payment,other' && /Claude に戻す/.test(list[0].description), JSON.stringify(list));
       t.ok('英語の会話には英語の説明', /Return to Claude/.test(browserTools('en')[0].description));
 

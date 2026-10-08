@@ -412,11 +412,14 @@ async function locate({ root, key }) {
 
 /**
  * 実行場所で走るサーバーが、外の AI（Claude Code など）に貼る設定の起動口。実行場所の Node・スクリプトは版ごとのパスで、
- * 古い版の掃除で壊れるので、版に依らない $INSTDIR の起動口（Ply.exe + resources\app\bin\pleiad.mjs）を指す（core/cli-launcher.mjs の stableCli）。
+ * 古い版の掃除で壊れるので、NSIS は $INSTDIR、Store は App Execution Alias の起動口を指す（core/cli-launcher.mjs の stableCli）。
  * サーバーの env に足す
  */
-function stableCliEnv({ execPath = process.execPath, resourcesPath = process.resourcesPath } = {}) {
-  return { PLEIAD_CLI_EXEC: execPath, PLEIAD_CLI_SCRIPT: path.join(resourcesPath, 'app', 'bin', 'pleiad.mjs'), PLEIAD_CLI_ELECTRON: '1' };
+function stableCliEnv({ execPath = process.execPath, resourcesPath = process.resourcesPath,
+  store = require('./updates.cjs').isStoreBuild({ pkg: require('../package.json'), windowsStore: process.windowsStore }), env = process.env } = {}) {
+  return { PLEIAD_CLI_EXEC: store ? require('./msix.cjs').stableLauncher({ proc: process, env, store }) : execPath,
+    PLEIAD_CLI_SCRIPT: store ? '' : path.join(resourcesPath, 'app', 'bin', 'pleiad.mjs'), PLEIAD_CLI_ELECTRON: '1',
+    ...(store ? { PLEIAD_CLI_STORE: '1' } : {}) };
 }
 
 module.exports = {

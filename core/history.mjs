@@ -142,6 +142,7 @@ export async function recordPresent(sessionId, payload) {
     ...(payload.kind === 'chromeHandover' ? { chromeHandover: { seconds: Number.isFinite(payload.chromeHandover?.seconds) ? Math.max(0, Math.round(payload.chromeHandover.seconds)) : 0 } } : {}),
     // エージェントがプロフィールを切り替えた行（core/chrome/profile-choice.mjs）: { browser, dir, name, agent }（表示名とフォルダー名だけ）
     ...(payload.kind === 'chromeProfile' ? { chromeProfile: chromeProfileLine(payload.chromeProfile) } : {}),
+    ...(payload.kind === 'chromeClosed' ? { chromeClosed: { by: ['agent', 'human'].includes(payload.chromeClosed?.by) ? payload.chromeClosed.by : 'human' } } : {}),
   };
 
   const inline =

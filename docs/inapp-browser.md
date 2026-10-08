@@ -242,6 +242,14 @@ PC に引き継いだ間は、窓を見せる前に撮影を止め、映像に�
 
 会話の入力欄の上にも一時停止中の帯と戻すボタンを出す。窓を × で閉じても paused のままで、この帯から戻せる。Chrome ごと閉じて接続が切れると一時停止も解く。引き継ぎ・戻す・止めるは同じ会話では順に行い、先に引き継いだ状態を後の押下で取り替えない。これらの操作は画面専用で MCP・CLI には出さない。
 
+### Chrome の窓の上端のピル
+
+PC へ引き継いでいる間（`paused`・`by: 'pc'`）に、その会話の見える Chrome の窓が前面なら、上端に「あなたが操作中 · {エージェント名} に戻す」のピルを重ねる。押すと右パネルの `browser.chromeResume` と同じように窓を隠して一時停止を解く。ほかの窓が前面になったとき、Chrome の窓を閉じたとき、Chrome の接続が閉じたとき、戻したときは消す。端末への引き継ぎでは PC の窓を見せないので出さない。
+
+`desktop/chrome-pill.cjs` のクリックを受ける小さな Electron 窓で、ページには何も差し込まない。ページのアクセシビリティの木には入らず、Esc も取らない。ピルの窓だけ `setContentProtection(true)` で撮影から外す。OS の層の `watch` で前面を追い、`bounds(ref)` が Win32 の物理矩形の左上を Electron の画面 DIP へ変換し、窓の `GetDpiForWindow` で幅と高さを換算する。前面の間は位置を更新し、移動・大きさ・モニター・DPI の変更に追従する。
+
+ADR 0148 にある「{エージェント名} が操作中「題」· 止める · 引き継ぐ」は出さない。ADR 0154 でエージェントの窓は引き継ぐまで画面外にあり、その文言を窓の上に見せる場面がなくなった。通常時の止める・引き継ぐは右パネルの状態の一行から操作する。
+
 ### 操作待ちのカードと hand_to_user
 
 `core/chrome/handoff.mjs` と `web/browser-handoff-card.mjs` が、接続の案内とログインなどの依頼を会話に出す。1 会話に開くカードは 1 枚で、`permissionUpdate` で同じ id の中身を替える。`askPermission` の `outlivesTurn` を使い、ターンが普通に終わってもカードを残す。ターンが走っている間は `detached` と違って承認待ちとして数えるため、委譲の待機と通知にも載る（[ADR 0168](adr/0168-permission-wait-outlives-turn.md)）。
@@ -274,6 +282,14 @@ MCP の口は会話ごとの Bearer で守る。Claude・Codex は HTTP の MCP�
 
 開いてもエージェントへ自動でメッセージは送らない。続けて操作してほしい内容は会話で頼む。この項目は URL を開くもので、隠した窓を人へ見せる操作は「引き継ぐ」。
 
+### 窓を閉じる
+
+`ply_browser.close_browser_window` は呼び出した会話の専用窓を閉じる（引数なし）。右パネルの「窓を閉じる」は `browser.chromeCloseWindow` を呼び、PC の画面とリモートの端末で使える。MCP と CLI の ops には出さない。窓は使い終えたときに閉じられるが、続きに使う画面やログイン中の窓は開いたままにできる。閉じた後にブラウザーを使うと新しい専用窓が黙って開く。
+
+閉じる直前の `Page.captureScreenshot` を `<data>/uploads/chrome-window/<会話 ID の SHA-256>/<時刻>-<UUID>.png` に置き、会話の `chromeClosed` の行にファイルのパスだけを記録する。人が Chrome の × で直接閉じたときと、撮影できないときは最後に受けた映像の JPEG を `.jpg` として残す。画像が無いときも閉じた行は残る。会話を消すと、窓とその会話の静止画を片付ける。
+
+窓の全タブを `Target.closeTarget` で先に閉じる。破棄の通知を 500 ms 待ち、層に記録が残った専用窓だけ `closeAgent` で閉じる。引き継ぎ中なら一時停止と操作待ちのカードを片付ける。Chrome の接続が途中で切れたときは既存の切断処理が接続を off に戻し、専用窓と一時停止を片付ける。更新の carry と、層が引き継げなかった窓の orphans は、閉じた会話の窓の記録だけを外して保つ。
+
 ### 検証
 
-`tests/unit/chrome-connection.mjs`・`chrome-os.mjs`・`server-chrome.mjs`・`chrome-settings.mjs` が接続と OS の層、`chrome-relay.mjs` が範囲・断る一覧・サイトの確認、`chrome-windows.mjs` が専用の窓を確かめる。映像は `chrome-screencast.mjs`・`server-chrome-screencast.mjs`、引き継ぎは `chrome-control.mjs`・`chrome-control-ui.mjs`。操作待ちと端末入力は `chrome-handoff.mjs`・`chrome-handoff-flow.mjs`・`chrome-device.mjs`・`browser-bridge.mjs`。いずれも偽の Chrome・OS の層で、本物の利用者の Chrome は使わない。
+`tests/unit/chrome-connection.mjs`・`chrome-os.mjs`・`server-chrome.mjs`・`chrome-settings.mjs` が接続と OS の層、`chrome-relay.mjs` が範囲・断る一覧・サイトの確認、`chrome-windows.mjs` が専用の窓を確かめる。映像は `chrome-screencast.mjs`・`server-chrome-screencast.mjs`、引き継ぎは `chrome-control.mjs`・`chrome-control-ui.mjs`。窓を閉じる流れは `chrome-close-window.mjs`。操作待ちと端末入力は `chrome-handoff.mjs`・`chrome-handoff-flow.mjs`・`chrome-device.mjs`・`browser-bridge.mjs`。いずれも偽の Chrome・OS の層で、本物の利用者の Chrome は使わない。

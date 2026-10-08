@@ -14,7 +14,7 @@ import { copyIcon, downloadIcon, sidePanelIcon, openInBrowserIcon, moreIcon } fr
 import { copyPathText } from './file-actions.mjs';
 import { renderGitSummary } from './git-view.mjs';
 import { renderWorktreeLine } from './worktree-ui.mjs';
-import { renderChromeHandoverLine } from './chrome-control.mjs';
+import { renderChromeHandoverLine, renderChromeClosedLine } from './chrome-control.mjs';
 import { renderChromeProfileLine } from './chrome-profile-menu.mjs';
 import { COMPUTER_PREFIX, isComputerTool, computerToolName, computerVerb, computerInfo, reasonShort, reasonLong, shotsOf, shotButton, stopMark } from './computer-use.mjs';
 
@@ -600,6 +600,7 @@ export function renderPresent(ev) {
   if (e.kind === 'chromeHandover') return renderChromeHandoverLine(e);
   // エージェントが Chrome のプロフィールを切り替えた行
   if (e.kind === 'chromeProfile') return renderChromeProfileLine(e);
+  if (e.kind === 'chromeClosed') return renderChromeClosedLine(e);
   const kind = ["image", "html", "text", "file", "visualization"].includes(e.kind) ? e.kind : "text";
   const card = el("figure", `present present-${kind}`);
 

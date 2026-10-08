@@ -388,6 +388,11 @@ export default async function (t) {
       const env = runtime.stableCliEnv({ execPath: path.join(scratch, 'Programs', 'Ply', 'Ply.exe'), resourcesPath: path.join(scratch, 'Programs', 'Ply', 'resources') });
       t.ok('stableCliEnv: $INSTDIR の Ply.exe と resources\\app\\bin\\pleiad.mjs（実行場所の版ごとのパスを指さない）・Electron の内蔵 Node', env.PLEIAD_CLI_EXEC.endsWith('Ply.exe') && env.PLEIAD_CLI_SCRIPT === path.join(scratch, 'Programs', 'Ply', 'resources', 'app', 'bin', 'pleiad.mjs')
         && env.PLEIAD_CLI_ELECTRON === '1' && !env.PLEIAD_CLI_SCRIPT.includes('agent-host-runtime'));
+      const store = runtime.stableCliEnv({ execPath: 'C:\\Program Files\\WindowsApps\\Pleiad_0.9.2.0_x64__abc\\app\\Ply.exe',
+        resourcesPath: 'C:\\Program Files\\WindowsApps\\Pleiad_0.9.2.0_x64__abc\\app\\resources', store: true,
+        env: { LOCALAPPDATA: 'C:\\Users\\u\\AppData\\Local' } });
+      t.ok('stableCliEnv: Store 版は版に依らない alias と遅延解決を示す', store.PLEIAD_CLI_EXEC === 'C:\\Users\\u\\AppData\\Local\\Microsoft\\WindowsApps\\Ply.exe'
+        && store.PLEIAD_CLI_SCRIPT === '' && store.PLEIAD_CLI_STORE === '1' && !JSON.stringify(store).includes('Pleiad_0.9.2.0'), JSON.stringify(store));
     }
   } finally {
     await fsp.rm(scratch, { recursive: true, force: true, maxRetries: 5 });

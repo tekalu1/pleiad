@@ -65,6 +65,7 @@ const SUITES = [
   './unit/chrome-connection.mjs',
   // Chrome の絞り込みの中継（ADR 0148・0153）: 会話の窓の範囲・断る／真似る一覧・sessionId の持ち主・サイトの利用の確認（Fetch・window.open）・止める・鍵・agent-browser の本物の通し（偽の Chrome）
   './unit/chrome-relay.mjs',
+  './unit/chrome-close-window.mjs',
   // Chrome の操作待ち（ADR 0148・0168）: 1 会話 1 枚・状態の差し替え・つながったら決着・wait の区切りと中断・ターンの外で戻したら続ける（偽の askPermission / 接続 / control）
   './unit/chrome-handoff.mjs',
   // Chrome の窓の映像（ADR 0148 第 5 段）: 今のタブへの付け外し・ack の間引き・focus emulation の理由の数え方（ターンと映像。閉じてすぐ開き直しても残る）・タブの付け替え・rebind／forget／Chrome 側の detach・撮影を断つ口（suspend。見る前・開始の途中・会話の寿命）・見るだけ（偽の Chrome）
@@ -83,6 +84,7 @@ const SUITES = [
   './unit/chrome-control-ui.mjs',
   // Chrome への接続の OS の層（Windows）: 確認の窓の見つけ方・前面化・閉じる・使えない OS・parentPort の往復（偽の Win32 の表）
   './unit/chrome-os.mjs',
+  './unit/desktop-chrome-pill.mjs',
   // Chrome への接続（サーバー越し）: browser.chrome* の操作・chromeBrowser イベントはホストの画面だけ・使えない OS / Electron の無いホスト（偽の Chrome・parentPort の身代わり）
   './unit/server-chrome.mjs',
   // Chrome の OS の層をパイプの経路（無停止の更新）で作る: parentPort が無くても層ができる・chrome-os の依頼が main に届く・付け直しで求め直す・main が居ない間は失敗で返す
@@ -254,6 +256,7 @@ const SUITES = [
   './unit/server-api-keys.mjs',
   // リモート接続の暗号・フレーム・チャネル（core/remote/）。Noise の公式ベクトルと、メモリの管でつないだ往復
   './unit/remote-noise.mjs',
+  './unit/remote-pairing-vectors.mjs',
   './unit/remote-frames.mjs',
   './unit/remote-channel.mjs',
   // 互換の接続先のモデルの表示名（anthropic/ と [1m]）・検索（AND・件数の上限・自由入力）・display_name の保存と旧形式

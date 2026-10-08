@@ -25,6 +25,10 @@ const said = async (c, prompt) => {
   return turn.events.filter(e => e.type === 'text.delta').map(e => e.text ?? e.delta ?? '').join('') || turn.events.find(e => e.type === 'text.end')?.text || '';
 };
 const fail = p => p.then(() => null, e => ({ code: e.code, message: e.message }));
+const within = (promise, ms, detail) => {
+  let timer;
+  return Promise.race([promise, new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(detail())), ms); })]).finally(() => clearTimeout(timer));
+};
 
 export default async function (t) {
   const scratch = await fs.mkdtemp(path.join(os.tmpdir(), 'ply-server-chrome-'));
@@ -194,6 +198,19 @@ export default async function (t) {
       t.ok('状態の便りに by: device が載る', true);
       const back = await ask('chromeResume', { sessionId: turn.sessionId });
       t.ok('端末から戻す → 一時停止が解け、by は null', back.ok === true && back.result.state !== 'paused' && back.result.by === null, JSON.stringify(back));
+      const closeOp = registry.get('browser.chromeCloseWindow');
+      const closeFromMcp = await registry.invoke(agent, 'browser.chromeCloseWindow', { sessionId: turn.sessionId }, { locale: 'ja' });
+      t.ok('browser.chromeCloseWindow は write で MCP・CLI に出さない', closeOp.risk === 'write' && closeOp.surfaces.mcp === false && closeOp.surfaces.cli === false && closeFromMcp.code === 'NOT_FOUND');
+      const closed = await within(ask('chromeCloseWindow', { sessionId: turn.sessionId }), 10000, () => `chromeCloseWindow timed out\n${s.tail(60)}`);
+      t.ok('リモートの端末から窓を閉じると、最後の画面の記録が届き窓の数が 0 になる', closed.ok === true && closed.result.closed === true
+        && await until(() => u.events.some(e => e.type === 'present' && e.sessionId === turn.sessionId && e.kind === 'chromeClosed' && e.path?.endsWith('.png')))
+        && await until(() => u.events.some(e => e.type === 'chromeWindow' && e.sessionId === turn.sessionId && e.windows === 0)));
+      const reopened = await u.cmd('chromeOpen', { sessionId: turn.sessionId, url: 'https://again.example/' });
+      const closedLines = u.events.filter(e => e.type === 'present' && e.sessionId === turn.sessionId && e.kind === 'chromeClosed').length;
+      const deleted = await u.cmd('deleteSession', { sessionId: turn.sessionId });
+      t.ok('会話を消すと開き直した窓も閉じ、閉じた行を新しく残さない', deleted === 'deleted'
+        && !chrome.browser.targets().some(tab => tab.targetId === reopened.targetId)
+        && u.events.filter(e => e.type === 'present' && e.sessionId === turn.sessionId && e.kind === 'chromeClosed').length === closedLines);
     } finally { v?.terminate(); u?.close(); await s.stop(); }
   }
 

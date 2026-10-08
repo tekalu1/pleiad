@@ -82,6 +82,7 @@ async function start({ ready = true, work = { count: 0 } } = {}) {
     './chrome-os/index.cjs': { createChromeOs: () => ({}), attachChromeOs: () => {} },
     './browser-screencast-bridge.cjs': { attachBrowserScreencastBridge: () => ({ close: () => {} }) },
     './computer-overlay.cjs': { attachComputerOverlay: () => ({ close: () => {} }) },
+    './chrome-pill.cjs': { attachChromePill: () => ({ close: () => {} }) },
     './agent-browser-bin.cjs': { prepareAgentBrowserBin: () => '' },
     './notifications.cjs': { createDesktopNotifications: () => () => {} },
     './worker-messages.cjs': workerMessages,

@@ -3,7 +3,7 @@
 // ここから分岐はスレッドの中だけ（channels.branchThread）。編集して再送信・再送信はスレッドのあなたの返信だけ（channels.resend）。
 // bot の会話はスレッドそのものなので「会話を開く」は置かない（会話は脇・目次・原文から辿る）。
 // 右クリック・長押し・Shift+F10・メニューキーは setupMessageMenu（Chats と同じ口）で受ける。
-import { messageMenuPlan, copyToClipboard, hoverless, setupMessageMenu } from '../message-actions.mjs';
+import { messageMenuPlan, copyToClipboard, hoverless, setupMessageMenu, reportAiContent } from '../message-actions.mjs';
 
 /**
  * 投稿のメニューの項目（host.showMenu に渡す形）と、ホバーの無い端末で先頭に置く時刻の行
@@ -22,9 +22,9 @@ import { messageMenuPlan, copyToClipboard, hoverless, setupMessageMenu } from '.
  * @returns {{ items: object[], title: string|undefined }}
  */
 export function postMenu({ post, t, name, time, copyButton = null, react, reply = null, source = null, fork = null, edit = null, resend = null }) {
-  const kind = post.author?.kind === 'human' ? 'user' : 'ai';
+  const kind = post.author?.kind === 'human' ? 'user' : post.author?.kind === 'bot' ? 'ai' : 'cmd';
   const plan = messageMenuPlan({ kind, canFork: Boolean(fork), editable: Boolean(edit && resend), source: kind === 'user' && Boolean(source) });
-  const run = { copy: () => copyToClipboard(post.text ?? '', copyButton), source: () => source?.(), fork: () => fork?.(), edit: () => edit?.(), resend: () => resend?.() };
+  const run = { copy: () => copyToClipboard(post.text ?? '', copyButton), source: () => source?.(), fork: () => fork?.(), edit: () => edit?.(), resend: () => resend?.(), report: reportAiContent };
   const items = [
     ...(reply ? [{ label: t('channels:feed.reply'), onClick: reply }] : []),
     ...plan.map((p) => (p.sep ? { sep: true } : { label: p.label, onClick: run[p.key] })),

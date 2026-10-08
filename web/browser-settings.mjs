@@ -205,6 +205,7 @@ export function setupBrowserSettings({ available, cmd, getPrefs, getAgentLabel =
     return cmd('invoke', { op: 'browser.listProfiles', args: {} }).then(r => { profiles = r?.profiles ?? []; paintProfiles(); paintConfirmation(); }).catch(() => { profiles = null; paintProfiles(); });
   }
   function paintProfiles() {
+    // i18n-dynamic: settings.browser.profiles.
     if (!profiles?.length) { profileSection.hidden = true; profileSection.replaceChildren(); return; }
     const prefs = getPrefs();
     const k = 'settings.browser.profiles.';

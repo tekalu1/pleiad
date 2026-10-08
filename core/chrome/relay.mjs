@@ -1040,7 +1040,36 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, prof
       carryChanged();
     },
     endTurn(sessionId) { const entry = entries.get(sessionId); if (entry) settleEntry(entry); },
-    /** 会話を消した。接続を閉じて鍵を捨てる（窓を閉じるのは第 8 段） */
+    /** 会話の全タブを CDP で閉じ、残った専用窓だけを OS の層に閉じさせる。端点は残し、次の利用で窓を開き直せる。 */
+    async closeConversationWindows(sessionId) {
+      const entry = entries.get(sessionId);
+      if (!entry) return { closed: false };
+      const state = up;
+      const tabs = state ? tabsOf(state, entry) : [];
+      if (!tabs.length && !scope.windows?.(sessionId)?.length && !entry.windows.size) return { closed: false };
+      entry.paused = null;
+      changed(entry);
+      for (const tab of tabs) {
+        if (up !== state || state.cdp.closed) break;
+        await state.cdp.send('Target.closeTarget', { targetId: tab.targetId }).catch(() => {});
+      }
+      // 第 4 段の実機では closeTarget の約 0.3 秒後に Chrome が落ちた。破棄の通知を待ち、
+      // 同じ窓に CDP と WM_CLOSE を重ねない。接続が切れた場合は teardown が状態を off に戻す。
+      if (scope.windows?.(sessionId)?.length) await new Promise(resolve => setTimeout(resolve, 500));
+      const osResult = scope.windows?.(sessionId)?.length ? await scope.closeRemaining?.(sessionId) : null;
+      if (up === state) {
+        for (const windowId of [...entry.windows]) {
+          if (!scope.windows?.(sessionId)?.some(w => w.windowId === windowId)) {
+            entry.windows.delete(windowId); state.windows.delete(windowId);
+          }
+        }
+      }
+      carryChanged();
+      const remainingTabs = up === state && state ? tabsOf(state, entry).length : 0;
+      return { closed: !remainingTabs && !scope.windows?.(sessionId)?.length && !osResult?.failed,
+        ...((remainingTabs || scope.windows?.(sessionId)?.length || osResult?.failed) ? { failed: true } : {}) };
+    },
+    /** 会話を消した。接続を閉じて鍵を捨てる（窓は先に closeConversationWindows で閉じる） */
     forget(sessionId) {
       const entry = entries.get(sessionId);
       if (!entry) return;

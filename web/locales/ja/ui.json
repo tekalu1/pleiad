@@ -1834,6 +1834,9 @@
       "forkPart": "この発言から分岐",
       "copy": "コピー",
       "copyReply": "返答をコピー",
+      "reportAi": "不適切な AI の内容を報告",
+      "reportTitle": "Pleiad で表示された不適切な AI の内容",
+      "reportBody": "問題のある返答、利用した AI の CLI、問題だと考える理由を説明してください。共有する箇所だけを記載し、送信前に個人情報・認証情報・非公開の作業内容を除いてください。Pleiad は会話本文を自動で添付しません。",
       "copied": "コピーしました",
       "more": "この発言の操作",
       "sentAt": "{{time}} に送信",
@@ -4113,6 +4116,7 @@
     "banner": "一時停止中 · あなたが Chrome で操作しています",
     "error": { "concealFailed": "窓を隠せなかったので、一時停止のままです。もう一度「戻す」を押してください" },
     "handover": "あなたが引き継ぎ · {{name}} に戻しました · {{duration}}",
+    "closed": { "agent": "{{name}} が窓を閉じました", "human": "Chrome の窓が閉じました", "image": "閉じた窓の最後の画面" },
     "duration": { "minutes": "{{m}} 分 {{s}} 秒", "seconds": "{{s}} 秒" }
   },
   "browser": {
@@ -4170,7 +4174,8 @@
       "deviceNote": "パスワード管理・パスキーは、この端末からは使えません",
       "inputFailed": "Chrome の窓へ送れませんでした",
       "waitingPermission": "Chrome の許可を待っています",
-      "openFailed": "Chrome で開けませんでした"
+      "openFailed": "Chrome で開けませんでした",
+      "close": "窓を閉じる", "closeFailed": "Chrome の窓を閉じられませんでした"
     },
     "remote": {
       "title": "PC のブラウザー",

@@ -17,6 +17,7 @@ import { parseProfileKey, profileKey, noteOf, browserLabel, profileLabel } from 
  * @param {(key: string, vars?: object) => string} [o.t]
  */
 export function profileMenuItems({ profiles = [], notes = [], current = null, busy = null, onPick, onManage = null, t = translate }) {
+  // i18n-dynamic: chromeProfiles.busy.
   const now = typeof current === 'string' ? parseProfileKey(current) : current;
   const nowKey = now ? profileKey(now) : null;
   const items = [];

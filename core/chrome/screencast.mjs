@@ -34,6 +34,7 @@ export function chromeScreencastSettings({ width, height, scale, quality } = {})
  */
 export function createChromeScreencast({ host, log = () => {} } = {}) {
   const watches = new Map();   // 会話の id -> { settings, view, tabId, generation, queue, suspended: boolean, announced: boolean（端末へ知らせた suspended） }
+  const lastFrames = new Map(); // 人が窓を直接閉じたときの最後の映像（JPEG）。一時停止中も更新しない
   const suspended = new Set(); // 'sessionId' か 'sessionId#windowId'
   const operated = new Map();  // 会話の id -> 端末の映像の箱（{ width, height, scale }。端末が引き継いでいる間）
   const listeners = { frame: new Set(), state: new Set(), ended: new Set(), away: new Set() };
@@ -91,6 +92,7 @@ export function createChromeScreencast({ host, log = () => {} } = {}) {
       // 撮影を断っている間は流さない（順番待ちの外でも、断りの鍵を直に見る）
       if (watch.suspended || isSuspended(sessionId, windowOf(sessionId, watch.tabId)) || typeof params.data !== 'string') return;
       const m = params.metadata ?? {};
+      lastFrames.set(sessionId, params.data);
       emit('frame', sessionId, { id: params.sessionId, data: params.data,
         metadata: { deviceWidth: m.deviceWidth, deviceHeight: m.deviceHeight, pageScaleFactor: m.pageScaleFactor, offsetTop: m.offsetTop, scrollOffsetX: m.scrollOffsetX, scrollOffsetY: m.scrollOffsetY } });
     } else if (method === 'Target.detachedFromTarget') {
@@ -131,8 +133,9 @@ export function createChromeScreencast({ host, log = () => {} } = {}) {
   }
 
   const off = host.onChange((sessionId, kind, extra) => {
-    if (kind === 'reset' || kind === 'forget') { dropSuspension(sessionId); operated.delete(sessionId); end(sessionId, 'closed'); return; }
+    if (kind === 'reset' || kind === 'forget') { lastFrames.delete(sessionId); dropSuspension(sessionId); operated.delete(sessionId); end(sessionId, 'closed'); return; }
     if (kind === 'rebind') {
+      if (lastFrames.has(extra)) { lastFrames.set(sessionId, lastFrames.get(extra)); lastFrames.delete(extra); }
       moveSuspension(extra, sessionId);
       if (operated.has(extra)) { operated.set(sessionId, operated.get(extra)); operated.delete(extra); }
       end(extra, 'closed');
@@ -227,7 +230,9 @@ export function createChromeScreencast({ host, log = () => {} } = {}) {
     },
     operating: sessionId => operated.has(sessionId),
     watching: () => [...watches.keys()],
-    close() { off(); for (const sessionId of [...watches.keys()]) end(sessionId, 'closed'); },
+    lastFrame(sessionId) { return lastFrames.get(sessionId) ?? null; },
+    forgetFrame(sessionId) { lastFrames.delete(sessionId); },
+    close() { off(); lastFrames.clear(); for (const sessionId of [...watches.keys()]) end(sessionId, 'closed'); },
   };
 
   /** 端末からの入力を、映像のセッションで今のタブへ送る（端末が引き継いでいる間だけ） */

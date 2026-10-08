@@ -68,6 +68,7 @@
     "channels-threads-index": 144,
     "chrome-connection": 882,
     "chrome-control": 2010,
+    "chrome-close-window": 3000,
     "chrome-control-ui": 866,
     "chrome-device": 190,
     "chrome-handoff": 35,

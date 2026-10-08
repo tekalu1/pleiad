@@ -125,6 +125,16 @@ class NoiseVectorsTest {
     }
 }
 
+class PairingRulesVectorsTest {
+    @Test fun cleanLabelMatchesSharedVectors() {
+        val cases = loadVectors().getJSONObject("pleiad").getJSONObject("pairing").getJSONArray("cleanLabels")
+        for (i in 0 until cases.length()) {
+            val v = cases.getJSONObject(i)
+            assertEquals("cleanLabel vector $i", v.getString("output"), PairingCodec.cleanLabel(v.getString("input")))
+        }
+    }
+}
+
 class FramesVectorsTest {
     @Test fun frames() {
         val frames = loadVectors().getJSONArray("frames")

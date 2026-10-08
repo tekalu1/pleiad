@@ -152,6 +152,7 @@
       }
     }
   },
+  "chromePill": { "resume": "You are in control · Return to {{agent}}" },
   "computer": {
     "overlay": {
       "who": "{{agent}} is using your computer",

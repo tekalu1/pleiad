@@ -6,7 +6,8 @@
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { CLI_DIR, CLI_SCRIPT, addCliToPath, mcpSetup, pathKey, prependPath, stableCli } from '../../core/cli-launcher.mjs';
+import { spawnSync } from 'node:child_process';
+import { CLI_DIR, CLI_SCRIPT, STORE_CLI_ENTRY, addCliToPath, mcpSetup, pathKey, prependPath, stableCli } from '../../core/cli-launcher.mjs';
 import { agentDefinition } from '../../core/backends/antigravity-context.mjs';
 import { startServer, ROOT } from '../lib/server.mjs';
 import { open } from '../lib/ws-client.mjs';
@@ -51,6 +52,24 @@ export default async function (t) {
     stable.command === stableEnv.PLEIAD_CLI_EXEC && stable.args[0] === stableEnv.PLEIAD_CLI_SCRIPT && JSON.stringify(stable.env) === '{"ELECTRON_RUN_AS_NODE":"1"}' && !/agent-host-runtime|pleiad-node/.test(stable.json), stable.json);
   const stableNode = mcpSetup({ stable: stableCli({ ...stableEnv, PLEIAD_CLI_ELECTRON: '' }), dataDir: path.join(home, '.agent-host'), home });
   t.ok('実行場所のサーバー: 起動口が素の Node なら ELECTRON_RUN_AS_NODE は付けない', !('env' in JSON.parse(stableNode.json).mcpServers.pleiad));
+  const storeEnv = { PLEIAD_CLI_EXEC: 'C:/Users/me/AppData/Local/Microsoft/WindowsApps/Ply.exe', PLEIAD_CLI_SCRIPT: '', PLEIAD_CLI_ELECTRON: '1', PLEIAD_CLI_STORE: '1' };
+  const store = mcpSetup({ stable: stableCli(storeEnv), dataDir: path.join(home, '.agent-host'), home });
+  const storeEntry = JSON.parse(store.json).mcpServers.pleiad;
+  t.ok('Store 版: JSON と Claude コマンドは App Execution Alias を起こし、現在の版のスクリプトを実行時に探す',
+    storeEntry.command === storeEnv.PLEIAD_CLI_EXEC && JSON.stringify(storeEntry.args) === JSON.stringify(['-e', STORE_CLI_ENTRY, 'mcp'])
+    && storeEntry.env.ELECTRON_RUN_AS_NODE === '1' && store.claude.includes(storeEnv.PLEIAD_CLI_EXEC)
+    && !/WindowsApps\\Pleiad_|WindowsApps\/Pleiad_|pleiad\.mjs/.test(storeEntry.command), store.json);
+  const fakeInstall = await fs.mkdtemp(path.join(os.tmpdir(), 'ply-store-cli-'));
+  try {
+    const fakeScript = path.join(fakeInstall, 'resources', 'app', 'bin', 'pleiad.mjs');
+    const capture = path.join(fakeInstall, 'argv.json');
+    await fs.mkdir(path.dirname(fakeScript), { recursive: true });
+    await fs.writeFile(fakeScript, "import fs from 'node:fs'; fs.writeFileSync(process.env.PLY_STORE_CAPTURE, JSON.stringify(process.argv));\n");
+    const entry = `Object.defineProperty(process,'execPath',{value:${JSON.stringify(path.join(fakeInstall, 'Ply.exe'))}});` + STORE_CLI_ENTRY;
+    const run = spawnSync(process.execPath, ['-e', entry, 'mcp'], { encoding: 'utf8', env: { ...process.env, PLY_STORE_CAPTURE: capture } });
+    const argv = run.status === 0 ? JSON.parse(await fs.readFile(capture, 'utf8')) : [];
+    t.ok('Store 版の -e 入口は起動した版のスクリプトを読み、mcp 引数を渡す', run.status === 0 && argv[1] === fakeScript && argv[2] === 'mcp', run.stderr);
+  } finally { await fs.rm(fakeInstall, { recursive: true, force: true }); }
   // agy の relay: サーバーが実行場所の pleiad-node.exe（素の Node）で走ると、relay も同じ実行ファイルで、Electron 用の env は付かない
   const relayNode = String(agentDefinition({ owners: {}, prompt: 'p', cwd: home, home, execPath: 'C:/rt/node/24.21.0-abc/pleiad-node.exe', electron: false }));
   t.ok('agy の relay: 実行場所の pleiad-node.exe で走り、ELECTRON_RUN_AS_NODE を付けない', relayNode.includes('pleiad-node.exe') && !relayNode.includes('ELECTRON_RUN_AS_NODE'), relayNode.slice(0, 400));
