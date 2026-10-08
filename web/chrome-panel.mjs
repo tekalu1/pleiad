@@ -285,9 +285,9 @@ export function setupChromePanel({ cmd, preview, browser = null, showMenu = null
     const id = session();
     if (!id || (!browser && !windows.has(id))) return;
     show(id, element);
-    connecting = true;
+    connecting = windows.has(id);   // 窓がまだ無いなら接続中にしない（窓ができたら windowEvent が見始める）
     paint();
-    if (windows.has(id)) watch(id);
+    if (connecting) watch(id);
   }
 
   /** 映像を受け始める（パネルを開いた次の描画で、箱の大きさが決まってから） */
@@ -349,8 +349,9 @@ export function setupChromePanel({ cmd, preview, browser = null, showMenu = null
     windowEvent(ev) {
       const changed = windows.apply(ev);
       if (changed && isOpen() && ev.sessionId === sessionId && !(ev.windows > 0)) { ended = true; paint(); }
-      else if (isOpen() && ev.sessionId === sessionId && ev.windows > 0 && !parts?.sink.frame && !connecting) {
-        waiting = null; connecting = true; paint(); watch(sessionId);
+      else if (isOpen() && ev.sessionId === sessionId && ev.windows > 0 && (ended || !parts?.sink.frame) && !connecting) {
+        // 窓ができた（最初の窓・閉じた後の新しい窓）。残っている古いフレームを捨てて見直す
+        waiting = null; ended = false; connecting = true; parts?.sink.reset(); frameMeta = null; paint(); watch(sessionId);
       }
       return changed;
     },

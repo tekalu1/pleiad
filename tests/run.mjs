@@ -68,6 +68,7 @@ const SUITES = [
   // Chrome の絞り込みの中継（ADR 0148・0153）: 会話の窓の範囲・断る／真似る一覧・sessionId の持ち主・サイトの利用の確認（Fetch・window.open）・止める・鍵・agent-browser の本物の通し（偽の Chrome）
   './unit/chrome-relay.mjs',
   './unit/chrome-close-window.mjs',
+  './unit/chrome-panel-lifecycle.mjs',
   // Chrome の操作待ち（ADR 0148・0168）: 1 会話 1 枚・状態の差し替え・つながったら決着・wait の区切りと中断・ターンの外で戻したら続ける（偽の askPermission / 接続 / control）
   './unit/chrome-handoff.mjs',
   './unit/chrome-delegation.mjs',
