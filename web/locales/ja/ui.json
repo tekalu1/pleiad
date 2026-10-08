@@ -1,5 +1,5 @@
 {
-  "taskChrome": { "view": "Chrome の窓を見る", "close": "子の Chrome の窓を閉じる", "unknown": "プロフィール未確認", "running": "作業中", "paused": "引き継ぎ中", "stopped": "停止中", "idle": "待機中" },
+  "taskChrome": { "view": "Chrome の窓を見る", "close": "子の Chrome の窓を閉じる", "confirmClose": "窓を閉じる", "confirmHuman": "この窓は引き継ぎ中です。閉じると、操作の途中で終わります。閉じますか？", "confirmWaiting": "この窓は、あなたの操作（ログインなど）を待っています。閉じると、依頼に応えられなくなります。閉じますか？", "unknown": "プロフィール未確認", "running": "作業中", "paused": "引き継ぎ中", "stopped": "停止中", "idle": "待機中" },
   "pending": {
     "moving": "移動中",
     "movingProgress": "移動中 {{done}}/{{total}}",

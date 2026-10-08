@@ -186,7 +186,7 @@ export const browserOps = [
     summary: 'agent:ops.browser.chromeWindows.summary',
     risk: 'read',
     input: controlInput,
-    output: z.array(z.object({ sessionId: z.string(), taskId: z.string().nullable(), title: z.string().nullable(), windows: z.number(), profile: profileRefShape.nullable(), profileName: z.string().nullable(), state: z.string() })),
+    output: z.array(z.object({ sessionId: z.string(), taskId: z.string().nullable(), title: z.string().nullable(), windows: z.number(), profile: profileRefShape.nullable(), profileName: z.string().nullable(), state: z.string(), waiting: z.boolean().optional() })),
     surfaces: { ui: true, mcp: false, cli: false },
     handler: (ctx, { sessionId }) => mustBeSupported(ctx).windows(sessionId),
   }),

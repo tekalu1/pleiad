@@ -74,7 +74,7 @@ export default async function (t) {
   const rowActions = [];
   const rowWords = { 'taskChrome.view': 'Chrome の窓を見る', 'taskChrome.close': '子の Chrome の窓を閉じる',
     'taskChrome.running': '作業中', 'taskChrome.paused': '引き継ぎ中' };
-  const paintRow = row => paintTaskChrome(card, row, { el, open: id => rowActions.push(['open', id]), close: id => rowActions.push(['close', id]), t: key => rowWords[key] });
+  const paintRow = row => paintTaskChrome(card, row, { el, open: id => rowActions.push(['open', id]), close: row => rowActions.push(['close', row.sessionId]), t: key => rowWords[key] });
   paintRow({ sessionId: 'a', windows: 1, profileName: '仕事', state: 'running' });
   assert.deepEqual(chromeLine.children.map(child => child.textContent), ['Chrome', '仕事', '作業中', 'Chrome の窓を見る', '×']);
   chromeLine.children.at(-2).onclick();

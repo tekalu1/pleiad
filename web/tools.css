@@ -12,7 +12,9 @@
 .tc-task-chrome-mark{color:var(--ink-blue)}
 .tc-task-chrome-profile{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .tc-task-chrome-state{white-space:nowrap}
-.tc-task-chrome-view,.tc-task-chrome-close{border:0;background:none;color:var(--ink-blue);font:inherit;cursor:pointer;padding:1px 3px}
+.tc-task-chrome-view,.tc-task-chrome-close{border:0;background:none;color:var(--ink-blue);font:inherit;cursor:pointer;padding:1px 3px;min-height:24px}
+.tc-task-chrome-close{min-width:24px}
+.tc-task-chrome-close:disabled{opacity:.4;cursor:default}
 .tc-task-chrome-view{margin-left:auto;white-space:nowrap}
 .tc-task-chrome-close{color:var(--ink-weak);font-size:1.2em}
 .tc.tc-compact{font-size:var(--fs-xs)}

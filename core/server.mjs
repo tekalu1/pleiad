@@ -3723,7 +3723,7 @@ const opsChrome = chromeConnection ? {
   closeWindow: chromeWindowCloser ? sessionId => chromeWindowCloser.close(sessionId, { by: 'human' }) : null,
   windows: async parentId => {
     const rows = delegatedChromeWindows(parentId, { rows: () => agentTasks?.rowsWhere(row => row.parentSessionId === parentId && row.sessionId && store.peek(row.sessionId)?.delegation?.taskId === row.taskId) ?? [],
-      sessions: () => chromeRelay?.view.sessions() ?? [], summary: id => chromeRelay.view.summary(id), profile: id => chromeProfiles?.current(id), state: id => chromeControl?.state(id)?.state ?? 'idle' });
+      sessions: () => chromeRelay?.view.sessions() ?? [], summary: id => chromeRelay.view.summary(id), profile: id => chromeProfiles?.current(id), state: id => chromeControl?.state(id)?.state ?? 'idle', waiting: id => Boolean(chromeHandoffs?.current?.(id)) });
     const profiles = (await chromeProfiles?.list({})?.catch(() => null))?.profiles ?? [];
     return rows.map(row => ({ ...row, profileName: profiles.find(p => p.browser === row.profile?.browser && p.dir === row.profile?.dir)?.name ?? row.profile?.dir ?? null }));
   },

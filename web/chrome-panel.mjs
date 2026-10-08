@@ -14,6 +14,7 @@ import { t } from './i18n.mjs';
 import { notify } from './file-actions.mjs';
 import { createFrameSink } from './screencast-frame.mjs';
 import { containRect, toPageCoords, toPageDelta } from './remote-browser.mjs';
+import { confirmCloseWindow } from './task-chrome.mjs';
 
 const KEY = 'chrome-window';
 const HINT_MS = 2600;
@@ -60,7 +61,7 @@ export function createWindowTable() {
  * @param session   今の会話の id
  * @param getAgentName エージェントの名前（映像の名前に入れる）
  */
-export function setupChromePanel({ cmd, preview, browser = null, showMenu = null, session = () => null, getAgentName = () => 'Claude', windows = createWindowTable(), touch = null } = {}) {
+export function setupChromePanel({ cmd, preview, browser = null, showMenu = null, session = () => null, getAgentName = () => 'Claude', windows = createWindowTable(), touch = null, closeRisk = () => null } = {}) {
   let root = null, parts = null, sessionId = null, state = null, frameMeta = null, quality = 'auto', ended = false, connecting = false, hintTimer = 0, observer = null, lastBox = null, resizeTimer = 0;
   let opener = null, openListeners = new Set(), notifyOpenChange = open => { for (const fn of openListeners) { try { fn(open); } catch {} } }, operating = false, waiting = null, closing = false;   // waiting: ⋯「Chrome で開く」で、窓ができるのを待っている会話と字
   const alwaysHint = touch ?? (() => { try { return matchMedia('(hover: none), (pointer: coarse)').matches; } catch { return false; } });
@@ -97,7 +98,9 @@ export function setupChromePanel({ cmd, preview, browser = null, showMenu = null
       const items = list.map(({ number, current }) => ({ label: t('browser.chromeWindow.windowNumber', { n: number }) +
         (current ? ` · ${t('browser.chromeWindow.windowCurrent')}` : ''), disabled: true }));
       if (items.length) items.push({ sep: true });
-      items.push({ label: t('browser.chromeWindow.close'), disabled: !list.length || closing, onClick: closeCurrentWindow });
+      // 引き継ぎ中・依頼待ちの窓は、押した場所の下で確かめてから閉じる
+      items.push({ label: t('browser.chromeWindow.close'), disabled: !list.length || closing,
+        onClick: () => confirmCloseWindow({ risk: closeRisk(sessionId), run: closeCurrentWindow, anchor: windowMenu, t, showMenu }) });
       showMenu?.(r.left, r.bottom + 4, items, t('browser.chromeWindow.windowActions'));
     };
     // 端末から操作する間の文字の欄と添え書き

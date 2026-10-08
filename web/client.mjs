@@ -70,7 +70,7 @@ import { backgroundTitle, taskTree, backgroundTotals, groupByOwner, visibleRows 
 import { hostViewCursor, joinHostView, hostTreeRows, mergeHostTree, hostRowStale, hostRowRunning, HOST_ROW_STALE_MS } from './host-view.mjs';
 import { createCardRoll } from './card-roll.mjs';
 import { mergeTasks, tasksToFetch, staleTasks, treeSessions } from './task-cards.mjs';
-import { paintTaskChrome } from './task-chrome.mjs';
+import { paintTaskChrome, closeRiskOf, confirmCloseWindow } from './task-chrome.mjs';
 import { createBackgroundChip } from './background-chip.mjs';
 import { overlaySessions, rollbackSessions, currentRows } from './pending-sidebar.mjs';
 import { behindOfTasks, liveTasksOf } from './work-status.mjs';
@@ -4685,6 +4685,33 @@ const TASK_LIVE = new Set(['queued', 'running', 'cancelling']);
 const taskCards = { sessionId: null, rows: new Map(), ver: 0, live: new Map(), asked: new Set(), merged: null };
 const taskChromeRows = new Map();
 let taskChromeRequest = 0;
+/** 子の Chrome の窓を閉じている最中の会話（カードの × を押せなくする） */
+const closingChildWindows = new Set();
+/** 引き継ぎ中・依頼待ちの印（行の state / 依頼のカード）から、閉じると途中で終わるか */
+const handoffWaiting = id => [...state.pendingPerms.values()].some(ev => ev.sessionId === id && ev.browserHandoff);
+/** 「Chrome の窓を見る」: 子の会話へ移ってから、右パネルを Chrome の窓にする（会話が替わる時に閉じるので、移った後に開く） */
+async function openChildChromeWindow(sessionId) {
+  await select(sessionId);
+  if (state.current === sessionId) chromePanel?.open($('browserEntry'));
+}
+/** カードの ×。引き継ぎ中・依頼待ちの窓は確かめてから閉じる。閉じている間は押せない */
+function closeChildChromeWindow(row, anchor) {
+  const id = row.sessionId;
+  if (closingChildWindows.has(id)) return;
+  const run = async () => {
+    if (closingChildWindows.has(id)) return;
+    closingChildWindows.add(id);
+    paintDelegateCards();
+    try {
+      const result = await cmd('chromeCloseWindow', { sessionId: id });
+      if (result?.failed) notify(t('browser.chromeWindow.closeFailed'));
+    } catch (error) { notify(error?.message ?? String(error)); }
+    finally { closingChildWindows.delete(id); refreshTaskChromeWindows(); paintDelegateCards(); }
+  };
+  const live = taskChromeRows.get(row.taskId) ?? row;
+  confirmCloseWindow({ risk: closeRiskOf({ state: live.state, waiting: live.waiting === true || handoffWaiting(id) }), run, anchor, t,
+    showMenu: (x, y, items, title) => showMenu(x, y, items, title) });
+}
 async function refreshTaskChromeWindows(sessionId = state.current) {
   const request = ++taskChromeRequest;
   if (!sessionId) return;
@@ -6018,8 +6045,8 @@ function paintDelegateStates(root = thread, scope = null) {
   if (!cards.length) return;
   const items = backgroundItems(scope).filter(i => i.group === 'agent');
   for (const card of cards) {
-    if (card.dataset.taskId) paintTaskChrome(card, taskChromeRows.get(card.dataset.taskId), { el, open: select,
-      close: async id => { try { await cmd('chromeCloseWindow', { sessionId: id }); refreshTaskChromeWindows(); } catch (error) { notify(error?.message ?? String(error)); } }, t });
+    if (card.dataset.taskId) paintTaskChrome(card, taskChromeRows.get(card.dataset.taskId), { el, open: openChildChromeWindow,
+      close: closeChildChromeWindow, busy: id => closingChildWindows.has(id), t });
     const res = card.querySelector('.tc-res');
     if (!res || card.classList.contains('tc-error')) continue;
     const item = card.dataset.taskId ? items.find(i => i.taskId === card.dataset.taskId) : items.find(i => i.origin && i.origin === card.dataset.id);
@@ -6464,7 +6491,7 @@ const filePreview = setupFilePreview({
 browserEntry = setupBrowserEntry({ button: $('browserEntry'), browser: browserPanel, preview: filePreview, bridge: window.plyDesktop?.browser,
   chrome: () => chromePanel, windows: chromeWindows, getSessionId: () => state.current ?? null, getAgentName: () => labelOf(activeBackendId()),
   getChromeState: id => chromeControlStore.get(id).state,
-  waiting: id => [...state.pendingPerms.values()].some(ev => ev.sessionId === id && ev.browserHandoff),
+  waiting: handoffWaiting,
   chromeAvailable: () => state.hostCaps?.chromeWindow === true,
   blocked: () => document.body.classList.contains('settings') || !!document.querySelector('dialog[open]') });
 // いま見ている場所のアドレス（web/view-address.mjs）。通知の一覧・検索・脇の行・スレッドの開閉はここを通り、見ている場所を 1 つで残す。
@@ -8592,7 +8619,8 @@ $('gitEntry').onclick = () => gitPanel.toggle($('gitEntry'));
 // 会話の右パネル「Chrome の窓」（ADR 0148 第 5 段）。窓のある会話の頭の行の入口から開く。映像は見るだけ（ホストの画面もリモートの端末も）
 chromePanel = setupChromePanel({ cmd, preview: filePreview, browser: browserPanel,
   showMenu: (x, y, items, title) => showMenu(x, y, items, title),
-  session: () => state.current ?? null, getAgentName: () => labelOf(activeBackendId()), windows: chromeWindows });
+  session: () => state.current ?? null, getAgentName: () => labelOf(activeBackendId()), windows: chromeWindows,
+  closeRisk: id => closeRiskOf({ state: chromeControlStore.get(id).state, waiting: handoffWaiting(id) }) });
 chromePanel.onOpenChange(() => { browserEntry?.paint(); browserPanel?.refreshTabs(); });
 browserPanel?.connect({ chromeAvailable: () => state.hostCaps?.chromeWindow === true,
   chromeOpen: () => chromePanel?.isOpen() === true,

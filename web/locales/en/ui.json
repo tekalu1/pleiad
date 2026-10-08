@@ -1,5 +1,5 @@
 {
-  "taskChrome": { "view": "View Chrome window", "close": "Close child's Chrome window", "unknown": "Profile unknown", "running": "Working", "paused": "Handed over", "stopped": "Stopped", "idle": "Idle" },
+  "taskChrome": { "view": "View Chrome window", "close": "Close child's Chrome window", "confirmClose": "Close window", "confirmHuman": "You have taken over this window. Closing it ends what you are doing midway. Close it?", "confirmWaiting": "This window is waiting for you (to sign in, for example). If you close it, the request goes unanswered. Close it?", "unknown": "Profile unknown", "running": "Working", "paused": "Handed over", "stopped": "Stopped", "idle": "Idle" },
   "pending": {
     "moving": "Moving…",
     "movingProgress": "Moving… {{done}}/{{total}}",
