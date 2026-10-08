@@ -6,7 +6,7 @@ Android 版を Google Play に出すときに Play Console へ入れるものの
 |---|---|
 | [listing.md](listing.md) | ストアの掲載文（アプリ名・短い説明・詳しい説明。日本語と英語）・画像・そのほかの欄 |
 | [foreground-service.md](foreground-service.md) | 前面サービス `remoteMessaging` の申告文（何をするか・止められたときの影響。日本語と英語）と動画の台本 |
-| [app-access.md](app-access.md) | 審査員向けのアプリへのアクセス（ホストとのペアリングが要ることへの案の比べと、入れる文） |
+| [app-access.md](app-access.md) | 審査員向けのアプリへのアクセス（審査用のホストと審査の招待。[ADR 0172](../adr/0172-play-review-access.md)。出す順と、入れる文） |
 | [data-safety.md](data-safety.md) | データセーフティの回答案と、コードで確かめた送り先の一覧 |
 | [content-rating.md](content-rating.md) | コンテンツのレーティング・ターゲット層・そのほかの申告の回答案 |
 

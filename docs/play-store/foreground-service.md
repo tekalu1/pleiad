@@ -60,9 +60,17 @@ If the task is interrupted (paused or restarted): the connection to the relay cl
 
 準備:
 
-- PC: Pleiad を、審査用のホストと同じく fake のバックエンド・英語の画面・本物と別のデータ置き場で起動する（[app-access.md](app-access.md)。`AGENT_HOST_BACKENDS=fake AGENT_HOST_LOCALE=en AGENT_HOST_DATA=<一時の置き場>`）。中継に接続済みにしておく。本物の会話・ホスト名・パス・トークンを映さない。
+- PC: Pleiad を fake のバックエンド・英語の画面・本物と別のデータ置き場で起動する（`AGENT_HOST_BACKENDS=fake AGENT_HOST_LOCALE=en AGENT_HOST_DATA=<一時の置き場>`）。審査モード（[app-access.md](app-access.md)・[ADR 0172](../adr/0172-play-review-access.md)）にはしない（普通のペアリングと承認を映すため）。中継に接続済みにしておく。本物の会話・ホスト名・パス・トークンを映さない。
 - スマートフォン: Play のテストのトラックから入れた版。端末の言語は英語にする。ペアリングはまだしない。
-- 見ている会話の通知は出ない（スマートフォンでは常に、PC では既定の「PC で見ている会話は知らせない」で）。少し待ってから承認を求める台本 `ask-later.json`（[app-access.md](app-access.md)）を PC の置き場に置き、送った後は PC で別の会話へ移る。
+- 見ている会話の通知は出ない（スマートフォンでは常に、PC では既定の「PC で見ている会話は知らせない」で）。少し待ってから承認を求める台本 `ask-later.json`（下）を PC の置き場に置き、送った後は PC で別の会話へ移る。
+
+  ```json
+  {"steps":[
+    {"tool":"Wait","input":{"seconds":20},"ms":20000,"result":"waited 20 s"},
+    {"tool":"Bash","input":{"command":"echo review"},"ask":true,"result":"review"},
+    {"text":"Approved. This reply is scripted (no real AI)."}
+  ]}
+  ```
 
 | 秒 | 映すもの | 操作 |
 |---|---|---|
