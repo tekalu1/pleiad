@@ -2,7 +2,8 @@
 // 会話の専用の Chrome の窓（エージェントが操作する、画面の外の見えない窓）の「今のタブ」の映像を、WS の screencast（source: 'chrome'）で受けて映す。
 // 見るだけ: 映像に押す・打つと「見るだけ · 操作は引き継いでから」を出すだけで、何も送らない（タッチでは常に出す）。
 // 右パネルの枠は web/file-preview.mjs の openPanel（git パネルと同じ）。ここは中身だけを作る。
-//   - 状態の一行の差し込み口（.cp-slot）: 第 6 段の web/chrome-control.mjs が mountStatus で差し込む（「Claude が操作中」「止める」「引き継ぐ」など）。空の間は場所を取らない
+//   - 状態の一行の差し込み口（.cp-slot）: web/chrome-control.mjs が mountStatus で差し込む（「Claude が操作中」「止める」「引き継ぐ」など）。空の間は場所を取らない。
+//     映像の上の層（押した位置の輪）は mountOverlay で映像の箱へ重ねる。輪の位置に要る映像の元の大きさは frameSize（フレームの metadata）
 //   - 映像: 名前は「{{name}} の Chrome の窓の映像（見るだけ）」。撮影を断っている間（state.suspended）は薄い幕
 //   - 映像の描画と ack は web/screencast-frame.mjs（内蔵ブラウザーを見る全面の表示と共有）
 import { el } from './dom.mjs';
@@ -42,7 +43,7 @@ export function createWindowTable() {
  * @param getAgentName エージェントの名前（映像の名前に入れる）
  */
 export function setupChromePanel({ cmd, preview, session = () => null, getAgentName = () => 'Claude', windows = createWindowTable(), touch = null } = {}) {
-  let root = null, parts = null, sessionId = null, state = null, quality = 'auto', ended = false, connecting = false, hintTimer = 0, observer = null, lastBox = null, resizeTimer = 0;
+  let root = null, parts = null, sessionId = null, state = null, frameMeta = null, quality = 'auto', ended = false, connecting = false, hintTimer = 0, observer = null, lastBox = null, resizeTimer = 0;
   let opener = null, onOpenChange = () => {};
   const alwaysHint = touch ?? (() => { try { return matchMedia('(hover: none), (pointer: coarse)').matches; } catch { return false; } });
 
@@ -141,7 +142,7 @@ export function setupChromePanel({ cmd, preview, session = () => null, getAgentN
     observer?.disconnect(); observer = null;
     clearTimeout(resizeTimer); clearTimeout(hintTimer);
     if (sessionId) cmd('browserScreencastStop', { sessionId, source: 'chrome' }).catch(() => {});
-    sessionId = null; state = null; ended = false; connecting = false; lastBox = null;
+    sessionId = null; state = null; frameMeta = null; ended = false; connecting = false; lastBox = null;
     parts?.sink.reset();
   }
 
@@ -150,7 +151,7 @@ export function setupChromePanel({ cmd, preview, session = () => null, getAgentN
     if (!id || !windows.has(id)) return;
     if (!parts) { parts = build(); root = parts.node; }
     if (sessionId && sessionId !== id) stopWatching();
-    sessionId = id; state = null; ended = false; connecting = true;
+    sessionId = id; state = null; frameMeta = null; ended = false; connecting = true;
     parts.sink.reset();
     opener = element;
     const label = t('browser.chromeWindow.panel');
@@ -179,6 +180,17 @@ export function setupChromePanel({ cmd, preview, session = () => null, getAgentN
       if (!parts) { parts = build(); root = parts.node; }
       parts.slot.replaceChildren(...(node ? [node] : []));
     },
+    /** 映像の上に重ねる層（web/chrome-control.mjs の overlay）。映像の箱（position: relative）の中へ置く。null で外す */
+    mountOverlay(node) {
+      if (!parts) { parts = build(); root = parts.node; }
+      parts.screen.querySelector('[data-slot="overlay"]')?.remove();
+      if (node) { node.dataset.slot = 'overlay'; parts.screen.append(node); }
+    },
+    /** 映像の元のページの大きさ（CSS 画素。最後のフレームの metadata）。まだ無ければ null */
+    frameSize() {
+      const width = Number(frameMeta?.deviceWidth), height = Number(frameMeta?.deviceHeight);
+      return width > 0 && height > 0 ? { width, height } : null;
+    },
     get statusSlot() { if (!parts) { parts = build(); root = parts.node; } return parts.slot; },
     windows,
     /** サーバーの chromeWindow イベント。表示中の会話の窓が無くなったら閉じた表示にする */
@@ -190,7 +202,7 @@ export function setupChromePanel({ cmd, preview, session = () => null, getAgentN
     /** WS の screencast メッセージ（source: 'chrome'）。ほかは無視 */
     onMessage(message) {
       if (message.source !== 'chrome' || !isOpen() || message.sessionId !== sessionId) return;
-      if (message.type === 'frame' && typeof message.data === 'string') { parts.fit(message.metadata); parts.sink.push(message); ended = false; connecting = false; paint(); }
+      if (message.type === 'frame' && typeof message.data === 'string') { frameMeta = message.metadata ?? null; parts.fit(message.metadata); parts.sink.push(message); ended = false; connecting = false; paint(); }
       else if (message.type === 'state') { state = message.state; paint(); }
       else if (message.type === 'ended') { ended = true; paint(); }
     },

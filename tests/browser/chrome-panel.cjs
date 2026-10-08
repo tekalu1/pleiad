@@ -81,7 +81,7 @@ async page => {
   const screen = page.locator('.cp-screen');
   await screen.waitFor();
   check(/の Chrome の窓の映像（見るだけ）$/.test(await screen.getAttribute('aria-label')) && await screen.getAttribute('role') === 'img', 'the video is named and read-only');
-  check(await page.locator('.cp-slot').count() === 1 && await page.locator('.cp-slot').evaluate((el) => getComputedStyle(el).display === 'none'), 'the status slot exists and takes no room while empty');
+  check(await page.locator('.cp-slot').count() === 1 && await page.locator('.cp-slot .cc').count() === 1, 'the status slot exists and holds the control row (web/chrome-control.mjs)');
   await page.waitForFunction(() => window.__sent.some((x) => x.command === 'browserScreencast'));
   const start = (await sent('browserScreencast'))[0].args;
   check(start.sessionId === sessionId && start.source === 'chrome' && start.width > 100 && start.height > 100 && start.scale >= 1, `start request: ${JSON.stringify(start)}`);
@@ -133,9 +133,8 @@ async page => {
 
   // ============ 6. 状態の一行の差し込み口: 差し込むと場所ができ、外すと詰まる（第 6 段の部品を後で入れる）
   await page.evaluate(() => { const row = document.createElement('div'); row.id = 'probe'; row.textContent = 'status'; document.querySelector('.cp-slot').append(row); });
-  check(await page.locator('.cp-slot').evaluate((el) => getComputedStyle(el).display !== 'none') && await page.locator('#probe').isVisible(), 'a mounted status row shows in the slot');
+  check(await page.locator('#probe').isVisible(), 'a mounted status row shows in the slot');
   await page.evaluate(() => document.querySelector('#probe').remove());
-  check(await page.locator('.cp-slot').evaluate((el) => getComputedStyle(el).display === 'none'), 'the slot collapses again when emptied');
 
   // ============ 7. 動きを減らす設定では、出し入れだけ
   await page.emulateMedia({ reducedMotion: 'reduce' });

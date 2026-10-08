@@ -5,7 +5,7 @@
 const { createWin32ChromeOs } = require('./win32.cjs');
 
 const FEATURES_NONE = Object.freeze({ dialog: false, raise: false, launch: false, conceal: false, watch: false, bounds: false });
-const ACTIONS = new Set(['snapshotWindows', 'findPermissionDialog', 'raise', 'yieldForeground', 'foreground', 'close',
+const ACTIONS = new Set(['snapshotWindows', 'findPermissionDialog', 'raise', 'yieldForeground', 'foreground', 'appWindow', 'close',
   'locateBrowser', 'launchWindow', 'findWindowByNonce', 'findWindowByBounds', 'hiddenSpot', 'conceal', 'reveal', 'release', 'closeAgent']);
 
 /**
@@ -22,6 +22,7 @@ function createChromeOs({ platform = process.platform, win32 = null, reason = 'n
     raise: () => ({ ok: false, method: 'unsupported' }),
     yieldForeground: () => false,
     foreground: () => null,
+    appWindow: () => null,
     close: () => false,
     locateBrowser: () => null,
     launchWindow: () => ({ ok: false, reason: 'unsupported' }),

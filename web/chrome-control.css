@@ -1,0 +1,33 @@
+/* エージェントの Chrome の窓の状態の一行・一時停止中の帯・映像の上の押した位置の輪・会話の引き継ぎの行
+   （docs/design-system.md「Chrome の窓の状態の一行」、ADR 0148・0154）。色は面（surface）・文字（ink）・塗り・青の線（--line-blue）だけ。枠線は使わない。
+   動きは --dur・--ease-out（動きを減らす設定では --dur が 0 で、入れ替えだけ） */
+
+.cc{display:flex;align-items:center;flex-wrap:wrap;gap:6px 8px;min-width:0;font-size:var(--fs-s);color:var(--ink-weak)}
+.cc[hidden]{display:none}
+.cc-status{display:inline-flex;align-items:center;gap:6px;min-width:0;flex:1 1 140px;color:var(--ink)}
+.cc-text{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cc-dot{flex:none;width:7px;height:7px;border-radius:50%;color:var(--ink-weak);background:currentColor;transition:color var(--dur-fast) var(--ease-out)}
+.cc[data-state="running"] .cc-dot{color:var(--ink-blue)}
+.cc[data-state="paused"] .cc-dot{color:var(--ink-strong)}
+.cc-btn{display:inline-flex;align-items:center;justify-content:center;border-radius:var(--r-pill);white-space:nowrap;height:24px;padding:0 10px;font-size:var(--fs-xs)}
+.cc-btn[hidden]{display:none}
+
+/* 一時停止中の帯（会話の中） */
+.cc-banner{display:flex;align-items:center;flex-wrap:wrap;gap:6px 10px;margin:4px 0 6px;padding:6px 10px;background:var(--surface-2);border-radius:var(--r-m);font-size:var(--fs-s);color:var(--ink)}
+.cc-banner[hidden]{display:none}
+.cc-banner-text{min-width:0;flex:1 1 200px}
+
+/* 映像の上の層（親は position: relative）。押した位置に輪を出す（一時停止中の幕は映像の側の .cp-veil） */
+.cc-overlay{position:absolute;inset:0;overflow:hidden;pointer-events:none}
+.cc-ring{position:absolute;width:30px;height:30px;margin:-15px 0 0 -15px;border-radius:50%;box-shadow:0 0 0 2px var(--line-blue);opacity:0;animation:cc-ring 700ms var(--ease-out) forwards}
+@keyframes cc-ring{0%{opacity:.95;transform:scale(.4)}100%{opacity:0;transform:scale(1.5)}}
+@media (prefers-reduced-motion:reduce){
+  .cc-ring{animation:cc-ring-hold 700ms linear forwards}
+  @keyframes cc-ring-hold{0%{opacity:.9}100%{opacity:0}}
+}
+
+/* 会話の中の静かな 1 行（引き継いで戻した） */
+.cc-line{display:flex;align-items:center;flex-wrap:wrap;gap:6px 8px;margin:2px 0 6px;font-size:var(--fs-xs);color:var(--ink-weak)}
+.cc-line-ic{display:inline-flex;flex:none}
+.cc-line-ic svg.i{width:13px;height:13px}
+.cc-line-t{min-width:0;flex:1 1 200px}

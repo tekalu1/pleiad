@@ -131,6 +131,7 @@ import { chromeHomes } from './chrome/locate.mjs';
 import { parentPortChromeOs } from './chrome/os.mjs';
 import { createChromeRelay } from './chrome/relay.mjs';
 import { createChromeHandoffs } from './chrome/handoff.mjs';
+import { createChromeControl } from './chrome/control.mjs';
 import { createChromeScreencast } from './chrome/screencast.mjs';
 import { createBrowserSiteApprovals } from './browser-confirm.mjs';
 import { createBrowserBridge, BROWSER_MCP_PATH } from './browser-bridge.mjs';
@@ -232,6 +233,8 @@ const chromeRelay = chromeConnection
 // 内蔵ブラウザーの映像（上の screencastHub）とは別のハブで、WS のコマンドは args.source === 'chrome' で選ぶ
 const chromeScreencast = chromeRelay ? createChromeScreencast({ host: chromeRelay.view, log: line => console.log(`  ${line}`) }) : null;
 const chromeScreencastHub = chromeScreencast ? createScreencastHub({ bridge: chromeScreencast, source: 'chrome' }) : null;
+// エージェントの Chrome の窓の止める・引き継ぐ・戻す（core/chrome/control.mjs、ADR 0148・0154）。戻したときの会話の行は recordChromeHandover
+const chromeControl = chromeRelay ? createChromeControl({ relay: chromeRelay, os: chromeOs, capture: chromeScreencast, log: line => console.log(`  ${line}`), record: ({ sessionId, seconds }) => recordChromeHandover(sessionId, seconds) }) : null;
 // 会話の端点を出す口（ターンの開始・新しい会話の id の付け替え・ターンの終わり・会話の削除）。Chrome の中継があるホスト（デスクトップ版）だけ。Windows 以外（unsupported）では渡さない（下の browserEnv）
 const agentBrowserEndpoints = chromeRelay ? chromeRelayBrowser(chromeRelay) : null;
 // A nested server may inherit another conversation's shell environment; only this process's bridge can issue browser access.
@@ -2201,6 +2204,22 @@ chromeConnection?.onChange(state => {
 });
 
 /**
+ * エージェントの Chrome の窓の状態（chromeControl）と、エージェントが押した位置（chromeTap）の便り。会話ごと（sessionId つき）で、全部の接続へ流す。
+ * 取りこぼしても次の状態で足りるので溜めない（emitGlobal の再送の置き場に積まない）
+ */
+const chromeControlSend = event => {
+  const text = JSON.stringify({ kind: P.EVENT, event });
+  for (const ws of runtime.sockets) if (ws.readyState === ws.OPEN) ws.send(text);
+};
+chromeControl?.onChange(state => chromeControlSend({ type: 'chromeControl', ...state }));
+chromeControl?.onTap(tap => chromeControlSend({ type: 'chromeTap', ...tap }));
+/** 引き継いで戻したときの会話の行（present kind: 'chromeHandover'）。ターンの外でも出すので、記録して全部の接続へ流す */
+async function recordChromeHandover(sessionId, seconds) {
+  const record = await history.recordPresent(sessionId, { kind: 'chromeHandover', chromeHandover: { seconds } });
+  emitGlobal({ type: 'present', sessionId, ...record });
+}
+
+/**
  * 会話の Chrome の窓の知らせ（右パネルの Chrome の入口。窓のある会話だけに出し、操作中は弧を出す）。リモートの端末にも流す。
  * 取りこぼしても次の知らせで足りるので溜めない。変わったときだけ送る。接続したての端末には chromeWindowFrames で今の分を送る
  */
@@ -3574,6 +3593,11 @@ const opsCompat = {
 };
 
 // エージェントのブラウザー（PC の Chrome）への接続（browser.chrome*。core/ops/browser.mjs）。状態は chromeBrowser イベントでホストの画面へ流す
+const opsChromeControl = chromeControl ? {
+  takeOver: sessionId => chromeControl.takeOver(sessionId),
+  resume: sessionId => chromeControl.resume(sessionId),
+  stop: sessionId => chromeControl.stop(sessionId),
+} : null;
 const opsChrome = chromeConnection ? {
   status: () => chromeConnection.state(),
   connect: async () => { await chromeConnection.connect(); return chromeConnection.state(); },
@@ -4147,6 +4171,7 @@ function opsDeps(lng = currentLocale()) {
     compat: opsCompat,
     computer: opsComputer,
     chrome: opsChrome,
+    chromeControl: opsChromeControl,
     // MCP・Hooks・コンテキスト・リモート・接続先の操作（core/ops/mcp.mjs・hooks.mjs・context.mjs・remote.mjs。ADR 0095）。WS の同じ名前のコマンドがしていた処理
     mcp: opsMcp,
     hooks: opsHooks,
@@ -7061,6 +7086,8 @@ wss.on("connection", (ws, req) => {
   // エージェントのブラウザー（PC の Chrome）への接続の今の状態。ホストの PC の画面だけ（リモートの端末へは送らない）
   if (local) hostScreens.add(ws);
   if (chromeConnection && local) ws.send(JSON.stringify(chromeBrowserFrame(chromeConnection.state())));
+  // 待機中でない Chrome の窓の今の状態（会話ごと。つなぎ直した画面が、引き継ぎ中などを取りこぼさない）
+  for (const state of chromeControl?.snapshot() ?? []) ws.send(JSON.stringify({ kind: P.EVENT, event: { type: 'chromeControl', ...state } }));
   for (const text of chromeWindowFrames()) ws.send(text);
   ws.on("close", () => {
     detach(ws);
@@ -7645,6 +7672,10 @@ wss.on("connection", (ws, req) => {
         case 'chromeConnect': return await viaOp('browser.chromeConnect');
         case 'chromeDisconnect': return await viaOp('browser.chromeDisconnect');
         case 'chromeRaiseDialog': return await viaOp('browser.chromeRaiseDialog');
+        // エージェントの Chrome の窓の引き継ぐ・戻す・止める（人だけ。画面とリモートの端末から。browser.chromeTakeOver・chromeResume・chromeStop）
+        case 'chromeTakeOver': return await viaOp('browser.chromeTakeOver');
+        case 'chromeResume': return await viaOp('browser.chromeResume');
+        case 'chromeStop': return await viaOp('browser.chromeStop');
         case "resolvePath": case "revealPath": case "openPath": {
           const hostAction = msg.command !== 'resolvePath';
           if (hostAction && !local) return reply(false, t('files.remoteOnly'));

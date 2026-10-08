@@ -72,6 +72,10 @@ const SUITES = [
   './unit/server-chrome-screencast.mjs',
   // 会話ごとの専用の Chrome の窓（ADR 0154）: chrome.exe の最初の窓・画面の外の隠した窓・前面を返す・窓だけ閉じられた／Chrome が閉じた・popup・bringToFront の握りつぶし・focus emulation（ターンの間だけ）（偽の OS の層・偽の Chrome）
   './unit/chrome-windows.mjs',
+  // エージェントの Chrome の窓の止める・引き継ぐ・戻す（ADR 0148・0154）: 状態機械・一時停止中の断り・映像を断る・止めて人の送信で解く・窓を見える形に戻して前に出す／画面の外へ戻す・窓が閉じられた／Chrome が閉じた・押した位置（偽の OS の層・偽の Chrome）
+  './unit/chrome-control.mjs',
+  // エージェントの Chrome の窓の状態の一行（web/chrome-control.mjs）: 状態ごとの字とボタン・押した位置の輪・一時停止中の帯と膜・状態の置き場・会話の引き継ぎの行・記録（DOM の代役）
+  './unit/chrome-control-ui.mjs',
   // Chrome への接続の OS の層（Windows）: 確認の窓の見つけ方・前面化・閉じる・使えない OS・parentPort の往復（偽の Win32 の表）
   './unit/chrome-os.mjs',
   // Chrome への接続（サーバー越し）: browser.chrome* の操作・chromeBrowser イベントはホストの画面だけ・使えない OS / Electron の無いホスト（偽の Chrome・parentPort の身代わり）

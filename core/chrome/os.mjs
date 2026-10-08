@@ -19,6 +19,7 @@
 // raise(ref)                             → Promise<{ ok: boolean, method: string }>  窓を前に出す（最小化なら戻す）。method は direct・attach・failed など
 // yieldForeground(ref, { to })           → Promise<boolean>  ref が前面を取っていたら to（直前の前面）に返す
 // foreground()                           → Promise<{ id: string, browser: boolean } | null>  今の前面の窓。browser はブラウザー自身の窓か
+// appWindow()                            → Promise<WindowRef | null>  Pleiad 自身の窓（Electron main の窓）。引き継ぎで窓を戻す画面を、押した時の前面でなく Pleiad の窓のある画面にする
 // close(ref)                             → Promise<boolean>  確認の窓を閉じる（層が確認として出した ref だけ）
 //
 // エージェントの専用の窓（ADR 0154。core/chrome/windows.mjs が使う）。層が出した ref・browser 以外には何もしない
@@ -56,6 +57,7 @@ export function unsupportedChromeOs(reason = 'platform') {
     raise: async () => ({ ok: false, method: 'unsupported' }),
     yieldForeground: async () => false,
     foreground: async () => null,
+    appWindow: async () => null,
     close: async () => false,
     locateBrowser: async () => null,
     launchWindow: async () => ({ ok: false }),
@@ -149,6 +151,7 @@ export function parentPortChromeOs(port, { timeoutMs = CALL_TIMEOUT_MS, readyWai
     raise: ref => call('raise', { ref }, { ok: false, method: 'failed' }),
     yieldForeground: (ref, { to } = {}) => call('yieldForeground', { ref, to }, false),
     foreground: () => call('foreground', {}, null),
+    appWindow: () => call('appWindow', {}, null),
     close: ref => call('close', { ref }, false),
     locateBrowser: ({ product = 'chrome' } = {}) => call('locateBrowser', { product }, null),
     launchWindow: ({ browser, profileDir, url, nonce, userDataDir = null, position = null, size = null } = {}) =>

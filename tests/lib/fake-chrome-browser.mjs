@@ -342,6 +342,16 @@ export function createFakeBrowser({ product, calls, userTabs = USER_TABS } = {})
     openUserTab(url, title, windowId = userWindow) { return newTarget({ url, title, windowId }).targetId; },
     windowOpen,
     navigateUser(targetId, url) { const t = targets.get(targetId); return t ? navigate(t, url) : null; },
+    /** 利用者がタブを引き離して新しい窓にした（タブはそのまま、窓が替わる。元の窓にタブが無ければ元の窓は無くなる）。新しい窓の id を返す */
+    detachTab(targetId) {
+      const t = targets.get(targetId);
+      if (!t) return null;
+      const previous = t.windowId;
+      const windowId = newWindow('normal', { ...DEFAULT_BOUNDS });
+      t.windowId = windowId;
+      if (![...targets.values()].some(o => o.windowId === previous)) windows.delete(previous);
+      return windowId;
+    },
     /** 利用者がタブを閉じた */
     closeTab(targetId) { const t = targets.get(targetId); if (t) closeTarget(t); },
   };

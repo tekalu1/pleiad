@@ -10,6 +10,8 @@
 //     外形で探すときは、先に CDP でその窓を一意な位置（画面の外）へ置き、つないだ Chrome のプロセスの窓で、開く前の写しに無いものだけを見る
 //     （利用者の窓・Edge の窓・別の Chrome の窓を取り違えて隠さない）。プロセスが分からなければ採用しない
 //   - Chrome の接続が切れたとき・窓の開きかけに失敗したときは、隠した窓を閉じる（閉じられなければ見える形へ戻す）。見えない窓を残さない
+// 引き継ぎ（ADR 0154。control.mjs が呼ぶ）: reveal は会話の窓を見える形に戻して（Pleiad の窓のある画面の中へ）前に出し、conceal は画面の外の見えない窓に戻す。
+// 見えている間は、層の前面の見張りがその窓を見ない（層の reveal が窓の隠した印を外す）。見えている間に開いた popup は隠さず、戻すときに探して隠す
 // 窓の大きさ（DIP）は Pleiad が決める（Browser.setWindowBounds）。窓の ref は層が出した値で、core は覚えて返すだけ。
 // ログには窓の題・URL・プロフィール名を出さない。
 import crypto from 'node:crypto';
@@ -185,12 +187,66 @@ export function createChromeWindows({ os, locate, log = () => {}, random = () =>
       entry.windows.set(windowId, record);
       const features = os.capabilities().features;
       if (!features.conceal || !features.bounds) return;
+      if (entry.revealed) return;   // 人が引き継いでいる間。人の窓を画面の外へ動かさない（戻すときに探して隠す）
       const ref = await findByBounds(cdp, windowId, baseline, { waitMs: time.popupWaitMs });
       if (!ref) { log('chrome-windows: popup window not found, so it was not hidden'); return; }
       if (entry.windows.get(windowId) !== record) { await os.closeAgent(ref).catch(() => {}); return; }   // 先に閉じられた
       record.ref = ref;
       await hide(ref, null);
     },
+
+    /**
+     * 引き継ぎ: 会話の窓を見える形に戻し、near（層が出した ref。Pleiad の窓）のある画面の中へ置き、front（windowId。無ければ最初の窓）を前に出す。
+     * 見える形に戻せた窓が無ければ revealed: 0（呼び出し側が引き継ぎをやめる）
+     * @returns {Promise<{ revealed: number, raised: boolean }>}
+     */
+    async reveal({ entryId, near = null, front = null } = {}) {
+      const entry = entries.get(entryId);
+      if (!entry) return { revealed: 0, raised: false };
+      const records = [...entry.windows.entries()].filter(([, record]) => record.ref);
+      if (!records.length) return { revealed: 0, raised: false };
+      entry.near = near;
+      entry.revealed = true;
+      const shown = [];
+      for (const [windowId, record] of records) if (await os.reveal(record.ref, { near })) shown.push([windowId, record]);
+      if (!shown.length) { entry.revealed = false; entry.near = null; return { revealed: 0, raised: false }; }
+      const target = (shown.find(([windowId]) => windowId === front) ?? shown.find(([, record]) => record.role === 'main') ?? shown[0])[1];
+      const raised = (await os.raise(target.ref))?.ok === true;
+      return { revealed: shown.length, raised };
+    },
+
+    /**
+     * 引き継ぎを終える: 窓を画面の外の見えない窓に戻す。人が前面に置いていた窓が前面のままにならないよう、今の前面（隠す窓でなければ。
+     * 隠す窓なら引き継ぎを始めたときの前面）へ返す。見えている間に開いた popup（人がタブを引き離して作った窓も含む）は、ここで探して隠す。cdp は popup を探すのに使う
+     * @returns {Promise<{ concealed: number, failed: number }>} failed: 隠せなかった窓（隠す処理が失敗した・popup の窓を見つけられなかった）の数。0 でなければ、呼び出し側は引き継ぎを解かない
+     */
+    async conceal({ entryId, cdp = null } = {}) {
+      const entry = entries.get(entryId);
+      if (!entry) return { concealed: 0, failed: 0 };
+      entry.revealed = false;
+      const near = entry.near ?? null;
+      entry.near = null;
+      const records = [...entry.windows];
+      const own = new Set(records.filter(([, record]) => record.ref).map(([, record]) => record.ref.id));
+      const fg = await os.foreground();
+      const to = fg && !own.has(fg.id) ? fg : near;
+      const features = os.capabilities().features;
+      let concealed = 0, failed = 0;
+      for (const [windowId, record] of records) {
+        if (record.ref) {
+          if (await hide(record.ref, to)) concealed += 1; else failed += 1;
+        } else if (record.role === 'popup') {
+          const ref = cdp && features.conceal && features.bounds ? await findByBounds(cdp, windowId, baseline, { waitMs: time.popupWaitMs }).catch(() => null) : null;
+          if (!ref) { log('chrome-windows: popup window not found, so it was not hidden'); failed += 1; continue; }
+          record.ref = ref;
+          if (await hide(ref, to)) concealed += 1; else failed += 1;
+        }
+      }
+      return { concealed, failed };
+    },
+
+    /** 見える形に戻してあるか（引き継ぎ中） */
+    isRevealed(entryId) { return entries.get(entryId)?.revealed === true; },
 
     /** 窓のタブがすべて無くなった（窓だけ閉じられた）。窓の記録を捨てる。次のタブは、窓が無ければ開き直す */
     windowClosed(entryId, windowId) {
@@ -216,6 +272,7 @@ export function createChromeWindows({ os, locate, log = () => {}, random = () =>
       for (const entry of entries.values()) {
         for (const record of entry.windows.values()) if (record.ref) os.closeAgent(record.ref).catch(() => {});
         entry.windows.clear();
+        entry.revealed = false; entry.near = null;   // 引き継ぎ中だった窓ももう無い
       }
     },
 

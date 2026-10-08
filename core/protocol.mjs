@@ -227,6 +227,10 @@ export const COMMANDS = new Set([
   'chromeConnect',           // {} -> 状態。つなぐ（denied のときは「もう一度」）
   'chromeDisconnect',        // {} -> 状態。切る・やめる（確認が出ていれば閉じる）
   'chromeRaiseDialog',       // {} -> { raised, method }。Chrome の許可の確認を前に出す
+  // エージェントの Chrome の窓の操作（core/chrome/control.mjs）。{ sessionId } -> { sessionId, state: running|idle|stopped|paused, since }。変わったら chromeControl イベント。画面とリモートの端末から
+  'chromeTakeOver',          // 引き継ぐ: 窓を見える形に戻して前に出し、エージェントのコマンドを断る（paused）
+  'chromeResume',            // 戻す: 窓を画面の外の見えない窓に戻し、paused を解く（会話に「あなたが引き継ぎ · Claude に戻しました」の行）
+  'chromeStop',              // 止める: 接続を閉じ、次の人の送信まで再接続を断る（stopped）
 ]);
 
 // event.type の一覧（server -> client の EVENT ペイロード）。
@@ -310,6 +314,9 @@ export const EVENTS = new Set([
   "turnEnd",       // { completedAt, outcome, interrupted: { at, reason } | null, requeued?, delegated? }
   // { state: off|setup|permission|denied|connected|unsupported, reason, dialog, product } Chrome への接続の状態（ホストの PC の画面だけに流す。リモートの端末には送らない。sessionId は null）
   "chromeBrowser",
+  // { state: running|idle|stopped|paused, since } エージェントの Chrome の窓の状態（会話ごと。sessionId つき。computer.state と同じく全部の接続へ流す）。tap は { x, y, windowId } エージェントが押した位置（右パネルの輪）
+  "chromeControl",
+  "chromeTap",
   // { windows, operating } 会話の Chrome の窓（エージェント専用の窓）の有無と、エージェントが操作中か（右パネルの Chrome の入口。リモートの端末にも流す。sessionId は会話）
   "chromeWindow",
 ]);
