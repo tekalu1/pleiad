@@ -56,7 +56,7 @@ function agent(url, options) {
 }
 const refused = (url, options) => agent(url, options).then(client => { client.close(); return false; }, () => true);
 
-async function rig({ permission = 'auto', connectWaitMs, authorize } = {}) {
+async function rig({ permission = 'auto', connectWaitMs, authorize, handoff, connectWaitText } = {}) {
   const chrome = await startFakeChrome({ permission });
   const os_ = fakeChromeOs({ chrome });
   const conn = createChromeConnection({ locate: { browser: 'chrome', userDataDir: chrome.userDataDir }, os: os_, pollMs: 20 });
@@ -64,7 +64,7 @@ async function rig({ permission = 'auto', connectWaitMs, authorize } = {}) {
   const asked = [];
   let answer = async () => ({ allow: true });
   const locate = { browser: 'chrome', userDataDir: chrome.userDataDir, custom: true };
-  const relay = createChromeRelay({ connection: conn, os: os_, locate, deniedMessage: () => 'DENIED-TEXT', log: line => logs.push(line), ...(connectWaitMs ? { connectWaitMs } : {}),
+  const relay = createChromeRelay({ connection: conn, os: os_, locate, deniedMessage: () => 'DENIED-TEXT', log: line => logs.push(line), ...(connectWaitMs ? { connectWaitMs } : {}), ...(handoff ? { handoff } : {}), ...(connectWaitText ? { connectWaitText } : {}),
     authorize: authorize ?? (async (request, signal) => { asked.push(request); return answer(request, signal); }) });
   return {
     chrome, conn, relay, logs, asked, fake: chrome.browser, os: os_,
@@ -411,6 +411,19 @@ export default async function (t) {
       r.chrome.dropConnections();
       const gone = await a.closed;
       t.ok('上りが切れたら、エージェントの接続も閉じる', gone.code === 1011, JSON.stringify(gone));
+    } finally { a?.close(); await r.stop(); }
+  }
+
+  // ===== 5b. 操作待ちの案内: 接続を求めるときに handoff.connect を呼び、待ち切れたら案内の字で返す =====
+  {
+    const calls = [];
+    const r = await rig({ permission: 'hold', connectWaitMs: 300, handoff: { connect: (id, o) => { calls.push(id); return null; } }, connectWaitText: () => 'CONNECT-WAIT-TEXT' });
+    let a;
+    try {
+      a = await agent(await r.relay.endpoint('wait'));
+      const reply = await a.cmd('Browser.getVersion');
+      t.ok('つながっていなければ handoff.connect を会話の id で呼ぶ', calls.length >= 1 && typeof calls[0] === 'string', JSON.stringify(calls));
+      t.ok('待ち切れたら connectWaitText の字で返す', reply.error?.message === 'CONNECT-WAIT-TEXT', JSON.stringify(reply));
     } finally { a?.close(); await r.stop(); }
   }
 

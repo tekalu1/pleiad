@@ -514,6 +514,11 @@ v1 は `canUseTool` から host に問い、**会話の流れの中にカード�
 - **接続が切れたら pending は全部 deny で解決する。**
   SDK の `CanUseTool` は fail-closed で、応答しないとツールが無期限にブロックされる
   （park deadline が無い）。放置は「静かに固まる」を意味する
+- **Chrome の操作待ち（`browserHandoff`。`core/chrome/handoff.mjs`、ADR 0148・0168）**: Chrome につながらない案内（`reason: connect`）と、
+  エージェントが `hand_to_user` で人に渡した依頼（ログイン・CAPTCHA 等）は、`outlivesTurn` の承認カードで出す。
+  許可・拒否の承認ではないので、`resolvePermission` の `allow: true` は断る（`HANDOFF_ONLY`）。
+  戻すのは Chrome の操作側（`chromeResume`）の決着、断るのはカードの「できない」。1 会話に開いた依頼は 1 件
+- ターンが終わっても依頼は残る。人が戻したとき、ターンが生きていなければ決まった id で続きの発言を 1 回だけ送る（「Claude に戻して続ける」）
 
 ### 承認モード（v1.1 で追加）
 

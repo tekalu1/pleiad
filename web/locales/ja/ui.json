@@ -1652,6 +1652,36 @@
       "more_other": "ほか {{count}} 件",
       "withdrawn": "取り下げた"
     },
+    "browserHandoff": {
+      "headingMark": "Chrome の操作待ち",
+      "askedLead": "Claude からの依頼 · {{reason}}",
+      "reason": {
+        "login": "ログイン",
+        "captcha": "CAPTCHA",
+        "two_factor": "2 段階認証",
+        "payment": "支払い",
+        "other": "操作の依頼"
+      },
+      "connect": {
+        "lead": "Chrome への接続を待っています"
+      },
+      "operating": "あなたが操作中",
+      "operatingNote": "Chrome の窓で操作して、終わったら「Claude に戻す」を押してください。",
+      "operatingByDevice": "別の端末で操作しています。終わったら「Claude に戻す」を押してください。",
+      "operate": "Chrome で操作する",
+      "resume": "Claude に戻す",
+      "resumeContinue": "Claude に戻して続ける",
+      "decline": "断る",
+      "failed": "操作できませんでした: {{error}}",
+      "done": {
+        "resumed": "済み · Claude に戻しました",
+        "resumedContinued": "済み · Claude に続けるよう送りました",
+        "connected": "済み · Chrome につながりました",
+        "connectedContinued": "済み · Chrome につながったので、Claude に続けるよう送りました",
+        "declined": "断りました",
+        "aborted": "中断しました"
+      }
+    },
     "computerApproval": {
       "label": "許可",
       "agent": "エージェント",

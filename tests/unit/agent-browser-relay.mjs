@@ -263,7 +263,7 @@ export default async function (t) {
       t.ok('thread config にブラウザー用の writable_roots を追加しない', requests.every(r => !('sandbox_workspace_write.writable_roots' in r.params.config)));
       t.ok('ターンも既存の sandboxPolicy を保ちソケットのルートを追加しない', turns.every(r => r.sandboxPolicy === returnedSandbox && JSON.stringify(r.sandboxPolicy.writableRoots) === JSON.stringify([scratch])));
       await codex.runTurn({ ...args, mode: 'readonly', sessionId: first.sessionId });
-      t.ok('読み取り専用ではルートを追加せず操作不可の指示に替える', !('sandbox_workspace_write.writable_roots' in requests.at(-1).params.config) && turns.at(-1).sandboxPolicy.type === 'readOnly' && !turns.at(-1).sandboxPolicy.writableRoots && requests.at(-1).params.developerInstructions.includes('Do not operate the built-in browser'));
+      t.ok('読み取り専用ではルートを追加せず操作不可の指示に替える', !('sandbox_workspace_write.writable_roots' in requests.at(-1).params.config) && turns.at(-1).sandboxPolicy.type === 'readOnly' && !turns.at(-1).sandboxPolicy.writableRoots && requests.at(-1).params.developerInstructions.includes('Do not operate the Chrome window'));
       await codex.runTurn({ ...args, mode: 'full', sessionId: first.sessionId });
       t.ok('通常モードへ戻しても追加ルートを増やさない', turns.at(-1).sandboxPolicy.type === 'workspaceWrite' && !turns.at(-1).sandboxPolicy.writableRoots.includes(env.AGENT_BROWSER_SOCKET_DIR));
       await codex.runTurn({ ...args, mode: 'yolo', sessionId: first.sessionId });

@@ -49,6 +49,7 @@
     "channels:routines.kind.webhook",
     "channels:routines.text.cron",
     "channels:routines.text.webhook",
-    "channels:routines.where.dm"
+    "channels:routines.where.dm",
+    "ui:chat.browserHandoff.reason.captcha"
   ]
 }

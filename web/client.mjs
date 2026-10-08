@@ -87,6 +87,7 @@ import { retainPlan, syncRequest, joinReply } from "./history-sync.mjs";
 import { createHeightSettler } from "./history-heights.mjs";
 import { makeBranchRow, layoutBranchSpine, motionDuration, EASING } from "./branch-view.mjs";
 import { el, svgEl, icon, relTime, randomId, chevron } from "./dom.mjs";
+import { browserHandoffView, settledLine as handoffSettledLine } from "./browser-handoff-card.mjs";
 import { t, fmt, lang as uiLang, applyDom, languageName, rememberLang } from "./i18n.mjs";
 import { savedEvent, savedTitle } from "./saved-text.mjs";
 import { buildItems, attachmentMessageIndex, attachmentLine, ATTACHMENT_LINE, normalizeAttachmentPath, inlineAttachments, showsAsCard } from "./timeline.mjs";
@@ -2203,7 +2204,28 @@ function foldApprovalRow(id, { box, row, details, host }) {
   if (isRunningHere()) activity.show(t("activity.continuing"));
 }
 
+/**
+ * Chrome の操作待ちのカード（permission の browserHandoff。web/browser-handoff-card.mjs）。ターンが終わっても残り、
+ * 中身は permissionUpdate で替わり、決着は permissionSettled で畳む（ボタンは決着の便りを待つ）
+ */
+function browserHandoffCard(ev, into = null) {
+  const m = el("div", "m card");
+  const card = el("div", "card");
+  m.append(card);
+  const head = el("div", "card-head");
+  head.append(...markedHead(t("chat.approval.heading", { mark: MARK }), t("chat.browserHandoff.headingMark")));
+  const actions = el("div", "card-actions");
+  const view = browserHandoffView(ev, { el, t, cmd, onChange: (buttons, res) => actions.replaceChildren(res, ...buttons) });
+  head.append(el("span", "desc", view.summary()));
+  card.append(head, view.body, actions);
+  placeCard(m, ev, into);
+  registerRelayCard(ev, { m, card, head, code: null, actions, res: view.res, buttons: [], removeOnFold: [view.body], desc: view.summary(),
+    settled: (settledEv) => handoffSettledLine(t, settledEv), onUpdate: (patch) => view.update(patch.browserHandoff) });
+  return m;
+}
+
 function permissionCard(ev, into = null) {
+  if (ev.browserHandoff) return browserHandoffCard(ev, into);
   if (into?.matches?.(".tc")) return rowApprovalCard(ev, into);
   const m = el("div", "m card");
   const card = el("div", "card");
@@ -2331,8 +2353,12 @@ function foldElsewhere(id) {
 
 /** permissionSettled。この窓で答えを送っている最中のカードは、答えの応答で畳むのでここでは触らない（「許可した」と出すため） */
 function onPermissionSettled(ev) {
+  const handoff = Boolean(state.pendingPerms.get(ev.id)?.browserHandoff);
   state.pendingPerms.delete(ev.id);
-  if (openCards.has(ev.id) && !openCards.sending(ev.id)) foldElsewhere(ev.id);
+  if (!openCards.has(ev.id) || openCards.sending(ev.id)) return;
+  // Chrome の操作待ちは、戻した・つながった・断った・中断をカードの字にする（別の場所で処理された、とは言わない）
+  if (handoff) openCards.fold(ev.id, { by: "handoff", settled: ev });
+  else foldElsewhere(ev.id);
 }
 
 /**
@@ -2355,7 +2381,7 @@ function reconcileOpenCards() {
 
 function registerRelayCard(ev, parts) {
   // removeOnFold・desc は、見出しの要約と本文が code の外にあるカード（コンピューターの操作の承認）が、畳むときに本文を外して要約を見出しへ移すため
-  const { m, card, head, code, actions, res, buttons, question = false, hostOnly = false, removeOnFold = [], desc = "" } = parts;
+  const { m, card, head, code, actions, res, buttons, question = false, hostOnly = false, removeOnFold = [], desc = "", settled = null } = parts;
   const blocking = ev.remote ? null : t("chat.approval.blocking");
   if (ev.remote && !detailCardMode) {
     // 詳細を見る（作業の窓のそのタスクの詳細。経過・同じカードで答えられる。どの端末の画面でも開ける）。詳細の中のカードには出さない
@@ -2372,14 +2398,14 @@ function registerRelayCard(ev, parts) {
     res.replaceChildren(online ? (blocking ?? "") : t("chat.approval.relay.offline", { host: ev.remote.hostName }));
     if (!online) res.setAttribute("role", "status"); else res.removeAttribute("role");
   };
-  const fold = ({ by, allow, peer }) => {
+  const fold = ({ by, allow, peer, settled: settledEv }) => {
     if (card.classList.contains("done")) return;
     // 誰がどこで答えたか分からない決着（つなぎ直しで消えた・タスクが止まった）は、カードごと下げる
     if (!by) { m.remove(); state.pendingPerms.delete(ev.id); return; }
     const what = question ? t("chat.approval.relay.answered") : allow ? t("chat.approval.allowed") : t("chat.approval.denied");
     // この端末（の別の窓）で答えた決着は、ふつうの承認と同じ「許可した · 時刻」。ホストで先に答えられたら「ホスト名で…」、ホストの子のカードは「端末名で…」。
     // 別の場所（別の窓・子の会話の側・ターンの終わりや中断）で片付いたものは、どう答えたかを問わず「別の場所で処理されました · 時刻」
-    const line = by === "elsewhere" ? `${t("chat.approval.elsewhere")} · ${hhmm(new Date())}`
+    const line = by === "handoff" && settled ? `${settled(settledEv)} · ${hhmm(new Date())}` : by === "elsewhere" ? `${t("chat.approval.elsewhere")} · ${hhmm(new Date())}`
       : ev.remote ? (by === "device" ? `${what} · ${hhmm(new Date())}` : t("chat.approval.relay.answeredByHost", { host: peer || ev.remote.hostName, what, time: hhmm(new Date()) }))
       : t("chat.approval.relay.answeredByDevice", { device: peer || ev.remoteOrigin?.deviceName || "", what, time: hhmm(new Date()) });
     m.classList.add("done");
@@ -2430,6 +2456,12 @@ function renderPermission(ev) {
   if (settingChange) {
     closeTurnEl();
     return settingChangeApproval(ev, settingChange);
+  }
+  // Chrome の操作待ち（hand_to_user・接続の案内）。ターンの外でも残る札なので、稼働表示は「承認を待っている」にする
+  if (ev.browserHandoff) {
+    closeTurnEl();
+    if (isRunningHere()) activity.show(t("activity.waitingApproval"));
+    return browserHandoffCard(ev);
   }
   // アプリの承認（コンピューターの操作）。アプリが読めなければ（形が違う）ふつうの承認として出す
   const computerApp = ev.computerApp ? approvalApps(ev.computerApp) : null;
