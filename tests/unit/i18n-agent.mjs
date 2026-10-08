@@ -55,7 +55,7 @@ export default async function (t) {
       const list = await rpc(c, "tools/list");
       const bad = await rpc(c, "tools/call", { name: "nope", arguments: {} });
       const failed = await rpc(c, "tools/call", { name: "ply_task_list", arguments: {} });
-      t.ok(`${lng} の会話の橋: instructions・ツールの説明・エラーがその言語`, c.instructions === agentInstructions(lng) && init.instructions === agentInstructions(lng)
+      t.ok(`${lng} の会話の橋: instructions・ツールの説明・エラーがその言語`, c.instructions === agentInstructions(lng) && init.instructions === undefined
         && list.tools.every(x => check(x.description)) && bad.content[0].text === agentT(lng, "bridge.invalidTool") && failed.content[0].text === agentT(lng, "delegation.notRunning"),
         `${bad.content[0].text} / ${failed.content[0].text}`);
       c.close();
