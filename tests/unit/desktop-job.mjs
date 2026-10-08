@@ -89,16 +89,14 @@ export default async function (t) {
         const out = path.join(dir, 'child.json');
         const script = path.join(dir, 'child.mjs');
         fs.writeFileSync(script, `import fs from 'node:fs'; fs.writeFileSync(${JSON.stringify(out)}, JSON.stringify({ pid: process.pid, marker: process.env.PLEIAD_JOB_MARKER, args: process.argv.slice(2) }));\n`);
-        const started = job.launchBreakaway({ exe: process.execPath, args: [script, 'with space', 'plain'], env: { ...process.env, PLEIAD_JOB_MARKER: 'こんにちは' }, cwd: dir, koffi });
+        const started = job.launchBreakaway({ exe: process.execPath, args: [script, 'with space', 'plain'], env: { ...process.env, PLEIAD_JOB_MARKER: 'こんにちは' }, cwd: os.tmpdir(), koffi });
         t.ok('本物: CREATE_BREAKAWAY_FROM_JOB で起こすと PID が返る', Number.isInteger(started.pid) && started.pid > 0);
         const end = Date.now() + 15_000;
         while (!fs.existsSync(out) && Date.now() < end) await sleep(50);
         const seen = fs.existsSync(out) ? JSON.parse(fs.readFileSync(out, 'utf8')) : null;
         t.ok('本物: 子が動き、PID・渡した環境（日本語を含む）・引数（空白を含む）が届く', seen?.pid === started.pid && seen.marker === 'こんにちは' && seen.args.join('|') === 'with space|plain', JSON.stringify(seen));
         t.ok('本物: 渡した環境のとおり（親の process.env を書き換えていない）', process.env.PLEIAD_JOB_MARKER === undefined);
-        // 子は書いた後もまだ dir を作業場所に持っている。終わるのを待ってから消す（待たないと rmdir が EBUSY）
-        const gone = Date.now() + 10_000;
-        while (Date.now() < gone) { try { process.kill(started.pid, 0); } catch { break; } await sleep(50); }
+        // 子の cwd は使い捨ての dir にしない。出力を確認した後、子の終了と掃除の順を競わせない。
       } finally { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
     }
     const failing = (() => { try { job.launchBreakaway({ exe: path.join(os.tmpdir(), 'pleiad-no-such-node.exe'), args: [], env: process.env, koffi }); return null; } catch (error) { return error; } })();
