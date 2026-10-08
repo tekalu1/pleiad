@@ -15,7 +15,7 @@ import { ROOT } from "../lib/server.mjs";
 import { ownedDescendants, reapOwned, killTagged, WORKER_TAG_ENV } from "../lib/process-reap.mjs";
 import { Suite } from "../lib/harness.mjs";
 import { isRetryable, buildRetryEntry, reportRetriesToCi } from "../lib/runner-retry.mjs";
-import { ArgError, parseArgs, extractSuiteName, loadRegistry, loadWeights, assignShards, heaviestFirst, weightOf } from "../lib/runner-plan.mjs";
+import { ArgError, DEFAULT_JOBS, parseArgs, extractSuiteName, loadRegistry, loadWeights, assignShards, heaviestFirst, weightOf } from "../lib/runner-plan.mjs";
 
 export const name = "runner-contract";
 export const title = "テストランナー: 引数・登録・分割・worker・異常系・環境の隔離（--jobs / --shard）";
@@ -54,7 +54,7 @@ export default async function (t) {
       const a = parseArgs(["--jobs=3", "--shard=2/2", "x"]);
       t.ok("--jobs=N・--shard=k/N の形", a.jobs === 3 && same(a.shard, { index: 2, total: 2 }) && same(a.names, ["x"]), JSON.stringify(a));
       t.ok("-jN・-j N の形", parseArgs(["-j4"]).jobs === 4 && parseArgs(["-j", "5"]).jobs === 5);
-      t.ok("既定は --jobs 1・shard なし・絞り込みなし", same(parseArgs([]), { names: [], jobs: 1, shard: null, timings: null, weights: null, retryFailed: 0, list: false, json: false, help: false }));
+      t.ok("既定は利用可能な CPU 数（最大 12）・shard なし・絞り込みなし", DEFAULT_JOBS === Math.min(12, Math.max(1, os.availableParallelism())) && same(parseArgs([]), { names: [], jobs: DEFAULT_JOBS, shard: null, timings: null, weights: null, retryFailed: 0, list: false, json: false, help: false }));
       t.ok("--retry-failed n・--retry-failed=n（0 か 1）。値は suite 名にならない。既定は 0", parseArgs(["--retry-failed", "1", "x"]).retryFailed === 1 && same(parseArgs(["--retry-failed", "1", "x"]).names, ["x"]) && parseArgs(["--retry-failed=0"]).retryFailed === 0 && parseArgs([]).retryFailed === 0);
       t.ok("-- の後ろは全部 suite 名（npm test -- … の形）", same(parseArgs(["--", "--jobs", "2"]).names, ["--jobs", "2"]));
       const bad = [
@@ -175,7 +175,7 @@ export default async function (t) {
       ...Object.fromEntries(keptNames.map((k) => [k, "7"])),
       RUNNER_FIXTURE_WATCH: JSON.stringify([...inheritedNames, ...keptNames]),
     };
-    const j1 = await fixtureRun(GOOD, ["--timings", path.join(tmp, "j1.json")], { RUNNER_FIXTURE_OUT: probeDir, ...ambient });
+    const j1 = await fixtureRun(GOOD, ["--jobs", "1", "--timings", path.join(tmp, "j1.json")], { RUNNER_FIXTURE_OUT: probeDir, ...ambient });
     const userData = fs.mkdtempSync(path.join(tmp, "user-data-"));
     const j2 = await fixtureRun(GOOD, ["--jobs", "2", "--timings", path.join(tmp, "j2.json")], { RUNNER_FIXTURE_OUT: probeDir2, ...ambient, AGENT_HOST_DATA: userData });
     const T1 = read(path.join(tmp, "j1.json"));
@@ -232,7 +232,7 @@ export default async function (t) {
       t.ok("全体の終了コードは 1・timings の ok は false", CT.ok === false);
 
       const D = ["./fx-pass-a.mjs", "./fx-throw.mjs", "./fx-mismatch.mjs", "./fx-nodefault.mjs"];
-      const d = await fixtureRun(D, ["--timings", path.join(tmp, "d.json")]);
+      const d = await fixtureRun(D, ["--jobs", "1", "--timings", path.join(tmp, "d.json")]);
       const DT = read(path.join(tmp, "d.json"));
       const ds = Object.fromEntries(DT.suites.map((s) => [s.name, s.status]));
       t.ok("--jobs 1 でも、例外・default が関数でない・name の不一致は失敗になり、残りは走る", d.code === 1 && ds["fx-pass-a"] === "pass" && ds["fx-throw"] === "error" && ds["fx-nodefault"] === "error" && Object.values(ds).includes("fail"), JSON.stringify(ds));

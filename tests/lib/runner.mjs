@@ -1,7 +1,7 @@
 // tests/run.mjs の実行部。計画（tests/lib/runner-plan.mjs）に従って suite を走らせ、結果を集めて終了コードを返す。
 //
-//   --jobs 1（既定）  従来どおり、このプロセスで suite を登録の順に 1 本ずつ。
-//   --jobs N > 1      子プロセスの worker（tests/lib/run-worker.mjs）を N 本。重い suite から順に、空いた worker へ 1 本ずつ渡す。
+//   --jobs 1          従来どおり、このプロセスで suite を登録の順に 1 本ずつ。
+//   --jobs N > 1      既定は利用可能な CPU 数（最大 12）。子プロセスの worker（tests/lib/run-worker.mjs）を N 本。重い suite から順に、空いた worker へ 1 本ずつ渡す。
 //                     worker は suite 1 本ごとに終わるまで次を受けない（同じプロセスの中で suite を並行させない）。
 //                     出力は suite ごとにまとめて、終わった順に出す（行が混ざらない）。
 //

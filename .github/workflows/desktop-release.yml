@@ -69,7 +69,7 @@ jobs:
           }
       - name: Validate source version and signing configuration
         run: node scripts/release-preflight.mjs
-      - run: npm test
+      - run: node tests/run.mjs --jobs 2
       - run: npm run desktop:dist -- --config electron-builder.release.cjs --publish never
       - name: Verify Windows signatures
         if: runner.os == 'Windows'
