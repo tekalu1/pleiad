@@ -222,6 +222,7 @@ export default async function (t) {
         const parent8 = await holder.connect();
         const link7 = await openChromeLink({ holder: parent8.client, runtimeRoot: root, runtimeKey: 'k1' });
         t.ok('版の不一致: 古い子を終わらせて起こし直し、新しい子の版で付く', link7 && link7.welcome.v === LINK_VERSION && link7.welcome.phase === 'idle', JSON.stringify(link7?.welcome));
+        t.ok('版の不一致: 古い子の預かり物（carry）を新しい子へ引き継ぐ（隠した窓・鍵・止めた印を失わない）', link7.welcome.carry?.port === 7777 && link7.welcome.carry.entries[0]?.stopped === true, JSON.stringify(link7.welcome.carry));
         t.ok('版の不一致: 古い子は残らない', !linkChildren((await holder.connect()).client).some(c => c.id === 'chrome-link-old'));
         await link7?.quit();
       }
