@@ -297,6 +297,6 @@ export default async function (t) {
     const main = read('desktop/main.cjs');
     t.ok('デスクトップ版の main が橋をつなぐ', /attachBrowserScreencastBridge\(messages, browserPanel/.test(main));
     const client = read('web/client.mjs');
-    t.ok('画面は screencast の知らせを表示へ渡す', /m\.kind === "screencast"\) return remoteBrowser\.onMessage\(m\)/.test(client));
+    t.ok('画面は screencast の知らせを表示へ渡す（Chrome の窓の映像は右パネルへ、内蔵ブラウザーは全面の表示へ）', /m\.kind === "screencast"\) return m\.source === 'chrome' \? chromePanel\?\.onMessage\(m\) : remoteBrowser\.onMessage\(m\)/.test(client));
   }
 }

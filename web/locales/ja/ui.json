@@ -4070,6 +4070,19 @@
     "siteDataCleared": "このサイトのデータを消しました。",
     "failed": "ブラウザーの操作に失敗しました。",
     "reloaded": "読み直しました",
+    "chromeWindow": {
+      "panel": "Chrome の窓",
+      "entry": "{{name}} の Chrome の窓",
+      "entryWorking": "{{name}} の Chrome の窓 · 操作中",
+      "screen": "{{name}} の Chrome の窓の映像（見るだけ）",
+      "viewOnly": "見るだけ · 操作は引き継いでから",
+      "suspended": "映像を止めています",
+      "connecting": "接続しています…",
+      "fps": "映像 · {{fps}} fps",
+      "ended": "Chrome の窓が閉じました",
+      "none": "この会話には Chrome の窓がありません",
+      "failed": "Chrome の窓の映像を開けませんでした。"
+    },
     "remote": {
       "title": "PC のブラウザー",
       "backToChat": "会話へ",

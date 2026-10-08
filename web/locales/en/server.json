@@ -1116,6 +1116,8 @@
     "agent-active": "An agent is using the browser. Tap Take over first.",
     "invalid-input": "Can't send this input.",
     "failed": "The PC browser action failed.",
+    "view-only": "The Chrome window is view-only. Take it over and use the window in Chrome.",
+    "no-window": "This conversation has no Chrome window yet.",
     "unknown": "Unknown action."
   },
   "notify": {

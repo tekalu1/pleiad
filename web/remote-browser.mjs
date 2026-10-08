@@ -8,6 +8,7 @@ import { runMark } from './arc.mjs';
 import { backIcon } from './icons.mjs';
 import { normalizeAddress, addressParts } from './browser-address.mjs';
 import { notify } from './file-actions.mjs';
+import { createFrameSink, framesPerSecond } from './screencast-frame.mjs';
 
 const svg = d => `<svg class="i" viewBox="0 0 24 24" aria-hidden="true">${d}</svg>`;
 const ICON = {
@@ -44,11 +45,7 @@ export function toPageDelta(delta, rect, metadata) {
   return delta * metadata.deviceWidth / rect.width;
 }
 
-/** 直近の時刻の列から fps（3 秒の窓） */
-export function framesPerSecond(times, now) {
-  const recent = times.filter(time => now - time <= 3000);
-  return recent.length < 2 ? recent.length : Math.round(recent.length / 3 * 10) / 10;
-}
+export { framesPerSecond };
 
 const button = (html, label, className = 'btn btn-icon') => {
   const b = el('button', className); b.type = 'button';
@@ -60,7 +57,7 @@ const button = (html, label, className = 'btn btn-icon') => {
  * @param cmd WS のコマンド。getSessionId は今の会話。getAgentName はエージェントの名前。getHostName はホストの名前
  */
 export function createRemoteBrowser({ cmd, getSessionId, getAgentName = () => '', getHostName = () => '' }) {
-  let view = null, sessionId = null, frame = null, state = null, quality = 'auto', times = [], ended = false, youTimer = null;
+  let view = null, sessionId = null, state = null, quality = 'auto', ended = false, youTimer = null;
 
   function build() {
     const root = el('section', 'rb'); root.hidden = true;
@@ -90,6 +87,7 @@ export function createRemoteBrowser({ cmd, getSessionId, getAgentName = () => ''
     const screen = el('div', 'rb-screen'); screen.setAttribute('aria-label', t('browser.remote.screen'));
     const img = el('img', 'rb-frame'); img.alt = ''; img.draggable = false;
     screen.append(img);
+    const sink = createFrameSink({ img, onAck: seq => { if (sessionId) cmd('browserScreencastAck', { sessionId, seq }).catch(() => {}); } });
 
     const status = el('span', 'rb-status weak', t('browser.remote.connecting'));
     const qualityButton = el('button', 'btn rb-tool'); qualityButton.type = 'button';
@@ -158,21 +156,21 @@ export function createRemoteBrowser({ cmd, getSessionId, getAgentName = () => ''
     let down = null, lastScroll = 0, pendingDy = 0, pendingDx = 0, at = null;
     const rect = () => containRect(img.getBoundingClientRect(), { width: img.naturalWidth, height: img.naturalHeight });
     screen.addEventListener('pointerdown', event => {
-      if (!frame || event.button > 0) return;
+      if (!sink.frame || event.button > 0) return;
       down = { x: event.clientX, y: event.clientY, lastX: event.clientX, lastY: event.clientY, moved: false, id: event.pointerId };
       try { screen.setPointerCapture(event.pointerId); } catch {}
     });
     const flushScroll = () => {
       if (!at || (!pendingDx && !pendingDy)) return;
       const r = rect();
-      const dx = toPageDelta(pendingDx, r, frame?.metadata), dy = toPageDelta(pendingDy, r, frame?.metadata);
+      const dx = toPageDelta(pendingDx, r, sink.frame?.metadata), dy = toPageDelta(pendingDy, r, sink.frame?.metadata);
       pendingDx = pendingDy = 0; lastScroll = performance.now();
       if (!blocked()) send({ type: 'scroll', x: at.x, y: at.y, dx, dy }).catch(() => {});
     };
     screen.addEventListener('pointermove', event => {
       if (!down || event.pointerId !== down.id) return;
       if (!down.moved && Math.hypot(event.clientX - down.x, event.clientY - down.y) < TAP_SLOP) return;
-      if (!down.moved) { down.moved = true; at = toPageCoords(down, rect(), frame?.metadata) ?? { x: 0, y: 0 }; }
+      if (!down.moved) { down.moved = true; at = toPageCoords(down, rect(), sink.frame?.metadata) ?? { x: 0, y: 0 }; }
       // 指を上へ動かすとページは下へ（端末の触り方と同じ向き）
       pendingDx += down.lastX - event.clientX; pendingDy += down.lastY - event.clientY;
       down.lastX = event.clientX; down.lastY = event.clientY;
@@ -183,27 +181,22 @@ export function createRemoteBrowser({ cmd, getSessionId, getAgentName = () => ''
       const was = down; down = null;
       if (was.moved) { flushScroll(); return; }
       if (event.type === 'pointercancel') return;
-      const point = toPageCoords({ x: event.clientX, y: event.clientY }, rect(), frame?.metadata);
+      const point = toPageCoords({ x: event.clientX, y: event.clientY }, rect(), sink.frame?.metadata);
       if (!point || blocked()) return;
       send({ type: 'tap', ...point }).catch(() => {});
     };
     screen.addEventListener('pointerup', finish);
     screen.addEventListener('pointercancel', finish);
     screen.addEventListener('wheel', event => {
-      if (!frame) return;
+      if (!sink.frame) return;
       event.preventDefault();
-      const point = toPageCoords({ x: event.clientX, y: event.clientY }, rect(), frame.metadata);
+      const point = toPageCoords({ x: event.clientX, y: event.clientY }, rect(), sink.frame.metadata);
       if (!point || blocked()) return;
       at = point; pendingDx += event.deltaX; pendingDy += event.deltaY;
       if (performance.now() - lastScroll > 60) flushScroll();
     }, { passive: false });
 
-    img.addEventListener('load', () => {
-      const seq = img.dataset.seq;
-      if (seq && sessionId) cmd('browserScreencastAck', { sessionId, seq: Number(seq) }).catch(() => {});
-    });
-
-    return { root, host, back, address, mark, shown, input, reload, agentRow, agentText, agentStop, agentTake, screen, img, status, qualityButton, textButton, text, textHint };
+    return { root, host, back, address, mark, shown, input, reload, agentRow, agentText, agentStop, agentTake, screen, img, sink, status, qualityButton, textButton, text, textHint };
   }
 
   const failed = error => notify(error?.message || t('browser.remote.failed'));
@@ -260,8 +253,8 @@ export function createRemoteBrowser({ cmd, getSessionId, getAgentName = () => ''
   function paintTools() {
     view.qualityButton.textContent = t('browser.remote.quality', { level: quality === 'auto' ? t('browser.remote.qualityAuto') : t('browser.remote.qualityLow') });
     if (ended) { view.status.textContent = t('browser.remote.ended'); return; }
-    if (!frame) { view.status.textContent = t('browser.remote.connecting'); return; }
-    view.status.textContent = t('browser.remote.connectedFps', { fps: framesPerSecond(times, performance.now()) });
+    if (!view.sink.frame) { view.status.textContent = t('browser.remote.connecting'); return; }
+    view.status.textContent = t('browser.remote.connectedFps', { fps: view.sink.fps() });
   }
   function paint() { paintAddress(); paintAgent(); paintTools(); }
 
@@ -282,8 +275,8 @@ export function createRemoteBrowser({ cmd, getSessionId, getAgentName = () => ''
   async function open(target = {}) {
     view ??= build();
     sessionId = getSessionId();
-    frame = null; state = null; times = []; ended = false;
-    view.img.removeAttribute('src');
+    state = null; ended = false;
+    view.sink.reset();
     view.host.textContent = getHostName() ? `⇄ ${getHostName()}` : '';
     view.root.hidden = false;
     document.body.classList.add('rb-open');
@@ -299,16 +292,14 @@ export function createRemoteBrowser({ cmd, getSessionId, getAgentName = () => ''
     if (sessionId) cmd('browserScreencastStop', { sessionId }).catch(() => {});
     view.root.hidden = true;
     document.body.classList.remove('rb-open');
-    sessionId = null; frame = null;
+    sessionId = null; view.sink.reset();
   }
 
   function onMessage(message) {
-    if (!view || view.root.hidden || message.sessionId !== sessionId) return;
+    // エージェントの Chrome の窓の映像（source: 'chrome'）は右パネル（web/chrome-panel.mjs）のもの
+    if (!view || view.root.hidden || message.sessionId !== sessionId || message.source === 'chrome') return;
     if (message.type === 'frame' && typeof message.data === 'string') {
-      frame = { seq: message.seq, metadata: message.metadata ?? {} };
-      times.push(performance.now()); if (times.length > 40) times.shift();
-      view.img.dataset.seq = String(message.seq);
-      view.img.src = `data:image/jpeg;base64,${message.data}`;
+      view.sink.push(message);
       paintTools();
     } else if (message.type === 'state') {
       state = message.state; paint();

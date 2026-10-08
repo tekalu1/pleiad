@@ -4189,6 +4189,19 @@
     "siteDataCleared": "Cleared data for this site.",
     "failed": "The browser action failed.",
     "reloaded": "Reloaded",
+    "chromeWindow": {
+      "panel": "Chrome window",
+      "entry": "{{name}}'s Chrome window",
+      "entryWorking": "{{name}}'s Chrome window · working",
+      "screen": "Video of {{name}}'s Chrome window (view only)",
+      "viewOnly": "View only · take over to use it",
+      "suspended": "Video paused",
+      "connecting": "Connecting…",
+      "fps": "Video · {{fps}} fps",
+      "ended": "The Chrome window was closed",
+      "none": "This conversation has no Chrome window",
+      "failed": "Couldn't open the Chrome window video."
+    },
     "remote": {
       "title": "PC browser",
       "backToChat": "Back to conversation",

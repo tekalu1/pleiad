@@ -105,3 +105,38 @@ export function setupBrowserEntry({ button, browser, preview, getSessionId = () 
   paint();
   return { paint, toggle };
 }
+
+/**
+ * エージェントの Chrome の窓のボタン（右パネル「Chrome の窓」を開閉する。web/chrome-panel.mjs）。会話に窓があるときだけ出し、
+ * エージェントが操作中の間は右上に走っている弧を置く（内蔵ブラウザーの入口と同じ web/arc.mjs）。リモートの端末の画面にも出す（映像は見るだけ）
+ * panel は setupChromePanel の返り値（windows・open・toggle・isOpen）。available() が false の間（Chrome の窓の映像が無いホスト）は出さない
+ */
+export function setupChromeEntry({ button, panel, getSessionId = () => null, getAgentName = () => 'Claude', available = () => true, mark: makeMark = runMark }) {
+  if (!button) return null;
+  function paint() {
+    const id = getSessionId();
+    const visible = Boolean(id) && available() && panel.windows.has(id);
+    button.hidden = !visible;
+    if (!visible) return;
+    const name = getAgentName() || 'Claude';
+    const working = panel.windows.operating(id);
+    const label = working ? t('browser.chromeWindow.entryWorking', { name }) : t('browser.chromeWindow.entry', { name });
+    button.title = label;
+    button.setAttribute('aria-label', label);
+    const open = panel.isOpen();
+    button.setAttribute('aria-expanded', String(open));
+    button.classList.toggle('on', open);
+    // 走っている印は操作中の間だけ DOM に置く
+    const run = button.querySelector('.entry-run');
+    if (working && !run) {
+      const arc = makeMark();
+      arc.classList.add('entry-run');
+      arc.setAttribute('aria-hidden', 'true');
+      button.append(arc);
+    } else if (!working && run) run.remove();
+  }
+  button.addEventListener('click', () => panel.toggle(button));
+  panel.onOpenChange(paint);
+  paint();
+  return { paint };
+}

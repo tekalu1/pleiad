@@ -105,7 +105,7 @@ export default async function (t) {
       const secondTab = tabInfo(r, second.result?.targetId);
       const newWindowCalls = r.chrome.calls.filter(c => c.method === 'Target.createTarget');
       t.ok('2 枚目のタブは新しい窓（createTarget の newWindow・background。画面の外の位置と大きさ）。chrome.exe は起こさない', !!secondTab && secondTab.windowId !== tab.windowId
-        && newWindowCalls.length === 1 && newWindowCalls[0].params.newWindow === true && newWindowCalls[0].params.background === true && newWindowCalls[0].params.left === 6000 && newWindowCalls[0].params.width === 1100
+        && newWindowCalls.length === 1 && newWindowCalls[0].params.newWindow === true && newWindowCalls[0].params.background === true && newWindowCalls[0].params.left === 6000 && newWindowCalls[0].params.width === WINDOW_DIP.width
         && r.os.calls('launchWindow').length === 1, JSON.stringify(newWindowCalls));
       t.ok('その窓も隠す', concealedOk(hwndOf(r, secondTab?.windowId)));
       t.ok('createTarget には nonce の data: のページで頼み、頼まれた URL へ移してから返す', newWindowCalls[0].params.url.startsWith('data:text/html,<title>PLY-') && secondTab.url === 'about:blank');
