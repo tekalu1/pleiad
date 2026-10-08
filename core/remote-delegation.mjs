@@ -154,12 +154,24 @@ export function createRemoteDelegation({ bridge, tasks, agentT, titleOf = async 
 
   const patchOf = ev => {
     const final = FINAL.has(ev.rawStatus ?? ev.status);
+    const telemetry = ev.telemetry?.version === 1 && Number.isFinite(ev.telemetry.lastActivityAt)
+      ? ev.telemetry : null;
     return {
       title: ev.title ?? undefined, status: ev.rawStatus ?? ev.status, hostWaiting: ev.status === 'waiting', error: ev.error ?? null,
       backend: ev.backend ?? undefined, model: ev.model ?? undefined, effort: ev.effort ?? undefined, mode: ev.mode ?? undefined, cwd: ev.cwd ?? undefined,
       remoteSessionId: ev.sessionId ?? undefined, worktree: ev.worktree ?? undefined,
       routing: ev.routing ? { mode: 'host', kind: ev.routing.kind ?? null, decidedBy: 'host', target: { backend: ev.routing.backend ?? null, model: ev.routing.model ?? null, account: null } } : undefined,
       ...(final ? { result: ev.result ?? '', resultLength: ev.resultLength ?? 0 } : {}),
+      ...(!telemetry && !final ? { hostTelemetry: null, hostBackground: null, hostLockWaiting: null,
+        lastActivityAt: null, lastOutputAt: null, activeCommands: null } : {}),
+      ...(telemetry ? { hostTelemetry: true, lastActivityAt: telemetry.lastActivityAt,
+        lastOutputAt: Number.isFinite(telemetry.lastOutputAt) ? telemetry.lastOutputAt : null,
+        activeCommands: Array.isArray(telemetry.activeCommands) ? telemetry.activeCommands.slice(0, 8).filter(c => c && typeof c.noticeId === 'string' && typeof c.command === 'string')
+          .map(c => ({ ...c, notified: false })) : [],
+        hostLockWaiting: telemetry.lockWaiting === true,
+        hostBackground: Number.isFinite(telemetry.background?.since) && Array.isArray(telemetry.background?.tasks)
+          ? { since: telemetry.background.since, tasks: telemetry.background.tasks.slice(0, 8),
+            reply: typeof telemetry.background.reply === 'string' ? telemetry.background.reply.slice(0, 4000) : '' } : null } : {}),
     };
   };
 
@@ -286,6 +298,11 @@ export function createRemoteDelegation({ bridge, tasks, agentT, titleOf = async 
     }
     for (const entry of [...open.values()]) if (entry.hostId === hostId) closeRelay(hostId, entry.relayId, { by: null, allow: null });
   }
+  async function suspendTelemetry(hostId) {
+    for (const r of tasks()?.rowsWhere(x => x.host?.hostId === hostId && ACTIVE.has(x.status) && x.hostTelemetry) ?? [])
+      await tasks().mirror(r.taskId, { hostTelemetry: null, hostBackground: null, hostLockWaiting: null,
+        activeCommands: null, lastActivityAt: null, lastOutputAt: null });
+  }
 
   /** sync の答えの「ホストが知らない ID」。ホストのデータが消えた・別の端末として組み直した、など。動いているつもりの写しを、記録が無いものとして終わらせる */
   async function unknownTasks(hostId, ids) {
@@ -305,7 +322,8 @@ export function createRemoteDelegation({ bridge, tasks, agentT, titleOf = async 
       bridge.onState((hostId, status) => {
         if (status.state === 'ready') offlineAt.delete(hostId); else if (!offlineAt.has(hostId)) offlineAt.set(hostId, Date.now());
         cards?.online(hostId, status.state === 'ready' && status.allowed);
-        const done = stopped(status) ? retire(hostId).catch(e => log(`remote delegation: ${e?.message ?? e}`)) : null;
+        const done = stopped(status) ? retire(hostId).catch(e => log(`remote delegation: ${e?.message ?? e}`))
+          : status.state !== 'ready' ? suspendTelemetry(hostId).catch(e => log(`remote delegation: ${e?.message ?? e}`)) : null;
         Promise.resolve(done).finally(changed);
       }),
       bridge.onReady((hostId, status) => { offlineAt.delete(hostId); return catchUp(hostId, status).catch(e => log(`remote delegation: ${e?.message ?? e}`)); }),

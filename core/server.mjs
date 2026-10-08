@@ -626,6 +626,7 @@ function rejectionNotice(lng, list) {
 const peerBackground = x => ({ kind: pick(x.kind, 20) ?? 'other', label: redactForPeer(String(x.label ?? ''), REJECTION_TEXT_MAX) ?? '' });
 // 裏待ちの最初の知らせに載せる子の返答の上限（全文は完了通知と ply_task_status で渡る）
 const BACKGROUND_REPLY_MAX = 4000;
+const delegatedNoticeTitle = task => task.host ? `${task.title || task.taskId} ⇄ ${task.host.name}` : task.title;
 function backgroundNotice(lng, task, { count, minutes, interval, tasks }, reply) {
   const items = tasks.slice(0, NOTICE_REJECTIONS).map(x => agentT(lng, 'delegation.backgroundItem', { label: x.label || x.kind })).join('\n');
   const vars = { taskId: task.taskId, title: task.title, minutes, interval, items };
@@ -864,6 +865,11 @@ const remoteWaiting = row => REMOTE_ACTIVE.has(row.status) && Boolean(row.sessio
 function remoteTaskEvent(row) {
   const parsed = parseRemoteOwner(row.parentSessionId);
   const waiting = remoteWaiting(row);
+  const telemetry = row.status === 'running' ? agentTasks?.remoteTelemetry(row.taskId) : null;
+  const execution = taskExecutions.get(row.sessionId);
+  const turn = runtime.turns.get(row.sessionId);
+  const background = execution?.waitingSince && turn?.info.phase === 'waiting'
+    ? (turn.info.background ?? []).map(peerBackground) : [];
   return {
     taskId: row.taskId, requesterSessionId: parsed?.sessionId ?? null, title: row.title ?? null,
     status: waiting ? 'waiting' : row.status, rawStatus: row.status, notification: row.notification ?? null,
@@ -876,24 +882,30 @@ function remoteTaskEvent(row) {
     result: REMOTE_ACTIVE.has(row.status) ? '' : String(row.result ?? '').slice(0, RESULT_PAGE), resultLength: row.resultLength ?? String(row.result ?? '').length,
     worktree: row.worktree ? { id: row.worktree.id, branch: row.worktree.branch, path: row.worktree.path, origin: row.worktree.origin } : null,
     routing: row.routing ? { kind: row.routing.kind ?? null, mode: row.routing.mode ?? null, backend: row.routing.target?.backend ?? null, model: row.routing.target?.model ?? null } : null,
+    ...(telemetry ? { telemetry: { version: 1, ...telemetry, lockWaiting: computerLock.snapshot().some(s => s.sessionId === row.sessionId && s.state === 'waiting'),
+      background: background.length ? { since: execution.waitingSince, tasks: background.slice(0, 8),
+        reply: String(execution.streamed ?? '').slice(0, BACKGROUND_REPLY_MAX) } : null } } : {}),
   };
 }
 
 const remotePushed = new Map();   // taskId → 最後に端末へ知らせたときの署名（変わったときだけ知らせる）
-let remotePushTimer = null, remoteStatsSignature = '[]';
+let remotePushTimer = null, remotePushAll = false, remoteStatsSignature = '[]';
 /** 任された作業の状態が変わった。つながっている端末へ、変わった行だけ知らせる（まとめて 1 回） */
-function remoteTasksChanged() {
+function remoteTasksChanged(activeOnly = false) {
+  if (!activeOnly) remotePushAll = true;
   if (remotePushTimer || !agentTasks) return;
   remotePushTimer = setTimeout(() => {
     remotePushTimer = null;
+    const onlyActive = !remotePushAll;
+    remotePushAll = false;
     try {
       const counts = new Map();
-      for (const row of agentTasks.rowsWhere(r => isRemoteOwner(r.parentSessionId))) {
+      for (const row of agentTasks.rowsWhere(r => isRemoteOwner(r.parentSessionId) && (!onlyActive || REMOTE_ACTIVE.has(r.status)))) {
         const parsed = parseRemoteOwner(row.parentSessionId);
         if (!parsed) continue;
         const event = remoteTaskEvent(row);
         if (REMOTE_ACTIVE.has(row.status)) { const n = counts.get(parsed.deviceId) ?? [0, 0]; n[0]++; if (event.status === 'waiting') n[1]++; counts.set(parsed.deviceId, n); }
-        const signature = JSON.stringify([event.status, event.updatedAt, event.instructionRevision, event.resultLength, event.error, event.pendingMessages]);
+        const signature = JSON.stringify([event.status, event.updatedAt, event.instructionRevision, event.resultLength, event.error, event.pendingMessages, event.telemetry]);
         if (remotePushed.get(row.taskId) !== signature && remoteAgentPort.pushTask(parsed.deviceId, event)) remotePushed.set(row.taskId, signature);
       }
       // 設定 › リモートの端末の行の「任された作業 N・承認待ち M」。数が変わったときだけ配り直す
@@ -5235,7 +5247,7 @@ agentTasks = await createAgentTasks({
     if (await noticeBlocked(owner)) return 'requeue';
     const lng = await ensureAgentLocale(owner);
     const prompt = agentT(lng, 'delegation.commandNotice', { taskId: task.taskId, noticeId: command.noticeId,
-      title: task.title, command: redactForPeer(command.command, 200), minutes: command.elapsedMinutes });
+      title: delegatedNoticeTitle(task), command: redactForPeer(command.command, 200), minutes: command.elapsedMinutes });
     return runTurn({ sessionId: owner, prompt }, () => {}, { internal: true });
   },
   deliverSilence: async (task, minutes) => {
@@ -5243,7 +5255,7 @@ agentTasks = await createAgentTasks({
     if (isRemoteOwner(owner)) return 'ok';
     if (await noticeBlocked(owner)) return 'requeue';
     const lng = await ensureAgentLocale(owner);
-    const prompt = agentT(lng, 'delegation.silenceNotice', { taskId: task.taskId, title: task.title, minutes });
+    const prompt = agentT(lng, 'delegation.silenceNotice', { taskId: task.taskId, title: delegatedNoticeTitle(task), minutes });
     return runTurn({ sessionId: owner, prompt }, () => {}, { internal: true });
   },
   // 子の main が返答を終えて裏の作業だけを待っている（ADR 0170）。止めずに、待っているものを依頼元へ見せる
@@ -5259,8 +5271,8 @@ agentTasks = await createAgentTasks({
     if (isRemoteOwner(owner)) return 'ok';
     if (await noticeBlocked(owner)) return 'requeue';
     const lng = await ensureAgentLocale(owner);
-    const reply = notice.count > 1 ? null : await lastReply(task.sessionId).catch(() => null);
-    return runTurn({ sessionId: owner, prompt: backgroundNotice(lng, task, notice, reply) }, () => {}, { internal: true });
+    const reply = notice.count > 1 ? null : task.host ? task.hostBackground?.reply ?? null : await lastReply(task.sessionId).catch(() => null);
+    return runTurn({ sessionId: owner, prompt: backgroundNotice(lng, task.host ? { ...task, title: delegatedNoticeTitle(task) } : task, notice, reply) }, () => {}, { internal: true });
   },
 });
 // 前の起動で走っていて、再起動で止まった委譲タスクを、依頼元の会話の「止めたもの」に残す（次のターンで伝える）。
@@ -5268,6 +5280,9 @@ agentTasks = await createAgentTasks({
 await recordTaskStops(agentTasks.restored, 'restart', { restart: true });
 // ホストに任せたタスクの写し: 動いていたものはホストで続いている。ホストの便りを聞き、つながり次第追いつく（remote-delegation.mjs）
 remoteDelegation.start();
+// 活動はメモリだけで更新される。変化をまとめ、最大 30 秒に 1 通だけ状態の便りへ載せる。
+const remoteTelemetryTimer = setInterval(() => remoteTasksChanged(true), 30_000);
+remoteTelemetryTimer.unref();
 // 設定の変更の承認の結果を会話へ届ける（ADR 0088）。届け方は委譲の完了通知と同じ（ADR 0057）: 走っているターンへ途中送信で渡せればそこへ、
 // 渡せなければ会話が空いてから新しいターンで。前の起動で待っていた要求は、再起動で取り下げた結果として届ける
 settingApprovals = await createSettingApprovals({

@@ -154,6 +154,24 @@ export default async function (t) {
         emit({ t: 'task', task: { taskId: ID(2), status: 'completed', result: 'BACK', resultLength: 4, updatedAt: 2 } });
         await sleep(100);
         t.ok('取り込み: ホストの便りで、失敗にした行がホストの状態（completed）に戻る', m2.get(ID(2)).status === 'completed' && m2.get(ID(2)).result === 'BACK' && m2.get(ID(2)).hostLost === undefined);
+        await add2(27);
+        emit({ t: 'task', task: { taskId: ID(27), rawStatus: 'running', status: 'running', telemetry: { version: 1,
+          lastActivityAt: 123, lastOutputAt: null, lockWaiting: true, background: null,
+          activeCommands: [{ noticeId: 'command-7', command: 'build', state: 'running', observedAt: 123, pausedMs: 0, notified: true }] } } });
+        await sleep(50);
+        t.ok('取り込み: 新しいホストの活動と実行中コマンドの写しを受ける',
+          m2.get(ID(27)).hostTelemetry === true && m2.get(ID(27)).lastActivityAt >= 123 && m2.get(ID(27)).hostLockWaiting === true
+          && m2.get(ID(27)).activeCommands[0].command === 'build');
+        setState({ state: 'offline', allowed: true });
+        await sleep(50);
+        t.ok('取り込み: オフラインでは古い活動の写しによる通知を止める', m2.get(ID(27)).hostTelemetry === undefined);
+        ready({ state: 'ready', allowed: true });
+        emit({ t: 'task', task: { taskId: ID(27), rawStatus: 'running', status: 'running', telemetry: {
+          version: 1, lastActivityAt: 124, activeCommands: [], lockWaiting: false, background: null } } });
+        await sleep(50);
+        emit({ t: 'task', task: { taskId: ID(27), rawStatus: 'running', status: 'running' } });
+        await sleep(50);
+        t.ok('取り込み: 古いホストの便りへ戻ったら活動の写しを使わない', m2.get(ID(27)).hostTelemetry === undefined && m2.get(ID(27)).activeCommands.length === 0);
         // ホストが知らない
         await add2(3);
         emit({ t: 'synced', unknown: [ID(3), 'nope', ID(2)] });
