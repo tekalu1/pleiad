@@ -16,6 +16,8 @@ const WATCHDOG_MS = 30_000;
 const WATCHDOG_TICK_MS = 5_000;
 const ASYNC_METHODS = new Set(['captureRect', 'fileDescription', 'shellOpen']);
 const KEYBOARD = new Set(['text', 'key', 'keyDown', 'keyUp']);
+/** 押す・掴む動作。Pleiad 自身の窓（引き継ぎのピルなど、スクリーンショットに写らない窓も含む）の上では送らない。move・scroll は押さないので止めない */
+const PRESS = new Set(['click', 'down', 'drag']);
 
 /**
  * main のスレッドが Per-Monitor（V1 でも V2 でもよい。Electron の main は V1 = 実測 2026-10-01）でないときだけ、
@@ -105,7 +107,7 @@ function createComputerService({ post, win32: rawWin32 = null, backend: injected
     if ((await desktop.check()).locked) throw new ComputerError('locked', 'the screen is locked or showing a secure desktop');
   };
 
-  /** 入力の前に毎回: 昇格したアプリには届かない（uipi）、Pleiad 自身の窓にはキーを送らない（self）。離す動作は止めない */
+  /** 入力の前に毎回: 昇格したアプリには届かない（uipi）、Pleiad 自身の窓にはキーを送らず、押しもしない（self）。離す動作は止めない */
   async function gate(action) {
     if (action.type === 'keyUp' || action.type === 'up') return;
     let target;
@@ -115,6 +117,8 @@ function createComputerService({ post, win32: rawWin32 = null, backend: injected
     } else {
       const point = action.type === 'drag' ? action.from : action.x !== undefined ? action : backend.cursor();
       target = await apps.inspectAt(point.x, point.y);
+      // 画面共有・撮影から外したピル（desktop/chrome-pill.cjs）は、写らないのに点の下にある。Pleiad の窓を押させない
+      if (PRESS.has(action.type) && target?.self) throw new ComputerError('self', 'the window under the pointer belongs to Pleiad');
     }
     if (target?.elevated && !selfElevated) throw new ComputerError('uipi', 'the target app runs with administrator rights and cannot receive input');
   }

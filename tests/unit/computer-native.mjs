@@ -681,6 +681,23 @@ async function serviceTests(t) {
     t.ok('途中の動作で断られたら done に終えた数を載せる', partial.error?.code === 'self' && partial.error.done === 1);
   }
 
+  // 点の下が Pleiad 自身の窓（撮影から外した引き継ぎのピルなど）なら、押す動作は self（キーと同じ）
+  {
+    const { call, w } = make({
+      windowAt: () => 5, rootOf: h => h,
+      windowInfo: hwnd => ({ hwnd, pid: 1, title: 'pill', className: '', exStyle: 0, visible: true, iconic: false, cloaked: false, hung: false, rect: null }),
+      processPath: () => 'C:\\x\\Ply.exe',
+    });
+    const click = await call('input', { actions: [{ type: 'click', x: 5, y: 5 }] });
+    t.ok('点の下が Pleiad 自身の窓なら click は self（何も送らない）', click.error?.code === 'self' && w.sent.length === 0, JSON.stringify(click.error));
+    const down = await call('input', { actions: [{ type: 'down', x: 5, y: 5 }] });
+    const drag = await call('input', { actions: [{ type: 'drag', from: { x: 5, y: 5 }, to: { x: 9, y: 9 } }] });
+    t.ok('down・drag も self', down.error?.code === 'self' && drag.error?.code === 'self' && w.sent.length === 0);
+    const move = await call('input', { actions: [{ type: 'move', x: 5, y: 5 }] });
+    const scroll = await call('input', { actions: [{ type: 'scroll', x: 5, y: 5, dy: 1 }] });
+    t.ok('押さない move・scroll は止めない', move.ok === true && scroll.ok === true, JSON.stringify([move.error, scroll.error]));
+  }
+
   // stopped・arm・turn-ended
   {
     const { call, svc, w } = make();
