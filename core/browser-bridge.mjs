@@ -98,6 +98,7 @@ export function createBrowserBridge({ handoffs = null, closeWindow = null } = {}
       try {
         const result = await closeWindow(owner.sessionId, args.task ?? null);
         if (result?.failed) return fail(agentT(locale, 'browserBridge.closeWindow.failed'));
+        // i18n-dynamic: agent:browserBridge.closeWindowTask.
         return { isError: false, content: [{ type: 'text', text: agentT(locale, result?.closed ? 'browserBridge.closeWindow.closed' : args.task ? 'browserBridge.closeWindowTask.none' : 'browserBridge.closeWindow.none') }] };
       } catch (error) { return fail(String(error?.message ?? error)); }
     }

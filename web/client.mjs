@@ -6015,7 +6015,7 @@ function paintDelegateStates(root = thread, scope = null) {
   const items = backgroundItems(scope).filter(i => i.group === 'agent');
   for (const card of cards) {
     if (card.dataset.taskId) paintTaskChrome(card, taskChromeRows.get(card.dataset.taskId), { el, open: select,
-      close: async id => { try { await cmd('chromeCloseWindow', { sessionId: id }); refreshTaskChromeWindows(); } catch (error) { notify(error?.message ?? String(error)); } }, lang: document.documentElement.lang });
+      close: async id => { try { await cmd('chromeCloseWindow', { sessionId: id }); refreshTaskChromeWindows(); } catch (error) { notify(error?.message ?? String(error)); } }, t });
     const res = card.querySelector('.tc-res');
     if (!res || card.classList.contains('tc-error')) continue;
     const item = card.dataset.taskId ? items.find(i => i.taskId === card.dataset.taskId) : items.find(i => i.origin && i.origin === card.dataset.id);

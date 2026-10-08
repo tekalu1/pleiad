@@ -67,8 +67,10 @@ export default async function (t) {
       return child.length === 1 && parentCards.length === 1 && parentCard?.browserHandoff ? { child, parentCard } : null;
     });
     assert.equal(pending.parentCard.targetSessionId, tasks[0].sessionId);
-    const statusTurn = await run({ sessionId: parent, prompt: ply('ply_task_status', { taskId: tasks[0].taskId }) });
-    const status = JSON.parse(statusTurn.events.find(event => event.type === 'tool.result')?.text ?? '{}');
+    const statusFrom = c.mark();
+    await run({ sessionId: parent, prompt: ply('ply_task_status', { taskId: tasks[0].taskId }) });
+    const statusEvent = await c.waitFor(event => event.type === 'tool.result' && event.sessionId === parent, { from: statusFrom, ms: 10000 });
+    const status = JSON.parse(statusEvent.text);
     assert.equal(status.status, 'waiting');
     t.ok('子の操作待ちは親にも届き、親のカードは子の窓を対象にする', true);
 

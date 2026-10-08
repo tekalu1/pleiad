@@ -127,6 +127,7 @@ export default async function (t) {
   // どの read 操作も、秘密らしい名前の欄に目印が入った生の値を受け取っても、返りに出さない（最後の網。実際のデータ置き場でのものは ops-control.mjs）
   const secret = { token: MARKER, apiKey: MARKER, authorization: MARKER };
   const deps = {
+    chrome: { status: () => ({ state: 'connected', reason: null, dialog: false, product: 'Chrome' }), windows: () => [] },
     chromeProfiles: { list: async () => ({ profiles: [{ browser: 'chrome', dir: 'Default', name: 'Personal', note: '', ...secret }], current: null, busy: null, ...secret }) },
     locale: 'ja',
     app: { status: async () => ({ version: '0', protocolVersion: 0, startedAt: 0, locale: { setting: 'auto', lang: 'ja' }, running: 0, ...secret }),
@@ -246,6 +247,7 @@ export default async function (t) {
   // 人の画面には返すが agent には伏せるもの（引数の秘密・承認の URL・ペアリングの番号・URL のクエリ）は tests/unit/ops-mcp-hooks.mjs
   // 必須の引数がある read 操作に渡す引数（設定は全部の key）
   const samples = {
+    'browser.chromeWindows': [{ sessionId: 's1' }],
     'settings.get': registry.settings.map((x) => ({ key: x.key })), 'settings.schema': registry.settings.map((x) => ({ key: x.key })),
     'sessions.search': [{ query: 'こんにちは' }], 'sessions.get': [{ sessionId: 's1' }], 'sessions.read': [{ sessionId: 's1' }], 'delegation.status': [{ taskId: 't' }],
     'sessions.listMessages': [{ sessionId: 's1' }], 'sessions.changes': [{ sessionId: 's1' }], 'sessions.lineage': [{ sessionId: 's1' }], 'sessions.suggestTitle': [{ sessionId: 's1' }],

@@ -698,6 +698,21 @@
       "input": "6b5db096dd25"
     },
     {
+      "id": "browser.chromeWindows",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": false,
+        "cli": false
+      },
+      "legacyCommand": null,
+      "input": "7f7ac791e818"
+    },
+    {
       "id": "browser.listProfiles",
       "risk": "read",
       "riskOf": false,
