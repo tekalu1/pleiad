@@ -345,7 +345,7 @@ function buildToolServer(ctx) {
 }
 
 /**
- * 委譲の子（Claude）に使わせない組み込みの道具。定義だけで約 12,300 トークンあり、子の最初のリクエストを膨らませる（ADR 0167）。
+ * 委譲の子（Claude）に使わせない組み込みの道具。定義だけで約 12,300 トークンあり、子の最初のリクエストを膨らませる（ADR 0169）。
  * Workflow は子が更に多段のエージェントを組む道具、ScheduleWakeup は /loop 用、ReportFindings は code-review 用、ListAgents は SendMessage の宛先の一覧で、
  * いずれも子の仕事（依頼元へ結果を返す）には要らない。AskUserQuestion・Agent・Bash・PowerShell は残す。
  */

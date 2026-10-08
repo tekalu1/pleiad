@@ -5544,7 +5544,7 @@ async function beginTurn(ctx) {
   const notes = [...(ctx.interruption ? [ctx.interruption.text] : []), ...botExtras.notes];
   // 委譲の子の Claude だけ、CLI の自動圧縮の閾値を「固定の部分 + 空き」に下げる（親・bot は CLI の既定のまま。docs/design.md「自動圧縮」、ADR 0166）
   const autoCompactWindow = await delegatedCompaction(ctx);
-  // 委譲の子は、可視化（出力は依頼元が受け取る）と ply_control の指示を渡さず、Claude は使わない組み込みの道具も外す（ADR 0167）
+  // 委譲の子は、可視化（出力は依頼元が受け取る）と ply_control の指示を渡さず、Claude は使わない組み込みの道具も外す（ADR 0169）
   const delegatedChild = Boolean(sessionId && (await store.get(sessionId).catch(() => null))?.delegation);
   const runArgs = {
     prompt,

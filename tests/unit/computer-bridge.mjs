@@ -18,7 +18,7 @@ export default async function(t) {
     const status = async (method, token) => { let code; await h.bridge.handle({ method, headers: { authorization: token, host: 'x' }, [Symbol.asyncIterator]: async function* () { yield Buffer.from('{}'); } }, { writeHead(s) { code = s; }, end() {} }); return code; };
     t.ok('トークンの違う呼び出しは 401。GET は 405', await status('POST', 'Bearer ' + 'f'.repeat(64)) === 401 && await status('POST', undefined) === 401 && await status('GET', a.binding.headers.Authorization) === 405);
     const init = (await a.rpc('initialize', {})).body.result;
-    t.ok('initialize: serverInfo は ply_computer。instructions は返さない（append だけで渡す。ADR 0167）。open の instructions は指示文（ja）', init.serverInfo.name === 'ply_computer' && init.instructions === undefined && a.binding.instructions.includes("screenshot") && init.capabilities.tools);
+    t.ok('initialize: serverInfo は ply_computer。instructions は返さない（append だけで渡す。ADR 0169）。open の instructions は指示文（ja）', init.serverInfo.name === 'ply_computer' && init.instructions === undefined && a.binding.instructions.includes("screenshot") && init.capabilities.tools);
     const list = (await a.rpc('tools/list', {})).body.result.tools;
     t.ok('tools/list: ツールは契約の 22 個（request_access・list_granted_applications・screenshot・zoom・switch_display・cursor_position・mouse_move・5 種のクリック・drag・down/up・scroll・type・key・hold_key・wait・open_application・computer_batch）',
       list.length === 22 && COMPUTER_TOOL_NAMES.every(n => list.some(x => x.name === n)) && ['left_click', 'double_click', 'triple_click', 'right_click', 'middle_click', 'left_click_drag', 'left_mouse_down', 'left_mouse_up'].every(n => list.some(x => x.name === n)));

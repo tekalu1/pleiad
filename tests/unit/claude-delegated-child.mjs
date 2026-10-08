@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 export const name = 'claude-delegated-child';
-export const title = 'Claude の委譲の子: 使わない組み込みの道具を外す・指示を二重にしない（ADR 0167）';
+export const title = 'Claude の委譲の子: 使わない組み込みの道具を外す・指示を二重にしない（ADR 0169）';
 
 export default async function (t) {
   const dir = await fsp.mkdtemp(path.join(os.tmpdir(), 'ply-claude-child-'));
