@@ -76,47 +76,54 @@ export function normalizeRoutine(raw, now = Date.now()) {
 export function createRoutineStore({ file } = {}) {
   if (!file) throw new Error('createRoutineStore: file is required');
   let routines = [];
+  let loaded = false;           // load() が一度成功したか。まだなら、書き込みは先に読む（読む前に書くと、ファイルの既存の行を消す）
   let broken = null;            // 読めなかった理由（RoutineStoreError）。立っている間は書かない
   let queue = Promise.resolve();
   const serial = (fn) => { const task = queue.catch(() => {}).then(fn); queue = task; return task; };
   const copy = (r) => structuredClone(r);
   const guard = () => { if (broken) throw broken; };
+  // 書き込みの前に、まだ読んでいなければ読む（キューの中で呼ぶ）。起動の load より先に来た作成が、ファイルの既存の行を上書きして消さない
+  const ready = async () => { if (!loaded && !broken) await load(); guard(); };
   const save = async () => {
     await fs.mkdir(path.dirname(file), { recursive: true });
     await writeAtomic(file, `${JSON.stringify({ version: ROUTINES_VERSION, routines }, null, 2)}\n`);
   };
 
+  // 読み込みも書き込みと同じ直列化キューに並べる。キューの外で走ると、起動中に作られた行（put が mkdir を待っている間）や、読んでいる間に作られた行を、読み込みの結果で丸ごと置き換えて消す
+  const load = async () => {
+    let text;
+    for (let attempt = 0; ; attempt++) {
+      try { text = await fs.readFile(file, 'utf8'); break; }
+      catch (e) {
+        if (e.code === 'ENOENT') { routines = []; broken = null; loaded = true; return; }
+        if (TRANSIENT_READ.has(e.code) && attempt < READ_RETRIES.length) { await wait(READ_RETRIES[attempt]); continue; }
+        // 読めなかっただけで「ルーティンが 0 件」と見なさない（次の保存で routines.json を空で上書きしてしまう）。読み直すには再起動する
+        broken = new RoutineStoreError('ROUTINES_UNREADABLE', `routines.json could not be read (${e.code ?? e.message}); check whether another program has it open: ${file}`);
+        throw broken;
+      }
+    }
+    let data;
+    try { data = JSON.parse(text); }
+    catch { broken = new RoutineStoreError('ROUTINES_CORRUPT', `routines.json is not valid JSON: ${file}`); throw broken; }
+    if (data?.version !== ROUTINES_VERSION || !Array.isArray(data.routines)) {
+      broken = new RoutineStoreError('ROUTINES_UNSUPPORTED_VERSION', `routines.json has an unsupported version (${data?.version}): ${file}`);
+      throw broken;
+    }
+    broken = null;
+    loaded = true;
+    routines = data.routines.map((r) => normalizeRoutine(r)).filter(Boolean);
+    if (routines.length < data.routines.length) console.error(`  routines: ${data.routines.length - routines.length} row(s) of routines.json could not be read and were dropped: ${file}`);
+  };
+
   return {
     file,
     get problem() { return broken; },
-    async load() {
-      let text;
-      for (let attempt = 0; ; attempt++) {
-        try { text = await fs.readFile(file, 'utf8'); break; }
-        catch (e) {
-          if (e.code === 'ENOENT') { routines = []; broken = null; return; }
-          if (TRANSIENT_READ.has(e.code) && attempt < READ_RETRIES.length) { await wait(READ_RETRIES[attempt]); continue; }
-          // 読めなかっただけで「ルーティンが 0 件」と見なさない（次の保存で routines.json を空で上書きしてしまう）。読み直すには再起動する
-          broken = new RoutineStoreError('ROUTINES_UNREADABLE', `routines.json could not be read (${e.code ?? e.message}); check whether another program has it open: ${file}`);
-          throw broken;
-        }
-      }
-      let data;
-      try { data = JSON.parse(text); }
-      catch { broken = new RoutineStoreError('ROUTINES_CORRUPT', `routines.json is not valid JSON: ${file}`); throw broken; }
-      if (data?.version !== ROUTINES_VERSION || !Array.isArray(data.routines)) {
-        broken = new RoutineStoreError('ROUTINES_UNSUPPORTED_VERSION', `routines.json has an unsupported version (${data?.version}): ${file}`);
-        throw broken;
-      }
-      broken = null;
-      routines = data.routines.map((r) => normalizeRoutine(r)).filter(Boolean);
-      if (routines.length < data.routines.length) console.error(`  routines: ${data.routines.length - routines.length} row(s) of routines.json could not be read and were dropped: ${file}`);
-    },
+    load: () => serial(load),
     list: () => routines.map(copy),
     get: (id) => { const r = routines.find((x) => x.id === id); return r ? copy(r) : null; },
     put(routine) {
       return serial(async () => {
-        guard();
+        await ready();
         const next = normalizeRoutine(routine, routine?.createdAt);
         if (!next) throw new RoutineStoreError('ROUTINE_INVALID', 'routine is missing a required field or has an unreadable trigger');
         const i = routines.findIndex((x) => x.id === next.id);
@@ -128,7 +135,7 @@ export function createRoutineStore({ file } = {}) {
     },
     update(id, fn) {
       return serial(async () => {
-        guard();
+        await ready();
         const i = routines.findIndex((x) => x.id === id);
         if (i < 0) throw new RoutineStoreError('ROUTINE_NOT_FOUND', `no such routine: ${id}`, { id });
         const changed = await fn(copy(routines[i]));
@@ -143,7 +150,7 @@ export function createRoutineStore({ file } = {}) {
     },
     remove(id) {
       return serial(async () => {
-        guard();
+        await ready();
         const found = routines.find((x) => x.id === id);
         if (!found) return null;
         const before = routines;

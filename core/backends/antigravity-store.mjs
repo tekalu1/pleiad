@@ -17,6 +17,7 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { writeAtomic } from "../atomic-file.mjs";
 import { MAX_RESULT_CHARS } from "./shared.mjs";
 import { t } from "../i18n.mjs";
 import { promptTitle } from "../prompt-title.mjs";
@@ -53,13 +54,14 @@ async function read(conversationId) {
   }
 }
 
-/** 一時ファイルへ書いてから置き換える。途中で落ちても前のものを壊さない。 */
+/**
+ * 一時ファイルへ書いてから置き換える。途中で落ちても前のものを壊さない。
+ * Windows では、一覧の読み取りやウイルス対策が置き換え先を開いている間だけ rename が EPERM になる。
+ * 素の rename だと最後の本文（ターンの終わりの書き込み）が捨てられるので、やり直しのある writeAtomic で置き換える
+ */
 async function write(record) {
   await fs.mkdir(dir(), { recursive: true });
-  const target = fileFor(record.conversationId);
-  const tmp = `${target}.${process.pid}.tmp`;
-  await fs.writeFile(tmp, JSON.stringify(record, null, 2), "utf8");
-  await fs.rename(tmp, target);
+  await writeAtomic(fileFor(record.conversationId), JSON.stringify(record, null, 2));
 }
 
 /**

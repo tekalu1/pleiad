@@ -572,6 +572,8 @@ const SUITES = [
   // --- bots (S2) ---
   // bot の定義の保存: 名前の一意・予約名・読めない bots.json は上書きしない・同時の作成の直列化
   './unit/bots-store.mjs',
+  // 起動の読み込みと書き込みの競合（ルーティン・bot）と、agy の控えの rename の再試行
+  './unit/store-load-races.mjs',
   // bots.* の操作: 作成と DM・AI が見える操作と見えない操作・フォルダーを広げる向きは承認・承認モードは人だけ・Antigravity は yolo だけ・削除
   './unit/ops-bots.mjs',
   // bot の人格の文（毎ターン同じバイト列）・フォルダーの渡し方・3 つのバックエンドへの渡し方・agy の起こし直しの判定
