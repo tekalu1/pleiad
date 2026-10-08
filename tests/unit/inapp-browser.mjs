@@ -379,6 +379,29 @@ export default async function (t) {
   });
   t.ok('画面: タブの列にプロフィールの選択を出さない', true);
 
+  // ---- Chrome のタブの印: 依頼待ちと人の操作中は形を変え（色だけで分けない）、片付いたら refreshTabs ですぐ消える
+  await withWindow({ plyDesktop: { browser: null } }, async () => {
+    const bridge = fakeBridge();
+    window.plyDesktop.browser = bridge;
+    const panel = createBrowserPanel({ bridge, getSessionId: () => 's1' });
+    let mark = 'requested';
+    panel.connect({ chromeAvailable: () => true, chromeMark: () => mark, chromeName: () => 'Claude' });
+    bridge.push({ tabs: [], current: null, sessionId: 's1' });
+    const walk = (node, out = []) => { out.push(node); for (const child of node.children ?? []) walk(child, out); return out; };
+    const flags = () => walk(panel.tabsRow).filter(n => /browser-tab-flag/.test(n.className ?? ''));
+    const pick = () => walk(panel.tabsRow).find(n => /browser-tab-pick/.test(n.className ?? ''));
+    assert.equal(flags().length, 1);
+    assert.match(flags()[0].className, /flag-requested/, '依頼待ちの印');
+    assert.match(pick().getAttribute('aria-label'), /entryState\.requested|依頼/, '名前にも状態が入る（読み上げ）');
+    mark = 'paused'; panel.refreshTabs();
+    assert.match(flags()[0].className, /flag-paused/, '人の操作中は別の形');
+    assert.equal(flags().length, 1);
+    mark = ''; panel.refreshTabs();
+    assert.equal(flags().length, 0, '片付いたら印が消える');
+    assert.ok(pick().getAttribute('aria-label') == null, '名前の状態も消える');
+  });
+  t.ok('画面: Chrome のタブに依頼待ち（点）と人の操作中（二本線）を別の形で出し、片付いたら消す', true);
+
   // ---- 頭の行の内蔵ブラウザーのボタン（web/header-entries.mjs）と近道
   await withWindow({ plyDesktop: { browser: null } }, async () => {
     const bridge = fakeBridge();

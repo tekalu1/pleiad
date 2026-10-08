@@ -153,6 +153,11 @@ body.file-preview-wide .file-preview-resize{display:none}
 .browser-tab-chrome .browser-tab-pick{padding-right:10px}
 .browser-tab-count{flex:none;min-width:16px;padding:0 4px;border-radius:var(--r-pill);background:var(--surface-2);font-size:var(--fs-xs);text-align:center}
 .browser-tab-chrome .run{flex:none;transform:scale(.8)}
+.browser-tab-flag{position:relative;flex:none;width:12px;height:12px;border-radius:50%}
+.flag-requested{background:var(--ink-mark)}
+.flag-paused{background:var(--surface-paper);box-shadow:inset 0 0 0 1.5px var(--ink)}
+.flag-paused::before,.flag-paused::after{content:"";position:absolute;top:3px;width:2px;height:6px;border-radius:1px;background:var(--ink)}
+.flag-paused::before{left:3px}.flag-paused::after{right:3px}
 .browser-tab-pick{display:flex;align-items:center;gap:6px;flex:1;min-width:0;height:100%;padding:0 4px 0 10px;background:transparent;color:inherit;
   border-radius:var(--r-m);font-size:var(--fs-xs);cursor:pointer;text-align:left}
 .browser-tab-pick:focus-visible{outline:2px solid var(--line-blue);outline-offset:-2px}

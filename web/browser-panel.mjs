@@ -70,7 +70,7 @@ export function createBrowserPanel({ bridge = window.plyDesktop?.browser, showMe
   // rewriteSnapshot(rewrite): 写しの「読み込む」で、一時の許可付きの写しを書き直して同じタブで開く。onPaint(state): 状態が変わった
   // canOpenInChrome() / openInChrome({ sessionId, url }): ⋯「Chrome で開く（エージェントの窓へ）」（web/client.mjs が入れる。出すのは Chrome の層が使えるホストだけ）
   let hooks = { openPanel: () => {}, onEmpty: () => {}, tabMenu: () => [], rewriteSnapshot: async () => {}, onPaint: () => {}, canOpenInChrome: () => false, openInChrome: () => {},
-    chromeAvailable: () => false, chromeOpen: () => false, chromeCount: () => 0, chromeOperating: () => false, chromeName: () => 'Claude', openChrome: () => {}, noteView: () => {} };
+    chromeAvailable: () => false, chromeOpen: () => false, chromeCount: () => 0, chromeOperating: () => false, chromeMark: () => '', chromeName: () => 'Claude', openChrome: () => {}, noteView: () => {} };
   const current = () => state.tabs.find(tab => tab.id === state.current) ?? null;
   const run = (action, args) => bridge.command(action, args).then(next => { if (next?.tabs) paint(next); return next; });
   const failed = () => notify(t('browser.failed'));
@@ -200,6 +200,14 @@ export function createBrowserPanel({ bridge = window.plyDesktop?.browser, showMe
         pick.append(mark, el('span', 'browser-tab-name', t('browser.chromeWindow.tab', { name: hooks.chromeName() })));
         const count = hooks.chromeCount();
         if (count > 1) pick.append(el('span', 'browser-tab-count', String(count)));
+        // 依頼待ち（● 塗りの点）と人の操作中（Ⅱ 二本線）は形を変える。色だけで分けず、名前にも状態を入れる
+        const flag = hooks.chromeMark();
+        if (flag === 'requested' || flag === 'paused') {
+          const badge = el('span', `browser-tab-flag flag-${flag}`); badge.setAttribute('aria-hidden', 'true');
+          pick.append(badge);
+          // i18n-dynamic: browser.entryState.
+          pick.setAttribute('aria-label', `${t('browser.chromeWindow.tab', { name: hooks.chromeName() })} · ${t(`browser.entryState.${flag}`, { name: hooks.chromeName() })}`);
+        }
         if (hooks.chromeOperating()) pick.append(runMark(t('browser.chromeWindow.entryWorking', { name: hooks.chromeName() })));
         pick.onclick = () => { hooks.noteView('chrome'); hooks.openChrome(); };
         pick.onkeydown = event => moveTab(event, position);

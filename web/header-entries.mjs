@@ -72,7 +72,7 @@ export const browserViewToOpen = ({ viewer = false, chrome = false, urgent = fal
  */
 export function setupBrowserEntry({ button, browser, preview, chrome = () => null, windows = null, getSessionId = () => null,
   getAgentName = () => 'Claude', getChromeState = () => 'idle', waiting = () => false, chromeAvailable = () => false,
-  mac = isMac(), bridge = null, blocked = () => false, mark: makeMark = runMark }) {
+  mac = isMac(), bridge = null, blocked = () => false, mark: makeMark = runMark, announce = () => {} }) {
   if (!button) return null;
   if (!browser && !windows) { button.hidden = true; return null; }
   button.setAttribute('aria-keyshortcuts', mac ? 'Meta+Shift+B' : 'Control+Shift+B');
@@ -82,16 +82,31 @@ export function setupBrowserEntry({ button, browser, preview, chrome = () => nul
   const chromeOpen = () => chrome()?.isOpen() === true;
   const open = () => preview.browserOpen() || chromeOpen();
 
+  /** いまの会話の角の印（requested / paused / working / ''）。Chrome のタブの印も同じものを読む */
+  function currentMark() {
+    const id = activeId();
+    if (!id || !chromeAvailable()) return '';
+    return browserEntryMark({ requested: Boolean(waiting(id)), paused: getChromeState(id) === 'paused',
+      working: Boolean(windows?.operating(id) || getChromeState(id) === 'running') });
+  }
+
+  // 会話ごとに最後に見た印。依頼待ち・人の操作中に「変わった」ときだけ一度読み上げる（開き直しや再描画では読まない）
+  const seenMark = new Map();
+  function announceChange(id, state) {
+    const before = seenMark.get(id);
+    seenMark.set(id, state);
+    if (before === undefined || before === state) return;
+    if (state === 'requested' || state === 'paused') announce(t(`browser.entryState.${state}`, { name: getAgentName() || 'Claude' }));
+  }
+
   function paint() {
     const id = activeId();
     const hasWindow = Boolean(id && chromeAvailable() && windows?.has(id));
     button.hidden = !browser && !hasWindow;
     if (hasWindow) button.setAttribute('data-mobile-chrome', ''); else button.removeAttribute('data-mobile-chrome');
     if (button.hidden) return;
-    const requested = Boolean(id && chromeAvailable() && waiting(id));
-    const paused = Boolean(id && chromeAvailable() && getChromeState(id) === 'paused');
-    const working = Boolean(id && chromeAvailable() && (windows?.operating(id) || getChromeState(id) === 'running'));
-    const state = browserEntryMark({ requested, paused, working });
+    const state = currentMark();
+    if (id) announceChange(id, state);
     const label = [t('browser.unifiedEntryLabel'), state ? t(`browser.entryState.${state}`, { name: getAgentName() || 'Claude' }) : ''].filter(Boolean).join(' · ');
     button.title = `${label}（${browserShortcutLabel(mac)}）`;
     button.setAttribute('aria-label', label);
@@ -138,5 +153,5 @@ export function setupBrowserEntry({ button, browser, preview, chrome = () => nul
   // 内蔵ブラウザーのページにフォーカスがあるときの近道（desktop/browser-panel.cjs の before-input-event）
   bridge?.onShortcut?.(() => { if (!button.hidden && !blocked()) toggle(); });
   paint();
-  return { paint, toggle, noteView, lastView };
+  return { paint, toggle, noteView, lastView, currentMark };
 }

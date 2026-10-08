@@ -108,6 +108,28 @@ export default async function (t) {
     t.ok('別の会話の選びは持ち込まない（a は b で選んだ Chrome でなくビューア）', opened.at(-1) === 'viewer' && entry.lastView.get('b') === 'chrome');
   }
 
+  // ---- 依頼待ち・人の操作中が「変わった」ときだけ一度読み上げる
+  {
+    let waiting = false, state = 'idle';
+    const said = [];
+    const entryButton = new N('button');
+    const entry = setupBrowserEntry({ button: entryButton, mac: false,
+      browser: { open: () => {} }, preview: { browserOpen: () => false, openBrowser: () => {}, close: () => {} },
+      windows: { has: () => true, operating: () => false }, getSessionId: () => 'a', chromeAvailable: () => true,
+      waiting: () => waiting, getChromeState: () => state, announce: text => said.push(text) });
+    entry.paint(); entry.paint();
+    t.ok('開いた直後・何も変わらない再描画では読み上げない', said.length === 0);
+    waiting = true; entry.paint(); entry.paint(); entry.paint();
+    t.ok('依頼待ちになったら一度だけ読み上げる（再描画で繰り返さない）', said.length === 1 && /entryState\.requested|依頼/.test(said[0]), JSON.stringify(said));
+    t.ok('currentMark は印を返す', entry.currentMark() === 'requested');
+    waiting = false; entry.paint();
+    t.ok('依頼待ちが片付いたら印は消え、読み上げも増えない', entry.currentMark() === '' && said.length === 1);
+    state = 'paused'; entry.paint();
+    t.ok('人の操作中になったら別の文を一度読み上げる', said.length === 2 && /entryState\.paused|操作中/.test(said[1]), JSON.stringify(said));
+    state = 'running'; entry.paint();
+    t.ok('エージェントの操作中（working）は読み上げない', said.length === 2);
+  }
+
   // ---- 頭の行の並び
   const html = fs.readFileSync(new URL('../../web/index.html', import.meta.url), 'utf8');
   const start = html.indexOf('<header class="top">');

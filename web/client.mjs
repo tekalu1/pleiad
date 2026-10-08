@@ -3357,7 +3357,10 @@ function applyRunning(work) {
   // 誰が答えたか（別のタブ・中断）に関わらず、残っている承認はサーバが正。
   // 消えた分を覚えたままにすると、次にその会話を開いたとき解決済みのカードが出る
   const unresolved = new Set((state.work.permissions ?? []).map((p) => p.id));
-  for (const id of state.pendingPerms.keys()) if (!unresolved.has(id)) state.pendingPerms.delete(id);
+  let settledPerm = false;
+  for (const id of state.pendingPerms.keys()) if (!unresolved.has(id)) { state.pendingPerms.delete(id); settledPerm = true; }
+  // 依頼待ちの印（頭の行のボタンと Chrome のタブ）は、承認が片付いたらすぐ消す
+  if (settledPerm) { browserEntry?.paint(); browserPanel?.refreshTabs(); }
   reconcileOpenCards();
   const behind = new Map();
   for (const t of state.work.turns ?? []) {
@@ -6491,7 +6494,7 @@ const filePreview = setupFilePreview({
 browserEntry = setupBrowserEntry({ button: $('browserEntry'), browser: browserPanel, preview: filePreview, bridge: window.plyDesktop?.browser,
   chrome: () => chromePanel, windows: chromeWindows, getSessionId: () => state.current ?? null, getAgentName: () => labelOf(activeBackendId()),
   getChromeState: id => chromeControlStore.get(id).state,
-  waiting: handoffWaiting,
+  waiting: handoffWaiting, announce,
   chromeAvailable: () => state.hostCaps?.chromeWindow === true,
   blocked: () => document.body.classList.contains('settings') || !!document.querySelector('dialog[open]') });
 // いま見ている場所のアドレス（web/view-address.mjs）。通知の一覧・検索・脇の行・スレッドの開閉はここを通り、見ている場所を 1 つで残す。
@@ -8626,6 +8629,7 @@ browserPanel?.connect({ chromeAvailable: () => state.hostCaps?.chromeWindow === 
   chromeOpen: () => chromePanel?.isOpen() === true,
   chromeCount: () => chromeWindows.count(state.current),
   chromeOperating: () => chromeWindows.operating(state.current),
+  chromeMark: () => browserEntry?.currentMark() ?? '',
   chromeName: () => labelOf(activeBackendId()),
   openChrome: () => chromePanel?.open($('browserEntry')),
   noteView: view => browserEntry?.noteView(view) });
