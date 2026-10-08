@@ -1,7 +1,7 @@
 {
   "browserBridge": {
     "invalidTool": "ply_browser のツールの名前か引数が正しくありません。",
-    "closeWindow": { "description": "この会話の Chrome の窓を閉じ、最後の画面を会話に残す。続きに使う・ログインを保つ必要があるなら開いたままにする。", "closed": "Chrome の窓を閉じました。次に使うときは新しい窓が開きます。", "none": "この会話に開いている Chrome の窓はありません。", "failed": "Chrome の窓を閉じられませんでした。" },
+    "closeWindow": { "description": "この会話の Chrome の窓を閉じ、最後の画面を会話に残す。続きに使う・ログインを保つ必要があるなら開いたままにする。", "closed": "Chrome の窓を閉じました。次に使うときは新しい窓が開きます。", "none": "この会話に開いている Chrome の窓はありません。", "failed": "Chrome の窓を閉じられませんでした。", "busy": { "waiting": "人への依頼（hand_to_user）の答えを待っている間は、窓を閉じられません。答えが出てからもう一度呼んでください。", "human": "人が Chrome の窓を引き継いでいる間は、窓を閉じられません。人が戻してからもう一度呼んでください。" } },
     "closeWindowTask": { "description": "task に直接委譲した子の taskId を指定すると、その子の窓を閉じる。孫や別の会話の子は指定できない。", "argument": "この会話から直接委譲した子の taskId。省くとこの会話の窓を閉じる。", "none": "指定した子に開いている Chrome の窓はありません。" },
     "connectWait": "Chrome の準備か許可を待っています。人に確認のカードを出しました。ply_browser の hand_to_user（reason: other、message に状況）を呼んで待ち、つながったらもう一度 agent-browser を実行してください。",
     "listProfiles": {

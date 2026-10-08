@@ -1,7 +1,7 @@
 {
   "browserBridge": {
     "invalidTool": "Invalid ply_browser tool name or arguments.",
-    "closeWindow": { "description": "Close this conversation's Chrome window and save its last image in the conversation. Keep it open if the user may continue or needs the login session.", "closed": "Chrome window closed. A new window opens when you use the browser again.", "none": "This conversation has no open Chrome window.", "failed": "Chrome window could not be closed." },
+    "closeWindow": { "description": "Close this conversation's Chrome window and save its last image in the conversation. Keep it open if the user may continue or needs the login session.", "closed": "Chrome window closed. A new window opens when you use the browser again.", "none": "This conversation has no open Chrome window.", "failed": "Chrome window could not be closed.", "busy": { "waiting": "The window cannot be closed while a request to the user (hand_to_user) is waiting for an answer. Call again after it is answered.", "human": "The window cannot be closed while the user has taken it over. Call again after the user hands it back." } },
     "closeWindowTask": { "description": "Set task to the taskId of a directly delegated child to close that child's window. Grandchildren and other conversations' children are not allowed.", "argument": "The taskId of a child directly delegated from this conversation. Omit to close this conversation's window.", "none": "The specified child has no open Chrome window." },
     "connectWait": "Waiting for Chrome to be ready or for permission. A confirmation card was shown to the user. Call ply_browser hand_to_user (reason: other, message: the situation) to wait, then run agent-browser again once connected.",
     "listProfiles": {

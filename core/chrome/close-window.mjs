@@ -6,6 +6,11 @@ import crypto from 'node:crypto';
 const MAX_IMAGE = 10 * 1024 * 1024;
 const folderOf = (dataDir, sessionId) => path.join(dataDir, 'uploads', 'chrome-window', crypto.createHash('sha256').update(sessionId).digest('hex'));
 
+/** エージェントが閉じようとしたが、人への依頼の待ち・人の引き継ぎの最中（code: BUSY、reason: waiting | human。profile-choice の busy と同じ理由の名前） */
+export class ChromeWindowBusyError extends Error {
+  constructor(reason) { super('BUSY'); this.code = 'BUSY'; this.detail = { reason }; }
+}
+
 export function createChromeWindowCloser({ relay, screencast, handoffs, dataDir, record, log = () => {} }) {
   const active = new Map();
   const pending = new Map();
@@ -45,13 +50,27 @@ export function createChromeWindowCloser({ relay, screencast, handoffs, dataDir,
     screencast?.forgetFrame(sessionId);
   }
 
+  /** 人の依頼の待ち（hand_to_user のカード）・人の引き継ぎ（paused）の最中か。エージェントはどちらも閉じられない */
+  const busyOf = sessionId => handoffs?.current?.(sessionId) ? 'waiting' : relay.state(sessionId)?.paused ? 'human' : null;
+
   function close(sessionId, { by = 'agent', discard = false } = {}) {
+    if (by === 'agent' && !discard) {
+      const reason = busyOf(sessionId);
+      if (reason) return Promise.reject(new ChromeWindowBusyError(reason));
+    }
     if (active.has(sessionId)) return active.get(sessionId);
     if (forgotten.has(sessionId) && !discard) return Promise.resolve({ closed: false });
     const run = (async () => {
       const hadWindow = relay.view.summary(sessionId).tabs > 0 || relay.scope.windows?.(sessionId)?.length > 0;
       if (!hadWindow) return { closed: false };
-      const file = discard ? null : await capture(sessionId, false).catch(error => { log(`chrome-close: save failed: ${error?.message ?? error}`); return null; });
+      // 引き継ぎ中の窓はログインや 2 段階認証の画面かもしれないので、静止画を撮らない
+      let file = discard || relay.state(sessionId)?.paused ? null : await capture(sessionId, false).catch(error => { log(`chrome-close: save failed: ${error?.message ?? error}`); return null; });
+      // 撮っている間に引き継ぎ・依頼が始まったとき: エージェントは閉じず、人が閉じるなら撮った画像を捨てる
+      if (by === 'agent' && !discard) {
+        const reason = busyOf(sessionId);
+        if (reason) { if (file) await fs.rm(file, { force: true }).catch(() => {}); throw new ChromeWindowBusyError(reason); }
+      }
+      if (file && relay.state(sessionId)?.paused) { await fs.rm(file, { force: true }).catch(() => {}); file = null; }
       handoffs?.forget(sessionId); // 操作待ちのカードを中断し、hand_to_user の待ちも解く
       let recorded = false;
       try {
@@ -76,10 +95,12 @@ export function createChromeWindowCloser({ relay, screencast, handoffs, dataDir,
     const was = known.get(sessionId) ?? 0;
     known.set(sessionId, tabs);
     if (was > 0 && tabs === 0 && !active.has(sessionId)) {
+      const wasPaused = Boolean(relay.state(sessionId)?.paused);
       handoffs?.forget(sessionId);
       relay.unpause(sessionId);
       if (forgotten.has(sessionId)) return;
-      const task = capture(sessionId, true).then(file => recordClose(sessionId, 'human', file));
+      // 引き継ぎ中に閉じられたとき、直近の映像は引き継ぎの前のもの。ログイン前後の画面を残さないよう静止画は作らない
+      const task = (wasPaused ? Promise.resolve(null) : capture(sessionId, true)).then(file => recordClose(sessionId, 'human', file));
       pending.set(sessionId, task);
       task.finally(() => { if (pending.get(sessionId) === task) pending.delete(sessionId); })
         .catch(error => log(`chrome-close: record failed: ${error?.message ?? error}`));

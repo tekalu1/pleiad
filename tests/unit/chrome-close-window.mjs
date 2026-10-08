@@ -27,11 +27,11 @@ async function rig() {
   const relay = createChromeRelay({ connection, os: desktop, locate: { browser: 'chrome', userDataDir: chrome.userDataDir, custom: true } });
   const screencast = createChromeScreencast({ host: relay.view });
   const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), 'ply-chrome-close-'));
-  const records = [], cards = [];
+  const records = [], cards = [], openCards = new Set();
   let recordHook = null;
-  const closer = createChromeWindowCloser({ relay, screencast, handoffs: { forget: id => cards.push(id) }, dataDir,
+  const closer = createChromeWindowCloser({ relay, screencast, handoffs: { forget: id => { cards.push(id); openCards.delete(id); }, current: id => openCards.has(id) ? { reason: 'login' } : null }, dataDir,
     record: async (id, payload) => { await recordHook?.(id); records.push({ id, ...payload }); } });
-  return { chrome, desktop, connection, relay, screencast, dataDir, records, cards, closer, setRecordHook: hook => { recordHook = hook; },
+  return { chrome, desktop, connection, relay, screencast, dataDir, records, cards, openCards, closer, setRecordHook: hook => { recordHook = hook; },
     async stop() { closer.stop(); screencast.close(); relay.close(); await connection.close(); await chrome.stop(); await fs.rm(dataDir, { recursive: true, force: true }); } };
 }
 
@@ -51,6 +51,24 @@ export default async function (t) {
     r.relay.pause('one');
     const paused = await r.closer.close('one', { by: 'human' });
     t.ok('一時停止中でも閉じられ、カードと一時停止を片付ける', paused.closed && !r.relay.state('one')?.paused && r.cards.includes('one') && r.records.at(-1)?.chromeClosed?.by === 'human');
+    t.ok('引き継ぎ中に人が閉じても、窓の静止画は撮らず保存もしない', !r.records.at(-1)?.path && !r.chrome.calls.slice(-6).some(c => c.method === 'Page.captureScreenshot'));
+
+    // 人が引き継いでいる最中・人への依頼の待ちの最中は、エージェント（子の窓なら親）が閉じられない
+    const busy = await r.relay.openForConversation('busy', 'https://busy.test/');
+    r.relay.pause('busy');
+    const busyCalls = r.chrome.calls.length;
+    const heldHuman = await r.closer.close('busy').then(() => null, error => error);
+    t.ok('人が引き継いでいる窓は、エージェントが閉じようとすると BUSY（human）で断られ、窓・撮影・行は変わらない',
+      heldHuman?.code === 'BUSY' && heldHuman.detail.reason === 'human' && r.relay.state('busy')?.paused
+      && r.chrome.browser.targets().some(x => x.targetId === busy.targetId)
+      && !r.chrome.calls.slice(busyCalls).some(c => c.method === 'Page.captureScreenshot' || c.method === 'Target.closeTarget') && !r.records.some(x => x.id === 'busy'));
+    r.relay.unpause('busy');
+    r.openCards.add('busy');
+    const heldCard = await r.closer.close('busy').then(() => null, error => error);
+    t.ok('人への依頼のカードがある窓は BUSY（waiting）で断られ、カードも消えない', heldCard?.code === 'BUSY' && heldCard.detail.reason === 'waiting'
+      && r.openCards.has('busy') && !r.cards.includes('busy') && r.chrome.browser.targets().some(x => x.targetId === busy.targetId));
+    r.openCards.delete('busy');
+    t.ok('引き継ぎも依頼も終われば、エージェントも閉じられる', (await r.closer.close('busy')).closed === true);
 
     const second = await r.relay.openForConversation('two', 'https://other.test/');
     await r.screencast.request('start', 'two');
@@ -60,6 +78,14 @@ export default async function (t) {
     r.chrome.browser.closeWindow(windowId);
     t.ok('人が × で直接閉じたときは最後の映像 JPEG を静止画にして行を残す', await until(() => r.records.some(x => x.id === 'two')) && r.records.find(x => x.id === 'two')?.path.endsWith('.jpg')
       && (await fs.readFile(r.records.find(x => x.id === 'two').path)).toString() === 'last-frame');
+
+    const held = await r.relay.openForConversation('held', 'https://held.test/');
+    await r.screencast.request('start', 'held');
+    r.chrome.browser.screencastFrame(held.targetId, { data: Buffer.from('before-handover').toString('base64') });
+    await until(() => Boolean(r.screencast.lastFrame('held')));
+    r.relay.pause('held');
+    r.chrome.browser.closeWindow(r.relay.view.tabs('held')[0].windowId);
+    t.ok('引き継ぎ中に人が × で閉じたときは、引き継ぎ前の映像も静止画にしない', await until(() => r.records.some(x => x.id === 'held')) && !r.records.find(x => x.id === 'held').path);
 
     let startRecord, finishRecord;
     const recording = new Promise(resolve => { startRecord = resolve; });
@@ -119,6 +145,16 @@ export default async function (t) {
         && (await call({ task: 42 })).isError === true && JSON.stringify(bridgeCalls) === JSON.stringify([['own', null], ['own', 'child']]));
       endpoint.close();
     } finally { server.close(); }
+
+    const busyBridge = createBrowserBridge({ handoffs: {}, closeWindow: async () => { throw Object.assign(new Error('BUSY'), { code: 'BUSY', detail: { reason: 'human' } }); } });
+    const busyServer = http.createServer((req, res) => busyBridge.handle(req, res));
+    await new Promise(resolve => busyServer.listen(0, '127.0.0.1', resolve));
+    try {
+      const endpoint = busyBridge.open({ origin: `http://127.0.0.1:${busyServer.address().port}`, locale: 'ja', owner: () => ({ sessionId: 'own' }) });
+      const answer = (await (await fetch(endpoint.url, { method: 'POST', headers: { ...endpoint.headers, 'content-type': 'application/json' }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'close_browser_window', arguments: {} } }) })).json()).result;
+      t.ok('ply_browser は BUSY を引き継ぎ中の案内の文で返す', answer.isError === true && answer.content[0].text.includes('引き継いでいる間'));
+      endpoint.close();
+    } finally { busyServer.close(); }
 
     await r.relay.openForConversation('fallback', 'https://fallback.test/');
     const fallbackWindow = r.relay.scope.windows('fallback')[0]?.windowId;

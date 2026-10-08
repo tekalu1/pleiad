@@ -100,7 +100,11 @@ export function createBrowserBridge({ handoffs = null, closeWindow = null } = {}
         if (result?.failed) return fail(agentT(locale, 'browserBridge.closeWindow.failed'));
         // i18n-dynamic: agent:browserBridge.closeWindowTask.
         return { isError: false, content: [{ type: 'text', text: agentT(locale, result?.closed ? 'browserBridge.closeWindow.closed' : args.task ? 'browserBridge.closeWindowTask.none' : 'browserBridge.closeWindow.none') }] };
-      } catch (error) { return fail(String(error?.message ?? error)); }
+      } catch (error) {
+        // i18n-dynamic: agent:browserBridge.closeWindow.busy.
+        if (error?.code === 'BUSY') return fail(agentT(locale, `browserBridge.closeWindow.busy.${error.detail?.reason === 'human' ? 'human' : 'waiting'}`));
+        return fail(String(error?.message ?? error));
+      }
     }
     handoffs.ask(owner.sessionId, { reason: args.reason, message: args.message });
     const answer = await handoffs.wait(owner.sessionId, { sliceMs: owner.waitSliceMs ?? BROWSER_WAIT_SLICE_MS, signal: owner.signal });
