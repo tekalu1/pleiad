@@ -113,8 +113,12 @@ export default async function(t) {
   answer = { allow: true }; assert((await authorize({ sessionId: 'codex', url: 'https://example.org/a', account: 'alice' })).allow);
   assert(!asked.at(-1).title.includes('alice') && !('account' in asked.at(-1).browserSite));
   await authorize({ sessionId: 'codex', url: 'https://example.org/b' }); assert.equal(asked.length, 3);
-  answer = { allow: true, always: true }; await authorize({ sessionId: 'codex', url: 'https://example.org/' });
-  await authorize({ sessionId: 'codex', url: 'https://example.org/next' }); assert.equal(asked.length, 4);
-  await authorize({ sessionId: 'claude', url: 'https://example.org/' }); assert.equal(asked.length, 5);
+  answer = { allow: true, always: true };
+  await authorize({ sessionId: 'codex', url: 'https://example.org/' }); assert.equal(asked.at(-1).canAlways, false, 'プロフィールが分からなければ「常に」を出さない'); assert(!sitePrefs.agentSitePermissions);
+  assert.equal(asked.length, 4);
+  const profile = 'chrome:Default';
+  await authorize({ sessionId: 'codex', url: 'https://example.org/', profile }); assert.equal(asked.at(-1).canAlways, true); assert.equal(sitePrefs.agentSitePermissions[0].profile, profile);
+  await authorize({ sessionId: 'codex', url: 'https://example.org/next', profile }); assert.equal(asked.length, 5);
+  await authorize({ sessionId: 'claude', url: 'https://example.org/', profile }); assert.equal(asked.length, 6);
   t.ok('Site approvals: deny, once, persistent agent × origin, never an account name', true);
 }

@@ -119,6 +119,19 @@ export default async function (t) {
   allowed.push({ agent: 'fake', origin: 'https://old.example', mode: 'always' });
   await authorize({ sessionId: 's', url: 'https://old.example', profile: 'chrome:Profile 1' });
   assert.equal(asks, 2);
+  {
+    // プロフィールが分からない窓では「常に」を出さず、答えが always でもプロフィールの無い行（全プロフィールに効く）を作らない
+    const asked = [], rows = [];
+    const unknown = createBrowserSiteApprovals({ getPrefs: async () => ({ confirmAgentSites: true, agentSitePermissions: rows }), getAgent: async () => ({ id: 'fake', label: 'Fake' }), translate: () => 'site', askPermission: async request => { asked.push(request.canAlways); return { allow: true, always: true }; }, remember: async row => rows.push(row) });
+    assert.equal((await unknown({ sessionId: 's', url: 'https://unknown.example/', profile: null })).allow, true);
+    assert.deepEqual(asked, [false], 'プロフィールが分からなければ canAlways は false');
+    assert.equal(rows.length, 0, 'プロフィールが分からないタブでは覚えない');
+    await unknown({ sessionId: 's', url: 'https://unknown.example/' });
+    assert.equal(asked.length, 2, '覚えていないので次も聞く');
+    await unknown({ sessionId: 's', url: 'https://known.example/', profile: 'chrome:Default' });
+    assert.equal(asked[2], true, 'プロフィールが分かれば canAlways は true');
+    assert.deepEqual(rows.map(r => r.profile), ['chrome:Default']);
+  }
   const oldPrefs = await store.getPrefs();
   try {
     for (const row of allowed) await store.rememberBrowserSite(row);
