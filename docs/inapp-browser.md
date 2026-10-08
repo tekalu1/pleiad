@@ -31,7 +31,7 @@ View は DOM より上に描かれるので、メニュー・ダイアログ・�
 
 入口は会話の頭の行の地球のボタン一つ（`#browserEntry`、`web/header-entries.mjs`。2026-10-09 承認）と、近道 Ctrl+Shift+B（macOS は ⌘⇧B）。どちらも右パネルのブラウザーを開閉する。操作中・依頼待ち・あなたが操作中なら Chrome の固定タブ、それ以外は会話で最後に見た方を開く。開いている間の状態変化では勝手に切り替えない。ビューアを開くときは前のタブをそのまま出し（読み直さない）、タブが無ければ空の新しいタブを作ってアドレス欄にフォーカスを置く。閉じるとフォーカスはボタンへ戻る。近道は IME の変換中・ダイアログ・設定の画面では効かない。ページにフォーカスがあるときは main がタブの webContents の `before-input-event` でこの近道だけを拾う。開いている間の印は `aria-expanded` と `aria-controls="filePreview"`。
 
-右パネルの 1 つのモード（`web/side-panel.mjs` の `browserSlots`）。見出しの字は出さず、その行にタブ列と広げる・閉じるを置く。Chrome の使えるホストでは先頭に「{エージェント名} の Chrome」の閉じられない固定タブを置く。窓の数が二つ以上ならそのタブに札、エージェントが操作中なら弧を出す。ビューアのタブは×で閉じられ、列の＋で増やす。左右・Home・End キーで移る。ビューアの道具の列は戻る・進む・再読み込み・アドレス欄・既定のブラウザーで開く・⋯。Chrome の固定タブを選ぶと、列は状態の一行・プロフィール選択 pill（`.cp-profile-slot`）・窓の ⋯ に替わり、効かないビューアの道具は出さない。種類の印・切り替え・ツリーは出さない。形は docs/design-system.md「内蔵ブラウザー」。
+右パネルの 1 つのモード（`web/side-panel.mjs` の `browserSlots`）。見出しの字は出さず、その行にタブ列と広げる・閉じるを置く。Chrome の使えるホストでは先頭に「{エージェント名} の Chrome」の閉じられない固定タブを置く。窓の数（この会話の窓と、直接委譲した子の窓の合計）が二つ以上ならそのタブに札（読み上げは「… · N 窓」）、エージェントが操作中なら弧を出す。ビューアのタブは×で閉じられ、列の＋で増やす。左右・Home・End キーで移る。ビューアの道具の列は戻る・進む・再読み込み・アドレス欄・既定のブラウザーで開く・⋯。Chrome の固定タブを選ぶと、列は状態の一行・プロフィール選択 pill（`.cp-profile-slot`）・窓の ⋯ に替わり、効かないビューアの道具は出さない。種類の印・切り替え・ツリーは出さない。形は docs/design-system.md「内蔵ブラウザー」。
 
 アドレス欄（`web/browser-address.mjs`）:
 
@@ -221,7 +221,7 @@ OS の層は、隠した窓が前面を取ったら直前の前面へ返す。�
 
 `core/chrome/screencast.mjs` がエージェントとは別のセッションで `Page.startScreencast` を使う。今のタブが替われば付け替える。大きさは表示の箱と倍率から決め、画質は自動 55・低 30。フレームの間隔と ack はビューアと同じで、見る画面が無くなれば止める。隠したページを描かせる focus emulation はタブごとに 1 本で持ち、ターンと映像のどちらの理由も無くなったときだけ外す。
 
-WS の `browserScreencast`・`browserScreencastStop`・`browserScreencastAck` に `source: 'chrome'` を付け、ビューアと分ける。URL を開く指定と `browserScreencastNav` は断る。入力は下の端末への引き継ぎ中だけ。窓の有無は `chromeWindow`（`sessionId, windows, operating`）で全画面へ知らせ、入口と操作中の弧を更新する。映像の状態には URL・題を載せない。
+WS の `browserScreencast`・`browserScreencastStop`・`browserScreencastAck` に `source: 'chrome'` を付け、ビューアと分ける。URL を開く指定と `browserScreencastNav` は断る。入力は下の端末への引き継ぎ中だけ。窓の有無は `chromeWindow`（`sessionId, windows, operating, windowIds, currentWindowId`）で全画面へ知らせ、入口と操作中の弧を更新する。入口には窓の数を出さない。映像の状態には URL・題を載せない。
 
 ### 状態の一行と止める・引き継ぐ・戻す
 
@@ -246,7 +246,7 @@ PC に引き継いだ間は、窓を見せる前に撮影を止め、映像に�
 
 PC へ引き継いでいる間（`paused`・`by: 'pc'`）に、その会話の見える Chrome の窓が前面なら、上端に「あなたが操作中 · {エージェント名} に戻す」のピルを重ねる。押すと右パネルの `browser.chromeResume` と同じように窓を隠して一時停止を解く。ほかの窓が前面になったとき、Chrome の窓を閉じたとき、Chrome の接続が閉じたとき、戻したときは消す。端末への引き継ぎでは PC の窓を見せないので出さない。
 
-`desktop/chrome-pill.cjs` のクリックを受ける小さな Electron 窓で、ページには何も差し込まない。ページのアクセシビリティの木には入らず、Esc も取らない。ピルの窓だけ `setContentProtection(true)` で撮影から外す。OS の層の `watch` で前面を追い、`bounds(ref)` が Win32 の物理矩形の左上を Electron の画面 DIP へ変換し、窓の `GetDpiForWindow` で幅と高さを換算する。前面の間は位置を更新し、移動・大きさ・モニター・DPI の変更に追従する。
+`desktop/chrome-pill.cjs` のクリックを受ける小さな Electron 窓で、ページには何も差し込まない。ページのアクセシビリティの木には入らず、Esc も取らない。ピルの窓だけ `setContentProtection(true)` で撮影から外す。画面共有・録画・`ply_computer` のスクリーンショットには写らない（点の下には在るので、`ply_computer` の押す動作 click・down・drag は、点の下が Pleiad の窓なら `self` で断る。キーと同じ）。OS の層の `watch` で前面を追い、`bounds(ref)` が Win32 の物理矩形の左上を Electron の画面 DIP へ変換し、窓の `GetDpiForWindow` で幅と高さを換算する。前面の間は位置を更新し、移動・大きさ・モニター・DPI の変更に追従する。
 
 ADR 0148 にある「{エージェント名} が操作中「題」· 止める · 引き継ぐ」は出さない。ADR 0154 でエージェントの窓は引き継ぐまで画面外にあり、その文言を窓の上に見せる場面がなくなった。通常時の止める・引き継ぐは右パネルの状態の一行から操作する。
 
@@ -286,9 +286,9 @@ MCP の口は会話ごとの Bearer で守る。Claude・Codex は HTTP の MCP�
 
 ### 窓を閉じる
 
-`ply_browser.close_browser_window` は引数なしなら呼び出した会話の専用窓を閉じる。`{ task: '<taskId>' }` なら、この会話が直接委譲したローカルの子の窓を閉じる。タスクと子の会話メタの親子関係を両方確かめ、別の親・孫・リモートのホストの子・孤立した記録は断る。右パネルでは Chrome の道具の列の ⋯ に窓の一覧と「窓を閉じる」を置き、後者は `browser.chromeCloseWindow` を呼ぶ。PC の画面とリモートの端末で使える。MCP と CLI の ops には出さない。窓は使い終えたときに閉じられるが、続きに使う画面やログイン中の窓は開いたままにできる。閉じた後にブラウザーを使うと新しい専用窓が黙って開く。
+`ply_browser.close_browser_window` は引数なしなら呼び出した会話の専用窓を閉じる。`{ task: '<taskId>' }` なら、この会話が直接委譲したローカルの子の窓を閉じる。タスクと子の会話メタの親子関係を両方確かめ、別の親・孫・リモートのホストの子・孤立した記録は断る。右パネルでは Chrome の道具の列の ⋯ に窓の一覧（この会話の窓と、直接委譲した子の窓。子の項目は押すとその子の会話の Chrome を開く）と「窓を閉じる」を置き、後者は `browser.chromeCloseWindow` を呼ぶ。PC の画面とリモートの端末で使える。MCP と CLI の ops には出さない。窓は使い終えたときに閉じられるが、続きに使う画面やログイン中の窓は開いたままにできる。閉じた後にブラウザーを使うと新しい専用窓が黙って開く。
 
-親の委譲カードの下には、子の窓が開いている間だけ Chrome の印・プロフィール・状態・子の会話を開く操作・窓を閉じる × を出す。`browser.chromeWindows({ sessionId })` は、この会話と直接委譲した子の開いている窓を `{ sessionId, taskId, title, windows, profile, profileName, state }[]` で返す。タブの窓の数と ⋯ の一覧は、この読み取り口を使う。窓が開閉したら `chromeWindow`、プロフィールが替わったら `chromeProfile`、操作状態が替わったら `chromeControl` で読み直す。
+親の委譲カードの下には、子の窓が開いている間だけ Chrome の印・プロフィール・状態・子の会話を開く操作・窓を閉じる × を出す。`browser.chromeWindows({ sessionId })` は、この会話と直接委譲した子の開いている窓を `{ sessionId, taskId, title, windows, profile, profileName, state, waiting }[]` で返す（この会話の行は `taskId: null`。`waiting` は人への依頼待ち）。タブの窓の数と ⋯ の一覧は、この読み取り口を使う。窓が開閉したら `chromeWindow`、プロフィールが替わったら `chromeProfile`、操作状態が替わったら `chromeControl` で読み直す。
 
 閉じる直前の `Page.captureScreenshot` を `<data>/uploads/chrome-window/<会話 ID の SHA-256>/<時刻>-<UUID>.png` に置き、会話の `chromeClosed` の行にファイルのパスだけを記録する。人が Chrome の × で直接閉じたときと、撮影できないときは最後に受けた映像の JPEG を `.jpg` として残す。画像が無いときも閉じた行は残る。会話を消すと、窓とその会話の静止画を片付ける。
 

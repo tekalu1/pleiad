@@ -1,6 +1,6 @@
 # 0091 host・委譲・ブラウザーの操作を一覧に通す
 
-- 状態: 承認（2026-10-03）。ビューアの ⋯「Chrome で開く（エージェントの窓へ）」を `browser.chromeOpen` として追加した（ホストの PC の画面専用。0148 の第 7 段、2026-10-08）
+- 状態: 承認（2026-10-03）。ビューアの ⋯「Chrome で開く（エージェントの窓へ）」を `browser.chromeOpen` として追加した（ホストの PC の画面専用。0148 の第 7 段、2026-10-08）。本文の「`browser.listProfiles`・`useProfile`・`setProfile` は無くなった」のうち、`browser.listProfiles`・`useProfile` は Chrome のプロフィールの操作として戻っている（0148 の第 10 段、2026-10-09。`setProfile` は戻していない）
 
 ## 状況
 
