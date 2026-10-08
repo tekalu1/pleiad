@@ -251,6 +251,7 @@ export default async function (t) {
       await r.chrome.restart();
       await a.closed;
       t.ok('Chrome が閉じたら paused を解く', await until(() => r.control.state('one').state !== 'paused') && r.control.captureBlocked('one') === false, JSON.stringify(r.control.state('one')));
+      t.ok('窓の「見える形」の印も捨てる（つなぎ直した後の popup を隠せる）', r.scope.isRevealed('one') === false);
       const b = await r.agent('one');
       t.ok('つなぎ直せばコマンドが通る', !(await b.cmd('Browser.getVersion')).error);
     } finally { await r.stop(); }

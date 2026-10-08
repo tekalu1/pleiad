@@ -268,6 +268,7 @@ export function createChromeWindows({ os, locate, log = () => {}, random = () =>
       for (const entry of entries.values()) {
         for (const record of entry.windows.values()) if (record.ref) os.closeAgent(record.ref).catch(() => {});
         entry.windows.clear();
+        entry.revealed = false; entry.near = null;   // 引き継ぎ中だった窓ももう無い
       }
     },
 
