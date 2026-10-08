@@ -66,21 +66,22 @@ function fakeAsk() {
 const TIMING = { hwndWaitMs: 200, hwndPollMs: 10, targetWaitMs: 500, targetPollMs: 10, popupWaitMs: 200, boundsWaitMs: 100 };
 const opOf = id => browserOps.find(o => o.id === id);
 
-async function rig() {
-  const chrome = await startFakeChrome({ permission: 'auto' });
+async function rig({ permission = 'auto' } = {}) {
+  const chrome = await startFakeChrome({ permission });
   const os_ = fakeChromeOs({ chrome });
   const conn = createChromeConnection({ locate: { browser: 'chrome', userDataDir: chrome.userDataDir }, os: os_, pollMs: 20 });
   const locate = { browser: 'chrome', userDataDir: chrome.userDataDir, custom: true };
   const asked = fakeAsk();
   const env = { live: true, busy: false, sent: [] };
+  const turn = new AbortController();   // 人の「止める」（ターンの中断の合図）
   // core/server.mjs と同じ順: 台帳 → 中継（台帳を受け取る）→ control → useControl
   const handoffs = createChromeHandoffs({
     askPermission: asked.ask, connection: conn,
-    sessionBusy: () => env.busy, turnLive: () => env.live,
+    sessionBusy: () => env.busy, turnLive: () => env.live, turnSignal: () => turn.signal,
     continueTurn: async (sessionId, args) => { env.sent.push({ sessionId, ...args }); },
   });
   const scope = createChromeWindows({ os: os_, locate, timing: TIMING });
-  const relay = createChromeRelay({ connection: conn, os: os_, locate, scope, handoff: handoffs });
+  const relay = createChromeRelay({ connection: conn, os: os_, locate, scope, handoff: handoffs, turnLive: () => env.live, turnSignal: () => turn.signal });
   const control = createChromeControl({ relay, os: os_ });
   handoffs.useControl(control);
   // カードのボタンが呼ぶ ops（WS の chromeTakeOver・chromeResume と同じ handler）
@@ -91,7 +92,7 @@ async function rig() {
   };
   const live = [];
   return {
-    ...asked, chrome, os: os_, conn, relay, control, handoffs, env, press,
+    ...asked, turn, chrome, os: os_, conn, relay, control, handoffs, env, press,
     async agent(sessionId) { const a = await agent(await relay.endpoint(sessionId)); live.push(a); return a; },
     /** 会話の窓にタブを 1 つ作る（エージェントの操作） */
     async tab(sessionId) {
@@ -133,6 +134,20 @@ export default async function (t) {
       t.ok('戻すとカードが決着し（resumed）、待っていた hand_to_user が受ける', r.cards[0].answer?.allow === true && r.cards[0].answer.response.kind === 'resumed' && result.kind === 'resumed', JSON.stringify(result));
       t.ok('待っている人がいたので「続けてください」は送らない', r.env.sent.length === 0 && result.continued === false);
       t.ok('依頼は閉じる（次の hand_to_user は新しいカード）', r.handoffs.current('one') === null);
+    } finally { await r.stop(); }
+  }
+
+  // ===== 1b. 接続の案内の待ちを「止める」と、Chrome の確認がすぐ閉じる（中継の待ちも外れる） =====
+  {
+    const r = await rig({ permission: 'hold' });
+    try {
+      const a = await r.agent('one');
+      const call = a.cmd('Browser.getVersion');
+      t.ok('接続の案内のカードが出て、Chrome の確認も出る', await until(() => r.cards.length === 1 && r.chrome.pending() === 1));
+      const t0 = Date.now();
+      r.turn.abort();
+      t.ok('止めると、カードは中断で決着し、Chrome の確認がすぐ閉じる（中継の約 20 秒の待ちを待たない）', await until(() => r.chrome.pending() === 0, 1500) && Date.now() - t0 < 1500 && r.cards[0].answer?.messageKey === 'aborted', String(Date.now() - t0));
+      t.ok('待っていた agent-browser の呼び出しは失敗で返る', Boolean((await call).error));
     } finally { await r.stop(); }
   }
 
