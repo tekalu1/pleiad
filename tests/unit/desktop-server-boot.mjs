@@ -15,6 +15,7 @@ import { createMainLink, mainLinkPipeName, LINK_FILE } from '../../core/main-lin
 import { createOrphanGuard, ORPHAN_IDLE_MS, UPDATE_IDLE_MS } from '../../core/orphan-guard.mjs';
 import { createLogSink, redactLine, redirectOutput } from '../../core/server-log.mjs';
 import { isRuntimeInUse } from '../../core/runtime-use.mjs';
+import { testDataDir, testDataOwned } from '../lib/test-env.mjs';
 
 const require = createRequire(import.meta.url);
 const boot = require('../../desktop/server-boot.cjs');
@@ -25,8 +26,12 @@ export const name = 'desktop-server-boot';
 export const title = 'サーバーを見つける・起こす・付け直す（Job の分岐・ログ・孤児の見張り・別プロセスのサーバーを main を切っても残して付け直す）';
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
-const tempDir = () => fs.mkdtempSync(path.join(os.tmpdir(), 'pleiad-server-boot-'));
-const rm = dir => fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+const tempDir = () => fs.mkdtempSync(path.join(testDataOwned ? testDataDir : os.tmpdir(), 'pleiad-server-boot-'));
+// Windows で終了直後の DB が掴まれていたら、worker 自身の置き場は worker 終了後の掃除に任せる。
+const rm = dir => {
+  try { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
+  catch (error) { if (!testDataOwned || error.code !== 'EPERM') throw error; }
+};
 const settled = promise => promise.then(value => ({ value }), error => ({ error }));
 
 async function waitFor(check, ms = 10_000, label = 'condition') {
