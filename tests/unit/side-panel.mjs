@@ -1,7 +1,7 @@
 // 右パネルの枠（web/side-panel.mjs）: モードごとの部品の表と、渡されなかった部品を必ず隠す当て方。
 // 可視化の ⋯ の中身（web/file-actions.mjs の visualizationMenuItems）もここで見る。
 import assert from 'node:assert/strict';
-import { applySlots, fileSlots, visualizationSlots, customSlots, subtitleFor } from '../../web/side-panel.mjs';
+import { applySlots, fileSlots, visualizationSlots, customSlots, browserSlots, subtitleFor } from '../../web/side-panel.mjs';
 import { visualizationMenuItems } from '../../web/file-actions.mjs';
 import { visualizationDocument } from '../../web/visualize-document.mjs';
 
@@ -51,6 +51,16 @@ export default async function (t) {
   const custom = customSlots({ label: 'コンテキスト' });
   assert.deepEqual(custom.head, ['close']); assert.equal(custom.footer, null); assert.equal(custom.aside, false);
   t.ok('可視化: ツリー無し・⋯ あり・元の有無で出し分け。コンテキストは閉じるだけ', true);
+
+  const viewer = browserSlots(), chrome = browserSlots({ chrome:true, toolbar:['status', 'profile', 'windowMore'] });
+  assert.equal(viewer.tabs, true); assert.equal(chrome.tabs, true);
+  assert.deepEqual(viewer.toolbar, ['back', 'forward', 'reloadPage', 'address', 'openExternal', 'browserMore']);
+  assert.deepEqual(chrome.toolbar, ['status', 'profile', 'windowMore']);
+  assert.deepEqual(chrome.head, ['wide', 'close']);
+  const remoteChrome = browserSlots({ chrome:true, toolbar:['status', 'profile', 'windowMore'], tabs:false });
+  assert.deepEqual(remoteChrome.head, []);
+  assert.deepEqual(remoteChrome.toolbar, ['close', 'status', 'profile', 'windowMore']);
+  t.ok('ブラウザーの固定タブ: Chrome を選ぶと道具の列を状態・プロフィールの口・窓の操作へ替える', true);
 
   // ---- 枠に当てる。前のモードの部品が残らない
   const parts = makeParts();

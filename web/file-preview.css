@@ -139,13 +139,20 @@ body.file-preview-wide .file-preview-resize{display:none}
 /* ---- 内蔵ブラウザー（docs/inapp-browser.md、docs/design-system.md「内蔵ブラウザー」）。
    ページはデスクトップ版の main が本文の枠（.browser-viewport）の位置に重ねるネイティブの View。ここは枠の部品だけ */
 .file-preview[data-mode=browser] .file-preview-path:empty{display:none}
-.file-preview[data-mode=browser] .file-preview-head{padding-bottom:8px}
-.browser-tabs{display:flex;align-items:center;gap:2px;padding:0 0 8px;min-width:0;container-type:inline-size}
+.file-preview[data-mode=browser] .file-preview-head{align-items:center;padding:8px 0 10px}
+.file-preview[data-mode=browser] .file-preview-title{display:none}
+.file-preview[data-mode=browser]:not(:has(.browser-tabs:not([hidden]))) .file-preview-head{display:none}
+.browser-tabs{display:flex;align-items:center;gap:2px;padding:0;min-width:0;flex:1;container-type:inline-size}
 .browser-tab-list{display:flex;gap:2px;min-width:0;overflow-x:auto;scrollbar-width:none}
 .browser-tab{display:flex;align-items:center;flex:0 1 180px;min-width:72px;max-width:180px;height:28px;border-radius:var(--r-m);color:var(--ink-weak);
   transition:background-color var(--dur-fast) var(--ease-out)}
 .browser-tab:hover{background:var(--surface-hover)}
 .browser-tab.on{background:var(--surface-paper);color:var(--ink)}
+.browser-tab-chrome{flex:0 0 auto;min-width:0;max-width:170px;margin-right:5px;background:var(--surface-1)}
+.browser-tab-chrome.on{background:var(--surface-paper)}
+.browser-tab-chrome .browser-tab-pick{padding-right:10px}
+.browser-tab-count{flex:none;min-width:16px;padding:0 4px;border-radius:var(--r-pill);background:var(--surface-2);font-size:var(--fs-xs);text-align:center}
+.browser-tab-chrome .run{flex:none;transform:scale(.8)}
 .browser-tab-pick{display:flex;align-items:center;gap:6px;flex:1;min-width:0;height:100%;padding:0 4px 0 10px;background:transparent;color:inherit;
   border-radius:var(--r-m);font-size:var(--fs-xs);cursor:pointer;text-align:left}
 .browser-tab-pick:focus-visible{outline:2px solid var(--line-blue);outline-offset:-2px}
@@ -159,6 +166,7 @@ body.file-preview-wide .file-preview-resize{display:none}
 @media (hover:none){.browser-tab-close{opacity:1}}
 .file-preview[data-mode=browser] .file-preview-toolbar{flex-wrap:nowrap;gap:2px;padding-bottom:10px}
 .file-preview[data-mode=browser] .file-preview-toolbar .btn-icon{width:30px;height:30px;padding:0;flex:none}
+@media (max-width:480px){.browser-tab-chrome{max-width:140px}.browser-tab-chrome .browser-tab-name{max-width:92px}}
 .browser-address{position:relative;display:flex;align-items:center;gap:6px;flex:1;min-width:0;height:32px;margin:0 4px;padding:0 12px;
   background:var(--surface-paper);border-radius:var(--r-pill);color:var(--ink-weak)}
 .browser-address:focus-within{outline:2px solid var(--line-blue);outline-offset:-1px;color:var(--ink)}

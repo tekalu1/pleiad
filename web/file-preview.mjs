@@ -67,7 +67,7 @@ export function setupFilePreview({ getContext, useFile, onLayout, showMenu, cmd,
   });
   more.setAttribute('aria-haspopup', 'menu');
   // 並べるのは show()（web/side-panel.mjs の applySlots）。モードの設定に無いボタンはここに入らない
-  const actions = el('div', 'file-preview-actions'); head.append(title, actions);
+  const actions = el('div', 'file-preview-actions'); head.append(title, ...(browser ? [browser.tabsRow] : []), actions);
   const toolbar = el('div', 'file-preview-toolbar'), switcher = el('div', 'file-preview-switch');
   switcher.setAttribute('aria-label', t('filePreview.viewMode'));
   const rendered = button(t('filePreview.preview'), () => { source = false; paint(); });
@@ -202,7 +202,7 @@ export function setupFilePreview({ getContext, useFile, onLayout, showMenu, cmd,
       reveal, save, visualSave, use, ...(browser?.buttons ?? {}) } };
   const handle = el('div', 'file-preview-resize'); handle.tabIndex = 0; handle.setAttribute('role', 'separator');
   handle.setAttribute('aria-label', t('filePreview.width')); handle.setAttribute('aria-orientation', 'vertical'); handle.setAttribute('aria-valuemin', '30'); handle.setAttribute('aria-valuemax', '65');
-  panel.append(handle, head, ...(browser ? [browser.tabsRow] : []), toolbar, ...(browser ? [browser.guardRow] : []), location, note, bodyLayout, footer); document.body.append(panel);
+  panel.append(handle, head, toolbar, ...(browser ? [browser.guardRow] : []), location, note, bodyLayout, footer); document.body.append(panel);
   const main = document.querySelector('body > main'), sidebar = document.getElementById('sidebar');
   const mobile = matchMedia('(max-width:760px)');
   // 幅の割合の分母は、脇を除いた窓の幅。1150px 以下では脇が畳まれ、閉じた脇（web/client.mjs）も列を取らない
@@ -234,6 +234,7 @@ export function setupFilePreview({ getContext, useFile, onLayout, showMenu, cmd,
   /** 今のモードの設定。状態（custom・visual・file）から毎回作り直す */
   function slots() {
     if (browsing) return browserSlots();
+    if (custom?.key === 'chrome-window') return browserSlots({ chrome:true, toolbar:custom.toolbar ?? [], tabs:!!browser });
     if (custom) return custom.footer || custom.head || custom.wide ? gitSlots({ label:custom.label, footer:custom.footer, head:custom.head, toolbar:custom.toolbar, wide:custom.wide }) : customSlots({ label:custom.label });
     if (visual) return visualizationSlots({ origin:visual.origin, html:visual.html, canBrowse:!!snapshotQuery(visual), canUse:!!useFile });
     return fileSlots({ file, osActions:osActions() });

@@ -45,18 +45,18 @@ export function visualizationSlots({ origin = null, html = '', canBrowse = true,
 }
 
 /**
- * 内蔵ブラウザー（docs/inapp-browser.md、ADR 0041）。見出しの下にタブの列、道具の列は戻る・進む・再読み込み・アドレス欄・
- * 既定のブラウザーで開く（常に）・⋯。種類の印・切り替え・ツリー・下の行は出さない。部品は web/browser-panel.mjs が作る
+ * 統合ブラウザー（docs/inapp-browser.md、ADR 0041）。見出しの行にタブ列を置く。
+ * ビューアと Chrome で道具の列を替え、ビューアのない端末では閉じるボタンも道具の列に置く。
  */
-export function browserSlots() {
+export function browserSlots({ chrome = false, toolbar = [], tabs = true } = {}) {
   return {
     mode: 'browser',
     label: t('browser.panel'),
     kind: '',
-    head: ['wide', 'close'],
-    tabs: true,
+    head: tabs ? ['wide', 'close'] : [],
+    tabs,
     views: false,
-    toolbar: ['back', 'forward', 'reloadPage', 'address', 'openExternal', 'browserMore'],
+    toolbar: chrome ? (tabs ? toolbar : ['close', ...toolbar]) : ['back', 'forward', 'reloadPage', 'address', 'openExternal', 'browserMore'],
     aside: false,
     note: '',
     footer: null,

@@ -11,7 +11,7 @@ const AGENT_BROWSER_VERSION = '0.38.1';
 // エージェントのブラウザー（PC の Chrome）への接続の案内で開いてもらうアドレス。chrome.exe に渡しても新しいタブになるので、コピーして貼り付けてもらう
 const CHROME_INSPECT_ADDRESS = 'chrome://inspect/#remote-debugging';
 
-/** Chrome の印（16px の線画。web/header-entries.mjs の Chrome の入口と同じ形） */
+/** Chrome の印（16px の線画。ブラウザーの固定タブと同じ形） */
 function chromeMark() {
   const svg = svgEl('svg', { class: 'i', viewBox: '0 0 16 16', 'aria-hidden': 'true' });
   svg.append(svgEl('circle', { cx: 8, cy: 8, r: 6.5 }), svgEl('circle', { cx: 8, cy: 8, r: 2.6 }), svgEl('path', { d: 'M8 5.4h5.9M10.25 9.3l-2.98 5.16M5.75 9.3 2.77 4.14' }));

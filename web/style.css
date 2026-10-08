@@ -542,6 +542,10 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 .entry-dot{position:absolute;top:4px;right:4px;width:7px;height:7px;border-radius:50%;color:var(--ink-strong);background:currentColor;box-shadow:0 0 0 2px var(--surface-paper);pointer-events:none}
 .entry-run.run{position:absolute;top:-2px;right:-3px;width:14px;height:14px;border-radius:50%;background:var(--surface-paper);color:var(--ink);pointer-events:none}
 .entry-run.run svg{width:12.32px;height:12.32px;stroke-width:1.7}
+.entry-requested{position:absolute;top:3px;right:3px;width:7px;height:7px;border-radius:50%;color:var(--ink-mark);background:currentColor;box-shadow:0 0 0 2px var(--surface-paper);pointer-events:none}
+.entry-paused{position:absolute;top:-2px;right:-3px;width:14px;height:14px;border-radius:50%;background:var(--surface-paper);color:var(--ink);pointer-events:none}
+.entry-paused::before,.entry-paused::after{content:"";position:absolute;top:3px;width:2px;height:8px;border-radius:1px;background:currentColor}
+.entry-paused::before{left:5px}.entry-paused::after{right:5px}
 .btn:hover > .entry-dot{box-shadow:0 0 0 2px var(--surface-2)}
 /* AI がタイトルを考えている間。欄の文字を隠し、文字の代わりに丸い棒を置いて光を左から右へ通す。
    棒は 15px の太字 1 行に合わせた高さ 10px、長さはタイトルの半分ほど。欄は disabled で書き込めない */
@@ -1989,6 +1993,7 @@ body{padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) 0 env(s
 @media (max-width:480px){
   main > .top{gap:4px}
   main > .top :is(#contextEntry,#gitEntry,#browserEntry){display:none}
+  main > .top #browserEntry[data-mobile-chrome]:not([hidden]){display:inline-flex}
   #sessionMore{position:relative}
 }
 

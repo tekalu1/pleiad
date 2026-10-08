@@ -59,7 +59,7 @@ async page => {
 
   // ============ 1. 窓があるとき、パネルの差し込み口に状態の一行が入る
   await page.evaluate((id) => window.__event({ type: 'chromeWindow', sessionId: id, windows: 1, operating: false }), sessionId);
-  await page.locator('#chromeEntry').click();
+  await page.locator('#browserEntry').click();
   await page.locator('#filePreview[data-panel="chrome-window"]').waitFor();
   await page.locator('.cp-screen').waitFor();
   check(await page.locator('.cp-slot .cc').count() === 1, 'the status row is mounted in the slot');
@@ -106,7 +106,7 @@ async page => {
   check((await page.locator('.cp-veil').textContent()).includes('映像を止めています'), 'the veil says the video is stopped');
   // 窓が無くなっても、一時停止中は戻せる
   await page.evaluate((id) => window.__event({ type: 'chromeWindow', sessionId: id, windows: 0, operating: false }), sessionId);
-  await page.locator('#chromeEntry').waitFor({ state: 'hidden' });
+  await page.locator('#browserEntry').waitFor({ state: 'hidden' });
   check(await page.locator('#chromeBanner .cc-banner').isVisible(), 'the banner stays while paused even if the window is gone');
   await page.locator('#chromeBanner .cc-banner .cc-btn').click();
   await page.waitForFunction(() => window.__sent.some((x) => x.command === 'chromeResume'));
@@ -117,7 +117,7 @@ async page => {
 
   // ============ 5. 窓が戻ると一行も戻る。止める・待機中・止めた後
   await page.evaluate((id) => window.__event({ type: 'chromeWindow', sessionId: id, windows: 1, operating: false }), sessionId);
-  await page.locator('#chromeEntry').waitFor({ state: 'visible' });
+  await page.locator('#browserEntry').waitFor({ state: 'visible' });
   check((await shown()).join() === '止める,引き継ぐ', 'back to running buttons');
   await page.locator('.cp-slot .cc-btn', { hasText: '止める' }).click();
   await page.waitForFunction(() => window.__sent.some((x) => x.command === 'chromeStop'));
@@ -156,6 +156,6 @@ async page => {
 
   // 後片付け: パネルを閉じる
   await page.keyboard.press('Escape').catch(() => {});
-  if (await page.locator('#filePreview[data-panel="chrome-window"]').isVisible()) await page.locator('#chromeEntry').click();
+  if (await page.locator('#filePreview[data-panel="chrome-window"]').isVisible()) await page.locator('#browserEntry').click();
   return results.join('\n');
 }
