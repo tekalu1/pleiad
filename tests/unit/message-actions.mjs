@@ -1,7 +1,8 @@
 // 発言の操作（web/message-actions.mjs）・長い発言の畳み（web/fold.mjs）・送った直後の画像の枠（web/attachment-frame.mjs）。ADR 0067
-import { messageMenuPlan, setupMessageMenu, COPIED_MS } from "../../web/message-actions.mjs";
+import { messageMenuPlan, setupMessageMenu, COPIED_MS, aiReportUrl } from "../../web/message-actions.mjs";
 import { frameSize, pendingImageHtml, SLOW_MS } from "../../web/attachment-frame.mjs";
 import { revealFold } from "../../web/fold.mjs";
+import { postMenu } from "../../web/channels/post-menu.mjs";
 
 export const name = "message-actions";
 export const title = "発言のメニュー: 並び・右クリックの譲り方・キーボード / 畳みを開く / 送った直後の画像の枠";
@@ -27,12 +28,22 @@ export default async function (t) {
     keys(messageMenuPlan({ kind: "user", source: true })) === "copy,fork,sep,edit,resend,source");
   t.ok("保存前の自分の発言: 編集・再送信は出さない",
     keys(messageMenuPlan({ kind: "user", source: true, editable: false })) === "copy,fork,sep,source");
-  t.ok("エージェントの返答: 返答をコピー・ここから分岐だけ", keys(messageMenuPlan({ kind: "ai" })) === "copy,fork"
+  t.ok("エージェントの返答: 返答をコピー・ここから分岐・報告", keys(messageMenuPlan({ kind: "ai" })) === "copy,fork,sep,report"
     && messageMenuPlan({ kind: "ai" })[0].label === "返答をコピー");
+  t.ok("報告は Pleiad 開発者への Issue を開き、会話本文を自動で含めない", (() => {
+    const url = new URL(aiReportUrl());
+    return url.origin === 'https://github.com' && url.pathname === '/tekalu1/pleiad/issues/new'
+      && url.searchParams.get('title') === 'Pleiad で表示された不適切な AI の内容'
+      && url.searchParams.get('body')?.includes('会話本文を自動で添付しません');
+  })());
   t.ok("続きの発言を右クリックしたときの分岐は「この発言から分岐」", messageMenuPlan({ kind: "ai", part: true }).find((p) => p.key === "fork").label === "この発言から分岐"
     && messageMenuPlan({ kind: "ai" }).find((p) => p.key === "fork").label === "ここから分岐");
-  t.ok("分岐できない発言（uuid が無い・分岐できないエージェント）には分岐を出さない", !keys(messageMenuPlan({ kind: "ai", canFork: false })).includes("fork"));
+  t.ok("分岐できない返答にも報告は出す", keys(messageMenuPlan({ kind: "ai", canFork: false })) === "copy,sep,report");
   t.ok("`!` の行は「入力欄に写す」を足し、編集・再送信は出さない", keys(messageMenuPlan({ kind: "cmd", shell: true })) === "copy,toComposer,fork");
+  const menu = (kind) => postMenu({ post: { author: { kind }, text: 'private content' }, t: () => 'react', name: 'bot', time: '', react: () => {} }).items;
+  t.ok("Channels の bot 投稿にも報告を出し、人やシステムの投稿には出さない", menu('bot').some(item => item.label === '不適切な AI の内容を報告')
+    && !menu('human').some(item => item.label === '不適切な AI の内容を報告')
+    && !menu('system').some(item => item.label === '不適切な AI の内容を報告'));
   t.ok("コピーの印は 1.2 秒", COPIED_MS === 1200);
 
   // ---- 右クリック・キーボード

@@ -17,7 +17,7 @@ import { createRemoteBrowser } from './remote-browser.mjs';
 import { fileDownloadUrl } from './file-reference.mjs';
 import { setupCodeCopy, copyText } from './code-copy.mjs';
 import { setupMessagePeek } from './message-peek.mjs';
-import { actionButtons, copyToClipboard, messageMenuPlan, hoverless, setupMessageMenu, openSourceDialog, announce, writeClipboard } from './message-actions.mjs';
+import { actionButtons, copyToClipboard, messageMenuPlan, hoverless, setupMessageMenu, openSourceDialog, announce, writeClipboard, reportAiContent } from './message-actions.mjs';
 import { tailInfo, buildBand, resendKeys, sendGlyph } from './resend-band.mjs';
 import { mountFold, revealFold } from './fold.mjs';
 import { isSearchShortcut } from './session-find.mjs';
@@ -924,6 +924,7 @@ function openMessageMenu({ m, part = false }, at = {}) {
     edit: () => resendFrom(m, true),
     resend: () => resendFrom(m, false),
     source: () => openSourceDialog({ text: userRaw(m), at: m.querySelector(':scope > .who .when')?.textContent ?? '', opener: more }),
+    report: reportAiContent,
   };
   const items = plan.map(p => (p.sep ? { sep: true } : { label: p.label, disabled: busy && ['fork', 'edit', 'resend'].includes(p.key), onClick: run[p.key] }));
   // ホバーが無い端末は、時刻を出す手段が押すことしか無いので、メニューの先頭に置く

@@ -43,7 +43,7 @@ Store の版は Store が更新する。electron-updater の確認もダウン�
 | App Execution Alias（`%LOCALAPPDATA%\Microsoft\WindowsApps\Ply.exe`） | 動く（実測）。引数・環境変数・標準入出力が通り、識別子が付く。`ELECTRON_RUN_AS_NODE=1` も効く | manifest に入れた |
 | パッケージの中の実行ファイルを直に起動 | 動くが識別子が付かない（実測）。userData が別の場所になる。WindowsApps の中の実行ファイルも、外から絶対パスで起動できる（一覧は拒否。同じ PC の winget で確認） | 起動口を残す箇所はエイリアスを指す |
 | `process.execPath` のパス | `<入れ先>\app\Ply.exe`。Store の入れ先は `C:\Program Files\WindowsApps\<パッケージ名>_<版>_<arch>__<発行元の印>\` で、版ごとに変わる | 下の各行 |
-| 　`core/cli-launcher.mjs` の `mcpSetup`（設定の「MCP の設定をコピー」） | 貼った直後は動くが、更新で古い版のフォルダーが消えると切れる | 未実装。案は下の「実行ファイルのパス」 |
+| 　`core/cli-launcher.mjs` の `mcpSetup`（設定の「MCP の設定をコピー」） | 版ごとの実行ファイルと `pleiad.mjs` を貼ると更新後に切れる | Store 版は App Execution Alias を貼り、起動時に現在の版の `pleiad.mjs` を見つける |
 | 　`core/backends/codex.mjs`・`context-options.mjs` | `enabled: false` の置き場の値で、起動しない。影響なし | 不要 |
 | 　`core/backends/antigravity-context.mjs` | ターンごとに書き直すので動く。agy は Pleiad の子で、パッケージの中の Ply.exe を絶対パスで起こせる | 不要 |
 | 　`desktop/main.cjs` の `setAppUserModelId`・`setAppDetails` | 窓に `jp.ply.desktop` が付き、スタートメニューのタイル（`<パッケージファミリー名>!Pleiad`）と別のアプリとして並ぶ（実測）。パッケージのアプリは自分の AUMID しか使えない（Microsoft の文書） | 直した。識別子があれば付けない（`desktop/msix.cjs`）。窓の AUMID が空になり、パッケージの AUMID で並ぶことを実測 |
@@ -59,7 +59,7 @@ Store の版は Store が更新する。electron-updater の確認もダウン�
 | node-pty（ConPTY） | `cmd.exe` を起こしてエコーが返る（実測） | 不要 |
 | computer use（koffi） | koffi の読み込みと Win32 の呼び出しが動く（実測）。撮影・入力は同じ medium IL の Win32 なので変わらない見込み（未実測） | 不要 |
 | agent-browser（`scripts/pack-agent-browser.cjs`） | `resources\agent-browser\agent-browser.exe` が動く（実測）。サーバーの PATH に入るのは版ごとのフォルダーだが、起動ごとに渡し直す | 不要 |
-| `bin/` の pleiad CLI | パッケージの中の `pleiad.cmd` が内蔵の Node で動く（実測。未起動なら終了コード 3）。外のシェルからは版ごとのパスになる | `mcpSetup` と同じ案 |
+| `bin/` の pleiad CLI | パッケージの中の `pleiad.cmd` が内蔵の Node で動く（実測。未起動なら終了コード 3）。外のシェルへ `bin/` のパスを恒久登録する機能は無い | 会話中のシェルの PATH は起動ごとに作り直す。外の AI へ貼る MCP 設定は上のエイリアスを使う |
 | capability | 上の全部が `runFullTrust` だけで動く。full trust のアプリにネットワークの capability は要らない | 仮想化を切るなら `unvirtualizedResources` |
 
 まだ確かめていないこと: WindowsApps に入れた状態（管理者権限が要る）、arm64、Store が署名した版、Windows App Certification Kit（WACK）。
@@ -91,8 +91,11 @@ capability を使わずに子プロセスだけを外に出す方法として、
 
 ### 実行ファイルのパス
 
-外のプログラムに残る起動口（`mcpSetup` の貼り付け用の設定・ジャンプリスト）は、版に依らない App Execution Alias を指す。エイリアスから起動した `Ply.exe` の `process.execPath` は今の版の本物のパスになる（実測）ので、`bin/pleiad.mjs` もそこから引ける。
-`mcpSetup` は、Store の版では `command` をエイリアスにし、`args` を版ごとのパスではなく `process.execPath` から `resources\app\bin\pleiad.mjs` を引く起動（`-e` で読み込む小さな入口）にする案。未実装（`core/cli-launcher.mjs`・`bin/pleiad.mjs` の引数の扱い・テスト）。
+外のプログラムに残る起動口（`mcpSetup` の貼り付け用の設定・ジャンプリスト）は、manifest の App Execution Alias `Ply.exe`（通常は `%LOCALAPPDATA%\Microsoft\WindowsApps\Ply.exe`）を指す。`LOCALAPPDATA` が無ければエイリアス名を使う。エイリアスから起動した `Ply.exe` の `process.execPath` は今の版の本物のパスになる（開発者モードで実測）。
+
+Store 版の MCP 設定は `command` をこのエイリアスにし、`args` の `-e` で現在の `process.execPath` の隣の `resources\app\bin\pleiad.mjs` を探して読み込む。貼る設定に版番号入りのパスは残さない。判定は `plyStore` または `process.windowsStore` に揃え、エイリアスが利用者の Windows で無効なら設定は起動できないので有効化が要る。既に貼った古い設定は自動更新できないため、Store 版で「MCP の設定をコピー」をもう一度使う。
+
+ほかの `process.execPath` の用途も確認した。Codex の MCP 設定に置く `enabled: false` の値は起動されず、Antigravity の relay と computer use の自己プロセス判定は起動中のプロセスに閉じる。hooks の設定は Pleiad の実行ファイルの絶対パスを書き出さない。ジャンプリストは既にエイリアスを使用し、`setAppDetails` の再起動コマンドは MSIX では設定しない。会話中のシェルに渡す `bin/` の PATH は起動ごとに再生成される。
 
 ## Store の審査とポリシー
 
@@ -105,7 +108,7 @@ capability を使わずに子プロセスだけを外に出す方法として、
 | Windows の設定の変更（10.2.8） | 支持された方法と利用者の同意が要る。アクセシビリティ API などで変えてはいけない | computer use が設定の画面を操作しうる。操作の前に承認を取ること（[ADR 0071](adr/0071-computer-use-approval-and-safety.md)）を審査メモに書く |
 | 試せること（10.3・10.3.1） | 審査で試せなければ落ちる。ログインが要るなら試用のアカウントを審査メモに | 外部の CLI とアカウントが無いと会話できない。審査メモに入れ方と試し方を書く |
 | プライバシーポリシー（10.5.1） | Desktop Bridge・Win32 の製品は常に要る | プライバシーポリシーの URL を用意する |
-| 生成 AI（11.16） | 掲載情報と Partner Center で生成 AI の使用を申告し、不適切な内容を開発者へ報告する手段を製品に置く | 報告の導線は未実装 |
+| 生成 AI（11.16） | 掲載情報と Partner Center で生成 AI の使用を申告し、不適切な内容を開発者へ報告する手段を製品に置き、報告に応じて対処する | Chats と Channels の AI 返答のメニューから Pleiad の GitHub Issue 作成画面を開く。返答本文は自動送信しない |
 | capability（10.6・制限付きの承認） | 宣言する capability は機能に正当に関係すること。制限付きは提出時に理由を書いて承認を受ける | `runFullTrust` の理由。`unvirtualizedResources` を使うならその理由（想定外の用途とされている） |
 | カスタムの AUMID・ジャンプリスト | パッケージの AUMID しか使えない。ジャンプリストはエイリアスを指す | 直した |
 | コマンドの起動と Windows 10 S | MSIX の準備の文書は、Store のアプリは Windows 10 S（S モード）で動くこと、`cmd.exe`・PowerShell の起動を避けることを求めている | シェルと外部 CLI の起動は Pleiad の中心なので、S モードでは使えない。審査で問われうる |
@@ -123,6 +126,12 @@ capability を使わずに子プロセスだけを外に出す方法として、
 - [UpdateProcThreadAttribute](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-updateprocthreadattribute)（`PROC_THREAD_ATTRIBUTE_DESKTOP_APP_POLICY`）
 - [Application（uap10:RuntimeBehavior）](https://learn.microsoft.com/en-us/uwp/schemas/appxpackage/uapmanifestschema/element-application)
 - [MSIX: containerized or not?（WindowsAppSDK #410）](https://github.com/microsoft/WindowsAppSDK/discussions/410)（win32App と `unvirtualizedResources`。Microsoft のメンテナーの発言で、文書ではない）
+
+### 生成内容の報告と審査メモ
+
+Pleiad は利用者が用意した Claude Code・Codex・Antigravity の CLI の返答を表示する。モデルの提供元ではないが、Pleiad 内で見た不適切な生成内容は開発者へ報告できるようにする。返答の `⋯` →「不適切な AI の内容を報告」は Pleiad の公開 GitHub Issue 作成画面を開く。GitHub アカウントが必要で、本文の共有範囲と送信は利用者が決める。会話・添付・作業パスは自動で付けない。開発者は報告を確認し、Pleiad の表示・制御に原因があれば修正し、モデルや CLI に起因するものは該当する提供元への報告を案内する。公開 Issue に秘密を書かないよう、作成画面の本文で注意を出す。
+
+Notes for certification に記す内容: "In Chats and Channels, open the menu (⋯) on an AI response and select 'Report inappropriate AI content'. This opens a new issue in the Pleiad developer's GitHub repository. No conversation text is uploaded automatically; the user chooses what to submit. The developer reviews reports and fixes Pleiad issues or directs model/CLI concerns to the relevant provider."
 
 ## Partner Center でやること
 
