@@ -425,7 +425,7 @@ export default async function (t) {
     t.ok('照合のジョブのトークンは github.token（秘密を渡さない）', JSON.stringify(gate.steps).includes('${{ github.token }}') && !JSON.stringify(gate).includes('secrets.'));
     t.ok('公開のジョブは照合のジョブを待つ（赤なら走らない）', release.needs === 'ci-gate' || (Array.isArray(release.needs) && release.needs.includes('ci-gate')));
     const steps = release.steps;
-    const full = steps.findIndex(s => s.run === 'node tests/run.mjs --retry-failed 1');
+    const full = steps.findIndex(s => s.run === 'node tests/run.mjs --jobs 2 --retry-failed 1');
     const smoke = steps.findIndex(s => /Release environment smoke/.test(s.name ?? ''));
     const publish = steps.findIndex(s => /publish/i.test(s.name ?? ''));
     t.ok('全部のテストは reuse 以外のすべてで回る（空・想定外の値でも省かない）', steps[full]?.if === "needs.ci-gate.outputs.decision != 'reuse'", steps[full]?.if);
