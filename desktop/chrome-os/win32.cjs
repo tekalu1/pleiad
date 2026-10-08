@@ -57,7 +57,7 @@ const isInt = v => Number.isInteger(v) && Math.abs(v) < 100000;
  * @param [deps.appHwnd] Pleiad 自身の窓（main の BrowserWindow）のハンドルを返す関数。引き継ぎで窓を戻す画面を、押した時の前面でなく Pleiad の窓のある画面にするのに使う
  */
 function createWin32ChromeOs({ win32, log = () => {}, spawn = childProcess.spawn, env = process.env, exists = fs.existsSync,
-  timers = { setInterval: (fn, ms) => setInterval(fn, ms), clearInterval: handle => clearInterval(handle) }, guardMs = GUARD_MS, now = Date.now, appHwnd = null }) {
+  timers = { setInterval: (fn, ms) => setInterval(fn, ms), clearInterval: handle => clearInterval(handle) }, guardMs = GUARD_MS, now = Date.now, appHwnd = null, pointToDip = null }) {
   const refs = new Map();   // id -> { hwnd, kind: 'dialog' | 'foreign' | 'agent', ex0?, concealed? }
   const browsers = new Map();   // id -> { path, product }
   let browserSeq = 0;
@@ -197,6 +197,41 @@ function createWin32ChromeOs({ win32, log = () => {}, spawn = childProcess.spawn
     try { hwnd = appHwnd ? Number(appHwnd()) || 0 : 0; } catch { hwnd = 0; }
     if (!hwnd || !alive(hwnd)) return null;
     return remember(hwnd, 'foreign');
+  }
+
+  /** The OS rectangle is physical pixels. Electron positions its windows in screen DIP. */
+  function bounds(ref) {
+    const entry = knownAgent(ref);
+    if (!entry || entry.concealed || !alive(entry.hwnd) || !pointToDip) return null;
+    try {
+      const info = win32.windowInfo(entry.hwnd);
+      if (!info.visible || info.iconic || info.cloaked || !info.rect || info.className !== BROWSER_CLASS ||
+          !BROWSER_EXES.has(exeName(win32.processPath(info.pid)))) return null;
+      const { left, top, right, bottom } = info.rect;
+      const dpi = win32.dpiForWindow(entry.hwnd);
+      if (![left, top, right, bottom, dpi].every(Number.isFinite) || dpi <= 0 || right <= left || bottom <= top) return null;
+      const origin = pointToDip({ x: left, y: top });
+      if (!origin || !Number.isFinite(origin.x) || !Number.isFinite(origin.y)) return null;
+      return { x: origin.x, y: origin.y, width: (right - left) * 96 / dpi, height: (bottom - top) * 96 / dpi };
+    } catch { return null; }
+  }
+
+  /** Watch foreground changes only while a caller has visible agent windows. */
+  function watch({ refs: watched = [] } = {}, notify = () => {}) {
+    const ids = new Set(watched.filter(ref => knownAgent(ref)).map(ref => ref.id));
+    if (!ids.size) return () => {};
+    let previous;
+    const tick = () => {
+      const front = foreground();
+      const id = front?.id ?? null;
+      if (id === previous) return;
+      previous = id;
+      notify({ kind: 'foreground', ref: ids.has(id) ? { id } : null });
+    };
+    tick();
+    const timer = timers.setInterval(tick, 120);
+    timer?.unref?.();
+    return () => timers.clearInterval(timer);
   }
 
   function foreground() {
@@ -596,7 +631,7 @@ function createWin32ChromeOs({ win32, log = () => {}, spawn = childProcess.spawn
 
   return {
     capabilities: () => ({ supported: true, reason: null, features: FEATURES }),
-    snapshotWindows, findPermissionDialog, raise, yieldForeground, foreground, appWindow, close,
+    snapshotWindows, findPermissionDialog, raise, yieldForeground, foreground, appWindow, close, bounds, watch,
     locateBrowser, launchWindow, findWindowByNonce, findWindowByBounds, hiddenSpot, conceal, reveal, release, closeAgent,
     exportAgent, adoptAgent, reconceal, closeAllAgents,
     /** テスト用: 見張りを 1 回だけ回す・止める */

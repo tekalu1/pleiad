@@ -22,6 +22,8 @@ function createChromeOs({ platform = process.platform, win32 = null, reason = 'n
     raise: () => ({ ok: false, method: 'unsupported' }),
     yieldForeground: () => false,
     foreground: () => null,
+    bounds: () => null,
+    watch: () => () => {},
     appWindow: () => null,
     close: () => false,
     locateBrowser: () => null,
