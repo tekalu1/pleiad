@@ -2248,6 +2248,19 @@ const chromeControlSend = event => {
   for (const ws of runtime.sockets) if (ws.readyState === ws.OPEN) ws.send(text);
 };
 chromeControl?.onChange(state => chromeControlSend({ type: 'chromeControl', ...state }));
+// The protected desktop pill needs only window refs and the control state. No page content is sent.
+async function sendChromePillState(state) {
+  if (!hostedPort || !chromeControl) return;
+  const current = chromeControl.state(state.sessionId);
+  if (current.state !== state.state || current.since !== state.since) return;
+  const refs = current.state === 'paused' && current.by === 'pc'
+    ? chromeRelay.scope.windows(state.sessionId).map(window => window.ref).filter(Boolean) : [];
+  const agent = refs.length ? (runtime.turns.get(state.sessionId)?.backend
+    ?? await resolveBackendForSession(state.sessionId).catch(() => null))?.label ?? 'Claude' : '';
+  if (chromeControl.state(state.sessionId).since !== state.since) return;
+  try { hostedPort.postMessage({ type: 'chrome-pill-state', ...current, refs, agent }); } catch { /* main が離れたら次の snapshot で送り直す */ }
+}
+chromeControl?.onChange(state => { void sendChromePillState(state); });
 chromeControl?.onTap(tap => chromeControlSend({ type: 'chromeTap', ...tap }));
 /** 引き継いで戻したときの会話の行（present kind: 'chromeHandover'）。ターンの外でも出すので、記録して全部の接続へ流す */
 async function recordChromeHandover(sessionId, seconds) {
@@ -8037,6 +8050,15 @@ async function readOnboarding() {
 }
 
 mainPort.on("message", async ({ data }) => {
+  if (data?.type === 'chrome-pill-snapshot') {
+    for (const state of chromeControl?.snapshot() ?? []) void sendChromePillState(state);
+  }
+  if (data?.type === 'chrome-pill-resume' && typeof data.sessionId === 'string' && chromeControl?.state(data.sessionId).by === 'pc') {
+    void chromeControl.resume(data.sessionId).catch(error => {
+      console.warn('chrome pill resume failed:', error?.message ?? error);
+      try { mainPort.postMessage({ type: 'chrome-pill-resume-failed', sessionId: data.sessionId }); } catch { /* main が離れた */ }
+    });
+  }
   if (data?.type === 'wake') { await schedule.check(); await recoverLimitWaits().catch(() => {}); }
   if (data?.type === 'update-lock') {
     // 断るときは何が止めているかを返す。画面に出さないと、見た目に何も動いていないのに更新できない理由が分からない

@@ -870,4 +870,33 @@ export default async function (t) {
     t.ok('findWindowByBounds の往復（port・since・tolerance が層へ届く）', await core.findWindowByBounds({ bounds: popupBounds, port: 9222, since: ['650'], tolerance: 2 }) === null
       && await core.findWindowByBounds({ bounds: popupBounds, tolerance: 2 }) === null && (await core.findWindowByBounds({ bounds: popupBounds, port: 9222, since: [], tolerance: 2 }))?.id === '650');
   }
+  // ===== 第 9 段: 窓の矩形と前面の見張り =====
+  {
+    const w = fakeWin32();
+    w.add(800, { title: `PLY-${NONCE} - Google Chrome`, rect: { left: 300, top: 150, right: 1800, bottom: 1050 } });
+    let tick, stopped = false;
+    const os = createWin32ChromeOs({ win32: w,
+      pointToDip: point => point.x < 2560 ? { x: point.x / 1.5, y: point.y / 1.5 }
+        : { x: 2560 / 1.5 + point.x - 2560, y: point.y },
+      timers: { setInterval(fn) { tick = fn; return 1; }, clearInterval() { stopped = true; } },
+    });
+    const ref = os.findWindowByNonce(NONCE);
+    const first = os.bounds(ref);
+    t.ok('物理矩形と GetDpiForWindow から主モニターの DIP を返す', first.x === 200 && first.y === 100 && first.width === 1000 && first.height === 600, JSON.stringify(first));
+    w.windows.get(800).rect = { left: 2760, top: 100, right: 3560, bottom: 700 };
+    w.windows.get(800).dpi = 96;
+    const second = os.bounds(ref);
+    t.ok('倍率の違う副モニターでは物理座標の原点を保って DIP へ直す', Math.abs(second.x - (2560 / 1.5 + 200)) < .001 && second.y === 100 && second.width === 800 && second.height === 600, JSON.stringify(second));
+    const events = [];
+    w.fg = 800;
+    const unwatch = os.watch({ refs: [ref] }, event => events.push(event));
+    w.fg = 801; tick();
+    t.ok('前面の変化を対象の ref と null で知らせる', events.length === 2 && events[0].ref.id === '800' && events[1].ref === null, JSON.stringify(events));
+    unwatch();
+    t.ok('見張りを解除できる', stopped);
+    w.windows.get(800).iconic = true;
+    t.ok('最小化した窓の矩形は返さない', os.bounds(ref) === null);
+    w.windows.delete(800);
+    t.ok('閉じた窓・知らない ref の矩形は返さない', os.bounds(ref) === null && os.bounds({ id: 'unknown' }) === null);
+  }
 }

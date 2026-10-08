@@ -83,6 +83,7 @@ const SUITES = [
   './unit/chrome-control-ui.mjs',
   // Chrome への接続の OS の層（Windows）: 確認の窓の見つけ方・前面化・閉じる・使えない OS・parentPort の往復（偽の Win32 の表）
   './unit/chrome-os.mjs',
+  './unit/desktop-chrome-pill.mjs',
   // Chrome への接続（サーバー越し）: browser.chrome* の操作・chromeBrowser イベントはホストの画面だけ・使えない OS / Electron の無いホスト（偽の Chrome・parentPort の身代わり）
   './unit/server-chrome.mjs',
   // Chrome の OS の層をパイプの経路（無停止の更新）で作る: parentPort が無くても層ができる・chrome-os の依頼が main に届く・付け直しで求め直す・main が居ない間は失敗で返す
