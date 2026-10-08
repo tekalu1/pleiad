@@ -10,6 +10,9 @@
 //     外形で探すときは、先に CDP でその窓を一意な位置（画面の外）へ置き、つないだ Chrome のプロセスの窓で、開く前の写しに無いものだけを見る
 //     （利用者の窓・Edge の窓・別の Chrome の窓を取り違えて隠さない）。プロセスが分からなければ採用しない
 //   - Chrome の接続が切れたとき・窓の開きかけに失敗したときは、隠した窓を閉じる（閉じられなければ見える形へ戻す）。見えない窓を残さない
+//   - 更新（ADR 0167）: 隠した窓は閉じずに持ち越す。窓ごとの印（os.exportAgent）を snapshot() で接続の子に預け（relay の carry）、新しいサーバーが
+//     restore() で受けて、main の層が戻ったら readopt()（os.adoptAgent）で記録を作り直す。層が窓を引き継げなかった窓は readopt() の返り値で relay に渡し、CDP で閉じる
+//     main が居ない間（層が pending）に窓を開く・採用する依頼は、readyWaitMs だけ待ち、それでも戻らなければ「更新中」で失敗させる
 // 引き継ぎ（ADR 0154。control.mjs が呼ぶ）: reveal は会話の窓を見える形に戻して（Pleiad の窓のある画面の中へ）前に出し、conceal は画面の外の見えない窓に戻す。
 // 見えている間は、層の前面の見張りがその窓を見ない（層の reveal が窓の隠した印を外す）。見えている間に開いた popup は隠さず、戻すときに探して隠す
 // 窓の大きさ（DIP）は Pleiad が決める（Browser.setWindowBounds）。窓の ref は層が出した値で、core は覚えて返すだけ。
@@ -23,7 +26,7 @@ import { readLastUsedProfile } from './locate.mjs';
  * 画面は 800×800 の外形のとき、ページ（viewport）が約 800×660 になる
  */
 export const WINDOW_DIP = Object.freeze({ width: 800, height: 800 });
-const DEFAULT_TIMING = { hwndWaitMs: 3000, hwndPollMs: 20, targetWaitMs: 8000, targetPollMs: 50, popupWaitMs: 3000, boundsWaitMs: 1000, navigateMs: 15_000 };
+const DEFAULT_TIMING = { hwndWaitMs: 3000, hwndPollMs: 20, targetWaitMs: 8000, targetPollMs: 50, popupWaitMs: 3000, boundsWaitMs: 1000, navigateMs: 15_000, readyWaitMs: 20_000 };
 /** 外形で探す前に窓を置く、画面の外の位置の揺らぎ（DIP）と、最初の窓の大きさの端数。同時に外形で探す窓同士が同じ外形にならないように */
 const MARK_STEP = 8, MARK_SLOTS = 20, MARK_SIZE_EXTRA = { width: 3, height: 5 }, MARK_TOLERANCE = 2;
 
@@ -53,6 +56,21 @@ export function createChromeWindows({ os, locate, log = () => {}, random = () =>
   let browser;                 // undefined: まだ探していない / null: 見つからない / { id, product }
   let baseline = null;         // 直近の窓を開く前のブラウザーの窓の写し（snapshotWindows）。popup を外形で探すとき、それ以前からある窓を除く
   let markSeq = 0;
+  const listeners = new Set();
+  const changed = () => { for (const fn of [...listeners]) { try { fn(); } catch { /* 聞き手の失敗は窓の管理を壊さない */ } } };
+
+  /** main の層が居ない間（pending。更新で main が入れ替わる間）は、戻るのを readyWaitMs だけ待つ。戻らなければ更新中の失敗 */
+  async function osReady() {
+    if (os.capabilities().reason !== 'pending') return;
+    let off = () => {};
+    let timer = null;
+    const ready = await Promise.race([
+      new Promise(resolve => { off = os.onReady(() => resolve(true)); }),
+      new Promise(resolve => { timer = setTimeout(() => resolve(false), time.readyWaitMs); }),
+    ]);
+    off(); clearTimeout(timer);
+    if (!ready && os.capabilities().reason === 'pending') throw new Error('Pleiad is updating. Retry in a minute.');
+  }
 
   const entryOf = id => {
     let entry = entries.get(id);
@@ -116,6 +134,7 @@ export function createChromeWindows({ os, locate, log = () => {}, random = () =>
   }
 
   async function openWindow(cdp, entry, url) {
+    await osReady();
     const nonce = random();
     const features = os.capabilities().features;
     const before = await os.foreground();
@@ -155,7 +174,9 @@ export function createChromeWindows({ os, locate, log = () => {}, random = () =>
         if (ref) await hide(ref, before);
         else log('chrome-windows: window not found, so it was not hidden');
       }
-      entry.windows.set(windowId, { ref, nonce, role: first ? 'main' : 'extra' });
+      const token = ref ? await os.exportAgent(ref) : null;
+      entry.windows.set(windowId, { ref, nonce, role: first ? 'main' : 'extra', token });
+      changed();
     } catch (error) {
       // 隠した窓の記録だけを残さない（見えない窓が、誰にも戻せないまま残る）。閉じる（だめなら戻す）
       if (ref) await os.closeAgent(ref).catch(() => {});
@@ -183,8 +204,9 @@ export function createChromeWindows({ os, locate, log = () => {}, random = () =>
     async adoptPopup({ cdp, entryId, windowId }) {
       const entry = entryOf(entryId);
       if (entry.windows.has(windowId)) return;
-      const record = { ref: null, nonce: null, role: 'popup' };
+      const record = { ref: null, nonce: null, role: 'popup', token: null };
       entry.windows.set(windowId, record);
+      try { await osReady(); } catch (error) { log(`chrome-windows: ${error.message}`); return; }
       const features = os.capabilities().features;
       if (!features.conceal || !features.bounds) return;
       if (entry.revealed) return;   // 人が引き継いでいる間。人の窓を画面の外へ動かさない（戻すときに探して隠す）
@@ -193,6 +215,8 @@ export function createChromeWindows({ os, locate, log = () => {}, random = () =>
       if (entry.windows.get(windowId) !== record) { await os.closeAgent(ref).catch(() => {}); return; }   // 先に閉じられた
       record.ref = ref;
       await hide(ref, null);
+      record.token = await os.exportAgent(ref);
+      changed();
     },
 
     /**
@@ -212,6 +236,7 @@ export function createChromeWindows({ os, locate, log = () => {}, random = () =>
       if (!shown.length) { entry.revealed = false; entry.near = null; return { revealed: 0, raised: false }; }
       const target = (shown.find(([windowId]) => windowId === front) ?? shown.find(([, record]) => record.role === 'main') ?? shown[0])[1];
       const raised = (await os.raise(target.ref))?.ok === true;
+      changed();   // 見せている窓の印を預け直す（サーバーが入れ替わっても、人が操作している窓を隠さない）
       return { revealed: shown.length, raised };
     },
 
@@ -239,9 +264,10 @@ export function createChromeWindows({ os, locate, log = () => {}, random = () =>
           const ref = cdp && features.conceal && features.bounds ? await findByBounds(cdp, windowId, baseline, { waitMs: time.popupWaitMs }).catch(() => null) : null;
           if (!ref) { log('chrome-windows: popup window not found, so it was not hidden'); failed += 1; continue; }
           record.ref = ref;
-          if (await hide(ref, to)) concealed += 1; else failed += 1;
+          if (await hide(ref, to)) { concealed += 1; record.token = await os.exportAgent(ref); } else failed += 1;
         }
       }
+      changed();
       return { concealed, failed };
     },
 
@@ -255,6 +281,7 @@ export function createChromeWindows({ os, locate, log = () => {}, random = () =>
       if (!record) return;
       entry.windows.delete(windowId);
       if (record.ref) os.release(record.ref).catch(() => {});
+      changed();
     },
 
     /** 新しい会話の id が決まった */
@@ -262,6 +289,7 @@ export function createChromeWindows({ os, locate, log = () => {}, random = () =>
       const entry = entries.get(from);
       if (!entry || entries.has(to)) return;
       entries.delete(from); entries.set(to, entry);
+      changed();
     },
 
     /**
@@ -274,10 +302,85 @@ export function createChromeWindows({ os, locate, log = () => {}, random = () =>
         entry.windows.clear();
         entry.revealed = false; entry.near = null;   // 引き継ぎ中だった窓ももう無い
       }
+      changed();
     },
 
     /** 会話を消した。窓を閉じるのは第 8 段なので、記録だけを捨てる（隠した窓の見張りは層が続ける） */
-    forget(entryId) { entries.delete(entryId); },
+    forget(entryId) { if (entries.delete(entryId)) changed(); },
+
+    /** 窓の記録が変わった（relay が carry を預け直す） */
+    onChange(fn) { listeners.add(fn); return () => listeners.delete(fn); },
+
+    /** 更新を越えて持ち越す窓の印（会話の id → 窓。隠している窓だけ）。ref は main が入れ替わると意味を持たないので、層の印（token）だけを預ける */
+    snapshot() {
+      const out = [];
+      for (const [id, entry] of entries) {
+        // 見せている間に開いた popup は、まだ層の印が無い（戻すときに外形で探して隠す）。窓の ID だけ預けて、新しいサーバーでも範囲に戻す
+        const windows = [...entry.windows].filter(([, record]) => record.token || record.role === 'popup').map(([windowId, record]) => ({ windowId, role: record.role, token: record.token ?? null }));
+        if (windows.length) out.push({ id, ...(entry.revealed ? { revealed: true } : {}), windows });
+      }
+      return out;
+    },
+
+    /** 前のサーバーが預けた窓の印を受ける（記録だけ。窓には触らない。引き継ぎは readopt） */
+    restore(saved) {
+      for (const item of Array.isArray(saved) ? saved : []) {
+        if (typeof item?.id !== 'string' || !Array.isArray(item.windows)) continue;
+        const entry = entryOf(item.id);
+        if (item.revealed === true) entry.revealed = true;   // 人が操作している窓。隠さない・戻すまで popup も隠さない
+        for (const w of item.windows) {
+          const popup = w?.role === 'popup' && w.token == null;
+          if (!Number.isSafeInteger(w?.windowId) || (typeof w.token !== 'string' && !popup) || entry.windows.has(w.windowId)) continue;
+          entry.windows.set(w.windowId, { ref: null, nonce: null, role: typeof w.role === 'string' ? w.role : 'extra', token: popup ? null : w.token });
+        }
+      }
+    },
+
+    /**
+     * 印を持つ窓を層に引き継がせて、記録の ref を作り直す（サーバーの入れ替わり後・main の層が入れ替わった後）。
+     * 層が引き継げなかった窓（窓が無い・ブラウザーの窓でない）は記録を捨て、{ entryId, windowId } で返す（relay が CDP で閉じる）。層が使えなければ何もしない
+     */
+    async readopt({ cdp = null } = {}) {
+      if (!os.capabilities().supported) return [];
+      const lost = [];
+      const features = os.capabilities().features;
+      for (const [entryId, entry] of [...entries]) {
+        for (const [windowId, record] of [...entry.windows]) {
+          if (!record.token) {
+            // main が居ない間に開いた popup（隠せず、窓の ID だけ残っている）。層が戻ったので、外形で探して隠す。探せない・cdp が無いなら、見える窓を残さないよう lost で返して閉じさせる
+            if (record.role !== 'popup' || record.ref || entry.revealed) continue;
+            const ref = cdp && features.conceal && features.bounds ? await findByBounds(cdp, windowId, baseline, { waitMs: time.popupWaitMs }).catch(() => null) : null;
+            if (ref) { record.ref = ref; await hide(ref, null); record.token = await os.exportAgent(ref); changed(); }
+            else { entry.windows.delete(windowId); lost.push({ entryId, windowId, revealed: false }); }
+            continue;
+          }
+          // 見せている窓は、層に「隠していない窓」として引き継がせる（前面の見張りが人の窓を画面の外へ戻さない）
+          const ref = await os.adoptAgent(record.token, { revealed: entry.revealed === true }).catch(() => null);
+          if (ref) record.ref = ref;
+          else { entry.windows.delete(windowId); lost.push({ entryId, windowId, revealed: entry.revealed === true }); }
+        }
+      }
+      if (lost.length) { log(`chrome-windows: ${lost.length} window(s) could not be taken over`); changed(); }
+      return lost;
+    },
+
+    /**
+     * Chrome に接続できないまま層が戻ったとき（main が居ない間に接続が切れた）: 隠した窓を閉じる。窓の記録を引き継いだだけで接続が無いので、誰にも戻せない。
+     * 人が操作している窓（revealed）は閉じない（記録だけ捨てる）。閉じた数を返す
+     */
+    async closeHidden() {
+      let closed = 0;
+      for (const entry of entries.values()) {
+        for (const [windowId, record] of [...entry.windows]) {
+          if (entry.revealed) { entry.windows.delete(windowId); continue; }
+          if (record.ref) { await os.closeAgent(record.ref).catch(() => {}); closed += 1; }
+          entry.windows.delete(windowId);
+        }
+      }
+      if (closed) log(`chrome-windows: closed ${closed} hidden window(s) left without a Chrome connection`);
+      changed();
+      return closed;
+    },
 
     /** テスト・診断用: 会話の窓（windowId・ref・役割）。窓の題・URL は持たない */
     windows(entryId) { return [...(entries.get(entryId)?.windows ?? [])].map(([windowId, record]) => ({ windowId, ref: record.ref, role: record.role })); },

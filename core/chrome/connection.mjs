@@ -52,8 +52,9 @@ export function probeLoopbackPort(port, timeoutMs = DEFAULTS.probeMs) {
  * @param {object} deps
  * @param {{ browser: string, userDataDir: string }|null} deps.locate  Chrome の User Data（null・空なら unsupported / platform）
  * @param os  core/chrome/os.mjs の口（偽物でもよい）
+ * @param link  接続の子への口（core/chrome/link.mjs。ADR 0167）。あれば ws はそこ経由で張る・引き継ぐ。無い・切れたときは WebSocketImpl（このプロセスの中の ws）
  */
-export function createChromeConnection({ locate, os, WebSocketImpl = NodeWebSocket, clock = realClock, probePort = probeLoopbackPort, log = () => {}, ...overrides }) {
+export function createChromeConnection({ locate, os, WebSocketImpl = NodeWebSocket, link = null, clock = realClock, probePort = probeLoopbackPort, log = () => {}, ...overrides }) {
   const opt = { ...DEFAULTS, ...overrides };
   const home = locate?.userDataDir ? locate : null;
   const listeners = new Set();
@@ -71,6 +72,10 @@ export function createChromeConnection({ locate, os, WebSocketImpl = NodeWebSock
   /** 待たずに走らせる続き。想定外の例外は処理されない拒否にせず、ログに 1 行だけ出す（Chrome の値は出さない） */
   const run = promise => { promise.catch(error => log(`chrome: internal error: ${error?.message ?? error}`)); };
   const caps = () => os.capabilities();
+  const linked = () => (link?.alive ? link : null);
+  const wsImpl = () => linked()?.WebSocketImpl ?? WebSocketImpl;
+  /** 接続の子の経由では、CDP の番号を前のサーバーが振った番号より後から始める（古い答えと混ぜない） */
+  const firstId = () => linked()?.welcome.firstId ?? 1;
 
   /** 公開する状態。OS の層が使えないときは unsupported で固定 */
   function state() {
@@ -138,12 +143,19 @@ export function createChromeConnection({ locate, os, WebSocketImpl = NodeWebSock
     // 確認の窓の見つけ方の比べ元と、出し直しで前面を返す先は、upgrade を投げる直前に写す
     const [snap, fg] = await Promise.all([os.snapshotWindows(), os.foreground()]);
     if (stale(att)) return;
-    const rnd = { n: att.round, snap: snap ?? [], prevFg: fg, ws: null, dialog: null, opened: false, selfClose: false, upgradeAt: clock.now(), port: info.port,
+    const rnd = { n: att.round, snap: snap ?? [], prevFg: fg, ws: null, dialog: null, opened: false, selfClose: false, upgradeAt: clock.now(), port: info.port, path: info.path,
       reissueTimer: null, guardTimer: null, yieldTimer: null, finding: false };
     att.cur = rnd;
-    const ws = new WebSocketImpl(`ws://127.0.0.1:${info.port}${info.path}`, { perMessageDeflate: false });
+    // 接続の子との縁が途中で切れていたら、子が持つ古い ws を終わらせてから、このサーバーの中で張る（二重の接続・二重の確認にしない）
+    if (link && !link.alive) { await link.retireChild?.(); if (stale(att)) return; }
+    const ws = new (wsImpl())(`ws://127.0.0.1:${info.port}${info.path}`, { perMessageDeflate: false });
     rnd.ws = ws;
     setStatus({ state: 'permission', reason: null, dialog: att.round === 0 ? false : status.dialog });
+    wireRound(att, rnd, ws, opt.reissueMs);
+  }
+
+  /** upgrade の ws のイベントと、出し直し・確認の窓の探しを仕掛ける（引き継いだ upgrade にも使う。reissueInMs は出し直しまでの残り） */
+  function wireRound(att, rnd, ws, reissueInMs) {
     ws.on('open', () => { run(onOpen(att, rnd)); });
     // 確認を閉じた・「キャンセル」を押したとき、Chrome は HTTP 403 で断る（実機で確認。2026-10-06）。ほかの応答は想定外（protocol）
     ws.on('unexpected-response', (_req, res) => {
@@ -154,7 +166,7 @@ export function createChromeConnection({ locate, os, WebSocketImpl = NodeWebSock
     });
     ws.on('error', () => {});
     ws.on('close', () => { run(onFail(att, rnd, {})); });
-    rnd.reissueTimer = clock.setTimeout(() => { rnd.reissueTimer = null; run(reissue(att, rnd)); }, opt.reissueMs);
+    rnd.reissueTimer = clock.setTimeout(() => { rnd.reissueTimer = null; run(reissue(att, rnd)); }, reissueInMs);
     run(findDialog(att, rnd));
   }
 
@@ -252,8 +264,9 @@ export function createChromeConnection({ locate, os, WebSocketImpl = NodeWebSock
     if (stale(att, rnd) || rnd.failed) { try { rnd.ws?.terminate(); } catch { /* 同上 */ } return; }
     rnd.opened = true;
     clearRound(rnd);
-    const cdp = createCdp(rnd.ws);
+    const cdp = createCdp(rnd.ws, { firstId: firstId() });
     cdp.port = rnd.port;   // 窓を外形で探す層（core/chrome/windows.mjs）が、つないだ Chrome のプロセスを引くのに使う
+    cdp.browserId = rnd.path ?? null;   // /devtools/browser/<GUID>。Chrome の起動ごとに変わる（中継が、持ち越した窓の持ち主の Chrome かを確かめる）
     let product = null;
     try { product = (await cdp.send('Browser.getVersion')).product ?? null; }
     catch { cdp.close(); if (!stale(att)) finishAttempt(att, 'protocol', new ChromeConnectionError('protocol')); return; }
@@ -333,6 +346,8 @@ export function createChromeConnection({ locate, os, WebSocketImpl = NodeWebSock
     /** 「やめる」: 試行を止め、待っている人へ declined を返す。確認が出ていれば閉じる */
     giveUp() { if (current) finishAttempt(current, 'declined', new ChromeConnectionError('declined')); },
     /** 「切る」と「やめる」。つながっていれば切り、試行中なら止める */
+    // 接続の子には quit を送らず !close（子は ws を閉じて idle に戻る）で済ませる。quit だと子が終わり、「もう一度つなぐ」が
+    // 次の起動まで内の ws になって、更新をまたいで持てなくなる。窓は cdp.close の前に relay が片付ける。Pleiad の終了は server.mjs が quit する
     disconnect() {
       if (connected) {
         const c = connected; connected = null;
@@ -353,6 +368,48 @@ export function createChromeConnection({ locate, os, WebSocketImpl = NodeWebSock
       const result = await os.raise(ref);
       log(`chrome: raise method=${result?.method ?? 'failed'}`);
       return result;
+    },
+    /**
+     * 入れ替わったサーバーが、接続の子の持つ接続を引き継ぐ（ADR 0167）。つながっていれば確認なしで connected、
+     * 確認待ち（upgrading）なら permission の続き（出し直しの残り時間は upgrade を始めた時刻から数える）。何も無ければ false
+     */
+    async adopt() {
+      const l = linked();
+      if (closedForGood || !l || connected || current || !home) return false;
+      const welcome = l.welcome;
+      const socket = l.adopted();
+      if (!socket) return false;
+      if (welcome.phase === 'open') {
+        const cdp = createCdp(socket, { firstId: welcome.firstId });
+        cdp.port = welcome.port;
+        cdp.browserId = welcome.path ?? null;
+        let product = null;
+        try { product = (await cdp.send('Browser.getVersion')).product ?? null; }
+        catch { if (!closedForGood) cdp.close(); return false; }
+        if (closedForGood) return false;
+        connected = { cdp, port: welcome.port };
+        setStatus({ state: 'connected', reason: null, dialog: false, product });
+        cdp.onClose(() => { run(onConnectedClosed(cdp, welcome.port)); });
+        return true;
+      }
+      const att = { id: ++seq, stopped: false, cur: null, round: 0, pollTimer: null };
+      current = att; userStarted = true; bEntry = { raised: true };   // 確認は前の main が前に出した。出し直しの前面は返さない
+      const upgradeAt = Number(welcome.upgradeAt) || clock.now();
+      const rnd = { n: 0, snap: [], prevFg: null, ws: socket, dialog: null, opened: false, selfClose: false, upgradeAt, port: welcome.port, path: welcome.path,
+        reissueTimer: null, guardTimer: null, yieldTimer: null, finding: false };
+      att.cur = rnd;
+      setStatus({ state: 'permission', reason: null, dialog: false });
+      wireRound(att, rnd, socket, Math.max(0, opt.reissueMs - (clock.now() - upgradeAt)));
+      return true;
+    },
+    /** 引き継ぎで出ていくサーバーの終わり: 接続の子の ws も確認の窓も閉じず、この側の記録と待ちだけを終える。以後この接続は使わない */
+    handOff() {
+      if (closedForGood) return;
+      closedForGood = true;
+      const att = current; current = null; connected = null;
+      if (att) { att.stopped = true; clearTimer(att, 'pollTimer'); if (att.cur) { clearRound(att.cur); att.cur = null; } }
+      rejectWaiters(new ChromeConnectionError('closed'));
+      listeners.clear();
     },
     /** Pleiad の終了。確認が出ていれば閉じる（Chrome に確認を残さない） */
     async close() {

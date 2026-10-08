@@ -127,6 +127,7 @@ import { closeAll as closeDataDb } from './db.mjs';
 import { createApprovalIds } from './approval-id.mjs';
 import { parentPortScreencast, createScreencastHub, screencastCommand } from './browser-screencast.mjs';
 import { createChromeConnection } from './chrome/connection.mjs';
+import { chromeLinkEnabled, openChromeLink, shutdownHolderIfIdle } from './chrome/link.mjs';
 import { chromeHomes } from './chrome/locate.mjs';
 import { parentPortChromeOs } from './chrome/os.mjs';
 import { createChromeRelay } from './chrome/relay.mjs';
@@ -207,8 +208,17 @@ const screencastClients = new WeakMap();   // ws -> hub に渡す端末
 // エージェントのブラウザー（PC の Chrome）への接続 1 本（core/chrome/connection.mjs、ADR 0148・0153）。デスクトップ版だけ。OS ごとの層は main（desktop/chrome-os）
 const chromeLocate = chromeHomes()[0] ?? null;
 const chromeOs = hostedPort ? parentPortChromeOs(hostedPort) : null;
+// Chrome への ws を持つ接続の子（保持役の子。更新のサーバー・main の入れ替わりを越えて接続を保つ。ADR 0167）。AGENT_HOST_CHROME_LINK=off・実行場所の置き場が無い・つなげないときは、このプロセスの中の ws
+let chromeHolder = null;   // 保持役への口（接続の子を起こしたとき。終わるときに保持役ごと終わらせる）
+const chromeLink = chromeOs && chromeLinkEnabled({ runtimeRoot: BOOT_ENV.AGENT_HOST_RUNTIME_ROOT, handover: handoverEnabled(BOOT_ENV), bootValue: BOOT_ENV.AGENT_HOST_CHROME_LINK })
+  ? await holderLink({ dataDir: store.dataDir, root: BOOT_ENV.AGENT_HOST_RUNTIME_ROOT, key: BOOT_ENV.AGENT_HOST_RUNTIME_KEY ?? '', appVersion: APP_VERSION })
+    .then(holder => { chromeHolder = holder; return holder; })
+    .then(holder => openChromeLink({ holder, runtimeRoot: BOOT_ENV.AGENT_HOST_RUNTIME_ROOT, runtimeKey: BOOT_ENV.AGENT_HOST_RUNTIME_KEY ?? '', log: line => console.log(`  ${line}`),
+      onGone: () => console.log('  chrome-link: the connection child went away; Chrome is reached from this process') }))
+    .catch(error => { console.error('  chrome-link: not available:', String(error?.code ?? error?.message ?? error)); return null; })
+  : null;
 const chromeConnection = chromeOs
-  ? createChromeConnection({ locate: chromeLocate, os: chromeOs, log: line => console.log(`  ${line}`) })
+  ? createChromeConnection({ locate: chromeLocate, os: chromeOs, link: chromeLink, log: line => console.log(`  ${line}`) })
   : null;
 // 人を待つ場面の台帳（接続の許可の案内・ログインなどの依頼。core/chrome/handoff.mjs、ADR 0148・0168）。待ちは askPermission の outlivesTurn で出す。
 // control は第 6 段の core/chrome/control.mjs（{ state, onChange }）。中継の後に作られるので、下の chromeControl を作った所で useControl で差し込む
@@ -228,6 +238,18 @@ const chromeRelay = chromeConnection
   ? createChromeRelay({ connection: chromeConnection, os: chromeOs, locate: chromeLocate, authorize: (request, signal) => browserSiteApprovals(request, signal), deniedMessage: () => t('permission.browserSiteDenied'), log: line => console.log(`  ${line}`),
     handoff: chromeHandoffs, turnLive: id => liveTurn(id), turnSignal: id => runtime.turns.get(id)?.ac.signal, connectWaitText: id => agentT(runtime.turns.get(id)?.agentLocale ?? currentLocale(), 'browserBridge.connectWait') })
   : null;
+// 接続の子が預かっていた状態を受ける（端点・鍵・ポート・隠した窓の印）。前のサーバーの接続（確認待ちも）を引き継ぎ、以後の変化を預け直す
+if (chromeLink && chromeRelay) {
+  await chromeRelay.restore(chromeLink.welcome.carry, { staleSessions: chromeLink.welcome.sessions, invalid: chromeLink.welcome.carryInvalid === true }).catch(error => console.error('  chrome-link: restore failed:', String(error?.message ?? error)));
+  await chromeConnection.adopt().catch(error => console.error('  chrome-link: adopt failed:', String(error?.message ?? error)));
+  chromeRelay.onCarry((carry, options) => chromeLink.setCarry(carry, options));
+}
+// 隠した窓は main の層（desktop/chrome-os）が引き継ぐ。層が戻ったら（main の入れ替わり後を含む）記録を作り直す。引き継げなかった窓は CDP で閉じる
+if (chromeRelay && chromeOs) {
+  const readoptChromeWindows = () => { void chromeRelay.readopt().catch(error => console.error('  chrome-windows: readopt failed:', String(error?.message ?? error))); };
+  chromeOs.onReady(readoptChromeWindows);
+  if (chromeOs.capabilities().supported) readoptChromeWindows();
+}
 // 会話の Chrome の窓の映像（右パネルの「Chrome の窓」。ホストの画面もリモートの端末も見られる。見るだけ。core/chrome/screencast.mjs、ADR 0148）。
 // 内蔵ブラウザーの映像（上の screencastHub）とは別のハブで、WS のコマンドは args.source === 'chrome' で選ぶ
 const chromeScreencast = chromeRelay ? createChromeScreencast({ host: chromeRelay.view, log: line => console.log(`  ${line}`) }) : null;
@@ -6056,6 +6078,14 @@ const handoverRun = createHandover({
     for (const backend of listBackends()) { try { await backend.releaseIdle?.(); } catch (error) { console.error('  idle の子を止められない:', String(error?.message ?? error)); } }
     // 保持役に載った `!` の行も手を離す（無停止の更新 段階 3。終わりで止めない。新しいサーバーが引き取る）
     await shellRuns.handOff();
+    // Chrome への接続は接続の子が持ち続ける。端点・窓の印を最後の carry として預け、このサーバーの側の記録だけを終える（窓も接続も閉じない）
+    if (chromeLink?.alive && chromeRelay) {
+      try {
+        chromeLink.setCarry(chromeRelay.handOff());
+        chromeConnection.handOff();
+        await chromeLink.handOff();
+      } catch (error) { console.error('  chrome-link: handoff failed:', String(error?.message ?? error)); }
+    }
     const root = BOOT_ENV.AGENT_HOST_RUNTIME_ROOT;
     const client = root ? await holderLink({ dataDir: store.dataDir, root, launch: false }).catch(() => null) : null;
     if (!client) return;
@@ -8036,6 +8066,7 @@ mainPort.on("message", async ({ data }) => {
     chromeHandoffs?.close();
     chromeRelay?.close();
     if (chromeConnection) await Promise.race([chromeConnection.close(), new Promise(resolve => setTimeout(resolve, 2000))]).catch(() => {});
+    if (chromeLink) await Promise.race([chromeLink.quit(), new Promise(resolve => setTimeout(resolve, 2000))]).catch(() => {});   // 接続の子は Pleiad が終わるときに終える
     try { finishShutdown(store.flushNow, () => runtime.turns.size > 0 || agentTasks.busy, exitAfterStoppingHeld); }
     catch (e) {
       console.error('session store shutdown save failed:', e?.code ?? e?.message ?? e);
@@ -8044,17 +8075,34 @@ mainPort.on("message", async ({ data }) => {
   }
 });
 
+// 本当に終わる（更新の引き継ぎではない）とき、終わりの後片付け（shellRuns.stopAll など）が保持役の子を全部止めた後、接続の子のために起こした保持役も終わらせる（exitAfterStoppingHeld）
+/**
+ * 接続の子のために起こした保持役を終わらせる。保持役の shutdown は、中の子を全部止めて終わる。ほかの子（app-server・シェル）がまだ居るなら終わらせない。
+ * 書き込みが済むのを待ってから戻る（exit のハンドラの中では、送る前にプロセスが終わる）。待つのは 1 秒まで
+ */
+async function shutdownChromeHolder() {
+  if (!chromeHolder) return;
+  // 子の一覧は、つなぎ直した welcome の写しを見る（つなぎ直すと古い親は外れる。終わるところなので構わない）
+  const client = await holderLink({ dataDir: store.dataDir, root: BOOT_ENV.AGENT_HOST_RUNTIME_ROOT, launch: false }).catch(() => null) ?? chromeHolder;
+  await shutdownHolderIfIdle(client);
+}
 /** 終わる（main の shutdown・孤児の見張り）。手を離していない保持役の子の app-server は、止めてから終わる（保持役の子は、サーバーが終わっても残るため。無停止の更新 段階 3） */
 function exitAfterStoppingHeld(code) {
-  void Promise.race([stopHeldAppServer(), new Promise(resolve => setTimeout(resolve, 2500))]).catch(() => {}).finally(() => process.exit(code));
+  void Promise.race([stopHeldAppServer(), new Promise(resolve => setTimeout(resolve, 2500))]).catch(() => {})
+    .then(() => shutdownChromeHolder()).catch(() => {})
+    .finally(() => process.exit(code));
 }
 
 // 名前付きパイプの main が居ないまま長く居続けない（utilityProcess は main と一緒に終わるので要らない）。作業が 0 件のまま上限を過ぎたら、shutdown と同じに終わる
 const orphanGuard = mainLink ? createOrphanGuard({
   isBusy: async () => (await runningWork()).count > 0,
   onExpire: () => {
-    try { finishShutdown(store.flushNow, () => false, exitAfterStoppingHeld); }
-    catch (e) { console.error('session store shutdown save failed:', e?.code ?? e?.message ?? e); process.exit(1); }
+    // 接続の子には quit を送って、終わるのを 2 秒まで待つ（待たずに終わると、子が Chrome への ws を持ったまま残る）
+    const quitLink = chromeLink ? Promise.race([chromeLink.quit(), new Promise(resolve => setTimeout(resolve, 2000))]).catch(() => {}) : Promise.resolve();
+    void quitLink.then(() => {
+      try { finishShutdown(store.flushNow, () => false, exitAfterStoppingHeld); }
+      catch (e) { console.error('session store shutdown save failed:', e?.code ?? e?.message ?? e); process.exit(1); }
+    });
   },
   log: line => console.log(`  [main-link] ${line}`),
 }) : null;

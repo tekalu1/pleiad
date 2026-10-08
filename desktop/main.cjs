@@ -454,7 +454,9 @@ ipcMain.on('ply:title-bar', (event, colors) => {
   window.setTitleBarOverlay({ color: colors.color, symbolColor: colors.symbolColor, height: TITLE_BAR_HEIGHT });
 });
 // 画面の外・透明・マウス素通しの窓は、Pleiad が終わると誰にも戻せない。終了の道（will-quit・will-quit を通らない app.exit）で閉じる（閉じられなければ見える形へ戻す）
+// 更新で離れるとき（updateLeaving）は閉じない。窓は新しい main が exportAgent の印から引き継ぐ（ADR 0167）。引き継げなかった窓は新しい main が CDP で閉じる
 function closeAgentWindows() {
+  if (updateLeaving) { try { chromeOs?.stopGuard?.(); } catch { /* 見張りが無い層 */ } return; }
   try { chromeOs?.closeAllAgents?.(); } catch (error) { console.warn('[chrome-os]', `closeAllAgents failed: ${error.message}`); }
 }
 if (!app.requestSingleInstanceLock()) app.quit();

@@ -137,6 +137,18 @@ WS の口は `browserScreencast`・`browserScreencastStop`・`browserScreencastA
 
 `browser.chromeConnect`・`browser.chromeDisconnect`・`browser.chromeRaiseDialog` はホストの PC の画面だけから呼べる。`browser.chromeStatus` は MCP の catalog と CLI の `pleiad browser status` にも出る。`chromeBrowser` イベント（`state, reason, dialog, product`）はホストの画面だけへ配る。接続の案内のカードは会話へ届くが、スマホで Chrome 自身の許可に答えることはできない。
 
+### 接続の子（更新を越える Chrome への接続。[ADR 0167](adr/0167-chrome-connection-held-across-updates.md)）
+
+Chrome への ws（`core/chrome/connection.mjs` の接続）は、サーバーでも main でもなく**接続の子**（保持役の子。`core/chrome/link-child.mjs`）が持つ。サーバーは名前付きパイプ（`core/chrome/link.mjs`）で子とつなぎ、`WebSocketImpl` として `connection.mjs` に渡す。サーバーの入れ替えでも main の入れ替えでも ws は切れず、許可の確認は出直さない。
+
+- **パイプ**: 1 行 1 メッセージ。CDP の行はそのまま通し、制御の行は `!名前 JSON`（サーバー→子: `!hello`・`!open`・`!close`・`!carry`・`!quit`、子→サーバー: `!welcome`・`!opened`・`!fail`・`!closed`）。映像のような大きい行（64 KB 以上）は JSON として読まず、先頭 256 バイトだけ見て Buffer のまま通す（64 MB を超える行は捨てる）。
+- **つなぎ手が居ない間**: 子は Chrome からの `Fetch.requestPaused` に `Fetch.failRequest(BlockedByClient)` で答える（止まったままのリクエストを残さない）。CDP の番号は `firstId = 最大の番号 + 1000` から始め直す。
+- **引き継ぎ**: 古いサーバーは中継の状態（`relay.snapshot()`。会話の id・鍵・待ち受けのポート・隠した窓の印）を `!carry` で預け（200 ms でまとめる。引き継ぎの直前に確定させる。256 KB まで）、新しいサーバーは `welcome` で受けて `relay.restore` で同じポート・同じ鍵を立てる。確認待ちのまま入れ替わったら、`connection.adopt()` が確認の続きを引き取る。
+- **止める・引き継ぐ（第 6 段）を越える**: carry は会話ごとに `stopped`（止めた印）と `paused`（引き継ぎ中の印。`at` と、あれば `by`）を持ち、見せている窓の会話には `revealed` を付ける。新しいサーバーは `relay.restore` で一時停止のまま会話を戻すので、つなぎ直したエージェントのコマンドは `PAUSED_MESSAGE` で断られ、人が操作している窓へ通らない。control は作られたとき（と restore のあと）に撮影を断ち直す。見せている窓は `adoptAgent(token, { revealed: true })` で、隠さず見張りにも入れずに引き継ぐ（戻すときの `conceal` で隠す）。引き継げなかった窓でも、見せている窓のタブは CDP で閉じない（人の窓。記録だけ捨てる）。見せている間に開いた popup は印が無いので、窓の ID と役割だけ預けて範囲に戻す。端末から引き継いでいる間（第 7 段 C）は `paused` に `by: 'device'` と映像の箱（`viewport`）も載り、新しい control が端末の印を立て直して箱を映像に伝え直す（撮影は断たない）。`openForConversation` は restore 後の同じポート・同じ鍵の待ち受けでそのまま動く。
+- **隠した窓**: main の層（`desktop/chrome-os`）が `exportAgent`（`"<hwnd>:<元のスタイル>"`）で出した印を `core/chrome/windows.mjs` が窓ごとに持ち、新しい層が `adoptAgent` で記録を作り直す。更新のあいだ窓は閉じない（`desktop/main.cjs` の `closeAgentWindows` は更新で離れるときは何もしない）。引き継げなかった窓は、Chrome の接続が付いたとき CDP でタブを閉じる。
+- **子の寿命**: サーバーが 10 分つながらなければ、保持役が止める。Pleiad の終了（`shutdown`・孤児の見張り）では `!quit` で終える。
+- **切り替え**: `AGENT_HOST_CHROME_LINK=off`（または実行場所の置き場が無い・子につなげない）なら、サーバーの中で ws を張る今の形。
+
 ### 中継とエージェントへの渡し方
 
 `core/chrome/relay.mjs` が Chrome への接続の上で、会話の範囲に絞った CDP を中継する。待ち受けは loopback の 1 ポートで、会話ごとに鍵付きの `ws://127.0.0.1:<port>/devtools/browser/<鍵 48 桁>` を出す。相手・Host が一致しない接続や、鍵の違う接続は断る。Electron の remote-debugging-port は開かない。

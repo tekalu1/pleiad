@@ -10,10 +10,10 @@ const DEFAULT_TIMEOUT_MS = 15_000;
 
 /**
  * @param ws 開いた接続
- * @param {{ timeoutMs?: number }} [options] 1 回の send の上限
+ * @param {{ timeoutMs?: number, firstId?: number }} [options] 1 回の send の上限。firstId は最初に振る id（接続の子から引き継いだ接続は、前のサーバーが振った id より先から数える）
  */
-export function createCdp(ws, { timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
-  let next = 0;
+export function createCdp(ws, { timeoutMs = DEFAULT_TIMEOUT_MS, firstId = 1 } = {}) {
+  let next = firstId - 1;
   let closed = false;
   const pending = new Map();
   const listeners = new Map();         // method -> Set<fn(params, sessionId)>

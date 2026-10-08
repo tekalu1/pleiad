@@ -440,6 +440,64 @@ function createWin32ChromeOs({ win32, log = () => {}, spawn = childProcess.spawn
     return count;
   }
 
+  /**
+   * 隠している窓の持ち物（窓のハンドルと元の拡張スタイル）を、main の入れ替わりを越える印にする（ADR 0167）。窓はそのまま（閉じない・戻さない）。
+   * 隠していない窓・エージェントの窓でない ref には null
+   */
+  function exportAgent(ref) {
+    const entry = knownAgent(ref);
+    if (!entry || !entry.concealed) return null;
+    try {
+      // 窓のハンドルは使い回される。ブラウザーのプロセス（pid）も印に入れ、引き継ぐときに同じ窓か確かめる
+      return `${entry.hwnd}:${(entry.ex0 ?? 0) >>> 0}:${win32.windowInfo(entry.hwnd).pid}`;
+    } catch { return null; }
+  }
+
+  /**
+   * exportAgent の印から、隠している窓の記録を作り直す（新しい main）。窓がもう無い・ブラウザーの窓でない印には null（窓には触らない）。
+   * 作り直した窓は隠しているものとして前面の見張りに入る（revealed: true の窓は人が操作中なので、隠さず見張りにも入れない）
+   */
+  function adoptAgent(token, { revealed = false } = {}) {
+    const match = /^(\d{1,20}):(\d{1,10}):(\d{1,10})$/.exec(String(token ?? ''));
+    if (!match) return null;
+    const hwnd = Number(match[1]);
+    try {
+      if (!Number.isSafeInteger(hwnd) || hwnd <= 0 || !alive(hwnd)) return null;
+      const info = win32.windowInfo(hwnd);
+      if (info.className !== BROWSER_CLASS || !BROWSER_EXES.has(exeName(win32.processPath(info.pid)))) return null;
+      // 同じ窓か: 印を作ったときのプロセスのままで、隠した姿（画面の外・タスクバーから外す・透明・素通し）のままか。
+      // ハンドルが別のブラウザーの窓に使い回されていたら、隠していない窓に触らない
+      if (info.pid !== Number(match[3])) return null;
+      if (!revealed && !looksConcealed(info)) return null;
+      if (refs.get(String(hwnd))?.kind === 'dialog') return null;
+      const ref = rememberAgent(hwnd);
+      if (!ref) return null;
+      const entry = refs.get(ref.id);
+      entry.ex0 = Number(match[2]) >>> 0;
+      // 人が操作している窓（revealed）は隠さない・見張らない（戻すときの conceal が元のスタイルで隠す）
+      entry.concealed = !revealed;
+      entry.closeAt = 0;
+      if (!revealed) startGuard();
+      return ref;
+    } catch (error) {
+      log(`adopt agent failed: ${error.message}`);
+      return null;
+    }
+  }
+
+  /** conceal がした姿か: 拡張スタイルが TOOLWINDOW・LAYERED・TRANSPARENT で APPWINDOW が無く、どのモニターにもかからない位置にある */
+  function looksConcealed(info) {
+    const mask = WS_EX_TOOLWINDOW | WS_EX_LAYERED | WS_EX_TRANSPARENT;
+    if ((info.exStyle & mask) !== mask || (info.exStyle & WS_EX_APPWINDOW) !== 0) return false;
+    const rect = info.rect;
+    if (!rect) return false;
+    let list = [];
+    try { list = win32.monitors?.() ?? []; } catch { list = []; }
+    if (list.length) return !list.some(m => rect.left < m.x + m.width && rect.right > m.x && rect.top < m.y + m.height && rect.bottom > m.y);
+    const spot = hiddenSpot();
+    return Math.abs(rect.left - spot.x) <= 64 && Math.abs(rect.top - spot.y) <= 64;
+  }
+
   /** 画面の構成が変わった（モニターの増減・解像度・DPI・スリープ復帰）。隠している窓を置き直す。main が Electron の screen のイベントで呼ぶ */
   function reconceal() {
     let count = 0;
@@ -540,7 +598,7 @@ function createWin32ChromeOs({ win32, log = () => {}, spawn = childProcess.spawn
     capabilities: () => ({ supported: true, reason: null, features: FEATURES }),
     snapshotWindows, findPermissionDialog, raise, yieldForeground, foreground, appWindow, close,
     locateBrowser, launchWindow, findWindowByNonce, findWindowByBounds, hiddenSpot, conceal, reveal, release, closeAgent,
-    reconceal, closeAllAgents,
+    exportAgent, adoptAgent, reconceal, closeAllAgents,
     /** テスト用: 見張りを 1 回だけ回す・止める */
     guardTick, stopGuard,
   };

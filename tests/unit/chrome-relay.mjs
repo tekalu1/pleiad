@@ -1,3 +1,4 @@
+import net from 'node:net';
 import { WebSocket } from 'ws';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import os from 'node:os';
@@ -395,6 +396,62 @@ export default async function (t) {
     } finally { a?.close(); await r.stop(); }
   }
 
+  // ===== 4b. carry: 止める・一時停止の印はすぐ預ける。無効の預かり物から始めると、会話は止めたまま =====
+  {
+    const r = await rig();
+    try {
+      const seen = [];
+      r.relay.onCarry((carry, options) => seen.push({ marks: carry.entries.map(e => `${e.id}:${e.stopped}:${!!e.paused}`).join(','), now: options?.now === true }));
+      await r.relay.endpoint('c1');
+      r.relay.stop('c1');
+      t.ok('止めた印が替わった carry は now: true で預ける', seen.at(-1)?.now === true && /c1:true/.test(seen.at(-1)?.marks), JSON.stringify(seen));
+      r.relay.pause('c1');
+      t.ok('一時停止の印が替わった carry も now: true', seen.at(-1)?.now === true && /c1:true:true/.test(seen.at(-1)?.marks), JSON.stringify(seen.at(-1)));
+    } finally { await r.stop(); }
+    const r2 = await rig();
+    try {
+      await r2.relay.restore(null, { invalid: true });
+      const url = await r2.relay.endpoint('inv');
+      t.ok('無効の預かり物から始めると、新しい会話は止めたまま（再接続を断る）', await refused(url));
+      const fresh = await r2.relay.endpoint('inv', { unlock: true });
+      t.ok('人の送信（unlock）で始まれば、つなげる', !(await refused(fresh)));
+      const other = await r2.relay.endpoint('inv2');
+      t.ok('unlock の後は、ほかの会話も止めたままにしない', !(await refused(other)));
+    } finally { await r2.stop(); }
+    // 前のポートを別のプロセスが持っていて別のポートで待ち受けるとき、鍵は作り直す（古い鍵が別のプロセスに知られるため）
+    {
+      const squatter = net.createServer(); await new Promise(resolve => squatter.listen(0, '127.0.0.1', resolve));
+      const taken = squatter.address().port;
+      const oldKey = 'ab'.repeat(24);
+      const r3 = await rig();
+      try {
+        await r3.relay.restore({ v: 1, port: taken, entries: [{ id: 'k1', key: oldKey, stopped: false, paused: null }], windows: [] });
+        const url = await r3.relay.endpoint('k1');
+        t.ok('前のポートが取れず別のポートで待ち受けたら、鍵を作り直す', r3.relay.port !== taken && !url.includes(oldKey), url);
+        t.ok('作り直した鍵ではつながり、古い鍵は断る', !(await refused(url)) && await refused(url.replace(/[a-f0-9]{48}$/, oldKey)));
+      } finally { await r3.stop(); await new Promise(resolve => squatter.close(resolve)); }
+    }
+    // 持ち越した窓は、つないだ Chrome のものだけ生かす（windowId は Chrome の起動ごとに 1 から振り直される。別の Chrome の windowId は利用者の窓を指す）
+    for (const same of [true, false]) {
+      const r4 = await rig();
+      let a4;
+      try {
+        let last = null;
+        r4.relay.onCarry(carry => { last = carry; });
+        const carried = { v: 1, port: 0, chrome: same ? r4.chrome.wsPath : '/devtools/browser/00000000-0000-0000-0000-000000000000',
+          entries: [{ id: 'k2', key: 'cd'.repeat(24), stopped: false, paused: null }], windows: [{ id: 'k2', windows: [{ windowId: 101, role: 'main', token: 'fake:hw101' }] }] };
+        await r4.relay.restore(carried);
+        a4 = await agent(await r4.relay.endpoint('k2'));
+        await a4.cmd('Browser.getVersion');
+        await until(() => last?.chrome === r4.chrome.wsPath);
+        const kept = last.windows.some(item => item.id === 'k2' && item.windows.some(w => w.windowId === 101));
+        t.ok(same ? '同じ Chrome に付いたら、持ち越した窓はそのまま' : '別の Chrome に付いたら、持ち越した窓を捨てる',
+          same ? kept : !kept, JSON.stringify(last));
+        t.ok('carry は今つないでいる Chrome の印を載せる', last.chrome === r4.chrome.wsPath, String(last.chrome));
+      } finally { a4?.close(); await r4.stop(); }
+    }
+  }
+
   // ===== 5. 上りが無い・切れたとき =====
   {
     const r = await rig({ permission: 'hold', connectWaitMs: 300 });
@@ -427,7 +484,31 @@ export default async function (t) {
     } finally { a?.close(); await r.stop(); }
   }
 
-  // ===== 5c. 人の「止める」でその会話の接続待ちを外す（Chrome の確認がすぐ閉じる）。ターンの外では確認を出さずに断る =====
+  // ===== 5c. 更新で出ていくとき（handOff）、確認待ちの止まった要求は出る前に断る（ADR 0167。出た後は接続の子への道が閉じて、断りが届かない）=====
+  {
+    const r = await rig();
+    let a;
+    try {
+      r.fake.setPage('https://pending.example/', { title: 'Pending' });
+      a = await agent(await r.relay.endpoint('hand'));
+      await a.cmd('Target.setDiscoverTargets', { discover: true });
+      const tabId = (await a.cmd('Target.createTarget', { url: 'about:blank' })).result.targetId;
+      const sid = (await a.cmd('Target.attachToTarget', { targetId: tabId, flatten: true })).result.sessionId;
+      await a.cmd('Page.enable', {}, sid);
+      r.relay.setConfirm(true);
+      await until(() => r.fake.sessions().some(s => s.targetId === tabId && s.fetch));
+      r.answer((_request, signal) => new Promise(resolve => signal.addEventListener('abort', () => resolve({ allow: false }), { once: true })));
+      void a.cmd('Page.navigate', { url: 'https://pending.example/' }, sid);
+      await until(() => r.asked.at(-1)?.url === 'https://pending.example/');
+      const cdp = r.relay.cdp;
+      r.relay.handOff();
+      cdp.close();   // 出ていった後は上りへ書けない（link.mjs は ended の後の行を捨てる）
+      t.ok('handOff は、確認待ちの止まった要求を出る前に Fetch.failRequest（BlockedByClient）で断る',
+        await until(() => r.chrome.calls.some(c => c.method === 'Fetch.failRequest' && c.params.errorReason === 'BlockedByClient')) && !r.fake.served.includes('https://pending.example/'));
+    } finally { a?.close(); await r.stop(); }
+  }
+
+  // ===== 5d. 人の「止める」でその会話の接続待ちを外す（Chrome の確認がすぐ閉じる）。ターンの外では確認を出さずに断る =====
   {
     const ac = new AbortController();
     const r = await rig({ permission: 'hold', connectWaitMs: 5000, handoff: { connect: () => null }, turnLive: () => true, turnSignal: () => ac.signal });

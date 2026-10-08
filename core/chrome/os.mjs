@@ -40,6 +40,8 @@
 // closeAgent(ref)                        → Promise<boolean>  エージェントの窓を閉じる（WM_CLOSE）。窓がもう無ければ記録を捨てて true。閉じる依頼が出せなければ見える形へ戻して false
 //                                          （画面の外・透明のまま誰にも戻せない窓を残さない）。Chrome との接続が切れたとき・窓の開きかけの失敗に使う。
 //                                          main は Pleiad の終了でも、隠している窓を全部これと同じに片付ける（closeAllAgents。main の中だけの口で、core からは呼ばない）
+// exportAgent(ref)                      → Promise<string | null>  隠している窓を main の入れ替わりを越えて渡す印にする（窓は閉じない・戻さない。ADR 0167）。隠していない窓には null
+// adoptAgent(token, { revealed })        → Promise<WindowRef | null>  印から窓の記録を作り直す（新しい main の層）。窓がもう無い・ブラウザーの窓でなければ null。作った窓は隠しているものとして見張る（revealed: true は人が操作中の見せている窓。隠さず見張らない）
 // 画面の構成が変わったときの置き直し（reconceal）は main が Electron の screen のイベントで呼ぶので、core から呼ぶ口は無い
 
 const FEATURES_NONE = Object.freeze({ dialog: false, raise: false, launch: false, conceal: false, watch: false, bounds: false });
@@ -68,6 +70,8 @@ export function unsupportedChromeOs(reason = 'platform') {
     reveal: async () => false,
     release: async () => false,
     closeAgent: async () => false,
+    exportAgent: async () => null,
+    adoptAgent: async () => null,
   };
 }
 
@@ -163,5 +167,7 @@ export function parentPortChromeOs(port, { timeoutMs = CALL_TIMEOUT_MS, readyWai
     reveal: (ref, { near = null } = {}) => call('reveal', { ref, near }, false),
     release: ref => call('release', { ref }, false),
     closeAgent: ref => call('closeAgent', { ref }, false),
+    exportAgent: ref => call('exportAgent', { ref }, null),
+    adoptAgent: (token, options = {}) => call('adoptAgent', { token, revealed: options.revealed === true }, null),
   };
 }
