@@ -5,6 +5,10 @@
 //                     worker は suite 1 本ごとに終わるまで次を受けない（同じプロセスの中で suite を並行させない）。
 //                     出力は suite ごとにまとめて、終わった順に出す（行が混ざらない）。
 //
+// --retry-failed 1 のとき: 全体を走らせた後、落ちた suite だけを新しい worker で 1 回だけ流し直す（tests/lib/runner-retry.mjs）。
+//                     通れば緑として扱い、流し直したことは端末・timings・GitHub Actions の注釈とまとめに必ず残す。2 回目も落ちれば失敗。
+//                     ランナーの整合の失敗（worker の異常終了・登録の不一致・worktree の漏れ）は流し直さない。
+//
 // どちらでも: 登録した suite はちょうど 1 回ずつ走り、走らなかったもの・二重に走ったもの・worker が途中で死んだものは失敗にする。
 // worktree の見張り（テストの後に本体の git に worktree が増えていない）は suite ごとに worker の中で見て、全体の前後でも親が見る。
 import fs from "node:fs";
@@ -16,6 +20,7 @@ import { Suite, runCase, summarize, pick } from "./harness.mjs";
 import { snapshotPleiadWorktrees, leakedWorktrees } from "./worktree-guard.mjs";
 import { installDomStub } from "./dom-stub.mjs";
 import { reapOwned, killTagged, WORKER_TAG_ENV } from "./process-reap.mjs";
+import { isRetryable, buildRetryEntry, retryLines, reportRetriesToCi } from "./runner-retry.mjs";
 import { ArgError, USAGE, parseArgs, loadRegistry, loadWeights, weightOf, isWeighted, heaviestFirst, assignShards, planHash } from "./runner-plan.mjs";
 
 const WORKER_PATH = fileURLToPath(new URL("./run-worker.mjs", import.meta.url));
@@ -289,6 +294,44 @@ async function runPool({ entries, jobs, root, weights, parentDataDir }) {
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
+// 落ちた suite だけの流し直し（--retry-failed）
+
+/**
+ * 1 回目の結果のうち、流し直す対象（isRetryable）だけを新しい worker で 1 回走らせ、その結果で記録を置き換える。
+ * 1 回目のランナーの問題・子孫の回収は引き継ぐ（流し直しで通っても、整合の失敗は消えない）。
+ */
+async function retryPass({ ran, jobs, root, weights, parentDataDir, offsetMs }) {
+  const targets = ran.records.filter(isRetryable);
+  if (!targets.length) return { ran, retried: [] };
+  console.log(`\n══ 流し直し: 1 回目に落ちた ${targets.length} 本を、新しい worker で 1 回だけ走らせ直す（${targets.map((r) => r.entry.name).join(", ")}）`);
+  const second = await runPool({ entries: targets.map((r) => r.entry), jobs: Math.min(jobs, targets.length), root, weights, parentDataDir });
+  const byName = new Map(second.records.map((r) => [r.entry.name, r]));
+  const problems = [...ran.problems, ...second.problems];
+  const retried = [];
+  const records = ran.records.map((r) => {
+    const again = byName.get(r.entry.name);
+    if (!again) {
+      if (targets.includes(r)) problems.push(`流し直しで走らなかった suite: ${r.entry.name}`);
+      return r;
+    }
+    const info = buildRetryEntry({ name: r.entry.name, first: r.suite, second: again.suite });
+    retried.push(info);
+    return { ...again, startMs: again.startMs + offsetMs, endMs: again.endMs + offsetMs, retried: info, retry: true };
+  });
+  return {
+    ran: {
+      ...ran,
+      records,
+      workers: [...ran.workers, ...second.workers.map((w) => Object.assign(w, { retry: true }))],
+      problems,
+      reaped: ran.reaped + second.reaped,
+      reapErrors: [...ran.reapErrors, ...second.reapErrors],
+    },
+    retried,
+  };
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
 // 機械可読の記録
 
 function statusOf(suite, extra) {
@@ -317,6 +360,7 @@ function buildTimings({ args, weights, selected, totalCount, records, workers, e
       worker: r.worker,
       startMs: r.startMs,
       endMs: r.endMs,
+      retried: r.retried ?? null,
     };
   }).sort((a, b) => selected.findIndex((e) => e.name === a.name) - selected.findIndex((e) => e.name === b.name));
   const sum = (f) => suites.reduce((n, s) => n + f(s), 0);
@@ -326,7 +370,7 @@ function buildTimings({ args, weights, selected, totalCount, records, workers, e
     node: process.version,
     platform: process.platform,
     arch: process.arch,
-    args: { jobs: args.jobs, shard: args.shard, filter: args.names },
+    args: { jobs: args.jobs, shard: args.shard, filter: args.names, retryFailed: args.retryFailed },
     planHash: plan.hash,
     selected: selected.length,
     registered: totalCount,
@@ -339,9 +383,11 @@ function buildTimings({ args, weights, selected, totalCount, records, workers, e
       failedJudgements: sum((s) => s.failed),
       failedSuites: suites.filter((s) => s.status !== "pass" && s.status !== "skip").length,
       skippedSuites: suites.filter((s) => s.skipped).length,
+      retriedSuites: suites.filter((s) => s.retried).length,
+      retriedPassed: suites.filter((s) => s.retried?.outcome === "passed").length,
     },
     problems: extraProblems,
-    workers: workers.map((w) => ({ id: w.id, pid: w.pid, suites: w.done, busyMs: w.busyMs, exit: w.exit, dataDirRemoved: w.dataDir ? !fs.existsSync(w.dataDir) : null })),
+    workers: workers.map((w) => ({ id: w.id, pid: w.pid, suites: w.done, busyMs: w.busyMs, exit: w.exit, dataDirRemoved: w.dataDir ? !fs.existsSync(w.dataDir) : null, retry: !!w.retry })),
     suites,
   };
 }
@@ -406,9 +452,11 @@ export async function main({ suites: files, baseDir, unitDir = null, argv, root,
   const t0 = Date.now();
   // 全体の前後でも、本体の git の worktree を見る（suite ごとの見張りが拾えない取りこぼしと、worker が途中で死んだ場合の分）
   const before = await snapshotPleiadWorktrees(root);
-  const ran = jobs > 1
+  let ran = jobs > 1
     ? await runPool({ entries: selected, jobs, root, weights, parentDataDir: testEnv.testDataDir })
     : await runInProcess({ entries: selected, root });
+  let retried = [];
+  if (args.retryFailed > 0) ({ ran, retried } = await retryPass({ ran, jobs, root, weights, parentDataDir: testEnv.testDataDir, offsetMs: Date.now() - t0 }));
   const after = await snapshotPleiadWorktrees(root);
   if (ran.reaped) console.log(`
   後始末: worker の子孫のプロセス ${ran.reaped} 本を止めた（suite が起こして残したもの・worker が途中で死んで残ったもの）`);
@@ -441,6 +489,8 @@ export async function main({ suites: files, baseDir, unitDir = null, argv, root,
   }
 
   const code = summarize(suiteList);
+  for (const line of retryLines(retried)) console.log(line);
+  reportRetriesToCi(retried);
   const wallMs = Date.now() - t0;
   const sumMs = suiteList.reduce((n, s) => n + (s.ms ?? 0), 0);
   console.log(jobs > 1 ? `  ${(wallMs / 1000).toFixed(1)} 秒（worker ${jobs} 本・suite の合計 ${(sumMs / 1000).toFixed(1)} 秒）` : `  ${(wallMs / 1000).toFixed(1)} 秒`);

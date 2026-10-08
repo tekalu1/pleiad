@@ -25,7 +25,7 @@ CI が赤ければ公開しない。使える成功が無ければ、今まで�
 | run かジョブ（必須でないものも）が `failure`・`timed_out`・`action_required`・`startup_failure` | **赤**。公開しない。走っている途中でも、終わったジョブが赤ければ待たずに止める。同じ commit の run が複数あり、どれかが赤ければ止める |
 | run・ジョブが終わっていない | 待つ（下記） |
 | run が無い（`site/**` だけの変更・まとめて push した途中の commit など） | `fallback` |
-| `cancelled`（次の push に取り消された）・`skipped`・`neutral` など | `fallback` |
+| `cancelled`（PR の古い run が次の push に取り消された、または手動で取り消した）・`skipped`・`neutral` など | `fallback`（main への push の run は後の push で取り消さない。下記） |
 | 必須のジョブの欠け・重複・一部だけの成功、必須でないジョブの `cancelled`・`skipped`・`neutral`、run の総合の `success` だけ、jobs を読めない | `fallback` |
 | 別の commit・別の workflow・PR・手動の起動・別の枝の成功しか無い | `fallback` |
 | `reuse` と判定した直後に run を読み直すと、attempt・状態・結論が変わっていた（jobs を読んだ後に再実行が始まった） | 待つ。新しい attempt を同じ規則で見直す |
@@ -35,6 +35,12 @@ CI が赤ければ公開しない。使える成功が無ければ、今まで�
 週次・手動だけの `safe-storage-macos` は push では `skipped` になる。`skipped` を許すのはこれだけ（`SKIPPED_ON_PUSH`）。
 test.yml の matrix やジョブを変えたら `REQUIRED_JOBS`・`SKIPPED_ON_PUSH` も合わせる。`tests/unit/release-ci-gate.mjs` が test.yml を読んで突き合わせるので、合わせ忘れるとその commit の CI が赤くなり、そのままではリリースできない。
 合わせ忘れたまま足したジョブが `success` 以外で終わっても、`reuse` にはならない（上の表）。
+
+## CI の流し直しと、取り消さない push
+
+- test.yml の `npm test` の脚（`node tests/run.mjs --jobs 2 --retry-failed 1`）と、release の fallback の全部のテストは、**落ちた suite だけを新しい worker で 1 回流し直す**。通ればそのジョブは success で終わるので、この照合は何も変えずに `reuse` と読む（ジョブの結論だけを見る。警告の注釈は結論を変えない）。2 回目も落ちたジョブは `failure` で、今までどおり赤（[ADR 0162](adr/0162-ci-retry-failed-suites.md)）。
+- 流し直したことは、ジョブの警告の注釈（`::warning`）とジョブのまとめ（step summary）に、どの suite が 1 回目のどの判定で落ちたかと一緒に残る。`test-timings-*` の成果物の `suites[].retried` にも入る。リリースの前後で気になったら、test.yml の run のまとめを見る。
+- test.yml の `concurrency` は、PR だけ古い run を止める。main への push と手動の起動は、group を commit ごとに分けて取り消さない（タグを打った commit の run が後の push で `cancelled` になって `fallback` に落ち、release が全部のテストを回し直すのを避ける）。
 
 ## 待ち方
 
@@ -72,7 +78,7 @@ test.yml の matrix やジョブを変えたら `REQUIRED_JOBS`・`SKIPPED_ON_PU
 
 ## 止まったとき
 
-- **赤で止まった**: main を直すか、test.yml の失敗したジョブを再実行して最新の attempt を揃った成功にしてから、Evaluation release を再実行する（失敗した run の再実行、または `workflow_dispatch` に同じタグ）。
+- **赤で止まった**: 1 本の suite の揺れは、CI の中の流し直しで通るので、ここまで来る赤は 2 回とも落ちたもの（本物の失敗の疑い）が多い。ジョブのまとめで、どの suite がどう落ちたかを見る。main を直すか、test.yml の失敗したジョブを再実行して最新の attempt を揃った成功にしてから、Evaluation release を再実行する（失敗した run の再実行、または `workflow_dispatch` に同じタグ）。
 - **`fallback` で全部のテストを回した**: 理由は `ci-gate` の step summary とログの `reason=` に出る。`fallback` は今までと同じ流れなので、そのまま公開まで進む。
 
 ## 範囲

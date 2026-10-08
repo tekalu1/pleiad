@@ -16,10 +16,13 @@ on:
 permissions:
   contents: read
 
-# 同じ枝に続けて押したときは古い実行を止める。main も PR も、見たいのは先端の状態だけ。
+# PR は、同じ PR に続けて押したときに古い実行を止める（見たいのは先端の状態だけ）。
+# main への push は止めない: タグを打った commit の run が後の push で取り消されると、リリースの ci-gate が CI の結果を使えず、
+# release の中で全部のテストを回し直す（約 28 分。docs/release-ci-reuse.md）。cancel-in-progress を切るだけでは、同じ group の待ちの run が
+# 次の push で取り消されるので、push・手動の group は commit ごとに分ける（commit 同士は待たせず並べて回す）。
 concurrency:
-  group: test-${{ github.ref }}
-  cancel-in-progress: true
+  group: test-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   test:
@@ -54,7 +57,9 @@ jobs:
       # 同じ suite の並列で落ちる・遅くなるようなら --jobs 1 に戻せば従来どおり（同じプロセスで 1 本ずつ）
       # npm test を通さず直に呼ぶ。Windows の既定の shell（pwsh）は `npm test -- --jobs 2` の `--` を食べ、
       # npm が --jobs を自分の設定として取るので、tests/run.mjs には `2 temporary/…` だけが suite 名として届いて落ちる（0.8.0 で起きた）
-      - run: node tests/run.mjs --jobs 2 --timings temporary/test-timings.json
+      # --retry-failed 1: 落ちた suite だけを新しい worker で 1 回流し直し、通れば緑にする（Windows の負荷で時々 1 本だけ落ちる試験を、リリースの足止めにしない。
+      # 手元の npm test は流し直さない）。流し直したら、警告の注釈とジョブのまとめに、どの suite が 1 回目に落ちたかが必ず残る。2 回目も落ちたら赤（docs/adr/0162）
+      - run: node tests/run.mjs --jobs 2 --retry-failed 1 --timings temporary/test-timings.json
       # suite ごとの時間・判定数・skip の記録（tests/run.mjs --timings）だけを残す。ログや環境変数・トークンは上げない。
       # 落ちた実行でも残し（always）、npm test が引数の不正などで書けなかったときは警告だけ（失敗にしない）
       - name: Upload test timings

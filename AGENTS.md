@@ -62,7 +62,7 @@ core が web へ流すのは正規化イベントだけで、バックエンド�
 | `AGENT_HOST_CHROME_USER_DATA` | Pleiad が `DevToolsActivePort` を読む Chrome の `User Data` を、このディレクトリだけに差し替える（OS に依らない。既定は Windows の `%LOCALAPPDATA%\Google\Chrome\User Data`）。テストは存在しない一時ディレクトリへ向け（`tests/lib/test-env.mjs`）、実機の確かめは `--user-data-dir` を付けて起こした確かめ専用の Chrome を指す（利用者の Chrome に触れない。`docs/inapp-browser.md`「Chrome への接続」）。確認の窓はそのポートを待ち受けるプロセスの窓だけを見る |
 | `AGENT_HOST_WORKTREE_GRACE_MS` | worktree を作ってから、使われていないものとして自動で片付けるまでの猶予（既定 60 秒。ADR 0089）。テストが 0 にする |
 
-デスクトップ版は `npm run desktop`、インストーラーの生成は `npm run desktop:dist`（対象 OS で実行）。リリースの運用は `docs/desktop-releases.md`。
+デスクトップ版は `npm run desktop`、インストーラーの生成は `npm run desktop:dist`（対象 OS で実行）。リリースの運用は `docs/desktop-releases.md`。版上げは `node scripts/release-bump.mjs <版>`（`npm run release:bump -- <版>`）の 1 本で行い（版・原稿・`release:prepare`・原稿の検査・commit・タグ。push は `--push` のときだけ）、タグの前に手元の `npm test` 全部は流さない（CI の結果を `ci-gate` が読む。ADR 0162）。
 
 ## 実装と検証
 
@@ -77,6 +77,7 @@ core が web へ流すのは正規化イベントだけで、バックエンド�
 - コード変更後は `npm test` を実行する。通常テストは実際の LLM を呼び出さない。1 本だけなら `node tests/run.mjs <ケース名>`。Pleiad の会話のシェルから流しても、継いだ Pleiad の変数（`AGENT_HOST_`・`PLEIAD_`・`PLY_`・`AGENT_BROWSER_` で始まるもの）は外して走る（`env -u` は要らない。残る利用者の上書きは `tests/lib/inherited-env.mjs`）。test-env を読まない入口でも、`tests/lib/server.mjs` はテストのサーバーへ起動用の変数（`core/boot-env.mjs`）と `PLEIAD_CLI_*`・`PLEIAD_CONTROL_*` を継がない。
   - 全件の順次実行は 10 分を超えることがある。長い実行はログへ保存して最後まで待つ。途中で打ち切った結果を通過とみなさない。
   - `npm test -- --jobs 2` で別プロセスの worker 2 本を使う。既定の `--jobs 1` は同じプロセスで登録順に実行する。スイートごとの時間・判定数・skip は `--timings <JSONの保存先>` で記録できる。
+  - `--retry-failed 1` は、落ちた suite だけを新しい worker で 1 回流し直し、通れば緑にする。**CI のワークフロー（`test.yml`・release の fallback）だけが付ける**。手元の `npm test` は既定の 0 で流し直さない（手元で通ったのに揺れる試験を隠さないため）。流し直したことは、端末・`--timings` の `retried`・Actions の警告の注釈とジョブのまとめに必ず残る。ランナーの整合の失敗（worker の死・名前の不一致・worktree の漏れ）は流し直さない（ADR 0162）。
   - 分けて流す場合は `node tests/run.mjs --shard 1/3`、`--shard 2/3`、`--shard 3/3` の全分割を同じ版・時間重みで実行し、すべての通過を確認する。`--list --json` は実行対象の一覧。名前で絞る場合は従来どおり部分一致なので、短い名前は別のスイートも選ぶ。
 - `npm run test:e2e` は実際の LLM を呼び出すため、実サービスとの接続確認が必要な変更で実行する。
 - 現在は独立したビルドコマンドはない。文書のみの変更では、内容と `git diff --check` の確認を行えばよい。
