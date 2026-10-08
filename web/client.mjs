@@ -119,7 +119,7 @@ import { createConversationToc } from './conversation-toc.mjs';
 import { setupGitPanel } from './git-panel.mjs';
 import { renderDelegateGit, branchLabel } from './git-view.mjs';
 import { busyPlan, paintWorktreeLine, setWorktreeLineMode, askText, shortPath } from './worktree-ui.mjs';
-import { chromeControlStore, createChromeControlView, setChromeHandoverAgentName } from './chrome-control.mjs';
+import { chromeControlStore, createChromeControlView, setChromeHandoverAgentName, setChromeClosedSession } from './chrome-control.mjs';
 import { branchIcon } from './icons.mjs';
 const outboxes = new Map();
 const turnErrorRows = new Map();
@@ -6424,6 +6424,7 @@ $("draftSaved").onclick = () => saveDraft().catch(() => {});
 $("draftFailRetry").onclick = () => { $("prompt").focus(); saveDraft().catch(() => {}); };
 // 引き継いで戻した行（present kind: 'chromeHandover'）の「Claude に戻しました」の名前
 setChromeHandoverAgentName(() => labelOf(activeBackendId()));
+setChromeClosedSession(() => state.current);
 // 内蔵ブラウザー（web/browser-panel.mjs）。デスクトップ版のホストの画面だけ。右パネルの 1 つのモードになる
 let browserEntry = null;   // 頭の行のボタン（下の setupBrowserEntry）。状態の知らせが先に届いても落ちないよう先に宣言する
 // エージェントの Chrome の窓（右パネル「Chrome の窓」。web/chrome-panel.mjs）。会話ごとの窓の有無はサーバーの chromeWindow イベントで届く。知らせが先に届いても受けられるよう表を先に作る
@@ -6668,7 +6669,7 @@ function openLightbox(src, caption, path, origin) {
   // 絶対パスは認証付きの /local-file?download=1、パスの無い画像は data URI をそのまま保存する
   const absolute = path && /^(?:[a-z]:[\\/]|\/)/i.test(path);
   save.hidden = !absolute && !/^data:image\//.test(src);
-  save.onclick = (e) => { e.preventDefault(); download(absolute ? fileDownloadUrl(path) : src, name); };
+  save.onclick = (e) => { e.preventDefault(); download(absolute ? fileDownloadUrl(path, state.current) : src, name); };
   d.showModal();
 }
 

@@ -2,9 +2,9 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { windowShotFolder as folderOf } from './window-shots.mjs';
 
 const MAX_IMAGE = 10 * 1024 * 1024;
-const folderOf = (dataDir, sessionId) => path.join(dataDir, 'uploads', 'chrome-window', crypto.createHash('sha256').update(sessionId).digest('hex'));
 
 /** エージェントが閉じようとしたが、人への依頼の待ち・人の引き継ぎの最中（code: BUSY、reason: waiting | human。profile-choice の busy と同じ理由の名前） */
 export class ChromeWindowBusyError extends Error {

@@ -25,8 +25,8 @@ export function fileReference(value) {
   return { path: raw, line: Number.isSafeInteger(line) && line > 0 ? line : null };
 }
 
-export function fileDownloadUrl(path) {
-  return `/local-file?path=${encodeURIComponent(path)}&download=1`;
+export function fileDownloadUrl(path, sessionId = null) {
+  return `/local-file?path=${encodeURIComponent(path)}&download=1${sessionId ? `&sessionId=${encodeURIComponent(sessionId)}` : ''}`;
 }
 
 // ---- 自動リンク用の厳しい判定（docs/design-system.md「ファイルの操作」）

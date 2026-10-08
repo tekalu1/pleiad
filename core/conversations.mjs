@@ -5,6 +5,7 @@ import crypto from "node:crypto";
 import * as store from "./store.mjs";
 import { MAX_RESULT_CHARS } from "./backends/shared.mjs";
 import { readPresents, keepPresents } from "./history.mjs";
+import { copyWindowShot, windowShotFolder } from "./chrome/window-shots.mjs";
 import { applyRewindMark, markIsLive, nativeUuid, keptPresentIndexes, removedSummary } from "./rewind.mjs";
 import { buildItems } from "../web/timeline.mjs";
 import { t, agentT } from "./i18n.mjs";
@@ -504,6 +505,10 @@ export function wrapBackend(native) {
         throw new Error(t("conversations.toolRunning"));
       }
     }
+    // 閉じた Chrome の窓の静止画は会話ごとの置き場にあり、元の会話を消すと一緒に消える。分岐した会話は自分の置き場へ複製して指す
+    presents = await Promise.all(presents.map(async p => p?.kind === "chromeClosed" && p.path
+      ? { ...p, path: await copyWindowShot({ dataDir: store.dataDir, from: id, to: child, file: p.path }) }
+      : p));
     const now = Date.now();
     const parent = { sessionId: id, atMessage: cutId ?? null,
       ...(before !== undefined ? { beforeMessage: before } : {}) };
@@ -520,6 +525,7 @@ export function wrapBackend(native) {
         ...(r?.contextStart ? { contextStart: Math.min(classifySystemMessages(r.messages.slice(0, r.contextStart)).length, messages.length), contextSince: r.contextSince } : {}), _dirty: true } });
     } catch (error) {
       delete (await all())[child];
+      await fs.rm(windowShotFolder(store.dataDir, child), { recursive: true, force: true }).catch(() => {});
       await fs.rm(sessionFilePath(child), { force: true }).catch(() => {});
       await store.removeSession(child);
       throw error;

@@ -39,6 +39,7 @@ export default async function(t) {
   t.ok('プロンプトを渡す前に終わったターンの session id は採用を戻し、transcript の無い id の空の会話は新しく始める（本文のある会話は外さない）', child.stdout.includes('abandoned session contracts passed'), child.stdout + child.stderr);
   t.ok('transcript の無い nativeId の会話は、題・状態の変更と削除を Pleiad の記録だけで通す（別の失敗は隠さない）', child.stdout.includes('missing transcript contracts passed'), child.stdout + child.stderr);
   t.ok('ADR 0147: 送った会話の削除は Pleiad の記録だけを消し、ネイティブの会話は残したまま一覧に戻さない（再起動の後も。ネイティブだけの行も消せる）', child.stdout.includes('delete contracts passed'), child.stdout + child.stderr);
+  t.ok('分岐した会話は、閉じた Chrome の窓の静止画を自分の置き場へ複製して指す（元の会話の置き場が消えても残る）', child.stdout.includes('window shot fork contracts passed'), child.stdout + child.stderr);
 }
 
 // Run in a child with its own store: other suites import the store before this test runs.
@@ -381,4 +382,37 @@ export async function missingTranscriptContracts() {
   await assert.rejects(broken.setTag(id, 'x'), /EPERM/);
   await assert.rejects(deleteHiddenConversation(id, () => broken), /EPERM/);
   assert.ok(await conversation(id), '消せなかった会話は残る');
+}
+
+// 分岐した会話は、閉じた Chrome の窓の静止画を自分の置き場へ複製して指す（元の会話を消すと置き場も消えるため。core/chrome/window-shots.mjs）
+export async function windowShotForkContracts() {
+  const store = await import('../../core/store.mjs');
+  const { windowShotFolder } = await import('../../core/chrome/window-shots.mjs');
+  const fs = await import('node:fs/promises');
+  const path = await import('node:path');
+  const native = { id: 'shots', capabilities: {},
+    async getMessages() { return []; },
+    async getSession() { return { title: 'window shots' }; } };
+  const wrapped = wrapBackend(native);
+  const id = await createConversation(native, { title: 'window shots' });
+  const entry = await conversation(id);
+  const folder = windowShotFolder(store.dataDir, id);
+  await fs.mkdir(folder, { recursive: true });
+  const file = path.join(folder, '1-aaa.png');
+  await fs.writeFile(file, 'PNG-BYTES');
+  entry.backend = native.id;
+  entry.messages = [{ role: 'user', uuid: 'u1', text: 'open it', at: '2026-01-01T00:00:00.000Z' }, { role: 'assistant', uuid: 'a1', text: 'done', at: '2026-01-01T00:00:01.000Z' }];
+  entry.base = entry.messages.length;
+  entry.presents = [{ kind: 'chromeClosed', by: 'ai', at: '2026-01-01T00:00:02.000Z', path: file, chromeClosed: { by: 'agent' } },
+    { kind: 'chromeClosed', by: 'ai', at: '2026-01-01T00:00:03.000Z', path: path.join(store.dataDir, 'uploads', 'chrome-window', 'elsewhere', 'x.png'), chromeClosed: { by: 'agent' } }];
+  const child = (await wrapped.fork(id)).sessionId;
+  const shots = (await conversation(child)).presents.filter(p => p.kind === 'chromeClosed');
+  const mine = windowShotFolder(store.dataDir, child);
+  assert.equal(path.dirname(shots[0].path), mine, '分岐した会話の置き場を指す');
+  assert.equal(await fs.readFile(shots[0].path, 'utf8'), 'PNG-BYTES', '中身を複製する');
+  assert.equal(await fs.readFile(file, 'utf8'), 'PNG-BYTES', '元の画像は残る');
+  assert.equal(shots[1].path, null, '元の置き場の外のパスは複製せず、指さない');
+  // 元の会話の置き場を消しても、分岐した会話の画像は残る
+  await fs.rm(folder, { recursive: true, force: true });
+  assert.equal(await fs.readFile(shots[0].path, 'utf8'), 'PNG-BYTES');
 }

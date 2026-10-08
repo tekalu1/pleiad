@@ -148,6 +148,9 @@ export function createChromeControlStore() {
 /** 今の会話のエージェントの名前（会話の行の「Claude に戻しました」。web/client.mjs が入れる） */
 let agentName = () => 'Claude';
 export const setChromeHandoverAgentName = fn => { if (typeof fn === 'function') agentName = fn; };
+// 閉じた窓の静止画は、持ち主の会話を見ている要求にだけサーバーが見せる（core/chrome/window-shots.mjs）。今見ている会話の id を渡す
+let currentSession = () => null;
+export const setChromeClosedSession = fn => { if (typeof fn === 'function') currentSession = fn; };
 
 const handIcon = () => {
   const svg = svgEl('svg', { class: 'i', viewBox: '0 0 24 24', 'aria-hidden': 'true' });
@@ -173,7 +176,8 @@ export function renderChromeClosedLine(ev) {
   box.append(row);
   if (typeof ev?.path === 'string' && ev.path) {
     const shot = el('img', 'cc-closed-shot');
-    shot.src = `/local-file?path=${encodeURIComponent(ev.path)}`;
+    const owner = currentSession();
+    shot.src = `/local-file?path=${encodeURIComponent(ev.path)}${owner ? `&sessionId=${encodeURIComponent(owner)}` : ''}`;
     shot.alt = t('chromeControl.closed.image');
     shot.loading = 'lazy';
     shot.dataset.filePath = ev.path;

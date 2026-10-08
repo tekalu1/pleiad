@@ -805,6 +805,7 @@
     "relativeUnknownCwd": "Cannot resolve a relative path because the working directory is unknown. Open it with an absolute path.",
     "networkPath": "UNC and device paths cannot be opened. Use a local path on the host.",
     "protectedData": "Pleiad's data directory cannot be opened. Only attachments in uploads are accessible.",
+    "windowShot": "Images of closed Chrome windows can only be opened from their own conversation.",
     "notFile": "Choose a file or folder.",
     "tooLarge": "The file exceeds the display limit.",
     "overLimitDownload": "Exceeds the display limit ({{mb}} MB). You can save it to view.",

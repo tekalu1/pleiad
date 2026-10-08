@@ -803,6 +803,7 @@
     "relativeUnknownCwd": "作業場所が不明なため、相対パスを解決できません。絶対パスで開いてください。",
     "networkPath": "UNC パスとデバイスパスは開けません。ホストのローカルパスを指定してください。",
     "protectedData": "Pleiad のデータ置き場は開けません。添付の uploads 内だけ利用できます。",
+    "windowShot": "閉じた Chrome の窓の画像は、その会話からだけ開けます。",
     "notFile": "ファイルまたはフォルダーを選んでください。",
     "tooLarge": "ファイルが表示上限を超えています。",
     "overLimitDownload": "表示上限（{{mb}} MB）を超えています。保存して確認できます。",

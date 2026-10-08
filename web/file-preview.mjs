@@ -279,7 +279,7 @@ export function setupFilePreview({ getContext, useFile, onLayout, showMenu, cmd,
       const data = await request(reference.path + (reference.line ? `:${reference.line}` : ''), context.base);
       if (current !== generation || panel.hidden) return;
       file = data; fullPath.value = data.path;
-      use.disabled = false; save.href = fileDownloadUrl(data.path);
+      use.disabled = false; save.href = fileDownloadUrl(data.path, context.sessionId);
       const directory = data.kind === 'directory';
       show({ title:data.name, subtitle:subtitleFor(data.path, data.cwd),
         status: directory ? t('filePreview.status.directory', { count: (data.items || []).length })
@@ -735,7 +735,7 @@ export function setupFilePreview({ getContext, useFile, onLayout, showMenu, cmd,
       }
       const where = /^(?:[a-z]:[\\/]|\/)/i.test(target.path) ? { path:target.path } : await resolve(target);
       const name = where.path.split(/[\\/]/).at(-1);
-      if (action === 'save') return download(fileDownloadUrl(where.path), name);
+      if (action === 'save') return download(fileDownloadUrl(where.path, whereFrom(target).sessionId), name);
       if (action === 'use') {
         if (getContext().sessionId !== whereFrom(target).sessionId) return;
         useFile({ path:where.path, name, mime:'' });

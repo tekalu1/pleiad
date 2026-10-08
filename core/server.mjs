@@ -44,7 +44,8 @@ import { writeAtomic } from './atomic-file.mjs';
 import os from "node:os";
 import { readLocalFile } from "./local-files.mjs";
 import { isLocalRequest, defaultOpener, createRateLimit, OPENABLE } from './os-open.mjs';
-import { readPreview, listTreeFolder, resolveReference, cwdAt, inspectFile, previewFailure } from './file-preview.mjs';
+import { readPreview, listTreeFolder, resolveReference, cwdAt, inspectFile, previewFailure, PreviewError } from './file-preview.mjs';
+import { windowShotGuard } from './chrome/window-shots.mjs';
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { WebSocketServer } from "ws";
 import * as P from "./protocol.mjs";
@@ -331,7 +332,10 @@ const settingsWrites = new Map();
 const COOKIE_NAME = "agent_host_token";
 // 人間が渡したファイルの置き場。作業ディレクトリを汚さないよう外に出す
 const UPLOAD_DIR = path.join(store.dataDir, "uploads");
-const fileAccess = { dataDir: store.dataDir, uploadDir: UPLOAD_DIR };
+// 閉じた Chrome の窓の静止画は持ち主の会話を見ている要求にだけ見せる（guard。要求の sessionId が持ち主）。ここは持ち主を名乗らない口の分で、断る
+const windowShotDenied = () => new PreviewError('protected-data', t('filePreview.windowShot'));
+const fileAccessFor = sessionId => ({ dataDir: store.dataDir, uploadDir: UPLOAD_DIR, guard: windowShotGuard({ uploadDir: UPLOAD_DIR, sessionId, deny: windowShotDenied }) });
+const fileAccess = fileAccessFor(null);
 // 1 件の添付の上限（2026-09-23 に 8MB から上げた）。中身は断片（512 KiB の base64）で送る（attachStart / attachChunk / attachFinish）。
 // 1 通の WS で丸ごと送ると 100MB は約 133MB の 1 通になり、ws の既定の maxPayload（100 MiB）・リモートの 64 MiB の上限を超え、
 // 端末内プロキシ・中継・このサーバーのどこでも丸ごと抱えることになるため
@@ -1615,6 +1619,7 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === "/local-file" || url.pathname === '/file-preview') {
       const sessions = await store.getAll();
       const roots = fileRoots(sessions);
+      const access = fileAccessFor(url.searchParams.get('sessionId'));
       if (url.pathname === '/file-preview') {
         let resolved;
         try {
@@ -1622,8 +1627,8 @@ const server = http.createServer(async (req, res) => {
             at:url.searchParams.get('at'), base:url.searchParams.get('base') }, sessions, roots);
           // list=1 はプレビューの横のツリーの 1 フォルダー（開いたとき・「さらに表示」。web/file-preview.mjs）
           const preview = url.searchParams.get('list') === '1'
-            ? await listTreeFolder(resolved.path, { access: fileAccess, offset:Number(url.searchParams.get('offset')) || 0 })
-            : await readPreview(resolved.path, roots, { access: fileAccess, resource:url.searchParams.get('resource') === '1' });
+            ? await listTreeFolder(resolved.path, { access, offset:Number(url.searchParams.get('offset')) || 0 })
+            : await readPreview(resolved.path, roots, { access, resource:url.searchParams.get('resource') === '1' });
           res.writeHead(200, { 'content-type':'application/json; charset=utf-8', 'cache-control':'private, no-store', 'x-content-type-options':'nosniff' });
           return res.end(JSON.stringify({ ...preview, line:resolved.line, cwd:resolved.cwd }));
         } catch (error) {
@@ -1632,7 +1637,7 @@ const server = http.createServer(async (req, res) => {
           return res.end(JSON.stringify({ error:failure, path:resolved?.path ?? url.searchParams.get('path') }));
         }
       }
-      const { body, headers } = await readLocalFile(url.searchParams.get("path"), fileAccess, { download:url.searchParams.get('download') === '1' });
+      const { body, headers } = await readLocalFile(url.searchParams.get("path"), access, { download:url.searchParams.get('download') === '1' });
       res.writeHead(200, headers);
       return res.end(body);
     }

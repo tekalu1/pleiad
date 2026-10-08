@@ -41,7 +41,8 @@ function containsPath(root, file) {
   return rel === '' || (rel !== '..' && !rel.startsWith(`..${path.sep}`) && !path.isAbsolute(rel));
 }
 
-export async function inspectFile(requested, { dataDir, uploadDir }) {
+/** guard は、データ置き場の中の読んでよい場所（uploads）のうち、持ち主の会話にだけ見せるもの（閉じた Chrome の窓の静止画。core/chrome/window-shots.mjs）を断る */
+export async function inspectFile(requested, { dataDir, uploadDir, guard = null }) {
   // Check before realpath: even resolving a UNC path can send SMB credentials.
   rejectNetworkPath(requested);
   if (typeof requested !== 'string' || !path.isAbsolute(requested)) throw new PreviewError('invalid-path', t('filePreview.invalidPath'));
@@ -60,6 +61,7 @@ export async function inspectFile(requested, { dataDir, uploadDir }) {
     if (!uploads || containsPath(uploads, protectedDir) || !containsPath(uploads, file)) {
       throw new PreviewError('protected-data', t('filePreview.protectedData'));
     }
+    if (guard) await guard(file);
   }
   const stat = await fs.stat(file);
   if (!stat.isFile() && !stat.isDirectory()) throw new PreviewError('not-file', t('filePreview.notFile'));
