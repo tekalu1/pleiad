@@ -217,10 +217,9 @@ export const COMMANDS = new Set([
   'browserScreencast',       // { sessionId, url? | visualization?: { id?, at? }, width, height, scale, quality: auto|low } -> { tabId, state }。見始める（url があれば新しいタブ）
   'browserScreencastStop',   // { sessionId } -> {}。見るのをやめる（見る端末がいなくなれば止める）
   'browserScreencastAck',    // { sessionId, seq } -> {}。そのフレームを描き終えた（次のフレームを許す）
-  'browserScreencastInput',  // { sessionId, input: { type: tap|scroll|text|key, x?, y?, dx?, dy?, text?, key? } } -> {}。エージェントが操作中は断る（code: agent-active）
+  'browserScreencastInput',  // { sessionId, input: { type: tap|scroll|text|key, x?, y?, dx?, dy?, text?, key? } } -> {}
   'browserScreencastNav',    // { sessionId, action: back|forward|reload|stop|open, url? } -> {}
-  'browserScreencastAgent',  // { sessionId, action: stop|takeOver } -> {}。エージェントの接続を止める・引き継ぐ
-  // どれも args.source: 'chrome' でエージェントの Chrome の窓の映像（core/chrome/screencast.mjs）を選ぶ。ホストの画面もリモートの端末も受け、見るだけ（Input・Nav・Agent は code: view-only、窓が無ければ no-window）
+  // どれも args.source: 'chrome' でエージェントの Chrome の窓の映像（core/chrome/screencast.mjs）を選ぶ。ホストの画面もリモートの端末も受け、見るだけ（Input・Nav は code: view-only、窓が無ければ no-window）
   // コンピューターの操作（docs/computer-use.md）。ホストの OS を操作する命令ではなく止める側なので、リモートの端末からも受ける
   'computerStop',            // { sessionId } -> { stopped }。その会話の走っているターン（貸している先の子のターンも）に止めた印を付け、main へ computer-stop を送る
   // エージェントのブラウザー（PC の Chrome）への接続（docs/inapp-browser.md「Chrome への接続」、ADR 0148・0153）。つなぐ・切る・前に出すはホストの PC の画面だけ（browser.chrome*）

@@ -110,7 +110,8 @@ import { createVisualizationCollector, visualizeInstructions, snapshotResponse, 
 import { plyParts } from './instruction-amount.mjs';
 import { computerPrompt } from './backends/computer-delivery.mjs';
 import { MIN_BUDGET, MAX_BUDGET } from '../web/instruction-amount.mjs';
-import { parentPortBrowser, browserEnvironment, browserInstruction, forgetBrowserEnvironment, agentBrowserMode, chromeRelayBrowser } from './agent-browser.mjs';
+import { browserEnvironment, browserInstruction, forgetBrowserEnvironment, chromeRelayBrowser } from './agent-browser.mjs';
+import { parentPortViewer } from './browser-viewer.mjs';
 import { getMainPort, setMainPortSource } from './main-port.mjs';
 import { createMainLink, handoverEnabled } from './main-link.mjs';
 import { createOrphanGuard } from './orphan-guard.mjs';
@@ -196,7 +197,7 @@ const hostedPort = mainPort.hosted ? mainPort : null;
 // main が居ない間（更新）の出来事と、OAuth の同意画面などを開く口（core/main-away.mjs）。機能ごとの扱いは頼む側のモジュールが持つ
 const mainAway = createMainAway({ mainPort });
 const openExternal = createExternalOpener({ mainPort, log: line => console.log(`  [main-away] ${line}`) });
-const agentBrowser = parentPortBrowser(hostedPort, { dataDir: store.dataDir });
+const browserViewer = parentPortViewer(hostedPort);
 // リモートの端末から PC の内蔵ブラウザーを見る（core/browser-screencast.mjs）。デスクトップ版だけ
 const screencastBridge = parentPortScreencast(hostedPort);
 const screencastHub = screencastBridge ? createScreencastHub({ bridge: screencastBridge }) : null;
@@ -207,17 +208,16 @@ const chromeOs = hostedPort ? parentPortChromeOs(hostedPort) : null;
 const chromeConnection = chromeOs
   ? createChromeConnection({ locate: chromeLocate, os: chromeOs, log: line => console.log(`  ${line}`) })
   : null;
-// エージェントのブラウザーを PC の Chrome の絞り込みの中継へ向ける（core/chrome/relay.mjs）。環境変数 AGENT_HOST_AGENT_BROWSER=chrome のときだけ
-// （開発と実機の確かめ用。docs/inapp-browser.md「Chrome の中継（開発中）」）。無ければ内蔵ブラウザーの道のまま。確認は下の browserSiteApprovals
-const chromeRelay = chromeConnection && agentBrowserMode() === 'chrome'
+// エージェントのブラウザーは PC の Chrome の絞り込みの中継（core/chrome/relay.mjs）だけ。Electron の main がいるデスクトップ版だけで、確認は下の browserSiteApprovals
+const chromeRelay = chromeConnection
   ? createChromeRelay({ connection: chromeConnection, os: chromeOs, locate: chromeLocate, authorize: (request, signal) => browserSiteApprovals(request, signal), deniedMessage: () => t('permission.browserSiteDenied'), log: line => console.log(`  ${line}`) })
   : null;
 // 会話の Chrome の窓の映像（右パネルの「Chrome の窓」。ホストの画面もリモートの端末も見られる。見るだけ。core/chrome/screencast.mjs、ADR 0148）。
 // 内蔵ブラウザーの映像（上の screencastHub）とは別のハブで、WS のコマンドは args.source === 'chrome' で選ぶ
 const chromeScreencast = chromeRelay ? createChromeScreencast({ host: chromeRelay.view, log: line => console.log(`  ${line}`) }) : null;
 const chromeScreencastHub = chromeScreencast ? createScreencastHub({ bridge: chromeScreencast, source: 'chrome' }) : null;
-// 会話の端点を出す口（ターンの開始・新しい会話の id の付け替え・ターンの終わり・会話の削除）。Chrome の道でなければ内蔵ブラウザーの橋そのもの
-const agentBrowserEndpoints = chromeRelay ? chromeRelayBrowser(chromeRelay) : agentBrowser;
+// 会話の端点を出す口（ターンの開始・新しい会話の id の付け替え・ターンの終わり・会話の削除）。Chrome の中継があるホスト（デスクトップ版）だけ。Windows 以外（unsupported）では渡さない（下の browserEnv）
+const agentBrowserEndpoints = chromeRelay ? chromeRelayBrowser(chromeRelay) : null;
 // A nested server may inherit another conversation's shell environment; only this process's bridge can issue browser access.
 delete process.env.AGENT_BROWSER_CONFIG;
 delete process.env.AGENT_BROWSER_SESSION;
@@ -2727,8 +2727,7 @@ async function applyPlyInstructions(next) {
 /** 内蔵ブラウザーの確認と「このサイトは常に」。保存して、走っているブラウザーの方針にも伝える。値の検査は呼び出し側 */
 async function applyBrowserPref(key, value) {
   const prefs = await savePref(key, value);
-  agentBrowser?.prefs(prefs);
-  agentBrowser?.loadPolicy(prefs);
+  browserViewer?.loadPolicy(prefs);
   chromeRelay?.setConfirm(prefs.confirmAgentSites === true);
   return prefs;
 }
@@ -4603,7 +4602,7 @@ const askPermission = async ({ toolName, input, sessionId, toolUseID, title, sig
   });
 };
 
-// サイトの利用の確認（ADR 0042）。内蔵ブラウザーの橋と Chrome の中継が同じものを使う
+// サイトの利用の確認（ADR 0042）。Chrome の中継が使う
 const browserSiteApprovals = createBrowserSiteApprovals({
   getPrefs: store.getPrefs,
   getAgent: async id => {
@@ -4613,10 +4612,8 @@ const browserSiteApprovals = createBrowserSiteApprovals({
   askPermission, translate: t,
   remember: async site => { const prefs = await store.rememberBrowserSite(site); emitGlobal({ type: 'prefs', sessionId: null, prefs, locale }); },
 });
-agentBrowser?.configureAuthorization(browserSiteApprovals);
 chromeRelay?.setConfirm((await store.getPrefs()).confirmAgentSites === true);
-agentBrowser?.prefs(await store.getPrefs());
-agentBrowser?.loadPolicy(await store.getPrefs());
+browserViewer?.loadPolicy(await store.getPrefs());
 
 // ---- コンピューターの操作（docs/computer-use.md、ADR 0070〜0075） ----------------------------
 // driver は main（Electron）への口。Electron でない起動では null で、ply_computer は渡さない。
@@ -5633,9 +5630,10 @@ async function beginTurn(ctx) {
     locale: agentLocale,
     visualizeInstructions: delegatedChild ? null : visualizeInstructions(agentLocale),
     ...(delegatedChild ? { delegatedChild: true } : {}),
-    browserEnv: await browserEnvironment({ bridge: agentBrowserEndpoints, dataDir: store.dataDir, sessionId: sessionId || turn.key, unlock: turn.userInitiated }).catch(error => { console.error('agent browser unavailable:', error.message); return null; }),
+    // Chrome の層が使えないホスト（Windows 以外・Electron なし）ではエージェントのブラウザーは無く、環境・指示・ply_browser のどれも渡さない
+    browserEnv: chromeConnection?.state().state === 'unsupported' ? null : await browserEnvironment({ bridge: agentBrowserEndpoints, dataDir: store.dataDir, sessionId: sessionId || turn.key, unlock: turn.userInitiated }).catch(error => { console.error('agent browser unavailable:', error.message); return null; }),
     browserInstructions: null,
-    // ply_browser。内蔵ブラウザーを渡すターンだけ（下で入れる）
+    // ply_browser。エージェントのブラウザー（Chrome）を渡すターンだけ（下で入れる）
     browserRuntime: null,
     // ply_computer（url・headers・instructions）。使えない・オフ・対応しないエージェントなら null（computerRuntimeFor）
     computerRuntime: await computerRuntimeFor(turn),
@@ -7560,7 +7558,7 @@ wss.on("connection", (ws, req) => {
 
         // リモートの端末から PC の内蔵ブラウザーを見る・操作する（docs/inapp-browser.md「リモートから見る」）
         case 'browserScreencast': case 'browserScreencastStop': case 'browserScreencastAck':
-        case 'browserScreencastInput': case 'browserScreencastNav': case 'browserScreencastAgent': {
+        case 'browserScreencastInput': case 'browserScreencastNav': {
           if (!screencastClients.has(ws)) screencastClients.set(ws, { send: message => { if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(message)); } });
           const answer = await screencastCommand({ command: msg.command, args: msg.args ?? {}, local, hub: screencastHub, bridge: screencastBridge,
             chrome: chromeScreencastHub ? { hub: chromeScreencastHub, bridge: chromeScreencast } : null,

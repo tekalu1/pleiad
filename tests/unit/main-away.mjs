@@ -1,10 +1,11 @@
 // main が居ない間（更新の約 50 秒・付け直しまで）の、サーバー側の機能ごとの扱い（無停止の更新 段階 1 の 1-5。docs/zero-downtime-update/design.md §7.2）。
 // 口は main が付け直す形の偽物（connected・resumable・connect/disconnect）。実時間は短い上限に縮める。
 //   secret（待たせる・上限・復号の保持・切れた依頼を戻す・答えを得られなかったときに平文で書かない）・computer use（Esc と同じに止める）・
-//   内蔵ブラウザー（中継の URL の写し・タブの写し・戻った main への復元の答え・別ポート）・screencast（ended away）・os-open と openExternal・
+//   内蔵ブラウザー（タブの写し・戻った main への復元の答え・読み込みの方針）・screencast（ended away）・os-open と openExternal・
 //   main-leaving（画面の猶予を数えない）・main-leaving-cancel（更新の取りやめで猶予を数える状態に戻す）・既定（utilityProcess の口）は何も変わらない
-//   切り替えで替わったサーバー（空から始まる）: secret は頼み直せば通る・内蔵ブラウザーは main が送り直した写しと中継の URL を取り込む
+//   切り替えで替わったサーバー（空から始まる）: secret は頼み直せば通る・内蔵ブラウザーは main が送り直した写しを取り込む
 //   ホストへ任せる口（remote-agent）: 居ない間はホストを全部オフライン扱いにして依頼を待たせず OFFLINE で失敗・戻ったら main が送り直す一覧と ready で元に戻る
+import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import fs from 'node:fs/promises';
 import os from 'node:os';
@@ -14,7 +15,8 @@ import { createMainPort } from '../../core/main-port.mjs';
 import { createMainAway, createExternalOpener, openableUrl, urlLaunchPlan } from '../../core/main-away.mjs';
 import { parentPortCipher, createSecretStore } from '../../core/secret-store.mjs';
 import { parentPortComputer, ComputerError } from '../../core/computer-use/driver.mjs';
-import { parentPortBrowser, cleanTabState, browserConfigFile } from '../../core/agent-browser.mjs';
+import { cleanTabState } from '../../core/agent-browser.mjs';
+import { parentPortViewer } from '../../core/browser-viewer.mjs';
 import { parentPortRemoteAgent } from '../../core/remote-delegation.mjs';
 import { parentPortScreencast, createScreencastHub } from '../../core/browser-screencast.mjs';
 import { defaultOpener } from '../../core/os-open.mjs';
@@ -44,9 +46,6 @@ function parentPort() {
 }
 
 const { attachSecretBridge } = createRequire(import.meta.url)('../../desktop/secret-bridge.cjs');
-
-const KEY = 'a'.repeat(48);
-const urlOf = (port, key = KEY) => `ws://127.0.0.1:${port}/devtools/browser/${key}`;
 
 export default async function (t) {
   const scratch = await fs.mkdtemp(path.join(os.tmpdir(), 'ply-main-away-'));
@@ -264,126 +263,41 @@ export default async function (t) {
       t.ok('main の口が無い起動（Electron でない）は null のまま', parentPortRemoteAgent(null) === null);
     }
 
-    // ---- 内蔵ブラウザー（サーバー側）
+    // ---- 内蔵ブラウザー（サーバー側。エージェントの操作は無く、タブの写しと読み込みの方針だけ）
     {
-      const dataDir = path.join(scratch, 'data-browser');
       const port = linkPort();
-      const bridge = parentPortBrowser(port, { timeoutMs: 80, connectWaitMs: 300, dataDir });
-      const ask = (sessionId, extra) => bridge.endpoint(sessionId, extra);
-      const first = ask('s1');
-      const request = port.take('agent-browser-endpoint').at(-1);
-      t.ok('main が居る間は main に頼む（今のとおり）', request.sessionId === 's1');
-      port.say({ type: 'agent-browser-endpoint', id: request.id, ok: true, url: urlOf(5555) });
-      t.ok('答えの URL', await first === urlOf(5555));
-
-      // 居ない間: 写しで答える
-      const sent = port.sent.length;
-      port.disconnect();
-      t.ok('居ない間は、同じ会話に写しの URL（同じポートと鍵）を返す。main には送らない', await ask('s1') === urlOf(5555) && port.sent.length === sent);
-      const fresh = await ask('s2');
-      const again = await ask('s2');
-      t.ok('新しい会話の鍵はここで決める（同じポート・48 桁の 16 進・次も同じ鍵）', /^ws:\/\/127\.0\.0\.1:5555\/devtools\/browser\/[a-f0-9]{48}$/.test(fresh) && fresh !== urlOf(5555) && again === fresh);
-      // 送ったのに切れた依頼
-      port.connect();
-      const inflight = ask('s3');
-      port.disconnect();
-      const copied = await inflight;
-      t.ok('main に送った直後に切れた依頼も、写しで答える', /^ws:\/\/127\.0\.0\.1:5555\/devtools\/browser\/[a-f0-9]{48}$/.test(copied));
-
-      // タブの写しと復元の答え
-      port.connect();
+      const viewer = parentPortViewer(port);
+      port.say({ type: 'browser-restore-request' });
+      t.ok('タブの写しが無いうちの復元の答えは、空のタブ（中継の写しは持たない）', JSON.stringify(port.take('browser-restore').at(-1)) === '{"type":"browser-restore","tabs":[],"relay":null}');
       port.say({ type: 'browser-state-report',
         tabs: [{ sessionId: 's1', url: 'https://example.com/a', selected: true }, { sessionId: 's1', url: 'file:///C:/secret.html', selected: false },
           { sessionId: null, url: 'http://localhost:3000/', selected: false }, { sessionId: 'x'.repeat(201), url: 'https://example.com/long' }, { sessionId: 's1', url: 'about:blank' }] });
       port.say({ type: 'browser-restore-request' });
       const restore = port.take('browser-restore').at(-1);
       t.ok('browser-restore: http(s) のタブだけ（file:・空・長すぎる会話の id は落とす）', restore.tabs.length === 2 && restore.tabs[0].url === 'https://example.com/a' && restore.tabs[0].selected === true && restore.tabs[1].sessionId === null
-        && !('profile' in restore.tabs[0]) && !('profiles' in restore));
-      t.ok('browser-restore: 中継は同じポートと、会話ごとの鍵', restore.relay.port === 5555 && restore.relay.entries.length === 3 && restore.relay.entries.find(row => row.sessionId === 's1').key === KEY);
+        && !('profile' in restore.tabs[0]) && !('profiles' in restore) && restore.relay === null);
       t.ok('cleanTabState: 配列でないものは空', JSON.stringify(cleanTabState({ tabs: 'x' })) === '{"tabs":[]}');
-
-      // 別のポートで立った（ポートが取れなかった）: 持っている URL と、設定ファイルの cdp を直す
-      const configFile = browserConfigFile(dataDir, 's1');
-      await fs.mkdir(path.dirname(configFile), { recursive: true });
-      await fs.writeFile(configFile, JSON.stringify({ cdp: urlOf(5555) }));
-      port.say({ type: 'agent-browser-endpoint-moved', port: 6001 });
-      await sleep(50);
-      t.ok('別のポート: 設定ファイルの cdp を新しいポートへ書き直す（鍵は同じ）。設定ファイルが無い会話は作らない', JSON.parse(await fs.readFile(configFile, 'utf8')).cdp === urlOf(6001)
-        && !(await fs.stat(browserConfigFile(dataDir, 's2')).catch(() => null)));
-      port.disconnect();
-      t.ok('別のポートの後の写しも新しいポート', await ask('s1') === urlOf(6001));
-      port.say({ type: 'agent-browser-endpoint-moved', port: 70000 });
-      t.ok('範囲の外のポートは無視する', await ask('s1') === urlOf(6001));
-
-      // 会話の id が替わったら写しも移る
-      bridge.rebind('s1', 's1-native');
-      t.ok('rebind: 写しの会話の id も替わる', await ask('s1-native') === urlOf(6001));
-      port.connect();
-    }
-    {
-      // 切り替えで替わったサーバー（空から始まる）: main が送り直した報告のタブの写しと中継の URL を取り込み、居ない間はその URL で答える
-      const port = linkPort();
-      const bridge = parentPortBrowser(port, { timeoutMs: 80, connectWaitMs: 200 });
-      port.say({ type: 'browser-state-report', tabs: [{ sessionId: 's1', url: 'https://example.com/a', selected: true }],
-        relay: { port: 6000, entries: [{ sessionId: 's1', key: KEY }, { sessionId: 's2', key: 'zz' }, { sessionId: '', key: KEY }, null] } });
-      port.disconnect();
-      t.ok('main が送り直した中継の URL で、居ない間に答える（形の悪い鍵・空の会話は取り込まない）', await bridge.endpoint('s1') === urlOf(6000));
-      port.connect();
-      port.say({ type: 'browser-restore-request' });
-      const restore = port.take('browser-restore').at(-1);
-      t.ok('取り込んだ写しは、次に付け直す main への復元の答えにもなる（タブ・中継のポートと鍵）', restore.tabs.length === 1 && restore.relay.port === 6000 && restore.relay.entries.length === 1 && restore.relay.entries[0].key === KEY);
-      port.say({ type: 'browser-state-report', tabs: [], relay: { port: 0, entries: [{ sessionId: 's3', key: KEY }] } });
       port.say({ type: 'browser-state-report', tabs: [] });
       port.say({ type: 'browser-restore-request' });
-      const later = port.take('browser-restore').at(-1);
-      t.ok('中継の写しが無い・ポートの形が悪い報告は、持っている中継を変えない（写しの上書きは tabs だけ）', later.tabs.length === 0 && later.relay.port === 6000 && later.relay.entries.length === 1);
-    }
-    {
-      // ポートを一度も知らない（main が一度も答えていない）うちは、main が居ない間にサーバーが空きポートを選んで答える。戻った main が立てる
-      const port = linkPort({ connected: false });
-      let picks = 0;
-      const bridge = parentPortBrowser(port, { timeoutMs: 80, connectWaitMs: 200, pickPort: async () => { picks++; return 7003; } });
-      const [x, y] = await Promise.all([bridge.endpoint('s9'), bridge.endpoint('s10')]);
-      t.ok('ポートを知らなければ空きポートを選んで答える（1 回だけ選ぶ・main には送らない・会話ごとに鍵）',
-        /^ws:\/\/127\.0\.0\.1:7003\/devtools\/browser\/[a-f0-9]{48}$/.test(x) && x !== y && y.startsWith('ws://127.0.0.1:7003/') && picks === 1 && port.sent.length === 0);
+      t.ok('写しは最後の報告で上書きする', port.take('browser-restore').at(-1).tabs.length === 0);
+      // main が居ない間も、写しは持ったまま。戻った main の復元の依頼にそのまま答える
+      port.say({ type: 'browser-state-report', tabs: [{ sessionId: 's1', url: 'https://example.com/a', selected: true }] });
+      port.disconnect();
       port.connect();
       port.say({ type: 'browser-restore-request' });
-      const restore = port.take('browser-restore').at(-1);
-      t.ok('戻った main への復元の答えは、選んだポートと、答えた会話の鍵', restore.relay.port === 7003 && restore.relay.entries.length === 2 && x.endsWith(restore.relay.entries.find(row => row.sessionId === 's9').key));
-      // 空きポートを選べなければ、戻るまで待つ。戻れば送り直され、上限までに戻らなければ失敗
-      const stuckPort = linkPort({ connected: false });
-      const stuck = parentPortBrowser(stuckPort, { timeoutMs: 80, connectWaitMs: 200, pickPort: async () => { throw new Error('no port'); } });
-      const waiting = stuck.endpoint('s11');
-      await sleep(40);
-      t.ok('空きポートを選べなければ戻るまで待つ（送らない）', stuckPort.sent.length === 0);
-      stuckPort.connect();
-      const req = stuckPort.take('agent-browser-endpoint').at(-1);
-      t.ok('つながると送り直す', req?.sessionId === 's11');
-      stuckPort.say({ type: 'agent-browser-endpoint', id: req.id, ok: true, url: urlOf(7001) });
-      t.ok('答えで解決する', await waiting === urlOf(7001));
-      const lonely = parentPortBrowser(linkPort({ connected: false }), { connectWaitMs: 60, pickPort: async () => { throw new Error('no port'); } });
-      const gaveUp = await lonely.endpoint('s9').then(() => 'resolved', error => error.message);
-      t.ok('戻らなければ上限で失敗', gaveUp === 'browser relay timeout');
-      // 新しい main の橋ができる前に送って落ちた依頼は、browser-restore-request で送り直す
-      const p2 = linkPort();
-      const b2 = parentPortBrowser(p2, { timeoutMs: 500 });
-      const dropped = b2.endpoint('s10');
-      const first = p2.take('agent-browser-endpoint').at(-1);
-      p2.say({ type: 'browser-restore-request' });
-      const second = p2.take('agent-browser-endpoint').at(-1);
-      t.ok('browser-restore-request で、答えていない endpoint の依頼を送り直す', p2.take('agent-browser-endpoint').length === 2 && second.id === first.id);
-      p2.say({ type: 'agent-browser-endpoint', id: second.id, ok: true, url: urlOf(7002) });
-      await dropped;
-    }
-    {
-      // 既定（utilityProcess の口）: 答えが無ければ今までどおり timeout で失敗（写し・待ちは使わない）
-      const plain = parentPort();
-      const bridge = parentPortBrowser(plain, { timeoutMs: 50 });
-      const first = bridge.endpoint('s1');
-      plain.say({ type: 'agent-browser-endpoint', id: plain.sent.at(-1).id, ok: true, url: urlOf(5555) });
-      await first;
-      const lost = await bridge.endpoint('s1').then(() => 'resolved', error => error.message);
-      t.ok('既定: 答えが無ければ timeout で失敗（写しで答えない）', lost === 'browser relay timeout');
+      t.ok('main が付け直されても、持っている写しで復元の答えを返す', port.take('browser-restore').at(-1).tabs.length === 1);
+
+      // 外部の読み込みの確認の設定を main へ（内蔵ブラウザーの file: のタブが使う。docs/inapp-browser.md）
+      port.say({ type: 'browser-load-policy-request' });
+      assert.deepEqual(port.take('browser-load-policy').at(-1), { type: 'browser-load-policy', confirm: false, origins: [] }, '設定が来る前は確認 OFF');
+      viewer.loadPolicy({ confirmExternalLoads: true, externalSitePermissions: [{ origin: 'https://cdn.example', mode: 'always' }, { origin: 'https://ask.example', mode: 'ask' }] });
+      assert.deepEqual(port.take('browser-load-policy').at(-1), { type: 'browser-load-policy', confirm: true, origins: ['https://cdn.example'] }, '「常に」だけを渡す');
+      port.say({ type: 'browser-load-policy-request' });
+      assert.deepEqual(port.take('browser-load-policy').at(-1), { type: 'browser-load-policy', confirm: true, origins: ['https://cdn.example'] }, 'main が起動時に聞き直したら最新を返す');
+      viewer.loadPolicy({});
+      assert.deepEqual(port.take('browser-load-policy').at(-1), { type: 'browser-load-policy', confirm: false, origins: [] });
+      t.ok('外部の読み込みの確認の設定を main へ届ける（ON と「常に」の https だけ・main の問い合わせに最新を返す）', true);
+      t.ok('main の口が無い起動（Electron でない）は null のまま', parentPortViewer(null) === null);
     }
 
     // ---- screencast

@@ -61,10 +61,10 @@ const button = (icon, label, action, className = 'btn btn-icon') => {
  * getSessionId は今開いている会話（タブがどの会話から開かれたかを main が覚える）。
  * openPanel は右パネルをブラウザーのモードにする関数（web/file-preview.mjs が後から入れる）。onEmpty は同じ会話のまま最後のタブが無くなったとき
  * （タブの無い会話へ移っただけなら呼ばず、パネルは開いたまま）。
- * onChange は main から状態（タブ・エージェントの操作）が届いて描き直した後（頭の行のボタンの操作中の印。web/header-entries.mjs）
+ * onChange は main から状態（タブ）が届いて描き直した後
  */
-export function createBrowserPanel({ bridge = window.plyDesktop?.browser, showMenu, getSessionId = () => null, getAgentName = () => 'Agent', onChange = () => {} } = {}) {
-  let state = { tabs: [], current: null, agent: null, sessionId: null };
+export function createBrowserPanel({ bridge = window.plyDesktop?.browser, showMenu, getSessionId = () => null, onChange = () => {} } = {}) {
+  let state = { tabs: [], current: null, sessionId: null };
   let shown = false, covered = false, freezing = null, editing = false;
   // tabMenu(tab): ⋯ の先頭に足すファイルの操作（PC のファイル・可視化の写しのタブだけ。web/file-preview.mjs）。
   // rewriteSnapshot(rewrite): 写しの「読み込む」で、一時の許可付きの写しを書き直して同じタブで開く。onPaint(state): 状態が変わった
@@ -78,13 +78,6 @@ export function createBrowserPanel({ bridge = window.plyDesktop?.browser, showMe
   const tabList = el('div', 'browser-tab-list'); tabList.setAttribute('role', 'tablist'); tabList.setAttribute('aria-label', t('browser.tabs'));
   const newTab = button(ICON.plus, t('browser.newTab'), () => run('newTab').then(() => focusAddress()).catch(failed), 'btn btn-icon browser-new-tab');
   tabsRow.append(tabList, newTab);
-  const agentRow = el('div', 'browser-agent-row'); agentRow.hidden = true;
-  const agentStatus = el('span', 'browser-agent-status');
-  const agentStop = el('button', 'btn', t('browser.agent.stop')); agentStop.type = 'button';
-  agentStop.onclick = () => run('agentStop').catch(failed);
-  const agentTakeOver = el('button', 'btn', t('browser.agent.takeOver')); agentTakeOver.type = 'button';
-  agentTakeOver.onclick = () => run('agentTakeOver').catch(failed);
-  agentRow.append(agentStatus, agentStop, agentTakeOver);
 
   // ---- 止めた件数の一行（画面が開いた PC のファイルのタブで、外部の読み込みの確認が ON のとき。プレビューと同じ語彙）。
   // ページ（ネイティブの View）の上ではなく、道具の列とページの間の DOM に置く
@@ -192,8 +185,7 @@ export function createBrowserPanel({ bridge = window.plyDesktop?.browser, showMe
       pick.setAttribute('role', 'tab'); pick.setAttribute('aria-selected', String(selected)); pick.tabIndex = selected ? 0 : -1;
       pick.title = tab.url ? `${label}\n${tab.url}` : label;
       const ic = el('span', 'browser-tab-mark');
-      if (state.agent?.tabId === tab.id) ic.append(runMark(t('browser.agent.working')));
-      else if (tab.loading) ic.append(runMark(t('browser.loading'))); else ic.innerHTML = ICON[addressParts(tab.url).kind] ?? ICON.blank;
+      if (tab.loading) ic.append(runMark(t('browser.loading'))); else ic.innerHTML = ICON[addressParts(tab.url).kind] ?? ICON.blank;
       pick.append(ic, el('span', 'browser-tab-name', label));
       pick.onclick = () => run('select', { id: tab.id }).catch(failed);
       pick.onkeydown = event => {
@@ -213,14 +205,7 @@ export function createBrowserPanel({ bridge = window.plyDesktop?.browser, showMe
 
   function paint(next) {
     const before = state;
-    state = { tabs: Array.isArray(next?.tabs) ? next.tabs : [], current: next?.current ?? null, agent: next?.agent ?? null, sessionId: next?.sessionId ?? null };
-    const active = !!state.agent && state.agent.sessionId === getSessionId();
-    agentRow.hidden = !active;
-    agentStatus.replaceChildren();
-    if (active) {
-      agentStatus.append(runMark(t('browser.agent.working')), document.createTextNode(t('browser.agent.status', { name: getAgentName() })));
-      if (!shown) hooks.openPanel();
-    }
+    state = { tabs: Array.isArray(next?.tabs) ? next.tabs : [], current: next?.current ?? null, sessionId: next?.sessionId ?? null };
     const tab = current();
     back.disabled = !tab?.canGoBack; forward.disabled = !tab?.canGoForward;
     reload.disabled = !tab?.url;
@@ -306,14 +291,13 @@ export function createBrowserPanel({ bridge = window.plyDesktop?.browser, showMe
 
   const api = {
     buttons: { back, forward, reloadPage: reload, address, openExternal, browserMore: more },
-    tabsRow, agentRow, guardRow, body,
+    tabsRow, guardRow, body,
     /** file-preview がパネルを開く関数と、最後のタブを閉じたときの関数を入れる */
     connect(next) { hooks = { ...hooks, ...next }; },
     /** パネルがブラウザーのモードで見えるようになった・隠れた */
     show() {
       if (shown) return sync();
       shown = true; lastSent = ''; watch(true);
-      agentRow.hidden = !(state.agent && state.agent.sessionId === getSessionId());
       paintGuard();
       bridge.command('context', { sessionId: getSessionId() }).then(paint).catch(() => {});
       sync();

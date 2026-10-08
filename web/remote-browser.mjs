@@ -1,10 +1,9 @@
 // PC のブラウザーを見る全面の表示（docs/inapp-browser.md「リモートから見る」、docs/design-system.md「PC のブラウザーを見る画面」）。
 // ホストの内蔵ブラウザーのタブの画面（JPEG）を WS の screencast で受けて描き、タップ・スクロール・文字の入力・少数のキーを送り返す。
-// 上にアドレス欄・戻る・再読み込み、エージェントが操作中なら「止める」「引き継ぐ」、下に接続の状態・画質・文字入力。
+// 上にアドレス欄・戻る・再読み込み、下に接続の状態・画質・文字入力。内蔵ブラウザーは人のものなので、入力はいつでも通る。
 // ページの大きさは端末の表示の大きさ（ホストがビューポートをこの大きさにする）。座標はフレームの metadata で変換する。
 import { el } from './dom.mjs';
 import { t } from './i18n.mjs';
-import { runMark } from './arc.mjs';
 import { backIcon } from './icons.mjs';
 import { normalizeAddress, addressParts } from './browser-address.mjs';
 import { notify } from './file-actions.mjs';
@@ -54,10 +53,10 @@ const button = (html, label, className = 'btn btn-icon') => {
 };
 
 /**
- * @param cmd WS のコマンド。getSessionId は今の会話。getAgentName はエージェントの名前。getHostName はホストの名前
+ * @param cmd WS のコマンド。getSessionId は今の会話。getHostName はホストの名前
  */
-export function createRemoteBrowser({ cmd, getSessionId, getAgentName = () => '', getHostName = () => '' }) {
-  let view = null, sessionId = null, state = null, quality = 'auto', ended = false, youTimer = null;
+export function createRemoteBrowser({ cmd, getSessionId, getHostName = () => '' }) {
+  let view = null, sessionId = null, state = null, quality = 'auto', ended = false;
 
   function build() {
     const root = el('section', 'rb'); root.hidden = true;
@@ -78,12 +77,6 @@ export function createRemoteBrowser({ cmd, getSessionId, getAgentName = () => ''
     const reload = button(ICON.reload, t('browser.reload'));
     const bar = el('div', 'rb-bar'); bar.append(back, address, input, reload);
 
-    const agentRow = el('div', 'rb-agent'); agentRow.hidden = true;
-    const agentText = el('span', 'rb-agent-text');
-    const agentStop = el('button', 'btn', t('browser.agent.stop')); agentStop.type = 'button';
-    const agentTake = el('button', 'btn', t('browser.agent.takeOver')); agentTake.type = 'button';
-    agentRow.append(agentText, agentStop, agentTake);
-
     const screen = el('div', 'rb-screen'); screen.setAttribute('aria-label', t('browser.remote.screen'));
     const img = el('img', 'rb-frame'); img.alt = ''; img.draggable = false;
     screen.append(img);
@@ -99,11 +92,10 @@ export function createRemoteBrowser({ cmd, getSessionId, getAgentName = () => ''
     const text = el('div', 'rb-text'); text.hidden = true;
     const textInput = el('input'); textInput.setAttribute('aria-label', t('browser.remote.textLabel')); textInput.placeholder = t('browser.remote.textPlaceholder');
     textInput.setAttribute('enterkeyhint', 'send');
-    const textHint = el('span', 'rb-text-hint small weak', t('browser.remote.takeOverFirst')); textHint.hidden = true;
     const textSend = el('button', 'btn primary', t('browser.remote.textSend')); textSend.type = 'button';
     text.append(textInput, textSend);
 
-    root.append(head, bar, agentRow, screen, tools, textHint, text);
+    root.append(head, bar, screen, tools, text);
     document.body.append(root);
 
     close.onclick = () => closeView();
@@ -129,13 +121,10 @@ export function createRemoteBrowser({ cmd, getSessionId, getAgentName = () => ''
       endAddress();
       nav('open', url);
     });
-    agentStop.onclick = () => agent('stop');
-    agentTake.onclick = () => agent('takeOver');
     qualityButton.onclick = () => { quality = quality === 'auto' ? 'low' : 'auto'; paintTools(); start({}).catch(failed); };
     textButton.onclick = () => {
       text.hidden = !text.hidden; textButton.setAttribute('aria-expanded', String(!text.hidden));
       if (!text.hidden) textInput.focus();
-      paintAgent();
     };
     const sendText = async (withEnter) => {
       if (blocked()) return;
@@ -196,44 +185,18 @@ export function createRemoteBrowser({ cmd, getSessionId, getAgentName = () => ''
       if (performance.now() - lastScroll > 60) flushScroll();
     }, { passive: false });
 
-    return { root, host, back, address, mark, shown, input, reload, agentRow, agentText, agentStop, agentTake, screen, img, sink, status, qualityButton, textButton, text, textHint };
+    return { root, host, back, address, mark, shown, input, reload, screen, img, sink, status, qualityButton, textButton, text };
   }
 
   const failed = error => notify(error?.message || t('browser.remote.failed'));
-  const blocked = () => {
-    if (ended) return true;
-    if (!state?.agent) return false;
-    view.textHint.hidden = false;
-    notify(t('browser.remote.takeOverFirst'));
-    return true;
-  };
+  const blocked = () => ended;
   async function send(input) {
     if (!sessionId) return;
-    try { await cmd('browserScreencastInput', { sessionId, input }); }
-    catch (error) { if (error?.code === 'agent-active') { state = { ...state, agent: true }; paintAgent(); } throw error; }
+    await cmd('browserScreencastInput', { sessionId, input });
   }
   function nav(action, url) {
     if (!sessionId || blocked()) return;
     cmd('browserScreencastNav', { sessionId, action, ...(url ? { url } : {}) }).catch(failed);
-  }
-  function agent(action) {
-    if (!sessionId) return;
-    cmd('browserScreencastAgent', { sessionId, action }).then(() => {
-      state = { ...state, agent: false };
-      clearTimeout(youTimer);
-      view.agentRow.hidden = false; view.agentRow.dataset.done = '';
-      view.agentText.textContent = action === 'takeOver' ? t('browser.remote.youOperate') : t('browser.remote.stopped');
-      youTimer = setTimeout(() => { delete view.agentRow.dataset.done; paintAgent(); }, 3000);
-    }).catch(failed);
-  }
-
-  function paintAgent() {
-    if (!view || 'done' in view.agentRow.dataset) return;
-    const active = !!state?.agent && !ended;
-    view.agentRow.hidden = !active;
-    view.agentText.replaceChildren();
-    if (active) view.agentText.append(runMark(t('browser.agent.working')), document.createTextNode(t('browser.agent.status', { name: getAgentName() || 'AI' })));
-    view.textHint.hidden = !active || view.text.hidden;
   }
   function paintAddress() {
     const url = state?.url ?? '';
@@ -256,7 +219,7 @@ export function createRemoteBrowser({ cmd, getSessionId, getAgentName = () => ''
     if (!view.sink.frame) { view.status.textContent = t('browser.remote.connecting'); return; }
     view.status.textContent = t('browser.remote.connectedFps', { fps: view.sink.fps() });
   }
-  function paint() { paintAddress(); paintAgent(); paintTools(); }
+  function paint() { paintAddress(); paintTools(); }
 
   async function start(target) {
     // 見ている箱の大きさ（CSS px）をページの大きさにする。端末の画素の倍率は画質で上限を決める（ホストが丸める）

@@ -1,6 +1,4 @@
 import assert from 'node:assert/strict';
-import { EventEmitter } from 'node:events';
-import { createRequire } from 'node:module';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -11,10 +9,8 @@ import { snapshotResponse, writeSnapshotFile } from '../../core/visualize.mjs';
 import { createBrowserSiteApprovals } from '../../core/browser-confirm.mjs';
 import { configurePreviewConfirmation, confirmedPreview, receivePreviewViolation, refreshPreviewConfirmation, blockedPreviewOrigins, noteBlockedOrigins } from '../../web/preview-confirm.mjs';
 import { setupBrowserSettings } from '../../web/browser-settings.mjs';
-const { createBrowserNavigation } = createRequire(import.meta.url)('../../desktop/browser-navigation.cjs');
 export const name = 'browser-confirm';
-export const title = 'Preview CSP, per-display grants, site approval and navigation';
-const tick = () => new Promise(resolve => setImmediate(resolve));
+export const title = 'Preview CSP, per-display grants and site approval';
 
 export default async function(t) {
   assert.equal(previewCsp(), VISUALIZE_CSP);
@@ -121,26 +117,4 @@ export default async function(t) {
   await authorize({ sessionId: 'codex', url: 'https://example.org/next' }); assert.equal(asked.length, 4);
   await authorize({ sessionId: 'claude', url: 'https://example.org/' }); assert.equal(asked.length, 5);
   t.ok('Site approvals: deny, once, persistent agent × origin, never an account name', true);
-
-  let enabled = true, resolve, askedCount = 0, sent = 0, url = 'https://one.example';
-  const c = new EventEmitter(); c.getURL = () => url; c.isDestroyed = () => false; c.loadURL = async next => { url = next; c.emit('did-navigate', {}, next); };
-  const tab = { id: 'tab', sessionId: 'codex', webContents: c };
-  const gate = createBrowserNavigation({ enabled: () => enabled, authorize: () => { askedCount++; return new Promise(r => { resolve = r; }); } }); gate.watch(tab);
-  const go = next => gate.run(tab, 'Page.navigate', { url: next }, async () => { sent++; await c.loadURL(next); return {}; });
-  const first = go('https://two.example'); await tick(); assert.equal(sent, 0); resolve({ allow: true }); await first; assert.equal(url, 'https://two.example');
-  await go('https://two.example/path'); assert.equal(askedCount, 1);
-  const denied = go('https://three.example'); await tick(); resolve({ allow: false }); await assert.rejects(denied); assert.equal(sent, 2);
-  let blocked = false;
-  c.emit('will-frame-navigate', { url: 'https://four.example', isMainFrame: true, preventDefault() { blocked = true; } }); assert(blocked); await tick(); resolve({ allow: true }); await tick(); assert.equal(url, 'https://four.example');
-  blocked = false; c.emit('will-redirect', { url: 'https://five.example', isMainFrame: true, preventDefault() { blocked = true; } }); assert(blocked); await tick(); resolve({ allow: true }); await tick(); assert.equal(url, 'https://five.example');
-  let popup = false; assert(gate.popup(tab, 'https://popup.example', () => { popup = true; })); await tick(); assert(!popup); resolve({ allow: true }); await tick(); assert(popup);
-  gate.human(tab); blocked = false;
-  c.emit('will-frame-navigate', { url: 'https://human.example', isMainFrame: true, preventDefault() { blocked = true; } }); assert(!blocked);
-  enabled = false; await go('https://off.example'); assert.equal(url, 'https://off.example');
-  enabled = true;
-  const cancelled = go('https://cancelled.example'); await tick(); gate.cancel('codex'); resolve({ allow: true }); await assert.rejects(cancelled);
-  assert.equal(url, 'https://off.example');
-  c.emit('before-input-event'); blocked = false;
-  c.emit('will-frame-navigate', { url: 'https://human.example', isMainFrame: true, preventDefault() { blocked = true; } }); assert(!blocked);
-  t.ok('Agent navigate is held, deny fails, same-origin passes; page navigation, redirect, popup guarded; human and OFF pass', true);
 }

@@ -58,13 +58,13 @@ export function parentPortScreencast(port, { timeoutMs = 15_000 } = {}) {
   };
 }
 
-export const SCREENCAST_COMMANDS = ['browserScreencast', 'browserScreencastStop', 'browserScreencastAck', 'browserScreencastInput', 'browserScreencastNav', 'browserScreencastAgent'];
+export const SCREENCAST_COMMANDS = ['browserScreencast', 'browserScreencastStop', 'browserScreencastAck', 'browserScreencastInput', 'browserScreencastNav'];
 
 /**
  * WS のコマンドを処理する（core/server.mjs から呼ぶ）。戻り値は { ok, result } か { ok: false, code }。
  * 内蔵ブラウザーの映像は、リモートの接続（ADR 0010 の isLocalRequest が false）からだけ受ける。ホストの画面には内蔵ブラウザーそのものがある。
- * args.source === 'chrome' は、エージェントの Chrome の窓の映像（chrome = { hub, bridge }）。ホストの画面もリモートも見られるが、見るだけ（入力・移動・操作は view-only）。
- * 入力・移動・エージェントの操作は、その会話を見ている接続からだけ。エージェントが操作中の入力と移動は main が断る（agent-active）。
+ * args.source === 'chrome' は、エージェントの Chrome の窓の映像（chrome = { hub, bridge }）。ホストの画面もリモートも見られるが、見るだけ（入力・移動は view-only）。
+ * 入力・移動は、その会話を見ている接続からだけ。
  * snapshotFile({ sessionId, id, at }) は可視化の写しを書き出して file: の URL を返す（見つからなければ null）
  */
 export async function screencastCommand({ command, args = {}, local, hub, bridge, client, snapshotFile, chrome = null }) {
@@ -72,7 +72,7 @@ export async function screencastCommand({ command, args = {}, local, hub, bridge
   if (viaChrome) {
     if (!chrome?.hub || !chrome.bridge?.ready) return { ok: false, code: 'unavailable' };
     ({ hub, bridge } = chrome);
-    if (command === 'browserScreencastInput' || command === 'browserScreencastNav' || command === 'browserScreencastAgent') return { ok: false, code: 'view-only' };
+    if (command === 'browserScreencastInput' || command === 'browserScreencastNav') return { ok: false, code: 'view-only' };
     if (command === 'browserScreencast' && (args.url != null || args.visualization)) return { ok: false, code: 'view-only' };
   } else if (local) return { ok: false, code: 'remote-only' };
   if (!hub || !bridge?.ready) return { ok: false, code: 'unavailable' };
@@ -94,18 +94,17 @@ export async function screencastCommand({ command, args = {}, local, hub, bridge
       }
       case 'browserScreencastStop': await hub.unwatch(client, sessionId); return { ok: true, result: {} };
       case 'browserScreencastAck': hub.received(client, sessionId, Number(args.seq)); return { ok: true, result: {} };
-      case 'browserScreencastInput': case 'browserScreencastNav': case 'browserScreencastAgent': {
+      case 'browserScreencastInput': case 'browserScreencastNav': {
         if (!hub.watching(client, sessionId)) return { ok: false, code: 'not-watching' };
         if (command === 'browserScreencastInput') await bridge.request('input', sessionId, { input: args.input });
-        else if (command === 'browserScreencastNav') await bridge.request('navigate', sessionId, { nav: args.action, url: args.url });
-        else await bridge.request('agent', sessionId, { control: args.action });
+        else await bridge.request('navigate', sessionId, { nav: args.action, url: args.url });
         return { ok: true, result: {} };
       }
       default: return { ok: false, code: 'unknown' };
     }
   } catch (error) {
     const code = String(error?.message ?? '');
-    return { ok: false, code: ['agent-active', 'invalid-url', 'invalid-input', 'not-watching', 'no-window', 'view-only'].includes(code) ? code : 'failed' };
+    return { ok: false, code: ['invalid-url', 'invalid-input', 'not-watching', 'no-window', 'view-only'].includes(code) ? code : 'failed' };
   }
 }
 

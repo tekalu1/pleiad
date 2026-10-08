@@ -91,7 +91,7 @@ x64 の `node.exe` は 93.6 MB。7z（LZMA）で圧縮すると約 22.5 MB【実
 
 ### 3.1 方法
 
-`scripts/zero-downtime/stage1-0/c-agent-browser-reconnect.mjs`（と `c-relay-host.cjs`）。
+`scripts/zero-downtime/stage1-0/c-agent-browser-reconnect.mjs`（と `c-relay-host.cjs`）。（内蔵ブラウザーの中継を消した第 7 段で、この 2 つの台本も消した。計測は歴史として残る）
 
 - **中継は本物のコード**（`desktop/browser-relay.cjs`）。待ち受けのポートと鍵だけを環境変数で決められるようにした写しを一時に作って使う（1-5 で入れる直しの最小形。`server.listen(0, …)` → ポート指定・`key: random()` → 鍵の指定。直したのは 2 行）。本物の panel（`desktop/browser-panel.cjs`）の代わりに、Electron の非表示の `BrowserWindow` をタブにする最小の panel を渡す（`webContents.debugger` は本物。about:blank を読み込んでおかないと `Page.getFrameTree` が返らず、最初の `Browser.getVersion` から止まる）
 - **`agent-browser` は本物**（`node_modules/agent-browser` 0.38.1 の `agent-browser-win32-x64.exe`）。環境変数は `core/agent-browser.mjs` の `browserEnvironment` と同じ形（`AGENT_BROWSER_CONFIG` の JSON に `{ "cdp": <中継の URL> }`・`AGENT_BROWSER_SESSION`・`AGENT_BROWSER_SOCKET_DIR`・`AGENT_BROWSER_NAMESPACE=''`。セッション名・ソケットの置き場は試験用で、インストール版の常駐とは別）

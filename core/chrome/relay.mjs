@@ -1,6 +1,6 @@
-// エージェントのブラウザー（PC の Chrome）の絞り込みの中継（docs/inapp-browser.md「Chrome の中継（開発中）」、ADR 0148・0153）。
+// エージェントのブラウザー（PC の Chrome）の絞り込みの中継（docs/inapp-browser.md「Chrome の中継」、ADR 0148・0153）。
 //
-// 会話ごとに鍵付きの loopback の ws の端点（ws://127.0.0.1:<port>/devtools/browser/<鍵 48 桁>。内蔵ブラウザーの中継と同じ形）を出し、
+// 会話ごとに鍵付きの loopback の ws の端点（ws://127.0.0.1:<port>/devtools/browser/<鍵 48 桁>）を出し、
 // Chrome への 1 本の接続（core/chrome/connection.mjs）の上で、その会話の窓の範囲にだけ絞った CDP を中継する。
 //   - 範囲: 会話の窓（windowId）のタブ。中継が作った窓のタブと、範囲のタブが開いたタブ（openerId。popup の別窓はその窓も範囲に足す）。
 //     ほかの窓（利用者の普段の窓・ほかの会話の窓）のタブは、getTargets にもイベントにも出さない。URL・題は覚えずログにも出さない
@@ -29,7 +29,7 @@ const CONNECT_WAIT_MS = 20_000;
 /** エージェントのコマンドの上りの上限。移動の確認（人が答える）を待つことがあるので長くとる。CLI は自分で先に打ち切る */
 const COMMAND_TIMEOUT_MS = 600_000;
 
-/** 応答のときに確認の答えを待ち、断られた文を返すコマンド（内蔵ブラウザーの中継と同じ。desktop/browser-navigation.cjs） */
+/** 応答のときに確認の答えを待ち、断られた文を返すコマンド（ADR 0042） */
 const OPERATES = /^(Input\.|Runtime\.(evaluate|callFunctionOn)$|Page\.(navigate|reload|navigateToHistoryEntry)$)/;
 /**
  * エージェントがタブを動かしている印を付けないコマンド（有効化と、iframe・worker の自動 attach の続き）。
@@ -71,7 +71,7 @@ class RelayError extends Error {
 }
 const denied = what => new RelayError(`${what} denied`);
 
-/** http(s)（認証情報なし）と about:blank だけ（内蔵ブラウザーの中継と同じ） */
+/** http(s)（認証情報なし）と about:blank だけ */
 export function safeUrl(value) {
   try { const url = new URL(value); return (['http:', 'https:'].includes(url.protocol) && !url.username && !url.password) || url.href === 'about:blank'; }
   catch { return false; }

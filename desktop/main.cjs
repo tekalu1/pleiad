@@ -19,7 +19,7 @@ const { createRemoteWindows } = require('./remote-windows.cjs');
 const { createSwitchScreen } = require('./switch-screen.cjs');
 // 内蔵ブラウザー（右パネルに重ねる WebContentsView。docs/inapp-browser.md、ADR 0041）。ローカルの窓にだけ置く
 const { createBrowserPanel } = require('./browser-panel.cjs');
-const { attachAgentBrowserBridge } = require('./agent-browser-bridge.cjs');
+const { attachBrowserViewerBridge } = require('./browser-viewer-bridge.cjs');
 // リモートの端末から内蔵ブラウザーを見る・操作する（docs/inapp-browser.md「リモートから見る」）
 const { attachBrowserScreencastBridge } = require('./browser-screencast-bridge.cjs');
 const { prepareAgentBrowserBin } = require('./agent-browser-bin.cjs');
@@ -31,7 +31,7 @@ const { createChromeOs, attachChromeOs } = require('./chrome-os/index.cjs');
 const { createWorkerMessages } = require('./worker-messages.cjs');
 let computerService;
 let browserPanel;
-let agentBrowserBridge;
+let browserViewerBridge;
 let browserScreencastBridge;
 // コンピューターの操作中のオーバーレイと Esc（docs/computer-use.md、ADR 0073）。画面を撮る・入力する側（desktop/computer）はこの overlay を受け取って使う
 const { attachComputerOverlay } = require('./computer-overlay.cjs');
@@ -300,13 +300,12 @@ async function boot() {
     icon: path.join(__dirname, 'icon.png'), external });
   remoteWindows.attach();
   remoteWindows.attachWorker(messages);
-  browserPanel = createBrowserPanel({ window, WebContentsView, BrowserWindow, session, shell, ipcMain, app, trust, icon: path.join(__dirname, 'icon.png'), agentControl: (action, id) => agentBrowserBridge?.[action]?.(id) });
+  browserPanel = createBrowserPanel({ window, WebContentsView, BrowserWindow, session, shell, ipcMain, app, trust, icon: path.join(__dirname, 'icon.png') });
   browserPanel.attach();
-  // 名前付きパイプの経路（無停止の更新）では、タブの写しをサーバーへ渡し、付け直したときにサーバーの写しからタブと中継を立て直す（core/agent-browser.mjs）
-  agentBrowserBridge = attachAgentBrowserBridge(messages, browserPanel, { handover: Boolean(linked) });
+  // 名前付きパイプの経路（無停止の更新）では、タブの写しをサーバーへ渡し、付け直したときにサーバーの写しからタブを立て直す（core/browser-viewer.mjs）
+  browserViewerBridge = attachBrowserViewerBridge(messages, browserPanel, { handover: Boolean(linked) });
   computerOverlay = attachComputerOverlay(messages, { onEscape: owner => computerService?.escape({ owner, notify: false }) });
   browserScreencastBridge = attachBrowserScreencastBridge(messages, browserPanel, {
-    agentControl: (action, id) => agentBrowserBridge?.[action]?.(id),
     // 隠れた窓（常駐で閉じた）ではページが描かれない。見られている間だけ最小化で出し、終われば隠し直す
     keepVisible: () => {
       if (!window || window.isDestroyed() || window.isVisible()) return () => {};
@@ -459,7 +458,7 @@ function closeAgentWindows() {
 }
 if (!app.requestSingleInstanceLock()) app.quit();
 else {
-  app.on('will-quit', () => { closeAgentWindows(); serverSwitch?.cancel(); browserScreencastBridge?.close(); agentBrowserBridge?.close(); computerOverlay?.close(); });
+  app.on('will-quit', () => { closeAgentWindows(); serverSwitch?.cancel(); browserScreencastBridge?.close(); browserViewerBridge?.close(); computerOverlay?.close(); });
   app.on('second-instance', (_event, argv) => { if (remoteWindows?.handleArgv(argv)) return; if (window) { window.restore(); window.show(); window.focus(); } });
   app.on('before-quit', event => { exitInProgress = true; if (!quitting && window) { event.preventDefault(); void closeSafely(); } });
   app.on('will-quit', () => { exitInProgress = true; });

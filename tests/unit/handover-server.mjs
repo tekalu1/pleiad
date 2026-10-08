@@ -40,7 +40,11 @@ async function attachMain(dataDir, pid) {
   const info = await until(() => { const found = readLinkInfo(dataDir); return found?.pid === pid ? found : null; }, WAIT_MS, `main-link.json (pid ${pid})`);
   const link = createServerLink({ pipe: info.pipe, secret: info.secret, appVersion: '0.0.1' });
   const seen = { messages: [], exits: [] };
-  link.on('message', message => seen.messages.push(message));
+  link.on('message', message => {
+    seen.messages.push(message);
+    // Chrome の層は無い（答えないと、ターンごとに層の準備を待たされる）
+    if (message.type === 'chrome-os-ready-request') link.postMessage({ type: 'chrome-os-ready', supported: false, reason: 'platform' });
+  });
   link.on('exit', code => seen.exits.push(code));
   await link.connect();
   return { link, seen, request: async (type, extra = {}, ms = WAIT_MS) => {
@@ -80,6 +84,8 @@ export default async function (t) {
     s1 = await startServer({ env, dataDir, timeoutMs: 40_000, entry: path.join(ROOT, 'tests', 'lib', 'adopt-server.mjs') });
     m1 = await attachMain(dataDir, s1.child.pid);
     c1 = await open({ port: s1.port, token: s1.token });
+    // 場面の入口（adopt-server の読み込み）はサーバーの起動のあとに立つ。場面が答えるまで待ってから、時間に敏感な場面（T の 5 秒の Read）を始める
+    await scene('slowCall', { ms: 1 });
     const ids = {};
     for (const k of ['T', 'Q', 'B', 'X']) {
       const res = await c1.runTurn({ backend: 'fake', cwd: ROOT, prompt: `echo:${k}` }, { ms: WAIT_MS });

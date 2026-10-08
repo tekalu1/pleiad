@@ -1,10 +1,10 @@
 // リモートの画面から PC の内蔵ブラウザーを見る・操作する（docs/inapp-browser.md「リモートから見る」、ADR 0041）。
 // 会話の内蔵ブラウザーのタブに webContents.debugger で Page.startScreencast を回し、フレームを worker へ渡す。
-// debugger はエージェントの CDP 中継（desktop/browser-relay.cjs）と同じものを共有する（どちらも付いていれば付け直さない）。
+// debugger は DevTools などが先に付けていれば付け直さない。
 //   - フレームは変化があったときだけ Chromium が出す。次のフレームは ack の後なので、間引きは ack を遅らせて行う（worker が決める）
 //   - 見ている間はビューポートを端末の表示の大きさにする（Emulation.setDeviceMetricsOverride）。端末で読める幅になり、
 //     タブが窓に載っていない・窓が最小化されていても描かれる（窓に載せる必要はある。panel.pin が窓の外に 1px で載せる）
-//   - 入力は Input.dispatch*。エージェントが操作中は断る（端末の「引き継ぐ」で接続を切ってから）
+//   - 入力は Input.dispatch*。内蔵ブラウザーは人が見るもの（エージェントの操作は PC の Chrome）なので、常に通る
 const { navigable } = require('./browser-panel.cjs');
 
 const KEYS = {
@@ -61,11 +61,10 @@ function inputCommands(input, { width = 1600, height = 2400 } = {}) {
 }
 
 /**
- * @param panel desktop/browser-panel.cjs の戻り値（tabsFor・createFor・contentsOf・agentFor・pin・human・onTabsChanged・onAgentChanged）
+ * @param panel desktop/browser-panel.cjs の戻り値（tabsFor・createFor・contentsOf・pin・onTabsChanged）
  * @param post  worker へ送る（{ type: 'browser-screencast-frame' | 'browser-screencast-state' | 'browser-screencast-ended', sessionId, ... }）
- * @param agentControl エージェントの接続を止める・引き継ぐ（desktop/agent-browser-bridge.cjs の stop / takeOver）
  */
-function createBrowserScreencast(panel, { post = () => {}, agentControl = () => {} } = {}) {
+function createBrowserScreencast(panel, { post = () => {} } = {}) {
   const sessions = new Map();   // sessionId -> { tabId, contents, settings, cleanup[] }
 
   function state(sessionId) {
@@ -77,7 +76,6 @@ function createBrowserScreencast(panel, { post = () => {}, agentControl = () => 
       // PC のファイル（可視化の写し）の在り処は端末へ出さない
       tabId: entry.tabId, url: url === 'about:blank' ? '' : /^file:/i.test(url) ? 'file:///' : url, title: c.getTitle(), loading: c.isLoading(),
       canGoBack: c.navigationHistory.canGoBack(), canGoForward: c.navigationHistory.canGoForward(),
-      agent: !!panel.agentFor(sessionId),
     };
   }
   let stateTimer = new Map();
@@ -94,8 +92,7 @@ function createBrowserScreencast(panel, { post = () => {}, agentControl = () => 
   function pickTab(sessionId, url) {
     if (url) return panel.createFor(sessionId, url);
     const tabs = panel.tabsFor(sessionId);
-    const agentTab = panel.agentFor(sessionId)?.tabId;
-    return tabs.find(tab => tab.id === agentTab) ?? tabs[0] ?? panel.createFor(sessionId, 'about:blank');
+    return tabs[0] ?? panel.createFor(sessionId, 'about:blank');
   }
 
   async function begin(entry) {
@@ -174,7 +171,6 @@ function createBrowserScreencast(panel, { post = () => {}, agentControl = () => 
       }
     });
     entry.cleanup.push(panel.onTabsChanged((change, changed) => { if (change === 'destroyed' && changed.id === tab.id) end(sessionId, 'closed'); }));
-    entry.cleanup.push(panel.onAgentChanged(changedSession => { if (changedSession === sessionId) update(); }));
     try { await begin(entry); }
     catch (error) { release(sessionId); throw error; }
     return { tabId: tab.id, state: state(sessionId) };
@@ -191,11 +187,8 @@ function createBrowserScreencast(panel, { post = () => {}, agentControl = () => 
   async function input(sessionId, value) {
     const entry = sessions.get(sessionId);
     if (!entry || entry.contents.isDestroyed()) throw new Error('not-watching');
-    if (panel.agentFor(sessionId)) throw new Error('agent-active');
     const commands = inputCommands(value, entry.settings);
     if (!commands.length) throw new Error('invalid-input');
-    // 人がページへ入力したらエージェントの操作を解除する（docs/inapp-browser.md「サイトの利用の確認」）
-    panel.human(entry.tabId);
     for (const [method, params] of commands) await entry.contents.debugger.sendCommand(method, params);
   }
 
@@ -203,8 +196,6 @@ function createBrowserScreencast(panel, { post = () => {}, agentControl = () => 
     const entry = sessions.get(sessionId);
     const c = entry?.contents;
     if (!c || c.isDestroyed()) throw new Error('not-watching');
-    if (panel.agentFor(sessionId)) throw new Error('agent-active');
-    panel.human(entry.tabId);
     switch (action) {
       case 'back': if (c.navigationHistory.canGoBack()) c.navigationHistory.goBack(); break;
       case 'forward': if (c.navigationHistory.canGoForward()) c.navigationHistory.goForward(); break;
@@ -218,15 +209,9 @@ function createBrowserScreencast(panel, { post = () => {}, agentControl = () => 
     }
   }
 
-  function agent(sessionId, action) {
-    if (action !== 'stop' && action !== 'takeOver') throw new Error('unknown action');
-    agentControl(action, sessionId);
-    pushState(sessionId);
-  }
-
   function close() { for (const id of [...sessions.keys()]) release(id); }
 
-  return { start, stop, ack, input, navigate, agent, state, close, watching: () => [...sessions.keys()] };
+  return { start, stop, ack, input, navigate, state, close, watching: () => [...sessions.keys()] };
 }
 
 module.exports = { createBrowserScreencast, inputCommands, screencastSettings, KEYS };

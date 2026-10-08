@@ -61,7 +61,7 @@ export default async function (t) {
   const chrome = await startFakeChrome({ permission: 'auto' });
   const dataDir = path.join(scratch, 'data');
   await fs.mkdir(dataDir);
-  const server = await startServer({ env: { AGENT_HOST_BACKENDS: 'fake', AGENT_HOST_AGENT_BROWSER: 'chrome', AGENT_HOST_CHROME_USER_DATA: chrome.userDataDir }, dataDir, entry });
+  const server = await startServer({ env: { AGENT_HOST_BACKENDS: 'fake', AGENT_HOST_CHROME_USER_DATA: chrome.userDataDir }, dataDir, entry });
   let c, remote, late, a;
   try {
     c = await open({ port: server.port, token: server.token });

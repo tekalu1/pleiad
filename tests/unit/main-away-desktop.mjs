@@ -1,16 +1,13 @@
 // main が居ない間の機能ごとの扱いの、main（desktop/）側（無停止の更新 段階 1 の 1-5。docs/zero-downtime-update/design.md §7.2）。
-//   内蔵ブラウザーの中継を同じポートと鍵で立て直す（relay.restore。別のポートに落ちるときは moved）・パネルのタブの写し（exportState / restoreState）・
-//   橋（desktop/agent-browser-bridge.cjs）の流れ: 復元の依頼 → タブを先に開き直す → 中継を立て直す → 写しの報告。既定（handover なし）は何も足さない
-//   切り替えで替わったサーバー（空から始まる）へ、つながった印（ready）で写しと中継の URL を 1 回送り直す（relay.snapshot）
+//   パネルのタブの写し（exportState / restoreState）・
+//   橋（desktop/browser-viewer-bridge.cjs）の流れ: 復元の依頼 → タブを開き直す → 写しの報告。既定（handover なし）は読み込みの方針の依頼だけ
+//   切り替えで替わったサーバー（空から始まる）へ、つながった印（ready）で写しを 1 回送り直す
 //   ホストへ任せる橋（remote-agent-bridge）: つなぎ直したサーバーへ、ready で一覧と、つながっている線の ready を送り直す
 import { EventEmitter } from 'node:events';
-import net from 'node:net';
 import { createRequire } from 'node:module';
-import { WebSocket } from 'ws';
 
 const require = createRequire(import.meta.url);
-const { createBrowserRelay } = require('../../desktop/browser-relay.cjs');
-const { attachAgentBrowserBridge } = require('../../desktop/agent-browser-bridge.cjs');
+const { attachBrowserViewerBridge } = require('../../desktop/browser-viewer-bridge.cjs');
 const bp = require('../../desktop/browser-panel.cjs');
 const { attachRemoteAgentBridge } = require('../../desktop/remote-agent-bridge.cjs');
 
@@ -19,54 +16,21 @@ export const title = '内蔵ブラウザーの付け直し（main 側）: 中継
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 const until = async (check, ms = 3000) => { const end = Date.now() + ms; while (!check()) { if (Date.now() > end) return false; await sleep(10); } return true; };
-const KEY = 'b'.repeat(48);
 
-/** 空いているポート（取って離す） */
-function freePort() {
-  return new Promise((resolve, reject) => {
-    const server = net.createServer();
-    server.once('error', reject);
-    server.listen(0, '127.0.0.1', () => { const { port } = server.address(); server.close(() => resolve(port)); });
-  });
-}
-function blocker(port) {
-  return new Promise((resolve, reject) => {
-    const server = net.createServer();
-    server.once('error', reject);
-    server.listen(port, '127.0.0.1', () => resolve(server));
-  });
-}
-
-/** 中継の試験用のパネル（タブの webContents の debugger だけ偽物） */
-function relayPanel() {
+/** 橋の試験用のタブの入れ物（タブの数と作成だけ） */
+function fakeTabs() {
   let serial = 0;
   const tabs = [];
   const listeners = new Set();
   const createFor = (sessionId, initial = '') => {
     const id = `t${++serial}`;
-    const debuggerApi = new EventEmitter();
-    debuggerApi.isAttached = () => true; debuggerApi.attach = () => {};
-    debuggerApi.sendCommand = async method => (method === 'Page.getFrameTree' ? { frameTree: { frame: { id: `frame-${id}` } } } : {});
-    const webContents = { debugger: debuggerApi, isDestroyed: () => false, getTitle: () => id, getURL: () => initial || 'about:blank' };
+    const webContents = { isDestroyed: () => false, getTitle: () => id, getURL: () => initial || 'about:blank' };
     const tab = { id, sessionId, webContents };
     tabs.push(tab);
     for (const listener of listeners) listener('created', tab);
     return tab;
   };
   return { tabs, createFor, tabsFor: sessionId => tabs.filter(tab => tab.sessionId === sessionId), selectFor() {}, closeFor() {}, rebindSession() {}, onTabsChanged: l => { listeners.add(l); return () => listeners.delete(l); } };
-}
-
-/** CDP の接続を 1 つ開き、Target.getTargets の答え（URL の一覧）を返す */
-async function targetsVia(url) {
-  const ws = new WebSocket(url);
-  const opened = await new Promise(resolve => { ws.once('open', () => resolve(true)); ws.once('error', () => resolve(false)); ws.once('unexpected-response', () => resolve(false)); });
-  if (!opened) return null;
-  const answer = await new Promise(resolve => {
-    ws.on('message', raw => { const m = JSON.parse(raw.toString()); if (m.id === 1) resolve(m.result.targetInfos.map(x => x.url)); });
-    ws.send(JSON.stringify({ id: 1, method: 'Target.getTargets' }));
-  });
-  ws.close();
-  return answer;
 }
 
 /** パネルの試験用の偽の electron（desktop/browser-panel.cjs が使う分） */
@@ -107,65 +71,18 @@ function bridgeKit() {
   worker.sent = [];
   worker.postMessage = message => { worker.sent.push(message); };
   worker.say = message => worker.emit('message', message);
-  const base = relayPanel();
+  const base = fakeTabs();
   const log = { restored: [], state: { tabs: [{ sessionId: 's1', url: 'https://example.com/a', selected: true }] } };
   const stateListeners = new Set();
-  const panel = { ...base, setNavigationGuard() {}, setAgent() {}, setLoadPolicy() {},
+  const applied = [];
+  const panel = { ...base, setLoadPolicy: policy => applied.push(policy),
     exportState: () => structuredClone(log.state),
     restoreState: state => { log.restored.push(state); for (const tab of state.tabs) base.createFor(tab.sessionId, tab.url); return state.tabs.length; },
     onStateChanged: l => { stateListeners.add(l); return () => stateListeners.delete(l); } };
-  return { worker, panel, log, changed: () => { for (const l of stateListeners) l(); }, stateListeners };
+  return { worker, panel, log, applied, changed: () => { for (const l of stateListeners) l(); }, stateListeners };
 }
 
 export default async function (t) {
-  // ---- 中継: 同じポートと鍵で立て直す
-  {
-    const panel = relayPanel();
-    panel.createFor('s1', 'https://example.com/a');   // 先にタブを開き直しておく
-    const relay = createBrowserRelay(panel);
-    const port = await freePort();
-    const result = await relay.restore({ port, entries: [{ sessionId: 's1', key: KEY }, { sessionId: 'bad', key: 'zz' }, { sessionId: '', key: KEY.replace(/b/g, 'c') }] });
-    t.ok('restore: 指定のポートで立つ（moved は false）', result.port === port && result.moved === false);
-    const url = await relay.endpoint('s1');
-    t.ok('restore した会話の endpoint は、同じポート・同じ鍵の URL', url === `ws://127.0.0.1:${port}/devtools/browser/${KEY}`);
-    const urls = await targetsVia(url);
-    t.ok('前の URL でつながり、先に開き直したタブが見える（空のタブを足さない）', JSON.stringify(urls) === '["https://example.com/a"]' && panel.tabs.length === 1);
-    t.ok('形の悪い鍵・空の会話の id は足さない（鍵が違えば接続できない）', await targetsVia(`ws://127.0.0.1:${port}/devtools/browser/${'d'.repeat(48)}`) === null);
-    const other = await relay.endpoint('s2');
-    t.ok('restore の後に始まる会話は、同じポートで新しい鍵', other.startsWith(`ws://127.0.0.1:${port}/devtools/browser/`) && !other.endsWith(KEY));
-    const again = await relay.restore({ port: await freePort(), entries: [{ sessionId: 's1', key: 'e'.repeat(48) }] });
-    t.ok('restore は 2 回目以降、立っている待ち受けも会話の鍵も替えない', again.port === port && await relay.endpoint('s1') === url);
-    relay.close();
-  }
-  {
-    // ポートが取れなかったら別のポート。サーバーが URL と設定ファイルを直せるよう moved で知らせる
-    const taken = await freePort();
-    const hold = await blocker(taken);
-    const panel = relayPanel();
-    const relay = createBrowserRelay(panel);
-    const result = await relay.restore({ port: taken, entries: [{ sessionId: 's1', key: KEY }] });
-    t.ok('ポートが取れなければ別のポートで立ち、moved で知らせる（鍵は同じ）', result.moved === true && result.port !== taken && await relay.endpoint('s1') === `ws://127.0.0.1:${result.port}/devtools/browser/${KEY}`);
-    relay.close();
-    hold.close();
-    // 同時に endpoint を呼んでも待ち受けは 1 つ
-    const relay2 = createBrowserRelay(relayPanel());
-    const [a, b] = await Promise.all([relay2.endpoint('x1'), relay2.endpoint('x2')]);
-    t.ok('同時に endpoint を頼んでも待ち受けは 1 つ（同じポート）', new URL(a).port === new URL(b).port);
-    relay2.close();
-  }
-
-  {
-    // snapshot: 立っている中継の写し（切り替えで替わったサーバーへ送り直す）。待ち受けが無い・会話が無ければ null
-    const relay = createBrowserRelay(relayPanel());
-    t.ok('snapshot: 待ち受けが無ければ null', relay.snapshot() === null);
-    const url = await relay.endpoint('s1');
-    const second = await relay.endpoint('s2');
-    const snap = relay.snapshot();
-    t.ok('snapshot: 待ち受けのポートと、会話ごとの鍵（endpoint で答えた URL と同じ）', snap.port === Number(new URL(url).port) && snap.entries.length === 2
-      && url.endsWith(snap.entries.find(row => row.sessionId === 's1').key) && second.endsWith(snap.entries.find(row => row.sessionId === 's2').key));
-    relay.close();
-  }
-
   // ---- パネル: タブの写しの書き出しと開き直し
   {
     const { panel, electron } = newPanel();
@@ -244,19 +161,16 @@ export default async function (t) {
   // ---- 橋の流れ
   {
     const kit = bridgeKit();
-    const port = await freePort();
-    const bridge = attachAgentBrowserBridge(kit.worker, kit.panel, { handover: true, reportMs: 30, restoreWaitMs: 400 });
-    t.ok('起動で browser-restore-request を送る（今までの 2 つの依頼の後）', kit.worker.sent.map(m => m.type).join() === 'browser-load-policy-request,agent-browser-prefs-request,browser-restore-request');
+    const bridge = attachBrowserViewerBridge(kit.worker, kit.panel, { handover: true, reportMs: 30, restoreWaitMs: 400 });
+    t.ok('起動で browser-restore-request を送る（読み込みの方針の依頼の後）', kit.worker.sent.map(m => m.type).join() === 'browser-load-policy-request,browser-restore-request');
     kit.changed();
     await sleep(80);
     t.ok('復元の答えが届くまでは報告しない（空の状態でサーバーの写しを上書きしない）', !kit.worker.sent.some(m => m.type === 'browser-state-report'));
-    kit.worker.say({ type: 'browser-restore', tabs: [{ sessionId: 's1', url: 'https://example.com/a', selected: true }], relay: { port, entries: [{ sessionId: 's1', key: KEY }] } });
+    kit.worker.say({ type: 'browser-restore', tabs: [{ sessionId: 's1', url: 'https://example.com/a', selected: true }], relay: null });
     await until(() => kit.worker.sent.some(m => m.type === 'browser-state-report'));
-    t.ok('browser-restore: タブを先に開き直し、そのあと同じポート・鍵で中継を立てる（前の URL でつながり、タブが見える。moved は送らない）',
-      kit.log.restored.length === 1 && kit.panel.tabs.length === 1 && JSON.stringify(await targetsVia(`ws://127.0.0.1:${port}/devtools/browser/${KEY}`)) === '["https://example.com/a"]'
-      && !kit.worker.sent.some(m => m.type === 'agent-browser-endpoint-moved'));
+    t.ok('browser-restore: タブを開き直す', kit.log.restored.length === 1 && kit.panel.tabs.length === 1);
     const reports = () => kit.worker.sent.filter(m => m.type === 'browser-state-report');
-    t.ok('復元の後は、写しを報告する（タブ）', reports().length === 1 && reports()[0].tabs[0].url === 'https://example.com/a');
+    t.ok('復元の後は、写しを報告する（タブ）', reports().length === 1 && reports()[0].tabs[0].url === 'https://example.com/a' && reports()[0].relay === undefined);
     kit.changed(); kit.changed(); kit.changed();
     await sleep(100);
     t.ok('中身が同じなら報告しない（loading の細かい変化で送り続けない）', reports().length === 1);
@@ -271,19 +185,16 @@ export default async function (t) {
     t.ok('close: 終わる前に最後の写しを渡す', reports().length === 3 && reports()[2].tabs.length === 0);
   }
   {
-    // 切り替えで替わったサーバー（S2）は空から始まる。つながるたびに届く ready で、写しと中継の URL を 1 回送り直す（中身が変わらなくても）
+    // 切り替えで替わったサーバー（S2）は空から始まる。つながるたびに届く ready で、写しを 1 回送り直す（中身が変わらなくても）
     const kit = bridgeKit();
-    const port = await freePort();
-    const bridge = attachAgentBrowserBridge(kit.worker, kit.panel, { handover: true, reportMs: 30, restoreWaitMs: 400 });
+    const bridge = attachBrowserViewerBridge(kit.worker, kit.panel, { handover: true, reportMs: 30, restoreWaitMs: 400 });
     const reports = () => kit.worker.sent.filter(m => m.type === 'browser-state-report');
     kit.worker.say({ type: 'ready', port: 7611, token: 'early' });
     t.ok('復元が済む前の ready では送らない（復元の流れが報告を始める）', reports().length === 0);
-    kit.worker.say({ type: 'browser-restore', tabs: kit.log.state.tabs, relay: { port, entries: [{ sessionId: 's1', key: KEY }] } });
+    kit.worker.say({ type: 'browser-restore', tabs: kit.log.state.tabs, relay: null });
     await until(() => reports().length === 1);
-    t.ok('復元の報告（中継の URL は付けない。同じ main が持つ写しなので）', reports()[0].relay === undefined);
     kit.worker.say({ type: 'ready', port: 7611, token: 'switched' });
     t.ok('S2 につながった（ready）直後に、中身が同じでも写しを送り直す', reports().length === 2 && reports()[1].tabs[0].url === 'https://example.com/a');
-    t.ok('送り直しには中継の URL（ポートと会話ごとの鍵）が付く', reports()[1].relay?.port === port && reports()[1].relay.entries.length === 1 && reports()[1].relay.entries[0].sessionId === 's1' && reports()[1].relay.entries[0].key === KEY);
     kit.changed();
     await sleep(100);
     t.ok('送り直しの後も、中身が同じなら報告しない（重ねて送らない）', reports().length === 2);
@@ -292,42 +203,40 @@ export default async function (t) {
   {
     // 復元の待ちの上限を過ぎて報告を始めた後（古いサーバーなど）の ready でも送り直す。handover なしは何もしない
     const kit = bridgeKit();
-    attachAgentBrowserBridge(kit.worker, kit.panel, { handover: true, reportMs: 10, restoreWaitMs: 40 });
+    attachBrowserViewerBridge(kit.worker, kit.panel, { handover: true, reportMs: 10, restoreWaitMs: 40 });
     await sleep(120);
     kit.worker.say({ type: 'ready', port: 7611, token: 't' });
-    t.ok('復元の答えが無いまま待ちの上限を過ぎた後の ready でも、写しを送り直す（中継が無ければ relay は付けない）', kit.worker.sent.filter(m => m.type === 'browser-state-report').length === 2 && kit.worker.sent.at(-1).relay === undefined);
+    t.ok('復元の答えが無いまま待ちの上限を過ぎた後の ready でも、写しを送り直す', kit.worker.sent.filter(m => m.type === 'browser-state-report').length === 2);
     const plain = bridgeKit();
-    attachAgentBrowserBridge(plain.worker, plain.panel);
+    attachBrowserViewerBridge(plain.worker, plain.panel);
     plain.worker.say({ type: 'ready', port: 7611, token: 't' });
     t.ok('既定（handover なし）: ready で何も送らない', !plain.worker.sent.some(m => m.type === 'browser-state-report'));
   }
   {
-    const kit = bridgeKit();
-    const taken = await freePort();
-    const hold = await blocker(taken);
-    attachAgentBrowserBridge(kit.worker, kit.panel, { handover: true, reportMs: 30, restoreWaitMs: 400 });
-    kit.worker.say({ type: 'browser-restore', tabs: [], relay: { port: taken, entries: [{ sessionId: 's1', key: KEY }] } });
-    const moved = await until(() => kit.worker.sent.some(m => m.type === 'agent-browser-endpoint-moved'));
-    const message = kit.worker.sent.find(m => m.type === 'agent-browser-endpoint-moved');
-    t.ok('ポートが取れなかったら、別のポートで立てて agent-browser-endpoint-moved で知らせる', moved && message.port !== taken && JSON.stringify(await targetsVia(`ws://127.0.0.1:${message.port}/devtools/browser/${KEY}`)) === '["about:blank"]');
-    hold.close();
-  }
-  {
     // 答えが来ない（古いサーバー）ときも、少し待てば報告を始める
     const kit = bridgeKit();
-    attachAgentBrowserBridge(kit.worker, kit.panel, { handover: true, reportMs: 10, restoreWaitMs: 60 });
+    attachBrowserViewerBridge(kit.worker, kit.panel, { handover: true, reportMs: 10, restoreWaitMs: 60 });
     await sleep(150);
     kit.changed();
     await until(() => kit.worker.sent.some(m => m.type === 'browser-state-report'));
     t.ok('復元の答えが無くても、待ちの上限の後は報告を始める', kit.worker.sent.some(m => m.type === 'browser-state-report'));
   }
   {
-    // 既定（handover なし）: 復元の依頼も報告もしない。今のとおり
+    // 既定（handover なし）: 復元の依頼も報告もしない
     const kit = bridgeKit();
-    const bridge = attachAgentBrowserBridge(kit.worker, kit.panel);
+    const bridge = attachBrowserViewerBridge(kit.worker, kit.panel);
     kit.changed();
     await sleep(80);
     bridge.close();
-    t.ok('既定（handover なし）: 起動で今までの 2 つの依頼だけ。報告も復元もしない・状態の購読もしない', kit.worker.sent.map(m => m.type).join() === 'browser-load-policy-request,agent-browser-prefs-request' && kit.stateListeners.size === 0);
+    t.ok('既定（handover なし）: 起動で読み込みの方針の依頼だけ。報告も復元もしない・状態の購読もしない', kit.worker.sent.map(m => m.type).join() === 'browser-load-policy-request' && kit.stateListeners.size === 0);
+  }
+  {
+    // 読み込みの方針（ADR 0079）: worker からの browser-load-policy を panel.setLoadPolicy へ
+    const kit = bridgeKit();
+    const bridge = attachBrowserViewerBridge(kit.worker, kit.panel);
+    kit.worker.say({ type: 'browser-load-policy', confirm: true, origins: ['https://ok.example'] });
+    kit.worker.say({ type: 'browser-load-policy', confirm: 'yes', origins: 'nope' });
+    t.ok('読み込みの方針を panel に渡す（true 以外は OFF。形の検査は panel.setLoadPolicy）', JSON.stringify(kit.applied) === JSON.stringify([{ confirm: true, origins: ['https://ok.example'] }, { confirm: false, origins: 'nope' }]));
+    bridge.close();
   }
 }

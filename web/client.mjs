@@ -6365,12 +6365,12 @@ let browserEntry = null;   // 頭の行のボタン（下の setupBrowserEntry�
 const chromeWindows = createWindowTable();
 let chromePanel = null, chromeEntry = null;
 const browserPanel = browserPanelAvailable()
-  ? createBrowserPanel({ showMenu: (x, y, items, title, opts) => showMenu(x, y, items, title, opts), getSessionId: () => state.current ?? null, getAgentName: () => labelOf(activeBackendId()),
+  ? createBrowserPanel({ showMenu: (x, y, items, title, opts) => showMenu(x, y, items, title, opts), getSessionId: () => state.current ?? null,
     onChange: () => browserEntry?.paint() })
   : null;
 // ホストの画面ではない端末から、ホストの内蔵ブラウザーを見る（web/remote-browser.mjs）。リンクを押したら開き先を選ぶ（web/link-sheet.mjs）
 const remoteBrowser = createRemoteBrowser({ cmd: (command, args) => cmd(command, args), getSessionId: () => state.current ?? null,
-  getAgentName: () => labelOf(activeBackendId()), getHostName: () => state.hostCaps?.hostName ?? '' });
+  getHostName: () => state.hostCaps?.hostName ?? '' });
 /** シートを出したら true。ホストの画面・内蔵ブラウザーの無いホストでは出さない（呼び出し側が今までどおりに開く） */
 function chooseRemote({ url = '', kind = 'url', label = url, openHere = () => {}, target = { url } }) {
   const choices = linkChoices({ url, kind, pageOrigin: location.origin, hostScreen: state.osActions === true, pcBrowser: state.hostCaps?.pcBrowser === true });
@@ -6396,7 +6396,6 @@ const filePreview = setupFilePreview({
 });
 // 頭の行の内蔵ブラウザーのボタンと近道（web/header-entries.mjs）。使えない画面では出さない
 browserEntry = setupBrowserEntry({ button: $('browserEntry'), browser: browserPanel, preview: filePreview, bridge: window.plyDesktop?.browser,
-  getSessionId: () => state.current ?? null, getAgentName: () => labelOf(activeBackendId()),
   blocked: () => document.body.classList.contains('settings') || !!document.querySelector('dialog[open]') });
 // いま見ている場所のアドレス（web/view-address.mjs）。通知の一覧・検索・脇の行・スレッドの開閉はここを通り、見ている場所を 1 つで残す。
 // 前の回に見ていた場所は、会話を開く（select が残す）前に読んでおく（起動時に Channels の面の位置を戻す）

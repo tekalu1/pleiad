@@ -181,7 +181,7 @@ Playwright の Chromium 151（一時のプロフィール。利用者の Chrome 
 - 画面の転送（`desktop/browser-screencast.cjs`）: タブの `webContents.debugger` で `Page.startScreencast`（JPEG）を回す。debugger はエージェントの CDP 中継と共有し、中継はエージェント自身が始めていない画面のフレームを流さない。見ている間はビューポートを端末の表示の大きさにし（`Emulation.setDeviceMetricsOverride`、倍率は画質「自動」で 2 まで・「低」で 1）、`setBackgroundThrottling(false)` で覆われた窓・最小化した窓でも描かせる。タブが窓に載っていないと描かれないので、パネルに出ていないタブは窓の外に 1px で載せる（`panel.pin`）。窓が隠れている（常駐で閉じた）ときは、見られている間だけ最小化で出し、終われば隠し直す。止めるとビューポートと描き方を戻す。別の文書へ移るたびに送信をかけ直す（描く側が替わると止まることがある）。
 - 送る頻度（`core/browser-screencast.mjs`）: Chromium は変化があったときだけフレームを出し、ack を返すまで次を出さない。worker は、見ている端末がみな描き終えた（`browserScreencastAck`。返事が無ければ 3 秒）うえで、前のフレームから最短の間隔（自動 200ms・低 500ms）が過ぎたら ack を返す。回線の遅い端末では自然に頻度が下がる。フレームは WS の `{ kind: "screencast" }` で見ている接続にだけ送る。新しいポートは開けず、リモートは中継の既存の WS 経路を通る。
 - 入力: タップはマウスの移動・押す・離す、ドラッグとホイールは `mouseWheel`、文字は `Input.insertText`、キーは Enter・Backspace・Tab・Escape・Delete・矢印だけ（`Input.dispatchKeyEvent`）。座標は端末がフレームの `metadata`（`deviceWidth` / `deviceHeight`）と画像の表示の大きさから CSS px に変換する（`toPageCoords`）。ほかに戻る・進む・再読み込み・止める・URL を開く（http・https だけ）。入力と移動は人の操作としてエージェントの操作を解除する（「サイトの利用の確認」）。
-- エージェントとの関係: エージェントが中継で操作中（`panel.agentFor`）は、端末では見るだけで、入力と移動は断る（`agent-active`）。端末の「引き継ぐ」でエージェントの接続を切ってから操作できる。「止める」は次の人の送信まで再接続を断る（どちらも「エージェントの操作」と同じ意味）。
+- エージェントとの関係: 内蔵ブラウザーはエージェントが操作しない（エージェントのブラウザーは PC の Chrome）。端末からは見る・入力・移動ができる。
 - 止める: 端末が閉じる・接続が切れる・見る端末がいなくなると止める。タブが閉じる・DevTools で debugger が外れると端末へ終わりを知らせる。
 - 口: WS の `browserScreencast`・`browserScreencastStop`・`browserScreencastAck`・`browserScreencastInput`・`browserScreencastNav`・`browserScreencastAgent`（`core/protocol.mjs`）。リモートの接続（ADR 0010 の `isLocalRequest` が false）からだけ受け、ホストの画面からは `remote-only` で断る。入力・移動・エージェントの操作は、その会話を見ている接続からだけ。worker と main の間は parentPort（`desktop/browser-screencast-bridge.cjs`）。
 - 帯域の実測（2026-09-28、390×712 の表示、毎 50ms 数字が変わるページ）: 自動は 1 枚 約 9 KB（780×1424）、約 4 fps、約 290 kbit/s。低は 1 枚 約 3.5 KB（390×712）、約 1.8 fps、約 50 kbit/s。変化の無い間は 0 枚。WS では base64 と JSON で約 1.35 倍になる。
@@ -268,7 +268,7 @@ ON のとき「許可したサイト」を表示し、止めた出どころを�
 
 ### サイトの利用の確認
 
-ON のとき、エージェントが別の origin へ移る前に中継の `Page.navigate` と新しいタブの作成を保留する。ページ内の遷移・リダイレクト・新しい窓は Electron の `will-frame-navigate`・`will-redirect`・`setWindowOpenHandler` で止め、承認後に移動する。確認は `desktop/browser-navigation.cjs`、会話への受け渡しは `core/browser-confirm.mjs` が担当する。
+ON のとき、エージェントが別の origin へ移る前に中継の `Page.navigate` と新しいタブの作成を保留する。ページ内の遷移・リダイレクト・新しい窓は Electron の `will-frame-navigate`・`will-redirect`・`setWindowOpenHandler` で止め、承認後に移動する。会話への受け渡しは `core/browser-confirm.mjs` が担当する。
 
 会話の承認カードに「<エージェント名> が <サイト> を使おうとしています」と「一度だけ / このサイトは常に / 断る」を出す。ログイン中のアカウント名（「ログイン済み」）は出さない（Chrome の Cookie を読まないので、内蔵ブラウザーの道でも Cookie を読まずに同じ形にした。[ADR 0153](adr/0153-chrome-connection-waits-indefinitely-behind-os-layer.md)）。Chrome の中継での止め方は上の「サイトの利用の確認（Chrome）」。
 
@@ -293,7 +293,7 @@ ON のとき、エージェントが別の origin へ移る前に中継の `Page
 
 ### 会話とタブ
 
-タブは開いたときに画面で開いていた会話（`sessionId`）を覚える。画面は開く・会話を切り替えるたびに `context` で今の会話を知らせ、`window.open` で開いたタブは元のタブの会話を引き継ぐ。パネルの一覧（`ply:browser-state` と `state`）と今のタブは、今の会話のタブと、会話に属さないタブ（`sessionId` が null）だけ。会話を切り替えると（`context`）、その会話で最後に選んだタブ、なければ見えるタブの先頭、なければ今のタブなしにし、窓に載せる View も替える。別の会話のタブをエージェントが作る・前に出しても、今の画面のタブと窓は動かない。新しい会話の最初のターンは会話 ID が無いので、タブは `turn.key` の会話に付き、ID が決まったところで本物の ID へ付け替える（`rebind`。画面も同じ時点で `context` を本物の ID に替える）。main の `createBrowserPanel` は `tabsFor(sessionId)`（その会話のタブと webContents）と `contentsOf(tabId)` を返し、会話別の CDP 中継はここから webContents の debugger へつなぐ（[ADR 0043](adr/0043-agent-browser-via-per-session-cdp-relay.md)）。
+タブは開いたときに画面で開いていた会話（`sessionId`）を覚える。画面は開く・会話を切り替えるたびに `context` で今の会話を知らせ、`window.open` で開いたタブは元のタブの会話を引き継ぐ。パネルの一覧（`ply:browser-state` と `state`）と今のタブは、今の会話のタブと、会話に属さないタブ（`sessionId` が null）だけ。会話を切り替えると（`context`）、その会話で最後に選んだタブ、なければ見えるタブの先頭、なければ今のタブなしにし、窓に載せる View も替える。別の会話のタブをエージェントが作る・前に出しても、今の画面のタブと窓は動かない。main の `createBrowserPanel` は `tabsFor(sessionId)`（その会話のタブと webContents）を返し、画面の転送（`desktop/browser-screencast.cjs`）がここから webContents の debugger へつなぐ。
 
 ## 検証
 

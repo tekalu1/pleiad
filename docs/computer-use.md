@@ -48,7 +48,7 @@ Windows の arm64 は実機で未確認。ワークフローで arm64 の koffi 
 
 ### core と main（main への口）
 
-`agent-browser-*` と同じく `{ type, … }` の JSON を `parentPort.postMessage` で送る（core は `process.parentPort` を直に触らず、`core/main-port.mjs` の「main への口」を通す。口は、`utilityProcess` のサーバー（`AGENT_HOST_HANDOVER=off`・開発）では parentPort をそのまま包んだもの、パッケージ版の既定（無停止の更新）では名前付きパイプ（`core/main-link.mjs`。型は同じで、`Uint8Array` は `{ $bin: base64 }` に包んで運ぶ））。画像は `Uint8Array`（構造化複製で通る）。座標はすべて**物理画素の仮想デスクトップ座標**（左上のモニターが負になりうる）。DIP に直すのはオーバーレイに描くときの main だけ。
+`browser-load-policy` などと同じく `{ type, … }` の JSON を `parentPort.postMessage` で送る（core は `process.parentPort` を直に触らず、`core/main-port.mjs` の「main への口」を通す。口は、`utilityProcess` のサーバー（`AGENT_HOST_HANDOVER=off`・開発）では parentPort をそのまま包んだもの、パッケージ版の既定（無停止の更新）では名前付きパイプ（`core/main-link.mjs`。型は同じで、`Uint8Array` は `{ $bin: base64 }` に包んで運ぶ））。画像は `Uint8Array`（構造化複製で通る）。座標はすべて**物理画素の仮想デスクトップ座標**（左上のモニターが負になりうる）。DIP に直すのはオーバーレイに描くときの main だけ。
 
 **main が居ない間**（更新で main が入れ替わる間・main が落ちた間。パイプの口だけ。無停止の更新 段階 1）: core は main の切断を Esc と同じに扱い、使用を止める（持ち主のロックを解き、進行中の呼び出しは `ComputerError('failed', …)` で返る）。ツールには「Pleiad の更新中のため止めました」を返し、ターンは止めない（`computer.state` は `stopped`・reason `update`）。戻った main には止めたことを送り直さず、次の呼び出しで承認からやり直す。`computer-ready-request` は main がつながるたびに送り直す（パイプでは main が後からつながるので、起動時の 1 回では捨てられる）。main の `releaseAll`・オーバーレイの `hideAll` は、つながりが切れるたび（`exit`）に走る。
 

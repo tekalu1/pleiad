@@ -7,7 +7,7 @@
 //   - 切れたあとの postMessage は何もせず false（溜めない）。connect() をもう一度呼べば同じ包みでつなぎ直せる（'message' の登録はそのまま残る。
 //     once('exit') は 1 回で消えるので、つなぎ直しのたびに付け直す）
 //   - **最初に connect する前**の postMessage だけは溜めて（上限 MAX_QUEUED 件）、つながった直後に順に送る（true を返す）。
-//     utilityProcess.fork の直後に main が worker.postMessage する（agent-browser-bridge の prefs の依頼など）のと同じ使い方を、つながる前から許すため。
+//     utilityProcess.fork の直後に main が worker.postMessage する（browser-viewer-bridge の読み込みの方針の依頼など）のと同じ使い方を、つながる前から許すため。
 //     つながったことがある包みは溜めない（切れた後は false）。つながらないまま捨てるなら clearQueue()
 //   - kill() は「終わらせる」の握手: shutdown のメッセージを送って、つながりを閉じる（サーバーは今の worker.postMessage({ type: 'shutdown' }) と同じに終わる）
 //   - **connect() の前に on('message') を付ける**（サーバーはつながった直後に最新の ready を送る。つないだ後に付けると取りこぼす）

@@ -46,7 +46,7 @@ function fakeBridge() {
   const requests = [], acks = [];
   return {
     ready: true, requests, acks,
-    request: async (action, sessionId, args) => { requests.push([action, sessionId, args]); if (action === 'input' && args.input?.type === 'agent') throw new Error('agent-active'); return action === 'start' ? { tabId: 't1', state: { url: 'http://localhost:5173/' } } : {}; },
+    request: async (action, sessionId, args) => { requests.push([action, sessionId, args]); return action === 'start' ? { tabId: 't1', state: { url: 'http://localhost:5173/' } } : {}; },
     ack: (sessionId, frameId) => acks.push([sessionId, frameId]),
     onFrame: fn => { on.frame = fn; }, onState: fn => { on.state = fn; }, onEnded: fn => { on.ended = fn; },
     frame: (sessionId, id, data = 'AAAA') => on.frame(sessionId, { id, data, metadata: { deviceWidth: 390, deviceHeight: 700 } }),
@@ -58,8 +58,7 @@ const client = () => { const got = []; return { got, send: message => got.push(m
 
 function fakePanel() {
   let serial = 0;
-  const tabs = [], listeners = new Set(), agentListeners = new Set(), log = { pinned: new Set(), human: [], commands: [] };
-  let agent = null;
+  const tabs = [], listeners = new Set(), log = { pinned: new Set(), commands: [] };
   function createFor(sessionId, url = '') {
     const id = `t${++serial}`;
     const dbg = new EventEmitter();
@@ -79,11 +78,7 @@ function fakePanel() {
     log, createFor,
     tabsFor: sessionId => tabs.filter(tab => tab.sessionId === sessionId),
     onTabsChanged: fn => { listeners.add(fn); return () => listeners.delete(fn); },
-    onAgentChanged: fn => { agentListeners.add(fn); return () => agentListeners.delete(fn); },
-    agentFor: () => agent,
-    setAgent: (sessionId, tabId) => { agent = tabId ? { sessionId, tabId } : null; for (const fn of agentListeners) fn(sessionId); },
     pin: (id, on) => { if (on) log.pinned.add(id); else log.pinned.delete(id); },
-    human: id => log.human.push(id),
     destroy: id => { const index = tabs.findIndex(tab => tab.id === id); const [tab] = tabs.splice(index, 1); tab.webContents.destroyed = true; for (const fn of listeners) fn('destroyed', tab); },
   };
 }
@@ -144,10 +139,10 @@ export default async function (t) {
 
     const another = client();
     await hub.watch(another, 's2', {});
-    bridge.state('s2', { url: 'https://example.com/', agent: true });
+    bridge.state('s2', { url: 'https://example.com/', loading: true });
     bridge.ended('s2', 'closed');
     t.ok('状態と終わり（タブが閉じた）を端末へ知らせ、見るのをやめる',
-      another.got.some(m => m.type === 'state' && m.state.agent) && another.got.at(-1).type === 'ended' && !hub.watching(another, 's2'));
+      another.got.some(m => m.type === 'state' && m.state.loading) && another.got.at(-1).type === 'ended' && !hub.watching(another, 's2'));
   }
 
   // ---- コマンドの断り
@@ -164,9 +159,7 @@ export default async function (t) {
     const opened = await run('browserScreencast', { sessionId: 's1', url: 'http://localhost:5173/' });
     t.ok('見始められる', opened.ok && bridge.requests.at(-1)[2].options.url === 'http://localhost:5173/');
     t.ok('見ている接続の入力は main へ渡す', (await run('browserScreencastInput', { sessionId: 's1', input: { type: 'tap', x: 1, y: 1 } })).ok);
-    t.ok('エージェントが操作中の入力は断る（code: agent-active）', (await run('browserScreencastInput', { sessionId: 's1', input: { type: 'agent' } })).code === 'agent-active');
-    t.ok('引き継ぐ・止めるは main へ渡す', (await run('browserScreencastAgent', { sessionId: 's1', action: 'takeOver' })).ok
-      && bridge.requests.at(-1)[0] === 'agent' && bridge.requests.at(-1)[2].control === 'takeOver');
+    t.ok('エージェント向けの操作（browserScreencastAgent）は無い', (await run('browserScreencastAgent', { sessionId: 's1', action: 'takeOver' })).ok !== true);
     let asked = null;
     const shown = await run('browserScreencast', { sessionId: 's1', visualization: { sessionId: 's0', id: 'v1' } }, { snapshotFile: async q => { asked = q; return 'file:///C:/data/visualization-snapshots/v1.html'; } });
     t.ok('可視化の写しはサーバーが書き出した file: の URL で開く（端末から file: は受けない）', shown.ok && asked.sessionId === 's0' && asked.id === 'v1'
@@ -183,17 +176,17 @@ export default async function (t) {
     t.ok('main から ready が届くまでは使えない', bridge.ready === false);
     port.emit('message', { data: { type: 'browser-screencast-ready' } });
     const pending = bridge.request('start', 's1', { options: { width: 390 } });
-    port.emit('message', { data: { type: 'browser-screencast', id: posted[0].id, ok: false, error: 'agent-active' } });
+    port.emit('message', { data: { type: 'browser-screencast', id: posted[0].id, ok: false, error: 'no-tab' } });
     let error = null;
     try { await pending; } catch (e) { error = e.message; }
-    t.ok('ready の後は依頼を送り、失敗の理由をそのまま返す', bridge.ready && posted[0].action === 'start' && error === 'agent-active');
+    t.ok('ready の後は依頼を送り、失敗の理由をそのまま返す', bridge.ready && posted[0].action === 'start' && error === 'no-tab');
     t.ok('parentPort が無い（npm start）なら口を作らない', parentPortScreencast(null) === null);
   }
 
   // ---- main（desktop/browser-screencast.cjs）
   {
-    const panel = fakePanel(), posted = [], control = [];
-    const sc = createBrowserScreencast(panel, { post: message => posted.push(message), agentControl: (action, id) => control.push([action, id]) });
+    const panel = fakePanel(), posted = [];
+    const sc = createBrowserScreencast(panel, { post: message => posted.push(message) });
     const result = await sc.start('s1', { width: 390, height: 700, scale: 2, quality: 55 });
     const tab = panel.tabsFor('s1')[0];
     const commands = panel.log.commands.filter(([id]) => id === tab.id).map(([, method, params]) => [method, params]);
@@ -207,17 +200,8 @@ export default async function (t) {
     sc.ack('s1', 3);
     t.ok('worker の ack で Chromium に次を許す', panel.log.commands.some(([, method, params]) => method === 'Page.screencastFrameAck' && params.sessionId === 3));
     await sc.input('s1', { type: 'tap', x: 100, y: 200 });
-    t.ok('タップはマウスの押す・離す。人の操作としてエージェントの操作を解除する',
-      panel.log.commands.filter(([, method]) => method === 'Input.dispatchMouseEvent').length === 3 && panel.log.human.includes(tab.id));
-    panel.setAgent('s1', tab.id);
-    let refused = null;
-    try { await sc.input('s1', { type: 'text', text: 'x' }); } catch (e) { refused = e.message; }
-    let navRefused = null;
-    try { await sc.navigate('s1', 'reload'); } catch (e) { navRefused = e.message; }
-    t.ok('エージェントが操作中は入力も移動も断る', refused === 'agent-active' && navRefused === 'agent-active');
-    sc.agent('s1', 'takeOver');
-    t.ok('引き継ぐはエージェントの接続を切る（段階 2 と同じ）', control[0][0] === 'takeOver' && control[0][1] === 's1');
-    panel.setAgent('s1', null);
+    t.ok('タップはマウスの押す・離す',
+      panel.log.commands.filter(([, method]) => method === 'Input.dispatchMouseEvent').length === 3);
     await sc.navigate('s1', 'open', 'http://localhost:5173/next');
     let badUrl = null;
     try { await sc.navigate('s1', 'open', 'file:///C:/secret.txt'); } catch (e) { badUrl = e.message; }
@@ -286,14 +270,12 @@ export default async function (t) {
 
   // ---- 配線
   {
-    const all = ['browserScreencast', 'browserScreencastStop', 'browserScreencastAck', 'browserScreencastInput', 'browserScreencastNav', 'browserScreencastAgent'];
+    const all = ['browserScreencast', 'browserScreencastStop', 'browserScreencastAck', 'browserScreencastInput', 'browserScreencastNav'];
     t.ok('WS のコマンドを protocol に登録してある', all.every(command => COMMANDS.has(command)));
     const server = read('core/server.mjs');
     t.ok('サーバーは isLocalRequest の結果を渡し、hostCapabilities で pcBrowser を答える',
       /screencastCommand\(\{ command: msg\.command, args: msg\.args \?\? \{\}, local,/.test(server) && /pcBrowser: !local && !!screencastBridge\?\.ready/.test(server));
     t.ok('接続が切れたら見ていた画面を外す', /screencastHub\?\.forget\(viewer\)/.test(server));
-    const relay = read('desktop/browser-relay.cjs');
-    t.ok('エージェントの中継は、自分で始めていない画面のフレームを流さない', /method === 'Page\.screencastFrame' && !innerSession && !record\.screencast/.test(relay));
     const main = read('desktop/main.cjs');
     t.ok('デスクトップ版の main が橋をつなぐ', /attachBrowserScreencastBridge\(messages, browserPanel/.test(main));
     const client = read('web/client.mjs');

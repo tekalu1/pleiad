@@ -19,6 +19,11 @@ const until = async (cond, ms = 8000, what = '') => {
   }
 };
 const states = c => c.events.filter(e => e.type === 'chromeBrowser').map(e => e.state);
+/** fake backend に prompt を言わせて、返った本文を読む（browser-instructions / browser:... は渡った物をそのまま返す） */
+const said = async (c, prompt) => {
+  const turn = await c.runTurn({ backend: 'fake', cwd: ROOT, prompt });
+  return turn.events.filter(e => e.type === 'text.delta').map(e => e.text ?? e.delta ?? '').join('') || turn.events.find(e => e.type === 'text.end')?.text || '';
+};
 const fail = p => p.then(() => null, e => ({ code: e.code, message: e.message }));
 
 export default async function (t) {
@@ -78,6 +83,7 @@ export default async function (t) {
     // ---- 操作の面: chromeStatus だけが MCP・CLI に出る。つなぐ・切る・前に出すは出ない
     const agent = { by: 'agent', via: 'mcp', sessionId: null };
     const status = await registry.invoke(agent, 'browser.chromeStatus', {}, { locale: 'ja' });
+    t.ok('使える OS のターンには、指示が渡る（対照）', (await said(c, 'browser-instructions')) !== '(none)');
     t.ok('browser.chromeStatus は MCP から読める（Electron の無いこの呼び出しでは unsupported）', status.ok === true && status.result.state === 'unsupported' && registry.get('browser.chromeStatus').surfaces.mcp === 'catalog');
     for (const id of ['browser.chromeConnect', 'browser.chromeDisconnect', 'browser.chromeRaiseDialog']) {
       const r = await registry.invoke(agent, id, {}, { locale: 'ja' });
@@ -94,12 +100,13 @@ export default async function (t) {
     const s = await startServer({ env: { AGENT_HOST_BACKENDS: 'fake', AGENT_HOST_CHROME_USER_DATA: chrome.userDataDir, FAKE_CHROME_OS: 'unsupported' }, dataDir: dirs('data2'), entry });
     let u;
     try {
-      u = await open({ port: s.port, token: s.token });
+      u = await open({ port: s.port, token: s.token, autoAllow: true });
       await until(async () => (await u.cmd('chromeStatus')).state === 'unsupported', 8000, 'unsupported');
       t.ok('OS の層が unsupported → hostCapabilities.chromeBrowser は unsupported', (await u.cmd('hostCapabilities')).chromeBrowser === 'unsupported');
       const connect = await fail(u.cmd('chromeConnect'));
       t.ok('chromeConnect は「この OS ではまだ使えません」で断る（UNSUPPORTED。upgrade は投げない）', connect?.code === 'UNSUPPORTED' && /まだ使えません/.test(connect.message) && chrome.upgrades === 1, JSON.stringify(connect));
       t.ok('状態の便りも unsupported', states(u).at(-1) === 'unsupported', states(u).join());
+      t.ok('使えない OS のターンには、ブラウザーの環境変数・指示・ply_browser を渡さない', await said(u, 'browser-instructions') === '(none)' && await said(u, 'browser:{"name":"hand_to_user","arguments":{}}') === 'browser: unavailable');
     } finally { u?.close(); await s.stop(); }
   }
 
@@ -108,12 +115,13 @@ export default async function (t) {
     const s = await startServer({ env: { AGENT_HOST_BACKENDS: 'fake' }, dataDir: dirs('data3') });
     let p;
     try {
-      p = await open({ port: s.port, token: s.token });
+      p = await open({ port: s.port, token: s.token, autoAllow: true });
       t.ok('Electron の無いホストでは hostCapabilities.chromeBrowser が false', (await p.cmd('hostCapabilities')).chromeBrowser === false);
       t.ok('chromeBrowser のイベントも送らない', states(p).length === 0);
       const connect = await fail(p.cmd('chromeConnect'));
       t.ok('chromeConnect は UNSUPPORTED で断る', connect?.code === 'UNSUPPORTED', JSON.stringify(connect));
       t.ok('chromeStatus は unsupported', (await p.cmd('chromeStatus')).state === 'unsupported');
+      t.ok('Electron の無いホストのターンにも、ブラウザーの環境変数・指示・ply_browser を渡さない', await said(p, 'browser-instructions') === '(none)' && await said(p, 'browser:{"name":"hand_to_user","arguments":{}}') === 'browser: unavailable');
     } finally { p?.close(); await s.stop(); }
   }
 
