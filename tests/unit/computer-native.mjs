@@ -426,7 +426,7 @@ export default async function (t) {
   {
     const fs = require('node:fs');
     const main = fs.readFileSync(new URL('../../desktop/main.cjs', import.meta.url), 'utf8');
-    t.ok('main.cjs: service を worker の message の包み（messages）につなぎ、Esc の登録の解除はオーバーレイの suspendEscape へ渡す', /attachComputerService\(messages,[\s\S]*?escape: \{ suspend: \(\) => computerOverlay\?\.suspendEscape\(\)/.test(main));
+    t.ok('main.cjs: service を worker の message の包み（messages）につなぎ、Esc の登録の解除はオーバーレイの suspendEscape へ渡す', /attachComputerService\(messages,[\s\S]*?escape: computerEscape/.test(main) && /const computerEscape = \{ suspend: \(\) => computerOverlay\?\.suspendEscape\(\)/.test(main));
     t.ok('main.cjs: オーバーレイが Esc を拾ったら service.escape（computer-escape はオーバーレイが送る）', /attachComputerOverlay\(messages, \{ onEscape: owner => computerService\?\.escape\(\{ owner, notify: false \}\) \}\)/.test(main));
   }
 
@@ -851,7 +851,7 @@ async function overlayIntegrationTests(t) {
   const service = createComputerService({ post: m => posted.push(m), win32: w, sleep: noSleep, selfPid: 1, selfExe: 'C:\\x\\Ply.exe',
     escape: { suspend: () => overlay.suspendEscape() }, nativeImage: null, timeouts: { op: 2000, launch: 2000, watchdog: 30_000 } });
   overlay = createComputerOverlay({ electron, post: m => posted.push(m), t: key => key, timing: { idleMs: 500, stopMs: 40, tailMs: 10, exitMs: 10, rmExitMs: 4, marginMs: 4, keepMs: 200, escapeWaitMs: 200 },
-    onEscape: owner => service.escape({ owner, notify: false }), log: () => {} });
+    onEscape: owner => service.escape({ owner, notify: false }), log: () => {}, platform: 'win32' });
   const both = m => { service.handleMessage(m); overlay.handleMessage(m); }; // main.cjs では、同じ worker のメッセージを両方が受ける
   const call = async (id, actions) => { service.handleMessage({ type: 'computer-call', id, owner: 'o1', op: 'input', args: { actions } }); for (let i = 0; i < 200 && !posted.some(m => m.id === id); i++) await new Promise(r => setTimeout(r, 5)); return posted.find(m => m.id === id); };
 

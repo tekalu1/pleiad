@@ -53,8 +53,8 @@ export default async function (t) {
 
   // ---- hostCapabilities.computerUse ----
   const cap = computerUseCapability;
-  t.ok('使えない理由: Electron でない → desktop / Windows でない → platform / main が読めない → native',
-    cap({ hasParentPort: false, platform: 'win32' }).reason === 'desktop' && cap({ hasParentPort: true, platform: 'darwin' }).reason === 'platform'
+  t.ok('使えない理由: Electron でない → desktop / Windows・macOS でない → platform / main が読めない → native',
+    cap({ hasParentPort: false, platform: 'win32' }).reason === 'desktop' && cap({ hasParentPort: true, platform: 'linux' }).reason === 'platform'
     && cap({ hasParentPort: true, platform: 'win32', ready: { supported: false, reason: 'native' } }).reason === 'native'
     && cap({ hasParentPort: true, platform: 'win32', ready: { supported: false } }).reason === 'native');
   t.ok('Windows の Electron では使える（computer-ready の前も後も）',
@@ -125,7 +125,7 @@ export default async function (t) {
     calls.length = 0; mainSwitch.onclick(); await new Promise(r => setImmediate(r));
     t.ok('止めたスイッチは押しても保存しない', calls.length === 0);
     caps = { computerUse: { supported: false, reason: 'platform' } }; view.paint();
-    t.ok('Windows でないときの理由', all('.cu-unsupported')[0].textContent === 'Windows の PC でだけ使えます。');
+    t.ok('対象外の OS の理由', all('.cu-unsupported')[0].textContent === 'Windows または macOS 14 以上の PC で使えます。');
     caps = null; view.paint();
     t.ok('hostCapabilities が届く前は使えるものとして描く', mainSwitch.disabled === false && all('.cu-unsupported')[0].hidden === true);
   } finally { document.getElementById = get; }

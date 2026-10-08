@@ -4726,7 +4726,8 @@ const computerLock = createComputerLock({
   onStop: owner => computerDriver?.stop(owner),
 });
 const computerBridge = computerDriver ? createComputerBridge({
-  driver: computerDriver, lock: computerLock, shots: computerShots, askPermission, translate: t,
+  // 偽の driver（試験）は Windows の偽のアプリを返すので、OS に依らず Windows の文と検査にする（hostCapabilities と同じ）
+  driver: computerDriver, lock: computerLock, shots: computerShots, askPermission, translate: t, platform: computerDriver.kind === 'fake' ? 'win32' : process.platform,
   access: {
     getPrefs: store.getPrefs,
     sessionApps: async sessionId => (await store.get(sessionId)).computerApps ?? [],

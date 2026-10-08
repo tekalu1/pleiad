@@ -3,6 +3,7 @@ productName: Pleiad
 artifactName: Pleiad-${version}-${os}-${arch}.${ext}
 asar: false
 # agent-browser の同梱と、無停止の更新の実行場所の材料（公式の Node・manifest。docs/zero-downtime-update/design.md §3）。順番は scripts/after-pack.cjs
+beforePack: ./scripts/build-computer-mac.cjs
 afterPack: ./scripts/after-pack.cjs
 # node-pty は N-API の prebuild（win32 / darwin の x64・arm64）をそのまま Electron で読む。
 # 既定の npmRebuild はソースからビルドし直して build/Release に置き（prebuild より先に読まれる）、
@@ -16,6 +17,7 @@ directories:
   output: dist-desktop
 files:
   - desktop/**
+  - "!desktop/computer/mac/**"
   - core/**
   # pleiad CLI（bin/pleiad.mjs）と起動口（pleiad.cmd・pleiad）。Ply の内蔵 Node で走らせる（ADR 0090）
   - bin/**
@@ -52,6 +54,11 @@ nsis:
   allowToChangeInstallationDirectory: true
   include: build/installer.nsh
 mac:
+  extraFiles:
+    - from: desktop/computer/mac/dist/pleiad-computer-helper
+      to: Helpers/pleiad-computer-helper
+  binaries:
+    - Contents/Helpers/pleiad-computer-helper
   icon: desktop/icon.icns
   category: public.app-category.productivity
   # 通話モード（docs/voice-call.md）のマイク。説明文と、署名・公証した版の entitlement（audio-input）。Mac の実機では確かめていない

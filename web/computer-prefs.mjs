@@ -6,12 +6,12 @@ const ID_LIMIT = 1000;
 
 export const DEFAULT_COMPUTER_USE = Object.freeze({ enabled: true, allowAllApps: false, introduced: false, alwaysAllowed: Object.freeze([]) });
 
-/** 常に許可の 1 行。形が違えば null。kind は id の接頭辞（aumid: / exe:）と一致していなければならない */
+/** 常に許可の 1 行。形が違えば null。kind は id の接頭辞（aumid: / exe:、macOS は bundle:）と一致していなければならない */
 export function computerAppRow(row) {
   if (!row || typeof row !== 'object') return null;
   const { id, name, kind, path, at } = row;
   if (typeof id !== 'string' || id.length > ID_LIMIT || typeof name !== 'string' || !name || name.length > 200) return null;
-  const prefix = /^(exe|aumid):\S/.exec(id)?.[1];
+  const prefix = /^(exe|aumid|bundle):\S/.exec(id)?.[1];
   if (!prefix || kind !== prefix) return null;
   const out = { id, name, kind };
   if (path !== undefined) { if (typeof path !== 'string' || path.length > ID_LIMIT) return null; if (path) out.path = path; }

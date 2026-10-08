@@ -320,7 +320,7 @@
       },
       "unsupported": {
         "desktop": "Available in the desktop version of Pleiad. This way of running it can’t operate apps on the PC.",
-        "platform": "Only available on a Windows PC.",
+        "platform": "Available on Windows or macOS 14 and later.",
         "native": "The component that operates the screen couldn’t be loaded on this PC. Reinstalling Pleiad may fix it."
       },
       "saveFailed": "Could not save: {{error}}"
