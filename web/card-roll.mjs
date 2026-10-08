@@ -1,7 +1,7 @@
 // 出ている承認・質問のカードの名簿（web/client.mjs の openCards）。ほかで片付いたときに畳むために持つ。
 // 同じ承認のカードが 2 か所に出ることがある（ホストの子の承認は、依頼元の会話と作業の窓の詳細の両方。docs/remote.md §4.5）ので、
 // id ごとにカードの集合で持つ。畳むときは集合の全部を畳み、外れた（DOM から消えた・答え終えた）カードだけを集合から外す。
-// entry: { el, sending(), fold(how), setOnline?(online) }
+// entry: { el, sending(), fold(how), setOnline?(online), update?(ev) }
 
 export function createCardRoll() {
   const cards = new Map();   // permission id → Set<entry>
@@ -21,6 +21,10 @@ export function createCardRoll() {
       const list = of(id);
       cards.delete(id);
       for (const entry of list) entry.fold(how);
+    },
+    /** 中身の差し替え（permissionUpdate）を、その承認のカード全部へ渡す。update を持たないカードは何もしない */
+    update(id, ev) {
+      for (const entry of of(id)) entry.update?.(ev);
     },
     /** 外れたカード（DOM から消えた・答え終えた）だけを集合から外す。集合が空になった id は行ごと外す */
     prune() {

@@ -2395,7 +2395,7 @@ function registerRelayCard(ev, parts) {
     state.pendingPerms.delete(ev.id);
   };
   // 同じ承認のカードが依頼元の会話と詳細の両方に出ることがある。先に答えた方で決まり、残りは同じ決着で畳む（名簿は id ごとの集合）
-  openCards.add(ev.id, { el: m, sending: () => Boolean(card.dataset.sending), setOnline, fold });
+  openCards.add(ev.id, { el: m, sending: () => Boolean(card.dataset.sending), setOnline, fold, update: (patch) => parts.onUpdate?.(patch) });
   if (ev.remote && ev.remote.online === false) setOnline(false);
 }
 
@@ -2404,6 +2404,16 @@ function onRelayCardEvent(ev) {
   if (!openCards.has(ev.id)) return;
   if (ev.type === "permissionRelayState") for (const entry of openCards.of(ev.id)) entry.setOnline?.(ev.online !== false);
   else openCards.fold(ev.id, { by: ev.by, allow: ev.allow === true, peer: ev.peer ?? ev.hostName });
+}
+
+/**
+ * permissionUpdate（ADR 0168）。決着していない承認の中身の差し替え。つなぎ直したときに描き直せるよう pendingPerms の写しも書き替え、
+ * 出ているカードには update(ev) を渡す（種類ごとの描き方は、そのカードの parts.onUpdate が持つ。無ければ何もしない）
+ */
+function onPermissionUpdate(ev) {
+  const pending = state.pendingPerms.get(ev.id);
+  if (pending) state.pendingPerms.set(ev.id, { ...pending, browserHandoff: ev.browserHandoff });
+  openCards.update(ev.id, ev);
 }
 
 /**
@@ -3180,6 +3190,9 @@ function onEvent(ev, replay = false) {
     case "permissionRelayEnd":
     case "permissionRelayState":
       return onRelayCardEvent(ev);
+
+    case "permissionUpdate":
+      return onPermissionUpdate(ev);
 
     case "session":
       if (ev.sessionId && state.current !== ev.sessionId) {
@@ -8140,7 +8153,7 @@ function isRunningHere() {
 }
 
 // 設定の変更の承認（detached）はターンを止めていない。中断しても残るので、中断・再開の判断には数えない（ADR 0088）
-const isWaitingHere = () => (state.work.permissions ?? []).some((p) => !p.detached && belongsHere(p));
+const isWaitingHere = () => (state.work.permissions ?? []).some((p) => (p.blocking ?? !p.detached) && belongsHere(p));
 /** いま表示している会話の中断を受け付けて、止まり終えるのを待っているか */
 function stoppingHere() {
   return Boolean(state.current) && state.stopping.has(state.current);
