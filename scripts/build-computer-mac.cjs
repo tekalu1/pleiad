@@ -10,7 +10,7 @@ function build({ root = path.resolve(__dirname, '..'), run = execFileSync } = {}
   run('swift', ['build', '-c', 'release', '--arch', 'arm64', '--arch', 'x86_64'], options);
   const bin = run('swift', ['build', '-c', 'release', '--arch', 'arm64', '--arch', 'x86_64', '--show-bin-path'], { cwd, encoding: 'utf8' }).trim();
   const source = path.join(bin, 'pleiad-computer-helper');
-  run('lipo', ['-verify_arch', 'x86_64', 'arm64', source], options);
+  run('lipo', [source, '-verify_arch', 'x86_64', 'arm64'], options);
   const dist = path.join(cwd, 'dist');
   fs.mkdirSync(dist, { recursive: true });
   fs.copyFileSync(source, path.join(dist, 'pleiad-computer-helper'));

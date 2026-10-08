@@ -54,12 +54,14 @@ jobs:
           with open(os.environ['GITHUB_ENV'], 'a') as f:
               f.write('IOS_SIMULATOR_ID=' + ipads[0]['udid'] + '\n')
           PY
+      # 署名しないと試験の宿主に entitlement が付かず、Keychain が -34018（errSecMissingEntitlement）で断る。
+      # シミュレーターは ad-hoc の署名（-）で足り、Team も証明書も要らない
       - name: Test the shell bridge and Keychain on iPad Simulator
         run: >-
           xcodebuild test -project mobile/ios/App/App.xcodeproj -scheme App
           -configuration Debug -sdk iphonesimulator -destination "platform=iOS Simulator,id=$IOS_SIMULATOR_ID"
           -derivedDataPath mobile/ios/DerivedData -resultBundlePath mobile/ios/App/build/tests.xcresult
-          CODE_SIGNING_ALLOWED=NO
+          CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=- DEVELOPMENT_TEAM= PROVISIONING_PROFILE_SPECIFIER=
   credentials:
     if: github.event_name == 'workflow_dispatch' && inputs.testflight
     runs-on: ubuntu-latest
