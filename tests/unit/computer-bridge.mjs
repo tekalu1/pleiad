@@ -1,4 +1,4 @@
-import { createHarness, BYPASS_MODE, sleep } from '../lib/computer-harness.mjs';
+import { createHarness, BYPASS_MODE, sleep, until } from '../lib/computer-harness.mjs';
 import { FAKE_APPS } from '../../core/computer-use/driver.mjs';
 import { COMPUTER_TOOL_NAMES } from '../../core/computer-use/tools.mjs';
 import { computerDisplay } from '../../core/computer-use/display.mjs';
@@ -238,7 +238,7 @@ export default async function(t) {
       t.ok('hold_key: keyDown → core で待つ → keyUp', seq.join() === 'keyDown,keyUp' && mark(hold).state === 'ok');
       hk.driver.calls.length = 0;
       const longHold = x.call('hold_key', { text: 'shift', duration: 5, title: 'x' });
-      await sleep(80);
+      await until(() => hk.inputs().some(a => a.type === 'keyDown'));
       hk.lock.stopSession('k1', 'stop');
       const heldStop = await longHold;
       t.ok('hold_key は止められたら待ちを打ち切り、必ず keyUp を送る（stopped）', mark(heldStop).state === 'stopped' && hk.inputs().map(a => a.type).join() === 'keyDown,keyUp');
@@ -400,7 +400,7 @@ export default async function(t) {
       t.ok('同じターンの並列の呼び出しは直列にする（appAt, input, appAt, input の順）', hp.ops().join() === 'appAt,input,appAt,input', hp.ops().join());
       const y = hp.connect({ sessionId: 'p2', title: '別の会話' });
       const yc = y.call('screenshot', { title: 'x' });
-      await sleep(60);
+      await until(() => hp.states.some(s => s.sessionId === 'p2' && s.state === 'waiting'));
       t.ok('別の会話は待つ（computer.state waiting。持ち主はこの会話）', hp.states.some(s => s.sessionId === 'p2' && s.state === 'waiting' && s.holder.sessionId === 'p1') && hp.ops().filter(o => o === 'screenshot').length === 0);
       x.end();
       const yr = await yc;
@@ -431,14 +431,15 @@ export default async function(t) {
     } finally { await hs.close(); }
 
     // 委譲の子
-    const hc = await createHarness({ waitMs: 300, prefs: { computerUse: { allowAllApps: true } } });
+    // 「待たない」は経過時間の短さでは測らない（撮影の保存は遅い環境で数百 ms かかる）。待ちの上限を長く取り、待ち（computer.state waiting）に入らず、上限よりずっと早く撮れたことで確かめる
+    const hc = await createHarness({ waitMs: 5000, prefs: { computerUse: { allowAllApps: true } } });
     try {
       const parent = hc.connect({ sessionId: 'sp' });
       await parent.call('screenshot', { title: 'x' });
       const child = hc.connect({ sessionId: 'sc', ancestors: ['sp'] });
       const t0 = Date.now();
       const r = await child.call('screenshot', { title: 'x' });
-      t.ok('委譲の子は、親がロックを持っていても借りて撮れる（待たない）', mark(r).state === 'ok' && Date.now() - t0 < 200 && hc.lock.holder().sessionId === 'sc');
+      t.ok('委譲の子は、親がロックを持っていても借りて撮れる（待たない）', mark(r).state === 'ok' && !hc.states.some(s => s.sessionId === 'sc' && s.state === 'waiting') && Date.now() - t0 < 2500 && hc.lock.holder().sessionId === 'sc', `${Date.now() - t0}ms`);
       child.end();
       t.ok('子のターンが終われば親へ返る', hc.lock.holder().sessionId === 'sp');
       parent.end();
@@ -471,7 +472,7 @@ export default async function(t) {
         const x = hy.connect({ sessionId: 'y1' });
         await x.call('screenshot', { title: 'x' });
         x.ac.abort();
-        await sleep(20);
+        await until(() => hy.lock.holder() === null && hy.driver.stops.includes(x.state.turnId) && hy.arms.at(-1) === null);
         return hy.lock.holder() === null && hy.driver.stops.includes(x.state.turnId) && hy.arms.at(-1) === null;
       } finally { await hy.close(); }
     })());

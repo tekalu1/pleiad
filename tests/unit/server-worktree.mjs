@@ -40,6 +40,15 @@ export default async function (t) {
     let calm = 0;
     for (let i = 0; i < 200 && calm < 4; i++) { await sleep(150); calm = (await c.cmd('running')).turns.length === 0 ? calm + 1 : 0; }
   };
+  // 同じ会話（first）へ送る素の runTurn は、前のターンの後始末や、子の完了通知で始まる内部のターンと重なると「切り替え中」で断られる（turnEnd の後も印が少し残る）。落ち着くのを待ってから送り、それでも断られたら、その2つの文言のときだけ送り直す
+  const parentTurn = async (args) => {
+    for (let attempt = 0; ; attempt++) {
+      await quiet();
+      try { return await c.runTurn(args); } catch (error) {
+        if (attempt >= 10 || !/切り替え中|実行中/.test(String(error?.message))) throw error;
+      }
+    }
+  };
   const startLong = async (cwd, ms = 4000) => {
     const from = c.mark();
     const running = c.runTurn({ backend: 'fake', cwd, prompt: long(ms) });
@@ -129,16 +138,16 @@ export default async function (t) {
     t.ok('書き手が居なければ、1 つ目の子は今の場所のまま（分けない）', firstTask && !firstTask.worktree && slash(firstTask.cwd) === repo, JSON.stringify(firstTask));
     // 1 つ目の子が repo で書き込み中に、2 つ目を委譲する → 分ける
     await sleep(1000);
-    const second = await c.runTurn({ sessionId: first.sessionId, prompt: ply('ply_delegate', { kind: 'implement', backend: 'fake', title: 'second', task: 'echo:second-job' }) });
+    const second = await parentTurn({ sessionId: first.sessionId, prompt: ply('ply_delegate', { kind: 'implement', backend: 'fake', title: 'second', task: 'echo:second-job' }) });
     const secondTask = (await c.cmd('agentTasks')).find((r) => r.title === 'second');
     t.ok('書き手が居ても isolate 省略の子は今の場所で走る', secondTask && !secondTask.worktree && slash(secondTask.cwd) === repo, JSON.stringify(secondTask));
     // isolate の明示: true は 1 つだけでも分ける・false は書き手が居ても分けない・読むだけの種類は分けない
     await quiet();
-    const third = await c.runTurn({ sessionId: first.sessionId, prompt: ply('ply_delegate', { kind: 'investigate', backend: 'fake', title: 'third', task: 'echo:read-only' }) });
+    const third = await parentTurn({ sessionId: first.sessionId, prompt: ply('ply_delegate', { kind: 'investigate', backend: 'fake', title: 'third', task: 'echo:read-only' }) });
     const thirdTask = (await c.cmd('agentTasks')).find((r) => r.title === 'third');
     t.ok('読むだけの種類（investigate）は、書き手が居ても分けない', thirdTask && !thirdTask.worktree, JSON.stringify(thirdTask));
     await quiet();
-    const forced = await c.runTurn({ sessionId: first.sessionId, prompt: ply('ply_delegate', { kind: 'investigate', backend: 'fake', title: 'forced', isolate: true, task: childLong }) });
+    const forced = await parentTurn({ sessionId: first.sessionId, prompt: ply('ply_delegate', { kind: 'investigate', backend: 'fake', title: 'forced', isolate: true, task: childLong }) });
     const forcedTask = (await c.cmd('agentTasks')).find((r) => r.title === 'forced');
     t.ok('isolate: true は、書き手が居なくても分ける', Boolean(forcedTask?.worktree), JSON.stringify(forcedTask?.worktree));
     // 子（forced）が worktree に変更を残して終わる → 未取り込みで残り、通知・status・一覧に出る
@@ -147,10 +156,10 @@ export default async function (t) {
     await fs.writeFile(`${forcedPath}/feature.txt`, 'a\nb\n');
     sh(forcedPath, 'add', '.'); sh(forcedPath, 'commit', '-q', '-m', 'child: feature');
     await fs.writeFile(`${forcedPath}/extra.txt`, 'c\n');
-    const refused = await c.runTurn({ sessionId: first.sessionId, prompt: ply('ply_delegate', { kind: 'implement', backend: 'fake', title: 'plain', isolate: false, task: 'echo:no-iso' }) });
+    const refused = await parentTurn({ sessionId: first.sessionId, prompt: ply('ply_delegate', { kind: 'implement', backend: 'fake', title: 'plain', isolate: false, task: 'echo:no-iso' }) });
     const plainTask = (await c.cmd('agentTasks')).find((r) => r.title === 'plain');
     t.ok('isolate: false は、書き手が居ても今の場所のまま', plainTask && !plainTask.worktree && slash(plainTask.cwd) === repo);
-    const bad = await c.runTurn({ sessionId: first.sessionId, prompt: ply('ply_delegate', { kind: 'implement', backend: 'fake', title: 'bad', isolate: 'yes', task: 'echo:x' }) });
+    const bad = await parentTurn({ sessionId: first.sessionId, prompt: ply('ply_delegate', { kind: 'implement', backend: 'fake', title: 'bad', isolate: 'yes', task: 'echo:x' }) });
     t.ok('isolate が真偽でなければ断る', /isolate/.test(JSON.stringify(bad.events.find((e) => e.type === 'tool.result')?.text ?? '')) && !(await c.cmd('agentTasks')).some((r) => r.title === 'bad'));
     void third; void refused;
 
@@ -162,7 +171,7 @@ export default async function (t) {
     t.ok('依頼元への完了通知に「作業場所: worktree <branch>（未取り込み · N ファイル）」', notices.some((n) => n.text.includes(`作業場所: worktree ${forcedTask.worktree.branch}（未取り込み · 2 ファイル）`)), notices.map((n) => n.text).join('\n---\n').slice(0, 700));
     for (let i = 0; i < 100 && (await c.cmd('running')).turns.length; i++) await sleep(100);
     await quiet();
-    const asked = await c.runTurn({ sessionId: first.sessionId, prompt: ply('ply_task_status', { taskId: forcedTask.taskId }) });
+    const asked = await parentTurn({ sessionId: first.sessionId, prompt: ply('ply_task_status', { taskId: forcedTask.taskId }) });
     const reply = (await c.cmd('loadSession', { sessionId: asked.sessionId })).messages.filter((m) => m.role === 'assistant').at(-1)?.text ?? '';
     t.ok('ply_task_status にも workspaceSummary と構造（ブランチ・場所・元・状態）', reply.includes(`"workspaceSummary":"作業場所: worktree ${forcedTask.worktree.branch}（未取り込み · 2 ファイル）`) && /"workspace":\{[^}]*"state":"unmerged"/.test(reply), reply.slice(0, 500));
     // 終わって通知が届いたタスクは running に載らない。画面は会話の分（tree）を読む
@@ -178,11 +187,11 @@ export default async function (t) {
     await fs.rm(`${forcedPath}/extra.txt`);
     sh(repo, 'merge', '-q', '--no-ff', '-m', 'merge forced', forcedTask.worktree.branch);
     await quiet();
-    await c.runTurn({ sessionId: first.sessionId, prompt: 'echo:after-merge' });
+    await parentTurn({ sessionId: first.sessionId, prompt: 'echo:after-merge' });
     for (let i = 0; i < 100 && ((await exists(forcedPath)) || branches().includes(forcedTask.worktree.branch)); i++) await sleep(100);
     t.ok('取り込んだ後は、ターンの終わりの片付けで自動で消える（フォルダー・ブランチ・台帳）', !(await exists(forcedPath)) && !branches().includes(forcedTask.worktree.branch) && !(await c.cmd('running')).tasks.find((r) => r.taskId === forcedTask.taskId)?.worktree?.live);
     await quiet();
-    const afterStatus = await c.runTurn({ sessionId: first.sessionId, prompt: ply('ply_task_status', { taskId: forcedTask.taskId }) });
+    const afterStatus = await parentTurn({ sessionId: first.sessionId, prompt: ply('ply_task_status', { taskId: forcedTask.taskId }) });
     const afterReply = (await c.cmd('loadSession', { sessionId: afterStatus.sessionId })).messages.filter((m) => m.role === 'assistant').at(-1)?.text ?? '';
     t.ok('片付いた後の ply_task_status は「片付け済み」', /作業場所: worktree pleiad\/ply-[0-9a-f]+（片付け済み）/.test(afterReply), afterReply.slice(0, 400));
   } finally {

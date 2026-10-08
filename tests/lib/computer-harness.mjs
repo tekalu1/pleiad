@@ -70,3 +70,13 @@ export async function createHarness({ waitMs = 5000, prefs = {}, answers, driver
 }
 
 export const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+/** 条件が真になるのを待つ（固定の sleep の代わり）。上限を過ぎたら最後の値のまま返す（判定の側が落ちる） */
+export async function until(check, ms = 10000) {
+  const end = Date.now() + ms;
+  for (;;) {
+    const value = await check();
+    if (value || Date.now() > end) return value;
+    await sleep(10);
+  }
+}

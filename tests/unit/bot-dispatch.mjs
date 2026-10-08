@@ -1209,7 +1209,9 @@ export default async function (t) {
     const steered = await until(async () => (await history(sessionD)).find((m) => m.kind === 'channelEvent' && m.postId === extra.id), { label: '途中送信' });
     t.ok('@ の無い人の投稿は、作業中の bot が 1 体ならその会話へ書き足される（包みだけ。新しいターンは走らない）', steered.body === 'ついでに README も'
       && turnEnds(sessionD, mD).length === 0 && !(await history(sessionD)).some((m) => m.kind === 'contextNote' && m.body.includes('ついでに')), JSON.stringify(steered));
-    t.ok('書き足しは会話の画面へも channelEvent で出る', c.since(mD).some((e) => e.type === 'channelEvent' && e.sessionId === sessionD && e.rows.some((r) => r.postId === extra.id)));
+    // 画面への channelEvent は、書き足しを履歴に入れた後の保存を待ってから出る（steered）。履歴に出た時点で一度だけ見ず、出るのを待つ
+    const shownD = await until(async () => c.since(mD).some((e) => e.type === 'channelEvent' && e.sessionId === sessionD && e.rows.some((r) => r.postId === extra.id)), { label: '書き足しの channelEvent' });
+    t.ok('書き足しは会話の画面へも channelEvent で出る', Boolean(shownD));
     const inboxD = JSON.parse(await fs.readFile(path.join(dataDir, 'channels', 'inbox.json'), 'utf8'));
     t.ok('渡した書き足しは sent（出来事の一覧に残る）', inboxD.items.find((i) => i.postId === extra.id)?.status === 'sent');
     await call('channels.stopThread', { channelId: dev.id, threadId: rootD.id });

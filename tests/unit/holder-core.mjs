@@ -260,7 +260,9 @@ export default async function (t) {
       a.client.spawn(fakeChild('e5', 'big', 10000));
       await waitFor(() => a.events.exit.length === 3, 8000, 'three exits');
       const exitOf = id => a.events.exit.find(e => e.id === id);
-      t.ok('終わり: 改行の無い最後の行も記録し、終了コードは exit で 1 回（out を全部流した後）', exitOf('e1').code === 0 && a.events.lines('e1').at(-1).tail === 1 && a.events.out.findLastIndex(e => e.id === 'e1') < a.events.exit.findIndex(e => e.id === 'e1'));
+      // e1 の最後の out と exit の前後は、届いた順の通し番号（events.all）で比べる。out と exit は別の配列で、e4・e5 の行や e2・e3 の exit も混ざるので、それぞれの添字は比べられない
+      const e1Lines = a.events.lines('e1');
+      t.ok('終わり: 改行の無い最後の行も記録し、終了コードは exit で 1 回（out を全部流した後）', exitOf('e1').code === 0 && e1Lines.length === 1 && e1Lines.at(-1)?.tail === 1 && a.events.exit.filter(e => e.id === 'e1').length === 1 && a.events.indexOf('out', 'e1', true) >= 0 && a.events.indexOf('out', 'e1', true) < a.events.indexOf('exit', 'e1'));
       t.ok('終わり: 終了コードがそのまま届く', exitOf('e2').code === 3);
       t.ok('起こせないコマンド: exit に error（ENOENT）が付き、生きていない', exitOf('e3').error === 'ENOENT' && childOf(h, 'e3').alive === false && childOf(h, 'e3').error === 'ENOENT');
       await waitFor(() => a.events.err.some(e => e.id === 'e4'), 8000, 'stderr');
