@@ -427,6 +427,30 @@ export default async function (t) {
     } finally { a?.close(); await r.stop(); }
   }
 
+  // ===== 5c. 更新で出ていくとき（handOff）、確認待ちの止まった要求は出る前に断る（ADR 0167。出た後は接続の子への道が閉じて、断りが届かない）=====
+  {
+    const r = await rig();
+    let a;
+    try {
+      r.fake.setPage('https://pending.example/', { title: 'Pending' });
+      a = await agent(await r.relay.endpoint('hand'));
+      await a.cmd('Target.setDiscoverTargets', { discover: true });
+      const tabId = (await a.cmd('Target.createTarget', { url: 'about:blank' })).result.targetId;
+      const sid = (await a.cmd('Target.attachToTarget', { targetId: tabId, flatten: true })).result.sessionId;
+      await a.cmd('Page.enable', {}, sid);
+      r.relay.setConfirm(true);
+      await until(() => r.fake.sessions().some(s => s.targetId === tabId && s.fetch));
+      r.answer((_request, signal) => new Promise(resolve => signal.addEventListener('abort', () => resolve({ allow: false }), { once: true })));
+      void a.cmd('Page.navigate', { url: 'https://pending.example/' }, sid);
+      await until(() => r.asked.at(-1)?.url === 'https://pending.example/');
+      const cdp = r.relay.cdp;
+      r.relay.handOff();
+      cdp.close();   // 出ていった後は上りへ書けない（link.mjs は ended の後の行を捨てる）
+      t.ok('handOff は、確認待ちの止まった要求を出る前に Fetch.failRequest（BlockedByClient）で断る',
+        await until(() => r.chrome.calls.some(c => c.method === 'Fetch.failRequest' && c.params.errorReason === 'BlockedByClient')) && !r.fake.served.includes('https://pending.example/'));
+    } finally { a?.close(); await r.stop(); }
+  }
+
   // ===== 6. 環境変数: PIN_TAB・3 つのバックエンドへの受け渡し =====
   {
     const r = await rig();

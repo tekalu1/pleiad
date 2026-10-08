@@ -546,7 +546,7 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, scop
     let settled = false;
     const resume = () => { if (settled) return; settled = true; tab.paused.delete(requestId); state.cdp.send('Fetch.continueRequest', { requestId }, sessionId).catch(() => {}); };
     const block = () => { if (settled) return; settled = true; tab.paused.delete(requestId); state.cdp.send('Fetch.failRequest', { requestId, errorReason: 'BlockedByClient' }, sessionId).catch(() => {}); };
-    tab.paused.set(requestId, resume);
+    tab.paused.set(requestId, Object.assign(resume, { block }));
     // 主フレームだけを聞く（iframe は聞かない。確認はトップフレームの単位）
     if (!confirm || params.frameId !== tab.targetId) { resume(); return; }
     // 新しい移動（リダイレクトでない）なら、前の移動で許可して移り終えなかった分は捨てる
@@ -1090,7 +1090,14 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, scop
       const carry = snapshot();
       handedOff = true;
       for (const entry of entries.values()) closeClients(entry, 1012, 'updating');
-      if (up) { for (const off of up.offs) off(); for (const tab of up.tabs.values()) tab.controller.abort(); up = null; }
+      if (up) {
+        // 確認（ask）の答えを待っている止まった要求は、出ていく前に断る（abort の後の block は、接続の子へ書く道が閉じた後で届かない。
+        // 答える者が居ない要求を通さない: サイトの利用の確認を、更新の間にすり抜けさせない）
+        for (const tab of up.tabs.values()) for (const resume of [...tab.paused.values()]) resume.block();
+        for (const off of up.offs) off();
+        for (const tab of up.tabs.values()) tab.controller.abort();
+        up = null;
+      }
       closed = true;
       wss.close(); server.close();
       log('chrome-relay: handed off');

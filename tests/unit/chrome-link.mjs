@@ -108,6 +108,39 @@ export default async function (t) {
       cleanups.push(() => raw.close());
     }
 
+    // ===== 4b. 新しいつなぎ手が付いても、その手が Fetch.enable していないセッションの止まった要求は通さない。大きい行も同じ。答えの無いまま切れたら断る =====
+    {
+      const page = targets[0].targetId;
+      const { WebSocket } = await import('ws');
+      const raw = new WebSocket(wsUrl(chrome));
+      await new Promise(resolve => raw.on('open', resolve));
+      cleanups.push(() => raw.close());
+      const other = createCdp(raw);
+      const mine = (await other.send('Target.attachToTarget', { targetId: page, flatten: true })).sessionId;
+      const within = (promise, ms) => Promise.race([promise, new Promise(resolve => setTimeout(() => resolve({ hung: true }), ms))]);
+      const parentB = await holder.connect();
+      const linkB = await openChromeLink({ holder: parentB.client, runtimeRoot: root, runtimeKey: 'k1' });
+      const cdpB = createCdp(linkB.adopted(), { firstId: linkB.welcome.firstId });
+      const nav = await within(other.send('Page.navigate', { url: 'https://between.example/x' }, mine), 3000);
+      t.ok('welcome と bind の間: 新しいつなぎ手が Fetch.enable していないセッションの止まった要求は、誰も答えないので断る', /BLOCKED_BY_CLIENT/.test(nav.errorText ?? ''), JSON.stringify(nav));
+      const bigNav = await within(other.send('Page.navigate', { url: `https://big.example/${'a'.repeat(70_000)}` }, mine), 3000);
+      t.ok('64 KB 以上の requestPaused の行も、requestId を読んで断る', /BLOCKED_BY_CLIENT/.test(bigNav.errorText ?? ''), JSON.stringify(bigNav).slice(0, 200));
+      // つなぎ手が自分で Fetch.enable したセッションの止まった要求は、つなぎ手へ流れる。答えずに切れたら断る
+      const sessions = linkB.welcome.sessions.filter(x => x.targetId === page).map(x => x.sessionId);
+      for (const old of sessions) await cdpB.send('Fetch.disable', {}, old).catch(() => {});
+      const own = (await cdpB.send('Target.attachToTarget', { targetId: page, flatten: true })).sessionId;
+      const seen = [];
+      cdpB.onSession(own, (method, params) => { if (method === 'Fetch.requestPaused') seen.push(params.requestId); });
+      await cdpB.send('Fetch.enable', { patterns: [{ urlPattern: '*' }] }, own);
+      const navOwn = within(other.send('Page.navigate', { url: 'https://held.example/x' }, mine), 4000);
+      await waitFor(() => seen.length === 1, 3000, 'requestPaused to client');
+      t.ok('Fetch.enable したセッションの止まった要求は、つなぎ手へ流れる（通る道は塞がない）', seen.length === 1);
+      await linkB.handOff();   // 答えずに離れる
+      const heldResult = await navOwn;
+      t.ok('答えずにつなぎ手が離れたら、流してあった止まった要求を断る', /BLOCKED_BY_CLIENT/.test(heldResult.errorText ?? ''), JSON.stringify(heldResult));
+      other.close();
+    }
+
     // ===== 5. 古い id の答えは新しいつなぎ手に届かない =====
     {
       const parent3 = await holder.connect();

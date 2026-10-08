@@ -7,6 +7,9 @@
 // 大きい行（映像のフレーム・撮影の答え。BIG_LINE_BYTES 以上）は JSON を解かず、先頭の数百バイトで id と method を読むだけで流す。
 // つなぎ手（サーバー）が居ない間:
 //   - Fetch.requestPaused は Fetch.failRequest（BlockedByClient）を同じ sessionId で返す（サイトの利用の確認を、居ない間も「疑わしきは通さない」にする）
+//     大きい行（64 KB 以上の URL・ヘッダーなど）の requestPaused も、requestId と sessionId を読むために解いて同じに扱う
+//   - つなぎ手が居ても、そのつなぎ手が Fetch.enable を送っていないセッションの requestPaused は、前のサーバーの置き土産で誰も答えない。同じく failRequest で返す
+//   - つなぎ手に流して答えが来ていない requestPaused は覚えておき、つなぎ手が替わる・切れるときに failRequest で返す（答える者が居なくなる）
 //   - ほかのイベントと答えは捨てる。Target.attachedToTarget・detachedFromTarget だけは見て、セッションの一覧を保つ（新しいサーバーが外して付け直す）
 // 新しいつなぎ手には firstId = （前のつなぎ手が振った最大の id）+ ID_GAP を渡し、それ未満の id の答えは流さない。
 import net from 'node:net';
@@ -25,11 +28,13 @@ export function startLinkChild({ pipe, secret, root = '', key = '', log = () => 
   const releaseUse = root && key ? markRuntimeInUse({ root, key }) : null;
   const state = { phase: 'idle', gen: 0, ws: null, port: null, path: null, upgradeAt: null, maxId: 0, sessions: new Map(), carry: null };
   let client = null;   // 今のつなぎ手のソケット
+  const pending = new Map();   // 今のつなぎ手に流して、答え（continue・fail・fulfill…）がまだ来ていない requestPaused: requestId -> sessionId
+  const bound = new Set();     // 今のつなぎ手が Fetch.enable したセッション（sessionId。ブラウザー全体は ''）
   let quitting = false;
 
   const writeControl = (socket, name, value) => { if (socket && !socket.destroyed) socket.write(controlLine(name, value)); };
   const toClient = (name, value) => writeControl(client, name, value);
-  const resetWs = () => { state.phase = 'idle'; state.ws = null; state.port = null; state.path = null; state.upgradeAt = null; state.sessions.clear(); state.carry = null; };
+  const resetWs = () => { state.phase = 'idle'; state.ws = null; state.port = null; state.path = null; state.upgradeAt = null; state.sessions.clear(); state.carry = null; pending.clear(); bound.clear(); };
 
   // ---- Chrome からの行 ----------------------------------------------------------------------
   function trackSession(method, buf) {
@@ -41,14 +46,24 @@ export function startLinkChild({ pipe, secret, root = '', key = '', log = () => 
     else if (method === 'Target.detachedFromTarget' && params?.sessionId) state.sessions.delete(params.sessionId);
   }
 
-  function failPaused(buf) {
-    if (buf.length >= BIG_LINE_BYTES || !state.ws || state.ws.readyState !== WebSocket.OPEN) return;
+  /** requestPaused の行から { requestId, sessionId }。大きい行も解く（読めなければ null） */
+  function pausedOf(buf) {
     let message;
-    try { message = JSON.parse(buf.toString('utf8')); } catch { return; }
+    try { message = JSON.parse(buf.toString('utf8')); } catch { return null; }
     const requestId = message?.params?.requestId;
-    if (!requestId) return;
+    return requestId ? { requestId, sessionId: message.sessionId ?? '' } : null;
+  }
+
+  function failRequest({ requestId, sessionId }) {
+    if (!state.ws || state.ws.readyState !== WebSocket.OPEN) return;
     // この id は番号の空間の外（サーバーの番号は firstId から）。答えは「つなぎ手が居ない」ので捨てる id を使う
-    state.ws.send(JSON.stringify({ id: ++state.maxId, method: 'Fetch.failRequest', params: { requestId, errorReason: 'BlockedByClient' }, ...(message.sessionId ? { sessionId: message.sessionId } : {}) }));
+    state.ws.send(JSON.stringify({ id: ++state.maxId, method: 'Fetch.failRequest', params: { requestId, errorReason: 'BlockedByClient' }, ...(sessionId ? { sessionId } : {}) }));
+  }
+
+  /** つなぎ手が替わる・切れる: 流してあって答えの来ていない止まった要求を全部断る（答える者が居なくなる）。つなぎ手の持ち物も捨てる */
+  function dropClientState() {
+    for (const [requestId, sessionId] of pending) failRequest({ requestId, sessionId });
+    pending.clear(); bound.clear();
   }
 
   let firstId = 1;   // 今のつなぎ手に渡した番号の始まり
@@ -56,7 +71,11 @@ export function startLinkChild({ pipe, secret, root = '', key = '', log = () => 
     const peek = peekLine(buf);
     if (peek.kind === 'event') {
       if (peek.method === 'Target.attachedToTarget' || peek.method === 'Target.detachedFromTarget') trackSession(peek.method, buf);
-      if (!client) { if (peek.method === 'Fetch.requestPaused') failPaused(buf); return; }
+      if (peek.method === 'Fetch.requestPaused') {
+        const paused = pausedOf(buf);
+        if (!client || (paused && !bound.has(paused.sessionId))) { if (paused) failRequest(paused); return; }
+        if (paused) pending.set(paused.requestId, paused.sessionId);
+      } else if (!client) return;
     } else {
       if (!client) return;
       if (peek.kind === 'id' && peek.id < firstId) return;   // 前のつなぎ手への答え
@@ -106,9 +125,23 @@ export function startLinkChild({ pipe, secret, root = '', key = '', log = () => 
   }
 
   // ---- つなぎ手（サーバー） -------------------------------------------------------------------
+  const FETCH_METHOD = /^\{"id":\d+,"method":"(Fetch\.[A-Za-z]+)"/;
+  const FETCH_ANSWERS = new Set(['Fetch.continueRequest', 'Fetch.failRequest', 'Fetch.fulfillRequest', 'Fetch.continueWithAuth', 'Fetch.continueResponse']);
+  /** つなぎ手の Fetch の行を見て、どのセッションが答える側か・どの止まった要求に答えたかを覚える */
+  function watchFetch(buf) {
+    const method = FETCH_METHOD.exec(buf.toString('latin1', 0, Math.min(buf.length, 256)))?.[1];
+    if (!method || (method !== 'Fetch.enable' && method !== 'Fetch.disable' && !FETCH_ANSWERS.has(method))) return;
+    let message;
+    try { message = JSON.parse(buf.toString('utf8')); } catch { return; }
+    if (method === 'Fetch.enable') bound.add(message.sessionId ?? '');
+    else if (method === 'Fetch.disable') bound.delete(message.sessionId ?? '');
+    else if (message.params?.requestId) pending.delete(message.params.requestId);
+  }
+
   function toChrome(buf) {
     const peek = peekLine(buf);
     if (peek.kind === 'id' && peek.id > state.maxId) state.maxId = peek.id;
+    watchFetch(buf);
     const ws = state.ws;
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
     ws.send(buf.toString('utf8'));
@@ -148,7 +181,7 @@ export function startLinkChild({ pipe, secret, root = '', key = '', log = () => 
           if (control?.name !== 'hello' || control.value?.secret !== secret) { socket.destroy(); return; }
           greeted = true; clearTimeout(timer);
           // 版が合わないときも挨拶は受ける（welcome.v で相手が見分け、quit を送ってくる）
-          if (client && client !== socket) client.destroy();   // 新しいつなぎ手が古いほうを切る
+          if (client && client !== socket) { dropClientState(); client.destroy(); }   // 新しいつなぎ手が古いほうを切る
           client = socket;
           welcome(socket);
           return;
@@ -160,7 +193,7 @@ export function startLinkChild({ pipe, secret, root = '', key = '', log = () => 
     });
     socket.on('data', chunk => reader.push(chunk));
     socket.on('error', () => {});
-    socket.on('close', () => { clearTimeout(timer); if (client === socket) client = null; });
+    socket.on('close', () => { clearTimeout(timer); if (client === socket) { dropClientState(); client = null; } });
   });
   server.on('error', error => { log(`chrome-link: pipe error ${error?.code ?? error?.message}`); });
 
