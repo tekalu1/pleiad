@@ -1,5 +1,5 @@
 import { N } from '../lib/dom-stub.mjs';
-import { createChromeControlView, createChromeControlStore, statusText, actionsFor, durationText, renderChromeHandoverLine, setChromeHandoverAgentName, CONTROL_STATES } from '../../web/chrome-control.mjs';
+import { createChromeControlView, createChromeControlStore, statusText, actionsFor, durationText, renderChromeHandoverLine, renderChromeClosedLine, setChromeHandoverAgentName, CONTROL_STATES } from '../../web/chrome-control.mjs';
 import { renderPresent } from '../../web/render.mjs';
 import * as history from '../../core/history.mjs';
 
@@ -127,6 +127,9 @@ export default async function (t) {
   t.ok('renderPresent が行へ回す（カードにしない）', renderPresent({ kind: 'chromeHandover', chromeHandover: { seconds: 5 } }).className === 'cc-line');
   setChromeHandoverAgentName(() => 'Codex');
   t.ok('名前は今の会話のエージェント', renderChromeHandoverLine({ chromeHandover: { seconds: 1 } }).textContent.includes('Codex に戻しました'));
+  const closed = renderChromeClosedLine({ kind: 'chromeClosed', chromeClosed: { by: 'agent' }, path: 'C:/shot.png' });
+  t.ok('閉じた行は今のエージェント名と静止画を示す', closed.textContent.includes('Codex が窓を閉じました') && closed.querySelector('img')?.src?.includes('shot.png'));
+  t.ok('人が × で閉じたときの行は画像がなくても残る', renderPresent({ kind: 'chromeClosed', chromeClosed: { by: 'human' } }).textContent.includes('Chrome の窓が閉じました'));
 
   // ---- 記録（core/history.mjs recordPresent）
   const id = `chrome-control-ui-${Date.now()}`;
@@ -138,4 +141,6 @@ export default async function (t) {
   t.ok('読み戻せる', rows.length === 2 && rows[0].chromeHandover.seconds === 72);
   const other = await history.recordPresent(id, { kind: 'text', content: 'x', chromeHandover: { seconds: 9 } });
   t.ok('ほかの kind には載せない', !('chromeHandover' in other));
+  const savedClose = await history.recordPresent(id, { kind: 'chromeClosed', chromeClosed: { by: 'agent' }, path: 'C:/shot.png' });
+  t.ok('静止画は present にパスと閉じた人の印だけを保存し、画像本体は DB に入れない', savedClose.path === 'C:/shot.png' && savedClose.chromeClosed.by === 'agent' && !savedClose.dataUri);
 }

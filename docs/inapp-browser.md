@@ -256,6 +256,14 @@ MCP の口は会話ごとの Bearer で守る。Claude・Codex は HTTP の MCP�
 
 開いてもエージェントへ自動でメッセージは送らない。続けて操作してほしい内容は会話で頼む。この項目は URL を開くもので、隠した窓を人へ見せる操作は「引き継ぐ」。
 
+### 窓を閉じる
+
+`ply_browser.close_browser_window` は呼び出した会話の専用窓を閉じる（引数なし）。右パネルの「窓を閉じる」は `browser.chromeCloseWindow` を呼び、PC の画面とリモートの端末で使える。MCP と CLI の ops には出さない。窓は使い終えたときに閉じられるが、続きに使う画面やログイン中の窓は開いたままにできる。閉じた後にブラウザーを使うと新しい専用窓が黙って開く。
+
+閉じる直前の `Page.captureScreenshot` を `<data>/uploads/chrome-window/<会話 ID の SHA-256>/<時刻>-<UUID>.png` に置き、会話の `chromeClosed` の行にファイルのパスだけを記録する。人が Chrome の × で直接閉じたときと、撮影できないときは最後に受けた映像の JPEG を `.jpg` として残す。画像が無いときも閉じた行は残る。会話を消すと、窓とその会話の静止画を片付ける。
+
+窓の全タブを `Target.closeTarget` で先に閉じる。破棄の通知を 500 ms 待ち、層に記録が残った専用窓だけ `closeAgent` で閉じる。引き継ぎ中なら一時停止と操作待ちのカードを片付ける。Chrome の接続が途中で切れたときは既存の切断処理が接続を off に戻し、専用窓と一時停止を片付ける。更新の carry と、層が引き継げなかった窓の orphans は、閉じた会話の窓の記録だけを外して保つ。
+
 ### 検証
 
-`tests/unit/chrome-connection.mjs`・`chrome-os.mjs`・`server-chrome.mjs`・`chrome-settings.mjs` が接続と OS の層、`chrome-relay.mjs` が範囲・断る一覧・サイトの確認、`chrome-windows.mjs` が専用の窓を確かめる。映像は `chrome-screencast.mjs`・`server-chrome-screencast.mjs`、引き継ぎは `chrome-control.mjs`・`chrome-control-ui.mjs`。操作待ちと端末入力は `chrome-handoff.mjs`・`chrome-handoff-flow.mjs`・`chrome-device.mjs`・`browser-bridge.mjs`。いずれも偽の Chrome・OS の層で、本物の利用者の Chrome は使わない。
+`tests/unit/chrome-connection.mjs`・`chrome-os.mjs`・`server-chrome.mjs`・`chrome-settings.mjs` が接続と OS の層、`chrome-relay.mjs` が範囲・断る一覧・サイトの確認、`chrome-windows.mjs` が専用の窓を確かめる。映像は `chrome-screencast.mjs`・`server-chrome-screencast.mjs`、引き継ぎは `chrome-control.mjs`・`chrome-control-ui.mjs`。窓を閉じる流れは `chrome-close-window.mjs`。操作待ちと端末入力は `chrome-handoff.mjs`・`chrome-handoff-flow.mjs`・`chrome-device.mjs`・`browser-bridge.mjs`。いずれも偽の Chrome・OS の層で、本物の利用者の Chrome は使わない。
