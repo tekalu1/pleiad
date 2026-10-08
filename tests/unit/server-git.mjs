@@ -36,10 +36,14 @@ export default async function (t) {
     for (let i = 0; i < 600 && !refs().includes(ref); i++) await sleep(50);
   };
   // 台本の最初のツールは ask: true で承認待ちに止める。撮影が済んだのを見てから作業場所を実際に変え、変え終わってから承認して台本を進める（台本の ms の固定の長さでは、遅い環境で git の起動が間に合わず、変更より先にターンが終わる）
+  const permissionBeforeTurnEnd = async (running, from) => Promise.race([
+    c.waitFor((e) => e.type === 'permission', { from, ms: 30_000 }),
+    running.then((result) => { throw new Error(`承認より先にターンが終わった: ${JSON.stringify({ outcome: result.outcome, events: result.events?.map(e => e.type) })}`); }),
+  ]);
   const turnWithChanges = async (args, change) => {
     const from = c.mark();
     const running = c.runTurn(args);
-    const asked = await c.waitFor((e) => e.type === 'permission', { from });
+    const asked = await permissionBeforeTurnEnd(running, from);
     await startSnapped(asked.sessionId);
     await change();
     await c.cmd('resolvePermission', { id: asked.id, allow: true });
@@ -110,7 +114,7 @@ export default async function (t) {
     const parentFrom = c.mark();
     const parentRun = c.runTurn({ backend: 'fake', cwd: repo, prompt: ply('ply_delegate', { kind: 'implement', backend: 'fake', task: `steps:${JSON.stringify(childSteps)}`, cwd: wt }) });
     // 子のツールを承認待ちに止め、子が worktree を変え終わるまで終わらせない（実時間の長さで待たない）
-    const started = await c.waitFor((e) => e.type === 'permission', { from: parentFrom });
+    const started = await permissionBeforeTurnEnd(parentRun, parentFrom);
     await startSnapped(started.sessionId);
     await fs.writeFile(path.join(wt, 'w1.txt'), 'a\nb\n');
     sh(wt, 'add', '.'); sh(wt, 'commit', '-q', '-m', 'child: w1');

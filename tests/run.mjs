@@ -1,7 +1,8 @@
 // LLM もサーバも要らないテスト。CI で常時回す。
 //
-//   npm test                          全部（同じプロセスで 1 本ずつ）
+//   npm test                          全部（利用可能な CPU 数、最大 12 worker で並列）
 //   npm test -- markdown              名前で絞る（部分一致）
+//   npm test -- --jobs 1              同じプロセスで登録順に 1 本ずつ
 //   npm test -- --jobs 2              子プロセスの worker 2 本で並列に（重い suite から配る）
 //   npm test -- --shard 2/3           3 分割の 2 番目だけ（時間の重み tests/suite-weights.json で決定的に分ける。CI のジョブ分けに）
 //   npm test -- --timings out.json    suite ごとの時間・判定数・skip・worker を JSON で書く
@@ -574,6 +575,7 @@ const SUITES = [
   './unit/remote-agent-e2e.mjs',
   // ホストに任せたタスクの写し（agent-tasks の host の行）の台帳の規則: adopt の検査・mirror・止める予定・並列の中断・追えなくなった行の復帰・子孫
   './unit/agent-tasks-remote.mjs',
+  './unit/agent-tasks-remote-notices.mjs',
   // 端末の AI の口へのレビュー後の守り: 同時数の予約・作りかけの依頼の打ち切り・口の数・質問と「ホストの画面で答える」承認の中継・子孫まで止める
   './unit/remote-agent-hardening.mjs',
   // 設定 › リモートの部品と常駐（トレイ・スリープ。Electron は差し替える）、setRemoteResident

@@ -53,8 +53,7 @@ jobs:
           node-version: ${{ matrix.node }}
           cache: npm
       - run: npm ci
-      # 子プロセスの worker 2 本で並列に回す（tests/run.mjs --jobs。重い suite から配る）。ジョブは増やさない。
-      # 同じ suite の並列で落ちる・遅くなるようなら --jobs 1 に戻せば従来どおり（同じプロセスで 1 本ずつ）
+      # 共有ランナーでは worker 2 本に固定する（ローカルの CPU 数に応じた既定値は使わない）。ジョブは増やさない。
       # npm test を通さず直に呼ぶ。Windows の既定の shell（pwsh）は `npm test -- --jobs 2` の `--` を食べ、
       # npm が --jobs を自分の設定として取るので、tests/run.mjs には `2 temporary/…` だけが suite 名として届いて落ちる（0.8.0 で起きた）
       # --retry-failed 1: 落ちた suite だけを新しい worker で 1 回流し直し、通れば緑にする（Windows の負荷で時々 1 本だけ落ちる試験を、リリースの足止めにしない。
