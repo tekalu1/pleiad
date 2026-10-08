@@ -374,6 +374,7 @@ export const backend = {
   // バックエンド（codex）と同じ形を、テストでも踏むため。
   capabilities: {
     compact: true,
+    autoCompactWindow: true,   // 委譲の子だけ渡る自動圧縮の窓（runArgs.autoCompactWindow）。台本 compact-window が値を返す
     title: true,
     tag: true,
     fork: true,
@@ -416,7 +417,7 @@ export const backend = {
     emit({ type: 'contextWindow', usedTokens: 21_000, windowTokens: 200_000 });
   },
 
-  async runTurn({ prompt, sessionId, cwd, mode, model, emit, onPromptDelivered, askPermission, signal, control, agentRuntime, contextRuntime, computerRuntime, browserRuntime, controlRuntime, browserInstructions, oauthToken, hostSessionId, shellAppends = [], notes = [], botInstructions = null, rewind = null }) {
+  async runTurn({ prompt, sessionId, cwd, mode, model, emit, onPromptDelivered, askPermission, signal, control, agentRuntime, contextRuntime, computerRuntime, browserRuntime, controlRuntime, browserInstructions, oauthToken, autoCompactWindow, hostSessionId, shellAppends = [], notes = [], botInstructions = null, rewind = null }) {
     // プロンプトを渡す前に失敗する台本（claude のネイティブ指示を止められなかったときと同じ形）。会話にも記録しない
     if (scriptOf(prompt).startsWith("undelivered")) {
       const error = "fake: failed before the prompt was delivered";
@@ -727,6 +728,9 @@ export const backend = {
       } else if (/(^|\n)whoami$/.test(text)) {   // 分岐した会話の最初のターンは履歴の引き継ぎ文の末尾に来る
         // トークンそのものは出さない。同じトークンかどうかだけ分かる指紋
         out.text = oauthToken ? `account:${crypto.createHash("sha256").update(oauthToken).digest("hex").slice(0, 12)}` : "account:none";
+        await say(emit, out.text, out.uuid);
+      } else if (/(^|\n)compact-window$/.test(text)) {   // 子にだけ渡る自動圧縮の窓。渡っていなければ none
+        out.text = `compactWindow:${autoCompactWindow ?? "none"}`;
         await say(emit, out.text, out.uuid);
       } else if (/^fail(\s|$)/.test(text)) {
         throw new Error('fake: failure');

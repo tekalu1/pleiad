@@ -30,11 +30,11 @@ const invalid = (ctx, detail, human) => new OpError('INVALID', human && ctx.prin
 
 const site = z.object({ origin: z.string(), mode: z.string().optional(), profile: z.string().optional() }).passthrough();
 const compaction = z.object({
-  enabled: z.boolean(), minTokens: z.number().int(),
+  enabled: z.boolean(), minTokens: z.number().int(), delegatedTokens: z.number().int(),
   claude: z.object({ enabled: z.boolean(), delayMinutes: z.number().int() }), codex: z.object({ enabled: z.boolean(), delayMinutes: z.number().int() }),
 });
 const compactionPatch = z.object({
-  enabled: z.boolean(), minTokens: z.number().int(),
+  enabled: z.boolean(), minTokens: z.number().int(), delegatedTokens: z.number().int(),
   claude: z.object({ enabled: z.boolean(), delayMinutes: z.number().int() }).partial(), codex: z.object({ enabled: z.boolean(), delayMinutes: z.number().int() }).partial(),
 }).partial();
 

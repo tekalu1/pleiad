@@ -40,6 +40,7 @@
 .auto-compaction-settings > .rm-switch { min-height:34px; }
 .auto-compaction-minimum { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px; }
 .auto-compaction-minimum > label { cursor:pointer; }
+.auto-compaction-minimum > .mp-note { flex-basis:100%; margin:0; }
 /* 数値の欄は設定 › 委譲の数値（manage-panel.css の .mp-field）と同じ白い pill */
 .auto-compaction-settings input[type=number] { width:90px; flex:none; min-width:0; padding:8px 14px; background:var(--surface-paper); border-radius:var(--r-pill); color:var(--ink); font-variant-numeric:tabular-nums; }
 .auto-compaction-head, .auto-compaction-row { display:grid; grid-template-columns:minmax(0,1fr) 56px 130px; gap:8px; align-items:center; }

@@ -392,6 +392,11 @@
               <label for="autoCompactionMin" data-i18n="compaction.minSize"></label>
               <span class="rt-number-row"><input type="number" id="autoCompactionMin" min="1" max="10000" data-i18n-aria-label="compaction.minSize"> <span class="rt-unit" data-i18n="compaction.kTokens"></span></span>
             </section>
+            <section class="mp-panel auto-compaction-minimum">
+              <label for="autoCompactionDelegated" data-i18n="compaction.delegatedSize"></label>
+              <span class="rt-number-row"><input type="number" id="autoCompactionDelegated" min="0" max="10000" data-i18n-aria-label="compaction.delegatedSize"> <span class="rt-unit" data-i18n="compaction.kTokens"></span></span>
+              <p class="mp-note" data-i18n="compaction.delegatedHint"></p>
+            </section>
             <section class="mp-panel auto-compaction-agents">
               <div class="auto-compaction-head"><span data-i18n="compaction.agent"></span><span data-i18n="compaction.enabled"></span><span data-i18n="compaction.delay"></span></div>
               <div class="auto-compaction-row"><span>Claude Code</span><button type="button" class="cx-sw" id="autoCompactionClaude" role="switch" data-i18n-aria-label="compaction.claudeEnabled"></button><label class="rt-number-row"><input type="number" id="autoCompactionClaudeDelay" min="1" max="10080" data-i18n-aria-label="compaction.claudeDelay"> <span class="rt-unit" data-i18n="compaction.minutes"></span></label></div>

@@ -3639,6 +3639,8 @@
     "sidebarDone": "Compacted",
     "autoEnabled": "Automatically compact idle conversations",
     "minSize": "Minimum size",
+    "delegatedSize": "Compaction threshold for delegated children",
+    "delegatedHint": "A delegated Claude child is compacted automatically by Claude Code once its context passes this size (0 turns it off). Parent conversations are not affected",
     "kTokens": "k tokens",
     "agent": "Agent",
     "enabled": "On / Off",

@@ -1,5 +1,5 @@
 import { createCompactionScheduler, idleCompactionGuards } from '../../core/compaction-scheduler.mjs';
-import { normalizeCompactionSettings } from '../../core/compaction-settings.mjs';
+import { normalizeCompactionSettings, delegatedCompactWindow } from '../../core/compaction-settings.mjs';
 import { normalizeSdkMessage, createClaudeCompactDiagnostic, claudeCompactionsFromHistory } from '../../core/backends/claude-normalize.mjs';
 import { codexContextWindow, codexCompactionEvent } from '../../core/backends/codex.mjs';
 import { mergeCompactionHistory } from '../../core/compaction-history.mjs';
@@ -54,6 +54,22 @@ export default async function (t) {
     && defaults.claude.enabled && defaults.claude.delayMinutes === 50 && !defaults.codex.enabled && defaults.codex.delayMinutes === 25);
   t.ok('設定の入切・待ち時間を保持する', normalizeCompactionSettings({ codex: { enabled: true, delayMinutes: 12 } }).codex.delayMinutes === 12);
   t.ok('不正な設定を拒否する', (() => { try { normalizeCompactionSettings({ minTokens: -1 }); return false; } catch { return true; } })());
+
+  // 委譲の子の閾値（delegatedTokens。ADR 0162）: 既定 150k・0 はオフ・0 以外は 70k 以上（窓の下限 100k − 余白 33k）
+  const rejects = (input) => { try { normalizeCompactionSettings(input); return false; } catch { return true; } };
+  t.ok('委譲の子の閾値は既定 150k で、保存済みの設定（項目なし）にも既定が入る',
+    defaults.delegatedTokens === 150000 && normalizeCompactionSettings({ enabled: false, minTokens: 60000 }).delegatedTokens === 150000);
+  t.ok('委譲の子の閾値は 0（オフ）と 70k 以上を受け、それ以外は拒否する',
+    normalizeCompactionSettings({ delegatedTokens: 0 }).delegatedTokens === 0 && normalizeCompactionSettings({ delegatedTokens: 70000 }).delegatedTokens === 70000
+    && rejects({ delegatedTokens: 69999 }) && rejects({ delegatedTokens: -1 }) && rejects({ delegatedTokens: 1.5 }) && rejects({ delegatedTokens: '150000' }));
+  t.ok('子の窓は閾値 + 33000（150k → 183000）で、放置圧縮の enabled には依らない',
+    delegatedCompactWindow(defaults, {}) === '183000' && delegatedCompactWindow(normalizeCompactionSettings({ enabled: false, claude: { enabled: false } }), {}) === '183000'
+    && delegatedCompactWindow(normalizeCompactionSettings({ delegatedTokens: 70000 }), {}) === '103000');
+  t.ok('子の窓は上限 100 万に丸める', delegatedCompactWindow({ delegatedTokens: 5_000_000 }, {}) === '1000000');
+  t.ok('0（オフ）では子の窓を付けない', delegatedCompactWindow(normalizeCompactionSettings({ delegatedTokens: 0 }), {}) === null);
+  t.ok('利用者が同名の環境変数を置いていたらそちらを優先する（空文字は無いものとして扱う）',
+    delegatedCompactWindow(defaults, { CLAUDE_CODE_AUTO_COMPACT_WINDOW: '400000' }) === null
+    && delegatedCompactWindow(defaults, { CLAUDE_CODE_AUTO_COMPACT_WINDOW: '' }) === '183000');
 
   let time = 1000, serial = 0;
   const timers = new Map(), changed = [], run = [];

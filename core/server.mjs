@@ -63,7 +63,7 @@ import { createSchedule } from './schedule.mjs';
 import { limitHolds, limitResetsAt } from './limit-resume.mjs';
 import { buildSendRow, buildPostRow, decideFire, sendArgs, decorateScheduled, addRecord, MAX_PER_SESSION, MAX_TOTAL } from './send-schedule.mjs';
 import { createCompactionScheduler, idleCompactionGuards } from './compaction-scheduler.mjs';
-import { normalizeCompactionSettings } from './compaction-settings.mjs';
+import { normalizeCompactionSettings, delegatedCompactWindow } from './compaction-settings.mjs';
 import { mergeCompactionHistory, attachCompactSummaries } from './compaction-history.mjs';
 import { createContextSettings } from './context-settings.mjs';
 import { scanContext, skillList } from './context-scan.mjs';
@@ -5518,6 +5518,9 @@ async function beginTurn(ctx) {
   // bot の会話なら、人格（botInstructions）と、ターンの末尾（記憶の核の写し・差分。notes）を足す。bot でなければ空
   const botExtras = await botHost?.turnExtras(turn) ?? { botInstructions: null, notes: [] };
   const notes = [...(ctx.interruption ? [ctx.interruption.text] : []), ...botExtras.notes];
+  // 委譲の子の Claude だけ、CLI の自動圧縮の閾値を下げる（親・bot は CLI の既定のまま。docs/design.md「自動圧縮」、ADR 0162）
+  const autoCompactWindow = backend.capabilities?.autoCompactWindow && sessionId && (await store.get(sessionId)).delegation
+    ? delegatedCompactWindow(compactionSettings) : null;
   const runArgs = {
     prompt,
     ...(shellHandoff?.lines.length ? { shellAppends: shellHandoff.lines } : {}),
@@ -5559,6 +5562,7 @@ async function beginTurn(ctx) {
     ...(account ? { oauthToken: account.token } : {}),
     // 互換の接続先（キーを含む。backend の中でだけ使い、ログ・イベントには出さない。core/compat-endpoints.mjs）
     ...(endpoint ? { endpoint } : {}),
+    ...(autoCompactWindow ? { autoCompactWindow } : {}),
   };
   if (runArgs.browserEnv) {
     // 中継へ渡したキー。新規会話の id 決定での付け替え（rebind）と、承認の問い合わせ（getAgent）がこれで照合する

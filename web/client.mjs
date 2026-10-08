@@ -542,10 +542,11 @@ function acceptCompaction(event) {
   paintContextStrip();
 }
 function paintAutoCompactionSettings() {
-  const settings = state.prefs.autoCompaction ?? { enabled: true, minTokens: 150_000,
+  const settings = state.prefs.autoCompaction ?? { enabled: true, minTokens: 150_000, delegatedTokens: 150_000,
     claude: { enabled: true, delayMinutes: 50 }, codex: { enabled: false, delayMinutes: 25 } };
   $('autoCompactionEnabled').setAttribute('aria-checked', String(settings.enabled));
   $('autoCompactionMin').value = String(settings.minTokens / 1000);
+  $('autoCompactionDelegated').value = String((settings.delegatedTokens ?? 150_000) / 1000);
   for (const id of ['claude', 'codex']) {
     const name = id[0].toUpperCase() + id.slice(1);
     $(`autoCompaction${name}`).setAttribute('aria-checked', String(settings[id].enabled));
@@ -555,6 +556,7 @@ function paintAutoCompactionSettings() {
 async function saveAutoCompactionSettings() {
   const settings = { enabled: $('autoCompactionEnabled').getAttribute('aria-checked') === 'true',
     minTokens: Number($('autoCompactionMin').value) * 1000,
+    delegatedTokens: Number($('autoCompactionDelegated').value) * 1000,
     claude: { enabled: $('autoCompactionClaude').getAttribute('aria-checked') === 'true', delayMinutes: Number($('autoCompactionClaudeDelay').value) },
     codex: { enabled: $('autoCompactionCodex').getAttribute('aria-checked') === 'true', delayMinutes: Number($('autoCompactionCodexDelay').value) } };
   try {

@@ -18,6 +18,7 @@ import { readClaudeAccountsUsage } from './claude-usage.mjs';
 import { claudeEnv, redactToken } from '../claude-accounts.mjs';
 import { claudeCompatEnv, writeClaudeFlagSettings, adoptClaudeFlagSettings, redactSecret } from '../compat-endpoints.mjs';
 import { claudeExecutable } from '../cli-installation.mjs';
+import { AUTO_COMPACT_WINDOW_ENV } from '../compaction-settings.mjs';
 import { claudeContextOptions, claudeQueryExtraArgs, unexpectedNativeMcp } from './context-options.mjs';
 import { claudeHookCallbacks, mergeCallbacks } from '../hooks-unify.mjs';
 import { undelivered } from './undelivered.mjs';
@@ -649,6 +650,8 @@ export const backend = {
 
   capabilities: {
     compact: true,
+    // 委譲の子だけ自動圧縮の閾値を下げる窓（runArgs.autoCompactWindow → CLAUDE_CODE_AUTO_COMPACT_WINDOW）を受ける
+    autoCompactWindow: true,
     title: true,       // renameSession / customTitle。公式 CLI・VS Code と共有される
     tag: true,         // tagSession / tag。同上
     fork: true,
@@ -696,7 +699,7 @@ export const backend = {
    * 新規セッションは走り出すまで id が無いので、確定した時点で `session` イベントを出す。
    */
   // adopt は付け直し（{ source, card }。adoptTurn だけが渡す）。無ければ普通のターン（保持役に載せるかは claude-held.mjs の heldPlan が決める）
-  async runTurn({ prompt, sessionId, cwd, mode, model, effort, emit, onPromptDelivered, askPermission, signal, control, hostSessionId, hostBackend, hostInvoke, visualizeInstructions, browserEnv, browserInstructions, browserRuntime = null, contextRuntime, agentRuntime, computerRuntime = null, controlRuntime = null, hooksRuntime = null, oauthToken, endpoint = null, locale, compact, shellAppends = [], notes = [], botInstructions = null, botFolders = null, rewind = null }, adopt = null) {
+  async runTurn({ prompt, sessionId, cwd, mode, model, effort, emit, onPromptDelivered, askPermission, signal, control, hostSessionId, hostBackend, hostInvoke, visualizeInstructions, browserEnv, browserInstructions, browserRuntime = null, contextRuntime, agentRuntime, computerRuntime = null, controlRuntime = null, hooksRuntime = null, oauthToken, endpoint = null, autoCompactWindow = null, locale, compact, shellAppends = [], notes = [], botInstructions = null, botFolders = null, rewind = null }, adopt = null) {
     // locale は会話の言語（host ツールの説明と承認の deny の理由。core/server.mjs が会話ごとに決めて渡す）
     const ctx = { sessionId: sessionId ?? null, emit, hostSessionId, hostBackend, hostInvoke, locale, track: control?.track ?? null };
     // このターンで呼んだ ply_computer の tool_use の id。tool_result に名前は載らないので、印の行を読むのはこの id の結果だけにする
@@ -1049,6 +1052,7 @@ export const backend = {
       for (let i = 0; i < (Number.isInteger(adopt.card.pushed) ? adopt.card.pushed : 0); i++) tracker.pushed();
     }
 
+    const claudeExtraEnv = { CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS: "0", ...(autoCompactWindow ? { [AUTO_COMPACT_WINDOW_ENV]: String(autoCompactWindow) } : {}) };
     // query の組み立てで例外になっても、鍵を含むフラグ設定のファイルを残さない（ターンの終わりの finally まで届かないため）
     if (!finished) try { q = sdk.query({
       prompt: promptStream(),
@@ -1059,8 +1063,9 @@ export const backend = {
         // env は置き換え（足し算ではない）なので process.env を必ず広げる。
         // 待ちの上限は 0 = 無し。入力を開けている限り CLI は上限を見ないが、閉じた後の保険として外す。
         // 会話で選んだアカウントのトークンは、この会話の env にだけ入れる（process.env は触らない。core/claude-accounts.mjs）
-        env: { ...(endpoint ? claudeCompatEnv(process.env, endpoint, { CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS: "0" })
-          : claudeEnv(process.env, { token: oauthToken, extra: { CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS: "0" } })), ...browserEnv, ...controlRuntime?.env },
+        // 委譲の子だけ、自動圧縮の閾値を下げる窓（autoCompactWindow。Pleiad の設定 compaction.auto の delegatedTokens）を足す
+        env: { ...(endpoint ? claudeCompatEnv(process.env, endpoint, claudeExtraEnv)
+          : claudeEnv(process.env, { token: oauthToken, extra: claudeExtraEnv })), ...browserEnv, ...controlRuntime?.env },
         // CLI の stderr は今まで捨てていた（上限で subagent を殺したことも分からなかった）。トークン・接続先のキーが紛れても伏せる
         stderr: createStderrLog({ secrets: [oauthToken, endpoint?.key].filter(Boolean) }),
         resume: sessionId ?? undefined,

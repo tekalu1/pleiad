@@ -3520,6 +3520,8 @@
     "sidebarDone": "圧縮済み",
     "autoEnabled": "放置した会話を自動で圧縮する",
     "minSize": "対象にする最小サイズ",
+    "delegatedSize": "委譲の子の圧縮の閾値",
+    "delegatedHint": "委譲した Claude の子は、文脈がこの量を超えると Claude Code が自動で圧縮します（0 でオフ）。親の会話には影響しません",
     "kTokens": "k トークン",
     "agent": "エージェント",
     "enabled": "入 / 切",
