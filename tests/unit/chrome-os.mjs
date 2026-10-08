@@ -748,11 +748,11 @@ export default async function (t) {
       t.ok('隠していない窓には印を出さない', old.exportAgent(ref) === null);
       old.conceal(ref);
       const token = old.exportAgent(ref);
-      t.ok('隠した窓の印は "<hwnd>:<元のスタイル>"。窓は閉じない・戻さない', /^500:\d+$/.test(token) && closes(w).length === 0 && w.windows.get(500).alpha === 0, String(token));
+      t.ok('隠した窓の印は "<hwnd>:<元のスタイル>:<pid>"。窓は閉じない・戻さない', /^500:\d+:10$/.test(token) && closes(w).length === 0 && w.windows.get(500).alpha === 0, String(token));
       const next = createWin32ChromeOs({ win32: w, timers: noTimers().timers });
       const again = next.adoptAgent(token);
       t.ok('新しい層が印から記録を作り直す（隠したまま・元のスタイルも引き継ぐ）', again?.id === '500' && w.windows.get(500).alpha === 0 && next.reveal(again) === true && w.windows.get(500).alpha === 255 && w.windows.get(500).exStyle === 0x200000, JSON.stringify(w.windows.get(500)));
-      t.ok('壊れた印・知らない窓・窓の無い印は null（窓には触らない）', next.adoptAgent('x') === null && next.adoptAgent('500') === null && next.adoptAgent('999:0') === null && next.adoptAgent(null) === null && next.adoptAgent('0:0') === null);
+      t.ok('壊れた印・知らない窓・窓の無い印は null（窓には触らない）', next.adoptAgent('x') === null && next.adoptAgent('500') === null && next.adoptAgent('999:0') === null && next.adoptAgent(null) === null && next.adoptAgent('0:0:10') === null && next.adoptAgent('500:0') === null);
       {
         // 人が操作中の窓（引き継ぎ中）を新しい層が引き継ぐ: 見える形のまま。隠した窓として見張らず、戻すときの conceal で隠せる
         const w2 = winWith();
@@ -766,14 +766,52 @@ export default async function (t) {
         const shown = o2.adoptAgent(tok, { revealed: true });
         t.ok('見せている窓の印は、隠さずに引き継ぐ（人の窓を画面の外へ戻さない。隠した窓ではないので exportAgent は null）',
           shown?.id === '500' && w2.windows.get(500).alpha === visible.alpha && w2.windows.get(500).exStyle === visible.exStyle && o2.exportAgent(shown) === null && o2.reveal(shown) === false);
-        t.ok('引き継いだ見せている窓は、戻すときの conceal で隠せる', o2.conceal(shown) === true && w2.windows.get(500).alpha === 0 && /^500:\d+$/.test(o2.exportAgent(shown)));
+        t.ok('引き継いだ見せている窓は、戻すときの conceal で隠せる', o2.conceal(shown) === true && w2.windows.get(500).alpha === 0 && /^500:\d+:10$/.test(o2.exportAgent(shown)));
+      }
+      {
+        // 窓のハンドルが使い回された・隠した姿でなくなった窓は引き継がない（ユーザーの窓に触らない）
+        const hidden = () => {
+          const w3 = winWith();
+          const o = createWin32ChromeOs({ win32: w3, timers: noTimers().timers });
+          const r = o.findWindowByNonce(NONCE);
+          o.conceal(r);
+          return { w3, tok: o.exportAgent(r) };
+        };
+        const adopt = (w3, tok, opts) => createWin32ChromeOs({ win32: w3, timers: noTimers().timers }).adoptAgent(tok, opts);
+        {
+          const { w3, tok } = hidden();
+          t.ok('同じ窓なら引き継ぐ（対照）', adopt(w3, tok)?.id === '500');
+        }
+        {
+          const { w3, tok } = hidden();
+          w3.windows.get(500).pid = 11;   // 同じ hwnd が別の Chrome（pid 11）の窓に使い回された
+          t.ok('別のプロセスの窓に使い回されたハンドルは引き継がない', adopt(w3, tok) === null);
+        }
+        {
+          const { w3, tok } = hidden();
+          w3.windows.get(500).exStyle = 0;   // ユーザーの普通の窓（隠した姿でない）
+          t.ok('隠した姿（スタイル）でない窓は引き継がない', adopt(w3, tok) === null);
+        }
+        {
+          const { w3, tok } = hidden();
+          w3.windows.get(500).exStyle = (w3.windows.get(500).exStyle | WS_EX_APPWINDOW) >>> 0;
+          t.ok('タスクバーに出ている（APPWINDOW）窓は引き継がない', adopt(w3, tok) === null);
+        }
+        {
+          const { w3, tok } = hidden();
+          w3.windows.get(500).rect = { left: 100, top: 100, right: 1140, bottom: 631 };   // 画面の中へ戻っている
+          t.ok('画面の中にある窓は引き継がない', adopt(w3, tok) === null);
+          t.ok('見せている窓として引き継ぐ分には、位置とスタイルは問わない（pid は見る）', adopt(w3, tok, { revealed: true })?.id === '500');
+          w3.windows.get(500).pid = 11;
+          t.ok('見せている窓でも、別のプロセスの窓は引き継がない', adopt(w3, tok, { revealed: true }) === null);
+        }
       }
       const dialogW = fakeWin32(); dialogW.add(910, DIALOG);
       const dialogOs = createWin32ChromeOs({ win32: dialogW });
       const dialogRef = dialogOs.findPermissionDialog({ since: [] });
-      t.ok('確認の窓の印は引き継がない', dialogRef?.id === '910' && dialogOs.adoptAgent('910:0') === null);
+      t.ok('確認の窓の印は引き継がない', dialogRef?.id === '910' && dialogOs.adoptAgent('910:0:10') === null);
       const unsupported = createChromeOs({ platform: 'linux' });
-      t.ok('使えない OS の exportAgent・adoptAgent は null', unsupported.exportAgent({ id: '1' }) === null && unsupported.adoptAgent('1:0') === null);
+      t.ok('使えない OS の exportAgent・adoptAgent は null', unsupported.exportAgent({ id: '1' }) === null && unsupported.adoptAgent('1:0:1') === null);
     }
     {
       const unsupported = createChromeOs({ platform: 'linux' });

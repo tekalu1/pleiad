@@ -447,7 +447,10 @@ function createWin32ChromeOs({ win32, log = () => {}, spawn = childProcess.spawn
   function exportAgent(ref) {
     const entry = knownAgent(ref);
     if (!entry || !entry.concealed) return null;
-    return `${entry.hwnd}:${(entry.ex0 ?? 0) >>> 0}`;
+    try {
+      // 窓のハンドルは使い回される。ブラウザーのプロセス（pid）も印に入れ、引き継ぐときに同じ窓か確かめる
+      return `${entry.hwnd}:${(entry.ex0 ?? 0) >>> 0}:${win32.windowInfo(entry.hwnd).pid}`;
+    } catch { return null; }
   }
 
   /**
@@ -455,13 +458,17 @@ function createWin32ChromeOs({ win32, log = () => {}, spawn = childProcess.spawn
    * 作り直した窓は隠しているものとして前面の見張りに入る（revealed: true の窓は人が操作中なので、隠さず見張りにも入れない）
    */
   function adoptAgent(token, { revealed = false } = {}) {
-    const match = /^(\d{1,20}):(\d{1,10})$/.exec(String(token ?? ''));
+    const match = /^(\d{1,20}):(\d{1,10}):(\d{1,10})$/.exec(String(token ?? ''));
     if (!match) return null;
     const hwnd = Number(match[1]);
     try {
       if (!Number.isSafeInteger(hwnd) || hwnd <= 0 || !alive(hwnd)) return null;
       const info = win32.windowInfo(hwnd);
       if (info.className !== BROWSER_CLASS || !BROWSER_EXES.has(exeName(win32.processPath(info.pid)))) return null;
+      // 同じ窓か: 印を作ったときのプロセスのままで、隠した姿（画面の外・タスクバーから外す・透明・素通し）のままか。
+      // ハンドルが別のブラウザーの窓に使い回されていたら、隠していない窓に触らない
+      if (info.pid !== Number(match[3])) return null;
+      if (!revealed && !looksConcealed(info)) return null;
       if (refs.get(String(hwnd))?.kind === 'dialog') return null;
       const ref = rememberAgent(hwnd);
       if (!ref) return null;
@@ -476,6 +483,19 @@ function createWin32ChromeOs({ win32, log = () => {}, spawn = childProcess.spawn
       log(`adopt agent failed: ${error.message}`);
       return null;
     }
+  }
+
+  /** conceal がした姿か: 拡張スタイルが TOOLWINDOW・LAYERED・TRANSPARENT で APPWINDOW が無く、どのモニターにもかからない位置にある */
+  function looksConcealed(info) {
+    const mask = WS_EX_TOOLWINDOW | WS_EX_LAYERED | WS_EX_TRANSPARENT;
+    if ((info.exStyle & mask) !== mask || (info.exStyle & WS_EX_APPWINDOW) !== 0) return false;
+    const rect = info.rect;
+    if (!rect) return false;
+    let list = [];
+    try { list = win32.monitors?.() ?? []; } catch { list = []; }
+    if (list.length) return !list.some(m => rect.left < m.x + m.width && rect.right > m.x && rect.top < m.y + m.height && rect.bottom > m.y);
+    const spot = hiddenSpot();
+    return Math.abs(rect.left - spot.x) <= 64 && Math.abs(rect.top - spot.y) <= 64;
   }
 
   /** 画面の構成が変わった（モニターの増減・解像度・DPI・スリープ復帰）。隠している窓を置き直す。main が Electron の screen のイベントで呼ぶ */
