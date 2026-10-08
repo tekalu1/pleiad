@@ -1,6 +1,6 @@
 // 先頭に置く: AGENT_HOST_SERVER_LOG があれば、他のモジュールの読み込みの失敗も含めて出力をファイルへ向ける（stdio の無い起動）
 import './server-log-boot.mjs';
-import { effortOptions, validateEffort } from './effort.mjs';
+import { effortOptions, validateEffort, effortCapability } from './effort.mjs';
 import { listDirs } from './list-dirs.mjs';
 import { createQuotaCache, createUsageStore, agentUsage } from './usage.mjs';
 import { migrateClaudeUsage } from './usage-migrations.mjs';
@@ -21,7 +21,7 @@ import { createShots as createComputerShots } from './computer-use/shots.mjs';
 import { parentPortComputer, fakeComputerDriver } from './computer-use/driver.mjs';
 import { normalizeComputerUse } from './computer-use/policy.mjs';
 import { appendFileSync } from 'node:fs';
-import { KINDS, JUDGES, TIERS, SIGNALS, normalizeSettings, RETIRED_KEYS, RoutingSettingsError, pinnedRouting, manualRouting, route, candidateStates, settingsWarnings, checkCandidate, selectRetryAccount, parseCandidate, formatSkippedCandidates } from './delegation-routing.mjs';
+import { KINDS, JUDGES, TIERS, SIGNALS, normalizeSettings, pruneEfforts, decideEffort, effortTierFor, RETIRED_KEYS, RoutingSettingsError, pinnedRouting, manualRouting, route, candidateStates, settingsWarnings, checkCandidate, selectRetryAccount, parseCandidate, formatSkippedCandidates } from './delegation-routing.mjs';
 import { judgeDifficulty, normalizeKey, SERVICES as ROUTING_JUDGE, JUDGE_SERVICE, JUDGE_TIMEOUT_MS } from './delegation-judges.mjs';
 import { createUsageMonitor } from './delegation-usage.mjs';
 import { canDelegate, resolveDelegatedMode, modePosition, scopeRank, autonomyRank, SCOPES, AUTONOMIES } from './modes.mjs';
@@ -1102,10 +1102,17 @@ async function delegationRoutingState() {
   const has = await Promise.all(ROUTING_SERVICES.map(s => apiKeys.hasUse(`judge:${ROUTING_JUDGE[s]}`).catch(() => false)));
   const refs = apiKeys.usesState();
   const storage = await apiKeySecrets.status().catch(() => null);
-  return { settings, defaults: normalizeSettings({}), kinds: KINDS, judges: JUDGES, tiers: TIERS, signals: SIGNALS,
+  // 候補ごとの強さの持ち方（選択肢の元。モデルの一覧から引く）と、会話の既定（エージェント設定の強さ。「会話の既定に従う（今は X）」）
+  const candidates = await Promise.all(candidateStates({ settings, usage, now: Date.now() }).map(async c => {
+    const backend = c.backend ? getBackend(c.backend) : null;
+    return backend ? { ...c, effort: await effortCapability(backend, c.model, process.cwd()) } : c;
+  }));
+  const prefs = await store.getPrefs();
+  const conversationEfforts = Object.fromEntries(listBackends().map(b => [b.id, prefs.backends?.[b.id]?.effort ?? '']));
+  return { settings, defaults: normalizeSettings({}), kinds: KINDS, judges: JUDGES, tiers: TIERS, signals: SIGNALS, conversationEfforts,
     keys: Object.fromEntries(ROUTING_SERVICES.map((s, i) => [s, { hasKey: has[i], keyRef: has[i] ? refs[`judge:${ROUTING_JUDGE[s]}`] ?? null : null }])),
     storage: storage ? { encrypted: storage.encrypted, backend: storage.backend, ...(storage.reason ? { reason: storage.reason } : {}) } : null,
-    warnings: settingsWarnings({ settings, usage }), candidates: candidateStates({ settings, usage, now: Date.now() }) };
+    warnings: settingsWarnings({ settings, usage }), candidates };
 }
 // i18n-dynamic: server:routing.settings.
 const routingSettingsError = e => e instanceof RoutingSettingsError ? new Error(t(`routing.settings.${e.code}`, e.detail)) : e;
@@ -1142,7 +1149,9 @@ async function retryAgentTask({ taskId, candidate, account, stop, approved } = {
     if (stop) await agentTasks.cancel(original.taskId);
   }
   const request = agentTasks.request(original.taskId);
-  const routing = manualRouting({ kind: original.routing?.kind ?? null, candidate, check, of: original.taskId, from });
+  const routing = manualRouting({ kind: original.routing?.kind ?? null, candidate, check, of: original.taskId, from,
+    // 子の思考の強さは、その候補が属する段の値（元の段にあればそれ）
+    effortTier: effortTierFor({ settings: routingSettingsCache, candidate, preferred: original.routing?.tier ?? original.routing?.baseTier ?? null }) });
   const task = await agentTasks.call(owner, 'ply_delegate', { kind: routing.kind, task: request.task, ...(request.title ? { title: request.title } : {}), ...(request.context ? { context: request.context } : {}),
     cwd: original.worktree?.origin ?? original.cwd, isolate: Boolean(original.worktree), backend: parsed.backend, model: parsed.model, account: check.account ?? '', routing, mode: decided.mode }, undefined, await agentLocaleFor(owner));
   // 子が使い始めるので、振り分けに使う使用量を取り直しておく（待たない）
@@ -2653,6 +2662,9 @@ async function applyRoutingSettings(patch) {
   for (const key of RETIRED_KEYS) delete raw[key];
   let settings;
   try { settings = normalizeSettings(raw, { strict: true }); } catch (e) { throw routingSettingsError(e); }
+  // 段から外した候補の上書きは保存しない（外して入れ直したときに前の上書きが付かない）
+  const efforts = pruneEfforts(raw.efforts, settings);
+  if (efforts) raw.efforts = efforts; else delete raw.efforts;
   const previous = routingSettingsCache;
   const known = routingUsage.snapshot();
   const oldCandidates = new Set(TIERS.flatMap(tier => previous.tiers[tier] ?? []));
@@ -4971,7 +4983,11 @@ agentTasks = await createAgentTasks({
     const model = await resolveModel(null, args.model, backend, cwd, endpoint);
     // 選んだモデルを使えなくなっていたら、黙って既定に落とさず断る
     if (auto && model !== args.model) throw new Error(agentT(lng, 'routing.modelUnavailable', { model: args.model, backend: backend.id }));
-    const effort = await resolveEffort(null, args.effort, backend, model, cwd, await endpointRow(endpoint));
+    // 自動の振り分け・人が選び直した委譲の子の強さは、上書き → 段の既定 → そのモデルに合わせる（ADR 0164）。
+    // 振り分けでは断らず、モデルが持たない強さは合わせて記録に残す。固定の委譲は依頼元が書いた値のまま（検証する）
+    const decided = auto ? decideEffort({ settings: routingSettingsCache, tier: manual ? args.routing.effortTier ?? null : args.routing.tier ?? null,
+      candidate: `${backend.id}:${model}`, capability: await effortCapability(backend, model, cwd) }) : null;
+    const effort = await resolveEffort(null, decided ? decided.send : args.effort, backend, model, cwd, await endpointRow(endpoint));
     // 承認モードは委譲を受け付けた側（agentBridge の call）が親の強さから決めてある。
     // ここで決め直すと「聞いた内容」と「実際に動く強さ」がずれるので、来た値をそのまま使う。
     const modes = backend.modes();
@@ -4980,7 +4996,9 @@ agentTasks = await createAgentTasks({
     // 自動で Claude を選んだときは、使用量で選んだアカウント（'' はログイン中のアカウント）
     const account = auto && backend.id === 'claude' ? args.account ?? '' : (await store.get(owner)).claudeAccount ?? '';
     // 振り分けの記録（タスクと子の会話に残す）。委譲先は実際に使う値で書く（固定のときのモデルの既定への戻り・継いだアカウントも）
-    const routing = args.routing ? { ...args.routing, target: { backend: backend.id, model, account: backend.id === 'claude' ? account : null } } : null;
+    const { effortTier: _tier, ...routed } = args.routing ?? {};
+    const routing = args.routing ? { ...routed, target: { backend: backend.id, model, account: backend.id === 'claude' ? account : null, effort: (decided?.source === 'model' ? decided.effort : effort) || null },
+      ...(decided ? { effortSource: decided.source, ...(decided.tier ? { effortTier: decided.tier } : {}), ...(decided.asked ? { effortAsked: decided.asked } : {}) } : {}) } : null;
     // worktree（ADR 0089）。子の作業場所をここで作る。作れなければ（git でない・コミットが無い・失敗）今の場所のまま走らせる
     let worktree = null;
     if (args.isolate === true) {

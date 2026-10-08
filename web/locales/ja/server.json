@@ -1016,7 +1016,10 @@
       "unknownJudge": "{{kind}} の判定器が不正です: {{judge}}",
       "unknownTier": "知らない段です: {{tier}}",
       "badCandidates": "{{tier}} の候補が不正です（backend:model の形で、重複なし、20 件まで）",
-      "badRow": "{{kind}} の段の並びが不正です（低・中・高の 3 つ）"
+      "badRow": "{{kind}} の段の並びが不正です（低・中・高の 3 つ）",
+      "badEfforts": "{{tier}} の思考の強さの形が不正です",
+      "badEffortKey": "{{tier}} の思考の強さの対象が不正です（段の既定は *、候補は backend:model）: {{key}}",
+      "badEffort": "{{tier}} の思考の強さが不正です（low・medium・high・xhigh・max、会話の既定に従うなら空）: {{value}}"
     },
     "key": {
       "unknownService": "知らない判定サービスです: {{service}}",

@@ -757,7 +757,9 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
         const target = row.routing?.target ?? {};
         const sameAccount = backend === target.backend && (account ?? null) === (target.account ?? null);
         row.routing = { ...(row.routing ?? { mode: 'pinned', kind: null }),
-          target: { backend, model, account: account ?? null, ...(sameAccount && target.accountLabel ? { accountLabel: target.accountLabel } : {}) } };
+          target: { backend, model, account: account ?? null, ...(sameAccount && target.accountLabel ? { accountLabel: target.accountLabel } : {}), effort: effort || null } };
+        // 振り分けが決めた強さ（由来・段・合わせた元）は、依頼元が替えたら当てはまらない
+        if ((previous.effort ?? '') !== (effort ?? '')) { row.routing.effortSource = 'parent'; delete row.routing.effortTier; delete row.routing.effortAsked; }
         if (same(from, { backend, model, effort })) delete row.routing.changed;
         else row.routing.changed = { by: 'parent', at: new Date().toISOString(), from, count: (previous.routing?.changed?.count ?? 0) + 1 };
         // 選んだ時点の使用率は前の委譲先のものなので外す
@@ -784,7 +786,7 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
       if (!r || ((r.backend ?? null) === backend && (r.model ?? '') === (model ?? '') && (r.effort ?? '') === (effort ?? '') && (r.mode ?? '') === (mode ?? ''))) return null;
       await record(r.taskId, row => {
         row.backend = backend; row.model = model; row.effort = effort; row.mode = mode;
-        if (row.routing?.changed && row.routing.target) row.routing.target = { ...row.routing.target, backend, model };
+        if (row.routing?.changed && row.routing.target) row.routing.target = { ...row.routing.target, backend, model, effort: effort || null };
       }, 'sync');
       return r.taskId;
     },

@@ -1537,7 +1537,7 @@
     "agentSitePermissions": "エージェントのブラウザーに「このサイトは常に許可」した一覧。",
     "externalSitePermissions": "外部の読み込みに「このサイトは常に許可」した一覧。",
     "computerUse": "コンピューターの操作の設定（有効・全アプリの許可・常に許可のアプリ）。",
-    "delegationRouting": "委譲先の自動振り分けの設定（判定器・段・候補。キーは含まない）。",
+    "delegationRouting": "委譲先の自動振り分けの設定（判定器・段・候補・段ごとの思考の強さ。キーは含まない）。",
     "plyInstructions": "Pleiad が会話に足す指示の項目。",
     "addedContext": "前の版の委譲の指示のスイッチ（plyInstructions に置き換わった）。",
     "context": {

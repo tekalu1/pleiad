@@ -1,6 +1,6 @@
 // 委譲先の自動振り分け（core/delegation-routing.mjs・delegation-judges.mjs・delegation-usage.mjs）。
 // 判定器は偽の fetch とだけ話す（本物の OpenRouter・Cerebras へは送らない）。LLM は呼ばない
-import { KINDS, SIGNALS, DEFAULTS, normalizeSettings, RoutingSettingsError, difficultyOf, judgeWindows, windowsFor, checkCandidate, selectRetryAccount, dedupeAccounts,
+import { KINDS, SIGNALS, DEFAULTS, EFFORT_LEVELS, normalizeSettings, pruneEfforts, fitEffort, decideEffort, effortTierFor, RoutingSettingsError, difficultyOf, judgeWindows, windowsFor, checkCandidate, selectRetryAccount, dedupeAccounts,
   route, pinnedRouting, manualRouting, candidateStates, settingsWarnings, parseCandidate, elapsedPercent, formatSkippedCandidates } from '../../core/delegation-routing.mjs';
 import { askJev, askCerebras, judgeDifficulty, normalizeKey, TASK_LIMIT, JEV_MODEL, CEREBRAS_MODEL } from '../../core/delegation-judges.mjs';
 import { createUsageMonitor, REFRESH_MS, STALE_MS } from '../../core/delegation-usage.mjs';
@@ -370,6 +370,64 @@ export default async function (t) {
   t.ok('取り直しが終わらなくても最長 ms で戻る（取り直しは裏で続く）', efReads === 4 && Date.now() - start < 150);
   await new Promise(r => setTimeout(r, 250));
   efDelayMs = 0;
+
+  // ---- 子の思考の強さ（ADR 0164）
+  const strictFails = (raw, code) => { try { normalizeSettings(raw, { strict: true }); return false; } catch (e) { return e instanceof RoutingSettingsError && e.code === code; } };
+  t.ok('強さの既定: 段 1 low・段 2 medium・段 3 medium・段 4 high・創作は会話の既定（空）', JSON.stringify(settings.efforts)
+    === '{"t1":{"*":"low"},"t2":{"*":"medium"},"t3":{"*":"medium"},"t4":{"*":"high"},"tv":{"*":""}}' && JSON.stringify(DEFAULTS.efforts) === JSON.stringify(settings.efforts));
+  t.ok('強さの語彙は弱い順に low・medium・high・xhigh・max', EFFORT_LEVELS.join() === 'low,medium,high,xhigh,max');
+  const withTiers = normalizeSettings({ tiers: { t3: ['claude:sonnet', 'codex:gpt-6-sol'] }, efforts: { t3: { '*': 'high', 'claude:sonnet': 'low', 'codex:gpt-6-sol': '' } } }, { strict: true });
+  t.ok('段の既定と候補の id ごとの上書きを読む（空は会話の既定に従う）。書かなかった段は既定のまま', withTiers.efforts.t3['*'] === 'high' && withTiers.efforts.t3['claude:sonnet'] === 'low'
+    && withTiers.efforts.t3['codex:gpt-6-sol'] === '' && withTiers.efforts.t4['*'] === 'high' && withTiers.efforts.tv['*'] === '');
+  t.ok('段に無い候補の上書きは持ち越さない（外した候補・段にまだ無い候補）', normalizeSettings({ efforts: { t3: { 'claude:opus': 'high' } } }, { strict: true }).efforts.t3['claude:opus'] === undefined);
+  t.ok('段の既定を書かない行は組み込みの段の既定で補う', normalizeSettings({ tiers: { t3: ['claude:sonnet'] }, efforts: { t3: { 'claude:sonnet': 'max' } } }, { strict: true }).efforts.t3['*'] === 'medium');
+  t.ok('保存（strict）は形だけを見て断る: 語彙の外の強さ・候補でない対象・知らない段・形の違う値・多すぎる対象',
+    strictFails({ efforts: { t3: { '*': 'extreme' } } }, 'badEffort') && strictFails({ efforts: { t3: { '*': 1 } } }, 'badEffort') && strictFails({ efforts: { t3: { nope: 'low' } } }, 'badEffortKey')
+    && strictFails({ efforts: { t9: { '*': 'low' } } }, 'unknownTier') && strictFails({ efforts: [] }, 'notObject') && strictFails({ efforts: { t3: 'low' } }, 'badEfforts')
+    && strictFails({ efforts: { t3: Object.fromEntries(Array.from({ length: 41 }, (_, i) => [`claude:m${i}`, 'low'])) } }, 'badEfforts'));
+  t.ok('モデルが持つかどうかは保存では見ない（xhigh を持たないモデルの候補にも書ける）', normalizeSettings({ tiers: { t2: ['claude:haiku'] }, efforts: { t2: { 'claude:haiku': 'xhigh' } } }, { strict: true }).efforts.t2['claude:haiku'] === 'xhigh');
+  const lenient = normalizeSettings({ efforts: { t3: { '*': 'extreme' }, t9: { '*': 'low' }, t4: { '*': 'low' } } });
+  t.ok('読むとき（strict でない）は不正な項目だけ既定に戻し、動く', lenient.efforts.t3['*'] === 'medium' && lenient.efforts.t4['*'] === 'low' && !('t9' in lenient.efforts)
+    && normalizeSettings({ efforts: 'x' }).efforts.t1['*'] === 'low');
+  t.ok('efforts を持たない前の版の設定も読める（unknownKey にしない）', normalizeSettings({ avoidPercent: 70 }, { strict: true }).efforts.t4['*'] === 'high');
+
+  const tiersFor = normalizeSettings({ tiers: { t3: ['claude:sonnet', 'codex:gpt-6-sol'] } });
+  t.ok('保存する efforts から、段に無い候補の上書きと既定と同じ行を落とす（空なら undefined）', JSON.stringify(pruneEfforts({ t3: { '*': 'medium', 'claude:haiku': 'low' }, t4: { '*': 'max' } }, tiersFor)) === '{"t4":{"*":"max"}}'
+    && pruneEfforts({ t3: { '*': 'medium' } }, tiersFor) === undefined && pruneEfforts(undefined, tiersFor) === undefined
+    && JSON.stringify(pruneEfforts({ t3: { 'claude:sonnet': 'low' } }, tiersFor)) === '{"t3":{"claude:sonnet":"low"}}');
+
+  t.ok('合わせ: 持たない強さは近い下の強さへ（xhigh → high、max → high）。下が無ければ持つ中でいちばん弱いもの。持たないモデルは null',
+    fitEffort(['low', 'medium', 'high'], 'xhigh') === 'high' && fitEffort(['low', 'medium', 'high'], 'max') === 'high' && fitEffort(['low', 'high'], 'medium') === 'low'
+    && fitEffort(['medium', 'high'], 'low') === 'medium' && fitEffort(['low', 'medium'], 'medium') === 'medium' && fitEffort([], 'high') === null && fitEffort(['minimal'], 'low') === null);
+  const lv = { levels: ['low', 'medium', 'high', 'xhigh'], fixed: null };
+  const decide = (over, candidate, tier, capability = lv) => decideEffort({ settings: normalizeSettings({ tiers: { t3: ['claude:sonnet', 'codex:gpt-6-sol'] }, efforts: over }), tier, candidate, capability });
+  const d1 = decide(undefined, 'codex:gpt-6-sol', 't3');
+  t.ok('決まり方 1: 上書きが無ければ段の既定（medium・source tier）', d1.send === 'medium' && d1.effort === 'medium' && d1.source === 'tier' && d1.tier === 't3' && !('asked' in d1));
+  const d2 = decide({ t3: { 'codex:gpt-6-sol': 'low' } }, 'codex:gpt-6-sol', 't3');
+  t.ok('決まり方 2: 候補の上書きは段の既定に優先する（source override）', d2.send === 'low' && d2.source === 'override');
+  const d3 = decide({ t3: { 'codex:gpt-6-sol': '' } }, 'codex:gpt-6-sol', 't3');
+  t.ok('決まり方 3: 上書きの空は会話の既定（send は undefined = 会話の既定のまま。記録の強さは走らせてから決める）', d3.send === undefined && d3.effort === null && d3.source === 'conversation');
+  const d4 = decide({ t3: { '*': '' } }, 'claude:sonnet', 't3');
+  t.ok('決まり方 4: 段の既定が空でも会話の既定', d4.send === undefined && d4.source === 'conversation');
+  const d5 = decide({ t3: { '*': 'max' } }, 'codex:gpt-6-sol', 't3');
+  t.ok('決まり方 5: 持たない強さは合わせて断らず、元の強さを asked に残す', d5.send === 'xhigh' && d5.effort === 'xhigh' && d5.asked === 'max' && d5.source === 'tier');
+  const d6 = decide({ t3: { 'claude:sonnet': 'xhigh' } }, 'claude:sonnet', 't3', { levels: ['low', 'medium', 'high'], fixed: null });
+  t.ok('決まり方 6: 上書きでも合わせる（xhigh → high。source は override のまま）', d6.send === 'high' && d6.asked === 'xhigh' && d6.source === 'override');
+  const d7 = decide(undefined, 'claude:haiku', 't1', { levels: [], fixed: null });
+  t.ok('決まり方 7: 強さを持たないモデルには送らない（send は空・source none）', d7.send === '' && d7.effort === null && d7.source === 'none' && !('asked' in d7));
+  const d8 = decide(undefined, 'antigravity:gemini-3.8-flash-high', 't1', { levels: [], fixed: 'high' });
+  t.ok('決まり方 8: 強さがモデル名に入るモデルは送らず、名前の強さを記録する（source model）', d8.send === '' && d8.effort === 'high' && d8.source === 'model');
+  const d9 = decide({ t3: { '*': 'low' } }, 'codex:gpt-6-sol', null);
+  t.ok('決まり方 9: 段が決まらなければ会話の既定', d9.send === undefined && d9.source === 'conversation');
+  t.ok('決まり方 10: 語彙の外の強さしか持たないモデルは送らない', decide(undefined, 'x:y', 't3', { levels: ['minimal'], fixed: null }).source === 'none');
+
+  t.ok('やり直しの段: 元の段にその候補があればそれ、無ければ入っている最初の段、どこにも無ければ null',
+    effortTierFor({ settings: tiersFor, candidate: 'claude:sonnet', preferred: 't3' }) === 't3' && effortTierFor({ settings: settings, candidate: 'claude:sonnet', preferred: 't3' }) === 't3' && effortTierFor({ settings: settings, candidate: 'claude:sonnet', preferred: 't4' }) === 't2'
+    && effortTierFor({ settings: settings, candidate: 'claude:sonnet', preferred: null }) === 't2' && effortTierFor({ settings: settings, candidate: 'claude:sonnet', preferred: 't2' }) === 't2'
+    && effortTierFor({ settings: settings, candidate: 'claude:nope' }) === null);
+  const manual = manualRouting({ kind: 'implement', candidate: 'claude:sonnet', check: { ok: true, account: '', checkedAt: NOW }, of: 'ply-task-x', from: null, effortTier: 't3' });
+  t.ok('人が選び直した記録は強さを引く段を持つ（段が無ければ付けない）', manual.effortTier === 't3'
+    && !('effortTier' in manualRouting({ kind: 'implement', candidate: 'claude:sonnet', check: { ok: true, account: '', checkedAt: NOW }, of: 'ply-task-x', from: null })));
 
   t.ok('9 種類の kind', KINDS.length === 9);
 }

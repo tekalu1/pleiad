@@ -649,7 +649,7 @@ Pleiadでターンが終了すると（成功・失敗・中断を含む）、�
 
 Claude・Codex 共通の `ply_agents` MCP で、Pleiad 管理の子会話を作成・継続・停止する。
 ネイティブの `spawn_agent` / `agent_job` と名前・ID・完了通知の管理元を分ける。詳細は [agent-delegation.md](agent-delegation.md)。
-親は仕事の種類（`kind`）を必ず申告し、`backend` を省けば Pleiad が難しさの判定器（既定は OpenRouter の Jev）と使用量から委譲先を選んで理由（`routing`）を残す（[ADR 0022](adr/0022-delegation-routing.md)）。
+親は仕事の種類（`kind`）を必ず申告し、`backend` を省けば Pleiad が難しさの判定器（既定は OpenRouter の Jev）と使用量から委譲先を選んで理由（`routing`）を残す（[ADR 0022](adr/0022-delegation-routing.md)）。自動で選んだ子の思考の強さは、段の既定と候補ごとの上書き（`delegationRouting.efforts`。既定は段 1 low・段 2 medium・段 3 medium・段 4 high・創作は会話の既定）から決め、モデルが持たない強さは近い下の強さに合わせて断らず、強さを持たないモデルには送らない。走った強さとその由来は `routing` に残す（[ADR 0164](adr/0164-delegation-child-effort.md)）。
 
 ## 指示の量（2026-09-28）
 

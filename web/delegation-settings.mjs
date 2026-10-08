@@ -4,7 +4,8 @@
 // - 「難しさの判定」: 種類ごとの判定器（Jev / Cerebras / 判定しない）の表と「Jev が迷ったら Cerebras に聞き直す」
 // - 「判定器が使うキー」: OpenRouter（Jev）と Cerebras それぞれに「使うキー」を設定 › API キー（承認済み 2026-10-07）から選ぶ（WS の setApiKeyUse）。
 //   選ぶまでは何も送らない。未登録ならその場で登録でき（登録先は API キー）、キーは返ってこない（hasKey と keyRef だけ）。送る内容の 1 行
-// - 「詳しい設定」（details）: 段ごとの候補（並べ替え・追加・外す、各候補の今の使用量と使えるかどうか）・種類 × 難しさの表・使用量の方針
+// - 「詳しい設定」（details）: 段ごとの候補（並べ替え・追加・外す、各候補の今の使用量と使えるかどうか、段の既定と候補ごとの思考の強さ。
+//   承認済み 2026-10-08・ADR 0164）・種類 × 難しさの表・使用量の方針
 // - 末尾の「既定に戻す」（その場の確認。キーは残る）
 //
 // 状態はサーバーが持つ（delegationRouting コマンドと、変わるたびに届く delegationRoutingChanged イベント）。
@@ -15,6 +16,8 @@ import { el } from './dom.mjs';
 import { t, fmt } from './i18n.mjs';
 import { kindText, difficultyText, tierText, tierShortText, judgeText, skipText, usageSummary, splitCandidate } from './delegation-routing-view.mjs';
 import { apiKeyList, keySelect, registerForm, statusLine, manageLink } from './api-key-ui.mjs';
+import { EFFORT_LEVELS, candidateEffort, tierEffort, withEffort } from './delegation-effort.mjs';
+import { effortSelect, effortFixed } from './effort-select.mjs';
 
 const SERVICES = ['openrouter', 'cerebras'];
 const SERVICE_JUDGE = { openrouter: 'jev', cerebras: 'cerebras' };
@@ -30,12 +33,15 @@ export function diffFromDefaults(value, defaults) {
   return same(value, defaults) ? null : value;
 }
 
+/** 送る値が「既定との差の全体」（サーバーが丸ごと置き換える）の項目。重ねる先は今の値ではなく既定（段の既定に戻した行が残らないように） */
+const REPLACED = new Set(['efforts']);
+
 function applyPatch(settings, patch, defaults) {
   const next = structuredClone(settings);
   for (const [key, value] of Object.entries(patch)) {
     next[key] = value === null ? structuredClone(defaults[key])
       : value && typeof value === 'object' && !Array.isArray(value)
-        ? { ...next[key], ...structuredClone(value) } : value;
+        ? { ...(REPLACED.has(key) ? defaults[key] : next[key]), ...structuredClone(value) } : value;
   }
   return next;
 }
@@ -132,6 +138,7 @@ export function setupDelegationSettings({ cmd, page, showMenu, labelOf, logo, mo
   }
   /** 入れ子の設定（judgeByKind・tiers・table）を変えたとき。既定と同じ項目は送らず、全部既定なら null で既定に戻す */
   const saveNested = (key, value) => save({ [key]: diffFromDefaults(value, data.defaults[key]) });
+  const saveEfforts = efforts => saveNested('efforts', efforts);
 
   // ---- 描く
   function paint() {
@@ -292,6 +299,8 @@ export function setupDelegationSettings({ cmd, page, showMenu, labelOf, logo, mo
   // ---- 詳しい設定
   function paintAdvanced() {
     const s = data.settings;
+    // 強さの選択を押した後の描き直しで、押した部品へフォーカスを戻す
+    const focused = advancedBody.contains(document.activeElement) ? document.activeElement.dataset?.fk ?? '' : '';
     const out = [];
     // 段ごとの候補
     const tiersHead = el('div', 'rt-sub-head');
@@ -319,6 +328,7 @@ export function setupDelegationSettings({ cmd, page, showMenu, labelOf, logo, mo
       numberField('paceLimit', t('routing.settings.pace'), t('routing.settings.paceUnit'), { min: 0.1, max: 10, step: 0.1 }));
     out.push(policy);
     advancedBody.replaceChildren(...out);
+    if (focused) [...advancedBody.querySelectorAll('button')].find(b => b.dataset?.fk === focused)?.focus({ preventScroll: true });
   }
   function stateOf(candidate) { return data.candidates.find(c => c.candidate === candidate) ?? null; }
   function candidateUsage(candidate) {
@@ -354,7 +364,9 @@ export function setupDelegationSettings({ cmd, page, showMenu, labelOf, logo, mo
   function tierBlock(tier) {
     const list = data.settings.tiers[tier] ?? [];
     const block = el('div', 'rt-tier');
-    block.append(el('div', 'rt-tier-name', tierText(tier)));
+    const tierHead = el('div', 'rt-tier-head');
+    tierHead.append(el('span', 'rt-tier-name', tierText(tier)), tierEffortSelect(tier, list));
+    block.append(tierHead);
     const rows = el('ol', 'rt-cand-list');
     list.forEach((candidate, i) => {
       const { backend, model } = splitCandidate(candidate);
@@ -383,7 +395,9 @@ export function setupDelegationSettings({ cmd, page, showMenu, labelOf, logo, mo
       remove.disabled = false;
       actions.append(move(i - 1, t('routing.settings.candidateUp', { name }), 'M6 15l6-6 6 6'),
         move(i + 1, t('routing.settings.candidateDown', { name }), 'M6 9l6 6 6-6'), remove);
-      row.append(info, actions);
+      const effort = el('div', 'rt-cand-effort');
+      effort.append(candidateEffortSelect(tier, candidate, name));
+      row.append(info, effort, actions);
       rows.append(row);
     });
     if (!list.length) block.append(el('p', 'mp-note', t('routing.settings.empty')));
@@ -392,6 +406,46 @@ export function setupDelegationSettings({ cmd, page, showMenu, labelOf, logo, mo
     add.disabled = false;
     block.append(add);
     return block;
+  }
+  // ---- 思考の強さ（ADR 0164。決め方は web/delegation-effort.mjs・サーバーの decideEffort と同じ）
+  const conversationOf = backend => data.conversationEfforts?.[backend] ?? '';
+  /** 段の見出しの右の「段の既定」。段の中の候補は、上書きが無ければこの値で走る */
+  function tierEffortSelect(tier, list) {
+    const { value, changed } = tierEffort({ settings: data.settings, defaults: data.defaults, tier });
+    const shown = value === '' ? t('routing.effort.conversation') : value;
+    const name = tierText(tier);
+    // 会話の既定はエージェントごとに違うので、段の候補が同じ値のときだけ「今は X」と出す
+    const nows = [...new Set(list.map(c => conversationOf(splitCandidate(c).backend) || t('routing.effort.unset')))];
+    const recommended = data.defaults.efforts?.[tier]?.['*'] ?? '';
+    const pick = v => () => { sel.button.focus(); saveEfforts(withEffort(data.settings.efforts, tier, '*', v)); };
+    const sel = effortSelect({ focusKey: `${tier}|*`, changed, align: 'right',
+      label: t('routing.effort.tierLabel', { tier: name, value: shown }), head: t('routing.effort.tierHead', { tier: name }),
+      parts: [{ text: t('routing.effort.tierDefault') }, { text: shown, cls: 'ef-v' }],
+      rows: [{ label: t('routing.effort.followConversation'), hint: nows.length === 1 ? t('routing.effort.now', { value: nows[0] }) : t('routing.effort.perAgent'), on: value === '', pick: pick('') },
+        { sep: true },
+        ...EFFORT_LEVELS.map(l => ({ label: l, hint: l === recommended ? t('routing.effort.recommended') : '', on: value === l, pick: pick(l) })),
+        { foot: t('routing.effort.fitNote') }] });
+    return sel.element;
+  }
+  /** 候補の行の右の強さ。選べない候補（強さを持たないモデル・強さがモデル名に入るもの）は選択を出さず、理由を 1 語 */
+  function candidateEffortSelect(tier, candidate, name) {
+    const { backend } = splitCandidate(candidate);
+    const e = candidateEffort({ settings: data.settings, tier, candidate, capability: stateOf(candidate)?.effort, conversation: conversationOf(backend) });
+    if (e.kind === 'fixed') return effortFixed({ value: e.value, reason: t('routing.effort.byModel'), title: t('routing.effort.byModelTitle') });
+    if (e.kind === 'none') return effortFixed({ reason: t('routing.effort.none'), title: t('routing.effort.noneTitle') });
+    const value = e.value ?? t('routing.effort.modelDefault');
+    const note = [e.source === 'tier' ? t('routing.effort.sourceTier') : e.source === 'conversation' ? t('routing.effort.sourceConversation') : '',
+      e.asked ? t('routing.effort.adjusted', { asked: e.asked, value: e.value ?? '—' }) : ''].filter(Boolean).join(' ');
+    const pick = v => () => { sel.button.focus(); saveEfforts(withEffort(data.settings.efforts, tier, candidate, v)); };
+    const sel = effortSelect({ focusKey: `${tier}|${candidate}`, changed: e.changed, align: 'right',
+      label: t('routing.effort.candLabel', { name, value, source: note }).trim(),
+      head: t('routing.effort.candHead', { name, tier: tierText(tier) }),
+      parts: [{ text: t('routing.effort.label') }, { text: value, cls: 'ef-v' }, ...(note ? [{ text: note, cls: 'ef-s' }] : [])],
+      rows: [{ label: t('routing.effort.followTier'), hint: e.tierDefault === '' ? t('routing.effort.convShort') : e.tierValue ?? '', on: e.own === undefined, pick: pick(undefined) },
+        { label: t('routing.effort.followConversation'), hint: t('routing.effort.now', { value: e.conversationValue ?? t('routing.effort.unset') }), on: e.own === '', pick: pick('') },
+        { sep: true },
+        ...e.options.map(l => ({ label: l, on: e.own === l, pick: pick(l) }))] });
+    return sel.element;
   }
   /** 候補を足すメニュー。エージェントごとにモデルの一覧（段にまだ無いもの）と、backend:model を打ち込む欄 */
   async function addMenu(tier, anchor) {

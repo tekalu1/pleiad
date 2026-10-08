@@ -1018,7 +1018,10 @@
       "unknownJudge": "Invalid judge for {{kind}}: {{judge}}",
       "unknownTier": "Unknown tier: {{tier}}",
       "badCandidates": "Invalid candidates for {{tier}} (backend:model, no duplicates, up to 20).",
-      "badRow": "Invalid tiers for {{kind}} (three: low, mid, high)."
+      "badRow": "Invalid tiers for {{kind}} (three: low, mid, high).",
+      "badEfforts": "Invalid thinking effort settings for {{tier}}.",
+      "badEffortKey": "Invalid thinking effort target for {{tier}} (* for the tier default, backend:model for a candidate): {{key}}",
+      "badEffort": "Invalid thinking effort for {{tier}} (low, medium, high, xhigh, max, or empty to follow the conversation default): {{value}}"
     },
     "key": {
       "unknownService": "Unknown judge service: {{service}}",

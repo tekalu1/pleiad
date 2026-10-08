@@ -139,6 +139,26 @@ export function tierLine(routing) {
 }
 
 /**
+ * 子の思考の強さの一言（「medium · 段 3 の既定」。内訳の「思考の強さ」と、使った候補の行の右）。
+ * 由来は routing.effortSource（tier・override・conversation・model・none・parent）。モデルが持たない強さに合わせたときは
+ * その旨（effortAsked）を添える。振り分けが強さを決める前の記録（由来が無い）は、強さが分かればその値だけ、無ければ空
+ */
+// i18n-dynamic: routing.detail.effortLine.
+export function effortLine(routing) {
+  const effort = routing?.target?.effort ?? null;
+  const key = routing?.effortSource;
+  if (!key) return effort ?? '';
+  const line = (name, vars = {}) => t(`routing.detail.effortLine.${name}`, { value: effort ?? '', ...vars });
+  const main = key === 'tier' ? line('tier', { tier: tierText(routing.effortTier ?? routing.tier) })
+    : key === 'override' ? line('override')
+    : key === 'conversation' ? (effort ? line('conversation') : line('conversationUnset'))
+    : key === 'model' ? line('model')
+    : key === 'none' ? line('none')
+    : key === 'parent' ? (effort ? line('parent') : line('conversationUnset')) : '';
+  return main && routing.effortAsked && effort ? [main, line('adjusted', { asked: routing.effortAsked })].join(t('routing.line.join')) : main;
+}
+
+/**
  * やり直しに出す候補。今使えるもので、元の委譲先を除く。元の段から上へ、次に下の段の順（段の中は設定の順）。
  * candidates は delegationRouting の candidates、tiers は段の並び
  */
@@ -302,12 +322,12 @@ function fact(label, value) {
 }
 
 /** 候補 1 つ（使った・飛ばした）。n は試した順 */
-function candidateCard({ n, backend, model, used, skipped, account, accountLabel, windows, usageAt }, { names, logo }) {
+function candidateCard({ n, backend, model, used, skipped, account, accountLabel, windows, usageAt, effort = null }, { names, logo }) {
   const card = el('div', 'rt-cand' + (used ? ' used' : ''));
   const head = el('div', 'rt-cand-head');
   head.append(el('span', 'rt-n', String(n)), logo(backend));
   head.append(el('b', null, [names.model(backend, model) || model, ...(account !== undefined ? [accountName({ account, accountLabel })] : [])].filter(Boolean).join(t('routing.line.join'))));
-  const state = used ? t('routing.detail.used') : t('routing.detail.skipped', { reason: skipText(skipped.reason, skipped.detail) });
+  const state = used ? (effort ? t('routing.detail.usedWith', { effort }) : t('routing.detail.used')) : t('routing.detail.skipped', { reason: skipText(skipped.reason, skipped.detail) });
   head.append(el('span', 'rt-state' + (used ? ' used' : ''), state));
   card.append(head);
   if (windows?.length) card.append(usageRows(windows));
@@ -337,6 +357,8 @@ export function routingDetail(routing, { names = defaultNames, logo = () => el('
   facts.append(fact(t('routing.detail.kind'), kindText(routing.kind)), fact(t('routing.detail.difficulty'), difficultyText(routing.difficulty)),
     fact(t('routing.detail.tier'), tierLine(routing)), fact(t('routing.detail.judge'), judgeLine(routing)),
     fact(t('routing.detail.signals'), yes.length ? fmt.list(yes) : t('routing.detail.noSignals')));
+  const effort = effortLine(routing);
+  if (effort) facts.append(fact(t('routing.detail.effort'), effort));
   if (routing.usageAt) facts.append(fact(t('routing.detail.usageAt'), fmt.dateTime(routing.usageAt)));
   root.append(facts);
   const list = el('div', 'rt-cands');
@@ -348,7 +370,7 @@ export function routingDetail(routing, { names = defaultNames, logo = () => el('
   }
   if (routing.target) list.append(candidateCard({ n: ++n, backend: routing.target.backend, model: routing.target.model, used: true,
     account: routing.target.backend === 'claude' ? routing.target.account : undefined, accountLabel: routing.target.accountLabel,
-    windows: routing.targetWindows ?? [] }, { names, logo }));
+    windows: routing.targetWindows ?? [], effort: routing.target.effort ?? null }, { names, logo }));
   root.append(list);
   // やり直したタスク（client.mjs の paintRetried が中身を入れる）
   root.append(el('div', 'rt-retried'));
@@ -377,6 +399,8 @@ export function pinnedDetail(routing, { names = defaultNames, mode = '', cwd = '
   facts.append(fact(t('routing.detail.kind'), kindText(routing?.kind)),
     fact(t('routing.detail.target'), routing?.changed ? t('routing.detail.targetChanged', { target }) : routing?.mode === 'pinned' ? t('routing.detail.targetPinned', { target }) : target));
   if (mode) facts.append(fact(t('routing.detail.mode'), mode));
+  const effort = effortLine(routing);
+  if (effort) facts.append(fact(t('routing.detail.effort'), effort));
   if (cwd) facts.append(fact(t('routing.detail.cwd'), cwd));
   root.append(facts);
   return root;

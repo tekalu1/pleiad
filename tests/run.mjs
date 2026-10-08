@@ -203,8 +203,10 @@ const SUITES = [
   // 同じくサーバー全体: kind の検査・自動で選んで子を作る・記録・設定とキーの口（偽の判定器と偽の agy）
   './unit/server-delegation-routing.mjs',
   './unit/server-delegation-routing-settings.mjs',
+  './unit/server-delegation-effort.mjs',
   // 同じく画面: 委譲カードの理由・内訳の文、やり直しの候補の並び、設定の差分（web/delegation-routing-view.mjs）
   './unit/delegation-routing-view.mjs',
+  './unit/delegation-effort-view.mjs',
   // Pleiad の指示: 担当によらず届く・依頼元と子で違う・足した指示・既定の編集・前の版のスイッチ・Codex のロード済みスレッド
   './unit/server-added-context.mjs',
   './unit/usage.mjs',

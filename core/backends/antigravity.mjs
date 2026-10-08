@@ -253,6 +253,7 @@ export const backend = {
     // agy は会話のあいだ 1 本のプロセスを生かすので、ply_context のトークンもターンごとではなく会話ごと（'conversation'）
     plyContext: "conversation",
     alwaysAllow: false, // **対話承認そのものが無い**
+    effortInModelId: true, // 強さは段違いのモデル名に入る（--effort は渡さない）。委譲の振り分けは強さを選ばせない（core/effort.mjs の effortCapability）
     login: true,
     // ply_computer は 2 本目の中継（agy-context-relay.mjs --computer）で渡す。MCP の画像は agy がファイルに退避し、モデルは view_file で読む
     // ので、保存先のパスも書く（images: 'path'）。1 回の呼び出しは 3 分で切れ、設定では伸びないので、ロックの待ちは 150 秒ごとに分けて返す

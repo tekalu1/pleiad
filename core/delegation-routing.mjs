@@ -9,6 +9,10 @@
 //   委譲先          … 段の候補を左から、使用量の枠で飛ばしながら選ぶ（route）。無ければ 1 つ上の段へ
 
 import { STALE_MS } from './delegation-usage.mjs';
+// 思考の強さの語彙と合わせ方は画面と同じもの（web/delegation-effort.mjs）
+import { EFFORT_LEVELS, fitEffort } from '../web/delegation-effort.mjs';
+
+export { EFFORT_LEVELS, fitEffort };
 
 export const KINDS = Object.freeze(['trivial', 'mechanical', 'investigate', 'implement', 'review', 'design', 'ux_change', 'ux_new', 'visual']);
 export const DIFFICULTIES = Object.freeze(['low', 'mid', 'high']);
@@ -51,6 +55,12 @@ export const DEFAULTS = Object.freeze({
     design: Object.freeze(['t3', 't4', 't4']), ux_change: Object.freeze(['t4', 't4', 't4']),
     ux_new: Object.freeze(['t4', 't4', 't4']), visual: Object.freeze(['tv', 'tv', 'tv']),
   }),
+  // 段ごとの子の思考の強さ（ADR 0164）。'*' は段の既定、候補の id（backend:model）はその候補だけの上書き。'' は会話の既定に従う。
+  // 創作（tv）は強さの当たりが未確認なので会話の既定に従う
+  efforts: Object.freeze({
+    t1: Object.freeze({ '*': 'low' }), t2: Object.freeze({ '*': 'medium' }), t3: Object.freeze({ '*': 'medium' }),
+    t4: Object.freeze({ '*': 'high' }), tv: Object.freeze({ '*': '' }),
+  }),
 });
 /** 週次の枠のペース（使用率 ÷ 経過率）を見始める経過率（%） */
 export const PACE_MIN_ELAPSED = 20;
@@ -82,7 +92,8 @@ export function normalizeSettings(raw, { strict = false } = {}) {
   const out = { enabled: DEFAULTS.enabled, judgeByKind: { ...DEFAULTS.judgeByKind }, escalateToCerebras: DEFAULTS.escalateToCerebras,
     avoidPercent: DEFAULTS.avoidPercent, paceLimit: DEFAULTS.paceLimit,
     tiers: Object.fromEntries(Object.entries(DEFAULTS.tiers).map(([k, v]) => [k, [...v]])),
-    table: Object.fromEntries(Object.entries(DEFAULTS.table).map(([k, v]) => [k, [...v]])) };
+    table: Object.fromEntries(Object.entries(DEFAULTS.table).map(([k, v]) => [k, [...v]])),
+    efforts: Object.fromEntries(Object.entries(DEFAULTS.efforts).map(([k, v]) => [k, { ...v }])) };
   for (const key of Object.keys(src)) if (!Object.hasOwn(out, key) && !RETIRED_KEYS.includes(key)) fail('unknownKey', { key });
   for (const key of ['enabled', 'escalateToCerebras']) {
     if (src[key] === undefined) continue;
@@ -118,7 +129,42 @@ export function normalizeSettings(raw, { strict = false } = {}) {
       out.table[kind] = [...row];
     }
   }
+  if (src.efforts !== undefined) {
+    if (!isPlain(src.efforts)) fail('notObject', { key: 'efforts' });
+    else for (const [tier, row] of Object.entries(src.efforts)) {
+      if (!TIERS.includes(tier)) { fail('unknownTier', { tier }); continue; }
+      if (!isPlain(row) || Object.keys(row).length > 40) { fail('badEfforts', { tier }); continue; }
+      const next = { ...out.efforts[tier] };
+      for (const [key, value] of Object.entries(row)) {
+        // 保存では形だけを見る。そのモデルが持つ強さかは、子を作るときに合わせる（モデルの一覧は場所・ログインで変わる）
+        if (key !== '*' && !parseCandidate(key)) { fail('badEffortKey', { tier, key: key.slice(0, 80) }); continue; }
+        if (value !== '' && !EFFORT_LEVELS.includes(value)) { fail('badEffort', { tier, value: String(value).slice(0, 40) }); continue; }
+        next[key] = value;
+      }
+      out.efforts[tier] = next;
+    }
+  }
+  // 段から外した候補の上書きは持ち越さない（外して入れ直した候補に前の上書きが付かない）
+  for (const tier of TIERS) for (const key of Object.keys(out.efforts[tier])) if (key !== '*' && !out.tiers[tier].includes(key)) delete out.efforts[tier][key];
   return out;
+}
+const isPlain = v => Boolean(v) && typeof v === 'object' && !Array.isArray(v);
+
+/**
+ * 保存する delegationRouting の efforts から、段に無い候補の上書きと、既定と同じ段の行を落とす。
+ * 保存の形（raw）は利用者が変えた項目だけなので、外した候補の上書きを残さない。空になれば undefined
+ */
+export function pruneEfforts(rawEfforts, settings) {
+  if (!isPlain(rawEfforts)) return undefined;
+  const out = {};
+  for (const [tier, row] of Object.entries(rawEfforts)) {
+    if (!TIERS.includes(tier) || !isPlain(row)) continue;
+    const kept = Object.fromEntries(Object.entries(row).filter(([key]) => key === '*' || (settings.tiers[tier] ?? []).includes(key)));
+    const merged = { ...DEFAULTS.efforts[tier], ...kept };
+    const sameAsDefault = Object.keys(merged).length === Object.keys(DEFAULTS.efforts[tier]).length && Object.entries(DEFAULTS.efforts[tier]).every(([k, v]) => merged[k] === v);
+    if (!sameAsDefault) out[tier] = kept;
+  }
+  return Object.keys(out).length ? out : undefined;
 }
 
 /**
@@ -336,16 +382,49 @@ export function pinnedRouting({ kind, backend, model = null }) {
     target: { backend, model: model ?? null, account: null }, skipped: [], usageAt: null, fallback: null };
 }
 
+// ---- 子の思考の強さ（ADR 0164） -----------------------------------------------------
+
+/**
+ * 子の思考の強さの決め方。上書き（efforts[段][候補]）→ 段の既定（efforts[段]['*']）→ そのモデルに合わせる。
+ * capability は、そのモデルが持つ強さ { levels, fixed }。levels が空で fixed も無ければ持たない（Haiku など）。
+ * fixed は強さがモデル名に入るもの（Antigravity の -high）で、選べず、送らない。
+ * 振り分けでは断らない（持たない強さは合わせ、合わせたことを asked に残す）。
+ * 返り値: { send, effort, source, tier?, asked? }
+ *   send    … 子へ渡す値。'' は渡さない、undefined は会話の既定（prefs の強さ）にそのまま従う
+ *   effort  … 記録する強さ（会話の既定に従うときは null。走らせてから実際の値を書く）
+ *   source  … override（この候補の上書き）・tier（段の既定）・conversation（会話の既定）・model（モデル名で決まる）・none（持たない）
+ */
+export function decideEffort({ settings, tier, candidate, capability }) {
+  const fixed = capability?.fixed ?? null;
+  const levels = capability?.levels ?? [];
+  if (fixed) return { send: '', effort: fixed, source: 'model' };
+  if (!levels.length) return { send: '', effort: null, source: 'none' };
+  const row = tier ? settings?.efforts?.[tier] : null;
+  const own = row && Object.hasOwn(row, candidate) ? row[candidate] : undefined;
+  const wanted = own !== undefined ? own : row ? row['*'] ?? DEFAULTS.efforts[tier]?.['*'] ?? '' : '';
+  if (wanted === '') return { send: undefined, effort: null, source: 'conversation' };
+  const effort = fitEffort(levels, wanted);
+  if (!effort) return { send: '', effort: null, source: 'none' };   // 語彙の外の強さしか持たないモデルは、何も送らない
+  return { send: effort, effort, source: own !== undefined ? 'override' : 'tier', tier, ...(effort !== wanted ? { asked: wanted } : {}) };
+}
+
+/** 強さを引く段。やり直し（人が選んだ候補）は元の段にその候補があればそれ、無ければ候補が入っている最初の段、どこにも無ければ null */
+export function effortTierFor({ settings, candidate, preferred = null }) {
+  if (preferred && (settings.tiers[preferred] ?? []).includes(candidate)) return preferred;
+  return TIERS.find(tier => (settings.tiers[tier] ?? []).includes(candidate)) ?? null;
+}
+
 /**
  * 人が委譲カードの「別の候補でやり直す」で選んだ委譲先の記録。元のタスク（retry.of）と、元の委譲先（retry.from）に結び付ける。
  * 判定はしていないので judge などは null。check は checkCandidate の結果（使える候補だけを渡す）
  */
-export function manualRouting({ kind, candidate, check, of, from }) {
+export function manualRouting({ kind, candidate, check, of, from, effortTier = null }) {
   const { backend, model } = parseCandidate(candidate);
   return { mode: 'manual', kind, judge: null, signals: null, probabilities: null, difficulty: null, tier: null,
     target: { backend, model, account: check.account ?? null, ...(check.accountLabel ? { accountLabel: check.accountLabel } : {}) }, skipped: [],
     usageAt: check.checkedAt == null ? null : new Date(check.checkedAt).toISOString(), fallback: null,
     ...(check.windows ? { targetWindows: check.windows } : {}),
+    ...(effortTier ? { effortTier } : {}),
     ...(check.deferred ? { selectedWithLowHeadroom: { reason: check.reason, ...(check.window ? { window: check.window } : {}), avoidPercent: check.avoidPercent } } : {}),
     retry: { of, from: from ? { backend: from.backend ?? null, model: from.model ?? null, account: from.account ?? null } : null, by: 'user' } };
 }

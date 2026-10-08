@@ -75,16 +75,44 @@
 .rt-sub-title{margin-top:24px !important;margin-bottom:10px !important}
 .rt-usage-at{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:4px 0 6px}
 .rt-usage-at .btn{color:var(--ink-blue);font-size:var(--fs-s);padding:2px 8px}
-.rt-tier{margin-top:14px}
-.rt-tier-name{font-size:var(--fs-s);font-weight:600;margin-bottom:6px}
+/* 段ごとの候補。コンテナの幅で、強さの選択を行の 2 行目へ回す（設定の脇パネルの有無でも同じ） */
+.rt-tier{margin-top:14px;container-type:inline-size}
+.rt-tier-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px;min-height:30px}
+.rt-tier-name{font-size:var(--fs-s);font-weight:600}
 .rt-cand-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:4px}
-.rt-cand-row{display:flex;align-items:center;gap:8px;padding:6px 6px 6px 12px;background:var(--surface-paper);border-radius:var(--r-m);min-width:0}
+.rt-cand-row{display:grid;grid-template-columns:minmax(0,1fr) auto auto;grid-template-areas:"info effort actions";align-items:center;gap:4px 10px;padding:6px 6px 6px 12px;background:var(--surface-paper);border-radius:var(--r-m);min-width:0}
 .rt-cand-row.off .rt-cand-name{color:var(--ink-weak)}
-.rt-cand-info{flex:1;min-width:0}
+.rt-cand-info{grid-area:info;min-width:0}
+.rt-cand-effort{grid-area:effort;display:flex;justify-content:flex-end;min-width:0}
 .rt-cand-name{display:flex;align-items:center;gap:6px;min-width:0;overflow-wrap:anywhere}
 .rt-cand-info small{display:block;font-size:var(--fs-xs);color:var(--ink-weak);overflow-wrap:anywhere}
 .rt-cand-info small.rt-strong{color:var(--ink-strong);font-weight:600}
-.rt-cand-actions{display:flex;flex:none}
+.rt-cand-actions{grid-area:actions;display:flex}
+@container (max-width:559.98px){
+  .rt-cand-row{grid-template-columns:minmax(0,1fr) auto;grid-template-areas:"info actions" "effort effort"}
+  .rt-cand-effort{justify-content:flex-start;padding:0 0 4px 0}
+  .rt-cand-effort .ef-pop{right:auto;left:0}
+}
+/* 思考の強さの選択（設定 › API キーの「使うキー」と同じ pill + リストボックス）。既定から外した値は青い字 */
+.ef-wrap{position:relative;display:inline-flex;max-width:100%}
+.ef-btn{display:inline-flex;align-items:center;gap:6px;max-width:100%;padding:4px 10px 4px 12px;border-radius:var(--r-pill);background:var(--surface-1);color:var(--ink);font-size:var(--fs-s);line-height:1.5;text-align:left;cursor:pointer;transition:background-color var(--dur-fast) var(--ease-out)}
+.rt-tier-head .ef-btn{background:var(--surface-paper)}
+.ef-btn:hover,.ef-btn[aria-expanded=true]{background:var(--surface-2)}
+.ef-l{color:var(--ink-weak)}
+.ef-v{font-weight:600}
+.ef-s{color:var(--ink-weak);font-size:var(--fs-xs)}
+.ef-btn.changed .ef-v{color:var(--ink-blue)}
+.ef-chev{display:inline-flex;color:var(--ink-weak);transition:transform var(--dur-fast) var(--ease-out)}
+.ef-chev svg{width:12px;height:12px}
+.ef-btn[aria-expanded=true] .ef-chev{transform:rotate(180deg)}
+.ef-fixed{display:inline-flex;flex-wrap:wrap;gap:0 6px;align-items:baseline;padding:4px 4px;font-size:var(--fs-s);color:var(--ink-weak)}
+.ef-fixed b{font-weight:600;color:var(--ink)}
+.ef-fixed small{font-size:var(--fs-xs)}
+.ef-pop{top:calc(100% + 4px);right:0;min-width:250px;width:max-content;max-width:min(340px,86vw);animation:ef-pop-in var(--dur) var(--ease-out)}
+.ef-pop .li .lbl{overflow:visible;text-overflow:clip;white-space:normal;overflow-wrap:anywhere}
+.ef-pop .li .hint{overflow:visible;text-overflow:clip;white-space:normal;font-family:inherit}
+.ef-foot{padding:6px 10px 2px;font-size:var(--fs-xs);color:var(--ink-weak);white-space:normal;line-height:1.5}
+@keyframes ef-pop-in{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:none}}
 .rt-move{width:30px;height:30px;padding:0}
 .rt-add{margin-top:4px;color:var(--ink-blue);font-size:var(--fs-s)}
 .rt-table{margin:0}

@@ -1537,7 +1537,7 @@
     "agentSitePermissions": "Sites always allowed for the agent's browser.",
     "externalSitePermissions": "Sites always allowed for external loads.",
     "computerUse": "Computer use settings (enabled, allow all apps, always-allowed apps).",
-    "delegationRouting": "Automatic delegation routing (judges, tiers, candidates; no keys).",
+    "delegationRouting": "Automatic delegation routing (judges, tiers, candidates, per-tier thinking effort; no keys).",
     "plyInstructions": "The instruction items Pleiad adds to conversations.",
     "addedContext": "The previous version's delegation-instruction switch (replaced by plyInstructions).",
     "context": {

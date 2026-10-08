@@ -41,6 +41,21 @@ export async function effortOptions(backend, model = '', cwd, endpoint = null) {
     ...values.map(value => [value, { label: value, note: levelNote(value),
       ...(value === fallback ? { isDefault: true } : {}) }])]);
 }
+/**
+ * 委譲の振り分けが見る、そのモデルの強さの持ち方（docs/agent-delegation.md「子の思考の強さ」）。
+ *   levels … 選べる強さ（effortOptions と同じ元。弱い順は並べない）。持たないモデル（Claude の Haiku など）は []
+ *   fixed  … 強さがモデル名に入るもの（Antigravity の -high。段違いは別のモデル名）の、その名前の強さ。選べず、送らない
+ * 一覧を引けない・知らないモデルは levels が [] になる（振り分けでは「調整なし」として何も送らない）
+ */
+export async function effortCapability(backend, model = '', cwd) {
+  if (backend.capabilities?.effortInModelId) {
+    const entry = (typeof backend.models === 'function' ? await backend.models(cwd).catch(() => null) : null)?.[model];
+    return { levels: [], fixed: entry?.efforts?.length ? entry.defaultEffort ?? null : null };
+  }
+  const options = await effortOptions(backend, model, cwd).catch(() => ({}));
+  return { levels: Object.keys(options).filter(Boolean), fixed: null };
+}
+
 export async function validateEffort(backend, value, model, cwd, endpoint = null) {
   if (value === '') return value;
   if (typeof value !== 'string' || !Object.hasOwn(await effortOptions(backend, model, cwd, endpoint), value))
