@@ -273,15 +273,13 @@ OS の完了通知は依頼元の会話に出す。依頼元のターン後も�
 | `suppressed` | 止めた。`ply_task_cancel`・人の取り消しでは走っている・待っているタスクだけ（終わって `pending` のものは止めるものが無いので、そのまま届ける）。依頼元の会話の中断では、終わって届いていない結果も止める（勝手に新しいターンを始めない）が、次のターンで一覧にして伝える（design.md「中断と再開」） | — |
 | `read` | 依頼元が結果を受け取った | `ply_task_send` で `none` |
 
-親が受け取れない間は `pending` のまま何も書かない。「受け取れる」は、新しいターンを受けられる（`ready`。上の 2 つ目の条件）か、走っているターンへ渡せる（`steerable`。1 つ目）のどちらか。無音・コマンドの通知は前者だけを使う（[ADR 0048](adr/0048-delegation-silence-notice.md)）。
+親が受け取れない間は `pending` のまま何も書かない。「受け取れる」は、新しいターンを受けられる（`ready`。上の 2 つ目の条件）か、走っているターンへ渡せる（`steerable`。1 つ目）のどちらか。無音・コマンド・裏作業の通知は前者だけを使う（[ADR 0048](adr/0048-delegation-silence-notice.md)、[ADR 0170](adr/0170-delegation-background-notify-not-stop.md)）。
 裏の作業に数えるのは終わりを待つものだけ（画面の衛星と同じ基準。`core/server.mjs` の `awaitedBackground`）。Codex のバックグラウンド端末（`kind: terminal`。dev サーバーなど）は数えない。以前は端末のある親には通知が届かなかった（2026-09-27）。裏の作業が残っているだけで依頼元のターンが走っていないときは、今までどおり保留する。
 送る直前に `delivering` を保存し、保存できなければ送らない（同じ依頼元の分は 1 回の保存）。送ったか分からないまま落ちたときに、再起動で `unknown` にして再送しないため。
 `deliver` が `requeue` を返したら（受け取る直前に親が動き出した・走っているターンが途中送信を受理しなかった）、メモリだけ `pending` に戻し、ファイルは `delivering` のまま書かない。
 次に送るとき、ファイルがすでに `delivering` なら書き直さない。以前は親が忙しい間、500ms ごとにファイル全体を 2 回ずつ書き直していた（2026-09-27）。
 
 走っているターンへ渡す道（`core/server.mjs` の `steerNotice`）は、outbox を通さず、item id `task-notice-<uuid>` で `control.steer` を呼ぶ。本文のハッシュを先に記録する。`true` は `sent`、`false` は `requeue`、例外は `unknown`。「渡った」合図を後から出すバックエンド（`steerConfirms`）では、合図（`userMessage.delivered`）で通知の 1 行を出し、捨てられた（`userMessage.dropped`）か、合図が来ないままターンが終わったら、`pending` に戻して送り直す（人間の発言と違い、通知は送り直してよい）。合図の無いバックエンドでは受理した時点で 1 行を出す。
-
-子の報告後も終わらず Pleiad が止めた裏の作業があれば、通知の本文の最後に 1 段落足す（`agent:delegation.noticeStoppedBackground`。件数、待った分数、先頭 3 件の見出し）。全件は `ply_task_status` の `stoppedBackground` で読める。
 
 子で実行前に拒否されたコマンドがあれば、通知の本文の最後（「元の依頼に必要な作業を続けてください。」の前）に 1 段落足す（`agent:delegation.noticeRejections`）。
 件数と、先頭 3 件の `command`（伏せて切ったもの）と `reason` だけを並べ、全件は `ply_task_status` の `rejections` で読むよう案内する。拒否が無ければ何も足さない。
@@ -335,14 +333,19 @@ OS の完了通知は依頼元の会話に出す。依頼元のターン後も�
 
 ## 子に残った裏の作業
 
-子の結果は、子のターンが終わり、子が待つ裏の作業と子が作った Pleiad タスクが片付いてから確定する（`execute`）。**main がまだ結果を待っているコマンドは、5 分で知らせるだけで自動停止しない。完了報告後の裏の作業は、10 分待って片付ける。** この片付けは委譲の子だけに適用し、ユーザーの会話では行わない（[ADR 0048](adr/0048-delegation-silence-notice.md)）。
+子の結果は、子のターンが終わり、子が待つ裏の作業と子が作った Pleiad タスクが片付いてから確定する（`execute`）。**Pleiad は子の裏の作業を時間で止めない。** main がまだ結果を待っているコマンドは 5 分で知らせ（[ADR 0048](adr/0048-delegation-silence-notice.md)）、main が返答を終えた後の裏の作業は、依頼元へ知らせながら終わるのを待つ（[ADR 0170](adr/0170-delegation-background-notify-not-stop.md)）。止めるのは依頼元（`ply_task_cancel`）か人（作業ダイアログの停止ボタン）。
 
-- **Claude**: main が返答を終えても、裏のタスクが生きている間はターンを保持する（`phase: waiting`）。委譲の子では、この状態が `AGENT_HOST_DELEGATION_BACKGROUND_WAIT_MS`（既定 600000 ミリ秒＝10 分）続いたら、サブエージェント以外の裏の作業を `stopBackground` → `Query.stopTask` で止める。CLI は停止の完了通知で main を再開させ、ターンを終える。main が再開したら時計を解除し、再び `waiting` に入ってから数え直す。サブエージェントは止めない。
-- 停止後に main が足した一言だけが結果にならないよう、停止前の報告を結果の先頭に残す。止めた作業は台帳から外し、タスクの `stoppedBackground`（`[{ kind, label }]`。見出しは秘密を伏せて 300 字で切る）と完了通知に残す。その回で止めたものがなければ `stoppedBackground` を消す。
+- **Claude**: main が返答を終えても、裏のタスクが生きている間はターンを保持する（`phase: waiting`）。委譲の子では、待ち始めた時刻（`taskExecutions` の `waitingSince`。main が再開したら消し、再び `waiting` に入った時刻から数え直す）を元に、依頼元へ裏作業通知を送る（`core/agent-tasks.mjs` の `notifyBackground`）。
+  - 最初は待ち始めて 1 分後（`agent:delegation.backgroundNotice`）。待っている裏の作業の見出し（サブエージェントも含む）、子のここまでの返答（4000 字で切る）、タスクは実行中のままで終われば完了通知で届けること、止め方（`ply_task_cancel`・作業ダイアログの停止ボタン）を書く。
+  - まだ走っていれば `AGENT_HOST_TASK_BACKGROUND_MINUTES`（既定 30 分。`0` で送らない）ごとに送り直す（`backgroundStillNotice`。返答は添えない）。
+  - 待っている間は、無音の通知とコマンドの 5 分の通知を送らない（同じ待ちを重ねて知らせない）。
+  - 送る前に、送った回数と時刻をタスクの行（`backgroundNotice`）に保存する。待ち始めた時刻は札（turn card の `delegation`）に載るので、無停止の更新の後も最初からやり直さない。ホストに任せたタスクの依頼元（リモート）には送らない。
+  - `ply_task_status` / `ply_task_list` のタスクには `backgroundWaiting`（`{ minutes, tasks }`）が載り、`silenceMinutes` は null になる。
+  - 裏の作業が終わると CLI が main を再開させ、ターンが終わる。結果は今までどおり最後の返答で、完了通知で届く。
 - **Codex**: 端末はターンの外に残り、終わっても main は再開しない。子の結果と完了通知は端末を待たず、コマンドの監視は続ける。子の完了後も `ply_task_cancel` で、台帳とバックグラウンド一覧の ID が一致する端末を明示的に止められる。
 - **Antigravity**: バックグラウンド移行の情報がなくても、`run_command` の ACTIVE から DONE まで監視する。
 
-コマンドの 5 分通知は開始から数え、片付けの 10 分は報告後の待機から数える。コマンド通知を無効にしても片付けは有効。再起動時、実行中だった子タスクは従来どおり `interrupted` にし、再実行しない。
+コマンドの 5 分通知は開始から数え、裏作業通知は返答後の待機から数える。再起動時、実行中だった子タスクは従来どおり `interrupted` にし、再実行しない。
 
 ## 実行前に拒否されたコマンド
 

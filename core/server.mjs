@@ -622,16 +622,17 @@ function rejectionNotice(lng, list) {
     command: r.command ?? r.raw ?? '', reason: r.reason ?? r.kind ?? '' })).join('\n');
   return agentT(lng, 'delegation.noticeRejections', { count: list.length, items }) + '\n';
 }
-// 委譲の子で main が返答を終え、裏の作業だけを待っている（phase: waiting）ときに待つ上限（docs/agent-delegation.md「子に残った裏の作業」）。
-// 過ぎたらサブエージェント以外（終わらないことがあるコマンドなど）を止める。止めると完了通知で main が再開し、ターンが終わる。
-// 既定は Claude Code の print モードが裏の作業を待つ上限（CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS の既定 600 秒）と同じ。テストは縮める
-const DELEGATION_BACKGROUND_WAIT_MS = Number(process.env.AGENT_HOST_DELEGATION_BACKGROUND_WAIT_MS) > 0 ? Number(process.env.AGENT_HOST_DELEGATION_BACKGROUND_WAIT_MS) : 600_000;
-// 止めた裏の作業を依頼元へ返す形。見出しはコマンドのことがあるので、拒否と同じく秘密を伏せて切る
+// 子が返答を終えた後も走っている裏の作業を依頼元へ知らせる形（ADR 0170）。見出しはコマンドのことがあるので、拒否と同じく秘密を伏せて切る
 const peerBackground = x => ({ kind: pick(x.kind, 20) ?? 'other', label: redactForPeer(String(x.label ?? ''), REJECTION_TEXT_MAX) ?? '' });
-function stoppedBackgroundNotice(lng, list) {
-  if (!Array.isArray(list) || !list.length) return '';
-  const items = list.slice(0, NOTICE_REJECTIONS).map(x => agentT(lng, 'delegation.noticeStoppedItem', { label: x.label || x.kind })).join('\n');
-  return agentT(lng, 'delegation.noticeStoppedBackground', { count: list.length, minutes: Math.max(1, Math.round(DELEGATION_BACKGROUND_WAIT_MS / 60000)), items }) + '\n';
+// 裏待ちの最初の知らせに載せる子の返答の上限（全文は完了通知と ply_task_status で渡る）
+const BACKGROUND_REPLY_MAX = 4000;
+function backgroundNotice(lng, task, { count, minutes, interval, tasks }, reply) {
+  const items = tasks.slice(0, NOTICE_REJECTIONS).map(x => agentT(lng, 'delegation.backgroundItem', { label: x.label || x.kind })).join('\n');
+  const vars = { taskId: task.taskId, title: task.title, minutes, interval, items };
+  if (count > 1) return agentT(lng, 'delegation.backgroundStillNotice', vars);
+  const text = String(reply ?? '').trim();
+  const cut = text.length > BACKGROUND_REPLY_MAX ? `${text.slice(0, BACKGROUND_REPLY_MAX)}…` : text;
+  return agentT(lng, 'delegation.backgroundNotice', { ...vars, reply: cut ? agentT(lng, 'delegation.backgroundReply', { reply: cut }) + '\n' : '' });
 }
 // エラー・結果の文はツールの結果としてエージェントが読むので、会話の言語で引く（agent 名前空間。橋は会話ごとに開き、locale はその会話の言語）
 async function callAgentOp(owner, name, args, { locale } = {}) {
@@ -4858,7 +4859,7 @@ function completionNotice(lng, tasks) {
     error: task.error ?? '',
     // 人が委譲先を変えてやり直したタスクは、依頼元のエージェントが作ったものではないので一行添える
     retry: task.routing?.retry?.of ? agentT(lng, 'delegation.noticeRetry', { of: task.routing.retry.of }) : '',
-    rejections: rejectionNotice(lng, task.rejections) + stoppedBackgroundNotice(lng, task.stoppedBackground),
+    rejections: rejectionNotice(lng, task.rejections),
     git: workspaceNotice(lng, task) + gitNotice(lng, task.git),
   }));
   if (parts.length === 1) return agentT(lng, 'delegation.notice', parts[0]);
@@ -4940,9 +4941,12 @@ async function renewTaskWorktree(task) {
   return publicWorktree(made.entry);
 }
 
-/** 委譲の子のターンの実行の控え（taskExecutions の値）。makeEmit が出来事を集め、finishChild が結果にする。付け直すターンでは札の delegation から reply・stopped を戻す */
+/**
+ * 委譲の子のターンの実行の控え（taskExecutions の値）。makeEmit が出来事を集め、finishChild が結果にする。
+ * waitingSince は、main が返答を終えて裏の作業だけを待ち始めた時刻（watchChildBackground。ADR 0170）。付け直すターンでは札の delegation から戻す
+ */
 function newExecution(card = null) {
-  return { outcome: null, error: null, rejections: [], stopped: card?.stopped ?? [], reply: card?.reply ?? null, timer: null, streamed: '', streamEnded: false };
+  return { outcome: null, error: null, rejections: [], waitingSince: Number.isFinite(card?.waitingSince) ? card.waitingSince : null, streamed: '', streamEnded: false };
 }
 
 /**
@@ -4962,7 +4966,7 @@ function trackChild(task, signal, execution) {
     resolveBackendForSession(task.sessionId).then(b => b?.stopSession?.(task.sessionId)).catch(() => {});
   };
   signal.addEventListener('abort', stopChild, { once: true });
-  return () => { signal.removeEventListener('abort', stopChild); clearTimeout(execution.timer); if (taskExecutions.get(task.sessionId) === execution) taskExecutions.delete(task.sessionId); };
+  return () => { signal.removeEventListener('abort', stopChild); if (taskExecutions.get(task.sessionId) === execution) taskExecutions.delete(task.sessionId); };
 }
 
 /**
@@ -4991,11 +4995,9 @@ async function finishChild(task, signal, execution, outcome, renewed = null) {
     last = execution.streamed;
     historyNote = agentT(await agentLocaleFor(task.parentSessionId), 'delegation.historyUnreadable', { error: String(e?.message ?? e).slice(0, 300) });
   }
-  // 裏の作業を止める前の返答（報告）を残す。止めた後に main が再開して足した一言だけが結果にならないように
-  const text = execution.reply && execution.reply !== last ? [execution.reply, last].filter(Boolean).join('\n\n') : last;
+  const text = last;
   // error は完了通知に載って依頼元のエージェントが読む（依頼元の会話の言語）
   const rejections = execution.rejections.map(peerRejection);
-  const stoppedBackground = execution.stopped.map(peerBackground);
   const nowCwd = (await store.get(task.sessionId).catch(() => null))?.cwd ?? task.cwd;
   const git = await taskGitNote({ ...task, cwd: nowCwd });
   // 子が終わった。変わっていなければ・取り込み済みなら片付け、そうでなければ残す。通知に載せる状態は片付ける前のもの
@@ -5003,8 +5005,8 @@ async function finishChild(task, signal, execution, outcome, renewed = null) {
   const extra = { ...(workspace ? { workspace } : {}), ...(renewed ? { worktree: renewed } : {}) };
   worktreeSweepSoon();
   const withNote = error => [error, historyNote].filter(Boolean).join('\n') || null;
-  if (agentTasks.list(task.sessionId).some(r => r.notification === 'unknown')) return { outcome: 'error', text, error: withNote(agentT(await agentLocaleFor(task.parentSessionId), 'delegation.noticeUnknown')), rejections, stoppedBackground, git, ...extra };
-  return { outcome: signal.aborted ? 'aborted' : execution.outcome ?? outcome, text, error: withNote(execution.error), rejections, stoppedBackground, git, ...extra };
+  if (agentTasks.list(task.sessionId).some(r => r.notification === 'unknown')) return { outcome: 'error', text, error: withNote(agentT(await agentLocaleFor(task.parentSessionId), 'delegation.noticeUnknown')), rejections, git, ...extra };
+  return { outcome: signal.aborted ? 'aborted' : execution.outcome ?? outcome, text, error: withNote(execution.error), rejections, git, ...extra };
 }
 
 /**
@@ -5243,6 +5245,22 @@ agentTasks = await createAgentTasks({
     const lng = await ensureAgentLocale(owner);
     const prompt = agentT(lng, 'delegation.silenceNotice', { taskId: task.taskId, title: task.title, minutes });
     return runTurn({ sessionId: owner, prompt }, () => {}, { internal: true });
+  },
+  // 子の main が返答を終えて裏の作業だけを待っている（ADR 0170）。止めずに、待っているものを依頼元へ見せる
+  backgroundWaiting: sessionId => {
+    const execution = taskExecutions.get(sessionId);
+    const turn = runtime.turns.get(sessionId);
+    if (!execution?.waitingSince || turn?.info.phase !== 'waiting') return null;
+    const tasks = (turn.info.background ?? []).map(peerBackground);
+    return tasks.length ? { since: execution.waitingSince, tasks } : null;
+  },
+  deliverBackground: async (task, notice) => {
+    const owner = task.parentSessionId;
+    if (isRemoteOwner(owner)) return 'ok';
+    if (await noticeBlocked(owner)) return 'requeue';
+    const lng = await ensureAgentLocale(owner);
+    const reply = notice.count > 1 ? null : await lastReply(task.sessionId).catch(() => null);
+    return runTurn({ sessionId: owner, prompt: backgroundNotice(lng, task, notice, reply) }, () => {}, { internal: true });
   },
 });
 // 前の起動で走っていて、再起動で止まった委譲タスクを、依頼元の会話の「止めたもの」に残す（次のターンで伝える）。
@@ -6280,7 +6298,7 @@ async function restoreTurn(card, source) {
     shellHanded: fields.delivery.shellHanded,
     runArgs: null,
     card: fields,
-    // 委譲の子のターン: タスクの id と実行の控え（結果の確定は adoptChild。rejections・streamed は再生の出来事から作り直る。reply・stopped は札）
+    // 委譲の子のターン: タスクの id と実行の控え（結果の確定は adoptChild。rejections・streamed は再生の出来事から作り直る。waitingSince は札）
     taskId,
     execution: taskId ? newExecution(fields.delegation) : null,
   };
@@ -6646,43 +6664,14 @@ async function lastReply(sessionId) {
 }
 
 /**
- * 委譲の子のターンで、main が返答を終えて裏の作業だけを待つ（phase: waiting）時間を測る。
- * DELEGATION_BACKGROUND_WAIT_MS を過ぎたら、サブエージェント以外の裏の作業を止める（作業ダイアログの停止ボタンと同じ stopBackground）。
- * Claude はそれまでターンを保持するので、裏へ回ったまま終わらないコマンドが 1 本あると、子の報告が済んでいてもタスクが running のまま残り、
- * 依頼元へ完了通知が届かなかった（2026-09-27。docs/agent-delegation.md「子に残った裏の作業」）。人が見ている会話では止めない（委譲の子だけ）
+ * 委譲の子のターンで、main が返答を終えて裏の作業だけを待ち始めた時刻を控える（phase: waiting。ADR 0170）。
+ * 裏の作業は止めない。agentTasks が控えを見て依頼元へ知らせ（backgroundWaiting・deliverBackground）、終われば main が再開して完了になる。
+ * 以前は 10 分で止めていたが、裏へ回った長い試験を止め、途中の報告が完了として届いた（2026-10-08。docs/agent-delegation.md「子に残った裏の作業」）
  */
 function watchChildBackground(turn) {
   const execution = taskExecutions.get(turn.info.sessionId);
   if (!execution) return;
-  if (turn.info.phase !== "waiting") { clearTimeout(execution.timer); execution.timer = null; return; }
-  if (execution.timer) return;
-  execution.timer = setTimeout(() => { execution.timer = null; void stopChildBackground(turn, execution); }, DELEGATION_BACKGROUND_WAIT_MS);
-  execution.timer.unref?.();
-}
-
-async function stopChildBackground(turn, execution) {
-  const sessionId = turn.info.sessionId;
-  if (runtime.turns.get(sessionId) !== turn || taskExecutions.get(sessionId) !== execution || turn.info.phase !== "waiting") return;
-  // サブエージェントは自分で終わるので止めない（止めると仕事を失う）
-  const targets = (turn.info.background ?? []).filter((x) => x.kind !== "agent");
-  if (!targets.length || typeof turn.backend.stopBackground !== "function") return;
-  // 止めると main が再開して一言足すことがある。止める前の返答（報告）を控えておく
-  execution.reply ??= await lastReply(sessionId).catch(() => null);
-  for (const x of targets) {
-    if (runtime.turns.get(sessionId) !== turn || taskExecutions.get(sessionId) !== execution || turn.info.phase !== "waiting") return;
-    if (!turn.info.background?.some(task => task.id === x.id)) continue;
-    try {
-      const result = await turn.backend.stopBackground(sessionId, x.id);
-      if (result?.stopped === false) continue;
-      agentTasks?.observe(sessionId, { type: 'task.command', id: x.id, nativeTaskId: x.id, state: 'stopped' });
-      execution.stopped.push(x);
-      // i18n-ignore: サーバーのログ
-      console.error(`  [delegation] 子 ${sessionId} の裏の作業（${x.kind}）を ${Math.round(DELEGATION_BACKGROUND_WAIT_MS / 1000)} 秒待って止めた`);
-    } catch (err) {
-      // i18n-ignore: サーバーのログ
-      console.error(`  [delegation] 子 ${sessionId} の裏の作業（${x.kind}）を止められなかった: ${String(err?.message ?? err).slice(0, 200)}`);
-    }
-  }
+  execution.waitingSince = turn.info.phase === "waiting" ? (execution.waitingSince ?? Date.now()) : null;
 }
 
 /**

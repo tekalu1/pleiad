@@ -317,21 +317,21 @@ export default async function (t) {
 
     t.ok('途中送信の控え（steers）の形（5 か所の waiters）と正規化が正しい', true);
 
-    // 2b-7: 渡った合図を待つ控えの中身（完了通知・追加指示）は、札の往復で欠けない。委譲の子の実行の控え（delegation）は上限で切り、往復する
+    // 2b-7: 渡った合図を待つ控えの中身（完了通知・追加指示）は、札の往復で欠けない。委譲の子の実行の控え（delegation）も往復する
     const steers = {
       'task-notice-1': { waiters: ['liveNotices'], notice: { prompt: 'p', promptHash: 'h', promptChars: 1, items: [{ taskId: 't1', revision: 2 }] } },
       'task-send-1': { waiters: ['liveInstructions', 'agentTasks'], taskId: 't2', instructionIds: ['i1', 'i2'] },
     };
-    const execution = { reply: 'r'.repeat(20000), stopped: [{ id: 'bg1', kind: 'shell', label: 'sleep' }], rejections: [{ text: '再生で作り直る' }] };
+    const execution = { waitingSince: 1_700_000_000_000, rejections: [{ text: '再生で作り直る' }] };
     const { card: full } = cardOf({ sessionId: 's-2b7', backend: 'fake', steers, execution });
     const back = restoreFields(JSON.parse(JSON.stringify(full)));
     assert.deepEqual(back.steers, normalizeSteers(steers));
     assert.deepEqual(back.steers['task-send-1'].instructionIds, ['i1', 'i2']);
-    assert.equal(back.delegation.reply.length, 16000, '止める前の返答は上限で切る');
-    assert.deepEqual(back.delegation.stopped, [{ id: 'bg1', kind: 'shell', label: 'sleep' }]);
+    assert.deepEqual(back.delegation, { waitingSince: 1_700_000_000_000 }, '裏の作業だけを待ち始めた時刻が往復する（ADR 0170）');
     assert.equal('rejections' in back.delegation, false, '拒否されたコマンドは札に入れない（再生の出来事から作り直る）');
+    assert.equal(restoreFields(cardOf({ sessionId: 's-2b7', backend: 'fake', execution: {} }).card).delegation.waitingSince, null, '待っていなければ waitingSince は null');
     assert.equal(restoreFields(cardOf({ sessionId: 's-2b7', backend: 'fake' }).card).delegation, null, '委譲の子でなければ delegation は null');
-    t.ok('2b-7: 完了通知・追加指示の控えと、委譲の子の実行の控え（reply・stopped）が札の往復で保たれる', true);
+    t.ok('2b-7: 完了通知・追加指示の控えと、委譲の子の実行の控え（waitingSince）が札の往復で保たれる', true);
   }
 
   // 6. 会話の口のトークン（connectionTokens）の正規化

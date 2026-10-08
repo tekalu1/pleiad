@@ -88,7 +88,7 @@
 | T26 | `info.sessionId`・`backend`・`startedAt`・`cwd`・`mode`・`model`・`effort`・`endpoint`・`account` | 4900-4909 | 一覧・`runningWork`・`limit` 2120・`setup` 2179 | 保存済み | 会話の記録（`setMeta`・`setMode`・`setModel`・`setSessionData`）。実行中の切り替え（`setModeLive`）も記録される |
 | T27 | `info.status`・`info.attachments`（新規の会話の予約・添付） | 4910-4911 | id 決定時 2176-2195、添付の照合 5117 | 札 | 添付は終わりの照合（5117-5127）に要る。状態の予約は id が決まった後は要らない |
 | T28 | `info.phase` | 4913・2151 | `outbox` の `active` 4281、裏の待ち 5435 | 再生 | `phase` の出来事 |
-| T29 | `info.background` | 4914・2152 | `captureStops` 5555、`stopChildBackground` 5445、`findBackgroundTask` 5506 | 再生 | `background` の出来事 |
+| T29 | `info.background` | 4914・2152 | `captureStops` 5555、`watchChildBackground`、`findBackgroundTask` 5506 | 再生 | `background` の出来事 |
 | T30 | `stops`（止めた瞬間に抱えていたもの） | 4919・1790 | `endTurn` 5232 | 捨てる | 止めた瞬間に取る値。付け直した後に止めれば新しいサーバーで取れる。止め始めた後の引き継ぎは T7 と同じに中断を送り直す |
 | T31 | `worktreeId` | 4928 | 台帳の `sessionId` 4929・2198 | 保存済み | worktree の台帳（`worktreeHost`）。付け直しで `byPath(cwd)` から引き直す |
 | T32 | `gitCalls` | 4930 | 追う 2033、終わりの要約 5161 | 再生 | `tool.start` などの出来事から |
@@ -131,7 +131,7 @@
 |---|---|---|---|---|---|
 | M1 | `switching`・`forking`・`settingsWrites` | 207-209 | `sessionBusy` 5310・`runTurnInternal` 4725-4734・切り替え 2432-2486・分岐 | 捨てる | 準備中・切り替え・分岐の最中の印。2d は空になるのを待つ |
 | M2 | `agentConnections`（会話ごとの MCP の口: ply_agents・ply_computer・ply_browser・ply_control と `contextToken`） | 476 | `conversationConnection` 1010-1031・1075-1127、付け替え 2167、片付け 1059 | 札 | **トークンを札へ**。新しいサーバーは同じトークンで口を開き直す（2b-3）。CLI が持つ URL（同じポート + 道）とヘッダーがそのまま通る（design.md §4.6）。ターンの外の会話の口（agy の会話の間ずっと使う `contextToken`）は段階 3 |
-| M3 | `taskExecutions`（委譲の子の実行: `outcome`・`rejections`・`stopped`・`reply`・`streamed`） | 477 | 置く 4558、`makeEmit` 2132-2146、`childTarget` 4377、裏の待ち 5433-5450、外す 4610 | 札 | `rejections`・`stopped`・`reply` は札（再生では作れない）。`streamed` は再生。`execute` の後半を付け直しから呼ぶ（2b-7） |
+| M3 | `taskExecutions`（委譲の子の実行: `outcome`・`rejections`・`waitingSince`・`streamed`） | 477 | 置く 4558、`makeEmit` 2132-2146、`childTarget` 4377、裏の待ち 5433-5450、外す 4610 | 札 | `waitingSince` は札（再生では作れない。ADR 0170）。`rejections` は再生の出来事から作り直る。`streamed` は再生。`execute` の後半を付け直しから呼ぶ（2b-7） |
 | M4 | `liveNotices`（走っている依頼元へ途中送信で渡した完了通知の控え） | 4259 | 置く 4363、合図 2094-2100、終わり 5247-5252 | 札 | 欠けると、渡ったか分からないまま送り直されない（通知が欠ける）か二重。`agentTasks` の `notification` の値と組で渡す（2b-7） |
 | M5 | `liveInstructions`（委譲の子へ途中送信で渡した追加指示の控え） | 4263 | 置く 4395、合図 2103-2106、終わり 5258-5262 | 札 | M4 と同じ。`agentTasks` の `steers`（O17）と組 |
 | M6 | `limitStates` | 4266 | `outbox` の `active` 4270、`endTurn` 5225、起動 6942-6945 | 保存済み | 会話の `interrupted.reason === 'limit'` から起動で作る |
@@ -160,7 +160,7 @@
 | M29 | `watching`・`screencastClients`・`connectionDevices`（WS ごと） | 1817・169・369 | 送り先の選り分け | 捨てる | 画面がつなぎ直すと作り直す |
 | M30 | `worktreeSweeping`・`worktreeSweepAgain` | 1854 | 1855-1860 | 捨てる | |
 | M31 | `workspaceRoots`・`SERVER_STARTED_AT`・`imageImportTestOrigin` | 256・176・246 | | 捨てる | `SERVER_STARTED_AT` は新しい値でよい（画面は「この起動より前の更新の中断」だけを見る） |
-| M32 | 定数（`HOST`・`NL`・`COOKIE_NAME`・`UPLOAD_DIR`・`ATTACH_*`・`PRESENT_*`・`IMAGE_MIME`・`MIME`・`EVENT_BUFFER_MAX`・`HOST_GRACE_MS`・`INTERRUPT_REASONS`・`ABORT_REASONS`・`LIST_NEUTRAL_EVENTS`・`WATCH_EXEMPT`・`OUTSIDE_TURN_EVENTS`・`LIVE_TASK`・`SUBAGENT_STATUS`・`ANSWER_EVENTS`・`GIT_*`・`DELEGATION_BACKGROUND_WAIT_MS`・`ROUTING_*`・`REMOTE_*`・`RELAYED_KEEP`・`HOOK_LEAKS_MAX`・`TASK_SETTINGS`・`NOTICE_REJECTIONS`・`REJECTION_TEXT_MAX`・`POLL_TRIAL_MISSES`・`BUSY_RETRY_MS`・`PLACE_CHECK_*`・`NATIVE_LIST_TTL_MS`・`COMPACTION_SCHEDULE_FILE`・`CONTEXT_SNAPSHOTS`・`APP_VERSION`・`BUILD`・`HERE`・`WEB`）と、関数を入れた定数（`pick`・`peerRejection`・`changeBy`・`ops*` の束・`blockingWaits` など） | 各所 | | 捨てる | 同じ版なら同じ値。違う版では新しい版の値になる（それでよい） |
+| M32 | 定数（`HOST`・`NL`・`COOKIE_NAME`・`UPLOAD_DIR`・`ATTACH_*`・`PRESENT_*`・`IMAGE_MIME`・`MIME`・`EVENT_BUFFER_MAX`・`HOST_GRACE_MS`・`INTERRUPT_REASONS`・`ABORT_REASONS`・`LIST_NEUTRAL_EVENTS`・`WATCH_EXEMPT`・`OUTSIDE_TURN_EVENTS`・`LIVE_TASK`・`SUBAGENT_STATUS`・`ANSWER_EVENTS`・`GIT_*`・`BACKGROUND_REPLY_MAX`・`ROUTING_*`・`REMOTE_*`・`RELAYED_KEEP`・`HOOK_LEAKS_MAX`・`TASK_SETTINGS`・`NOTICE_REJECTIONS`・`REJECTION_TEXT_MAX`・`POLL_TRIAL_MISSES`・`BUSY_RETRY_MS`・`PLACE_CHECK_*`・`NATIVE_LIST_TTL_MS`・`COMPACTION_SCHEDULE_FILE`・`CONTEXT_SNAPSHOTS`・`APP_VERSION`・`BUILD`・`HERE`・`WEB`）と、関数を入れた定数（`pick`・`peerRejection`・`changeBy`・`ops*` の束・`blockingWaits` など） | 各所 | | 捨てる | 同じ版なら同じ値。違う版では新しい版の値になる（それでよい） |
 | M33 | `updateGate` | 135 | `runTurn` 4712、`update-lock` 6837 | 捨てる | 2d で「準備中だけを数える」形に見直す |
 | M34 | `mainLink`・`mainPort`・`mainAway`・`orphanGuard` | 154・160・163・6871 | main との口（段階 1） | 捨てる | 新しいサーバーが口を立て、main が付け直す（段階 1 の 1-4・1-6 と同じ） |
 | M35 | `agentBrowser`（内蔵ブラウザーの中継の写し・鍵） | 165 | `endTurn` 5264、付け替え 2163、承認 4206-4216 | 捨てる | main が `ready` で `browser-state-report` を送り直す（1-6 の合わせ 1）。`configIds`（`agent-browser.mjs:65`。新しい会話の設定ファイルの名前）は札（O20） |

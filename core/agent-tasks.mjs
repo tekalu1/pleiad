@@ -27,6 +27,9 @@ const LOG_MAX = 64 * 1024;
 const NOTICED_MAX = 50;
 // 1 タスクに持つ実行前の拒否（rejections）の上限。超えた分は捨て、rejectionsDropped に数だけ残す
 const MAX_REJECTIONS = 50;
+// 子が返答を終えて裏の作業だけを待つ間の、最初の知らせまでの猶予（docs/agent-delegation.md「子に残った裏の作業」）。
+// すぐ終わる裏の作業（短いサブエージェントなど）のたびに、依頼元のターンを起こさない。知らせ直す周期がこれより短ければ周期に合わせる
+const BACKGROUND_FIRST_MS = 60_000;
 // これらの通知の状態なら、今の rejections は依頼元へ渡した（か、止めた）。ply_task_send で始まる次の回は新しく数え直す
 // read: 依頼元が ply_task_status / ply_task_wait で完了と結果を受け取った（完了通知は送らない。ADR 0057）
 const NOTICED = new Set(['delivering', 'sent', 'unknown', 'suppressed', 'read']);
@@ -99,14 +102,19 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
   lockWaiting = () => false,
   // 子の worktree の今の状態（core/worktree-host.mjs の taskState）。ply_task_status・ply_task_wait の workspaceSummary に使う
   workspaceState = async () => null,
+  // 子が返答を終えて裏の作業だけを待っているか（ADR 0170）。待っていれば { since（待ち始めた時刻 ms）, tasks: [{ kind, label }] }、無ければ null。
+  // 待っている間は止めず、依頼元へ deliverBackground で知らせ、backgroundMinutes ごとに知らせ直す
+  backgroundWaiting = () => null, deliverBackground = async () => 'ok',
   now = Date.now, silenceMinutes = Number(process.env.AGENT_HOST_TASK_SILENCE_MINUTES ?? 5),
   commandMinutes = Number(process.env.AGENT_HOST_TASK_COMMAND_MINUTES ?? 5),
+  backgroundMinutes = Number(process.env.AGENT_HOST_TASK_BACKGROUND_MINUTES ?? 30),
   io = fs, log = line => console.error(line), retryMax = RETRY_MAX, taskStorage = null,
   // 付け直すターン（無停止の更新 2b-7）の委譲の子のタスク id。起動の復元で interrupted にせず、adoptRun() が結果の確定を引き継ぐ（stage2-server-state.md S8）
   adopting = [] }) {
   const silenceMs = Number.isFinite(silenceMinutes) && silenceMinutes > 0 ? silenceMinutes * 60000 : 0;
   const commandMs = Number.isFinite(commandMinutes) && commandMinutes > 0 ? commandMinutes * 60000 : 0;
-  const commandNotices = new Set();
+  const backgroundMs = Number.isFinite(backgroundMinutes) && backgroundMinutes > 0 ? backgroundMinutes * 60000 : 0;
+  const commandNotices = new Set(), backgroundNotices = new Set();
   const logFile = path.join(dataDir, 'agent-tasks-errors.log');
   let handle = null;
   let rowStore = taskStorage;
@@ -246,9 +254,12 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
   };
   // context は「別の候補でやり直す」で同じ依頼を渡し直すために持つだけ（長いので一覧・状態には載せない）
   const view = (r, offset = 0) => {
-    const { result = '', queue, context, instructions, rejections = [], silenceNotifiedAt, noticedCommands, noticedSilence, lastOutputAt, activeCommands = [], ...rest } = r;
+    const { result = '', queue, context, instructions, rejections = [], silenceNotifiedAt, noticedCommands, noticedSilence, lastOutputAt, activeCommands = [], backgroundNotice, ...rest } = r;
     pauseCommands(r, now(), waitingOf(r));
-    return { ...rest, activeCommands: activeCommands.map(c => commandView(c, now())), silenceMinutes: r.status === 'running' && !waitingOf(r) && !lockWaiting(r.sessionId) && r.lastActivityAt != null
+    // 子が返答を終えて裏の作業だけを待っている間は、待っているものと経過分数を見せる（ADR 0170）
+    const bg = r.status === 'running' && !r.host ? backgroundWaiting(r.sessionId) : null;
+    return { ...rest, activeCommands: activeCommands.map(c => commandView(c, now())),
+      ...(bg ? { backgroundWaiting: { minutes: Math.max(0, Math.floor((now() - bg.since) / 60000)), tasks: bg.tasks } } : {}), silenceMinutes: r.status === 'running' && !bg && !waitingOf(r) && !lockWaiting(r.sessionId) && r.lastActivityAt != null
       ? Math.max(0, Math.floor((now() - r.lastActivityAt) / 60000)) : null,
       rejections, pendingMessages: instructions.filter(x => x.state === 'queued').length, result: result.slice(offset, offset + 16000), resultOffset: offset,
       resultLength: result.length, nextOffset: offset + 16000 < result.length ? offset + 16000 : null };
@@ -436,9 +447,8 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
             row.rejections = all.slice(0, MAX_REJECTIONS);
             if (all.length > MAX_REJECTIONS) row.rejectionsDropped = (row.rejectionsDropped ?? 0) + all.length - MAX_REJECTIONS;
           }
-          // 子が返答を終えた後も終わらず、Pleiad が止めた裏の作業（この回の分。docs/agent-delegation.md「子に残った裏の作業」）
-          const stopped = Array.isArray(result?.stoppedBackground) ? result.stoppedBackground.slice(0, MAX_REJECTIONS) : [];
-          if (stopped.length) row.stoppedBackground = stopped; else delete row.stoppedBackground;
+          // 前の版が止めた裏の作業の記録（ADR 0170 で止めなくなった）。次の回の結果で消す
+          delete row.stoppedBackground;
           row.status = controller.signal.aborted ? 'cancelled' : result?.outcome === 'ok' ? (row.queue.length ? 'queued' : 'completed') : 'failed';
           if (['failed', 'cancelled'].includes(row.status)) dropInstructions(row);
         }, 'run.result');
@@ -567,6 +577,31 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
       if (outcome === 'requeue' && current()) await record(r.taskId, release, 'command.requeue');
     } finally { commandNotices.delete(id); }
   }
+  // 子が返答を終えて裏の作業だけを待っている（ADR 0170）。止めずに依頼元へ知らせ、待ちが続く間は backgroundMs ごとに知らせ直す。
+  // 待ちの回（since）ごとに数え、子が再開して次の待ちに入ったら最初の知らせからやり直す。タスクは running のまま（完了にしない）
+  const backgroundDue = (r, bg) => {
+    const n = r.backgroundNotice?.since === bg.since ? r.backgroundNotice : null;
+    return n ? now() - n.at >= backgroundMs : now() - bg.since >= Math.min(BACKGROUND_FIRST_MS, backgroundMs);
+  };
+  async function notifyBackground(r) {
+    backgroundNotices.add(r.taskId);
+    try {
+      const bg = backgroundWaiting(r.sessionId);
+      if (!bg || !(await ready(structuredClone(r)).catch(() => false))) return;
+      const current = () => { const w = r.status === 'running' ? backgroundWaiting(r.sessionId) : null; return w?.since === bg.since ? w : null; };
+      if (!current() || !backgroundDue(r, bg)) return;
+      const before = r.backgroundNotice ?? null;
+      const count = before?.since === bg.since ? before.count + 1 : 1;
+      // 完了通知と同じく、送る前に印を保存する（送ったか分からないまま重ねて送らない）
+      try { await commit(r.taskId, row => { row.backgroundNotice = { since: bg.since, at: now(), count }; }, 'background.notice'); }
+      catch { return; }
+      const live = current();
+      if (!live) return;
+      const outcome = await deliverBackground(structuredClone(r), { count, minutes: Math.max(1, Math.floor((now() - bg.since) / 60000)),
+        interval: Math.max(1, Math.round(backgroundMs / 60000)), tasks: live.tasks }).catch(() => 'error');
+      if (outcome === 'requeue') await record(r.taskId, row => { if (row.backgroundNotice?.since === bg.since && row.backgroundNotice.count === count) row.backgroundNotice = before; }, 'background.requeue');
+    } finally { backgroundNotices.delete(r.taskId); }
+  }
   // 保存障害の間は、間隔を空けて保存だけをやり直す（1 回に 1 秒ほど待つ保存を、500ms ごとに仕事の数だけ重ねない）。
   // 書けたら障害を解き、次のタイマーから実行の開始と通知を再開する
   function probe() {
@@ -589,7 +624,9 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
         continue;
       }
       pauseCommands(r, now(), waitingOf(r));
-      for (const c of r.activeCommands ?? []) {
+      // 返答を終えて裏の作業だけを待つ子は、裏待ちの知らせ（ADR 0170）が受け持つ。「黙っている」「コマンドが長い」は重ねて送らない
+      const bg = r.status === 'running' ? backgroundWaiting(r.sessionId) : null;
+      for (const c of bg ? [] : r.activeCommands ?? []) {
         if (commandMs && commandFit(r, c) && !waitingOf(r) && !c.notified && !commandNoticed(r, c)
           && commandElapsed(c, now()) >= commandMs && !commandNotices.has(c.noticeId)) {
           spawn(notifyCommand(r, c).catch(e => report({ event: 'unexpected', operation: 'command', taskId: r.taskId, code: e?.code ?? null })));
@@ -604,11 +641,12 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
           silenceWaiting.set(r.taskId, true);
         }
         else if (silenceWaiting.delete(r.taskId)) { r.lastActivityAt = now(); r.silenceNotifiedAt = null; }
-        if (silenceMs && !isWaiting && r.lastActivityAt != null && now() - r.lastActivityAt >= silenceMs
+        if (silenceMs && !isWaiting && !bg && r.lastActivityAt != null && now() - r.lastActivityAt >= silenceMs
           && r.silenceNotifiedAt !== r.lastActivityAt && !silenceNotices.has(r.taskId)
           && silenceFit(r) && !r.noticedSilence?.includes(silenceSignature(r))) {
           spawn(notifySilence(r).catch(e => report({ event: 'unexpected', operation: 'silence', taskId: r.taskId, code: e?.code ?? null })));
         }
+        if (backgroundMs && bg && !backgroundNotices.has(r.taskId) && backgroundDue(r, bg)) spawn(notifyBackground(r).catch(e => report({ event: 'unexpected', operation: 'background', taskId: r.taskId, code: e?.code ?? null })));
       } else silenceWaiting.delete(r.taskId);
       if (r.status === 'queued' && !live.has(r.taskId)) {
         const ac = new AbortController(); live.set(r.taskId, ac);
@@ -629,8 +667,8 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
   return {
     // ホストに任せたタスクの写しは、ホストで動いている（この PC の更新・終了を止めない）。完了通知がまだ届いていないものだけ数える
     // 完了通知を渡している最中か（引き継ぎの前に終わるのを待つ。無停止の更新 2d。動いている子そのもの（busy）は、保持役に載った子は新しいサーバーが引き継ぐので数えない）
-    get settling() { return notices.size > 0 || silenceNotices.size > 0 || commandNotices.size > 0 || Object.values(records).some(r => r.notification === 'delivering'); },
-    get busy() { return live.size > 0 || notices.size > 0 || silenceNotices.size > 0 || commandNotices.size > 0 || Object.values(records).some(r => (ACTIVE.has(r.status) && !r.host) || r.notification === 'pending'); },
+    get settling() { return notices.size > 0 || silenceNotices.size > 0 || commandNotices.size > 0 || backgroundNotices.size > 0 || Object.values(records).some(r => r.notification === 'delivering'); },
+    get busy() { return live.size > 0 || notices.size > 0 || silenceNotices.size > 0 || commandNotices.size > 0 || backgroundNotices.size > 0 || Object.values(records).some(r => (ACTIVE.has(r.status) && !r.host) || r.notification === 'pending'); },
     list(owner) { return Object.values(records).filter(r => !owner || r.parentSessionId === owner).map(r => view(r)); },
     /** sessionIds の会話が作った行と、その子孫の行の view（ホストに任された子の下の孫を数える・止める。docs/remote.md §4.5） */
     descendants(sessionIds) {
