@@ -105,7 +105,18 @@ export function parentPortChromeOs(port, { timeoutMs = CALL_TIMEOUT_MS, readyWai
       item.resolve(message.ok ? (message.result ?? item.fallback) : item.fallback);
     }
   });
-  port.postMessage({ type: 'chrome-os-ready-request' });
+  const requestReady = () => { try { port.postMessage({ type: 'chrome-os-ready-request' }); } catch { /* main に届かなければ、つながり直したときに求め直す */ } };
+  requestReady();
+  if (port.resumable) {
+    // main が付け直す口（名前付きパイプ）。main が居ない間（更新）は、待っていた呼び出しを失敗で返し、層は pending に戻す。
+    // 戻ったら chrome-os-ready を求め直す（新しい main の層が答える）。docs/zero-downtime-update/design.md §7.2
+    port.on('disconnect', () => {
+      isReady = false;
+      caps = Object.freeze({ supported: false, reason: 'pending', features: FEATURES_NONE });
+      failAll();
+    });
+    port.on('connect', requestReady);
+  }
 
   const call = (action, args, fallback) => {
     if (!caps.supported) return Promise.resolve(fallback);
@@ -113,7 +124,9 @@ export function parentPortChromeOs(port, { timeoutMs = CALL_TIMEOUT_MS, readyWai
       const id = `co${++next}`;
       const timer = setTimeout(() => { pending.delete(id); resolve(fallback); }, timeoutMs);
       pending.set(id, { resolve, timer, fallback });
-      try { port.postMessage({ type: 'chrome-os', id, action, args }); } catch { pending.delete(id); clearTimeout(timer); resolve(fallback); }
+      let sent = false;
+      try { sent = port.postMessage({ type: 'chrome-os', id, action, args }) !== false; } catch { /* 送れなかった */ }
+      if (!sent) { pending.delete(id); clearTimeout(timer); resolve(fallback); }
     });
   };
 
