@@ -13,8 +13,8 @@ const UNDELIVERED = new Set(['none', 'pending', 'delivering']);
 // 端末の AI から始まった委譲の鎖の深さの上限（docs/remote.md §4.5、ADR 0146。core/remote/agent-protocol.mjs の AGENT_LIMITS.depth と同じ）。
 // 手元の委譲には深さの上限は無い（2026-09-27 に廃止）
 const REMOTE_DEPTH_MAX = 4;
-// ホストの便りから写しの行へ写す項目（agent-tasks の mirror）。結果・状態・どの委譲先で動いているか
-const MIRROR_FIELDS = ['title', 'status', 'error', 'backend', 'model', 'effort', 'mode', 'cwd', 'remoteSessionId', 'worktree', 'routing', 'result', 'resultLength', 'hostWaiting', 'hostPendingMessages', 'cancelPending', 'hostLost'];
+// ホストの便りから写しの行へ写す項目（agent-tasks の mirror）。結果・状態・活動の写し
+const MIRROR_FIELDS = ['title', 'status', 'error', 'backend', 'model', 'effort', 'mode', 'cwd', 'remoteSessionId', 'worktree', 'routing', 'result', 'resultLength', 'hostWaiting', 'hostLockWaiting', 'hostBackground', 'hostTelemetry', 'lastActivityAt', 'lastOutputAt', 'activeCommands', 'hostPendingMessages', 'cancelPending', 'hostLost'];
 // ホストの子を止める依頼を待つ上限。応答しないホストが、会話の中断・「すべて止める」を長く止めない（届かなかった分は cancelPending でつながり直したときに送り直す）
 const CANCEL_HOST_MS = 3000;
 // ホストが便りで返す taskId の形。端末の台帳の鍵にするので、形を確かめる（__proto__ や手元のタスクの ID を入れさせない）
@@ -133,6 +133,8 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
   // pending follow-ups visible without replaying the initial delegation request.
   // 承認待ちか。ホストに任せたタスクの写しは、ホストの便り（hostWaiting）か、依頼元の会話に中継された承認の有無で決まる
   const waitingOf = r => r.host ? r.hostWaiting === true || remoteWaiting(r) : waiting(r.sessionId);
+  const lockWaitingOf = r => r.host ? r.hostLockWaiting === true : lockWaiting(r.sessionId);
+  const backgroundOf = r => r.host ? r.hostBackground ?? null : backgroundWaiting(r.sessionId);
   for (const r of Object.values(records)) {
     r.instructions ??= [];
     const initial = !r.revision && !r.result && r.status === 'queued' && r.createdAt === r.updatedAt;
@@ -236,6 +238,8 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
   for (const r of Object.values(records)) {
     // ホストに任せたタスクの写しは、ホストで続いている。再起動で止めず、つながり直したときの同期で追いつく
     if (adoptable.has(r.taskId)) continue;
+    // 再起動前の活動の写しは古い。ホストの sync が届くまで停滞の判定には使わない
+    if (r.host) { delete r.hostTelemetry; delete r.hostBackground; delete r.activeCommands; delete r.lastActivityAt; delete r.lastOutputAt; }
     if (ACTIVE.has(r.status) && !r.host) {
       restored.push({ taskId: r.taskId, parentSessionId: r.parentSessionId, title: r.title ?? null, status: r.status });
       r.status = 'interrupted'; r.error = t('tasks.interruptedByRestart');
@@ -255,11 +259,11 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
   // context は「別の候補でやり直す」で同じ依頼を渡し直すために持つだけ（長いので一覧・状態には載せない）
   const view = (r, offset = 0) => {
     const { result = '', queue, context, instructions, rejections = [], silenceNotifiedAt, noticedCommands, noticedSilence, lastOutputAt, activeCommands = [], backgroundNotice, ...rest } = r;
-    pauseCommands(r, now(), waitingOf(r));
+    if (!r.host) pauseCommands(r, now(), waitingOf(r));
     // 子が返答を終えて裏の作業だけを待っている間は、待っているものと経過分数を見せる（ADR 0170）
-    const bg = r.status === 'running' && !r.host ? backgroundWaiting(r.sessionId) : null;
+    const bg = r.status === 'running' ? backgroundOf(r) : null;
     return { ...rest, activeCommands: activeCommands.map(c => commandView(c, now())),
-      ...(bg ? { backgroundWaiting: { minutes: Math.max(0, Math.floor((now() - bg.since) / 60000)), tasks: bg.tasks } } : {}), silenceMinutes: r.status === 'running' && !bg && !waitingOf(r) && !lockWaiting(r.sessionId) && r.lastActivityAt != null
+      ...(bg ? { backgroundWaiting: { minutes: Math.max(0, Math.floor((now() - bg.since) / 60000)), tasks: bg.tasks } } : {}), silenceMinutes: r.status === 'running' && !bg && !waitingOf(r) && !lockWaitingOf(r) && r.lastActivityAt != null
       ? Math.max(0, Math.floor((now() - r.lastActivityAt) / 60000)) : null,
       rejections, pendingMessages: instructions.filter(x => x.state === 'queued').length, result: result.slice(offset, offset + 16000), resultOffset: offset,
       resultLength: result.length, nextOffset: offset + 16000 < result.length ? offset + 16000 : null };
@@ -533,12 +537,12 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
     const signature = silenceSignature(r);
     try {
       if (!(await ready(structuredClone(r)).catch(() => false))) return;
-      if (r.status !== 'running' || waitingOf(r) || lockWaiting(r.sessionId) || r.lastActivityAt !== activityAt || r.silenceNotifiedAt === activityAt
+      if (r.status !== 'running' || (r.host && !r.hostTelemetry) || waitingOf(r) || lockWaitingOf(r) || r.lastActivityAt !== activityAt || r.silenceNotifiedAt === activityAt
         || !silenceFit(r) || r.noticedSilence?.includes(signature)) return;
       // Mark before delivery, as with completion notices: an uncertain delivery must not be repeated.
       try { await commit(r.taskId, row => { row.silenceNotifiedAt = activityAt; remember(row, 'noticedSilence', signature); }, 'silence.notice'); }
       catch { return; }
-      if (r.status !== 'running' || waitingOf(r) || lockWaiting(r.sessionId) || r.lastActivityAt !== activityAt) return;
+      if (r.status !== 'running' || (r.host && !r.hostTelemetry) || waitingOf(r) || lockWaitingOf(r) || r.lastActivityAt !== activityAt) return;
       const outcome = await deliverSilence(structuredClone(r), Math.max(1, Math.floor((now() - activityAt) / 60000))).catch(() => 'error');
       if (outcome === 'requeue' && r.lastActivityAt === activityAt) await record(r.taskId, row => { row.silenceNotifiedAt = null; forget(row, 'noticedSilence', signature); }, 'silence.requeue');
     } finally { silenceNotices.delete(r.taskId); }
@@ -549,7 +553,7 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
     const current = () => r.activeCommands?.find(c => c.noticeId === id);
     const eligible = () => {
       const c = current();
-      return c && commandFit(r, c) && !waitingOf(r) && commandElapsed(c, now()) >= commandMs;
+      return c && (!r.host || (r.hostTelemetry && r.status === 'running')) && commandFit(r, c) && !waitingOf(r) && commandElapsed(c, now()) >= commandMs;
     };
     // 同じ子で同じコマンドは、もう知らせた（繰り返しの確認・再実行で何度も知らせない）
     const key = command.command;
@@ -586,9 +590,9 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
   async function notifyBackground(r) {
     backgroundNotices.add(r.taskId);
     try {
-      const bg = backgroundWaiting(r.sessionId);
+      const bg = backgroundOf(r);
       if (!bg || !(await ready(structuredClone(r)).catch(() => false))) return;
-      const current = () => { const w = r.status === 'running' ? backgroundWaiting(r.sessionId) : null; return w?.since === bg.since ? w : null; };
+      const current = () => { const w = r.status === 'running' ? backgroundOf(r) : null; return w?.since === bg.since ? w : null; };
       if (!current() || !backgroundDue(r, bg)) return;
       const before = r.backgroundNotice ?? null;
       const count = before?.since === bg.since ? before.count + 1 : 1;
@@ -615,8 +619,27 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
     if (fault) { probe(); return; }
     const groups = new Map();
     for (const r of Object.values(records)) {
-      // ホストに任せたタスクの写しは走らせない（ホストが正本）。完了通知だけ、手元の委譲と同じに届ける
+      // ホストに任せたタスクの写しは走らせない。新しいホストの活動の写しがあれば、通知だけ依頼元で判定する
       if (r.host) {
+        if (r.hostTelemetry && !r.hostLost && r.status === 'running') {
+          const bg = backgroundOf(r);
+          for (const c of bg ? [] : r.activeCommands ?? []) {
+            if (commandMs && commandFit(r, c) && !waitingOf(r) && !c.notified && !commandNoticed(r, c)
+              && commandElapsed(c, now()) >= commandMs && !commandNotices.has(c.noticeId))
+              spawn(notifyCommand(r, c).catch(e => report({ event: 'unexpected', operation: 'command', taskId: r.taskId, code: e?.code ?? null })));
+          }
+          const isWaiting = waitingOf(r) || lockWaitingOf(r);
+          if (isWaiting) {
+            if (!silenceWaiting.has(r.taskId)) { r.lastActivityAt = now(); r.silenceNotifiedAt = null; }
+            silenceWaiting.set(r.taskId, true);
+          } else if (silenceWaiting.delete(r.taskId)) { r.lastActivityAt = now(); r.silenceNotifiedAt = null; }
+          if (silenceMs && !isWaiting && !bg && r.lastActivityAt != null && now() - r.lastActivityAt >= silenceMs
+            && r.silenceNotifiedAt !== r.lastActivityAt && !silenceNotices.has(r.taskId)
+            && silenceFit(r) && !r.noticedSilence?.includes(silenceSignature(r)))
+            spawn(notifySilence(r).catch(e => report({ event: 'unexpected', operation: 'silence', taskId: r.taskId, code: e?.code ?? null })));
+          if (backgroundMs && bg && !backgroundNotices.has(r.taskId) && backgroundDue(r, bg))
+            spawn(notifyBackground(r).catch(e => report({ event: 'unexpected', operation: 'background', taskId: r.taskId, code: e?.code ?? null })));
+        } else silenceWaiting.delete(r.taskId);
         if (r.notification === 'pending' && !notices.has(r.taskId) && !waited.has(r.taskId) && !ACTIVE.has(r.status)) {
           if (!groups.has(r.parentSessionId)) groups.set(r.parentSessionId, []);
           groups.get(r.parentSessionId).push(r);
@@ -701,6 +724,13 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
       }));
     },
     get(taskId, offset = 0) { return records[taskId] ? view(records[taskId], offset) : null; },
+    /** リモート依頼元へ周期的に渡す小さな活動の写し。活動イベントごとの保存・送信はしない */
+    remoteTelemetry(taskId) {
+      const r = records[taskId];
+      if (!r || r.host || r.status !== 'running') return null;
+      return { lastActivityAt: r.lastActivityAt ?? null, lastOutputAt: r.lastOutputAt ?? null,
+        activeCommands: (r.activeCommands ?? []).slice(0, 8).map(c => ({ ...c })) };
+    },
     observe(sessionId, event) {
       const r = bySession.get(sessionId);
       if (!r || !event?.type) return;
@@ -880,6 +910,7 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
           if (keep && ['status', 'hostWaiting', 'error'].includes(k)) continue;
           if (patch[k] == null) delete r[k]; else r[k] = patch[k];
         }
+        if (patch.hostLost) { delete r.hostTelemetry; delete r.hostBackground; delete r.activeCommands; delete r.lastActivityAt; }
         if (r.cancelPending === true && !ACTIVE.has(r.status) && patch.status && !ACTIVE.has(patch.status)) delete r.cancelPending;
         if (patch.hostLost == null) delete r.hostLost;
         const wasActive = ACTIVE.has(was), isActive = ACTIVE.has(r.status);
