@@ -384,12 +384,14 @@ export default async function (t) {
     t.ok('委譲の 6 つ以外の操作（invoke の汎用の道）は BAD_REQUEST', op.ok === false && op.code === 'BAD_REQUEST');
 
     // ---- 上限: 動いているタスクは 8 件まで
+    // 前の段のタスク（引き上げの確定で作った子・孫を任せた子の木）が動いている間は、その分も枠を使う。遅い環境で残っていると、8 件の途中で上限に当たったり、over が通ったりするので、0 になるのを待ってから始める
+    await within((async () => { for (;;) { if ((await cmd('remoteDevices')).find(d => d.id === laptop.id).agent.active === 0) return; await sleep(50); } })(), 30_000, '前の段のタスクが終わる');
     const slowIds = [];
     for (let i = 0; i < AGENT_LIMITS.active; i++) {
       const r = await a0.call('delegate', { kind: 'mechanical', backend: 'fake', task: 'slow' }, requesterOf('conv-S'));
       if (r.ok && r.result.task) slowIds.push(r.result.task.taskId);
     }
-    t.ok(`動いているタスクは ${AGENT_LIMITS.active} 件まで（その分は通る）`, slowIds.length >= AGENT_LIMITS.active - 2, String(slowIds.length));
+    t.ok(`動いているタスクは ${AGENT_LIMITS.active} 件まで（その分は通る）`, slowIds.length === AGENT_LIMITS.active, String(slowIds.length));
     const stats = (await cmd('remoteDevices')).find(d => d.id === laptop.id).agent;
     t.ok('端末の行に任された作業の数が出る', stats.active >= slowIds.length, JSON.stringify(stats));
     const over = await a0.call('delegate', { kind: 'mechanical', backend: 'fake', task: 'slow' }, requesterOf('conv-S'));

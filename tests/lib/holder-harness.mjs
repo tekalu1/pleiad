@@ -62,7 +62,12 @@ export async function startHolder(options = {}) {
 /** クライアントの出来事を溜める */
 export function collect(client) {
   const events = { out: [], err: [], exit: [], overflow: [], fault: [], disconnect: [] };
-  for (const type of Object.keys(events)) client.on(type, value => events[type].push(value));
+  // 種類をまたいだ届いた順（out と exit の前後は、別々の配列の添字では比べられない）
+  const all = [];
+  for (const type of Object.keys(events)) client.on(type, value => { events[type].push(value); all.push({ type, value }); });
+  events.all = all;
+  /** 種類をまたいだ通し番号。無ければ -1 */
+  events.indexOf = (type, id, last = false) => (last ? all.findLastIndex : all.findIndex).call(all, e => e.type === type && e.value.id === id);
   events.lines = id => events.out.filter(e => e.id === id && !e.redelivered).map(e => JSON.parse(e.line));
   events.seqs = id => events.out.filter(e => e.id === id && !e.redelivered).map(e => e.seq);
   return events;

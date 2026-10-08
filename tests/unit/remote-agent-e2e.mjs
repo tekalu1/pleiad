@@ -147,6 +147,8 @@ export default async function (t) {
     const waited = toolResult(await tool(sid, 'ply_task_wait', { taskId: slowId, seconds: 1 }));
     t.ok('ply_task_wait は動いている間は running を返す', waited.json?.status === 'running', waited.text.slice(0, 160));
     const cancel = toolResult(await tool(sid, 'ply_task_cancel', { taskId: slowId }));
+    // 取り消しの返事とホストの行の更新は別の出来事。遅い環境では返事の直後はまだ running なので、cancelled になるのを待ってから判定する（待ち切れなければ下の判定が落ちる）
+    await until(async () => (await hRows()).find(r => r.taskId === slowId)?.status === 'cancelled', 15_000, 'ホストの行が cancelled').catch(() => {});
     t.ok('ply_task_cancel でホストのタスクが止まる', !cancel.isError && (await hRows()).find(r => r.taskId === slowId)?.status === 'cancelled', cancel.text.slice(0, 160));
     await until(async () => (await tRows()).find(r => r.taskId === slowId)?.status === 'cancelled', 10_000, '写しも cancelled');
     const other = toolResult(await tool(null, 'ply_task_status', { taskId }));

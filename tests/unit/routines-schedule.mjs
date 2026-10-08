@@ -47,6 +47,8 @@ function manualClock(start) {
         state.now = Math.max(state.now, due.at);
         due.fn();
         await sleep(40);                    // 発火の後始末（保存・投稿）が済むまで
+        // 発火の後始末で次の予約が入るのを待つ。書き込みが 40ms を超えると予約が入る前に続きの advance が空振りし、その時刻の発火が起きない。次の予約を入れない発火（止めた・消した）もあるので上限を付ける
+        for (let i = 0; i < 50 && !state.timers.some((x) => !x.off && x.at > due.at); i++) await sleep(20);
       }
       state.now = Math.max(state.now, to);
     },
@@ -274,7 +276,7 @@ export default async function (t) {
       const got = await w2.service.get({ routineId: every.id });
       t.ok('取りこぼしの後は予約が普通に続く（次は 10:11）', got.nextAt === at(2026, 10, 5, 10, 11) && got.last.at === at(2026, 10, 5, 10, 10, 10));
       await w2.mc.advance(at(2026, 10, 5, 10, 11));
-      await sleep(120);
+      await until(async () => (await w2.roots()).length >= 2, { ms: 15_000, label: '10:11 のスキップの投稿' });
       t.ok('次の分は普通の実行（missed でない）。走っている間なのでスキップの投稿', (await w2.roots()).length === 2 && (await w2.roots())[1].routine.missed !== true);
       // 取りこぼしの判定は「最後に動いた後」: last.at が新しければ走らせない
       w2.service.stop();
