@@ -211,6 +211,10 @@ body.file-preview-wide .file-preview-resize{display:none}
 .browser-conn-steps code{font:var(--fs-s) var(--font-mono);background:var(--surface-1);border-radius:var(--r-pill);padding:1px 8px;overflow-wrap:anywhere}
 .browser-chrome-setting .browser-setting-note{padding-left:46px;margin:8px 0 0}
 .browser-chrome-error:empty{display:none}
+/* 設定 › ブラウザー › Chrome のプロフィール（新しい会話の既定と、プロフィールごとのメモ） */
+.browser-profile-setting .browser-setting{padding:6px 0}
+.browser-profile .browser-site-name small{display:block;color:var(--ink-weak);font-size:var(--fs-xs)}
+.browser-profile input[type=text]{flex:2;min-width:200px}
 /* 「エージェントの操作」の見出しは、上の節（エージェントのブラウザー）の後に、ほかの節の見出しと同じ 24px を空ける */
 .browser-agent-setting{margin-top:24px}
 @media (max-width:520px){.browser-link-open{min-width:0;width:100%}}

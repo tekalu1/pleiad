@@ -9,6 +9,8 @@
 //   - 窓は位置・大きさ（bounds。DIP）を持つ。createTarget の newWindow は left・top・width・height を守り、popup の窓は既定で左上（0,0・324×298）に出る（実機）。
 //     窓ができたら onWindow の聞き手に知らせる（偽の OS の層が、その窓の HWND を作る）。windowTitle は窓の最後のタブの題（Chrome の窓の題は「<題> - Google Chrome」）
 //   - launchWindow は chrome.exe --new-window の窓（URL は題に nonce を持つ data: のページ。題は <title> から取る）
+//   - プロフィール: タブは browserContextId を持つ（既定は CTX-DEFAULT。launchWindow の profileDir が Default 以外なら CTX-<profileDir>）。
+//     createTarget の browserContextId は知っている値だけ受け（知らない値はエラー）、ignoreTargetContext(true) の間は無視して CTX-DEFAULT に開く。popup は開いたタブと同じ
 //   - Emulation.setFocusEmulationEnabled はページに 1 つの状態として効く（実機: 有効にするとページは focus・visible。あるセッションが enabled: false にするか、有効にしたセッションを外すと、
 //     ほかのセッションが有効にしていても外れる。2026-10-08）。s.fe はセッションが最後に送った値。focusEmulated(targetId) は、今そのページで効いているか
 //   - Page.startScreencast・stopScreencast・screencastFrameAck はセッションごとの状態。screencastFrame(targetId) が、始めているセッションへ Page.screencastFrame を流す（実機は ack まで次を出さない）。
@@ -37,6 +39,8 @@ export function createFakeBrowser({ product, calls, userTabs = USER_TABS } = {})
   const served = [];
   const autoAttachCalls = [];
   let windowSeq = 100, requestSeq = 0, contextSeq = 0, entrySeq = 0;
+  const contexts = new Set(['CTX-DEFAULT']);   // プロフィールごとの browserContextId（launchWindow の profileDir で増える）
+  let contextIgnored = false;    // createTarget の browserContextId を無視する（Chrome が別のプロフィールに開いたときの確かめ）
   let movesRefused = false;      // Browser.setWindowBounds の left・top を受けない（Chrome が画面の外へ置かせてくれない）
   let lastActive = null;
   let fetchEnableDelayMs = 0;
@@ -44,7 +48,7 @@ export function createFakeBrowser({ product, calls, userTabs = USER_TABS } = {})
   let screencastStartDelayMs = 0;   // Page.startScreencast の応答を遅らせる（始まった印は先に付く。開始の途中を試す）
 
   const send = (socket, message) => { if (socket.readyState === 1) socket.send(JSON.stringify(message)); };
-  const info = t => ({ targetId: t.targetId, type: t.type, title: t.title, url: t.url, attached: [...sessions.values()].some(s => s.targetId === t.targetId), canAccessOpener: false, ...(t.openerId ? { openerId: t.openerId } : {}), browserContextId: 'CTX-DEFAULT' });
+  const info = t => ({ targetId: t.targetId, type: t.type, title: t.title, url: t.url, attached: [...sessions.values()].some(s => s.targetId === t.targetId), canAccessOpener: false, ...(t.openerId ? { openerId: t.openerId } : {}), browserContextId: t.browserContextId ?? 'CTX-DEFAULT' });
   const toDiscovering = (method, params) => { for (const socket of discovering) send(socket, { method, params }); };
   const sessionsOf = t => [...sessions.values()].filter(s => s.targetId === t.targetId);
   const emit = (t, method, params) => { for (const s of sessionsOf(t)) send(s.socket, { method, params, sessionId: s.id }); };
@@ -60,8 +64,8 @@ export function createFakeBrowser({ product, calls, userTabs = USER_TABS } = {})
   }
   const boundsOf = windowId => ({ ...(windows.get(windowId)?.bounds ?? DEFAULT_BOUNDS), windowState: windows.get(windowId)?.state ?? 'normal' });
   const windowTitle = windowId => { const last = [...targets.values()].filter(t => t.windowId === windowId && t.type === 'page').pop(); return last ? `${last.title} - Google Chrome` : ''; };
-  function newTarget({ url = 'about:blank', title, windowId, openerId = null, type = 'page' }) {
-    const t = { targetId: hex(), type, url, title: title ?? (url === 'about:blank' ? '' : pageFor(url).title), windowId, openerId, browserContextId: 'CTX-DEFAULT',
+  function newTarget({ url = 'about:blank', title, windowId, openerId = null, type = 'page', browserContextId = 'CTX-DEFAULT' }) {
+    const t = { targetId: hex(), type, url, title: title ?? (url === 'about:blank' ? '' : pageFor(url).title), windowId, openerId, browserContextId,
       history: [{ id: ++entrySeq, url }], index: 0 };
     targets.set(t.targetId, t);
     toDiscovering('Target.targetCreated', { targetInfo: info(t) });
@@ -148,7 +152,7 @@ export function createFakeBrowser({ product, calls, userTabs = USER_TABS } = {})
   function windowOpen(openerId, url, { popup = false } = {}) {
     const opener = targets.get(openerId);
     if (!opener) throw new Error('no opener');
-    const t = newTarget({ url: 'about:blank', title: '', windowId: popup ? newWindow('normal', POPUP_BOUNDS) : opener.windowId, openerId });
+    const t = newTarget({ url: 'about:blank', title: '', windowId: popup ? newWindow('normal', POPUP_BOUNDS) : opener.windowId, openerId, browserContextId: opener.browserContextId });
     setImmediate(() => {
       if (!targets.has(t.targetId)) return;
       served.push(url);
@@ -205,8 +209,9 @@ export function createFakeBrowser({ product, calls, userTabs = USER_TABS } = {})
       case 'Target.setAutoAttach': autoAttachCalls.push(params); return {};
       case 'Target.createTarget': {
         const bounds = { ...DEFAULT_BOUNDS, ...Object.fromEntries(['left', 'top', 'width', 'height'].filter(k => Number.isFinite(params[k])).map(k => [k, params[k]])) };
+        if (params.browserContextId != null && !contexts.has(params.browserContextId)) throw { code: -32602, message: 'Failed to find browser context with given id' };
         const windowId = params.newWindow ? newWindow('normal', bounds) : lastActive;
-        const t = newTarget({ url: 'about:blank', windowId });
+        const t = newTarget({ url: 'about:blank', windowId, browserContextId: !contextIgnored && params.browserContextId ? params.browserContextId : 'CTX-DEFAULT' });
         if (params.url && params.url !== 'about:blank') setImmediate(() => { if (targets.has(t.targetId)) navigate(t, params.url).catch(() => {}); });
         return { targetId: t.targetId };
       }
@@ -315,11 +320,17 @@ export function createFakeBrowser({ product, calls, userTabs = USER_TABS } = {})
     windowBounds: windowId => (windows.has(windowId) ? boundsOf(windowId) : null),
     /** Browser.setWindowBounds の位置（left・top）を受けなくする（大きさは受ける） */
     refuseWindowMoves(on) { movesRefused = on; },
+    /** createTarget の browserContextId を無視する（別のプロフィールに開く） */
+    ignoreTargetContext(on) { contextIgnored = on; },
+    /** タブの browserContextId（プロフィール） */
+    contextOf: targetId => targets.get(targetId)?.browserContextId ?? null,
     onWindow(fn) { windowListeners.add(fn); return () => windowListeners.delete(fn); },
     /** chrome.exe --new-window の窓（最初のタブは url。bounds は --window-position・--window-size が効いたとき） */
-    launchWindow({ url, bounds } = {}) {
+    launchWindow({ url, bounds, profileDir = null } = {}) {
+      const browserContextId = profileDir && profileDir !== 'Default' ? `CTX-${profileDir}` : 'CTX-DEFAULT';
+      contexts.add(browserContextId);
       const windowId = newWindow('normal', { ...DEFAULT_BOUNDS, ...(bounds ?? {}) });
-      const t = newTarget({ url, windowId });
+      const t = newTarget({ url, windowId, browserContextId });
       return { windowId, targetId: t.targetId };
     },
     /** Chrome の側が、セッションを外した（付けた側へ detachedFromTarget を送る） */

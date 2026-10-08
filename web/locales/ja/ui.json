@@ -233,6 +233,16 @@
       },
       "saveFailed": "保存できませんでした: {{error}}",
       "agentOperation": { "title": "エージェントの操作", "bundled": "agent-browser {{version}} · 同梱" },
+      "profiles": {
+        "title": "Chrome のプロフィール",
+        "description": "エージェントの窓を開く Chrome のプロフィールです。会話ごとの切り替えは会話の側で行い、エージェントも一覧から選べます。",
+        "newDefault": "新しい会話のプロフィール",
+        "lastUsed": "Chrome の最後に使ったもの",
+        "notesTitle": "メモ",
+        "notesNote": "エージェントがプロフィールを選ぶときの手がかりです（例: 「仕事のアカウント。社内のサイトはここ」）。メモはエージェントの一覧にも載ります。",
+        "notePlaceholder": "メモ（任意）",
+        "noteLabel": "{{name}} のメモ"
+      },
       "agentBrowser": {
         "title": "エージェントのブラウザー",
         "name": "Chrome",
@@ -4085,6 +4095,17 @@
       "repairConfirm": "元のファイルは hooks.broken-<時刻>.json に退避します。読めなかった登録は無くなり、担当を読めなかった場所はエージェント任せになります（ネイティブの hooks が再開します）。",
       "repairGo": "外して保存し直す"
     }
+  },
+  "chromeProfiles": {
+    "busy": {
+      "operating": "エージェントが操作している間は切り替えられません。止めてから選んでください。",
+      "waiting": "あなたへの依頼に答えるまで切り替えられません。",
+      "human": "あなたが操作している間は切り替えられません。エージェントに戻してから選んでください。"
+    },
+    "none": "プロフィールが見つかりません",
+    "manage": "プロフィールの設定…",
+    "agent": "エージェント",
+    "switched": "{{agent}} が Chrome のプロフィールを『{{name}}』に切り替えました（次に開く窓から）"
   },
   "chromeControl": {
     "status": { "running": "{{name}} が操作中", "idle": "待機中", "paused": "あなたが操作中", "stopped": "止めました" },

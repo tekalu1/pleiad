@@ -3,6 +3,16 @@
     "invalidTool": "ply_browser のツールの名前か引数が正しくありません。",
     "closeWindow": { "description": "この会話の Chrome の窓を閉じ、最後の画面を会話に残す。続きに使う・ログインを保つ必要があるなら開いたままにする。", "closed": "Chrome の窓を閉じました。次に使うときは新しい窓が開きます。", "none": "この会話に開いている Chrome の窓はありません。", "failed": "Chrome の窓を閉じられませんでした。" },
     "connectWait": "Chrome の準備か許可を待っています。人に確認のカードを出しました。ply_browser の hand_to_user（reason: other、message に状況）を呼んで待ち、つながったらもう一度 agent-browser を実行してください。",
+    "listProfiles": {
+      "description": "この PC の Chrome のプロフィールの一覧（表示名・フォルダー名・人が付けたメモ）と、この会話の今のプロフィールを返す。仕事・個人など、ログインしているアカウントで開くサイトが変わるときに、メモを見て合うプロフィールを選ぶために呼ぶ。"
+    },
+    "useProfile": {
+      "description": "この会話の Chrome の窓を開くプロフィールを、list_browser_profiles の一覧にあるものへ切り替える。今開いている窓はそのまま残り、次に開く窓から効く。Chrome を操作している・人への依頼を待っている・人が窓を引き継いでいる間は断られる。切り替えると会話に記録が残り、人に見える。",
+      "profileDescription": "プロフィールのフォルダー名（dir。例: Default、Profile 1）か表示名（name）。",
+      "browserDescription": "ブラウザー（chrome・edge）。省けばどれからでも探す。今は chrome だけ。",
+      "done": "Chrome のプロフィールを『{{name}}』（{{dir}}）に切り替えました。今開いている窓はそのままで、次に開く窓からこのプロフィールになります。",
+      "same": "この会話はすでに『{{name}}』（{{dir}}）を使っています。"
+    },
     "handToUser": {
       "description": "ブラウザーの操作を人に任せ、戻ってくるまで待つ。ログイン・CAPTCHA・2 段階認証・支払い・個人情報の入力の手前で、自分で入力せずに呼ぶ。Chrome の許可を待っている・人が操作中で agent-browser が失敗したときにも呼ぶ。人が「Claude に戻す」を押すと返る。「まだ待っています」が返ったら、もう一度呼ぶ。",
       "messageDescription": "人に伝えること（何をしてほしいか。例: example.com にログインしてください）。",
@@ -715,6 +725,14 @@
       "chromeNoWindow": "引き継げる Chrome の窓がありません（この会話はまだブラウザーを使っていないか、窓が閉じられています）。",
       "chromeDeviceSize": "端末から操作するときは、映像の箱の大きさ（width・height）を指定してください。",
       "chromeOpenUrl": "Chrome で開けるのは http・https の URL だけです。",
+      "chromeProfileOwnSession": "エージェントが切り替えられるのは、自分の会話の Chrome のプロフィールだけです。sessionId を省いてください。",
+      "chromeProfileBusy": {
+        "operating": "エージェントが Chrome を操作している間は、プロフィールを切り替えられません。",
+        "waiting": "人への依頼（hand_to_user）に答えが出るまで、プロフィールを切り替えられません。",
+        "human": "人が Chrome の窓を引き継いでいる間は、プロフィールを切り替えられません。"
+      },
+      "chromeProfileNotFound": "Chrome のプロフィール「{{profile}}」が見つかりません。list_browser_profiles の dir か name を指定してください。",
+      "chromeProfileAmbiguous": "「{{profile}}」に当たるプロフィールが複数あります。フォルダー名（dir）で指定してください。",
       "badCursor": "cursor が正しくありません。前の返り値の next をそのまま渡してください。",
       "DENIED": "ユーザーが {{id}} の変更を許可しませんでした。やり直さず、ユーザーに理由を尋ねてください。",
       "STALE": "承認のあとも値が変わり続けたので、{{id}} は行っていません。settings.get で今の値を確かめてからやり直してください。",
@@ -846,6 +864,8 @@
       "confirmExternalLoads": "外部の読み込みの前に確認",
       "agentSitePermissions": "許可したサイト · エージェントの利用",
       "externalSitePermissions": "許可したサイト · 外部の読み込み",
+      "chromeProfileNotes": "Chrome のプロフィールのメモ",
+      "chromeNewProfile": "新しい会話の Chrome のプロフィール",
       "computerUse": "コンピューターの操作",
       "delegationRouting": "委譲先の自動振り分け",
       "plyInstructions": "Pleiad の指示",
@@ -997,7 +1017,9 @@
       "chromeStop": { "summary": "エージェントの Chrome の操作を止める。接続を閉じ、次の人の送信まで再接続を断る。画面とリモートの端末からだけ呼べる。" },
       "chromeControl": { "sessionId": "会話の id。", "state": "窓の状態。running（エージェントのターンの間）・idle（待機中）・stopped（止めた）・paused（人が引き継いでいる）。", "since": "paused の始まりの時刻（ミリ秒）。paused でなければ null。", "error": "戻せなかった理由。conceal-failed は、窓を画面の外へ隠せなかったので一時停止のままにしたこと。無ければ null。", "by": "paused のとき、誰が操作しているか。pc（PC の画面）・device（リモートの端末）。paused でなければ null。" },
       "chromeCloseWindow": { "summary": "この会話の専用 Chrome の窓を閉じ、最後の画面を会話に残す。画面とリモートの端末からだけ呼べる。" },
-      "chromeOpen": { "summary": "ビューアで見ているページを、会話のエージェントの Chrome の窓で開く。つながっていなければ Chrome の許可を待つ。エージェントには知らせない。ホストの PC の画面だけから呼べる。", "url": "開く URL（http・https）。" }
+      "chromeOpen": { "summary": "ビューアで見ているページを、会話のエージェントの Chrome の窓で開く。つながっていなければ Chrome の許可を待つ。エージェントには知らせない。ホストの PC の画面だけから呼べる。", "url": "開く URL（http・https）。" },
+      "listProfiles": { "summary": "この PC の Chrome のプロフィールの一覧（表示名・フォルダー名・設定のメモ）と、会話の今のプロフィール・今切り替えられない理由を返す。メールアドレスなどのアカウントの情報は読まない。", "profiles": "プロフィール。browser（chrome）・dir（フォルダー名）・name（表示名）・note（設定 › ブラウザーのメモ。無ければ空）。", "current": "会話の今のプロフィール（browser・dir）。まだ決まっていなければ null（最初の窓は Chrome の最後に使ったプロフィールで開く）。会話を指定しなければ null。", "busy": "今切り替えられない理由。operating（エージェントが操作中）・waiting（人への依頼の待ち）・human（人が窓を引き継いでいる）。切り替えられれば null。" },
+      "useProfile": { "summary": "会話の Chrome の窓を開くプロフィールを、一覧にあるものへ切り替える。開いている窓は閉じず、次に開く窓から効く。サイトの許可はプロフィールごとに記録される。エージェントが切り替えると会話に記録が残る。", "browser": "ブラウザー（chrome・edge）。省けばどれからでも探す。", "profile": "フォルダー名（dir）か表示名（name）。フォルダー名が先に当たる。" }
     },
     "control": {
       "instructions": "Pleiad の機能と設定は ply_control から使えます。\nまず list_ops で操作を探し（id を渡すと入力の JSON Schema が分かります）、call_op で呼びます。検索・読み出し・設定の get/set は直に呼べます。\nPleiad の状態を変える操作はこの会話の承認モードに従います。関所を緩める変更はユーザーに承認カードを出し、待たずに status: pending で返ります（結果は後でこの会話に届きます）。code が NEEDS_UI・NEEDS_APPROVAL・READ_ONLY_MODE で返ったら、やり直さずユーザーに伝えてください。",
@@ -1588,6 +1610,8 @@
     "confirmExternalLoads": "外部の読み込みの前に確認するか。",
     "agentSitePermissions": "エージェントのブラウザーに「このサイトは常に許可」した一覧。",
     "externalSitePermissions": "外部の読み込みに「このサイトは常に許可」した一覧。",
+    "chromeProfileNotes": "Chrome のプロフィールごとのメモ（browser・dir・note の一覧。note は 200 字まで）。エージェントがプロフィールを選ぶ手がかりで、プロフィールの一覧にも載る。",
+    "chromeNewProfile": "新しい会話が始めに使う Chrome のプロフィール（browser・dir）。null なら Chrome の最後に使ったもの。一覧から消えたプロフィールは使わない。",
     "computerUse": "コンピューターの操作の設定（有効・全アプリの許可・常に許可のアプリ）。",
     "delegationRouting": "委譲先の自動振り分けの設定（判定器・段・候補・段ごとの思考の強さ。キーは含まない）。",
     "plyInstructions": "Pleiad が会話に足す指示の項目。",

@@ -186,7 +186,8 @@ export async function setPref(key, value, backendId) {
 export async function rememberBrowserSite(site) {
   return exclusive(async () => {
     const all = await prefs.read();
-    all.agentSitePermissions = [...(all.agentSitePermissions ?? []).filter(row => row.agent !== site.agent || row.origin !== site.origin), site];
+    // 同じエージェント・プロフィール・origin の行を置き換える（プロフィールの無い行と、ある行は別の行）
+    all.agentSitePermissions = [...(all.agentSitePermissions ?? []).filter(row => row.agent !== site.agent || row.origin !== site.origin || (row.profile ?? '') !== (site.profile ?? '')), site];
     await prefs.write();
     return { ...all };
   });
@@ -462,7 +463,7 @@ export const dataDir = DIR;
 /** Host-only data. 書き込みはその場で行い、書けなければ投げる（durable は互換のために残す。意味は変わらない） */
 export async function setSessionData(sessionId, field, value, { durable = false } = {}) {
   void durable;
-  if (!sessionId || !["draft", "nextSettings", "outbox", "effort", "contextSession", "delegation", "taskNotices", "relayed", "ungrouped", "claudeAccount", "compatEndpoint", "agentLocale", "routing", "compactions", "contextWindow", "autoCompactionOff", "compacted", "hookRuns", "shellPending", "shellExits", "shellKept", "computerApps", "rewind", "scheduledSends", "bot", "antigravityFailures", "contextBase"].includes(field)) throw new Error(t("store.invalidSessionField"));
+  if (!sessionId || !["draft", "nextSettings", "outbox", "effort", "contextSession", "delegation", "taskNotices", "relayed", "ungrouped", "claudeAccount", "compatEndpoint", "agentLocale", "routing", "compactions", "contextWindow", "autoCompactionOff", "compacted", "hookRuns", "shellPending", "shellExits", "shellKept", "computerApps", "rewind", "scheduledSends", "bot", "antigravityFailures", "contextBase", "chromeProfile"].includes(field)) throw new Error(t("store.invalidSessionField"));
   return exclusive(async () => {
     const all = await load();
     const before = all[sessionId];

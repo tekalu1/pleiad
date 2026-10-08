@@ -124,14 +124,16 @@ export default async function (t) {
     const turn = await c.runTurn({ backend: 'fake', cwd, sessionId, prompt: 'browser:{"name":"list_browser_profiles","arguments":{}}' });
     assert(!(await messages()).some(m => m.type?.startsWith('agent-browser-')), '内蔵ブラウザーの中継の準備・設定は main に頼まない');
     const result = turn.events.find(e => e.type === 'tool.result');
-    assert.equal(result?.isError, true, 'ply_browser は渡るが、呼べるツールは無い');
+    // list_browser_profiles は第 10 段の Chrome のプロフィールの一覧（ADR 0078 の内蔵ブラウザーのプロフィールではない）。試験の User Data には Local State が無いので空
+    assert.equal(result?.isError, false, 'list_browser_profiles は Chrome のプロフィールの一覧を返す');
+    assert.deepEqual(JSON.parse(result.text).profiles, [], '試験の User Data（Local State が無い）では空');
     assert.deepEqual(turn.tools, ['mcp__ply_browser__list_browser_profiles'], '呼び出しは会話のツール履歴に残る');
     const second = await c.runTurn({ backend: 'fake', cwd, sessionId, prompt: 'browser-instructions' });
     const text = second.events.filter(e => e.type === 'text.delta').map(e => e.text ?? e.delta ?? '').join('') || second.events.find(e => e.type === 'text.end')?.text || '';
     assert.match(text, /agent-browser/, 'エージェント向けの指示は残る');
     assert(!/profile|プロフィール/i.test(text), '指示にプロフィールの段落が無い');
   } finally { c?.close?.(); await server.stop(); await fs.rm(scratch, { recursive: true, force: true }); }
-  t.ok('サーバー越し: 設定・コマンド・会話のメタ・中継の準備・main への知らせにプロフィールが無い。ply_browser は渡るがツールは無く、エージェントへの指示にプロフィールの段落が無い', true);
+  t.ok('サーバー越し: 設定・コマンド・会話のメタ・中継の準備・main への知らせに内蔵ブラウザーのプロフィールが無い。list_browser_profiles は Chrome のプロフィールの一覧で、エージェントへの指示にプロフィールの段落が無い', true);
 
   // ---- agy: 2 つ以上のサーバーは 1 本の中継に束ねる
   {

@@ -1,6 +1,6 @@
 // ply_browser: エージェントのブラウザー操作のための MCP の口（core/agent-bridge.mjs と同じ型。会話ごとに Bearer の付いた HTTP）。
 // エージェントのブラウザー（PC の Chrome の専用の窓。ADR 0148）を渡すターン（デスクトップ版で中継がある）にだけ渡す。
-// 載せるツールは hand_to_user と close_browser_window。Chrome のプロフィールの一覧は後の段で足す。
+// hand_to_user・close_browser_window と、useProfiles で登録するプロフィールの一覧・切り替えを載せる。
 import { claimToken } from './mcp-token.mjs';
 import { agentT } from './i18n.mjs';
 import { HANDOFF_REASONS } from './chrome/handoff.mjs';
@@ -26,6 +26,25 @@ export const browserTools = locale => [{
   inputSchema: { type: 'object', properties: {}, additionalProperties: false },
 }];
 
+/** Chrome のプロフィールのツール（第 10 段）。プロフィールの本体があるホストだけに載せる（createBrowserBridge の useProfiles） */
+export const PROFILE_TOOLS = ['list_browser_profiles', 'use_browser_profile'];
+export const profileTools = locale => [{
+  name: 'list_browser_profiles',
+  description: agentT(locale, 'browserBridge.listProfiles.description'),
+  inputSchema: { type: 'object', properties: {} },
+}, {
+  name: 'use_browser_profile',
+  description: agentT(locale, 'browserBridge.useProfile.description'),
+  inputSchema: {
+    type: 'object',
+    properties: {
+      profile: { type: 'string', description: agentT(locale, 'browserBridge.useProfile.profileDescription') },
+      browser: { type: 'string', enum: ['chrome', 'edge'], description: agentT(locale, 'browserBridge.useProfile.browserDescription') },
+    },
+    required: ['profile'],
+  },
+}];
+
 /** hand_to_user を待つ 1 回の長さ（ミリ秒）。バックエンドの呼び出しの上限（Claude・Codex は 660 秒）より短くし、超えたら「まだ待っています」で返して呼び直させる */
 export const BROWSER_WAIT_SLICE_MS = 600_000;
 
@@ -49,9 +68,25 @@ export function handToUserResult(locale, answer) {
 export function createBrowserBridge({ handoffs = null, closeWindow = null } = {}) {
   const bindings = new Map();
   const fail = text => ({ isError: true, content: [{ type: 'text', text }] });
+  let profiles = null;   // { list(sessionId, locale), use(sessionId, { profile, browser }, locale) }（useProfiles で差し込む。ops の browser.listProfiles・useProfile を呼ぶ）
+  async function profileCall(binding, params) {
+    // i18n-dynamic: agent:browserBridge.useProfile.
+    const { locale } = binding;
+    let owner;
+    try { owner = await binding.owner(); } catch (error) { return fail(String(error?.message ?? error)); }
+    if (!owner?.sessionId) return fail(agentT(locale, 'browserBridge.handToUser.noTurn'));
+    const args = params.arguments && typeof params.arguments === 'object' ? params.arguments : {};
+    try {
+      if (params.name === 'list_browser_profiles') return { isError: false, content: [{ type: 'text', text: JSON.stringify(await profiles.list(owner.sessionId, locale)) }] };
+      if (typeof args.profile !== 'string' || !args.profile) return fail(agentT(locale, 'browserBridge.invalidTool'));
+      const done = await profiles.use(owner.sessionId, { profile: args.profile, ...(typeof args.browser === 'string' ? { browser: args.browser } : {}) }, locale);
+      return { isError: false, content: [{ type: 'text', text: agentT(locale, done.changed ? 'browserBridge.useProfile.done' : 'browserBridge.useProfile.same', { name: done.name, dir: done.dir }) }] };
+    } catch (error) { return fail(String(error?.message ?? error)); }
+  }
   async function callTool(binding, params) {
     // i18n-dynamic: agent:browserBridge.closeWindow.
     const { locale } = binding;
+    if (profiles && PROFILE_TOOLS.includes(params?.name)) return profileCall(binding, params);
     if (!['hand_to_user', 'close_browser_window'].includes(params?.name) || (params.name === 'hand_to_user' && !handoffs) || (params.name === 'close_browser_window' && !closeWindow)) return fail(agentT(locale, 'browserBridge.invalidTool'));
     let owner;
     try { owner = await binding.owner(); } catch (error) { return fail(String(error?.message ?? error)); }
@@ -72,6 +107,8 @@ export function createBrowserBridge({ handoffs = null, closeWindow = null } = {}
     return { isError, content: [{ type: 'text', text }] };
   }
   return {
+    /** プロフィールのツールの本体を差し込む（null で外す）。差し込んだホストだけ tools/list に載る */
+    useProfiles(adapter) { profiles = adapter ?? null; },
     // token は開き直す口の値（省略なら新しく作る。形が違う・使用中なら投げる）。
     // owner は呼び出しの時点の会話を返す: { sessionId, signal, waitSliceMs? }（ターンが無ければ投げる。ply_computer の owner と同じ）
     open({ origin, owner, locale, token: fixed }) {
@@ -103,6 +140,7 @@ export function createBrowserBridge({ handoffs = null, closeWindow = null } = {}
       else if (m.method === 'tools/list') result = { tools: handoffs ? browserTools(locale) : [] };   // Chrome の層が無いホストは載せない
       else if (m.method === 'tools/call') result = await callTool(binding, m.params);
       else return reply(200, { jsonrpc: '2.0', id: m.id, error: { code: -32601, message: 'Method not found' } });
+      if (m.method === 'tools/list' && handoffs && profiles) result = { tools: [...result.tools, ...profileTools(locale)] };
       reply(200, { jsonrpc: '2.0', id: m.id, result });
     },
   };

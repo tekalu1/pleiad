@@ -5,6 +5,7 @@ import { el, svgEl } from './dom.mjs';
 import { LINK_OPEN_VALUES, linkOpenPref } from './browser-address.mjs';
 import { modifierKey } from './link-open.mjs';
 import { blockedPreviewOrigins, onBlockedPreviewOrigins } from './preview-confirm.mjs';
+import { profileKey, noteOf, browserLabel, validProfileRef, profileLabel, NOTE_MAX } from './chrome-profile-model.mjs';
 const AGENT_BROWSER_VERSION = '0.38.1';
 
 // エージェントのブラウザー（PC の Chrome）への接続の案内で開いてもらうアドレス。chrome.exe に渡しても新しいタブになるので、コピーして貼り付けてもらう
@@ -42,6 +43,7 @@ export function setupBrowserSettings({ available, cmd, getPrefs, getAgentLabel =
   row.append(label, seg);
   const error = el('p', 'browser-setting-error'); error.setAttribute('role', 'status');
   const chromeSection = el('section', 'browser-confirm-settings browser-chrome-setting'); chromeSection.hidden = true;
+  const profileSection = el('section', 'browser-confirm-settings browser-profile-setting'); profileSection.hidden = true;
   const agentSection = el('div', 'browser-agent-setting');
   agentSection.append(el('strong', null, t('settings.browser.agentOperation.title')), el('p', null, t('settings.browser.agentOperation.bundled', { version: AGENT_BROWSER_VERSION })));
   // 近道の説明。修飾キーの名前は <kbd> にする（辞書の {{key}} の所に入れる）
@@ -52,7 +54,7 @@ export function setupBrowserSettings({ available, cmd, getPrefs, getAgentLabel =
   root.replaceChildren(el('p', null, available ? t('settings.browser.description') : t('settings.browser.descriptionRemote')), row, el('p', 'browser-setting-note', t('settings.browser.linkOpen.note')), shortcuts, error);
   if (!available) { row.remove(); agentSection.remove(); root.querySelectorAll('.browser-setting-note').forEach(n => n.remove()); }
   const confirmation = el('section', 'browser-confirm-settings');
-  error.remove(); root.append(confirmation); if (available) root.append(chromeSection, agentSection); root.append(error);
+  error.remove(); root.append(confirmation); if (available) root.append(chromeSection, profileSection, agentSection); root.append(error);
   async function save(key, value) {
     error.textContent = '';
     try { await cmd('setPref', { key, value }); }
@@ -60,9 +62,11 @@ export function setupBrowserSettings({ available, cmd, getPrefs, getAgentLabel =
   }
   function siteRow(key, site, pending = false) {
     const row = el('div', 'browser-setting browser-site');
-    row.append(el('span', 'browser-site-name', site.agent ? `${getAgentLabel(site.agent)} · ${site.origin}` : site.origin));
+    // エージェントの行はプロフィールごと。プロフィールの無い行は、どのプロフィールにも効く古い行
+    const profileName = site.profile ? (profiles?.find(p => profileKey(p) === site.profile)?.name || site.profile.replace(/^\w+:/, '')) : null;
+    row.append(el('span', 'browser-site-name', site.agent ? [getAgentLabel(site.agent), profileName, site.origin].filter(Boolean).join(' · ') : site.origin));
     const update = mode => {
-      const rows = (getPrefs()[key] ?? []).filter(item => item.origin !== site.origin || item.agent !== site.agent);
+      const rows = (getPrefs()[key] ?? []).filter(item => item.origin !== site.origin || item.agent !== site.agent || (item.profile ?? '') !== (site.profile ?? ''));
       if (mode) rows.push({ ...site, mode });
       return save(key, rows);
     };
@@ -192,17 +196,71 @@ export function setupBrowserSettings({ available, cmd, getPrefs, getAgentLabel =
     return cmd('chromeStatus').then(status => { chrome = status; paintChrome(); }).catch(() => {});
   }
 
+  // ---- Chrome のプロフィール（docs/inapp-browser.md「プロフィール」）: 新しい会話の既定と、プロフィールごとのメモ（エージェントの一覧にも載る）。
+  // 会話ごとの切り替えは会話の側（ops の browser.useProfile・web/chrome-profile-menu.mjs）。一覧は ops の browser.listProfiles（表示名・フォルダー名・メモ）
+  let profiles = null;   // [{ browser, dir, name, note }] | null（まだ読んでいない・読めない）
+  function loadProfiles() {
+    const caps = getHostCaps();
+    if (!available || caps === null || caps?.chromeBrowser !== 'available') { profiles = null; paintProfiles(); return Promise.resolve(); }
+    return cmd('invoke', { op: 'browser.listProfiles', args: {} }).then(r => { profiles = r?.profiles ?? []; paintProfiles(); paintConfirmation(); }).catch(() => { profiles = null; paintProfiles(); });
+  }
+  function paintProfiles() {
+    // i18n-dynamic: settings.browser.profiles.
+    if (!profiles?.length) { profileSection.hidden = true; profileSection.replaceChildren(); return; }
+    const prefs = getPrefs();
+    const k = 'settings.browser.profiles.';
+    const many = new Set(profiles.map(p => p.browser)).size > 1;
+    const nameOf = p => many ? `${browserLabel(p.browser)} · ${profileLabel(p, profiles)}` : profileLabel(p, profiles);
+    // 新しい会話の既定（選ばなければ Chrome の最後に使ったプロフィール）
+    const want = validProfileRef(prefs.chromeNewProfile) ? profileKey(prefs.chromeNewProfile) : '';
+    const select = el('select'); select.id = 'browserNewProfile';
+    const last = el('option', null, t(`${k}lastUsed`)); last.value = ''; select.append(last);
+    for (const p of profiles) { const o = el('option', null, nameOf(p)); o.value = profileKey(p); select.append(o); }
+    select.value = profiles.some(p => profileKey(p) === want) ? want : '';
+    select.onchange = () => {
+      const p = profiles.find(row => profileKey(row) === select.value);
+      void save('chromeNewProfile', p ? { browser: p.browser, dir: p.dir } : null);
+    };
+    const pickRow = el('div', 'browser-setting');
+    const pickLabel = el('label', null, t(`${k}newDefault`)); pickLabel.htmlFor = select.id;
+    pickRow.append(pickLabel, select);
+    const list = el('div', 'browser-profile-list');
+    for (const p of profiles) {
+      const row = el('div', 'browser-setting browser-profile');
+      const name = el('span', 'browser-site-name'); name.append(el('strong', null, nameOf(p)), el('small', null, p.dir));
+      const input = el('input'); input.type = 'text'; input.autocomplete = 'off'; input.maxLength = NOTE_MAX;
+      input.placeholder = t(`${k}notePlaceholder`); input.setAttribute('aria-label', t(`${k}noteLabel`, { name: p.name || p.dir }));
+      input.value = noteOf(prefs.chromeProfileNotes ?? [], p);
+      input.onchange = () => {
+        const note = input.value.trim().slice(0, NOTE_MAX);
+        const rows = (getPrefs().chromeProfileNotes ?? []).filter(row => profileKey(row) !== profileKey(p));
+        if (note) rows.push({ browser: p.browser, dir: p.dir, note });
+        void save('chromeProfileNotes', rows);
+      };
+      row.append(name, input); list.append(row);
+    }
+    profileSection.hidden = false;
+    profileSection.replaceChildren(el('h3', null, t(`${k}title`)), el('p', 'browser-setting-note', t(`${k}description`)), pickRow,
+      el('h4', null, t(`${k}notesTitle`)), el('p', 'browser-setting-note', t(`${k}notesNote`)), list);
+  }
+
   function paint() {
     const value = linkOpenPref(getPrefs());
     for (const b of buttons) { b.classList.toggle('on', b.dataset.linkOpen === value); b.setAttribute('aria-pressed', String(b.dataset.linkOpen === value)); }
     paintConfirmation();
+    // 書いているメモの欄は描き直さない（打っている途中の字と位置を保つ）
+    if (!profileSection.contains(document.activeElement)) paintProfiles();
   }
   paint();
   return {
     paint,
     /** サーバーの chromeBrowser イベント（ホストの画面だけに届く） */
-    chromeEvent(ev) { chrome = { state: ev.state, reason: ev.reason ?? null, dialog: ev.dialog === true, product: ev.product ?? null }; paintChrome(); },
+    chromeEvent(ev) {
+      const was = chrome?.state;
+      chrome = { state: ev.state, reason: ev.reason ?? null, dialog: ev.dialog === true, product: ev.product ?? null }; paintChrome();
+      if (ev.state === 'connected' && was !== 'connected') void loadProfiles();   // つないだときに、増やした・名前を変えたプロフィールを読み直す
+    },
     /** hostCapabilities が届いた（つなぎ直したときも）。使える環境なら今の状態を取り直す */
-    hostCapsChanged: loadChrome,
+    hostCapsChanged: () => Promise.all([loadChrome(), loadProfiles()]),
   };
 }

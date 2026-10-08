@@ -16,6 +16,7 @@ import { KINDS as CONTEXT_KINDS, normalizeKind as normalizeContextKind } from '.
 import { MIN_BUDGET, MAX_BUDGET } from '../../web/instruction-amount.mjs';
 import { validBrowserPref } from '../../web/browser-confirm-policy.mjs';
 import { computerUsePrefs, validComputerUse } from '../../web/computer-prefs.mjs';
+import { validProfileNotes, validProfileRef } from '../../web/chrome-profile-model.mjs';
 import { DEFAULTS as VOICE_DEFAULTS, normalizeVoiceSettings, VoiceSettingsError, loosensLimits as voiceLoosens } from '../voice/settings.mjs';
 import { defineOp, defineSetting, OpError, stableStringify } from './registry.mjs';
 import { maxRisk } from './policy.mjs';
@@ -60,7 +61,7 @@ const knownValue = (key) => async (ctx, value, { backend }) => {
   return value;
 };
 
-const sitesKey = (row) => `${row?.agent ?? ''}|${row?.profile ?? 'main'}|${row?.origin ?? ''}`;
+const sitesKey = (row) => `${row?.agent ?? ''}|${row?.profile ?? ''}|${row?.origin ?? ''}`;
 const alwaysSites = (rows) => new Set((Array.isArray(rows) ? rows : []).filter((row) => row?.mode === 'always').map(sitesKey));
 /** 「常に許可」の行が増えた（または ask から always に変わった）ときだけ関所を緩める */
 const sitesRiskOf = (before, after) => { const had = alwaysSites(before); return [...alwaysSites(after)].some((k) => !had.has(k)) ? 'guarded' : 'write'; };
@@ -124,6 +125,14 @@ export const settings = [
     schema: z.array(site), default: [], read: fromPrefs(key),
     normalize: (ctx, v) => { if (!validBrowserPref(key, v)) throw invalid(ctx, `${key}: ${JSON.stringify(v)?.slice(0, 80)}`); return { after: v }; },
     write: (ctx, v) => ctx.writes.browserPref(key, v) })),
+  // Chrome・Edge のプロフィールのメモと、新しい会話のプロフィール（docs/inapp-browser.md「プロフィール」）。
+  // どちらも選ぶ・書き添えるだけで、サイトの許可には触らない（許可の鍵はプロフィールごと）
+  defineSetting({ key: 'chromeProfileNotes', summary: S('chromeProfileNotes'), risk: 'write', riskReason: `Notes shown next to the Chrome profiles. ${WRITE_ABOUT}`,
+    schema: z.array(z.object({ browser: z.string(), dir: z.string(), note: z.string() })), default: [], read: fromPrefs('chromeProfileNotes'),
+    ...plainPref('chromeProfileNotes', (ctx, v) => { if (!validProfileNotes(v)) throw invalid(ctx, `chromeProfileNotes: ${JSON.stringify(v)?.slice(0, 80)}`); return v; }) }),
+  defineSetting({ key: 'chromeNewProfile', summary: S('chromeNewProfile'), risk: 'write', riskReason: `The Chrome profile new conversations start with. ${PICK_ABOUT}`,
+    schema: z.object({ browser: z.string(), dir: z.string() }).nullable(), default: null, read: fromPrefs('chromeNewProfile'),
+    ...plainPref('chromeNewProfile', (ctx, v) => { if (!validProfileRef(v)) throw invalid(ctx, `chromeNewProfile: ${JSON.stringify(v)?.slice(0, 80)}`); return v; }, { nullable: true }) }),
   // 有効にする・全アプリの許可・常に許可を足す向きは関所を緩めるので guarded
   defineSetting({ key: 'computerUse', summary: S('computerUse'), risk: 'write', riskReason: NARROW_ABOUT,
     riskOf: (before, after) => ((after?.enabled === true && before?.enabled !== true) || (after?.allowAllApps === true && before?.allowAllApps !== true)

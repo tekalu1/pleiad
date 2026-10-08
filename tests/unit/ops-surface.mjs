@@ -127,6 +127,7 @@ export default async function (t) {
   // どの read 操作も、秘密らしい名前の欄に目印が入った生の値を受け取っても、返りに出さない（最後の網。実際のデータ置き場でのものは ops-control.mjs）
   const secret = { token: MARKER, apiKey: MARKER, authorization: MARKER };
   const deps = {
+    chromeProfiles: { list: async () => ({ profiles: [{ browser: 'chrome', dir: 'Default', name: 'Personal', note: '', ...secret }], current: null, busy: null, ...secret }) },
     locale: 'ja',
     app: { status: async () => ({ version: '0', protocolVersion: 0, startedAt: 0, locale: { setting: 'auto', lang: 'ja' }, running: 0, ...secret }),
       running: async () => ({ count: 0, turns: [], tasks: [], waiting: 0, ...secret }),

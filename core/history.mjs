@@ -19,6 +19,12 @@ const PRESENT_DIR = path.join(store.dataDir, "presents");
 // present の上限。これを超える content/dataUri は落として印だけ残す。
 const MAX_INLINE_BYTES = 8 * 1024 * 1024;
 
+/** プロフィールを切り替えた行の中身。決まった項目だけを、長さをそろえて残す */
+const shortText = (value, max) => (typeof value === 'string' ? value.slice(0, max) : '');
+const chromeProfileLine = (value) => ({
+  browser: value?.browser === 'edge' ? 'edge' : 'chrome', dir: shortText(value?.dir, 64), name: shortText(value?.name, 100), agent: shortText(value?.agent, 100),
+});
+
 /** ファイルごとの追記を直列化する（同一セッションへの並行 present で行が壊れないように）。 */
 const appendChains = new Map();
 
@@ -134,6 +140,8 @@ export async function recordPresent(sessionId, payload) {
     ...(payload.kind === 'worktree' ? { worktree: payload.worktree ?? null } : {}),
     // 引き継いで戻した行（core/chrome/control.mjs）: { seconds }（引き継いでいた秒数）
     ...(payload.kind === 'chromeHandover' ? { chromeHandover: { seconds: Number.isFinite(payload.chromeHandover?.seconds) ? Math.max(0, Math.round(payload.chromeHandover.seconds)) : 0 } } : {}),
+    // エージェントがプロフィールを切り替えた行（core/chrome/profile-choice.mjs）: { browser, dir, name, agent }（表示名とフォルダー名だけ）
+    ...(payload.kind === 'chromeProfile' ? { chromeProfile: chromeProfileLine(payload.chromeProfile) } : {}),
     ...(payload.kind === 'chromeClosed' ? { chromeClosed: { by: ['agent', 'human'].includes(payload.chromeClosed?.by) ? payload.chromeClosed.by : 'human' } } : {}),
   };
 

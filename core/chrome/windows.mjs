@@ -4,6 +4,10 @@
 //   - 会話の最初の窓: chrome.exe --profile-directory --new-window（プロフィールは Local State の profile.last_used。AGENT_HOST_CHROME_USER_DATA があれば
 //     --user-data-dir を必ず付ける）。題に nonce を持つ data: のページで開き、題の nonce で窓を見つけて隠し、前面を取っていたら直前の前面へ返す。
 //     窓が見つからない・chrome.exe を起こせないときは、createTarget の新しい窓に落とす（プロフィールは選べない）
+//   - プロフィール（第 10 段）: 会話のプロフィール（profileFor。選んだもの・新しい会話の既定）があれば、そのプロフィールの窓を開く。
+//     そのプロフィールの窓がまだ無ければ chrome.exe --profile-directory で開き、あれば createTarget にその窓の browserContextId を渡して、
+//     開いたタブの browserContextId が同じかを確かめる（違えば閉じて chrome.exe で開き直す。どちらもできなければ失敗。違うプロフィールで開かない）。
+//     選んでいないときは今まで通りで、最初の窓を開いたプロフィールを profileUsed で会話に覚える。切り替えても前の窓は閉じない
 //   - 2 枚目からのタブ: 新しい窓（createTarget に画面の外の位置を渡す。題の nonce で窓を見つけて隠す）。同じ窓へ足すと、裏のタブは hidden になり
 //     描画が止まる（agent-browser の tab tN が送る bringToFront は中継が握りつぶすので、前へ出せない）ので、タブごとに窓を持つ
 //   - window.open の popup の別窓: 中継が範囲に足したあと adoptPopup。外形（CDP の Browser.getWindowBounds）で窓を見つけて隠す。
@@ -18,7 +22,7 @@
 // 窓の大きさ（DIP）は Pleiad が決める（Browser.setWindowBounds）。窓の ref は層が出した値で、core は覚えて返すだけ。
 // ログには窓の題・URL・プロフィール名を出さない。
 import crypto from 'node:crypto';
-import { readLastUsedProfile } from './locate.mjs';
+import { readLastUsedProfile, PROFILE_DIR } from './locate.mjs';
 
 /**
  * 窓の大きさ（DIP。外形）。右パネルの映像（第 5 段）の元の大きさで、右パネルの幅（既定で約 430〜540 px）に縮めて映すので、窓が広いほど字が小さくなる。
@@ -49,10 +53,14 @@ async function waitFor(check, totalMs, pollMs) {
  * @param {object} deps
  * @param deps.os      core/chrome/os.mjs の口（偽物でもよい）
  * @param deps.locate  Chrome の User Data（{ userDataDir, custom? }。core/chrome/locate.mjs の chromeHomes）
+ * @param [deps.profileFor]   会話の id → 窓を開くプロフィール（{ browser: 'chrome', dir } | null。null は今まで通り profile.last_used）
+ * @param [deps.profileUsed]  (会話の id, { browser, dir }) 選んでいない会話の最初の窓を開いたプロフィール（会話に覚えさせる）
  */
-export function createChromeWindows({ os, locate, log = () => {}, random = () => crypto.randomBytes(8).toString('hex'), timing = {} }) {
+export function createChromeWindows({ os, locate, log = () => {}, random = () => crypto.randomBytes(8).toString('hex'), timing = {}, profileFor = () => null, profileUsed = () => {} }) {
   const time = { ...DEFAULT_TIMING, ...timing };
-  const entries = new Map();   // 会話の id -> { windows: Map<windowId, { ref, nonce, role }>, queue: Promise }
+  // 会話の id -> { windows: Map<windowId, { ref, nonce, role, token, profile, context }>, queue: Promise }
+  // profile: 窓のプロフィールのフォルダー名（分からなければ null）。context: 窓の最初のタブの browserContextId（同じプロフィールに窓を足すときに渡す）
+  const entries = new Map();
   let browser;                 // undefined: まだ探していない / null: 見つからない / { id, product }
   let baseline = null;         // 直近の窓を開く前のブラウザーの窓の写し（snapshotWindows）。popup を外形で探すとき、それ以前からある窓を除く
   let markSeq = 0;
@@ -133,29 +141,65 @@ export function createChromeWindows({ os, locate, log = () => {}, random = () =>
     }, waitMs, time.hwndPollMs);
   }
 
-  async function openWindow(cdp, entry, url) {
+  /** chrome.exe で新しい窓を開く（--profile-directory。起こせなければ false） */
+  async function launch(features, nonce, profileDir) {
+    if (!features.launch) return false;
+    const found = await locateBrowser();
+    if (!found) return false;
+    const result = await os.launchWindow({ browser: found, profileDir, url: nonceUrl(nonce), nonce,
+      ...(locate?.custom ? { userDataDir: locate.userDataDir } : {}) });   // --window-position・--window-size は付けない（起動中の Chrome に渡す新しい窓では無視される。実機）
+    if (result?.ok !== true) { log('chrome-windows: launching chrome.exe failed'); return false; }
+    return true;
+  }
+
+  const contextOf = async (cdp, targetId) => (await cdp.send('Target.getTargetInfo', { targetId }).catch(() => null))?.targetInfo?.browserContextId ?? null;
+
+  /** 会話のプロフィール（Chrome のものだけ。Edge への接続はまだ無い） */
+  function wantedProfile(entryId) {
+    let want = null;
+    try { want = profileFor(entryId); } catch { want = null; }
+    return want?.browser === 'chrome' && typeof want.dir === 'string' && PROFILE_DIR.test(want.dir) ? want.dir : null;
+  }
+
+  async function openWindow(cdp, entryId, entry, url) {
     await osReady();
-    const nonce = random();
+    let nonce = random();
     const features = os.capabilities().features;
     const before = await os.foreground();
     const since = features.conceal && features.bounds ? await os.snapshotWindows() : null;
     baseline = since;
-    const first = entry.windows.size === 0;
+    const want = wantedProfile(entryId);
+    const records = [...entry.windows.values()];
+    const first = want ? !records.some(record => record.profile === want) : entry.windows.size === 0;
     const spot = features.conceal ? await os.hiddenSpot() : null;
+    const create = context => cdp.send('Target.createTarget', { url: nonceUrl(nonce), newWindow: true, background: true, ...(spot ? { left: spot.x, top: spot.y, ...WINDOW_DIP } : {}), ...(context ? { browserContextId: context } : {}) });
     let targetId = null;
     let launched = false;
-    if (first && features.launch) {
-      const found = await locateBrowser();
-      if (found) {
-        const profileDir = await readLastUsedProfile(locate?.userDataDir);
-        const result = await os.launchWindow({ browser: found, profileDir, url: nonceUrl(nonce), nonce,
-          ...(locate?.custom ? { userDataDir: locate.userDataDir } : {}) });   // --window-position・--window-size は付けない（起動中の Chrome に渡す新しい窓では無視される。実機）
-        launched = result?.ok === true;
-        if (!launched) log('chrome-windows: launching chrome.exe failed (opens the window with createTarget)');
+    let profile = null;
+    if (want) {
+      // 選んだプロフィール: その窓があれば同じ browserContextId に足して確かめ、無い・違えば chrome.exe で開く
+      const known = records.find(record => record.profile === want && record.context)?.context ?? null;
+      if (known) {
+        targetId = (await create(known).catch(() => null))?.targetId ?? null;
+        if (targetId && await contextOf(cdp, targetId) !== known) {
+          log('chrome-windows: the new window opened in another profile, so it was closed');
+          await cdp.send('Target.closeTarget', { targetId }).catch(() => {});
+          targetId = null;
+        }
       }
-    }
-    if (!launched) {
-      ({ targetId } = await cdp.send('Target.createTarget', { url: nonceUrl(nonce), newWindow: true, background: true, ...(spot ? { left: spot.x, top: spot.y, ...WINDOW_DIP } : {}) }));
+      if (!targetId) {
+        nonce = random();
+        launched = await launch(features, nonce, want);
+        if (!launched) throw new Error('could not open a window in the selected Chrome profile');
+      }
+      profile = want;
+    } else {
+      if (first) {
+        const profileDir = await readLastUsedProfile(locate?.userDataDir);
+        launched = await launch(features, nonce, profileDir);
+        if (launched) profile = profileDir;
+      }
+      if (!launched) ({ targetId } = await create(null));
     }
     let ref = null;
     let windowId;
@@ -175,8 +219,14 @@ export function createChromeWindows({ os, locate, log = () => {}, random = () =>
         else log('chrome-windows: window not found, so it was not hidden');
       }
       const token = ref ? await os.exportAgent(ref) : null;
-      entry.windows.set(windowId, { ref, nonce, role: first ? 'main' : 'extra', token });
+      const context = await contextOf(cdp, targetId);
+      if (!profile && context) profile = records.find(record => record.context === context && record.profile)?.profile ?? null;
+      entry.windows.set(windowId, { ref, nonce, role: first ? 'main' : 'extra', token, profile, context });
       changed();
+      if (!want && launched) {
+        const id = [...entries].find(([, value]) => value === entry)?.[0] ?? entryId;   // 開く間に新しい会話の id が決まっていれば、その id
+        try { profileUsed(id, { browser: 'chrome', dir: profile }); } catch { /* 覚えられなくても窓は使える */ }
+      }
     } catch (error) {
       // 隠した窓の記録だけを残さない（見えない窓が、誰にも戻せないまま残る）。閉じる（だめなら戻す）
       if (ref) await os.closeAgent(ref).catch(() => {});
@@ -195,7 +245,7 @@ export function createChromeWindows({ os, locate, log = () => {}, random = () =>
      */
     openTab({ cdp, url = 'about:blank', entryId }) {
       const entry = entryOf(entryId);
-      const run = entry.queue.then(() => openWindow(cdp, entry, url));
+      const run = entry.queue.then(() => openWindow(cdp, entryId, entry, url));
       entry.queue = run.catch(() => {});
       return run;
     },
@@ -204,7 +254,7 @@ export function createChromeWindows({ os, locate, log = () => {}, random = () =>
     async adoptPopup({ cdp, entryId, windowId }) {
       const entry = entryOf(entryId);
       if (entry.windows.has(windowId)) return;
-      const record = { ref: null, nonce: null, role: 'popup', token: null };
+      const record = { ref: null, nonce: null, role: 'popup', token: null, profile: null, context: null };
       entry.windows.set(windowId, record);
       try { await osReady(); } catch (error) { log(`chrome-windows: ${error.message}`); return; }
       const features = os.capabilities().features;
@@ -334,7 +384,8 @@ export function createChromeWindows({ os, locate, log = () => {}, random = () =>
       const out = [];
       for (const [id, entry] of entries) {
         // 見せている間に開いた popup は、まだ層の印が無い（戻すときに外形で探して隠す）。窓の ID だけ預けて、新しいサーバーでも範囲に戻す
-        const windows = [...entry.windows].filter(([, record]) => record.token || record.role === 'popup').map(([windowId, record]) => ({ windowId, role: record.role, token: record.token ?? null }));
+        const windows = [...entry.windows].filter(([, record]) => record.token || record.role === 'popup').map(([windowId, record]) => ({ windowId, role: record.role, token: record.token ?? null,
+          ...(record.profile ? { profile: record.profile } : {}), ...(record.context ? { context: record.context } : {}) }));
         if (windows.length) out.push({ id, ...(entry.revealed ? { revealed: true } : {}), windows });
       }
       return out;
@@ -349,7 +400,9 @@ export function createChromeWindows({ os, locate, log = () => {}, random = () =>
         for (const w of item.windows) {
           const popup = w?.role === 'popup' && w.token == null;
           if (!Number.isSafeInteger(w?.windowId) || (typeof w.token !== 'string' && !popup) || entry.windows.has(w.windowId)) continue;
-          entry.windows.set(w.windowId, { ref: null, nonce: null, role: typeof w.role === 'string' ? w.role : 'extra', token: popup ? null : w.token });
+          entry.windows.set(w.windowId, { ref: null, nonce: null, role: typeof w.role === 'string' ? w.role : 'extra', token: popup ? null : w.token,
+            profile: typeof w.profile === 'string' && PROFILE_DIR.test(w.profile) ? w.profile : null,
+            context: typeof w.context === 'string' && w.context.length <= 128 ? w.context : null });
         }
       }
     },
@@ -400,7 +453,19 @@ export function createChromeWindows({ os, locate, log = () => {}, random = () =>
       return closed;
     },
 
+    /**
+     * タブのプロフィール（サイトの許可の鍵。'chrome:<フォルダー名>'）。窓の記録に無ければ、同じ browserContextId の窓から引く（popup は開いた窓と同じ）。
+     * 分からなければ null
+     */
+    profileOf(entryId, { windowId = null, context = null } = {}) {
+      const entry = entries.get(entryId);
+      if (!entry) return null;
+      const own = entry.windows.get(windowId)?.profile
+        ?? (context ? [...entry.windows.values()].find(record => record.context === context && record.profile)?.profile : null);
+      return own ? `chrome:${own}` : null;
+    },
+
     /** テスト・診断用: 会話の窓（windowId・ref・役割）。窓の題・URL は持たない */
-    windows(entryId) { return [...(entries.get(entryId)?.windows ?? [])].map(([windowId, record]) => ({ windowId, ref: record.ref, role: record.role })); },
+    windows(entryId) { return [...(entries.get(entryId)?.windows ?? [])].map(([windowId, record]) => ({ windowId, ref: record.ref, role: record.role, profile: record.profile ?? null })); },
   };
 }

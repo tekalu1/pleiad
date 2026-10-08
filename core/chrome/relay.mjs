@@ -104,15 +104,18 @@ function committedOrigin(frame) {
  * @param deps.connection  core/chrome/connection.mjs の接続（demand({ signal }) で cdp を返す）
  * @param deps.os          core/chrome/os.mjs の口（窓を隠す・見つける。connection と同じものでよい）
  * @param deps.locate      Chrome の User Data（core/chrome/locate.mjs の chromeHomes の 1 つ。{ userDataDir, custom? }）
+ * @param [deps.profileFor]  会話の窓を開くプロフィール（core/chrome/windows.mjs の profileFor。既定の scope に渡す）
+ * @param [deps.profileUsed] 選んでいない会話の最初の窓を開いたプロフィール（同じく profileUsed）
  * @param [deps.scope]     窓の作り方（openTab・adoptPopup・windowClosed・rebind・reset・forget）。既定は core/chrome/windows.mjs の専用の窓
- * @param [deps.authorize] サイトの利用の確認（core/browser-confirm.mjs の createBrowserSiteApprovals）。({ sessionId, url }, signal) → { allow, message? }
+ * @param [deps.authorize] サイトの利用の確認（core/browser-confirm.mjs の createBrowserSiteApprovals）。({ sessionId, url, profile }, signal) → { allow, message? }。
+ *                        profile はタブのプロフィール（'chrome:<フォルダー名>'。scope.profileOf。分からなければ null）
  * @param [deps.deniedMessage] 確認で断られた移動をエージェントへ返す文
  * @param [deps.handoff]  操作待ち（core/chrome/handoff.mjs）。接続が無いまま待つとき connect(sessionId) で許可待ちのカードを出す（20 秒の待ちが外れても試行は続く）
  * @param [deps.turnLive] (sessionId) => その会話のターンが走っているか。無い・false のとき、つながっていなければ確認を出さずに断る（頼んだ人が居ない）
  * @param [deps.turnSignal] (sessionId) => 走っているターンの中断の合図。人の「止める」で、その会話の接続待ちを外す
  * @param [deps.connectWaitText] (sessionId) => 20 秒待ってもつながらないときに（setup・permission で）エージェントへ返す文。会話の言語。無ければ英語の固定
  */
-export function createChromeRelay({ connection, os, locate, log = () => {}, scope = createChromeWindows({ os, locate, log }), authorize = async () => ({ allow: false }), deniedMessage = () => 'navigation denied',
+export function createChromeRelay({ connection, os, locate, log = () => {}, profileFor, profileUsed, scope = createChromeWindows({ os, locate, log, profileFor, profileUsed }), authorize = async () => ({ allow: false }), deniedMessage = () => 'navigation denied',
   connectWaitMs = CONNECT_WAIT_MS, commandTimeoutMs = COMMAND_TIMEOUT_MS, handoff = null, connectWaitText = null, turnLive = null, turnSignal = () => undefined } = {}) {
   const entries = new Map();   // 会話の id -> entry
   const byKey = new Map();
@@ -564,7 +567,8 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, scop
 
   function ask(tab, url) {
     const signal = tab.controller.signal;
-    const work = Promise.resolve().then(() => authorize({ sessionId: tab.entry.id, url }, signal)).then(answer => answer ?? { allow: false }, () => ({ allow: false }));
+    const profile = scope.profileOf?.(tab.entry.id, { windowId: tab.windowId, context: tab.info?.browserContextId ?? null }) ?? null;
+    const work = Promise.resolve().then(() => authorize({ sessionId: tab.entry.id, url, profile }, signal)).then(answer => answer ?? { allow: false }, () => ({ allow: false }));
     tab.pending.add(work);
     work.finally(() => tab.pending.delete(work));
     return work;

@@ -71,7 +71,8 @@ export default async function (t) {
   {
     const win = { LOCALAPPDATA: 'C:\\Users\\x\\AppData\\Local' };
     const def = chromeHomes({ platform: 'win32', env: win });
-    t.ok('既定（Windows）は %LOCALAPPDATA%\\Google\\Chrome\\User Data', def.length === 1 && def[0].browser === 'chrome' && def[0].userDataDir === path.join(win.LOCALAPPDATA, 'Google', 'Chrome', 'User Data'), JSON.stringify(def));
+    t.ok('既定（Windows）は %LOCALAPPDATA%\\Google\\Chrome\\User Data が先頭（接続に使う）', def[0].browser === 'chrome' && def[0].userDataDir === path.join(win.LOCALAPPDATA, 'Google', 'Chrome', 'User Data'), JSON.stringify(def));
+    t.ok('2 つ目は Edge の User Data（プロフィールの一覧の口）', def.length === 2 && def[1].browser === 'edge' && def[1].userDataDir === path.join(win.LOCALAPPDATA, 'Microsoft', 'Edge', 'User Data'), JSON.stringify(def));
     const over = chromeHomes({ platform: 'win32', env: { ...win, AGENT_HOST_CHROME_USER_DATA: 'D:\\chrome-test' } });
     t.ok('AGENT_HOST_CHROME_USER_DATA があれば、それだけを返す（既定の場所は混ぜない）', over.length === 1 && over[0].userDataDir === 'D:\\chrome-test', JSON.stringify(over));
     const overLinux = chromeHomes({ platform: 'linux', env: { AGENT_HOST_CHROME_USER_DATA: '/tmp/chrome-test' } });
