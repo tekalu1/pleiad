@@ -1,4 +1,5 @@
 {
+  "taskChrome": { "view": "Chrome の窓を見る", "close": "子の Chrome の窓を閉じる", "unknown": "プロフィール未確認", "running": "作業中", "paused": "引き継ぎ中", "stopped": "停止中", "idle": "待機中" },
   "pending": {
     "moving": "移動中",
     "movingProgress": "移動中 {{done}}/{{total}}",

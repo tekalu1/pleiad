@@ -1,4 +1,5 @@
 {
+  "taskChrome": { "view": "View Chrome window", "close": "Close child's Chrome window", "unknown": "Profile unknown", "running": "Working", "paused": "Handed over", "stopped": "Stopped", "idle": "Idle" },
   "pending": {
     "moving": "Moving…",
     "movingProgress": "Moving… {{done}}/{{total}}",

@@ -102,6 +102,13 @@ export function createProfileChoice({ list, peek, save, getPrefs, control = null
       if (!(await list()).some(p => sameRef(p, want))) return;   // 消したプロフィールは選ばない（今まで通り最後に使ったもの）
       await remember(tempId, { browser: want.browser, dir: want.dir });
     },
+    /** 委譲の子は作成時点の親の選択を写す。親が未選択なら新しい会話の既定を使う。 */
+    async inherit(parentId, childId) {
+      if (!childId || current(childId)) return;
+      const parent = current(parentId);
+      if (parent) await remember(childId, { ...parent });
+      else await this.startNew(childId);
+    },
     /** windows.mjs の profileFor */
     profileFor: sessionId => current(sessionId),
     /** 本物の会話メタができた後に、仮 id から移した選択を保存する */

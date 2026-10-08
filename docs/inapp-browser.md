@@ -213,7 +213,7 @@ OS の層は、隠した窓が前面を取ったら直前の前面へ返す。�
 
 **画面の部品の口**: `web/chrome-profile-menu.mjs` の `profileMenuItems({ profiles, notes?, current, busy, onPick, onManage? })` は `web/context-menu.mjs` 用の項目を返す。`profiles/current/busy` は `browser.listProfiles` の答えをそのまま渡せる。`onPick({ browser, dir })` で `browser.useProfile({ sessionId, browser, profile: dir })` を呼び、`onManage` は設定 › ブラウザーへつなぐ。選択ボタンは「Claude の Chrome」タブ内の道具の列へ置く。ボタンとメニューの開閉、イベントによる再取得は呼び出し側が受け持つ。
 
-**委譲への引き継ぎ**: 子の作成時に親の会話メタ `chromeProfile` を子へ継ぐ処理は次段で行う。親が未選択の場合と、明示的な子の選択がある場合の優先順位もそこで決める。ここでは新規会話の設定の既定だけを適用する。
+**委譲への引き継ぎ**: 子の会話を作るとき、親の `chromeProfile` をその時点で子へ写す。親が未選択なら `chromeNewProfile` を適用する。親が後で替えても子には波及せず、子は `use_browser_profile` で独立に替えられる。子の変更は子の会話に記録され、親の委譲カードの Chrome の行にも反映される。
 
 ### 映像と右パネルの「Chrome の窓」
 
@@ -258,6 +258,8 @@ ADR 0148 にある「{エージェント名} が操作中「題」· 止める �
 
 `ply_browser`（`core/browser-bridge.mjs`、`/mcp/browser`）の `hand_to_user` は、`reason`（`login`・`captcha`・`two_factor`・`payment`・`other`）と `message` を受ける。文は最大 200 文字。依頼のカードの「Chrome で操作する」は引き継ぎを呼び、「あなたが操作中」へ替わる。「Claude に戻す」で一時停止が解けると待っていた呼び出しに返る。接続前なら接続の案内に読み替え、すでにカードがあれば同じカードを待つ。
 
+委譲した子の依頼は親の会話にも複製される。親のカードの操作対象は子の会話 ID なので、親から子の窓を引き継ぎ、戻せる。子のカードも同時に済む。`reason: login` の子が並行したときだけ、直接の親・現在のタブを含む窓の実際のプロフィール・呼び出し時の現在のタブの origin がすべて同じなら、親のカードを 1 枚にまとめる。カードには待っている子の作業を並べ、最初の子の窓を操作対象にする。戻すと各子の待ちを解き、各自が `snapshot` からやり直す。origin または窓のプロフィールが読めない場合は別のカードにする。
+
 MCP の口は会話ごとの Bearer で守る。Claude・Codex は HTTP の MCP、Antigravity は `core/agy-context-relay.mjs --browser` を使い、コンテキスト・コンピューターの操作と一緒に渡す場合は 1 本の stdio の中継に束ねる。
 
 #### 区切って返す・「続けてください」
@@ -284,7 +286,9 @@ MCP の口は会話ごとの Bearer で守る。Claude・Codex は HTTP の MCP�
 
 ### 窓を閉じる
 
-`ply_browser.close_browser_window` は呼び出した会話の専用窓を閉じる（引数なし）。右パネルでは Chrome の道具の列の ⋯ に窓の一覧と「窓を閉じる」を置き、後者は `browser.chromeCloseWindow` を呼ぶ。PC の画面とリモートの端末で使える。MCP と CLI の ops には出さない。窓は使い終えたときに閉じられるが、続きに使う画面やログイン中の窓は開いたままにできる。閉じた後にブラウザーを使うと新しい専用窓が黙って開く。
+`ply_browser.close_browser_window` は引数なしなら呼び出した会話の専用窓を閉じる。`{ task: '<taskId>' }` なら、この会話が直接委譲したローカルの子の窓を閉じる。タスクと子の会話メタの親子関係を両方確かめ、別の親・孫・リモートのホストの子・孤立した記録は断る。右パネルでは Chrome の道具の列の ⋯ に窓の一覧と「窓を閉じる」を置き、後者は `browser.chromeCloseWindow` を呼ぶ。PC の画面とリモートの端末で使える。MCP と CLI の ops には出さない。窓は使い終えたときに閉じられるが、続きに使う画面やログイン中の窓は開いたままにできる。閉じた後にブラウザーを使うと新しい専用窓が黙って開く。
+
+親の委譲カードの下には、子の窓が開いている間だけ Chrome の印・プロフィール・状態・子の会話を開く操作・窓を閉じる × を出す。`browser.chromeWindows({ sessionId })` は、この会話と直接委譲した子の開いている窓を `{ sessionId, taskId, title, windows, profile, profileName, state }[]` で返す。タブの窓の数と ⋯ の一覧は、この読み取り口を使う。窓が開閉したら `chromeWindow`、プロフィールが替わったら `chromeProfile`、操作状態が替わったら `chromeControl` で読み直す。
 
 閉じる直前の `Page.captureScreenshot` を `<data>/uploads/chrome-window/<会話 ID の SHA-256>/<時刻>-<UUID>.png` に置き、会話の `chromeClosed` の行にファイルのパスだけを記録する。人が Chrome の × で直接閉じたときと、撮影できないときは最後に受けた映像の JPEG を `.jpg` として残す。画像が無いときも閉じた行は残る。会話を消すと、窓とその会話の静止画を片付ける。
 
@@ -292,4 +296,4 @@ MCP の口は会話ごとの Bearer で守る。Claude・Codex は HTTP の MCP�
 
 ### 検証
 
-`tests/unit/chrome-connection.mjs`・`chrome-os.mjs`・`server-chrome.mjs`・`chrome-settings.mjs` が接続と OS の層、`chrome-relay.mjs` が範囲・断る一覧・サイトの確認、`chrome-windows.mjs` が専用の窓を確かめる。映像は `chrome-screencast.mjs`・`server-chrome-screencast.mjs`、引き継ぎは `chrome-control.mjs`・`chrome-control-ui.mjs`。窓を閉じる流れは `chrome-close-window.mjs`。操作待ちと端末入力は `chrome-handoff.mjs`・`chrome-handoff-flow.mjs`・`chrome-device.mjs`・`browser-bridge.mjs`。いずれも偽の Chrome・OS の層で、本物の利用者の Chrome は使わない。
+`tests/unit/chrome-connection.mjs`・`chrome-os.mjs`・`server-chrome.mjs`・`chrome-settings.mjs` が接続と OS の層、`chrome-relay.mjs` が範囲・断る一覧・サイトの確認、`chrome-windows.mjs` が専用の窓を確かめる。映像は `chrome-screencast.mjs`・`server-chrome-screencast.mjs`、引き継ぎは `chrome-control.mjs`・`chrome-control-ui.mjs`。窓を閉じる流れは `chrome-close-window.mjs`。操作待ちと端末入力は `chrome-handoff.mjs`・`chrome-handoff-flow.mjs`・`chrome-device.mjs`・`browser-bridge.mjs`。委譲は `chrome-delegation.mjs` がプロフィール・窓の所有関係・同じサイトを待つ 2 つの子・窓ごとの停止を確かめる。いずれも偽の Chrome・OS の層で、本物の利用者の Chrome は使わない。

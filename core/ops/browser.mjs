@@ -182,6 +182,15 @@ export const browserOps = [
     },
   }),
   defineOp({
+    id: 'browser.chromeWindows',
+    summary: 'agent:ops.browser.chromeWindows.summary',
+    risk: 'read',
+    input: controlInput,
+    output: z.array(z.object({ sessionId: z.string(), taskId: z.string().nullable(), title: z.string().nullable(), windows: z.number(), profile: profileRefShape.nullable(), profileName: z.string().nullable(), state: z.string() })),
+    surfaces: { ui: true, mcp: false, cli: false },
+    handler: (ctx, { sessionId }) => mustBeSupported(ctx).windows(sessionId),
+  }),
+  defineOp({
     id: 'browser.chromeOpen',
     summary: 'agent:ops.browser.chromeOpen.summary',
     risk: 'write',

@@ -69,6 +69,7 @@ import { backgroundTitle, taskTree, backgroundTotals, groupByOwner, visibleRows 
 import { hostViewCursor, joinHostView, hostTreeRows, mergeHostTree, hostRowStale, hostRowRunning, HOST_ROW_STALE_MS } from './host-view.mjs';
 import { createCardRoll } from './card-roll.mjs';
 import { mergeTasks, tasksToFetch, staleTasks, treeSessions } from './task-cards.mjs';
+import { paintTaskChrome } from './task-chrome.mjs';
 import { createBackgroundChip } from './background-chip.mjs';
 import { overlaySessions, rollbackSessions, currentRows } from './pending-sidebar.mjs';
 import { behindOfTasks, liveTasksOf } from './work-status.mjs';
@@ -2995,9 +2996,10 @@ function onEvent(ev, replay = false) {
   // エージェントのブラウザー（PC の Chrome）への接続の状態。ホストの画面だけに届く（設定 › ブラウザー）
   if (ev.type === 'chromeBrowser') { browserSettings.chromeEvent(ev); return; }
   // エージェントの Chrome の窓の状態（会話ごと。running・idle・stopped・paused）と、エージェントが押した位置。右パネルの「Chrome の窓」が置き場から引く（web/chrome-control.mjs）
-  if (ev.type === 'chromeControl' || ev.type === 'chromeTap') { chromeControlStore.event(ev); return; }
+  if (ev.type === 'chromeControl' || ev.type === 'chromeTap') { chromeControlStore.event(ev); if (ev.type === 'chromeControl') refreshTaskChromeWindows(); return; }
   // 会話の Chrome の窓の有無と、エージェントが操作中か（リモートの端末にも届く）
-  if (ev.type === 'chromeWindow') { if (chromePanel ? chromePanel.windowEvent(ev) : chromeWindows.apply(ev)) { browserEntry?.paint(); browserPanel?.refreshTabs(); paintChromeControl(); } return; }
+  if (ev.type === 'chromeWindow') { if (chromePanel ? chromePanel.windowEvent(ev) : chromeWindows.apply(ev)) { browserEntry?.paint(); browserPanel?.refreshTabs(); paintChromeControl(); refreshTaskChromeWindows(); } return; }
+  if (ev.type === 'chromeProfile') { refreshTaskChromeWindows(); return; }
   if (!isMine(ev)) {
     // 一覧に効くものだけは取り込む（画面には出さない）。セッションに紐づかないもの（statusIcon 等）はここへ来ない
     if (["status", "group", "title", "fork", "mode", "model", "cwd", "backend", "nextSettings"].includes(ev.type)) {
@@ -4680,6 +4682,17 @@ const TASK_LIVE = new Set(['queued', 'running', 'cancelling']);
  * 重ねた結果は、rows を書き換える（ver を進める）か running が届くまで使い回す（カードごとに引くので）
  */
 const taskCards = { sessionId: null, rows: new Map(), ver: 0, live: new Map(), asked: new Set(), merged: null };
+const taskChromeRows = new Map();
+let taskChromeRequest = 0;
+async function refreshTaskChromeWindows(sessionId = state.current) {
+  const request = ++taskChromeRequest;
+  if (!sessionId) return;
+  const rows = await cmd('invoke', { op: 'browser.chromeWindows', args: { sessionId } }).catch(() => []);
+  if (request !== taskChromeRequest || state.current !== sessionId) return;
+  taskChromeRows.clear();
+  if (Array.isArray(rows)) for (const row of rows) if (row.taskId) taskChromeRows.set(row.taskId, row);
+  paintDelegateCards();
+}
 /**
  * Channels のスレッドが見ている bot の会話（子孫まで）の委譲の行。Chats の会話の分（taskCards.rows）とは別に持つので、Chats の会話を切り替えても消えない。
  * sessions: 見ている会話、rows: taskId → 行、loaded: 読み終えた会話、listeners: 一覧・数が変わったときに呼ぶ（スレッドの入口）。
@@ -4708,8 +4721,10 @@ async function readTaskCards(sessionId) {
 }
 /** 会話を開いた・つなぎ直した・作業場所が変わった。その会話の分を読み直す（読めなければ今の分のまま） */
 async function loadTaskCards(sessionId) {
+  if (sessionId !== taskCards.sessionId) taskChromeRows.clear();
   const rows = await readTaskCards(sessionId);
   if (rows && state.current === sessionId) setTaskCards(sessionId, rows);
+  if (state.current === sessionId) refreshTaskChromeWindows(sessionId);
 }
 function setTaskCards(sessionId, rows) {
   taskCards.sessionId = sessionId;
@@ -6002,6 +6017,8 @@ function paintDelegateStates(root = thread, scope = null) {
   if (!cards.length) return;
   const items = backgroundItems(scope).filter(i => i.group === 'agent');
   for (const card of cards) {
+    if (card.dataset.taskId) paintTaskChrome(card, taskChromeRows.get(card.dataset.taskId), { el, open: select,
+      close: async id => { try { await cmd('chromeCloseWindow', { sessionId: id }); refreshTaskChromeWindows(); } catch (error) { notify(error?.message ?? String(error)); } }, t });
     const res = card.querySelector('.tc-res');
     if (!res || card.classList.contains('tc-error')) continue;
     const item = card.dataset.taskId ? items.find(i => i.taskId === card.dataset.taskId) : items.find(i => i.origin && i.origin === card.dataset.id);
