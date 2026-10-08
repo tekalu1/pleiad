@@ -114,6 +114,7 @@ import { browserEnvironment, browserInstruction, forgetBrowserEnvironment, chrom
 import { createChromeWindowCloser } from './chrome/close-window.mjs';
 import { delegatedChromeTarget as resolveDelegatedChromeTarget, delegatedChromeWindows } from './chrome/delegation.mjs';
 import { createChromeLoginGroups } from './chrome/login-groups.mjs';
+import { resumeFromPill } from './chrome/pill-resume.mjs';
 import { parentPortViewer } from './browser-viewer.mjs';
 import { getMainPort, setMainPortSource } from './main-port.mjs';
 import { createMainLink, handoverEnabled } from './main-link.mjs';
@@ -8190,11 +8191,9 @@ mainPort.on("message", async ({ data }) => {
   if (data?.type === 'chrome-pill-snapshot') {
     for (const state of chromeControl?.snapshot() ?? []) void sendChromePillState(state);
   }
-  if (data?.type === 'chrome-pill-resume' && typeof data.sessionId === 'string' && chromeControl?.state(data.sessionId).by === 'pc') {
-    void chromeControl.resume(data.sessionId).catch(error => {
-      console.warn('chrome pill resume failed:', error?.message ?? error);
-      try { mainPort.postMessage({ type: 'chrome-pill-resume-failed', sessionId: data.sessionId }); } catch { /* main が離れた */ }
-    });
+  if (data?.type === 'chrome-pill-resume' && typeof data.sessionId === 'string') {
+    // 戻せなかったときは必ず返す（黙って捨てるとピルが押せないままになる）
+    void resumeFromPill({ control: chromeControl, reply: message => mainPort.postMessage(message), log: line => console.warn(line) }, data);
   }
   if (data?.type === 'wake') { await schedule.check(); await recoverLimitWaits().catch(() => {}); }
   if (data?.type === 'update-lock') {

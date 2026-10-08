@@ -46,10 +46,11 @@ export default async function (t) {
     },
     bounds: ref => rects.get(ref.id) ?? null,
   };
-  const pill = attachChromePill(worker, { electron: { BrowserWindow: class extends Window { constructor(options) { super(options); windows.push(this); } }, ipcMain }, os,
-    t: (_key, { agent }) => `あなたが操作中 · ${agent} に戻す`, tickMs: 10, snapshotMs: 10 });
-  const state = (sessionId, value, by = 'pc', refs = [{ id: sessionId === 's' ? 'a' : 'b' }], agent = 'Claude') =>
-    worker.emit('message', { type: 'chrome-pill-state', sessionId, state: value, by, refs, agent });
+  const screen = { getDisplayMatching: () => ({ bounds: { x: 0, y: 0, width: 1920, height: 1080 } }) };
+  const pill = attachChromePill(worker, { electron: { BrowserWindow: class extends Window { constructor(options) { super(options); windows.push(this); } }, ipcMain, screen }, os,
+    t: (_key, { agent }) => `あなたが操作中 · ${agent} に戻す`, tickMs: 10, snapshotMs: 10, busyMs: 80 });
+  const state = (sessionId, value, by = 'pc', refs = [{ id: sessionId === 's' ? 'a' : 'b' }], agent = 'Claude', since = 100) =>
+    worker.emit('message', { type: 'chrome-pill-state', sessionId, state: value, by, refs, agent, since });
   state('s', 'running');
   state('s', 'paused', 'device');
   t.ok('実行中と端末への引き継ぎでは窓を作らない', windows.length === 0);
@@ -72,6 +73,7 @@ export default async function (t) {
   t.ok('別の webContents からの押下は無視する', posted.length === 0);
   ipcMain.emit('ply:chrome-pill-resume', { sender: w.webContents }, 's');
   t.ok('押すと同じ会話の resume を頼み、直ちにピルを隠す', posted.length === 1 && posted[0].type === 'chrome-pill-resume' && posted[0].sessionId === 's' && !w.visible);
+  t.ok('押した引き継ぎの印（since）を付けて頼む', posted[0].since === 100, JSON.stringify(posted[0]));
   ipcMain.emit('ply:chrome-pill-resume', { sender: w.webContents }, 's');
   t.ok('二重押下は送らない', posted.length === 1);
   worker.emit('message', { type: 'chrome-pill-resume-failed', sessionId: 's' });
@@ -87,6 +89,33 @@ export default async function (t) {
   t.ok('窓を隠せず paused のままなら再び押せる', w.visible);
   state('s', 'idle');
   t.ok('戻した後も隠れている', !w.visible && pill.snapshot().sessions === 0);
+  // ---- 押した会話だけを待たせる（全部の会話のピルを隠さない）。返事が無くても一定時間でまた押せる
+  state('s', 'paused', 'pc', [{ id: 'a' }], 'Claude', 300); state('x', 'paused', 'pc', [{ id: 'b' }], 'Claude', 400);
+  foreground = 'a'; notify({ kind: 'foreground', ref: { id: 'a' } });
+  const before = posted.filter(message => message.type === 'chrome-pill-resume').length;
+  ipcMain.emit('ply:chrome-pill-resume', { sender: w.webContents }, 's');
+  t.ok('押した引き継ぎの since は、その時の便りの値', posted.at(-1).since === 300 && posted.filter(message => message.type === 'chrome-pill-resume').length === before + 1, JSON.stringify(posted.at(-1)));
+  foreground = 'b'; notify({ kind: 'foreground', ref: { id: 'b' } });
+  t.ok('返事を待つのは押した会話だけで、別の会話のピルは出る', w.visible && pill.snapshot().sessionId === 'x');
+  foreground = 'a'; notify({ kind: 'foreground', ref: { id: 'a' } });
+  t.ok('返事を待つ間、押した会話のピルは隠れたまま', !w.visible);
+  await new Promise(resolve => setTimeout(resolve, 150));
+  t.ok('サーバーが黙って捨てても、一定時間でピルがまた出る（押した会話が戻せなくならない）', w.visible && pill.snapshot().sessionId === 's');
+  ipcMain.emit('ply:chrome-pill-resume', { sender: w.webContents }, 's');
+  t.ok('出直したピルを押し直せる', posted.at(-1).type === 'chrome-pill-resume' && posted.at(-1).since === 300 && !w.visible);
+  state('s', 'paused', 'pc', [{ id: 'a' }], 'Claude', 500);
+  t.ok('次の引き継ぎ（since が替わった）の便りで待ちを解き、押したピルを使い回さず出し直す', w.visible && pill.snapshot().sessionId === 's');
+  ipcMain.emit('ply:chrome-pill-resume', { sender: w.webContents }, 's');
+  t.ok('次の引き継ぎには、その since を付けて頼む', posted.at(-1).since === 500, JSON.stringify(posted.at(-1)));
+  state('s', 'idle'); state('x', 'idle');
+
+  // ---- 最大化した窓は上端が画面の上にはみ出る（-8px）。そのモニターの上端より上には出さない
+  rects.set('a', { x: -8, y: -8, width: 1936, height: 1096 });
+  state('s', 'paused', 'pc', [{ id: 'a' }], 'Claude', 600);
+  foreground = 'a'; notify({ kind: 'foreground', ref: { id: 'a' } });
+  t.ok('最大化した窓でも、ピルの上端は画面の上端', w.visible && w.bounds.y === 0, JSON.stringify(w.bounds));
+  state('s', 'idle'); rects.set('a', { x: 1800, y: 40, width: 900, height: 700 });
+
   state('s', 'paused'); foreground = 'a'; notify({ kind: 'foreground', ref: { id: 'a' } });
   rects.delete('a');
   await new Promise(resolve => setTimeout(resolve, 30));
@@ -99,6 +128,13 @@ export default async function (t) {
   await new Promise(resolve => setTimeout(resolve, 25));
   t.ok('main の更新後に ref が戻るまで状態を取り直す', posted.some(message => message.type === 'chrome-pill-snapshot'));
   state('pending', 'idle');
+  // ---- 窓が閉じたあと ref が戻らない会話の状態の取り直しは、上限で諦める
+  state('gone', 'paused', 'pc', []);
+  await new Promise(resolve => setTimeout(resolve, 450));
+  const asked = posted.filter(message => message.type === 'chrome-pill-snapshot').length;
+  await new Promise(resolve => setTimeout(resolve, 100));
+  t.ok('ref が戻らないまま取り直し続けない（上限で止める）', posted.filter(message => message.type === 'chrome-pill-snapshot').length === asked);
+  state('gone', 'idle');
   worker.emit('exit');
   t.ok('サーバーが終わると隠す', !w.visible && pill.snapshot().sessions === 0);
   pill.close();

@@ -1036,6 +1036,7 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, prof
       clearViewFocus(entry);
       scope.rebind?.(from, to);
       changed(entry);
+      fire(changeListeners, from);   // 前の id はもう中継に無い（state が null → 待機中）。前の id で配った引き継ぎ（ピルなど）を片付けさせる
       notifyView(to, 'rebind', from);
       carryChanged();
     },

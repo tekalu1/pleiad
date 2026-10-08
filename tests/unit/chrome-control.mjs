@@ -284,6 +284,7 @@ export default async function (t) {
       r.relay.rebind('new:abc', 'real');
       t.ok('id が替わっても paused は新しい id に付き、新しい id へ suspend を出し直す', r.control.state('real').state === 'paused' && r.captureLog.some(x => x.op === 'suspend' && x.id === 'real'), JSON.stringify(r.captureLog));
       t.ok('古い id の分は resume で片付く', r.captureLog.some(x => x.op === 'resume' && x.id === 'new:abc'), JSON.stringify(r.captureLog));
+      t.ok('古い id にも待機中（idle）の便りを配る（古い id で配った引き継ぎのピルを片付けさせる）', r.events.some(e => e.sessionId === 'new:abc' && e.state === 'idle') && r.control.state('new:abc').state === 'idle', JSON.stringify(r.events));
       r.relay.forget('real');
       const open = new Set();
       for (const x of r.captureLog) { if (x.op === 'suspend') open.add(x.id); else open.delete(x.id); }
