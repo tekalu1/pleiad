@@ -4105,7 +4105,8 @@
     "none": "プロフィールが見つかりません",
     "manage": "プロフィールの設定…",
     "agent": "エージェント",
-    "switched": "{{agent}} が Chrome のプロフィールを『{{name}}』に切り替えました（次に開く窓から）"
+    "switched": "{{agent}} が Chrome のプロフィールを『{{name}}』に切り替えました（次に開く窓から）",
+    "switchFailed": "プロフィールを切り替えられませんでした"
   },
   "chromeControl": {
     "status": { "running": "{{name}} が操作中", "idle": "待機中", "paused": "あなたが操作中", "stopped": "止めました" },
@@ -4182,7 +4183,8 @@
       "inputFailed": "Chrome の窓へ送れませんでした",
       "waitingPermission": "Chrome の許可を待っています",
       "openFailed": "Chrome で開けませんでした",
-      "close": "窓を閉じる", "closeFailed": "Chrome の窓を閉じられませんでした"
+      "close": "窓を閉じる", "closeFailed": "Chrome の窓を閉じられませんでした",
+      "profileActions": "Chrome のプロフィール"
     },
     "remote": {
       "title": "PC のブラウザー",

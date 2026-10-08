@@ -31,7 +31,7 @@ View は DOM より上に描かれるので、メニュー・ダイアログ・�
 
 入口は会話の頭の行の地球のボタン一つ（`#browserEntry`、`web/header-entries.mjs`。2026-10-09 承認）と、近道 Ctrl+Shift+B（macOS は ⌘⇧B）。どちらも右パネルのブラウザーを開閉する。操作中・依頼待ち・あなたが操作中なら Chrome の固定タブ、それ以外は会話で最後に見た方を開く。開いている間の状態変化では勝手に切り替えない。ビューアを開くときは前のタブをそのまま出し（読み直さない）、タブが無ければ空の新しいタブを作ってアドレス欄にフォーカスを置く。閉じるとフォーカスはボタンへ戻る。近道は IME の変換中・ダイアログ・設定の画面では効かない。ページにフォーカスがあるときは main がタブの webContents の `before-input-event` でこの近道だけを拾う。開いている間の印は `aria-expanded` と `aria-controls="filePreview"`。
 
-右パネルの 1 つのモード（`web/side-panel.mjs` の `browserSlots`）。見出しの字は出さず、その行にタブ列と広げる・閉じるを置く。Chrome の使えるホストでは先頭に「{エージェント名} の Chrome」の閉じられない固定タブを置く。窓の数が二つ以上ならそのタブに札、エージェントが操作中なら弧を出す。ビューアのタブは×で閉じられ、列の＋で増やす。左右・Home・End キーで移る。ビューアの道具の列は戻る・進む・再読み込み・アドレス欄・既定のブラウザーで開く・⋯。Chrome の固定タブを選ぶと、列は状態の一行・第 10 段のプロフィール pill の口・窓の ⋯ に替わり、効かないビューアの道具は出さない。種類の印・切り替え・ツリーは出さない。形は docs/design-system.md「内蔵ブラウザー」。
+右パネルの 1 つのモード（`web/side-panel.mjs` の `browserSlots`）。見出しの字は出さず、その行にタブ列と広げる・閉じるを置く。Chrome の使えるホストでは先頭に「{エージェント名} の Chrome」の閉じられない固定タブを置く。窓の数が二つ以上ならそのタブに札、エージェントが操作中なら弧を出す。ビューアのタブは×で閉じられ、列の＋で増やす。左右・Home・End キーで移る。ビューアの道具の列は戻る・進む・再読み込み・アドレス欄・既定のブラウザーで開く・⋯。Chrome の固定タブを選ぶと、列は状態の一行・プロフィール選択 pill（`.cp-profile-slot`）・窓の ⋯ に替わり、効かないビューアの道具は出さない。種類の印・切り替え・ツリーは出さない。形は docs/design-system.md「内蔵ブラウザー」。
 
 アドレス欄（`web/browser-address.mjs`）:
 
@@ -211,7 +211,7 @@ OS の層は、隠した窓が前面を取ったら直前の前面へ返す。�
 
 一覧の読み取りと保存の形は Chrome・Edge 共通。現在の接続・窓の起動は Chrome のみなので、Edge は一覧に出さない。Edge を有効にするには接続先の選択、Edge の実行ファイルによる窓の起動、実機でのプロフィール確認が要る。
 
-**画面の部品の口**: `web/chrome-profile-menu.mjs` の `profileMenuItems({ profiles, notes?, current, busy, onPick, onManage? })` は `web/context-menu.mjs` 用の項目を返す。`profiles/current/busy` は `browser.listProfiles` の答えをそのまま渡せる。`onPick({ browser, dir })` で `browser.useProfile({ sessionId, browser, profile: dir })` を呼び、`onManage` は設定 › ブラウザーへつなぐ。選択ボタンは「Claude の Chrome」タブ内の道具の列へ置く。ボタンとメニューの開閉、イベントによる再取得は呼び出し側が受け持つ。
+**画面の部品の口**: `web/chrome-profile-pill.mjs`（`setupChromeProfilePill`）が「Claude の Chrome」固定タブの道具の列（`web/chrome-panel.mjs` の `.cp-profile-slot`）へプロフィールの pill を差し込む。pill は今のプロフィールの名前（メモがあれば弱い字）を出し、押すと `web/chrome-profile-menu.mjs` の `profileMenuItems({ profiles, notes?, current, busy, onPick, onManage? })` によるメニュー（`web/context-menu.mjs`）を開く。`profiles/current/busy` は `browser.listProfiles({ sessionId })` から取得し、`onPick({ browser, dir })` で `browser.useProfile({ sessionId, browser, profile: dir })` を呼ぶ。`onManage` は設定 › ブラウザーを開く。切り替えられない状態（`busy`: エージェント操作中・依頼待ち・人が引き継ぎ中）では pill に `aria-disabled="true"` を付け、メニューの先頭に理由を掲示して各項目を無効化する。選択の表示と取り直しは `chromeProfile { sessionId, profile }` イベントで即時反映し、操作待ち・引き継ぎ状態変化時にも一覧を取り直す。Chrome のタブが選ばれていないときや Chrome 層の無いホスト（Windows 以外・リモート端末等で op が呼べない環境）では出さない。狭い幅（360px）ではメモを隠し名前を省略して道具の列が溢れないようにする。
 
 **委譲への引き継ぎ**: 子の作成時に親の会話メタ `chromeProfile` を子へ継ぐ処理は次段で行う。親が未選択の場合と、明示的な子の選択がある場合の優先順位もそこで決める。ここでは新規会話の設定の既定だけを適用する。
 

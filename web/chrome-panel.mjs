@@ -62,7 +62,7 @@ export function createWindowTable() {
  */
 export function setupChromePanel({ cmd, preview, browser = null, showMenu = null, session = () => null, getAgentName = () => 'Claude', windows = createWindowTable(), touch = null } = {}) {
   let root = null, parts = null, sessionId = null, state = null, frameMeta = null, quality = 'auto', ended = false, connecting = false, hintTimer = 0, observer = null, lastBox = null, resizeTimer = 0;
-  let opener = null, onOpenChange = () => {}, operating = false, waiting = null, closing = false;   // waiting: ⋯「Chrome で開く」で、窓ができるのを待っている会話と字
+  let opener = null, openListeners = new Set(), notifyOpenChange = open => { for (const fn of openListeners) { try { fn(open); } catch {} } }, operating = false, waiting = null, closing = false;   // waiting: ⋯「Chrome で開く」で、窓ができるのを待っている会話と字
   const alwaysHint = touch ?? (() => { try { return matchMedia('(hover: none), (pointer: coarse)').matches; } catch { return false; } });
 
   function build() {
@@ -277,8 +277,8 @@ export function setupChromePanel({ cmd, preview, browser = null, showMenu = null
     const label = t('browser.chromeWindow.panel');
     preview.openPanel({ key: KEY, title: label, subtitle: '', label, element, body: root, wide: true,
       toolbar: [parts.slot, parts.profileSlot, parts.windowMenu],
-      onClose: () => { stopWatching(); opener?.setAttribute?.('aria-expanded', 'false'); onOpenChange(false); } });
-    onOpenChange(true);
+      onClose: () => { stopWatching(); opener?.setAttribute?.('aria-expanded', 'false'); notifyOpenChange(false); } });
+    notifyOpenChange(true);
   }
 
   function open(element = null) {
@@ -387,7 +387,7 @@ export function setupChromePanel({ cmd, preview, browser = null, showMenu = null
     reconnected() { if (isOpen() && sessionId) start().catch(() => { ended = true; paint(); }); },
     /** 別の会話へ移った・会話を閉じた。開いているパネルは閉じる */
     reset() { if (isOpen() && session() !== sessionId) close(); },
-    onOpenChange(fn) { onOpenChange = fn; },
+    onOpenChange(fn) { if (typeof fn === 'function') openListeners.add(fn); },
     /** テスト用 */
     get sessionId() { return sessionId; },
   };

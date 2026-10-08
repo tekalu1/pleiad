@@ -4224,7 +4224,8 @@
     "none": "No profiles found",
     "manage": "Profile settings…",
     "agent": "The agent",
-    "switched": "{{agent}} switched the Chrome profile to \"{{name}}\" (from the next window)"
+    "switched": "{{agent}} switched the Chrome profile to \"{{name}}\" (from the next window)",
+    "switchFailed": "Couldn't switch the profile"
   },
   "chromeControl": {
     "status": { "running": "{{name}} is operating", "idle": "Idle", "paused": "You are operating", "stopped": "Stopped" },
@@ -4301,7 +4302,8 @@
       "inputFailed": "Couldn't send that to the Chrome window",
       "waitingPermission": "Waiting for Chrome to allow the connection",
       "openFailed": "Couldn't open it in Chrome",
-      "close": "Close window", "closeFailed": "Couldn't close the Chrome window"
+      "close": "Close window", "closeFailed": "Couldn't close the Chrome window",
+      "profileActions": "Chrome profiles"
     },
     "remote": {
       "title": "PC browser",

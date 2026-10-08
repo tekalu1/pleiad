@@ -9,7 +9,29 @@
 .file-preview[data-panel="chrome-window"] .cp-slot .cc{flex-wrap:nowrap;overflow:hidden}
 .file-preview[data-panel="chrome-window"] .cp-slot .cc-status{flex:1 1 auto}
 .file-preview[data-panel="chrome-window"] .cp-slot .cc-btn{flex:none}
+.cp-profile-slot{display:inline-flex;align-items:center;min-width:0;flex-shrink:1}
 .cp-profile-slot:empty{display:none}
+.cp-profile-btn{display:inline-flex;align-items:center;gap:4px;height:24px;padding:0 8px;border-radius:var(--r-pill);background:var(--surface-1);color:var(--ink);font-size:var(--fs-s);line-height:1;max-width:160px;min-width:0;flex:0 1 auto;border:0;cursor:pointer;user-select:none;transition:background-color var(--dur-fast) var(--ease-out),color var(--dur-fast) var(--ease-out)}
+.cp-profile-btn:hover{background:var(--surface-hover);color:var(--ink)}
+.cp-profile-btn:focus-visible{outline:2px solid var(--line-blue);outline-offset:2px}
+.cp-profile-btn[aria-expanded="true"]{background:var(--surface-sel)}
+.cp-profile-btn[aria-disabled="true"]{color:var(--ink-weak);cursor:pointer}
+.cp-profile-btn[aria-disabled="true"]:hover{background:var(--surface-1)}
+.cp-profile-icon-wrap{display:inline-flex;align-items:center;flex:none}
+.cp-profile-icon{width:13px;height:13px;stroke:currentColor;fill:none}
+.cp-profile-text{display:inline-flex;align-items:baseline;gap:4px;overflow:hidden;min-width:0;text-overflow:ellipsis;white-space:nowrap}
+.cp-profile-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cp-profile-note{color:var(--ink-weak);font-size:var(--fs-xs);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cp-profile-note[hidden]{display:none}
+.cp-profile-chev-wrap{display:inline-flex;align-items:center;flex:none;color:var(--ink-weak)}
+.cp-profile-chev{width:10px;height:10px;stroke:currentColor;fill:none}
+@media (max-width:480px){
+  .cp-profile-btn{max-width:110px;padding:0 6px}
+  .cp-profile-note{display:none}
+}
+@media (max-width:360px){
+  .cp-profile-btn{max-width:90px;padding:0 4px;gap:2px}
+}
 .cp-window-menu{margin-left:auto}
 @media (max-width:480px){.file-preview[data-panel="chrome-window"] .cp-slot .cc{flex-wrap:wrap}}
 .cp{display:flex;flex-direction:column;gap:8px;padding:8px}

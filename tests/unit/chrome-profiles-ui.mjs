@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { N } from '../lib/dom-stub.mjs';
 import { setupBrowserSettings } from '../../web/browser-settings.mjs';
+import { setupChromeProfilePill } from '../../web/chrome-profile-pill.mjs';
 import { profileMenuItems, renderChromeProfileLine } from '../../web/chrome-profile-menu.mjs';
 import { validProfileNotes, parseProfileKey } from '../../web/chrome-profile-model.mjs';
 
@@ -63,4 +64,102 @@ export default async function (t) {
     assert(writes.length >= 3);
   } finally { document.getElementById = original; }
   t.ok('設定内だけで既定とメモを編集でき、許可の削除は同じサイトの別プロフィールを残す', true);
+
+  // ---- 道具の列のプロフィール選択 pill とメニュー（第 10 段）
+  {
+    const slot = new N('div');
+    let session = 's1';
+    let menuCalls = [];
+    let invoked = [];
+    let currentProfile = work;
+    let currentBusy = null;
+    let hostCaps = { chromeBrowser: 'available', chromeWindow: true };
+
+    const testPrefs = { confirmAgentSites: true, chromeNewProfile: work, chromeProfileNotes: [{ ...work, note: '社内サイト用' }] };
+
+    const pill = setupChromeProfilePill({
+      slot,
+      cmd: async (command, args) => {
+        if (command === 'invoke' && args.op === 'browser.listProfiles') {
+          if (hostCaps.chromeBrowser === false && hostCaps.chromeWindow === false) {
+            throw new Error('UNSUPPORTED');
+          }
+          invoked.push({ op: args.op, args: args.args });
+          return { profiles, current: currentProfile, busy: currentBusy };
+        }
+        if (command === 'invoke' && args.op === 'browser.useProfile') {
+          invoked.push({ op: args.op, args: args.args });
+          return { browser: args.args.browser, dir: args.args.profile, name: '個人', changed: true };
+        }
+        throw new Error('unknown cmd: ' + command);
+      },
+      showMenu: (x, y, items, title, opts) => {
+        menuCalls.push({ x, y, items, title, opts });
+      },
+      getSessionId: () => session,
+      getPrefs: () => testPrefs,
+      getHostCaps: () => hostCaps,
+      openSettings: () => { writes.push({ action: 'openSettings' }); },
+    });
+
+    // 1. 出る条件: Chrome が使える環境で会話があるとき
+    await pill.refresh();
+    const btn = slot.querySelector('button');
+    assert(btn, 'pill の button が slot に生成されること');
+    assert.equal(btn.getAttribute('aria-haspopup'), 'menu');
+    assert.equal(btn.getAttribute('aria-expanded'), 'false');
+    assert.match(btn.textContent, /仕事/);
+    assert.match(btn.textContent, /社内サイト用/);
+
+    // 2. 選ぶと op が呼ばれる: クリックでメニューを開き、項目を選ぶと browser.useProfile が呼ばれて表示が変わる
+    btn.onclick();
+    assert.equal(menuCalls.length, 1);
+    assert.equal(btn.getAttribute('aria-expanded'), 'true');
+    const menu = menuCalls[0];
+    const defaultItem = menu.items.find(i => i.label?.includes('個人'));
+    assert(defaultItem, '「個人」のメニュー項目があること');
+    await defaultItem.onClick();
+    assert.deepEqual(invoked.at(-1), {
+      op: 'browser.useProfile',
+      args: { sessionId: 's1', browser: 'chrome', profile: 'Default' },
+    });
+    assert.match(btn.textContent, /個人/);
+    // メニューを閉じたときの aria-expanded リセット
+    menu.opts.onClose();
+    assert.equal(btn.getAttribute('aria-expanded'), 'false');
+
+    // 3. busy のとき: 操作中・依頼待ち・引き継ぎ中は aria-disabled になり、メニューで理由が出る
+    currentBusy = 'operating';
+    await pill.refresh();
+    assert.equal(btn.getAttribute('aria-disabled'), 'true');
+    assert.equal(btn.dataset.busy, 'operating');
+    menuCalls = [];
+    btn.onclick();
+    assert.equal(menuCalls.length, 1);
+    assert(menuCalls[0].items[0].head, '先頭に busy 理由の見出しがあること');
+    assert(menuCalls[0].items.slice(1).filter(i => i.radio).every(i => i.disabled), '各プロフィール項目が disabled であること');
+
+    // 4. イベントで表示が替わる: chromeProfile イベントで即座に反映
+    currentBusy = null;
+    currentProfile = work;
+    pill.onProfileEvent({ sessionId: 's1', profile: { browser: 'chrome', dir: 'Default' } });
+    assert.match(btn.textContent, /個人/);
+    // 別の会話のイベントは無視される
+    pill.onProfileEvent({ sessionId: 's2', profile: { browser: 'chrome', dir: 'Profile 1' } });
+    assert.match(btn.textContent, /個人/);
+
+    // 5. 出ない条件:
+    // 5a. 会話が無いとき
+    session = null;
+    await pill.refresh();
+    assert.equal(slot.children.length, 0, '会話が無いときはスロットが空になること');
+
+    // 5b. Chrome の層が無いホスト（Windows 以外など）
+    session = 's1';
+    hostCaps = { chromeBrowser: false, chromeWindow: false };
+    await pill.refresh();
+    assert.equal(slot.children.length, 0, 'Chrome 層が無いホストではスロットが空になること');
+
+    t.ok('Chrome の固定タブの道具の列で、出る・出ない条件、メニュー選択での op 呼出、busy、イベントによる更新が正しく動く', true);
+  }
 }

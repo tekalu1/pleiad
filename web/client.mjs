@@ -4,6 +4,7 @@ import { setupFilePreview } from './file-preview.mjs';
 import { browserPanelAvailable, createBrowserPanel } from './browser-panel.mjs';
 import { isManagedContext, paintContextEntry as paintContextEntryButton, setupBrowserEntry } from './header-entries.mjs';
 import { setupChromePanel, createWindowTable } from './chrome-panel.mjs';
+import { setupChromeProfilePill } from './chrome-profile-pill.mjs';
 import { setupBrowserSettings } from './browser-settings.mjs';
 import { setupComputerSettings } from './computer-settings.mjs';
 import { configurePreviewConfirmation, refreshPreviewConfirmation } from './preview-confirm.mjs';
@@ -2998,6 +2999,7 @@ function onEvent(ev, replay = false) {
   if (ev.type === 'chromeControl' || ev.type === 'chromeTap') { chromeControlStore.event(ev); return; }
   // 会話の Chrome の窓の有無と、エージェントが操作中か（リモートの端末にも届く）
   if (ev.type === 'chromeWindow') { if (chromePanel ? chromePanel.windowEvent(ev) : chromeWindows.apply(ev)) { browserEntry?.paint(); browserPanel?.refreshTabs(); paintChromeControl(); } return; }
+  if (ev.type === 'chromeProfile') { chromeProfilePill?.onProfileEvent(ev); return; }
   if (!isMine(ev)) {
     // 一覧に効くものだけは取り込む（画面には出さない）。セッションに紐づかないもの（statusIcon 等）はここへ来ない
     if (["status", "group", "title", "fork", "mode", "model", "cwd", "backend", "nextSettings"].includes(ev.type)) {
@@ -6410,7 +6412,7 @@ setChromeHandoverAgentName(() => labelOf(activeBackendId()));
 let browserEntry = null;   // 頭の行のボタン（下の setupBrowserEntry）。状態の知らせが先に届いても落ちないよう先に宣言する
 // エージェントの Chrome の窓（右パネル「Chrome の窓」。web/chrome-panel.mjs）。会話ごとの窓の有無はサーバーの chromeWindow イベントで届く。知らせが先に届いても受けられるよう表を先に作る
 const chromeWindows = createWindowTable();
-let chromePanel = null, chromeControlView = null;   // 状態の知らせが先に届いても落ちないよう先に宣言する
+let chromePanel = null, chromeControlView = null, chromeProfilePill = null;   // 状態の知らせが先に届いても落ちないよう先に宣言する
 const browserPanel = browserPanelAvailable()
   ? createBrowserPanel({ showMenu: (x, y, items, title, opts) => showMenu(x, y, items, title, opts), getSessionId: () => state.current ?? null,
     onChange: () => browserEntry?.paint() })
@@ -8468,7 +8470,7 @@ function connect() {
         renderAttached();
         remoteBrowser.reconnected();
         chromePanel?.reconnected();
-        browserEntry?.paint(); browserPanel?.refreshTabs();
+        browserEntry?.paint(); browserPanel?.refreshTabs(); chromeProfilePill?.refresh();
       }).catch(() => {});
       // 開く前から承認待ちがあれば、ここでダイアログに出す
       remoteSettings.refresh();
@@ -8591,12 +8593,28 @@ chromeControlView = createChromeControlView({
 chromePanel.mountStatus(chromeControlView.root);
 chromePanel.mountOverlay(chromeControlView.overlay);
 $('chromeBanner').append(chromeControlView.banner);
+chromeProfilePill = setupChromeProfilePill({
+  slot: chromePanel.profileSlot,
+  cmd: (command, args) => cmd(command, args),
+  showMenu: (x, y, items, title, opts) => showMenu(x, y, items, title, opts),
+  getSessionId: () => state.current ?? null,
+  getPrefs: () => state.prefs,
+  getHostCaps: () => state.hostCaps,
+  openSettings: () => {
+    onboarding.open('browser');
+    const target = $('browserNewProfile') || $('browserAllowedSites');
+    target?.focus({ preventScroll: true });
+    target?.scrollIntoView({ block: 'start' });
+  },
+});
+chromePanel.onOpenChange((open) => { if (open) chromeProfilePill?.refresh(); });
 function paintChromeControl() {
   const id = state.current ?? null;
   const row = id ? chromeControlStore.get(id) : null;
   chromeControlView?.apply(row && (row.state === 'paused' || chromeWindows.has(id)) ? row : null);
   // 端末から操作する（by: 'device' の一時停止）間は、リモートの端末の映像から入力を送る（ホストの画面は見るだけのまま）
   chromePanel?.setOperating(Boolean(window.plyRemote) && row?.state === 'paused' && row.by === 'device');
+  chromeProfilePill?.onStateChange();
 }
 // 内蔵ブラウザーの⋯「Chrome で開く（エージェントの窓へ）」（browser.chromeOpen）。開いたら右パネルを Chrome の窓の映像に替える。
 // つながっていなければ Chrome の許可を待つ（カードは出さない。パネルに「Chrome の許可を待っています」）。エージェントには知らせない
