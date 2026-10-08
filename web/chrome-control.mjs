@@ -1,6 +1,7 @@
 // エージェントの Chrome の窓の「状態の一行」と止める・引き継ぐ・戻す（docs/design-system.md「Chrome の窓の状態の一行」、ADR 0148・0154）。
 //   - createChromeControlView: 状態の一行（role=status。ボタンは「止める」「引き継ぐ」「Claude に戻す」）・一時停止中の帯（会話の中）・
-//     映像の上に重ねる膜と、エージェントが押した位置の輪。単体で描けて試せる（右パネルの「Chrome の窓」へ差し込むのは web/chrome-panel.mjs の側）
+//     映像の上に重ねる、エージェントが押した位置の輪。単体で描けて試せる。右パネルの「Chrome の窓」へは web/chrome-panel.mjs の mountStatus（root）・mountOverlay（overlay）で差し込む。
+//     撮影を断っている間の薄い幕と「映像を止めています」は映像の側（web/chrome-panel.mjs の .cp-veil）が出す（二重にしない）
 //   - chromeControlStore: サーバーの chromeControl・chromeTap イベント（会話ごと）の置き場。右パネルが会話の状態を引く・聞く
 //   - renderChromeHandoverLine: 引き継いで戻したときの会話の行（present kind: 'chromeHandover'）
 // 状態は core/chrome/control.mjs の 4 つ（running・idle・stopped・paused）。色は既存のトークンだけ。動きは --dur・--ease-out（動きを減らす設定では入れ替えだけ）。
@@ -73,19 +74,14 @@ export function createChromeControlView({ run, getName = () => 'Claude', onError
   bannerBtn.onclick = () => act('resume');
   banner.append(bannerText, bannerBtn);
 
-  // 映像の上に重ねる層（親が position: relative の枠に入れる）。一時停止中の薄い幕と、押した位置の輪
+  // 映像の上に重ねる層（親が position: relative の枠に入れる）。押した位置の輪だけを出す
   const overlay = el('div', 'cc-overlay'); overlay.setAttribute('aria-hidden', 'true');
-  const veil = el('div', 'cc-veil'); veil.hidden = true;
-  const veilText = el('span', 'cc-veil-text');
-  veil.append(veilText);
-  overlay.append(veil);
 
   function paint() {
     const state = current?.state ?? null;
     root.hidden = !state;
     root.dataset.state = state ?? '';
     banner.hidden = state !== 'paused';
-    veil.hidden = state !== 'paused';
     overlay.dataset.state = state ?? '';
     if (!state) return;
     text.textContent = statusText(state, getName());
@@ -97,7 +93,6 @@ export function createChromeControlView({ run, getName = () => 'Claude', onError
     }
     bannerText.textContent = t('chromeControl.banner');
     bannerBtn.textContent = labels.resume(); bannerBtn.disabled = busy;
-    veilText.textContent = t('chromeControl.veil');
     root.setAttribute('aria-label', t('chromeControl.label'));
   }
 
@@ -142,6 +137,8 @@ export function createChromeControlStore() {
     get: sessionId => states.get(sessionId) ?? { state: 'idle', since: null },
     onChange(fn) { changes.add(fn); return () => changes.delete(fn); },
     onTap(fn) { taps.add(fn); return () => taps.delete(fn); },
+    /** 全部の会話の状態を捨てる（接続し直したとき。サーバーは続けて今の分を送る）。持っていた状態は idle として聞き手へ知らせる */
+    clear() { const ids = [...states.keys()]; states.clear(); for (const id of ids) fire(changes, id, 'idle', null); },
   };
 }
 

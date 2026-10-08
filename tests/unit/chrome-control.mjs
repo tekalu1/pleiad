@@ -54,14 +54,17 @@ async function rig() {
   const relay = createChromeRelay({ connection: conn, os: os_, locate, scope, log: line => logs.push(line) });
   let clock = 1_000_000;
   const records = [];
-  const control = createChromeControl({ relay, os: os_, now: () => clock, record: async row => { records.push(row); }, log: line => logs.push(line) });
+  // 映像の撮影を断る口（core/chrome/screencast.mjs の代わり）。suspend した時に OS の層の reveal がいくつ呼ばれていたかも残す（先に断つ）
+  const captureLog = [];
+  const capture = { suspend: id => captureLog.push({ op: 'suspend', id, reveals: os_.calls('reveal').length }), resume: id => captureLog.push({ op: 'resume', id }) };
+  const control = createChromeControl({ relay, os: os_, now: () => clock, record: async row => { records.push(row); }, capture, log: line => logs.push(line) });
   const events = [];
   control.onChange(state => events.push(state));
   const taps = [];
   control.onTap(tap => taps.push(tap));
   const live = [];
   return {
-    chrome, conn, relay, control, logs, os: os_, scope, fake: chrome.browser, events, taps, records,
+    chrome, conn, relay, control, logs, os: os_, scope, fake: chrome.browser, events, taps, records, captureLog,
     advance: ms => { clock += ms; },
     async agent(sessionId, options = {}) {
       const a = await agent(await relay.endpoint(sessionId, options));
@@ -127,6 +130,7 @@ export default async function (t) {
       t.ok('押された直後の前面（Pleiad の窓）のある画面の中へ戻す', reveal?.ref === hw().id && reveal.near === 'pleiad-window', JSON.stringify(reveal));
       t.ok('窓を前に出す（raise）。reveal の後', raise?.ref === hw().id && r.os.getForeground() === hw().id && r.os.log.indexOf(reveal) < r.os.log.indexOf(raise));
       t.ok('映像・撮影を断る（captureBlocked）', r.control.captureBlocked('one') === true);
+      t.ok('撮影を断つ口（suspend）を 1 回、窓を見える形に戻す前に呼ぶ（同期で効かせる）', r.captureLog.length === 1 && r.captureLog[0].op === 'suspend' && r.captureLog[0].id === 'one' && r.captureLog[0].reveals === 0, JSON.stringify(r.captureLog));
 
       const refusals = await Promise.all([a.cmd('Browser.getVersion'), a.cmd('Target.getTargets'), a.cmd('Runtime.evaluate', { expression: '1' }, sid), a.cmd('Input.dispatchMouseEvent', { type: 'mousePressed', x: 1, y: 1 }, sid), a.cmd('Page.bringToFront', {}, sid)]);
       t.ok('エージェントのコマンドは全部断る（hand_to_user を呼んで戻るのを待つ。日本語と英語）', refusals.every(m => m.error?.message === PAUSED_MESSAGE) && /hand_to_user/.test(PAUSED_MESSAGE) && /paused/.test(PAUSED_MESSAGE) && /一時停止/.test(PAUSED_MESSAGE), JSON.stringify(refusals.map(m => m.error?.message)));
@@ -140,6 +144,7 @@ export default async function (t) {
       r.advance(72_000);
       const back = await r.control.resume('one');
       t.ok('戻す → 窓を画面の外の見えない窓に戻す', concealedOk(hw()), JSON.stringify(hw()));
+      t.ok('戻したら resume を 1 回（suspend と対）', r.captureLog.map(x => x.op).join() === 'suspend,resume' && r.captureLog[1].id === 'one', JSON.stringify(r.captureLog));
       t.ok('一時停止が解ける（ターンの間なので running）。映像の断りも解ける', back.state === 'running' && last(r) === 'running' && r.control.captureBlocked('one') === false, JSON.stringify(back));
       t.ok('人が前面に置いていた窓が前面のままにならない（Pleiad の窓へ返す）', r.os.getForeground() === 'pleiad-window', r.os.getForeground());
       t.ok('会話に残す行の秒数は引き継いでいた時間（72 秒）', r.records.length === 1 && r.records[0].sessionId === 'one' && r.records[0].seconds === 72, JSON.stringify(r.records));
@@ -158,6 +163,7 @@ export default async function (t) {
       t.ok('会話が中継に無ければ NO_WINDOW', none?.code === 'NO_WINDOW');
       const a = await r.agent('one');
       const early = await r.control.takeOver('one').then(() => null, error => error);
+      t.ok('窓がまだ無い会話は NO_WINDOW。撮影を断ったなら戻して対にする', r.captureLog.map(x => x.op).join() === 'suspend,resume', JSON.stringify(r.captureLog));
       t.ok('窓がまだ無い会話は NO_WINDOW。一時停止も残さない', early?.code === 'NO_WINDOW' && r.control.state('one').state === 'running' && !(await a.cmd('Browser.getVersion')).error && r.control.captureBlocked('one') === false, JSON.stringify(early?.code));
       const one = await a.cmd('Target.createTarget', { url: 'about:blank' });
       const two = await a.cmd('Target.createTarget', { url: 'about:blank' });
@@ -235,6 +241,7 @@ export default async function (t) {
       const hw = () => hwndOf(r, tabInfo(r, created.result.targetId).windowId);
       await r.control.takeOver('one');
       const stopped = await r.control.stop('one');
+      t.ok('止めたら resume で対にする', r.captureLog.map(x => x.op).join() === 'suspend,resume', JSON.stringify(r.captureLog));
       t.ok('止める → 窓は隠れて、stopped', stopped.state === 'stopped' && concealedOk(hw()) && r.control.captureBlocked('one') === false && (await a.closed).code === 1000);
     } finally { await r.stop(); }
   }
@@ -252,8 +259,27 @@ export default async function (t) {
       await a.closed;
       t.ok('Chrome が閉じたら paused を解く', await until(() => r.control.state('one').state !== 'paused') && r.control.captureBlocked('one') === false, JSON.stringify(r.control.state('one')));
       t.ok('窓の「見える形」の印も捨てる（つなぎ直した後の popup を隠せる）', r.scope.isRevealed('one') === false);
+      t.ok('Chrome が閉じて paused が解けたら resume で対にする', r.captureLog.map(x => x.op).join() === 'suspend,resume', JSON.stringify(r.captureLog));
       const b = await r.agent('one');
       t.ok('つなぎ直せばコマンドが通る', !(await b.cmd('Browser.getVersion')).error);
+    } finally { await r.stop(); }
+  }
+
+  // ===== 8b. 引き継ぎ中に会話を消す・id が替わる → 撮影の断りの対が崩れない =====
+  {
+    const r = await rig();
+    try {
+      r.os.setForeground('pleiad-window');
+      const a = await r.agent('new:abc');
+      await a.cmd('Target.createTarget', { url: 'about:blank' });
+      await r.control.takeOver('new:abc');
+      r.relay.rebind('new:abc', 'real');
+      t.ok('id が替わっても paused は新しい id に付き、新しい id へ suspend を出し直す', r.control.state('real').state === 'paused' && r.captureLog.some(x => x.op === 'suspend' && x.id === 'real'), JSON.stringify(r.captureLog));
+      t.ok('古い id の分は resume で片付く', r.captureLog.some(x => x.op === 'resume' && x.id === 'new:abc'), JSON.stringify(r.captureLog));
+      r.relay.forget('real');
+      const open = new Set();
+      for (const x of r.captureLog) { if (x.op === 'suspend') open.add(x.id); else open.delete(x.id); }
+      t.ok('会話を消したら、断ったままの会話は残らない（suspend と resume が対になる）', open.size === 0 && r.captureLog.at(-1).op === 'resume', JSON.stringify(r.captureLog));
     } finally { await r.stop(); }
   }
 

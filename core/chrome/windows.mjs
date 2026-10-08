@@ -17,8 +17,12 @@
 import crypto from 'node:crypto';
 import { readLastUsedProfile } from './locate.mjs';
 
-/** 窓の大きさ（DIP）。右パネルの映像（第 5 段）の元の大きさ */
-export const WINDOW_DIP = Object.freeze({ width: 1100, height: 720 });
+/**
+ * 窓の大きさ（DIP。外形）。右パネルの映像（第 5 段）の元の大きさで、右パネルの幅（既定で約 430〜540 px）に縮めて映すので、窓が広いほど字が小さくなる。
+ * 1100×720（第 4 段の想定）は 0.4〜0.5 倍で本文の 14px が 6px 前後になり読めなかったため、800×800 にした（実機 2026-10-08。理由は docs/inapp-browser.md「窓の大きさ」）。
+ * 画面は 800×800 の外形のとき、ページ（viewport）が約 800×660 になる
+ */
+export const WINDOW_DIP = Object.freeze({ width: 800, height: 800 });
 const DEFAULT_TIMING = { hwndWaitMs: 3000, hwndPollMs: 20, targetWaitMs: 8000, targetPollMs: 50, popupWaitMs: 3000, boundsWaitMs: 1000, navigateMs: 15_000 };
 /** 外形で探す前に窓を置く、画面の外の位置の揺らぎ（DIP）と、最初の窓の大きさの端数。同時に外形で探す窓同士が同じ外形にならないように */
 const MARK_STEP = 8, MARK_SLOTS = 20, MARK_SIZE_EXTRA = { width: 3, height: 5 }, MARK_TOLERANCE = 2;

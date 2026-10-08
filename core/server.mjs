@@ -63,7 +63,8 @@ import { createSchedule } from './schedule.mjs';
 import { limitHolds, limitResetsAt } from './limit-resume.mjs';
 import { buildSendRow, buildPostRow, decideFire, sendArgs, decorateScheduled, addRecord, MAX_PER_SESSION, MAX_TOTAL } from './send-schedule.mjs';
 import { createCompactionScheduler, idleCompactionGuards } from './compaction-scheduler.mjs';
-import { normalizeCompactionSettings, delegatedCompactWindow } from './compaction-settings.mjs';
+import { normalizeCompactionSettings, delegatedCompactPlan, validContextBase } from './compaction-settings.mjs';
+import { createContextBases } from './context-bases.mjs';
 import { mergeCompactionHistory, attachCompactSummaries } from './compaction-history.mjs';
 import { createContextSettings } from './context-settings.mjs';
 import { scanContext, skillList } from './context-scan.mjs';
@@ -129,6 +130,7 @@ import { chromeHomes } from './chrome/locate.mjs';
 import { parentPortChromeOs } from './chrome/os.mjs';
 import { createChromeRelay } from './chrome/relay.mjs';
 import { createChromeControl } from './chrome/control.mjs';
+import { createChromeScreencast } from './chrome/screencast.mjs';
 import { createBrowserSiteApprovals } from './browser-confirm.mjs';
 import { createBrowserBridge, BROWSER_MCP_PATH } from './browser-bridge.mjs';
 import { validBrowserPref, externalOrigin } from '../web/browser-confirm-policy.mjs';
@@ -202,7 +204,7 @@ const screencastHub = screencastBridge ? createScreencastHub({ bridge: screencas
 const screencastClients = new WeakMap();   // ws -> hub に渡す端末
 // エージェントのブラウザー（PC の Chrome）への接続 1 本（core/chrome/connection.mjs、ADR 0148・0153）。デスクトップ版だけ。OS ごとの層は main（desktop/chrome-os）
 const chromeLocate = chromeHomes()[0] ?? null;
-const chromeOs = process.parentPort ? parentPortChromeOs(process.parentPort) : null;
+const chromeOs = hostedPort ? parentPortChromeOs(hostedPort) : null;
 const chromeConnection = chromeOs
   ? createChromeConnection({ locate: chromeLocate, os: chromeOs, log: line => console.log(`  ${line}`) })
   : null;
@@ -211,8 +213,12 @@ const chromeConnection = chromeOs
 const chromeRelay = chromeConnection && agentBrowserMode() === 'chrome'
   ? createChromeRelay({ connection: chromeConnection, os: chromeOs, locate: chromeLocate, authorize: (request, signal) => browserSiteApprovals(request, signal), deniedMessage: () => t('permission.browserSiteDenied'), log: line => console.log(`  ${line}`) })
   : null;
+// 会話の Chrome の窓の映像（右パネルの「Chrome の窓」。ホストの画面もリモートの端末も見られる。見るだけ。core/chrome/screencast.mjs、ADR 0148）。
+// 内蔵ブラウザーの映像（上の screencastHub）とは別のハブで、WS のコマンドは args.source === 'chrome' で選ぶ
+const chromeScreencast = chromeRelay ? createChromeScreencast({ host: chromeRelay.view, log: line => console.log(`  ${line}`) }) : null;
+const chromeScreencastHub = chromeScreencast ? createScreencastHub({ bridge: chromeScreencast, source: 'chrome' }) : null;
 // エージェントの Chrome の窓の止める・引き継ぐ・戻す（core/chrome/control.mjs、ADR 0148・0154）。戻したときの会話の行は recordChromeHandover
-const chromeControl = chromeRelay ? createChromeControl({ relay: chromeRelay, os: chromeOs, log: line => console.log(`  ${line}`), record: ({ sessionId, seconds }) => recordChromeHandover(sessionId, seconds) }) : null;
+const chromeControl = chromeRelay ? createChromeControl({ relay: chromeRelay, os: chromeOs, capture: chromeScreencast, log: line => console.log(`  ${line}`), record: ({ sessionId, seconds }) => recordChromeHandover(sessionId, seconds) }) : null;
 // 会話の端点を出す口（ターンの開始・新しい会話の id の付け替え・ターンの終わり・会話の削除）。Chrome の道でなければ内蔵ブラウザーの橋そのもの
 const agentBrowserEndpoints = chromeRelay ? chromeRelayBrowser(chromeRelay) : agentBrowser;
 // A nested server may inherit another conversation's shell environment; only this process's bridge can issue browser access.
@@ -238,6 +244,9 @@ try {
     console.error('  自動圧縮の既定値を保存できませんでした:', String(saveError?.message ?? saveError));
   });
 }
+// 委譲の子の固定の部分（最初のリクエストの文脈）の直近の値。子の最初のターンの自動圧縮の閾値を見積もる（ADR 0166）
+const contextBases = createContextBases({ file: path.join(store.dataDir, 'context-bases.json') });
+await contextBases.load();
 
 import { installation, cliCommand } from "./cli-installation.mjs";
 import { createClaudeLogin } from './claude-login.mjs';
@@ -2018,7 +2027,7 @@ function giveUp() {
   // 承認待ちを却下する前に、止めるターンが抱えているもの（承認待ち・裏の作業）を控える（中断で終わったら会話の「止めたもの」に残す）
   for (const t of runtime.turns.values()) t.stops ??= captureStops(t);
   // エージェントへの理由は承認ごとに会話の言語で（askPermission が messageKey を訳す）。ログは日本語のまま
-  for (const [, w] of [...runtime.waiting]) if (!w.detached) w.settle({ allow: false, messageKey: 'hostAway', messageParams: { seconds } });
+  for (const [, w] of [...runtime.waiting]) if (blocksTurn(w)) w.settle({ allow: false, messageKey: 'hostAway', messageParams: { seconds } });
   // 承認を返せないまま走らせ続けない。黙って deny し続けるより、止めて気づかせる。
   // 中断の理由は hostAway（会話に中断として残り、戻った人が「再開」で続けられる）
   for (const t of [...runtime.turns.values()]) { t.abortReason ??= "hostAway"; t.ac.abort(); }
@@ -2029,7 +2038,7 @@ function giveUp() {
 // 会話の一覧の行を変えない、数の多い出来事。これ以外の出来事ではネイティブ一覧の使い回しを捨てる（nativeSessions）
 const LIST_NEUTRAL_EVENTS = new Set([
   "text.delta", "text.end", "thinking.start", "thinking.delta", "tool.start", "tool.result", "activity",
-  "userMessage.delivered", "running", "permission", "permissionSettled", "outbox", "mcpAuth", "claudeLogin", "computer.state",
+  "userMessage.delivered", "running", "permission", "permissionSettled", "permissionUpdate", "outbox", "mcpAuth", "claudeLogin", "computer.state",
   "contextWindow", "compaction", "compactionSchedule", "autoCompactionSettings", "conversationAutoCompaction", "settingsChanged", "settingApproval",
   // 入力欄の `!`（core/shell-runs.mjs）。一覧の行は変わらない
   "shell.start", "shell.output", "shell.done", "shell.skip", "shell.handed",
@@ -2181,6 +2190,27 @@ async function recordChromeHandover(sessionId, seconds) {
 }
 
 /**
+ * 会話の Chrome の窓の知らせ（右パネルの Chrome の入口。窓のある会話だけに出し、操作中は弧を出す）。リモートの端末にも流す。
+ * 取りこぼしても次の知らせで足りるので溜めない。変わったときだけ送る。接続したての端末には chromeWindowFrames で今の分を送る
+ */
+const chromeWindowFrame = (sessionId, summary) => ({ kind: P.EVENT, event: { type: 'chromeWindow', sessionId, windows: summary.windows, operating: summary.operating } });
+const chromeWindowSent = new Map();   // 会話の id -> 最後に送った { windows, operating }
+function chromeWindowFrames() {
+  return chromeRelay ? chromeRelay.view.sessions().map(id => JSON.stringify(chromeWindowFrame(id, chromeRelay.view.summary(id)))) : [];
+}
+chromeRelay?.view.onChange((sessionId, kind, from) => {
+  const ids = kind === 'rebind' ? [from, sessionId] : [sessionId];
+  for (const id of ids) {
+    const summary = chromeRelay.view.summary(id);
+    const last = chromeWindowSent.get(id);
+    if (last ? last.windows === summary.windows && last.operating === summary.operating : !summary.windows) continue;
+    if (summary.windows) chromeWindowSent.set(id, summary); else chromeWindowSent.delete(id);
+    const text = JSON.stringify(chromeWindowFrame(id, summary));
+    for (const ws of runtime.sockets) if (ws.readyState === ws.OPEN) ws.send(text);
+  }
+});
+
+/**
  * グループ（fork でつながった会話のまとまり、docs/design-system.md §4.1）を一覧の行から数える。
  * まとまりは持ち物ではなく、**親子でつながり・状態が同じ・人が外していない**ことで決まる。
  * 脇の描画は web/family.mjs が同じ規則で組む。ここはサーバ側で「根を動かすと中も動く」を守るためだけに使う。
@@ -2306,6 +2336,8 @@ function makeEmit(turn) {
     turn.gitCalls?.track(event);
     // Internal activity and command observations do not add conversation UI events.
     if (event?.type === 'task.activity' || event?.type === 'task.command') return;
+    // 新しい会話の最初のリクエストの文脈（固定の部分）。委譲の子の分だけ覚え、画面へは流さない（ADR 0166）
+    if (event?.type === 'contextBase') { if (!replay) rememberContextBase(turn, event.tokens); return; }
     if (event?.type === 'usage') turn.usage = { ...turn.usage, ...event };
     // bot の会話のターンの出来事（text.end・usage・activity・present・permission・turnResult・userMessage.delivered / dropped）。bot の会話でなければ何もしない
     if (!replay) botHost?.onTurnEvent(turn, event);
@@ -2776,6 +2808,7 @@ async function rewindConversation({ sessionId, beforeMessageId, stopRunning = fa
   if (forking.has(sessionId) || switching.has(sessionId) && !running) throw new Error(t('session.preparingRewind'));
   forking.add(sessionId);
   try {
+    settleOutlivingWaits(sessionId);   // ターンが走っていなくても残っている待ち（ADR 0168）
     compactionScheduler.cancel(sessionId);
     await settingsWrites.get(sessionId);
     const backend = refuseRetired(await pickBackend(sessionId));
@@ -3104,7 +3137,7 @@ async function deleteUnsentSessionOf(args) {
 
 /**
  * 会話を消せないなら、理由（code: CANNOT_DELETE）を投げる（sessions.delete の承認カードの前と、消す直前。ADR 0147）。
- * 断るのは、走っている・準備中（切り替え・分岐）・承認や質問を待っている・裏の作業（Codex のバックグラウンド端末・シェルの行）がある・
+ * 断るのは、走っている・準備中（切り替え・分岐）・承認や質問を待っている（ターンの終わった後も残る待ち outlivesTurn は断らず、消す時に片付ける。ADR 0168）・裏の作業（Codex のバックグラウンド端末・シェルの行）がある・
  * 委譲の子として終わっていない・委譲した子が終わっていない（完了の通知がまだ届いていないものを含む）・送信待ちや送信予定がある会話と、bot の会話
  */
 const deleteRefusal = (message) => Object.assign(new Error(message), { code: 'CANNOT_DELETE' });
@@ -3113,7 +3146,7 @@ async function refuseDelete(sessionId) {
   const meta = await store.get(sessionId);
   // bot の会話は Channels のスレッド・DM・ルーティンが持つ（一覧にも出ない）。隠れた会話は host.deleteHidden が片付ける（ADR 0127）
   if (meta.bot) throw deleteRefusal(t('session.deleteBot'));
-  if (sessionBusy(sessionId) || [...runtime.waiting.values()].some(w => w.payload?.sessionId === sessionId)
+  if (sessionBusy(sessionId) || [...runtime.waiting.values()].some(w => w.payload?.sessionId === sessionId && !(w.outlivesTurn && w.origin === sessionId && !blocksTurn(w)))
       || runtime.background.get(sessionId)?.tasks?.length || shellRuns.runningIn(sessionId)
       || (agentTasks?.running() ?? []).some(r => r.sessionId === sessionId)) throw deleteRefusal(t('session.deleteBusy'));
   if ((agentTasks?.running() ?? []).some(r => r.parentSessionId === sessionId)) throw deleteRefusal(t('session.deleteChildren'));
@@ -3138,6 +3171,7 @@ async function deleteSessionOf(sessionId) {
   switching.add(sessionId);
   let deleted = false;
   try {
+    settleOutlivingWaits(sessionId);   // ターンの終わった後も残る待ち（ADR 0168）。普通の待ちは上の sessionBusy で無い
     // git の撮影の ref は会話が使った作業場所ごとのリポジトリにある。sidecar を消す前に集める
     const meta = await store.get(sessionId);
     const cwds = new Set([meta.cwd, meta.nextSettings?.cwd, ...(meta.history ?? []).filter(h => h?.field === 'cwd').flatMap(h => [h.from, h.to])]
@@ -4212,6 +4246,8 @@ async function runningWork() {
     relay: Boolean(w.relay),   // 祖先の会話へ中継した複製。元のカードと同じ1件を指す
     ...(w.remote ? { remote: { hostId: w.remote.hostId, hostName: w.remote.hostName, online: w.remote.online !== false } } : {}),   // ホストの子の承認の中継（docs/remote.md §4.5）
     ...(w.detached ? { detached: true } : {}),   // ターンを止めていない承認（設定の変更。ADR 0088）
+    ...(w.outlivesTurn ? { outlivesTurn: true } : {}),   // ターンが終わっても残る待ち（ADR 0168）
+    blocking: blocksTurn(w),   // 今ターンを止めているか（実行中の数に入るか）
   }));
 
   const nested = await Promise.all([...runtime.turns.values()].map(async (t) => {
@@ -4262,10 +4298,10 @@ async function runningWork() {
   const dueRows = schedule.list();
   // 委譲のタスクは、終わっていないものと完了通知が届いていないものだけ（agentTasks.running）。過去の分は会話ごとに delegation.tasks で読む
   const tasks = withWorktreeLive(agentTasks?.running() ?? []);
-  const count = turns.length + permissions.filter((p) => !p.relay && !p.detached).length
+  const count = turns.length + permissions.filter((p) => !p.relay && p.blocking).length
     + subagents.filter((a) => a.status === "running" || a.status == null).length + tasks.filter(r => !r.host && ["queued", "running", "cancelling"].includes(r.status) && !runtime.turns.has(r.sessionId)).length;
   // 渡せる作業の数（count のうち、保持役に載ったターンとその承認待ち・サブエージェント）。blocking は引き継ぎを待たせる作業（無ければ作業の最中でも切り替わる）
-  const heldCount = turns.filter(x => x.held).length + permissions.filter(p => p.held && !p.relay && !p.detached).length
+  const heldCount = turns.filter(x => x.held).length + permissions.filter(p => p.held && !p.relay && p.blocking).length
     + subagents.filter(a => a.held && (a.status === "running" || a.status == null)).length;
   return {
     turns,
@@ -4360,8 +4396,15 @@ function detach(ws) {
   runtime.graceTimer = setTimeout(giveUp, HOST_GRACE_MS + 500);
 }
 
-/** ターンを止めている承認待ち（設定の変更の承認 detached を除く。ADR 0088） */
-const blockingWaits = () => [...runtime.waiting.values()].filter(w => !w.detached);
+/** この会話のターンが走っているか */
+const liveTurn = sessionId => Boolean(sessionId) && runtime.turns.has(sessionId);
+/**
+ * 承認待ちが今ターンを止めているか。設定の変更の承認（detached。ADR 0088）は止めない。
+ * outlivesTurn の待ちは、承認を求めた会話（origin。中継の複製でも元の子の会話）のターンが走っている間だけ止める（ADR 0168）
+ */
+const blocksTurn = w => w.outlivesTurn ? liveTurn(w.origin) : !w.detached;
+/** ターンを止めている承認待ち */
+const blockingWaits = () => [...runtime.waiting.values()].filter(blocksTurn);
 
 /**
  * 承認待ちを片付ける。どのセッションの分かは呼び出し側が必ず指定する。
@@ -4379,8 +4422,16 @@ function settleAll(messageKey, sessionId) {
     if (w.relay) continue;
     // 設定の変更の承認（detached）はターンを止めていない。ターンが終わっても、中断しても残す（ADR 0088）
     if (w.detached) continue;
+    // ターンの終わった後も残す待ち（outlivesTurn）は、ターンの終わりでだけ飛ばす。人の「止める」・巻き戻しでは片付ける（ADR 0168）
+    if (w.outlivesTurn && messageKey === 'turnEnded') continue;
     w.settle({ allow: false, messageKey });
   }
+}
+
+/** ターンの終わった後も残る待ち（outlivesTurn）のうち、この会話が求めたもの（中継の複製の元も）を片付ける。巻き戻し・会話の削除のため（ADR 0168） */
+function settleOutlivingWaits(sessionId) {
+  if (!sessionId) return;
+  for (const [, w] of [...runtime.waiting]) if (w.outlivesTurn && w.origin === sessionId) w.settle({ allow: false, messageKey: 'aborted' });
 }
 
 /** 承認待ちの増減を知らせる。画面の実行中一覧と、依頼元の ply_task_wait の両方を起こす */
@@ -4438,7 +4489,7 @@ async function delegationRoot(sessionId) {
  * どれか1つで答えれば全部が決着し、残りは消える。
  */
 const approvalIds = createApprovalIds();
-const askPermission = async ({ toolName, input, sessionId, toolUseID, title, signal, canAlways, kind, questions, locale, browserSite, computerApp, settingChange, detached = false }) => {
+const askPermission = async ({ toolName, input, sessionId, toolUseID, title, signal, canAlways, kind, questions, locale, browserSite, computerApp, settingChange, detached = false, outlivesTurn = false, onOpen }) => {
   const { chain: ancestors, remote: remoteRoot } = sessionId ? await delegationRoot(sessionId) : { chain: [], remote: null };
   // 中継先の見出しは「どの会話の承認か」。委譲したときの info.title を使う
   const childTitle = ancestors.length || remoteRoot ? (await store.get(sessionId)).title || t('permission.childConversation') : "";
@@ -4483,6 +4534,17 @@ const askPermission = async ({ toolName, input, sessionId, toolUseID, title, sig
     }))];
     // 端末の AI に任された子の承認は、端末（依頼元の会話）へも中継する（docs/remote.md §4.5）。決着したら端末のカードも畳む
     let remoteRelay = null;
+    // 決着していなければ、全部のカードの browserHandoff に patch を重ねて知らせる（カードの id は替えない。ADR 0168）
+    const updateCards = patch => {
+      if (!cards.some(card => runtime.waiting.has(card.id))) return false;
+      for (const card of cards) {
+        const w = runtime.waiting.get(card.id);
+        if (!w) continue;
+        w.payload.browserHandoff = { ...w.payload.browserHandoff, ...patch };
+        emitGlobal({ type: 'permissionUpdate', id: card.id, sessionId: card.payload.sessionId ?? null, browserHandoff: w.payload.browserHandoff });
+      }
+      return true;
+    };
     const onAbort = () => settle({ allow: false, messageKey: 'aborted' });
     const settle = (answer) => {
       // どれか1つで決着し、残りの複製も消す。1つも残っていなければ二重解決
@@ -4505,7 +4567,14 @@ const askPermission = async ({ toolName, input, sessionId, toolUseID, title, sig
       permissionsChanged();
     };
 
-    for (const card of cards) runtime.waiting.set(card.id, { settle, payload: card.payload, askedAt: new Date().toISOString(), relay: card.relay, notified: false, detached });
+    for (const card of cards) runtime.waiting.set(card.id, { settle, payload: card.payload, askedAt: new Date().toISOString(), relay: card.relay, notified: false, detached, outlivesTurn, origin: sessionId ?? null });
+    // 呼び出し側へ、元のカードの id と中身の差し替え・外からの決着の口を渡す（最初の送信より前に同期で。ADR 0168）
+    onOpen?.({
+      id: cards[0].id,
+      ids: cards.map(card => card.id),
+      update: patch => updateCards(patch),
+      settle: answer => settle(answer),
+    });
     touchCard(runtime.turns.get(sessionId));   // 札の waits（出している承認の id）が変わった
     // 承認・質問は端末へ中継して、そこで答えられる。設定の変更の承認（受領証つきで、決着が別の台帳へ届く）など、ターンを止めない承認（detached）は、
     // 端末の画面と AI に「ホストの画面で答えてください」と知らせるだけ（答えるボタンは無く、口からの答えも受けない。docs/remote.md §4.5）
@@ -5561,9 +5630,10 @@ async function beginTurn(ctx) {
   // bot の会話なら、人格（botInstructions）と、ターンの末尾（記憶の核の写し・差分。notes）を足す。bot でなければ空
   const botExtras = await botHost?.turnExtras(turn) ?? { botInstructions: null, notes: [] };
   const notes = [...(ctx.interruption ? [ctx.interruption.text] : []), ...botExtras.notes];
-  // 委譲の子の Claude だけ、CLI の自動圧縮の閾値を下げる（親・bot は CLI の既定のまま。docs/design.md「自動圧縮」、ADR 0163）
-  const autoCompactWindow = backend.capabilities?.autoCompactWindow && sessionId && (await store.get(sessionId)).delegation
-    ? delegatedCompactWindow(compactionSettings) : null;
+  // 委譲の子の Claude だけ、CLI の自動圧縮の閾値を「固定の部分 + 空き」に下げる（親・bot は CLI の既定のまま。docs/design.md「自動圧縮」、ADR 0166）
+  const autoCompactWindow = await delegatedCompaction(ctx);
+  // 委譲の子は、可視化（出力は依頼元が受け取る）と ply_control の指示を渡さず、Claude は使わない組み込みの道具も外す（ADR 0169）
+  const delegatedChild = Boolean(sessionId && (await store.get(sessionId).catch(() => null))?.delegation);
   const runArgs = {
     prompt,
     ...(shellHandoff?.lines.length ? { shellAppends: shellHandoff.lines } : {}),
@@ -5586,7 +5656,8 @@ async function beginTurn(ctx) {
     control: turn.control,
     // エージェントに渡す文（指示・ツールの説明・タイトル生成など）の言語。会話ごとに決めて保存したもの
     locale: agentLocale,
-    visualizeInstructions: visualizeInstructions(agentLocale),
+    visualizeInstructions: delegatedChild ? null : visualizeInstructions(agentLocale),
+    ...(delegatedChild ? { delegatedChild: true } : {}),
     browserEnv: await browserEnvironment({ bridge: agentBrowserEndpoints, dataDir: store.dataDir, sessionId: sessionId || turn.key, unlock: turn.userInitiated }).catch(error => { console.error('agent browser unavailable:', error.message); return null; }),
     browserInstructions: null,
     // ply_browser。内蔵ブラウザーを渡すターンだけ（下で入れる）
@@ -5594,7 +5665,8 @@ async function beginTurn(ctx) {
     // ply_computer（url・headers・instructions）。使えない・オフ・対応しないエージェントなら null（computerRuntimeFor）
     computerRuntime: await computerRuntimeFor(turn),
     // ply_control（操作の一覧）。全会話に渡す。env は会話のシェルへ渡す CLI の接続情報
-    controlRuntime: controlRuntimeFor(turn),
+    // 委譲の子には指示（約 0.2k）だけ渡さない。MCP は残す: 子の設定変更の承認を依頼元へ中継する口（ADR 0088）が ply_control を通るため
+    controlRuntime: delegatedChild ? { ...controlRuntimeFor(turn), instructions: null } : controlRuntimeFor(turn),
     addedInstructions: !backend.capabilities?.plyAgents ? withAdded(null, contextRecord.added) : null,
     contextRuntime: ctx.runtimeContext,
     // Hooks を Pleiad がそろえるターンだけ（担当がエージェントなら渡さない。エージェントの設定の hooks がそのまま動く）
@@ -5617,9 +5689,37 @@ async function beginTurn(ctx) {
   // Pleiad が足した文の量（右パネルの「指示の量」。ADR 0056）。このターンで渡す文が出そろったここで数え、変わったときだけ記録し直す
   const parts = plyParts({ plyAgents: Boolean(backend.capabilities?.plyAgents), context: ctx.runtimeContext?.sections ?? null,
     visualize: runArgs.visualizeInstructions, browser: runArgs.browserInstructions, agents: agentConnection(turn).instructions, added: contextRecord.added,
-    computer: computerPrompt(runArgs.computerRuntime, { locale: agentLocale, agent: backend.id }), control: runArgs.controlRuntime.instructions });
+    computer: computerPrompt(runArgs.computerRuntime, { locale: agentLocale, agent: backend.id }), control: runArgs.controlRuntime?.instructions ?? null });
   if (JSON.stringify(parts) !== JSON.stringify(contextRecord.plyParts ?? null)) { contextRecord.plyParts = parts; await ctx.saveContext(); }
   ctx.runArgs = runArgs;
+}
+
+/**
+ * 委譲の子の Claude のターンの自動圧縮の窓（CLAUDE_CODE_AUTO_COMPACT_WINDOW の値）。委譲の子でない・オフ・利用者の環境変数があれば null。
+ * 閾値 = 固定の部分 + 空き（delegatedHeadroom）。固定の部分は、子自身の値 → 同じ作業場所・同じモデルの直近の子 → 直近の子 → 定数の順（ADR 0166）。
+ * 使った閾値と内訳はタスクの記録（compaction）に残す。新しい会話の最初の返答が出す contextBase を覚えるため、ターンに作業場所とモデルを付ける（makeEmit）
+ */
+async function delegatedCompaction({ backend, sessionId, cwd, model, turn }) {
+  if (!backend.capabilities?.autoCompactWindow || !sessionId) return null;
+  const meta = await store.get(sessionId);
+  if (!meta.delegation) return null;
+  turn.contextBaseKey = { cwd, model: model || '' };
+  const own = meta.contextBase?.tokens;
+  const base = validContextBase(own) ? { tokens: own, source: 'own' } : contextBases.estimate(turn.contextBaseKey);
+  const plan = delegatedCompactPlan(compactionSettings, base);
+  const recorded = plan ? { threshold: plan.threshold, base: plan.base, source: plan.source, headroom: plan.headroom } : null;
+  const changed = await agentTasks?.compaction(sessionId, recorded).catch(() => null);
+  if (changed) emitGlobal({ type: 'agentTaskChanged', sessionId: null, taskId: changed });
+  return plan?.window ?? null;
+}
+
+/** 委譲の子の新しい会話の最初の返答が出した固定の部分（contextBase）を、子自身の値と直近の値に残す（ADR 0166） */
+function rememberContextBase(turn, tokens) {
+  const sessionId = turn.info.sessionId;
+  if (!turn.contextBaseKey || !sessionId || !validContextBase(tokens)) return;
+  store.setSessionData(sessionId, 'contextBase', { tokens, at: Date.now() })
+    .catch(err => console.error('  委譲の子の固定の部分を記録できませんでした:', String(err?.message ?? err)));
+  void contextBases.remember({ ...turn.contextBaseKey, tokens });
 }
 
 /** バックエンドの host の口（in-process の MCP）から操作の一覧を呼ぶ。ターンを始めるとき（beginTurn）と付け直すとき（adoptTurn） */
@@ -5759,7 +5859,7 @@ async function releaseTurn(sessionId, { adopted = false } = {}) {
 
 /** 出している承認のカード（中継の複製・設定の変更の承認・ホストへ任せた子の承認を除く）の id。札の waits */
 const openWaitIds = sessionId => !sessionId ? [] : [...runtime.waiting]
-  .filter(([, w]) => !w.relay && !w.detached && !w.remote && w.payload.sessionId === sessionId).map(([id]) => id);
+  .filter(([, w]) => !w.relay && blocksTurn(w) && !w.remote && w.payload.sessionId === sessionId).map(([id]) => id);
 
 /** 完了通知の本文を札に置く文字数の上限。長い結果が載る通知で札が上限を超えないよう、本文は切る（付け直した先の画面の通知の一行が短くなるだけ。ハッシュと元の文字数は残す） */
 const NOTICE_CARD_CHARS = 4000;
@@ -5895,7 +5995,7 @@ const handoverRun = createHandover({
       if (holdable(turn)) heldIds.add(turn.info.sessionId);
       else out.push({ kind: 'turn', sessionId: turn.info.sessionId ?? null });
     }
-    for (const [, w] of runtime.waiting) if (!w.relay && !w.detached && !heldIds.has(w.payload.sessionId ?? null)) out.push({ kind: 'permission', sessionId: w.payload.sessionId ?? null });
+    for (const [, w] of runtime.waiting) if (!w.relay && blocksTurn(w) && !heldIds.has(w.payload.sessionId ?? null)) out.push({ kind: 'permission', sessionId: w.payload.sessionId ?? null });
     for (const r of agentTasks.running()) if (!r.host && ['queued', 'running', 'cancelling'].includes(r.status) && !runtime.turns.has(r.sessionId)) out.push({ kind: 'task', sessionId: r.sessionId ?? null });
     return out;
   },
@@ -5928,6 +6028,7 @@ const handoverRun = createHandover({
   // DB を書き切り、main へ答えてから、データ置き場のロックを放して終わる（以後このプロセスは何も書かない）
   release: async result => {
     await Promise.race([voiceHost.close(), new Promise(resolve => setTimeout(resolve, 2000))]).catch(() => {});
+    chromeScreencast?.close();
     chromeRelay?.close();
     store.flushNow();
     handoverReply?.({ ...result, at: Date.now(), pid: process.pid });
@@ -6604,7 +6705,7 @@ function captureStops(turn) {
   const id = turn.info.sessionId;
   return {
     background: (turn.info.background ?? []).map(backgroundStop),
-    approvals: id ? [...runtime.waiting].filter(([, w]) => !w.relay && !w.detached && w.payload.sessionId === id).map(([key, w]) => approvalStop(key, w.payload)) : [],
+    approvals: id ? [...runtime.waiting].filter(([, w]) => !w.relay && blocksTurn(w) && w.payload.sessionId === id).map(([key, w]) => approvalStop(key, w.payload)) : [],
   };
 }
 
@@ -6938,12 +7039,13 @@ wss.on("connection", (ws, req) => {
   if (chromeConnection && local) ws.send(JSON.stringify(chromeBrowserFrame(chromeConnection.state())));
   // 待機中でない Chrome の窓の今の状態（会話ごと。つなぎ直した画面が、引き継ぎ中などを取りこぼさない）
   for (const state of chromeControl?.snapshot() ?? []) ws.send(JSON.stringify({ kind: P.EVENT, event: { type: 'chromeControl', ...state } }));
+  for (const text of chromeWindowFrames()) ws.send(text);
   ws.on("close", () => {
     detach(ws);
     notifyPresence.clear(ws);
     // 見ていた PC のブラウザーは、見る端末がいなくなれば止める
     const viewer = screencastClients.get(ws);
-    if (viewer) screencastHub?.forget(viewer);
+    if (viewer) { screencastHub?.forget(viewer); chromeScreencastHub?.forget(viewer); }
   });
 
   ws.on("message", async (raw) => {
@@ -7488,6 +7590,7 @@ wss.on("connection", (ws, req) => {
         case 'browserScreencastInput': case 'browserScreencastNav': case 'browserScreencastAgent': {
           if (!screencastClients.has(ws)) screencastClients.set(ws, { send: message => { if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(message)); } });
           const answer = await screencastCommand({ command: msg.command, args: msg.args ?? {}, local, hub: screencastHub, bridge: screencastBridge,
+            chrome: chromeScreencastHub ? { hub: chromeScreencastHub, bridge: chromeScreencast } : null,
             client: screencastClients.get(ws),
             snapshotFile: async ({ sessionId, id, at }) => {
               const record = await history.findVisualization(sessionId, await resolveBackendForSession(sessionId).catch(() => null), { id, at });
@@ -7504,7 +7607,8 @@ wss.on("connection", (ws, req) => {
         case "hostCapabilities":
           // hostName は添付の「ホストから <ホスト名>」の見出し（リモートの印の無いブラウザーで使う）
           // pcBrowser: この接続から PC の内蔵ブラウザーを見られるか（デスクトップ版で、リモートの接続のとき）
-          return reply(true, { osActions: local, hostName: os.hostname(), pcBrowser: !local && !!screencastBridge?.ready,
+          // chromeWindow: 会話の Chrome の窓の映像を見られるか（リモートの端末も。見るだけ）
+          return reply(true, { osActions: local, hostName: os.hostname(), pcBrowser: !local && !!screencastBridge?.ready, chromeWindow: Boolean(chromeScreencast),
             // エージェントのブラウザー（PC の Chrome）への接続の入口。ホストの PC の画面だけ。Electron の無いホストは false、OS の層が使えなければ 'unsupported'
             chromeBrowser: local && chromeConnection ? (chromeConnection.state().state === 'unsupported' ? 'unsupported' : 'available') : false,
             computerUse: computerUseCapability({ hasParentPort: Boolean(computerDriver), platform: computerDriver?.kind === 'fake' ? 'win32' : undefined, ready: computerDriver?.state() ?? null }) });
@@ -7872,6 +7976,7 @@ mainPort.on("message", async ({ data }) => {
   if (data?.type === "shutdown") {
     void voiceHost.close();   // 通話の使用量の台帳を書き切る
     // Chrome に許可の確認を残して終わらない（確認が出ていれば閉じる）。main の返事を待つので、長くても 2 秒まで
+    chromeScreencast?.close();
     chromeRelay?.close();
     if (chromeConnection) await Promise.race([chromeConnection.close(), new Promise(resolve => setTimeout(resolve, 2000))]).catch(() => {});
     try { finishShutdown(store.flushNow, () => runtime.turns.size > 0 || agentTasks.busy, exitAfterStoppingHeld); }

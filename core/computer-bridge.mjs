@@ -146,7 +146,7 @@ export function createComputerBridge({ driver, lock, shots, access, askPermissio
       if (m.id === undefined) return reply(202);
       const { locale } = binding;
       let result;
-      if (m.method === 'initialize') result = { protocolVersion: '2025-03-26', capabilities: { tools: {} }, serverInfo: { name: 'ply_computer', version: '1.0.0' }, instructions: computerInstructions(locale, binding.delivery) };
+      if (m.method === 'initialize') result = { protocolVersion: '2025-03-26', capabilities: { tools: {} }, serverInfo: { name: 'ply_computer', version: '1.0.0' } };  // instructions は systemPrompt の append だけで渡す（二重にしない。ADR 0169）
       else if (m.method === 'ping') result = {};
       else if (m.method === 'tools/list') result = { tools: computerTools(locale) };
       else if (m.method === 'tools/call') {

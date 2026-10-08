@@ -9,7 +9,10 @@
 //   - 窓は位置・大きさ（bounds。DIP）を持つ。createTarget の newWindow は left・top・width・height を守り、popup の窓は既定で左上（0,0・324×298）に出る（実機）。
 //     窓ができたら onWindow の聞き手に知らせる（偽の OS の層が、その窓の HWND を作る）。windowTitle は窓の最後のタブの題（Chrome の窓の題は「<題> - Google Chrome」）
 //   - launchWindow は chrome.exe --new-window の窓（URL は題に nonce を持つ data: のページ。題は <title> から取る）
-//   - Emulation.setFocusEmulationEnabled はセッションごとの状態（セッションを外すと消える）。focusEmulated(targetId) は、今どのセッションかが有効にしているか
+//   - Emulation.setFocusEmulationEnabled はページに 1 つの状態として効く（実機: 有効にするとページは focus・visible。あるセッションが enabled: false にするか、有効にしたセッションを外すと、
+//     ほかのセッションが有効にしていても外れる。2026-10-08）。s.fe はセッションが最後に送った値。focusEmulated(targetId) は、今そのページで効いているか
+//   - Page.startScreencast・stopScreencast・screencastFrameAck はセッションごとの状態。screencastFrame(targetId) が、始めているセッションへ Page.screencastFrame を流す（実機は ack まで次を出さない）。
+//     screencasting(targetId) は今どのセッションかが始めているか。screencastParams(targetId) はその引数
 //   - ページはとても小さな型（題と、見出し・リンク・ボタンの並び）。Accessibility.getFullAXTree・DOM.getBoxModel・Input.dispatchMouseEvent で押せる
 // 受けたメソッドは calls（{ method, sessionId, params }）に、サーバーに届いた要求（移動）の URL は served に残す。
 import crypto from 'node:crypto';
@@ -37,6 +40,8 @@ export function createFakeBrowser({ product, calls, userTabs = USER_TABS } = {})
   let movesRefused = false;      // Browser.setWindowBounds の left・top を受けない（Chrome が画面の外へ置かせてくれない）
   let lastActive = null;
   let fetchEnableDelayMs = 0;
+  let frameSeq = 0;
+  let screencastStartDelayMs = 0;   // Page.startScreencast の応答を遅らせる（始まった印は先に付く。開始の途中を試す）
 
   const send = (socket, message) => { if (socket.readyState === 1) socket.send(JSON.stringify(message)); };
   const info = t => ({ targetId: t.targetId, type: t.type, title: t.title, url: t.url, attached: [...sessions.values()].some(s => s.targetId === t.targetId), canAccessOpener: false, ...(t.openerId ? { openerId: t.openerId } : {}), browserContextId: 'CTX-DEFAULT' });
@@ -193,6 +198,7 @@ export function createFakeBrowser({ product, calls, userTabs = USER_TABS } = {})
         const s = sessions.get(params.sessionId);
         if (!s || s.socket !== socket) throw { code: -32602, message: 'No session with given id' };
         sessions.delete(s.id);
+        if (s.fe) { const t = targets.get(s.targetId); if (t) t.focusOn = false; }
         send(socket, { method: 'Target.detachedFromTarget', params: { sessionId: s.id, targetId: s.targetId } });
         return {};
       }
@@ -247,7 +253,10 @@ export function createFakeBrowser({ product, calls, userTabs = USER_TABS } = {})
       case 'DOM.getBoxModel': { const i = Number(params.backendNodeId) - 10; const q = box(i); return { model: { content: q, padding: q, border: q, margin: q, width: 100, height: 24 } }; }
       case 'DOM.resolveNode': return { object: { type: 'object', subtype: 'node', className: 'HTMLElement', description: 'el', objectId: `obj-${params.backendNodeId}` } };
       case 'Input.dispatchMouseEvent': if (params.type === 'mouseReleased') setImmediate(() => click(t, params.x, params.y)); return {};
-      case 'Emulation.setFocusEmulationEnabled': s.fe = params.enabled === true; return {};
+      case 'Emulation.setFocusEmulationEnabled': s.fe = params.enabled === true; t.focusOn = s.fe; return {};
+      case 'Page.startScreencast': s.screencast = { ...params }; if (screencastStartDelayMs) await new Promise(resolve => setTimeout(resolve, screencastStartDelayMs)); return {};
+      case 'Page.stopScreencast': s.screencast = null; return {};
+      case 'Page.screencastFrameAck': return {};
       case 'Fetch.enable': if (fetchEnableDelayMs) await new Promise(resolve => setTimeout(resolve, fetchEnableDelayMs)); s.fetch = true; return {};
       case 'Fetch.disable': s.fetch = false; return {};
       case 'Fetch.continueRequest': { const r = pausedFetch.get(params.requestId); pausedFetch.delete(params.requestId); r?.('continue'); return {}; }
@@ -278,7 +287,7 @@ export function createFakeBrowser({ product, calls, userTabs = USER_TABS } = {})
       });
       socket.on('close', () => {
         discovering.delete(socket);
-        for (const s of [...sessions.values()]) if (s.socket === socket) sessions.delete(s.id);
+        for (const s of [...sessions.values()]) if (s.socket === socket) { sessions.delete(s.id); if (s.fe) { const t = targets.get(s.targetId); if (t) t.focusOn = false; } }
         for (const [id, resolve] of [...pausedFetch]) { pausedFetch.delete(id); resolve('continue'); }
       });
     },
@@ -287,9 +296,21 @@ export function createFakeBrowser({ product, calls, userTabs = USER_TABS } = {})
     autoAttachCalls,
     windows: () => [...windows].map(([windowId, w]) => ({ windowId, state: w.state, bounds: { ...w.bounds } })),
     targets: () => [...targets.values()].map(t => ({ ...t })),
-    sessions: () => [...sessions.values()].map(s => ({ id: s.id, targetId: s.targetId, fetch: s.fetch, fe: s.fe })),
+    sessions: () => [...sessions.values()].map(s => ({ id: s.id, targetId: s.targetId, fetch: s.fetch, fe: s.fe, screencast: Boolean(s.screencast) })),
+    /** Page.startScreencast の応答を ms 遅らせる（始まった印は先に付く） */
+    delayScreencastStart(ms) { screencastStartDelayMs = ms; },
+    /** そのタブで Page.startScreencast を回しているセッションが今あるか */
+    screencasting: targetId => [...sessions.values()].some(s => s.targetId === targetId && s.screencast),
+    screencastParams: targetId => [...sessions.values()].find(s => s.targetId === targetId && s.screencast)?.screencast ?? null,
+    /** 始めているセッションへ 1 フレームを流す（実機は ack まで次を出さない）。戻り値は ack の id（流せなければ null） */
+    screencastFrame(targetId, { data = 'QUJD', metadata = { deviceWidth: 1100, deviceHeight: 720, pageScaleFactor: 1, offsetTop: 0, scrollOffsetX: 0, scrollOffsetY: 0 } } = {}) {
+      const id = ++frameSeq;
+      let sent = false;
+      for (const s of sessions.values()) if (s.targetId === targetId && s.screencast) { send(s.socket, { method: 'Page.screencastFrame', sessionId: s.id, params: { data, metadata, sessionId: id } }); sent = true; }
+      return sent ? id : null;
+    },
     /** そのタブに focus emulation を有効にしているセッションが今あるか */
-    focusEmulated: targetId => [...sessions.values()].some(s => s.targetId === targetId && s.fe),
+    focusEmulated: targetId => targets.get(targetId)?.focusOn === true,
     windowTitle,
     windowBounds: windowId => (windows.has(windowId) ? boundsOf(windowId) : null),
     /** Browser.setWindowBounds の位置（left・top）を受けなくする（大きさは受ける） */
@@ -306,6 +327,7 @@ export function createFakeBrowser({ product, calls, userTabs = USER_TABS } = {})
       const s = sessions.get(sessionId);
       if (!s) return false;
       sessions.delete(sessionId);
+      if (s.fe) { const t = targets.get(s.targetId); if (t) t.focusOn = false; }
       send(s.socket, { method: 'Target.detachedFromTarget', params: { sessionId, targetId: s.targetId } });
       return true;
     },

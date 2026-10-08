@@ -12,6 +12,7 @@
 //   "tool"         … tool.start / tool.result を挟む
 //   "ask"          … askPermission（kind:"tool"）を呼び、結果を本文にする
 //   "ask-slow"     … "ask" の後、中断されるまで走り続ける（承認の前後で状態が変わるのを測る）
+//   "outlives:<json>" … ターンが終わっても残る承認（outlivesTurn。ADR 0168）を出す／その handle を操る（update・settle・result）。tests/unit/server-permission-update.mjs
 //   "question"     … askPermission（kind:"question"）を呼び、回答を本文にする
 //   "slow"         … 中断されるまで待つ
 //   "fail"         … 失敗で終わる（outcome: error。離れた端末への「失敗」の通知を測る）
@@ -60,6 +61,7 @@ import { computerDisplay, computerToolInput } from "../computer-use/display.mjs"
 
 const sessions = new Map();   // sessionId -> { sessionId, title, cwd, createdAt, lastModified, tag, messages, subagents }
 const deletedNatives = [];    // deleteSession に渡された id（台本 "deleted-natives"）
+const outlivesWaits = new Map();   // 会話 id → { handle, result }（台本 "outlives:"）
 const auth = { loggedIn: false, account: null };
 // 台本 "bg-shell" の止め口（Pleiad の会話 id -> taskId -> 止める関数）と、台本 "term" が残した端末（会話 id -> 端末の一覧）
 const shells = new Map();
@@ -702,6 +704,35 @@ export const backend = {
           emit({ type: "turnResult", outcome: "aborted" });
           return { sessionId: id };
         }
+      } else if (text.startsWith("outlives:")) {
+        // ターンが終わっても残る承認（outlivesTurn。ADR 0168）。{ open: { hold?, signal?, key? } }（target の既定は会話の id。key があればそれ） で待ちを出し（答えを待たずに進む。hold ならターンを中断まで走らせる、
+        // signal ならターンの signal を渡す）、{ op: "update"|"settle"|"result", target, patch?, answer? } で target の会話が出した待ちを操る
+        const spec = JSON.parse(text.slice("outlives:".length));
+        if (spec.open) {
+          outlivesWaits.set(spec.open.key ?? id, { handle: null, result: null });
+          const entry = outlivesWaits.get(spec.open.key ?? id);
+          emit({ type: "activity", state: "waiting" });
+          askPermission({ toolName: "fake_handoff", input: {}, sessionId: id, toolUseID: crypto.randomUUID(), title: null, canAlways: false, kind: "tool", questions: null,
+            outlivesTurn: true, onOpen: (handle) => { entry.handle = handle; }, ...(spec.open.signal ? { signal: signal?.signal } : {}) })
+            .then((answer) => { entry.result = answer; });
+          out.text = "待ちを出した";
+          await say(emit, out.text, out.uuid);
+          if (spec.open.hold) {
+            await new Promise((resolve) => {
+              if (signal?.signal?.aborted) return resolve();
+              signal?.signal?.addEventListener?.("abort", () => resolve(), { once: true });
+            });
+            push(s, out);
+            emit({ type: "turnResult", outcome: "aborted" });
+            return { sessionId: id };
+          }
+        } else {
+          const entry = outlivesWaits.get(spec.target);
+          if (spec.op === "update") out.text = String(entry?.handle?.update(spec.patch));
+          else if (spec.op === "settle") { entry?.handle?.settle(spec.answer); out.text = "settled"; }
+          else out.text = JSON.stringify({ id: entry?.handle?.id ?? null, ids: entry?.handle?.ids ?? null, result: entry?.result ?? null });
+          await say(emit, out.text, out.uuid);
+        }
       } else if (text.startsWith("question")) {
         emit({ type: "activity", state: "waiting" });
         const answer = await askPermission({
@@ -729,7 +760,10 @@ export const backend = {
         // トークンそのものは出さない。同じトークンかどうかだけ分かる指紋
         out.text = oauthToken ? `account:${crypto.createHash("sha256").update(oauthToken).digest("hex").slice(0, 12)}` : "account:none";
         await say(emit, out.text, out.uuid);
-      } else if (/(^|\n)compact-window$/.test(text)) {   // 子にだけ渡る自動圧縮の窓。渡っていなければ none
+      } else if (/(^|\n)compact-window(?: base:\d+)?$/.test(text)) {   // 子にだけ渡る自動圧縮の窓。渡っていなければ none
+        // base:N は Claude の新しい会話の最初の返答の usage（固定の部分。ADR 0166）の代わり。新しい会話のときだけ出す
+        const base = /compact-window base:(\d+)$/.exec(text);
+        if (base && !sessionId) emit({ type: "contextBase", tokens: Number(base[1]) });
         out.text = `compactWindow:${autoCompactWindow ?? "none"}`;
         await say(emit, out.text, out.uuid);
       } else if (/^fail(\s|$)/.test(text)) {

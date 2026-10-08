@@ -29,6 +29,7 @@ const SUITES = [
   './unit/server-compaction.mjs',
   // 委譲の子だけ自動圧縮の窓（CLAUDE_CODE_AUTO_COMPACT_WINDOW = 閾値 + 33000）を渡す: 親・0（オフ）・利用者の環境変数が先、では渡さない
   './unit/server-compaction-delegated.mjs',
+  './unit/claude-delegated-child.mjs',
   './unit/limit-resume.mjs',
   './unit/server-limit-resume.mjs',
   './unit/send-schedule.mjs',
@@ -64,6 +65,10 @@ const SUITES = [
   './unit/chrome-connection.mjs',
   // Chrome の絞り込みの中継（ADR 0148・0153）: 会話の窓の範囲・断る／真似る一覧・sessionId の持ち主・サイトの利用の確認（Fetch・window.open）・止める・鍵・agent-browser の本物の通し（偽の Chrome）
   './unit/chrome-relay.mjs',
+  // Chrome の窓の映像（ADR 0148 第 5 段）: 今のタブへの付け外し・ack の間引き・focus emulation の理由の数え方（ターンと映像。閉じてすぐ開き直しても残る）・タブの付け替え・rebind／forget／Chrome 側の detach・撮影を断つ口（suspend。見る前・開始の途中・会話の寿命）・見るだけ（偽の Chrome）
+  './unit/chrome-screencast.mjs',
+  // Chrome の窓の映像（サーバー越し）: chromeWindow イベントがホストの画面にもリモートの端末にも届く・接続の直後に今の分・hostCapabilities.chromeWindow・source: chrome の映像と view-only（偽の Chrome・parentPort の身代わり）
+  './unit/server-chrome-screencast.mjs',
   // 会話ごとの専用の Chrome の窓（ADR 0154）: chrome.exe の最初の窓・画面の外の隠した窓・前面を返す・窓だけ閉じられた／Chrome が閉じた・popup・bringToFront の握りつぶし・focus emulation（ターンの間だけ）（偽の OS の層・偽の Chrome）
   './unit/chrome-windows.mjs',
   // エージェントの Chrome の窓の止める・引き継ぐ・戻す（ADR 0148・0154）: 状態機械・一時停止中の断り・映像を断る・止めて人の送信で解く・窓を見える形に戻して前に出す／画面の外へ戻す・窓が閉じられた／Chrome が閉じた・押した位置（偽の OS の層・偽の Chrome）
@@ -74,6 +79,8 @@ const SUITES = [
   './unit/chrome-os.mjs',
   // Chrome への接続（サーバー越し）: browser.chrome* の操作・chromeBrowser イベントはホストの画面だけ・使えない OS / Electron の無いホスト（偽の Chrome・parentPort の身代わり）
   './unit/server-chrome.mjs',
+  // Chrome の OS の層をパイプの経路（無停止の更新）で作る: parentPort が無くても層ができる・chrome-os の依頼が main に届く・付け直しで求め直す・main が居ない間は失敗で返す
+  './unit/chrome-os-link.mjs',
   // 設定 › ブラウザー › エージェントのブラウザー: 状態ごとの字とボタン・使えない環境（DOM の代役）
   './unit/chrome-settings.mjs',
   './unit/browser-confirm.mjs',
@@ -193,6 +200,8 @@ const SUITES = [
   './unit/server-agent-tasks.mjs',
   // 承認が片付いた知らせ（permissionSettled）: 子と中継の複製の id ごと・中断でも・片付いた承認への答えは ALREADY_RESOLVED・画面の配線
   './unit/server-permission-settled.mjs',
+  // ターンを越えて残る承認の待ち（outlivesTurn。ADR 0168）と中身の差し替え（permissionUpdate）
+  './unit/server-permission-update.mjs',
   // 委譲の子に裏の作業が残るとき: 終わらないコマンドも自動停止しない・サブエージェントは止めない・端末は待たない（子にも親にも）
   './unit/server-delegation-background.mjs',
   // 依頼元が子のエージェント・モデル・思考の強さを ply_task_send で替える（走っている子・走っていない子・断る場合・記録）

@@ -27,7 +27,7 @@ export default async function (t) {
   view.apply({ state: 'running', since: null });
   t.ok('running: 「Claude が操作中」と止める・引き継ぐ', view.root.hidden === false && view.root.querySelector('.cc-text').textContent === 'Claude が操作中' && shownButtons(view.root).join() === '止める,引き継ぐ', shownButtons(view.root).join());
   t.ok('操作中の印は data-state（色は CSS のトークン）', view.root.dataset.state === 'running' && view.overlay.dataset.state === 'running');
-  t.ok('帯・膜は一時停止中だけ', view.banner.hidden === true && view.overlay.querySelector('.cc-veil').hidden === true);
+  t.ok('帯は一時停止中だけ。映像の上の層に幕は持たない（幕は映像の側の .cp-veil が 1 つだけ出す）', view.banner.hidden === true && view.overlay.querySelector('.cc-veil') === null);
   view.apply({ state: 'idle' });
   t.ok('idle: 「待機中」と引き継ぐ', view.root.querySelector('.cc-text').textContent === '待機中' && shownButtons(view.root).join() === '引き継ぐ');
   view.apply({ state: 'stopped' });
@@ -43,8 +43,7 @@ export default async function (t) {
   view.apply({ state: 'paused', since: 1 });
   t.ok('paused: 「あなたが操作中」と「Claude に戻す」だけ', view.root.querySelector('.cc-text').textContent === 'あなたが操作中' && shownButtons(view.root).join() === 'Claude に戻す' && view.root.dataset.state === 'paused');
   t.ok('一時停止中の帯（会話の中。role=status）に文と戻すボタン', view.banner.hidden === false && view.banner.getAttribute('role') === 'status' && view.banner.textContent.includes('一時停止中 · あなたが Chrome で操作しています') && view.banner.querySelector('button').textContent === 'Claude に戻す');
-  const veil = view.overlay.querySelector('.cc-veil');
-  t.ok('映像の上の薄い幕（読み上げない層の中）', veil.hidden === false && veil.textContent === '一時停止中' && view.overlay.getAttribute('aria-hidden') === 'true');
+  t.ok('映像の上の層は読み上げない。一時停止中も幕は足さない（二重にしない）', view.overlay.querySelector('.cc-veil') === null && view.overlay.getAttribute('aria-hidden') === 'true');
   view.banner.querySelector('button').onclick();
   await sleep(5);
   t.ok('帯の「Claude に戻す」は resume を呼ぶ', calls.at(-1) === 'resume');
@@ -106,6 +105,8 @@ export default async function (t) {
   store.event({ type: 'chromeTap', sessionId: 'b', x: 3, y: 4, windowId: 7 });
   store.event({ type: 'chromeTap', x: 3, y: 4 });
   t.ok('押した位置は会話の id つきで聞き手へ', taps.length === 1 && taps[0].sessionId === 'b' && taps[0].x === 3 && taps[0].windowId === 7);
+  store.clear();
+  t.ok('clear は全部を idle に戻し、聞き手へ知らせる', store.get('b').state === 'idle' && seen.at(-1) === 'b:idle:', seen.join());
   const off = store.onChange(() => { throw new Error('listener'); });
   store.event({ type: 'chromeControl', sessionId: 'c', state: 'running' });
   off();

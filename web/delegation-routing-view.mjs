@@ -159,6 +159,19 @@ export function effortLine(routing) {
 }
 
 /**
+ * 子の自動圧縮の閾値の一言（「171k（固定 71k + 空き 100k） · 固定は直近の子の値」。内訳の「圧縮の閾値」）。
+ * compaction はタスクの記録の { threshold, base, source, headroom }（最後に走った子のターンで使ったもの。ADR 0166）。無ければ空
+ */
+// i18n-dynamic: routing.detail.compactionLine.
+export function compactionLine(compaction) {
+  if (!Number.isFinite(compaction?.threshold) || !Number.isFinite(compaction.base) || !Number.isFinite(compaction.headroom)) return '';
+  const k = n => `${Math.round(n / 1000)}k`;
+  const value = t('routing.detail.compactionLine.value', { threshold: k(compaction.threshold), base: k(compaction.base), headroom: k(compaction.headroom) });
+  const source = ['own', 'same', 'recent', 'default'].includes(compaction.source) ? t(`routing.detail.compactionLine.${compaction.source}`) : '';
+  return source ? [value, source].join(t('routing.line.join')) : value;
+}
+
+/**
  * やり直しに出す候補。今使えるもので、元の委譲先を除く。元の段から上へ、次に下の段の順（段の中は設定の順）。
  * candidates は delegationRouting の candidates、tiers は段の並び
  */
@@ -346,9 +359,10 @@ function candidateCard({ n, backend, model, used, skipped, account, accountLabel
 
 /**
  * 委譲カードを開いたときの内訳。種類・難しさ・段・判定・はいだった手がかり・使用量の取得時刻と、試した候補を順に。
- * opts: { names, logo(backend), onRetry?(root) } onRetry が無ければ「別の候補でやり直す」を出さない
+ * opts: { names, logo(backend), onRetry?(root), compaction? } onRetry が無ければ「別の候補でやり直す」を出さない。
+ * compaction は子の自動圧縮の閾値と内訳（compactionLine）。無ければ出さない
  */
-export function routingDetail(routing, { names = defaultNames, logo = () => el('span'), onRetry = null } = {}) {
+export function routingDetail(routing, { names = defaultNames, logo = () => el('span'), onRetry = null, compaction = null } = {}) {
   const root = el('div', 'rt-detail');
   root.setAttribute('role', 'group');
   root.setAttribute('aria-label', t('routing.detail.label'));
@@ -359,6 +373,8 @@ export function routingDetail(routing, { names = defaultNames, logo = () => el('
     fact(t('routing.detail.signals'), yes.length ? fmt.list(yes) : t('routing.detail.noSignals')));
   const effort = effortLine(routing);
   if (effort) facts.append(fact(t('routing.detail.effort'), effort));
+  const threshold = compactionLine(compaction);
+  if (threshold) facts.append(fact(t('routing.detail.compaction'), threshold));
   if (routing.usageAt) facts.append(fact(t('routing.detail.usageAt'), fmt.dateTime(routing.usageAt)));
   root.append(facts);
   const list = el('div', 'rt-cands');
@@ -388,9 +404,10 @@ export function routingDetail(routing, { names = defaultNames, logo = () => el('
 
 /**
  * 自動でない委譲を開いたときの内訳。種類・委譲先（依頼元が指定）・承認モード・作業場所の格子だけ。
- * 判定・候補・やり直しは自動のときだけの部品なので出さない。mode は表示名、cwd は子の作業場所（分からなければ出さない）
+ * 判定・候補・やり直しは自動のときだけの部品なので出さない。mode は表示名、cwd は子の作業場所（分からなければ出さない）、
+ * compaction は子の自動圧縮の閾値と内訳（compactionLine。無ければ出さない）
  */
-export function pinnedDetail(routing, { names = defaultNames, mode = '', cwd = '' } = {}) {
+export function pinnedDetail(routing, { names = defaultNames, mode = '', cwd = '', compaction = null } = {}) {
   const root = el('div', 'rt-detail');
   root.setAttribute('role', 'group');
   root.setAttribute('aria-label', t('routing.detail.label'));
@@ -401,6 +418,8 @@ export function pinnedDetail(routing, { names = defaultNames, mode = '', cwd = '
   if (mode) facts.append(fact(t('routing.detail.mode'), mode));
   const effort = effortLine(routing);
   if (effort) facts.append(fact(t('routing.detail.effort'), effort));
+  const threshold = compactionLine(compaction);
+  if (threshold) facts.append(fact(t('routing.detail.compaction'), threshold));
   if (cwd) facts.append(fact(t('routing.detail.cwd'), cwd));
   root.append(facts);
   return root;

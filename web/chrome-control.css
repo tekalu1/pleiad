@@ -1,4 +1,4 @@
-/* エージェントの Chrome の窓の状態の一行・一時停止中の帯・映像の膜と押した位置の輪・会話の引き継ぎの行
+/* エージェントの Chrome の窓の状態の一行・一時停止中の帯・映像の上の押した位置の輪・会話の引き継ぎの行
    （docs/design-system.md「Chrome の窓の状態の一行」、ADR 0148・0154）。色は面（surface）・文字（ink）・塗り・青の線（--line-blue）だけ。枠線は使わない。
    動きは --dur・--ease-out（動きを減らす設定では --dur が 0 で、入れ替えだけ） */
 
@@ -17,11 +17,8 @@
 .cc-banner[hidden]{display:none}
 .cc-banner-text{min-width:0;flex:1 1 200px}
 
-/* 映像の上の層（親は position: relative）。一時停止中は薄い幕で、押した位置に輪を出す */
+/* 映像の上の層（親は position: relative）。押した位置に輪を出す（一時停止中の幕は映像の側の .cp-veil） */
 .cc-overlay{position:absolute;inset:0;overflow:hidden;pointer-events:none}
-.cc-veil{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:var(--surface-1);opacity:.86;transition:opacity var(--dur) var(--ease-out)}
-.cc-veil[hidden]{display:none}
-.cc-veil-text{color:var(--ink);font-size:var(--fs-s)}
 .cc-ring{position:absolute;width:30px;height:30px;margin:-15px 0 0 -15px;border-radius:50%;box-shadow:0 0 0 2px var(--line-blue);opacity:0;animation:cc-ring 700ms var(--ease-out) forwards}
 @keyframes cc-ring{0%{opacity:.95;transform:scale(.4)}100%{opacity:0;transform:scale(1.5)}}
 @media (prefers-reduced-motion:reduce){

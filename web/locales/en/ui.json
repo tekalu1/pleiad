@@ -3447,6 +3447,14 @@
         "none": "Not adjustable",
         "parent": "{{value}} · changed by the requester",
         "adjusted": "{{asked}} is not available for this model, so {{value}} was used"
+      },
+      "compaction": "Compaction threshold",
+      "compactionLine": {
+        "value": "{{threshold}} (fixed {{base}} + room {{headroom}})",
+        "own": "fixed part is the size of this child's first request",
+        "same": "fixed part from the latest child in the same folder with the same model",
+        "recent": "fixed part from the latest child",
+        "default": "fixed part estimated (nothing measured yet)"
       }
     },
     "effort": {
@@ -3676,8 +3684,8 @@
     "sidebarDone": "Compacted",
     "autoEnabled": "Automatically compact idle conversations",
     "minSize": "Minimum size",
-    "delegatedSize": "Compaction threshold for delegated children",
-    "delegatedHint": "A delegated Claude child is compacted automatically by Claude Code once its context passes this size (0 turns it off). Parent conversations are not affected",
+    "delegatedSize": "Room before compacting delegated children",
+    "delegatedHint": "A delegated Claude child is compacted automatically by Claude Code once its context passes its fixed part (the size of its first request: instructions, tools, and so on) plus this amount. 0 turns it off (the Claude Code default); otherwise at least 30k. Parent conversations are not affected",
     "kTokens": "k tokens",
     "agent": "Agent",
     "enabled": "On / Off",
@@ -4155,8 +4163,8 @@
     "stop": "Stop",
     "takeOver": "Take over",
     "resume": "Hand back to {{name}}",
+    "failed": "Could not do that.",
     "banner": "Paused · you are operating Chrome",
-    "veil": "Paused",
     "handover": "You took over · handed back to {{name}} · {{duration}}",
     "duration": { "minutes": "{{m}} min {{s}} s", "seconds": "{{s}} s" }
   },
@@ -4200,6 +4208,19 @@
     "siteDataCleared": "Cleared data for this site.",
     "failed": "The browser action failed.",
     "reloaded": "Reloaded",
+    "chromeWindow": {
+      "panel": "Chrome window",
+      "entry": "{{name}}'s Chrome window",
+      "entryWorking": "{{name}}'s Chrome window · working",
+      "screen": "Video of {{name}}'s Chrome window (view only)",
+      "viewOnly": "View only · take over to use it",
+      "suspended": "Video paused",
+      "connecting": "Connecting…",
+      "fps": "Video · {{fps}} fps",
+      "ended": "The Chrome window was closed",
+      "none": "This conversation has no Chrome window",
+      "failed": "Couldn't open the Chrome window video."
+    },
     "remote": {
       "title": "PC browser",
       "backToChat": "Back to conversation",

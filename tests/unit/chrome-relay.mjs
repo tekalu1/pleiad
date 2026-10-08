@@ -8,6 +8,7 @@ import { fakeChromeOs } from '../lib/fake-chrome-os.mjs';
 import { runAgentBrowser } from '../lib/agent-browser-cli.mjs';
 import { createChromeConnection } from '../../core/chrome/connection.mjs';
 import { createChromeRelay } from '../../core/chrome/relay.mjs';
+import { WINDOW_DIP } from '../../core/chrome/windows.mjs';
 import { browserEnvironment, chromeRelayBrowser, agentBrowserMode, browserSocketDirectory } from '../../core/agent-browser.mjs';
 import { rpc as nativeRpc } from '../../core/backends/codex-rpc.mjs';
 import { startServer, ROOT } from '../lib/server.mjs';
@@ -91,7 +92,7 @@ export default async function (t) {
       const win = r.fake.windows().find(w => w.windowId === tab?.windowId);
       t.ok('createTarget は context・newWindow の指定を捨てて、会話の新しい窓に作る（利用者の窓に入れない）', !!tab && tab.windowId !== r.fake.userWindow, JSON.stringify(tab));
       const hwnd = r.os.hwnds().find(h => h.windowId === tab?.windowId);
-      t.ok('窓は最小化せず、決めた大きさ（1100×720 DIP）で開く（画面の外へは OS の層が動かす）', win?.state === 'normal' && win.bounds.width === 1100 && win.bounds.height === 720, JSON.stringify(win));
+      t.ok(`窓は最小化せず、決めた大きさ（${WINDOW_DIP.width}×${WINDOW_DIP.height} DIP）で開く（画面の外へは OS の層が動かす）`, win?.state === 'normal' && win.bounds.width === WINDOW_DIP.width && win.bounds.height === WINDOW_DIP.height, JSON.stringify(win));
       t.ok('窓の HWND を隠す（画面の外・タスクバーと Alt+Tab から外す・透明度 0・マウスの素通し）', hwnd?.concealed === true && hwnd.alpha === 0 && hwnd.ex.toolwindow && hwnd.ex.layered && hwnd.ex.transparent && !hwnd.ex.appwindow, JSON.stringify(hwnd));
       t.ok('窓の状態（最小化・復元）を上りへ送らない', !r.chrome.calls.some(c => c.method === 'Browser.setWindowBounds' && c.params.bounds?.windowState));
       t.ok('作ったタブだけが getTargets と targetCreated に出る', JSON.stringify((await a1.cmd('Target.getTargets')).result.targetInfos.map(x => x.targetId)) === JSON.stringify([tabId])

@@ -234,7 +234,7 @@ export function setupFilePreview({ getContext, useFile, onLayout, showMenu, cmd,
   /** 今のモードの設定。状態（custom・visual・file）から毎回作り直す */
   function slots() {
     if (browsing) return browserSlots();
-    if (custom) return custom.footer || custom.head ? gitSlots({ label:custom.label, footer:custom.footer, head:custom.head, toolbar:custom.toolbar }) : customSlots({ label:custom.label });
+    if (custom) return custom.footer || custom.head || custom.wide ? gitSlots({ label:custom.label, footer:custom.footer, head:custom.head, toolbar:custom.toolbar, wide:custom.wide }) : customSlots({ label:custom.label });
     if (visual) return visualizationSlots({ origin:visual.origin, html:visual.html, canBrowse:!!snapshotQuery(visual), canUse:!!useFile });
     return fileSlots({ file, osActions:osActions() });
   }
@@ -497,7 +497,7 @@ export function setupFilePreview({ getContext, useFile, onLayout, showMenu, cmd,
    * ファイル以外の中身を同じパネルに出す（会話の右パネル「この会話のコンテキスト」）。
    * 幅・Esc・狭い画面の全面表示はファイルと共有する。出す部品は customSlots（見出しと本文と閉じるだけ）
    */
-  function openPanel({ key, title, subtitle = '', body, label, element, onClose, width = 0, footer = null, head = null, toolbar = null, status: statusText }) {
+  function openPanel({ key, title, subtitle = '', body, label, element, onClose, width = 0, footer = null, head = null, toolbar = null, wide = false, status: statusText }) {
     const previous = custom;
     abort?.abort(); generation++; paintId++; disposePdf();
     if (previous && previous.key !== key) { leaveCustom(); previous.onClose?.(); }
@@ -508,7 +508,7 @@ export function setupFilePreview({ getContext, useFile, onLayout, showMenu, cmd,
     // 頭の右のアイコンの列（head: [{ icon, label, onClick }]）と、道具の列に置く要素（toolbar: [Node]）。git パネルが使う
     const headIds = (head ?? []).map((h, i) => { parts.buttons[`customHead${i}`] = h.node ?? iconButton(h.icon, h.label, h.onClick); return `customHead${i}`; });
     const toolIds = (toolbar ?? []).map((node, i) => { parts.buttons[`customTool${i}`] = node; return `customTool${i}`; });
-    custom = { key, label, onClose, opener: element ?? null, width, footer: footerIds.length ? footerIds : null, head: headIds.length ? headIds : null, toolbar: toolIds.length ? toolIds : null };
+    custom = { key, label, onClose, opener: element ?? null, width, footer: footerIds.length ? footerIds : null, head: headIds.length ? headIds : null, toolbar: toolIds.length ? toolIds : null, wide };
     context = getContext(element);
     panel.hidden = false; panel.dataset.panel = key; document.body.classList.add('file-preview-open');
     document.body.classList.remove('file-preview-wide');

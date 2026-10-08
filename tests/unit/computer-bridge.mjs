@@ -18,7 +18,7 @@ export default async function(t) {
     const status = async (method, token) => { let code; await h.bridge.handle({ method, headers: { authorization: token, host: 'x' }, [Symbol.asyncIterator]: async function* () { yield Buffer.from('{}'); } }, { writeHead(s) { code = s; }, end() {} }); return code; };
     t.ok('トークンの違う呼び出しは 401。GET は 405', await status('POST', 'Bearer ' + 'f'.repeat(64)) === 401 && await status('POST', undefined) === 401 && await status('GET', a.binding.headers.Authorization) === 405);
     const init = (await a.rpc('initialize', {})).body.result;
-    t.ok('initialize: serverInfo は ply_computer、instructions は指示文（ja）', init.serverInfo.name === 'ply_computer' && init.instructions.includes('screenshot') && init.instructions.includes('ターミナル') && init.capabilities.tools);
+    t.ok('initialize: serverInfo は ply_computer。instructions は返さない（append だけで渡す。ADR 0169）。open の instructions は指示文（ja）', init.serverInfo.name === 'ply_computer' && init.instructions === undefined && a.binding.instructions.includes("screenshot") && init.capabilities.tools);
     const list = (await a.rpc('tools/list', {})).body.result.tools;
     t.ok('tools/list: ツールは契約の 22 個（request_access・list_granted_applications・screenshot・zoom・switch_display・cursor_position・mouse_move・5 種のクリック・drag・down/up・scroll・type・key・hold_key・wait・open_application・computer_batch）',
       list.length === 22 && COMPUTER_TOOL_NAMES.every(n => list.some(x => x.name === n)) && ['left_click', 'double_click', 'triple_click', 'right_click', 'middle_click', 'left_click_drag', 'left_mouse_down', 'left_mouse_up'].every(n => list.some(x => x.name === n)));
@@ -29,7 +29,7 @@ export default async function(t) {
         && s.computer_batch.properties.actions.maxItems === 20 && !s.computer_batch.properties.actions.items.properties.action.enum.includes('computer_batch') && !s.computer_batch.properties.actions.items.properties.action.enum.includes('request_access');
     })());
     const en = h.connect({ sessionId: 'en', locale: 'en' });
-    t.ok('英語の会話では説明も指示文も英語', (await en.rpc('tools/list', {})).body.result.tools[0].description.startsWith('Ask the user') && (await en.rpc('initialize', {})).body.result.instructions.includes('terminals'));
+    t.ok('英語の会話では説明も指示文も英語', (await en.rpc('tools/list', {})).body.result.tools[0].description.startsWith('Ask the user') && en.binding.instructions.includes('terminals'));
     t.ok('知らないメソッドは JSON-RPC のエラー、通知（id なし）は 202', (await a.rpc('nope', {})).body.error.code === -32601);
     en.binding.close();
     t.ok('橋を閉じたら、そのトークンは使えない（401）', (await en.rpc('ping', {})).status === 401);
@@ -452,7 +452,7 @@ export default async function(t) {
       const sh = await x.call('screenshot', { title: 'x' });
       const id = mark(sh).shot;
       t.ok('images: path なら、text に保存先の絶対パスの行を足し、image ブロックも残す。印の行は最後のまま', sh.content[0].text.includes(hi.shots.pathOf(id)) && sh.content[1].type === 'image' && sh.content[0].text.split('\n').at(-1).startsWith('[ply_computer]') && /[A-Za-z]:|^\//.test(hi.shots.pathOf(id)));
-      t.ok('images: path の instructions は、画像が見えなければファイルを開いて見る指示を足す', (await x.rpc('initialize', {})).body.result.instructions.includes('保存先のファイル') && x.binding.instructions.includes('保存先のファイル'));
+      t.ok('images: path の instructions は、画像が見えなければファイルを開いて見る指示を足す', (await x.rpc('initialize', {})).body.result.instructions === undefined && x.binding.instructions.includes('保存先のファイル'));
       const inline = hi.connect({ sessionId: 'i2' });
       const sh2 = await inline.call('screenshot', { title: 'x' });
       t.ok('既定（inline）は保存先の行を入れない', !sh2.content[0].text.includes('保存先') && !inline.binding.instructions.includes('保存先のファイル'));

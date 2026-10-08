@@ -10,6 +10,9 @@
 // 自動の一時停止は作らない（ADR 0154。窓が見えるのは引き継ぎのときだけ）。窓を × で閉じられても paused のまま（「戻す」で解き、次に使うとき黙って開き直す）。
 // Chrome が閉じたときは中継が paused を解く。
 //
+// 撮影を断る（右パネルの映像。core/chrome/screencast.mjs の suspend / resume）: paused に入った時に同期で suspend し、paused が解けた時に resume する。
+// 解け方（戻す・止める・Chrome が閉じた・会話の削除・id の付け替え）に依らず、中継の状態の変化から対にする（付け替え・削除で消えた会話の分は次の変化で resume して片付ける。
+// 映像の側も、会話の削除・接続の切断で断りを自分で消し、id の付け替えで新しい id へ移す）。
 // 状態の便り（onChange）は { sessionId, state, since } の形（since: paused の始まりの時刻 ms。それ以外は null）。ログには窓の題・URL を出さない。
 
 export const CONTROL_STATES = Object.freeze(['running', 'idle', 'stopped', 'paused']);
@@ -23,9 +26,10 @@ export class ChromeControlError extends Error {
  * @param {object} deps
  * @param deps.relay    core/chrome/relay.mjs の中継（pause・unpause・state・scope・cdp・stop・onChange・onTap）
  * @param deps.os       core/chrome/os.mjs の口（引き継ぎの前に、押された直後の前面＝Pleiad の窓を取るのに使う）
+ * @param [deps.capture] 映像の撮影を断る口（{ suspend(sessionId), resume(sessionId) }。core/chrome/screencast.mjs）。無ければ断らない（captureBlocked は引ける）
  * @param [deps.record] 戻したときに会話へ残す行（({ sessionId, seconds }) → Promise）。失敗しても戻す操作は成功させる
  */
-export function createChromeControl({ relay, os, now = Date.now, record = async () => {}, log = () => {} }) {
+export function createChromeControl({ relay, os, now = Date.now, record = async () => {}, capture = null, log = () => {} }) {
   const listeners = new Set();
   const last = new Map();      // 会話の id -> 最後に配った状態の印（同じ状態を重ねて配らない）
   const queues = new Map();    // 会話の id -> 操作の順番待ち（同じ会話の引き継ぎ・戻す・止めるを順に流す）
@@ -38,7 +42,19 @@ export function createChromeControl({ relay, os, now = Date.now, record = async 
   }
   const mark = state => `${state.state}:${state.since ?? ''}`;
 
+  const suspended = new Set();   // 撮影を断っている会話の id（paused の間）
+  const safe = (what, fn) => { try { fn(); } catch (error) { log(`chrome-control: ${what} failed: ${error?.message ?? error}`); } };
+  /** paused に合わせて撮影を断る・解く。suspend は同期で効く（relay.pause の中から呼ばれる）。中継から消えた会話（削除・付け替え）の分は resume して片付ける */
+  function syncCapture(sessionId) {
+    if (!capture) return;
+    const paused = Boolean(relay.state(sessionId)?.paused);
+    if (paused && !suspended.has(sessionId)) { suspended.add(sessionId); safe('suspend', () => capture.suspend(sessionId)); }
+    else if (!paused && suspended.has(sessionId)) { suspended.delete(sessionId); safe('resume', () => capture.resume(sessionId)); }
+    for (const id of [...suspended]) if (!relay.state(id)) { suspended.delete(id); safe('resume', () => capture.resume(id)); }
+  }
+
   const offChange = relay.onChange(sessionId => {
+    syncCapture(sessionId);
     const state = stateOf(sessionId);
     if (last.get(sessionId) === mark(state)) return;
     last.set(sessionId, mark(state));
@@ -104,6 +120,6 @@ export function createChromeControl({ relay, os, now = Date.now, record = async 
     onChange(fn) { listeners.add(fn); return () => listeners.delete(fn); },
     /** エージェントが押した位置（{ sessionId, x, y, windowId }。右パネルの輪の元） */
     onTap: fn => relay.onTap(fn),
-    close() { offChange(); listeners.clear(); },
+    close() { offChange(); listeners.clear(); for (const id of [...suspended]) { suspended.delete(id); safe('resume', () => capture?.resume(id)); } },
   };
 }

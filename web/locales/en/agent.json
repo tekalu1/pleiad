@@ -1535,7 +1535,7 @@
     "mode": "The default approval mode (only a human changes it).",
     "claudeAccount": "The default Claude account (an id; no token. Only a human changes it).",
     "compaction": {
-      "auto": "Auto compaction (enabled, the token threshold, and the idle minutes per agent)."
+      "auto": "Auto compaction (enabled, the token threshold, and the idle minutes per agent). delegatedHeadroom is the room for a delegated Claude child: it is compacted once its context passes its fixed part (the size of its first request) plus this many tokens (0 = off, otherwise 30000 to 1000000)."
     },
     "confirmAgentSites": "Whether to confirm before the agent's browser opens a new site.",
     "confirmExternalLoads": "Whether to confirm before external loads.",

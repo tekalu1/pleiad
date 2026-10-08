@@ -51,6 +51,8 @@ export default async function (t) {
   const slots = gitSlots({ label: 'git', footer: ['custom0', 'custom1'] });
   assert.deepEqual(slots.head, ['close']); assert.deepEqual(slots.footer, ['custom0', 'custom1']);
   assert.deepEqual(gitSlots({ label: 'git', head: ['customHead0'], toolbar: ['customTool0'] }).head, ['customHead0', 'wide', 'close'], 'git パネルは頭に再読み込み・広げる・閉じる');
+  assert.deepEqual(gitSlots({ label: 'chrome', wide: true }).head, ['wide', 'close'], 'wide だけのパネル（Chrome の窓）は頭に広げる・閉じる');
+  assert.deepEqual(gitSlots({ label: 'x' }).head, ['close'], '何も頼まなければ閉じるだけ');
   assert.deepEqual(gitSlots({ label: 'git', toolbar: ['customTool0'] }).toolbar, ['customTool0'], '道具の列にタブ');
   assert.equal(slots.aside, false); assert.equal(slots.views, false); assert.deepEqual(slots.toolbar, []); assert.equal(gitSlots({ label: 'git' }).footer, null);
   const node = (tag = 'div') => document.createElement(tag);

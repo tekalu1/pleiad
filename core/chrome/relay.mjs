@@ -19,6 +19,8 @@
 // 引き継ぎ（一時停止。ADR 0148・0154。状態機械は core/chrome/control.mjs）: pause() の間は接続を切らず、エージェントのコマンドを全部 PAUSED_MESSAGE で断る
 // （人が窓を操作している。エージェントは hand_to_user で戻るのを待つ）。unpause() で解く。Chrome との接続が切れたときも解く
 //   - onChange(fn): 会話の状態（ターンの間か・止めた・一時停止）が変わるたびに sessionId を渡す。onTap(fn): エージェントが押した位置（Input.dispatchMouseEvent の mousePressed）
+// 右パネルの映像（core/chrome/screencast.mjs。ADR 0148 第 5 段）には view の口を出す: 会話の窓のタブ・エージェントが最後に触れたタブ（「今のタブ」）・
+// 操作中の印・中継自身のセッションの付け外し（エージェントのセッションとは別。映像を見ている間だけ付け、focus emulation も映像側のセッションで持つ）・変化の知らせ
 import http from 'node:http';
 import crypto from 'node:crypto';
 import { WebSocketServer } from 'ws';
@@ -112,6 +114,8 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, scop
   const changeListeners = new Set(), tapListeners = new Set();
   const fire = (set, ...args) => { for (const fn of [...set]) { try { fn(...args); } catch (error) { log(`chrome-relay: listener failed: ${error?.message ?? error}`); } } };
   const changed = entry => fire(changeListeners, entry.id);
+  const viewers = new Set();   // 映像側の聞き手 fn(entryId, kind, extra)。kind: tabs（タブの増減）| current（今のタブが替わった）| operating（操作中の印が替わった）| reset（Chrome の接続が切れた）| forget（会話を消した）| rebind（extra が前の id）
+  const notifyView = (entryId, kind, extra) => { for (const fn of [...viewers]) { try { fn(entryId, kind, extra); } catch { /* 聞き手の失敗は中継を壊さない */ } } };
 
   server.on('upgrade', (request, socket, head) => {
     const key = KEY_PATH.exec(request.url || '')?.[1];
@@ -148,7 +152,9 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, scop
     for (const entry of entries.values()) {
       entry.windows.clear();
       if (entry.paused) { entry.paused = null; changed(entry); }   // Chrome が閉じた。窓はもう無いので、引き継ぎも解く
+      entry.current = null; entry.operating = false;
       for (const client of [...entry.clients]) { try { client.ws.close(1011, 'chrome disconnected'); } catch { /* 閉じていてもよい */ } }
+      notifyView(entry.id, 'reset');
     }
   }
 
@@ -181,7 +187,9 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, scop
     return { targetId: info.targetId, entry, info: { ...info }, windowId, opener, internal: null, internalReady: null,
       active: opener?.active ?? false, origin: null, approved: new Set(), commits: 0, gate: null,
       controller: new AbortController(), pending: new Set(), paused: new Map(), denial: null, ops: 0, popupChecked: false,
-      fe: null };   // fe: focus emulation 用の中継自身のセッション（{ sessionId, promise }）。ターンの間だけ持つ
+      fe: null,     // fe: focus emulation 用の中継自身のセッション（{ sessionId, promise }）。ターンの間と、映像を見ている間だけ持つ
+      viewFocus: new Set(),   // 映像（view.focus）がこのタブの focus emulation を要る持ち主（映像の見張りごとの札）。ターン（entry.turn）と別の理由で、どちらも無くなったときだけ外す
+      focusChain: null };     // focus emulation の付け外しを 1 つずつ流す順番待ち（focusSync）
   }
   const tabsOf = (state, entry) => [...state.tabs.values()].filter(tab => tab.entry === entry);
   const clientsOf = entry => [...entry.clients];
@@ -202,8 +210,9 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, scop
       if (client.autoAttach) attachFor(state, client, tab).catch(() => {});
     }
     if (confirm) ensureInternal(state, tab).catch(() => {});
-    if (entry.turn) ensureFocus(state, tab).catch(() => {});
+    if (wantsFocus(tab)) focusSync(state, tab);
     if (opener) checkPopup(state, tab);
+    notifyView(entry.id, 'tabs');
     return tab;
   }
 
@@ -216,9 +225,25 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, scop
     if (tab.windowId != null && ![...state.tabs.values()].some(other => other.windowId === tab.windowId)) {
       state.windows.delete(tab.windowId);
       tab.entry.windows.delete(tab.windowId);
-      if (tab.entry.lastWindowId === tab.windowId) tab.entry.lastWindowId = null;
       scope.windowClosed?.(tab.entry.id, tab.windowId);   // 窓だけ閉じられた。次に使うときに黙って開き直す
     }
+    if (tab.entry.current === tab.targetId) tab.entry.current = null;
+    notifyView(tab.entry.id, 'tabs');
+    refreshOperating(tab.entry);
+  }
+
+  /** エージェントが触れたタブを「今のタブ」として覚える（映像が追う。agent-browser の「今のタブ」は自分の側で持つので、コマンドの宛先から知る）。操作中の印も見直す */
+  function touch(tab) {
+    const entry = tab.entry;
+    if (entry.current !== tab.targetId) { entry.current = tab.targetId; notifyView(entry.id, 'current'); }
+    refreshOperating(entry);
+  }
+  /** 操作中: ターンの間にエージェントがタブを動かしている */
+  function refreshOperating(entry) {
+    const operating = Boolean(entry.turn && up && tabsOf(up, entry).some(tab => tab.active));
+    if (operating === entry.operating) return;
+    entry.operating = operating;
+    notifyView(entry.id, 'operating');
   }
 
   async function onTargetCreated(state, info) {
@@ -251,6 +276,7 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, scop
     if (sessionId) {
       const rec = state.sessions.get(sessionId);
       if (!rec) return;
+      if (rec.own) { rec.own(method, params); return; }   // 映像の中継自身のセッション（view.attach）
       if (!rec.client) { onInternalEvent(state, rec.tab, method, params); return; }
       if (method === 'Target.attachedToTarget' && params.sessionId) {
         // セッションの自動 attach（iframe・worker）。子のセッションも同じエージェントの接続のもの
@@ -292,12 +318,13 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, scop
         if (!rec) return;
         forgetSession(state, params.sessionId);
         if (rec.client) send(rec.client, { method, params });
+        else if (rec.own) rec.own(method, params);
         else if (rec.tab.internal === params.sessionId) { rec.tab.internal = null; rec.tab.internalReady = null; }
         else if (rec.tab.fe?.sessionId === params.sessionId) {
           // Chrome の側で外れた。ターンの間は付け直す（タブが残っていれば）
           const { tab } = rec;
           tab.fe = null;
-          if (tab.entry.turn && state.tabs.get(tab.targetId) === tab) ensureFocus(state, tab).catch(() => {});
+          if (wantsFocus(tab) && state.tabs.get(tab.targetId) === tab) focusSync(state, tab);
         }
         return;
       }
@@ -305,8 +332,8 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, scop
     }
   }
 
-  function register(state, sessionId, { client, tab }) {
-    state.sessions.set(sessionId, { client, tab, parent: null });
+  function register(state, sessionId, { client, tab, own = null }) {
+    state.sessions.set(sessionId, { client, tab, parent: null, ...(own ? { own } : {}) });
     if (client) client.sessions.add(sessionId);
   }
   function forgetSession(state, sessionId) {
@@ -318,8 +345,8 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, scop
   }
 
   /** 上りへ attach（flatten）。セッションは上りの attachedToTarget（応答より先に届く）で結び、届かなければ応答で結ぶ */
-  async function attach(state, tab, client) {
-    const token = { client, tab, sessionId: null };
+  async function attach(state, tab, client, own = null) {
+    const token = { client, tab, sessionId: null, own };
     if (!state.attaching.has(tab.targetId)) state.attaching.set(tab.targetId, []);
     state.attaching.get(tab.targetId).push(token);
     let result;
@@ -344,7 +371,7 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, scop
    * 隠した窓のページに、見えている・フォーカスがあるものとして描かせ、入力を受けさせる（Emulation.setFocusEmulationEnabled）。
    * セッションごとの状態なので、エージェントのセッション（付け外しされる）とは別に、中継自身のセッションを 1 タブにつき 1 本、ターンの間だけ保つ
    */
-  function ensureFocus(state, tab) {
+  function ensureFocusNow(state, tab) {
     if (tab.fe) return tab.fe.promise;
     const fe = { sessionId: null, promise: null };
     tab.fe = fe;
@@ -365,16 +392,38 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, scop
     await state.cdp.send('Emulation.setFocusEmulationEnabled', { enabled: false }, sessionId).catch(() => {});
     await state.cdp.send('Target.detachFromTarget', { sessionId }).catch(() => {});
   }
-  async function dropFocus(state, tab) {
+  async function dropFocusNow(state, tab) {
     const fe = tab.fe;
     if (!fe) return;
     tab.fe = null;
     await fe.promise;
     if (fe.sessionId) await detachFocus(state, fe.sessionId);
   }
-  /** 会話のタブの focus emulation を、ターンの状態（entry.turn）に合わせる */
+  /**
+   * focus emulation が要る理由は 2 つ: エージェントのターンの間（entry.turn）と、映像を見ている間（tab.viewFocus。view.focus）。
+   * Chrome は focus emulation をページに 1 つの状態として持ち、あるセッションが外すと（enabled: false・detach）ほかのセッションが有効にしていても外れる（実機）。
+   * だから外すセッションを 1 タブ 1 本（tab.fe）に決め、理由がどちらも無くなったときだけ外す
+   */
+  const wantsFocus = tab => tab.entry.turn || tab.viewFocus.size > 0;
+  /**
+   * タブの focus emulation を、そのときの理由（ターン・映像）に合わせる。付け外しは 1 タブにつき 1 つずつ順に流し、流す時に理由を見直す
+   * （閉じてすぐ開き直したときに、前の「外す」が後から届いて新しい「付ける」を打ち消さない）
+   */
+  function focusSync(state, tab) {
+    tab.focusChain = (tab.focusChain ?? Promise.resolve()).then(() => {
+      if (up !== state || state.tabs.get(tab.targetId) !== tab) return undefined;
+      return wantsFocus(tab) ? ensureFocusNow(state, tab) : dropFocusNow(state, tab);
+    }).catch(() => {});
+    return tab.focusChain;
+  }
+  /** 会話のタブの focus emulation を、理由（ターン・映像）に合わせる */
   function syncFocus(state, entry) {
-    for (const tab of tabsOf(state, entry)) (entry.turn ? ensureFocus(state, tab) : dropFocus(state, tab)).catch(() => {});
+    for (const tab of tabsOf(state, entry)) focusSync(state, tab);
+  }
+  /** 会話のタブの映像の理由を全部手放す（会話を消した・id を付け替えた。映像の見張りは古い id では手放せない） */
+  function clearViewFocus(entry) {
+    if (!up) return;
+    for (const tab of tabsOf(up, entry)) if (tab.viewFocus.size) { tab.viewFocus.clear(); focusSync(up, tab); }
   }
 
   // ---- サイトの利用の確認（Fetch と Page.frameNavigated） ------------------------------------
@@ -565,7 +614,7 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, scop
       client.paused.delete(params.requestId);
     } else if (method === 'Fetch.failRequest' || method === 'Fetch.fulfillRequest') client.paused.delete(params.requestId);
     // エージェントが動かしているタブの印（人の操作と区別する。ターンの終わりで外れる）
-    if (!PASSIVE.test(method)) { tab.active = true; if (tab.windowId != null) tab.entry.lastWindowId = tab.windowId; }
+    if (!PASSIVE.test(method)) { tab.active = true; touch(tab); }
     // 移った後の確認の答えを待つ間は、このタブへのコマンドを待たせる（断られたページを読ませない）
     while (tab.gate) await tab.gate.promise;
     // 窓を前に出して前面を取る命令は、Chrome へ送らずに成功で返す。agent-browser の「今のタブ」は自分の側で持つので操作は変わらず、
@@ -636,7 +685,7 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, scop
         mine(state, client, params.targetId);
         return state.cdp.send(method, { targetId: params.targetId });
       }
-      case 'Target.attachToTarget': return { sessionId: await attachFor(state, client, mine(state, client, params.targetId)) };
+      case 'Target.attachToTarget': { const tab = mine(state, client, params.targetId); touch(tab); return { sessionId: await attachFor(state, client, tab) }; }
       case 'Target.detachFromTarget': {
         const rec = state.sessions.get(params.sessionId);
         if (!rec || rec.client !== client) throw denied('session');
@@ -668,6 +717,7 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, scop
     const fresh = await state.cdp.send('Target.getTargetInfo', { targetId }).catch(() => null);
     const tab = adopt(state, entry, fresh?.targetInfo ?? { targetId, type: 'page', title: '', url: 'about:blank', attached: false, canAccessOpener: false }, { windowId });
     tab.active = true;   // エージェントが作ったタブ
+    touch(tab);
     if (direct) return targetId;
     const op = ++tab.ops;
     try {
@@ -705,12 +755,13 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, scop
     const wasTurn = entry.turn;
     entry.turn = false;   // ターンが終わった（止める・消す）。focus emulation を外す
     if (wasTurn) changed(entry);
-    if (!up) return;
+    if (!up) { refreshOperating(entry); return; }
     for (const tab of tabsOf(up, entry)) {
       tab.active = false; tab.approved.clear(); tab.denial = null;
       tab.controller.abort(); tab.controller = new AbortController();
     }
     syncFocus(up, entry);
+    refreshOperating(entry);
   }
 
   return {
@@ -720,7 +771,7 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, scop
       if (typeof sessionId !== 'string' || !sessionId || sessionId.length > 200) throw new Error('invalid session');
       await ensureListening();
       let entry = entries.get(sessionId);
-      if (!entry) { entry = { id: sessionId, key: random(), stopped: false, clients: new Set(), windows: new Set(), turn: false }; entries.set(sessionId, entry); byKey.set(entry.key, entry); }
+      if (!entry) { entry = { id: sessionId, key: random(), stopped: false, clients: new Set(), windows: new Set(), turn: false, current: null, operating: false }; entries.set(sessionId, entry); byKey.set(entry.key, entry); }
       if (unlock) this.resume(sessionId);
       // 端点を渡すのはターンの始まり（core/agent-browser.mjs の browserEnvironment）。ターンの間、窓のタブに focus emulation を保つ
       if (!entry.stopped && !entry.turn) { entry.turn = true; changed(entry); if (up) syncFocus(up, entry); }
@@ -764,7 +815,7 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, scop
     /** 会話の今の状態。会話が中継に無ければ null。lastWindowId は、エージェントが最後に操作したタブの窓（引き継ぎで前に出す窓） */
     state(sessionId) {
       const entry = entries.get(sessionId);
-      return entry ? { turn: entry.turn, stopped: entry.stopped, paused: entry.paused ? { ...entry.paused } : null, lastWindowId: entry.lastWindowId ?? null } : null;
+      return entry ? { turn: entry.turn, stopped: entry.stopped, paused: entry.paused ? { ...entry.paused } : null, lastWindowId: up?.tabs.get(entry.current)?.windowId ?? null } : null;
     },
     /** 窓の作り方（core/chrome/windows.mjs。control が引き継ぎで窓を見える形に戻す・隠し直すのに使う） */
     get scope() { return scope; },
@@ -776,8 +827,10 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, scop
       const entry = entries.get(from);
       if (!entry || entries.has(to)) return;
       entries.delete(from); entry.id = to; entries.set(to, entry);
+      clearViewFocus(entry);
       scope.rebind?.(from, to);
       changed(entry);
+      notifyView(to, 'rebind', from);
     },
     endTurn(sessionId) { const entry = entries.get(sessionId); if (entry) settleEntry(entry); },
     /** 会話を消した。接続を閉じて鍵を捨てる（窓を閉じるのは第 8 段） */
@@ -785,11 +838,13 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, scop
       const entry = entries.get(sessionId);
       if (!entry) return;
       entry.stopped = true;
+      clearViewFocus(entry);
       settleEntry(entry);
       closeClients(entry, 1000, 'forgotten');
       scope.forget?.(sessionId);
       entries.delete(sessionId); byKey.delete(entry.key);
       fire(changeListeners, sessionId);   // 会話がもう中継に無い（state が null → 待機中）
+      notifyView(sessionId, 'forget');
     },
     /** 中継が知っている会話の id（画面がつなぎ直したときに、今の状態を配るため） */
     sessionIds() { return [...entries.keys()]; },
@@ -803,6 +858,59 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, scop
         if (confirm) ensureInternal(up, tab).catch(() => {});
         else dropInternal(up, tab);
       }
+    },
+    /**
+     * 映像（core/chrome/screencast.mjs）の口。会話の窓のタブの一覧・今のタブ・操作中の印・変化の知らせと、中継自身のセッションの付け外し。
+     * 映像のセッションは範囲のタブだけに付けられ、エージェントのセッションとは別（付け外しが互いに影響しない）。URL・題はここから出さない
+     */
+    view: {
+      onChange(fn) { viewers.add(fn); return () => viewers.delete(fn); },
+      /** 窓のある会話の id の一覧 */
+      sessions() { return up ? [...entries.values()].filter(entry => tabsOf(up, entry).length).map(entry => entry.id) : []; },
+      summary(sessionId) {
+        const entry = entries.get(sessionId);
+        const tabs = entry && up ? tabsOf(up, entry) : [];
+        return { tabs: tabs.length, windows: new Set(tabs.map(tab => tab.windowId).filter(id => id != null)).size, operating: Boolean(entry?.operating) };
+      },
+      tabs(sessionId) {
+        const entry = entries.get(sessionId);
+        return entry && up ? tabsOf(up, entry).map(tab => ({ targetId: tab.targetId, windowId: tab.windowId })) : [];
+      },
+      /** 今のタブ: エージェントが最後にコマンドを送った（開いた）タブ。無い・閉じていれば窓の最初のタブ。タブが無ければ null */
+      current(sessionId) {
+        const entry = entries.get(sessionId);
+        if (!entry || !up) return null;
+        if (entry.current && up.tabs.get(entry.current)?.entry === entry) return entry.current;
+        return tabsOf(up, entry)[0]?.targetId ?? null;
+      },
+      /**
+       * 映像を見ている間、そのタブに focus emulation を保つ（on）・その理由を手放す（!on。ターンの間・ほかの持ち主がいれば残す）。有効になるまで待つ。
+       * owner は理由の持ち主の札（映像の見張りごと）。持ち主ごとに数えるので、閉じた見張りの「手放す」が、開き直した見張りの理由を消さない。
+       * 隠した窓のページは focus emulation が無いと描かれない・フレームが出ない（実機）
+       */
+      async focus(sessionId, targetId, on, owner = 'view') {
+        const state = up;
+        const tab = state?.tabs.get(targetId);
+        if (!state || !tab || tab.entry.id !== sessionId) return;
+        if (on === true) tab.viewFocus.add(owner); else tab.viewFocus.delete(owner);
+        await focusSync(state, tab);
+      },
+      /** 中継自身のセッションを範囲のタブに付ける。onEvent(method, params) はそのセッションのイベント（と外れたときの Target.detachedFromTarget） */
+      async attach(sessionId, targetId, onEvent) {
+        const state = up;
+        const tab = state?.tabs.get(targetId);
+        if (!state || state.cdp.closed || !tab || tab.entry.id !== sessionId) throw new Error('tab not available');
+        const cdpSession = await attach(state, tab, null, onEvent);   // 付けた時から、届くイベントを onEvent へ渡す
+        return {
+          sessionId: cdpSession,
+          send: (method, params = {}) => state.cdp.send(method, params, cdpSession),
+          async detach() {
+            if (up !== state) return;
+            forgetSession(state, cdpSession);
+            await state.cdp.send('Target.detachFromTarget', { sessionId: cdpSession }).catch(() => {});
+          },
+        };
+      },
     },
     get port() { return address?.port ?? null; },
     close() {
