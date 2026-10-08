@@ -4,6 +4,10 @@
 //     近道は Ctrl+Shift+B（macOS は ⌘⇧B）。内蔵ブラウザーのページにフォーカスがあるときは main が拾って知らせる
 import { t } from './i18n.mjs';
 import { runMark } from './arc.mjs';
+// i18n-dynamic: browser.entryState
+// 旧入口の訳語は並行するプロフィール改修との合流まで辞書に残す。
+// i18n-dynamic: browser.entry
+// i18n-dynamic: browser.chromeWindow.entry
 import { isComposingKey } from './keyboard.mjs';
 
 const CTX_KINDS = ['instruction', 'skill', 'mcp'];
