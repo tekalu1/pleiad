@@ -50,6 +50,8 @@
     "childConversation": "Delegated conversation",
     "relayTitle": "Delegated task \"{{child}}\"",
     "relayTitleWith": "Delegated task \"{{child}}\" / {{title}}",
+    "browserHandoffConnect": "Waiting for the Chrome connection",
+    "browserHandoff": "Your help is needed: {{message}}",
     "computerApp": "Allow {{agent}} to control \"{{app}}\"?",
     "settingChange": "{{agent}} wants to change the setting \"{{key}}\"",
     "opApproval": "{{agent}} is asking for your approval to run \"{{op}}\"",
@@ -122,6 +124,7 @@
     "visualizationSaveFailed": "Could not save the visualization: {{error}}",
     "contextSaveFailed": "Could not save the context usage record."
   },
+  "browserHandoff": { "continue": { "resumed": "I finished in the Chrome window. Please continue.", "connected": "Chrome is connected. Please continue." } },
   "resume": {
     "running": "This conversation is running. Resume it after it finishes.",
     "notInterrupted": "This conversation was not stopped.",
@@ -168,7 +171,8 @@
   "approval": {
     "receiptMismatch": "The receipt does not match this approval. Reopen the card.",
     "remoteOffline": "Can't send the answer because {{host}} is offline. You can send it once the connection returns.",
-    "alreadyResolved": "That approval has already been resolved."
+    "alreadyResolved": "That approval has already been resolved.",
+    "browserHandoffAllow": "A Chrome handoff cannot be approved. Operate Chrome, then press \"Return to Claude\" on the card."
   },
   "title": {
     "unsupported": "This agent cannot generate titles.",

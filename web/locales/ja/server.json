@@ -50,6 +50,8 @@
     "childConversation": "委譲した子の会話",
     "relayTitle": "委譲先「{{child}}」",
     "relayTitleWith": "委譲先「{{child}}」 / {{title}}",
+    "browserHandoffConnect": "Chrome への接続を待っています",
+    "browserHandoff": "操作をお願いします: {{message}}",
     "computerApp": "{{agent}} に「{{app}}」の操作を許可しますか？",
     "settingChange": "{{agent}} が設定「{{key}}」を変えようとしています",
     "opApproval": "{{agent}} が操作「{{op}}」の許可を求めています",
@@ -122,6 +124,7 @@
     "visualizationSaveFailed": "可視化を保存できませんでした: {{error}}",
     "contextSaveFailed": "プラグインの利用記録を保存できませんでした"
   },
+  "browserHandoff": { "continue": { "resumed": "Chrome の窓の操作を終えました。続けてください。", "connected": "Chrome につながりました。続けてください。" } },
   "resume": {
     "running": "この会話は実行中です。終わってから再開してください",
     "notInterrupted": "この会話は中断していません",
@@ -168,7 +171,8 @@
   "approval": {
     "receiptMismatch": "この承認の受領証が合いません。カードを開き直してください",
     "remoteOffline": "{{host}} がオフラインのため、答えを送れません。つながり直すと送れます。",
-    "alreadyResolved": "この承認はすでに処理されています"
+    "alreadyResolved": "この承認はすでに処理されています",
+    "browserHandoffAllow": "Chrome の操作待ちは「許可」では進みません。Chrome で操作して、カードの「Claude に戻す」を押してください"
   },
   "title": {
     "unsupported": "このエージェントはタイトル生成に対応していません",

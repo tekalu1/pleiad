@@ -1688,6 +1688,36 @@
       "more_other": "and {{count}} more",
       "withdrawn": "Withdrawn"
     },
+    "browserHandoff": {
+      "headingMark": "Chrome needs you",
+      "askedLead": "Request from Claude · {{reason}}",
+      "reason": {
+        "login": "Login",
+        "captcha": "CAPTCHA",
+        "two_factor": "Two-factor authentication",
+        "payment": "Payment",
+        "other": "Hands-on request"
+      },
+      "connect": {
+        "lead": "Waiting for the Chrome connection"
+      },
+      "operating": "You are operating",
+      "operatingNote": "Work in the Chrome window, then press \"Return to Claude\" when you are done.",
+      "operatingByDevice": "Another device is operating. Press \"Return to Claude\" when you are done.",
+      "operate": "Operate in Chrome",
+      "resume": "Return to Claude",
+      "resumeContinue": "Return to Claude and continue",
+      "decline": "Decline",
+      "failed": "Could not do that: {{error}}",
+      "done": {
+        "resumed": "Done · Handed back to Claude",
+        "resumedContinued": "Done · Asked Claude to continue",
+        "connected": "Done · Chrome is connected",
+        "connectedContinued": "Done · Chrome is connected; asked Claude to continue",
+        "declined": "Declined",
+        "aborted": "Stopped"
+      }
+    },
     "computerApproval": {
       "label": "Allow",
       "agent": "The agent",

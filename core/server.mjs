@@ -130,6 +130,7 @@ import { createChromeConnection } from './chrome/connection.mjs';
 import { chromeHomes } from './chrome/locate.mjs';
 import { parentPortChromeOs } from './chrome/os.mjs';
 import { createChromeRelay } from './chrome/relay.mjs';
+import { createChromeHandoffs } from './chrome/handoff.mjs';
 import { createChromeScreencast } from './chrome/screencast.mjs';
 import { createBrowserSiteApprovals } from './browser-confirm.mjs';
 import { createBrowserBridge, BROWSER_MCP_PATH } from './browser-bridge.mjs';
@@ -208,9 +209,24 @@ const chromeOs = hostedPort ? parentPortChromeOs(hostedPort) : null;
 const chromeConnection = chromeOs
   ? createChromeConnection({ locate: chromeLocate, os: chromeOs, log: line => console.log(`  ${line}`) })
   : null;
+// 人を待つ場面の台帳（接続の許可の案内・ログインなどの依頼。core/chrome/handoff.mjs、ADR 0148・0168）。待ちは askPermission の outlivesTurn で出す。
+// control は第 6 段の core/chrome/control.mjs の口（{ state, onChange }）を差し込む所。まだ無いので null（人が先に引き継いだ状態は見ない）
+const chromeHandoffs = chromeConnection ? createChromeHandoffs({
+  askPermission: request => askPermission(request),
+  connection: chromeConnection,
+  control: null,
+  sessionBusy: id => sessionBusy(id),
+  turnLive: id => liveTurn(id),
+  // 人の「止める」・子の取り消しで待ちを片付ける合図。ターンが普通に終わっても abort されない（ターンの AbortController は中断のときだけ引く）
+  turnSignal: id => runtime.turns.get(id)?.ac.signal,
+  continueTurn: (sessionId, { kind, messageId }) => continueAfterHandoff(sessionId, kind, messageId),
+  titleFor: ({ reason, message }) => reason === 'connect' ? t('permission.browserHandoffConnect') : t('permission.browserHandoff', { message: message ?? '' }),
+  log: line => console.log(`  ${line}`),
+}) : null;
 // エージェントのブラウザーは PC の Chrome の絞り込みの中継（core/chrome/relay.mjs）だけ。Electron の main がいるデスクトップ版だけで、確認は下の browserSiteApprovals
 const chromeRelay = chromeConnection
-  ? createChromeRelay({ connection: chromeConnection, os: chromeOs, locate: chromeLocate, authorize: (request, signal) => browserSiteApprovals(request, signal), deniedMessage: () => t('permission.browserSiteDenied'), log: line => console.log(`  ${line}`) })
+  ? createChromeRelay({ connection: chromeConnection, os: chromeOs, locate: chromeLocate, authorize: (request, signal) => browserSiteApprovals(request, signal), deniedMessage: () => t('permission.browserSiteDenied'), log: line => console.log(`  ${line}`),
+    handoff: chromeHandoffs, connectWaitText: id => agentT(runtime.turns.get(id)?.agentLocale ?? currentLocale(), 'browserBridge.connectWait') })
   : null;
 // 会話の Chrome の窓の映像（右パネルの「Chrome の窓」。ホストの画面もリモートの端末も見られる。見るだけ。core/chrome/screencast.mjs、ADR 0148）。
 // 内蔵ブラウザーの映像（上の screencastHub）とは別のハブで、WS のコマンドは args.source === 'chrome' で選ぶ
@@ -1225,7 +1241,7 @@ function restoreConnection(entry) {
   try {
     attachAgentsPort(restored, tokens.agents);
     restored.contextToken = tokens.context;
-    if (tokens.browser) restored.browser = browserBridge.open({ origin: localOrigin(), locale, owner: () => restored.key, token: tokens.browser });
+    if (tokens.browser) restored.browser = browserBridge.open({ origin: localOrigin(), locale, owner: browserOwner(restored), token: tokens.browser });
     if (tokens.control) restored.control = openControlPort(restored, tokens.control);
     if (tokens.computer) {
       const backend = getBackend(computerBackend);
@@ -1311,11 +1327,25 @@ function openComputerPort(entry, backend, token) {
 }
 
 // ---- ply_browser（エージェントのブラウザー操作の口。core/browser-bridge.mjs、ADR 0148）。ツールはまだ載せていない ----------------------------
-const browserBridge = createBrowserBridge();
+const browserBridge = createBrowserBridge({ handoffs: chromeHandoffs });
+/**
+ * hand_to_user の呼び出しの時点の会話（ply_computer の owner と同じ形）。ターンの中断の合図と、そのエージェントの待つ長さの区切り
+ * （agy は MCP の呼び出しを 3 分で切るので 150 秒、Claude・Codex は 600 秒。core/browser-bridge.mjs の BROWSER_WAIT_SLICE_MS）を返す
+ */
+function browserOwner(entry) {
+  return async () => {
+    const live = runtime.turns.get(entry.key);
+    if (!live) throw new Error(agentT(entry.locale, 'delegation.notRunning'));
+    await live.setup;
+    const sessionId = live.info.sessionId;
+    if (!sessionId) throw new Error(agentT(entry.locale, 'delegation.idPending'));
+    return { sessionId, signal: live.ac.signal, waitSliceMs: live.backend.capabilities?.computerUse?.waitSliceMs ?? null };
+  };
+}
 /** このターンに渡す ply_browser（url・headers）。会話のあいだ同じ口を使う（agy は起動時にしか渡せない） */
 function browserRuntimeFor(turn) {
   const entry = conversationConnection(turn);
-  entry.browser ??= browserBridge.open({ origin: localOrigin(), locale: entry.locale, owner: () => entry.key });
+  entry.browser ??= browserBridge.open({ origin: localOrigin(), locale: entry.locale, owner: browserOwner(entry) });
   return { url: entry.browser.url, headers: entry.browser.headers };
 }
 
@@ -3173,6 +3203,7 @@ async function deleteSessionOf(sessionId) {
       history.forgetPresents(sessionId),
       computerShots.removeSession(sessionId),
       forgetBrowserEnvironment({ bridge: agentBrowserEndpoints, dataDir: store.dataDir, sessionId }),
+      Promise.resolve().then(() => chromeHandoffs?.forget(sessionId)),
       Promise.resolve().then(() => chromeRelay?.forget(sessionId)),
       settingApprovals?.forget(sessionId),
       ...[...cwds].map(cwd => gitActivity.forget(cwd, sessionId)),
@@ -4463,7 +4494,7 @@ async function delegationRoot(sessionId) {
  * どれか1つで答えれば全部が決着し、残りは消える。
  */
 const approvalIds = createApprovalIds();
-const askPermission = async ({ toolName, input, sessionId, toolUseID, title, signal, canAlways, kind, questions, locale, browserSite, computerApp, settingChange, detached = false, outlivesTurn = false, onOpen }) => {
+const askPermission = async ({ toolName, input, sessionId, toolUseID, title, signal, canAlways, kind, questions, locale, browserSite, computerApp, settingChange, detached = false, outlivesTurn = false, onOpen, onSettle, browserHandoff }) => {
   const { chain: ancestors, remote: remoteRoot } = sessionId ? await delegationRoot(sessionId) : { chain: [], remote: null };
   // 中継先の見出しは「どの会話の承認か」。委譲したときの info.title を使う
   const childTitle = ancestors.length || remoteRoot ? (await store.get(sessionId)).title || t('permission.childConversation') : "";
@@ -4492,6 +4523,7 @@ const askPermission = async ({ toolName, input, sessionId, toolUseID, title, sig
       ...(browserSite ? { browserSite } : {}),
       ...(computerApp ? { computerApp } : {}),
       ...(settingChange ? { settingChange } : {}),
+      ...(browserHandoff ? { browserHandoff } : {}),
       ...(questions ? { questions } : {}),
       // 端末の AI に任された子の承認。画面は「依頼元の会話（⇄ 端末）でも答えられます」を添える（docs/remote.md §4.5）
       ...(remoteRoot ? { remoteOrigin: { deviceName: remoteRoot.deviceName || '' } } : {}),
@@ -4528,8 +4560,10 @@ const askPermission = async ({ toolName, input, sessionId, toolUseID, title, sig
       touchCard(runtime.turns.get(sessionId));
       // 片付いたことを画面へ知らせる。本来のカードも、祖先の会話の中継の複製も、ほかの窓・リモートの画面に残った写しも、これで畳める
       // （running の permissions から消えるだけでは、開いたままのカードは変わらない）。複製は id ごと・会話ごとに 1 つずつ
-      for (const card of cards) emitGlobal({ type: 'permissionSettled', id: card.id, sessionId: card.payload.sessionId ?? null, allow: answer?.allow === true, reason: answer?.messageKey ?? null });
+      for (const card of cards) emitGlobal({ type: 'permissionSettled', id: card.id, sessionId: card.payload.sessionId ?? null, allow: answer?.allow === true, reason: answer?.messageKey ?? null, ...(answer?.response?.kind ? { response: { kind: answer.response.kind, continued: answer.response.continued === true } } : {}) });
       remoteRelay?.end(answer?.messageKey === 'aborted' ? 'abort' : 'host', answer?.allow === true);
+      // 呼び出し側へ生の答え（messageKey 付き）を渡す。操作待ち（core/chrome/handoff.mjs）が断る・中断を見分ける
+      try { onSettle?.(answer); } catch (e) { console.error('  onSettle:', String(e?.message ?? e)); }
       // スマホに出ている承認・質問の通知を消す（どの端末で答えても、ターンが終わっても）
       pushNotifier.approvalResolved({ id: cards[0].id, sessionId: payload.sessionId });
       // 通知の一覧のあなた待ちを決着させる（承認済み・回答済み・却下・取り消し。ADR 0149）
@@ -5657,6 +5691,7 @@ async function beginTurn(ctx) {
   if (runArgs.browserEnv) {
     // 中継へ渡したキー。新規会話の id 決定での付け替え（rebind）と、承認の問い合わせ（getAgent）がこれで照合する
     turn.browserRelayId = sessionId || turn.key;
+    chromeHandoffs?.turnChanged(sessionId || turn.key, true);
     // i18n-dynamic: agent:browser.instructions
     runArgs.browserInstructions = browserInstruction(runArgs.browserEnv, agentLocale, agentT);
     runArgs.browserRuntime = browserRuntimeFor(turn);
@@ -6004,6 +6039,7 @@ const handoverRun = createHandover({
   release: async result => {
     await Promise.race([voiceHost.close(), new Promise(resolve => setTimeout(resolve, 2000))]).catch(() => {});
     chromeScreencast?.close();
+    chromeHandoffs?.close();
     chromeRelay?.close();
     store.flushNow();
     handoverReply?.({ ...result, at: Date.now(), pid: process.pid });
@@ -6389,6 +6425,7 @@ async function endTurn(turn, emit, { record = true } = {}) {
     }
   }
   agentBrowserEndpoints?.endTurn(turn.info.sessionId || turn.key);
+  chromeHandoffs?.turnChanged(turn.info.sessionId || turn.key, false);
   // ロックの解放、止めた印・このターンの拒否の消去、main への後始末（押したままの入力を離し、オーバーレイを消す）
   if (computerLock.endTurn(turn.presentKey)) computerDriver?.turnEnded(turn.presentKey);
   notifyFree(turn.key);
@@ -6764,6 +6801,18 @@ function outboxSettled(sessionId, ids, ms = 120000) {
     set.add(check);
     outbox.list(sessionId).then(check, done);
   });
+}
+
+/**
+ * ターンの外で人が Chrome を戻した・Chrome につながったとき、会話へ「続けてください」を送る（core/chrome/handoff.mjs。ADR 0148）。
+ * 文は会話の言語で、人の送信として見える。messageId はカードの id から決まる値なので、同じカードで二度呼んでも 1 件にまとまる
+ */
+async function continueAfterHandoff(sessionId, kind, messageId) {
+  const entry = await store.get(sessionId);
+  const lng = agentLocaleOf(entry.agentLocale) ?? currentLocale();
+  // i18n-dynamic: browserHandoff.continue.
+  const prompt = t(`browserHandoff.continue.${kind === 'connected' ? 'connected' : 'resumed'}`, { lng });
+  return outbox.accept(sessionId, messageId, { prompt });
 }
 
 // 再開を受け付けている最中の会話（二度押し・別の端末からの再開で二重に送らない）。
@@ -7426,6 +7475,9 @@ wss.on("connection", (ws, req) => {
             if (r.ok) return reply(true, 'ok');
             return reply(false, r.code === 'OFFLINE' ? t('approval.remoteOffline', { host: w.remote.hostName }) : t('approval.alreadyResolved'), r.code);
           }
+          // Chrome の操作待ち（core/chrome/handoff.mjs）の「戻した・つながった」は、専用のボタン（browser.chromeResume ほか）からしか決まらない。
+          // 一般の「許可」を受けると、人が戻していないのに「Chrome を戻しました」になる（botやスマホの通知の許可ボタンなど）。断る・止めるは通す
+          if (w.payload.browserHandoff && allow === true) return reply(false, t('approval.browserHandoffAllow'), 'HANDOFF_ONLY');
           // 設定の変更の承認は受領証つき。画面は出したカードの受領証を添えて答える。合わなければ別の変更への答えなので受け取らない（取り違え・再送を防ぐ）
           if (w.payload.settingChange && w.payload.settingChange.receipt !== receipt) return reply(false, t('approval.receiptMismatch'), 'RECEIPT_MISMATCH');
           // 回答を伴うツール（質問カード）は、承認ではなく入力の差し替えとして返る。
@@ -7946,6 +7998,7 @@ mainPort.on("message", async ({ data }) => {
     void voiceHost.close();   // 通話の使用量の台帳を書き切る
     // Chrome に許可の確認を残して終わらない（確認が出ていれば閉じる）。main の返事を待つので、長くても 2 秒まで
     chromeScreencast?.close();
+    chromeHandoffs?.close();
     chromeRelay?.close();
     if (chromeConnection) await Promise.race([chromeConnection.close(), new Promise(resolve => setTimeout(resolve, 2000))]).catch(() => {});
     try { finishShutdown(store.flushNow, () => runtime.turns.size > 0 || agentTasks.busy, exitAfterStoppingHeld); }

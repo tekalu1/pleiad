@@ -8,12 +8,13 @@ import path from 'node:path';
 import http from 'node:http';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { createBrowserBridge, browserTools, BROWSER_SERVER } from '../../core/browser-bridge.mjs';
+import { createBrowserBridge, browserTools, BROWSER_SERVER, BROWSER_WAIT_SLICE_MS } from '../../core/browser-bridge.mjs';
 import { agentDefinition } from '../../core/backends/antigravity-context.mjs';
 import { startServer, ROOT } from '../lib/server.mjs';
 import { open } from '../lib/ws-client.mjs';
 import { readSessions } from '../lib/data-store.mjs';
 import * as P from '../../core/protocol.mjs';
+import { COMPUTER_CALL_TIMEOUT_SEC } from '../../core/backends/computer-delivery.mjs';
 
 export const name = 'browser-bridge';
 export const title = 'ply_browser の骨組み: 鍵付きの口・載せるツールが無い間の断り方・プロフィールの削除後の形（サーバー越し）・agy の束ね';
@@ -31,8 +32,8 @@ export default async function (t) {
       assert.equal(BROWSER_SERVER, 'ply_browser');
       const init = await (await rpc('initialize', {})).json();
       assert.equal(init.result.serverInfo.name, 'ply_browser');
-      assert.deepEqual((await (await rpc('tools/list', {})).json()).result.tools, [], '載せるツールは次の段で足す');
-      assert.deepEqual(browserTools('en'), []);
+      assert.deepEqual((await (await rpc('tools/list', {})).json()).result.tools, [], '操作待ちの台帳が無いホストは hand_to_user を載せない');
+      assert.deepEqual(browserTools('en').map(x => x.name), ['hand_to_user']);
       const call = await (await rpc('tools/call', { name: 'use_browser_profile', arguments: { profile: 'x' } })).json();
       assert.equal(call.result.isError, true, '載せていないツールの呼び出しは断る');
       assert.match(call.result.content[0].text, /ply_browser/);
@@ -42,7 +43,65 @@ export default async function (t) {
       assert.equal((await rpc('tools/list', {})).status, 401, '閉じた口は断る');
     } finally { server.close(); }
   }
-  t.ok('口: 会話ごとの Bearer の鍵・origin の検査・載せるツールが無い間は tools/list が空で呼び出しは断る', true);
+  t.ok('口: 会話ごとの Bearer の鍵・origin の検査・台帳が無いホストでは tools/list が空で呼び出しは断る', true);
+
+  // ---- hand_to_user（ADR 0148。台帳は身代わり）
+  {
+    const calls = [];
+    let next = { kind: 'resumed', at: new Date(2026, 9, 8, 9, 5).toISOString(), url: 'https://a.example/', title: 'A' };
+    let ask = null;
+    const handoffs = {
+      ask: (sessionId, args) => { calls.push(['ask', sessionId, args]); return ask; },
+      wait: async (sessionId, opts) => { calls.push(['wait', sessionId, opts]); return typeof next === 'function' ? next(opts) : next; },
+    };
+    const bridge = createBrowserBridge({ handoffs });
+    const server = http.createServer((req, res) => bridge.handle(req, res));
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+    try {
+      const ac = new AbortController();
+      let owner = async () => ({ sessionId: 'conv-1', signal: ac.signal, waitSliceMs: null });
+      const open = locale => bridge.open({ origin: `http://127.0.0.1:${server.address().port}`, owner: () => owner(), locale });
+      const call = async (binding, name, args) => (await (await fetch(binding.url, { method: 'POST', headers: { ...binding.headers, 'content-type': 'application/json' }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: args } }) })).json()).result;
+      const ja = open('ja');
+      const list = (await (await fetch(ja.url, { method: 'POST', headers: { ...ja.headers, 'content-type': 'application/json' }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }) })).json()).result.tools;
+      t.ok('tools/list に hand_to_user（reason は列挙・message と一緒に必須）', list.length === 1 && list[0].name === 'hand_to_user' && list[0].inputSchema.required.join() === 'reason,message'
+        && list[0].inputSchema.properties.reason.enum.join() === 'login,captcha,two_factor,payment,other' && /Claude に戻す/.test(list[0].description), JSON.stringify(list));
+      t.ok('英語の会話には英語の説明', /Return to Claude/.test(browserTools('en')[0].description));
+
+      const resumed = await call(ja, 'hand_to_user', { reason: 'login', message: 'ログインしてください' });
+      t.ok('resumed: ask → wait の順で呼び、時刻・url・title を添えて snapshot からのやり直しを促す（エラーにしない）',
+        calls[0][0] === 'ask' && calls[0][1] === 'conv-1' && calls[0][2].reason === 'login' && calls[0][2].message === 'ログインしてください' && calls[1][0] === 'wait'
+        && resumed.isError === false && /09:05/.test(resumed.content[0].text) && /https:\/\/a\.example\//.test(resumed.content[0].text) && /snapshot/.test(resumed.content[0].text), JSON.stringify(resumed));
+      t.ok('wait の区切りは既定 600 秒・signal はターンの中断の合図', calls[1][2].sliceMs === BROWSER_WAIT_SLICE_MS && calls[1][2].signal === ac.signal && BROWSER_WAIT_SLICE_MS === 600_000);
+      owner = async () => ({ sessionId: 'conv-1', signal: ac.signal, waitSliceMs: 150_000 });
+      await call(ja, 'hand_to_user', { reason: 'other', message: 'x' });
+      t.ok('バックエンドの区切り（agy は 150 秒）を優先する', calls.at(-1)[2].sliceMs === 150_000);
+
+      const results = {};
+      for (const kind of ['connected', 'waiting', 'declined', 'aborted', 'none']) { next = { kind }; results[kind] = await call(ja, 'hand_to_user', { reason: 'other', message: 'x' }); }
+      t.ok('connected / waiting はエラーにしない（waiting は呼び直しを促す）', results.connected.isError === false && results.waiting.isError === false && /hand_to_user/.test(results.waiting.content[0].text) && /まだ待って/.test(results.waiting.content[0].text), JSON.stringify(results));
+      t.ok('declined / aborted / none はエラー', results.declined.isError === true && results.aborted.isError === true && results.none.isError === true && /断りました/.test(results.declined.content[0].text));
+      next = { kind: 'declined' };
+      const en = await call(open('en'), 'hand_to_user', { reason: 'other', message: 'x' });
+      t.ok('結果の字は会話の言語（agentT）', /declined/i.test(en.content[0].text) && !/[぀-ヿ]/.test(en.content[0].text), en.content[0].text);
+
+      next = opts => new Promise(resolve => opts.signal.addEventListener('abort', () => resolve({ kind: 'aborted' }), { once: true }));
+      const pending = call(ja, 'hand_to_user', { reason: 'other', message: 'x' });
+      setTimeout(() => ac.abort(), 20);
+      const aborted = await pending;
+      t.ok('signal（人の止める）で待ちを抜けて aborted を返す', aborted.isError === true && /中断|止め/.test(aborted.content[0].text), JSON.stringify(aborted));
+
+      owner = async () => { throw new Error('この会話は走っていません'); };
+      const noTurn = await call(ja, 'hand_to_user', { reason: 'other', message: 'x' });
+      t.ok('ターンが無いとき（owner が投げる）は失敗を返し、台帳に触らない', noTurn.isError === true && noTurn.content[0].text === 'この会話は走っていません' && calls.every(c => c[1] === 'conv-1'));
+      const before = calls.length;
+      owner = async () => ({ sessionId: null });
+      const noId = await call(ja, 'hand_to_user', { reason: 'other', message: 'x' });
+      t.ok('会話の id が決まっていなければ失敗', noId.isError === true && calls.length === before, JSON.stringify(noId));
+      const bad = await call(ja, 'close_browser_window', {});
+      t.ok('知らないツールは断る', bad.isError === true && /ply_browser/.test(bad.content[0].text));
+    } finally { server.close(); }
+  }
 
   // ---- サーバー越し: プロフィールが無くなったこと
   const scratch = await fs.mkdtemp(path.join(os.tmpdir(), 'ply-browser-bridge-server-'));
@@ -139,5 +198,15 @@ export default async function (t) {
       partial.kill();
       t.ok('agy: 接続先が欠けても束ねた中継は残りのツールだけを出す', JSON.parse(pout.split('\n')[0]).result.tools.map(x => x.name).join() === 'hand_to_user,close_browser_window', pout.slice(0, 300));
     } finally { upstream.close(); }
+  }
+
+  // ===== hand_to_user の待ちの長さ: バックエンドごとの MCP の上限 =====
+  {
+    const src = async f => fs.readFile(path.join(ROOT, 'core/backends', f), 'utf8');
+    const [claude, codex, agy] = [await src('claude.mjs'), await src('codex.mjs'), await src('antigravity.mjs')];
+    t.ok('待ちの 1 回分（600 秒）は MCP の上限（660 秒）より短い', BROWSER_WAIT_SLICE_MS === 600_000 && COMPUTER_CALL_TIMEOUT_SEC === 660 && BROWSER_WAIT_SLICE_MS < COMPUTER_CALL_TIMEOUT_SEC * 1000);
+    t.ok('Claude: ply_browser の MCP の timeout は 660 秒', /\[BROWSER_SERVER\]: \{[^}]*timeout: COMPUTER_CALL_TIMEOUT_SEC \* 1000/.test(claude));
+    t.ok('Codex: ply_browser の tool_timeout_sec は 660 秒', /mcp_servers\.\$\{BROWSER_SERVER\}`\]: \{[^}]*tool_timeout_sec: COMPUTER_CALL_TIMEOUT_SEC/.test(codex));
+    t.ok('agy: 3 分で切られるので 150 秒ごとに分けて返す', /AGY_WAIT_SLICE_MS = 150[_]?000/.test(await src('computer-delivery.mjs')) && /waitSliceMs: AGY_WAIT_SLICE_MS/.test(agy));
   }
 }
