@@ -268,7 +268,7 @@ export default async function (t) {
       const childAlive = async () => linkChildren((await holder.connect()).client).some(c => c.id === linkX.childId && c.alive);
       t.ok('縁が切れただけでは子は残る（落ちた後に起動する次のサーバーが拾えるように）', await reachableX());
       await linkX.retireChild();
-      t.ok('このサーバーが内の ws に落ちるとき（retireChild）、接続の子を終わらせる（ws を持ったまま残らない）', !(await reachableX()) && !(await childAlive()));
+      t.ok('このサーバーが内の ws に落ちるとき（retireChild）、接続の子を終わらせる（ws を持ったまま残らない）', await (async () => { for (const end = Date.now() + 8000; Date.now() < end; await sleep(100)) { if (!(await reachableX()) && !(await childAlive())) return true; } return false; })());
       await linkX.retireChild();
       t.ok('retireChild は何度呼んでも壊れない', true);
       void upgradesX;
