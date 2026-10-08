@@ -29,7 +29,8 @@
 //                     "control-info" は渡った接続の url・指示文・会話のシェルへ渡す環境変数の名前とトークンを JSON で返す
 //   "compact"      … 文脈の圧縮（Claude の activity compacting と同じ形）を流す
 //   "bg-shell <本文>" … 本文で返答した後、終わらない裏のコマンド（Claude の local_bash）を抱えて phase: waiting で待つ。
-//                    stopBackground で止めると main が再開して一言返し、ターンが終わる
+//                    stopBackground で止めると main が再開して一言返し、ターンが終わる。
+//                    "bg-shell gate:<名前> <本文>" はゲートが開いたら裏のコマンドが終わり、main が再開して「裏のコマンドが終わった」と返す
 //   "term <本文>"  … 本文で返答して終わり、ターンの外に端末（Codex の unified_exec と同じ kind: terminal）を残す
 //   "history-ioerr <回数> <本文>" … 本文で返答して終わり、その後のこの会話の getMessages を <回数> だけ Codex と同じ
 //                    `(code: 1546) disk I/O error` で失敗させる（止めたばかりのターン用の app-server とぶつかった形。core/history-retry.mjs）
@@ -326,36 +327,41 @@ async function background(text, { s, out, emit, signal, control }) {
  * 台本 "bg-shell <本文>"。Claude で、裏へ回ったコマンドが終わらないまま main が返答を終えた形
  * （local_bash の完了通知が来ないので、入力を閉じられずターンが続く）。本文で返答し、phase: waiting で待つ。
  * stopBackground（Query.stopTask に当たる）で止めると、完了通知で main が再開して一言返し、ターンが終わる。
+ * "bg-shell gate:<名前> <本文>" は、ゲートが開いたら裏のコマンドが終わる（長い試験が裏で終わった形）。完了通知で main が再開して一言返す。
  * "active-shell" は報告せず、main が結果を待っている形（phase: active）。
  * 中断されたら true。
  */
 async function hangingShell(text, { s, out, emit, signal, keys }) {
   const reported = !text.startsWith("active-shell");
+  const gate = text.match(/^bg-shell\s+gate:([\w.-]+)/)?.[1] ?? null;
+  const body = text.replace(/^bg-shell\s*/, "").replace(/^gate:[\w.-]+\s*/, "");
   const task = { id: `fake-shell-${crypto.randomUUID().slice(0, 8)}`, kind: "shell", label: "cat >> /dev/null", waitable: true };
-  let stopped = false, wake = null;
+  let stopped = false, finished = false, wake = null;
   const poke = () => { const w = wake; wake = null; w?.(); };
   const stop = () => { stopped = true; poke(); };
   for (const key of keys) { if (!shells.has(key)) shells.set(key, new Map()); shells.get(key).set(task.id, stop); }
   signal?.signal?.addEventListener?.("abort", poke, { once: true });
+  const stopGate = gate ? watchGate(gate, () => { finished = true; poke(); }) : () => {};
   try {
     emit({ type: "tool.start", id: task.id, name: "Bash", input: { command: task.label, run_in_background: true } });
     emit({ type: "tool.result", id: task.id, text: "launched", commandBackground: true, nativeTaskId: task.id });
     emit({ type: "background", tasks: [task] });
     if (reported) {
-      const report = { uuid: crypto.randomUUID(), role: "assistant", text: text.replace(/^bg-shell\s*/, "") || "終わった" };
+      const report = { uuid: crypto.randomUUID(), role: "assistant", text: body || "終わった" };
       await say(emit, report.text, report.uuid);
       push(s, report);
       emit({ type: "phase", state: "waiting" });
     } else emit({ type: "phase", state: "active" });
-    while (!stopped && !signal?.signal?.aborted) await new Promise((resolve) => { wake = resolve; });
+    while (!stopped && !finished && !signal?.signal?.aborted) await new Promise((resolve) => { wake = resolve; });
     if (signal?.signal?.aborted) { emit({ type: "turnResult", outcome: "aborted" }); return true; }
     emit({ type: "background", tasks: [] });
     emit({ type: "phase", state: "active" });
-    const resumed = { uuid: crypto.randomUUID(), role: "assistant", text: "裏のコマンドが止められた" };
+    const resumed = { uuid: crypto.randomUUID(), role: "assistant", text: stopped ? "裏のコマンドが止められた" : "裏のコマンドが終わった" };
     await say(emit, resumed.text, resumed.uuid);
     push(s, resumed);
   } finally {
-    emit({ type: "task.command", id: task.id, state: "stopped" });
+    stopGate();
+    emit({ type: "task.command", id: task.id, state: stopped || !finished ? "stopped" : "completed" });
     for (const key of keys) { shells.get(key)?.delete(task.id); if (!shells.get(key)?.size) shells.delete(key); }
   }
   out.text = "";

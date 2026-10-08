@@ -227,6 +227,10 @@
     "historyUnreadable": "注意: 子の作業は終わりましたが、終わった後の履歴を一時的なエラーで読み出せませんでした（{{error}}）。結果は実行中に受け取った最後の返答で、欠けていることがあります。子の会話で確かめてください",
     "commandNotice": "[Pleiad コマンド長時間通知 / {{taskId}} / {{noticeId}}]\n{{title}} の子が `{{command}}` を少なくとも {{minutes}} 分実行中、または完了を待っています。止まっている可能性があります。ply_task_status で様子を見るか、ply_task_cancel で止めてください。",
     "silenceNotice": "[Pleiad タスク無音通知 / {{taskId}}]\n{{title}} の子が {{minutes}} 分なにも出していません。止まっている可能性があります。ply_task_status で様子を見るか、ply_task_cancel で止めてください。",
+    "backgroundNotice": "[Pleiad タスク裏作業通知 / {{taskId}}]\n{{title}} の子は返答しましたが、裏の作業がまだ走っています（返答から {{minutes}} 分）:\n{{items}}\n{{reply}}タスクは実行中のままです。裏の作業が終わり、子が返答を終えたら、結果を完了通知で届けます。\n様子は ply_task_status で見られます。止めるなら ply_task_cancel か、作業ダイアログの停止ボタンを使ってください。まだ走っていれば {{interval}} 分後にもう一度知らせます。",
+    "backgroundStillNotice": "[Pleiad タスク裏作業通知 / {{taskId}}]\n{{title}} の子の裏の作業が、返答から {{minutes}} 分たってもまだ走っています:\n{{items}}\nタスクは実行中のままで、終われば結果を完了通知で届けます。止めるなら ply_task_cancel か、作業ダイアログの停止ボタンを使ってください。まだ走っていれば {{interval}} 分後にもう一度知らせます。",
+    "backgroundReply": "子のここまでの返答:\n{{reply}}",
+    "backgroundItem": "- {{label}}",
     "notice": "[Pleiad タスク完了通知 / {{taskId}}]\n{{retry}}実行先: {{backend}}\n状態: {{status}}\n依頼: {{task}}\n結果（子エージェントの報告）:\n{{result}}{{more}}\n{{error}}\n{{rejections}}{{git}}元の依頼に必要な作業を続けてください。",
     "noticeBatch": "[Pleiad タスク完了通知 / {{count}} 件]\n{{count}} 件の子タスクが完了しました。結果は次のとおりです。\n\n{{sections}}元の依頼に必要な作業を続けてください。",
     "noticeSection": "--- {{taskId}} ---\n{{retry}}実行先: {{backend}}\n状態: {{status}}\n依頼: {{task}}\n結果（子エージェントの報告）:\n{{result}}{{more}}\n{{error}}\n{{rejections}}{{git}}\n",
@@ -239,8 +243,6 @@
     "noticeWorkspaceUnknown": "作業場所: worktree {{branch}}（状態を確かめられません。{{path}} を見てください）",
     "noticeRetry": "利用者が {{of}} を別の委譲先でやり直したタスク\n",
     "noticeRejections": "実行前に拒否されたコマンド（Codex 自身の安全判定など）: {{count}} 件\n{{items}}\n全件は ply_task_status の rejections で読めます。",
-    "noticeStoppedBackground": "子の返答の後も {{minutes}} 分以上終わらなかった裏の作業を、Pleiad が止めました: {{count}} 件\n{{items}}\n続きが要るなら、子の会話で結果を確かめてから ply_task_send で指示してください。",
-    "noticeStoppedItem": "- {{label}}",
     "noticeRejection": "- {{command}}（{{reason}}）"
   },
   "tasks": {

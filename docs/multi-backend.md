@@ -118,8 +118,8 @@ web はこれを見て、一覧の行・畳んだ見出し・稼働表示の弧�
   kill する**（`tasks/<id>.output` に `[killed]` だけが残り、「完了の通知が来たら報告します」が果たされない）。
   いまは `canCloseInput` が shell も待つので入力は開いたまま、完了通知で main が再開して報告できる。
   タスクには `waitable: true` を付けて出す。終わらないコマンド（`npm run dev`）の逃げ道はタイムアウトではなく
-  作業ダイアログの**停止ボタン**（`stopBackground` → SDK の `Query.stopTask`）。例外は委譲の子で、人が見ていないので、
-  `phase: waiting` が上限（既定 10 分）続いたら server がサブエージェント以外を同じ口で止める（agent-delegation.md「子に残った裏の作業」）
+  作業ダイアログの**停止ボタン**（`stopBackground` → SDK の `Query.stopTask`）。委譲の子でも server は止めず、
+  `phase: waiting` の間、依頼元へ裏作業通知を送る（agent-delegation.md「子に残った裏の作業」、ADR 0170）
 - 見出し（`behindOfTasks` の `label`）は、全部 `agent` なら「サブエージェントを待っている」、
   全部 `shell` なら「バックグラウンドのコマンドを待っている」、混在なら「裏の作業を待っている」
 
