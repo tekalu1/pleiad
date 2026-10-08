@@ -248,6 +248,7 @@
     "server-mcp-auth": 1096,
     "server-ops": 569,
     "server-ops-send": 9827,
+    "server-permission-update": 8000,
     "server-push-notify": 2767,
     "server-read": 827,
     "server-retired": 667,

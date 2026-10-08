@@ -192,6 +192,8 @@ const SUITES = [
   './unit/server-agent-tasks.mjs',
   // 承認が片付いた知らせ（permissionSettled）: 子と中継の複製の id ごと・中断でも・片付いた承認への答えは ALREADY_RESOLVED・画面の配線
   './unit/server-permission-settled.mjs',
+  // ターンを越えて残る承認の待ち（outlivesTurn。ADR 0168）と中身の差し替え（permissionUpdate）
+  './unit/server-permission-update.mjs',
   // 委譲の子に裏の作業が残るとき: 終わらないコマンドも自動停止しない・サブエージェントは止めない・端末は待たない（子にも親にも）
   './unit/server-delegation-background.mjs',
   // 依頼元が子のエージェント・モデル・思考の強さを ply_task_send で替える（走っている子・走っていない子・断る場合・記録）

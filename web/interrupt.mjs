@@ -155,7 +155,7 @@ export function workRows(work) {
 export function handoverWaits(work) {
   const waiting = new Set();
   for (const x of [...(work?.turns ?? []), ...(work?.permissions ?? [])]) {
-    if (x?.sessionId && !x.relay && !x.detached && !x.held) waiting.add(x.sessionId);
+    if (x?.sessionId && !x.relay && (x.blocking ?? !x.detached) && !x.held) waiting.add(x.sessionId);
   }
   return waiting.size || Number(work?.handover?.blocking) || 0;
 }
