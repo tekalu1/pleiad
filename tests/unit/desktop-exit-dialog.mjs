@@ -79,6 +79,7 @@ async function start({ ready = true, work = { count: 0 } } = {}) {
     './browser-viewer-bridge.cjs': { attachBrowserViewerBridge: () => ({ close: () => {} }) },
     './computer/service.cjs': { attachComputerService: () => ({}), withPerMonitorDpi: w => w },
     './computer/win32.cjs': { loadWin32: () => { throw Object.assign(new Error('not windows'), { reason: 'platform' }); } },
+    './computer/mac.cjs': { loadMac: () => { throw Object.assign(new Error('not macOS'), { reason: 'platform' }); } },
     './chrome-os/index.cjs': { createChromeOs: () => ({}), attachChromeOs: () => {} },
     './browser-screencast-bridge.cjs': { attachBrowserScreencastBridge: () => ({ close: () => {} }) },
     './computer-overlay.cjs': { attachComputerOverlay: () => ({ close: () => {} }) },

@@ -108,6 +108,7 @@ async function start({ env = {}, packaged = false, choice = 'link', connectError
     './browser-viewer-bridge.cjs': { attachBrowserViewerBridge: listens(calls) },
     './computer/service.cjs': { attachComputerService: listens(calls), withPerMonitorDpi: win32 => win32 },
     './computer/win32.cjs': { loadWin32: () => { throw Object.assign(new Error('not windows'), { reason: 'platform' }); } },
+    './computer/mac.cjs': { loadMac: () => { throw Object.assign(new Error('not macOS'), { reason: 'platform' }); } },
     './chrome-pill.cjs': { attachChromePill: listens(calls, 'chromePill') },
     './chrome-os/index.cjs': { createChromeOs: () => ({ reconceal: () => { calls.reconceals = (calls.reconceals ?? 0) + 1; }, closeAllAgents: () => { calls.closeAlls = (calls.closeAlls ?? 0) + 1; if (calls.failCloseAll) throw new Error('boom'); return 0; } }), attachChromeOs: listens(calls) },
     './browser-screencast-bridge.cjs': { attachBrowserScreencastBridge: listens(calls) },
