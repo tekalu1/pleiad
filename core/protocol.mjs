@@ -23,7 +23,7 @@ export const READY = "ready";   // { protocolVersion, version（アプリの版�
 export const EVENT = "event";
 export const RESPONSE = "response";
 export const ERROR = "error";
-// PC の内蔵ブラウザーの画面（browserScreencast で見ている接続だけへ）。{ type: frame|state|ended, sessionId, seq?, data?（JPEG の base64）, metadata?, state?, reason? }
+// PC の内蔵ブラウザー・エージェントの Chrome の窓の画面（browserScreencast で見ている接続だけへ）。{ source?: 'chrome'（Chrome の窓。無ければ内蔵ブラウザー）, type: frame|state|ended, sessionId, seq?, data?（JPEG の base64）, metadata?, state?, reason? }
 export const SCREENCAST = "screencast";
 
 // client -> server
@@ -220,6 +220,7 @@ export const COMMANDS = new Set([
   'browserScreencastInput',  // { sessionId, input: { type: tap|scroll|text|key, x?, y?, dx?, dy?, text?, key? } } -> {}。エージェントが操作中は断る（code: agent-active）
   'browserScreencastNav',    // { sessionId, action: back|forward|reload|stop|open, url? } -> {}
   'browserScreencastAgent',  // { sessionId, action: stop|takeOver } -> {}。エージェントの接続を止める・引き継ぐ
+  // どれも args.source: 'chrome' でエージェントの Chrome の窓の映像（core/chrome/screencast.mjs）を選ぶ。ホストの画面もリモートの端末も受け、見るだけ（Input・Nav・Agent は code: view-only、窓が無ければ no-window）
   // コンピューターの操作（docs/computer-use.md）。ホストの OS を操作する命令ではなく止める側なので、リモートの端末からも受ける
   'computerStop',            // { sessionId } -> { stopped }。その会話の走っているターン（貸している先の子のターンも）に止めた印を付け、main へ computer-stop を送る
   // エージェントのブラウザー（PC の Chrome）への接続（docs/inapp-browser.md「Chrome への接続」、ADR 0148・0153）。つなぐ・切る・前に出すはホストの PC の画面だけ（browser.chrome*）
@@ -310,4 +311,6 @@ export const EVENTS = new Set([
   "turnEnd",       // { completedAt, outcome, interrupted: { at, reason } | null, requeued?, delegated? }
   // { state: off|setup|permission|denied|connected|unsupported, reason, dialog, product } Chrome への接続の状態（ホストの PC の画面だけに流す。リモートの端末には送らない。sessionId は null）
   "chromeBrowser",
+  // { windows, operating } 会話の Chrome の窓（エージェント専用の窓）の有無と、エージェントが操作中か（右パネルの Chrome の入口。リモートの端末にも流す。sessionId は会話）
+  "chromeWindow",
 ]);

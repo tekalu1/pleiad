@@ -129,6 +129,7 @@ import { createChromeConnection } from './chrome/connection.mjs';
 import { chromeHomes } from './chrome/locate.mjs';
 import { parentPortChromeOs } from './chrome/os.mjs';
 import { createChromeRelay } from './chrome/relay.mjs';
+import { createChromeScreencast } from './chrome/screencast.mjs';
 import { createBrowserSiteApprovals } from './browser-confirm.mjs';
 import { createBrowserBridge, BROWSER_MCP_PATH } from './browser-bridge.mjs';
 import { validBrowserPref, externalOrigin } from '../web/browser-confirm-policy.mjs';
@@ -211,6 +212,10 @@ const chromeConnection = chromeOs
 const chromeRelay = chromeConnection && agentBrowserMode() === 'chrome'
   ? createChromeRelay({ connection: chromeConnection, os: chromeOs, locate: chromeLocate, authorize: (request, signal) => browserSiteApprovals(request, signal), deniedMessage: () => t('permission.browserSiteDenied'), log: line => console.log(`  ${line}`) })
   : null;
+// 会話の Chrome の窓の映像（右パネルの「Chrome の窓」。ホストの画面もリモートの端末も見られる。見るだけ。core/chrome/screencast.mjs、ADR 0148）。
+// 内蔵ブラウザーの映像（上の screencastHub）とは別のハブで、WS のコマンドは args.source === 'chrome' で選ぶ
+const chromeScreencast = chromeRelay ? createChromeScreencast({ host: chromeRelay.view, log: line => console.log(`  ${line}`) }) : null;
+const chromeScreencastHub = chromeScreencast ? createScreencastHub({ bridge: chromeScreencast, source: 'chrome' }) : null;
 // 会話の端点を出す口（ターンの開始・新しい会話の id の付け替え・ターンの終わり・会話の削除）。Chrome の道でなければ内蔵ブラウザーの橋そのもの
 const agentBrowserEndpoints = chromeRelay ? chromeRelayBrowser(chromeRelay) : agentBrowser;
 // A nested server may inherit another conversation's shell environment; only this process's bridge can issue browser access.
@@ -2163,6 +2168,27 @@ const chromeBrowserFrame = state => ({ kind: P.EVENT, event: { type: 'chromeBrow
 chromeConnection?.onChange(state => {
   const text = JSON.stringify(chromeBrowserFrame(state));
   for (const ws of runtime.sockets) if (ws.readyState === ws.OPEN && hostScreens.has(ws)) ws.send(text);
+});
+
+/**
+ * 会話の Chrome の窓の知らせ（右パネルの Chrome の入口。窓のある会話だけに出し、操作中は弧を出す）。リモートの端末にも流す。
+ * 取りこぼしても次の知らせで足りるので溜めない。変わったときだけ送る。接続したての端末には chromeWindowFrames で今の分を送る
+ */
+const chromeWindowFrame = (sessionId, summary) => ({ kind: P.EVENT, event: { type: 'chromeWindow', sessionId, windows: summary.windows, operating: summary.operating } });
+const chromeWindowSent = new Map();   // 会話の id -> 最後に送った { windows, operating }
+function chromeWindowFrames() {
+  return chromeRelay ? chromeRelay.view.sessions().map(id => JSON.stringify(chromeWindowFrame(id, chromeRelay.view.summary(id)))) : [];
+}
+chromeRelay?.view.onChange((sessionId, kind, from) => {
+  const ids = kind === 'rebind' ? [from, sessionId] : [sessionId];
+  for (const id of ids) {
+    const summary = chromeRelay.view.summary(id);
+    const last = chromeWindowSent.get(id);
+    if (last ? last.windows === summary.windows && last.operating === summary.operating : !summary.windows) continue;
+    if (summary.windows) chromeWindowSent.set(id, summary); else chromeWindowSent.delete(id);
+    const text = JSON.stringify(chromeWindowFrame(id, summary));
+    for (const ws of runtime.sockets) if (ws.readyState === ws.OPEN) ws.send(text);
+  }
 });
 
 /**
@@ -5977,6 +6003,7 @@ const handoverRun = createHandover({
   // DB を書き切り、main へ答えてから、データ置き場のロックを放して終わる（以後このプロセスは何も書かない）
   release: async result => {
     await Promise.race([voiceHost.close(), new Promise(resolve => setTimeout(resolve, 2000))]).catch(() => {});
+    chromeScreencast?.close();
     chromeRelay?.close();
     store.flushNow();
     handoverReply?.({ ...result, at: Date.now(), pid: process.pid });
@@ -6985,12 +7012,13 @@ wss.on("connection", (ws, req) => {
   // エージェントのブラウザー（PC の Chrome）への接続の今の状態。ホストの PC の画面だけ（リモートの端末へは送らない）
   if (local) hostScreens.add(ws);
   if (chromeConnection && local) ws.send(JSON.stringify(chromeBrowserFrame(chromeConnection.state())));
+  for (const text of chromeWindowFrames()) ws.send(text);
   ws.on("close", () => {
     detach(ws);
     notifyPresence.clear(ws);
     // 見ていた PC のブラウザーは、見る端末がいなくなれば止める
     const viewer = screencastClients.get(ws);
-    if (viewer) screencastHub?.forget(viewer);
+    if (viewer) { screencastHub?.forget(viewer); chromeScreencastHub?.forget(viewer); }
   });
 
   ws.on("message", async (raw) => {
@@ -7535,6 +7563,7 @@ wss.on("connection", (ws, req) => {
         case 'browserScreencastInput': case 'browserScreencastNav': case 'browserScreencastAgent': {
           if (!screencastClients.has(ws)) screencastClients.set(ws, { send: message => { if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(message)); } });
           const answer = await screencastCommand({ command: msg.command, args: msg.args ?? {}, local, hub: screencastHub, bridge: screencastBridge,
+            chrome: chromeScreencastHub ? { hub: chromeScreencastHub, bridge: chromeScreencast } : null,
             client: screencastClients.get(ws),
             snapshotFile: async ({ sessionId, id, at }) => {
               const record = await history.findVisualization(sessionId, await resolveBackendForSession(sessionId).catch(() => null), { id, at });
@@ -7551,7 +7580,8 @@ wss.on("connection", (ws, req) => {
         case "hostCapabilities":
           // hostName は添付の「ホストから <ホスト名>」の見出し（リモートの印の無いブラウザーで使う）
           // pcBrowser: この接続から PC の内蔵ブラウザーを見られるか（デスクトップ版で、リモートの接続のとき）
-          return reply(true, { osActions: local, hostName: os.hostname(), pcBrowser: !local && !!screencastBridge?.ready,
+          // chromeWindow: 会話の Chrome の窓の映像を見られるか（リモートの端末も。見るだけ）
+          return reply(true, { osActions: local, hostName: os.hostname(), pcBrowser: !local && !!screencastBridge?.ready, chromeWindow: Boolean(chromeScreencast),
             // エージェントのブラウザー（PC の Chrome）への接続の入口。ホストの PC の画面だけ。Electron の無いホストは false、OS の層が使えなければ 'unsupported'
             chromeBrowser: local && chromeConnection ? (chromeConnection.state().state === 'unsupported' ? 'unsupported' : 'available') : false,
             computerUse: computerUseCapability({ hasParentPort: Boolean(computerDriver), platform: computerDriver?.kind === 'fake' ? 'win32' : undefined, ready: computerDriver?.state() ?? null }) });
@@ -7915,6 +7945,7 @@ mainPort.on("message", async ({ data }) => {
   if (data?.type === "shutdown") {
     void voiceHost.close();   // 通話の使用量の台帳を書き切る
     // Chrome に許可の確認を残して終わらない（確認が出ていれば閉じる）。main の返事を待つので、長くても 2 秒まで
+    chromeScreencast?.close();
     chromeRelay?.close();
     if (chromeConnection) await Promise.race([chromeConnection.close(), new Promise(resolve => setTimeout(resolve, 2000))]).catch(() => {});
     try { finishShutdown(store.flushNow, () => runtime.turns.size > 0 || agentTasks.busy, exitAfterStoppingHeld); }

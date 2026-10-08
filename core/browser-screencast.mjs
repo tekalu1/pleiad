@@ -5,6 +5,9 @@
 // フレームは Chromium が変化のあったときだけ出し、ack を返すまで次を出さない。ack は
 // 「見ている端末がみな受け取った（または ackTimeout が過ぎた）」かつ「前のフレームから minInterval が過ぎた」ときに返す。
 // 端末の受け取りを待つので、中継の遅い回線では自然に頻度が下がる。
+// 映像の出どころは 2 つ（bridge を差し替える）。内蔵ブラウザー（main が持つ。上の parentPortScreencast）と、エージェントの Chrome の窓
+// （core/chrome/screencast.mjs。同じ形の bridge。args.source === 'chrome'）。Chrome の窓はホストの画面からもリモートの端末からも見られ、入力は受けない（見るだけ）。
+// hub は source を messages に載せ、画面が内蔵ブラウザーの映像と取り違えないようにする。
 // main が居なくなった（更新）ときは、ページ（内蔵ブラウザーのタブ）ごと消えるので、見ている端末へ ended('away') を送って畳む
 // （待っていた依頼は失敗にし、新しい main の browser-screencast-ready まで ready は false。docs/zero-downtime-update/design.md §7.2）。
 
@@ -59,12 +62,19 @@ export const SCREENCAST_COMMANDS = ['browserScreencast', 'browserScreencastStop'
 
 /**
  * WS のコマンドを処理する（core/server.mjs から呼ぶ）。戻り値は { ok, result } か { ok: false, code }。
- * リモートの接続（ADR 0010 の isLocalRequest が false）からだけ受ける。ホストの画面には内蔵ブラウザーそのものがある。
+ * 内蔵ブラウザーの映像は、リモートの接続（ADR 0010 の isLocalRequest が false）からだけ受ける。ホストの画面には内蔵ブラウザーそのものがある。
+ * args.source === 'chrome' は、エージェントの Chrome の窓の映像（chrome = { hub, bridge }）。ホストの画面もリモートも見られるが、見るだけ（入力・移動・操作は view-only）。
  * 入力・移動・エージェントの操作は、その会話を見ている接続からだけ。エージェントが操作中の入力と移動は main が断る（agent-active）。
  * snapshotFile({ sessionId, id, at }) は可視化の写しを書き出して file: の URL を返す（見つからなければ null）
  */
-export async function screencastCommand({ command, args = {}, local, hub, bridge, client, snapshotFile }) {
-  if (local) return { ok: false, code: 'remote-only' };
+export async function screencastCommand({ command, args = {}, local, hub, bridge, client, snapshotFile, chrome = null }) {
+  const viaChrome = args.source === 'chrome';
+  if (viaChrome) {
+    if (!chrome?.hub || !chrome.bridge?.ready) return { ok: false, code: 'unavailable' };
+    ({ hub, bridge } = chrome);
+    if (command === 'browserScreencastInput' || command === 'browserScreencastNav' || command === 'browserScreencastAgent') return { ok: false, code: 'view-only' };
+    if (command === 'browserScreencast' && (args.url != null || args.visualization)) return { ok: false, code: 'view-only' };
+  } else if (local) return { ok: false, code: 'remote-only' };
   if (!hub || !bridge?.ready) return { ok: false, code: 'unavailable' };
   const sessionId = args.sessionId;
   if (typeof sessionId !== 'string' || !sessionId || sessionId.length > 200) return { ok: false, code: 'invalid-session' };
@@ -95,7 +105,7 @@ export async function screencastCommand({ command, args = {}, local, hub, bridge
     }
   } catch (error) {
     const code = String(error?.message ?? '');
-    return { ok: false, code: ['agent-active', 'invalid-url', 'invalid-input', 'not-watching'].includes(code) ? code : 'failed' };
+    return { ok: false, code: ['agent-active', 'invalid-url', 'invalid-input', 'not-watching', 'no-window', 'view-only'].includes(code) ? code : 'failed' };
   }
 }
 
@@ -103,7 +113,8 @@ export async function screencastCommand({ command, args = {}, local, hub, bridge
  * @param bridge parentPortScreencast の戻り値（テストでは偽物）
  * client は { send(message) }。message は WS の { kind: 'screencast', type: frame|state|ended, sessionId, ... }
  */
-export function createScreencastHub({ bridge, ackTimeout = 3000, now = () => Date.now(), setTimer = setTimeout, clearTimer = clearTimeout } = {}) {
+export function createScreencastHub({ bridge, source = null, ackTimeout = 3000, now = () => Date.now(), setTimer = setTimeout, clearTimer = clearTimeout } = {}) {
+  const tag = source ? { source } : {};
   const sessions = new Map();   // sessionId -> { clients: Map<client, { waiting }>, seq, frameId, sentAt, timer, settings, state, stats }
 
   function entryOf(sessionId) { return sessions.get(sessionId) ?? null; }
@@ -121,7 +132,7 @@ export function createScreencastHub({ bridge, ackTimeout = 3000, now = () => Dat
     entry.stats.maxBytes = Math.max(entry.stats.maxBytes, Math.floor(frame.data.length * 3 / 4));
     for (const [client, info] of entry.clients) {
       info.waiting = seq;
-      deliver(client, { kind: 'screencast', type: 'frame', sessionId, seq, data: frame.data, metadata: frame.metadata ?? {} });
+      deliver(client, { kind: 'screencast', ...tag, type: 'frame', sessionId, seq, data: frame.data, metadata: frame.metadata ?? {} });
     }
     schedule(sessionId);
   });
@@ -129,20 +140,20 @@ export function createScreencastHub({ bridge, ackTimeout = 3000, now = () => Dat
     const entry = entryOf(sessionId);
     if (!entry) return;
     entry.state = state;
-    for (const client of entry.clients.keys()) deliver(client, { kind: 'screencast', type: 'state', sessionId, state });
+    for (const client of entry.clients.keys()) deliver(client, { kind: 'screencast', ...tag, type: 'state', sessionId, state });
   });
   bridge.onEnded((sessionId, reason) => {
     const entry = entryOf(sessionId);
     if (!entry) return;
     drop(sessionId);
-    for (const client of entry.clients.keys()) deliver(client, { kind: 'screencast', type: 'ended', sessionId, reason });
+    for (const client of entry.clients.keys()) deliver(client, { kind: 'screencast', ...tag, type: 'ended', sessionId, reason });
   });
   // main が居なくなった（更新）: 見ている端末へ終わりを知らせ、全部畳む。戻った main の前の続きは無い（タブの中身は一度切れる）
   bridge.onAway?.(() => {
     for (const sessionId of [...sessions.keys()]) {
       const entry = entryOf(sessionId);
       drop(sessionId);
-      for (const client of entry.clients.keys()) deliver(client, { kind: 'screencast', type: 'ended', sessionId, reason: 'away' });
+      for (const client of entry.clients.keys()) deliver(client, { kind: 'screencast', ...tag, type: 'ended', sessionId, reason: 'away' });
     }
   });
 

@@ -72,9 +72,10 @@ export function customSlots({ label = '' } = {}) {
  * git（会話のブランチ・したこと・変更。ADR 0085）。見出し（git・ルートのパス）と本文、下の行（取得時刻・再読み込み・会話で使う）と閉じるだけ。
  * footer は下の行に並べるボタンの名前の列（web/file-preview.mjs の openPanel が作る）
  */
-export function gitSlots({ label = '', footer = null, head = null, toolbar = null } = {}) {
-  // head・toolbar は部品の名前の列。git パネル（ADR 0135）は頭に再読み込みと広げる、道具の列にタブを置く
-  return { mode: 'custom', label, kind: '', head: head ? [...head, 'wide', 'close'] : ['close'], views: false, toolbar: toolbar ?? [], aside: false, footer };
+export function gitSlots({ label = '', footer = null, head = null, toolbar = null, wide = false } = {}) {
+  // head・toolbar は部品の名前の列。git パネル（ADR 0135）は頭に再読み込みと広げる、道具の列にタブを置く。
+  // wide は、頭にほかの部品が無くても「広げる」を出す（Chrome の窓の映像は広げると字が読みやすくなる）
+  return { mode: 'custom', label, kind: '', head: head ? [...head, 'wide', 'close'] : wide ? ['wide', 'close'] : ['close'], views: false, toolbar: toolbar ?? [], aside: false, footer };
 }
 
 /**
