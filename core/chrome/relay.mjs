@@ -1033,7 +1033,7 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, scop
     /**
      * 前のサーバーが預けた状態を受ける（接続の子の welcome.carry。待ち受けを始める前に呼ぶ）。会話の id・鍵を戻し、同じポートで待ち受ける
      * （エージェントの接続先 ws://127.0.0.1:<port>/devtools/browser/<鍵> が更新を越えて同じ）。前のサーバーがまだポートを持っていれば短く待つ。
-     * ポートが取れなければ別のポートで待ち受ける（鍵は同じ。動いていたエージェントの接続先は古くなる）。窓の印は scope.restore へ
+     * ポートが取れなければ別のポートで待ち受ける（鍵は作り直す。動いていたエージェントの接続先は古くなる）。窓の印は scope.restore へ
      * @param [options.staleSessions] 前のサーバーが Chrome の接続に付けたまま残したセッション（welcome.sessions）。最初の bind で外す
      * @returns {Promise<boolean>} 何かを戻したか
      */
@@ -1042,7 +1042,7 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, scop
       // 預かり物が無効（大きすぎて預けられなかった）: 古い止めた印・一時停止の印を信じられない。人が送るまで、端点は止めたものとして渡す
       if (invalid) { invalidCarry = true; log('chrome-relay: previous carry was invalid, conversations start stopped'); }
       staleSessions = stale.map(item => (typeof item === 'string' ? item : item?.sessionId)).filter(id => typeof id === 'string' && id);
-      let restored = false;
+      let restored = false, fellBack = false;
       if (carry && carry.v === 1 && Array.isArray(carry.entries)) {
         for (const item of carry.entries) {
           if (typeof item?.id !== 'string' || !item.id || item.id.length > 200 || !/^[a-f0-9]{48}$/.test(item.key ?? '') || entries.has(item.id) || byKey.has(item.key)) continue;
@@ -1071,10 +1071,16 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, scop
           }
           log(`chrome-relay: could not listen on the previous port ${wanted}, so another port is used`);
           address = await listenOn(0);
+          fellBack = true;
           return address;
         })().catch(error => { listening = null; throw error; });
       }
       await ensureListening();
+      // 前のポートを別のプロセスが持っていた: 古い鍵のままだと、その鍵が別のプロセスに知られる（古い接続先は元々つながらない）。鍵を作り直す。新しい接続先は次の endpoint() で渡る
+      if (fellBack) {
+        for (const entry of entries.values()) { byKey.delete(entry.key); entry.key = random(); byKey.set(entry.key, entry); }
+        log('chrome-relay: previous port was taken, so the keys were regenerated');
+      }
       // 一時停止のまま引き継がれた会話を、control に知らせる（映像の撮影を断ち続ける）
       for (const entry of entries.values()) if (entry.paused) fire(changeListeners, entry.id);
       carryChanged();

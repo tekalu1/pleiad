@@ -1,3 +1,4 @@
+import net from 'node:net';
 import { WebSocket } from 'ws';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import os from 'node:os';
@@ -417,6 +418,19 @@ export default async function (t) {
       const other = await r2.relay.endpoint('inv2');
       t.ok('unlock の後は、ほかの会話も止めたままにしない', !(await refused(other)));
     } finally { await r2.stop(); }
+    // 前のポートを別のプロセスが持っていて別のポートで待ち受けるとき、鍵は作り直す（古い鍵が別のプロセスに知られるため）
+    {
+      const squatter = net.createServer(); await new Promise(resolve => squatter.listen(0, '127.0.0.1', resolve));
+      const taken = squatter.address().port;
+      const oldKey = 'ab'.repeat(24);
+      const r3 = await rig();
+      try {
+        await r3.relay.restore({ v: 1, port: taken, entries: [{ id: 'k1', key: oldKey, stopped: false, paused: null }], windows: [] });
+        const url = await r3.relay.endpoint('k1');
+        t.ok('前のポートが取れず別のポートで待ち受けたら、鍵を作り直す', r3.relay.port !== taken && !url.includes(oldKey), url);
+        t.ok('作り直した鍵ではつながり、古い鍵は断る', !(await refused(url)) && await refused(url.replace(/[a-f0-9]{48}$/, oldKey)));
+      } finally { await r3.stop(); await new Promise(resolve => squatter.close(resolve)); }
+    }
   }
 
   // ===== 5. 上りが無い・切れたとき =====
