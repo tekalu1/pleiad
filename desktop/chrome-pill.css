@@ -1,0 +1,7 @@
+body { font-family: "Segoe UI Variable", "Segoe UI", system-ui, sans-serif; }
+.pill { border: 0; cursor: pointer; width: max-content; max-width: 100%;
+  transition: opacity var(--dur) var(--ease-out), transform var(--dur) var(--ease-out); }
+.pill.in { transition: opacity var(--dur) var(--ease-out), transform var(--dur) var(--ease-out); }
+.pill:hover { background: var(--fill-primary-hover); }
+.pill:focus-visible { outline: 2px solid var(--line-blue); outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) { .pill, .pill.in { transition: none; transform: translate(-50%, 0); } }

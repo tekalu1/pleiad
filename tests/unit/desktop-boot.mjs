@@ -108,6 +108,7 @@ async function start({ env = {}, packaged = false, choice = 'link', connectError
     './browser-viewer-bridge.cjs': { attachBrowserViewerBridge: listens(calls) },
     './computer/service.cjs': { attachComputerService: listens(calls), withPerMonitorDpi: win32 => win32 },
     './computer/win32.cjs': { loadWin32: () => { throw Object.assign(new Error('not windows'), { reason: 'platform' }); } },
+    './chrome-pill.cjs': { attachChromePill: listens(calls, 'chromePill') },
     './chrome-os/index.cjs': { createChromeOs: () => ({ reconceal: () => { calls.reconceals = (calls.reconceals ?? 0) + 1; }, closeAllAgents: () => { calls.closeAlls = (calls.closeAlls ?? 0) + 1; if (calls.failCloseAll) throw new Error('boom'); return 0; } }), attachChromeOs: listens(calls) },
     './browser-screencast-bridge.cjs': { attachBrowserScreencastBridge: listens(calls) },
     './computer-overlay.cjs': { attachComputerOverlay: listens(calls) },
@@ -159,6 +160,9 @@ export default async function (t) {
   {
     const { calls, link } = await start({ env: {}, packaged: true });
     t.ok('パッケージ版の既定は on: env が無くてもパイプの包みを worker にし、utilityProcess は起こさない', calls.forks === 0 && calls.connects === 1 && link.listenerCount('message') === 1 && (calls.secretBridge.postMessage({ type: 'via-hub' }), calls.messages.at(-1)?.type === 'via-hub') && calls.chosen !== null);
+    const snapshots = calls.messages.filter(message => message.type === 'chrome-pill-snapshot').length;
+    link.emit('message', { type: 'ready', port: 7611, token: 'attached-token' });
+    t.ok('サーバーへ付け直した後も Chrome ピルの引き継ぎ状態を取り直す', calls.messages.filter(message => message.type === 'chrome-pill-snapshot').length === snapshots + 1);
   }
   {
     const { calls } = await start({ env: { AGENT_HOST_HANDOVER: '  ' }, packaged: true });
