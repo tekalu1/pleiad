@@ -107,11 +107,14 @@ export function normalizeBot(raw, now = Date.now()) {
 export function createBotStore({ file } = {}) {
   if (!file) throw new Error('createBotStore: file is required');
   let bots = [];
+  let loaded = false;           // load() が一度成功したか。まだなら、書き込みは先に読む（読む前に書くと、ファイルの既存の行を消す）
   let broken = null;            // 読めなかった理由（BotStoreError）。立っている間は書かない
   let queue = Promise.resolve();
   const serial = (fn) => { const task = queue.catch(() => {}).then(fn); queue = task; return task; };
   const copy = (b) => structuredClone(b);
   const guard = () => { if (broken) throw broken; };
+  // 書き込みの前に、まだ読んでいなければ読む（キューの中で呼ぶ）。起動の load より先に来た作成が、ファイルの既存の行を上書きして消さない
+  const ready = async () => { if (!loaded && !broken) await load(); guard(); };
   // 名前はチャンネルを通して一意。直列化の中で確かめるので、同時の作成でも重ならない
   const taken = (bot) => {
     if (bot.plain) return;   // 組み込みの bot は名前で呼ばれない（人の bot と同じ名前でもよい）
@@ -122,40 +125,44 @@ export function createBotStore({ file } = {}) {
     await writeAtomic(file, `${JSON.stringify({ version: BOTS_VERSION, bots }, null, 2)}\n`);
   };
 
+  // 読み込みも書き込みと同じ直列化キューに並べる。キューの外で走ると、起動中に作られた行（put が mkdir を待っている間）や、読んでいる間に作られた行を、読み込みの結果で丸ごと置き換えて消す
+  const load = async () => {
+    let text;
+    for (let attempt = 0; ; attempt++) {
+      try { text = await fs.readFile(file, 'utf8'); break; }
+      catch (e) {
+        if (e.code === 'ENOENT') { bots = []; broken = null; loaded = true; return; }
+        if (TRANSIENT_READ.has(e.code) && attempt < READ_RETRIES.length) { await wait(READ_RETRIES[attempt]); continue; }
+        // 読めなかっただけで「bot が 0 件」と見なさない（次の保存で bots.json を空の一覧で上書きしてしまう）。読み直すには再起動する
+        broken = new BotStoreError('BOTS_UNREADABLE', `bots.json could not be read (${e.code ?? e.message}); check whether another program has it open: ${file}`);
+        throw broken;
+      }
+    }
+    let data;
+    try { data = JSON.parse(text); }
+    catch { broken = new BotStoreError('BOTS_CORRUPT', `bots.json is not valid JSON: ${file}`); throw broken; }
+    if (data?.version !== BOTS_VERSION || !Array.isArray(data.bots)) {
+      broken = new BotStoreError('BOTS_UNSUPPORTED_VERSION', `bots.json has an unsupported version (${data?.version}): ${file}`);
+      throw broken;
+    }
+    broken = null;
+    loaded = true;
+    bots = data.bots.map((b) => normalizeBot(b)).filter(Boolean);
+    // id か name が無い行は読み込まれず、次の保存で消える。黙って消さずにログへ残す
+    if (bots.length < data.bots.length) console.error(`  bots: ${data.bots.length - bots.length} row(s) of bots.json have no id or name and were dropped: ${file}`);
+  };
+
   return {
     file,
     /** 読めなかった理由（BotStoreError）。読めているなら null。画面へ出して止める材料 */
     get problem() { return broken; },
-    async load() {
-      let text;
-      for (let attempt = 0; ; attempt++) {
-        try { text = await fs.readFile(file, 'utf8'); break; }
-        catch (e) {
-          if (e.code === 'ENOENT') { bots = []; broken = null; return; }
-          if (TRANSIENT_READ.has(e.code) && attempt < READ_RETRIES.length) { await wait(READ_RETRIES[attempt]); continue; }
-          // 読めなかっただけで「bot が 0 件」と見なさない（次の保存で bots.json を空の一覧で上書きしてしまう）。読み直すには再起動する
-          broken = new BotStoreError('BOTS_UNREADABLE', `bots.json could not be read (${e.code ?? e.message}); check whether another program has it open: ${file}`);
-          throw broken;
-        }
-      }
-      let data;
-      try { data = JSON.parse(text); }
-      catch { broken = new BotStoreError('BOTS_CORRUPT', `bots.json is not valid JSON: ${file}`); throw broken; }
-      if (data?.version !== BOTS_VERSION || !Array.isArray(data.bots)) {
-        broken = new BotStoreError('BOTS_UNSUPPORTED_VERSION', `bots.json has an unsupported version (${data?.version}): ${file}`);
-        throw broken;
-      }
-      broken = null;
-      bots = data.bots.map((b) => normalizeBot(b)).filter(Boolean);
-      // id か name が無い行は読み込まれず、次の保存で消える。黙って消さずにログへ残す
-      if (bots.length < data.bots.length) console.error(`  bots: ${data.bots.length - bots.length} row(s) of bots.json have no id or name and were dropped: ${file}`);
-    },
+    load: () => serial(load),
     list: () => bots.map(copy),
     get: (id) => { const b = bots.find((x) => x.id === id); return b ? copy(b) : null; },
     byName: (name) => { const key = nameKey(name); const b = key ? bots.find((x) => !x.plain && nameKey(x.name) === key) : null; return b ? copy(b) : null; },
     put(bot) {
       return serial(async () => {
-        guard();
+        await ready();
         const next = normalizeBot(bot, bot?.createdAt);
         if (!next) throw new BotStoreError('BOT_INVALID', 'bot needs id and name');
         taken(next);
@@ -168,7 +175,7 @@ export function createBotStore({ file } = {}) {
     },
     update(id, fn) {
       return serial(async () => {
-        guard();
+        await ready();
         const i = bots.findIndex((x) => x.id === id);
         if (i < 0) throw new BotStoreError('BOT_NOT_FOUND', `no such bot: ${id}`);
         const next = normalizeBot(await fn(copy(bots[i])), bots[i].createdAt);
@@ -182,7 +189,7 @@ export function createBotStore({ file } = {}) {
     },
     remove(id) {
       return serial(async () => {
-        guard();
+        await ready();
         const found = bots.find((x) => x.id === id);
         if (!found) return null;
         const before = bots;

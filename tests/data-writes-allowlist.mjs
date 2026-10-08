@@ -45,7 +45,7 @@ export const DATA_WRITES = [
   { file: 'core/history.mjs', sites: 3, targets: [
     { name: 'presents/<sessionId>.jsonl', limit: '提示物の件数（1 件は MAX_INLINE_BYTES=8MiB まで）', reason: '追記が主で、全体の書き換えは巻き戻し・添付の固定のときだけ。1 会話 1 ファイル', unbounded: true },
   ] },
-  { file: 'core/backends/antigravity-store.mjs', sites: 2, targets: [
+  { file: 'core/backends/antigravity-store.mjs', sites: 1, targets: [
     { name: 'antigravity/<conversationId>.json', limit: '会話の長さ', reason: 'Antigravity の会話の控え。ターン中に何度も書き直す', unbounded: true },
   ] },
   { file: 'core/backends/antigravity-pids.mjs', sites: 1, targets: [

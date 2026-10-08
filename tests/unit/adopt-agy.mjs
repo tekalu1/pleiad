@@ -183,7 +183,7 @@ export default async function (t) {
       const loaded = await cb.cmd('loadSession', { sessionId: id });
       assert.equal(loaded.messages.filter(m => m.role === 'user' && m.text === `gated:${k === 'T' ? 't-tool' : 'f-fin'}`).length, 1, `${k}: 人の発言は履歴に 1 回`);
       const finals = loaded.messages.filter(m => m.role === 'assistant' && String(m.text).includes(`終わり: ${k === 'T' ? 't-tool' : 'f-fin'}`));
-      assert.equal(finals.length, 1, `${k}: 最後の本文は履歴に 1 回`);
+      assert.equal(finals.length, 1, `${k}: 最後の本文は履歴に 1 回 ${b.tail(40)}`);
       assert.equal(finals[0].text, `前置き。終わり: ${k === 'T' ? 't-tool' : 'f-fin'}`, `${k}: 本文は再生と続きで欠けず重ならない`);
       const calls = loaded.messages.flatMap(m => m.toolCalls ?? []).filter(c => String(c.result?.text).startsWith('out-'));
       assert.deepEqual(calls.map(c => c.result.text), [`out-${k === 'T' ? 't-tool' : 'f-fin'}`], `${k}: ツールの結果は 1 回`);
