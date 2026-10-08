@@ -120,6 +120,9 @@ export const DATA_WRITES = [
   { file: 'core/chrome/close-window.mjs', sites: 1, targets: [
     { name: 'uploads/chrome-window/<会話の SHA-256>/<時刻>-<UUID>.(png|jpg)', limit: '1 枚 MAX_IMAGE=10MiB。窓を閉じるたびに 1 枚を追加し、会話の削除で消す', reason: '閉じた窓の静止画。会話の present にはパスだけを記録する（ADR 0115）' },
   ] },
+  { file: 'core/chrome/window-shots.mjs', sites: 1, targets: [
+    { name: 'uploads/chrome-window/<会話の SHA-256>/<元のファイル名>', limit: '分岐した会話へ 1 枚ずつ複製（元の 1 枚は close-window.mjs の MAX_IMAGE=10MiB 以下）。会話の削除で消す', reason: '分岐した会話の閉じた窓の静止画。元の会話を消してもパスが残るよう、複製を持たせる（ADR 0115）' },
+  ] },
   { file: 'core/context-bases.mjs', sites: 1, targets: [
     { name: 'context-bases.json', limit: 'CONTEXT_BASES_LIMIT=50 件（作業場所 × モデル）', reason: '委譲の子の固定の部分（最初のリクエストの文脈）の直近の値。自動圧縮の閾値の見積もり（ADR 0166）' },
   ] },
