@@ -384,15 +384,18 @@ export function createActions({ driver, shots, access, askPermission, translate,
       const askOnce = key ? async () => {
         // 前面が操作できないアプリ（ターミナル・パスワード管理・Pleiad 自身など）の画面は送らない
         const { app } = await call(ctx, 'foreground', {});
-        if (isForbiddenApp(app)) { skippedApp = nameOf(app); return { skip: 'foreground' }; }
+        if (isForbiddenApp(app)) { skippedApp = nameOf(app); return { skip: 'protected_app' }; }
+        skippedApp = '';
         const shot = await capture(ctx, { display: d.id, ...DECIDER_SHOT });
         checkStopped(ctx);
         return askDecision({ key, jpeg: shot.jpeg, until, signal: ctx.signal });
       } : null;
-      const r = await settle({ grab, ask: askOnce, timeoutMs: seconds * 1000, sleep, check: () => checkStopped(ctx) });
+      const noKey = Boolean(until) && !key;
+      let r = await settle({ grab, ask: askOnce, timeoutMs: seconds * 1000, sleep, check: () => checkStopped(ctx) });
+      // 問いがあるのにキーが無ければ、画面が止まっても問いは確かめていない
+      if (noKey && r.status === 'success') r = { ...r, status: 'unverified', reason: 'no_key' };
       activity(ctx, { display: d });
-      return { text: untilText(ctx, r, { until, noKey: Boolean(until) && !key, app: skippedApp }),
-        wait: { done: r.done, end: r.end, ms: r.waitedMs, asks: r.asks, ...(r.p !== null ? { p: r.p } : {}), ...(until && !key ? { decider: 'no_key' } : r.end === 'skipped' ? { decider: 'foreground' } : r.end === 'ask_failed' ? { decider: r.code } : {}) } };
+      return { text: untilText(ctx, r, { until, noKey, app: skippedApp }), wait: untilResult(r) };
     },
 
     async open_application(ctx, args) {
@@ -461,21 +464,21 @@ export function createActions({ driver, shots, access, askPermission, translate,
   }
 
   /**
-   * wait_until の結果の文。1 行目が何が起きたか、2 行目が 終わったか・待った時間・聞いた回数・最後の確率。
-   * 問いを使わなかった・聞けなかったときは、その理由の行を足す
+   * wait_until の結果の決まった語（言語に依らない。印の行の wait）。キーの値は入らない。
+   * status: success（条件を満たした）・timeout・unverified（止まったが問いを確かめていない）・error（決定モデルに聞けなかった）
    */
+  function untilResult(r) {
+    return { status: r.status, screen: r.screen, answer: r.answer, ...(r.reason ? { reason: r.reason } : {}),
+      ...(r.p !== null ? { p_yes: r.p } : {}), checks: r.asks, waited_ms: r.waitedMs };
+  }
+  /** wait_until の結果の文（会話の言語の 1 文）。何が起きたかと待った時間 */
   function untilText(ctx, r, { until, noKey, app }) {
-    const s = (r.waitedMs / 1000).toFixed(1);
-    const p = r.p === null ? '—' : r.p.toFixed(2);
-    const lines = [];
-    if (r.end === 'yes') lines.push(L(ctx, 'until.yes', { seconds: s }));
-    else if (r.end === 'still') lines.push(L(ctx, r.sawChange ? 'until.still' : 'until.alreadyStill', { seconds: s }));
-    else if (r.end === 'skipped') lines.push(L(ctx, 'until.skipped', { seconds: s, app }));
-    else if (r.end === 'ask_failed') lines.push(L(ctx, 'until.askFailed', { seconds: s, reason: deciderReason(ctx, r.code) }));
-    else lines.push(L(ctx, r.asks ? 'until.notYet' : until && !noKey ? 'until.neverStillAsk' : 'until.neverStill', { seconds: s }));
-    if (noKey) lines.push(L(ctx, 'until.noKey'));
-    lines.push(L(ctx, 'until.summary', { done: L(ctx, r.done ? 'until.yesWord' : 'until.noWord'), seconds: s, asks: r.asks, p }));
-    return lines.join('\n');
+    const seconds = (r.waitedMs / 1000).toFixed(1);
+    const key = r.status === 'success' ? (r.answer === 'yes' ? (r.screen === 'stable' ? 'yes' : 'yesChanging') : r.sawChange ? 'still' : 'alreadyStill')
+      : r.status === 'unverified' ? (r.reason === 'no_key' ? 'noKey' : 'protectedApp')
+      : r.status === 'error' ? 'error'
+      : r.asks ? 'notYet' : noKey ? 'neverStillNoKey' : app ? 'neverStillProtected' : until ? 'neverStillAsk' : 'neverStill';
+    return L(ctx, `until.${key}`, { seconds, app, count: r.asks, ...(r.status === 'error' ? { reason: deciderReason(ctx, r.reason) } : {}) });
   }
   /** 決定モデルに聞けなかった理由（決まった code から。キーも応答の本文も含めない） */
   function deciderReason(ctx, code) {
