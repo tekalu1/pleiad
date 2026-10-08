@@ -8627,7 +8627,8 @@ browserPanel?.connect({ chromeAvailable: () => state.hostCaps?.chromeWindow === 
   chromeCount: () => chromeWindows.count(state.current),
   chromeOperating: () => chromeWindows.operating(state.current),
   chromeName: () => labelOf(activeBackendId()),
-  openChrome: () => chromePanel?.open($('browserEntry')) });
+  openChrome: () => chromePanel?.open($('browserEntry')),
+  noteView: view => browserEntry?.noteView(view) });
 // エージェントの Chrome の窓の状態の一行・止める・引き継ぐ・戻す（web/chrome-control.mjs。ADR 0154）。状態の一行は右パネルの映像の上の差し込み口、押した位置の輪は映像の上、
 // 一時停止中の帯は会話の側（入力欄の上）。撮影を断っている間の幕は映像の側が出す。窓があるか一時停止中の会話だけに出す
 chromeControlView = createChromeControlView({

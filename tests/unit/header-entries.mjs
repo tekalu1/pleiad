@@ -5,7 +5,7 @@
 //   - 頭の行の並び（目次・プラグイン・ブラウザーが同じ 30px のアイコンボタン）と、プラグインの字・件数の要素が無いこと
 import fs from 'node:fs';
 import assert from 'node:assert/strict';
-import { N } from '../lib/dom-stub.mjs';
+import { N, installDomStub } from '../lib/dom-stub.mjs';
 import { contextTotal, isManagedContext, contextEntryText, paintContextEntry, isBrowserShortcut, browserShortcutLabel, browserEntryMark, browserViewToOpen, setupBrowserEntry } from '../../web/header-entries.mjs';
 
 export const name = 'header-entries';
@@ -78,6 +78,35 @@ export default async function (t) {
   assert.equal(setupBrowserEntry({ button: hiddenButton, browser: null, preview: {} }), null);
   assert.equal(hiddenButton.hidden, true, 'ブラウザーで開いた Pleiad・リモートの窓・スマホでは出さない');
   t.ok('内蔵ブラウザーのボタン: 内蔵ブラウザーの無い画面では出さない', true);
+
+  // ---- 前に見た中身は、人が開いた・タブを押したときだけ覚える
+  installDomStub();
+  document.addEventListener = () => {};
+  {
+    let current = 'a', chromeIsOpen = false, viewerIsOpen = false;
+    const opened = [];
+    const entryButton = new N('button');
+    entryButton.focus = () => {};
+    const entry = setupBrowserEntry({ button: entryButton, mac: false,
+      browser: { open: () => { viewerIsOpen = true; opened.push('viewer'); } },
+      preview: { browserOpen: () => viewerIsOpen, openBrowser: () => {}, close: () => { chromeIsOpen = false; viewerIsOpen = false; } },
+      chrome: () => ({ isOpen: () => chromeIsOpen, open: () => { chromeIsOpen = true; opened.push('chrome'); } }),
+      windows: { has: () => true, operating: () => false }, getSessionId: () => current, chromeAvailable: () => true });
+    // 会話 a で Chrome の窓が（人の操作でなく）開いたまま、会話 b へ移って描き直す
+    chromeIsOpen = true;
+    entry.paint(); current = 'b'; entry.paint();
+    t.ok('人の操作でない表示（開いたままの Chrome の窓）は、移った先の会話の「前に見た中身」にしない', entry.lastView.size === 0);
+    chromeIsOpen = false;
+    entry.toggle();
+    t.ok('前に見た中身が無ければ、ビューアを開く（Chrome は依頼・操作中のときだけ優先）', opened.at(-1) === 'viewer' && entry.lastView.get('b') === 'viewer');
+    entry.toggle();
+    entry.noteView('chrome');
+    t.ok('パネルのタブを押すと、今の会話の前に見た中身になり、次に開くときそれを開く', entry.lastView.get('b') === 'chrome' && entry.lastView.get('a') === undefined && (entry.toggle(), opened.at(-1) === 'chrome'));
+    current = 'a';
+    chromeIsOpen = false; viewerIsOpen = false;
+    entry.toggle();
+    t.ok('別の会話の選びは持ち込まない（a は b で選んだ Chrome でなくビューア）', opened.at(-1) === 'viewer' && entry.lastView.get('b') === 'chrome');
+  }
 
   // ---- 頭の行の並び
   const html = fs.readFileSync(new URL('../../web/index.html', import.meta.url), 'utf8');

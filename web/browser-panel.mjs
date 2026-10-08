@@ -70,7 +70,7 @@ export function createBrowserPanel({ bridge = window.plyDesktop?.browser, showMe
   // rewriteSnapshot(rewrite): 写しの「読み込む」で、一時の許可付きの写しを書き直して同じタブで開く。onPaint(state): 状態が変わった
   // canOpenInChrome() / openInChrome({ sessionId, url }): ⋯「Chrome で開く（エージェントの窓へ）」（web/client.mjs が入れる。出すのは Chrome の層が使えるホストだけ）
   let hooks = { openPanel: () => {}, onEmpty: () => {}, tabMenu: () => [], rewriteSnapshot: async () => {}, onPaint: () => {}, canOpenInChrome: () => false, openInChrome: () => {},
-    chromeAvailable: () => false, chromeOpen: () => false, chromeCount: () => 0, chromeOperating: () => false, chromeName: () => 'Claude', openChrome: () => {} };
+    chromeAvailable: () => false, chromeOpen: () => false, chromeCount: () => 0, chromeOperating: () => false, chromeName: () => 'Claude', openChrome: () => {}, noteView: () => {} };
   const current = () => state.tabs.find(tab => tab.id === state.current) ?? null;
   const run = (action, args) => bridge.command(action, args).then(next => { if (next?.tabs) paint(next); return next; });
   const failed = () => notify(t('browser.failed'));
@@ -201,7 +201,7 @@ export function createBrowserPanel({ bridge = window.plyDesktop?.browser, showMe
         const count = hooks.chromeCount();
         if (count > 1) pick.append(el('span', 'browser-tab-count', String(count)));
         if (hooks.chromeOperating()) pick.append(runMark(t('browser.chromeWindow.entryWorking', { name: hooks.chromeName() })));
-        pick.onclick = () => hooks.openChrome();
+        pick.onclick = () => { hooks.noteView('chrome'); hooks.openChrome(); };
         pick.onkeydown = event => moveTab(event, position);
         item.append(pick);
         return item;
@@ -214,7 +214,7 @@ export function createBrowserPanel({ bridge = window.plyDesktop?.browser, showMe
       const ic = el('span', 'browser-tab-mark');
       if (tab.loading) ic.append(runMark(t('browser.loading'))); else ic.innerHTML = ICON[addressParts(tab.url).kind] ?? ICON.blank;
       pick.append(ic, el('span', 'browser-tab-name', label));
-      pick.onclick = () => { hooks.openPanel(); run('select', { id: tab.id }).catch(failed); };
+      pick.onclick = () => { hooks.noteView('viewer'); hooks.openPanel(); run('select', { id: tab.id }).catch(failed); };
       pick.onkeydown = event => moveTab(event, position);
       const close = button(closeIcon, t('browser.closeTab', { title: label }), () => run('close', { id: tab.id }).catch(failed), 'btn btn-icon browser-tab-close');
       close.tabIndex = -1;

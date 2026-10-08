@@ -76,6 +76,7 @@ export function setupBrowserEntry({ button, browser, preview, chrome = () => nul
   if (!button) return null;
   if (!browser && !windows) { button.hidden = true; return null; }
   button.setAttribute('aria-keyshortcuts', mac ? 'Meta+Shift+B' : 'Control+Shift+B');
+  // 会話ごとの「前に人が選んだ中身」。人が開いた・タブを押したときだけ書く（自動で開いた・別の会話から開いたままの表示では書かない）
   const lastView = new Map();
   const activeId = () => getSessionId() ?? null;
   const chromeOpen = () => chrome()?.isOpen() === true;
@@ -87,8 +88,6 @@ export function setupBrowserEntry({ button, browser, preview, chrome = () => nul
     button.hidden = !browser && !hasWindow;
     if (hasWindow) button.setAttribute('data-mobile-chrome', ''); else button.removeAttribute('data-mobile-chrome');
     if (button.hidden) return;
-    if (id && chromeOpen()) lastView.set(id, 'chrome');
-    else if (id && preview.browserOpen()) lastView.set(id, 'viewer');
     const requested = Boolean(id && chromeAvailable() && waiting(id));
     const paused = Boolean(id && chromeAvailable() && getChromeState(id) === 'paused');
     const working = Boolean(id && chromeAvailable() && (windows?.operating(id) || getChromeState(id) === 'running'));
@@ -119,8 +118,15 @@ export function setupBrowserEntry({ button, browser, preview, chrome = () => nul
       const view = browserViewToOpen({ viewer: !!browser, chrome: chromeAvailable() && !!id, urgent, last: lastView.get(id) });
       if (view === 'chrome') chrome()?.open(button);
       else if (view === 'viewer') { preview.openBrowser(button); browser.open(); }
+      if (id && view) lastView.set(id, view);
     }
     paint();
+  }
+
+  /** 人が内蔵ブラウザーのパネルのタブ（ビューア / Chrome）を押した。今の会話の「前に選んだ中身」にする */
+  function noteView(view) {
+    const id = activeId();
+    if (id && (view === 'chrome' || view === 'viewer')) lastView.set(id, view);
   }
 
   button.addEventListener('click', toggle);
@@ -132,5 +138,5 @@ export function setupBrowserEntry({ button, browser, preview, chrome = () => nul
   // 内蔵ブラウザーのページにフォーカスがあるときの近道（desktop/browser-panel.cjs の before-input-event）
   bridge?.onShortcut?.(() => { if (!button.hidden && !blocked()) toggle(); });
   paint();
-  return { paint, toggle, lastView };
+  return { paint, toggle, noteView, lastView };
 }
