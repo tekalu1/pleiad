@@ -8,6 +8,13 @@
    body に横スクロールを出さないため、入れ子のどこかで min-width:0 が切れないようにする。 */
 
 .tc{--tc-indent:calc(3.4 * var(--fs-xs) + 10px);font-size:var(--fs-s);color:var(--ink-weak);padding:0;margin:0 0 2px;border-radius:var(--r-s);max-width:100%;min-width:0}
+.tc-task-chrome{display:flex;align-items:center;gap:8px;padding:0 0 3px var(--tc-indent);font-size:var(--fs-xs);color:var(--ink-weak);min-width:0}
+.tc-task-chrome-mark{color:var(--ink-blue)}
+.tc-task-chrome-profile{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tc-task-chrome-state{white-space:nowrap}
+.tc-task-chrome-view,.tc-task-chrome-close{border:0;background:none;color:var(--ink-blue);font:inherit;cursor:pointer;padding:1px 3px}
+.tc-task-chrome-view{margin-left:auto;white-space:nowrap}
+.tc-task-chrome-close{color:var(--ink-weak);font-size:1.2em}
 .tc.tc-compact{font-size:var(--fs-xs)}
 .tc-details-body{padding:4px 0 8px var(--tc-indent);min-width:0}
 .tc-details-body .code-block>pre{max-height:240px;overflow:auto}

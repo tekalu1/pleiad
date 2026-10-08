@@ -40,6 +40,7 @@ export function settledLine(t, ev) {
  */
 export function browserHandoffView(ev, { el, t, cmd, onChange = () => {}, operateHere = null }) {
   let h = ev.browserHandoff;
+  const targetSessionId = () => h.targetSessionId ?? ev.targetSessionId ?? ev.sessionId;
   const body = el('div', 'bh-body');
   const res = el('span', 'res');
   let buttons = [];
@@ -99,14 +100,19 @@ export function browserHandoffView(ev, { el, t, cmd, onChange = () => {}, operat
       lead.textContent = t(`${K}operating`);
       const where = h.by !== 'device' ? t(`${K}operatingNote`) : operateHere ? t(`${K}operatingOnDevice`) : t(`${K}operatingByDevice`);
       body.replaceChildren(lead, note(where));
-      buttons = [button(t(h.turnLive === false ? `${K}resumeContinue` : `${K}resume`), () => cmd('chromeResume', { sessionId: ev.sessionId }), 'btn btn-primary')];
+      buttons = [button(t(h.turnLive === false ? `${K}resumeContinue` : `${K}resume`), () => cmd('chromeResume', { sessionId: targetSessionId() }), 'btn btn-primary')];
     } else {
       lead.textContent = t(`${K}askedLead`, { reason: reasonLabel(t, h.reason) });
       body.replaceChildren(lead);
       if (h.message) body.append(el('p', 'bh-message', h.message));
       buttons = operateHere
-        ? [decline(), button(t(`${K}operateOnPc`), () => cmd('chromeTakeOver', { sessionId: ev.sessionId })), button(t(`${K}operateHere`), takeOverHere, 'btn btn-primary')]
-        : [decline(), button(t(`${K}operate`), () => cmd('chromeTakeOver', { sessionId: ev.sessionId }), 'btn btn-primary')];
+        ? [decline(), button(t(`${K}operateOnPc`), () => cmd('chromeTakeOver', { sessionId: targetSessionId() })), button(t(`${K}operateHere`), takeOverHere, 'btn btn-primary')]
+        : [decline(), button(t(`${K}operate`), () => cmd('chromeTakeOver', { sessionId: targetSessionId() }), 'btn btn-primary')];
+    }
+    if (h.waitingTasks?.length > 1) {
+      const list = el('ul', 'bh-waiting-tasks');
+      for (const task of h.waitingTasks) list.append(el('li', null, task.title || task.taskId || ''));
+      body.append(list);
     }
     if (h.windowTitle) body.append(el('small', 'bh-window', h.windowTitle));
   }
@@ -114,7 +120,7 @@ export function browserHandoffView(ev, { el, t, cmd, onChange = () => {}, operat
   async function takeOverHere() {
     const size = await operateHere();
     if (!size) throw new Error(t(`${K}noWindow`));
-    await cmd('chromeTakeOver', { sessionId: ev.sessionId, by: 'device', ...size });
+    await cmd('chromeTakeOver', { sessionId: targetSessionId(), by: 'device', ...size });
   }
 
   function paint() {

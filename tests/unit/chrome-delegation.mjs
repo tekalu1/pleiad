@@ -11,6 +11,8 @@ import { createChromeControl } from '../../core/chrome/control.mjs';
 import { createChromeHandoffs } from '../../core/chrome/handoff.mjs';
 import { startFakeChrome } from '../lib/fake-chrome.mjs';
 import { fakeChromeOs } from '../lib/fake-chrome-os.mjs';
+import { browserHandoffView } from '../../web/browser-handoff-card.mjs';
+import { paintTaskChrome } from '../../web/task-chrome.mjs';
 
 export const name = 'chrome-delegation';
 export const title = 'Chrome の委譲: プロフィールの写し、親だけの窓操作、2 人の子の同じサイトのログイン待ち、窓ごとの停止（偽の Chrome）';
@@ -52,6 +54,33 @@ export default async function (t) {
   assert.deepEqual(listing.map(row => row.taskId), [null, 'ta', 'tb']);
   assert.equal(listing[1].state, 'paused');
   t.ok('親の直接の子だけを閉じる対象にでき、リモート・孫・別の親・孤立した記録を断る。窓一覧は開いている分だけ', true);
+
+  const el = (tag, cls = null, value = '') => ({ tag, className: cls, textContent: value, children: [],
+    append(...children) { this.children.push(...children); }, replaceChildren(...children) { this.children = children; },
+    setAttribute() {}, removeAttribute() {} });
+  const commands = [];
+  const handoffCard = browserHandoffView({ id: 'parent-card', sessionId: 'parent', targetSessionId: 'a',
+    browserHandoff: { reason: 'login', state: 'asked', waitingTasks: [{ taskId: 'ta', title: 'A' }, { taskId: 'tb', title: 'B' }] } },
+  { el, t: key => key, cmd: async (name, args) => { commands.push([name, args]); } });
+  assert.deepEqual(handoffCard.body.children.find(child => child.tag === 'ul')?.children.map(child => child.textContent), ['A', 'B']);
+  await handoffCard.buttons.at(-1).onclick();
+  handoffCard.update({ state: 'operating' });
+  await handoffCard.buttons.at(-1).onclick();
+  assert.deepEqual(commands, [['chromeTakeOver', { sessionId: 'a' }], ['chromeResume', { sessionId: 'a' }]]);
+  t.ok('親の 1 枚のカードに 2 つの作業を並べ、引き継ぎと戻すを子の会話へ送る', true);
+
+  let chromeLine = null;
+  const card = { querySelector(selector) { return selector === ':scope > .tc-task-chrome' ? chromeLine : selector === ':scope > .tc-details' ? { after(line) { chromeLine = line; } } : null; } };
+  const rowActions = [];
+  const paintRow = row => paintTaskChrome(card, row, { el, open: id => rowActions.push(['open', id]), close: id => rowActions.push(['close', id]) });
+  paintRow({ sessionId: 'a', windows: 1, profileName: '仕事', state: 'running' });
+  assert.deepEqual(chromeLine.children.map(child => child.textContent), ['Chrome', '仕事', '作業中', 'Chrome の窓を見る', '×']);
+  chromeLine.children.at(-2).onclick();
+  chromeLine.children.at(-1).onclick();
+  paintRow({ sessionId: 'a', windows: 1, profileName: '個人', state: 'paused' });
+  assert.deepEqual(rowActions, [['open', 'a'], ['close', 'a']]);
+  assert.equal(chromeLine.children[1].textContent, '個人');
+  t.ok('委譲カードの細い行は子の会話と窓を操作し、子のプロフィール変更を表示する', true);
 
   const chrome = await startFakeChrome();
   await fs.writeFile(path.join(chrome.userDataDir, 'Local State'), JSON.stringify({ profile: { last_used: 'Default', info_cache: {

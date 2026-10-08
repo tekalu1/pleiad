@@ -2,6 +2,7 @@
   "browserBridge": {
     "invalidTool": "ply_browser のツールの名前か引数が正しくありません。",
     "closeWindow": { "description": "この会話の Chrome の窓を閉じ、最後の画面を会話に残す。続きに使う・ログインを保つ必要があるなら開いたままにする。", "closed": "Chrome の窓を閉じました。次に使うときは新しい窓が開きます。", "none": "この会話に開いている Chrome の窓はありません。", "failed": "Chrome の窓を閉じられませんでした。" },
+    "closeWindowTask": { "description": "task に直接委譲した子の taskId を指定すると、その子の窓を閉じる。孫や別の会話の子は指定できない。", "argument": "この会話から直接委譲した子の taskId。省くとこの会話の窓を閉じる。", "none": "指定した子に開いている Chrome の窓はありません。" },
     "connectWait": "Chrome の準備か許可を待っています。人に確認のカードを出しました。ply_browser の hand_to_user（reason: other、message に状況）を呼んで待ち、つながったらもう一度 agent-browser を実行してください。",
     "listProfiles": {
       "description": "この PC の Chrome のプロフィールの一覧（表示名・フォルダー名・人が付けたメモ）と、この会話の今のプロフィールを返す。仕事・個人など、ログインしているアカウントで開くサイトが変わるときに、メモを見て合うプロフィールを選ぶために呼ぶ。"
@@ -1032,6 +1033,7 @@
       "chromeStop": { "summary": "エージェントの Chrome の操作を止める。接続を閉じ、次の人の送信まで再接続を断る。画面とリモートの端末からだけ呼べる。" },
       "chromeControl": { "sessionId": "会話の id。", "state": "窓の状態。running（エージェントのターンの間）・idle（待機中）・stopped（止めた）・paused（人が引き継いでいる）。", "since": "paused の始まりの時刻（ミリ秒）。paused でなければ null。", "error": "戻せなかった理由。conceal-failed は、窓を画面の外へ隠せなかったので一時停止のままにしたこと。無ければ null。", "by": "paused のとき、誰が操作しているか。pc（PC の画面）・device（リモートの端末）。paused でなければ null。" },
       "chromeCloseWindow": { "summary": "この会話の専用 Chrome の窓を閉じ、最後の画面を会話に残す。画面とリモートの端末からだけ呼べる。" },
+      "chromeWindows": { "summary": "この会話と直接委譲した子の開いている Chrome の窓を返す。画面の窓の一覧に使う。" },
       "chromeOpen": { "summary": "ビューアで見ているページを、会話のエージェントの Chrome の窓で開く。つながっていなければ Chrome の許可を待つ。エージェントには知らせない。ホストの PC の画面だけから呼べる。", "url": "開く URL（http・https）。" },
       "listProfiles": { "summary": "この PC の Chrome のプロフィールの一覧（表示名・フォルダー名・設定のメモ）と、会話の今のプロフィール・今切り替えられない理由を返す。メールアドレスなどのアカウントの情報は読まない。", "profiles": "プロフィール。browser（chrome）・dir（フォルダー名）・name（表示名）・note（設定 › ブラウザーのメモ。無ければ空）。", "current": "会話の今のプロフィール（browser・dir）。まだ決まっていなければ null（最初の窓は Chrome の最後に使ったプロフィールで開く）。会話を指定しなければ null。", "busy": "今切り替えられない理由。operating（エージェントが操作中）・waiting（人への依頼の待ち）・human（人が窓を引き継いでいる）。切り替えられれば null。" },
       "useProfile": { "summary": "会話の Chrome の窓を開くプロフィールを、一覧にあるものへ切り替える。開いている窓は閉じず、次に開く窓から効く。サイトの許可はプロフィールごとに記録される。エージェントが切り替えると会話に記録が残る。", "browser": "ブラウザー（chrome・edge）。省けばどれからでも探す。", "profile": "フォルダー名（dir）か表示名（name）。フォルダー名が先に当たる。" }
