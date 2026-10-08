@@ -7,6 +7,10 @@
 //
 // テスト側は t.ok を呼ぶだけでよい。数え上げ・失敗の一覧・終了コードはここが持つ。
 
+// 補足に行頭が :: の行（子のランナーの出力など）があると、GitHub Actions が workflow command（::warning など）として読み、
+// 本物の注釈に混ざる。表示するときだけ崩す（記録した detail はそのまま）
+const shown = (detail) => String(detail).replace(/^(\s*)::/gm, "$1: :");
+
 export class Suite {
   constructor(name, title) {
     this.name = name;
@@ -20,7 +24,7 @@ export class Suite {
   ok(label, pass, detail = "") {
     const r = { label, pass: Boolean(pass), detail: String(detail ?? "") };
     this.results.push(r);
-    console.log(`  ${r.pass ? "OK" : "NG"}  ${label}${r.detail ? "  — " + r.detail : ""}`);
+    console.log(`  ${r.pass ? "OK" : "NG"}  ${label}${r.detail ? "  — " + shown(r.detail) : ""}`);
     return r.pass;
   }
 
@@ -76,7 +80,7 @@ export function summarize(suites) {
   console.log(`  失敗  ${total - passed} / ${total} 判定（${broken.length} / ${suites.length} 本）`);
   for (const s of broken) {
     console.log(`\n  [${s.name}] ${s.title}`);
-    for (const f of s.failures) console.log(`    NG  ${f.label}${f.detail ? "  — " + f.detail : ""}`);
+    for (const f of s.failures) console.log(`    NG  ${f.label}${f.detail ? "  — " + shown(f.detail) : ""}`);
     if (s.error) console.log(`    例外  ${String(s.error?.stack ?? s.error).split("\n").slice(0, 6).join("\n          ")}`);
   }
   return 1;
