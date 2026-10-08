@@ -83,7 +83,7 @@ export function fakeChromeOs({ chrome = null, supported = true, reason = 'platfo
       if (opts.launchFails || args.browser?.id !== 'fake-browser' || !chrome) return { ok: false };
       const position = opts.honorPosition && args.position ? { left: args.position.x, top: args.position.y } : {};
       const size = opts.honorPosition && args.size ? { width: args.size.width, height: args.size.height } : {};
-      chrome.browser.launchWindow({ url: args.url, bounds: { ...position, ...size } });
+      chrome.browser.launchWindow({ url: args.url, bounds: { ...position, ...size }, profileDir: args.profileDir ?? null });
       return { ok: true };
     },
     async findWindowByNonce(nonce) {

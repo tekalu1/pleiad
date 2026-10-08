@@ -1,7 +1,7 @@
 // Chrome の User Data の場所と、DevToolsActivePort の読み取り（docs/inapp-browser.md「Chrome への接続」、ADR 0148・0153）。
 // OS で違うのは場所の表だけ。ほかの OS を足すときはここの表に 1 行足す（層の実装は desktop/chrome-os/<os>.cjs）。
-// Pleiad が読む Chrome のファイルは DevToolsActivePort と、Local State の profile.last_used（専用の窓を開くプロフィール。第 4 段）だけ。
-// プロフィール名の一覧（profile.info_cache の name）は第 9 段。Cookie・履歴・パスワードは読まない。
+// Pleiad が読む Chrome のファイルは DevToolsActivePort と、Local State の profile.last_used（専用の窓を開くプロフィール。第 4 段）と
+// profile.info_cache の name（プロフィールの一覧。第 10 段、core/chrome/profiles.mjs）だけ。Cookie・履歴・パスワード・アカウントは読まない。
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
@@ -10,15 +10,20 @@ import os from 'node:os';
 const TEST_ENV = 'AGENT_HOST_CHROME_USER_DATA';
 
 /**
- * 今の OS で使える Chrome の User Data（今は Windows だけ。ほかの OS は空 = 使えない）
- * custom は環境変数で差し替えた User Data（chrome.exe に --user-data-dir を付ける。付けないと既定の User Data の Chrome に窓が開く）
- * @returns {{ browser: 'chrome', userDataDir: string, custom?: true }[]}
+ * 今の OS で使える Chrome 系のブラウザーの User Data（今は Windows だけ。ほかの OS は空 = 使えない）。先頭が Chrome（接続に使う）、
+ * 2 つ目の Edge はプロフィールの一覧の口（Edge への接続はまだ無いので一覧にも出ない。docs/inapp-browser.md「プロフィール」）。
+ * custom は環境変数で差し替えた User Data（chrome.exe に --user-data-dir を付ける。付けないと既定の User Data の Chrome に窓が開く）。
+ * 差し替えたときはそれだけを返す（試験・確かめで利用者の本物の Edge も読まない）
+ * @returns {{ browser: 'chrome' | 'edge', userDataDir: string, custom?: true }[]}
  */
 export function chromeHomes({ platform = process.platform, env = process.env } = {}) {
   if (env[TEST_ENV]) return [{ browser: 'chrome', userDataDir: env[TEST_ENV], custom: true }];
   if (platform === 'win32') {
     const base = env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local');
-    return [{ browser: 'chrome', userDataDir: path.join(base, 'Google', 'Chrome', 'User Data') }];
+    return [
+      { browser: 'chrome', userDataDir: path.join(base, 'Google', 'Chrome', 'User Data') },
+      { browser: 'edge', userDataDir: path.join(base, 'Microsoft', 'Edge', 'User Data') },
+    ];
   }
   return [];
 }
@@ -42,7 +47,8 @@ export async function readActivePort(userDataDir) {
   return { port, path: wsPath };
 }
 
-const PROFILE_DIR = /^[A-Za-z0-9][A-Za-z0-9 ._-]{0,63}$/;
+/** プロフィールのフォルダー名として受け付ける形（Default・Profile 1 など。パスの区切りや .. は通さない） */
+export const PROFILE_DIR = /^[A-Za-z0-9][A-Za-z0-9 ._-]{0,63}$/;
 export const DEFAULT_PROFILE = 'Default';
 
 /**
