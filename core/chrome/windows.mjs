@@ -217,12 +217,12 @@ export function createChromeWindows({ os, locate, log = () => {}, random = () =>
 
     /**
      * 引き継ぎを終える: 窓を画面の外の見えない窓に戻す。人が前面に置いていた窓が前面のままにならないよう、今の前面（隠す窓でなければ。
-     * 隠す窓なら引き継ぎを始めたときの前面）へ返す。見えている間に開いた popup は、ここで探して隠す。cdp は popup を探すのに使う
-     * @returns {Promise<{ concealed: number }>}
+     * 隠す窓なら引き継ぎを始めたときの前面）へ返す。見えている間に開いた popup（人がタブを引き離して作った窓も含む）は、ここで探して隠す。cdp は popup を探すのに使う
+     * @returns {Promise<{ concealed: number, failed: number }>} failed: 隠せなかった窓（隠す処理が失敗した・popup の窓を見つけられなかった）の数。0 でなければ、呼び出し側は引き継ぎを解かない
      */
     async conceal({ entryId, cdp = null } = {}) {
       const entry = entries.get(entryId);
-      if (!entry) return { concealed: 0 };
+      if (!entry) return { concealed: 0, failed: 0 };
       entry.revealed = false;
       const near = entry.near ?? null;
       entry.near = null;
@@ -231,18 +231,18 @@ export function createChromeWindows({ os, locate, log = () => {}, random = () =>
       const fg = await os.foreground();
       const to = fg && !own.has(fg.id) ? fg : near;
       const features = os.capabilities().features;
-      let concealed = 0;
+      let concealed = 0, failed = 0;
       for (const [windowId, record] of records) {
         if (record.ref) {
-          if (await hide(record.ref, to)) concealed += 1;
-        } else if (record.role === 'popup' && cdp && features.conceal && features.bounds) {
-          const ref = await findByBounds(cdp, windowId, baseline, { waitMs: time.popupWaitMs }).catch(() => null);
-          if (!ref) { log('chrome-windows: popup window not found, so it was not hidden'); continue; }
+          if (await hide(record.ref, to)) concealed += 1; else failed += 1;
+        } else if (record.role === 'popup') {
+          const ref = cdp && features.conceal && features.bounds ? await findByBounds(cdp, windowId, baseline, { waitMs: time.popupWaitMs }).catch(() => null) : null;
+          if (!ref) { log('chrome-windows: popup window not found, so it was not hidden'); failed += 1; continue; }
           record.ref = ref;
-          if (await hide(ref, to)) concealed += 1;
+          if (await hide(ref, to)) concealed += 1; else failed += 1;
         }
       }
-      return { concealed };
+      return { concealed, failed };
     },
 
     /** 見える形に戻してあるか（引き継ぎ中） */

@@ -96,7 +96,7 @@ async page => {
   await control(sessionId, 'paused', 1);
   await page.locator('#chromeBanner .cc-banner').waitFor({ state: 'visible' });
   check((await page.locator('#chromeBanner .cc-banner-text').textContent()) === '一時停止中 · あなたが Chrome で操作しています', 'the banner text');
-  check(await page.locator('#chromeBanner .cc-banner').getAttribute('role') === 'status', 'the banner is role=status');
+  check(await page.locator('#chromeBanner .cc-banner').getAttribute('role') === null && await page.locator('.cp-slot .cc').getAttribute('aria-label') === null, 'the banner has no role (no double reading) and the row div has no aria-label');
   check((await page.locator('.cp-slot .cc-text').textContent()) === 'あなたが操作中', 'paused: you are operating');
   check((await shown()).length === 1 && /に戻す$/.test((await shown())[0]), `paused: only the hand-back button (${(await shown()).join()})`);
   // 撮影を断つ幕は映像の側（server が suspended を送る）。こちらの層は幕を持たない

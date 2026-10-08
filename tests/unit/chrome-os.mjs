@@ -502,6 +502,34 @@ export default async function (t) {
     t.ok('置き直し（reconceal）は吹き出しの窓も対象（親の窓と合わせて 3 つ）', os.reconceal() === 3 && w.windows.get(520).rect.left === 2920);
   }
 
+  // ===== 見直しの修正（第 6 段）: 引き継ぎで窓を戻すとき、隠していた吹き出し（持ち主つきの窓）も見える形に戻す。Pleiad 自身の窓を引ける =====
+  {
+    const w = winWith();
+    w.add(520, { title: 'このページを翻訳しますか？', owner: 500, rect: { left: 300, top: 150, right: 900, bottom: 400 } });   // 持ち主 = 隠す窓
+    w.add(521, { title: 'ほかの Chrome の吹き出し', owner: 700, rect: { left: 400, top: 150, right: 900, bottom: 400 } });   // 持ち主が隠す窓でない
+    const os = createWin32ChromeOs({ win32: w, timers: { setInterval: () => 1, clearInterval: () => {} }, appHwnd: () => 700 });
+    const ref = os.findWindowByNonce(NONCE);
+    os.conceal(ref);
+    t.ok('前提: 吹き出しは隠れている', w.windows.get(520).alpha === 0 && w.windows.get(520).rect.left === 5480);
+    const app = os.appWindow();
+    t.ok('appWindow は Pleiad の窓の ref（層が覚えた窓。知らない値には何もしない）', app?.id === '700' && os.raise({ id: '999' }).method === 'unknown');
+    t.ok('reveal の near に appWindow を渡せる（その窓のあるモニターの中へ戻す）', os.reveal(ref, { near: app }) === true && w.windows.get(500).rect.left >= 2560);
+    const bubble = w.windows.get(520);
+    t.ok('隠していた吹き出しも見える形に戻す（不透明・タスクバー・マウスを受ける）。画面の中へ', bubble.alpha === 255 && !(bubble.exStyle & WS_EX_TOOLWINDOW) && !(bubble.exStyle & WS_EX_TRANSPARENT) && bubble.rect.left < 5480, JSON.stringify(bubble.rect));
+    t.ok('持ち主が隠す窓でない窓は触らない', w.windows.get(521).alpha === undefined && w.windows.get(521).rect.left === 400);
+    os.guardTick();
+    t.ok('見えている間は、見張りが吹き出しをまた隠さない', bubble.alpha === 255 && bubble.rect.left < 5480);
+    t.ok('戻すと、親の窓と一緒に吹き出しもまた隠す', os.conceal(ref) === true && (os.guardTick(), bubble.alpha === 0 && bubble.rect.left === 5480));
+    os.stopGuard();
+    const none = createWin32ChromeOs({ win32: winWith(), timers: { setInterval: () => 1, clearInterval: () => {} } });
+    t.ok('appHwnd が無ければ appWindow は null', none.appWindow() === null);
+    const gone = createWin32ChromeOs({ win32: winWith(), timers: { setInterval: () => 1, clearInterval: () => {} }, appHwnd: () => 424242 });
+    t.ok('窓がもう無ければ appWindow は null（投げない）', gone.appWindow() === null);
+    const bad = createWin32ChromeOs({ win32: winWith(), timers: { setInterval: () => 1, clearInterval: () => {} }, appHwnd: () => { throw new Error('boom'); } });
+    t.ok('appHwnd が投げても appWindow は null', bad.appWindow() === null);
+  }
+
+
   // ===== 見直しの修正: 外形で窓を探すときの絞り込み（つないだ Chrome のプロセス・開く前の写し・許容） =====
   {
     const BOUNDS = { left: 0, top: 0, width: 324, height: 298 };
@@ -753,6 +781,7 @@ export default async function (t) {
     await core.ready();
     const browser = await core.locateBrowser({ product: 'chrome' });
     t.ok('locateBrowser の往復', browser?.product === 'chrome' && typeof browser.id === 'string');
+    t.ok('appWindow の往復（Pleiad の窓の手がかりが無ければ null）', await core.appWindow() === null);
     const launched = await core.launchWindow({ browser, profileDir: 'Default', url: NONCE_URL, nonce: NONCE, userDataDir: 'C:\\t\\ud', position: { x: 1, y: 2 }, size: { width: 3, height: 4 } });
     t.ok('launchWindow の往復（引数が chrome.exe の引数になる）', launched.ok === true && spawned.at(-1).args.includes('--user-data-dir=C:\\t\\ud') && spawned.at(-1).args.includes('--window-position=1,2'));
     const ref = await core.findWindowByNonce(NONCE);

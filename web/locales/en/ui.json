@@ -4158,13 +4158,13 @@
     }
   },
   "chromeControl": {
-    "label": "Chrome window status",
     "status": { "running": "{{name}} is operating", "idle": "Idle", "paused": "You are operating", "stopped": "Stopped" },
     "stop": "Stop",
     "takeOver": "Take over",
     "resume": "Hand back to {{name}}",
     "failed": "Could not do that.",
     "banner": "Paused · you are operating Chrome",
+    "error": { "concealFailed": "The window could not be hidden, so it is still paused. Press hand back again" },
     "handover": "You took over · handed back to {{name}} · {{duration}}",
     "duration": { "minutes": "{{m}} min {{s}} s", "seconds": "{{s}} s" }
   },

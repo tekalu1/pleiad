@@ -4039,13 +4039,13 @@
     }
   },
   "chromeControl": {
-    "label": "Chrome の窓の状態",
     "status": { "running": "{{name}} が操作中", "idle": "待機中", "paused": "あなたが操作中", "stopped": "止めました" },
     "stop": "止める",
     "takeOver": "引き継ぐ",
     "resume": "{{name}} に戻す",
     "failed": "操作できませんでした",
     "banner": "一時停止中 · あなたが Chrome で操作しています",
+    "error": { "concealFailed": "窓を隠せなかったので、一時停止のままです。もう一度「戻す」を押してください" },
     "handover": "あなたが引き継ぎ · {{name}} に戻しました · {{duration}}",
     "duration": { "minutes": "{{m}} 分 {{s}} 秒", "seconds": "{{s}} 秒" }
   },

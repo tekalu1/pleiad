@@ -11,7 +11,8 @@ import { t } from './i18n.mjs';
 export const CONTROL_STATES = ['running', 'idle', 'stopped', 'paused'];
 
 /** 状態の一行の語（running は {{name}} が操作中）。state が無ければ null */
-export function statusText(state, name) {
+export function statusText(state, name, error = null) {
+  if (error === 'conceal-failed') return t('chromeControl.error.concealFailed');
   if (state === 'running') return t('chromeControl.status.running', { name });
   if (state === 'idle') return t('chromeControl.status.idle');
   if (state === 'paused') return t('chromeControl.status.paused');
@@ -42,7 +43,7 @@ const RING_MS = 700;
  * @param {(action: 'takeOver'|'resume'|'stop') => Promise<any>} o.run  押されたときに呼ぶ（browser.chromeTakeOver・chromeResume・chromeStop の呼び出し）
  * @param {() => string} [o.getName]  エージェントの名前（「Claude が操作中」「Claude に戻す」）
  * @param {(error: Error, action: string) => void} [o.onError]
- * @returns {{ root: HTMLElement, banner: HTMLElement, overlay: HTMLElement, apply: (next: {state: string, since?: number|null}|null) => void,
+ * @returns {{ root: HTMLElement, banner: HTMLElement, overlay: HTMLElement, apply: (next: {state: string, since?: number|null, error?: string|null}|null) => void,
  *            ring: (x: number, y: number, size?: {width: number, height: number}) => void, state: () => string|null, refresh: () => void }}
  */
 export function createChromeControlView({ run, getName = () => 'Claude', onError = () => {} } = {}) {
@@ -68,7 +69,8 @@ export function createChromeControlView({ run, getName = () => 'Claude', onError
   root.append(status, ...buttons.values());
 
   // 一時停止中の帯（会話の中。「一時停止中 · あなたが Chrome で操作しています」）
-  const banner = el('div', 'cc-banner'); banner.hidden = true; banner.setAttribute('role', 'status');
+  // 帯は role=status にしない（状態の一行が同じことを読み上げるので、二重にしない）
+  const banner = el('div', 'cc-banner'); banner.hidden = true;
   const bannerText = el('span', 'cc-banner-text');
   const bannerBtn = el('button', 'btn cc-btn', labels.resume()); bannerBtn.type = 'button';
   bannerBtn.onclick = () => act('resume');
@@ -84,16 +86,15 @@ export function createChromeControlView({ run, getName = () => 'Claude', onError
     banner.hidden = state !== 'paused';
     overlay.dataset.state = state ?? '';
     if (!state) return;
-    text.textContent = statusText(state, getName());
+    text.textContent = statusText(state, getName(), current.error);
     const allowed = actionsFor(state);
     for (const [action, b] of buttons) {
       b.hidden = !allowed.includes(action);
       b.textContent = labels[action]();
       b.disabled = busy;
     }
-    bannerText.textContent = t('chromeControl.banner');
+    bannerText.textContent = current.error === 'conceal-failed' ? t('chromeControl.error.concealFailed') : t('chromeControl.banner');
     bannerBtn.textContent = labels.resume(); bannerBtn.disabled = busy;
-    root.setAttribute('aria-label', t('chromeControl.label'));
   }
 
   /** 押した位置に輪を出す。(x, y) は押した位置（ページの CSS 画素）、size は映像の元のページの大きさ。大きさが分からなければ出さない（位置を偽らない） */
@@ -109,7 +110,7 @@ export function createChromeControlView({ run, getName = () => 'Claude', onError
 
   return {
     root, banner, overlay, ring,
-    apply(next) { current = next && CONTROL_STATES.includes(next.state) ? { state: next.state, since: next.since ?? null } : null; paint(); },
+    apply(next) { current = next && CONTROL_STATES.includes(next.state) ? { state: next.state, since: next.since ?? null, error: next.error ?? null } : null; paint(); },
     state: () => current?.state ?? null,
     refresh: paint,
   };
@@ -128,13 +129,14 @@ export function createChromeControlStore() {
       if (!ev?.sessionId) return;
       if (ev.type === 'chromeControl') {
         if (!CONTROL_STATES.includes(ev.state)) return;
-        const before = states.get(ev.sessionId)?.state ?? 'idle';
-        if (ev.state === 'idle') states.delete(ev.sessionId); else states.set(ev.sessionId, { state: ev.state, since: ev.since ?? null });
-        if (before !== ev.state) fire(changes, ev.sessionId, ev.state, ev.since ?? null);
+        const was = states.get(ev.sessionId);
+        const before = was?.state ?? 'idle';
+        if (ev.state === 'idle') states.delete(ev.sessionId); else states.set(ev.sessionId, { state: ev.state, since: ev.since ?? null, error: ev.error ?? null });
+        if (before !== ev.state || (was?.error ?? null) !== (ev.error ?? null)) fire(changes, ev.sessionId, ev.state, ev.since ?? null);
       } else if (ev.type === 'chromeTap') fire(taps, { sessionId: ev.sessionId, x: ev.x, y: ev.y, windowId: ev.windowId ?? null });
     },
     /** 会話の今の状態（イベントが無い会話は idle） */
-    get: sessionId => states.get(sessionId) ?? { state: 'idle', since: null },
+    get: sessionId => states.get(sessionId) ?? { state: 'idle', since: null, error: null },
     onChange(fn) { changes.add(fn); return () => changes.delete(fn); },
     onTap(fn) { taps.add(fn); return () => taps.delete(fn); },
     /** 全部の会話の状態を捨てる（接続し直したとき。サーバーは続けて今の分を送る）。持っていた状態は idle として聞き手へ知らせる */

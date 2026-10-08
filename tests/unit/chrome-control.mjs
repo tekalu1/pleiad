@@ -23,13 +23,15 @@ function agent(url) {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(url);
     const waiting = new Map();
+    const raw = [];
     let next = 0;
     ws.on('message', data => {
+      raw.push(data.toString());
       const msg = JSON.parse(data.toString());
       if (msg.id !== undefined) { waiting.get(msg.id)?.(msg); waiting.delete(msg.id); }
     });
     ws.once('open', () => resolve({
-      ws,
+      ws, raw,
       cmd(method, params = {}, sessionId) {
         const id = ++next;
         return new Promise(done => { waiting.set(id, done); ws.send(JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) })); });
@@ -44,19 +46,19 @@ const refused = url => agent(url).then(client => { client.close(); return false;
 
 const TIMING = { hwndWaitMs: 200, hwndPollMs: 10, targetWaitMs: 500, targetPollMs: 10, popupWaitMs: 200, boundsWaitMs: 100 };
 
-async function rig() {
+async function rig({ authorize } = {}) {
   const chrome = await startFakeChrome({ permission: 'auto' });
   const os_ = fakeChromeOs({ chrome });
   const conn = createChromeConnection({ locate: { browser: 'chrome', userDataDir: chrome.userDataDir }, os: os_, pollMs: 20 });
   const logs = [];
   const locate = { browser: 'chrome', userDataDir: chrome.userDataDir, custom: true };
   const scope = createChromeWindows({ os: os_, locate, log: line => logs.push(line), timing: TIMING });
-  const relay = createChromeRelay({ connection: conn, os: os_, locate, scope, log: line => logs.push(line) });
+  const relay = createChromeRelay({ connection: conn, os: os_, locate, scope, log: line => logs.push(line), ...(authorize ? { authorize } : {}) });
   let clock = 1_000_000;
   const records = [];
   // 映像の撮影を断る口（core/chrome/screencast.mjs の代わり）。suspend した時に OS の層の reveal がいくつ呼ばれていたかも残す（先に断つ）
   const captureLog = [];
-  const capture = { suspend: id => captureLog.push({ op: 'suspend', id, reveals: os_.calls('reveal').length }), resume: id => captureLog.push({ op: 'resume', id }) };
+  const capture = { suspend: id => captureLog.push({ op: 'suspend', id, reveals: os_.calls('reveal').length, lookups: os_.calls('appWindow').length + os_.calls('foreground').length }), resume: id => captureLog.push({ op: 'resume', id }) };
   const control = createChromeControl({ relay, os: os_, now: () => clock, record: async row => { records.push(row); }, capture, log: line => logs.push(line) });
   const events = [];
   control.onChange(state => events.push(state));
@@ -107,7 +109,7 @@ export default async function (t) {
     } finally { await r.stop(); }
   }
 
-  // ===== 2. 引き継ぐ: 窓を見える形に戻して前に出す → コマンドを全部断る（接続は切らない）→ 戻す =====
+  // ===== 2. 引き継ぐ: エージェントの接続を切り、窓を見える形に戻して前に出す → つなぎ直されたコマンドも全部断る → 戻す =====
   {
     const r = await rig();
     try {
@@ -132,12 +134,15 @@ export default async function (t) {
       t.ok('映像・撮影を断る（captureBlocked）', r.control.captureBlocked('one') === true);
       t.ok('撮影を断つ口（suspend）を 1 回、窓を見える形に戻す前に呼ぶ（同期で効かせる）', r.captureLog.length === 1 && r.captureLog[0].op === 'suspend' && r.captureLog[0].id === 'one' && r.captureLog[0].reveals === 0, JSON.stringify(r.captureLog));
 
-      const refusals = await Promise.all([a.cmd('Browser.getVersion'), a.cmd('Target.getTargets'), a.cmd('Runtime.evaluate', { expression: '1' }, sid), a.cmd('Input.dispatchMouseEvent', { type: 'mousePressed', x: 1, y: 1 }, sid), a.cmd('Page.bringToFront', {}, sid)]);
-      t.ok('エージェントのコマンドは全部断る（hand_to_user を呼んで戻るのを待つ。日本語と英語）', refusals.every(m => m.error?.message === PAUSED_MESSAGE) && /hand_to_user/.test(PAUSED_MESSAGE) && /paused/.test(PAUSED_MESSAGE) && /一時停止/.test(PAUSED_MESSAGE), JSON.stringify(refusals.map(m => m.error?.message)));
-      t.ok('一時停止中も接続は切らない', a.ws.readyState === 1);
-      t.ok('断ったコマンドは Chrome へ届かない（押した位置の便りも出ない）', r.taps.length === 1);
+      const closedWith = await a.closed;
+      t.ok('引き継ぐと、エージェントのブラウザーとタブの接続を切る（1000 paused。Chrome からの通知を流し続けない）', closedWith.code === 1000 && closedWith.reason === 'paused', JSON.stringify(closedWith));
+      t.ok('上りのエージェントのセッションを外す（エージェントが付けた Fetch・Network もセッションごと外れる）', r.chrome.calls.some(c => c.method === 'Target.detachFromTarget' && c.params.sessionId === sid));
+      const callsBefore = r.chrome.calls.length;
       const fresh = await agent(await r.relay.endpoint('one'));
-      t.ok('つなぎ直した接続（agent-browser の次のコマンド）も断る', (await fresh.cmd('Browser.getVersion')).error?.message === PAUSED_MESSAGE);
+      const refusals = await Promise.all([fresh.cmd('Browser.getVersion'), fresh.cmd('Target.getTargets'), fresh.cmd('Runtime.evaluate', { expression: '1' }, sid), fresh.cmd('Input.dispatchMouseEvent', { type: 'mousePressed', x: 1, y: 1 }, sid), fresh.cmd('Page.bringToFront', {}, sid), fresh.cmd('Target.setAutoAttach', { autoAttach: true, waitForDebuggerOnStart: false }), fresh.cmd('Target.createTarget', { url: 'about:blank' })]);
+      t.ok('つなぎ直した接続（agent-browser の次のコマンド）のコマンドは全部断る（hand_to_user を呼んで戻るのを待つ。日本語と英語）', refusals.every(m => m.error?.message === PAUSED_MESSAGE) && /hand_to_user/.test(PAUSED_MESSAGE) && /paused/.test(PAUSED_MESSAGE) && /一時停止/.test(PAUSED_MESSAGE), JSON.stringify(refusals.map(m => m.error?.message)));
+      t.ok('つなぎ直しは受ける（接続は切らない）', fresh.ws.readyState === 1);
+      t.ok('断ったコマンドは Chrome へ届かない（押した位置の便りも出ない・窓も増えない）', r.taps.length === 1 && r.chrome.calls.slice(callsBefore).every(c => c.method !== 'Target.createTarget' && c.method !== 'Runtime.evaluate'));
       fresh.close();
       t.ok('二重に引き継いでも窓は 1 回だけ戻す', (await r.control.takeOver('one')).state === 'paused' && r.os.calls('reveal').length === 1);
 
@@ -148,7 +153,9 @@ export default async function (t) {
       t.ok('一時停止が解ける（ターンの間なので running）。映像の断りも解ける', back.state === 'running' && last(r) === 'running' && r.control.captureBlocked('one') === false, JSON.stringify(back));
       t.ok('人が前面に置いていた窓が前面のままにならない（Pleiad の窓へ返す）', r.os.getForeground() === 'pleiad-window', r.os.getForeground());
       t.ok('会話に残す行の秒数は引き継いでいた時間（72 秒）', r.records.length === 1 && r.records[0].sessionId === 'one' && r.records[0].seconds === 72, JSON.stringify(r.records));
-      t.ok('戻した後はコマンドが通る', !(await a.cmd('Browser.getVersion')).error && !(await a.cmd('Runtime.evaluate', { expression: '1' }, sid)).error);
+      const a2 = await r.agent('one');   // 戻した後は agent-browser がつなぎ直す
+      const sid2 = (await a2.cmd('Target.attachToTarget', { targetId: tabId, flatten: true })).result?.sessionId;
+      t.ok('戻した後は、つなぎ直した接続のコマンドが通る', !(await a2.cmd('Browser.getVersion')).error && !!sid2 && !(await a2.cmd('Runtime.evaluate', { expression: '1' }, sid2)).error);
       t.ok('戻すを重ねても行は増えない', (await r.control.resume('one')).state === 'running' && r.records.length === 1);
       t.ok('状態の便りの並び', r.events.map(e => e.state).join() === 'running,paused,running', r.events.map(e => e.state).join());
     } finally { await r.stop(); }
@@ -163,7 +170,7 @@ export default async function (t) {
       t.ok('会話が中継に無ければ NO_WINDOW', none?.code === 'NO_WINDOW');
       const a = await r.agent('one');
       const early = await r.control.takeOver('one').then(() => null, error => error);
-      t.ok('窓がまだ無い会話は NO_WINDOW。撮影を断ったなら戻して対にする', r.captureLog.map(x => x.op).join() === 'suspend,resume', JSON.stringify(r.captureLog));
+      t.ok('窓がまだ無い会話は NO_WINDOW。撮影も断たず、エージェントの接続も切らない（一時停止にしない）', r.captureLog.length === 0 && a.ws.readyState === 1, JSON.stringify(r.captureLog));
       t.ok('窓がまだ無い会話は NO_WINDOW。一時停止も残さない', early?.code === 'NO_WINDOW' && r.control.state('one').state === 'running' && !(await a.cmd('Browser.getVersion')).error && r.control.captureBlocked('one') === false, JSON.stringify(early?.code));
       const one = await a.cmd('Target.createTarget', { url: 'about:blank' });
       const two = await a.cmd('Target.createTarget', { url: 'about:blank' });
@@ -203,10 +210,11 @@ export default async function (t) {
       await r.control.takeOver('one');
       r.fake.closeWindow(windowId);
       await until(() => r.scope.windows('one').length === 0);
-      t.ok('窓を閉じられても paused のまま（エージェントのコマンドは断る）', r.control.state('one').state === 'paused' && (await a.cmd('Browser.getVersion')).error?.message === PAUSED_MESSAGE);
+      const b = await r.agent('one');
+      t.ok('窓を閉じられても paused のまま（つなぎ直したエージェントのコマンドは断る）', r.control.state('one').state === 'paused' && (await b.cmd('Browser.getVersion')).error?.message === PAUSED_MESSAGE);
       const back = await r.control.resume('one');
       t.ok('戻すで解ける（隠す窓は無い）。会話の行も残る', back.state === 'running' && r.records.length === 1);
-      const again = await a.cmd('Target.createTarget', { url: 'about:blank' });
+      const again = await b.cmd('Target.createTarget', { url: 'about:blank' });
       t.ok('次に使うときに黙って開き直し、その窓も隠す', !again.error && concealedOk(hwndOf(r, tabInfo(r, again.result.targetId)?.windowId)));
     } finally { await r.stop(); }
   }
@@ -308,6 +316,184 @@ export default async function (t) {
       await a.cmd('Target.createTarget', { url: 'about:blank' });
       await r.control.takeOver('one');
       t.ok('待機中でない会話だけ（paused と running）', r.control.snapshot().map(s => `${s.sessionId}:${s.state}`).sort().join() === 'one:paused', JSON.stringify(r.control.snapshot()));
+    } finally { await r.stop(); }
+  }
+
+  // ===== 11. 一時停止の間、Chrome からの通知がエージェントへ流れず、エージェントの横取りが人のページを固めない =====
+  {
+    const r = await rig();
+    try {
+      r.os.setForeground('pleiad-window');
+      const a = await r.agent('one');
+      const created = await a.cmd('Target.createTarget', { url: 'about:blank' });
+      const tabId = created.result.targetId;
+      const sid = (await a.cmd('Target.attachToTarget', { targetId: tabId, flatten: true })).result.sessionId;
+      await a.cmd('Network.enable', {}, sid);
+      await a.cmd('Fetch.enable', { patterns: [{ urlPattern: '*' }] }, sid);   // agent-browser が付ける横取り（エージェントは答えないので、残ると人の移動が止まる）
+      const sent = a.raw.length;
+      await r.control.takeOver('one');
+      await sleep(100);   // 上りの「外す」が Chrome（偽物）へ届くのを待つ（人の操作は偽の Chrome へ直に入るので、実際の時間の順に合わせる）
+      const move = r.fake.navigateUser(tabId, 'https://human.example/login');   // 人がログインのページへ移る
+      const finished = await Promise.race([Promise.resolve(move).then(() => true), sleep(1500).then(() => false)]);
+      t.ok('人の移動が固まらない（エージェントの Fetch の横取りは、セッションごと外れている）', finished && r.fake.pausedCount() === 0, `finished=${finished} paused=${r.fake.pausedCount()}`);
+      t.ok('エージェントへは何も届かない（通知を捨てる。接続ごと切れている）', a.raw.length === sent && a.ws.readyState !== 1, `${a.raw.length - sent} frames`);
+      const fresh = await agent(await r.relay.endpoint('one'));
+      await r.fake.navigateUser(tabId, 'https://human.example/otp');
+      await sleep(150);
+      t.ok('つなぎ直した接続にも何も届かない（断りの返事だけ）', fresh.raw.length === 0);
+      const refused = await fresh.cmd('Target.setDiscoverTargets', { discover: true });
+      t.ok('つなぎ直した接続が通知を求めても断る（発見の登録も付かない）', refused.error?.message === PAUSED_MESSAGE && fresh.raw.length === 1);
+      const attaches = () => r.chrome.calls.filter(c => c.method === 'Target.attachToTarget' && c.params.flatten === true).length;
+      const before = attaches();
+      r.fake.openUserTab('https://human.example/new', 'new', tabInfo(r, tabId).windowId);   // 人がエージェントの窓にタブを開いた
+      await sleep(200);
+      t.ok('一時停止中に人が開いたタブは、エージェントへ知らせない', fresh.raw.length === 1);
+      void before;
+      fresh.close();
+    } finally { await r.stop(); }
+  }
+
+  // ===== 12. 一時停止の間の人の移動を、サイトの利用の確認にかけない =====
+  {
+    const asked = [];
+    const r = await rig({ authorize: async request => { asked.push(request.url); return { allow: false, message: 'DENIED-BY-TEST' }; } });
+    try {
+      r.relay.setConfirm(true);
+      r.os.setForeground('pleiad-window');
+      const a = await r.agent('one');
+      const created = await a.cmd('Target.createTarget', { url: 'about:blank' });
+      const tabId = created.result.targetId;
+      const sid = (await a.cmd('Target.attachToTarget', { targetId: tabId, flatten: true })).result.sessionId;
+      const agentMove = await a.cmd('Page.navigate', { url: 'https://agent.example/' }, sid);
+      t.ok('（比べ）エージェントの移動は確認にかかり、断られる', asked.length === 1 && agentMove.error?.message === 'DENIED-BY-TEST', JSON.stringify(agentMove.error));
+      await r.control.takeOver('one');
+      await r.fake.navigateUser(tabId, 'https://auth.example/login');
+      await sleep(100);
+      t.ok('一時停止中の人の移動（外部の認証サイトへ）は確認にかけない・白紙に戻さない', asked.length === 1 && tabInfo(r, tabId).url === 'https://auth.example/login', `${asked.join()} / ${tabInfo(r, tabId)?.url}`);
+      r.fake.windowOpen(tabId, 'https://auth.example/popup');   // 人のページが開いたログインのポップアップ
+      await sleep(250);
+      const popup = r.fake.targets().find(x => x.url === 'https://auth.example/popup');
+      t.ok('一時停止中に人のページが開いたタブ・ポップアップは確認にかけない・閉じない', asked.length === 1 && !!popup, `${asked.join()}`);
+      await r.control.resume('one');
+      const b = await r.agent('one');
+      const sidAgain = (await b.cmd('Target.attachToTarget', { targetId: tabId, flatten: true })).result.sessionId;
+      const after = await b.cmd('Page.navigate', { url: 'https://agent2.example/' }, sidAgain);
+      t.ok('戻したあとのエージェントの移動は、また確認にかかる', asked.length === 2 && after.error?.message === 'DENIED-BY-TEST', `${asked.join()}`);
+    } finally { await r.stop(); }
+  }
+
+  // ===== 13. 確認の待ちの後ろに並んだコマンドが、一時停止の後に届かない =====
+  {
+    let release;
+    const wait = new Promise(resolve => { release = resolve; });
+    const asked = [];
+    const r = await rig({ authorize: async request => { asked.push(request.url); if (request.url.includes('popup.example')) await wait; return { allow: true }; } });
+    try {
+      r.relay.setConfirm(true);
+      r.os.setForeground('pleiad-window');
+      const a = await r.agent('one');
+      const created = await a.cmd('Target.createTarget', { url: 'about:blank' });
+      const tabId = created.result.targetId;
+      const sid = (await a.cmd('Target.attachToTarget', { targetId: tabId, flatten: true })).result.sessionId;
+      await a.cmd('Page.navigate', { url: 'https://open.example/' }, sid);
+      r.fake.windowOpen(tabId, 'https://popup.example/popup');   // ポップアップの確認が答えを待つ（そのタブへのコマンドは待たされる）
+      await until(() => asked.some(url => url.includes('popup.example')));
+      const popup = r.fake.targets().find(x => x.openerId === tabId);
+      const sidPopup = (await a.cmd('Target.attachToTarget', { targetId: popup.targetId, flatten: true })).result.sessionId;
+      void a.cmd('Runtime.evaluate', { expression: 'window.__queued = 1' }, sidPopup);   // 待たされる
+      await sleep(100);
+      const evals = () => r.chrome.calls.filter(c => c.method === 'Runtime.evaluate' && c.params.expression === 'window.__queued = 1').length;
+      t.ok('（前提）確認の待ちの間、後ろに並んだコマンドは Chrome へ送られない', evals() === 0);
+      await r.control.takeOver('one');
+      release();
+      await sleep(250);
+      t.ok('待ちが解けても、一時停止の後にコマンドは Chrome へ届かない（送る直前にもう一度見る）', evals() === 0, `${evals()} calls`);
+    } finally { await r.stop(); }
+  }
+
+  // ===== 14. 隠すのに失敗したら、一時停止を解かない（paused のまま、失敗を状態で返す） =====
+  {
+    const r = await rig();
+    try {
+      r.os.setForeground('pleiad-window');
+      const a = await r.agent('one');
+      const created = await a.cmd('Target.createTarget', { url: 'about:blank' });
+      const hw = () => hwndOf(r, tabInfo(r, created.result.targetId).windowId);
+      await r.control.takeOver('one');
+      r.os.opts.concealFails = true;
+      const failed = await r.control.resume('one');
+      t.ok('隠せなかったら paused のまま、理由 conceal-failed を状態に載せる', failed.state === 'paused' && failed.error === 'conceal-failed' && r.control.state('one').error === 'conceal-failed', JSON.stringify(failed));
+      t.ok('状態の便りで画面へ返す', r.events.at(-1).state === 'paused' && r.events.at(-1).error === 'conceal-failed');
+      t.ok('窓は見えたまま・映像は断ったまま・会話の行は残さない', visibleOk(hw()) && r.control.captureBlocked('one') === true && r.records.length === 0 && r.captureLog.map(x => x.op).join() === 'suspend');
+      const b = await r.agent('one');
+      t.ok('エージェントのコマンドも断ったまま', (await b.cmd('Browser.getVersion')).error?.message === PAUSED_MESSAGE);
+      const stop = await r.control.stop('one');
+      t.ok('止めるも、隠せないうちは止めない（paused のまま）', stop.state === 'paused' && stop.error === 'conceal-failed');
+      r.os.opts.concealFails = false;
+      const ok = await r.control.resume('one');
+      t.ok('もう一度「戻す」で隠せれば解ける。error も消える', ok.state === 'running' && ok.error === null && concealedOk(hw()) && r.records.length === 1 && r.captureLog.map(x => x.op).join() === 'suspend,resume', JSON.stringify(ok));
+    } finally { await r.stop(); }
+  }
+
+  // ===== 15. リモートの端末から引き継ぐ: 窓を戻す画面は、その時の前面でなく Pleiad の窓のある画面。先に一時停止してから引く =====
+  {
+    const r = await rig();
+    try {
+      r.os.setForeground('someone-elses-app');   // リモートから押したので、PC の前面は別のアプリ
+      const a = await r.agent('one');
+      await a.cmd('Target.createTarget', { url: 'about:blank' });
+      const lookupsBefore = r.os.calls('appWindow').length + r.os.calls('foreground').length;
+      await r.control.takeOver('one');
+      const reveal = r.os.calls('reveal').at(-1);
+      t.ok('窓を戻す画面（near）は Pleiad の窓。その時の前面ではない', reveal?.near === 'pleiad-window', JSON.stringify(reveal));
+      t.ok('窓は PC で前に出る（リモートからでも PC の前面を取る）', r.os.getForeground() !== 'someone-elses-app');
+      t.ok('一時停止（接続を切る・撮影を断つ）が先で、窓の手がかりを引くのはそのあと', r.captureLog[0].op === 'suspend' && r.captureLog[0].lookups === lookupsBefore, JSON.stringify(r.captureLog[0]));
+    } finally { await r.stop(); }
+    const r2 = await rig();
+    try {
+      r2.os.opts.noAppWindow = true;
+      r2.os.setForeground('someone-elses-app');
+      const b = await r2.agent('one');
+      await b.cmd('Target.createTarget', { url: 'about:blank' });
+      await r2.control.takeOver('one');
+      t.ok('Pleiad の窓が引けなければ、その時の前面で代える', r2.os.calls('reveal').at(-1)?.near === 'someone-elses-app');
+    } finally { await r2.stop(); }
+  }
+
+  // ===== 16. 引き継ぐときに、エージェントのセッションが始めた走っているスクリプトを止める（実機: 始めたのと同じセッションからだけ効く） =====
+  {
+    const r = await rig();
+    try {
+      r.os.setForeground('pleiad-window');
+      const a = await r.agent('one');
+      const one = await a.cmd('Target.createTarget', { url: 'about:blank' });
+      const two = await a.cmd('Target.createTarget', { url: 'about:blank' });
+      const sid1 = (await a.cmd('Target.attachToTarget', { targetId: one.result.targetId, flatten: true })).result.sessionId;
+      const sid2 = (await a.cmd('Target.attachToTarget', { targetId: two.result.targetId, flatten: true })).result.sessionId;
+      await r.control.takeOver('one');
+      await until(() => r.chrome.calls.filter(c => c.method === 'Runtime.terminateExecution').length === 2);
+      const calls = r.chrome.calls.filter(c => c.method === 'Runtime.terminateExecution');
+      t.ok('エージェントの各セッションへ Runtime.terminateExecution を送る（始めたのと同じセッションからだけ効く）', JSON.stringify(calls.map(c => c.sessionId).sort()) === JSON.stringify([sid1, sid2].sort()), JSON.stringify(calls.map(c => c.sessionId)));
+      const order = sid => ({ terminate: r.chrome.calls.findIndex(c => c.method === 'Runtime.terminateExecution' && c.sessionId === sid), detach: r.chrome.calls.findIndex(c => c.method === 'Target.detachFromTarget' && c.params.sessionId === sid) });
+      t.ok('セッションを外す前に送る', [sid1, sid2].every(sid => order(sid).terminate >= 0 && order(sid).terminate < order(sid).detach), JSON.stringify([order(sid1), order(sid2)]));
+    } finally { await r.stop(); }
+  }
+
+  // ===== 17. 引き継いでいる間に人がタブを引き離して作った窓も、戻すときに隠す。タブの無くなった窓の記録は捨てる =====
+  {
+    const r = await rig();
+    try {
+      r.os.setForeground('pleiad-window');
+      const a = await r.agent('one');
+      const created = await a.cmd('Target.createTarget', { url: 'about:blank' });
+      const tabId = created.result.targetId;
+      const oldWindow = tabInfo(r, tabId).windowId;
+      await r.control.takeOver('one');
+      const newWindow = r.fake.detachTab(tabId);   // 人がタブを引き離して新しい窓にした
+      r.os.killWindow(hwndOf(r, oldWindow).id);
+      const back = await r.control.resume('one');
+      t.ok('戻す: 新しい窓も隠れる（人が作った窓を見えたまま残さない）', back.state === 'running' && concealedOk(hwndOf(r, newWindow)), JSON.stringify(hwndOf(r, newWindow)));
+      t.ok('元の窓（もう無い）の記録は捨て、新しい窓が会話の窓になる', JSON.stringify(r.scope.windows('one').map(w => w.windowId)) === JSON.stringify([newWindow]), JSON.stringify(r.scope.windows('one')));
     } finally { await r.stop(); }
   }
 }

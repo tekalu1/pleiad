@@ -24,7 +24,7 @@ export function fakeChromeOs({ chrome = null, supported = true, reason = 'platfo
   const listeners = new Set();
   const hw = new Map();   // hwnd -> { id, windowId, rect(DIP), concealed, agent, alpha, ex, prevFg }
   let hwSeq = 100;
-  const opts = { launchFails: false, chromeMissing: false, hideNonce: false, hideBounds: false, concealFails: false, honorPosition: true, noListener: false, closeFails: false };
+  const opts = { appWindow: 'pleiad-window', noAppWindow: false, launchFails: false, chromeMissing: false, hideNonce: false, hideBounds: false, concealFails: false, honorPosition: true, noListener: false, closeFails: false };
   const OFFSCREEN = Object.freeze({ x: 6000, y: 0 });
   const isDialog = id => chrome?.dialogs().some(d => d.id === id);
   const note = entry => { log.push(entry); };
@@ -64,6 +64,8 @@ export function fakeChromeOs({ chrome = null, supported = true, reason = 'platfo
       fg = to.id; return true;
     },
     async foreground() { note({ op: 'foreground' }); return { id: fg, browser: isDialog(fg) || hw.has(fg) || windows.get(fg)?.browser === true }; },
+    /** Pleiad 自身の窓（引き継ぎで窓を戻す画面の手がかり）。opts.noAppWindow なら引けない */
+    async appWindow() { note({ op: 'appWindow' }); return opts.noAppWindow ? null : { id: opts.appWindow }; },
     async close(ref) { note({ op: 'close', ref: ref?.id }); return chrome ? chrome.closeDialog(ref?.id) : false; },
 
     // ---- エージェントの窓

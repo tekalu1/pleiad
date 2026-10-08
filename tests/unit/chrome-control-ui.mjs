@@ -23,7 +23,7 @@ export default async function (t) {
   const errors = [];
   const view = createChromeControlView({ run: async action => { calls.push(action); return reply(action); }, getName: () => 'Claude', onError: (error, action) => errors.push(`${action}:${error.message}`) });
   t.ok('状態が無いうちは隠れている', view.root.hidden === true && view.banner.hidden === true && view.state() === null);
-  t.ok('状態の一行は role=status', view.root.querySelector('.cc-status').getAttribute('role') === 'status');
+  t.ok('状態の一行は role=status。役割の無い div（root）に aria-label を付けない', view.root.querySelector('.cc-status').getAttribute('role') === 'status' && view.root.getAttribute('role') === undefined && view.root.getAttribute('aria-label') === undefined);
   view.apply({ state: 'running', since: null });
   t.ok('running: 「Claude が操作中」と止める・引き継ぐ', view.root.hidden === false && view.root.querySelector('.cc-text').textContent === 'Claude が操作中' && shownButtons(view.root).join() === '止める,引き継ぐ', shownButtons(view.root).join());
   t.ok('操作中の印は data-state（色は CSS のトークン）', view.root.dataset.state === 'running' && view.overlay.dataset.state === 'running');
@@ -42,7 +42,7 @@ export default async function (t) {
 
   view.apply({ state: 'paused', since: 1 });
   t.ok('paused: 「あなたが操作中」と「Claude に戻す」だけ', view.root.querySelector('.cc-text').textContent === 'あなたが操作中' && shownButtons(view.root).join() === 'Claude に戻す' && view.root.dataset.state === 'paused');
-  t.ok('一時停止中の帯（会話の中。role=status）に文と戻すボタン', view.banner.hidden === false && view.banner.getAttribute('role') === 'status' && view.banner.textContent.includes('一時停止中 · あなたが Chrome で操作しています') && view.banner.querySelector('button').textContent === 'Claude に戻す');
+  t.ok('一時停止中の帯（会話の中）に文と戻すボタン。帯は role=status にしない（状態の一行と二重に読み上げない）', view.banner.hidden === false && view.banner.getAttribute('role') === undefined && view.banner.textContent.includes('一時停止中 · あなたが Chrome で操作しています') && view.banner.querySelector('button').textContent === 'Claude に戻す');
   t.ok('映像の上の層は読み上げない。一時停止中も幕は足さない（二重にしない）', view.overlay.querySelector('.cc-veil') === null && view.overlay.getAttribute('aria-hidden') === 'true');
   view.banner.querySelector('button').onclick();
   await sleep(5);
@@ -62,6 +62,10 @@ export default async function (t) {
   resume.onclick(); await sleep(5);
   t.ok('失敗は onError へ（投げない）', errors.join() === 'resume:boom' && resume.disabled === false, errors.join());
 
+  view.apply({ state: 'paused', since: 1, error: 'conceal-failed' });
+  t.ok('戻せなかった（窓を隠せなかった）ときは、一行に理由を出す。paused のまま「戻す」を押せる', view.root.querySelector('.cc-text').textContent.includes('窓を隠せなかった') && shownButtons(view.root).length === 1 && statusText('paused', 'Claude', 'conceal-failed').includes('もう一度') && view.banner.textContent.includes('窓を隠せなかった'));
+  view.apply({ state: 'paused', since: 1 });
+  t.ok('error が無くなれば元の語に戻る', view.root.querySelector('.cc-text').textContent === 'あなたが操作中');
   view.apply({ state: 'bogus' });
   t.ok('知らない状態は隠す', view.root.hidden === true && view.banner.hidden === true);
 
@@ -105,6 +109,8 @@ export default async function (t) {
   store.event({ type: 'chromeTap', sessionId: 'b', x: 3, y: 4, windowId: 7 });
   store.event({ type: 'chromeTap', x: 3, y: 4 });
   t.ok('押した位置は会話の id つきで聞き手へ', taps.length === 1 && taps[0].sessionId === 'b' && taps[0].x === 3 && taps[0].windowId === 7);
+  store.event({ type: 'chromeControl', sessionId: 'b', state: 'paused', since: 3, error: 'conceal-failed' });
+  t.ok('error だけが変わっても聞き手へ知らせる・置き場が持つ', store.get('b').error === 'conceal-failed' && seen.at(-1) === 'b:paused:3', seen.join());
   store.clear();
   t.ok('clear は全部を idle に戻し、聞き手へ知らせる', store.get('b').state === 'idle' && seen.at(-1) === 'b:idle:', seen.join());
   const off = store.onChange(() => { throw new Error('listener'); });

@@ -16,8 +16,15 @@
 //   - エージェントのターンの間、会話の窓のタブすべてに中継の自分のセッションで Emulation.setFocusEmulationEnabled(true) を保つ（隠した窓の描画・入力を保つため）。
 //     エージェントのセッションの付け外しでは切れない。ターンが終わったら外す
 //   - 範囲のタブが window.open の popup で開いた別窓にも、同じ置き方を当てる（scope.adoptPopup）
-// 引き継ぎ（一時停止。ADR 0148・0154。状態機械は core/chrome/control.mjs）: pause() の間は接続を切らず、エージェントのコマンドを全部 PAUSED_MESSAGE で断る
-// （人が窓を操作している。エージェントは hand_to_user で戻るのを待つ）。unpause() で解く。Chrome との接続が切れたときも解く
+// 引き継ぎ（一時停止。ADR 0148・0154。状態機械は core/chrome/control.mjs）: pause() の間は、エージェントのコマンドを全部 PAUSED_MESSAGE で断る
+// （人が窓を操作している。エージェントは hand_to_user で戻るのを待つ）。unpause() で解く。Chrome との接続が切れたときも解く。
+//   - pause に入るときに、エージェントのブラウザーとタブの接続を切る（上りのセッションを外し、ws を 1000 で閉じる）。Chrome からの通知（Network の postData・Fetch.requestPaused など）が
+//     エージェントへ流れ続けず、エージェントの Fetch の横取りが人のページを固めないため。戻した後は agent-browser がつなぎ直す（つなぎ直した接続のコマンドは全部断る）
+//   - 一時停止の間は、タブを「エージェントが動かしている」と見なさない（人の移動をサイトの利用の確認にかけない）。確認の待ちも取り下げる
+//   - 会話の範囲の上りへの送信は、送る直前にもう一度一時停止を見る（確認の待ちの後ろに並んだコマンドが、一時停止の後に届かないように）
+//   - 引き継ぐ時に、エージェントの各セッション（タブ・iframe・worker）へ、外す前に Runtime.terminateExecution を送って、そのセッションが始めて今走っているスクリプトを止める。
+//     実機（Chrome 154）で、効くのは**そのスクリプトを始めたのと同じセッション**からだけだった（別のセッションから送ると、走っている無限ループには応答もしない・止まらない）。
+//     だから中継自身の一時のセッションではなく、エージェントのセッションに送る。エージェントのセッションを通さずに走っているスクリプト（ページ自身のもの）・エージェントが待っている Promise・タイマーは止まらない
 //   - onChange(fn): 会話の状態（ターンの間か・止めた・一時停止）が変わるたびに sessionId を渡す。onTap(fn): エージェントが押した位置（Input.dispatchMouseEvent の mousePressed）
 // 右パネルの映像（core/chrome/screencast.mjs。ADR 0148 第 5 段）には view の口を出す: 会話の窓のタブ・エージェントが最後に触れたタブ（「今のタブ」）・
 // 操作中の印・中継自身のセッションの付け外し（エージェントのセッションとは別。映像を見ている間だけ付け、focus emulation も映像側のセッションで持つ）・変化の知らせ
@@ -205,7 +212,8 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, scop
     const tab = newTab(entry, info, windowId, opener);
     state.tabs.set(tab.targetId, tab);
     addWindow(state, entry, windowId);
-    for (const client of clientsOf(entry)) {
+    // 一時停止中（人が開いたタブなど）は、エージェントの接続に知らせず、エージェントのセッションも付けない
+    if (!entry.paused) for (const client of clientsOf(entry)) {
       if (client.discovering) send(client, { method: 'Target.targetCreated', params: { targetInfo: { ...tab.info } } });
       if (client.autoAttach) attachFor(state, client, tab).catch(() => {});
     }
@@ -231,6 +239,9 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, scop
     notifyView(tab.entry.id, 'tabs');
     refreshOperating(tab.entry);
   }
+
+  /** エージェントが動かしているタブか（一時停止中は人が動かしているので、いつも false。確認にかけるかを決める） */
+  const driven = tab => tab.active && !tab.entry.paused;
 
   /** エージェントが触れたタブを「今のタブ」として覚える（映像が追う。agent-browser の「今のタブ」は自分の側で持つので、コマンドの宛先から知る）。操作中の印も見直す */
   function touch(tab) {
@@ -362,6 +373,12 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, scop
       register(state, result.sessionId, token);
       if (client) send(client, { method: 'Target.attachedToTarget', params: { sessionId: result.sessionId, targetInfo: { ...tab.info, attached: true }, waitingForDebugger: false } });
     }
+    // 待っている間に、エージェントの接続が閉じた・一時停止に入った。付けたセッションは外す（誰にも使われないセッションを Chrome に残さない）
+    if (client && (client.closed || client.entry.paused)) {
+      forgetSession(state, result.sessionId);
+      state.cdp.send('Target.detachFromTarget', { sessionId: result.sessionId }).catch(() => {});
+      throw new RelayError(client.entry.paused ? PAUSED_MESSAGE : 'the agent connection is closed');
+    }
     return result.sessionId;
   }
   const attachFor = (state, client, tab) => attach(state, tab, client);
@@ -481,7 +498,7 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, scop
     const url = params.request?.url ?? '';
     const origin = originOf(url);
     // エージェントが動かしていないタブ（人の操作）・移り終えた今の origin と同じ・この移動で許可済みは聞かない
-    if (!tab.active || !origin || origin === tab.origin || tab.approved.has(origin)) { resume(); return; }
+    if (!driven(tab) || !origin || origin === tab.origin || tab.approved.has(origin)) { resume(); return; }
     ask(tab, url).then(answer => {
       if (!confirm) { resume(); return; }
       if (answer.allow && !tab.controller.signal.aborted) { tab.approved.add(origin); resume(); return; }
@@ -501,7 +518,7 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, scop
     const approved = Boolean(origin) && tab.approved.has(origin);
     tab.origin = origin;
     tab.approved.clear();
-    if (!origin || origin === previous || approved || !confirm || !tab.active) return;
+    if (!origin || origin === previous || approved || !confirm || !driven(tab)) return;
     if (tab.opener && !tab.popupChecked) { checkPopup(state, tab, origin, frame.url ?? ''); return; }
     hold(tab, ask(tab, frame.url ?? origin), async answer => {
       if (state.tabs.get(tab.targetId) !== tab || tab.origin !== origin || !confirm) return;   // 閉じた・もう別の所へ移った・OFF にした
@@ -518,7 +535,7 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, scop
 
   /** window.open で開いたタブ（最初の要求は Fetch で止められない）。開いた後に聞き、断られたら閉じる */
   function checkPopup(state, tab, origin = originOf(tab.info.url), url = tab.info.url) {
-    if (tab.popupChecked || !confirm || !tab.opener.active) return;
+    if (tab.popupChecked || !confirm || !driven(tab.opener)) return;
     if (!origin) return;   // まだ about:blank。URL が付いたら聞く
     tab.popupChecked = true;
     // 聞いている間の origin はこれとみなす（後から届く frameNavigated で二度聞かない。断られたらタブを閉じる）
@@ -603,6 +620,11 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, scop
     const rec = state.sessions.get(sessionId);
     if (!rec || rec.client !== client) throw denied('session');
     const tab = rec.tab;
+    // 待ち（確認・準備）の後に送る前に、もう一度一時停止と接続を見る。待っている間に人が引き継いだのに、後ろに並んだコマンドが届かないように
+    const live = () => {
+      if (client.entry.paused) throw new RelayError(PAUSED_MESSAGE);
+      if (client.closed || state.cdp.closed) throw new RelayError('the agent connection is closed');
+    };
     if (method.startsWith('Target.') && method !== 'Target.setAutoAttach') throw denied('browser command');
     if (SESSION_DENIED.has(method) || SESSION_DENIED_DOMAINS.some(prefix => method.startsWith(prefix))) throw denied('browser command');
     let forward = params;
@@ -617,6 +639,7 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, scop
     if (!PASSIVE.test(method)) { tab.active = true; touch(tab); }
     // 移った後の確認の答えを待つ間は、このタブへのコマンドを待たせる（断られたページを読ませない）
     while (tab.gate) await tab.gate.promise;
+    live();
     // 窓を前に出して前面を取る命令は、Chrome へ送らずに成功で返す。agent-browser の「今のタブ」は自分の側で持つので操作は変わらず、
     // 隠した窓は前面を取らない。前に出すのは人が引き継いだときの Pleiad だけ（ADR 0154）
     if (method === 'Page.bringToFront') return {};
@@ -624,7 +647,7 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, scop
     if (method === 'Network.getCookies') forward = {};
     if (COOKIE_WRITES.has(method)) {
       // 確認が ON なら、移り終えた今の origin のホスト（断った先のエラーのページは、どのホストでもない）
-      if (confirm) await ensureInternal(state, tab);
+      if (confirm) { await ensureInternal(state, tab); live(); }
       const host = confirm ? hostOf(tab.origin ?? '') : hostOf(tab.info.url);
       const list = method === 'Network.setCookies' ? (Array.isArray(params.cookies) ? params.cookies : []) : [params];
       const domainOk = value => { const domain = value.replace(/^\./, ''); return Boolean(domain) && (host === domain || host.endsWith(`.${domain}`)); };
@@ -643,6 +666,7 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, scop
       // 確認を ON にした直後でも、中継のセッションの準備（Page と Fetch）が済むまで移動を待たせる
       if (confirm) await ensureInternal(state, tab);
     }
+    live();   // 送る直前（この後は await を挟まない）
     const commits = tab.commits;
     const result = await state.cdp.send(method, forward, sessionId, { timeoutMs: commandTimeoutMs });
     // 押した位置（右パネルの輪）。座標だけで、URL・題は渡さない
@@ -716,12 +740,16 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, scop
     const { targetId, windowId } = await scope.openTab({ cdp: state.cdp, url: direct ? url : 'about:blank', entryId: entry.id });
     const fresh = await state.cdp.send('Target.getTargetInfo', { targetId }).catch(() => null);
     const tab = adopt(state, entry, fresh?.targetInfo ?? { targetId, type: 'page', title: '', url: 'about:blank', attached: false, canAccessOpener: false }, { windowId });
+    // 窓を作っている間に引き継がれた。作った窓（隠れた about:blank）は閉じ、エージェントには断りを返す（移動もしない）
+    const stillLive = () => !entry.paused && !client.closed && !state.cdp.closed;
+    if (!stillLive()) { state.cdp.send('Target.closeTarget', { targetId }).catch(() => {}); throw new RelayError(entry.paused ? PAUSED_MESSAGE : 'the agent connection is closed'); }
     tab.active = true;   // エージェントが作ったタブ
     touch(tab);
     if (direct) return targetId;
     const op = ++tab.ops;
     try {
       const sessionId = await ensureInternal(state, tab);
+      if (!stillLive()) throw new RelayError(entry.paused ? PAUSED_MESSAGE : 'the agent connection is closed');
       const result = await state.cdp.send('Page.navigate', { url }, sessionId, { timeoutMs: commandTimeoutMs });
       if (result?.errorText) {
         const message = (tab.denial?.op >= op && tab.denial.message) || result.errorText;
@@ -750,6 +778,35 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, scop
   function closeClients(entry, code, reason) {
     for (const client of [...entry.clients]) { try { client.ws.close(code, reason); } catch { /* 閉じていてもよい */ } }
   }
+  /**
+   * 引き継ぎ（一時停止）に入る: エージェントのブラウザーとタブの接続を切り、タブを「エージェントが動かしている」と見なさなくし（確認の待ちも取り下げる）、
+   * 走っているスクリプトを止める。接続を切るので、Chrome からの通知（Network.requestWillBeSent の postData・Fetch.requestPaused など）はエージェントへ流れず、
+   * エージェントが付けていた Fetch の横取りもセッションごと外れる（人のページが固まらない）。戻した後は agent-browser がつなぎ直す
+   */
+  function suspendAgent(entry) {
+    for (const client of [...entry.clients]) {
+      if (up) {
+        for (const sessionId of [...client.sessions]) {
+          const rec = up.sessions.get(sessionId);
+          if (!rec || rec.client !== client) { client.sessions.delete(sessionId); continue; }
+          // 走っているスクリプトを止める（そのセッションが始めたものにだけ効く）。外す前に送る（同じ接続の上で順に届く）
+          up.cdp.send('Runtime.terminateExecution', {}, sessionId, { timeoutMs: 2000 }).catch(() => {});
+          const top = rec.parent == null;
+          forgetSession(up, sessionId);
+          if (top) up.cdp.send('Target.detachFromTarget', { sessionId }).catch(() => {});
+        }
+      }
+      client.paused.clear();
+      try { client.ws.close(1000, 'paused'); } catch { /* 閉じていてもよい */ }
+    }
+    if (!up) return;
+    for (const tab of tabsOf(up, entry)) {
+      tab.active = false; tab.approved.clear(); tab.denial = null;
+      tab.controller.abort(); tab.controller = new AbortController();
+    }
+    refreshOperating(entry);
+  }
+
   /** 会話のタブの確認の待ちを取り下げ、エージェントが動かしている印を外す（ターンの終わり・止める） */
   function settleEntry(entry) {
     const wasTurn = entry.turn;
@@ -800,8 +857,39 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, scop
       const entry = entries.get(sessionId);
       if (!entry || entry.paused) return false;
       entry.paused = { at };
+      suspendAgent(entry);
       changed(entry);
       return true;
+    },
+    /**
+     * 引き継いでいる間に人が窓を作り替えた（タブを引き離して新しい窓にした・窓ごと閉じた）のを、戻す前に取り込む: タブごとの今の窓を引き直し、
+     * 新しい窓は範囲に足して（scope.adoptPopup。引き継ぎ中は記録だけで、戻すときに探して隠す）、タブの無くなった窓の記録は捨てる
+     */
+    async refreshWindows(sessionId) {
+      const entry = entries.get(sessionId);
+      const state = up;
+      if (!entry || !state) return;
+      const tabs = tabsOf(state, entry);
+      const seen = new Set();
+      let answered = 0;
+      for (const tab of tabs) {
+        const where = await state.cdp.send('Browser.getWindowForTarget', { targetId: tab.targetId }).catch(() => null);
+        if (up !== state) return;
+        if (!where || where.windowId == null) continue;
+        answered += 1;
+        seen.add(where.windowId);
+        if (where.windowId === tab.windowId) continue;
+        tab.windowId = where.windowId;
+        const isNew = !entry.windows.has(where.windowId);
+        addWindow(state, entry, where.windowId);
+        if (isNew) await scope.adoptPopup?.({ cdp: state.cdp, entryId: entry.id, windowId: where.windowId });
+      }
+      if (answered !== tabs.length) return;   // 引けないタブがあれば、窓の記録は捨てない
+      for (const windowId of [...entry.windows]) {
+        if (seen.has(windowId)) continue;
+        entry.windows.delete(windowId); state.windows.delete(windowId);
+        scope.windowClosed?.(entry.id, windowId);
+      }
     },
     /** 一時停止を解く。解く前の始まりの時刻を返す（一時停止でなければ null） */
     unpause(sessionId) {

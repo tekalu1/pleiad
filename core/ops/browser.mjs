@@ -28,6 +28,7 @@ const controlShape = z.object({
   sessionId: z.string().describe('agent:ops.browser.chromeControl.sessionId'),
   state: z.enum(['running', 'idle', 'stopped', 'paused']).describe('agent:ops.browser.chromeControl.state'),
   since: z.number().nullable().describe('agent:ops.browser.chromeControl.since'),
+  error: z.string().nullable().describe('agent:ops.browser.chromeControl.error'),
 });
 const controlInput = z.object({ sessionId: z.string().min(1).max(200).describe('agent:ops.browser.chromeControl.sessionId') });
 /** 会話の窓の操作（引き継ぐ・戻す・止める）。Chrome の層が使えなければ UNSUPPORTED、引き継げる窓が無ければ NO_WINDOW */
