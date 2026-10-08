@@ -292,6 +292,8 @@ export function setupChromePanel({ cmd, preview, browser = null, showMenu = null
   function open(element = null) {
     const id = session();
     if (!id || (!browser && !windows.has(id))) return;
+    // 同じ会話の映像をもう見ているなら（選んでいるタブをもう一度押した）、映像を最初からにしない
+    if (isOpen() && sessionId === id && !ended && (connecting || parts?.sink.frame)) return;
     show(id, element);
     connecting = windows.has(id);   // 窓がまだ無いなら接続中にしない（窓ができたら windowEvent が見始める）
     paint();
@@ -356,7 +358,10 @@ export function setupChromePanel({ cmd, preview, browser = null, showMenu = null
     /** サーバーの chromeWindow イベント。表示中の会話の窓が無くなったら閉じた表示にする */
     windowEvent(ev) {
       const changed = windows.apply(ev);
-      if (changed && isOpen() && ev.sessionId === sessionId && !(ev.windows > 0)) { ended = true; paint(); }
+      if (changed && isOpen() && ev.sessionId === sessionId && !(ev.windows > 0)) {
+        // ビューアの無い端末では、窓が無くなると入口のボタンも消えて開き直せない。パネルだけ残さず閉じる
+        if (!browser) close(); else { ended = true; paint(); }
+      }
       else if (isOpen() && ev.sessionId === sessionId && ev.windows > 0 && (ended || !parts?.sink.frame) && !connecting) {
         // 窓ができた（最初の窓・閉じた後の新しい窓）。残っている古いフレームを捨てて見直す
         waiting = null; ended = false; connecting = true; parts?.sink.reset(); frameMeta = null; paint(); watch(sessionId);

@@ -6,8 +6,9 @@
 .file-preview[data-panel="chrome-window"] .file-preview-content{background:var(--surface-paper);border-radius:var(--r-l)}
 .file-preview[data-panel="chrome-window"] .file-preview-toolbar{align-items:center;gap:6px;min-height:36px}
 .file-preview[data-panel="chrome-window"] .cp-slot{flex:1;min-width:0}
-.file-preview[data-panel="chrome-window"] .cp-slot .cc{flex-wrap:nowrap;overflow:hidden}
-.file-preview[data-panel="chrome-window"] .cp-slot .cc-status{flex:1 1 auto}
+/* 右パネルの幅は窓の幅と別に狭くなる。「止める」「引き継ぐ」は切らず、入らないときは字の行の下へ折り返す */
+.file-preview[data-panel="chrome-window"] .cp-slot .cc{flex-wrap:wrap}
+.file-preview[data-panel="chrome-window"] .cp-slot .cc-status{flex:1 1 120px}
 .file-preview[data-panel="chrome-window"] .cp-slot .cc-btn{flex:none}
 .cp-profile-slot{display:inline-flex;align-items:center;min-width:0;flex-shrink:1}
 .cp-profile-slot:empty{display:none}
@@ -33,7 +34,6 @@
   .cp-profile-btn{max-width:90px;padding:0 4px;gap:2px}
 }
 .cp-window-menu{margin-left:auto}
-@media (max-width:480px){.file-preview[data-panel="chrome-window"] .cp-slot .cc{flex-wrap:wrap}}
 .cp{display:flex;flex-direction:column;gap:8px;padding:8px}
 /* 状態の一行の差し込み口（第 6 段の web/chrome-control.mjs）。空の間は場所を取らない */
 .cp-slot:empty,.cp-slot:not(:has(> :not([hidden]))){display:none}
