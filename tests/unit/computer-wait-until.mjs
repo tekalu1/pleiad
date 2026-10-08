@@ -74,6 +74,15 @@ export default async function (t) {
       r.done && r.end === 'yes' && r.asks === 2 && r.p === 0.8 && at[0] === 1000 && at[1] === 2200 && r.waitedMs === 2200, JSON.stringify({ r, at }));
   }
   {
+    // 静止 → 聞く（往復 700ms）の間の 1300ms に変わり、以後静止 → はい。聞く前のコマと比べるので、この変化を見落とさない
+    const v = virtual(ms => ms >= 1300 ? 120 : 80);
+    const answers = [{ ok: true, p: 0.2 }, { ok: true, p: 0.8 }];
+    const at = [];
+    const r = await settle({ grab: v.grab, ask: async () => { at.push(v.now()); await v.sleep(700); return answers.shift(); }, timeoutMs: 15000, now: v.now, sleep: v.sleep });
+    t.ok('聞いている間に変わって止まった画面: 聞く前のコマと比べて変化として数え、静止したら聞き直す',
+      r.done && r.end === 'yes' && r.asks === 2 && r.p === 0.8 && at[0] === 1000 && at[1] === 2200, JSON.stringify({ r, at }));
+  }
+  {
     // いいえが続き、変化も無い → timeout。最後の確率を返す
     const v = virtual(() => 80);
     const r = await settle({ grab: v.grab, ask: async () => ({ ok: true, p: 0.12 }), timeoutMs: 4000, now: v.now, sleep: v.sleep });
