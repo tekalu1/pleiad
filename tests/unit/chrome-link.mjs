@@ -217,8 +217,12 @@ export default async function (t) {
         const card = { kind: LINK_CARD_KIND, v: 0, pipe: linkPipeName(`old-${process.pid}`), secret: 'old-secret' };
         const parent7 = await holder.connect();
         parent7.client.spawn({ id: 'chrome-link-old', command: process.execPath, args: [OLD_CHILD, card.pipe, card.secret], env: process.env, policy: 'none', label: card });
-        await waitFor(() => (parent7.client.welcome?.children ?? []).some(c => c.id === 'chrome-link-old') || true, 1000, 'spawn');
-        await sleep(500);
+        // welcome は接続時の写しなので spawn 後には増えない。子が実際に待ち受けてから版の不一致を試す。
+        await waitFor(() => new Promise(resolve => {
+          const probe = net.connect(card.pipe);
+          probe.once('connect', () => { probe.destroy(); resolve(true); });
+          probe.once('error', () => { probe.destroy(); resolve(false); });
+        }), 8000, '古い版の子がパイプを開く');
         const parent8 = await holder.connect();
         const link7 = await openChromeLink({ holder: parent8.client, runtimeRoot: root, runtimeKey: 'k1' });
         t.ok('版の不一致: 古い子を終わらせて起こし直し、新しい子の版で付く', link7 && link7.welcome.v === LINK_VERSION && link7.welcome.phase === 'idle', JSON.stringify(link7?.welcome));

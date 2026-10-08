@@ -166,5 +166,40 @@ export default async function (t) {
       assert.equal(await status(opened), 401);
     }
     t.ok('ply_context: token を受ける（形の違う値は断る・省略時は新しい値・閉じたら 401）', true);
+    // 開き直し中に届いた要求を、時間ではなく予約の解放で進める。
+    // request の既存リスナーが handle を呼んだ後の ServerResponse を見て、まだ返していないことを確かめる。
+    {
+      const before = { url: `${origin}/mcp/context`, headers: { Authorization: `Bearer ${TOKEN_A}` } };
+      const arriving = () => new Promise(resolve => server.once('request', (_req, res) => resolve(res)));
+      let opened;
+      let release = context.reserve(TOKEN_A);
+      try {
+        const arrival = arriving();
+        const pending = status(before);
+        assert.equal((await arrival).writableEnded, false, '開き直し中は 401 を返さずに待つ');
+        assert.equal(await status({ ...before, headers: { Authorization: `Bearer ${TOKEN_B}` } }), 401, '予約していないトークンは待たずに断る');
+        opened = await context.open({ runtime: emptyRuntime, prompt: '', origin, isActive: () => true, token: TOKEN_A });
+        release();
+        assert.equal(await pending, 200, '開き直す前から待っていた要求が同じトークンで通る');
+        await opened.close();
+
+        release = context.reserve(TOKEN_A);
+        const abandonedArrival = arriving();
+        const abandoned = status(before);
+        assert.equal((await abandonedArrival).writableEnded, false);
+        release();
+        release();
+        assert.equal(await abandoned, 401, '開き直せずに解放したら要求を断って終える');
+
+        release = context.reserve(TOKEN_A);
+        const inactiveArrival = arriving();
+        const inactive = status(before);
+        assert.equal((await inactiveArrival).writableEnded, false);
+        opened = await context.open({ runtime: emptyRuntime, prompt: '', origin, isActive: () => false, token: TOKEN_A });
+        release();
+        assert.equal(await inactive, 401, '待った後もターンが有効か確かめる');
+      } finally { release(); await opened?.close(); }
+    }
+    t.ok('ply_context: 開き直し中の要求は待ち、成功後は通す。未知のトークン・開き直し失敗・無効なターンは断る', true);
   } finally { await new Promise(resolve => server.close(resolve)); await fs.rm(scratch, { recursive: true, force: true }); }
 }

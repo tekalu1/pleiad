@@ -162,17 +162,20 @@ export default async function (t) {
     }
 
     // 順番: 先の発話の認識が遅れても、確定は話した順
+    // 2 つの発話の要求は同じ瞬間に出るので、偽の API に届く順は負荷で入れ替わる。届いた順ではなく音声の長さで発話を見分ける
+    // （1 つ目は声 5 枠で約 0.7 秒、2 つ目は声 10 枠と前の無音で約 1.5 秒）
     {
-      const api4 = await startFakeOpenRouter({ transcripts: (_rec, i) => `発話${i}`, sttDelay: (_rec, i) => (i === 0 ? 400 : 0) });
+      const first = (rec) => rec.durationMs < 1000;
+      const api4 = await startFakeOpenRouter({ transcripts: (rec) => (first(rec) ? '発話0' : '発話1'), sttDelay: (rec) => (first(rec) ? 400 : 0) });
       try {
         const events = [];
         const client = createSttClient({ config: { baseUrl: api4.url, apiKey: KEY }, model: PRIMARY, language: 'ja' });
         const tr = createTranscriber({ client, language: 'ja', emit: (e) => events.push(e), cut: { endSilenceMs: 600, maxUtteranceMs: 15000, speculativeSilenceMs: 0 } });
         frames(tr, true, 5); frames(tr, false, 8);
-        frames(tr, true, 5); frames(tr, false, 8);
+        frames(tr, true, 10); frames(tr, false, 8);
         await waitFor(() => events.filter((e) => e.type === 'final').length === 2, 4000);
         const finals = events.filter((e) => e.type === 'final');
-        t.ok('順番: 後の発話が先に返っても、確定は区切った順に出る（前の結果を待つ）', finals.map((f) => f.utt).join() === '1,2' && finals[0].text === '発話0' && finals[1].text === '発話1', JSON.stringify(finals.map((f) => [f.utt, f.text])));
+        t.ok('順番: 後の発話が先に返っても、確定は区切った順に出る（前の結果を待つ）', finals.map((f) => f.utt).join() === '1,2' && finals[0].text === '発話0' && finals[1].text === '発話1', `${JSON.stringify(finals.map((f) => [f.utt, f.text]))} ${JSON.stringify(api4.records.stt.map((r) => r.durationMs))}`);
         tr.close();
       } finally { await api4.close(); }
     }

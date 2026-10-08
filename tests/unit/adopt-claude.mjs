@@ -43,8 +43,10 @@ async function until(check, ms, label) {
 }
 
 /** 偽の main（tests/unit/handover-server.mjs と同じ）: パイプにつなぎ、受けたメッセージを溜める */
-async function attachMain(dataDir, pid) {
-  const info = await until(() => { const found = readLinkInfo(dataDir); return found?.pid === pid ? found : null; }, WAIT_MS, `main-link.json (pid ${pid})`);
+async function attachMain(dataDir, server) {
+  const pid = server.child.pid;
+  const info = await until(() => { const found = readLinkInfo(dataDir); return found?.pid === pid ? found : null; }, WAIT_MS, `main-link.json (pid ${pid})`)
+    .catch(error => { throw new Error(`${error.message}\n${server.tail(15)}`); });
   const link = createServerLink({ pipe: info.pipe, secret: info.secret, appVersion: '0.0.1' });
   const seen = { messages: [] };
   link.on('message', message => {
@@ -291,13 +293,14 @@ export default async function (t) {
       const launches = path.join(scratch, 'fixture-launches.txt');
       await fs.mkdir(path.join(workCtx, '.git'), { recursive: true });
       const fixture = path.join(scratch, 'fixture-mcp.mjs');
-      // 状態を持つ外部の MCP（呼ぶたびに数が増える）。起こすたびに 1 行残す
-      await fs.writeFile(fixture, `import fs from 'node:fs';import readline from 'node:readline';fs.appendFileSync(${JSON.stringify(launches)},'launch\\n');let n=0;for await(const line of readline.createInterface({input:process.stdin})){const m=JSON.parse(line);if(m.id===undefined)continue;const result=m.method==='initialize'?{protocolVersion:'2025-06-18',capabilities:{tools:{}},serverInfo:{name:'fixture',version:'1'}}:m.method==='tools/list'?{tools:[{name:'count',description:'count',inputSchema:{type:'object'}}]}:m.method==='tools/call'?{content:[{type:'text',text:'count='+(++n)}]}:{};process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:m.id,result})+'\\n');}`);
+      // 状態を持つ外部の MCP（呼ぶたびに数が増える）。起こすたびに 1 行残す。起こし直し（2 回目から）は 2 秒かけて立ち上がる（npx などの遅い MCP の形）。
+      // その間に CLI が呼んでも、S2 は断らずに開き直し終わるのを待たせる
+      await fs.writeFile(fixture, `import fs from 'node:fs';import readline from 'node:readline';fs.appendFileSync(${JSON.stringify(launches)},'launch\\n');if(fs.readFileSync(${JSON.stringify(launches)},'utf8').split('launch').length>2)await new Promise(r=>setTimeout(r,2000));let n=0;for await(const line of readline.createInterface({input:process.stdin})){const m=JSON.parse(line);if(m.id===undefined)continue;const result=m.method==='initialize'?{protocolVersion:'2025-06-18',capabilities:{tools:{}},serverInfo:{name:'fixture',version:'1'}}:m.method==='tools/list'?{tools:[{name:'count',description:'count',inputSchema:{type:'object'}}]}:m.method==='tools/call'?{content:[{type:'text',text:'count='+(++n)}]}:{};process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:m.id,result})+'\\n');}`);
       await fs.writeFile(path.join(workCtx, '.mcp.json'), JSON.stringify({ mcpServers: { fixture: { command: process.execPath, args: [fixture] } } }));
       const launchCount = async () => (await fs.readFile(launches, 'utf8').catch(() => '')).split('\n').filter(Boolean).length;
       const envH = { ...env, AGENT_HOST_HANDOVER: 'on', AGENT_HOST_GRACE_MS: '600000' };
       a = await startServer({ env: envH, dataDir, timeoutMs: 40_000, entry: path.join(ROOT, 'tests', 'lib', 'adopt-server.mjs') });
-      m1 = await attachMain(dataDir, a.child.pid);
+      m1 = await attachMain(dataDir, a);
       ca = await open({ port: a.port, token: a.token });
       const none = { sources: [], excludePaths: [] };
       await ca.cmd('setContextSettings', { cwd: workCtx, place: workCtx, kind: 'mcp', value: { owner: 'ply', user: none, directory: { sources: ['claude'], excludePaths: [] } } });
@@ -326,7 +329,7 @@ export default async function (t) {
       await until(() => a.child.exitCode !== null, 20_000, 'S1 が終わる');
       await b.ready();
       assert.equal(b.port, a.port, 'S2 は S1 と同じポートで待ち受ける');
-      m2 = await attachMain(dataDir, b.child.pid);
+      m2 = await attachMain(dataDir, b);
       ca.close(); ca = null;
       cb = await open({ port: a.port, token: a.token });
       const askB = await cb.waitFor(e => e.type === 'permission' && e.sessionId === ids.Q, { ms: WAIT_MS });

@@ -42,8 +42,10 @@ async function until(check, ms, label) {
 }
 
 /** 偽の main（adopt-claude と同じ）: パイプにつなぎ、受けたメッセージを溜める */
-async function attachMain(dataDir, pid) {
-  const info = await until(() => { const found = readLinkInfo(dataDir); return found?.pid === pid ? found : null; }, WAIT_MS, `main-link.json (pid ${pid})`);
+async function attachMain(dataDir, server) {
+  const pid = server.child.pid;
+  const info = await until(() => { const found = readLinkInfo(dataDir); return found?.pid === pid ? found : null; }, WAIT_MS, `main-link.json (pid ${pid})`)
+    .catch(error => { throw new Error(`${error.message}\n${server.tail(15)}`); });
   const link = createServerLink({ pipe: info.pipe, secret: info.secret, appVersion: '0.0.1' });
   const seen = { messages: [] };
   link.on('message', message => {
@@ -131,7 +133,8 @@ export default async function (t) {
       const res = await ca.runTurn({ backend: 'antigravity', cwd: work, prompt: `hello ${k}` }, { ms: WAIT_MS });
       assert.equal(res.outcome, 'ok', a.tail(10));
       ids[k] = res.sessionId;
-      if (k === 'T') await until(() => !alive(leftover.pid), 10_000, '前のサーバーが残した idle の子は、A の最初の保持役の使用が止める');
+      if (k === 'T') await until(() => !alive(leftover.pid), 10_000, '前のサーバーが残した idle の子は、A の最初の保持役の使用が止める')
+        .catch(async error => { throw new Error(`${error.message}\n${a.tail(15)}\n[holder.log]\n${(await fs.readFile(path.join(root, 'logs', 'holder.log'), 'utf8').catch(() => '')).split('\n').slice(-15).join('\n')}`); });
     }
     assert.ok((await spawned()).length >= 6, '会話ごとに別の agy');
     const before = Object.fromEntries(Object.entries(ids).map(([k, id]) => [k, sessionMeta(id)?.completedAt]));
@@ -254,7 +257,7 @@ export default async function (t) {
     {
       const envH = { ...env, AGENT_HOST_HANDOVER: 'on', AGENT_HOST_GRACE_MS: '600000' };
       a = await startServer({ env: envH, dataDir, timeoutMs: 40_000, entry: path.join(ROOT, 'tests', 'lib', 'adopt-server.mjs') });
-      m1 = await attachMain(dataDir, a.child.pid);
+      m1 = await attachMain(dataDir, a);
       ca = await open({ port: a.port, token: a.token });
       const markH = ca.mark();
       // R と I を、この A で（それぞれ 1 ターン）走らせて、I だけ idle にする
@@ -277,7 +280,7 @@ export default async function (t) {
       await until(() => a.child.exitCode !== null, 20_000, 'S1 が終わる');
       await b.ready();
       assert.equal(b.port, a.port, 'S2 は S1 と同じポートで待ち受ける');
-      m2 = await attachMain(dataDir, b.child.pid);
+      m2 = await attachMain(dataDir, b);
       ca.close(); ca = null;
       // S2 は保持役につないで付け直す。この間に保持役へつなぐと親の座を取ってしまうので、見るのは pid だけ
       await until(() => !alive(idlePid), 10_000, 'idle の agy を S1 が止める');
