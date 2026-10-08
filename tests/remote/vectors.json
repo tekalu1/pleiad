@@ -218,6 +218,7 @@
         { "input": "机\u3000\u3000の上", "output": "机 の上" },
         { "input": "\u00a0x\u3000y\u00a0", "output": "x y" },
         { "input": "a\u2028b\u0085c", "output": "a b c" },
+        { "input": "a\u001bb\u000e\u001fc", "output": "a b c" },
         { "input": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx", "output": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" },
         { "input": "", "output": "" }
       ]
