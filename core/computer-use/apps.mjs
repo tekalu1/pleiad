@@ -2,6 +2,7 @@
 // 出典: Codex の同梱の computer use が操作を拒むアプリの一覧に倣い、Claude Desktop の「シェルと同じことができる」アプリを高リスクに足した。
 //
 // アプリの id は `aumid:<AUMID>` か `exe:<フルパスを小文字にして \ を / にしたもの>`。照合は exe 名（パスの最後）と AUMID の接頭辞で行う。
+// macOS（ADR 0173 §5）は `bundle:<バンドル ID>` で、バンドル ID の接頭辞（小文字）で照合する。バンドルの無いプロセスは `exe:<パス>`。
 // 一覧に載せるのは、すべて許可・確認なしでも拒む対象だけ。聞くだけでよいものは高リスクの一覧に置く。
 
 /** 小文字・/ 区切りにそろえた exe の名前（パスの最後）。id が aumid のときは null */
@@ -9,7 +10,14 @@ export function exeName(app) {
   const id = String(app?.id ?? '');
   const path = id.startsWith('exe:') ? id.slice(4) : typeof app?.path === 'string' ? app.path.toLowerCase().replaceAll('\\', '/') : '';
   if (!path) return null;
-  return path.slice(path.lastIndexOf('/') + 1);
+  return path.slice(path.lastIndexOf('/') + 1).toLowerCase();
+}
+
+/** 小文字にしたバンドル ID（macOS）。無ければ null */
+export function bundleIdOf(app) {
+  const id = String(app?.id ?? '');
+  const v = id.startsWith('bundle:') ? id.slice(7) : app?.bundleId;
+  return typeof v === 'string' && v ? v.toLowerCase() : null;
 }
 
 /** 小文字にした AUMID（`<パッケージ家族名>!<アプリ>`）。無ければ null */
@@ -36,6 +44,8 @@ const FORBIDDEN_EXE = new Set([
   'searchapp.exe', 'startmenuexperiencehost.exe', 'textinputhost.exe', 'securityhealthhost.exe', 'cloudexperiencehosts.exe',
   // エージェント自身（Pleiad・Claude・Codex・Antigravity）
   'ply.exe', 'pleiad.exe', 'claude.exe', 'claude-code.exe', 'codex.exe', 'chatgpt.exe', 'agy.exe', 'antigravity.exe',
+  // macOS のバンドルの無いシェル（exe:<パス> の最後）
+  'zsh', 'bash', 'sh', 'fish', 'login', 'claude', 'codex', 'agy',
 ]);
 // exe 名の先頭一致（版・変種のあるもの）
 const FORBIDDEN_EXE_PREFIX = ['1password', 'bitwarden', 'keepass', 'avast', 'norton', 'mcafee', 'kaspersky', 'bitdefender', 'malwarebytes', 'sophos', 'crowdstrike', 'sentinelagent'];
@@ -58,6 +68,26 @@ const HIGH_EXE = new Set([
 ]);
 const HIGH_AUMID = ['windows.immersivecontrolpanel', 'microsoft.windows.explorer', 'microsoft.visualstudiocode', 'jetbrains.'];
 
+// macOS のバンドル ID の接頭辞（小文字）。完全一致させたいものは末尾まで書く（'com.apple.terminal' は 'com.apple.terminal.' 始まりも含む）
+const FORBIDDEN_BUNDLE = [
+  // ターミナル
+  'com.apple.terminal', 'com.googlecode.iterm2', 'dev.warp.', 'org.alacritty', 'io.alacritty', 'net.kovidgoyal.kitty', 'com.github.wez.wezterm',
+  'com.mitchellh.ghostty', 'co.zeit.hyper', 'org.tabby',
+  // パスワード管理（キーチェーンアクセス・パスワードを含む）
+  'com.1password.', 'com.agilebits.onepassword', 'com.bitwarden.', 'org.keepassxc.', 'com.apple.keychainaccess', 'com.apple.passwords',
+  'com.dashlane.', 'me.proton.pass',
+  // 認証・ログインの画面
+  'com.apple.securityagent', 'com.apple.loginwindow', 'com.apple.screensaver.engine',
+  // スクリプトの道具（シェルと同じことができる）
+  'com.apple.scripteditor2', 'com.apple.automator', 'com.apple.shortcuts',
+  // エージェント自身（Pleiad・Claude・ChatGPT・Codex・Antigravity）
+  'jp.ply.desktop', 'com.anthropic.claude', 'com.openai.chat', 'com.openai.codex', 'com.google.antigravity',
+];
+const HIGH_BUNDLE = [
+  'com.apple.finder', 'com.apple.systempreferences', 'com.apple.settings', 'com.apple.activitymonitor',
+  'com.microsoft.vscode', 'com.todesktop.230313mzl4w4u92', 'com.exafunction.windsurf', 'dev.zed.', 'com.apple.dt.xcode', 'com.jetbrains.',
+];
+
 /** 操作させないアプリか。Pleiad 自身（self）を含む */
 export function isForbiddenApp(app) {
   if (!app) return false;
@@ -65,7 +95,9 @@ export function isForbiddenApp(app) {
   const exe = exeName(app);
   if (exe && (FORBIDDEN_EXE.has(exe) || FORBIDDEN_EXE_PREFIX.some(p => exe.startsWith(p)))) return true;
   const aumid = aumidOf(app);
-  return Boolean(aumid && FORBIDDEN_AUMID.some(p => aumid.startsWith(p)));
+  if (aumid && FORBIDDEN_AUMID.some(p => aumid.startsWith(p))) return true;
+  const bundle = bundleIdOf(app);
+  return Boolean(bundle && FORBIDDEN_BUNDLE.some(p => bundle.startsWith(p)));
 }
 
 /** 警告付きで聞くアプリか（許可はできる） */
@@ -74,5 +106,7 @@ export function isHighRiskApp(app) {
   const exe = exeName(app);
   if (exe && HIGH_EXE.has(exe)) return true;
   const aumid = aumidOf(app);
-  return Boolean(aumid && HIGH_AUMID.some(p => aumid.startsWith(p)));
+  if (aumid && HIGH_AUMID.some(p => aumid.startsWith(p))) return true;
+  const bundle = bundleIdOf(app);
+  return Boolean(bundle && HIGH_BUNDLE.some(p => bundle.startsWith(p)));
 }

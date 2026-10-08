@@ -44,6 +44,7 @@ function fakeElectron({ registerOk = true, displays = [D1, D2] } = {}) {
     }
     loadFile(file) { this.file = file; return Promise.resolve().then(() => this.fireLoaded()); }
     setAlwaysOnTop(flag, level) { this.alwaysOnTopLevel = level; this.calls.push(`alwaysOnTop:${level}`); }
+    setVisibleOnAllWorkspaces(flag, options) { this.workspaces = { flag, ...options }; }
     setIgnoreMouseEvents(flag) { this.ignoreMouse = flag; }
     setContentProtection(flag) { this.contentProtection = flag; }
     setBounds(b) { this.bounds = { ...b }; this.calls.push('setBounds'); }
@@ -84,6 +85,7 @@ function setup(options = {}) {
   const overlay = createComputerOverlay({
     electron: fake.electron, post: m => posted.push(m), t: tr, timing: { ...FAST, ...options.timing }, log: (...a) => logs.push(a.join(' ')),
     onEscape: options.onEscape ?? (owner => { escapes.push(owner); }), reducedMotion: options.reducedMotion, contentProtection: options.contentProtection,
+    platform: options.platform ?? 'win32', // 既存の Windows の座標と Esc は OS に依らず同じ条件で確かめる
   });
   const send = m => overlay.handleMessage(m);
   const activity = (extra = {}) => send({ type: 'computer-overlay', owner: 'o1', state: 'activity', display: { id: 11, index: 1, bounds: PHYS[11], scale: 1 },
@@ -95,6 +97,20 @@ const pressEsc = h => h.shortcut.registered.get('Escape')?.();
 const lastPayload = (win, op) => [...win.sent].reverse().find(s => s.payload.op === op)?.payload;
 
 export default async function (t) {
+  {
+    const h = setup({ platform: 'darwin' });
+    h.send({ type: 'computer-arm', owner: 'o1' });
+    h.activity({ display: { id: 22, bounds: D2.bounds }, cursor: { x: 2220, y: 150 } });
+    await sleep(5);
+    const w = h.win(0), cursor = lastPayload(w, 'cursor');
+    t.ok('macOS: point をそのまま使い、Retina でも二重に縮小しない', cursor?.x === 300 && cursor?.y === 150);
+    t.ok('macOS: 全画面の Space にも出す', w.workspaces?.flag && w.workspaces.visibleOnFullScreen);
+    t.ok('macOS: ⌘Esc と ⌃⌘Esc で止めるが、強制終了の ⌥⌘Esc は奪わない', h.shortcut.registered.has('Command+Escape') && h.shortcut.registered.has('Control+Command+Escape') && !h.shortcut.registered.has('Alt+Command+Escape'));
+    h.shortcut.registered.get('Command+Escape')?.();
+    await sleep(5);
+    t.ok('macOS: ⌘Esc が停止の処理を呼ぶ', h.escapes.includes('o1'));
+    h.overlay.close();
+  }
   // ---------------------------------------------------------------- 純粋な部品
   t.ok('cutTitle: 16 字まではそのまま、越えたら 16 字と …', cutTitle('あ'.repeat(16)) === 'あ'.repeat(16) && cutTitle('あ'.repeat(17)) === `${'あ'.repeat(16)}…`);
   t.ok('cutTitle: 改行・連続の空白は 1 つの空白にする。undefined は空', cutTitle('a\n  b') === 'a b' && cutTitle(undefined) === '');
@@ -489,7 +505,7 @@ export default async function (t) {
     // attach: worker のメッセージにつなぎ、終了で全部消す
     const fake = fakeElectron(), handlers = {}, sent = [];
     const worker = { on: (e, f) => { handlers[e] = f; }, once: (e, f) => { handlers[`once:${e}`] = f; }, postMessage: m => sent.push(m) };
-    const overlay = attachComputerOverlay(worker, { electron: fake.electron, t: tr, timing: FAST });
+    const overlay = attachComputerOverlay(worker, { electron: fake.electron, t: tr, timing: FAST, platform: 'win32' });
     handlers.message({ type: 'computer-arm', owner: 'o1' });
     handlers.message({ type: 'computer-overlay', owner: 'o1', state: 'activity', display: { id: 11, bounds: PHYS[11] }, agent: 'Claude', title: 'x' });
     await sleep(5);

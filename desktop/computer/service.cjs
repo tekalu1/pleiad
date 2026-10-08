@@ -33,19 +33,39 @@ function withPerMonitorDpi(win32) {
 }
 
 /**
+ * Windows の部品（input・capture・apps・desktop）を win32.cjs の表から作る。macOS の部品は mac.cjs の loadMac が同じ形で作る（ADR 0173）
+ * @returns {{ input, capture, apps, desktop, cursor(): { x, y }, listDisplays(): object[], selfElevated: boolean }}
+ */
+function createWin32Backend({ win32: rawWin32, nativeImage, escape, sleep, listStartApps, selfPid, selfExe, getDisplays }) {
+  const win32 = withPerMonitorDpi(rawWin32);
+  let selfElevated = false;
+  const backend = {
+    input: createInput({ win32, sleep, escape, virtualBounds: () => virtualBounds(getDisplays()) }),
+    capture: createCapture({ win32, nativeImage }),
+    apps: createApps({ win32, selfPid, selfExe, listStartApps, ...(sleep ? { sleep } : {}) }),
+    desktop: createDesktopState({ win32 }),
+    cursor: () => win32.cursor(),
+    listDisplays: () => listDisplays(win32),
+  };
+  try { selfElevated = !!win32.selfElevated(); } catch { /* 昇格していない扱い */ }
+  backend.selfElevated = selfElevated;
+  return backend;
+}
+
+/**
  * @param {object} deps
  * @param {(message: object) => void} deps.post core へ送る
- * @param {object|null} deps.win32 win32.cjs の表（偽物でもよい）。null なら unsupported
- * @param {string} [deps.reason] win32 が null のときの理由（platform / native）
+ * @param {object|null} deps.win32 win32.cjs の表（偽物でもよい）。null で backend も無ければ unsupported
+ * @param {object|null} [deps.backend] Windows 以外の部品（mac.cjs の loadMac の結果）。win32 より先に使う
+ * @param {string} [deps.reason] 部品が無いときの理由（platform / native）
  * @param {{ suspend(): () => void }|null} [deps.escape] Esc の globalShortcut を外す（オーバーレイの suspendEscape）。戻す関数を返す
  */
-function createComputerService({ post, win32: rawWin32 = null, reason = 'native', nativeImage = null, escape = null, sleep, listStartApps,
+function createComputerService({ post, win32: rawWin32 = null, backend: injectedBackend = null, reason = 'native', nativeImage = null, escape = null, sleep, listStartApps,
   selfPid, selfExe, now = Date.now, log = () => {}, timeouts = {} }) {
   const opTimeout = timeouts.op ?? OP_TIMEOUT_MS;
   const launchTimeout = timeouts.launch ?? LAUNCH_TIMEOUT_MS;
   const watchdogMs = timeouts.watchdog ?? WATCHDOG_MS;
-  const supported = !!rawWin32;
-  const win32 = supported ? withPerMonitorDpi(rawWin32) : null;
+  const supported = !!(injectedBackend || rawWin32);
   let displays = [];
   let displaysVersion = 1;
   let armedOwner = null;
@@ -56,21 +76,16 @@ function createComputerService({ post, win32: rawWin32 = null, reason = 'native'
   let lastSeen = now();
   let watchdogFired = false;
   let watchdogTimer = null;
-  let selfElevated = false;
 
-  let input, capture, apps, desktop;
-  if (supported) {
-    input = createInput({ win32, sleep, escape, virtualBounds: () => virtualBounds(displays) });
-    capture = createCapture({ win32, nativeImage });
-    apps = createApps({ win32, selfPid, selfExe, listStartApps, ...(sleep ? { sleep } : {}) });
-    desktop = createDesktopState({ win32 });
-    try { selfElevated = !!win32.selfElevated(); } catch { /* 昇格していない扱い */ }
-  }
+  const backend = !supported ? null : injectedBackend
+    ?? createWin32Backend({ win32: rawWin32, nativeImage, escape, sleep, listStartApps, selfPid, selfExe, getDisplays: () => displays });
+  const { input, capture, apps, desktop } = backend ?? {};
+  const selfElevated = !!backend?.selfElevated;
 
   let primed = false; // 最初の列挙は版を進めない
   function refreshDisplays(bump = false) {
     if (!supported) return false;
-    const next = listDisplays(win32);
+    const next = backend.listDisplays();
     const changed = primed && signature(next) !== signature(displays);
     displays = next;
     primed = true;
@@ -79,31 +94,34 @@ function createComputerService({ post, win32: rawWin32 = null, reason = 'native'
   }
 
   function releaseAll() {
+    // macOS はアプリの特定も非同期。入力を送り始める前の待ちも中断する。
+    if (backend?.platform === 'darwin') active?.controller.abort();
     if (!supported) return [];
     try { return input.releaseAll(); } catch (error) { log(`releaseAll failed: ${error.message}`); return []; }
   }
 
-  const ensureUnlocked = () => {
-    if (desktop.check().locked) throw new ComputerError('locked', 'the screen is locked or showing a secure desktop');
+  // Windows の部品は同期で答え、macOS の部品（ヘルパーに頼む）は Promise で答える。どちらも await で受ける
+  const ensureUnlocked = async () => {
+    if ((await desktop.check()).locked) throw new ComputerError('locked', 'the screen is locked or showing a secure desktop');
   };
 
   /** 入力の前に毎回: 昇格したアプリには届かない（uipi）、Pleiad 自身の窓にはキーを送らない（self）。離す動作は止めない */
-  function gate(action) {
+  async function gate(action) {
     if (action.type === 'keyUp' || action.type === 'up') return;
     let target;
     if (KEYBOARD.has(action.type)) {
-      target = apps.inspectForeground();
+      target = await apps.inspectForeground();
       if (target?.self) throw new ComputerError('self', 'the foreground window belongs to Pleiad');
     } else {
-      const point = action.type === 'drag' ? action.from : action.x !== undefined ? action : win32.cursor();
-      target = apps.inspectAt(point.x, point.y);
+      const point = action.type === 'drag' ? action.from : action.x !== undefined ? action : backend.cursor();
+      target = await apps.inspectAt(point.x, point.y);
     }
     if (target?.elevated && !selfElevated) throw new ComputerError('uipi', 'the target app runs with administrator rights and cannot receive input');
   }
 
   async function runInput(args, owner, signal) {
     if (stopped.has(owner)) throw new ComputerError('stopped', 'stopped by the user');
-    ensureUnlocked();
+    await ensureUnlocked();
     refreshDisplays();
     const actions = args?.actions;
     input.validate(actions, { inDisplay: (x, y) => containsPoint(displays, x, y) });
@@ -111,29 +129,30 @@ function createComputerService({ post, win32: rawWin32 = null, reason = 'native'
     try {
       for (const action of actions) {
         if (stopped.has(owner)) throw new ComputerError('stopped', 'stopped by the user');
-        gate(action);
+        await gate(action);
         await input.perform(action, signal);
         done++;
       }
     } catch (error) {
-      releaseAll(); // 途中で止まったときは、押したままにしない
+      // 中断済みの macOS の動作は、停止元で解放済み。後続の動作を解放し直さない。
+      if (!(backend?.platform === 'darwin' && signal.aborted)) releaseAll();
       error.done = done;
       throw error;
     }
-    return { done, cursor: win32.cursor() };
+    return { done, cursor: backend.cursor() };
   }
 
   async function runOp(op, args, owner, signal) {
     switch (op) {
       case 'displays': refreshDisplays(); return { displays, displaysVersion };
-      case 'screenshot': ensureUnlocked(); refreshDisplays(); return capture.screenshot(args ?? {}, { displays, displaysVersion });
+      case 'screenshot': await ensureUnlocked(); refreshDisplays(); return capture.screenshot(args ?? {}, { displays, displaysVersion });
       case 'appAt':
         if (!Number.isFinite(args?.x) || !Number.isFinite(args?.y)) throw new ComputerError('failed', 'x and y are required');
         return { app: await apps.appAt(args.x, args.y) };
       case 'foreground': return { app: await apps.foreground() };
       case 'findApp': return { apps: await apps.findApp(args?.name) };
       case 'input': return runInput(args, owner, signal);
-      case 'cursor': return win32.cursor();
+      case 'cursor': return backend.cursor();
       case 'launch': return apps.launch(args?.app);
       default: throw new ComputerError('failed', `unknown op: ${op}`);
     }
@@ -154,7 +173,8 @@ function createComputerService({ post, win32: rawWin32 = null, reason = 'native'
       if (error.code === 'timeout' && op === 'input') releaseAll();
       const known = error instanceof ComputerError;
       if (!known) log(`${op} failed: ${error.stack ?? error}`);
-      post({ type: 'computer-result', id, ok: false, error: { code: known ? error.code : 'failed', message: String(error.message ?? error), ...(error.done !== undefined ? { done: error.done } : {}) } });
+      post({ type: 'computer-result', id, ok: false, error: { code: known ? error.code : 'failed', message: String(error.message ?? error), ...(error.done !== undefined ? { done: error.done } : {}),
+        ...(known && error.permission ? { permission: error.permission } : {}) } });
     } finally {
       clearTimeout(timer);
       if (active?.controller === controller) active = null;
@@ -238,23 +258,24 @@ function createComputerService({ post, win32: rawWin32 = null, reason = 'native'
     armedOwner: () => armedOwner,
     startWatchdog,
     watchdogTick,
-    dispose() { clearInterval(watchdogTimer); watchdogTimer = null; releaseAll(); },
+    dispose() { clearInterval(watchdogTimer); watchdogTimer = null; releaseAll(); backend?.dispose?.(); },
     get supported() { return supported; },
   };
 }
 
 /**
- * desktop/main.cjs から 1 行でつなぐ。Windows 以外・koffi を読めないときは `computer-ready { supported: false, reason }` を返す。
+ * desktop/main.cjs からつなぐ。対応する backend が無いときは `computer-ready { supported: false, reason }` を返す。
+ * macOS は main が mac.cjs の loadMac で作った backend を渡す（ADR 0173）。
  * @param worker utilityProcess（core）
- * @param {{ electron?: { screen?, nativeImage? }, app?, escape?, log?, win32?, reason? }} [options] win32 は main が 1 回だけ読んで共有する表（Chrome の OS の層と共有。読めなかった理由は reason）。無ければここで読む
+ * @param {{ electron?: { screen?, nativeImage? }, app?, escape?, log?, win32?, backend?, reason? }} [options] win32 は main が 1 回だけ読んで共有する表（Chrome の OS の層と共有。読めなかった理由は reason）。無ければここで読む
  */
-function attachComputerService(worker, { electron = {}, app = null, escape = null, log = () => {}, win32: injected = null, reason: injectedReason = null, ...rest } = {}) {
+function attachComputerService(worker, { electron = {}, app = null, escape = null, log = () => {}, win32: injected = null, backend = null, reason: injectedReason = null, ...rest } = {}) {
   let win32 = injected, reason = injectedReason ?? 'native';
-  if (!win32 && !injectedReason) {
+  if (!win32 && !backend && !injectedReason) {
     try { win32 = loadWin32(); } catch (error) { reason = error.reason ?? 'native'; log(`computer use unavailable: ${error.message}`); }
   }
   const service = createComputerService({ post: message => { try { worker.postMessage(message); } catch (error) { log(`postMessage failed: ${error.message}`); } },
-    win32, reason, nativeImage: electron.nativeImage ?? null, escape, log, ...rest });
+    win32, backend, reason, nativeImage: electron.nativeImage ?? null, escape, log, ...rest });
   worker.on('message', message => { if (typeof message?.type === 'string' && message.type.startsWith('computer-')) service.handleMessage(message); });
   const screenEvents = ['display-added', 'display-removed', 'display-metrics-changed'];
   for (const event of screenEvents) electron.screen?.on(event, service.onDisplaysChanged);
@@ -267,4 +288,4 @@ function attachComputerService(worker, { electron = {}, app = null, escape = nul
   });
 }
 
-module.exports = { attachComputerService, createComputerService, withPerMonitorDpi, OP_TIMEOUT_MS, LAUNCH_TIMEOUT_MS, WATCHDOG_MS };
+module.exports = { attachComputerService, createComputerService, createWin32Backend, withPerMonitorDpi, OP_TIMEOUT_MS, LAUNCH_TIMEOUT_MS, WATCHDOG_MS };

@@ -1,6 +1,6 @@
 // 設定 › コンピューターの操作（docs/computer-use.md「設定と会話のデータ」、docs/design-system.md「設定 › コンピューターの操作」）。
 // 全体のスイッチ・すべてのアプリを許可・常に許可したアプリ（消せる）・操作できないアプリ（読み取りのみ）。
-// 保存は setPref { key: 'computerUse', value } に全体を渡す。使えない起動（Electron でない・Windows でない）ではスイッチを止めて理由を書く。
+// 保存は setPref { key: 'computerUse', value } に全体を渡す。使えない起動（Electron でない・対象外の OS）ではスイッチを止めて理由を書く。
 // wait_until の問い（決定モデル pplx-decider。ADR 0165）に使う OpenRouter のキーは、通話と同じ部品で選ぶ（setApiKeyUse の computer:decider）。選ぶまで画面は送らない。
 import { t } from './i18n.mjs';
 import { el, svgEl } from './dom.mjs';
@@ -16,9 +16,9 @@ function appIcon() {
   return svg;
 }
 
-/** 行に出す所在。パッケージアプリは AUMID（パスが無い） */
+/** 行に出す所在。パッケージアプリは AUMID（パスが無い）。macOS は .app のパスかバンドル ID */
 export function appLocation(row) {
-  return row.path || row.id.replace(/^(exe|aumid):/, '');
+  return row.path || row.id.replace(/^(exe|aumid|bundle):/, '');
 }
 
 function switchRow(id, label) {

@@ -113,6 +113,7 @@ export function appWhere(id) {
   const s = String(id ?? "");
   if (s.startsWith("exe:")) return s.slice(4);
   if (s.startsWith("aumid:")) return s.slice(6);
+  if (s.startsWith("bundle:")) return s.slice(7); // macOS のバンドル ID（ADR 0173）
   return "";
 }
 

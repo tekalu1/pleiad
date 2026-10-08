@@ -13,9 +13,10 @@ export const COMPUTER_MCP_PATH = '/mcp/computer';
 const DEFAULT_DELIVERY = Object.freeze({ images: 'inline', waitSliceMs: null });
 const TITLE_MAX = 80;
 
-/** ply_computer の instructions。画像をファイルでも渡すエージェント（images: path）には、ファイルを開いて見る指示を足す */
-export function computerInstructions(locale, delivery = DEFAULT_DELIVERY) {
-  return [agentT(locale, 'computer.instructions'), delivery.images === 'path' ? agentT(locale, 'computer.pathInstructions') : null].filter(Boolean).join('\n');
+/** ply_computer の instructions。画像をファイルでも渡すエージェント（images: path）には、ファイルを開いて見る指示を足す。macOS は別の文（ADR 0173 §4） */
+export function computerInstructions(locale, delivery = DEFAULT_DELIVERY, platform = process.platform) {
+  const base = platform === 'darwin' ? agentT(locale, 'computer.instructionsMac') : agentT(locale, 'computer.instructions');
+  return [base, delivery.images === 'path' ? agentT(locale, 'computer.pathInstructions') : null].filter(Boolean).join('\n');
 }
 
 const POINT_TOOLS = new Set(['mouse_move', 'left_click', 'right_click', 'middle_click', 'double_click', 'triple_click', 'left_mouse_down', 'left_mouse_up']);
@@ -43,10 +44,11 @@ const cleanTitle = value => (typeof value === 'string' && value.trim() ? value.t
  * @param askPermission server の承認の口（payload に computerApp を足せる）
  * @param translate server の t（承認カードの見出し）
  * @param decider wait_until の問いの口 { key(), ask? }（core/computer-use/actions.mjs）
+ * @param platform 操作する PC の OS（指示文・ツールの説明・⌘ の扱い。既定は process.platform）
  */
-export function createComputerBridge({ driver, lock, shots, access, askPermission, translate, decider }) {
+export function createComputerBridge({ driver, lock, shots, access, askPermission, translate, decider, platform = process.platform }) {
   const bindings = new Map();
-  const actions = createActions({ driver, shots, access, askPermission, translate, decider });
+  const actions = createActions({ driver, shots, access, askPermission, translate, decider, platform });
 
   const plain = (locale, text, isError = true) => ({ isError, content: [{ type: 'text', text }] });
 
@@ -127,7 +129,7 @@ export function createComputerBridge({ driver, lock, shots, access, askPermissio
       return {
         url: origin + COMPUTER_MCP_PATH,
         headers: { Authorization: `Bearer ${token}` },
-        instructions: computerInstructions(locale, d),
+        instructions: computerInstructions(locale, d, platform),
         close() { bindings.delete(token); for (const id of binding.turns) lock.endTurn(id); binding.turns.clear(); },
       };
     },
@@ -152,7 +154,7 @@ export function createComputerBridge({ driver, lock, shots, access, askPermissio
       let result;
       if (m.method === 'initialize') result = { protocolVersion: '2025-03-26', capabilities: { tools: {} }, serverInfo: { name: 'ply_computer', version: '1.0.0' } };  // instructions は systemPrompt の append だけで渡す（二重にしない。ADR 0169）
       else if (m.method === 'ping') result = {};
-      else if (m.method === 'tools/list') result = { tools: computerTools(locale) };
+      else if (m.method === 'tools/list') result = { tools: computerTools(locale, platform) };
       else if (m.method === 'tools/call') {
         const args = m.params?.arguments ?? {};
         // 知らない引数は無視する（失敗にしない）。引数の形が object でなければ断る

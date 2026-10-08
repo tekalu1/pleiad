@@ -26,6 +26,8 @@ const { prepareAgentBrowserBin } = require('./agent-browser-bin.cjs');
 // コンピューターの操作（Windows）の Win32 の層: 撮影・入力・アプリの特定（docs/computer-use.md、desktop/computer/service.cjs）
 const { attachComputerService, withPerMonitorDpi } = require('./computer/service.cjs');
 const { loadWin32 } = require('./computer/win32.cjs');
+// macOS の層（Swift のヘルパーに頼む。ADR 0173）
+const { loadMac } = require('./computer/mac.cjs');
 // Chrome への接続（エージェントのブラウザー）の OS の層: 確認の窓を見つけて前に出す・閉じる（docs/inapp-browser.md「OS ごとの層」、ADR 0153）
 const { createChromeOs, attachChromeOs } = require('./chrome-os/index.cjs');
 const { attachChromePill } = require('./chrome-pill.cjs');
@@ -258,8 +260,16 @@ async function boot() {
   // koffi（Win32）は 1 回だけ読み、コンピューターの操作と Chrome の OS の層で共有する。読めなかったら両方とも unsupported
   let win32 = null, win32Reason = 'native';
   try { win32 = loadWin32(); } catch (error) { win32Reason = error.reason ?? 'native'; if (win32Reason !== 'platform') console.warn('[computer]', `win32 unavailable: ${error.message}`); }
-  computerService = attachComputerService(messages, { electron: { screen, nativeImage }, app, log: line => console.warn('[computer]', line), win32, reason: win32Reason,
-    escape: { suspend: () => computerOverlay?.suspendEscape() ?? (() => {}) } });
+  const computerEscape = { suspend: () => computerOverlay?.suspendEscape() ?? (() => {}) };
+  // macOS はヘルパー（Contents/Helpers/pleiad-computer-helper）の backend を渡す。見つからなければ unsupported（理由は native）
+  let macBackend = null, computerReason = win32Reason;
+  if (process.platform === 'darwin') {
+    try {
+      macBackend = loadMac({ screen, openExternal: url => shell.openExternal(url), escape: computerEscape, isPackaged: app.isPackaged, log: line => console.warn('[computer]', line) });
+    } catch (error) { computerReason = error.reason ?? 'native'; console.warn('[computer]', `mac helper unavailable: ${error.message}`); }
+  }
+  computerService = attachComputerService(messages, { electron: { screen, nativeImage }, app, log: line => console.warn('[computer]', line), win32, backend: macBackend, reason: computerReason,
+    escape: computerEscape });
   chromeOs = createChromeOs({ platform: process.platform, win32: win32 ? withPerMonitorDpi(win32) : null, reason: win32Reason, log: line => console.warn('[chrome-os]', line),
     pointToDip: point => screen.screenToDipPoint(point),
     appHwnd: () => { const w = window; return w && !w.isDestroyed() ? Number(w.getNativeWindowHandle().readBigUInt64LE()) : 0; } });

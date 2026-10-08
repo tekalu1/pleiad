@@ -2,6 +2,7 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+  <!-- computer use の画面収録・アクセシビリティは利用者の TCC 許可を使う。App Sandbox は有効にせず、追加の entitlement は不要（ADR 0173） -->
   <!-- electron-builder の既定の entitlement（Electron の実行に要る）に、通話モードのマイクを足したもの -->
   <key>com.apple.security.cs.allow-jit</key>
   <true/>

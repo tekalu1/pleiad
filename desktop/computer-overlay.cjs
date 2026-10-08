@@ -10,6 +10,7 @@
 //   - 物理の Esc … 操作中（active）の間だけ globalShortcut を持つ。「使用中」の間は持たない（長く続くので、人の Esc を奪わない）。
 //     拾ったら onEscape（A: 押したままの入力を離す）→ 止めました → computer-escape
 // オーバーレイの窓だけを setContentProtection(true) で撮影から外す。Pleiad 本体の窓には掛けない（契約）。
+// macOS（ADR 0173 §10）: 座標は point のまま（DIP = point）。全画面の Space にも出す。Esc に ⌘Esc も足す（⌥⌘Esc は強制終了なので奪わない）。
 const path = require('node:path');
 
 // idleMs: 最後の操作からフェードまで。stopMs: 「止めました」を残す時間（tailMs はその後のピルのフェード）。exitMs / rmExitMs: 縁の引き（描画側の値と揃える）。
@@ -38,11 +39,13 @@ function agentLabel(agent) {
  * @param {(owner: string|null) => any} [options.onEscape]  物理の Esc を拾った。押したままの入力を離し、以後の input を stopped にする（desktop/computer の担当）
  * @param {() => boolean|undefined} [options.reducedMotion]  true / false で描画側の判定を上書き（確認用）。undefined なら描画側が OS の設定を読む
  * @param {boolean} [options.contentProtection]  オーバーレイの窓を撮影から外す（既定 true。確認で写したいときだけ false）
+ * @param {string} [options.platform]  process.platform（試験で差し替える）
  */
-function createComputerOverlay({ electron, post, t, onEscape, reducedMotion, contentProtection = true, timing, log = (...args) => console.warn('[computer-overlay]', ...args),
+function createComputerOverlay({ electron, post, t, onEscape, reducedMotion, contentProtection = true, timing, platform = process.platform, log = (...args) => console.warn('[computer-overlay]', ...args),
   page = path.join(__dirname, 'computer-overlay.html'), preload = path.join(__dirname, 'computer-overlay-preload.cjs') }) {
   const { BrowserWindow, globalShortcut, screen } = electron;
   const T = { ...TIMING, ...timing };
+  const mac = platform === 'darwin';
   let handler = onEscape;
   let armed; // undefined = まだ便りが無い / null = 持ち主なし / 文字列 = 持ち主
   // 今見えている（か、消えつつある）操作 { owner, entry, agent, title, phase, escOk, timers }。
@@ -67,6 +70,7 @@ function createComputerOverlay({ electron, post, t, onEscape, reducedMotion, con
     });
     const entry = { display, win, loaded: false, queue: [], destroyTimer: null };
     win.setAlwaysOnTop(true, 'screen-saver');
+    if (mac) win.setVisibleOnAllWorkspaces?.(true, { visibleOnFullScreen: true }); // 全画面のアプリの Space でも縁を出す
     win.setIgnoreMouseEvents(true);
     if (contentProtection) win.setContentProtection(true);
     win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
@@ -128,7 +132,7 @@ function createComputerOverlay({ electron, post, t, onEscape, reducedMotion, con
     if (spec && typeof spec === 'object' && spec.bounds) {
       const cx = spec.bounds.x + spec.bounds.width / 2, cy = spec.bounds.y + spec.bounds.height / 2;
       for (const d of all) {
-        const r = screen.dipToScreenRect(null, d.bounds);
+        const r = mac ? d.bounds : screen.dipToScreenRect(null, d.bounds); // macOS は core の座標も point
         if (cx >= r.x && cx < r.x + r.width && cy >= r.y && cy < r.y + r.height) return d;
       }
     }
@@ -139,7 +143,7 @@ function createComputerOverlay({ electron, post, t, onEscape, reducedMotion, con
 
   /** 物理の仮想デスクトップ座標 → その窓の中の DIP */
   function toLocal(entry, point) {
-    const dip = screen.screenToDipPoint ? screen.screenToDipPoint({ x: point.x, y: point.y }) : { x: point.x / (entry.display.scaleFactor || 1), y: point.y / (entry.display.scaleFactor || 1) };
+    const dip = mac ? point : screen.screenToDipPoint ? screen.screenToDipPoint({ x: point.x, y: point.y }) : { x: point.x / (entry.display.scaleFactor || 1), y: point.y / (entry.display.scaleFactor || 1) };
     return { x: dip.x - entry.display.bounds.x, y: dip.y - entry.display.bounds.y };
   }
 
@@ -147,7 +151,10 @@ function createComputerOverlay({ electron, post, t, onEscape, reducedMotion, con
   // RegisterHotKey は修飾キーまで一致しないと反応しない。エージェントが Shift・Ctrl・Alt を押したままにしている最中（hold_key・keyDown）は
   // 素の Esc が合わず、止めたいときに限って止まらない（2026-10-01 に本物で確認）。修飾キーつきの Esc も同じ手で握る。
   // Ctrl+Shift+Esc はタスクマネージャーの起動なので奪わない
-  const ESC_WITH_MODIFIERS = ['Shift+Escape', 'Control+Escape', 'Alt+Escape', 'Control+Alt+Escape', 'Alt+Shift+Escape'];
+  const ESC_WITH_MODIFIERS = mac
+    ? ['Shift+Escape', 'Control+Escape', 'Alt+Escape', 'Control+Alt+Escape', 'Alt+Shift+Escape', 'Control+Shift+Escape', 'Control+Alt+Shift+Escape',
+      'Command+Escape', 'Command+Shift+Escape', 'Control+Command+Escape', 'Control+Command+Shift+Escape']
+    : ['Shift+Escape', 'Control+Escape', 'Alt+Escape', 'Control+Alt+Escape', 'Alt+Shift+Escape'];
   const extraEsc = new Set();
   function onKey() {
     if (!cur || cur.phase !== 'active') return;

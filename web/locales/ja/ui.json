@@ -328,7 +328,7 @@
       },
       "unsupported": {
         "desktop": "デスクトップ版の Pleiad で使えます。この起動では PC のアプリを操作できません。",
-        "platform": "Windows の PC でだけ使えます。",
+        "platform": "Windows または macOS 14 以上の PC で使えます。",
         "native": "この PC では画面を操作する部品を読み込めませんでした。Pleiad を入れ直すと直ることがあります。"
       },
       "saveFailed": "保存できませんでした: {{error}}"

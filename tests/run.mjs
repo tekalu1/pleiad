@@ -55,6 +55,8 @@ const SUITES = [
   './unit/computer-overlay.mjs',
   // computer use の main 側（desktop/computer/*）: キーの解釈・SendInput の中身・releaseAll・撮影の縮小・アプリの特定・service の列と止め方（偽の Win32。本物の入力は送らない）
   './unit/computer-native.mjs',
+  // macOS のヘルパー通信・座標・入力の中断・platform の分岐（本物の OS 入力は送らない）
+  './unit/computer-mac.mjs',
   './unit/header-entries.mjs',
   './unit/arc.mjs',
   // 会話別の agent-browser の設定ファイル・環境変数・指示（Chrome の中継の形の偽物。各 backend へ届く）

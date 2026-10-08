@@ -1,12 +1,12 @@
-# コンピューターの操作（Windows）
+# コンピューターの操作（Windows・macOS）
 
-エージェントが Windows の画面を撮り、マウスとキーボードで PC のアプリを操作する（[ADR 0070](adr/0070-computer-use-via-ply-computer-mcp.md)）。対象は Claude・Codex・Antigravity の 3 つで、どれにも Pleiad の MCP サーバー `ply_computer` を渡す。承認・止める・会話の中のスクリーンショット・設定は 3 つで同じにする。
+エージェントが PC の画面を撮り、マウスとキーボードで PC のアプリを操作する（[ADR 0070](adr/0070-computer-use-via-ply-computer-mcp.md)）。対象は Claude・Codex・Antigravity の 3 つで、どれにも Pleiad の MCP サーバー `ply_computer` を渡す。承認・止める・会話の中のスクリーンショット・設定は 3 つで同じにする。
 
-状態: 実装済み（2026-10-01）。第 1 段階はデスクトップ版の Windows だけ。ウィンドウ単位の撮影・背面での操作・クリップボード・OCR は第 2 段階。
+状態: Windows は実装済み（2026-10-01）。macOS 14 以上の層を追加（[ADR 0173](adr/0173-computer-use-macos.md)）。Mac 実機では未確認。ウィンドウ単位の撮影・背面での操作・クリップボード・OCR は第 2 段階。
 
 ## 使い方
 
-- **できること**: 会話の中でエージェントが Windows の画面を撮り、マウスとキーボードでアプリを操作する。使えるのは Windows のデスクトップ版だけ。macOS・Linux・`npm start` の起動では、設定のスイッチが止まり、使えない理由が出る。
+- **できること**: 会話の中でエージェントが PC の画面を撮り、マウスとキーボードでアプリを操作する。Windows・macOS 14 以上のデスクトップ版で使える。macOS 13 以前・Linux・`npm start` の起動では、設定のスイッチが止まり、使えない理由が出る。
 - **設定の場所**: 設定 › コンピューターの操作。全体のスイッチ（既定はオン）、すべてのアプリを許可、常に許可したアプリの一覧（ここから消せる）、操作できないアプリの一覧（読み取りのみ）がある。
 - **承認**: エージェントが初めてそのアプリを操作するとき、入力欄の上にカードが出る。「常に許可」「この会話で許可」「拒否」から選ぶ（拒否はそのターンの間だけ覚える）。ターミナル・パスワード管理・セキュリティソフトなどは承認の設定にかかわらず操作できない。
 - **確認なしの会話**: Claude の bypass・Codex の yolo の会話では承認を聞かずに操作する（操作できないアプリを除く）。Antigravity は確認なしでしか動かないため、同じく承認を聞かない。
@@ -15,6 +15,34 @@
 - **同時に操作できる会話は 1 つ**。別の会話が操作中のときは終わるまで待つ。撮った画面は会話の中に小さな画像で残る。
 
 Windows の arm64 は実機で未確認。ワークフローで arm64 の koffi の本体を入れて作るが、読めるかは確かめていない（読めなければ設定に「この PC では画面を操作する部品を読み込めませんでした。」と出て、アプリは動く）。
+
+## macOS
+
+**macOS 14（Sonoma）以上が必要です。Intel / Apple Silicon に対応する構成ですが、Mac 実機での撮影・入力はまだ確認していません。** macOS 13 以前ではコンピューターの操作を利用できません。古い Intel Mac は「この Mac について」で OS の版を先に確かめてください。
+
+### 初めて使うとき
+
+1. 設定 › コンピューターの操作をオンにし、会話で画面の撮影を頼む。
+2. 許可を求められたら、システム設定 › プライバシーとセキュリティ › 画面収録（OS により「画面とシステムオーディオ録音」）で Pleiad を許可する。許可は利用者が操作する。
+3. アプリの操作を頼み、同じく「アクセシビリティ」で Pleiad を許可する。反映されなければ Pleiad を終了して起動し直し、再度撮影から頼む。
+
+アプリごとの承認は TCC の許可とは別です。テキストエディットなどを「この会話で許可」して操作を試せます。⌘ のショートカットは `cmd+s` などで指定します。
+
+### 制限と実機で確かめること
+
+- まずテキストエディットの新規文書で、撮影 → クリック → 日本語入力 → 選択・スクロールを試す。JIS / US 配列と日本語の入力ソースの復元は未確認。
+- 操作中に Esc と会話の「止める」を試し、押したままのキー・ボタンが離れること、続きの入力が送られないことを確認する。全画面の Space でも枠が見え、撮影には枠が入らないことも未確認。
+- Retina の zoom と、倍率の異なる複数画面（左・上に配置した画面を含む）で、撮影位置とクリック位置が合うことを確認する。画面をつなぎ直した後は再撮影する。
+- 画面ロック中は `locked`、安全な入力が有効なパスワード欄などでは `secure_input` で入力を断る。ターミナル・キーチェーン・スクリプトエディタ等は禁止。Spotlight・強制終了・ロック・ログアウトのキーも送れない。
+- DRM などで保護された内容は黒くなることがある。ウィンドウ単位の撮影と背面操作には対応しない。8GB の Intel Mac での速度・メモリ使用量は未測定。
+
+### ビルド・署名・許可の維持
+
+Mac の Xcode 16.4 で `node scripts/build-computer-mac.cjs` を実行すると、x86_64 + arm64 のヘルパーを作る。`npm run desktop:pack` / `desktop:dist` でも `beforePack` が自動実行する。ヘルパーは `Pleiad.app/Contents/Helpers/pleiad-computer-helper` に入り、Pleiad と同じ Developer ID / Team ID で署名する。画面収録・アクセシビリティに専用の entitlement は追加しない（App Sandbox は使わない）。配置と署名の根拠は [ADR 0173](adr/0173-computer-use-macos.md#参照) を参照。
+
+TCC はコード署名に結び付く。同じ署名要件を維持する配布版では許可の引き継ぎを想定するが、署名済み版の初回許可・更新後の許可維持・TCC に表示される名前は実機で確認が必要。未署名・ad-hoc 署名の開発版は再ビルドで許可が外れることがある。システム設定で該当項目を外して登録し直す。ソース起動では Electron または起動元のターミナルに許可が付く場合もある。
+
+Windows で試験するのは JSON 行・座標・エラー・OS 分岐・入力の中断と Foundation の共通部分。`.github/workflows/computer-mac-helper.yml` は macos-15 で専用 API のコンパイルと universal の検証を行う。CI の追加は実機で動作確認済みであることを意味しない。
 
 ## 仕組み
 
@@ -49,7 +77,7 @@ Windows の arm64 は実機で未確認。ワークフローで arm64 の koffi 
 
 ### core と main（main への口）
 
-`browser-load-policy` などと同じく `{ type, … }` の JSON を `parentPort.postMessage` で送る（core は `process.parentPort` を直に触らず、`core/main-port.mjs` の「main への口」を通す。口は、`utilityProcess` のサーバー（`AGENT_HOST_HANDOVER=off`・開発）では parentPort をそのまま包んだもの、パッケージ版の既定（無停止の更新）では名前付きパイプ（`core/main-link.mjs`。型は同じで、`Uint8Array` は `{ $bin: base64 }` に包んで運ぶ））。画像は `Uint8Array`（構造化複製で通る）。座標はすべて**物理画素の仮想デスクトップ座標**（左上のモニターが負になりうる）。DIP に直すのはオーバーレイに描くときの main だけ。
+`browser-load-policy` などと同じく `{ type, … }` の JSON を `parentPort.postMessage` で送る（core は `process.parentPort` を直に触らず、`core/main-port.mjs` の「main への口」を通す。口は、`utilityProcess` のサーバー（`AGENT_HOST_HANDOVER=off`・開発）では parentPort をそのまま包んだもの、パッケージ版の既定（無停止の更新）では名前付きパイプ（`core/main-link.mjs`。型は同じで、`Uint8Array` は `{ $bin: base64 }` に包んで運ぶ））。画像は `Uint8Array`（構造化複製で通る）。座標は Windows では**物理画素の仮想デスクトップ座標**、macOS では **CoreGraphics のグローバル座標（point）**。主画面の左や上は負になりうる。以下の表の「物理」はこの OS ごとの単位を指す。モデルが渡す座標は両 OS とも画像の画素。
 
 **main が居ない間**（更新で main が入れ替わる間・main が落ちた間。パイプの口だけ。無停止の更新 段階 1）: core は main の切断を Esc と同じに扱い、使用を止める（持ち主のロックを解き、進行中の呼び出しは `ComputerError('failed', …)` で返る）。ツールには「Pleiad の更新中のため止めました」を返し、ターンは止めない（`computer.state` は `stopped`・reason `update`）。戻った main には止めたことを送り直さず、次の呼び出しで承認からやり直す。`computer-ready-request` は main がつながるたびに送り直す（パイプでは main が後からつながるので、起動時の 1 回では捨てられる）。main の `releaseAll`・オーバーレイの `hideAll` は、つながりが切れるたび（`exit`）に走る。
 
@@ -58,7 +86,7 @@ Windows の arm64 は実機で未確認。ワークフローで arm64 の koffi 
 | 向き | type | 中身 |
 |---|---|---|
 | core→main | `computer-ready-request` | `{}`。core の起動時に 1 回 |
-| main→core | `computer-ready` | `{ supported, reason?, displays, displaysVersion }`。`reason` は `platform`（Windows でない）/ `native`（koffi を読めない）。core が作り直されたときもこれで始まる |
+| main→core | `computer-ready` | `{ supported, reason?, displays, displaysVersion }`。`reason` は `platform`（対象外の OS）/ `native`（Win32 の部品・macOS ヘルパーを読めない）。core が作り直されたときもこれで始まる |
 | core→main | `computer-call` | `{ id, owner, op, args }`（op は下の表） |
 | main→core | `computer-result` | `{ id, ok: true, data }` か `{ id, ok: false, error: { code, message } }` |
 | main→core | `computer-displays-changed` | `{ displays, displaysVersion }`。`screen` の `display-added` / `display-removed` / `display-metrics-changed` で版を 1 進める |
@@ -79,18 +107,19 @@ Windows の arm64 は実機で未確認。ワークフローで arm64 の koffi 
 | `screenshot` | `{ display, maxPixels, maxEdge, quality, region?, upscale?, gray? }`。`region` は物理の `{ x, y, width, height }`（zoom のとき）。`display` は `displays` の `id`（`index` はモデルに見せる番号にだけ使う）。`gray: true` は `wait_until` の比べるコマ | `{ jpeg: Uint8Array, width, height, scale, origin: { x, y }, displaysVersion }`。`scale` は「画像の画素 / 物理画素」、`origin` は撮った範囲の左上（物理）。`gray` のときは `jpeg` の代わりに `gray: Uint8Array`（明るさ。1 画素 1 バイト、行の順） |
 | `appAt` | `{ x, y }` | `{ app: AppInfo \| null }`（点の下の窓の最上位の窓） |
 | `foreground` | — | `{ app: AppInfo \| null }` |
-| `findApp` | `{ name }`（表示名・exe 名・AUMID） | `{ apps: AppInfo[] }`（動いているものとスタートメニューのアプリから。一致の強い順） |
+| `findApp` | `{ name }`（表示名・exe / .app 名・AUMID / バンドル ID） | `{ apps: AppInfo[] }`（動いているものとインストール済みのアプリから。一致の強い順） |
 | `input` | `{ actions: InputAction[] }` | `{ done, cursor: { x, y } }`。`done` は終えた動作の数 |
 | `cursor` | — | `{ x, y }` |
-| `launch` | `{ app: AppInfo }` | `{ started, alreadyRunning, app }`。`shell:AppsFolder\<AUMID>` か exe のパスを ShellExecute で起こす。引数は渡さない |
+| `launch` | `{ app: AppInfo }` | `{ started, alreadyRunning, app }`。Windows は `shell:AppsFolder\<AUMID>` か exe を ShellExecute で、macOS は .app を NSWorkspace で起こす。引数は渡さない |
 | `releaseAll` | — | `{ released: string[] }` |
 
-`AppInfo` は `{ id, kind: 'exe' | 'aumid', name, path?, aumid?, pid?, elevated, self }`。
+`AppInfo` は `{ id, kind: 'exe' | 'aumid' | 'bundle', name, path?, aumid?, bundleId?, pid?, elevated, self }`。
 
-- `id` は `aumid:<AUMID>`（パッケージアプリ）か `exe:<フルパスを小文字にして \ を / にしたもの>`。表示名は id に入れない。
-- `name` は版の情報の FileDescription。無ければ窓のタイトル、それも無ければ exe 名。
-- `elevated` は対象のプロセスが昇格しているか（`OpenProcessToken` + `TokenElevation`）。
-- `self` は Pleiad 自身（`process.execPath` の exe か、Pleiad の PID の子孫）。
+- Windows の `id` は `aumid:<AUMID>`（パッケージアプリ）か `exe:<フルパスを小文字にして \ を / にしたもの>`。表示名は id に入れない。
+- Windows の `name` は版の情報の FileDescription。無ければ窓のタイトル、それも無ければ exe 名。
+- `elevated` は Windows の対象のプロセスが昇格しているか（`OpenProcessToken` + `TokenElevation`）。macOS は false。
+- `self` は Pleiad 自身。Windows は同じ exe か PID の子孫、macOS は同じ PID・.app 内・バンドル ID で判定。
+- macOS の `id` は `bundle:<バンドル ID>`、バンドルが無ければ `exe:<パス>`。`name` は NSWorkspace の表示名、`path` は .app または実行ファイル。
 
 `InputAction`（座標は物理。`modifiers` は `['ctrl', 'shift']` の形）:
 
@@ -101,7 +130,7 @@ Windows の arm64 は実機で未確認。ワークフローで arm64 の koffi 
 | `down` / `up` | `x?, y?, button` |
 | `drag` | `from: { x, y }, to: { x, y }` |
 | `scroll` | `x, y, direction: 'up'\|'down'\|'left'\|'right', amount` |
-| `text` | `text`（KEYEVENTF_UNICODE） |
+| `text` | `text`（Windows: KEYEVENTF_UNICODE、macOS: CGEvent の Unicode） |
 | `key` | `combo`（xdotool の形。`ctrl+s`・`Return`・`F5`）, `repeat?` |
 | `keyDown` / `keyUp` | `combo`（`hold_key` の押す・離す） |
 
@@ -109,16 +138,19 @@ Windows の arm64 は実機で未確認。ワークフローで arm64 の koffi 
 
 | code | いつ |
 |---|---|
-| `locked` | 入力デスクトップが `Default` でない（ロック中か UAC の安全なデスクトップ）。`screenshot` と `input` の前に main が毎回見る |
+| `locked` | Windows は入力デスクトップが `Default` でない場合。macOS はロック中かコンソールのセッションでない場合。`screenshot` と `input` の前に main が毎回見る |
 | `uipi` | 対象（点の下か前面）のプロセスが昇格していて、入力が届かない |
 | `self` | 前面が Pleiad 自身なのに `text` / `key` を送ろうとした（禁止の判定と二重に守る） |
-| `windows_key` | `combo` に `super` / `win` / `meta` がある |
+| `windows_key` | Windows で `combo` に `super` / `win` / `meta` がある |
 | `stopped` | Esc か `computer-stop` の後、同じ `owner` の `input` が来た。次の `computer-arm` か `computer-turn-ended` まで続く |
 | `outside` | 座標がどのディスプレイにも入らない |
 | `not_found` | `launch` の対象が無い |
 | `timeout` | 操作の上限時間（10 秒、`launch` は 15 秒）を過ぎた |
+| `permission` | macOS の TCC 許可が無い。追加の `permission` は `screen` / `accessibility` |
+| `secure_input` | macOS の安全な入力が有効で、キーや文字を送れない |
+| `system_key` | Spotlight・強制終了・ロック・ログアウトのキー |
 | `unsupported` | `computer-ready` の `supported: false` の後の呼び出し |
-| `failed` | 上のどれでもない失敗（`message` に Win32 のエラー） |
+| `failed` | 上のどれでもない失敗（`message` に OS / ヘルパーのエラー） |
 
 main の約束:
 

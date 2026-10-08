@@ -65,11 +65,15 @@ const batchItem = () => {
 
 export const COMPUTER_TOOL_NAMES = [...Object.keys(SPECS), 'computer_batch'];
 
+// macOS で説明を差し替えるツール（⌘ を使える。ADR 0173 §4）
+const MAC_DESCRIPTIONS = new Set(['left_click', 'right_click', 'key', 'open_application', 'request_access']);
+
 /** ツールの定義。名前と引数（inputSchema）は言語に依らず、説明だけ会話の言語。title は全部のツールにあり、スキーマでは必須 */
-export function computerTools(locale) {
+export function computerTools(locale, platform = process.platform) {
   // i18n-dynamic: agent:computer.tools.
+  // i18n-dynamic: agent:computer.toolsMac.
   const title = { type: 'string', description: agentT(locale, 'computer.title') };
-  const one = (name, spec) => ({ name, description: agentT(locale, `computer.tools.${name}`),
+  const one = (name, spec) => ({ name, description: agentT(locale, platform === 'darwin' && MAC_DESCRIPTIONS.has(name) ? `computer.toolsMac.${name}` : `computer.tools.${name}`),
     inputSchema: { type: 'object', properties: { title, ...spec.props }, required: ['title', ...spec.required] } });
   return [
     ...Object.entries(SPECS).map(([name, spec]) => one(name, spec)),

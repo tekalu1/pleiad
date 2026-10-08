@@ -55,7 +55,12 @@ export function parentPortComputer(port, { timeoutMs = CALL_TIMEOUT_MS, launchTi
         if (!item) break;
         pending.delete(message.id); clearTimeout(item.timer);
         if (message.ok) item.resolve(message.data);
-        else item.reject(new ComputerError(message.error?.code ?? 'failed', message.error?.message));
+        else {
+          const error = new ComputerError(message.error?.code ?? 'failed', message.error?.message);
+          // macOS の許可（TCC）が無い: どの許可か（screen / accessibility。ADR 0173 §6）
+          if (typeof message.error?.permission === 'string') error.permission = message.error.permission;
+          item.reject(error);
+        }
         break;
       }
       default:

@@ -19,15 +19,19 @@ export class ToolFail extends Error {
 const fail = (reason, params) => { throw new ToolFail(reason, params); };
 
 const MODIFIERS = new Set(['ctrl', 'shift', 'alt']);
+// macOS は ⌘ を使う（ADR 0173 §4）。OS の機能を呼ぶ組み合わせ（Spotlight など）は main が system_key で拒む
+const MAC_MODIFIERS = new Set([...MODIFIERS, 'cmd', 'command']);
 const WINDOWS_KEY = /(^|[+\s,])(super|win|windows|meta|cmd|command)([+\s,]|$)/i;
 const num = v => typeof v === 'number' && Number.isFinite(v);
+// main が返す契約の code のうち、そのまま reason にするもの（permission・secure_input・system_key は macOS だけが返す）
+const PASS_CODES = new Set(['locked', 'uipi', 'self', 'windows_key', 'outside', 'not_found', 'timeout', 'unsupported', 'permission', 'secure_input', 'system_key']);
 
-/** text の修飾キー（ctrl / shift / alt。"ctrl+shift" の形も受ける）。不正なら invalid */
-function modifiers(text) {
+/** text の修飾キー（ctrl / shift / alt。macOS は cmd も。"ctrl+shift" の形も受ける）。不正なら invalid */
+function modifiers(text, allowed = MODIFIERS) {
   if (text === undefined || text === null || text === '') return undefined;
   if (typeof text !== 'string') fail('invalid');
   const list = text.toLowerCase().split(/[+\s,]+/).filter(Boolean);
-  if (!list.length || !list.every(m => MODIFIERS.has(m))) fail('invalid');
+  if (!list.length || !list.every(m => allowed.has(m))) fail('invalid');
   return [...new Set(list)];
 }
 
@@ -38,8 +42,10 @@ function modifiers(text) {
  * @param askPermission server の askPermission
  * @param translate server の t（承認カードの見出し）
  * @param decider wait_until の問いの口 { key(): 選んだキーか null, ask: askDecider と同じ形 }（core/computer-use/decider.mjs）
+ * @param platform 操作する PC の OS（process.platform）。darwin では ⌘ を通す
  */
-export function createActions({ driver, shots, access, askPermission, translate, decider = {} }) {
+export function createActions({ driver, shots, access, askPermission, translate, decider = {}, platform = process.platform }) {
+  const mac = platform === 'darwin';
   const sleep = ms => new Promise(r => setTimeout(r, ms));
   const deciderKey = decider.key ?? (async () => null);
   const askDecision = decider.ask ?? askDecider;
@@ -65,7 +71,8 @@ export function createActions({ driver, shots, access, askPermission, translate,
       if (e.code === 'stopped') { ctx.t.stopped ??= { reason: 'escape', at: Date.now() }; fail(ctx.t.stopped.reason); }
       // main が居ない（Pleiad の更新中）。Esc と同じに、このターンの操作を止める（core/computer-use/lock.mjs の stopAll と同じ印）
       if (e.code === 'away') { ctx.t.stopped ??= { reason: 'update', at: Date.now() }; fail(ctx.t.stopped.reason); }
-      if (['locked', 'uipi', 'self', 'windows_key', 'outside', 'not_found', 'timeout', 'unsupported'].includes(e.code)) fail(e.code, { message: e.message });
+      if (e.code === 'permission') fail('permission', { what: L(ctx, e.permission === 'accessibility' ? 'permissionNames.accessibility' : 'permissionNames.screen') });
+      if (PASS_CODES.has(e.code)) fail(e.code, { message: e.message });
       fail('failed', { message: e.message });
     }
   }
@@ -446,7 +453,7 @@ export function createActions({ driver, shots, access, askPermission, translate,
   /** マウスの動作。coordinate を省くと今のカーソルの位置 */
   async function pointer(ctx, args, action, doneKey, { required = false } = {}) {
     const p = physicalOf(ctx, args.coordinate, { optional: !required });
-    const mods = action.type === 'click' ? modifiers(args.text) : undefined;
+    const mods = action.type === 'click' ? modifiers(args.text, mac ? MAC_MODIFIERS : MODIFIERS) : undefined;
     const at = p ?? await cursorPoint(ctx);
     const { app, grant } = await authorizeAt(ctx, at);
     const send = { ...action, ...(p ? { x: p.x, y: p.y } : {}), ...(mods ? { modifiers: mods } : {}) };
@@ -459,7 +466,7 @@ export function createActions({ driver, shots, access, askPermission, translate,
 
   function keyCombo(text) {
     if (typeof text !== 'string' || !text.trim() || text.length > 200 || /[\r\n]/.test(text)) fail('invalid');
-    if (WINDOWS_KEY.test(text)) fail('windows_key');
+    if (!mac && WINDOWS_KEY.test(text)) fail('windows_key');
     return text.trim();
   }
 
@@ -509,5 +516,6 @@ export function createActions({ driver, shots, access, askPermission, translate,
 /** id から作る名前（exe のファイル名・AUMID）。名前が分からないとき（list_granted_applications）のため */
 function idToName(id) {
   if (String(id).startsWith('exe:')) return String(id).slice(4).split('/').pop();
+  if (String(id).startsWith('bundle:')) return String(id).slice(7);
   return String(id).replace(/^aumid:/, '').split('!')[0];
 }
