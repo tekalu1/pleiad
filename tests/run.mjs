@@ -80,6 +80,8 @@ const SUITES = [
   './unit/chrome-os-link.mjs',
   // Chrome への ws を保持役の子が持つ（接続の子。パイプ・引き継ぎ・つなぎ手が居ない間・許可待ちの続き・版。ADR 0167）
   './unit/chrome-link.mjs',
+  // 接続の子から引き継ぐ Chrome への接続（入れ替わりで確認が出ない・確認待ちの続き・異常終了・接続の子が居ないとき。ADR 0167）
+  './unit/chrome-link-adopt.mjs',
   // 設定 › ブラウザー › エージェントのブラウザー: 状態ごとの字とボタン・使えない環境（DOM の代役）
   './unit/chrome-settings.mjs',
   './unit/browser-confirm.mjs',

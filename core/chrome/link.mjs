@@ -120,7 +120,12 @@ class ChromeLink {
     if (!control) { this.current?.message(line.toString('utf8')); return; }
     const { name, value } = control;
     if (name !== 'opened' && name !== 'fail' && name !== 'closed') return;
-    if (value?.gen !== this.current?.gen) return;   // 閉じた接続の遅れた知らせ
+    if (!this.current) {
+      // 引き継ぎの直後（adopted() の前）に届いた知らせは、挨拶の相を書き換えて残す
+      if (value?.gen === this.gen && !this.adoptedOnce) this.welcome = { ...this.welcome, phase: name === 'opened' ? 'open' : 'idle' };
+      return;
+    }
+    if (value?.gen !== this.current.gen) return;   // 閉じた接続の遅れた知らせ
     this.current.deliver(name, value);
   }
 
@@ -149,6 +154,7 @@ class ChromeLink {
   adopted() {
     const phase = this.welcome.phase;
     if (phase !== 'open' && phase !== 'upgrading') return null;
+    this.adoptedOnce = true;
     return new LinkSocket(this, { gen: this.gen, state: phase });
   }
 
@@ -169,6 +175,9 @@ class ChromeLink {
     this.lastCarryJson = json;
     this.control('carry', { carry: carry ?? null });
   }
+
+  /** パイプがまだ生きている（handOff・quit・切れた後は false） */
+  get alive() { return !this.ended; }
 
   onLost(fn) { this.lostFns.add(fn); return () => this.lostFns.delete(fn); }
 
@@ -196,6 +205,14 @@ class ChromeLink {
 
 const cardOf = child => readLinkCard(child.label);
 
+/** 子を止めて片付ける。kill は付いている親からしか転送されないので、先に attach する */
+async function retire(holder, id) {
+  try { await holder.attach(id); } catch { return; }
+  holder.kill(id, { tree: true });
+  await sleep(200);
+  holder.release(id);
+}
+
 /**
  * 接続の子を見つけるか起こして、つなぐ。つなげなければ null（呼び出し側は今のサーバー内の ws に落ちる）。
  * holder は保持役への口（core/holder/client.mjs の HolderClient）。onGone は接続の子との縁が切れたとき（handOff・quit を除く）
@@ -209,14 +226,14 @@ export async function openChromeLink({ holder, runtimeRoot, runtimeKey = '', log
     if (!card) continue;
     if (!child.alive) { holder.release(child.id); continue; }
     const found = await connectPipe(card);
-    if (!found) { log('chrome-link: existing child unreachable, replacing'); holder.kill(child.id, { tree: true }); holder.release(child.id); continue; }
+    if (!found) { log('chrome-link: existing child unreachable, replacing'); await retire(holder, child.id); continue; }
     if (found.welcome.v !== LINK_VERSION) {
       // 版が合わない: 終わらせて起こし直す（確認が 1 回出る）
       log(`chrome-link: version mismatch (child ${found.welcome.v}, server ${LINK_VERSION}), replacing`);
       found.socket.write(controlLine('quit'));
       found.socket.end();
       await sleep(200);
-      holder.kill(child.id, { tree: true }); holder.release(child.id);
+      await retire(holder, child.id);
       continue;
     }
     return make(found);
@@ -233,6 +250,6 @@ export async function openChromeLink({ holder, runtimeRoot, runtimeKey = '', log
     await sleep(START_POLL_MS);
   }
   log('chrome-link: new child did not answer');
-  holder.kill(id, { tree: true });
+  await retire(holder, id);
   return null;
 }
