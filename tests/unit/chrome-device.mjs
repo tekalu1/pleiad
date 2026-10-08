@@ -146,7 +146,7 @@ export default async function (t) {
     const v = deviceViewport({ width: 100.4, height: 9999, scale: 5 });
     t.ok('端末の箱の大きさは範囲に丸める（幅 240〜1600・高さ 240〜2400・倍率 1〜3）', v.width === 240 && v.height === 2400 && v.scale === 3, JSON.stringify(v));
     t.ok('大きさが数でなければ null（引き継げない）', deviceViewport({ width: 'x', height: 700 }) === null && deviceViewport() === null);
-    t.ok('ページの大きさのコマンドは mobile: true', JSON.stringify(deviceMetrics({ width: 390, height: 700, scale: 2 })) === JSON.stringify({ width: 390, height: 700, deviceScaleFactor: 2, mobile: true }));
+    t.ok('ページの大きさのコマンドは mobile: false（meta の無いページで座標がずれない）', JSON.stringify(deviceMetrics({ width: 390, height: 700, scale: 2 })) === JSON.stringify({ width: 390, height: 700, deviceScaleFactor: 2, mobile: false }));
   }
 
   // ===== 2. 内蔵ブラウザーの映像（desktop）と端末から操作する Chrome の窓が、同じ入力に同じ CDP を出す =====
@@ -200,7 +200,7 @@ export default async function (t) {
       t.ok('エージェントの接続は切る（1000 paused）', (await a2.closed).reason === 'paused');
       t.ok('映像は止めない（suspend を呼ばない・captureBlocked は false・screencast も続く）', !r.captureLog.some(([op]) => op === 'suspend') && r.control.captureBlocked('one') === false && !r.bridge.isSuspended('one') && r.fake.screencasting(tab), JSON.stringify(r.captureLog));
       const metrics = callsOn(r, view2, mark).filter(c => c.method === 'Emulation.setDeviceMetricsOverride');
-      t.ok('映像のセッションでページの大きさを端末の箱にする（mobile: true）', metrics.length === 1 && JSON.stringify(metrics[0].params) === JSON.stringify({ width: 390, height: 700, deviceScaleFactor: 2, mobile: true }), JSON.stringify(metrics));
+      t.ok('映像のセッションでページの大きさを端末の箱にする（mobile: false）', metrics.length === 1 && JSON.stringify(metrics[0].params) === JSON.stringify({ width: 390, height: 700, deviceScaleFactor: 2, mobile: false }), JSON.stringify(metrics));
       const lateOnPc = await r.control.takeOver('one');
       t.ok('端末が引き継いでいる所へ PC が後から押しても、今の状態（by: device）を返すだけ（窓は見せない）', lateOnPc.by === 'device' && r.os.calls('reveal').length === reveals);
 
@@ -247,7 +247,7 @@ export default async function (t) {
       const view = viewSession(r, tab);
       const methods = callsOn(r, view, mark).map(c => c.method);
       const set = callsOn(r, view, mark).find(c => c.method === 'Emulation.setDeviceMetricsOverride');
-      t.ok('見始めると、screencast の前にページの大きさを端末に合わせる', set?.params.width === 400 && set.params.mobile === true && methods.indexOf('Emulation.setDeviceMetricsOverride') < methods.indexOf('Page.startScreencast'), methods.join());
+      t.ok('見始めると、screencast の前にページの大きさを端末に合わせる', set?.params.width === 400 && set.params.mobile === false && methods.indexOf('Emulation.setDeviceMetricsOverride') < methods.indexOf('Page.startScreencast'), methods.join());
       const mark2 = r.chrome.calls.length;
       await r.hub.unwatch(r.client, 'one');
       t.ok('見るのをやめると、映像のセッションを外す前に大きさを戻す', callsOn(r, view, mark2).some(c => c.method === 'Emulation.clearDeviceMetricsOverride'), callsOn(r, view, mark2).map(c => c.method).join());

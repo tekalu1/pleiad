@@ -57,7 +57,7 @@ function agent(url, options) {
 }
 const refused = (url, options) => agent(url, options).then(client => { client.close(); return false; }, () => true);
 
-async function rig({ permission = 'auto', connectWaitMs, authorize, handoff, connectWaitText } = {}) {
+async function rig({ permission = 'auto', connectWaitMs, authorize, handoff, connectWaitText, turnLive, turnSignal } = {}) {
   const chrome = await startFakeChrome({ permission });
   const os_ = fakeChromeOs({ chrome });
   const conn = createChromeConnection({ locate: { browser: 'chrome', userDataDir: chrome.userDataDir }, os: os_, pollMs: 20 });
@@ -65,7 +65,7 @@ async function rig({ permission = 'auto', connectWaitMs, authorize, handoff, con
   const asked = [];
   let answer = async () => ({ allow: true });
   const locate = { browser: 'chrome', userDataDir: chrome.userDataDir, custom: true };
-  const relay = createChromeRelay({ connection: conn, os: os_, locate, deniedMessage: () => 'DENIED-TEXT', log: line => logs.push(line), ...(connectWaitMs ? { connectWaitMs } : {}), ...(handoff ? { handoff } : {}), ...(connectWaitText ? { connectWaitText } : {}),
+  const relay = createChromeRelay({ connection: conn, os: os_, locate, deniedMessage: () => 'DENIED-TEXT', log: line => logs.push(line), ...(connectWaitMs ? { connectWaitMs } : {}), ...(handoff ? { handoff } : {}), ...(connectWaitText ? { connectWaitText } : {}), ...(turnLive ? { turnLive } : {}), ...(turnSignal ? { turnSignal } : {}),
     authorize: authorize ?? (async (request, signal) => { asked.push(request); return answer(request, signal); }) });
   return {
     chrome, conn, relay, logs, asked, fake: chrome.browser, os: os_,
@@ -508,6 +508,32 @@ export default async function (t) {
     } finally { a?.close(); await r.stop(); }
   }
 
+  // ===== 5d. 人の「止める」でその会話の接続待ちを外す（Chrome の確認がすぐ閉じる）。ターンの外では確認を出さずに断る =====
+  {
+    const ac = new AbortController();
+    const r = await rig({ permission: 'hold', connectWaitMs: 5000, handoff: { connect: () => null }, turnLive: () => true, turnSignal: () => ac.signal });
+    let a;
+    try {
+      a = await agent(await r.relay.endpoint('stop'));
+      const waiting = a.cmd('Browser.getVersion');
+      t.ok('接続を待つあいだ、Chrome の確認が出ている', await until(() => r.chrome.pending() === 1));
+      const t0 = Date.now();
+      ac.abort();
+      t.ok('止めると、ほかに待つ人がいなければ確認がすぐ閉じる（connectWaitMs を待たない）', await until(() => r.chrome.pending() === 0, 1500) && Date.now() - t0 < 1500, String(Date.now() - t0));
+      t.ok('待っていた呼び出しは失敗で返る', Boolean((await waiting).error));
+    } finally { a?.close(); await r.stop(); }
+  }
+  {
+    const r = await rig({ permission: 'hold', connectWaitMs: 5000, turnLive: () => false });
+    let a;
+    try {
+      a = await agent(await r.relay.endpoint('outside'));
+      const reply = await a.cmd('Browser.getVersion');
+      t.ok('ターンの外では、つながっていなければ「ターンの外では使えない」で断る', /outside of a turn/.test(reply.error?.message ?? ''), JSON.stringify(reply));
+      t.ok('ターンの外では Chrome の確認を出さない', r.chrome.pending() === 0 && r.conn.state().state === 'off', JSON.stringify(r.conn.state()));
+    } finally { a?.close(); await r.stop(); }
+  }
+
   // ===== 6. 環境変数: PIN_TAB・3 つのバックエンドへの受け渡し =====
   {
     const r = await rig();
@@ -606,7 +632,8 @@ export default async function (t) {
       t.ok('ターンの agent-browser.json の cdp は core の中継（parentPort へ endpoint を頼まない）', /^ws:\/\/127\.0\.0\.1:\d+\/devtools\/browser\/[a-f0-9]{48}$/.test(config?.cdp ?? '') && !config.cdp.startsWith('ws://127.0.0.1:1/')
         && !sent.some(m => m.type === 'agent-browser-endpoint'), JSON.stringify({ config, sent: sent.map(m => m.type) }));
       a = await agent(config.cdp);
-      t.ok('その端点から偽の Chrome につながり、範囲（この会話の窓）だけが見える', (await a.cmd('Browser.getVersion')).result?.product === 'Chrome/154.0.8037.97' && (await a.cmd('Target.getTargets')).result?.targetInfos?.length === 0);
+      // ターンは終わっているので、つながっていない Chrome へは確認を出さずに断る（頼んだ人が居ない）。端点は中継につながっている
+      t.ok('その端点は中継につながる。ターンの外で Chrome につながっていなければ、確認を出さずに断る', /outside of a turn/.test((await a.cmd('Browser.getVersion')).error?.message ?? '') && chrome.pending() === 0);
       const second = await c.runTurn({ backend: 'fake', cwd: ROOT, sessionId: turn.sessionId, prompt: 'ok' });
       const after = JSON.parse(await readFile(path.join(dataDir, 'agent-browser', configs[0], 'agent-browser.json'), 'utf8'));
       t.ok('鍵の文字列はサーバーのログに出ない', !server.tail(200).includes(config.cdp.split('/').pop()));

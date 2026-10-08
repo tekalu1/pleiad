@@ -1,5 +1,7 @@
 # 無停止の更新 段階 1 の 1-0（頭の確認）: 公式 Node・Job・内蔵ブラウザーの再接続・インストーラーの内訳・サーバーの子
 
+> ブラウザーの記述について（2026-10-08）: この文書に残る内蔵ブラウザーのエージェント操作・CDP の中継・中継の復元の計画と計測は、Chrome へ移す前の記録。ADR 0148 の第 7 段で `desktop/browser-relay.cjs`・`browser-navigation.cjs`・`agent-browser-bridge.cjs` と `AGENT_HOST_AGENT_BROWSER` は削除した。現在のエージェント操作は Chrome の中継だけで、ビューアのタブの写しと読み込みの方針は `core/browser-viewer.mjs` と `desktop/browser-viewer-bridge.cjs` が扱う。現在の動きは [ブラウザー](../inapp-browser.md) を参照。
+
 - 状態: 実測の記録（2026-10-06）。コードは変えていない（計画の文書 [plan.md](plan.md)・[design.md](design.md) の直しと、測るスクリプトだけ）。測るスクリプトは `scripts/zero-downtime/stage1-0/`
 - 管理: [issue #54](https://github.com/tekalu1/pleiad/issues/54)。確かめる項目は [plan.md](plan.md)「1-0 頭の確認」の a〜f
 - 印は stage0-*.md と同じ。**【実測】** = 動かして確かめた（手順と数値を書く）。**【確認】** = コード・テンプレート・実行中のプロセスの形を読んで確かめた。**【推測】** = 動かしていない見込み。**【未確認】** = 測れていない
