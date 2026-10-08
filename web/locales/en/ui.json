@@ -234,6 +234,16 @@
       },
       "saveFailed": "Couldn't save: {{error}}",
       "agentOperation": { "title": "Agent operation", "bundled": "agent-browser {{version}} · Bundled" },
+      "profiles": {
+        "title": "Chrome profiles",
+        "description": "The Chrome profile the agent's windows open in. Switch it per conversation from the conversation; agents can also pick one from the list.",
+        "newDefault": "Profile for new conversations",
+        "lastUsed": "Chrome's last used profile",
+        "notesTitle": "Notes",
+        "notesNote": "Hints for agents choosing a profile (for example, \"Work account. Use for internal sites\"). Notes are shown to agents in the profile list.",
+        "notePlaceholder": "Note (optional)",
+        "noteLabel": "Note for {{name}}"
+      },
       "agentBrowser": {
         "title": "Agent browser",
         "name": "Chrome",
@@ -4201,6 +4211,17 @@
       "repairConfirm": "The original file is moved to hooks.broken-<time>.json. Unreadable registrations are dropped, and locations whose owner could not be read go back to Leave to the agent (the agent's hooks run again).",
       "repairGo": "Remove and save again"
     }
+  },
+  "chromeProfiles": {
+    "busy": {
+      "operating": "You can't switch while the agent is operating. Stop it first.",
+      "waiting": "You can't switch until you answer the agent's request.",
+      "human": "You can't switch while you are operating. Hand it back to the agent first."
+    },
+    "none": "No profiles found",
+    "manage": "Profile settings…",
+    "agent": "The agent",
+    "switched": "{{agent}} switched the Chrome profile to \"{{name}}\" (from the next window)"
   },
   "chromeControl": {
     "status": { "running": "{{name}} is operating", "idle": "Idle", "paused": "You are operating", "stopped": "Stopped" },

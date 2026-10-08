@@ -8,6 +8,7 @@
 import { z } from 'zod';
 import { agentT } from '../i18n.mjs';
 import { defineOp, OpError } from './registry.mjs';
+import { PROFILE_BROWSERS } from '../../web/chrome-profile-model.mjs';
 
 const STATES = ['off', 'setup', 'permission', 'denied', 'connected', 'unsupported'];
 const stateShape = z.object({
@@ -55,6 +56,34 @@ async function controlRun(ctx, action, sessionId, options) {
     if (error?.code === 'INVALID') throw new OpError('INVALID', agentT(ctx.locale, 'ops.errors.chromeDeviceSize'));
     throw error;
   }
+}
+
+const PROFILE_BUSY = ['operating', 'waiting', 'human'];
+const profileRefShape = z.object({ browser: z.string(), dir: z.string() });
+const profileListShape = z.object({
+  profiles: z.array(z.object({ browser: z.string(), dir: z.string(), name: z.string(), note: z.string() })).describe('agent:ops.browser.listProfiles.profiles'),
+  current: profileRefShape.nullable().describe('agent:ops.browser.listProfiles.current'),
+  busy: z.enum(PROFILE_BUSY).nullable().describe('agent:ops.browser.listProfiles.busy'),
+});
+/** プロフィールの本体（Chrome の層が無いホストは UNSUPPORTED） */
+const profilesOf = (ctx) => (ctx.chromeProfiles && ctx.chrome?.status().state !== 'unsupported' ? ctx.chromeProfiles : unavailable(ctx));
+/** 対象の会話。エージェントは省けば自分の会話で、ほかの会話は指せない。画面は省けない（一覧だけは会話なしで読める） */
+function profileSession(ctx, given, { optional = false } = {}) {
+  const own = ctx.actor?.sessionId ?? null;
+  if (ctx.principal.by === 'agent') {
+    if (given && given !== own) throw new OpError('INVALID', agentT(ctx.locale, 'ops.errors.chromeProfileOwnSession'));
+    if (!own && !optional) throw new OpError('INVALID', agentT(ctx.locale, 'ops.errors.sessionRequired'));
+    return own;
+  }
+  if (!given && !optional) throw new OpError('INVALID', agentT(ctx.locale, 'ops.errors.sessionRequired'));
+  return given ?? null;
+}
+function profileError(ctx, error) {
+  // i18n-dynamic: agent:ops.errors.chromeProfileBusy.
+  if (error?.code === 'BUSY') return new OpError('BUSY', agentT(ctx.locale, `ops.errors.chromeProfileBusy.${error.detail?.reason}`), { reason: error.detail?.reason });
+  if (error?.code === 'NOT_FOUND') return new OpError('PROFILE_NOT_FOUND', agentT(ctx.locale, 'ops.errors.chromeProfileNotFound', { profile: error.detail?.profile ?? '' }));
+  if (error?.code === 'AMBIGUOUS') return new OpError('INVALID', agentT(ctx.locale, 'ops.errors.chromeProfileAmbiguous', { profile: error.detail?.profile ?? '' }));
+  return error;
 }
 
 export const browserOps = [
@@ -156,6 +185,40 @@ export const browserOps = [
       if (!chrome.open) unavailable(ctx);
       const { targetId } = await chrome.open(sessionId, url);
       return { sessionId, targetId };
+    },
+  }),
+  // Chrome のプロフィール（第 10 段。docs/inapp-browser.md「プロフィール」）。本体は core/chrome/profile-choice.mjs（ply_browser の list_browser_profiles・use_browser_profile もここを通る）。
+  // 画面・端末は会話を指定して、エージェントは自分の会話だけ。名前は ADR 0091 の追記で残した browser.listProfiles・browser.useProfile
+  defineOp({
+    id: 'browser.listProfiles',
+    summary: 'agent:ops.browser.listProfiles.summary',
+    risk: 'read',
+    input: z.object({ sessionId: sessionIdShape.optional() }),
+    output: profileListShape,
+    surfaces: { ui: true, mcp: 'catalog', cli: { path: ['browser', 'profiles'] } },
+    handler: async (ctx, { sessionId }) => {
+      const choice = profilesOf(ctx);
+      return choice.list({ sessionId: profileSession(ctx, sessionId, { optional: true }), by: ctx.principal.by });
+    },
+  }),
+  defineOp({
+    id: 'browser.useProfile',
+    summary: 'agent:ops.browser.useProfile.summary',
+    risk: 'write',
+    riskReason: 'Picks which existing Chrome profile the next windows of this conversation open in; open windows stay, site permissions are kept per profile, and nothing is copied between profiles. Allowed from read-only conversations too (ADR 0091)',
+    modeGate: false,
+    input: z.object({
+      sessionId: sessionIdShape.optional(),
+      browser: z.enum(PROFILE_BROWSERS).optional().describe('agent:ops.browser.useProfile.browser'),
+      profile: z.string().min(1).max(200).describe('agent:ops.browser.useProfile.profile'),
+    }),
+    output: z.object({ browser: z.string(), dir: z.string(), name: z.string(), changed: z.boolean() }),
+    surfaces: { ui: true, mcp: 'catalog', cli: { path: ['browser', 'use-profile'], positional: ['profile'] } },
+    handler: async (ctx, { sessionId, browser, profile }) => {
+      const choice = profilesOf(ctx);
+      const id = profileSession(ctx, sessionId);
+      try { return await choice.use({ sessionId: id, browser: browser ?? null, profile, by: ctx.principal.by }); }
+      catch (error) { throw profileError(ctx, error); }
     },
   }),
 ];

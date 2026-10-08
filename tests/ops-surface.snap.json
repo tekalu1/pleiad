@@ -683,6 +683,49 @@
       "input": "6b5db096dd25"
     },
     {
+      "id": "browser.listProfiles",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "browser",
+            "profiles"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "c72e5204555a"
+    },
+    {
+      "id": "browser.useProfile",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": false,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "browser",
+            "use-profile"
+          ],
+          "positional": [
+            "profile"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "7c2b278271bc"
+    },
+    {
       "id": "channels.archive",
       "risk": "write",
       "riskOf": false,
@@ -4292,6 +4335,24 @@
       ]
     },
     {
+      "key": "chromeNewProfile",
+      "risk": "write",
+      "riskOf": false,
+      "writable": true,
+      "prefKeys": [
+        "chromeNewProfile"
+      ]
+    },
+    {
+      "key": "chromeProfileNotes",
+      "risk": "write",
+      "riskOf": false,
+      "writable": true,
+      "prefKeys": [
+        "chromeProfileNotes"
+      ]
+    },
+    {
       "key": "claudeAccount",
       "risk": "human-only",
       "riskOf": false,
@@ -4470,6 +4531,20 @@
       "agent-bound-readonly": "write=deny:READ_ONLY_MODE guarded=deny:READ_ONLY_MODE"
     },
     "backend": {
+      "human": "write=allow",
+      "agent-unbound": "write=allow",
+      "agent-bound-ask": "write=allow",
+      "agent-bound-never-full": "write=allow",
+      "agent-bound-readonly": "write=deny:READ_ONLY_MODE"
+    },
+    "chromeNewProfile": {
+      "human": "write=allow",
+      "agent-unbound": "write=allow",
+      "agent-bound-ask": "write=allow",
+      "agent-bound-never-full": "write=allow",
+      "agent-bound-readonly": "write=deny:READ_ONLY_MODE"
+    },
+    "chromeProfileNotes": {
       "human": "write=allow",
       "agent-unbound": "write=allow",
       "agent-bound-ask": "write=allow",
@@ -4773,9 +4848,21 @@
       ]
     },
     {
+      "id": "browser.listProfiles",
+      "path": "browser profiles",
+      "positional": []
+    },
+    {
       "id": "browser.chromeStatus",
       "path": "browser status",
       "positional": []
+    },
+    {
+      "id": "browser.useProfile",
+      "path": "browser use-profile",
+      "positional": [
+        "profile"
+      ]
     },
     {
       "id": "channels.archive",

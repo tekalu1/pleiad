@@ -177,7 +177,7 @@ Claude は会話の env、Codex は共有 app-server のスレッドごとの `s
 
 設定 › ブラウザーの「エージェントがサイトを使う前に確認」（`confirmAgentSites`）は既定 OFF。ON では、エージェントが動かしているタブの主フレームの要求を中継自身の `Fetch` セッションで止め、`core/browser-confirm.mjs` が会話で「一度だけ / このサイトは常に / 断る」を聞く（[ADR 0042](adr/0042-preview-loads-external-by-default.md)）。許可なら要求を続け、断られたら失敗として返す。
 
-今の origin は `Page.frameNavigated` の移り終えた先で持つ。同じ origin、同じ移動の中で許可済みの origin、iframe、人が引き継いだ間の操作は聞かない。「常に」は `agentSitePermissions: [{ agent, origin, mode }]` にエージェントの種類と origin の組で保存し、同じエージェントの別会話にも効く。「一度だけ」はその移動だけで、離れて戻れば聞き直す。設定の一覧では「常に / 毎回聞く」と削除を選べる。ログイン済みのアカウント名は出さない。
+今の origin は `Page.frameNavigated` の移り終えた先で持つ。同じ origin、同じ移動の中で許可済みの origin、iframe、人が引き継いだ間の操作は聞かない。「常に」は `agentSitePermissions: [{ agent, profile?, origin, mode }]` にエージェントの種類・プロフィール・origin の組で保存し、同じプロフィールを使う同じエージェントの別会話にも効く。`profile` は `chrome:Profile 1` の形で、移動するタブの窓から引く（会話の次の窓の設定とは別）。旧版の `profile` が無い行はどのプロフィールにも効く。「一度だけ」はその移動だけで、離れて戻れば聞き直す。設定の一覧では「常に / 毎回聞く」と削除を選べる。ログイン済みのアカウント名は出さない。
 
 **Chrome では一部の移動を要求前に止められない。** `window.open` の最初の要求は開いた後に確認し、返事までエージェントのコマンドを待たせ、断られたらタブを閉じる。bfcache など要求を出さない移動も移った後に確認し、断られたら `about:blank` へ戻す。送信・購入・削除など操作ごとの確認は、この設定では扱わない。
 
@@ -185,7 +185,7 @@ Claude は会話の env、Codex は共有 app-server のスレッドごとの `s
 
 `core/chrome/windows.mjs` が会話ごとに窓を持つ。最小化は描画が止まるため使わず、画面の外・透明・マウスを素通しにし、タスクバーと Alt+Tab から外す（[ADR 0154](adr/0154-agent-window-hidden-off-screen.md)）。窓の外形の既定は 800×800 DIP。通常はページの大きさの emulation を使わず、窓の大きさで右パネルの読みやすさを保つ。
 
-最初の窓は Chrome の最後に使ったプロフィールで `chrome.exe --new-window` から開き、題の nonce で窓を見つけて隠す。起こせなければ `Target.createTarget` を使う。2 枚目以降も、裏のタブの描画が間引かれないよう別の窓に作る。ページが `window.open` で開いたタブは同じ窓に入ることがあり、popup の別窓は範囲に取り込んで隠す。
+最初の窓は会話で選んだプロフィール（未選択なら Chrome の最後に使ったもの）を `--profile-directory` に渡し、`chrome.exe --new-window` から開く。題の nonce で窓を見つけて隠す。未選択で起こせなければ `Target.createTarget` を使う。選択済みの場合は、別のプロフィールで開く代わりに失敗を返す。2 枚目以降も、裏のタブの描画が間引かれないよう別の窓に作る。ページが `window.open` で開いたタブは同じ窓に入ることがあり、popup の別窓は範囲に取り込んで隠す。
 
 OS の層は、隠した窓が前面を取ったら直前の前面へ返す。モニター・DPI の変更やスリープ復帰では置き直す。窓が見つからなければ隠せなかったことをログに残す。起動や popup で短く窓が見える場合があり、裏になったタブの撮影や操作が遅くなる場合もある。
 
@@ -196,6 +196,24 @@ OS の層は、隠した窓が前面を取ったら直前の前面へ返す。�
 `core/chrome/os.mjs` が OS の口を定め、Windows の実装は `desktop/chrome-os/` に置く。窓は core では不透明な `WindowRef` で扱う。main との `chrome-os` / `chrome-os-result` の往復で、確認の発見・前面化・隠す・戻すを頼む。OS の層が使えなければ `unsupported` を返す。
 
 確かめ専用の Chrome は `AGENT_HOST_CHROME_USER_DATA` で User Data を差し替える。このとき窓の起動にも同じ `--user-data-dir` を渡す。試験は偽の Chrome・OS の層、または専用のプロフィールを使い、利用者の Chrome を操作しない。
+
+### プロフィール
+
+`core/chrome/profiles.mjs` は Local State の `profile.info_cache` のキー（フォルダー名）と `name`（表示名）だけを取り出す。ファイルを JSON として解析するが、メールアドレス・アカウント・画像などの項目は参照せず、出力・記録・ログに載せない。最初の窓の既定に使う `profile.last_used` は従来の `locate.mjs` が読む。Cookie・履歴・パスワードのファイルは読まない。
+
+設定 › ブラウザーには `chromeProfileNotes: [{ browser, dir, note }]`（メモは200字まで）と `chromeNewProfile: { browser, dir } | null`（新しい会話の既定）を置く。メモはエージェントのプロフィール一覧にも載る。既定が一覧から消えていたら適用せず、Chrome の最後に使ったものを使う。会話の選択はメタの `chromeProfile: { browser, dir }` に保存し、既存の会話の選択は設定の既定を変えても変わらない。新規会話で id が決まるまでは仮の id に持ち、確定時に `rebind` で保存する。
+
+`ply_browser.list_browser_profiles` は `{ profiles: [{ browser, dir, name, note }], current, busy }` を返す。`use_browser_profile({ profile, browser? })` はフォルダー名を優先し、表示名でも探す。同名が複数ならフォルダー名での指定を求める。対応する ops は `browser.listProfiles`（read）と `browser.useProfile`（write、`modeGate: false`）。エージェントは自分の会話だけを指定でき、読み取りモードでも選べる。
+
+切り替えは Chrome の操作中・人への依頼待ち・人への引き継ぎ中には断る。人からの切り替えはエージェントのターン中も断る。エージェント自身は、まだ Chrome を操作していないターンなら選べる。エージェントが変えたときは `present` の `chromeProfile` に名前とエージェント名を残して画面へ配る。選択の変更は `chromeProfile { sessionId, profile }` でも知らせる。
+
+開いている窓はそのままで、次の窓から選択を適用する。同じプロフィールの窓の `browserContextId` が分かれば `Target.createTarget` へ渡し、作成したタブの値が一致するか確かめる。一致しなければそのタブを閉じ、`--profile-directory` で開き直す。実際の Chrome でのプロフィール間の接続と起動の挙動は、専用PCでの確認が残る。自動試験は偽の Chrome と OS の層で、別プロフィールで続行しないことを確かめる。
+
+一覧の読み取りと保存の形は Chrome・Edge 共通。現在の接続・窓の起動は Chrome のみなので、Edge は一覧に出さない。Edge を有効にするには接続先の選択、Edge の実行ファイルによる窓の起動、実機でのプロフィール確認が要る。
+
+**画面の部品の口**: `web/chrome-profile-menu.mjs` の `profileMenuItems({ profiles, notes?, current, busy, onPick, onManage? })` は `web/context-menu.mjs` 用の項目を返す。`profiles/current/busy` は `browser.listProfiles` の答えをそのまま渡せる。`onPick({ browser, dir })` で `browser.useProfile({ sessionId, browser, profile: dir })` を呼び、`onManage` は設定 › ブラウザーへつなぐ。選択ボタンは「Claude の Chrome」タブ内の道具の列へ置く。ボタンとメニューの開閉、イベントによる再取得は呼び出し側が受け持つ。
+
+**委譲への引き継ぎ**: 子の作成時に親の会話メタ `chromeProfile` を子へ継ぐ処理は次段で行う。親が未選択の場合と、明示的な子の選択がある場合の優先順位もそこで決める。ここでは新規会話の設定の既定だけを適用する。
 
 ### 映像と右パネルの「Chrome の窓」
 

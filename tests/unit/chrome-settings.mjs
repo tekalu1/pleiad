@@ -26,7 +26,7 @@ export default async function (t) {
 
     caps = { chromeBrowser: 'available' };
     await settings.hostCapsChanged();
-    t.ok('hostCapabilities が届くと chromeStatus を取り、節が出る', sent.join() === 'chromeStatus' && section.hidden === false);
+    t.ok('hostCapabilities が届くと chromeStatus を取り、節が出る', sent.filter(c => c !== 'invoke').join() === 'chromeStatus' && section.hidden === false);
     t.ok('off: 「つながっていません」と主のボタン「つなぐ」', statusOf(section) === 'つながっていません' && buttonsOf(section).join() === 'つなぐ', buttonsOf(section).join());
     section.querySelectorAll('button')[0].onclick();
     t.ok('「つなぐ」は chromeConnect を送る', sent.at(-1) === 'chromeConnect');

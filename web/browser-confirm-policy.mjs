@@ -1,4 +1,6 @@
 // Shared by the renderer and snapshot responses. Only exact HTTPS origins enter CSP.
+import { parseProfileKey } from './chrome-profile-model.mjs';
+
 export function externalOrigin(value) {
   try {
     const url = new URL(value);
@@ -22,7 +24,8 @@ export function validBrowserPref(key, value) {
     let url;
     try { url = new URL(row.origin); } catch { return false; }
     if (!['https:', ...(key === 'agentSitePermissions' ? ['http:'] : [])].includes(url.protocol) || url.origin !== row.origin || url.username || url.password) return false;
-    return key !== 'agentSitePermissions' || typeof row.agent === 'string' && /^[a-z0-9_-]{1,100}$/i.test(row.agent);
+    // agentSitePermissions の profile はプロフィールの鍵（'chrome:Profile 1'）。無い行はどのプロフィールにも効く
+    return key !== 'agentSitePermissions' || typeof row.agent === 'string' && /^[a-z0-9_-]{1,100}$/i.test(row.agent) && (row.profile === undefined || parseProfileKey(row.profile) !== null);
   });
 }
 

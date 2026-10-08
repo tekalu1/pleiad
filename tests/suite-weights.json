@@ -80,6 +80,8 @@
     "chrome-relay": 8029,
     "chrome-screencast": 2069,
     "chrome-settings": 38,
+    "chrome-profiles": 2500,
+    "chrome-profiles-ui": 40,
     "chrome-windows": 3828,
     "claude-accounts": 397,
     "claude-background": 18,

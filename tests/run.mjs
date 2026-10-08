@@ -95,6 +95,8 @@ const SUITES = [
   './unit/chrome-persist.mjs',
   // 設定 › ブラウザー › エージェントのブラウザー: 状態ごとの字とボタン・使えない環境（DOM の代役）
   './unit/chrome-settings.mjs',
+  './unit/chrome-profiles.mjs',
+  './unit/chrome-profiles-ui.mjs',
   './unit/browser-confirm.mjs',
   // 会話の MCP の口を同じトークンで開き直す open({ token })（無停止の更新 2b-3）
   './unit/mcp-bridge-token.mjs',

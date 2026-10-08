@@ -1,7 +1,8 @@
 // ply_browser: エージェントのブラウザー操作のための MCP の口（core/agent-bridge.mjs と同じ型。会話ごとに Bearer の付いた HTTP）。
 // エージェントのブラウザー（PC の Chrome の専用の窓。ADR 0148）を渡すターン（デスクトップ版で中継がある）にだけ渡す。
 // 載せるツールは hand_to_user（ログイン・CAPTCHA などを人に任せて、戻るまで待つ。core/chrome/handoff.mjs）。
-// Chrome のプロフィールの一覧・close_browser_window は後の段で browserTools に足す。3 つのバックエンドへの渡し方・Bearer の鍵・agy の中継への束ねを保つ
+// 3 つのバックエンドへの渡し方・Bearer の鍵・agy の中継への束ねを保つ
+// プロフィールのツール（list_browser_profiles・use_browser_profile。第 10 段）は profileTools で、useProfiles で本体を差し込んだホストだけに載る
 import { claimToken } from './mcp-token.mjs';
 import { agentT } from './i18n.mjs';
 import { HANDOFF_REASONS } from './chrome/handoff.mjs';
@@ -20,6 +21,25 @@ export const browserTools = locale => [{
       message: { type: 'string', description: agentT(locale, 'browserBridge.handToUser.messageDescription') },
     },
     required: ['reason', 'message'],
+  },
+}];
+
+/** Chrome のプロフィールのツール（第 10 段）。プロフィールの本体があるホストだけに載せる（createBrowserBridge の useProfiles） */
+export const PROFILE_TOOLS = ['list_browser_profiles', 'use_browser_profile'];
+export const profileTools = locale => [{
+  name: 'list_browser_profiles',
+  description: agentT(locale, 'browserBridge.listProfiles.description'),
+  inputSchema: { type: 'object', properties: {} },
+}, {
+  name: 'use_browser_profile',
+  description: agentT(locale, 'browserBridge.useProfile.description'),
+  inputSchema: {
+    type: 'object',
+    properties: {
+      profile: { type: 'string', description: agentT(locale, 'browserBridge.useProfile.profileDescription') },
+      browser: { type: 'string', enum: ['chrome', 'edge'], description: agentT(locale, 'browserBridge.useProfile.browserDescription') },
+    },
+    required: ['profile'],
   },
 }];
 
@@ -46,8 +66,23 @@ export function handToUserResult(locale, answer) {
 export function createBrowserBridge({ handoffs = null } = {}) {
   const bindings = new Map();
   const fail = text => ({ isError: true, content: [{ type: 'text', text }] });
+  let profiles = null;   // { list(sessionId, locale), use(sessionId, { profile, browser }, locale) }（useProfiles で差し込む。ops の browser.listProfiles・useProfile を呼ぶ）
+  async function profileCall(binding, params) {
+    const { locale } = binding;
+    let owner;
+    try { owner = await binding.owner(); } catch (error) { return fail(String(error?.message ?? error)); }
+    if (!owner?.sessionId) return fail(agentT(locale, 'browserBridge.handToUser.noTurn'));
+    const args = params.arguments && typeof params.arguments === 'object' ? params.arguments : {};
+    try {
+      if (params.name === 'list_browser_profiles') return { isError: false, content: [{ type: 'text', text: JSON.stringify(await profiles.list(owner.sessionId, locale)) }] };
+      if (typeof args.profile !== 'string' || !args.profile) return fail(agentT(locale, 'browserBridge.invalidTool'));
+      const done = await profiles.use(owner.sessionId, { profile: args.profile, ...(typeof args.browser === 'string' ? { browser: args.browser } : {}) }, locale);
+      return { isError: false, content: [{ type: 'text', text: agentT(locale, done.changed ? 'browserBridge.useProfile.done' : 'browserBridge.useProfile.same', { name: done.name, dir: done.dir }) }] };
+    } catch (error) { return fail(String(error?.message ?? error)); }
+  }
   async function callTool(binding, params) {
     const { locale } = binding;
+    if (profiles && PROFILE_TOOLS.includes(params?.name)) return profileCall(binding, params);
     if (params?.name !== 'hand_to_user' || !handoffs) return fail(agentT(locale, 'browserBridge.invalidTool'));
     let owner;
     try { owner = await binding.owner(); } catch (error) { return fail(String(error?.message ?? error)); }
@@ -59,6 +94,8 @@ export function createBrowserBridge({ handoffs = null } = {}) {
     return { isError, content: [{ type: 'text', text }] };
   }
   return {
+    /** プロフィールのツールの本体を差し込む（null で外す）。差し込んだホストだけ tools/list に載る */
+    useProfiles(adapter) { profiles = adapter ?? null; },
     // token は開き直す口の値（省略なら新しく作る。形が違う・使用中なら投げる）。
     // owner は呼び出しの時点の会話を返す: { sessionId, signal, waitSliceMs? }（ターンが無ければ投げる。ply_computer の owner と同じ）
     open({ origin, owner, locale, token: fixed }) {
@@ -90,6 +127,7 @@ export function createBrowserBridge({ handoffs = null } = {}) {
       else if (m.method === 'tools/list') result = { tools: handoffs ? browserTools(locale) : [] };   // 操作待ちの台帳が無いホスト（Chrome の層が無い）は載せない
       else if (m.method === 'tools/call') result = await callTool(binding, m.params);
       else return reply(200, { jsonrpc: '2.0', id: m.id, error: { code: -32601, message: 'Method not found' } });
+      if (m.method === 'tools/list' && handoffs && profiles) result = { tools: [...result.tools, ...profileTools(locale)] };
       reply(200, { jsonrpc: '2.0', id: m.id, result });
     },
   };

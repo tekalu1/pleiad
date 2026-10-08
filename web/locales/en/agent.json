@@ -2,6 +2,16 @@
   "browserBridge": {
     "invalidTool": "Invalid ply_browser tool name or arguments.",
     "connectWait": "Waiting for Chrome to be ready or for permission. A confirmation card was shown to the user. Call ply_browser hand_to_user (reason: other, message: the situation) to wait, then run agent-browser again once connected.",
+    "listProfiles": {
+      "description": "List the Chrome profiles on this PC (display name, folder name, and the note the user wrote) and this conversation's current profile. Call it when the site you need depends on which account is signed in (work, personal, and so on), and pick the profile whose note fits."
+    },
+    "useProfile": {
+      "description": "Switch the Chrome profile this conversation's windows open in, to one from list_browser_profiles. Windows that are already open stay; the new profile applies from the next window. Refused while Chrome is being operated, a request to the user is waiting, or the user has taken over the window. The switch is recorded in the conversation, where the user sees it.",
+      "profileDescription": "The profile's folder name (dir, for example Default or Profile 1) or display name (name).",
+      "browserDescription": "The browser (chrome or edge). Omit to search all. Only chrome for now.",
+      "done": "Switched the Chrome profile to \"{{name}}\" ({{dir}}). Windows already open stay as they are; the next window opens in this profile.",
+      "same": "This conversation already uses \"{{name}}\" ({{dir}})."
+    },
     "handToUser": {
       "description": "Hand browser control to the user and wait until they hand it back. Call it, without typing anything yourself, right before login, CAPTCHA, two-factor authentication, payment or entering personal information. Also call it when agent-browser fails because Chrome is waiting for permission or the user is operating. It returns when the user presses \"Return to Claude\". If it returns \"still waiting\", call it again.",
       "messageDescription": "What to tell the user (what you need them to do, e.g. log in to example.com).",
@@ -714,6 +724,14 @@
       "chromeNoWindow": "There is no Chrome window to take over (this conversation has not used the browser yet, or the window was closed).",
       "chromeDeviceSize": "To operate from a device, give the size of its video box (width and height).",
       "chromeOpenUrl": "Only http and https URLs can be opened in Chrome.",
+      "chromeProfileOwnSession": "An agent can only switch the Chrome profile of its own conversation. Omit sessionId.",
+      "chromeProfileBusy": {
+        "operating": "The Chrome profile can't be switched while the agent is operating Chrome.",
+        "waiting": "The Chrome profile can't be switched until the request to the user (hand_to_user) is answered.",
+        "human": "The Chrome profile can't be switched while the user has taken over the Chrome window."
+      },
+      "chromeProfileNotFound": "No Chrome profile \"{{profile}}\". Pass a dir or name from list_browser_profiles.",
+      "chromeProfileAmbiguous": "More than one profile matches \"{{profile}}\". Pass the folder name (dir).",
       "badCursor": "The cursor is not valid. Pass the previous result's next as is.",
       "DENIED": "The user did not allow the change ({{id}}). Do not retry; ask the user why.",
       "STALE": "The value kept changing after approval, so {{id}} was not done. Check the current value with settings.get and try again.",
@@ -845,6 +863,8 @@
       "confirmExternalLoads": "Ask before loading external resources",
       "agentSitePermissions": "Allowed sites · Agent access",
       "externalSitePermissions": "Allowed sites · External resources",
+      "chromeProfileNotes": "Chrome profile notes",
+      "chromeNewProfile": "Chrome profile for new conversations",
       "computerUse": "Computer use",
       "delegationRouting": "Automatic delegation routing",
       "plyInstructions": "Pleiad's instructions",
@@ -995,7 +1015,9 @@
       "chromeResume": { "summary": "Hand the taken-over Chrome window back to the agent. The window returns to its hidden place off-screen and the pause is lifted. A hand-over line is left in the conversation. Only the screen and remote devices can call it." },
       "chromeStop": { "summary": "Stop the agent's use of Chrome: closes the connection and refuses reconnecting until the next message from the user. Only the screen and remote devices can call it." },
       "chromeControl": { "sessionId": "The conversation id.", "state": "The window's state: running (during the agent's turn), idle, stopped, or paused (a person has taken over).", "since": "When the pause began (milliseconds), or null when not paused.", "error": "Why it could not be handed back. conceal-failed means the window could not be hidden off-screen, so the pause was kept. null when there is none.", "by": "While paused, who is operating: pc (the PC's screen) or device (a remote device). null when not paused." },
-      "chromeOpen": { "summary": "Open the page shown in the viewer in the agent's Chrome window of the conversation, waiting for Chrome to allow the connection if needed. The agent is not told. Only the host PC's screen can call it.", "url": "The URL to open (http or https)." }
+      "chromeOpen": { "summary": "Open the page shown in the viewer in the agent's Chrome window of the conversation, waiting for Chrome to allow the connection if needed. The agent is not told. Only the host PC's screen can call it.", "url": "The URL to open (http or https)." },
+      "listProfiles": { "summary": "List the Chrome profiles on this PC (display name, folder name, and the note from settings), with the conversation's current profile and why it can't be switched right now. Email addresses and other account details are not read.", "profiles": "The profiles: browser (chrome), dir (folder name), name (display name), note (from Settings › Browser; empty if none).", "current": "The conversation's current profile (browser, dir). null if not chosen yet (the first window opens in Chrome's last used profile) or if no conversation is given.", "busy": "Why it can't be switched now: operating (the agent is operating), waiting (a request to the user is waiting), human (the user has taken over the window). null if it can be switched." },
+      "useProfile": { "summary": "Switch the Chrome profile the conversation's windows open in, to one from the list. Open windows stay; it applies from the next window. Site permissions are recorded per profile. A switch by the agent is recorded in the conversation.", "browser": "The browser (chrome or edge). Omit to search all.", "profile": "The folder name (dir) or display name (name). The folder name is matched first." }
     },
     "control": {
       "instructions": "Pleiad's features and settings are available through ply_control.\nFind an operation with list_ops (pass an id to get its input JSON Schema) and call it with call_op. Conversation search and reading (search_sessions, get_session, read_session) and current setting values (get_setting) can be called directly.\nOperations that change Pleiad's state follow this conversation's approval mode. A change that loosens a gate shows the user an approval card and returns status: pending without waiting; the result is delivered to this conversation later. If the code is NEEDS_UI, NEEDS_APPROVAL, or READ_ONLY_MODE, do not retry; tell the user.",
@@ -1586,6 +1608,8 @@
     "confirmExternalLoads": "Whether to confirm before external loads.",
     "agentSitePermissions": "Sites always allowed for the agent's browser.",
     "externalSitePermissions": "Sites always allowed for external loads.",
+    "chromeProfileNotes": "Notes per Chrome profile (a list of browser, dir, note; note up to 200 characters). Hints for agents choosing a profile, also shown in the profile list.",
+    "chromeNewProfile": "The Chrome profile new conversations start with (browser, dir). null uses Chrome's last used profile. A profile no longer listed is not used.",
     "computerUse": "Computer use settings (enabled, allow all apps, always-allowed apps).",
     "delegationRouting": "Automatic delegation routing (judges, tiers, candidates, per-tier thinking effort; no keys).",
     "plyInstructions": "The instruction items Pleiad adds to conversations.",

@@ -132,6 +132,8 @@ import { chromeHomes } from './chrome/locate.mjs';
 import { parentPortChromeOs } from './chrome/os.mjs';
 import { createChromeRelay } from './chrome/relay.mjs';
 import { createChromeHandoffs } from './chrome/handoff.mjs';
+import { createProfileChoice } from './chrome/profile-choice.mjs';
+import { listBrowserProfiles } from './chrome/profiles.mjs';
 import { createChromeControl } from './chrome/control.mjs';
 import { createChromeScreencast } from './chrome/screencast.mjs';
 import { createBrowserSiteApprovals } from './browser-confirm.mjs';
@@ -233,9 +235,23 @@ const chromeHandoffs = chromeConnection ? createChromeHandoffs({
   titleFor: ({ reason, message }) => reason === 'connect' ? t('permission.browserHandoffConnect') : t('permission.browserHandoff', { message: message ?? '' }),
   log: line => console.log(`  ${line}`),
 }) : null;
+// 会話の Chrome のプロフィール（core/chrome/profile-choice.mjs、第 10 段）。一覧は Local State の名前とフォルダー名だけ。Edge は接続ができるまで出さない。
+// control は下で作る chromeControl（作る前には呼ばれない）。切り替えの行は recordChromeProfile
+const chromeProfiles = chromeConnection ? createProfileChoice({
+  list: () => listBrowserProfiles({ homes: chromeHomes(), connected: browser => browser === 'chrome' }),
+  peek: id => store.peek(id),
+  save: async (id, profile) => { await store.setSessionData(id, 'chromeProfile', profile); emitGlobal({ type: 'chromeProfile', sessionId: id, profile }); },
+  getPrefs: () => store.getPrefs(),
+  control: { state: id => chromeControl?.state(id) ?? null },
+  handoffs: chromeHandoffs,
+  operating: id => chromeRelay?.view.summary(id).operating === true,
+  record: ({ sessionId, profile }) => recordChromeProfile(sessionId, profile),
+  log: line => console.log(`  ${line}`),
+}) : null;
 // エージェントのブラウザーは PC の Chrome の絞り込みの中継（core/chrome/relay.mjs）だけ。Electron の main がいるデスクトップ版だけで、確認は下の browserSiteApprovals
 const chromeRelay = chromeConnection
   ? createChromeRelay({ connection: chromeConnection, os: chromeOs, locate: chromeLocate, authorize: (request, signal) => browserSiteApprovals(request, signal), deniedMessage: () => t('permission.browserSiteDenied'), log: line => console.log(`  ${line}`),
+    profileFor: id => chromeProfiles?.profileFor(id) ?? null, profileUsed: (id, profile) => chromeProfiles?.used(id, profile),
     handoff: chromeHandoffs, turnLive: id => liveTurn(id), turnSignal: id => runtime.turns.get(id)?.ac.signal, connectWaitText: id => agentT(runtime.turns.get(id)?.agentLocale ?? currentLocale(), 'browserBridge.connectWait') })
   : null;
 // 接続の子が預かっていた状態を受ける（端点・鍵・ポート・隠した窓の印）。前のサーバーの接続（確認待ちも）を引き継ぎ、以後の変化を預け直す
@@ -1365,8 +1381,18 @@ function openComputerPort(entry, backend, token) {
     } });
 }
 
-// ---- ply_browser（エージェントのブラウザー操作の口。core/browser-bridge.mjs、ADR 0148）。ツールはまだ載せていない ----------------------------
+// ---- ply_browser（エージェントのブラウザー操作の口。core/browser-bridge.mjs、ADR 0148） ----------------------------
 const browserBridge = createBrowserBridge({ handoffs: chromeHandoffs });
+// プロフィールのツールは ops（browser.listProfiles・useProfile）を通す（画面・CLI と同じ断り・同じ監査）
+if (chromeProfiles) browserBridge.useProfiles({
+  list: (sessionId, locale) => browserProfileOp(sessionId, 'browser.listProfiles', {}, locale),
+  use: (sessionId, args, locale) => browserProfileOp(sessionId, 'browser.useProfile', args, locale),
+});
+async function browserProfileOp(sessionId, op, args, locale) {
+  const result = await opsRegistry.invoke({ by: 'agent', via: 'mcp', sessionId }, op, args, opsDeps(locale));
+  if (!result.ok) throw new Error(result.error);
+  return result.result;
+}
 /**
  * hand_to_user の呼び出しの時点の会話（ply_computer の owner と同じ形）。ターンの中断の合図と、そのエージェントの待つ長さの区切り
  * （agy は MCP の呼び出しを 3 分で切るので 150 秒、Claude・Codex は 600 秒。core/browser-bridge.mjs の BROWSER_WAIT_SLICE_MS）を返す
@@ -2112,6 +2138,8 @@ const LIST_NEUTRAL_EVENTS = new Set([
   "channelsChanged", "channelPost", "channelReaction", "channelThread", "channelRead", "botsChanged", "memoryChanged", "routinesChanged", "channelEvent", "voiceChanged", "apiKeysChanged",
   // 通知の一覧の件数（ベルのボタン。ADR 0149）。会話の一覧の行は変わらない
   "notificationsChanged",
+  // 会話の Chrome のプロフィールが替わった（core/chrome/profile-choice.mjs）。一覧の行は変わらない
+  "chromeProfile",
 ]);
 
 // 接続ごとに、いま開いている会話（loadSession の watch）。宣言した接続には、流れの出来事（streamEvents）を
@@ -2252,6 +2280,12 @@ chromeControl?.onTap(tap => chromeControlSend({ type: 'chromeTap', ...tap }));
 /** 引き継いで戻したときの会話の行（present kind: 'chromeHandover'）。ターンの外でも出すので、記録して全部の接続へ流す */
 async function recordChromeHandover(sessionId, seconds) {
   const record = await history.recordPresent(sessionId, { kind: 'chromeHandover', chromeHandover: { seconds } });
+  emitGlobal({ type: 'present', sessionId, ...record });
+}
+/** エージェントがプロフィールを切り替えた行（present kind: 'chromeProfile'）。「Claude が『仕事』に切り替えました」 */
+async function recordChromeProfile(sessionId, { browser, dir, name }) {
+  const agent = runtime.turns.get(sessionId)?.backend.label ?? [...runtime.turns.values()].find(turn => turn.info.sessionId === sessionId)?.backend.label ?? '';
+  const record = await history.recordPresent(sessionId, { kind: 'chromeProfile', chromeProfile: { browser, dir, name, agent } });
   emitGlobal({ type: 'present', sessionId, ...record });
 }
 
@@ -2542,6 +2576,7 @@ function makeEmit(turn) {
     // （差し替えると sidecar に "null" キーの行が生える）。
     if (event?.type === "session" && event.sessionId && !turn.info.sessionId) {
       turn.info.sessionId = event.sessionId;
+      if (turn.browserRelayId && turn.browserRelayId !== event.sessionId) chromeProfiles?.rebind(turn.browserRelayId, event.sessionId);
       if (turn.browserRelayId && turn.browserRelayId !== event.sessionId) { agentBrowserEndpoints?.rebind(turn.browserRelayId, event.sessionId); turn.browserRelayId = event.sessionId; }
       turn.compactionRevision = compactionScheduler.revision(event.sessionId);
       for (const read of liveReads) if (read.sessionId === event.sessionId) read.turn = turn;
@@ -2576,6 +2611,7 @@ function makeEmit(turn) {
         // 送信と一緒に渡した添付も、id が決まった今、会話に載せる
         event.first && attachments?.length ? presentAttachments(sessionId, attachments, emit) : null,
       ]);
+      turn.setup = turn.setup.then(() => chromeProfiles?.flush(sessionId));
       turn.setup.catch((err) => console.error("  設定の記録に失敗:", String(err?.message ?? err)));
       if (turn.worktreeId) worktreeHost.worktrees.update(turn.worktreeId, { sessionId: event.sessionId }).catch(() => {});
     }
@@ -3096,6 +3132,7 @@ async function createSession(args) {
     const account = source ? source.nextSettings?.account ?? source.claudeAccount ?? '' : (await store.getPrefs()).claudeAccount ?? '';
     if (account && await claudeAccounts.has(account)) await store.setSessionData(sessionId, 'claudeAccount', account);
     if (draft) await store.setSessionData(sessionId, "draft", { text: draft, attached: [] }, { durable: true });
+    await chromeProfiles?.startNew(sessionId);
   } catch (e) { await deleteUnsentConversation(sessionId); await store.removeSession(sessionId); releaseAgentConnection(sessionId); throw e; }
   emitGlobal({ type: "sessionsChanged", sessionId: null });
   return { sessionId };
@@ -3260,6 +3297,7 @@ async function deleteSessionOf(sessionId) {
       forgetBrowserEnvironment({ bridge: agentBrowserEndpoints, dataDir: store.dataDir, sessionId }),
       Promise.resolve().then(() => chromeHandoffs?.forget(sessionId)),
       Promise.resolve().then(() => chromeRelay?.forget(sessionId)),
+      Promise.resolve().then(() => chromeProfiles?.forget(sessionId)),
       settingApprovals?.forget(sessionId),
       ...[...cwds].map(cwd => gitActivity.forget(cwd, sessionId)),
     ];
@@ -3634,6 +3672,8 @@ const opsChromeControl = chromeControl ? {
   resume: sessionId => chromeControl.resume(sessionId),
   stop: sessionId => chromeControl.stop(sessionId),
 } : null;
+// 会話の Chrome のプロフィール（browser.listProfiles・useProfile）。ply_browser の list_browser_profiles・use_browser_profile も ops を通す
+const opsChromeProfiles = chromeProfiles;
 const opsChrome = chromeConnection ? {
   status: () => chromeConnection.state(),
   connect: async () => { await chromeConnection.connect(); return chromeConnection.state(); },
@@ -4210,6 +4250,7 @@ function opsDeps(lng = currentLocale()) {
     computer: opsComputer,
     chrome: opsChrome,
     chromeControl: opsChromeControl,
+    chromeProfiles: opsChromeProfiles,
     // MCP・Hooks・コンテキスト・リモート・接続先の操作（core/ops/mcp.mjs・hooks.mjs・context.mjs・remote.mjs。ADR 0095）。WS の同じ名前のコマンドがしていた処理
     mcp: opsMcp,
     hooks: opsHooks,
@@ -5179,6 +5220,7 @@ agentTasks = await createAgentTasks({
     if (worktree) await worktreeHost.worktrees.update(worktree.id, { sessionId }).catch(() => {});
     try {
       await store.setMeta(sessionId, { ...info, backend: backend.id, unsent: true });
+      await chromeProfiles?.startNew(sessionId);
       await store.setMode(sessionId, mode); await store.setModel(sessionId, model);
       await store.setSessionData(sessionId, 'effort', effort);
       // 端末の AI から任された子は、出どころ（どの端末の・どの会話の AI か。画面の「⇄ <端末> の AI から」）と、依頼元の承認モードを残す
@@ -5774,6 +5816,8 @@ async function beginTurn(ctx) {
   if (runArgs.browserEnv) {
     // 中継へ渡したキー。新規会話の id 決定での付け替え（rebind）と、承認の問い合わせ（getAgent）がこれで照合する
     turn.browserRelayId = sessionId || turn.key;
+    // 新しい会話は設定の chromeNewProfile で始まる（id が決まったら rebind で会話のメタに書く）
+    if (!sessionId) await chromeProfiles?.startNew(turn.key).catch(error => console.error('  chrome-profile: the new conversation profile was not applied:', String(error?.message ?? error)));
     chromeHandoffs?.turnChanged(sessionId || turn.key, true);
     // i18n-dynamic: agent:browser.instructions
     runArgs.browserInstructions = browserInstruction(runArgs.browserEnv, agentLocale, agentT);

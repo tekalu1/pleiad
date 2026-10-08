@@ -11,7 +11,7 @@ const NAME_MAX = 100;
 /** 表示名を画面に出せる形にする（制御文字を除き、長さをそろえる。空ならフォルダー名） */
 function displayName(value, dir) {
   if (typeof value !== 'string') return dir;
-  const name = value.replace(/[\u0000-\u001f\u007f-\u009f  ]/g, '').trim().slice(0, NAME_MAX);
+  const name = value.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, '').trim().slice(0, NAME_MAX);
   return name || dir;
 }
 
