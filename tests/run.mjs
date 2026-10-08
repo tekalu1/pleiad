@@ -74,6 +74,10 @@ const SUITES = [
   './unit/chrome-windows.mjs',
   // エージェントの Chrome の窓の止める・引き継ぐ・戻す（ADR 0148・0154）: 状態機械・一時停止中の断り・映像を断る・止めて人の送信で解く・窓を見える形に戻して前に出す／画面の外へ戻す・窓が閉じられた／Chrome が閉じた・押した位置（偽の OS の層・偽の Chrome）
   './unit/chrome-control.mjs',
+  // 端末から Chrome の窓を操作する（第 7 段 C。by: 'device'）: 入力の変換は内蔵ブラウザーと同じ CDP・by: device の間だけ入力が通る・ページの大きさを合わせて戻す・窓は見せず映像も止めない・Chrome で開く（偽の Chrome・偽の OS の層）
+  './unit/chrome-device.mjs',
+  // Chrome の操作待ちと引き継ぐ・戻すの通し（第 7 段 C）: カードの「Chrome で操作する」→ 引き継ぐ・「Claude に戻す」→ 決着・先に引き継いでいたら操作中から・ターンの外なら「続けてください」が 1 回（偽の Chrome・偽の OS の層）
+  './unit/chrome-handoff-flow.mjs',
   // エージェントの Chrome の窓の状態の一行（web/chrome-control.mjs）: 状態ごとの字とボタン・押した位置の輪・一時停止中の帯と膜・状態の置き場・会話の引き継ぎの行・記録（DOM の代役）
   './unit/chrome-control-ui.mjs',
   // Chrome への接続の OS の層（Windows）: 確認の窓の見つけ方・前面化・閉じる・使えない OS・parentPort の往復（偽の Win32 の表）

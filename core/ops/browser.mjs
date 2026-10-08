@@ -3,6 +3,8 @@
 // human-only は ADR 0094 の 5 つに限るので write。エージェントが自分の窓を引き継ぐ・戻す意味は無い）。
 // 状態を読む操作（chromeStatus）だけが AI・CLI にも出る。つなぐ・切る・確認を前に出すは、設定 › ブラウザーの画面の操作で、
 // ホストの PC の画面だけから呼べる（エージェントがつなぐ道は core の接続の案内 chromeConnection.demand が持つ）。
+// 引き継ぐ（chromeTakeOver）は by: 'device' でリモートの端末から操作する（窓は PC に見せず、端末の映像の箱の大きさでページを描き、映像のセッションで入力を送る）。
+// ビューアの⋯「Chrome で開く（エージェントの窓へ）」（chromeOpen）は、会話の窓に URL を開く。ホストの PC の画面だけ。エージェントには知らせない。
 import { z } from 'zod';
 import { agentT } from '../i18n.mjs';
 import { defineOp, OpError } from './registry.mjs';
@@ -29,18 +31,28 @@ const controlShape = z.object({
   state: z.enum(['running', 'idle', 'stopped', 'paused']).describe('agent:ops.browser.chromeControl.state'),
   since: z.number().nullable().describe('agent:ops.browser.chromeControl.since'),
   error: z.string().nullable().describe('agent:ops.browser.chromeControl.error'),
+  by: z.enum(['pc', 'device']).nullable().describe('agent:ops.browser.chromeControl.by'),
 });
-const controlInput = z.object({ sessionId: z.string().min(1).max(200).describe('agent:ops.browser.chromeControl.sessionId') });
+const sessionIdShape = z.string().min(1).max(200).describe('agent:ops.browser.chromeControl.sessionId');
+const controlInput = z.object({ sessionId: sessionIdShape });
+const takeOverInput = z.object({
+  sessionId: sessionIdShape,
+  by: z.enum(['pc', 'device']).optional().describe('agent:ops.browser.chromeTakeOver.by'),
+  width: z.number().positive().max(10000).optional().describe('agent:ops.browser.chromeTakeOver.width'),
+  height: z.number().positive().max(10000).optional().describe('agent:ops.browser.chromeTakeOver.height'),
+  scale: z.number().positive().max(10).optional().describe('agent:ops.browser.chromeTakeOver.scale'),
+});
 /** 会話の窓の操作（引き継ぐ・戻す・止める）。Chrome の層が使えなければ UNSUPPORTED、引き継げる窓が無ければ NO_WINDOW */
 const controlOf = (ctx) => {
   const control = ctx.chromeControl;
   if (!control || ctx.chrome?.status().state === 'unsupported') unavailable(ctx);
   return control;
 };
-async function controlRun(ctx, action, sessionId) {
-  try { return await controlOf(ctx)[action](sessionId); }
+async function controlRun(ctx, action, sessionId, options) {
+  try { return await controlOf(ctx)[action](sessionId, options); }
   catch (error) {
     if (error?.code === 'NO_WINDOW') throw new OpError('NO_WINDOW', agentT(ctx.locale, 'ops.errors.chromeNoWindow'));
+    if (error?.code === 'INVALID') throw new OpError('INVALID', agentT(ctx.locale, 'ops.errors.chromeDeviceSize'));
     throw error;
   }
 }
@@ -97,11 +109,11 @@ export const browserOps = [
     summary: 'agent:ops.browser.chromeTakeOver.summary',
     risk: 'write',
     riskReason: 'Shows the Chrome window of the conversation to the user and pauses the browser commands of the agent until it is handed back; it never grants anything or touches the user own windows. Screen and remote devices only (not on MCP or CLI)',
-    input: controlInput,
+    input: takeOverInput,
     output: controlShape,
     surfaces: { ui: true, mcp: false, cli: false },
     legacyCommand: 'chromeTakeOver',
-    handler: (ctx, { sessionId }) => controlRun(ctx, 'takeOver', sessionId),
+    handler: (ctx, { sessionId, by, width, height, scale }) => controlRun(ctx, 'takeOver', sessionId, by === 'device' ? { by, width, height, scale } : { by: 'pc' }),
   }),
   defineOp({
     id: 'browser.chromeResume',
@@ -124,5 +136,26 @@ export const browserOps = [
     surfaces: { ui: true, mcp: false, cli: false },
     legacyCommand: 'chromeStop',
     handler: (ctx, { sessionId }) => controlRun(ctx, 'stop', sessionId),
+  }),
+  defineOp({
+    id: 'browser.chromeOpen',
+    summary: 'agent:ops.browser.chromeOpen.summary',
+    risk: 'write',
+    riskReason: 'Opens a web page the user chose in the Chrome window of the conversation (waiting for Chrome to allow the connection if needed); the agent is not told and nothing is granted. Only the host PC\'s screen can call it (not on MCP or CLI)',
+    input: z.object({
+      sessionId: sessionIdShape,
+      url: z.string().min(1).max(8192).describe('agent:ops.browser.chromeOpen.url'),
+    }),
+    output: z.object({ sessionId: z.string(), targetId: z.string() }),
+    surfaces: { ui: true, mcp: false, cli: false },
+    hostScreenOnly: true,
+    legacyCommand: 'chromeOpen',
+    handler: async (ctx, { sessionId, url }) => {
+      const chrome = mustBeSupported(ctx);
+      if (!/^https?:\/\//i.test(url)) throw new OpError('INVALID', agentT(ctx.locale, 'ops.errors.chromeOpenUrl'));
+      if (!chrome.open) unavailable(ctx);
+      const { targetId } = await chrome.open(sessionId, url);
+      return { sessionId, targetId };
+    },
   }),
 ];

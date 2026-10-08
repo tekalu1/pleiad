@@ -68,7 +68,8 @@ export function createBrowserPanel({ bridge = window.plyDesktop?.browser, showMe
   let shown = false, covered = false, freezing = null, editing = false;
   // tabMenu(tab): ⋯ の先頭に足すファイルの操作（PC のファイル・可視化の写しのタブだけ。web/file-preview.mjs）。
   // rewriteSnapshot(rewrite): 写しの「読み込む」で、一時の許可付きの写しを書き直して同じタブで開く。onPaint(state): 状態が変わった
-  let hooks = { openPanel: () => {}, onEmpty: () => {}, tabMenu: () => [], rewriteSnapshot: async () => {}, onPaint: () => {} };
+  // canOpenInChrome() / openInChrome({ sessionId, url }): ⋯「Chrome で開く（エージェントの窓へ）」（web/client.mjs が入れる。出すのは Chrome の層が使えるホストだけ）
+  let hooks = { openPanel: () => {}, onEmpty: () => {}, tabMenu: () => [], rewriteSnapshot: async () => {}, onPaint: () => {}, canOpenInChrome: () => false, openInChrome: () => {} };
   const current = () => state.tabs.find(tab => tab.id === state.current) ?? null;
   const run = (action, args) => bridge.command(action, args).then(next => { if (next?.tabs) paint(next); return next; });
   const failed = () => notify(t('browser.failed'));
@@ -121,10 +122,15 @@ export function createBrowserPanel({ bridge = window.plyDesktop?.browser, showMe
   const more = button(moreIcon, t('browser.actions'), () => {
     const r = more.getBoundingClientRect(), tab = current();
     const fileItems = tab ? hooks.tabMenu(tab) : [];
+    // 会話のエージェントの Chrome の窓に開く。http(s) のページだけ（PC のファイル・可視化の写し・空のタブには出さない）、会話に属するパネルだけ
+    const chromeSession = state.sessionId ?? getSessionId();
+    const toChrome = hooks.canOpenInChrome() && chromeSession && !tab?.snapshot && /^https?:/i.test(tab?.url ?? '')
+      ? [{ label: t('browser.menu.openInChrome'), onClick: () => hooks.openInChrome({ sessionId: chromeSession, url: tab.url }) }] : [];
     showMenu?.(r.left, r.bottom + 4, [
       ...(fileItems.length ? [...fileItems, { sep: true }] : []),
       { label: t('browser.menu.devtools'), disabled: !tab?.url, onClick: () => run('devtools').catch(failed) },
       { label: t('browser.menu.detach'), disabled: !tab?.url, onClick: () => run('detach').catch(failed) },
+      ...toChrome,
       { sep: true },
       { label: t('browser.menu.clearSiteData'), disabled: !/^https?:/.test(tab?.url ?? ''), onClick: () => run('clearSiteData').then(res => notify(res?.ok ? t('browser.siteDataCleared') : t('browser.failed'))).catch(failed) },
     ], tab?.url ? addressParts(tab.url).host || tabLabel(tab) : t('browser.panel'));

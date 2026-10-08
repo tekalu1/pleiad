@@ -63,7 +63,8 @@ export const SCREENCAST_COMMANDS = ['browserScreencast', 'browserScreencastStop'
 /**
  * WS のコマンドを処理する（core/server.mjs から呼ぶ）。戻り値は { ok, result } か { ok: false, code }。
  * 内蔵ブラウザーの映像は、リモートの接続（ADR 0010 の isLocalRequest が false）からだけ受ける。ホストの画面には内蔵ブラウザーそのものがある。
- * args.source === 'chrome' は、エージェントの Chrome の窓の映像（chrome = { hub, bridge }）。ホストの画面もリモートも見られるが、見るだけ（入力・移動は view-only）。
+ * args.source === 'chrome' は、エージェントの Chrome の窓の映像（chrome = { hub, bridge }）。ホストの画面もリモートも見られるが、見るだけ（移動は view-only）。
+ * 入力はリモートの端末からだけ受け、端末が引き継いでいる間かは bridge（core/chrome/screencast.mjs）が決める（それ以外は view-only）。
  * 入力・移動は、その会話を見ている接続からだけ。
  * snapshotFile({ sessionId, id, at }) は可視化の写しを書き出して file: の URL を返す（見つからなければ null）
  */
@@ -72,7 +73,7 @@ export async function screencastCommand({ command, args = {}, local, hub, bridge
   if (viaChrome) {
     if (!chrome?.hub || !chrome.bridge?.ready) return { ok: false, code: 'unavailable' };
     ({ hub, bridge } = chrome);
-    if (command === 'browserScreencastInput' || command === 'browserScreencastNav') return { ok: false, code: 'view-only' };
+    if (command === 'browserScreencastNav' || (command === 'browserScreencastInput' && local)) return { ok: false, code: 'view-only' };
     if (command === 'browserScreencast' && (args.url != null || args.visualization)) return { ok: false, code: 'view-only' };
   } else if (local) return { ok: false, code: 'remote-only' };
   if (!hub || !bridge?.ready) return { ok: false, code: 'unavailable' };

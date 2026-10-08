@@ -169,6 +169,31 @@ export default async function (t) {
         const r = await registry.invoke(agent, id, { sessionId: 'x' }, { locale: 'ja' });
         t.ok(`${id} は MCP からは見つからない（画面とリモートの端末だけ）`, r.ok === false && r.code === 'NOT_FOUND' && registry.get(id).risk === 'write' && registry.get(id).surfaces.mcp === false && registry.get(id).surfaces.cli === false && registry.get(id).hostScreenOnly === false);
       }
+
+      // ---- ビューアの⋯「Chrome で開く」（chromeOpen）: ホストの画面だけ。つながっていなければ Chrome の許可を待つ（接続の案内のカードは出さない）
+      const badUrl = await fail(u.cmd('chromeOpen', { sessionId: turn.sessionId, url: 'file:///C:/secret.txt' }));
+      t.ok('chromeOpen: http(s) でない URL は INVALID（画面の言語の字）', badUrl?.code === 'INVALID' && /http・https/.test(badUrl.message), JSON.stringify(badUrl));
+      const remoteOpen = await ask('chromeOpen', { sessionId: turn.sessionId, url: 'https://a.example/' });
+      t.ok('chromeOpen: リモートの端末からは断る（HOST_SCREEN_ONLY）', remoteOpen.ok === false && remoteOpen.code === 'HOST_SCREEN_ONLY', JSON.stringify(remoteOpen));
+      const opening = u.cmd('chromeOpen', { sessionId: turn.sessionId, url: 'https://a.example/' });
+      await until(() => chrome.pending() >= 1, 8000, 'chromeOpen upgrade pending');
+      chrome.approve();
+      const opened = await opening;
+      t.ok('chromeOpen: 許可されると会話の窓に URL を開き、targetId を返す', opened.sessionId === turn.sessionId && chrome.browser.targets().some(x => x.targetId === opened.targetId && x.url === 'https://a.example/'), JSON.stringify(opened));
+      t.ok('chromeOpen: 待つ間に承認のカードを出さない', !u.events.some(e => e.type === 'permission'));
+      const openOp = registry.get('browser.chromeOpen');
+      const viaMcp = await registry.invoke(agent, 'browser.chromeOpen', { sessionId: 'x', url: 'https://a.example/' }, { locale: 'ja' });
+      t.ok('browser.chromeOpen は MCP・CLI に出さない（write・ホストの画面だけ）', viaMcp.ok === false && viaMcp.code === 'NOT_FOUND' && openOp.risk === 'write' && openOp.surfaces.mcp === false && openOp.surfaces.cli === false && openOp.hostScreenOnly === true);
+
+      // ---- 端末から引き継ぐ（chromeTakeOver の by: device）
+      const noSize = await fail(u.cmd('chromeTakeOver', { sessionId: turn.sessionId, by: 'device' }));
+      t.ok('by: device で大きさが無ければ INVALID（画面の言語の字）', noSize?.code === 'INVALID' && /映像の箱の大きさ/.test(noSize.message), JSON.stringify(noSize));
+      const device = await ask('chromeTakeOver', { sessionId: turn.sessionId, by: 'device', width: 390, height: 700, scale: 2 });
+      t.ok('リモートの端末から by: device で引き継ぐ → paused・by: device', device.ok === true && device.result.state === 'paused' && device.result.by === 'device', JSON.stringify(device));
+      await until(() => u.events.some(e => e.type === 'chromeControl' && e.sessionId === turn.sessionId && e.state === 'paused' && e.by === 'device'), 8000, 'chromeControl by device');
+      t.ok('状態の便りに by: device が載る', true);
+      const back = await ask('chromeResume', { sessionId: turn.sessionId });
+      t.ok('端末から戻す → 一時停止が解け、by は null', back.ok === true && back.result.state !== 'paused' && back.result.by === null, JSON.stringify(back));
     } finally { v?.terminate(); u?.close(); await s.stop(); }
   }
 
