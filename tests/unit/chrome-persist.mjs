@@ -191,6 +191,28 @@ export default async function (t) {
       await a.conn.close(); await a.link.quit();
     }
 
+    // ===== 4b. サーバーが居ない間に Chrome との接続が切れた: 子の預かり物は残り、次のサーバーが隠した窓を閉じる（誰にも戻せない窓を残さない）=====
+    {
+      await clearChildren();
+      const chrome = await startFakeChrome({ permission: 'auto' });
+      cleanups.push(() => chrome.stop());
+      const os = fakeChromeOs({ chrome });
+      const a = await newServer(chrome, os);
+      const ag = await agent(await a.relay.endpoint('conv-4b'));
+      await ag.cmd('Target.setDiscoverTargets', { discover: true });
+      await ag.cmd('Target.createTarget', { url: 'about:blank' });
+      t.ok('前提: 隠した窓がある', os.hwnds().filter(h => h.agent && h.concealed && !h.closed).length === 1);
+      await leave(a);
+      chrome.dropConnections();   // 出ていった後、次のサーバーが来る前に、Chrome との接続が切れた
+      await sleep(300);
+      const b = await newServer(chrome, os);
+      t.ok('新しいサーバー: 接続は切れたまま（拾えない）', b.adopted === false && b.conn.state().state !== 'connected', JSON.stringify(b.conn.state()));
+      t.ok('新しいサーバー: 預かり物から端点を取り戻す（同じ会話の鍵）', b.relay.snapshot().entries.some(e => e.id === 'conv-4b'));
+      t.ok('接続が無いまま層が戻ったら、引き継いだ隠した窓を閉じる（隠れたまま残らない）', os.hwnds().filter(h => h.agent && !h.closed).length === 0 && os.calls('closeAgent').length === 1, JSON.stringify(os.hwnds()));
+      t.ok('閉じた窓は carry からも消える', b.relay.snapshot().windows.length === 0, JSON.stringify(b.relay.snapshot().windows));
+      await b.relay.close(); await b.conn.close(); await b.link.quit();
+    }
+
     // ===== 5. 一時停止（引き継ぎ）のまま更新を越える: 一時停止は解けず、人が操作している窓へエージェントのコマンドが通らない（ADR 0154・0167）=====
     {
       await clearChildren();

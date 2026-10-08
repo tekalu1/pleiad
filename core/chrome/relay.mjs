@@ -1110,7 +1110,10 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, scop
      */
     async readopt() {
       if (closed || handedOff) return 0;
-      const lost = await scope.readopt?.() ?? [];
+      // Chrome に接続している間に引き継いだ窓の popup は、ここで探して隠す。接続が無ければ、層に引き継げた窓も誰にも戻せない（main が居ない間に Chrome との接続が切れた）ので閉じる
+      const lost = await scope.readopt?.({ cdp: up?.cdp ?? null }) ?? [];
+      const state = connection.state?.().state;
+      if (!up && state !== 'connected' && state !== 'permission') { await scope.closeHidden?.(); carryChanged(); }
       if (!lost.length) return 0;
       // 引き継げなかった窓のタブは閉じる。ただし人が操作している（見せている）窓は閉じない（人の窓。記録だけ捨てる）
       for (const { entryId, windowId, revealed } of lost) { entries.get(entryId)?.windows.delete(windowId); if (!revealed) orphans.add(windowId); }

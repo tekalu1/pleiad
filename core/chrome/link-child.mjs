@@ -34,7 +34,7 @@ export function startLinkChild({ pipe, secret, root = '', key = '', log = () => 
 
   const writeControl = (socket, name, value) => { if (socket && !socket.destroyed) socket.write(controlLine(name, value)); };
   const toClient = (name, value) => writeControl(client, name, value);
-  const resetWs = () => { state.phase = 'idle'; state.ws = null; state.port = null; state.path = null; state.upgradeAt = null; state.sessions.clear(); state.carry = null; state.carryInvalid = false; pending.clear(); bound.clear(); };
+  const resetWs = () => { state.phase = 'idle'; state.ws = null; state.port = null; state.path = null; state.upgradeAt = null; state.sessions.clear(); pending.clear(); bound.clear(); };
 
   // ---- Chrome からの行 ----------------------------------------------------------------------
   function trackSession(method, buf) {

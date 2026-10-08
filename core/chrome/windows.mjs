@@ -340,12 +340,20 @@ export function createChromeWindows({ os, locate, log = () => {}, random = () =>
      * 印を持つ窓を層に引き継がせて、記録の ref を作り直す（サーバーの入れ替わり後・main の層が入れ替わった後）。
      * 層が引き継げなかった窓（窓が無い・ブラウザーの窓でない）は記録を捨て、{ entryId, windowId } で返す（relay が CDP で閉じる）。層が使えなければ何もしない
      */
-    async readopt() {
+    async readopt({ cdp = null } = {}) {
       if (!os.capabilities().supported) return [];
       const lost = [];
+      const features = os.capabilities().features;
       for (const [entryId, entry] of [...entries]) {
         for (const [windowId, record] of [...entry.windows]) {
-          if (!record.token) continue;
+          if (!record.token) {
+            // main が居ない間に開いた popup（隠せず、窓の ID だけ残っている）。層が戻ったので、外形で探して隠す。探せない・cdp が無いなら、見える窓を残さないよう lost で返して閉じさせる
+            if (record.role !== 'popup' || record.ref || entry.revealed) continue;
+            const ref = cdp && features.conceal && features.bounds ? await findByBounds(cdp, windowId, baseline, { waitMs: time.popupWaitMs }).catch(() => null) : null;
+            if (ref) { record.ref = ref; await hide(ref, null); record.token = await os.exportAgent(ref); changed(); }
+            else { entry.windows.delete(windowId); lost.push({ entryId, windowId, revealed: false }); }
+            continue;
+          }
           // 見せている窓は、層に「隠していない窓」として引き継がせる（前面の見張りが人の窓を画面の外へ戻さない）
           const ref = await os.adoptAgent(record.token, { revealed: entry.revealed === true }).catch(() => null);
           if (ref) record.ref = ref;
@@ -354,6 +362,24 @@ export function createChromeWindows({ os, locate, log = () => {}, random = () =>
       }
       if (lost.length) { log(`chrome-windows: ${lost.length} window(s) could not be taken over`); changed(); }
       return lost;
+    },
+
+    /**
+     * Chrome に接続できないまま層が戻ったとき（main が居ない間に接続が切れた）: 隠した窓を閉じる。窓の記録を引き継いだだけで接続が無いので、誰にも戻せない。
+     * 人が操作している窓（revealed）は閉じない（記録だけ捨てる）。閉じた数を返す
+     */
+    async closeHidden() {
+      let closed = 0;
+      for (const entry of entries.values()) {
+        for (const [windowId, record] of [...entry.windows]) {
+          if (entry.revealed) { entry.windows.delete(windowId); continue; }
+          if (record.ref) { await os.closeAgent(record.ref).catch(() => {}); closed += 1; }
+          entry.windows.delete(windowId);
+        }
+      }
+      if (closed) log(`chrome-windows: closed ${closed} hidden window(s) left without a Chrome connection`);
+      changed();
+      return closed;
     },
 
     /** テスト・診断用: 会話の窓（windowId・ref・役割）。窓の題・URL は持たない */

@@ -522,6 +522,37 @@ export default async function (t) {
       t.ok('閉じられなければ、見える形へ戻して記録を手放す（見えない窓を残さない）', await until(() => agentWindows(r).every(h => h.released && !h.closed && h.concealed === false && h.alpha === 255 && h.ex.appwindow)), JSON.stringify(r.os.hwnds()));
     } finally { await r.stop(); }
   }
+  // ===== 10. main が居ない間に開いて隠せなかった popup: 層が戻ったら探して隠す（cdp が無ければ lost で返して閉じさせる） =====
+  {
+    const { r, popup } = await popupRig({ prepare: r => r.fake.refuseWindowMoves(true), afterOpen: r => { r.os.opts.noListener = true; } });
+    try {
+      await until(() => r.logs.some(line => line.includes('popup window not found')));
+      t.ok('前提: 隠せなかった popup は窓の ID だけを記録に持つ（token なし）', hwndOf(r, popup.windowId)?.concealed === false && r.scope.snapshot().some(e => e.windows.some(w => w.windowId === popup.windowId && w.token === null)), JSON.stringify(r.scope.snapshot()));
+      r.os.opts.noListener = false;
+      const adopted = await r.scope.readopt({ cdp: await r.conn.demand() });
+      t.ok('層が戻ったら、隠せなかった popup を探して隠す（lost に出さない）', adopted.length === 0 && await until(() => concealedOk(hwndOf(r, popup.windowId))), JSON.stringify({ adopted, hw: hwndOf(r, popup.windowId) }));
+      t.ok('隠した popup の印（token）も記録に載る', r.scope.snapshot().some(e => e.windows.some(w => w.windowId === popup.windowId && /^fake:/.test(w.token))));
+    } finally { await r.stop(); }
+  }
+  {
+    const { r, popup } = await popupRig({ prepare: r => r.fake.refuseWindowMoves(true), afterOpen: r => { r.os.opts.noListener = true; } });
+    try {
+      await until(() => r.logs.some(line => line.includes('popup window not found')));
+      const lost = await r.scope.readopt();
+      t.ok('cdp が無くて探せない popup は、lost で返す（relay が CDP で閉じる。見える窓を残さない）', lost.length === 1 && lost[0].windowId === popup.windowId && lost[0].revealed === false && r.scope.windows('one').length === 1, JSON.stringify(lost));
+    } finally { await r.stop(); }
+  }
+  // 人が操作している（revealed）popup は、記録のまま触らない
+  {
+    const { r, popup } = await popupRig({ prepare: r => r.fake.refuseWindowMoves(true), afterOpen: r => { r.os.opts.noListener = true; } });
+    try {
+      await until(() => r.logs.some(line => line.includes('popup window not found')));
+      r.scope.restore([{ id: 'one', revealed: true, windows: [{ windowId: popup.windowId, role: 'popup', token: null }] }]);
+      const lost = await r.scope.readopt();
+      t.ok('人が操作している popup は lost に出さない（閉じさせない）', lost.length === 0, JSON.stringify(lost));
+    } finally { await r.stop(); }
+  }
+
   {
     // 隠した後に失敗したら、隠した窓の記録だけを残さない
     const r = await rig();
