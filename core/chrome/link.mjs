@@ -13,7 +13,6 @@ import net from 'node:net';
 import crypto from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { fileURLToPath } from 'node:url';
-import { connectHolder } from '../holder/client.mjs';
 import { LINK_VERSION, LINK_CARD_KIND, CARRY_MAX_BYTES, HELLO_TIMEOUT_MS, LineReader, controlLine, parseControl, linkPipeName } from './link-wire.mjs';
 
 export { LINK_VERSION, LINK_CARD_KIND };
@@ -206,20 +205,6 @@ class ChromeLink {
 }
 
 const cardOf = child => readLinkCard(child.label);
-
-/**
- * Pleiad が終わるとき、保持役に子が 1 つも生きていなければ保持役も終わらせる（接続の子を起こすためだけに起こした保持役を、使用中の印ごと残さない）。
- * 保持役の親は 1 つなので、つなぎ直して最新の子の一覧を見る（後から合格した方が勝つ）。他の子（Codex・シェル）が生きていれば何もしない
- */
-export async function stopHolderIfIdle({ dataDir, root, appVersion = '', connect = connectHolder } = {}) {
-  let client;
-  try { client = await connect({ dataDir, root, appVersion }); } catch { return false; }
-  const busy = (client.welcome?.children ?? []).some(child => child.alive && !cardOf(child));   // 接続の子は今 quit した（終わる途中のことがある）
-  if (busy) { client.close(); return false; }
-  client.shutdown();
-  await sleep(100);
-  return true;
-}
 
 /** 子を止めて片付ける。kill は付いている親からしか転送されないので、先に attach する */
 async function retire(holder, id) {

@@ -3,7 +3,7 @@ import { fileURLToPath } from 'node:url';
 import { startFakeChrome } from '../lib/fake-chrome.mjs';
 import { startHolder, waitFor, sleep } from '../lib/holder-harness.mjs';
 import { createCdp } from '../../core/chrome/cdp.mjs';
-import { openChromeLink, stopHolderIfIdle, chromeLinkEnabled, readLinkCard, LINK_CARD_KIND, LINK_VERSION } from '../../core/chrome/link.mjs';
+import { openChromeLink, chromeLinkEnabled, readLinkCard, LINK_CARD_KIND, LINK_VERSION } from '../../core/chrome/link.mjs';
 import { LineReader, peekLine, parseControl, controlLine, linkPipeName } from '../../core/chrome/link-wire.mjs';
 
 const OLD_CHILD = fileURLToPath(new URL('../lib/link-old-child.mjs', import.meta.url));
@@ -192,20 +192,6 @@ export default async function (t) {
         t.ok('版の不一致: 古い子は残らない', !linkChildren((await holder.connect()).client).some(c => c.id === 'chrome-link-old'));
         await link7?.quit();
       }
-    }
-    // 終わるとき: 他に生きた子が居なければ保持役も終わらせる（他の子が居れば残す）
-    {
-      const fakeConnect = children => async () => {
-        const calls = { shutdown: 0, close: 0 };
-        return { calls, welcome: { children }, shutdown() { calls.shutdown += 1; }, close() { calls.close += 1; } };
-      };
-      const card = { kind: LINK_CARD_KIND, v: LINK_VERSION, pipe: 'p', secret: 's' };
-      let made;
-      const spy = children => async () => (made = await fakeConnect(children)());
-      t.ok('終わるとき: 生きた子が接続の子だけなら、保持役も終わらせる', await stopHolderIfIdle({ connect: spy([{ id: 'chrome-link-1', alive: true, label: card }]) }) === true && made.calls.shutdown === 1);
-      t.ok('終わるとき: 子が居なければ保持役を終わらせる', await stopHolderIfIdle({ connect: spy([]) }) === true && made.calls.shutdown === 1);
-      t.ok('終わるとき: 他の生きた子（Codex など）が居れば保持役を残す', await stopHolderIfIdle({ connect: spy([{ id: 'codex-1', alive: true, label: null }]) }) === false && made.calls.shutdown === 0 && made.calls.close === 1);
-      t.ok('終わるとき: 保持役につなげなければ何もしない', await stopHolderIfIdle({ connect: async () => { throw new Error('none'); } }) === false);
     }
   } finally {
     for (const fn of cleanups) { try { await fn(); } catch { /* 片付け */ } }

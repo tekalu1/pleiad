@@ -127,7 +127,7 @@ import { closeAll as closeDataDb } from './db.mjs';
 import { createApprovalIds } from './approval-id.mjs';
 import { parentPortScreencast, createScreencastHub, screencastCommand } from './browser-screencast.mjs';
 import { createChromeConnection } from './chrome/connection.mjs';
-import { chromeLinkEnabled, openChromeLink, stopHolderIfIdle } from './chrome/link.mjs';
+import { chromeLinkEnabled, openChromeLink } from './chrome/link.mjs';
 import { chromeHomes } from './chrome/locate.mjs';
 import { parentPortChromeOs } from './chrome/os.mjs';
 import { createChromeRelay } from './chrome/relay.mjs';
@@ -209,8 +209,10 @@ const screencastClients = new WeakMap();   // ws -> hub に渡す端末
 const chromeLocate = chromeHomes()[0] ?? null;
 const chromeOs = hostedPort ? parentPortChromeOs(hostedPort) : null;
 // Chrome への ws を持つ接続の子（保持役の子。更新のサーバー・main の入れ替わりを越えて接続を保つ。ADR 0167）。AGENT_HOST_CHROME_LINK=off・実行場所の置き場が無い・つなげないときは、このプロセスの中の ws
+let chromeHolder = null;   // 保持役への口（接続の子を起こしたとき。終わるときに保持役ごと終わらせる）
 const chromeLink = chromeOs && chromeLinkEnabled({ runtimeRoot: BOOT_ENV.AGENT_HOST_RUNTIME_ROOT, handover: handoverEnabled(BOOT_ENV), bootValue: BOOT_ENV.AGENT_HOST_CHROME_LINK })
   ? await holderLink({ dataDir: store.dataDir, root: BOOT_ENV.AGENT_HOST_RUNTIME_ROOT, key: BOOT_ENV.AGENT_HOST_RUNTIME_KEY ?? '', appVersion: APP_VERSION })
+    .then(holder => { chromeHolder = holder; return holder; })
     .then(holder => openChromeLink({ holder, runtimeRoot: BOOT_ENV.AGENT_HOST_RUNTIME_ROOT, runtimeKey: BOOT_ENV.AGENT_HOST_RUNTIME_KEY ?? '', log: line => console.log(`  ${line}`),
       onGone: () => console.log('  chrome-link: the connection child went away; Chrome is reached from this process') }))
     .catch(error => { console.error('  chrome-link: not available:', String(error?.code ?? error?.message ?? error)); return null; })
@@ -8069,11 +8071,13 @@ mainPort.on("message", async ({ data }) => {
   }
 });
 
+// 本当に終わる（更新の引き継ぎではない）ときの印。終わりの後片付け（shellRuns.stopAll など）が保持役の子を全部止めた後、接続の子のために起こした保持役も終わらせる
+let quittingForGood = false;
+process.on('exit', () => { if (quittingForGood && chromeHolder) { try { chromeHolder.shutdown(); } catch { /* 終わるところ */ } } });
 /** 終わる（main の shutdown・孤児の見張り）。手を離していない保持役の子の app-server は、止めてから終わる（保持役の子は、サーバーが終わっても残るため。無停止の更新 段階 3） */
 function exitAfterStoppingHeld(code) {
-  void Promise.race([stopHeldAppServer(), new Promise(resolve => setTimeout(resolve, 2500))]).catch(() => {})
-    .then(() => chromeLink ? Promise.race([stopHolderIfIdle({ dataDir: store.dataDir, root: BOOT_ENV.AGENT_HOST_RUNTIME_ROOT, appVersion: APP_VERSION }), new Promise(resolve => setTimeout(resolve, 1500))]).catch(() => {}) : null)
-    .finally(() => process.exit(code));
+  quittingForGood = true;
+  void Promise.race([stopHeldAppServer(), new Promise(resolve => setTimeout(resolve, 2500))]).catch(() => {}).finally(() => process.exit(code));
 }
 
 // 名前付きパイプの main が居ないまま長く居続けない（utilityProcess は main と一緒に終わるので要らない）。作業が 0 件のまま上限を過ぎたら、shutdown と同じに終わる
