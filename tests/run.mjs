@@ -78,6 +78,8 @@ const SUITES = [
   './unit/server-chrome.mjs',
   // Chrome の OS の層をパイプの経路（無停止の更新）で作る: parentPort が無くても層ができる・chrome-os の依頼が main に届く・付け直しで求め直す・main が居ない間は失敗で返す
   './unit/chrome-os-link.mjs',
+  // Chrome への ws を保持役の子が持つ（接続の子。パイプ・引き継ぎ・つなぎ手が居ない間・許可待ちの続き・版。ADR 0167）
+  './unit/chrome-link.mjs',
   // 設定 › ブラウザー › エージェントのブラウザー: 状態ごとの字とボタン・使えない環境（DOM の代役）
   './unit/chrome-settings.mjs',
   './unit/browser-confirm.mjs',

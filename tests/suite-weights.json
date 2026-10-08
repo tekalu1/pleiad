@@ -48,6 +48,7 @@
     "channels-store": 2463,
     "chrome-connection": 1000,
     "chrome-os": 300,
+    "chrome-link": 5000,
     "chrome-os-link": 4000,
     "chrome-relay": 3230,
     "chrome-handoff": 600,
