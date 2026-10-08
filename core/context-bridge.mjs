@@ -8,6 +8,8 @@ import { t, agentT } from './i18n.mjs';
 
 export const CONTEXT_MCP_PATH = '/mcp/context';
 const MAX_TOOLS = 500;
+// 開き直しを待つ上限（外部の MCP を起こし直すのに手間取っても、呼び出しを止めっぱなしにしない）
+const REOPEN_WAIT_MS = 120_000;
 // MCP_CONFIG は mcpTransportConfig（core/context-runtime.mjs）の設定の誤り。文言は言語で変わるので code で見る
 const configError = e => e?.code === 'INVALID' || e?.code === 'SECRET_LOCKED' || e?.code === 'MCP_CONFIG';
 
@@ -75,6 +77,16 @@ export async function connectServer(item, { cwd, plyMcp, oauth } = {}) {
 
 export function createContextBridge({ plyMcp, oauth } = {}) {
   const bindings = new Map();
+  // 付け直したターンの口を開き直している間の token → 開き終わりの待ち。保持役の CLI は新しいサーバーが待ち受けた直後から ply_context を呼べるので、
+  // 外部の MCP を起こし直している間に届いた呼び出しは断らずに待たせる
+  const reopening = new Map();
+  /** token の口をこれから開き直す（open より前、待ち受けた時点で呼ぶ）。返す関数で待ちを解く（開き終えた・開かないと決めた。何度呼んでもよい） */
+  function reserve(token) {
+    let release;
+    const wait = new Promise(resolve => { release = () => { if (reopening.get(token) === wait) reopening.delete(token); resolve(); }; });
+    reopening.set(token, wait);
+    return release;
+  }
   /**
    * token を渡すと、その値で束ねる（会話のあいだ同じ値を使うバックエンド向け。antigravity は agy を会話ごとに
    * 1 本生かし、起動時に受け取った値をターンをまたいで使い続ける）。受け付けるのはこの open が開いている間だけ。
@@ -161,7 +173,13 @@ export function createContextBridge({ plyMcp, oauth } = {}) {
   }
   async function handle(req, res) {
     const json = (status, body) => { res.writeHead(status, { 'content-type': 'application/json', 'cache-control': 'no-store' }); res.end(JSON.stringify(body)); };
-    const token = /^Bearer ([a-f0-9]{64})$/.exec(req.headers.authorization ?? '')?.[1], b = bindings.get(token);
+    const token = /^Bearer ([a-f0-9]{64})$/.exec(req.headers.authorization ?? '')?.[1];
+    if (!bindings.has(token) && reopening.has(token)) {
+      let timer;
+      await Promise.race([reopening.get(token), new Promise(resolve => { timer = setTimeout(resolve, REOPEN_WAIT_MS); })]);
+      clearTimeout(timer);
+    }
+    const b = bindings.get(token);
     if (!b || b.closed || !b.isActive()) return json(401, { error: 'Active context required' });
     if (req.headers.origin && req.headers.origin !== b.origin) return json(403, { error: 'Origin not allowed' });
     if (req.method !== 'POST') { res.writeHead(405, { Allow: 'POST' }); return res.end(); }
@@ -204,5 +222,5 @@ export function createContextBridge({ plyMcp, oauth } = {}) {
     b.pending.add(work);
     try { return reply(await work); } finally { b.pending.delete(work); }
   }
-  return { open, handle };
+  return { open, handle, reserve };
 }

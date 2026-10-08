@@ -185,7 +185,7 @@ export default async function (t) {
     t.ok("どちらも失敗する suite があるので終了コード 1・末尾に失敗の詳細（判定名・詳細・suite 名）が残る", j1.code === 1 && j2.code === 1 && [j1, j2].every((r) => r.stdout.includes("[fx-fail]") && r.stdout.includes("落ちる判定") && r.stdout.includes("FAIL-DETAIL-1")), `${j1.code} ${j2.code}`);
     t.ok("skip は理由つきで機械可読（timings）にも、末尾の一覧にも出る", T2.suites.find((s) => s.name === "fx-skip")?.skipped === "前提が無い（試験用）" && j2.stdout.includes("とばした  fx-skip") && T1.totals.skippedSuites === 1);
     t.ok("判定数の合計・通った数が合う（6 判定 + …）", T1.totals.judgements === T2.totals.judgements && T2.totals.passed === T2.totals.judgements - T2.totals.failedJudgements && T2.totals.failedJudgements === 1, JSON.stringify(T2.totals));
-    t.ok("--jobs 2 は worker 2 本・全 suite を 1 回ずつ・各 worker の一時の置き場は消えている", T2.workers.length >= 2 && T2.workers.reduce((n, w) => n + w.suites, 0) === GOOD.length && T2.workers.every((w) => w.exit?.code === 0 && w.dataDirRemoved === true) && T2.problems.length === 0, JSON.stringify(T2.workers));
+    t.ok("--jobs 2 は worker 2 本・全 suite を 1 回ずつ・各 worker の一時の置き場は消えている", T2.workers.length >= 2 && T2.workers.reduce((n, w) => n + w.suites, 0) === GOOD.length && T2.workers.every((w) => w.exit?.code === 0 && w.dataDirRemoved === true) && T2.problems.length === 0, JSON.stringify({ workers: T2.workers, problems: T2.problems }));
     const heavy = T2.suites.find((s) => s.name === "fx-heavy");
     t.ok("重い suite から先に配る（最初に配られる）", T2.suites.every((s) => heavy.startMs <= s.startMs), JSON.stringify(T2.suites.map((s) => [s.name, s.startMs])));
     t.ok("timings: 重み・重みの有無・時間・worker・開始終了が入る", T2.suites.every((s) => typeof s.ms === "number" && typeof s.weightMs === "number" && typeof s.weighted === "boolean" && s.worker >= 1 && s.endMs >= s.startMs) && T1.suites.every((s) => s.worker === null) && T2.args.jobs === 2 && T2.registered === GOOD.length);
@@ -207,7 +207,7 @@ export default async function (t) {
     const S1 = read(path.join(tmp, "s1.json"));
     const S2 = read(path.join(tmp, "s2.json"));
     const sn = [...S1.suites, ...S2.suites].map((s) => s.name);
-    t.ok("--shard 1/2 と 2/2 を走らせた和は、全 suite をちょうど 1 回ずつ・同じ結果（--jobs 1 と一致）", sn.length === GOOD.length && new Set(sn).size === GOOD.length && same([...S1.suites, ...S2.suites].map((s) => [s.name, s.status, s.judgements]).sort(), T1.suites.map((s) => [s.name, s.status, s.judgements]).sort()) && sh1.stdout.includes("shard 1/2") && sh2.stdout.includes("shard 2/2"));
+    t.ok("--shard 1/2 と 2/2 を走らせた和は、全 suite をちょうど 1 回ずつ・同じ結果（--jobs 1 と一致）", sn.length === GOOD.length && new Set(sn).size === GOOD.length && same([...S1.suites, ...S2.suites].map((s) => [s.name, s.status, s.judgements]).sort(), T1.suites.map((s) => [s.name, s.status, s.judgements]).sort()) && sh1.stdout.includes("shard 1/2") && sh2.stdout.includes("shard 2/2"), JSON.stringify({ expected: view(T1), shards: [S1, S2].map(doc => ({ suites: view(doc), problems: doc.problems })), exits: [sh1.code, sh2.code] }));
     t.ok("fx-heavy（重い）は fx-pass-a と別の shard", S1.suites.some((s) => s.name === "fx-heavy") !== S1.suites.some((s) => s.name === "fx-pass-a") && S1.planHash === S2.planHash && S1.planHash !== T1.planHash);
 
     // ---- 絞り込みと worker の本数 -----------------------------------------------------------------------------------------

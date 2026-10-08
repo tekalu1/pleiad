@@ -11,6 +11,7 @@ import fs from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { startServer, ROOT } from '../lib/server.mjs';
 import { open, sleep } from '../lib/ws-client.mjs';
 import { readSessions, readUsage } from '../lib/data-store.mjs';
@@ -81,7 +82,9 @@ export default async function (t) {
     holderPid = found.pid;
     found.client.close();
 
-    s1 = await startServer({ env, dataDir, timeoutMs: 40_000, entry: path.join(ROOT, 'tests', 'lib', 'adopt-server.mjs') });
+    // S1 はロックを放した後、2 秒残ってから消える（負荷でプロセスの後片付けが遅れた形。tests/lib/slow-exit-preload.mjs）。その間に S2 が main とのパイプを立てる
+    const slowExit = { NODE_OPTIONS: `--import="${pathToFileURL(path.join(ROOT, 'tests', 'lib', 'slow-exit-preload.mjs')).href}"`, PLEIAD_SLOW_EXIT_MS: '2000' };
+    s1 = await startServer({ env: { ...env, ...slowExit }, dataDir, timeoutMs: 40_000, entry: path.join(ROOT, 'tests', 'lib', 'adopt-server.mjs') });
     m1 = await attachMain(dataDir, s1.child.pid);
     c1 = await open({ port: s1.port, token: s1.token });
     // 場面の入口（adopt-server の読み込み）はサーバーの起動のあとに立つ。場面が答えるまで待ってから、時間に敏感な場面（T の 5 秒の Read）を始める
@@ -157,6 +160,7 @@ export default async function (t) {
     assert.equal(s1.child.exitCode, 0, `S1 は正常に終わる\n${s1.tail(20)}`);
     await s2.ready();
     assert.equal(s2.port, s1.port, 'S2 は S1 と同じポートで待ち受ける（預かり物）');
+    assert.ok(!s2.tail(200).includes('main とのパイプを立てられませんでした'), `S1 のプロセスが残っていても、S2 は main とのパイプを立てる（S1 はロックを放す前にパイプを閉じる）\n${s2.tail(20)}`);
     m2 = await attachMain(dataDir, s2.child.pid);
     const ready2 = await until(() => m2.seen.messages.find(m => m.type === 'ready'), WAIT_MS, 'S2 の ready');
     assert.equal(ready2.token, s1.token, 'S2 は S1 と同じ画面のトークン（預かり物。startServer が S2 に渡した別のトークンではない）');

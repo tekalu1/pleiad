@@ -6216,6 +6216,9 @@ const handoverRun = createHandover({
     // 待ち受けのポートも新しいサーバーのために空ける（同じポートで待ち受ける。画面は 1.5 秒ごとのつなぎ直しで戻る）
     server.close();
     server.closeAllConnections?.();
+    // main とのパイプも、ロックを放す前に閉じる。Windows の名前付きパイプは持ち主のプロセスが残る間は同じ名前で立てられず、新しいサーバーは
+    // EADDRINUSE で main への口を持たないまま動く。ロックを放してからこのプロセスが消えるまでは、負荷で 1 秒近くかかる
+    await Promise.race([mainLink.close(), new Promise(resolve => setTimeout(resolve, 1500))]).catch(() => {});
     // bot の DB（別のファイル）を閉じ、データ置き場の DB の接続を持ち主が残っていても全部閉じてから、ロックを放す（新サーバーが取ってすぐ開く）
     await Promise.race([Promise.resolve(botHost?.close?.()), new Promise(resolve => setTimeout(resolve, 1500))]).catch(() => {});
     store.closeStore();
@@ -6415,6 +6418,9 @@ async function adoptTurn(card, source, ctx = null, { abandon = null } = {}) {
   ctx ??= await restoreTurn(card, source);
   const { turn, sessionId, backend, agentLocale, emit } = ctx;
   const releaseUpdateGate = updateGate.enter();
+  // ply_context の口は下で開き直す。それまでに CLI から届いた呼び出しは断らずに待たせる（待ち受けた直後から呼べる。外部の MCP の起こし直しは数秒かかりうる）
+  const contextToken = ctx.card.connectionTokens?.context;
+  const releaseContext = contextToken ? contextBridge.reserve(contextToken) : () => {};
   try {
     turn.compactionRevision = compactionScheduler.revision(sessionId);
     return await driveTurn(ctx, async () => {
@@ -6448,6 +6454,7 @@ async function adoptTurn(card, source, ctx = null, { abandon = null } = {}) {
             console.log(`  ply_context の口を開き直した（${sessionId}）: 外部の MCP ${resolved.servers.length} 件を起こし直した`);
           } catch (e) { console.error(`  ply_context の口を開き直せない（${sessionId}）:`, String(e?.message ?? e)); }
         }
+        releaseContext();
         ctx.runArgs = {
           sessionId, cwd: ctx.cwd, mode: ctx.permissionMode, model: ctx.model || undefined, effort: ctx.effort,
           card: ctx.card.backendCard, source,
@@ -6476,6 +6483,7 @@ async function adoptTurn(card, source, ctx = null, { abandon = null } = {}) {
         return result;
       } catch (err) {
         console.error(`  ターンを付け直せなかったので中断として残す（${sessionId}）:`, String(err?.message ?? err));
+        releaseContext();
         source.dispose?.();   // 付け直しの待ちを外す（Codex は共有の app-server の frame を預かっている。バックエンドを呼ぶ前に諦めたとき）
         turn.abortReason = 'restart';
         emit({ type: 'turnResult', outcome: 'aborted' });
@@ -6484,6 +6492,7 @@ async function adoptTurn(card, source, ctx = null, { abandon = null } = {}) {
     });
   } finally {
     releaseUpdateGate();
+    releaseContext();
     // 札の承認のうち、出し直されず決着の行も付かなかったもの（答えが旧サーバーの手を離す前後で記録に入った・付け直しをあきらめた）の通知の一覧の行を畳む。
     // 決着済みの行には何もしない（出し直して答えた承認は、その答えで決着している）
     for (const id of ctx.card.waits) void inboxSources.permissionSettled({ id, answer: { messageKey: 'turnEnded' } });
