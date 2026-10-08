@@ -96,9 +96,11 @@ object PairingCodec {
         return PairingOffer(relay, hostId, publicKey, secret, q["n"] ?: "")
     }
 
-    /** cleanLabel: drop control characters, collapse spaces, cap the length. */
+    /** cleanLabel: match JavaScript's Unicode-aware `\s`, drop controls, and cap the length. */
     fun cleanLabel(value: String?, max: Int = 64): String {
-        val s = (value ?: "").replace(Regex("[\\x00-\\x1f\\x7f-\\x9f\\u2028\\u2029]"), " ").replace(Regex("\\s+"), " ").trim()
+        // Java's default regex `\s` is ASCII-only; enumerate the ECMAScript whitespace set used by the JS port.
+        val spaces = Regex("[\\u0000-\\u000d\\u007f-\\u009f\\u0020\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000\\ufeff]+")
+        val s = spaces.replace(value ?: "", " ").trim(' ')
         return if (s.length > max) s.substring(0, max) else s
     }
 }

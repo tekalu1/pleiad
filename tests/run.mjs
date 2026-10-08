@@ -252,6 +252,7 @@ const SUITES = [
   './unit/server-api-keys.mjs',
   // リモート接続の暗号・フレーム・チャネル（core/remote/）。Noise の公式ベクトルと、メモリの管でつないだ往復
   './unit/remote-noise.mjs',
+  './unit/remote-pairing-vectors.mjs',
   './unit/remote-frames.mjs',
   './unit/remote-channel.mjs',
   // 互換の接続先のモデルの表示名（anthropic/ と [1m]）・検索（AND・件数の上限・自由入力）・display_name の保存と旧形式

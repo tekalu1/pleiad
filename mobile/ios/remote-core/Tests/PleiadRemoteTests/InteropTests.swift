@@ -272,7 +272,9 @@ final class InteropTests: XCTestCase {
 
     /// cleanLabel and normalizeRelayUrl give the same results as core/remote/pairing.mjs for the same inputs.
     func testPairingRulesMatchNode() throws {
-        let labels: [String] = ["  a\n\tb\u{7}  c  ", "机\u{3000}\u{3000}の上", "\u{a0}x\u{a0}", "a\u{2028}b\u{85}c", String(repeating: "あ", count: 70), ""]
+        let vectors = try JSONSerialization.jsonObject(with: Data(contentsOf: repoRoot().appendingPathComponent("tests/remote/vectors.json"))) as! [String: Any]
+        let pairing = (vectors["pleiad"] as! [String: Any])["pairing"] as! [String: Any]
+        let labels = (pairing["cleanLabels"] as! [[String: String]]).compactMap { $0["input"] }
         let relays: [String] = [" HTTPS://Relay.Example:443/base/ ", "http://127.0.0.1:8787/", "http://[::1]:8787", "wss://relay.example:8443",
                                 "http://relay.example", "ftp://relay.example", "https://u:p@relay.example", "https://relay.example/?a=1",
                                 "https://relay.example/?", "https://relay.example/#", "https://relay.example//", ""]
