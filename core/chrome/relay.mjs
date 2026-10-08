@@ -113,10 +113,11 @@ function committedOrigin(frame) {
  * @param [deps.handoff]  操作待ち（core/chrome/handoff.mjs）。接続が無いまま待つとき connect(sessionId) で許可待ちのカードを出す（20 秒の待ちが外れても試行は続く）
  * @param [deps.turnLive] (sessionId) => その会話のターンが走っているか。無い・false のとき、つながっていなければ確認を出さずに断る（頼んだ人が居ない）
  * @param [deps.turnSignal] (sessionId) => 走っているターンの中断の合図。人の「止める」で、その会話の接続待ちを外す
+ * @param [deps.carryExtra] 更新を越えて持ち越す、中継の外の状態（{ snapshot() → 小さな object, restore(object) }）。carry の extra に載り、変わったら touch() で預け直す（一時 id のプロフィール選択・ログイン待ちの束ねの鍵。ADR 0167）
  * @param [deps.connectWaitText] (sessionId) => 20 秒待ってもつながらないときに（setup・permission で）エージェントへ返す文。会話の言語。無ければ英語の固定
  */
 export function createChromeRelay({ connection, os, locate, log = () => {}, profileFor, profileUsed, scope = createChromeWindows({ os, locate, log, profileFor, profileUsed }), authorize = async () => ({ allow: false }), deniedMessage = () => 'navigation denied',
-  connectWaitMs = CONNECT_WAIT_MS, commandTimeoutMs = COMMAND_TIMEOUT_MS, handoff = null, connectWaitText = null, turnLive = null, turnSignal = () => undefined } = {}) {
+  connectWaitMs = CONNECT_WAIT_MS, commandTimeoutMs = COMMAND_TIMEOUT_MS, handoff = null, connectWaitText = null, turnLive = null, turnSignal = () => undefined, carryExtra = null } = {}) {
   const entries = new Map();   // 会話の id -> entry
   const byKey = new Map();
   const wss = new WebSocketServer({ noServer: true, perMessageDeflate: false });
@@ -147,11 +148,14 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, prof
       entries: [...entries.values()].map(entry => ({ id: entry.id, key: entry.key, stopped: entry.stopped, paused: entry.paused ? { ...entry.paused } : null })),
       windows,
     };
+    const extra = carryExtra?.snapshot?.();
+    if (extra && typeof extra === 'object' && Object.keys(extra).length) carry.extra = extra;
     // 大きすぎて預けられないときは、窓も止めた印も一時停止も無い古い会話（端点だけ）から落とす。それでも大きければ、link が「無効」の印にする
     if (Buffer.byteLength(JSON.stringify(carry), 'utf8') > CARRY_MAX_BYTES) {
       const keep = new Set(windows.filter(item => item?.windows?.length).map(item => item.id));
       carry.entries = carry.entries.filter(item => item.stopped || item.paused || keep.has(item.id));
     }
+    if (carry.extra && Buffer.byteLength(JSON.stringify(carry), 'utf8') > CARRY_MAX_BYTES) delete carry.extra;   // 補助の状態は、端点・窓の印より先に諦める
     return carry;
   }
   /** carry の一時停止の印を戻す。at は時刻 ms、by は control が付けた印（文字列）、viewport は端末が引き継いだときの映像の箱（数だけ受ける） */
@@ -1088,6 +1092,8 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, prof
     // ---- 更新を越える（ADR 0167）
     /** 持ち越す状態（端点・窓の印）。変わるたびに onCarry の聞き手へも渡す */
     snapshot,
+    /** carryExtra の中身が変わった。預け直す */
+    touch: carryChanged,
     onCarry(fn) { carryListeners.add(fn); return () => carryListeners.delete(fn); },
     /**
      * 前のサーバーが預けた状態を受ける（接続の子の welcome.carry。待ち受けを始める前に呼ぶ）。会話の id・鍵を戻し、同じポートで待ち受ける
@@ -1118,6 +1124,7 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, prof
           for (const w of item.windows) if (Number.isSafeInteger(w?.windowId)) entry.windows.add(w.windowId);
         }
         scope.restore?.(carry.windows);
+        if (carry.extra && typeof carry.extra === 'object') { try { carryExtra?.restore?.(carry.extra); } catch (error) { log(`chrome-relay: restoring the extra carry failed: ${error?.message ?? error}`); } }
       }
       const wanted = Number.isInteger(carry?.port) && carry.port > 0 && carry.port < 65536 ? carry.port : 0;
       if (wanted) {

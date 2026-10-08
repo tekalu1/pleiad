@@ -12,6 +12,7 @@ export class ProfileChoiceError extends Error {
   constructor(code, detail = {}) { super(code); this.code = code; this.detail = detail; }
 }
 
+const PENDING_MAX = 50;
 const sameRef = (a, b) => !!a && !!b && a.browser === b.browser && a.dir === b.dir;
 
 /**
@@ -22,9 +23,10 @@ const sameRef = (a, b) => !!a && !!b && a.browser === b.browser && a.dir === b.d
  * @param deps.getPrefs  () → Promise<prefs>（chromeNewProfile・chromeProfileNotes）
  * @param [deps.control]  core/chrome/control.mjs（state(id).state: running | idle | stopped | paused）
  * @param [deps.handoffs] core/chrome/handoff.mjs（current(id) が人への依頼の待ち）
+ * @param [deps.changed]  仮の id の選択（メモリだけにある分）が変わった（更新を越える預かり物を預け直す。pending）
  * @param [deps.record]   エージェントが切り替えたときの会話の行（({ sessionId, profile: { browser, dir, name }, agent }) → Promise）
  */
-export function createProfileChoice({ list, peek, save, getPrefs, control = null, handoffs = null, operating = () => false, record = async () => {}, log = () => {} }) {
+export function createProfileChoice({ list, peek, save, getPrefs, control = null, handoffs = null, operating = () => false, record = async () => {}, changed = () => {}, log = () => {} }) {
   const chosen = new Map();    // 会話の id -> { browser, dir }（メタへの書き込みを待たずに引く。仮の id もここ）
 
   function current(sessionId) {
@@ -47,6 +49,7 @@ export function createProfileChoice({ list, peek, save, getPrefs, control = null
     chosen.set(sessionId, ref);
     try { if (peek(sessionId)) await save(sessionId, ref); }
     catch (error) { log(`chrome-profile: saving failed: ${error?.message ?? error}`); }   // 仮の id は書けない（rebind で書く）
+    changed();
   }
 
   /** 一覧から 1 つ選ぶ。profile はフォルダー名か表示名（フォルダー名が先）。browser を省けばどのブラウザーからでも */
@@ -126,9 +129,25 @@ export function createProfileChoice({ list, peek, save, getPrefs, control = null
       if (!from || !to || from === to || !chosen.has(from)) return;
       const ref = chosen.get(from);
       chosen.delete(from);
-      if (!current(to)) void remember(to, ref);
+      if (!current(to)) void remember(to, ref); else changed();
     },
     /** 会話を消した・ターンが id を持たずに終わった */
-    forget(sessionId) { chosen.delete(sessionId); },
+    forget(sessionId) { if (chosen.delete(sessionId)) changed(); },
+    /**
+     * 更新を越えて持ち越す分: まだ会話のメタに書けていない選択（仮の id のもの）。メモリにしか無いので、新しいサーバーへ渡さないと
+     * 付け直したターンの窓が、選んだプロフィールでなく「最後に使ったもの」で開く。数を絞る
+     */
+    pending() {
+      const out = [];
+      for (const [id, ref] of chosen) if (!peek(id) && out.length < PENDING_MAX) out.push({ id, browser: ref.browser, dir: ref.dir });
+      return out;
+    },
+    /** pending() の写しを受ける（前のサーバーの預かり物。既にある選択は上書きしない） */
+    restorePending(list) {
+      for (const item of Array.isArray(list) ? list : []) {
+        if (typeof item?.id !== 'string' || !item.id || item.id.length > 200 || chosen.has(item.id) || !validProfileRef({ browser: item.browser, dir: item.dir })) continue;
+        chosen.set(item.id, { browser: item.browser, dir: item.dir });
+      }
+    },
   };
 }

@@ -251,12 +251,19 @@ const chromeProfiles = chromeConnection ? createProfileChoice({
   handoffs: chromeHandoffs,
   operating: id => chromeRelay?.view.summary(id).operating === true,
   record: ({ sessionId, profile }) => recordChromeProfile(sessionId, profile),
+  changed: () => chromeRelay?.touch(),
   log: line => console.log(`  ${line}`),
 }) : null;
+// 委譲の子のログイン待ちの束ね（askPermission）。束ねの鍵の材料は更新を越えて持ち越す（下の carryExtra）
+const chromeLoginGroups = createChromeLoginGroups({ changed: () => chromeRelay?.touch() });
 // エージェントのブラウザーは PC の Chrome の絞り込みの中継（core/chrome/relay.mjs）だけ。Electron の main がいるデスクトップ版だけで、確認は下の browserSiteApprovals
 const chromeRelay = chromeConnection
   ? createChromeRelay({ connection: chromeConnection, os: chromeOs, locate: chromeLocate, authorize: (request, signal) => browserSiteApprovals(request, signal), deniedMessage: () => t('permission.browserSiteDenied'), log: line => console.log(`  ${line}`),
     profileFor: id => chromeProfiles?.profileFor(id) ?? null, profileUsed: (id, profile) => chromeProfiles?.used(id, profile),
+    carryExtra: {
+      snapshot: () => ({ profiles: chromeProfiles?.pending() ?? [], logins: chromeLoginGroups.snapshot() }),
+      restore: extra => { chromeProfiles?.restorePending(extra.profiles); chromeLoginGroups.restore(extra.logins); },
+    },
     handoff: chromeHandoffs, turnLive: id => liveTurn(id), turnSignal: id => runtime.turns.get(id)?.ac.signal, connectWaitText: id => agentT(runtime.turns.get(id)?.agentLocale ?? currentLocale(), 'browserBridge.connectWait') })
   : null;
 // 接続の子が預かっていた状態を受ける（端点・鍵・ポート・隠した窓の印）。前のサーバーの接続（確認待ちも）を引き継ぎ、以後の変化を預け直す
@@ -4644,7 +4651,6 @@ async function delegationRoot(sessionId) {
  * どれか1つで答えれば全部が決着し、残りは消える。
  */
 const approvalIds = createApprovalIds();
-const chromeLoginGroups = createChromeLoginGroups();
 async function chromeLoginOrigin(sessionId) {
   const targetId = chromeRelay?.view.current(sessionId);
   if (!targetId) return null;
@@ -4665,8 +4671,14 @@ const askPermission = async ({ toolName, input, sessionId, toolUseID, title, sig
   // 中継先の見出しは「どの会話の承認か」。委譲したときの info.title を使う
   const childTitle = ancestors.length || remoteRoot ? (await store.get(sessionId)).title || t('permission.childConversation') : "";
   const directParent = ancestors[0] ?? null;
-  const selectedProfile = browserHandoff?.reason === 'login' && directParent ? chromeHandoffProfile(sessionId) : null;
-  const loginOrigin = selectedProfile ? await chromeLoginOrigin(sessionId) : null;
+  // 窓の記録から引けなければ、前のサーバーが預けた鍵の材料を使う（更新の後に承認を出し直すとき、中継の窓がまだ戻っていない）
+  const loginAsk = browserHandoff?.reason === 'login' && directParent;
+  const liveProfile = loginAsk ? chromeHandoffProfile(sessionId) : null;
+  const liveOrigin = liveProfile ? await chromeLoginOrigin(sessionId) : null;
+  const savedLogin = loginAsk && !(liveProfile && liveOrigin) ? chromeLoginGroups.recall(sessionId) : null;
+  const selectedProfile = savedLogin?.profile ?? liveProfile;
+  const loginOrigin = savedLogin?.origin ?? liveOrigin;
+  if (loginAsk && selectedProfile && loginOrigin) chromeLoginGroups.remember(sessionId, { profile: selectedProfile, origin: loginOrigin });
   const groupKey = chromeLoginGroups.key({ parent: directParent, profile: selectedProfile, origin: loginOrigin, reason: browserHandoff?.reason });
   const askingMeta = sessionId ? await store.get(sessionId).catch(() => null) : null;
   const conversationTitle = askingMeta?.title ?? '';
@@ -4734,6 +4746,7 @@ const askPermission = async ({ toolName, input, sessionId, toolUseID, title, sig
     };
     const onAbort = () => settle({ allow: false, messageKey: 'aborted' });
     const settle = (answer) => {
+      if (groupKey) chromeLoginGroups.forget(sessionId);
       const nextLogin = loginGroup ? chromeLoginGroups.finish(groupKey, loginGroup, sessionId, answer) : null;
       const parentCard = nextLogin && cards.find(card => card.id === loginGroup.parentCardId);
       if (parentCard) {
@@ -6224,6 +6237,7 @@ const handoverRun = createHandover({
     if (agentTasks.settling) busy.push('notices');
     if (handover.critical.size) busy.push('steer');
     if (schedule.firing) busy.push('schedule');
+    if (chromeWindowCloser?.busy()) busy.push('chrome-close');   // 閉じた窓の静止画と記録の書き込みの途中（手を離すと記録が欠ける。ADR 0167）
     return { ok: busy.length === 0, detail: busy.join(', ') };
   },
   blockers: () => {

@@ -172,6 +172,28 @@ export default async function (t) {
     assert.equal(resumed, 0, '止めた子の待ちを別の子の決着で再開しない');
     t.ok('偽の Chrome の 2 つの子: 同じプロフィール・origin のログイン待ちは親 1 枚。戻すと両方再開し、引き継ぎ・停止は窓ごと', true);
     t.ok('最初の子が中断しても別の子の待ちは残り、ログイン以外は束ねない', true);
+    {
+      // 更新を越える: 待っている子ごとの鍵の材料（プロフィール・サイト）を預け、新しいサーバーで戻す
+      let changes = 0;
+      const before = createChromeLoginGroups({ changed: () => { changes += 1; } });
+      const profile = { browser: 'chrome', dir: 'Profile 1' };
+      before.remember('a', { profile, origin: 'https://site.example' });
+      before.remember('bad-origin', { profile, origin: 'javascript:alert(1)' });
+      before.remember('bad-profile', { profile: { browser: 'chrome' }, origin: 'https://site.example' });
+      assert.deepEqual(before.snapshot(), [{ sessionId: 'a', profile, origin: 'https://site.example' }], '鍵になる材料が揃った子だけ覚える');
+      assert.equal(changes, 1);
+      const after = createChromeLoginGroups();
+      after.restore([...before.snapshot(), { sessionId: 'x', profile: { browser: 'chrome', dir: 'D' }, origin: 'file:///etc/passwd' }, { sessionId: '', profile, origin: 'https://a.example' }, null]);
+      assert.deepEqual(after.recall('a'), { profile, origin: 'https://site.example' }, '戻した材料から、前と同じ束ねの鍵が作れる');
+      assert.equal(after.recall('x'), null, '不正な預かり物は受けない');
+      assert.equal(after.key({ parent: 'parent', ...after.recall('a'), reason: 'login' }), before.key({ parent: 'parent', profile, origin: 'https://site.example', reason: 'login' }));
+      before.forget('a');
+      assert.equal(before.recall('a'), null);
+      assert.equal(changes, 2, '待ちが片付いたら預け直しを促す');
+      for (let i = 0; i < 80; i++) before.remember(`c${i}`, { profile, origin: 'https://site.example' });
+      assert(before.snapshot().length <= 50, '預かる数に上限がある');
+      t.ok('ログイン待ちの鍵の材料は、更新を越えて預けて戻せる（不正な物は受けず、上限がある）', true);
+    }
   } finally {
     handoffs.close(); control.close(); relay.close(); await connection.close(); await chrome.stop();
   }

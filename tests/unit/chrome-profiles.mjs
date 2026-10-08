@@ -54,6 +54,28 @@ export default async function (t) {
   await choice.startNew('missing');
   assert.equal(choice.current('missing'), null);
   assert.equal((await choice.list({ sessionId: 's' })).profiles[1].note, '社内サイト用');
+  {
+    // 更新を越える: まだ会話のメタに書けていない選択（仮の id）だけを預かり、新しいサーバーで戻す
+    let changes = 0;
+    const metaA = new Map([['saved', {}]]);
+    const first = createProfileChoice({ list: async () => rows, peek: id => metaA.get(id), save: async (id, p) => { metaA.get(id).chromeProfile = p; }, getPrefs: async () => ({ chromeNewProfile: ref(work) }), changed: () => { changes += 1; } });
+    await first.startNew('turn-key');
+    await first.startNew('saved');
+    assert.deepEqual(first.pending(), [{ id: 'turn-key', ...ref(work) }], 'メタのある会話の分は預けない');
+    assert(changes >= 2, '仮の id の選択が変わったら預け直しを促す');
+    const second = createProfileChoice({ list: async () => rows, peek: () => undefined, save: async () => {}, getPrefs: async () => ({}) });
+    second.restorePending([...first.pending(), { id: 'x', browser: 'chrome', dir: '../evil' }, { id: '', browser: 'chrome', dir: 'Default' }, null]);
+    assert.deepEqual(second.current('turn-key'), ref(work), '付け直したターンの仮の id は、選んだプロフィールのまま');
+    assert.equal(second.current('x'), null, '不正な印は受けない');
+    second.restorePending([{ id: 'turn-key', ...ref(personal) }]);
+    assert.deepEqual(second.current('turn-key'), ref(work), '既にある選択は上書きしない');
+    const saved = [];
+    const third = createProfileChoice({ list: async () => rows, peek: id => (id === 'real' ? {} : undefined), save: async (id, p) => saved.push([id, p]), getPrefs: async () => ({}) });
+    third.restorePending(first.pending());
+    third.rebind('turn-key', 'real');
+    await new Promise(resolve => setImmediate(resolve));
+    assert.deepEqual(saved, [['real', ref(work)]], '更新の後に本物の id が決まっても、選んだプロフィールを会話に書く');
+  }
   await choice.use({ sessionId: 's', profile: '仕事', by: 'agent' });
   assert.deepEqual(meta.get('s').chromeProfile, ref(work));
   assert.equal(records.length, 1);

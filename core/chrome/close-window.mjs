@@ -94,18 +94,21 @@ export function createChromeWindowCloser({ relay, screencast, handoffs, dataDir,
     const tabs = relay.view.summary(sessionId).tabs;
     const was = known.get(sessionId) ?? 0;
     known.set(sessionId, tabs);
-    if (was > 0 && tabs === 0 && !active.has(sessionId)) {
-      const wasPaused = Boolean(relay.state(sessionId)?.paused);
-      handoffs?.forget(sessionId);
-      relay.unpause(sessionId);
-      if (forgotten.has(sessionId)) return;
-      // 引き継ぎ中に閉じられたとき、直近の映像は引き継ぎの前のもの。ログイン前後の画面を残さないよう静止画は作らない
-      const task = (wasPaused ? Promise.resolve(null) : capture(sessionId, true)).then(file => recordClose(sessionId, 'human', file));
-      pending.set(sessionId, task);
-      task.finally(() => { if (pending.get(sessionId) === task) pending.delete(sessionId); })
-        .catch(error => log(`chrome-close: record failed: ${error?.message ?? error}`));
-    }
+    if (was > 0 && tabs === 0 && !active.has(sessionId)) humanClosed(sessionId);
   });
+
+  /** 人が Chrome の × で最後の窓を閉じた。引き継ぎ・依頼を畳み、閉じた窓の記録を残す */
+  function humanClosed(sessionId) {
+    const wasPaused = Boolean(relay.state(sessionId)?.paused);
+    handoffs?.forget(sessionId);
+    relay.unpause(sessionId);
+    if (forgotten.has(sessionId)) return;
+    // 引き継ぎ中に閉じられたとき、直近の映像は引き継ぎの前のもの。ログイン前後の画面を残さないよう静止画は作らない
+    const task = (wasPaused ? Promise.resolve(null) : capture(sessionId, true)).then(file => recordClose(sessionId, 'human', file));
+    pending.set(sessionId, task);
+    task.finally(() => { if (pending.get(sessionId) === task) pending.delete(sessionId); })
+      .catch(error => log(`chrome-close: record failed: ${error?.message ?? error}`));
+  }
 
   return {
     close,
@@ -118,6 +121,8 @@ export function createChromeWindowCloser({ relay, screencast, handoffs, dataDir,
       await fs.rm(folderOf(dataDir, sessionId), { recursive: true, force: true });
     },
     revive(sessionId) { forgotten.delete(sessionId); },
+    /** 閉じる処理・人が × で閉じた窓の静止画と記録の書き込みが途中か。途中の間は無停止の更新で手を離さない（書きかけの静止画と記録の欠けを残さない。ADR 0167） */
+    busy: () => active.size + pending.size > 0,
     stop() { off(); forgotten.clear(); },
   };
 }

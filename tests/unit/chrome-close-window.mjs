@@ -97,12 +97,14 @@ export default async function (t) {
     await until(() => Boolean(r.screencast.lastFrame('race')));
     r.chrome.browser.closeWindow(r.relay.view.tabs('race')[0].windowId);
     await recording;
+    t.ok('人が × で閉じた窓の記録を書いている間は busy（無停止の更新が手を離さない）', r.closer.busy() === true);
     let forgot = false;
     const forgetting = r.closer.forget('race').then(() => { forgot = true; });
     await sleep(20);
     const waited = !forgot;
     finishRecord();
     await forgetting;
+    t.ok('記録が済めば busy は戻る', await until(() => r.closer.busy() === false));
     t.ok('人の × の静止画が保存中でも、会話削除は保存を待って画像を片付ける', waited && forgot
       && !r.chrome.browser.targets().some(tab => tab.targetId === race.targetId)
       && !(await fs.stat(path.dirname(r.records.find(x => x.id === 'race').path)).then(() => true, () => false)));

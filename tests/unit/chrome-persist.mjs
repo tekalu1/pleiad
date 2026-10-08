@@ -62,14 +62,14 @@ export default async function (t) {
     throw new Error('connection child did not go away');
   };
   /** server.mjs の起動と同じ順: 接続の子 → 中継の restore → 接続の adopt → 以後の変化を預ける → 層が使えれば readopt */
-  const newServer = async (chrome, os, { timing } = {}) => {
+  const newServer = async (chrome, os, { timing, carryExtra } = {}) => {
     const { client } = await holder.connect();
     const link = await openChromeLink({ holder: client, runtimeRoot: holder.root, runtimeKey: 'persist' });
     const locate = { browser: 'chrome', userDataDir: chrome.userDataDir };
     const conn = createChromeConnection({ locate, os, link, pollMs: 20 });
     const logs = [];
     const relay = createChromeRelay({ connection: conn, os, locate, scope: createChromeWindows({ os, locate, log: line => logs.push(line), ...(timing ? { timing } : {}) }),
-      authorize: async () => ({ allow: true }), deniedMessage: () => 'DENIED', log: line => logs.push(line) });
+      authorize: async () => ({ allow: true }), deniedMessage: () => 'DENIED', log: line => logs.push(line), ...(carryExtra ? { carryExtra } : {}) });
     await relay.restore(link.welcome.carry, { staleSessions: link.welcome.sessions });
     const adopted = await conn.adopt();
     // 第 6 段の control（server.mjs と同じく、restore の後に作る。一時停止のまま引き継がれた会話の撮影を断つ）
@@ -330,6 +330,40 @@ export default async function (t) {
       await sleep(300);
       t.ok('見せている窓を引き継げなくても、人が操作中の窓のタブは閉じない。一時停止も解けない', tabsIn(chrome, windowId).length === 1 && !!b.relay.state('conv-6')?.paused, JSON.stringify(b.relay.state('conv-6')));
       await b.relay.close(); await b.conn.close(); await b.link.quit();
+    }
+
+    // ===== 8. 中継の外の預かり物（仮の id のプロフィール選択・ログイン待ちの鍵の材料）も、中継の持ち越しに載って戻る =====
+    {
+      await clearChildren();
+      const chrome = await startFakeChrome({ permission: 'auto' });
+      cleanups.push(() => chrome.stop());
+      const os = fakeChromeOs({ chrome });
+      const extra = { profiles: [{ id: 'turn-1', browser: 'chrome', dir: 'Profile 1' }], logins: [{ sessionId: 'child-1', profile: { browser: 'chrome', dir: 'Profile 1' }, origin: 'https://site.example' }] };
+      const restored = [];
+      const a = await newServer(chrome, os, { carryExtra: { snapshot: () => extra, restore: value => restored.push(value) } });
+      a.relay.touch();
+      await leave(a);
+      const b = await newServer(chrome, os, { carryExtra: { snapshot: () => extra, restore: value => restored.push(value) } });
+      t.ok('預かり物は、更新の後の新しいサーバーの restore に同じ形で戻る', restored.length === 1 && JSON.stringify(restored[0]) === JSON.stringify(extra), JSON.stringify(restored));
+      // 大きすぎる預かり物は載せず、restore が投げても中継の復元（窓の印・端点）は続く
+      const big = { profiles: [{ id: 'x'.repeat(300000), browser: 'chrome', dir: 'Default' }], logins: [] };
+      const c = await newServer(chrome, os, { carryExtra: { snapshot: () => big, restore: () => {} } });
+      const ag = await agent(await c.relay.endpoint('conv-9'));
+      await ag.cmd('Target.createTarget', { url: 'about:blank' });
+      c.relay.touch();
+      await leave(c);
+      const seen = [];
+      const d = await newServer(chrome, os, { carryExtra: { snapshot: () => ({}), restore: value => { seen.push(value); } } });
+      t.ok('大きすぎる預かり物は載せない（窓の印は残る）', seen.length === 0 && !!d.relay.state('conv-9'), JSON.stringify([seen.length, d.relay.state('conv-9')]));
+      d.relay.touch();
+      await leave(d);
+      const e = await newServer(chrome, os, { carryExtra: { snapshot: () => ({ profiles: [{ id: 'turn-2', browser: 'chrome', dir: 'Default' }] }), restore: () => { throw new Error('boom'); } } });
+      e.relay.touch();
+      await leave(e);
+      const f = await newServer(chrome, os, { carryExtra: { snapshot: () => ({}), restore: () => { throw new Error('boom'); } } });
+      t.ok('restore が投げても、中継の復元は続き、ログに残す', !!f.relay.state('conv-9') && f.logs.some(line => /extra carry failed.*boom/.test(line)), JSON.stringify([f.relay.state('conv-9'), f.logs]));
+      await f.relay.close(); await f.conn.close(); await f.link.quit();
+      await b.relay.close(); await b.conn.close();
     }
   } finally {
     for (const fn of cleanups) { try { await fn(); } catch { /* 後片付け */ } }
