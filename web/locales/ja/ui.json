@@ -3336,6 +3336,14 @@
         "none": "調整なし",
         "parent": "{{value}} · 依頼元が変更",
         "adjusted": "{{asked}} がこのモデルに無いので {{value}} に合わせた"
+      },
+      "compaction": "圧縮の閾値",
+      "compactionLine": {
+        "value": "{{threshold}}（固定 {{base}} + 空き {{headroom}}）",
+        "own": "固定はこの子の最初のリクエストの大きさ",
+        "same": "固定は同じ作業場所・同じモデルの直近の子の値",
+        "recent": "固定は直近の子の値",
+        "default": "固定はまだ測った値が無いので見積もり"
       }
     },
     "effort": {
@@ -3557,8 +3565,8 @@
     "sidebarDone": "圧縮済み",
     "autoEnabled": "放置した会話を自動で圧縮する",
     "minSize": "対象にする最小サイズ",
-    "delegatedSize": "委譲の子の圧縮の閾値",
-    "delegatedHint": "委譲した Claude の子は、文脈がこの量を超えると Claude Code が自動で圧縮します（0 でオフ）。親の会話には影響しません",
+    "delegatedSize": "委譲の子の圧縮までの空き",
+    "delegatedHint": "委譲した Claude の子は、文脈が「固定の部分（最初のリクエストの大きさ。指示・道具など）＋ この量」を超えると、Claude Code が自動で圧縮します。0 でオフ（Claude Code の既定）、それ以外は 30k 以上。親の会話には影響しません",
     "kTokens": "k トークン",
     "agent": "エージェント",
     "enabled": "入 / 切",

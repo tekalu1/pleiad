@@ -1,6 +1,6 @@
 // 委譲カードの振り分けの理由と設定 › 委譲の組み立て（web/delegation-routing-view.mjs・web/delegation-settings.mjs）。DOM の大半は触らず、文と並びだけ見る
 import assert from 'node:assert/strict';
-import { routingLine, skippedPhrase, judgeLine, tierLine, yesSignals, fallbackText, retryCandidates, retryPanel, usageRows, usageSummary, isAutoRouting, fallbackName, routingDetail, pinnedDetail,
+import { routingLine, skippedPhrase, judgeLine, tierLine, yesSignals, fallbackText, retryCandidates, retryPanel, usageRows, usageSummary, isAutoRouting, fallbackName, routingDetail, pinnedDetail, compactionLine,
   skipText, parseRoutingFailure, groupSkipped, groupText, routingFailureParts } from '../../web/delegation-routing-view.mjs';
 import { diffFromDefaults, setupDelegationSettings } from '../../web/delegation-settings.mjs';
 import { el } from '../../web/dom.mjs';
@@ -102,6 +102,17 @@ export default async function (t) {
   assert.equal(facts.querySelectorAll('.rt-cand').length, 0, '候補は出さない');
   assert.equal(facts.querySelector('.rt-retry-open'), null, 'やり直しは出さない');
   t.ok('固定の委譲の 1 行と内訳（判定・候補・やり直しは出さない）', true);
+
+  // 委譲の子の自動圧縮の閾値と内訳（ADR 0166）。タスクの記録の compaction を内訳に 1 行で出す
+  const compaction = { threshold: 171000, base: 71003, source: 'own', headroom: 100000 };
+  assert.equal(compactionLine(compaction), '171k（固定 71k + 空き 100k） · 固定はこの子の最初のリクエストの大きさ');
+  assert.equal(compactionLine({ ...compaction, source: 'default', base: 70000, threshold: 170000 }), '170k（固定 70k + 空き 100k） · 固定はまだ測った値が無いので見積もり');
+  assert.equal(compactionLine({ ...compaction, source: 'unknown' }), '171k（固定 71k + 空き 100k）', '知らない出どころは数だけ');
+  assert.equal(compactionLine(null), '');
+  assert.ok(routingDetail(routing, { names, compaction }).textContent.includes('圧縮の閾値') && routingDetail(routing, { names, compaction }).textContent.includes('171k'));
+  assert.ok(pinnedDetail(pinned, { names, compaction }).textContent.includes('171k（固定 71k + 空き 100k）'));
+  assert.ok(!routingDetail(routing, { names }).textContent.includes('圧縮の閾値'), '閾値の記録が無い（オフ・Claude 以外）なら出さない');
+  t.ok('委譲の内訳に、子の自動圧縮の閾値と内訳（固定の部分・空き・出どころ）を出す', true);
 
   const defaults = { judgeByKind: { trivial: 'jev', visual: 'none' }, tiers: { t1: ['a:b'], t2: ['c:d'] }, avoidPercent: 80 };
   assert.deepEqual(diffFromDefaults({ trivial: 'cerebras', visual: 'none' }, defaults.judgeByKind), { trivial: 'cerebras' });

@@ -790,6 +790,16 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
       }, 'sync');
       return r.taskId;
     },
+    /**
+     * 子のターンで使った自動圧縮の閾値と内訳（{ threshold, base, source, headroom }。付けないターンは null。ADR 0166）。
+     * 画面の委譲カードの内訳が読む。同じなら書かない。書いたらタスクの id を返す
+     */
+    async compaction(sessionId, plan) {
+      const r = bySession.get(sessionId);
+      if (!r || JSON.stringify(r.compaction ?? null) === JSON.stringify(plan ?? null)) return null;
+      await record(r.taskId, row => { if (plan) row.compaction = structuredClone(plan); else delete row.compaction; }, 'compaction');
+      return r.taskId;
+    },
     instructions(taskId) { const r = records[taskId]; return r ? { taskId, revision: r.instructionRevision ?? 0, instructions: structuredClone(r.instructions) } : null; },
     /** 最初の依頼（task と context）。やり直しで同じ依頼を渡す。context を持つ前に作ったタスクは task だけ */
     request(taskId) { const r = records[taskId]; return r ? { task: r.task, title: r.title ?? null, context: r.context ?? null } : null; },

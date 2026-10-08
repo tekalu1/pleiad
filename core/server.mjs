@@ -63,7 +63,8 @@ import { createSchedule } from './schedule.mjs';
 import { limitHolds, limitResetsAt } from './limit-resume.mjs';
 import { buildSendRow, buildPostRow, decideFire, sendArgs, decorateScheduled, addRecord, MAX_PER_SESSION, MAX_TOTAL } from './send-schedule.mjs';
 import { createCompactionScheduler, idleCompactionGuards } from './compaction-scheduler.mjs';
-import { normalizeCompactionSettings, delegatedCompactWindow } from './compaction-settings.mjs';
+import { normalizeCompactionSettings, delegatedCompactPlan, validContextBase } from './compaction-settings.mjs';
+import { createContextBases } from './context-bases.mjs';
 import { mergeCompactionHistory, attachCompactSummaries } from './compaction-history.mjs';
 import { createContextSettings } from './context-settings.mjs';
 import { scanContext, skillList } from './context-scan.mjs';
@@ -235,6 +236,9 @@ try {
     console.error('  自動圧縮の既定値を保存できませんでした:', String(saveError?.message ?? saveError));
   });
 }
+// 委譲の子の固定の部分（最初のリクエストの文脈）の直近の値。子の最初のターンの自動圧縮の閾値を見積もる（ADR 0166）
+const contextBases = createContextBases({ file: path.join(store.dataDir, 'context-bases.json') });
+await contextBases.load();
 
 import { installation, cliCommand } from "./cli-installation.mjs";
 import { createClaudeLogin } from './claude-login.mjs';
@@ -2287,6 +2291,8 @@ function makeEmit(turn) {
     turn.gitCalls?.track(event);
     // Internal activity and command observations do not add conversation UI events.
     if (event?.type === 'task.activity' || event?.type === 'task.command') return;
+    // 新しい会話の最初のリクエストの文脈（固定の部分）。委譲の子の分だけ覚え、画面へは流さない（ADR 0166）
+    if (event?.type === 'contextBase') { if (!replay) rememberContextBase(turn, event.tokens); return; }
     if (event?.type === 'usage') turn.usage = { ...turn.usage, ...event };
     // bot の会話のターンの出来事（text.end・usage・activity・present・permission・turnResult・userMessage.delivered / dropped）。bot の会話でなければ何もしない
     if (!replay) botHost?.onTurnEvent(turn, event);
@@ -5536,9 +5542,8 @@ async function beginTurn(ctx) {
   // bot の会話なら、人格（botInstructions）と、ターンの末尾（記憶の核の写し・差分。notes）を足す。bot でなければ空
   const botExtras = await botHost?.turnExtras(turn) ?? { botInstructions: null, notes: [] };
   const notes = [...(ctx.interruption ? [ctx.interruption.text] : []), ...botExtras.notes];
-  // 委譲の子の Claude だけ、CLI の自動圧縮の閾値を下げる（親・bot は CLI の既定のまま。docs/design.md「自動圧縮」、ADR 0163）
-  const autoCompactWindow = backend.capabilities?.autoCompactWindow && sessionId && (await store.get(sessionId)).delegation
-    ? delegatedCompactWindow(compactionSettings) : null;
+  // 委譲の子の Claude だけ、CLI の自動圧縮の閾値を「固定の部分 + 空き」に下げる（親・bot は CLI の既定のまま。docs/design.md「自動圧縮」、ADR 0166）
+  const autoCompactWindow = await delegatedCompaction(ctx);
   const runArgs = {
     prompt,
     ...(shellHandoff?.lines.length ? { shellAppends: shellHandoff.lines } : {}),
@@ -5595,6 +5600,34 @@ async function beginTurn(ctx) {
     computer: computerPrompt(runArgs.computerRuntime, { locale: agentLocale, agent: backend.id }), control: runArgs.controlRuntime.instructions });
   if (JSON.stringify(parts) !== JSON.stringify(contextRecord.plyParts ?? null)) { contextRecord.plyParts = parts; await ctx.saveContext(); }
   ctx.runArgs = runArgs;
+}
+
+/**
+ * 委譲の子の Claude のターンの自動圧縮の窓（CLAUDE_CODE_AUTO_COMPACT_WINDOW の値）。委譲の子でない・オフ・利用者の環境変数があれば null。
+ * 閾値 = 固定の部分 + 空き（delegatedHeadroom）。固定の部分は、子自身の値 → 同じ作業場所・同じモデルの直近の子 → 直近の子 → 定数の順（ADR 0166）。
+ * 使った閾値と内訳はタスクの記録（compaction）に残す。新しい会話の最初の返答が出す contextBase を覚えるため、ターンに作業場所とモデルを付ける（makeEmit）
+ */
+async function delegatedCompaction({ backend, sessionId, cwd, model, turn }) {
+  if (!backend.capabilities?.autoCompactWindow || !sessionId) return null;
+  const meta = await store.get(sessionId);
+  if (!meta.delegation) return null;
+  turn.contextBaseKey = { cwd, model: model || '' };
+  const own = meta.contextBase?.tokens;
+  const base = validContextBase(own) ? { tokens: own, source: 'own' } : contextBases.estimate(turn.contextBaseKey);
+  const plan = delegatedCompactPlan(compactionSettings, base);
+  const recorded = plan ? { threshold: plan.threshold, base: plan.base, source: plan.source, headroom: plan.headroom } : null;
+  const changed = await agentTasks?.compaction(sessionId, recorded).catch(() => null);
+  if (changed) emitGlobal({ type: 'agentTaskChanged', sessionId: null, taskId: changed });
+  return plan?.window ?? null;
+}
+
+/** 委譲の子の新しい会話の最初の返答が出した固定の部分（contextBase）を、子自身の値と直近の値に残す（ADR 0166） */
+function rememberContextBase(turn, tokens) {
+  const sessionId = turn.info.sessionId;
+  if (!turn.contextBaseKey || !sessionId || !validContextBase(tokens)) return;
+  store.setSessionData(sessionId, 'contextBase', { tokens, at: Date.now() })
+    .catch(err => console.error('  委譲の子の固定の部分を記録できませんでした:', String(err?.message ?? err)));
+  void contextBases.remember({ ...turn.contextBaseKey, tokens });
 }
 
 /** バックエンドの host の口（in-process の MCP）から操作の一覧を呼ぶ。ターンを始めるとき（beginTurn）と付け直すとき（adoptTurn） */

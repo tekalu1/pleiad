@@ -542,11 +542,11 @@ function acceptCompaction(event) {
   paintContextStrip();
 }
 function paintAutoCompactionSettings() {
-  const settings = state.prefs.autoCompaction ?? { enabled: true, minTokens: 150_000, delegatedTokens: 150_000,
+  const settings = state.prefs.autoCompaction ?? { enabled: true, minTokens: 150_000, delegatedHeadroom: 100_000,
     claude: { enabled: true, delayMinutes: 50 }, codex: { enabled: false, delayMinutes: 25 } };
   $('autoCompactionEnabled').setAttribute('aria-checked', String(settings.enabled));
   $('autoCompactionMin').value = String(settings.minTokens / 1000);
-  $('autoCompactionDelegated').value = String((settings.delegatedTokens ?? 150_000) / 1000);
+  $('autoCompactionDelegated').value = String((settings.delegatedHeadroom ?? 100_000) / 1000);
   for (const id of ['claude', 'codex']) {
     const name = id[0].toUpperCase() + id.slice(1);
     $(`autoCompaction${name}`).setAttribute('aria-checked', String(settings[id].enabled));
@@ -556,7 +556,7 @@ function paintAutoCompactionSettings() {
 async function saveAutoCompactionSettings() {
   const settings = { enabled: $('autoCompactionEnabled').getAttribute('aria-checked') === 'true',
     minTokens: Number($('autoCompactionMin').value) * 1000,
-    delegatedTokens: Number($('autoCompactionDelegated').value) * 1000,
+    delegatedHeadroom: Number($('autoCompactionDelegated').value) * 1000,
     claude: { enabled: $('autoCompactionClaude').getAttribute('aria-checked') === 'true', delayMinutes: Number($('autoCompactionClaudeDelay').value) },
     codex: { enabled: $('autoCompactionCodex').getAttribute('aria-checked') === 'true', delayMinutes: Number($('autoCompactionCodexDelay').value) } };
   try {
@@ -5699,11 +5699,14 @@ function pinnedFacts(card, routing) {
   // 依頼元が子の設定を替えたら（ADR 0134）、ply_delegate の返り値は前の委譲先のもの。タスクの記録の今の mode を使う
   const mode = (routing.changed ? task.mode ?? result.mode : result.mode ?? task.mode) ?? '';
   // worktree の子は、パスの代わりに「作業場所」の行（ブランチ付き。paintDelegateWorkspace）が出る
-  return { names: routingNames, mode: mode ? state.vocab.get(routing.target.backend)?.modes?.[mode]?.label ?? mode : '', cwd: task.worktree ? '' : result.cwd ?? task.cwd ?? '' };
+  return { names: routingNames, mode: mode ? state.vocab.get(routing.target.backend)?.modes?.[mode]?.label ?? mode : '', cwd: task.worktree ? '' : result.cwd ?? task.cwd ?? '',
+    compaction: task.compaction ?? null };
 }
 function delegateDetail(card, routing) {
+  // 子の自動圧縮の閾値と内訳（タスクの記録の compaction。最後に走った子のターンの分。ADR 0166）
   return isAutoRouting(routing)
-    ? routingDetail(routing, { names: routingNames, logo: routingLogo, onRetry: (root, button) => toggleRetry(card, root, button) })
+    ? routingDetail(routing, { names: routingNames, logo: routingLogo, onRetry: (root, button) => toggleRetry(card, root, button),
+      compaction: taskById(card.dataset.taskId)?.compaction ?? null })
     : pinnedDetail(routing, pinnedFacts(card, routing));
 }
 const foldLabels = () => ({ open: t('dialog.work.showFull'), close: t('dialog.work.collapse') });

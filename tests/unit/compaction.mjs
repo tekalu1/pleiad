@@ -1,9 +1,14 @@
 import { createCompactionScheduler, idleCompactionGuards } from '../../core/compaction-scheduler.mjs';
-import { normalizeCompactionSettings, delegatedCompactWindow } from '../../core/compaction-settings.mjs';
+import { normalizeCompactionSettings, delegatedCompactWindow, delegatedCompactPlan } from '../../core/compaction-settings.mjs';
+import { createContextBases } from '../../core/context-bases.mjs';
+import { backend as claude, setClaudeSdkForTest } from '../../core/backends/claude.mjs';
 import { normalizeSdkMessage, createClaudeCompactDiagnostic, claudeCompactionsFromHistory } from '../../core/backends/claude-normalize.mjs';
 import { codexContextWindow, codexCompactionEvent } from '../../core/backends/codex.mjs';
 import { mergeCompactionHistory } from '../../core/compaction-history.mjs';
 import fs from 'node:fs';
+import fsp from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 
 export const name = 'compaction';
 export const title = '圧縮イベント・文脈量・自動圧縮の時計';
@@ -55,21 +60,118 @@ export default async function (t) {
   t.ok('設定の入切・待ち時間を保持する', normalizeCompactionSettings({ codex: { enabled: true, delayMinutes: 12 } }).codex.delayMinutes === 12);
   t.ok('不正な設定を拒否する', (() => { try { normalizeCompactionSettings({ minTokens: -1 }); return false; } catch { return true; } })());
 
-  // 委譲の子の閾値（delegatedTokens。ADR 0163）: 既定 150k・0 はオフ・0 以外は 70k 以上（窓の下限 100k − 余白 33k）
+  // 委譲の子の閾値 = 固定の部分 + 空き（delegatedHeadroom。ADR 0166）: 既定 10 万・0 はオフ・0 以外は 3 万〜100 万
   const rejects = (input) => { try { normalizeCompactionSettings(input); return false; } catch { return true; } };
-  t.ok('委譲の子の閾値は既定 150k で、保存済みの設定（項目なし）にも既定が入る',
-    defaults.delegatedTokens === 150000 && normalizeCompactionSettings({ enabled: false, minTokens: 60000 }).delegatedTokens === 150000);
-  t.ok('委譲の子の閾値は 0（オフ）と 70k 以上を受け、それ以外は拒否する',
-    normalizeCompactionSettings({ delegatedTokens: 0 }).delegatedTokens === 0 && normalizeCompactionSettings({ delegatedTokens: 70000 }).delegatedTokens === 70000
-    && rejects({ delegatedTokens: 69999 }) && rejects({ delegatedTokens: -1 }) && rejects({ delegatedTokens: 1.5 }) && rejects({ delegatedTokens: '150000' }));
-  t.ok('子の窓は閾値 + 33000（150k → 183000）で、放置圧縮の enabled には依らない',
-    delegatedCompactWindow(defaults, {}) === '183000' && delegatedCompactWindow(normalizeCompactionSettings({ enabled: false, claude: { enabled: false } }), {}) === '183000'
-    && delegatedCompactWindow(normalizeCompactionSettings({ delegatedTokens: 70000 }), {}) === '103000');
-  t.ok('子の窓は上限 100 万に丸める', delegatedCompactWindow({ delegatedTokens: 5_000_000 }, {}) === '1000000');
-  t.ok('0（オフ）では子の窓を付けない', delegatedCompactWindow(normalizeCompactionSettings({ delegatedTokens: 0 }), {}) === null);
+  t.ok('委譲の子の空きは既定 10 万で、保存済みの設定（項目なし）にも既定が入る',
+    defaults.delegatedHeadroom === 100000 && normalizeCompactionSettings({ enabled: false, minTokens: 60000 }).delegatedHeadroom === 100000);
+  t.ok('委譲の子の空きは 0（オフ）と 3 万〜100 万を受け、それ以外は拒否する',
+    normalizeCompactionSettings({ delegatedHeadroom: 0 }).delegatedHeadroom === 0 && normalizeCompactionSettings({ delegatedHeadroom: 30000 }).delegatedHeadroom === 30000
+    && normalizeCompactionSettings({ delegatedHeadroom: 1_000_000 }).delegatedHeadroom === 1_000_000
+    && rejects({ delegatedHeadroom: 29999 }) && rejects({ delegatedHeadroom: 1_000_001 }) && rejects({ delegatedHeadroom: -1 })
+    && rejects({ delegatedHeadroom: 1.5 }) && rejects({ delegatedHeadroom: '100000' }));
+  const legacy = normalizeCompactionSettings({ delegatedTokens: 180000, minTokens: 60000 });
+  t.ok('前の版の delegatedTokens（ADR 0163）が残っていても読めて、結果には残さない（空きは既定に戻る）',
+    !('delegatedTokens' in legacy) && legacy.delegatedHeadroom === 100000 && legacy.minTokens === 60000
+    && normalizeCompactionSettings({ delegatedTokens: 'x' }).delegatedHeadroom === 100000);
+
+  t.ok('子の窓は閾値 + 33000 で、閾値は 7 万に上げ、窓は 100 万に丸める',
+    delegatedCompactWindow(150000, {}) === '183000' && delegatedCompactWindow(70000, {}) === '103000'
+    && delegatedCompactWindow(40000, {}) === '103000' && delegatedCompactWindow(5_000_000, {}) === '1000000');
+  t.ok('閾値が無い（0・不正）なら子の窓を付けない', delegatedCompactWindow(0, {}) === null && delegatedCompactWindow(null, {}) === null
+    && delegatedCompactWindow(1.5, {}) === null);
   t.ok('利用者が同名の環境変数を置いていたらそちらを優先する（空文字は無いものとして扱う）',
-    delegatedCompactWindow(defaults, { CLAUDE_CODE_AUTO_COMPACT_WINDOW: '400000' }) === null
-    && delegatedCompactWindow(defaults, { CLAUDE_CODE_AUTO_COMPACT_WINDOW: '' }) === '183000');
+    delegatedCompactWindow(150000, { CLAUDE_CODE_AUTO_COMPACT_WINDOW: '400000' }) === null
+    && delegatedCompactWindow(150000, { CLAUDE_CODE_AUTO_COMPACT_WINDOW: '' }) === '183000');
+
+  const plan = (settings, base, env = {}) => delegatedCompactPlan(normalizeCompactionSettings(settings), base, env);
+  const measured = plan({}, { tokens: 71000, source: 'own' });
+  t.ok('閾値は固定の部分 + 空き（7.1 万 + 10 万 → 17.1 万・窓 204000）で、内訳と出どころを返す',
+    measured?.threshold === 171000 && measured.window === '204000' && measured.base === 71000 && measured.source === 'own' && measured.headroom === 100000);
+  const unknown = plan({}, null);
+  t.ok('固定の部分をまだ測っていなければ 7 万で見積もる（default）',
+    unknown?.threshold === 170000 && unknown.window === '203000' && unknown.base === 70000 && unknown.source === 'default');
+  t.ok('同じ作業場所・同じモデル（same）・直近（recent）の出どころをそのまま返し、不正な値は default にする',
+    plan({}, { tokens: 80000, source: 'same' })?.source === 'same' && plan({}, { tokens: 60000, source: 'recent' })?.threshold === 160000
+    && plan({}, { tokens: 0, source: 'same' })?.source === 'default' && plan({}, { tokens: 1_500_000, source: 'own' })?.base === 70000);
+  t.ok('空きを足しても 7 万に満たない・100 万を超える閾値は、CLI が使う値（丸めた後）を返す',
+    plan({ delegatedHeadroom: 30000 }, { tokens: 20000, source: 'own' })?.threshold === 70000
+    && plan({ delegatedHeadroom: 1_000_000 }, { tokens: 71000, source: 'own' })?.threshold === 967000);
+  t.ok('空きが 0（オフ）か利用者の環境変数があれば計画を作らない',
+    plan({ delegatedHeadroom: 0 }, { tokens: 71000, source: 'own' }) === null
+    && plan({}, { tokens: 71000, source: 'own' }, { CLAUDE_CODE_AUTO_COMPACT_WINDOW: '400000' }) === null);
+
+  // 直近の固定の部分（core/context-bases.mjs）: 同じ作業場所・同じモデル → 直近 → 無し。再起動をまたいで context-bases.json に残る
+  const basesDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'ply-context-bases-'));
+  try {
+    const file = path.join(basesDir, 'context-bases.json');
+    let clock = 1;
+    const bases = createContextBases({ file, limit: 3, now: () => clock++, log: () => {} });
+    await bases.load();
+    t.ok('何も測っていなければ見積もりは無い', bases.estimate({ cwd: basesDir, model: 'opus' }) === null);
+    await bases.remember({ cwd: path.join(basesDir, 'a'), model: 'opus', tokens: 71000 });
+    await bases.remember({ cwd: path.join(basesDir, 'b'), model: 'opus', tokens: 65000 });
+    const same = bases.estimate({ cwd: path.join(basesDir, 'a'), model: 'opus' });
+    const otherModel = bases.estimate({ cwd: path.join(basesDir, 'a'), model: 'sonnet' });
+    t.ok('同じ作業場所・同じモデルの値を先に使い、無ければ直近の値を使う',
+      same?.tokens === 71000 && same.source === 'same' && otherModel?.tokens === 65000 && otherModel.source === 'recent');
+    if (process.platform === 'win32')
+      t.ok('Windows では作業場所の大文字・小文字を区別しない', bases.estimate({ cwd: path.join(basesDir, 'A').toUpperCase(), model: 'opus' })?.source === 'same');
+    await bases.remember({ cwd: path.join(basesDir, 'a'), model: 'opus', tokens: 72000 });
+    t.ok('同じ作業場所・同じモデルの前の値は置き換える', bases.entries().length === 2
+      && bases.estimate({ cwd: path.join(basesDir, 'a'), model: 'opus' })?.tokens === 72000 && bases.estimate({ cwd: basesDir, model: 'x' })?.tokens === 72000);
+    await bases.remember({ cwd: path.join(basesDir, 'a'), model: 'opus', tokens: 0 });
+    await bases.remember({ cwd: path.join(basesDir, 'c'), model: '', tokens: 50000 });
+    await bases.remember({ cwd: path.join(basesDir, 'd'), model: '', tokens: 52000 });
+    t.ok('不正な値は覚えず、上限を超えたら古いものから捨てる', bases.entries().length === 3
+      && bases.entries().every(e => e.tokens !== 0) && !bases.entries().some(e => e.cwd.endsWith('b')));
+    await bases.settled();
+    const reloaded = createContextBases({ file, limit: 3, log: () => {} });
+    await reloaded.load();
+    t.ok('保存した値を次の起動で読み直す', reloaded.estimate({ cwd: path.join(basesDir, 'c'), model: '' })?.tokens === 50000
+      && reloaded.estimate({ cwd: basesDir, model: 'x' })?.tokens === 52000);
+    await fsp.writeFile(file, '{ broken');
+    const broken = createContextBases({ file, log: () => {} });
+    await broken.load();
+    t.ok('壊れたファイルは空から始める', broken.estimate({ cwd: basesDir, model: '' }) === null);
+  } finally {
+    await fsp.rm(basesDir, { recursive: true, force: true });
+  }
+
+  // Claude の接続部: 新しい会話の最初の返答の usage の入力の合計（キャッシュの作成・読み出しを含む）を固定の部分として 1 度だけ出す（SDK は身代わり）
+  const claudeDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'ply-context-base-claude-'));
+  const prevConfig = process.env.CLAUDE_CONFIG_DIR;
+  let restoreSdk = null;
+  try {
+    process.env.CLAUDE_CONFIG_DIR = claudeDir;
+    const inbox = [];
+    let options = null;
+    restoreSdk = setClaudeSdkForTest({ executable: () => 'claude-fake', query: ({ prompt, options: o }) => {
+      options = o;
+      (async () => { for await (const _ of prompt) { /* 入力は読み捨てる */ } })();
+      return { close() {}, interrupt: async () => ({}), async *[Symbol.asyncIterator]() { yield* inbox; } };
+    } });
+    const usage = (input, created, read) => ({ input_tokens: input, cache_creation_input_tokens: created, cache_read_input_tokens: read, output_tokens: 10 });
+    const said = (u, extra = {}) => ({ type: 'assistant', session_id: 'new-1', message: { role: 'assistant', content: [{ type: 'text', text: 'ok' }], usage: u }, ...extra });
+    const done = { type: 'result', subtype: 'success', num_turns: 1, session_id: 'new-1', total_cost_usd: 0 };
+    const runClaude = async (sessionId, messages, extra = {}) => {
+      inbox.splice(0, inbox.length, ...messages);
+      const events = [];
+      await claude.runTurn({ prompt: 'x', sessionId, cwd: claudeDir, mode: 'default', emit: e => events.push(e), askPermission: async () => ({ allow: true }),
+        signal: new AbortController(), control: {}, hostSessionId: 'h', ...extra });
+      return events.filter(e => e.type === 'contextBase');
+    };
+    const fresh = await runClaude(null, [said(usage(9, 0, 0), { parent_tool_use_id: 'tool-1' }), said(usage(3, 1000, 70000)), said(usage(5, 2000, 80000)), done],
+      { autoCompactWindow: '203000' });
+    t.ok('新しい会話の最初の返答（サブエージェントを除く）の入力の合計を 1 度だけ出す',
+      fresh.length === 1 && fresh[0].tokens === 71003, JSON.stringify(fresh));
+    t.ok('渡された窓を CLAUDE_CODE_AUTO_COMPACT_WINDOW にする', options?.env?.CLAUDE_CODE_AUTO_COMPACT_WINDOW === '203000');
+    t.ok('再開した会話（2 ターン目から）は出さない', (await runClaude('sess-old', [said(usage(3, 1000, 90000), { session_id: 'sess-old' }), { ...done, session_id: 'sess-old' }])).length === 0);
+    t.ok('窓が無ければ環境変数を付けない', !('CLAUDE_CODE_AUTO_COMPACT_WINDOW' in (options?.env ?? {})) || options.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW === process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW);
+  } finally {
+    restoreSdk?.();
+    if (prevConfig === undefined) delete process.env.CLAUDE_CONFIG_DIR; else process.env.CLAUDE_CONFIG_DIR = prevConfig;
+    await fsp.rm(claudeDir, { recursive: true, force: true });
+  }
 
   let time = 1000, serial = 0;
   const timers = new Map(), changed = [], run = [];
