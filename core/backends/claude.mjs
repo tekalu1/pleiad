@@ -988,12 +988,20 @@ export const backend = {
     let limit = null;
     // CLI から最初のメッセージが届いたか。巻き戻しを伴うターンが、これより前に失敗したら（catch の rewindRejected）
     let sawMessage = false;
+    // 新しい会話の最初のリクエストの文脈の大きさ（固定の部分）を出したか。委譲の子の自動圧縮の閾値に使う（server の makeEmit。ADR 0166）
+    let toldBase = Boolean(sessionId || adopt);
     // replay は付け直しの再生（印から ack まで。画面へは出さず、実行中のスナップショットとメモリの状態だけを作る。server の makeEmit）
     const send = (ev, replay) => replay ? emit(ev, { replay: true }) : emit(ev);
     /** SDK のメッセージ 1 件を取り込む。ライブのループと、付け直しの記録の読み直しが同じ道を通る */
     const handle = async (message, replay = false) => {
       sawMessage = true;
       compactDiagnostic?.observe(message);
+      // 最初の返答の usage の入力の合計（キャッシュの作成・読み出しを含む）。サブエージェントの返答（parent_tool_use_id）は除く
+      if (!toldBase && !replay && message.type === 'assistant' && !message.parent_tool_use_id) {
+        const usage = message.message?.usage;
+        const tokens = ['input_tokens', 'cache_creation_input_tokens', 'cache_read_input_tokens'].reduce((sum, key) => sum + (Number.isFinite(usage?.[key]) ? usage[key] : 0), 0);
+        if (tokens > 0) { toldBase = true; emit({ type: 'contextBase', tokens }); }
+      }
       const model = message.type === "system" && message.subtype === "init" && message.model
         ? String(message.model) : null;
 
@@ -1063,7 +1071,7 @@ export const backend = {
         // env は置き換え（足し算ではない）なので process.env を必ず広げる。
         // 待ちの上限は 0 = 無し。入力を開けている限り CLI は上限を見ないが、閉じた後の保険として外す。
         // 会話で選んだアカウントのトークンは、この会話の env にだけ入れる（process.env は触らない。core/claude-accounts.mjs）
-        // 委譲の子だけ、自動圧縮の閾値を下げる窓（autoCompactWindow。Pleiad の設定 compaction.auto の delegatedTokens）を足す
+        // 委譲の子だけ、自動圧縮の閾値を下げる窓（autoCompactWindow。固定の部分 + 設定 compaction.auto の delegatedHeadroom。ADR 0166）を足す
         env: { ...(endpoint ? claudeCompatEnv(process.env, endpoint, claudeExtraEnv)
           : claudeEnv(process.env, { token: oauthToken, extra: claudeExtraEnv })), ...browserEnv, ...controlRuntime?.env },
         // CLI の stderr は今まで捨てていた（上限で subagent を殺したことも分からなかった）。トークン・接続先のキーが紛れても伏せる

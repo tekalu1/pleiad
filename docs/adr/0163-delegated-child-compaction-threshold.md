@@ -1,6 +1,6 @@
 # 0163 委譲の子の Claude は文脈 15 万トークンで自動圧縮する
 
-- 状態: 承認
+- 状態: 承認。閾値を固定の値（`delegatedTokens`）にすることは置換（[0166](0166-delegated-child-compaction-headroom.md)。固定の部分 + 空き `delegatedHeadroom`）
 - 関連: [0068](0068-idle-compaction-after-notice-turns.md)（放置圧縮は委譲の子を除く）、[0051](0051-auto-compaction-min-150k.md)
 
 ## 状況

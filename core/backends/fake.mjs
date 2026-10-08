@@ -729,7 +729,10 @@ export const backend = {
         // トークンそのものは出さない。同じトークンかどうかだけ分かる指紋
         out.text = oauthToken ? `account:${crypto.createHash("sha256").update(oauthToken).digest("hex").slice(0, 12)}` : "account:none";
         await say(emit, out.text, out.uuid);
-      } else if (/(^|\n)compact-window$/.test(text)) {   // 子にだけ渡る自動圧縮の窓。渡っていなければ none
+      } else if (/(^|\n)compact-window(?: base:\d+)?$/.test(text)) {   // 子にだけ渡る自動圧縮の窓。渡っていなければ none
+        // base:N は Claude の新しい会話の最初の返答の usage（固定の部分。ADR 0166）の代わり。新しい会話のときだけ出す
+        const base = /compact-window base:(\d+)$/.exec(text);
+        if (base && !sessionId) emit({ type: "contextBase", tokens: Number(base[1]) });
         out.text = `compactWindow:${autoCompactWindow ?? "none"}`;
         await say(emit, out.text, out.uuid);
       } else if (/^fail(\s|$)/.test(text)) {
