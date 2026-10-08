@@ -173,9 +173,12 @@ final class PairingCodecTests: XCTestCase {
     }
 
     func testCleanLabel() {
-        XCTAssertEqual("a b c", PairingCodec.cleanLabel("  a\n\tb\u{7}  c  "))
-        XCTAssertEqual("机 の上", PairingCodec.cleanLabel("机\u{3000}\u{3000}の上"))
-        XCTAssertEqual(String(repeating: "x", count: 64), PairingCodec.cleanLabel(String(repeating: "x", count: 100)))
-        XCTAssertEqual("", PairingCodec.cleanLabel(nil))
+        let vectors = try! JSONSerialization.jsonObject(with: Data(contentsOf: repoRoot().appendingPathComponent("tests/remote/vectors.json"))) as! [String: Any]
+        let pleiad = vectors["pleiad"] as! [String: Any]
+        let pairing = pleiad["pairing"] as! [String: Any]
+        let cases = pairing["cleanLabels"] as! [[String: String]]
+        for (i, v) in cases.enumerated() {
+            XCTAssertEqual(v["output"], PairingCodec.cleanLabel(v["input"]), "cleanLabel vector \(i)")
+        }
     }
 }

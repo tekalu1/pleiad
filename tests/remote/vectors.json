@@ -212,7 +212,16 @@
       "secret": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
       "psk": "2cd6b5c59a9b4266c27111e633b1923b5bd6f3d58a8f3f4aa2b35daf4f8e975b",
       "ticket": "9551ecddd6434b1f847a74c17763f506029e9ba24474e4effe1e49bd4387fc62",
-      "ticketHash": "f541b3fc9929d4e839f4937eae486fd9b2784e8bf21c8d6c08d373ca880961e7"
+      "ticketHash": "f541b3fc9929d4e839f4937eae486fd9b2784e8bf21c8d6c08d373ca880961e7",
+      "cleanLabels": [
+        { "input": "  a\n\tb\u0007  c  ", "output": "a b c" },
+        { "input": "机\u3000\u3000の上", "output": "机 の上" },
+        { "input": "\u00a0x\u3000y\u00a0", "output": "x y" },
+        { "input": "a\u2028b\u0085c", "output": "a b c" },
+        { "input": "a\u001bb\u000e\u001fc", "output": "a b c" },
+        { "input": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx", "output": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" },
+        { "input": "", "output": "" }
+      ]
     },
     "host": {
       "privateKey": "4a3acbfdb163dec651dfa3194dece676d437029c62a408b4c5ea9114246e4893",
