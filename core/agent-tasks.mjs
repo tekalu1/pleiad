@@ -262,7 +262,8 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
     if (!r.host) pauseCommands(r, now(), waitingOf(r));
     // 子が返答を終えて裏の作業だけを待っている間は、待っているものと経過分数を見せる（ADR 0170）
     const bg = r.status === 'running' ? backgroundOf(r) : null;
-    return { ...rest, activeCommands: activeCommands.map(c => commandView(c, now())),
+    // 古いホストの便り（活動の写しが無い）では写しに null が入る。分割代入の既定値は null に効かないので ?? で受ける
+    return { ...rest, activeCommands: (activeCommands ?? []).map(c => commandView(c, now())),
       ...(bg ? { backgroundWaiting: { minutes: Math.max(0, Math.floor((now() - bg.since) / 60000)), tasks: bg.tasks } } : {}), silenceMinutes: r.status === 'running' && !bg && !waitingOf(r) && !lockWaitingOf(r) && r.lastActivityAt != null
       ? Math.max(0, Math.floor((now() - r.lastActivityAt) / 60000)) : null,
       rejections, pendingMessages: instructions.filter(x => x.state === 'queued').length, result: result.slice(offset, offset + 16000), resultOffset: offset,

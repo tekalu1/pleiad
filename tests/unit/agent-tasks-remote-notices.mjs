@@ -90,5 +90,13 @@ export default async function (t) {
     await until(() => manager.get(id(7)).status === 'completed');
     manager.checkSilence(); await sleep(20);
     t.ok('偽のホストの完了便りの後は停滞通知しない', silence.filter(x => x[0] === id(7)).length === 1);
+
+    // 活動の写しを送らない古いホストの便りでも、写しの行を読める（activeCommands が null になっても落ちない）
+    // 委譲の戻り（remote-delegation の delegate）は、便りに活動の写しが無いと null の項目を付けて adopt する
+    await manager.adopt({ taskId: id(9), parentSessionId: 'parent', host: { hostId: 'h1', name: 'MSI' }, status: 'running', title: 'old host',
+      hostTelemetry: null, hostBackground: null, hostLockWaiting: null, lastActivityAt: null, lastOutputAt: null, activeCommands: null }, 'ja');
+    const old = manager.get(id(9));
+    t.ok('古いホストの便りの後も、行を読めて活動中のコマンドは空', Array.isArray(old.activeCommands) && old.activeCommands.length === 0
+      && manager.list('parent').some(r => r.taskId === id(9)));
   } finally { await manager.close(); await fs.rm(dir, { recursive: true, force: true }); }
 }
