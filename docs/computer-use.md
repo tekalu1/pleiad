@@ -11,6 +11,7 @@
 - **承認**: エージェントが初めてそのアプリを操作するとき、入力欄の上にカードが出る。「常に許可」「この会話で許可」「拒否」から選ぶ（拒否はそのターンの間だけ覚える）。ターミナル・パスワード管理・セキュリティソフトなどは承認の設定にかかわらず操作できない。
 - **確認なしの会話**: Claude の bypass・Codex の yolo の会話では承認を聞かずに操作する（操作できないアプリを除く）。Antigravity は確認なしでしか動かないため、同じく承認を聞かない。
 - **止める**: 操作中はディスプレイの縁が光り、上に「操作中」のピルが出る。Esc か会話の「止める」でいつでも止められ、押したままの入力も離れる。止めても会話は続く。
+- **画面が落ち着くまで待つ**: エージェントは `wait_until` で、画面が動いてから止まるまで待てる。問いを付けると、止まるたびに決定モデル（Perplexity の pplx-decider）が画面を見て「終わったか」を答える。問いを使うのは、設定 › コンピューターの操作で OpenRouter のキーを選んだときだけで、そのとき撮った画面が OpenRouter へ送られる。選ぶまでは画面の差分だけで待つ。
 - **同時に操作できる会話は 1 つ**。別の会話が操作中のときは終わるまで待つ。撮った画面は会話の中に小さな画像で残る。
 
 Windows の arm64 は実機で未確認。ワークフローで arm64 の koffi の本体を入れて作るが、読めるかは確かめていない（読めなければ設定に「この PC では画面を操作する部品を読み込めませんでした。」と出て、アプリは動く）。
@@ -75,7 +76,7 @@ Windows の arm64 は実機で未確認。ワークフローで arm64 の koffi 
 | op | args | data |
 |---|---|---|
 | `displays` | — | `{ displays, displaysVersion }` |
-| `screenshot` | `{ display, maxPixels, maxEdge, quality, region?, upscale? }`。`region` は物理の `{ x, y, width, height }`（zoom のとき）。`display` は `displays` の `id`（`index` はモデルに見せる番号にだけ使う） | `{ jpeg: Uint8Array, width, height, scale, origin: { x, y }, displaysVersion }`。`scale` は「画像の画素 / 物理画素」、`origin` は撮った範囲の左上（物理） |
+| `screenshot` | `{ display, maxPixels, maxEdge, quality, region?, upscale?, gray? }`。`region` は物理の `{ x, y, width, height }`（zoom のとき）。`display` は `displays` の `id`（`index` はモデルに見せる番号にだけ使う）。`gray: true` は `wait_until` の比べるコマ | `{ jpeg: Uint8Array, width, height, scale, origin: { x, y }, displaysVersion }`。`scale` は「画像の画素 / 物理画素」、`origin` は撮った範囲の左上（物理）。`gray` のときは `jpeg` の代わりに `gray: Uint8Array`（明るさ。1 画素 1 バイト、行の順） |
 | `appAt` | `{ x, y }` | `{ app: AppInfo \| null }`（点の下の窓の最上位の窓） |
 | `foreground` | — | `{ app: AppInfo \| null }` |
 | `findApp` | `{ name }`（表示名・exe 名・AUMID） | `{ apps: AppInfo[] }`（動いているものとスタートメニューのアプリから。一致の強い順） |
@@ -239,8 +240,9 @@ JSON-RPC は `initialize` / `ping` / `tools/list` / `tools/call` を自前で処
 | `key` | `text: string`（xdotool の形）, `repeat?: integer` | 文。Windows キーは `windows_key` で拒む | 取る |
 | `hold_key` | `text: string`, `duration: number`（秒。上限 10） | 文。`keyDown` → core で待つ → `keyUp`。終わりと中断のどちらでも離す | 取る |
 | `wait` | `duration: number`（秒。上限 10） | 文 | 取らない |
+| `wait_until` | `until?: string`（「はい」が「終わった」になる問い。500 字まで）, `timeout?: number`（秒。既定 15・上限 30） | 文（下の「`wait_until` の待ち方」）。画像は返さない | 取る |
 | `open_application` | `app: string` | 起動した・既に動いていた・見つからない、を正直に返す。起動の前にそのアプリの禁止と承認の判定を通す | 取る |
-| `computer_batch` | `actions: [{ action, …各ツールの引数 }]`（最大 20。`request_access`・`list_granted_applications`・`computer_batch` は入れられない） | 動作ごとの結果。失敗・止められたらそこで打ち切る。撮影を含むときは最後の 1 枚だけを返す | 取る |
+| `computer_batch` | `actions: [{ action, …各ツールの引数 }]`（最大 20。`request_access`・`list_granted_applications`・`wait_until`・`computer_batch` は入れられない） | 動作ごとの結果。失敗・止められたらそこで打ち切る。撮影を含むときは最後の 1 枚だけを返す | 取る |
 
 `left_click` などの `coordinate` を省くと今のカーソルの位置。`text` の修飾キーは `ctrl` / `shift` / `alt` だけ。
 
@@ -262,6 +264,29 @@ JSON-RPC は `initialize` / `ping` / `tools/list` / `tools/call` を自前で処
 - 物理から画像へは `×scale`、戻すときは `÷scale` して `round`。モデルには計算させない。
 - `zoom` は範囲を物理で切り出し、同じ上限に収まるまで拡大・縮小する（`upscale: true`）。`scale` 引数はその上限に掛ける倍率（既定 1、上限 1）。
 - オーバーレイの窓だけが `setContentProtection(true)` で撮影に写らない。Pleiad の窓は写る（会話の中身と承認カードもモデルに見える。操作は禁止のアプリなのでできない）。
+
+#### `wait_until` の待ち方
+
+[ADR 0165](adr/0165-computer-use-wait-until-decision-model.md)。`core/computer-use/settle.mjs`（待ち方）と `core/computer-use/decider.mjs`（決定モデル）。読み込みや処理の終わりを、`wait` と `screenshot` の繰り返しではなく 1 回の呼び出しで待つ。
+
+- **比べるコマ**: `screenshot` と同じ op に `gray: true, maxEdge: 320` を渡し、対象のディスプレイ（最後の `screenshot` / `switch_display` のもの）を長辺 320 の明るさ（1 画素 1 バイト）で撮る。JPEG は作らない。撮る間隔は撮り始めから次の撮り始めまで 100ms（撮影が遅ければ間を空けずに次を撮る）。
+- **変化と静止**: 前のコマとの差が 6 を超えた画素が 2.0% 以上なら、そのコマで画面が変わった。最後の変化から 400ms 変わらなければ静止。まず変化を待つ。
+- **最初から止まっている画面**: 呼んでから 1 秒の間に変化が無ければ、最初から静止していたとして返す（「画面は最初から止まっていました」）。変化だけを待つと、もう終わっている画面で timeout まで待つため。決定モデルが「いいえ」と答えた後はこの扱いをせず、次の変化と静止を待つ。
+- **問い（`until`）**: 「はい」が「終わった」になる問い。空白を詰め、500 字で切る。静止するたびに 1 回、長辺 1440（`maxPixels: 1_300_000`・品質 75）の JPEG を同じディスプレイで撮り直し、OpenRouter の `POST /api/alpha/decisions` で `perplexity/pplx-decider-v1.1-27b` に聞く。
+  - 本文は `state: [{ type: 'text', text: 'Screenshot' }, { type: 'image_url', image_url: { url: 'data:image/jpeg;base64,…' } }]` と `questions.done = { type: 'noul', instructions: until, criteria: { true: 'Yes', false: 'No' } }`。
+  - 応答は `answers.done.noul`（「はい」の確率）。読むのは `parseDecision` の 1 か所だけ。
+  - 確率が 0.5 以上なら返す。「いいえ」なら次の変化と静止を待って聞き直す。締め切りでは「まだ」と最後の確率を返す。
+  - 1 回の往復の上限は 6 秒。送り先は `AGENT_HOST_OPENROUTER_API` で変えられる（テストの偽物用。判定器と同じ変数）。
+- **キー**: 設定 › API キーの割り当て `computer:decider`（OpenRouter のキー。[ADR 0155](adr/0155-api-keys-in-one-place.md) の追記）。選ぶ欄は設定 › コンピューターの操作にある。キーが選ばれていなければ問いを使わず差分だけで待ち、結果にその旨を書く（`decider: 'no_key'`）。
+- **前面が操作できないアプリ**: 聞く前に前面を見る。ターミナル・パスワード管理・Pleiad 自身など（「判定の順」の 1）なら画面を送らず、静止で返す（`end: 'skipped'`・`decider: 'foreground'`）。
+- **聞けなかったとき**: 時間切れ・つながらない・401/403（キーが受け付けられない）・402（クレジット不足）・429・5xx・答えの形が読めない。聞き直さずに返し、「決定モデルに聞けませんでした」と理由を書く（`end: 'ask_failed'`。`decider` は `timeout` / `network` / `bad_response` / `http_<status>`）。キーと応答の本文は、文にもログにも出さない。
+- **結果**: 画像は返さない。text は、何が起きたかの 1 行と「終わった · 待った時間 · 聞いた回数 · 最後の『はい』の確率」の行。印の行に `wait: { done, end, ms, asks, p?, decider? }` を足す。`end` は `still` / `yes` / `timeout` / `ask_failed` / `skipped`。`state` は止められたとき以外は `ok` で、「まだ」も失敗にしない。
+- **上限**: `timeout` は秒で、既定 15・上限 30（超えたら 30 に丸める）。最後の問いは、締め切りを越えて最長 `UNTIL_GRACE_MS = 8000`（往復の 6 秒と撮影）続く。1 回の呼び出しは、ロックの待ちを除いて最長 38 秒。
+  - 画面を撮るのでロックを取る。`computer_batch` には入れられない（まとめると Antigravity の 1 回 3 分に収まらない）。
+  - Claude・Codex: ロックの待ち 600 秒 + 38 秒は、呼び出しの上限 660 秒に収まる。
+  - Antigravity: ロックの待ちを `max(10 秒, 150 秒 − timeout − 8 秒)` で切って `waiting` を返すので、1 回の呼び出しは 150 秒に収まる。
+  - `wait`（上限 10 秒・ロックを取らない）はそのまま残す。
+- **止める**: コマとコマの間と問いの後に止めた印を見る。問いの往復もターンの signal で切る。
 
 #### 失敗と止めた理由
 
@@ -293,6 +318,7 @@ JSON-RPC は `initialize` / `ping` / `tools/list` / `tools/call` を自前で処
 - 削除・送信・購入・アカウント作成は、実行の直前にユーザーに確かめる。
 - 止められたというエラーが返ったら、以後このターンでは呼ばず、最終の返答で伝える。
 - 各ツールの `title` を会話の言語で短く書く。
+- 読み込みや処理の終わりを待つときは、`wait` と `screenshot` を繰り返さず `wait_until` を使う。
 
 ### 正規化イベントと履歴
 
@@ -309,6 +335,7 @@ JSON-RPC は `initialize` / `ping` / `tools/list` / `tools/call` を自前で処
 - 形: 行頭が `[ply_computer] `、続きが 1 行の JSON。`v` は 1。
 - 項目: `tool`、`state`（`ok` / `failed` / `stopped` / `waiting`）、`reason?`、`title`（入力か、サーバーが作ったもの）、`app?`（対象のアプリの表示名）、`display?`、`shot?`（保存したスクショの id。32 桁の hex）、`w?` / `h?`（その画像の大きさ）。`grant?` は、確認なし（`bypass`）かすべて許可（`all`）でアプリの承認を飛ばしたとき、そのアプリのターンで最初の呼び出しにだけ付ける（行に「許可 · 確認なしのため自動」と出す）。
 - `computer_batch` は `actions: [{ tool, state, reason?, app? }]` を足し、`shot` は最後の撮影。
+- `wait_until` は `wait: { done, end, ms, asks, p?, decider? }` を足す（上の「`wait_until` の待ち方」）。
 - 読む側は知らない項目を無視し、`v` が 1 でなければ印が無いものとして扱う。
 
 `core/computer-use/display.mjs`（B が書き、F が呼ぶ）:
@@ -387,7 +414,8 @@ permission: { …, toolName: 'ply_computer', canAlways: true,
 - `core/store.mjs` に `rememberComputerApp(app)` / `forgetComputerApp(id)`（`rememberBrowserSite` と同じ書き方）。
 - 「この会話で許可」は会話のデータの `computerApps: string[]`（id の一覧。`store.setSessionData`）。再起動をまたいで保たれ、会話を消せば消える。
 - 拒否は覚えない。ターンの間だけ `turn.computerDenied`（id の Set）に持ち、同じアプリは `denied` をすぐ返す（2026-10-01 に決めた）。
-- 設定の画面: 全体のスイッチ、すべてのアプリを許可、常に許可の一覧と削除、操作できないアプリ（読み取りのみ）、「Antigravity では承認を聞きません」の 1 行。
+- 設定の画面: 全体のスイッチ、すべてのアプリを許可、常に許可の一覧と削除、操作できないアプリ（読み取りのみ）、「Antigravity では承認を聞きません」の 1 行、`wait_until` の問いに使うキー（下の段落）。
+- `wait_until` の問いに使うキーは prefs ではなく API キーの割り当て `computer:decider`（`setApiKeyUse`。人だけ）。選ぶ欄・その場の登録・状態の行は設定 › 通話と同じ部品（`web/api-key-ui.mjs`）で、欄の下に「wait_until に問いを付けたとき、撮った画面が OpenRouter（Perplexity）へ送られます」と書く。API キーの移行を保留している間は選べない（古い置き場を持たない割り当てなので、保留中は問いを使わない）。
 
 ### 判定の順（`core/computer-use/policy.mjs`）
 
@@ -423,7 +451,7 @@ permission: { …, toolName: 'ply_computer', canAlways: true,
 止めた印:
 
 - core のターンに `computerStopped = { reason: 'escape' | 'stop', at }`。`computer-escape`・`computerStop`・ターンの中断で付ける。Esc は貸し借りでつながる全部のターンに付ける。
-- 印のあるターンでは、以後の呼び出しをすべてすぐ `stopped` にする。実行中の呼び出しは動作の切れ目（`computer_batch` の 1 動作ごと、`hold_key` / `wait` の待ち）で打ち切る。
+- 印のあるターンでは、以後の呼び出しをすべてすぐ `stopped` にする。実行中の呼び出しは動作の切れ目（`computer_batch` の 1 動作ごと、`hold_key` / `wait` の待ち、`wait_until` のコマの間と問い）で打ち切る。
 - ターン自体は中断しない（モデルに止められた旨を返す）。
 
 `endTurn` で行うこと（`agentBrowser?.endTurn` の隣）: ロックの解放、止めた印の消去、`turn.computerDenied` の消去、`computer-turn-ended`。
@@ -480,3 +508,4 @@ Codex `codex-cli 0.156.1`（app-server）、Claude Agent SDK 0.3.258（CLI 2.1.2
 - [ADR 0073](adr/0073-computer-use-ui.md) 操作中の画面の表示と会話の中の表示
 - [ADR 0074](adr/0074-codex-bundled-computer-use-off.md) Codex の同梱の computer use を切る
 - [ADR 0075](adr/0075-computer-screenshots-in-data-dir.md) スクリーンショットの保存と印の行
+- [ADR 0165](adr/0165-computer-use-wait-until-decision-model.md) `wait_until`（画面の差分と決定モデル）

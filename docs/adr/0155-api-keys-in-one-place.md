@@ -45,3 +45,11 @@
 - 辞書: `ui:apiKeys.*`・`server:apiKeys.*`・`agent:ops.apiKeys.*`。使われなくなった旧キー欄の文言は消した。
 - 文書: docs/design.md「API キー」「互換の接続先」「通話」、docs/voice-call.md、docs/agent-delegation.md、docs/design-system.md「設定 › API キー」「設定 › 委譲」「設定 › 通話」。0022・0150・0094 の状態の行に、置き換えた範囲を書いた。
 - 残る課題: 古い置き場と古いコマンドの後片付け（段階 5・別のリリース）。古い版が移行後に古い置き場へ書いた新しいキーは取り込まない（移行は 1 回）。
+
+## 追記（2026-10-08）: 割り当て `computer:decider`
+
+[ADR 0165](0165-computer-use-wait-until-decision-model.md) の `wait_until` の問い（決定モデル pplx-decider）に使う OpenRouter のキーとして、`uses` に `computer:decider` を足した。
+
+- 同意の分け方は通話・判定器と同じ。登録しただけでは送らず、人が選んで（`setApiKeyUse`）初めて画面を送り始める。選ぶ欄は設定 › コンピューターの操作に置き、通話と同じ部品で作る。欄の下に「wait_until に問いを付けたとき、撮った画面が OpenRouter（Perplexity）へ送られます」と書く。
+- 「使っている所」（`{ kind: 'computer' }`。設定 › コンピューターの操作へのリンク）、削除の確認（「wait_until の問いは使われず、画面の差分だけで待ちます」）、差し替えた後の確かめ直しの対象になる。
+- **古い置き場を持たない。** この割り当ては移行の後に足したので、移行で引き継ぐものも古い版が読むものも無い。古い置き場へ書き写さず、移行を保留している起動では「選ばれていない」とみなす（問いを使わない）。保留の間は選ぶ欄を出さない。

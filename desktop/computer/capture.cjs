@@ -16,9 +16,16 @@ function intersect(a, b) {
   return right > x && bottom > y ? { x, y, width: right - x, height: bottom - y } : null;
 }
 
+/** BGRA（Windows の nativeImage の toBitmap）から明るさ（0〜255）へ */
+function lumaOf(bgra, count) {
+  const out = new Uint8Array(count);
+  for (let i = 0, j = 0; i < count && j + 2 < bgra.length; i++, j += 4) out[i] = (bgra[j] * 29 + bgra[j + 1] * 150 + bgra[j + 2] * 77) >> 8;
+  return out;
+}
+
 function createCapture({ win32, nativeImage }) {
   /**
-   * @param {object} args { display, maxPixels, maxEdge, quality, region?, upscale? }
+   * @param {object} args { display, maxPixels, maxEdge, quality, region?, upscale?, gray? }
    * @param {{ displays: object[], displaysVersion: number }} state
    */
   async function screenshot(args, { displays, displaysVersion }) {
@@ -45,6 +52,8 @@ function createCapture({ win32, nativeImage }) {
       height = Math.max(1, Math.floor(raw.height * scale));
       image = image.resize({ width, height, quality: 'best' });
     }
+    // gray: wait_until が前のコマと比べる小さい灰色の画素（1 画素 1 バイト。core/computer-use/settle.mjs）。JPEG は作らない
+    if (args.gray) return { gray: lumaOf(image.toBitmap(), width * height), width, height, scale: width / raw.width, origin: { x: wanted.x, y: wanted.y }, displaysVersion };
     const jpeg = image.toJPEG(Math.min(100, Math.max(1, Math.round(limits.quality))));
     return {
       jpeg: new Uint8Array(jpeg), width, height, scale: width / raw.width,
@@ -54,4 +63,4 @@ function createCapture({ win32, nativeImage }) {
   return { screenshot };
 }
 
-module.exports = { createCapture, fitScale };
+module.exports = { createCapture, fitScale, lumaOf };

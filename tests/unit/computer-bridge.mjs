@@ -20,8 +20,8 @@ export default async function(t) {
     const init = (await a.rpc('initialize', {})).body.result;
     t.ok('initialize: serverInfo は ply_computer、instructions は指示文（ja）', init.serverInfo.name === 'ply_computer' && init.instructions.includes('screenshot') && init.instructions.includes('ターミナル') && init.capabilities.tools);
     const list = (await a.rpc('tools/list', {})).body.result.tools;
-    t.ok('tools/list: ツールは契約の 22 個（request_access・list_granted_applications・screenshot・zoom・switch_display・cursor_position・mouse_move・5 種のクリック・drag・down/up・scroll・type・key・hold_key・wait・open_application・computer_batch）',
-      list.length === 22 && COMPUTER_TOOL_NAMES.every(n => list.some(x => x.name === n)) && ['left_click', 'double_click', 'triple_click', 'right_click', 'middle_click', 'left_click_drag', 'left_mouse_down', 'left_mouse_up'].every(n => list.some(x => x.name === n)));
+    t.ok('tools/list: ツールは契約の 23 個（request_access・list_granted_applications・screenshot・zoom・switch_display・cursor_position・mouse_move・5 種のクリック・drag・down/up・scroll・type・key・hold_key・wait・wait_until・open_application・computer_batch）',
+      list.length === 23 && COMPUTER_TOOL_NAMES.every(n => list.some(x => x.name === n)) && ['left_click', 'double_click', 'triple_click', 'right_click', 'middle_click', 'left_click_drag', 'left_mouse_down', 'left_mouse_up'].every(n => list.some(x => x.name === n)));
     t.ok('全部のツールに title があり、スキーマでは必須。説明は会話の言語（ja）', list.every(x => x.inputSchema.properties.title?.type === 'string' && x.inputSchema.required.includes('title') && x.description.length > 5 && x.inputSchema.properties.title.description.includes('40 字')));
     t.ok('スキーマ: scroll は coordinate・方向・回数が必須、key の text と hold_key の duration（上限 10）', (() => {
       const s = Object.fromEntries(list.map(x => [x.name, x.inputSchema]));

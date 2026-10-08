@@ -86,6 +86,7 @@ export default async function (t) {
         JSON.stringify(list.keys.map(k => k.label)));
       const id = list.keys[0].id;
       t.ok('通話と Jev は、登録済みだったキーを選んだ状態で引き継ぐ', list.uses.voice === id && list.uses['judge:jev'] === id && list.uses['judge:cerebras'] === null);
+      t.ok('wait_until の問いは古い置き場を持たないので、移行しても選ばれない（人が選ぶまで画面を送らない）', list.uses['computer:decider'] === null && await w.apiKeys.useKey('computer:decider') === null);
       t.ok('使っている所に 2 つの接続先・通話・Jev が並ぶ', list.keys[0].uses.filter(u => u.kind === 'endpoint').length === 2 && list.keys[0].uses.some(u => u.kind === 'voice') && list.keys[0].uses.some(u => u.kind === 'judge' && u.judge === 'jev'));
       t.ok('接続先は keyRef で持ち、値は持たない', (await w.eps.list()).endpoints.every(e => e.hasKey && e.keyRef === id) && !(await fs.readFile(path.join(d, 'compat-endpoints.json'), 'utf8')).includes(A));
       t.ok('値は api-key-secrets.json にあり、台帳にも一覧にも出ない', (await w.secrets.get('key:' + id))?.key === A
@@ -232,15 +233,23 @@ export default async function (t) {
         && await w.apiKeys.useKey('voice') === null && !(await exists(path.join(d, 'voice-secrets.json'))));
       t.ok('登録しただけでは古い置き場にも書かない（使うキーを選ぶまで古い版も送らない）', !(await w.voice.keys('openrouter')).length && !(await w.compat.keys('delegation-routing:')).length);
       t.ok('プロバイダーの違うキーは割り当てられない（通話は OpenRouter・Cerebras の判定器は Cerebras）', (await rejects(() => w.apiKeys.setUse('judge:cerebras', id)))?.code === 'PROVIDER_MISMATCH'
+        && (await rejects(() => w.apiKeys.setUse('computer:decider', 'key-000000000000')))?.code === 'NOT_FOUND'
         && (await rejects(() => w.apiKeys.setUse('nope', id)))?.code === 'UNKNOWN_USE' && (await rejects(() => w.apiKeys.setUse('voice', 'key-000000000000')))?.code === 'NOT_FOUND');
       w.events.length = 0;
       await w.apiKeys.setUse('voice', id);
       t.ok('選んだときから使う: 通話が値を読め、古い置き場にも同じ値が書かれ、変更が配られる', await w.apiKeys.useKey('voice') === A && (await w.voice.get('openrouter'))?.key === A && w.events.some(e => e.uses?.includes('voice')));
       await w.apiKeys.setUse('judge:jev', id);
       t.ok('Jev も同じキーを選べて、古い置き場の delegation-routing:openrouter にも書かれる', await w.apiKeys.useKey('judge:jev') === A && (await w.compat.get('delegation-routing:openrouter'))?.key === A);
+      const legacyBefore = [...await w.voice.keys(''), ...await w.compat.keys('')].sort().join();
+      w.events.length = 0;
+      await w.apiKeys.setUse('computer:decider', id);
+      list = await w.apiKeys.list();
+      t.ok('wait_until の問いも同じキーを選べて、使っている所に並び、変更が配られる', await w.apiKeys.useKey('computer:decider') === A && list.uses['computer:decider'] === id
+        && list.keys[0].uses.some(u => u.kind === 'computer') && w.events.some(e => e.uses?.includes('computer:decider')) && !JSON.stringify(list).includes(A));
+      t.ok('wait_until の問いは古い置き場に書かない（ADR 0155 の後に足した割り当て）', [...await w.voice.keys(''), ...await w.compat.keys('')].sort().join() === legacyBefore);
       // 差し替え
       await w.apiKeys.replace(id, B);
-      t.ok('差し替え: 使っている所すべてが新しい値で送り、古い置き場にも新しい値が書かれる', await w.apiKeys.useKey('voice') === B && await w.apiKeys.useKey('judge:jev') === B
+      t.ok('差し替え: 使っている所すべてが新しい値で送り、古い置き場にも新しい値が書かれる', await w.apiKeys.useKey('voice') === B && await w.apiKeys.useKey('judge:jev') === B && await w.apiKeys.useKey('computer:decider') === B
         && (await w.voice.get('openrouter'))?.key === B && (await w.compat.get('delegation-routing:openrouter'))?.key === B);
       // 確認（OpenRouter の GET /key）
       const ok = await w.apiKeys.check(id);
@@ -262,6 +271,7 @@ export default async function (t) {
       // 削除
       const removed = await w.apiKeys.remove(id);
       t.ok('削除: 使っていた所が返り、判定器は使わないに戻り、値と古い置き場の項目も消える', removed.affected.some(u => u.kind === 'judge') && await w.apiKeys.useKey('judge:jev') === null
+        && removed.affected.some(u => u.kind === 'computer') && await w.apiKeys.useKey('computer:decider') === null && (await w.apiKeys.list()).uses['computer:decider'] === null
         && (await w.secrets.keys('key:')).length === 1 && (await w.compat.keys('delegation-routing:')).length === 0);
       t.ok('消したキーは確かめられない', (await rejects(() => w.apiKeys.check(id)))?.code === 'NOT_FOUND');
     }

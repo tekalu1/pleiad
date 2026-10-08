@@ -2,6 +2,9 @@
 //   POST /audio/transcriptions  WAV（JSON の input_audio）を受け、台本の文字を返す。受けた長さ・モデル・キーを records に残す
 //   POST /audio/speech          文字の長さに比例した正弦波の PCM（24kHz s16le）を、実時間より速く逐次で返す（speechStatus が 200 でなければその状態で失敗する。関数なら呼ぶたびに決める）
 //   GET  /key                   キーの確認（既定は 200。keyStatus で 401 などにできる）
+//   POST /alpha/decisions       wait_until の決定モデル（core/computer-use/decider.mjs。AGENT_HOST_OPENROUTER_API にこの URL を渡す）。
+//                               decisions(rec, index) が はい の確率（数）か { status } か { body }（そのまま返す JSON）か { delayMs, p } を返す。既定は 0.9
+//                               受けたモデル・キー・問い・画像の種類と大きさを records.decisions に残す
 // 台本: transcripts は (request, index) => text | { status, retryAfter } を返す関数か、順に返す文字の配列（尽きたら最後を繰り返す）。
 import http from 'node:http';
 
@@ -11,8 +14,8 @@ const wavInfo = (b64) => {
   return { bytes: bytes.length, durationMs: Math.round(((bytes.length - 44) / 2 / rate) * 1000) };
 };
 
-export async function startFakeOpenRouter({ transcripts = ['こんにちは'], sttDelay = null, ttsChunkMs = 5, ttsMsPerChar = 90, ttsFirstByteDelayMs = 0, keyStatus = 200, speechContentType = 'audio/pcm;rate=24000;channels=1', speechStatus = 200 } = {}) {
-  const records = { stt: [], tts: [], key: 0 };
+export async function startFakeOpenRouter({ transcripts = ['こんにちは'], sttDelay = null, ttsChunkMs = 5, ttsMsPerChar = 90, ttsFirstByteDelayMs = 0, keyStatus = 200, speechContentType = 'audio/pcm;rate=24000;channels=1', speechStatus = 200, decisions = () => 0.9 } = {}) {
+  const records = { stt: [], tts: [], key: 0, decisions: [] };
   const script = typeof transcripts === 'function' ? transcripts : (_req, i) => transcripts[Math.min(i, transcripts.length - 1)];
   let sttCount = 0;
   const server = http.createServer((req, res) => {
@@ -23,6 +26,19 @@ export async function startFakeOpenRouter({ transcripts = ['こんにちは'], s
       const auth = req.headers.authorization ?? '';
       let body = null;
       try { body = chunks.length ? JSON.parse(Buffer.concat(chunks).toString()) : null; } catch { /* 空 */ }
+      if (url.pathname === '/alpha/decisions' && req.method === 'POST') {
+        const image = body?.state?.find?.(s => s?.type === 'image_url')?.image_url?.url ?? '';
+        const m = /^data:([^;]+);base64,(.*)$/.exec(image);
+        const rec = { model: body?.model, auth, until: body?.questions?.done?.instructions, type: body?.questions?.done?.type, criteria: body?.questions?.done?.criteria,
+          text: body?.state?.[0]?.text, imageType: m?.[1] ?? null, imageBytes: m ? Buffer.from(m[2], 'base64').length : 0, at: Date.now() };
+        const index = records.decisions.length;
+        records.decisions.push(rec);
+        let out = decisions(rec, index);
+        if (out && typeof out === 'object' && out.delayMs) { await new Promise((r) => setTimeout(r, out.delayMs)); out = out.p ?? out; }
+        if (out && typeof out === 'object' && out.status) { res.writeHead(out.status, { 'content-type': 'application/json' }); return res.end('{"error":{"message":"scripted failure"}}'); }
+        res.writeHead(200, { 'content-type': 'application/json' });
+        return res.end(JSON.stringify(out && typeof out === 'object' && out.body !== undefined ? out.body : { answers: { done: { type: 'noul', noul: out } } }));
+      }
       if (url.pathname === '/key') { records.key++; res.writeHead(keyStatus, { 'content-type': 'application/json' }); return res.end(JSON.stringify({ data: { label: 'fake' } })); }
       if (url.pathname === '/audio/transcriptions') {
         const info = wavInfo(body?.input_audio?.data ?? '');

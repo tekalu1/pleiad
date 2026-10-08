@@ -3,7 +3,7 @@
 // 撮影と入力は Electron の main（driver 越し）が行い、ここは MCP の面・アプリの承認・ロック・止めた印・スクショの保存だけを持つ。
 import { claimToken } from './mcp-token.mjs';
 import { agentT } from './i18n.mjs';
-import { computerTools, COMPUTER_TOOL_NAMES, LOCKING } from './computer-use/tools.mjs';
+import { computerTools, COMPUTER_TOOL_NAMES, LOCKING, untilSeconds, UNTIL_GRACE_MS } from './computer-use/tools.mjs';
 import { createActions, ToolFail } from './computer-use/actions.mjs';
 import { computerMarker } from './computer-use/display.mjs';
 import { LockError } from './computer-use/lock.mjs';
@@ -25,7 +25,7 @@ function autoTitle(locale, name, args) {
   const c = Array.isArray(args.coordinate) && args.coordinate.length === 2 ? args.coordinate.map(v => Math.round(Number(v))) : null;
   const params = {
     x: c?.[0], y: c?.[1], count: typeof args.text === 'string' ? [...args.text].length : 0, text: typeof args.text === 'string' ? args.text.slice(0, 30) : '',
-    app: typeof args.app === 'string' ? args.app.slice(0, 30) : '', n: args.display, direction: args.scroll_direction, seconds: args.duration,
+    app: typeof args.app === 'string' ? args.app.slice(0, 30) : '', n: args.display, direction: args.scroll_direction, seconds: name === 'wait_until' ? untilSeconds(args.timeout) : args.duration,
     actions: Array.isArray(args.actions) ? args.actions.length : 0,
   };
   const key = (POINT_TOOLS.has(name) || name === 'screenshot') && !c && (name !== 'screenshot' || args.display === undefined) ? `${name}NoPoint` : name;
@@ -42,10 +42,11 @@ const cleanTitle = value => (typeof value === 'string' && value.trim() ? value.t
  * @param access アプリの許可の読み書き { getPrefs, sessionApps, rememberSession, rememberAlways, markIntroduced }
  * @param askPermission server の承認の口（payload に computerApp を足せる）
  * @param translate server の t（承認カードの見出し）
+ * @param decider wait_until の問いの口 { key(), ask? }（core/computer-use/actions.mjs）
  */
-export function createComputerBridge({ driver, lock, shots, access, askPermission, translate }) {
+export function createComputerBridge({ driver, lock, shots, access, askPermission, translate, decider }) {
   const bindings = new Map();
-  const actions = createActions({ driver, shots, access, askPermission, translate });
+  const actions = createActions({ driver, shots, access, askPermission, translate, decider });
 
   const plain = (locale, text, isError = true) => ({ isError, content: [{ type: 'text', text }] });
 
@@ -53,7 +54,7 @@ export function createComputerBridge({ driver, lock, shots, access, askPermissio
   function format(ctx, name, title, r, { state = 'ok', reason } = {}) {
     const lines = [r.text];
     if (r.shotId && ctx.binding.delivery.images === 'path') lines.push(agentT(ctx.locale, 'computer.shotPath', { path: shots.pathOf(r.shotId) }));
-    lines.push(computerMarker({ tool: name, state, reason, title, app: r.app, display: r.display, shot: r.shotId, w: r.shotId ? r.w : undefined, h: r.shotId ? r.h : undefined, grant: r.grant, actions: r.actions }));
+    lines.push(computerMarker({ tool: name, state, reason, title, app: r.app, display: r.display, shot: r.shotId, w: r.shotId ? r.w : undefined, h: r.shotId ? r.h : undefined, grant: r.grant, actions: r.actions, wait: r.wait }));
     const content = [{ type: 'text', text: lines.filter(l => l !== undefined && l !== '').join('\n') }];
     if (r.image?.jpeg) content.push({ type: 'image', mimeType: 'image/jpeg', data: Buffer.from(r.image.jpeg).toString('base64') });
     return { isError: state !== 'ok', content };
@@ -90,9 +91,12 @@ export function createComputerBridge({ driver, lock, shots, access, askPermissio
         return actions.perform(ctx, name, args);
       };
       let r;
+      // 1 回の呼び出しに上限があるエージェント（Antigravity は 3 分）では、wait_until の待つ時間と最後の問いのぶんだけロックの待ちを短くする
+      const slice = binding.delivery.waitSliceMs;
+      const sliceMs = slice && name === 'wait_until' ? Math.max(10_000, slice - (untilSeconds(args.timeout) ?? 0) * 1000 - UNTIL_GRACE_MS) : slice;
       try {
         r = LOCKING.has(name)
-          ? await lock.run(info, body, { signal: info.signal, sliceMs: binding.delivery.waitSliceMs })
+          ? await lock.run(info, body, { signal: info.signal, sliceMs })
           : await body();
       } catch (e) {
         if (!(e instanceof LockError)) throw e;

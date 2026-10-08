@@ -18,7 +18,7 @@ const VERB = {
   screenshot: "shot", zoom: "zoom", switch_display: "display", cursor_position: "cursor", mouse_move: "move",
   left_click: "click", right_click: "click", middle_click: "click", double_click: "click", triple_click: "click",
   left_click_drag: "drag", left_mouse_down: "down", left_mouse_up: "up", scroll: "scroll",
-  type: "type", key: "key", hold_key: "key", wait: "wait", open_application: "open",
+  type: "type", key: "key", hold_key: "key", wait: "wait", wait_until: "wait", open_application: "open",
   request_access: "access", list_granted_applications: "list", computer_batch: "batch",
 };
 

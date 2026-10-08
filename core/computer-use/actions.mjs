@@ -4,7 +4,10 @@ import { agentT } from '../i18n.mjs';
 import { SHOT_LIMITS, toPhysical, toImage, inShot, regionToPhysical, displayAt } from './coords.mjs';
 import { decideApp, autoGrantKind, normalizeComputerUse, isUnattendedMode } from './policy.mjs';
 import { ComputerError } from './driver.mjs';
-import { BATCHABLE, MAX_BATCH, MAX_SECONDS } from './tools.mjs';
+import { BATCHABLE, MAX_BATCH, MAX_SECONDS, untilSeconds } from './tools.mjs';
+import { isForbiddenApp } from './apps.mjs';
+import { settle, SETTLE } from './settle.mjs';
+import { askDecider, DECIDER_SHOT, UNTIL_MAX } from './decider.mjs';
 
 /** 止めた・ロック・禁止・拒否・待ちの上限・更新で main が居ないための停止は、画面で失敗に数えない（state: stopped）。それ以外は failed */
 const STOPPED_REASONS = new Set(['escape', 'stop', 'update', 'locked', 'forbidden', 'denied', 'busy']);
@@ -34,9 +37,12 @@ function modifiers(text) {
  * @param access { getPrefs(), sessionApps(sessionId), rememberSession(sessionId, apps), rememberAlways(app), markIntroduced() }
  * @param askPermission server の askPermission
  * @param translate server の t（承認カードの見出し）
+ * @param decider wait_until の問いの口 { key(): 選んだキーか null, ask: askDecider と同じ形 }（core/computer-use/decider.mjs）
  */
-export function createActions({ driver, shots, access, askPermission, translate }) {
+export function createActions({ driver, shots, access, askPermission, translate, decider = {} }) {
   const sleep = ms => new Promise(r => setTimeout(r, ms));
+  const deciderKey = decider.key ?? (async () => null);
+  const askDecision = decider.ask ?? askDecider;
 
   // ---- 共通の部品 ----------------------------------------------------------------------
   // i18n-dynamic: agent:computer.
@@ -360,6 +366,35 @@ export function createActions({ driver, shots, access, askPermission, translate 
       return { text: L(ctx, 'waited', { seconds }) };
     },
 
+    async wait_until(ctx, args) {
+      if (args.until !== undefined && args.until !== null && typeof args.until !== 'string') fail('invalid');
+      const seconds = untilSeconds(args.timeout);
+      if (seconds === null) fail('invalid');
+      const until = typeof args.until === 'string' ? args.until.trim().replace(/\s+/g, ' ').slice(0, UNTIL_MAX) : '';
+      const d = targetDisplay(ctx);
+      // 人がキーを選ぶまでは画面を送らない（ADR 0155）。選んでいなければ問いを使わず、差分だけで待つ
+      const key = until ? await deciderKey().catch(() => null) : null;
+      activity(ctx, { display: d });
+      const grab = async () => {
+        const r = await capture(ctx, { display: d.id, gray: true, maxEdge: SETTLE.frameEdge, maxPixels: SETTLE.frameEdge * SETTLE.frameEdge });
+        if (!ArrayBuffer.isView(r?.gray)) fail('failed', { message: 'no frame' });
+        return r;
+      };
+      let skippedApp = '';
+      const askOnce = key ? async () => {
+        // 前面が操作できないアプリ（ターミナル・パスワード管理・Pleiad 自身など）の画面は送らない
+        const { app } = await call(ctx, 'foreground', {});
+        if (isForbiddenApp(app)) { skippedApp = nameOf(app); return { skip: 'foreground' }; }
+        const shot = await capture(ctx, { display: d.id, ...DECIDER_SHOT });
+        checkStopped(ctx);
+        return askDecision({ key, jpeg: shot.jpeg, until, signal: ctx.signal });
+      } : null;
+      const r = await settle({ grab, ask: askOnce, timeoutMs: seconds * 1000, sleep, check: () => checkStopped(ctx) });
+      activity(ctx, { display: d });
+      return { text: untilText(ctx, r, { until, noKey: Boolean(until) && !key, app: skippedApp }),
+        wait: { done: r.done, end: r.end, ms: r.waitedMs, asks: r.asks, ...(r.p !== null ? { p: r.p } : {}), ...(until && !key ? { decider: 'no_key' } : r.end === 'skipped' ? { decider: 'foreground' } : r.end === 'ask_failed' ? { decider: r.code } : {}) } };
+    },
+
     async open_application(ctx, args) {
       if (typeof args.app !== 'string' || !args.app.trim()) fail('invalid');
       const { apps } = await call(ctx, 'findApp', { name: args.app.trim() });
@@ -423,6 +458,31 @@ export function createActions({ driver, shots, access, askPermission, translate 
     if (typeof text !== 'string' || !text.trim() || text.length > 200 || /[\r\n]/.test(text)) fail('invalid');
     if (WINDOWS_KEY.test(text)) fail('windows_key');
     return text.trim();
+  }
+
+  /**
+   * wait_until の結果の文。1 行目が何が起きたか、2 行目が 終わったか・待った時間・聞いた回数・最後の確率。
+   * 問いを使わなかった・聞けなかったときは、その理由の行を足す
+   */
+  function untilText(ctx, r, { until, noKey, app }) {
+    const s = (r.waitedMs / 1000).toFixed(1);
+    const p = r.p === null ? '—' : r.p.toFixed(2);
+    const lines = [];
+    if (r.end === 'yes') lines.push(L(ctx, 'until.yes', { seconds: s }));
+    else if (r.end === 'still') lines.push(L(ctx, r.sawChange ? 'until.still' : 'until.alreadyStill', { seconds: s }));
+    else if (r.end === 'skipped') lines.push(L(ctx, 'until.skipped', { seconds: s, app }));
+    else if (r.end === 'ask_failed') lines.push(L(ctx, 'until.askFailed', { seconds: s, reason: deciderReason(ctx, r.code) }));
+    else lines.push(L(ctx, r.asks ? 'until.notYet' : until && !noKey ? 'until.neverStillAsk' : 'until.neverStill', { seconds: s }));
+    if (noKey) lines.push(L(ctx, 'until.noKey'));
+    lines.push(L(ctx, 'until.summary', { done: L(ctx, r.done ? 'until.yesWord' : 'until.noWord'), seconds: s, asks: r.asks, p }));
+    return lines.join('\n');
+  }
+  /** 決定モデルに聞けなかった理由（決まった code から。キーも応答の本文も含めない） */
+  function deciderReason(ctx, code) {
+    const status = /^http_(\d{3})$/.exec(String(code ?? ''))?.[1];
+    if (!status) return L(ctx, `until.reason.${['timeout', 'network', 'bad_response'].includes(code) ? code : 'bad_response'}`);
+    const n = Number(status);
+    return L(ctx, n === 401 || n === 403 ? 'until.reason.auth' : n === 402 ? 'until.reason.credits' : n === 429 ? 'until.reason.rate' : n >= 500 ? 'until.reason.server' : 'until.reason.http', { status });
   }
 
   /** 止められるまで待つ（50ms 刻みで止めた印とターンの中断を見る） */

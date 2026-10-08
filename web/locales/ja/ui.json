@@ -3127,6 +3127,7 @@
       "endpoint": "{{agent}} の接続先「{{name}}」",
       "voice": "通話",
       "judge": "委譲の判定器 {{judge}}",
+      "computer": "wait_until の問い",
       "more": "ほか {{count}} か所",
       "less": "たたむ",
       "open": "設定 › {{page}} を開く"
@@ -3134,6 +3135,7 @@
     "effect": {
       "endpoint": "選んでいる会話は選び直しが必要になります",
       "voice": "通話は使えなくなります",
+      "computer": "wait_until の問いは使われず、画面の差分だけで待ちます",
       "judge": "この判定器は使われなくなります"
     },
     "list": {
@@ -3192,6 +3194,15 @@
       "chosen": "OpenRouter のキーを通話に使います。",
       "unchosen": "通話にキーを使わないようにしました。",
       "registered": "OpenRouter のキーを登録し、通話に使います。"
+    },
+    "computer": {
+      "title": "wait_until の問いに使うキー",
+      "note": "wait_until に問いを付けたとき、撮った画面が OpenRouter（Perplexity）へ送られます",
+      "unset": "キーを選ぶまで、問いは使わず画面の差分だけで待ちます",
+      "selectLabel": "wait_until の問いに使うキー",
+      "chosen": "OpenRouter のキーを wait_until の問いに使います。",
+      "unchosen": "wait_until の問いにキーを使わないようにしました。",
+      "registered": "OpenRouter のキーを登録し、wait_until の問いに使います。"
     },
     "delegation": {
       "title": "判定器が使うキー",

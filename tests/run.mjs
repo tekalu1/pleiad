@@ -103,6 +103,8 @@ const SUITES = [
   './unit/main-away-server.mjs',
   // 橋: MCP の面・座標の基準・ゲートの順・アプリの承認・止める・ロック画面・画像の渡し方（偽の driver）
   './unit/computer-bridge.mjs',
+  // wait_until: 画面の差分で静止を待つ・決定モデル（偽の OpenRouter）に聞く・キーが無い／前面が禁止のアプリ／聞けなかったとき（偽の driver）
+  './unit/computer-wait-until.mjs',
   // サーバー越し: 承認カードの payload・スクショの保存と配信・computer.state・computerStop・委譲の子の承認（fake + 偽の driver）
   './unit/server-computer.mjs',
   './unit/modes.mjs',
