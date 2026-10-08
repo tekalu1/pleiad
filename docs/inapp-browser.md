@@ -140,6 +140,17 @@ Playwright の Chromium 151（一時のプロフィール。利用者の Chrome 
 
 **既知の制約**: `window.open`（`target="_blank"`）のタブは同じ窓に入り、元のタブが裏になる。agent-browser が元のタブへ `tab tN` で戻しても `bringToFront` は握りつぶすので裏のまま、描画が間引かれて（`requestAnimationFrame` が約 2 fps）`screenshot` が 2.3〜2.5 秒、`click` が約 0.5 秒かかる（効きはする）。`Page.bringToFront`・`Target.activateTarget` は中継が握りつぶすので窓は前面に出ない。隠した窓が前面を取るのは、Chrome 自身の前面化と `window.open` の popup で、約 30〜110 ms で見張りが返す。`WS_EX_NOACTIVATE` を付けても前面は取られた。Pleiad の終了で閉じる依頼（`WM_CLOSE`）は、依頼を出すだけで窓が閉じたかは待たない（離れる確認が出る窓は隠れたまま残りうる。Pleiad が終わった後なので戻せない）。
 
+## 接続の子（更新を越える Chrome への接続。[ADR 0167](adr/0167-chrome-connection-held-across-updates.md)）
+
+Chrome への ws（`core/chrome/connection.mjs` の接続）は、サーバーでも main でもなく**接続の子**（保持役の子。`core/chrome/link-child.mjs`）が持つ。サーバーは名前付きパイプ（`core/chrome/link.mjs`）で子とつなぎ、`WebSocketImpl` として `connection.mjs` に渡す。サーバーの入れ替えでも main の入れ替えでも ws は切れず、許可の確認は出直さない。
+
+- **パイプ**: 1 行 1 メッセージ。CDP の行はそのまま通し、制御の行は `!名前 JSON`（サーバー→子: `!hello`・`!open`・`!close`・`!carry`・`!quit`、子→サーバー: `!welcome`・`!opened`・`!fail`・`!closed`）。映像のような大きい行（64 KB 以上）は JSON として読まず、先頭 256 バイトだけ見て Buffer のまま通す（64 MB を超える行は捨てる）。
+- **つなぎ手が居ない間**: 子は Chrome からの `Fetch.requestPaused` に `Fetch.failRequest(BlockedByClient)` で答える（止まったままのリクエストを残さない）。CDP の番号は `firstId = 最大の番号 + 1000` から始め直す。
+- **引き継ぎ**: 古いサーバーは中継の状態（`relay.snapshot()`。会話の id・鍵・待ち受けのポート・隠した窓の印）を `!carry` で預け（200 ms でまとめる。引き継ぎの直前に確定させる。256 KB まで）、新しいサーバーは `welcome` で受けて `relay.restore` で同じポート・同じ鍵を立てる。確認待ちのまま入れ替わったら、`connection.adopt()` が確認の続きを引き取る。
+- **隠した窓**: main の層（`desktop/chrome-os`）が `exportAgent`（`"<hwnd>:<元のスタイル>"`）で出した印を `core/chrome/windows.mjs` が窓ごとに持ち、新しい層が `adoptAgent` で記録を作り直す。更新のあいだ窓は閉じない（`desktop/main.cjs` の `closeAgentWindows` は更新で離れるときは何もしない）。引き継げなかった窓は、Chrome の接続が付いたとき CDP でタブを閉じる。
+- **子の寿命**: サーバーが 10 分つながらなければ、保持役が止める。Pleiad の終了（`shutdown`・孤児の見張り）では `!quit` で終える。
+- **切り替え**: `AGENT_HOST_CHROME_LINK=off`（または実行場所の置き場が無い・子につなげない）なら、サーバーの中で ws を張る今の形。
+
 ## OS ごとの層
 
 窓を前に出す・確認の窓を見つけて閉じる、といった OS で違う操作は、`core/chrome/os.mjs` の口（core から見た約束）の向こうの、Electron main の `desktop/chrome-os/<os>.cjs` に閉じ込める（ADR 0153）。`core/chrome/` のほかのファイルは OS の値（窓のハンドルなど）を持たず、窓は不透明な `WindowRef = { id }` で扱う。core と main は parentPort の `chrome-os`（`{ id, action, args }`）⇔ `chrome-os-result`（`{ id, ok, result | error }`）と、`chrome-os-ready { supported, reason, features }`（起動時と `chrome-os-ready-request` への返事）でつなぐ。

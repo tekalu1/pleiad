@@ -713,6 +713,26 @@ export default async function (t) {
       t.ok('隠している窓が無ければ何もせず 0', createWin32ChromeOs({ win32: winWith() }).closeAllAgents() === 0);
     }
     {
+      // exportAgent / adoptAgent: main の入れ替わりを越えて隠した窓を渡す（ADR 0167）。窓は閉じない・戻さない
+      const w = winWith();
+      const old = createWin32ChromeOs({ win32: w, timers: noTimers().timers });
+      const ref = old.findWindowByNonce(NONCE);
+      t.ok('隠していない窓には印を出さない', old.exportAgent(ref) === null);
+      old.conceal(ref);
+      const token = old.exportAgent(ref);
+      t.ok('隠した窓の印は "<hwnd>:<元のスタイル>"。窓は閉じない・戻さない', /^500:\d+$/.test(token) && closes(w).length === 0 && w.windows.get(500).alpha === 0, String(token));
+      const next = createWin32ChromeOs({ win32: w, timers: noTimers().timers });
+      const again = next.adoptAgent(token);
+      t.ok('新しい層が印から記録を作り直す（隠したまま・元のスタイルも引き継ぐ）', again?.id === '500' && w.windows.get(500).alpha === 0 && next.reveal(again) === true && w.windows.get(500).alpha === 255 && w.windows.get(500).exStyle === 0x200000, JSON.stringify(w.windows.get(500)));
+      t.ok('壊れた印・知らない窓・窓の無い印は null（窓には触らない）', next.adoptAgent('x') === null && next.adoptAgent('500') === null && next.adoptAgent('999:0') === null && next.adoptAgent(null) === null && next.adoptAgent('0:0') === null);
+      const dialogW = fakeWin32(); dialogW.add(910, DIALOG);
+      const dialogOs = createWin32ChromeOs({ win32: dialogW });
+      const dialogRef = dialogOs.findPermissionDialog({ since: [] });
+      t.ok('確認の窓の印は引き継がない', dialogRef?.id === '910' && dialogOs.adoptAgent('910:0') === null);
+      const unsupported = createChromeOs({ platform: 'linux' });
+      t.ok('使えない OS の exportAgent・adoptAgent は null', unsupported.exportAgent({ id: '1' }) === null && unsupported.adoptAgent('1:0') === null);
+    }
+    {
       const unsupported = createChromeOs({ platform: 'linux' });
       t.ok('使えない OS の closeAgent・closeAllAgents は何もしない', unsupported.closeAgent({ id: '1' }) === false && unsupported.closeAllAgents() === 0);
     }

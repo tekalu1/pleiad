@@ -106,8 +106,38 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, scop
   let up = null;               // 上り（Chrome への接続 1 本）の上の状態
   let binding = null;
   let closed = false;
+  let handedOff = false;       // 引き継ぎで出ていく（窓も接続も閉じない。handOff）
+  let staleSessions = [];      // 前のサーバーが Chrome の接続に付けたまま残したセッション（restore で受け、最初の bind で外す）
+  const orphans = new Set();   // 層が引き継げなかった窓の windowId（Chrome の接続が付いたら、その窓のタブを CDP で閉じる）
+  const carryListeners = new Set();
   const viewers = new Set();   // 映像側の聞き手 fn(entryId, kind, extra)。kind: tabs（タブの増減）| current（今のタブが替わった）| operating（操作中の印が替わった）| reset（Chrome の接続が切れた）| forget（会話を消した）| rebind（extra が前の id）
   const notifyView = (entryId, kind, extra) => { for (const fn of [...viewers]) { try { fn(entryId, kind, extra); } catch { /* 聞き手の失敗は中継を壊さない */ } } };
+  /** 更新を越えて持ち越す状態（接続の子へ預ける carry）。端点（会話の id・鍵・待ち受けのポート）と、隠した窓の印 */
+  function snapshot() {
+    return {
+      v: 1,
+      port: address?.port ?? null,
+      entries: [...entries.values()].map(entry => ({ id: entry.id, key: entry.key, stopped: entry.stopped })),
+      windows: scope.snapshot?.() ?? [],
+    };
+  }
+  /** 持ち越す状態が変わった。聞き手（server.mjs → link.setCarry。200 ms でまとめる）へ今の状態を渡す */
+  function changed() {
+    if (closed || handedOff || !carryListeners.size) return;
+    const carry = snapshot();
+    for (const fn of [...carryListeners]) { try { fn(carry); } catch { /* 聞き手の失敗は中継を壊さない */ } }
+  }
+  scope.onChange?.(changed);
+  /** 窓のタブをすべて閉じる（CDP）。層が窓を引き継げなかった・層が居ない間に閉じるとき */
+  async function closeWindowTabs(state, windowIds) {
+    if (!windowIds.size || state.cdp.closed) return;
+    const { targetInfos = [] } = await state.cdp.send('Target.getTargets').catch(() => ({}));
+    for (const info of targetInfos) {
+      if (info.type !== 'page') continue;
+      const where = await state.cdp.send('Browser.getWindowForTarget', { targetId: info.targetId }).catch(() => null);
+      if (where && windowIds.has(where.windowId)) state.cdp.send('Target.closeTarget', { targetId: info.targetId }).catch(() => {});
+    }
+  }
 
   server.on('upgrade', (request, socket, head) => {
     const key = KEY_PATH.exec(request.url || '')?.[1];
@@ -124,9 +154,14 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, scop
     const state = { cdp, tabs: new Map(), windows: new Map(), sessions: new Map(), attaching: new Map(), offs: [] };
     state.offs.push(cdp.onEvent((method, params, sessionId) => { if (up === state) onUpEvent(state, method, params, sessionId); }));
     state.offs.push(cdp.onClose(() => teardown(state)));
+    // 持ち越した窓（restore）。Target.setDiscoverTargets が返す既存のタブのうち、この窓にあるものを、会話の範囲に戻す（onTargetCreated の窓の経路）
+    for (const entry of entries.values()) for (const windowId of entry.windows) state.windows.set(windowId, entry);
     const promise = (async () => {
       up = state;
+      const stale = staleSessions; staleSessions = [];
+      for (const sessionId of stale) cdp.send('Target.detachFromTarget', { sessionId }).catch(() => {});   // 前のサーバーの確認の Fetch は、答える相手が居ない
       await cdp.send('Target.setDiscoverTargets', { discover: true });
+      if (orphans.size) { const ids = new Set(orphans); orphans.clear(); closeWindowTabs(state, ids).catch(() => {}); }
       return state;
     })();
     binding = { cdp, promise };
@@ -140,7 +175,7 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, scop
     up = null;
     for (const off of state.offs) off();
     for (const tab of state.tabs.values()) { tab.controller.abort(); tab.fe = null; }
-    scope.reset?.();   // Chrome が閉じた。窓はもう無い
+    if (!handedOff) scope.reset?.();   // Chrome が閉じた。窓はもう無い
     for (const entry of entries.values()) {
       entry.windows.clear();
       entry.current = null; entry.operating = false;
@@ -761,7 +796,7 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, scop
       if (typeof sessionId !== 'string' || !sessionId || sessionId.length > 200) throw new Error('invalid session');
       await ensureListening();
       let entry = entries.get(sessionId);
-      if (!entry) { entry = { id: sessionId, key: random(), stopped: false, clients: new Set(), windows: new Set(), turn: false, current: null, operating: false }; entries.set(sessionId, entry); byKey.set(entry.key, entry); }
+      if (!entry) { entry = { id: sessionId, key: random(), stopped: false, clients: new Set(), windows: new Set(), turn: false, current: null, operating: false }; entries.set(sessionId, entry); byKey.set(entry.key, entry); changed(); }
       if (unlock) this.resume(sessionId);
       // 端点を渡すのはターンの始まり（core/agent-browser.mjs の browserEnvironment）。ターンの間、窓のタブに focus emulation を保つ
       if (!entry.stopped && !entry.turn) { entry.turn = true; if (up) syncFocus(up, entry); }
@@ -774,6 +809,7 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, scop
       entry.stopped = true;
       settleEntry(entry);
       closeClients(entry, 1000, 'stopped');
+      changed();
     },
     resume(sessionId) {
       const entry = entries.get(sessionId);
@@ -782,6 +818,7 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, scop
       entry.key = random();
       byKey.set(entry.key, entry);
       entry.stopped = false;
+      changed();
     },
     /** 新しい会話の id が決まった（turn.key → 本物の id） */
     rebind(from, to) {
@@ -791,6 +828,7 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, scop
       clearViewFocus(entry);
       scope.rebind?.(from, to);
       notifyView(to, 'rebind', from);
+      changed();
     },
     endTurn(sessionId) { const entry = entries.get(sessionId); if (entry) settleEntry(entry); },
     /** 会話を消した。接続を閉じて鍵を捨てる（窓を閉じるのは第 8 段） */
@@ -804,6 +842,86 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, scop
       scope.forget?.(sessionId);
       entries.delete(sessionId); byKey.delete(entry.key);
       notifyView(sessionId, 'forget');
+      changed();
+    },
+
+    // ---- 更新を越える（ADR 0167）
+    /** 持ち越す状態（端点・窓の印）。変わるたびに onCarry の聞き手へも渡す */
+    snapshot,
+    onCarry(fn) { carryListeners.add(fn); return () => carryListeners.delete(fn); },
+    /**
+     * 前のサーバーが預けた状態を受ける（接続の子の welcome.carry。待ち受けを始める前に呼ぶ）。会話の id・鍵を戻し、同じポートで待ち受ける
+     * （エージェントの接続先 ws://127.0.0.1:<port>/devtools/browser/<鍵> が更新を越えて同じ）。前のサーバーがまだポートを持っていれば短く待つ。
+     * ポートが取れなければ別のポートで待ち受ける（鍵は同じ。動いていたエージェントの接続先は古くなる）。窓の印は scope.restore へ
+     * @param [options.staleSessions] 前のサーバーが Chrome の接続に付けたまま残したセッション（welcome.sessions）。最初の bind で外す
+     * @returns {Promise<boolean>} 何かを戻したか
+     */
+    async restore(carry, { staleSessions: stale = [] } = {}) {
+      if (closed) return false;
+      staleSessions = stale.map(item => (typeof item === 'string' ? item : item?.sessionId)).filter(id => typeof id === 'string' && id);
+      let restored = false;
+      if (carry && carry.v === 1 && Array.isArray(carry.entries)) {
+        for (const item of carry.entries) {
+          if (typeof item?.id !== 'string' || !item.id || item.id.length > 200 || !/^[a-f0-9]{48}$/.test(item.key ?? '') || entries.has(item.id) || byKey.has(item.key)) continue;
+          const entry = { id: item.id, key: item.key, stopped: item.stopped === true, clients: new Set(), windows: new Set(), turn: false, current: null, operating: false };
+          entries.set(entry.id, entry); byKey.set(entry.key, entry);
+          restored = true;
+        }
+        for (const item of Array.isArray(carry.windows) ? carry.windows : []) {
+          const entry = entries.get(item?.id);
+          if (!entry || !Array.isArray(item.windows)) continue;
+          for (const w of item.windows) if (Number.isSafeInteger(w?.windowId)) entry.windows.add(w.windowId);
+        }
+        scope.restore?.(carry.windows);
+      }
+      const wanted = Number.isInteger(carry?.port) && carry.port > 0 && carry.port < 65536 ? carry.port : 0;
+      if (wanted) {
+        listening ??= (async () => {
+          for (let attempt = 0; attempt < 30; attempt += 1) {
+            try { address = await listenOn(wanted); return address; }
+            catch (error) {
+              if (error?.code !== 'EADDRINUSE' || closed) break;
+              await new Promise(resolve => setTimeout(resolve, 100));
+            }
+          }
+          log(`chrome-relay: could not listen on the previous port ${wanted}, so another port is used`);
+          address = await listenOn(0);
+          return address;
+        })().catch(error => { listening = null; throw error; });
+      }
+      await ensureListening();
+      changed();
+      return restored;
+    },
+    /**
+     * 層（main）が窓を引き継ぐ。サーバーの入れ替わりの後・main の層が戻った後に呼ぶ（server.mjs が os.onReady で）。
+     * 層が引き継げなかった窓のタブは、Chrome の接続があれば CDP で閉じ、無ければ接続が付いたときに閉じる
+     */
+    async readopt() {
+      if (closed || handedOff) return 0;
+      const lost = await scope.readopt?.() ?? [];
+      if (!lost.length) return 0;
+      for (const { entryId, windowId } of lost) { entries.get(entryId)?.windows.delete(windowId); orphans.add(windowId); }
+      // Chrome の接続が既にあれば付けて、その窓のタブを今閉じる（エージェントがつなぐまで、引き継げなかった窓を残さない）。許可の確認は起こさない
+      if (!up && connection.state?.().state === 'connected') { const cdp = await connection.demand().catch(() => null); if (cdp && !closed) await bind(cdp).catch(() => {}); }
+      if (up) { const ids = new Set(orphans); orphans.clear(); await closeWindowTabs(up, ids).catch(() => {}); }
+      changed();
+      return lost.length;
+    },
+    /**
+     * 引き継ぎで出ていく。端点の待ち受けと、エージェントの接続（1012 で閉じる。agent-browser は新しいサーバーへつなぎ直す）だけを終える。
+     * 窓は閉じない・戻さない（上りの切れ目で scope.reset を走らせない）。返り値が最後の carry
+     */
+    handOff() {
+      if (closed || handedOff) return snapshot();
+      const carry = snapshot();
+      handedOff = true;
+      for (const entry of entries.values()) closeClients(entry, 1012, 'updating');
+      if (up) { for (const off of up.offs) off(); for (const tab of up.tabs.values()) tab.controller.abort(); up = null; }
+      closed = true;
+      wss.close(); server.close();
+      log('chrome-relay: handed off');
+      return carry;
     },
     /** サイトの利用の確認（confirmAgentSites）。ON なら範囲のタブに確認の Fetch を付け、OFF なら外す（止めている要求は通す） */
     setConfirm(enabled) {
@@ -874,6 +992,8 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, scop
       if (closed) return;
       closed = true;
       for (const entry of entries.values()) { entry.stopped = true; closeClients(entry, 1001, 'closing'); }
+      // main の層が居ない間（更新中）に終わると、隠した窓を層で閉じられない。見えない窓を残さないよう、CDP でタブを閉じる
+      if (up && os.capabilities?.().reason === 'pending') for (const tab of up.tabs.values()) up.cdp.send('Target.closeTarget', { targetId: tab.targetId }).catch(() => {});
       if (up) teardown(up);
       wss.close(); server.close();
       log('chrome-relay: closed');

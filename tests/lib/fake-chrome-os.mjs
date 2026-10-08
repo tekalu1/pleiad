@@ -11,10 +11,13 @@
 export const CHROME_PID = 4242;
 
 export function fakeChromeOs({ chrome = null, supported = true, reason = 'platform', features } = {}) {
-  const caps = Object.freeze({
+  const realCaps = Object.freeze({
     supported, ...(supported ? {} : { reason }),
     features: features ?? { dialog: supported, raise: supported, launch: supported, conceal: supported, watch: supported, bounds: supported },
   });
+  // main が居ない間（更新）は pending（supported: false）。setPending(false) で戻して onReady を呼ぶ
+  const pendingCaps = Object.freeze({ supported: false, reason: 'pending', features: { dialog: false, raise: false, launch: false, conceal: false, watch: false, bounds: false } });
+  let caps = realCaps;
   const log = [];
   const windows = new Map([['chrome-main', { browser: true }], ['app-notes', { browser: false }]]);
   let fg = 'app-notes';
@@ -24,7 +27,7 @@ export function fakeChromeOs({ chrome = null, supported = true, reason = 'platfo
   const listeners = new Set();
   const hw = new Map();   // hwnd -> { id, windowId, rect(DIP), concealed, agent, alpha, ex, prevFg }
   let hwSeq = 100;
-  const opts = { launchFails: false, chromeMissing: false, hideNonce: false, hideBounds: false, concealFails: false, honorPosition: true, noListener: false, closeFails: false };
+  const opts = { launchFails: false, chromeMissing: false, hideNonce: false, hideBounds: false, concealFails: false, honorPosition: true, noListener: false, closeFails: false, adoptFails: false };
   const OFFSCREEN = Object.freeze({ x: 6000, y: 0 });
   const isDialog = id => chrome?.dialogs().some(d => d.id === id);
   const note = entry => { log.push(entry); };
@@ -49,6 +52,11 @@ export function fakeChromeOs({ chrome = null, supported = true, reason = 'platfo
     calls: name => log.filter(e => e.op === name),
     capabilities: () => caps,
     ready: async () => caps,
+    /** main の入れ替わり: true の間は pending（層の口はどれも失敗の値を返す）、false で戻して onReady を呼ぶ */
+    setPending(on) {
+      caps = on ? pendingCaps : realCaps;
+      if (!on) for (const fn of [...listeners]) { try { fn(caps); } catch { /* 聞き手の失敗 */ } }
+    },
     onReady(fn) { listeners.add(fn); return () => listeners.delete(fn); },
     async snapshotWindows() { note({ op: 'snapshotWindows' }); return [...windows.keys(), ...(chrome?.dialogs().map(d => d.id) ?? []), ...hw.keys()]; },
     async findPermissionDialog({ since = [], port = null } = {}) {
@@ -114,6 +122,19 @@ export function fakeChromeOs({ chrome = null, supported = true, reason = 'platfo
       h.concealed = false; h.rect = { ...h.rect, left: 100, top: 100 };
       h.alpha = 255; h.ex = { toolwindow: false, layered: false, transparent: false, appwindow: true };
       return true;
+    },
+    async exportAgent(ref) {
+      note({ op: 'exportAgent', ref: ref?.id });
+      const h = knownAgent(ref);
+      return h && h.concealed ? `fake:${h.id}` : null;
+    },
+    async adoptAgent(token) {
+      note({ op: 'adoptAgent', token });
+      if (!caps.supported) return null;
+      const h = typeof token === 'string' && token.startsWith('fake:') ? hw.get(token.slice(5)) : null;
+      if (!h || h.gone || h.closed || opts.adoptFails) return null;
+      h.agent = true; h.released = false; h.concealed = true;
+      return { id: h.id };
     },
     async release(ref) { note({ op: 'release', ref: ref?.id }); const h = knownAgent(ref); if (!h) return false; h.released = true; return true; },
     async closeAgent(ref) {

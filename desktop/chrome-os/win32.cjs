@@ -423,6 +423,43 @@ function createWin32ChromeOs({ win32, log = () => {}, spawn = childProcess.spawn
     return count;
   }
 
+  /**
+   * 隠している窓の持ち物（窓のハンドルと元の拡張スタイル）を、main の入れ替わりを越える印にする（ADR 0167）。窓はそのまま（閉じない・戻さない）。
+   * 隠していない窓・エージェントの窓でない ref には null
+   */
+  function exportAgent(ref) {
+    const entry = knownAgent(ref);
+    if (!entry || !entry.concealed) return null;
+    return `${entry.hwnd}:${(entry.ex0 ?? 0) >>> 0}`;
+  }
+
+  /**
+   * exportAgent の印から、隠している窓の記録を作り直す（新しい main）。窓がもう無い・ブラウザーの窓でない印には null（窓には触らない）。
+   * 作り直した窓は隠しているものとして前面の見張りに入る
+   */
+  function adoptAgent(token) {
+    const match = /^(\d{1,20}):(\d{1,10})$/.exec(String(token ?? ''));
+    if (!match) return null;
+    const hwnd = Number(match[1]);
+    try {
+      if (!Number.isSafeInteger(hwnd) || hwnd <= 0 || !alive(hwnd)) return null;
+      const info = win32.windowInfo(hwnd);
+      if (info.className !== BROWSER_CLASS || !BROWSER_EXES.has(exeName(win32.processPath(info.pid)))) return null;
+      if (refs.get(String(hwnd))?.kind === 'dialog') return null;
+      const ref = rememberAgent(hwnd);
+      if (!ref) return null;
+      const entry = refs.get(ref.id);
+      entry.ex0 = Number(match[2]) >>> 0;
+      entry.concealed = true;
+      entry.closeAt = 0;
+      startGuard();
+      return ref;
+    } catch (error) {
+      log(`adopt agent failed: ${error.message}`);
+      return null;
+    }
+  }
+
   /** 画面の構成が変わった（モニターの増減・解像度・DPI・スリープ復帰）。隠している窓を置き直す。main が Electron の screen のイベントで呼ぶ */
   function reconceal() {
     let count = 0;
@@ -522,7 +559,7 @@ function createWin32ChromeOs({ win32, log = () => {}, spawn = childProcess.spawn
     capabilities: () => ({ supported: true, reason: null, features: FEATURES }),
     snapshotWindows, findPermissionDialog, raise, yieldForeground, foreground, close,
     locateBrowser, launchWindow, findWindowByNonce, findWindowByBounds, hiddenSpot, conceal, reveal, release, closeAgent,
-    reconceal, closeAllAgents,
+    exportAgent, adoptAgent, reconceal, closeAllAgents,
     /** テスト用: 見張りを 1 回だけ回す・止める */
     guardTick, stopGuard,
   };

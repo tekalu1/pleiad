@@ -82,7 +82,7 @@ export default async function (t) {
   const env = { ...base, AGENT_HOST_RUNTIME_ROOT: root, ADOPT_SCENES_DIR: scenesDir };
   const holderChildren = async () => {
     const probe = await connectHolder({ dataDir, root });
-    try { return probe.welcome.children; } finally { probe.close(); }
+    try { return probe.welcome.children.filter(x => !x.id.startsWith('chrome-link-')); } finally { probe.close(); }   // 接続の子（Chrome への ws。ADR 0167）は数えない
   };
   let a = null, b = null, ca = null, cb = null, m1 = null, m2 = null, holderPid = null;
   const adoptEntry = path.join(ROOT, 'tests', 'lib', 'adopt-server.mjs');

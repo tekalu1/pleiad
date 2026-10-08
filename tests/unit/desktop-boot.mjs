@@ -323,6 +323,15 @@ export default async function (t) {
     t.ok('起こし直さない: main-leaving の後（更新で離れる途中）に切れたとき', calls.messages.some(m => m.type === 'main-leaving') && calls.restarts === 0 && calls.dialogs.length === 1 && calls.dialogs[0][1].message === 'server.exited');
   }
   {
+    // 更新で離れるときは、隠したエージェントの Chrome の窓を閉じない（新しい main が印から引き継ぐ。ADR 0167）
+    const { app, calls } = await start({ env: { AGENT_HOST_HANDOVER: 'on' }, packaged: true, hangInstall: true });
+    void calls.updates.install().catch(() => {});
+    await tick();
+    app.emit('will-quit');
+    app.exit(0);
+    t.ok('更新で離れるとき（main-leaving の後）は、隠した窓を閉じない', calls.messages.some(m => m.type === 'main-leaving') && calls.closeAlls === undefined, String(calls.closeAlls));
+  }
+  {
     const { calls, link } = await start({ env: { AGENT_HOST_HANDOVER: 'on' }, packaged: true, quitFails: true, restart: { ok: true, ready: { type: 'ready', port: 7611, token: 'attached-token' } } });
     await calls.updates.install().catch(() => {});
     link.emit('exit', 1);
