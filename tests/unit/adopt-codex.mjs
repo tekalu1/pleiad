@@ -45,8 +45,8 @@ async function attachMain(dataDir, pid) {
   const seen = { messages: [] };
   link.on('message', message => {
     seen.messages.push(message);
-    // 内蔵ブラウザーの中継は無い（答えないと、ターンごとに 10 秒待たされる）
-    if (message.type === 'agent-browser-endpoint') link.postMessage({ type: 'agent-browser-endpoint', id: message.id, ok: false, error: 'no browser in this test' });
+    // Chrome の層は無い（答えないと、ターンごとに層の準備を待たされる）
+    if (message.type === 'chrome-os-ready-request') link.postMessage({ type: 'chrome-os-ready', supported: false, reason: 'platform' });
   });
   await link.connect();
   return { link, seen, request: async (type, extra = {}, ms = 40_000) => {

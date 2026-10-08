@@ -181,8 +181,8 @@ export default async function (t) {
       const host = { hub, bridge };
       const run = (command, args, local = true) => screencastCommand({ command, args: { sessionId: 's1', source: 'chrome', ...args }, local, hub: null, bridge: null, chrome: host, client, snapshotFile: async () => null });
       t.ok('ホストの画面（local）からも Chrome の窓の映像を見始められる', (await run('browserScreencast', { width: 400, height: 300 }, true)).ok === true);
-      t.ok('入力・移動・エージェントの操作は view-only で断る（見るだけ）', (await run('browserScreencastInput', { input: { type: 'tap', x: 1, y: 1 } })).code === 'view-only'
-        && (await run('browserScreencastNav', { action: 'reload' })).code === 'view-only' && (await run('browserScreencastAgent', { action: 'stop' })).code === 'view-only');
+      t.ok('入力・移動は view-only で断る（見るだけ）', (await run('browserScreencastInput', { input: { type: 'tap', x: 1, y: 1 } })).code === 'view-only'
+        && (await run('browserScreencastNav', { action: 'reload' })).code === 'view-only');
       t.ok('url・可視化を開く指定も断る', (await run('browserScreencast', { url: 'https://example.com/' })).code === 'view-only' && (await run('browserScreencast', { visualization: { id: 'x' } })).code === 'view-only');
       const nobody = await screencastCommand({ command: 'browserScreencast', args: { sessionId: 'nobody', source: 'chrome' }, local: true, chrome: host, client });
       t.ok('窓の無い会話は code: no-window', nobody.ok === false && nobody.code === 'no-window', JSON.stringify(nobody));

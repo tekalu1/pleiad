@@ -58,7 +58,6 @@ core が web へ流すのは正規化イベントだけで、バックエンド�
 | `AGENT_HOST_IMAGE_IMPORT_TEST_ORIGIN` | 貼り付けた画像の取り込み（ADR 0141）の確認用。`AGENT_HOST_BACKENDS` が `fake` だけのときに限り、origin のホストがループバック（127.0.0.1・::1・localhost）なら効き、検査をやめて、どの https の URL もこの origin へ向け替える。本物のバックエンドと並べたときや、ループバックでない origin は無視する（`tests/unit/image-import.mjs`） |
 | `AGENT_HOST_VOICE_API` | 通話モード（`core/voice/`）の OpenRouter の送り先（既定 `https://openrouter.ai/api/v1`）。テストの偽物用（`tests/lib/fake-openrouter.mjs`）。`tests/lib/server.mjs` は既定で閉じたポートへ向け、本物へは送らない |
 | `AGENT_HOST_FAKE_VOICE_REPLY` | fake バックエンドの通話の確認用。`{ when, steps }`（または `{ when, script }`。配列なら発言ごと）の JSON ファイルを渡すと、本文が `when` と一致した発言に `steps` の台本（`script` ならそのままの台本）で返す（声で話した言葉は台本の接頭辞を持てないため。`docs/voice-call.md`） |
-| `AGENT_HOST_AGENT_BROWSER` | `chrome` で、エージェントの agent-browser を PC の Chrome の絞り込みの中継（`core/chrome/relay.mjs`）へつなぐ（開発と実機の確かめ用。デスクトップ版だけ。値が無ければ内蔵ブラウザーの中継のまま。`docs/inapp-browser.md`「Chrome の中継（開発中）」）。ADR 0148 の第 7 段で消す |
 | `AGENT_HOST_CHROME_USER_DATA` | Pleiad が `DevToolsActivePort` を読む Chrome の `User Data` を、このディレクトリだけに差し替える（OS に依らない。既定は Windows の `%LOCALAPPDATA%\Google\Chrome\User Data`）。テストは存在しない一時ディレクトリへ向け（`tests/lib/test-env.mjs`）、実機の確かめは `--user-data-dir` を付けて起こした確かめ専用の Chrome を指す（利用者の Chrome に触れない。`docs/inapp-browser.md`「Chrome への接続」）。確認の窓はそのポートを待ち受けるプロセスの窓だけを見る |
 | `AGENT_HOST_WORKTREE_GRACE_MS` | worktree を作ってから、使われていないものとして自動で片付けるまでの猶予（既定 60 秒。ADR 0089）。テストが 0 にする |
 

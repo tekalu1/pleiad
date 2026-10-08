@@ -4050,11 +4050,9 @@
     }
   },
   "browser": {
-    "agent": { "working": "エージェントが操作中", "status": "{{name}} が操作中", "stop": "止める", "takeOver": "引き継ぐ" },
     "panel": "ブラウザー",
     "entry": "内蔵ブラウザー（{{keys}}）",
     "entryLabel": "内蔵ブラウザー",
-    "entryWorking": "内蔵ブラウザー · {{name}} が操作中",
     "tabs": "ブラウザーのタブ",
     "newTab": "新しいタブ",
     "untitled": "新しいタブ",
@@ -4118,9 +4116,6 @@
       "textLabel": "PC のページへ入力する文字",
       "textPlaceholder": "PC に入力する文字",
       "textSend": "入力",
-      "takeOverFirst": "引き継いでから入力できます",
-      "youOperate": "あなたが操作中",
-      "stopped": "操作を止めました",
       "failed": "PC のブラウザーを開けませんでした。"
     }
   },

@@ -76,7 +76,7 @@ async function start({ ready = true, work = { count: 0 } } = {}) {
     './window-trust.cjs': { createWindowTrust: () => ({ register: () => {} }) },
     './remote-windows.cjs': { createRemoteWindows: () => ({ attach: () => {}, attachWorker: () => {}, handleArgv: () => false }) },
     './browser-panel.cjs': { createBrowserPanel: () => ({ attach: () => {} }) },
-    './agent-browser-bridge.cjs': { attachAgentBrowserBridge: () => ({ close: () => {} }) },
+    './browser-viewer-bridge.cjs': { attachBrowserViewerBridge: () => ({ close: () => {} }) },
     './computer/service.cjs': { attachComputerService: () => ({}), withPerMonitorDpi: w => w },
     './computer/win32.cjs': { loadWin32: () => { throw Object.assign(new Error('not windows'), { reason: 'platform' }); } },
     './chrome-os/index.cjs': { createChromeOs: () => ({}), attachChromeOs: () => {} },

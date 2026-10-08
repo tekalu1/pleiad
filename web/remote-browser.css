@@ -37,10 +37,6 @@ body.rb-open{overflow:hidden}
 .rb-address-mark svg{width:14px;height:14px}
 .rb-address-text{overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
 .rb-address-input{border:0;color:var(--ink);font-size:16px;outline:2px solid var(--line-blue);outline-offset:-1px}
-.rb-agent{display:flex;align-items:center;gap:8px;padding:4px 12px 8px;font-size:13px}
-.rb-agent[hidden]{display:none}
-.rb-agent-text{flex:1;display:flex;align-items:center;gap:6px;min-width:0}
-.rb-agent[data-done] .btn{display:none}
 .rb-screen{position:relative;flex:1;min-height:0;background:var(--surface-1);touch-action:none;overflow:hidden;user-select:none;-webkit-user-select:none}
 .rb-frame{display:block;width:100%;height:100%;object-fit:contain;pointer-events:none}
 .rb-tools{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:4px 12px;font-size:12px}

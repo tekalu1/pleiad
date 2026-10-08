@@ -3,7 +3,7 @@
 //   - タブごとに WebContentsView を 1 つ。窓に載せるのは今のタブだけで、ほかのタブは外したまま裏で動き続ける
 //   - 置く場所は画面が決める（右パネルの本文の枠の位置と大きさを ply:browser-layout で送ってくる）。
 //     ネイティブの View は DOM より上に描かれるので、メニューなどが重なる間は画面が freeze を頼み、写した画像と差し替えて View を外す
-//   - タブは開いた会話（sessionId）を覚える。CDP 中継は会話ごとのタブへつなぐ（ADR 0043）
+//   - タブは開いた会話（sessionId）を覚える。リモートの端末へ映す画面の転送は会話ごとのタブへつなぐ（desktop/browser-screencast.cjs）
 //   - パネルの一覧と今のタブは、今の会話のタブと、会話に属さないタブ（sessionId が null）だけ。会話を移ると、その会話で最後に選んだタブへ替わる
 //   - 画面が開いた file: のタブ（HTML ファイル・可視化の写し。allowFile）だけ、session の webRequest で資源を止める（docs/inapp-browser.md「PC のファイルのタブ」、ADR 0079）:
 //     file: の資源は UNC・デバイスパス・データ置き場（添付の uploads を除く）を常に、http(s) は「外部の読み込みの前に確認」が ON のとき「常に」許可した https だけ通す。
@@ -165,7 +165,7 @@ function uniquePath(dir, name, exists = fs.existsSync) {
  *   window: 本体の BrowserWindow。WebContentsView・BrowserWindow・session・shell・ipcMain・app は electron のもの（テストでは偽物）
  *   trust: desktop/window-trust.cjs。icon: 別の窓のアイコン
  */
-function createBrowserPanel({ window, WebContentsView, BrowserWindow, session, shell, ipcMain, app, trust, icon, log = () => {}, agentControl = () => {}, now,
+function createBrowserPanel({ window, WebContentsView, BrowserWindow, session, shell, ipcMain, app, trust, icon, log = () => {}, now,
   dataDir = process.env.AGENT_HOST_DATA ?? path.join(os.homedir(), '.agent-host'), realpath = fs.realpathSync }) {
   const tabs = new Map();          // id -> { id, view, sessionId, detached }
   let order = [];                  // タブの並び（id）
@@ -176,12 +176,9 @@ function createBrowserPanel({ window, WebContentsView, BrowserWindow, session, s
   const selected = new Map();      // 会話（selectKey）-> そこで最後に選んだタブの id
   let nextId = 1;
   const tabListeners = new Set();
-  const agents = new Map();
-  const agentListeners = new Set();
   const stateListeners = new Set();
   // リモートの端末が見ているタブ（desktop/browser-screencast.cjs）。窓に載っていないと描かれないので、窓の外に 1px で載せておく
   const pinned = new Set(), parked = new Set();
-  let navigation = null;
   const openFileAllowed = createRateLimit({ now });
   const byContents = new Map();    // webContents の id -> タブ（webRequest が要求の持ち主を引く。別の窓に出したタブも残す）
   let loadPolicy = { confirm: false, origins: [] };   // 外部の読み込みの確認（サーバーの設定。setLoadPolicy）
@@ -278,7 +275,7 @@ function createBrowserPanel({ window, WebContentsView, BrowserWindow, session, s
     return out;
   }
   function snapshot() {
-    return { tabs: visibleTabs().map(info), current, agent: agents.get(context.sessionId) ?? null, sessionId: context.sessionId };
+    return { tabs: visibleTabs().map(info), current, sessionId: context.sessionId };
   }
   let pushTimer = null;
   function push() {
@@ -354,7 +351,7 @@ function createBrowserPanel({ window, WebContentsView, BrowserWindow, session, s
     if (attached !== want) { window.contentView.addChildView(want); attached = want; }
   }
 
-  function setupPopupWindow(c, sessionId, agentFromTab) {
+  function setupPopupWindow(c, sessionId) {
     // 新しい窓のうち、ポップアップ（disposition: 'new-window'）は opener を保って別の窓で開く
     // 通常の新しいタブ（target=_blank）は内蔵ブラウザーの新しいタブにする（opener なし）
     c.setWindowOpenHandler(({ url: next, disposition, features }) => {
@@ -381,24 +378,20 @@ function createBrowserPanel({ window, WebContentsView, BrowserWindow, session, s
             }
           };
         }
-        const open = () => createTab({ url: target, sessionId, select: disposition !== 'background-tab', agentFrom: agentFromTab });
-        if (!navigation?.popup(agentFromTab, target, open)) open();
+        createTab({ url: target, sessionId, select: disposition !== 'background-tab' });
       }
       return { action: 'deny' };
     });
-    c.on('did-create-window', (popupWin, details) => {
+    c.on('did-create-window', popupWin => {
       popupWin.setMenuBarVisibility?.(false);
-      const popupTab = { id: `popup-${nextId++}`, sessionId, webContents: popupWin.webContents };
-      navigation?.watch(popupTab);
-      if (agentFromTab) navigation?.inherit(agentFromTab, popupTab, details.url);
-      setupPopupWindow(popupWin.webContents, sessionId, popupTab);
+      setupPopupWindow(popupWin.webContents, sessionId);
       const guard = (event, nextUrl) => { if (!navigable(nextUrl)) event.preventDefault(); };
       popupWin.webContents.on('will-navigate', guard);
       popupWin.webContents.on('will-redirect', guard);
     });
   }
 
-  function createTab({ url = '', sessionId = context.sessionId, select = true, agentFrom = null } = {}) {
+  function createTab({ url = '', sessionId = context.sessionId, select = true } = {}) {
     const view = new WebContentsView({ webPreferences: { session: ses, contextIsolation: true, sandbox: true, nodeIntegration: false } });
     view.setBackgroundColor?.('#ffffff');
     const tab = { id: `t${nextId++}`, view, sessionId: sessionId ?? null, blank: !url };
@@ -407,10 +400,7 @@ function createBrowserPanel({ window, WebContentsView, BrowserWindow, session, s
     Object.assign(tab, { once: new Set(), blocked: new Map(), source: null, key: null });
     const contentsId = c.id;
     byContents.set(contentsId, tab);
-    const navigationTab = { id: tab.id, sessionId: tab.sessionId, webContents: c };
-    navigation?.watch(navigationTab);
-    if (agentFrom) navigation?.inherit(agentFrom, navigationTab, url);
-    setupPopupWindow(c, tab.sessionId, navigationTab);
+    setupPopupWindow(c, tab.sessionId);
     // ページから file: や独自のスキームへは移らない
     const guard = (event, next) => { if (!navigable(next) && !(tab.allowFile && next.startsWith('file:') && !protectedFile(next, dataDir, realpath))) event.preventDefault(); };
     c.on('will-navigate', guard);
@@ -511,14 +501,11 @@ function createBrowserPanel({ window, WebContentsView, BrowserWindow, session, s
     const tab = args.id ? tabOf(args.id) : currentTab();
     switch (action) {
       case 'state': return snapshot();
-      case 'agentStop': agentControl('stop', context.sessionId); return snapshot();
-      case 'agentTakeOver': agentControl('takeOver', context.sessionId); return snapshot();
       case 'context': {
         context = { sessionId: typeof args.sessionId === 'string' ? args.sessionId : null };
         pickForContext(); place(); push(); return snapshot();
       }
       case 'open': {
-        if (tab) navigation?.human({ id: tab.id }, true);
         const url = openable(args.url);
         if (!url) throw new Error('invalid-url');
         const source = cleanSource(args.source, url);
@@ -526,7 +513,6 @@ function createBrowserPanel({ window, WebContentsView, BrowserWindow, session, s
         const key = args.reuse === true && url.startsWith('file:') ? fileKey(url, source) : null;
         const same = key ? visibleTabs().find(x => x.allowFile && x.key === key) : null;
         if (same) {
-          navigation?.human({ id: same.id }, true);
           current = same.id; remember(same); load(same, url, source); push();
           return { ...snapshot(), reused: same.id };
         }
@@ -546,9 +532,9 @@ function createBrowserPanel({ window, WebContentsView, BrowserWindow, session, s
       }
       case 'select': if (tab && isVisible(tab)) { current = tab.id; remember(tab); place(); push(); } return snapshot();
       case 'close': if (tab) removeTab(tab.id); return snapshot();
-      case 'back': if (tab) navigation?.human({ id: tab.id }, true); if (tab?.view.webContents.navigationHistory.canGoBack()) tab.view.webContents.navigationHistory.goBack(); return snapshot();
-      case 'forward': if (tab) navigation?.human({ id: tab.id }, true); if (tab?.view.webContents.navigationHistory.canGoForward()) tab.view.webContents.navigationHistory.goForward(); return snapshot();
-      case 'reload': if (tab) navigation?.human({ id: tab.id }, true); tab?.view.webContents.reload(); return snapshot();
+      case 'back': if (tab?.view.webContents.navigationHistory.canGoBack()) tab.view.webContents.navigationHistory.goBack(); return snapshot();
+      case 'forward': if (tab?.view.webContents.navigationHistory.canGoForward()) tab.view.webContents.navigationHistory.goForward(); return snapshot();
+      case 'reload': tab?.view.webContents.reload(); return snapshot();
       case 'stop': tab?.view.webContents.stop(); return snapshot();
       case 'devtools': if (tab && !tab.blank) tab.view.webContents.openDevTools({ mode: 'detach' }); return snapshot();
       case 'external': {
@@ -624,43 +610,19 @@ function createBrowserPanel({ window, WebContentsView, BrowserWindow, session, s
 
   return {
     attach, command, layout, snapshot,
-    setNavigationGuard: guard => { navigation = guard; for (const tab of tabs.values()) guard.watch({ id: tab.id, sessionId: tab.sessionId, webContents: tab.view.webContents }); },
-    // ---- エージェントの操作の中継へ渡す、会話ごとのタブと webContents
+    // ---- 画面の転送（desktop/browser-screencast.cjs）へ渡す、会話ごとのタブと webContents
     tabsFor: sessionId => order.map(id => tabs.get(id)).filter(tab => tab.sessionId === sessionId).map(tab => ({ id: tab.id, webContents: tab.view.webContents })),
-    contentsOf: id => tabs.get(id)?.view.webContents ?? null,
     createFor: (sessionId, url = '') => { const tab = createTab({ sessionId, url: url || 'about:blank', select: true }); return { id: tab.id, webContents: tab.view.webContents }; },
     selectFor: id => { const tab = tabs.get(id); if (!tab) return; remember(tab); if (isVisible(tab)) { current = id; place(); } push(); },
     closeFor: id => removeTab(id),
-    rebindSession: (from, to) => {
-      for (const tab of tabs.values()) if (tab.sessionId === from) tab.sessionId = to;
-      const fromKey = selectKey(from), toKey = selectKey(to);
-      if (selected.has(fromKey)) {
-        if (!selected.has(toKey)) selected.set(toKey, selected.get(fromKey));
-        selected.delete(fromKey);
-      }
-      reconcile(); place();
-      if (agents.has(from)) { const active = agents.get(from); agents.delete(from); agents.set(to, { ...active, sessionId: to }); }
-      push();
-    },
+    contentsOf: id => tabs.get(id)?.view.webContents ?? null,
     onTabsChanged: listener => { tabListeners.add(listener); return () => tabListeners.delete(listener); },
-    // ---- サーバーへ写しを渡す・戻す（desktop/agent-browser-bridge.cjs。AGENT_HOST_HANDOVER=on のときだけ使う）
+    // ---- サーバーへ写しを渡す・戻す（desktop/browser-viewer-bridge.cjs。AGENT_HOST_HANDOVER=on のときだけ使う）
     exportState, restoreState,
     onStateChanged: listener => { stateListeners.add(listener); return () => stateListeners.delete(listener); },
-    setAgent: (sessionId, tabId) => {
-      const before = agents.get(sessionId)?.tabId ?? null;
-      if (tabId) agents.set(sessionId, { sessionId, tabId }); else agents.delete(sessionId);
-      if (tabId && tabs.has(tabId)) selected.set(selectKey(sessionId), tabId);
-      if (tabId && context.sessionId === sessionId && tabs.has(tabId)) { current = tabId; place(); }
-      push();
-      if (before !== (tabId ?? null)) for (const listener of agentListeners) listener(sessionId);
-    },
-    // ---- リモートの端末から見る（desktop/browser-screencast.cjs）
-    agentFor: sessionId => agents.get(sessionId) ?? null,
-    onAgentChanged: listener => { agentListeners.add(listener); return () => agentListeners.delete(listener); },
     pin: (id, on) => { if (on && tabs.has(id)) pinned.add(id); else pinned.delete(id); place(); },
-    human: id => navigation?.human({ id }, true),
     session: ses,
-    /** 外部の読み込みの確認の設定（desktop/agent-browser-bridge.cjs がサーバーから受ける）。もう通る出どころは止めた一覧から外す */
+    /** 外部の読み込みの確認の設定（desktop/browser-viewer-bridge.cjs がサーバーから受ける）。もう通る出どころは止めた一覧から外す */
     setLoadPolicy: policy => {
       const origins = (Array.isArray(policy?.origins) ? policy.origins : []).filter(o => typeof o === 'string' && /^https:\/\/[^/\s]+$/.test(o)).slice(0, 500);
       loadPolicy = { confirm: policy?.confirm === true, origins };

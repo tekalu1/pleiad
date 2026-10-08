@@ -23,11 +23,6 @@ const service = createRemoteAgentService({ getDevice: async () => device, post: 
 process.parentPort = {
   postMessage(message) {
     if (message?.type === 'remote-agent') return service.handle(message);
-    // 内蔵ブラウザーの口（main の身代わり）。答えないと、ターンごとに 10 秒の待ちが入る（tests/lib/parent-port-server.mjs と同じ）
-    if (message?.type === 'agent-browser-endpoint') {
-      const url = `ws://127.0.0.1:1/devtools/browser/${Buffer.from(String(message.sessionId)).toString('hex').padEnd(48, '0').slice(0, 48)}`;
-      queueMicrotask(() => toWorker({ type: 'agent-browser-endpoint', id: message.id, ok: true, url }));
-    }
   },
   on(type, fn) { if (type === 'message') listeners.push(fn); },
 };

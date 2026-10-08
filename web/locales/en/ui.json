@@ -4169,11 +4169,9 @@
     }
   },
   "browser": {
-    "agent": { "working": "Agent operating", "status": "{{name}} is operating", "stop": "Stop", "takeOver": "Take over" },
     "panel": "Browser",
     "entry": "In-app browser ({{keys}})",
     "entryLabel": "In-app browser",
-    "entryWorking": "In-app browser · {{name}} is operating",
     "tabs": "Browser tabs",
     "newTab": "New tab",
     "untitled": "New tab",
@@ -4237,9 +4235,6 @@
       "textLabel": "Text to type into the PC page",
       "textPlaceholder": "Text for the PC",
       "textSend": "Send",
-      "takeOverFirst": "Take over to type",
-      "youOperate": "You're in control",
-      "stopped": "Stopped the agent",
       "failed": "Couldn't open the PC browser."
     }
   },

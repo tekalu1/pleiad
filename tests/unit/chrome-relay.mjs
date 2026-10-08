@@ -9,7 +9,7 @@ import { runAgentBrowser } from '../lib/agent-browser-cli.mjs';
 import { createChromeConnection } from '../../core/chrome/connection.mjs';
 import { createChromeRelay } from '../../core/chrome/relay.mjs';
 import { WINDOW_DIP } from '../../core/chrome/windows.mjs';
-import { browserEnvironment, chromeRelayBrowser, agentBrowserMode, browserSocketDirectory } from '../../core/agent-browser.mjs';
+import { browserEnvironment, chromeRelayBrowser, browserSocketDirectory } from '../../core/agent-browser.mjs';
 import { rpc as nativeRpc } from '../../core/backends/codex-rpc.mjs';
 import { startServer, ROOT } from '../lib/server.mjs';
 import { open as openHost } from '../lib/ws-client.mjs';
@@ -81,7 +81,7 @@ export default async function (t) {
     try {
       const url1 = await r.relay.endpoint('one');
       const url2 = await r.relay.endpoint('two');
-      t.ok('端点は会話ごとの鍵付きの loopback の ws（内蔵ブラウザーの中継と同じ形）', /^ws:\/\/127\.0\.0\.1:\d+\/devtools\/browser\/[a-f0-9]{48}$/.test(url1) && url1 !== url2 && (await r.relay.endpoint('one')) === url1);
+      t.ok('端点は会話ごとの鍵付きの loopback の ws（会話ごとに別の鍵）', /^ws:\/\/127\.0\.0\.1:\d+\/devtools\/browser\/[a-f0-9]{48}$/.test(url1) && url1 !== url2 && (await r.relay.endpoint('one')) === url1);
       a1 = await agent(url1);
       t.ok('Browser.getVersion は上りの Chrome の値を返す', (await a1.cmd('Browser.getVersion')).result?.product === 'Chrome/154.0.8037.97');
       await a1.cmd('Target.setDiscoverTargets', { discover: true });
@@ -414,22 +414,21 @@ export default async function (t) {
     } finally { a?.close(); await r.stop(); }
   }
 
-  // ===== 6. 環境変数: 道の選び方・PIN_TAB・3 つのバックエンドへの受け渡し =====
+  // ===== 6. 環境変数: PIN_TAB・3 つのバックエンドへの受け渡し =====
   {
-    t.ok('AGENT_HOST_AGENT_BROWSER=chrome のときだけ Chrome の道', agentBrowserMode({ AGENT_HOST_AGENT_BROWSER: 'chrome' }) === 'chrome' && agentBrowserMode({}) === 'inapp' && agentBrowserMode({ AGENT_HOST_AGENT_BROWSER: 'inapp' }) === 'inapp');
     const r = await rig();
     const dir = await mkdtemp(path.join(os.tmpdir(), 'pleiad-chrome-relay-env-'));
     try {
       const bridge = chromeRelayBrowser(r.relay);
       const env = await browserEnvironment({ bridge, dataDir: dir, sessionId: 'env-1' });
       const config = JSON.parse(await readFile(env.AGENT_BROWSER_CONFIG, 'utf8'));
-      t.ok('Chrome の道では cdp に中継の URL、AGENT_BROWSER_PIN_TAB=1 を足す', config.cdp === await r.relay.endpoint('env-1') && env.AGENT_BROWSER_PIN_TAB === '1');
+      t.ok('Chrome の中継では cdp に中継の URL、AGENT_BROWSER_PIN_TAB=1 を足す', config.cdp === await r.relay.endpoint('env-1') && env.AGENT_BROWSER_PIN_TAB === '1');
       bridge.rebind('env-1', 'env-native');
       const again = await browserEnvironment({ bridge, dataDir: dir, sessionId: 'env-native' });
       t.ok('id が決まった後も設定の置き場を保ち、同じ鍵を使う', again.AGENT_BROWSER_CONFIG === env.AGENT_BROWSER_CONFIG && JSON.parse(await readFile(again.AGENT_BROWSER_CONFIG, 'utf8')).cdp === config.cdp);
-      const inapp = await browserEnvironment({ bridge: { endpoint: async () => 'ws://127.0.0.1:1/devtools/browser/k' }, dataDir: dir, sessionId: 'env-2' });
-      t.ok('内蔵ブラウザーの道の環境変数は今のまま（PIN_TAB を足さない）', Object.keys(inapp).join() === 'AGENT_BROWSER_CONFIG,AGENT_BROWSER_SESSION,AGENT_BROWSER_SOCKET_DIR,AGENT_BROWSER_NAMESPACE');
-      for (const e of [env, inapp]) await rm(e.AGENT_BROWSER_SOCKET_DIR, { recursive: true, force: true });
+      const plain = await browserEnvironment({ bridge: { endpoint: async () => 'ws://127.0.0.1:1/devtools/browser/k' }, dataDir: dir, sessionId: 'env-2' });
+      t.ok('pinTab の無い橋では PIN_TAB を足さない', Object.keys(plain).join() === 'AGENT_BROWSER_CONFIG,AGENT_BROWSER_SESSION,AGENT_BROWSER_SOCKET_DIR,AGENT_BROWSER_NAMESPACE');
+      for (const e of [env, plain]) await rm(e.AGENT_BROWSER_SOCKET_DIR, { recursive: true, force: true });
 
       // Codex は共有の app-server なので、スレッドの config で渡す。PIN_TAB があるときだけ足す
       const originalRpc = { request: nativeRpc.request, attach: nativeRpc.attach, claimOrphan: nativeRpc.claimOrphan, stop: nativeRpc.stop };
@@ -448,8 +447,8 @@ export default async function (t) {
       };
       try {
         const first = await codex.runTurn({ prompt: 'x', cwd: dir, mode: 'ask', emit() {}, browserEnv: env, sessionId: null });
-        await codex.runTurn({ prompt: 'x', cwd: dir, mode: 'ask', emit() {}, browserEnv: inapp, sessionId: first.sessionId });
-        t.ok('Codex のスレッドの環境変数に AGENT_BROWSER_PIN_TAB が届き、内蔵ブラウザーの道では足さない', configs[0]?.AGENT_BROWSER_PIN_TAB === '1' && configs[0]?.AGENT_BROWSER_CONFIG === env.AGENT_BROWSER_CONFIG && configs[1] && !('AGENT_BROWSER_PIN_TAB' in configs[1]), JSON.stringify(configs));
+        await codex.runTurn({ prompt: 'x', cwd: dir, mode: 'ask', emit() {}, browserEnv: plain, sessionId: first.sessionId });
+        t.ok('Codex のスレッドの環境変数に AGENT_BROWSER_PIN_TAB が届き、pinTab の無い橋では足さない', configs[0]?.AGENT_BROWSER_PIN_TAB === '1' && configs[0]?.AGENT_BROWSER_CONFIG === env.AGENT_BROWSER_CONFIG && configs[1] && !('AGENT_BROWSER_PIN_TAB' in configs[1]), JSON.stringify(configs));
       } finally { Object.assign(nativeRpc, originalRpc); }
     } finally { await rm(dir, { recursive: true, force: true }); await r.stop(); }
   }
@@ -493,14 +492,14 @@ export default async function (t) {
     }
   }
 
-  // ===== 8. サーバー越し: AGENT_HOST_AGENT_BROWSER=chrome のターンは core の中継の端点を受け取る（parentPort の往復なし） =====
+  // ===== 8. サーバー越し: ターンは core の中継の端点を受け取る（parentPort の往復なし） =====
   {
     const scratch = await mkdtemp(path.join(os.tmpdir(), 'ply-chrome-relay-server-'));
     const chrome = await startFakeChrome({ permission: 'auto' });
     const dataDir = path.join(scratch, 'data');
     const ppLog = path.join(scratch, 'pp.ndjson');
     await fs.mkdir(dataDir);
-    const server = await startServer({ env: { AGENT_HOST_BACKENDS: 'fake', AGENT_HOST_AGENT_BROWSER: 'chrome', AGENT_HOST_CHROME_USER_DATA: chrome.userDataDir, FAKE_PARENT_PORT_LOG: ppLog },
+    const server = await startServer({ env: { AGENT_HOST_BACKENDS: 'fake', AGENT_HOST_CHROME_USER_DATA: chrome.userDataDir, FAKE_PARENT_PORT_LOG: ppLog },
       dataDir, entry: path.join(ROOT, 'tests', 'lib', 'parent-port-server.mjs') });
     let c, a, configDir = null;
     try {

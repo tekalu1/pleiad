@@ -58,7 +58,7 @@ export const browserShortcutLabel = (mac = isMac()) => (mac ? '⌘⇧B' : 'Ctrl+
  * bridge は preload の plyDesktop.browser（ページにフォーカスがあるときの近道）。blocked() が true の間は近道を効かせない（設定・ダイアログ）。
  * 使えない画面ではボタンを出さず null を返す
  */
-export function setupBrowserEntry({ button, browser, preview, getSessionId = () => null, getAgentName = () => 'Agent', mac = isMac(), bridge = null, blocked = () => false, mark: makeMark = runMark }) {
+export function setupBrowserEntry({ button, browser, preview, mac = isMac(), bridge = null, blocked = () => false }) {
   if (!button) return null;
   if (!browser) { button.hidden = true; return null; }
   button.hidden = false;
@@ -69,17 +69,7 @@ export function setupBrowserEntry({ button, browser, preview, getSessionId = () 
     const open = !!preview.browserOpen();
     button.setAttribute('aria-pressed', String(open));
     button.classList.toggle('on', open);
-    const agent = browser.state?.agent;
-    const working = !!agent && agent.sessionId === getSessionId();
-    button.setAttribute('aria-label', working ? t('browser.entryWorking', { name: getAgentName() }) : t('browser.entryLabel'));
-    // 走っている印は操作中の間だけ DOM に置く（web/arc.mjs）
-    const mark = button.querySelector('.entry-run');
-    if (working && !mark) {
-      const run = makeMark();
-      run.classList.add('entry-run');
-      run.setAttribute('aria-hidden', 'true');
-      button.append(run);
-    } else if (!working && mark) mark.remove();
+    button.setAttribute('aria-label', t('browser.entryLabel'));
   }
 
   /** 右パネルがブラウザーなら閉じ、そうでなければブラウザーにする。前のタブがあればそのまま、無ければ空の新しいタブ */

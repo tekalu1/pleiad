@@ -1113,7 +1113,6 @@
     "not-found": "Couldn't find the saved visualization.",
     "invalid-url": "Can't open this URL.",
     "not-watching": "You aren't viewing the PC browser. Open it again.",
-    "agent-active": "An agent is using the browser. Tap Take over first.",
     "invalid-input": "Can't send this input.",
     "failed": "The PC browser action failed.",
     "view-only": "The Chrome window is view-only. Take it over and use the window in Chrome.",

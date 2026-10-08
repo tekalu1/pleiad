@@ -46,7 +46,11 @@ async function attachMain(dataDir, pid) {
   const info = await until(() => { const found = readLinkInfo(dataDir); return found?.pid === pid ? found : null; }, WAIT_MS, `main-link.json (pid ${pid})`);
   const link = createServerLink({ pipe: info.pipe, secret: info.secret, appVersion: '0.0.1' });
   const seen = { messages: [] };
-  link.on('message', message => seen.messages.push(message));
+  link.on('message', message => {
+    seen.messages.push(message);
+    // Chrome の層は無い（答えないと、ターンごとに層の準備を待たされる）
+    if (message.type === 'chrome-os-ready-request') link.postMessage({ type: 'chrome-os-ready', supported: false, reason: 'platform' });
+  });
   await link.connect();
   return { link, seen, request: async (type, extra = {}, ms = 40_000) => {
     const id = Math.floor(Math.random() * 1e9);

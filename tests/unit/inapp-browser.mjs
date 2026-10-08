@@ -404,9 +404,8 @@ export default async function (t) {
     };
     panel.connect({ openPanel: () => preview.openBrowser(), onEmpty: () => preview.close() });
     const button = new N('button'); button.hidden = true;
-    const mark = () => { const s = new N('span'); s.className = 'run'; return s; };
     try {
-      entry = setupBrowserEntry({ button, browser: panel, preview, bridge, getSessionId: () => 's1', getAgentName: () => 'Claude', mac: false, mark });
+      entry = setupBrowserEntry({ button, browser: panel, preview, bridge, mac: false });
       assert.equal(button.hidden, false, 'デスクトップ版のホストの画面では出す');
       assert.equal(button.attrs.title, '内蔵ブラウザー（Ctrl+Shift+B）');
       assert.equal(button.getAttribute('aria-label'), '内蔵ブラウザー');
@@ -430,19 +429,6 @@ export default async function (t) {
       preview.close();   // Esc・閉じるボタンの経路（右パネルが閉じる）
       assert.equal(button.getAttribute('aria-pressed'), 'false', '右パネルの側で閉じても押されていない状態に戻る');
       assert.equal(focused.at(-1), button);
-
-      // エージェントが操作中
-      const tab = { id: 't1', url: 'https://example.com/', title: '', loading: false, canGoBack: false, canGoForward: false };
-      bridge.push({ tabs: [tab], current: 't1', agent: { sessionId: 's1', tabId: 't1' } });
-      assert.equal(button.getAttribute('aria-label'), '内蔵ブラウザー · Claude が操作中');
-      assert.equal(button.querySelectorAll('.entry-run').length, 1, '操作中は右上に走っている弧');
-      bridge.push({ tabs: [tab], current: 't1', agent: { sessionId: 's1', tabId: 't1' } });
-      assert.equal(button.querySelectorAll('.entry-run').length, 1, '描き直しても弧は 1 つ');
-      bridge.push({ tabs: [tab], current: 't1', agent: { sessionId: 'other', tabId: 't1' } });
-      assert.equal(button.querySelectorAll('.entry-run').length, 0, 'ほかの会話のエージェントの操作では出さない');
-      assert.equal(button.getAttribute('aria-label'), '内蔵ブラウザー');
-      bridge.push({ tabs: [tab], current: 't1', agent: null });
-      assert.equal(button.querySelectorAll('.entry-run').length, 0, '操作が終われば外す');
 
       // 近道: 画面の keydown と、ページにフォーカスがあるとき（main から）
       const wasOpen = open;
@@ -829,26 +815,6 @@ export default async function (t) {
   }
   t.ok('main: 画面が開いた file: のタブ — 同じファイルは使い回す・外部の読み込みを設定と一時の許可で止める（http は localhost も）・データ置き場と UNC を常に止める・移った先と Web のページには効かせない・写しの読み込む', true);
 
-  // ---- main: サーバーから届く外部の読み込みの設定（desktop/agent-browser-bridge.cjs）
-  {
-    const { attachAgentBrowserBridge } = require('../../desktop/agent-browser-bridge.cjs');
-    const worker = { handlers: [], posted: [], on(type, fn) { this.handlers.push(fn); }, postMessage(message) { this.posted.push(message); } };
-    const fw = fakeElectron();
-    const wp = bp.createBrowserPanel(fw.deps);
-    const applied = [];
-    const realSet = wp.setLoadPolicy;
-    wp.setLoadPolicy = policy => { applied.push(policy); realSet(policy); };
-    const attached = attachAgentBrowserBridge(worker, wp);
-    assert(worker.posted.some(m => m.type === 'browser-load-policy-request'), '起動時にサーバーへ設定を聞く');
-    for (const fn of worker.handlers) await fn({ type: 'browser-load-policy', confirm: true, origins: ['https://ok.example'] });
-    assert.deepEqual(applied, [{ confirm: true, origins: ['https://ok.example'] }]);
-    for (const fn of worker.handlers) await fn({ type: 'browser-load-policy', confirm: 'yes', origins: 'nope' });
-    assert.deepEqual(applied.at(-1), { confirm: false, origins: 'nope' }, 'true 以外は OFF（形の検査は panel.setLoadPolicy）');
-    attached.close();
-  }
-  t.ok('main: サーバーの外部の読み込みの設定を受けて panel に渡す', true);
-
-
   // ---- main: パネルの一覧と今のタブは、今の会話のタブと、会話に属さないタブだけ
   {
     const fv = fakeElectron();
@@ -911,30 +877,12 @@ export default async function (t) {
     assert.equal(st.tabs.length, 0); assert.equal(st.current, null, 'タブの無い会話では current なし');
     assert.equal(attachedView(), null, '前の会話のタブの View を窓に残さない');
 
-    // 新規会話: 仮のキーで作ったタブが本物の会話 ID へ移ると、その会話を見ている画面に出る
-    const fresh = vp.createFor('new:key', 'https://fresh.example/');
-    const later = vp.createFor('new:key', 'https://later.example/');
-    vp.selectFor(fresh.id);   // 仮のキーの会話で、最後に作ったものでないタブを選んだ
-    st = await go('context', { sessionId: null });
-    assert.equal(st.tabs.length, 0, '仮のキーのタブは会話を決めていない画面には出ない');
-    vp.rebindSession('new:key', 'real-id');
-    assert.deepEqual(vp.tabsFor('new:key'), [], '仮のキーにはタブが残らない');
-    assert.deepEqual(vp.tabsFor('real-id').map(tab => tab.id), [fresh.id, later.id], '中継から引くタブも本物の ID へ移る');
-    st = await go('context', { sessionId: 'real-id' });
-    assert.deepEqual(urls(st), ['https://fresh.example/', 'https://later.example/']); assert.equal(st.current, fresh.id, '選んでいたタブも本物の ID へ移る');
-    await go('close', { id: later.id });
-    // エージェントの操作中の表示は会話ごと。別の会話の操作では今のタブを動かさない
-    const other = vp.createFor('conv-a', 'https://agent.example/');
-    vp.setAgent('conv-a', other.id);
-    st = await go('state');
-    assert.equal(st.current, fresh.id); assert.equal(st.agent, null, '別の会話の操作中は出さない');
-    st = await go('context', { sessionId: 'conv-a' });
-    assert.equal(st.current, other.id, '操作中のタブを最後に選んだものとして覚える'); assert.deepEqual(st.agent, { sessionId: 'conv-a', tabId: other.id });
     // 人が開く・新しいタブは今の会話のものになる
+    await go('context', { sessionId: 'conv-a' });
     st = await go('open', { url: 'https://human.example/', newTab: true });
-    assert.equal(vp.tabsFor('conv-a').length, 4); assert.equal(st.tabs.at(-1).sessionId, 'conv-a');
+    assert.equal(vp.tabsFor('conv-a').length, 3); assert.equal(st.tabs.at(-1).sessionId, 'conv-a');
   }
-  t.ok('main: session は 1 つ・パネルの一覧と今のタブは今の会話と会話なしのタブだけ・別の会話のタブを作っても動かない・会話を移ると最後に選んだタブ・閉じた移り先・View を残さない・仮のキーからの付け替え（タブと選択）', true);
+  t.ok('main: session は 1 つ・パネルの一覧と今のタブは今の会話と会話なしのタブだけ・別の会話のタブを作っても動かない・会話を移ると最後に選んだタブ・閉じた移り先・View を残さない', true);
 
   // ---- 補助
   assert.equal(bp.openable('https://a.example/'), 'https://a.example/'); assert.equal(bp.openable('chrome://gpu'), null);

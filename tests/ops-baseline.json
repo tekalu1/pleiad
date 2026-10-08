@@ -66,8 +66,7 @@
     "browserScreencastStop": "stream",
     "browserScreencastAck": "stream",
     "browserScreencastInput": "stream",
-    "browserScreencastNav": "stream",
-    "browserScreencastAgent": "stream"
+    "browserScreencastNav": "stream"
   },
   "todoMax": 0,
   "setPrefAllowed": 3

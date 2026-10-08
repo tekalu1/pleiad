@@ -221,8 +221,6 @@ body.file-preview-wide .file-preview-resize{display:none}
 .browser-site-approval .card-actions .res:empty{display:none}
 .file-preview-content:has(>.preview-blocked){display:flex;flex-direction:column}
 .file-preview-content:has(>.preview-blocked)>iframe{flex:1;min-height:0;height:0}
-.browser-agent-row{display:flex;align-items:center;gap:8px;padding:5px 10px;color:var(--ink-weak);font-size:var(--fs-s)}
-.browser-agent-row[hidden]{display:none}
 /* 止めた件数の一行（画面が開いた PC のファイルのタブ。道具の列とページの間）。出るときだけ --dur で下りる */
 .browser-blocked{margin:0 0 8px;padding:5px 12px;background:var(--surface-1);border-radius:var(--r-m);font-size:var(--fs-xs);animation:browser-blocked-in var(--dur) var(--ease-out)}
 .browser-blocked[hidden]{display:none}
@@ -233,5 +231,3 @@ body.file-preview-wide .file-preview-resize{display:none}
 .browser-tab.flash{animation:browser-tab-flash calc(var(--dur) * 3.75) var(--ease-out)}
 @keyframes browser-tab-flash{0%{box-shadow:0 0 0 2px var(--line-blue)}100%{box-shadow:0 0 0 0 transparent}}
 @media (prefers-reduced-motion:reduce){.browser-tab.flash,.browser-blocked{animation:none}}
-.browser-agent-status{display:flex;align-items:center;gap:7px;flex:1;min-width:0;color:var(--ink)}
-.browser-agent-row .btn{padding:3px 8px;font-size:var(--fs-s)}

@@ -63,11 +63,7 @@ export default async function (t) {
     const { sessionId } = await c.cmd('newSession', { backend: 'fake', cwd });
     assert.equal(readSessions(dataDir)[sessionId]?.browserProfile, undefined, '新しい会話はプロフィールを持たない');
     const turn = await c.runTurn({ backend: 'fake', cwd, sessionId, prompt: 'browser:{"name":"list_browser_profiles","arguments":{}}' });
-    const endpoint = (await messages()).filter(m => m.type === 'agent-browser-endpoint').at(-1);
-    assert(endpoint, '中継の準備は今までどおり main に頼む');
-    assert.equal(endpoint.profile, undefined, '中継の準備にプロフィールを渡さない');
-    const prefsMessage = (await messages()).filter(m => m.type === 'agent-browser-prefs').at(-1);
-    assert(prefsMessage && prefsMessage.profiles === undefined && prefsMessage.defaultProfile === undefined, 'main に使えるプロフィールを知らせない');
+    assert(!(await messages()).some(m => m.type?.startsWith('agent-browser-')), '内蔵ブラウザーの中継の準備・設定は main に頼まない');
     const result = turn.events.find(e => e.type === 'tool.result');
     assert.equal(result?.isError, true, 'ply_browser は渡るが、呼べるツールは無い');
     assert.deepEqual(turn.tools, ['mcp__ply_browser__list_browser_profiles'], '呼び出しは会話のツール履歴に残る');

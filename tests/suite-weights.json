@@ -4,7 +4,7 @@
   "source": "2026-10-04 ローカル Windows (Node 24.14.0) の全件 1 回の直列実行（294 本・809 秒）。相対的な重さの目安。node tests/run.mjs --timings <path> の出力で更新できる",
   "defaultMs": 3000,
   "suites": {
-    "agent-browser-relay": 254,
+    "agent-browser-env": 254,
     "agent-tasks": 2226,
     "agent-tasks-command-storage": 243,
     "agent-tasks-interrupt": 1943,
@@ -218,7 +218,6 @@
     "server-agy-context": 3278,
     "server-antigravity": 10381,
     "server-background": 8830,
-    "server-browser-rebind": 644,
     "server-chrome": 2500,
     "server-chrome-screencast": 1129,
     "server-claude-accounts": 2982,

@@ -105,7 +105,7 @@ async function start({ env = {}, packaged = false, choice = 'link', connectError
     './window-trust.cjs': { createWindowTrust: () => ({ register: () => {}, update: (_window, patch) => { calls.trusted = patch.origin; } }) },
     './remote-windows.cjs': { createRemoteWindows: () => ({ attach: () => {}, attachWorker: listens(calls), handleArgv: () => false }) },
     './browser-panel.cjs': { createBrowserPanel: () => ({ attach: () => {} }) },
-    './agent-browser-bridge.cjs': { attachAgentBrowserBridge: listens(calls) },
+    './browser-viewer-bridge.cjs': { attachBrowserViewerBridge: listens(calls) },
     './computer/service.cjs': { attachComputerService: listens(calls), withPerMonitorDpi: win32 => win32 },
     './computer/win32.cjs': { loadWin32: () => { throw Object.assign(new Error('not windows'), { reason: 'platform' }); } },
     './chrome-os/index.cjs': { createChromeOs: () => ({ reconceal: () => { calls.reconceals = (calls.reconceals ?? 0) + 1; }, closeAllAgents: () => { calls.closeAlls = (calls.closeAlls ?? 0) + 1; if (calls.failCloseAll) throw new Error('boom'); return 0; } }), attachChromeOs: listens(calls) },
