@@ -1,5 +1,7 @@
 # 更新で走っているターンを止めない（無停止の更新）— 設計
 
+> ブラウザーの記述について（2026-10-08）: この文書に残る内蔵ブラウザーのエージェント操作・CDP の中継・中継の復元の計画と計測は、Chrome へ移す前の記録。ADR 0148 の第 7 段で `desktop/browser-relay.cjs`・`browser-navigation.cjs`・`agent-browser-bridge.cjs` と `AGENT_HOST_AGENT_BROWSER` は削除した。現在のエージェント操作は Chrome の中継だけで、ビューアのタブの写しと読み込みの方針は `core/browser-viewer.mjs` と `desktop/browser-viewer-bridge.cjs` が扱う。現在の動きは [ブラウザー](../inapp-browser.md) を参照。
+
 - 状態: 確定（2026-10-06）。段階 0 の実測と、段階 1 の 1-0（頭の確認）の実測を反映した。コードは変えていない（実装は [plan.md](plan.md) の段階ごと）
 - 決定: [ADR 0151](../adr/0151-zero-downtime-update.md)。段階と作業項目: [plan.md](plan.md)。管理: [issue #54](https://github.com/tekalu1/pleiad/issues/54)
 - 実測の記録: [stage0-claude.md](stage0-claude.md)・[stage0-codex-agy.md](stage0-codex-agy.md)・[stage0-runtime.md](stage0-runtime.md)・[stage1-0.md](stage1-0.md)・[stage1-7.md](stage1-7.md)（実機の確認。測るスクリプトは `scripts/zero-downtime/`）
