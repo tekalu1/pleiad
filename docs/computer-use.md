@@ -275,7 +275,7 @@ JSON-RPC は `initialize` / `ping` / `tools/list` / `tools/call` を自前で処
 - **問い（`until`）**: 「はい」が「終わった」になる問い。空白を詰め、500 字で切る。静止するたびに 1 回、長辺 1440（`maxPixels: 1_300_000`・品質 75）の JPEG を同じディスプレイで撮り直し、OpenRouter の `POST /api/alpha/decisions` で `perplexity/pplx-decider-v1.1-27b` に聞く。
   - 本文は `state: [{ type: 'text', text: 'Screenshot' }, { type: 'image_url', image_url: { url: 'data:image/jpeg;base64,…' } }]` と `questions.done = { type: 'noul', instructions: until, criteria: { true: 'Yes', false: 'No' } }`。
   - 応答は `answers.done.noul`（「はい」の確率）。読むのは `parseDecision` の 1 か所だけ。
-  - 確率が 0.5 以上なら返す。「いいえ」なら次の変化と静止を待って聞き直す。締め切りでは「まだ」と最後の確率を返す。
+  - 確率が 0.5 以上なら返す。「いいえ」なら次の変化と静止を待って聞き直す。このとき、聞く前に静止したコマと比べる（聞いている間に変わって止まった画面を見落とさない）。締め切りでは「まだ」と最後の確率を返す。
   - 1 回の往復の上限は 6 秒。送り先は `AGENT_HOST_OPENROUTER_API` で変えられる（テストの偽物用。判定器と同じ変数）。
 - **キー**: 設定 › API キーの割り当て `computer:decider`（OpenRouter のキー。[ADR 0155](adr/0155-api-keys-in-one-place.md) の追記）。選ぶ欄は設定 › コンピューターの操作にある。キーが選ばれていなければ問いを使わず差分だけで待ち、結果にその旨を書く（`decider: 'no_key'`）。
 - **前面が操作できないアプリ**: 聞く前に前面を見る。ターミナル・パスワード管理・Pleiad 自身など（「判定の順」の 1）なら画面を送らず、静止で返す（`end: 'skipped'`・`decider: 'foreground'`）。
