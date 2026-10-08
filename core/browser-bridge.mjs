@@ -1,7 +1,6 @@
 // ply_browser: エージェントのブラウザー操作のための MCP の口（core/agent-bridge.mjs と同じ型。会話ごとに Bearer の付いた HTTP）。
 // エージェントのブラウザー（PC の Chrome の専用の窓。ADR 0148）を渡すターン（デスクトップ版で中継がある）にだけ渡す。
-// 載せるツールは hand_to_user（ログイン・CAPTCHA などを人に任せて、戻るまで待つ。core/chrome/handoff.mjs）。
-// Chrome のプロフィールの一覧・close_browser_window は後の段で browserTools に足す。3 つのバックエンドへの渡し方・Bearer の鍵・agy の中継への束ねを保つ
+// 載せるツールは hand_to_user と close_browser_window。Chrome のプロフィールの一覧は後の段で足す。
 import { claimToken } from './mcp-token.mjs';
 import { agentT } from './i18n.mjs';
 import { HANDOFF_REASONS } from './chrome/handoff.mjs';
@@ -21,6 +20,10 @@ export const browserTools = locale => [{
     },
     required: ['reason', 'message'],
   },
+}, {
+  name: 'close_browser_window',
+  description: agentT(locale, 'browserBridge.closeWindow.description'),
+  inputSchema: { type: 'object', properties: {}, additionalProperties: false },
 }];
 
 /** hand_to_user を待つ 1 回の長さ（ミリ秒）。バックエンドの呼び出しの上限（Claude・Codex は 660 秒）より短くし、超えたら「まだ待っています」で返して呼び直させる */
@@ -43,16 +46,26 @@ export function handToUserResult(locale, answer) {
 }
 
 /** ply_browser の口。会話ごとに open し、橋は会話の id が決まっても使い回す（agy は会話のあいだ同じトークンを使う） */
-export function createBrowserBridge({ handoffs = null } = {}) {
+export function createBrowserBridge({ handoffs = null, closeWindow = null } = {}) {
   const bindings = new Map();
   const fail = text => ({ isError: true, content: [{ type: 'text', text }] });
   async function callTool(binding, params) {
+    // i18n-dynamic: agent:browserBridge.closeWindow.
     const { locale } = binding;
-    if (params?.name !== 'hand_to_user' || !handoffs) return fail(agentT(locale, 'browserBridge.invalidTool'));
+    if (!['hand_to_user', 'close_browser_window'].includes(params?.name) || (params.name === 'hand_to_user' && !handoffs) || (params.name === 'close_browser_window' && !closeWindow)) return fail(agentT(locale, 'browserBridge.invalidTool'));
     let owner;
     try { owner = await binding.owner(); } catch (error) { return fail(String(error?.message ?? error)); }
     if (!owner?.sessionId) return fail(agentT(locale, 'browserBridge.handToUser.noTurn'));
     const args = params.arguments && typeof params.arguments === 'object' ? params.arguments : {};
+    if (params.name === 'close_browser_window') {
+      if (params.arguments != null && (typeof params.arguments !== 'object' || Array.isArray(params.arguments) || Object.keys(args).length))
+        return fail(agentT(locale, 'browserBridge.invalidTool')); // { task } は第 11 段
+      try {
+        const result = await closeWindow(owner.sessionId);
+        if (result?.failed) return fail(agentT(locale, 'browserBridge.closeWindow.failed'));
+        return { isError: false, content: [{ type: 'text', text: agentT(locale, result?.closed ? 'browserBridge.closeWindow.closed' : 'browserBridge.closeWindow.none') }] };
+      } catch (error) { return fail(String(error?.message ?? error)); }
+    }
     handoffs.ask(owner.sessionId, { reason: args.reason, message: args.message });
     const answer = await handoffs.wait(owner.sessionId, { sliceMs: owner.waitSliceMs ?? BROWSER_WAIT_SLICE_MS, signal: owner.signal });
     const { isError, text } = handToUserResult(locale, answer);
@@ -87,7 +100,7 @@ export function createBrowserBridge({ handoffs = null } = {}) {
       let result;
       if (m.method === 'initialize') result = { protocolVersion: '2025-03-26', capabilities: { tools: {} }, serverInfo: { name: BROWSER_SERVER, version: '1.0.0' } };
       else if (m.method === 'ping') result = {};
-      else if (m.method === 'tools/list') result = { tools: handoffs ? browserTools(locale) : [] };   // 操作待ちの台帳が無いホスト（Chrome の層が無い）は載せない
+      else if (m.method === 'tools/list') result = { tools: handoffs ? browserTools(locale) : [] };   // Chrome の層が無いホストは載せない
       else if (m.method === 'tools/call') result = await callTool(binding, m.params);
       else return reply(200, { jsonrpc: '2.0', id: m.id, error: { code: -32601, message: 'Method not found' } });
       reply(200, { jsonrpc: '2.0', id: m.id, result });

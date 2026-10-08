@@ -117,6 +117,9 @@ export const DATA_WRITES = [
     { name: 'computer-use/shots.json', limit: '1 会話あたり MAX_SHOTS_PER_SESSION=300、合計 MAX_SHOTS_BYTES=1GiB で古い順に消す', reason: 'スクリーンショットの索引。画像の合計の上限で行数も間接的に抑えられる' },
     { name: 'computer-use/shots/<id>.jpg', limit: '1 枚 1 ファイル', reason: '成果物（書き換えない）' },
   ] },
+  { file: 'core/chrome/close-window.mjs', sites: 1, targets: [
+    { name: 'uploads/chrome-window/<会話の SHA-256>/<時刻>-<UUID>.(png|jpg)', limit: '1 枚 MAX_IMAGE=10MiB。窓を閉じるたびに 1 枚を追加し、会話の削除で消す', reason: '閉じた窓の静止画。会話の present にはパスだけを記録する（ADR 0115）' },
+  ] },
   { file: 'core/context-bases.mjs', sites: 1, targets: [
     { name: 'context-bases.json', limit: 'CONTEXT_BASES_LIMIT=50 件（作業場所 × モデル）', reason: '委譲の子の固定の部分（最初のリクエストの文脈）の直近の値。自動圧縮の閾値の見積もり（ADR 0166）' },
   ] },

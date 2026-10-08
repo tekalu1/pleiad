@@ -558,6 +558,21 @@
       "input": "f08816c821a8"
     },
     {
+      "id": "browser.chromeCloseWindow",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": false,
+        "cli": false
+      },
+      "legacyCommand": "chromeCloseWindow",
+      "input": "7f7ac791e818"
+    },
+    {
       "id": "browser.chromeConnect",
       "risk": "write",
       "riskOf": false,

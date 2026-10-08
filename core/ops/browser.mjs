@@ -138,6 +138,21 @@ export const browserOps = [
     handler: (ctx, { sessionId }) => controlRun(ctx, 'stop', sessionId),
   }),
   defineOp({
+    id: 'browser.chromeCloseWindow',
+    summary: 'agent:ops.browser.chromeCloseWindow.summary',
+    risk: 'write',
+    riskReason: 'Closes only the dedicated Chrome windows of this conversation and records the last image. Screen and remote devices only (not on MCP or CLI)',
+    input: controlInput,
+    output: z.object({ closed: z.boolean(), failed: z.boolean().optional() }),
+    surfaces: { ui: true, mcp: false, cli: false },
+    legacyCommand: 'chromeCloseWindow',
+    handler: async (ctx, { sessionId }) => {
+      const chrome = mustBeSupported(ctx);
+      if (!chrome.closeWindow) unavailable(ctx);
+      return chrome.closeWindow(sessionId);
+    },
+  }),
+  defineOp({
     id: 'browser.chromeOpen',
     summary: 'agent:ops.browser.chromeOpen.summary',
     risk: 'write',
