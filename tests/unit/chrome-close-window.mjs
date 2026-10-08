@@ -107,13 +107,14 @@ export default async function (t) {
     } finally { globalThis.requestAnimationFrame = oldFrame; N.prototype.toggleAttribute = oldToggle; }
 
     const bridgeCalls = [];
-    const bridge = createBrowserBridge({ handoffs: {}, closeWindow: async id => { bridgeCalls.push(id); return { closed: true }; } });
+    const bridge = createBrowserBridge({ handoffs: {}, closeWindow: async (id, task) => { bridgeCalls.push([id, task]); return { closed: true }; } });
     const server = http.createServer((req, res) => bridge.handle(req, res));
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
     try {
       const endpoint = bridge.open({ origin: `http://127.0.0.1:${server.address().port}`, locale: 'ja', owner: () => ({ sessionId: 'own' }) });
       const call = async args => (await (await fetch(endpoint.url, { method: 'POST', headers: { ...endpoint.headers, 'content-type': 'application/json' }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'close_browser_window', arguments: args } }) })).json()).result;
-      t.ok('ply_browser は引数なしで自分の会話だけを閉じ、task は第 11 段まで断る', (await call({})).isError === false && (await call({ task: 'child' })).isError === true && bridgeCalls.join() === 'own');
+      t.ok('ply_browser は引数なしで自分の会話を閉じ、task があれば所有の確認へ渡す', (await call({})).isError === false && (await call({ task: 'child' })).isError === false
+        && (await call({ task: 42 })).isError === true && JSON.stringify(bridgeCalls) === JSON.stringify([['own', null], ['own', 'child']]));
       endpoint.close();
     } finally { server.close(); }
 

@@ -22,8 +22,8 @@ export const browserTools = locale => [{
   },
 }, {
   name: 'close_browser_window',
-  description: agentT(locale, 'browserBridge.closeWindow.description'),
-  inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+  description: `${agentT(locale, 'browserBridge.closeWindow.description')} ${agentT(locale, 'browserBridge.closeWindowTask.description')}`,
+  inputSchema: { type: 'object', properties: { task: { type: 'string', description: agentT(locale, 'browserBridge.closeWindowTask.argument') } }, additionalProperties: false },
 }];
 
 /** Chrome のプロフィールのツール（第 10 段）。プロフィールの本体があるホストだけに載せる（createBrowserBridge の useProfiles） */
@@ -93,12 +93,12 @@ export function createBrowserBridge({ handoffs = null, closeWindow = null } = {}
     if (!owner?.sessionId) return fail(agentT(locale, 'browserBridge.handToUser.noTurn'));
     const args = params.arguments && typeof params.arguments === 'object' ? params.arguments : {};
     if (params.name === 'close_browser_window') {
-      if (params.arguments != null && (typeof params.arguments !== 'object' || Array.isArray(params.arguments) || Object.keys(args).length))
-        return fail(agentT(locale, 'browserBridge.invalidTool')); // { task } は第 11 段
+      if (params.arguments != null && (typeof params.arguments !== 'object' || Array.isArray(params.arguments) || Object.keys(args).some(key => key !== 'task') || (args.task !== undefined && (typeof args.task !== 'string' || !args.task))))
+        return fail(agentT(locale, 'browserBridge.invalidTool'));
       try {
-        const result = await closeWindow(owner.sessionId);
+        const result = await closeWindow(owner.sessionId, args.task ?? null);
         if (result?.failed) return fail(agentT(locale, 'browserBridge.closeWindow.failed'));
-        return { isError: false, content: [{ type: 'text', text: agentT(locale, result?.closed ? 'browserBridge.closeWindow.closed' : 'browserBridge.closeWindow.none') }] };
+        return { isError: false, content: [{ type: 'text', text: agentT(locale, result?.closed ? 'browserBridge.closeWindow.closed' : args.task ? 'browserBridge.closeWindowTask.none' : 'browserBridge.closeWindow.none') }] };
       } catch (error) { return fail(String(error?.message ?? error)); }
     }
     handoffs.ask(owner.sessionId, { reason: args.reason, message: args.message });

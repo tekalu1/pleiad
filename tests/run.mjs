@@ -70,6 +70,8 @@ const SUITES = [
   './unit/chrome-close-window.mjs',
   // Chrome の操作待ち（ADR 0148・0168）: 1 会話 1 枚・状態の差し替え・つながったら決着・wait の区切りと中断・ターンの外で戻したら続ける（偽の askPermission / 接続 / control）
   './unit/chrome-handoff.mjs',
+  './unit/chrome-delegation.mjs',
+  './unit/server-chrome-delegation.mjs',
   // Chrome の窓の映像（ADR 0148 第 5 段）: 今のタブへの付け外し・ack の間引き・focus emulation の理由の数え方（ターンと映像。閉じてすぐ開き直しても残る）・タブの付け替え・rebind／forget／Chrome 側の detach・撮影を断つ口（suspend。見る前・開始の途中・会話の寿命）・見るだけ（偽の Chrome）
   './unit/chrome-screencast.mjs',
   // Chrome の窓の映像（サーバー越し）: chromeWindow イベントがホストの画面にもリモートの端末にも届く・接続の直後に今の分・hostCapabilities.chromeWindow・source: chrome の映像と view-only（偽の Chrome・parentPort の身代わり）

@@ -112,6 +112,8 @@ import { computerPrompt } from './backends/computer-delivery.mjs';
 import { MIN_BUDGET, MAX_BUDGET } from '../web/instruction-amount.mjs';
 import { browserEnvironment, browserInstruction, forgetBrowserEnvironment, chromeRelayBrowser } from './agent-browser.mjs';
 import { createChromeWindowCloser } from './chrome/close-window.mjs';
+import { delegatedChromeTarget as resolveDelegatedChromeTarget, delegatedChromeWindows } from './chrome/delegation.mjs';
+import { createChromeLoginGroups } from './chrome/login-groups.mjs';
 import { parentPortViewer } from './browser-viewer.mjs';
 import { getMainPort, setMainPortSource } from './main-port.mjs';
 import { createMainLink, handoverEnabled } from './main-link.mjs';
@@ -1385,7 +1387,8 @@ function openComputerPort(entry, backend, token) {
 }
 
 // ---- ply_browser（エージェントのブラウザー操作の口。core/browser-bridge.mjs、ADR 0148） ----------------------------
-const browserBridge = createBrowserBridge({ handoffs: chromeHandoffs, closeWindow: sessionId => chromeWindowCloser?.close(sessionId) });
+const browserBridge = createBrowserBridge({ handoffs: chromeHandoffs, closeWindow: async (sessionId, taskId) => chromeWindowCloser?.close(taskId ? await delegatedChromeTarget(sessionId, taskId) : sessionId) });
+const delegatedChromeTarget = (sessionId, taskId) => resolveDelegatedChromeTarget(sessionId, taskId, { task: id => agentTasks?.get(id), meta: id => store.get(id) });
 // プロフィールのツールは ops（browser.listProfiles・useProfile）を通す（画面・CLI と同じ断り・同じ監査）
 if (chromeProfiles) browserBridge.useProfiles({
   list: (sessionId, locale) => browserProfileOp(sessionId, 'browser.listProfiles', {}, locale),
@@ -3705,6 +3708,12 @@ const opsChrome = chromeConnection ? {
   // ビューアの⋯「Chrome で開く」。つながっていなければ Chrome の許可を待つ（カードは出さない）
   open: chromeRelay ? (sessionId, url) => chromeRelay.openForConversation(sessionId, url) : null,
   closeWindow: chromeWindowCloser ? sessionId => chromeWindowCloser.close(sessionId, { by: 'human' }) : null,
+  windows: async parentId => {
+    const rows = delegatedChromeWindows(parentId, { rows: () => agentTasks?.rowsWhere(row => row.parentSessionId === parentId && row.sessionId && store.peek(row.sessionId)?.delegation?.taskId === row.taskId) ?? [],
+      sessions: () => chromeRelay?.view.sessions() ?? [], summary: id => chromeRelay.view.summary(id), profile: id => chromeProfiles?.current(id), state: id => chromeControl?.state(id)?.state ?? 'idle' });
+    const profiles = (await chromeProfiles?.list({})?.catch(() => null))?.profiles ?? [];
+    return rows.map(row => ({ ...row, profileName: profiles.find(p => p.browser === row.profile?.browser && p.dir === row.profile?.dir)?.name ?? row.profile?.dir ?? null }));
+  },
 } : null;
 
 // コンピューターの操作を止める（computer.stop。docs/computer-use.md「computerStop」）。止める側なので、リモートの端末からも AI からも受ける
@@ -4622,10 +4631,30 @@ async function delegationRoot(sessionId) {
  * どれか1つで答えれば全部が決着し、残りは消える。
  */
 const approvalIds = createApprovalIds();
+const chromeLoginGroups = createChromeLoginGroups();
+async function chromeLoginOrigin(sessionId) {
+  const targetId = chromeRelay?.view.current(sessionId);
+  if (!targetId) return null;
+  try {
+    const info = await chromeRelay.cdp?.send('Target.getTargetInfo', { targetId });
+    const origin = new URL(info?.targetInfo?.url ?? '').origin;
+    return origin === 'null' ? null : origin;
+  } catch { return null; }
+}
+function chromeHandoffProfile(sessionId) {
+  const targetId = chromeRelay?.view.current(sessionId);
+  const windowId = chromeRelay?.view.tabs(sessionId).find(tab => tab.targetId === targetId)?.windowId;
+  const dir = chromeRelay?.scope.windows?.(sessionId)?.find(window => window.windowId === windowId)?.profile;
+  return dir ? { browser: 'chrome', dir } : null;
+}
 const askPermission = async ({ toolName, input, sessionId, toolUseID, title, signal, canAlways, kind, questions, locale, browserSite, computerApp, settingChange, detached = false, outlivesTurn = false, onOpen, onSettle, browserHandoff }) => {
   const { chain: ancestors, remote: remoteRoot } = sessionId ? await delegationRoot(sessionId) : { chain: [], remote: null };
   // 中継先の見出しは「どの会話の承認か」。委譲したときの info.title を使う
   const childTitle = ancestors.length || remoteRoot ? (await store.get(sessionId)).title || t('permission.childConversation') : "";
+  const directParent = ancestors[0] ?? null;
+  const selectedProfile = browserHandoff?.reason === 'login' && directParent ? chromeHandoffProfile(sessionId) : null;
+  const loginOrigin = selectedProfile ? await chromeLoginOrigin(sessionId) : null;
+  const groupKey = chromeLoginGroups.key({ parent: directParent, profile: selectedProfile, origin: loginOrigin, reason: browserHandoff?.reason });
   const askingMeta = sessionId ? await store.get(sessionId).catch(() => null) : null;
   const conversationTitle = askingMeta?.title ?? '';
   // 拒否・中断の理由はエージェントに返るので、承認を求めた会話の言語で訳す（settle には messageKey で来る）
@@ -4637,6 +4666,7 @@ const askPermission = async ({ toolName, input, sessionId, toolUseID, title, sig
   if (HIDDEN_BOT_KINDS.has(askingMeta?.bot?.kind)) return localize({ allow: false, messageKey: 'hiddenConversation' });
   // 祖先を読むあいだに中断されたなら、待たせずに返す（abort はもう来ない）
   if (signal?.aborted) return localize({ allow: false, messageKey: 'aborted' });
+  const { group: loginGroup, joined: joinedLoginGroup } = chromeLoginGroups.prepare(groupKey);
   return new Promise((resolve) => {
     const payload = {
       type: "permission",
@@ -4659,13 +4689,23 @@ const askPermission = async ({ toolName, input, sessionId, toolUseID, title, sig
     // 祖先ごとに別の id の複製を作り、どれも同じ settle を指す。
     // web は「id ごとに1つの会話」の前提のまま動き、消せば勝手に片付く
     // 承認の id は、ツールの id があれば会話の id との組から決まる値（付け直しで旧サーバーと同じ id になる。core/approval-id.mjs）
-    const cards = [{ id: approvalIds.next(sessionId, toolUseID), payload, relay: false }, ...ancestors.map((ancestor) => ({
+    const cards = [{ id: approvalIds.next(sessionId, toolUseID), payload, relay: false }, ...ancestors.filter((ancestor, index) => !(joinedLoginGroup && index === 0)).map((ancestor) => ({
       id: approvalIds.next(ancestor, toolUseID),
       relay: true,
       // Tool-wide grants stay in the child. Browser and computer grants show the specific agent
       // and origin / app, so the same choices are available to ancestors.
-      payload: { ...payload, sessionId: ancestor, canAlways: !!browserSite || !!computerApp, title: title ? t('permission.relayTitleWith', { child: childTitle, title }) : t('permission.relayTitle', { child: childTitle }) },
+      payload: { ...payload, sessionId: ancestor, targetSessionId: sessionId, canAlways: !!browserSite || !!computerApp, title: title ? t('permission.relayTitleWith', { child: childTitle, title }) : t('permission.relayTitle', { child: childTitle }) },
     }))];
+    if (loginGroup) {
+      loginGroup.members.set(sessionId, { sessionId, taskId: askingMeta?.delegation?.taskId ?? null, title: childTitle, cards, settle: answer => settle(answer) });
+      if (!joinedLoginGroup) loginGroup.parentCardId = cards.find(card => card.payload.sessionId === directParent)?.id ?? null;
+      const parentCard = runtime.waiting.get(loginGroup.parentCardId);
+      if (parentCard) {
+        const waitingTasks = [...loginGroup.members.values()].map(({ taskId, title }) => ({ taskId, title }));
+        parentCard.payload.browserHandoff = { ...parentCard.payload.browserHandoff, waitingTasks };
+        emitGlobal({ type: 'permissionUpdate', id: loginGroup.parentCardId, sessionId: directParent, browserHandoff: parentCard.payload.browserHandoff });
+      }
+    }
     // 端末の AI に任された子の承認は、端末（依頼元の会話）へも中継する（docs/remote.md §4.5）。決着したら端末のカードも畳む
     let remoteRelay = null;
     // 決着していなければ、全部のカードの browserHandoff に patch を重ねて知らせる（カードの id は替えない。ADR 0168）
@@ -4681,6 +4721,29 @@ const askPermission = async ({ toolName, input, sessionId, toolUseID, title, sig
     };
     const onAbort = () => settle({ allow: false, messageKey: 'aborted' });
     const settle = (answer) => {
+      const nextLogin = loginGroup ? chromeLoginGroups.finish(groupKey, loginGroup, sessionId, answer) : null;
+      const parentCard = nextLogin && cards.find(card => card.id === loginGroup.parentCardId);
+      if (parentCard) {
+        cards.splice(cards.indexOf(parentCard), 1);
+        nextLogin.cards.push(parentCard);
+        const waiting = runtime.waiting.get(parentCard.id);
+        const nextWait = runtime.waiting.get(nextLogin.cards[0].id);
+        if (waiting) {
+          waiting.settle = nextLogin.settle;
+          waiting.origin = nextLogin.sessionId;
+          waiting.payload.targetSessionId = nextLogin.sessionId;
+          waiting.payload.browserHandoff = { ...nextWait?.payload.browserHandoff, targetSessionId: nextLogin.sessionId,
+            waitingTasks: [...loginGroup.members.values()].map(({ taskId, title }) => ({ taskId, title })) };
+          emitGlobal({ type: 'permissionUpdate', id: parentCard.id, sessionId: directParent, browserHandoff: waiting.payload.browserHandoff });
+        }
+      } else if (loginGroup && nextLogin) {
+        const waiting = runtime.waiting.get(loginGroup.parentCardId);
+        if (waiting) {
+          waiting.payload.browserHandoff = { ...waiting.payload.browserHandoff,
+            waitingTasks: [...loginGroup.members.values()].map(({ taskId, title }) => ({ taskId, title })) };
+          emitGlobal({ type: 'permissionUpdate', id: loginGroup.parentCardId, sessionId: directParent, browserHandoff: waiting.payload.browserHandoff });
+        }
+      }
       // どれか1つで決着し、残りの複製も消す。1つも残っていなければ二重解決
       let found = false;
       for (const card of cards) if (runtime.waiting.delete(card.id)) found = true;
@@ -5176,7 +5239,7 @@ agentTasks = await createAgentTasks({
   changed: () => { broadcastRunning(); completionNotices.changed(); remoteTasksChanged(); },
   // 人間の承認を待っているか。承認は core/server.mjs 側にしかないので判定を渡す。
   // 中継の複製も数える（孫が止まっていれば、その子も止まっている）
-  waiting: sessionId => Boolean(sessionId) && blockingWaits().some(w => w.payload.sessionId === sessionId),
+  waiting: sessionId => Boolean(sessionId) && [...runtime.waiting.values()].some(w => w.payload.sessionId === sessionId && (blocksTurn(w) || (!w.relay && w.payload.browserHandoff))),
   // ホストに任せたタスクの写し: 依頼元の会話に中継された承認を待っているか・会話の中断でホストのタスクも止める（core/remote-delegation.mjs）
   remoteWaiting: row => remoteDelegation.waitingFor(row.taskId),
   cancelHost: row => remoteDelegation.cancelHost(row),
@@ -5245,7 +5308,7 @@ agentTasks = await createAgentTasks({
     if (worktree) await worktreeHost.worktrees.update(worktree.id, { sessionId }).catch(() => {});
     try {
       await store.setMeta(sessionId, { ...info, backend: backend.id, unsent: true });
-      await chromeProfiles?.startNew(sessionId);
+      await chromeProfiles?.inherit(owner, sessionId);
       await store.setMode(sessionId, mode); await store.setModel(sessionId, model);
       await store.setSessionData(sessionId, 'effort', effort);
       // 端末の AI から任された子は、出どころ（どの端末の・どの会話の AI か。画面の「⇄ <端末> の AI から」）と、依頼元の承認モードを残す
