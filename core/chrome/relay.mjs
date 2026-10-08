@@ -138,10 +138,12 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, scop
       windows: scope.snapshot?.() ?? [],
     };
   }
-  /** carry の一時停止の印を戻す。at は時刻 ms、by は control が付けた印（文字列）だけ受ける */
+  /** carry の一時停止の印を戻す。at は時刻 ms、by は control が付けた印（文字列）、viewport は端末が引き継いだときの映像の箱（数だけ受ける） */
   const restoredPause = saved => {
     const mark = { at: Number.isFinite(saved.at) ? saved.at : Date.now() };
     if (typeof saved.by === 'string' && saved.by.length <= 40) mark.by = saved.by;
+    const v = saved.viewport;
+    if (v && [v.width, v.height, v.scale].every(n => Number.isFinite(n) && n > 0 && n <= 10_000)) mark.viewport = { width: v.width, height: v.height, scale: v.scale };
     return mark;
   };
   /** 持ち越す状態が変わった。聞き手（server.mjs → link.setCarry。200 ms でまとめる）へ今の状態を渡す */
@@ -926,10 +928,11 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, scop
       changed(entry);
     },
     /** 引き継ぎ（一時停止）にする。接続は切らず、以後のコマンドを PAUSED_MESSAGE で断る。at は一時停止の始まり（戻したときの経過時間に使う） */
-    pause(sessionId, at = Date.now()) {
+    pause(sessionId, at = Date.now(), { by, viewport } = {}) {
       const entry = entries.get(sessionId);
       if (!entry || entry.paused) return false;
-      entry.paused = { at };
+      // by・viewport は引き継ぎの印として carry に載り、更新を越えて残る（端末が引き継いでいる印）
+      entry.paused = { at, ...(typeof by === 'string' ? { by } : {}), ...(viewport ? { viewport: { ...viewport } } : {}) };
       suspendAgent(entry);
       changed(entry);
       return true;

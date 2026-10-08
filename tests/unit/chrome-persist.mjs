@@ -74,7 +74,7 @@ export default async function (t) {
     const adopted = await conn.adopt();
     // 第 6 段の control（server.mjs と同じく、restore の後に作る。一時停止のまま引き継がれた会話の撮影を断つ）
     const captureLog = [];
-    const control = createChromeControl({ relay, os, capture: { suspend: id => captureLog.push(`suspend:${id}`), resume: id => captureLog.push(`resume:${id}`) }, log: line => logs.push(line) });
+    const control = createChromeControl({ relay, os, capture: { suspend: id => captureLog.push(`suspend:${id}`), resume: id => captureLog.push(`resume:${id}`), operate: (id, viewport) => captureLog.push(`operate:${id}:${viewport ? `${viewport.width}x${viewport.height}@${viewport.scale}` : 'off'}`) }, log: line => logs.push(line) });
     relay.onCarry(carry => link.setCarry(carry));
     if (os.capabilities().supported) await relay.readopt();
     return { link, conn, relay, control, captureLog, logs, adopted };
@@ -248,6 +248,46 @@ export default async function (t) {
         b.control.state('conv-5').state !== 'paused' && shown().length === 0 && os.hwnds().some(h => h.agent && h.concealed && !h.closed) && b.captureLog.includes('resume:conv-5') && b.relay.scope.isRevealed('conv-5') === false);
       ag3.close();
       await b.relay.close(); await b.conn.close(); await b.link.quit();
+    }
+
+    // ===== 7. 端末から引き継いでいる間に更新: by・映像の箱が載り、新しいサーバーでも端末の引き継ぎのまま。openForConversation は新しい待ち受けでも動く =====
+    {
+      await clearChildren();
+      const chrome = await startFakeChrome({ permission: 'auto' });
+      cleanups.push(() => chrome.stop());
+      const os = fakeChromeOs({ chrome });
+      const a = await newServer(chrome, os);
+      const url = await a.relay.endpoint('conv-7');
+      const ag = await agent(url);
+      await ag.cmd('Target.setDiscoverTargets', { discover: true });
+      const tabId = (await ag.cmd('Target.createTarget', { url: 'about:blank' })).result.targetId;
+      const took = await a.control.takeOver('conv-7', { by: 'device', width: 390, height: 700, scale: 2 });
+      t.ok('前提: 端末から引き継ぐと by: device・窓は見せない', took.state === 'paused' && took.by === 'device' && os.hwnds().filter(h => h.agent && !h.concealed && !h.closed).length === 0, JSON.stringify(took));
+      const entry = a.relay.snapshot().entries.find(e => e.id === 'conv-7');
+      t.ok('carry の一時停止の印に by と映像の箱が載る', entry?.paused?.by === 'device' && entry.paused.viewport?.width === 390 && entry.paused.viewport.scale === 2 && !a.relay.snapshot().windows.some(w => w.revealed), JSON.stringify(entry));
+      await leave(a);
+      ag.close();
+
+      const b = await newServer(chrome, os);
+      const state = b.control.state('conv-7');
+      t.ok('新しいサーバー: 端末の引き継ぎのまま（by: device・since 同じ）で、映像は断たず、箱を映像に伝え直す',
+        state.state === 'paused' && state.by === 'device' && state.since === entry.paused.at && !b.control.captureBlocked('conv-7')
+        && !b.captureLog.includes('suspend:conv-7') && b.captureLog.includes('operate:conv-7:390x700@2'), JSON.stringify([state, b.captureLog]));
+      const ag2 = await agent(url);
+      const refused = await ag2.cmd('Target.createTarget', { url: 'about:blank' });
+      t.ok('新しいサーバー: 端末が操作している間もエージェントのコマンドは PAUSED で断られる', refused.error?.message === PAUSED_MESSAGE, JSON.stringify(refused));
+      ag2.close();
+      await b.control.resume('conv-7');
+      t.ok('端末の引き継ぎを戻すと、箱を戻して一時停止が解ける', b.control.state('conv-7').state !== 'paused' && b.captureLog.includes('operate:conv-7:off'), JSON.stringify([b.control.state('conv-7'), b.captureLog]));
+
+      // openForConversation: 同じポート・同じ鍵の新しい待ち受けで、新しい会話の窓を開く
+      const port = b.relay.snapshot().port;
+      const opened = await b.relay.openForConversation('conv-8', 'http://127.0.0.1:1/');
+      t.ok('新しい待ち受けでも openForConversation が窓を開く（同じポート）', typeof opened.targetId === 'string' && b.relay.snapshot().port === port && chrome.browser.targets().some(x => x.targetId === opened.targetId), JSON.stringify(opened));
+      await leave(b);
+      const c = await newServer(chrome, os);
+      t.ok('開いた会話も次の更新で引き継がれる（窓の印・同じポート）', c.relay.snapshot().port === port && c.relay.snapshot().windows.some(w => w.id === 'conv-8'), JSON.stringify(c.relay.snapshot()));
+      await c.relay.close(); await c.conn.close(); await c.link.quit();
     }
 
     // ===== 6. 見せている窓を層が引き継げなかったとき: 人の窓のタブは CDP で閉じない（記録だけ捨てる）=====

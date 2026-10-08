@@ -58,6 +58,12 @@ export function createChromeControl({ relay, os, now = Date.now, record = async 
    * 端末が引き継いでいる間は断らない（端末はその映像で操作する）。paused でなくなった（Chrome が閉じた・会話の削除など）端末の引き継ぎは、大きさを戻して片付ける
    */
   function syncCapture(sessionId) {
+    // 更新を越えて引き継がれた端末の引き継ぎ（carry の paused.by・viewport）: 端末の印と映像の箱を立て直す（映像は断たず、人が端末で操作を続けられる）
+    const saved = relay.state(sessionId)?.paused;
+    if (saved?.by === 'device' && saved.viewport && !devices.has(sessionId)) {
+      devices.set(sessionId, saved.viewport);
+      safe('operate', () => Promise.resolve(capture?.operate?.(sessionId, saved.viewport)).catch(error => log(`chrome-control: operate failed: ${error?.message ?? error}`)));
+    }
     if (!relay.state(sessionId)?.paused && devices.has(sessionId)) { devices.delete(sessionId); safe('operate', () => capture?.operate?.(sessionId, null)); }
     for (const id of [...devices.keys()]) if (!relay.state(id)) { devices.delete(id); safe('operate', () => capture?.operate?.(id, null)); }
     if (!capture) return;
@@ -115,7 +121,7 @@ export function createChromeControl({ relay, os, now = Date.now, record = async 
     if (!viewport) throw new ChromeControlError('INVALID', 'the size of the device view is needed');
     if (!relay.view?.tabs?.(sessionId)?.length) throw new ChromeControlError('NO_WINDOW', 'no agent browser window to hand over');
     devices.set(sessionId, viewport);   // pause の中の同期の syncCapture が、映像を断らないように先に立てる
-    relay.pause(sessionId, now());
+    relay.pause(sessionId, now(), { by: 'device', viewport });
     await Promise.resolve(capture?.operate?.(sessionId, viewport)).catch(error => log(`chrome-control: operate failed: ${error?.message ?? error}`));
     return stateOf(sessionId);
   }
