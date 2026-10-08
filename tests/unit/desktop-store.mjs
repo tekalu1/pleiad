@@ -58,9 +58,10 @@ export default async function (t) {
   const plain = { platform: 'win32', execPath: 'C:\\Users\\u\\AppData\\Local\\Programs\\Pleiad\\Ply.exe' };
   const alias = 'C:\\Users\\u\\AppData\\Local\\Microsoft\\WindowsApps\\Ply.exe';
   t.ok('識別子は Windows の windowsStore だけで決まる', packagedIdentity(store) && !packagedIdentity(plain) && !packagedIdentity({ platform: 'darwin', windowsStore: true }));
-  t.ok('Store の版の起動口は App Execution Alias', stableLauncher({ proc: store, env: { LOCALAPPDATA: 'C:\\Users\\u\\AppData\\Local' }, exists: p => p === alias }) === alias);
-  t.ok('エイリアスが無ければパッケージの中の実行ファイル', stableLauncher({ proc: store, env: { LOCALAPPDATA: 'C:\\Users\\u\\AppData\\Local' }, exists: () => false }) === store.execPath);
-  t.ok('NSIS の版は今までどおり実行ファイル', stableLauncher({ proc: plain, env: { LOCALAPPDATA: 'C:\\Users\\u\\AppData\\Local' }, exists: () => true }) === plain.execPath);
+  t.ok('Store の版の起動口は App Execution Alias', stableLauncher({ proc: store, env: { LOCALAPPDATA: 'C:\\Users\\u\\AppData\\Local' } }) === alias);
+  t.ok('識別子が付かなくても plyStore 版はエイリアスを指す', stableLauncher({ proc: { ...store, windowsStore: false }, env: { LOCALAPPDATA: 'C:\\Users\\u\\AppData\\Local' }, store: true }) === alias);
+  t.ok('LOCALAPPDATA が無いときも版ごとのパスは貼らない', stableLauncher({ proc: store, env: {} }) === 'Ply.exe');
+  t.ok('NSIS の版は今までどおり実行ファイル', stableLauncher({ proc: plain, env: { LOCALAPPDATA: 'C:\\Users\\u\\AppData\\Local' } }) === plain.execPath);
 
   // ---------------------------------------------------------------- Store 用の設定
   const placeholder = loadStoreConfig({ PLY_STORE_IDENTITY_NAME: undefined, PLY_STORE_PUBLISHER: undefined, PLY_STORE_REQUIRE_IDENTITY: undefined });

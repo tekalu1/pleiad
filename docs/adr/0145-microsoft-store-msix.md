@@ -19,6 +19,8 @@ Microsoft Store は個人の登録が無料で、提出された MSIX に Store 
 - **別の設定で作る**: Store 用は `electron-builder.store.cjs`（`appx` ターゲット）。NSIS の設定と配布の流れは変えない。appId・`Ply.exe`・`agent-host` は NSIS と同じ（[ADR 0019](0019-rename-ply-to-pleiad-keep-identifiers.md)）。Store が割り当てる Identity の値は環境変数で渡し、コードに書かない。Store には正式な版だけを出す（`-beta.N` の版は同じ 4 桁の番号になる）。
 - **更新は Store に任せる**: Store の版（焼き込んだ `plyStore: true`、または `process.windowsStore`）では electron-updater を使わない。画面は Store で更新する案内を出す。
 - **AUMID とジャンプリスト**: パッケージの識別子があれば `jp.ply.desktop` の AUMID を付けず、Windows が付けるパッケージの AUMID に任せる。ジャンプリストと、外に残す起動口は App Execution Alias（`Ply.exe`）を指す。
+- **MCP の貼り付け用設定**: Store 版（`plyStore` または `process.windowsStore`）は manifest の App Execution Alias を起動する。`-e` の入口が起動した現在の版の `process.execPath` から `resources\app\bin\pleiad.mjs` を探す。設定には版ごとの実行ファイルとスクリプトのパスを残さない。
+- **生成内容の報告**: AI の返答のメニューから Pleiad 開発者の GitHub Issue 作成画面を開く。Pleiad は利用者自身の AI CLI を動かすホストだが、Store ポリシー 11.16 の報告先はアプリの開発者とする。会話本文は自動で載せず、共有内容は利用者に選んでもらう。開発者は報告を確認し、Pleiad の問題なら直し、モデル・CLI の問題なら提供元への報告を案内する。
 - **仮想化は切る申請をする（未決）**: 最初の提出で `unvirtualizedResources` を申請し、`desktop6:FileSystemWriteVirtualization`・`desktop6:RegistryWriteVirtualization` を `disabled` にする。理由として、利用者の PC で利用者の CLI を動かす開発の道具であり、エージェントの作業の結果が利用者のほかのアプリから見える必要があることを書く。
 - **却下されたとき（未決）**: 仮想化を残したまま、次の 2 つで補う。
   - userData を AppData の外に置き、NSIS 版の `Local State` を写して safeStorage の鍵を引き継ぐ。
@@ -37,6 +39,6 @@ Microsoft Store は個人の登録が無料で、提出された MSIX に Store 
 ## 影響
 
 - `npm run desktop:store` で Store 用の MSIX を作る。CI のジョブはまだ無い。
-- Store の版では「MCP の設定をコピー」が版ごとのパスを貼るので、更新で切れる。エイリアスを使う形に直すまでは案内が要る。
+- Store の版で新しくコピーする MCP 設定はエイリアスを使う。以前コピーした版番号入りの設定は利用者が貼り直す必要がある。
 - 同じ PC に NSIS 版と Store 版を両方入れると、スタートメニューに Pleiad が 2 つ並ぶ。`~/.agent-host` は共有で、同時には 1 つしか動かない。Store へ移った利用者には NSIS 版のアンインストールを案内する。
-- 審査では、外部の CLI への依存・生成 AI・computer use・シェルの起動（Windows 10 S）を説明する（[microsoft-store.md](../microsoft-store.md)「Store の審査とポリシー」）。生成 AI の内容を報告する導線を製品に足す。
+- 審査では、外部の CLI への依存・生成 AI・computer use・シェルの起動（Windows 10 S）と、AI の返答から報告する手順を説明する（[microsoft-store.md](../microsoft-store.md)「Store の審査とポリシー」）。
