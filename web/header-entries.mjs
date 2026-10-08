@@ -85,7 +85,7 @@ export function setupBrowserEntry({ button, browser, preview, chrome = () => nul
     const id = activeId();
     const hasWindow = Boolean(id && chromeAvailable() && windows?.has(id));
     button.hidden = !browser && !hasWindow;
-    button.toggleAttribute('data-mobile-chrome', hasWindow);
+    if (hasWindow) button.setAttribute('data-mobile-chrome', ''); else button.removeAttribute('data-mobile-chrome');
     if (button.hidden) return;
     if (id && chromeOpen()) lastView.set(id, 'chrome');
     else if (id && preview.browserOpen()) lastView.set(id, 'viewer');

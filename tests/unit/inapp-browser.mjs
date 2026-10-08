@@ -407,27 +407,27 @@ export default async function (t) {
     try {
       entry = setupBrowserEntry({ button, browser: panel, preview, bridge, mac: false });
       assert.equal(button.hidden, false, 'デスクトップ版のホストの画面では出す');
-      assert.equal(button.attrs.title, '内蔵ブラウザー（Ctrl+Shift+B）');
-      assert.equal(button.getAttribute('aria-label'), '内蔵ブラウザー');
+      assert.equal(button.attrs.title, 'ブラウザー（Ctrl+Shift+B）');
+      assert.equal(button.getAttribute('aria-label'), 'ブラウザー');
       assert.equal(button.getAttribute('aria-keyshortcuts'), 'Control+Shift+B');
-      assert.equal(button.getAttribute('aria-pressed'), 'false');
+      assert.equal(button.getAttribute('aria-expanded'), 'false');
       const newTabs = () => bridge.calls.filter(c => c[0] === 'newTab').length;
       const click = async () => { button.dispatchEvent({ type: 'click' }); await new Promise(r => setTimeout(r, 0)); };
 
       await click();
       assert.equal(open, true, '押すと右パネルがブラウザーになる');
       assert.equal(newTabs(), 1, 'タブが無ければ空の新しいタブを作る');
-      assert.equal(button.getAttribute('aria-pressed'), 'true'); assert.equal(button.classList.contains('on'), true, '表示中は青い字');
+      assert.equal(button.getAttribute('aria-expanded'), 'true'); assert.equal(button.classList.contains('on'), true, '表示中は青い字');
       assert.equal(opener, button, '閉じたときのフォーカスの戻り先はボタン');
       await click();
       assert.equal(open, false, 'もう一度押すと閉じる');
       assert.equal(focused.at(-1), button, 'フォーカスはボタンへ戻る');
-      assert.equal(button.getAttribute('aria-pressed'), 'false'); assert.equal(button.classList.contains('on'), false);
+      assert.equal(button.getAttribute('aria-expanded'), 'false'); assert.equal(button.classList.contains('on'), false);
       await click();
       assert.equal(open, true); assert.equal(newTabs(), 1, '前のタブがあればそのまま（新しいタブを作らない）');
       assert(!bridge.calls.some(c => c[0] === 'reload' || c[0] === 'open'), '開き直しで再読み込みしない');
       preview.close();   // Esc・閉じるボタンの経路（右パネルが閉じる）
-      assert.equal(button.getAttribute('aria-pressed'), 'false', '右パネルの側で閉じても押されていない状態に戻る');
+      assert.equal(button.getAttribute('aria-expanded'), 'false', '右パネルの側で閉じても押されていない状態に戻る');
       assert.equal(focused.at(-1), button);
 
       // 近道: 画面の keydown と、ページにフォーカスがあるとき（main から）
@@ -448,7 +448,7 @@ export default async function (t) {
       N.prototype.focus = savedFocus; delete N.prototype.select;
     }
   });
-  t.ok('頭の行のブラウザー: 押すと開く・もう一度で閉じてボタンへ戻る・タブが無いときだけ新しいタブ・aria-pressed・操作中の弧と名前・近道（IME の変換中は効かない・ページから）', true);
+  t.ok('頭の行のブラウザー: 押すと開く・もう一度で閉じてボタンへ戻る・タブが無いときだけ新しいタブ・aria-expanded・操作中の弧と名前・近道（IME の変換中は効かない・ページから）', true);
 
   // ---- preload
   const local = runPreload('preload.cjs'), remote = runPreload('remote-preload.cjs');
