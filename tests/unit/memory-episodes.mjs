@@ -5,7 +5,7 @@ import path from 'node:path';
 import { createChannelService } from '../../core/channels/service.mjs';
 import { createMemoryService } from '../../core/memory/service.mjs';
 import { createMemoryLearner } from '../../core/memory/learn.mjs';
-import { createEpisodes } from '../../core/memory/episodes.mjs';
+import { createEpisodes, EPISODE_QUIET_MS, MAX_DEFERRALS, STALE_WORKING_MS } from '../../core/memory/episodes.mjs';
 import { splitLeadingNotes } from '../../core/system-messages.mjs';
 
 export const name = 'memory-episodes';
@@ -86,10 +86,89 @@ export default async function (t) {
     assert.ok(limited.length <= 1350, '申し送りは約 1k トークンの枠に収める');
     assert.ok(limited.includes('&lt;pleiad-bot-recent>'));
     t.ok('要約は bot ごと・出どころの検査を通し、申し送りは安全な本文だけ', true);
+
+    // 作業中のまま消された投稿は、消した時点で作業中の印を外す
+    const gone = await channels.post({ channelId: channel.id, threadId: ids[0], text: '…', state: 'working', turn: { botId, sessionId: 's_gone' } }, { kind: 'bot', botId });
+    await channels.remove({ channelId: channel.id, postId: gone.id }, { kind: 'bot', botId });
+    const goneAfter = (await channels.read({ channelId: channel.id, threadId: ids[0], limit: 100 })).posts.find((p) => p.id === gone.id);
+    assert.ok(goneAfter.deletedAt && goneAfter.state === undefined, '消した投稿に working が残らない');
+    t.ok('作業中のまま消した投稿は working を外す', true);
   } finally {
     episodes?.stop();
     memory.stop();
     await channels.close();
     await fs.rm(dir, { recursive: true, force: true });
   }
+  await digestWhileWorking(t);
+}
+
+/** 作業中の投稿があるときの再予約（実際の Claude を呼ばない）。タイマーは手で進める */
+export async function digestWhileWorking(t) {
+  const botId = 'b_owl12345';
+  const clock = { at: 10_000_000_000 };
+  const timers = [];
+  const state = { thread: { sessions: { [botId]: 's' }, state: 'idle', digest: {} }, extra: [] };
+  const human = { id: 'p_root', threadId: 'p_root', author: { kind: 'human' }, text: '依頼です', at: clock.at - 3_600_000 };
+  const channels = {
+    threads: { list: async () => [], get: async () => state.thread, update: async (_c, _t, patch) => { Object.assign(state.thread, typeof patch === 'function' ? patch(state.thread) : patch); } },
+    get: async () => ({ id: 'c_1' }),
+    read: async () => ({ posts: [human, ...state.extra] }),
+  };
+  let summaries = 0;
+  const episodes = createEpisodes({ channels, bots: { get: async () => ({ id: botId }) }, now: () => clock.at,
+    summarize: async () => { summaries++; return { text: '要約', commit: async () => {} }; },
+    setTimer: (fn, delay) => { const timer = { fn, delay, live: true }; timers.push(timer); return timer; }, clearTimer: (timer) => { timer.live = false; } });
+  const fire = async () => {
+    const timer = timers.filter((x) => x.live).at(-1);
+    assert.ok(timer, '予約が残っている');
+    timer.live = false;
+    timer.fn();
+    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setImmediate(resolve));
+    return timer;
+  };
+  await episodes.start();
+  try {
+    // 作業中の投稿がある間は、要約（Claude）を呼ばずに待つ
+    state.extra = [{ id: 'p_w', threadId: 'p_root', author: { kind: 'bot', botId }, text: '…', state: 'working', at: clock.at - 1000 }];
+    episodes.onTurnEnd('c_1', 'p_root');
+    await fire();
+    assert.equal(summaries, 0, '作業中の投稿があるとき summarize を呼ばない');
+    assert.ok(timers.some((x) => x.live), '作業中は待ち直す');
+
+    // 長く書き換わっていない working（止まったターンの残り）では止まらない
+    state.extra = [{ id: 'p_w', threadId: 'p_root', author: { kind: 'bot', botId }, text: '…', state: 'working', at: clock.at - STALE_WORKING_MS - 1 }];
+    await fire();
+    assert.equal(summaries, 1, '古い working は作業中とみなさず要約する');
+    assert.equal(state.thread.digest[botId].text, '要約');
+    assert.ok(!timers.some((x) => x.live), '要約を保存したら再予約しない');
+
+    // 消された working の投稿も作業中に数えない
+    state.thread.digest = {};
+    state.extra = [{ id: 'p_d', threadId: 'p_root', author: { kind: 'bot', botId }, text: '', state: 'working', deletedAt: clock.at - 1000, at: clock.at - 2000 }];
+    episodes.onTurnEnd('c_1', 'p_root');
+    await fire();
+    assert.equal(summaries, 2, '消された working の投稿で止まらない');
+
+    // 作業中が続いても、再予約には回数の上限と間隔の伸びがある
+    state.thread.digest = {};
+    state.extra = [{ id: 'p_w', threadId: 'p_root', author: { kind: 'bot', botId }, text: '…', state: 'working', at: clock.at }];
+    episodes.onTurnEnd('c_1', 'p_root');
+    const delays = [EPISODE_QUIET_MS];
+    for (let n = 0; n <= MAX_DEFERRALS; n++) {
+      clock.at += 1;
+      state.extra[0].at = clock.at;
+      const before = timers.length;
+      await fire();
+      if (timers.length > before) delays.push(timers.at(-1).delay);
+    }
+    assert.equal(delays.length, MAX_DEFERRALS + 1, `再予約は ${MAX_DEFERRALS} 回まで`);
+    assert.ok(!timers.some((x) => x.live), '上限に達したら次の出来事まで予約しない');
+    assert.ok(delays.every((d, i) => i === 0 || d >= delays[i - 1]) && delays.at(-1) > delays[1], '間隔は伸びる');
+    assert.equal(summaries, 2, '待っている間は Claude を呼ばない');
+    // 次の出来事で数え直す
+    episodes.onTurnEnd('c_1', 'p_root');
+    assert.ok(timers.some((x) => x.live), '新しい出来事で予約し直す');
+    t.ok('作業中は Claude を呼ばず、古い working では止まらず、再予約には上限がある', true);
+  } finally { episodes.stop(); }
 }

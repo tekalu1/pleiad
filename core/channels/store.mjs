@@ -60,6 +60,8 @@ export function foldOp(posts, op) {
     if (post.deletedAt) return post;
     post.deletedAt = op.at;
     post.text = '';
+    // 作業中のまま消された投稿（何も言わずに終えたターンの投稿）が、作業中として数え続けられないようにする
+    if (post.state === 'working' || post.state === 'waiting') delete post.state;
     post.reactions = {};
     delete post.presents;
     delete post.attachments;
