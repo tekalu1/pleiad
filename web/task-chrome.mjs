@@ -16,6 +16,22 @@ export function confirmCloseWindow({ risk, run, showMenu, anchor, t }) {
   ], { text, wrap: true });
 }
 
+/**
+ * 右パネルの ⋯ に足す、委譲の子の窓の行（browser.chromeWindows の taskId のある行）。子の窓の映像は子の会話で見るので、押すとその会話を開く。
+ * rows が空・窓の無い行だけなら空
+ */
+export function childWindowItems(rows, { open, t }) {
+  const list = (Array.isArray(rows) ? rows : []).filter(row => row?.taskId && row.sessionId && row.windows > 0);
+  if (!list.length) return [];
+  // i18n-dynamic: ui:taskChrome.
+  const stateWord = value => t(`taskChrome.${['running', 'paused', 'stopped', 'idle'].includes(value) ? value : 'idle'}`);
+  return [{ label: t('browser.chromeWindow.childrenHeading'), disabled: true }, ...list.map(row => ({
+    label: [row.title || t('browser.chromeWindow.childUntitled'), row.profileName || row.profile?.dir || t('taskChrome.unknown'), stateWord(row.state),
+      ...(row.waiting ? [t('browser.chromeWindow.childWaiting')] : []), ...(row.windows > 1 ? [t('browser.chromeWindow.childCount', { n: row.windows })] : [])].join(' · '),
+    onClick: () => open(row.sessionId),
+  }))];
+}
+
 export function paintTaskChrome(card, row, { el, open, close, busy = () => false, t }) {
   let line = card.querySelector(':scope > .tc-task-chrome');
   if (!row?.windows) { line?.remove(); return; }

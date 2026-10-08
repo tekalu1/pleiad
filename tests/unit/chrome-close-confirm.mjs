@@ -93,6 +93,32 @@ export default async function (t) {
     r.menus[0].items.at(-1).onClick();
     await flush();
     t.ok('確かめが要らない窓は、⋯ からそのまま閉じる', r.menus.length === 1 && r.closes().length === 1);
+
+    // ⋯ の窓の一覧に、browser.chromeWindows の子の行を足す（押すとその子の会話を開く）
+    {
+      const menus = [], opened = [], windows = createWindowTable();
+      let toolbar = null, open = false, rows = [];
+      const preview = { openPanel: opts => { toolbar = opts.toolbar; open = true; }, panelOpen: () => open, close: () => { open = false; } };
+      windows.apply({ sessionId: 'conv', windows: 1, windowIds: [7], currentWindowId: 7 });
+      const panel = setupChromePanel({ cmd: async name => (name === 'browserScreencast' ? { state: {} } : {}), preview, browser: {}, session: () => 'conv', windows,
+        showMenu: (x, y, items, title) => menus.push({ items, title }), children: () => rows, openChild: id => opened.push(id) });
+      panel.open();
+      await flush();
+      toolbar.at(-1).onclick();
+      t.ok('子の窓が無ければ、一覧は自分の窓と閉じるだけ', menus[0].items.length === 3 && menus[0].items.every(item => !item.onClick || item.label === '窓を閉じる'), JSON.stringify(menus[0].items.map(i => i.label)));
+      rows = [{ sessionId: 'conv', taskId: null, title: null, windows: 1, state: 'idle' },
+        { sessionId: 'a', taskId: 'ta', title: '調査', windows: 2, profileName: '仕事', state: 'running', waiting: true },
+        { sessionId: 'gone', taskId: 'tg', title: '終了', windows: 0, state: 'idle' }];
+      toolbar.at(-1).onclick();
+      const labels = menus[1].items.map(item => item.label);
+      const child = menus[1].items.find(item => /調査/.test(item.label ?? ''));
+      t.ok('子の窓の行は、題・プロフィール・状態・依頼待ち・枚数を並べ、自分の行と窓の無い行は足さない',
+        !!child && /仕事/.test(child.label) && /作業中/.test(child.label) && /依頼待ち/.test(child.label) && /2 窓/.test(child.label)
+        && !labels.some(label => /終了/.test(label ?? '')) && labels.filter(label => /子の会話の窓/.test(label ?? '')).length === 1, JSON.stringify(labels));
+      child.onClick();
+      t.ok('子の行を押すと、その子の会話を開く', opened.join() === 'a');
+      t.ok('「窓を閉じる」は最後のまま', menus[1].items.at(-1).label === '窓を閉じる');
+    }
   } finally {
     globalThis.requestAnimationFrame = old.raf; N.prototype.getBoundingClientRect = old.rect; N.prototype.toggleAttribute = old.toggle; globalThis.window = old.window;
   }

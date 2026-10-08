@@ -202,14 +202,21 @@ export function createBrowserPanel({ bridge = window.plyDesktop?.browser, showMe
         const mark = el('span', 'browser-tab-mark'); mark.innerHTML = svg('<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3.6"/><path d="M12 8.4h8.4M9 13.8l-4.2 7.2M15 13.8l-4.2-7.2"/>');
         pick.append(mark, el('span', 'browser-tab-name', t('browser.chromeWindow.tab', { name: hooks.chromeName() })));
         const count = hooks.chromeCount();
-        if (count > 1) pick.append(el('span', 'browser-tab-count', String(count)));
+        // 窓の数の丸には名前が無いので、タブの名前に数を入れる（この会話と直接の子の窓の合計）
+        const tabName = t('browser.chromeWindow.tab', { name: hooks.chromeName() });
+        const countText = count > 1 ? t('browser.chromeWindow.windowCount', { n: count }) : '';
+        if (count > 1) {
+          const badge = el('span', 'browser-tab-count', String(count)); badge.setAttribute('aria-hidden', 'true'); badge.title = countText;
+          pick.append(badge);
+          pick.setAttribute('aria-label', `${tabName} · ${countText}`);
+        }
         // 依頼待ち（● 塗りの点）と人の操作中（Ⅱ 二本線）は形を変える。色だけで分けず、名前にも状態を入れる
         const flag = hooks.chromeMark();
         if (flag === 'requested' || flag === 'paused') {
           const badge = el('span', `browser-tab-flag flag-${flag}`); badge.setAttribute('aria-hidden', 'true');
           pick.append(badge);
           // i18n-dynamic: browser.entryState.
-          pick.setAttribute('aria-label', `${t('browser.chromeWindow.tab', { name: hooks.chromeName() })} · ${t(`browser.entryState.${flag}`, { name: hooks.chromeName() })}`);
+          pick.setAttribute('aria-label', `${tabName}${countText ? ` · ${countText}` : ''} · ${t(`browser.entryState.${flag}`, { name: hooks.chromeName() })}`);
         }
         if (hooks.chromeOperating()) pick.append(runMark(t('browser.chromeWindow.entryWorking', { name: hooks.chromeName() })));
         pick.onclick = () => { hooks.noteView('chrome'); hooks.openChrome(); };

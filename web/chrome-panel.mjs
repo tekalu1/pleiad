@@ -14,7 +14,7 @@ import { t } from './i18n.mjs';
 import { notify } from './file-actions.mjs';
 import { createFrameSink } from './screencast-frame.mjs';
 import { containRect, toPageCoords, toPageDelta } from './remote-browser.mjs';
-import { confirmCloseWindow } from './task-chrome.mjs';
+import { confirmCloseWindow, childWindowItems } from './task-chrome.mjs';
 
 const KEY = 'chrome-window';
 const HINT_MS = 2600;
@@ -59,9 +59,11 @@ export function createWindowTable() {
  * @param cmd       WS のコマンド
  * @param preview   web/file-preview.mjs の返り値（openPanel・close・panelOpen）
  * @param session   今の会話の id
+ * @param children  () → browser.chromeWindows の行（この会話と直接の子の窓）。⋯ の一覧に子の窓の行を足す
+ * @param openChild (子の会話の id) → 子の会話を開いて、その Chrome の窓を見る
  * @param getAgentName エージェントの名前（映像の名前に入れる）
  */
-export function setupChromePanel({ cmd, preview, browser = null, showMenu = null, session = () => null, getAgentName = () => 'Claude', windows = createWindowTable(), touch = null, closeRisk = () => null } = {}) {
+export function setupChromePanel({ cmd, preview, browser = null, showMenu = null, session = () => null, getAgentName = () => 'Claude', windows = createWindowTable(), touch = null, closeRisk = () => null, children = () => [], openChild = () => {} } = {}) {
   let root = null, parts = null, sessionId = null, state = null, frameMeta = null, quality = 'auto', ended = false, connecting = false, hintTimer = 0, observer = null, lastBox = null, resizeTimer = 0;
   let opener = null, openListeners = new Set(), notifyOpenChange = open => { for (const fn of openListeners) { try { fn(open); } catch {} } }, operating = false, waiting = null, closing = false;   // waiting: ⋯「Chrome で開く」で、窓ができるのを待っている会話と字
   const alwaysHint = touch ?? (() => { try { return matchMedia('(hover: none), (pointer: coarse)').matches; } catch { return false; } });
@@ -98,6 +100,9 @@ export function setupChromePanel({ cmd, preview, browser = null, showMenu = null
       const items = list.map(({ number, current }) => ({ label: t('browser.chromeWindow.windowNumber', { n: number }) +
         (current ? ` · ${t('browser.chromeWindow.windowCurrent')}` : ''), disabled: true }));
       if (items.length) items.push({ sep: true });
+      // 委譲の子の窓（browser.chromeWindows）。子の窓の映像は子の会話で見るので、押すとその会話を開く
+      const kids = childWindowItems(children(), { open: openChild, t });
+      if (kids.length) items.push(...kids, { sep: true });
       // 引き継ぎ中・依頼待ちの窓は、押した場所の下で確かめてから閉じる
       items.push({ label: t('browser.chromeWindow.close'), disabled: !list.length || closing,
         onClick: () => confirmCloseWindow({ risk: closeRisk(sessionId), run: closeCurrentWindow, anchor: windowMenu, t, showMenu }) });

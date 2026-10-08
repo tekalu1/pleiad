@@ -402,6 +402,27 @@ export default async function (t) {
   });
   t.ok('画面: Chrome のタブに依頼待ち（点）と人の操作中（二本線）を別の形で出し、片付いたら消す', true);
 
+  // ---- Chrome のタブの窓数: hook が返す合計（この会話と直接の子）を出し、丸に名前を付ける。1 枚なら出さない
+  await withWindow({ plyDesktop: { browser: null } }, async () => {
+    const bridge = fakeBridge();
+    window.plyDesktop.browser = bridge;
+    const panel = createBrowserPanel({ bridge, getSessionId: () => 's1' });
+    let count = 3, mark = '';
+    panel.connect({ chromeAvailable: () => true, chromeCount: () => count, chromeMark: () => mark, chromeName: () => 'Claude' });
+    bridge.push({ tabs: [], current: null, sessionId: 's1' });
+    const walk = (node, out = []) => { out.push(node); for (const child of node.children ?? []) walk(child, out); return out; };
+    const badge = () => walk(panel.tabsRow).find(n => /browser-tab-count/.test(n.className ?? ''));
+    const pick = () => walk(panel.tabsRow).find(n => /browser-tab-pick/.test(n.className ?? ''));
+    assert.equal(badge().textContent, '3', '窓数の丸は hook の合計');
+    assert.match(pick().getAttribute('aria-label'), /windowCount|3/, '丸の数がタブの名前に入る（丸だけでは名前が無い）');
+    mark = 'requested'; panel.refreshTabs();
+    assert.match(pick().getAttribute('aria-label'), /windowCount|3/, '状態の名前にも数が残る');
+    count = 1; mark = ''; panel.refreshTabs();
+    assert.equal(badge(), undefined, '1 枚なら丸を出さない');
+    assert.ok(pick().getAttribute('aria-label') == null);
+  });
+  t.ok('画面: Chrome のタブの窓数は hook の合計で、丸に名前（読み上げ）が付く', true);
+
   // ---- タブの列を作り直しても、列の中にあったフォーカスは選ばれたタブに残る（外にあったフォーカスは奪わない）
   await withWindow({ plyDesktop: { browser: null } }, async () => {
     const bridge = fakeBridge();

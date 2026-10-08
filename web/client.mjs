@@ -4687,6 +4687,8 @@ const TASK_LIVE = new Set(['queued', 'running', 'cancelling']);
  */
 const taskCards = { sessionId: null, rows: new Map(), ver: 0, live: new Map(), asked: new Set(), merged: null };
 const taskChromeRows = new Map();
+/** browser.chromeWindows の行そのまま（この会話と直接の子。入口の窓数と ⋯ の一覧が読む）。会話を替えたら捨てる */
+let chromeWindowRows = [];
 let taskChromeRequest = 0;
 /** 子の Chrome の窓を閉じている最中の会話（カードの × を押せなくする） */
 const closingChildWindows = new Set();
@@ -4715,14 +4717,18 @@ function closeChildChromeWindow(row, anchor) {
   confirmCloseWindow({ risk: closeRiskOf({ state: live.state, waiting: live.waiting === true || handoffWaiting(id) }), run, anchor, t,
     showMenu: (x, y, items, title) => showMenu(x, y, items, title) });
 }
+/** 直接の子が開いている窓の数（browser.chromeWindows の行。この会話の分は chromeWindows の表が持つ） */
+const childChromeWindowCount = () => chromeWindowRows.reduce((sum, row) => sum + (row.taskId && row.windows > 0 ? row.windows : 0), 0);
 async function refreshTaskChromeWindows(sessionId = state.current) {
   const request = ++taskChromeRequest;
   if (!sessionId) return;
   const rows = await cmd('invoke', { op: 'browser.chromeWindows', args: { sessionId } }).catch(() => []);
   if (request !== taskChromeRequest || state.current !== sessionId) return;
   taskChromeRows.clear();
-  if (Array.isArray(rows)) for (const row of rows) if (row.taskId) taskChromeRows.set(row.taskId, row);
+  chromeWindowRows = Array.isArray(rows) ? rows : [];
+  for (const row of chromeWindowRows) if (row.taskId) taskChromeRows.set(row.taskId, row);
   paintDelegateCards();
+  browserEntry?.paint(); browserPanel?.refreshTabs();
 }
 /**
  * Channels のスレッドが見ている bot の会話（子孫まで）の委譲の行。Chats の会話の分（taskCards.rows）とは別に持つので、Chats の会話を切り替えても消えない。
@@ -4752,7 +4758,7 @@ async function readTaskCards(sessionId) {
 }
 /** 会話を開いた・つなぎ直した・作業場所が変わった。その会話の分を読み直す（読めなければ今の分のまま） */
 async function loadTaskCards(sessionId) {
-  if (sessionId !== taskCards.sessionId) taskChromeRows.clear();
+  if (sessionId !== taskCards.sessionId) { taskChromeRows.clear(); chromeWindowRows = []; }
   const rows = await readTaskCards(sessionId);
   if (rows && state.current === sessionId) setTaskCards(sessionId, rows);
   if (state.current === sessionId) refreshTaskChromeWindows(sessionId);
@@ -8623,11 +8629,12 @@ $('gitEntry').onclick = () => gitPanel.toggle($('gitEntry'));
 chromePanel = setupChromePanel({ cmd, preview: filePreview, browser: browserPanel,
   showMenu: (x, y, items, title) => showMenu(x, y, items, title),
   session: () => state.current ?? null, getAgentName: () => labelOf(activeBackendId()), windows: chromeWindows,
+  children: () => chromeWindowRows, openChild: openChildChromeWindow,
   closeRisk: id => closeRiskOf({ state: chromeControlStore.get(id).state, waiting: handoffWaiting(id) }) });
 chromePanel.onOpenChange(() => { browserEntry?.paint(); browserPanel?.refreshTabs(); });
 browserPanel?.connect({ chromeAvailable: () => state.hostCaps?.chromeWindow === true,
   chromeOpen: () => chromePanel?.isOpen() === true,
-  chromeCount: () => chromeWindows.count(state.current),
+  chromeCount: () => chromeWindows.count(state.current) + childChromeWindowCount(),
   chromeOperating: () => chromeWindows.operating(state.current),
   chromeMark: () => browserEntry?.currentMark() ?? '',
   chromeName: () => labelOf(activeBackendId()),
