@@ -18,6 +18,7 @@
     "desktop:dist": "electron-builder",
     "desktop:store": "electron-builder --config electron-builder.store.cjs --win --publish never",
     "release:prepare": "node scripts/release-info.mjs",
+    "release:bump": "node scripts/release-bump.mjs",
     "predesktop:dist": "npm run release:prepare",
     "predesktop:pack": "npm run release:prepare",
     "predesktop:store": "npm run release:prepare"

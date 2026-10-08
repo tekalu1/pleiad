@@ -408,6 +408,13 @@ export default async function (t) {
     }
     t.ok('REQUIRED_JOBS は test.yml が main の push で回すジョブ全部と一致（matrix を変えたらここで落ちる）', JSON.stringify([...names].sort()) === JSON.stringify([...REQUIRED_JOBS].sort()), names.join(' | '));
     t.ok('test.yml は main の push で走る', testYml.on.push.branches.includes('main'));
+    // 落ちた suite だけを 1 回流し直した run も、ジョブが success で終わる（注釈は結論を変えない）ので、evaluate はそのまま reuse と読む。流し直しの設定が外れていないことをここで固める
+    const testSteps = testYml.jobs.test.steps.map(s => s.run).filter(Boolean);
+    t.ok('test.yml の npm test の脚は、落ちた suite だけを 1 回流し直す（--retry-failed 1。docs/adr/0162）', testSteps.some(r => /^node tests\/run\.mjs.*--retry-failed 1/.test(r)), testSteps.join(' | '));
+    const conc = testYml.concurrency;
+    const groupOf = (event, ref, sha) => String(conc.group).replace(/\$\{\{[^}]*\}\}/, event === "pull_request" ? ref : sha);
+    t.ok('test.yml: main への push は後の push で取り消さない（cancel-in-progress は PR だけ）', String(conc['cancel-in-progress']) === "${{ github.event_name == 'pull_request' }}", String(conc['cancel-in-progress']));
+    t.ok('test.yml: push の group は commit ごと（待ちの run が次の push に取り消されない）・PR は PR ごと', groupOf('push', 'refs/heads/main', 'aaa') !== groupOf('push', 'refs/heads/main', 'bbb') && groupOf('pull_request', 'refs/pull/1/merge', 'aaa') === groupOf('pull_request', 'refs/pull/1/merge', 'bbb'), String(conc.group));
     const skipped = Object.entries(testYml.jobs).filter(([, job]) => !onPush(job)).map(([id, job]) => job.name ?? id);
     t.ok('SKIPPED_ON_PUSH は test.yml が push で飛ばすジョブと一致', JSON.stringify(skipped.sort()) === JSON.stringify([...SKIPPED_ON_PUSH].sort()), skipped.join(' | '));
 
@@ -418,7 +425,7 @@ export default async function (t) {
     t.ok('照合のジョブのトークンは github.token（秘密を渡さない）', JSON.stringify(gate.steps).includes('${{ github.token }}') && !JSON.stringify(gate).includes('secrets.'));
     t.ok('公開のジョブは照合のジョブを待つ（赤なら走らない）', release.needs === 'ci-gate' || (Array.isArray(release.needs) && release.needs.includes('ci-gate')));
     const steps = release.steps;
-    const full = steps.findIndex(s => s.run === 'npm test');
+    const full = steps.findIndex(s => s.run === 'node tests/run.mjs --retry-failed 1');
     const smoke = steps.findIndex(s => /Release environment smoke/.test(s.name ?? ''));
     const publish = steps.findIndex(s => /publish/i.test(s.name ?? ''));
     t.ok('全部のテストは reuse 以外のすべてで回る（空・想定外の値でも省かない）', steps[full]?.if === "needs.ci-gate.outputs.decision != 'reuse'", steps[full]?.if);

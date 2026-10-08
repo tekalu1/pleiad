@@ -15,13 +15,21 @@ Pleiad の画面・サーバー・Electron を一つの `package.json.version` �
 
 `releases/<version>.json` がリリースノートの正本。バージョン・公開日・見出し・利用者への影響を記載する。
 `npm run release:prepare` はアプリ内の `web/release-info.json` と公開用 `temporary/release-notes.md` を生成する。
-package.json と package-lock.json の番号を揃え、原稿と生成済み JSON をコミットする。
-番号は package.json の 1 か所と package-lock.json の 2 か所（先頭と `packages[""]`）。`release:prepare` は番号を上げて原稿を置いた後に走らせる（合う原稿が無いと止まる）。`npm test` も `web/release-info.json` を作り直すので、番号と原稿が食い違ったままでは落ちる。タグの前に `node scripts/release-info.mjs --require-new-notes` を通す（CI も前の版と同じ原稿なら止める）。
-`0.1.0` を出すときは、この順で行う。
-1. `package.json` の `version`、`package-lock.json` の 2 か所（先頭と `packages[""]`）を `0.1.0` にする。
-2. `releases/0.1.0.json` の原稿を書く（`releases/0.1.0-beta.73.json` の形に合わせる）。
-3. `npm run release:prepare` で `web/release-info.json` を作り直し、番号・原稿・生成済み JSON を一緒にコミットする。
-4. `npm test` と `node scripts/release-info.mjs --require-new-notes` を通してから、タグ `v0.1.0` を打つ（push は別途明示操作）。
+版上げは **`node scripts/release-bump.mjs <版>`（`npm run release:bump -- <版>`）の 1 本**で行う（[ADR 0162](adr/0162-ci-retry-failed-suites.md)）。版は人が決めて引数で渡す（スクリプトは決めない）。
+番号は package.json の 1 か所と package-lock.json の 2 か所（先頭と `packages[""]`）。`npm test` も `web/release-info.json` を作り直すので、番号と原稿が食い違ったままでは落ちる。
+`0.12.0-beta.10` を出すときは、この順で行う。
+1. `releases/0.12.0-beta.10.json` の原稿を書く（直前の版の形に合わせる）。無ければ、スクリプトが雛形を置いて止まる（書いてから同じコマンドをもう一度）。別の場所で書いた原稿は `--notes <file>` で取り込む。
+2. `node scripts/release-bump.mjs 0.12.0-beta.10` を打つ。スクリプトは、次を順に行う。
+   - 前提の検査: ブランチが main・作業ツリーが clean（原稿だけ未追跡でよい）・origin/main より遅れていない・版が今までの最新より新しい・タグ `v0.12.0-beta.10` がローカルにも origin にも無い。1 つでも外れたら何も書かずに止まる。
+   - package.json・package-lock.json の版を書き換える（CRLF のファイルは CRLF のまま）。
+   - `npm run release:prepare` で `web/release-info.json` を作り直し、`node scripts/release-info.mjs --require-new-notes` で原稿を検査する（直前の版と同じ原稿なら止まる）。
+   - 速い確認（`node tests/run.mjs release-ci-gate`）を流す。
+   - 版・原稿・生成物の 4 ファイルだけを commit し（題は `<版>: <原稿の見出し>`。`--subject`・`--trailer` で変えられる）、タグ `v0.12.0-beta.10` を付ける。
+   - 途中で失敗したら、版と生成物は元に戻る（commit もタグも作らない）。
+3. 既定では push しない。表示された `git push --atomic origin main v0.12.0-beta.10` を打つ（main とタグが一緒に通るか一緒に落ちる）。`--push` を付けたときだけ、スクリプトが送る。送ると `Evaluation release` が起動し、同じ commit の CI の結果を待って公開する。
+`--dry-run` は前提の検査だけ（何も書かない）。`--offline` は origin を見ない（一時の clone での練習用）。
+
+**タグの前に手元で `npm test` 全部は流さない。** コードの確かめは main の CI が行い、赤い commit は `ci-gate` が公開を止める（[release-ci-reuse.md](release-ci-reuse.md)）。CI は落ちた suite だけを 1 回流し直し、通れば緑にする（流し直したことは警告の注釈とジョブのまとめに必ず残る）。手元の `npm test` は流し直さない。
 公開前に原稿の日付と検証結果を確定する。コミットの羅列はリリースノートの本文にしない。
 リリースノートは利用者が使える機能・操作の変更に絞り、リポジトリ移行などの運用経緯は載せない。
 
@@ -246,7 +254,7 @@ GitHub用の自己署名証明書を作成し、暗号化PFXのBase64を `WIN_CS
 
 ### 認証局の署名・段階配布
 
-1. 原稿・番号を更新し、通常テストを通してリリース用ソースタグを作成する（pushは別途明示操作）。
+1. 原稿・番号の更新とリリース用ソースタグの作成は `scripts/release-bump.mjs`（「バージョンと原稿」）。通常テストは main の CI が通っていること（`Evaluation release` の `ci-gate` が確かめる）を使い、手元で全部は流さない（pushは別途明示操作）。
 2. `Desktop signed release` をそのタグ・対象OS・初期配信率で実行する。
    既定の `platforms=windows` はWindows x64/ARM64のみ。`all` はmacOS Intel/Apple Siliconも含める。
    Windowsはインストーラーと両CPUの実行ファイル（Ply.exe）の署名・発行元を、macOSは署名・公証を検証する。
@@ -258,7 +266,7 @@ GitHub用の自己署名証明書を作成し、暗号化PFXのBase64を `WIN_CS
 5. 少人数で確認後、同ワークフローの `rollout` で10→50→100%へ拡大する。
    配信率は自動で上げない。障害・問い合わせの確認に基づき判断する。
 
-CIは無断でバージョンを決めたりコミット・タグを作ったりしない。ソースと配布先へのpush/公開は明示的な操作。
+CIは無断でバージョンを決めたりコミット・タグを作ったりしない。ソースと配布先へのpush/公開は明示的な操作（`release-bump.mjs` は人が打つコマンドで、`--push` を付けたときだけ push する）。
 既存の `Desktop packages` は未署名の評価用生成として残す。
 
 ## 配信停止と先行版

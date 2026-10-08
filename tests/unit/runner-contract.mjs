@@ -4,6 +4,7 @@
 //   - 分割: --shard は決定的で、全 suite がちょうど 1 つの shard に入る（重みの無い新しい suite も）。重い suite が 1 つの shard に偏らない
 //   - 実行: --jobs 1（同じプロセス）と --jobs 2（子プロセス）で、同じ suite が同じ結果になる。失敗の詳細・skip・例外・判定数が残る
 //   - 異常系: worker が途中で死ぬ・例外・読み込めない・名前の不一致は、他の suite を巻き込まず、その suite を失敗にして全体の終了コードを 1 にする
+//   - 流し直し: --retry-failed 1 は落ちた suite だけを新しい worker で 1 回流し直し、通れば緑・2 回目も落ちれば赤。流し直したことは端末・timings・Actions の注釈とまとめに残す。既定（指定なし）は流し直さない。ランナーの整合の失敗は流し直さない
 //   - 隔離: worker は親の AGENT_HOST_DATA を使わず、worker ごとの一時ディレクトリを作って消す。実行元の制御用の環境変数（PLEIAD_CONTROL_* など）はテストに届かない。子プロセスは残らない
 // 実際の tests/run.mjs は --list（走らせない）で見る。走らせるのは tests/lib/runner-fixtures/ の小さな試験用 suite（入口は tests/lib/runner-fixture-entry.mjs）。
 import { execFile, spawn } from "node:child_process";
@@ -12,6 +13,8 @@ import os from "node:os";
 import path from "node:path";
 import { ROOT } from "../lib/server.mjs";
 import { ownedDescendants, reapOwned, killTagged, WORKER_TAG_ENV } from "../lib/process-reap.mjs";
+import { Suite } from "../lib/harness.mjs";
+import { isRetryable, buildRetryEntry, reportRetriesToCi } from "../lib/runner-retry.mjs";
 import { ArgError, parseArgs, extractSuiteName, loadRegistry, loadWeights, assignShards, heaviestFirst, weightOf } from "../lib/runner-plan.mjs";
 
 export const name = "runner-contract";
@@ -51,13 +54,15 @@ export default async function (t) {
       const a = parseArgs(["--jobs=3", "--shard=2/2", "x"]);
       t.ok("--jobs=N・--shard=k/N の形", a.jobs === 3 && same(a.shard, { index: 2, total: 2 }) && same(a.names, ["x"]), JSON.stringify(a));
       t.ok("-jN・-j N の形", parseArgs(["-j4"]).jobs === 4 && parseArgs(["-j", "5"]).jobs === 5);
-      t.ok("既定は --jobs 1・shard なし・絞り込みなし", same(parseArgs([]), { names: [], jobs: 1, shard: null, timings: null, weights: null, list: false, json: false, help: false }));
+      t.ok("既定は --jobs 1・shard なし・絞り込みなし", same(parseArgs([]), { names: [], jobs: 1, shard: null, timings: null, weights: null, retryFailed: 0, list: false, json: false, help: false }));
+      t.ok("--retry-failed n・--retry-failed=n（0 か 1）。値は suite 名にならない。既定は 0", parseArgs(["--retry-failed", "1", "x"]).retryFailed === 1 && same(parseArgs(["--retry-failed", "1", "x"]).names, ["x"]) && parseArgs(["--retry-failed=0"]).retryFailed === 0 && parseArgs([]).retryFailed === 0);
       t.ok("-- の後ろは全部 suite 名（npm test -- … の形）", same(parseArgs(["--", "--jobs", "2"]).names, ["--jobs", "2"]));
       const bad = [
         [["--jobs"], "値が無い"], [["--jobs", "--shard", "1/2"], "値が無い（次が別のオプション）"], [["--jobs", "0"], "0"], [["--jobs", "-3"], "負"], [["--jobs", "abc"], "整数でない"],
         [["--jobs", "1.5"], "小数"], [["--jobs", "999"], "上限超え"], [["--jobs", "2", "--jobs", "3"], "重複"], [["--shard", "3/2"], "k > N"], [["--shard", "0/2"], "k = 0"],
         [["--shard", "1"], "k/N の形でない"], [["--shard", "a/b"], "数字でない"], [["--shard", "1/9999"], "N が大きすぎる"], [["--bogus"], "知らないオプション"],
         [["--list=1"], "値を取らない旗に値"], [["--json"], "--json だけ"], [["--timings"], "値が無い"], [["--timings", "a", "--timings", "b"], "重複"],
+        [["--retry-failed"], "値が無い"], [["--retry-failed", "2"], "上限超え"], [["--retry-failed", "-1"], "負"], [["--retry-failed", "x"], "整数でない"], [["--retry-failed", "1", "--retry-failed", "1"], "重複"],
       ];
       for (const [argv, why] of bad) t.ok(`不正な引数は ArgError: ${argv.join(" ")}（${why}）`, throws(() => parseArgs(argv)) instanceof ArgError);
     }
@@ -342,6 +347,79 @@ export default async function (t) {
       // プロセス表（PowerShell）が読めない環境: 子孫が残っていないか確かめられないので、注意だけで成功にせず失敗にする
       const blind = await fixtureRun(["./fx-pass-a.mjs", "./fx-pass-b.mjs"], ["--jobs", "2"], { PATH: path.dirname(process.execPath) });
       t.ok("Windows: プロセス表が読めないと、suite が全部通っても終了コード 1（回収を確かめられなかったことを失敗に数える）", blind.code === 1 && blind.stdout.includes("子孫のプロセスの回収を確かめられなかった"), `${blind.code} ${blind.stdout.slice(-300)} ${blind.stderr.slice(-300)}`);
+    }
+
+    // ---- 落ちた suite だけの流し直し（--retry-failed）------------------------------------------------------------------------------
+    {
+      const attempts = (dir) => { try { return fs.readFileSync(path.join(dir, "flaky-attempts"), "utf8").split("\n").filter(Boolean).length; } catch { return 0; } };
+      const outDir = (n) => { const d = path.join(tmp, n); fs.mkdirSync(d); return d; };
+      const noCi = { GITHUB_ACTIONS: undefined, GITHUB_STEP_SUMMARY: undefined };
+      const F2 = ["./fx-pass-a.mjs", "./fx-flaky.mjs"];
+
+      // 既定は流し直さない（手元の npm test と同じ）。--retry-failed 0 も同じ
+      for (const extra of [[], ["--retry-failed", "0"]]) {
+        const out = outDir(`retry-off-${extra.length}`);
+        const r = await fixtureRun(F2, ["--timings", path.join(tmp, `ro${extra.length}.json`), ...extra], { RUNNER_FIXTURE_OUT: out, ...noCi });
+        const R = read(path.join(tmp, `ro${extra.length}.json`));
+        t.ok(`既定（${extra.join(" ") || "指定なし"}）は流し直さない: 1 回目だけ落ちる suite は落ちたまま・終了コード 1・1 回しか走らない`, r.code === 1 && attempts(out) === 1 && R.suites.every((s) => s.retried === null) && R.totals.retriedSuites === 0 && !r.stdout.includes("流し直し"), `${r.code} ${attempts(out)}`);
+      }
+
+      for (const jobs of ["1", "2"]) {
+        const out = outDir(`retry-on-${jobs}`);
+        const summary = path.join(tmp, `summary-${jobs}.md`);
+        const r = await fixtureRun(F2, ["--jobs", jobs, "--retry-failed", "1", "--timings", path.join(tmp, `rt${jobs}.json`)], { RUNNER_FIXTURE_OUT: out, GITHUB_ACTIONS: "true", GITHUB_STEP_SUMMARY: summary });
+        const R = read(path.join(tmp, `rt${jobs}.json`));
+        const flaky = R.suites.find((s) => s.name === "fx-flaky");
+        t.ok(`--retry-failed 1（--jobs ${jobs}）: 1 回目だけ落ちた suite は流し直しで通り、終了コード 0・ちょうど 2 回走る・通った suite は流し直さない`, r.code === 0 && attempts(out) === 2 && flaky.status === "pass" && R.ok === true && R.suites.find((s) => s.name === "fx-pass-a").retried === null && (r.stdout.match(/── fx-pass-a/g) ?? []).length === 1, `${r.code} ${attempts(out)} ${r.stdout.slice(-300)}`);
+        t.ok(`流し直しは timings に残る（retried: 1 回目の失敗・結果。totals.retriedPassed。args.retryFailed）。流し直しの worker は別（retry: true）`, flaky.retried?.outcome === "passed" && flaky.retried.first.failedJudgements === 1 && flaky.retried.first.description.includes("FLAKY-FIRST-ATTEMPT") && flaky.retried.second === null && R.totals.retriedSuites === 1 && R.totals.retriedPassed === 1 && R.args.retryFailed === 1 && R.workers.some((w) => w.retry === true) && R.problems.length === 0, JSON.stringify(flaky.retried));
+        t.ok(`端末に、どの suite が 1 回目に落ちて流し直しで通ったかが残る`, /流し直しで通った suite[^\n]*: 1 本/.test(r.stdout) && r.stdout.includes("- fx-flaky — 1 回目: 1 回目だけ落ちる判定") && r.stdout.includes("══ 流し直し"), r.stdout.slice(-500));
+        t.ok(`GitHub Actions の中（GITHUB_ACTIONS=true）では、警告の注釈（::warning）と、ジョブのまとめ（GITHUB_STEP_SUMMARY）に残る`, /^::warning title=[^\n]*::fx-flaky: 1 回目に落ちたが、流し直しで通った/m.test(r.stdout) && fs.existsSync(summary) && fs.readFileSync(summary, "utf8").includes("| fx-flaky |") && fs.readFileSync(summary, "utf8").includes("緑として扱っている"), fs.existsSync(summary) ? fs.readFileSync(summary, "utf8") : "まとめが無い");
+      }
+      {
+        const out = outDir("retry-no-ci");
+        const r = await fixtureRun(F2, ["--retry-failed", "1"], { RUNNER_FIXTURE_OUT: out, ...noCi });
+        t.ok("GitHub Actions の外では注釈を出さない（端末の一覧だけ）", r.code === 0 && !r.stdout.includes("::warning") && r.stdout.includes("流し直しで通った suite"));
+      }
+
+      // 2 回目も落ちれば赤。落ちた suite だけを流し直す
+      for (const jobs of ["1", "2"]) {
+        const summary = path.join(tmp, `summary-fail-${jobs}.md`);
+        const r = await fixtureRun(["./fx-pass-a.mjs", "./fx-fail.mjs", "./fx-pass-b.mjs"], ["--jobs", jobs, "--retry-failed", "1", "--timings", path.join(tmp, `rf${jobs}.json`)], { GITHUB_ACTIONS: "true", GITHUB_STEP_SUMMARY: summary });
+        const R = read(path.join(tmp, `rf${jobs}.json`));
+        const fail = R.suites.find((s) => s.name === "fx-fail");
+        t.ok(`--retry-failed 1（--jobs ${jobs}）: 2 回目も落ちる suite は赤のまま（終了コード 1・失敗の詳細が末尾に残る・ちょうど 2 回走る・通った suite は 1 回）`, r.code === 1 && fail.status === "fail" && fail.retried?.outcome === "failed" && fail.retried.second.failedJudgements === 1 && R.ok === false && (r.stdout.match(/── fx-fail/g) ?? []).length === 2 && (r.stdout.match(/── fx-pass-/g) ?? []).length === 2 && r.stdout.includes("[fx-fail]") && r.stdout.includes("FAIL-DETAIL-1") && r.stdout.includes("流し直しでも落ちた suite"), `${r.code} ${r.stdout.slice(-400)}`);
+        t.ok(`2 回とも落ちたことも、ジョブのまとめに残る（赤）`, fs.readFileSync(summary, "utf8").includes("流し直しでも落ちたもの") && fs.readFileSync(summary, "utf8").includes("| fx-fail |"));
+      }
+
+      // ランナーの整合の失敗（worker の死・登録した名前の不一致）は流し直さない。例外は流し直す（通常の失敗と同じ）
+      {
+        const r = await fixtureRun(["./fx-pass-a.mjs", "./fx-exit.mjs", "./fx-mismatch.mjs", "./fx-throw.mjs"], ["--jobs", "2", "--retry-failed", "1", "--timings", path.join(tmp, "ri.json")], { ...noCi });
+        const R = read(path.join(tmp, "ri.json"));
+        const st = Object.fromEntries(R.suites.map((s) => [s.name, [s.status, s.retried?.outcome ?? null]]));
+        const header = /══ 流し直し[^\n]*/.exec(r.stdout)?.[0] ?? "";
+        t.ok("worker の異常終了（crash）・登録した名前の不一致（fx-ghost。ファイルは fx-mismatch）は流し直さない（失敗のまま）。例外で中断した suite は流し直す", r.code === 1 && st["fx-exit"][0] === "crash" && st["fx-exit"][1] === null && st["fx-ghost"][1] === null && st["fx-ghost"][0] === "fail" && st["fx-throw"][1] === "failed" && header.includes("fx-throw") && !header.includes("fx-exit") && !header.includes("fx-ghost"), `${JSON.stringify(st)} ${header}`);
+      }
+
+      // 部品: 何を流し直すか・注釈の escape・まとめの書き込み失敗
+      {
+        const mkSuite = (label, detail) => { const s = new Suite("x", "x"); const log = console.log; console.log = () => {}; try { s.ok(label, false, detail); } finally { console.log = log; } return s; };
+        t.ok("isRetryable: 判定が落ちた・例外 → 流し直す / 通った・skip・crash・missing・ランナーの整合の判定 → 流し直さない",
+          isRetryable({ suite: mkSuite("a", "d") }) && isRetryable({ suite: Object.assign(new Suite("x", "x"), { error: "boom" }) })
+          && !isRetryable({ suite: new Suite("x", "x") }) && !isRetryable({ suite: mkSuite("a", "d"), status: "crash" }) && !isRetryable({ suite: mkSuite("a", "d"), status: "missing" })
+          && !isRetryable({ suite: mkSuite("テストの後に本体の git の worktree が増えていない", "d") }) && !isRetryable({ suite: mkSuite("登録した名前と export const name が一致する", "d") }));
+        const info = buildRetryEntry({ name: "n|1", first: mkSuite("100%\n落ちた, :", "a\nb"), second: new Suite("x", "x") });
+        const lines = [];
+        const files = [];
+        const env = { GITHUB_ACTIONS: "true", GITHUB_STEP_SUMMARY: "S" };
+        const r1 = reportRetriesToCi([info], { env, write: (s) => lines.push(s), append: (f, s) => files.push([f, s]), platform: "linux", node: "v22.13.0" });
+        t.ok("注釈は 1 行（改行・% は escape。title の : と , も）・まとめの表の | は escape", r1.annotations === 1 && lines.length === 1 && lines[0].startsWith("::warning title=") && !lines[0].slice(0, -1).includes("\n") && lines[0].includes("100%25%0A落ちた, :") && lines[0].includes("linux / node v22.13.0") && files[0][1].includes("n\\|1"), lines[0]);
+        const many = Array.from({ length: 13 }, (_, i) => ({ ...info, name: `s${i}` }));
+        lines.length = 0;
+        const r2 = reportRetriesToCi(many, { env, write: (s) => lines.push(s), append: () => {} });
+        t.ok("注釈は 10 本まで + 残りの件数の 1 行（まとめには全部）", r2.annotations === 11 && lines.length === 11 && lines[10].includes("ほか 3 本"));
+        const r3 = reportRetriesToCi([info], { env, write: (s) => lines.push(s), append: () => { throw new Error("EACCES"); } });
+        t.ok("まとめのファイルが書けなくても失敗にしない（注釈は出る）・Actions の外・流し直し 0 本では何も出さない", r3.annotations === 1 && r3.summary === false && reportRetriesToCi([info], { env: {}, write: () => { throw new Error("出さない"); }, append: () => { throw new Error("出さない"); } }).annotations === 0 && reportRetriesToCi([], { env, write: () => { throw new Error("出さない"); } }).annotations === 0);
+      }
     }
 
     // ---- 不正な引数・登録は、何も走らせない -------------------------------------------------------------------------------------

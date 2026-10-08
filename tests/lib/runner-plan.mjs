@@ -11,6 +11,7 @@ export class ArgError extends Error {}
 
 export const MAX_JOBS = 32;
 export const MAX_SHARDS = 256;
+export const MAX_RETRY = 1;
 
 export const USAGE = `使い方: node tests/run.mjs [絞り込み…] [オプション]
 
@@ -19,6 +20,7 @@ export const USAGE = `使い方: node tests/run.mjs [絞り込み…] [オプシ
   --shard k/N        N 分割したうちの k 番目だけ走らせる（時間の重みで決定的に分ける。k は 1〜N）
   --timings <path>   suite ごとの時間・判定数・skip・worker を JSON で書く
   --weights <path>   時間の重みの JSON（既定 tests/suite-weights.json）
+  --retry-failed n   落ちた suite だけを n 回（0 か 1。既定 0 = 流し直さない）新しい worker で流し直す。通ったら緑として扱い、流し直したことを必ず出す（CI 用）
   --list [--json]    走らせずに、選ばれた suite と重みを出す
   --help, -h         これ`;
 
@@ -31,7 +33,7 @@ const intIn = (name, text, min, max) => {
 
 /** argv（node tests/run.mjs の後ろ）を解釈する。おかしければ ArgError */
 export function parseArgs(argv) {
-  const o = { names: [], jobs: 1, shard: null, timings: null, weights: null, list: false, json: false, help: false };
+  const o = { names: [], jobs: 1, shard: null, timings: null, weights: null, retryFailed: 0, list: false, json: false, help: false };
   const seen = new Set();
   const once = (key) => {
     if (seen.has(key)) throw new ArgError(`${key} が 2 回指定されている`);
@@ -73,6 +75,7 @@ export function parseArgs(argv) {
         break;
       }
       case "--timings": { once(key); const p = need(); if (!p) throw new ArgError("--timings のパスが空"); o.timings = p; break; }
+      case "--retry-failed": { once(key); o.retryFailed = intIn("--retry-failed", need(), 0, MAX_RETRY); break; }
       case "--weights": { once(key); const p = need(); if (!p) throw new ArgError("--weights のパスが空"); o.weights = p; break; }
       case "--list": flag(); once(key); o.list = true; break;
       case "--json": flag(); once(key); o.json = true; break;
