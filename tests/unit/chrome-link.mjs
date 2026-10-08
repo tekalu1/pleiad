@@ -3,7 +3,7 @@ import { fileURLToPath } from 'node:url';
 import { startFakeChrome } from '../lib/fake-chrome.mjs';
 import { startHolder, waitFor, sleep } from '../lib/holder-harness.mjs';
 import { createCdp } from '../../core/chrome/cdp.mjs';
-import { openChromeLink, chromeLinkEnabled, readLinkCard, LINK_CARD_KIND, LINK_VERSION } from '../../core/chrome/link.mjs';
+import { openChromeLink, shutdownHolderIfIdle, chromeLinkEnabled, readLinkCard, LINK_CARD_KIND, LINK_VERSION } from '../../core/chrome/link.mjs';
 import { LineReader, peekLine, parseControl, controlLine, linkPipeName, CARRY_MAX_BYTES } from '../../core/chrome/link-wire.mjs';
 
 const OLD_CHILD = fileURLToPath(new URL('../lib/link-old-child.mjs', import.meta.url));
@@ -272,6 +272,27 @@ export default async function (t) {
       await linkX.retireChild();
       t.ok('retireChild は何度呼んでも壊れない', true);
       void upgradesX;
+    }
+
+    // ===== 14. 本当に終わるとき、接続の子のために起こした保持役を終わらせる（ほかの子が居れば、巻き込まない）=====
+    {
+      const shutdowns = () => holder.logs.filter(line => line.includes('shutdown requested')).length;
+      const other = (await holder.connect()).client;
+      other.spawn({ id: 'other-child', command: process.execPath, args: ['-e', 'setTimeout(() => {}, 60000)'], policy: 'none' });
+      await sleep(300);
+      const withOther = (await holder.connect()).client;
+      t.ok('ほかの子（app-server・シェルなど）が居れば、保持役は終わらせない', await shutdownHolderIfIdle(withOther, { timeoutMs: 100 }) === false && shutdowns() === 0, String(shutdowns()));
+      const attached = (await holder.connect()).client;
+      await attached.attach('other-child');
+      attached.kill('other-child', { tree: true });
+      let alone;
+      for (const end = Date.now() + 8000; Date.now() < end;) {
+        alone = (await holder.connect()).client;
+        if (!(alone.welcome?.children ?? []).some(c => c.id === 'other-child' && c.alive)) break;
+        await sleep(100);
+      }
+      t.ok('接続の子しか居なければ、保持役に shutdown を送る（待つのは timeoutMs まで）', await shutdownHolderIfIdle(alone, { timeoutMs: 100 }) === true && shutdowns() === 1, String(shutdowns()));
+      t.ok('つながっていないクライアントには何もしない', await shutdownHolderIfIdle(null) === false);
     }
   } finally {
     for (const fn of cleanups) { try { await fn(); } catch { /* 片付け */ } }

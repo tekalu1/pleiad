@@ -127,7 +127,7 @@ import { closeAll as closeDataDb } from './db.mjs';
 import { createApprovalIds } from './approval-id.mjs';
 import { parentPortScreencast, createScreencastHub, screencastCommand } from './browser-screencast.mjs';
 import { createChromeConnection } from './chrome/connection.mjs';
-import { chromeLinkEnabled, openChromeLink } from './chrome/link.mjs';
+import { chromeLinkEnabled, openChromeLink, shutdownHolderIfIdle } from './chrome/link.mjs';
 import { chromeHomes } from './chrome/locate.mjs';
 import { parentPortChromeOs } from './chrome/os.mjs';
 import { createChromeRelay } from './chrome/relay.mjs';
@@ -8075,22 +8075,34 @@ mainPort.on("message", async ({ data }) => {
   }
 });
 
-// 本当に終わる（更新の引き継ぎではない）ときの印。終わりの後片付け（shellRuns.stopAll など）が保持役の子を全部止めた後、接続の子のために起こした保持役も終わらせる
-let quittingForGood = false;
-process.on('exit', () => { if (quittingForGood && chromeHolder) { try { chromeHolder.shutdown(); } catch { /* 終わるところ */ } } });
+// 本当に終わる（更新の引き継ぎではない）とき、終わりの後片付け（shellRuns.stopAll など）が保持役の子を全部止めた後、接続の子のために起こした保持役も終わらせる（exitAfterStoppingHeld）
+/**
+ * 接続の子のために起こした保持役を終わらせる。保持役の shutdown は、中の子を全部止めて終わる。ほかの子（app-server・シェル）がまだ居るなら終わらせない。
+ * 書き込みが済むのを待ってから戻る（exit のハンドラの中では、送る前にプロセスが終わる）。待つのは 1 秒まで
+ */
+async function shutdownChromeHolder() {
+  if (!chromeHolder) return;
+  // 子の一覧は、つなぎ直した welcome の写しを見る（つなぎ直すと古い親は外れる。終わるところなので構わない）
+  const client = await holderLink({ dataDir: store.dataDir, root: BOOT_ENV.AGENT_HOST_RUNTIME_ROOT, launch: false }).catch(() => null) ?? chromeHolder;
+  await shutdownHolderIfIdle(client);
+}
 /** 終わる（main の shutdown・孤児の見張り）。手を離していない保持役の子の app-server は、止めてから終わる（保持役の子は、サーバーが終わっても残るため。無停止の更新 段階 3） */
 function exitAfterStoppingHeld(code) {
-  quittingForGood = true;
-  void Promise.race([stopHeldAppServer(), new Promise(resolve => setTimeout(resolve, 2500))]).catch(() => {}).finally(() => process.exit(code));
+  void Promise.race([stopHeldAppServer(), new Promise(resolve => setTimeout(resolve, 2500))]).catch(() => {})
+    .then(() => shutdownChromeHolder()).catch(() => {})
+    .finally(() => process.exit(code));
 }
 
 // 名前付きパイプの main が居ないまま長く居続けない（utilityProcess は main と一緒に終わるので要らない）。作業が 0 件のまま上限を過ぎたら、shutdown と同じに終わる
 const orphanGuard = mainLink ? createOrphanGuard({
   isBusy: async () => (await runningWork()).count > 0,
   onExpire: () => {
-    void chromeLink?.quit().catch(() => {});
-    try { finishShutdown(store.flushNow, () => false, exitAfterStoppingHeld); }
-    catch (e) { console.error('session store shutdown save failed:', e?.code ?? e?.message ?? e); process.exit(1); }
+    // 接続の子には quit を送って、終わるのを 2 秒まで待つ（待たずに終わると、子が Chrome への ws を持ったまま残る）
+    const quitLink = chromeLink ? Promise.race([chromeLink.quit(), new Promise(resolve => setTimeout(resolve, 2000))]).catch(() => {}) : Promise.resolve();
+    void quitLink.then(() => {
+      try { finishShutdown(store.flushNow, () => false, exitAfterStoppingHeld); }
+      catch (e) { console.error('session store shutdown save failed:', e?.code ?? e?.message ?? e); process.exit(1); }
+    });
   },
   log: line => console.log(`  [main-link] ${line}`),
 }) : null;
