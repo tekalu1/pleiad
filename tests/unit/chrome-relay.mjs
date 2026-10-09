@@ -547,7 +547,7 @@ export default async function (t) {
       const again = await browserEnvironment({ bridge, dataDir: dir, sessionId: 'env-native' });
       t.ok('id が決まった後も設定の置き場を保ち、同じ鍵を使う', again.AGENT_BROWSER_CONFIG === env.AGENT_BROWSER_CONFIG && JSON.parse(await readFile(again.AGENT_BROWSER_CONFIG, 'utf8')).cdp === config.cdp);
       const plain = await browserEnvironment({ bridge: { endpoint: async () => 'ws://127.0.0.1:1/devtools/browser/k' }, dataDir: dir, sessionId: 'env-2' });
-      t.ok('pinTab の無い橋では PIN_TAB を足さない', Object.keys(plain).join() === 'AGENT_BROWSER_CONFIG,AGENT_BROWSER_SESSION,AGENT_BROWSER_SOCKET_DIR,AGENT_BROWSER_NAMESPACE');
+      t.ok('pinTab の無い橋では PIN_TAB を足さない', Object.keys(plain).join() === 'AGENT_BROWSER_CONFIG,AGENT_BROWSER_SESSION,AGENT_BROWSER_SOCKET_DIR,AGENT_BROWSER_NAMESPACE,AGENT_BROWSER_IDLE_TIMEOUT_MS');
       for (const e of [env, plain]) await rm(e.AGENT_BROWSER_SOCKET_DIR, { recursive: true, force: true });
 
       // Codex は共有の app-server なので、スレッドの config で渡す。PIN_TAB があるときだけ足す

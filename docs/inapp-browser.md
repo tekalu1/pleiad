@@ -155,9 +155,11 @@ Chrome への ws（`core/chrome/connection.mjs` の接続）は、サーバー�
 
 `core/chrome/relay.mjs` が Chrome への接続の上で、会話の範囲に絞った CDP を中継する。待ち受けは loopback の 1 ポートで、会話ごとに鍵付きの `ws://127.0.0.1:<port>/devtools/browser/<鍵 48 桁>` を出す。相手・Host が一致しない接続や、鍵の違う接続は断る。Electron の remote-debugging-port は開かない。
 
-`core/agent-browser.mjs` の `chromeRelayBrowser` と `browserEnvironment` が、会話ごとの `agent-browser.json` に `cdp` を書く。シェルには `AGENT_BROWSER_CONFIG`・`AGENT_BROWSER_SESSION`・`AGENT_BROWSER_SOCKET_DIR`・`AGENT_BROWSER_PIN_TAB=1` を渡す。会話のネイティブ ID が決まっても設定の場所と名前は変えない。デーモンの管理ファイルは OS の一時領域の `ply-ab-<ハッシュ>` に置き、Codex の書き込みの許可は増やさない。
+`core/agent-browser.mjs` の `chromeRelayBrowser` と `browserEnvironment` が、会話ごとの `agent-browser.json` に `cdp` を書く。シェルには `AGENT_BROWSER_CONFIG`・`AGENT_BROWSER_SESSION`・`AGENT_BROWSER_SOCKET_DIR`・`AGENT_BROWSER_PIN_TAB=1`・`AGENT_BROWSER_IDLE_TIMEOUT_MS=86400000` を渡す。会話のネイティブ ID が決まっても設定の場所と名前は変えない。デーモンの管理ファイルは OS の一時領域の `ply-ab-<ハッシュ>` に置き、Codex の書き込みの許可は増やさない。
 
 `AGENT_BROWSER_PIN_TAB=1` の縛りは、その置き場の `<セッション名>.target` とデーモンの中に残る。縛ったタブが消えると、次の `open` からも `tab_gone` で断られ続ける。そのため会話のタブがエージェントの外で全部無くなったら（窓を閉じる操作・人が窓を閉じた・Chrome が切れた）、中継の `onTabsLost` を受けて `.target` を消し、消したときだけ中継がエージェントの接続を切る（縛りの無いエージェントの接続は切らず、次の `Target.createTarget` で黙って窓を開き直す。ADR 0154）。デーモンはつなぎ直すときに記録を読み直し、縛りが無いので新しいタブ（新しい専用窓）を作る。エージェント自身がタブを閉じた場合は縛りを外さない。
+
+**デーモンと置き場の寿命**（[ADR 0180](adr/0180-agent-browser-daemon-lifetime.md)）: デーモンは会話ごとに 1 つで、最初の `agent-browser` の呼び出しで起き、Pleiad の子ではない。暇なデーモンは `AGENT_BROWSER_IDLE_TIMEOUT_MS`（24 時間）で自分で落ちる（明示すると `--cdp` のデーモンにも効く。既定の 1 時間は効かない）。Pleiad が止めるのは、委譲の子が止まったとき（完了・失敗・取り消し）・会話を消したとき・掃除（起動の 1 分後と 1 時間ごと）で持ち主の会話が無いか終わった子と分かったとき。依頼元の会話は消すまで止めない。走っている会話・引き継ぎ中の会話は触らない。止め方は `agent-browser close` ではなく、`<セッション名>.pid` の pid の実行ファイルが agent-browser と確かめてから落とす（`close` はデーモンが居ないと新しく起こし、中継が切れた後は落ちないことがある。落としても Chrome とタブには何も送らない）。止めてからソケットの置き場と設定の置き場を消し、止めたと確かめられなければ何も消さない。Windows ではソケットの置き場を前もって作らない（デーモンが作る）。ターンの終わりに、そのターンでデーモンが起きていなければ両方の置き場を消す。掃除は、デーモンの起きていない 1 時間より古い置き場と、この Pleiad の置き場に当たらない空の `ply-ab-*`（10 分より古いもの）も消す。
 
 Claude は会話の env、Codex は共有 app-server のスレッドごとの `shell_environment_policy.set`、Antigravity は会話のプロセスの env で受け取る。`agent-browser` は同梱の本体を PATH から呼び、接続先を手で指定する必要はない。ターン終了でサイトの確認を取り下げ、エージェントが動かしている印を外す。
 

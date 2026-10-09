@@ -128,7 +128,7 @@
 
 本物の Chrome での確認で済んだ項目（許可の前面化と再接続、起動時の最小化、題の nonce による HWND 特定と GetLastInputInfo、主フレームの Fetch 遮断、window.open の同一窓格納、フォーカスエミュレーションによる映像フレーム生成、プロフィールの札の正体など）を除き、以下を残す。
 
-1. **agent-browser の束縛**: `AGENT_BROWSER_PIN_TAB=1` の効き。`agent-browser close` が外部の Chrome に何をするか（README に無く、中継で `Browser.close` を断る前提）。
+1. **agent-browser の束縛**: `AGENT_BROWSER_PIN_TAB=1` の効き。`agent-browser close` が外部の Chrome に何をするかは確かめた（`Browser.getVersion` だけを送り、Chrome もタブも閉じない。ただしデーモンが居ないと新しく起こすので、止めるのには使わない。[ADR 0180](0180-agent-browser-daemon-lifetime.md)）。
 2. **映像の大きさ**: 専用の窓の表示の大きさ（1100×720 想定）は右パネルでは 0.5〜0.6 倍で縮小され、小さい字が読みにくい。エミュレーション（`Emulation.setDeviceMetricsOverride` は本物の窓の形が変わる）や `Page.captureScreenshot` の周期取得などの検討。
 3. **別モニター・DPI の違うモニター**: `Browser.getWindowBounds`（DIP）と HWND（Win32 矩形・DPI 倍率）の対応づけや、窓の移動・最大化の追従。
 4. **Chrome が前面のときの createTarget の前面**: 利用者が別の Chrome の窓を操作しているときに、エージェント側で `Target.createTarget` や窓操作を行った場合に前面を奪うか。
