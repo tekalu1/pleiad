@@ -67,6 +67,9 @@
   - 実機（2026-10-09）では、隠し直した後に、通常に戻った窓が遅れて画面の中（保存していた位置）へ出た（透明のまま）。そこで `adoptAgent` は位置でなく拡張スタイル（`TOOLWINDOW`・`LAYERED`・`TRANSPARENT` があり `APPWINDOW` が無い。`conceal` だけが付ける組み合わせで、利用者の Chrome の窓は持たない）で隠した窓と見て引き継ぎ、画面の中にあれば隠し直す。main の見張りも、隠している窓が画面の中へ動かされていないかを 1 秒に 1 回確かめて隠し直す（0154）。
 - main は更新で終わるとき（`installUpdate` で `updateLeaving` を立てた後の `will-quit`・`app.exit`）、**エージェントの窓を閉じない**。更新を取りやめた（`main-leaving-cancel`）ら印を戻す。それ以外の終わり方（Pleiad の終了）では、0154 のとおり閉じる。
 - サーバーの OS の層（`core/chrome/os.mjs`）は `process.parentPort` ではなく main への口（`core/main-port.mjs` の `getMainPort()`）から作る。口が切れたら待っていた呼び出しを `away` で失敗にし、つながり直したら `chrome-os-ready` を求め直す。
+- **`chrome-os-ready` は同じ main から 2 回届く**（main が起動時に送るものと、サーバーの `chrome-os-ready-request` への返事）。2 回目で処理中の呼び出しを失敗にしてはならない。`adoptAgent` の失敗（null）は「その窓は無い」と区別がつかず、`windows.mjs` の `readopt` が窓を失われた扱いにして、中継が CDP でタブを閉じてしまう（窓が消える）。そこで main は `attachChromeOs` ごとに `epoch` を作って全ての ready に載せ、層は **epoch が変わったとき（main が入れ替わったとき）だけ**待っている呼び出しを失敗にする。同じ epoch の ready は何もしない。層は `generation()`（epoch の変化・切断のたびに増える）も持ち、`windows.mjs` は窓ごとの引き継ぎの最中に値が動いたら、null を「無い」と読まずに**中断**として扱う。中断した引き継ぎは記録を捨てず（失われた扱いにも、タブを閉じる側にも回さず）、次の ready でやり直す。利用者の Chrome の窓には、どちらの経路でも触れない。
+- **更新のあと、タブは層を待たずに会話へ戻す。** 層は新しいサーバーが待ち受けた後で main から付くため、起動の `rejoin()` が層を待つとサーバーの待ち受けが遅れ、待たなければ接続が 'unsupported' のまま誰にもつながらない。`connection.demand()` は、すでにつながっている CDP があれば層を待たずに返す（層が要るのは窓を開く・隠すときだけ）。`relay.readopt()` は、失われた窓が無くても必ず `bindConnected()` で今ある窓のタブを会話の範囲へ戻し、呼び出しは直列にする（起動の rejoin・ready の知らせ・初回の確認が重ならない）。
+- **窓を開く最中に main が入れ替わったとき、題（nonce）のページだけの見える窓を残さない。** chrome.exe で開く最初の窓は、返事を聞けなくても窓は開いている。`windows.mjs` の `launch` は、層の `generation()` が呼び出しの間に動いて失敗したとき、その呼び出しが付けた nonce の窓だけを CDP の `Target.closeTarget` で閉じる。窓を探せない・隠せないまま層が入れ替わったときも、開いた窓を閉じて「Pleiad is updating」で失敗にする（隠せていない窓も、記録の無い窓も残らない）。実機で見えた「OS の隠し窓 3 に対して追跡 6」と `data:text/html` の `PLY-…` ページは、この余りの窓だった。
 
 ### 5. 引き継げないとき
 
