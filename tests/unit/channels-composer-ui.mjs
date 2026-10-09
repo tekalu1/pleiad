@@ -34,6 +34,14 @@ export default function (t) {
   t.ok('保存の形を往復できる（字・添付・時刻）', round.get('ch:c_a').text === '下書き' && round.get('th:c_a:p_1').attached[0].path === '/up/a.png' && round.get('ch:c_a').at === 3);
   t.ok('壊れた保存・形の違うものは空・不正な行だけ捨てる', parseDrafts('{') .size === 0 && parseDrafts(null).size === 0 && parseDrafts('{"a":1}').size === 0
     && parseDrafts(JSON.stringify([['k', { text: 'ok' }], [1, {}], ['z', null], ['p', { text: 1, attached: [{ path: 2 }, { path: '/x' }] }]])).get('p').attached.length === 1);
+  // ADR 0177: スレッドの入力欄の「編集中」も下書きと一緒に残す（字も添付も空のまま編集中でも捨てない。id の無い壊れたものは持たない）
+  const editing = new Map([
+    ['th:c_a:p_9', { text: '', attached: [], at: 5, edit: { v: 1, id: 'p_4', time: '10:02', base: { text: 'x', paths: [] }, stash: { text: '', attached: [] } } }],
+    ['th:c_a:p_8', { text: '', attached: [], at: 6, edit: { id: '' } }],
+  ]);
+  const savedEdit = parseDrafts(serializeDrafts(editing));
+  pruneDrafts(savedEdit);
+  t.ok('編集中の状態は下書きに載る（空の入力欄でも残る）。id の無いものは持たない', savedEdit.get('th:c_a:p_9')?.edit?.id === 'p_4' && !savedEdit.has('th:c_a:p_8'));
   const many = new Map(Array.from({ length: DRAFT_LIMIT + 5 }, (_, i) => [`ch:c_${i}`, { text: `t${i}`, attached: [], at: i }]));
   pruneDrafts(many);
   t.ok(`上限（${DRAFT_LIMIT} 件）を超えたら古い方から捨てる`, many.size === DRAFT_LIMIT && !many.has('ch:c_0') && many.has(`ch:c_${DRAFT_LIMIT + 4}`));
