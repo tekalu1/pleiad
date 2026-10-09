@@ -227,7 +227,16 @@ export function blockRaw(b) {
 }
 
 const RE_HEAD = /^[ ]{0,3}#{1,6}[ \t]+/;
-const RE_QUOTE = /^[ ]{0,3}(?:>[ \t]?)+/;
+const RE_QUOTE = /^[ ]{0,3}(?:[>＞][ \t]?)+/;
+/** Enter を押したときだけ箇条書きと見なす行頭の中点（打っただけでは変えない。送る本文は打ったとおり） */
+const RE_BULLET_CHAR = /^[・•･][ \t　]*/;
+const RE_CHECK = /^\[[ xX]\] ?/;
+const RE_CONT = /^[ \t]+(?=\S)/;
+
+/** 引用の深さ（`>` と全角の `＞` の数） */
+export const quoteDepth = (marker) => (marker.match(/[>＞]/g) ?? []).length;
+/** 箇条書き・番号の字下げの段（2 つの空白で 1 段、最大 4 段） */
+export const indentLevel = (marker) => Math.min(4, Math.floor(/^[ \t]*/.exec(marker)[0].replace(/\t/g, '    ').length / 2));
 const RE_UL = /^[ \t]*[-*+][ \t]+/;
 const RE_OL = /^[ \t]*\d{1,9}[.)][ \t]+/;
 
@@ -278,6 +287,16 @@ export function markdownToDoc(md, opts = {}) {
   const lines = String(md ?? '').replace(/\r\n?/g, '\n').split('\n');
   const roles = opts.plain ? lines.map(() => null) : fenceRoles(lines);
   const blocks = lines.map((line, i) => (roles[i] ? codeBlock(line) : classifyLine(line, opts)));
+  // 箇条書き・番号の項目のすぐ後ろの字下げした行は、項目の中の改行（Shift+Enter）の続きの行
+  if (!opts.plain) {
+    blocks.forEach((b, i) => {
+      const prev = blocks[i - 1];
+      const ws = b.kind === 'p' && !roles[i] ? RE_CONT.exec(lines[i])?.[0] : null;
+      if (ws && ws.replace(/\t/g, '  ').length >= 2 && (prev?.kind === 'ul' || prev?.kind === 'ol' || prev?.kind === 'cont')) {
+        blocks[i] = { kind: 'cont', marker: ws, runs: parseInline(lines[i].slice(ws.length)) };
+      }
+    });
+  }
   return ensureShape(blocks);
 }
 
@@ -377,6 +396,7 @@ export function deleteSelection(st) {
   ensureShape(next.blocks);
   const idx = Math.min(at, next.blocks.length - 1);
   next.sel = caret(idx, merged ? s.v : 0);
+  renumber(next.blocks);
   return next;
 }
 
@@ -422,11 +442,60 @@ const nextOrderedMarker = (marker) => marker.replace(/(\d+)([.)])/, (_, n, d) =>
 /** 新しい行の記号: 番号は 1 つ進め、箇条書き・引用は同じ */
 const continuedMarker = (b) => (b.kind === 'ol' ? nextOrderedMarker(b.marker) : b.marker);
 
-export function enter(st, { plain = false } = {}) {
+/**
+ * 番号の振り直し（blocks を書き換える。変えたら true）。連続した同じ字下げの番号の並びごとに、最初の番号から 1 つずつ数える。
+ * 項目の中の改行（cont）は並びを切らず、ほかの種類の行・同じ段の箇条書きは切る。深い段は浅い段が来たら閉じる
+ */
+export function renumber(blocks) {
+  const count = new Map();
+  let changed = false;
+  for (const b of blocks) {
+    if (b.kind === 'cont') continue;
+    if (b.kind !== 'ul' && b.kind !== 'ol') { count.clear(); continue; }
+    const d = indentLevel(b.marker);
+    for (const k of [...count.keys()]) if (k > d) count.delete(k);
+    if (b.kind === 'ul') { count.delete(d); continue; }
+    const first = Number(/\d+/.exec(b.marker)?.[0]);
+    if (!Number.isFinite(first)) continue;
+    const n = count.has(d) ? count.get(d) + 1 : first;
+    count.set(d, n);
+    const marker = b.marker.replace(/\d+/, String(n));
+    if (marker !== b.marker) { b.marker = marker; changed = true; }
+  }
+  return changed;
+}
+
+/** Tab（dir = 1）・Shift+Tab（dir = -1）で、選択にかかる箇条書き・番号の行を 1 段深く・浅くする。何も変わらなければ null（フォーカスを動かしてよい） */
+export function indentList(st, dir) {
+  const { s, e } = orderSel(st.sel.s, st.sel.e);
+  const next = clone(st);
+  let any = false;
+  for (let i = s.b; i <= e.b; i++) {
+    const b = next.blocks[i];
+    if (b?.kind !== 'ul' && b?.kind !== 'ol') continue;
+    const d = indentLevel(b.marker);
+    if (dir > 0) {
+      if (d >= 4) continue;
+      b.marker = '  ' + b.marker;
+      if (b.kind === 'ol') b.marker = b.marker.replace(/\d+/, '1');
+    } else {
+      if (d <= 0) continue;
+      b.marker = b.marker.replace(/^( {1,2}|\t)/, '');
+    }
+    any = true;
+  }
+  if (!any) return null;
+  renumber(next.blocks);
+  return next;
+}
+
+/** soft: Shift+Enter（項目の中の改行）。plain: 整形しない平文の間 */
+export function enter(st, { plain = false, soft = false } = {}) {
   const cur = deleteSelection(st);
   const next = clone(cur);
   const { b, v } = next.sel.s;
   const blk = next.blocks[b];
+  const finish = () => { renumber(next.blocks); return next; };
   // 添付・閉じフェンスの次に足してあった pad は、そのまま本物の行にする（空行を重ねない）
   const below = () => {
     if (next.blocks[b + 1]?.pad && isEmptyBlock(next.blocks[b + 1])) delete next.blocks[b + 1].pad;
@@ -437,13 +506,52 @@ export function enter(st, { plain = false } = {}) {
   if (blk.kind === 'att') return below();
   const left = sliceRuns(blk.runs, 0, v), right = sliceRuns(blk.runs, v);
   delete blk.pad;
+  const insertBelow = (kind, marker, runs, at) => {
+    blk.runs = left;
+    next.blocks.splice(b + 1, 0, { kind, marker, runs });
+    next.sel = caret(b + 1, at);
+    return finish();
+  };
+  if (!plain && blk.kind === 'cont') {
+    if (soft) return insertBelow('cont', blk.marker, right, 0);
+    if (!blk.runs.length) { blk.kind = 'p'; blk.marker = ''; next.sel = caret(b, 0); return finish(); }
+    let at = b - 1;
+    while (at >= 0 && next.blocks[at].kind === 'cont') at--;
+    const parent = next.blocks[at];
+    return parent ? insertBelow(parent.kind, continuedMarker(parent), right, 0) : insertBelow('p', '', right, 0);
+  }
+  // Shift+Enter: 項目の中の改行（字下げした続きの行）。引用は引用のまま続く（下の listLike）
+  if (!plain && soft && (blk.kind === 'ul' || blk.kind === 'ol')) {
+    return insertBelow('cont', ' '.repeat(2 * (indentLevel(blk.marker) + 1)), right, 0);
+  }
+  // ・ • ･ で始まる行は、Enter を押したときに箇条書きと見なす（同じ字で続ける。空の項目で抜ける）
+  if (!plain && !soft && blk.kind === 'p') {
+    const text = runsText(blk.runs);
+    const bullet = RE_BULLET_CHAR.exec(text)?.[0];
+    if (bullet && v >= bullet.length && !sliceRuns(blk.runs, 0, bullet.length).some(r => r.marks.length)) {
+      if (text.length === bullet.length) { blk.runs = []; next.sel = caret(b, 0); return next; }
+      return insertBelow('p', '', mergeRuns([...plainRun(bullet), ...right]), bullet.length);
+    }
+  }
   const listLike = !plain && (blk.kind === 'ul' || blk.kind === 'ol' || blk.kind === 'quote');
   if (listLike) {
-    if (!blk.runs.length) { blk.kind = 'p'; blk.marker = ''; next.sel = caret(b, 0); return next; }
-    blk.runs = left;
-    next.blocks.splice(b + 1, 0, { kind: blk.kind, marker: continuedMarker(blk), runs: right });
-    next.sel = caret(b + 1, 0);
-    return next;
+    // チェック欄（- [ ] ）は、次の項目も未チェックの [ ] から始める
+    const check = blk.kind === 'ul' ? RE_CHECK.exec(runsText(blk.runs))?.[0] : null;
+    const carry = check && v >= check.length ? '[ ] ' : '';
+    if (carry ? runsText(blk.runs).length === check.length : !blk.runs.length) {
+      // 空の項目: 字下げしていれば 1 段戻し、入れ子の引用なら 1 段戻し、そうでなければ記号を消して抜ける
+      if (blk.kind !== 'quote' && indentLevel(blk.marker) > 0) {
+        blk.marker = blk.marker.replace(/^( {1,2}|\t)/, '');
+        if (blk.kind === 'ol') blk.marker = blk.marker.replace(/\d+/, '1');
+        blk.runs = plainRun(carry);
+        next.sel = caret(b, carry.length);
+      } else if (blk.kind === 'quote' && quoteDepth(blk.marker) > 1) {
+        blk.marker = blk.marker.replace(/[>＞][ \t]?$/, '');
+        next.sel = caret(b, 0);
+      } else { blk.kind = 'p'; blk.marker = ''; blk.runs = []; next.sel = caret(b, 0); }
+      return finish();
+    }
+    return insertBelow(blk.kind, continuedMarker(blk), mergeRuns([...plainRun(carry), ...right]), carry.length);
   }
   if (blk.kind === 'h' && v === 0 && blk.runs.length) {
     next.blocks.splice(b, 0, emptyBlock());
@@ -471,9 +579,10 @@ export function backspaceAtStart(st) {
   const next = clone(deleteSelection(st));
   const { b } = next.sel.s;
   const blk = next.blocks[b];
-  if (blk.kind !== 'att' && (blk.kind === 'h' || blk.kind === 'ul' || blk.kind === 'ol' || blk.kind === 'quote')) {
+  if (blk.kind !== 'att' && (blk.kind === 'h' || blk.kind === 'ul' || blk.kind === 'ol' || blk.kind === 'quote' || blk.kind === 'cont')) {
     blk.kind = 'p'; blk.marker = '';
     next.sel = caret(b, 0);
+    renumber(next.blocks);
     return next;
   }
   if (b === 0) return next;
@@ -492,6 +601,7 @@ export function backspaceAtStart(st) {
   next.blocks.splice(b - 1, 2, { ...prev, kind, marker: kind === 'code' ? '' : prev.marker, runs, pad: undefined });
   ensureShape(next.blocks);
   next.sel = caret(b - 1, at);
+  renumber(next.blocks);
   return next;
 }
 
@@ -515,6 +625,7 @@ export function deleteAtEnd(st) {
   next.blocks.splice(b, 2, { ...here, kind: here.kind === 'att' ? 'p' : here.kind, runs, pad: undefined });
   ensureShape(next.blocks);
   next.sel = caret(b, at);
+  renumber(next.blocks);
   return next;
 }
 
@@ -689,7 +800,7 @@ export function normalizeFences(blocks, { resolve = () => null, plain = false, r
 }
 
 // ------------------------------------------------------------------ 打った直後の整形
-const BLOCK_TRIGGER = /^(#{1,6}|[-*+]|\d{1,9}[.)]|>) $/;
+const BLOCK_TRIGGER = /^(#{1,6}|[-*+]|\d{1,9}[.)]|[>＞]) $/;
 
 function runAt(runs, v) {
   let at = 0;
@@ -753,8 +864,8 @@ export function applyTriggers(st, ch, { plain = false } = {}) {
       const m = BLOCK_TRIGGER.exec(head);
       if (m && runsText(sliceRuns(blk.runs, 0, v)) === head) {
         const next = clone(st);
-        const kind = head[0] === '#' ? 'h' : head[0] === '>' ? 'quote' : /\d/.test(head[0]) ? 'ol' : 'ul';
-        next.blocks[b] = { kind, marker: head, runs: sliceRuns(blk.runs, v) };
+        const kind = head[0] === '#' ? 'h' : head[0] === '>' || head[0] === '＞' ? 'quote' : /\d/.test(head[0]) ? 'ol' : 'ul';
+        next.blocks[b] = { kind, marker: kind === 'quote' ? '> ' : head, runs: sliceRuns(blk.runs, v) };
         next.sel = caret(b, 0);
         return { state: next, kind: 'block' };
       }
@@ -766,6 +877,16 @@ export function applyTriggers(st, ch, { plain = false } = {}) {
       ensureShape(next.blocks);
       next.sel = caret(b, 3);
       return { state: next, kind: 'fence' };
+    }
+  }
+  // 引用の行頭でもう一度 `> ` を打つと、引用が 1 段深くなる
+  if (blk.kind === 'quote' && ch === ' ') {
+    const head = text.slice(0, v);
+    if (/^[>＞] $/.test(head) && runsText(sliceRuns(blk.runs, 0, v)) === head) {
+      const next = clone(st);
+      next.blocks[b] = { kind: 'quote', marker: (/[ \t]$/.test(blk.marker) ? blk.marker : blk.marker + ' ') + '> ', runs: sliceRuns(blk.runs, v) };
+      next.sel = caret(b, 0);
+      return { state: next, kind: 'block' };
     }
   }
   const at = runAt(blk.runs, v);

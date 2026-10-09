@@ -1144,7 +1144,8 @@ body.inapp-links .present-tools .visualize-expand{display:none}
 .md-b.md-h[data-l="4"]{font-size:1em;color:var(--ink-weak)}
 .md-b.md-ul,.md-b.md-ol{position:relative;padding-left:calc(1.5em + var(--ind,0) * 1.2em)}
 .md-b.md-ul::before,.md-b.md-ol::before{content:attr(data-mk);position:absolute;left:calc(.4em + var(--ind,0) * 1.2em);color:var(--ink-weak);font-variant-numeric:tabular-nums;pointer-events:none;user-select:none}
-.md-b.md-quote{padding:0 12px;background:var(--surface-paper);color:var(--ink-weak)}
+.md-b.md-cont{padding-left:calc(1.5em + var(--ind,0) * 1.2em)}
+.md-b.md-quote{padding:0 12px 0 calc(12px + (var(--q,1) - 1) * 16px);background:var(--surface-paper);color:var(--ink-weak)}
 .md-b.md-quote:not(.md-quote + .md-quote){border-top-left-radius:var(--r-s);border-top-right-radius:var(--r-s);padding-top:2px}
 .md-b.md-quote:not(:has(+ .md-quote)){border-bottom-left-radius:var(--r-s);border-bottom-right-radius:var(--r-s);padding-bottom:2px}
 .md-b.md-code{font:var(--fs-s)/1.7 var(--font-mono);background:var(--surface-paper);padding:0 14px;white-space:pre-wrap;tab-size:2}
