@@ -37,7 +37,7 @@ export function attachmentMessageIndex(messages, present) {
 
 /**
  * Preserve message order; human attachments belong immediately after their message.
- * 末尾の窓だけを持っているとき（ADR 0902）は、base = messages[0] の通し番号、presentBase = presents[0] の通し番号。
+ * 末尾の窓だけを持っているとき（ADR 0182）は、base = messages[0] の通し番号、presentBase = presents[0] の通し番号。
  * mi・pi・anchorMi は常に通し番号（画面の行の印 m:<mi>・p:<pi> が、窓が伸びても変わらないように）。結び付く先が窓の手前にある提示は anchorMi = -1
  */
 export function buildItems(messages, presents, base = 0, presentBase = 0) {

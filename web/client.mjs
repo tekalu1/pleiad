@@ -348,7 +348,7 @@ const state = {
   // 会話ごとのコンピューター操作の状態（computer.state。running / waiting のものだけ。idle は消す）。waiting の行の表示に使う
   computerStates: new Map(),
   submitting: false,       // 新規セッションを送った直後（id が決まるまで）
-  messages: [],        // 今のセッションの履歴（loadSession の messages）。長い会話は末尾の窓だけ（ADR 0902）
+  messages: [],        // 今のセッションの履歴（loadSession の messages）。長い会話は末尾の窓だけ（ADR 0182）
   base: 0,             // messages[0] の通し番号。画面の行の印 m:<通し番号> とサーバーの添字はこの値で揃える
   contextInfo: null,   // 今のセッションの読み込み記録（sessionContext の戻り）。タイトル行の入口と筋の一行に使う
   contextInfoId: null, // 上の記録がどのセッションのものか
@@ -526,7 +526,7 @@ function compactionBoundary(entry) {
   }
   return m;
 }
-/** 画面に描く提示。本文が印のままの提示（ADR 0902）には、本文を取る URL が使う会話の id を足す */
+/** 画面に描く提示。本文が印のままの提示（ADR 0182）には、本文を取る URL が使う会話の id を足す */
 function paintable(p) {
   const e = savedEvent(p);
   return p?.lazy ? { ...e, lazy: { ...p.lazy, sessionId: state.current } } : e;
@@ -677,11 +677,11 @@ function place(w) {
 let paintingHistory = false;
 // 古い発言を読み足して描く間（paintOlder）、行は末尾ではなくこの行の手前に置く
 let paintBefore = null;
-// 前の発言の読み込み（ADR 0902）。読み込み中の約束・読めなかった会話と窓の位置・先頭に出している表示
+// 前の発言の読み込み（ADR 0182）。読み込み中の約束・読めなかった会話と窓の位置・先頭に出している表示
 let olderBusy = null;
 let olderFail = null;
 let olderEl = null;
-// 会話を開いたとき、末尾の数行だけ先に描き、手前は idle に小分けで足している最中の仕事（ADR 0902: C1）。無ければ null
+// 会話を開いたとき、末尾の数行だけ先に描き、手前は idle に小分けで足している最中の仕事（ADR 0182: C1）。無ければ null
 let backfill = null;
 
 function append(node, key) {
@@ -7839,7 +7839,7 @@ function roleBefore(items, index) {
   return null;
 }
 
-// 会話を開くとき（ADR 0902: C1）: 末尾の FIRST_PAINT_ROWS 件の発言を先に描いて見せ、手前は idle に BACKFILL_MS ほどずつ足す。
+// 会話を開くとき（ADR 0182: C1）: 末尾の FIRST_PAINT_ROWS 件の発言を先に描いて見せ、手前は idle に BACKFILL_MS ほどずつ足す。
 // 全部を 1 回で描くと、スマホでは 1 つの長いタスクが数百 ms になり、開いた後の最初の操作が待たされる
 const FIRST_PAINT_ROWS = 16;
 const BACKFILL_MIN = 12;    // 手前がこれより少ない（項目の数）なら分けずに全部描く
@@ -8062,7 +8062,7 @@ function placeJunctions({ snapshots = branchSnapshots() } = {}) {
  * 読む間の出来事を取り置く呼び出し（sessionLoads。会話を開く・枝の切り替え）にだけ付ける
  */
 async function loadHistory(args, prev = null, { window = false, bulk = false } = {}) {
-  // 会話を開く読み込み（window）は、末尾の窓だけを頼み、大きい提示の本文は印にしてもらう（ADR 0902）。
+  // 会話を開く読み込み（window）は、末尾の窓だけを頼み、大きい提示の本文は印にしてもらう（ADR 0182）。
   // この仕組みを知らないサーバーは窓の頼みを無視して全量を返す（応答に base が無い）ので、base 0・本文付きの提示として扱う
   const extra = window ? { lazy: true, tail: WINDOW_MESSAGES, tailBytes: WINDOW_BYTES } : {};
   const request = prev ? syncRequest(prev.messages, prev.presents, { base: prev.base ?? 0, presentBase: prev.presentBase ?? 0 }) : null;
@@ -8212,7 +8212,7 @@ function mostRecentSession() {
 function startBootPrefetch(id) {
   const args = { sessionId: id, live: true, watch: true };
   const load = sessionLoads.begin(id);
-  // 開くときと同じく末尾の窓だけを頼む（loadAndPaint が引き取る返事は窓の形でなければならない。ADR 0902）
+  // 開くときと同じく末尾の窓だけを頼む（loadAndPaint が引き取る返事は窓の形でなければならない。ADR 0182）
   const reply = loadHistory(args, null, { window: true, bulk: true });
   reply.catch(() => {});
   bootPrefetch = { id, load, reply, args };
@@ -8366,7 +8366,7 @@ async function paintSession(id, data, { keepUpTo, transition, loaded = false, lo
   }
   if (!keepComposer) loadDraft();
   closeTurnEl();
-  // 長い会話を開くときは、末尾の数行を先に描き、手前は idle に足す（ADR 0902: C1）。
+  // 長い会話を開くときは、末尾の数行を先に描き、手前は idle に足す（ADR 0182: C1）。
   // 位置を保つ描き替え・枝の切り替え・編集中・開いた直後に送った会話は、全部を描く
   const split = !retained && keepUpTo === undefined && !transition && (!quiet || atEnd) && !chatEdit.active && !state.initialMessageId ? splitFirstPaint() : null;
   const added = split ? paintHistory(0, null, split.tail) : paintHistory(keepUpTo ?? 0, retained);
@@ -8476,7 +8476,7 @@ async function syncHistory() {
   placeJunctions();
 }
 
-// ---------------------------------------------------------------- 前の発言（ADR 0902）
+// ---------------------------------------------------------------- 前の発言（ADR 0182）
 
 // 長い会話は末尾の窓だけを読んで開く。上へ戻って先頭に近づいたら、窓の手前の発言を足す。読んでいる位置は動かさない。
 // 先頭には「前の発言を読み込んでいます…」と骨組みの線を出し、読めなかったら「もう一度」を出す（自動では読み直さない）

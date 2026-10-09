@@ -1709,7 +1709,7 @@ const server = http.createServer(async (req, res) => {
       res.writeHead(200, headers);
       return res.end(req.method === 'HEAD' ? undefined : body);
     }
-    // 会話の提示（Visualize の HTML・画像）の本文を 1 件ずつ返す（ADR 0902）。loadSession は大きい本文を運ばず、画面が見える近くに来た提示だけをここから取る。
+    // 会話の提示（Visualize の HTML・画像）の本文を 1 件ずつ返す（ADR 0182）。loadSession は大きい本文を運ばず、画面が見える近くに来た提示だけをここから取る。
     // 本文は記録に追記されるだけで変わらないので、(sessionId, i, at) ごとに長く覚えさせてよい。画像は画像のまま（<img src> が直に読む）、HTML は文字で返す。
     // どちらも画面の外では実行されない形（nosniff・sandbox）にして、直に開かれても同じオリジンのスクリプトにならないようにする
     if (url.pathname === '/present-body') {
@@ -7948,7 +7948,7 @@ wss.on("connection", (ws, req) => {
             const compactionData = { compactions, contextWindow: read.turn?.contextWindow ?? sidecar.contextWindow ?? null,
               compactionAt: compactionScheduler.get(sessionId), autoCompactionOff: Boolean(sidecar.autoCompactionOff) };
             // from・check（web/history-sync.mjs）を付けて頼まれたら、持っている先頭が合うときだけ続きを返す（ADR 0062）。合わなければ全量。
-            // tail・lazy・older を付けて頼まれたら、末尾の窓・提示の本文の印・手前の分だけを返す（ADR 0902）
+            // tail・lazy・older を付けて頼まれたら、末尾の窓・提示の本文の印・手前の分だけを返す（ADR 0182）
             if (!msg.args?.live) return reply(true, serveHistory({ ...data, completedAt, interrupted, draft, ...compactionData, ...retired }, msg.args));
             // 承認は一度きりの配信で、streamEvents にも載らない（web/session-stream.mjs）。
             // 開き直しのたびに保留中のものを返さないと、承認が起きた後にその会話を開いても

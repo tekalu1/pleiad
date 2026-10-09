@@ -1,4 +1,4 @@
-// 会話を開く速さ（ADR 0902）の純粋な部分。
+// 会話を開く速さ（ADR 0182）の純粋な部分。
 //   - 窓（末尾の発言だけ）の切り方・提示の本文の印・遡り（older）・窓の差分。つないだ結果は全量と同じ。古い相手とは今までの形でやりとりする
 //   - 画面の描き方: 末尾を先に描き、手前を idle に足す（splitFirstPaint・backfillChunk ほか。vm で client.mjs から切り出して動かす）
 // サーバーを起動して量と本文の取り方を確かめる試験は tests/unit/server-history-window.mjs。ブラウザーでの位置のずれは tests/browser/history-window.cjs

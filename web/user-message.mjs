@@ -31,7 +31,7 @@ export const attachmentName = p =>
 /** 画像の src。画像でない・載せられない（大きすぎて中身を外した）ものは、ホストが配る /local-file か null */
 export function attachmentImageSrc(p) {
   if (p?.kind !== 'image') return null;
-  // 本文が印のままの添付（ADR 0902）は、<img> が本文の URL を直に読む
+  // 本文が印のままの添付（ADR 0182）は、<img> が本文の URL を直に読む
   return presentImg(isLazy(p, 'dataUri') ? presentBodyUrl(p, 'dataUri') : p.dataUri ?? p.path);
 }
 

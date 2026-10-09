@@ -175,7 +175,7 @@ export async function findVisualization(sessionId, backend, { id, at } = {}) {
 }
 
 /**
- * 会話に保存された提示の本文（content・dataUri）を 1 つ探す（画面が /present-body で取りに行く。ADR 0902）。
+ * 会話に保存された提示の本文（content・dataUri）を 1 つ探す（画面が /present-body で取りに行く。ADR 0182）。
  * 画面が持っている通し番号 i を先に見て、その時刻（at）が合えば採る。ずれていたら（走っているターンの提示の並びと記録の並びが違うとき）時刻で探す。
  * 本文が文字列で無いもの・上限を超えて落とした提示は null
  */

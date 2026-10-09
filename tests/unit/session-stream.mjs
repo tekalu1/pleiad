@@ -82,7 +82,7 @@ export default async function (t) {
     chatEdit: { active: false, sending: false, snapshot: () => null, reset: noop, restore: noop }, syncEdit: noop, syncEditTail: noop,
     // 中断と再開（client.mjs の syncResume / paintInterruptLine、web/interrupt.mjs）。このテストの対象外
     syncResume: noop, paintInterruptLine: noop, isInterrupted: () => false, interruptReadPoint: () => 0, resumeSettled: () => false,
-    // 会話を開くときの窓と手前を足す仕事（ADR 0902）。このテストの対象外
+    // 会話を開くときの窓と手前を足す仕事（ADR 0182）。このテストの対象外
     WINDOW_MESSAGES, WINDOW_BYTES, backfill: null, paintBefore: null, olderBusy: null, olderFail: null, olderEl: null,
     cancelBackfill: noop, maybeLoadOlder: noop, hideOlder: noop, splitFirstPaint: () => null, paintedFloor: () => 0,
   });

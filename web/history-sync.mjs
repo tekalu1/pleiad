@@ -1,8 +1,8 @@
-// 履歴を全部読み直さずに済ませるための道具（issue #37 段階 2。ADR 0062・ADR 0902）。
+// 履歴を全部読み直さずに済ませるための道具（issue #37 段階 2。ADR 0062・ADR 0182）。
 //   - retainPlan: 静かな読み直しで、画面に残す行と描き直す行の境目（画面の DOM は client.mjs が触る）
 //   - syncRequest / serveFrom / joinReply: loadSession を「今持っている先頭の続きだけ」にする（画面が頼み、サーバーが切り、画面がつなぐ）
 //   - serveHistory / windowStart / presentBaseFor / stubPresent: 会話を開くときに末尾の窓だけを運び（base = 窓の最初の発言の通し番号）、
-//     大きい提示の本文（Visualize の HTML・画像）は印（lazy）だけにする。古い側は serveOlder で遡って運ぶ（ADR 0902）
+//     大きい提示の本文（Visualize の HTML・画像）は印（lazy）だけにする。古い側は serveOlder で遡って運ぶ（ADR 0182）
 // 中身の同じ発言を見分けるのは、発言全体の署名（messageSig）。uuid・本文だけでなく、後から付いたツールの結果・
 // 圧縮の印など、行の見た目に効く値が変わっても「違う」になる（web/branches.mjs の commonPrefix は本文とツール名しか見ない）。
 import { buildItems, inlineAttachments } from "./timeline.mjs";
@@ -168,7 +168,7 @@ export function joinReply(prev, data, request) {
   return { messages: [...prev.messages.slice(0, data.from - base), ...messages], presents: [...prev.presents.slice(0, data.presentFrom - presentBase), ...presents], base, presentBase };
 }
 
-// ---------------------------------------------------------------- 窓と本文の遅延（ADR 0902）
+// ---------------------------------------------------------------- 窓と本文の遅延（ADR 0182）
 
 /** 委譲先のエージェント（サブエージェント）を呼ぶツール。作業ダイアログの過去の一覧は、この呼び出しから子を引き直す */
 export const SUBAGENT_TOOLS = new Set(['Task', 'Agent', 'collabAgentToolCall', 'subAgentActivity']);

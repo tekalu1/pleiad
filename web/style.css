@@ -557,7 +557,7 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 @keyframes title-think{from{background-position:100% 0}to{background-position:0 0}}
 @media (prefers-reduced-motion:reduce){.title-field.generating::after{animation:none}}
 .history-skeleton{width:min(100%,680px);padding:10px 14px;margin-bottom:18px}
-/* 上へ戻って前の発言を読むときの先頭の表示（ADR 0902）。筋の右、発言の列に揃える */
+/* 上へ戻って前の発言を読むときの先頭の表示（ADR 0182）。筋の右、発言の列に揃える */
 .older-load{padding:8px 0 4px var(--gut,72px);min-height:8px}
 .older-note{margin:10px 0 8px;text-align:center;color:var(--ink-weak);font-size:var(--fs-s)}
 .older-retry{display:block;margin:0 auto 10px;min-height:36px;padding:6px 16px;border-radius:var(--r-pill);background:var(--surface-2);color:var(--ink);font-size:var(--fs-s)}
@@ -974,7 +974,7 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 /* iframe の中身の高さは sandbox かつスクリプト無しでは測れない。固定高 + 縦スクロールで妥協する */
 .present-body>iframe{display:block;width:100%;height:440px;border:0;border-radius:var(--r-s);background:var(--surface-paper)}
 .present-note{padding:22px 16px;color:var(--ink-weak);font-size:var(--fs-s);text-align:center}
-/* 本文が印のままの提示の枠（web/present-lazy.mjs。ADR 0902）。高さは本物の iframe の既定と同じ 150px で、差し替えても下の行が動かない */
+/* 本文が印のままの提示の枠（web/present-lazy.mjs。ADR 0182）。高さは本物の iframe の既定と同じ 150px で、差し替えても下の行が動かない */
 .present-lazy{display:flex;align-items:center;justify-content:center;height:150px;border-radius:var(--r-m);background:var(--surface-1)}
 .present-lazy .history-line{width:36%}
 .present-lazy[role=button]{cursor:pointer}
