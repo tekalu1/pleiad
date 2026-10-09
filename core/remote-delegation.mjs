@@ -77,6 +77,8 @@ export function parentPortRemoteAgent(port, { timeoutMs = 70_000 } = {}) {
   return {
     /** main が最後に知らせたホストの一覧 [{ hostId, name, hostName, agentUse, state, allowed, view }]。view はホストが経過の読み出しを知っているか */
     get hosts() { return hosts; },
+    /** main との口が使えるか（更新の引き継ぎの間は false）。false の間のオフラインは、ホストの不通ではない */
+    get connected() { return !port.resumable || port.connected !== false; },
     refresh: async () => { const r = await call('hosts'); hosts = r.hosts ?? hosts; return hosts; },
     /** 委譲の 6 つの操作のどれか（ホストの答えの result で解決。失敗は code 付きの Error）。ms は main がホストの答えを待つ上限 */
     request: async (hostId, op, args, requester, { signal, timeoutMs: ms = 60_000 } = {}) =>
@@ -109,13 +111,25 @@ class DelegationError extends Error {
  * @param deps.locale        () => 言語。依頼元の会話がまだ分からない場所のエージェント向けの文に使う
  * @param deps.changed       () => void。承認の待ちが変わった（ply_task_wait を起こす・実行中の配信）
  * @param deps.log           (line) => void
+ * @param deps.deliverNotice async (ownerSessionId, build(lng) => 文) => 'ok' | 'requeue' | 'error'。依頼元の会話へ内部のターンで知らせる（無音の通知と同じ道。ADR 0171）
+ * @param deps.now           () => ms。時計（試験で偽物にする）
+ * @param deps.offlineMinutes        ホストがこの分数オフラインのままなら、走っている子のある依頼元へ知らせる（0 で知らせない）
+ * @param deps.offlineRepeatMinutes  同じオフラインが続くとき、最初の通知からこの分数あけて、もう 1 回だけ知らせる
+ * @param deps.syncWaitMs            つながり直した後、追いつきの答え（synced）を待つ上限
  */
-export function createRemoteDelegation({ bridge, tasks, agentT, titleOf = async () => '', cards = null, changed = () => {}, locale = () => 'en', log = () => {} }) {
+export function createRemoteDelegation({ bridge, tasks, agentT, titleOf = async () => '', cards = null, changed = () => {}, locale = () => 'en', log = () => {},
+  deliverNotice = async () => 'ok', now = Date.now,
+  offlineMinutes = Number(process.env.AGENT_HOST_OFFLINE_MINUTES ?? 10), offlineRepeatMinutes = Number(process.env.AGENT_HOST_OFFLINE_REPEAT_MINUTES ?? 60),
+  syncWaitMs = 20_000 }) {
   const open = new Map();         // `${hostId}:${relayId}` → { cardId, hostId, relayId, taskId, receipt }
   const byCard = new Map();       // cardId → 同じ項目
   const orphans = new Map();      // taskId → { event, at }。adopt より先に届いた便り（res と task の順が入れ替わったとき）
   const syncing = new Set();      // hostId。同期の最中の二重実行を避ける
   const offlineAt = new Map();    // hostId → 線が使えなくなった時刻。画面の「オフライン · HH:MM までの分」（経過の読み出しが最後に届いた分の目安）
+  const seenOffline = new Map();  // hostId → Pleiad が初めてオフラインと知った時刻（起動した時にはもう落ちていたホストの、不通の通知の起点）
+  const told = new Map();         // hostId → Map(依頼元の会話 → { at, n, taskIds })。不通を知らせた記録。つながり直して追いつきを知らせたら消す
+  const catching = new Map();     // hostId → { unknown: Set, timer }。つながり直した後、追いつきの答え（synced）を待っている
+  const working = new Set();      // 反映の途中の task の便り（追いつきの知らせは、それが済んでから）
   const known = new Map();        // 経過の読み出しで知ったホストの子孫の taskId → hostId（読み出しの宛先を引く。端末の台帳には保存しない）
 
   const hostsNow = () => bridge?.hosts ?? [];
@@ -256,9 +270,13 @@ export function createRemoteDelegation({ bridge, tasks, agentT, titleOf = async 
 
   function onEvent(hostId, ev) {
     switch (ev?.t) {
-      case 'task': return onTask(hostId, ev.task).catch(e => log(`remote delegation: ${e?.message ?? e}`));
+      case 'task': {
+        const work = onTask(hostId, ev.task).catch(e => log(`remote delegation: ${e?.message ?? e}`)).finally(() => working.delete(work));
+        working.add(work);
+        return work;
+      }
       case 'relays': return reconcile(hostId, ev.relays);
-      case 'synced': return unknownTasks(hostId, ev.unknown);
+      case 'synced': return unknownTasks(hostId, ev.unknown).then(() => caughtUp(hostId, ev.unknown));
       case 'relay': return openRelay(hostId, ev.relay);
       case 'relayEnd': return closeRelay(hostId, ev.id, { by: ev.by === 'device' ? 'device' : ev.by === 'host' ? 'host' : null, allow: ev.allow === true });
       default:
@@ -314,19 +332,111 @@ export function createRemoteDelegation({ bridge, tasks, agentT, titleOf = async 
     changed();
   }
 
+  // ---- 依頼元の会話への通知（ホストが落ちたままのとき。ADR 0171） ----
+
+  const hhmm = ms => new Date(ms).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false });
+  const itemsOf = (rows, state) => rows.map(r => `- ${r.title || r.taskId} (${r.taskId})${state ? `: ${state(r)}` : ''}`).join('\n');
+  const stillRunning = hostId => (tasks()?.rowsWhere(r => r.host?.hostId === hostId && !FINAL.has(r.status)) ?? []);
+  const byParent = rows => { const m = new Map(); for (const r of rows) m.set(r.parentSessionId, [...(m.get(r.parentSessionId) ?? []), r]); return m; };
+  const sending = new Set();
+
+  /** 通知を 1 通送る。'requeue'（会話が受け取れない）なら false を返し、記録しない（次の確認でもう一度） */
+  async function say(owner, build) {
+    const key = `${owner}`;
+    if (sending.has(key)) return false;
+    sending.add(key);
+    try { return (await deliverNotice(owner, build)) !== 'requeue'; }
+    catch (e) { log(`remote delegation: ${e?.message ?? e}`); return true; }
+    finally { sending.delete(key); }
+  }
+
+  let checking = false;
+  /**
+   * 定期の確認。走っている子（終わっていないホストの行）があるホストが offlineMinutes 以上オフラインのままなら、その依頼元の会話へ 1 通
+   * （ホストと依頼元の組ごと。子ごとではない）。続くなら offlineRepeatMinutes あけてもう 1 回。口が無い間（更新の引き継ぎ）は数えない
+   */
+  async function checkOffline() {
+    const offlineMs = offlineMinutes * 60000, repeatMs = offlineRepeatMinutes * 60000;
+    if (checking || !bridge || !(offlineMs > 0) || bridge.connected === false) return;
+    checking = true;
+    try {
+      const at = now();
+      for (const h of hostsNow()) if (h.state === 'offline' && !offlineAt.has(h.hostId) && !seenOffline.has(h.hostId)) seenOffline.set(h.hostId, at);
+      const ids = new Set([...offlineAt.keys(), ...seenOffline.keys()]);
+      for (const hostId of ids) {
+        const host = hostById(hostId);
+        if (!host || host.state === 'ready') continue;
+        const since = offlineAt.get(hostId) ?? seenOffline.get(hostId);
+        if (at - since < offlineMs) continue;
+        for (const [owner, rows] of byParent(stillRunning(hostId))) {
+          const mine = told.get(hostId) ?? new Map();
+          const rec = mine.get(owner);
+          if (rec && (rec.n >= 2 || !(repeatMs > 0) || at - rec.at < repeatMs)) continue;
+          const name = host.name ?? rows[0].host.name;
+          const build = lng => agentT(lng, 'delegation.hostOfflineNotice', { host: name, since: hhmm(since), minutes: Math.round((at - since) / 60000),
+            count: rows.length, items: itemsOf(rows) });
+          if (!await say(owner, build)) continue;
+          mine.set(owner, { at, n: (rec?.n ?? 0) + 1, taskIds: new Set([...(rec?.taskIds ?? []), ...rows.map(r => r.taskId)]) });
+          told.set(hostId, mine);
+        }
+      }
+    } finally { checking = false; }
+  }
+
+  /** つながり直した。不通を知らせたホストなら、追いつきの答え（synced）を待って（上限 syncWaitMs）まとめて知らせる */
+  function reconnected(hostId) {
+    offlineAt.delete(hostId); seenOffline.delete(hostId);
+    if (!told.has(hostId) || catching.has(hostId)) return;
+    const entry = { unknown: new Set(), timer: null };
+    entry.timer = setTimeout(() => { report(hostId).catch(e => log(`remote delegation: ${e?.message ?? e}`)); }, syncWaitMs);
+    entry.timer.unref?.();
+    catching.set(hostId, entry);
+  }
+
+  /** synced が届いた（ホストが知らない ID を含む）。追いつきの待ちがあれば知らせる */
+  async function caughtUp(hostId, unknown) {
+    const entry = catching.get(hostId);
+    if (!entry) return;
+    for (const id of Array.isArray(unknown) ? unknown : []) entry.unknown.add(String(id));
+    await report(hostId);
+  }
+
+  /** 追いつきの結果を、不通を知らせた依頼元ごとに 1 通で知らせる。走っている・終わった（結果は完了通知で届く）・ホストに記録が無い、の別 */
+  async function report(hostId) {
+    const entry = catching.get(hostId);
+    const mine = told.get(hostId);
+    if (!entry || !mine) return;
+    catching.delete(hostId); told.delete(hostId);
+    clearTimeout(entry.timer);
+    await Promise.all([...working]);
+    const name = hostById(hostId)?.name ?? '';
+    for (const [owner, rec] of mine) {
+      const rows = [...rec.taskIds].map(id => tasks()?.get(id)).filter(r => r?.host?.hostId === hostId);
+      if (!rows.length) continue;
+      const build = lng => {
+        const label = r => (entry.unknown.has(r.taskId) ? agentT(lng, 'delegation.hostBackLost')
+          : FINAL.has(r.status) ? agentT(lng, 'delegation.hostBackEnded', { status: r.status }) : agentT(lng, 'delegation.hostBackRunning'));
+        return agentT(lng, 'delegation.hostBackNotice', { host: name || rows[0].host.name, items: itemsOf(rows, label) });
+      };
+      await say(owner, build);
+    }
+  }
+
   let unsubscribe = [];
+  let ticker = null;
   function start() {
     if (!bridge || unsubscribe.length) return;
     unsubscribe = [
       bridge.onEvent(onEvent),
       bridge.onState((hostId, status) => {
-        if (status.state === 'ready') offlineAt.delete(hostId); else if (!offlineAt.has(hostId)) offlineAt.set(hostId, Date.now());
+        if (status.state === 'ready') { offlineAt.delete(hostId); seenOffline.delete(hostId); } else if (!offlineAt.has(hostId)) offlineAt.set(hostId, now());
+        if (status.state !== 'ready') { const c = catching.get(hostId); if (c) { clearTimeout(c.timer); catching.delete(hostId); } }
         cards?.online(hostId, status.state === 'ready' && status.allowed);
         const done = stopped(status) ? retire(hostId).catch(e => log(`remote delegation: ${e?.message ?? e}`))
           : status.state !== 'ready' ? suspendTelemetry(hostId).catch(e => log(`remote delegation: ${e?.message ?? e}`)) : null;
         Promise.resolve(done).finally(changed);
       }),
-      bridge.onReady((hostId, status) => { offlineAt.delete(hostId); return catchUp(hostId, status).catch(e => log(`remote delegation: ${e?.message ?? e}`)); }),
+      bridge.onReady((hostId, status) => { reconnected(hostId); return catchUp(hostId, status).catch(e => log(`remote delegation: ${e?.message ?? e}`)); }),
       // 一覧が変わった。この PC 側で任せる設定を切った・ホストを消したら、そのホストの動いていた写しは追えない（理由つきで終わらせる）
       bridge.onHosts(list => {
         const gone = new Set();
@@ -338,6 +448,8 @@ export function createRemoteDelegation({ bridge, tasks, agentT, titleOf = async 
       }),
     ];
     bridge.refresh().catch(() => {});
+    ticker = setInterval(() => { checkOffline().catch(e => log(`remote delegation: ${e?.message ?? e}`)); }, 60_000);
+    ticker.unref?.();
   }
 
   // ---- ply_delegate の host ----
@@ -522,7 +634,7 @@ export function createRemoteDelegation({ bridge, tasks, agentT, titleOf = async 
 
   return {
     enabled: Boolean(bridge),
-    start, describe, delegate, taskCall, cancelHost, answerCard, presentList, view,
+    start, checkOffline, describe, delegate, taskCall, cancelHost, answerCard, presentList, view,
     /** 線が使えなくなった時刻（使えるなら null。つながっていなかった間に起きたものは分からず null） */
     offlineSince: hostId => offlineAt.get(hostId) ?? null,
     isRemoteCard: cardId => byCard.has(cardId),
