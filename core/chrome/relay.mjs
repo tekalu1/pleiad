@@ -26,6 +26,10 @@
 //     実機（Chrome 154）で、効くのは**そのスクリプトを始めたのと同じセッション**からだけだった（別のセッションから送ると、走っている無限ループには応答もしない・止まらない）。
 //     だから中継自身の一時のセッションではなく、エージェントのセッションに送る。エージェントのセッションを通さずに走っているスクリプト（ページ自身のもの）・エージェントが待っている Promise・タイマーは止まらない
 //   - onChange(fn): 会話の状態（ターンの間か・止めた・一時停止）が変わるたびに sessionId を渡す。onTap(fn): エージェントが押した位置（Input.dispatchMouseEvent の mousePressed）
+//   - onTabsLost(fn): 会話のタブが、エージェントが閉じたのでなく全部無くなった（窓を閉じる操作・人が窓を閉じた・Chrome が切れた）ときに sessionId を渡す。
+//     agent-browser は --pin-tab で消えたタブに縛られたまま、次の open からも tab_gone で断り続ける。聞き手（core/agent-browser.mjs）が縛りの記録を消して true を返したら、
+//     中継はエージェントの接続を切る。デーモンはつなぎ直すときに記録を読み直し、縛りが無ければ新しいタブ（新しい専用窓）を作る。
+//     縛りの無いエージェントの接続は切らない（次の createTarget で黙って窓を開き直す。ADR 0154）
 // 右パネルの映像（core/chrome/screencast.mjs。ADR 0148 第 5 段）には view の口を出す: 会話の窓のタブ・エージェントが最後に触れたタブ（「今のタブ」）・
 // 操作中の印・中継自身のセッションの付け外し（エージェントのセッションとは別。映像を見ている間だけ付け、focus emulation も映像側のセッションで持つ）・変化の知らせ
 import http from 'node:http';
@@ -133,7 +137,7 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, prof
   const orphans = new Set();   // 層が引き継げなかった窓の windowId（Chrome の接続が付いたら、その窓のタブを CDP で閉じる）
   let chromeId = null;         // 持ち越した窓・orphans の持ち主の Chrome（ws のパスの GUID）。windowId は Chrome の起動ごとに 1 から振り直されるので、別の Chrome の windowId で利用者の窓を触らないための印
   const carryListeners = new Set();
-  const changeListeners = new Set(), tapListeners = new Set();
+  const changeListeners = new Set(), tapListeners = new Set(), lostListeners = new Set();
   const fire = (set, ...args) => { for (const fn of [...set]) { try { fn(...args); } catch (error) { log(`chrome-relay: listener failed: ${error?.message ?? error}`); } } };
   const changed = entry => { fire(changeListeners, entry.id); carryChanged(); };
   const viewers = new Set();   // 映像側の聞き手 fn(entryId, kind, extra)。kind: tabs（タブの増減）| current（今のタブが替わった）| operating（操作中の印が替わった）| reset（Chrome の接続が切れた）| forget（会話を消した）| rebind（extra が前の id）
@@ -245,6 +249,7 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, prof
     for (const tab of state.tabs.values()) { tab.controller.abort(); tab.fe = null; }
     if (!handedOff) { scope.reset?.(); orphans.clear(); chromeId = null; }   // Chrome が閉じた。窓はもう無い（閉じ待ちの windowId も、次の Chrome では別の窓を指す）
     for (const entry of entries.values()) {
+      if (!handedOff && !closed) fire(lostListeners, entry.id);   // 窓はもう無い。agent-browser の縛りを捨てさせる（接続はすぐ下で閉じる）
       entry.windows.clear();
       if (entry.paused) { entry.paused = null; changed(entry); }   // Chrome が閉じた。窓はもう無いので、引き継ぎも解く
       entry.current = null; entry.operating = false;
@@ -339,6 +344,7 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, prof
     if (tab.entry.current === tab.targetId) tab.entry.current = null;
     notifyView(tab.entry.id, 'tabs');
     refreshOperating(tab.entry);
+    if (!tab.agentClosed && !tabsOf(state, tab.entry).length) tabsLost(tab.entry);   // 人が窓を閉じた・窓を閉じる操作
   }
 
   /** エージェントが動かしているタブか（一時停止中は人が動かしているので、いつも false。確認にかけるかを決める） */
@@ -805,7 +811,12 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, prof
         client.autoAttach = params.autoAttach === true;
         if (client.autoAttach) queueMicrotask(() => { for (const tab of tabsOf(state, entry)) if (![...client.sessions].some(sid => state.sessions.get(sid)?.tab === tab && state.sessions.get(sid)?.parent == null)) attachFor(state, client, tab).catch(() => {}); });
         return {};
-      case 'Target.getTargets': return { targetInfos: tabsOf(state, entry).map(tab => ({ ...tab.info })) };
+      case 'Target.getTargets': {
+        const targetInfos = tabsOf(state, entry).map(tab => ({ ...tab.info }));
+        // つないで最初にタブを探して 1 枚も無かった。次に作る空のタブは agent-browser の置き場（createTab の spare）
+        if (!client.created) client.placeholder = !targetInfos.length;
+        return { targetInfos };
+      }
       case 'Target.getTargetInfo': {
         if (!params.targetId) throw denied('target');
         mine(state, client, params.targetId);
@@ -817,7 +828,7 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, prof
         if (!rec || rec.client !== client) throw denied('session');
         return state.cdp.send(method, { sessionId: params.sessionId });
       }
-      case 'Target.closeTarget': mine(state, client, params.targetId); return state.cdp.send(method, { targetId: params.targetId });
+      case 'Target.closeTarget': mine(state, client, params.targetId).agentClosed = true; return state.cdp.send(method, { targetId: params.targetId });
       case 'Target.activateTarget': mine(state, client, params.targetId); return {};   // bringToFront と同じ。範囲の外の targetId は断る（上の mine）
       case 'Browser.getWindowForTarget': {
         if (!params.targetId) throw denied('target');
@@ -838,6 +849,13 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, prof
     const url = typeof params.url === 'string' && params.url ? params.url : 'about:blank';
     if (!safeUrl(url)) throw denied('navigation');
     const entry = client.entry;
+    // agent-browser はつないだとき会話にタブが無いと（Target.getTargets が空）空のタブを 1 つ作り、--pin-tab の縛りが無ければ続けて自分のタブを作る。
+    // タブごとに窓が分かれるので、最初の空のタブが空の窓として残る。同じ接続が次のタブを作ったら、まだ何も載せていないその空のタブを閉じる。
+    // タブを探さずに作ったタブ（エージェントが自分で並べたタブ）は閉じない
+    const spare = client.spare;
+    client.spare = null;
+    const first = client.placeholder === true && !client.created && url === 'about:blank' && !tabsOf(state, entry).length;
+    client.created = true;
     const direct = url === 'about:blank' || !confirm;
     const { targetId, windowId } = await scope.openTab({ cdp: state.cdp, url: direct ? url : 'about:blank', entryId: entry.id });
     const fresh = await state.cdp.send('Target.getTargetInfo', { targetId }).catch(() => null);
@@ -847,6 +865,14 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, prof
     if (!stillLive()) { state.cdp.send('Target.closeTarget', { targetId }).catch(() => {}); throw new RelayError(entry.paused ? PAUSED_MESSAGE : 'the agent connection is closed'); }
     tab.active = true;   // エージェントが作ったタブ
     touch(tab);
+    if (first) client.spare = targetId;
+    else if (spare) {
+      const blank = state.tabs.get(spare);
+      if (blank?.entry === entry && blank.info.url === 'about:blank') {
+        blank.agentClosed = true;
+        state.cdp.send('Target.closeTarget', { targetId: spare }).catch(() => {});
+      }
+    }
     if (direct) return targetId;
     const op = ++tab.ops;
     try {
@@ -879,6 +905,18 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, prof
   }
   function closeClients(entry, code, reason) {
     for (const client of [...entry.clients]) { try { client.ws.close(code, reason); } catch { /* 閉じていてもよい */ } }
+  }
+  /**
+   * 会話のタブが、エージェントが閉じたのでなく全部無くなった。agent-browser（--pin-tab）の縛りの記録を聞き手に先に消させ（同期）、消したら接続を切る。
+   * デーモンは消えたタブの縛りを覚えたままなので、接続を切らないと記録を消しても tab_gone が続く（つなぎ直すときに記録を読み直す）。
+   * 縛りが無ければ接続は切らない（窓が閉じてもエージェントの接続は生きている。次に使うときに黙って開き直す）
+   */
+  function tabsLost(entry) {
+    let unpinned = false;
+    for (const fn of [...lostListeners]) {
+      try { if (fn(entry.id) === true) unpinned = true; } catch (error) { log(`chrome-relay: listener failed: ${error?.message ?? error}`); }
+    }
+    if (unpinned) closeClients(entry, 1000, 'tabs lost');
   }
   /**
    * 引き継ぎ（一時停止）に入る: エージェントのブラウザーとタブの接続を切り、タブを「エージェントが動かしている」と見なさなくし（確認の待ちも取り下げる）、
@@ -1032,6 +1070,7 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, prof
     get cdp() { return up && !up.cdp.closed ? up.cdp : null; },
     onChange(fn) { changeListeners.add(fn); return () => changeListeners.delete(fn); },
     onTap(fn) { tapListeners.add(fn); return () => tapListeners.delete(fn); },
+    onTabsLost(fn) { lostListeners.add(fn); return () => lostListeners.delete(fn); },
     /** 新しい会話の id が決まった（turn.key → 本物の id） */
     rebind(from, to) {
       const entry = entries.get(from);
@@ -1071,6 +1110,8 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, prof
       }
       carryChanged();
       const remainingTabs = up === state && state ? tabsOf(state, entry).length : 0;
+      // タブの破棄の通知が閉じる前に届かなかった場合も、閉じ終えた後の次の open が新しい窓で動くようにする（dropTab と同じ。二度目は何もしない）
+      if (!remainingTabs) tabsLost(entry);
       return { closed: !remainingTabs && !scope.windows?.(sessionId)?.length && !osResult?.failed,
         ...((remainingTabs || scope.windows?.(sessionId)?.length || osResult?.failed) ? { failed: true } : {}) };
     },

@@ -155,6 +155,8 @@ Chrome への ws（`core/chrome/connection.mjs` の接続）は、サーバー�
 
 `core/agent-browser.mjs` の `chromeRelayBrowser` と `browserEnvironment` が、会話ごとの `agent-browser.json` に `cdp` を書く。シェルには `AGENT_BROWSER_CONFIG`・`AGENT_BROWSER_SESSION`・`AGENT_BROWSER_SOCKET_DIR`・`AGENT_BROWSER_PIN_TAB=1` を渡す。会話のネイティブ ID が決まっても設定の場所と名前は変えない。デーモンの管理ファイルは OS の一時領域の `ply-ab-<ハッシュ>` に置き、Codex の書き込みの許可は増やさない。
 
+`AGENT_BROWSER_PIN_TAB=1` の縛りは、その置き場の `<セッション名>.target` とデーモンの中に残る。縛ったタブが消えると、次の `open` からも `tab_gone` で断られ続ける。そのため会話のタブがエージェントの外で全部無くなったら（窓を閉じる操作・人が窓を閉じた・Chrome が切れた）、中継の `onTabsLost` を受けて `.target` を消し、消したときだけ中継がエージェントの接続を切る（縛りの無いエージェントの接続は切らず、次の `Target.createTarget` で黙って窓を開き直す。ADR 0154）。デーモンはつなぎ直すときに記録を読み直し、縛りが無いので新しいタブ（新しい専用窓）を作る。エージェント自身がタブを閉じた場合は縛りを外さない。
+
 Claude は会話の env、Codex は共有 app-server のスレッドごとの `shell_environment_policy.set`、Antigravity は会話のプロセスの env で受け取る。`agent-browser` は同梱の本体を PATH から呼び、接続先を手で指定する必要はない。ターン終了でサイトの確認を取り下げ、エージェントが動かしている印を外す。
 
 #### 会話の範囲と断る一覧
@@ -185,7 +187,7 @@ Claude は会話の env、Codex は共有 app-server のスレッドごとの `s
 
 `core/chrome/windows.mjs` が会話ごとに窓を持つ。最小化は描画が止まるため使わず、画面の外・透明・マウスを素通しにし、タスクバーと Alt+Tab から外す（[ADR 0154](adr/0154-agent-window-hidden-off-screen.md)）。窓の外形の既定は 800×800 DIP。通常はページの大きさの emulation を使わず、窓の大きさで右パネルの読みやすさを保つ。
 
-最初の窓は会話で選んだプロフィール（未選択なら Chrome の最後に使ったもの）を `--profile-directory` に渡し、`chrome.exe --new-window` から開く。題の nonce で窓を見つけて隠す。未選択で起こせなければ `Target.createTarget` を使う。選択済みの場合は、別のプロフィールで開く代わりに失敗を返す。2 枚目以降も、裏のタブの描画が間引かれないよう別の窓に作る。ページが `window.open` で開いたタブは同じ窓に入ることがあり、popup の別窓は範囲に取り込んで隠す。
+最初の窓は会話で選んだプロフィール（未選択なら Chrome の最後に使ったもの）を `--profile-directory` に渡し、`chrome.exe --new-window` から開く。題の nonce で窓を見つけて隠す。未選択で起こせなければ `Target.createTarget` を使う。選択済みの場合は、別のプロフィールで開く代わりに失敗を返す。2 枚目以降も、裏のタブの描画が間引かれないよう別の窓に作る。agent-browser はつないだとき会話にタブが無いと空のタブを 1 つ作り、続けて自分のタブを作る。中継は、同じ接続が次のタブを作った時点で、まだ `about:blank` のままの最初のタブを閉じる。最初の `open` で開く窓は 1 つになる。ページが `window.open` で開いたタブは同じ窓に入ることがあり、popup の別窓は範囲に取り込んで隠す。
 
 OS の層は、隠した窓が前面を取ったら直前の前面へ返す。モニター・DPI の変更やスリープ復帰では置き直す。窓が見つからなければ隠せなかったことをログに残す。起動や popup で短く窓が見える場合があり、裏になったタブの撮影や操作が遅くなる場合もある。
 
@@ -286,7 +288,7 @@ MCP の口は会話ごとの Bearer で守る。Claude・Codex は HTTP の MCP�
 
 ### 窓を閉じる
 
-`ply_browser.close_browser_window` は引数なしなら呼び出した会話の専用窓を閉じる。`{ task: '<taskId>' }` なら、この会話が直接委譲したローカルの子の窓を閉じる。タスクと子の会話メタの親子関係を両方確かめ、別の親・孫・リモートのホストの子・孤立した記録は断る。右パネルでは Chrome の道具の列の ⋯ に窓の一覧（この会話の窓と、直接委譲した子の窓。子の項目は押すとその子の会話の Chrome を開く）と「窓を閉じる」を置き、後者は `browser.chromeCloseWindow` を呼ぶ。PC の画面とリモートの端末で使える。MCP と CLI の ops には出さない。窓は使い終えたときに閉じられるが、続きに使う画面やログイン中の窓は開いたままにできる。閉じた後にブラウザーを使うと新しい専用窓が黙って開く。
+`ply_browser.close_browser_window` は引数なしなら呼び出した会話の専用窓を閉じる。`{ task: '<taskId>' }` なら、この会話が直接委譲したローカルの子の窓を閉じる。タスクと子の会話メタの親子関係を両方確かめ、別の親・孫・リモートのホストの子・孤立した記録は断る。右パネルでは Chrome の道具の列の ⋯ に窓の一覧（この会話の窓と、直接委譲した子の窓。子の項目は押すとその子の会話の Chrome を開く）と「窓を閉じる」を置き、後者は `browser.chromeCloseWindow` を呼ぶ。PC の画面とリモートの端末で使える。MCP と CLI の ops には出さない。窓は使い終えたときに閉じられるが、続きに使う画面やログイン中の窓は開いたままにできる。閉じた後にブラウザーを使うと新しい専用窓が黙って開く（agent-browser の縛りを外してつなぎ直させる。「中継とエージェントへの渡し方」）。
 
 親の委譲カードの下には、子の窓が開いている間だけ Chrome の印・プロフィール・状態・子の会話を開く操作・窓を閉じる × を出す。`browser.chromeWindows({ sessionId })` は、この会話と直接委譲した子の開いている窓を `{ sessionId, taskId, title, windows, profile, profileName, state, waiting }[]` で返す（この会話の行は `taskId: null`。`waiting` は人への依頼待ち）。タブの窓の数と ⋯ の一覧は、この読み取り口を使う。窓が開閉したら `chromeWindow`、プロフィールが替わったら `chromeProfile`、操作状態が替わったら `chromeControl` で読み直す。
 

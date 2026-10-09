@@ -14,8 +14,9 @@ export default async function (t) {
   // Chrome の中継の形の偽物（実物は core/chrome/relay.mjs。chromeRelayBrowser が包む）
   let endpointUrl = 'ws://127.0.0.1:1234/devtools/browser/key';
   const rebinds = [];
-  const bridge = chromeRelayBrowser({ endpoint: async () => endpointUrl, rebind: (from, to) => rebinds.push([from, to]), endTurn() {} });
+  let tabsLost = null;
   const dir = await mkdtemp(path.join(os.tmpdir(), 'pleiad-browser-test-'));
+  const bridge = chromeRelayBrowser({ endpoint: async () => endpointUrl, rebind: (from, to) => rebinds.push([from, to]), endTurn() {}, onTabsLost: fn => { tabsLost = fn; } }, { dataDir: dir });
   const socketDirs = new Set();
   try {
     const env = await browserEnvironment({ bridge, dataDir: dir, sessionId: 'conversation-1' });
@@ -37,6 +38,13 @@ export default async function (t) {
     endpointUrl = 'ws://127.0.0.1:1234/devtools/browser/new-key';
     const rebound = await browserEnvironment({ bridge, dataDir: dir, sessionId: 'native-thread-1' });
     t.ok('ID 確定後もデーモンの置き場を保つ', rebound.AGENT_BROWSER_SOCKET_DIR === env.AGENT_BROWSER_SOCKET_DIR);
+    // 会話のタブがエージェントの外で全部無くなった: --pin-tab の縛りの記録（<セッション名>.target）だけを消す。ID 確定後の id でも最初の置き場を指す
+    const bindingFile = path.join(env.AGENT_BROWSER_SOCKET_DIR, `${env.AGENT_BROWSER_SESSION}.target`);
+    await writeFile(bindingFile, '{}');
+    const unpinned = tabsLost?.('native-thread-1');
+    t.ok('タブが無くなったら agent-browser の縛りの記録だけを消す（ID 確定後の id でも同じ置き場）', !(await stat(bindingFile).catch(() => null)) && (await stat(path.join(env.AGENT_BROWSER_SOCKET_DIR, 'probe')).catch(() => null))?.isFile() === true);
+    // 消したときだけ true（中継はそのときだけエージェントの接続を切る。縛りの無いエージェントの接続は窓が無くなっても切らない。ADR 0154）
+    t.ok('縛りの記録を消したときだけ true を返す（記録が無ければ false）', unpinned === true && tabsLost?.('native-thread-1') === false && tabsLost?.('conversation-2') === false, JSON.stringify(unpinned));
     t.ok('新規スレッドの ID 確定後も設定パスを保ち、鍵を更新する', rebound.AGENT_BROWSER_CONFIG === env.AGENT_BROWSER_CONFIG && rebound.AGENT_BROWSER_SESSION === env.AGENT_BROWSER_SESSION && JSON.parse(await readFile(env.AGENT_BROWSER_CONFIG, 'utf8')).cdp === endpointUrl);
     t.ok('デスクトップ以外では渡さない', await browserEnvironment({ bridge: null, dataDir: dir, sessionId: 'one' }) === null);
     t.ok('指示は中継があるターンだけ', browserInstruction(env, 'ja', (_locale, key) => key) === 'browser.instructions' && browserInstruction(null, 'ja', () => 'wrong') === null);
