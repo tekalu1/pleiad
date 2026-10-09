@@ -63,6 +63,7 @@ const SUITES = [
   './unit/arc.mjs',
   // 会話別の agent-browser の設定ファイル・環境変数・指示（Chrome の中継の形の偽物。各 backend へ届く）
   './unit/agent-browser-env.mjs',
+  './unit/agent-browser-lifetime.mjs',
   // ply_browser の骨組み（ADR 0148）: 鍵付きの口・プロフィール（ADR 0078）の削除後の形・agy の束ね
   './unit/browser-bridge.mjs',
   // Chrome への接続（ADR 0148・0153）: A〜D の状態機械・無期限の待ち・確認の出し直し・OS の層が無いとき（偽の Chrome・偽の OS の層・偽の時計）
@@ -75,6 +76,7 @@ const SUITES = [
   './unit/chrome-panel-lifecycle.mjs',
   './unit/chrome-window-switch.mjs',
   './unit/chrome-pill-resume.mjs',
+  './unit/browser-handoff-card.mjs',
   // Chrome の操作待ち（ADR 0148・0168）: 1 会話 1 枚・状態の差し替え・つながったら決着・wait の区切りと中断・ターンの外で戻したら続ける（偽の askPermission / 接続 / control）
   './unit/chrome-handoff.mjs',
   './unit/chrome-delegation.mjs',
@@ -235,6 +237,7 @@ const SUITES = [
   './unit/server-delegation-background.mjs',
   // 依頼元が子のエージェント・モデル・思考の強さを ply_task_send で替える（走っている子・走っていない子・断る場合・記録）
   './unit/server-delegation-settings.mjs',
+  './unit/server-delegation-model-name.mjs',
   // 委譲の結果に選ぶ返答: Stop フックの続き（調べものだけ）は飛ばす・中身の仕事をした続きは選ぶ（Claude の transcript の印）
   './unit/delegation-result.mjs',
   // 委譲の子の履歴が一時的に読めない（Codex の 1546 disk I/O error）: 0.5・1・2 秒で読み直す・読めなければ流れた返答で注意書き付きの完了・ターン用の app-server の終わりを待つ
@@ -474,6 +477,7 @@ const SUITES = [
   './unit/claude-catalog-cli-version.mjs',
   // Claude のモデル一覧: 手元に古い一覧・別の作業場所の一覧があれば、引き直しを待たずに返す
   './unit/claude-catalog-stale.mjs',
+  './unit/claude-model-match.mjs',
   './unit/codex-background.mjs',
   './unit/codex-terminals.mjs',
   './unit/event-session-id.mjs',
@@ -608,6 +612,8 @@ const SUITES = [
   './unit/remote-settings.mjs',
   // リモートの端末側（core/remote/device*.mjs）。中継とホストを立て、端末内プロキシの URL を素の HTTP と ws で叩く
   './unit/remote-device.mjs',
+  // 画面の殻を端末に持つ（ADR 0181）: 束の形と検証・ホストの /static-bundle・端末の保存と配り・ポートが変わったとき・古いホストと古いアプリ
+  './unit/remote-static-bundle.mjs',
   // 手元のフォルダーを送る口（core/folder-uploads.mjs）: パスの検査・送り先・続きから・中断・上書きの確認・掃除、WS での往復
   './unit/folder-uploads.mjs',
   // 同じ口を端末内プロキシ → 中継 → ホストで。50 MiB・2000 件が流量の制御の下で届くこと、中継が落ちても続きから送れること

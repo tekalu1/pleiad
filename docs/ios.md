@@ -37,7 +37,7 @@ node tests/run.mjs mobile-web
 
 ## 登録後の設定
 
-1. Apple Developer で明示的な Bundle ID を登録する。既定は `com.procway.pleiad`。変える場合は `mobile/capacitor.config.json` の `appId` と App ターゲットの Debug / Release の `PRODUCT_BUNDLE_IDENTIFIER` を揃える。App Store Connect に同じ ID の iOS アプリを作る。
+1. Apple Developer で明示的な Bundle ID を登録する。既定は `dev.pleiad.app`。変える場合は `mobile/capacitor.config.json` の `appId` と App ターゲットの Debug / Release の `PRODUCT_BUNDLE_IDENTIFIER` を揃える。App Store Connect に同じ ID の iOS アプリを作る。
 2. Apple Distribution 証明書を秘密鍵付きの、パスワードを設定した `.p12` に書き出す。同じ Team・Bundle ID の App Store Connect 用プロビジョニングプロファイルを作る。
 3. App Store Connect の「ユーザとアクセス」→「統合」で、アップロード権限を持つ Team API キー（App Manager）を作る。Issuer ID、Key ID、一度だけダウンロードできる `.p8` を保管する。[API キーの管理](https://developer.apple.com/help/app-store-connect/get-started/app-store-connect-api/)
 4. GitHub のリポジトリ secrets に下表を設定する。秘密ファイルはリポジトリに置かない。

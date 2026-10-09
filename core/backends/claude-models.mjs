@@ -80,6 +80,23 @@ function match(out, listed, name) {
 }
 
 /**
+ * AI が明示して書いたモデル名（'claude-sonnet-5-5' / 'claude-opus-5-5[1m]' / 'Sonnet'）を、一覧の id に当てる。
+ * 一覧の行の resolvedModel が一致すればその行、無ければ同じ系統の行（[1m] を書いたなら 1M の行を先に）。当たらなければ null。
+ * @param {object} models buildClaudeModels の戻り
+ * @param {Array} [rows]  SDK の ModelInfo[]（取れていなければ空。固定の一覧は系統名だけで当てる）
+ */
+export function matchClaudeModel(models, rows, name) {
+  const listed = (Array.isArray(rows) ? rows : []).filter((r) => r?.value && r.value !== "default");
+  const want = String(name ?? "").trim();
+  const family = familyOf(want);
+  if (family && /\[1m\]\s*$/i.test(want)) {
+    const same = listed.find((r) => String(r.resolvedModel ?? "").toLowerCase() === want.toLowerCase());
+    if (!same && models[`${family}[1m]`]) return `${family}[1m]`;
+  }
+  return match(models, listed, want);
+}
+
+/**
  * @param {object} o
  * @param {Array} o.rows       SDK の ModelInfo[]。空・無しなら固定の一覧
  * @param {Record<string,string>} [o.efforts] モデルの value → CLI が既定で使うエフォート

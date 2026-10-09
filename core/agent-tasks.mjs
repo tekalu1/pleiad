@@ -107,7 +107,9 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
   backgroundMinutes = Number(process.env.AGENT_HOST_TASK_BACKGROUND_MINUTES ?? 30),
   io = fs, log = line => console.error(line), retryMax = RETRY_MAX, taskStorage = null,
   // 付け直すターン（無停止の更新 2b-7）の委譲の子のタスク id。起動の復元で interrupted にせず、adoptRun() が結果の確定を引き継ぐ（stage2-server-state.md S8）
-  adopting = [] }) {
+  adopting = [],
+  // 子の回が終わり、止まった状態（完了・失敗・取り消し）になった。子の会話の id を渡す。エージェントのブラウザーのデーモンを止める（core/agent-browser.mjs。ADR 0180）
+  ended = () => {} }) {
   const silenceMs = Number.isFinite(silenceMinutes) && silenceMinutes > 0 ? silenceMinutes * 60000 : 0;
   const commandMs = Number.isFinite(commandMinutes) && commandMinutes > 0 ? commandMinutes * 60000 : 0;
   const backgroundMs = Number.isFinite(backgroundMinutes) && backgroundMinutes > 0 ? backgroundMinutes * 60000 : 0;
@@ -469,6 +471,7 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
         if (r.queue.length && !controller.signal.aborted) await record(r.taskId, row => { row.status = 'queued'; row.notification = 'none'; }, 'run.queued');
         // 依頼元が結果を先に受け取っていたら（read）通知を送らない。通知は次の指示で走る回のためにまた始まる
         else if (!ACTIVE.has(r.status)) await record(r.taskId, row => { row.notification = row.status === 'cancelled' ? 'suppressed' : row.notification === 'read' ? 'read' : 'pending'; }, 'run.notice');
+        if (!ACTIVE.has(r.status) && r.sessionId) { try { ended(r.sessionId); } catch (e) { report({ event: 'unexpected', operation: 'ended', taskId: r.taskId, code: e?.code ?? null }); } }
         // Busy sessions retry on the timer, never in a recursive write loop. 止めた後に積まれた指示はすぐ走らせる
         if (r.status !== 'queued' || controller.signal.aborted) kick();
       }
@@ -707,6 +710,8 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
     },
     /** 記録の行が条件に合うものだけの view（端末の AI に任された作業のように、全部を view にしたくないとき） */
     rowsWhere(predicate) { return Object.values(records).filter(predicate).map(r => view(r)); },
+    /** 止まった（終わった・中断された）委譲の子の会話の id。エージェントのブラウザーの掃除に使う（core/agent-browser.mjs の sweepBrowserEnvironments） */
+    finishedSessions() { return new Set(Object.values(records).filter(r => r.sessionId && !r.host && !ACTIVE.has(r.status)).map(r => r.sessionId)); },
     /**
      * 全端末へ配る running に載せる行（docs/agent-delegation.md「保存・画面・再起動」）。終わっていないものと、完了通知がまだ依頼元に
      * 届いていないものだけ。依頼文・振り分けの記録・結果は載せない（過去のタスクは画面が会話ごとに delegation.tasks で読む）

@@ -73,7 +73,13 @@ function createChromePill({ electron, os, post, t, tickMs = 120, snapshotMs = 10
       lastLabel = label;
     }
     current = active;
-    if (!w.isVisible()) w.showInactive();
+    if (!w.isVisible()) {
+      w.showInactive();
+      // hide() のあとに showInactive() で出し直した窓は、中身を受ける子窓（Chrome_RenderWidgetHostHWND）が隠れたままになり、
+      // クリックが描画側へ届かない（Windows で実測）。窓の大きさを一度変えて戻すと子窓が再び出る。
+      w.setBounds({ ...place, width: place.width + 1 });
+      w.setBounds(place);
+    }
   }
   function rewatch() {
     unwatch(); unwatch = () => {};

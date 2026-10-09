@@ -3511,9 +3511,9 @@ function backendLabels() {
   return Object.fromEntries(state.backends.map((b) => [b.id, b.label]));
 }
 
-async function loadBackends() {
+async function loadBackends(early = null) {
   if (state.backends.length) return state.backends;
-  const list = await cmd("backends").catch(() => []);
+  const list = early ?? await cmd("backends").catch(() => []);
   state.backends = Array.isArray(list) ? list : [];
   for (const b of state.backends) applyToolHints(b.toolHints);
   state.backendId = state.backends.some((b) => b.id === state.prefs.backend)
@@ -4203,12 +4203,18 @@ const side = createSide({
 // ---- 脇のスレッドの行（channels.threads の索引。web/side.mjs の 2 つの並べ方）
 const THREAD_INDEX_EVENTS = new Set(['channelThread', 'channelPost', 'channelsChanged', 'channelRead', 'botsChanged']);
 let threadIndexTimer = 0;
-async function loadThreadIndex() {
+// 起動の最初の一覧は、会話（listSessions）とスレッド（この索引）の両方が届いてから 1 度だけ描く。それまでは骨組み（web/side.mjs の skeleton）。
+// 片方だけの一覧を見せると、行が入れ替わって見え、開いた直後のパネルが空に見える
+const listLoaded = { sessions: false, threads: false };async function loadThreadIndex() {
   clearTimeout(threadIndexTimer);
   try {
     state.threadIndex = await cmd('invoke', { op: 'channels.threads', args: { all: true } });
+    listLoaded.threads = true;
     renderSessions();
-  } catch { /* 読めなければ前の索引のまま（接続し直したら読み直す） */ }
+  } catch {
+    /* 読めなければ前の索引のまま（接続し直したら読み直す） */
+    if (!listLoaded.threads) { listLoaded.threads = true; renderSessions(); }
+  }
 }
 function loadThreadIndexSoon() {
   clearTimeout(threadIndexTimer);
@@ -4294,7 +4300,8 @@ function renderSessions() {
   // 脇が見えていない間の印（web/open-sidebar-mark.mjs）。今の会話は数えない
   paintOpenSidebar($("openSidebar"), attentionCounts(listed, { currentId: state.current, waitingIds: state.waitingIds, unreadIds,
     busyIds: new Set([...state.runningIds, ...state.bgWaiting.keys()]) }), t);
-  side.render(listed, {
+  if (!(listLoaded.sessions && listLoaded.threads)) side.skeleton();
+  else side.render(listed, {
     statuses: state.statuses,
     currentId,
     runningIds,
@@ -4561,9 +4568,10 @@ document.addEventListener("visibilitychange", () => {
 /** 新しいセッション。絞り込みの条件（一意に定まるもの）を引き継ぐ */
 let creatingSession = null;
 let pendingNewSession = null;
-async function startNew({ status = null, cwd = "", backend, changes } = {}) {
+async function startNew({ status = null, cwd = "", backend, changes, keepDrawer = false } = {}) {
   if (state.busy || creatingSession) return creatingSession;
-  setDrawer(false);
+  if (!keepDrawer) setDrawer(false);   // keepDrawer: 起動で自動で作るとき（利用者が開いた脇のパネルを閉じない）
+  bootHold = null; bootSkeleton = false;
   saveDraft().catch(() => {});
   const source = state.current;
   const requestedCwd = cwd || state.cwd || state.homeDir || '';
@@ -4594,6 +4602,7 @@ async function startNew({ status = null, cwd = "", backend, changes } = {}) {
   syncTopbar();
   pendingRows.set(pendingNewSession.id, { kind: 'new', text: t('pending.creating'), visible: false });
   renderSessions();
+  settleDrawer();   // 閉じた脇の背後の inert を、入力欄へ置く前に外す（setDrawer は後ろへ回している）
   $('prompt').focus();
   const cancel = pendingAfterDelay(pendingRows.get(pendingNewSession.id));
   creatingSession = (async () => {
@@ -6361,15 +6370,34 @@ let sidebarMoving;
 const narrowView = matchMedia("(max-width:700px)");
 const drawerOpen = () => document.documentElement.classList.contains("side-open");
 
+// タップの中では開閉の印（side-open・aria-expanded）だけを付け、動き（--dur）を次のフレームから始める。
+// 一覧の描き直し・背後の inert・フォーカスは、開き始めた後（settleDrawer）へ回す。長い会話では main への inert の付け外しと
+// たまった一覧の描き直しだけで 200ms 以上かかり、押してから動くまでが止まって見えた（docs/remote.md §8.4）
+let drawerSettle = null;   // { frame, timer, safety, from, refocus }
 function setDrawer(open, { refocus = true } = {}) {
   const root = document.documentElement;
   if (drawerOpen() === open) return;
   root.classList.toggle("side-open", open);
-  if (open) side.redraw();
   $("openSidebar").setAttribute("aria-expanded", String(open));
+  // 押された時点の居場所（閉じるときの戻し先の判断に使う）。続けて何度か切り替わったら最初の分を持つ
+  const from = drawerSettle?.from ?? document.activeElement;
+  if (drawerSettle) { cancelAnimationFrame(drawerSettle.frame); clearTimeout(drawerSettle.timer); clearTimeout(drawerSettle.safety); }
+  const pending = drawerSettle = { frame: 0, timer: 0, safety: 0, from, refocus: refocus && (drawerSettle?.refocus ?? true) };
+  // 描いたコマの後ろで 1 回（rAF の後の timer）。コマが来ない（隠れたタブ）ときの保険の timer も付ける
+  pending.frame = requestAnimationFrame(() => { pending.timer = setTimeout(settleDrawer, 0); });
+  pending.safety = setTimeout(settleDrawer, 300);
+}
+/** 開閉の後始末。今の開閉の状態に合わせるだけなので、何度呼んでも同じ（待っていなければ何もしない） */
+function settleDrawer() {
+  const pending = drawerSettle;
+  if (!pending) return;
+  drawerSettle = null;
+  cancelAnimationFrame(pending.frame); clearTimeout(pending.timer); clearTimeout(pending.safety);
+  const open = drawerOpen();
+  if (open) side.redraw();
   // 開いている間は背後を inert にする。Tab は脇の中だけを巡り、見えない会話を操作させない（設定で会話を覆うときと同じ手）
   for (const n of document.body.children) if (n.matches("main, .file-preview, .host-bar, #remoteBadge")) n.inert = open;
-  const from = document.activeElement;
+  const { from, refocus } = pending;
   // 検索欄には置かない（スマホでキーボードが出る）。閉じるボタンへ。閉じたら開いたボタンへ戻す。
   // 開くときは style.css が visibility をすぐ visible にするので、この場で置ける。置けなかったら（まだ隠れていた）次のフレームで置き直す
   if (open) {
@@ -7546,11 +7574,32 @@ function selectedMode(s, bid, modes, chosen = null) {
   const mode = chosen?.mode ?? s?.nextSettings?.mode ?? (s?.backend === bid ? s.mode : prefs.mode);
   return mode in modes ? mode : "default" in modes ? "default" : Object.keys(modes)[0] ?? "";
 }
+// 前に開いていた会話の題を覚えておき、殻（スマホのアプリ）では接続を待つ間も、その題と骨組みを出す（「新しいセッション」を見せない）。
+// 会話が読めるまでの間だけ持つ（paintSession・startNew で外す）。覚えは会話ごとの題で、localStorage の現在の会話と同じ生き方
+const BOOT_TITLE_KEY = "agent-host-current-title";
+/** モバイル版の殻の中か（デスクトップ版のリモートの窓も plyRemote を持つので、殻の印まで見る） */
+const inMobileShell = () => remoteInfo(window.plyRemote)?.shell === "mobile";
+let bootHold = null, rememberedTitle = "";
+function rememberTitle(id, title) {
+  const value = JSON.stringify({ id, title });
+  if (value === rememberedTitle) return;
+  rememberedTitle = value;
+  try { localStorage.setItem(BOOT_TITLE_KEY, value); } catch {}
+}
+function readBootTitle() {
+  try {
+    const saved = localStorage.getItem("agent-host-current");
+    const rec = JSON.parse(localStorage.getItem(BOOT_TITLE_KEY) ?? "null");
+    return saved && rec?.id === saved && typeof rec.title === "string" && rec.title ? { id: saved, title: rec.title } : null;
+  } catch { return null; }
+}
 async function syncTopbar() {
   syncParentEntry();
   homeDest.paint();
   const version = ++topbarVersion;
   const s = state.sessions.find((x) => x.id === state.current);
+  if (s?.title && s.title !== "(no title)") rememberTitle(s.id, s.title);
+  const held = !s && bootHold && (!state.current || bootHold.id === state.current) ? bootHold.title : null;
   const on = Boolean(state.current);
   const id = state.current;
   // 新しい会話の欄（まだ会話が無い）と、作ったばかりの会話（startNew が予約を流し終えるまで）は、そこで選んだ設定を見せる。
@@ -7560,7 +7609,7 @@ async function syncTopbar() {
   const bid = homeBot?.backend ?? chosen?.backend ?? s?.nextSettings?.backend ?? activeBackendId();
   const caps = capsOf(activeBackendId());
 
-  $("titleEdit").value = s?.title === "(no title)" ? "" : (s?.title ?? "");
+  $("titleEdit").value = s?.title === "(no title)" ? "" : (s?.title ?? held ?? "");
   syncTitleControls();
 
   if (bid) state.shownBackend = bid;
@@ -7640,10 +7689,13 @@ const REFRESH_REPLY_TIMEOUT_MS = 60_000;
 async function runRefresh() {
   const version = ++refreshVersion;
   const wait = { timeoutMs: REFRESH_REPLY_TIMEOUT_MS };
-  const [sessions, statuses, prefs] = await Promise.all([
+  // 互いに待たない問い合わせ（エージェントの一覧・走っている作業）も最初に一緒に出す。順に待つと中継を通るスマホでは往復の数だけ遅くなる
+  const [sessions, statuses, prefs, backends, running] = await Promise.all([
     listSessions(wait),
     cmd("listStatuses", {}, wait).catch(() => []),
     cmd("prefs", {}, wait).catch(() => ({})),
+    state.backends.length ? null : cmd("backends").catch(() => []),
+    cmd("running").catch(() => null),
   ]);
   refreshSnapshotReady = true;
   if (version !== refreshVersion) return;
@@ -7656,9 +7708,15 @@ async function runRefresh() {
   computerSettings.paint();
   refreshPreviewConfirmation();
   filePreview.prefsChanged();
-  await loadBackends();
+  await loadBackends(backends);
+  if (version !== refreshVersion) return;
+  // 走っている作業の印は、最初の一覧を描く前に載せる（描いた後に印が足されて行が変わらないように）
+  if (running) applyRunning(running);
+  // 最初の一覧は、スレッドの索引も届いていればここで描く（まだなら索引が届いたときに描く。loadThreadIndex）
+  const firstList = !listLoaded.sessions;
+  listLoaded.sessions = true;
+  if (firstList && listLoaded.threads) renderSessions();
   await syncTopbar();
-  cmd("running").then(applyRunning).catch(() => {});
 }
 
 // ---------------------------------------------------------------- 履歴と枝（web/branches.mjs）
@@ -8016,11 +8074,12 @@ async function loadHistory(args, prev = null, { window = false, bulk = false } =
  * retry は読み込みに失敗した今の会話を読み直す（「もう一度読む」。開き直しと同じ見せ方）
  * jump は脇の検索の抜粋から開いたとき。読み込んだ後にその発言へ送って輪を付ける（openFromSearch・revealMessage）
  * after は fresh のとき、描く前に待つ約束（startNew の一覧の読み直し。会話の行が載ってから描く）
+ * keepDrawer は起動・つなぎ直しで自動で開くとき。利用者が開いている脇のパネルを閉じない（行を押して選ぶ道は閉じる）
  */
-async function select(id, { keepUpTo, reload = false, fresh = false, retry = false, jump = null, after = null } = {}) {
+async function select(id, { keepUpTo, reload = false, fresh = false, retry = false, jump = null, after = null, keepDrawer = false } = {}) {
   if (state.busy || (id === state.current && keepUpTo === undefined && !reload && !retry)) return;
   const quiet = reload && !retry && id === state.current && keepUpTo === undefined && !state.loadingSession;
-  if (keepUpTo === undefined && !quiet && !fresh) setDrawer(false);
+  if (keepUpTo === undefined && !quiet && !fresh && !keepDrawer) setDrawer(false);
   filePreview.sessionChanged(id);
   if (keepUpTo === undefined && !quiet) {
     // 開き直し: 先に空にして「読み込み中」。切り替え（keepUpTo）は剥がれた後に一緒に描くので、ここでは触らない
@@ -8109,22 +8168,73 @@ function flashMessage(m, mark) {
   flashMessageTimer = setTimeout(() => { body.classList.remove('flash'); if (flashedMessage === body) flashedMessage = null; }, 1300);
 }
 
+/** 履歴を読み込んでいる間の骨組み（発言 2 つ分の線）と「履歴を読み込み中…」 */
+function paintHistorySkeleton() {
+  for (const widths of [[42, 62], [35, 78, 54]]) {
+    const lines = el('div', 'history-lines');
+    for (const width of widths) { const line = el('span', 'history-line'); line.style.width = `${width}%`; lines.append(line); }
+    const skeleton = el('div', 'm history-skeleton');
+    skeleton.append(lines);
+    append(skeleton);
+  }
+  activity.show(t('pending.historyLoading'));
+}
+let bootSkeleton = false;
+/** 殻の起動: 覚えていた前回の題と骨組みを、接続する前から出す */
+function paintBootSkeleton() {
+  const held = inMobileShell() ? readBootTitle() : null;
+  if (!held) return;
+  bootHold = held;
+  bootSkeleton = true;
+  $("titleEdit").value = held.title;
+  paintHistorySkeleton();
+}
+// 起動の先読み（ready の直後に、前に開いていた会話の履歴を一覧の返事を待たずに頼む）。開く会話が同じなら、その返事と取り置いた出来事を使う
+let bootPrefetch = null, bootPrefetched = false;
+/** 一覧に出る会話（委譲の子・bot の会話ではない）のうち、いちばん最近動いたもの。無ければ null */
+function mostRecentSession() {
+  const at = (s) => new Date(s.lastModified ?? 0).getTime() || 0;
+  let best = null;
+  for (const s of state.sessions) if (!s.bot && !s.delegation && !s.unsent && (!best || at(s) > at(best))) best = s;
+  return best;
+}
+function startBootPrefetch(id) {
+  const args = { sessionId: id, live: true, watch: true };
+  const load = sessionLoads.begin(id);
+  // 開くときと同じく末尾の窓だけを頼む（loadAndPaint が引き取る返事は窓の形でなければならない。ADR 0902）
+  const reply = loadHistory(args, null, { window: true, bulk: true });
+  reply.catch(() => {});
+  bootPrefetch = { id, load, reply, args };
+}
+/** 先読みを引き取る。開く会話が違う・静かな読み直し・切り替え（keepUpTo）なら捨てる */
+function takeBootPrefetch(id, adoptable) {
+  const pre = bootPrefetch;
+  bootPrefetch = null;
+  if (!pre) return null;
+  if (pre.id !== id || !adoptable) { sessionLoads.cancel(pre.load); return null; }
+  return pre;
+}
+
 async function loadAndPaint(id, { keepUpTo, quiet, fresh, after = null }) {
   sessionLoads.cancel(state.displayLoad);
-  const load = sessionLoads.begin(id);
+  const pre = takeBootPrefetch(id, keepUpTo === undefined && !quiet && !fresh);
+  const load = pre?.load ?? sessionLoads.begin(id);
   state.displayLoad = load;
+  // 起動で骨組みを出していたなら（paintBootSkeleton）、select が空にした直後に同じ手で出し直す（150ms 空にならない）
+  if (bootSkeleton && keepUpTo === undefined && !quiet && !fresh) paintHistorySkeleton();
+  bootSkeleton = false;
   const historyTimer = keepUpTo === undefined && !quiet && !fresh ? setTimeout(() => {
     if (state.current !== id || state.displayLoad !== load) return;
-    for (const skeleton of historySkeletons()) append(skeleton);
-    activity.show(t('pending.historyLoading'));
+    paintHistorySkeleton();
   }, 150) : null;
   let data;
   try {
     // 静かな読み直し（つなぎ直したとき）は、今持っている履歴の続きだけを頼む
     // 委譲カード・バックグラウンドの一覧の行（会話の分）も一緒に読み、描く前に揃える
     const cards = loadTaskCards(id);
-    data = await loadHistory({ sessionId: id, live: true, watch: true },
-      quiet && state.messages.length ? { messages: state.messages, presents: state.presents, base: state.base, presentBase: state.presentBase } : null, { window: true, bulk: true });
+    data = pre ? await pre.reply.catch(() => loadHistory(pre.args, null, { window: true, bulk: true }))
+      : await loadHistory({ sessionId: id, live: true, watch: true },
+        quiet && state.messages.length ? { messages: state.messages, presents: state.presents, base: state.base, presentBase: state.presentBase } : null, { window: true, bulk: true });
     await cards;
     // 作ったばかりの会話（startNew）は、一覧の読み直しと並べて履歴を読む。描く前に一覧の行が載るのを待つ
     await after;
@@ -8171,6 +8281,7 @@ async function paintSession(id, data, { keepUpTo, transition, loaded = false, lo
   const snapshots = branchSnapshots();
   if (keepUpTo !== undefined) saveDraft().catch(() => {});
   state.current = id;
+  bootHold = null;
   syncWorkEntry();
   if (state.contextInfoId !== id) { state.contextInfo = null; state.contextInfoId = null; }   // 前の会話の記録を持ち越さない
   paintOutbox();
@@ -8854,16 +8965,27 @@ function connect() {
       notificationInbox.reconnected();
       presenceReporter.reset();
       presenceReporter.report(true);
+      // 前に開いていた会話の履歴は、一覧の返事を待たずに一緒に頼む（開くのは一覧が届いてからだが、読むのは並べる）
+      let saved;
+      try { saved = localStorage.getItem("agent-host-current"); } catch {}
+      if (!bootPrefetched && !state.current && saved && !new URLSearchParams(location.search).get("open")) startBootPrefetch(saved);
+      bootPrefetched = true;
       loadThreadIndex();
       return refresh({ sharePending: true }).then(async () => {
-        // スマホの通知を押して開いた会話（殻が ?open= で渡す）
+        // スマホの通知を押して開いた会話（殻が ?open= で渡す）。起動・つなぎ直しで自動に開くので、利用者が開いた脇のパネルは閉じない
         const wanted = mobileNotify.takeOpenRequest();
-        if (wanted) return select(wanted);
-        if (state.current) return select(state.current, { reload: true });
-        let saved;
-        try { saved = localStorage.getItem("agent-host-current"); } catch {}
-        if (saved && state.sessions.some(s => s.id === saved)) await select(saved);
-        else await startNew();
+        if (wanted) return select(wanted, { keepDrawer: true });
+        if (state.current) return select(state.current, { reload: true, keepDrawer: true });
+        // 一覧は件数で切れるので、前の会話がそこに無くても、読めた（先読みが返った）なら開く。読めないなら無い会話
+        const known = saved && (state.sessions.some(s => s.id === saved) || await bootPrefetch?.reply.then(() => bootPrefetch?.id === saved, () => false));
+        if (known) await select(saved, { keepDrawer: true });
+        else {
+          if (bootPrefetch) { sessionLoads.cancel(bootPrefetch.load); bootPrefetch = null; }   // 外れた先読み（無い会話）を捨てる
+          // 殻（スマホのアプリ）で前の会話が無いときは、新しい会話ではなく、いちばん最近動いた会話を開く（端末の代理のポートが変わると覚えが消える）
+          const recent = inMobileShell() ? mostRecentSession() : null;
+          if (recent) await select(recent.id, { keepDrawer: true });
+          else await startNew({ keepDrawer: true });
+        }
         // Channels の面を見ていたなら、その場所（チャンネル・スレッド・bot のページ）へ戻す（初めの 1 回だけ）
         const where = toShowDetail(savedView);
         if (!viewRestored && where && channelsUi.tab === 'channels') viewAddress.go(savedView);
@@ -9291,4 +9413,6 @@ wireDropZone();
 fitPrompt();
 // 初めて接続して会話を開く（または新しい会話を始める）までは書けない。書いても開いた会話の下書きで上書きされる
 composerWait.busy("connect");
+paintBootSkeleton();
+side.skeleton();   // 会話とスレッドの一覧が届くまでの骨組み（renderSessions が揃うまで置き続ける）
 connect();

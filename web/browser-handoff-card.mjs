@@ -99,7 +99,8 @@ export function browserHandoffView(ev, { el, t, cmd, onChange = () => {}, operat
     if (h.state === 'operating') {
       lead.textContent = t(`${K}operating`);
       const where = h.by !== 'device' ? t(`${K}operatingNote`) : operateHere ? t(`${K}operatingOnDevice`) : t(`${K}operatingByDevice`);
-      body.replaceChildren(lead, note(where));
+      // 人が操作している間も、頼まれたこと（asked のときと同じ本文）を「Claude に戻す」まで出し続ける
+      body.replaceChildren(lead, ...(h.message ? [el('p', 'bh-message', h.message)] : []), note(where));
       buttons = [button(t(h.turnLive === false ? `${K}resumeContinue` : `${K}resume`), () => cmd('chromeResume', { sessionId: targetSessionId() }), 'btn btn-primary')];
     } else {
       lead.textContent = t(`${K}askedLead`, { reason: reasonLabel(t, h.reason) });

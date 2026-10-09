@@ -527,6 +527,7 @@ iOS も A 案にした（2026-10-06、[ADR 0144](adr/0144-ios-remote-core-in-swi
 - 試験（`cd mobile/android && ./gradlew :remote-core:test`、JDK 17 以上。`mobile/node_modules` と `cap sync` の生成物が無い checkout・worktree では `:app` の設定評価が `cordova.variables.gradle` が無くて落ちるので `--configure-on-demand` を付ける。2026-10-01）: ベクトル（cacophony の IK / IKpsk2、Pleiad の導出、フレーム 17 例）、メモリの管でつないだチャネル（窓より大きい本文・大きい WebSocket のメッセージ）、**Node の本物の中継と fake のホストとの往復**（`InteropTest`。`mobile/scripts/fake-host.mjs` を子プロセスで立て、ペアリング・プロキシの認証と防火壁・`/ws` の `ready` とコマンド・900 KB のメッセージ・取り消しまで。`node` が無ければ飛ばす）。`npm test` の `mobile-shell` は plyRemote の形・平文の許可・版の固定・殻の辞書を見る
 - 資格情報: `noBackupFilesDir/remote/`。秘密は Android Keystore の AES-256-GCM の鍵で封じる（`KeystoreCipher`）。Keystore の鍵はバックアップされないので `allowBackup=false` と data extraction rules でバックアップ・端末の移行から外す
 - 平文: `network_security_config` で `127.0.0.1` だけ（ループバックのプロキシと、試験で `adb reverse` した中継）。利用者の入れた CA は信じない
+- 待ち受けのポート（2026-10-09）: `DeviceProxy.bindListener` が `reuseAddress = true` で前回のポートを取り直す（iOS の `SO_REUSEADDR` と同じ。付けないと、閉じた直後の再起動で TIME_WAIT が残り、別のポートに落ちてオリジンが変わり、`agent-host-current` などの localStorage が消えて新しい会話が開いていた）。それでも取れなければ 250 ms 置きに 6 回やり直し、それでもだめなら今まで通り空きポートへ落ちる
 - 殻の画面（`mobile/www/`）: ホスト一覧（状態・最後に使った時刻・「…」で名前を変える / 削除）、「ホストを追加」（ML Kit の `scan()` で QR、カメラの許可を求め、Google のスキャナーのモジュールが無ければ入れ始める。貼り付けも可）、ペアリング中は確認コード 6 桁と「やめる」。`pleiad://pair?...` のリンク（端末のカメラで QR を開いたとき）でも開き、そのときとペアリング済みのホストのときは先に確かめる。文言は殻の辞書 `mobile/www/i18n.js`（ja / en）、ネイティブは失敗を決まったコードで返して殻が訳す
 - ホストの窓（`HostActivity`）: Capacitor の入らない素の WebView で `http://127.0.0.1:<p>/?token=…` を開く。入れるのは `window.plyRemote` だけで、`WebViewCompat.addDocumentStartJavaScript` と `addWebMessageListener` をどちらもプロキシのオリジンに限り、受け口は本体フレームからのメッセージだけを受ける。形は `{ hostId, hostName, relay, device, shell: 'mobile', status(), onStatus(fn), retry(), backToHosts(), closeWindow(), setTheme(dark, { top, bottom }) }`（`closeWindow` = `backToHosts`。凍結し再定義できない。`setTheme` は画面の配色と上端・下端の地の色 `#rrggbb` を殻へ知らせる口）。帯のバッジはこれでデスクトップと同じ部品が動く
 - 戻るボタン・画面端のスワイプ: まず画面に取り消せる `plyremote:back` のイベント（`window`）を投げる。web/ は開いている面を手前から 1 つ閉じる（ダイアログ → メニュー・浮く面 → ファイルのプレビュー・設定 → 引き出し。client.mjs の `watchShellBack`）。`preventDefault()` されなければアプリを背面へ回す（`moveTaskToBack`）。**ホスト一覧へは戻らない**（2026-09-24。戻るのはタイトルの下のホスト名と「…」の「ホスト一覧に戻る」だけ。スワイプのたびに一覧へ落ちて会話を開き直すのを避ける）。窓を離れたらそのホストのプロキシを閉じる。前面に戻ったとき `offline` / `host-offline` なら待たずに張り直す
@@ -534,10 +535,10 @@ iOS も A 案にした（2026-10-06、[ADR 0144](adr/0144-ios-remote-core-in-swi
 - オフライン・取り消しの案内（`DeviceProxy.unavailablePage`）には「ホスト一覧に戻る」のボタンを置く（2026-10-01）。ホストがつながらないまま自動で開いた窓から一覧へ出る口が、これしか無いため。ボタンは `window.backToHosts`（ホストの窓が入れる。上の「ホストの窓」の項）があるときだけ出し、押すと一覧へ戻って覚えたホストも消す。案内のページはプロキシ自身が返す応答で CSP を付けていないので、インラインのスクリプトで足りる。5 秒ごとの再読み込みはそのまま（取り消し済みは再読み込みしない）。文言は `ProxyTexts.backToHosts()`（アプリは `strings.xml` の `remote_back_to_hosts`。画面の `remote.backToHosts` と同じ）
 - 画面の端: 状態バー・ナビゲーションバー・切り欠きの下には画面を描かない（2026-09-24。それまでは edge-to-edge で web/ の `env(safe-area-inset-*)` に任せていたが、全面に重なる面（ファイルのプレビューなど）や WebView の版によって状態バーの時刻とタイトル・本文が重なった）。殻が WebView をバーとキーボードの分だけ内側に寄せ、insets を消費するので web/ の `env(safe-area-inset-*)` は 0 になる。バーには色だけを塗る: 状態バーは画面の上端の地の色、ナビゲーションバーと左右は下端の地の色（画面が `plyRemote.setTheme(dark, { top, bottom })` で知らせる。client.mjs の `paintShellTheme` が上端・下端の中ほどの要素の地の色を読み、脇・設定の開閉と幅の変化で送り直す）。記号の明暗も画面の配色に合わせる（初めは OS の明暗と紙の色。`HostActivity.applyBars`）。**殻の作り直しが要る**。`window.backToHosts` も `plyRemote.backToHosts` と同じものを入れる（web/remote-badge.mjs が両方を見る）
 - 添付は WebView のファイル選択（`#fileIn`）、ダウンロードは DownloadManager にプロキシの Cookie を付けて渡す。リンクと可視化の「ブラウザーで開く」は §8.5
-- 版: Capacitor 8.5.2、@capacitor/app 8.1.1、@capacitor-mlkit/barcode-scanning 8.2.1、AGP 8.13.0、Gradle 8.14.3、Kotlin 2.2.21、OkHttp 4.12.0、compile / target 36、**minSdk 33**。アプリ ID `com.procway.pleiad`（デスクトップは `jp.ply.desktop`。ストアに出す前に揃えるか決める）
+- 版: Capacitor 8.5.2、@capacitor/app 8.1.1、@capacitor-mlkit/barcode-scanning 8.2.1、AGP 8.13.0、Gradle 8.14.3、Kotlin 2.2.21、OkHttp 4.12.0、compile / target 36、**minSdk 33**。アプリ ID `dev.pleiad.app`（デスクトップは `jp.ply.desktop`。ストアに出す前に揃えるか決める）
 
 - ビルドと手元の確認: `cd mobile && npm ci && npx cap sync android && cd android && gradlew assembleDebug`（**JDK 21 以上**。Capacitor の `capacitor-android` が Java 21 でコンパイルするため、JDK 19 では「21は無効なソース・リリースです」で落ちる（2026-09-24）。`JAVA_HOME` を 21 以上に向けてから打つ。`local.properties` に `sdk.dir`）。`cap sync` を省くと `capacitor-cordova-android-plugins/cordova.variables.gradle` が無いと言って落ちる。Windows では `cap sync` が追跡中の `app/capacitor.build.gradle` と `capacitor.settings.gradle` を改行だけ書き換えるので、`git checkout --` で戻してからコミットする。本番の中継を使わずに確かめるなら `node mobile/scripts/fake-host.mjs --relay-port 8787` と `adb reverse tcp:8787 tcp:8787` で、端末の `http://127.0.0.1:8787` が手元の中継になる（出てくる `pleiad://pair?...` を `adb shell am start -a android.intent.action.VIEW -d '<それ>'` で渡すか貼り付ける）
-  - 画面を押して確かめるときは、ホストの窓の WebView の DevTools の口を使う（2026-09-27）: `adb -s <serial> forward tcp:9333 localabstract:webview_devtools_remote_$(adb -s <serial> shell pidof com.procway.pleiad)` の後、`http://127.0.0.1:9333/json/list` の `webSocketDebuggerUrl` へ CDP でつなぎ、`Runtime.evaluate` で要素の位置を取って `Input.dispatchTouchEvent` で押す（押したことになるので `window.open` も通る）。外へ出たかは `adb logcat` の `START u0` と `dumpsys activity activities` の `topResumedActivity` で見る。`adb` は `-s` を付ける（一時的に「more than one device」で落ちる）。使ったスクリプトは `temporary/scripts/remote-links-*`
+  - 画面を押して確かめるときは、ホストの窓の WebView の DevTools の口を使う（2026-09-27）: `adb -s <serial> forward tcp:9333 localabstract:webview_devtools_remote_$(adb -s <serial> shell pidof dev.pleiad.app)` の後、`http://127.0.0.1:9333/json/list` の `webSocketDebuggerUrl` へ CDP でつなぎ、`Runtime.evaluate` で要素の位置を取って `Input.dispatchTouchEvent` で押す（押したことになるので `window.open` も通る）。外へ出たかは `adb logcat` の `START u0` と `dumpsys activity activities` の `topResumedActivity` で見る。`adb` は `-s` を付ける（一時的に「more than one device」で落ちる）。使ったスクリプトは `temporary/scripts/remote-links-*`
   - `fake-host.mjs` は標準入力が閉じると止まるので、バックグラウンドでは `tail -f /dev/null | node mobile/scripts/fake-host.mjs …` で立てる。先頭のコメントにある `login` のコマンドは無い。会話を作ってターンを流すスクリプトは、先に `authLogin { backend: 'fake' }` を送る（送らないと `runTurn` が返らない）
 
 実装（iOS の第 1 段階、2026-10-06。[ADR 0144](adr/0144-ios-remote-core-in-swift.md)）:
@@ -570,6 +571,16 @@ App Store の審査: 殻がホスト一覧・QR ペアリング・Keychain の�
 
 実装（2026-09-23、#16 の web 側）: 上の通り。加えて、タイトル行の右端に「この会話の操作」の「…」（700px 以下とタッチ）、タッチの長押しで右クリックと同じメニュー（`web/long-press.mjs`。Android の OS の長押しと二重にならない）、指で開いた子メニューは入力欄にフォーカスしない、`crypto.randomUUID` の代わり（`web/dom.mjs` の `randomId`、§8.3）、モバイル版の殻の上端のホスト名の帯（`web/remote-badge.mjs` の `setupHostBar`。`plyRemote.backToHosts` か `window.backToHosts` を呼ぶ）。見た目の決まりは docs/design-system.md「狭い画面・タッチ」
 
+起動と引き出しの手直し（2026-10-09、承認済み。モック `temporary/mockups/mobile-ux.html` の 02・04・05）:
+
+- **前回の会話を開く**: ポートが同じでも localStorage に前回の会話が無いとき（ポートが変わった・消された）、`plyRemote.shell === 'mobile'` の殻の中だけは新しい会話ではなく**最後に動いた会話**を開く（`mostRecentSession`）。ブラウザー版・デスクトップ（遠隔の窓も）は今まで通り。前回の会話が一覧の件数の外でも、`loadSession` が通れば「ある」と見て開く（一覧に無いことで `startNew` に落とさない）
+- **つなぎ中の見た目**: 前回の会話の題を `agent-host-current-title` に覚え、殻では「新しいセッション」ではなくその題と本文の骨組みを出す（`paintBootSkeleton`）。題は選んだ会話・題の変更のたびに書き直す
+- **早取り**: `ready` の直後に、前回の会話の `loadSession` を一覧の取得と並べて送る（`startBootPrefetch`）。一覧が届いて会話があれば、その結果をそのまま使う（`sessionLoads` に載せるので二重に描かない）。一覧後の `backends`・`modes/models`・`running` は、互いに待たない分を並べて送る
+- **脇のパネルは勝手に閉じない**: 起動・つなぎ直し・`?open=` の `select` / `startNew` は `keepDrawer` で引き出しを閉じない。行を押して選ぶ道だけが閉じる
+- **一覧は 1 回だけ描く**: 会話とスレッドの両方が届くまで骨組み（`side.skeleton()`。`aria-busy`）を出し、揃ってから 1 回描く（片方だけで描いて後でもう一度描き替えない）
+- **タップの反応**: 引き出しの開閉は `side-open` と `aria-expanded` だけをタップの中で切り替え、一覧の描き直し・背後の `inert`・フォーカスは次のフレームの後（`settleDrawer`）へ回す。開く動きは次のコマで始まる。Tab は開いている間は脇の中だけを巡り、読み上げの扱いも変えない。連打しても最後の状態に落ち着く（300 ms の安全の timer が rAF の止まった背面でも後始末を通す）
+
+
 ### 8.5 リンク
 
 リモートの窓・モバイル版・LAN のブラウザー（ホストの PC の画面ではないところ）で、会話のリンクや可視化の「ブラウザーで開く」を押したときの行き先（2026-09-27、issue #33 の段階 0）。ホストがデスクトップ版なら、先に下からのシートで「この端末で開く / PC のブラウザーで見る」を選ぶ（2026-09-28、段階 4。docs/inapp-browser.md「リモートから見る」）。下の表は「この端末で開く」を選んだとき、またはホストに内蔵ブラウザーが無いとき（`npm start`）の行き先。規則は 3 か所が同じ表で持つ: 画面の `web/host-only-links.mjs`、デスクトップ版の `desktop/remote-windows.cjs` の `linkTarget`、Android の `LinkPolicy`（`mobile/android/remote-core`）。
@@ -588,6 +599,20 @@ App Store の審査: 殻がホスト一覧・QR ペアリング・Keychain の�
 - 写しの中の `target=_blank` は写しの sandbox（`allow-popups` なし）が止める。`target` の無いリンクは上の規則で端末のブラウザーへ
 - ホストの PC のブラウザーで見る（画面の転送）は docs/inapp-browser.md「リモートから見る」。フレームと入力は中継の既存の WS 経路（`{ kind: "screencast" }` と `browserScreencast*` のコマンド）を通り、新しいポートは開けない。殻の変更は無い（戻るボタンは `plyremote:back` でシートと画面を閉じる）。HTML ファイルの「ブラウザーで開く」（ホストの OS で開く）はリモートでは出さない（§7.3）
 - 確かめ方（2026-09-27）: Android はエミュレーター（API 33）で `mobile/scripts/fake-host.mjs` と `adb reverse` の中継につなぎ、WebView の DevTools の口（`webview_devtools_remote_<pid>`）から押した。デスクトップ版は Electron の中で `createRemoteWindows` を偽のホストにつないで押した。LAN のブラウザーは、エミュレーターの Chrome から `X-Forwarded-For` を足すプロキシ経由で開いた。単体の試験は `tests/unit/remote-links.mjs` と `LinkPolicyTest`
+
+### 8.6 画面の殻を端末に持つ（2026-10-09、[ADR 0181](adr/0181-mobile-static-shell-cache.md)）
+
+端末内プロキシは、ホストの `web/` の静的ファイル一式（画面の殻）をホストごとに 1 本の束で保存し、ページの読み込みのたびに版だけを確かめて、自分で返す。それまでは起動のたびに 243 本（4.4 MB）を 1 本ずつ中継の往復で取っていた。
+
+- **ホストの口** `GET /static-bundle?have=<key>`（`core/static-bundle.mjs`）: ホストのトークンの確かめの後ろ（無ければ 401。§4.2 の接続口がトークンを差し込むのはほかの要求と同じ）。`have` が今の key なら 304（本文なし）、違えば 200 で束。応答の見出しは `x-pleiad-bundle-key`・`cache-control: no-store`・`vary: accept-encoding`。入れるのは静的ファイルの口が配るもののうち拡張子が MIME にあるもの全部と `/vendor/i18next.mjs`（PDF.js・可視化の写しなどは入れない）。`index.html` は配るときと同じ `pleiad-build` の置き換え済み。要求のたびに `web/` の大きさと更新時刻を見て、変わっていれば作り直す（`web/` をディスクから読み直す開発の流れでも、次の読み込みで新しい key）。今の `web/` で束は約 5.05 MB、gzip で約 1.44 MB。ふつうの静的ファイルの応答は変えない
+- **束の形**（`core/remote/static-bundle.mjs`）: `"PLSB"` | u32（BE）の見出しの長さ | 見出しの JSON `{ format: 1, key, files: [{ path, type, size }] }` | 本文を files の順に。key は files の順に `"<path>\n<type>\n<size>\n"` と本文の SHA-256 の hex（中身から決まるので、版の番号に頼らない）。読む側は magic・見出し・パス（`/` で始まり英数字と `._-/`、`..` 無し）・type の改行・大きさ・余りのバイト・key を全部確かめ、1 つでも合わなければ使わない。上限は展開の前後とも 64 MiB
+- **端末の保存**: `<端末の保存場所>/static/<hostId>.bin`（圧縮しない束。原子的に置き換える）。デスクトップ版の端末は `core/remote/device.mjs` の保存場所、Android は `noBackupFilesDir/remote/`、iOS は Application Support の `remote/`。ホストを削除すると消す。読み込んで確かめに通らないファイル（途中で切れた・壊れた）は使わず、`have=` を空にして取り直す
+- **確かめる時**: `/` か `/index.html` の要求が来るたび、チャネルが ready になった後で 1 往復（`core/remote/static-cache.mjs`、`StaticCache.kt`、`StaticCache.swift`）。304 なら持っている束、200 なら新しい束を保存して使う。それ以外の静的ファイルの要求は直近の確かめの答えを待って使う（同時に来た要求は同じ 1 回を待つ）。オフラインの扱い（案内のページ）は今までと同じ
+- **束から返すもの**: GET・HEAD で、クエリが `token` だけ（ほかのクエリがあれば流す）、パスが束にあるもの。トークン・`Host`・メソッドの照合はプロキシが先に行う（§7.1）。返すときの見出しは `content-type`・`content-length`・`connection: close` と、`token` のクエリが正しいときだけプロキシ自身の Cookie。ホストのトークンは端末に出ない。束に無いもの（`/ws`・API・PDF.js など）と、束が使えないときは今までどおりホストへ流す
+- **古い版との組み合わせ**: 古いアプリは `/static-bundle` を呼ばないので今までどおり。古いホストは 404 を返すので、新しいアプリは保存せずに 1 本ずつ流す。どちらも遅いだけで動く。ホストを新しくした後の最初の読み込みで束を取り直し、`pleiad-build` の読み直し（docs/zero-downtime-update/design.md §8）もそのまま効く
+- **転送の圧縮**: `/bulk/<id>`（§4.3 の大きい返事、ADR 0179）と同じ決まりにそろえる。要求の `accept-encoding` に gzip があればホストは gzip（水準 6）で縮めて `content-encoding: gzip` を付け、無ければ縮めない。縮めた本文は版ごとに 1 回だけ作る。接続口（`core/remote/forward.mjs`）は `accept-encoding` を通し `content-encoding` を返すので、圧縮の決まりは `/bulk/` と束で 1 つ。Node と Kotlin は `accept-encoding: gzip` で取り、Swift は Apple の Compression があるときだけ付ける（Windows・Linux の試験では付けず、縮めない束を受ける）。読む側は `content-encoding` が無い・`identity`・`gzip` 以外を使わず、展開も 64 MiB で止める
+- デスクトップ版・ブラウザーの直のつなぎは束を使わない（ホストの静的ファイルの口のまま）。デスクトップ版のリモートの窓（`core/remote/device.mjs` のプロキシ）は束を使う
+- 試験: `tests/unit/remote-static-bundle.mjs`（形・壊れた束・ホストの口の 304/200/401・作り直し・端末のプロキシで束から返す・古いホスト・古いアプリ・取り消し）、`StaticCacheTest`（Kotlin）・`StaticCacheTests`（Swift）と、両方の `InteropTest(s)`（Node の本物のホストの束を保存し、`index.html`・`client.mjs` が同じ中身で返り、ホストの削除で消える）
 
 ## 9. 安全についての考え
 

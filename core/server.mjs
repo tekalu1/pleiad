@@ -43,6 +43,8 @@ import path from "node:path";
 import { writeAtomic } from './atomic-file.mjs';
 import os from "node:os";
 import { readLocalFile } from "./local-files.mjs";
+import { createStaticBundle } from './static-bundle.mjs';
+import { BUNDLE_PATH } from './remote/static-bundle.mjs';
 import { isLocalRequest, defaultOpener, createRateLimit, OPENABLE } from './os-open.mjs';
 import { readPreview, listTreeFolder, resolveReference, cwdAt, inspectFile, previewFailure, PreviewError } from './file-preview.mjs';
 import { windowShotGuard } from './chrome/window-shots.mjs';
@@ -113,7 +115,7 @@ import { createVisualizationCollector, visualizeInstructions, snapshotResponse, 
 import { plyParts } from './instruction-amount.mjs';
 import { computerPrompt } from './backends/computer-delivery.mjs';
 import { MIN_BUDGET, MAX_BUDGET } from '../web/instruction-amount.mjs';
-import { browserEnvironment, browserInstruction, forgetBrowserEnvironment, chromeRelayBrowser } from './agent-browser.mjs';
+import { browserEnvironment, browserInstruction, forgetBrowserEnvironment, discardBrowserEnvironment, settleBrowserEnvironment, sweepBrowserEnvironments, chromeRelayBrowser } from './agent-browser.mjs';
 import { createChromeWindowCloser } from './chrome/close-window.mjs';
 import { delegatedChromeTarget as resolveDelegatedChromeTarget, delegatedChromeWindows } from './chrome/delegation.mjs';
 import { createChromeLoginGroups } from './chrome/login-groups.mjs';
@@ -296,6 +298,9 @@ const chromeWindowCloser = chromeRelay ? createChromeWindowCloser({ relay: chrom
 chromeHandoffs?.useControl(chromeControl);
 // 会話の端点を出す口（ターンの開始・新しい会話の id の付け替え・ターンの終わり・会話の削除）。Chrome の中継があるホスト（デスクトップ版）だけ。Windows 以外（unsupported）では渡さない（下の browserEnv）
 const agentBrowserEndpoints = chromeRelay ? chromeRelayBrowser(chromeRelay, { dataDir: store.dataDir }) : null;
+// その会話の agent-browser の置き場を今は触れないか: ターンが走っている（ID 確定前の id も）・中継でターンの印が付いている・人が引き継いでいる（ADR 0180）
+const agentBrowserBusy = id => [...runtime.turns.values()].some(turn => turn.key === id || turn.browserRelayId === id || turn.info?.sessionId === id)
+  || Boolean(chromeRelay?.state?.(id)?.turn || chromeRelay?.state?.(id)?.paused);
 // A nested server may inherit another conversation's shell environment; only this process's bridge can issue browser access.
 delete process.env.AGENT_BROWSER_CONFIG;
 delete process.env.AGENT_BROWSER_SESSION;
@@ -808,11 +813,11 @@ async function taskSettingsPlan(owner, args, lng, turn) {
     if (endpoint && !(await compatEndpoints.has(endpoint, target.id))) throw new Error(agentT(lng, 'delegation.endpointDeleted'));
   }
   if (!endpointCapable(target)) endpoint = '';
-  const model = args.model ?? (target.id === current.id ? before.model : target.id === source.id ? meta.model ?? ''
+  const asked = await canonicalModel(target, args.model, cwd, endpoint);
+  const model = asked ?? (target.id === current.id ? before.model : target.id === source.id ? meta.model ?? ''
     : await resolveModel(null, undefined, target, cwd, endpoint));
   if (args.model !== undefined && !(await validModel(target, model, cwd, endpoint).catch(() => false))) {
-    const known = endpoint ? [] : Object.keys(await target.models(cwd).catch(() => ({}))).filter(Boolean).slice(0, 30);
-    throw new Error(agentT(lng, 'tasks.modelUnknown', { model, backend: target.id, models: known.join(', ') || '-' }));
+    throw new Error(agentT(lng, 'tasks.modelUnknown', { model, backend: target.id, models: await knownModelNames(target, cwd, endpoint) }));
   }
   // 使用枠が満杯と分かっているときだけ断る（取り置きが無い・古いだけでは断らない。固定の ply_delegate も使用量では断らない）
   const account = meta.nextSettings?.account ?? meta.claudeAccount ?? '';
@@ -1502,6 +1507,14 @@ const MIME = {
   ".json": "application/json; charset=utf-8",
 };
 
+/** 配る index.html に版を書き込む。web/client.mjs が ready の版と比べ、違えば 1 回だけ読み直す（docs/zero-downtime-update/design.md §8） */
+const stampBuild = body => Buffer.from(String(body).replace('<meta name="pleiad-build" content="">', `<meta name="pleiad-build" content="${APP_VERSION}+${BUILD ?? ''}">`));
+const staticBundle = createStaticBundle({
+  webDir: WEB, mime: MIME,
+  extra: () => [{ path: '/vendor/i18next.mjs', file: fileURLToPath(import.meta.resolve('i18next')), type: MIME['.mjs'] }],
+  transform: (p, body) => (p === '/index.html' ? stampBuild(body) : body),
+});
+
 function tokenOk(given) {
   if (typeof given !== "string") return false;
   const a = Buffer.from(given);
@@ -1633,6 +1646,8 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(204, { "cache-control": "no-store" });
     return res.end();
   }
+  // 画面の殻の束（端末のプロキシが版ごとに保存して自分で配る。docs/remote.md §8.6、ADR 0181）
+  if (url.pathname === BUNDLE_PATH) return staticBundle.handle(req, res, url);
   // WS の外で渡す大きい返事（core/bulk-replies.mjs。ADR 0179）。トークンの認証は上で済んでいる
   if (await bulkReplies.handle(req, res, url)) return;
 
@@ -1729,8 +1744,8 @@ const server = http.createServer(async (req, res) => {
     const file = path.join(WEB, rel);
     if (!file.startsWith(WEB)) throw new Error("outside web/");
     let body = await fs.readFile(file);
-    // 画面を配った版。web/client.mjs が ready の版と比べ、違えば 1 回だけ読み直す（docs/zero-downtime-update/design.md §8）
-    if (rel === 'index.html') body = Buffer.from(String(body).replace('<meta name="pleiad-build" content="">', `<meta name="pleiad-build" content="${APP_VERSION}+${BUILD ?? ''}">`));
+    // 画面を配った版（stampBuild）
+    if (rel === 'index.html') body = stampBuild(body);
     const headers = { "content-type": MIME[path.extname(file)] ?? "application/octet-stream" };
     if (tokenOk(viaQuery)) {
       // HttpOnly なので JS からは読めない。SameSite=Strict で他サイトからは送られない
@@ -2057,6 +2072,22 @@ async function resolveEffort(sessionId, asked, backend, model, cwd, endpoint = n
 async function validModel(backend, model, cwd, endpointId = '') {
   if (endpointId) return model === '' || isModelId(model);
   return backend.validModel ? backend.validModel(model, cwd) : Object.hasOwn(await backend.models(cwd), model);
+}
+/**
+ * 明示して渡されたモデル名を、一覧の id に当てる（AI が書く claude-sonnet-5-5 → sonnet）。
+ * そのままで通る名前・互換の接続先・当てる手段の無い backend・当たらない名前は、渡された値のまま返す（断るのは呼び出し側）
+ */
+async function canonicalModel(backend, name, cwd, endpointId = '') {
+  if (endpointId || typeof name !== 'string' || !backend.matchModel) return name;
+  if (await validModel(backend, name, cwd).catch(() => false)) return name;
+  return (await backend.matchModel(name, cwd).catch(() => null)) ?? name;
+}
+/** エラーに添える、選べるモデル名（隠し以外を先頭 30 件） */
+async function knownModelNames(backend, cwd, endpointId = '') {
+  if (endpointId) return '-';
+  const models = await backend.models(cwd).catch(() => ({}));
+  const names = Object.keys(models).filter(id => id && !models[id]?.hidden).slice(0, 30);
+  return names.join(', ') || '-';
 }
 async function resolveModel(sessionId, given, backend, cwd, endpointId = '') {
   const asked = typeof given === "string" ? given : null;
@@ -3390,7 +3421,7 @@ async function deleteSessionOf(sessionId) {
     const cleanups = [
       history.forgetPresents(sessionId),
       computerShots.removeSession(sessionId),
-      forgetBrowserEnvironment({ bridge: agentBrowserEndpoints, dataDir: store.dataDir, sessionId }),
+      forgetBrowserEnvironment({ bridge: agentBrowserEndpoints, dataDir: store.dataDir, sessionId, busy: agentBrowserBusy }),
       Promise.resolve().then(() => chromeHandoffs?.forget(sessionId)),
       Promise.resolve().then(() => chromeRelay?.forget(sessionId)),
       Promise.resolve().then(() => chromeProfiles?.forget(sessionId)),
@@ -5339,6 +5370,12 @@ agentTasks = await createAgentTasks({
   cancelHost: row => remoteDelegation.cancelHost(row),
   // コンピューターの操作のロックを待っている子は、黙っているとは数えない（承認待ちではないので ply_task_wait の waiting にはしない）
   lockWaiting: sessionId => computerLock.snapshot().some(s => s.sessionId === sessionId && s.state === 'waiting'),
+  // 委譲の子が止まった（完了・失敗・取り消し）: 子のエージェントのブラウザーのデーモンを止め、置き場を消す。依頼元の会話は消すまで止めない（ADR 0180）
+  ended: sessionId => {
+    if (!agentBrowserEndpoints || agentBrowserBusy(sessionId)) return;
+    discardBrowserEnvironment({ bridge: agentBrowserEndpoints, dataDir: store.dataDir, sessionId, busy: agentBrowserBusy })
+      .catch(error => console.error('  終わった子のブラウザーのデーモンを止められない:', String(error?.message ?? error)));
+  },
   rollback: async ({ sessionId, worktree }) => {
     await deleteUnsentConversation(sessionId); await store.removeSession(sessionId); releaseAgentConnection(sessionId);
     if (worktree) await worktreeHost.abandon(worktree.id).catch(() => {});
@@ -5369,7 +5406,12 @@ agentTasks = await createAgentTasks({
     // 継ぐべき接続先が消えていたら委譲を断る（黙って公式で走らせない）
     if (inherited && !(await compatEndpoints.has(inherited, backend.id))) throw new Error(agentT(lng, 'delegation.endpointDeleted'));
     const endpoint = inherited;
-    const model = await resolveModel(null, args.model, backend, cwd, endpoint);
+    const asked = await canonicalModel(backend, args.model, cwd, endpoint);
+    const model = await resolveModel(null, asked, backend, cwd, endpoint);
+    // 依頼元が書いたモデル名が一覧に無いなら、黙って既定に落とさず断る（選べる名前を添える）。互換の接続先は形だけを見る
+    if (!auto && !endpoint && typeof args.model === 'string' && model !== asked) {
+      throw new Error(agentT(lng, 'delegation.modelUnknown', { model: args.model, backend: backend.id, models: await knownModelNames(backend, cwd) }));
+    }
     // 選んだモデルを使えなくなっていたら、黙って既定に落とさず断る
     if (auto && model !== args.model) throw new Error(agentT(lng, 'routing.modelUnavailable', { model: args.model, backend: backend.id }));
     // 自動の振り分け・人が選び直した委譲の子の強さは、上書き → 段の既定 → そのモデルに合わせる（ADR 0164）。
@@ -5504,6 +5546,20 @@ agentTasks = await createAgentTasks({
 await recordTaskStops(agentTasks.restored, 'restart', { restart: true });
 // ホストに任せたタスクの写し: 動いていたものはホストで続いている。ホストの便りを聞き、つながり次第追いつく（remote-delegation.mjs）
 remoteDelegation.start();
+// 持ち主の居ないエージェントのブラウザーのデーモンと置き場の掃除（起動の 1 分後と 1 時間ごと。ADR 0180）。
+// 持ち主は記録にある会話と走っているターン。終わった委譲の子のものも止める
+if (agentBrowserEndpoints) {
+  const sweep = async () => {
+    const sessions = new Set(Object.keys(await store.getAll()));
+    for (const turn of runtime.turns.values()) for (const id of [turn.key, turn.browserRelayId, turn.info?.sessionId]) if (id) sessions.add(id);
+    const finished = agentTasks.finishedSessions();
+    const result = await sweepBrowserEnvironments({ bridge: agentBrowserEndpoints, dataDir: store.dataDir, sessions, finished: id => finished.has(id), busy: agentBrowserBusy });
+    if (result.removed || result.unused || result.empty) console.log(`  agent-browser: 掃除 デーモン ${result.stopped} を止め、置き場 ${result.removed + result.unused} と空のソケットの置き場 ${result.empty} を消した`);
+  };
+  const run = () => { sweep().catch(error => console.error('  agent-browser の掃除に失敗:', String(error?.message ?? error))); };
+  setTimeout(run, 60_000).unref();
+  setInterval(run, 60 * 60_000).unref();
+}
 // 活動はメモリだけで更新される。変化をまとめ、最大 30 秒に 1 通だけ状態の便りへ載せる。
 const remoteTelemetryTimer = setInterval(() => remoteTasksChanged(true), 30_000);
 remoteTelemetryTimer.unref();
@@ -6753,6 +6809,8 @@ async function endTurn(turn, emit, { record = true } = {}) {
     }
   }
   agentBrowserEndpoints?.endTurn(turn.info.sessionId || turn.key);
+  // このターンで agent-browser を呼ばなかったなら、ターンの初めに書いた設定の置き場を消す（ADR 0180）
+  if (agentBrowserEndpoints && turn.browserRelayId) settleBrowserEnvironment({ bridge: agentBrowserEndpoints, dataDir: store.dataDir, sessionId: turn.browserRelayId, busy: agentBrowserBusy }).catch(() => {});
   chromeHandoffs?.turnChanged(turn.info.sessionId || turn.key, false);
   // ロックの解放、止めた印・このターンの拒否の消去、main への後始末（押したままの入力を離し、オーバーレイを消す）
   if (computerLock.endTurn(turn.presentKey)) computerDriver?.turnEnded(turn.presentKey);

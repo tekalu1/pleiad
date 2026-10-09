@@ -101,10 +101,21 @@ Requires Android 13 or later.
 | 種類 | 条件 | 作り方 |
 |---|---|---|
 | アプリのアイコン | 512×512、32 ビットの PNG（透過あり）、1,024 KB まで | [`icon-512.png`](icon-512.png)（`cd mobile && npm run icons` が、ランチャーのアイコンと同じ印を全面塗りの 512 px で書き出す。Google が角を丸める。アップロードは人が Play Console で行う） |
-| フィーチャー グラフィック | 1024×500、JPEG か 24 ビットの PNG（透過なし） | サイトの見出しと星図（`site/assets/og.png` の構図）を元にする |
-| スマートフォンのスクリーンショット | 2 枚以上。短い辺 320 px 以上、長い辺 3,840 px 以下、長い辺は短い辺の 2 倍まで | 下の場面を、審査用のホスト（fake のバックエンド）で撮る。本物の会話・ホスト名・パスを写さない |
+| フィーチャー グラフィック | 1024×500、JPEG か 24 ビットの PNG（透過なし） | [`graphics/feature-graphic.png`](graphics/feature-graphic.png)。`node docs/play-store/graphics/feature-graphic.mjs` が、サイトの見出しと星図（`site/assets/og.png` の構図）を headless の Chromium で撮る。見出しは「PC のエージェントを、手元から。」の一言にし、他社の名前とロゴ（見出しの下の文・星図の札のアイコン）とボタンは隠す |
+| スマートフォンのスクリーンショット | 2 枚以上。短い辺 320 px 以上、長い辺 3,840 px 以下、長い辺は短い辺の 2 倍まで | `graphics/phone-0N-<場面>.png`（1080×1920）。`node docs/play-store/graphics/phone-screenshots.mjs` が、fake のバックエンドのホストを立てて作り話の会話を作り、`mobile/www` とホストの画面を headless の Chromium（405×720、倍率 8/3）で撮る。本物の会話・ホスト名・パスを写さない（撮るたびに画面の字に利用者名・PC 名・パスが無いか確かめる） |
 
-撮る場面: ホストの一覧 / ペアリングの確認コード / 会話の一覧 / 承認を待っている会話 / 通知（ロック画面の汎用の文と、開いた後の会話名） / 通知の設定の画面。
+撮る場面:
+
+| ファイル | 場面 |
+|---|---|
+| `phone-01-hosts.png` | ホストの一覧（オンラインの 1 台と、昨日使った 1 台） |
+| `phone-02-pairing-code.png` | ホストを追加するときの確認コード |
+| `phone-03-conversations.png` | 会話の一覧（承認待ち・作業中・終わった会話） |
+| `phone-04-approval.png` | 承認を待っている会話（`npm test` の実行の許可） |
+| `phone-05-notification-settings.png` | 通知の設定 |
+
+作り話のデータ: ホスト名（`desktop-home`・`laptop`・`studio-pc`）・確認コード・通知の設定はスクリプトの中のアプリのプラグインの代わり（`PleiadRemote` の偽物）が返す。会話は fake のバックエンドが、スクリプトに書いた返事（`AGENT_HOST_FAKE_VOICE_REPLY`）で作る。フォルダは `temporary/play-store-demo/` の下に作り、ホームもそこに向ける。試験用のバックエンドの名前（Fake (test)）は、撮る前に画面の字を「エージェント」に置き換える。
+ロック画面の通知は、ブラウザーでは撮れないので載せていない（要るなら実機で撮る）。
 
 ## リリースノート（「このリリースの新機能」）の型
 

@@ -1,5 +1,6 @@
 // 端末内プロキシ（docs/remote.md §7.1・§7.4）。ホスト 1 台につき 1 つ、127.0.0.1 で待ち受け、
 // 窓（WebView）の HTTP と /ws を DeviceLink のチャネルに載せてホストへ流す。画面はホストが配る web/ をそのまま使う。
+// 画面の殻（web/ の静的ファイル）は、ホストの束を版ごとに保存して自分で返す（§8.6。読み込みのたびに版だけ確かめる）。
 //
 // 認証は今のサーバーと同じ形（web/ を変えずに済むように）:
 //   - 窓は http://127.0.0.1:<p>/?token=<プロキシのトークン> を開く。?token= が合えば HttpOnly・SameSite=Strict の Cookie を返し、
@@ -19,6 +20,7 @@ import { EventEmitter } from 'node:events';
 import WebSocket, { WebSocketServer } from 'ws';
 import { RESET_CODE } from './frames.mjs';
 import { DeviceLink } from './device-link.mjs';
+import { StaticCache } from './static-cache.mjs';
 import { t, currentLocale } from '../i18n.mjs';
 
 export const PROXY_COOKIE = 'pleiad_remote_token';
@@ -80,10 +82,11 @@ main{max-width:28rem;padding:24px}h1{font-size:16px;margin:0 0 8px}p{margin:0;co
  *   creds: { hostId, hostPublicKey, relayUrl, deviceId, token, hostName? }、keyPair: 端末の静的鍵
  *   port: 覚えているポート（塞がっていれば空きポート）。0 なら空きポート
  *   requestWaitMs: つないでいる最中に来た要求を待たせる上限
+ *   staticCacheFile: 画面の殻の束を保存する場所（§8.6）。無ければ静的ファイルも 1 本ずつホストへ流す
  * 出来事: 'status'（DeviceLink の状態 + { port }）
  */
 export class DeviceProxy extends EventEmitter {
-  constructor({ creds, keyPair, port = 0, app = '', name = '', shell = 'desktop', backoff, connectTimeoutMs, requestWaitMs = 10_000, channelOptions, log = () => {} }) {
+  constructor({ creds, keyPair, port = 0, app = '', name = '', shell = 'desktop', backoff, connectTimeoutMs, requestWaitMs = 10_000, staticCacheFile = null, channelOptions, log = () => {} }) {
     super();
     this.creds = creds;
     this.wantPort = Number.isInteger(port) && port >= 1024 && port <= 65535 ? port : 0;
@@ -93,6 +96,8 @@ export class DeviceProxy extends EventEmitter {
     this.log = log;
     this.link = new DeviceLink({ creds, keyPair, app, name, shell, backoff, connectTimeoutMs, channelOptions, log });
     this.link.on('status', s => this.emit('status', { ...s, port: this.port }));
+    this.staticCache = staticCacheFile ? new StaticCache({ file: staticCacheFile, log }) : null;
+    this.staticCheck = null;   // 最後の読み込みで確かめた束（Promise<束 | null>）。読み込みの後の静的ファイルはこれを使う
     this.server = http.createServer((req, res) => this.#onRequest(req, res));
     this.server.on('upgrade', (req, socket, head) => this.#onUpgrade(req, socket, head));
     this.server.on('clientError', (err, socket) => { try { socket.destroy(); } catch {} });
@@ -191,6 +196,22 @@ export class DeviceProxy extends EventEmitter {
     try { ch = await this.link.ready(this.requestWaitMs); }
     catch (e) { if (!res.destroyed) this.#unavailable(req, res, e); return; }
     if (res.destroyed) return;
+
+    // 画面の殻は端末に持った束から返す（§8.6）。束に無いもの・束が使えないときは下でホストへ流す
+    if (this.staticCache && [...url.searchParams.keys()].every(k => k === 'token')) {
+      const pageLoad = url.pathname === '/' || url.pathname === '/index.html';
+      if (pageLoad || !this.staticCheck) this.staticCheck = this.staticCache.check(ch);
+      const bundle = await this.staticCheck;
+      if (res.destroyed) return;
+      const file = bundle?.files.get(pageLoad ? '/index.html' : url.pathname);
+      if (file) {
+        const head = { 'content-type': file.type, 'content-length': file.body.length };
+        if (queryOk) head['set-cookie'] = `${PROXY_COOKIE}=${encodeURIComponent(this.token)}; HttpOnly; SameSite=Strict; Path=/`;
+        finished = true;
+        res.writeHead(200, head);
+        return res.end(method === 'HEAD' ? undefined : file.body);
+      }
+    }
 
     const headers = {};
     for (const [k, v] of Object.entries(req.headers)) if (PASS_REQUEST.has(k)) headers[k] = Array.isArray(v) ? v.join(', ') : v;

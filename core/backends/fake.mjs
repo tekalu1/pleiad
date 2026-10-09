@@ -414,6 +414,8 @@ export const backend = {
 
   modes: () => MODES,
   models: async () => MODELS,
+  // 正式な ID（Claude の claude-sonnet-5-5 に当たるもの）を一覧の id に当てる手段。サーバーの配線の試験で通す
+  matchModel: async (name) => /^fake-(fast|smart|tiny)-\d/.exec(String(name))?.[1] ?? null,
 
   async compact({ sessionId, emit }) {
     const s = ensure(sessionId);
