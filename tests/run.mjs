@@ -75,6 +75,7 @@ const SUITES = [
   './unit/chrome-panel-lifecycle.mjs',
   './unit/chrome-window-switch.mjs',
   './unit/chrome-pill-resume.mjs',
+  './unit/browser-handoff-card.mjs',
   // Chrome の操作待ち（ADR 0148・0168）: 1 会話 1 枚・状態の差し替え・つながったら決着・wait の区切りと中断・ターンの外で戻したら続ける（偽の askPermission / 接続 / control）
   './unit/chrome-handoff.mjs',
   './unit/chrome-delegation.mjs',

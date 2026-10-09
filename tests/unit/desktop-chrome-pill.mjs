@@ -11,7 +11,7 @@ class Window {
   constructor(options) {
     this.options = options;
     this.bounds = { x: 0, y: 0, width: options.width, height: options.height };
-    this.visible = false; this.destroyed = false; this.messages = [];
+    this.visible = false; this.destroyed = false; this.messages = []; this.boundsLog = [];
     this.events = new EventEmitter();
     this.webContents = new EventEmitter();
     this.webContents.send = (channel, message) => this.messages.push({ channel, message });
@@ -21,7 +21,7 @@ class Window {
   loadFile(file) { this.file = file; queueMicrotask(() => this.webContents.emit('did-finish-load')); return Promise.resolve(); }
   setAlwaysOnTop(_flag, level) { this.topLevel = level; }
   setContentProtection(value) { this.protected = value; }
-  setBounds(value) { this.bounds = value; }
+  setBounds(value) { this.bounds = value; this.boundsLog.push(value); }
   getBounds() { return this.bounds; }
   showInactive() { this.visible = true; }
   hide() { this.visible = false; }
@@ -67,8 +67,12 @@ export default async function (t) {
   t.ok('窓の移動と大きさの変更に追従する', w.bounds.x === -970 && w.bounds.y === 140 && w.bounds.width === 360, JSON.stringify(w.bounds));
   foreground = null; notify({ kind: 'foreground', ref: null });
   t.ok('別のアプリが前面なら隠す', !w.visible);
+  const logged = w.boundsLog.length;
   foreground = 'a'; notify({ kind: 'foreground', ref: { id: 'a' } });
   t.ok('Chrome に戻ると再び出現する', w.visible && w.messages.at(-1)?.message.enter === true);
+  // 隠した窓を出し直すと、描画の子窓が隠れたままクリックが届かなくなる（Windows）。出すたびに大きさを一度変えて戻す
+  const nudge = w.boundsLog.slice(logged);
+  t.ok('出し直すたびに窓の大きさを一度変えて元に戻す（子窓を復活させる）', nudge.length === 2 && nudge[0].width === nudge[1].width + 1 && nudge[0].x === nudge[1].x && nudge[0].y === nudge[1].y && w.bounds === nudge[1] && w.bounds.width === 360, JSON.stringify(nudge));
   ipcMain.emit('ply:chrome-pill-resume', { sender: {} }, 's');
   t.ok('別の webContents からの押下は無視する', posted.length === 0);
   ipcMain.emit('ply:chrome-pill-resume', { sender: w.webContents }, 's');
