@@ -222,9 +222,15 @@ export function createFakeBrowser({ product, calls, userTabs = USER_TABS } = {})
       case 'Target.activateTarget': { const t = targets.get(params.targetId); if (!t) throw { code: -32602, message: 'No target with given id found' }; const w = windows.get(t.windowId); if (w) w.state = 'normal'; return {}; }
       case 'Browser.getWindowForTarget': { const t = targets.get(params.targetId); if (!t || t.windowId == null) throw { code: -32000, message: 'No web contents in the target' }; return { windowId: t.windowId, bounds: boundsOf(t.windowId) }; }
       case 'Browser.setWindowBounds': { const w = windows.get(params.windowId); if (!w) throw { code: -32000, message: 'Browser window not found' };
-        // 最大化の窓に windowState なしで大きさだけ頼むと、Chrome は窓を通常へ戻し、前に保存していた通常の位置（画面の中）へ動かす
-        if (w.state === 'maximized' && !params.bounds?.windowState) { w.state = 'normal'; for (const fn of [...restoreListeners]) fn({ windowId: params.windowId }); }
-        if (params.bounds?.windowState) w.state = params.bounds.windowState; for (const k of ['left', 'top', 'width', 'height']) if (Number.isFinite(params.bounds?.[k]) && !(movesRefused && (k === 'left' || k === 'top'))) w.bounds[k] = params.bounds[k]; return {}; }
+        // 実物（chrome/browser/devtools/protocol/browser_handler.cc の SetWindowBounds）に合わせる。windowState の既定は normal で、位置・大きさは normal とだけ一緒に送れる。
+        // normal: 最大化・最小化・全画面の窓は戻すだけで、位置・大きさは当てない（戻った窓は、前に保存していた通常の位置（画面の中）へ動く）。通常の窓にだけ位置・大きさを当てる
+        const state = params.bounds?.windowState ?? 'normal';
+        const keys = ['left', 'top', 'width', 'height'].filter(k => params.bounds?.[k] !== undefined);
+        if (keys.length && state !== 'normal') throw { code: -32602, message: "The 'minimized', 'maximized' and 'fullscreen' states cannot be combined with 'left', 'top', 'width' or 'height'" };
+        if (state !== 'normal') { w.state = state; return {}; }
+        if (w.state !== 'normal') { w.state = 'normal'; w.bounds = { ...w.bounds, left: 10, top: 10 }; for (const fn of [...restoreListeners]) fn({ windowId: params.windowId }); return {}; }
+        for (const k of keys) if (Number.isFinite(params.bounds[k]) && !(movesRefused && (k === 'left' || k === 'top'))) w.bounds[k] = params.bounds[k];
+        return {}; }
       case 'Browser.getWindowBounds': { const w = windows.get(params.windowId); if (!w) throw { code: -32000, message: 'Browser window not found' }; return { bounds: boundsOf(params.windowId) }; }
       case 'Browser.setContentsSize': return {};
       case 'Browser.close': return {};
@@ -328,7 +334,7 @@ export function createFakeBrowser({ product, calls, userTabs = USER_TABS } = {})
     refuseWindowMoves(on) { movesRefused = on; },
     /** createTarget の browserContextId を無視する（別のプロフィールに開く） */
     ignoreTargetContext(on) { contextIgnored = on; },
-    /** chrome.exe --new-window の窓を、最大化のまま開く（Browser.setWindowBounds で通常に戻すと、窓は画面の中の位置へ動く） */
+    /** chrome.exe --new-window の窓を、最大化のまま開く（Browser.setWindowBounds で通常に戻すと、窓は画面の中の位置へ動く。戻す依頼では大きさは当たらない） */
     launchMaximized(on) { launchMaximized = on; },
     /** 最大化の窓が通常へ戻された（偽の OS の層が、その HWND を画面の中へ動かす） */
     onWindowRestored(fn) { restoreListeners.add(fn); return () => restoreListeners.delete(fn); },

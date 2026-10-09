@@ -4,7 +4,7 @@ import { fakeChromeOs } from '../lib/fake-chrome-os.mjs';
 import { startHolder } from '../lib/holder-harness.mjs';
 import { createChromeConnection } from '../../core/chrome/connection.mjs';
 import { createChromeRelay, PAUSED_MESSAGE } from '../../core/chrome/relay.mjs';
-import { createChromeWindows } from '../../core/chrome/windows.mjs';
+import { createChromeWindows, WINDOW_DIP } from '../../core/chrome/windows.mjs';
 import { createChromeControl } from '../../core/chrome/control.mjs';
 import { openChromeLink } from '../../core/chrome/link.mjs';
 
@@ -161,6 +161,11 @@ export default async function (t) {
       const windowId = chrome.browser.targets().find(x => x.targetId === first)?.windowId;
       const hw = os.hwnds().find(h => h.windowId === windowId);
       t.ok('最大化で開いた最初の窓は、大きさを決めて通常に戻っても、隠した位置（画面の外）のまま', chrome.browser.windowBounds(windowId)?.windowState === 'normal' && hw?.concealed === true && hw.rect.left === 6000, JSON.stringify(hw));
+      // 実物の Chrome は、最大化の窓への大きさの依頼では戻すだけで大きさを当てない。先に通常へ戻し、戻ってから大きさを送る
+      const sets = chrome.calls.filter(c => c.method === 'Browser.setWindowBounds' && c.params.windowId === windowId).map(c => c.params.bounds);
+      t.ok('最大化の窓は、先に通常へ戻して（windowState: normal だけ）から大きさを送る。大きさが WINDOW_DIP になる',
+        sets.length === 2 && JSON.stringify(sets[0]) === JSON.stringify({ windowState: 'normal' }) && sets[1].width === WINDOW_DIP.width && sets[1].height === WINDOW_DIP.height && sets[1].windowState === undefined
+          && chrome.browser.windowBounds(windowId)?.width === WINDOW_DIP.width && chrome.browser.windowBounds(windowId)?.height === WINDOW_DIP.height, JSON.stringify({ sets, bounds: chrome.browser.windowBounds(windowId) }));
       await until(() => a.link.alive && a.link.welcome, 2000);
       await leave(a);
       const b = await newServer(chrome, os);
