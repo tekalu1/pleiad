@@ -124,7 +124,7 @@
     "visualizationSaveFailed": "可視化を保存できませんでした: {{error}}",
     "contextSaveFailed": "プラグインの利用記録を保存できませんでした"
   },
-  "browserHandoff": { "continue": { "resumed": "Chrome の窓の操作を終えました。続けてください。", "connected": "Chrome につながりました。続けてください。" } },
+  "browserHandoff": { "continue": { "resumed": "Chrome のウィンドウの操作を終えました。続けてください。", "connected": "Chrome につながりました。続けてください。" } },
   "resume": {
     "running": "この会話は実行中です。終わってから再開してください",
     "notInterrupted": "この会話は中断していません",
@@ -807,7 +807,7 @@
     "relativeUnknownCwd": "作業場所が不明なため、相対パスを解決できません。絶対パスで開いてください。",
     "networkPath": "UNC パスとデバイスパスは開けません。ホストのローカルパスを指定してください。",
     "protectedData": "Pleiad のデータ置き場は開けません。添付の uploads 内だけ利用できます。",
-    "windowShot": "閉じた Chrome の窓の画像は、その会話からだけ開けます。",
+    "windowShot": "閉じた Chrome のウィンドウの画像は、その会話からだけ開けます。",
     "notFile": "ファイルまたはフォルダーを選んでください。",
     "tooLarge": "ファイルが表示上限を超えています。",
     "overLimitDownload": "表示上限（{{mb}} MB）を超えています。保存して確認できます。",
@@ -1122,8 +1122,8 @@
     "not-watching": "PC のブラウザーを見ていません。開き直してください。",
     "invalid-input": "送れない入力です。",
     "failed": "PC のブラウザーの操作に失敗しました。",
-    "view-only": "Chrome の窓は見るだけです。操作は引き継いでから、Chrome の窓で行ってください。",
-    "no-window": "この会話にはまだ Chrome の窓がありません。",
+    "view-only": "Chrome のウィンドウは見るだけです。操作は引き継いでから、Chrome のウィンドウで行ってください。",
+    "no-window": "この会話にはまだ Chrome のウィンドウがありません。",
     "unknown": "知らない操作です。"
   },
   "notify": {

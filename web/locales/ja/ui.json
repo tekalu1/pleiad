@@ -1,5 +1,5 @@
 {
-  "taskChrome": { "view": "Chrome の窓を見る", "close": "子の Chrome の窓を閉じる", "confirmClose": "窓を閉じる", "confirmHuman": "この窓は引き継ぎ中です。閉じると、操作の途中で終わります。閉じますか？", "confirmWaiting": "この窓は、あなたの操作（ログインなど）を待っています。閉じると、依頼に応えられなくなります。閉じますか？", "unknown": "プロフィール未確認", "running": "作業中", "paused": "引き継ぎ中", "stopped": "停止中", "idle": "待機中" },
+  "taskChrome": { "view": "Chrome のウィンドウを見る", "close": "子の Chrome のウィンドウを閉じる", "confirmClose": "ウィンドウを閉じる", "confirmHuman": "このウィンドウは引き継ぎ中です。閉じると、操作の途中で終わります。閉じますか？", "confirmWaiting": "このウィンドウは、あなたの操作（ログインなど）を待っています。閉じると、依頼に応えられなくなります。閉じますか？", "unknown": "プロフィール未確認", "running": "作業中", "paused": "引き継ぎ中", "stopped": "停止中", "idle": "待機中" },
   "pending": {
     "moving": "移動中",
     "movingProgress": "移動中 {{done}}/{{total}}",
@@ -215,12 +215,12 @@
       "otherHosts": "ほかのホストにつなぐ…",
       "resident": {
         "title": "常駐",
-        "keepRunning": "窓を閉じてもホストを続ける（トレイに残す）",
+        "keepRunning": "ウィンドウを閉じてもホストを続ける（トレイに残す）",
         "sleep": "スリープ",
         "sleepWorking": "作業中だけ防ぐ",
         "sleepAlways": "リモートが有効な間は防ぐ",
         "sleepOff": "防がない",
-        "launchAtLogin": "サインイン時に Pleiad を起動する（窓は出さずに起動）",
+        "launchAtLogin": "サインイン時に Pleiad を起動する（ウィンドウは出さずに起動）",
         "launchAtLoginRecommend": "リモートの受付がオンです。この PC を再起動しても委譲を受けられるよう、サインイン時の起動をおすすめします。",
         "launchAtLoginBlockedWin": "Windows の設定またはタスクマネージャーの「スタートアップ」で無効になっています。そこで有効にすると起動します。",
         "launchAtLoginBlockedMac": "システム設定の「ログイン項目」で許可すると起動します。"
@@ -240,7 +240,7 @@
       "agentOperation": { "title": "エージェントの操作", "bundled": "agent-browser {{version}} · 同梱" },
       "profiles": {
         "title": "Chrome のプロフィール",
-        "description": "エージェントの窓を開く Chrome のプロフィールです。会話ごとの切り替えは会話の側で行い、エージェントも一覧から選べます。",
+        "description": "エージェントのウィンドウを開く Chrome のプロフィールです。会話ごとの切り替えは会話の側で行い、エージェントも一覧から選べます。",
         "newDefault": "新しい会話のプロフィール",
         "lastUsed": "Chrome の最後に使ったもの",
         "notesTitle": "メモ",
@@ -286,7 +286,7 @@
         "connected": {
           "status": "つながっています · {{browser}}",
           "disconnect": "切る",
-          "note": "つないでいる間、Chrome の窓に「Chrome は自動テスト ソフトウェアによって制御されています」の帯が出ることがあります。"
+          "note": "つないでいる間、Chrome のウィンドウに「Chrome は自動テスト ソフトウェアによって制御されています」の帯が出ることがあります。"
         }
       },
       "confirm": {
@@ -1498,7 +1498,7 @@
       "hostOffline": "ホストがオフライン",
       "viewDetail": "詳細を見る",
       "hostCanAnswer": "依頼元の会話（⇄ {{device}}）でも答えられます",
-      "viewChildFailed": "リモートの窓を開けませんでした: {{error}}"
+      "viewChildFailed": "リモートのウィンドウを開けませんでした: {{error}}"
       },
       "allowedAlways": "常に許可した",
       "allowed": "許可した",
@@ -1681,14 +1681,14 @@
         "lead": "Chrome への接続を待っています"
       },
       "operating": "あなたが操作中",
-      "operatingNote": "Chrome の窓で操作して、終わったら「Claude に戻す」を押してください。",
+      "operatingNote": "Chrome のウィンドウで操作して、終わったら「Claude に戻す」を押してください。",
       "operatingByDevice": "別の端末で操作しています。終わったら「Claude に戻す」を押してください。",
       "operate": "Chrome で操作する",
       "operateHere": "この端末で操作する",
       "operateOnPc": "PC で操作する",
-      "waitingCurrent": "この窓を開きます",
-      "operatingOnDevice": "右の「Chrome の窓」で操作して、終わったら「Claude に戻す」を押してください。",
-      "noWindow": "Chrome の窓を開けませんでした",
+      "waitingCurrent": "このウィンドウを開きます",
+      "operatingOnDevice": "右の「Chrome のウィンドウ」で操作して、終わったら「Claude に戻す」を押してください。",
+      "noWindow": "Chrome のウィンドウを開けませんでした",
       "resume": "Claude に戻す",
       "resumeContinue": "Claude に戻して続ける",
       "decline": "断る",
@@ -3016,7 +3016,7 @@
       "device": "この端末",
       "state": "状態",
       "retry": "再試行",
-      "close": "この窓を閉じる"
+      "close": "このウィンドウを閉じる"
     },
     "loginOnHostShort": "ホストの PC でログイン",
     "loginOnHost": "このログインはホストの PC で行ってください。ログインの戻り先がホストの PC なので、この端末からは完了できません。",
@@ -4111,7 +4111,7 @@
     "none": "プロフィールが見つかりません",
     "manage": "プロフィールの設定…",
     "agent": "エージェント",
-    "switched": "{{agent}} が Chrome のプロフィールを『{{name}}』に切り替えました（次に開く窓から）",
+    "switched": "{{agent}} が Chrome のプロフィールを『{{name}}』に切り替えました（次に開くウィンドウから）",
     "switchFailed": "プロフィールを切り替えられませんでした"
   },
   "chromeControl": {
@@ -4121,9 +4121,9 @@
     "resume": "{{name}} に戻す",
     "failed": "操作できませんでした",
     "banner": "一時停止中 · あなたが Chrome で操作しています",
-    "error": { "concealFailed": "窓を隠せなかったので、一時停止のままです。もう一度「戻す」を押してください" },
+    "error": { "concealFailed": "ウィンドウを隠せなかったので、一時停止のままです。もう一度「戻す」を押してください" },
     "handover": "あなたが引き継ぎ · {{name}} に戻しました · {{duration}}",
-    "closed": { "agent": "{{name}} が窓を閉じました", "human": "Chrome の窓が閉じました", "image": "閉じた窓の最後の画面" },
+    "closed": { "agent": "{{name}} がウィンドウを閉じました", "human": "Chrome のウィンドウが閉じました", "image": "閉じたウィンドウの最後の画面" },
     "duration": { "minutes": "{{m}} 分 {{s}} 秒", "seconds": "{{s}} 秒" }
   },
   "browser": {
@@ -4147,8 +4147,8 @@
     "actions": "ブラウザーの操作",
     "menu": {
       "devtools": "DevTools",
-      "detach": "別の窓に出す",
-      "openInChrome": "Chrome で開く（エージェントの窓へ）",
+      "detach": "別のウィンドウに出す",
+      "openInChrome": "Chrome で開く（エージェントのウィンドウへ）",
       "clearSiteData": "このサイトのデータを消す"
     },
     "kind": {
@@ -4170,31 +4170,31 @@
     "chromeWindow": {
       "tab": "{{name}} の Chrome",
       "fixedTab": "{{name}} の Chrome（閉じられません）",
-      "windowActions": "Chrome の窓の操作",
-      "windowNumber": "窓 {{n}}",
+      "windowActions": "Chrome のウィンドウの操作",
+      "windowNumber": "ウィンドウ {{n}}",
       "windowCurrent": "表示中",
-      "childrenHeading": "子の会話の窓（押すとその会話を開く）",
+      "childrenHeading": "子の会話のウィンドウ（押すとその会話を開く）",
       "childUntitled": "子の会話",
       "childWaiting": "依頼待ち",
-      "childCount": "{{n}} 窓",
-      "windowCount": "{{n}} 窓",
-      "panel": "Chrome の窓",
-      "entry": "{{name}} の Chrome の窓",
-      "entryWorking": "{{name}} の Chrome の窓 · 操作中",
-      "screen": "{{name}} の Chrome の窓の映像（見るだけ）",
+      "childCount": "{{n}} ウィンドウ",
+      "windowCount": "{{n}} ウィンドウ",
+      "panel": "Chrome のウィンドウ",
+      "entry": "{{name}} の Chrome のウィンドウ",
+      "entryWorking": "{{name}} の Chrome のウィンドウ · 操作中",
+      "screen": "{{name}} の Chrome のウィンドウの映像（見るだけ）",
       "viewOnly": "見るだけ · 操作は引き継いでから",
       "suspended": "映像を止めています",
       "connecting": "接続しています…",
       "fps": "映像 · {{fps}} fps",
-      "ended": "Chrome の窓が閉じました",
-      "none": "この会話には Chrome の窓がありません",
-      "failed": "Chrome の窓の映像を開けませんでした。",
-      "screenOperating": "{{name}} の Chrome の窓の映像（この端末で操作中）",
+      "ended": "Chrome のウィンドウが閉じました",
+      "none": "この会話には Chrome のウィンドウがありません",
+      "failed": "Chrome のウィンドウの映像を開けませんでした。",
+      "screenOperating": "{{name}} の Chrome のウィンドウの映像（この端末で操作中）",
       "deviceNote": "パスワード管理・パスキーは、この端末からは使えません",
-      "inputFailed": "Chrome の窓へ送れませんでした",
+      "inputFailed": "Chrome のウィンドウへ送れませんでした",
       "waitingPermission": "Chrome の許可を待っています",
       "openFailed": "Chrome で開けませんでした",
-      "close": "窓を閉じる", "closeFailed": "Chrome の窓を閉じられませんでした",
+      "close": "ウィンドウを閉じる", "closeFailed": "Chrome のウィンドウを閉じられませんでした",
       "profileActions": "Chrome のプロフィール"
     },
     "remote": {

@@ -1048,7 +1048,7 @@ export const CATEGORIES = [
     ["🚪", "door door", "ドア"],
     ["🛗", "elevator elevator", "エレベーター"],
     ["🪞", "mirror mirror", "鏡"],
-    ["🪟", "window window", "窓"],
+    ["🪟", "window window", "ウィンドウ"],
     ["🛏️", "bed bed", "ベッド"],
     ["🛋️", "couch and lamp couch", "ソファ"],
     ["🪑", "chair chair", "椅子"],
