@@ -10,7 +10,8 @@ async (page) => {
     window.startupListCalls = 0;
     const send = WebSocket.prototype.send;
     WebSocket.prototype.send = function (data) {
-      try { if (JSON.parse(data).command === 'listSessions') window.startupListCalls++; } catch {}
+      // 差分（since 付き）の取り直しは数えない。全量の取得が重ならないことを見る（ADR 0179）
+      try { const m = JSON.parse(data); if (m.command === 'listSessions' && !m.args?.since) window.startupListCalls++; } catch {}
       return send.call(this, data);
     };
   });
