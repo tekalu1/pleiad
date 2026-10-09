@@ -70,6 +70,8 @@ export function createEditMode({ composer, t, announce = () => {}, host, kind = 
 
   const dirty = () => Boolean(st) && changedFrom(st.base, host.read());
   const valid = () => { const c = host.read(); return Boolean(c.text.trim() || c.attached.length); };
+  // i18n-dynamic: chat.resend.title
+  // i18n-dynamic: chat.resend.announce
   const titleText = () => t(kind === 'reply' ? 'chat.resend.titleReply' : 'chat.resend.title', { time: st.time });
 
   function build() {
