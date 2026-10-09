@@ -34,6 +34,15 @@ export default async function (t) {
     await c.cmd('saveDraft', { sessionId, text: '古い', attached: [] });
     t.ok('下書き: version を送らなければ持たない（印の無い古い形式のまま）', !('version' in (await c.cmd('loadSession', { sessionId })).draft));
 
+    // ADR 0178: 入力欄の「編集中」の状態は下書きと一緒に保存する（会話を切り替えても・読み込み直しても続く）。形の崩れたものは捨てる
+    const edit = { v: 1, id: 'msg-1', time: '10:02', quote: '元の文', base: { text: '元の文', paths: [many[0].path] }, stash: { text: '書きかけ', attached: [{ ...many[1] }] }, junk: 'x' };
+    await c.cmd('saveDraft', { sessionId, text: '直した文', attached: [many[0]], version: 2, edit });
+    const ed = (await c.cmd('loadSession', { sessionId })).draft?.edit;
+    t.ok('下書き: 編集中の状態（元の発言の id・時刻・引用・編集前の本文と添付・脇に取った書きかけ）を保存する', ed?.id === 'msg-1' && ed.time === '10:02' && ed.base?.text === '元の文' && ed.base.paths[0] === many[0].path && ed.stash?.text === '書きかけ' && ed.stash.attached?.length === 1 && !('junk' in ed), JSON.stringify(ed));
+    await c.cmd('saveDraft', { sessionId, text: '直した文', attached: [], edit: { id: '', stash: {} } });
+    t.ok('下書き: 元の発言の id が無い編集中の状態は持たない', !('edit' in (await c.cmd('loadSession', { sessionId })).draft));
+    await c.cmd('saveDraft', { sessionId, text: '古い', attached: [] });
+
     const ups = [];
     for (let i = 0; i < N; i++) ups.push(await c.cmd('attachFile', { sessionId, name: `u${i}.txt`, mime: 'text/plain', data: Buffer.from(`x${i}`).toString('base64') }));
     const big = await c.cmd('attachFile', { sessionId, name: 'big.bin', mime: 'application/octet-stream', data: Buffer.alloc(8 * 1024 * 1024 + 1).toString('base64') }).then(() => null, (e) => e.message);

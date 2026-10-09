@@ -1,9 +1,10 @@
-// 送り方の帯（web/resend-band.mjs。ADR 0102）: 送り直すと消えるものの見立てとキーの受け方。見た目と動きは tests/browser/message-actions.cjs
-import { tailInfo, resendKeys } from "../../web/resend-band.mjs";
+// 送り直しの見立て（web/resend-band.mjs。ADR 0102）と、入力欄の「編集中」の純粋な部分（web/composer/edit-mode.mjs。ADR 0178）。見た目と動き・キーは tests/browser/message-actions.cjs
+import { tailInfo, tailLines, sendLabels } from "../../web/resend-band.mjs";
+import { quoteOf, changedFrom, mergeContent } from "../../web/composer/edit-mode.mjs";
 import { removedSummary, applyRewindMark, markIsLive, nativeUuid, keptPresentIndexes } from "../../core/rewind.mjs";
 
 export const name = "resend-band";
-export const title = "送り直しの帯: 消えるものの件数・走っている返答・ファイルの変更 / キー / 巻き戻しの印と提示の切り取り";
+export const title = "送り直し: 消えるものの件数・走っている返答・ファイルの変更 / 帯の文とボタンの名前 / 編集中の引用・変更の判定・書きかけの合流 / 巻き戻しの印と提示の切り取り";
 
 const user = (uuid, extra = {}) => ({ role: "user", uuid, text: uuid, at: "2026-10-03T10:00:00Z", ...extra });
 const ai = (uuid, extra = {}) => ({ role: "assistant", uuid, text: uuid, at: "2026-10-03T10:00:00Z", ...extra });
@@ -27,25 +28,26 @@ export default async function(t) {
   t.ok("消える範囲より前のファイルの変更は数えない",
     tailInfo([user("u0"), ai("a0", { toolCalls: [{ id: "x", name: "Write", input: { file_path: "a.md", content: "x" } }] }), user("u1"), ai("a1")], 2).files === false);
 
-  // ---- キー
-  const fired = [];
-  const handlers = { send: () => fired.push("send"), branch: () => fired.push("branch"), cancel: () => fired.push("cancel") };
-  const key = (init) => {
-    const event = { key: "", ctrlKey: false, metaKey: false, shiftKey: false, isComposing: false, keyCode: 0, stopped: false, prevented: false, ...init,
-      preventDefault() { this.prevented = true; }, stopPropagation() { this.stopped = true; } };
-    return { event, handled: resendKeys(event, handlers) };
-  };
-  fired.length = 0;
-  t.ok("Ctrl+Enter = 送り直す", key({ key: "Enter", ctrlKey: true }).handled && fired.at(-1) === "send");
-  t.ok("⌘+Enter = 送り直す", key({ key: "Enter", metaKey: true }).handled && fired.at(-1) === "send");
-  t.ok("Ctrl+Shift+Enter = 分岐して送る", key({ key: "Enter", ctrlKey: true, shiftKey: true }).handled && fired.at(-1) === "branch");
-  t.ok("⌘+Shift+Enter = 分岐して送る", key({ key: "Enter", metaKey: true, shiftKey: true }).handled && fired.at(-1) === "branch");
-  const esc = key({ key: "Escape" });
-  t.ok("Esc = 取り消し（親へ伝えない）", esc.handled && fired.at(-1) === "cancel" && esc.event.stopped && esc.event.prevented);
-  const before = fired.length;
-  const plain = key({ key: "Enter" });
-  t.ok("ふつうの Enter は受けない（ボタンの既定の動作・改行に任せる）", !plain.handled && fired.length === before && !plain.event.prevented);
-  t.ok("日本語入力の変換中は受けない", !key({ key: "Enter", ctrlKey: true, isComposing: true }).handled && !key({ key: "Escape", keyCode: 229 }).handled && fired.length === before);
+  // ---- 帯の文とボタンの名前
+  const info = (extra) => ({ saved: 0, users: 0, files: false, running: false, forkOnly: false, any: false, ...extra });
+  t.ok("後ろに自分の発言があれば件数を言う", tailLines(info({ saved: 3, users: 2, any: true })).length === 1);
+  t.ok("走っている返答・ファイルの変更はそれぞれ 1 行足す", tailLines(info({ saved: 3, users: 1, running: true, files: true, any: true })).length === 3);
+  t.ok("走っている返答の文は差し替えられる（スレッドは「このスレッド」）", tailLines(info({ running: true, any: true }), { running: "RUN" })[0] === "RUN");
+  t.ok("委譲された作業の会話は 1 行だけ", tailLines(info({ forkOnly: true, saved: 4, users: 2, any: true })).length === 1);
+  t.ok("走っていれば［止めて送り直す］、そうでなければ［送り直す］", sendLabels(info({ running: true, any: true })).label !== sendLabels(info({ saved: 1, any: true })).label);
+  t.ok("読み上げには消えるものが付く", sendLabels(info({ saved: 2, users: 1, any: true })).aria !== sendLabels(info({ saved: 2, users: 1, any: true })).label);
+  t.ok("消えるものが無ければ読み上げはボタンの名前のまま", sendLabels(info()).aria === sendLabels(info()).label);
+
+  // ---- 編集中の引用・変更の判定・書きかけの合流
+  t.ok("引用は添付の印の行と空行を飛ばした先頭の 1 行", quoteOf("\n[添付] /a/b.png\n  本題です  \n続き") === "本題です");
+  t.ok("引用は 120 字まで", quoteOf("あ".repeat(300)).length === 120 && quoteOf("") === "" && quoteOf("[Attachment] /x") === "");
+  const base = { text: "元の文", paths: ["/a.png", "/b.png"] };
+  t.ok("何も直していなければ変更なし（添付の並びが違っても同じ）", !changedFrom(base, { text: "元の文", attached: [{ path: "/b.png" }, { path: "/a.png" }] }));
+  t.ok("本文を直せば変更あり", changedFrom(base, { text: "元の文!", attached: [{ path: "/a.png" }, { path: "/b.png" }] }));
+  t.ok("添付を外す・足すと変更あり", changedFrom(base, { text: "元の文", attached: [{ path: "/a.png" }] }) && changedFrom(base, { text: "元の文", attached: [{ path: "/a.png" }, { path: "/b.png" }, { path: "/c.png" }] }));
+  const merged = mergeContent({ text: "編集していた文", attached: [{ path: "/a.png" }] }, { text: "書きかけ", attached: [{ path: "/a.png" }, { path: "/z.png" }] });
+  t.ok("編集の相手が消えたら、書きかけを編集していた文の後ろに足す（添付は重ねない）", merged.text === "編集していた文\n\n書きかけ" && merged.attached.map((a) => a.path).join() === "/a.png,/z.png");
+  t.ok("書きかけが無ければ編集していた文のまま", mergeContent({ text: "x", attached: [] }, null).text === "x");
 
   // ---- 巻き戻しの印・提示の切り取り・uuid（core/rewind.mjs）
   const chain = [user("u1"), ai("a1"), user("u2"), ai("a2")];

@@ -76,6 +76,8 @@ export default async function (t) {
     cmd: () => new Promise(r => { releaseHistory = r; }),
     // 文言（web/i18n.mjs の t と client.mjs の html.t・ACTIVITY_LABEL）。このテストは文言を見ない
     t: key => key, html: { t: key => key }, ACTIVITY_LABEL: {},
+    // 入力欄の「編集中」（web/composer/edit-mode.mjs・client.mjs の chatEdit / syncEdit）。このテストの対象外（編集中ではない会話だけ）
+    chatEdit: { active: false, sending: false, snapshot: () => null, reset: noop, restore: noop }, syncEdit: noop, syncEditTail: noop,
     // 中断と再開（client.mjs の syncResume / paintInterruptLine、web/interrupt.mjs）。このテストの対象外
     syncResume: noop, paintInterruptLine: noop, isInterrupted: () => false, interruptReadPoint: () => 0, resumeSettled: () => false,
   });

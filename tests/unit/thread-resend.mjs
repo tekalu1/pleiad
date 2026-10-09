@@ -74,6 +74,14 @@ export default async function (t) {
     const stopped = await call('channels.resend', { channelId: dev.id, postId: h2.id, text: 'echo:E', stopRunning: true, clientId: 'resend-0002' });
     await until(async () => (await done(root.id, owl)).some((p) => p.text === 'E'), { label: 'E の返事' });
     t.ok('stopRunning で止めて送り直す', stopped.text === 'echo:E' && !(await read(root.id)).posts.some((p) => p.id === h2.id));
+    // ---- 添付つきで送り直す（入力欄の「編集中」から送る形。ADR 0178）
+    const file = path.join(tmp, 'note.txt');
+    await fs.writeFile(file, 'memo');
+    const h3 = await call('channels.post', { channelId: dev.id, threadId: root.id, text: 'echo:F' });
+    await until(async () => (await done(root.id, owl)).some((p) => p.text === 'F'), { label: 'F の返事' });
+    await idle(root.id);
+    const withFile = await call('channels.resend', { channelId: dev.id, postId: h3.id, text: `echo:G\n[添付] ${file}`, attachments: [{ path: file, name: 'note.txt' }], clientId: 'resend-0003' });
+    t.ok('送り直した新しい投稿に添付が付く（本文の印と対）', withFile.attachments?.length === 1 && withFile.attachments[0].path === file && withFile.text.includes('[添付]'), JSON.stringify(withFile));
     t.ok('サーバーのログに例外が出ていない', !/Unhandled|TypeError|ReferenceError/.test(server.tail(80)), server.tail(30));
   } finally {
     c?.close();

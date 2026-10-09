@@ -121,7 +121,7 @@ export const hoverless = () => typeof matchMedia === 'function' && matchMedia('(
 // ---------------------------------------------------------------- 右クリック・キーボード
 
 // 今までのメニュー（ブラウザーの、リンク・ファイル・コードなどの）を優先する場所
-const OWN_MENU = 'a, [data-file-path], [data-file-menu], pre, code, .code-block, img, input, textarea, select, summary, .message-editor, .tc-details, .table-wrap';
+const OWN_MENU = 'a, [data-file-path], [data-file-menu], pre, code, .code-block, img, input, textarea, select, summary, .tc-details, .table-wrap';
 
 /**
  * 会話の列（root）の発言の右クリック・長押し・キーボード（Shift+F10・メニューキー）を受ける。

@@ -19,7 +19,7 @@ import { fileDownloadUrl } from './file-reference.mjs';
 import { setupCodeCopy, copyText } from './code-copy.mjs';
 import { setupMessagePeek } from './message-peek.mjs';
 import { actionButtons, copyToClipboard, messageMenuPlan, hoverless, setupMessageMenu, openSourceDialog, announce, writeClipboard, reportAiContent } from './message-actions.mjs';
-import { tailInfo, buildBand, resendKeys, sendGlyph } from './resend-band.mjs';
+import { tailInfo, penGlyph } from './resend-band.mjs';
 import { mountFold, revealFold } from './fold.mjs';
 import { isSearchShortcut } from './session-find.mjs';
 import { captureViewState, restoreViewState } from './view-state.mjs';
@@ -265,6 +265,17 @@ const chatComposer = createComposer({
   onSchedule: () => sendMenu.open(),
 });
 const chatAttach = chatComposer.attach, composerEditor = chatComposer.editor, composerWait = chatComposer.wait;
+// 発言の ⋯ › 「編集して再送信」「再送信」は、いつもの入力欄を「編集中」にする（web/composer/edit-mode.mjs。ADR 0178）。関数は下で宣言する
+const chatEdit = chatComposer.useEdit({
+  announce: (text) => announce(text),
+  host: {
+    read: () => editRead(), write: (content) => editWrite(content),
+    send: (ctx) => editSend(ctx), branch: (ctx) => editBranch(ctx),
+    decorate: (id, on, tail) => editDecorate(id, on, tail), locate: (id) => editLocate(id),
+    takeExtra: () => editTakeExtra(), putExtra: (extra) => editPutExtra(extra),
+    change: () => saveDraftSoon(),
+  },
+});
 // まだ送っていない会話の宛先（bot なし / bot）。bot を選んだ最初の送信は、一時チャットでその bot に話しかける投稿になる（sendToHomeBot）
 const homeDest = createHomeDest({ invoke: (op, args) => cmd("invoke", { op, args }),
   visible: () => unsentHere(), onChange: () => { syncTopbar().catch(() => {}); } });
@@ -877,11 +888,11 @@ function forkAtReplyEnd(head) {
 
 /**
  * 発言の「編集して再送信」「再送信」。基本は同じ会話の中で送り直す（後ろの発言は消える。ADR 0102）。
- * 送り直すと消えるものが 1 つでもあるときは、発言（編集欄）の直下の帯で「送り直す」と「分岐して送る」を選ぶ。
- * 何も消えないときは帯を出さず、再送信ならすぐ送り直す（編集は編集欄の［送り直す］で送る）
+ * 編集は、いつもの入力欄に元の本文と添付を入れて「編集中」にする（chatEdit。送り直すと消えるものは入力欄の上の帯に出る）。
+ * 後ろに消えるものがある再送信も同じ形で、［送り直す］へフォーカスを置く。何も消えない再送信はすぐ送り直す
  */
 async function resendFrom(m, edit) {
-  if (state.busy || m.querySelector('.message-editor') || m.querySelector('.resend-band') || m.dataset.resending || rewindingNow === state.current) return;
+  if (state.busy || m.dataset.resending || rewindingNow === state.current || chatEdit.sending) return;
   const source = state.current;
   m.dataset.resending = '1';
   try {
@@ -895,11 +906,14 @@ async function resendFrom(m, edit) {
         mime: p.mime ?? /^data:([^;,]+)/.exec(p.dataUri ?? '')?.[1] ?? '', kind: p.kind, dataUri: p.dataUri,
         // 出どころと大きさも引き継ぐ（入力欄の一覧が出す）
         ...(p.origin === 'host' || p.origin === 'device' ? { from: p.origin } : {}), ...(Number.isFinite(p.size) ? { size: p.size } : {}) }));
-    // 印（[添付] / [Attachment]）は本文の位置のまま編集欄へ戻す。文中の位置を保つ（編集で印を消した添付は送らない。keptAttachments）
-    const draft = { text: data.messages[index].text ?? '', attached, index };
+    // 印（[添付] / [Attachment]）は本文の位置のまま入力欄へ戻す。文中の位置を保つ（編集で印を消した添付は送らない。resendPayload）
+    const content = { text: data.messages[index].text ?? '', attached };
     // 委譲された作業の会話は同じ会話では送り直せない（サーバーも断る）。分岐して送るだけにする
     const forkOnly = Boolean(state.sessions.find(x => x.id === source)?.delegation);
-    openResend(m, { draft, tail: tailInfo(data.messages, index, { running: isRunningHere(), forkOnly }), edit });
+    const tail = tailInfo(data.messages, index, { running: isRunningHere(), forkOnly });
+    // 何も消えない再送信は、確かめずにすぐ送り直す
+    if (!edit && !tail.any && !forkOnly) { void rewindSend({ m, source, tail, text: content.text, attached }); return; }
+    chatEdit.begin({ id: m.dataset.uuid, time: m.querySelector(':scope > .who .when')?.textContent ?? '', tail }, content, { focus: edit ? 'text' : 'send' });
   } catch (e) { composerError(t('chat.message.resendPrepareFailed', { error: e.message })); }
   finally { delete m.dataset.resending; }
 }
@@ -950,20 +964,11 @@ function openMessageMenu({ m, part = false }, at = {}) {
 setupMessageMenu(thread, {
   resolve: (target) => {
     const m = target.closest('.m[data-role]');
-    if (!m || m.classList.contains('editing')) return null;
+    if (!m) return null;
     return { m, part: m.classList.contains('ai') && m.classList.contains('cont') };
   },
   open: (hit, at) => openMessageMenu(hit, at),
 });
-/** 編集で本文から消した印の添付は、再送しない（元の本文に印があって、編集後に無くなったものだけを外す） */
-function keptAttachments(attached, before, after) {
-  const marks = (text) => new Set(String(text ?? '').split(/\r?\n/).map(line => ATTACHMENT_LINE.exec(line.trim())?.[1]).filter(Boolean).map(normalizeAttachmentPath));
-  const had = marks(before), has = marks(after);
-  return attached.filter(a => { const k = normalizeAttachmentPath(a.path); return !had.has(k) || has.has(k); });
-}
-
-// 今開いている送り方（編集欄・帯）。1 つだけ。別の発言を送り直し始めたら前のは閉じる
-let resendOpen = null;
 // 同じ会話で送り直している間の会話（サーバーの rewind イベントで自分の画面を二重に読み直さない）
 let rewindingNow = null;
 
@@ -988,13 +993,13 @@ function resendPayload(text, attached, sessionId) {
 /**
  * 同じ会話の中で送り直す（sendMessage の rewind）。消える範囲は先に畳み、サーバーが巻き戻して送り終えたら履歴を読み直して
  * 消えた発言を片付け、新しい発言の吹き出しを置く（会話は切り替えない）。送れなかったら畳んだ範囲を戻して理由を出す。成功したら true。
- * 押した時点の実行中の判定は、帯を開いたときのものではなく今のもの（開いたあとに走り出していたら、帯を作り直して、もう一度押してもらう）。
+ * 押した時点の実行中の判定は、帯を開いたときのものではなく今のもの（開いたあとに走り出していたら、入力欄の帯を作り直して、もう一度押してもらう）。
  * 巻き戻しは済んで受け付けだけが失敗したときは、rewind を外して同じ messageId で送り直す（起点の発言はもう無いので、巻き戻し直せない）
  */
-async function rewindSend({ m, source, tail, text, attached, band = null }) {
+async function rewindSend({ m, source, tail, text, attached, editing = false }) {
   if (isRunningHere() && !tail.running) {
-    tail.running = true; tail.any = true;
-    band?.update(tail);
+    const next = { ...tail, running: true, any: true };
+    if (editing) chatEdit.setTail(next);
     return false;
   }
   const { prompt, attachments } = resendPayload(text, attached, source);
@@ -1021,7 +1026,7 @@ async function rewindSend({ m, source, tail, text, attached, band = null }) {
   } catch (e) {
     for (const w of doomed) w.classList.remove('leaving');
     // サーバーの見立ては「実行中」だった（開いたあとに走り出した）。帯を作り直して、もう一度押してもらう
-    if (e.code === 'SESSION_RUNNING' && !tail.running) { tail.running = true; tail.any = true; band?.update(tail); }
+    if (e.code === 'SESSION_RUNNING' && !tail.running && editing) chatEdit.setTail({ ...tail, running: true, any: true });
     composerError(t('chat.resend.failed', { error: e.message }));
     const data = await cmd('loadSession', { sessionId: source }).catch(() => null);
     const uuids = list => (list ?? []).map(x => x.uuid).join();
@@ -1043,111 +1048,113 @@ async function rewindSend({ m, source, tail, text, attached, band = null }) {
   } finally { rewindingNow = null; }
 }
 
-/**
- * 送り直す発言の操作を開く。編集（edit）なら編集欄を、後ろに消えるものがあれば帯を、発言の直下に置く。
- * 帯があるとき、編集欄は自前の送信ボタンを持たず帯で送る。後ろに何も無い再送信は帯を出さずすぐ送る。
- * 同じ会話では送り直せない会話（forkOnly。委譲された作業の会話）は、帯の［分岐して送る］だけ
- */
-function openResend(m, { draft, tail, edit }) {
-  resendOpen?.close();
-  const source = state.current;
-  const { forkOnly } = tail;
-  if (!edit && !tail.any && !forkOnly) { void rewindSend({ m, source, tail, text: draft.text, attached: draft.attached }); return; }
-  const body = m.querySelector(':scope > .body');
-  // 消える範囲を薄くする。帯を開いたあとに（走っている返答などで）増える行にも付ける
-  const dims = tail.any && !forkOnly;
+// ---- 入力欄の「編集中」の持ち分（chatEdit の host。web/composer/edit-mode.mjs）
+/** 元の発言の行 */
+function editRow(id) {
+  return [...thread.querySelectorAll('.m[data-uuid]')].find(x => x.dataset.uuid === id) ?? null;
+}
+/** 履歴から見た元の発言と、送り直すと消えるものの見立て。無ければ null */
+function editTarget(id) {
+  if (!state.current) return null;
+  const index = state.messages.findIndex(x => x.uuid === id);
+  if (index < 0) return null;
+  const forkOnly = Boolean(state.sessions.find(x => x.id === state.current)?.delegation);
+  return { index, tail: tailInfo(state.messages, index, { running: isRunningHere(), forkOnly }) };
+}
+const editRead = () => ({ text: shellComposer.draftText(), attached: orderedAttachments() });
+function editWrite({ text, attached }) {
+  shellComposer.reset();
+  state.attached = attached.slice();
+  chatAttach.dropFailed();
+  $('prompt').value = text;
+  fitPrompt();
+  renderAttached();
+}
+function editTakeExtra() {
+  const at = armedSends.get(state.current);
+  if (at === undefined) return undefined;
+  armedSends.delete(state.current);
+  paintArmed();
+  return at;
+}
+function editPutExtra(at) {
+  if (state.current) armedSends.set(state.current, at);
+  paintArmed();
+}
+let editObserver = null;
+/** 元の発言に「編集中」の札を付け、消える範囲の行を薄くする。帯を開いたあとに（走っている返答などで）増える行にも付ける */
+function editDecorate(id, on, tail) {
+  editObserver?.disconnect();
+  editObserver = null;
+  for (const w of thread.querySelectorAll('.mw.doomed')) w.classList.remove('doomed');
+  for (const x of thread.querySelectorAll('.editing-tag')) x.remove();
+  for (const x of thread.querySelectorAll('.edit-src')) x.classList.remove('edit-src');
+  if (!on) return;
+  const m = editRow(id);
+  if (!m) return;
+  m.classList.add('edit-src');
+  const tag = el('span', 'editing-tag');
+  tag.append(penGlyph(), t('chat.resend.tag'));
+  const name = m.querySelector(':scope > .who > span:not(.row-be):not(.when)');
+  (name ?? m.querySelector(':scope > .who'))?.after(tag);
+  if (!tail?.any || tail.forkOnly) return;
+  for (const w of rowsAfter(m)) w.classList.add('doomed');
   const mw = m.closest('.mw');
-  for (const w of dims ? rowsAfter(m) : []) w.classList.add('doomed');
-  const observer = dims && typeof MutationObserver === 'function' ? new MutationObserver((records) => {
+  if (typeof MutationObserver !== 'function' || !mw) return;
+  editObserver = new MutationObserver((records) => {
     for (const record of records) for (const node of record.addedNodes) {
-      if (node.nodeType === 1 && node.classList.contains('mw') && mw && (mw.compareDocumentPosition(node) & Node.DOCUMENT_POSITION_FOLLOWING)) node.classList.add('doomed');
+      if (node.nodeType === 1 && node.classList.contains('mw') && (mw.compareDocumentPosition(node) & Node.DOCUMENT_POSITION_FOLLOWING)) node.classList.add('doomed');
     }
-  }) : null;
-  observer?.observe(thread, { childList: true });
-  let editor = null, input = null, band = null, ownSend = null, sending = false;
-  const current = () => (input
-    ? { text: input.value, attached: keptAttachments(draft.attached, draft.text, input.value) }
-    : { text: draft.text, attached: draft.attached });
-  const valid = () => { const c = current(); return Boolean(c.text.trim() || c.attached.length); };
-  const close = ({ focus = false } = {}) => {
-    observer?.disconnect();
-    for (const w of thread.querySelectorAll('.mw.doomed')) w.classList.remove('doomed');
-    band?.node.remove();
-    if (editor) { editor.remove(); body.hidden = false; m.classList.remove('editing'); }
-    if (resendOpen?.m === m) resendOpen = null;
-    if (focus) m.querySelector(':scope > .who .who-more')?.focus();
-    relayoutBranches();
-  };
-  const refresh = () => {
-    const off = sending || !valid();
-    if (ownSend) ownSend.disabled = off;
-    if (band) { band.send.disabled = off; band.branch.disabled = off; }
-    if (input) { input.style.height = 'auto'; input.style.height = `${input.scrollHeight}px`; }
-    relayoutBranches();
-  };
-  const busy = (on) => {
-    sending = on;
-    band?.busy(on);
-    if (input) input.disabled = on;
-    refresh();
-  };
-  const branch = async () => {
-    if (sending || !valid()) return;
-    const c = current();
-    busy(true);
-    try { await forkFrom(m, { draft: { ...c, index: draft.index } }); }
-    finally { busy(false); }
-    // 分岐の先へ移ったなら、この会話の編集欄・帯は役目を終えている。移れなかったら（理由は forkFrom が出した）開いたまま
-    if (state.current !== source || !m.isConnected) { close(); announce(t('chat.resend.doneBranch')); }
-  };
-  const send = async () => {
-    if (forkOnly) return branch();
-    if (sending || !valid()) return;
-    busy(true);
-    const ok = await rewindSend({ m, source, tail, ...current(), band });
-    busy(false);
-    if (ok) close();
-  };
-  const cancel = () => { if (!sending) close({ focus: true }); };
-  // onkeydown が false を返すと既定の動作（ボタンの Enter・Space）まで止まるので、返り値は捨てる
-  const keys = (event) => { resendKeys(event, { send, branch, cancel }); };
-
-  if (edit) {
-    editor = el('div', 'message-editor');
-    input = el('textarea', 'message-edit-input');
-    input.value = draft.text;
-    input.setAttribute('aria-label', t('chat.message.editLabel'));
-    editor.append(input);
-    if (draft.attached.length) editor.append(el('div', 'message-edit-attachments', draft.attached.map(a => a.name).join(' · ')));
-    if (!tail.any && !forkOnly) {
-      // 後ろに何も無い: 帯は出さず、編集欄が［取り消し］と［送り直す］を持つ。近道（Ctrl/⌘+Enter・Ctrl/⌘+Shift+Enter・Esc）は同じに効く
-      const controls = el('div', 'message-edit-controls');
-      const cancelButton = el('button', 'btn', t('chat.resend.cancel'));
-      ownSend = el('button', 'btn btn-primary');
-      cancelButton.type = ownSend.type = 'button';
-      ownSend.append(sendGlyph(), el('span', null, t('chat.resend.send')));
-      ownSend.title = `${t('chat.resend.send')} (Ctrl+Enter) · ${t('chat.resend.branch')} (Ctrl+Shift+Enter)`;
-      cancelButton.onclick = cancel;
-      ownSend.onclick = send;
-      controls.append(cancelButton, ownSend);
-      editor.append(controls);
-    }
-    body.hidden = true; body.after(editor); m.classList.add('editing');
-    input.oninput = refresh;
-    input.onkeydown = keys;
-  }
-  if (tail.any || forkOnly) {
-    band = buildBand({ tail, onSend: send, onBranch: branch, onCancel: cancel });
-    band.node.onkeydown = keys;
-    // 発言の中身（添付の行・送信の状態）の下、発言の一番下。編集中は送信の状態の行を隠す（style.css）
-    m.append(band.node);
-    input?.setAttribute('aria-describedby', `${band.node.id}t`);
-  }
-  resendOpen = { m, close };
-  refresh();
-  // 編集は編集欄、再送信で帯が出たときは主のボタン［送り直す］（同じ会話で送り直せないときは［分岐して送る］）へ。読み上げに帯の名前と文が届く
-  if (input) input.focus(); else (forkOnly ? band?.branch : band?.send)?.focus({ preventScroll: true });
-  band?.node.scrollIntoView?.({ block: 'nearest' });
+  });
+  editObserver.observe(thread, { childList: true });
+}
+function editLocate(id) {
+  const m = editRow(id);
+  const row = m?.closest('.mw');
+  if (m && row) nav.scrollToRow(row, 90, () => flashMessage(m));
+}
+/** 送れない理由（設定の保存待ち・送っている途中の添付）があれば、理由を出して true */
+function editBlocked() {
+  if (composerWait.held) { composerWait.point(); return true; }
+  const reason = uploadBlockReason();
+  if (reason) { notify(reason); flashAttachEntry(); return true; }
+  return false;
+}
+async function editSend({ id, text, attached, tail }) {
+  if (editBlocked()) return false;
+  const m = editRow(id);
+  if (!m) { chatEdit.targetLost(); return false; }
+  return rewindSend({ m, source: state.current, tail, text, attached, editing: true });
+}
+async function editBranch({ id, text, attached }) {
+  if (editBlocked()) return false;
+  const m = editRow(id);
+  const found = editTarget(id);
+  if (!m || !found) { chatEdit.targetLost(); return false; }
+  const source = state.current;
+  const stash = chatEdit.stashed();
+  await forkFrom(m, { draft: { text, attached, index: found.index } });
+  // 分岐の先へ移ったなら、元の会話の下書きは編集前の書きかけに戻す（直した内容は分岐の先へ渡った）。移れなかったら（理由は forkFrom が出した）開いたまま
+  if (state.current === source) return false;
+  persistDraft(source, { text: stash?.text ?? '', attached: stash?.attached ?? [], version: 2, dirty: true }).catch(() => {});
+  if (stash?.extra !== undefined) armedSends.set(source, stash.extra);
+  announce(t('chat.resend.doneBranch'));
+  return false;
+}
+/** 履歴を描き直したあと: 元の発言がまだあれば札と薄めを付け直し、無ければ編集をやめる（送っている間は rewindSend が読み直すので触らない） */
+function syncEdit() {
+  if (!chatEdit.active || chatEdit.sending) return;
+  const found = editTarget(chatEdit.id);
+  if (!found) { chatEdit.targetLost(); return; }
+  chatEdit.setTail(found.tail);
+}
+/** 走り出した・止まったとき、帯の「走っている返答は止まる」とボタンの名前だけを合わせる */
+function syncEditTail() {
+  const tail = chatEdit.tail;
+  if (!tail || chatEdit.sending) return;
+  const running = isRunningHere();
+  if (running === tail.running) return;
+  chatEdit.setTail({ ...tail, running, any: tail.saved > 0 || running });
 }
 
 function setUuid(m, uuid) {
@@ -6400,6 +6407,9 @@ function saveDraft() {
   // シェルの形の欄は `!` を頭に戻して残す（復元ではシェルの形に入らない。web/shell-composer.mjs）
   // text は文中の添付の印（[添付] パス）を含む Markdown（位置が残る）。version: 2 より前の下書きは印が無く、添付は「文末に付く」になる
   const value = { text: shellComposer.draftText(), attached: state.attached.slice(), version: 2, dirty: true };
+  // 「編集中」も下書きと一緒に残す（会話を切り替えても、読み込み直しても続く。web/composer/edit-mode.mjs の snapshot）
+  const edit = chatEdit.snapshot();
+  if (edit) value.edit = edit;
   return persistDraft(id, value);
 }
 function persistDraft(id, value) {
@@ -6444,6 +6454,7 @@ function setDraftNote(text, st) {
 }
 function loadDraft() {
   const d = state.drafts.get(draftKey());
+  chatEdit.reset();
   shellComposer.reset();
   // 添付の実体を先に置く（本文の印は、ここにあるものだけが札になる。無い印・古い下書きの添付は「文末に付く」）
   state.attached = Array.isArray(d?.attached) ? d.attached.slice() : [];
@@ -6454,6 +6465,8 @@ function loadDraft() {
   // ホストのファイルの面で選んでいたもの・開いていた場所は会話ごと（次は新しい会話の作業ディレクトリから）
   attachMenu?.reset();
   setDraftNote(d?.text || d?.attached?.length ? t("chat.draft.restored") : "", "restored");
+  // 編集中だった会話は、元の発言がまだあれば「編集中」に戻す（無ければ脇の書きかけを足して編集をやめる）
+  if (d?.edit && state.current) chatEdit.restore(d.edit, id => { const f = editTarget(id); return f ? { tail: f.tail } : null; });
 }
 $("draftSaved").onclick = () => saveDraft().catch(() => {});
 // 狭い幅の「再試行」。押すと一行は「保存中…」で消えるので、フォーカスは入力欄へ（失敗すれば一行が出直す）
@@ -8050,6 +8063,7 @@ async function paintSession(id, data, { keepUpTo, transition, loaded = false, lo
   if (!keepComposer) loadDraft();
   closeTurnEl();
   const added = paintHistory(keepUpTo ?? 0, retained);
+  syncEdit();
   paintCompactions();
   if (state.initialMessageId) {
     const lastUser = [...thread.querySelectorAll('.mw:has(.m.user:not(.cmd))')].at(-1);
@@ -8288,6 +8302,7 @@ function syncRunState() {
   // 受け付けた中断は取り消せない。止まり終えるまで押せないようにする（稼働表示は「中断している」）
   $("abort").disabled = here && stoppingHere();
   syncResume();     // 中断状態なら同じ位置に「再開」
+  syncEditTail();   // 編集中の帯の「走っている返答は止まる」
   controls.fit();   // 中断が出入りすると行の幅の配分が変わる
   if (!here) {
     closeTurnEl();
@@ -8355,6 +8370,8 @@ async function sendToHomeBot(bot) {
 }
 
 async function submit({ at = armedSends.get(state.current) } = {}) {
+  // 編集中の送信は［送り直す］（Enter・送信の近道もここへ来る）
+  if (chatEdit.active) return chatEdit.send();
   // 入力欄の `!`: シェルの形なら走らせる。使えない会話の `!` は送らずに理由の一行を光らせる（文として送るのは「文として送る」だけ）
   if (shellComposer.active) return runShellFromComposer();
   if (shellComposer.blocked) return shellComposer.flash();

@@ -15,6 +15,7 @@ import { setupSendMenu } from '../send-menu.mjs';
 import { setupSlashSkills } from '../slash-skills.mjs';
 import { createShellComposer } from '../shell-composer.mjs';
 import { isComposingKey } from '../keyboard.mjs';
+import { createEditMode } from './edit-mode.mjs';
 
 /** 入力欄の中の要素の役割（id は頭 + 役割。頭が空なら役割そのもの） */
 export const COMPOSER_PARTS = ['composer', 'contextStrip', 'contextMeterWrap', 'contextMeter', 'contextMeterPop', 'meterCompact', 'meterSettings', 'usageChip',
@@ -91,10 +92,12 @@ export function createComposer({ els, prefix = '', t, attach, isPlain = () => fa
     prompt.style.maxHeight = `${promptMaxHeight({ line, pad, touch: matchMedia('(pointer:coarse)').matches, viewport: innerHeight })}px`;
   }
 
-  els.composer.onsubmit = (e) => { e.preventDefault(); onSubmit(); };
+  // 発言を編集して送り直している間（useEdit）は、送信も Ctrl/⌘+Enter も「送り直す」、Ctrl/⌘+Shift+Enter は「分岐して送る」（日時の予約は使わない）
+  els.composer.onsubmit = (e) => { e.preventDefault(); if (parts.edit?.active) parts.edit.send(); else onSubmit(); };
   prompt.onkeydown = (e) => {
     if (isComposingKey(e)) return;
     for (const take of keys) if (take(e)) return;
+    if (parts.edit?.key(e)) return;
     if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); if (e.shiftKey) onSchedule(); else onSubmit(); }
   };
   prompt.addEventListener('input', fit);
@@ -124,6 +127,12 @@ export function createComposer({ els, prefix = '', t, attach, isPlain = () => fa
     get sendMenu() { return parts.sendMenu ?? null; },
     get slash() { return parts.slash ?? null; },
     get shell() { return parts.shell ?? null; },
+    get edit() { return parts.edit ?? null; },
+    /** 発言を編集して送り直す状態（web/composer/edit-mode.mjs）。host は面ごとの決まり */
+    useEdit(o) {
+      parts.edit = createEditMode({ composer: this, t, ...o });
+      return parts.edit;
+    },
     /** 設定のチップ（作業ディレクトリ・モデル・承認モード。web/composer-controls.mjs） */
     useControls({ cmd, get, on }) {
       parts.controls = setupComposerControls({ cmd, get, on, els: {
@@ -153,6 +162,7 @@ export function createComposer({ els, prefix = '', t, attach, isPlain = () => fa
     focus(o) { prompt.focus?.(o); },
     destroy() {
       removeEventListener('resize', fit);
+      parts.edit?.destroy();
       parts.controls?.destroy?.();
       editor.destroy?.();
     },

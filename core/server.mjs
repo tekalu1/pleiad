@@ -368,6 +368,22 @@ folderUploads.sweep().catch(() => {});
 attachUploads.sweep().catch(() => {});
 setInterval(() => { folderUploads.sweep().catch(() => {}); attachUploads.sweep().catch(() => {}); }, 24 * 60 * 60_000).unref();
 
+/**
+ * 下書きに載せる「編集中」の状態（入力欄の「編集して再送信」。web/composer/edit-mode.mjs の snapshot）。
+ * 形だけ確かめて残す: 元の発言の id・時刻・引用、編集を始めたときの本文と添付のパス、脇に取った書きかけ。壊れていたら捨てる
+ */
+function sanitizeDraftEdit(edit) {
+  if (!edit || typeof edit !== "object" || typeof edit.id !== "string" || !edit.id || edit.id.length > 256) return null;
+  const str = (v, max) => (typeof v === "string" ? v.slice(0, max) : "");
+  const files = (list) => (Array.isArray(list) ? list : []).slice(0, 1000).map(a => ({ name: str(a?.name, 4096), path: str(a?.path, 8192), kind: str(a?.kind, 32) || "file", mime: str(a?.mime, 256),
+    ...(a?.from === "host" || a?.from === "device" ? { from: a.from } : {}), ...(Number.isFinite(a?.size) && a.size >= 0 ? { size: a.size } : {}) }));
+  return {
+    v: 1, id: edit.id, time: str(edit.time, 64), quote: str(edit.quote, 400),
+    base: { text: str(edit.base?.text, 2_000_000), paths: (Array.isArray(edit.base?.paths) ? edit.base.paths : []).slice(0, 1000).map(x => str(x, 8192)) },
+    stash: { text: str(edit.stash?.text, 2_000_000), attached: files(edit.stash?.attached) },
+  };
+}
+
 /** 添付を置く場所。名前は信用せず区切り文字を落とす。id の形はエージェントごとに違うので、形で弾かずパスに使えない字を潰す */
 function attachTarget(sessionId, name) {
   const safe = String(name ?? "file").replace(/[^\p{L}\p{N}._-]/gu, "_").slice(-80).replace(/[. ]+$/, "_") || "file";
@@ -7611,7 +7627,8 @@ wss.on("connection", (ws, req) => {
             ...(Number.isFinite(a?.size) && a.size >= 0 ? { size: a.size } : {}) }));
           if (files.some(a => a.path.length > 8192 || a.name.length > 4096)) throw new Error(t('session.attachmentInfoTooLarge'));
           // version: 2 = text が文中の添付の印（[添付] パス）を含む Markdown（位置が残る。ADR 0060）。無い下書きは印が無く、添付は文末に付く
-          await store.setSessionData(sessionId, "draft", { text, attached: files, ...(Number.isInteger(version) ? { version } : {}) }, { durable: true });
+          const edit = sanitizeDraftEdit(msg.args?.edit);
+          await store.setSessionData(sessionId, "draft", { text, attached: files, ...(Number.isInteger(version) ? { version } : {}), ...(edit ? { edit } : {}) }, { durable: true });
           if ((await store.get(sessionId)).unsent && typeof msg.args?.cwd === "string") {
             await store.setMeta(sessionId, { cwd: msg.args.cwd });
           }

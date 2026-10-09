@@ -681,7 +681,6 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 .msg-tool{display:inline-flex;align-items:center;gap:5px;padding:4px 0;background:transparent;font-size:var(--fs-xs);color:var(--ink-weak);cursor:pointer}
 .msg-tool:hover{color:var(--ink)}
 .msg-tool svg.i{width:14px;height:14px}
-.m.editing > .msg-tools{display:none}
 /* エージェントに渡した原文のモーダル（web/message-actions.mjs）。添付の一覧の面（.att-list）と同じ作り。700px 以下は下からのシート */
 .src-dlg{margin:auto;padding:0;border:0;background:var(--surface-paper);color:var(--ink);border-radius:var(--r-m);
   width:min(720px,calc(100vw - 24px));max-height:min(80vh,720px);box-shadow:0 8px 32px var(--shadow)}
@@ -780,28 +779,39 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
   .cl-dialog{left:0;right:0;top:auto;bottom:0;width:100%;max-width:none;max-height:85dvh;border-radius:var(--r-l) var(--r-l) 0 0}
   .cl-handle{display:block;width:32px;height:4px;margin:0 auto 14px;background:var(--surface-3);border-radius:var(--r-pill)}
 }
-.message-editor{max-width:680px;background:var(--surface-2);border-radius:var(--r-l);padding:var(--sp-3) var(--sp-4)}
-.message-edit-input{display:block;width:100%;min-height:80px;max-height:50vh;resize:vertical;background:transparent;color:var(--ink);font:inherit;border-radius:var(--r-s)}
-.message-edit-controls{display:flex;justify-content:flex-end;gap:var(--sp-2);margin-top:var(--sp-2)}
-.message-edit-attachments{font-size:var(--fs-s);color:var(--ink-weak);overflow-wrap:anywhere}
-/* 送り直す・分岐して送る（web/resend-band.mjs。ADR 0102）。送り直すと消える範囲は薄く見せ、畳むときは高さと不透明度を 240ms で */
+/* 送り直すと消える範囲は薄く見せ、畳むときは高さと不透明度を 240ms で（ADR 0102） */
 .mw.doomed{opacity:.42;transition-duration:var(--dur-fast)}
-.m.editing>.outbox-status{display:none}
 .mw.leaving{grid-template-rows:0fr;opacity:0;pointer-events:none;transition-duration:var(--dur)}
-/* 送り方の帯。編集欄（再送信は発言）の直下。主は右端の［送り直す］ */
-.resend-band{max-width:680px;margin:var(--sp-2) 0 0;font-size:var(--fs-s);color:var(--ink)}
-.rb-t::before{content:"";display:inline-block;width:18px;height:1px;margin-right:8px;vertical-align:middle;background:repeating-linear-gradient(90deg,var(--line-strong) 0 4px,transparent 4px 7px)}
-.rb-sub{margin:2px 0 0 26px;font-size:var(--fs-xs);color:var(--ink-weak)}
-.rb-acts{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:var(--sp-2);margin-top:var(--sp-2)}
-.rb-acts .btn{min-height:34px}
-.rb-acts .btn svg.i{width:14px;height:14px}
-.rb-acts .run{display:inline-flex;margin-right:2px}
-@media (hover:none){.rb-acts .btn,.message-editor .btn{min-height:40px}}
-/* 狭い画面: ［取り消し］と［分岐して送る］を上の段、主の［送り直す］を下の段の全幅に */
-@media (max-width:480px){
-  .rb-acts .rb-send{flex:1 0 100%}
-  .rb-sub{margin-left:0}
-}
+/* 編集して再送信（web/composer/edit-mode.mjs。ADR 0178）: いつもの入力欄を「編集中」にする。帯は入力欄の上（#composerNote と同じ作り） */
+.edit-note{font-size:var(--fs-xs);color:var(--ink-weak);padding:0 6px 6px;display:grid;grid-template-rows:1fr;transition:grid-template-rows var(--dur) var(--ease-out),opacity var(--dur) var(--ease-out)}
+.edit-note>div{min-height:0;overflow:hidden}
+.edit-note.enter{grid-template-rows:0fr;opacity:0}
+.en-1{display:flex;align-items:center;flex-wrap:wrap;gap:2px 6px}
+.en-1 svg{width:13px;height:13px;color:var(--ink-blue);flex:none}
+.en-1 b{color:var(--ink);font-weight:600}
+.en-1 .q{min-width:0;flex:1 1 0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.en-acts{display:inline-flex;flex:none;margin-left:auto}
+.en-act{background:none;color:var(--ink-blue);padding:0 6px;font-size:var(--fs-xs);border-radius:var(--r-pill);white-space:nowrap}
+.en-act:hover{background:var(--surface-2)}
+.en-act:disabled{opacity:.5;pointer-events:none}
+.en-2{margin-top:1px}
+.en-2.sub{color:var(--ink-weak)}
+.en-confirm{display:flex;align-items:center;flex-wrap:wrap;gap:4px 8px;margin-top:4px;color:var(--ink)}
+.en-confirm .btn{min-height:26px;padding:1px 10px;font-size:var(--fs-xs)}
+/* 編集中は送信の円・▾・中断・再開を出さない。代わりに［分岐して送る］と主の［送り直す］（広い幅は円のあった所、狭い幅は 2 段目） */
+.composer.editing .crow :is(.send,.send-more,.abort,.resume),.composer.editing :is(.resume-note,.chip.armed){display:none}
+.erow{display:flex;justify-content:flex-end;align-items:center;gap:8px;padding:6px 4px 2px}
+.erow.below .btn-primary{flex:1}
+.erow .btn{white-space:nowrap}
+.erow .btn svg.i{width:14px;height:14px}
+.erow .run{display:inline-flex;margin-right:2px}
+@media (hover:none){.erow .btn{min-height:40px}}
+.cbox.flash{animation:note-flash 1.2s var(--ease-out)}
+/* 元の発言の「編集中」の札と、編集中の発言（Chats の .m / チャンネルの .post） */
+.editing-tag{display:inline-flex;align-items:center;gap:3px;color:var(--ink-blue);font-weight:600;font-size:var(--fs-xs);animation:editing-tag-in var(--dur) var(--ease-out)}
+.editing-tag svg{width:12px;height:12px}
+@keyframes editing-tag-in{from{opacity:0}to{opacity:1}}
+@media (prefers-reduced-motion:reduce){.cbox.flash{animation:none;box-shadow:0 0 0 2px var(--line-blue)}.edit-note{transition:none}.editing-tag{animation:none}}
 /* 出来事の一行（送信の失敗・状態やタイトルの変更）。筋の節は持たない */
 .m.sys{margin-bottom:8px;font-size:var(--fs-xs);color:var(--ink-weak)}
 .m.sys b{color:var(--ink);font-weight:500}

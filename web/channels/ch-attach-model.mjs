@@ -36,7 +36,7 @@ export function composeBody(value, attached, order, locale) {
 export const DRAFT_STORE = 'agent-host-channel-drafts';
 export const DRAFT_LIMIT = 60;
 
-/** 下書きの入れ物（key → { text, attached, at }）を保存の形から読む。壊れていれば空 */
+/** 下書きの入れ物（key → { text, attached, at, edit? }）を保存の形から読む。壊れていれば空 */
 export function parseDrafts(raw) {
   let list;
   try { list = JSON.parse(raw ?? '[]'); } catch { return new Map(); }
@@ -49,6 +49,8 @@ export function parseDrafts(raw) {
       text: typeof value.text === 'string' ? value.text : '',
       attached: Array.isArray(value.attached) ? value.attached.filter((a) => a && typeof a.path === 'string') : [],
       at: Number.isFinite(value.at) ? value.at : 0,
+      // 入力欄の「編集中」の状態（web/composer/edit-mode.mjs の snapshot。壊れていれば捨てる）
+      ...(value.edit && typeof value.edit === 'object' && typeof value.edit.id === 'string' && value.edit.id ? { edit: value.edit } : {}),
     });
   }
   return out;
@@ -56,7 +58,7 @@ export function parseDrafts(raw) {
 
 /** 空の下書きは持たない。上限を超えたら古い（at の小さい）ものから捨てる */
 export function pruneDrafts(drafts, limit = DRAFT_LIMIT) {
-  for (const [key, d] of drafts) if (!d.text.trim() && !d.attached.length) drafts.delete(key);
+  for (const [key, d] of drafts) if (!d.text.trim() && !d.attached.length && !d.edit) drafts.delete(key);
   if (drafts.size <= limit) return drafts;
   const keep = new Set([...drafts].sort((a, b) => b[1].at - a[1].at).slice(0, limit).map(([key]) => key));
   for (const key of drafts.keys()) if (!keep.has(key)) drafts.delete(key);
