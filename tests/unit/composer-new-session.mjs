@@ -102,6 +102,8 @@ export default async function (t) {
     createComposerWait,
     // 添付を送る（runUpload）。sendAttachment は手で終わらせる
     whenOnline: async () => {},
+    // 入力欄の「編集中」（web/composer/edit-mode.mjs・client.mjs の chatEdit / syncEdit）。このテストの対象外（編集中ではない会話だけ）
+    chatEdit: { active: false, sending: false, snapshot: () => null, reset: noop, restore: noop }, syncEdit: noop, syncEditTail: noop,
     // 中断と再開（web/interrupt.mjs・client.mjs の syncResume / paintInterruptLine）。ここでは中断していない会話だけ
     syncResume: noop, paintInterruptLine: noop, isInterrupted: () => false, interruptReadPoint: () => 0, resumeSettled: () => false,
     // 送信予定（日時を指定した送信。web/client.mjs の submit が引く）。このテストは日時を指定しない
