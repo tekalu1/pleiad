@@ -946,6 +946,9 @@
       "hostScreenOnly": "Accepting requests from a device's AI can only be switched on from the host PC's own screen (switching it off and stopping everything also work from the device).",
       "desktopOnly": "Only a desktop device can hand work over from its AI"
     },
+    "review": {
+      "addDeviceDisabled": "This host is a review host. Devices join with the review invite, so \"Add a device\" is turned off here."
+    },
     "unnamedDevice": "Unnamed device",
     "settings": {
       "needConfig": "Enter the relay URL and the enrollment secret",
