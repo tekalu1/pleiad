@@ -218,12 +218,25 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, prof
       const stale = staleSessions; staleSessions = [];
       for (const sessionId of stale) cdp.send('Target.detachFromTarget', { sessionId }).catch(() => {});   // 前のサーバーの確認の Fetch は、答える相手が居ない
       await cdp.send('Target.setDiscoverTargets', { discover: true });
+      // Chrome は、すでに発見中の接続（更新を越えて接続の子が持ち続ける接続）への setDiscoverTargets では既存のタブの targetCreated を送り直さない（実機）。
+      // 持ち越した窓のタブは、今あるタブを自分で引いて会話の範囲に戻す（イベントが来ても state.tabs で重ならない）
+      if (state.windows.size) {
+        const { targetInfos = [] } = await cdp.send('Target.getTargets').catch(() => ({}));
+        await Promise.all(targetInfos.filter(info => info?.type === 'page').map(info => onTargetCreated(state, info).catch(() => {})));
+      }
       if (orphans.size) { const ids = new Set(orphans); orphans.clear(); closeWindowTabs(state, ids).catch(() => {}); }
       return state;
     })();
     binding = { cdp, promise };
     promise.catch(() => {}).finally(() => { if (binding?.cdp === cdp) binding = null; });
     return promise;
+  }
+
+  /** Chrome に接続済みなら、確認を起こさずに上りをつなぐ（つながっていなければ何もしない） */
+  async function bindConnected() {
+    if (up || closed || handedOff || connection.state?.().state !== 'connected') return;
+    const cdp = await connection.demand().catch(() => null);
+    if (cdp && !closed) await bind(cdp).catch(() => {});
   }
 
   /** 持ち越した窓の記録・閉じ待ち（orphans）・古いセッションを捨てる。層の隠した窓は閉じる（Chrome が別なら、窓はもう無い） */
@@ -1154,6 +1167,13 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, prof
       return restored;
     },
     /**
+     * 持ち越した窓があり、Chrome の接続を引き継げていれば、エージェントがつながる前に上りをつないで、窓のタブを会話の範囲に戻す
+     * （更新の後、映像の一覧・窓の状態がすぐ戻り、ターンの外のエージェントも「つながっていない」と断られない）。層の状態には依らない。server.mjs が adopt の後に呼ぶ
+     */
+    async rejoin() {
+      if ([...entries.values()].some(entry => entry.windows.size)) await bindConnected();
+    },
+    /**
      * 層（main）が窓を引き継ぐ。サーバーの入れ替わりの後・main の層が戻った後に呼ぶ（server.mjs が os.onReady で）。
      * 層が引き継げなかった窓のタブは、Chrome の接続があれば CDP で閉じ、無ければ接続が付いたときに閉じる
      */
@@ -1167,7 +1187,7 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, prof
       // 引き継げなかった窓のタブは閉じる。ただし人が操作している（見せている）窓は閉じない（人の窓。記録だけ捨てる）
       for (const { entryId, windowId, revealed } of lost) { entries.get(entryId)?.windows.delete(windowId); if (!revealed) orphans.add(windowId); }
       // Chrome の接続が既にあれば付けて、その窓のタブを今閉じる（エージェントがつなぐまで、引き継げなかった窓を残さない）。許可の確認は起こさない
-      if (!up && connection.state?.().state === 'connected') { const cdp = await connection.demand().catch(() => null); if (cdp && !closed) await bind(cdp).catch(() => {}); }
+      await bindConnected();
       if (up) { const ids = new Set(orphans); orphans.clear(); await closeWindowTabs(up, ids).catch(() => {}); }
       carryChanged();
       return lost.length;

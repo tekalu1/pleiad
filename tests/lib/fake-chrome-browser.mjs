@@ -186,7 +186,8 @@ export function createFakeBrowser({ product, calls, userTabs = USER_TABS } = {})
     switch (method) {
       case 'Browser.getVersion': return { product, protocolVersion: '1.3', userAgent: 'fake', jsVersion: '1' };
       case 'Target.setDiscoverTargets':
-        if (params.discover) { discovering.add(socket); for (const t of targets.values()) send(socket, { method: 'Target.targetCreated', params: { targetInfo: info(t) } }); }
+        // 本物の Chrome は、すでに発見中の接続への 2 回目の setDiscoverTargets では既存のタブの targetCreated を送り直さない（実機で確かめた）
+        if (params.discover) { const already = discovering.has(socket); discovering.add(socket); if (!already) for (const t of targets.values()) send(socket, { method: 'Target.targetCreated', params: { targetInfo: info(t) } }); }
         else discovering.delete(socket);
         return {};
       case 'Target.getTargets': return { targetInfos: [...targets.values()].map(info) };

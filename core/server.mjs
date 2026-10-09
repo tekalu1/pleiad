@@ -271,6 +271,8 @@ if (chromeLink && chromeRelay) {
   await chromeRelay.restore(chromeLink.welcome.carry, { staleSessions: chromeLink.welcome.sessions, invalid: chromeLink.welcome.carryInvalid === true }).catch(error => console.error('  chrome-link: restore failed:', String(error?.message ?? error)));
   await chromeConnection.adopt().catch(error => console.error('  chrome-link: adopt failed:', String(error?.message ?? error)));
   chromeRelay.onCarry((carry, options) => chromeLink.setCarry(carry, options));
+  // 持ち越した窓のタブを、エージェントがつながる前に会話の範囲へ戻す（Chrome は発見中の接続へ既存のタブを送り直さない）
+  await chromeRelay.rejoin().catch(error => console.error('  chrome-relay: rejoin failed:', String(error?.message ?? error)));
 }
 // 隠した窓は main の層（desktop/chrome-os）が引き継ぐ。層が戻ったら（main の入れ替わり後を含む）記録を作り直す。引き継げなかった窓は CDP で閉じる
 if (chromeRelay && chromeOs) {

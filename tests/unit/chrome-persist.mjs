@@ -62,20 +62,21 @@ export default async function (t) {
     throw new Error('connection child did not go away');
   };
   /** server.mjs の起動と同じ順: 接続の子 → 中継の restore → 接続の adopt → 以後の変化を預ける → 層が使えれば readopt */
-  const newServer = async (chrome, os, { timing, carryExtra } = {}) => {
+  const newServer = async (chrome, os, { timing, carryExtra, relayOptions } = {}) => {
     const { client } = await holder.connect();
     const link = await openChromeLink({ holder: client, runtimeRoot: holder.root, runtimeKey: 'persist' });
     const locate = { browser: 'chrome', userDataDir: chrome.userDataDir };
     const conn = createChromeConnection({ locate, os, link, pollMs: 20 });
     const logs = [];
     const relay = createChromeRelay({ connection: conn, os, locate, scope: createChromeWindows({ os, locate, log: line => logs.push(line), ...(timing ? { timing } : {}) }),
-      authorize: async () => ({ allow: true }), deniedMessage: () => 'DENIED', log: line => logs.push(line), ...(carryExtra ? { carryExtra } : {}) });
+      authorize: async () => ({ allow: true }), deniedMessage: () => 'DENIED', log: line => logs.push(line), ...(carryExtra ? { carryExtra } : {}), ...(relayOptions ?? {}) });
     await relay.restore(link.welcome.carry, { staleSessions: link.welcome.sessions });
     const adopted = await conn.adopt();
     // 第 6 段の control（server.mjs と同じく、restore の後に作る。一時停止のまま引き継がれた会話の撮影を断つ）
     const captureLog = [];
     const control = createChromeControl({ relay, os, capture: { suspend: id => captureLog.push(`suspend:${id}`), resume: id => captureLog.push(`resume:${id}`), operate: (id, viewport) => captureLog.push(`operate:${id}:${viewport ? `${viewport.width}x${viewport.height}@${viewport.scale}` : 'off'}`) }, log: line => logs.push(line) });
     relay.onCarry(carry => link.setCarry(carry));
+    await relay.rejoin();
     if (os.capabilities().supported) await relay.readopt();
     return { link, conn, relay, control, captureLog, logs, adopted };
   };
@@ -118,6 +119,31 @@ export default async function (t) {
       const targets = (await ag2.cmd('Target.getTargets')).result.targetInfos;
       t.ok('つなぎ直したエージェントには、持ち越した窓のタブが見える（会話の範囲に戻っている）', targets.length === 1 && targets[0].targetId === tabId, JSON.stringify(targets));
       ag2.close();
+      await b.relay.close(); await b.conn.close(); await b.link.quit();
+    }
+
+    // ===== 1a. 更新の後、エージェントがつながる前から、持ち越した窓のタブは会話の範囲に戻っている（Chrome は発見中の接続へ targetCreated を送り直さない）=====
+    {
+      await clearChildren();
+      const chrome = await startFakeChrome({ permission: 'auto' });
+      cleanups.push(() => chrome.stop());
+      const os = fakeChromeOs({ chrome });
+      const a = await newServer(chrome, os);
+      const url = await a.relay.endpoint('conv-1a');
+      const ag = await agent(url);
+      await ag.cmd('Target.setDiscoverTargets', { discover: true });
+      const tabId = (await ag.cmd('Target.createTarget', { url: 'about:blank' })).result?.targetId;
+      const windowId = chrome.browser.targets().find(x => x.targetId === tabId)?.windowId;
+      await until(() => a.link.alive && a.link.welcome, 2000);
+      await leave(a);
+      // ターンの外（turnLive が false）: 上りがつながっていなければ、エージェントは「ターンの外では確認を出せない」と断られる
+      const b = await newServer(chrome, os, { relayOptions: { turnLive: () => false } });
+      await until(() => b.relay.view.tabs('conv-1a').length === 1, 3000, 'carried tab back in scope before any agent connects');
+      t.ok('新しいサーバー: エージェントがつながる前に、持ち越した窓のタブが会話の範囲（映像の一覧）に戻っている', b.relay.view.sessions().includes('conv-1a') && b.relay.view.tabs('conv-1a')[0].targetId === tabId && b.relay.view.tabs('conv-1a')[0].windowId === windowId, JSON.stringify(b.relay.view.tabs('conv-1a')));
+      const ag2 = await agent(url);
+      const listed = await ag2.cmd('Target.getTargets');
+      t.ok('ターンの外でつないだエージェントも、断られずに持ち越したタブが見える（Chrome とはつながっている）', listed.error === undefined && listed.result?.targetInfos.length === 1 && listed.result.targetInfos[0].targetId === tabId, JSON.stringify(listed));
+      ag.close(); ag2.close();
       await b.relay.close(); await b.conn.close(); await b.link.quit();
     }
 
