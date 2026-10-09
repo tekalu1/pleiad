@@ -5257,6 +5257,13 @@ const remoteAgentBridge = parentPortRemoteAgent(hostedPort);
 const remoteDelegation = createRemoteDelegation({
   bridge: remoteAgentBridge, tasks: () => agentTasks, agentT, titleOf: async id => (await store.get(id)).title ?? '', cards: remoteCards,
   locale: () => currentLocale(), changed: () => permissionsChanged(), log: line => console.log(`  ${line}`),
+  // ホストが落ちたままのとき・つながり直したときの、依頼元の会話への知らせ（無音の通知と同じ道。ADR 0171）
+  deliverNotice: async (owner, build) => {
+    if (isRemoteOwner(owner)) return 'ok';
+    if (await noticeBlocked(owner)) return 'requeue';
+    const lng = await ensureAgentLocale(owner);
+    return runTurn({ sessionId: owner, prompt: build(lng) }, () => {}, { internal: true });
+  },
 });
 agentTasks = await createAgentTasks({
   dataDir: store.dataDir,
