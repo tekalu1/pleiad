@@ -420,7 +420,7 @@ var b=document.getElementById('back-to-hosts');if(typeof window.backToHosts==='f
                     if body.count + chunk.count > StaticBundleCodec.MAX_BYTES { throw StateError(description: "static bundle: too large") }
                     body += chunk
                 case .end:
-                    return StaticFetch(status: status, headers: headers, body: body)
+                    return StaticFetch(status: status, headers: got, body: body)
                 case .reset(let code):
                     throw StateError(description: "static bundle: reset \(code)")
                 default: break
@@ -510,7 +510,8 @@ var b=document.getElementById('back-to-hosts');if(typeof window.backToHosts==='f
                         let key = k.lowercased()
                         if DeviceProxy.DROP_RESPONSE.contains(key) || key.hasPrefix("proxy-") { continue }
                         let values = v.array?.map { $0.text } ?? [v.text]
-                        for value in values where !value.contains("\r") && !value.contains("\n") { text += "\(key): \(value)\r\n" }
+                        // bytes: "\r\n" is one Character, so contains("\n") misses it
+                        for value in values where !value.utf8.contains(13) && !value.utf8.contains(10) { text += "\(key): \(value)\r\n" }
                     }
                     if queryOk { text += "set-cookie: \(DeviceProxy.PROXY_COOKIE)=\(token); HttpOnly; SameSite=Strict; Path=/\r\n" }
                     text += "connection: close\r\n\r\n"

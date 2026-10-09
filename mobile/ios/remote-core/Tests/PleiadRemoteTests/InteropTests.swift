@@ -228,6 +228,12 @@ final class InteropTests: XCTestCase {
         let saved = try StaticBundleCodec.decode(Bytes(try Data(contentsOf: savedFile)))
         XCTAssertEqual(saved.files["/index.html"]?.body, page.body, "index.html from the saved shell")
         XCTAssertEqual(saved.files["/client.mjs"]?.body, js.body, "client.mjs from the saved shell")
+        // the next page load asks again and the host answers 304: the held bundle serves it (a forwarded reply would carry
+        // the host's own headers)
+        let again = try get(port, "/", headers: [("Cookie", cookie), ("Accept", "text/html")])
+        XCTAssertEqual(200, again.status)
+        XCTAssertEqual(page.body, again.body)
+        XCTAssertEqual(["connection", "content-length", "content-type"], Set(again.headers.keys), "index.html from the held shell after a 304")
         XCTAssertEqual(403, try get(port, "/mcp/agents", headers: [("Cookie", cookie)]).status, "the host's internal MCP routes are blocked")
 
         // ---- /ws through the proxy: `ready` arrives (early message kept), then a command round trip
