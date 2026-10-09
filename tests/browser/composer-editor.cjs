@@ -82,6 +82,85 @@ async page => {
   await K.press('End'); await page.waitForTimeout(150);
   check('選択を外すと書式バーは消える', await page.evaluate(() => document.querySelector('.md-bar').hidden), true);
 
+  // ---------------------------------------------------------------- 1b. 箇条書き・引用の続き（承認済み 2026-10-09）
+  const setText = (s, at = 'end') => page.evaluate(([text, where]) => {
+    const p = document.querySelector('#prompt'); p.value = text; p.focus();
+    const sel = getSelection(); sel.selectAllChildren(p);
+    if (where === 'end') sel.collapseToEnd(); else sel.collapseToStart();
+  }, [s, at]);
+  const qdepth = () => page.evaluate(() => [...document.querySelector('#prompt').children].map(b => b.style.getPropertyValue('--q')).join(','));
+  await reset(); await K.type('・foo');
+  check('行頭に ・ を打っただけでは何も変わらない', [await val(), await kinds()], ['・foo', 'p']);
+  await K.press('Enter'); await K.type('bar');
+  check('・ の行の Enter は同じ字で続ける', await val(), '・foo\n・bar');
+  await K.press('Enter'); await K.press('Enter'); await K.type('out');
+  check('・ だけの項目で Enter すると記号を外して抜ける', await val(), '・foo\n・bar\nout');
+  await reset(); await K.type('•x'); await K.press('Enter'); await K.type('y');
+  check('• でも続く（打った字のまま）', await val(), '•x\n•y');
+  await reset(); await K.type('> a'); await K.press('Enter'); await K.type('> '); await K.type('b');
+  check('引用の行頭で > を打つと 1 段深くなる', [await val(), await qdepth()], ['> a\n> > b', '1,2']);
+  await K.press('Enter'); await K.type('c');
+  check('入れ子の引用の Enter は深さを保つ', await val(), '> a\n> > b\n> > c');
+  await K.press('Enter'); await K.press('Enter');
+  check('空の深い引用の Enter は 1 段戻る', await val(), '> a\n> > b\n> > c\n> ');
+  await K.press('Enter');
+  check('最後の段の空の引用の Enter は抜ける', [await val(), await kinds()], ['> a\n> > b\n> > c\n', 'quote,quote,quote,p']);
+  await reset(); await setText('＞ x'); await K.press('End'); await K.press('Enter'); await K.type('y');
+  check('全角の ＞ も引用として続く', await val(), '＞ x\n＞ y');
+  await reset(); await K.type('- [ ] todo'); await K.press('Enter'); await K.type('next');
+  check('チェック欄 - [ ] は - [ ] で続く（字のまま）', [await val(), await kinds()], ['- [ ] todo\n- [ ] next', 'ul,ul']);
+  await setText('- [x] done'); await K.press('Enter');
+  check('- [x] の次は - [ ]', await val(), '- [x] done\n- [ ] ');
+  await K.press('Enter');
+  check('チェック欄だけの項目で Enter すると抜ける', await val(), '- [x] done\n');
+  await reset(); await K.type('- a'); await K.press('Enter'); await K.type('b'); await K.press('Tab');
+  check('箇条書きの Tab は字下げ', [await val(), await page.evaluate(() => document.activeElement.id)], ['- a\n  - b', 'prompt']);
+  await K.press('Shift+Tab');
+  check('Shift+Tab は字上げ', await val(), '- a\n- b');
+  await K.press('Control+z');
+  check('字下げ・字上げは元に戻せる', await val(), '- a\n  - b');
+  await reset(); await K.type('plain');
+  await K.press('Tab');
+  check('本文の行の Tab は字下げせず、フォーカスは今までどおり動く', [await val(), await page.evaluate(() => document.activeElement.id !== 'prompt')], ['plain', true]);
+  await page.evaluate(() => document.querySelector('#prompt').focus());
+  await setText('1. a\n2. b\n3. c', 'end'); await K.press('Control+Home'); await K.press('End'); await K.press('Enter'); await K.type('x');
+  check('番号は Enter で数え直す', await val(), '1. a\n2. x\n3. b\n4. c');
+  await setText('5. a\n6. b'); await K.press('Enter'); await K.type('c');
+  check('番号は最初の数に従う', await val(), '5. a\n6. b\n7. c');
+  await setText('1. a\n2. b\n3. c\n4. d'); await K.press('Control+Home'); await K.press('End'); await K.press('Delete');
+  check('番号は行をつないだあとも数え直す', await val(), '1. ab\n2. c\n3. d');
+  await setText('1. a\n2. b\n3. c'); await K.press('Control+Home'); await K.press('ArrowDown'); await K.press('Tab');
+  check('番号の行を字下げすると 1 から数え直し、上の並びは詰まる', await val(), '1. a\n  1. b\n2. c');
+  await reset();
+  await page.evaluate(() => {
+    const dt = new DataTransfer(); dt.setData('text/plain', '1. a\n5. b');
+    document.querySelector('#prompt').dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
+  });
+  check('貼り付けた番号は触らない', await val(), '1. a\n5. b');
+  await reset(); await K.type('- a'); await K.press('Shift+Enter'); await K.type('more');
+  check('Shift+Enter は項目の中の改行（字下げした続きの行）', [await val(), await kinds()], ['- a\n  more', 'ul,cont']);
+  await K.press('Enter'); await K.type('b');
+  check('続きの行の Enter は次の項目', await val(), '- a\n  more\n- b');
+  await reset(); await K.type('- a'); await K.press('Shift+Enter'); await K.press('Enter'); await K.type('z');
+  check('空の続きの行の Enter は抜ける', await val(), '- a\nz');
+  await reset(); await K.type('> a'); await K.press('Shift+Enter'); await K.type('b');
+  check('引用の Shift+Enter は引用のまま', await val(), '> a\n> b');
+  await reset(); await K.type('- a'); await K.press('Shift+Enter'); await K.type('b');
+  await page.evaluate(() => document.querySelector('#prompt').editor?.refresh?.());
+  await K.press('Home'); await K.press('Backspace');
+  check('続きの行の行頭の Backspace は本文の行に戻る', [await val(), await kinds()], ['- a\nb', 'ul,p']);
+  await reset(); await K.type('- a'); await K.press('Enter'); await K.type('b'); await K.press('Control+z');
+  check('Ctrl+Z は自動で入れた記号だけ戻す', await val(), '- a\n- ');
+  await K.press('Control+z');
+  check('もう一度 Ctrl+Z で改行ごと戻る', await val(), '- a');
+  await reset(); await K.type('- a');
+  await K.press('Control+Enter'); await page.waitForSelector('#log .m.user', { timeout: 8000 });
+  check('Ctrl+Enter は箇条書きの行でも送る', [await val(), await page.evaluate(() => [...document.querySelectorAll('#log .m.user .body')].at(-1).dataset.raw)], ['', '- a']);
+  await reset(); await K.type('- a'); await K.press('Shift+Enter'); await K.type('b'); await K.press('Control+Enter');
+  await page.waitForFunction(() => [...document.querySelectorAll('#log .m.user .body')].at(-1)?.dataset.raw === '- a\n  b', null, { timeout: 8000 });
+  check('項目の中の改行も、そのままの形で送られる', await val(), '');
+  await reset();
+
   // ---------------------------------------------------------------- 2. 文中の添付
   await clean();
   await K.type('x'); await K.press('Enter'); await K.type('y'); await K.press('ArrowUp'); await K.press('End');
@@ -242,9 +321,9 @@ async page => {
     await navigator.clipboard.write([new ClipboardItem({ 'text/html': new Blob(['<h1 style="color:red">Big</h1><div>line2</div><img src="https://example.com/t.png">'], { type: 'text/html' }) })]);
   });
   await K.press('Control+v'); await page.waitForTimeout(300);
-  check('HTML だけの貼り付けは字だけが入る（要素・外の画像は入らない）',
+  check('HTML だけの貼り付けは Markdown として入る（要素・外の画像・style は入らない。ADR 0141）',
     await page.evaluate(() => ({ v: document.querySelector('#prompt').value, img: document.querySelectorAll('#prompt img[src^="http"]').length, h1: document.querySelectorAll('#prompt h1').length })),
-    { v: 'xBig\nline2', img: 0, h1: 0 });
+    { v: 'x\n# Big\nline2', img: 0, h1: 0 });
   await reset();
   check('value の往復（設定した文字がそのまま読める）', await page.evaluate(() => {
     const p = document.querySelector('#prompt');

@@ -3,7 +3,7 @@ import {
   markdownToDoc, docToMarkdown, classifyLine, parseInline, serializeRuns, sliceRaw, fenceRoles, ensureShape,
   caret, deleteSelection, insertText, insertPlain, enter, backspaceAtStart, deleteAtEnd, insertAtom, removeAtoms, newAtom, atomKeys,
   pasteText, pasteRich, removeAtomsTidy, normalizeFences, applyTriggers, toggleMark, marksInRange, selectionMarkdown, createHistory,
-  posToOffset, offsetToPos, runsText, runsLength, normalizeAttachmentPath, docLayout, memoRaw,
+  posToOffset, offsetToPos, runsText, runsLength, normalizeAttachmentPath, docLayout, memoRaw, renumber, indentList, indentLevel, quoteDepth,
 } from "../../web/md-doc.mjs";
 import { codeFenceMask } from "../../web/render.mjs";
 
@@ -333,4 +333,88 @@ export default async function (t) {
     hh.rewrite((state) => removeAtomsTidy(state, (b) => b.pid === "x"));
     return hh.size === 1 && !hh.canUndo && !hh.canRedo;
   })());
+
+  // ------------------------------------------------------------ 箇条書き・引用の続き（承認済み 2026-10-09: docs/design-system.md）
+  t.ok("・ • ･ の行は Enter で同じ字のまま続く（種類は本文のまま・本文は打ったとおり）", ["・", "•", "･"].every(c => {
+    const s = enter(st(`${c}りんご`, 0, 4));
+    return md(s) === `${c}りんご\n${c}` && kinds(s) === "p,p" && at(s) === `1:${c.length}` && md(enter(st(`${c} りんご`, 0, 5))) === `${c} りんご\n${c} `;
+  }));
+  t.ok("・ の空の項目で Enter すると字が消えて抜ける・字の手前の Enter は普通の行", md(enter(st("・a\n・", 1, 1))) === "・a\n" && at(enter(st("・a\n・", 1, 1))) === "1:0"
+    && md(enter(st("・a", 0, 0))) === "\n・a");
+  t.ok("・ を打っただけでは変換しない（半角の記号とは違い、打った直後の整形なし）", applyTriggers(st("・", 0, 1), " ") === null && applyTriggers(st("・ ", 0, 2), " ") === null
+    && kinds(st("・a")) === "p");
+  t.ok("行の途中の ・ の Enter は右を次の行へ（・ を付けて）", md(enter(st("・ab", 0, 2))) === "・a\n・b");
+  t.ok("全角の ＞ も引用・入れ子の深さを数える（往復で文字は変わらない）", kinds(st("＞ a")) === "quote" && quoteDepth("> ＞ ") === 2 && md(st("＞ a\n> ＞ b")) === "＞ a\n> ＞ b");
+  t.ok("入れ子の引用の Enter は同じ深さで続く・空の行は 1 段戻り、最後の 1 段で抜ける", (() => {
+    const a = enter(st("> > a", 0, 5));
+    const b = enter({ blocks: a.blocks, sel: caret(1, 0) });
+    const c = enter({ blocks: b.blocks, sel: caret(1, 0) });
+    return md(a) === "> > a\n> > " && md(b) === "> > a\n> " && kinds(b) === "quote,quote" && md(c) === "> > a\n" && kinds(c) === "quote,p";
+  })());
+  t.ok("引用の行頭で ＞ か > を打つと 1 段深くなる・行頭の ＞ は引用になる（> に直す）", (() => {
+    const run = (text) => ({ text, marks: [] });
+    const deep = applyTriggers({ blocks: [{ kind: "quote", marker: "> ", runs: [run("> ")] }], sel: caret(0, 2) }, " ");
+    const none = applyTriggers({ blocks: [{ kind: "quote", marker: "> ", runs: [run("a >")] }], sel: caret(0, 3) }, " ");
+    const wide = applyTriggers({ blocks: [{ kind: "p", marker: "", runs: [run("＞ ")] }], sel: caret(0, 2) }, " ");
+    return deep?.kind === "block" && md(deep.state) === "> > " && none === null && md(wide.state) === "> " && kinds(wide.state) === "quote";
+  })());
+  t.ok("チェック欄: [ ] も [x] も次の項目は [ ] から・空の [ ] で抜ける・字下げは 1 段戻る", (() => {
+    const a = enter(st("- [ ] 牛乳", 0, 8));
+    const b = enter(st("- [x] パン", 0, 8));
+    const c = enter({ blocks: a.blocks, sel: caret(1, 4) });
+    const d = enter({ blocks: doc("- a\n  - [ ] "), sel: caret(1, 4) });
+    return md(a) === "- [ ] 牛乳\n- [ ] " && at(a) === "1:4" && md(b) === "- [x] パン\n- [ ] " && md(c) === "- [ ] 牛乳\n" && kinds(c) === "ul,p"
+      && md(d) === "- a\n- [ ] " && at(d) === "1:4";
+  })());
+  t.ok("チェック欄の途中は [ ] を付けて割る・[ ] の中の Enter は付けずに割る", md(enter(st("- [ ] ab", 0, 5))) === "- [ ] a\n- [ ] b" && md(enter(st("- [ ] ab", 0, 2))) === "- [ \n- ] ab");
+  t.ok("Tab: 箇条書き・番号の行だけ 1 段深くなる（番号は 1 から）・最深・本文の行・最上段の Shift+Tab は null", (() => {
+    const a = indentList(st("- a\n- b", 1, 1), 1);
+    const o = indentList(st("1. a\n2. b", 1, 1), 1);
+    const back = indentList({ blocks: a.blocks, sel: caret(1, 1) }, -1);
+    const deepest = st("        - x", 0, 0);
+    return md(a) === "- a\n  - b" && at(a) === "1:1" && md(o) === "1. a\n  1. b" && md(back) === "- a\n- b"
+      && indentLevel("        - x") === 4 && indentList(deepest, 1) === null && indentList(st("a"), 1) === null && indentList(st("- a"), -1) === null && indentList(st("> q"), 1) === null;
+  })());
+  t.ok("Tab は選択にかかる行をまとめて動かし、番号を数え直す", (() => {
+    const s = { blocks: doc("1. a\n2. b\n3. c"), sel: { s: { b: 1, v: 0 }, e: { b: 2, v: 1 } } };
+    return md(indentList(s, 1)) === "1. a\n  1. b\n  2. c";
+  })());
+  t.ok("番号: Enter・削除・字下げで数え直す（先頭の数に従う・同じ段の並びだけ・貼り付けは触らない）", (() => {
+    const mid = enter(st("1. a\n2. b\n3. c", 0, 4));
+    const del = backspaceAtStart({ blocks: doc("1. a\n2. b\n3. c"), sel: caret(1, 0) });
+    const del2 = deleteAtEnd(st("1. a\n2. \n3. c", 1, 0));
+    const start = enter(st("5. a\n6. b", 0, 4));
+    const sub = renumber(doc("1. a\n  1. x\n  5. y\n2. b"));
+    const split = doc("1. a\n- x\n7. b");
+    renumber(split);
+    const pasted = pasteText(st("", 0, 0), "1. a\n3. b\n9. c", { resolve });
+    return md(mid) === "1. a\n2. \n3. b\n4. c" && md(del) === "1. a\nb\n3. c" && md(del2) === "1. a\n2. c" && md(start) === "5. a\n6. \n7. b"
+      && sub === true && docToMarkdown(split) === "1. a\n- x\n7. b" && md(pasted) === "1. a\n3. b\n9. c";
+  })());
+  t.ok("番号: 深い段は同じ段の並びの中だけ数える・浅い段が来たら閉じ、その後の深い段は自分の最初の数から", (() => {
+    const blocks = doc("1. a\n  1. x\n  3. y\n2. b\n  3. z");
+    const changed = renumber(blocks);
+    return changed && docToMarkdown(blocks) === "1. a\n  1. x\n  2. y\n2. b\n  3. z";
+  })());
+  t.ok("Shift+Enter: 箇条書き・番号は項目の中の改行（字下げした続きの行・往復で文字は変わらない）", (() => {
+    const a = enter(st("- ab", 0, 3), { soft: true });
+    const b = enter(st("1. ab", 0, 5), { soft: true });
+    const c = enter(st("  - ab", 0, 5), { soft: true });
+    return md(a) === "- ab\n  " && kinds(a) === "ul,cont" && at(a) === "1:0" && md(b) === "1. ab\n  " && md(c) === "  - ab\n    " && kinds(c) === "ul,cont"
+      && kinds(st("- ab\n  c")) === "ul,cont" && md(st("- ab\n  c\n  d")) === "- ab\n  c\n  d" && kinds(st("- ab\n  c\n  d")) === "ul,cont,cont" && kinds(st("a\n  c")) === "p,p";
+  })());
+  t.ok("続きの行の Enter は次の項目（親と同じ記号・番号は進む）・空の続きの行の Enter は抜ける・Shift+Enter はもう 1 行", (() => {
+    const next = enter({ blocks: doc("1. ab\n  cd"), sel: caret(1, 2) });
+    const out = enter({ blocks: enter(st("- ab", 0, 3), { soft: true }).blocks, sel: caret(1, 0) });
+    const more = enter({ blocks: doc("- ab\n  cd"), sel: caret(1, 2) }, { soft: true });
+    return md(next) === "1. ab\n  cd\n2. " && kinds(next) === "ol,cont,ol" && md(out) === "- ab\n" && kinds(out) === "ul,p" && md(more) === "- ab\n  cd\n  " && kinds(more) === "ul,cont,cont";
+  })());
+  t.ok("Shift+Enter: 引用は引用のまま続く（空で Enter すると抜ける）・本文の行は普通の改行", (() => {
+    const q = enter(st("> a", 0, 3), { soft: true });
+    const p = enter(st("ab", 0, 1), { soft: true });
+    return md(q) === "> a\n> " && kinds(q) === "quote,quote" && md(p) === "a\nb" && kinds(p) === "p,p" && md(enter({ blocks: q.blocks, sel: caret(1, 0) })) === "> a\n";
+  })());
+  t.ok("続きの行の行頭の Backspace は本文の行に戻る", kinds(backspaceAtStart({ blocks: doc("- a\n  b"), sel: caret(1, 0) })) === "ul,p");
+  t.ok("平文の間（plain）は今までどおり記号を続けない", md(enter(st("- a", 0, 3), { plain: true })) === "- a\n" && kinds(enter(st("・a", 0, 2), { plain: true })) === "p,p"
+    && md(enter(st("・a", 0, 2), { plain: true })) === "・a\n");
 }
