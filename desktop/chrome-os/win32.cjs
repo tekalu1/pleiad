@@ -28,6 +28,8 @@ const SWP_NOSIZE = 0x1, SWP_NOMOVE = 0x2, SWP_NOZORDER = 0x4, SWP_NOACTIVATE = 0
 const HIDDEN_MARGIN = 1000;
 const HIDDEN_X_MAX = 30000;
 const GUARD_MS = 100;
+/** 見張りが、隠している窓の位置とスタイルを確かめる間隔（Chrome が後から画面の中へ動かした窓を隠し直す） */
+const PLACE_CHECK_MS = 1000;
 /** 閉じる依頼（WM_CLOSE）を出した窓が、これだけ経っても残っていたら（beforeunload の確認など）、見える形へ戻す */
 const CLOSE_GRACE_MS = 3000;
 
@@ -490,7 +492,7 @@ function createWin32ChromeOs({ win32, log = () => {}, spawn = childProcess.spawn
 
   /**
    * exportAgent の印から、隠している窓の記録を作り直す（新しい main）。窓がもう無い・ブラウザーの窓でない印には null（窓には触らない）。
-   * 作り直した窓は隠しているものとして前面の見張りに入る（revealed: true の窓は人が操作中なので、隠さず見張りにも入れない）
+   * 作り直した窓は隠しているものとして前面の見張りに入る（revealed: true の窓は人が操作中なので、隠さず見張りにも入れない）。画面の中へ動いていた窓は隠し直す
    */
   function adoptAgent(token, { revealed = false } = {}) {
     const match = /^(\d{1,20}):(\d{1,10}):(\d{1,10})$/.exec(String(token ?? ''));
@@ -500,10 +502,15 @@ function createWin32ChromeOs({ win32, log = () => {}, spawn = childProcess.spawn
       if (!Number.isSafeInteger(hwnd) || hwnd <= 0 || !alive(hwnd)) return null;
       const info = win32.windowInfo(hwnd);
       if (info.className !== BROWSER_CLASS || !BROWSER_EXES.has(exeName(win32.processPath(info.pid)))) return null;
-      // 同じ窓か: 印を作ったときのプロセスのままで、隠した姿（画面の外・タスクバーから外す・透明・素通し）のままか。
+      // 同じ窓か: 印を作ったときのプロセスのままで、隠した姿（タスクバーから外す・透明・素通し）のままか。
       // ハンドルが別のブラウザーの窓に使い回されていたら、隠していない窓に触らない
       if (info.pid !== Number(match[3])) return null;
-      if (!revealed && !looksConcealed(info)) return null;
+      // 隠した姿かは拡張スタイルで見て、位置（画面の外か）は問わない。Chrome は隠した後の窓を画面の中へ動かすことがある（最大化で開いた窓が通常に戻ると、保存していた位置へ動く。
+      // 透明・素通しのまま）。位置で断ると、その見えない窓を引き継げない窓として閉じていた（実機）。このスタイルの組み合わせは conceal だけが付けるもので、
+      // 利用者の Chrome の窓（タスクバーに出て、クリックを受ける）は持たない。画面の中にあるときは、持ち主のある窓（吹き出し）でないことも確かめてから隠し直す
+      const away = revealed || offscreen(info.rect);
+      if (!revealed && !concealStyled(info)) return null;
+      if (!away && win32.ownerOf(hwnd) !== 0) return null;
       if (refs.get(String(hwnd))?.kind === 'dialog') return null;
       const ref = rememberAgent(hwnd);
       if (!ref) return null;
@@ -512,7 +519,10 @@ function createWin32ChromeOs({ win32, log = () => {}, spawn = childProcess.spawn
       // 人が操作している窓（revealed）は隠さない・見張らない（戻すときの conceal が元のスタイルで隠す）
       entry.concealed = !revealed;
       entry.closeAt = 0;
-      if (!revealed) startGuard();
+      if (!revealed) {
+        startGuard();
+        if (!away) { log('adopt agent: the hidden window was on a screen, so it was concealed again'); conceal(ref); }
+      }
       return ref;
     } catch (error) {
       log(`adopt agent failed: ${error.message}`);
@@ -520,11 +530,14 @@ function createWin32ChromeOs({ win32, log = () => {}, spawn = childProcess.spawn
     }
   }
 
-  /** conceal がした姿か: 拡張スタイルが TOOLWINDOW・LAYERED・TRANSPARENT で APPWINDOW が無く、どのモニターにもかからない位置にある */
-  function looksConcealed(info) {
+  /** conceal が付けた拡張スタイルのままか: TOOLWINDOW・LAYERED・TRANSPARENT があり、APPWINDOW が無い */
+  function concealStyled(info) {
     const mask = WS_EX_TOOLWINDOW | WS_EX_LAYERED | WS_EX_TRANSPARENT;
-    if ((info.exStyle & mask) !== mask || (info.exStyle & WS_EX_APPWINDOW) !== 0) return false;
-    const rect = info.rect;
+    return (info.exStyle & mask) === mask && (info.exStyle & WS_EX_APPWINDOW) === 0;
+  }
+
+  /** どのモニターにもかからない位置か（モニターの一覧が取れなければ、右の外の位置の近く） */
+  function offscreen(rect) {
     if (!rect) return false;
     let list = [];
     try { list = win32.monitors?.() ?? []; } catch { list = []; }
@@ -572,8 +585,22 @@ function createWin32ChromeOs({ win32, log = () => {}, spawn = childProcess.spawn
       if (ref && conceal(ref)) { hidden.add(hwnd); log('conceal owned window'); }
     }
   }
+  /**
+   * 隠している窓が画面の中へ動かされていたら（スタイルが外れていたら）隠し直す。Chrome は後から窓を動かす（最大化で開いた窓が通常に戻ると、保存していた画面の中の位置へ。
+   * 実機で、隠した後に画面の中へ出た）。見張りの PLACE_CHECK_MS ごとに 1 回。引き継ぎで見せている窓（concealed: false）・閉じる依頼を出した窓は見ない
+   */
+  function keepConcealed() {
+    for (const [id, entry] of [...refs]) {
+      if (entry.kind !== 'agent' || !entry.concealed || entry.closeAt) continue;
+      let info;
+      try { info = win32.windowInfo(entry.hwnd); } catch { continue; }
+      if (!info.rect || (concealStyled(info) && offscreen(info.rect))) continue;
+      if (conceal({ id })) log('guard: a hidden window had moved onto a screen, so it was concealed again');
+    }
+  }
   let guard = null;
   let current = 0;
+  let placedAt = 0;
   const before = new Map();
   let ticking = false;
   function guardTick() {
@@ -599,6 +626,7 @@ function createWin32ChromeOs({ win32, log = () => {}, spawn = childProcess.spawn
       hidden.add(entry.hwnd);
     }
     if (!hidden.size) { stopGuard(); return; }
+    if (now() - placedAt >= PLACE_CHECK_MS) { placedAt = now(); keepConcealed(); }
     concealOwned(hidden);
     if (!fg) return;
     if (fg !== current) {

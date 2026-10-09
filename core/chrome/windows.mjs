@@ -141,6 +141,19 @@ export function createChromeWindows({ os, locate, log = () => {}, random = () =>
     }, waitMs, time.hwndPollMs);
   }
 
+  /**
+   * 最大化・最小化・全画面の窓を通常の状態へ戻し、戻ったのを確かめる（短く待つ）。Browser.setWindowBounds は、通常でない窓に windowState: normal（省いたときの既定）を
+   * 受けると戻すだけで大きさを当てない（Chromium の chrome/browser/devtools/protocol/browser_handler.cc の SetWindowBounds。大きさと normal 以外の状態は一緒に送れない）。
+   * 大きさを送る前に呼ぶ。戻ったか分からなくても投げない（大きさが当たらないだけ）
+   */
+  async function normalize(cdp, windowId) {
+    const state = (await cdp.send('Browser.getWindowBounds', { windowId }).catch(() => null))?.bounds?.windowState;
+    if (!state || state === 'normal') return;
+    await cdp.send('Browser.setWindowBounds', { windowId, bounds: { windowState: 'normal' } }).catch(() => {});
+    const normal = await waitFor(async () => (await cdp.send('Browser.getWindowBounds', { windowId }))?.bounds?.windowState === 'normal', time.boundsWaitMs, time.hwndPollMs);
+    if (!normal) log('chrome-windows: the window did not return to the normal state');
+  }
+
   /** chrome.exe で新しい窓を開く（--profile-directory。起こせなければ false） */
   async function launch(features, nonce, profileDir) {
     if (!features.launch) return false;
@@ -218,8 +231,9 @@ export function createChromeWindows({ os, locate, log = () => {}, random = () =>
         if (ref) await hide(ref, before);
         else log('chrome-windows: window not found, so it was not hidden');
       }
-      // 大きさを決める。最大化のまま開いた窓（前回の最大化がプロフィールに残っている chrome.exe の最初の窓）は、ここで通常に戻り、Chrome が保存していた画面の中の位置へ動く。
-      // 隠し直してから印（token）を作る（動いた後の窓は、新しい main の adoptAgent が「隠した姿のまま」と見ず、引き継げない窓として閉じられていた）
+      // 大きさを決める。最大化のまま開いた窓（前回の最大化がプロフィールに残っている chrome.exe の最初の窓）には、先に通常へ戻してから大きさを送る（normalize）。
+      // 通常に戻った窓は Chrome が保存していた画面の中の位置へ動くので、隠し直してから印（token）を作る。Chrome が後から動かした分は、層の見張りが隠し直す
+      await normalize(cdp, windowId);
       await cdp.send('Browser.setWindowBounds', { windowId, bounds: { ...WINDOW_DIP } }).catch(() => {});
       if (ref) await os.conceal(ref);
       const token = ref ? await os.exportAgent(ref) : null;

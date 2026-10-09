@@ -4,7 +4,7 @@ import { fakeChromeOs } from '../lib/fake-chrome-os.mjs';
 import { startHolder } from '../lib/holder-harness.mjs';
 import { createChromeConnection } from '../../core/chrome/connection.mjs';
 import { createChromeRelay, PAUSED_MESSAGE } from '../../core/chrome/relay.mjs';
-import { createChromeWindows } from '../../core/chrome/windows.mjs';
+import { createChromeWindows, WINDOW_DIP } from '../../core/chrome/windows.mjs';
 import { createChromeControl } from '../../core/chrome/control.mjs';
 import { openChromeLink } from '../../core/chrome/link.mjs';
 
@@ -161,11 +161,42 @@ export default async function (t) {
       const windowId = chrome.browser.targets().find(x => x.targetId === first)?.windowId;
       const hw = os.hwnds().find(h => h.windowId === windowId);
       t.ok('最大化で開いた最初の窓は、大きさを決めて通常に戻っても、隠した位置（画面の外）のまま', chrome.browser.windowBounds(windowId)?.windowState === 'normal' && hw?.concealed === true && hw.rect.left === 6000, JSON.stringify(hw));
+      // 実物の Chrome は、最大化の窓への大きさの依頼では戻すだけで大きさを当てない。先に通常へ戻し、戻ってから大きさを送る
+      const sets = chrome.calls.filter(c => c.method === 'Browser.setWindowBounds' && c.params.windowId === windowId).map(c => c.params.bounds);
+      t.ok('最大化の窓は、先に通常へ戻して（windowState: normal だけ）から大きさを送る。大きさが WINDOW_DIP になる',
+        sets.length === 2 && JSON.stringify(sets[0]) === JSON.stringify({ windowState: 'normal' }) && sets[1].width === WINDOW_DIP.width && sets[1].height === WINDOW_DIP.height && sets[1].windowState === undefined
+          && chrome.browser.windowBounds(windowId)?.width === WINDOW_DIP.width && chrome.browser.windowBounds(windowId)?.height === WINDOW_DIP.height, JSON.stringify({ sets, bounds: chrome.browser.windowBounds(windowId) }));
       await until(() => a.link.alive && a.link.welcome, 2000);
       await leave(a);
       const b = await newServer(chrome, os);
       t.ok('更新を越えた先でも、その最初の窓を引き継げる（引き継げない窓として閉じない）', !b.logs.some(line => line.includes('could not be taken over')) && tabsIn(chrome, windowId).length === 1
         && b.relay.snapshot().windows.length === 1 && os.hwnds().some(h => h.windowId === windowId && h.agent && h.concealed && !h.closed), JSON.stringify({ logs: b.logs, hwnds: os.hwnds() }));
+      ag.close();
+      await b.relay.close(); await b.conn.close(); await b.link.quit();
+    }
+
+    // ===== 1c. 最大化で開いた最初の窓が、隠し直した後に遅れて画面の中へ動いた（透明のまま）: 更新の先で引き継いで隠し直す（閉じない）=====
+    {
+      await clearChildren();
+      const chrome = await startFakeChrome({ permission: 'auto' });
+      cleanups.push(() => chrome.stop());
+      chrome.browser.launchMaximized(true);
+      const os = fakeChromeOs({ chrome });
+      os.opts.restoreMoveMs = 150;   // 通常へ戻した後、窓が画面の中へ動くのが遅れる（隠し直した後に効く）
+      const a = await newServer(chrome, os);
+      const ag = await agent(await a.relay.endpoint('conv-1c'));
+      await ag.cmd('Target.setDiscoverTargets', { discover: true });
+      const first = (await ag.cmd('Target.createTarget', { url: 'about:blank' })).result?.targetId;
+      const windowId = chrome.browser.targets().find(x => x.targetId === first)?.windowId;
+      const hwOf = () => os.hwnds().find(h => h.windowId === windowId);
+      await until(() => hwOf()?.rect.left === 10, 3000, 'restored window moved onto a screen');
+      t.ok('（前提）隠した窓が、遅れて画面の中へ動いた（スタイルは隠した姿・透明のまま）', hwOf().alpha === 0 && hwOf().ex.transparent && !hwOf().ex.appwindow, JSON.stringify(hwOf()));
+      await until(() => a.link.alive && a.link.welcome, 2000);
+      await leave(a);
+      const b = await newServer(chrome, os);
+      t.ok('画面の中で透明のままの窓も、更新の先で引き継ぐ（引き継げない窓として閉じない）', !b.logs.some(line => line.includes('could not be taken over')) && tabsIn(chrome, windowId).length === 1
+        && b.relay.snapshot().windows.length === 1 && hwOf()?.agent && hwOf()?.concealed && !hwOf()?.closed, JSON.stringify({ logs: b.logs, hw: hwOf() }));
+      t.ok('引き継いだ窓は、画面の外へ隠し直す', hwOf()?.rect.left === 6000 && os.calls('concealOnAdopt').length === 1, JSON.stringify(hwOf()));
       ag.close();
       await b.relay.close(); await b.conn.close(); await b.link.quit();
     }

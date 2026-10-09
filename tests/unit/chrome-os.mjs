@@ -453,6 +453,36 @@ export default async function (t) {
     t.ok('モニターの一覧が取れないときの右の外は固定の位置', none.hiddenSpot().x === 20000);
   }
   {
+    // 見張り: 隠している窓を Chrome が後から画面の中へ動かした（最大化で開いた窓が通常に戻ると、保存していた位置へ動く。透明のまま）。1 秒に 1 回の確認で隠し直す
+    let clock = 10_000;
+    const w = winWith();
+    w.add(501, { title: `PLY-${NONCE.replace(/0/g, '1')} - Google Chrome`, rect: { left: 100, top: 100, right: 1700, bottom: 1180 } });
+    const logs = [];
+    const os = createWin32ChromeOs({ win32: w, timers: { setInterval: () => 1, clearInterval: () => {} }, now: () => clock, log: line => logs.push(line) });
+    const ref = os.findWindowByNonce(NONCE), shown = os.findWindowByNonce(NONCE.replace(/0/g, '1'));
+    os.conceal(ref); os.conceal(shown); os.reveal(shown);   // 501 は引き継ぎで見せている窓
+    const shownWin = () => w.windows.get(501);
+    const shownBefore = JSON.stringify(shownWin());
+    let n = w.calls.length;
+    clock += 1000; os.guardTick();
+    t.ok('隠した窓が画面の外にあれば、確認しても何もしない', w.calls.slice(n).every(c => c[0] !== 'setWindowPos' && c[0] !== 'setLayeredAlpha'), JSON.stringify(w.calls.slice(n)));
+    w.windows.get(500).rect = { left: 35, top: 35, right: 1882, bottom: 1729 };
+    clock += 300; os.guardTick();
+    t.ok('前の確認から 1 秒より前なら、まだ見ない', w.windows.get(500).rect.left === 35);
+    clock += 700; os.guardTick();
+    t.ok('隠している窓が画面の中へ動かされていたら、画面の外へ隠し直す（透明のまま）', w.windows.get(500).rect.left === 5480 && w.windows.get(500).rect.top === 0 && w.windows.get(500).alpha === 0
+      && logs.some(line => line.includes('concealed again')), JSON.stringify(w.windows.get(500)));
+    t.ok('引き継ぎで見せている窓には触らない', JSON.stringify(shownWin()) === shownBefore && shownWin().alpha === 255, JSON.stringify(shownWin()));
+    w.windows.get(500).exStyle = (w.windows.get(500).exStyle | WS_EX_APPWINDOW) >>> 0;   // Chrome がスタイルを戻した
+    clock += 1000; os.guardTick();
+    t.ok('隠している窓のスタイルが外れていたら、付け直す', (w.windows.get(500).exStyle & WS_EX_APPWINDOW) === 0 && (w.windows.get(500).exStyle & WS_EX_TOOLWINDOW) !== 0);
+    os.closeAgent(ref);
+    w.windows.get(500).rect = { left: 35, top: 35, right: 1882, bottom: 1729 };
+    n = w.calls.length;
+    clock += 1000; os.guardTick();
+    t.ok('閉じる依頼を出した窓は、動かし直さない', w.windows.get(500).rect.left === 35 && !w.calls.slice(n).some(c => c[0] === 'setWindowPos'));
+  }
+  {
     // 層が出した ref を MAX_REFS で押し出さない（隠している窓の ref が、前面の窓の記録で消えない）
     const w = winWith();
     const os = createWin32ChromeOs({ win32: w, timers: { setInterval: () => 1, clearInterval: () => {} } });
@@ -799,11 +829,32 @@ export default async function (t) {
         }
         {
           const { w3, tok } = hidden();
-          w3.windows.get(500).rect = { left: 100, top: 100, right: 1140, bottom: 631 };   // 画面の中へ戻っている
-          t.ok('画面の中にある窓は引き継がない', adopt(w3, tok) === null);
-          t.ok('見せている窓として引き継ぐ分には、位置とスタイルは問わない（pid は見る）', adopt(w3, tok, { revealed: true })?.id === '500');
+          w3.windows.get(500).rect = { left: 100, top: 100, right: 1140, bottom: 631 };   // 画面の中へ戻っている（スタイルは隠した姿のまま）
+          t.ok('見せている窓として引き継ぐ分には、位置とスタイルは問わない（pid は見る）', adopt(w3, tok, { revealed: true })?.id === '500' && w3.windows.get(500).rect.left === 100);
           w3.windows.get(500).pid = 11;
           t.ok('見せている窓でも、別のプロセスの窓は引き継がない', adopt(w3, tok, { revealed: true }) === null);
+        }
+        {
+          // 最大化で開いた窓が通常に戻り、隠した後に画面の中へ動いた（Chrome が保存していた位置へ。透明・素通しのまま）。位置でなくスタイルで隠した窓と見て、引き継いで隠し直す
+          const { w3, tok } = hidden();
+          w3.windows.get(500).rect = { left: 35, top: 35, right: 1882, bottom: 1729 };
+          const logs = [];
+          const got = createWin32ChromeOs({ win32: w3, timers: noTimers().timers, log: line => logs.push(line) }).adoptAgent(tok);
+          const win = w3.windows.get(500);
+          t.ok('画面の中にあっても、隠した姿（スタイル）のままの窓は引き継ぎ、画面の外へ隠し直す（透明のまま）', got?.id === '500' && win.rect.left === 5480 && win.rect.top === 0 && win.alpha === 0
+            && (win.exStyle & WS_EX_TRANSPARENT) !== 0 && logs.some(line => line.includes('concealed again')), JSON.stringify({ win, logs }));
+        }
+        {
+          const { w3, tok } = hidden();
+          w3.windows.get(500).rect = { left: 35, top: 35, right: 1882, bottom: 1729 };
+          w3.windows.get(500).owner = 900;   // 持ち主のある窓（吹き出し）に使い回された
+          t.ok('画面の中にある、持ち主のある窓は引き継がない（窓には触らない）', adopt(w3, tok) === null && w3.windows.get(500).rect.left === 35);
+        }
+        {
+          const { w3, tok } = hidden();
+          w3.windows.get(500).rect = { left: 35, top: 35, right: 1882, bottom: 1729 };
+          w3.windows.get(500).exStyle = WS_NOREDIRECTION;   // 画面の中の、隠した姿でない窓（利用者の窓）
+          t.ok('画面の中の、隠した姿（スタイル）でない窓は引き継がない（窓には触らない）', adopt(w3, tok) === null && w3.windows.get(500).rect.left === 35 && w3.windows.get(500).exStyle === WS_NOREDIRECTION);
         }
       }
       const dialogW = fakeWin32(); dialogW.add(910, DIALOG);
