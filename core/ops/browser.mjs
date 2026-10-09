@@ -36,6 +36,7 @@ const controlShape = z.object({
 });
 const sessionIdShape = z.string().min(1).max(200).describe('agent:ops.browser.chromeControl.sessionId');
 const controlInput = z.object({ sessionId: sessionIdShape });
+const windowIdShape = z.number().int().describe('agent:ops.browser.chromePinWindow.windowId');
 const takeOverInput = z.object({
   sessionId: sessionIdShape,
   by: z.enum(['pc', 'device']).optional().describe('agent:ops.browser.chromeTakeOver.by'),
@@ -170,15 +171,35 @@ export const browserOps = [
     id: 'browser.chromeCloseWindow',
     summary: 'agent:ops.browser.chromeCloseWindow.summary',
     risk: 'write',
-    riskReason: 'Closes only the dedicated Chrome windows of this conversation and records the last image. Screen and remote devices only (not on MCP or CLI)',
-    input: controlInput,
+    riskReason: 'Closes only the dedicated Chrome windows of this conversation (one of them when windowId is given) and records the last image of the last one. Screen and remote devices only (not on MCP or CLI)',
+    input: z.object({ sessionId: sessionIdShape, windowId: windowIdShape.optional().describe('agent:ops.browser.chromeCloseWindow.windowId') }),
     output: z.object({ closed: z.boolean(), failed: z.boolean().optional() }),
     surfaces: { ui: true, mcp: false, cli: false },
     legacyCommand: 'chromeCloseWindow',
-    handler: async (ctx, { sessionId }) => {
+    handler: async (ctx, { sessionId, windowId }) => {
       const chrome = mustBeSupported(ctx);
       if (!chrome.closeWindow) unavailable(ctx);
-      return chrome.closeWindow(sessionId);
+      return chrome.closeWindow(sessionId, windowId ?? null);
+    },
+  }),
+  defineOp({
+    id: 'browser.chromePinWindow',
+    summary: 'agent:ops.browser.chromePinWindow.summary',
+    risk: 'write',
+    riskReason: 'Chooses which of the Chrome windows of the conversation the video in the right panel shows (null follows the window the agent used last); it only changes what the person sees and never touches the agent or the windows. Screen and remote devices only (not on MCP or CLI)',
+    input: z.object({ sessionId: sessionIdShape, windowId: windowIdShape.nullable().describe('agent:ops.browser.chromePinWindow.windowId') }),
+    output: z.object({ pinnedWindowId: z.number().nullable() }),
+    surfaces: { ui: true, mcp: false, cli: false },
+    legacyCommand: 'chromePinWindow',
+    handler: async (ctx, { sessionId, windowId }) => {
+      const chrome = mustBeSupported(ctx);
+      if (!chrome.pinWindow) unavailable(ctx);
+      try { return await chrome.pinWindow(sessionId, windowId); }
+      catch (error) {
+        const code = String(error?.message ?? '');
+        if (code === 'not-watching' || code === 'no-window' || code === 'operating') throw new OpError('INVALID', agentT(ctx.locale, `ops.errors.chromePin.${code === 'not-watching' ? 'notWatching' : code === 'no-window' ? 'noWindow' : 'operating'}`));
+        throw error;
+      }
     },
   }),
   defineOp({

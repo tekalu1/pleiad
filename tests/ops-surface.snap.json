@@ -570,7 +570,7 @@
         "cli": false
       },
       "legacyCommand": "chromeCloseWindow",
-      "input": "7f7ac791e818"
+      "input": "fe8eff1c2c63"
     },
     {
       "id": "browser.chromeConnect",
@@ -616,6 +616,21 @@
       },
       "legacyCommand": "chromeOpen",
       "input": "e312d5bb93ff"
+    },
+    {
+      "id": "browser.chromePinWindow",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": false,
+        "cli": false
+      },
+      "legacyCommand": "chromePinWindow",
+      "input": "d8b113b0adae"
     },
     {
       "id": "browser.chromeRaiseDialog",
