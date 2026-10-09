@@ -1,12 +1,13 @@
 import { WebSocket } from 'ws';
 import { startFakeChrome } from '../lib/fake-chrome.mjs';
-import { fakeChromeOs } from '../lib/fake-chrome-os.mjs';
+import { fakeChromeOs, fakeMainPort } from '../lib/fake-chrome-os.mjs';
 import { startHolder } from '../lib/holder-harness.mjs';
 import { createChromeConnection } from '../../core/chrome/connection.mjs';
 import { createChromeRelay, PAUSED_MESSAGE } from '../../core/chrome/relay.mjs';
 import { createChromeWindows, WINDOW_DIP } from '../../core/chrome/windows.mjs';
 import { createChromeControl } from '../../core/chrome/control.mjs';
 import { openChromeLink } from '../../core/chrome/link.mjs';
+import { parentPortChromeOs } from '../../core/chrome/os.mjs';
 
 export const name = 'chrome-persist';
 export const title = '更新を越えるエージェントのブラウザー: 中継の端点（同じポート・同じ鍵）・隠した窓の持ち越し・引き継げなかった窓を CDP で閉じる・main が居ない間の待ち・更新で窓を閉じない（本物の保持役と接続の子・偽の Chrome と偽の OS の層。ADR 0167）';
@@ -62,7 +63,7 @@ export default async function (t) {
     throw new Error('connection child did not go away');
   };
   /** server.mjs の起動と同じ順: 接続の子 → 中継の restore → 接続の adopt → 以後の変化を預ける → 層が使えれば readopt */
-  const newServer = async (chrome, os, { timing, carryExtra, relayOptions } = {}) => {
+  const newServer = async (chrome, os, { timing, carryExtra, relayOptions, readoptOnReady = false, manual = false } = {}) => {
     const { client } = await holder.connect();
     const link = await openChromeLink({ holder: client, runtimeRoot: holder.root, runtimeKey: 'persist' });
     const locate = { browser: 'chrome', userDataDir: chrome.userDataDir };
@@ -76,7 +77,10 @@ export default async function (t) {
     const captureLog = [];
     const control = createChromeControl({ relay, os, capture: { suspend: id => captureLog.push(`suspend:${id}`), resume: id => captureLog.push(`resume:${id}`), operate: (id, viewport) => captureLog.push(`operate:${id}:${viewport ? `${viewport.width}x${viewport.height}@${viewport.scale}` : 'off'}`) }, log: line => logs.push(line) });
     relay.onCarry(carry => link.setCarry(carry));
+    if (manual) return { link, conn, relay, control, captureLog, logs, adopted };   // rejoin・readopt は試験が呼ぶ
     await relay.rejoin();
+    // server.mjs と同じく、層が（遅れて・入れ替わって）戻るたびに引き継ぎ直す
+    if (readoptOnReady) os.onReady(() => { relay.readopt().catch(() => {}); });
     if (os.capabilities().supported) await relay.readopt();
     return { link, conn, relay, control, captureLog, logs, adopted };
   };
@@ -444,6 +448,107 @@ export default async function (t) {
       t.ok('restore が投げても、中継の復元は続き、ログに残す', !!f.relay.state('conv-9') && f.logs.some(line => /extra carry failed.*boom/.test(line)), JSON.stringify([f.relay.state('conv-9'), f.logs]));
       await f.relay.close(); await f.conn.close(); await f.link.quit();
       await b.relay.close(); await b.conn.close();
+    }
+
+    // ===== 10. 更新の先で main の層が遅れて戻る（ADR 0167）。層の口は本物（parentPortChromeOs）、main は偽（fakeMainPort）で、呼び出しは遅れて返る =====
+    {
+      await clearChildren();
+      const chrome = await startFakeChrome({ permission: 'auto' });
+      cleanups.push(() => chrome.stop());
+      const os = fakeChromeOs({ chrome });   // main の側の層（本物は desktop/chrome-os/win32.cjs）
+      const a = await newServer(chrome, os);
+      const url = await a.relay.endpoint('conv-10');
+      const ag = await agent(url);
+      await ag.cmd('Target.setDiscoverTargets', { discover: true });
+      const tabId = (await ag.cmd('Target.createTarget', { url: 'about:blank' })).result?.targetId;
+      const windowId = chrome.browser.targets().find(x => x.targetId === tabId)?.windowId;
+      const pages = () => chrome.browser.targets().filter(x => x.type === 'page').length;
+      const hidden = () => os.hwnds().filter(h => h.agent && !h.closed);
+      const pagesBefore = pages();
+      await until(() => a.link.alive && a.link.welcome, 2000);
+      await leave(a);
+
+      // 新しいサーバー: 待ち受けの時点で main の層はまだ付いていない（口は pending）
+      const main = fakeMainPort(os, { delayMs: 80 });
+      const core = parentPortChromeOs(main.port, { timeoutMs: 5000, readyWaitMs: 150 });
+      const b = await newServer(chrome, core, { readoptOnReady: true, relayOptions: { turnLive: () => false } });
+      t.ok('前提: サーバーが待ち受けても、層の口は pending のまま', core.capabilities().reason === 'pending' && b.adopted === true);
+      t.ok('層が付く前でも、接続は引き継がれ、窓のタブが会話の範囲（映像の一覧）に戻っている',
+        b.conn.state().state === 'connected' && b.relay.view.tabs('conv-10').length === 1 && b.relay.view.tabs('conv-10')[0].targetId === tabId, JSON.stringify([b.conn.state(), b.relay.view.tabs('conv-10')]));
+      const ag2 = await agent(url);
+      const listed = await ag2.cmd('Target.getTargets');
+      t.ok('層が付く前、ターンの外でつないだエージェントも、断られずに窓のタブが見える', listed.error === undefined && listed.result?.targetInfos.length === 1 && listed.result.targetInfos[0].targetId === tabId, JSON.stringify(listed));
+
+      // main の層が付く。起動時の ready と chrome-os-ready-request への返事は、同じ main から重なって届く（引き継ぎの呼び出しが処理中に）
+      main.ready();
+      await until(() => main.sent.some(m => m.action === 'adoptAgent'), 3000, 'adoptAgent sent to main');
+      main.ready();
+      await sleep(500);
+      t.ok('ready が重なっても、処理中の引き継ぎは失敗にならない: 窓は閉じず、タブも残る', tabsIn(chrome, windowId).length === 1 && os.calls('closeAgent').length === 0 && !b.logs.some(line => line.includes('could not be taken over')), JSON.stringify({ logs: b.logs, calls: os.calls('closeAgent').length }));
+      t.ok('窓の数が増えない（隠した窓 1・Chrome のタブの数そのまま・記録も 1）', hidden().length === 1 && pages() === pagesBefore && b.relay.snapshot().windows.flatMap(e => e.windows).length === 1 && b.relay.view.tabs('conv-10').length === 1,
+        JSON.stringify({ hidden: hidden().length, pages: [pages(), pagesBefore], snapshot: b.relay.snapshot().windows, tabs: b.relay.view.tabs('conv-10') }));
+
+      // 引き継ぎの途中で main が入れ替わった（epoch が替わる）: 呼び出しは聞けなかっただけ。窓は閉じず、新しい main で引き継ぎ直す
+      const sentBefore = main.sent.filter(m => m.action === 'adoptAgent').length;
+      const during = b.relay.readopt();
+      await until(() => main.sent.filter(m => m.action === 'adoptAgent').length > sentBefore, 3000, 'adoptAgent sent again');
+      main.ready({ epoch: 'main-2' });
+      const lostCount = await during;
+      await sleep(500);
+      t.ok('引き継ぎの途中で main が入れ替わっても、窓は「引き継げなかった窓」にならない（閉じない・記録も残る）', lostCount === 0 && tabsIn(chrome, windowId).length === 1 && os.calls('closeAgent').length === 0 && b.relay.snapshot().windows.flatMap(e => e.windows).length === 1,
+        JSON.stringify({ lostCount, logs: b.logs }));
+      t.ok('入れ替わった main には、onReady でもう一度引き継ぐ（窓は隠した形のまま 1 つ）', hidden().length === 1 && hidden()[0].concealed === true && core.generation() === 1 && main.sent.filter(m => m.action === 'adoptAgent').length >= sentBefore + 2,
+        JSON.stringify({ hidden: hidden(), generation: core.generation(), sent: main.sent.length }));
+      ag.close(); ag2.close();
+      await b.relay.close(); await b.conn.close(); await b.link.quit();
+    }
+
+    // ===== 10c. 最初の窓を chrome.exe で開いている最中に main が入れ替わる: 返事は聞けなくても chrome.exe は窓を開いている。題（nonce）のページだけの見える窓を残さない =====
+    {
+      await clearChildren();
+      const chrome = await startFakeChrome({ permission: 'auto' });
+      cleanups.push(() => chrome.stop());
+      const os = fakeChromeOs({ chrome });
+      const main = fakeMainPort(os, { delayMs: 40 });
+      const core = parentPortChromeOs(main.port, { timeoutMs: 5000, readyWaitMs: 500 });
+      main.ready();
+      const b = await newServer(chrome, core, { readoptOnReady: true });
+      const ag = await agent(await b.relay.endpoint('conv-10c'));
+      await ag.cmd('Target.setDiscoverTargets', { discover: true });
+      const pagesBefore = chrome.browser.targets().filter(x => x.type === 'page').length;
+      const opening = ag.cmd('Target.createTarget', { url: 'about:blank' });
+      await until(() => main.sent.some(m => m.action === 'launchWindow'), 3000, 'launchWindow sent to main');
+      main.ready({ epoch: 'main-2' });   // 窓を開く依頼の返事が届かない
+      const reply = await opening;
+      await sleep(300);
+      const pages = chrome.browser.targets().filter(x => x.type === 'page');
+      t.ok('開く最中に main が入れ替わっても、窓は開く（エージェントは新しいタブを得る）', typeof reply.result?.targetId === 'string', JSON.stringify(reply));
+      t.ok('chrome.exe が開いた題（nonce）のページの窓を残さない（開いた窓は 1 つ・隠れている・記録も 1）',
+        !pages.some(x => String(x.url).includes('PLY-')) && pages.length === pagesBefore + 1 && os.hwnds().filter(h => h.agent && h.concealed && !h.closed).length === 1 && os.hwnds().filter(h => !h.agent && !h.closed && pages.some(x => x.windowId === h.windowId)).length === 0 && b.relay.snapshot().windows.flatMap(e => e.windows).length === 1,
+        JSON.stringify({ pages: pages.map(x => x.url), hwnds: os.hwnds().map(h => ({ id: h.id, agent: h.agent, concealed: h.concealed, closed: h.closed, gone: h.gone })), records: b.relay.snapshot().windows }));
+      ag.close();
+      await b.relay.close(); await b.conn.close(); await b.link.quit();
+    }
+
+    // ===== 10b. 接続を引き継いだだけで中継がつながっていなくても、readopt が（引き継げない窓が無くても）つなぎ、窓のタブを会話の範囲に戻す =====
+    {
+      await clearChildren();
+      const chrome = await startFakeChrome({ permission: 'auto' });
+      cleanups.push(() => chrome.stop());
+      const os = fakeChromeOs({ chrome });
+      const a = await newServer(chrome, os);
+      const ag = await agent(await a.relay.endpoint('conv-10b'));
+      await ag.cmd('Target.setDiscoverTargets', { discover: true });
+      const tabId = (await ag.cmd('Target.createTarget', { url: 'about:blank' })).result?.targetId;
+      await until(() => a.link.alive && a.link.welcome, 2000);
+      await leave(a);
+      const b = await newServer(chrome, os, { manual: true });
+      t.ok('前提: 接続は引き継いだが、中継はつながっていない（窓のタブはまだ会話の範囲に無い）', b.adopted === true && b.relay.view.tabs('conv-10b').length === 0, JSON.stringify(b.relay.view.tabs('conv-10b')));
+      const lost = await b.relay.readopt();
+      await until(() => b.relay.view.tabs('conv-10b').length === 1, 3000, 'tab back in scope after readopt');
+      t.ok('readopt: 引き継げない窓が無くても中継をつなぎ、窓のタブを会話の範囲に戻す', lost === 0 && b.relay.view.tabs('conv-10b')[0].targetId === tabId && os.calls('closeAgent').length === 0, JSON.stringify({ lost, tabs: b.relay.view.tabs('conv-10b') }));
+      ag.close();
+      await b.relay.close(); await b.conn.close(); await b.link.quit();
     }
   } finally {
     for (const fn of cleanups) { try { await fn(); } catch { /* 後片付け */ } }

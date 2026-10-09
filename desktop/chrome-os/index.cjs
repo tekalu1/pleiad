@@ -1,7 +1,9 @@
 'use strict';
 // Chrome への接続の OS の層（docs/inapp-browser.md「OS ごとの層」、ADR 0153・0154）を選び、core の parentPort の依頼につなぐ。
 // 実装があるのは Windows（win32.cjs）だけ。ほかの OS・koffi を読めないときは「使えない」を返す層（どの口も null / false）。
-// core は main の `chrome-os-ready { supported, reason, features }` を見て、エージェントのブラウザーを出すか決める。
+// core は main の `chrome-os-ready { supported, reason, features, epoch }` を見て、エージェントのブラウザーを出すか決める。epoch は main の起動ごとの印
+// （起動時の ready と chrome-os-ready-request への返事は重なって届く。core は epoch が替わったときだけ「main が入れ替わった」と見る）。
+const crypto = require('node:crypto');
 const { createWin32ChromeOs } = require('./win32.cjs');
 
 const FEATURES_NONE = Object.freeze({ dialog: false, raise: false, launch: false, conceal: false, watch: false, bounds: false });
@@ -45,7 +47,8 @@ function createChromeOs({ platform = process.platform, win32 = null, reason = 'n
 /** core（utilityProcess）の `chrome-os` の依頼を受けて口を呼び、`chrome-os-result` を返す。起動時と chrome-os-ready-request に chrome-os-ready を送る */
 function attachChromeOs(worker, { chromeOs, log = () => {} }) {
   const post = message => { try { worker.postMessage(message); } catch (error) { log(`postMessage failed: ${error.message}`); } };
-  const ready = () => { const c = chromeOs.capabilities(); post({ type: 'chrome-os-ready', supported: c.supported === true, ...(c.reason ? { reason: c.reason } : {}), features: c.features ?? FEATURES_NONE }); };
+  const epoch = crypto.randomBytes(8).toString('hex');
+  const ready = () => { const c = chromeOs.capabilities(); post({ type: 'chrome-os-ready', supported: c.supported === true, ...(c.reason ? { reason: c.reason } : {}), features: c.features ?? FEATURES_NONE, epoch }); };
   worker.on('message', message => {
     if (!message || typeof message.type !== 'string') return;
     if (message.type === 'chrome-os-ready-request') { ready(); return; }

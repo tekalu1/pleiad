@@ -243,6 +243,29 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, prof
     if (cdp && !closed) await bind(cdp).catch(() => {});
   }
 
+  /**
+   * 層が窓を引き継ぐ（readopt の本体）。同時には 1 つだけ流す（層の ready が重なって onReady が続けて呼ばれても、窓ごとの引き継ぎを重ねない）
+   */
+  let readoptChain = Promise.resolve();
+  async function readoptNow() {
+    if (closed || handedOff) return 0;
+    // 層が戻ったので、上りがまだなら Chrome の接続につなぐ（更新の直後は層が listen の後でないと付かず、起動時の rejoin の時点では待てない。窓の有無には依らない）
+    await bindConnected();
+    // Chrome に接続している間に引き継いだ窓の popup は、ここで探して隠す。接続が無ければ、層に引き継げた窓も誰にも戻せない（main が居ない間に Chrome との接続が切れた）ので閉じる
+    const lost = await scope.readopt?.({ cdp: up?.cdp ?? null }) ?? [];
+    const state = connection.state?.().state;
+    // 層が入れ替わっている途中（interrupted）は、閉じる側へ倒さない。層が戻ったときの readopt がもう一度判断する
+    if (!lost.interrupted && !up && state !== 'connected' && state !== 'permission') { await scope.closeHidden?.(); carryChanged(); }
+    if (!lost.length) return 0;
+    // 引き継げなかった窓のタブは閉じる。ただし人が操作している（見せている）窓は閉じない（人の窓。記録だけ捨てる）
+    for (const { entryId, windowId, revealed } of lost) { entries.get(entryId)?.windows.delete(windowId); if (!revealed) orphans.add(windowId); }
+    // Chrome の接続が既にあれば、その窓のタブを今閉じる（エージェントがつなぐまで、引き継げなかった窓を残さない）。許可の確認は起こさない
+    await bindConnected();
+    if (up) { const ids = new Set(orphans); orphans.clear(); await closeWindowTabs(up, ids).catch(() => {}); }
+    carryChanged();
+    return lost.length;
+  }
+
   /** 持ち越した窓の記録・閉じ待ち（orphans）・古いセッションを捨てる。層の隠した窓は閉じる（Chrome が別なら、窓はもう無い） */
   function forgetCarriedWindows(why) {
     log(`chrome-relay: dropped carried windows (${why})`);
@@ -1218,20 +1241,10 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, prof
      * 層（main）が窓を引き継ぐ。サーバーの入れ替わりの後・main の層が戻った後に呼ぶ（server.mjs が os.onReady で）。
      * 層が引き継げなかった窓のタブは、Chrome の接続があれば CDP で閉じ、無ければ接続が付いたときに閉じる
      */
-    async readopt() {
-      if (closed || handedOff) return 0;
-      // Chrome に接続している間に引き継いだ窓の popup は、ここで探して隠す。接続が無ければ、層に引き継げた窓も誰にも戻せない（main が居ない間に Chrome との接続が切れた）ので閉じる
-      const lost = await scope.readopt?.({ cdp: up?.cdp ?? null }) ?? [];
-      const state = connection.state?.().state;
-      if (!up && state !== 'connected' && state !== 'permission') { await scope.closeHidden?.(); carryChanged(); }
-      if (!lost.length) return 0;
-      // 引き継げなかった窓のタブは閉じる。ただし人が操作している（見せている）窓は閉じない（人の窓。記録だけ捨てる）
-      for (const { entryId, windowId, revealed } of lost) { entries.get(entryId)?.windows.delete(windowId); if (!revealed) orphans.add(windowId); }
-      // Chrome の接続が既にあれば付けて、その窓のタブを今閉じる（エージェントがつなぐまで、引き継げなかった窓を残さない）。許可の確認は起こさない
-      await bindConnected();
-      if (up) { const ids = new Set(orphans); orphans.clear(); await closeWindowTabs(up, ids).catch(() => {}); }
-      carryChanged();
-      return lost.length;
+    readopt() {
+      const run = readoptChain.then(readoptNow);
+      readoptChain = run.catch(() => {});
+      return run;
     },
     /**
      * 引き継ぎで出ていく。端点の待ち受けと、エージェントの接続（1012 で閉じる。agent-browser は新しいサーバーへつなぎ直す）だけを終える。

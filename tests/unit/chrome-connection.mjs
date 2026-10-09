@@ -334,6 +334,18 @@ export default async function (t) {
     await n.stop();
   }
 
+  // ===== 13b. つながっている接続は、OS の層が（更新の先で、まだ）付いていなくても渡す。層は待たない（ADR 0167）=====
+  {
+    const r = await rig({ permission: 'auto' });
+    const cdp = await r.conn.demand();
+    r.os.opts.readyWaitMs = 5000;   // 層が付くまで ready() は待たされる（本物の口と同じ）
+    r.os.setPending(true);
+    const got = await Promise.race([r.conn.demand(), new Promise(resolve => setTimeout(() => resolve('waiting'), 500))]);
+    t.ok('層が pending の間も、つながっていれば demand() はすぐ同じ接続を返す（層の ready を待たない）', got === cdp && r.conn.state().state === 'connected', String(got));
+    r.os.setPending(false);
+    await r.stop();
+  }
+
   // ===== 14. 確認を閉じずに ws だけ閉じると確認が残る（実機の事実）→ 確認の窓を見つけていないときの出し直しは、探して閉じる =====
   {
     const r = await rig();

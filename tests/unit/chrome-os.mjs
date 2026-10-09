@@ -287,6 +287,60 @@ export default async function (t) {
     handler({ data: { type: 'chrome-os-ready', supported: false, reason: 'platform' } });
     t.ok('unsupported を受けたら、依頼を main へ送らず null・false を返す', await core2.findPermissionDialog({ since: [] }) === null && posts.every(m => m.type !== 'chrome-os'));
   }
+  {
+    // ready が重なる（ADR 0167。更新の先で、main の起動時の ready と core の chrome-os-ready-request への返事が重なって届く）
+    const posts = [];
+    let handler;
+    const port = { on: (type, fn) => { if (type === 'message') handler = fn; }, postMessage: m => posts.push(m) };
+    const core = parentPortChromeOs(port, { timeoutMs: 2000, readyWaitMs: 200 });
+    const say = data => handler({ data });
+    const ready = epoch => say({ type: 'chrome-os-ready', supported: true, features: { dialog: true, raise: true }, ...(epoch ? { epoch } : {}) });
+    const requestIdOf = () => posts.filter(m => m.type === 'chrome-os').at(-1).id;
+    let fired = 0;
+    core.onReady(() => { fired++; });
+    ready('main-1');
+    const inFlight = core.snapshotWindows();
+    const id1 = requestIdOf();
+    ready('main-1');
+    t.ok('同じ main の ready が重なっても、処理中の呼び出しを失敗にしない（答えが返る）。層は入れ替わっていない', (say({ type: 'chrome-os-result', id: id1, ok: true, result: ['5'] }), JSON.stringify(await inFlight) === '["5"]') && core.generation() === 0 && core.capabilities().supported === true);
+    t.ok('重なった ready でも onReady は呼ぶ（聞き手は引き継ぎ直せる）', fired === 2);
+    const second = core.snapshotWindows();
+    const id2 = requestIdOf();
+    ready();
+    t.ok('epoch の無い ready も、処理中の呼び出しを失敗にしない', (say({ type: 'chrome-os-result', id: id2, ok: true, result: ['6'] }), JSON.stringify(await second) === '["6"]') && core.generation() === 0);
+    const third = core.adoptAgent('fake:hw1');
+    ready('main-2');
+    t.ok('main が替わった（epoch が違う）ready では、処理中の呼び出しを失敗（null）で返し、層の世代が進む', await third === null && core.generation() === 1 && core.capabilities().supported === true);
+    // 失敗にした呼び出しへの遅い答えは無視する（落ちない）
+    say({ type: 'chrome-os-result', id: requestIdOf(), ok: true, result: { id: 'late' } });
+    const fourth = core.snapshotWindows();
+    ready('main-2');
+    say({ type: 'chrome-os-result', id: requestIdOf(), ok: true, result: [] });
+    t.ok('替わった後の main の重なった ready は、また失敗にしない', JSON.stringify(await fourth) === '[]' && core.generation() === 1);
+  }
+  {
+    // 切れる（付け直す口）: 世代が進む
+    const handlers = { message: [], connect: [], disconnect: [] };
+    const port = { resumable: true, on: (type, fn) => handlers[type]?.push(fn), postMessage: () => true };
+    const core = parentPortChromeOs(port, { timeoutMs: 2000, readyWaitMs: 200 });
+    handlers.message.forEach(fn => fn({ data: { type: 'chrome-os-ready', supported: true, features: { dialog: true }, epoch: 'main-1' } }));
+    handlers.disconnect.forEach(fn => fn());
+    t.ok('main との縁が切れたら、層の世代が進む（pending に戻る）', core.generation() === 1 && core.capabilities().reason === 'pending');
+  }
+  {
+    // main の側: 起動時の ready と chrome-os-ready-request への返事は同じ epoch。別の attach（main の入れ替わり）は別の epoch
+    const readyOf = () => {
+      const sent = [];
+      const handlers = [];
+      attachChromeOs({ on: (type, fn) => handlers.push(fn), postMessage: m => sent.push(m) }, { chromeOs: createChromeOs({ platform: 'win32', win32: fakeWin32() }), log: () => {} });
+      handlers.forEach(fn => fn({ type: 'chrome-os-ready-request' }));
+      return sent.filter(m => m.type === 'chrome-os-ready');
+    };
+    const [first, reply] = readyOf();
+    const [other] = readyOf();
+    t.ok('main の chrome-os-ready は epoch を持つ。起動時と chrome-os-ready-request への返事は同じ epoch', typeof first.epoch === 'string' && first.epoch.length >= 8 && reply.epoch === first.epoch, JSON.stringify([first, reply]));
+    t.ok('別の main（入れ替わった attach）は別の epoch', other.epoch !== first.epoch);
+  }
 
   // ===== エージェントの窓（ADR 0154）: ブラウザーの場所・chrome.exe の起こし方 =====
   const NONCE = '0123456789abcdef';
