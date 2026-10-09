@@ -274,7 +274,7 @@ async function boot() {
     pointToDip: point => screen.screenToDipPoint(point),
     appHwnd: () => { const w = window; return w && !w.isDestroyed() ? Number(w.getNativeWindowHandle().readBigUInt64LE()) : 0; } });
   attachChromeOs(messages, { chromeOs, log: line => console.warn('[chrome-os]', line) });
-  chromePill = attachChromePill(messages, { electron: { BrowserWindow, ipcMain }, os: chromeOs, t, log: line => console.warn('[chrome-pill]', line) });
+  chromePill = attachChromePill(messages, { electron: { BrowserWindow, ipcMain, screen }, os: chromeOs, t, log: line => console.warn('[chrome-pill]', line) });
   // 画面の構成が変わったら（モニターの増減・解像度・DPI・スリープ復帰）、画面の外へ隠しているエージェントの Chrome の窓を置き直す（ADR 0154）
   for (const event of ['display-added', 'display-removed', 'display-metrics-changed']) screen.on(event, () => chromeOs.reconceal());
   powerMonitor.on('resume', () => chromeOs.reconceal());
