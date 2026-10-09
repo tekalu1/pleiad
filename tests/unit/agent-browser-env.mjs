@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { browserEnvironment, chromeRelayBrowser, browserInstruction, browserSocketDirectory } from '../../core/agent-browser.mjs';
@@ -23,8 +23,11 @@ export default async function (t) {
     socketDirs.add(env.AGENT_BROWSER_SOCKET_DIR);
     const config = JSON.parse(await readFile(env.AGENT_BROWSER_CONFIG, 'utf8'));
     t.ok('会話別の設定ファイルと環境変数', /^ply-[a-f0-9]{24}$/.test(env.AGENT_BROWSER_SESSION) && Object.keys(config).join() === 'cdp' && config.cdp.includes('/key') && env.AGENT_BROWSER_PIN_TAB === '1');
+    // Windows はデーモンが自分で作るので前もって作らない（ADR 0179）。ここでは作ったものとして続ける
+    const created = Boolean(await stat(env.AGENT_BROWSER_SOCKET_DIR).catch(() => null));
+    await mkdir(env.AGENT_BROWSER_SOCKET_DIR, { recursive: true });
     await writeFile(path.join(env.AGENT_BROWSER_SOCKET_DIR, 'probe'), 'ok');
-    t.ok('ソケット用の書ける置き場を作り、継承した namespace を解除する', (await stat(env.AGENT_BROWSER_SOCKET_DIR)).isDirectory() && env.AGENT_BROWSER_NAMESPACE === '');
+    t.ok('ソケットの置き場は Unix だけ前もって作り、継承した namespace を解除する', created === (process.platform !== 'win32') && env.AGENT_BROWSER_NAMESPACE === '' && env.AGENT_BROWSER_IDLE_TIMEOUT_MS === '86400000');
     const other = await browserEnvironment({ bridge, dataDir: dir, sessionId: 'conversation-2' });
     socketDirs.add(other.AGENT_BROWSER_SOCKET_DIR);
     t.ok('会話ごとにデーモンと置き場を分ける', other.AGENT_BROWSER_SOCKET_DIR !== env.AGENT_BROWSER_SOCKET_DIR && other.AGENT_BROWSER_SESSION !== env.AGENT_BROWSER_SESSION);
@@ -58,7 +61,7 @@ export default async function (t) {
   const codexBin = process.env.AGENT_HOST_CODEX_BIN, agyBin = process.env.AGENT_HOST_AGY_BIN;
   const fakeBrowserEnvFile = process.env.FAKE_BROWSER_ENV_FILE;
   try {
-    const env = { AGENT_BROWSER_CONFIG: path.join(scratch, 'agent-browser.json'), AGENT_BROWSER_SESSION: 'env-session', AGENT_BROWSER_SOCKET_DIR: path.join(scratch, 'sock'), AGENT_BROWSER_NAMESPACE: '' };
+    const env = { AGENT_BROWSER_CONFIG: path.join(scratch, 'agent-browser.json'), AGENT_BROWSER_SESSION: 'env-session', AGENT_BROWSER_SOCKET_DIR: path.join(scratch, 'sock'), AGENT_BROWSER_NAMESPACE: '', AGENT_BROWSER_IDLE_TIMEOUT_MS: '86400000' };
     process.env.AGENT_HOST_CODEX_BIN = `"${process.execPath}" "${fake}"`;
     process.env.FAKE_BROWSER_ENV_FILE = path.join(scratch, 'unexpected-codex.json');
     const originalRpc = { request: nativeRpc.request, attach: nativeRpc.attach, claimOrphan: nativeRpc.claimOrphan, stop: nativeRpc.stop };

@@ -111,7 +111,7 @@ import { createVisualizationCollector, visualizeInstructions, snapshotResponse, 
 import { plyParts } from './instruction-amount.mjs';
 import { computerPrompt } from './backends/computer-delivery.mjs';
 import { MIN_BUDGET, MAX_BUDGET } from '../web/instruction-amount.mjs';
-import { browserEnvironment, browserInstruction, forgetBrowserEnvironment, chromeRelayBrowser } from './agent-browser.mjs';
+import { browserEnvironment, browserInstruction, forgetBrowserEnvironment, discardBrowserEnvironment, settleBrowserEnvironment, sweepBrowserEnvironments, chromeRelayBrowser } from './agent-browser.mjs';
 import { createChromeWindowCloser } from './chrome/close-window.mjs';
 import { delegatedChromeTarget as resolveDelegatedChromeTarget, delegatedChromeWindows } from './chrome/delegation.mjs';
 import { createChromeLoginGroups } from './chrome/login-groups.mjs';
@@ -294,6 +294,9 @@ const chromeWindowCloser = chromeRelay ? createChromeWindowCloser({ relay: chrom
 chromeHandoffs?.useControl(chromeControl);
 // 会話の端点を出す口（ターンの開始・新しい会話の id の付け替え・ターンの終わり・会話の削除）。Chrome の中継があるホスト（デスクトップ版）だけ。Windows 以外（unsupported）では渡さない（下の browserEnv）
 const agentBrowserEndpoints = chromeRelay ? chromeRelayBrowser(chromeRelay, { dataDir: store.dataDir }) : null;
+// その会話の agent-browser の置き場を今は触れないか: ターンが走っている（ID 確定前の id も）・中継でターンの印が付いている・人が引き継いでいる（ADR 0179）
+const agentBrowserBusy = id => [...runtime.turns.values()].some(turn => turn.key === id || turn.browserRelayId === id || turn.info?.sessionId === id)
+  || Boolean(chromeRelay?.state?.(id)?.turn || chromeRelay?.state?.(id)?.paused);
 // A nested server may inherit another conversation's shell environment; only this process's bridge can issue browser access.
 delete process.env.AGENT_BROWSER_CONFIG;
 delete process.env.AGENT_BROWSER_SESSION;
@@ -3363,7 +3366,7 @@ async function deleteSessionOf(sessionId) {
     const cleanups = [
       history.forgetPresents(sessionId),
       computerShots.removeSession(sessionId),
-      forgetBrowserEnvironment({ bridge: agentBrowserEndpoints, dataDir: store.dataDir, sessionId }),
+      forgetBrowserEnvironment({ bridge: agentBrowserEndpoints, dataDir: store.dataDir, sessionId, busy: agentBrowserBusy }),
       Promise.resolve().then(() => chromeHandoffs?.forget(sessionId)),
       Promise.resolve().then(() => chromeRelay?.forget(sessionId)),
       Promise.resolve().then(() => chromeProfiles?.forget(sessionId)),
@@ -5309,6 +5312,12 @@ agentTasks = await createAgentTasks({
   cancelHost: row => remoteDelegation.cancelHost(row),
   // コンピューターの操作のロックを待っている子は、黙っているとは数えない（承認待ちではないので ply_task_wait の waiting にはしない）
   lockWaiting: sessionId => computerLock.snapshot().some(s => s.sessionId === sessionId && s.state === 'waiting'),
+  // 委譲の子が止まった（完了・失敗・取り消し）: 子のエージェントのブラウザーのデーモンを止め、置き場を消す。依頼元の会話は消すまで止めない（ADR 0179）
+  ended: sessionId => {
+    if (!agentBrowserEndpoints || agentBrowserBusy(sessionId)) return;
+    discardBrowserEnvironment({ bridge: agentBrowserEndpoints, dataDir: store.dataDir, sessionId, busy: agentBrowserBusy })
+      .catch(error => console.error('  終わった子のブラウザーのデーモンを止められない:', String(error?.message ?? error)));
+  },
   rollback: async ({ sessionId, worktree }) => {
     await deleteUnsentConversation(sessionId); await store.removeSession(sessionId); releaseAgentConnection(sessionId);
     if (worktree) await worktreeHost.abandon(worktree.id).catch(() => {});
@@ -5474,6 +5483,20 @@ agentTasks = await createAgentTasks({
 await recordTaskStops(agentTasks.restored, 'restart', { restart: true });
 // ホストに任せたタスクの写し: 動いていたものはホストで続いている。ホストの便りを聞き、つながり次第追いつく（remote-delegation.mjs）
 remoteDelegation.start();
+// 持ち主の居ないエージェントのブラウザーのデーモンと置き場の掃除（起動の 1 分後と 1 時間ごと。ADR 0179）。
+// 持ち主は記録にある会話と走っているターン。終わった委譲の子のものも止める
+if (agentBrowserEndpoints) {
+  const sweep = async () => {
+    const sessions = new Set(Object.keys(await store.getAll()));
+    for (const turn of runtime.turns.values()) for (const id of [turn.key, turn.browserRelayId, turn.info?.sessionId]) if (id) sessions.add(id);
+    const finished = agentTasks.finishedSessions();
+    const result = await sweepBrowserEnvironments({ bridge: agentBrowserEndpoints, dataDir: store.dataDir, sessions, finished: id => finished.has(id), busy: agentBrowserBusy });
+    if (result.removed || result.unused || result.empty) console.log(`  agent-browser: 掃除 デーモン ${result.stopped} を止め、置き場 ${result.removed + result.unused} と空のソケットの置き場 ${result.empty} を消した`);
+  };
+  const run = () => { sweep().catch(error => console.error('  agent-browser の掃除に失敗:', String(error?.message ?? error))); };
+  setTimeout(run, 60_000).unref();
+  setInterval(run, 60 * 60_000).unref();
+}
 // 活動はメモリだけで更新される。変化をまとめ、最大 30 秒に 1 通だけ状態の便りへ載せる。
 const remoteTelemetryTimer = setInterval(() => remoteTasksChanged(true), 30_000);
 remoteTelemetryTimer.unref();
@@ -6723,6 +6746,8 @@ async function endTurn(turn, emit, { record = true } = {}) {
     }
   }
   agentBrowserEndpoints?.endTurn(turn.info.sessionId || turn.key);
+  // このターンで agent-browser を呼ばなかったなら、ターンの初めに書いた設定の置き場を消す（ADR 0179）
+  if (agentBrowserEndpoints && turn.browserRelayId) settleBrowserEnvironment({ bridge: agentBrowserEndpoints, dataDir: store.dataDir, sessionId: turn.browserRelayId, busy: agentBrowserBusy }).catch(() => {});
   chromeHandoffs?.turnChanged(turn.info.sessionId || turn.key, false);
   // ロックの解放、止めた印・このターンの拒否の消去、main への後始末（押したままの入力を離し、オーバーレイを消す）
   if (computerLock.endTurn(turn.presentKey)) computerDriver?.turnEnded(turn.presentKey);

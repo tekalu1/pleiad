@@ -11,6 +11,7 @@
     "adopt-held": 34127,
     "adopt-shell": 6160,
     "agent-browser-env": 167,
+    "agent-browser-lifetime": 1500,
     "agent-tasks": 2241,
     "agent-tasks-adopt": 2015,
     "agent-tasks-command-storage": 220,

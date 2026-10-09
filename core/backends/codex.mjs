@@ -1795,6 +1795,8 @@ export const backend = {
               AGENT_BROWSER_NAMESPACE: browserEnv.AGENT_BROWSER_NAMESPACE,
               // Chrome の中継の道だけ（core/agent-browser.mjs の chromeRelayBrowser）。agent-browser を自分のタブに縛る
               ...(browserEnv.AGENT_BROWSER_PIN_TAB ? { AGENT_BROWSER_PIN_TAB: browserEnv.AGENT_BROWSER_PIN_TAB } : {}),
+              // 暇なデーモンを落とすまでの時間（ADR 0179）
+              ...(browserEnv.AGENT_BROWSER_IDLE_TIMEOUT_MS ? { AGENT_BROWSER_IDLE_TIMEOUT_MS: browserEnv.AGENT_BROWSER_IDLE_TIMEOUT_MS } : {}),
             } : {}),
             ...controlRuntime?.env,
           } } : {}),
