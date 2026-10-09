@@ -1,4 +1,4 @@
-// 入力欄の「編集中」の状態（docs/design-system.md「発言の操作 › 送り直し」、docs/message-fork.md、ADR 0177）。
+// 入力欄の「編集中」の状態（docs/design-system.md「発言の操作 › 送り直し」、docs/message-fork.md、ADR 0178）。
 // 発言の ⋯ › 「編集して再送信」「再送信」は、発言の場所に別の編集欄を開かず、いつもの入力欄（web/md-editor.mjs）に
 // 元の本文と添付を入れて「編集中」にする。Chats の会話の欄とスレッドの欄が同じものを使う（web/composer/composer.mjs の useEdit）。
 //

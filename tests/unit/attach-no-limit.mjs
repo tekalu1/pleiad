@@ -34,7 +34,7 @@ export default async function (t) {
     await c.cmd('saveDraft', { sessionId, text: '古い', attached: [] });
     t.ok('下書き: version を送らなければ持たない（印の無い古い形式のまま）', !('version' in (await c.cmd('loadSession', { sessionId })).draft));
 
-    // ADR 0177: 入力欄の「編集中」の状態は下書きと一緒に保存する（会話を切り替えても・読み込み直しても続く）。形の崩れたものは捨てる
+    // ADR 0178: 入力欄の「編集中」の状態は下書きと一緒に保存する（会話を切り替えても・読み込み直しても続く）。形の崩れたものは捨てる
     const edit = { v: 1, id: 'msg-1', time: '10:02', quote: '元の文', base: { text: '元の文', paths: [many[0].path] }, stash: { text: '書きかけ', attached: [{ ...many[1] }] }, junk: 'x' };
     await c.cmd('saveDraft', { sessionId, text: '直した文', attached: [many[0]], version: 2, edit });
     const ed = (await c.cmd('loadSession', { sessionId })).draft?.edit;

@@ -782,7 +782,7 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 /* 送り直すと消える範囲は薄く見せ、畳むときは高さと不透明度を 240ms で（ADR 0102） */
 .mw.doomed{opacity:.42;transition-duration:var(--dur-fast)}
 .mw.leaving{grid-template-rows:0fr;opacity:0;pointer-events:none;transition-duration:var(--dur)}
-/* 編集して再送信（web/composer/edit-mode.mjs。ADR 0177）: いつもの入力欄を「編集中」にする。帯は入力欄の上（#composerNote と同じ作り） */
+/* 編集して再送信（web/composer/edit-mode.mjs。ADR 0178）: いつもの入力欄を「編集中」にする。帯は入力欄の上（#composerNote と同じ作り） */
 .edit-note{font-size:var(--fs-xs);color:var(--ink-weak);padding:0 6px 6px;display:grid;grid-template-rows:1fr;transition:grid-template-rows var(--dur) var(--ease-out),opacity var(--dur) var(--ease-out)}
 .edit-note>div{min-height:0;overflow:hidden}
 .edit-note.enter{grid-template-rows:0fr;opacity:0}
@@ -791,7 +791,7 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 .en-1 b{color:var(--ink);font-weight:600}
 .en-1 .q{min-width:0;flex:1 1 0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .en-acts{display:inline-flex;flex:none;margin-left:auto}
-.en-act{color:var(--ink-blue);padding:0 6px;font-size:var(--fs-xs);border-radius:var(--r-pill);white-space:nowrap}
+.en-act{background:none;color:var(--ink-blue);padding:0 6px;font-size:var(--fs-xs);border-radius:var(--r-pill);white-space:nowrap}
 .en-act:hover{background:var(--surface-2)}
 .en-act:disabled{opacity:.5;pointer-events:none}
 .en-2{margin-top:1px}

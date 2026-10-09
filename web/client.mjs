@@ -265,7 +265,7 @@ const chatComposer = createComposer({
   onSchedule: () => sendMenu.open(),
 });
 const chatAttach = chatComposer.attach, composerEditor = chatComposer.editor, composerWait = chatComposer.wait;
-// 発言の ⋯ › 「編集して再送信」「再送信」は、いつもの入力欄を「編集中」にする（web/composer/edit-mode.mjs。ADR 0177）。関数は下で宣言する
+// 発言の ⋯ › 「編集して再送信」「再送信」は、いつもの入力欄を「編集中」にする（web/composer/edit-mode.mjs。ADR 0178）。関数は下で宣言する
 const chatEdit = chatComposer.useEdit({
   announce: (text) => announce(text),
   host: {

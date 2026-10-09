@@ -147,7 +147,7 @@ export function createThreadComposer({ host, bucket = () => null, candidates, su
     onSchedule: (at) => submit({ at }),
     onSendNow: () => submit({ at: null }),
   });
-  // 発言の ⋯ › 「編集して再送信」「再送信」: いつもの入力欄を「編集中」にする（web/composer/edit-mode.mjs。ADR 0177）。
+  // 発言の ⋯ › 「編集して再送信」「再送信」: いつもの入力欄を「編集中」にする（web/composer/edit-mode.mjs。ADR 0178）。
   // 何を送るか・元の投稿の見せ方は thread.mjs（options.edit）。投稿を読み込むまでは、保存した状態を持っておく（syncEdit）
   const edit = c.useEdit({
     kind: 'reply', texts: { running: t('channels:thread.resend.running') }, announce: (text) => announce(text),

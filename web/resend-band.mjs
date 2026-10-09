@@ -1,4 +1,4 @@
-// 発言の「編集して再送信」「再送信」が消すものの見立てと、その文（docs/design-system.md「発言の操作 › 送り直し」、docs/message-fork.md、ADR 0102・0177）。
+// 発言の「編集して再送信」「再送信」が消すものの見立てと、その文（docs/design-system.md「発言の操作 › 送り直し」、docs/message-fork.md、ADR 0102・0178）。
 // 送り直すと消えるもの（後ろの発言・返答・走っている返答）を数え、入力欄の上の「編集中」の帯（web/composer/edit-mode.mjs）に出す文と
 // ボタンの名前を作る。Chats と、チャンネルのスレッドが同じものを使う。
 import { svgEl } from './dom.mjs';

@@ -1,6 +1,6 @@
 // playwright-cli -s=message-actions run-code --filename=tests/browser/message-actions.cjs
 // 認証済みの、実データと分離した fake サーバーを開いてから実行する。
-// 発言の操作（コピー・⋯・編集して再送信・再送信・分岐して送る）。送り直しは同じ会話の中で、いつもの入力欄を「編集中」にして行う（ADR 0102・0177）。
+// 発言の操作（コピー・⋯・編集して再送信・再送信・分岐して送る）。送り直しは同じ会話の中で、いつもの入力欄を「編集中」にして行う（ADR 0102・0178）。
 async page => {
   // run-code は Node のモジュールも process も使えない。このリポジトリの絶対パスを書いてから実行する。
   const ROOT = 'C:/path/to/ply';

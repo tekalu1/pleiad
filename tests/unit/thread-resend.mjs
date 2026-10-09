@@ -74,7 +74,7 @@ export default async function (t) {
     const stopped = await call('channels.resend', { channelId: dev.id, postId: h2.id, text: 'echo:E', stopRunning: true, clientId: 'resend-0002' });
     await until(async () => (await done(root.id, owl)).some((p) => p.text === 'E'), { label: 'E の返事' });
     t.ok('stopRunning で止めて送り直す', stopped.text === 'echo:E' && !(await read(root.id)).posts.some((p) => p.id === h2.id));
-    // ---- 添付つきで送り直す（入力欄の「編集中」から送る形。ADR 0177）
+    // ---- 添付つきで送り直す（入力欄の「編集中」から送る形。ADR 0178）
     const file = path.join(tmp, 'note.txt');
     await fs.writeFile(file, 'memo');
     const h3 = await call('channels.post', { channelId: dev.id, threadId: root.id, text: 'echo:F' });

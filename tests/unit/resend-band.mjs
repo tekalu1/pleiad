@@ -1,4 +1,4 @@
-// 送り直しの見立て（web/resend-band.mjs。ADR 0102）と、入力欄の「編集中」の純粋な部分（web/composer/edit-mode.mjs。ADR 0177）。見た目と動き・キーは tests/browser/message-actions.cjs
+// 送り直しの見立て（web/resend-band.mjs。ADR 0102）と、入力欄の「編集中」の純粋な部分（web/composer/edit-mode.mjs。ADR 0178）。見た目と動き・キーは tests/browser/message-actions.cjs
 import { tailInfo, tailLines, sendLabels } from "../../web/resend-band.mjs";
 import { quoteOf, changedFrom, mergeContent } from "../../web/composer/edit-mode.mjs";
 import { removedSummary, applyRewindMark, markIsLive, nativeUuid, keptPresentIndexes } from "../../core/rewind.mjs";

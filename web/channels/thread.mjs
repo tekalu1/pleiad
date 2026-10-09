@@ -728,7 +728,7 @@ export function createThread(host) {
     node?.classList.add('menu-open');
     host.showMenu(x, y, items, title, { alignRight, onClose: () => { more?.setAttribute('aria-expanded', 'false'); node?.classList.remove('menu-open'); } });
   }
-  // ---------------------------------------------------------------- 送り直し（ADR 0157 の 4.5、ADR 0177。Chats と同じ「編集中」の入力欄。web/composer/edit-mode.mjs）
+  // ---------------------------------------------------------------- 送り直し（ADR 0157 の 4.5、ADR 0178。Chats と同じ「編集中」の入力欄。web/composer/edit-mode.mjs）
   const resendId = () => `rs-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`;
   /** 元の返信と、送り直すと消えるものの見立て。根（先頭）と、無い投稿は null */
   function resendTarget(id) {
