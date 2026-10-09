@@ -144,7 +144,7 @@ async page => {
   check(await page.locator('.erow').getByRole('button', { name: '送り直す、この後のやり取り（あなたの発言 1 件と返答）を消します' }).count() === 1, '主のボタンの読み上げ名に消える件数');
   check(await prompt.getAttribute('aria-describedby') === await note.getAttribute('id'), '入力欄は帯の文を読み上げに結ぶ');
   check(!(await page.locator('#send').isVisible()) && await page.locator('#composer .send-more:visible, #composer .chip.armed:visible').count() === 0, '送信の円と予約（▾）は編集中は出さない');
-  check(await user.locator('.editing-tag').count() === 1 && await user.evaluate(m => m.classList.contains('edit-src')), '元の発言に「編集中」の札を付ける');
+  check(await user.locator('.editing-tag').count() === 1 && (await user.locator('.editing-tag').innerText()).trim() === '編集中' && await user.evaluate(m => m.classList.contains('edit-src')), '元の発言に「編集中」の札を付ける');
   check(await page.locator('#thread .mw.doomed').count() >= 3, '送り直すと消える範囲（後ろの行）を薄くする');
   await page.waitForTimeout(300);   // 薄くする遷移が終わってから見る
   check(await page.evaluate(() => getComputedStyle(document.querySelector('#thread .mw.doomed')).opacity) === '0.42', '薄くする不透明度は .42');

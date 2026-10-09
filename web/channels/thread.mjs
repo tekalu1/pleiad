@@ -748,7 +748,9 @@ export function createThread(host) {
     const node = postEls.get(id);
     if (!on || !node) return;
     node.classList.add('edit-src');
-    node.querySelector('.post-head .post-name')?.after(el('span', 'editing-tag', [penGlyph(), t('chat.resend.tag')]));
+    const tag = el('span', 'editing-tag');
+    tag.append(penGlyph(), t('chat.resend.tag'));
+    node.querySelector('.post-head .post-name')?.after(tag);
     if (!tail?.any) return;
     const idx = S.posts.findIndex((x) => x.id === id);
     for (const x of S.posts.slice(idx + 1)) postEls.get(x.id)?.classList.add('doomed');

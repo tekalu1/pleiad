@@ -1093,7 +1093,8 @@ function editDecorate(id, on, tail) {
   const m = editRow(id);
   if (!m) return;
   m.classList.add('edit-src');
-  const tag = el('span', 'editing-tag', [penGlyph(), t('chat.resend.tag')]);
+  const tag = el('span', 'editing-tag');
+  tag.append(penGlyph(), t('chat.resend.tag'));
   const name = m.querySelector(':scope > .who > span:not(.row-be):not(.when)');
   (name ?? m.querySelector(':scope > .who'))?.after(tag);
   if (!tail?.any || tail.forkOnly) return;
