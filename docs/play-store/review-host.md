@@ -45,7 +45,9 @@ Play の審査員が使う、審査専用のホストと中継を、いつもの
    `AGENT_HOST_REVIEW=1`・`AGENT_HOST_BACKENDS=fake`・`AGENT_HOST_LOCALE=en`・`AGENT_HOST_DATA=/data` などは Dockerfile が決めてある。変えない
 4. 永続ストレージ: 名前付きのボリュームを **`/data` に 1 つだけ**付ける。ホストのフォルダー（bind mount）は付けない。Docker のソケットも渡さない
 5. Custom Docker Options（任意だが勧める。権限を落とし、書ける場所を `/data` と `/tmp` だけにする）:
-   `--read-only --tmpfs /tmp --cap-drop ALL --security-opt no-new-privileges`
+   `--read-only --tmpfs /tmp --cap-drop=ALL`
+   `--security-opt` は付けない。Coolify（2026-10 の版）は Custom Docker Options を compose に直すときに `no-new-privileges` を `"no"` に崩し、`invalid security-opt: "no"` でデプロイが落ちる（`--security-opt=no-new-privileges:true` の書き方でも同じ）。image は非 root の利用者で動き、権限はすべて落としてあるので、外しても足りる
+   登録用の秘密（`AGENT_HOST_RELAY_SECRET`、中継の `RELAY_ENROLL_SECRET`）は、Environment Variables の編集で Build time を「Not available during build」にする（既定のままだと Coolify がビルドの ARG にも渡し、image の層に残りうる）
 6. Auto Deploy は**切る**。リポジトリへの push のたびに再起動して会話が消えたり、審査の最中に版が変わったりしないように、デプロイは手で行う
 7. Deploy。ログに次が出れば動いている:
 
