@@ -517,11 +517,11 @@ body.side-moving > main{transition:border-radius var(--dur) var(--ease-out)}
    短い固定の弧と衛星を SVG ごと回す。線や点は毎フレーム描き直さない。 */
 .run{display:inline-grid;place-items:center;width:14px;height:14px;color:var(--ink);flex:none}
 .run svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round}
-.run:not(.sat) svg{transform-origin:7px 7px;animation:run-spin 2s linear infinite;will-change:transform}
+.run:not(.sat) svg{transform-origin:50% 50%;animation:run-spin 2s linear infinite;will-change:transform}
 .run:not(.sat) path{stroke-dasharray:10 100}
 @keyframes run-spin{to{transform:rotate(360deg)}}
 /* 裏で待っている印。点の間隔は固定で、弧の半分の速さで回す。 */
-.run.sat svg{fill:currentColor;stroke:none;transform-origin:7px 7px;animation:sat-spin 4s linear infinite;will-change:transform}
+.run.sat svg{fill:currentColor;stroke:none;transform-origin:50% 50%;animation:sat-spin 4s linear infinite;will-change:transform}
 @keyframes sat-spin{to{transform:rotate(360deg)}}
 .page-hidden .run svg{animation-play-state:paused}
 @media (prefers-reduced-motion:reduce){.run svg{animation:none!important}.run:not(.sat) path{stroke-dasharray:none}}
