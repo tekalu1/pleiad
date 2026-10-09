@@ -328,9 +328,11 @@ export function createEditMode({ composer, t, announce = () => {}, host, kind = 
     /** 消えるものの見立てが変わった（走り出した・履歴が増えた）。文とボタンの名前を作り直す */
     setTail(tail) {
       if (!st) return;
+      // 変わっていなければ描き直さない（帯の中の［続ける］などのフォーカスを失わない）
+      const same = JSON.stringify(st.tail) === JSON.stringify(tail);
       st.tail = tail;
       host.decorate?.(st.id, true, tail);
-      paint();
+      if (!same) paint();
     },
     get tail() { return st?.tail ?? null; },
     /** 脇に取った書きかけ（分岐して送ったあと、元の会話の下書きへ戻すため） */

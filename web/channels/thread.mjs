@@ -19,7 +19,7 @@ import { openEmojiPicker } from '../emoji-picker.mjs';
 import { postMenu, setupPostMenu, menuPoint } from './post-menu.mjs';
 import { openSourceDialog } from '../message-actions.mjs';
 import { makeBranchRow } from '../branch-view.mjs';
-import { buildBand, resendKeys, sendGlyph } from '../resend-band.mjs';
+import { penGlyph } from '../resend-band.mjs';
 import { createDeck } from './deck.mjs';
 import { createThreadHead } from './thread-head.mjs';
 import { createConversationNav } from '../conversation-nav-view.mjs';
@@ -123,6 +123,7 @@ export function createThread(host) {
     schedules: () => (host.state?.schedules ?? []).filter((r) => r.kind === 'post' && r.channelId === S.channelId && r.threadId === S.threadId).sort((a, b) => a.at - b.at),
     pending: () => S.pending.map((x) => ({ id: x.postId, text: S.index.get(x.postId)?.text ?? '' })).filter((x) => x.text),
     withdrawPending: (postId) => host.invoke('channels.withdrawPending', { channelId: S.channelId, postId }).then(() => refreshPending()),
+    edit: { target: (id) => resendTarget(id), send: (ctx) => resendSend(ctx), branch: (ctx) => resendBranch(ctx), decorate: (id, on, tail) => resendDecorate(id, on, tail), locate: (id) => resendLocate(id) },
     compact: (sessionId) => host.invoke('sessions.compact', { sessionId }),
     onSettings: async (botId, patch) => {
       // 組み込みの bot の最初の設定は、選んだエージェント（無ければ Chats の既定）で会話を作る（作った後は backend を変えない）
@@ -627,6 +628,7 @@ export function createThread(host) {
       for (const sid of new Set([...windows.values()].map((w) => w.sessionId))) tools.refresh(sid, { force: true });
       composer.setDisabled(Boolean(S.channel?.archivedAt), t('channels:feed.archived'));
       composer.refresh();
+      composer.syncEdit();
       markSelected();
       if (seq === S.seq) composer.focus();
       requestAnimationFrame(flushReveal);
@@ -720,100 +722,79 @@ export function createThread(host) {
       // ここから分岐: 根からこの投稿までを写した新しいスレッド（bot の会話もこの手前で分ける）
       fork: S.channel?.kind === 'dm' || p.state === 'working' ? null : () => branchFrom(p),
       // 編集して再送信・再送信: あなたの返信だけ（根は分岐して送る）
-      ...(p.author?.kind === 'human' && p.threadId && S.channel?.kind !== 'dm' ? { edit: () => openResend(p, true), resend: () => openResend(p, false) } : {}),
+      ...(p.author?.kind === 'human' && p.threadId && S.channel?.kind !== 'dm' ? { edit: () => beginResend(p, true), resend: () => beginResend(p, false) } : {}),
     });
     more?.setAttribute('aria-expanded', 'true');
     node?.classList.add('menu-open');
     host.showMenu(x, y, items, title, { alignRight, onClose: () => { more?.setAttribute('aria-expanded', 'false'); node?.classList.remove('menu-open'); } });
   }
-  // ---------------------------------------------------------------- 送り直し（ADR 0157 の 4.5。Chats の送り方の帯と同じ部品。web/resend-band.mjs）
-  let resendOpen = null;
+  // ---------------------------------------------------------------- 送り直し（ADR 0157 の 4.5、ADR 0177。Chats と同じ「編集中」の入力欄。web/composer/edit-mode.mjs）
   const resendId = () => `rs-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`;
-  async function doResend(p, text, stopRunning) {
-    try {
-      await host.invoke('channels.resend', { channelId: S.channelId, postId: p.id, text, stopRunning, clientId: resendId() });
-      return true;
-    } catch (err) { composer.say(t('channels:thread.resend.failed', { error: err?.message ?? String(err) }), true); return false; }
-  }
-  /** 分岐して送る: H の直前で分けた新しいスレッドに、新しい本文を書く */
-  async function branchAndSend(prev, text) {
-    try {
-      const made = await host.invoke('channels.branchThread', { channelId: S.channelId, threadId: S.threadId, atPostId: prev.id });
-      await host.invoke('channels.post', { channelId: made.channelId, threadId: made.threadId, text, clientId: resendId() });
-      document.dispatchEvent(new CustomEvent('channels:show', { detail: { kind: 'channel', id: made.channelId, threadId: made.threadId } }));
-      return true;
-    } catch (err) { composer.say(t('channels:thread.branch.failed', { error: err?.message ?? String(err) }), true); return false; }
-  }
-  /** 編集して再送信（edit）・再送信。後ろに消えるもの（投稿・作業中の返事）があれば、投稿の直下に送り方の帯。押した時点では何も消さない */
-  function openResend(p, edit) {
-    resendOpen?.close();
-    const node = postEls.get(p.id);
-    const idx = S.posts.findIndex((x) => x.id === p.id);
-    if (!node || idx <= 0) return;
+  /** 元の返信と、送り直すと消えるものの見立て。根（先頭）と、無い投稿は null */
+  function resendTarget(id) {
+    const idx = S.posts.findIndex((x) => x.id === id && !x.deletedAt);
+    if (idx <= 0) return null;
     const after = S.posts.slice(idx + 1).filter((x) => !x.deletedAt);
     const running = liveBots().length > 0;
     // bot のターン（作業）が後ろにあれば、ファイルの変更は戻らないことを帯の 2 行目に書く（中身までは見ない）
     const tail = { saved: after.length, users: after.filter((x) => x.author?.kind === 'human').length, files: after.some((x) => x.turn), running, forkOnly: false, any: after.length > 0 || running };
-    if (!edit && !tail.any) { void doResend(p, p.text ?? '', false); return; }
-    const body = node.querySelector('.post-body');
-    for (const x of after) postEls.get(x.id)?.classList.add('doomed');
-    let editor = null, input = null, band = null, ownSend = null, sending = false;
-    const current = () => (input ? input.value : p.text ?? '');
-    const close = () => {
-      for (const n of log.querySelectorAll('.post.doomed')) n.classList.remove('doomed');
-      band?.node.remove();
-      if (editor) { editor.remove(); body.hidden = false; node.classList.remove('editing'); }
-      if (resendOpen?.p === p) resendOpen = null;
-    };
-    const busy = (on) => { sending = on; band?.busy(on); if (input) input.disabled = on; if (ownSend) ownSend.disabled = on; };
-    const send = async () => {
-      if (sending || !current().trim()) return;
-      busy(true);
-      const ok = await doResend(p, current(), tail.running);
-      busy(false);
-      if (ok) close();
-    };
-    const branch = async () => {
-      if (sending || !current().trim()) return;
-      busy(true);
-      const ok = await branchAndSend(S.posts[idx - 1], current());
-      busy(false);
-      if (ok) close();
-    };
-    const cancel = () => { if (!sending) close(); };
-    const keys = (event) => { resendKeys(event, { send, branch, cancel }); };
-    if (edit) {
-      editor = el('div', 'message-editor');
-      input = el('textarea', 'message-edit-input');
-      input.value = p.text ?? '';
-      input.setAttribute('aria-label', t('chat.message.editLabel'));
-      editor.append(input);
-      if (!tail.any) {
-        const controls = el('div', 'message-edit-controls');
-        const cancelButton = el('button', 'btn', t('chat.resend.cancel'));
-        ownSend = el('button', 'btn btn-primary');
-        cancelButton.type = ownSend.type = 'button';
-        ownSend.append(sendGlyph(), el('span', null, t('chat.resend.send')));
-        cancelButton.onclick = cancel;
-        ownSend.onclick = send;
-        controls.append(cancelButton, ownSend);
-        editor.append(controls);
-      }
-      body.hidden = true;
-      body.after(editor);
-      node.classList.add('editing');
-      input.onkeydown = keys;
-      input.oninput = () => { input.style.height = 'auto'; input.style.height = `${input.scrollHeight}px`; };
-    }
-    if (tail.any) {
-      band = buildBand({ tail, onSend: send, onBranch: branch, onCancel: cancel, texts: { running: t('channels:thread.resend.running') } });
-      band.node.onkeydown = keys;
-      node.querySelector('.post-main')?.append(band.node);
-      input?.setAttribute('aria-describedby', `${band.node.id}t`);
-    }
-    resendOpen = { p, close };
-    if (input) { input.focus(); input.oninput(); } else band?.send.focus({ preventScroll: true });
-    (band?.node ?? editor)?.scrollIntoView?.({ block: 'nearest' });
+    return { time: postEls.get(id)?.querySelector('.post-when')?.textContent ?? '', tail };
+  }
+  /** 元の返信に「編集中」の札を付け、消える範囲の投稿を薄くする */
+  function resendDecorate(id, on, tail) {
+    for (const n of log.querySelectorAll('.post.doomed')) n.classList.remove('doomed');
+    for (const n of log.querySelectorAll('.editing-tag')) n.remove();
+    for (const n of log.querySelectorAll('.post.edit-src')) n.classList.remove('edit-src');
+    const node = postEls.get(id);
+    if (!on || !node) return;
+    node.classList.add('edit-src');
+    node.querySelector('.post-head .post-name')?.after(el('span', 'editing-tag', [penGlyph(), t('chat.resend.tag')]));
+    if (!tail?.any) return;
+    const idx = S.posts.findIndex((x) => x.id === id);
+    for (const x of S.posts.slice(idx + 1)) postEls.get(x.id)?.classList.add('doomed');
+  }
+  function resendLocate(id) {
+    const node = postEls.get(id);
+    if (!node) return;
+    node.scrollIntoView?.({ block: 'center', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+    node.classList.remove('flash');
+    void node.offsetWidth;
+    node.classList.add('flash');
+    setTimeout(() => node.classList.remove('flash'), 1300);
+  }
+  /** 編集して再送信（edit）・再送信。後ろに消えるもの（投稿・作業中の返事）があれば入力欄の上の帯に出す。押した時点では何も消さない */
+  function beginResend(p, edit) {
+    const found = resendTarget(p.id);
+    if (!found) return;
+    const { tail } = found;
+    if (!edit && !tail.any) { void doResend(p, { text: p.text ?? '', attachments: (p.attachments ?? []).map(attachmentOf) }, false); return; }
+    composer.edit.begin({ id: p.id, time: found.time, tail }, { text: p.text ?? '', attached: (p.attachments ?? []).map((a) => ({ ...a })) }, { focus: edit ? 'text' : 'send' });
+  }
+  const attachmentOf = (a) => ({ path: a.path, name: a.name, mime: a.mime ?? '' });
+  async function doResend(p, body, stopRunning) {
+    try {
+      await host.invoke('channels.resend', { channelId: S.channelId, postId: p.id, text: body.text, stopRunning, clientId: resendId(), ...(body.attachments?.length ? { attachments: body.attachments } : {}) });
+      return true;
+    } catch (err) { composer.say(t('channels:thread.resend.failed', { error: err?.message ?? String(err) }), true); return false; }
+  }
+  async function resendSend({ id, text, tail }) {
+    const p = S.index.get(id);
+    if (!p) { composer.edit.targetLost(); return false; }
+    return doResend(p, composer.attach.compose(text), tail.running);
+  }
+  /** 分岐して送る: H の直前で分けた新しいスレッドに、新しい本文（と添付）を書く。移る前に入力欄を編集前の書きかけへ戻す（元のスレッドの下書きになる） */
+  async function resendBranch({ id, text }) {
+    const idx = S.posts.findIndex((x) => x.id === id);
+    if (idx <= 0) { composer.edit.targetLost(); return false; }
+    const body = composer.attach.compose(text);
+    try {
+      const made = await host.invoke('channels.branchThread', { channelId: S.channelId, threadId: S.threadId, atPostId: S.posts[idx - 1].id });
+      await host.invoke('channels.post', { channelId: made.channelId, threadId: made.threadId, text: body.text, clientId: resendId(), ...(body.attachments.length ? { attachments: body.attachments } : {}) });
+      composer.edit.end({ restore: true });
+      composer.saveDraft();
+      document.dispatchEvent(new CustomEvent('channels:show', { detail: { kind: 'channel', id: made.channelId, threadId: made.threadId } }));
+      return true;
+    } catch (err) { composer.say(t('channels:thread.branch.failed', { error: err?.message ?? String(err) }), true); return false; }
   }
   // ---------------------------------------------------------------- 送信待ち（ADR 0157 の F12）
   let pendingTimer = 0;
@@ -976,6 +957,7 @@ export function createThread(host) {
     paintBand();
     paintPlaceholder();
     composer.refresh();
+    composer.syncEdit();
     toc.refresh(); nav.refresh(); nav.syncRunning();
     head.setSession(activeSession());
     syncSubs();

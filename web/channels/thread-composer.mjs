@@ -15,6 +15,7 @@ import { draftStore, persistDrafts } from './ch-composer.mjs';
 import { runMark } from '../arc.mjs';
 import { el } from '../dom.mjs';
 import { t } from '../i18n.mjs';
+import { announce } from '../message-actions.mjs';
 
 const PREFIX = 'th';
 const SAVE_WAIT_MS = 400;
@@ -40,9 +41,10 @@ const UNUSED = ['armedChip', 'draftSaved', 'abort', 'resume', 'contextStrip', 'u
  * @param {(sessionId: string) => Promise<void>} [o.compact] 宛先の bot の会話を圧縮する（/compact）
  * @param {() => { id: string, text: string }[]} [o.pending] bot へ届く前のあなたの投稿（送信待ちの行。投稿の順）
  * @param {(postId: string) => Promise<void>} [o.withdrawPending] 送信待ちの投稿を取り下げる（［取り消し］・［編集］）
+ * @param {object} [o.edit] 「編集して再送信」の持ち分（web/composer/edit-mode.mjs の host）: target(id) → { time, tail } か null、send(ctx)、branch(ctx)、decorate(id, on, tail)、locate(id)
  */
 export function createThreadComposer({ host, bucket = () => null, candidates, suggest = () => null, backendLabel, wakePreview, onSend, dest = () => ({ inThread: [], others: [], fallback: null }), onDestChange = () => {},
-  settings = () => null, onSettings = async () => {}, schedules = () => [], compact = async () => {}, pending = () => [], withdrawPending = async () => {} }) {
+  settings = () => null, onSettings = async () => {}, schedules = () => [], compact = async () => {}, pending = () => [], withdrawPending = async () => {}, edit: editHost = {} }) {
   const form = buildComposer(PREFIX);
   form.classList.add('th-composer');
   form.noValidate = true;
@@ -79,7 +81,7 @@ export function createThreadComposer({ host, bucket = () => null, candidates, su
   els.attach.after(destChip);
   let chosen = null;   // 人が選んだ宛先（null = 選んでいない。このスレッドの決まりで決まる）
 
-  let busy = false, disabled = false, noteTimer = null, draftKey = null, saveTimer = null, pendingWake = null;
+  let busy = false, disabled = false, noteTimer = null, draftKey = null, saveTimer = null, pendingWake = null, pendingEdit = null;
   const dismissWake = () => { pendingWake = null; wakeCard.hidden = true; };
   wakeCancel.onclick = dismissWake;
   const say = (text, sticky = false) => {
@@ -93,8 +95,10 @@ export function createThreadComposer({ host, bucket = () => null, candidates, su
     clearTimeout(saveTimer);
     saveTimer = null;
     if (!draftKey) return;
-    const d = { text: input.value ?? '', attached: c.attach.items, at: Date.now() };
-    if (!d.text.trim() && !d.attached.length) draftStore().delete(draftKey); else draftStore().set(draftKey, d);
+    // 「編集中」も下書きと一緒に残す。スレッドを開き直した直後（投稿を読むまで）は、読み込んだままの状態を持ち越す
+    const snap = edit.snapshot() ?? pendingEdit;
+    const d = { text: input.value ?? '', attached: c.attach.items, at: Date.now(), ...(snap ? { edit: snap } : {}) };
+    if (!d.text.trim() && !d.attached.length && !snap) draftStore().delete(draftKey); else draftStore().set(draftKey, d);
     persistDrafts();
     saveServerDraft();
   }
@@ -103,7 +107,8 @@ export function createThreadComposer({ host, bucket = () => null, candidates, su
   const saveServerDraft = () => {
     clearTimeout(serverTimer);
     const key = draftKey;
-    if (!key) return;
+    // 編集中の字は、まだ送っていない書きかけではない（ほかの端末の下書きにしない。戻したあとの保存が上書きする）
+    if (!key || edit.active || pendingEdit) return;
     const text = input.value;
     serverTimer = setTimeout(() => { host.invoke('drafts.save', { key, text, at: Date.now() }).catch(() => {}); }, 1500);
   };
@@ -141,6 +146,18 @@ export function createThreadComposer({ host, bucket = () => null, candidates, su
     environment: async () => (await host.scheduleEnvironment?.().catch(() => null)) ?? { persistent: true, hostZone: null },
     onSchedule: (at) => submit({ at }),
     onSendNow: () => submit({ at: null }),
+  });
+  // 発言の ⋯ › 「編集して再送信」「再送信」: いつもの入力欄を「編集中」にする（web/composer/edit-mode.mjs。ADR 0177）。
+  // 何を送るか・元の投稿の見せ方は thread.mjs（options.edit）。投稿を読み込むまでは、保存した状態を持っておく（syncEdit）
+  const edit = c.useEdit({
+    kind: 'reply', texts: { running: t('channels:thread.resend.running') }, announce: (text) => announce(text),
+    host: {
+      read: () => ({ text: input.value, attached: att.ordered() }),
+      write: ({ text, attached }) => { c.shell?.reset?.(); att.restore(attached); input.value = text; c.fit(); paintHint(); },
+      send: (ctx) => editHost.send(ctx), branch: (ctx) => editHost.branch(ctx),
+      decorate: (id, on, tail) => editHost.decorate?.(id, on, tail), locate: (id) => editHost.locate?.(id),
+      change: () => saveDraftSoon(),
+    },
   });
   // 欄の「/」のスキル候補。候補は宛先の bot の会話の作業フォルダーから（/compact は宛先の bot の会話を圧縮する）
   const destSession = () => { const bot = destNow().bot; return bot ? settings(bot.id) : null; };
@@ -408,6 +425,7 @@ export function createThreadComposer({ host, bucket = () => null, candidates, su
     }
   }
   async function submit({ at = null } = {}) {
+    if (edit.active) return edit.send();
     if (busy || disabled || pendingWake) return;
     if (c.shell?.active) return runShell();
     if (c.shell?.blocked) return c.shell.flash?.();
@@ -488,17 +506,36 @@ export function createThreadComposer({ host, bucket = () => null, candidates, su
       if (key === draftKey) return;
       dismissWake();
       saveDraft();
+      edit.reset();
+      pendingEdit = null;
       draftKey = key;
       chosen = null;   // 宛先はスレッドごと（別のスレッドへ移ったら、そのスレッドの決まりに戻る）
       const d = key ? draftStore().get(key) : null;
       att.restore(d?.attached);
       input.value = d?.text ?? '';
+      // 編集中だったスレッドは、投稿を読み込んだあと（syncEdit）に「編集中」へ戻す
+      if (d?.edit) pendingEdit = d.edit;
       if (!d) void loadServerDraft(key);   // この端末に写しが無い: サーバーの写しを読む（ほかの端末で書いた続き）
       say('');
       paintHint();
       paintDest();
     },
     saveDraft,
+    /** 「編集して再送信」の状態（begin・cancel など） */
+    edit,
+    /** 投稿を読み込んだ・増減した: 保存した編集中を戻す。元の投稿が無くなっていたら編集をやめ、消えるものの見立てが変わっていたら帯を直す */
+    syncEdit() {
+      if (edit.sending) return;
+      if (pendingEdit) {
+        const saved = pendingEdit;
+        pendingEdit = null;
+        edit.restore(saved, (id) => editHost.target?.(id) ?? null);
+        return;
+      }
+      if (!edit.active) return;
+      const found = editHost.target?.(edit.id);
+      if (!found) edit.targetLost(); else edit.setTail(found.tail);
+    },
     bindDropZone: (zone) => att.bindDropZone(zone),
     /** 通話モードの差し込み口の composer（web/voice/index.mjs）。マイクとスピーカーは送信の左のスロット */
     voiceSlot: () => c.voiceSlot(),
