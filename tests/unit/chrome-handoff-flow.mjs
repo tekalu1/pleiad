@@ -125,6 +125,7 @@ export default async function (t) {
       const took = await r.press.takeOver('one');
       t.ok('カードの「Chrome で操作する」（chromeTakeOver）→ paused（by: pc）', took.state === 'paused' && took.by === 'pc', JSON.stringify(took));
       t.ok('カードが「あなたが操作中」（by: pc）に替わる', lastUpdate(r.cards[0]).state === 'operating' && lastUpdate(r.cards[0]).by === 'pc', JSON.stringify(r.cards[0].updates));
+      t.ok('引き継いでも、頼んだ本文（message）は差し替えの便りで消さない（人が操作中も出し続けるため）', r.cards[0].opts.browserHandoff.message === 'ログインしてください' && r.cards[0].updates.every(u => !('message' in u)), JSON.stringify(r.cards[0].updates));
       t.ok('窓は PC の画面に見せる（reveal）', r.os.calls('reveal').length === 1);
       t.ok('まだ決着しない（hand_to_user は待ち続ける）', r.cards[0].answer === null && r.handoffs.current('one')?.state === 'operating');
 
