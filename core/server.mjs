@@ -1646,7 +1646,7 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(204, { "cache-control": "no-store" });
     return res.end();
   }
-  // 画面の殻の束（端末のプロキシが版ごとに保存して自分で配る。docs/remote.md §8.6、ADR 0901）
+  // 画面の殻の束（端末のプロキシが版ごとに保存して自分で配る。docs/remote.md §8.6、ADR 0181）
   if (url.pathname === BUNDLE_PATH) return staticBundle.handle(req, res, url);
   // WS の外で渡す大きい返事（core/bulk-replies.mjs。ADR 0179）。トークンの認証は上で済んでいる
   if (await bulkReplies.handle(req, res, url)) return;

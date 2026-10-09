@@ -1,4 +1,4 @@
-// 画面の殻（web/ の静的ファイル一式）を 1 本に束ねる形（docs/remote.md §8.6、ADR 0901）。
+// 画面の殻（web/ の静的ファイル一式）を 1 本に束ねる形（docs/remote.md §8.6、ADR 0181）。
 // ホスト（core/static-bundle.mjs）が作り、端末のプロキシ（device-proxy.mjs・Android の DeviceProxy.kt・iOS の DeviceProxy.swift）が
 // 保存して、窓の静的ファイルの要求に自分で答える。版（key）が変わったときだけ取り直す。
 //

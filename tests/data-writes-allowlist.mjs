@@ -99,7 +99,7 @@ export const DATA_WRITES = [
     { name: 'remote/settings.json・remote/devices.json・remote/resident.json', limit: 'リモートの設定と、ペアリングした端末の一覧。ユーザーが数個', reason: '設定の台帳' },
   ] },
   { file: 'core/remote/static-cache.mjs', sites: 2, targets: [
-    { name: '(置き場の外) デスクトップ版の端末の置き場（userData の remote-hosts）の static/<hostId>.bin と書きかけの .tmp', limit: 'ホスト 1 つにつき 1 ファイル。BUNDLE_MAX_BYTES=64MiB（今の web/ で約 5 MB）', reason: 'ホストの画面の殻の束（docs/remote.md §8.6、ADR 0901）。版が変わったときだけ別名に書いてから置き換える。ホストを削除すると消す' },
+    { name: '(置き場の外) デスクトップ版の端末の置き場（userData の remote-hosts）の static/<hostId>.bin と書きかけの .tmp', limit: 'ホスト 1 つにつき 1 ファイル。BUNDLE_MAX_BYTES=64MiB（今の web/ で約 5 MB）', reason: 'ホストの画面の殻の束（docs/remote.md §8.6、ADR 0181）。版が変わったときだけ別名に書いてから置き換える。ホストを削除すると消す' },
   ] },
   { file: 'core/control-file.mjs', sites: 1, targets: [
     { name: 'control.json', limit: '固定', reason: '起動中ホストの接続情報' },

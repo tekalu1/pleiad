@@ -609,7 +609,7 @@ const SUITES = [
   './unit/remote-settings.mjs',
   // リモートの端末側（core/remote/device*.mjs）。中継とホストを立て、端末内プロキシの URL を素の HTTP と ws で叩く
   './unit/remote-device.mjs',
-  // 画面の殻を端末に持つ（ADR 0901）: 束の形と検証・ホストの /static-bundle・端末の保存と配り・ポートが変わったとき・古いホストと古いアプリ
+  // 画面の殻を端末に持つ（ADR 0181）: 束の形と検証・ホストの /static-bundle・端末の保存と配り・ポートが変わったとき・古いホストと古いアプリ
   './unit/remote-static-bundle.mjs',
   // 手元のフォルダーを送る口（core/folder-uploads.mjs）: パスの検査・送り先・続きから・中断・上書きの確認・掃除、WS での往復
   './unit/folder-uploads.mjs',

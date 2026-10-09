@@ -1,4 +1,4 @@
-// 画面の殻を 1 本に束ねて返す口（GET /static-bundle。形は core/remote/static-bundle.mjs、ADR 0901）。
+// 画面の殻を 1 本に束ねて返す口（GET /static-bundle。形は core/remote/static-bundle.mjs、ADR 0181）。
 // 端末のプロキシが版ごとに保存し、リモートの往復を 1 回にするためのもの。ふつうの静的ファイルの応答（1 本ずつ）は変えない。
 //
 // 要求のたびに web/ をたどって大きさと更新時刻を見る。変わっていなければ前に作った束を使い、変わっていれば作り直す。

@@ -1,4 +1,4 @@
-// 画面の殻を端末に持つ（docs/remote.md §8.6、ADR 0901）。束の形（core/remote/static-bundle.mjs）、
+// 画面の殻を端末に持つ（docs/remote.md §8.6、ADR 0181）。束の形（core/remote/static-bundle.mjs）、
 // ホストの口（core/static-bundle.mjs・GET /static-bundle）、端末内プロキシの保存と配り（core/remote/static-cache.mjs・device-proxy.mjs）。
 // 中継をこのプロセスで、fake バックエンドのサーバーを別プロセスで立てる。LLM もネットワークも使わない。
 import fs from 'node:fs/promises';

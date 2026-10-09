@@ -9,7 +9,7 @@ import Compression
 #endif
 
 // Swift port of StaticCache.kt / core/remote/static-cache.mjs and the reader of core/remote/static-bundle.mjs
-// (docs/remote.md §8.6, ADR 0901): the device keeps the host's web/ shell as one bundle per host, and asks the host on
+// (docs/remote.md §8.6, ADR 0181): the device keeps the host's web/ shell as one bundle per host, and asks the host on
 // every page load (/ and /index.html) whether it is still current (GET /static-bundle?have=<key>: 304 when unchanged,
 // one round trip). While a checked bundle is held, the proxy answers the WebView's static requests itself.
 // An old host without the endpoint (404) or a failed check gives nil, and the proxy forwards to the host as before.

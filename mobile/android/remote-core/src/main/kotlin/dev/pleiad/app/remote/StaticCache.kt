@@ -1,7 +1,7 @@
 package dev.pleiad.app.remote
 
 // Kotlin port of core/remote/static-cache.mjs and the reader of core/remote/static-bundle.mjs (docs/remote.md §8.6,
-// ADR 0901): the device keeps the host's web/ shell as one bundle per host, and asks the host on every page load
+// ADR 0181): the device keeps the host's web/ shell as one bundle per host, and asks the host on every page load
 // (/ and /index.html) whether it is still current (GET /static-bundle?have=<key>: 304 when unchanged, one round trip).
 // The bundle comes gzipped (accept-encoding: gzip -> content-encoding: gzip), the same rule as the host's /bulk/ replies
 // (core/bulk-replies.mjs, ADR 0179).

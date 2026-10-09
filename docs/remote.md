@@ -600,7 +600,7 @@ App Store の審査: 殻がホスト一覧・QR ペアリング・Keychain の�
 - ホストの PC のブラウザーで見る（画面の転送）は docs/inapp-browser.md「リモートから見る」。フレームと入力は中継の既存の WS 経路（`{ kind: "screencast" }` と `browserScreencast*` のコマンド）を通り、新しいポートは開けない。殻の変更は無い（戻るボタンは `plyremote:back` でシートと画面を閉じる）。HTML ファイルの「ブラウザーで開く」（ホストの OS で開く）はリモートでは出さない（§7.3）
 - 確かめ方（2026-09-27）: Android はエミュレーター（API 33）で `mobile/scripts/fake-host.mjs` と `adb reverse` の中継につなぎ、WebView の DevTools の口（`webview_devtools_remote_<pid>`）から押した。デスクトップ版は Electron の中で `createRemoteWindows` を偽のホストにつないで押した。LAN のブラウザーは、エミュレーターの Chrome から `X-Forwarded-For` を足すプロキシ経由で開いた。単体の試験は `tests/unit/remote-links.mjs` と `LinkPolicyTest`
 
-### 8.6 画面の殻を端末に持つ（2026-10-09、[ADR 0901](adr/0901-mobile-static-shell-cache.md)）
+### 8.6 画面の殻を端末に持つ（2026-10-09、[ADR 0181](adr/0181-mobile-static-shell-cache.md)）
 
 端末内プロキシは、ホストの `web/` の静的ファイル一式（画面の殻）をホストごとに 1 本の束で保存し、ページの読み込みのたびに版だけを確かめて、自分で返す。それまでは起動のたびに 243 本（4.4 MB）を 1 本ずつ中継の往復で取っていた。
 
