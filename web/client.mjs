@@ -7872,19 +7872,21 @@ function placeJunctions({ snapshots = branchSnapshots() } = {}) {
 /**
  * loadSession。prev（今持っている { messages, presents }）を渡すと、その先頭の続きだけを頼む（web/history-sync.mjs、ADR 0062）。
  * 差分が返れば先頭につないで全量の形にし、全量が返った（古いサーバー・先頭が合わない）ときはそのまま、
- * 差分の印と件数が食い違うときは全量を取り直す。どの場合も、呼び出し側が受け取る形は同じ
+ * 差分の印と件数が食い違うときは全量を取り直す。どの場合も、呼び出し側が受け取る形は同じ。
+ * bulk は中継越しで返事が大きいとき、WS の外（HTTP の /bulk/<id>・gzip）で受ける（ADR 0179）。返事が出来事より後になるので、
+ * 読む間の出来事を取り置く呼び出し（sessionLoads。会話を開く・枝の切り替え）にだけ付ける
  */
-async function loadHistory(args, prev = null, { window = false } = {}) {
+async function loadHistory(args, prev = null, { window = false, bulk = false } = {}) {
   // 会話を開く読み込み（window）は、末尾の窓だけを頼み、大きい提示の本文は印にしてもらう（ADR 0902）。
   // この仕組みを知らないサーバーは窓の頼みを無視して全量を返す（応答に base が無い）ので、base 0・本文付きの提示として扱う
   const extra = window ? { lazy: true, tail: WINDOW_MESSAGES, tailBytes: WINDOW_BYTES } : {};
   const request = prev ? syncRequest(prev.messages, prev.presents, { base: prev.base ?? 0, presentBase: prev.presentBase ?? 0 }) : null;
   const opened = (data) => ({ ...data, base: Number.isInteger(data?.base) ? data.base : 0, presentBase: Number.isInteger(data?.presentBase) ? data.presentBase : 0 });
-  const data = await cmd("loadSession", { ...args, ...extra, ...request });
+  const data = await cmd("loadSession", { ...args, ...extra, ...request }, { bulk });
   if (!request) return opened(data);
   const joined = joinReply(prev, data, request);
   if (joined === null) return opened(data);
-  if (joined === false) return opened(await cmd("loadSession", { ...args, ...extra }));
+  if (joined === false) return opened(await cmd("loadSession", { ...args, ...extra }, { bulk }));
   const { from, total, presentFrom, presentTotal, ...rest } = data;
   return { ...rest, ...joined };
 }
@@ -8005,7 +8007,7 @@ async function loadAndPaint(id, { keepUpTo, quiet, fresh, after = null }) {
     // 委譲カード・バックグラウンドの一覧の行（会話の分）も一緒に読み、描く前に揃える
     const cards = loadTaskCards(id);
     data = await loadHistory({ sessionId: id, live: true, watch: true },
-      quiet && state.messages.length ? { messages: state.messages, presents: state.presents, base: state.base, presentBase: state.presentBase } : null, { window: true });
+      quiet && state.messages.length ? { messages: state.messages, presents: state.presents, base: state.base, presentBase: state.presentBase } : null, { window: true, bulk: true });
     await cards;
     // 作ったばかりの会話（startNew）は、一覧の読み直しと並べて履歴を読む。描く前に一覧の行が載るのを待つ
     await after;
@@ -8277,7 +8279,7 @@ function loadOlder() {
     let joined = null;
     try {
       const data = await cmd('loadSession', { sessionId: id, lazy: true,
-        older: { ...request, count: WINDOW_MESSAGES, bytes: WINDOW_BYTES, check: messageSig(prev.messages[0]) } });
+        older: { ...request, count: WINDOW_MESSAGES, bytes: WINDOW_BYTES, check: messageSig(prev.messages[0]) } }, { bulk: true });
       if (!same()) { if (state.current === id) hideOlder(); return false; }   // 会話が替わった・窓が替わった: 捨てる
       joined = joinOlder(prev, data, request);
     } catch {
@@ -8418,7 +8420,7 @@ async function changeBranch(id, row) {
   state.displayLoad = load;
   let painted = false;
   try {
-    const [data, cards] = await Promise.all([loadHistory({ sessionId: id, live: true, watch: true }, null, { window: true }), readTaskCards(id)]);
+    const [data, cards] = await Promise.all([loadHistory({ sessionId: id, live: true, watch: true }, null, { window: true, bulk: true }), readTaskCards(id)]);
     const target = data?.messages ?? [];
     // 窓のときは通し番号がずれるので、共通の行を残さず描き直す
     let keep = state.base || data.base ? 0 : commonPrefix(state.messages, target);

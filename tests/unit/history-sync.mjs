@@ -143,5 +143,5 @@ export default async function (t) {
 
   // 静かな読み直しの経路も同じ関数を通る（loadAndPaint は quiet のときだけ prev を渡す。tests/unit/session-stream.mjs が全量の経路を見ている）
   t.ok("loadAndPaint は静かな読み直しのときだけ、持っている履歴を渡して頼む",
-    /loadHistory\(\{ sessionId: id, live: true, watch: true \},\n\s+quiet && state\.messages\.length \? \{ messages: state\.messages, presents: state\.presents, base: state\.base, presentBase: state\.presentBase \} : null, \{ window: true \}\)/.test(source));
+    /loadHistory\(\{ sessionId: id, live: true, watch: true \},\n\s+quiet && state\.messages\.length \? \{ messages: state\.messages, presents: state\.presents, base: state\.base, presentBase: state\.presentBase \} : null, \{ window: true, bulk: true \}\)/.test(source));
 }
