@@ -368,7 +368,6 @@ folderUploads.sweep().catch(() => {});
 attachUploads.sweep().catch(() => {});
 setInterval(() => { folderUploads.sweep().catch(() => {}); attachUploads.sweep().catch(() => {}); }, 24 * 60 * 60_000).unref();
 
-/** 添付を置く場所。名前は信用せず区切り文字を落とす。id の形はエージェントごとに違うので、形で弾かずパスに使えない字を潰す */
 /**
  * 下書きに載せる「編集中」の状態（入力欄の「編集して再送信」。web/composer/edit-mode.mjs の snapshot）。
  * 形だけ確かめて残す: 元の発言の id・時刻・引用、編集を始めたときの本文と添付のパス、脇に取った書きかけ。壊れていたら捨てる
@@ -385,6 +384,7 @@ function sanitizeDraftEdit(edit) {
   };
 }
 
+/** 添付を置く場所。名前は信用せず区切り文字を落とす。id の形はエージェントごとに違うので、形で弾かずパスに使えない字を潰す */
 function attachTarget(sessionId, name) {
   const safe = String(name ?? "file").replace(/[^\p{L}\p{N}._-]/gu, "_").slice(-80).replace(/[. ]+$/, "_") || "file";
   const stamp = new Date().toISOString().replace(/[:.]/g, "-");
