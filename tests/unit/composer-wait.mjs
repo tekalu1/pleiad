@@ -129,7 +129,7 @@ export default function (t) {
   t.ok('会話を開く: disabled ではなく readonly + aria-busy（composerWait.busy）', !/prompt"\)\.disabled = true/.test(select) && /composerWait\.busy\("history"\)/.test(select));
   t.ok('会話を開く: fresh では下書きを読み直さない', /if \(!fresh\) loadDraft\(\)/.test(select));
   t.ok('読み込みの失敗: 欄を戻して「もう一度読む」（composerWait.failed → select retry）', /composerWait\.failed\(\(\) => select\(id, \{ retry: true \}\)\)/.test(select));
-  t.ok('初めての接続まで「接続しています…」', /composerWait\.busy\("connect"\);\s*connect\(\);/.test(client));
+  t.ok('初めての接続まで「接続しています…」', /composerWait\.busy\("connect"\);[^;]*;[^;]*;[^;]*connect\(\);/.test(client));
   t.ok('作成中の送信は予約する', /composerWait\.queue\(/.test(client) && /creatingSession \?\? startNew\(\)/.test(client));
   t.ok('設定を保存できなかった会話は送らず、理由の一行へフォーカス（composerWait.hold・point）', /composerWait\.hold\(/.test(client) && /if \(composerWait\.held\) \{ composerWait\.point\(\); return; \}/.test(client));
   const hold = client.slice(client.indexOf('function syncSettingsHold('), client.indexOf('function paintSettingsNotice('));

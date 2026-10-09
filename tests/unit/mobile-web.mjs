@@ -133,6 +133,20 @@ export default async function (t) {
   const drawer = client.slice(client.indexOf("function setDrawer("), client.indexOf("function setSidebar("));
   t.ok("引き出しを開いたら閉じるボタンへ。置けなければ次のフレームで置き直す",
     /close\.focus\(\{ preventScroll: true \}\);\s*if \(document\.activeElement !== close\) requestAnimationFrame\(/.test(drawer));
+  // 開閉のタップでは印だけ付け、一覧の描き直し・背後の inert・フォーカスは開き始めた後（rAF の次の timer）へ回す
+  const setDrawerBody = drawer.slice(drawer.indexOf("function setDrawer("), drawer.indexOf("function settleDrawer("));
+  const settleBody = drawer.slice(drawer.indexOf("function settleDrawer("));
+  t.ok("引き出しの開閉: タップの中では side-open と aria-expanded だけ。描き直し・inert・フォーカスは入れない",
+    /classList\.toggle\("side-open", open\)/.test(setDrawerBody) && /aria-expanded/.test(setDrawerBody)
+      && !/side\.redraw|\.inert|\.focus\(/.test(setDrawerBody)
+      && /requestAnimationFrame\(\(\) => \{ pending\.timer = setTimeout\(settleDrawer, 0\)/.test(setDrawerBody) && /pending\.safety = setTimeout\(settleDrawer/.test(setDrawerBody));
+  t.ok("開閉の後始末は今の状態に合わせるだけ（開いていれば一覧を描き直し、背後を inert に）",
+    /const open = drawerOpen\(\)/.test(settleBody) && /if \(open\) side\.redraw\(\)/.test(settleBody) && /n\.inert = open/.test(settleBody));
+  t.ok("起動・つなぎ直しの select / startNew は脇のパネルを閉じない（keepDrawer）。行を押す道は今まで通り閉じる",
+    /if \(keepUpTo === undefined && !quiet && !fresh && !keepDrawer\) setDrawer\(false\)/.test(client) && /if \(!keepDrawer\) setDrawer\(false\)/.test(client)
+      && /select\(saved, \{ keepDrawer: true \}\)/.test(client) && /startNew\(\{ keepDrawer: true \}\)/.test(client));
+  t.ok("脇の一覧は会話とスレッドの両方が届くまで骨組み（side.skeleton）",
+    /if \(!\(listLoaded\.sessions && listLoaded\.threads\)\) side\.skeleton\(\)/.test(client));
   t.ok("pointer:coarse で入力欄を 16px 以上", /@media \(pointer:coarse\)\{[^@]*font-size:max\(16px/s.test(css));
   t.ok("hover:none で「…」と ＋ を常に見せる", /@media \(hover:none\)\{[^@]*\.row-more[^@]*\.grp-add\{opacity:1\}/s.test(css));
   t.ok("モバイル版の殻の帯（.host-bar）", css.includes(":root.remote-mobile .host-bar"));

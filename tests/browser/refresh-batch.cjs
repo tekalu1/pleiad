@@ -10,14 +10,16 @@ async (page) => {
     window.startupListCalls = 0;
     const send = WebSocket.prototype.send;
     WebSocket.prototype.send = function (data) {
-      try { if (JSON.parse(data).command === 'listSessions') window.startupListCalls++; } catch {}
+      // 差分（since 付き）の取り直しは数えない。全量の取得が重ならないことを見る（ADR 0179）
+      try { const m = JSON.parse(data); if (m.command === 'listSessions' && !m.args?.since) window.startupListCalls++; } catch {}
       return send.call(this, data);
     };
   });
   await page.goto(url);
   await page.locator('#groups .row[data-session="ss-nightly"]').waitFor();
-  if (await page.locator('#onboardingDialog[open]').count()) await page.locator('#closeOnboarding').click();
+  // 初回のあいさつは一覧より少し後に開くので、待ってから閉じる
   await page.waitForTimeout(500);
+  if (await page.locator('#onboardingDialog[open]').count()) await page.locator('#closeOnboarding').click();
   checks.push(check(await page.evaluate(() => window.startupListCalls) === 1, '起動時の一覧取得は 1 回'));
 
   const command = (name, args) => page.evaluate(({ name, args }) => new Promise((resolve, reject) => {
@@ -95,9 +97,10 @@ async (page) => {
     document.querySelector('#groups .row[data-session="ss-nightly"] .row-t')?.textContent !== expected, closedTitle),
     '閉じたドロワーでは一覧を描かない'));
   await page.evaluate(() => document.getElementById('openSidebar').click());
-  checks.push(check(await page.evaluate((expected) => document.documentElement.classList.contains('side-open') &&
-    document.querySelector('#groups .row[data-session="ss-nightly"] .row-t')?.textContent === expected, closedTitle),
-    '開いたときに最新の題を描く'));
+  // 一覧の描き直しはタップの後ろ（開き始めた次のコマ）へ回している
+  await page.waitForFunction((expected) => document.documentElement.classList.contains('side-open') &&
+    document.querySelector('#groups .row[data-session="ss-nightly"] .row-t')?.textContent === expected, closedTitle);
+  checks.push('開いたときに最新の題を描く');
 
   await page.evaluate(() => { window.stableRow = document.querySelector('#groups .row[data-session="ss-map"]'); });
   const movedStatus = `検証 ${Date.now()}`;
