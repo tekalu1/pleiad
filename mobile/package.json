@@ -7,6 +7,8 @@
   "scripts": {
     "sync:ios": "cap sync ios",
     "open:ios": "cap open ios",
+    "icons": "node scripts/generate-icons.mjs",
+    "icons:check": "node scripts/generate-icons.mjs --check",
     "sync": "cap sync android",
     "build:debug": "cap sync android && cd android && gradlew assembleDebug",
     "build:release": "cap sync android && cd android && gradlew assembleRelease",
