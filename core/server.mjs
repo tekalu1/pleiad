@@ -21,7 +21,7 @@ import { createShots as createComputerShots } from './computer-use/shots.mjs';
 import { parentPortComputer, fakeComputerDriver } from './computer-use/driver.mjs';
 import { normalizeComputerUse } from './computer-use/policy.mjs';
 import { appendFileSync } from 'node:fs';
-import { KINDS, JUDGES, TIERS, SIGNALS, normalizeSettings, pruneEfforts, decideEffort, effortTierFor, RETIRED_KEYS, RoutingSettingsError, pinnedRouting, manualRouting, route, candidateStates, settingsWarnings, checkCandidate, selectRetryAccount, parseCandidate, formatSkippedCandidates } from './delegation-routing.mjs';
+import { KINDS, JUDGES, TIERS, SIGNALS, normalizeSettings, migrateLegacySettings, pruneEfforts, decideEffort, effortTierFor, RETIRED_KEYS, RoutingSettingsError, pinnedRouting, manualRouting, route, candidateStates, settingsWarnings, checkCandidate, selectRetryAccount, parseCandidate, formatSkippedCandidates } from './delegation-routing.mjs';
 import { judgeDifficulty, normalizeKey, SERVICES as ROUTING_JUDGE, JUDGE_SERVICE, JUDGE_TIMEOUT_MS } from './delegation-judges.mjs';
 import { createUsageMonitor } from './delegation-usage.mjs';
 import { canDelegate, resolveDelegatedMode, modePosition, scopeRank, autonomyRank, SCOPES, AUTONOMIES } from './modes.mjs';
@@ -746,11 +746,10 @@ async function callAgentOp(owner, name, args, { locale } = {}) {
 /**
  * ply_delegate { host }（端末のデスクトップ版の AI からホストの Pleiad へ。core/remote-delegation.mjs）。手元の委譲と同じ関門を通る:
  * 読み取り・計画モードの会話は断る（上）・Codex の親は full / yolo 以外では呼び出し自体を確かめる・承認モードの引き上げが要るときは、ホストが計画を返し、
- * 依頼元の会話で 1 回だけ確かめる。ホストに任された会話からは、さらにホストへ任せられない
+ * 依頼元の会話で 1 回だけ確かめる。ホストに任された会話（とその子孫）からも、さらにホストへ任せられる（2026-10-09 に禁止を外した）
  */
 async function callRemoteDelegate(owner, turn, args, lng) {
   if (!remoteDelegation.enabled) throw new Error(agentT(lng, 'delegation.remote.unavailable'));
-  if ((await delegationRoot(owner)).remote) throw new Error(agentT(lng, 'delegation.remote.nested'));
   if (turn.backend.id === 'codex' && !['full', 'yolo'].includes(turn.info.mode)) {
     const answer = await askPermission({ toolName: 'ply_delegate', input: args, sessionId: owner, signal: turn.ac.signal, kind: 'tool', canAlways: false, locale: lng });
     if (!answer.allow) throw new Error(agentT(lng, 'delegation.denied'));
@@ -1123,13 +1122,14 @@ hosts: () => remoteDelegation?.describe() ?? [] });
 
 // ---- 委譲先の自動振り分け ------------------------------------------------------
 // 設定は prefs.json の delegationRouting（未設定の項目は既定値）。判定器が使うキーは設定 › API キー（core/api-keys.mjs）で選んだもの
-// （uses の judge:jev・judge:cerebras）で、画面へは hasKey と選んだキーの id（keyRef）だけ返す。選ぶまでは何も送らない
+// （uses の judge:jev。Jev・Qwen のどちらも OpenRouter で同じキー）で、画面へは hasKey と選んだキーの id（keyRef）だけ返す。選ぶまでは何も送らない
+// 前の版の Cerebras の判定器の項目（judgeByKind の cerebras・escalateToCerebras）は読むときに Qwen の名前へ直し、次に保存するときに書き直す（ADR 0177）
 let routingSettingsCache = normalizeSettings((await store.getPrefs()).delegationRouting);
 // Pleiad の指示（core/ply-instructions.mjs）。prefs.json の plyInstructions。まだ無ければ前の版の addedContext（委譲の指示のスイッチ）から作る
 let plyInstructionsCache = await (async () => { const prefs = await store.getPrefs(); return normalizePlyInstructions(prefs.plyInstructions, prefs.addedContext); })();
 /** 設定 › コンテキストの「Pleiad の指示」。文は画面の言語。委譲と連動の項目は今の委譲先の自動選択の有無を反映する */
 const plyInstructionsState = () => plyInstructionsScreen(plyInstructionsCache, currentLocale(), { routing: routingSettingsCache.enabled });
-const ROUTING_SERVICES = Object.values(JUDGE_SERVICE);
+const ROUTING_SERVICES = [...new Set(Object.values(JUDGE_SERVICE))];
 const routingKey = service => apiKeys.useKey(`judge:${ROUTING_JUDGE[service]}`);
 /** API キー・割り当てが変わったとき（core/api-keys.mjs の onChange）。使う側の画面と通話のキーを更新する */
 function apiKeysChanged(change = {}) {
@@ -1151,7 +1151,7 @@ async function legacyUseKey(use, service, key) {
     return;
   }
   if (!key) { await apiKeys.setUse(use, null); return; }
-  const provider = use === 'judge:cerebras' ? 'cerebras' : 'openrouter';
+  const provider = 'openrouter';
   const id = await apiKeys.findByValue(provider, key) ?? (await apiKeys.add({ provider, label: '', key })).id;
   await apiKeys.setUse(use, id);
 }
@@ -1189,7 +1189,7 @@ async function routeDelegation(args, lng, cwd) {
   // 依頼文は判定器へ送る前に確かめる（agentTasks と同じ上限）
   if (typeof args.task !== 'string' || !args.task.trim() || args.task.length > 60000) throw new Error(agentT(lng, 'tasks.textLength', { name: 'task', max: 60000 }));
   const [judged] = await Promise.all([
-    judgeDifficulty({ kind: args.kind, task: args.task, judge: settings.judgeByKind[args.kind], escalate: settings.escalateToCerebras, keyOf: routingKey }),
+    judgeDifficulty({ kind: args.kind, task: args.task, judge: settings.judgeByKind[args.kind], escalate: settings.escalateToQwen, keyOf: routingKey }),
     // 起動直後でまだ一度も取れていない、または古ければ取り直し、判定と同じだけ待つ
     routingUsage.ensureFresh(JUDGE_TIMEOUT_MS),
   ]);
@@ -2877,8 +2877,8 @@ async function applyAutoCompaction(settings) {
 /** 委譲先の自動振り分けの設定。patch は prefs.json の delegationRouting に重ねる項目（null の項目は既定に戻す）。全体を検証してから保存する */
 async function applyRoutingSettings(patch) {
   if (!patch || typeof patch !== 'object' || Array.isArray(patch)) throw new Error(t('routing.settings.notObject', { key: 'settings' }));
-  const raw = { ...((await store.getPrefs()).delegationRouting ?? {}) };
-  for (const [key, value] of Object.entries(patch)) { if (value === null) delete raw[key]; else raw[key] = structuredClone(value); }
+  const raw = { ...migrateLegacySettings((await store.getPrefs()).delegationRouting ?? {}).raw };
+  for (const [key, value] of Object.entries(migrateLegacySettings(patch).raw)) { if (value === null) delete raw[key]; else raw[key] = structuredClone(value); }
   for (const key of RETIRED_KEYS) delete raw[key];
   let settings;
   try { settings = normalizeSettings(raw, { strict: true }); } catch (e) { throw routingSettingsError(e); }
@@ -4632,10 +4632,12 @@ function permissionsChanged() {
   remoteTasksChanged();
 }
 
+const DELEGATION_WALK_MAX = 1000;
+
 /**
  * 委譲でつながった祖先の会話を、近い順に並べる。
  * 会話メタデータの delegation（prepare が書く）を親へ辿る。
- * 壊れた記録で回り続けないよう、同じ会話は二度通らず、辿る回数にも上限を置く（委譲は4階層まで）。
+ * 壊れた記録で回り続けないよう、同じ会話は二度通らない。委譲の深さに上限は無いので、辿る回数の上限（DELEGATION_WALK_MAX）は輪の守りの予備で、実際の鎖より十分大きくする。
  */
 async function delegationAncestors(sessionId) {
   return (await delegationRoot(sessionId)).chain;
@@ -4651,7 +4653,7 @@ async function delegationRoot(sessionId) {
   const seen = new Set([sessionId]);
   let id = sessionId;
   let remote = null;
-  for (let i = 0; i < 8; i++) {
+  for (let i = 0; i < DELEGATION_WALK_MAX; i++) {
     const delegation = (await store.get(id)).delegation;
     const parent = delegation?.parentSessionId;
     if (!parent || seen.has(parent)) break;
@@ -7708,7 +7710,7 @@ wss.on("connection", (ws, req) => {
         }
         case 'deleteApiKey':
           return reply(true, await apiKeys.remove(String(msg.args?.id ?? '')));
-        // { use: voice | judge:jev | judge:cerebras | computer:decider, id: キーの id | null（使わない）}
+        // { use: voice | judge:jev | computer:decider, id: キーの id | null（使わない）}
         case 'setApiKeyUse':
           return reply(true, await apiKeys.setUse(String(msg.args?.use ?? ''), msg.args?.id ?? null));
         // 移行の案内。{ keep: キーの id }（ほかの同じプロバイダーのキーをまとめる）か { keep: null }（このままにする）。どちらでも案内は二度と出ない

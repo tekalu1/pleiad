@@ -117,7 +117,7 @@ export function judgeLine(routing) {
   if (routing.escalated) return t('routing.detail.judgeEscalated', { judge: judgeText(routing.judge) });
   // もう一方の判定器に落ちた（fallback は最初に選んだ判定器の失敗の理由）
   if (routing.fallback) return t('routing.detail.judgeFailed', { judge: judgeText(routing.judge),
-    first: judgeText(routing.judge === 'jev' ? 'cerebras' : 'jev'), reason: fallbackText(routing.fallback) });
+    first: judgeText(routing.judge === 'jev' ? 'qwen' : 'jev'), reason: fallbackText(routing.fallback) });
   return judgeText(routing.judge);
 }
 

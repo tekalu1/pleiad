@@ -29,7 +29,7 @@ Claude・Codex の会話から、`ply_agents` MCP の `ply_delegate` で別の�
 ローカルの使用実績（トークン数・参考費用）は返さない。Claude でアカウントを登録していれば `accounts` にアカウントごとの枠を並べ、表示名にメールアドレスが含まれる場合はローカル部を1文字残して伏せる。アカウント ID・資格情報は返さない。
 不明な `backend` はエラー。1つのバックエンドの取得失敗はそのバックエンドの `message` に入れ、他は返す。
 
-**委譲の指示**: 委譲の使い方は、利用者の指示ファイルではなく Pleiad の指示の既定の項目として Pleiad が入れる（[ADR 0023](adr/0023-pleiad-added-delegation-instructions.md) を [ADR 0026](adr/0026-context-global-settings-and-ply-instructions.md) で置き換え）。`ply_agents` の instructions の後ろに毎ターン足す。依頼元の会話には「委譲の進め方」（委譲を基本にする・この会話でやること。編集できる）と「委譲の振り分けの使い方」（`kind` を付けて `backend` を書かない。同じリポジトリに書く子を並べるなら worktree を使うかユーザーに聞くこと・完了通知や `ply_task_status` に「作業場所: worktree …（未取り込み）」とあればそのブランチを元の作業場所へ取り込むのは自分の仕事で競合も自分で解くことも書く。委譲と連動で編集できず、振り分けが無効なら入れない）、委譲された子の会話には「委譲した会話では任せない」（さらに委譲しない・コマンドには時間上限を付ける・常駐するサーバーやアプリはバックグラウンドで起動して PID を控え、自分で止める・`Start-Process -Wait` のような無期限待機をしない。編集できる）、Codex の子にだけ「Codex の実行前の拒否」（承認なしのモードでも Codex 自身の安全判定で拒否されることがある。言い換えで回避せず、実行できなかったコマンドと理由・残ったものを報告する。編集・切り替えできる）。項目・スイッチ・記録は context-runtime.md「Pleiad の指示」。Antigravity の子にも、コマンドの時間上限と PID の管理の指示をカスタムエージェントの本文に足す。親とユーザーの会話には足さない（[ADR 0048](adr/0048-delegation-silence-notice.md)）。編集済みの子向け指示は上書きせず、既定に戻すと新しい文面になる。
+**委譲の指示**: 委譲の使い方は、利用者の指示ファイルではなく Pleiad の指示の既定の項目として Pleiad が入れる（[ADR 0023](adr/0023-pleiad-added-delegation-instructions.md) を [ADR 0026](adr/0026-context-global-settings-and-ply-instructions.md) で置き換え）。`ply_agents` の instructions の後ろに毎ターン足す。依頼元の会話には「委譲の進め方」（委譲を基本にする・この会話でやること。編集できる）と「委譲の振り分けの使い方」（`kind` を付けて `backend` を書かない。同じリポジトリに書く子を並べるなら worktree を使うかユーザーに聞くこと・完了通知や `ply_task_status` に「作業場所: worktree …（未取り込み）」とあればそのブランチを元の作業場所へ取り込むのは自分の仕事で競合も自分で解くことも書く。委譲と連動で編集できず、振り分けが無効なら入れない）、委譲された子の会話には「委譲された会話でのコマンドの扱い」（コマンドには時間上限を付ける・常駐するサーバーやアプリはバックグラウンドで起動して PID を控え、自分で止める・`Start-Process -Wait` のような無期限待機をしない。編集できる）、Codex の子にだけ「Codex の実行前の拒否」（承認なしのモードでも Codex 自身の安全判定で拒否されることがある。言い換えで回避せず、実行できなかったコマンドと理由・残ったものを報告する。編集・切り替えできる）。項目・スイッチ・記録は context-runtime.md「Pleiad の指示」。Antigravity の子にも、コマンドの時間上限と PID の管理の指示をカスタムエージェントの本文に足す。親とユーザーの会話には足さない（[ADR 0048](adr/0048-delegation-silence-notice.md)）。編集済みの子向け指示は上書きせず、既定に戻すと新しい文面になる。
 
 タスク ID は `ply-task-<UUID>`。Claude / Codex のネイティブサブエージェントとは別に管理する。
 `ply_agents` は専用の接続で注入するため、外部 MCP 中継のハッシュ化されたツール名にならない。
@@ -57,12 +57,12 @@ Claude・Codex の会話から、`ply_agents` MCP の `ply_delegate` で別の�
 
 **流れ**（`backend` が無いとき。`core/server.mjs` の `routeDelegation`。選んだ後は、書いた `backend` と同じく承認の強さの判定・承認カードを通る）:
 
-1. **判定器を選ぶ。** 設定の種類ごとの判定器（`jev` / `cerebras` / `none`）。既定は `ux_change` `ux_new` `visual` が `none`、ほかは `jev`。
+1. **判定器を選ぶ。** 設定の種類ごとの判定器（`jev` / `qwen` / `none`）。既定は `ux_change` `ux_new` `visual` が `none`、ほかは `jev`。
 2. **難しさの手がかりを得る。** 判定器へ送るのは `kind` と依頼文（`task`。8,000 文字で切る）だけ。`context`・使用量・振り分けの表・会話の記録は送らない。答えは 6 つの手がかりの真偽。
    - `jev`: OpenRouter `POST https://openrouter.ai/api/alpha/decisions`、`typesafe/jev-1.13`、Noul 6 つ。はいの確率を手がかりごとの閾値で真偽にする（`diagnose` 0.50・`choose` 0.31・`long_procedure` 0.685・`many_parts` 0.68・`writes_shared` 0.50・`security_gate` 0.19）。問いの文面（英語）と閾値は検証で決めたもので、`core/delegation-routing.mjs` の `QUESTIONS` / `JEV_THRESHOLDS`。Noul の false 側は「The statement for <id> is false for this task.」（閾値を選んだときと同じ文面）。
-   - `cerebras`: `POST https://api.cerebras.ai/v1/chat/completions`、`qwen-3.8-27b`、`reasoning_effort: "none"`、JSON schema strict（6 つの boolean）。
-   - 「Jev が迷ったら Cerebras に聞き直す」（既定 OFF）: どれかの確率が閾値 ± 0.15 以内で、Cerebras のキーがあれば Cerebras の答えを使う（Jev の確率も残す）。
-   - 時間切れは 1 回 3 秒。選んだ判定器が使えなければ、もう一方にキーがあればそちらを試し、それも無理なら難しさ `mid` で続ける。`fallback` に最初の理由のコード: `no_key` `key_unreadable` `timeout` `network` `http_<status>` `bad_response` `judge_none`（判定しない種類）。
+   - `qwen`: OpenRouter `POST https://openrouter.ai/api/v1/chat/completions`、`qwen/qwen3.8-27b`、`reasoning: { effort: "none" }`、`temperature: 0`、`provider: { order: ["cerebras"], allow_fallbacks: true, require_parameters: true }`（速さのため Cerebras を先に。受けなければ関数の呼び出しを受けるほかの provider）。6 つの boolean は strict な関数 `routing_v3` を 1 つだけ渡して呼ばせ、その引数で受け取る（OpenRouter の Cerebras は `response_format` の JSON schema を受けない）。キーは Jev と同じ OpenRouter のキー。2026-10-09 までは Cerebras へ直に送る `cerebras`（`api.cerebras.ai`）だった（[ADR 0177](adr/0177-judges-via-openrouter.md)）。
+   - 「Jev が迷ったら Qwen に聞き直す」（既定 OFF）: どれかの確率が閾値 ± 0.15 以内なら Qwen の答えを使う（Jev の確率も残す）。
+   - 時間切れは 1 回 3 秒。選んだ判定器が使えなければ、もう一方を試し（どちらも OpenRouter のキー）、それも無理なら難しさ `mid` で続ける。`fallback` に最初の理由のコード: `no_key` `key_unreadable` `timeout` `network` `http_<status>` `bad_response` `judge_none`（判定しない種類）。
 3. **難しさの規則（v3・規則 A）。** `security_gate` → `high`。それ以外は `diagnose` `choose` `long_procedure` `many_parts` のはいの数 0 → `low`、1〜2 → `mid`、3〜4 → `high`。`writes_shared` がはいで `low` なら `mid`。
 4. **段。** 種類 × 難しさの表（既定）:
 
@@ -102,7 +102,7 @@ Claude・Codex の会話から、`ply_agents` MCP の `ply_delegate` で別の�
 
 ```jsonc
 { "mode": "auto" | "pinned" | "manual", "kind": "implement",   // manual は人が「別の候補でやり直す」で選んだもの（下）
-  "judge": "jev" | "cerebras" | "none" | null,          // 答えを使った判定器。固定なら null
+  "judge": "jev" | "qwen" | "none" | null,              // 答えを使った判定器。固定なら null（2026-10-09 より前の記録は "cerebras" もある）
   "signals": { "diagnose": false, … } | null, "probabilities": { "diagnose": 0.12, … } | null,  // 確率は Jev のとき
   "difficulty": "low" | "mid" | "high" | null, "baseTier": "t2", "tier": "t3",   // baseTier は表の段、tier は選んだ候補の段（自動のときだけ）
   "target": { "backend": "claude", "model": "opus", "account": "oz", "accountLabel": "OZ", "effort": "high" }, // accountLabel は伏せた表示名。account の '' はログイン中。effort は走る強さ（送らなければ null）
@@ -113,7 +113,7 @@ Claude・Codex の会話から、`ply_agents` MCP の `ply_delegate` で別の�
                 "window": { "label": "週次", "minutes": 10080, "usedPercent": 85 }, "windows": [ … ] }], // Claude は認証ごとに 1 行
   "usageAt": "2026-09-26T03:00:00.000Z",   // 選んだ候補の使用量の取得時刻（選べなければ見た中で最も古いもの）。skipped[] にも各自の checkedAt
   "fallback": null,                        // 判定器を使えなかった理由（no_key など）
-  "escalated": true,                       // 「Jev が迷ったら Cerebras」で聞き直したときだけ
+  "escalated": true,                       // 「Jev が迷ったら Qwen」で聞き直したときだけ
   "retry": { "of": "ply-task-…", "from": { "backend": "…", "model": "…", "account": null }, "by": "user" } }  // manual のときだけ
 ```
 
@@ -134,16 +134,18 @@ Claude・Codex の会話から、`ply_agents` MCP の `ply_delegate` で別の�
 ```jsonc
 { "enabled": true,
   "judgeByKind": { "trivial": "jev", …, "ux_change": "none", "ux_new": "none", "visual": "none" },
-  "escalateToCerebras": false,
+  "escalateToQwen": false,                 // 前の版の escalateToCerebras・judgeByKind の "cerebras" は読むときに直す（下）
   "avoidPercent": 80, "paceLimit": 1.2,
   "tiers": { "t1": ["antigravity:gemini-3.8-flash-high", "claude:haiku"], … },   // 候補は "backend:model"
   "table": { "trivial": ["t1", "t1", "t2"], … },                               // low・mid・high の段
   "efforts": { "t1": { "*": "low" }, "t2": { "*": "medium" }, "t3": { "*": "medium", "claude:sonnet": "high" }, "t4": { "*": "high" }, "tv": { "*": "" } } } // 子の思考の強さ
 ```
 
-画面（委譲カード・設定 › 委譲。design-system.md）が使う WebSocket のコマンド（`core/protocol.mjs`）: `delegationRouting { refresh? }`（設定・既定値・一覧・キーの `hasKey`・秘密の置き場の状態・今のモデル一覧に無い候補と使えないバックエンド `warnings`・候補ごとの今の使用量と使えるかどうか `candidates`。候補ごとにそのモデルの強さの持ち方 `effort: { levels, fixed }` を持ち、エージェントごとの会話の既定を `conversationEfforts` に返す）、`setDelegationRouting { settings }`、`setApiKeyUse { use: 'judge:jev' | 'judge:cerebras', id | null }`（判定器に使うキーを設定 › API キーから選ぶ。human-only）。古い口 `setDelegationRoutingKey { service, key }`・`deleteDelegationRoutingKey { service }`（`service` は `openrouter`（Jev）/ `cerebras`）は、同じ値のキーを登録して選ぶ橋渡しとして残してある（後片付けで外す）。`delegationRouting` の `keys` は `{ hasKey, keyRef }`。変わったら `delegationRoutingChanged` イベント（`change: 'settings'`）。使用量の取り直しが終わったときは同じイベントの `change: 'usage'`。種類のない旧イベントは設定の変更として扱える。設定保存は使用量の取得を待たない。自動選択をオンにしたとき、または使用量をまだ持たない候補を増やしたときだけ裏で取り直す。タスクごとの `routing` は `agentTasks` の各行（`running` の配信の `tasks` には載せない。下の「保存・画面・再起動」）。やり直しは `retryAgentTask`（上）。
+前の版（2026-10-09 より前）の `escalateToCerebras` は `escalateToQwen`、`judgeByKind` の `"cerebras"` は `"qwen"` として読む（`core/delegation-routing.mjs` の `migrateLegacySettings`。画面・操作からの保存でも断らない）。`prefs.json` は起動では書き直さず、次に委譲の設定を保存したときに今の名前で書く（[ADR 0177](adr/0177-judges-via-openrouter.md)）。
 
-**鍵と外部送信。** 判定器のキーは設定 › API キー（`api-key-secrets.json`。[ADR 0155](adr/0155-api-keys-in-one-place.md)）に登録し、Jev と Cerebras それぞれに「使うキー」を選ぶ（`api-keys.json` の `uses`）。画面には `hasKey` と `keyRef` だけ返す。キーの中身は確かめない（判定のときに初めて送る）。キーをログ・タスク・会話の記録・エラーに出さない。**外部送信の同意はキーを選ぶこと**（0022 のときは登録）: キーを選んでいなければ外へは何も送らず、難しさは `mid`。移行では、今キーを登録済みだった判定器だけ選んだ状態で引き継ぐ。送り先の URL は固定で、リダイレクトは追わない。
+画面（委譲カード・設定 › 委譲。design-system.md）が使う WebSocket のコマンド（`core/protocol.mjs`）: `delegationRouting { refresh? }`（設定・既定値・一覧・キーの `hasKey`・秘密の置き場の状態・今のモデル一覧に無い候補と使えないバックエンド `warnings`・候補ごとの今の使用量と使えるかどうか `candidates`。候補ごとにそのモデルの強さの持ち方 `effort: { levels, fixed }` を持ち、エージェントごとの会話の既定を `conversationEfforts` に返す）、`setDelegationRouting { settings }`、`setApiKeyUse { use: 'judge:jev', id | null }`（判定器（Jev・Qwen）に使う OpenRouter のキーを設定 › API キーから選ぶ。human-only。`judge:cerebras` は 2026-10-09 に廃止）。古い口 `setDelegationRoutingKey { service, key }`・`deleteDelegationRoutingKey { service }`（`service` は `openrouter` だけ。`cerebras` は断る）は、同じ値のキーを登録して選ぶ橋渡しとして残してある（後片付けで外す）。`delegationRouting` の `keys` は `{ hasKey, keyRef }`。変わったら `delegationRoutingChanged` イベント（`change: 'settings'`）。使用量の取り直しが終わったときは同じイベントの `change: 'usage'`。種類のない旧イベントは設定の変更として扱える。設定保存は使用量の取得を待たない。自動選択をオンにしたとき、または使用量をまだ持たない候補を増やしたときだけ裏で取り直す。タスクごとの `routing` は `agentTasks` の各行（`running` の配信の `tasks` には載せない。下の「保存・画面・再起動」）。やり直しは `retryAgentTask`（上）。
+
+**鍵と外部送信。** 判定器のキーは設定 › API キー（`api-key-secrets.json`。[ADR 0155](adr/0155-api-keys-in-one-place.md)）に登録し、判定器の「使うキー」を 1 つ選ぶ（`api-keys.json` の `uses` の `judge:jev`。Jev と Qwen が同じ OpenRouter のキーで送る）。画面には `hasKey` と `keyRef` だけ返す。キーの中身は確かめない（判定のときに初めて送る）。キーをログ・タスク・会話の記録・エラーに出さない。**外部送信の同意はキーを選ぶこと**（0022 のときは登録）: キーを選んでいなければ外へは何も送らず、難しさは `mid`。移行では、今キーを登録済みだった判定器だけ選んだ状態で引き継ぐ。送り先の URL は固定で、リダイレクトは追わない。
 
 ## リモートのホストへ任せる（`host`）
 
@@ -157,7 +159,7 @@ Claude・Codex の会話から、`ply_agents` MCP の `ply_delegate` で別の�
 - **無音・長いコマンド・裏の作業待ち**: 新しいホストは、実行中の子の活動時刻・コマンド・裏待ちを `task.telemetry` にまとめ、変化があれば最大 30 秒ごとに送る。依頼元が手元の子と同じ閾値・文面・通知済みの印で判定し、題に `⇄ <ホスト名>` を添えて会話へ届ける（[ADR 0171](adr/0171-remote-delegation-notices.md)）。承認待ちとロック待ちは無音に数えず、裏待ち中は無音と長いコマンドを重ねない。オフライン・`hostLost` の間と完了後は送らず、復帰したらホストの今の状態から再開する。古いホストから `telemetry` が来なければ従来どおり完了通知のみ。古い依頼元は追加の項目を無視する。
 - **ホストが落ちたまま**: 終わっていない子のあるホストが 10 分（`AGENT_HOST_OFFLINE_MINUTES`）以上オフラインのままなら、依頼元の会話へ、ホスト名・いつから・子の数と題・「PC が止まった、または Pleiad が起動していない可能性。つながり直せば追いつく」・待つか `ply_task_cancel` を 1 通で知らせる（ホストと依頼元の組ごと。続けば `AGENT_HOST_OFFLINE_REPEAT_MINUTES`（60）あけてもう 1 回だけ）。つながり直したら、`sync` の結果（走っている・終わった・ホストに記録が無い）を 1 通で知らせる。ホストの再起動で子の会話が無くなった行は `interrupted` で届き、完了通知になる（[ADR 0171](adr/0171-remote-delegation-notices.md)）。
 - **ホストに任せた作業の経過**（承認済み（2026-10-07））: バックグラウンドの詳細は、手元の委譲と同じ筋（`readonlyThread`。依頼・発言・ツール・考えた内容・稼働の弧）でホストの子の会話を見せる。読むのは端末のサーバーが `/agent` の `view` で取る（docs/remote.md §4.5「経過の読み出し」。人の操作だけ。AI の `ply_task_*` は今までどおり要約の結果だけで、会話の中身は読めない）。詳細を開いている間だけ差分を引き、終わったものは 1 回で止まる。古い分は末尾 40 発言までで、筋の先頭に「古い N 件のやり取りは省いています」（デスクトップ版は「ホストで開く」つき）。ホストの子がホストで任せた孫は、一覧に字下げの行で出す（詳細を一度開いた後。端末の台帳には保存しない。孫の「停止」は出さない: 止めるのは根のタスクで、止めれば孫も止まる）。AI が `ply_task_send` で送った追加の指示は「追加の指示」の発言として筋に出る（人が詳細から送る口は手元にも無いのでホストでも足さない）。ホストがオフラインの間は、経過時間を止めて「オフライン · HH:MM までの分」を出し（弧は衛星）、つながり直したら続きを足す。読み出しを知らない古いホスト・読めなかったときは、依頼と結果の 2 つの箱に戻し、読めなかった旨の 1 行を出す。
-- **ホストの側**: 任された子の会話には、出どころの印（`delegation.remote = { deviceId, deviceName, sessionTitle }`。画面は「⇄ <端末> の AI から」）が付き、タスクの親は仮の ID `remote:<deviceId>:<端末の会話の ID>`。完了通知は端末へ便りで届ける（ホストの会話に新しいターンは始めない）。**任された会話（とその子孫）からは、さらに `host` を指定できない**。端末の AI から始まった鎖には、委譲の深さの上限（4）を効かせる。端末ごとの上限は、動いているタスクが 8 件（任された子の子孫も数える）・`delegate` と `send` が 1 分に 20 件。取り消し・「すべて止める」は、任された子の子孫まで止める。記録は `by: agent`・`via: remote`・`deviceId`（子の会話に `delegate`・`send`・`cancel` と、人の答えが残る）。
+- **ホストの側**: 任された子の会話には、出どころの印（`delegation.remote = { deviceId, deviceName, sessionTitle }`。画面は「⇄ <端末> の AI から」）が付き、タスクの親は仮の ID `remote:<deviceId>:<端末の会話の ID>`。完了通知は端末へ便りで届ける（ホストの会話に新しいターンは始めない）。任された会話（とその子孫）からも、さらに `host` を指定でき、端末の AI から始まった鎖にも委譲の深さの上限は無い（手元の委譲と同じ。2026-10-09 に、`host` の禁止と深さの上限（4）を外した）。端末ごとの上限は、動いているタスクが 8 件（任された子の子孫も数える）・`delegate` と `send` が 1 分に 20 件。取り消し・「すべて止める」は、任された子の子孫まで止める。記録は `by: agent`・`via: remote`・`deviceId`（子の会話に `delegate`・`send`・`cancel` と、人の答えが残る）。
 - **端末を取り消す・許可を切る**: 任された動いている作業を止める（止めた旨は端末が次につながったときに知る）。端末側が許可を切った場合、ホストのタスクは続き、端末は新しい依頼も追跡もしない。
 
 ## 会話・権限・作業場所
@@ -431,7 +433,7 @@ Windows では、別のプロセス（ウイルス対策・PowerShell の `Get-C
 実行前の拒否は `tests/unit/codex-rejections.mjs`（rollout の解析・読む範囲・伏せ方）と `tests/unit/server-codex-rejections.mjs`（身代わりの Codex が rollout に拒否を書き、会話・`ply_task_status`・完了通知・`ply_task_send` の次の回まで）。
 子に残った裏の作業と子の結果は `tests/unit/server-delegation-background.mjs`（fake の台本 `bg-shell` / `active-shell` / `bg` / `term` / `hook-follow` で、報告後のコマンドを上限まで待って止める・台帳を閉じて完了通知に載せる・結果に止める前の報告を残す・返答前とユーザーの会話では止めない・サブエージェントは止めない・端末は子でも親でも待たない・Stop フックの続きの一言を結果にしない）と `tests/unit/delegation-result.mjs`（2026-09-27 の transcript と同じ行の形で、続きの印・中身の仕事をした続き・区切り・結果の選び方）と `tests/unit/claude-turn-end.mjs`（SDK の身代わりで、Stop フックの続きではターンが終わり、裏へ回ったまま終わらないコマンドがあると終わらず、`stopTask` で終わる）。
 履歴が一時的に読めないときは `tests/unit/history-retry.mjs`（見分け・0.5・1・2 秒の読み直し・一時的でないエラーはすぐ投げる・`CodexRpc.stop()` がプロセスの終わりを待つ）と `tests/unit/server-delegation-history-retry.mjs`（fake の台本 `history-ioerr <回数>` で、読み直して読める・取り込みを見送っても結果は読める・読めないままなら流れた返答で注意書き付きの `completed`）。
-振り分けは `tests/unit/delegation-routing.mjs`（規則・段・使用量・アカウント。判定器は偽の fetch）と `tests/unit/server-delegation-routing.mjs`（偽の Jev と偽の agy でサーバー全体。別の候補でやり直す・承認モードの確かめ・動いている元のタスク・完了通知の一行も）、画面の文と並びは `tests/unit/delegation-routing-view.mjs`。テストのサーバーは使用量を定期的に取らず（`AGENT_HOST_ROUTING_USAGE=off`）、判定器の送り先を手元に向ける（`AGENT_HOST_OPENROUTER_API` / `AGENT_HOST_CEREBRAS_API`。本物へは送らない）。
+振り分けは `tests/unit/delegation-routing.mjs`（規則・段・使用量・アカウント。判定器は偽の fetch）と `tests/unit/server-delegation-routing.mjs`（偽の Jev と偽の agy でサーバー全体。別の候補でやり直す・承認モードの確かめ・動いている元のタスク・完了通知の一行も）、画面の文と並びは `tests/unit/delegation-routing-view.mjs`。テストのサーバーは使用量を定期的に取らず（`AGENT_HOST_ROUTING_USAGE=off`）、判定器の送り先を手元に向ける（`AGENT_HOST_OPENROUTER_API`。本物へは送らない）。
 子の設定を替えるのは `tests/unit/server-delegation-settings.mjs`（fake・身代わりの Codex と agy で、走っている子のモデル・思考の強さ、message なしと一緒、無いモデル・選べない思考の強さ、走っていない子のエージェントの切り替えと引き継ぎ、親より緩くなる切り替えの承認、他人のタスク、変更の記録）。
 `npm run test:e2e -- agent-delegation` は実サービスを呼び、Claude → Codex、Codex → Claude と結果通知による再開を確認する。
 単独確認には `E2E_DELEGATION_PARENT=codex` などを使える。

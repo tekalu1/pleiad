@@ -82,12 +82,12 @@ export default async function (t) {
     { candidate: 'codex:gpt-6-luna', backend: 'codex', model: 'gpt-6-luna', tiers: ['t2'], usable: false, reason: 'unavailable', windows: [] },
   ];
   const tiers = { t1: ['antigravity:gemini-3.8-flash-high', 'claude:haiku'], t2: ['antigravity:gemini-3.8-flash-high', 'codex:gpt-6-luna', 'claude:sonnet'] };
-  const defaults = { enabled: true, judgeByKind: { implement: 'jev' }, escalateToCerebras: false, avoidPercent: 80, paceLimit: 1.5, tiers, table: { implement: ['t1', 't2', 't2'] },
+  const defaults = { enabled: true, judgeByKind: { implement: 'jev' }, escalateToQwen: false, avoidPercent: 80, paceLimit: 1.5, tiers, table: { implement: ['t1', 't2', 't2'] },
     efforts: { t1: { '*': 'low' }, t2: { '*': 'medium' } } };
   let stored = structuredClone(defaults);
   const sent = [];
-  const state = () => structuredClone({ settings: stored, defaults, kinds: ['implement'], judges: ['jev', 'cerebras', 'none'], tiers: ['t1', 't2'], candidates,
-    conversationEfforts: { claude: 'high', codex: '', antigravity: '' }, keys: { openrouter: { hasKey: true }, cerebras: { hasKey: true } }, storage: { encrypted: true } });
+  const state = () => structuredClone({ settings: stored, defaults, kinds: ['implement'], judges: ['jev', 'qwen', 'none'], tiers: ['t1', 't2'], candidates,
+    conversationEfforts: { claude: 'high', codex: '', antigravity: '' }, keys: { openrouter: { hasKey: true } }, storage: { encrypted: true } });
   const cmd = async (name, args) => {
     if (name === 'setDelegationRouting') {
       sent.push(args.settings);

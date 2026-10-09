@@ -28,3 +28,7 @@
 - `ply_delegate` の `kind` が必須になり、`backend` は任意になった。指示ファイルの振り分け表は要らなくなる。
 - 振り分けのために、サーバーが使用量を定期的に（5 分ごと・委譲の直後）取り直す。
 - 仕様は agent-delegation.md「委譲先の自動振り分け」。設定の画面（設定 › 委譲・委譲カードの理由）は次の段で作る。
+
+## 追記（2026-10-09）: 判定器 `cerebras` は OpenRouter 経由の `qwen` へ
+
+[ADR 0177](0177-judges-via-openrouter.md) で、Cerebras の API へ直に送る判定器 `cerebras` をやめ、同じ Qwen を OpenRouter 経由で呼ぶ判定器 `qwen` に替えた（`qwen/qwen3.8-27b`、provider の順で Cerebras を先に、答えは strict な関数の呼び出し）。キーは Jev と同じ OpenRouter のキー 1 つ。設定の `escalateToCerebras` は `escalateToQwen`、`judgeByKind` の `cerebras` は `qwen` として読む。上の検証の数字は Cerebras へ直に送ったときのもので、OpenRouter 経由では測っていない。

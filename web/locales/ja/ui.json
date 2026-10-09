@@ -3157,10 +3157,6 @@
           "name": "OpenRouter",
           "hint": "openrouter.ai · 多数のモデル"
         },
-        "cerebras": {
-          "name": "Cerebras",
-          "hint": "委譲の判定器"
-        },
         "custom": {
           "name": "その他",
           "hint": "名前を付けて登録"
@@ -3329,6 +3325,7 @@
     },
     "judge": {
       "jev": "Jev",
+      "qwen": "Qwen",
       "cerebras": "Cerebras",
       "none": "判定しない"
     },
@@ -3480,7 +3477,7 @@
     "settings": {
       "enable": "委譲先を自動で選ぶ",
       "judgeTitle": "難しさの判定",
-      "escalate": "Jev が迷ったら Cerebras に聞き直す",
+      "escalate": "Jev が迷ったら Qwen に聞き直す",
       "effective": {
         "noKey": "{{service}} のキーが登録されていないため、{{judge}} を選んだ種類は難しさを「中」として扱います。",
         "noCandidates": "使える委譲先がないため、自動の委譲はすべて失敗します。",
@@ -3488,8 +3485,7 @@
       },
       "judgeLabel": "{{kind}} の判定",
       "service": {
-        "openrouter": "OpenRouter（Jev）",
-        "cerebras": "Cerebras"
+        "openrouter": "OpenRouter（Jev・Qwen）"
       },
       "keyCancel": "やめる",
       "keyInput": "{{service}} のキー",
