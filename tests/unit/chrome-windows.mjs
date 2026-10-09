@@ -553,6 +553,49 @@ export default async function (t) {
     } finally { await r.stop(); }
   }
 
+  // ===== 11. 引き継ぎの途中で層が入れ替わった・切れた: 聞けなかっただけなので、窓の記録を残して途中でやめる（引き継げなかった窓にしない）=====
+  {
+    const r = await rig();
+    try {
+      const a = await r.agent('one');
+      await a.cmd('Target.createTarget', { url: 'about:blank' });
+      const tokenBefore = r.scope.snapshot()[0].windows[0].token;
+      const original = r.os.adoptAgent;
+      r.os.adoptAgent = async (...args) => { r.os.setPending(true); return original(...args); };   // 呼び出しの途中で main が入れ替わる（呼び出しは null で返る）
+      const cut = await r.scope.readopt();
+      t.ok('引き継ぎの途中で層が入れ替わったら、その窓は lost に出さず（閉じさせない）、記録も残して interrupted で返す', cut.length === 0 && cut.interrupted === true && r.scope.windows('one').length === 1 && r.scope.snapshot()[0].windows[0].token === tokenBefore, JSON.stringify({ cut, snapshot: r.scope.snapshot() }));
+      r.os.adoptAgent = original;
+      r.os.setPending(false);
+      const again = await r.scope.readopt();
+      t.ok('層が戻ってからの引き継ぎでは、残した記録から窓を引き継げる（interrupted ではない）', again.length === 0 && !again.interrupted && r.scope.windows('one').length === 1 && agentWindows(r).filter(h => !h.closed).length === 1, JSON.stringify({ again, hwnds: r.os.hwnds() }));
+      // 層が入れ替わっていないのに窓が見つからなければ、これまで通り lost（引き継げなかった窓）
+      r.os.opts.adoptFails = true;
+      const gone = await r.scope.readopt();
+      t.ok('層はそのままなのに引き継げない窓は、これまで通り lost で返す', gone.length === 1 && !gone.interrupted && r.scope.windows('one').length === 0, JSON.stringify(gone));
+    } finally { await r.stop(); }
+  }
+
+  // 窓を開いている最中に層が入れ替わって、窓を隠せなかった: 見える窓を残さず、閉じて「更新中」で失敗する
+  {
+    const r = await rig();
+    try {
+      const a = await r.agent('one');
+      await a.cmd('Target.createTarget', { url: 'about:blank' });
+      const pages = () => r.fake.targets().filter(x => x.type === 'page').length;
+      const before = pages();
+      const original = r.os.findWindowByNonce;
+      r.os.findWindowByNonce = async () => { r.os.setPending(true); return null; };   // 探している間に main が入れ替わる
+      const byBounds = r.os.findWindowByBounds;
+      r.os.findWindowByBounds = async () => null;
+      const failed = await a.cmd('Target.createTarget', { url: 'about:blank', newWindow: true });
+      r.os.findWindowByNonce = original;
+      r.os.findWindowByBounds = byBounds;
+      r.os.setPending(false);
+      t.ok('窓を隠せないまま層が入れ替わったら、「更新中」で失敗する', /updating/i.test(failed.error?.message ?? ''), JSON.stringify(failed));
+      t.ok('開いた窓は閉じる（隠せていない窓・題のページを残さない）。記録も増えない', pages() === before && r.scope.windows('one').length === 1 && !r.fake.targets().some(x => String(x.url).includes('PLY-')), JSON.stringify({ before, now: pages(), targets: r.fake.targets().map(x => x.url) }));
+    } finally { await r.stop(); }
+  }
+
   {
     // 隠した後に失敗したら、隠した窓の記録だけを残さない
     const r = await rig();

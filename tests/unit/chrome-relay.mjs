@@ -680,4 +680,21 @@ export default async function (t) {
       await rm(scratch, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
     }
   }
+
+  // ===== 更新の先の引き継ぎ（readopt）は 1 本ずつ。重なって呼ばれても、層への引き継ぎを並べて走らせない（ADR 0167）=====
+  {
+    const r = await rig();
+    let a;
+    try {
+      a = await agent(await r.relay.endpoint('one'));
+      await a.cmd('Target.setDiscoverTargets', { discover: true });
+      await a.cmd('Target.createTarget', { url: 'about:blank' });
+      let running = 0, peak = 0, total = 0;
+      const original = r.os.adoptAgent;
+      r.os.adoptAgent = async (...args) => { running++; total++; peak = Math.max(peak, running); await new Promise(resolve => setTimeout(resolve, 40)); running--; return original(...args); };
+      const results = await Promise.all([r.relay.readopt(), r.relay.readopt(), r.relay.readopt()]);
+      t.ok('readopt が重なって呼ばれても 1 本ずつ走る（層への引き継ぎが並ばない）。窓は 1 つのまま', peak === 1 && total === 3 && results.every(n => n === 0) && r.os.hwnds().filter(h => h.agent && !h.closed).length === 1, JSON.stringify({ peak, total, results }));
+      t.ok('引き継いでも、窓のタブは会話の範囲のまま', (await a.cmd('Target.getTargets')).result.targetInfos.length === 1);
+    } finally { a?.close(); await r.stop(); }
+  }
 }

@@ -155,14 +155,27 @@ export function createChromeWindows({ os, locate, log = () => {}, random = () =>
   }
 
   /** chrome.exe で新しい窓を開く（--profile-directory。起こせなければ false） */
-  async function launch(features, nonce, profileDir) {
+  async function launch(cdp, features, nonce, profileDir) {
     if (!features.launch) return false;
     const found = await locateBrowser();
     if (!found) return false;
+    const layer = os.generation?.() ?? 0;
     const result = await os.launchWindow({ browser: found, profileDir, url: nonceUrl(nonce), nonce,
       ...(locate?.custom ? { userDataDir: locate.userDataDir } : {}) });   // --window-position・--window-size は付けない（起動中の Chrome に渡す新しい窓では無視される。実機）
-    if (result?.ok !== true) { log('chrome-windows: launching chrome.exe failed'); return false; }
+    if (result?.ok !== true) {
+      log('chrome-windows: launching chrome.exe failed');
+      // 呼び出しの途中で層が入れ替わった・切れたなら、返事を聞けなかっただけで、chrome.exe は窓を開いている（隠せず、どの記録にも載らない窓になる）。
+      // この呼び出しが付けた題（nonce）の窓だけを CDP で閉じる
+      if ((os.generation?.() ?? 0) !== layer) await closeStray(cdp, nonce);
+      return false;
+    }
     return true;
+  }
+
+  /** 題の nonce の窓（この呼び出しが開いたもの）を CDP で閉じる。ほかの窓には触らない */
+  async function closeStray(cdp, nonce) {
+    const targetId = await waitFor(() => findTarget(cdp, nonce), time.targetWaitMs, time.targetPollMs);
+    if (targetId) await cdp.send('Target.closeTarget', { targetId }).catch(() => {});
   }
 
   const contextOf = async (cdp, targetId) => (await cdp.send('Target.getTargetInfo', { targetId }).catch(() => null))?.targetInfo?.browserContextId ?? null;
@@ -176,6 +189,7 @@ export function createChromeWindows({ os, locate, log = () => {}, random = () =>
 
   async function openWindow(cdp, entryId, entry, url) {
     await osReady();
+    const layer = os.generation?.() ?? 0;
     let nonce = random();
     const features = os.capabilities().features;
     const before = await os.foreground();
@@ -202,14 +216,14 @@ export function createChromeWindows({ os, locate, log = () => {}, random = () =>
       }
       if (!targetId) {
         nonce = random();
-        launched = await launch(features, nonce, want);
+        launched = await launch(cdp, features, nonce, want);
         if (!launched) throw new Error('could not open a window in the selected Chrome profile');
       }
       profile = want;
     } else {
       if (first) {
         const profileDir = await readLastUsedProfile(locate?.userDataDir);
-        launched = await launch(features, nonce, profileDir);
+        launched = await launch(cdp, features, nonce, profileDir);
         if (launched) profile = profileDir;
       }
       if (!launched) ({ targetId } = await create(null));
@@ -229,6 +243,7 @@ export function createChromeWindows({ os, locate, log = () => {}, random = () =>
         ref = await os.findWindowByNonce(nonce);
         if (!ref && features.bounds) ref = await findByBounds(cdp, windowId, since, { resize: true });
         if (ref) await hide(ref, before);
+        else if ((os.generation?.() ?? 0) !== layer) throw new Error('Pleiad is updating. Retry in a minute.');   // 層が入れ替わる間に探せなかった。隠せていない窓を残さず、閉じて失敗にする（下の catch）
         else log('chrome-windows: window not found, so it was not hidden');
       }
       // 大きさを決める。最大化のまま開いた窓（前回の最大化がプロフィールに残っている chrome.exe の最初の窓）には、先に通常へ戻してから大きさを送る（normalize）。
@@ -248,6 +263,7 @@ export function createChromeWindows({ os, locate, log = () => {}, random = () =>
     } catch (error) {
       // 隠した窓の記録だけを残さない（見えない窓が、誰にも戻せないまま残る）。閉じる（だめなら戻す）
       if (ref) await os.closeAgent(ref).catch(() => {});
+      else if (targetId) await cdp.send('Target.closeTarget', { targetId }).catch(() => {});   // 隠せていない新しい窓（まだ題のページだけ）を残さない
       throw error;
     }
     await navigate(cdp, targetId, url);
@@ -426,25 +442,31 @@ export function createChromeWindows({ os, locate, log = () => {}, random = () =>
 
     /**
      * 印を持つ窓を層に引き継がせて、記録の ref を作り直す（サーバーの入れ替わり後・main の層が入れ替わった後）。
-     * 層が引き継げなかった窓（窓が無い・ブラウザーの窓でない）は記録を捨て、{ entryId, windowId } で返す（relay が CDP で閉じる）。層が使えなければ何もしない
+     * 層が引き継げなかった窓（窓が無い・ブラウザーの窓でない）は記録を捨て、{ entryId, windowId } で返す（relay が CDP で閉じる）。層が使えなければ何もしない。
+     * 引き継ぎの途中で層が入れ替わった・切れた（呼び出しが聞けなかっただけ。窓が無いとは分からない）ときは、その窓の記録を残して途中でやめ、返す配列の interrupted を true にする
+     * （層が戻れば onReady でもう一度呼ばれる）
      */
     async readopt({ cdp = null } = {}) {
       if (!os.capabilities().supported) return [];
       const lost = [];
       const features = os.capabilities().features;
-      for (const [entryId, entry] of [...entries]) {
+      const layer = os.generation?.() ?? 0;
+      const cut = () => !os.capabilities().supported || (os.generation?.() ?? 0) !== layer;
+      scan: for (const [entryId, entry] of [...entries]) {
         for (const [windowId, record] of [...entry.windows]) {
           if (!record.token) {
             // main が居ない間に開いた popup（隠せず、窓の ID だけ残っている）。層が戻ったので、外形で探して隠す。探せない・cdp が無いなら、見える窓を残さないよう lost で返して閉じさせる
             if (record.role !== 'popup' || record.ref || entry.revealed) continue;
             const ref = cdp && features.conceal && features.bounds ? await findByBounds(cdp, windowId, baseline, { waitMs: time.popupWaitMs }).catch(() => null) : null;
             if (ref) { record.ref = ref; await hide(ref, null); record.token = await os.exportAgent(ref); changed(); }
+            else if (cut()) { lost.interrupted = true; break scan; }
             else { entry.windows.delete(windowId); lost.push({ entryId, windowId, revealed: false }); }
             continue;
           }
           // 見せている窓は、層に「隠していない窓」として引き継がせる（前面の見張りが人の窓を画面の外へ戻さない）
           const ref = await os.adoptAgent(record.token, { revealed: entry.revealed === true }).catch(() => null);
           if (ref) record.ref = ref;
+          else if (cut()) { lost.interrupted = true; break scan; }
           else { entry.windows.delete(windowId); lost.push({ entryId, windowId, revealed: entry.revealed === true }); }
         }
       }

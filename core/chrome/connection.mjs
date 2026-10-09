@@ -312,8 +312,9 @@ export function createChromeConnection({ locate, os, WebSocketImpl = NodeWebSock
      */
     async demand({ signal } = {}) {
       if (closedForGood) throw new ChromeConnectionError('closed');
-      if (!await isSupported()) throw new ChromeConnectionError('unsupported');
+      // つながっていれば層を待たない。更新の直後は、接続を引き継いでも main の層はサーバーの待ち受けの後でないと付かない（待つと上りがつながらないまま時間切れになる）
       if (connected && !connected.cdp.closed) return connected.cdp;
+      if (!await isSupported()) throw new ChromeConnectionError('unsupported');
       if (signal?.aborted) throw new ChromeConnectionError('aborted');
       return new Promise((resolve, reject) => {
         const waiter = { resolve, reject };
