@@ -65,7 +65,8 @@
   transition:background var(--dur-fast) var(--ease-out),color var(--dur-fast) var(--ease-out)}
 .gp-tab:hover{color:var(--ink)}
 .gp-tab[aria-selected="true"]{background:var(--surface-paper);color:var(--ink);font-weight:600;box-shadow:0 1px 4px var(--shadow)}
-.gp-tab .n{font-weight:400;color:var(--ink-weak);font-size:var(--fs-s)}
+.gp-tab svg.i{width:18px;height:18px;flex:none}
+.gp-tab .tl{min-width:0;overflow:hidden;text-overflow:ellipsis}
 .gp-tab:focus-visible,.gp :is(.btn,.seg button,.fr,.grp,.cg-row,.wrow,.dgap,[tabindex]):focus-visible{outline:2px solid var(--line-blue);outline-offset:1px}
 /* 本文 */
 .gp{position:relative;min-height:100%;font-variant-numeric:tabular-nums}
@@ -84,8 +85,8 @@
 .gp .btn[aria-pressed="true"]{color:var(--ink-blue)}
 .gp .btn[aria-disabled="true"]{opacity:.4;cursor:default}
 .gp svg.i{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round;flex:none}
-.gp .sm svg.i,.gp .fr svg.i,.gp .grp svg.i,.gp .ref svg.i,.gp .startmk svg.i,.gp .cpill svg.i,.gp .dgap svg.i,.gp .cl-meta svg.i,.gp .wrow > svg.i{width:13px;height:13px}
-.gp .chev svg.i,.gp .cpill .x svg.i{width:12px;height:12px}
+.gp .sm svg.i,.gp .fr svg.i,.gp .grp svg.i,.gp .ref svg.i,.gp .startmk svg.i,.gp .dgap svg.i,.gp .cl-meta svg.i,.gp .wrow > svg.i{width:13px;height:13px}
+.gp .chev svg.i{width:12px;height:12px}
 .gp .seg{display:inline-flex;gap:2px;padding:3px;background:var(--surface-3);border-radius:var(--r-pill);flex:none}
 .gp .seg button{border:0;background:transparent;border-radius:var(--r-pill);padding:2px 10px;font:inherit;font-size:var(--fs-s);color:var(--ink-weak);cursor:pointer;white-space:nowrap}
 .gp .seg button:hover{color:var(--ink)}
@@ -181,6 +182,7 @@
 @media (prefers-reduced-motion:reduce){.gp .flash{animation:none}}
 @keyframes gp-flash{0%{box-shadow:inset 0 0 0 2px var(--line-blue)}100%{box-shadow:inset 0 0 0 2px transparent}}
 .gp .dx.wrap .din, .gp .dx.wrap .sbs{width:auto}
+.gp .dx.wrap .sbs{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
 .gp .dx.wrap .code{white-space:pre-wrap;overflow-wrap:anywhere}
 .gp .sbs{display:grid;grid-template-columns:1fr 1fr;width:max-content;min-width:100%;column-gap:2px}
 .gp .hc{display:grid;grid-template-columns:var(--gw,3.2em) 1.5em minmax(0,1fr);color:var(--ink);background:var(--surface-1)}
@@ -195,14 +197,13 @@
 .gp .rbar{position:sticky;top:-10px;z-index:4;background:var(--surface-paper);margin:-10px -10px 2px;padding:10px 10px 8px;display:flex;align-items:center}
 .gp .rseg{max-width:100%;min-width:0}
 .gp .rseg > button{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis}
-.gp .cpill{display:inline-flex;align-items:center;flex:none;background:var(--surface-paper);border-radius:var(--r-pill);box-shadow:0 1px 4px var(--shadow);animation:gp-appear var(--dur) var(--ease-out)}
-.gp .cpill button{border:0;background:none;cursor:pointer;display:inline-flex;align-items:center;gap:4px;font:600 var(--fs-s) var(--font-mono);color:var(--ink);padding:2px 4px 2px 9px;border-radius:var(--r-pill)}
-.gp .cpill .x{padding:2px 7px 2px 3px;color:var(--ink-weak)}
-.gp .cpill .x:hover{color:var(--ink)}
 .gp .cg{margin:0 -4px}
-.gp .cg-row{display:grid;grid-template-columns:44px minmax(0,1fr) auto;align-items:center;width:100%;height:30px;border:0;background:none;padding:0 8px 0 0;border-radius:var(--r-s);cursor:pointer;text-align:left;font-size:var(--fs-s);color:var(--ink);transition:background var(--dur-fast) var(--ease-out)}
+.gp .cg-row{display:grid;grid-template-columns:44px minmax(0,1fr) auto 18px;align-items:center;width:100%;height:30px;border:0;background:none;padding:0 4px 0 0;border-radius:var(--r-s);cursor:pointer;text-align:left;font-size:var(--fs-s);color:var(--ink);transition:background var(--dur-fast) var(--ease-out)}
 .gp .cg-row:hover{background:var(--surface-hover)}
 .gp .cg-row.sel{background:var(--surface-sel)}
+.gp .cg-row .chev{color:var(--ink-weak);justify-content:center}
+.gp .cg-row[aria-expanded="true"] .chev{color:var(--ink-blue)}
+.gp .cg-row:hover .chev{color:var(--ink)}
 .gp .cg-row:focus-visible{outline:2px solid var(--line-blue);outline-offset:-2px}
 .gp svg.g{width:44px;height:30px;display:block;overflow:visible}
 .gp .cg-t{display:flex;align-items:center;gap:5px;min-width:0;transition:opacity var(--dur) var(--ease-out)}
@@ -250,6 +251,17 @@
 .gp .cl-meta{font-size:var(--fs-xs);color:var(--ink-weak);padding:0 2px 6px 6px;display:flex;flex-wrap:wrap;gap:4px 8px;align-items:center}
 .gp .cl-meta .btn{font-size:var(--fs-xs);padding:2px 10px;height:24px}
 .gp .cl-meta code{font-size:var(--fs-xs)}
+/* ---- コミットの行を開いた箱（グラフの縦線を左に引き継ぐ。開閉は .fold と同じ高さ + 不透明度） ---- */
+.gp .ins{display:grid;grid-template-columns:44px minmax(0,1fr)}
+.gp .ins-l{position:relative}
+.gp .ins-l svg.g{position:absolute;inset:0;height:100%}
+.gp .ins-b{background:var(--surface-1);border-radius:var(--r-m);padding:8px 4px 6px;margin:2px 0 6px;min-width:0}
+.gp .ins-b .fr:hover, .gp .ins-b .fr:focus-within, .gp .ins-b .grp:hover{background:var(--surface-paper)}
+.gp .ins-b .cl-meta{padding-left:6px}
+.gp .ins-b .git-empty{padding:10px 6px}
+/* ---- 差分の注記（新規・削除のファイルを 1 列で見せる理由） ---- */
+.gp .dnote{font-size:var(--fs-xs);color:var(--ink-weak);background:var(--surface-1);border-radius:var(--r-s);padding:4px 10px;margin-top:8px}
+.gp .dnote + .dx{margin-top:6px}
 /* ---- 作業場所タブ ---- */
 .gp .wrow{display:grid;grid-template-columns:20px minmax(0,1fr) auto;column-gap:6px;align-items:start;width:100%;border:0;background:none;text-align:left;cursor:pointer;padding:8px 8px;border-radius:var(--r-m);font-size:var(--fs-s)}
 .gp .wrow:hover{background:var(--surface-hover)}

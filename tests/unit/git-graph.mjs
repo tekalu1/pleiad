@@ -1,5 +1,5 @@
 // git パネルのグラフ（web/git-graph.mjs）: レーンの割り当て（合流・分岐・作業ツリーの行）と、範囲の帯に入るコミットの判定。
-import { layoutGraph, rangeNodes, rowSvg, WT_KEY } from '../../web/git-graph.mjs';
+import { lanesBelow, laneX, layoutGraph, rangeNodes, rowSvg, WT_KEY } from '../../web/git-graph.mjs';
 
 export const name = 'git-graph';
 export const title = 'git のグラフ: レーン・合流・分岐・作業ツリーの行・範囲の帯';
@@ -41,4 +41,12 @@ export default async function (t) {
   t.ok('始まりが読み込みの外なら unknownStart', unknown.unknownStart === true);
   const one = rangeNodes(lay, commits, { kind: 'commit', hash: 'p2' });
   t.ok('コミットを押した: そのコミットだけ', [...one.nodes].join() === '3' && one.base === null);
+
+  // 行を開いた箱の左へ引き継ぐ縦の線（lanesBelow）: 行 r の下へ続く筋を、同じ筋・同じ点線かどうかで 1 本にまとめる
+  const below1 = lanesBelow(merged, 1);
+  t.ok('分岐の途中の行の下: 筋 0（m→b2）と筋 1（f→b1）が続く', below1.map((l) => l.lane).join() === '0,1' && below1.every((l) => l.x === laneX(l.lane)), JSON.stringify(below1));
+  t.ok('同じ筋に重なる辺は 1 本にまとめる（b2→b1 と f→b1 はどちらも筋 1）', lanesBelow(merged, 2).map((l) => l.lane).join() === '1');
+  t.ok('末尾の行の下には何も続かない', lanesBelow(merged, 3).length === 0);
+  t.ok('各線は辺の添字を持つ（箱の線が行の強調と一緒に切り替わる）', below1.every((l) => merged.edges[l.edge].mid === l.lane));
+  t.ok('作業ツリーの行の下は HEAD へ向かう点線', lanesBelow(lay, 0).length === 1 && lanesBelow(lay, 0)[0].dash === true && lanesBelow(lay, 0)[0].lane === 0);
 }
