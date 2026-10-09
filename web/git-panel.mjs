@@ -279,7 +279,7 @@ export function setupGitPanel({ cmd, preview, session, jump, use, onState = () =
     boxList = []; boxKeys = {};
     const meta = m.commit && !m.loading ? (() => {
       const c = m.commit; const mine = mineHash(c.hash);
-      return `<div class="cl-meta"><span>${esc(c.author)} · ${esc(new Date(c.at).toLocaleString())} · <code>${esc(c.short)}</code> · ${esc(t('git.parent'))} <code>${esc(c.parents.map((p) => p.slice(0, 7)).join(' ') || t('git.noParent'))}</code>${mine ? ` · ${esc(t('git.madeHere'))}` : ''}</span>${mine && !foreign() ? `<button class="btn btn-quiet" type="button" data-jump="${esc(c.hash)}">${jumpIcon}${esc(t('git.jump'))}</button>` : ''}</div>`;
+      return `<div class="cl-meta"><span>${esc(c.author)} · <time datetime="${esc(new Date(c.at).toISOString())}" title="${esc(new Date(c.at).toLocaleString())}">${esc(fmt.relative(c.at))}</time> · <code>${esc(c.short)}</code> · ${esc(t('git.parent'))} <code>${esc(c.parents.map((p) => p.slice(0, 7)).join(' ') || t('git.noParent'))}</code>${mine ? ` · ${esc(t('git.madeHere'))}` : ''}</span>${mine && !foreign() ? `<button class="btn btn-quiet" type="button" data-jump="${esc(c.hash)}">${jumpIcon}${esc(t('git.jump'))}</button>` : ''}</div>`;
     })() : '';
     const body = messageOf(m, key === WT_KEY ? t('git.emptyUncommitted') : t('git.emptyCommit'));
     const files = filesHTML(m, 'b:', boxList, boxKeys);

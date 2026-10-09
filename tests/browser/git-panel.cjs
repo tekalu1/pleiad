@@ -42,6 +42,10 @@ async (page) => {
   check(await page.locator('.gp-tab svg path, .gp-tab svg circle').count() >= 4, 'the tab icons are drawn');
 
   await page.locator('.cg-row').first().waitFor();
+  // 会話の始まりが HEAD なら、それより古い履歴は畳まれている。箱を開く試験のために先に広げる
+  const older = page.locator('.cg-more[data-older]');
+  if (await older.count() && await older.getAttribute('aria-expanded') === 'false') await older.click();
+  await page.waitForFunction(() => [...document.querySelectorAll('.cg-row:not(.wt)')].filter((r) => r.getBoundingClientRect().height > 0).length >= 3);
   check(await page.locator('.rbar [data-rg="uncommitted"][aria-pressed="true"]').count() === 1, 'range starts at uncommitted from the shortcut');
   const rowCount = await page.locator('.cg-row').count();
   check(rowCount >= 3, 'the graph has commit rows');
@@ -51,7 +55,9 @@ async (page) => {
   // コミットの行を押すと、その行のすぐ下に箱が開く（同時に 1 つ。札も薄くもならない）
   const commitRows = page.locator('.cg-row:not(.wt)');
   const a = commitRows.nth(0), b = commitRows.nth(1);
-  await a.click();
+  // 箱の開閉の動きの途中は行が動くので、行は DOM の click で押す（範囲の帯が重なることもある）
+  const tap = (loc) => loc.evaluate((x) => x.click());
+  await tap(a);
   check(await a.getAttribute('aria-expanded') === 'true', 'the row opens (aria-expanded)');
   const boxA = page.locator(`#${await a.getAttribute('aria-controls')}`);
   await page.locator('.ins .fr[data-key]').first().waitFor();
@@ -63,15 +69,27 @@ async (page) => {
   await page.waitForTimeout(400);
   check(await page.evaluate(() => getComputedStyle(document.querySelector('.cg-row[aria-expanded="true"] > .chev')).transform === 'matrix(0, 1, -1, 0, 0, 0)'), 'the chevron is rotated 90 degrees while open');
 
+  const meta = await boxA.locator('.cl-meta time').evaluate((x) => ({ text: x.textContent, title: x.title }));
+  check(/前|たった今/.test(meta.text) && /\d{4}/.test(meta.title) && !/\d{4}/.test(meta.text), 'the box shows a relative time and keeps the absolute one in its title');
+  check(meta.text === (await a.locator('.cg-tm').textContent()), 'the box time is written like the graph row');
+  // 小さいアイコンの大きさと面（13px / 12px・背景は透明・padding なし）。規則が潰れると灰色の丸い面が付く
+  const iconBox = (sel) => page.evaluate((q) => [...document.querySelectorAll(q)].map((e) => { const c = getComputedStyle(e); return [c.width, c.height, c.backgroundColor, c.paddingLeft, c.display]; }), sel);
+  const flat = (rows, size) => rows.length > 0 && rows.every(([w, h, bg, pad]) => w === size && h === size && bg === 'rgba(0, 0, 0, 0)' && pad === '0px');
+  check(flat(await iconBox('.gp .ins .fr svg.i'), '13px'), 'file row icons are 13px with no face');
+  check(flat(await iconBox('.gp .ins .fr .btn.sm svg.i'), '13px'), 'small button icons are 13px with no face');
+  check(flat(await iconBox('.gp .cg-row .chev svg.i'), '12px'), 'row chevrons are 12px with no face');
+  check(flat(await iconBox('.gp-tab svg.i'), '18px'), 'tab icons are 18px with no face');
+  check(await page.evaluate(() => { const c = getComputedStyle(document.querySelector('.gp .rseg')); return c.backgroundColor !== 'rgba(0, 0, 0, 0)' && c.paddingLeft === '3px'; }), 'the segmented control keeps its face');
+
   // 別の行を押すと前の箱は閉じる。同じ行をもう一度で閉じる
-  await b.click();
+  await tap(b);
   check(await a.getAttribute('aria-expanded') === 'false' && await b.getAttribute('aria-expanded') === 'true', 'another row closes the previous box');
   check(await page.locator('.cg-row[aria-expanded="true"]').count() === 1, 'only one box is open at a time');
-  await b.click();
+  await tap(b);
   check(await page.locator('.cg-row[aria-expanded="true"]').count() === 0, 'the same row again closes the box');
 
   // Esc で閉じる（パネルは閉じない）
-  await a.click();
+  await tap(a);
   await page.locator('.ins .fr[data-key]').first().waitFor();
   await page.keyboard.press('Escape');
   check(await page.locator('.cg-row[aria-expanded="true"]').count() === 0, 'Escape closes the open box');
@@ -79,7 +97,7 @@ async (page) => {
   check(await page.evaluate(() => document.activeElement?.classList.contains('cg-row')), 'focus stays on the row after closing');
 
   // 差分: 開いた箱のファイルを押す → Esc で、開いたままの箱と押したファイルの行へ戻る
-  await a.click();
+  await tap(a);
   await page.locator('.ins .fr[data-key]').first().waitFor();
   const second = page.locator('.ins .fr[data-key]').nth(1);
   const secondKey = await second.getAttribute('data-key');
@@ -183,6 +201,7 @@ async (page) => {
   await page.locator('.wrow').first().waitFor();
   check(/Worktree、\d+ 件/.test(await page.locator('.gp-tab[data-t="worktrees"]').getAttribute('aria-label')), 'the worktree tab keeps its count in the accessible name');
   check(await page.locator('.wrow .wbadge.here').count() === 1, 'the current worktree is marked');
+  check(flat(await iconBox('.gp .wrow > svg.i'), '13px'), 'worktree row icons are 13px with no face');
   await page.locator('.wrow').first().click();
   check(await page.locator('.wrow[aria-expanded="true"]').count() === 1, 'a worktree row opens');
 
