@@ -225,7 +225,6 @@
     "notRunning": "この会話は実行中ではありません",
     "remote": {
       "unavailable": "この PC の Pleiad はホストへ任せる口を持っていません（デスクトップ版の端末だけが使えます）",
-      "nested": "ホストに任された会話からは、さらにホストへ任せられません",
       "hostUnknown": "host「{{host}}」は、この PC がつないでいるホストにありません。使えるホスト: {{hosts}}",
       "hostAmbiguous": "host「{{host}}」に当たるホストが複数あります。名前を変えるか、ホストの ID で指定してください",
       "hostNotEnabled": "ホスト「{{host}}」は、この PC の AI から任せる設定がオフです（利用者が「ほかのホストにつなぐ」のウィンドウで変えられます）",
@@ -288,7 +287,6 @@
     "offsetInvalid": "offset は0以上の整数です",
     "secondsInvalid": "seconds は1〜30です",
     "remoteBadTaskId": "ホストの便りの taskId の形が不正です（手元のタスクと同じ ID も受けません）",
-    "remoteDepth": "端末の AI から任された作業の委譲は、{{max}} 階層までです",
     "isolateInvalid": "isolate は true か false で指定してください",
     "stopping": "停止処理中です。少し待ってください",
     "modelUnknown": "model_unknown: モデル {{model}} は {{backend}} の今の一覧にありません（選べるもの: {{models}}）。何も変えていません",

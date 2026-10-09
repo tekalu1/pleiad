@@ -730,11 +730,10 @@ async function callAgentOp(owner, name, args, { locale } = {}) {
 /**
  * ply_delegate { host }（端末のデスクトップ版の AI からホストの Pleiad へ。core/remote-delegation.mjs）。手元の委譲と同じ関門を通る:
  * 読み取り・計画モードの会話は断る（上）・Codex の親は full / yolo 以外では呼び出し自体を確かめる・承認モードの引き上げが要るときは、ホストが計画を返し、
- * 依頼元の会話で 1 回だけ確かめる。ホストに任された会話からは、さらにホストへ任せられない
+ * 依頼元の会話で 1 回だけ確かめる。ホストに任された会話（とその子孫）からも、さらにホストへ任せられる（2026-10-09 に禁止を外した）
  */
 async function callRemoteDelegate(owner, turn, args, lng) {
   if (!remoteDelegation.enabled) throw new Error(agentT(lng, 'delegation.remote.unavailable'));
-  if ((await delegationRoot(owner)).remote) throw new Error(agentT(lng, 'delegation.remote.nested'));
   if (turn.backend.id === 'codex' && !['full', 'yolo'].includes(turn.info.mode)) {
     const answer = await askPermission({ toolName: 'ply_delegate', input: args, sessionId: owner, signal: turn.ac.signal, kind: 'tool', canAlways: false, locale: lng });
     if (!answer.allow) throw new Error(agentT(lng, 'delegation.denied'));

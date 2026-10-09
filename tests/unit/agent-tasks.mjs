@@ -172,6 +172,9 @@ export default async function(t) {
     let owner = 'parent', deepest;
     for (let i = 0; i < 6; i++) { deepest = await manager.call(owner, 'ply_delegate', { backend: 'codex', task: 'deep' }); owner = deepest.sessionId; }
     t.ok('委譲の深さに上限が無い（6 階層まで委譲できる）', deepest.depth === 6);
+    owner = 'parent';
+    for (let i = 0; i < 6; i++) { deepest = await manager.call(owner, 'ply_delegate', { backend: 'codex', task: 'deep', ...(i === 0 ? { remote: { deviceId: 'dev', deviceName: 'laptop', sessionId: 'conv', title: 't', mode: {} } } : {}) }); owner = deepest.sessionId; }
+    t.ok('端末の AI から任された作業の鎖にも、深さの上限が無い（6 階層まで委譲できる）', deepest.depth === 6);
     openGate();
     await until(() => many.every(j => manager.get(j.taskId).status === 'completed'));
     t.ok('積んだ追加指示を順に全部実行する', manager.get(many[0].taskId).result.endsWith('more 24') && calls.filter(c => c[0] === many[0].taskId).flatMap(c => c[1].split('\n\n')).filter(p => p.startsWith('more ')).length === 25);

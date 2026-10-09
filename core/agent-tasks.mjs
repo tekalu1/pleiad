@@ -10,9 +10,6 @@ import { taskTable } from './db.mjs';
 const ACTIVE = new Set(['queued', 'running', 'cancelling']);
 // 完了通知がまだ依頼元に届いていない（終わった直後・送る前・送っている最中）。running にはこの間だけ終わったタスクも載せる
 const UNDELIVERED = new Set(['none', 'pending', 'delivering']);
-// 端末の AI から始まった委譲の鎖の深さの上限（docs/remote.md §4.5、ADR 0146。core/remote/agent-protocol.mjs の AGENT_LIMITS.depth と同じ）。
-// 手元の委譲には深さの上限は無い（2026-09-27 に廃止）
-const REMOTE_DEPTH_MAX = 4;
 // ホストの便りから写しの行へ写す項目（agent-tasks の mirror）。結果・状態・活動の写し
 const MIRROR_FIELDS = ['title', 'status', 'error', 'backend', 'model', 'effort', 'mode', 'cwd', 'remoteSessionId', 'worktree', 'routing', 'result', 'resultLength', 'hostWaiting', 'hostLockWaiting', 'hostBackground', 'hostTelemetry', 'lastActivityAt', 'lastOutputAt', 'activeCommands', 'hostPendingMessages', 'cancelPending', 'hostLost'];
 // ホストの子を止める依頼を待つ上限。応答しないホストが、会話の中断・「すべて止める」を長く止めない（届かなかった分は cancelPending でつながり直したときに送り直す）
@@ -935,17 +932,14 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
         const row = await serial(async () => {
           // 保存できない間は新しい仕事を受けない。子の会話を作る前に、書けるかを確かめる
           if (fault) { try { await write([]); touched(); } catch (e) { failed(e, 'delegate'); throw refused(locale); } }
-          // 同時の件数・1 会話の件数・深さに上限は置かない（2026-09-27 に廃止。depth は記録だけ残す）
+          // 同時の件数・1 会話の件数・深さに上限は置かない（2026-09-27 に廃止。端末の AI から任された作業の鎖の深さの上限も、2026-10-09 に外した。depth は記録だけ残す）
           const parent = Object.values(records).find(r => r.sessionId === owner);
           const depth = (parent?.depth ?? 0) + 1;
-          // 端末の AI から任された作業（args.remote は口の本体だけが付ける）と、その子孫は、深さに上限を効かせる
-          const remoteOrigin = Boolean(args.remote || parent?.remoteOrigin);
-          if (remoteOrigin && depth > REMOTE_DEPTH_MAX) throw new Error(agentT(locale, 'tasks.remoteDepth', { max: REMOTE_DEPTH_MAX }));
           const taskId = `ply-task-${crypto.randomUUID()}`;
           const prepared = await prepare(owner, args, taskId, signal);
           try {
           if (signal?.aborted) throw new Error(agentT(locale, 'tasks.aborted'));
-          const row = { ...prepared, taskId, parentSessionId: owner, manager: 'ply', depth, ...(remoteOrigin ? { remoteOrigin: true } : {}), task: args.task, title: args.title, ...(args.context !== undefined ? { context: args.context } : {}),
+          const row = { ...prepared, taskId, parentSessionId: owner, manager: 'ply', depth, task: args.task, title: args.title, ...(args.context !== undefined ? { context: args.context } : {}),
             createdAt: Date.now(), updatedAt: Date.now(), status: 'queued', notification: 'none',
             result: '', error: null, instructions: [], instructionRevision: 0,
             queue: [(args.context ? agentT(locale, 'tasks.withContext', { task: args.task, context: args.context }) : args.task)

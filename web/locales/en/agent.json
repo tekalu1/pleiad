@@ -226,7 +226,6 @@
     "notRunning": "This conversation is not running.",
     "remote": {
       "unavailable": "This PC's Pleiad has no way to hand work to a host (only a desktop device can).",
-      "nested": "A conversation that was handed over by another device cannot hand work to a host.",
       "hostUnknown": "The host \"{{host}}\" is not one this PC is connected to. Available hosts: {{hosts}}",
       "hostAmbiguous": "More than one host matches \"{{host}}\". Rename one or give the host's ID.",
       "hostNotEnabled": "Handing work from this PC's AI to the host \"{{host}}\" is off (the user can change it in the Connect to other hosts window).",
@@ -289,7 +288,6 @@
     "offsetInvalid": "offset must be an integer of 0 or more.",
     "secondsInvalid": "seconds must be from 1 to 30.",
     "remoteBadTaskId": "The taskId in the host's message is malformed (an ID that matches a local task is not accepted either).",
-    "remoteDepth": "Work handed over from a device's AI can be delegated at most {{max}} levels deep.",
     "isolateInvalid": "isolate must be true or false.",
     "stopping": "The task is stopping. Wait a moment.",
     "modelUnknown": "model_unknown: model {{model}} is not in the current {{backend}} model list (available: {{models}}). Nothing was changed.",
