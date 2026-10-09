@@ -4615,10 +4615,12 @@ function permissionsChanged() {
   remoteTasksChanged();
 }
 
+const DELEGATION_WALK_MAX = 1000;
+
 /**
  * 委譲でつながった祖先の会話を、近い順に並べる。
  * 会話メタデータの delegation（prepare が書く）を親へ辿る。
- * 壊れた記録で回り続けないよう、同じ会話は二度通らず、辿る回数にも上限を置く（委譲は4階層まで）。
+ * 壊れた記録で回り続けないよう、同じ会話は二度通らない。委譲の深さに上限は無いので、辿る回数の上限（DELEGATION_WALK_MAX）は輪の守りの予備で、実際の鎖より十分大きくする。
  */
 async function delegationAncestors(sessionId) {
   return (await delegationRoot(sessionId)).chain;
@@ -4634,7 +4636,7 @@ async function delegationRoot(sessionId) {
   const seen = new Set([sessionId]);
   let id = sessionId;
   let remote = null;
-  for (let i = 0; i < 8; i++) {
+  for (let i = 0; i < DELEGATION_WALK_MAX; i++) {
     const delegation = (await store.get(id)).delegation;
     const parent = delegation?.parentSessionId;
     if (!parent || seen.has(parent)) break;
