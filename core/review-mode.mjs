@@ -55,7 +55,8 @@ export function prepareReviewHost({ dataDir, backendIds }) {
   }
   const work = path.join(dataDir, REVIEW_WORK);
   fs.mkdirSync(work, { recursive: true });
-  workDir = fs.realpathSync(work);
+  // native: Windows の 8.3 の短い名前（RUNNER~1）も長い名前に開く（js の realpathSync は開かない）
+  workDir = fs.realpathSync.native(work);
   return { workDir };
 }
 
