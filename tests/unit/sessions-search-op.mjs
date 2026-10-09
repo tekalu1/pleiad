@@ -36,7 +36,8 @@ export default async function (t) {
     t.ok('抜粋は誰の発言か・飛び先の uuid・一致の範囲を持つ', ['user', 'assistant'].includes(hit.hits[0].role) && hit.hits[0].uuid.startsWith('claude:n:')
       && hit.hits[0].ranges.length > 0 && hit.hits[0].excerpt.slice(...hit.hits[0].ranges[0]).toLowerCase() === 'gateway' && hit.hitCount >= 2, JSON.stringify(hit.hits[0]));
 
-    const withKids = await search({ query: 'gateway', filters: { includeDelegated: true } });
+    // 委譲の子を含める探し方は、別の読み込みが裏で続くことがある（並列の全件で partial のまま返った）。終わるまで待つ
+    const withKids = await settled({ query: 'gateway', filters: { includeDelegated: true } });
     const kid = withKids.sessions.find((s) => s.sessionId === 'ss-price');
     t.ok('includeDelegated で委譲の子が出て、依頼元の会話の id を持つ', kid?.parentSessionId === 'ss-paid', JSON.stringify(kid));
 
