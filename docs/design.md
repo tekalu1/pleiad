@@ -251,6 +251,16 @@ Codex は `model/list` の `supportedReasoningEfforts` を候補として `turn/
 - **描画**: 静かな読み直しは `clearThread` せず、今の画面と読み直した履歴を、描く行の並び（`buildItems`）で先頭から比べる（`retainPlan`）。ツールの結果・本文・uuid・圧縮の区切り・提示（`visualize` の印と添付の結び付き）のどれが変わっても「違う」になり、最初に違う項目から後ろだけ描き直す。発言に取り込んで描く人の添付（`inlineAttachments`）が変わった（結び付いた・外れた）発言も「違う」とし、残した行の分の取り込み済みも数え直す。ツールのまとまり（`Bundle`）は発言の行の中にあるので、行ごと残る。残すのは履歴から描いた行（`data-h`）で、ライブで描いた行・稼働表示・圧縮の区切り・分岐点の行は外して描き直す（`retainThread`）。先頭が違えば今までどおり全部描き直す。
 - **位置**: 末尾を見ていたなら末尾へ。読み返していたなら、基準の行（`historyAnchor`）が同じ高さに来るよう戻す（`holdReading`）。
 
+## 会話を開くときの窓（承認済み（2026-10-09）、[ADR 0902](adr/0902-session-open-window.md)（提案。番号は仮））
+
+会話を開く（`loadSession`）と、末尾の窓と提示の枠だけを先に受けて描き、手前は上へ送ったときに読み足す。[ADR 0062](adr/0062-incremental-session-load.md) の差分の読み直しは、この窓の上でそのまま続く。
+
+- **通信**: 画面が `lazy: true`・`tail`（既定 50 発言）・`tailBytes`（既定 256 KiB。最小 6 件・最大 2000 件）を付けると、サーバーは末尾の窓だけを返し、窓の先頭の絶対位置 `base`・`presentBase` と全体の件数 `total`・`presentTotal` を足す。`content` / `dataUri` が 2048 字以上の提示は本文を外し `lazy: { i, content?, dataUri? }`（長さ）の印にする（`stubPresent`）。本文は `GET /present-body?sessionId=&i=&at=&field=` で取る（`private, max-age=31536000, immutable`・`nosniff`・CSP `sandbox`。404 = 見つからない、400 = 不正な `field`・`sessionId` なし、415 = 画像でない dataUri）。手前は `older: true` の `loadSession`（`until`・`presentUntil`・`tail`）で読み足す。能力は引数だけで決め（返事の整数の `base` が窓に対応した印）、古い画面には今までの形、古いサーバーには窓つきの差分が合わず全量に戻る。64 KiB 以上の窓の返事と読み足しの返事は、中継越しのとき ADR 0179 の `/bulk/<id>` で渡す（`syncHistory` と窓でない全量の読み込みは WS のまま。出来事との順序を `sessionLoads` だけが守るため）。窓の切り出しと照合は `web/history-sync.mjs`、提示の遅延は `web/present-lazy.mjs`・`web/render.mjs`。
+- **描画**: `state.messages` は読み込んだ末尾の窓、`state.base` はその先頭の絶対位置（提示は `state.presentBase`）。行の印は絶対位置（`m:<abs>` / `p:<abs>`）。上へ送って先頭から 900px 以内に来たら手前を読み足して先頭に足し（`loadOlder`・`paintBefore`）、読んでいる行の位置は `holdReading` で保つ。脇の検索・目次・`revealMessage` で窓の外へ飛ぶときは、見つかるまで（目次は全部）読み足してから着く。
+- **開いた直後（C1）**: 末尾の 16 発言を先に描き、残りの窓は手が空いたとき（`requestIdleCallback`。無ければ 16ms の `setTimeout`）に 24ms を目安に 2〜48 発言ずつ、先頭へ向けて足す。足している間は位置を動かさず、実寸の確定・行ごとの i18n・末尾判定の読みは足し終えてから 1 回にまとめる。静かな読み直しで末尾にいない・残す行がある・遷移の演出がある・`keepUpTo` / 編集中 / `initialMessageId` があるときは分けず、全量を 1 回で描く。
+- **窓の外の見え方**: 窓の手前の発言を指す提示は、読み足すまでその場に単独で出る。窓の境をまたぐ同名の `visualize` の参照は、読み足すまで対が入れ替わりうる。親の会話に戻る分岐の印・圧縮の区切りが窓の手前にあるときは、読み足したときに現れる。静かな読み直しで窓ごと置き換わると、読み足した分は捨てて窓から取り直す。
+- **測った値**（449 発言・提示 40 件、CPU 4 倍・8 Mbps）: 開く → 触れるまで 4638ms → 946ms（直結）、9934ms → 1399ms（中継 100ms）、16801ms → 1063ms（中継 300ms）。Long Task の最大 2582〜3032ms → 334〜371ms。返事 6551 KB → 19 KB。
+
 ## 長い履歴の実寸の確定（2026-09-29）
 
 画面外の発言は `content-visibility:auto` と仮の高さ（160px）で並べ、開くときのレイアウトを省く。仮の高さと実寸は大きく違い（実データで会話全体が 1/2〜1/3 に見積もられる）、スクロールで行が見え始めるたびに高さが変わってレイアウトが繰り返される。そこで、見えている所の近くだけ先に実寸にする（`.height-ready` を付けて `content-visibility` を外す。`web/history-heights.mjs`。issue #37）。以前は開いた後に末尾から 16 行ずつ全部を確定しており、強制レイアウトの回数が行数の 2 乗になって、スマホの CPU で 2000 発言の会話は開いた後 1 分半ほど主スレッドが埋まった。
