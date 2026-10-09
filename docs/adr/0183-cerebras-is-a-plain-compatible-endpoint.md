@@ -1,6 +1,6 @@
 # 0183 API キーで Cerebras を特別扱いしない（cerebras.ai の互換の接続先は、ほかと同じ custom）
 
-- 状態: 提案
+- 状態: 承認（2026-10-10。利用者が承認）
 - 日付: 2026-10-10
 - 置き換える: [ADR 0177](0177-judges-via-openrouter.md) の決定 6 のうち「互換の接続先で `cerebras.ai` を使うためのプロバイダー名と、URL のホストからの見分け（`providerOfEndpoint`）は残す」
 - 関連: [ADR 0155](0155-api-keys-in-one-place.md)、docs/design.md「API キー」
