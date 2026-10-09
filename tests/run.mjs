@@ -281,6 +281,8 @@ const SUITES = [
   // データ置き場を共有する 2 つのプロセス。本物の子プロセスを 2 本起動する
   './unit/mcp-oauth-processes.mjs',
   './unit/desktop-updates.mjs',
+  // 自動更新の署名の確かめ（ADR 0176）: 既定の確かめ + WinVerifyTrust の信頼されないルートを指紋で固定・CLOSE を必ず呼ぶ・失敗は理由で返す・リリースのビルドが一覧に無い指紋を止める（偽の koffi。Windows では本物の koffi の呼び出しも）
+  './unit/desktop-update-signature.mjs',
   './unit/desktop-store.mjs',
   './unit/desktop-exit-dialog.mjs',
   // OS にサインインしたら起動する設定: 登録するパス・引数（版に依らない exe と --hidden）・OS の実際の状態・古いパスの直し・使えない構成（偽の electron。本物の Run には書かない）

@@ -1,0 +1,6 @@
+{
+  "note": "自動更新が、Windows に信頼されていない自己署名でも受け入れる署名者の証明書の SHA-1 指紋（desktop/update-signature.cjs）。署名の鍵を替えるときは、新しい指紋をこの一覧へ足した版を『古い鍵で署名して』先に配る。新しい鍵の版を先に出すと、今の利用者は更新を受けられない。リリースのビルドは、署名に使う証明書の指紋がここに無いと止まる（scripts/release-signing.cjs）。",
+  "signers": [
+    { "sha1": "BCEE9BE88BEE6BB94909FC74C0622420CAE50910", "subject": "CN=Ply Evaluation (hikaru)", "expires": "2027-09-18" }
+  ]
+}

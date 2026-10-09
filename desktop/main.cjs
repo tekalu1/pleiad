@@ -5,6 +5,7 @@ const { Updates, isStoreBuild, updaterEnabled } = require('./updates.cjs');
 const { packagedIdentity } = require('./msix.cjs');
 const { prepareUpdateCheck } = require('./update-auth.cjs');
 const { createUpdateLog } = require('./update-log.cjs');
+const { installUpdateSignatureVerifier } = require('./update-signature.cjs');
 const { savedPort, rememberPort } = require('./server-port.cjs');
 const { attachSecretBridge } = require('./secret-bridge.cjs');
 const { t, setLocale, resolveLocale, initDesktopI18n } = require('./i18n.cjs');
@@ -404,9 +405,12 @@ async function boot() {
   for (const line of pendingServerLog.splice(0)) bootLogger.info?.(`[server] ${line}`);
   // Microsoft Store の版は Store が更新する。確認もダウンロードもしない（docs/microsoft-store.md「自動更新」）
   const pkg = require('../package.json');
+  const updaterOn = updaterEnabled({ packaged: app.isPackaged, pkg, windowsStore: process.windowsStore, feed: fs.existsSync(path.join(process.resourcesPath, 'app-update.yml')) });
+  // Windows が信頼していない自己署名でも、指紋で固定した署名者なら更新を受け入れる（desktop/update-signature.cjs。ADR 0176）。Store 版・開発起動は今のまま
+  if (updaterOn) try { installUpdateSignatureVerifier(autoUpdater); } catch (e) { bootLogger.warn?.(`update signature verifier: ${e.message}`); }
   updates = new Updates({ updater: autoUpdater, version: app.getVersion(), file: path.join(app.getPath('userData'), 'updates.json'),
     store: isStoreBuild({ pkg, windowsStore: process.windowsStore }),
-    enabled: updaterEnabled({ packaged: app.isPackaged, pkg, windowsStore: process.windowsStore, feed: fs.existsSync(path.join(process.resourcesPath, 'app-update.yml')) }), install: installUpdate, handover: Boolean(linked),
+    enabled: updaterOn, install: installUpdate, handover: Boolean(linked),
     prepareCheck: () => prepareUpdateCheck(autoUpdater, path.join(process.resourcesPath, 'app-update.yml')) });
   updates.on('state', state => { if (!window.isDestroyed()) window.webContents.send('ply:update-state', state); });
   try { await updates.init(); }

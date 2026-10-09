@@ -262,7 +262,7 @@ export default async function(t) {
     await rejects('Signing refuses missing credentials', async () => releaseSigning(publisher, 'win32'));
     const pfx = releaseSigning({ ...publisher, CSC_LINK: 'private-key', CSC_KEY_PASSWORD: 'private-password' }, 'win32');
     t.ok('Signing pins updater verification to the publisher and does not embed keys', pfx.win.verifyUpdateCodeSignature && pfx.win.signtoolOptions.publisherName === publisher.PLY_WIN_PUBLISHER && !JSON.stringify(pfx).includes('private-'));
-    const store = releaseSigning({ ...publisher, PLY_WINDOWS_SIGNING: 'store', PLY_WIN_CERTIFICATE_SHA1: 'a'.repeat(40) }, 'win32');
+    const store = releaseSigning({ ...publisher, PLY_WINDOWS_SIGNING: 'store', PLY_WIN_CERTIFICATE_SHA1: 'a'.repeat(40) }, 'win32', { signers: ['A'.repeat(40)] });
     t.ok('Hardware-backed Windows store certificate does not require key export', store.win.signtoolOptions.certificateSha1 === 'a'.repeat(40));
     const azureEnv = { ...publisher, PLY_WINDOWS_SIGNING: 'azure', PLY_AZURE_ENDPOINT: 'https://eus.codesigning.azure.net/', PLY_AZURE_ACCOUNT: 'account', PLY_AZURE_PROFILE: 'profile', AZURE_TENANT_ID: 'tenant', AZURE_CLIENT_ID: 'client', AZURE_CLIENT_SECRET: 'azure-secret' };
     const azure = releaseSigning(azureEnv, 'win32');

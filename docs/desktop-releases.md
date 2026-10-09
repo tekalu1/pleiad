@@ -128,7 +128,7 @@ main が落ちた・強制終了したときもサーバーは残り、次に起
 公開証明書と管理情報は `%LOCALAPPDATA%/Ply/signing/evaluation` に保存する。同じPCでは既存の鍵を再利用する。
 この鍵はローカルビルド専用。PC変更や鍵紛失の場合は新しい証明書の信頼設定が必要になる。
 
-検証PCでは公開 `.cer` の拇印を別途確認し、次のコマンドで現在のユーザーに限定して信頼する。
+自動更新を受けるだけなら、この信頼設定（`Trust`）は要らない（下記）。インストーラーを `Get-AuthenticodeSignature` で `Valid` と確かめたい検証PCでは、公開 `.cer` の拇印を別途確認し、次のコマンドで現在のユーザーに限定して信頼する。
 秘密鍵入りの `.pfx` は利用者へ渡さない。この操作はコード署名用途だけの証明書を受け付ける。
 
 ```powershell
@@ -137,8 +137,13 @@ powershell -NoProfile -File scripts/build-evaluation.ps1
 ```
 
 ビルドは署名を必須とし、完成したインストーラーと実行ファイルの署名が `Valid` かつ指定の証明書であることを検証する。
-更新時の `verifyUpdateCodeSignature` も有効なまま。信頼設定がないPCでは署名検証に失敗する。
+更新時の `verifyUpdateCodeSignature` も有効なまま。ただし確かめ方を足してある（`desktop/update-signature.cjs`。[ADR 0176](adr/0176-update-signature-pinned-signers.md)）。
+Windows が署名者を信頼していれば、electron-updater の既定の確かめ（発行元名）が通る。信頼していないPCでも、`WinVerifyTrust` の結果がちょうど `CERT_E_UNTRUSTEDROOT`（0x800B0109）で、署名者の証明書の SHA-1 指紋が `desktop/update-signers.json` の一覧にあれば受け入れる。ファイルの改ざん（`TRUST_E_BAD_DIGEST`）・未署名・一覧に無い署名者は受け入れない。理由は `updater.log` に HRESULT と見つけた指紋つきで残る。
+Windows の証明書ストア（`Root`）には何も入れない。このため、更新を受ける利用者に `Trust` は不要。
 未署名の beta.1 から最初の自己署名版へは手動インストールし、以降は同じ証明書で署名した新しい版を使う。
+この確かめを持たない古い版（beta.4 以前）から、持つ最初の版へ上げるときだけは、古い版の確かめが働くので、手動で入れ直すか、一度 `Trust` する。その版以降は不要。
+一覧に足す指紋は、署名に使う証明書の指紋（`PLY_WIN_CERTIFICATE_SHA1`）。鍵を替えるときは、新しい指紋を足した版を古い鍵で署名して先に配り、その後で新しい鍵の版を出す（先に新しい鍵の版を出すと、今の利用者は更新を受けられない）。
+手元の確かめは `scripts/verify-update-signature.ps1`（使い捨ての自己署名で、許可・未許可・改ざん・未署名を確かめ、証明書を消す。`-Installer <exe>` で実物も確かめる）。
 公開証明書の信頼と SmartScreen の評価は別であり、警告が消えることは保証しない。
 証明書の削除・切替は利用者が対象の拇印を確認して行う。正式署名への切替時も更新検証を行う。
 
@@ -213,7 +218,7 @@ Actionsは `PLY_RELEASE_REPOSITORY` Variableや `PLY_RELEASE_TOKEN` Secretを参
 
 ## 配布と利用者認証
 
-Releases は public で、ブラウザーからはログインなしで取得できる。評価版は自己署名のため、インストール前に公開証明書の扱いを確認する（下記「自己署名の配布」）。
+Releases は public で、ブラウザーからはログインなしで取得できる。評価版は自己署名のため、インストール前に公開証明書の扱いを確認する（下記「自己署名の配布」）。自動更新は、証明書を信頼していないPCでも、一覧（`desktop/update-signers.json`）に指紋のある署名者なら受け入れる（上記「自己署名での評価」）。
 自動更新に GitHub のログインは要らない。`gh auth login` も不要で、GitHub CLI が無い PC・未ログインの PC でも更新できる。
 更新設定は `private: true` のまま（外すと最新の先行版を semver で選ぶ `NewestReleaseProvider` が効かなくなり、先行版のメタデータ `beta.yml` も探されるため。導入済みのアプリにもこの設定が焼き込まれている）。
 資格情報が無いときは、`PrivateGitHubProvider` 系の同じプロバイダーが `authorization` ヘッダーを付けずに GitHub API を呼ぶ。
@@ -252,12 +257,13 @@ Claude の CLI は既定で保持役に載るので（無停止の更新。[ADR 
 初回設定は `powershell -File scripts/setup-evaluation-secrets.ps1`。GitHub CLIで認証済みの管理者が実行する。
 GitHub用の自己署名証明書を作成し、暗号化PFXのBase64を `WIN_CSC_LINK`、ランダムなパスワードを `WIN_CSC_KEY_PASSWORD` Repository Secretsへ標準入力で登録する。
 発行元と公開指紋は `PLY_WIN_PUBLISHER` / `PLY_WIN_CERTIFICATE_SHA1` Repository Variablesに登録する。
+`PLY_WIN_CERTIFICATE_SHA1` を登録してあれば、ビルドは署名の準備で `desktop/update-signers.json` にその指紋があるかを確かめ、無ければ止まる（`scripts/release-signing.cjs`。ストアの証明書は常に確かめる）。Azure（認証局）の署名と macOS は対象外。新しい鍵へ替えるときは、先に一覧へ足す。
 秘密鍵・パスワードはソース、ログ、Releaseアセットに含めない。署名ステップだけがSecretsを参照し、runnerの一時PFXと証明書ストアは処理後に掃除する。
 この証明書は自己署名であり、公的な認証局による署名ではない。
 
 既存のbeta.2の非エクスポート可能な鍵は維持する。GitHub用の新しい鍵は別の `LocalAppData/Ply/signing/github-evaluation` の公開マニフェストで管理し、同じ発行元名を使用する。
-更新を受けるWindowsユーザーには、新しい公開証明書の信頼が一度必要。初回設定を実行したユーザーには自動で追加する。
-他の評価端末ではReleaseの `Pleiad-Evaluation.cer` と `evaluation-certificate.ps1` を取得し、別途確認した指紋を指定して `-Action Trust -CertificateFile ... -ExpectedThumbprint ...` を実行する。
+更新を受けるWindowsユーザーに、公開証明書の信頼（`Trust`）は要らない。一覧にある指紋の署名なら、信頼していないPCでも更新できる（「自己署名での評価」）。新しい鍵の指紋は先に一覧へ足す。
+インストーラーの署名を Windows で `Valid` と確かめたい評価端末では、Releaseの `Pleiad-Evaluation.cer` と `evaluation-certificate.ps1` を取得し、別途確認した指紋を指定して `-Action Trust -CertificateFile ... -ExpectedThumbprint ...` を実行する。
 `SIGNING-INFO.json` は公開証明書の指紋と有効期限、`BUILD-INFO.json` はソースコミットとActions実行URLを記録する。
 
 リリースジョブは所有者のタグpushまたはmainからの手動実行に限定し、タグがmainに含まれることも検証する。PRから署名ジョブは実行しない。
