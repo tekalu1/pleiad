@@ -108,7 +108,7 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
   io = fs, log = line => console.error(line), retryMax = RETRY_MAX, taskStorage = null,
   // 付け直すターン（無停止の更新 2b-7）の委譲の子のタスク id。起動の復元で interrupted にせず、adoptRun() が結果の確定を引き継ぐ（stage2-server-state.md S8）
   adopting = [],
-  // 子の回が終わり、止まった状態（完了・失敗・取り消し）になった。子の会話の id を渡す。エージェントのブラウザーのデーモンを止める（core/agent-browser.mjs。ADR 0179）
+  // 子の回が終わり、止まった状態（完了・失敗・取り消し）になった。子の会話の id を渡す。エージェントのブラウザーのデーモンを止める（core/agent-browser.mjs。ADR 0180）
   ended = () => {} }) {
   const silenceMs = Number.isFinite(silenceMinutes) && silenceMinutes > 0 ? silenceMinutes * 60000 : 0;
   const commandMs = Number.isFinite(commandMinutes) && commandMinutes > 0 ? commandMinutes * 60000 : 0;

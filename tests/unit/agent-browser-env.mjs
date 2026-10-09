@@ -23,7 +23,7 @@ export default async function (t) {
     socketDirs.add(env.AGENT_BROWSER_SOCKET_DIR);
     const config = JSON.parse(await readFile(env.AGENT_BROWSER_CONFIG, 'utf8'));
     t.ok('会話別の設定ファイルと環境変数', /^ply-[a-f0-9]{24}$/.test(env.AGENT_BROWSER_SESSION) && Object.keys(config).join() === 'cdp' && config.cdp.includes('/key') && env.AGENT_BROWSER_PIN_TAB === '1');
-    // Windows はデーモンが自分で作るので前もって作らない（ADR 0179）。ここでは作ったものとして続ける
+    // Windows はデーモンが自分で作るので前もって作らない（ADR 0180）。ここでは作ったものとして続ける
     const created = Boolean(await stat(env.AGENT_BROWSER_SOCKET_DIR).catch(() => null));
     await mkdir(env.AGENT_BROWSER_SOCKET_DIR, { recursive: true });
     await writeFile(path.join(env.AGENT_BROWSER_SOCKET_DIR, 'probe'), 'ok');

@@ -7,7 +7,7 @@ import { browserConfigFile, browserEnvironment, browserSocketDirectory, BROWSER_
 import { createAgentTasks } from '../../core/agent-tasks.mjs';
 
 export const name = 'agent-browser-lifetime';
-export const title = 'エージェントのブラウザーのデーモンと置き場の寿命（止める・消す・掃除。ADR 0179）';
+export const title = 'エージェントのブラウザーのデーモンと置き場の寿命（止める・消す・掃除。ADR 0180）';
 
 const sessionName = dir => `ply-${crypto.createHash('sha256').update(path.resolve(dir)).digest('hex').slice(0, 24)}`;
 const exists = file => fs.stat(file).then(() => true, () => false);

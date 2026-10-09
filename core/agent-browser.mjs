@@ -25,7 +25,7 @@ const sessionName = dir => `ply-${crypto.createHash('sha256').update(path.resolv
 
 /**
  * 暇なデーモンを落とすまでの時間（AGENT_BROWSER_IDLE_TIMEOUT_MS）。agent-browser の既定の 1 時間は、--cdp でつないだデーモンには効かない。
- * 明示して渡すと --cdp でも効き、落ちるときは Chrome にもタブにも何も送らない（実機、2026-10-09。ADR 0179）
+ * 明示して渡すと --cdp でも効き、落ちるときは Chrome にもタブにも何も送らない（実機、2026-10-09。ADR 0180）
  */
 export const BROWSER_IDLE_TIMEOUT_MS = 24 * 60 * 60_000;
 
@@ -93,7 +93,7 @@ export async function browserEnvironment({ bridge, dataDir, sessionId, unlock = 
   await inOrder(dir, async () => {
     await fs.mkdir(dir, { recursive: true, mode: 0o700 });
     // Windows のデーモンはソケットの置き場を自分で作る（無くても動く。実機、2026-10-09）。前もって作ると、ブラウザーを使わなかった会話の空の置き場が
-    // 一時領域に残るので作らない。Unix は確かめていないので今どおり作り、使わなかったターンの終わりに消す（settleBrowserEnvironment。ADR 0179）
+    // 一時領域に残るので作らない。Unix は確かめていないので今どおり作り、使わなかったターンの終わりに消す（settleBrowserEnvironment。ADR 0180）
     if (process.platform !== 'win32') await fs.mkdir(socketDir, { recursive: true, mode: 0o700 });
     await fs.writeFile(file, JSON.stringify({ cdp: url }), { mode: 0o600 });
   });
@@ -101,7 +101,7 @@ export async function browserEnvironment({ bridge, dataDir, sessionId, unlock = 
     AGENT_BROWSER_IDLE_TIMEOUT_MS: String(BROWSER_IDLE_TIMEOUT_MS), ...(bridge.pinTab ? { AGENT_BROWSER_PIN_TAB: '1' } : {}) };
 }
 
-// ---- デーモンと置き場の寿命（ADR 0179）
+// ---- デーモンと置き場の寿命（ADR 0180）
 //
 // デーモンは会話ごとに 1 つで、エージェントが最初に agent-browser を呼んだときに起き、Pleiad の子ではない（Pleiad が落ちても残る）。
 // 止めるのは「委譲の子が終わったとき」「会話を消したとき」「掃除（起動の後と 1 時間ごと）で持ち主が居ないと分かったとき」。
@@ -197,7 +197,7 @@ export async function discardBrowserEnvironment({ bridge, dataDir, sessionId, bu
   return done;
 }
 
-/** 会話を消したときに、その会話のデーモンを止め、agent-browser の設定とソケットの置き場を消す（sessions.delete。ADR 0147・0179） */
+/** 会話を消したときに、その会話のデーモンを止め、agent-browser の設定とソケットの置き場を消す（sessions.delete。ADR 0147・0180） */
 export async function forgetBrowserEnvironment({ bridge, dataDir, sessionId, ...options }) {
   if (!sessionId) return;
   await discardBrowserEnvironment({ bridge, dataDir, sessionId, ...options });

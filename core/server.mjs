@@ -296,7 +296,7 @@ const chromeWindowCloser = chromeRelay ? createChromeWindowCloser({ relay: chrom
 chromeHandoffs?.useControl(chromeControl);
 // 会話の端点を出す口（ターンの開始・新しい会話の id の付け替え・ターンの終わり・会話の削除）。Chrome の中継があるホスト（デスクトップ版）だけ。Windows 以外（unsupported）では渡さない（下の browserEnv）
 const agentBrowserEndpoints = chromeRelay ? chromeRelayBrowser(chromeRelay, { dataDir: store.dataDir }) : null;
-// その会話の agent-browser の置き場を今は触れないか: ターンが走っている（ID 確定前の id も）・中継でターンの印が付いている・人が引き継いでいる（ADR 0179）
+// その会話の agent-browser の置き場を今は触れないか: ターンが走っている（ID 確定前の id も）・中継でターンの印が付いている・人が引き継いでいる（ADR 0180）
 const agentBrowserBusy = id => [...runtime.turns.values()].some(turn => turn.key === id || turn.browserRelayId === id || turn.info?.sessionId === id)
   || Boolean(chromeRelay?.state?.(id)?.turn || chromeRelay?.state?.(id)?.paused);
 // A nested server may inherit another conversation's shell environment; only this process's bridge can issue browser access.
@@ -5319,7 +5319,7 @@ agentTasks = await createAgentTasks({
   cancelHost: row => remoteDelegation.cancelHost(row),
   // コンピューターの操作のロックを待っている子は、黙っているとは数えない（承認待ちではないので ply_task_wait の waiting にはしない）
   lockWaiting: sessionId => computerLock.snapshot().some(s => s.sessionId === sessionId && s.state === 'waiting'),
-  // 委譲の子が止まった（完了・失敗・取り消し）: 子のエージェントのブラウザーのデーモンを止め、置き場を消す。依頼元の会話は消すまで止めない（ADR 0179）
+  // 委譲の子が止まった（完了・失敗・取り消し）: 子のエージェントのブラウザーのデーモンを止め、置き場を消す。依頼元の会話は消すまで止めない（ADR 0180）
   ended: sessionId => {
     if (!agentBrowserEndpoints || agentBrowserBusy(sessionId)) return;
     discardBrowserEnvironment({ bridge: agentBrowserEndpoints, dataDir: store.dataDir, sessionId, busy: agentBrowserBusy })
@@ -5490,7 +5490,7 @@ agentTasks = await createAgentTasks({
 await recordTaskStops(agentTasks.restored, 'restart', { restart: true });
 // ホストに任せたタスクの写し: 動いていたものはホストで続いている。ホストの便りを聞き、つながり次第追いつく（remote-delegation.mjs）
 remoteDelegation.start();
-// 持ち主の居ないエージェントのブラウザーのデーモンと置き場の掃除（起動の 1 分後と 1 時間ごと。ADR 0179）。
+// 持ち主の居ないエージェントのブラウザーのデーモンと置き場の掃除（起動の 1 分後と 1 時間ごと。ADR 0180）。
 // 持ち主は記録にある会話と走っているターン。終わった委譲の子のものも止める
 if (agentBrowserEndpoints) {
   const sweep = async () => {
@@ -6753,7 +6753,7 @@ async function endTurn(turn, emit, { record = true } = {}) {
     }
   }
   agentBrowserEndpoints?.endTurn(turn.info.sessionId || turn.key);
-  // このターンで agent-browser を呼ばなかったなら、ターンの初めに書いた設定の置き場を消す（ADR 0179）
+  // このターンで agent-browser を呼ばなかったなら、ターンの初めに書いた設定の置き場を消す（ADR 0180）
   if (agentBrowserEndpoints && turn.browserRelayId) settleBrowserEnvironment({ bridge: agentBrowserEndpoints, dataDir: store.dataDir, sessionId: turn.browserRelayId, busy: agentBrowserBusy }).catch(() => {});
   chromeHandoffs?.turnChanged(turn.info.sessionId || turn.key, false);
   // ロックの解放、止めた印・このターンの拒否の消去、main への後始末（押したままの入力を離し、オーバーレイを消す）
