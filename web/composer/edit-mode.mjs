@@ -333,6 +333,10 @@ export function createEditMode({ composer, t, announce = () => {}, host, kind = 
       paint();
     },
     get tail() { return st?.tail ?? null; },
+    /** 脇に取った書きかけ（分岐して送ったあと、元の会話の下書きへ戻すため） */
+    stashed() { return st ? { text: st.stash.text, attached: st.stash.attached.slice(), ...(st.stash.extra != null ? { extra: st.stash.extra } : {}) } : null; },
+    /** 元の発言の札・薄めを付け直す（履歴を描き直したあと） */
+    redecorate() { if (st) host.decorate?.(st.id, true, st.tail); },
     /** 編集をやめて、書きかけを戻す。restore: false なら入力欄を触らない（送れたあと、別の会話へ移ったあと） */
     end({ restore = true, focus = false } = {}) {
       if (!st) return;
