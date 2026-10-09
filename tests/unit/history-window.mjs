@@ -267,4 +267,17 @@ export default async function (t) {
   t.ok("配線: 手前の発言が要る操作（遡り・目次・会話の中の検索）は、描いていない手前を先に描き切る", /flushBackfill\(\)/.test(cut("loadOlder")) && /flushBackfill\(\)/.test(cut("loadAllOlder")) && /flushBackfill\(\)/.test(cut("revealMessage")));
   t.ok("配線: 会話を描き直す・替えるときは手前の仕事を捨てる", /cancelBackfill\(\)/.test(cut("clearThread")));
   t.ok("配線: 手前の読み足しは、手前を足している間は始めない", /backfill/.test(cut("maybeLoadOlder")));
+
+  // ---------------------------------------------------------------- 起動の先読み（ready の直後に前回の会話を頼む。開くときと同じ窓の形でなければ引き取れない）
+  const asked = [];
+  const boot = new Function("loadHistory", "sessionLoads", `let bootPrefetch = null; ${cut("startBootPrefetch")}
+return { start: startBootPrefetch, get pre() { return bootPrefetch; } };`)(
+    (args, prev, options) => { asked.push({ args, prev, options }); return Promise.resolve({ messages: [], presents: [], base: 0, presentBase: 0 }); },
+    { begin: (id) => ({ id }) });
+  boot.start("前回の会話");
+  t.ok("起動の先読み: 前回の会話も、開くときと同じ末尾の窓（loadHistory の window と bulk）で頼む",
+    asked.length === 1 && asked[0].args.sessionId === "前回の会話" && asked[0].prev === null && asked[0].options.window === true && asked[0].options.bulk === true);
+  t.ok("起動の先読み: 引き取り先（loadAndPaint）が使う args と返事を取り置く", boot.pre.id === "前回の会話" && boot.pre.args === asked[0].args && typeof boot.pre.reply.then === "function");
+  t.ok("起動の先読み: 先読みが失敗したときの読み直しも窓の形（loadAndPaint の pre.reply の catch）",
+    /pre\.reply\.catch\(\(\) => loadHistory\(pre\.args, null, \{ window: true, bulk: true \}\)\)/.test(cut("loadAndPaint")));
 }
