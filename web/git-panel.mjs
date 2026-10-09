@@ -1,15 +1,16 @@
 // 右パネル「git」（docs/design-system.md「git の動き」、ADR 0085・0135）。
-// タブは「変更 N」と「作業場所」。変更は、範囲の切り替え（コミットしていない分 / この会話の間 / 押したコミット）→ コミットのグラフ（選んだ範囲を帯で見せる）→
-// 選んだ範囲のファイルの一覧 → 差分。作業場所は、このリポジトリの git worktree を並べ、Pleiad の worktree の操作は行を開いた中に置く。
+// タブは「グラフ」と「Worktree」（線画 + 語。件数は読み上げ用の名前に持つ）。グラフは、範囲の切り替え（コミットしていない分 / この会話の間）→ コミットのグラフ →
+// 選んだ範囲のファイルの一覧 → 差分。コミットの行を押すと、その行のすぐ下に変わったファイルの箱が開く（同時に 1 つ）。Worktree は、このリポジトリの
+// git worktree を並べ、Pleiad の worktree の操作は行を開いた中に置く。
 // 読むだけ（ステージ・コミット・ブランチの切り替えは作らない）。取るのは開いたとき・再読み込み・ターンの終わり・範囲やコミットを選んだときだけ。
 // 右パネルの枠は web/file-preview.mjs の openPanel（頭の再読み込み・広げる・閉じる、道具の列にタブ）。ここは中身だけを作る。
 // 文字列に埋めるモデル・利用者由来の値は esc を通す。
 import { t, fmt } from './i18n.mjs';
-import { branchIcon, commitIcon, jumpIcon, chevRightIcon, backIcon, openInBrowserIcon, folderIcon, moreIcon, closeIcon, archiveIcon } from './icons.mjs';
-import { refreshIcon, chatIcon, listIcon, treeIcon, upIcon, downIcon, prevChangeIcon, nextChangeIcon, inlineIcon, sideIcon, wrapIcon, tagIcon, cloudIcon, flagIcon, diffIcon } from './git-icons.mjs';
+import { branchIcon, jumpIcon, chevRightIcon, backIcon, openInBrowserIcon, folderIcon, moreIcon, archiveIcon } from './icons.mjs';
+import { refreshIcon, chatIcon, listIcon, treeIcon, upIcon, downIcon, prevChangeIcon, nextChangeIcon, inlineIcon, sideIcon, wrapIcon, tagIcon, cloudIcon, flagIcon, diffIcon, graphTabIcon, worktreeTabIcon } from './git-icons.mjs';
 import { branchLabel, changeText, filesText } from './git-view.mjs';
 import { createLeftovers } from './worktree-ui.mjs';
-import { layoutGraph, rangeNodes, rowSvg, tailSvg, WT_KEY } from './git-graph.mjs';
+import { layoutGraph, rangeNodes, rowSvg, tailSvg, lanesBelow, WT_KEY } from './git-graph.mjs';
 import { diffHTML } from './git-diff.mjs';
 
 const KEY = 'git';
@@ -66,7 +67,7 @@ export function setupGitPanel({ cmd, preview, session, jump, use, onState = () =
   // 返事が来ない問い合わせで「読み込み中…」のまま止まらないよう、30 秒で諦めて「取れませんでした」にする
   const ask = (command, args) => new Promise((resolve, reject) => { const timer = setTimeout(() => reject(new Error('timeout')), 30_000); cmd(command, args).then(resolve, reject).finally(() => clearTimeout(timer)); });
   const leftovers = createLeftovers({ ...worktrees, changed: () => { if (st.tab === 'worktrees') paint(); } });
-  const fresh = (key) => ({ key, tab: 'changes', sel: { k: 'uncommitted' }, back: 'uncommitted', initial: 'uncommitted', shut: new Set(), older: false, base: null, changes: {}, commitData: {}, hist: null, histLoading: false,
+  const fresh = (key) => ({ key, tab: 'changes', sel: { k: 'uncommitted' }, open: null, initial: 'uncommitted', shut: new Set(), older: false, base: null, changes: {}, commitData: {}, hist: null, histLoading: false,
     wt: null, wtOpen: new Set(), wtDetail: new Map(), diff: null, loading: false, failed: false, at: null, note: '' });
   let st = fresh(null);
   let opener = null, ticket = 0, noteTimer = 0, target = null, wide = false;
@@ -107,9 +108,8 @@ export function setupGitPanel({ cmd, preview, session, jump, use, onState = () =
   const mineHash = (hash) => (st.base?.timeline ?? []).some((e) => e.kind === 'commit' && e.hash && hash.startsWith(e.hash));
   const eventOf = (hash) => (st.base?.timeline ?? []).find((e) => e.kind === 'commit' && e.hash && hash.startsWith(e.hash));
 
-  /** { title, meta, groups: [{ id, title, files }], total } */
-  function listModel() {
-    const sel = st.sel;
+  /** { title, meta, groups: [{ id, title, files }], total }。sel は範囲 { k: 'uncommitted' | 'session' } か、開いた箱のコミット { k: 'commit', hash } */
+  function modelFor(sel) {
     const tag = (files, src) => files.map((f) => ({ ...f, src }));
     if (sel.k === 'uncommitted') {
       const ch = st.changes.uncommitted;
@@ -131,6 +131,7 @@ export function setupGitPanel({ cmd, preview, session, jump, use, onState = () =
     const c = data.commit;
     return { title: `<code>${esc(c.short)}</code> ${esc(c.subject)}`, html: true, commit: c, failed: data.failed === true, groups: [{ id: `c${c.short}`, title: null, files: tag(data.files, { commit: c.hash }) }], total: data.total };
   }
+  const listModel = () => modelFor(st.sel);
 
   // 読み込み中・取れなかったときは数を出さない（0 と読めてしまうため）
   const countOf = () => { if (!st.base || st.failed) return null; const m = listModel(); return m.loading || m.failed ? null : m.total.files; };
@@ -155,8 +156,11 @@ export function setupGitPanel({ cmd, preview, session, jump, use, onState = () =
   function paintTabs() {
     const n = countOf();
     const wtN = st.wt?.total ?? null;
-    tabs.innerHTML = [['changes', t('git.tabChanges'), n], ['worktrees', t('git.tabWorktrees'), wtN]].map(([k, label, count]) =>
-      `<button class="gp-tab" role="tab" type="button" id="gp-tab-${k}" aria-controls="gp-panel" data-t="${k}" aria-selected="${st.tab === k}" tabindex="${st.tab === k ? 0 : -1}">${esc(label)}${count != null ? `<span class="n">${count}</span>` : ''}</button>`).join('');
+    // 件数は画面に出さず、読み上げとツールチップの名前に持つ（「Worktree、30 件」）
+    tabs.innerHTML = [['changes', t('git.tabChanges'), graphTabIcon, n], ['worktrees', t('git.tabWorktrees'), worktreeTabIcon, wtN]].map(([k, label, icon, count]) => {
+      const name = count != null ? t('git.tabLabel', { label, count }) : label;
+      return `<button class="gp-tab" role="tab" type="button" id="gp-tab-${k}" aria-controls="gp-panel" data-t="${k}" aria-label="${esc(name)}" title="${esc(name)}" aria-selected="${st.tab === k}" tabindex="${st.tab === k ? 0 : -1}">${icon}<span class="tl">${esc(label)}</span></button>`;
+    }).join('');
     root.id = 'gp-panel'; root.setAttribute('aria-labelledby', `gp-tab-${st.tab}`);
     tabs.hidden = Boolean(st.diff) && matchMedia('(max-width:760px)').matches;
   }
@@ -177,25 +181,29 @@ export function setupGitPanel({ cmd, preview, session, jump, use, onState = () =
     const hasSession = Boolean(st.base?.changes?.hasSession);
     let h = `<span class="seg rseg" role="group" aria-label="${esc(t('git.range'))}"><button type="button" data-rg="uncommitted" aria-pressed="${st.sel.k === 'uncommitted'}">${esc(narrow ? t('git.rangeUncommittedShort') : t('git.rangeUncommitted'))}</button>`;
     if (hasSession) h += `<button type="button" data-rg="session" aria-pressed="${st.sel.k === 'session'}">${esc(narrow ? t('git.rangeSessionShort') : t('git.rangeSession'))}</button>`;
-    if (st.sel.k === 'commit') {
-      const c = commits.find((x) => x.hash === st.sel.hash);
-      h += `<span class="cpill"><button type="button" aria-pressed="true" title="${esc(c?.subject ?? '')}">${commitIcon}${esc(st.sel.hash.slice(0, 7))}</button><button type="button" class="x" data-clear aria-label="${esc(t('git.clearCommit', { hash: st.sel.hash.slice(0, 7) }))}" title="${esc(t('git.clearCommitTitle'))}">${closeIcon}</button></span>`;
-    }
     return `${h}</span>`;
   }
+
+  /** 行のすぐ下に開く箱。縦の線を左に引き継ぎ、中身は開いている間だけ作る（閉じると .fold.shut で畳む） */
+  function boxShell(r, key, name) {
+    const lines = lanesBelow(layout, r).map((l) => `<line class="e${l.lane === 0 ? ' l0' : ''}" data-e="${l.edge}" x1="${l.x}" x2="${l.x}" y1="0" y2="100%"${l.dash ? ' stroke-dasharray="3 3"' : ''}/>`).join('');
+    return `<div class="fold${st.open === key ? '' : ' shut'}" id="ins-${r}" role="group" aria-label="${esc(t('git.boxLabel', { name }))}"><div><div class="ins"><div class="ins-l" aria-hidden="true"><svg class="g">${lines}</svg></div><div class="ins-b">${st.open === key ? boxInner(key) : ''}</div></div></div></div>`;
+  }
+  const chevHTML = `<span class="chev">${chevRightIcon}</span>`;
 
   function rowHTML(r) {
     const row = layout.rows[r];
     if (row.wt) {
       const n = st.changes.uncommitted?.total?.files ?? 0;
-      return `<button type="button" class="cg-row wt" data-r="${r}" aria-label="${esc(t('git.wtRowLabel', { count: n }))}">${rowSvg(layout, r)}<span class="cg-t"><span class="subj">${esc(t('git.wtRow'))}</span><span class="cnt">${n}</span></span><span class="cg-tm"></span></button>`;
+      const label = t('git.wtRowLabel', { count: n });
+      return `<button type="button" class="cg-row wt" data-r="${r}" data-k="${WT_KEY}" aria-expanded="${st.open === WT_KEY}" aria-controls="ins-${r}" aria-label="${esc(label)}">${rowSvg(layout, r)}<span class="cg-t"><span class="subj">${esc(t('git.wtRow'))}</span><span class="cnt">${n}</span></span><span class="cg-tm"></span>${chevHTML}</button>${boxShell(r, WT_KEY, t('git.wtRow'))}`;
     }
     const c = commits[r - (layout.rows[0].wt ? 1 : 0)];
     const start = st.hist?.session;
     const isStart = start && start.head === c.hash;
     const mark = isStart ? `<span class="startmk" title="${esc(t('git.startTitle', { time: fmt.time(start.at) }))}">${flagIcon}${esc(t('git.sessionStart', { time: fmt.time(start.at) }))}</span>` : '';
     const tip = `${c.short} · ${c.author} · ${new Date(c.at).toLocaleString()}`;
-    return `<button type="button" class="cg-row${row.head ? ' headc' : ''}" data-r="${r}" data-h="${esc(c.hash)}" title="${esc(tip)}" aria-label="${esc(`${c.subject} · ${c.refs.map((x) => x.name).filter(Boolean).join(' ')} · ${fmt.relative(c.at)} · ${c.short}${isStart ? ` · ${t('git.sessionStartLabel')}` : ''}`)}">${rowSvg(layout, r)}<span class="cg-t">${c.refs.map(refHTML).join('')}<span class="subj">${esc(c.subject)}</span>${mark}</span><span class="cg-tm">${esc(fmt.relative(c.at))}</span></button>`;
+    return `<button type="button" class="cg-row${row.head ? ' headc' : ''}" data-r="${r}" data-k="${esc(c.hash)}" aria-expanded="${st.open === c.hash}" aria-controls="ins-${r}" title="${esc(tip)}" aria-label="${esc(`${c.subject} · ${c.refs.map((x) => x.name).filter(Boolean).join(' ')} · ${fmt.relative(c.at)} · ${c.short}${isStart ? ` · ${t('git.sessionStartLabel')}` : ''}`)}">${rowSvg(layout, r)}<span class="cg-t">${c.refs.map(refHTML).join('')}<span class="subj">${esc(c.subject)}</span>${mark}</span><span class="cg-tm">${esc(fmt.relative(c.at))}</span>${chevHTML}</button>${boxShell(r, c.hash, c.subject)}`;
   }
 
   function graphHTML() {
@@ -232,30 +240,52 @@ export function setupGitPanel({ cmd, preview, session, jump, use, onState = () =
     return html;
   }
 
-  let diffList = [];     // 今の一覧を開き順に並べたもの（差分の前後のファイル）
+  let diffList = [];     // 範囲の一覧を開き順に並べたもの（差分の前後のファイル）
   let fileKeys = {};     // data-key → 差分の並びの添字
+  let boxList = [];      // 開いている箱のファイル（範囲の一覧とは別に持つ）
+  let boxKeys = {};
+  /** ファイルの群・行の HTML。scope は一覧と箱で行の鍵・畳みの識別子がぶつからないための頭。list / keys に開き順の並びを足す */
+  function filesHTML(m, scope, list, keys) {
+    return m.groups.map((g) => {
+      const gid = `${scope}${g.id}`;
+      g.files.forEach((f, idx) => { keys[`${gid}:${idx}`] = list.length; list.push(f); });
+      const keyOf = (idx) => `${gid}:${idx}`;
+      const inner = prefs.view === 'tree' ? treeHTML(g.files, gid, keyOf) : g.files.map((f, idx) => fileRowHTML(f, keyOf(idx), 0, true)).join('');
+      if (!g.title) return inner;
+      const open = !st.shut.has(gid);
+      return `<div class="grp" role="treeitem" aria-level="1" aria-expanded="${open}" tabindex="-1" data-fold="${esc(gid)}"><span class="chev">${chevRightIcon}</span>${esc(g.title)}<span class="n">${g.files.length}</span></div><div class="fold${open ? '' : ' shut'}" role="group"><div>${inner}</div></div>`;
+    }).join('');
+  }
+  const countsText = (total) => `${total.add ? `<span class="a">+${total.add}</span>` : ''}${total.add && total.del ? ' ' : ''}${total.del ? `<span class="d">−${total.del}</span>` : ''}`;
+  function messageOf(m, empty) {
+    return m.loading ? `<div class="git-empty">${esc(t('git.loading'))}</div>` : m.failed ? `<div class="git-empty">${esc(t('git.failedChanges'))}</div>`
+      : m.groups.every((g) => !g.files.length) ? `<div class="git-empty">${esc(empty)}</div>` : '';
+  }
   function listHTML() {
     const m = listModel();
     diffList = []; fileKeys = {};
-    const meta = m.commit ? (() => {
-      const c = m.commit; const mine = mineHash(c.hash);
-      return `<div class="cl-meta"><span>${esc(c.author)} · ${esc(new Date(c.at).toLocaleString())} · ${esc(t('git.parent'))} <code>${esc(c.parents.map((p) => p.slice(0, 7)).join(' ') || t('git.noParent'))}</code>${mine ? ` · ${esc(t('git.madeHere'))}` : ''}</span>${mine && !foreign() ? `<button class="btn btn-quiet" type="button" data-jump>${jumpIcon}${esc(t('git.jump'))}</button>` : ''}</div>`;
-    })() : '';
-    const body = m.loading ? `<div class="git-empty">${esc(t('git.loading'))}</div>` : m.failed ? `<div class="git-empty">${esc(t('git.failedChanges'))}</div>`
-      : m.groups.every((g) => !g.files.length) ? `<div class="git-empty">${esc(st.sel.k === 'session' ? t('git.emptySession') : st.sel.k === 'commit' ? t('git.emptyCommit') : t('git.emptyUncommitted'))}</div>` : '';
-    const groupsHTML = m.groups.map((g) => {
-      g.files.forEach((f, idx) => { fileKeys[`${g.id}:${idx}`] = diffList.length; diffList.push(f); });
-      const keyOf = (idx) => `${g.id}:${idx}`;
-      const inner = prefs.view === 'tree' ? treeHTML(g.files, g.id, keyOf) : g.files.map((f, idx) => fileRowHTML(f, keyOf(idx), 0, true)).join('');
-      if (!g.title) return inner;
-      const open = !st.shut.has(g.id);
-      return `<div class="grp" role="treeitem" aria-level="1" aria-expanded="${open}" tabindex="-1" data-fold="${esc(g.id)}"><span class="chev">${chevRightIcon}</span>${esc(g.title)}<span class="n">${g.files.length}</span></div><div class="fold${open ? '' : ' shut'}" role="group"><div>${inner}</div></div>`;
-    }).join('');
-    const tot = `${t('git.files', { count: m.total.files })}${m.total.add ? ` <span class="a">+${m.total.add}</span>` : ''}${m.total.del ? ` <span class="d">−${m.total.del}</span>` : ''}`;
+    const body = messageOf(m, st.sel.k === 'session' ? t('git.emptySession') : t('git.emptyUncommitted'));
+    const groupsHTML = filesHTML(m, '', diffList, fileKeys);
+    const tot = `${t('git.files', { count: m.total.files })}${m.total.add || m.total.del ? ` ${countsText(m.total)}` : ''}`;
     return `<div class="cl-h"><div class="cl-tt"><b>${m.html ? m.title : esc(m.title)}${m.titleNote ? ` <span class="w">${esc(m.titleNote)}</span>` : ''}</b>${m.loading ? '' : `<span class="cn">${tot}</span>`}</div>
       <button class="btn btn-icon sm" type="button" data-v aria-pressed="${prefs.view === 'tree'}" aria-label="${esc(prefs.view === 'tree' ? t('git.listView') : t('git.treeView'))}" title="${esc(prefs.view === 'tree' ? t('git.listView') : t('git.treeView'))}">${prefs.view === 'tree' ? listIcon : treeIcon}</button>
-      <button class="btn btn-icon sm" type="button" data-use aria-label="${esc(t('git.useRange'))}" title="${esc(t('git.useRange'))}">${chatIcon}</button></div>${meta}${body}
+      <button class="btn btn-icon sm" type="button" data-use aria-label="${esc(t('git.useRange'))}" title="${esc(t('git.useRange'))}">${chatIcon}</button></div>${body}
       <div class="tree" role="tree" aria-label="${esc(t('git.changedFiles'))}">${groupsHTML}</div>`;
+  }
+  const selOfBox = (key) => (key === WT_KEY ? { k: 'uncommitted' } : { k: 'commit', hash: key });
+  /** 開いた箱の中身: 件数と「会話で使う」→ 作者・日時・親 → ファイルの一覧（ファイルの行は範囲の一覧と同じ部品） */
+  function boxInner(key) {
+    const m = modelFor(selOfBox(key));
+    boxList = []; boxKeys = {};
+    const meta = m.commit && !m.loading ? (() => {
+      const c = m.commit; const mine = mineHash(c.hash);
+      return `<div class="cl-meta"><span>${esc(c.author)} · ${esc(new Date(c.at).toLocaleString())} · <code>${esc(c.short)}</code> · ${esc(t('git.parent'))} <code>${esc(c.parents.map((p) => p.slice(0, 7)).join(' ') || t('git.noParent'))}</code>${mine ? ` · ${esc(t('git.madeHere'))}` : ''}</span>${mine && !foreign() ? `<button class="btn btn-quiet" type="button" data-jump="${esc(c.hash)}">${jumpIcon}${esc(t('git.jump'))}</button>` : ''}</div>`;
+    })() : '';
+    const body = messageOf(m, key === WT_KEY ? t('git.emptyUncommitted') : t('git.emptyCommit'));
+    const files = filesHTML(m, 'b:', boxList, boxKeys);
+    const head = m.loading ? '' : `<b>${esc(t('git.files', { count: m.total.files }))}</b>${m.total.add || m.total.del ? `<span class="cn">${countsText(m.total)}</span>` : ''}`;
+    return `<div class="cl-h"><div class="cl-tt">${head}</div><button class="btn btn-quiet" type="button" data-cuse>${chatIcon}${esc(t('git.use'))}</button></div>${meta}${body}
+      <div class="tree" role="tree" aria-label="${esc(t('git.changedFiles'))}">${files}</div>`;
   }
 
   function renderChanges() {
@@ -267,34 +297,68 @@ export function setupGitPanel({ cmd, preview, session, jump, use, onState = () =
     return view;
   }
 
-  /** 選んだ範囲を線に沿った帯・太い線・塗った点で見せ、範囲の外を薄くする */
+  /**
+   * 選んだ範囲を線に沿った帯・太い線・塗った点で見せる。範囲の外を薄くするのは、複数のコミットにまたがる「この会話の間」だけ
+   * （コミットを 1 つ開いたときも、既定の「コミットしていない分」のときも、ほかの行は薄くしない）
+   */
   function applySelection() {
     if (!layout) return;
-    const R = rangeNodes(layout, commits, { kind: st.sel.k, hash: st.sel.hash, head: st.hist?.head ?? null, start: st.hist?.session?.head ?? null });
+    const R = rangeNodes(layout, commits, { kind: st.sel.k, head: st.hist?.head ?? null, start: st.hist?.session?.head ?? null });
+    const dimOut = st.sel.k === 'session';
     const edgeOn = (i) => { const e = layout.edges[i]; return R.nodes.has(e.a) && (e.b == null ? false : R.nodes.has(e.b) || e.b === R.base); };
-    for (const x of root.querySelectorAll('.cg [data-e]')) { const on = edgeOn(Number(x.dataset.e)); x.classList.toggle('on', on); x.classList.toggle('dim', !on); }
-    for (const x of root.querySelectorAll('.cg [data-n]')) { const r = Number(x.dataset.n); const on = R.nodes.has(r), base = r === R.base; x.classList.toggle('on', on); x.classList.toggle('base', base && !on); x.classList.toggle('dim', !on && !base); }
+    for (const x of root.querySelectorAll('.cg [data-e]')) { const on = edgeOn(Number(x.dataset.e)); x.classList.toggle('on', on); x.classList.toggle('dim', dimOut && !on); }
+    for (const x of root.querySelectorAll('.cg [data-n]')) { const r = Number(x.dataset.n); const on = R.nodes.has(r), base = r === R.base; x.classList.toggle('on', on); x.classList.toggle('base', base && !on); x.classList.toggle('dim', dimOut && !on && !base); }
     for (const x of root.querySelectorAll('.cg-row')) {
       const r = Number(x.dataset.r); const on = R.nodes.has(r);
-      x.classList.toggle('dim', !on && r !== R.base); x.classList.toggle('sel', st.sel.k === 'commit' && x.dataset.h === st.sel.hash);
-      x.setAttribute('aria-pressed', String(st.sel.k === 'commit' ? x.dataset.h === st.sel.hash : st.sel.k === 'uncommitted' && layout.rows[r].wt));
+      x.classList.toggle('dim', dimOut && !on && r !== R.base); x.classList.toggle('sel', x.dataset.k === st.open);
     }
     for (const x of root.querySelectorAll('.startmk')) x.classList.toggle('on', st.sel.k === 'session');
-    // グラフの行は Tab の止まりを 1 つにする（↑↓ で移る）。選んでいる行、無ければ最初の行
+    // グラフの行は Tab の止まりを 1 つにする（↑↓ で移る）。開いている行、無ければ最初の行
     const rowsAll = [...root.querySelectorAll('.cg-row')];
-    const stop = rowsAll.find((x) => x.getAttribute('aria-pressed') === 'true') ?? rowsAll[0];
+    const stop = rowsAll.find((x) => x.dataset.k === st.open) ?? rowsAll[0];
     for (const x of rowsAll) x.tabIndex = x === stop ? 0 : -1;
   }
 
-  /** 範囲・コミットを選び直す。グラフは動かさず、帯・一覧・タブの数だけ替える */
+  /** 範囲を選び直す。グラフは動かさず、帯・一覧・タブの数だけ替える */
   async function choose(next) {
     st.sel = next;
-    if (next.k !== 'commit') st.back = next.k;
     const bar = root.querySelector('.rbar'), cl = root.querySelector('.cl');
     if (!bar || !cl) { paint(); return; }
     bar.innerHTML = rbarHTML(); cl.innerHTML = listHTML(); wireTree(); applySelection(); paintTabs();
     if (next.k === 'session' && !st.changes.session) await loadRange('session');
-    if (next.k === 'commit' && !st.commitData[next.hash]) await loadCommit(next.hash);
+  }
+
+  // ---------------------------------------------------------------- コミットの行の箱（同時に 1 つ。240ms · ease-out の開閉は .fold と同じ）
+  const rowOfKey = (key) => [...root.querySelectorAll('.cg-row')].find((x) => x.dataset.k === key);
+  const foldOfRow = (row) => row?.nextElementSibling;
+  function closeBox(key) {
+    const row = rowOfKey(key), fold = foldOfRow(row); if (!row || !fold) return;
+    row.setAttribute('aria-expanded', 'false'); row.classList.remove('sel');
+    fold.classList.add('shut'); fold.inert = true;
+    // 畳み終わってから中身を捨てる（開き直したときに作り直す）
+    setTimeout(() => { if (fold.classList.contains('shut')) fold.querySelector('.ins-b').replaceChildren(); }, reduced() ? 0 : 320);
+  }
+  function openBox(key) {
+    const row = rowOfKey(key), fold = foldOfRow(row); if (!row || !fold) return;
+    fold.querySelector('.ins-b').innerHTML = boxInner(key);
+    row.setAttribute('aria-expanded', 'true'); row.classList.add('sel');
+    fold.classList.remove('shut'); fold.inert = false;
+    if (key !== WT_KEY && !st.commitData[key]) loadCommit(key);
+    // 箱の下が切れていたら、足りない分だけ送る（畳みが開き終わる頃）
+    setTimeout(() => { if (st.open === key && fold.isConnected) fold.scrollIntoView({ block: 'nearest', behavior: reduced() ? 'auto' : 'smooth' }); }, reduced() ? 0 : 250);
+  }
+  /** key の箱を開く / 閉じる。ほかの箱が開いていれば先に閉じる */
+  function toggleBox(key) {
+    const prev = st.open;
+    if (prev) closeBox(prev);
+    st.open = prev === key ? null : key;
+    if (st.open) openBox(st.open);
+    applySelection();
+  }
+  function refillBox() {
+    if (!st.open || st.tab !== 'changes' || st.diff) return;
+    const fold = foldOfRow(rowOfKey(st.open)); if (!fold) return;
+    fold.querySelector('.ins-b').innerHTML = boxInner(st.open);
   }
 
   // ---------------------------------------------------------------- 一覧のキーボード（role=tree の行を上下で移る）
@@ -310,7 +374,9 @@ export function setupGitPanel({ cmd, preview, session, jump, use, onState = () =
     const open = !st.shut.has(id);
     r.setAttribute('aria-expanded', String(open)); r.nextElementSibling?.classList.toggle('shut', !open);
   }
-  const fileOf = (row) => diffList[fileKeys[row.dataset.key]];
+  /** ファイルの行 → その行がある並び（箱の中か範囲の一覧か）と添字 */
+  const listOf = (row) => (row.closest('.ins') ? [boxList, boxKeys] : [diffList, fileKeys]);
+  const fileOf = (row) => { const [list, keys] = listOf(row); return list[keys[row.dataset.key]]; };
 
   // ---------------------------------------------------------------- 作業場所タブ
   const badge = (w) => (w.kind === 'here' ? ['here', t('git.wtHere')] : w.kind === 'left' ? ['wait', t('git.wtUnmerged')] : w.kind === 'busy' ? ['', t('git.wtBusy')] : w.kind === 'plain' ? ['', t('git.wtPlain')] : ['', '']);
@@ -350,19 +416,32 @@ export function setupGitPanel({ cmd, preview, session, jump, use, onState = () =
 
   // ---------------------------------------------------------------- 差分
   const stateTitle = (f) => stateName(f.state);
+  /** 差分が全部追加（新規のファイル）か全部削除（削除したファイル）なら 'add' / 'del'、そうでなければ null */
+  function singleSided(f, data) {
+    const lines = data.hunks.flatMap((h) => h.lines.map((l) => l.t));
+    if (!lines.length) return null;
+    if (lines.every((x) => x === '+') && (f.state === 'A' || f.state === 'U' || data.hunks.every((h) => h.oldCount === 0 && h.oldStart === 0))) return 'add';
+    if (lines.every((x) => x === '-') && (f.state === 'D' || data.hunks.every((h) => h.newCount === 0 && h.newStart === 0))) return 'del';
+    return null;
+  }
   function renderDiff() {
     const d = st.diff, f = d.list[d.index];
     const [dir, nm] = splitPath(f.path);
-    const mode = wide ? prefs.mode : 'inline';
     const narrow = matchMedia('(max-width:760px)').matches;
-    const wrap = narrow ? prefs.wrapNarrow : prefs.wrap;
     const data = d.cache.get(d.index);
+    // 新規・削除のファイルは片側が空なので、左右ではなく 1 列で見せる（理由を 1 行添える。ほかのファイルへ移れば左右に戻る）
+    const whole = data?.hunks?.length ? singleSided(f, data) : null;
+    let mode = wide ? prefs.mode : 'inline';
+    const note = mode === 'side' && whole ? (whole === 'add' ? t('git.noteNew') : t('git.noteDeleted')) : '';
+    if (note) mode = 'inline';
+    // 左右は常に折り返す（折り返さないと各列が最長の行の幅になり、横にはみ出して見比べられない）
+    const wrap = mode === 'side' ? true : narrow ? prefs.wrapNarrow : prefs.wrap;
     let body, changes = 0;
     if (d.failed.has(d.index)) body = `<div class="git-empty">${esc(t('git.failedDiff'))}</div>`;
     else if (!data) body = `<div class="git-empty">${esc(t('git.loading'))}</div>`;
     else if (data.binary) body = `<div class="git-empty">${esc(t('git.binary'))}</div>`;
     else if (!data.hunks.length) body = `<div class="git-empty">${esc(data.truncated ? t('git.truncated') : t('git.noDiff'))}</div>`;
-    else { const out = diffHTML(data, { mode, open: d.open }); changes = out.changes; body = `<div class="dx${wrap ? ' wrap' : ''}${mode === 'side' ? ' side' : ''}">${out.html}</div>${data.truncated ? `<div class="git-empty">${esc(t('git.truncated'))}</div>` : ''}`; }
+    else { const out = diffHTML(data, { mode, open: d.open }); changes = out.changes; body = `${note ? `<div class="dnote" role="note">${esc(note)}</div>` : ''}<div class="dx${wrap ? ' wrap' : ''}${mode === 'side' ? ' side' : ''}">${out.html}</div>${data.truncated ? `<div class="git-empty">${esc(t('git.truncated'))}</div>` : ''}`; }
     d.nChanges = changes;
     const btn = (a, icon, label, extra = '') => `<button class="btn btn-icon sm${extra}" type="button" data-da="${a}" aria-label="${esc(label)}" title="${esc(label)}">${icon}</button>`;
     const dis = (cond) => (cond ? ' aria-disabled="true"' : '');
@@ -375,7 +454,7 @@ export function setupGitPanel({ cmd, preview, session, jump, use, onState = () =
         <span class="grp2"><button class="btn btn-icon sm" type="button" data-da="pc" aria-label="${esc(t('git.prevChange'))}" title="${esc(t('git.prevChange'))} (Shift+Alt+F5)">${prevChangeIcon}</button><button class="btn btn-icon sm" type="button" data-da="nc" aria-label="${esc(t('git.nextChange'))}" title="${esc(t('git.nextChange'))} (Alt+F5)">${nextChangeIcon}</button><span class="pos" data-pos>${esc(t('git.changePos', { n: changes ? Math.max(d.cur, 0) + 1 : 0, total: changes }))}</span></span>
         <span class="grow"></span>
         ${narrow ? '' : `<span class="seg" role="group" aria-label="${esc(t('git.diffForm'))}"><button type="button" data-da="inline" aria-pressed="${mode === 'inline'}">${esc(t('git.inline'))}</button><button type="button" data-da="side" aria-pressed="${mode === 'side'}"${wide ? '' : ' aria-disabled="true"'} title="${esc(wide ? t('git.sideTitle') : t('git.sideNeedsWide'))}">${esc(t('git.side'))}</button></span>`}
-        <button class="btn btn-icon sm" type="button" data-da="wrap" aria-pressed="${wrap}" aria-label="${esc(t('git.wrap'))}" title="${esc(t('git.wrap'))}">${wrapIcon}</button></div></div>${body}</div>`);
+        <button class="btn btn-icon sm" type="button" data-da="wrap" aria-pressed="${wrap}"${mode === 'side' ? ' aria-disabled="true"' : ''} aria-label="${esc(t('git.wrap'))}" title="${esc(mode === 'side' ? t('git.wrapFixed') : t('git.wrap'))}">${wrapIcon}</button></div></div>${body}</div>`);
     return view;
   }
   function diffRequest(f) {
@@ -391,13 +470,16 @@ export function setupGitPanel({ cmd, preview, session, jump, use, onState = () =
     if (d.index === index) paint({ keepScroll: true });
   }
   function openDiff(list, index, from) {
-    st.diff = { list, index, cache: new Map(), failed: new Set(), open: new Set(), cur: -1, nChanges: 0, opener: from };
+    // 戻ったときに、開いていた箱と押したファイルの行・スクロールの位置へ帰れるよう、行の鍵と位置を持つ
+    st.diff = { list, index, cache: new Map(), failed: new Set(), open: new Set(), cur: -1, nChanges: 0, opener: from?.dataset?.key ?? null, scroll: root.parentElement?.scrollTop ?? 0 };
     paint(); loadDiffAt(index);
     root.querySelector('.dv')?.focus({ preventScroll: true });
   }
   function closeDiff() {
-    const from = st.diff?.opener; st.diff = null; paint();
-    if (from?.isConnected) from.focus({ preventScroll: true });
+    const key = st.diff?.opener, scroll = st.diff?.scroll ?? 0; st.diff = null; paint();
+    const scrollEl = root.parentElement; if (scrollEl) scrollEl.scrollTop = scroll;
+    const row = key == null ? null : [...root.querySelectorAll('.fr')].find((x) => x.dataset.key === key);
+    if (row) row.focus({ preventScroll: true });
   }
   function goFile(step) {
     const d = st.diff; const j = d.index + step; if (j < 0 || j >= d.list.length) return;
@@ -423,28 +505,22 @@ export function setupGitPanel({ cmd, preview, session, jump, use, onState = () =
       else if (a === 'pf') goFile(-1); else if (a === 'nf') goFile(1);
       else if (a === 'pc') goChange(-1); else if (a === 'nc') goChange(1);
       else if (a === 'inline' || a === 'side') { prefs.mode = a; savePrefs(); paint({ keepScroll: true }); root.querySelector(`[data-da="${a}"]`)?.focus(); }
-      else if (a === 'wrap') { if (matchMedia('(max-width:760px)').matches) prefs.wrapNarrow = !prefs.wrapNarrow; else prefs.wrap = !prefs.wrap; savePrefs(); paint({ keepScroll: true }); root.querySelector('[data-da="wrap"]')?.focus(); }
+      else if (a === 'wrap') { if (root.querySelector('.dx.side')) return; if (matchMedia('(max-width:760px)').matches) prefs.wrapNarrow = !prefs.wrapNarrow; else prefs.wrap = !prefs.wrap; savePrefs(); paint({ keepScroll: true }); root.querySelector('[data-da="wrap"]')?.focus(); }
       return;
     }
     const gap = e.target.closest('.dgap');
     if (gap && st.diff) { if (!gap.disabled) { st.diff.open.add(Number(gap.dataset.gap)); paint({ keepScroll: true }); } return; }
     const rg = e.target.closest('[data-rg]');
     if (rg) { choose({ k: rg.dataset.rg }); root.querySelector(`[data-rg="${st.sel.k}"]`)?.focus(); return; }
-    if (e.target.closest('[data-clear]')) { choose({ k: st.back }); root.querySelector(`[data-rg="${st.back}"]`)?.focus(); return; }
     const crow = e.target.closest('.cg-row');
-    if (crow) {
-      const r = Number(crow.dataset.r);
-      if (layout.rows[r].wt) choose({ k: 'uncommitted' });
-      else if (st.sel.k === 'commit' && st.sel.hash === crow.dataset.h) choose({ k: st.back });
-      else choose({ k: 'commit', hash: crow.dataset.h });
-      root.querySelector(`.cg-row[data-r="${r}"]`)?.focus({ preventScroll: true });
-      return;
-    }
+    if (crow) { toggleBox(crow.dataset.k); crow.focus({ preventScroll: true }); return; }
     if (e.target.closest('[data-older]')) { st.older = !st.older; paint({ keepScroll: true }); return; }
     if (e.target.closest('[data-more]')) { loadMoreHistory(); return; }
-    if (e.target.closest('[data-v]')) { prefs.view = prefs.view === 'tree' ? 'list' : 'tree'; savePrefs(); const cl = root.querySelector('.cl'); cl.innerHTML = listHTML(); wireTree(); root.querySelector('[data-v]')?.focus(); return; }
-    if (e.target.closest('[data-use]')) { useRange(); return; }
-    if (e.target.closest('[data-jump]')) { const ev = eventOf(st.sel.hash); if (!ev || !jump(ev)) setNote(t('git.jumpFailed')); return; }
+    if (e.target.closest('[data-v]')) { prefs.view = prefs.view === 'tree' ? 'list' : 'tree'; savePrefs(); const cl = root.querySelector('.cl'); cl.innerHTML = listHTML(); wireTree(); refillBox(); root.querySelector('[data-v]')?.focus(); return; }
+    if (e.target.closest('[data-use]')) { useSel(st.sel); return; }
+    if (e.target.closest('[data-cuse]')) { if (st.open) useSel(selOfBox(st.open)); return; }
+    const jumpBtn = e.target.closest('[data-jump]');
+    if (jumpBtn) { const ev = eventOf(jumpBtn.dataset.jump); if (!ev || !jump(ev)) setNote(t('git.jumpFailed')); return; }
     const wrow = e.target.closest('.wrow');
     if (wrow) {
       const w = st.wt.rows[Number(wrow.dataset.wi)];
@@ -460,7 +536,8 @@ export function setupGitPanel({ cmd, preview, session, jump, use, onState = () =
     if (st.tab === 'worktrees') { const [list, index] = wtList(r); if (act === 'use') { use(t('git.useFile', { path: list[index].path })); setNote(t('git.used')); } else openDiff(list, index, r); return; }
     const f = fileOf(r);
     if (act === 'use') { use(t('git.useFile', { path: f.path })); setNote(t('git.used')); return; }
-    openDiff(diffList, fileKeys[r.dataset.key], r);
+    const [list, keys] = listOf(r);
+    openDiff(list, keys[r.dataset.key], r);
   }
   /** 作業場所タブのファイルの行 → その作業場所の並びと添字 */
   function wtList(row) {
@@ -476,12 +553,32 @@ export function setupGitPanel({ cmd, preview, session, jump, use, onState = () =
       else if (e.altKey && e.key === 'F5') { e.preventDefault(); goChange(e.shiftKey ? -1 : 1); }
       return;
     }
+    if (e.altKey || e.ctrlKey || e.metaKey) return;
+    // グラフの行と、開いた箱の中のファイルの行は、見えている順に ↑↓ で移る
+    const visible = () => [...root.querySelectorAll('.cg-row, .ins .grp, .ins .fr')].filter((x) => !x.closest('.fold.shut'));
+    const go = (x) => { if (!x) return; if (x.classList.contains('cg-row')) { for (const y of root.querySelectorAll('.cg-row')) y.tabIndex = -1; x.tabIndex = 0; } x.focus(); };
     const crow = e.target.closest?.('.cg-row');
-    if (crow && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
-      e.preventDefault(); const all = [...root.querySelectorAll('.cg-row')].filter((x) => !x.closest('.fold.shut')); const next = all[all.indexOf(crow) + (e.key === 'ArrowDown' ? 1 : -1)]; if (next) { for (const x of all) x.tabIndex = -1; next.tabIndex = 0; next.focus(); } return;
+    if (crow && e.target === crow) {
+      const open = crow.getAttribute('aria-expanded') === 'true';
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); const all = visible(); go(all[all.indexOf(crow) + (e.key === 'ArrowDown' ? 1 : -1)]); }
+      else if (e.key === 'ArrowRight') { e.preventDefault(); if (!open) toggleBox(crow.dataset.k); else go(foldOfRow(crow).querySelector('.fr, .grp')); }
+      else if (e.key === 'ArrowLeft' && open) { e.preventDefault(); toggleBox(crow.dataset.k); }
+      else if (e.key === 'Escape' && st.open) { e.preventDefault(); e.stopPropagation(); const was = st.open; toggleBox(was); rowOfKey(was)?.focus({ preventScroll: true }); }
+      return;
     }
     const r = e.target.closest?.('.grp, .fr');
     if (!r || e.target !== r) return;
+    if (r.closest('.ins')) {
+      const all = visible(); const k = all.indexOf(r);
+      const parent = r.closest('.ins').closest('.fold').previousElementSibling;
+      if (e.key === 'ArrowDown') { e.preventDefault(); e.stopPropagation(); go(all[k + 1]); }
+      else if (e.key === 'ArrowUp') { e.preventDefault(); e.stopPropagation(); go(all[k - 1]); }
+      else if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); r.click(); }
+      else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); go(parent); }
+      else if (e.key === 'ArrowLeft') { e.preventDefault(); if (r.getAttribute('aria-expanded') === 'true') toggleFold(r); else go(parent); }
+      else if (e.key === 'ArrowRight' && r.getAttribute('aria-expanded') === 'false') { e.preventDefault(); toggleFold(r); }
+      return;
+    }
     const all = treeRows(); const k = all.indexOf(r);
     if (e.key === 'ArrowDown') { e.preventDefault(); if (all[k + 1]) focusRow(all[k + 1]); }
     else if (e.key === 'ArrowUp') { e.preventDefault(); if (all[k - 1]) focusRow(all[k - 1]); }
@@ -491,11 +588,12 @@ export function setupGitPanel({ cmd, preview, session, jump, use, onState = () =
     else if ((e.key === 'ArrowLeft' || e.key === 'ArrowRight') && r.hasAttribute('aria-expanded')) { e.preventDefault(); if ((r.getAttribute('aria-expanded') === 'true') !== (e.key === 'ArrowRight')) toggleFold(r); }
   }
 
-  function useRange() {
-    const g = st.base?.git; const m = listModel();
+  /** 範囲（コミットしていない分・この会話の間）か、開いたコミットを、会話の入力欄へ渡す */
+  function useSel(sel) {
+    const g = st.base?.git; const m = modelFor(sel);
     let text;
-    if (st.sel.k === 'commit') text = t('git.useCommit', { hash: st.sel.hash.slice(0, 7), subject: m.commit?.subject ?? '' });
-    else text = t('git.useStatus', { branch: branchLabel(g), summary: m.total.files ? (st.sel.k === 'session' ? `${t('git.rangeSession')} ` : '') + filesText(m.total) : t('git.emptyUncommitted') });
+    if (sel.k === 'commit') text = t('git.useCommit', { hash: sel.hash.slice(0, 7), subject: m.commit?.subject ?? '' });
+    else text = t('git.useStatus', { branch: branchLabel(g), summary: m.total.files ? (sel.k === 'session' ? `${t('git.rangeSession')} ` : '') + filesText(m.total) : t('git.emptyUncommitted') });
     use(text); setNote(t('git.used'));
   }
 
@@ -531,7 +629,7 @@ export function setupGitPanel({ cmd, preview, session, jump, use, onState = () =
     try { res = await ask('gitCommit', { sessionId: id, hash }); } catch { /* */ }
     if (sid() !== id) return;
     st.commitData[hash] = res?.commit ?? { failed: true, commit: { hash, short: hash.slice(0, 7), subject: '', author: '', at: 0, parents: [] }, files: [], total: { files: 0, add: 0, del: 0 } };
-    if (st.sel.k === 'commit' && st.sel.hash === hash && st.tab === 'changes' && !st.diff) { const cl = root.querySelector('.cl'); if (cl) { cl.innerHTML = listHTML(); wireTree(); paintTabs(); } }
+    if (st.open === hash) refillBox();
   }
   async function loadHistory() {
     const id = sid(); st.histLoading = true;
@@ -587,12 +685,12 @@ export function setupGitPanel({ cmd, preview, session, jump, use, onState = () =
     if (!data?.git) { st.base = null; st.failed = true; onState(null, { foreign: foreign() }); paint(); return; }
     st.base = data; st.changes = { uncommitted: data.changes };
     if (!data.changes?.hasSession && st.sel.k === 'session') st.sel = { k: 'uncommitted' };
-    if (st.initial === 'session' && data.changes?.hasSession) { st.sel = { k: 'session' }; st.back = 'session'; }
+    if (st.initial === 'session' && data.changes?.hasSession) st.sel = { k: 'session' };
     st.initial = 'uncommitted';
     onState(data.git, { foreign: foreign() });
     st.commitData = {};
     const sameHead = !force && st.hist && data.git.head && st.hist.head?.startsWith(data.git.head);
-    await Promise.all([sameHead ? null : loadHistory(), st.sel.k === 'session' ? loadRange('session') : null, st.sel.k === 'commit' ? loadCommit(st.sel.hash) : null, st.tab === 'worktrees' ? loadWorktrees() : null]);
+    await Promise.all([sameHead ? null : loadHistory(), st.sel.k === 'session' ? loadRange('session') : null, st.open && st.open !== WT_KEY ? loadCommit(st.open) : null, st.tab === 'worktrees' ? loadWorktrees() : null]);
     if (mine !== ticket || sid() !== id) return;
     // 差分を開いている間に取り直しが終わったら、差分は開いたまま中身だけ読み直す
     if (st.diff) { st.diff.cache.clear(); st.diff.failed.clear(); loadDiffAt(st.diff.index); }
@@ -629,14 +727,19 @@ export function setupGitPanel({ cmd, preview, session, jump, use, onState = () =
     if (isOpen()) preview.close(true); else open(element, options);
   }
 
-  // Esc: 差分を開いている間は、パネルを閉じずに一覧へ戻る（パネルの外にフォーカスがあっても）
+  // Esc: 差分を開いている間は、パネルを閉じずに一覧へ戻る。差分が無く箱が開いていれば、箱を閉じる（どちらもパネルの外にフォーカスがあっても）
   document.addEventListener('keydown', (e) => {
-    if (e.key !== 'Escape' || e.isComposing || !isOpen() || !st.diff || e.defaultPrevented) return;
+    if (e.key !== 'Escape' || e.isComposing || !isOpen() || e.defaultPrevented) return;
+    const boxOpen = !st.diff && st.tab === 'changes' && st.open;
+    if (!st.diff && !boxOpen) return;
     // ダイアログ・メニューが開いている間と、フォーカスがパネルの外（入力欄など）にあるときは奪わない
     if (document.querySelector('dialog[open], .pop.menu:not([hidden])')) return;
     const active = document.activeElement;
     if (active && active !== document.body && !document.getElementById('filePreview')?.contains(active)) return;
-    e.preventDefault(); e.stopImmediatePropagation(); closeDiff();
+    // 箱の中のファイルの行・グラフの行にフォーカスがあるときは、行ごとの移り方（ファイル → 親の行 → 閉じる）に任せる
+    if (boxOpen && active?.closest?.('.cg-row, .ins .fr, .ins .grp')) return;
+    e.preventDefault(); e.stopImmediatePropagation();
+    if (st.diff) closeDiff(); else { const row = rowOfKey(st.open); const inside = Boolean(active?.closest?.('.ins')); toggleBox(st.open); if (inside) row?.focus({ preventScroll: true }); }
   }, true);
 
   // Ctrl+Shift+G（macOS は ⌘⇧G）で開閉。IME の変換中・ダイアログ・設定の画面では奪わない

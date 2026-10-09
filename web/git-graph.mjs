@@ -107,6 +107,18 @@ export function rowSvg(layout, r) {
   return `<svg class="g" viewBox="0 0 44 ${ROW_H}" aria-hidden="true">${halo}<circle class="hn" data-n="${r}" cx="${x}" cy="${ROW_MID}" r="6.5"/>${core}<circle class="n ${kind}${laneClass(row.lane)}" data-n="${r}" cx="${x}" cy="${ROW_MID}" r="${radius}"/></svg>`;
 }
 
+/** 行 r の下へ（行を開いた箱の左も）続く縦の線: [{ x, lane, dash, edge }]。箱の左に同じ線を引き継ぐのに使う */
+export function lanesBelow(layout, r) {
+  const seen = new Set(), out = [];
+  layout.edges.forEach((e, i) => {
+    if (r < e.a || r >= (e.b ?? layout.rows.length)) return;
+    const key = `${e.mid}:${e.dash}`;
+    if (seen.has(key)) return;
+    seen.add(key); out.push({ x: laneX(e.mid), lane: e.mid, dash: e.dash, edge: i });
+  });
+  return out;
+}
+
 /** 「さらに N 件」の行の頭に付ける、下へ切れる線 */
 export function tailSvg(lane = 0) {
   return `<svg class="g" viewBox="0 0 44 28" aria-hidden="true"><path class="tail" d="M${laneX(lane)} 0V12"/></svg>`;
