@@ -292,7 +292,7 @@ MCP の口は会話ごとの Bearer で守る。Claude・Codex は HTTP の MCP�
 
 親の委譲カードの下には、子の窓が開いている間だけ Chrome の印・プロフィール・状態・子の会話を開く操作・窓を閉じる × を出す。`browser.chromeWindows({ sessionId })` は、この会話と直接委譲した子の開いている窓を `{ sessionId, taskId, title, windows, profile, profileName, state, waiting }[]` で返す（この会話の行は `taskId: null`。`waiting` は人への依頼待ち）。タブの窓の数と ⋯ の一覧は、この読み取り口を使う。窓が開閉したら `chromeWindow`、プロフィールが替わったら `chromeProfile`、操作状態が替わったら `chromeControl` で読み直す。
 
-閉じる直前の `Page.captureScreenshot` を `<data>/uploads/chrome-window/<会話 ID の SHA-256>/<時刻>-<UUID>.png` に置き、会話の `chromeClosed` の行にファイルのパスだけを記録する。人が Chrome の × で直接閉じたときと、撮影できないときは最後に受けた映像の JPEG を `.jpg` として残す。画像が無いときも閉じた行は残る。会話を消すと、窓とその会話の静止画を片付ける。
+閉じる直前の `Page.captureScreenshot` を `<data>/uploads/chrome-window/<会話 ID の SHA-256>/<時刻>-<UUID>.png` に置き、会話の `chromeClosed` の行にファイルのパスだけを記録する。人が Chrome の × で直接閉じたときと、撮影できないときは最後に受けた映像の JPEG を `.jpg` として残す。画像が無いときも閉じた行は残る。会話を消すと、窓とその会話の静止画を片付ける。分岐した会話は、写した `chromeClosed` の行の静止画を自分の置き場へ複製して指す（元の会話を消しても残る。ネイティブの分岐も同じ。docs/message-fork.md）。
 
 窓の全タブを `Target.closeTarget` で先に閉じる。破棄の通知を 500 ms 待ち、層に記録が残った専用窓だけ `closeAgent` で閉じる。引き継ぎ中なら一時停止と操作待ちのカードを片付ける。Chrome の接続が途中で切れたときは既存の切断処理が接続を off に戻し、専用窓と一時停止を片付ける。更新の carry と、層が引き継げなかった窓の orphans は、閉じた会話の窓の記録だけを外して保つ。
 

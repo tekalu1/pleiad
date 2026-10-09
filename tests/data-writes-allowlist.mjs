@@ -42,8 +42,8 @@ export const DATA_WRITES = [
     { name: 'conversations/<id>.json', limit: '会話の長さ（発言の数）', reason: '会話の本文。変更のたびに 1 会話分を丸ごと書く。索引（conversations）は行にした。本文を行へ移すのは別の作業', unbounded: true },
     { name: 'handoff-<sha256>.json', limit: '会話の長さ（ターンの始まりごとに全文の写しを書き直す）', reason: '引き継ぎで読ませる全文の写し。会話ごとに 1 ファイル', unbounded: true },
   ] },
-  { file: 'core/history.mjs', sites: 3, targets: [
-    { name: 'presents/<sessionId>.jsonl', limit: '提示物の件数（1 件は MAX_INLINE_BYTES=8MiB まで）', reason: '追記が主で、全体の書き換えは巻き戻し・添付の固定のときだけ。1 会話 1 ファイル', unbounded: true },
+  { file: 'core/history.mjs', sites: 4, targets: [
+    { name: 'presents/<sessionId>.jsonl', limit: '提示物の件数（1 件は MAX_INLINE_BYTES=8MiB まで）', reason: '追記が主で、全体の書き換えは巻き戻し・添付の固定・分岐した子への写し（seedPresents）のときだけ。1 会話 1 ファイル', unbounded: true },
   ] },
   { file: 'core/backends/antigravity-store.mjs', sites: 1, targets: [
     { name: 'antigravity/<conversationId>.json', limit: '会話の長さ', reason: 'Antigravity の会話の控え。ターン中に何度も書き直す', unbounded: true },

@@ -206,6 +206,16 @@ export async function keepPresents(sessionId, keep) {
   });
 }
 
+/** 分岐した会話の提示の記録を、元の会話から選んだ行で始める（ネイティブの分岐は transcript だけを写す。core/conversations.mjs の fork） */
+export async function seedPresents(sessionId, rows) {
+  if (!rows.length) return;
+  const file = presentFile(sessionId);
+  await serialize(file, async () => {
+    await fs.mkdir(PRESENT_DIR, { recursive: true });
+    await writeAtomic(file, rows.map(row => JSON.stringify(row)).join("\n") + "\n");
+  });
+}
+
 /** 会話を消したときに、その会話の提示（添付・present・可視化の写し）の記録を消す（sessions.delete。ADR 0147） */
 export async function forgetPresents(sessionId) {
   const file = presentFile(sessionId);
