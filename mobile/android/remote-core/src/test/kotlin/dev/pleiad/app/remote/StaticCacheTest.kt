@@ -3,7 +3,7 @@ package dev.pleiad.app.remote
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.security.MessageDigest
-import java.util.zip.Deflater
+import java.util.zip.GZIPOutputStream
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.After
@@ -39,13 +39,9 @@ class StaticCacheTest {
         return key to out.toByteArray()
     }
 
-    private fun deflateRaw(b: ByteArray): ByteArray {
-        val d = Deflater(6, true)
-        d.setInput(b); d.finish()
+    private fun gzip(b: ByteArray): ByteArray {
         val out = ByteArrayOutputStream()
-        val buf = ByteArray(8192)
-        while (!d.finished()) out.write(buf, 0, d.deflate(buf))
-        d.end()
+        GZIPOutputStream(out).use { it.write(b) }
         return out.toByteArray()
     }
 
@@ -63,7 +59,7 @@ class StaticCacheTest {
         assertEquals("text/javascript; charset=utf-8", b.files["/client.mjs"]!!.type)
         assertArrayEquals(v1[1].body, b.files["/client.mjs"]!!.body)
         assertEquals(0, b.files["/empty.css"]!!.body.size)
-        assertArrayEquals(raw, StaticBundleCodec.inflateRaw(deflateRaw(raw)))
+        assertArrayEquals(raw, StaticBundleCodec.gunzip(gzip(raw)))
 
         fun rejects(name: String, buf: ByteArray) {
             try { StaticBundleCodec.decode(buf); fail("$name accepted") } catch (_: java.io.IOException) {} catch (_: org.json.JSONException) {}
@@ -74,7 +70,9 @@ class StaticCacheTest {
         rejects("bad magic", raw.copyOf().also { it[0] = 'X'.code.toByte() })
         rejects("a path with ..", encode(listOf(F("/../x.js", "text/javascript", ByteArray(1)))).second)
         rejects("a type with a newline", encode(listOf(F("/x.js", "text/javascript\r\nx-evil: 1", ByteArray(1)))).second)
-        try { StaticBundleCodec.inflateRaw(deflateRaw(raw), max = 100); fail("limit not applied") } catch (_: java.io.IOException) {}
+        try { StaticBundleCodec.gunzip(gzip(raw), max = 100); fail("limit not applied") } catch (_: java.io.IOException) {}
+        val z = gzip(raw)
+        try { StaticBundleCodec.gunzip(z.copyOf(z.size - 4)); fail("a truncated gzip accepted") } catch (_: java.io.IOException) {}
     }
 
     @Test fun checkSaveReuseAndRefetch() {
@@ -84,13 +82,14 @@ class StaticCacheTest {
         var hostKey = key1
         var hostRaw = raw1
         var hostStatus = 0   // 0: a current host; otherwise answer this status (an old host: 404)
-        val fetch = { p: String ->
+        val fetch = { p: String, h: Map<String, String> ->
             asked.add(p)
+            assertEquals("gzip", h["accept-encoding"])
             val have = Regex("have=([0-9a-f]*)").find(p)!!.groupValues[1]
             when {
                 hostStatus != 0 -> StaticFetch(hostStatus, emptyMap(), "not found".toByteArray())
                 have == hostKey -> StaticFetch(304, mapOf(StaticBundleCodec.KEY_HEADER to hostKey), ByteArray(0))
-                else -> StaticFetch(200, mapOf(StaticBundleCodec.KEY_HEADER to hostKey, StaticBundleCodec.ENCODING_HEADER to "deflate-raw"), deflateRaw(hostRaw))
+                else -> StaticFetch(200, mapOf(StaticBundleCodec.KEY_HEADER to hostKey, "content-encoding" to "gzip"), gzip(hostRaw))
             }
         }
 
@@ -98,11 +97,11 @@ class StaticCacheTest {
         val c1 = StaticCache(file)
         val b1 = c1.check(fetch)!!
         assertEquals(key1, b1.key)
-        assertEquals("${StaticBundleCodec.PATH}?have=&enc=deflate-raw", asked.last())
+        assertEquals("${StaticBundleCodec.PATH}?have=", asked.last())
         assertArrayEquals(raw1, file.readBytes())
         // same proxy, next page load: 304, the held bundle
         assertSame(b1, c1.check(fetch))
-        assertEquals("${StaticBundleCodec.PATH}?have=$key1&enc=deflate-raw", asked.last())
+        assertEquals("${StaticBundleCodec.PATH}?have=$key1", asked.last())
 
         // a new proxy (the app restarted, maybe on another port) reads the saved file: 304
         val c2 = StaticCache(file)
@@ -122,7 +121,7 @@ class StaticCacheTest {
         file.writeBytes(raw2.copyOf(raw2.size - 5))
         val c3 = StaticCache(file)
         assertEquals(key2, c3.check(fetch)!!.key)
-        assertTrue(asked.last().contains("have=&"))
+        assertEquals("${StaticBundleCodec.PATH}?have=", asked.last())
 
         // a host whose key header disagrees with the body is not trusted
         hostKey = "f".repeat(64); hostRaw = raw1
@@ -133,6 +132,6 @@ class StaticCacheTest {
         assertNull(StaticCache(File(dir, "static/cccc.bin")).check(fetch))
         assertTrue(!File(dir, "static/cccc.bin").exists())
         // a failing channel: null too
-        assertNull(StaticCache(File(dir, "static/dddd.bin")).check { throw java.io.IOException("reset") })
+        assertNull(StaticCache(File(dir, "static/dddd.bin")).check { _, _ -> throw java.io.IOException("reset") })
     }
 }

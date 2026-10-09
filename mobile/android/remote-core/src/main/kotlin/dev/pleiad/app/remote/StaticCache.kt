@@ -3,6 +3,8 @@ package dev.pleiad.app.remote
 // Kotlin port of core/remote/static-cache.mjs and the reader of core/remote/static-bundle.mjs (docs/remote.md §8.6,
 // ADR 0901): the device keeps the host's web/ shell as one bundle per host, and asks the host on every page load
 // (/ and /index.html) whether it is still current (GET /static-bundle?have=<key>: 304 when unchanged, one round trip).
+// The bundle comes gzipped (accept-encoding: gzip -> content-encoding: gzip), the same rule as the host's /bulk/ replies
+// (core/bulk-replies.mjs, ADR 0179).
 // While a checked bundle is held, the proxy answers the WebView's static requests itself.
 // An old host without the endpoint (404) or a failed check gives null, and the proxy forwards to the host as before.
 //
@@ -15,7 +17,7 @@ import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.IOException
 import java.security.MessageDigest
-import java.util.zip.Inflater
+import java.util.zip.GZIPInputStream
 import org.json.JSONObject
 
 class StaticFile(val type: String, val body: ByteArray)
@@ -29,8 +31,9 @@ object StaticBundleCodec {
     const val PATH = "/static-bundle"
     const val FORMAT = 1
     const val KEY_HEADER = "x-pleiad-bundle-key"
-    const val ENCODING_HEADER = "x-pleiad-bundle-encoding"
-    /** Limit before and after inflating (the host's web/ is about 5 MB). */
+    /** Asked for on every fetch; the host answers content-encoding: gzip (or nothing, uncompressed). */
+    const val REQUEST_HEADERS_ENCODING = "gzip"
+    /** Limit before and after gunzip (the host's web/ is about 5 MB). */
     const val MAX_BYTES = 64 * 1024 * 1024
     private val MAGIC = "PLSB".toByteArray(Charsets.ISO_8859_1)
     private val KEY_RE = Regex("^[0-9a-f]{64}$")
@@ -69,23 +72,18 @@ object StaticBundleCodec {
         return StaticBundle(key, files)
     }
 
-    /** Raw deflate (RFC 1951), at most [max] bytes out. */
-    fun inflateRaw(data: ByteArray, max: Int = MAX_BYTES): ByteArray {
-        val inf = Inflater(true)
-        try {
-            // nowrap needs one extra dummy input byte (java.util.zip.Inflater)
-            inf.setInput(data.copyOf(data.size + 1))
+    /** gzip (RFC 1952; the CRC and length are checked by GZIPInputStream), at most [max] bytes out. */
+    fun gunzip(data: ByteArray, max: Int = MAX_BYTES): ByteArray {
+        GZIPInputStream(data.inputStream(), 64 * 1024).use { input ->
             val out = ByteArrayOutputStream(data.size * 4)
             val chunk = ByteArray(64 * 1024)
-            while (!inf.finished()) {
-                val n = inf.inflate(chunk)
-                if (n == 0 && (inf.needsInput() || inf.needsDictionary())) throw IOException("static bundle: truncated deflate")
+            while (true) {
+                val n = input.read(chunk)
+                if (n < 0) break
                 out.write(chunk, 0, n)
                 if (out.size() > max) throw IOException("static bundle: too large")
             }
             return out.toByteArray()
-        } finally {
-            inf.end()
         }
     }
 }
@@ -104,20 +102,20 @@ class StaticCache(val file: File, private val log: (String) -> Unit = {}) {
         }
     }
 
-    /** Ask the host (blocking) and return the bundle that may be served, or null. [fetch] runs one GET over the channel. */
-    fun check(fetch: (String) -> StaticFetch): StaticBundle? {
+    /** Ask the host (blocking) and return the bundle that may be served, or null. [fetch] runs one GET (path, headers) over the channel. */
+    fun check(fetch: (String, Map<String, String>) -> StaticFetch): StaticBundle? {
         load()
         val held = bundle
         val have = held?.key ?: ""
-        val r = try { fetch("${StaticBundleCodec.PATH}?have=$have&enc=deflate-raw") } catch (e: Exception) {
+        val r = try { fetch("${StaticBundleCodec.PATH}?have=$have", mapOf("accept-encoding" to StaticBundleCodec.REQUEST_HEADERS_ENCODING)) } catch (e: Exception) {
             log("static cache: cannot check (${e.message})"); return null
         }
         if (r.status == 304 && held != null && r.headers[StaticBundleCodec.KEY_HEADER] == have) return held
         if (r.status != 200) return null   // an old host (404) and the like
         return try {
-            val raw = when (val enc = r.headers[StaticBundleCodec.ENCODING_HEADER] ?: "identity") {
+            val raw = when (val enc = r.headers["content-encoding"]?.trim()?.lowercase() ?: "identity") {
                 "identity" -> r.body
-                "deflate-raw" -> StaticBundleCodec.inflateRaw(r.body)
+                "gzip" -> StaticBundleCodec.gunzip(r.body)
                 else -> throw IOException("unknown encoding $enc")
             }
             val b = StaticBundleCodec.decode(raw)

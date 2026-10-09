@@ -8,16 +8,15 @@
 // key は中身から決まる: sha256（各ファイルの `${path}\n${type}\n${size}\n` と本文を files の順につないだもの）の 16 進。
 // 受け手は同じ計算で key を確かめる（書きかけ・壊れた保存を使わない）。
 //
-// 取り方: GET /static-bundle?have=<持っている key>&enc=deflate-raw
-//   have が今の key と同じ → 304（本文なし）。違う・無い → 200 と束。enc=deflate-raw なら本文を raw deflate（RFC 1951）で縮める
-//   応答ヘッダー: x-pleiad-bundle-key（今の key）、x-pleiad-bundle-encoding（deflate-raw か identity）
+// 取り方: GET /static-bundle?have=<持っている key>（accept-encoding: gzip）
+//   have が今の key と同じ → 304（本文なし）。違う・無い → 200 と束。accept-encoding に gzip があれば content-encoding: gzip で縮める
+//   （/bulk/ の大きい返事と同じ決まり。core/bulk-replies.mjs、ADR 0179）。応答ヘッダー x-pleiad-bundle-key は今の key
 //   この口が無い古いホストは 404 を返す。端末はそのとき今までどおり 1 本ずつホストへ流す
 import crypto from 'node:crypto';
 
 export const BUNDLE_PATH = '/static-bundle';
 export const BUNDLE_FORMAT = 1;
 export const BUNDLE_KEY_HEADER = 'x-pleiad-bundle-key';
-export const BUNDLE_ENCODING_HEADER = 'x-pleiad-bundle-encoding';
 /** 束の上限（縮めた後も戻した後も）。ホストの web/ は 5 MB ほど */
 export const BUNDLE_MAX_BYTES = 64 * 1024 * 1024;
 const MAGIC = Buffer.from('PLSB', 'latin1');

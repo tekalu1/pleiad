@@ -9,9 +9,9 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import zlib from 'node:zlib';
 import { promisify } from 'node:util';
-import { encodeBundle, BUNDLE_KEY_HEADER, BUNDLE_ENCODING_HEADER, BUNDLE_MAX_BYTES } from './remote/static-bundle.mjs';
+import { encodeBundle, BUNDLE_KEY_HEADER, BUNDLE_MAX_BYTES } from './remote/static-bundle.mjs';
 
-const deflateRaw = promisify(zlib.deflateRaw);
+const gzip = promisify(zlib.gzip);
 const NAME_RE = /^[A-Za-z0-9._-]+$/;
 
 async function walk(root, rel = '') {
@@ -32,7 +32,7 @@ async function walk(root, rel = '') {
  *   transform: (urlPath, body) => body（index.html の pleiad-build の置き換え）
  */
 export function createStaticBundle({ webDir, mime, extra = () => [], transform = (_p, b) => b }) {
-  let cached = null;      // { sig, key, body, deflated: Promise<Buffer> | null }
+  let cached = null;      // { sig, key, body, gzipped: Promise<Buffer> | null }
   let building = null;
 
   async function sources() {
@@ -50,7 +50,7 @@ export function createStaticBundle({ webDir, mime, extra = () => [], transform =
     const files = await Promise.all(list.map(async l => ({ path: l.path, type: l.type, body: transform(l.path, await fs.readFile(l.file)) })));
     const { key, body } = encodeBundle(files);
     if (body.length > BUNDLE_MAX_BYTES) throw new Error('static bundle too large');
-    cached = { sig, key, body, deflated: null };
+    cached = { sig, key, body, gzipped: null };
     return cached;
   }
 
@@ -67,16 +67,16 @@ export function createStaticBundle({ webDir, mime, extra = () => [], transform =
       res.writeHead(500, { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' });
       return res.end('static bundle unavailable');
     }
-    const headers = { 'cache-control': 'no-store', [BUNDLE_KEY_HEADER]: b.key, 'x-content-type-options': 'nosniff' };
+    const headers = { 'cache-control': 'no-store', [BUNDLE_KEY_HEADER]: b.key, 'x-content-type-options': 'nosniff', vary: 'accept-encoding' };
     if (url.searchParams.get('have') === b.key) { res.writeHead(304, headers); return res.end(); }
+    // 縮め方は /bulk/ と同じ（accept-encoding に gzip があれば gzip の水準 6。core/bulk-replies.mjs）。縮めた本文は版ごとに 1 回だけ作る
     let body = b.body;
-    let encoding = 'identity';
-    if (url.searchParams.get('enc') === 'deflate-raw') {
-      b.deflated ??= deflateRaw(b.body, { level: 6 });
-      body = await b.deflated;
-      encoding = 'deflate-raw';
+    if (/\bgzip\b/i.test(String(req.headers['accept-encoding'] ?? ''))) {
+      b.gzipped ??= gzip(b.body, { level: 6 });
+      body = await b.gzipped;
+      headers['content-encoding'] = 'gzip';
     }
-    res.writeHead(200, { ...headers, 'content-type': 'application/octet-stream', [BUNDLE_ENCODING_HEADER]: encoding, 'content-length': body.length });
+    res.writeHead(200, { ...headers, 'content-type': 'application/octet-stream', 'content-length': body.length });
     res.end(req.method === 'HEAD' ? undefined : body);
   }
 

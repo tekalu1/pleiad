@@ -7,15 +7,15 @@ import path from 'node:path';
 import zlib from 'node:zlib';
 import { promisify } from 'node:util';
 import { RESET_CODE } from './frames.mjs';
-import { BUNDLE_PATH, BUNDLE_KEY_HEADER, BUNDLE_ENCODING_HEADER, BUNDLE_MAX_BYTES, decodeBundle } from './static-bundle.mjs';
+import { BUNDLE_PATH, BUNDLE_KEY_HEADER, BUNDLE_MAX_BYTES, decodeBundle } from './static-bundle.mjs';
 
-const inflateRaw = promisify(zlib.inflateRaw);
+const gunzip = promisify(zlib.gunzip);
 const FETCH_TIMEOUT_MS = 120_000;
 
 /** チャネルで 1 本の GET を流し、{ status, headers, body } を返す。上限を超えたら捨てる。 */
-function fetchOver(ch, reqPath, { timeoutMs = FETCH_TIMEOUT_MS } = {}) {
+function fetchOver(ch, reqPath, { headers: reqHeaders = {}, timeoutMs = FETCH_TIMEOUT_MS } = {}) {
   return new Promise((resolve, reject) => {
-    const stream = ch.openHttp({ method: 'GET', path: reqPath, headers: {} });
+    const stream = ch.openHttp({ method: 'GET', path: reqPath, headers: reqHeaders });
     let head = null;
     const chunks = [];
     let size = 0;
@@ -64,14 +64,15 @@ export class StaticCache {
     await this.load();
     const have = this.bundle?.key ?? '';
     let r;
-    try { r = await fetchOver(ch, `${BUNDLE_PATH}?have=${have}&enc=deflate-raw`); }
+    // 縮め方は /bulk/ と同じ gzip（content-encoding）。接続口（forward.mjs）は accept-encoding を通し、content-encoding を返す
+    try { r = await fetchOver(ch, `${BUNDLE_PATH}?have=${have}`, { headers: { 'accept-encoding': 'gzip' } }); }
     catch (e) { this.log(`static cache: 確かめられない (${e.message})`); return null; }   // i18n-ignore: ログは訳さない
     if (r.status === 304 && this.bundle && r.headers[BUNDLE_KEY_HEADER] === have) return this.bundle;
     if (r.status !== 200) return null;   // 古いホスト（404）など
     try {
-      const enc = r.headers[BUNDLE_ENCODING_HEADER] ?? 'identity';
-      if (enc !== 'identity' && enc !== 'deflate-raw') throw new Error(`unknown encoding ${enc}`);
-      const raw = enc === 'deflate-raw' ? await inflateRaw(r.body, { maxOutputLength: BUNDLE_MAX_BYTES }) : r.body;
+      const enc = (r.headers['content-encoding'] ?? 'identity').trim().toLowerCase();
+      if (enc !== 'identity' && enc !== 'gzip') throw new Error(`unknown encoding ${enc}`);
+      const raw = enc === 'gzip' ? await gunzip(r.body, { maxOutputLength: BUNDLE_MAX_BYTES }) : r.body;
       const bundle = decodeBundle(raw);
       if (r.headers[BUNDLE_KEY_HEADER] && r.headers[BUNDLE_KEY_HEADER] !== bundle.key) throw new Error('key header mismatch');
       this.bundle = bundle;

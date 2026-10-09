@@ -48,10 +48,13 @@ function recordHostRequests(proxy, { rewrite = p => p } = {}) {
   const ch = proxy.link.channel;
   const orig = ch.openHttp.bind(ch);
   ch.openHttp = opts => {
-    const entry = { path: opts.path, status: null };
+    const entry = { path: opts.path, status: null, acceptEncoding: opts.headers?.['accept-encoding'] ?? null, contentEncoding: null };
     seen.push(entry);
     const stream = orig({ ...opts, path: rewrite(opts.path) });
-    stream.on('response', h => { entry.status = h?.status ?? null; });
+    stream.on('response', h => {
+      entry.status = h?.status ?? null;
+      entry.contentEncoding = Object.entries(h?.headers ?? {}).find(([k]) => k.toLowerCase() === 'content-encoding')?.[1] ?? null;
+    });
     return stream;
   };
   return seen;
@@ -140,12 +143,13 @@ export default async function (t) {
       const hostBundle = decodeBundle(full.body);
       const clientFile = await fs.readFile(path.join(ROOT, 'web', 'client.mjs'));
       t.ok('200 で束が返り、key の見出しと中身（client.mjs・辞書・i18next・版を埋めた index.html）が合う',
-        full.status === 200 && full.headers['x-pleiad-bundle-key'] === hostBundle.key && full.headers['x-pleiad-bundle-encoding'] === 'identity'
+        full.status === 200 && full.headers['x-pleiad-bundle-key'] === hostBundle.key && !full.headers['content-encoding']
         && hostBundle.files.get('/client.mjs').body.equals(clientFile) && hostBundle.files.has('/locales/ja/ui.json') && hostBundle.files.has('/vendor/i18next.mjs')
         && /<meta name="pleiad-build" content="[^"]+">/.test(hostBundle.files.get('/index.html').body.toString()), `${full.status} ${full.body.length}`);
-      const deflated = await request(server.port, '/static-bundle?enc=deflate-raw', { headers: auth });
-      t.ok('enc=deflate-raw なら raw deflate で縮めて返し、戻すと同じ束', deflated.headers['x-pleiad-bundle-encoding'] === 'deflate-raw'
-        && deflated.body.length < full.body.length / 2 && zlib.inflateRawSync(deflated.body).equals(full.body), `${deflated.body.length}/${full.body.length}`);
+      const gzipped = await request(server.port, '/static-bundle', { headers: { ...auth, 'accept-encoding': 'gzip, deflate' } });
+      t.ok('accept-encoding に gzip があれば /bulk/ と同じく content-encoding: gzip で縮めて返し、戻すと同じ束',
+        gzipped.headers['content-encoding'] === 'gzip' && /accept-encoding/i.test(gzipped.headers.vary ?? '')
+        && gzipped.body.length < full.body.length / 2 && zlib.gunzipSync(gzipped.body).equals(full.body), `${gzipped.body.length}/${full.body.length}`);
       const same = await request(server.port, `/static-bundle?have=${hostBundle.key}`, { headers: auth });
       t.ok('have が今の key なら 304（本文なし）', same.status === 304 && same.body.length === 0 && same.headers['x-pleiad-bundle-key'] === hostBundle.key, String(same.status));
       const direct = await request(server.port, '/client.mjs', { headers: auth });
@@ -175,8 +179,9 @@ export default async function (t) {
       const seen = recordHostRequests(proxy);
       const root = await request(proxy.port, `/?token=${proxy.token}`, { headers: { accept: 'text/html' } });
       const setCookie = [root.headers['set-cookie'] ?? []].flat().join('\n');
-      t.ok('最初の読み込み: ホストへは束の 1 本だけ（have なし・縮めて）流し、画面は束の index.html',
-        seen.length === 1 && seen[0].path === '/static-bundle?have=&enc=deflate-raw' && seen[0].status === 200
+      t.ok('最初の読み込み: ホストへは束の 1 本だけ（have なし・gzip で）流し、画面は束の index.html',
+        seen.length === 1 && seen[0].path === '/static-bundle?have=' && seen[0].status === 200
+        && seen[0].acceptEncoding === 'gzip' && seen[0].contentEncoding === 'gzip'
         && root.status === 200 && root.body.equals(hostBundle.files.get('/index.html').body), JSON.stringify(seen));
       t.ok('端末が配るときも ?token= で HttpOnly・SameSite=Strict の Cookie（プロキシのトークン）を返し、ホストのトークンは出ない',
         /pleiad_remote_token=[^;]+; HttpOnly; SameSite=Strict; Path=\//.test(setCookie) && !setCookie.includes('agent_host_token') && !root.body.includes(server.token), setCookie);
@@ -203,7 +208,7 @@ export default async function (t) {
       const reload = await request(proxy.port, `/?token=${proxy.token}`, { headers: { accept: 'text/html' } });
       const last = seen.at(-1);
       t.ok('読み込み直すたびに版だけ確かめ、同じなら 304（往復 1 回・本文なし）',
-        last.path === `/static-bundle?have=${hostBundle.key}&enc=deflate-raw` && last.status === 304 && reload.status === 200, JSON.stringify(last));
+        last.path === `/static-bundle?have=${hostBundle.key}` && last.status === 304 && reload.status === 200, JSON.stringify(last));
 
       // ---- ポートが変わっても（新しいプロキシ・新しいトークン）、保存した束を使う
       await within(device.close(hostId), 5000, 'プロキシを閉じる');
@@ -214,7 +219,7 @@ export default async function (t) {
       const seen2 = recordHostRequests(proxy2);
       const root2 = await request(proxy2.port, `/?token=${proxy2.token}`, { headers: { accept: 'text/html' } });
       t.ok('開き直して origin（ポート）が変わっても、保存した束の版を見せて 304 で済む',
-        proxy2.port !== proxy.port && seen2.length === 1 && seen2[0].path === `/static-bundle?have=${hostBundle.key}&enc=deflate-raw` && seen2[0].status === 304
+        proxy2.port !== proxy.port && seen2.length === 1 && seen2[0].path === `/static-bundle?have=${hostBundle.key}` && seen2[0].status === 304
         && root2.body.equals(hostBundle.files.get('/index.html').body), `${proxy.port}->${proxy2.port} ${JSON.stringify(seen2)}`);
 
       // ---- 版が変わったら必ず取り直す（保存した束が別の版）
@@ -228,7 +233,7 @@ export default async function (t) {
       const root3 = await request(proxy3.port, `/?token=${proxy3.token}`, { headers: { accept: 'text/html' } });
       const asset3 = await request(proxy3.port, '/client.mjs', { headers: { cookie: `pleiad_remote_token=${encodeURIComponent(proxy3.token)}` } });
       t.ok('保存した束の版がホストと違えば、その場で取り直して新しい画面を返し、保存も差し替える',
-        seen3[0]?.path === `/static-bundle?have=${stale.key}&enc=deflate-raw` && seen3[0].status === 200 && !root3.body.includes('old ui')
+        seen3[0]?.path === `/static-bundle?have=${stale.key}` && seen3[0].status === 200 && !root3.body.includes('old ui')
         && asset3.body.equals(clientFile) && decodeBundle(await fs.readFile(saved)).key === hostBundle.key, JSON.stringify(seen3));
 
       // ---- 保存が壊れていたら使わない（取り直す）
@@ -240,7 +245,7 @@ export default async function (t) {
       await waitConnected(device4, hostId);
       const seen4 = recordHostRequests(proxy4);
       const root4 = await request(proxy4.port, `/?token=${proxy4.token}`, { headers: { accept: 'text/html' } });
-      t.ok('保存した束が壊れていれば持っていないものとして取り直す', seen4[0]?.path === '/static-bundle?have=&enc=deflate-raw' && seen4[0].status === 200 && root4.status === 200, JSON.stringify(seen4));
+      t.ok('保存した束が壊れていれば持っていないものとして取り直す', seen4[0]?.path === '/static-bundle?have=' && seen4[0].status === 200 && root4.status === 200, JSON.stringify(seen4));
 
       // ---- 新しいアプリ × 古いホスト（束の口が無く 404）: 今までどおり 1 本ずつ流す
       await within(device4.close(hostId), 5000, 'プロキシを閉じる');

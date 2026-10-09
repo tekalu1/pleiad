@@ -18,7 +18,8 @@ import Compression
 //   header: { format: 1, key, files: [{ path, type, size }] }
 //   key = sha256 hex over, per file in order, "<path>\n<type>\n<size>\n" and the body. Recomputed here, so a torn or
 //   corrupted file is never used. Saved uncompressed at <dir>/static/<hostId>.bin (atomic write).
-// Transfer: raw deflate where the Compression framework exists (Apple), uncompressed elsewhere (Windows / Linux tests).
+// Transfer: gzip (accept-encoding: gzip -> content-encoding: gzip, the same rule as the host's /bulk/ replies,
+// core/bulk-replies.mjs, ADR 0179) where the Compression framework exists (Apple); uncompressed elsewhere (Windows / Linux tests).
 
 public struct StaticFile {
     public let type: String
@@ -46,13 +47,13 @@ public enum StaticBundleCodec {
     public static let PATH = "/static-bundle"
     public static let FORMAT: Int64 = 1
     public static let KEY_HEADER = "x-pleiad-bundle-key"
-    public static let ENCODING_HEADER = "x-pleiad-bundle-encoding"
-    /// Limit before and after inflating (the host's web/ is about 5 MB).
+    /// Limit before and after gunzip (the host's web/ is about 5 MB).
     public static let MAX_BYTES = 64 * 1024 * 1024
+    /// Request headers of the check: ask for gzip only where it can be undone.
     #if canImport(Compression)
-    public static let REQUEST_ENCODING = "deflate-raw"
+    public static let REQUEST_HEADERS: [String: String] = ["accept-encoding": "gzip"]
     #else
-    public static let REQUEST_ENCODING = "identity"
+    public static let REQUEST_HEADERS: [String: String] = [:]
     #endif
 
     private static func fail(_ what: String) -> StateError { StateError(description: "static bundle: \(what)") }
@@ -105,26 +106,52 @@ public enum StaticBundleCodec {
         return StaticBundle(key: key, files: files)
     }
 
-    /// Raw deflate (RFC 1951), at most `max` bytes out. Only where the Compression framework exists.
-    public static func inflateRaw(_ data: Bytes, max: Int = MAX_BYTES) throws -> Bytes {
+    /// One gzip member (RFC 1952): the raw deflate inside and the length from the trailer (ISIZE, mod 2^32).
+    /// The CRC is not checked here; the bundle's key (sha256 over every file) is checked after decoding.
+    static func gzipMember(_ data: Bytes) throws -> (deflate: ArraySlice<UInt8>, isize: UInt32) {
+        guard data.count >= 18, data[0] == 0x1f, data[1] == 0x8b, data[2] == 8 else { throw fail("not gzip") }
+        let flags = data[3]
+        guard flags & 0xe0 == 0 else { throw fail("bad gzip flags") }
+        var at = 10
+        func need(_ n: Int) throws { if at + n > data.count - 8 { throw fail("truncated gzip") } }
+        if flags & 0x04 != 0 {   // FEXTRA
+            try need(2)
+            let n = Int(data[at]) | Int(data[at + 1]) << 8
+            at += 2
+            try need(n)
+            at += n
+        }
+        for bit: UInt8 in [0x08, 0x10] where flags & bit != 0 {   // FNAME, FCOMMENT: zero-terminated
+            while true { try need(1); at += 1; if data[at - 1] == 0 { break } }
+        }
+        if flags & 0x02 != 0 { try need(2); at += 2 }   // FHCRC
+        let t = data.count - 4
+        let isize = UInt32(data[t]) | UInt32(data[t + 1]) << 8 | UInt32(data[t + 2]) << 16 | UInt32(data[t + 3]) << 24
+        return (data[at..<(data.count - 8)], isize)
+    }
+
+    /// gzip, at most `max` bytes out. Only where the Compression framework exists.
+    public static func gunzip(_ data: Bytes, max: Int = MAX_BYTES) throws -> Bytes {
         #if canImport(Compression)
+        let (deflate, isize) = try gzipMember(data)
         var out = Bytes()
         var tooLarge = false
-        // Apple's .zlib is raw deflate (no zlib header)
+        // Apple's .zlib is raw deflate (no zlib header), which is what gzip wraps
         let filter = try OutputFilter(.decompress, using: .zlib) { (chunk: Data?) in
             guard let chunk else { return }
             if out.count + chunk.count > max { tooLarge = true; throw StaticBundleCodec.fail("too large") }
             out += Bytes(chunk)
         }
         do {
-            try filter.write(Data(data))
+            try filter.write(Data(deflate))
             try filter.finalize()
         } catch {
-            throw tooLarge ? fail("too large") : fail("bad deflate")
+            throw tooLarge ? fail("too large") : fail("bad gzip")
         }
+        guard UInt32(truncatingIfNeeded: out.count) == isize else { throw fail("gzip length mismatch") }
         return out
         #else
-        throw fail("deflate-raw is not available here")
+        throw fail("gzip is not available here")
         #endif
     }
 }
@@ -156,14 +183,14 @@ public final class StaticCache {
         }
     }
 
-    /// Ask the host (blocking) and return the bundle that may be served, or nil. `fetch` runs one GET over the channel.
-    public func check(_ fetch: (String) throws -> StaticFetch) -> StaticBundle? {
+    /// Ask the host (blocking) and return the bundle that may be served, or nil. `fetch` runs one GET (path, headers) over the channel.
+    public func check(_ fetch: (String, [String: String]) throws -> StaticFetch) -> StaticBundle? {
         load()
         let held = bundle
         let have = held?.key ?? ""
         let r: StaticFetch
         do {
-            r = try fetch("\(StaticBundleCodec.PATH)?have=\(have)&enc=\(StaticBundleCodec.REQUEST_ENCODING)")
+            r = try fetch("\(StaticBundleCodec.PATH)?have=\(have)", StaticBundleCodec.REQUEST_HEADERS)
         } catch {
             log("static cache: cannot check (\(error))")
             return nil
@@ -172,9 +199,9 @@ public final class StaticCache {
         if r.status != 200 { return nil }   // an old host (404) and the like
         do {
             let raw: Bytes
-            switch r.headers[StaticBundleCodec.ENCODING_HEADER] ?? "identity" {
+            switch (r.headers["content-encoding"] ?? "identity").trimmingCharacters(in: .whitespaces).lowercased() {
             case "identity": raw = r.body
-            case "deflate-raw": raw = try StaticBundleCodec.inflateRaw(r.body)
+            case "gzip": raw = try StaticBundleCodec.gunzip(r.body)
             case let enc: throw StateError(description: "unknown encoding \(enc)")
             }
             let b = try StaticBundleCodec.decode(raw)

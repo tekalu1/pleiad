@@ -313,9 +313,9 @@ var b=document.getElementById('back-to-hosts');if(typeof window.backToHosts==='f
     }
 
     /** One GET over the channel, read whole (blocking; for the static bundle). */
-    private fun fetchOver(ch: Channel, path: String): StaticFetch {
+    private fun fetchOver(ch: Channel, path: String, headers: Map<String, String>): StaticFetch {
         val q = LinkedBlockingQueue<Ev>()
-        val head = JSONObject().put("method", "GET").put("path", path).put("headers", JSONObject())
+        val head = JSONObject().put("method", "GET").put("path", path).put("headers", JSONObject(headers))
         loop.post {
             try {
                 val st = ch.openHttp(head)
@@ -335,7 +335,7 @@ var b=document.getElementById('back-to-hosts');if(typeof window.backToHosts==='f
         val opened = q.poll(STATIC_FETCH_MS, TimeUnit.MILLISECONDS) as? Ev.Opened ?: throw IOException("static bundle: timeout")
         val stream = opened.stream ?: throw IOException("static bundle: ${opened.err?.message}")
         var status = 0
-        val headers = HashMap<String, String>()
+        val got = HashMap<String, String>()
         val body = java.io.ByteArrayOutputStream()
         try {
             while (true) {
@@ -346,7 +346,7 @@ var b=document.getElementById('back-to-hosts');if(typeof window.backToHosts==='f
                         val hs = ev.head.optJSONObject("headers") ?: JSONObject()
                         for (k in hs.keys()) {
                             val v = hs.get(k)
-                            headers[k.lowercase()] = if (v is JSONArray) (0 until v.length()).joinToString(", ") { v.get(it).toString() } else v.toString()
+                            got[k.lowercase()] = if (v is JSONArray) (0 until v.length()).joinToString(", ") { v.get(it).toString() } else v.toString()
                         }
                     }
                     is Ev.Data -> {
@@ -355,7 +355,7 @@ var b=document.getElementById('back-to-hosts');if(typeof window.backToHosts==='f
                             body.write(ev.chunk)
                         } finally { ev.release() }
                     }
-                    is Ev.End -> return StaticFetch(status, headers, body.toByteArray())
+                    is Ev.End -> return StaticFetch(status, got, body.toByteArray())
                     is Ev.Reset -> throw IOException("static bundle: reset ${ev.code}")
                     else -> {}
                 }
@@ -372,7 +372,7 @@ var b=document.getElementById('back-to-hosts');if(typeof window.backToHosts==='f
         val check = synchronized(staticLock) {
             staticCheck?.takeIf { !pageLoad } ?: StaticCheck().also { c ->
                 staticCheck = c
-                pool.execute { try { c.bundle = cache.check { p -> fetchOver(ch, p) } } finally { c.done.countDown() } }
+                pool.execute { try { c.bundle = cache.check { p, h -> fetchOver(ch, p, h) } } finally { c.done.countDown() } }
             }
         }
         check.done.await(STATIC_FETCH_MS + 5_000, TimeUnit.MILLISECONDS)

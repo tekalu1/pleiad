@@ -381,9 +381,9 @@ var b=document.getElementById('back-to-hosts');if(typeof window.backToHosts==='f
     }
 
     /// One GET over the channel, read whole (blocking; for the static bundle).
-    private func fetchOver(_ ch: Channel, _ path: String) throws -> StaticFetch {
+    private func fetchOver(_ ch: Channel, _ path: String, _ headers: [String: String]) throws -> StaticFetch {
         let q = BlockingQueue<Ev>()
-        let head: JSON = ["method": .string("GET"), "path": .string(path), "headers": .object([:])]
+        let head: JSON = ["method": .string("GET"), "path": .string(path), "headers": .object(headers.mapValues { .string($0) })]
         loop.post {
             do {
                 let st = try ch.openHttp(head)
@@ -404,7 +404,7 @@ var b=document.getElementById('back-to-hosts');if(typeof window.backToHosts==='f
         guard case .opened(let opened, let openErr)? = q.poll(left()) else { throw StateError(description: "static bundle: timeout") }
         guard let stream = opened else { throw openErr ?? StateError(description: "static bundle: cannot open") }
         var status = 0
-        var headers: [String: String] = [:]
+        var got: [String: String] = [:]
         var body = Bytes()
         do {
             while true {
@@ -413,7 +413,7 @@ var b=document.getElementById('back-to-hosts');if(typeof window.backToHosts==='f
                 case .response(let h):
                     status = Int(h["status"]?.int ?? 0)
                     for (k, v) in h["headers"]?.object ?? [:] {
-                        headers[k.lowercased()] = v.array?.map { $0.text }.joined(separator: ", ") ?? v.text
+                        got[k.lowercased()] = v.array?.map { $0.text }.joined(separator: ", ") ?? v.text
                     }
                 case .data(let chunk, let release):
                     defer { release() }
@@ -448,9 +448,9 @@ var b=document.getElementById('back-to-hosts');if(typeof window.backToHosts==='f
         lock.unlock()
         if started {
             spawn("pleiad-proxy-static") { [weak self] in
-                check.finish(cache.check { p in
+                check.finish(cache.check { p, h in
                     guard let self else { throw StateError(description: "closed") }
-                    return try self.fetchOver(ch, p)
+                    return try self.fetchOver(ch, p, h)
                 })
             }
         }
