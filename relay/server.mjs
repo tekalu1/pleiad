@@ -140,6 +140,8 @@ export function createRelay(opts = {}) {
   if (typeof o.enrollSecret !== 'string' || o.enrollSecret.length < 32) {
     throw new Error('RELAY_ENROLL_SECRET が無いか短い（32 字以上の乱数を指定する）');
   }
+  // 空白・改行の混じった秘密は、ホストが送る値と食い違って拒否が続くだけになるので、起動で止める（末尾の改行に気づけるように）
+  if (/\s/.test(o.enrollSecret)) throw new Error('RELAY_ENROLL_SECRET に空白か改行が含まれている（末尾の改行を確かめる）');
   const secretHash = sha256(Buffer.from(o.enrollSecret, 'utf8'));
   const minLevel = LEVELS[o.logLevel] ?? LEVELS.info;
   const logger = o.logger ?? ((line) => process.stdout.write(JSON.stringify(line) + '\n'));

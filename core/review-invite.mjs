@@ -102,9 +102,10 @@ const commands = {
   async init({ store, env, out }) {
     requireReviewMode(env);
     const relayUrl = normalizeRelayUrl(env.AGENT_HOST_RELAY_URL || '');
-    const secret = String(env.AGENT_HOST_RELAY_SECRET || '').trim();
-    if (!relayUrl || !secret) throw new UsageError('Set AGENT_HOST_RELAY_URL and AGENT_HOST_RELAY_SECRET (the review relay) first.');
-    if (/\s/.test(secret) || secret.length > 1024) throw new UsageError('AGENT_HOST_RELAY_SECRET must not contain spaces.');
+    // 削らずに検査する。削ってから保存すると、削らずに比べる中継と食い違い、「秘密が違う」とだけ出て理由が分からない
+    const secret = String(env.AGENT_HOST_RELAY_SECRET || '');
+    if (!relayUrl || !secret.trim()) throw new UsageError('Set AGENT_HOST_RELAY_URL and AGENT_HOST_RELAY_SECRET (the review relay) first.');
+    if (/\s/.test(secret) || secret.length > 1024) throw new UsageError('AGENT_HOST_RELAY_SECRET must not contain spaces or line breaks (check for a trailing newline).');
     await store.setEnrollSecret(secret);
     await store.saveSettings({ enabled: true, relayUrl, hostName: String(env.AGENT_HOST_REVIEW_NAME || REVIEW_HOST_NAME).trim() || REVIEW_HOST_NAME });
     out(`Remote access is configured for ${relayUrl}.`);
