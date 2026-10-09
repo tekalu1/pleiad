@@ -37,7 +37,8 @@ final class ChannelTests: XCTestCase {
     override func setUp() { loop = Loop(name: "test-loop") }
     override func tearDown() { loop.shutdown() }
 
-    private func pair() throws -> (Channel, Channel) {
+    // old = a peer from before ADR 0903 (does not widen its receive windows)
+    private func pair(deviceOld: Bool = false, hostOld: Bool = false) throws -> (Channel, Channel) {
         let host = KeyPair.generate()
         let dev = KeyPair.generate()
         let i = try Handshake(.IK, initiator: true, prologue: Pleiad.prologueFor("h"), staticKey: dev, remoteStatic: host.publicKey)
@@ -47,10 +48,13 @@ final class ChannelTests: XCTestCase {
         let loop = self.loop!
         var d: Channel!
         var h: Channel!
+        let sw = { (old: Bool) in old ? ChannelConst.STREAM_WINDOW : ChannelConst.RECV_STREAM_WINDOW }
+        let cw = { (old: Bool) in old ? ChannelConst.CHANNEL_WINDOW : ChannelConst.RECV_CHANNEL_WINDOW }
         d = Channel(loop: loop, role: "device", send: { b in loop.post { h.receive(b) } }, transport: try i.split(),
-                    hello: ["app": "t", "shell": "mobile"], pingIntervalMs: 0)
+                    hello: ["app": "t", "shell": "mobile"], recvStreamWindow: sw(deviceOld), recvChannelWindow: cw(deviceOld),
+                    pingIntervalMs: 0)
         h = Channel(loop: loop, role: "host", send: { b in loop.post { d.receive(b) } }, transport: try r.split(),
-                    hello: ["hostName": "hn"], pingIntervalMs: 0)
+                    hello: ["hostName": "hn"], recvStreamWindow: sw(hostOld), recvChannelWindow: cw(hostOld), pingIntervalMs: 0)
         return (d, h)
     }
 
@@ -95,6 +99,65 @@ final class ChannelTests: XCTestCase {
         XCTAssertEqual(200, status.value)
         XCTAssertEqual("hn", hostName.value)
         XCTAssertEqual(body, got.value)
+    }
+
+    // The receiver widens its windows with WINDOW increments (ADR 0903). The sender stops at whatever the receiver
+    // granted, so new and old peers mix: an old device stops the host at 256 KiB, a new one at 1 MiB.
+    private func heldThenComplete(deviceOld: Bool, hostOld: Bool) throws -> (Int, Bool) {
+        let (d, h) = try pair(deviceOld: deviceOld, hostOld: hostOld)
+        let body = randomBytes(3 * 1024 * 1024)
+        let got = Box(Bytes())
+        let held = Box<[() -> Void]>([])
+        let hold = Box(true)
+        let latch = Latch(1)
+        loop.call {
+            let hl = ChannelListener()
+            hl.onStream = { stream in
+                stream.respond(["status": 200, "headers": [:]])
+                stream.write(body)
+                stream.end()
+                return true
+            }
+            h.listener = hl
+            h.start()
+            d.start()
+        }
+        Thread.sleep(forTimeInterval: 0.1)
+        try loop.call {
+            let s = try d.openHttp(["method": "GET", "path": "/mixed", "headers": [:]])
+            let l = StreamListener()
+            l.onData = { chunk, release in
+                got.value += chunk
+                if hold.value { held.value.append(release) } else { release() }
+            }
+            l.onEnd = { latch.countDown() }
+            s.listener = l
+            s.end()
+        }
+        Thread.sleep(forTimeInterval: 0.5)
+        let stoppedAt: Int = loop.call {
+            hold.value = false
+            let rs = held.value
+            held.value = []
+            rs.forEach { $0() }
+            return got.value.count
+        }
+        let completed = latch.await(20) && got.value == body
+        return (stoppedAt, completed)
+    }
+
+    func testReceiverWidensWindowsAndMixesWithOldPeers() throws {
+        let cases: [(Bool, Bool, Int)] = [
+            (false, false, ChannelConst.RECV_STREAM_WINDOW),
+            (true, false, ChannelConst.STREAM_WINDOW),       // old device × new host
+            (false, true, ChannelConst.RECV_STREAM_WINDOW),  // new device × old host
+            (true, true, ChannelConst.STREAM_WINDOW),
+        ]
+        for (devOld, hostOld, expect) in cases {
+            let (stoppedAt, completed) = try heldThenComplete(deviceOld: devOld, hostOld: hostOld)
+            XCTAssertEqual(expect, stoppedAt, "device old=\(devOld) host old=\(hostOld): stops at the window the device granted")
+            XCTAssertTrue(completed, "device old=\(devOld) host old=\(hostOld): completes after releasing")
+        }
     }
 
     func testWsMessagesBothWaysIncludingLargeOnes() throws {
