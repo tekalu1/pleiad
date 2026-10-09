@@ -67,9 +67,33 @@ PLY_ANDROID_KEY_PASSWORD=…
 
 `./gradlew :remote-core:test` には通知の試験（`NotifyCryptoTest`: 暗号と Node との突き合わせ、`NotifyPlannerTest`: 束ね方・上書き・取り消し、`NotifyInteropTest`: Node の中継と fake のホストを相手にした登録・受信・溜めて渡す）が入る。`NotifyInteropTest` は `node` が PATH に無いとき（または `-Dpleiad.interop=off`）は飛ばす。
 
+## アイコンとスプラッシュ（承認済み（2026-10-09））
+
+モバイル版（Android・iOS）のアイコンとスプラッシュは Pleiad の印（Fold）で、Capacitor の既定の青い X ではない。形は 2026-10-09 にモックで承認済み。
+
+- **形**: 地は `desktop/icon.png`・`web/favicon.svg` と同じ青 `#3a499e`、印は白（折り目の面は `#dfe3f2`）。印の幅は見える面積の約 60%（デスクトップのアイコンと同じ比）。adaptive アイコンでは、どのランチャーの形（丸・スクワークル・角丸四角）でも欠けない 66dp の円の中に収まる。
+- **Android のアイコン**: `res/mipmap-*/` の `ic_launcher`（旧式の角丸）・`ic_launcher_round`（旧式の丸）・`ic_launcher_foreground`（adaptive の前景。透過）・`ic_launcher_monochrome`（Android 13 のテーマアイコン）。adaptive の地は `values/ic_launcher_background.xml`（`#3A499E`）、`mipmap-anydpi-v26/ic_launcher(_round).xml` が前景・地・monochrome をまとめる。テーマアイコンは本体と尾を 1 色、折り目だけ 55% の濃さにして、1 色でも P の折り目が残る形。
+- **スプラッシュ**: `res/drawable*/splash.png`（明。白地に ink 色の印）と `drawable-night/`・`drawable-{port,land}-night-*/`（暗。`#1b1c23` の地に明るい印）。印は短い辺の約 30%。Android 12 以降の起動画面は OS が adaptive アイコンを出すので、このアイコンが自動で効く。
+- **通知の小アイコン**（`drawable/ic_stat_pleiad.xml`）は今の P の線画のまま替えない（24dp のステータスバーでは、印のシルエットだと折り目が潰れる）。
+- **iOS**: 同じ印を [ios.md](ios.md)「アイコンとスプラッシュ」に書いた。Play ストアの 512 px のアイコンは `docs/play-store/icon-512.png`（アップロードは下の「Play Console でやること」の手作業で、ここでは上げない）。
+
+### 作り方（再生成）
+
+全サイズを 1 本のスクリプトが `web/favicon.svg`・`web/brand/pleiad-icon.svg`（印の 3 つのパス）から書き出す。依存は Node の組み込みだけ。
+
+```
+cd mobile
+npm run icons          # 全部書き直す（node scripts/generate-icons.mjs）
+npm run icons:check    # コミット済みの PNG が今の SVG と一致するかだけ見る（書かない）
+```
+
+ロゴを変えたら `npm run icons` で書き直して、PNG ごとコミットする。`npm test` の `mobile-icons` が `--check` を走らせるので、SVG だけ替えて PNG を忘れると落ちる。出すもの: Android のランチャー 5 密度 × 4 種・スプラッシュ 11 枚 × 明暗・iOS の AppIcon 1024・Splash（明・暗 × 1x/2x/3x）・Play の 512 px。
+
 ## Google Play
 
 GitHub Release の APK の流れはそのまま残し、Google Play へは同じ鍵（Play App Signing のアプリ署名鍵に今の鍵を登録する）・同じ `versionCode` の決め方の AAB を、人が決めたときに上げる（[ADR 0142](adr/0142-android-play-distribution.md)）。同じ鍵なので、GitHub の APK を入れた端末は入れ直さずに Play の版へ移れる（逆も同じ）。端末は、入っているものより `versionCode` が大きい方から更新を受け取る。
+
+**アプリ ID（2026-10-09 に変えた）。** Play Console でアプリを作る前に、アプリ ID（パッケージ名）を `com.procway.pleiad` から `dev.pleiad.app` に替えた（パッケージ名は作ったあとで変えられないため。iOS の Bundle ID も同じ値）。`com.procway.pleiad` の GitHub の APK を入れた端末は別のアプリ扱いになり、`dev.pleiad.app` の APK は上書きにならない。旧版を消して入れ直し、ペアリングを 1 回やり直す。「同じ鍵なので GitHub の APK から Play へ移れる」は、`dev.pleiad.app` の APK 以降の話である。
 
 申請に要る資料の下書きは [play-store/](play-store/) にある（掲載文・前面サービスの申告・審査員向けのアクセス方法・データセーフティ・コンテンツのレーティング）。プライバシーポリシーはサイトの `site/privacy/`（https://pleiad.dev/privacy/ ）で、アプリのホスト一覧の下からも開ける。
 
@@ -109,7 +133,7 @@ Actions の画面で「Android Play upload」を `main` で手動で実行する
 1. **開発者アカウントを作る（個人）。** Google アカウントで Play Console に登録し、デベロッパー配布契約に同意して登録料 25 米ドルを払う（18 歳以上）。デベロッパー名・法的な氏名と住所・連絡先のメールと電話番号・デベロッパーのメールを入れる。Google Play に出るのは、法的な氏名・国（住所から）・デベロッパーのメールで、収益化すると住所全体も出る。連絡先の電話番号とメールは出ない。[^start][^info]
 2. **本人確認を済ませる。** 政府発行の身分証で本人確認をし、連絡先の電話とメールを確かめる。新しい個人アカウントは、Play Console のモバイルアプリで実機の Android 端末を持っていることも確かめる（済まないとアプリを公開できない）。[^verify]
 3. **サイトのプライバシーポリシーを公開する。** `main` に入れると Cloudflare がサイトを出し直す（[site/README.md](../site/README.md)）。https://pleiad.dev/privacy/ が開けることを確かめる。
-4. **アプリを作る。** 既定の言語（日本語）・アプリ名「Pleiad」（30 字まで）・アプリ（ゲームではない）・無料・連絡先のメールを入れ、宣言（デベロッパー プログラム ポリシー・米国の輸出法・Play App Signing の利用規約）に同意する。パッケージ名は最初に上げる AAB の `com.procway.pleiad` になり、後から変えられない。[^create]
+4. **アプリを作る。** 既定の言語（日本語）・アプリ名「Pleiad」（30 字まで）・アプリ（ゲームではない）・無料・連絡先のメールを入れ、宣言（デベロッパー プログラム ポリシー・米国の輸出法・Play App Signing の利用規約）に同意する。パッケージ名は最初に上げる AAB の `dev.pleiad.app` になり、後から変えられない。[^create]
 5. **アプリのコンテンツ（申告）を埋める。** 下書きは [play-store/](play-store/)。
    - プライバシーポリシー: https://pleiad.dev/privacy/
    - 広告: 無し
@@ -119,7 +143,7 @@ Actions の画面で「Android Play upload」を `main` で手動で実行する
    - データセーフティ: [play-store/data-safety.md](play-store/data-safety.md)
    - 前面サービス（AAB を上げた後に出る）: [play-store/foreground-service.md](play-store/foreground-service.md)。動画が要る
    - ニュース・政府・金融・健康などの申告: どれも当てはまらない
-6. **ストアの掲載情報を入れる。** 文は [play-store/listing.md](play-store/listing.md)。アイコン（512×512 の PNG）・フィーチャー グラフィック（1024×500）・スクリーンショット（2 枚以上）が要る。[^listing]
+6. **ストアの掲載情報を入れる。** 文は [play-store/listing.md](play-store/listing.md)。アイコン（512×512 の PNG。`docs/play-store/icon-512.png`）・フィーチャー グラフィック（1024×500）・スクリーンショット（2 枚以上）が要る。[^listing]
 7. **Play App Signing に今の鍵を登録する（最初のリリースを出す前に）。** 新しいアプリは、既定で Google が作る鍵になる。自分の鍵に変えられるのは、オープンテストか製品版にリリースを出す前まで。[^signing]
    1. 鍵が条件を満たすか確かめる: `keytool -list -v -storetype PKCS12 -keystore <keystore>`。自分の鍵は RSA 2048 ビット以上が要る（「2048 ビット RSA 鍵」以上と出ること）。証明書の SHA-256 が変数 `PLY_ANDROID_CERT_SHA256` と同じことも見る。
    2. Play Console の［Google Play による保護］→［Google Play ストアでの配信］→［Play アプリ署名に移動］で［アプリ署名鍵を変更］を押す。
@@ -132,7 +156,7 @@ Actions の画面で「Android Play upload」を `main` で手動で実行する
    3. Play Console の「ユーザーと権限」→「新しいユーザーを招待」で、サービスアカウントのメールアドレスを入れ、Pleiad のアプリにテストのトラックへリリースする権限を与える。
    4. GitHub の Secret `PLY_ANDROID_PLAY_SERVICE_ACCOUNT_JSON` に JSON の全文を入れ、手元の JSON を消す。
 9. **最初の AAB を上げる。** 「Android Play upload」を `track: internal`・`status: draft` で実行する。Play Console で内部テストのテスター（自分のアカウント）を決めてロールアウトする。内部テストは 100 人まで・アプリの設定が終わっていなくても作れる。[^testing] ここで前面サービスの申告が出るので、5 の申告を済ませる。
-10. **鍵が同じことを実機で確かめる。** GitHub の APK が入った端末で、テスターの登録の後に Play から更新し、入れ直し無しで上書きされ、ペアリングしたホストが残ることを見る。
+10. **鍵が同じことを実機で確かめる。** `dev.pleiad.app` の GitHub の APK が入った端末で、テスターの登録の後に Play から更新し、入れ直し無しで上書きされ、ペアリングしたホストが残ることを見る。
 11. **クローズドテストを 14 日続ける。** 既定のクローズドテストのトラックにテスターのリスト（メールアドレスのリストか Google グループ）を付け、配布する国を選び、ワークフローを `track: alpha` で実行するか内部テストのリリースを昇格させて、審査に出す。テスターは参加用のリンクから参加する。**12 人以上が 14 日続けて参加**している必要があり、途中で抜けて入り直した人は数え直しになる。内部テストは数えない。[^test-req][^testing]
 12. **製品版を申請する。** ダッシュボードの「製品版へのアクセスを申請」で、クローズドテスト（テスターの集め方・使われた機能・フィードバック）・アプリ（対象の利用者・価値・1 年目のインストール数の見込み）・準備（テストで直したこと）について答える。審査はふつう 7 日以内。[^test-req]
 13. **（任意）APK の配布もデベロッパー検証に登録する。** Google は、2026 年 9 月 30 日からブラジル・インドネシア・シンガポール・タイで、2027 年からほかの国でも、認定された端末に入るアプリに登録済みのデベロッパーであることを求める。Play のアプリは Play が登録し、Play の外で配るものは Play Console で登録できる。GitHub の APK は同じパッケージ名・同じ鍵なので、Play Console で登録の状態を確かめる。[^devverify]

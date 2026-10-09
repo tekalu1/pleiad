@@ -15,7 +15,7 @@ const APP = 'mobile/android/app/src/main';
 
 export default async function (t) {
   // ---- plyRemote（HostActivity が入れるもの）を web/remote-badge.mjs が読める
-  const host = read(`${APP}/kotlin/com/procway/pleiad/HostActivity.kt`);
+  const host = read(`${APP}/kotlin/dev/pleiad/app/HostActivity.kt`);
   const script = host.slice(host.indexOf('private fun remoteScript'), host.indexOf('private fun pushStatus'));
   const keys = ['hostId:', 'hostName:', 'relay:', 'device:', "shell: 'mobile'", 'status:', 'onStatus:', 'retry:', 'backToHosts:', 'closeWindow:', 'setTheme:'];
   t.ok('plyRemote に web/ が使う口がそろう（status・onStatus・retry・closeWindow・backToHosts・setTheme・shell: mobile）',
@@ -37,8 +37,8 @@ export default async function (t) {
   t.ok('戻るボタンはまず画面に plyremote:back（取り消せる）を投げ、取り消されなければ背面へ回る（ホスト一覧へは戻らない）',
     /new CustomEvent\('plyremote:back', \{ cancelable: true \}\)/.test(host) && /if \(result != "true"\) moveTaskToBack\(true\)/.test(host));
   // ---- 起動時に前回のホストを開く（2026-10-01）。覚える・消す・開くの 3 か所がそろっている
-  const main = read(`${APP}/kotlin/com/procway/pleiad/MainActivity.kt`);
-  const plugin = read(`${APP}/kotlin/com/procway/pleiad/PleiadRemotePlugin.kt`);
+  const main = read(`${APP}/kotlin/dev/pleiad/app/MainActivity.kt`);
+  const plugin = read(`${APP}/kotlin/dev/pleiad/app/PleiadRemotePlugin.kt`);
   t.ok('ホストの窓を開いたら覚え、一覧へ戻る口（back・戻るボタンで窓が無いとき）で消す。背面へ回すだけでは消さない',
     /ResumeStore\(this\)\.remember\(hostId\)/.test(host) && /"back" -> backToList\(\)/.test(host) && /ResumeStore\(this\)\.forget\(hostId\)/.test(host)
       && /val w = web \?: return backToList\(\)/.test(host) && /if \(result != "true"\) moveTaskToBack\(true\)/.test(host));
@@ -46,7 +46,7 @@ export default async function (t) {
   t.ok('起動時は ResumePolicy が決める（復元でない・ACTION_MAIN）。Capacitor の WebView を作る前に HostActivity を起こす',
     /ResumePolicy\.decide\(saved, device\.store\.hosts\(\), savedInstanceState == null, intent\?\.action == Intent\.ACTION_MAIN\)/.test(main)
       && main.indexOf('resumeLastHost(savedInstanceState)') < main.indexOf('super.onCreate(savedInstanceState)'));
-  const proxyKt = read('mobile/android/remote-core/src/main/kotlin/com/procway/pleiad/remote/DeviceProxy.kt');
+  const proxyKt = read('mobile/android/remote-core/src/main/kotlin/dev/pleiad/app/remote/DeviceProxy.kt');
   t.ok('オフライン・取り消しの案内に「ホスト一覧に戻る」（window.backToHosts があるときだけ出す）',
     /id="back-to-hosts" hidden/.test(proxyKt) && /typeof window\.backToHosts==='function'/.test(proxyKt) && /fun backToHosts\(\): String/.test(proxyKt));
   const xml = l => read(`${APP}/res/${l === 'ja' ? 'values-ja' : 'values'}/strings.xml`);
@@ -80,7 +80,7 @@ export default async function (t) {
   t.ok('ルートの package.json に Capacitor を入れない', !Object.keys({ ...root.dependencies, ...root.devDependencies }).some(k => k.startsWith('@capacitor')));
   const vars = read('mobile/android/variables.gradle');
   t.ok('最低の版は Android 13（API 33。標準の XDH が使える最初の版）', /minSdkVersion = 33\b/.test(vars));
-  const x = read('mobile/android/remote-core/src/main/kotlin/com/procway/pleiad/remote/X25519.kt');
+  const x = read('mobile/android/remote-core/src/main/kotlin/dev/pleiad/app/remote/X25519.kt');
   t.ok('X25519 は標準の XDH だけ（自前の実装を持たない）', /KeyAgreement\.getInstance\("XDH"\)/.test(x) && !/scalarMult|car25519|Portable/.test(x));
 
   // ---- 殻の辞書（mobile/www/i18n.js）の ja と en がそろう

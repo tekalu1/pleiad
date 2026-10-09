@@ -3,7 +3,7 @@ import Foundation
 import Security
 import PleiadRemote
 final class KeychainVault: SecretVault {
-    static let service = "com.procway.pleiad.remote"
+    static let service = "dev.pleiad.app.remote"
     private let account: String
 
     init(account: String = "secrets") { self.account = account }

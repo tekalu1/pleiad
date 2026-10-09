@@ -73,7 +73,7 @@ export default async function (t) {
     /contents === windows\.get\(hostId\)\?\.win\.webContents/.test(rw));
 
   // ---- Android の殻（HostActivity）
-  const host = read('mobile/android/app/src/main/kotlin/com/procway/pleiad/HostActivity.kt');
+  const host = read('mobile/android/app/src/main/kotlin/dev/pleiad/app/HostActivity.kt');
   t.ok('新しい窓は殻が受ける（setSupportMultipleWindows(true)）。押したときだけ（isUserGesture）',
     /setSupportMultipleWindows\(true\)/.test(host) && /override fun onCreateWindow\([^)]*\): Boolean \{\s*if \(!isUserGesture\) return false/.test(host));
   const popup = host.slice(host.indexOf('private fun newPopup'), host.indexOf('private fun place'));
@@ -82,7 +82,7 @@ export default async function (t) {
       && /allowFileAccess = false/.test(popup));
   t.ok('振り分けは LinkPolicy（写しはシート、Web は ACTION_VIEW、localhost は知らせ）',
     /LinkPolicy\.classify\(/.test(host) && /LinkTarget\.SNAPSHOT/.test(host) && /Intent\.ACTION_VIEW/.test(host) && /R\.string\.link_host_only/.test(host));
-  const policy = read('mobile/android/remote-core/src/main/kotlin/com/procway/pleiad/remote/LinkPolicy.kt');
+  const policy = read('mobile/android/remote-core/src/main/kotlin/dev/pleiad/app/remote/LinkPolicy.kt');
   t.ok('LinkPolicy の写しのパスは画面・サーバーと同じ', policy.includes('const val SNAPSHOT_PATH = "/visualization-snapshot"'));
   const ui = { ja: JSON.parse(read('web/locales/ja/ui.json')), en: JSON.parse(read('web/locales/en/ui.json')) };
   const res = lang => read(`mobile/android/app/src/main/res/${lang === 'ja' ? 'values-ja' : 'values'}/strings.xml`);
