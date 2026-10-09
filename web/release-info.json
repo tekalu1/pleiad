@@ -1,8 +1,8 @@
 {
-  "version": "0.13.2",
+  "version": "0.13.3",
   "releases": [
     {
-      "version": "0.13.2",
+      "version": "0.13.3",
       "date": "2026-10-09",
       "title": "委譲した会話からさらに任せられるようになり、委譲の判定器が OpenRouter のキー 1 本で動くようになりました",
       "sections": [
