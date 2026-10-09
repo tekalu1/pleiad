@@ -286,6 +286,7 @@ const SUITES = [
   // OS にサインインしたら起動する設定: 登録するパス・引数（版に依らない exe と --hidden）・OS の実際の状態・古いパスの直し・使えない構成（偽の electron。本物の Run には書かない）
   './unit/desktop-login-item.mjs',
   './unit/login-item-server.mjs',
+  './unit/login-item-ui.mjs',
   './unit/message-queue.mjs',
   // 送り終わった outbox は刈らない: 古い項目でも returned・undelivered・同じ ID の再試行が見つかる（ADR 0115）
   './unit/outbox-keep.mjs',
