@@ -9,7 +9,7 @@ Claude・Codex の会話から、`ply_agents` MCP の `ply_delegate` で別の�
 
 | ツール | 引数 | 動作 |
 |---|---|---|
-| `ply_delegate` | `kind`, `task`, 任意の `title`, `backend`, `context`, `cwd`, `model`, `effort`, `isolate`, `host`（下の「リモートのホストへ任せる」） | 子会話を作り、すぐ `taskId`・短い `title`・`routing`（どう選んだか）・worktree なら `worktree`（`{ id, branch, path, origin, baseBranch }`）を返す。`title` は一覧と子会話の見出しに使い、無ければ依頼の最初の空でない行。`model` / `effort` は `backend` を書いたときだけ。`isolate`（真偽）は下の「worktree」 |
+| `ply_delegate` | `kind`, `task`, 任意の `title`, `backend`, `context`, `cwd`, `model`, `effort`, `isolate`, `host`（下の「リモートのホストへ任せる」） | 子会話を作り、すぐ `taskId`・短い `title`・`routing`（どう選んだか）・worktree なら `worktree`（`{ id, branch, path, origin, baseBranch }`）を返す。`title` は一覧と子会話の見出しに使い、無ければ依頼の最初の空でない行。`model` / `effort` は `backend` を書いたときだけ。`model` は backend の一覧の名前で、Claude は正式な ID（`claude-sonnet-5-5`）も一覧の行に当てる（`backend.matchModel`。`resolvedModel` が一致する行、無ければ同じ系統の行）。当たらない名前は既定に落とさず `model_unknown`（選べる名前を添える。`agent:delegation.modelUnknown`）で断る。互換の接続先の会話は形だけを見る従来どおり。`isolate`（真偽）は下の「worktree」 |
 | `ply_task_status` | `taskId`, 任意の `offset` | 状態と結果。結果は16,000文字ずつ返し、`nextOffset` で続きへ進む。子で実行前に拒否されたコマンドは `rejections`（下の「実行前に拒否されたコマンド」） |
 | `ply_task_wait` | `taskId`, 任意の `seconds`（1〜30、既定30） | 上限まで待つ。承認待ちになったらすぐ戻る。未完了なら現在の状態を返す |
 | `ply_task_send` | `taskId`, 任意の `message`, `backend`, `model`, `effort` | `backend` / `model` / `effort` を書くと子の設定を替える（下の「子の設定を替える」。設定だけなら `message` を省ける）。`message` は同じ子会話に追加指示。子のターンが走っていて途中送信を受けられるなら、今のターンへ途中送信（`control.steer`）で渡す（下の「追加指示の配送」）。起動準備中は受信可能になり次第、現在のターンに送る。待機分は順序を保ってまとめる。途中送信を受けられない場合は次のターンに送る。完了後・停止後なら再開する（止まった直後に送った指示も捨てずに走らせる）。止めている途中（`cancelling`）は断る |

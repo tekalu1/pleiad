@@ -808,11 +808,11 @@ async function taskSettingsPlan(owner, args, lng, turn) {
     if (endpoint && !(await compatEndpoints.has(endpoint, target.id))) throw new Error(agentT(lng, 'delegation.endpointDeleted'));
   }
   if (!endpointCapable(target)) endpoint = '';
-  const model = args.model ?? (target.id === current.id ? before.model : target.id === source.id ? meta.model ?? ''
+  const asked = await canonicalModel(target, args.model, cwd, endpoint);
+  const model = asked ?? (target.id === current.id ? before.model : target.id === source.id ? meta.model ?? ''
     : await resolveModel(null, undefined, target, cwd, endpoint));
   if (args.model !== undefined && !(await validModel(target, model, cwd, endpoint).catch(() => false))) {
-    const known = endpoint ? [] : Object.keys(await target.models(cwd).catch(() => ({}))).filter(Boolean).slice(0, 30);
-    throw new Error(agentT(lng, 'tasks.modelUnknown', { model, backend: target.id, models: known.join(', ') || '-' }));
+    throw new Error(agentT(lng, 'tasks.modelUnknown', { model, backend: target.id, models: await knownModelNames(target, cwd, endpoint) }));
   }
   // 使用枠が満杯と分かっているときだけ断る（取り置きが無い・古いだけでは断らない。固定の ply_delegate も使用量では断らない）
   const account = meta.nextSettings?.account ?? meta.claudeAccount ?? '';
@@ -2034,6 +2034,22 @@ async function resolveEffort(sessionId, asked, backend, model, cwd, endpoint = n
 async function validModel(backend, model, cwd, endpointId = '') {
   if (endpointId) return model === '' || isModelId(model);
   return backend.validModel ? backend.validModel(model, cwd) : Object.hasOwn(await backend.models(cwd), model);
+}
+/**
+ * 明示して渡されたモデル名を、一覧の id に当てる（AI が書く claude-sonnet-5-5 → sonnet）。
+ * そのままで通る名前・互換の接続先・当てる手段の無い backend・当たらない名前は、渡された値のまま返す（断るのは呼び出し側）
+ */
+async function canonicalModel(backend, name, cwd, endpointId = '') {
+  if (endpointId || typeof name !== 'string' || !backend.matchModel) return name;
+  if (await validModel(backend, name, cwd).catch(() => false)) return name;
+  return (await backend.matchModel(name, cwd).catch(() => null)) ?? name;
+}
+/** エラーに添える、選べるモデル名（隠し以外を先頭 30 件） */
+async function knownModelNames(backend, cwd, endpointId = '') {
+  if (endpointId) return '-';
+  const models = await backend.models(cwd).catch(() => ({}));
+  const names = Object.keys(models).filter(id => id && !models[id]?.hidden).slice(0, 30);
+  return names.join(', ') || '-';
 }
 async function resolveModel(sessionId, given, backend, cwd, endpointId = '') {
   const asked = typeof given === "string" ? given : null;
@@ -5346,7 +5362,12 @@ agentTasks = await createAgentTasks({
     // 継ぐべき接続先が消えていたら委譲を断る（黙って公式で走らせない）
     if (inherited && !(await compatEndpoints.has(inherited, backend.id))) throw new Error(agentT(lng, 'delegation.endpointDeleted'));
     const endpoint = inherited;
-    const model = await resolveModel(null, args.model, backend, cwd, endpoint);
+    const asked = await canonicalModel(backend, args.model, cwd, endpoint);
+    const model = await resolveModel(null, asked, backend, cwd, endpoint);
+    // 依頼元が書いたモデル名が一覧に無いなら、黙って既定に落とさず断る（選べる名前を添える）。互換の接続先は形だけを見る
+    if (!auto && !endpoint && typeof args.model === 'string' && model !== asked) {
+      throw new Error(agentT(lng, 'delegation.modelUnknown', { model: args.model, backend: backend.id, models: await knownModelNames(backend, cwd) }));
+    }
     // 選んだモデルを使えなくなっていたら、黙って既定に落とさず断る
     if (auto && model !== args.model) throw new Error(agentT(lng, 'routing.modelUnavailable', { model: args.model, backend: backend.id }));
     // 自動の振り分け・人が選び直した委譲の子の強さは、上書き → 段の既定 → そのモデルに合わせる（ADR 0164）。

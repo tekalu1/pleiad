@@ -236,6 +236,7 @@ const SUITES = [
   './unit/server-delegation-background.mjs',
   // 依頼元が子のエージェント・モデル・思考の強さを ply_task_send で替える（走っている子・走っていない子・断る場合・記録）
   './unit/server-delegation-settings.mjs',
+  './unit/server-delegation-model-name.mjs',
   // 委譲の結果に選ぶ返答: Stop フックの続き（調べものだけ）は飛ばす・中身の仕事をした続きは選ぶ（Claude の transcript の印）
   './unit/delegation-result.mjs',
   // 委譲の子の履歴が一時的に読めない（Codex の 1546 disk I/O error）: 0.5・1・2 秒で読み直す・読めなければ流れた返答で注意書き付きの完了・ターン用の app-server の終わりを待つ
@@ -472,6 +473,7 @@ const SUITES = [
   './unit/claude-catalog-cli-version.mjs',
   // Claude のモデル一覧: 手元に古い一覧・別の作業場所の一覧があれば、引き直しを待たずに返す
   './unit/claude-catalog-stale.mjs',
+  './unit/claude-model-match.mjs',
   './unit/codex-background.mjs',
   './unit/codex-terminals.mjs',
   './unit/event-session-id.mjs',
