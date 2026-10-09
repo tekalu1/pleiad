@@ -1697,7 +1697,7 @@ const server = http.createServer(async (req, res) => {
         ? await history.findPresentBody(sessionId, await resolveBackendForSession(sessionId).catch(() => null), { i, at, field }).catch(() => null)
         : null;
       const plain = { 'content-type':'text/plain; charset=utf-8', 'cache-control':'private, no-store', 'x-content-type-options':'nosniff' };
-      if (found === null) { res.writeHead(sessionId && field ? 404 : 400, plain); return res.end('not found'); }
+      if (found === null) { res.writeHead(sessionId && (field === 'content' || field === 'dataUri') ? 404 : 400, plain); return res.end('not found'); }
       const safe = { 'cache-control':'private, max-age=31536000, immutable', 'x-content-type-options':'nosniff', 'content-security-policy':"sandbox; default-src 'none'" };
       if (field === 'dataUri') {
         const m = /^data:(image\/(?:png|jpe?g|gif|webp|avif|bmp|svg\+xml));base64,/i.exec(found);
