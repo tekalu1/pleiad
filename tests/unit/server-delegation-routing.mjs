@@ -118,7 +118,7 @@ export default async function (t) {
     const tasks = await c.cmd('agentTasks');
     const row = tasks.find(x => x.taskId === auto.data.taskId);
     t.ok('タスクに routing を保存する（確率つき）', row?.routing?.mode === 'auto' && row.routing.probabilities.choose === 0.01 && tasks.find(x => x.taskId === pinned.data.taskId).routing.mode === 'pinned');
-    // 画面の一覧（listSessions）は routing を載せない（ADR 0903）。会話の記録そのものは操作の一覧で見る
+    // 画面の一覧（listSessions）は routing を載せない（ADR 0179）。会話の記録そのものは操作の一覧で見る
     const sessions = await c.cmd('invoke', { op: 'sessions.list', args: {} });
     t.ok('子の会話のメタデータにも routing', sessions.find(s => s.id === row.sessionId)?.routing?.target?.model === 'gemini-3.8-flash-high');
     t.ok('画面の一覧には routing を載せない', !('routing' in ((await c.cmd('listSessions')).find(s => s.id === row.sessionId) ?? { routing: 1 })));

@@ -50,7 +50,7 @@ export default async function (t) {
   t.ok('timeoutMs を渡さないコマンドは今までどおり待つ（見張りを付けない）', timers.size === 0 && pending.size === 1);
 
   const refresh = client.slice(client.indexOf('async function runRefresh()'), client.indexOf('refreshSnapshotReady = true;'));
-  // 一覧は差分で受ける口（listSessions(wait)）を通す。その口も同じ時間切れで cmd を呼ぶ（ADR 0903）
+  // 一覧は差分で受ける口（listSessions(wait)）を通す。その口も同じ時間切れで cmd を呼ぶ（ADR 0179）
   const listing = client.slice(client.indexOf('async function listSessions(wait)'), client.indexOf('async function runRefresh()'));
   t.ok('取り直しの一覧・状態・設定は時間切れ付きで読む', /listSessions\(wait\)/.test(refresh) && /cmd\("listSessions", sessionListSync\.args\(\), \{ \.\.\.wait, bulk: true \}\)/.test(listing)
     && /cmd\("listStatuses", \{\}, wait\)/.test(refresh) && /cmd\("prefs", \{\}, wait\)/.test(refresh));

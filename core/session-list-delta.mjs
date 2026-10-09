@@ -1,4 +1,4 @@
-// 画面の会話の一覧（WS の listSessions）を細く・差分で返す（ADR 0903）。
+// 画面の会話の一覧（WS の listSessions）を細く・差分で返す（ADR 0179）。
 // - 行の振り分けの記録（routing）は載せず、委譲の記録（delegation）は画面が一覧で使う欄だけにする。詳しい中身は、要る画面が
 //   タスクの口（agentTasks・delegation.tasks・delegation.status）で取る。操作（core/ops の sessions.list）の形は変えない
 // - 接続ごとに、送った一覧の写し（行の順と、行ごとの中身の指紋）を新しい順にいくつか持ち、画面が「since（前に受けた写しの番号）」を

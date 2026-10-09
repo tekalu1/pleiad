@@ -185,7 +185,7 @@ stream 0 はチャネル自体。端末が開くストリームは奇数、ホ�
 ### 4.3 流量の制御と背圧
 
 - HTTP/2 と同じ考えのクレジット方式。ストリームの初期窓 256 KiB、チャネル全体 1 MiB。DATA と WS_MSG の payload の分だけ減らし、窓が 0 のストリームは待つ。制御フレームは数えない
-- **受け手は初期窓から自分の窓を広げる**（[ADR 0903](adr/0903-remote-throughput-and-list-size.md)）。HELLO の直後にチャネルへ 3 MiB、ストリームを開いた直後（端末は HTTP_REQ / WS_OPEN を送った直後、ホストは受け付けた直後）にそのストリームへ 768 KiB の WINDOW を送り、ストリーム 1 MiB・チャネル 4 MiB にする。ホスト・Node の端末（`core/remote/channel.mjs` の `RECV_STREAM_WINDOW`・`RECV_CHANNEL_WINDOW`）・Kotlin・Swift で同じ。ストリーム 1 MiB は往復 300 ms・20 Mbps の帯域と遅延の積（約 0.75 MB）を 1 本で満たす大きさで、それより広げると大きい返事の後ろに並ぶ小さい返事の待ち（窓 ÷ 帯域）が延びる
+- **受け手は初期窓から自分の窓を広げる**（[ADR 0179](adr/0179-remote-throughput-and-list-size.md)）。HELLO の直後にチャネルへ 3 MiB、ストリームを開いた直後（端末は HTTP_REQ / WS_OPEN を送った直後、ホストは受け付けた直後）にそのストリームへ 768 KiB の WINDOW を送り、ストリーム 1 MiB・チャネル 4 MiB にする。ホスト・Node の端末（`core/remote/channel.mjs` の `RECV_STREAM_WINDOW`・`RECV_CHANNEL_WINDOW`）・Kotlin・Swift で同じ。ストリーム 1 MiB は往復 300 ms・20 Mbps の帯域と遅延の積（約 0.75 MB）を 1 本で満たす大きさで、それより広げると大きい返事の後ろに並ぶ小さい返事の待ち（窓 ÷ 帯域）が延びる
 - 受け側は**下流に渡し終えてから** WINDOW を返す。HTTP はローカルのソケットへの `write()` が true を返したとき（または `drain`）、WebSocket は `ws.bufferedAmount` が 64 KiB を下回ったとき
 - 送り側は中継への WebSocket の `bufferedAmount` が 4 MiB を超えたら全ストリームを止める
 - これで中継に溜まるのは向きごとに最大でチャネルの窓（4 MiB）程度に抑えられる。中継はさらに相手側の `bufferedAmount` が上限（8 MiB）を超えた接続を切る
@@ -196,7 +196,7 @@ stream 0 はチャネル自体。端末が開くストリームは奇数、ホ�
 
 今のサーバーは `ws.bufferedAmount` を見ずに送る（`sendTo()` `core/server.mjs:586`）が、相手はループバックの接続口なので速く読み出され、背圧は接続口のところで効く。
 
-WS は 1 本のストリームなので、大きいメッセージの後ろに並んだ小さいメッセージは、大きい方を送り終えるまで待つ。チャネルはストリームごとに 1 フレームずつ順に送る（`_pump`）ので、別のストリームなら交互に流れる。そこで、画面が `bulk: true` を添えたコマンドの返事が 64 KiB 以上で、つなぎ先がこの PC でないときは、サーバーが本文を `/bulk/<id>` に置き、WS には置き場の URL だけを返す（`core/bulk-replies.mjs`。GET だけ・1 回きり・60 秒・合計 64 MiB まで・`accept-encoding` に gzip があれば gzip）。画面はそれを HTTP（別のストリーム）で取る。使っているのは会話の一覧（`listSessions`。最初の 1 回の全部。2 回目からは前に受けた写しからの差分で小さい）。WS のメッセージの順序は変えない。WS の圧縮（permessage-deflate）は、接続口が WS をメッセージに組み立て直して渡すので中継の線では効かず、使わない（ADR 0903 の決定 3）。
+WS は 1 本のストリームなので、大きいメッセージの後ろに並んだ小さいメッセージは、大きい方を送り終えるまで待つ。チャネルはストリームごとに 1 フレームずつ順に送る（`_pump`）ので、別のストリームなら交互に流れる。そこで、画面が `bulk: true` を添えたコマンドの返事が 64 KiB 以上で、つなぎ先がこの PC でないときは、サーバーが本文を `/bulk/<id>` に置き、WS には置き場の URL だけを返す（`core/bulk-replies.mjs`。GET だけ・1 回きり・60 秒・合計 64 MiB まで・`accept-encoding` に gzip があれば gzip）。画面はそれを HTTP（別のストリーム）で取る。使っているのは会話の一覧（`listSessions`。最初の 1 回の全部。2 回目からは前に受けた写しからの差分で小さい）。WS のメッセージの順序は変えない。WS の圧縮（permessage-deflate）は、接続口が WS をメッセージに組み立て直して渡すので中継の線では効かず、使わない（ADR 0179 の決定 3）。
 
 ### 4.4 再接続
 

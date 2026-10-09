@@ -3426,7 +3426,7 @@ const sameSet = (a, b) => a.size === b.size && [...a].every((x) => b.has(x));
 
 /**
  * timeoutMs を渡すと、その間に返事が無ければ失敗にする（返事を待ち続けて後の処理まで止めないため。refresh）
- * bulk を渡すと、大きい返事をサーバーが WS の外（/bulk/<id>）に置いてよい。中継越しの線で後の返事・出来事を待たせない（ADR 0903）。
+ * bulk を渡すと、大きい返事をサーバーが WS の外（/bulk/<id>）に置いてよい。中継越しの線で後の返事・出来事を待たせない（ADR 0179）。
  * 返事は HTTP で取ってから渡すので、その間に届いた出来事より後になる。順が要るコマンドには付けない
  */
 function cmd(command, args = {}, { timeoutMs = 0, bulk = false } = {}) {
@@ -7594,7 +7594,7 @@ function refresh({ sharePending = false } = {}) {
 }
 
 let refreshVersion = 0;
-// 一覧は前に受けた写しからの差分で受ける（web/session-list-sync.mjs。ADR 0903）
+// 一覧は前に受けた写しからの差分で受ける（web/session-list-sync.mjs。ADR 0179）
 const sessionListSync = createSessionListSync();
 async function listSessions(wait) {
   const ask = () => cmd("listSessions", sessionListSync.args(), { ...wait, bulk: true }).then((r) => sessionListSync.apply(r));

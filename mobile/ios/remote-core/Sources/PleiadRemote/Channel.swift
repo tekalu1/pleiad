@@ -8,7 +8,7 @@ import Foundation
 public enum ChannelConst {
     public static let STREAM_WINDOW = 256 * 1024
     public static let CHANNEL_WINDOW = 1024 * 1024
-    // What this side grants as a receiver (ADR 0903): the protocol's initial windows stay as above, and the receiver
+    // What this side grants as a receiver (ADR 0179): the protocol's initial windows stay as above, and the receiver
     // widens them with WINDOW increments right after HELLO (channel) and right after a stream opens. Old peers just
     // see larger credit, so mixed versions keep working. 1 MiB covers the bandwidth-delay product at 300 ms × 20 Mbps;
     // 4 MiB stays well under the relay's 8 MiB per-connection buffer.
@@ -478,7 +478,7 @@ public final class Channel {
         return true
     }
 
-    // Grants the receive window beyond the protocol's initial value (ADR 0903).
+    // Grants the receive window beyond the protocol's initial value (ADR 0179).
     private func widen(_ stream: Stream?) {
         let extra = stream != nil ? recvStreamWindow - streamWindow : recvChannelWindow - channelWindow
         if extra <= 0 || closed { return }

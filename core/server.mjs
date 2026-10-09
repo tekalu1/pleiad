@@ -1633,7 +1633,7 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(204, { "cache-control": "no-store" });
     return res.end();
   }
-  // WS の外で渡す大きい返事（core/bulk-replies.mjs。ADR 0903）。トークンの認証は上で済んでいる
+  // WS の外で渡す大きい返事（core/bulk-replies.mjs。ADR 0179）。トークンの認証は上で済んでいる
   if (await bulkReplies.handle(req, res, url)) return;
 
   // コンピューターの操作のスクリーンショット（core/computer-use/shots.mjs）。id は 32 桁の hex だけ。トークンの認証は上で済んでいる（/local-file は使わない。ADR 0075）
@@ -4908,7 +4908,7 @@ const computerDriver = process.env.AGENT_HOST_COMPUTER_DRIVER === 'fake'
   ? fakeComputerDriver({ log: process.env.AGENT_HOST_COMPUTER_LOG ? entry => appendFileSync(process.env.AGENT_HOST_COMPUTER_LOG, JSON.stringify(entry) + '\n') : undefined })
   : parentPortComputer(hostedPort);
 const computerShots = createComputerShots({ dataDir: store.dataDir });
-// 画面の一覧の差分（接続ごとの写し）と、中継越しの大きい返事の置き場（ADR 0903）
+// 画面の一覧の差分（接続ごとの写し）と、中継越しの大きい返事の置き場（ADR 0179）
 const listDeltas = createListDeltas();
 const bulkReplies = createBulkReplies();
 const computerLock = createComputerLock({
@@ -7357,7 +7357,7 @@ wss.on("connection", (ws, req) => {
     // (connection-check receipts and concurrent clients can share the same ID).
     // code: 失敗の種類。画面は文言（言語で変わる）ではなくこれで見分ける
     // extra: 失敗に添える機械が読む欄（invoke の issues）
-    // 画面が bulk を添えたコマンドの大きい返事は、中継越しなら WS の外（HTTP の /bulk/<id>）で渡す。WS の後の返事・出来事を待たせない（ADR 0903）
+    // 画面が bulk を添えたコマンドの大きい返事は、中継越しなら WS の外（HTTP の /bulk/<id>）で渡す。WS の後の返事・出来事を待たせない（ADR 0179）
     const reply = (ok, payload, code, extra) => {
       if (ws.readyState !== ws.OPEN) return;
       const bulk = ok && msg.bulk === true && !local ? bulkReplies.offer(JSON.stringify(payload ?? null)) : null;
@@ -7520,7 +7520,7 @@ wss.on("connection", (ws, req) => {
           return await viaOp('context.scan');
         case 'slashSkills':
           return await viaOp('context.skills');
-        // 画面の一覧は行を細くし、delta なら前に受けた写し（since）からの差分で返す（core/session-list-delta.mjs。ADR 0903）。
+        // 画面の一覧は行を細くし、delta なら前に受けた写し（since）からの差分で返す（core/session-list-delta.mjs。ADR 0179）。
         // delta・since は画面の受け方の指定なので、操作（sessions.list）の入力には渡さない
         case "listSessions": {
           const { delta, since, ...input } = args && typeof args === 'object' && !Array.isArray(args) ? args : {};

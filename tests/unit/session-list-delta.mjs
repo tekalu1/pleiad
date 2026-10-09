@@ -6,7 +6,7 @@ import { createBulkReplies } from '../../core/bulk-replies.mjs';
 import { createSessionListSync } from '../../web/session-list-sync.mjs';
 
 export const name = 'session-list-delta';
-export const title = '画面の一覧: 行を細くし、差分で送って同じ一覧に組み立てる。大きい返事は WS の外に 1 回だけ置く（ADR 0903）';
+export const title = '画面の一覧: 行を細くし、差分で送って同じ一覧に組み立てる。大きい返事は WS の外に 1 回だけ置く（ADR 0179）';
 
 export default async function (t) {
   // ---- 行を細くする

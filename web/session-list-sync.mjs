@@ -1,4 +1,4 @@
-// 会話の一覧を差分で受けて組み立てる（core/session-list-delta.mjs の受け手。ADR 0903）。DOM を触らない。
+// 会話の一覧を差分で受けて組み立てる（core/session-list-delta.mjs の受け手。ADR 0179）。DOM を触らない。
 // 受けた行は手元の写し（base）に持ち、画面には行ごとの浅い写しを渡す（画面は行を直に書き換える。sidebarChange）。
 export function createSessionListSync() {
   let since = null;

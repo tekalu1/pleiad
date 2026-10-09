@@ -15,7 +15,7 @@ class ChannelTest {
 
     @After fun done() = loop.shutdown()
 
-    // old = a peer from before ADR 0903 (does not widen its receive windows)
+    // old = a peer from before ADR 0179 (does not widen its receive windows)
     private fun pair(deviceOld: Boolean = false, hostOld: Boolean = false): Pair<Channel, Channel> {
         val host = KeyPair.generate()
         val dev = KeyPair.generate()
@@ -71,7 +71,7 @@ class ChannelTest {
         assertTrue(body.contentEquals(got.toByteArray()))
     }
 
-    // The receiver widens its windows with WINDOW increments (ADR 0903). The sender stops at whatever the receiver
+    // The receiver widens its windows with WINDOW increments (ADR 0179). The sender stops at whatever the receiver
     // granted, so new and old peers mix: an old device stops the host at 256 KiB, a new one at 1 MiB.
     private fun heldThenComplete(deviceOld: Boolean, hostOld: Boolean): Pair<Long, Boolean> {
         val (d, h) = pair(deviceOld, hostOld)

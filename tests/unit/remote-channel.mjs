@@ -171,7 +171,7 @@ export default async function (t) {
     p.close();
   }
 
-  // ── 窓を広げない相手（古い版）と混ざっても通る（ADR 0903）──
+  // ── 窓を広げない相手（古い版）と混ざっても通る（ADR 0179）──
   // 窓を広げるのは受け手の WINDOW の足し増しだけなので、古い受け手には取り決めの初期値で送り、古い送り手は新しい受け手の窓まで送る
   {
     const old = { recvStreamWindow: STREAM_WINDOW, recvChannelWindow: CHANNEL_WINDOW };

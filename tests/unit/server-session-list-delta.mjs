@@ -9,7 +9,7 @@ import { startServer } from '../lib/server.mjs';
 import { open } from '../lib/ws-client.mjs';
 
 export const name = 'server-session-list-delta';
-export const title = 'サーバーの一覧: 委譲の詳しい中身を外し、差分で返し、中継越しの大きい返事は /bulk で gzip にして渡す（ADR 0903）';
+export const title = 'サーバーの一覧: 委譲の詳しい中身を外し、差分で返し、中継越しの大きい返事は /bulk で gzip にして渡す（ADR 0179）';
 
 const N = 400;
 const ENV = { AGENT_HOST_BACKENDS: 'fake', AGENT_HOST_BIND: '127.0.0.1' };

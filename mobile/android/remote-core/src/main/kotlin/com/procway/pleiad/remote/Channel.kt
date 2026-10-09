@@ -10,7 +10,7 @@ import org.json.JSONObject
 object ChannelConst {
     const val STREAM_WINDOW = 256 * 1024L
     const val CHANNEL_WINDOW = 1024 * 1024L
-    // What this side grants as a receiver (ADR 0903): the protocol's initial windows stay as above, and the receiver
+    // What this side grants as a receiver (ADR 0179): the protocol's initial windows stay as above, and the receiver
     // widens them with WINDOW increments right after HELLO (channel) and right after a stream opens. Old peers just
     // see larger credit, so mixed versions keep working. 1 MiB covers the bandwidth-delay product at 300 ms × 20 Mbps;
     // 4 MiB stays well under the relay's 8 MiB per-connection buffer.
@@ -379,7 +379,7 @@ class Channel(
         return true
     }
 
-    // Grants the receive window beyond the protocol's initial value (ADR 0903).
+    // Grants the receive window beyond the protocol's initial value (ADR 0179).
     private fun widen(stream: Stream?) {
         val extra = if (stream != null) recvStreamWindow - streamWindow else recvChannelWindow - channelWindow
         if (extra <= 0 || closed) return

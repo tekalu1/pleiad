@@ -37,7 +37,7 @@ final class ChannelTests: XCTestCase {
     override func setUp() { loop = Loop(name: "test-loop") }
     override func tearDown() { loop.shutdown() }
 
-    // old = a peer from before ADR 0903 (does not widen its receive windows)
+    // old = a peer from before ADR 0179 (does not widen its receive windows)
     private func pair(deviceOld: Bool = false, hostOld: Bool = false) throws -> (Channel, Channel) {
         let host = KeyPair.generate()
         let dev = KeyPair.generate()
@@ -101,7 +101,7 @@ final class ChannelTests: XCTestCase {
         XCTAssertEqual(body, got.value)
     }
 
-    // The receiver widens its windows with WINDOW increments (ADR 0903). The sender stops at whatever the receiver
+    // The receiver widens its windows with WINDOW increments (ADR 0179). The sender stops at whatever the receiver
     // granted, so new and old peers mix: an old device stops the host at 256 KiB, a new one at 1 MiB.
     private func heldThenComplete(deviceOld: Bool, hostOld: Bool) throws -> (Int, Bool) {
         let (d, h) = try pair(deviceOld: deviceOld, hostOld: hostOld)
