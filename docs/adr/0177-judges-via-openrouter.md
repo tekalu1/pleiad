@@ -34,3 +34,7 @@ Qwen の判定器は「Jev が迷ったら聞き直す」（`escalateToCerebras`
 - 前の版のタスクの記録の `routing.judge: 'cerebras'` は、委譲カードの内訳でそのまま「Cerebras」と出す（辞書の `ui:routing.judge.cerebras` を残す）。
 - Cerebras のキーを判定器にしか使っていなかった利用者は、OpenRouter のキーを登録して選ぶまで、Jev を含む判定器が使われない（難しさは中）。
 - 実装: `core/delegation-judges.mjs`（`askQwen`・`QWEN_PROVIDER`）、`core/delegation-routing.mjs`（`JUDGES`・`migrateLegacySettings`）、`core/api-keys.mjs`（`USES`・`judge:cerebras` の扱い）、`core/server.mjs`・`core/ops/settings.mjs`（保存の前の直し）、`web/delegation-settings.mjs`・`web/api-keys-settings.mjs`。テストの `AGENT_HOST_CEREBRAS_API` は使わなくなった。
+
+## 追記（2026-10-10）: 決定 6 のプロバイダー名と見分けは外した
+
+決定 6 の「互換の接続先で `cerebras.ai` を使うためのプロバイダー名と、URL のホストからの見分けは残す」は、[ADR 0183](0183-cerebras-is-a-plain-compatible-endpoint.md) で置き換えた。Cerebras のキーは `custom`（host なし）として読み、キーの行・id・値は消さない。

@@ -64,13 +64,15 @@ export function normalizeApiKey(value) {
   return key;
 }
 
-const normalizeProvider = value => PROVIDER.test(String(value ?? '')) ? String(value) : 'custom';
+/** 前の版が名前付きのプロバイダーにしていたもの（Cerebras。2026-10-09 に直の経路を廃止、ADR 0183）は、ほかの互換の接続先と同じ custom として読む */
+const RETIRED_PROVIDERS = Object.freeze({ cerebras: 'custom' });
+const normalizeProvider = value => PROVIDER.test(String(value ?? '')) ? (RETIRED_PROVIDERS[value] ?? String(value)) : 'custom';
 
 const sha = value => crypto.createHash('sha256').update('apikey:' + value).digest('hex');
 const iso = ms => new Date(ms).toISOString();
 const emptyState = () => ({ version: 1, migration: null, keys: [], uses: Object.fromEntries(USES.map(u => [u, null])), guide: null });
 
-/** キーを結び付けるホスト。ホストの決まったプロバイダー（OpenRouter・Cerebras）のキーは持たない（null） */
+/** キーを結び付けるホスト。ホストの決まったプロバイダー（OpenRouter）のキーは持たない（null） */
 function normalizeHost(provider, host) {
   const h = String(host ?? '').trim().toLowerCase();
   return !FIXED_HOST_PROVIDERS.has(provider) && /^[a-z0-9.:\-\[\]]{1,253}$/.test(h) ? h : null;
@@ -83,9 +85,10 @@ function adoptRetiredJudge(uses, keys) {
 
 function clean(raw) {
   if (raw?.version !== 1 || !Array.isArray(raw.keys)) throw new Error('bad');
+  // provider が 'cerebras' の既存のキーは custom（host なし）に直す。label・id・値はそのまま（起動では書き直さず、次に台帳を保存したときに書く）
   const keys = raw.keys.filter(k => ID.test(k?.id ?? '') && PROVIDER.test(k.provider ?? '') && typeof k.label === 'string')
-    .map(k => ({ id: k.id, provider: k.provider, label: k.label.slice(0, MAX_LABEL), createdAt: typeof k.createdAt === 'string' ? k.createdAt : null,
-      host: normalizeHost(k.provider, k.host), lastCheck: k.lastCheck && typeof k.lastCheck === 'object' ? k.lastCheck : null }));
+    .map(k => ({ id: k.id, provider: normalizeProvider(k.provider), label: k.label.slice(0, MAX_LABEL), createdAt: typeof k.createdAt === 'string' ? k.createdAt : null,
+      host: normalizeHost(normalizeProvider(k.provider), k.host), lastCheck: k.lastCheck && typeof k.lastCheck === 'object' ? k.lastCheck : null }));
   const ids = new Set(keys.map(k => k.id));
   const uses = Object.fromEntries(USES.map(u => [u, ids.has(raw.uses?.[u]) ? raw.uses[u] : null]));
   if (ids.has(raw.uses?.[RETIRED_JUDGE_USE])) adoptRetiredJudge(uses, keys);
