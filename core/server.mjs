@@ -3329,7 +3329,7 @@ async function deleteSessionOf(sessionId) {
     queuedCompactions.delete(sessionId);
     shellRuns.stopSession(sessionId);
     try { await chromeWindowCloser?.forget(sessionId); } // 保存中の静止画も待ち、会話の記録を消した後に増やさない
-    catch (error) { console.error('  消す会話の Chrome の窓を閉じられない:', String(error?.message ?? error)); }
+    catch (error) { console.error('  消す会話の Chrome のウィンドウを閉じられない:', String(error?.message ?? error)); }
     await deleteConversation(sessionId, backend.id);
     await store.removeSession(sessionId);
     deleted = true;

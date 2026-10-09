@@ -133,8 +133,8 @@ export default async function (t) {
         preview: { openPanel: (options) => { panelOpen = true; options.toolbar[2].getBoundingClientRect = () => ({ left:0, bottom:0 }); options.toolbar[2].onclick(); }, panelOpen: () => panelOpen, close: () => { panelOpen = false; } },
         session: () => 'panel', windows });
       panel.open();
-      await menuItems.find(item => item.label === '窓を閉じる').onClick();
-      t.ok('⋯ の「窓を閉じる」は自分の会話 ID で chromeCloseWindow を送る', menuItems[0].label === '窓 1 · 表示中' && commands.some(([name, args]) => name === 'chromeCloseWindow' && args.sessionId === 'panel'));
+      await menuItems.find(item => item.label === 'ウィンドウを閉じる').onClick();
+      t.ok('⋯ の「窓を閉じる」は自分の会話 ID で chromeCloseWindow を送る', menuItems[0].label === 'ウィンドウ 1 · 表示中' && commands.some(([name, args]) => name === 'chromeCloseWindow' && args.sessionId === 'panel'));
     } finally { globalThis.requestAnimationFrame = oldFrame; N.prototype.toggleAttribute = oldToggle; }
 
     const bridgeCalls = [];

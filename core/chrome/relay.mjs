@@ -83,7 +83,7 @@ const BROWSER_ALLOWED = new Set([
 
 /** 一時停止中のコマンドを断る文（agent-browser の画面にそのまま出る）。日本語と英語を並べる */
 // i18n-ignore: エージェントへの断りの文。会話の言語に依らず、日本語と英語を並べる（中継は言語を持たない）
-export const PAUSED_MESSAGE = 'The user is operating the Chrome window now (paused). Call hand_to_user and wait until they hand it back. / 人が Chrome の窓を操作中です（一時停止）。hand_to_user を呼んで、戻るのを待ってください';
+export const PAUSED_MESSAGE = 'The user is operating the Chrome window now (paused). Call hand_to_user and wait until they hand it back. / 人が Chrome のウィンドウを操作中です（一時停止）。hand_to_user を呼んで、戻るのを待ってください';
 
 class RelayError extends Error {
   constructor(message, code = -32000) { super(message); this.code = code; }

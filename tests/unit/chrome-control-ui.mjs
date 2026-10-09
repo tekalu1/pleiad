@@ -63,7 +63,7 @@ export default async function (t) {
   t.ok('失敗は onError へ（投げない）', errors.join() === 'resume:boom' && resume.disabled === false, errors.join());
 
   view.apply({ state: 'paused', since: 1, error: 'conceal-failed' });
-  t.ok('戻せなかった（窓を隠せなかった）ときは、一行に理由を出す。paused のまま「戻す」を押せる', view.root.querySelector('.cc-text').textContent.includes('窓を隠せなかった') && shownButtons(view.root).length === 1 && statusText('paused', 'Claude', 'conceal-failed').includes('もう一度') && view.banner.textContent.includes('窓を隠せなかった'));
+  t.ok('戻せなかった（窓を隠せなかった）ときは、一行に理由を出す。paused のまま「戻す」を押せる', view.root.querySelector('.cc-text').textContent.includes('ウィンドウを隠せなかった') && shownButtons(view.root).length === 1 && statusText('paused', 'Claude', 'conceal-failed').includes('もう一度') && view.banner.textContent.includes('ウィンドウを隠せなかった'));
   view.apply({ state: 'paused', since: 1 });
   t.ok('error が無くなれば元の語に戻る', view.root.querySelector('.cc-text').textContent === 'あなたが操作中');
   view.apply({ state: 'bogus' });
@@ -128,8 +128,8 @@ export default async function (t) {
   setChromeHandoverAgentName(() => 'Codex');
   t.ok('名前は今の会話のエージェント', renderChromeHandoverLine({ chromeHandover: { seconds: 1 } }).textContent.includes('Codex に戻しました'));
   const closed = renderChromeClosedLine({ kind: 'chromeClosed', chromeClosed: { by: 'agent' }, path: 'C:/shot.png' });
-  t.ok('閉じた行は今のエージェント名と静止画を示す', closed.textContent.includes('Codex が窓を閉じました') && closed.querySelector('img')?.src?.includes('shot.png'));
-  t.ok('人が × で閉じたときの行は画像がなくても残る', renderPresent({ kind: 'chromeClosed', chromeClosed: { by: 'human' } }).textContent.includes('Chrome の窓が閉じました'));
+  t.ok('閉じた行は今のエージェント名と静止画を示す', closed.textContent.includes('Codex がウィンドウを閉じました') && closed.querySelector('img')?.src?.includes('shot.png'));
+  t.ok('人が × で閉じたときの行は画像がなくても残る', renderPresent({ kind: 'chromeClosed', chromeClosed: { by: 'human' } }).textContent.includes('Chrome のウィンドウが閉じました'));
 
   // ---- 記録（core/history.mjs recordPresent）
   const id = `chrome-control-ui-${Date.now()}`;

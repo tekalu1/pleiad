@@ -155,13 +155,13 @@ export default async function (t) {
 
   // ---------------------------------------------------------------- ほかのホストにつなぐ窓
   {
-    const tr = view.translator({ remote: { hosts: { open: '開く', lastConnected: '最後につないだ時刻 {{when}}', state: { connected: 'オンライン', revoked: '取り消されました', closed: '閉じています' }, windowOpen: '窓を開いています', neverConnected: 'まだ' } } });
+    const tr = view.translator({ remote: { hosts: { open: '開く', lastConnected: '最後につないだ時刻 {{when}}', state: { connected: 'オンライン', revoked: '取り消されました', closed: '閉じています' }, windowOpen: 'ウィンドウを開いています', neverConnected: 'まだ' } } });
     t.ok('辞書: 道で引き、desktop: を外し、差し込みを埋め、無ければキー',
       tr('remote.hosts.open') === '開く' && tr('desktop:remote.hosts.open') === '開く' && tr('remote.hosts.lastConnected', { when: 'X' }) === '最後につないだ時刻 X' && tr('remote.nope') === 'remote.nope');
     const on = view.hostLine({ hostId: HOST_ID, name: 'desk', state: 'connected', windowOpen: true }, tr, String);
     const off = view.hostLine({ hostId: HOST_ID, name: 'desk', state: 'closed', lastConnectedAt: 'T' }, tr, String);
     const rv = view.hostLine({ hostId: HOST_ID, name: '', state: 'revoked' }, tr, String);
-    t.ok('行: オンラインは丸と文字、窓を開いていればそれも', on.dot === 'on' && on.detail === 'オンライン · 窓を開いています' && on.canOpen);
+    t.ok('行: オンラインは丸と文字、窓を開いていればそれも', on.dot === 'on' && on.detail === 'オンライン · ウィンドウを開いています' && on.canOpen);
     t.ok('行: 閉じているホストは中抜きと最後につないだ時刻', off.dot === 'off' && off.detail === '閉じています · 最後につないだ時刻 T');
     t.ok('行: 取り消されたホストは開けない（名前が無ければ hostId）', !rv.canOpen && rv.revoked && rv.name === HOST_ID && rv.detail === '取り消されました');
     // この PC の AI から任せる（docs/remote.md §7.4）: オフは何も出さず、オンでホストが未許可なら許可する場所を言い、両方オンなら「使える」

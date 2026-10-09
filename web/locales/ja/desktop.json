@@ -99,7 +99,7 @@
     "hosts": {
       "windowTitle": "ほかのホストにつなぐ",
       "jumpTask": "ほかのホストにつなぐ…",
-      "jumpTaskDescription": "ペアリングしたホストの Pleiad をこの PC の窓で開きます",
+      "jumpTaskDescription": "ペアリングしたホストの Pleiad をこの PC のウィンドウで開きます",
       "heading": "ペアリングしたホスト",
       "empty": "まだホストがありません。下の「ホストを追加」から追加します。",
       "state": {
@@ -113,7 +113,7 @@
       },
       "lastConnected": "最後につないだ時刻 {{when}}",
       "neverConnected": "まだつないでいません",
-      "windowOpen": "窓を開いています",
+      "windowOpen": "ウィンドウを開いています",
       "open": "開く",
       "opening": "開いています…",
       "rename": "名前を変える",
