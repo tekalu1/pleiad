@@ -1,10 +1,13 @@
+// 断るときは code: 'TASK_REFUSED' と detail.reason（invalid・notChild・changed）を付ける。ply_browser（core/browser-bridge.mjs）がエージェントの言語の文にする
+const refuse = (reason, message) => Object.assign(new Error(message), { code: 'TASK_REFUSED', detail: { reason } });
+
 // 委譲した子の Chrome の窓。taskId は推測可能なので、毎回タスクと会話メタの両方で所有を確かめる。
 export async function delegatedChromeTarget(parentId, taskId, { task, meta }) {
-  if (!parentId || typeof taskId !== 'string' || !taskId) throw new Error('invalid task');
+  if (!parentId || typeof taskId !== 'string' || !taskId) throw refuse('invalid', 'invalid task');
   const row = task(taskId);
-  if (!row || row.parentSessionId !== parentId || !row.sessionId || row.host) throw new Error('task is not a local direct child');
+  if (!row || row.parentSessionId !== parentId || !row.sessionId || row.host) throw refuse('notChild', 'task is not a local direct child');
   const child = await meta(row.sessionId);
-  if (child?.delegation?.taskId !== taskId || child.delegation.parentSessionId !== parentId) throw new Error('task ownership changed');
+  if (child?.delegation?.taskId !== taskId || child.delegation.parentSessionId !== parentId) throw refuse('changed', 'task ownership changed');
   return row.sessionId;
 }
 

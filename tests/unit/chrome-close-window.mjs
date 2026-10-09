@@ -10,6 +10,7 @@ import { createChromeRelay } from '../../core/chrome/relay.mjs';
 import { createChromeScreencast } from '../../core/chrome/screencast.mjs';
 import { createChromeWindowCloser } from '../../core/chrome/close-window.mjs';
 import { createBrowserBridge } from '../../core/browser-bridge.mjs';
+import { delegatedChromeTarget } from '../../core/chrome/delegation.mjs';
 import { browserOps } from '../../core/ops/browser.mjs';
 import { setupChromePanel, createWindowTable } from '../../web/chrome-panel.mjs';
 import { N } from '../lib/dom-stub.mjs';
@@ -157,6 +158,28 @@ export default async function (t) {
       t.ok('ply_browser は BUSY を引き継ぎ中の案内の文で返す', answer.isError === true && answer.content[0].text.includes('引き継いでいる間'));
       endpoint.close();
     } finally { busyServer.close(); }
+
+    // 子の窓を閉じるのを断るとき（所有の確認。core/chrome/delegation.mjs）も、エージェントの言語の文で返す
+    const ownership = { task: id => ({ mine: { taskId: 'mine', parentSessionId: 'own', sessionId: 'kid' }, other: { taskId: 'other', parentSessionId: 'someone', sessionId: 'x' } })[id],
+      meta: async id => (id === 'kid' ? { delegation: { taskId: 'moved', parentSessionId: 'own' } } : null) };
+    const ownerBridge = createBrowserBridge({ handoffs: {}, closeWindow: async (id, task) => delegatedChromeTarget(id, task, ownership) });
+    const ownerServer = http.createServer((req, res) => ownerBridge.handle(req, res));
+    await new Promise(resolve => ownerServer.listen(0, '127.0.0.1', resolve));
+    try {
+      const answers = {};
+      for (const locale of ['ja', 'en']) {
+        const endpoint = ownerBridge.open({ origin: `http://127.0.0.1:${ownerServer.address().port}`, locale, owner: () => ({ sessionId: 'own' }) });
+        const call = async task => (await (await fetch(endpoint.url, { method: 'POST', headers: { ...endpoint.headers, 'content-type': 'application/json' }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'close_browser_window', arguments: { task } } }) })).json()).result;
+        answers[locale] = { other: await call('other'), mine: await call('mine') };
+        endpoint.close();
+      }
+      const text = answer => answer.content[0].text;
+      t.ok('直接の子でないタスク・持ち主が変わったタスクを断る文は会話の言語（日本語で「直接委譲」「持ち主」、英語の内部の文をそのまま出さない）',
+        Object.values(answers).every(group => Object.values(group).every(answer => answer.isError === true && !/not a local direct child|ownership changed/.test(text(answer))))
+        && text(answers.ja.other).includes('直接委譲') && text(answers.ja.mine).includes('持ち主')
+        && /directly/.test(text(answers.en.other)) && /ownership/i.test(text(answers.en.mine)) && !/[぀-ヿ]/.test(text(answers.en.other) + text(answers.en.mine)),
+        JSON.stringify(answers));
+    } finally { ownerServer.close(); }
 
     await r.relay.openForConversation('fallback', 'https://fallback.test/');
     const fallbackWindow = r.relay.scope.windows('fallback')[0]?.windowId;
