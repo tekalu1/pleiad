@@ -122,7 +122,7 @@ export default async function (t) {
     globalThis.requestAnimationFrame = () => 1; // DOM の代役では映像を始めない
     N.prototype.toggleAttribute = function (name, on) { if (on) this.setAttribute(name, ''); else this.removeAttribute(name); };
     try {
-      let panelOpen = false;
+      let panelOpen = false, body = null;
       const commands = [];
       let menuItems = [];
       const windows = createWindowTable();
@@ -130,11 +130,14 @@ export default async function (t) {
       t.ok('窓の一覧は実際の窓と表示中の印を保持する', windows.count('panel') === 1 && windows.list('panel')[0].current);
       const panel = setupChromePanel({ cmd: async (name, args) => { commands.push([name, args]); return { closed: true }; },
         showMenu: (_x, _y, items) => { menuItems = items; },
-        preview: { openPanel: (options) => { panelOpen = true; options.toolbar[2].getBoundingClientRect = () => ({ left:0, bottom:0 }); options.toolbar[2].onclick(); }, panelOpen: () => panelOpen, close: () => { panelOpen = false; } },
+        preview: { openPanel: (options) => { panelOpen = true; body = options.body; options.toolbar[2].getBoundingClientRect = () => ({ left:0, bottom:0 }); options.toolbar[2].onclick(); }, panelOpen: () => panelOpen, close: () => { panelOpen = false; } },
         session: () => 'panel', windows });
       panel.open();
-      await menuItems.find(item => item.label === 'ウィンドウを閉じる').onClick();
-      t.ok('⋯ の「窓を閉じる」は自分の会話 ID で chromeCloseWindow を送る', menuItems[0].label === 'ウィンドウ 1 · 表示中' && commands.some(([name, args]) => name === 'chromeCloseWindow' && args.sessionId === 'panel'));
+      menuItems.find(item => item.label === '表示中のウィンドウを閉じる').onClick();
+      t.ok('⋯ の「表示中のウィンドウを閉じる」は、確かめを出すまで chromeCloseWindow を送らない', !commands.some(([name]) => name === 'chromeCloseWindow'));
+      body.querySelector('.cp-dlg-yes').onclick();
+      await sleep(0);
+      t.ok('確かめに答えると、自分の会話 ID で chromeCloseWindow を送る', menuItems.length === 1 && commands.some(([name, args]) => name === 'chromeCloseWindow' && args.sessionId === 'panel'));
     } finally { globalThis.requestAnimationFrame = oldFrame; N.prototype.toggleAttribute = oldToggle; }
 
     const bridgeCalls = [];
@@ -207,6 +210,35 @@ export default async function (t) {
         && !r.records.some(x => x.id === 'unable')
         && (await fs.readdir(path.join(r.dataDir, 'uploads', 'chrome-window', crypto.createHash('sha256').update('unable').digest('hex')))).length === 0);
     } finally { r.desktop.opts.closeFails = false; unableCdp.send = unableSend; }
+
+    // 窓が複数あるとき、ウィンドウを 1 つだけ閉じられる（右パネルの「表示中のウィンドウを閉じる」）。ほかの窓・引き継ぎ・閉じた行には触れない
+    {
+      const a = await r.relay.openForConversation('multi', 'https://multi-a.test/');
+      const b = await r.relay.openForConversation('multi', 'https://multi-b.test/');
+      const winOf = id => r.relay.view.tabs('multi').find(tab => tab.targetId === id)?.windowId;
+      const wa = winOf(a.targetId), wb = winOf(b.targetId);
+      t.ok('（前提）会話に窓が 2 つある', wa != null && wb != null && wa !== wb, `${wa} ${wb}`);
+      const recordsBefore = r.records.length;
+      const calls = r.chrome.calls.length;
+      const one = await r.closer.close('multi', { by: 'human', windowId: wa });
+      t.ok('windowId を指すと、その窓だけ閉じる（もう一方の窓とタブは残り、閉じた行も静止画も作らない）',
+        one.closed === true && !r.chrome.browser.targets().some(x => x.targetId === a.targetId) && r.chrome.browser.targets().some(x => x.targetId === b.targetId)
+        && r.relay.view.tabs('multi').length === 1 && r.records.length === recordsBefore && !r.chrome.calls.slice(calls).some(c => c.method === 'Page.captureScreenshot'), JSON.stringify(one));
+      t.ok('窓を 1 つ閉じても、会話の窓の数は残り 1 になる', r.relay.view.summary('multi').windows === 1);
+      const gone = await r.closer.close('multi', { by: 'human', windowId: wa });
+      t.ok('もう無い窓を指しても何も閉じない（closed: false）', gone.closed === false && r.relay.view.tabs('multi').length === 1);
+      // 引き継ぎ中の一部の窓はエージェントが閉じられない。人が閉じても引き継ぎは続く
+      const c = await r.relay.openForConversation('multi', 'https://multi-c.test/');
+      const wc = winOf(c.targetId);
+      r.relay.pause('multi');
+      const refused = await r.closer.close('multi', { windowId: wb }).then(() => null, error => error);
+      t.ok('引き継ぎ中の窓は、エージェントが 1 つだけ閉じようとしても BUSY で断られる', refused?.code === 'BUSY' && r.relay.view.tabs('multi').length === 2);
+      const human = await r.closer.close('multi', { by: 'human', windowId: wc });
+      t.ok('人が閉じるのは引き継ぎ中でもでき、引き継ぎ（一時停止）は続く', human.closed === true && r.relay.state('multi')?.paused && r.relay.view.tabs('multi').length === 1);
+      r.relay.unpause('multi');
+      const last = await r.closer.close('multi', { by: 'human', windowId: wb });
+      t.ok('最後の 1 つを windowId 付きで閉じると、全部閉じる通常の経路（静止画と閉じた行を残す）', last.closed === true && r.relay.view.tabs('multi').length === 0 && r.records.some(x => x.id === 'multi' && x.chromeClosed?.by === 'human'));
+    }
 
     await r.relay.openForConversation('crash', 'https://crash.test/');
     const cdp = await r.connection.demand();

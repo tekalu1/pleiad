@@ -8,13 +8,17 @@
 //   - 状態の一行の差し込み口（.cp-slot）: web/chrome-control.mjs が mountStatus で差し込む（「Claude が操作中」「止める」「引き継ぐ」など）。空の間は場所を取らない。
 //     映像の上の層（押した位置の輪）は mountOverlay で映像の箱へ重ねる。輪の位置に要る映像の元の大きさは frameSize（フレームの metadata）
 //   - 映像: 名前は「{{name}} の Chrome の窓の映像（見るだけ）」。撮影を断っている間（state.suspended）は薄い幕
+//   - 見るウィンドウ: 2 つ以上あるときだけ、映像の上に番号のチップの列（web/chrome-window-switch.mjs）。押すとそのウィンドウを固定する（会話に 1 つ。サーバーの chromePinWindow）。
+//     固定の間は映像の左上に印。エージェントが別のウィンドウへ移っても映像は動かず、そのチップの印だけが移る。「エージェントを追う」で固定を外す
+//     見ているウィンドウが閉じたら、映像を薄くして約 1 秒おいてから追う側へ戻る。引き継ぎ中は切り替えない
 //   - 映像の描画と ack は web/screencast-frame.mjs（内蔵ブラウザーを見る全面の表示と共有）
 import { el } from './dom.mjs';
 import { t } from './i18n.mjs';
 import { notify } from './file-actions.mjs';
 import { createFrameSink } from './screencast-frame.mjs';
 import { containRect, toPageCoords, toPageDelta } from './remote-browser.mjs';
-import { confirmCloseWindow, childWindowItems } from './task-chrome.mjs';
+import { childWindowItems } from './task-chrome.mjs';
+import { createWindowSwitch, createCloseDialog, pinIcon } from './chrome-window-switch.mjs';
 
 const KEY = 'chrome-window';
 const HINT_MS = 2600;
@@ -22,12 +26,15 @@ const HINT_MS = 2600;
 const RESIZE_STEP = 24;
 const TAP_SLOP = 10;   // これより動いたらスクロール（web/remote-browser.mjs と同じ）
 const SCROLL_MS = 60;
+/** 見るウィンドウを替えるときの溶かす長さ（--dur と同じ）と、見ているウィンドウが閉じたあと追う側へ戻るまで */
+const FADE_MS = 240;
+const HOLD_MS = 1000;
 /** 端末から操作するときにページへ送るキー（core/chrome/input.mjs の KEYS のうち、欄の外で打つもの。Tab・Escape は画面の移動に残す） */
 const SEND_KEYS = new Set(['Enter', 'Backspace', 'Delete', 'ArrowLeft', 'ArrowUp', 'ArrowRight', 'ArrowDown']);
 
 /** 会話の Chrome の窓の知らせ（サーバーの chromeWindow イベント）を会話ごとに覚える。入口の表示と弧が読む */
 export function createWindowTable() {
-  const rows = new Map();   // sessionId -> { windows, operating, windowIds, currentWindowId }
+  const rows = new Map();   // sessionId -> { windows, operating, windowIds, currentWindowId, pinnedWindowId, numbers, counter }
   return {
     /** イベントを当てる。変わったら true */
     apply(ev) {
@@ -35,21 +42,36 @@ export function createWindowTable() {
       if (typeof id !== 'string' || !id) return false;
       const before = rows.get(id);
       if (!(ev.windows > 0)) { rows.delete(id); return Boolean(before); }
-      const next = { windows: Number(ev.windows), operating: ev.operating === true,
-        windowIds: Array.isArray(ev.windowIds) ? ev.windowIds.filter(Number.isSafeInteger) : [],
-        currentWindowId: Number.isSafeInteger(ev.currentWindowId) ? ev.currentWindowId : null };
+      const windowIds = Array.isArray(ev.windowIds) ? ev.windowIds.filter(Number.isSafeInteger) : [];
+      // ウィンドウの番号は、見え始めた順に付けて変えない（途中のウィンドウが閉じても、残りの番号は動かない）。全部閉じたら 1 から
+      const numbers = new Map(before?.numbers ?? []);
+      let counter = before?.counter ?? 0;
+      for (const windowId of windowIds) if (!numbers.has(windowId)) numbers.set(windowId, ++counter);
+      for (const windowId of [...numbers.keys()]) if (!windowIds.includes(windowId)) numbers.delete(windowId);
+      const next = { windows: Number(ev.windows), operating: ev.operating === true, windowIds,
+        currentWindowId: Number.isSafeInteger(ev.currentWindowId) ? ev.currentWindowId : null,
+        pinnedWindowId: Number.isSafeInteger(ev.pinnedWindowId) && windowIds.includes(ev.pinnedWindowId) ? ev.pinnedWindowId : null,
+        numbers, counter };
       rows.set(id, next);
       return !before || before.windows !== next.windows || before.operating !== next.operating ||
-        before.currentWindowId !== next.currentWindowId || before.windowIds.join(',') !== next.windowIds.join(',');
+        before.currentWindowId !== next.currentWindowId || before.pinnedWindowId !== next.pinnedWindowId || before.windowIds.join(',') !== next.windowIds.join(',');
     },
     has: id => (rows.get(id)?.windows ?? 0) > 0,
     count: id => rows.get(id)?.windows ?? 0,
+    /** ウィンドウの並び（windowId は Chrome のウィンドウの id。知らされていなければ null）。current は今エージェントが操作するウィンドウ */
     list(id) {
       const row = rows.get(id);
       if (!row) return [];
       const ids = row.windowIds.length ? row.windowIds : Array.from({ length: row.windows }, () => null);
-      return ids.map((windowId, index) => ({ number: index + 1, current: windowId !== null && windowId === row.currentWindowId }));
+      return ids.map((windowId, index) => ({ number: windowId === null ? index + 1 : row.numbers.get(windowId) ?? index + 1, windowId,
+        current: windowId !== null && windowId === row.currentWindowId, pinned: windowId !== null && windowId === row.pinnedWindowId }));
     },
+    ids: id => rows.get(id)?.windowIds ?? [],
+    /** エージェントが今操作するウィンドウ（なければ null） */
+    current: id => rows.get(id)?.currentWindowId ?? null,
+    /** 人が固定しているウィンドウ（なければ null） */
+    pinned: id => rows.get(id)?.pinnedWindowId ?? null,
+    numberOf: (id, windowId) => rows.get(id)?.numbers.get(windowId) ?? null,
     operating: id => rows.get(id)?.operating === true,
     clear() { rows.clear(); },
   };
@@ -62,10 +84,11 @@ export function createWindowTable() {
  * @param children  () → browser.chromeWindows の行（この会話と直接の子の窓）。⋯ の一覧に子の窓の行を足す
  * @param openChild (子の会話の id) → 子の会話を開いて、その Chrome の窓を見る
  * @param getAgentName エージェントの名前（映像の名前に入れる）
+ * @param paused    (会話の id) → 引き継ぎ中か。引き継ぎ中はウィンドウを切り替えられない
  */
-export function setupChromePanel({ cmd, preview, browser = null, showMenu = null, session = () => null, getAgentName = () => 'Claude', windows = createWindowTable(), touch = null, closeRisk = () => null, children = () => [], openChild = () => {} } = {}) {
+export function setupChromePanel({ cmd, preview, browser = null, showMenu = null, session = () => null, getAgentName = () => 'Claude', windows = createWindowTable(), touch = null, closeRisk = () => null, paused = () => false, children = () => [], openChild = () => {} } = {}) {
   let root = null, parts = null, sessionId = null, state = null, frameMeta = null, quality = 'auto', ended = false, connecting = false, hintTimer = 0, observer = null, lastBox = null, resizeTimer = 0;
-  let opener = null, openListeners = new Set(), notifyOpenChange = open => { for (const fn of openListeners) { try { fn(open); } catch {} } }, operating = false, waiting = null, closing = false;   // waiting: ⋯「Chrome で開く」で、窓ができるのを待っている会話と字
+  let opener = null, openListeners = new Set(), notifyOpenChange = open => { for (const fn of openListeners) { try { fn(open); } catch {} } }, operating = false, waiting = null, closing = false, optimistic = null, hold = null, holdTimer = 0, fadeTimer = 0, fadePending = false, lastShown, lastAgent, switchSig = '';   // optimistic: 押した直後（サーバーの知らせの前）の固定。hold: 閉じたウィンドウを薄くして残している間。waiting: ⋯「Chrome で開く」で、窓ができるのを待っている会話と字
   const alwaysHint = touch ?? (() => { try { return matchMedia('(hover: none), (pointer: coarse)').matches; } catch { return false; } });
 
   function build() {
@@ -74,19 +97,16 @@ export function setupChromePanel({ cmd, preview, browser = null, showMenu = null
     const veilText = el('span', 'cp-veil-text'); veil.append(veilText);
     const img = el('img', 'cp-frame'); img.alt = ''; img.draggable = false;
     const hint = el('div', 'cp-hint'); hint.setAttribute('role', 'status');
+    const ghost = el('img', 'cp-ghost'); ghost.alt = ''; ghost.draggable = false; ghost.setAttribute('aria-hidden', 'true');   // ウィンドウを替える間、前の絵を重ねて溶かす
+    const pinMark = el('span', 'cp-pin'); pinMark.setAttribute('role', 'img'); pinMark.setAttribute('aria-label', t('browser.chromeWindow.pinned')); pinMark.title = t('browser.chromeWindow.pinned'); pinMark.append(pinIcon());
     const screen = el('div', 'cp-screen'); screen.tabIndex = 0; screen.setAttribute('role', 'img');
-    screen.append(img, veil, hint);
+    screen.append(img, ghost, pinMark, veil, hint);
+    const switcher = createWindowSwitch({ t, getName: () => nameOf(), onPick: pick, onFollow: () => followAgent() });
+    const dialog = createCloseDialog({ t });
     const empty = el('div', 'cp-empty'); empty.hidden = true;
     const foot = el('div', 'cp-foot weak small');
     const status = el('span', 'cp-fps');
-    const closeCurrentWindow = async () => {
-      const id = sessionId;
-      if (!id || !windows.has(id) || closing) return;
-      closing = true;
-      try { const result = await cmd('chromeCloseWindow', { sessionId: id }); if (result?.failed) notify(t('browser.chromeWindow.closeFailed')); }
-      catch (error) { notify(error?.message || t('browser.chromeWindow.closeFailed')); }
-      finally { closing = false; }
-    };
+    switcher.follow.onclick = () => followAgent();
     foot.append(status);
     // 第 10 段のプロフィール pill をここへ差し込む。空の間は幅を取らない。
     const profileSlot = el('div', 'cp-profile-slot'); profileSlot.dataset.slot = 'chrome-profile';
@@ -95,17 +115,13 @@ export function setupChromePanel({ cmd, preview, browser = null, showMenu = null
     windowMenu.title = t('browser.chromeWindow.windowActions');
     windowMenu.setAttribute('aria-haspopup', 'menu');
     windowMenu.onclick = () => {
-      const list = windows.list(sessionId);
       const r = windowMenu.getBoundingClientRect();
-      const items = list.map(({ number, current }) => ({ label: t('browser.chromeWindow.windowNumber', { n: number }) +
-        (current ? ` · ${t('browser.chromeWindow.windowCurrent')}` : ''), disabled: true }));
-      if (items.length) items.push({ sep: true });
+      const items = [];
       // 委譲の子の窓（browser.chromeWindows）。子の窓の映像は子の会話で見るので、押すとその会話を開く
       const kids = childWindowItems(children(), { open: openChild, t });
       if (kids.length) items.push(...kids, { sep: true });
-      // 引き継ぎ中・依頼待ちの窓は、押した場所の下で確かめてから閉じる
-      items.push({ label: t('browser.chromeWindow.close'), disabled: !list.length || closing,
-        onClick: () => confirmCloseWindow({ risk: closeRisk(sessionId), run: closeCurrentWindow, anchor: windowMenu, t, showMenu }) });
+      // 映像に映っているウィンドウ（固定していればそれ）を、いつも確かめてから閉じる
+      items.push({ label: t('browser.chromeWindow.closeShown'), disabled: !windows.list(sessionId).length || closing, onClick: () => askClose(windowMenu) });
       showMenu?.(r.left, r.bottom + 4, items, t('browser.chromeWindow.windowActions'));
     };
     // 端末から操作する間の文字の欄と添え書き
@@ -116,7 +132,7 @@ export function setupChromePanel({ cmd, preview, browser = null, showMenu = null
     text.append(textInput, textSend);
     const note = el('p', 'cp-note weak small', t('browser.chromeWindow.deviceNote')); note.hidden = true;
     const node = el('div', 'cp');
-    node.append(screen, empty, text, note, foot);
+    node.append(switcher.root, screen, empty, text, note, foot, dialog.root);
     const sink = createFrameSink({ img, onAck: seq => { if (sessionId) cmd('browserScreencastAck', { sessionId, source: 'chrome', seq }).catch(() => {}); } });
     const fit = metadata => {
       // 映像の箱を窓の縦横比に合わせる（余白のない映像にする）。最初のフレームと、窓の形が変わったときだけ
@@ -189,7 +205,7 @@ export function setupChromePanel({ cmd, preview, browser = null, showMenu = null
       if (event.key === 'Enter') { event.preventDefault(); sendText(true); }
       else if (event.key === 'Backspace' && !textInput.value) { event.preventDefault(); send({ type: 'key', key: 'Backspace' }); }
     });
-    return { node, slot, profileSlot, windowMenu, screen, img, veil, veilText, hint, empty, text, textInput, note, foot, status, sink, fit, touched: false };
+    return { node, slot, profileSlot, windowMenu, screen, img, ghost, pinMark, switcher, dialog, veil, veilText, hint, empty, text, textInput, note, foot, status, sink, fit, touched: false };
   }
 
   const nameOf = () => getAgentName() || 'Claude';
@@ -203,6 +219,110 @@ export function setupChromePanel({ cmd, preview, browser = null, showMenu = null
     });
   }
   const isOpen = () => preview.panelOpen(KEY);
+
+  // ---- 見るウィンドウ ----
+  /** 固定しているウィンドウ（押した直後は、サーバーの知らせを待たず押した方）。なければ null */
+  function pinnedNow() {
+    const ids = windows.ids(sessionId);
+    const pin = optimistic?.sessionId === sessionId ? optimistic.windowId : windows.pinned(sessionId);
+    return pin != null && ids.includes(pin) ? pin : null;
+  }
+  /** 映像に映っているウィンドウ。閉じたウィンドウを薄くして残している間は、それ */
+  function shownNow() {
+    if (hold) return hold.windowId;
+    return pinnedNow() ?? windows.current(sessionId) ?? windows.ids(sessionId)[0] ?? null;
+  }
+  const switchDisabled = () => operating || paused(sessionId) === true;
+
+  function pick(windowId) {
+    const id = sessionId;
+    if (!id || !Number.isSafeInteger(windowId) || switchDisabled() || hold || !windows.ids(id).includes(windowId)) return;
+    sendPin(id, windowId);
+  }
+  /** 「エージェントを追う」。追っている間に押すと、今映っているウィンドウを固定する（承認済みのモックと同じ） */
+  function followAgent() {
+    const id = sessionId;
+    if (!id || switchDisabled() || hold) return;
+    if (pinnedNow() != null) { sendPin(id, null); parts?.switcher.flashFollow(); }
+    else { const shown = shownNow(); if (shown != null) sendPin(id, shown); }
+  }
+  function sendPin(id, windowId) {
+    optimistic = { sessionId: id, windowId };
+    paint();
+    cmd('chromePinWindow', { sessionId: id, windowId })
+      .catch(error => notify(error?.message || t('browser.chromeWindow.pinFailed')))
+      .finally(() => { if (optimistic?.sessionId === id && optimistic.windowId === windowId) { optimistic = null; if (sessionId === id) paint(); } });
+  }
+
+  /** 前の絵を重ね、新しい絵が来たら溶かして消す（動きを減らす設定では CSS が出し入れだけにする） */
+  function startFade() {
+    if (!parts?.img.getAttribute?.('src')) return;
+    parts.ghost.setAttribute('src', parts.img.getAttribute('src'));
+    parts.ghost.classList.remove('out'); parts.ghost.dataset.on = '';
+    fadePending = true;
+    clearTimeout(fadeTimer);
+    fadeTimer = setTimeout(endFade, 1500);
+  }
+  function fadeOutGhost() {
+    if (!fadePending || !parts) return;
+    fadePending = false;
+    parts.ghost.classList.add('out');
+    clearTimeout(fadeTimer);
+    fadeTimer = setTimeout(endFade, FADE_MS + 40);
+  }
+  function endFade() {
+    clearTimeout(fadeTimer); fadePending = false;
+    if (!parts) return;
+    parts.ghost.removeAttribute('src'); parts.ghost.classList.remove('out'); delete parts.ghost.dataset.on;
+  }
+
+  /** 見ているウィンドウが閉じた。映像を薄くして残し、約 1 秒おいてから追う側へ戻る */
+  function startHold(windowId, number, index) {
+    clearTimeout(holdTimer);
+    hold = { windowId, number, index };
+    holdTimer = setTimeout(() => { hold = null; if (parts) paint(); }, HOLD_MS);
+  }
+
+  /** 閉じる前の確かめ（いつも出す）。映像に映っているウィンドウを閉じる */
+  function askClose(trigger) {
+    const id = sessionId;
+    if (!id || !windows.has(id) || closing || !parts) return;
+    const shown = shownNow();
+    const rows = windows.list(id);
+    const number = shown != null ? windows.numberOf(id, shown) : rows.length === 1 ? rows[0].number : null;
+    parts.dialog.ask({ number, many: windows.count(id) > 1, agent: shown != null && shown === windows.current(id), running: windows.operating(id),
+      risk: closeRisk(id), trigger, run: () => closeShown(id, shown) });
+  }
+  async function closeShown(id, windowId) {
+    if (closing) return;
+    closing = true;
+    try {
+      const result = await cmd('chromeCloseWindow', windowId != null && windows.count(id) > 1 ? { sessionId: id, windowId } : { sessionId: id });
+      if (result?.failed) notify(t('browser.chromeWindow.closeFailed'));
+    } catch (error) { notify(error?.message || t('browser.chromeWindow.closeFailed')); }
+    finally { closing = false; }
+  }
+
+  function paintSwitch() {
+    if (!parts) return;
+    const id = sessionId;
+    const rows = id ? windows.list(id) : [];
+    const known = rows.length > 0 && rows.every(row => row.windowId !== null);
+    const shown = shownNow(), agentId = id ? windows.current(id) : null, pin = id ? pinnedNow() : null;
+    const items = known ? rows.map(row => ({ windowId: row.windowId, number: row.number, selected: row.windowId === shown, agent: row.windowId === agentId, ghost: false })) : [];
+    if (known && hold) items.splice(Math.min(hold.index, items.length), 0, { windowId: hold.windowId, number: hold.number, selected: true, agent: false, ghost: true });
+    const running = id ? windows.operating(id) : false;
+    // 映像が替わるとき（見るウィンドウが変わった）は前の絵を重ねて溶かす。最初の描画・閉じたウィンドウの保持中は溶かさない
+    if (lastShown !== undefined && shown !== lastShown && lastShown != null && shown != null && parts.sink.frame) startFade();
+    lastShown = shown;
+    // エージェントが別のウィンドウへ移ったら、そのチップの印が移って 1 回光る（固定している間も映像は動かない）
+    const flashId = lastAgent !== undefined && agentId !== lastAgent && agentId != null ? agentId : null;
+    lastAgent = agentId;
+    const args = { items, agentRunning: running, pinned: pin != null, away: pin != null && pin !== agentId, disabled: switchDisabled(), flashId };
+    const sig = JSON.stringify([items, args.agentRunning, args.pinned, args.away, args.disabled]);
+    if (sig !== switchSig || flashId != null) { switchSig = sig; parts.switcher.paint(args); }
+    parts.screen.toggleAttribute('data-pinned', pin != null);
+  }
 
   function showHint() {
     if (!parts || operating) return;
@@ -228,7 +348,7 @@ export function setupChromePanel({ cmd, preview, browser = null, showMenu = null
     parts.text.hidden = !operating; parts.note.hidden = !operating;
     parts.veil.hidden = !state?.suspended || ended;
     parts.veilText.textContent = t('browser.chromeWindow.suspended');
-    parts.screen.classList.toggle('ended', ended);
+    parts.screen.classList.toggle('ended', ended || hold !== null);
     const noWindow = !windows.has(sessionId) && !connecting;
     parts.screen.hidden = noWindow; parts.empty.hidden = !noWindow;
     parts.empty.textContent = waiting?.sessionId === sessionId ? waiting.text : t('browser.chromeWindow.none');
@@ -236,6 +356,7 @@ export function setupChromePanel({ cmd, preview, browser = null, showMenu = null
     else if (!parts.sink.frame) parts.status.textContent = connecting || windows.has(sessionId) ? t('browser.chromeWindow.connecting') : '';
     else parts.status.textContent = state?.suspended ? '' : t('browser.chromeWindow.fps', { fps: parts.sink.fps() });
     paintHint();
+    paintSwitch();
   }
 
   async function start() {
@@ -270,7 +391,9 @@ export function setupChromePanel({ cmd, preview, browser = null, showMenu = null
   function stopWatching() {
     waiting = null;
     observer?.disconnect(); observer = null;
-    clearTimeout(resizeTimer); clearTimeout(hintTimer);
+    clearTimeout(resizeTimer); clearTimeout(hintTimer); clearTimeout(holdTimer);
+    hold = null; optimistic = null; lastShown = undefined; lastAgent = undefined; switchSig = '';
+    endFade(); parts?.dialog.dismiss(false);
     if (sessionId) cmd('browserScreencastStop', { sessionId, source: 'chrome' }).catch(() => {});
     sessionId = null; state = null; frameMeta = null; ended = false; connecting = false; lastBox = null;
     parts?.sink.reset();
@@ -280,6 +403,8 @@ export function setupChromePanel({ cmd, preview, browser = null, showMenu = null
     if (!parts) { parts = build(); root = parts.node; }
     if (sessionId && sessionId !== id) stopWatching();
     sessionId = id; state = null; frameMeta = null; ended = false;
+    hold = null; optimistic = null; lastShown = undefined; lastAgent = undefined; switchSig = '';
+    clearTimeout(holdTimer); endFade();
     parts.sink.reset();
     opener = element;
     const label = t('browser.chromeWindow.panel');
@@ -357,7 +482,18 @@ export function setupChromePanel({ cmd, preview, browser = null, showMenu = null
     windows,
     /** サーバーの chromeWindow イベント。表示中の会話の窓が無くなったら閉じた表示にする */
     windowEvent(ev) {
+      const watching = isOpen() && ev?.sessionId === sessionId && Boolean(parts);
+      const before = watching ? { shown: shownNow(), ids: windows.ids(sessionId), number: windows.numberOf(sessionId, shownNow()) } : null;
       const changed = windows.apply(ev);
+      if (watching && ev.windows > 0) {
+        const ids = windows.ids(sessionId);
+        if (optimistic?.windowId != null && !ids.includes(optimistic.windowId)) optimistic = null;
+        // 見ていたウィンドウが閉じた: 映像を薄くして残し、約 1 秒おいて追う側へ戻る
+        if (!hold && before.shown != null && before.ids.includes(before.shown) && ids.length && !ids.includes(before.shown) && parts.sink.frame) {
+          startHold(before.shown, before.number, before.ids.indexOf(before.shown));
+        }
+      }
+      if (watching && changed) paint();
       if (changed && isOpen() && ev.sessionId === sessionId && !(ev.windows > 0)) {
         // ビューアの無い端末では、窓が無くなると入口のボタンも消えて開き直せない。パネルだけ残さず閉じる
         if (!browser) close(); else { ended = true; paint(); }
@@ -371,7 +507,11 @@ export function setupChromePanel({ cmd, preview, browser = null, showMenu = null
     /** WS の screencast メッセージ（source: 'chrome'）。ほかは無視 */
     onMessage(message) {
       if (message.source !== 'chrome' || !isOpen() || message.sessionId !== sessionId) return;
-      if (message.type === 'frame' && typeof message.data === 'string') { frameMeta = message.metadata ?? null; parts.fit(message.metadata); parts.sink.push(message); ended = false; connecting = false; paint(); }
+      if (message.type === 'frame' && typeof message.data === 'string' && hold) {
+        // 閉じたウィンドウを薄く残している間は、新しい絵を映さない（届いたことだけ返して、次を止めない）
+        cmd('browserScreencastAck', { sessionId, source: 'chrome', seq: message.seq }).catch(() => {});
+      }
+      else if (message.type === 'frame' && typeof message.data === 'string') { fadeOutGhost(); frameMeta = message.metadata ?? null; parts.fit(message.metadata); parts.sink.push(message); ended = false; connecting = false; paint(); }
       else if (message.type === 'state') { state = message.state; paint(); }
       else if (message.type === 'ended') { ended = true; paint(); }
     },
@@ -397,6 +537,8 @@ export function setupChromePanel({ cmd, preview, browser = null, showMenu = null
       paint();
     },
     get operating() { return operating; },
+    /** 引き継ぎの状態など、外の状態が変わった。描き直す */
+    refresh() { if (parts && isOpen()) paint(); },
     /** 接続し直したら見続ける（サーバーは接続が切れた端末を外している） */
     reconnected() { if (isOpen() && sessionId) start().catch(() => { ended = true; paint(); }); },
     /** 別の会話へ移った・会話を閉じた。開いているパネルは閉じる */

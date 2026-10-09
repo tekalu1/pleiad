@@ -8,7 +8,7 @@ export const title = 'Chrome の窓を閉じる前の確かめ: 引き継ぎ中�
 
 const words = { 'pending.cancel': 'やめる', 'taskChrome.confirmClose': 'ウィンドウを閉じる', 'taskChrome.confirmHuman': '引き継ぎ中です', 'taskChrome.confirmWaiting': '待っています',
   'taskChrome.view': '見る', 'taskChrome.close': '閉じる', 'taskChrome.running': '作業中', 'taskChrome.paused': '引き継ぎ中',
-  'browser.chromeWindow.windowActions': 'ウィンドウの操作', 'browser.chromeWindow.close': 'ウィンドウを閉じる', 'browser.chromeWindow.windowNumber': 'ウィンドウ', 'browser.chromeWindow.windowCurrent': '表示中' };
+  'browser.chromeWindow.windowActions': 'ウィンドウの操作', 'browser.chromeWindow.closeShown': '表示中のウィンドウを閉じる', 'browser.chromeWindow.windowNumber': 'ウィンドウ' };
 const tr = key => words[key] ?? key;
 const flush = () => new Promise(resolve => setTimeout(resolve, 0));
 const el = (tag, cls = null, value = '') => ({ tag, className: cls, textContent: value, children: [], disabled: false,
@@ -66,33 +66,45 @@ export default async function (t) {
   try {
     const rig = risk => {
       const commands = [], menus = [], windows = createWindowTable();
-      let toolbar = null, open = false;
-      const preview = { openPanel: opts => { toolbar = opts.toolbar; open = true; }, panelOpen: () => open, close: () => { open = false; } };
+      let toolbar = null, body = null, open = false;
+      const preview = { openPanel: opts => { toolbar = opts.toolbar; body = opts.body; open = true; }, panelOpen: () => open, close: () => { open = false; } };
       windows.apply({ sessionId: 'conv', windows: 1, windowIds: [7], currentWindowId: 7 });
       const panel = setupChromePanel({ cmd: async (name, args) => { commands.push([name, args]); return name === 'browserScreencast' ? { state: {} } : {}; },
         preview, browser: {}, session: () => 'conv', windows, closeRisk: () => risk, showMenu: (x, y, items, title) => menus.push({ items, title }) });
       panel.open();
-      return { commands, menus, press: () => toolbar.at(-1).onclick(), closes: () => commands.filter(([name]) => name === 'chromeCloseWindow') };
+      const dialog = () => body.querySelector('.cp-dlg');
+      return { commands, menus, dialog, press: () => toolbar.at(-1).onclick(), closes: () => commands.filter(([name]) => name === 'chromeCloseWindow'),
+        card: () => body.querySelector('.cp-dlg-card'), no: () => body.querySelector('.btn-quiet'), yes: () => body.querySelector('.cp-dlg-yes'), note: () => body.querySelector('.cp-dlg-n') };
     };
-    for (const risk of ['human', 'waiting']) {
+    for (const risk of ['human', 'waiting', null]) {
       const r = rig(risk);
       await flush();
       r.press();
+      t.ok('⋯ の中身は「表示中のウィンドウを閉じる」だけ（子の窓が無いとき。閉じる確かめは出さず、押すまで開かない）',
+        r.menus.length === 1 && r.menus[0].items.length === 1 && r.menus[0].items[0].label === '表示中のウィンドウを閉じる' && r.dialog().hidden === true, JSON.stringify(r.menus[0].items.map(i => i.label)));
       r.menus[0].items.at(-1).onClick();
-      t.ok(`⋯ の「窓を閉じる」は、${risk === 'human' ? '引き継ぎ中' : '依頼待ち'}なら送らず確かめを出す`, r.closes().length === 0 && r.menus.length === 2 && r.menus[1].title.wrap === true);
-      r.menus[1].items[0].onClick();
+      t.ok(`⋯ の「表示中のウィンドウを閉じる」は、${risk ?? '確かめの要らない'}窓でも送らず、パネルの中の確かめを出す（メニューの確かめは出さない）`,
+        r.closes().length === 0 && r.menus.length === 1 && r.dialog().hidden === false && r.card().attrs.role === 'alertdialog');
+      t.ok('確かめの題は、窓が 1 つなら番号を入れず、焦点は「やめる」の側にある',
+        /閉じますか/.test(r.card().querySelector('.cp-dlg-t').textContent) && !/\d/.test(r.card().querySelector('.cp-dlg-t').textContent) && r.no().textContent.length > 0 && r.yes().textContent === '閉じる');
+      t.ok(`注意の一文は引き継ぎ中・依頼待ちのときだけ付く（${risk ?? 'なし'}）`,
+        risk === null ? r.note() === null : risk === 'human' ? /引き継ぎ中/.test(r.note().textContent) : /待っています/.test(r.note().textContent));
+      r.no().onclick();
       await flush();
-      t.ok('「やめる」では閉じない', r.closes().length === 0);
-      r.menus[1].items[1].onClick();
+      t.ok('「やめる」では閉じない', r.closes().length === 0 && r.dialog().hidden === true);
+      r.menus[0].items.at(-1).onClick();
+      let prevented = 0;
+      r.dialog().onkeydown({ key: 'Escape', preventDefault: () => { prevented++; } });
+      t.ok('Esc も「やめる」で、ほかの Esc の処理（プレビューを閉じる）へ渡さない', r.closes().length === 0 && r.dialog().hidden === true && prevented === 1);
+      r.menus[0].items.at(-1).onClick();
+      r.dialog().onclick({ target: r.dialog() });
+      t.ok('外側を押すのも「やめる」', r.closes().length === 0 && r.dialog().hidden === true);
+      r.menus[0].items.at(-1).onClick();
+      r.yes().onclick();
       await flush();
-      t.ok('確かめに答えると、自分の会話の窓を閉じる', r.closes().length === 1 && r.closes()[0][1].sessionId === 'conv');
+      t.ok('「閉じる」で初めて、自分の会話の窓を閉じる（窓が 1 つなら windowId は送らない）',
+        r.closes().length === 1 && r.closes()[0][1].sessionId === 'conv' && !('windowId' in r.closes()[0][1]) && r.dialog().hidden === true);
     }
-    const r = rig(null);
-    await flush();
-    r.press();
-    r.menus[0].items.at(-1).onClick();
-    await flush();
-    t.ok('確かめが要らない窓は、⋯ からそのまま閉じる', r.menus.length === 1 && r.closes().length === 1);
 
     // ⋯ の窓の一覧に、browser.chromeWindows の子の行を足す（押すとその子の会話を開く）
     {
@@ -105,7 +117,7 @@ export default async function (t) {
       panel.open();
       await flush();
       toolbar.at(-1).onclick();
-      t.ok('子の窓が無ければ、一覧は自分の窓と閉じるだけ', menus[0].items.length === 3 && menus[0].items.every(item => !item.onClick || item.label === 'ウィンドウを閉じる'), JSON.stringify(menus[0].items.map(i => i.label)));
+      t.ok('子の窓が無ければ、一覧は閉じるだけ（「ウィンドウ n · 表示中」の行は無い）', menus[0].items.length === 1 && menus[0].items[0].label === '表示中のウィンドウを閉じる', JSON.stringify(menus[0].items.map(i => i.label)));
       rows = [{ sessionId: 'conv', taskId: null, title: null, windows: 1, state: 'idle' },
         { sessionId: 'a', taskId: 'ta', title: '調査', windows: 2, profileName: '仕事', state: 'running', waiting: true },
         { sessionId: 'gone', taskId: 'tg', title: '終了', windows: 0, state: 'idle' }];
@@ -117,7 +129,7 @@ export default async function (t) {
         && !labels.some(label => /終了/.test(label ?? '')) && labels.filter(label => /子の会話のウィンドウ/.test(label ?? '')).length === 1, JSON.stringify(labels));
       child.onClick();
       t.ok('子の行を押すと、その子の会話を開く', opened.join() === 'a');
-      t.ok('「窓を閉じる」は最後のまま', menus[1].items.at(-1).label === 'ウィンドウを閉じる');
+      t.ok('「表示中のウィンドウを閉じる」は最後のまま', menus[1].items.at(-1).label === '表示中のウィンドウを閉じる');
     }
   } finally {
     globalThis.requestAnimationFrame = old.raf; N.prototype.getBoundingClientRect = old.rect; N.prototype.toggleAttribute = old.toggle; globalThis.window = old.window;
