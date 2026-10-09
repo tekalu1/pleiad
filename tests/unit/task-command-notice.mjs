@@ -218,5 +218,6 @@ export default async function(t) {
     const child = withAdded('', turnInstructions({ ...args, child: true }));
     const parent = withAdded('', turnInstructions({ ...args, child: false }));
     t.ok(`${locale}/${supported}: 子だけに時間上限・PIDの管理・無期限待機禁止を入れる`, child.includes(agentT(locale, 'guide.commandLifetime')) && !parent.includes('Start-Process -Wait'));
+    t.ok(`${locale}/${supported}: 子の指示にさらに委譲しない旨は入れない（委譲の深さに上限は無い）`, !/さらに委譲しない|do not delegate further/.test(child));
   }
 }
