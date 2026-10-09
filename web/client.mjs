@@ -8630,7 +8630,8 @@ chromePanel = setupChromePanel({ cmd, preview: filePreview, browser: browserPane
   showMenu: (x, y, items, title) => showMenu(x, y, items, title),
   session: () => state.current ?? null, getAgentName: () => labelOf(activeBackendId()), windows: chromeWindows,
   children: () => chromeWindowRows, openChild: openChildChromeWindow,
-  closeRisk: id => closeRiskOf({ state: chromeControlStore.get(id).state, waiting: handoffWaiting(id) }) });
+  closeRisk: id => closeRiskOf({ state: chromeControlStore.get(id).state, waiting: handoffWaiting(id) }),
+  paused: id => chromeControlStore.get(id).state === 'paused' });
 chromePanel.onOpenChange(() => { browserEntry?.paint(); browserPanel?.refreshTabs(); });
 browserPanel?.connect({ chromeAvailable: () => state.hostCaps?.chromeWindow === true,
   chromeOpen: () => chromePanel?.isOpen() === true,
@@ -8684,7 +8685,7 @@ browserPanel?.connect({
     catch (error) { chromePanel.cancelWaiting(); notify(error?.message || t('browser.chromeWindow.openFailed')); }
   },
 });
-chromeControlStore.onChange((id) => { if (id === state.current) { paintChromeControl(); browserEntry?.paint(); browserPanel?.refreshTabs(); } });
+chromeControlStore.onChange((id) => { if (id === state.current) { paintChromeControl(); chromePanel.refresh(); browserEntry?.paint(); browserPanel?.refreshTabs(); } });
 chromeControlStore.onTap((tap) => { if (tap.sessionId === state.current && chromePanel.isOpen()) chromeControlView?.ring(tap.x, tap.y, chromePanel.frameSize()); });
 document.addEventListener('ply-git-open', (event) => {
   const sessionId = event.detail?.sessionId ?? null;

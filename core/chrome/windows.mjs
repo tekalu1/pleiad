@@ -388,13 +388,14 @@ export function createChromeWindows({ os, locate, log = () => {}, random = () =>
       changed();
     },
 
-    /** CDP で閉じた後も残った、この会話の専用窓だけを OS の層で閉じる。 */
-    async closeRemaining(entryId) {
+    /** CDP で閉じた後も残った、この会話の専用窓だけを OS の層で閉じる。onlyWindowId があればその窓だけ（ほかの窓の引き継ぎの状態は変えない） */
+    async closeRemaining(entryId, onlyWindowId = null) {
       const entry = entries.get(entryId);
       if (!entry) return { closed: 0, failed: 0 };
       await osReady();
       let count = 0, failed = 0;
       for (const [windowId, record] of [...entry.windows]) {
+        if (onlyWindowId != null && windowId !== onlyWindowId) continue;
         if (!record.ref) continue;
         // 引き継ぎで見せた窓も、閉じると決めた後は層の管理下で隠してから閉じる。
         if (entry.revealed) await os.conceal(record.ref).catch(() => {});
@@ -402,7 +403,7 @@ export function createChromeWindows({ os, locate, log = () => {}, random = () =>
         else failed += 1;
         entry.windows.delete(windowId);
       }
-      entry.revealed = false; entry.near = null;
+      if (onlyWindowId == null) { entry.revealed = false; entry.near = null; }
       changed();
       return { closed: count, failed };
     },

@@ -4172,7 +4172,6 @@
       "fixedTab": "{{name}} の Chrome（閉じられません）",
       "windowActions": "Chrome のウィンドウの操作",
       "windowNumber": "ウィンドウ {{n}}",
-      "windowCurrent": "表示中",
       "childrenHeading": "子の会話のウィンドウ（押すとその会話を開く）",
       "childUntitled": "子の会話",
       "childWaiting": "依頼待ち",
@@ -4194,7 +4193,12 @@
       "inputFailed": "Chrome のウィンドウへ送れませんでした",
       "waitingPermission": "Chrome の許可を待っています",
       "openFailed": "Chrome で開けませんでした",
-      "close": "ウィンドウを閉じる", "closeFailed": "Chrome のウィンドウを閉じられませんでした",
+      "closeShown": "表示中のウィンドウを閉じる", "closeFailed": "Chrome のウィンドウを閉じられませんでした",
+      "closeAsk": "ウィンドウを閉じますか？", "closeAskNumber": "ウィンドウ {{n}} を閉じますか？", "closeYes": "閉じる",
+      "closeRiskHuman": "このウィンドウは引き継ぎ中です。閉じると、操作の途中で終わります。",
+      "closeRiskWaiting": "このウィンドウは、あなたの操作（ログインなど）を待っています。閉じると、依頼に応えられなくなります。",
+      "switchLabel": "ウィンドウ", "follow": "エージェントを追う", "pinned": "固定中", "pinFailed": "ウィンドウを切り替えられませんでした。",
+      "chipAgentRunning": "{{name}} が操作中", "chipAgentIdle": "{{name}} が最後に操作",
       "profileActions": "Chrome のプロフィール"
     },
     "remote": {

@@ -53,7 +53,21 @@ export function createChromeWindowCloser({ relay, screencast, handoffs, dataDir,
   /** 人の依頼の待ち（hand_to_user のカード）・人の引き継ぎ（paused）の最中か。エージェントはどちらも閉じられない */
   const busyOf = sessionId => handoffs?.current?.(sessionId) ? 'waiting' : relay.state(sessionId)?.paused ? 'human' : null;
 
-  function close(sessionId, { by = 'agent', discard = false } = {}) {
+  /** 複数ある窓のうち 1 つだけを閉じる。ほかの窓が残るので、引き継ぎ・依頼・閉じた窓の記録には触れない（最後の窓は close が閉じて記録する） */
+  async function closeOne(sessionId, windowId, by) {
+    if (by === 'agent') {
+      const reason = busyOf(sessionId);
+      if (reason) throw new ChromeWindowBusyError(reason);
+    }
+    return relay.closeWindow(sessionId, windowId);
+  }
+
+  function close(sessionId, { by = 'agent', discard = false, windowId = null } = {}) {
+    if (windowId != null && !discard) {
+      const ids = new Set(relay.view.tabs(sessionId).map(tab => tab.windowId).filter(id => id != null));
+      if (!ids.has(windowId)) return Promise.resolve({ closed: false });
+      if (ids.size > 1) return closeOne(sessionId, windowId, by);
+    }
     if (by === 'agent' && !discard) {
       const reason = busyOf(sessionId);
       if (reason) return Promise.reject(new ChromeWindowBusyError(reason));
