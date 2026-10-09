@@ -67,6 +67,28 @@ PLY_ANDROID_KEY_PASSWORD=…
 
 `./gradlew :remote-core:test` には通知の試験（`NotifyCryptoTest`: 暗号と Node との突き合わせ、`NotifyPlannerTest`: 束ね方・上書き・取り消し、`NotifyInteropTest`: Node の中継と fake のホストを相手にした登録・受信・溜めて渡す）が入る。`NotifyInteropTest` は `node` が PATH に無いとき（または `-Dpleiad.interop=off`）は飛ばす。
 
+## アイコンとスプラッシュ（承認済み（2026-10-09））
+
+モバイル版（Android・iOS）のアイコンとスプラッシュは Pleiad の印（Fold）で、Capacitor の既定の青い X ではない。形は 2026-10-09 にモックで承認済み。
+
+- **形**: 地は `desktop/icon.png`・`web/favicon.svg` と同じ青 `#3a499e`、印は白（折り目の面は `#dfe3f2`）。印の幅は見える面積の約 60%（デスクトップのアイコンと同じ比）。adaptive アイコンでは、どのランチャーの形（丸・スクワークル・角丸四角）でも欠けない 66dp の円の中に収まる。
+- **Android のアイコン**: `res/mipmap-*/` の `ic_launcher`（旧式の角丸）・`ic_launcher_round`（旧式の丸）・`ic_launcher_foreground`（adaptive の前景。透過）・`ic_launcher_monochrome`（Android 13 のテーマアイコン）。adaptive の地は `values/ic_launcher_background.xml`（`#3A499E`）、`mipmap-anydpi-v26/ic_launcher(_round).xml` が前景・地・monochrome をまとめる。テーマアイコンは本体と尾を 1 色、折り目だけ 55% の濃さにして、1 色でも P の折り目が残る形。
+- **スプラッシュ**: `res/drawable*/splash.png`（明。白地に ink 色の印）と `drawable-night/`・`drawable-{port,land}-night-*/`（暗。`#1b1c23` の地に明るい印）。印は短い辺の約 30%。Android 12 以降の起動画面は OS が adaptive アイコンを出すので、このアイコンが自動で効く。
+- **通知の小アイコン**（`drawable/ic_stat_pleiad.xml`）は今の P の線画のまま替えない（24dp のステータスバーでは、印のシルエットだと折り目が潰れる）。
+- **iOS**: 同じ印を [ios.md](ios.md)「アイコンとスプラッシュ」に書いた。Play ストアの 512 px のアイコンは `docs/play-store/icon-512.png`（アップロードは下の「Play Console でやること」の手作業で、ここでは上げない）。
+
+### 作り方（再生成）
+
+全サイズを 1 本のスクリプトが `web/favicon.svg`・`web/brand/pleiad-icon.svg`（印の 3 つのパス）から書き出す。依存は Node の組み込みだけ。
+
+```
+cd mobile
+npm run icons          # 全部書き直す（node scripts/generate-icons.mjs）
+npm run icons:check    # コミット済みの PNG が今の SVG と一致するかだけ見る（書かない）
+```
+
+ロゴを変えたら `npm run icons` で書き直して、PNG ごとコミットする。`npm test` の `mobile-icons` が `--check` を走らせるので、SVG だけ替えて PNG を忘れると落ちる。出すもの: Android のランチャー 5 密度 × 4 種・スプラッシュ 11 枚 × 明暗・iOS の AppIcon 1024・Splash（明・暗 × 1x/2x/3x）・Play の 512 px。
+
 ## Google Play
 
 GitHub Release の APK の流れはそのまま残し、Google Play へは同じ鍵（Play App Signing のアプリ署名鍵に今の鍵を登録する）・同じ `versionCode` の決め方の AAB を、人が決めたときに上げる（[ADR 0142](adr/0142-android-play-distribution.md)）。同じ鍵なので、GitHub の APK を入れた端末は入れ直さずに Play の版へ移れる（逆も同じ）。端末は、入っているものより `versionCode` が大きい方から更新を受け取る。
@@ -119,7 +141,7 @@ Actions の画面で「Android Play upload」を `main` で手動で実行する
    - データセーフティ: [play-store/data-safety.md](play-store/data-safety.md)
    - 前面サービス（AAB を上げた後に出る）: [play-store/foreground-service.md](play-store/foreground-service.md)。動画が要る
    - ニュース・政府・金融・健康などの申告: どれも当てはまらない
-6. **ストアの掲載情報を入れる。** 文は [play-store/listing.md](play-store/listing.md)。アイコン（512×512 の PNG）・フィーチャー グラフィック（1024×500）・スクリーンショット（2 枚以上）が要る。[^listing]
+6. **ストアの掲載情報を入れる。** 文は [play-store/listing.md](play-store/listing.md)。アイコン（512×512 の PNG。`docs/play-store/icon-512.png`）・フィーチャー グラフィック（1024×500）・スクリーンショット（2 枚以上）が要る。[^listing]
 7. **Play App Signing に今の鍵を登録する（最初のリリースを出す前に）。** 新しいアプリは、既定で Google が作る鍵になる。自分の鍵に変えられるのは、オープンテストか製品版にリリースを出す前まで。[^signing]
    1. 鍵が条件を満たすか確かめる: `keytool -list -v -storetype PKCS12 -keystore <keystore>`。自分の鍵は RSA 2048 ビット以上が要る（「2048 ビット RSA 鍵」以上と出ること）。証明書の SHA-256 が変数 `PLY_ANDROID_CERT_SHA256` と同じことも見る。
    2. Play Console の［Google Play による保護］→［Google Play ストアでの配信］→［Play アプリ署名に移動］で［アプリ署名鍵を変更］を押す。
