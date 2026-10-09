@@ -137,7 +137,7 @@ export default async function (t) {
     try {
       u = await open({ port: s.port, token: s.token, autoAllow: true });
       const noWindow = await fail(u.cmd('chromeTakeOver', { sessionId: 'nobody' }));
-      t.ok('引き継げる窓が無ければ NO_WINDOW（画面の言語の文で断る）', noWindow?.code === 'NO_WINDOW' && /引き継げる Chrome の窓がありません/.test(noWindow.message), JSON.stringify(noWindow));
+      t.ok('引き継げる窓が無ければ NO_WINDOW（画面の言語の文で断る）', noWindow?.code === 'NO_WINDOW' && /引き継げる Chrome のウィンドウがありません/.test(noWindow.message), JSON.stringify(noWindow));
       const stopped = await u.cmd('chromeStop', { sessionId: 'nobody' });
       t.ok('止めるものが無ければ idle（投げない）', stopped.state === 'idle' && stopped.sessionId === 'nobody', JSON.stringify(stopped));
       const resumed = await u.cmd('chromeResume', { sessionId: 'nobody' });

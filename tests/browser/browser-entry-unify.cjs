@@ -69,7 +69,7 @@ async page => {
   await page.locator('.cp-window-menu').click();
   check((await page.locator('.pop:not([hidden])').textContent()).includes('窓 2 · 表示中'), 'current window in menu');
   check((await page.locator('.pop:not([hidden])').textContent()).includes('窓 2'), 'window list in menu');
-  check((await page.locator('.pop:not([hidden])').textContent()).includes('窓を閉じる'), 'close action in menu');
+  check((await page.locator('.pop:not([hidden])').textContent()).includes('ウィンドウを閉じる'), 'close action in menu');
   await page.keyboard.press('Escape');
   await page.locator('.browser-tab-chrome [role=tab]').focus();
   await page.keyboard.press('ArrowRight');
