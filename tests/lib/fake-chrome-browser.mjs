@@ -42,6 +42,8 @@ export function createFakeBrowser({ product, calls, userTabs = USER_TABS } = {})
   const contexts = new Set(['CTX-DEFAULT']);   // プロフィールごとの browserContextId（launchWindow の profileDir で増える）
   let contextIgnored = false;    // createTarget の browserContextId を無視する（Chrome が別のプロフィールに開いたときの確かめ）
   let movesRefused = false;      // Browser.setWindowBounds の left・top を受けない（Chrome が画面の外へ置かせてくれない）
+  let launchMaximized = false;   // chrome.exe --new-window の窓が、前回の最大化のまま開く（プロフィールに最大化が残っているとき）
+  const restoreListeners = new Set();
   let lastActive = null;
   let fetchEnableDelayMs = 0;
   let frameSeq = 0;
@@ -218,7 +220,10 @@ export function createFakeBrowser({ product, calls, userTabs = USER_TABS } = {})
       case 'Target.closeTarget': { const t = targets.get(params.targetId); if (!t) throw { code: -32602, message: 'No target with given id found' }; closeTarget(t); return { success: true }; }
       case 'Target.activateTarget': { const t = targets.get(params.targetId); if (!t) throw { code: -32602, message: 'No target with given id found' }; const w = windows.get(t.windowId); if (w) w.state = 'normal'; return {}; }
       case 'Browser.getWindowForTarget': { const t = targets.get(params.targetId); if (!t || t.windowId == null) throw { code: -32000, message: 'No web contents in the target' }; return { windowId: t.windowId, bounds: boundsOf(t.windowId) }; }
-      case 'Browser.setWindowBounds': { const w = windows.get(params.windowId); if (!w) throw { code: -32000, message: 'Browser window not found' }; if (params.bounds?.windowState) w.state = params.bounds.windowState; for (const k of ['left', 'top', 'width', 'height']) if (Number.isFinite(params.bounds?.[k]) && !(movesRefused && (k === 'left' || k === 'top'))) w.bounds[k] = params.bounds[k]; return {}; }
+      case 'Browser.setWindowBounds': { const w = windows.get(params.windowId); if (!w) throw { code: -32000, message: 'Browser window not found' };
+        // 最大化の窓に windowState なしで大きさだけ頼むと、Chrome は窓を通常へ戻し、前に保存していた通常の位置（画面の中）へ動かす
+        if (w.state === 'maximized' && !params.bounds?.windowState) { w.state = 'normal'; for (const fn of [...restoreListeners]) fn({ windowId: params.windowId }); }
+        if (params.bounds?.windowState) w.state = params.bounds.windowState; for (const k of ['left', 'top', 'width', 'height']) if (Number.isFinite(params.bounds?.[k]) && !(movesRefused && (k === 'left' || k === 'top'))) w.bounds[k] = params.bounds[k]; return {}; }
       case 'Browser.getWindowBounds': { const w = windows.get(params.windowId); if (!w) throw { code: -32000, message: 'Browser window not found' }; return { bounds: boundsOf(params.windowId) }; }
       case 'Browser.setContentsSize': return {};
       case 'Browser.close': return {};
@@ -322,6 +327,10 @@ export function createFakeBrowser({ product, calls, userTabs = USER_TABS } = {})
     refuseWindowMoves(on) { movesRefused = on; },
     /** createTarget の browserContextId を無視する（別のプロフィールに開く） */
     ignoreTargetContext(on) { contextIgnored = on; },
+    /** chrome.exe --new-window の窓を、最大化のまま開く（Browser.setWindowBounds で通常に戻すと、窓は画面の中の位置へ動く） */
+    launchMaximized(on) { launchMaximized = on; },
+    /** 最大化の窓が通常へ戻された（偽の OS の層が、その HWND を画面の中へ動かす） */
+    onWindowRestored(fn) { restoreListeners.add(fn); return () => restoreListeners.delete(fn); },
     /** タブの browserContextId（プロフィール） */
     contextOf: targetId => targets.get(targetId)?.browserContextId ?? null,
     onWindow(fn) { windowListeners.add(fn); return () => windowListeners.delete(fn); },
@@ -329,7 +338,7 @@ export function createFakeBrowser({ product, calls, userTabs = USER_TABS } = {})
     launchWindow({ url, bounds, profileDir = null } = {}) {
       const browserContextId = profileDir && profileDir !== 'Default' ? `CTX-${profileDir}` : 'CTX-DEFAULT';
       contexts.add(browserContextId);
-      const windowId = newWindow('normal', { ...DEFAULT_BOUNDS, ...(bounds ?? {}) });
+      const windowId = newWindow(launchMaximized ? 'maximized' : 'normal', { ...DEFAULT_BOUNDS, ...(bounds ?? {}) });
       const t = newTarget({ url, windowId, browserContextId });
       return { windowId, targetId: t.targetId };
     },

@@ -39,6 +39,11 @@ export function fakeChromeOs({ chrome = null, supported = true, reason = 'platfo
     hw.set(id, h);
     if (windowStealing) { h.prevFg = fg; fg = id; }
   });
+  // 最大化の窓が通常へ戻されると、本物の Chrome は窓を前に保存していた通常の位置（画面の中）へ動かす。隠した窓も例外ではない
+  if (chrome) chrome.browser.onWindowRestored(({ windowId }) => {
+    const h = [...hw.values()].find(x => x.windowId === windowId);
+    if (h) h.rect = { ...h.rect, left: 10, top: 10 };
+  });
   const known = ref => (ref && typeof ref.id === 'string' ? hw.get(ref.id) : undefined);
   const knownAgent = ref => { const h = known(ref); return h?.agent && !h.released ? h : undefined; };
   const near = (a, b, tolerance = 16) => Math.abs(a - b) <= tolerance;
@@ -135,6 +140,7 @@ export function fakeChromeOs({ chrome = null, supported = true, reason = 'platfo
       if (!caps.supported) return null;
       const h = typeof token === 'string' && token.startsWith('fake:') ? hw.get(token.slice(5)) : null;
       if (!h || h.gone || h.closed || opts.adoptFails) return null;
+      if (!revealed && !(h.concealed && h.rect.left === OFFSCREEN.x)) return null;   // 本物の層の looksConcealed: 隠した姿（画面の外）のままの窓だけ
       h.agent = true; h.released = false; h.concealed = !revealed;   // revealed: 人が操作中の窓。隠さない
       return { id: h.id };
     },

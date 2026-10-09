@@ -121,6 +121,29 @@ export default async function (t) {
       await b.relay.close(); await b.conn.close(); await b.link.quit();
     }
 
+    // ===== 1b. 最大化のまま開いた最初の窓（chrome.exe の窓）: 大きさを決めて通常に戻っても隠した位置のまま。更新を越えて引き継げる =====
+    {
+      await clearChildren();
+      const chrome = await startFakeChrome({ permission: 'auto' });
+      cleanups.push(() => chrome.stop());
+      chrome.browser.launchMaximized(true);
+      const os = fakeChromeOs({ chrome });
+      const a = await newServer(chrome, os);
+      const ag = await agent(await a.relay.endpoint('conv-1b'));
+      await ag.cmd('Target.setDiscoverTargets', { discover: true });
+      const first = (await ag.cmd('Target.createTarget', { url: 'about:blank' })).result?.targetId;
+      const windowId = chrome.browser.targets().find(x => x.targetId === first)?.windowId;
+      const hw = os.hwnds().find(h => h.windowId === windowId);
+      t.ok('最大化で開いた最初の窓は、大きさを決めて通常に戻っても、隠した位置（画面の外）のまま', chrome.browser.windowBounds(windowId)?.windowState === 'normal' && hw?.concealed === true && hw.rect.left === 6000, JSON.stringify(hw));
+      await until(() => a.link.alive && a.link.welcome, 2000);
+      await leave(a);
+      const b = await newServer(chrome, os);
+      t.ok('更新を越えた先でも、その最初の窓を引き継げる（引き継げない窓として閉じない）', !b.logs.some(line => line.includes('could not be taken over')) && tabsIn(chrome, windowId).length === 1
+        && b.relay.snapshot().windows.length === 1 && os.hwnds().some(h => h.windowId === windowId && h.agent && h.concealed && !h.closed), JSON.stringify({ logs: b.logs, hwnds: os.hwnds() }));
+      ag.close();
+      await b.relay.close(); await b.conn.close(); await b.link.quit();
+    }
+
     // ===== 2. 層が窓を引き継げなかったとき: 記録を捨て、その窓のタブを CDP で閉じる =====
     {
       await clearChildren();

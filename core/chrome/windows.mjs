@@ -218,6 +218,10 @@ export function createChromeWindows({ os, locate, log = () => {}, random = () =>
         if (ref) await hide(ref, before);
         else log('chrome-windows: window not found, so it was not hidden');
       }
+      // 大きさを決める。最大化のまま開いた窓（前回の最大化がプロフィールに残っている chrome.exe の最初の窓）は、ここで通常に戻り、Chrome が保存していた画面の中の位置へ動く。
+      // 隠し直してから印（token）を作る（動いた後の窓は、新しい main の adoptAgent が「隠した姿のまま」と見ず、引き継げない窓として閉じられていた）
+      await cdp.send('Browser.setWindowBounds', { windowId, bounds: { ...WINDOW_DIP } }).catch(() => {});
+      if (ref) await os.conceal(ref);
       const token = ref ? await os.exportAgent(ref) : null;
       const context = await contextOf(cdp, targetId);
       if (!profile && context) profile = records.find(record => record.context === context && record.profile)?.profile ?? null;
@@ -232,7 +236,6 @@ export function createChromeWindows({ os, locate, log = () => {}, random = () =>
       if (ref) await os.closeAgent(ref).catch(() => {});
       throw error;
     }
-    await cdp.send('Browser.setWindowBounds', { windowId, bounds: { ...WINDOW_DIP } }).catch(() => {});
     await navigate(cdp, targetId, url);
     return { targetId, windowId };
   }
