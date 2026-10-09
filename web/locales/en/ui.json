@@ -3255,10 +3255,6 @@
           "name": "OpenRouter",
           "hint": "openrouter.ai · many models"
         },
-        "cerebras": {
-          "name": "Cerebras",
-          "hint": "Delegation judge"
-        },
         "custom": {
           "name": "Other",
           "hint": "Register with a name"
@@ -3427,6 +3423,7 @@
     },
     "judge": {
       "jev": "Jev",
+      "qwen": "Qwen",
       "cerebras": "Cerebras",
       "none": "Don't judge"
     },
@@ -3579,7 +3576,7 @@
     "settings": {
       "enable": "Choose the delegate automatically",
       "judgeTitle": "Difficulty judge",
-      "escalate": "Ask Cerebras again when Jev is unsure",
+      "escalate": "Ask Qwen again when Jev is unsure",
       "effective": {
         "noKey": "No {{service}} key is registered, so kinds set to {{judge}} are treated as mid difficulty.",
         "noCandidates": "No delegates are available, so automatic delegation will fail.",
@@ -3587,8 +3584,7 @@
       },
       "judgeLabel": "Judge for {{kind}}",
       "service": {
-        "openrouter": "OpenRouter (Jev)",
-        "cerebras": "Cerebras"
+        "openrouter": "OpenRouter (Jev, Qwen)"
       },
       "keyCancel": "Cancel",
       "keyInput": "{{service}} key",

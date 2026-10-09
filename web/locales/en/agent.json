@@ -226,7 +226,6 @@
     "notRunning": "This conversation is not running.",
     "remote": {
       "unavailable": "This PC's Pleiad has no way to hand work to a host (only a desktop device can).",
-      "nested": "A conversation that was handed over by another device cannot hand work to a host.",
       "hostUnknown": "The host \"{{host}}\" is not one this PC is connected to. Available hosts: {{hosts}}",
       "hostAmbiguous": "More than one host matches \"{{host}}\". Rename one or give the host's ID.",
       "hostNotEnabled": "Handing work from this PC's AI to the host \"{{host}}\" is off (the user can change it in the Connect to other hosts window).",
@@ -289,7 +288,6 @@
     "offsetInvalid": "offset must be an integer of 0 or more.",
     "secondsInvalid": "seconds must be from 1 to 30.",
     "remoteBadTaskId": "The taskId in the host's message is malformed (an ID that matches a local task is not accepted either).",
-    "remoteDepth": "Work handed over from a device's AI can be delegated at most {{max}} levels deep.",
     "isolateInvalid": "isolate must be true or false.",
     "stopping": "The task is stopping. Wait a moment.",
     "modelUnknown": "model_unknown: model {{model}} is not in the current {{backend}} model list (available: {{models}}). Nothing was changed.",
@@ -449,7 +447,7 @@
     "heading": "{{name}} (instructions added by Pleiad):",
     "names": {
       "delegate": "How to delegate",
-      "child": "Don't delegate from a delegated conversation",
+      "child": "Commands in a delegated conversation",
       "route": "Using delegation routing",
       "codexPolicy": "Commands Codex rejects before running"
     },
@@ -457,7 +455,6 @@
     "main": "In this conversation, do only these yourself: decide the direction, check delegated results, irreversible actions (sending, deleting, paying; confirm with the user first), and one-off tasks with small output. Delegate multi-step work and operations with large output (browser operation, screenshots, long logs, large MCP responses), and have the child return only a summary and evidence.",
     "route": "When delegating, give ply_delegate a kind and leave out backend (Pleiad chooses). Write backend only when the user asks for a specific agent or model. If it reports that no candidate has quota left, tell the user. Use ply_delegate, not native subagents (such as Claude's Agent tool). Give ply_delegate a short title for the background list. Set isolate: true only when the user instructed you to use a worktree. Ask the user whether to use worktrees before running children that write to the same repository in parallel. Omission uses the current workspace. When a completion notice or ply_task_status says \"Workspace: worktree … (not merged)\", merging that workspace branch back into the original workspace is your job; resolve conflicts yourself. Pleiad cleans up afterwards.",
     "commandLifetime": "Run commands with a time limit. Start persistent processes (servers and graphical apps) in the background, record their PIDs, and stop them yourself; do not wait indefinitely for exit with commands such as `Start-Process -Wait`.",
-    "child": "You are a delegated child conversation, so do not delegate further.",
     "codexPolicy": "Even in Codex modes without approvals (full, YOLO), Codex's own safety check may reject some commands before they run (for example `blocked by policy`). If a command is rejected, do not try to get around it by rewording it or using a different command. Report the commands that could not run, the reasons, and what was left behind as a result (files that could not be deleted, processes that could not be stopped, and so on)."
   },
   "cli": {

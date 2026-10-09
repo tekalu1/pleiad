@@ -146,7 +146,7 @@ export function keyInput({ ariaLabel, placeholder = '', focusKey = '' }) {
  */
 export function registerForm({ provider, label, storage, onSubmit, onCancel, focusKey }) {
   const form = el('form', 'rt-key-form'); form.setAttribute('aria-label', label);
-  const { row, input } = keyInput({ ariaLabel: label, placeholder: provider === 'cerebras' ? 'csk-…' : 'sk-or-…', focusKey });
+  const { row, input } = keyInput({ ariaLabel: label, placeholder: 'sk-or-…', focusKey });
   const submit = el('button', 'btn btn-primary', t('apiKeys.register.useNow')); submit.type = 'submit';
   const cancel = el('button', 'btn', t('apiKeys.cancel')); cancel.type = 'button'; cancel.onclick = () => onCancel();
   const actions = el('div', 'mp-card-actions'); actions.append(cancel, submit);

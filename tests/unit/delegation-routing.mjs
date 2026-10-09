@@ -1,8 +1,8 @@
 // 委譲先の自動振り分け（core/delegation-routing.mjs・delegation-judges.mjs・delegation-usage.mjs）。
-// 判定器は偽の fetch とだけ話す（本物の OpenRouter・Cerebras へは送らない）。LLM は呼ばない
-import { KINDS, SIGNALS, DEFAULTS, EFFORT_LEVELS, normalizeSettings, pruneEfforts, fitEffort, decideEffort, effortTierFor, RoutingSettingsError, difficultyOf, judgeWindows, windowsFor, checkCandidate, selectRetryAccount, dedupeAccounts,
+// 判定器は偽の fetch とだけ話す（本物の OpenRouter へは送らない）。LLM は呼ばない
+import { KINDS, JUDGES, SIGNALS, DEFAULTS, EFFORT_LEVELS, normalizeSettings, migrateLegacySettings, pruneEfforts, fitEffort, decideEffort, effortTierFor, RoutingSettingsError, difficultyOf, judgeWindows, windowsFor, checkCandidate, selectRetryAccount, dedupeAccounts,
   route, pinnedRouting, manualRouting, candidateStates, settingsWarnings, parseCandidate, elapsedPercent, formatSkippedCandidates } from '../../core/delegation-routing.mjs';
-import { askJev, askCerebras, judgeDifficulty, normalizeKey, TASK_LIMIT, JEV_MODEL, CEREBRAS_MODEL } from '../../core/delegation-judges.mjs';
+import { askJev, askQwen, judgeDifficulty, normalizeKey, TASK_LIMIT, JEV_MODEL, QWEN_MODEL } from '../../core/delegation-judges.mjs';
 import { createUsageMonitor, REFRESH_MS, STALE_MS } from '../../core/delegation-usage.mjs';
 import { claudeQuota, codexQuota } from '../../core/usage.mjs';
 import { antigravityQuota } from '../../core/backends/antigravity-usage.mjs';
@@ -56,20 +56,30 @@ function fakeFetch(reply) {
   return fn;
 }
 const jevAnswer = p => ({ answers: Object.fromEntries(SIGNALS.map(k => [k, { type: 'noul', noul: p[k] ?? 0 }])) });
-const cerebrasAnswer = signals => ({ choices: [{ message: { content: JSON.stringify({ signals }) } }] });
+const qwenAnswer = signals => ({ choices: [{ message: { content: null, tool_calls: [{ type: 'function', function: { name: 'routing_v3', arguments: JSON.stringify({ signals }) } }] } }] });
 
 export default async function (t) {
   // ---- 設定
   t.ok('未設定なら既定値（既定で有効、ux_* と visual は判定しない）', settings.enabled === true && settings.judgeByKind.ux_new === 'none' && settings.judgeByKind.review === 'jev'
     && JSON.stringify(settings.tiers) === JSON.stringify(DEFAULTS.tiers) && settings.avoidPercent === 80 && settings.paceLimit === 1.2 && !Object.hasOwn(settings, 'staleMinutes'));
-  const partial = normalizeSettings({ judgeByKind: { design: 'cerebras' }, tiers: { t4: ['claude:fable'] }, avoidPercent: 70 });
-  t.ok('一部だけの設定は既定で補う', partial.judgeByKind.design === 'cerebras' && partial.judgeByKind.review === 'jev' && partial.tiers.t4.join() === 'claude:fable' && partial.tiers.t1.length === 2 && partial.avoidPercent === 70);
+  const partial = normalizeSettings({ judgeByKind: { design: 'qwen' }, tiers: { t4: ['claude:fable'] }, avoidPercent: 70 });
+  t.ok('一部だけの設定は既定で補う', partial.judgeByKind.design === 'qwen' && partial.judgeByKind.review === 'jev' && partial.tiers.t4.join() === 'claude:fable' && partial.tiers.t1.length === 2 && partial.avoidPercent === 70);
   const rejects = [{ nope: 1 }, { enabled: 'yes' }, { avoidPercent: 0 }, { paceLimit: 'x' }, { judgeByKind: { design: 'gpt' } }, { judgeByKind: { cooking: 'jev' } },
     { tiers: { t9: [] } }, { tiers: { t1: ['no-colon'] } }, { tiers: { t1: ['claude:haiku', 'claude:haiku'] } }, { table: { design: ['t1', 't2'] } }, { table: { design: ['t1', 't2', 't7'] } }];
   t.ok('画面からの保存（strict）は不正な値を断る', rejects.every(raw => { try { normalizeSettings(raw, { strict: true }); return false; } catch (e) { return e instanceof RoutingSettingsError && typeof e.code === 'string'; } }));
   t.ok('読むとき（strict でない）は不正な項目だけ既定に戻す', normalizeSettings({ avoidPercent: 500, paceLimit: 2 }).avoidPercent === 80 && normalizeSettings({ avoidPercent: 500, paceLimit: 2 }).paceLimit === 2);
   t.ok('保存済みの prefs に古い staleMinutes が残っていても、読むときはエラーにせず読み捨てる', !Object.hasOwn(normalizeSettings({ staleMinutes: 30 }), 'staleMinutes'));
   t.ok('外した項目（staleMinutes）が prefs に残っていても、画面からの保存（strict）は断らない', !Object.hasOwn(normalizeSettings({ staleMinutes: 30, avoidPercent: 70 }, { strict: true }), 'staleMinutes'));
+  // Cerebras の直の判定器（2026-10-09 に廃止、ADR 0177）の保存済みの設定は Qwen の名前で読み、画面からの保存（strict）も断らない
+  const legacy = { judgeByKind: { design: 'cerebras', review: 'jev' }, escalateToCerebras: true };
+  const migrated = migrateLegacySettings(legacy);
+  t.ok('前の版の judgeByKind の cerebras と escalateToCerebras を qwen・escalateToQwen へ直す（元の値は変えない）', migrated.changed && migrated.raw.judgeByKind.design === 'qwen' && migrated.raw.judgeByKind.review === 'jev'
+    && migrated.raw.escalateToQwen === true && !Object.hasOwn(migrated.raw, 'escalateToCerebras') && legacy.judgeByKind.design === 'cerebras' && legacy.escalateToCerebras === true);
+  t.ok('今の名前があればそちらを残し、直すものが無ければ changed は false', migrateLegacySettings({ escalateToCerebras: true, escalateToQwen: false }).raw.escalateToQwen === false
+    && migrateLegacySettings({ escalateToQwen: true, judgeByKind: { design: 'jev' } }).changed === false && migrateLegacySettings(null).changed === false);
+  const legacyRead = normalizeSettings(legacy, { strict: true });
+  t.ok('前の版の設定は読むときも strict の保存でも Qwen として扱う（unknownKey にしない）', legacyRead.judgeByKind.design === 'qwen' && legacyRead.escalateToQwen === true && !Object.hasOwn(legacyRead, 'escalateToCerebras')
+    && normalizeSettings({}).escalateToQwen === false && JUDGES.join() === 'jev,qwen,none');
   t.ok('候補の id は backend:model（model の中の : はそのまま）', parseCandidate('codex:gpt-6-sol').model === 'gpt-6-sol' && parseCandidate('x:a:b').model === 'a:b' && !parseCandidate('claude') && !parseCandidate(':m') && !parseCandidate('claude: x'));
 
   // ---- 難しさの規則（v3・規則 A）
@@ -281,32 +291,43 @@ export default async function (t) {
     && sent.init.headers.Authorization === `Bearer ${KEY}` && sent.init.redirect === 'manual');
   t.ok('Jev: はいの確率を手がかりごとの閾値で真偽にする', a.signals.diagnose === false && a.signals.choose === true && a.signals.long_procedure === true && a.signals.security_gate === false && a.probabilities.diagnose === 0.49);
   t.ok('Jev: 閾値 ± 0.15 以内の確率があれば迷ったとみなす', a.unsure === true && (await askJev({ kind: 'implement', task: 'x', key: KEY, fetch: fakeFetch(() => ({ json: jevAnswer({ diagnose: 1, choose: 1, long_procedure: 1, many_parts: 1, writes_shared: 1, security_gate: 1 }) })) })).unsure === false);
-  const cer = fakeFetch(() => ({ json: cerebrasAnswer({ ...zero, many_parts: true }) }));
-  const c = await askCerebras({ kind: 'review', task: 'check', key: 'csk-1', fetch: cer });
-  t.ok('Cerebras: qwen-3.8-27b・推論なし・JSON schema strict で 6 つの真偽を受け取る', cer.calls[0].url.endsWith('/v1/chat/completions') && cer.calls[0].body.model === CEREBRAS_MODEL
-    && cer.calls[0].body.reasoning_effort === 'none' && cer.calls[0].body.response_format.json_schema.strict === true && c.signals.many_parts === true && !('probabilities' in c));
+  const qw = fakeFetch(() => ({ json: qwenAnswer({ ...zero, many_parts: true }) }));
+  const c = await askQwen({ kind: 'review', task: long, key: KEY, fetch: qw });
+  const qs = qw.calls[0];
+  t.ok('Qwen: OpenRouter の chat/completions へ qwen3.8-27b・推論なし・Cerebras を先に（受けなければほかの provider）', qs.url.endsWith('/v1/chat/completions') && qs.url.startsWith(sent.url.slice(0, sent.url.indexOf('/alpha/')))
+    && qs.body.model === QWEN_MODEL && qs.body.reasoning.effort === 'none' && qs.body.temperature === 0 && qs.body.provider.order.join() === 'cerebras' && qs.body.provider.allow_fallbacks === true
+    && qs.body.provider.require_parameters === true && qs.init.headers.Authorization === `Bearer ${KEY}` && qs.init.redirect === 'manual', qs.url);
+  t.ok('Qwen: strict な関数 1 つを必ず呼ばせ、その引数で 6 つの真偽を受け取る（依頼文は長さで切る）', qs.body.tools.length === 1 && qs.body.tools[0].function.strict === true
+    && qs.body.tool_choice.function.name === qs.body.tools[0].function.name && qs.body.tools[0].function.parameters.properties.signals.required.join() === SIGNALS.join()
+    && !('response_format' in qs.body) && qs.body.messages[0].content.endsWith('x'.repeat(TASK_LIMIT)) && !qs.body.messages[0].content.includes('x'.repeat(TASK_LIMIT + 1))
+    && c.signals.many_parts === true && c.signals.diagnose === false && !('probabilities' in c));
+  const inContent = await askQwen({ kind: 'review', task: 'x', key: KEY, fetch: fakeFetch(() => ({ json: { choices: [{ message: { content: JSON.stringify({ signals: { ...zero, choose: true } }) } }] } })) });
+  t.ok('Qwen: 関数の呼び出しでなく本文で返した答えも、同じ形なら受け取る', inContent.signals.choose === true);
   const code = async (fn, reply) => { try { await fn({ kind: 'review', task: 'x', key: KEY, fetch: fakeFetch(reply) }); return 'ok'; } catch (e) { return e.message; } };
-  t.ok('応答の形が違えば bad_response', await code(askJev, () => ({ json: { answers: {} } })) === 'bad_response' && await code(askCerebras, () => ({ json: cerebrasAnswer({ diagnose: true }) })) === 'bad_response'
+  t.ok('応答の形が違えば bad_response', await code(askJev, () => ({ json: { answers: {} } })) === 'bad_response' && await code(askQwen, () => ({ json: qwenAnswer({ diagnose: true }) })) === 'bad_response'
+    && await code(askQwen, () => ({ json: { choices: [{ message: { tool_calls: [{ function: { name: 'routing_v3', arguments: '{not json' } }] } }] } })) === 'bad_response'
     && await code(askJev, () => ({ json: 'not json' })) === 'bad_response');
   t.ok('HTTP の失敗は http_<status>、時間切れは timeout、つながらなければ network', await code(askJev, () => ({ status: 429, json: { error: KEY } })) === 'http_429'
-    && await code(askJev, () => Object.assign(new Error('t'), { name: 'TimeoutError' })) === 'timeout' && await code(askCerebras, () => new Error('ECONNREFUSED')) === 'network');
+    && await code(askJev, () => Object.assign(new Error('t'), { name: 'TimeoutError' })) === 'timeout' && await code(askQwen, () => new Error('ECONNREFUSED')) === 'network');
   const keys = values => async service => values[service];
-  const jevOk = fakeFetch(url => url.includes('decisions') ? { json: jevAnswer({ diagnose: 1 }) } : { json: cerebrasAnswer({ ...zero, choose: true }) });
+  const jevOk = fakeFetch(url => url.includes('decisions') ? { json: jevAnswer({ diagnose: 1 }) } : { json: qwenAnswer({ ...zero, choose: true }) });
   const none = await judgeDifficulty({ kind: 'visual', task: 'x', judge: 'none', keyOf: keys({ openrouter: KEY }), fetch: jevOk });
   t.ok('判定しない種類は送らず judge_none', none.judge === 'none' && none.signals === null && none.fallback === 'judge_none' && jevOk.calls.length === 0);
   const noKeys = await judgeDifficulty({ kind: 'review', task: 'x', judge: 'jev', keyOf: keys({}), fetch: jevOk });
   t.ok('キーが無ければ外へは何も送らず no_key（難しさは mid）', noKeys.judge === 'none' && noKeys.fallback === 'no_key' && jevOk.calls.length === 0);
-  const other = await judgeDifficulty({ kind: 'review', task: 'x', judge: 'jev', keyOf: keys({ cerebras: 'csk' }), fetch: jevOk });
-  t.ok('選んだ判定器が使えなければ、キーのあるもう一方を試す', other.judge === 'cerebras' && other.fallback === 'no_key' && other.signals.choose === true);
-  const failing = fakeFetch(url => url.includes('decisions') ? { status: 503, json: {} } : { json: cerebrasAnswer(zero) });
-  const fb = await judgeDifficulty({ kind: 'review', task: 'x', judge: 'jev', keyOf: keys({ openrouter: KEY, cerebras: 'csk' }), fetch: failing });
-  t.ok('Jev が HTTP で失敗 → Cerebras の答えを使い、失敗の理由を残す', fb.judge === 'cerebras' && fb.fallback === 'http_503' && fb.signals.diagnose === false);
-  const both = await judgeDifficulty({ kind: 'review', task: 'x', judge: 'jev', keyOf: keys({ openrouter: KEY }), fetch: failing });
+  const qwenDown = fakeFetch(url => url.includes('decisions') ? { json: jevAnswer({ diagnose: 1 }) } : { status: 502, json: {} });
+  const other = await judgeDifficulty({ kind: 'review', task: 'x', judge: 'qwen', keyOf: keys({ openrouter: KEY }), fetch: qwenDown });
+  t.ok('Qwen を選んだ種類で Qwen が使えなければ、同じキーで Jev を試す', other.judge === 'jev' && other.fallback === 'http_502' && other.signals.diagnose === true && qwenDown.calls.length === 2);
+  const failing = fakeFetch(url => url.includes('decisions') ? { status: 503, json: {} } : { json: qwenAnswer(zero) });
+  const fb = await judgeDifficulty({ kind: 'review', task: 'x', judge: 'jev', keyOf: keys({ openrouter: KEY }), fetch: failing });
+  t.ok('Jev が HTTP で失敗 → Qwen の答えを使い、失敗の理由を残す', fb.judge === 'qwen' && fb.fallback === 'http_503' && fb.signals.diagnose === false);
+  const allDown = fakeFetch(() => ({ status: 503, json: {} }));
+  const both = await judgeDifficulty({ kind: 'review', task: 'x', judge: 'jev', keyOf: keys({ openrouter: KEY }), fetch: allDown });
   t.ok('どちらも使えなければ判定なし（mid）で最初の理由', both.judge === 'none' && both.signals === null && both.fallback === 'http_503');
-  const unsure = fakeFetch(url => url.includes('decisions') ? { json: jevAnswer({ diagnose: 0.55 }) } : { json: cerebrasAnswer({ ...zero, many_parts: true }) });
-  const esc = await judgeDifficulty({ kind: 'review', task: 'x', judge: 'jev', escalate: true, keyOf: keys({ openrouter: KEY, cerebras: 'csk' }), fetch: unsure });
-  t.ok('「Jev が迷ったら Cerebras」: 迷ったときは Cerebras の答えを使い、Jev の確率も残す', esc.judge === 'cerebras' && esc.escalated === true && esc.signals.many_parts === true && esc.probabilities.diagnose === 0.55);
-  const noEsc = await judgeDifficulty({ kind: 'review', task: 'x', judge: 'jev', escalate: false, keyOf: keys({ openrouter: KEY, cerebras: 'csk' }), fetch: unsure });
+  const unsure = fakeFetch(url => url.includes('decisions') ? { json: jevAnswer({ diagnose: 0.55 }) } : { json: qwenAnswer({ ...zero, many_parts: true }) });
+  const esc = await judgeDifficulty({ kind: 'review', task: 'x', judge: 'jev', escalate: true, keyOf: keys({ openrouter: KEY }), fetch: unsure });
+  t.ok('「Jev が迷ったら Qwen」: 迷ったときは Qwen の答えを使い、Jev の確率も残す', esc.judge === 'qwen' && esc.escalated === true && esc.signals.many_parts === true && esc.probabilities.diagnose === 0.55);
+  const noEsc = await judgeDifficulty({ kind: 'review', task: 'x', judge: 'jev', escalate: false, keyOf: keys({ openrouter: KEY }), fetch: unsure });
   t.ok('既定（OFF）では Jev の答えのまま', noEsc.judge === 'jev' && noEsc.signals.diagnose === true && unsure.calls.filter(x => x.url.includes('chat')).length === 1);
   const locked = await judgeDifficulty({ kind: 'review', task: 'x', judge: 'jev', keyOf: async () => { throw new Error(KEY); }, fetch: jevOk });
   t.ok('キーを読めなければ key_unreadable（キーの中身をどこにも出さない）', locked.fallback === 'key_unreadable' && !JSON.stringify([none, noKeys, other, fb, both, esc, locked]).includes(KEY));

@@ -315,8 +315,8 @@ export default async function (t) {
     t.ok('承認モードは依頼元（都度確認）に合わせた', done1.task.mode === 'default');
     const rows1 = await hostRows();
     const row1 = rows1.find(r => r.taskId === taskId);
-    t.ok('ホストの台帳の親は仮の ID（remote:<deviceId>:<端末の会話>）で、出どころ（requester）と remoteOrigin が残る',
-      row1.parentSessionId === `remote:${laptop.id}:conv-A` && row1.requester?.deviceId === laptop.id && row1.requester?.sessionId === 'conv-A' && row1.remoteOrigin === true, JSON.stringify([row1.parentSessionId, row1.requester]));
+    t.ok('ホストの台帳の親は仮の ID（remote:<deviceId>:<端末の会話>）で、出どころ（requester）が残る',
+      row1.parentSessionId === `remote:${laptop.id}:conv-A` && row1.requester?.deviceId === laptop.id && row1.requester?.sessionId === 'conv-A', JSON.stringify([row1.parentSessionId, row1.requester]));
     await sleep(300);
     const rows1b = await hostRows();
     t.ok('完了の通知は端末へ便りで届き（sent）、ホストの会話に新しいターンは始まらない', rows1b.find(r => r.taskId === taskId).notification === 'sent' && !(await cmd('listSessions')).some(s => s.title === 'CI を緑にする'));
@@ -413,6 +413,17 @@ export default async function (t) {
     t.ok('別の端末が任せた子（laptop のタスク）は、許可のある端末でも読めない（NOT_FOUND）', otherView.ok === false && otherView.code === 'NOT_FOUND', JSON.stringify(otherView));
     const otherGrand = await ax.view(grand.taskId);
     t.ok('別の端末が任せた子の孫も読めない', otherGrand.ok === false && otherGrand.code === 'NOT_FOUND');
+    // ---- 端末の AI から任された鎖に、深さの上限・host の禁止は無い（2026-10-09 に外した。手元の委譲と同じ。laptop は頻度の上限に近いので desk2 で）
+    let deepTask = 'echo:DEEP';
+    for (let i = 0; i < 5; i++) deepTask = 'ply:' + JSON.stringify({ name: 'ply_delegate', arguments: { kind: 'mechanical', backend: 'fake', title: '深い孫', task: deepTask } });
+    const deepRoot = await ax.call('delegate', { kind: 'mechanical', backend: 'fake', task: deepTask, title: '深い根' }, requesterOf('conv-D'));
+    const deepRows = await within((async () => { for (;;) { const rows = (await hostRows()).filter(r => r.title === '深い根' || r.title === '深い孫'); if (rows.length === 6 && rows.every(r => r.status === 'completed')) return rows; await sleep(150); } })(), 30_000, '深い鎖の完了');
+    t.ok('端末の AI から任された鎖は、4 階層を超えて 6 階層まで委譲できる（深さの上限が無い）', deepRoot.ok && Math.max(...deepRows.map(r => r.depth)) === 6 && deepRows.some(r => r.result === 'DEEP'), JSON.stringify(deepRows.map(r => [r.title, r.depth, r.status, String(r.result).slice(0, 60)])));
+    const hostTask = 'ply:' + JSON.stringify({ name: 'ply_delegate', arguments: { kind: 'mechanical', backend: 'fake', title: '先のホスト', task: 'echo:X', host: 'other-host' } });
+    const hostRoot = await ax.call('delegate', { kind: 'mechanical', backend: 'fake', task: hostTask, title: 'host 指定の根' }, requesterOf('conv-H'));
+    const hostRow = await within((async () => { for (;;) { const r = (await hostRows()).find(x => x.title === 'host 指定の根'); if (r && r.status === 'completed') return r; await sleep(150); } })(), 20_000, 'host 指定の根の完了');
+    t.ok('任された会話からの host の指定は、「任された会話からは任せられない」で断られない（この PC には任せる口が無いので、その理由で断られる）', hostRoot.ok && !/任された会話|handed over/.test(hostRow.result) && /任せる口を持っていません|no way to hand work to a host/.test(hostRow.result), String(hostRow.result).slice(0, 200));
+
     const reqP = requesterOf('conv-P', { title: '承認を試す会話' });
     const ask1 = await ax.call('delegate', { kind: 'mechanical', backend: 'fake', task: 'ask' }, reqP);
     const askTask = ask1.result.task.taskId;

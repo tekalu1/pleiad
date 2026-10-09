@@ -673,11 +673,11 @@ Claude・Codex 共通の `ply_agents` MCP で、Pleiad 管理の子会話を作�
 
 ## API キー（承認済み 2026-10-07）
 
-外部サービスのキーは設定 › API キー（エージェント設定の直下のタブ。`web/api-keys-settings.mjs`）に 1 回だけ登録する。接続先（Claude Code・Codex）・通話・委譲の判定器（Jev・Cerebras）は「どのキーを使うか」を選ぶだけで、キーの入力欄は使う側から無くした（[ADR 0155](adr/0155-api-keys-in-one-place.md)）。
+外部サービスのキーは設定 › API キー（エージェント設定の直下のタブ。`web/api-keys-settings.mjs`）に 1 回だけ登録する。接続先（Claude Code・Codex）・通話・委譲の判定器（Jev・Qwen。どちらも OpenRouter のキー 1 つ）は「どのキーを使うか」を選ぶだけで、キーの入力欄は使う側から無くした（[ADR 0155](adr/0155-api-keys-in-one-place.md)）。
 
-- **置き場**: `<data>/api-keys.json`（秘密でない台帳。`{ keys: [{ id: 'key-…', provider, label, createdAt, lastCheck }], uses: { voice, 'judge:jev', 'judge:cerebras', 'computer:decider' }, guide, migration }`。200 件まで。`computer:decider` は `wait_until` の問い（ADR 0165）で、古い置き場を持たない）と `<data>/api-key-secrets.json`（値。`core/secret-store.mjs`。エントリ `key:<id>`）。接続先の割り当ては `compat-endpoints.json` の各行の `keyRef`。実装は `core/api-keys.mjs`。
+- **置き場**: `<data>/api-keys.json`（秘密でない台帳。`{ keys: [{ id: 'key-…', provider, label, createdAt, lastCheck }], uses: { voice, 'judge:jev', 'computer:decider' }, guide, migration }`。200 件まで。`computer:decider` は `wait_until` の問い（ADR 0165）で、古い置き場を持たない。`judge:cerebras` は 2026-10-09 に廃止し、読み込むときに落として、判定器のキーが無ければ最初の OpenRouter のキーを `judge:jev` に選ぶ（台帳は次の保存で書く。Cerebras のキーの行は消さない。[ADR 0177](adr/0177-judges-via-openrouter.md)））と `<data>/api-key-secrets.json`（値。`core/secret-store.mjs`。エントリ `key:<id>`）。接続先の割り当ては `compat-endpoints.json` の各行の `keyRef`。実装は `core/api-keys.mjs`。
 - **同意**: 登録しただけでは、どの機能も外部へ送らない。通話・判定器は「使うキー」を人が選んで初めて送り、「使わない」なら何も送らない（判定器は難しさ `mid` で続ける）。
-- **コマンドと操作**: 入れる・差し替える・消す・割り当てる・案内に答える `setApiKey`・`deleteApiKey`・`setApiKeyUse`・`resolveApiKeyGuide` は human-only（HUMAN_ONLY の「秘密の値」。組は 5 つのまま）。操作の一覧は `apiKeys.list`（read。値を持たず、使っている所の名前だけ）と `apiKeys.check`（write。キーそのものだけを確かめる。OpenRouter `GET /key`・Cerebras `GET /v1/models`）。`voice.status`・`delegation.routing`・`endpoints.list` は `hasKey` を残して `keyRef` を足す。変わったら WS のイベント `apiKeysChanged`（と、使う側の `voiceChanged`・`delegationRoutingChanged`・`compatEndpointsChanged`）。
+- **コマンドと操作**: 入れる・差し替える・消す・割り当てる・案内に答える `setApiKey`・`deleteApiKey`・`setApiKeyUse`・`resolveApiKeyGuide` は human-only（HUMAN_ONLY の「秘密の値」。組は 5 つのまま）。操作の一覧は `apiKeys.list`（read。値を持たず、使っている所の名前だけ）と `apiKeys.check`（write。キーそのものだけを確かめる。OpenRouter `GET /key`。ほかのプロバイダーのキーは使っている接続先の確認で確かめる）。`voice.status`・`delegation.routing`・`endpoints.list` は `hasKey` を残して `keyRef` を足す。変わったら WS のイベント `apiKeysChanged`（と、使う側の `voiceChanged`・`delegationRoutingChanged`・`compatEndpointsChanged`）。
 - **移行**（起動時・冪等）: 古い置き場（`compat-endpoint-secrets.json`・`voice-secrets.json`）を読み、(プロバイダー, 値の sha256) が同じものは 1 件・違うものは元の場所が分かる名前の別の件にする。通話・判定器は今キーを登録済みの所だけ選んだ状態で引き継ぐ。値の違う同じプロバイダーのキーができたときだけ、設定 › API キーの先頭に案内を一度だけ出す。暗号化された古いキーを読めない起動・台帳が壊れた起動は保留し、古い置き場を読み続ける。古い置き場は消さず、キーを変えるたびに古い方にも書く（後片付けは別のリリース）。
 - **画面**: [design-system.md](design-system.md)「設定 › API キー」。
 

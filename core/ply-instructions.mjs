@@ -4,7 +4,7 @@
 // Codex は developerInstructions で受け取る。保存は prefs.json の plyInstructions（すべての場所に共通。場所ごとには持たない）。
 //
 // 項目は 3 種類:
-//   - 既定（delegate: 委譲の進め方 / child: 委譲した会話では任せない / codexPolicy: Codex の実行前の拒否（Codex の子だけ））。
+//   - 既定（delegate: 委譲の進め方 / child: 委譲された会話でのコマンドの扱い / codexPolicy: Codex の実行前の拒否（Codex の子だけ））。
 //     Pleiad が最初から入れている。編集でき、編集していなければ
 //     文面は辞書（agent:guide.*）から会話の言語で引く（Pleiad の更新で新しい文面になる）。編集したら保存した文のまま（「既定に戻す」で戻る）。
 //   - 委譲と連動（route: 委譲の振り分けの使い方）。ply_delegate の約束なので編集・スイッチは無く、委譲先の自動選択が有効なときだけ入る。
@@ -31,7 +31,7 @@ const MAX_ITEMS = 50, MAX_BODY = 32 * 1024, MAX_NAME = 80;
 const builtinName = (locale, id) => agentT(locale, `guide.names.${id}`);
 function builtinBody(locale, id) {
   if (id === 'delegate') return [`- ${agentT(locale, 'guide.delegate')}`, `- ${agentT(locale, 'guide.main')}`].join('\n');
-  if (id === 'child') return [agentT(locale, 'guide.child'), agentT(locale, 'guide.commandLifetime')].join('\n');
+  if (id === 'child') return agentT(locale, 'guide.commandLifetime');
   if (id === 'codexPolicy') return agentT(locale, 'guide.codexPolicy');
   return `- ${agentT(locale, 'guide.route')}`;
 }
@@ -90,7 +90,7 @@ export const itemText = (locale, item) => `${agentT(locale, 'guide.heading', { n
  * 項目ごとに { id, name, target, inserted, text? , reason? }。入れない理由:
  *   off（スイッチで切った）/ target（入れる会話が違う）/ agent（このエージェントは選んでいない）/
  *   readOnly（読み取り・計画モードの依頼元。ply_delegate を受け付けないので委譲の項目は入れない）/ routingOff（委譲先の自動選択が無効）
- * 子の会話は読み取りのモードでも「さらに委譲しない」を入れる（害が無く、委譲できないことと食い違わない）
+ * 子の会話は読み取りのモードでもコマンドの扱い（child）を入れる（子はコマンドを実行するので、依頼元が読み取りのモードでも入れる）
  * agent は backend の種類（claude / codex）。それ以外（fake など）はどのエージェントの項目も入れる
  */
 export function turnInstructions({ list, locale, child, routing, supported, canDelegate, agent = null }) {

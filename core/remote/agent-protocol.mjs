@@ -8,7 +8,7 @@ export const AGENT_PROTO = 1;
 /** AI の依頼として口に出す操作は、委譲の 6 つだけ（任意の操作を呼ぶ道は無い） */
 export const AGENT_OPS = Object.freeze(['delegate', 'status', 'wait', 'send', 'cancel', 'list']);
 /** 端末ごとの上限（ADR 0146）: 動いているタスク・delegate と send の頻度・1 つの便りの大きさ・同時の依頼 */
-export const AGENT_LIMITS = Object.freeze({ active: 8, perMinute: 20, messageBytes: 256 * 1024, pending: 32, depth: 4, portsPerDevice: 4, pendingPerDevice: 64, viewsPerConn: 4 });
+export const AGENT_LIMITS = Object.freeze({ active: 8, perMinute: 20, messageBytes: 256 * 1024, pending: 32, portsPerDevice: 4, pendingPerDevice: 64, viewsPerConn: 4 });
 /** 完了した便りに載せる結果の長さ（ply_task_status の 1 ページと同じ） */
 export const RESULT_PAGE = 16_000;
 /** 仮の親の ID。端末の会話の ID はホストに無いので、この形で「祖先」として扱う（ADR 0146） */

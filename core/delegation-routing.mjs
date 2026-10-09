@@ -19,7 +19,7 @@ export const DIFFICULTIES = Object.freeze(['low', 'mid', 'high']);
 export const TIERS = Object.freeze(['t1', 't2', 't3', 't4', 'tv']);
 /** 上がっていく段の順。tv（クリエイティブ）はこの列に入らず、上がらない */
 const LADDER = ['t1', 't2', 't3', 't4'];
-export const JUDGES = Object.freeze(['jev', 'cerebras', 'none']);
+export const JUDGES = Object.freeze(['jev', 'qwen', 'none']);
 
 // 難しさの手がかり（v3）。英語の文面がそのまま判定器への問いになる。閾値は Jev の「はい」の確率を真偽に分ける線
 export const SIGNALS = Object.freeze(['diagnose', 'choose', 'long_procedure', 'many_parts', 'writes_shared', 'security_gate']);
@@ -39,7 +39,7 @@ export const DEFAULTS = Object.freeze({
   enabled: true,
   judgeByKind: Object.freeze({ trivial: 'jev', mechanical: 'jev', investigate: 'jev', implement: 'jev', review: 'jev',
     design: 'jev', ux_change: 'none', ux_new: 'none', visual: 'none' }),
-  escalateToCerebras: false,
+  escalateToQwen: false,
   avoidPercent: 80,
   paceLimit: 1.2,
   tiers: Object.freeze({
@@ -83,19 +83,40 @@ export class RoutingSettingsError extends Error {
 export const RETIRED_KEYS = Object.freeze(['staleMinutes']);
 
 /**
+ * 前の版の Cerebras の判定器の設定を、OpenRouter の Qwen の名前へ直す（Cerebras の直の経路は 2026-10-09 に廃止。ADR 0177）。
+ * judgeByKind の cerebras は qwen に、escalateToCerebras は escalateToQwen に（両方あれば今の名前を残す）。changed は直したか
+ */
+export function migrateLegacySettings(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return { raw, changed: false };
+  const out = { ...raw };
+  let changed = false;
+  if (Object.hasOwn(out, 'escalateToCerebras')) {
+    if (out.escalateToQwen === undefined) out.escalateToQwen = out.escalateToCerebras;
+    delete out.escalateToCerebras;
+    changed = true;
+  }
+  const byKind = out.judgeByKind;
+  if (byKind && typeof byKind === 'object' && !Array.isArray(byKind) && Object.values(byKind).includes('cerebras')) {
+    out.judgeByKind = Object.fromEntries(Object.entries(byKind).map(([kind, judge]) => [kind, judge === 'cerebras' ? 'qwen' : judge]));
+    changed = true;
+  }
+  return { raw: out, changed };
+}
+
+/**
  * prefs.json の delegationRouting を、既定値で補った完全な形にする。
  * strict なら不正な値を RoutingSettingsError で断る（画面からの保存）。そうでなければ不正な項目だけ既定に戻す（読むとき）
  */
 export function normalizeSettings(raw, { strict = false } = {}) {
-  const src = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
+  const src = raw && typeof raw === 'object' && !Array.isArray(raw) ? migrateLegacySettings(raw).raw : {};
   const fail = (code, detail) => { if (strict) throw new RoutingSettingsError(code, detail); };
-  const out = { enabled: DEFAULTS.enabled, judgeByKind: { ...DEFAULTS.judgeByKind }, escalateToCerebras: DEFAULTS.escalateToCerebras,
+  const out = { enabled: DEFAULTS.enabled, judgeByKind: { ...DEFAULTS.judgeByKind }, escalateToQwen: DEFAULTS.escalateToQwen,
     avoidPercent: DEFAULTS.avoidPercent, paceLimit: DEFAULTS.paceLimit,
     tiers: Object.fromEntries(Object.entries(DEFAULTS.tiers).map(([k, v]) => [k, [...v]])),
     table: Object.fromEntries(Object.entries(DEFAULTS.table).map(([k, v]) => [k, [...v]])),
     efforts: Object.fromEntries(Object.entries(DEFAULTS.efforts).map(([k, v]) => [k, { ...v }])) };
   for (const key of Object.keys(src)) if (!Object.hasOwn(out, key) && !RETIRED_KEYS.includes(key)) fail('unknownKey', { key });
-  for (const key of ['enabled', 'escalateToCerebras']) {
+  for (const key of ['enabled', 'escalateToQwen']) {
     if (src[key] === undefined) continue;
     if (typeof src[key] === 'boolean') out[key] = src[key]; else fail('notBoolean', { key });
   }

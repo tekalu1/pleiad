@@ -11,7 +11,7 @@ import os from 'node:os';
 import { z } from 'zod';
 import { agentT, LOCALE_SETTINGS, t } from '../i18n.mjs';
 import { DEFAULT_COMPACTION_SETTINGS, normalizeCompactionSettings } from '../compaction-settings.mjs';
-import { DEFAULTS as ROUTING_DEFAULTS, normalizeSettings as normalizeRoutingSettings, RoutingSettingsError, RETIRED_KEYS as ROUTING_RETIRED_KEYS } from '../delegation-routing.mjs';
+import { DEFAULTS as ROUTING_DEFAULTS, normalizeSettings as normalizeRoutingSettings, migrateLegacySettings as migrateRoutingSettings, RoutingSettingsError, RETIRED_KEYS as ROUTING_RETIRED_KEYS } from '../delegation-routing.mjs';
 import { KINDS as CONTEXT_KINDS, normalizeKind as normalizeContextKind } from '../context-settings.mjs';
 import { MIN_BUDGET, MAX_BUDGET } from '../../web/instruction-amount.mjs';
 import { validBrowserPref } from '../../web/browser-confirm-policy.mjs';
@@ -196,8 +196,9 @@ export const settings = [
   defineSetting({ key: 'delegationRouting', summary: S('delegationRouting'), risk: 'guarded', prefKeys: ['delegationRouting'],
     schema: loose, writeSchema: z.record(z.string(), z.unknown()), default: ROUTING_DEFAULTS, read: (ctx) => ctx.routingSettings?.(),
     normalize: async (ctx, patch) => {
-      const raw = { ...((await prefs(ctx)).delegationRouting ?? {}) };
-      for (const [key, value] of Object.entries(patch)) { if (value === null) delete raw[key]; else raw[key] = structuredClone(value); }
+      // 前の版の Cerebras の判定器の項目は Qwen の名前へ直して重ねる（core/server.mjs の applyRoutingSettings と同じ。ADR 0177）
+      const raw = { ...migrateRoutingSettings((await prefs(ctx)).delegationRouting ?? {}).raw };
+      for (const [key, value] of Object.entries(migrateRoutingSettings(patch).raw)) { if (value === null) delete raw[key]; else raw[key] = structuredClone(value); }
       for (const key of ROUTING_RETIRED_KEYS) delete raw[key];
       try { return { after: normalizeRoutingSettings(raw, { strict: true }), arg: { patch } }; }
       catch (e) { const why = e instanceof RoutingSettingsError ? t(`routing.settings.${e.code}`, e.detail) : String(e?.message ?? e); throw invalid(ctx, why, why); }

@@ -4,7 +4,7 @@
 //   <data>/api-keys.json         秘密でない台帳: { keys: [{ id, provider, label, createdAt, lastCheck }], uses, guide, migration }
 //   <data>/api-key-secrets.json  キーの値（core/secret-store.mjs。エントリ key:<id>。Claude のアカウント・MCP と同じ暗号化）
 //   接続先の割り当ては compat-endpoints.json の各行の keyRef（値を持たない。書くのは compatEndpointSave・このモジュールの削除・まとめ）。
-//   通話・判定器・wait_until の問いの割り当ては uses（voice・judge:jev・judge:cerebras・computer:decider）。prefs の voice は AI も書ける設定なので、割り当てはそこに置かない。
+//   通話・判定器・wait_until の問いの割り当ては uses（voice・judge:jev・computer:decider。judge:jev は OpenRouter の判定器 2 つ（Jev・Qwen）が使う）。prefs の voice は AI も書ける設定なので、割り当てはそこに置かない。
 // 登録しただけでは、どの機能も外部に送らない。送るのは「使うキー」を人が選んだときから（ADR 0022・0150 の「キーの登録＝同意」を選ぶ操作へ移した）。
 // キーの値は返り値・ログ・エラー文に出さない（list は値を持たず、使っている所の名前だけを返す）。
 //
@@ -33,11 +33,15 @@ export const LEGACY_ENDPOINT_PREFIX = 'compat-endpoint:';
 const LEGACY_VOICE_KEY = 'openrouter';
 
 /** キーを割り当てる先（接続先は keyRef で、ここには入らない） */
-export const USES = Object.freeze(['voice', 'judge:jev', 'judge:cerebras', 'computer:decider']);
+export const USES = Object.freeze(['voice', 'judge:jev', 'computer:decider']);
+/**
+ * 前の版の割り当て（Cerebras の直の判定器。2026-10-09 に廃止、ADR 0177）。読み込むたびに、判定器のキーがまだ無ければ OpenRouter のキーを judge:jev に選んだ状態にし、
+ * 台帳からは次に書くときに消える（起動だけでは書き直さない。同じ置き場を読む前の版の割り当てを、何もしないうちに消さない）
+ */
+const RETIRED_JUDGE_USE = 'judge:cerebras';
 /** 古い置き場を持たない割り当て（ADR 0155 の後に足したもの。移行・古い置き場への書き写しの対象にしない） */
 const NO_LEGACY = new Set(['computer:decider']);
-const USE_JUDGE = Object.freeze({ 'judge:jev': 'jev', 'judge:cerebras': 'cerebras' });
-const SERVICE_OF_USE = Object.freeze({ 'judge:jev': JUDGE_SERVICE.jev, 'judge:cerebras': JUDGE_SERVICE.cerebras });
+const SERVICE_OF_USE = Object.freeze({ 'judge:jev': JUDGE_SERVICE.jev });
 
 export const MAX_KEYS = 200;
 export const MAX_LABEL = 60;
@@ -45,8 +49,7 @@ const ID = /^key-[a-f0-9]{12}$/;
 const PROVIDER = /^[a-z0-9-]{1,32}$/;
 const CHECK_TIMEOUT_MS = 5000;
 /** キーそのものだけを確かめられるプロバイダー（そうでないものは接続先の確認で確かめる） */
-const CHECKABLE = new Set(['openrouter', 'cerebras']);
-const CEREBRAS_API = () => (process.env.AGENT_HOST_CEREBRAS_API || 'https://api.cerebras.ai').replace(/\/+$/, '');
+const CHECKABLE = new Set(['openrouter']);
 
 /** code: INVALID_KEY / NOT_FOUND / PROVIDER_MISMATCH / MIGRATION_PENDING / TOO_MANY / UNKNOWN_USE / FILE_BROKEN */
 export class ApiKeyError extends Error {
@@ -73,6 +76,11 @@ function normalizeHost(provider, host) {
   return !FIXED_HOST_PROVIDERS.has(provider) && /^[a-z0-9.:\-\[\]]{1,253}$/.test(h) ? h : null;
 }
 
+/** Cerebras の判定器にキーを選んでいた人の割り当てを、OpenRouter の判定器へ移す（判定器のキーが無く、OpenRouter のキーがあるときだけ。最初に登録したもの） */
+function adoptRetiredJudge(uses, keys) {
+  if (!uses['judge:jev']) uses['judge:jev'] = keys.find(k => k.provider === USE_PROVIDER['judge:jev'])?.id ?? null;
+}
+
 function clean(raw) {
   if (raw?.version !== 1 || !Array.isArray(raw.keys)) throw new Error('bad');
   const keys = raw.keys.filter(k => ID.test(k?.id ?? '') && PROVIDER.test(k.provider ?? '') && typeof k.label === 'string')
@@ -80,6 +88,7 @@ function clean(raw) {
       host: normalizeHost(k.provider, k.host), lastCheck: k.lastCheck && typeof k.lastCheck === 'object' ? k.lastCheck : null }));
   const ids = new Set(keys.map(k => k.id));
   const uses = Object.fromEntries(USES.map(u => [u, ids.has(raw.uses?.[u]) ? raw.uses[u] : null]));
+  if (ids.has(raw.uses?.[RETIRED_JUDGE_USE])) adoptRetiredJudge(uses, keys);
   return { version: 1, migration: raw.migration?.done ? { done: true, at: String(raw.migration.at ?? '') } : null, keys, uses,
     guide: raw.guide === 'pending' || raw.guide === 'done' ? raw.guide : null };
 }
@@ -164,6 +173,7 @@ export function createApiKeys({ dataDir, secrets, legacy = {}, endpoints = () =>
     const rows = eps()?.rows ? await eps().rows().catch(() => null) : [];
     if (!rows) return 'broken';
     const sources = [];   // { kind: endpoint|judge|voice, value, provider, ... }
+    let hadRetiredJudge = false;
     let blocked = null;
     const read = async fn => {
       try { return await fn(); }
@@ -183,10 +193,10 @@ export function createApiKeys({ dataDir, secrets, legacy = {}, endpoints = () =>
         const value = normalizeApiKey((await read(() => legacy.compat.get(LEGACY_ENDPOINT_PREFIX + row.id)))?.key);
         if (value) sources.push({ kind: 'endpoint', value, provider: providerOfEndpoint(row), row });
       }
-      for (const use of ['judge:jev', 'judge:cerebras']) {
-        const value = normalizeApiKey((await read(() => legacy.compat.get(JUDGE_PREFIX + SERVICE_OF_USE[use])))?.key);
-        if (value) sources.push({ kind: 'judge', use, value, provider: USE_PROVIDER[use] });
-      }
+      const value = normalizeApiKey((await read(() => legacy.compat.get(JUDGE_PREFIX + SERVICE_OF_USE['judge:jev'])))?.key);
+      if (value) sources.push({ kind: 'judge', use: 'judge:jev', value, provider: USE_PROVIDER['judge:jev'] });
+      // Cerebras の判定器のキー（delegation-routing:cerebras）は取り込まない（使う所が無い。古い置き場には残す）。判定器へ選んでいたことだけ引き継ぐ
+      hadRetiredJudge = Boolean(normalizeApiKey((await read(() => legacy.compat.get(JUDGE_PREFIX + 'cerebras')))?.key));
     }
     if (legacy.voice) {
       const value = normalizeApiKey((await read(() => legacy.voice.get(LEGACY_VOICE_KEY)))?.key);
@@ -228,6 +238,7 @@ export function createApiKeys({ dataDir, secrets, legacy = {}, endpoints = () =>
       if (s.kind === 'endpoint') refs[s.row.id] = k.id;
       else uses[s.use] = k.id;
     }
+    if (hadRetiredJudge) adoptRetiredJudge(uses, keys);
     // 接続先の割り当ては移行の結果をそのまま書く（以前の途中の移行や古い方法で残った keyRef は、ここに無ければ消える）
     if (eps()?.setKeyRefs) await eps().setKeyRefs(refs);
     const providersWithMany = [...perProvider].filter(([p, n]) => n > 1 && p !== 'custom');
@@ -265,7 +276,7 @@ export function createApiKeys({ dataDir, secrets, legacy = {}, endpoints = () =>
     const out = [];
     for (const e of (await eps()?.keyUsers?.()) ?? []) if (e.keyRef === id) out.push({ kind: 'endpoint', id: e.id, agent: e.agent, name: e.name });
     if (state.uses.voice === id) out.push({ kind: 'voice' });
-    for (const u of ['judge:jev', 'judge:cerebras']) if (state.uses[u] === id) out.push({ kind: 'judge', judge: USE_JUDGE[u] });
+    if (state.uses['judge:jev'] === id) out.push({ kind: 'judge', judge: 'jev' });
     if (state.uses['computer:decider'] === id) out.push({ kind: 'computer' });
     return out;
   }
@@ -278,10 +289,10 @@ export function createApiKeys({ dataDir, secrets, legacy = {}, endpoints = () =>
     return found ? { provider: found[0], keyIds: found[1] } : null;
   }
 
-  // ---- 確認（キーそのものだけ。料金のかからない軽い GET）
-  async function probe(provider, value) {
+  // ---- 確認（キーそのものだけ。料金のかからない軽い GET。確かめられるのは OpenRouter の GET /key だけ）
+  async function probe(value) {
     const doFetch = fetchImpl ?? fetch;
-    const url = provider === 'openrouter' ? `${voiceBaseUrl(env)}/key` : `${CEREBRAS_API()}/v1/models`;
+    const url = `${voiceBaseUrl(env)}/key`;
     try {
       const res = await doFetch(url, { headers: { Authorization: `Bearer ${value}`, 'X-Title': 'Pleiad' }, redirect: 'manual', signal: AbortSignal.timeout(CHECK_TIMEOUT_MS) });
       await res.body?.cancel().catch(() => {});
@@ -426,7 +437,7 @@ export function createApiKeys({ dataDir, secrets, legacy = {}, endpoints = () =>
       if (!CHECKABLE.has(key.provider)) return { id: key.id, ok: null, code: 'unsupported' };
       const value = await keyValue(key.id);
       if (!value) throw new ApiKeyError('NOT_FOUND');
-      const result = await probe(key.provider, value);
+      const result = await probe(value);
       const at = iso(now());
       await mutate(() => { const k = known(key.id); if (k) k.lastCheck = { ok: result.ok, at, ...(result.code ? { code: result.code } : {}), ...(result.status ? { status: result.status } : {}) }; }).catch(() => {});
       emit({ keys: true });

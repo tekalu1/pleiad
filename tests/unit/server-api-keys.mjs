@@ -52,20 +52,21 @@ export default async function (t) {
     t.ok('登録しただけでは通話は始められない（キーを選んでいない）', (await call(server)).ready === false && (await c.cmd('invoke', { op: 'voice.status' })).hasKey === false);
 
     // ---- setApiKeyUse
-    t.ok('setApiKeyUse: 知らない使い道・知らないキー・プロバイダー違い（Cerebras の判定器に OpenRouter のキー）は断る',
+    t.ok('setApiKeyUse: 知らない使い道（廃止した Cerebras の判定器を含む）・知らないキー・プロバイダー違い（判定器に Cerebras のキー）は断る',
       /知らない使い道/.test((await rejects(c.cmd('setApiKeyUse', { use: 'nope', id: added.id })))?.message ?? '')
+      && /知らない使い道/.test((await rejects(c.cmd('setApiKeyUse', { use: 'judge:cerebras', id: cerebras.id })))?.message ?? '')
       && /登録されていません/.test((await rejects(c.cmd('setApiKeyUse', { use: 'voice', id: 'key-000000000000' })))?.message ?? '')
-      && /Cerebras/.test((await rejects(c.cmd('setApiKeyUse', { use: 'judge:cerebras', id: added.id })))?.message ?? ''));
+      && /OpenRouter/.test((await rejects(c.cmd('setApiKeyUse', { use: 'judge:jev', id: cerebras.id })))?.message ?? ''));
     let from = c.mark();
     t.ok('setApiKeyUse voice: 選ぶと { use, id } を返す', (await c.cmd('setApiKeyUse', { use: 'voice', id: added.id })).id === added.id);
     await c.waitFor((e) => e.type === 'voiceChanged', { from, ms: 5000 });
     t.ok('通話に選ぶと voiceChanged と apiKeysChanged が届く。voice.status は選んだキーの id', (await c.waitFor((e) => e.type === 'apiKeysChanged', { from, ms: 5000 })) && (await c.cmd('invoke', { op: 'voice.status' })).keyRef === added.id);
     from = c.mark();
-    await c.cmd('setApiKeyUse', { use: 'judge:cerebras', id: cerebras.id });
+    await c.cmd('setApiKeyUse', { use: 'judge:jev', id: added.id });
     await c.waitFor((e) => e.type === 'delegationRoutingChanged', { from, ms: 5000 });
     const routing = await c.cmd('delegationRouting', {});
-    t.ok('判定器に選ぶと delegationRoutingChanged が届き、delegationRouting の keys に hasKey と keyRef が出る（Jev は選んでいない）',
-      routing.keys.cerebras.hasKey === true && routing.keys.cerebras.keyRef === cerebras.id && routing.keys.openrouter.hasKey === false && !JSON.stringify(routing).includes(C));
+    t.ok('判定器に選ぶと delegationRoutingChanged が届き、delegationRouting の keys に hasKey と keyRef が出る（判定器のキーは OpenRouter の 1 つだけ）',
+      routing.keys.openrouter.hasKey === true && routing.keys.openrouter.keyRef === added.id && Object.keys(routing.keys).join() === 'openrouter' && !JSON.stringify(routing).includes(A));
 
     // ---- 通話中のキーの差し替え・「使わない」・削除で通話が切れる
     let voice = await call(server);
