@@ -27,7 +27,7 @@ export function fakeChromeOs({ chrome = null, supported = true, reason = 'platfo
   const listeners = new Set();
   const hw = new Map();   // hwnd -> { id, windowId, rect(DIP), concealed, agent, alpha, ex, prevFg }
   let hwSeq = 100;
-  const opts = { appWindow: 'pleiad-window', noAppWindow: false, launchFails: false, chromeMissing: false, hideNonce: false, hideBounds: false, concealFails: false, honorPosition: true, noListener: false, closeFails: false, adoptFails: false };
+  const opts = { appWindow: 'pleiad-window', noAppWindow: false, launchFails: false, chromeMissing: false, hideNonce: false, hideBounds: false, concealFails: false, honorPosition: true, noListener: false, closeFails: false, adoptFails: false, restoreMoveMs: 0 };
   const OFFSCREEN = Object.freeze({ x: 6000, y: 0 });
   const isDialog = id => chrome?.dialogs().some(d => d.id === id);
   const note = entry => { log.push(entry); };
@@ -39,10 +39,13 @@ export function fakeChromeOs({ chrome = null, supported = true, reason = 'platfo
     hw.set(id, h);
     if (windowStealing) { h.prevFg = fg; fg = id; }
   });
-  // 最大化の窓が通常へ戻されると、本物の Chrome は窓を前に保存していた通常の位置（画面の中）へ動かす。隠した窓も例外ではない
+  // 最大化の窓が通常へ戻されると、本物の Chrome は窓を前に保存していた通常の位置（画面の中）へ動かす。隠した窓も例外ではない（スタイルはそのまま、透明のまま）。
+  // opts.restoreMoveMs があれば、その分だけ遅れて動く（実機: 隠し直した後に画面の中へ出た）
   if (chrome) chrome.browser.onWindowRestored(({ windowId }) => {
     const h = [...hw.values()].find(x => x.windowId === windowId);
-    if (h) h.rect = { ...h.rect, left: 10, top: 10 };
+    if (!h) return;
+    const move = () => { h.rect = { ...h.rect, left: 10, top: 10 }; };
+    if (opts.restoreMoveMs > 0) setTimeout(move, opts.restoreMoveMs); else move();
   });
   const known = ref => (ref && typeof ref.id === 'string' ? hw.get(ref.id) : undefined);
   const knownAgent = ref => { const h = known(ref); return h?.agent && !h.released ? h : undefined; };
@@ -140,8 +143,11 @@ export function fakeChromeOs({ chrome = null, supported = true, reason = 'platfo
       if (!caps.supported) return null;
       const h = typeof token === 'string' && token.startsWith('fake:') ? hw.get(token.slice(5)) : null;
       if (!h || h.gone || h.closed || opts.adoptFails) return null;
-      if (!revealed && !(h.concealed && h.rect.left === OFFSCREEN.x)) return null;   // 本物の層の looksConcealed: 隠した姿（画面の外）のままの窓だけ
+      // 本物の層と同じく、隠した姿（スタイル）のままの窓だけ。位置は問わず、画面の中へ動いていた窓は隠し直す
+      const styled = h.ex.toolwindow && h.ex.layered && h.ex.transparent && !h.ex.appwindow;
+      if (!revealed && !styled) return null;
       h.agent = true; h.released = false; h.concealed = !revealed;   // revealed: 人が操作中の窓。隠さない
+      if (!revealed && h.rect.left !== OFFSCREEN.x) { note({ op: 'concealOnAdopt', ref: h.id }); h.rect = { ...h.rect, left: OFFSCREEN.x, top: OFFSCREEN.y }; h.alpha = 0; }
       return { id: h.id };
     },
     async release(ref) { note({ op: 'release', ref: ref?.id }); const h = knownAgent(ref); if (!h) return false; h.released = true; return true; },

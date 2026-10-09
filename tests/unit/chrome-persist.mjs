@@ -175,6 +175,32 @@ export default async function (t) {
       await b.relay.close(); await b.conn.close(); await b.link.quit();
     }
 
+    // ===== 1c. 最大化で開いた最初の窓が、隠し直した後に遅れて画面の中へ動いた（透明のまま）: 更新の先で引き継いで隠し直す（閉じない）=====
+    {
+      await clearChildren();
+      const chrome = await startFakeChrome({ permission: 'auto' });
+      cleanups.push(() => chrome.stop());
+      chrome.browser.launchMaximized(true);
+      const os = fakeChromeOs({ chrome });
+      os.opts.restoreMoveMs = 150;   // 通常へ戻した後、窓が画面の中へ動くのが遅れる（隠し直した後に効く）
+      const a = await newServer(chrome, os);
+      const ag = await agent(await a.relay.endpoint('conv-1c'));
+      await ag.cmd('Target.setDiscoverTargets', { discover: true });
+      const first = (await ag.cmd('Target.createTarget', { url: 'about:blank' })).result?.targetId;
+      const windowId = chrome.browser.targets().find(x => x.targetId === first)?.windowId;
+      const hwOf = () => os.hwnds().find(h => h.windowId === windowId);
+      await until(() => hwOf()?.rect.left === 10, 3000, 'restored window moved onto a screen');
+      t.ok('（前提）隠した窓が、遅れて画面の中へ動いた（スタイルは隠した姿・透明のまま）', hwOf().alpha === 0 && hwOf().ex.transparent && !hwOf().ex.appwindow, JSON.stringify(hwOf()));
+      await until(() => a.link.alive && a.link.welcome, 2000);
+      await leave(a);
+      const b = await newServer(chrome, os);
+      t.ok('画面の中で透明のままの窓も、更新の先で引き継ぐ（引き継げない窓として閉じない）', !b.logs.some(line => line.includes('could not be taken over')) && tabsIn(chrome, windowId).length === 1
+        && b.relay.snapshot().windows.length === 1 && hwOf()?.agent && hwOf()?.concealed && !hwOf()?.closed, JSON.stringify({ logs: b.logs, hw: hwOf() }));
+      t.ok('引き継いだ窓は、画面の外へ隠し直す', hwOf()?.rect.left === 6000 && os.calls('concealOnAdopt').length === 1, JSON.stringify(hwOf()));
+      ag.close();
+      await b.relay.close(); await b.conn.close(); await b.link.quit();
+    }
+
     // ===== 2. 層が窓を引き継げなかったとき: 記録を捨て、その窓のタブを CDP で閉じる =====
     {
       await clearChildren();
