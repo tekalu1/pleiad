@@ -15,6 +15,8 @@ package dev.pleiad.app.remote
 // The WebSocket's early host messages (WS_ACCEPT and `ready` arrive in the same read) are queued from the moment the
 // stream is opened, so nothing is lost before the 101 is written (the ordering race from the desktop work).
 // Every HTTP response is `Connection: close` (no keep-alive bookkeeping; loopback connections are cheap).
+// With a staticCacheFile, the web/ shell is answered from the device's saved bundle once the host confirmed it on the
+// page load (StaticCache.kt, docs/remote.md §8.6); auth, Host and method checks come first, as for any request.
 
 import java.io.BufferedInputStream
 import java.io.IOException
@@ -69,9 +71,11 @@ class DeviceProxy(
     private val requestWaitMs: Long = 10_000,
     private val texts: ProxyTexts = DefaultTexts,
     private val log: (String) -> Unit = {},
+    staticCacheFile: java.io.File? = null,
 ) {
     companion object {
         const val PROXY_COOKIE = "pleiad_remote_token"
+        private const val STATIC_FETCH_MS = 120_000L
         private const val WS_PAUSE_ABOVE = 256 * 1024L
         private const val MAX_WS_MESSAGE = 64L * 1024 * 1024
         private const val MAX_HEAD = 32 * 1024
@@ -104,6 +108,10 @@ class DeviceProxy(
     private var server: ServerSocket? = null
     private val sockets = ConcurrentHashMap.newKeySet<Socket>()
     @Volatile var closed = false; private set
+    val staticCache = staticCacheFile?.let { StaticCache(it, log) }
+    private class StaticCheck { val done = java.util.concurrent.CountDownLatch(1); @Volatile var bundle: StaticBundle? = null }
+    private val staticLock = Any()
+    private var staticCheck: StaticCheck? = null
 
     /** The URL the WebView opens (contains the token: never log it). */
     val url: String get() = "http://127.0.0.1:$port/?token=$token"
@@ -325,7 +333,7 @@ var b=document.getElementById('back-to-hosts');if(typeof window.backToHosts==='f
         if (req.method != "GET" && req.method != "HEAD") {
             return writeSimple(out, 405, "text/plain; charset=utf-8", "method not allowed".toByteArray(), mapOf("Allow" to "GET, HEAD"))
         }
-        handleHttp(s, out, req, forwardPath, queryOk)
+        handleHttp(s, out, req, path, restQuery, queryOk)
     }
 
     private fun awaitChannel(q: LinkedBlockingQueue<Ev>): Ev.Ready {
@@ -333,10 +341,93 @@ var b=document.getElementById('back-to-hosts');if(typeof window.backToHosts==='f
         return q.poll(requestWaitMs + 5_000, TimeUnit.MILLISECONDS) as? Ev.Ready ?: Ev.Ready(null, LinkUnavailable("offline"))
     }
 
-    private fun handleHttp(s: Socket, out: OutputStream, req: Request, forwardPath: String, queryOk: Boolean) {
+    /** One GET over the channel, read whole (blocking; for the static bundle). */
+    private fun fetchOver(ch: Channel, path: String, headers: Map<String, String>): StaticFetch {
+        val q = LinkedBlockingQueue<Ev>()
+        val head = JSONObject().put("method", "GET").put("path", path).put("headers", JSONObject(headers))
+        loop.post {
+            try {
+                val st = ch.openHttp(head)
+                st.listener = object : StreamListener {
+                    override fun onResponse(head: JSONObject) { q.put(Ev.Response(head)) }
+                    override fun onData(chunk: ByteArray, release: Release) { q.put(Ev.Data(chunk, release)) }
+                    override fun onEnd() { q.put(Ev.End) }
+                    override fun onReset(code: Int, remote: Boolean) { q.put(Ev.Reset(code)) }
+                }
+                st.end()
+                q.put(Ev.Opened(st, null))
+            } catch (e: Exception) {
+                q.put(Ev.Opened(null, e))
+            }
+        }
+        val end = System.currentTimeMillis() + STATIC_FETCH_MS
+        val opened = q.poll(STATIC_FETCH_MS, TimeUnit.MILLISECONDS) as? Ev.Opened ?: throw IOException("static bundle: timeout")
+        val stream = opened.stream ?: throw IOException("static bundle: ${opened.err?.message}")
+        var status = 0
+        val got = HashMap<String, String>()
+        val body = java.io.ByteArrayOutputStream()
+        try {
+            while (true) {
+                val ev = q.poll(maxOf(0L, end - System.currentTimeMillis()), TimeUnit.MILLISECONDS) ?: throw IOException("static bundle: timeout")
+                when (ev) {
+                    is Ev.Response -> {
+                        status = ev.head.optInt("status", 0)
+                        val hs = ev.head.optJSONObject("headers") ?: JSONObject()
+                        for (k in hs.keys()) {
+                            val v = hs.get(k)
+                            got[k.lowercase()] = if (v is JSONArray) (0 until v.length()).joinToString(", ") { v.get(it).toString() } else v.toString()
+                        }
+                    }
+                    is Ev.Data -> {
+                        try {
+                            if (body.size() + ev.chunk.size > StaticBundleCodec.MAX_BYTES) throw IOException("static bundle: too large")
+                            body.write(ev.chunk)
+                        } finally { ev.release() }
+                    }
+                    is Ev.End -> return StaticFetch(status, got, body.toByteArray())
+                    is Ev.Reset -> throw IOException("static bundle: reset ${ev.code}")
+                    else -> {}
+                }
+            }
+        } catch (e: IOException) {
+            loop.post { if (!stream.destroyed) stream.reset(ResetCode.CANCEL) }
+            while (true) { val ev = q.poll() ?: break; if (ev is Ev.Data) ev.release() }
+            throw e
+        }
+    }
+
+    /** The bundle that may be served now, or null. A page load always asks the host again; other requests share the last answer. */
+    private fun localBundle(cache: StaticCache, ch: Channel, pageLoad: Boolean): StaticBundle? {
+        val check = synchronized(staticLock) {
+            staticCheck?.takeIf { !pageLoad } ?: StaticCheck().also { c ->
+                staticCheck = c
+                pool.execute { try { c.bundle = cache.check { p, h -> fetchOver(ch, p, h) } } finally { c.done.countDown() } }
+            }
+        }
+        check.done.await(STATIC_FETCH_MS + 5_000, TimeUnit.MILLISECONDS)
+        return check.bundle
+    }
+
+    private fun writeLocal(out: OutputStream, req: Request, file: StaticFile, queryOk: Boolean) {
+        val sb = StringBuilder("HTTP/1.1 200 OK\r\ncontent-type: ${file.type}\r\ncontent-length: ${file.body.size}\r\n")
+        if (queryOk) sb.append("set-cookie: $PROXY_COOKIE=$token; HttpOnly; SameSite=Strict; Path=/\r\n")
+        sb.append("connection: close\r\n\r\n")
+        out.write(sb.toString().toByteArray(Charsets.UTF_8))
+        if (req.method != "HEAD") out.write(file.body)
+        out.flush()
+    }
+
+    private fun handleHttp(s: Socket, out: OutputStream, req: Request, path: String, restQuery: String, queryOk: Boolean) {
+        val forwardPath = if (restQuery.isEmpty()) path else "$path?$restQuery"
         val q = LinkedBlockingQueue<Ev>()
         val ready = awaitChannel(q)
         val ch = ready.ch ?: return unavailable(out, req, ready.err?.state ?: "offline", null)
+        val cache = staticCache
+        if (cache != null && restQuery.isEmpty()) {
+            val pageLoad = path == "/" || path == "/index.html"
+            val file = localBundle(cache, ch, pageLoad)?.files?.get(if (pageLoad) "/index.html" else path)
+            if (file != null) return writeLocal(out, req, file, queryOk)
+        }
         val headers = JSONObject()
         for ((k, v) in req.headers) if (k in PASS_REQUEST) headers.put(k, v)
         val head = JSONObject().put("method", req.method).put("path", forwardPath).put("headers", headers)

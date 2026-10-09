@@ -7,6 +7,7 @@ import Foundation
 //                      Keychain (kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly); tests use FileVault.
 //   <dir>/hosts.json   { version: 1, hosts: [{ hostId, hostName, label, relayUrl, hostPublicKey, deviceId, port,
 //                        pairedAt, lastConnectedAt, revokedAt }] }   (no secrets; same shape as the desktop's and Android's)
+//   <dir>/static/<hostId>.bin  the host's web/ shell as last confirmed (StaticCache.swift, docs/remote.md §8.6)
 
 /// Where the secrets live, as one opaque blob. The app's implementation is the Keychain (stage 2).
 public protocol SecretVault {
@@ -95,6 +96,7 @@ public struct HostRecord: Equatable {
 }
 
 public final class DeviceStore {
+    public let dir: URL
     private let hostsFile: URL
     private let vault: SecretVault
     private let lock = NSRecursiveLock()
@@ -104,6 +106,7 @@ public final class DeviceStore {
 
     public init(dir: URL, vault: SecretVault? = nil) throws {
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        self.dir = dir
         hostsFile = dir.appendingPathComponent("hosts.json")
         self.vault = vault ?? FileVault(file: dir.appendingPathComponent("secrets.json"))
     }
@@ -267,7 +270,7 @@ public final class RemoteDevice {
         let rec = try store.host(hostId)
         let px = DeviceProxy(loop: loop, creds: creds, keyPair: try store.identity(), wantPort: rec?.port ?? 0, app: app, name: name,
                              shell: "mobile", backoff: backoff, connectTimeoutMs: connectTimeoutMs, requestWaitMs: requestWaitMs,
-                             texts: texts, log: log)
+                             texts: texts, log: log, staticCacheFile: staticCacheFile(hostId))
         px.onStatus { [weak self] s in
             guard let self else { return }
             do {
@@ -315,7 +318,12 @@ public final class RemoteDevice {
     @discardableResult
     public func remove(_ hostId: String) throws -> HostRecord? {
         close(hostId)
+        try? FileManager.default.removeItem(at: staticCacheFile(hostId))
         return try store.removeHost(hostId)
+    }
+
+    private func staticCacheFile(_ hostId: String) -> URL {
+        store.dir.appendingPathComponent("static", isDirectory: true).appendingPathComponent("\(hostId).bin")
     }
 
     /// The app became active again: every open proxy listens again and reconnects (ADR 0144). Returns the hosts whose

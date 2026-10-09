@@ -7,11 +7,13 @@
 //   <dir>/hosts.json    { version: 1, hosts: [{ hostId, hostName, label, relayUrl, hostPublicKey, deviceId, port,
 //                         pairedAt, lastConnectedAt, revokedAt, agentUse }] }（秘密は入れない。port は §7.1 のホストごとに覚えるポート。
 //                         agentUse = この PC の AI からそのホストへ任せるか。既定オフ。docs/remote.md §4.5）
+//   <dir>/static/<hostId>.bin  そのホストの画面の殻の束（core/remote/static-bundle.mjs。docs/remote.md §8.6）
 //
 //   const device = createRemoteDevice({ dir, cipher, app: '0.1.0', name: os.hostname() });
 //   const host = await device.pair(payload, { onCode: code => show(code) });   // ホストで承認されたら解決
 //   const proxy = await device.open(host.hostId);                               // proxy.url を窓で開く
 //   device.on('status', ({ hostId, state }) => ...);
+import fs from 'node:fs/promises';
 import path from 'node:path';
 import { EventEmitter } from 'node:events';
 import { createSecretStore, plainCipher, withFileLock } from '../secret-store.mjs';
@@ -203,6 +205,9 @@ export function createRemoteDevice({ dir, cipher = plainCipher, app = '', name =
   const proxies = new Map();   // hostId -> Promise<DeviceProxy>
   const agents = new Map();    // hostId -> { link: DeviceLink, agent: AgentLink }。この PC の AI からホストへ任せる線（agentUse のホストだけ。窓を開かなくても持つ）
 
+  /** ホストごとの画面の殻の束（docs/remote.md §8.6）。忘れたホストの分は remove で消す */
+  const staticCacheFile = hostId => path.join(dir, 'static', `${hostId}.bin`);
+
   async function list() {
     const hosts = await store.hosts();
     return Promise.all(hosts.map(async h => {
@@ -220,7 +225,8 @@ export function createRemoteDevice({ dir, cipher = plainCipher, app = '', name =
       const creds = await store.credentials(hostId);
       if (!creds) throw Object.assign(new Error(t('remote.device.unknownHost')), { code: 'unknown-host' });
       const keyPair = await store.identity();
-      const px = new DeviceProxy({ creds, keyPair, port: creds.port, app, name, shell: platform === 'desktop' ? 'desktop' : 'mobile', log, ...proxyOptions });
+      const px = new DeviceProxy({ creds, keyPair, port: creds.port, app, name, shell: platform === 'desktop' ? 'desktop' : 'mobile', log,
+        staticCacheFile: staticCacheFile(hostId), ...proxyOptions });
       px.on('status', s => {
         if (s.state === 'connected') store.updateHost(hostId, { lastConnectedAt: new Date().toISOString(), revokedAt: null, ...(s.hostName ? { hostName: cleanLabel(s.hostName) } : {}) }).catch(() => {});
         if (s.state === 'revoked') store.updateHost(hostId, { revokedAt: new Date().toISOString() }).catch(() => {});
@@ -308,7 +314,11 @@ export function createRemoteDevice({ dir, cipher = plainCipher, app = '', name =
     close,
     async rename(hostId, label) { return store.updateHost(hostId, { label: cleanLabel(label) }); },
     /** ペアリングを忘れる（ホストの端末一覧からは消えない。ホストで取り消す）。 */
-    async remove(hostId) { await close(hostId); await agentClose(hostId); return store.removeHost(hostId); },
+    async remove(hostId) {
+      await close(hostId); await agentClose(hostId);
+      await fs.rm(staticCacheFile(hostId), { force: true }).catch(() => {});
+      return store.removeHost(hostId);
+    },
     async closeAll() { await Promise.all([...proxies.keys()].map(close)); await Promise.all([...agents.keys()].map(agentClose)); },
     /** この PC の AI からそのホストへ任せるか（人だけが窓で変える。既定オフ）。入れたら線を張り、切ったら閉じる */
     async setAgentUse(hostId, enabled) {
