@@ -18,10 +18,10 @@ import {
   markdownToDoc, docToMarkdown, mergeRuns, runsText, runsLength, newMark, fenceRoles, normalizeFences, ensureShape, emptyBlock,
   caret, isCollapsed, orderSel, deleteSelection, insertText, enter, backspaceAtStart, deleteAtEnd, insertAtom, removeAtoms, newAtom,
   atomKey, atomKeys, normalizeAttachmentPath, pasteText, applyTriggers, toggleMark, marksInRange, selectionMarkdown, createHistory,
-  posToOffset, offsetToPos, insertPlain, docLayout, memoRaw, pasteRich, removeAtomsTidy,
+  posToOffset, offsetToPos, insertPlain, docLayout, memoRaw, pasteRich, removeAtomsTidy, indentList, indentLevel, quoteDepth,
 } from './md-doc.mjs';
 
-const KINDS = new Set(['p', 'h', 'ul', 'ol', 'quote', 'code', 'att']);
+const KINDS = new Set(['p', 'h', 'ul', 'ol', 'quote', 'cont', 'code', 'att']);
 
 const HTML_BLOCK = /^(?:ADDRESS|ARTICLE|ASIDE|BLOCKQUOTE|DD|DIV|DL|DT|FIELDSET|FIGCAPTION|FIGURE|FOOTER|FORM|H[1-6]|HEADER|HR|LI|MAIN|NAV|OL|P|PRE|SECTION|TABLE|TR|UL)$/;
 
@@ -274,11 +274,6 @@ export function createMarkdownEditor(root, o) {
     }
   }
 
-  function indentOf(marker) {
-    const ws = /^[ \t]*/.exec(marker)[0];
-    return Math.min(4, Math.floor(ws.replace(/\t/g, '    ').length / 2));
-  }
-
   function atomInfo(b) {
     if (b.path) {
       const info = resolve(b.path);
@@ -354,8 +349,9 @@ export function createMarkdownEditor(root, o) {
     if (b.kind === 'h') div.dataset.l = String(Math.min(4, /#+/.exec(b.marker)?.[0].length ?? 1));
     if (b.kind === 'ul') div.dataset.mk = '•';
     if (b.kind === 'ol') div.dataset.mk = b.marker.trim();
-    if (b.kind === 'ul' || b.kind === 'ol') div.style.setProperty('--ind', String(indentOf(b.marker)));
-    if (b.kind === 'quote') div.style.setProperty('--q', String((b.marker.match(/>/g) ?? []).length));
+    if (b.kind === 'ul' || b.kind === 'ol') div.style.setProperty('--ind', String(indentLevel(b.marker)));
+    if (b.kind === 'cont') div.style.setProperty('--ind', String(Math.max(0, indentLevel(b.marker) - 1)));
+    if (b.kind === 'quote') div.style.setProperty('--q', String(quoteDepth(b.marker)));
     if (b.kind === 'code') {
       div.spellcheck = false;
       const role = roles[i], nextRole = roles[i + 1];
@@ -593,7 +589,7 @@ export function createMarkdownEditor(root, o) {
     if (endTimer !== null && !/Composition/.test(type)) finishComposition();
     const st = () => getState();
     const done = (next, reason) => { e.preventDefault(); apply(next, reason); };
-    if (type === 'insertParagraph' || type === 'insertLineBreak') return done(enter(st(), { plain: plain() || type === 'insertLineBreak' }), 'enter');
+    if (type === 'insertParagraph' || type === 'insertLineBreak') return done(enter(st(), { plain: plain(), soft: type === 'insertLineBreak' }), 'enter');
     if (type === 'historyUndo') { e.preventDefault(); undo(); return; }
     if (type === 'historyRedo') { e.preventDefault(); redo(); return; }
     if (type.startsWith('format')) { e.preventDefault(); return; }
@@ -672,6 +668,12 @@ export function createMarkdownEditor(root, o) {
     if (mod && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'y') { e.preventDefault(); redo(); return; }
     if (mod || e.altKey) return;
     if (selAtom !== null) { atomKeydown(e); return; }
+    // 箇条書き・番号の行の Tab / Shift+Tab は字下げ。字下げできない場所では止めず、フォーカスは今までどおり動く
+    if (e.key === 'Tab') {
+      const next = plain() ? null : indentList(getState(), e.shiftKey ? -1 : 1);
+      if (next) { e.preventDefault(); apply(next, 'indent'); }
+      return;
+    }
     // 添付のすぐ隣で矢印を押したら、添付を選ぶ（文字は入れられないので、先に外す・間に行を足す）
     if (e.shiftKey || !['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) return;
     const sel = getSel();
