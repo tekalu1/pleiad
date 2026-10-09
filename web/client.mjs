@@ -537,11 +537,12 @@ function paintCompactions() {
     if (old.querySelector('details')?.open) open.add(old.dataset.compactionId);
     old.remove();
   }
-  // 窓の手前を読んでいないとき、窓の最初の発言より前の区切りは描かない（最初の発言の上に出ると、手前の発言が無いのに区切りだけが見える）
-  const firstAt = state.base > 0 ? Date.parse(state.messages[0]?.at ?? '') : NaN;
+  // 手前の発言をまだ描いていないとき（窓の手前を読んでいない・手前を足している最中）、描いた最初の発言より前の区切りは描かない
+  // （最初の発言の上に出ると、手前の発言が無いのに区切りだけが見える）
+  const floor = paintedFloor();
   for (const entry of state.compactions) {
     if (!['complete', 'failed'].includes(entry.phase)) continue;
-    if (state.base > 0 && !(entry.at > firstAt)) continue;
+    if (floor && !(entry.at > floor.at)) continue;
     const row = append(compactionBoundary(entry), `compaction:${entry.id}`);
     row.classList.add('compaction-boundary'); row.dataset.compactionId = entry.id;
     if (open.has(entry.id)) { const details = row.querySelector('details'); if (details) details.open = true; }
@@ -679,6 +680,8 @@ let paintBefore = null;
 let olderBusy = null;
 let olderFail = null;
 let olderEl = null;
+// 会話を開いたとき、末尾の数行だけ先に描き、手前は idle に小分けで足している最中の仕事（ADR 0902: C1）。無ければ null
+let backfill = null;
 
 function append(node, key) {
   if (paintingHistory) { const w = wrap(node, key); place(w); return w; }
@@ -777,6 +780,7 @@ function resetLiveTurn() {
 }
 
 function clearThread() {
+  cancelBackfill();
   heightSettler?.cancel();
   resetLiveTurn();
   thread.replaceChildren(spine());
@@ -7719,17 +7723,19 @@ function paintHistory(fromMi = 0, retained = null, older = null) {
 }
 
 function paintHistoryRows(fromMi, retained = null, older = null) {
-  const items = buildItems(state.messages, state.presents, state.base, state.presentBase);
-  const refs = state.presents.map(p => p.reference);
+  // older は一部だけ描くときの指定: wants（描く項目の判定）・range（描く項目の範囲 { from, to }）・items/refs/attachedTo（組み立て済み）・prevRole（範囲の直前の発言の役割）
+  const items = older?.items ?? buildItems(state.messages, state.presents, state.base, state.presentBase);
+  const refs = older?.refs ?? state.presents.map(p => p.reference);
   const added = [];
   // fromMi は通し番号。窓の中の添字は fromMi - state.base
-  let prevRole = retained ? retained.prevRole : fromMi > state.base ? state.messages[fromMi - 1 - state.base]?.role : null;
+  let prevRole = older && 'prevRole' in older ? older.prevRole : retained ? retained.prevRole : fromMi > state.base ? state.messages[fromMi - 1 - state.base]?.role : null;
   const startAt = !retained && fromMi > state.base ? new Date(state.messages[fromMi - 1 - state.base]?.at ?? 0) : null;
   // 発言に結び付いた human の present は、発言の本文の位置に取り込む（別のカードは出さない）。発言が描かれた添字だけ取り込み済みにする
-  const attachedTo = inlineAttachments(items);
+  const attachedTo = older?.attachedTo ?? inlineAttachments(items);
   const inlined = new Set();
   for (const [index, it] of items.entries()) {
-    if (older && !older.wants(it)) continue;   // 読み足した古い発言: 描いていない行だけ
+    if (older?.range && (index < older.range.from || index >= older.range.to)) continue;   // 先に描く末尾・手前に足す 1 まとまり
+    if (older?.wants && !older.wants(it)) continue;   // 読み足した古い発言: 描いていない行だけ
     if (retained && index < retained.from) {
       // 残した行のうち、本文に添付を取り込んで描いた発言は取り込み済みにする（後ろの添付の行を二重にしない）
       if (it.kind === "msg" && it.m.role === "user" && retained.rows.get(`m:${it.mi}`)?.querySelector(".m.user:not(.cmd)")) inlined.add(it.mi);
@@ -7757,6 +7763,116 @@ function paintHistoryRows(fromMi, retained = null, older = null) {
     prevRole = role;
   }
   return added;
+}
+
+/**
+ * 発言の行の役割（historyRow が返す role と同じ。行を作らずに分かる。続きの見出しを省く判定の「直前の発言」に使う）。
+ * コマンド・`!` は人の行、ほかのシステム側の行（systemHistoryNode）は役割なし
+ */
+function historyRole(m) {
+  if (m.kind === 'command' || m.kind === 'shell') return 'user';
+  if (m.kind === 'compactSummary' || m.kind === 'interrupt' || m.kind === 'teammate' || m.kind === 'interruptionNote' || m.kind === 'channelEvent' || m.kind === 'contextNote' || m.internalTaskNotice) return null;
+  return m.role;
+}
+/** items の index の直前にある発言の役割（無ければ null） */
+function roleBefore(items, index) {
+  for (let i = index - 1; i >= 0; i--) if (items[i].kind === 'msg') return historyRole(items[i].m);
+  return null;
+}
+
+// 会話を開くとき（ADR 0902: C1）: 末尾の FIRST_PAINT_ROWS 件の発言を先に描いて見せ、手前は idle に BACKFILL_MS ほどずつ足す。
+// 全部を 1 回で描くと、スマホでは 1 つの長いタスクが数百 ms になり、開いた後の最初の操作が待たされる
+const FIRST_PAINT_ROWS = 16;
+const BACKFILL_MIN = 12;    // 手前がこれより少ない（項目の数）なら分けずに全部描く
+const BACKFILL_MS = 24;     // 手前を足す 1 回に使う時間の目安（長いタスクにしない）
+
+/**
+ * 描いた一番上の発言の通し番号と時刻（これより手前は、読んでいない・まだ描いていない）。区切りと分岐点はこれより手前に置かない。全部描いてあれば null
+ */
+function paintedFloor() {
+  if (backfill) return { mi: backfill.floorMi, at: backfill.floorAt };
+  return state.base > 0 ? { mi: state.base, at: Date.parse(state.messages[0]?.at ?? '') } : null;
+}
+
+/** 末尾を先に描く分け方。分けないときは null。tail は paintHistory(0, null, tail) に、job は手前を足す仕事（backfill）になる */
+function splitFirstPaint() {
+  if (state.messages.length < FIRST_PAINT_ROWS + BACKFILL_MIN) return null;
+  const items = buildItems(state.messages, state.presents, state.base, state.presentBase);
+  let rows = 0, cut = -1;
+  for (let i = items.length - 1; i >= 0 && cut < 0; i--) if (items[i].kind === 'msg' && ++rows >= FIRST_PAINT_ROWS) cut = i;
+  if (cut < BACKFILL_MIN) return null;
+  const refs = state.presents.map(p => p.reference);
+  const attachedTo = inlineAttachments(items);
+  const job = { id: state.current, items, refs, attachedTo, end: cut, size: 8, handle: null, floorMi: items[cut].mi, floorAt: Date.parse(items[cut].m.at ?? '') };
+  return { job, tail: { items, refs, attachedTo, range: { from: cut, to: items.length }, prevRole: roleBefore(items, cut) } };
+}
+
+/**
+ * 手前を足す仕事の 1 まとまりを描く（job.end の手前から rows 件の発言）。見ている位置は動かさない（末尾を見ていれば末尾に合わせ、読み返していれば基準の行を保つ）。
+ * 発言に結び付いた提示はその発言の直後に並ぶので、まとまりの切れ目は提示の手前にならない。描き終えたら true
+ */
+function backfillChunk(job, rows) {
+  const { items } = job;
+  let from = job.end, seen = 0;
+  while (from > 0 && seen < rows) { from--; if (items[from].kind === 'msg') seen++; }
+  while (from > 0 && items[from].kind === 'present' && items[from].anchorMi >= 0) from--;
+  const restore = atBottom() ? () => { log.scrollTop = log.scrollHeight; } : holdReading();
+  paintBefore = thread.querySelector(':scope > .mw[data-h]');
+  try { paintHistory(0, null, { items, refs: job.refs, attachedTo: job.attachedTo, range: { from, to: job.end }, prevRole: roleBefore(items, from) }); }
+  finally { paintBefore = null; }
+  job.end = from;
+  const top = items.slice(from).find(it => it.kind === 'msg');
+  job.floorMi = top ? top.mi : state.base;
+  job.floorAt = top ? Date.parse(top.m.at ?? '') : NaN;
+  restore();
+  return from <= 0;
+}
+
+function scheduleBackfill(job) {
+  const run = () => { job.handle = null; stepBackfill(job); };
+  job.handle = typeof requestIdleCallback === 'function' ? { idle: requestIdleCallback(run, { timeout: 250 }) } : { timer: setTimeout(run, 16) };
+}
+function stopBackfillTimer(job) {
+  if (job.handle?.idle) cancelIdleCallback(job.handle.idle);
+  if (job.handle?.timer) clearTimeout(job.handle.timer);
+  job.handle = null;
+}
+/** idle の 1 回分。かかった時間に合わせて次の件数を決める */
+function stepBackfill(job) {
+  if (backfill !== job) return;
+  if (state.current !== job.id) { cancelBackfill(); return; }
+  const started = performance.now();
+  const done = backfillChunk(job, job.size);
+  const spent = Math.max(1, performance.now() - started);
+  job.size = Math.min(48, Math.max(2, Math.round(job.size * BACKFILL_MS / spent)));
+  if (done) finishBackfill(job); else scheduleBackfill(job);
+}
+/** 手前を足し終えた: 手前に置けなかった区切りと分岐点を置き、実寸の確定と手前の読み足しを再開する */
+function finishBackfill(job) {
+  if (backfill !== job) return;
+  backfill = null;
+  const restore = atBottom() ? () => { log.scrollTop = log.scrollHeight; } : holdReading();
+  syncEdit();
+  paintCompactions();
+  placeJunctions();
+  restore();
+  prepareHistoryHeights();
+  requestAnimationFrame(() => { log.style.overflowAnchor = ''; maybeLoadOlder(); });
+}
+/** 仕事をやめる（会話が替わった・描き直す）。描いた行は clearThread などが片付ける */
+function cancelBackfill() {
+  if (!backfill) return;
+  stopBackfillTimer(backfill);
+  backfill = null;
+  log.style.overflowAnchor = '';
+}
+/** 残りを今すぐ全部描く（手前の発言が要る操作: 手前の読み足し・会話の中の検索・目次・位置を保つ描き替え・枝の切り替え） */
+function flushBackfill() {
+  const job = backfill;
+  if (!job) return;
+  stopBackfillTimer(job);
+  backfillChunk(job, Infinity);
+  finishBackfill(job);
 }
 
 /**
@@ -7849,7 +7965,7 @@ function placeJunctions({ snapshots = branchSnapshots() } = {}) {
   }
   const added = [];
   for (const [mi, entries] of [...byNode].sort((a,b) => a[0]-b[0])) {
-    if (mi >= 0 && mi < state.base) continue;
+    if (mi >= 0 && mi < (paintedFloor()?.mi ?? 0)) continue;
     const key = `m:${mi}`;
     const all = branches.distinguish([{ id: state.current, name: branches.nameOf(state.current), n: Math.max(0, total-mi-1) }, ...entries],
       { id: state.current, messages: state.base ? undefined : state.messages });
@@ -7968,6 +8084,7 @@ async function openFromNotification(target) {
 async function revealMessage({ uuid, role, query, speaker }) {
   const find = () => [...thread.querySelectorAll('.m[data-uuid]')].find((x) => x.dataset.uuid === uuid) ?? null;
   let m = find();
+  if (!m && backfill) { flushBackfill(); m = find(); }   // 窓の中の、まだ描いていない手前
   // 窓の手前にある発言は、見つかるまで前の発言を読み足す
   while (!m && state.base > 0 && await loadOlder()) m = find();
   toc.carry(query, { scope: role === 'tool' ? 'tool' : speaker === 'user' ? 'user' : 'answer', uuid });
@@ -8048,6 +8165,8 @@ async function loadAndPaint(id, { keepUpTo, quiet, fresh, after = null }) {
  * transition は選択前のノード座標。本文の高さを畳まず、ノードを横移動する。
  */
 async function paintSession(id, data, { keepUpTo, transition, loaded = false, load, quiet = false, fresh = false, plan = null } = {}) {
+  // 手前を足している最中の会話を描き替えるとき: 残す行（位置を保つ描き替え・枝の切り替え）は手前まで描き終えてから、そうでなければやめる
+  if (backfill) { if (keepUpTo !== undefined || plan) flushBackfill(); else cancelBackfill(); }
   filePreview.sessionChanged(id);
   const snapshots = branchSnapshots();
   if (keepUpTo !== undefined) saveDraft().catch(() => {});
@@ -8124,7 +8243,11 @@ async function paintSession(id, data, { keepUpTo, transition, loaded = false, lo
   }
   if (!keepComposer) loadDraft();
   closeTurnEl();
-  const added = paintHistory(keepUpTo ?? 0, retained);
+  // 長い会話を開くときは、末尾の数行を先に描き、手前は idle に足す（ADR 0902: C1）。
+  // 位置を保つ描き替え・枝の切り替え・編集中・開いた直後に送った会話は、全部を描く
+  const split = !retained && keepUpTo === undefined && !transition && (!quiet || atEnd) && !chatEdit.active && !state.initialMessageId ? splitFirstPaint() : null;
+  const added = split ? paintHistory(0, null, split.tail) : paintHistory(keepUpTo ?? 0, retained);
+  if (split) { backfill = split.job; log.style.overflowAnchor = 'none'; }
   syncEdit();
   paintCompactions();
   if (state.initialMessageId) {
@@ -8165,6 +8288,7 @@ async function paintSession(id, data, { keepUpTo, transition, loaded = false, lo
   if (keepUpTo === undefined && (!quiet || atEnd)) scrollToEnd(); else if (restoreReading) restoreReading(); else log.scrollTop = scrollAt;
   prepareHistoryHeights();
   requestAnimationFrame(maybeLoadOlder);
+  if (backfill) scheduleBackfill(backfill);
   if (family) family.then(() => {
     if (state.current !== id || load && state.displayLoad !== load) return;
     if (state.busy) { pendingBranchReload = true; return; }
@@ -8259,7 +8383,7 @@ function hideOlder() {
 }
 
 function maybeLoadOlder() {
-  if (olderBusy || state.base <= 0 || !state.current || state.loadingSession || state.busy) return;
+  if (olderBusy || backfill || state.base <= 0 || !state.current || state.loadingSession || state.busy) return;
   if (olderFail?.id === state.current && olderFail.base === state.base) return;
   if (log.scrollTop > OLDER_REACH) return;
   loadOlder();
@@ -8269,6 +8393,7 @@ log.addEventListener('scroll', maybeLoadOlder, { passive: true });
 /** 窓の手前の発言を 1 まとまり読んで、先頭に足す。足せたら true */
 function loadOlder() {
   if (olderBusy) return olderBusy;
+  flushBackfill();   // 手前の行は、いま描いてある一番上の行の手前に足す。窓の中の手前を先に描き終える
   const id = state.current, before = state.base;
   if (!id || before <= 0 || !state.messages.length || state.loadingSession) return Promise.resolve(false);
   const prev = { messages: state.messages, presents: state.presents, base: before, presentBase: state.presentBase };
@@ -8301,6 +8426,7 @@ function loadOlder() {
 
 /** 窓の手前を全部読む（会話の中の検索・目次を開くとき）。会話の最初まで読めたら true */
 async function loadAllOlder() {
+  flushBackfill();
   while (state.base > 0) if (!await loadOlder()) return state.base === 0;
   return true;
 }
