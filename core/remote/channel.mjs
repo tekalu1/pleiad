@@ -12,6 +12,8 @@
 // 流量の制御（§4.3）: HTTP/2 と同じクレジット方式。DATA と WS_MSG の payload の分だけ窓を減らし、
 // 受け側は**下流に渡し終えてから** release() で WINDOW を返す。制御フレームは数えない。
 // 窓の初期値（ストリーム 256 KiB・チャネル 1 MiB）は取り決めの定数で、両側が同じ値を使う（交渉しない）。
+// 受け手はそこから WINDOW の足し増しで自分の窓を広げる（ストリーム 1 MiB・チャネル 4 MiB。ADR 0903）。
+// 古い相手も WINDOW はそのまま受けるので、版の組み合わせを問わない。
 import { EventEmitter } from 'node:events';
 import crypto from 'node:crypto';
 import {
@@ -21,6 +23,13 @@ import {
 
 export const STREAM_WINDOW = 256 * 1024;
 export const CHANNEL_WINDOW = 1024 * 1024;
+/**
+ * 受け手として広げた後の窓（ADR 0903）。往復 300 ms・20 Mbps の帯域と遅延の積（約 0.75 MB）を 1 本のストリームで満たす。
+ * チャネルは中継の上限（相手側に溜まってよい量 8 MiB。§5.3）の半分に収める。
+ * ストリームの窓は、大きい返事の後ろに並ぶ小さい返事の待ち（窓 ÷ 帯域）も決めるので、要る分より広げない。
+ */
+export const RECV_STREAM_WINDOW = 1024 * 1024;
+export const RECV_CHANNEL_WINDOW = 4 * 1024 * 1024;
 export const MAX_STREAMS = 64;
 export const PING_INTERVAL_MS = 20_000;
 export const PING_MISSES = 3;
@@ -258,6 +267,7 @@ export class Channel extends EventEmitter {
   constructor({
     role, send, transport = null, hello = {},
     streamWindow = STREAM_WINDOW, channelWindow = CHANNEL_WINDOW, maxStreams = MAX_STREAMS,
+    recvStreamWindow = RECV_STREAM_WINDOW, recvChannelWindow = RECV_CHANNEL_WINDOW,
     pingIntervalMs = PING_INTERVAL_MS, pingMisses = PING_MISSES,
     bufferedAmount = null, maxBuffered = MAX_BUFFERED, maxWsMessage = MAX_WS_MESSAGE,
   }) {
@@ -270,6 +280,9 @@ export class Channel extends EventEmitter {
     this.hello = hello;
     this.streamWindow = streamWindow;
     this.channelWindow = channelWindow;
+    // 受け手として広げる先。取り決めの初期値より狭くはしない（窓は減らせない）
+    this.recvStreamWindow = Math.min(Math.max(recvStreamWindow, streamWindow), MAX_WINDOW);
+    this.recvChannelWindow = Math.min(Math.max(recvChannelWindow, channelWindow), MAX_WINDOW);
     this.maxStreams = maxStreams;
     this.pingIntervalMs = pingIntervalMs;
     this.pingMisses = pingMisses;
@@ -299,6 +312,7 @@ export class Channel extends EventEmitter {
     if (this.started) return;
     this.started = true;
     this._sendNow(T.HELLO, 0, json.encode({ ...this.hello, proto: PROTO }));
+    this.#widen(null);
     if (this.pingIntervalMs > 0) {
       this.pingTimer = setInterval(() => this.#tick(), this.pingIntervalMs);
       this.pingTimer.unref?.();
@@ -318,6 +332,7 @@ export class Channel extends EventEmitter {
     const s = new Stream(this, id, kind, head, false);
     this.streams.set(id, s);
     this._sendNow(type, id, json.encode(head));
+    this.#widen(s);
     return s;
   }
 
@@ -401,6 +416,18 @@ export class Channel extends EventEmitter {
       this.retryTimer = setTimeout(() => { this.retryTimer = null; this._pump(); }, 10);
     }
     return true;
+  }
+
+  /**
+   * 受け手の窓を取り決めの初期値から広げる（ADR 0903）。ふつうの WINDOW の足し増しなので、相手の版を問わない。
+   * チャネルは HELLO の直後、ストリームは開いた直後（端末は HTTP_REQ / WS_OPEN の直後、ホストは受け付けた直後）。
+   */
+  #widen(stream) {
+    const extra = stream ? this.recvStreamWindow - this.streamWindow : this.recvChannelWindow - this.channelWindow;
+    if (extra <= 0 || this.closed) return;
+    if (stream) stream.recvWindow += extra;
+    else this.recvWindow += extra;
+    this._sendNow(T.WINDOW, stream ? stream.id : 0, u32(extra));
   }
 
   _returnCredit(stream, n) {
@@ -593,6 +620,7 @@ export class Channel extends EventEmitter {
     }
     const s = new Stream(this, id, type === T.HTTP_REQ ? 'http' : 'ws', head, true);
     this.streams.set(id, s);
+    this.#widen(s);
     this.emit('stream', s);
   }
 }

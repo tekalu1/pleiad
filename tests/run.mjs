@@ -48,6 +48,8 @@ const SUITES = [
   './unit/side-panel.mjs',
   './unit/refresh-batch.mjs',
   './unit/command-reply.mjs',
+  './unit/session-list-delta.mjs',
+  './unit/server-session-list-delta.mjs',
   // 内蔵ブラウザー: 右パネルの表・アドレス欄・リンクの開き先・使える画面・main のタブと位置（偽の electron）
   './unit/inapp-browser.mjs',
 
