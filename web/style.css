@@ -1145,9 +1145,10 @@ body.inapp-links .present-tools .visualize-expand{display:none}
 .md-b.md-ul,.md-b.md-ol{position:relative;padding-left:calc(1.5em + var(--ind,0) * 1.2em)}
 .md-b.md-ul::before,.md-b.md-ol::before{content:attr(data-mk);position:absolute;left:calc(.4em + var(--ind,0) * 1.2em);color:var(--ink-weak);font-variant-numeric:tabular-nums;pointer-events:none;user-select:none}
 .md-b.md-cont{padding-left:calc(1.5em + var(--ind,0) * 1.2em)}
-.md-b.md-quote{padding:0 12px 0 calc(12px + (var(--q,1) - 1) * 16px);background:var(--surface-paper);color:var(--ink-weak)}
-.md-b.md-quote:not(.md-quote + .md-quote){border-top-left-radius:var(--r-s);border-top-right-radius:var(--r-s);padding-top:2px}
-.md-b.md-quote:not(:has(+ .md-quote)){border-bottom-left-radius:var(--r-s);border-bottom-right-radius:var(--r-s);padding-bottom:2px}
+/* 引用は面でなく左の縦線で見せる（--surface-paper は入力欄の地とほぼ同じで見えない）。深さごとに 16px 間隔で 1 本ずつ。線は行の背景なので行の間で切れない */
+.md-b.md-quote{padding:0 12px 0 calc(12px + (var(--q,1) - 1) * 16px);color:var(--ink-weak);background:repeating-linear-gradient(to right,var(--line-strong) 0 2px,transparent 2px 16px) left top/calc(var(--q,1) * 16px) 100% no-repeat}
+.md-b.md-quote:not(.md-quote + .md-quote){padding-top:2px}
+.md-b.md-quote:not(:has(+ .md-quote)){padding-bottom:2px}
 .md-b.md-code{font:var(--fs-s)/1.7 var(--font-mono);background:var(--surface-paper);padding:0 14px;white-space:pre-wrap;tab-size:2}
 .md-b.md-code[data-pos^="top"]{border-top-left-radius:var(--r-s);border-top-right-radius:var(--r-s);padding-top:6px;color:var(--ink-weak)}
 .md-b.md-code[data-pos$="bottom"]{border-bottom-left-radius:var(--r-s);border-bottom-right-radius:var(--r-s);padding-bottom:6px}
