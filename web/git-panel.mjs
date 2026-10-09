@@ -67,7 +67,7 @@ export function setupGitPanel({ cmd, preview, session, jump, use, onState = () =
   // 返事が来ない問い合わせで「読み込み中…」のまま止まらないよう、30 秒で諦めて「取れませんでした」にする
   const ask = (command, args) => new Promise((resolve, reject) => { const timer = setTimeout(() => reject(new Error('timeout')), 30_000); cmd(command, args).then(resolve, reject).finally(() => clearTimeout(timer)); });
   const leftovers = createLeftovers({ ...worktrees, changed: () => { if (st.tab === 'worktrees') paint(); } });
-  const fresh = (key) => ({ key, tab: 'changes', sel: { k: 'uncommitted' }, open: null, initial: 'uncommitted', shut: new Set(), older: false, base: null, changes: {}, commitData: {}, hist: null, histLoading: false,
+  const fresh = (key) => ({ key, tab: 'changes', sel: { k: 'uncommitted' }, open: null, auto: false, touched: false, initial: 'uncommitted', shut: new Set(), older: false, base: null, changes: {}, commitData: {}, hist: null, histLoading: false,
     wt: null, wtOpen: new Set(), wtDetail: new Map(), diff: null, loading: false, failed: false, at: null, note: '' });
   let st = fresh(null);
   let opener = null, ticket = 0, noteTimer = 0, target = null, wide = false;
@@ -171,6 +171,7 @@ export function setupGitPanel({ cmd, preview, session, jump, use, onState = () =
   function buildLayout() {
     commits = st.hist?.commits ?? [];
     const dirty = (st.changes.uncommitted?.total?.files ?? 0) > 0;
+    if (!dirty && st.open === WT_KEY) st.open = null;
     layout = layoutGraph(commits, { withWorktree: dirty, headHash: st.hist?.head ?? null });
     const start = st.hist?.session?.head;
     startRow = start ? layout.rows.findIndex((r) => r.key === start) : -1;
@@ -179,8 +180,9 @@ export function setupGitPanel({ cmd, preview, session, jump, use, onState = () =
   function rbarHTML() {
     const narrow = matchMedia('(max-width:760px)').matches;
     const hasSession = Boolean(st.base?.changes?.hasSession);
+    if (!hasSession) return '';   // 範囲が 1 つだけなら切り替えは要らない（コミットしていない分は「未コミットの変更」の行の箱で見る）
     let h = `<span class="seg rseg" role="group" aria-label="${esc(t('git.range'))}"><button type="button" data-rg="uncommitted" aria-pressed="${st.sel.k === 'uncommitted'}">${esc(narrow ? t('git.rangeUncommittedShort') : t('git.rangeUncommitted'))}</button>`;
-    if (hasSession) h += `<button type="button" data-rg="session" aria-pressed="${st.sel.k === 'session'}">${esc(narrow ? t('git.rangeSessionShort') : t('git.rangeSession'))}</button>`;
+    h += `<button type="button" data-rg="session" aria-pressed="${st.sel.k === 'session'}">${esc(narrow ? t('git.rangeSessionShort') : t('git.rangeSession'))}</button>`;
     return `${h}</span>`;
   }
 
@@ -288,11 +290,15 @@ export function setupGitPanel({ cmd, preview, session, jump, use, onState = () =
       <div class="tree" role="tree" aria-label="${esc(t('git.changedFiles'))}">${files}</div>`;
   }
 
+  /** コミットしていない変更が無いときの 1 行（「未コミットの変更」の行が出る場所の代わり） */
+  const cleanHTML = () => (st.sel.k === 'uncommitted' && st.changes.uncommitted && !st.changes.uncommitted.failed && !layout.rows[0]?.wt ? `<div class="git-empty" data-clean>${esc(t('git.emptyUncommitted'))}</div>` : '');
+
   function renderChanges() {
     if (st.loading && !st.base) return frag(`<div class="gp-view"><div class="git-empty">${esc(t('git.loading'))}</div></div>`);
     if (st.failed || !st.base) return frag(`<div class="gp-view"><div class="git-empty">${esc(t('git.failed'))}</div></div>`);
     buildLayout();
-    const view = frag(`<div class="gp-view cgv"><div class="rbar">${rbarHTML()}</div>${graphHTML()}<div class="cl">${listHTML()}</div></div>`);
+    const bar = rbarHTML();
+    const view = frag(`<div class="gp-view cgv">${bar ? `<div class="rbar">${bar}</div>` : ''}${cleanHTML()}${graphHTML()}<div class="cl">${st.sel.k === 'session' ? listHTML() : ''}</div></div>`);
     queueMicrotask(() => { applySelection(); wireTree(); });
     return view;
   }
@@ -319,12 +325,19 @@ export function setupGitPanel({ cmd, preview, session, jump, use, onState = () =
     for (const x of rowsAll) x.tabIndex = x === stop ? 0 : -1;
   }
 
-  /** 範囲を選び直す。グラフは動かさず、帯・一覧・タブの数だけ替える */
+  /**
+   * 範囲を選び直す。グラフは動かさず、帯・一覧・タブの数だけ替える。
+   * 「コミットしていない分」は一覧を出さず、「未コミットの変更」の行の箱を開く。複数のコミットにまたがる「この会話の間」だけがグラフの下の一覧（箱と二重にならないよう、その箱は閉じる）
+   */
   async function choose(next) {
     st.sel = next;
     const bar = root.querySelector('.rbar'), cl = root.querySelector('.cl');
-    if (!bar || !cl) { paint(); return; }
-    bar.innerHTML = rbarHTML(); cl.innerHTML = listHTML(); wireTree(); applySelection(); paintTabs();
+    if (!cl) { paint(); return; }
+    if (bar) bar.innerHTML = rbarHTML();
+    root.querySelector('[data-clean]')?.remove(); root.querySelector('.cg')?.insertAdjacentHTML('beforebegin', cleanHTML());
+    if (next.k === 'session') { if (st.open === WT_KEY) toggleBox(WT_KEY); cl.innerHTML = listHTML(); }
+    else { cl.innerHTML = ''; if (layout.rows[0]?.wt && st.open !== WT_KEY) toggleBox(WT_KEY); }
+    wireTree(); applySelection(); paintTabs();
     if (next.k === 'session' && !st.changes.session) await loadRange('session');
   }
 
@@ -349,11 +362,17 @@ export function setupGitPanel({ cmd, preview, session, jump, use, onState = () =
   }
   /** key の箱を開く / 閉じる。ほかの箱が開いていれば先に閉じる */
   function toggleBox(key) {
+    st.touched = true; st.auto = false;
     const prev = st.open;
     if (prev) closeBox(prev);
     st.open = prev === key ? null : key;
     if (st.open) openBox(st.open);
     applySelection();
+  }
+  /** グラフの行を押した・→ を押した。「この会話の間」の一覧を見ている間に「未コミットの変更」の行を開くなら、範囲も「コミットしていない分」へ移す（箱と一覧が二重に並ばない） */
+  function toggleRow(key) {
+    if (key === WT_KEY && st.sel.k === 'session' && st.open !== WT_KEY) { choose({ k: 'uncommitted' }); return; }
+    toggleBox(key);
   }
   function refillBox() {
     if (!st.open || st.tab !== 'changes' || st.diff) return;
@@ -513,7 +532,7 @@ export function setupGitPanel({ cmd, preview, session, jump, use, onState = () =
     const rg = e.target.closest('[data-rg]');
     if (rg) { choose({ k: rg.dataset.rg }); root.querySelector(`[data-rg="${st.sel.k}"]`)?.focus(); return; }
     const crow = e.target.closest('.cg-row');
-    if (crow) { toggleBox(crow.dataset.k); crow.focus({ preventScroll: true }); return; }
+    if (crow) { toggleRow(crow.dataset.k); crow.focus({ preventScroll: true }); return; }
     if (e.target.closest('[data-older]')) { st.older = !st.older; paint({ keepScroll: true }); return; }
     if (e.target.closest('[data-more]')) { loadMoreHistory(); return; }
     if (e.target.closest('[data-v]')) { prefs.view = prefs.view === 'tree' ? 'list' : 'tree'; savePrefs(); const cl = root.querySelector('.cl'); cl.innerHTML = listHTML(); wireTree(); refillBox(); root.querySelector('[data-v]')?.focus(); return; }
@@ -561,7 +580,7 @@ export function setupGitPanel({ cmd, preview, session, jump, use, onState = () =
     if (crow && e.target === crow) {
       const open = crow.getAttribute('aria-expanded') === 'true';
       if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); const all = visible(); go(all[all.indexOf(crow) + (e.key === 'ArrowDown' ? 1 : -1)]); }
-      else if (e.key === 'ArrowRight') { e.preventDefault(); if (!open) toggleBox(crow.dataset.k); else go(foldOfRow(crow).querySelector('.fr, .grp')); }
+      else if (e.key === 'ArrowRight') { e.preventDefault(); if (!open) toggleRow(crow.dataset.k); else go(foldOfRow(crow).querySelector('.fr, .grp')); }
       else if (e.key === 'ArrowLeft' && open) { e.preventDefault(); toggleBox(crow.dataset.k); }
       else if (e.key === 'Escape' && st.open) { e.preventDefault(); e.stopPropagation(); const was = st.open; toggleBox(was); rowOfKey(was)?.focus({ preventScroll: true }); }
       return;
@@ -687,6 +706,8 @@ export function setupGitPanel({ cmd, preview, session, jump, use, onState = () =
     if (!data.changes?.hasSession && st.sel.k === 'session') st.sel = { k: 'uncommitted' };
     if (st.initial === 'session' && data.changes?.hasSession) st.sel = { k: 'session' };
     st.initial = 'uncommitted';
+    // 触っていないうちは、コミットしていない変更があれば「未コミットの変更」の行を開いておく（Esc はこの箱でなくパネルを閉じる）
+    if (!st.touched && !st.open && st.sel.k === 'uncommitted' && (data.changes?.total?.files ?? 0) > 0) { st.open = WT_KEY; st.auto = true; }
     onState(data.git, { foreign: foreign() });
     st.commitData = {};
     const sameHead = !force && st.hist && data.git.head && st.hist.head?.startsWith(data.git.head);
@@ -730,7 +751,7 @@ export function setupGitPanel({ cmd, preview, session, jump, use, onState = () =
   // Esc: 差分を開いている間は、パネルを閉じずに一覧へ戻る。差分が無く箱が開いていれば、箱を閉じる（どちらもパネルの外にフォーカスがあっても）
   document.addEventListener('keydown', (e) => {
     if (e.key !== 'Escape' || e.isComposing || !isOpen() || e.defaultPrevented) return;
-    const boxOpen = !st.diff && st.tab === 'changes' && st.open;
+    const boxOpen = !st.diff && st.tab === 'changes' && st.open && !st.auto;
     if (!st.diff && !boxOpen) return;
     // ダイアログ・メニューが開いている間と、フォーカスがパネルの外（入力欄など）にあるときは奪わない
     if (document.querySelector('dialog[open], .pop.menu:not([hidden])')) return;
