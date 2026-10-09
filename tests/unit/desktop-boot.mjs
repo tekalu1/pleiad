@@ -98,6 +98,7 @@ async function start({ env = {}, packaged = false, choice = 'link', connectError
     './msix.cjs': { packagedIdentity: () => false },
     './update-auth.cjs': { prepareUpdateCheck: () => {} },
     './update-log.cjs': { createUpdateLog: () => ({}) },
+    './update-signature.cjs': { installUpdateSignatureVerifier: () => false },
     './server-port.cjs': { savedPort: () => 7499, rememberPort: (_file, port) => { calls.remembered = port; } },
     './secret-bridge.cjs': { attachSecretBridge: listens(calls, 'secretBridge') },
     './i18n.cjs': { t: key => key, setLocale: () => {}, resolveLocale: () => 'ja', initDesktopI18n: async () => {} },

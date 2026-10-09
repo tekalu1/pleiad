@@ -73,6 +73,7 @@ async function start({ ready = true, work = { count: 0 }, argv = [], tray = fals
     './msix.cjs': { packagedIdentity: () => false },
     './update-auth.cjs': { prepareUpdateCheck: () => {} },
     './update-log.cjs': { createUpdateLog: () => ({}) },
+    './update-signature.cjs': { installUpdateSignatureVerifier: () => false },
     './server-port.cjs': { savedPort: () => 7499, rememberPort: () => {} },
     './secret-bridge.cjs': { attachSecretBridge: () => {} },
     './i18n.cjs': { t: key => key, setLocale: () => {}, resolveLocale: () => 'ja', initDesktopI18n: async () => {} },
