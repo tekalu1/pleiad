@@ -33,7 +33,7 @@
 4. **ページの読み込みのたびに確かめる。** プロキシは `/` か `/index.html` の要求が来るたび、チャネルが ready になった後でホストに尋ねる（1 往復）。304 なら持っている束、200 なら新しい束を保存して使う。ほかの静的ファイルの要求は、直近の確かめの答えを待って使う。オフラインの扱い（案内のページ）は今と同じ。
 5. **束から返すのは「クエリが `token` だけの GET/HEAD」で、束にあるパスだけ。** トークン・`Host`・メソッドの照合はこれまでどおりプロキシが先に行う。束から返すときに付ける Cookie はプロキシ自身のもの（`token` のクエリが正しいときだけ）。ホストのトークンは端末に出ない。束に無いもの・束が使えないとき（古いホストの 404・失敗・壊れたファイル）は、今までどおり 1 本ずつホストへ流す。
 6. **古いアプリ・古いホスト**: 古いアプリは `/static-bundle` を呼ばないので今までどおり。古いホストは 404 を返し、新しいアプリは今までどおり流す。どちらも遅いだけで動く。
-7. **転送の圧縮は `/bulk/<id>`（ADR 0179）と同じ HTTP の gzip にそろえる。** 要求の `accept-encoding` に gzip があればホストは gzip（水準 6）で返して `content-encoding: gzip`・`vary: accept-encoding` を付け、無ければ縮めない。束だけの圧縮の取り決め（独自のクエリや見出し）は作らない。Node・Kotlin は `accept-encoding: gzip` で取る。Swift は Apple の Compression があるときだけ付け、gzip の頭と尾（ISIZE）を読んで中の deflate を戻す（Windows・Linux の試験では付けず、縮めない束を受ける）。CRC は見ず、束の key（全ファイルの SHA-256）で確かめる。
+7. **転送の圧縮は `/bulk/<id>`（ADR 0179）と同じ HTTP の gzip にそろえる。** 要求の `accept-encoding` に gzip があればホストは gzip（水準 6）で返して `content-encoding: gzip`・`vary: accept-encoding` を付け、無ければ縮めない。束だけの圧縮の取り決め（独自のクエリや見出し）は作らない。Node・Kotlin・Swift は `accept-encoding: gzip` で取る。Swift は gzip の頭と尾（ISIZE）を読み、中の deflate を Swift だけで書いた inflate（`Inflate.swift`）で戻す（Apple の Compression は使わない。Windows・Linux の `swift test` でもアプリと同じ gzip の経路を通すため）。CRC は見ず、束の key（全ファイルの SHA-256）で確かめる。
 
 ## 理由
 

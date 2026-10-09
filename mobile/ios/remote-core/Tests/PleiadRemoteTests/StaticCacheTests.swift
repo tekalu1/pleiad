@@ -63,6 +63,10 @@ final class StaticCacheTests: XCTestCase {
     // gzip.compress(b"hello pleiad\n" * 20, mtime=0), and the same with FNAME "shell.bin" (python)
     static let gzPlain: Bytes = [31, 139, 8, 0, 0, 0, 0, 0, 2, 10, 203, 72, 205, 201, 201, 87, 40, 200, 73, 205, 76, 76, 225, 202, 24, 153, 28, 0, 138, 65, 183, 148, 4, 1, 0, 0]
     static let gzNamed: Bytes = [31, 139, 8, 8, 0, 0, 0, 0, 2, 255, 115, 104, 101, 108, 108, 46, 98, 105, 110, 0, 203, 72, 205, 201, 201, 87, 40, 200, 73, 205, 76, 76, 225, 202, 24, 153, 28, 0, 138, 65, 183, 148, 4, 1, 0, 0]
+    // the first 40 bytes of the same at level 0 (a stored block), and `listHtml` at level 9 (a dynamic Huffman block)
+    static let gzStored: Bytes = [31, 139, 8, 0, 0, 0, 0, 0, 4, 10, 1, 40, 0, 215, 255, 104, 101, 108, 108, 111, 32, 112, 108, 101, 105, 97, 100, 10, 104, 101, 108, 108, 111, 32, 112, 108, 101, 105, 97, 100, 10, 104, 101, 108, 108, 111, 32, 112, 108, 101, 105, 97, 100, 10, 104, 92, 209, 19, 49, 40, 0, 0, 0]
+    static let gzDynamic: Bytes = [31, 139, 8, 0, 0, 0, 0, 0, 2, 10, 141, 211, 59, 14, 194, 64, 12, 132, 225, 158, 83, 32, 247, 8, 108, 243, 148, 22, 223, 37, 132, 0, 139, 150, 42, 220, 95, 41, 145, 144, 60, 179, 245, 63, 213, 39, 187, 180, 186, 30, 219, 48, 207, 87, 169, 223, 233, 179, 217, 73, 12, 183, 241, 62, 61, 158, 175, 250, 46, 219, 86, 99, 85, 254, 38, 42, 65, 22, 38, 129, 7, 46, 1, 251, 94, 2, 229, 131, 4, 168, 71, 137, 60, 158, 36, 210, 118, 150, 200, 210, 69, 34, 211, 232, 17, 227, 100, 74, 205, 148, 161, 41, 81, 83, 204, 166, 208, 77, 17, 156, 2, 57, 205, 233, 172, 131, 206, 58, 174, 141, 210, 25, 163, 51, 66, 103, 152, 206, 32, 157, 33, 58, 3, 116, 150, 211, 121, 7, 157, 115, 58, 231, 159, 202, 232, 156, 208, 57, 166, 115, 72, 231, 136, 206, 1, 157, 255, 232, 22, 197, 135, 53, 208, 226, 4, 0, 0]
+    static let listHtml = Bytes((0..<40).map { "<li class=\"item-\($0)\">\(String("abcdefghij".dropFirst($0 % 10)))</li>\n" }.joined().utf8)
 
     func testGzipMember() throws {
         let plain = try StaticBundleCodec.gzipMember(Self.gzPlain)
@@ -74,16 +78,27 @@ final class StaticCacheTests: XCTestCase {
         XCTAssertThrowsError(try StaticBundleCodec.gzipMember(notGzip))
         // FNAME without its terminator inside the member
         XCTAssertThrowsError(try StaticBundleCodec.gzipMember(Array(Self.gzNamed.prefix(19)) + Bytes(repeating: 1, count: 8)))
-        #if canImport(Compression)
+    }
+
+    func testGunzip() throws {
         let raw = Bytes(String(repeating: "hello pleiad\n", count: 20).utf8)
         XCTAssertEqual(raw, try StaticBundleCodec.gunzip(Self.gzPlain))
         XCTAssertEqual(raw, try StaticBundleCodec.gunzip(Self.gzNamed))
+        XCTAssertEqual(Array(raw.prefix(40)), try StaticBundleCodec.gunzip(Self.gzStored))
+        XCTAssertEqual(Self.listHtml, try StaticBundleCodec.gunzip(Self.gzDynamic))
+        XCTAssertEqual(["accept-encoding": "gzip"], StaticBundleCodec.REQUEST_HEADERS)
+
         XCTAssertThrowsError(try StaticBundleCodec.gunzip(Self.gzPlain, max: 100))
+        XCTAssertThrowsError(try StaticBundleCodec.gunzip(Self.gzDynamic, max: Self.listHtml.count - 1))
+        XCTAssertEqual(Self.listHtml, try StaticBundleCodec.gunzip(Self.gzDynamic, max: Self.listHtml.count))
         var badSize = Self.gzPlain; badSize[badSize.count - 4] ^= 1
         XCTAssertThrowsError(try StaticBundleCodec.gunzip(badSize))
-        #else
-        XCTAssertTrue(StaticBundleCodec.REQUEST_HEADERS.isEmpty)   // never asks for what it cannot undo
-        #endif
+        // the deflate cut short (the trailer kept)
+        XCTAssertThrowsError(try StaticBundleCodec.gunzip(Array(Self.gzDynamic.prefix(100)) + Array(Self.gzDynamic.suffix(8))))
+        var badType = Self.gzPlain; badType[10] |= 6   // block type 3
+        XCTAssertThrowsError(try StaticBundleCodec.gunzip(badType))
+        var badStored = Self.gzStored; badStored[13] ^= 1   // NLEN no longer the complement of LEN
+        XCTAssertThrowsError(try StaticBundleCodec.gunzip(badStored))
     }
 
     func testCheckSaveReuseAndRefetch() throws {

@@ -4,9 +4,6 @@ import CryptoKit
 #else
 import Crypto
 #endif
-#if canImport(Compression)
-import Compression
-#endif
 
 // Swift port of StaticCache.kt / core/remote/static-cache.mjs and the reader of core/remote/static-bundle.mjs
 // (docs/remote.md §8.6, ADR 0181): the device keeps the host's web/ shell as one bundle per host, and asks the host on
@@ -19,7 +16,7 @@ import Compression
 //   key = sha256 hex over, per file in order, "<path>\n<type>\n<size>\n" and the body. Recomputed here, so a torn or
 //   corrupted file is never used. Saved uncompressed at <dir>/static/<hostId>.bin (atomic write).
 // Transfer: gzip (accept-encoding: gzip -> content-encoding: gzip, the same rule as the host's /bulk/ replies,
-// core/bulk-replies.mjs, ADR 0179) where the Compression framework exists (Apple); uncompressed elsewhere (Windows / Linux tests).
+// core/bulk-replies.mjs, ADR 0179), undone by the plain Swift inflate (Inflate.swift) on every platform.
 
 public struct StaticFile {
     public let type: String
@@ -49,12 +46,8 @@ public enum StaticBundleCodec {
     public static let KEY_HEADER = "x-pleiad-bundle-key"
     /// Limit before and after gunzip (the host's web/ is about 5 MB).
     public static let MAX_BYTES = 64 * 1024 * 1024
-    /// Request headers of the check: ask for gzip only where it can be undone.
-    #if canImport(Compression)
+    /// Request headers of the check.
     public static let REQUEST_HEADERS: [String: String] = ["accept-encoding": "gzip"]
-    #else
-    public static let REQUEST_HEADERS: [String: String] = [:]
-    #endif
 
     private static func fail(_ what: String) -> StateError { StateError(description: "static bundle: \(what)") }
 
@@ -92,7 +85,7 @@ public enum StaticBundleCodec {
         var at = 8 + headLen
         for f in list {
             guard let path = f["path"]?.string, validPath(path), let type = f["type"]?.string,
-                  !type.contains("\r"), !type.contains("\n"),
+                  !type.utf8.contains(13), !type.utf8.contains(10),   // bytes: "\r\n" is one Character, so contains("\n") misses it
                   case .int(let size64)? = f["size"], size64 >= 0, size64 <= Int64(buf.count - at) else { throw fail("bad entry") }
             let size = Int(size64)
             let body = Array(buf[at..<(at + size)])
@@ -130,29 +123,17 @@ public enum StaticBundleCodec {
         return (data[at..<(data.count - 8)], isize)
     }
 
-    /// gzip, at most `max` bytes out. Only where the Compression framework exists.
+    /// gzip, at most `max` bytes out.
     public static func gunzip(_ data: Bytes, max: Int = MAX_BYTES) throws -> Bytes {
-        #if canImport(Compression)
         let (deflate, isize) = try gzipMember(data)
-        var out = Bytes()
-        var tooLarge = false
-        // Apple's .zlib is raw deflate (no zlib header), which is what gzip wraps
-        let filter = try OutputFilter(.decompress, using: .zlib) { (chunk: Data?) in
-            guard let chunk else { return }
-            if out.count + chunk.count > max { tooLarge = true; throw StaticBundleCodec.fail("too large") }
-            out += Bytes(chunk)
-        }
+        let out: Bytes
         do {
-            try filter.write(Data(deflate))
-            try filter.finalize()
+            out = try Inflate.inflate(deflate, max: max)
         } catch {
-            throw tooLarge ? fail("too large") : fail("bad gzip")
+            throw fail("bad gzip (\(error))")
         }
         guard UInt32(truncatingIfNeeded: out.count) == isize else { throw fail("gzip length mismatch") }
         return out
-        #else
-        throw fail("gzip is not available here")
-        #endif
     }
 }
 
