@@ -1146,7 +1146,9 @@ body.inapp-links .present-tools .visualize-expand{display:none}
 .md-b.md-ul::before,.md-b.md-ol::before{content:attr(data-mk);position:absolute;left:calc(.4em + var(--ind,0) * 1.2em);color:var(--ink-weak);font-variant-numeric:tabular-nums;pointer-events:none;user-select:none}
 .md-b.md-cont{padding-left:calc(1.5em + var(--ind,0) * 1.2em)}
 /* 引用は面でなく左の縦線で見せる（--surface-paper は入力欄の地とほぼ同じで見えない）。深さごとに 16px 間隔で 1 本ずつ。線は行の背景なので行の間で切れない */
-.md-b.md-quote{padding:0 12px 0 calc(12px + (var(--q,1) - 1) * 16px);color:var(--ink-weak);background:repeating-linear-gradient(to right,var(--line-strong) 0 2px,transparent 2px 16px) left top/calc(var(--q,1) * 16px) 100% no-repeat}
+.md-b.md-quote{position:relative;padding:0 12px 0 calc(12px + (var(--q,1) - 1) * 16px);color:var(--ink-weak)}
+/* 線の幅（深さ）は --q を幅にだけ使う。--q は画面側が行ごとに付ける値で、トークンではないので background の中に置かない（design-lint の unknown-token） */
+.md-b.md-quote::before{content:"";position:absolute;left:0;top:0;bottom:0;width:calc(var(--q,1) * 16px);background:repeating-linear-gradient(to right,var(--line-strong) 0 2px,transparent 2px 16px);pointer-events:none}
 .md-b.md-quote:not(.md-quote + .md-quote){padding-top:2px}
 .md-b.md-quote:not(:has(+ .md-quote)){padding-bottom:2px}
 .md-b.md-code{font:var(--fs-s)/1.7 var(--font-mono);background:var(--surface-paper);padding:0 14px;white-space:pre-wrap;tab-size:2}
