@@ -57,12 +57,14 @@
 | 機能 | main が居ない間（45〜70 秒） | 戻ったとき |
 |---|---|---|
 | Chrome への接続・中継・映像 | 続く（接続の子とサーバーは main に頼らない） | — |
-| 隠した窓 | 隠したまま（画面の外・透明度 0・素通しは窓自身の状態なので、main が居なくても崩れない）。**前面を取ったときの押し返し（0154）は効かない** | サーバーが窓ごとに預かっていた OS の札（HWND・元の拡張スタイル・Chrome のプロセス）で、新しい main に窓を取り込み直させる（`adoptAgent`）。main は窓が生きていて、Chrome のプロセスの窓で、Pleiad が付けた拡張スタイルのままのときだけ取り込む（HWND の使い回しで利用者の窓を取り違えない）。取り込んだら押し返しを再開し、置き直す |
+| 隠した窓 | 隠したまま（画面の外・透明度 0・素通しは窓自身の状態なので、main が居なくても崩れない）。**前面を取ったときの押し返し（0154）は効かない** | サーバーが窓ごとに預かっていた OS の札（HWND・元の拡張スタイル・Chrome のプロセス）で、新しい main に窓を取り込み直させる（`adoptAgent`）。main は窓が生きていて、Chrome のプロセスの窓で、Pleiad が付けた拡張スタイルのままのときだけ取り込む（HWND の使い回しで利用者の窓を取り違えない）。位置は問わない（画面の中にあれば、持ち主の無い窓であることも確かめる）。取り込んだら押し返しを再開し、画面の中にあった窓は隠し直す |
 | 新しい窓（エージェントの `createTab`・ページの `popup`） | **開かずに待つ**（main が戻るまで。20 秒で失敗を返す）。OS の層が無い間に、隠せない窓を開かない | 待っていたものを開く |
 | 引き継ぐ・確認の窓を前に出す | 使えない（OS の層が要る）。画面には「Pleiad の更新中」と出す | 使える |
 | 窓を閉じる | CDP の `Target.closeTarget` で閉じる | OS の層で閉じる（0154 のまま） |
 
 - 窓の印（token）は、**窓の大きさを決めて隠し直した後**に作る（`windows.mjs` の `openWindow`）。chrome.exe で開く最初の窓は、プロフィールに最大化が残っていると最大化で開き、`Browser.setWindowBounds` で通常に戻ったとき Chrome が保存していた画面の中の位置へ動く。動いたままの窓は新しい main の `adoptAgent` が「隠した姿のまま」と見ず、引き継げない窓として CDP で閉じられていた（`createTarget` の窓は位置を指定して作るので動かない）。
+  - `Browser.setWindowBounds` は、最大化・最小化・全画面の窓に `windowState: 'normal'`（省いたときの既定）を受けると戻すだけで、大きさ・位置は当てない（Chromium の `chrome/browser/devtools/protocol/browser_handler.cc` の `SetWindowBounds`。大きさと `normal` 以外の状態は一緒に送れない）。`openWindow` は `Browser.getWindowBounds` の `windowState` を見て、通常でなければ先に `{ windowState: 'normal' }` を送り、通常になったのを確かめてから大きさを送る。
+  - 実機（2026-10-09）では、隠し直した後に、通常に戻った窓が遅れて画面の中（保存していた位置）へ出た（透明のまま）。そこで `adoptAgent` は位置でなく拡張スタイル（`TOOLWINDOW`・`LAYERED`・`TRANSPARENT` があり `APPWINDOW` が無い。`conceal` だけが付ける組み合わせで、利用者の Chrome の窓は持たない）で隠した窓と見て引き継ぎ、画面の中にあれば隠し直す。main の見張りも、隠している窓が画面の中へ動かされていないかを 1 秒に 1 回確かめて隠し直す（0154）。
 - main は更新で終わるとき（`installUpdate` で `updateLeaving` を立てた後の `will-quit`・`app.exit`）、**エージェントの窓を閉じない**。更新を取りやめた（`main-leaving-cancel`）ら印を戻す。それ以外の終わり方（Pleiad の終了）では、0154 のとおり閉じる。
 - サーバーの OS の層（`core/chrome/os.mjs`）は `process.parentPort` ではなく main への口（`core/main-port.mjs` の `getMainPort()`）から作る。口が切れたら待っていた呼び出しを `away` で失敗にし、つながり直したら `chrome-os-ready` を求め直す。
 
