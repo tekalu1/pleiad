@@ -49,6 +49,8 @@ export default async function (t) {
     paintContextStrip: noop, paintCompactions: noop,
     // 狭い画面の引き出し（client.mjs の setDrawer）。会話を開くと閉じる。このテストの対象外
     setDrawer: noop,
+    // 起動で前回の会話を先に取っておく仕組み（client.mjs の startBootPrefetch）と、つなぎ中の骨組み。このテストの対象外（先取りは無い）
+    takeBootPrefetch: () => null, bootSkeleton: false, paintHistorySkeleton: noop, bootHold: null,
     // 入力欄の待ち（web/composer-wait.mjs）。tests/unit/composer-wait.mjs が見る。このテストの対象外
     composerWait: { busy: noop, idle: noop, failed: noop, cancel: noop, queued: false }, freshSessionId: null,
     promptPlaceholder: () => "chat.composer.placeholder",

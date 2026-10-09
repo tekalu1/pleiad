@@ -77,7 +77,7 @@ export default async function (t) {
     settingsWrite: Promise.resolve(), modeWrite: Promise.resolve(),
     DRAFT_STORE: 'drafts', draftWrites: new Map(), draftKey: () => state.current ?? '',
     localStorage: { setItem: (k, v) => storage.set(k, v), getItem: k => storage.get(k) ?? null },
-    setDrawer: noop, randomId: () => Math.random().toString(36).slice(2), renderAttached: noop, fitPrompt: noop, clearThread: noop, prepareHistoryHeights: noop, syncTopbar: async () => {},
+    setDrawer: noop, settleDrawer: noop, takeBootPrefetch: () => null, bootSkeleton: false, paintHistorySkeleton: noop, bootHold: null, randomId: () => Math.random().toString(36).slice(2), renderAttached: noop, fitPrompt: noop, clearThread: noop, prepareHistoryHeights: noop, syncTopbar: async () => {},
     syncWorkEntry: noop, refreshGit: async () => {}, restorePastSubagents: noop, loadTaskCards: async () => {}, paintContextStrip: noop, paintCompactions: noop,
     pendingRows: new Map(), renderSessions: noop, pendingAfterDelay: () => noop, side: { keep: noop, showUndo: noop },
     filePreview: { sessionChanged: noop }, setTimeout: () => 1, clearTimeout: noop, el: () => new N('div'), append: noop,

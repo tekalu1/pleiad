@@ -49,6 +49,12 @@ export default async function (t) {
   const proxyKt = read('mobile/android/remote-core/src/main/kotlin/com/procway/pleiad/remote/DeviceProxy.kt');
   t.ok('オフライン・取り消しの案内に「ホスト一覧に戻る」（window.backToHosts があるときだけ出す）',
     /id="back-to-hosts" hidden/.test(proxyKt) && /typeof window\.backToHosts==='function'/.test(proxyKt) && /fun backToHosts\(\): String/.test(proxyKt));
+  // 開き直しのポート: TIME_WAIT の上にも bind でき（iOS の Socket.swift と同じ reuseAddress）、塞がっていたら少し待って数回試し、それでも駄目なら任意のポート
+  const bind = proxyKt.slice(proxyKt.indexOf('private fun bindListener('), proxyKt.indexOf('private fun acceptLoop('));
+  t.ok('DeviceProxy: 前のポートへ reuseAddress で bind し、塞がっていたら少し待って数回やり直してから任意のポートへ',
+    /reuseAddress = true/.test(bind) && /BIND_ATTEMPTS/.test(bind) && /Thread\.sleep\(BIND_RETRY_MS\)/.test(bind) && /ServerSocket\(\)/.test(bind)
+      && bind.indexOf('BIND_ATTEMPTS') < bind.lastIndexOf('InetSocketAddress(lo, 0)')
+      && /private const val BIND_ATTEMPTS = \d+/.test(proxyKt) && /private const val BIND_RETRY_MS = \d+L/.test(proxyKt));
   const xml = l => read(`${APP}/res/${l === 'ja' ? 'values-ja' : 'values'}/strings.xml`);
   t.ok('案内の「ホスト一覧に戻る」は画面の辞書（ui.json の remote.backToHosts）と同じ文言（ja・en）',
     ['ja', 'en'].every(l => {

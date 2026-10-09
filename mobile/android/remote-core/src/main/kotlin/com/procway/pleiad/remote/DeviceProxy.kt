@@ -75,6 +75,8 @@ class DeviceProxy(
         private const val WS_PAUSE_ABOVE = 256 * 1024L
         private const val MAX_WS_MESSAGE = 64L * 1024 * 1024
         private const val MAX_HEAD = 32 * 1024
+        private const val BIND_ATTEMPTS = 6
+        private const val BIND_RETRY_MS = 250L
         private val PASS_REQUEST = setOf(
             "accept", "accept-language", "accept-encoding", "cache-control", "pragma",
             "if-none-match", "if-modified-since", "if-range", "range", "user-agent",
@@ -111,20 +113,47 @@ class DeviceProxy(
     /** Listen and start connecting. Blocking (binds the socket); call off the main thread. */
     fun start(): DeviceProxy {
         val lo = InetAddress.getByName("127.0.0.1")
-        val ss = ServerSocket()
-        ss.reuseAddress = false
-        try {
-            ss.bind(InetSocketAddress(lo, wantPort), 64)
-        } catch (e: IOException) {
-            if (wantPort == 0) throw e
-            log("remote proxy: port $wantPort unavailable (${e.message})")
-            ss.bind(InetSocketAddress(lo, 0), 64)
-        }
+        val ss = bindListener(lo)
         server = ss
         port = ss.localPort
         pool.execute { acceptLoop(ss) }
         link.start()
         return this
+    }
+
+    /**
+     * The WebView's origin is this port, and its localStorage (the open conversation) goes with it.
+     * So the saved port is kept: SO_REUSEADDR lets us bind over the previous run's TIME_WAIT
+     * connections, and a still-held port is retried briefly before falling back to a random one.
+     */
+    private fun bindListener(lo: InetAddress): ServerSocket {
+        if (wantPort != 0) {
+            var last: IOException? = null
+            for (attempt in 0 until BIND_ATTEMPTS) {
+                if (attempt > 0) {
+                    try { Thread.sleep(BIND_RETRY_MS) } catch (_: InterruptedException) { break }
+                }
+                val ss = ServerSocket()
+                try {
+                    ss.reuseAddress = true
+                    ss.bind(InetSocketAddress(lo, wantPort), 64)
+                    return ss
+                } catch (e: IOException) {
+                    last = e
+                    try { ss.close() } catch (_: IOException) {}
+                }
+            }
+            log("remote proxy: port $wantPort unavailable (${last?.message})")
+        }
+        val ss = ServerSocket()
+        ss.reuseAddress = true
+        try {
+            ss.bind(InetSocketAddress(lo, 0), 64)
+        } catch (e: IOException) {
+            try { ss.close() } catch (_: IOException) {}
+            throw e
+        }
+        return ss
     }
 
     fun retryNow(newCreds: HostCreds? = null) {
