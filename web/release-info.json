@@ -1,8 +1,8 @@
 {
-  "version": "0.13.0-beta.5",
+  "version": "0.13.0-beta.6",
   "releases": [
     {
-      "version": "0.13.0-beta.5",
+      "version": "0.13.0-beta.6",
       "date": "2026-10-09",
       "title": "証明書を信頼させていない PC でも自動更新できるように",
       "sections": [
