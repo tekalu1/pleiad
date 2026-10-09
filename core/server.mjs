@@ -1720,7 +1720,8 @@ const server = http.createServer(async (req, res) => {
         : null;
       const plain = { 'content-type':'text/plain; charset=utf-8', 'cache-control':'private, no-store', 'x-content-type-options':'nosniff' };
       if (found === null) { res.writeHead(sessionId && (field === 'content' || field === 'dataUri') ? 404 : 400, plain); return res.end('not found'); }
-      const safe = { 'cache-control':'private, max-age=31536000, immutable', 'x-content-type-options':'nosniff', 'content-security-policy':"sandbox; default-src 'none'" };
+      // 時刻（at）で指した本文だけ長く覚えさせる。通し番号だけで指した本文は、巻き戻しの後に同じ番号へ別の提示が来ると変わる
+      const safe = { 'cache-control': at ? 'private, max-age=31536000, immutable' : 'private, no-store', 'x-content-type-options':'nosniff', 'content-security-policy':"sandbox; default-src 'none'" };
       if (field === 'dataUri') {
         const m = /^data:(image\/(?:png|jpe?g|gif|webp|avif|bmp|svg\+xml));base64,/i.exec(found);
         if (!m) { res.writeHead(415, plain); return res.end('unsupported'); }

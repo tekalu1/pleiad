@@ -49,6 +49,17 @@ export function presentSig(present) {
   return sig;
 }
 
+/**
+ * 遡り（older）の照合に使う署名。サーバーが後から付ける印（`!` の終了コード・渡していない印・予定の時刻）を除く。
+ * 会話を開く窓は走っているターンの途中だと印を付ける前の発言から切られ、遡りは印を付けた発言から切られるので、
+ * 印を含めると同じ発言でも署名が合わず、遡るたびに読み直しになる
+ */
+export function anchorSig(message) {
+  if (message === null || typeof message !== "object") return messageSig(message);
+  const { exitCode, pending, scheduledFor, ...rest } = message;
+  return hash53(JSON.stringify(rest));
+}
+
 const sameMessage = (a, b) => a === b || messageSig(a) === messageSig(b);
 const samePresent = (a, b) => a === b || presentSig(a) === presentSig(b);
 
@@ -159,6 +170,27 @@ export function joinReply(prev, data, request) {
 
 // ---------------------------------------------------------------- 窓と本文の遅延（ADR 0902）
 
+/** 委譲先のエージェント（サブエージェント）を呼ぶツール。作業ダイアログの過去の一覧は、この呼び出しから子を引き直す */
+export const SUBAGENT_TOOLS = new Set(['Task', 'Agent', 'collabAgentToolCall', 'subAgentActivity']);
+
+/**
+ * messages の [from, to) にあるサブエージェントの呼び出しの要約 { id, said, done, failed, at }。
+ * said は依頼の最初の行（120 字まで）、done は結果が付いているか、failed は結果がエラーか。窓の手前の分は、サーバーがこれで運ぶ
+ */
+export function subagentCalls(messages, from = 0, to = messages.length) {
+  const out = [];
+  for (let i = from; i < to; i++) for (const call of messages[i]?.toolCalls ?? []) {
+    if (!SUBAGENT_TOOLS.has(call?.name) || !call.id) continue;
+    const said = call.input?.description || call.input?.task || call.input?.prompt;
+    out.push({ id: call.id, said: String(said ?? '').split(/\r?\n/).find(Boolean)?.slice(0, 120) ?? '', done: Boolean(call.result), failed: Boolean(call.result?.isError), at: messages[i].at ?? null });
+  }
+  return out;
+}
+const earlierOf = (messages, start) => {
+  const calls = start > 0 ? subagentCalls(messages, 0, start) : [];
+  return calls.length ? { earlierCalls: calls } : {};
+};
+
 /** 会話を開くときに運ぶ発言の件数・大きさの目安（画面が頼み、サーバーが丸める） */
 export const WINDOW_MESSAGES = 50;
 export const WINDOW_BYTES = 256 * 1024;
@@ -166,6 +198,8 @@ export const WINDOW_BYTES = 256 * 1024;
 const MIN_WINDOW = 6;
 /** 頼みの上限（壊れた・悪意のある引数でも全部を数えない） */
 const MAX_WINDOW_MESSAGES = 2000;
+/** 遡りで特定の発言まで届かせる（reach）ときの大きさの目安。ふつうの遡り（WINDOW_BYTES）より大きい */
+const REACH_BYTES = 2 * 1024 * 1024;
 /** 本文をこの長さ以上の提示は印だけにする（小さい本文は印にするより直に運んだほうが速い） */
 export const LAZY_MIN = 2048;
 
@@ -241,24 +275,30 @@ export function serveHistory(body, args) {
   const from = intArg(args?.from), presentFrom = intArg(args?.presentFrom);
   if (from !== null && presentFrom !== null && base <= from && presentBase <= presentFrom && from <= messages.length && presentFrom <= presents.length
     && digestOf(messages, from, messageSig, base) === args.check && digestOf(presents, presentFrom, presentSig, presentBase) === args.presentCheck) {
-    return { ...body, messages: messages.slice(from), presents: stubAll(presents.slice(presentFrom), presentFrom, lazy), from, total: messages.length, base, presentFrom, presentTotal: presents.length, presentBase };
+    return { ...body, messages: messages.slice(from), presents: stubAll(presents.slice(presentFrom), presentFrom, lazy), from, total: messages.length, base, presentFrom, presentTotal: presents.length, presentBase, ...earlierOf(messages, base) };
   }
   if (!windowed) return { ...body, presents: stubAll(presents, 0, lazy), base: 0, total: messages.length, presentBase: 0, presentTotal: presents.length };
   const start = windowStart(messages, tail, intArg(args?.tailBytes) ?? 0);
   const pb = presentBaseFor(messages, presents, start);
-  return { ...body, messages: messages.slice(start), presents: stubAll(presents.slice(pb), pb, lazy), base: start, total: messages.length, presentBase: pb, presentTotal: presents.length };
+  return { ...body, messages: messages.slice(start), presents: stubAll(presents.slice(pb), pb, lazy), base: start, total: messages.length, presentBase: pb, presentTotal: presents.length, ...earlierOf(messages, start) };
 }
 
 /**
- * 画面が窓の手前をさらに頼んだときの応答。older = { before: 窓の最初の通し番号, count, bytes, check: その発言の署名, presentBefore: 窓の最初の提示の通し番号 }。
+ * 画面が窓の手前をさらに頼んだときの応答。older = { before: 窓の最初の通し番号, count, bytes, check: その発言の署名（anchorSig）, presentBefore: 窓の最初の提示の通し番号, reach?: 届かせたい発言の uuid }。
+ * reach の発言が窓の手前にあるときは、count・bytes を超えてでもそこまでを 1 回で運ぶ（検索の抜粋から古い発言へ飛ぶとき。2000 件・REACH_BYTES が上限）。
  * before の発言の署名が合わない（手前が書き換わった・圧縮・件数が減った）ときは { stale: true } を返し、画面は読み直す。
  * 合うときは { older: true, messages, presents, base, presentBase } （手前の分だけ。画面は窓の前につなぐ）
  */
 export function serveOlder(body, older, lazy) {
   const messages = body.messages ?? [], presents = body.presents ?? [];
   const before = intArg(older.before), presentBefore = intArg(older.presentBefore);
-  if (before === null || presentBefore === null || before <= 0 || before >= messages.length || presentBefore > presents.length || messageSig(messages[before]) !== older.check) return { stale: true };
-  const start = windowStart(messages, intArg(older.count) || WINDOW_MESSAGES, intArg(older.bytes) ?? 0, before);
+  if (before === null || presentBefore === null || before <= 0 || before >= messages.length || presentBefore > presents.length || anchorSig(messages[before]) !== older.check) return { stale: true };
+  let count = intArg(older.count) || WINDOW_MESSAGES, bytes = intArg(older.bytes) ?? 0;
+  if (typeof older.reach === "string" && older.reach) {
+    const at = messages.findIndex((m, i) => i < before && m?.uuid === older.reach);
+    if (at >= 0 && before - at > count) { count = before - at; bytes = Math.max(bytes, REACH_BYTES); }
+  }
+  const start = windowStart(messages, count, bytes, before);
   const pb = Math.min(presentBefore, presentBaseFor(messages, presents, start));
   return { older: true, messages: messages.slice(start, before), presents: stubAll(presents.slice(pb, presentBefore), pb, lazy), base: start, presentBase: pb, until: before, presentUntil: presentBefore, total: messages.length };
 }

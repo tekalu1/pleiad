@@ -6,7 +6,7 @@ import fs from "node:fs/promises";
 import vm from "node:vm";
 import { buildItems, inlineAttachments } from "../../web/timeline.mjs";
 import {
-  serveHistory, serveFrom, serveOlder, joinReply, joinOlder, syncRequest, windowStart, presentBaseFor, stubPresent, messageSig, presentSig,
+  serveHistory, serveFrom, serveOlder, joinReply, joinOlder, syncRequest, windowStart, presentBaseFor, stubPresent, messageSig, anchorSig, presentSig, subagentCalls,
   WINDOW_MESSAGES, WINDOW_BYTES, LAZY_MIN,
 } from "../../web/history-sync.mjs";
 
@@ -75,7 +75,7 @@ export default async function (t) {
   let have = { messages: win.messages, presents: win.presents, base: win.base, presentBase: win.presentBase };
   let ok = true, steps = 0;
   while (have.base > 0 && steps < 30) {
-    const request = { before: have.base, count: WINDOW_MESSAGES, bytes: WINDOW_BYTES, check: messageSig(have.messages[0]), presentBefore: have.presentBase };
+    const request = { before: have.base, count: WINDOW_MESSAGES, bytes: WINDOW_BYTES, check: anchorSig(have.messages[0]), presentBefore: have.presentBase };
     const older = serveHistory(clone(server), { lazy: true, older: request });
     const joined = joinOlder(have, older, request);
     if (!joined || joined.base >= have.base) { ok = false; break; }
@@ -84,7 +84,7 @@ export default async function (t) {
   }
   t.ok("遡り: base が 0 になるまで続けて取れる", ok && have.base === 0 && have.presentBase === 0 && steps >= 2 && steps <= 8, `${steps} 回`);
   t.ok("遡り: つないだ発言は全量と同じ・提示は全量の印と同じ", same(have.messages, server.messages) && same(have.presents, server.presents.map((p, i) => stubPresent(p, i))));
-  const request = { before: win.base, count: 50, bytes: 0, check: messageSig(win.messages[0]), presentBefore: win.presentBase };
+  const request = { before: win.base, count: 50, bytes: 0, check: anchorSig(win.messages[0]), presentBefore: win.presentBase };
   t.ok("遡り: 手前の発言が書き換わった（署名が合わない）・件数が減ったなら stale",
     serveOlder({ ...clone(server), messages: server.messages.map((m, i) => i === win.base ? { ...m, text: "書き換わった" } : m) }, request, true).stale === true
     && serveOlder({ messages: server.messages.slice(0, win.base), presents: [] }, request, true).stale === true);
@@ -94,6 +94,60 @@ export default async function (t) {
     joinOlder({ ...have, base: 5, messages: have.messages.slice(5), presents: have.presents }, older, request) === null
     && joinOlder({ messages: win.messages, presents: win.presents, base: win.base, presentBase: win.presentBase }, { ...older, until: older.until + 1 }, request) === null
     && joinOlder({ messages: win.messages, presents: win.presents, base: win.base, presentBase: win.presentBase }, { stale: true }, request) === null);
+
+  // 照合の署名は、サーバーが後から付ける印（終了コード・渡していない印・予定の時刻）に依らない。
+  // 走っているターンで開いた窓は印を付ける前の発言から切られ、遡りは印を付けた発言から切られる
+  const marked = m => ({ ...m, exitCode: 0, pending: true, scheduledFor: 1234 });
+  t.ok("anchorSig: 印（exitCode・pending・scheduledFor）の有る無しで変わらず、中身が違えば変わる。印の無い発言では messageSig と同じ",
+    anchorSig(win.messages[0]) === anchorSig(marked(win.messages[0])) && anchorSig(win.messages[0]) === messageSig(win.messages[0])
+    && messageSig(win.messages[0]) !== messageSig(marked(win.messages[0])) && anchorSig(win.messages[0]) !== anchorSig({ ...win.messages[0], text: "別" })
+    && anchorSig(null) === messageSig(null));
+  const markedServer = (on) => {
+    const s = clone(server);
+    if (on) s.messages = s.messages.map((m, i) => i === win.base ? marked(m) : m);
+    return s;
+  };
+  const liveWindow = serveHistory(markedServer(false), winArgs);
+  const markedRequest = { before: liveWindow.base, count: WINDOW_MESSAGES, bytes: WINDOW_BYTES, check: anchorSig(liveWindow.messages[0]), presentBefore: liveWindow.presentBase };
+  const fromMarked = serveOlder(markedServer(true), markedRequest, true);
+  t.ok("遡り: 印を付ける前の窓（走っているターン）から、印を付けた履歴で遡っても stale にならない（窓の読み直しにならない）",
+    liveWindow.base === win.base && !("stale" in fromMarked) && joinOlder({ messages: liveWindow.messages, presents: liveWindow.presents, base: liveWindow.base, presentBase: liveWindow.presentBase }, fromMarked, markedRequest) !== null);
+  t.ok("遡り: 発言の中身が違えば、印があっても stale",
+    serveOlder({ ...markedServer(true), messages: markedServer(true).messages.map((m, i) => i === win.base ? { ...m, text: "書き換わった" } : m) }, markedRequest, true).stale === true);
+
+  // reach: 特定の発言まで 1 回で届く
+  const reachAt = (uuid, from = win.base, count = WINDOW_MESSAGES, source = server) => serveOlder(clone(source), { before: from, count, bytes: WINDOW_BYTES, check: anchorSig(source.messages[from]), presentBefore: win.presentBase, reach: uuid }, true);
+  const normalOlder = reachAt(undefined);
+  t.ok("遡り（reach）: 手前の発言を指すと、count を超えてでもそこまでを 1 回で運ぶ", reachAt(server.messages[0].uuid).base === 0 && reachAt(server.messages[0].uuid).messages.length === win.base);
+  t.ok("遡り（reach）: 途中の発言を指しても、そこを含む（窓の最初は人の発言に寄る）", (() => { const r = reachAt(server.messages[120].uuid); return r.base <= 120 && r.base > 0 && server.messages[r.base].role === "user"; })());
+  t.ok("遡り（reach）: 窓の中・手前に無い・壊れた uuid は、reach の無い頼みと同じ", [win.messages[3].uuid, "no-such", "", 5, null].every(u => reachAt(u).base === normalOlder.base));
+  const huge = { messages: conversation(2600), presents: [] };
+  const hugeReach = serveOlder(clone(huge), { before: 2600 - 50, count: 50, bytes: WINDOW_BYTES, check: anchorSig(huge.messages[2550]), presentBefore: 0, reach: "u0" }, true);
+  t.ok("遡り（reach）: 運ぶ件数には上限がある（2000 件。画面は届くまで繰り返す）", hugeReach.base > 0 && 2550 - hugeReach.base <= 2000 + 20, `base ${hugeReach.base}`);
+  const tiny = clone(server);
+  tiny.messages = tiny.messages.map((m, i) => i < 5 ? m : { ...m, text: "あ".repeat(60_000) });
+  const tinyReach = serveOlder(clone(tiny), { before: 395, count: 50, bytes: WINDOW_BYTES, check: anchorSig(tiny.messages[395]), presentBefore: 0, reach: "u0" }, true);
+  t.ok("遡り（reach）: 大きさにも上限がある（REACH_BYTES を超えて運ばない）", tinyReach.base > 0 && JSON.stringify(tinyReach.messages).length < 3 * 1024 * 1024);
+
+  // 窓の手前のサブエージェントの呼び出し（作業ダイアログの過去の一覧は、窓の外の子も引く）
+  const callOf = (id, name, input, result) => ({ id, name, input, result });
+  const withCalls = clone(server);
+  withCalls.messages[1].toolCalls.push(callOf("s1", "Task", { description: "\n窓の外の調査\n詳しい依頼", prompt: "使わない" }, { text: "終わり", isError: false }));
+  withCalls.messages[3].toolCalls.push(callOf("s2", "collabAgentToolCall", { prompt: "あ".repeat(300) }, { text: "失敗", isError: true }));
+  withCalls.messages[5].toolCalls.push(callOf("s3", "Agent", {}, undefined), callOf("", "Task", { description: "id が無い" }, undefined), callOf("r1", "Read", { description: "子ではない" }, undefined));
+  withCalls.messages[withCalls.messages.length - 1].toolCalls = [callOf("s4", "Task", { description: "窓の中" }, undefined)];
+  const calls = subagentCalls(withCalls.messages, 0, 6);
+  t.ok("subagentCalls: 委譲のツールだけを、id の有るものについて { id, said, done, failed, at } にする",
+    calls.map(c => c.id).join() === "s1,s2,s3" && calls[0].said === "窓の外の調査" && calls[0].done && !calls[0].failed && calls[0].at === withCalls.messages[1].at
+    && calls[1].said.length === 120 && calls[1].done && calls[1].failed && !calls[2].done && !calls[2].failed && calls[2].said === "");
+  const winCalls = serveHistory(clone(withCalls), winArgs);
+  t.ok("窓の手前: 窓の応答は、窓より手前の呼び出しを earlierCalls で運ぶ（窓の中の分は messages にあるので含めない）",
+    same(winCalls.earlierCalls, calls) && !winCalls.earlierCalls.some(c => c.id === "s4"));
+  t.ok("窓の手前: 手前に呼び出しが無ければ付けない・全量（base 0）にも付けない", !("earlierCalls" in win) && !("earlierCalls" in serveHistory(clone(withCalls), { lazy: true })) && !("earlierCalls" in serveFrom(clone(withCalls), {})));
+  const callsDiff = serveHistory(clone(withCalls), { ...winArgs, ...syncRequest(winCalls.messages, winCalls.presents, { base: winCalls.base, presentBase: winCalls.presentBase }) });
+  t.ok("窓の手前: 窓の差分の応答にも付く", "from" in callsDiff && same(callsDiff.earlierCalls, calls));
+  const olderCalls = serveOlder(clone(withCalls), { before: winCalls.base, count: 50, bytes: WINDOW_BYTES, check: anchorSig(withCalls.messages[winCalls.base]), presentBefore: winCalls.presentBase }, true);
+  t.ok("窓の手前: 遡りの応答には付けない（画面は最初の窓の分を持ち続ける。遡って読んだ分は messages に入る）", !("earlierCalls" in olderCalls));
 
   // ---------------------------------------------------------------- 窓の差分
   const mine = { messages: win.messages, presents: win.presents, base: win.base, presentBase: win.presentBase };
@@ -169,8 +223,8 @@ export default async function (t) {
     vm.runInContext([
       constant("FIRST_PAINT_ROWS"), constant("BACKFILL_MIN"), constant("BACKFILL_MS"),
       "let backfill = null; let paintBefore = null;",
-      ...["historyRole", "roleBefore", "paintedFloor", "splitFirstPaint", "backfillChunk", "scheduleBackfill", "stopBackfillTimer", "stepBackfill", "finishBackfill", "cancelBackfill", "flushBackfill"].map(cut),
-      "this.api = { historyRole, roleBefore, paintedFloor, splitFirstPaint, backfillChunk, stepBackfill, cancelBackfill, flushBackfill, scheduleBackfill, get backfill() { return backfill; }, set backfill(v) { backfill = v; } };",
+      ...["historyRole", "roleBefore", "paintedAt", "paintedFloor", "splitFirstPaint", "backfillChunk", "scheduleBackfill", "stopBackfillTimer", "stepBackfill", "finishBackfill", "cancelBackfill", "flushBackfill"].map(cut),
+      "this.api = { historyRole, roleBefore, paintedAt, paintedFloor, splitFirstPaint, backfillChunk, stepBackfill, cancelBackfill, flushBackfill, scheduleBackfill, get backfill() { return backfill; }, set backfill(v) { backfill = v; } };",
     ].join("\n"), context);
     /** idle の仕事を 1 つずつ空にする（上限つき）。走らせた回数を返す */
     const drain = (limit = 200) => { let n = 0; while (idle.length && n < limit) { const fn = idle.shift(); if (fn) { fn({ timeRemaining: () => 50 }); n++; } } return n; };
@@ -199,6 +253,21 @@ export default async function (t) {
   const floor = s.api.paintedFloor();
   t.ok("描いた一番上の発言: 仕事の間は通し番号と時刻が先の範囲の最初の発言（区切り・分岐点はこれより手前に置かない）",
     floor.mi === split.job.items[split.job.end].mi && floor.at === Date.parse(split.job.items[split.job.end].m.at));
+
+  // 記録に時刻を持たない発言が窓や仕事の頭になっても、区切りの置き場所の基準は決まる（NaN にならない）
+  const noHead = conversation(120).map((m, i) => i < 3 ? { ...m, at: undefined } : m);
+  const headless = screen(noHead, [], { base: 40 });
+  t.ok("描いた一番上の発言（窓の会話）: 頭に時刻が無ければ、以降で最初に時刻を持つ発言の時刻を使う",
+    headless.api.paintedFloor().mi === 40 && headless.api.paintedFloor().at === Date.parse(at(3)) && headless.api.paintedAt(40) === Date.parse(at(3)) && headless.api.paintedAt(43) === Date.parse(at(3)));
+  const noTimes = screen(conversation(10).map(m => ({ ...m, at: undefined })), [], { base: 40 });
+  t.ok("描いた一番上の発言: 時刻を持つ発言が 1 つも無ければ NaN（区切りの基準が無いので、全部描く）", Number.isNaN(noTimes.api.paintedFloor().at) && noTimes.api.paintedFloor().mi === 40);
+  const sparse = screen(conversation(120).map((m, i) => i < 100 ? { ...m, at: undefined } : m), [], { base: 40 });
+  const headlessSplit = sparse.api.splitFirstPaint();
+  sparse.api.backfill = headlessSplit.job;
+  t.ok("描いた一番上の発言（仕事の間）: 仕事の頭の発言に時刻が無くても、その手前の区切りの基準が決まる",
+    headlessSplit && Number.isFinite(sparse.api.paintedFloor().at) && sparse.api.paintedFloor().mi === headlessSplit.job.floorMi);
+  t.ok("区切り: 描いた一番上の発言の時刻が NaN のときは、区切りを手前に置く基準が無いので除かない（paintCompactions）",
+    /Number\.isFinite\(floor\.at\) && !\(entry\.at > floor\.at\)/.test(cut("paintCompactions")));
 
   // 手前を足し切る
   s.api.scheduleBackfill(split.job);
@@ -267,6 +336,11 @@ export default async function (t) {
   t.ok("配線: 手前の発言が要る操作（遡り・目次・会話の中の検索）は、描いていない手前を先に描き切る", /flushBackfill\(\)/.test(cut("loadOlder")) && /flushBackfill\(\)/.test(cut("loadAllOlder")) && /flushBackfill\(\)/.test(cut("revealMessage")));
   t.ok("配線: 会話を描き直す・替えるときは手前の仕事を捨てる", /cancelBackfill\(\)/.test(cut("clearThread")));
   t.ok("配線: 手前の読み足しは、手前を足している間は始めない", /backfill/.test(cut("maybeLoadOlder")));
+  t.ok("配線: 遡りの照合は anchorSig で、検索からの移動（revealMessage）は届かせたい発言を reach で添える（1 回で届く）",
+    /check: anchorSig\(/.test(cut("loadOlder")) && /reach/.test(cut("loadOlder")) && /loadOlder\(\{ reach: uuid \}\)/.test(cut("revealMessage")));
+  t.ok("配線: 窓の手前の呼び出し（earlierCalls）を受けて覚え、作業ダイアログの過去の一覧が引く",
+    /state\.earlierCalls = data\?\.earlierCalls \?\? \[\]/.test(cut("paintSession")) && /state\.earlierCalls/.test(cut("restorePastSubagents")) && /subagentCalls\(/.test(cut("restorePastSubagents")));
+  t.ok("配線: 手前を足したとき、時刻だけで並ぶ提示（窓の中では先頭に載せていたもの）も時刻の位置へ描き直す", /firstAt/.test(cut("paintOlder")) && /it\.sortAt < firstAt/.test(cut("paintOlder")));
 
   // ---------------------------------------------------------------- 起動の先読み（ready の直後に前回の会話を頼む。開くときと同じ窓の形でなければ引き取れない）
   const asked = [];
