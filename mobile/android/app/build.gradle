@@ -14,10 +14,10 @@ if (plyKeystore) {
 }
 
 android {
-    namespace = "com.procway.pleiad"
+    namespace = "dev.pleiad.app"
     compileSdk = rootProject.ext.compileSdkVersion
     defaultConfig {
-        applicationId "com.procway.pleiad"
+        applicationId "dev.pleiad.app"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode plyVersionCode
