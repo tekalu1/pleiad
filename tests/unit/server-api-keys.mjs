@@ -45,14 +45,14 @@ export default async function (t) {
     t.ok('setApiKey: 知らない id の差し替えは NOT_FOUND の文', noId instanceof Error && /登録されていません/.test(noId.message));
     const added = await c.cmd('setApiKey', { provider: 'openrouter', label: '仕事用', key: A });
     t.ok('setApiKey: 登録すると id だけ返す（キーは返さない）', /^key-[a-f0-9]{12}$/.test(added.id) && !JSON.stringify(added).includes(A));
-    const cerebras = await c.cmd('setApiKey', { provider: 'cerebras', key: C });
+    const cerebras = await c.cmd('setApiKey', { provider: 'custom', label: 'Cerebras', key: C });
     const state = await list();
     t.ok('apiKeys.list: 名前・プロバイダー・使っている所だけで、値は無い。登録しただけでは何にも使われない', state.keys.length === 2 && state.keys.every((k) => k.uses.length === 0)
       && Object.values(state.uses).every((v) => v === null) && !JSON.stringify(state).includes(A));
     t.ok('登録しただけでは通話は始められない（キーを選んでいない）', (await call(server)).ready === false && (await c.cmd('invoke', { op: 'voice.status' })).hasKey === false);
 
     // ---- setApiKeyUse
-    t.ok('setApiKeyUse: 知らない使い道（廃止した Cerebras の判定器を含む）・知らないキー・プロバイダー違い（判定器に Cerebras のキー）は断る',
+    t.ok('setApiKeyUse: 知らない使い道（廃止した Cerebras の判定器を含む）・知らないキー・プロバイダー違い（判定器に OpenRouter 以外のキー）は断る',
       /知らない使い道/.test((await rejects(c.cmd('setApiKeyUse', { use: 'nope', id: added.id })))?.message ?? '')
       && /知らない使い道/.test((await rejects(c.cmd('setApiKeyUse', { use: 'judge:cerebras', id: cerebras.id })))?.message ?? '')
       && /登録されていません/.test((await rejects(c.cmd('setApiKeyUse', { use: 'voice', id: 'key-000000000000' })))?.message ?? '')
@@ -92,9 +92,9 @@ export default async function (t) {
 
     // ---- 値がどこにも出ない（compatEndpointCheck の失敗文を含む）
     const checkFail = await c.cmd('compatEndpointCheck', { input: { agent: 'codex', name: 'x', preset: 'custom', baseUrl: 'http://127.0.0.1:9/v1', authMode: 'bearer', key: B, roles: { main: 'm' } } });
-    const checkRef = await c.cmd('compatEndpointCheck', { input: { agent: 'codex', name: 'x', preset: 'custom', baseUrl: 'http://127.0.0.1:9/v1', authMode: 'bearer', keyRef: cerebras.id, roles: { main: 'm' } } }).catch((e) => ({ error: e.message }));
+    const checkRef = await c.cmd('compatEndpointCheck', { input: { agent: 'codex', name: 'x', preset: 'custom', baseUrl: 'http://127.0.0.1:9/v1', authMode: 'bearer', keyRef: added.id, roles: { main: 'm' } } }).catch((e) => ({ error: e.message }));
     t.ok('compatEndpointCheck の失敗文（キーを入れた・keyRef で選んだ）に値が出ない。別のホスト用のキーは断る', checkFail.ok === false && !JSON.stringify(checkFail).includes(B)
-      && !JSON.stringify(checkRef).includes(C) && /URL（ホスト）用ではありません/.test(JSON.stringify(checkRef)));
+      && !JSON.stringify(checkRef).includes(A) && /URL（ホスト）用ではありません/.test(JSON.stringify(checkRef)));
     const everything = JSON.stringify({ events: c.events, state: await list(), routing: await c.cmd('delegationRouting', {}), log: server.tail(400) });
     t.ok('イベント・一覧・delegationRouting・サーバーのログに値が出ない', ![A, B, C].some((v) => everything.includes(v)));
     t.ok('api-keys.json に値は無く、値は api-key-secrets.json にだけある', !(await fs.readFile(path.join(scratch, 'data', 'api-keys.json'), 'utf8')).match(/sk-or-v1|csk-/)

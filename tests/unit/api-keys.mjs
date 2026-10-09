@@ -5,7 +5,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { createApiKeys, providerOfEndpoint, normalizeApiKey } from '../../core/api-keys.mjs';
-import { keyFitsEndpoint, keyMatchesEndpoint } from '../../web/api-keys-model.mjs';
+import { keyFitsEndpoint, keyMatchesEndpoint, providerName } from '../../web/api-keys-model.mjs';
 import { createCompatEndpoints, EndpointError } from '../../core/compat-endpoints.mjs';
 import { createSecretStore, plainCipher } from '../../core/secret-store.mjs';
 import { startFakeOpenRouter } from '../lib/fake-openrouter.mjs';
@@ -58,7 +58,7 @@ export default async function (t) {
     t.ok('プロバイダー: プリセットと URL のホストで決める', providerOfEndpoint({ preset: 'openrouter', baseUrl: 'https://openrouter.ai/api' }) === 'openrouter'
       && providerOfEndpoint({ preset: 'openrouter', baseUrl: 'https://proxy.example/api' }) === 'custom'
       && providerOfEndpoint({ preset: 'custom', baseUrl: 'https://openrouter.ai/api/v1' }) === 'openrouter'
-      && providerOfEndpoint({ preset: 'custom', baseUrl: 'https://api.cerebras.ai/v1' }) === 'cerebras'
+      && providerOfEndpoint({ preset: 'custom', baseUrl: 'https://api.cerebras.ai/v1' }) === 'custom'
       && providerOfEndpoint({ preset: 'zai', baseUrl: 'https://api.z.ai/api/anthropic' }) === 'zai'
       && providerOfEndpoint({ preset: 'custom', baseUrl: 'http://localhost:4000' }) === 'custom');
     t.ok('キーの形: 空・空白・制御文字・長すぎるものは断る', normalizeApiKey('') === null && normalizeApiKey('a b') === null && normalizeApiKey('a\nb') === null
@@ -136,9 +136,11 @@ export default async function (t) {
     }
 
     // ---- 移行済みの台帳で Cerebras の判定器を選んでいた人（ADR 0177）: 読むときに OpenRouter の判定器へ移し、Cerebras のキーは使わないキーとして残す
+    // （Cerebras を名前付きのプロバイダーにしなくなった ADR 0183 の後は、provider 'cerebras' のキーは custom（host なし）として読む）
     {
       const d = await fresh();
-      await seed(d, {});
+      const CB_EP = 'ep-444444444444';
+      await seed(d, { endpoints: [EP(CB_EP, { name: 'Cerebras', preset: 'custom', baseUrl: 'https://api.cerebras.ai/v1', keyRef: 'key-0000000000c1' })] });
       const OR = 'key-0000000000a1', CB = 'key-0000000000c1';
       const ledger = JSON.stringify({ version: 1, migration: { done: true, at: '2026-10-01T00:00:00.000Z' }, keys: [{ id: CB, provider: 'cerebras', label: 'Cerebras' }, { id: OR, provider: 'openrouter', label: 'OpenRouter' }],
         uses: { voice: OR, 'judge:jev': null, 'judge:cerebras': CB }, guide: null });
@@ -149,11 +151,18 @@ export default async function (t) {
       await w.apiKeys.init();
       const list = await w.apiKeys.list();
       t.ok('Cerebras の判定器の割り当ては OpenRouter の判定器へ移り、判定器は OpenRouter のキーで送る', list.uses['judge:jev'] === OR && !Object.hasOwn(list.uses, 'judge:cerebras') && await w.apiKeys.useKey('judge:jev') === A);
-      t.ok('Cerebras のキーは消さず、使う所の無いキーとして残る（値も残る）', list.keys.find(k => k.id === CB)?.uses.length === 0 && (await w.secrets.get('key:' + CB))?.key === C);
+      t.ok('Cerebras のキーは消さず、判定器・通話には使わないキーとして残る（接続先が選んでいれば接続先に使われ、値も残る）', list.keys.find(k => k.id === CB)?.uses.every(u => u.kind === 'endpoint') && (await w.secrets.get('key:' + CB))?.key === C);
+      const cbKey = list.keys.find(k => k.id === CB);
+      t.ok('provider が cerebras のキーは custom（host なし）に直り、id・名前は変わらない', cbKey?.provider === 'custom' && cbKey.host === null && cbKey.label === 'Cerebras' && list.keys.length === 2);
+      t.ok('cerebras.ai の互換の接続先はそのキーに当てはまり（custom・host なし）、もう名前付きのプロバイダーではない',
+        await w.apiKeys.fits(CB, { preset: 'custom', baseUrl: 'https://api.cerebras.ai/v1' }) === true && await w.apiKeys.fits(CB, { preset: 'custom', baseUrl: 'http://localhost:4000' }) === true
+        && await w.apiKeys.fits(CB, { preset: 'openrouter', baseUrl: 'https://openrouter.ai/api' }) === false && providerName('cerebras') === '');
+      t.ok('そのキーを選んでいた接続先は、同じ id のまま同じ値で送れる', (await w.eps.rows())[0].keyRef === CB && (await w.eps.resolve(CB_EP, 'claude')).key === C);
       t.ok('起動だけでは台帳を書き直さない（同じデータを使う前の版の割り当てを消さない）', await fs.readFile(path.join(d, 'api-keys.json'), 'utf8') === ledger);
       await w.apiKeys.setUse('voice', null);
       const saved = JSON.parse(await fs.readFile(path.join(d, 'api-keys.json'), 'utf8'));
       t.ok('次に保存したときに、移した割り当てを書き、廃止した使い道を落とす', saved.uses['judge:jev'] === OR && !Object.hasOwn(saved.uses, 'judge:cerebras') && saved.keys.some(k => k.id === CB));
+      t.ok('次に保存したときに、cerebras のキーを custom で書く（名前・id は変えない）', saved.keys.find(k => k.id === CB)?.provider === 'custom' && saved.keys.find(k => k.id === CB)?.label === 'Cerebras');
       const d2 = await fresh();
       await seed(d2, {});
       await fs.writeFile(path.join(d2, 'api-keys.json'), JSON.stringify({ version: 1, migration: { done: true }, keys: [{ id: CB, provider: 'cerebras', label: 'Cerebras' }], uses: { 'judge:cerebras': CB } }));
@@ -261,7 +270,7 @@ export default async function (t) {
       t.ok('登録しただけでは何にも使わない（通話・判定器・接続先は選ばれない）', list.keys.length === 1 && list.keys[0].label === '仕事用' && list.keys[0].uses.length === 0 && Object.values(list.uses).every(v => v === null)
         && await w.apiKeys.useKey('voice') === null && !(await exists(path.join(d, 'voice-secrets.json'))));
       t.ok('登録しただけでは古い置き場にも書かない（使うキーを選ぶまで古い版も送らない）', !(await w.voice.keys('openrouter')).length && !(await w.compat.keys('delegation-routing:')).length);
-      const other = (await w.apiKeys.add({ provider: 'cerebras', label: '', key: C })).id;
+      const other = (await w.apiKeys.add({ provider: 'custom', label: 'Cerebras', key: C })).id;
       t.ok('プロバイダーの違うキーは割り当てられない（判定器は OpenRouter）・廃止した Cerebras の判定器は知らない使い道', (await rejects(() => w.apiKeys.setUse('judge:jev', other)))?.code === 'PROVIDER_MISMATCH'
         && (await rejects(() => w.apiKeys.setUse('judge:cerebras', id)))?.code === 'UNKNOWN_USE'
         && (await rejects(() => w.apiKeys.setUse('computer:decider', 'key-000000000000')))?.code === 'NOT_FOUND'

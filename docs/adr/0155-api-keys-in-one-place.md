@@ -61,3 +61,7 @@
 - 読み込むたびに `judge:cerebras` を落とし、それがキーを指していて `judge:jev` が空なら、最初に登録した OpenRouter のキーを `judge:jev` に選ぶ。台帳は起動では書かず、次の保存で書く。
 - 古い置き場からの移行では `delegation-routing:cerebras` を取り込まない（古い置き場には残す）。選んでいたことだけを同じ規則で引き継ぐ。
 - 台帳にある Cerebras のキーの行と値は消さず、使う所の無いキーとして残す（利用者が消す）。［確かめる］は OpenRouter（`GET /key`）だけになり、Cerebras のキーは確かめ方の無いプロバイダーと同じ扱い。設定 › API キーの追加の選択から Cerebras を外した（互換の接続先の `cerebras.ai` の見分けは残す）。
+
+## 追記（2026-10-10）: プロバイダー `cerebras` の廃止
+
+[ADR 0183](0183-cerebras-is-a-plain-compatible-endpoint.md) で、名前付きのプロバイダー `cerebras` を外した（`cerebras.ai` の互換の接続先のキーは `custom`。台帳を読むとき、`provider` が `cerebras` のキーを `custom`・host なしに直す）。

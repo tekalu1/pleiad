@@ -138,7 +138,7 @@ export default async function (t) {
   const hadCss = 'CSS' in globalThis;
   if (!hadCss) globalThis.CSS = { escape: v => String(v) };
   const OR1 = { id: 'k1', provider: 'openrouter', label: '', lastCheck: { ok: true, at: '2026-10-07T00:00:00.000Z' } };
-  const CB = { id: 'k2', provider: 'cerebras', label: '' };
+  const CB = { id: 'k2', provider: 'custom', label: '社内' };
   let list = { migration: { state: 'done' }, storage: 'safeStorage', keys: [OR1, CB], uses: { voice: null, 'judge:jev': null, 'computer:decider': null } };
   const keyCalls = [];
   const opened = [];
@@ -166,7 +166,7 @@ export default async function (t) {
     t.ok('選ぶ欄は OpenRouter のキーだけで、未選択は「使わない」', btn?.getAttribute('aria-label')?.startsWith('wait_until の問いに使うキー: '));
     btn.onclick();
     const options = q('.li');
-    t.ok('候補は OpenRouter のキーと「使わない」（Cerebras は出さない）', options.length === 2);
+    t.ok('候補は OpenRouter のキーと「使わない」（OpenRouter 以外のキーは出さない）', options.length === 2);
     options[0].onclick();
     await flush();
     t.ok('選ぶと setApiKeyUse { use: computer:decider, id } を送り、状態の行と管理へのリンクが出る',
