@@ -4,7 +4,7 @@ import path from "node:path";
 import crypto from "node:crypto";
 import * as store from "./store.mjs";
 import { MAX_RESULT_CHARS } from "./backends/shared.mjs";
-import { readPresents, keepPresents } from "./history.mjs";
+import { readPresents, keepPresents, seedPresents } from "./history.mjs";
 import { copyWindowShot, windowShotFolder } from "./chrome/window-shots.mjs";
 import { applyRewindMark, markIsLive, nativeUuid, keptPresentIndexes, removedSummary } from "./rewind.mjs";
 import { buildItems } from "../web/timeline.mjs";
@@ -446,6 +446,25 @@ export function wrapBackend(native) {
       return native[method](r?.nativeId ?? id, ...args);
     };
   }
+  // 切り口（at 番目の発言）までに出た提示。画面と同じ置き方（発言の後に出た添付も含む）で選ぶ
+  function presentsThrough(messages, presents, at) {
+    if (at >= messages.length - 1) return presents;
+    for (const p of presents) {
+      if (p.by === "ai" && (!p.at || !messages[at].at)) {
+        throw new Error(t("conversations.presentNoTime"));
+      }
+    }
+    // Use the same attachment placement as the UI, including attachments emitted after their user message.
+    const items = buildItems(messages, presents);
+    const end = items.findIndex(item => item.kind === "msg" && item.mi === at);
+    return items.filter((item, i) => item.kind === "present" &&
+      (i < end || item.anchorMi === at)).map(item => item.p);
+  }
+  // 閉じた Chrome の窓の静止画は会話ごとの置き場にあり、元の会話を消すと一緒に消える。分岐した会話は自分の置き場へ複製して指す
+  const copyShots = (presents, from, to) => Promise.all(presents.map(async p => p?.kind === "chromeClosed" && p.path
+    ? { ...p, path: await copyWindowShot({ dataDir: store.dataDir, from, to, file: p.path }) }
+    : p));
+
   wrapped.fork = async (id, options = {}) => {
     const r = await conversation(id);
     const before = options.beforeMessageId;
@@ -454,8 +473,30 @@ export function wrapBackend(native) {
     }
     // Claude supports exact message boundaries; Codex only supports whole turns.
     if (before === undefined && !options.snapshot && !r && native.fork && native.capabilities?.forkMessage) {
+      // SDK の分岐は transcript だけを写す（UUID は付け直し）。提示は会話ごとの記録（core/history.mjs）にあるので、切り口までの分を選んでおき、子へ写す
+      let carried = await readPresents(id, { strict: true });
+      let sourceMessages = null;
+      if (carried.length) {
+        const full = await wrapped.getMessages(id);
+        const at = options.upToMessageId === undefined ? full.length - 1 : full.findIndex(m => m.uuid === options.upToMessageId);
+        if (at < 0) throw new Error(t("conversations.forkMessageNotFound"));
+        carried = presentsThrough(full, carried, at);
+        sourceMessages = full.slice(0, at + 1);
+      }
       const result = await native.fork(id, options);
       await store.inheritSettings(id, result.sessionId);
+      if (carried.length) {
+        // 人の添付は発言の UUID に結び付いている。写した発言は同じ並びなので、並びで新しい UUID へ移す（並びが合わなければ添付の印の行で結び直す）
+        const childMessages = await wrapped.getMessages(result.sessionId).catch(() => []);
+        const renamed = childMessages.length === sourceMessages.length
+          ? new Map(sourceMessages.map((m, i) => [m.uuid, childMessages[i].uuid])) : new Map();
+        const rows = (await copyShots(carried, id, result.sessionId)).map(p => {
+          if (!p.messageId) return p;
+          const { messageId, ...rest } = p;
+          return renamed.has(messageId) ? { ...rest, messageId: renamed.get(messageId) } : rest;
+        });
+        await seedPresents(result.sessionId, rows);
+      }
       return result;
     }
     const source = await wrapped.getSession(id);
@@ -487,16 +528,7 @@ export function wrapBackend(native) {
       if (at < 0) throw new Error(options.snapshot
         ? t("conversations.messageNotSavedFork")
         : t("conversations.forkMessageNotFound"));
-      if (at < messages.length - 1) for (const p of presents) {
-        if (p.by === "ai" && (!p.at || !messages[at].at)) {
-          throw new Error(t("conversations.presentNoTime"));
-        }
-      }
-      // Use the same attachment placement as the UI, including attachments emitted after their user message.
-      const items = buildItems(messages, presents);
-      const end = items.findIndex(item => item.kind === "msg" && item.mi === at);
-      if (at < messages.length - 1) presents = items.filter((item, i) => item.kind === "present" &&
-        (i < end || item.anchorMi === at)).map(item => item.p);
+      presents = presentsThrough(messages, presents, at);
       messages = messages.slice(0, at + 1);
     }
     if (options.snapshot) {
@@ -505,10 +537,7 @@ export function wrapBackend(native) {
         throw new Error(t("conversations.toolRunning"));
       }
     }
-    // 閉じた Chrome の窓の静止画は会話ごとの置き場にあり、元の会話を消すと一緒に消える。分岐した会話は自分の置き場へ複製して指す
-    presents = await Promise.all(presents.map(async p => p?.kind === "chromeClosed" && p.path
-      ? { ...p, path: await copyWindowShot({ dataDir: store.dataDir, from: id, to: child, file: p.path }) }
-      : p));
+    presents = await copyShots(presents, id, child);
     const now = Date.now();
     const parent = { sessionId: id, atMessage: cutId ?? null,
       ...(before !== undefined ? { beforeMessage: before } : {}) };

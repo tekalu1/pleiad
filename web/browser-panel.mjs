@@ -190,7 +190,7 @@ export function createBrowserPanel({ bridge = window.plyDesktop?.browser, showMe
     if (chromeAvailable) items.unshift({ chrome: true });
     // 列を作り直すと、押した・矢印で移したタブのフォーカスが消える（キー操作が続けられない）。列の中にあったときだけ、選ばれたタブへ戻す
     const hadFocus = tabList.contains(document.activeElement);
-    let selectedPick = null;
+    let selectedPick = null, firstPick = null;
     tabList.replaceChildren(...items.map((entry, position) => {
       const tab = entry.tab;
       const selected = entry.chrome ? chromeSelected : !chromeSelected && tab.id === state.current;
@@ -222,6 +222,7 @@ export function createBrowserPanel({ bridge = window.plyDesktop?.browser, showMe
         pick.onclick = () => { hooks.noteView('chrome'); hooks.openChrome(); };
         pick.onkeydown = event => moveTab(event, position);
         if (selected) selectedPick = pick;
+        firstPick ??= pick;
         item.append(pick);
         return item;
       }
@@ -236,11 +237,14 @@ export function createBrowserPanel({ bridge = window.plyDesktop?.browser, showMe
       pick.onclick = () => { hooks.noteView('viewer'); hooks.openPanel(); run('select', { id: tab.id }).catch(failed); };
       pick.onkeydown = event => moveTab(event, position);
       if (selected) selectedPick = pick;
+      firstPick ??= pick;
       const close = button(closeIcon, t('browser.closeTab', { title: label }), () => run('close', { id: tab.id }).catch(failed), 'btn btn-icon browser-tab-close');
       close.tabIndex = -1;
       item.append(pick, close);
       return item;
     }));
+    // 選ばれたタブが無い間（Chrome の窓もビューアのタブも無い）も、先頭のタブを Tab キーの入口にする
+    if (!selectedPick && firstPick) firstPick.tabIndex = 0;
     if (hadFocus) selectedPick?.focus({ preventScroll: true });
   }
   function moveTab(event, position) {
@@ -274,6 +278,8 @@ export function createBrowserPanel({ bridge = window.plyDesktop?.browser, showMe
     if (covered && before.current !== state.current) refreeze();
     // 最後のタブを閉じたらパネルごと閉じる。タブの無い会話へ移っただけなら閉じない（一覧は会話ごと。desktop/browser-panel.cjs）
     if (before.tabs.length && !state.tabs.length && shown && before.sessionId === state.sessionId) hooks.onEmpty();
+    // ビューアを開いたままタブの無い会話へ移ったら、開いたときと同じく空のタブを作る。作らないと、中身は空のページなのに列に選ばれたタブが無い
+    else if (shown && !state.tabs.length && before.sessionId && state.sessionId && before.sessionId !== state.sessionId) run('newTab').catch(failed);
     onChange(state); hooks.onPaint(state);
   }
 

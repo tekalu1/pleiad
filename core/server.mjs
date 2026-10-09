@@ -293,7 +293,7 @@ const chromeWindowCloser = chromeRelay ? createChromeWindowCloser({ relay: chrom
 // 人への依頼のカードは、この引き継ぐ・戻すの変化で「あなたが操作中」になり、戻したときに決着する
 chromeHandoffs?.useControl(chromeControl);
 // 会話の端点を出す口（ターンの開始・新しい会話の id の付け替え・ターンの終わり・会話の削除）。Chrome の中継があるホスト（デスクトップ版）だけ。Windows 以外（unsupported）では渡さない（下の browserEnv）
-const agentBrowserEndpoints = chromeRelay ? chromeRelayBrowser(chromeRelay) : null;
+const agentBrowserEndpoints = chromeRelay ? chromeRelayBrowser(chromeRelay, { dataDir: store.dataDir }) : null;
 // A nested server may inherit another conversation's shell environment; only this process's bridge can issue browser access.
 delete process.env.AGENT_BROWSER_CONFIG;
 delete process.env.AGENT_BROWSER_SESSION;

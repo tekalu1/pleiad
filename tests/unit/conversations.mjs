@@ -40,6 +40,7 @@ export default async function(t) {
   t.ok('transcript の無い nativeId の会話は、題・状態の変更と削除を Pleiad の記録だけで通す（別の失敗は隠さない）', child.stdout.includes('missing transcript contracts passed'), child.stdout + child.stderr);
   t.ok('ADR 0147: 送った会話の削除は Pleiad の記録だけを消し、ネイティブの会話は残したまま一覧に戻さない（再起動の後も。ネイティブだけの行も消せる）', child.stdout.includes('delete contracts passed'), child.stdout + child.stderr);
   t.ok('分岐した会話は、閉じた Chrome の窓の静止画を自分の置き場へ複製して指す（元の会話の置き場が消えても残る）', child.stdout.includes('window shot fork contracts passed'), child.stdout + child.stderr);
+  t.ok('ネイティブの分岐（Claude の SDK の forkSession。UUID を付け直して transcript だけを写す）でも、切り口までの提示を子へ写し、閉じた窓の静止画を複製し、添付の結び付けを新しい UUID へ移す', child.stdout.includes('native fork present contracts passed'), child.stdout + child.stderr);
 }
 
 // Run in a child with its own store: other suites import the store before this test runs.
@@ -415,4 +416,58 @@ export async function windowShotForkContracts() {
   // 元の会話の置き場を消しても、分岐した会話の画像は残る
   await fs.rm(folder, { recursive: true, force: true });
   assert.equal(await fs.readFile(shots[0].path, 'utf8'), 'PNG-BYTES');
+}
+
+// ネイティブの分岐（Claude の停止中の会話。SDK の forkSession は UUID を付け直して transcript だけを写す）でも、
+// 提示（添付・git の行・閉じた窓の静止画。core/history.mjs の会話ごとの記録）は切り口までの分を子へ写す
+export async function nativeForkPresentContracts() {
+  const store = await import('../../core/store.mjs');
+  const { windowShotFolder } = await import('../../core/chrome/window-shots.mjs');
+  const { recordPresent, anchorAttachments } = await import('../../core/history.mjs');
+  const fs = await import('node:fs/promises');
+  const path = await import('node:path');
+  const transcripts = new Map([['sdk-source', [
+    { role: 'user', uuid: 'u1', text: '[添付] C:/work/a.png', at: '2026-01-01T00:00:00.000Z' },
+    { role: 'assistant', uuid: 'a1', text: 'opened', at: '2026-01-01T00:00:01.000Z' },
+    { role: 'user', uuid: 'u2', text: 'more', at: '2026-01-01T00:00:10.000Z' },
+    { role: 'assistant', uuid: 'a2', text: 'done', at: '2026-01-01T00:00:11.000Z' }]]]);
+  let forks = 0;
+  const native = { id: 'sdkfork', capabilities: { forkMessage: true },
+    async getMessages(id) { return structuredClone(transcripts.get(id) ?? []); },
+    async getSession(id) { return transcripts.has(id) ? { sessionId: id, title: 'sdk' } : null; },
+    async fork(id, { upToMessageId } = {}) {
+      const source = transcripts.get(id);
+      const cut = upToMessageId ? source.findIndex(m => m.uuid === upToMessageId) : source.length - 1;
+      const child = `sdk-child-${++forks}`;
+      transcripts.set(child, source.slice(0, cut + 1).map(m => ({ ...m, uuid: `${child}-${m.uuid}` })));
+      return { sessionId: child };
+    } };
+  const wrapped = wrapBackend(native);
+  const folder = windowShotFolder(store.dataDir, 'sdk-source');
+  await fs.mkdir(folder, { recursive: true });
+  const shot = path.join(folder, '1-bbb.png');
+  await fs.writeFile(shot, 'SHOT');
+  await recordPresent('sdk-source', { kind: 'file', by: 'human', path: 'C:/work/a.png', turnKey: 'k1' });
+  await anchorAttachments('sdk-source', 'k1', 'u1');
+  await recordPresent('sdk-source', { kind: 'git', at: '2026-01-01T00:00:00.500Z', git: { files: 1 } });
+  await recordPresent('sdk-source', { kind: 'chromeClosed', by: 'ai', path: shot, chromeClosed: { by: 'agent' } });
+  const kinds = async id => (await wrapped.getPresents(id)).map(p => p.kind);
+
+  // 会話全体の分岐（切り口なし）: 全部写す
+  const whole = (await wrapped.fork('sdk-source')).sessionId;
+  assert.deepEqual(await kinds(whole), ['file', 'git', 'chromeClosed'], '提示を丸ごと写す');
+  const copied = await wrapped.getPresents(whole);
+  assert.equal(copied[0].messageId, `${whole}-u1`, '添付の結び付けを、付け直した UUID へ移す');
+  assert.equal(path.dirname(copied[2].path), windowShotFolder(store.dataDir, whole), '閉じた窓の静止画は分岐した会話の置き場を指す');
+  assert.equal(await fs.readFile(copied[2].path, 'utf8'), 'SHOT', '静止画を複製する');
+  const timeline = (await import('../../web/timeline.mjs')).buildItems(await wrapped.getMessages(whole), copied);
+  assert.equal(timeline.find(item => item.kind === 'present' && item.p.kind === 'file')?.anchorMi, 0, '添付は分岐先でも元の発言の後に出る');
+
+  // ここから分岐（upToMessageId）: 切り口より後の提示は写さない
+  const upTo = (await wrapped.fork('sdk-source', { upToMessageId: 'a1' })).sessionId;
+  assert.deepEqual(await kinds(upTo), ['file', 'git'], '切り口までの提示だけを写す');
+  assert.equal((await fs.readdir(windowShotFolder(store.dataDir, upTo)).catch(() => [])).length, 0, '写さない静止画は複製しない');
+
+  // 元の会話の提示は変わらない
+  assert.deepEqual(await kinds('sdk-source'), ['file', 'git', 'chromeClosed']);
 }

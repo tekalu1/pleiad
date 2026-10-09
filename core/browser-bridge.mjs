@@ -103,6 +103,8 @@ export function createBrowserBridge({ handoffs = null, closeWindow = null } = {}
       } catch (error) {
         // i18n-dynamic: agent:browserBridge.closeWindow.busy.
         if (error?.code === 'BUSY') return fail(agentT(locale, `browserBridge.closeWindow.busy.${error.detail?.reason === 'human' ? 'human' : 'waiting'}`));
+        // i18n-dynamic: agent:browserBridge.closeWindowTask.refused.
+        if (error?.code === 'TASK_REFUSED') return fail(agentT(locale, `browserBridge.closeWindowTask.refused.${['invalid', 'changed'].includes(error.detail?.reason) ? error.detail.reason : 'notChild'}`));
         return fail(String(error?.message ?? error));
       }
     }

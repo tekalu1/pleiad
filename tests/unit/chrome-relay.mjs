@@ -612,6 +612,41 @@ export default async function (t) {
     }
   }
 
+  // ===== 7b. agent-browser の本物: 最初の open は 1 窓。窓が無くなった後（窓を閉じる操作・人が窓を閉じた・Chrome が切れた）の open も新しい 1 窓で動く =====
+  {
+    const r = await rig();
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'pleiad-chrome-relay-ab-lost-'));
+    let env = null;
+    try {
+      const site = 'https://site.example/';
+      for (const page of ['a', 'b', 'c', 'd']) r.fake.setPage(`${site}${page}`, { title: `Page ${page.toUpperCase()}`, elements: [{ role: 'heading', name: page }] });
+      env = await browserEnvironment({ bridge: chromeRelayBrowser(r.relay, { dataDir: dir }), dataDir: dir, sessionId: 'ab-lost' });
+      const agentTabs = () => r.fake.targets().filter(x => x.type === 'page' && x.windowId !== r.fake.userWindow);
+      const agentWindows = () => [...new Set(agentTabs().map(x => x.windowId))];
+      const open = async (page, label) => {
+        const res = await runAgentBrowser(['open', `${site}${page}`], env);
+        // 空のタブの破棄は open の応答の後に届くことがある
+        const single = await until(() => agentWindows().length === 1 && agentTabs().length === 1);
+        t.ok(label, res.status === 0 && res.stdout.includes(`Page ${page.toUpperCase()}`) && single,
+          JSON.stringify({ status: res.status, stdout: res.stdout, stderr: res.stderr, tabs: agentTabs().map(x => `${x.windowId}:${x.url}`) }));
+      };
+      await open('a', '最初の open は専用窓 1 つ（agent-browser がつないで最初に作る空のタブを、空の窓として残さない）');
+      const closed = await r.relay.closeConversationWindows('ab-lost');
+      t.ok('窓を閉じる操作で専用窓が無くなる', closed.closed === true && agentWindows().length === 0, JSON.stringify(closed));
+      await open('b', '窓を閉じる操作（⋯ の「窓を閉じる」・close_browser_window）の後の open は tab_gone にならず、新しい 1 窓で開く');
+      for (const windowId of agentWindows()) r.fake.closeWindow(windowId);
+      await until(() => !agentWindows().length);
+      await open('c', '人が窓を閉じた後の open も、新しい 1 窓で開く');
+      r.chrome.dropConnections();
+      await until(() => r.conn.state().state === 'off');
+      await open('d', 'Chrome との接続が切れた後の open も、つなぎ直して新しい 1 窓で開く');
+    } finally {
+      if (env) { await runAgentBrowser(['close'], env, { timeoutMs: 10_000 }).catch(() => {}); await rm(browserSocketDirectory(path.dirname(env.AGENT_BROWSER_CONFIG)), { recursive: true, force: true }).catch(() => {}); }
+      await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+      await r.stop();
+    }
+  }
+
   // ===== 8. サーバー越し: ターンは core の中継の端点を受け取る（parentPort の往復なし） =====
   {
     const scratch = await mkdtemp(path.join(os.tmpdir(), 'ply-chrome-relay-server-'));

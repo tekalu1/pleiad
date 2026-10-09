@@ -110,7 +110,7 @@ async function start({ env = {}, packaged = false, choice = 'link', connectError
     './computer/service.cjs': { attachComputerService: listens(calls), withPerMonitorDpi: win32 => win32 },
     './computer/win32.cjs': { loadWin32: () => { throw Object.assign(new Error('not windows'), { reason: 'platform' }); } },
     './computer/mac.cjs': { loadMac: () => { throw Object.assign(new Error('not macOS'), { reason: 'platform' }); } },
-    './chrome-pill.cjs': { attachChromePill: listens(calls, 'chromePill') },
+    './chrome-pill.cjs': { attachChromePill: (worker, options) => { calls.chromePillOptions = options; return listens(calls, 'chromePill')(worker); } },
     './chrome-os/index.cjs': { createChromeOs: () => ({ reconceal: () => { calls.reconceals = (calls.reconceals ?? 0) + 1; }, closeAllAgents: () => { calls.closeAlls = (calls.closeAlls ?? 0) + 1; if (calls.failCloseAll) throw new Error('boom'); return 0; } }), attachChromeOs: listens(calls) },
     './browser-screencast-bridge.cjs': { attachBrowserScreencastBridge: listens(calls) },
     './computer-overlay.cjs': { attachComputerOverlay: listens(calls) },
@@ -183,6 +183,8 @@ export default async function (t) {
     const { calls } = await start({ env: { AGENT_HOST_HANDOVER: 'off' }, packaged: true });
     calls.screen.emit('display-added'); calls.screen.emit('display-removed'); calls.screen.emit('display-metrics-changed');
     t.ok('画面の構成が変わったら（display-added・display-removed・display-metrics-changed）、隠しているエージェントの Chrome の窓を置き直す（chromeOs.reconceal。ADR 0154）', calls.reconceals === 3, String(calls.reconceals));
+    // ピルはモニターの上端より上に出さない（最大化した窓の上端は見えない枠の分だけ画面の外）。その判定に electron の screen が要る
+    t.ok('Chrome のピルに electron の screen を渡す（無いと最大化した窓でピルが画面の上にはみ出る）', calls.chromePillOptions?.electron?.screen === calls.screen);
   }
   {
     // 画面の外に隠したエージェントの窓は、Pleiad が終わると誰にも戻せない。終了の道で片付ける（閉じる。閉じられなければ戻す）

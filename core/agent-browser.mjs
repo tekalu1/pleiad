@@ -1,4 +1,5 @@
 import fs from 'node:fs/promises';
+import { rmSync } from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import os from 'node:os';
@@ -15,6 +16,9 @@ export function browserSocketDirectory(dir, platform = process.platform) {
 export function browserConfigFile(dataDir, configSessionId) {
   return path.join(dataDir, 'agent-browser', crypto.createHash('sha256').update(configSessionId).digest('hex'), 'agent-browser.json');
 }
+
+/** agent-browser のセッション名（設定の置き場ごと） */
+const sessionName = dir => `ply-${crypto.createHash('sha256').update(path.resolve(dir)).digest('hex').slice(0, 24)}`;
 
 const TABS_MAX = 500;
 
@@ -37,9 +41,15 @@ export function cleanTabState(message) {
 /**
  * エージェントのブラウザーの道は PC の Chrome の中継（core/chrome/relay.mjs）だけ。Chrome の中継を browserEnvironment の bridge の形にする。endpoint は parentPort の往復なしで core の中継から取る。
  * pinTab: agent-browser を自分のタブに縛る（AGENT_BROWSER_PIN_TAB=1。無いと最初の open が「アクティブなタブ」を書き換えうる。ADR 0148）
+ * 縛りはソケットの置き場の <セッション名>.target に残り、縛ったタブが消えると次の open からも tab_gone で断る。会話のタブがエージェントの外で全部無くなったら
+ * （窓を閉じる操作・人が窓を閉じた・Chrome が切れた。relay.onTabsLost）この記録を消す。消したら true を返し、中継が接続を切るので、デーモンはつなぎ直して新しい専用窓を開く
  */
-export function chromeRelayBrowser(relay) {
+export function chromeRelayBrowser(relay, { dataDir } = {}) {
   const configIds = new Map();
+  if (dataDir) relay.onTabsLost?.(sessionId => {
+    const dir = path.dirname(browserConfigFile(dataDir, configIds.get(sessionId) ?? sessionId));
+    try { rmSync(path.join(browserSocketDirectory(dir), `${sessionName(dir)}.target`)); return true; } catch { return false; }   // 記録が無い（縛っていない）
+  });
   return {
     pinTab: true,
     endpoint: (sessionId, options) => relay.endpoint(sessionId, options),
@@ -56,7 +66,7 @@ export async function browserEnvironment({ bridge, dataDir, sessionId, unlock = 
   const configSessionId = bridge.configSessionId?.(sessionId) ?? sessionId;
   const file = browserConfigFile(dataDir, configSessionId);
   const dir = path.dirname(file);
-  const session = `ply-${crypto.createHash('sha256').update(path.resolve(dir)).digest('hex').slice(0, 24)}`;
+  const session = sessionName(dir);
   const socketDir = browserSocketDirectory(dir);
   await fs.mkdir(dir, { recursive: true, mode: 0o700 });
   await fs.mkdir(socketDir, { recursive: true, mode: 0o700 });
