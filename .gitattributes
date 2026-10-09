@@ -4,3 +4,5 @@ web/release-info.json text eol=lf
 # pleiad CLI の起動口（ADR 0090）。シェルスクリプトは CRLF だと sh が読めず、.cmd は LF だと goto の飛び先を見失うことがある
 bin/pleiad text eol=lf
 bin/pleiad.cmd text eol=crlf
+# 審査用のホストの起動口（ADR 0172）。CRLF だと Linux の sh が読めない
+deploy/review-host/*.sh text eol=lf

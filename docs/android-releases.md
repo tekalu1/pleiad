@@ -137,7 +137,7 @@ Actions の画面で「Android Play upload」を `main` で手動で実行する
 5. **アプリのコンテンツ（申告）を埋める。** 下書きは [play-store/](play-store/)。
    - プライバシーポリシー: https://pleiad.dev/privacy/
    - 広告: 無し
-   - アプリへのアクセス: [play-store/app-access.md](play-store/app-access.md)（ホストとのペアリングが要るので、審査用のホストと審査の招待を用意する。[ADR 0172](adr/0172-play-review-access.md)。用意できるまではクローズドテストを申請しない）
+   - アプリへのアクセス: [play-store/app-access.md](play-store/app-access.md)（ホストとのペアリングが要るので、審査用のホストと審査の招待を用意する。[ADR 0172](adr/0172-play-review-access.md)、置き方と招待の作り方は [play-store/review-host.md](play-store/review-host.md)。用意できるまではクローズドテストを申請しない）
    - コンテンツのレーティング: [play-store/content-rating.md](play-store/content-rating.md)
    - ターゲット層: 18 歳以上だけ（[play-store/content-rating.md](play-store/content-rating.md)）
    - データセーフティ: [play-store/data-safety.md](play-store/data-safety.md)

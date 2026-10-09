@@ -6,6 +6,7 @@
 //   <data>/remote/devices.json   { version: 1, devices: [{ id, name, platform, app, publicKey, tokenHash, createdAt, lastSeenAt, notify? }] }
 //                                notify = { settings, muted, registeredAt, lastSentAt }（離れた端末への通知。鍵は秘密の置き場の notify:<id>）
 //                                agentDelegation = true（この端末の AI からの委譲を受ける。既定は無し = オフ。デスクトップ版の端末だけ。docs/remote.md §4.5）
+//                                invite = <招待の id>（審査の招待で入った端末の印。招待を取り消す・作り直す・期限が来ると、この印の端末をすべて外す。ADR 0172）
 //                                公開鍵は base64url、tokenHash は中継用トークン（生の 32 バイト）の SHA-256 の 16 進。トークンそのものは持たない
 //
 // ファイルは一時ファイル + rename で 0600、フォルダーは 0700 で作る（Windows では効かないが、利用者のフォルダーの中に置く）。

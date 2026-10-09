@@ -279,6 +279,7 @@
     "remote-host": 2340,
     "remote-links": 5,
     "remote-noise": 23,
+    "remote-review-invite": 2500,
     "remote-settings": 1119,
     "remote-static-bundle": 1500,
     "remote-upload": 7148,

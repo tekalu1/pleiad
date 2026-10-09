@@ -1,4 +1,4 @@
-# 審査員向けのアプリへのアクセス（下書き）
+# 審査員向けのアプリへのアクセス
 
 Play の審査員は、アプリの制限された部分に入る方法を「アプリのコンテンツ › アプリへのアクセス」で受け取る。ログインなどで制限された部分があるなら、入るための詳細を出し、ワンタイム パスワードのような特別な仕組みは「その他の手順」に書く（指示は 5 組まで。[審査のためにアプリを準備する](https://support.google.com/googleplay/android-developer/answer/9859455)）。出す情報は「いつでも使え、使い回せ、利用者の場所によらず有効」で、英語でなければならず、切れたパスワードは差し戻しの理由になる（[審査用のログイン情報の提供に関する要件](https://support.google.com/googleplay/android-developer/answer/15748846)、[Play Console 要件](https://support.google.com/googleplay/android-developer/answer/10788890) 3.3）。
 
@@ -6,7 +6,7 @@ Pleiad のアプリは、ホスト（PC の Pleiad）とペアリングするま
 
 ## 決めたこと
 
-入り方は [ADR 0172](../adr/0172-play-review-access.md) で決めた（状態: 提案）。
+入り方は [ADR 0172](../adr/0172-play-review-access.md) で決めた（承認済み）。審査用の機械を Coolify に置く手順は [review-host.md](review-host.md)。
 
 - 審査専用の機械で、**審査モード**（`AGENT_HOST_REVIEW=1`）の Pleiad と審査用の中継を常に動かす。バックエンドは fake だけ（LLM を呼ばない）。利用者の PC は使わない。
 - そのホストだけが出せる**審査の招待**（期限 90 日・何度でも使える・人の承認なしでペアリングを通す）のコードを、審査員に渡す。生きている端末は 8 台・自動で通すのは 1 時間に 4 台まで。取り消すと、入った端末もすべて切れる。
@@ -16,20 +16,31 @@ Pleiad のアプリは、ホスト（PC の Pleiad）とペアリングするま
 
 ### 出す順
 
-1. ADR 0172 の実装（審査モード → 審査の招待 → 審査用の機械）ができるまでは、**内部テストにだけ上げる**（内部テストは通常の審査を受けないことがある。[テストをセットアップする](https://support.google.com/googleplay/android-developer/answer/9845334)）。
-2. クローズドテストの申請の前に、審査用の機械を立て、招待を作り、下の「審査の招待で出す文」を入れる。
-3. 申請・更新のたびに、招待の残りが 30 日を切っていないか確かめる。切っていれば作り直し、申告の文のコードと日付を書き換える。審査の前にホストを起動し直して会話を消す。
+1. ADR 0172 の実装（審査モード → 審査の招待 → 審査用の機械）が済み、[review-host.md](review-host.md) の手順で審査用の機械を置くまでは、**内部テストにだけ上げる**（内部テストは通常の審査を受けないことがある。[テストをセットアップする](https://support.google.com/googleplay/android-developer/answer/9845334)）。
+2. クローズドテストの申請の前に、審査用の機械を立て、招待を作り（`create`）、下の「審査の招待で出す文」の `〈 〉` を埋めて入れる。
+3. 申請・更新のたびに、`show` で招待の残りが 30 日を切っていないか確かめる。切っていれば `create` で作り直し、申告の文のコードと日付を書き換える。審査の前にホストを起動し直して会話を消す。
 
 前面サービスの申告では、通知の流れを動画で見せる（[foreground-service.md](foreground-service.md)）。
 
 ## 審査用のホスト
 
-起動の形（審査モードと審査の招待を実装した後。名前は実装で確定する）:
+審査用のホストは `deploy/review-host/Dockerfile` の image を Coolify のコンテナで動かす（審査モード・fake のバックエンド・英語・非 root は image が決めてある。手順は [review-host.md](review-host.md)）。招待は、そのコンテナの Terminal で作る:
 
 ```
-AGENT_HOST_REVIEW=1 AGENT_HOST_BACKENDS=fake AGENT_HOST_LOCALE=en AGENT_HOST_DATA=<審査専用の置き場> node core/server.mjs
-node core/review-invite.mjs create --days 90
+node core/review-invite.mjs create --days 90   # 作る（既定 90 日、最長 180 日。今ある招待は置き換わる）
+node core/review-invite.mjs show               # 期限（Expires、UTC）・端末の数・コード
+node core/review-invite.mjs show --code-only   # 下の文の 〈pleiad://pair?...〉 に入れるコード
+node core/review-invite.mjs revoke             # 取り消す（入った端末もすべて切れる）
 ```
+
+下の文の `〈 〉` に入れるもの:
+
+| 穴 | 入れるもの |
+|---|---|
+| `〈pleiad://pair?...〉` | `show --code-only` の出力（1 行。中継の URL・ホストの鍵・招待の秘密が入っている。招待を作り直すと変わる） |
+| `〈date, UTC〉` / `〈日時〉` | `show` の `Expires` の日時（UTC）。例 `2027-01-08 00:00 UTC` / 日本語の文では日本時間に直して書いてよい |
+| `〈email〉` / `〈メールアドレス〉` | 審査員の連絡を受ける、Play Console の連絡先と同じ宛先 |
+| `〈video URL〉` | 急ぎの文で、通知の流れを見せる動画（[foreground-service.md](foreground-service.md)）の URL |
 
 fake のバックエンドは、会話の最初の言葉で台本を選ぶ（`core/backends/fake.mjs`）。審査モードで通す台本は次だけで、それ以外は言葉をそのまま返す。
 
@@ -40,7 +51,7 @@ fake のバックエンドは、会話の最初の言葉で台本を選ぶ（`co
 | `fail` | 失敗で終わる |
 | `ask-later` | 20 秒待ってから承認を求める（通知を試す用） |
 
-会話はメモリにだけあり、ホストを止めると消える。
+ホストを再起動すると、会話などのデータは消える（起動のたびに掃除する。残るのは招待と端末だけ）。
 
 通知は、その会話をスマートフォンか PC で見ている間は抑えられる（[ADR 0086](../adr/0086-notifications-through-relay.md)）。`ask` はすぐ承認を求めるので、送った画面で見ている間に通知が抑えられる。通知を試すには `ask-later` を送ってすぐアプリを閉じる。
 
