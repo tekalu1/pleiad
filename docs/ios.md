@@ -1,6 +1,6 @@
 # iOS の殻と TestFlight
 
-iPhone・iPad（iOS / iPadOS 16 以上）向けの Capacitor の殻は `mobile/ios/App/`。ホスト一覧は Android と同じ `mobile/www`、暗号とループバックの中継は `mobile/ios/remote-core/` を使う（[ADR 0174](adr/0174-ios-capacitor-shell.md)）。通知は対象外（ADR 0086）。
+iPhone・iPad（iOS / iPadOS 16 以上）向けの Capacitor の殻は `mobile/ios/App/`。ホスト一覧は Android と同じ `mobile/www`、暗号とループバックの中継は `mobile/ios/remote-core/` を使う（[ADR 0174](adr/0174-ios-capacitor-shell.md)）。通知は対象外（ADR 0086）。公式の中継とログインを入れるときの App Review の危険（4.2.7 のリモートデスクトップのクライアント・4.8 の Sign in with Apple・5.1.1(v) のアカウントの削除）は [ADR 0183](adr/0183-accounts-and-hosted-relay.md)（提案）の「影響」。
 
 ## 登録前にできること
 
