@@ -724,6 +724,7 @@
     "errors": {
       "NOT_FOUND": "No such operation: {{id}}.",
       "HOST_SCREEN_ONLY": "This operation can only be done from the screen of the PC where Pleiad is running.",
+      "REVIEW_MODE": "This Pleiad is running in review mode, so this operation ({{id}}) is not available.",
       "INVALID": "Invalid arguments: {{detail}}",
       "READ_ONLY_MODE": "This conversation is in a read-only or plan mode, so it cannot change Pleiad's state ({{id}}).",
       "NEEDS_UI": "{{id}} widens what the agent is allowed to do, so it cannot be run from here. Ask the user to do it on Pleiad's screen.",

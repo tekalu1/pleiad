@@ -39,6 +39,8 @@ const SUITES = [
   // プレビューの横のツリー: 経路の段は必ず返す・遅延読み込み・件数の枠と枠の外の経路・除外名も全部出す・roots の外は読めない
   './unit/file-preview-tree.mjs',
   './unit/file-access.mjs',
+  // 審査モード（ADR 0172）: 全命令の通す/断る表・操作の一覧の許可・起動の条件・作業フォルダーへの閉じ込め・fake の台本の絞り込み
+  './unit/review-mode.mjs',
   './unit/preview-links.mjs',
   // 文中の URL のリンク: 範囲の判定（ASCII の字まで）・リンクにする場所としない場所・行き先の一行と右クリックのメニューの項目
   './unit/url-links.mjs',
