@@ -25,7 +25,7 @@ export default async function (t) {
     const state = { streamEl: null, turnEl: null, turnClosed: false, thinkEl: null, toolCards: new Map() };
     const activity = { el: null, text: "", show(text) { this.text = text; this.el = { isConnected: true }; c.shows++; }, hide: noop };
     const context = vm.createContext({
-      state, log, activity,
+      state, log, activity, cancelBackfill: noop,
       requestAnimationFrame: cb => { frames.push(cb); return frames.length; },
       cancelAnimationFrame: id => { frames[id - 1] = null; },
       streamFrame: 0, streamTarget: null,

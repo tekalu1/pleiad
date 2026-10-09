@@ -43,7 +43,7 @@ export default async function (t) {
     };
     const activity = { el: null };
     const context = vm.createContext({ thread, el, log: {}, atBottom: () => false, relayoutBranches() {}, state: { busy: true }, activity });
-    vm.runInContext(`let paintingHistory = true;\n${cut("wrap")}\n${cut("place")}\n${cut("append")}\nthis.append = append;`, context);
+    vm.runInContext(`let paintingHistory = true; let paintBefore = null;\n${cut("wrap")}\n${cut("place")}\n${cut("append")}\nthis.append = append;`, context);
     return { rows, el, activity, append: context.append, queries: () => queries };
   };
 
