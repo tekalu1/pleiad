@@ -1,0 +1,11 @@
+# Docker のビルドの文脈は、審査用のホスト（deploy/review-host/Dockerfile）が要るものだけにする。
+# 中継（relay/）は relay/ を文脈にするので、ここには関係しない。
+*
+!package.json
+!package-lock.json
+!core
+!web
+!assets
+!skills
+!deploy/review-host/entrypoint.sh
+**/node_modules

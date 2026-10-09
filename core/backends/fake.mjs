@@ -12,6 +12,7 @@
 //   "tool"         … tool.start / tool.result を挟む
 //   "ask"          … askPermission（kind:"tool"）を呼び、結果を本文にする
 //   "ask-slow"     … "ask" の後、中断されるまで走り続ける（承認の前後で状態が変わるのを測る）
+//   "ask-later"    … 約 20 秒（AGENT_HOST_FAKE_ASK_LATER_MS で変える）待ってから "ask" と同じ承認を求める。送ってすぐアプリを閉じ、通知（前面サービス）が来るのを試す台本（docs/play-store/app-access.md）
 //   "outlives:<json>" … ターンが終わっても残る承認（outlivesTurn。ADR 0168）を出す／その handle を操る（update・settle・result）。tests/unit/server-permission-update.mjs
 //   "question"     … askPermission（kind:"question"）を呼び、回答を本文にする
 //   "slow"         … 中断されるまで待つ
@@ -43,6 +44,8 @@
 //                    新しいサーバーが記録を再生して続きを受ける（無停止の更新 2b-5。fake-held.mjs。AGENT_HOST_DATA と AGENT_HOST_RUNTIME_ROOT が要る）
 //   "notes:" / "instructions:" … Pleiad が足した notes（記憶・末尾）／ botInstructions（人格）を JSON で返す（bot の会話の検査用）
 //   それ以外        … prompt をそのまま echo
+// 審査モード（AGENT_HOST_REVIEW=1。ADR 0172）で通すのは echo:・ask・ask-later・question・fail だけ（core/review-mode.mjs の fakeScriptAllowed）。
+// ほかの台本（steps:・control:・computer:・browser:・context:・held:・bg-shell・term など）は台本として読まず、言葉をそのまま返す
 // 行頭の <pleiad-channel> などの包み（bot の会話。core/system-messages.mjs の splitLeadingNotes）は外してから台本を選ぶ（scriptOf）。
 // 環境変数: AGENT_HOST_FAKE_USAGE=1 … ターンの終わりに固定の usage を流す／AGENT_HOST_FAKE_SLOW_STEER=1 … "slow" が途中送信を受ける／
 //   AGENT_HOST_FAKE_QUOTA=<JSON のファイル> … 使用枠（usage()。{ windows: [{ label, usedPercent, resetsAt, minutes }] }）を毎回そのファイルから読む。
@@ -57,6 +60,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { undelivered } from "./undelivered.mjs";
+import { isReviewMode, fakeScriptAllowed } from "../review-mode.mjs";
 import { runHeld, driveHeld } from "./fake-held.mjs";
 import { computerDisplay, computerToolInput } from "../computer-use/display.mjs";
 
@@ -72,6 +76,15 @@ let host = null;   // attachHost で受け取る server の口（ターンの外
 const now = () => Date.now();
 const iso = () => new Date().toISOString();
 const wait = (ms) => new Promise((r) => setTimeout(r, ms).unref?.());
+// 台本 "ask-later" の待ち。中断されたら true
+const ASK_LATER_MS = Number(process.env.AGENT_HOST_FAKE_ASK_LATER_MS ?? 20_000);
+const sleepUnlessAborted = (ms, signal) => new Promise((resolve) => {
+  if (signal?.aborted) return resolve(true);
+  const onAbort = () => { clearTimeout(timer); resolve(true); };
+  const timer = setTimeout(() => { signal?.removeEventListener?.("abort", onAbort); resolve(false); }, ms);
+  timer.unref?.();
+  signal?.addEventListener?.("abort", onAbort, { once: true });
+});
 
 const GATE_DIR = process.env.AGENT_HOST_FAKE_GATE_DIR || null;
 const GATE_POLL_MS = 20;
@@ -428,8 +441,10 @@ export const backend = {
   },
 
   async runTurn({ prompt, sessionId, cwd, mode, model, emit, onPromptDelivered, askPermission, signal, control, agentRuntime, contextRuntime, computerRuntime, browserRuntime, controlRuntime, browserInstructions, oauthToken, autoCompactWindow, hostSessionId, shellAppends = [], notes = [], botInstructions = null, rewind = null }) {
+    // 審査モードで通さない台本は、台本として読まずに言葉をそのまま返す（下の plain）
+    const plain = isReviewMode() && !fakeScriptAllowed(scriptOf(prompt));
     // プロンプトを渡す前に失敗する台本（claude のネイティブ指示を止められなかったときと同じ形）。会話にも記録しない
-    if (scriptOf(prompt).startsWith("undelivered")) {
+    if (!plain && scriptOf(prompt).startsWith("undelivered")) {
       const error = "fake: failed before the prompt was delivered";
       emit({ type: "turnResult", outcome: "error", error });
       throw undelivered(new Error(error));
@@ -456,12 +471,12 @@ export const backend = {
     // 中断の後に Pleiad が添える文は、Claude の別の text ブロックをつないだ履歴と同じく、発言の前に置く
     push(s, { role: "user", text: [...notes, String(prompt ?? "")].join("") });
     // silent: は渡った合図を出さないバックエンド（antigravity）の代わり。server は返答の中身で渡ったとみなす
-    if (!scriptOf(prompt).startsWith("silent:")) onPromptDelivered?.();
+    if (plain || !scriptOf(prompt).startsWith("silent:")) onPromptDelivered?.();
     emit({ type: "activity", state: "thinking" });
 
     // AGENT_HOST_FAKE_VOICE_REPLY=<JSON ファイル>: { when, steps } の when と同じ本文の発言には steps の台本で返す（通話の確認用。声で話した言葉は台本の接頭辞を持てないため。docs/voice-call.md）
-    const text = voiceReplyFor(scriptOf(prompt)) ?? scriptOf(prompt);
-    if (text.startsWith('limit ')) {
+    const text = plain ? scriptOf(prompt) : voiceReplyFor(scriptOf(prompt)) ?? scriptOf(prompt);
+    if (!plain && text.startsWith('limit ')) {
       const raw = text.slice(6).trim();
       const resetsAt = /^\d+$/.test(raw) ? Number(raw) : Date.parse(raw);
       emit({ type: 'turnResult', outcome: 'limited', resetsAt: Number.isFinite(resetsAt) ? resetsAt : null,
@@ -473,7 +488,7 @@ export const backend = {
     const out = { uuid: crypto.randomUUID(), role: "assistant", text: "", toolCalls: null };
 
     try {
-      if (text.startsWith("slow")) {
+      if (!plain && text.startsWith("slow")) {
         // 中断できることを測るための台本。signal が来るまで終わらない
         if (SLOW_STEER && control) {
           // AGENT_HOST_FAKE_SLOW_STEER=1 のとき: 途中送信を受理して履歴に積む（bot への書き足しの検査用。終わりは finally が外す）
@@ -492,7 +507,10 @@ export const backend = {
         return { sessionId: id };
       }
 
-      if (text.startsWith('<pleiad-pulse>')) {
+      if (plain) {
+        out.text = text;
+        await say(emit, out.text, out.uuid);
+      } else if (text.startsWith('<pleiad-pulse>')) {
         // 心拍の安いモデル（ADR 0126）。台本は AGENT_HOST_FAKE_PULSE の JSON ファイル（返事の配列。1 回ごとに順に使い、尽きたら最後を繰り返す）。無ければ何もしない返事
         out.text = nextPulseAnswer();
         await say(emit, out.text, out.uuid);
@@ -688,6 +706,10 @@ export const backend = {
         out.text = "ツールを呼んだ";
         await say(emit, out.text, out.uuid);
       } else if (text.startsWith("ask")) {
+        if (/^ask-later(\s|$)/.test(text) && await sleepUnlessAborted(ASK_LATER_MS, signal?.signal)) {
+          emit({ type: "turnResult", outcome: "aborted" });
+          return { sessionId: id };
+        }
         emit({ type: "activity", state: "waiting" });
         const answer = await askPermission({
           toolName: "fake_write",

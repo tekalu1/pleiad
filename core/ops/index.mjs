@@ -1,6 +1,7 @@
 // 既定のレジストリ。操作を足したら、領域のファイルに書いてここで集める（集め忘れは tests/unit/ops-coverage.mjs が落とす）。
 // 設定は `export const settings = [defineSetting(…)]` で出し、ここで集める（今は settings.mjs に置く。持ち主のモジュールへ移していく）。
 import { createRegistry } from './registry.mjs';
+import { isReviewMode, reviewRegistry } from '../review-mode.mjs';
 import { appOps } from './app.mjs';
 import { sessionOps } from './sessions.mjs';
 import { conversationOps } from './conversations.mjs';
@@ -37,11 +38,14 @@ import { notificationOps } from './notifications.mjs';
 // 権限の配線を確かめる検査用の操作は、fake バックエンドを有効にしたとき（テスト）だけ載せる
 const withProbe = String(process.env.AGENT_HOST_BACKENDS ?? '').split(',').map((s) => s.trim()).includes('fake');
 
-export const registry = createRegistry({
+const fullRegistry = createRegistry({
   ops: [...appOps, ...sessionOps, ...resumeOps, ...conversationOps, ...agentOps, ...statusOps, ...settingOps, ...delegationOps,
     ...worktreeOps, ...notifyOps, ...hookOps, ...compatOps, ...computerOps, ...browserOps, ...mcpOps, ...contextOps, ...remoteOps,
     ...gitOps, ...shellOps, ...sessionWorkOps, ...fileOps, ...attachmentOps, ...channelOps, ...draftOps, ...botOps, ...memoryOps, ...brainOps, ...routineOps, ...notificationOps, ...voiceOps, ...apiKeyOps, ...(withProbe ? probeOps : [])],
   settings: [...settings],
 });
+
+// 審査モード（ADR 0172）では、許可の一覧にある操作だけ見せる・通す（core/review-mode.mjs）
+export const registry = isReviewMode() ? reviewRegistry(fullRegistry) : fullRegistry;
 
 export { createRegistry, defineOp, defineSetting, OpError } from './registry.mjs';

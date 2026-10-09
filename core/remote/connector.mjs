@@ -6,6 +6,9 @@
 //   通常は IK（端末の静的鍵が端末一覧にあり、中継が名乗った deviceId の鍵と一致すること）、ペアリングは IKpsk2
 // - 確立したら channel.mjs のチャネルに載せ、ストリームを forward.mjs の防火壁を通して既存サーバーへ流す
 // - ペアリング: 入場券を中継に登録 → QR → IKpsk2 → 承認待ち（確認コード）→ 承認で deviceId と中継用トークンを発行
+// - 審査の招待（ADR 0172）: 審査モードのホストだけが、長く使えて人の承認なしで通る招待を持てる。同じ秘密から導いた入場券を
+//   使われるたびと 4 分ごとに中継へ置き直し、端末を台数と回数の上限の中で自動で登録する。招待の記録は秘密の置き場にあり、
+//   CLI（core/review-invite.mjs）が作る・取り消す。ホストは記録を読み直して、消えた・切れた・作り直された招待で入った端末を取り消す
 // - 既定は無効。有効にするまで何もつながない（鍵も作らない）
 import os from 'node:os';
 import crypto from 'node:crypto';
@@ -18,6 +21,10 @@ import { AGENT_PATH } from './agent-protocol.mjs';
 import { createRemoteStore } from './devices.mjs';
 import { t } from '../i18n.mjs';
 import { normalizeRelayUrl, relayWsUrl, pairingPayload, cleanLabel, PAIRING_TTL_MS } from './pairing.mjs';
+import {
+  isReviewMode, loadInvite, inviteDaysLeft, checkAdmission, INVITE_KEY, INVITE_MAX_DEVICES, INVITE_MAX_PER_HOUR,
+  INVITE_RATE_WINDOW_MS, INVITE_REPLACE_MS, INVITE_POLL_MS, INVITE_LOG_MS,
+} from './review-invite.mjs';
 import { parseNotifyKey } from '../notify/crypto.mjs';
 import { normalizeDeviceSettings } from '../notify/policy.mjs';
 
@@ -60,7 +67,11 @@ function publicAgent(d, stats) {
 }
 
 function publicDevice(d, connections = 0, registered = false, agentStats = null) {
-  return { id: d.id, name: d.name, platform: d.platform, app: d.app ?? null, createdAt: d.createdAt, lastSeenAt: d.lastSeenAt ?? null, connected: connections > 0, connections, notify: publicNotify(d, registered), agent: publicAgent(d, agentStats) };
+  return {
+    id: d.id, name: d.name, platform: d.platform, app: d.app ?? null, createdAt: d.createdAt, lastSeenAt: d.lastSeenAt ?? null,
+    connected: connections > 0, connections, notify: publicNotify(d, registered), agent: publicAgent(d, agentStats),
+    ...(d.invite ? { invite: true } : {}),
+  };
 }
 
 /** この端末の AI からの依頼を受けてよいか（デスクトップ版の端末で、人がオンにしたものだけ） */
@@ -88,11 +99,15 @@ function parseJson(buf) {
  * @param emit        (event) => void。{ type: 'remoteStatus' | 'remotePairing', ... } を画面へ配る
  * @param env         AGENT_HOST_RELAY_URL / AGENT_HOST_RELAY_SECRET（設定が空のときの代わり）
  * @param agent       端末の AI 用の口 /agent（core/remote/agent-port.mjs と、server が足す stats・stopTasks）。無ければ /agent は受けない
+ * @param now         審査の招待の期限と回数の数え方に使う時計（試験で進める）
+ * @param reviewLimits 審査の招待の上限 { maxDevices, perHour }（既定は 8 台・1 時間 4 台。試験で変える）
  */
 export function createRemoteHost({
   dataDir, cipher, target, token, appVersion = '', emit = () => {}, env = process.env,
   backoff = { minMs: 1000, maxMs: 60_000 }, log = () => {}, agent = null,
+  now = Date.now, reviewLimits = {},
 }) {
+  const limits = { maxDevices: reviewLimits.maxDevices ?? INVITE_MAX_DEVICES, perHour: reviewLimits.perHour ?? INVITE_MAX_PER_HOUR };
   const store = createRemoteStore({ dataDir, cipher });
   let cfg = { enabled: false, relayUrl: '', secret: '', hostName: os.hostname(), relayUrlFromEnv: false, secretFromEnv: false };
   let identity = null;
@@ -115,6 +130,10 @@ export function createRemoteHost({
   const dataConns = new Set();
   let applying = Promise.resolve();
   let statusQueued = false;
+  let invite = null;               // 今使える審査の招待（loadInvite の結果）。審査モードでなければ常に null
+  let inviteChain = Promise.resolve();   // 招待の読み直しと自動の承認を 1 つずつ（台数と回数の数え間違いを防ぐ）
+  const inviteTimers = [];
+  const admitted = [];             // 招待で通した時刻（ms）。起動し直すと消えるが、直近 1 時間の数は devices.json の createdAt からも数える
 
   const setPhase = (next, err = null) => {
     if (phase !== next) since = Date.now();
@@ -171,6 +190,7 @@ export function createRemoteHost({
     if (offer && offer.expiresAt > Date.now()) {
       sendControl({ type: 'pairing', ticketHash: offer.ticketHash.toString('hex'), ttlMs: offer.expiresAt - Date.now() });
     }
+    placeInviteTicket();
   }
 
   function connect() {
@@ -247,6 +267,7 @@ export function createRemoteHost({
     for (const ws of dataConns) closeWs(ws, HOST_CLOSE.SHUTDOWN);
     dataConns.clear();
     clearOffer(false);
+    stopInviteTimers();
   }
 
   // ── データ用の接続 ────────────────────────────────────────────
@@ -346,14 +367,17 @@ export function createRemoteHost({
     const o = offer && offer.expiresAt > Date.now() ? offer : null;
     // 入場券は 1 回きり（中継も消している）。次は作り直す
     clearOffer(false);
-    if (!o) {
+    // 画面から作った入場券が無ければ、審査の招待（あれば）。中継は使われた入場券を消したので、すぐ置き直す
+    const inv = !o && invite && invite.expiresAt > now() ? invite : null;
+    if (inv) placeInviteTicket();
+    if (!o && !inv) {
       clearTimeout(timer);
       ws.once('open', () => closeWs(ws, HOST_CLOSE.UNAUTHORIZED, 'no pairing'));
       return;
     }
-    emit({ type: 'remotePairing', phase: 'connecting' });
+    if (!inv) emit({ type: 'remotePairing', phase: 'connecting' });
     firstMessage(ws, m1 => {
-      const hs = new Handshake({ pattern: 'IKpsk2', initiator: false, prologue: prologueFor(identity.hostId), staticKey: identity, psk: o.psk });
+      const hs = new Handshake({ pattern: 'IKpsk2', initiator: false, prologue: prologueFor(identity.hostId), staticKey: identity, psk: (o ?? inv).psk });
       const hello = parseJson(hs.readMessage(m1));
       ws.send(hs.writeMessage());
       const transport = hs.split();
@@ -365,15 +389,20 @@ export function createRemoteHost({
         try { msg = parseJson(transport.decrypt(Buffer.from(data))); } catch { msg = null; }
         clearTimeout(timer);
         if (msg?.type !== 'pair') return closeWs(ws, HOST_CLOSE.UNAUTHORIZED, 'pairing');
-        const now = Date.now();
-        const r = {
-          id: crypto.randomBytes(9).toString('base64url'),
+        const at = Date.now();
+        const label = {
           name: cleanLabel(hello.name) || t('remote.unnamedDevice'),
           platform: cleanLabel(hello.platform, 32) || 'unknown',
           app: cleanLabel(hello.app, 32) || null,
-          code, createdAt: new Date(now).toISOString(), expiresAt: new Date(now + PAIRING_TTL_MS).toISOString(),
-          publicKey, ws,
-          send: obj => { if (ws.readyState === WebSocket.OPEN) ws.send(transport.encrypt(Buffer.from(JSON.stringify(obj), 'utf8'))); },
+        };
+        const send = obj => { if (ws.readyState === WebSocket.OPEN) ws.send(transport.encrypt(Buffer.from(JSON.stringify(obj), 'utf8'))); };
+        // 審査の招待は確認コードの見比べも承認の待ちも無い。上限の中なら、ここで登録して終える
+        if (inv) return admitInvite(inv, { ...label, publicKey, ws, send });
+        const r = {
+          id: crypto.randomBytes(9).toString('base64url'),
+          ...label,
+          code, createdAt: new Date(at).toISOString(), expiresAt: new Date(at + PAIRING_TTL_MS).toISOString(),
+          publicKey, ws, send,
           timer: null,
         };
         r.timer = setTimeout(() => finishRequest(r, 'expired'), PAIRING_TTL_MS);
@@ -397,6 +426,139 @@ export function createRemoteHost({
     closeWs(r.ws, 1000);
     emit({ type: 'remotePairing', phase: phaseName, request: publicRequest(r), ...extra });
     queueStatus();
+  }
+
+  // ── 審査の招待（ADR 0172） ───────────────────────────────────
+
+  const reviewMode = () => isReviewMode(env);
+
+  /** 招待の入場券を中継へ置く（同じ秘密から同じ入場券になる）。制御用の接続が無ければ、つながったときの sync が置く。 */
+  function placeInviteTicket() {
+    if (!invite || invite.expiresAt <= now()) return;
+    sendControl({ type: 'pairing', ticketHash: invite.ticketHash.toString('hex'), ttlMs: PAIRING_TTL_MS });
+  }
+
+  const inviteDevices = () => [...deviceCache.values()].filter(d => invite && d.invite === invite.id);
+
+  function logInvite(prefix = 'review invite') {
+    if (!invite) return log(`${prefix}: none`);
+    log(`${prefix}: ${inviteDaysLeft(invite, now())} days left (expires ${new Date(invite.expiresAt).toISOString()}), ${inviteDevices().length}/${limits.maxDevices} devices`);
+  }
+
+  /**
+   * 招待の記録を読み直し、今の招待と食い違う印の端末（取り消された・切れた・作り直された招待で入った端末）をすべて取り消す。
+   * 審査モードでなければ招待は無いものとして扱う（印の付いた端末が残っていれば同じく取り消す）。
+   */
+  async function reconcileOnce() {
+    let next = null;
+    if (reviewMode()) {
+      try { next = loadInvite(await store.secrets.get(INVITE_KEY), now()); }
+      catch (e) { log(`review invite: cannot read the invite (${e.message})`); return; }   // 読めない間は、今の状態を変えない
+      if (next?.expired) next = null;
+    }
+    const before = invite;
+    invite = next;
+    for (const d of [...deviceCache.values()]) {
+      if (d.invite && d.invite !== invite?.id) {
+        log(`review invite: revoking device ${d.id.slice(0, 6)} (its invite ended)`);
+        await revokeDevice(d.id).catch(e => log(`review invite: revoke failed (${e.message})`));
+      }
+    }
+    if (invite?.id !== before?.id) {
+      admitted.length = 0;
+      placeInviteTicket();
+      if (reviewMode()) logInvite(invite ? 'review invite: active' : 'review invite: ended');
+    }
+  }
+  const chainInvite = fn => { const run = inviteChain.catch(() => {}).then(fn); inviteChain = run; return run; };
+  const reconcileInvite = () => chainInvite(reconcileOnce);
+
+  function startInviteTimers() {
+    stopInviteTimers();
+    if (!reviewMode()) return;
+    const every = (fn, ms) => { const timer = setInterval(fn, ms); timer.unref(); inviteTimers.push(timer); };
+    every(() => reconcileInvite().catch(() => {}), INVITE_POLL_MS);
+    every(placeInviteTicket, INVITE_REPLACE_MS);
+    every(() => logInvite(), INVITE_LOG_MS);
+  }
+  function stopInviteTimers() {
+    for (const timer of inviteTimers.splice(0)) clearInterval(timer);
+  }
+
+  /** 直近 1 時間に通した数。起動し直すと admitted は消えるので、devices.json の作成時刻からも数えて大きい方を取る。 */
+  function recentAdmissions(at) {
+    const since = at - INVITE_RATE_WINDOW_MS;
+    while (admitted.length && admitted[0] <= since) admitted.shift();
+    const fromDevices = inviteDevices().filter(d => Date.parse(d.createdAt) > since).length;
+    return Math.max(admitted.length, fromDevices);
+  }
+
+  /** 招待で入ってきた端末を、上限の中なら登録して approved を返す。上限を超えたら denied（承認待ちにしない）。 */
+  function admitInvite(inv, info) {
+    const { ws, send } = info;
+    const refuse = (type, reason) => { send({ type, ...(reason ? { reason } : {}) }); closeWs(ws, 1000); };
+    return chainInvite(async () => {
+      try {
+        await reconcileOnce();   // 順番を待つ間に取り消された・切れたかもしれない
+        if (!invite || invite.id !== inv.id || invite.expiresAt <= now()) return refuse('expired');
+        if (ws.readyState !== WebSocket.OPEN) return;
+        const at = now();
+        const key = info.publicKey.toString('base64url');
+        // 同じ端末（同じ鍵）が入り直すときは、古い登録と入れ替える（台数に数えない）
+        const again = inviteDevices().find(d => d.publicKey === key);
+        const verdict = checkAdmission({ live: inviteDevices().length - (again ? 1 : 0), recent: recentAdmissions(at), ...limits });
+        if (!verdict.ok) {
+          log(`review invite: refused a device (${verdict.reason === 'devices' ? 'device limit' : 'hourly limit'})`);
+          return refuse('denied', verdict.reason);
+        }
+        if (again) await revokeDevice(again.id);
+        const { device, raw } = issueDevice(info, { invite: invite.id });
+        await store.addDevice(device);
+        deviceCache.set(device.id, device);
+        sendControl({ type: 'allow', id: device.id, tokenHash: device.tokenHash });
+        send({ type: 'approved', deviceId: device.id, token: raw.toString('base64url'), hostName: cfg.hostName });
+        closeWs(ws, 1000);
+        admitted.push(at);
+        log(`review invite: admitted device ${device.id.slice(0, 6)} (${inviteDevices().length}/${limits.maxDevices} devices)`);
+        queueStatus();
+      } catch (e) {
+        log(`review invite: admit failed (${e.message})`);
+        refuse('denied', 'error');
+      }
+    });
+  }
+
+  // ── 端末の登録・取り消し ──────────────────────────────────────
+
+  /** 端末の記録と中継用トークンを作る（承認と招待で共通）。extra は devices.json の記録へ足す印（invite）。 */
+  function issueDevice({ name, platform, app, publicKey }, extra = {}) {
+    const raw = crypto.randomBytes(32);
+    const device = {
+      id: `d${crypto.randomBytes(12).toString('base64url')}`,
+      name, platform, app,
+      publicKey: publicKey.toString('base64url'),
+      tokenHash: crypto.createHash('sha256').update(raw).digest('hex'),
+      createdAt: new Date(now()).toISOString(),
+      lastSeenAt: null,
+      ...extra,
+    };
+    return { device, raw };
+  }
+
+  /** 取り消し: 一覧から消し、中継からも消し、つながり中のチャネルを切る。 */
+  async function revokeDevice(id) {
+    id = String(id ?? '');
+    deviceCache.delete(id);   // 照合は先に止める（消し終わるのを待つ間にハンドシェイクを通さない）
+    // 任された作業も止める（ADR 0146）。口を閉じてから、動いているタスクを止める
+    agent?.closeDevice(id, 'revoked');
+    await agent?.stopTasks?.(id);
+    await store.removeDevice(id);
+    sendControl({ type: 'revoke', id });
+    notifyKeys.delete(id);
+    await store.removeNotifyKey(id).catch(() => {});
+    for (const { ch } of channels.get(id) ?? []) ch.goaway('revoked', 'device revoked');
+    queueStatus();
+    return status();
   }
 
   // ── 状態 ──────────────────────────────────────────────────────
@@ -433,6 +595,10 @@ export function createRemoteHost({
         if (!cfg.relayUrl || !cfg.secret) { setPhase('error', { code: 'config', message: t('remote.settings.needConfig') }); return; }
         normalizeRelayUrl(cfg.relayUrl);
         identity = await store.identity();
+        // 招待は、つなぐ前に読む（つながったときの sync が入場券を置く）
+        await reconcileInvite();
+        if (reviewMode()) logInvite();
+        startInviteTimers();
         connect();
       } catch (e) {
         setPhase('error', { code: e.code === 'SECRET_LOCKED' ? 'locked' : 'config', message: e.message });
@@ -472,6 +638,8 @@ export function createRemoteHost({
 
     /** 端末を追加する。QR に入れる文字列と期限を返す。 */
     async startPairing() {
+      // 中継の入場券は 1 枚だけ。画面から作ると置き換わって審査の招待が使えなくなる
+      if (reviewMode()) throw new Error(t('remote.review.addDeviceDisabled'));
       if (!cfg.enabled) throw new Error(t('remote.settings.disabled'));
       if (phase !== 'connected') throw new Error(t('remote.settings.notConnected'));
       const secret = crypto.randomBytes(32);
@@ -501,15 +669,7 @@ export function createRemoteHost({
     async approve(id) {
       const r = requests.get(String(id ?? ''));
       if (!r) throw new Error(t('remote.pairing.requestGone'));
-      const raw = crypto.randomBytes(32);
-      const device = {
-        id: `d${crypto.randomBytes(12).toString('base64url')}`,
-        name: r.name, platform: r.platform, app: r.app,
-        publicKey: r.publicKey.toString('base64url'),
-        tokenHash: crypto.createHash('sha256').update(raw).digest('hex'),
-        createdAt: new Date().toISOString(),
-        lastSeenAt: null,
-      };
+      const { device, raw } = issueDevice(r);
       await store.addDevice(device);
       deviceCache.set(device.id, device);
       sendControl({ type: 'allow', id: device.id, tokenHash: device.tokenHash });
@@ -620,20 +780,10 @@ export function createRemoteHost({
     hostInfo: () => identity ? { hostId: identity.hostId, hostName: cfg.hostName } : null,
 
     /** 取り消し: 一覧から消し、中継からも消し、つながり中のチャネルを切る。 */
-    async revoke(id) {
-      id = String(id ?? '');
-      deviceCache.delete(id);   // 照合は先に止める（消し終わるのを待つ間にハンドシェイクを通さない）
-      // 任された作業も止める（ADR 0146）。口を閉じてから、動いているタスクを止める
-      agent?.closeDevice(id, 'revoked');
-      await agent?.stopTasks?.(id);
-      await store.removeDevice(id);
-      sendControl({ type: 'revoke', id });
-      notifyKeys.delete(id);
-      await store.removeNotifyKey(id).catch(() => {});
-      for (const { ch } of channels.get(id) ?? []) ch.goaway('revoked', 'device revoked');
-      queueStatus();
-      return status();
-    },
+    revoke: id => revokeDevice(id),
+
+    /** 審査の招待の記録を今すぐ読み直す（取り消された・切れた・作り直された招待で入った端末を取り消す）。ふだんは 10 秒ごとに自分で読む */
+    reconcileReviewInvite: () => reconcileInvite(),
 
     /** 終了時。設定は変えずにつながりだけ閉じる。 */
     stop() { disconnectAll(); setPhase('disabled'); },

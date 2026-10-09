@@ -884,6 +884,11 @@
     "notEditable": "このメッセージは変更できません",
     "invalidAction": "不正な操作です"
   },
+  "review": {
+    "needFake": "審査モード（AGENT_HOST_REVIEW=1）は、有効なバックエンドが fake だけのときに使えます（今: {{backends}}）。起動しません。",
+    "dataNotReview": "審査モード（AGENT_HOST_REVIEW=1）のデータ置き場は、空か、審査用の印（review-data.json）のあるものにしてください。使用済みの置き場では起動しません（置き場: {{dir}}）。",
+    "commandRefused": "この Pleiad は審査用の設定で動いています。その操作はできません。"
+  },
   "data": {
     "schemaUnreadable": "保存データの形式を確認できません。data-schema.json を確認してください。",
     "schemaMismatch": "この保存データは別の形式です。対応する新しい Pleiad を使用してください。データは変更していません。",
@@ -943,6 +948,9 @@
     "agent": {
       "hostScreenOnly": "この端末の AI からの依頼を受ける設定は、ホストの PC の画面からだけ入れられます（切る・すべて止めるは端末の画面からもできます）",
       "desktopOnly": "この端末の AI からの依頼は、デスクトップ版の端末だけが受けられます"
+    },
+    "review": {
+      "addDeviceDisabled": "このホストは審査用です。端末は審査の招待で入るので、ここでは「端末を追加」を使えません"
     },
     "unnamedDevice": "名前のない端末",
     "settings": {

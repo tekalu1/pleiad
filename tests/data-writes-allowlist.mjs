@@ -29,6 +29,9 @@ export const DATA_WRITES = [
     { name: 'data-schema.json', limit: '固定（{ schema: N }）', reason: '形式番号。移行の最後に 1 回だけ書く' },
     { name: 'backup-schema1-<日時>/（移行前の JSON と形式番号の写し）', limit: '移行 1 回につき JSON 5 つまで。移行前の大きさのまま増えない', reason: '移行前のデータの写し（docs/desktop-releases.md「適用とデータ保護」）。書き換えない。自動では消さない' },
   ] },
+  { file: 'core/review-mode.mjs', sites: 1, targets: [
+    { name: 'review-data.json', limit: '固定（{ review, createdAt }）', reason: '審査モード（ADR 0172）の置き場の印。空の置き場に起動のとき 1 回だけ書く' },
+  ] },
   { file: 'core/data-lock.mjs', sites: 1, targets: [
     { name: 'pleiad.lock', limit: '固定の小ささ（PID・トークン・時刻）', reason: 'データ置き場をプロセス単位で排他するロックファイル。終了で消す' },
   ] },

@@ -39,6 +39,8 @@ const SUITES = [
   // プレビューの横のツリー: 経路の段は必ず返す・遅延読み込み・件数の枠と枠の外の経路・除外名も全部出す・roots の外は読めない
   './unit/file-preview-tree.mjs',
   './unit/file-access.mjs',
+  // 審査モード（ADR 0172）: 全命令の通す/断る表・操作の一覧の許可・起動の条件・作業フォルダーへの閉じ込め・fake の台本の絞り込み
+  './unit/review-mode.mjs',
   './unit/preview-links.mjs',
   // 文中の URL のリンク: 範囲の判定（ASCII の字まで）・リンクにする場所としない場所・行き先の一行と右クリックのメニューの項目
   './unit/url-links.mjs',
@@ -598,6 +600,8 @@ const SUITES = [
   './unit/relay.mjs',
   // リモートのホスト側（core/remote/connector.mjs）。中継をこのプロセスで、fake のサーバーを別プロセスで立て、試験用の端末で往復する
   './unit/remote-host.mjs',
+  // 審査の招待（ADR 0172）: 同じコードで複数台・台数と 1 時間の上限・期限・取り消しと作り直しで端末が切れる・審査モードでしか作れない。中継とホストをこのプロセスで立てて往復する
+  './unit/remote-review-invite.mjs',
   // 端末の AI からの委譲の口 /agent（ホスト側。core/remote/agent-port.mjs）: 許可・防火壁・委譲と状態・承認モードの継承と引き上げ・上限・承認の中継と人の答え・取り消し
   './unit/remote-agent.mjs',
   // 端末の AI からホストへ任せる往復（端末のローカルのサーバー → main の橋の身代わり → 中継 → ホスト）: 委譲・完了通知・承認の中継と答え・オフライン・追いつき・取り消し

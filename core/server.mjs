@@ -159,6 +159,7 @@ import {
   getBackend, sessionBackend, listBackends, defaultBackend, describeBackends, resolveBackendForSession,
 } from "./backends/index.mjs";
 import { takeBootEnv } from './boot-env.mjs';
+import { isReviewMode, prepareReviewHost, reviewWorkDir, commandAllowed } from './review-mode.mjs';
 
 // main が起動の時にだけ渡す変数（AGENT_HOST_HANDOVER・PORT・RUNTIME_KEY・SERVER_LOG など。core/boot-env.mjs）を写して process.env から外す。
 // 子（エージェントの CLI・`!` の行・MCP）は process.env を継ぐので、どれを起こすより前に外す。以後の読み出しはこの写しから。
@@ -182,6 +183,8 @@ const HANDOVER_START = handoverStart();
 // 印は閉じない: プロセスの終了で OS が外す。データ置き場のロックより前に付ける: 引き継ぎの新サーバー（--handover）は、印ができたら
 // モジュールの読み込みが済んでロックを待っているとみなされ、main が旧サーバーに handover を頼む（desktop/switch.cjs）
 if (BOOT_ENV.AGENT_HOST_RUNTIME_ROOT && BOOT_ENV.AGENT_HOST_RUNTIME_KEY) markRuntimeInUse({ root: BOOT_ENV.AGENT_HOST_RUNTIME_ROOT, key: BOOT_ENV.AGENT_HOST_RUNTIME_KEY });
+// 審査モード（AGENT_HOST_REVIEW=1。ADR 0172）: fake だけ・審査用の置き場でなければ、データ置き場に触れる前に起動を止める（core/review-mode.mjs）
+if (isReviewMode()) prepareReviewHost({ dataDir: store.dataDir, backendIds: listBackends().map((b) => b.id) });
 const handoverLockFrom = Date.now();
 const releaseDataLock = HANDOVER_START ? await acquireDataLockWait(store.dataDir, { timeoutMs: LOCK_WAIT_MS }) : acquireDataLock(store.dataDir);
 const handoverLockWaitedMs = Date.now() - handoverLockFrom;
@@ -352,7 +355,8 @@ const COOKIE_NAME = "agent_host_token";
 const UPLOAD_DIR = path.join(store.dataDir, "uploads");
 // 閉じた Chrome の窓の静止画は持ち主の会話を見ている要求にだけ見せる（guard。要求の sessionId が持ち主）。ここは持ち主を名乗らない口の分で、断る
 const windowShotDenied = () => new PreviewError('protected-data', t('filePreview.windowShot'));
-const fileAccessFor = sessionId => ({ dataDir: store.dataDir, uploadDir: UPLOAD_DIR, guard: windowShotGuard({ uploadDir: UPLOAD_DIR, sessionId, deny: windowShotDenied }) });
+// 審査モードは作業フォルダーの中だけ読める（confine。core/file-preview.mjs）
+const fileAccessFor = sessionId => ({ dataDir: store.dataDir, uploadDir: UPLOAD_DIR, guard: windowShotGuard({ uploadDir: UPLOAD_DIR, sessionId, deny: windowShotDenied }), ...(isReviewMode() ? { confine: reviewWorkDir() } : {}) });
 const fileAccess = fileAccessFor(null);
 // 1 件の添付の上限（2026-09-23 に 8MB から上げた）。中身は断片（512 KiB の base64）で送る（attachStart / attachChunk / attachFinish）。
 // 1 通の WS で丸ごと送ると 100MB は約 133MB の 1 通になり、ws の既定の maxPayload（100 MiB）・リモートの 64 MiB の上限を超え、
@@ -1612,6 +1616,7 @@ const osActionAllowed = createRateLimit({ limit: 5, windowMs: 10_000 });
 // critical: 引き継ぎの前に終わるのを待つ短い処理（途中送信の受理待ち）。inflight: 処理中の HTTP の MCP・in-process の host MCP・hooks のコールバック
 // （待つのは上限つきで、待ち切れなくても進む。その呼び出しは 1 回失敗し、モデルが読んでやり直す）
 const handover = { hold: false, critical: new Set(), inflight: new Set(), droppedCalls: 0 };
+const REVIEW_CLOSED_PATHS = [AGENTS_MCP_PATH, CONTEXT_MCP_PATH, COMPUTER_MCP_PATH, BROWSER_MCP_PATH, CONTROL_MCP_PATH, OPS_PATH];
 const trackIn = (set, promise) => {
   const tracked = Promise.resolve(promise);
   set.add(tracked);
@@ -1622,6 +1627,8 @@ const trackIn = (set, promise) => {
 
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
+  // 審査モード（ADR 0172）: エージェントの MCP・CLI の口・webhook は閉じる（fake の台本は ply_* のツールを使えないが、口そのものも無い）
+  if (isReviewMode() && REVIEW_CLOSED_PATHS.some((p) => url.pathname === p || url.pathname.startsWith(`${p}/`))) { res.writeHead(404); return res.end(); }
   if (url.pathname === AGENTS_MCP_PATH) return trackIn(handover.inflight, agentBridge.handle(req, res));
   if (url.pathname === CONTEXT_MCP_PATH) return trackIn(handover.inflight, contextBridge.handle(req, res));
   if (url.pathname === COMPUTER_MCP_PATH && computerBridge) return trackIn(handover.inflight, computerBridge.handle(req, res));
@@ -1630,7 +1637,7 @@ const server = http.createServer(async (req, res) => {
   // CLI の口。画面のトークンは受けず、CLI 用トークンか会話の接続のトークンだけを受ける（core/ops/surfaces/http.mjs）
   if (url.pathname === OPS_PATH || url.pathname.startsWith(`${OPS_PATH}/`)) return opsHttp(req, res, url);
   // webhook の受け口（P3。/hooks/<id>。画面のトークンの前。ADR 0113）。自分の要求でなければ false
-  if (await botHost?.handleHttp(req, res)) return;
+  if (!isReviewMode() && await botHost?.handleHttp(req, res)) return;
 
   // 静的ファイルもトークンで守る。守られているのが WebSocket だけだと、
   // リモートに出したときに UI 一式が誰でも取れてしまう。
@@ -1768,6 +1775,7 @@ server.on("upgrade", (req, socket, head) => {
     socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
     return socket.destroy();
   }
+  if (url.pathname === VOICE_PATH && isReviewMode()) return socket.destroy();
   if (url.pathname === VOICE_PATH) return voiceHost.upgrade(req, socket, head);   // 通話の音声（バイナリ）。/ws とは別の口
   wss.handleUpgrade(req, socket, head, (ws) => wss.emit("connection", ws, req));
 });
@@ -2134,6 +2142,8 @@ async function resolveMode(sessionId, given, backend) {
  * 戻りは { cwd, changedFrom }。changedFrom はそれまでの cwd と違うときだけ（履歴とイベントに使う）
  */
 async function resolveCwd(resume, given, backend) {
+  // 審査モードの会話の作業フォルダーは、置き場の中の空のフォルダー 1 つに固定する（ADR 0172）
+  if (isReviewMode()) return { cwd: reviewWorkDir(), changedFrom: null };
   const asked = typeof given === "string" && given.trim() ? given : null;
 
   let cwd = asked;
@@ -3223,7 +3233,7 @@ async function createSession(args) {
   const inherit = source && backend.id === selectedBackend;
   const model = args?.model ?? (inherit ? source.nextSettings?.model ?? source.model ?? "" : undefined);
   const mode = args?.mode ?? (inherit ? source.nextSettings?.mode ?? (backend.id === sourceBackend.id ? source.mode : undefined) : undefined);
-  const cwd = typeof args?.cwd === "string" && args.cwd.trim() ? args.cwd.trim() : os.homedir();
+  const cwd = isReviewMode() ? reviewWorkDir() : typeof args?.cwd === "string" && args.cwd.trim() ? args.cwd.trim() : os.homedir();
   const status = typeof args?.status === "string" ? args.status.trim() || null : null;
   // draft: 入力欄に入れておく文（「見直しを頼む」。ADR 0056）。作るのと同時に下書きとして保存し、送らない
   const draft = args?.draft;
@@ -4398,7 +4408,7 @@ function opsDeps(lng = currentLocale()) {
     git: opsGit,
     shell: opsShell,
     sessionWork: opsSessionWork,
-    files: { listDirs: (p, opts) => listDirs(p, opts) },
+    files: { listDirs: (p, opts) => listDirs(p, isReviewMode() ? { ...opts, confine: reviewWorkDir() } : opts) },
     // 貼り付けた HTML の画像を取りに行く（attachments.*。ADR 0141）
     attachments: { importImage: (input) => imageImporter.importImage(input), cancelImport: (id) => imageImporter.cancel(id) },
     // コンテキストの探索の錠。AI・CLI はまとめて 1 つ（画面の WS は接続ごとの錠で上書きする）
@@ -7445,6 +7455,9 @@ wss.on("connection", (ws, req) => {
       ws.send(JSON.stringify({ kind: P.RESPONSE, id: msg.id ?? null, ok, ...(bulk ? { bulk } : ok ? { result: payload } : { error: payload, ...(code ? { code } : {}), ...extra }) }));
     };
 
+    // 審査モード（ADR 0172）: 許可の一覧（core/review-mode.mjs の COMMAND_PASS）にある命令だけ通す。ほかは何もせずに断る
+    if (isReviewMode() && !commandAllowed(msg.command)) return reply(false, t('review.commandRefused'), 'REVIEW_MODE');
+
     // 画面のコマンドは、操作の一覧（core/ops/）の同じ操作を人（画面）として呼ぶだけの外側。返り値は人に返す形（uiHandler）のまま。
     // viaOp(id)                  msg.args をそのまま渡す。then（成功の返り値を画面の形に直す）は第 2 引数に関数で渡せる
     // viaOp(id, input, { shape })  input を渡す（送らない欄 null・undefined は省く）。shape は従来の返り値の形へ寄せるとき
@@ -7727,7 +7740,7 @@ wss.on("connection", (ws, req) => {
           // version: 2 = text が文中の添付の印（[添付] パス）を含む Markdown（位置が残る。ADR 0060）。無い下書きは印が無く、添付は文末に付く
           const edit = sanitizeDraftEdit(msg.args?.edit);
           await store.setSessionData(sessionId, "draft", { text, attached: files, ...(Number.isInteger(version) ? { version } : {}), ...(edit ? { edit } : {}) }, { durable: true });
-          if ((await store.get(sessionId)).unsent && typeof msg.args?.cwd === "string") {
+          if (!isReviewMode() && (await store.get(sessionId)).unsent && typeof msg.args?.cwd === "string") {
             await store.setMeta(sessionId, { cwd: msg.args.cwd });
           }
           return reply(true, "saved");
@@ -8004,7 +8017,7 @@ wss.on("connection", (ws, req) => {
           // hostName は添付の「ホストから <ホスト名>」の見出し（リモートの印の無いブラウザーで使う）
           // pcBrowser: この接続から PC の内蔵ブラウザーを見られるか（デスクトップ版で、リモートの接続のとき）
           // chromeWindow: 会話の Chrome の窓の映像を見られるか（リモートの端末も。見るだけ）
-          return reply(true, { osActions: local, hostName: os.hostname(), pcBrowser: !local && !!screencastBridge?.ready, chromeWindow: Boolean(chromeScreencast),
+          return reply(true, { osActions: local, hostName: os.hostname(), ...(isReviewMode() ? { reviewMode: true } : {}), pcBrowser: !local && !!screencastBridge?.ready, chromeWindow: Boolean(chromeScreencast),
             // エージェントのブラウザー（PC の Chrome）への接続の入口。ホストの PC の画面だけ。Electron の無いホストは false、OS の層が使えなければ 'unsupported'
             chromeBrowser: local && chromeConnection ? (chromeConnection.state().state === 'unsupported' ? 'unsupported' : 'available') : false,
             computerUse: computerUseCapability({ hasParentPort: Boolean(computerDriver), platform: computerDriver?.kind === 'fake' ? 'win32' : undefined, ready: computerDriver?.state() ?? null }) });

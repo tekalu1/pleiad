@@ -8947,6 +8947,7 @@ function connect() {
       // 同じ答えで、添付の出どころを選ばせるか（ホストの画面でない接続）も決める（composer-layout.mjs の attachSources）
       cmd("hostCapabilities").then((c) => {
         state.hostCaps = c ?? null;
+        remoteSettings.setReviewMode(c?.reviewMode === true);
         computerSettings.paint();
         // エージェントのブラウザー（PC の Chrome）への接続の入口。使える環境なら今の状態を取る（設定 › ブラウザー）
         browserSettings.hostCapsChanged();

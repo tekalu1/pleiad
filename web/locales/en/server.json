@@ -886,6 +886,11 @@
     "notEditable": "This message cannot be changed.",
     "invalidAction": "Invalid action."
   },
+  "review": {
+    "needFake": "Review mode (AGENT_HOST_REVIEW=1) requires fake to be the only enabled backend (now: {{backends}}). This process will not start.",
+    "dataNotReview": "In review mode (AGENT_HOST_REVIEW=1) the data folder must be empty or already marked for review (review-data.json). A used data folder will not start (folder: {{dir}}).",
+    "commandRefused": "This Pleiad is running in review mode, so this operation is not available."
+  },
   "data": {
     "schemaUnreadable": "Cannot determine the saved data format. Check data-schema.json.",
     "schemaMismatch": "This saved data uses a different format. Use a newer version of Pleiad that supports it. The data was not changed.",
@@ -945,6 +950,9 @@
     "agent": {
       "hostScreenOnly": "Accepting requests from a device's AI can only be switched on from the host PC's own screen (switching it off and stopping everything also work from the device).",
       "desktopOnly": "Only a desktop device can hand work over from its AI"
+    },
+    "review": {
+      "addDeviceDisabled": "This host is a review host. Devices join with the review invite, so \"Add a device\" is turned off here."
     },
     "unnamedDevice": "Unnamed device",
     "settings": {
