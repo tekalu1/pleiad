@@ -9,5 +9,6 @@ Android 版を Google Play に出すときに Play Console へ入れるものの
 | [app-access.md](app-access.md) | 審査員向けのアプリへのアクセス（審査用のホストと審査の招待。[ADR 0172](../adr/0172-play-review-access.md)。出す順と、入れる文） |
 | [data-safety.md](data-safety.md) | データセーフティの回答案と、コードで確かめた送り先の一覧 |
 | [content-rating.md](content-rating.md) | コンテンツのレーティング・ターゲット層・そのほかの申告の回答案 |
+| [icon-512.png](icon-512.png) | アプリのアイコン 512×512（`mobile/scripts/generate-icons.mjs` の書き出し。手で替えない） |
 
 プライバシーポリシーはサイトの `site/privacy/`（https://pleiad.dev/privacy/ ）。アプリの送るもの・権限・SDK を変えたら、data-safety.md とプライバシーポリシーを一緒に直す。

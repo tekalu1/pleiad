@@ -2,7 +2,7 @@
 // 多数の同時ストリーム・背圧で送り手が止まること・窓より大きい本文・WebSocket の断片化・RESET・PING・GOAWAY・改ざん。
 import crypto from 'node:crypto';
 import { Handshake, generateKeyPair, prologueFor, MAX_MESSAGE } from '../../core/remote/noise.mjs';
-import { Channel, STREAM_WINDOW, CHANNEL_WINDOW } from '../../core/remote/channel.mjs';
+import { Channel, STREAM_WINDOW, CHANNEL_WINDOW, RECV_STREAM_WINDOW, RECV_CHANNEL_WINDOW } from '../../core/remote/channel.mjs';
 import { T, RESET_CODE, encodeFrame, json, u32 } from '../../core/remote/frames.mjs';
 
 export const name = 'remote-channel';
@@ -128,17 +128,17 @@ export default async function (t) {
     });
     p.dc.start(); p.hc.start();
     const r = get(p.dc, '/big', { hold: true });
-    await until(() => r.received() >= STREAM_WINDOW);
+    await until(() => r.received() >= RECV_STREAM_WINDOW);
     await sleep(50);
-    t.ok('ストリームの窓（256 KiB）を使い切ると送り手の write が止まる',
-      r.received() === STREAM_WINDOW && !written, `受け取り ${r.received()}`);
+    t.ok('ストリームの窓（受け手が広げた 1 MiB）を使い切ると送り手の write が止まる',
+      r.received() === RECV_STREAM_WINDOW && !written, `受け取り ${r.received()}`);
     // 半分だけ返すと、その分だけ進む
     const half = r.releases.splice(0, 2);
     half.forEach(f => f());
     const released = 2 * 61440;
-    await until(() => r.received() >= STREAM_WINDOW + released);
+    await until(() => r.received() >= RECV_STREAM_WINDOW + released);
     await sleep(30);
-    t.ok('返した分だけ進み、それ以上は送られない', r.received() === STREAM_WINDOW + released && !written, `受け取り ${r.received()}`);
+    t.ok('返した分だけ進み、それ以上は送られない', r.received() === RECV_STREAM_WINDOW + released && !written, `受け取り ${r.received()}`);
     // 以後は届いたそばから返す
     r.releases.splice(0).forEach(f => f());
     r.s.removeAllListeners('data');
@@ -148,26 +148,72 @@ export default async function (t) {
     p.close();
   }
 
-  // ── チャネル全体の窓: 1 MiB ──
+  // ── チャネル全体の窓: 受け手が広げた 4 MiB ──
   {
     const p = pair();
     serveHttp(p.hc, async s => {
       s.respond({ status: 200, headers: {} });
-      await s.end(crypto.randomBytes(512 * 1024));
+      await s.end(crypto.randomBytes(RECV_STREAM_WINDOW));
     });
     p.dc.start(); p.hc.start();
     const rs = Array.from({ length: 8 }, (_, i) => get(p.dc, `/${i}`, { hold: true }));
     const total = () => rs.reduce((n, r) => n + r.received(), 0);
-    await until(() => total() >= CHANNEL_WINDOW);
+    await until(() => total() >= RECV_CHANNEL_WINDOW);
     await sleep(50);
-    t.ok('全ストリームを合わせてもチャネルの窓（1 MiB）で止まる', total() === CHANNEL_WINDOW, `合計 ${total()}`);
+    t.ok('全ストリームを合わせてもチャネルの窓（4 MiB）で止まる', total() === RECV_CHANNEL_WINDOW, `合計 ${total()}`);
     for (const r of rs) {
       r.releases.splice(0).forEach(f => f());
       r.s.removeAllListeners('data');
       r.s.on('data', (c, release) => { r.chunks.push(c); release(); });
     }
     await until(() => rs.every(r => r.finished), 10000);
-    t.ok('返すと全部そろう', rs.every(r => r.received() === 512 * 1024));
+    t.ok('返すと全部そろう', rs.every(r => r.received() === RECV_STREAM_WINDOW));
+    p.close();
+  }
+
+  // ── 窓を広げない相手（古い版）と混ざっても通る（ADR 0179）──
+  // 窓を広げるのは受け手の WINDOW の足し増しだけなので、古い受け手には取り決めの初期値で送り、古い送り手は新しい受け手の窓まで送る
+  {
+    const old = { recvStreamWindow: STREAM_WINDOW, recvChannelWindow: CHANNEL_WINDOW };
+    const results = [];
+    for (const [label, opts, expect] of [
+      ['古い端末 × 新しいホスト', { device: old }, STREAM_WINDOW],
+      ['新しい端末 × 古いホスト', { host: old }, RECV_STREAM_WINDOW],
+      ['古い端末 × 古いホスト', { device: old, host: old }, STREAM_WINDOW],
+    ]) {
+      const p = pair(opts);
+      const big = crypto.randomBytes(3 * 1024 * 1024);
+      serveHttp(p.hc, async s => { s.respond({ status: 200, headers: {} }); await s.end(big); });
+      p.dc.start(); p.hc.start();
+      const r = get(p.dc, '/mixed', { hold: true });
+      await until(() => r.received() >= expect);
+      await sleep(50);
+      const held = r.received();
+      r.releases.splice(0).forEach(f => f());
+      r.s.removeAllListeners('data');
+      r.s.on('data', (c, release) => { r.chunks.push(c); release(); });
+      await until(() => r.finished, 10000);
+      results.push([label, held === expect && r.body().equals(big), `${label}: 止まった量 ${held}・届いた量 ${r.received()}`]);
+      p.close();
+    }
+    t.ok('古い版と混ざっても、受け手の窓の分だけ送って止まり、返せば最後まで届く（古い端末 256 KiB・新しい端末 1 MiB）',
+      results.every(([, ok]) => ok), results.map(([, , d]) => d).join(' / '));
+  }
+
+  // ── 窓を広げる WINDOW は、受け手のチャネルの始めとストリームを開いた直後に 1 回ずつ ──
+  {
+    const p = pair();
+    const windows = [];
+    const orig = p.dc._sendNow.bind(p.dc);
+    p.dc._sendNow = (type, stream, payload) => { if (type === T.WINDOW) windows.push([stream, payload.readUInt32BE(0)]); return orig(type, stream, payload); };
+    serveHttp(p.hc, async s => { s.respond({ status: 200, headers: {} }); await s.end('ok'); });
+    p.dc.start(); p.hc.start();
+    const r = get(p.dc, '/w');
+    await until(() => r.finished);
+    t.ok('端末は HELLO の直後にチャネル（+3 MiB）、開いた直後にストリーム（+768 KiB）を広げる',
+      windows[0]?.[0] === 0 && windows[0][1] === RECV_CHANNEL_WINDOW - CHANNEL_WINDOW && windows[1]?.[0] === r.s.id && windows[1][1] === RECV_STREAM_WINDOW - STREAM_WINDOW,
+      JSON.stringify(windows));
+    t.ok('ホストの送りの窓は、端末が広げた分になる', p.hc.sendWindow <= RECV_CHANNEL_WINDOW && p.hc.sendWindow > CHANNEL_WINDOW, String(p.hc.sendWindow));
     p.close();
   }
 
@@ -361,7 +407,7 @@ export default async function (t) {
       ['最初が HELLO でない', [encodeFrame(T.PING, 0, Buffer.alloc(8))]],
       ['開かれていないストリームへの DATA', [encodeFrame(T.HELLO, 0, json.encode({ proto: 1 })), encodeFrame(T.DATA, 9, Buffer.from('x'))]],
       ['窓を超えた DATA', [encodeFrame(T.HELLO, 0, json.encode({ proto: 1 })), encodeFrame(T.HTTP_REQ, 1, json.encode({ method: 'GET', path: '/', headers: {} })),
-        ...Array.from({ length: 5 }, () => encodeFrame(T.DATA, 1, Buffer.alloc(61440)))]],
+        ...Array.from({ length: Math.ceil(RECV_STREAM_WINDOW / 61440) + 1 }, () => encodeFrame(T.DATA, 1, Buffer.alloc(61440)))]],
       ['番号が戻るストリーム', [encodeFrame(T.HELLO, 0, json.encode({ proto: 1 })), encodeFrame(T.HTTP_REQ, 3, json.encode({ method: 'GET', path: '/', headers: {} })),
         encodeFrame(T.HTTP_REQ, 1, json.encode({ method: 'GET', path: '/', headers: {} }))]],
       ['WINDOW の増分 0', [encodeFrame(T.HELLO, 0, json.encode({ proto: 1 })), encodeFrame(T.WINDOW, 0, u32(0))]],

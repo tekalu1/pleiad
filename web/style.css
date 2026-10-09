@@ -883,8 +883,15 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 .body li>:is(ul,ol){margin:.2em 0}
 .body li::marker{color:var(--ink-weak)}
 .body hr{border:0;height:1px;background:var(--surface-3);margin:1.4em 0}
-.body blockquote{margin:0 0 .8em;padding:8px 14px;background:var(--surface-1);border-radius:var(--r-m);color:var(--ink-weak)}
-.body blockquote blockquote{margin-top:.5em}
+/* 発言の引用は入力欄の引用（.md-b.md-quote）と同じ左の縦線: 面は敷かず、2px の --line-strong と弱い字。線は ::before（border-left は one-sided-line）。
+   入れ子は 1 段ごとに 16px（字下げ 12px ＋ 4px）右へ。Channels の投稿・スレッドの作業ログも同じ（docs/design-system.md「発言の引用」） */
+:is(.body,.post-body,.th-log-text) blockquote{position:relative;margin:0 0 .8em;padding:2px 0 2px 12px;color:var(--ink-weak)}
+:is(.body,.post-body,.th-log-text) blockquote::before{content:"";position:absolute;left:0;top:0;bottom:0;width:2px;background:linear-gradient(var(--line-strong),var(--line-strong));pointer-events:none}
+:is(.body,.post-body,.th-log-text) blockquote blockquote{margin:.4em 0 .4em 4px}
+/* 引用の中の最初と最後の段の余白を溜めない（入れ子の数だけ下に空いていた） */
+:is(.body,.post-body,.th-log-text) blockquote>:first-child{margin-top:0}
+:is(.body,.post-body,.th-log-text) blockquote>:last-child{margin-bottom:0}
+:is(.post-body,.th-log-text)>blockquote:last-child{margin-bottom:0}
 .body :not(pre)>code{background:var(--surface-2);border-radius:var(--r-s);padding:.05em .4em;color:var(--ink)}
 .body :is(strong,b){color:var(--ink-strong);font-weight:650}
 .body del{color:var(--ink-weak)}
