@@ -4,7 +4,7 @@
 // サーバーを起動して量を測る確認は tests/unit/server-history-diff.mjs
 import fs from "node:fs/promises";
 import vm from "node:vm";
-import { syncRequest, serveFrom, joinReply, messageSig, presentSig, TAIL } from "../../web/history-sync.mjs";
+import { syncRequest, serveFrom, joinReply, messageSig, presentSig, TAIL, WINDOW_MESSAGES, WINDOW_BYTES } from "../../web/history-sync.mjs";
 
 export const name = "history-sync";
 export const title = "loadSession の差分: 合うときだけ続きを返し、つないだ結果は全量と同じ。合わなければ全量";
@@ -106,10 +106,11 @@ export default async function (t) {
   /** 画面の身代わり。cmd はサーバー（serveFrom）で応え、届いた引数と応答の大きさを残す */
   const screen = ({ remote = server, serve = serveFrom } = {}) => {
     const calls = [];
-    const state = { current: "s", busy: false, messages: clone(server.messages.slice(0, 1990)), presents: clone(server.presents.slice(0, 19)) };
+    let reloaded = 0;
+    const state = { current: "s", busy: false, base: 0, presentBase: 0, messages: clone(server.messages.slice(0, 1990)), presents: clone(server.presents.slice(0, 19)) };
     const thread = { querySelectorAll: () => [] };
     const context = vm.createContext({
-      state, thread, syncRequest, joinReply, restorePastSubagents: noop, setUuid: noop, placeJunctions: noop,
+      state, thread, syncRequest, joinReply, WINDOW_MESSAGES, WINDOW_BYTES, select: async () => { reloaded++; }, restorePastSubagents: noop, setUuid: noop, placeJunctions: noop,
       branches: { update: noop, has: () => true, load: async () => {} }, pendingHistorySync: false, pendingBranchReload: false,
       cmd: async (command, args) => {
         calls.push({ command, args });
@@ -117,13 +118,13 @@ export default async function (t) {
       },
     });
     vm.runInContext(`${cut("loadHistory")}\n${cut("syncHistory")}\nthis.syncHistory = syncHistory; this.loadHistory = loadHistory;`, context);
-    return { state, calls, context };
+    return { state, calls, context, reloaded: () => reloaded };
   };
 
   let s = screen();
   await s.context.syncHistory();
-  t.ok("syncHistory は持っている履歴の続きだけを頼む（from・check・presentFrom・presentCheck）",
-    s.calls.length === 1 && s.calls[0].args.from === 1988 && s.calls[0].args.presentFrom === 19 && typeof s.calls[0].args.check === "number" && typeof s.calls[0].args.presentCheck === "number");
+  t.ok("syncHistory は持っている履歴の続きだけを頼む（from・check・presentFrom・presentCheck）。長い会話の窓の頼み（lazy・tail）も添える",
+    s.calls.length === 1 && s.calls[0].args.lazy === true && s.calls[0].args.tail === WINDOW_MESSAGES && s.calls[0].args.from === 1988 && s.calls[0].args.presentFrom === 19 && typeof s.calls[0].args.check === "number" && typeof s.calls[0].args.presentCheck === "number");
   t.ok("差分でつないだ結果は、全量と同じ（発言・提示）", same(s.state.messages, server.messages) && same(s.state.presents, server.presents));
 
   s = screen({ serve: (body) => body });   // 古いサーバー: 頼みを知らず、いつも全量
@@ -142,5 +143,5 @@ export default async function (t) {
 
   // 静かな読み直しの経路も同じ関数を通る（loadAndPaint は quiet のときだけ prev を渡す。tests/unit/session-stream.mjs が全量の経路を見ている）
   t.ok("loadAndPaint は静かな読み直しのときだけ、持っている履歴を渡して頼む",
-    /loadHistory\(\{ sessionId: id, live: true, watch: true \}, quiet && state\.messages\.length \? \{ messages: state\.messages, presents: state\.presents \} : null\)/.test(source));
+    /loadHistory\(\{ sessionId: id, live: true, watch: true \},\n\s+quiet && state\.messages\.length \? \{ messages: state\.messages, presents: state\.presents, base: state\.base, presentBase: state\.presentBase \} : null, \{ window: true \}\)/.test(source));
 }

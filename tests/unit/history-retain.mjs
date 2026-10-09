@@ -107,7 +107,7 @@ export default async function (t) {
     if (start < 0) throw new Error(`client.mjs に ${name} が無い`);
     return source.slice(start, source.indexOf("\n}", start) + 2);
   };
-  const functions = ["wrap", "place", "append", "resetLiveTurn", "rowRole", "retainThread", "paintHistory", "paintHistoryRows"].map(cut).join("\n");
+  const functions = ["wrap", "place", "append", "resetLiveTurn", "rowRole", "retainThread", "paintHistory", "paintHistoryRows", "paintable"].map(cut).join("\n");
   const el = (tag, cls, text) => { const n = new Node(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; };
   // 履歴の 1 行。本物の historyRow（web/client.mjs）は発言 1 件から行を作る。ここでは中身が決まる作りものにして、行の並びと続きの見出しだけを見る
   // 人の発言には、結び付いた添付（presents）を本文の位置に取り込み、AI の発言はツールをまとまり（.bundle）にして持つ（main の historyRow と同じ形）
@@ -122,7 +122,7 @@ export default async function (t) {
   const build = () => {
     const thread = el("div", "thread");
     thread.append(el("svg", "spine"));
-    const state = { messages: [], presents: [], busy: true, toolCards: new Map(), streamEl: "s", thinkEl: "t", turnEl: "u", turnClosed: true, bundle: { live: true } };
+    const state = { messages: [], presents: [], base: 0, presentBase: 0, busy: true, toolCards: new Map(), streamEl: "s", thinkEl: "t", turnEl: "u", turnClosed: true, bundle: { live: true } };
     let cancelled = 0, hidden = 0;
     const activity = { el: null, hide: () => { hidden++; activity.el?.closest?.(".mw")?.remove(); activity.el = null; } };
     const context = vm.createContext({
@@ -130,7 +130,7 @@ export default async function (t) {
       renderPresent: p => el("div", "m card", `提示 ${p.id ?? p.path}`), savedEvent: p => p,
       cancelStream: () => { cancelled++; },
     });
-    vm.runInContext(`let paintingHistory = false;\n${functions}`, context);
+    vm.runInContext(`let paintingHistory = false;\nlet paintBefore = null;\n${functions}`, context);
     return {
       thread, state, activity, context,
       counts: () => ({ cancelled, hidden }),

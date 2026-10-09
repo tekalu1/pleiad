@@ -174,6 +174,22 @@ export async function findVisualization(sessionId, backend, { id, at } = {}) {
   return found && typeof found.content === 'string' && !found.error ? found : null;
 }
 
+/**
+ * 会話に保存された提示の本文（content・dataUri）を 1 つ探す（画面が /present-body で取りに行く。ADR 0902）。
+ * 画面が持っている通し番号 i を先に見て、その時刻（at）が合えば採る。ずれていたら（走っているターンの提示の並びと記録の並びが違うとき）時刻で探す。
+ * 本文が文字列で無いもの・上限を超えて落とした提示は null
+ */
+export async function findPresentBody(sessionId, backend, { i, at, field }) {
+  if (!sessionId || (field !== 'content' && field !== 'dataUri')) return null;
+  const presents = backend?.getPresents ? await backend.getPresents(sessionId) : await readPresents(sessionId);
+  const body = (p) => typeof p?.[field] === 'string' ? p[field] : null;
+  const direct = Number.isInteger(i) ? presents[i] : null;
+  if (direct && body(direct) !== null && (!at || direct.at === at)) return body(direct);
+  if (!at) return null;
+  const found = presents.find(p => p?.at === at && body(p) !== null);
+  return found ? body(found) : null;
+}
+
 /** Bind human attachments to a durable message UUID (some agents do not record timestamps). */
 export async function anchorAttachments(sessionId, turnKey, messageId) {
   if (!messageId) return;

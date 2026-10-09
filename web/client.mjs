@@ -85,7 +85,7 @@ import { setupVoiceSettings } from "./voice/settings.mjs";
 import { setupApiKeysSettings } from "./api-keys-settings.mjs";
 import { familiesOf } from "./family.mjs";
 import { createBranches, commonPrefix, nodeKeys } from "./branches.mjs";
-import { retainPlan, syncRequest, joinReply } from "./history-sync.mjs";
+import { retainPlan, syncRequest, joinReply, joinOlder, messageSig, WINDOW_MESSAGES, WINDOW_BYTES } from "./history-sync.mjs";
 import { createHeightSettler } from "./history-heights.mjs";
 import { makeBranchRow, layoutBranchSpine, motionDuration, EASING } from "./branch-view.mjs";
 import { el, svgEl, icon, relTime, randomId, chevron } from "./dom.mjs";
@@ -347,7 +347,8 @@ const state = {
   // 会話ごとのコンピューター操作の状態（computer.state。running / waiting のものだけ。idle は消す）。waiting の行の表示に使う
   computerStates: new Map(),
   submitting: false,       // 新規セッションを送った直後（id が決まるまで）
-  messages: [],        // 今のセッションの履歴（loadSession の messages）
+  messages: [],        // 今のセッションの履歴（loadSession の messages）。長い会話は末尾の窓だけ（ADR 0902）
+  base: 0,             // messages[0] の通し番号。画面の行の印 m:<通し番号> とサーバーの添字はこの値で揃える
   contextInfo: null,   // 今のセッションの読み込み記録（sessionContext の戻り）。タイトル行の入口と筋の一行に使う
   contextInfoId: null, // 上の記録がどのセッションのものか
   // worktree（ADR 0136）。worktreeCheck の結果（今の場所・作成できるか・同じリポジトリに書き込み中の別の会話）。
@@ -355,6 +356,7 @@ const state = {
   worktree: { key: null, data: null, ticket: 0 },
   git: { key: null, sessionId: null, data: null },   // 作業場所の git の状態（gitStatus。ADR 0085）。頭の行のアイコン・入力欄のブランチ・「…」のメニューに使う
   presents: [],
+  presentBase: 0,      // presents[0] の通し番号（p:<通し番号>）
   turnEl: null,        // 追記中の AI の発言（.m.ai）
   bundle: null,        // 走っているツールのまとまり（本文・委譲・ターンの終わりで閉じる。web/tool-bundle.mjs）
   pendingUuid: null,   // 見せるものが無いまま確定した発言（thinking だけ）の id。次に発言の入れ物を作るときに使う
@@ -522,6 +524,11 @@ function compactionBoundary(entry) {
   }
   return m;
 }
+/** 画面に描く提示。本文が印のままの提示（ADR 0902）には、本文を取る URL が使う会話の id を足す */
+function paintable(p) {
+  const e = savedEvent(p);
+  return p?.lazy ? { ...e, lazy: { ...p.lazy, sessionId: state.current } } : e;
+}
 function paintCompactions() {
   // 作り直しても、開いていた「要約を表示」は開いたままにする
   const open = new Set();
@@ -529,8 +536,11 @@ function paintCompactions() {
     if (old.querySelector('details')?.open) open.add(old.dataset.compactionId);
     old.remove();
   }
+  // 窓の手前を読んでいないとき、窓の最初の発言より前の区切りは描かない（最初の発言の上に出ると、手前の発言が無いのに区切りだけが見える）
+  const firstAt = state.base > 0 ? Date.parse(state.messages[0]?.at ?? '') : NaN;
   for (const entry of state.compactions) {
     if (!['complete', 'failed'].includes(entry.phase)) continue;
+    if (state.base > 0 && !(entry.at > firstAt)) continue;
     const row = append(compactionBoundary(entry), `compaction:${entry.id}`);
     row.classList.add('compaction-boundary'); row.dataset.compactionId = entry.id;
     if (open.has(entry.id)) { const details = row.querySelector('details'); if (details) details.open = true; }
@@ -653,6 +663,7 @@ createConversationRail({ frame: $("logFrame"), log, thread, nav, narrow: navNarr
  * 稼働表示の行は activity.el が持っている。1 行ごとに筋の子孫を探すと、履歴を描く間が件数の 2 乗になる
  */
 function place(w) {
+  if (paintBefore) { paintBefore.before(w); return; }
   const act = activity.el?.isConnected ? activity.el.closest(".mw") : null;
   if (act && !w.classList.contains("activity")) act.before(w);
   else thread.append(w);
@@ -661,6 +672,12 @@ function place(w) {
 // 履歴をまとめて描く間は、1 件ごとに筋を貼り直さない。筋の位置と末尾の判定はレイアウトを読むので、
 // 1 件ごとにやると件数の 2 乗でレイアウトが走り、大きな会話を開くのに数秒かかっていた。paintHistory が最後に 1 回貼る
 let paintingHistory = false;
+// 古い発言を読み足して描く間（paintOlder）、行は末尾ではなくこの行の手前に置く
+let paintBefore = null;
+// 前の発言の読み込み（ADR 0902）。読み込み中の約束・読めなかった会話と窓の位置・先頭に出している表示
+let olderBusy = null;
+let olderFail = null;
+let olderEl = null;
 
 function append(node, key) {
   if (paintingHistory) { const w = wrap(node, key); place(w); return w; }
@@ -819,6 +836,17 @@ function holdReading() {
     if (row) log.scrollTop += row.getBoundingClientRect().top - top;
     else log.scrollTop = scrollAt;
   };
+}
+
+/** 履歴を読み込む間の骨組みの行（開くとき全体に・上へ戻って前の発言を読むとき先頭に出す） */
+function historySkeletons() {
+  return [[42, 62], [35, 78, 54]].map((widths) => {
+    const lines = el('div', 'history-lines');
+    for (const width of widths) { const line = el('span', 'history-line'); line.style.width = `${width}%`; lines.append(line); }
+    const skeleton = el('div', 'm history-skeleton');
+    skeleton.append(lines);
+    return skeleton;
+  });
 }
 
 function spine() {
@@ -1030,7 +1058,7 @@ async function rewindSend({ m, source, tail, text, attached, editing = false }) 
     composerError(t('chat.resend.failed', { error: e.message }));
     const data = await cmd('loadSession', { sessionId: source }).catch(() => null);
     const uuids = list => (list ?? []).map(x => x.uuid).join();
-    if (data && state.current === source && uuids(data.messages) !== uuids(state.messages)) {
+    if (data && state.current === source && uuids(data.messages?.slice(state.base)) !== uuids(state.messages)) {
       // 巻き戻しは済んでいる（受け付けだけが失敗した）。同じ本文を、巻き戻さずに同じ messageId で送る
       try {
         await cmd('sendMessage', request);
@@ -1056,10 +1084,10 @@ function editRow(id) {
 /** 履歴から見た元の発言と、送り直すと消えるものの見立て。無ければ null */
 function editTarget(id) {
   if (!state.current) return null;
-  const index = state.messages.findIndex(x => x.uuid === id);
-  if (index < 0) return null;
+  const local = state.messages.findIndex(x => x.uuid === id);
+  if (local < 0) return null;
   const forkOnly = Boolean(state.sessions.find(x => x.id === state.current)?.delegation);
-  return { index, tail: tailInfo(state.messages, index, { running: isRunningHere(), forkOnly }) };
+  return { index: state.base + local, tail: tailInfo(state.messages, local, { running: isRunningHere(), forkOnly }) };
 }
 const editRead = () => ({ text: shellComposer.draftText(), attached: orderedAttachments() });
 function editWrite({ text, attached }) {
@@ -3071,7 +3099,7 @@ function onEvent(ev, replay = false) {
       if (ev.deleted === state.current) {
         // 開いていた会話が消えた（未送信の削除・sessions.delete。ADR 0147）。前の会話の文脈のメーター・圧縮の予約も持ち越さない
         state.current = null; clearThread(); loadDraft();
-        state.messages = []; state.contextWindow = null; state.compactionAt = null; state.compactionPhase = null; state.compactions = [];
+        state.messages = []; state.base = 0; state.contextWindow = null; state.compactionAt = null; state.compactionPhase = null; state.compactions = [];
         paintContextStrip();
         refreshContextEntry().catch(() => {});
       }
@@ -4534,6 +4562,7 @@ async function startNew({ status = null, cwd = "", backend, changes } = {}) {
   const draft = { status, cwd: pendingNewSession.cwd, changes: [...carried], created: null };
   state.draft = draft;
   state.messages = [];
+  state.base = 0;
   state.contextInfo = null;
   state.contextInfoId = null;
   // 入力欄は作っている間もずっと書ける（読み込むものが無い）。空にするのは別の会話から移ってきたときだけ。
@@ -7638,11 +7667,13 @@ async function reloadBranches(ev) {
   const related = ev.parent?.sessionId === id || ev.sessionId === id || branches.has(ev.parent?.sessionId) || branches.has(ev.sessionId);
   if (!related) return;
   if (state.busy) { pendingBranchReload = true; return; }
-  await branches.load(id, state.messages);
+  await loadBranches(id);
   if (state.current !== id) return;
   if (state.busy) { pendingBranchReload = true; return; }
   placeJunctions();
 }
+/** 今の会話の系譜を読む。窓だけを持っているときは、手前を会話の概要（outline）で埋めて通し番号を揃える（web/branches.mjs） */
+const loadBranches = (id) => branches.load(id, state.messages, { base: state.base });
 async function finishBranchChange() {
   state.busy = false;
   if (pendingHistorySync) { pendingHistorySync = false; await syncHistory(); }
@@ -7662,22 +7693,24 @@ function paintBranchNames() {
  * 履歴を描く。from 以降の添字（messages の mi）だけ。返すのは足した要素。
  * retained を渡すと（静かな読み直し。retainThread の戻り値）、描き並べる項目の retained.from 番目からだけ描く
  */
-function paintHistory(fromMi = 0, retained = null) {
+function paintHistory(fromMi = 0, retained = null, older = null) {
   paintingHistory = true;
-  try { return paintHistoryRows(fromMi, retained); }
+  try { return paintHistoryRows(fromMi, retained, older); }
   finally { paintingHistory = false; relayoutBranches(); paintDelegateStates(); }
 }
 
-function paintHistoryRows(fromMi, retained = null) {
-  const items = buildItems(state.messages, state.presents);
+function paintHistoryRows(fromMi, retained = null, older = null) {
+  const items = buildItems(state.messages, state.presents, state.base, state.presentBase);
   const refs = state.presents.map(p => p.reference);
   const added = [];
-  let prevRole = retained ? retained.prevRole : fromMi > 0 ? state.messages[fromMi - 1]?.role : null;
-  const startAt = !retained && fromMi > 0 ? new Date(state.messages[fromMi - 1]?.at ?? 0) : null;
+  // fromMi は通し番号。窓の中の添字は fromMi - state.base
+  let prevRole = retained ? retained.prevRole : fromMi > state.base ? state.messages[fromMi - 1 - state.base]?.role : null;
+  const startAt = !retained && fromMi > state.base ? new Date(state.messages[fromMi - 1 - state.base]?.at ?? 0) : null;
   // 発言に結び付いた human の present は、発言の本文の位置に取り込む（別のカードは出さない）。発言が描かれた添字だけ取り込み済みにする
   const attachedTo = inlineAttachments(items);
   const inlined = new Set();
   for (const [index, it] of items.entries()) {
+    if (older && !older.wants(it)) continue;   // 読み足した古い発言: 描いていない行だけ
     if (retained && index < retained.from) {
       // 残した行のうち、本文に添付を取り込んで描いた発言は取り込み済みにする（後ろの添付の行を二重にしない）
       if (it.kind === "msg" && it.m.role === "user" && retained.rows.get(`m:${it.mi}`)?.querySelector(".m.user:not(.cmd)")) inlined.add(it.mi);
@@ -7687,7 +7720,7 @@ function paintHistoryRows(fromMi, retained = null) {
       if (it.anchorMi >= 0 && it.anchorMi < fromMi) continue;
       if (!showsAsCard(it, inlined)) continue;
       if (it.anchorMi < 0 && startAt && new Date(it.p.at ?? 0) < startAt) continue;
-      const wrapper = append(renderPresent(savedEvent(it.p)), `p:${it.pi}`);
+      const wrapper = append(renderPresent(paintable(it.p)), `p:${it.pi}`);
       wrapper.dataset.h = "1";
       if (it.p.by === "human") wrapper.dataset.humanAttachment = "true";
       added.push(wrapper);
@@ -7695,7 +7728,7 @@ function paintHistoryRows(fromMi, retained = null) {
     }
     if (it.mi < fromMi) continue;
     const { node, role } = historyRow(it.m, { cont: prevRole === "assistant", refs, prev: added.at(-1) ?? retained?.row,
-      presents: (attachedTo.get(it.mi) ?? []).map(savedEvent) });
+      presents: (attachedTo.get(it.mi) ?? []).map(paintable) });
     if (it.m.role === "user" && node?.matches('.m.user:not(.cmd)')) inlined.add(it.mi);
     if (node) {
       const row = append(node, `m:${it.mi}`);
@@ -7782,7 +7815,9 @@ function placeJunctions({ snapshots = branchSnapshots() } = {}) {
   for (const row of thread.querySelectorAll('.branch-row')) row.remove();
   thread.classList.toggle('branched', branches.has(state.current));
   if (!state.current) return [];
-  const byNode = nodeKeys(branches.junctions(state.current), state.messages.length);
+  // 分岐点は通し番号。窓の手前（まだ読んでいない発言）の分岐点は、読み足したときに出る
+  const total = state.base + state.messages.length;
+  const byNode = nodeKeys(branches.junctions(state.current), total);
   if (!byNode.size) {
     const parent = state.sessions.find(x => x.id === state.current)?.parent?.sessionId;
     if (parent) byNode.set(0, [{ id: parent, name: t('session.parentChat'), n: 0, back: true }]);
@@ -7795,9 +7830,10 @@ function placeJunctions({ snapshots = branchSnapshots() } = {}) {
   }
   const added = [];
   for (const [mi, entries] of [...byNode].sort((a,b) => a[0]-b[0])) {
+    if (mi >= 0 && mi < state.base) continue;
     const key = `m:${mi}`;
-    const all = branches.distinguish([{ id: state.current, name: branches.nameOf(state.current), n: Math.max(0, state.messages.length-mi-1) }, ...entries],
-      { id: state.current, messages: state.messages });
+    const all = branches.distinguish([{ id: state.current, name: branches.nameOf(state.current), n: Math.max(0, total-mi-1) }, ...entries],
+      { id: state.current, messages: state.base ? undefined : state.messages });
     const row = makeBranchRow(key, all, state.current, switchTo, snapshots.get(key));
     const anchor = mi >= 0 ? branchAnchor(mi) : null;
     // Two boundaries may share one live DOM row; keep their order.
@@ -7819,13 +7855,17 @@ function placeJunctions({ snapshots = branchSnapshots() } = {}) {
  * 差分が返れば先頭につないで全量の形にし、全量が返った（古いサーバー・先頭が合わない）ときはそのまま、
  * 差分の印と件数が食い違うときは全量を取り直す。どの場合も、呼び出し側が受け取る形は同じ
  */
-async function loadHistory(args, prev = null) {
-  const request = prev ? syncRequest(prev.messages, prev.presents) : null;
-  const data = await cmd("loadSession", request ? { ...args, ...request } : args);
-  if (!request) return data;
+async function loadHistory(args, prev = null, { window = false } = {}) {
+  // 会話を開く読み込み（window）は、末尾の窓だけを頼み、大きい提示の本文は印にしてもらう（ADR 0902）。
+  // この仕組みを知らないサーバーは窓の頼みを無視して全量を返す（応答に base が無い）ので、base 0・本文付きの提示として扱う
+  const extra = window ? { lazy: true, tail: WINDOW_MESSAGES, tailBytes: WINDOW_BYTES } : {};
+  const request = prev ? syncRequest(prev.messages, prev.presents, { base: prev.base ?? 0, presentBase: prev.presentBase ?? 0 }) : null;
+  const opened = (data) => ({ ...data, base: Number.isInteger(data?.base) ? data.base : 0, presentBase: Number.isInteger(data?.presentBase) ? data.presentBase : 0 });
+  const data = await cmd("loadSession", { ...args, ...extra, ...request });
+  if (!request) return opened(data);
   const joined = joinReply(prev, data, request);
-  if (joined === null) return data;
-  if (joined === false) return cmd("loadSession", args);
+  if (joined === null) return opened(data);
+  if (joined === false) return opened(await cmd("loadSession", { ...args, ...extra }));
   const { from, total, presentFrom, presentTotal, ...rest } = data;
   return { ...rest, ...joined };
 }
@@ -7904,8 +7944,11 @@ async function openFromNotification(target) {
  * 検索で探した語を会話の中の検索へ引き継ぎ（開かない。Ctrl+F の 1 手で残りの一致へ進める）、その発言へ送って輪（note-flash）を付ける。
  * 発言は uuid で引く（会話の行の data-uuid と、検索の結果の uuid は同じ値）。見つからなければ語だけ引き継ぐ
  */
-function revealMessage({ uuid, role, query, speaker }) {
-  const m = [...thread.querySelectorAll('.m[data-uuid]')].find((x) => x.dataset.uuid === uuid) ?? null;
+async function revealMessage({ uuid, role, query, speaker }) {
+  const find = () => [...thread.querySelectorAll('.m[data-uuid]')].find((x) => x.dataset.uuid === uuid) ?? null;
+  let m = find();
+  // 窓の手前にある発言は、見つかるまで前の発言を読み足す
+  while (!m && state.base > 0 && await loadOlder()) m = find();
   toc.carry(query, { scope: role === 'tool' ? 'tool' : speaker === 'user' ? 'user' : 'answer', uuid });
   if (!m) return;
   const mark = m.querySelector('mark.searchhit.active');
@@ -7934,13 +7977,7 @@ async function loadAndPaint(id, { keepUpTo, quiet, fresh, after = null }) {
   state.displayLoad = load;
   const historyTimer = keepUpTo === undefined && !quiet && !fresh ? setTimeout(() => {
     if (state.current !== id || state.displayLoad !== load) return;
-    for (const widths of [[42, 62], [35, 78, 54]]) {
-      const lines = el('div', 'history-lines');
-      for (const width of widths) { const line = el('span', 'history-line'); line.style.width = `${width}%`; lines.append(line); }
-      const skeleton = el('div', 'm history-skeleton');
-      skeleton.append(lines);
-      append(skeleton);
-    }
+    for (const skeleton of historySkeletons()) append(skeleton);
     activity.show(t('pending.historyLoading'));
   }, 150) : null;
   let data;
@@ -7948,7 +7985,8 @@ async function loadAndPaint(id, { keepUpTo, quiet, fresh, after = null }) {
     // 静かな読み直し（つなぎ直したとき）は、今持っている履歴の続きだけを頼む
     // 委譲カード・バックグラウンドの一覧の行（会話の分）も一緒に読み、描く前に揃える
     const cards = loadTaskCards(id);
-    data = await loadHistory({ sessionId: id, live: true, watch: true }, quiet && state.messages.length ? { messages: state.messages, presents: state.presents } : null);
+    data = await loadHistory({ sessionId: id, live: true, watch: true },
+      quiet && state.messages.length ? { messages: state.messages, presents: state.presents, base: state.base, presentBase: state.presentBase } : null, { window: true });
     await cards;
     // 作ったばかりの会話（startNew）は、一覧の読み直しと並べて履歴を読む。描く前に一覧の行が載るのを待つ
     await after;
@@ -7969,8 +8007,8 @@ async function loadAndPaint(id, { keepUpTo, quiet, fresh, after = null }) {
     if (state.displayLoad !== load || keepUpTo === undefined && state.current !== id) return;
     // 静かな読み直しは、今の画面と同じ先頭の行を残して、変わった所から後ろだけ描く
     const plan = quiet && keepUpTo === undefined
-      ? retainPlan({ messages: state.messages, presents: state.presents, compactions: state.compactions },
-        { messages: data?.messages, presents: data?.presents, compactions: data?.compactions })
+      ? retainPlan({ messages: state.messages, presents: state.presents, compactions: state.compactions, base: state.base, presentBase: state.presentBase },
+        { messages: data?.messages, presents: data?.presents, compactions: data?.compactions, base: data?.base, presentBase: data?.presentBase })
       : null;
     await paintSession(id, data, { keepUpTo, load, quiet, fresh, plan });
   } catch (e) {
@@ -8010,6 +8048,7 @@ async function paintSession(id, data, { keepUpTo, transition, loaded = false, lo
   state.awaitingSession = false;
   state.submitting = false;
   state.messages = data?.messages ?? [];
+  state.base = data?.base ?? 0;
   state.contextWindow = data?.contextWindow ?? null;
   state.compactionAt = data?.compactionAt ?? null;
   state.compactionPhase = null;
@@ -8018,13 +8057,15 @@ async function paintSession(id, data, { keepUpTo, transition, loaded = false, lo
   restorePastSubagents(id);
   state.initialMessageId = data?.initialMessageId;
   state.presents = data?.presents ?? [];
+  state.presentBase = data?.presentBase ?? 0;
+  olderFail = null;
   // 系譜（lineage）は待たずに本文を先に描き、分岐点の印は届いてから付ける（下の family）。
   // 系譜はサーバーが全エージェントの一覧から組むので、待つと開くたびに 1〜3 秒止まっていた。
   // 別の家族の会話へ移ったなら、前の家族で分岐点を描かないように先に忘れる
   let family = null;
   if (!loaded) {
     if (!branches.has(id)) branches.reset();
-    family = branches.load(id, state.messages).catch(() => null);
+    family = loadBranches(id).catch(() => null);
   }
   if (state.current !== id || load && state.displayLoad !== load) return;
   state.loadingSession = null;
@@ -8053,7 +8094,7 @@ async function paintSession(id, data, { keepUpTo, transition, loaded = false, lo
   // Shared DOM survives a fork switch, but its UUID must belong to the selected session.
   // 静かな読み直しで残した行は同じ会話の同じ発言なので、uuid は変わらない
   if (!retained) for (const w of thread.querySelectorAll('.mw[data-key^="m:"]')) {
-    const message = state.messages[Number(w.dataset.key.slice(2))];
+    const message = state.messages[Number(w.dataset.key.slice(2)) - state.base];
     const m = w.querySelector('.m[data-role]');
     if (m && message) {
       delete m.dataset.uuid;
@@ -8102,6 +8143,7 @@ async function paintSession(id, data, { keepUpTo, transition, loaded = false, lo
   syncResume();
   if (keepUpTo === undefined && (!quiet || atEnd)) scrollToEnd(); else if (restoreReading) restoreReading(); else log.scrollTop = scrollAt;
   prepareHistoryHeights();
+  requestAnimationFrame(maybeLoadOlder);
   if (family) family.then(() => {
     if (state.current !== id || load && state.displayLoad !== load) return;
     if (state.busy) { pendingBranchReload = true; return; }
@@ -8125,9 +8167,11 @@ async function syncHistory() {
   const id = state.current;
   if (!id) return;
   const before = state.messages.length;
-  const data = await loadHistory({ sessionId: id }, { messages: state.messages, presents: state.presents }).catch(() => null);
+  const data = await loadHistory({ sessionId: id }, { messages: state.messages, presents: state.presents, base: state.base, presentBase: state.presentBase }, { window: true }).catch(() => null);
   if (!data || state.current !== id) return;
   if (state.busy) { pendingHistorySync = true; return; }
+  // 差分でつなげず窓が替わって返った（手前が書き換わった・圧縮など）: 画面の行の通し番号が合わないので、読み直して描き替える
+  if (data.base !== state.base || data.presentBase !== state.presentBase) { await select(id, { reload: true }); return; }
   state.messages = data.messages ?? [];
   restorePastSubagents(id);
   state.presents = data.presents ?? [];
@@ -8136,7 +8180,7 @@ async function syncHistory() {
   for (const m of thread.querySelectorAll('.mw[data-key^="live:"] .m[data-uuid]')) {
     const idx = state.messages.findIndex((x) => x.uuid === m.dataset.uuid);
     if (idx < 0 || claimed.has(idx)) continue;
-    m.closest(".mw").dataset.key = `m:${idx}`;
+    m.closest(".mw").dataset.key = `m:${state.base + idx}`;
     claimed.add(idx);
   }
   // 残り（人間の発言、uuid の来ないエージェントの発言）は、今回増えた分の中から役割と本文で
@@ -8147,21 +8191,133 @@ async function syncHistory() {
       && (m.dataset.role === "user" ? (x.text ?? "") === raw : (!raw || (x.text ?? "") === raw)));
     if (idx < 0) continue;
     setUuid(m, state.messages[idx].uuid);
-    m.closest(".mw").dataset.key = `m:${idx}`;
+    m.closest(".mw").dataset.key = `m:${state.base + idx}`;
     claimed.add(idx);
     j = idx + 1;
   }
   // 履歴の添字で描いた行にも、uuid の無いものがある。走っているターンの途中で読み直した（巻き戻して送り直した直後など）ときの
   // 人の発言は、保存前の控えとして uuid 無しで来て m:<添字> の行になる。同じ添字の発言と役割・本文が合えば uuid を付ける
   for (const m of thread.querySelectorAll('.mw[data-key^="m:"] .m[data-role]:not([data-uuid])')) {
-    const saved = state.messages[Number(m.closest('.mw').dataset.key.slice(2))];
+    const saved = state.messages[Number(m.closest('.mw').dataset.key.slice(2)) - state.base];
     if (saved?.uuid && saved.role === m.dataset.role && (m.dataset.role !== 'user' || (saved.text ?? '') === userRaw(m))) setUuid(m, saved.uuid);
   }
-  branches.update(id, state.messages);
-  if (!branches.has(id)) await branches.load(id, state.messages);
+  branches.update(id, state.messages, { base: state.base });
+  if (!branches.has(id)) await loadBranches(id);
   if (state.current !== id) return;
   if (state.busy) { pendingBranchReload = true; return; }
   placeJunctions();
+}
+
+// ---------------------------------------------------------------- 前の発言（ADR 0902）
+
+// 長い会話は末尾の窓だけを読んで開く。上へ戻って先頭に近づいたら、窓の手前の発言を足す。読んでいる位置は動かさない。
+// 先頭には「前の発言を読み込んでいます…」と骨組みの線を出し、読めなかったら「もう一度」を出す（自動では読み直さない）
+const OLDER_REACH = 900;   // 先頭からこの高さ（px）まで近づいたら読み始める
+
+/** 先頭の表示を替える。kind: loading（読み込み中）/ failed（読めなかった）/ start（会話の最初まで読んだ） */
+function showOlder(kind) {
+  const restore = olderEl?.isConnected || kind ? holdReading() : null;
+  olderEl?.remove();
+  const box = el('div', 'older-load');
+  if (kind === 'loading') {
+    box.setAttribute('aria-busy', 'true');
+    box.append(el('div', 'older-note', t('pending.olderLoading')), ...historySkeletons());
+  } else if (kind === 'failed') {
+    const retry = el('button', 'older-retry', t('pending.retry'));
+    retry.type = 'button';
+    retry.onclick = () => { olderFail = null; loadOlder(); };
+    box.append(el('div', 'older-note', t('pending.olderFailed')), retry);
+  } else box.append(el('div', 'older-note', t('pending.olderStart')));
+  olderEl = box;
+  thread.querySelector(':scope > .spine')?.after(box);
+  restore?.();
+}
+function hideOlder() {
+  olderEl?.remove();
+  olderEl = null;
+}
+
+function maybeLoadOlder() {
+  if (olderBusy || state.base <= 0 || !state.current || state.loadingSession || state.busy) return;
+  if (olderFail?.id === state.current && olderFail.base === state.base) return;
+  if (log.scrollTop > OLDER_REACH) return;
+  loadOlder();
+}
+log.addEventListener('scroll', maybeLoadOlder, { passive: true });
+
+/** 窓の手前の発言を 1 まとまり読んで、先頭に足す。足せたら true */
+function loadOlder() {
+  if (olderBusy) return olderBusy;
+  const id = state.current, before = state.base;
+  if (!id || before <= 0 || !state.messages.length || state.loadingSession) return Promise.resolve(false);
+  const prev = { messages: state.messages, presents: state.presents, base: before, presentBase: state.presentBase };
+  const request = { before, presentBefore: state.presentBase };
+  const same = () => state.current === id && state.base === before && state.messages === prev.messages;
+  const run = (async () => {
+    showOlder('loading');
+    let joined = null;
+    try {
+      const data = await cmd('loadSession', { sessionId: id, lazy: true,
+        older: { ...request, count: WINDOW_MESSAGES, bytes: WINDOW_BYTES, check: messageSig(prev.messages[0]) } });
+      if (!same()) { if (state.current === id) hideOlder(); return false; }   // 会話が替わった・窓が替わった: 捨てる
+      joined = joinOlder(prev, data, request);
+    } catch {
+      if (same()) { olderFail = { id, base: before }; showOlder('failed'); }
+      return false;
+    }
+    if (!joined) {
+      // 手前が書き換わった（圧縮・巻き戻しなど）・つながらない: 窓を読み直して描き替える
+      hideOlder();
+      await select(id, { reload: true });
+      return false;
+    }
+    paintOlder(joined, before, request.presentBefore);
+    return true;
+  })();
+  olderBusy = run.finally(() => { olderBusy = null; });
+  return olderBusy;
+}
+
+/** 窓の手前を全部読む（会話の中の検索・目次を開くとき）。会話の最初まで読めたら true */
+async function loadAllOlder() {
+  while (state.base > 0) if (!await loadOlder()) return state.base === 0;
+  return true;
+}
+
+/**
+ * 読んだ手前の発言（joined は窓の前につないだ全量）を、いまある行の手前に描く。
+ * いまある先頭の行が AI の発言なら描き直す（手前の発言が AI なら「続き」の形が変わる）。読んでいる位置は変えない
+ */
+function paintOlder(joined, oldBase, oldPresentBase) {
+  const restore = atBottom() ? () => { log.scrollTop = log.scrollHeight; } : holdReading();
+  log.style.overflowAnchor = 'none';
+  hideOlder();
+  const firstRow = thread.querySelector(`:scope > .mw[data-key="m:${oldBase}"]`);
+  const repaint = Boolean(firstRow?.querySelector('.m.ai'));
+  if (repaint) firstRow.remove();
+  state.messages = joined.messages;
+  state.presents = joined.presents;
+  state.base = joined.base;
+  state.presentBase = joined.presentBase;
+  // 読み足した分の行だけ描く。窓の外の発言に結び付いて、窓の中では単独の行になっていた提示は、描き直す
+  const wants = (it) => {
+    if (it.kind === 'present') {
+      const own = it.anchorMi >= 0 ? it.anchorMi < oldBase : it.pi < oldPresentBase;
+      if (own) thread.querySelector(`:scope > .mw[data-key="p:${it.pi}"]`)?.remove();
+      return own;
+    }
+    return it.mi < oldBase || repaint && it.mi === oldBase;
+  };
+  paintBefore = thread.querySelector(':scope > .spine')?.nextElementSibling ?? null;
+  try { paintHistory(0, null, { wants }); } finally { paintBefore = null; }
+  branches.update(state.current, state.messages, { base: state.base });
+  syncEdit();
+  paintCompactions();
+  placeJunctions();
+  if (state.base === 0) showOlder('start');
+  restore();
+  prepareHistoryHeights();
+  requestAnimationFrame(() => { log.style.overflowAnchor = ''; maybeLoadOlder(); });
 }
 
 // ---------------------------------------------------------------- 分岐
@@ -8181,7 +8337,8 @@ async function forkFrom(m, { draft, pending } = {}) {
   const uuid = m.dataset.uuid, mw = m.closest('.mw');
   if (!uuid || !state.current || state.busy) return;
   const key = mw?.dataset.key ?? '';
-  const mi = draft ? draft.index - 1 : key.startsWith('m:') ? Number(key.slice(2)) : state.messages.findIndex(x => x.uuid === uuid);
+  const found = state.messages.findIndex(x => x.uuid === uuid);
+  const mi = draft ? draft.index - 1 : key.startsWith('m:') ? Number(key.slice(2)) : found < 0 ? -1 : state.base + found;
   const source = state.current;
   const clearPending = forkPending(pending ?? m.querySelector(':scope > .who .who-more'));
   let sendTo;
@@ -8195,7 +8352,7 @@ async function forkFrom(m, { draft, pending } = {}) {
     if (!result?.sessionId) throw new Error(t('chat.fork.noId'));
     if (draft) await persistDraft(result.sessionId, { text: draft.text, attached: draft.attached, version: 2, dirty: true });
     await refresh();
-    await branches.load(source, state.messages);
+    await loadBranches(source);
     const groups = placeJunctions();
     const row = groups.find(r => r.dataset.key === `m:${mi}`);
     if (row) await row.grow(result.sessionId);
@@ -8225,7 +8382,7 @@ async function forkTail(id) {
     await modeWrite;
     const r = await cmd('fork', { sessionId: id });
     await refresh();
-    await branches.load(id, state.messages);
+    await loadBranches(id);
     const row = placeJunctions().at(-1);
     if (row) await row.grow(r.sessionId);
     await changeBranch(r.sessionId, row);
@@ -8242,16 +8399,17 @@ async function changeBranch(id, row) {
   state.displayLoad = load;
   let painted = false;
   try {
-    const [data, cards] = await Promise.all([cmd('loadSession', { sessionId: id, live: true, watch: true }), readTaskCards(id)]);
+    const [data, cards] = await Promise.all([loadHistory({ sessionId: id, live: true, watch: true }, null, { window: true }), readTaskCards(id)]);
     const target = data?.messages ?? [];
-    let keep = commonPrefix(state.messages, target);
+    // 窓のときは通し番号がずれるので、共通の行を残さず描き直す
+    let keep = state.base || data.base ? 0 : commonPrefix(state.messages, target);
     const cut = branches.boundary(source, id);
     if (cut != null) keep = Math.min(keep, cut + 1);
     const anchor = keep ? branchAnchor(keep - 1) : null;
     const retainedIndex = anchor?.dataset.key?.startsWith('m:') ? Number(anchor.dataset.key.slice(2)) : -1;
     keep = Math.min(keep, retainedIndex + 1);
     const transition = row ? { key: row.dataset.key, snapshot: row.snapshot() } : null;
-    await branches.load(id, target);
+    await branches.load(id, target, { base: data.base });
     if (state.current !== source) return;
     if (cards) setTaskCards(id, cards);
     await paintSession(id, data, { keepUpTo: keep, transition, loaded: true, load });
@@ -8635,7 +8793,7 @@ const sessionContext = setupSessionContext({ cmd, preview: filePreview,
   isRunning: () => Boolean(state.current && state.runningIds.has(state.current)), budget: () => budgetOf(state.prefs), askReview: draftReview });
 $('contextEntry').onclick = () => sessionContext.toggle($('contextEntry'));
 // 会話の目次と検索（右パネル。狭い画面は下からのシート）。会話の画面にいるときの Ctrl+F（macOS は ⌘F）でも開く
-const toc = createConversationToc({ thread, log, nav, preview: filePreview, narrow: navNarrow, button: $('tocEntry') });
+const toc = createConversationToc({ thread, log, nav, preview: filePreview, narrow: navNarrow, button: $('tocEntry'), onOpen: loadAllOlder });
 // 会話の右パネル「git」（ADR 0085）。頭の行のアイコン・返答の下の要約行・委譲カードの「変更」・狭い画面の「…」から開く
 gitPanel = setupGitPanel({ cmd, preview: filePreview, session: () => ({ id: state.current ?? null, cwd: state.cwd }),
   jump: jumpToConversation, use: useGitText, worktrees: worktreeOps, canOpen: () => Boolean(state.current && state.git.data),

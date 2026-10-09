@@ -15,6 +15,7 @@ import { ATTACHMENT_LINE, normalizeAttachmentPath } from './timeline.mjs';
 import { openAttachmentList } from './attachment-list.mjs';
 import { mountFold } from './fold.mjs';
 import { pendingImageHtml, hydrateFrames } from './attachment-frame.mjs';
+import { isLazy, presentBodyUrl } from './present-lazy.mjs';
 
 const ESC = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ESC[c]);
@@ -30,7 +31,8 @@ export const attachmentName = p =>
 /** 画像の src。画像でない・載せられない（大きすぎて中身を外した）ものは、ホストが配る /local-file か null */
 export function attachmentImageSrc(p) {
   if (p?.kind !== 'image') return null;
-  return presentImg(p.dataUri ?? p.path);
+  // 本文が印のままの添付（ADR 0902）は、<img> が本文の URL を直に読む
+  return presentImg(isLazy(p, 'dataUri') ? presentBodyUrl(p, 'dataUri') : p.dataUri ?? p.path);
 }
 
 /**
@@ -162,7 +164,8 @@ export function paintUserBody(body, text, presents = [], { markdown = true } = {
 /** 一覧の面の 1 行にする */
 export function attachmentListItem(p, index) {
   const src = attachmentImageSrc(p);
-  const bytes = p.dataUri ? Math.floor((String(p.dataUri).length - String(p.dataUri).indexOf(',') - 1) * 3 / 4) : null;
+  const bytes = p.dataUri ? Math.floor((String(p.dataUri).length - String(p.dataUri).indexOf(',') - 1) * 3 / 4)
+    : p.lazy?.dataUri ? Math.floor(p.lazy.dataUri * 3 / 4) : null;
   return {
     id: String(index), kind: src ? 'image' : 'file', name: attachmentName(p), path: String(p.path ?? ''),
     thumb: src, size: Number.isFinite(p.size) ? p.size : bytes && bytes > 0 ? bytes : null, origin: p.origin ?? null,

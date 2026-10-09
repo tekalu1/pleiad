@@ -148,7 +148,7 @@ import { validBrowserPref, externalOrigin } from '../web/browser-confirm-policy.
 import { computerUsePrefs, validComputerUse } from '../web/computer-prefs.mjs';
 import { computerUseCapability } from './computer-use-capability.mjs';
 import { streamEvents } from "../web/session-stream.mjs";
-import { serveFrom } from "../web/history-sync.mjs";
+import { serveHistory } from "../web/history-sync.mjs";
 import { switchBackend, createConversation, deleteUnsentConversation, deleteHiddenConversation, deleteConversation, pendingHandoff, conversation } from "./conversations.mjs";
 import { familyOf } from "./lineage.mjs";
 import {
@@ -1682,6 +1682,29 @@ const server = http.createServer(async (req, res) => {
       const { headers, body } = snapshotResponse(record, await store.getPrefs());
       res.writeHead(200, headers);
       return res.end(req.method === 'HEAD' ? undefined : body);
+    }
+    // 会話の提示（Visualize の HTML・画像）の本文を 1 件ずつ返す（ADR 0902）。loadSession は大きい本文を運ばず、画面が見える近くに来た提示だけをここから取る。
+    // 本文は記録に追記されるだけで変わらないので、(sessionId, i, at) ごとに長く覚えさせてよい。画像は画像のまま（<img src> が直に読む）、HTML は文字で返す。
+    // どちらも画面の外では実行されない形（nosniff・sandbox）にして、直に開かれても同じオリジンのスクリプトにならないようにする
+    if (url.pathname === '/present-body') {
+      const sessionId = url.searchParams.get('sessionId'), field = url.searchParams.get('field'), at = url.searchParams.get('at');
+      const iRaw = url.searchParams.get('i'), i = iRaw !== null && /^\d{1,9}$/.test(iRaw) ? Number(iRaw) : null;
+      const found = sessionId && (field === 'content' || field === 'dataUri')
+        ? await history.findPresentBody(sessionId, await resolveBackendForSession(sessionId).catch(() => null), { i, at, field }).catch(() => null)
+        : null;
+      const plain = { 'content-type':'text/plain; charset=utf-8', 'cache-control':'private, no-store', 'x-content-type-options':'nosniff' };
+      if (found === null) { res.writeHead(sessionId && field ? 404 : 400, plain); return res.end('not found'); }
+      const safe = { 'cache-control':'private, max-age=31536000, immutable', 'x-content-type-options':'nosniff', 'content-security-policy':"sandbox; default-src 'none'" };
+      if (field === 'dataUri') {
+        const m = /^data:(image\/(?:png|jpe?g|gif|webp|avif|bmp|svg\+xml));base64,/i.exec(found);
+        if (!m) { res.writeHead(415, plain); return res.end('unsupported'); }
+        const buf = Buffer.from(found.slice(m[0].length), 'base64');
+        res.writeHead(200, { ...safe, 'content-type':m[1].toLowerCase(), 'content-length':buf.length });
+        return res.end(req.method === 'HEAD' ? undefined : buf);
+      }
+      const buf = Buffer.from(found, 'utf8');
+      res.writeHead(200, { ...safe, 'content-type':'text/plain; charset=utf-8', 'content-length':buf.length });
+      return res.end(req.method === 'HEAD' ? undefined : buf);
     }
     // PDF.js is loaded only when a PDF is opened. Expose its browser assets,
     // not arbitrary files from node_modules. Cookies protect these too.
@@ -7835,8 +7858,9 @@ wss.on("connection", (ws, req) => {
             const compactions = attachCompactSummaries(compactSummaries, mergeCompactionHistory(nativeCompactions, savedCompactions));
             const compactionData = { compactions, contextWindow: read.turn?.contextWindow ?? sidecar.contextWindow ?? null,
               compactionAt: compactionScheduler.get(sessionId), autoCompactionOff: Boolean(sidecar.autoCompactionOff) };
-            // from・check（web/history-sync.mjs）を付けて頼まれたら、持っている先頭が合うときだけ続きを返す（ADR 0062）。合わなければ全量
-            if (!msg.args?.live) return reply(true, serveFrom({ ...data, completedAt, interrupted, draft, ...compactionData, ...retired }, msg.args));
+            // from・check（web/history-sync.mjs）を付けて頼まれたら、持っている先頭が合うときだけ続きを返す（ADR 0062）。合わなければ全量。
+            // tail・lazy・older を付けて頼まれたら、末尾の窓・提示の本文の印・手前の分だけを返す（ADR 0902）
+            if (!msg.args?.live) return reply(true, serveHistory({ ...data, completedAt, interrupted, draft, ...compactionData, ...retired }, msg.args));
             // 承認は一度きりの配信で、streamEvents にも載らない（web/session-stream.mjs）。
             // 開き直しのたびに保留中のものを返さないと、承認が起きた後にその会話を開いても
             // カードが出ず、一覧だけが「承認待ち」のまま止まる。
@@ -7852,13 +7876,13 @@ wss.on("connection", (ws, req) => {
                 : null;
               // Use a fixed pre-turn history, never an independently sampled partial
               // transcript: it may overlap the events or lag behind them.
-              return reply(true, serveFrom({
+              return reply(true, serveHistory({
                 messages: [...shellRuns.placeKept([...live.messages, ...(user ? [user] : [])], sidecar), ...shellRuns.rows(sessionId, sidecar)], presents: live.presents, completedAt, interrupted: null, draft, ...compactionData,
                 stream: { events: live.events }, streamCursor: streamSequence, permissions,
                 initialMessageId: live.initialMessageId,
               }, msg.args));
             }
-            return reply(true, serveFrom({ ...data, completedAt, interrupted, draft, ...compactionData, streamCursor: streamSequence, permissions, ...retired }, msg.args));
+            return reply(true, serveHistory({ ...data, completedAt, interrupted, draft, ...compactionData, streamCursor: streamSequence, permissions, ...retired }, msg.args));
           } finally { liveReads.delete(read); }
         }
 

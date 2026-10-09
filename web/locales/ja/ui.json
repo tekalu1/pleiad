@@ -8,6 +8,9 @@
     "creating": "作成中",
     "creatingBranch": "分岐を作成中",
     "historyLoading": "履歴を読み込み中",
+    "olderLoading": "前の発言を読み込んでいます…",
+    "olderFailed": "前の発言を読み込めませんでした",
+    "olderStart": "ここが会話の最初です",
     "loading": "読み込み中…",
     "reloading": "読み込み直し中",
     "searching": "探索中",
@@ -2403,7 +2406,9 @@
       "sidePanel": "サイドパネルに表示",
       "browser": "ブラウザーで開く",
       "truncated": "大きすぎるため省略されました",
-      "badImage": "表示できない画像です"
+      "badImage": "表示できない画像です",
+      "loadingBody": "読み込んでいます…",
+      "bodyFailed": "読み込めませんでした。押すともう一度読みます"
     },
     "tool": {
       "label": {
