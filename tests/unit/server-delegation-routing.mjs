@@ -16,7 +16,7 @@ const SIGNALS = ['diagnose', 'choose', 'long_procedure', 'many_parts', 'writes_s
 export default async function (t) {
   const scratch = await fs.mkdtemp(path.join(os.tmpdir(), 'ply-routing-'));
   const KEY = 'sk-or-routing-test-SECRET-9f3a';
-  // 偽の Jev。依頼文に FAIL を含めば 500 を返す
+  // 偽の OpenRouter（Jev の decisions と Qwen の chat/completions）。依頼文に FAIL を含めば 500 を返す
   const jevCalls = [];
   const jev = http.createServer((req, res) => {
     const chunks = [];
@@ -24,8 +24,9 @@ export default async function (t) {
     req.on('end', () => {
       const body = JSON.parse(Buffer.concat(chunks).toString('utf8'));
       jevCalls.push({ url: req.url, auth: req.headers.authorization, body });
-      if (String(body.state?.task).includes('FAIL')) { res.writeHead(500); return res.end('{}'); }
+      if (JSON.stringify(body).includes('FAIL')) { res.writeHead(500); return res.end('{}'); }
       res.writeHead(200, { 'content-type': 'application/json' });
+      if (req.url.endsWith('/chat/completions')) return res.end(JSON.stringify({ choices: [{ message: { tool_calls: [{ type: 'function', function: { name: 'routing_v3', arguments: JSON.stringify({ signals: Object.fromEntries(SIGNALS.map(k => [k, false])) }) } }] } }] }));
       res.end(JSON.stringify({ answers: Object.fromEntries(SIGNALS.map(k => [k, { type: 'noul', noul: 0.01 }])) }));
     });
   });
@@ -65,13 +66,13 @@ export default async function (t) {
       await sleep(100);
     }
     t.ok('設定は既定値（有効）で、9 種類・段・判定器の一覧を返す', state.settings.enabled === true && state.kinds.length === 9 && state.tiers.join() === 't1,t2,t3,t4,tv'
-      && state.judges.join() === 'jev,cerebras,none' && state.settings.judgeByKind.visual === 'none');
+      && state.judges.join() === 'jev,qwen,none' && state.settings.judgeByKind.visual === 'none');
     const gem = state.candidates.find(x => x.candidate === 'antigravity:gemini-3.8-flash-high');
     t.ok('候補ごとに今の使用量と使えるかどうかを返す（agy の使用量を定期的に取っている）', gem?.usable === true && gem.windows.length === 2 && gem.checkedAt
       && state.candidates.find(x => x.candidate === 'claude:opus').reason === 'unavailable', JSON.stringify(gem));
     t.ok('今の一覧に無い候補・使えないバックエンドを知らせる', state.warnings.some(w => w.candidate === 'codex:gpt-6-sol' && w.reason === 'unavailable')
       && state.warnings.some(w => w.candidate === 'antigravity:claude-opus-4-6-thinking' && w.reason === 'model_unknown'));
-    t.ok('キーは未登録', state.keys.openrouter.hasKey === false && state.keys.cerebras.hasKey === false);
+    t.ok('キーは未登録（判定器のキーは OpenRouter の 1 つだけ）', state.keys.openrouter.hasKey === false && Object.keys(state.keys).join() === 'openrouter');
 
     // ---- kind の検査
     const noKind = await call(null, { task: 'echo:X' });
@@ -102,8 +103,12 @@ export default async function (t) {
     const sent = jevCalls.at(-1);
     t.ok('Jev へは kind と依頼文だけを、キーを付けて送る', sent.url === '/api/alpha/decisions' && sent.auth === `Bearer ${KEY}` && sent.body.state.kind === 'trivial'
       && sent.body.state.task === 'agy-auto-task' && !JSON.stringify(sent.body).includes('usage'));
+    const beforeFail = jevCalls.length;
     const failed = await call(sid, { kind: 'trivial', task: 'agy-auto FAIL' });
     t.ok('Jev が失敗したら mid で続け、理由を残す（http_500）', !failed.isError && failed.data.routing.fallback === 'http_500' && failed.data.routing.difficulty === 'mid');
+    const second = jevCalls.slice(beforeFail);
+    t.ok('Jev が失敗したら同じキーで OpenRouter の Qwen に聞き直す（Cerebras へは直に送らない）', second.length === 2 && second[1].url === '/api/v1/chat/completions'
+      && second[1].auth === `Bearer ${KEY}` && second[1].body.model === 'qwen/qwen3.8-27b' && second[1].body.provider.order.join() === 'cerebras', JSON.stringify(second.map(x => x.url)));
 
     // ---- 固定
     const pinned = await call(sid, { kind: 'review', backend: 'fake', task: 'echo:PINNED' });

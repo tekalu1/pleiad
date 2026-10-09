@@ -12,12 +12,12 @@ import { providerName } from './api-keys-model.mjs';
 import { apiKeyList, keyName, statusLine, spinner, keyInput, keepFocus } from './api-key-ui.mjs';
 
 const AGENT_NAME = { claude: 'Claude Code', codex: 'Codex' };
-const JUDGE_NAME = { jev: 'Jev', cerebras: 'Cerebras' };
+const JUDGE_NAME = { jev: 'Jev / Qwen' };
 /** 使っている所が多いカードは先頭 3 件と［ほか N か所］に畳む（4 件までは全部出す） */
 const FOLD_AT = 4;
 const FOLD_SHOWN = 3;
 const SETTLE_MS = 240;
-const PROVIDER_CHOICES = ['openrouter', 'cerebras', 'custom'];
+const PROVIDER_CHOICES = ['openrouter', 'custom'];
 
 const reduced = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
 const wait = ms => new Promise(r => setTimeout(r, reduced() ? 0 : ms));
@@ -170,7 +170,7 @@ export function setupApiKeysSettings({ cmd, page, openEndpoints = () => {} }) {
 
   // ---- 差し替え・確かめる・削除
   function replaceForm(k) {
-    const { row, input } = keyInput({ ariaLabel: t('apiKeys.replace.input', { name: keyName(k) }), placeholder: k.provider === 'cerebras' ? 'csk-…' : k.provider === 'openrouter' ? 'sk-or-…' : '', focusKey: 'repin:' + k.id });
+    const { row, input } = keyInput({ ariaLabel: t('apiKeys.replace.input', { name: keyName(k) }), placeholder: k.provider === 'openrouter' ? 'sk-or-…' : '', focusKey: 'repin:' + k.id });
     const form = el('form', 'rt-key-form ak-form'); form.setAttribute('aria-label', t('apiKeys.replace.aria', { name: keyName(k) }));
     form.append(row);
     if (k.uses.some(u => u.kind === 'endpoint')) form.append(el('small', 'ak-cost', t('apiKeys.replace.cost')));
@@ -268,7 +268,7 @@ export function setupApiKeysSettings({ cmd, page, openEndpoints = () => {} }) {
       label.append(name); form.append(label);
     }
     const { row, input } = keyInput({ ariaLabel: a.provider === 'custom' ? t('apiKeys.add.keyAriaCustom') : t('apiKeys.add.keyAria', { provider: providerName(a.provider) }),
-      placeholder: a.provider === 'cerebras' ? 'csk-…' : a.provider === 'openrouter' ? 'sk-or-…' : '', focusKey: 'addin' });
+      placeholder: a.provider === 'openrouter' ? 'sk-or-…' : '', focusKey: 'addin' });
     const field = el('div', 'mp-field'); field.append(el('span', null, t('apiKeys.add.key')), row); form.append(field);
     const actions = el('div', 'mp-actions'); actions.style.marginTop = '12px';
     if (!forced) actions.append(button(t('apiKeys.cancel'), closeAdd));

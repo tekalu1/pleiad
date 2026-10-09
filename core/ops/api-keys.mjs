@@ -33,7 +33,7 @@ export const apiKeyOps = [
     id: 'apiKeys.check',
     summary: 'agent:ops.apiKeys.check.summary',
     risk: 'write',
-    riskReason: 'Sends the saved key only to its own provider (OpenRouter GET /key, Cerebras GET /models) to see whether it is accepted, and records the result. Nothing is entered, no feature starts sending, and it costs nothing; a human pressing "check" does the same (ADR 0155)',
+    riskReason: 'Sends the saved key only to its own provider (OpenRouter GET /key; keys of other providers are checked through their endpoint instead) to see whether it is accepted, and records the result. Nothing is entered, no feature starts sending, and it costs nothing; a human pressing "check" does the same (ADR 0155)',
     input: z.object({ id: z.string().min(1).max(40).describe('agent:ops.apiKeys.check.id') }),
     output: z.object({ id: z.string(), ok: z.boolean().nullable(), code: z.string().optional(), at: z.string().optional() }).passthrough(),
     surfaces: { ui: true, mcp: 'catalog', cli: { path: ['apikeys', 'check'], positional: ['id'] } },

@@ -1,8 +1,8 @@
 // 設定 › 委譲（委譲先の自動振り分け。docs/design-system.md「設定 › 委譲」、docs/agent-delegation.md「委譲先の自動振り分け」）。
 //
 // - 先頭のスイッチ「委譲先を自動で選ぶ」
-// - 「難しさの判定」: 種類ごとの判定器（Jev / Cerebras / 判定しない）の表と「Jev が迷ったら Cerebras に聞き直す」
-// - 「判定器が使うキー」: OpenRouter（Jev）と Cerebras それぞれに「使うキー」を設定 › API キー（承認済み 2026-10-07）から選ぶ（WS の setApiKeyUse）。
+// - 「難しさの判定」: 種類ごとの判定器（Jev / Qwen / 判定しない）の表と「Jev が迷ったら Qwen に聞き直す」
+// - 「判定器が使うキー」: OpenRouter（Jev・Qwen。どちらも OpenRouter で、キーは 1 つ）の「使うキー」を設定 › API キー（承認済み 2026-10-07）から選ぶ（WS の setApiKeyUse）。
 //   選ぶまでは何も送らない。未登録ならその場で登録でき（登録先は API キー）、キーは返ってこない（hasKey と keyRef だけ）。送る内容の 1 行
 // - 「詳しい設定」（details）: 段ごとの候補（並べ替え・追加・外す、各候補の今の使用量と使えるかどうか、段の既定と候補ごとの思考の強さ。
 //   承認済み 2026-10-08・ADR 0164）・種類 × 難しさの表・使用量の方針
@@ -19,8 +19,10 @@ import { apiKeyList, keySelect, registerForm, statusLine, manageLink } from './a
 import { EFFORT_LEVELS, candidateEffort, tierEffort, withEffort } from './delegation-effort.mjs';
 import { effortSelect, effortFixed } from './effort-select.mjs';
 
-const SERVICES = ['openrouter', 'cerebras'];
-const SERVICE_JUDGE = { openrouter: 'jev', cerebras: 'cerebras' };
+const SERVICES = ['openrouter'];
+/** キーのサービスごとの、そのキーを使う判定器と割り当て（API キーの uses。名前は前の版のまま judge:jev） */
+const SERVICE_JUDGES = { openrouter: ['jev', 'qwen'] };
+const SERVICE_USE = { openrouter: 'judge:jev' };
 const DIFFICULTIES = ['low', 'mid', 'high'];
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 
@@ -193,9 +195,9 @@ export function setupDelegationSettings({ cmd, page, showMenu, labelOf, logo, mo
     const check = el('label', 'mp-check');
     const box = el('input');
     box.type = 'checkbox';
-    box.checked = s.escalateToCerebras;
+    box.checked = s.escalateToQwen;
     box.disabled = false;
-    box.onchange = () => { judgeFocus = 'escalate'; save({ escalateToCerebras: box.checked }); };
+    box.onchange = () => { judgeFocus = 'escalate'; save({ escalateToQwen: box.checked }); };
     box.dataset.focusKey = 'escalate';
     controls.set('escalate', box);
     check.append(box, el('span', null, t('routing.settings.escalate')));
@@ -215,9 +217,9 @@ export function setupDelegationSettings({ cmd, page, showMenu, labelOf, logo, mo
     const lines = [];
     if (s?.enabled) {
       for (const service of SERVICES) {
-        const judge = SERVICE_JUDGE[service];
-        if (data.keys[service]?.hasKey || !Object.values(s.judgeByKind).includes(judge)) continue;
-        lines.push(effLine(t('routing.settings.effective.noKey', { service: t(`routing.settings.service.${service}`), judge: judgeText(judge) }),
+        const used = SERVICE_JUDGES[service].filter(judge => Object.values(s.judgeByKind).includes(judge));
+        if (data.keys[service]?.hasKey || !used.length) continue;
+        lines.push(effLine(t('routing.settings.effective.noKey', { service: t(`routing.settings.service.${service}`), judge: used.map(judgeText).join(' / ') }),
           t('apiKeys.delegation.selectKey'), () => goKey(service)));
       }
       if (!data.candidates.some(c => c.usable))
@@ -279,7 +281,7 @@ export function setupDelegationSettings({ cmd, page, showMenu, labelOf, logo, mo
   /** 判定器に使うキーを選ぶ（null は使わない）。選んだときから送り始める */
   async function chooseKey(service, id) {
     message = '';
-    try { await cmd('setApiKeyUse', { use: `judge:${SERVICE_JUDGE[service]}`, id }); await refresh(); }
+    try { await cmd('setApiKeyUse', { use: SERVICE_USE[service], id }); await refresh(); }
     catch (e) { message = t('routing.settings.saveFailed', { error: e.message }); paint(); }
     keys.querySelector(`[data-fk="sel:${service}"]`)?.focus({ preventScroll: true });
   }
@@ -288,7 +290,7 @@ export function setupDelegationSettings({ cmd, page, showMenu, labelOf, logo, mo
     message = '';
     try {
       const { id } = await cmd('setApiKey', { provider: service, label: '', key: value });
-      await cmd('setApiKeyUse', { use: `judge:${SERVICE_JUDGE[service]}`, id });
+      await cmd('setApiKeyUse', { use: SERVICE_USE[service], id });
       registering = '';
       await cmd('invoke', { op: 'apiKeys.check', args: { id } }).catch(() => null);
       await refresh();

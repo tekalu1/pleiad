@@ -26,7 +26,10 @@ export default async function (t) {
 
   assert.equal(judgeLine(routing), 'Jev');
   assert.equal(judgeLine({ ...routing, judge: 'cerebras', fallback: 'timeout' }), 'Cerebras · Jev: 時間切れ');
-  assert.equal(judgeLine({ ...routing, judge: 'cerebras', escalated: true }), 'Cerebras（Jev が迷ったので聞き直した）');
+  assert.equal(judgeLine({ ...routing, judge: 'cerebras', escalated: true }), 'Cerebras（Jev が迷ったので聞き直した）', '廃止前の記録は Cerebras のまま読む');
+  assert.equal(judgeLine({ ...routing, judge: 'qwen', fallback: 'http_503' }), 'Qwen · Jev: HTTP 503');
+  assert.equal(judgeLine({ ...routing, judge: 'jev', fallback: 'timeout' }), 'Jev · Qwen: 時間切れ');
+  assert.equal(judgeLine({ ...routing, judge: 'qwen', escalated: true }), 'Qwen（Jev が迷ったので聞き直した）');
   assert.equal(judgeLine({ ...routing, judge: 'none', fallback: 'judge_none' }), '判定しない種類（難しさは中）');
   assert.equal(judgeLine({ ...routing, judge: 'none', fallback: 'no_key' }), '判定できなかった: キーが無い（難しさは中）');
   assert.equal(fallbackText('http_503'), 'HTTP 503');
@@ -115,7 +118,7 @@ export default async function (t) {
   t.ok('委譲の内訳に、子の自動圧縮の閾値と内訳（固定の部分・空き・出どころ）を出す', true);
 
   const defaults = { judgeByKind: { trivial: 'jev', visual: 'none' }, tiers: { t1: ['a:b'], t2: ['c:d'] }, avoidPercent: 80 };
-  assert.deepEqual(diffFromDefaults({ trivial: 'cerebras', visual: 'none' }, defaults.judgeByKind), { trivial: 'cerebras' });
+  assert.deepEqual(diffFromDefaults({ trivial: 'qwen', visual: 'none' }, defaults.judgeByKind), { trivial: 'qwen' });
   assert.equal(diffFromDefaults({ trivial: 'jev', visual: 'none' }, defaults.judgeByKind), null, '全部既定なら null（既定に戻す）');
   assert.deepEqual(diffFromDefaults({ t1: ['a:b'], t2: ['d:e', 'c:d'] }, defaults.tiers), { t2: ['d:e', 'c:d'] });
   t.ok('設定は既定と違う項目だけを送る（既定値を凍らせない）', true);
@@ -177,12 +180,12 @@ function failure(t, names) {
 
 /** 設定 › 委譲のスイッチの直下: 効いていない理由だけを出す（平常時・オフのときは何も出さない） */
 async function effectiveLines(t) {
-  const defaults = { enabled: true, judgeByKind: { implement: 'jev' }, escalateToCerebras: false, tiers: { t1: ['codex:gpt-6-sol'] }, table: { implement: ['t1', 't1', 't1'] },
+  const defaults = { enabled: true, judgeByKind: { implement: 'jev' }, escalateToQwen: false, tiers: { t1: ['codex:gpt-6-sol'] }, table: { implement: ['t1', 't1', 't1'] },
     avoidPercent: 80, paceLimit: 1.5 };
   let settings = structuredClone(defaults), hasKey = false, usable = false;
-  const state = () => structuredClone({ settings, defaults, kinds: ['implement'], judges: ['jev', 'cerebras', 'none'], tiers: ['t1'],
+  const state = () => structuredClone({ settings, defaults, kinds: ['implement'], judges: ['jev', 'qwen', 'none'], tiers: ['t1'],
     candidates: [{ candidate: 'codex:gpt-6-sol', backend: 'codex', model: 'gpt-6-sol', tiers: ['t1'], usable, reason: usable ? null : 'unavailable', detail: 'disabled', windows: [] }],
-    keys: { openrouter: { hasKey }, cerebras: { hasKey: false } }, storage: { encrypted: true } });
+    keys: { openrouter: { hasKey } }, storage: { encrypted: true } });
   const root = el('div'), tab = el('button');
   const saved = document.getElementById;
   document.getElementById = id => ({ delegationPanel: root, delegationTab: tab })[id] ?? null;
@@ -211,12 +214,12 @@ async function effectiveLines(t) {
 /** 設定 › 委譲の判定器の面。押したボタンにフォーカスが残っていても、選び直しが画面に出てフォーカスが戻る */
 async function judgePanel(t) {
   const judgeDefaults = { implement: 'jev', review: 'jev' };
-  const defaults = { enabled: true, judgeByKind: judgeDefaults, escalateToCerebras: false, tiers: { t1: ['claude:haiku'] }, table: { implement: ['t1', 't1', 't1'], review: ['t1', 't1', 't1'] },
+  const defaults = { enabled: true, judgeByKind: judgeDefaults, escalateToQwen: false, tiers: { t1: ['claude:haiku'] }, table: { implement: ['t1', 't1', 't1'], review: ['t1', 't1', 't1'] },
     avoidPercent: 80, paceLimit: 1.5 };
   let settings = structuredClone(defaults);
   let candidates = [{ candidate: 'claude:haiku', backend: 'claude', usable: true, checkedAt: '2026-09-27T00:00:00Z', windows: [] }];
-  const state = () => structuredClone({ settings, defaults, kinds: ['implement', 'review'], judges: ['jev', 'cerebras', 'none'], tiers: ['t1'], candidates,
-    keys: { openrouter: { hasKey: true }, cerebras: { hasKey: true } }, storage: { encrypted: true } });
+  const state = () => structuredClone({ settings, defaults, kinds: ['implement', 'review'], judges: ['jev', 'qwen', 'none'], tiers: ['t1'], candidates,
+    keys: { openrouter: { hasKey: true } }, storage: { encrypted: true } });
   const releases = [], sent = [];
   const cmd = async (name, args) => {
     if (name === 'setDelegationRouting') {
@@ -240,23 +243,23 @@ async function judgePanel(t) {
       if (key === 'escalate') return root.querySelector('.rt-judges').querySelector('input');
       const [kind, judge] = key.split(':');
       const row = root.querySelectorAll('.rt-judge-row')[['implement', 'review'].indexOf(kind)];
-      return row.querySelector('.rt-seg').children[['jev', 'cerebras', 'none'].indexOf(judge)];
+      return row.querySelector('.rt-seg').children[['jev', 'qwen', 'none'].indexOf(judge)];
     };
     const tick = () => new Promise(r => setImmediate(r));
 
     // クリックでボタンにフォーカスが移る（Chromium）。その状態で保存が返ってくる
-    const cerebras = control('implement:cerebras');
-    document.activeElement = cerebras;
-    cerebras.onclick();
-    t.ok('押した瞬間に選択が変わり、ほかの判定器も押せる', control('implement:cerebras').classList.contains('on') && !control('review:none').disabled);
+    const qwen = control('implement:qwen');
+    document.activeElement = qwen;
+    qwen.onclick();
+    t.ok('押した瞬間に選択が変わり、ほかの判定器も押せる', control('implement:qwen').classList.contains('on') && !control('review:none').disabled);
     control('review:none').onclick();
     t.ok('保存中の次の変更もすぐ表示し、送信は最初の保存を待つ', control('review:none').classList.contains('on') && sent.length === 1);
     releases.shift().resolve(); await tick();
     t.ok('2 件目は 1 件目の完了後に送る', sent.length === 2 && sent[1].judgeByKind.review === 'none');
     releases.shift().resolve(); await tick();
-    const after = control('implement:cerebras');
+    const after = control('implement:qwen');
     t.ok('押した判定器に選択が移る', after.classList.contains('on') && after.getAttribute('aria-pressed') === 'true'
-      && !control('implement:jev').classList.contains('on') && settings.judgeByKind.implement === 'cerebras' && settings.judgeByKind.review === 'none');
+      && !control('implement:jev').classList.contains('on') && settings.judgeByKind.implement === 'qwen' && settings.judgeByKind.review === 'none');
 
     // 別の画面から変わった（delegationRoutingChanged）ときも、フォーカスが面の中にあっても描き直す
     settings.judgeByKind.review = 'jev';
@@ -268,7 +271,7 @@ async function judgePanel(t) {
     box.checked = true;
     box.onchange();
     releases.shift().resolve(); await tick();
-    t.ok('聞き直しのチェックも保存して描き直し、フォーカスを戻す', control('escalate').checked === true && settings.escalateToCerebras === true && document.activeElement === control('escalate'));
+    t.ok('聞き直しのチェックも保存して描き直し、フォーカスを戻す', control('escalate').checked === true && settings.escalateToQwen === true && document.activeElement === control('escalate'));
     control('review:none').onclick();
     t.ok('失敗する保存も先に画面へ反映する', control('review:none').classList.contains('on'));
     releases.shift().reject(new Error('denied')); await tick();
