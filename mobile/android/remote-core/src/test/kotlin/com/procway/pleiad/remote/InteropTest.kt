@@ -15,6 +15,7 @@ import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import org.json.JSONObject
 import org.junit.AfterClass
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
@@ -145,6 +146,10 @@ class InteropTest {
         val (st2, _, js) = get(port, "/client.mjs", headers = mapOf("Cookie" to cookie))
         assertEquals(200, st2)
         assertTrue(js.size > 1000)
+        // the page load fetched the web/ shell as one bundle from the Node host and saved it; /client.mjs came from it
+        val saved = StaticBundleCodec.decode(File(dir, "static/${rec.hostId}.bin").readBytes())
+        assertArrayEquals("index.html from the saved shell", saved.files["/index.html"]!!.body, body)
+        assertArrayEquals("client.mjs from the saved shell", saved.files["/client.mjs"]!!.body, js)
         assertEquals("the host's internal MCP routes are blocked", 403, get(port, "/mcp/agents", headers = mapOf("Cookie" to cookie)).first)
 
         // ---- /ws through the proxy: `ready` arrives (early message kept), then a command round trip
@@ -194,6 +199,8 @@ class InteropTest {
         assertEquals(503, st3)
         assertTrue(String(page).contains("data-remote-state=\"revoked\""))
         assertTrue(device.store.host(rec.hostId)!!.revokedAt != null)
+        device.remove(rec.hostId)
+        assertTrue("the saved shell goes with the host", !File(dir, "static/${rec.hostId}.bin").exists())
         client.dispatcher.executorService.shutdown()
     }
 }

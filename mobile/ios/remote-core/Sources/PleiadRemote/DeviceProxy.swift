@@ -16,6 +16,8 @@ import Foundation
 // The WebSocket's early host messages (WS_ACCEPT and `ready` arrive in the same read) are queued from the moment the
 // stream is opened, so nothing is lost before the 101 is written (the ordering race from the desktop work).
 // Every HTTP response is `Connection: close` (no keep-alive bookkeeping; loopback connections are cheap).
+// With a staticCacheFile, the web/ shell is answered from the device's saved bundle once the host confirmed it on the
+// page load (StaticCache.swift, docs/remote.md §8.6); auth, Host and method checks come first, as for any request.
 //
 // iOS: the system reclaims the listening socket while the app is suspended. The shell calls resumeForeground() when
 // the app becomes active again: it listens on the same port (same origin, so web/'s localStorage and the cookie stay)
@@ -73,6 +75,7 @@ public final class DeviceProxy {
     public static let PROXY_COOKIE = "pleiad_remote_token"
     private static let WS_PAUSE_ABOVE = 256 * 1024
     private static let MAX_WS_MESSAGE = 64 * 1024 * 1024
+    private static let STATIC_FETCH_MS = 120_000
     private static let PASS_REQUEST: Set<String> = [
         "accept", "accept-language", "accept-encoding", "cache-control", "pragma",
         "if-none-match", "if-modified-since", "if-range", "range", "user-agent",
@@ -107,10 +110,27 @@ public final class DeviceProxy {
     private var server: TcpListener?
     private var sockets: [ObjectIdentifier: TcpSocket] = [:]
     private var _closed = false
+    public let staticCache: StaticCache?
+    private var staticCheck: StaticCheck?
+
+    /// One check of the saved shell; the requests that arrive meanwhile wait for the same answer.
+    private final class StaticCheck {
+        private let cond = NSCondition()
+        private var done = false
+        private var result: StaticBundle?
+        func finish(_ b: StaticBundle?) { cond.lock(); result = b; done = true; cond.broadcast(); cond.unlock() }
+        func wait(_ ms: Int) -> StaticBundle? {
+            cond.lock(); defer { cond.unlock() }
+            let deadline = Date(timeIntervalSinceNow: Double(ms) / 1000)
+            while !done { if !cond.wait(until: deadline) { break } }
+            return result
+        }
+    }
 
     public init(loop: Loop, creds: HostCreds, keyPair: KeyPair, wantPort: Int = 0, app: String = "", name: String = "",
                 shell: String = "mobile", backoff: Backoff = Backoff(), connectTimeoutMs: Int = 15_000,
-                requestWaitMs: Int = 10_000, texts: ProxyTexts = DefaultTexts(), log: @escaping (String) -> Void = { _ in }) {
+                requestWaitMs: Int = 10_000, texts: ProxyTexts = DefaultTexts(), log: @escaping (String) -> Void = { _ in },
+                staticCacheFile: URL? = nil) {
         self.loop = loop
         self.link = DeviceLink(loop: loop, creds: creds, keyPair: keyPair, app: app, name: name, shell: shell, backoff: backoff,
                                connectTimeoutMs: connectTimeoutMs, log: log)
@@ -119,6 +139,7 @@ public final class DeviceProxy {
         self.texts = texts
         self.log = log
         self._creds = creds
+        self.staticCache = staticCacheFile.map { StaticCache(file: $0, log: log) }
     }
 
     public var port: Int { lock.lock(); defer { lock.unlock() }; return _port }
@@ -350,7 +371,7 @@ var b=document.getElementById('back-to-hosts');if(typeof window.backToHosts==='f
         if req.method != "GET" && req.method != "HEAD" {
             return writeSimple(out, 405, "text/plain; charset=utf-8", Bytes("method not allowed".utf8), [("Allow", "GET, HEAD")])
         }
-        handleHttp(s, out, req, forwardPath, queryOk)
+        handleHttp(s, out, req, path, restQuery, queryOk)
     }
 
     private func awaitChannel(_ q: BlockingQueue<Ev>) -> (Channel?, LinkUnavailable?) {
@@ -359,10 +380,103 @@ var b=document.getElementById('back-to-hosts');if(typeof window.backToHosts==='f
         return (nil, LinkUnavailable(state: "offline"))
     }
 
-    private func handleHttp(_ s: TcpSocket, _ out: Out, _ req: Request, _ forwardPath: String, _ queryOk: Bool) {
+    /// One GET over the channel, read whole (blocking; for the static bundle).
+    private func fetchOver(_ ch: Channel, _ path: String) throws -> StaticFetch {
+        let q = BlockingQueue<Ev>()
+        let head: JSON = ["method": .string("GET"), "path": .string(path), "headers": .object([:])]
+        loop.post {
+            do {
+                let st = try ch.openHttp(head)
+                let l = StreamListener()
+                l.onResponse = { q.put(.response($0)) }
+                l.onData = { q.put(.data($0, $1)) }
+                l.onEnd = { q.put(.end) }
+                l.onReset = { code, _ in q.put(.reset(code)) }
+                st.listener = l
+                st.end()
+                q.put(.opened(st, nil))
+            } catch {
+                q.put(.opened(nil, error))
+            }
+        }
+        let deadline = Date(timeIntervalSinceNow: Double(DeviceProxy.STATIC_FETCH_MS) / 1000)
+        func left() -> Int { max(1, Int(deadline.timeIntervalSinceNow * 1000)) }
+        guard case .opened(let opened, let openErr)? = q.poll(left()) else { throw StateError(description: "static bundle: timeout") }
+        guard let stream = opened else { throw openErr ?? StateError(description: "static bundle: cannot open") }
+        var status = 0
+        var headers: [String: String] = [:]
+        var body = Bytes()
+        do {
+            while true {
+                guard deadline.timeIntervalSinceNow > 0, let ev = q.poll(left()) else { throw StateError(description: "static bundle: timeout") }
+                switch ev {
+                case .response(let h):
+                    status = Int(h["status"]?.int ?? 0)
+                    for (k, v) in h["headers"]?.object ?? [:] {
+                        headers[k.lowercased()] = v.array?.map { $0.text }.joined(separator: ", ") ?? v.text
+                    }
+                case .data(let chunk, let release):
+                    defer { release() }
+                    if body.count + chunk.count > StaticBundleCodec.MAX_BYTES { throw StateError(description: "static bundle: too large") }
+                    body += chunk
+                case .end:
+                    return StaticFetch(status: status, headers: headers, body: body)
+                case .reset(let code):
+                    throw StateError(description: "static bundle: reset \(code)")
+                default: break
+                }
+            }
+        } catch {
+            loop.post { if !stream.destroyed { stream.reset(ResetCode.CANCEL) } }
+            for ev in q.drain() { ev.release() }
+            throw error
+        }
+    }
+
+    /// The bundle that may be served now, or nil. A page load always asks the host again; other requests share the last answer.
+    private func localBundle(_ cache: StaticCache, _ ch: Channel, pageLoad: Bool) -> StaticBundle? {
+        lock.lock()
+        let check: StaticCheck
+        var started = false
+        if let c = staticCheck, !pageLoad {
+            check = c
+        } else {
+            check = StaticCheck()
+            staticCheck = check
+            started = true
+        }
+        lock.unlock()
+        if started {
+            spawn("pleiad-proxy-static") { [weak self] in
+                check.finish(cache.check { p in
+                    guard let self else { throw StateError(description: "closed") }
+                    return try self.fetchOver(ch, p)
+                })
+            }
+        }
+        return check.wait(DeviceProxy.STATIC_FETCH_MS + 5_000)
+    }
+
+    private func writeLocal(_ out: Out, _ req: Request, _ file: StaticFile, _ queryOk: Bool) {
+        var text = "HTTP/1.1 200 OK\r\ncontent-type: \(file.type)\r\ncontent-length: \(file.body.count)\r\n"
+        if queryOk { text += "set-cookie: \(DeviceProxy.PROXY_COOKIE)=\(token); HttpOnly; SameSite=Strict; Path=/\r\n" }
+        text += "connection: close\r\n\r\n"
+        try? out.write(text)
+        if req.method != "HEAD" { try? out.write(file.body) }
+        try? out.flush()
+    }
+
+    private func handleHttp(_ s: TcpSocket, _ out: Out, _ req: Request, _ path: String, _ restQuery: String, _ queryOk: Bool) {
+        let forwardPath = restQuery.isEmpty ? path : "\(path)?\(restQuery)"
         let q = BlockingQueue<Ev>()
         let (readyCh, readyErr) = awaitChannel(q)
         guard let ch = readyCh else { return unavailable(out, req, readyErr?.state ?? "offline", nil) }
+        if let cache = staticCache, restQuery.isEmpty {
+            let pageLoad = path == "/" || path == "/index.html"
+            if let file = localBundle(cache, ch, pageLoad: pageLoad)?.files[pageLoad ? "/index.html" : path] {
+                return writeLocal(out, req, file, queryOk)
+            }
+        }
         var headers = [String: JSON]()
         for (k, v) in req.headers where DeviceProxy.PASS_REQUEST.contains(k) { headers[k] = .string(v) }
         let head: JSON = ["method": .string(req.method), "path": .string(forwardPath), "headers": .object(headers)]

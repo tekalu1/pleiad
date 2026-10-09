@@ -223,6 +223,11 @@ final class InteropTests: XCTestCase {
         let js = try get(port, "/client.mjs", headers: [("Cookie", cookie)])
         XCTAssertEqual(200, js.status)
         XCTAssertGreaterThan(js.body.count, 1000)
+        // the page load fetched the web/ shell as one bundle from the Node host and saved it; /client.mjs came from it
+        let savedFile = InteropTests.dir!.appendingPathComponent("static/\(rec.hostId).bin")
+        let saved = try StaticBundleCodec.decode(Bytes(try Data(contentsOf: savedFile)))
+        XCTAssertEqual(saved.files["/index.html"]?.body, page.body, "index.html from the saved shell")
+        XCTAssertEqual(saved.files["/client.mjs"]?.body, js.body, "client.mjs from the saved shell")
         XCTAssertEqual(403, try get(port, "/mcp/agents", headers: [("Cookie", cookie)]).status, "the host's internal MCP routes are blocked")
 
         // ---- /ws through the proxy: `ready` arrives (early message kept), then a command round trip
@@ -268,6 +273,8 @@ final class InteropTests: XCTestCase {
         XCTAssertEqual(503, gone.status)
         XCTAssertTrue(gone.body.utf8String.contains("data-remote-state=\"revoked\""))
         XCTAssertNotNil(try device.store.host(rec.hostId)?.revokedAt)
+        try device.remove(rec.hostId)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: savedFile.path), "the saved shell goes with the host")
     }
 
     /// cleanLabel and normalizeRelayUrl give the same results as core/remote/pairing.mjs for the same inputs.

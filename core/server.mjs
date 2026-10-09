@@ -43,6 +43,8 @@ import path from "node:path";
 import { writeAtomic } from './atomic-file.mjs';
 import os from "node:os";
 import { readLocalFile } from "./local-files.mjs";
+import { createStaticBundle } from './static-bundle.mjs';
+import { BUNDLE_PATH } from './remote/static-bundle.mjs';
 import { isLocalRequest, defaultOpener, createRateLimit, OPENABLE } from './os-open.mjs';
 import { readPreview, listTreeFolder, resolveReference, cwdAt, inspectFile, previewFailure, PreviewError } from './file-preview.mjs';
 import { windowShotGuard } from './chrome/window-shots.mjs';
@@ -1500,6 +1502,14 @@ const MIME = {
   ".json": "application/json; charset=utf-8",
 };
 
+/** 配る index.html に版を書き込む。web/client.mjs が ready の版と比べ、違えば 1 回だけ読み直す（docs/zero-downtime-update/design.md §8） */
+const stampBuild = body => Buffer.from(String(body).replace('<meta name="pleiad-build" content="">', `<meta name="pleiad-build" content="${APP_VERSION}+${BUILD ?? ''}">`));
+const staticBundle = createStaticBundle({
+  webDir: WEB, mime: MIME,
+  extra: () => [{ path: '/vendor/i18next.mjs', file: fileURLToPath(import.meta.resolve('i18next')), type: MIME['.mjs'] }],
+  transform: (p, body) => (p === '/index.html' ? stampBuild(body) : body),
+});
+
 function tokenOk(given) {
   if (typeof given !== "string") return false;
   const a = Buffer.from(given);
@@ -1631,6 +1641,8 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(204, { "cache-control": "no-store" });
     return res.end();
   }
+  // 画面の殻の束（端末のプロキシが版ごとに保存して自分で配る。docs/remote.md §8.6、ADR 0901）
+  if (url.pathname === BUNDLE_PATH) return staticBundle.handle(req, res, url);
 
   // コンピューターの操作のスクリーンショット（core/computer-use/shots.mjs）。id は 32 桁の hex だけ。トークンの認証は上で済んでいる（/local-file は使わない。ADR 0075）
   const computerShot = /^\/computer-shot\/([0-9a-f]{32})\.jpg$/.exec(url.pathname)?.[1];
@@ -1702,8 +1714,8 @@ const server = http.createServer(async (req, res) => {
     const file = path.join(WEB, rel);
     if (!file.startsWith(WEB)) throw new Error("outside web/");
     let body = await fs.readFile(file);
-    // 画面を配った版。web/client.mjs が ready の版と比べ、違えば 1 回だけ読み直す（docs/zero-downtime-update/design.md §8）
-    if (rel === 'index.html') body = Buffer.from(String(body).replace('<meta name="pleiad-build" content="">', `<meta name="pleiad-build" content="${APP_VERSION}+${BUILD ?? ''}">`));
+    // 画面を配った版（stampBuild）
+    if (rel === 'index.html') body = stampBuild(body);
     const headers = { "content-type": MIME[path.extname(file)] ?? "application/octet-stream" };
     if (tokenOk(viaQuery)) {
       // HttpOnly なので JS からは読めない。SameSite=Strict で他サイトからは送られない

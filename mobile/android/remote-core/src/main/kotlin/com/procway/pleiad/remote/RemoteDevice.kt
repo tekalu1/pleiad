@@ -6,6 +6,7 @@ package com.procway.pleiad.remote
 //   <dir>/secrets.bin  device static key + per-host relay tokens, sealed by a SecretCipher (Android Keystore in the app)
 //   <dir>/hosts.json   { version: 1, hosts: [{ hostId, hostName, label, relayUrl, hostPublicKey, deviceId, port,
 //                        pairedAt, lastConnectedAt, revokedAt }] }   (no secrets; same shape as the desktop's hosts.json)
+//   <dir>/static/<hostId>.bin  the host's web/ shell as last confirmed (StaticCache.kt, docs/remote.md §8.6)
 
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
@@ -61,7 +62,7 @@ data class HostRecord(
     }
 }
 
-class FileDeviceStore(private val dir: File, private val cipher: SecretCipher = PlainCipher) {
+class FileDeviceStore(val dir: File, private val cipher: SecretCipher = PlainCipher) {
     private val hostsFile = File(dir, "hosts.json")
     private val secretsFile = File(dir, "secrets.bin")
     private val lock = Any()
@@ -220,6 +221,7 @@ class RemoteDevice(
         val rec = store.host(hostId)
         val px = DeviceProxy(
             loop, creds, store.identity(), rec?.port ?: 0, app, name, "mobile", backoff, connectTimeoutMs, requestWaitMs, texts, log,
+            staticCacheFile(hostId),
         )
         px.onStatus { s ->
             try {
@@ -238,12 +240,14 @@ class RemoteDevice(
 
     fun proxy(hostId: String): DeviceProxy? = proxies[hostId]
 
+    private fun staticCacheFile(hostId: String) = File(store.dir, "static/$hostId.bin")
+
     fun close(hostId: String) { proxies.remove(hostId)?.close() }
 
     fun rename(hostId: String, label: String) = store.updateHost(hostId) { it.copy(label = PairingCodec.cleanLabel(label)) }
 
     /** Forget the pairing here (the host still lists the device until it is revoked there). */
-    fun remove(hostId: String): HostRecord? { close(hostId); return store.removeHost(hostId) }
+    fun remove(hostId: String): HostRecord? { close(hostId); staticCacheFile(hostId).delete(); return store.removeHost(hostId) }
 
     fun closeAll() { for (k in proxies.keys.toList()) close(k) }
 }

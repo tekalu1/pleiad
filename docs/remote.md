@@ -586,6 +586,20 @@ App Store の審査: 殻がホスト一覧・QR ペアリング・Keychain の�
 - ホストの PC のブラウザーで見る（画面の転送）は docs/inapp-browser.md「リモートから見る」。フレームと入力は中継の既存の WS 経路（`{ kind: "screencast" }` と `browserScreencast*` のコマンド）を通り、新しいポートは開けない。殻の変更は無い（戻るボタンは `plyremote:back` でシートと画面を閉じる）。HTML ファイルの「ブラウザーで開く」（ホストの OS で開く）はリモートでは出さない（§7.3）
 - 確かめ方（2026-09-27）: Android はエミュレーター（API 33）で `mobile/scripts/fake-host.mjs` と `adb reverse` の中継につなぎ、WebView の DevTools の口（`webview_devtools_remote_<pid>`）から押した。デスクトップ版は Electron の中で `createRemoteWindows` を偽のホストにつないで押した。LAN のブラウザーは、エミュレーターの Chrome から `X-Forwarded-For` を足すプロキシ経由で開いた。単体の試験は `tests/unit/remote-links.mjs` と `LinkPolicyTest`
 
+### 8.6 画面の殻を端末に持つ（2026-10-09、[ADR 0901](adr/0901-mobile-static-shell-cache.md)）
+
+端末内プロキシは、ホストの `web/` の静的ファイル一式（画面の殻）をホストごとに 1 本の束で保存し、ページの読み込みのたびに版だけを確かめて、自分で返す。それまでは起動のたびに 243 本（4.4 MB）を 1 本ずつ中継の往復で取っていた。
+
+- **ホストの口** `GET /static-bundle?have=<key>&enc=<deflate-raw|identity>`（`core/static-bundle.mjs`）: ホストのトークンの確かめの後ろ（無ければ 401。§4.2 の接続口がトークンを差し込むのはほかの要求と同じ）。`have` が今の key なら 304（本文なし）、違えば 200 で束。応答の見出しは `x-pleiad-bundle-key`・`x-pleiad-bundle-encoding`・`cache-control: no-store`。入れるのは静的ファイルの口が配るもののうち拡張子が MIME にあるもの全部と `/vendor/i18next.mjs`（PDF.js・可視化の写しなどは入れない）。`index.html` は配るときと同じ `pleiad-build` の置き換え済み。要求のたびに `web/` の大きさと更新時刻を見て、変わっていれば作り直す（`web/` をディスクから読み直す開発の流れでも、次の読み込みで新しい key）。今の `web/` で束は約 5.05 MB、deflate で約 1.44 MB。ふつうの静的ファイルの応答は変えない
+- **束の形**（`core/remote/static-bundle.mjs`）: `"PLSB"` | u32（BE）の見出しの長さ | 見出しの JSON `{ format: 1, key, files: [{ path, type, size }] }` | 本文を files の順に。key は files の順に `"<path>\n<type>\n<size>\n"` と本文の SHA-256 の hex（中身から決まるので、版の番号に頼らない）。読む側は magic・見出し・パス（`/` で始まり英数字と `._-/`、`..` 無し）・type の改行・大きさ・余りのバイト・key を全部確かめ、1 つでも合わなければ使わない。上限は展開の前後とも 64 MiB
+- **端末の保存**: `<端末の保存場所>/static/<hostId>.bin`（圧縮しない束。原子的に置き換える）。デスクトップ版の端末は `core/remote/device.mjs` の保存場所、Android は `noBackupFilesDir/remote/`、iOS は Application Support の `remote/`。ホストを削除すると消す。読み込んで確かめに通らないファイル（途中で切れた・壊れた）は使わず、`have=` を空にして取り直す
+- **確かめる時**: `/` か `/index.html` の要求が来るたび、チャネルが ready になった後で 1 往復（`core/remote/static-cache.mjs`、`StaticCache.kt`、`StaticCache.swift`）。304 なら持っている束、200 なら新しい束を保存して使う。それ以外の静的ファイルの要求は直近の確かめの答えを待って使う（同時に来た要求は同じ 1 回を待つ）。オフラインの扱い（案内のページ）は今までと同じ
+- **束から返すもの**: GET・HEAD で、クエリが `token` だけ（ほかのクエリがあれば流す）、パスが束にあるもの。トークン・`Host`・メソッドの照合はプロキシが先に行う（§7.1）。返すときの見出しは `content-type`・`content-length`・`connection: close` と、`token` のクエリが正しいときだけプロキシ自身の Cookie。ホストのトークンは端末に出ない。束に無いもの（`/ws`・API・PDF.js など）と、束が使えないときは今までどおりホストへ流す
+- **古い版との組み合わせ**: 古いアプリは `/static-bundle` を呼ばないので今までどおり。古いホストは 404 を返すので、新しいアプリは保存せずに 1 本ずつ流す。どちらも遅いだけで動く。ホストを新しくした後の最初の読み込みで束を取り直し、`pleiad-build` の読み直し（docs/zero-downtime-update/design.md §8）もそのまま効く
+- **転送の圧縮**: Node と Kotlin は `deflate-raw`、Swift は Apple の Compression があれば `deflate-raw`、無ければ（Windows・Linux の試験）`identity`
+- デスクトップ版・ブラウザーの直のつなぎは束を使わない（ホストの静的ファイルの口のまま）。デスクトップ版のリモートの窓（`core/remote/device.mjs` のプロキシ）は束を使う
+- 試験: `tests/unit/remote-static-bundle.mjs`（形・壊れた束・ホストの口の 304/200/401・作り直し・端末のプロキシで束から返す・古いホスト・古いアプリ・取り消し）、`StaticCacheTest`（Kotlin）・`StaticCacheTests`（Swift）と、両方の `InteropTest(s)`（Node の本物のホストの束を保存し、`index.html`・`client.mjs` が同じ中身で返り、ホストの削除で消える）
+
 ## 9. 安全についての考え
 
 | 相手 | できること | 対策 |
