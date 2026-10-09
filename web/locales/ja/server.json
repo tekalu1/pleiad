@@ -416,6 +416,10 @@
       "protocol": "{{protocol}} は扱えません"
     }
   },
+  "loginItem": {
+    "unavailable": "この環境ではサインイン時の起動を設定できません（{{reason}}）。インストールした Windows 版・macOS 版の Pleiad で設定してください",
+    "failed": "サインイン時の起動を変えられませんでした（{{reason}}）"
+  },
   "secrets": {
     "busy": "秘密情報のファイルが別の処理に使われています。少し待ってから再試行してください",
     "plainReason": "Electron の safeStorage が使えない起動（npm start など）です",

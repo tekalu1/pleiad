@@ -4471,6 +4471,13 @@
       ]
     },
     {
+      "key": "launchAtLogin",
+      "risk": "guarded",
+      "riskOf": false,
+      "writable": true,
+      "prefKeys": []
+    },
+    {
       "key": "linkOpen",
       "risk": "write",
       "riskOf": false,
@@ -4650,6 +4657,13 @@
       "agent-bound-ask": "write=allow",
       "agent-bound-never-full": "write=allow",
       "agent-bound-readonly": "write=deny:READ_ONLY_MODE"
+    },
+    "launchAtLogin": {
+      "human": "guarded=allow",
+      "agent-unbound": "guarded=deny:NEEDS_UI",
+      "agent-bound-ask": "guarded=ask",
+      "agent-bound-never-full": "guarded=allow",
+      "agent-bound-readonly": "guarded=deny:READ_ONLY_MODE"
     },
     "linkOpen": {
       "human": "write=allow",
