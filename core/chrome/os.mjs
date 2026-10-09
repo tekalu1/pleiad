@@ -20,6 +20,8 @@
 // yieldForeground(ref, { to })           → Promise<boolean>  ref が前面を取っていたら to（直前の前面）に返す
 // foreground()                           → Promise<{ id: string, browser: boolean } | null>  今の前面の窓。browser はブラウザー自身の窓か
 // appWindow()                            → Promise<WindowRef | null>  Pleiad 自身の窓（Electron main の窓）。引き継ぎで窓を戻す画面を、押した時の前面でなく Pleiad の窓のある画面にする
+// generation()                           → number  層が入れ替わった（main が替わった・main との縁が切れた）回数。引き継ぎの途中で層が入れ替わり、呼び出しが「聞けなかった」だけなのを、
+//                                          「見つからなかった」と取り違えないために使う（windows.mjs の readopt）
 // close(ref)                             → Promise<boolean>  確認の窓を閉じる（層が確認として出した ref だけ）
 //
 // エージェントの専用の窓（ADR 0154。core/chrome/windows.mjs が使う）。層が出した ref・browser 以外には何もしない
@@ -54,6 +56,7 @@ export function unsupportedChromeOs(reason = 'platform') {
     capabilities: () => caps,
     ready: async () => caps,
     onReady: () => () => {},
+    generation: () => 0,
     snapshotWindows: async () => null,
     findPermissionDialog: async () => null,
     raise: async () => ({ ok: false, method: 'unsupported' }),
@@ -80,7 +83,8 @@ const CALL_TIMEOUT_MS = 5000;
 
 /**
  * parentPort 越しの口。port が無い（Electron でない）ときは no-desktop の口を返す。
- * main が `chrome-os-ready { supported, reason, features }` を返すまで capabilities() は pending（supported: false, reason: 'pending'）。
+ * main が `chrome-os-ready { supported, reason, features, epoch }` を返すまで capabilities() は pending（supported: false, reason: 'pending'）。
+ * epoch は main の起動ごとの印。起動時の ready と chrome-os-ready-request への返事は同じ main から重なって届くので、epoch が同じ ready では待っている呼び出しを失敗にしない
  */
 export function parentPortChromeOs(port, { timeoutMs = CALL_TIMEOUT_MS, readyWaitMs = READY_WAIT_MS } = {}) {
   if (!port) return unsupportedChromeOs('no-desktop');
@@ -88,6 +92,8 @@ export function parentPortChromeOs(port, { timeoutMs = CALL_TIMEOUT_MS, readyWai
   const listeners = new Set();
   let caps = Object.freeze({ supported: false, reason: 'pending', features: FEATURES_NONE });
   let isReady = false;
+  let epoch = null;        // 最後に受けた ready の main の印
+  let generation = 0;      // 層が入れ替わった回数
   let next = 0;
   let readyWaiters = [];
 
@@ -97,7 +103,10 @@ export function parentPortChromeOs(port, { timeoutMs = CALL_TIMEOUT_MS, readyWai
   port.on('message', event => {
     const message = event?.data ?? event;
     if (message?.type === 'chrome-os-ready') {
-      if (isReady) failAll();   // main が作り直された。待っていた呼び出しはもう返らない
+      // main が作り直された（epoch が替わった）。待っていた呼び出しはもう返らない。同じ main の ready が重なっただけ（起動時の ready と依頼への返事）なら、待っている呼び出しは生きている
+      const ownEpoch = typeof message.epoch === 'string' ? message.epoch : null;
+      if (isReady && ownEpoch && epoch && ownEpoch !== epoch) { generation += 1; failAll(); }
+      if (ownEpoch) epoch = ownEpoch;
       isReady = true;
       const features = { ...FEATURES_NONE, ...(message.features ?? {}) };
       caps = Object.freeze({ supported: message.supported === true, ...(message.reason ? { reason: String(message.reason) } : {}), features });
@@ -118,6 +127,7 @@ export function parentPortChromeOs(port, { timeoutMs = CALL_TIMEOUT_MS, readyWai
     // 戻ったら chrome-os-ready を求め直す（新しい main の層が答える）。docs/zero-downtime-update/design.md §7.2
     port.on('disconnect', () => {
       isReady = false;
+      generation += 1;
       caps = Object.freeze({ supported: false, reason: 'pending', features: FEATURES_NONE });
       failAll();
     });
@@ -150,6 +160,7 @@ export function parentPortChromeOs(port, { timeoutMs = CALL_TIMEOUT_MS, readyWai
       });
     },
     onReady(fn) { listeners.add(fn); return () => listeners.delete(fn); },
+    generation: () => generation,
     snapshotWindows: () => call('snapshotWindows', {}, null),
     findPermissionDialog: ({ since, port } = {}) => call('findPermissionDialog', { since: since ?? [], port: port ?? null }, null),
     raise: ref => call('raise', { ref }, { ok: false, method: 'failed' }),

@@ -27,7 +27,10 @@ export function fakeChromeOs({ chrome = null, supported = true, reason = 'platfo
   const listeners = new Set();
   const hw = new Map();   // hwnd -> { id, windowId, rect(DIP), concealed, agent, alpha, ex, prevFg }
   let hwSeq = 100;
-  const opts = { appWindow: 'pleiad-window', noAppWindow: false, launchFails: false, chromeMissing: false, hideNonce: false, hideBounds: false, concealFails: false, honorPosition: true, noListener: false, closeFails: false, adoptFails: false, restoreMoveMs: 0 };
+  // readyWaitMs: pending の間、ready() が層の戻りを待つ長さ（0 は待たずに pending のまま返す）。本物の口（parentPortChromeOs）は readyWaitMs だけ待つ
+  const opts = { appWindow: 'pleiad-window', noAppWindow: false, launchFails: false, chromeMissing: false, hideNonce: false, hideBounds: false, concealFails: false, honorPosition: true, noListener: false, closeFails: false, adoptFails: false, restoreMoveMs: 0, readyWaitMs: 0 };
+  let generation = 0;
+  const readyWaiters = new Set();
   const OFFSCREEN = Object.freeze({ x: 6000, y: 0 });
   const isDialog = id => chrome?.dialogs().some(d => d.id === id);
   const note = entry => { log.push(entry); };
@@ -59,11 +62,20 @@ export function fakeChromeOs({ chrome = null, supported = true, reason = 'platfo
     opts,
     calls: name => log.filter(e => e.op === name),
     capabilities: () => caps,
-    ready: async () => caps,
+    ready() {
+      if (caps.reason !== 'pending' || !opts.readyWaitMs) return Promise.resolve(caps);
+      return new Promise(resolve => {
+        const waiter = { resolve: () => { clearTimeout(waiter.timer); readyWaiters.delete(waiter); resolve(caps); } };
+        waiter.timer = setTimeout(() => { readyWaiters.delete(waiter); resolve(Object.freeze({ supported: false, reason: 'no-desktop', features: pendingCaps.features })); }, opts.readyWaitMs);
+        readyWaiters.add(waiter);
+      });
+    },
+    generation: () => generation,
     /** main の入れ替わり: true の間は pending（層の口はどれも失敗の値を返す）、false で戻して onReady を呼ぶ */
     setPending(on) {
+      if (on) generation += 1;
       caps = on ? pendingCaps : realCaps;
-      if (!on) for (const fn of [...listeners]) { try { fn(caps); } catch { /* 聞き手の失敗 */ } }
+      if (!on) { for (const waiter of [...readyWaiters]) waiter.resolve(); for (const fn of [...listeners]) { try { fn(caps); } catch { /* 聞き手の失敗 */ } } }
     },
     onReady(fn) { listeners.add(fn); return () => listeners.delete(fn); },
     async snapshotWindows() { note({ op: 'snapshotWindows' }); return [...windows.keys(), ...(chrome?.dialogs().map(d => d.id) ?? []), ...hw.keys()]; },
@@ -185,4 +197,59 @@ export function fakeChromeOs({ chrome = null, supported = true, reason = 'platfo
     hwndOfWindow: windowId => { const h = [...hw.values()].find(x => x.windowId === windowId); return h ? { id: h.id } : null; },
   };
   return self;
+}
+
+/**
+ * 偽の main（desktop/chrome-os/index.cjs の attachChromeOs と同じ口）。core の parentPortChromeOs に渡す port を作り、chrome-os の依頼を偽の OS の層（fakeChromeOs）へ流して
+ * delayMs だけ遅れて chrome-os-result を返す（呼び出しが処理中になる）。main の ready は自分から送る（ready()。本物は起動時と chrome-os-ready-request の返事で重なって届く）。
+ * epoch は main の起動ごとの印（ready({ epoch }) で別の値を送ると、main が入れ替わった）
+ */
+export function fakeMainPort(os, { delayMs = 20, epoch = 'main-1' } = {}) {
+  const handlers = [];
+  const requests = [];
+  const sent = [];
+  const emit = data => { for (const fn of [...handlers]) fn({ data }); };
+  const act = async (action, a = {}) => {
+    switch (action) {
+      case 'findPermissionDialog': return os.findPermissionDialog({ since: a.since, port: a.port });
+      case 'raise': return os.raise(a.ref);
+      case 'yieldForeground': return os.yieldForeground(a.ref, { to: a.to });
+      case 'close': return os.close(a.ref);
+      case 'locateBrowser': return os.locateBrowser({ product: a.product });
+      case 'launchWindow': return os.launchWindow(a);
+      case 'findWindowByNonce': return os.findWindowByNonce(a.nonce);
+      case 'findWindowByBounds': return os.findWindowByBounds({ bounds: a.bounds, port: a.port, since: a.since, tolerance: a.tolerance });
+      case 'conceal': return os.conceal(a.ref);
+      case 'reveal': return os.reveal(a.ref, { near: a.near });
+      case 'release': return os.release(a.ref);
+      case 'closeAgent': return os.closeAgent(a.ref);
+      case 'exportAgent': return os.exportAgent(a.ref);
+      case 'adoptAgent': return os.adoptAgent(a.token, { revealed: a.revealed === true });
+      default: return os[action]();
+    }
+  };
+  const port = {
+    on: (type, fn) => { if (type === 'message') handlers.push(fn); },
+    postMessage(message) {
+      if (message?.type === 'chrome-os-ready-request') { requests.push(message); return true; }
+      if (message?.type === 'chrome-os') {
+        const { id, action, args } = message;
+        sent.push({ action, args });
+        setTimeout(() => { act(action, args).then(result => emit({ type: 'chrome-os-result', id, ok: true, result }), error => emit({ type: 'chrome-os-result', id, ok: false, error: String(error?.message ?? error) })); }, delayMs);
+      }
+      return true;
+    },
+  };
+  return {
+    port,
+    requests,
+    /** core から届いた chrome-os の依頼（action と args）。処理中かどうかを見るのに使う */
+    sent,
+    /** main の chrome-os-ready を core へ送る（既定は今の epoch） */
+    ready(options = {}) {
+      if (options.epoch) epoch = options.epoch;
+      const c = os.capabilities();
+      emit({ type: 'chrome-os-ready', supported: c.supported === true, ...(c.reason ? { reason: c.reason } : {}), features: c.features, epoch });
+    },
+  };
 }
