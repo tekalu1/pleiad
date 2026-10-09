@@ -196,7 +196,7 @@
     "instructions": "Pleiad の委譲ツール（ply_agents MCP）: ply_delegate で Pleiad が管理する子の会話を作る。kind（仕事の種類）は必ず書く。backend を省くと、Pleiad が種類・難しさ・使用量から委譲先（backend・model・Claude のアカウント）を選び、選んだ理由を返り値の routing に載せる。特定の委譲先が要るときだけ backend（claude, codex, antigravity）を書く。これはネイティブの spawn_agent / agent_job / Agent やその ID とは別物である。ply-task- の ID には ply_task_* だけを使う。ply_delegate はすぐに戻り、完了の結果は Pleiad が後のターンでこの会話へ届ける。その間にほかの作業を続けても、応答を終えてもよい。ply_task_wait は最長 30 秒待ち、子が人間の承認を待つ状態（status: waiting）になった時点ですぐ戻る。そのときは待ち直さず、どの会話に承認があるかをユーザーに伝える。ply_task_send は同じ子の会話に追加の指示を積む。必要なタスクの文脈は明示して渡すこと。非公開の推論と親の会話の記録は写されない。cwd の既定はこの会話の作業場所。isolate: true はユーザーが worktree を使うよう指示したときだけ付ける。同じリポジトリに書く子を並べて任せるなら、worktree を使うかユーザーに聞く。省略したら子は今の作業場所で走る。worktree を作った子の変更はそのブランチに残り、元の場所へ取り込むのは依頼元の仕事。ply_usage は各バックエンドの使用枠を読む（読み取りのみ、最大 60 秒前の値）。タスクの完了を受け取ったことを伝えるためだけに再び委譲しない。ply_delegate には一覧と子の会話に使う短い title を付ける。委譲は、ユーザーのタスクと適用される指示で認められている場合に限って使う。",
     "title": "一覧と会話のタイトルに使う短い名前。30 字程度。",
     "tools": {
-      "ply_delegate": "Pleiad が管理するタスクを始める。taskId をすぐに返し、完了は自動で届く。ネイティブの spawn_agent とは別物。kind は必ず書く。backend を省くと、Pleiad が種類・難しさ・使用量から委譲先を選び、理由を routing に載せる（全部の候補が使えなければエラー。そのときは backend を書いて頼み直すか、ユーザーに聞く）。backend を書くと固定で、model・effort も指定できる（model・effort は backend を書いたときだけ）。子は呼び出し元の承認の強さを、それを超えない範囲で継ぐ。それより強い子には、ここで人間の承認が 1 回要る。isolate は任意の真偽: true で、この子だけの worktree（リポジトリの隣・専用のブランチ）で走らせる。false で今の作業場所のまま。省くと今の作業場所のまま。true はユーザーが worktree を使うよう指示したときだけ付ける。同じリポジトリに書く子を並べるなら、worktree を使うかユーザーに聞く。worktree の子はその中だけに書き、終わるとコミットする。取り込みは依頼元が行う。",
+      "ply_delegate": "Pleiad が管理するタスクを始める。taskId をすぐに返し、完了は自動で届く。ネイティブの spawn_agent とは別物。kind は必ず書く。backend を省くと、Pleiad が種類・難しさ・使用量から委譲先を選び、理由を routing に載せる（全部の候補が使えなければエラー。そのときは backend を書いて頼み直すか、ユーザーに聞く）。backend を書くと固定で、model・effort も指定できる（model・effort は backend を書いたときだけ）。model はそのバックエンドの一覧の名前（Claude なら sonnet・opus・opus[1m]・haiku・fable。claude-sonnet-5-5 のような正式な ID も同じ系統の行に当てる）。当たらない名前は既定に戻さずエラーにし、選べる名前を返す。子は呼び出し元の承認の強さを、それを超えない範囲で継ぐ。それより強い子には、ここで人間の承認が 1 回要る。isolate は任意の真偽: true で、この子だけの worktree（リポジトリの隣・専用のブランチ）で走らせる。false で今の作業場所のまま。省くと今の作業場所のまま。true はユーザーが worktree を使うよう指示したときだけ付ける。同じリポジトリに書く子を並べるなら、worktree を使うかユーザーに聞く。worktree の子はその中だけに書き、終わるとコミットする。取り込みは依頼元が行う。",
       "ply_task_status": "Pleiad タスクとその結果を読む。長い結果の残りは nextOffset を使って読む。status: waiting は、子が人間の承認で止まっていることを表す。同じカードはこの会話にも出ているので、どこで承認するかをユーザーに伝える。",
       "ply_task_wait": "Pleiad タスクを最長 30 秒待つ。子が人間の承認を待つ状態（status: waiting）になったらすぐ戻る。まだ実行中という結果は失敗ではなく、完了は自動でも届く。waiting になったら待つのをやめ、どの会話に承認があるかをユーザーに伝える。",
       "ply_task_send": "同じ Pleiad の子の会話に追加の指示を積む。完了した後でもよい。backend・model・effort で子の設定を替えられる（次のターンから。設定だけなら message を省ける）。",
@@ -247,6 +247,7 @@
     "parentEnded": "依頼元の会話は終了しています",
     "childDeleted": "委譲した子の会話は削除されています。続けるなら、新しく委譲してください",
     "backendDisabled": "指定したバックエンドは有効ではありません",
+    "modelUnknown": "model_unknown: モデル {{model}} は {{backend}} の今の一覧にありません（選べるもの: {{models}}）。model を直すか省いて、頼み直してください",
     "cwdNotDirectory": "cwd はディレクトリを指定してください",
     "endpointDeleted": "依頼元の会話の接続先は削除されています。依頼元の会話で接続先を選び直してください",
     "aborted": "中断しました",

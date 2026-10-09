@@ -30,7 +30,7 @@ import { randomUUID } from "node:crypto";
 import os from "node:os";
 import * as store from "../store.mjs";
 import { recordBackendShapeMismatch } from '../backend-shape-diagnostics.mjs';
-import { buildClaudeModels, FALLBACK_MODELS } from "./claude-models.mjs";
+import { buildClaudeModels, FALLBACK_MODELS, matchClaudeModel } from "./claude-models.mjs";
 import { ZERO_COST, readCostState, decideCostBase } from "./claude-cost-state.mjs";
 import { normalizeSdkMessage, createClaudeCompactDiagnostic, claudeCompactionsFromHistory, transcriptToMessages, mergeQueuedCommands, stopHookFollowUps, subagentEntries, invalidSubagentTranscript, invalidQueuedCommandTranscript, transcriptSystemMarks } from "./claude-normalize.mjs";
 import { classifySystemMessages } from "../system-messages.mjs";
@@ -697,6 +697,12 @@ export const backend = {
     if (typeof model !== "string" || model.length > 200 || /[\r\n\x00]/.test(model)) return false;
     if (!model) return true;
     return Object.hasOwn(await claudeModels(cwd), model) || (!freshAnyCatalog(cliSignature()) && /^[\w.\-\[\]]+$/.test(model));
+  },
+  // 明示して渡された名前（claude-sonnet-5-5 など）を一覧の id に当てる。当たらなければ null
+  async matchModel(name, cwd) {
+    const pref = await preferredSettings(cwd);
+    const c = await loadCatalog(cwd, pref);
+    return matchClaudeModel(await claudeModels(cwd), c?.rows, name);
   },
 
   // ---- 実行 ---------------------------------------------------------------
