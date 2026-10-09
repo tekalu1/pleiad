@@ -122,7 +122,7 @@ export default async function (t) {
     globalThis.requestAnimationFrame = () => 1; // DOM の代役では映像を始めない
     N.prototype.toggleAttribute = function (name, on) { if (on) this.setAttribute(name, ''); else this.removeAttribute(name); };
     try {
-      let panelOpen = false;
+      let panelOpen = false, body = null;
       const commands = [];
       let menuItems = [];
       const windows = createWindowTable();
@@ -130,11 +130,14 @@ export default async function (t) {
       t.ok('窓の一覧は実際の窓と表示中の印を保持する', windows.count('panel') === 1 && windows.list('panel')[0].current);
       const panel = setupChromePanel({ cmd: async (name, args) => { commands.push([name, args]); return { closed: true }; },
         showMenu: (_x, _y, items) => { menuItems = items; },
-        preview: { openPanel: (options) => { panelOpen = true; options.toolbar[2].getBoundingClientRect = () => ({ left:0, bottom:0 }); options.toolbar[2].onclick(); }, panelOpen: () => panelOpen, close: () => { panelOpen = false; } },
+        preview: { openPanel: (options) => { panelOpen = true; body = options.body; options.toolbar[2].getBoundingClientRect = () => ({ left:0, bottom:0 }); options.toolbar[2].onclick(); }, panelOpen: () => panelOpen, close: () => { panelOpen = false; } },
         session: () => 'panel', windows });
       panel.open();
-      await menuItems.find(item => item.label === 'ウィンドウを閉じる').onClick();
-      t.ok('⋯ の「窓を閉じる」は自分の会話 ID で chromeCloseWindow を送る', menuItems[0].label === 'ウィンドウ 1 · 表示中' && commands.some(([name, args]) => name === 'chromeCloseWindow' && args.sessionId === 'panel'));
+      menuItems.find(item => item.label === '表示中のウィンドウを閉じる').onClick();
+      t.ok('⋯ の「表示中のウィンドウを閉じる」は、確かめを出すまで chromeCloseWindow を送らない', !commands.some(([name]) => name === 'chromeCloseWindow'));
+      body.querySelector('.cp-dlg-yes').onclick();
+      await sleep(0);
+      t.ok('確かめに答えると、自分の会話 ID で chromeCloseWindow を送る', menuItems.length === 1 && commands.some(([name, args]) => name === 'chromeCloseWindow' && args.sessionId === 'panel'));
     } finally { globalThis.requestAnimationFrame = oldFrame; N.prototype.toggleAttribute = oldToggle; }
 
     const bridgeCalls = [];
