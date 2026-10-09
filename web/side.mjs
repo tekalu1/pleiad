@@ -303,8 +303,12 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
 
   // ---- 描画 --------------------------------------------------------------
 
+  // 骨組みを置いている間 true。本物の一覧が渡された（render が呼ばれた）時点で false（隠れた引き出しで呼ばれても、開いたときの redraw が描く）
+  let skeletal = false;
   function render() {
+    skeletal = false;
     if (!isVisible()) { dirty = true; return; }
+    if (root.dataset.loading) { delete root.dataset.loading; root.removeAttribute("aria-busy"); }
     const q = $("q").value.trim();
     syncSearchBar(q);
     if (q) { renderedRows.clear(); dirty = true; return renderResults(q); }
@@ -1640,7 +1644,27 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
   };
 
   return {
-    redraw() { if (dirty && isVisible()) render(); },
+    // 骨組みの間は描き直さない（古い空の一覧で骨組みを消さない）。次の render が置き換える
+    redraw() { if (dirty && isVisible() && !skeletal) render(); },
+    /**
+     * 会話とスレッドの一覧がまだ揃っていない間の骨組み（片方だけの一覧を見せない）。
+     * 見えていなくても置く（数本の行だけで軽い）。次の render が行に置き換える
+     */
+    skeleton() {
+      if (skeletal) return;
+      skeletal = true;
+      root.dataset.loading = "1";
+      root.setAttribute("aria-busy", "true");
+      dirty = true;
+      const list = el("div", "side-skeleton");
+      list.setAttribute("aria-hidden", "true");
+      for (const widths of [[62, 30], [46, 26], [70, 34], [54, 28], [60, 32], [44, 24], [66, 30], [52, 28]]) {
+        const rowEl = el("div", "side-skel-row");
+        for (const width of widths) { const line = el("span", "history-line"); line.style.width = `${width}%`; rowEl.append(line); }
+        list.append(rowEl);
+      }
+      root.replaceChildren(list);
+    },
     /** 検索欄へ移る（Ctrl+Shift+F）。語が入っていれば全選択 */
     focusSearch() { searchBox.focus(); searchBox.select(); },
     /** この状態で新しいセッション（見出しのメニューから。見出しの ＋ と同じ） */

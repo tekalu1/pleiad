@@ -561,6 +561,10 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 .history-line{display:block;height:11px;border-radius:var(--r-pill);background:linear-gradient(90deg,var(--surface-2) 40%,var(--surface-1) 50%,var(--surface-2) 60%) 0 0/300% 100% no-repeat;animation:title-think 1.6s var(--ease-organic) infinite}
 .history-skeleton:first-of-type .history-line:last-child{height:42px;border-radius:var(--r-m)}
 @media (prefers-reduced-motion:reduce){.history-line{animation:none}}
+/* 脇の一覧がまだ揃っていない間の骨組み（web/side.mjs の skeleton）。行の高さに合わせた細い帯 2 本を並べる */
+.side-skeleton{display:flex;flex-direction:column;gap:18px;padding:14px 14px 0 30px}
+.side-skel-row{display:flex;flex-direction:column;gap:8px}
+.side-skel-row .history-line:last-child{height:9px}
 /* 考えている間。押されたことと動いていることが分かる必要がある。押せないのでホバーの面と色の変化も出さない */
 #titleWand.busy{color:var(--ink-blue);cursor:progress;background:transparent;transition:none}
 

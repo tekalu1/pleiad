@@ -527,6 +527,7 @@ iOS も A 案にした（2026-10-06、[ADR 0144](adr/0144-ios-remote-core-in-swi
 - 試験（`cd mobile/android && ./gradlew :remote-core:test`、JDK 17 以上。`mobile/node_modules` と `cap sync` の生成物が無い checkout・worktree では `:app` の設定評価が `cordova.variables.gradle` が無くて落ちるので `--configure-on-demand` を付ける。2026-10-01）: ベクトル（cacophony の IK / IKpsk2、Pleiad の導出、フレーム 17 例）、メモリの管でつないだチャネル（窓より大きい本文・大きい WebSocket のメッセージ）、**Node の本物の中継と fake のホストとの往復**（`InteropTest`。`mobile/scripts/fake-host.mjs` を子プロセスで立て、ペアリング・プロキシの認証と防火壁・`/ws` の `ready` とコマンド・900 KB のメッセージ・取り消しまで。`node` が無ければ飛ばす）。`npm test` の `mobile-shell` は plyRemote の形・平文の許可・版の固定・殻の辞書を見る
 - 資格情報: `noBackupFilesDir/remote/`。秘密は Android Keystore の AES-256-GCM の鍵で封じる（`KeystoreCipher`）。Keystore の鍵はバックアップされないので `allowBackup=false` と data extraction rules でバックアップ・端末の移行から外す
 - 平文: `network_security_config` で `127.0.0.1` だけ（ループバックのプロキシと、試験で `adb reverse` した中継）。利用者の入れた CA は信じない
+- 待ち受けのポート（2026-10-09）: `DeviceProxy.bindListener` が `reuseAddress = true` で前回のポートを取り直す（iOS の `SO_REUSEADDR` と同じ。付けないと、閉じた直後の再起動で TIME_WAIT が残り、別のポートに落ちてオリジンが変わり、`agent-host-current` などの localStorage が消えて新しい会話が開いていた）。それでも取れなければ 250 ms 置きに 6 回やり直し、それでもだめなら今まで通り空きポートへ落ちる
 - 殻の画面（`mobile/www/`）: ホスト一覧（状態・最後に使った時刻・「…」で名前を変える / 削除）、「ホストを追加」（ML Kit の `scan()` で QR、カメラの許可を求め、Google のスキャナーのモジュールが無ければ入れ始める。貼り付けも可）、ペアリング中は確認コード 6 桁と「やめる」。`pleiad://pair?...` のリンク（端末のカメラで QR を開いたとき）でも開き、そのときとペアリング済みのホストのときは先に確かめる。文言は殻の辞書 `mobile/www/i18n.js`（ja / en）、ネイティブは失敗を決まったコードで返して殻が訳す
 - ホストの窓（`HostActivity`）: Capacitor の入らない素の WebView で `http://127.0.0.1:<p>/?token=…` を開く。入れるのは `window.plyRemote` だけで、`WebViewCompat.addDocumentStartJavaScript` と `addWebMessageListener` をどちらもプロキシのオリジンに限り、受け口は本体フレームからのメッセージだけを受ける。形は `{ hostId, hostName, relay, device, shell: 'mobile', status(), onStatus(fn), retry(), backToHosts(), closeWindow(), setTheme(dark, { top, bottom }) }`（`closeWindow` = `backToHosts`。凍結し再定義できない。`setTheme` は画面の配色と上端・下端の地の色 `#rrggbb` を殻へ知らせる口）。帯のバッジはこれでデスクトップと同じ部品が動く
 - 戻るボタン・画面端のスワイプ: まず画面に取り消せる `plyremote:back` のイベント（`window`）を投げる。web/ は開いている面を手前から 1 つ閉じる（ダイアログ → メニュー・浮く面 → ファイルのプレビュー・設定 → 引き出し。client.mjs の `watchShellBack`）。`preventDefault()` されなければアプリを背面へ回す（`moveTaskToBack`）。**ホスト一覧へは戻らない**（2026-09-24。戻るのはタイトルの下のホスト名と「…」の「ホスト一覧に戻る」だけ。スワイプのたびに一覧へ落ちて会話を開き直すのを避ける）。窓を離れたらそのホストのプロキシを閉じる。前面に戻ったとき `offline` / `host-offline` なら待たずに張り直す
@@ -569,6 +570,16 @@ App Store の審査: 殻がホスト一覧・QR ペアリング・Keychain の�
 - 会話の左の 72px の溝（`web/style.css:385-390`）を狭い画面で縮めるのは任意（筋と節の位置に効くので、見た目の確認をしてから）
 
 実装（2026-09-23、#16 の web 側）: 上の通り。加えて、タイトル行の右端に「この会話の操作」の「…」（700px 以下とタッチ）、タッチの長押しで右クリックと同じメニュー（`web/long-press.mjs`。Android の OS の長押しと二重にならない）、指で開いた子メニューは入力欄にフォーカスしない、`crypto.randomUUID` の代わり（`web/dom.mjs` の `randomId`、§8.3）、モバイル版の殻の上端のホスト名の帯（`web/remote-badge.mjs` の `setupHostBar`。`plyRemote.backToHosts` か `window.backToHosts` を呼ぶ）。見た目の決まりは docs/design-system.md「狭い画面・タッチ」
+
+起動と引き出しの手直し（2026-10-09、承認済み。モック `temporary/mockups/mobile-ux.html` の 02・04・05）:
+
+- **前回の会話を開く**: ポートが同じでも localStorage に前回の会話が無いとき（ポートが変わった・消された）、`plyRemote.shell === 'mobile'` の殻の中だけは新しい会話ではなく**最後に動いた会話**を開く（`mostRecentSession`）。ブラウザー版・デスクトップ（遠隔の窓も）は今まで通り。前回の会話が一覧の件数の外でも、`loadSession` が通れば「ある」と見て開く（一覧に無いことで `startNew` に落とさない）
+- **つなぎ中の見た目**: 前回の会話の題を `agent-host-current-title` に覚え、殻では「新しいセッション」ではなくその題と本文の骨組みを出す（`paintBootSkeleton`）。題は選んだ会話・題の変更のたびに書き直す
+- **早取り**: `ready` の直後に、前回の会話の `loadSession` を一覧の取得と並べて送る（`startBootPrefetch`）。一覧が届いて会話があれば、その結果をそのまま使う（`sessionLoads` に載せるので二重に描かない）。一覧後の `backends`・`modes/models`・`running` は、互いに待たない分を並べて送る
+- **脇のパネルは勝手に閉じない**: 起動・つなぎ直し・`?open=` の `select` / `startNew` は `keepDrawer` で引き出しを閉じない。行を押して選ぶ道だけが閉じる
+- **一覧は 1 回だけ描く**: 会話とスレッドの両方が届くまで骨組み（`side.skeleton()`。`aria-busy`）を出し、揃ってから 1 回描く（片方だけで描いて後でもう一度描き替えない）
+- **タップの反応**: 引き出しの開閉は `side-open` と `aria-expanded` だけをタップの中で切り替え、一覧の描き直し・背後の `inert`・フォーカスは次のフレームの後（`settleDrawer`）へ回す。開く動きは次のコマで始まる。Tab は開いている間は脇の中だけを巡り、読み上げの扱いも変えない。連打しても最後の状態に落ち着く（300 ms の安全の timer が rAF の止まった背面でも後始末を通す）
+
 
 ### 8.5 リンク
 
