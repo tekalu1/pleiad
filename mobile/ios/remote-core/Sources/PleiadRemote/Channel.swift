@@ -8,6 +8,12 @@ import Foundation
 public enum ChannelConst {
     public static let STREAM_WINDOW = 256 * 1024
     public static let CHANNEL_WINDOW = 1024 * 1024
+    // What this side grants as a receiver (ADR 0179): the protocol's initial windows stay as above, and the receiver
+    // widens them with WINDOW increments right after HELLO (channel) and right after a stream opens. Old peers just
+    // see larger credit, so mixed versions keep working. 1 MiB covers the bandwidth-delay product at 300 ms × 20 Mbps;
+    // 4 MiB stays well under the relay's 8 MiB per-connection buffer.
+    public static let RECV_STREAM_WINDOW = 1024 * 1024
+    public static let RECV_CHANNEL_WINDOW = 4 * 1024 * 1024
     public static let MAX_STREAMS = 64
     public static let PING_INTERVAL_MS = 20_000
     public static let PING_MISSES = 3
@@ -294,6 +300,9 @@ public final class Channel {
     private let transport: Transport?
     private let hello: JSON
     let streamWindow: Int
+    private let channelWindow: Int
+    let recvStreamWindow: Int
+    let recvChannelWindow: Int
     private let maxStreams: Int
     private let pingIntervalMs: Int
     private let pingMisses: Int
@@ -321,6 +330,7 @@ public final class Channel {
 
     public init(loop: Loop, role: String, send: @escaping (Bytes) throws -> Void, transport: Transport? = nil, hello: JSON = [:],
                 streamWindow: Int = ChannelConst.STREAM_WINDOW, channelWindow: Int = ChannelConst.CHANNEL_WINDOW,
+                recvStreamWindow: Int = ChannelConst.RECV_STREAM_WINDOW, recvChannelWindow: Int = ChannelConst.RECV_CHANNEL_WINDOW,
                 maxStreams: Int = ChannelConst.MAX_STREAMS, pingIntervalMs: Int = ChannelConst.PING_INTERVAL_MS,
                 pingMisses: Int = ChannelConst.PING_MISSES, bufferedAmount: (() -> Int)? = nil,
                 maxBuffered: Int = ChannelConst.MAX_BUFFERED, maxWsMessage: Int = ChannelConst.MAX_WS_MESSAGE) {
@@ -331,6 +341,9 @@ public final class Channel {
         self.transport = transport
         self.hello = hello
         self.streamWindow = streamWindow
+        self.channelWindow = channelWindow
+        self.recvStreamWindow = min(max(recvStreamWindow, streamWindow), ChannelConst.MAX_WINDOW)
+        self.recvChannelWindow = min(max(recvChannelWindow, channelWindow), ChannelConst.MAX_WINDOW)
         self.sendWindow = channelWindow
         self.recvWindow = channelWindow
         self.maxStreams = maxStreams
@@ -348,6 +361,7 @@ public final class Channel {
         if started { return }
         started = true
         sendNow(T.HELLO, 0, Frames.jsonEncode(hello.with("proto", .int(Frames.PROTO))))
+        widen(nil)
         if pingIntervalMs > 0 { schedulePing() }
     }
 
@@ -374,6 +388,7 @@ public final class Channel {
         let s = Stream(self, id, kind, head, false)
         add(s)
         sendNow(type, id, payload)
+        widen(s)
         return s
     }
 
@@ -461,6 +476,14 @@ public final class Channel {
             }
         }
         return true
+    }
+
+    // Grants the receive window beyond the protocol's initial value (ADR 0179).
+    private func widen(_ stream: Stream?) {
+        let extra = stream != nil ? recvStreamWindow - streamWindow : recvChannelWindow - channelWindow
+        if extra <= 0 || closed { return }
+        if let s = stream { s.recvWindow += extra } else { recvWindow += extra }
+        sendNow(T.WINDOW, stream?.id ?? 0, Frames.u32(UInt32(extra)))
     }
 
     func returnCredit(_ stream: Stream?, _ n: Int) {
@@ -641,6 +664,7 @@ public final class Channel {
         if streams.count >= maxStreams { sendNow(T.RESET, id, Frames.u16(ResetCode.REFUSED)); return }
         let s = Stream(self, id, type == T.HTTP_REQ ? "http" : "ws", head, true)
         add(s)
+        widen(s)
         if !listener.onStream(s) {
             forget(s)
             sendNow(T.RESET, id, Frames.u16(ResetCode.REFUSED))

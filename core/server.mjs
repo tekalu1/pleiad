@@ -67,6 +67,8 @@ import { createCompactionScheduler, idleCompactionGuards } from './compaction-sc
 import { normalizeCompactionSettings, delegatedCompactPlan, validContextBase } from './compaction-settings.mjs';
 import { createContextBases } from './context-bases.mjs';
 import { mergeCompactionHistory, attachCompactSummaries } from './compaction-history.mjs';
+import { slimRow, createListDeltas } from './session-list-delta.mjs';
+import { createBulkReplies } from './bulk-replies.mjs';
 import { createContextSettings } from './context-settings.mjs';
 import { scanContext, skillList } from './context-scan.mjs';
 import { acceptsPlyContext, followSettings, managed, nativeContextReport, pinChanges, pinnedChanges, resolveRuntime } from './context-runtime.mjs';
@@ -1631,6 +1633,8 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(204, { "cache-control": "no-store" });
     return res.end();
   }
+  // WS の外で渡す大きい返事（core/bulk-replies.mjs。ADR 0179）。トークンの認証は上で済んでいる
+  if (await bulkReplies.handle(req, res, url)) return;
 
   // コンピューターの操作のスクリーンショット（core/computer-use/shots.mjs）。id は 32 桁の hex だけ。トークンの認証は上で済んでいる（/local-file は使わない。ADR 0075）
   const computerShot = /^\/computer-shot\/([0-9a-f]{32})\.jpg$/.exec(url.pathname)?.[1];
@@ -4904,6 +4908,9 @@ const computerDriver = process.env.AGENT_HOST_COMPUTER_DRIVER === 'fake'
   ? fakeComputerDriver({ log: process.env.AGENT_HOST_COMPUTER_LOG ? entry => appendFileSync(process.env.AGENT_HOST_COMPUTER_LOG, JSON.stringify(entry) + '\n') : undefined })
   : parentPortComputer(hostedPort);
 const computerShots = createComputerShots({ dataDir: store.dataDir });
+// 画面の一覧の差分（接続ごとの写し）と、中継越しの大きい返事の置き場（ADR 0179）
+const listDeltas = createListDeltas();
+const bulkReplies = createBulkReplies();
 const computerLock = createComputerLock({
   waitMs: Number(process.env.AGENT_HOST_COMPUTER_LOCK_WAIT_MS) > 0 ? Number(process.env.AGENT_HOST_COMPUTER_LOCK_WAIT_MS) : undefined,
   onState: state => emitGlobal({ type: 'computer.state', ...state }),
@@ -7350,8 +7357,11 @@ wss.on("connection", (ws, req) => {
     // (connection-check receipts and concurrent clients can share the same ID).
     // code: 失敗の種類。画面は文言（言語で変わる）ではなくこれで見分ける
     // extra: 失敗に添える機械が読む欄（invoke の issues）
+    // 画面が bulk を添えたコマンドの大きい返事は、中継越しなら WS の外（HTTP の /bulk/<id>）で渡す。WS の後の返事・出来事を待たせない（ADR 0179）
     const reply = (ok, payload, code, extra) => {
-      if (ws.readyState === ws.OPEN) ws.send(JSON.stringify({ kind: P.RESPONSE, id: msg.id ?? null, ok, ...(ok ? { result: payload } : { error: payload, ...(code ? { code } : {}), ...extra }) }));
+      if (ws.readyState !== ws.OPEN) return;
+      const bulk = ok && msg.bulk === true && !local ? bulkReplies.offer(JSON.stringify(payload ?? null)) : null;
+      ws.send(JSON.stringify({ kind: P.RESPONSE, id: msg.id ?? null, ok, ...(bulk ? { bulk } : ok ? { result: payload } : { error: payload, ...(code ? { code } : {}), ...extra }) }));
     };
 
     // 画面のコマンドは、操作の一覧（core/ops/）の同じ操作を人（画面）として呼ぶだけの外側。返り値は人に返す形（uiHandler）のまま。
@@ -7510,8 +7520,15 @@ wss.on("connection", (ws, req) => {
           return await viaOp('context.scan');
         case 'slashSkills':
           return await viaOp('context.skills');
-        case "listSessions":
-          return await viaOp('sessions.list', args);
+        // 画面の一覧は行を細くし、delta なら前に受けた写し（since）からの差分で返す（core/session-list-delta.mjs。ADR 0179）。
+        // delta・since は画面の受け方の指定なので、操作（sessions.list）の入力には渡さない
+        case "listSessions": {
+          const { delta, since, ...input } = args && typeof args === 'object' && !Array.isArray(args) ? args : {};
+          return await viaOp('sessions.list', args === undefined ? undefined : input, { shape: (rows) => {
+            const slim = rows.map(slimRow);
+            return delta === true ? listDeltas.reply(ws, slim, { since }) : slim;
+          } });
+        }
 
         // リモート（ホスト側）。秘密・トークンは返さない（core/remote/connector.mjs）
         case 'remoteStatus':

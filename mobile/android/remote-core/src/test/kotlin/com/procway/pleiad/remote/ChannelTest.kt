@@ -15,7 +15,8 @@ class ChannelTest {
 
     @After fun done() = loop.shutdown()
 
-    private fun pair(): Pair<Channel, Channel> {
+    // old = a peer from before ADR 0179 (does not widen its receive windows)
+    private fun pair(deviceOld: Boolean = false, hostOld: Boolean = false): Pair<Channel, Channel> {
         val host = KeyPair.generate()
         val dev = KeyPair.generate()
         val i = Handshake(Pattern.IK, true, Pleiad.prologueFor("h"), dev, remoteStatic = host.publicKey)
@@ -24,8 +25,12 @@ class ChannelTest {
         i.readMessage(r.writeMessage())
         lateinit var d: Channel
         lateinit var h: Channel
-        d = Channel(loop, "device", { b -> loop.post { h.receive(b) } }, i.split(), JSONObject().put("app", "t").put("shell", "mobile"), pingIntervalMs = 0)
-        h = Channel(loop, "host", { b -> loop.post { d.receive(b) } }, r.split(), JSONObject().put("hostName", "hn"), pingIntervalMs = 0)
+        val sw = { old: Boolean -> if (old) ChannelConst.STREAM_WINDOW else ChannelConst.RECV_STREAM_WINDOW }
+        val cw = { old: Boolean -> if (old) ChannelConst.CHANNEL_WINDOW else ChannelConst.RECV_CHANNEL_WINDOW }
+        d = Channel(loop, "device", { b -> loop.post { h.receive(b) } }, i.split(), JSONObject().put("app", "t").put("shell", "mobile"),
+            recvStreamWindow = sw(deviceOld), recvChannelWindow = cw(deviceOld), pingIntervalMs = 0)
+        h = Channel(loop, "host", { b -> loop.post { d.receive(b) } }, r.split(), JSONObject().put("hostName", "hn"),
+            recvStreamWindow = sw(hostOld), recvChannelWindow = cw(hostOld), pingIntervalMs = 0)
         return d to h
     }
 
@@ -64,6 +69,55 @@ class ChannelTest {
         assertEquals(200, status)
         assertEquals("hn", hostName)
         assertTrue(body.contentEquals(got.toByteArray()))
+    }
+
+    // The receiver widens its windows with WINDOW increments (ADR 0179). The sender stops at whatever the receiver
+    // granted, so new and old peers mix: an old device stops the host at 256 KiB, a new one at 1 MiB.
+    private fun heldThenComplete(deviceOld: Boolean, hostOld: Boolean): Pair<Long, Boolean> {
+        val (d, h) = pair(deviceOld, hostOld)
+        val body = randomBytes(3 * 1024 * 1024)
+        val got = java.io.ByteArrayOutputStream()
+        val held = ArrayList<Release>()
+        val done = CountDownLatch(1)
+        var hold = true   // touched only on the loop
+        loop.call {
+            h.listener = object : ChannelListener {
+                override fun onStream(stream: Stream): Boolean {
+                    stream.respond(JSONObject().put("status", 200).put("headers", JSONObject()))
+                    stream.write(body)
+                    stream.end()
+                    return true
+                }
+            }
+            h.start(); d.start()
+        }
+        Thread.sleep(100)
+        loop.call {
+            val s = d.openHttp(JSONObject().put("method", "GET").put("path", "/mixed").put("headers", JSONObject()))
+            s.listener = object : StreamListener {
+                override fun onData(chunk: ByteArray, release: Release) { got.write(chunk); if (hold) held.add(release) else release() }
+                override fun onEnd() { done.countDown() }
+            }
+            s.end()
+        }
+        Thread.sleep(500)
+        val stoppedAt = loop.call { hold = false; held.forEach { it() }; held.clear(); got.size().toLong() }
+        val completed = done.await(20, TimeUnit.SECONDS) && body.contentEquals(got.toByteArray())
+        return stoppedAt to completed
+    }
+
+    @Test fun receiverWidensWindowsAndMixesWithOldPeers() {
+        val cases = listOf(
+            Triple(false, false, ChannelConst.RECV_STREAM_WINDOW),
+            Triple(true, false, ChannelConst.STREAM_WINDOW),    // old device × new host
+            Triple(false, true, ChannelConst.RECV_STREAM_WINDOW), // new device × old host
+            Triple(true, true, ChannelConst.STREAM_WINDOW),
+        )
+        for ((devOld, hostOld, expect) in cases) {
+            val (stoppedAt, completed) = heldThenComplete(devOld, hostOld)
+            assertEquals("device old=$devOld host old=$hostOld: stops at the window the device granted", expect, stoppedAt)
+            assertTrue("device old=$devOld host old=$hostOld: completes after releasing", completed)
+        }
     }
 
     @Test fun wsMessagesBothWaysIncludingLargeOnes() {

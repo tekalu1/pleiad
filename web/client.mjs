@@ -121,6 +121,7 @@ import { renderDelegateGit, branchLabel } from './git-view.mjs';
 import { busyPlan, paintWorktreeLine, setWorktreeLineMode, askText, shortPath } from './worktree-ui.mjs';
 import { chromeControlStore, createChromeControlView, setChromeHandoverAgentName, setChromeClosedSession } from './chrome-control.mjs';
 import { branchIcon } from './icons.mjs';
+import { createSessionListSync } from './session-list-sync.mjs';
 const outboxes = new Map();
 const turnErrorRows = new Map();
 const submittingMessages = new Set();
@@ -3423,8 +3424,12 @@ const sameSet = (a, b) => a.size === b.size && [...a].every((x) => b.has(x));
 
 // ---------------------------------------------------------------- コマンド
 
-/** timeoutMs を渡すと、その間に返事が無ければ失敗にする（返事を待ち続けて後の処理まで止めないため。refresh） */
-function cmd(command, args = {}, { timeoutMs = 0 } = {}) {
+/**
+ * timeoutMs を渡すと、その間に返事が無ければ失敗にする（返事を待ち続けて後の処理まで止めないため。refresh）
+ * bulk を渡すと、大きい返事をサーバーが WS の外（/bulk/<id>）に置いてよい。中継越しの線で後の返事・出来事を待たせない（ADR 0179）。
+ * 返事は HTTP で取ってから渡すので、その間に届いた出来事より後になる。順が要るコマンドには付けない
+ */
+function cmd(command, args = {}, { timeoutMs = 0, bulk = false } = {}) {
   const id = String(++seq);
   return new Promise((res, rej) => {
     if (!ws || ws.readyState !== WebSocket.OPEN) return rej(new Error(t("app.notConnected")));
@@ -3434,8 +3439,15 @@ function cmd(command, args = {}, { timeoutMs = 0 } = {}) {
       const done = (fn) => (v) => { clearTimeout(timer); fn(v); };
       pending.set(id, { res: done(res), rej: done(rej) });
     }
-    ws.send(JSON.stringify({ kind: "command", command, id, args }));
+    ws.send(JSON.stringify({ kind: "command", command, id, args, ...(bulk ? { bulk: true } : {}) }));
   });
+}
+
+/** WS の外に置かれた返事を取る（同じ源なのでクッキーのトークンで通る） */
+async function fetchBulk(url) {
+  const res = await fetch(url, { cache: "no-store" });
+  if (!res.ok) throw new Error(`bulk ${res.status}`);
+  return res.json();
 }
 
 // ---------------------------------------------------------------- エージェント
@@ -7631,6 +7643,13 @@ function refresh({ sharePending = false } = {}) {
 }
 
 let refreshVersion = 0;
+// 一覧は前に受けた写しからの差分で受ける（web/session-list-sync.mjs。ADR 0179）
+const sessionListSync = createSessionListSync();
+async function listSessions(wait) {
+  const ask = () => cmd("listSessions", sessionListSync.args(), { ...wait, bulk: true }).then((r) => sessionListSync.apply(r));
+  // 差分を組み立てられなければ（写しが崩れた）、全部を頼み直す
+  return ask().catch((e) => (e?.listSync ? ask() : Promise.reject(e)));
+}
 // 取り直しの返事を待つ上限。後の refresh() は走っている分の終わりを待つので、返事が来ないと一覧が二度と更新されず、
 // それを待つ操作（脇の移動の「移動中」・新しい会話の最初の送信）も止まったままになる
 const REFRESH_REPLY_TIMEOUT_MS = 60_000;
@@ -7639,7 +7658,7 @@ async function runRefresh() {
   const wait = { timeoutMs: REFRESH_REPLY_TIMEOUT_MS };
   // 互いに待たない問い合わせ（エージェントの一覧・走っている作業）も最初に一緒に出す。順に待つと中継を通るスマホでは往復の数だけ遅くなる
   const [sessions, statuses, prefs, backends, running] = await Promise.all([
-    cmd("listSessions", {}, wait),
+    listSessions(wait),
     cmd("listStatuses", {}, wait).catch(() => []),
     cmd("prefs", {}, wait).catch(() => ({})),
     state.backends.length ? null : cmd("backends").catch(() => []),
@@ -8693,6 +8712,7 @@ function connect() {
     if (m.kind === "response") {
       const p = pending.get(m.id);
       pending.delete(m.id);
+      if (m.ok && typeof m.bulk === "string") return void fetchBulk(m.bulk).then((r) => p?.res(r), (e) => p?.rej(e));
       return m.ok ? p?.res(m.result) : p?.rej(Object.assign(new Error(String(m.error)), m.code ? { code: m.code } : {}));
     }
 

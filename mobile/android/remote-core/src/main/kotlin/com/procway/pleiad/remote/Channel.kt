@@ -10,6 +10,12 @@ import org.json.JSONObject
 object ChannelConst {
     const val STREAM_WINDOW = 256 * 1024L
     const val CHANNEL_WINDOW = 1024 * 1024L
+    // What this side grants as a receiver (ADR 0179): the protocol's initial windows stay as above, and the receiver
+    // widens them with WINDOW increments right after HELLO (channel) and right after a stream opens. Old peers just
+    // see larger credit, so mixed versions keep working. 1 MiB covers the bandwidth-delay product at 300 ms × 20 Mbps;
+    // 4 MiB stays well under the relay's 8 MiB per-connection buffer.
+    const val RECV_STREAM_WINDOW = 1024 * 1024L
+    const val RECV_CHANNEL_WINDOW = 4L * 1024 * 1024
     const val MAX_STREAMS = 64
     const val PING_INTERVAL_MS = 20_000L
     const val PING_MISSES = 3
@@ -234,7 +240,9 @@ class Channel(
     private val transport: Transport? = null,
     private val hello: JSONObject = JSONObject(),
     val streamWindow: Long = ChannelConst.STREAM_WINDOW,
-    channelWindow: Long = ChannelConst.CHANNEL_WINDOW,
+    private val channelWindow: Long = ChannelConst.CHANNEL_WINDOW,
+    recvStreamWindow: Long = ChannelConst.RECV_STREAM_WINDOW,
+    recvChannelWindow: Long = ChannelConst.RECV_CHANNEL_WINDOW,
     private val maxStreams: Int = ChannelConst.MAX_STREAMS,
     private val pingIntervalMs: Long = ChannelConst.PING_INTERVAL_MS,
     private val pingMisses: Int = ChannelConst.PING_MISSES,
@@ -247,6 +255,8 @@ class Channel(
     var listener: ChannelListener = object : ChannelListener {}
     internal var sendWindow = channelWindow
     private var recvWindow = channelWindow
+    val recvStreamWindow = recvStreamWindow.coerceIn(streamWindow, ChannelConst.MAX_WINDOW)
+    val recvChannelWindow = recvChannelWindow.coerceIn(channelWindow, ChannelConst.MAX_WINDOW)
     private val streams = LinkedHashMap<Long, Stream>()
     private var nextId = if (role == "device") 1L else 2L
     private var lastPeerId = 0L
@@ -267,6 +277,7 @@ class Channel(
         if (started) return
         started = true
         sendNow(T.HELLO, 0, Frames.jsonEncode(JSONObject(hello.toString()).put("proto", Frames.PROTO)))
+        widen(null)
         if (pingIntervalMs > 0) schedulePing()
     }
 
@@ -291,6 +302,7 @@ class Channel(
         val s = Stream(this, id, kind, head, false)
         streams[id] = s
         sendNow(type, id, Frames.jsonEncode(head))
+        widen(s)
         return s
     }
 
@@ -365,6 +377,14 @@ class Channel(
         if (b() <= maxBuffered) return false
         if (retryTimer == null) retryTimer = loop.schedule(10) { retryTimer = null; pump() }
         return true
+    }
+
+    // Grants the receive window beyond the protocol's initial value (ADR 0179).
+    private fun widen(stream: Stream?) {
+        val extra = if (stream != null) recvStreamWindow - streamWindow else recvChannelWindow - channelWindow
+        if (extra <= 0 || closed) return
+        if (stream != null) stream.recvWindow += extra else recvWindow += extra
+        sendNow(T.WINDOW, stream?.id ?: 0, Frames.u32(extra))
     }
 
     internal fun returnCredit(stream: Stream?, n: Long) {
@@ -543,6 +563,7 @@ class Channel(
         if (streams.size >= maxStreams) { sendNow(T.RESET, id, Frames.u16(ResetCode.REFUSED)); return }
         val s = Stream(this, id, if (type == T.HTTP_REQ) "http" else "ws", head, true)
         streams[id] = s
+        widen(s)
         if (!listener.onStream(s)) {
             streams.remove(id)
             sendNow(T.RESET, id, Frames.u16(ResetCode.REFUSED))
