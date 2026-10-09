@@ -116,15 +116,43 @@ export default async function (t) {
     const nobody = await remote.ask('browserScreencast', { sessionId: 'nobody', source: 'chrome' });
     t.ok('窓の無い会話は no-window', nobody.ok === false && nobody.code === 'no-window', JSON.stringify(nobody));
 
+    // ウィンドウの固定: 窓が 2 つになると、どの端末からも固定でき、固定は chromeWindow の pinnedWindowId で全部の端末に配られる
+    let second = null;
+    {
+      second = (await a.cmd('Target.createTarget', { url: 'about:blank' })).result?.targetId;
+      const ev2 = await until(() => c.events.filter(e => e.type === 'chromeWindow' && e.windowIds?.length === 2).at(-1), 10000, 'chromeWindow (2 windows)');
+      t.ok('窓が 2 つになると windowIds が 2 つになり、固定はまだ無い（pinnedWindowId: null）', ev2.windows === 2 && ev2.pinnedWindowId === null, JSON.stringify(ev2));
+      const target = hostEvent.windowIds[0];
+      const pinAnswer = await remote.ask('chromePinWindow', { sessionId: id, windowId: target });
+      t.ok('リモートの端末から chromePinWindow で固定できる', pinAnswer.ok === true && pinAnswer.result?.pinnedWindowId === target, JSON.stringify(pinAnswer));
+      t.ok('固定は、ホストの画面にも後から接続した端末にも chromeWindow の pinnedWindowId で届く',
+        await until(() => c.events.filter(e => e.type === 'chromeWindow').at(-1)?.pinnedWindowId === target && late.windowEvents().at(-1)?.pinnedWindowId === target, 10000, 'pinned'));
+      t.ok('固定したウィンドウのタブを映している', await until(() => chrome.browser.screencasting(opened) && !chrome.browser.screencasting(second), 10000, 'pinned screencast'));
+      const lateAsk = (command, args) => new Promise(resolve => {
+        const idn = `l${Math.random()}`;
+        const on = raw => { const m = JSON.parse(raw.toString()); if (m.kind === 'response' && m.id === idn) { late.ws.off('message', on); resolve(m); } };
+        late.ws.on('message', on);
+        late.ws.send(JSON.stringify({ kind: 'command', command, id: idn, args }));
+      });
+      const notWatching = await lateAsk('chromePinWindow', { sessionId: id, windowId: null });
+      t.ok('固定は会話に 1 つ: 見ていない端末からでも解ける（見ている端末が居る間は有効）', notWatching.ok === true && await until(() => c.events.filter(e => e.type === 'chromeWindow').at(-1)?.pinnedWindowId === null, 10000, 'released'));
+      const bad = await remote.ask('chromePinWindow', { sessionId: id, windowId: 123456 });
+      t.ok('存在しないウィンドウは固定できない', bad.ok === false, JSON.stringify(bad));
+      const closeOne = await remote.ask('chromeCloseWindow', { sessionId: id, windowId: hostEvent.windowIds[0] });
+      t.ok('windowId を付けた chromeCloseWindow は、そのウィンドウだけ閉じて、もう一方は残る',
+        closeOne.ok === true && closeOne.result?.closed === true && await until(() => !chrome.browser.targets().some(x => x.targetId === opened) && chrome.browser.targets().some(x => x.targetId === second), 10000, 'one closed')
+        && await until(() => c.events.filter(e => e.type === 'chromeWindow').at(-1)?.windows === 1, 10000, 'one left'), JSON.stringify(closeOne));
+    }
+
     // 見る端末の接続が切れても、もう一方が見ていれば続き、全員いなくなれば止まる
     remote.close();
     await sleep(300);
-    t.ok('見ている端末の接続が切れても、ホストの画面が見ていれば映像は続く', chrome.browser.screencasting(opened));
+    t.ok('見ている端末の接続が切れても、ホストの画面が見ていれば映像は続く', chrome.browser.screencasting(second));
     await c.cmd('browserScreencastStop', { sessionId: id, source: 'chrome' });
-    t.ok('全員が見るのをやめると screencast を止める', await until(() => !chrome.browser.screencasting(opened), 10000, 'screencast stopped'));
+    t.ok('全員が見るのをやめると screencast を止める', await until(() => !chrome.browser.screencasting(second), 10000, 'screencast stopped'));
 
     // 窓が閉じると chromeWindow が 0 になって両方へ届く
-    chrome.browser.closeTab(opened);
+    chrome.browser.closeTab(second);
     t.ok('窓が閉じると windows: 0 の chromeWindow が届く（入口が消える）', await until(() => c.events.filter(e => e.type === 'chromeWindow').at(-1)?.windows === 0 && late.windowEvents().at(-1)?.windows === 0, 10000, 'windows 0'));
   } finally {
     a?.close(); remote?.close(); late?.close(); c?.close();

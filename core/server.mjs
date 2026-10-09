@@ -2338,15 +2338,16 @@ function chromeWindowState(sessionId) {
   const tabs = chromeRelay.view.tabs(sessionId);
   const windowIds = [...new Set(tabs.map(tab => tab.windowId).filter(id => id != null))];
   const currentWindowId = tabs.find(tab => tab.targetId === chromeRelay.view.current(sessionId))?.windowId ?? null;
-  return { windows: summary.windows, operating: summary.operating, windowIds, currentWindowId };
+  // 固定は存在するウィンドウだけ（ウィンドウが消えた直後は、映像の側が解くより先にここが読まれる）
+  const pinned = chromeScreencast?.pinned(sessionId) ?? null;
+  return { windows: summary.windows, operating: summary.operating, windowIds, currentWindowId, pinnedWindowId: windowIds.includes(pinned) ? pinned : null };
 }
 const chromeWindowFrame = (sessionId, snapshot) => ({ kind: P.EVENT, event: { type: 'chromeWindow', sessionId, ...snapshot } });
 const chromeWindowSent = new Map();   // 会話の id -> 最後に送った窓の状態
 function chromeWindowFrames() {
   return chromeRelay ? chromeRelay.view.sessions().map(id => JSON.stringify(chromeWindowFrame(id, chromeWindowState(id)))) : [];
 }
-chromeRelay?.view.onChange((sessionId, kind, from) => {
-  const ids = kind === 'rebind' ? [from, sessionId] : [sessionId];
+function sendChromeWindow(ids) {
   for (const id of ids) {
     const summary = chromeWindowState(id);
     const last = chromeWindowSent.get(id);
@@ -2355,7 +2356,10 @@ chromeRelay?.view.onChange((sessionId, kind, from) => {
     const text = JSON.stringify(chromeWindowFrame(id, summary));
     for (const ws of runtime.sockets) if (ws.readyState === ws.OPEN) ws.send(text);
   }
-});
+}
+chromeRelay?.view.onChange((sessionId, kind, from) => sendChromeWindow(kind === 'rebind' ? [from, sessionId] : [sessionId]));
+// 映像に映すウィンドウの固定が変わった（人が選んだ・解いた・固定したウィンドウが消えた・パネルを閉じた）。全部の画面とリモートの端末へ配る
+chromeScreencast?.onPin(sessionId => sendChromeWindow([sessionId]));
 
 /**
  * グループ（fork でつながった会話のまとまり、docs/design-system.md §4.1）を一覧の行から数える。
@@ -3731,7 +3735,9 @@ const opsChrome = chromeConnection ? {
   raiseDialog: async () => { const result = await chromeConnection.raiseDialog(); return { raised: result.ok === true, method: String(result.method ?? 'none') }; },
   // ビューアの⋯「Chrome で開く」。つながっていなければ Chrome の許可を待つ（カードは出さない）
   open: chromeRelay ? (sessionId, url) => chromeRelay.openForConversation(sessionId, url) : null,
-  closeWindow: chromeWindowCloser ? sessionId => chromeWindowCloser.close(sessionId, { by: 'human' }) : null,
+  closeWindow: chromeWindowCloser ? (sessionId, windowId = null) => chromeWindowCloser.close(sessionId, { by: 'human', windowId }) : null,
+  // 右パネルの映像に映すウィンドウを固定する・解く（core/chrome/screencast.mjs の pin）
+  pinWindow: chromeScreencast ? async (sessionId, windowId) => ({ pinnedWindowId: (await chromeScreencast.request('pin', sessionId, { windowId })).pinnedWindowId }) : null,
   windows: async parentId => {
     const rows = delegatedChromeWindows(parentId, { rows: () => agentTasks?.rowsWhere(row => row.parentSessionId === parentId && row.sessionId && store.peek(row.sessionId)?.delegation?.taskId === row.taskId) ?? [],
       sessions: () => chromeRelay?.view.sessions() ?? [], summary: id => chromeRelay.view.summary(id), profile: id => chromeProfiles?.current(id), state: id => chromeControl?.state(id)?.state ?? 'idle', waiting: id => Boolean(chromeHandoffs?.current?.(id)) });
@@ -7898,6 +7904,7 @@ wss.on("connection", (ws, req) => {
         case 'chromeStop': return await viaOp('browser.chromeStop');
         case 'chromeOpen': return await viaOp('browser.chromeOpen');
         case 'chromeCloseWindow': return await viaOp('browser.chromeCloseWindow');
+        case 'chromePinWindow': return await viaOp('browser.chromePinWindow');
         case "resolvePath": case "revealPath": case "openPath": {
           const hostAction = msg.command !== 'resolvePath';
           if (hostAction && !local) return reply(false, t('files.remoteOnly'));

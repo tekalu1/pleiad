@@ -90,7 +90,7 @@ export default async function (t) {
     const view = fake.sessions().find(s => s.targetId === first && s.screencast);
     t.ok('映像のセッションは、エージェントのセッションとも、focus emulation を持つ中継のセッションとも別（映像のセッションは focus emulation を触らない）',
       sessionsOf(first).length === before + 1 && !!view && view.id !== sid1 && !view.fe && sessionsOf(first).filter(s => s.fe).length === 1 && fake.focusEmulated(first));
-    t.ok('state: 操作中の印・タブ数・撮影を断っていない。URL・題は載せない', JSON.stringify(watched.state) === JSON.stringify({ tabId: first, agent: true, suspended: false, tabs: 1 }), JSON.stringify(watched.state));
+    t.ok('state: 操作中の印・タブ数・撮影を断っていない。URL・題は載せない', JSON.stringify(watched.state) === JSON.stringify({ tabId: first, agent: true, suspended: false, tabs: 1, pinnedWindowId: null }), JSON.stringify(watched.state));
 
     // ---- フレームと ack の間引き ----
     const t0 = Date.now();
@@ -333,5 +333,64 @@ async function scenarios(t) {
       await w.r.chrome.turnOff();
       t.ok('Chrome との接続が切れると、断りも消える', await until(() => !w.bridge.isSuspended('s1')));
     } finally { await w.done(); }
+  }
+
+  // ---- 5. 映すウィンドウの固定（右パネルの番号チップ）----
+  {
+    const x = await fresh();
+    try {
+      const pins = [];
+      x.bridge.onPin((sessionId, windowId) => pins.push([sessionId, windowId]));
+      const second = (await x.a.cmd('Target.createTarget', { url: 'about:blank' })).result.targetId;   // タブごとに窓が分かれる
+      const sidSecond = (await x.a.cmd('Target.attachToTarget', { targetId: second, flatten: true })).result.sessionId;
+      const winOf = id => x.fake.targets().find(target => target.targetId === id)?.windowId;
+      const w1 = winOf(x.tab), w2 = winOf(second);
+      const refusedFirst = await x.bridge.request('pin', 's1', { windowId: w1 }).then(() => null, error => error.message);
+      t.ok('（前提）窓が 2 つある。見ていない間は固定できない（not-watching）', w1 !== w2 && refusedFirst === 'not-watching', `${w1} ${w2} ${refusedFirst}`);
+      await x.a.cmd('Runtime.evaluate', { expression: '1' }, sidSecond);   // 最後に触れたのは新しい窓
+      await x.hub.watch(x.client, 's1', size);
+      t.ok('固定しない間は、エージェントが最後に触れたタブ（新しい窓）を映す', await until(() => x.fake.screencasting(second) && !x.fake.screencasting(x.tab)));
+
+      const pinned = await x.bridge.request('pin', 's1', { windowId: w1 });
+      t.ok('固定すると、そのウィンドウのタブへ付け替わる。state と応答に pinnedWindowId が載る',
+        pinned.pinnedWindowId === w1 && await until(() => x.fake.screencasting(x.tab) && !x.fake.screencasting(second))
+        && x.messages.some(m => m.type === 'state' && m.state.pinnedWindowId === w1 && m.state.tabId === x.tab) && x.bridge.pinned('s1') === w1, JSON.stringify(pinned));
+      t.ok('固定の変化を onPin で知らせる', JSON.stringify(pins) === JSON.stringify([['s1', w1]]), JSON.stringify(pins));
+
+      await x.a.cmd('Runtime.evaluate', { expression: '1' }, sidSecond);   // エージェントが別のウィンドウへ移る
+      await sleep(150);
+      t.ok('固定の間は、エージェントが別のウィンドウへ移っても映像は動かない（エージェントの宛先は変わらない）',
+        x.fake.screencasting(x.tab) && !x.fake.screencasting(second) && x.r.relay.view.current('s1') === second);
+      t.ok('同じウィンドウを重ねて固定しても通知は増えない', (await x.bridge.request('pin', 's1', { windowId: w1 })).pinnedWindowId === w1 && pins.length === 1);
+
+      const unpinned = await x.bridge.request('pin', 's1', { windowId: null });
+      t.ok('解くと、エージェントが最後に触れたウィンドウへ戻る（pinnedWindowId は null）',
+        unpinned.pinnedWindowId === null && await until(() => x.fake.screencasting(second) && !x.fake.screencasting(x.tab)) && x.bridge.pinned('s1') === null && pins.at(-1)[1] === null, JSON.stringify(pins));
+
+      const missing = await x.bridge.request('pin', 's1', { windowId: 99999 }).then(() => null, error => error.message);
+      t.ok('存在しないウィンドウは固定できない（no-window）', missing === 'no-window');
+
+      // 固定したウィンドウが閉じたら解けて、追う側へ戻る
+      await x.bridge.request('pin', 's1', { windowId: w1 });
+      await until(() => x.fake.screencasting(x.tab));
+      const before = pins.length;
+      x.fake.closeWindow(w1);
+      t.ok('固定したウィンドウが閉じたら固定が解け、残ったウィンドウを映す（onPin も届く）',
+        await until(() => x.bridge.pinned('s1') === null && x.fake.screencasting(second)) && pins.length > before && pins.at(-1)[1] === null, JSON.stringify(pins));
+
+      // 引き継ぎの間は切り替えない
+      await x.bridge.operate('s1', { width: 400, height: 300, scale: 1 });
+      const operating = await x.bridge.request('pin', 's1', { windowId: w2 }).then(() => null, error => error.message);
+      t.ok('端末が引き継いでいる間は切り替えを断る（operating）', operating === 'operating', String(operating));
+      await x.bridge.operate('s1', null);
+
+      // 見るのをやめれば固定も消える（パネルを閉じる = 次に開くと追う側から）
+      await x.bridge.request('pin', 's1', { windowId: w2 });
+      await x.hub.unwatch(x.client, 's1');
+      t.ok('見るのをやめると固定が消える', x.bridge.pinned('s1') === null && pins.at(-1)[1] === null);
+      await x.hub.watch(x.client, 's1', size);
+      t.ok('開き直すと、固定のない追う側から始まる', x.bridge.pinned('s1') === null);
+      await x.hub.unwatch(x.client, 's1');
+    } finally { await x.done(); }
   }
 }

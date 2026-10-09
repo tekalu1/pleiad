@@ -1151,6 +1151,29 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, prof
       return { closed: !remainingTabs && !scope.windows?.(sessionId)?.length && !osResult?.failed,
         ...((remainingTabs || scope.windows?.(sessionId)?.length || osResult?.failed) ? { failed: true } : {}) };
     },
+    /**
+     * 会話の窓のうち 1 つだけを閉じる（右パネルの「表示中のウィンドウを閉じる」。窓が複数あるとき）。ほかの窓・引き継ぎ・端点には触れない。
+     * 窓のタブを CDP で閉じ、窓が残れば OS の層でその窓だけ閉じさせる
+     */
+    async closeWindow(sessionId, windowId) {
+      const entry = entries.get(sessionId);
+      const state = up;
+      if (!entry || !state || windowId == null) return { closed: false };
+      const tabs = tabsOf(state, entry).filter(tab => tab.windowId === windowId);
+      if (!tabs.length && !entry.windows.has(windowId)) return { closed: false };
+      for (const tab of tabs) {
+        if (up !== state || state.cdp.closed) break;
+        await state.cdp.send('Target.closeTarget', { targetId: tab.targetId }).catch(() => {});
+      }
+      const listed = () => scope.windows?.(sessionId)?.some(w => w.windowId === windowId);
+      if (listed()) await new Promise(resolve => setTimeout(resolve, 500));
+      const osResult = listed() ? await scope.closeRemaining?.(sessionId, windowId) : null;
+      if (up === state && !listed()) { entry.windows.delete(windowId); state.windows.delete(windowId); }
+      carryChanged();
+      const remaining = up === state ? tabsOf(state, entry).filter(tab => tab.windowId === windowId).length : 0;
+      const failed = remaining > 0 || listed() || Boolean(osResult?.failed);
+      return failed ? { closed: false, failed: true } : { closed: true };
+    },
     /** 会話を消した。接続を閉じて鍵を捨てる（窓は先に closeConversationWindows で閉じる） */
     forget(sessionId) {
       const entry = entries.get(sessionId);
