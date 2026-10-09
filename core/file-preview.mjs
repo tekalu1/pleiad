@@ -42,7 +42,7 @@ function containsPath(root, file) {
 }
 
 /** guard は、データ置き場の中の読んでよい場所（uploads）のうち、持ち主の会話にだけ見せるもの（閉じた Chrome の窓の静止画。core/chrome/window-shots.mjs）を断る */
-export async function inspectFile(requested, { dataDir, uploadDir, guard = null }) {
+export async function inspectFile(requested, { dataDir, uploadDir, guard = null, confine = null }) {
   // Check before realpath: even resolving a UNC path can send SMB credentials.
   rejectNetworkPath(requested);
   if (typeof requested !== 'string' || !path.isAbsolute(requested)) throw new PreviewError('invalid-path', t('filePreview.invalidPath'));
@@ -51,7 +51,10 @@ export async function inspectFile(requested, { dataDir, uploadDir, guard = null 
   rejectNetworkPath(dataDir);
   const protectedDir = await fs.realpath(dataDir);
   rejectNetworkPath(protectedDir);
-  if (containsPath(protectedDir, file)) {
+  if (confine) {
+    // 審査モード（ADR 0172）: 作業フォルダーの中だけ。データ置き場の保護はこの外側でかかる（作業フォルダーは置き場の中にある）
+    if (!containsPath(await fs.realpath(confine), file)) throw new PreviewError('protected-data', t('filePreview.protectedData'));
+  } else if (containsPath(protectedDir, file)) {
     rejectNetworkPath(uploadDir);
     const uploads = uploadDir ? await fs.realpath(uploadDir).catch(error => {
       if (error.code === 'ENOENT') return null;

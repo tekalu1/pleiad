@@ -24,6 +24,13 @@ async function driveRoots() {
   return found.filter(Boolean);
 }
 
+const fold = (p) => (process.platform === "win32" ? p.toLowerCase() : p);
+const sameDir = (a, b) => fold(a) === fold(b);
+function within(root, file) {
+  const rel = path.relative(fold(root), fold(file));
+  return rel === "" || (rel !== ".." && !rel.startsWith(`..${path.sep}`) && !path.isAbsolute(rel));
+}
+
 function reason(err, dir) {
   switch (err?.code) {
     case "ENOENT": return t("dirs.notFound", { dir });
@@ -35,13 +42,19 @@ function reason(err, dir) {
 
 /**
  * @param {string} [requested] 開くフォルダー。空なら fallback、それも空ならホーム
- * @param {{ fallback?: string, files?: boolean }} [o] files: ファイルも返す（件数の上限はフォルダーと合わせて MAX_ENTRIES）
+ * @param {{ fallback?: string, files?: boolean, confine?: string }} [o] files: ファイルも返す（件数の上限はフォルダーと合わせて MAX_ENTRIES）。
+ *   confine: このフォルダーの中だけ開く（審査モード。ADR 0172）。外は断る。このフォルダーが一番上で、parent・roots は返さない
  * @returns {Promise<{ path: string, parent: string|null, dirs: string[], files?: Array<{ name: string, size: number, mtime: number }>, truncated: boolean, roots: string[] }>}
  */
-export async function listDirs(requested, { fallback, files: withFiles = false } = {}) {
+export async function listDirs(requested, { fallback, files: withFiles = false, confine = null } = {}) {
   if (requested != null && typeof requested !== "string") throw new Error(t("dirs.invalidPath"));
   if (requested && (requested.length > 8192 || requested.includes("\0"))) throw new Error(t("dirs.invalidPath"));
-  const dir = path.resolve(String(requested || fallback || os.homedir()).trim());
+  const dir = path.resolve(String(requested || fallback || confine || os.homedir()).trim());
+  const top = confine ? await fs.realpath(confine) : null;
+  if (top) {
+    const real = await fs.realpath(dir).catch(() => null);
+    if (!real || !within(top, real)) throw Object.assign(new Error(reason({ code: "EACCES" }, dir)), { code: "EACCES" });
+  }
   let entries;
   try {
     if (!(await fs.stat(dir)).isDirectory()) throw Object.assign(new Error("not a directory"), { code: "ENOTDIR" });
@@ -75,12 +88,13 @@ export async function listDirs(requested, { fallback, files: withFiles = false }
   dirs.sort(byName);
   files.sort((a, b) => byName(a.name, b.name));
   const parent = path.dirname(dir);
+  const atTop = top ? sameDir(top, await fs.realpath(dir)) : parent === dir;
   return {
     path: dir,
-    parent: parent === dir ? null : parent,
+    parent: atTop ? null : parent,
     dirs,
     ...(withFiles ? { files } : {}),
     truncated: truncated || dirs.length + files.length >= MAX_ENTRIES,
-    roots: parent === dir ? await driveRoots() : [],
+    roots: !top && parent === dir ? await driveRoots() : [],
   };
 }

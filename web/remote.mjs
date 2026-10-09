@@ -276,6 +276,7 @@ export function setupRemote({ cmd, page, openSession = () => {} }) {
     return patch;
   }
 
+  let reviewMode = false;
   function paintDevices() {
     const devices = status?.devices ?? [];
     const out = [];
@@ -309,7 +310,8 @@ export function setupRemote({ cmd, page, openSession = () => {} }) {
     const connected = status?.enabled && status.connection?.state === 'connected';
     add.disabled = busy || !connected || Boolean(offer && !offerEnd);
     addHint.textContent = !status?.enabled ? t('settings.remote.pair.needEnable') : !connected ? t('settings.remote.pair.needConnected') : '';
-    addRow.hidden = Boolean(offer);
+    // 審査モードのホスト（hostCapabilities の reviewMode。ADR 0172）では端末を足せない
+    addRow.hidden = Boolean(offer) || reviewMode;
   }
 
   /**
@@ -613,5 +615,5 @@ export function setupRemote({ cmd, page, openSession = () => {} }) {
 
   $('remoteTab').onclick = () => { page('remote'); refresh(); };
   paint();
-  return { refresh, event, get status() { return status; } };
+  return { refresh, event, get status() { return status; }, setReviewMode(on) { reviewMode = on === true; paintDevices(); } };
 }

@@ -632,6 +632,16 @@ App Store の審査: 殻がホスト一覧・QR ペアリング・Keychain の�
 
 **全権限であることの意味**: ペアリングした端末は、承認モードの変更（YOLO を含む）、MCP の登録、秘密の差し替えまでホストの利用者と同じにできる。つまり端末を失くすことは、ホストの PC で任意のコマンドを実行されうることと同じ。端末一覧と取り消しを見つけやすい場所に置き、ペアリングの画面にもこの一文を出す。
 
+### 9.1 審査モード（`AGENT_HOST_REVIEW=1`。[ADR 0172](adr/0172-play-review-access.md)）
+
+Google Play の審査員に見せるホストは、全権限の端末を前提にした上の表の外で動かす。入るのも抜けるのも起動の環境変数だけで、設定の画面・操作の一覧（`/api/ops`・`ply_control`）・端末の命令からは変えられない。判定は `core/review-mode.mjs` の `isReviewMode()` 1 つ。
+
+- **起動の条件**: 有効なバックエンドが fake だけで、データ置き場が空か、審査用の印（`review-data.json`）のあるもの。空なら印を作る。印の無い使用済みの置き場では起動しない（データ置き場のロックより前に止める）。
+- **許可の一覧**: WS の命令は `COMMAND_PASS` だけを通し、操作の一覧は `OP_ALLOW`（`settings.set` は `SETTING_SET_ALLOW` のキーだけ）だけを見せて通す。ほかは `REVIEW_MODE` で断る。禁止の一覧にはしないので、載せ忘れは断る側に倒れる。`COMMAND_PASS` と `COMMAND_REFUSE` で protocol の全命令を振り分け、`tests/unit/review-mode.mjs` が過不足を突き合わせる。
+- **作業フォルダー**: 会話の cwd は、データ置き場の中の空のフォルダー（`review-work`）1 つに固定する。フォルダーの一覧（`listDirs`）とファイルの表示（`inspectFile`）はその中に閉じる。
+- **fake の台本**: `echo:`・`ask`・`ask-later`（約 20 秒待ってから承認を求める。通知を試す用）・`question`・`fail` だけ。`steps:`・`control:`・`computer:`・`browser:`・`context:`・`held:`・`bg-shell`・`term` などは台本として読まず、言葉をそのまま返す。
+- **閉じる口**: エージェント向けの MCP（`/mcp/*`）・`/api/ops`・webhook・通話の音声は閉じる。画面では「端末を追加」を出さない（`hostCapabilities` の `reviewMode`）。
+
 ## 10. 検証
 
 `npm test` で確かめる（LLM は呼ばない）。中継とトンネルは fake バックエンドのホストで、端末 → 中継 → ホストの往復（会話の送信・承認・ファイルの取得・再接続）を自動で確かめる。端末の AI からの委譲（§4.5）は、`tests/unit/remote-agent.mjs`（ホストの `/agent` の口: 許可・上限・委譲・状態・中継する承認と人の答え・経過の読み出しの絞り込みと許可・取り消しで止まる・防火壁）と `tests/unit/remote-agent-e2e.mjs`（端末のローカルのサーバー → main の橋 → 中継 → ホスト）で確かめる。
