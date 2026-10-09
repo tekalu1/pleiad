@@ -5,7 +5,7 @@ import path from "node:path";
 import { createSessionLoads } from "../../web/session-stream.mjs";
 import { createCompletionNotifications } from '../../web/notifications.mjs';
 import { mergeCompactionHistory, attachCompactSummaries } from '../../core/compaction-history.mjs';
-import { serveFrom, syncRequest, joinReply, retainPlan } from '../../web/history-sync.mjs';
+import { serveFrom, serveHistory, syncRequest, joinReply, retainPlan, WINDOW_MESSAGES, WINDOW_BYTES } from '../../web/history-sync.mjs';
 import { startServer, ROOT } from "../lib/server.mjs";
 import { open } from "../lib/ws-client.mjs";
 
@@ -82,7 +82,11 @@ export default async function (t) {
     chatEdit: { active: false, sending: false, snapshot: () => null, reset: noop, restore: noop }, syncEdit: noop, syncEditTail: noop,
     // 中断と再開（client.mjs の syncResume / paintInterruptLine、web/interrupt.mjs）。このテストの対象外
     syncResume: noop, paintInterruptLine: noop, isInterrupted: () => false, interruptReadPoint: () => 0, resumeSettled: () => false,
+    // 会話を開くときの窓と手前を足す仕事（ADR 0902）。このテストの対象外
+    WINDOW_MESSAGES, WINDOW_BYTES, backfill: null, paintBefore: null, olderBusy: null, olderFail: null, olderEl: null,
+    cancelBackfill: noop, maybeLoadOlder: noop, hideOlder: noop, splitFirstPaint: () => null, paintedFloor: () => 0,
   });
+  context.loadBranches = (id) => context.branches.load(id);   // client.mjs の const loadBranches（窓の先頭を添えて系譜を読む）
   vm.runInContext(functions, context);
   const event = (text, streamSeq) => ({ type: "text.delta", sessionId: "target", text, streamSeq });
   const deliver = ev => { context.event = ev; vm.runInContext("onEvent(event)", context); };
@@ -149,7 +153,7 @@ export default async function (t) {
   const serverContext = vm.createContext({
     msg: { args: { sessionId: "target", live: true } }, runtime: { turns, waiting: new Map() }, liveReads,
     resolveBackendForSession: async () => ({}), store: { get: async () => ({}) }, compactionScheduler: { get: () => null },
-    mergeCompactionHistory, attachCompactSummaries, serveFrom,
+    mergeCompactionHistory, attachCompactSummaries, serveFrom, serveHistory,
     // 入力欄の `!`（core/shell-runs.mjs）。このテストの対象外
     shellRuns: { decorate: m => m, rows: () => [], placeKept: m => m },
     decorateScheduled: m => m,
