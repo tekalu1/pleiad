@@ -101,6 +101,7 @@ async page => {
   check('引用の行頭で > を打つと 1 段深くなる', [await val(), await qdepth()], ['> a\n> > b', '1,2']);
   await K.press('Enter'); await K.type('c');
   check('入れ子の引用の Enter は深さを保つ', await val(), '> a\n> > b\n> > c');
+  check('引用の行に深さの数だけ縦線が付く（computed style・面は敷かない・行の間で切れない）', await page.evaluate(() => [...document.querySelectorAll('#prompt .md-quote')].map(b => { const c = getComputedStyle(b); return [c.backgroundImage.includes('repeating-linear-gradient') && c.backgroundImage.includes('rgb'), c.backgroundSize.split(' ')[0], c.backgroundColor, c.marginTop, c.marginBottom].join('/'); })), ['true/16px/rgba(0, 0, 0, 0)/0px/0px', 'true/32px/rgba(0, 0, 0, 0)/0px/0px', 'true/32px/rgba(0, 0, 0, 0)/0px/0px']);
   await K.press('Enter'); await K.press('Enter');
   check('空の深い引用の Enter は 1 段戻る', await val(), '> a\n> > b\n> > c\n> ');
   await K.press('Enter');
