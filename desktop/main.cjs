@@ -12,6 +12,8 @@ const { attachFileBridge } = require('./file-bridge.cjs');
 // ホストとして常駐する（リモートが有効な間、窓を閉じてもトレイに残す・スリープを防ぐ。docs/remote.md §6.3）
 const { attachResident } = require('./resident.cjs');
 let resident;
+// OS にサインインしたら起動する設定（desktop/login-item.cjs、ADR 0175）。OS の状態を読み書きし、--hidden の起動では窓を前面に出さない
+const { createLoginItem, attachLoginItem, launchedHidden } = require('./login-item.cjs');
 // 窓ごとのオリジンの表と、ほかのホストへつなぐ端末の窓（docs/remote.md §7。desktop/remote-windows.cjs）
 const { createWindowTrust } = require('./window-trust.cjs');
 const { createRemoteWindows } = require('./remote-windows.cjs');
@@ -75,6 +77,9 @@ const APP_USER_MODEL_ID = app.isPackaged ? 'jp.ply.desktop' : 'jp.ply.desktop.de
 // jp.ply.desktop を付けると、窓がスタートメニューのタイルとは別のアプリとしてタスクバーに並ぶ（docs/microsoft-store.md）
 const PACKAGED_IDENTITY = packagedIdentity();
 if (process.platform === 'win32' && !PACKAGED_IDENTITY) app.setAppUserModelId(APP_USER_MODEL_ID);
+// 登録するのは process.execPath（インストーラーが置いた $INSTDIR\Ply.exe。更新で版が替わっても同じパス）。Store の版は対象外
+const loginItem = createLoginItem({ app, platform: process.platform, execPath: process.execPath, appUserModelId: APP_USER_MODEL_ID,
+  store: Boolean(PACKAGED_IDENTITY) || isStoreBuild({ pkg: require('../package.json'), windowsStore: process.windowsStore }) });
 
 // ローカルの窓の本体フレームで、ローカルのサーバーの画面からの IPC だけを通す（リモートの窓・同梱の窓は別の口）
 function trusted(event) { trust.check(event, ['local']); }
@@ -219,7 +224,8 @@ function startServerSwitch(ready, portFile, onServerExit) {
     // 同じ包みにつなぎ直したので、once('exit') の見張りを付け直す
     rearm: () => { if (!worker.listeners('exit').includes(onServerExit)) worker.once('exit', onServerExit); },
     reload: next => reloadWindow(next, portFile),
-    restart: () => { quitting = true; app.relaunch(); app.exit(0); },
+    // 自動起動の --hidden は引き継がない（利用者が押した「再起動」で、窓が出ないままにならないように）
+    restart: () => { quitting = true; app.relaunch({ args: process.argv.slice(1).filter(arg => arg !== '--hidden') }); app.exit(0); },
     fallback: () => { if (!switchScreen.supported()) void dialog.showMessageBox(window, { type: 'warning', title: 'Pleiad', message: t('switch.fallback') }).catch(() => {}); },
     failed: error => { quitting = true; return showFatalError('Pleiad', t('switch.failed', { detail: error?.message ?? '' })).catch(e => console.error(e)).finally(() => app.quit()); },
   });
@@ -256,6 +262,8 @@ async function boot() {
   attachSecretBridge(messages, { safeStorage, openExternal: url => shell.openExternal(url).catch(() => {}) });
   // 「エクスプローラーで表示」「ブラウザーで開く」。範囲と接続元はサーバーが確かめ、実行は本体の shell（窓を前に出せる）
   attachFileBridge(messages, { shell });
+  // ply_control の設定（launchAtLogin）とリモートの窓からの変更を、OS の登録へ通す
+  attachLoginItem(messages, { loginItem });
   // Esc の登録を外す・戻すのは、オーバーレイ（computerOverlay。下で作る）が持つ。Esc を拾ったら、オーバーレイが computerService.escape を呼ぶ
   // koffi（Win32）は 1 回だけ読み、コンピューターの操作と Chrome の OS の層で共有する。読めなかったら両方とも unsupported
   let win32 = null, win32Reason = 'native';
@@ -382,7 +390,12 @@ async function boot() {
   };
   worker.once('exit', onServerExit);
   await window.loadURL(`${origin}/?token=${encodeURIComponent(ready.token)}`);
-  window.show();
+  // 自動起動（--hidden）は静かに上がる。トレイに残る構成（resident）なら窓は出さず、トレイから開く。トレイが無い構成ではタスクバーに最小化で置く
+  // （窓もトレイも無いと入口が無くなる）。普通の起動は今までどおり前面に出す
+  if (loginItem.launchedHidden(process.argv)) { if (!resident?.keepOnClose()) { window.showInactive(); window.minimize(); } }
+  else window.show();
+  // 登録が今の exe と違っていたら直す（登録が無い人には何も書かない）
+  try { if (loginItem.reconcile()) log('login item: re-registered with the current executable'); } catch { /* 登録の読み書きの失敗で起動を止めない */ }
   remoteWindows.handleArgv(process.argv);
   if (linked) serverSwitch = startServerSwitch(ready, portFile, onServerExit);
   const { autoUpdater } = require('electron-updater');
@@ -455,6 +468,12 @@ ipcMain.handle('ply:notify-completion', (event, notice) => {
   trusted(event);
   return notifyCompletion(notice);
 });
+// 設定の「サインインしたら Pleiad を起動する」。ローカルの窓だけ。状態は毎回 OS から読む（desktop/login-item.cjs）
+ipcMain.handle('ply:login-item', (event, action, value) => {
+  trusted(event);
+  if (action === 'set') return loginItem.set(value);
+  return loginItem.info();
+});
 ipcMain.handle('ply:update', async (event, action, value) => {
   trusted(event);
   if (!updates) return { version: app.getVersion(), enabled: false, phase: 'unavailable', channel: app.getVersion().includes('-') ? 'beta' : 'stable' };
@@ -479,7 +498,8 @@ function closeAgentWindows() {
 if (!app.requestSingleInstanceLock()) app.quit();
 else {
   app.on('will-quit', () => { closeAgentWindows(); serverSwitch?.cancel(); browserScreencastBridge?.close(); browserViewerBridge?.close(); computerOverlay?.close(); });
-  app.on('second-instance', (_event, argv) => { if (remoteWindows?.handleArgv(argv)) return; if (window) { window.restore(); window.show(); window.focus(); } });
+  // 自動起動（--hidden）が、すでに動いている Pleiad に重なっただけなら、窓を前に出さない
+  app.on('second-instance', (_event, argv) => { if (remoteWindows?.handleArgv(argv)) return; if (launchedHidden(argv)) return; if (window) { window.restore(); window.show(); window.focus(); } });
   app.on('before-quit', event => { exitInProgress = true; if (!quitting && window) { event.preventDefault(); void closeSafely(); } });
   app.on('will-quit', () => { exitInProgress = true; });
   app.whenReady().then(boot).catch(e => {

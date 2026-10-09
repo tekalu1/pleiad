@@ -11,10 +11,11 @@ export const title = 'サーバー終了の通知は非同期で、終了中は�
 const source = fs.readFileSync(new URL('../../desktop/main.cjs', import.meta.url), 'utf8');
 const desktop = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../desktop');
 const workerMessages = createRequire(import.meta.url)('../../desktop/worker-messages.cjs');
+const loginItem = createRequire(import.meta.url)('../../desktop/login-item.cjs');
 const tick = () => new Promise(resolve => setImmediate(resolve));
 
-async function start({ ready = true, work = { count: 0 } } = {}) {
-  const calls = { dialogs: [], messages: [], quits: 0, syncDialogs: 0 };
+async function start({ ready = true, work = { count: 0 }, argv = [], tray = false } = {}) {
+  const calls = { dialogs: [], messages: [], quits: 0, syncDialogs: 0, shows: 0, inactive: 0, minimized: 0 };
   const worker = new EventEmitter();
   worker.stdout = new EventEmitter();
   worker.stderr = new EventEmitter();
@@ -46,7 +47,11 @@ async function start({ ready = true, work = { count: 0 } } = {}) {
     isDestroyed() { return false; }
     removeMenu() {}
     loadURL() { return Promise.resolve(); }
-    show() {}
+    show() { calls.shows++; }
+    showInactive() { calls.inactive++; }
+    minimize() { calls.minimized++; }
+    restore() {}
+    focus() {}
   }
   let resolveDialog;
   const dialog = {
@@ -72,7 +77,8 @@ async function start({ ready = true, work = { count: 0 } } = {}) {
     './secret-bridge.cjs': { attachSecretBridge: () => {} },
     './i18n.cjs': { t: key => key, setLocale: () => {}, resolveLocale: () => 'ja', initDesktopI18n: async () => {} },
     './file-bridge.cjs': { attachFileBridge: () => {} },
-    './resident.cjs': { attachResident: () => ({ keepOnClose: () => false }) },
+    './resident.cjs': { attachResident: () => ({ keepOnClose: () => tray }) },
+    './login-item.cjs': loginItem,
     './window-trust.cjs': { createWindowTrust: () => ({ register: () => {} }) },
     './remote-windows.cjs': { createRemoteWindows: () => ({ attach: () => {}, attachWorker: () => {}, handleArgv: () => false }) },
     './browser-panel.cjs': { createBrowserPanel: () => ({ attach: () => {} }) },
@@ -99,7 +105,7 @@ async function start({ ready = true, work = { count: 0 } } = {}) {
     if (id in modules) return modules[id];
     throw new Error(`unexpected require ${id}`);
   };
-  vm.runInNewContext(source, { require, __dirname: desktop, process: { platform: 'linux', argv: [], env: {}, resourcesPath: '' },
+  vm.runInNewContext(source, { require, __dirname: desktop, process: { platform: 'linux', argv, env: {}, resourcesPath: '' },
     console: { error: () => {} }, setTimeout, clearTimeout, setInterval, queueMicrotask, URL });
   await tick();
   await tick();
@@ -107,6 +113,21 @@ async function start({ ready = true, work = { count: 0 } } = {}) {
 }
 
 export default async function (t) {
+  {
+    // 自動起動（--hidden）は静かに上がる: 窓を前面に出さない。トレイが無ければタスクバーに最小化、トレイがあれば窓は出さない
+    const normal = await start({ argv: ['Ply.exe'] });
+    t.ok('普通の起動は窓を前面に出す', normal.calls.shows === 1 && normal.calls.inactive === 0 && normal.calls.minimized === 0);
+    const quiet = await start({ argv: ['Ply.exe', '--hidden'] });
+    t.ok('--hidden の起動は窓を前面に出さず、タスクバーに最小化で置く（トレイが無い構成）', quiet.calls.shows === 0 && quiet.calls.inactive === 1 && quiet.calls.minimized === 1, JSON.stringify(quiet.calls.shows));
+    const resident = await start({ argv: ['Ply.exe', '--hidden'], tray: true });
+    t.ok('--hidden の起動でトレイに残る構成なら、窓は出さない（トレイから開く）', resident.calls.shows === 0 && resident.calls.inactive === 0 && resident.calls.minimized === 0);
+    // すでに動いている Pleiad に自動起動が重なっても、窓を前に出さない
+    const running = await start({ argv: ['Ply.exe'] });
+    running.app.emit('second-instance', {}, ['Ply.exe', '--hidden']);
+    t.ok('second-instance の --hidden は窓を前に出さない', running.calls.shows === 1);
+    running.app.emit('second-instance', {}, ['Ply.exe']);
+    t.ok('普通の second-instance は窓を前に出す', running.calls.shows === 2);
+  }
   {
     const { worker, calls, resolveDialog } = await start();
     worker.emit('exit');
