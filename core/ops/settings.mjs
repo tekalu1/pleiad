@@ -174,6 +174,24 @@ export const settings = [
       catch (e) { throw invalid(ctx, e instanceof VoiceSettingsError ? e.message : String(e?.message ?? e)); }
     },
     write: (ctx, value) => ctx.writes.pref('voice', value) }),
+  // OS にサインインしたら Pleiad を起動する（設定 › アップデートの「サインイン時に起動」。ADR 0175）。持ち主は OS なので prefs には持たず、読むのも書くのも main（desktop/login-item.cjs）。
+  // 常駐の入口を増やす設定なので guarded（束縛なしの agent は断られ、会話の承認モードで聞く）。使えない構成（開発起動・Store 版・Linux・main が居ない起動）でのオンは断る
+  defineSetting({ key: 'launchAtLogin', summary: S('launchAtLogin'), risk: 'guarded', prefKeys: [],
+    schema: z.boolean(), default: false, read: async (ctx) => (await ctx.host?.loginItem?.get())?.enabled === true,
+    normalize: async (ctx, value) => {
+      if (typeof value !== 'boolean') throw invalid(ctx, 'launchAtLogin: boolean');
+      if (value) {
+        const state = await ctx.host.loginItem.get();
+        if (!state.supported) throw invalid(ctx, `launchAtLogin: unavailable (${state.reason})`, t('loginItem.unavailable', { reason: state.reason }));
+      }
+      return { after: value };
+    },
+    write: async (ctx, value) => {
+      const state = await ctx.host.loginItem.get();
+      if (state.enabled === value || (!state.supported && !value)) return;
+      try { await ctx.writes.loginItem(value); }
+      catch (e) { throw invalid(ctx, `launchAtLogin: ${e?.code ?? 'failed'}`, t('loginItem.failed', { reason: e?.code ?? 'failed' })); }
+    } }),
   // 渡した項目だけを重ねる。null の項目は既定に戻す。判定器のキーは human-only の別の口で、ここには出ない
   defineSetting({ key: 'delegationRouting', summary: S('delegationRouting'), risk: 'guarded', prefKeys: ['delegationRouting'],
     schema: loose, writeSchema: z.record(z.string(), z.unknown()), default: ROUTING_DEFAULTS, read: (ctx) => ctx.routingSettings?.(),

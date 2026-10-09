@@ -1635,6 +1635,7 @@
     "externalSitePermissions": "Sites always allowed for external loads.",
     "chromeProfileNotes": "Notes per Chrome profile (a list of browser, dir, note; note up to 200 characters). Hints for agents choosing a profile, also shown in the profile list.",
     "chromeNewProfile": "The Chrome profile new conversations start with (browser, dir). null uses Chrome's last used profile. A profile no longer listed is not used.",
+    "launchAtLogin": "Whether Pleiad starts when you sign in to the OS (true / false; the value is the actual OS registration, re-read each time). It starts quietly without bringing the window to the front, so a PC that accepts delegations as a host comes back after a restart. Installed Windows / macOS builds only; it cannot be turned on where unavailable.",
     "computerUse": "Computer use settings (enabled, allow all apps, always-allowed apps).",
     "delegationRouting": "Automatic delegation routing (judges, tiers, candidates, per-tier thinking effort; no keys).",
     "plyInstructions": "The instruction items Pleiad adds to conversations.",

@@ -220,7 +220,11 @@
         "sleep": "Sleep",
         "sleepWorking": "Prevent only while working",
         "sleepAlways": "Prevent while remote access is on",
-        "sleepOff": "Do not prevent"
+        "sleepOff": "Do not prevent",
+        "launchAtLogin": "Start Pleiad when you sign in (starts without opening the window)",
+        "launchAtLoginRecommend": "Remote access is on. Turn on start at sign-in so this PC can still receive delegations after a restart.",
+        "launchAtLoginBlockedWin": "It is turned off in Windows Settings or the Startup tab of Task Manager. Turn it on there and Pleiad will start.",
+        "launchAtLoginBlockedMac": "Allow it in System Settings under Login Items and Pleiad will start."
       }
     },
     "browser": {

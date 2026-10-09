@@ -118,6 +118,7 @@ import { createChromeLoginGroups } from './chrome/login-groups.mjs';
 import { resumeFromPill } from './chrome/pill-resume.mjs';
 import { parentPortViewer } from './browser-viewer.mjs';
 import { getMainPort, setMainPortSource } from './main-port.mjs';
+import { createLoginItemClient } from './login-item.mjs';
 import { createMainLink, handoverEnabled } from './main-link.mjs';
 import { createOrphanGuard } from './orphan-guard.mjs';
 import { createMainAway, createExternalOpener } from './main-away.mjs';
@@ -206,6 +207,7 @@ const mainPort = getMainPort();
 const hostedPort = mainPort.hosted ? mainPort : null;
 // main が居ない間（更新）の出来事と、OAuth の同意画面などを開く口（core/main-away.mjs）。機能ごとの扱いは頼む側のモジュールが持つ
 const mainAway = createMainAway({ mainPort });
+const loginItem = createLoginItemClient({ port: mainPort });
 const openExternal = createExternalOpener({ mainPort, log: line => console.log(`  [main-away] ${line}`) });
 const browserViewer = parentPortViewer(hostedPort);
 // リモートの端末から PC の内蔵ブラウザーを見る（core/browser-screencast.mjs）。デスクトップ版だけ
@@ -4333,10 +4335,13 @@ function opsDeps(lng = currentLocale()) {
       },
       accountIds: async () => (await claudeAccounts.list()).accounts.map((a) => a.id),
       changePlyInstructions: (action) => changePlyInstructions(plyInstructionsCache, action, currentLocale()),
+      // サインイン時の起動（OS の登録。main に頼む。core/login-item.mjs）
+      loginItem: { get: () => loginItem.get() },
     },
     // 設定の保存。画面の setPref と同じ経路・同じ配信（prefs・autoCompactionSettings・delegationRoutingChanged）
     writes: {
       pref: (key, value, backendId) => savePref(key, value, backendId),
+      loginItem: (enabled) => loginItem.set(enabled),
       browserPref: applyBrowserPref,
       compaction: applyAutoCompaction,
       routing: applyRoutingSettings,

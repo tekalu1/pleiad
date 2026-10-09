@@ -10,6 +10,7 @@
 // 面と部品は設定の管理の面（web/manage-panel.css の .mp-*）とコンテキストのスイッチ（.cx-sw）を使う。
 import { el, svgEl } from './dom.mjs';
 import { t, fmt } from './i18n.mjs';
+import { loginItemView } from './login-item-view.mjs';
 import qrcode from './vendor/qrcode-generator.mjs';
 
 /** 確認コードを 3 桁ずつに分ける（「482 193」）。6 桁でなければそのまま */
@@ -179,9 +180,33 @@ export function setupRemote({ cmd, page, openSession = () => {} }) {
   }
   const residentState = el('p', 'mp-state');
   residentState.setAttribute('role', 'status');
+  // OS にサインインしたら起動する（desktop/login-item.cjs）。この窓（ローカルのデスクトップ版）だけ。状態は開くたびに OS から読み直す
+  const loginBridge = window.plyDesktop?.loginItem && !window.plyRemote ? window.plyDesktop.loginItem : null;
+  let login = null;
+  const launch = document.createElement('input');
+  launch.type = 'checkbox'; launch.id = 'remoteLaunchAtLogin';
+  const launchLabel = el('label', 'mp-check');
+  launchLabel.append(launch, el('span', null, t('settings.remote.resident.launchAtLogin')));
+  const launchNote = el('small', 'rm-add-hint');
+  launchNote.setAttribute('role', 'status');
+  const launchRow = el('div', 'rm-launch');
+  launchRow.hidden = true;
+  launchRow.append(launchLabel, launchNote);
   resident.append(el('h3', null, t('settings.remote.resident.title')), keepLabel,
-    el('p', 'rm-sub', t('settings.remote.resident.sleep')), sleepSeg, residentState);
+    el('p', 'rm-sub', t('settings.remote.resident.sleep')), sleepSeg, ...(loginBridge ? [launchRow] : []), residentState);
   keep.onchange = () => setResident({ keepRunning: keep.checked });
+  launch.onchange = async () => {
+    residentState.textContent = '';
+    launch.disabled = true;
+    try { login = await loginBridge.set(launch.checked); }
+    catch (e) { residentState.textContent = e.message; }
+    paintResident();
+  };
+  async function refreshLogin() {
+    if (!loginBridge) return;
+    try { login = await loginBridge.get(); } catch { login = null; }
+    paintResident();
+  }
 
   // ほかのホストにつなぐ（デスクトップ版の端末の機能。ローカルの窓だけ。desktop/remote-hosts.html）
   const others = el('div', 'rm-others');
@@ -391,6 +416,16 @@ export function setupRemote({ cmd, page, openSession = () => {} }) {
       b.setAttribute('aria-pressed', String(b.dataset.sleep === r.sleep));
       b.disabled = busy;
     }
+    if (loginBridge) {
+      const view = loginItemView(login, { remoteEnabled: status?.enabled === true });
+      launchRow.hidden = !view.visible;
+      launch.checked = view.checked;
+      launch.disabled = busy;
+      const mac = window.plyDesktop.platform === 'darwin';
+      launchNote.textContent = view.blocked ? (mac ? t('settings.remote.resident.launchAtLoginBlockedMac') : t('settings.remote.resident.launchAtLoginBlockedWin'))
+        : view.recommend ? t('settings.remote.resident.launchAtLoginRecommend') : '';
+      launchNote.hidden = !launchNote.textContent;
+    }
   }
 
   // ---- 承認のダイアログ
@@ -539,6 +574,7 @@ export function setupRemote({ cmd, page, openSession = () => {} }) {
     try { status = await cmd('remoteStatus'); }
     catch (e) { message = e.message; }
     paint();
+    refreshLogin();
   }
   function event(ev) {
     if (ev.type === 'remoteStatus') {

@@ -174,6 +174,16 @@ AzureにはCertificate Profile Signerの権限とPublic Trustプロファイル�
 アップロード先（`GH_REPO`）は Actions の `github.repository`。フィードとアップロード先を分けることで、別リポジトリの Actions で作った版も `tekalu1/pleiad` を見に行く。
 Actionsは `PLY_RELEASE_REPOSITORY` Variableや `PLY_RELEASE_TOKEN` Secretを参照しない。
 
+## サインイン時の起動
+
+設定 › リモート › 常駐の「サインイン時に Pleiad を起動する」（既定オフ。[ADR 0175](adr/0175-launch-at-login.md)）。委譲のホストの PC が再起動したあとも Pleiad が上がるようにする。
+
+- 登録: Windows は `HKCU\...\Run` に `process.execPath`（インストーラーが置く `$INSTDIR\Ply.exe`）と `--hidden`。版ごとの実行場所ではなく main の exe なので、更新（無停止の更新を含む）をまたいでも有効で、古い版のパスは残らない。入れ先が変わった再インストールで古いパスが残ったときは、起動のたびに今の exe へ直す
+- 状態: 画面は毎回 OS から読む。ほかの道で外されればオフに見える。タスクマネージャー・Windows の設定で無効にされた登録は、オフのまま「無効になっている」と出す
+- `--hidden` の起動: 窓を前面に出さない。トレイに残る状態なら窓を出さず、無ければ最小化。画面からの再起動・更新後の起動は窓を出す
+- 対象: インストールした Windows / macOS 版。Store 版・開発起動・Linux は対象外（設定を出さず、`launchAtLogin` のオンは断る）
+- 実機で確かめる手順（2 台目の PC）: 設定をオン → タスクマネージャーの「スタートアップ アプリ」に Pleiad が出る → サインアウト・サインインで窓なしで上がりトレイ（または最小化）にいる → 更新後も同じ項目が有効 → 設定をオフにすると項目が消える。レジストリは `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` の値を読むだけにする
+
 ## 製品名と識別子
 
 表示名と配布物の名前は Pleiad。改名前の版からの更新とデータを保つため、`appId: jp.ply.desktop`・package.json の `name: agent-host`・実行ファイル名 `Ply.exe`・署名証明書の発行元名（`CN=Ply Evaluation …`）・`PLY_*` と `AGENT_HOST_*`・データ置き場（`~/.agent-host`）・MCP のサーバー名とツール名は変えない。

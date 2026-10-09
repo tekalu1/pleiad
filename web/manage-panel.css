@@ -163,6 +163,10 @@
 .settings-content .rm-sub { margin:14px 0 6px; }
 .rm-resident h3 { margin:0 0 4px; }
 .rm-sleep { max-width:560px; }
+.rm-launch { margin-top:14px; }
+.rm-launch[hidden], .rm-launch small[hidden] { display:none; }
+.rm-launch .mp-check { margin-top:0; }
+.rm-launch small { display:block; margin:4px 0 0 24px; }
 .rm-sleep button { padding:4px 10px; }
 .rm-others { margin-top:20px; }
 .rm-others:empty { display:none; }

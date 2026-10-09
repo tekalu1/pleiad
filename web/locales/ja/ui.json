@@ -219,7 +219,11 @@
         "sleep": "スリープ",
         "sleepWorking": "作業中だけ防ぐ",
         "sleepAlways": "リモートが有効な間は防ぐ",
-        "sleepOff": "防がない"
+        "sleepOff": "防がない",
+        "launchAtLogin": "サインイン時に Pleiad を起動する（窓は出さずに起動）",
+        "launchAtLoginRecommend": "リモートの受付がオンです。この PC を再起動しても委譲を受けられるよう、サインイン時の起動をおすすめします。",
+        "launchAtLoginBlockedWin": "Windows の設定またはタスクマネージャーの「スタートアップ」で無効になっています。そこで有効にすると起動します。",
+        "launchAtLoginBlockedMac": "システム設定の「ログイン項目」で許可すると起動します。"
       }
     },
     "browser": {

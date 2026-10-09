@@ -418,6 +418,10 @@
       "protocol": "{{protocol}} isn't supported."
     }
   },
+  "loginItem": {
+    "unavailable": "Launch at sign-in cannot be set in this environment ({{reason}}). Set it in the installed Windows or macOS app",
+    "failed": "Could not change launch at sign-in ({{reason}})"
+  },
   "secrets": {
     "busy": "The secrets file is in use by another process. Wait a moment and try again.",
     "plainReason": "Electron's safeStorage isn't available in this launch (such as npm start).",

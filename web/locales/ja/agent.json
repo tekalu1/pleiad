@@ -1634,6 +1634,7 @@
     "externalSitePermissions": "外部の読み込みに「このサイトは常に許可」した一覧。",
     "chromeProfileNotes": "Chrome のプロフィールごとのメモ（browser・dir・note の一覧。note は 200 字まで）。エージェントがプロフィールを選ぶ手がかりで、プロフィールの一覧にも載る。",
     "chromeNewProfile": "新しい会話が始めに使う Chrome のプロフィール（browser・dir）。null なら Chrome の最後に使ったもの。一覧から消えたプロフィールは使わない。",
+    "launchAtLogin": "OS にサインインしたら Pleiad を起動するか（true / false。値は OS の登録を読み直した実際の状態）。起動は窓を前面に出さない静かな起動。ホストとして受け付ける PC を再起動後も使えるようにする。インストールした Windows / macOS 版だけで、使えない構成ではオンにできない。",
     "computerUse": "コンピューターの操作の設定（有効・全アプリの許可・常に許可のアプリ）。",
     "delegationRouting": "委譲先の自動振り分けの設定（判定器・段・候補・段ごとの思考の強さ。キーは含まない）。",
     "plyInstructions": "Pleiad が会話に足す指示の項目。",

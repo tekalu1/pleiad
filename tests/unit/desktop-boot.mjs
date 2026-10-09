@@ -21,6 +21,7 @@ const source = fs.readFileSync(new URL('../../desktop/main.cjs', import.meta.url
 const desktop = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../desktop');
 const tick = () => new Promise(resolve => setImmediate(resolve));
 const workerMessages = createRequire(import.meta.url)('../../desktop/worker-messages.cjs');
+const loginItem = createRequire(import.meta.url)('../../desktop/login-item.cjs');
 // 本物の橋と同じに message の受け手を 1 つ付ける偽物（受け手が worker の listener を増やさないことを見る）
 const listens = (calls, key) => worker => { worker.on('message', () => {}); if (key) calls[key] = worker; return { keepOnClose: () => false, close: () => {} }; };
 
@@ -118,6 +119,7 @@ async function start({ env = {}, packaged = false, choice = 'link', connectError
     './server-boot.cjs': serverBoot,
     './server-restart.cjs': { createServerRestarter: options => { calls.restarterOptions = options; return { restart: async () => { calls.restarts++; calls.order.push('restart'); return typeof restart === 'function' ? restart(calls) : restart; } }; } },
     './worker-messages.cjs': workerMessages,
+    './login-item.cjs': loginItem,
     './switch-screen.cjs': { createSwitchScreen: () => ({ attach: control => { calls.screenAttached = control; }, reset() {}, supported: () => false, ask: async () => 'later' }) },
     './switch.cjs': {
       startSwitch: options => { const control = { replacing: false, cancelled: false, cancel() { this.cancelled = true; }, options }; calls.switches.push(control); return control; },
