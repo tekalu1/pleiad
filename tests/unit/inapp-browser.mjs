@@ -453,6 +453,33 @@ export default async function (t) {
   });
   t.ok('画面: タブの列を作り直しても、列の中にあったフォーカスは選ばれたタブへ戻る・外のフォーカスは奪わない', true);
 
+  // ---- タブが 1 枚（Chrome の固定タブだけ）でも、列には選ばれたタブがあり、Tab キーで入れる
+  await withWindow({ plyDesktop: { browser: null } }, async () => {
+    const bridge = fakeBridge();
+    window.plyDesktop.browser = bridge;
+    const panel = createBrowserPanel({ bridge, getSessionId: () => 's1' });
+    panel.connect({ openPanel: () => panel.show(), chromeAvailable: () => true, chromeOpen: () => false, chromeName: () => 'Claude' });
+    const walk = (node, out = []) => { out.push(node); for (const child of node.children ?? []) walk(child, out); return out; };
+    const picks = () => walk(panel.tabsRow).filter(n => n.getAttribute?.('role') === 'tab');
+    const describe = () => JSON.stringify(picks().map(n => ({ cls: n.parent?.className, selected: n.getAttribute('aria-selected'), tabIndex: n.getAttribute('tabindex') })));
+    // 選ばれたタブが無い間（Chrome の窓もビューアのタブも無い）も、先頭のタブが Tab キーの入口になる
+    bridge.push({ tabs: [], current: null, sessionId: 's1' });
+    assert.equal(picks().length, 1, describe());
+    assert.equal(picks()[0].getAttribute('tabindex'), '0', `選ばれたタブが無くても列に Tab キーで入れる ${describe()}`);
+    // ビューアを開いたまま、ビューアのタブの無い会話へ移った: 空のタブを作って選ぶ（開いたときと同じ。中身の空のページと選ばれたタブを合わせる）
+    panel.show(); await new Promise(r => setTimeout(r, 0));
+    bridge.push({ tabs: [{ id: 't1', url: 'https://example.com/', title: '', loading: false, canGoBack: false, canGoForward: false }], current: 't1', sessionId: 's1' });
+    const before = bridge.calls.length;
+    bridge.push({ tabs: [], current: null, sessionId: 's2' });
+    await new Promise(r => setTimeout(r, 0));
+    assert.deepEqual(bridge.calls.slice(before).map(([action]) => action), ['newTab'], '移った先の会話に空のタブを 1 つ作る');
+    const selected = picks().filter(n => n.getAttribute('aria-selected') === 'true');
+    assert.equal(selected.length, 1, `選ばれたタブが 1 つある ${describe()}`);
+    assert.ok(!/browser-tab-chrome/.test(selected[0].parent?.className ?? ''), `選ばれたのはビューアのタブ（中身はビューア） ${describe()}`);
+    assert.deepEqual(picks().map(n => n.getAttribute('tabindex')), picks().map(n => (n === selected[0] ? '0' : '-1')), `Tab キーの入口は選ばれたタブだけ ${describe()}`);
+  });
+  t.ok('画面: Chrome の固定タブだけの列でも Tab キーで入れ、ビューアを開いたままタブの無い会話へ移ったら空のタブを作って選ぶ', true);
+
   // ---- 頭の行の内蔵ブラウザーのボタン（web/header-entries.mjs）と近道
   await withWindow({ plyDesktop: { browser: null } }, async () => {
     const bridge = fakeBridge();
