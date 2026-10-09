@@ -99,4 +99,10 @@ export default async function (t) {
     && /:root\.desktop\.remote body > \.titlebar\{background:var\(--surface-0\)/.test(css));
   t.ok('リモートの窓の 701px 以上はタイトル行を帯に上げる', /@media \(min-width:701px\)\{[^@]*:root\.desktop\.remote:not\(\.remote-mobile\) body > main > \.top\{position:fixed;top:0/s.test(css));
   t.ok('簡易ブラウザーの行の輪は内側に描く（一覧のスクロールの箱の端で切れていた）', /\.cbrowse \.copt:focus-visible\{outline-offset:-2px\}/.test(css));
+  // 発言の引用は入力欄の引用と同じ左の縦線（docs/design-system.md「4.5 会話」。見た目は tests/browser/message-quote-bar.cjs）
+  const Q = String.raw`:is\(\.body,\.post-body,\.th-log-text\) blockquote`;
+  const rule = (sel) => new RegExp(Q + sel + String.raw`\{([^}]*)\}`).exec(css)?.[1] ?? '';
+  t.ok('発言の引用は面も角丸も敷かず、弱い字（.body・Channels の投稿・スレッドの作業ログ）', /position:relative/.test(rule('')) && /color:var\(--ink-weak\)/.test(rule('')) && !/background|border/.test(rule('')));
+  t.ok('発言の引用の線は ::before の 2px の --line-strong（border-left にしない）', /width:2px/.test(rule('::before')) && /var\(--line-strong\)/.test(rule('::before')) && !/border-left/.test(rule('') + rule('::before')));
+  t.ok('入れ子の引用は 16px 間隔（字下げ 12px ＋ 4px）で、中の最初・最後の段の余白を溜めない', /padding:2px 0 2px 12px/.test(rule('')) && /margin:\.4em 0 \.4em 4px/.test(rule(' blockquote')) && /margin-top:0/.test(rule('>:first-child')) && /margin-bottom:0/.test(rule('>:last-child')));
 }
