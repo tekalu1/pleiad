@@ -448,6 +448,9 @@ const SUITES = [
   // loadSession の差分（ADR 0062）: 合うときだけ続きを返す・つないだ結果は全量と同じ・合わなければ全量・画面の頼み方
   './unit/history-sync.mjs',
   './unit/server-history-diff.mjs',
+  // 会話を開く速さ (ADR 0902): 末尾の窓だけ運ぶ・大きい提示の本文は印（/present-body で取る）・遡りでつなぐと全量と同じ・手前を後から足す描き方（vm）
+  './unit/history-window.mjs',
+  './unit/server-history-window.mjs',
   // 返答の本文は 1 コマに 1 回だけ描く・流れの終わりでは描き切る・会話を切り替えたら別の会話へ描かない
   './unit/stream-frames.mjs',
   './unit/work-attribution.mjs',

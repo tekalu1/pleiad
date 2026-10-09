@@ -46,7 +46,7 @@ const usable = (node) => !node.parentElement?.closest('button,summary,.code-copy
  *   entriesOf は項目の作り方（既定は Chats の会話の筋）。チャンネルのスレッドは投稿の列から作る（web/channels/thread.mjs）:
  *   ({ turns, kinds, turnInfo }) → { kind: 'user'|'answer'|'tool', turn, row, el, bodies?, at, pending? }[]（bodies は探す対象の要素）
  */
-export function createConversationToc({ thread, log, nav, preview, narrow, button, entriesOf = null }) {
+export function createConversationToc({ thread, log, nav, preview, narrow, button, entriesOf = null, onOpen = null }) {
   // ---- 状態（会話を開いている間は保つ。会話を替えたら reset）
   let query = '', scope = 'user', newestFirst = false, hitIndex = -1, total = 0;
   let entries = [], entriesDirty = true, opened = false, sheet = null, opener = null, typing = 0, active = -1;
@@ -361,6 +361,8 @@ export function createConversationToc({ thread, log, nav, preview, narrow, butto
       preview.openPanel({ key: KEY, title: t('nav.toc.title'), body: root, label: t('nav.toc.title'), element: button, width: PANEL_WIDTH, onClose: cleanup });
     }
     fill();
+    // 窓の手前を読んでいない会話は、開いたあとで手前を全部読む（行が増えれば下の MutationObserver が一覧を取り直す）
+    onOpen?.();
     requestAnimationFrame(() => { input.focus({ preventScroll: true }); input.select(); });
   }
   function close() {

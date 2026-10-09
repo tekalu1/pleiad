@@ -8,6 +8,9 @@
     "creating": "Creating…",
     "creatingBranch": "Creating branch…",
     "historyLoading": "Loading history…",
+    "olderLoading": "Loading earlier messages…",
+    "olderFailed": "Couldn't load earlier messages",
+    "olderStart": "This is the start of the conversation",
     "loading": "Loading…",
     "reloading": "Reloading…",
     "searching": "Searching…",
@@ -2465,7 +2468,9 @@
       "sidePanel": "Show in side panel",
       "browser": "Open in browser",
       "truncated": "Omitted because it's too large.",
-      "badImage": "This image can't be displayed."
+      "badImage": "This image can't be displayed.",
+      "loadingBody": "Loading…",
+      "bodyFailed": "Couldn't load this. Tap to try again."
     },
     "tool": {
       "label": {

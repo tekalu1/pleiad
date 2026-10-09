@@ -50,6 +50,8 @@
 // 環境変数: AGENT_HOST_FAKE_USAGE=1 … ターンの終わりに固定の usage を流す／AGENT_HOST_FAKE_SLOW_STEER=1 … "slow" が途中送信を受ける／
 //   AGENT_HOST_FAKE_QUOTA=<JSON のファイル> … 使用枠（usage()。{ windows: [{ label, usedPercent, resetsAt, minutes }] }）を毎回そのファイルから読む。
 //   指定が無いと usage() を持たない（使用量の上限の再開が、解除時刻の分からない上限の空きを確かめる検査用）
+//   AGENT_HOST_FAKE_SUBAGENTS=<JSON のファイル> … { "<sessionId>": [{ id, toolUseId, status, startedAt, endedAt }] }。記録にだけ在る会話（種を置いた会話）の
+//   過去のサブエージェントを引けるようにする（作業ダイアログの過去の一覧の検査用。tests/browser/history-window-seed.mjs）。ターンで生んだ子が在る会話ではそちらを使う
 //
 // ゲート（実時間でなく、テストが終わりを決める待ち。server は別プロセスなので、実体は AGENT_HOST_FAKE_GATE_DIR のディレクトリのファイル）:
 //   <dir>/<名前> が在れば開いている。テストが作る（tests/lib/fake-gate.mjs の open）。"bg <本数> gate:<名前>" と途中送信の本文の "HOLD_CONFIRM:<名前>" が待つ。
@@ -131,6 +133,13 @@ const TOOL_HINTS = {
   fake_shell: { label: "実行", shape: "shell" },
   fake_write: { label: "書く", shape: "write" },
 };
+
+/** 会話のサブエージェント。ターンで生んだ分があればそれ、無ければ AGENT_HOST_FAKE_SUBAGENTS の種（毎回読む） */
+function subagentsOf(sessionId) {
+  const own = sessions.get(sessionId)?.subagents;
+  if (own?.length) return own;
+  try { return (JSON.parse(fs.readFileSync(process.env.AGENT_HOST_FAKE_SUBAGENTS ?? "", "utf8"))[sessionId] ?? []).map((a) => ({ messages: [], ...a })); } catch { return own ?? []; }
+}
 
 function ensure(sessionId, cwd) {
   let s = sessions.get(sessionId);
@@ -950,17 +959,17 @@ export const backend = {
   // 前のターンの分も含めて全部返す（Claude の listSubagents と同じ）。並びは作った順の逆。
   // Claude も readdir の順で、起動順とは限らない。順番で見出しを当てると外れる形をテストで踏む
   async listSubagents(sessionId) {
-    return (sessions.get(sessionId)?.subagents ?? []).map((a) => a.id).reverse();
+    return subagentsOf(sessionId).map((a) => a.id).reverse();
   },
   async getSubagentMessages(sessionId, agentId) {
-    return (sessions.get(sessionId)?.subagents.find((a) => a.id === agentId)?.messages ?? []).map((m) => ({ ...m }));
+    return (subagentsOf(sessionId).find((a) => a.id === agentId)?.messages ?? []).map((m) => ({ ...m }));
   },
   async getSubagentState(sessionId, agentId) {
-    const a = sessions.get(sessionId)?.subagents.find((x) => x.id === agentId);
+    const a = subagentsOf(sessionId).find((x) => x.id === agentId);
     return a?.status ? { status: a.status, startedAt: a.startedAt ?? null, endedAt: a.endedAt ?? null } : null;
   },
   async getSubagentOrigin(sessionId, agentId) {
-    return sessions.get(sessionId)?.subagents.find((a) => a.id === agentId)?.toolUseId ?? null;
+    return subagentsOf(sessionId).find((a) => a.id === agentId)?.toolUseId ?? null;
   },
 
   async suggestTitle({ transcript }) {

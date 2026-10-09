@@ -35,26 +35,32 @@ export function attachmentMessageIndex(messages, present) {
     Math.abs(time(messages[best].at) - at) ? i : best) : candidates.at(-1);
 }
 
-/** Preserve message order; human attachments belong immediately after their message. */
-export function buildItems(messages, presents) {
+/**
+ * Preserve message order; human attachments belong immediately after their message.
+ * 末尾の窓だけを持っているとき（ADR 0902）は、base = messages[0] の通し番号、presentBase = presents[0] の通し番号。
+ * mi・pi・anchorMi は常に通し番号（画面の行の印 m:<mi>・p:<pi> が、窓が伸びても変わらないように）。結び付く先が窓の手前にある提示は anchorMi = -1
+ */
+export function buildItems(messages, presents, base = 0, presentBase = 0) {
   let lastAt = 0;
-  const items = messages.map((m, mi) => {
+  const items = messages.map((m, i) => {
     lastAt = Math.max(lastAt, time(m.at));
-    return { at:m.at, sortAt:lastAt, kind:"msg", m, mi };
+    return { at:m.at, sortAt:lastAt, kind:"msg", m, mi:base + i };
   });
+  const absolute = (local) => local >= 0 ? base + local : -1;
   const attached = new Map();
   const untimed = [];
   const visualAnchors = new Map();
-  messages.forEach((m, mi) => {
+  messages.forEach((m, i) => {
     if (m.role !== 'assistant') return;
     for (const ref of visualizeReferences(m.text)) {
       if (!visualAnchors.has(ref.raw)) visualAnchors.set(ref.raw, []);
-      visualAnchors.get(ref.raw).push(mi);
+      visualAnchors.get(ref.raw).push(base + i);
     }
   });
-  presents.forEach((p, pi) => {
+  presents.forEach((p, i) => {
+    const pi = presentBase + i;
     const anchorMi = p.kind === 'visualization' && p.reference
-      ? (visualAnchors.get(p.reference)?.shift() ?? -1) : attachmentMessageIndex(messages, p);
+      ? (visualAnchors.get(p.reference)?.shift() ?? -1) : absolute(attachmentMessageIndex(messages, p));
     const item = { kind:"present", p, pi, anchorMi, at:p.at, sortAt:time(p.at) };
     if (anchorMi >= 0) {
       if (!attached.has(anchorMi)) attached.set(anchorMi, []);

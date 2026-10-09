@@ -13,7 +13,7 @@ import { N } from '../lib/dom-stub.mjs';
 import { createSessionLoads } from '../../web/session-stream.mjs';
 import { createComposerWait } from '../../web/composer-wait.mjs';
 import { createComposerAttachments } from '../../web/composer/attachments.mjs';
-import { syncRequest, joinReply, retainPlan } from '../../web/history-sync.mjs';
+import { syncRequest, joinReply, retainPlan, WINDOW_MESSAGES, WINDOW_BYTES } from '../../web/history-sync.mjs';
 
 export const name = 'composer-new-session';
 export const title = '新しい会話を作っている間に書いた字が消えない・作成中の送信の予約・作成中の作業場所と設定の反映・読み込み失敗で欄が戻る';
@@ -71,7 +71,8 @@ export default async function (t) {
     channelsUi: { tab: 'chats', onEvent: () => false }, viewAddress: { note: () => {} },
     // まだ送っていない会話の宛先のチップ（web/composer/home-dest.mjs）。このテストは bot なし（ふつうの会話）だけ
     homeDest: { bot: null, paint: noop, reset: noop, botsChanged: noop },
-    state, $, cmd, refresh, syncRequest, joinReply, retainPlan, retainThread: noop, holdReading: noop, t: (k, params) => params?.error ? `${k}: ${params.error}` : k, html: { t: k => k }, sys: noop, escText: x => x, NL: '\n',
+    state, $, cmd, refresh, syncRequest, joinReply, retainPlan, WINDOW_MESSAGES, WINDOW_BYTES, backfill: null, paintBefore: null, olderBusy: null, olderFail: null, olderEl: null,
+    cancelBackfill: noop, maybeLoadOlder: noop, hideOlder: noop, splitFirstPaint: () => null, paintedFloor: () => 0, requestAnimationFrame: noop, loadBranches: (id) => context.branches.load(id), retainThread: noop, holdReading: noop, t: (k, params) => params?.error ? `${k}: ${params.error}` : k, html: { t: k => k }, sys: noop, escText: x => x, NL: '\n',
     creatingSession: null, pendingNewSession: null, freshSessionId: null, draftTimer: null, draftSavedAt: 0, DRAFT_THROTTLE_MS: 400, queuedSend: null, settingsFailure: null, syncSettingsHold: noop,
     failedSettingsPatch: null, failedSettingsError: '', cwdSaving: 0, stagedNext: new Map(),
     settingsWrite: Promise.resolve(), modeWrite: Promise.resolve(),

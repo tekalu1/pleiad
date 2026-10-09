@@ -328,6 +328,8 @@
     "server-groups": 1190,
     "server-handoff": 9101,
     "server-history-diff": 1824,
+    "history-window": 400,
+    "server-history-window": 2500,
     "server-hooks": 2268,
     "server-hooks-unify": 4428,
     "server-hooks-unify-review": 1661,

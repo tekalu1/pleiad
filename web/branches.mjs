@@ -58,11 +58,22 @@ export function createBranches({ cmd, titleOf }) {
   }
 
   /**
+   * 窓（末尾の一部だけ）を持っているとき（base > 0）、窓の手前を会話の概要（outline）で埋める。ほかの枝と通し番号が揃い、分岐点が窓の外でも出る。
+   * 概要が窓の手前より短い（読んでいる間に縮んだ）ときは概要だけにする
+   */
+  async function withPrefix(row, window, base) {
+    if (!(base > 0)) return window;
+    const outline = await messagesOf(row);
+    return outline.length >= base ? [...outline.slice(0, base), ...window] : outline;
+  }
+
+  /**
    * 系譜を読む。同じ根を持つセッションが 2 つ以上なければ null。
    * @param {string} currentId
-   * @param {Array} currentMessages 今開いているセッションの履歴（読み直さない）
+   * @param {Array} currentMessages 今開いているセッションの履歴（読み直さない）。base > 0 なら末尾の窓
+   * @param {{base?: number}} [window] currentMessages[0] の通し番号
    */
-  async function load(currentId, currentMessages) {
+  async function load(currentId, currentMessages, { base = 0 } = {}) {
     const request = ++revision;
     if (!currentId) { family = null; return null; }
     const lin = await cmd("lineage", { sessionId: currentId }).catch(() => null);
@@ -72,7 +83,7 @@ export function createBranches({ cmd, titleOf }) {
     const rows = new Map();
     for (const r of lin.sessions) rows.set(r.id, { ...r, messages: [], k: -1 });
     await Promise.all([...rows.values()].map(async (r) => {
-      r.messages = r.id === currentId ? currentMessages : await messagesOf(r);
+      r.messages = r.id === currentId ? await withPrefix(r, currentMessages, base) : await messagesOf(r);
     }));
     // 分岐点。第一の手がかりは sidecar の parent.atMessage（親のどの発言で分けたか）。
     // 無ければ（AI が末尾から分けた・古い記録）親の履歴との共通接頭辞の最後の添字。親が家族に無ければ根と同じ扱い
@@ -106,10 +117,10 @@ export function createBranches({ cmd, titleOf }) {
     family = null;
   }
 
-  /** 今の履歴を差し替える（送信や turnEnd の後）。読み直しはしない */
-  function update(id, messages) {
+  /** 今の履歴を差し替える（送信や turnEnd の後）。読み直しはしない。窓のとき（base > 0）は、手前の概要を残して窓の分だけ替える */
+  function update(id, messages, { base = 0 } = {}) {
     const r = family?.rows.get(id);
-    if (r) r.messages = messages;
+    if (r) r.messages = base > 0 ? (r.messages.length >= base ? [...r.messages.slice(0, base), ...messages] : r.messages) : messages;
     cache.delete(id);
   }
 
@@ -161,7 +172,7 @@ export function createBranches({ cmd, titleOf }) {
     for (const e of entries) count.set(e.name, (count.get(e.name) ?? 0) + 1);
     return entries.map((e) => {
       if (count.get(e.name) < 2 || !family?.rows.has(e.id)) return e;
-      const messages = (e.id === current?.id ? current.messages : family.rows.get(e.id).messages) ?? [];
+      const messages = (e.id === current?.id && current.messages ? current.messages : family.rows.get(e.id).messages) ?? [];
       const prompt = messages.slice(Math.max(0, messages.length - e.n)).find((m) => m.role === "user" && String(m.text ?? "").trim());
       return { ...e, label: ordinalName(e.id), excerpt: prompt ? excerptOf(prompt.text) : null };
     });

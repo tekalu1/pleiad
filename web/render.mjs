@@ -12,6 +12,7 @@ import { el, chevron } from "./dom.mjs";
 import { fmt, t } from "./i18n.mjs";
 import { copyIcon, downloadIcon, sidePanelIcon, openInBrowserIcon, moreIcon } from './icons.mjs';
 import { copyPathText } from './file-actions.mjs';
+import { isLazy, presentBodyUrl, fetchPresentBody, whenNear } from './present-lazy.mjs';
 import { renderGitSummary } from './git-view.mjs';
 import { renderWorktreeLine } from './worktree-ui.mjs';
 import { renderChromeHandoverLine, renderChromeClosedLine } from './chrome-control.mjs';
@@ -28,7 +29,7 @@ const text = (s) => esc(s).replace(/\n/g, "<br>");
 
 /** Local files are served by the authenticated host, never by file://. */
 function localFileUrl(raw) {
-  if (!/^[a-z]:[\\/]/i.test(raw) && !/^\/(?!\/|local-file(?:\?|$))/.test(raw)) return null;
+  if (!/^[a-z]:[\\/]/i.test(raw) && !/^\/(?!\/|local-file(?:\?|$)|present-body\?)/.test(raw)) return null;
   return `/local-file?path=${encodeURIComponent(raw.replace(/:\d+(?::\d+)?$/, ""))}`;
 }
 
@@ -585,6 +586,35 @@ function withCsp(html) {
 }
 
 /**
+ * 本文が印のままの提示（ADR 0902）の枠。見える近くに来るまで本文を取らず、高さは本物の枠（iframe の既定 150px）と同じにして、
+ * 差し替えても下の行が動かないようにする。取れなかったときは押すともう一度取る
+ */
+function lazyHold() {
+  const hold = el('div', 'present-lazy');
+  const shimmer = () => {
+    hold.replaceChildren(el('span', 'history-line'));
+    hold.removeAttribute('role');
+    hold.setAttribute('aria-busy', 'true');
+    hold.setAttribute('aria-label', t('timeline.present.loadingBody'));
+  };
+  shimmer();
+  hold.failed = (retry) => {
+    hold.replaceChildren(el('div', 'present-note', t('timeline.present.bodyFailed')));
+    hold.removeAttribute('aria-busy');
+    hold.setAttribute('role', 'button');
+    hold.tabIndex = 0;
+    hold.onclick = () => { hold.onclick = null; hold.tabIndex = -1; shimmer(); retry(); };
+  };
+  return hold;
+}
+
+/** 印の本文を、近づいたときに取って place(text) に渡す。取れなければ枠を「もう一度」にする */
+function loadWhenNear(hold, ev, place) {
+  const run = () => fetchPresentBody(ev, 'content').then(place, () => hold.failed(run));
+  whenNear(hold, run);
+}
+
+/**
  * present イベントをカード要素にする。
  * @param {{kind:"image"|"html"|"text"|"file", caption?:string, path?:string,
  *          content?:string, dataUri?:string, truncated?:boolean}} ev
@@ -618,8 +648,14 @@ export function renderPresent(ev) {
       card.classList.add('visualize-seamless');
       card.setAttribute('aria-label', t('timeline.present.namedVisualization', { title: e.caption || kindLabel(kind) }));
       cap.remove();
-      const frame = visualizationFrame(e.content ?? '', e.caption, { conversation: true });
-      body.append(frame);
+      const lazyContent = isLazy(e, 'content');
+      if (lazyContent) {
+        const hold = lazyHold();
+        body.append(hold);
+        loadWhenNear(hold, e, (text) => hold.replaceWith(visualizationFrame(text, e.caption, { conversation: true })));
+      } else body.append(visualizationFrame(e.content ?? '', e.caption, { conversation: true }));
+      // 本文が印のままの提示は、保存・サイドパネル・ブラウザーで開くを押したときに本文を取ってから渡す
+      const withContent = (use) => lazyContent ? fetchPresentBody(e, 'content').then(use).catch(() => {}) : use(e.content ?? '');
       const controls = el('span', 'present-tools');
       controls.setAttribute('role', 'group');
       controls.setAttribute('aria-label', t('filePreview.visual.actions'));
@@ -637,28 +673,39 @@ export function renderPresent(ev) {
       // 保存されるのは会話に残っている HTML。元のファイルは変わっていることがある。
       // 会話には可視化がいくつも並ぶので、URL は押したときだけ作ってすぐ捨てる
       tool(downloadIcon, t('timeline.present.download')).onclick =
-        () => downloadVisualization({ path: e.path, title: e.caption, content: e.content ?? '' });
+        () => withContent((content) => downloadVisualization({ path: e.path, title: e.caption, content }));
 
       // 開くのは右のプレビューパネル。ここは会話に載る面だけを組み立て、
       // 開く側とは要求イベントで繋ぐ（ファイルリンクと同じ一枚の面に集める）。
       // at・id は会話の記録の印。右パネルの「ブラウザーで開く」がサーバーから写しを引く（core/server.mjs /visualization-snapshot）
       // 内蔵ブラウザーが使えるホストの画面では、同じ位置に「ブラウザーで開く」を出し、「サイドパネルに表示」は隠す
       // （どちらを出すかは body の inapp-links。web/file-preview.mjs が設定と画面で決める。docs/visualize.md）
-      const detail = { content: e.content ?? '', title: e.caption ?? '', path: e.path ?? '', at: e.at ?? null, id: e.id ?? null };
+      const detailOf = (content) => ({ content, title: e.caption ?? '', path: e.path ?? '', at: e.at ?? null, id: e.id ?? null });
       const expand = tool(sidePanelIcon, t('timeline.present.sidePanel'), 'visualize-expand');
-      expand.onclick = () => expand.dispatchEvent(new CustomEvent('ply-visualize-expand', { bubbles: true, detail }));
+      expand.onclick = () => withContent((content) => expand.dispatchEvent(new CustomEvent('ply-visualize-expand', { bubbles: true, detail: detailOf(content) })));
       const open = tool(openInBrowserIcon, t('timeline.present.browser'), 'visualize-open-browser');
-      open.onclick = () => open.dispatchEvent(new CustomEvent('ply-visualize-browser', { bubbles: true, detail }));
+      open.onclick = () => withContent((content) => open.dispatchEvent(new CustomEvent('ply-visualize-browser', { bubbles: true, detail: detailOf(content) })));
       card.append(controls);
       if (e.mode === 'wide') card.classList.add('visualize-wide');
     }
   } else if (e.truncated) {
     body.append(el("div", "present-note", t("timeline.present.truncated")));
   } else if (kind === "image") {
-    const src = presentImg(e.dataUri ?? e.path);
+    // 本文が印のままの画像は、<img> が本文の URL を直に読む（loading=lazy で近づいてから取る。HTTP の覚えが効く）
+    const pending = isLazy(e, 'dataUri');
+    const src = presentImg(pending ? presentBodyUrl(e, 'dataUri') : e.dataUri ?? e.path);
     if (src === null) body.append(el("div", "present-note", t("timeline.present.badImage")));
     else {
       const img = el("img");
+      if (pending) {
+        // 読めるまでの枠（高さが 0 から伸びて下の行を押さない）。読めなかったら画像の枠のまま「表示できない」
+        img.classList.add('present-pending');
+        img.addEventListener('load', () => img.classList.remove('present-pending'), { once: true });
+        img.addEventListener('error', () => {
+          const note = el('div', 'present-note', t('timeline.present.badImage'));
+          img.replaceWith(note);
+        }, { once: true });
+      }
       img.src = src;
       img.alt = e.caption ?? "";
       img.loading = "lazy";
@@ -673,8 +720,11 @@ export function renderPresent(ev) {
     frame.setAttribute("referrerpolicy", "no-referrer");
     frame.loading = "lazy";
     frame.style.height = `${HEIGHTS[1][1]}px`;
-    frame.srcdoc = withCsp(e.content ?? "");
-    body.append(frame);
+    if (isLazy(e, 'content')) {
+      const hold = lazyHold();
+      body.append(hold);
+      loadWhenNear(hold, e, (text) => { frame.srcdoc = withCsp(text); hold.replaceWith(frame); });
+    } else { frame.srcdoc = withCsp(e.content ?? ""); body.append(frame); }
 
     // 高さを段階的に選ばせる。中身の高さは測れないので、これが現実的な落とし所
     const tools = el("span", "present-tools");
@@ -690,7 +740,15 @@ export function renderPresent(ev) {
     }
     cap.append(tools);
   } else {
-    body.innerHTML = codeBlock(String(e.content ?? ""), langFromPath(e.path));
+    if (isLazy(e, 'content')) {
+      const hold = lazyHold();
+      body.append(hold);
+      loadWhenNear(hold, e, (text) => {
+        const code = el('div');
+        code.innerHTML = codeBlock(String(text ?? ''), langFromPath(e.path));
+        hold.replaceWith(...code.childNodes);
+      });
+    } else body.innerHTML = codeBlock(String(e.content ?? ""), langFromPath(e.path));
   }
 
   // 元パスを小さく添える。ファイルリンクなので押すと右パネルで開き、⋯・右クリックで操作が出る
