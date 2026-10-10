@@ -4211,15 +4211,24 @@ const opsSessionWork = {
     }
     return { agentId: null };
   },
-  // 会話のサブエージェントの一覧（生んだ委譲ツールの id と、分かれば状態）
+  // 会話のサブエージェントの一覧（生んだ委譲ツールの id と、分かれば状態・依頼の最初の行）。
+  // description は、ターンの外に出た子（委譲した子の会話の孫）を一覧に残す画面が、見出しにする
   subagents: async (sessionId) => {
     const backend = await resolveBackendForSession(sessionId);
     if (!backend?.listSubagents) return [];
     const ids = await backend.listSubagents(sessionId).catch(() => []);
     return Promise.all(ids.map(async (id) => ({ agentId: id, origin: backend.getSubagentOrigin ? await backend.getSubagentOrigin(sessionId, id).catch(() => null) : null,
+      description: await subagentHeading(backend, sessionId, id),
       ...(await subagentStateOf(backend, sessionId, id)) })));
   },
 };
+/** サブエージェントの見出し: 最初の発言の最初の行（120 字まで。読めなければ null） */
+async function subagentHeading(backend, sessionId, id) {
+  if (typeof backend.getSubagentMessages !== 'function') return null;
+  const msgs = await backend.getSubagentMessages(sessionId, id, { limit: 5 }).catch(() => []);
+  const said = msgs.map((m) => m.text).find(Boolean);
+  return said ? String(said).split(/\r?\n/).find(Boolean)?.slice(0, 120) ?? null : null;
+}
 /** サブエージェントの状態（取れないエージェントは null） */
 async function subagentStateOf(backend, sessionId, id) {
   const raw = typeof backend.getSubagentState === 'function' ? await backend.getSubagentState(sessionId, id).catch(() => null) : null;

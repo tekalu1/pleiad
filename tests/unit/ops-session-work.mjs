@@ -178,6 +178,9 @@ export default async function (t) {
   t.ok('sessions.subagents: 一覧は 30 件ずつ区切り、next で続きを返す', subs.total === 35 && subs.subagents.length === 30 && subs2.subagents.length === 5 && subs2.next === null && subs2.subagents[0].agentId === 'a30');
   t.ok('sessions.subagents: toolId を渡すとその子だけ（画面の findSubagent と同じ形）', (await call(agent('ask'), 'sessions.subagents', { toolId: 'tool-1' })).r.result.agentId === 'a1'
     && (await call(human, 'sessions.subagents', { sessionId: 's1', toolId: 'tool-1' })).r.result.agentId === 'a1');
+  t.ok('sessions.subagents: 画面は toolId が無くても sessionId があれば子の一覧を返し、sessionId が無ければ今までの文で断る',
+    (await call(human, 'sessions.subagents', { sessionId: 's1' })).r.result.subagents?.length === 35
+    && !(await call(human, 'sessions.subagents', {})).r.ok);
   const read = (await call(agent('ask'), 'sessions.readSubagent', { agentId: 'a1', limit: 5 })).r.result;
   t.ok('sessions.readSubagent: 発言を区切り、本文と依頼文を切る。考えとツールの入力は返さない', read.total === 40 && read.messages.length === 5 && read.next && read.messages[0].text.length === 2000 && read.messages[0].truncated === true
     && read.prompt.length === 2000 && !JSON.stringify(read).includes('secret thinking') && !JSON.stringify(read).includes('"input"'), JSON.stringify(read).slice(0, 300));

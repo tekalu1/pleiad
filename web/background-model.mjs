@@ -23,6 +23,18 @@ export function taskTree(tasks, sessionId) {
   return (byParent.get(sessionId) ?? []).flatMap(root => visit(root, 0, ['queued', 'running', 'cancelling', 'waiting'].includes(root.status)));
 }
 
+/**
+ * 委譲した子の会話（sessionId）が生んだネイティブのサブエージェント（孫）。新しいものを先に並べる。
+ * 走っている分は配信（running の subagents。このターンの分）、終わった分は読み出し済みの past。同じ子（origin か id が同じ）は配信を取る
+ */
+export function nativeChildren(sessionId, subagents, past = []) {
+  if (!sessionId) return [];
+  const live = (subagents ?? []).filter(a => a.sessionId === sessionId);
+  const origins = new Set(live.map(a => a.origin).filter(Boolean)), ids = new Set(live.map(a => a.id));
+  const when = (a) => (a.startedAt ? new Date(a.startedAt).getTime() || 0 : 0);
+  return [...live, ...past.filter(a => !origins.has(a.origin) && !ids.has(a.id))].sort((a, b) => when(b) - when(a));
+}
+
 // hostStale: ホストの孫の行で、しばらく読めていないもの（走っていたかもしれない・終わったかもしれない）。どちらにも数えない
 export function backgroundTotals(items) {
   return { live: items.filter(item => item.live).length,

@@ -152,12 +152,16 @@ export const sessionWorkOps = [
     output: z.object({ agentId: z.string().nullable().optional(), subagents: z.array(z.record(z.string(), z.unknown())).optional() }).passthrough(),
     surfaces: { ui: true, mcp: 'catalog', cli: { path: ['sessions', 'subagents'] } },
     legacyCommand: 'findSubagent',
-    uiHandler: (ctx, { sessionId: id, toolId }) => { need(id && toolId, agentIdsRequired); return ctx.sessionWork.findSubagent(id, toolId); },
+    // toolId があればその子だけ（今までの形）。無ければ会話の子の一覧（委譲した子の会話が生んだ孫を、画面がターンの後も引き直す）
+    uiHandler: async (ctx, { sessionId: id, toolId }) => {
+      need(id, agentIdsRequired);
+      return toolId ? ctx.sessionWork.findSubagent(id, toolId) : { subagents: await ctx.sessionWork.subagents(id) };
+    },
     handler: (ctx, { sessionId: given, toolId, limit: n, cursor: c }) => run(ctx, async () => {
       const id = target(ctx, given, agentIdsRequired);
       if (toolId) return ctx.sessionWork.findSubagent(id, toolId);
       const page = pageOf(ctx, await ctx.sessionWork.subagents(id), { limit: n, cursor: c });
-      return { total: page.total, subagents: page.items, next: page.next };
+      return { total: page.total, subagents: maskTree(page.items), next: page.next };
     }),
   }),
 
