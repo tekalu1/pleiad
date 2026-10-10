@@ -70,7 +70,7 @@ export default async function(t) {
     const shotResult = results[0];
     t.ok('tool.result の text は印の行を除いた本文。images（/computer-shot/<id>.jpg）と computer（印の中身）が付く', shotResult.text === 'ディスプレイ 1 / 2・1460×821（実寸 1920×1080 を縮小）' && shotResult.images.length === 1
       && /^\/computer-shot\/[0-9a-f]{32}\.jpg$/.test(shotResult.images[0].url) && shotResult.images[0].width === 1460 && shotResult.computer.tool === 'screenshot' && shotResult.computer.state === 'ok' && shotResult.computer.title === '画面を確かめる');
-    t.ok('クリックの結果は印にアプリ名。画像は付かない', results[1].computer.app === 'メモ帳' && results[1].computer.title === '保存を押す' && !results[1].images?.length && results[1].text === '左クリックしました（メモ帳）');
+    t.ok('クリックの結果は印にアプリ名。画像は付かない', results[1].computer.app === 'メモ帳' && results[1].computer.title === '保存を押す' && !results[1].images?.length && results[1].text === '左クリックしました（メモ帳） 位置: (100, 100)。');
 
     const shotId = shotResult.computer.shot;
     const file = path.join(dataDir, 'computer-use', 'shots', `${shotId}.jpg`);

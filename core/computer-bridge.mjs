@@ -88,6 +88,8 @@ export function createComputerBridge({ driver, lock, shots, access, askPermissio
     try {
       if (!driver.state()?.supported || normalizeComputerUse((await access.getPrefs()).computerUse).enabled === false) throw new ToolFail('unsupported', { message: '' });
       if (t.stopped) throw new ToolFail(t.stopped.reason);
+      // 知らない引数・型の違いは、ロックを取る前に（何も送らずに）断る。文に悪い引数と正しい形を書く
+      actions.validate(ctx, name, args);
       const body = () => {
         if (t.stopped) throw new ToolFail(t.stopped.reason);
         return actions.perform(ctx, name, args);
@@ -157,7 +159,7 @@ export function createComputerBridge({ driver, lock, shots, access, askPermissio
       else if (m.method === 'tools/list') result = { tools: computerTools(locale, platform) };
       else if (m.method === 'tools/call') {
         const args = m.params?.arguments ?? {};
-        // 知らない引数は無視する（失敗にしない）。引数の形が object でなければ断る
+        // 引数の形が object でなければここで断る。知らない引数・型の違いは callTool が invalid にする（黙って捨てない）
         result = !args || typeof args !== 'object' || Array.isArray(args) ? plain(locale, agentT(locale, 'computer.errors.invalid', {})) : await callTool(binding, m.params?.name, args);
       } else return reply(200, { jsonrpc: '2.0', id: m.id, error: { code: -32601, message: 'Method not found' } });
       reply(200, { jsonrpc: '2.0', id: m.id, result });

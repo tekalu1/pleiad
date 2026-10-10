@@ -141,6 +141,7 @@ Windows で試験するのは JSON 行・座標・エラー・OS 分岐・入力
 | `locked` | Windows は入力デスクトップが `Default` でない場合。macOS はロック中かコンソールのセッションでない場合。`screenshot` と `input` の前に main が毎回見る |
 | `uipi` | 対象（点の下か前面）のプロセスが昇格していて、入力が届かない |
 | `self` | 前面が Pleiad 自身なのに `text` / `key` を送ろうとした（禁止の判定と二重に守る） |
+| `target_changed` | `input` に `expect` があり、`click` / `down` / `drag` を送る直前の点の下（`drag` は始点）が別のアプリ（pid も実行ファイルのパスも違う）に替わっていた |
 | `windows_key` | Windows で `combo` に `super` / `win` / `meta` がある |
 | `stopped` | Esc か `computer-stop` の後、同じ `owner` の `input` が来た。次の `computer-arm` か `computer-turn-ended` まで続く |
 | `outside` | 座標がどのディスプレイにも入らない |
@@ -181,7 +182,7 @@ A が作った土台。`desktop/main.cjs` は `attachComputerService(worker, { e
 - `findApp` は、動いている窓（見えていて名前のある最上位の窓）に、スタートメニューのアプリ（PowerShell の `Get-StartApps`。5 分使い回す。初回は約 2 秒）を足して強い順に並べる。`{GUID}\x.exe` の形の AppID は既知のフォルダーを展開して exe のアプリにする。
 - `launch` は、動いているアプリなら起こし直さず前に出す（`alreadyRunning: true`、前に出せたかは `foregrounded`）。起こしたあとは窓が出るまで最長 8 秒待つ（出ない常駐アプリは `app` をそのまま返す）。`kind: 'exe'` は `.exe` の絶対パスだけ。
 - `error` に `done`（`input` が終えた動作の数）を足すことがある。途中で断られたら、押したままのものは離してから返す。
-- `input` は動作ごとに、止めた印・昇格（`uipi`）・前面が Pleiad（`self`。`text` / `key` / `keyDown` だけ）を送る直前に見る。離す動作（`up` / `keyUp`）は止めない。昇格を確かめられないプロセス（開けない）は昇格とみなす。Pleiad 自身が昇格していれば `uipi` にしない。
+- `input` は動作ごとに、止めた印・昇格（`uipi`）・前面が Pleiad（`self`。`text` / `key` / `keyDown` だけ）・押す点の下が `expect` のアプリか（`target_changed`）を送る直前に見る。`input` の返り値の `cursor` は、送った後のカーソルの位置（core が狙いに届いたかを見る）。同じアプリかは pid が同じか、実行ファイルのパス（小文字・`/` にそろえる）が同じかで見る。離す動作（`up` / `keyUp`）は止めない。昇格を確かめられないプロセス（開けない）は昇格とみなす。Pleiad 自身が昇格していれば `uipi` にしない。
 - 持ち主（`owner`）は `computer-arm` と `computer-call` の両方で見る。`computer-call` の持ち主が前の呼び出しと違えば、`computer-arm` が無くても前の分を離す。
 - `displaysVersion` は `screen` のイベントで必ず 1 進める。構成が変わったのを次の呼び出しで見つけたときも進めて `computer-displays-changed` を送る。
 - Electron の main のスレッドは Per-Monitor（V1。2026-10-01 実測）で、物理画素の座標が得られる。Per-Monitor でないときは、同期の呼び出しの間だけ PMv2 に切り替える。
@@ -239,7 +240,7 @@ createComputerBridge({ driver, policy, lock, shots, askPermission, emit, transla
 - `agent` は `{ id, label }`（オーバーレイのピルと承認カードの名前）。
 - `delivery` は、バックエンドの `capabilities.computerUse`（下の「エージェントへの渡し方」）から来る `{ images, waitSliceMs }`。
 
-JSON-RPC は `initialize` / `ping` / `tools/list` / `tools/call` を自前で処理する。`initialize` の `instructions` は指示文（下の「指示文」）。本文の上限は 256KB。知らない引数は無視する（失敗にしない）。
+JSON-RPC は `initialize` / `ping` / `tools/list` / `tools/call` を自前で処理する。`initialize` の `instructions` は指示文（下の「指示文」）。本文の上限は 256KB。`tools/list` のスキーマは全ツールで `additionalProperties: false`。引数の検査は「共通の引数と結果」。
 
 #### 共通の引数と結果
 
@@ -248,6 +249,9 @@ JSON-RPC は `initialize` / `ping` / `tools/list` / `tools/call` を自前で処
   - 物理座標 = `origin + round(x / scale)`。画像の外は丸めずに `outside` で返し、撮り直させる。
   - 撮影の後に `displaysVersion` が変わったら、座標の操作は `stale` で返す。
   - 撮影の前の座標の操作は `no_shot` で返す。前のターンの撮影は使えない（ターンが替わったら `no_shot`）。
+- **引数は呼ぶ前に検査する（ロックを取る前。何も送らない）。** 知らない引数・足りない必須・型の違い（`"10"` のような文字列の数。丸めない）は `invalid` で返し、文に悪い引数名・正しい名前と形・渡された値・正しい呼び方の例（`argExample`）を 1 行で書き、スキーマを見ていない呼び出しも 1 回で直せるようにする（`computer.invalidArgs`）。`x` / `y` は `coordinate: [x, y]`、`x1` / `y1` / `x2` / `y2` は `region: [x0, y0, x1, y1]` の形を書く。別名としては受けない（誤りを隠し、押す位置を取り違えるため。ADR 0202）。`computer_batch` は動作の引数も先に全部検査し、誤りがあれば 1 つも実行せず何番目かを書く（バッチに入れられない動作名は、これまでどおり実行の時にその動作だけ `invalid`）。値の範囲（`display` の範囲・`scroll_amount` の上限など）は実行側が見る。
+- 押す・動かす・ドラッグの結果の文には、位置（上の座標の基準）を書く。`coordinate` を省いたときは「座標を指定しなかったので、今のカーソルの位置 (x, y) に対して行いました」と書く（`computer.pointAt*`）。`forbidden` の文にも、判定に使った位置（座標を省いたときはカーソルの位置、`type` / `key` は今の前面のアプリ）を書く（`computer.where*`）。
+- **入力が狙いに届いたかを確かめる。** main は `input` の返り値で、送った後のカーソルの位置（`cursor`）を返す。座標つきの `click` / `down` / `drag` / `move` の後で、カーソルが狙い（`drag` は終点）から 4 画素より離れていたら `ok` にせず `missed`（`failed`。入力は送った後なので、`screenshot` で確かめさせる文）にする。座標なしの操作は狙いが無いので見ない。
 - 結果は MCP の `content[]`。1 つ目は必ず text で、人が読める短い文と、最後の行に印の行（下の「印の行」）。画像を返すツールは 2 つ目に `{ type: 'image', mimeType: 'image/jpeg', data }` を置く。`delivery.images` が `path` なら、text に保存先の絶対パスの行（`computer.shotPath`）を足す。
 - `isError` は `state` が `ok` 以外のとき true。
 
@@ -276,7 +280,7 @@ JSON-RPC は `initialize` / `ping` / `tools/list` / `tools/call` を自前で処
 | `open_application` | `app: string` | 起動した・既に動いていた・見つからない、を正直に返す。起動の前にそのアプリの禁止と承認の判定を通す | 取る |
 | `computer_batch` | `actions: [{ action, …各ツールの引数 }]`（最大 20。`request_access`・`list_granted_applications`・`wait_until`・`computer_batch` は入れられない） | 動作ごとの結果。失敗・止められたらそこで打ち切る。撮影を含むときは最後の 1 枚だけを返す | 取る |
 
-`left_click` などの `coordinate` を省くと今のカーソルの位置。`text` の修飾キーは `ctrl` / `shift` / `alt` だけ。
+`left_click` などの `coordinate` を省くと、座標を指定せず今のカーソルの位置に対して行う（結果の文にその位置を書く）。`coordinate` は 2 つの数の配列で、`x` / `y` という別々の引数は無い。`text` の修飾キーは `ctrl` / `shift` / `alt` だけ。
 
 入力の前のゲート（core が毎回この順に見る）:
 
@@ -285,7 +289,7 @@ JSON-RPC は `initialize` / `ping` / `tools/list` / `tools/call` を自前で処
 3. 座標の検査（`no_shot` / `stale` / `outside`）。
 4. 対象のアプリを main に聞く。クリック・ドラッグ・スクロール・移動・ボタンは点の下（`appAt`）、`type` / `key` / `hold_key` は前面（`foreground`）。
 5. 方針で判定する（下の「判定の順」）。聞くときは承認カードを出して、この呼び出しの中で待つ。待つ間はオーバーレイを `hide` にする。
-6. main に `input` を送る。main は入力デスクトップ・UIPI・自分の窓を見て断ることがある。
+6. main に `input` を送る。押す動作（`click` / `down` / `drag`）には、判定して通したアプリを `expect` で渡す。main は入力デスクトップ・UIPI・自分の窓を見て断ることがあり、押す直前に点の下の窓が `expect` のアプリのままかも確かめる（替わっていたら `target_changed`。core は `point_changed` にする）。送った後は、返ってきたカーソルの位置で狙いに届いたかを見る（`missed`）。
 7. `computer-overlay { state: 'activity' }` を送る。
 
 `screenshot` と `zoom` にアプリの判定は無い（画面に映る禁止のアプリも撮れる）。入力デスクトップは main が見る。
@@ -339,6 +343,8 @@ JSON-RPC は `initialize` / `ping` / `tools/list` / `tools/call` を自前で処
 | `busy` | stopped | 別の会話が操作中のまま 10 分を過ぎた |
 | `uipi` | failed | 管理者権限のアプリで入力が届かない |
 | `self` / `windows_key` | failed | main の二重の守り・Windows キー |
+| `point_changed` | failed | 押す直前に、点の下の窓が判定したアプリから別の窓に替わっていたので、押さずに止めた（main の `target_changed`。キーの `target_changed` と文を分ける） |
+| `missed` | failed | 入力は送ったが、送った後のカーソルが狙いから 4 画素より離れていた。入力が狙いに入ったとは限らないので、`screenshot` で確かめさせる |
 | `no_shot` / `stale` / `outside` | failed | 座標の基準が無い・古い・範囲の外 |
 | `not_found` | failed | `open_application` の対象が無い |
 | `timeout` / `failed` / `unsupported` / `invalid` | failed | main の上限時間・その他・使えない・引数が不正 |
@@ -355,6 +361,7 @@ JSON-RPC は `initialize` / `ping` / `tools/list` / `tools/call` を自前で処
 - 削除・送信・購入・アカウント作成は、実行の直前にユーザーに確かめる。
 - 止められたというエラーが返ったら、以後このターンでは呼ばず、最終の返答で伝える。
 - 各ツールの `title` を会話の言語で短く書く。
+- 引数名はスキーマのとおりに渡す（座標は `coordinate: [x, y]`・zoom は `region`・ドラッグは `start_coordinate` と `coordinate`・scroll は `coordinate` / `scroll_direction` / `scroll_amount`・`wait` は `duration`・キーや文字は `text`。数は文字列にしない）。ツールが deferred でスキーマが見えないときは、呼ぶ前に先に読み込む（Claude Code は ToolSearch）。スキーマを見ずに呼んで誤ったときは、`invalid` の文（悪い引数名・使える引数・正しい形・呼び方の例）で直す。
 - 読み込みや処理の終わりを待つときは、`wait` と `screenshot` を繰り返さず `wait_until` を使う。
 
 ### 正規化イベントと履歴
@@ -546,3 +553,4 @@ Codex `codex-cli 0.156.1`（app-server）、Claude Agent SDK 0.3.258（CLI 2.1.2
 - [ADR 0074](adr/0074-codex-bundled-computer-use-off.md) Codex の同梱の computer use を切る
 - [ADR 0075](adr/0075-computer-screenshots-in-data-dir.md) スクリーンショットの保存と印の行
 - [ADR 0165](adr/0165-computer-use-wait-until-decision-model.md) `wait_until`（画面の差分と決定モデル）
+- [ADR 0202](adr/0202-computer-use-argument-validation-and-landing-check.md) 引数を検査して断り、押す直前に窓を確かめ直し、入力が狙いに届いたかを確かめる

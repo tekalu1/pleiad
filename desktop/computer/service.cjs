@@ -6,7 +6,7 @@ const { ComputerError } = require('./errors.cjs');
 const { loadWin32 } = require('./win32.cjs');
 const { createInput } = require('./input.cjs');
 const { createCapture } = require('./capture.cjs');
-const { createApps } = require('./apps.cjs');
+const { createApps, normalizePath } = require('./apps.cjs');
 const { createDesktopState } = require('./desktop-state.cjs');
 const { listDisplays, virtualBounds, containsPoint, signature } = require('./displays.cjs');
 
@@ -18,6 +18,21 @@ const ASYNC_METHODS = new Set(['captureRect', 'fileDescription', 'shellOpen']);
 const KEYBOARD = new Set(['text', 'key', 'keyDown', 'keyUp']);
 /** 押す・掴む動作。Pleiad 自身の窓（引き継ぎのピルなど、スクリーンショットに写らない窓も含む）の上では送らない。move・scroll は押さないので止めない */
 const PRESS = new Set(['click', 'down', 'drag']);
+
+/** input の expect（{ pid?, path? }）。どちらも無ければ確かめない（null） */
+function expectOf(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  const pid = Number.isInteger(raw.pid) && raw.pid > 0 ? raw.pid : null;
+  const path = typeof raw.path === 'string' && raw.path ? raw.path : null;
+  return pid || path ? { pid, path } : null;
+}
+
+/** 前面（押す動作は点の下）のアプリが expect と同じか: 同じプロセスか、同じ実行ファイル（同じアプリの別の窓） */
+function sameApp(target, expect) {
+  if (!target) return false;
+  if (expect.pid && target.pid === expect.pid) return true;
+  return Boolean(expect.path && target.path && normalizePath(target.path) === normalizePath(expect.path));
+}
 
 /**
  * main のスレッドが Per-Monitor（V1 でも V2 でもよい。Electron の main は V1 = 実測 2026-10-01）でないときだけ、
@@ -107,8 +122,12 @@ function createComputerService({ post, win32: rawWin32 = null, backend: injected
     if ((await desktop.check()).locked) throw new ComputerError('locked', 'the screen is locked or showing a secure desktop');
   };
 
-  /** 入力の前に毎回: 昇格したアプリには届かない（uipi）、Pleiad 自身の窓にはキーを送らず、押しもしない（self）。離す動作は止めない */
-  async function gate(action) {
+  /**
+   * 入力の前に毎回: 昇格したアプリには届かない（uipi）、Pleiad 自身の窓にはキーを送らず、押しもしない（self）。離す動作は止めない。
+   * expect（core が判定して通したアプリの pid とパス）があれば、押す点の下の窓がそのアプリのままかも確かめる（target_changed）。
+   * 押す点の下は、送る直前にここで引き直す（core が appAt で判定した後に、窓が重なる・動くことがあるため）
+   */
+  async function gate(action, expect) {
     if (action.type === 'keyUp' || action.type === 'up') return;
     let target;
     if (KEYBOARD.has(action.type)) {
@@ -119,6 +138,7 @@ function createComputerService({ post, win32: rawWin32 = null, backend: injected
       target = await apps.inspectAt(point.x, point.y);
       // 画面共有・撮影から外したピル（desktop/chrome-pill.cjs）は、写らないのに点の下にある。Pleiad の窓を押させない
       if (PRESS.has(action.type) && target?.self) throw new ComputerError('self', 'the window under the pointer belongs to Pleiad');
+      if (expect && PRESS.has(action.type) && !sameApp(target, expect)) throw new ComputerError('target_changed', 'the window under the pointer changed after it was checked');
     }
     if (target?.elevated && !selfElevated) throw new ComputerError('uipi', 'the target app runs with administrator rights and cannot receive input');
   }
@@ -129,11 +149,12 @@ function createComputerService({ post, win32: rawWin32 = null, backend: injected
     refreshDisplays();
     const actions = args?.actions;
     input.validate(actions, { inDisplay: (x, y) => containsPoint(displays, x, y) });
+    const expect = expectOf(args?.expect);
     let done = 0;
     try {
       for (const action of actions) {
         if (stopped.has(owner)) throw new ComputerError('stopped', 'stopped by the user');
-        await gate(action);
+        await gate(action, expect);
         await input.perform(action, signal);
         done++;
       }

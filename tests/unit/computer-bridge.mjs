@@ -1,6 +1,6 @@
 import { createHarness, BYPASS_MODE, sleep, until } from '../lib/computer-harness.mjs';
 import { FAKE_APPS } from '../../core/computer-use/driver.mjs';
-import { COMPUTER_TOOL_NAMES } from '../../core/computer-use/tools.mjs';
+import { COMPUTER_TOOL_NAMES, argProblems, argExample } from '../../core/computer-use/tools.mjs';
 import { computerDisplay } from '../../core/computer-use/display.mjs';
 
 export const name = 'computer-bridge';
@@ -28,7 +28,9 @@ export default async function(t) {
       return ['coordinate', 'scroll_direction', 'scroll_amount'].every(k => s.scroll.required.includes(k)) && s.hold_key.properties.duration.maximum === 10 && s.wait.properties.duration.maximum === 10
         && s.computer_batch.properties.actions.maxItems === 20 && !s.computer_batch.properties.actions.items.properties.action.enum.includes('computer_batch') && !s.computer_batch.properties.actions.items.properties.action.enum.includes('request_access');
     })());
+    t.ok('指示文に、引数の形（coordinate: [x, y]・region・duration・text）と、スキーマが見えないときは先に読み込むことを書く（ja）', ['coordinate: [x, y]', 'region: [x0, y0, x1, y1]', 'duration', 'ToolSearch', 'scroll_direction'].every(k => a.binding.instructions.includes(k)), a.binding.instructions);
     const en = h.connect({ sessionId: 'en', locale: 'en' });
+    t.ok('指示文の引数の形は英語でも同じ（coordinate: [x, y]・region・ToolSearch）', ['coordinate: [x, y]', 'region: [x0, y0, x1, y1]', 'ToolSearch'].every(k => en.binding.instructions.includes(k)));
     t.ok('英語の会話では説明も指示文も英語', (await en.rpc('tools/list', {})).body.result.tools[0].description.startsWith('Ask the user') && en.binding.instructions.includes('terminals'));
     t.ok('知らないメソッドは JSON-RPC のエラー、通知（id なし）は 202', (await a.rpc('nope', {})).body.error.code === -32601);
     en.binding.close();
@@ -47,7 +49,14 @@ export default async function(t) {
     t.ok('driver へは maxPixels 1.2MP・maxEdge 1568・quality 75 と、対象のディスプレイの id を送る', (() => { const c = h.driver.calls.find(x => x.op === 'screenshot'); return c.args.maxPixels === 1_200_000 && c.args.maxEdge === 1568 && c.args.quality === 75 && c.args.display === 'fake-1'; })());
     t.ok('title が来なくても失敗にせず、サーバーが操作から作って埋める', mark(await a.call('screenshot', {})).title === '画面を確かめる'
       && mark(await a.call('left_click', { coordinate: [412, 238] })).title === 'クリック（412, 238）' && mark(await a.call('key', { text: 'ctrl+s' })).title === 'キー入力（ctrl+s）');
-    t.ok('知らない引数は無視する（失敗にしない）', mark(await a.call('screenshot', { title: 'x', whatever: 1 })).state === 'ok');
+    {
+      const unk = await a.call('screenshot', { title: 'x', whatever: 1 });
+      t.ok('知らない引数は黙って捨てず invalid。文に悪い引数名と使える引数を書く', unk.isError && mark(unk).reason === 'invalid' && body(unk).includes('whatever') && body(unk).includes('display'), body(unk));
+    }
+    t.ok('スキーマは全ツールで additionalProperties: false（知らない引数を宣言から断る）', list.every(x => x.inputSchema.additionalProperties === false)
+      && list.find(x => x.name === 'computer_batch').inputSchema.properties.actions.items.additionalProperties === false);
+    t.ok('説明: 座標を省いたときの意味と coordinate の形を書く（クリック・マウス・zoom の region）', ['left_click', 'right_click', 'left_mouse_down'].every(n => { const d = list.find(x => x.name === n).description; return d.includes('coordinate: [x, y]') || d.includes('coordinate [x, y]'); })
+      && list.find(x => x.name === 'left_click').description.includes('カーソルの位置') && list.find(x => x.name === 'zoom').description.includes('region: [x0, y0, x1, y1]'));
 
     // ---- 座標の基準（no_shot / stale / outside）
     a.end();
@@ -88,7 +97,7 @@ export default async function(t) {
       const act = h.driver.overlays.find(o => o.state === 'activity' && o.cursor);
       return kinds[0] === 'activity' || kinds.includes('hide') ? kinds.indexOf('hide') >= 0 && act?.owner === c1.state.turnId && act.agent === 'Claude' && act.title === '見積もり' && typeof act.cursor.x === 'number' && act.cursor.pressed === false && act.display?.id === 'fake-1' && act.display.bounds.width === 1920 : false;
     })(), JSON.stringify(h.driver.overlays));
-    t.ok('「この会話で許可」は会話に覚える。印の行に app', h.db.session.get('c1')?.includes(FAKE_APPS.notepad.id) && mark(r1).app === 'メモ帳' && mark(r1).state === 'ok' && !('grant' in mark(r1)) && body(r1) === '左クリックしました（メモ帳）');
+    t.ok('「この会話で許可」は会話に覚える。印の行に app', h.db.session.get('c1')?.includes(FAKE_APPS.notepad.id) && mark(r1).app === 'メモ帳' && mark(r1).state === 'ok' && !('grant' in mark(r1)) && body(r1) === '左クリックしました（メモ帳） 位置: (100, 100)。');
     t.ok('答えた後は introduced になる（次のカードは first: false）', h.db.introduced.length === 1);
     await click(c1, 200, 200);
     t.ok('許可済みのアプリは、もう聞かない', h.asked.length === 1);
@@ -388,6 +397,90 @@ export default async function(t) {
         && mark(await x.call('computer_batch', { actions: Array.from({ length: 21 }, () => ({ action: 'wait', duration: 0.01 })), title: 'x' })).reason === 'invalid'
         && mark(await x.call('computer_batch', { actions: [], title: 'x' })).reason === 'invalid');
     } finally { await hx.close(); }
+
+    // ---- 引数の誤り・位置の明示・届かなかった入力（ツールのスキーマを見ていない呼び出しでも、1 回で直せる / 気づける）
+    const hv = await createHarness({ waitMs: 400, prefs: { computerUse: { allowAllApps: true } } });
+    try {
+      const x = hv.connect({ sessionId: 'v1', mode: BYPASS_MODE });
+      await x.call('screenshot', { title: 'x' });
+      hv.driver.calls.length = 0;
+      const xy = await x.call('left_click', { title: 'x', x: '1329', y: '727' });
+      t.ok('x・y の引数は、黙って捨てて今のカーソルを押さず invalid。悪い引数名と coordinate: [x, y] の形を書く。入力は送らない（別名としても受けない）',
+        xy.isError && mark(xy).reason === 'invalid' && mark(xy).state === 'failed' && body(xy).includes('x・y') && body(xy).includes('coordinate: [x, y]') && !hv.ops().includes('input') && !hv.ops().includes('appAt'), body(xy));
+      t.ok('誤りの文には、正しい呼び方の例（引数の JSON）を 1 行で付ける', body(xy).includes('正しい呼び方の例: left_click {"coordinate":[412,238]') && body(xy).split('\n').length === 1, body(xy));
+      t.ok('どのツールの例も、自分の検査を通る形（例が誤りを教えない）', COMPUTER_TOOL_NAMES.every(n => argExample(n) && argProblems(n, argExample(n), { batchItem: false }).length === 0));
+      const mv = await x.call('mouse_move', { title: 'x', x: 10, y: 10 });
+      t.ok('mouse_move の x・y も同じ（reason だけでなく、どの引数が悪いかを書く）', mark(mv).reason === 'invalid' && body(mv).includes('coordinate: [x, y]') && body(mv).includes('mouse_move'), body(mv));
+      const zm = await x.call('zoom', { title: 'x', x1: 0, y1: 0, x2: 400, y2: 300 });
+      t.ok('zoom の x1..y2 は invalid。region: [x0, y0, x1, y1] の形を書く', mark(zm).reason === 'invalid' && body(zm).includes('x1・y1・x2・y2') && body(zm).includes('region: [x0, y0, x1, y1]') && !hv.ops().includes('screenshot'), body(zm));
+      const wt = await x.call('wait', { title: 'x', seconds: 1 });
+      t.ok('wait の知らない引数（seconds）は、悪い引数名と使える引数（duration）を書く', mark(wt).reason === 'invalid' && body(wt).includes('seconds') && body(wt).includes('duration'), body(wt));
+      hv.driver.calls.length = 0;
+      const str = await x.call('left_click', { title: 'x', coordinate: ['10', '10'] });
+      const str2 = await x.call('scroll', { title: 'x', coordinate: [10, 10], scroll_direction: 'down', scroll_amount: '3' });
+      const str3 = await x.call('wait', { title: 'x', duration: '1' });
+      t.ok('型の違い（数を文字列で渡した）は丸めず invalid。引数名・正しい型・渡された値を書く。入力は送らない',
+        [str, str2, str3].every(r => mark(r).reason === 'invalid' && r.isError) && body(str).includes('coordinate') && body(str).includes('"10"') && body(str2).includes('scroll_amount') && body(str3).includes('duration') && !hv.ops().includes('input'), [body(str), body(str2), body(str3)].join(' / '));
+      const miss = await x.call('left_click', { title: 'x', coordinate: [10] });
+      t.ok('coordinate が 2 つの数でないものも invalid', mark(miss).reason === 'invalid' && body(miss).includes('coordinate'));
+      hv.driver.calls.length = 0;
+      const bt = await x.call('computer_batch', { title: 'x', actions: [{ action: 'left_click', coordinate: [10, 10] }, { action: 'left_click', x: 5, y: 5 }] });
+      t.ok('computer_batch は、動作の引数も先に全部検査する。誤りがあれば 1 つも実行せず、何番目かを書く', mark(bt).reason === 'invalid' && body(bt).includes('2 番目') && body(bt).includes('coordinate: [x, y]') && !hv.ops().includes('input'), body(bt));
+      const none = await x.call('left_click', { title: 'x', coordinate: [10, 10], whatever: 1 });
+      t.ok('正しい引数に知らない引数が混ざっても invalid（一部だけ効かせない）', mark(none).reason === 'invalid' && body(none).includes('whatever'));
+
+      // 位置の明示
+      hv.driver.calls.length = 0;
+      const withPoint = await x.call('left_click', { title: 'x', coordinate: [200, 120] });
+      t.ok('座標つきの操作の結果にも、位置（スクリーンショットの座標）を書く', mark(withPoint).state === 'ok' && body(withPoint).includes('位置: (200, 120)'), body(withPoint));
+      const noPoint = await x.call('left_click', { title: 'x' });
+      t.ok('座標なしの操作の結果は、今のカーソルの位置（スクリーンショットの座標）に対して行ったと書く', mark(noPoint).state === 'ok' && body(noPoint).includes('座標を指定しなかった') && /今のカーソルの位置 \(\d+, \d+\)/.test(body(noPoint)), body(noPoint));
+      const noDown = await x.call('left_mouse_down', { title: 'x' });
+      await x.call('left_mouse_up', { title: 'x' });
+      t.ok('left_mouse_down も座標なしなら今のカーソルの位置を書く', body(noDown).includes('座標を指定しなかった'), body(noDown));
+      const dragNo = await x.call('left_click_drag', { title: 'x', coordinate: [300, 300] });
+      t.ok('left_click_drag は、始点を省けば今のカーソルの位置と書き、終点も書く', body(dragNo).includes('始点は座標を指定しなかった') && body(dragNo).includes('終点は (300, 300)'), body(dragNo));
+      const dragBoth = await x.call('left_click_drag', { title: 'x', start_coordinate: [10, 10], coordinate: [300, 300] });
+      t.ok('始点を指定したドラッグは、from → to を書く', body(dragBoth).includes('(10, 10) から (300, 300) へ'), body(dragBoth));
+
+      // 狙いに届かなかった入力
+      hv.driver.driftCursor({ x: 700, y: 400 });
+      const missed = await x.call('left_click', { title: 'x', coordinate: [10, 10] });
+      t.ok('送った後のカーソルが狙いから離れていたら、ok にせず missed（failed）。狙いと実際の位置を書き、確かめるよう促す', missed.isError && mark(missed).reason === 'missed' && mark(missed).state === 'failed' && body(missed).includes('(10, 10)') && body(missed).includes('screenshot'), body(missed));
+      hv.driver.driftCursor({ x: 700, y: 400 });
+      const missedDown = await x.call('left_mouse_down', { title: 'x', coordinate: [10, 10] });
+      t.ok('left_mouse_down も届かなければ missed', mark(missedDown).reason === 'missed');
+      await x.call('left_mouse_up', { title: 'x' });
+      hv.driver.driftCursor({ x: 700, y: 400 });
+      const missedDrag = await x.call('left_click_drag', { title: 'x', start_coordinate: [10, 10], coordinate: [300, 300] });
+      t.ok('left_click_drag は終点に届かなければ missed', mark(missedDrag).reason === 'missed');
+      const near = (await x.call('left_click', { title: 'x', coordinate: [50, 50] }));
+      t.ok('狙いのとおりに届けば ok のまま（座標なしの操作は、狙いが無いので missed にしない）', mark(near).state === 'ok' && mark(await x.call('left_click', { title: 'x' })).state === 'ok');
+
+      // 押す直前に点の下の窓が替わった
+      hv.driver.coverBeforeInput(FAKE_APPS.calc);
+      hv.driver.calls.length = 0;
+      const covered = await x.call('left_click', { title: 'x', coordinate: [50, 50] });
+      t.ok('判定した後、押す直前に点の下が別のアプリに替わったら、main が止めて point_changed（failed）。ok にしない',
+        covered.isError && mark(covered).reason === 'point_changed' && mark(covered).state === 'failed' && body(covered).includes('メモ帳') && body(covered).includes('screenshot'), body(covered));
+      t.ok('押す動作には、判定したアプリを expect で渡す（pid とパス）', (c => c?.args.expect?.pid === FAKE_APPS.notepad.pid && c.args.expect.path === FAKE_APPS.notepad.path)(hv.driver.calls.find(c => c.op === 'input')), JSON.stringify(hv.driver.calls.find(c => c.op === 'input')?.args));
+      hv.driver.coverBeforeInput(null);
+      const moved = await x.call('mouse_move', { title: 'x', coordinate: [60, 60] });
+      t.ok('マウスを動かすだけの mouse_move は、押さないので窓が替わっていても止めない', mark(moved).state === 'ok');
+
+      // 禁止の文に、判定に使った位置
+      hv.driver.driftCursor({ x: 100, y: 1050 });
+      await x.call('left_click', { title: 'x', coordinate: [10, 10] });
+      hv.driver.calls.length = 0;
+      const fNo = await x.call('left_click', { title: 'x' });
+      t.ok('座標なしで禁止に当たったら、文に「座標を指定しなかったので、今のカーソルの位置 (x, y)」を書く。入力は送らない', mark(fNo).reason === 'forbidden' && mark(fNo).state === 'stopped' && body(fNo).includes('Windows Terminal') && /判定した位置: 座標を指定しなかったので、今のカーソルの位置 \(\d+, \d+\)/.test(body(fNo)) && !hv.ops().includes('input'), body(fNo));
+      const fYes = await x.call('left_click', { title: 'x', coordinate: [100, 790] });
+      t.ok('座標つきで禁止に当たったら、判定した位置（その座標）を書く', mark(fYes).reason === 'forbidden' && body(fYes).includes('判定した位置: (100, 790)'), body(fYes));
+      hv.driver.setForeground(FAKE_APPS.terminal);
+      const fKey = await x.call('key', { title: 'x', text: 'Return' });
+      t.ok('キーが禁止に当たったら、判定したのは今の前面のアプリと書く', mark(fKey).reason === 'forbidden' && body(fKey).includes('判定したのは、今の前面のアプリ'), body(fKey));
+      hv.driver.setForeground(FAKE_APPS.notepad);
+    } finally { await hv.close(); }
 
     // ---- 同じターンの並列の呼び出しは直列。複数の会話ではロック
     const hp = await createHarness({ waitMs: 400, prefs: { computerUse: { allowAllApps: true } }, driverOptions: { delayMs: 30 } });

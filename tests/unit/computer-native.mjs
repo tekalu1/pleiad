@@ -681,6 +681,31 @@ async function serviceTests(t) {
     t.ok('途中の動作で断られたら done に終えた数を載せる', partial.error?.code === 'self' && partial.error.done === 1);
   }
 
+  // expect: 押す動作（click・down・drag）は、送る直前に点の下の窓が判定したアプリのままかを引き直して確かめる
+  {
+    let under = 5;
+    const owner = { 5: { pid: 200, path: 'C:\\Apps\\Editor.exe' }, 6: { pid: 300, path: 'C:\\Apps\\Other.exe' }, 7: { pid: 201, path: 'c:/apps/editor.exe' } };
+    const pids = Object.fromEntries(Object.values(owner).map(o => [o.pid, o.path]));
+    const { call, w } = make({
+      windowAt: () => under, rootOf: h => h, foreground: () => 5,
+      windowInfo: hwnd => ({ hwnd, pid: owner[hwnd]?.pid ?? 0, title: 't', className: '', exStyle: 0, visible: true, iconic: false, cloaked: false, hung: false, rect: null }),
+      processPath: pid => pids[pid] ?? null,
+    });
+    const expect = { pid: 200, path: 'C:\\Apps\\Editor.exe' };
+    t.ok('点の下が判定したアプリのままなら押す', (await call('input', { actions: [{ type: 'click', x: 5, y: 5 }], expect })).ok === true && w.sent.length > 0);
+    w.sent.length = 0; under = 6;
+    const click = await call('input', { actions: [{ type: 'click', x: 5, y: 5 }], expect });
+    t.ok('点の下が別のアプリに替わっていたら、click は target_changed（何も送らない）', click.error?.code === 'target_changed' && w.sent.length === 0, JSON.stringify(click.error));
+    const down = await call('input', { actions: [{ type: 'down', x: 5, y: 5 }], expect });
+    const drag = await call('input', { actions: [{ type: 'drag', from: { x: 5, y: 5 }, to: { x: 9, y: 9 } }], expect });
+    t.ok('down・drag も target_changed', down.error?.code === 'target_changed' && drag.error?.code === 'target_changed' && w.sent.length === 0);
+    t.ok('動かすだけの move は、点の下が替わっていても止めない', (await call('input', { actions: [{ type: 'move', x: 5, y: 5 }], expect })).ok === true);
+    under = 7;
+    t.ok('同じ実行ファイルの別のプロセスなら押す', (await call('input', { actions: [{ type: 'click', x: 5, y: 5 }], expect })).ok === true);
+    under = 6;
+    t.ok('expect が無ければ確かめない（これまでどおり）', (await call('input', { actions: [{ type: 'click', x: 5, y: 5 }] })).ok === true);
+  }
+
   // 点の下が Pleiad 自身の窓（撮影から外した引き継ぎのピルなど）なら、押す動作は self（キーと同じ）
   {
     const { call, w } = make({
