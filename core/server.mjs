@@ -4516,6 +4516,8 @@ async function runningWork() {
     ...(w.remote ? { remote: { hostId: w.remote.hostId, hostName: w.remote.hostName, online: w.remote.online !== false } } : {}),   // ホストの子の承認の中継（docs/remote.md §4.5）
     ...(w.detached ? { detached: true } : {}),   // ターンを止めていない承認（設定の変更。ADR 0088）
     ...(w.outlivesTurn ? { outlivesTurn: true } : {}),   // ターンが終わっても残る待ち（ADR 0168）
+    // Chrome の準備・許可・操作を待っている承認。一覧の行は「承認待ち」ではなく「Chrome の操作待ち」と言う
+    ...(w.payload.browserHandoff || w.payload.chromeWait ? { chromeWait: true } : {}),
     blocking: blocksTurn(w),   // 今ターンを止めているか（実行中の数に入るか）
   }));
 
@@ -4851,6 +4853,8 @@ const askPermission = async ({ toolName, input, sessionId, toolUseID, title, sig
         w.payload.browserHandoff = { ...w.payload.browserHandoff, ...patch };
         emitGlobal({ type: 'permissionUpdate', id: card.id, sessionId: card.payload.sessionId ?? null, browserHandoff: w.payload.browserHandoff });
       }
+      // 端末の依頼元のカードも、同じ状態に替える（setup → permission → denied。docs/remote.md §4.5）
+      remoteRelay?.update(chromeWaitOf(cards[0].payload.browserHandoff));
       return true;
     };
     const onAbort = () => settle({ allow: false, messageKey: 'aborted' });
@@ -4921,7 +4925,7 @@ const askPermission = async ({ toolName, input, sessionId, toolUseID, title, sig
         payload: hostOnly ? { kind: 'hostOnly', toolName, title: title ?? null, childTitle, childSessionId: sessionId ?? null, canAlways: false }
           : { kind: asked, toolName, input, ...(asked === 'question' ? { questions } : {}), title: title ?? null, childTitle, childSessionId: sessionId ?? null, canAlways: false,
               // Chrome の操作待ち（core/chrome/handoff.mjs）。端末のカードは「許可」を出さず、「Chrome を使わずに続けてもらう」だけにする
-              ...(browserHandoff ? { chromeWait: { reason: browserHandoff.reason ?? null } } : {}) },
+              ...(browserHandoff ? { chromeWait: chromeWaitOf(cards[0].payload.browserHandoff ?? browserHandoff) } : {}) },
         // 端末の人の答え（remote.md §4.5）。ホストが中継した今待っている承認の ID・受領証・1 回だけを照合した後にだけ来る。常に許可は受けない
         answer: hostOnly ? null : ({ allow, message, answers, annotations, response }) => {
           if (!runtime.waiting.has(cards[0].id)) return false;
@@ -4939,7 +4943,7 @@ const askPermission = async ({ toolName, input, sessionId, toolUseID, title, sig
     }
     botHost?.onPermission({ id: cards[0].id, ...payload }, 'open');
     // 通知の一覧のあなた待ち。委譲の子の承認は、カードが出ている依頼元の会話へ飛ぶ（ADR 0149）
-    if (payload.sessionId) void inboxSources.permissionOpened({ id: cards[0].id, sessionId: payload.sessionId, kind: payload.kind, via: ancestors[0] ?? null });
+    if (payload.sessionId) void inboxSources.permissionOpened({ id: cards[0].id, sessionId: payload.sessionId, kind: payload.kind, via: ancestors[0] ?? null, chrome: Boolean(payload.browserHandoff || payload.chromeWait) });
     signal?.addEventListener?.("abort", onAbort, { once: true });
     // 離れたスマホへ（画面が居るかによらない。委譲の子の承認・質問は子の会話の分だけ。中継の複製は送らない）
     // （会話名を読むあいだに決着していたら送らない。送ると取り消しが先に行ってしまい、通知が残る）
@@ -5339,6 +5343,9 @@ async function settleWorktreesOf(sessionId) {
 }
 // この PC の AI からリモートのホストへ任せる（docs/agent-delegation.md「リモートのホストへ任せる」）。main との口は parentPort（デスクトップ版だけ）。
 // ホストの子の承認は、依頼元の会話の中継のカードとして出す（手元の委譲の中継と同じ runtime.waiting。ただし答えはホストへ運ぶ）
+/** 端末へ中継する Chrome の操作待ちの印。端末のカードが「ホストの Chrome で何をするか」を書き分けるのに要る分だけ（core/chrome/handoff.mjs の状態） */
+const chromeWaitOf = bh => ({ reason: bh?.reason ?? null, state: bh?.state ?? null, dialog: bh?.dialog === true,
+  message: typeof bh?.message === 'string' ? bh.message.slice(0, 400) : null });
 const remoteCards = {
   open(c) {
     const id = crypto.randomUUID();
@@ -5353,6 +5360,13 @@ const remoteCards = {
     sendTo({ kind: P.EVENT, event: { ...payload, id } });
     permissionsChanged();
     return id;
+  },
+  /** ホストの Chrome の操作待ちの状態が変わった。開いているカードの中身だけ差し替える（カードも通知も増やさない） */
+  update(id, patch) {
+    const w = runtime.waiting.get(id);
+    if (!w?.payload.chromeWait || !patch?.chromeWait) return;
+    w.payload.chromeWait = { ...w.payload.chromeWait, ...patch.chromeWait };
+    emitGlobal({ type: 'permissionUpdate', id, sessionId: w.payload.sessionId ?? null, chromeWait: w.payload.chromeWait });
   },
   close(id, resolution) {
     const w = runtime.waiting.get(id);

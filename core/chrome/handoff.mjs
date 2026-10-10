@@ -59,7 +59,7 @@ export function createChromeHandoffs({ askPermission, connection, control: initi
 
   function create(sessionId, reason, message, browserHandoff) {
     const h = { sessionId, reason, message, card: null, queued: null, shown: browserHandoff, ac: new AbortController(), waiters: new Set(), done: false,
-      operating: false, window: { url: null, title: null }, early: null };
+      operating: false, window: { url: null, title: null }, early: null, startedAt: now().getTime() };
     open.set(sessionId, h);
     h.answer = askPermission({
       kind: 'tool', toolName: 'ply_browser', input: { reason, message }, title: titleFor({ reason, message }), sessionId,
@@ -216,7 +216,8 @@ export function createChromeHandoffs({ askPermission, connection, control: initi
         const onAbort = () => done({ kind: 'aborted' });
         if (signal?.aborted) return resolve({ kind: 'aborted' });
         signal?.addEventListener?.('abort', onAbort, { once: true });
-        if (sliceMs > 0) timer = setTimeout(() => done({ kind: 'waiting' }), sliceMs);
+        // 待った長さ（分）は子へ返す。子が「まだ待つか、Chrome を使わずに進めるか」を決める手がかり
+        if (sliceMs > 0) timer = setTimeout(() => done({ kind: 'waiting', minutes: Math.max(1, Math.round((now().getTime() - h.startedAt) / 60_000)) }), sliceMs);
         h.waiters.add(done);
       });
     },

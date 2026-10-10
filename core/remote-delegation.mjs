@@ -229,10 +229,25 @@ export function createRemoteDelegation({ bridge, tasks, agentT, titleOf = async 
 
   // ---- 中継された承認 ----
 
+  /** ホストの Chrome の操作待ちの印（relay.chromeWait）を、カードに載せる形へ。知らない値は落とす */
+  const cleanChromeWait = (w, askedAt = null) => {
+    if (!w || typeof w !== 'object') return null;
+    const str = (v, n) => (typeof v === 'string' ? v.slice(0, n) : null);
+    return { reason: str(w.reason, 40), state: str(w.state, 20), dialog: w.dialog === true, message: str(w.message, 400),
+      ...(typeof askedAt === 'string' ? { since: askedAt } : {}) };
+  };
+
+  function updateRelay(hostId, relayId, chromeWait) {
+    const entry = open.get(`${hostId}:${relayId}`);
+    const next = entry?.chromeWait && cleanChromeWait(chromeWait);
+    if (next) cards?.update?.(entry.cardId, { chromeWait: next });
+  }
+
   function openRelay(hostId, relay) {
     if (!cards || !relay || typeof relay.id !== 'string') return;
     const key = `${hostId}:${relay.id}`;
-    if (open.has(key)) return;
+    // つなぎ直しで送り直された中継は、開いたままのカードの中身だけ最新に替える（カードも通知も増やさない）
+    if (open.has(key)) return updateRelay(hostId, relay.id, relay.chromeWait);
     const row = tasks()?.get(relay.taskId);
     // 自分が任せたタスク（この会話の写し）の承認だけを出す。知らないタスクの承認は出さない
     if (!row?.host || row.host.hostId !== hostId || row.parentSessionId !== relay.requesterSessionId) return;
@@ -242,12 +257,14 @@ export function createRemoteDelegation({ bridge, tasks, agentT, titleOf = async 
     const kind = ['question', 'hostOnly'].includes(relay.kind) ? relay.kind : 'tool';
     const cardId = cards.open({
       sessionId: row.parentSessionId, hostId, hostName: host?.name ?? row.host.name, relayId: relay.id, taskId: relay.taskId, kind, hostOnly: kind === 'hostOnly',
-      toolName: relay.toolName, input: relay.input, questions: kind === 'question' ? relay.questions : undefined, title: relay.title ?? null, childTitle: row.title || relay.childTitle || '',
+      toolName: relay.toolName, input: relay.input, questions: kind === 'question' ? relay.questions : undefined,
+      // Chrome の操作待ちのカードは、題に「委譲先「…」」だけを出す（ホスト側の依頼の題は、本文の最初の 1 行が言う）
+      title: relay.chromeWait ? null : relay.title ?? null, childTitle: row.title || relay.childTitle || '',
       askedAt: relay.askedAt, online: usable(host),
       ...(typeof relay.childSessionId === 'string' && relay.childSessionId.length <= 200 ? { childSessionId: relay.childSessionId } : {}),
-      ...(relay.chromeWait && typeof relay.chromeWait === 'object' ? { chromeWait: { reason: typeof relay.chromeWait.reason === 'string' ? relay.chromeWait.reason.slice(0, 40) : null } } : {}),
+      ...(relay.chromeWait && typeof relay.chromeWait === 'object' ? { chromeWait: cleanChromeWait(relay.chromeWait, relay.askedAt) } : {}),
     });
-    const entry = { cardId, hostId, relayId: relay.id, taskId: relay.taskId, receipt: relay.receipt, hostOnly: kind === 'hostOnly' };
+    const entry = { cardId, hostId, relayId: relay.id, taskId: relay.taskId, receipt: relay.receipt, hostOnly: kind === 'hostOnly', chromeWait: Boolean(relay.chromeWait) };
     open.set(key, entry);
     byCard.set(cardId, entry);
     changed();
@@ -258,7 +275,9 @@ export function createRemoteDelegation({ bridge, tasks, agentT, titleOf = async 
     if (!entry) return;
     open.delete(`${hostId}:${relayId}`);
     byCard.delete(entry.cardId);
-    cards?.close(entry.cardId, { ...resolution, hostName: hostById(hostId)?.name ?? '' });
+    // 子が待つのをやめた（abort）は、Chrome の操作待ちのカードだけ「子が待つのをやめました」と残す。ほかの中継は誰が答えたか分からない決着として下げる
+    const by = resolution.by === 'abort' && !entry.chromeWait ? null : resolution.by;
+    cards?.close(entry.cardId, { ...resolution, by, hostName: hostById(hostId)?.name ?? '' });
     changed();
   }
 
@@ -279,7 +298,8 @@ export function createRemoteDelegation({ bridge, tasks, agentT, titleOf = async 
       case 'relays': return reconcile(hostId, ev.relays);
       case 'synced': return unknownTasks(hostId, ev.unknown).then(() => caughtUp(hostId, ev.unknown));
       case 'relay': return openRelay(hostId, ev.relay);
-      case 'relayEnd': return closeRelay(hostId, ev.id, { by: ev.by === 'device' ? 'device' : ev.by === 'host' ? 'host' : null, allow: ev.allow === true });
+      case 'relayUpdate': return updateRelay(hostId, ev.id, ev.chromeWait);
+      case 'relayEnd': return closeRelay(hostId, ev.id, { by: ['device', 'host', 'abort'].includes(ev.by) ? ev.by : null, allow: ev.allow === true });
       default:
     }
   }

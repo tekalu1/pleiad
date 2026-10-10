@@ -258,6 +258,7 @@
         "unsupportedOs": "この OS ではまだ使えません",
         "unsupportedEnv": "この環境ではまだ使えません",
         "giveUp": "やめる",
+        "waiting": "待っている会話: {{title}}",
         "failed": "操作できませんでした: {{error}}",
         "off": {
           "status": "つながっていません",
@@ -365,6 +366,7 @@
     "runningTool": "{{tool}} を実行中",
     "waitingAnswer": "あなたの回答を待っている",
     "waitingApproval": "承認を待っている",
+    "waitingChrome": "Chrome の操作を待っている",
     "behindCount_other": "裏で {{count}} 本が動いている",
     "turnRunning": "ターンが走っている",
     "thinkingTokens_other": "考えている（約 {{count}} トークン）",
@@ -1509,12 +1511,6 @@
       "allowedAlways": "常に許可した",
       "allowed": "許可した",
       "denied": "拒否した",
-      "chromeSkip": "Chrome を使わずに続けてもらう",
-      "chromeSkipSending": "Chrome を使わずに続けるよう伝えています…",
-      "chromeSkipFailed": "伝えられませんでした · {{error}}",
-      "chromeSkipped": "Chrome を使わずに続けた",
-      "chromeWaitEnded": "Chrome の待ちを終えた",
-      "chromeWaitNote": "{{host}} の Chrome の操作待ちです。{{host}} で Chrome を操作すると進みます。ここから許可しても進みません。",
       "elsewhere": "別の場所で処理されました",
       "sending": "{{action}}を送っています…",
       "sendFailedInline": "{{action}}を送れませんでした · {{error}}"
@@ -1678,6 +1674,41 @@
       "join": "、",
       "more_other": "ほか {{count}} 件",
       "withdrawn": "取り下げた"
+    },
+    "chromeWait": {
+      "skip": "Chrome を使わずに続けてもらう",
+      "skipSending": "Chrome を使わずに続けるよう伝えています…",
+      "skipFailed": "伝えられませんでした · {{error}}",
+      "waited": "待って {{minutes}} 分",
+      "waitedNow": "待っています",
+      "join": " · ",
+      "setup": {
+        "lead": "{{host}} の Chrome で、リモート デバッグをオンにしてください",
+        "step1": "{{host}} の Chrome のアドレス欄で {{address}} を開く",
+        "step2": "「Allow remote debugging for this browser instance」をオンにする",
+        "auto": "オンになると自動で進みます"
+      },
+      "permission": {
+        "lead": "{{host}} の画面に Chrome の確認が出ています。「許可する」を押してください"
+      },
+      "denied": {
+        "lead": "{{host}} の Chrome で接続が断られました",
+        "note": "つなぐなら、{{host}} の Pleiad のカードで「もう一度」を押してください"
+      },
+      "asked": {
+        "lead": "{{host}} の Chrome で操作してください（{{reason}}）"
+      },
+      "operating": {
+        "lead": "{{host}} で操作しています"
+      },
+      "offline": "{{host}} がオフラインです。つながると、今の状態に変わります",
+      "done": {
+        "connected": "{{host}} の Chrome につながりました",
+        "resumed": "{{host}} での操作が済みました",
+        "skipped": "Chrome を使わずに続けてもらいました",
+        "declined": "{{host}} で断りました",
+        "aborted": "子が待つのをやめました"
+      }
     },
     "browserHandoff": {
       "headingMark": "Chrome の操作待ち",
@@ -2677,6 +2708,7 @@
     "noMatch": "該当なし",
     "forked": "fork で生まれた会話",
     "waiting": "承認待ち",
+    "waitingChrome": "Chrome の操作待ち",
     "waitingCount_other": "承認待ち {{count}} 件",
     "staleDays_other": "{{count}}日",
     "unsent": "未送信",
@@ -2984,6 +3016,16 @@
         "plain": {
           "open": "エージェントが質問への答えを待っています",
           "closed": "エージェントが質問への答えを待っていました"
+        }
+      },
+      "chrome": {
+        "named": {
+          "open": "{{name}} が Chrome の操作を待っています",
+          "closed": "{{name}} が Chrome の操作を待っていました"
+        },
+        "plain": {
+          "open": "エージェントが Chrome の操作を待っています",
+          "closed": "エージェントが Chrome の操作を待っていました"
         }
       },
       "failed": {

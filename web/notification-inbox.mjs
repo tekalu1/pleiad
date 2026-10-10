@@ -25,7 +25,7 @@ export function describeNotification(n, t, titleOf = () => '') {
   const open = n.kind === 'wait' && n.resolvedAt == null;
   let line;
   if (n.kind === 'wait') {
-    const what = n.ask === 'question' ? 'question' : 'approval';
+    const what = n.ask === 'question' ? 'question' : n.ask === 'chrome' ? 'chrome' : 'approval';
     line = t(`inbox.line.${what}.${name ? 'named' : 'plain'}.${open ? 'open' : 'closed'}`, { name });
   } else if (n.kind === 'failed') {
     line = name ? t('inbox.line.failed.named', { name }) : title ? t('inbox.line.failed.titled', { title }) : t('inbox.line.failed.plain');
@@ -42,7 +42,8 @@ export function describeNotification(n, t, titleOf = () => '') {
       ? (n.threadTitle ? t('inbox.place.thread', { channel: n.channelName, thread: n.threadTitle }) : t('inbox.place.channel', { channel: n.channelName }))
       : (n.threadTitle || '');
   } else if (n.target?.sessionId) place = t('inbox.place.chat', { title: title || t('session.untitled') });
-  const outcome = n.kind === 'wait' && n.outcome ? t(`inbox.outcome.${n.outcome}`) : '';
+  // Chrome の操作待ちが済んだことは「承認済み」と言わない（承認ではない）。「…待っていました」だけで足りる
+  const outcome = n.kind === 'wait' && n.outcome && !(n.ask === 'chrome' && n.outcome === 'allowed') ? t(`inbox.outcome.${n.outcome}`) : '';
   const icon = n.kind === 'wait' ? (open ? 'wait' : 'closed') : n.kind;
   return { icon, line, place, outcome, open };
 }

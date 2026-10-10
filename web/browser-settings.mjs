@@ -22,7 +22,7 @@ function chromeMark() {
 /** product（Chrome/154.0.8037.97）から「Chrome 154」を作る。読めなければ「Chrome」 */
 export const chromeLabel = product => { const m = /^(\w+)\/(\d+)/.exec(String(product ?? '')); return m ? `${m[1]} ${m[2]}` : 'Chrome'; };
 
-export function setupBrowserSettings({ available, cmd, getPrefs, getAgentLabel = id => id, getHostCaps = () => null }) {
+export function setupBrowserSettings({ available, cmd, getPrefs, getAgentLabel = id => id, getHostCaps = () => null, getChromeWaiting = () => [] }) {
   const $ = id => document.getElementById(id);
   const tab = $('browserTab'), root = $('browserPanel');
   tab.hidden = false;
@@ -186,7 +186,9 @@ export function setupBrowserSettings({ available, cmd, getPrefs, getAgentLabel =
       if (why) details.push(note(t(`${k}off.${why}`)));
     }
     const row = el('div', 'browser-conn-row');
-    const name = el('span', 'nm'); name.append(el('strong', null, t(`${k}name`)), el('small', null, t(`${k}description`)));
+    // 会話が Chrome の準備・許可を待っている間は、「まだ内蔵ブラウザーを使います」と言わず、どの会話が待っているかを言う
+    const waiting = ['setup', 'permission', 'denied'].includes(state) ? getChromeWaiting() : [];
+    const name = el('span', 'nm'); name.append(el('strong', null, t(`${k}name`)), el('small', null, waiting.length ? t(`${k}waiting`, { title: waiting.join(' · ') }) : t(`${k}description`)));
     row.append(chromeMark(), name, status, ...actions);
     chromeSection.replaceChildren(el('h3', null, t(`${k}title`)), row, ...details, chromeError);
   }
@@ -254,6 +256,8 @@ export function setupBrowserSettings({ available, cmd, getPrefs, getAgentLabel =
   paint();
   return {
     paint,
+    /** 待っている会話の増減に合わせて、Chrome の行だけ描き直す */
+    chromeRepaint: paintChrome,
     /** サーバーの chromeBrowser イベント（ホストの画面だけに届く） */
     chromeEvent(ev) {
       const was = chrome?.state;
