@@ -117,6 +117,22 @@ export default async function (t) {
     t.ok('断られても決着していないので、同じカードから「Chrome を使わずに続ける」（allow:false）を押し直せる', skipped?.ok === true && answered.length === 2 && answered[1] === false, JSON.stringify(skipped));
   }
 
+  // ---- 口だけ: 状態が替わったら relayUpdate（端末のカードは同じカードの中身を差し替える）。子が待つのをやめたら relayEnd（by: abort）
+  {
+    const { port, s } = mk({ allowed: () => true, invoke: async () => ({}) }, 'dev-chrome-update');
+    await sleep(5);
+    const entry = port.relayOpen({ deviceId: 'dev-chrome-update', taskId: 'task-cu', requesterSessionId: 's1',
+      payload: { kind: 'tool', toolName: 'ply_browser', input: {}, title: null, childTitle: '子', canAlways: false, chromeWait: { reason: 'connect', state: 'setup' } },
+      answer: () => true });
+    const relay = s.out.find(m => m.t === 'relay')?.relay;
+    entry.update({ reason: 'connect', state: 'permission', dialog: true });
+    const upd = s.out.find(m => m.t === 'relayUpdate');
+    t.ok('状態が替わると relayUpdate（relay の id と新しい chromeWait）が端末へ届く', upd?.id === relay.id && upd.chromeWait?.state === 'permission' && upd.chromeWait.dialog === true, JSON.stringify(upd));
+    entry.end('abort', false);
+    const end = s.out.find(m => m.t === 'relayEnd');
+    t.ok('子が待つのをやめたら relayEnd（by: abort）が端末へ届く', end?.id === relay.id && end.by === 'abort' && end.allow === false, JSON.stringify(end));
+  }
+
   // ---- サーバー越し
   const scratch = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'agent-host-remote-hardening-')));
   const dataDir = path.join(scratch, 'data');

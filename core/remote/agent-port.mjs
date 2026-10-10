@@ -3,7 +3,7 @@
 // 端末の AI（端末の会話の ply_delegate の host と ply_task_*）の依頼を受け、ホストのサーバーの委譲の本体（deps.invoke）へ渡す。
 // 主体は agent・via: 'remote'・deviceId。画面（human）の経路 /ws とは別の口で、口の上の便りは決まった種類だけ:
 //   端末 → ホスト   req（委譲の 6 つの操作）・answer（人の答え。承認の中継の答え）・view（人の読み出し。任せた子の会話の経過）・sync・ping
-//   ホスト → 端末   ready・allowed・res・task・relays・relay・relayEnd・answered・viewed・pong
+//   ホスト → 端末   ready・allowed・res・task・relays・relay・relayUpdate・relayEnd・answered・viewed・pong
 // 許可は端末ごと（deps.allowed）。承認の答えは、ホストが中継した今待っている承認の ID・受領証・1 回だけを照合してから受ける。
 // 経過の読み出しは、この端末が任せた子とその子孫だけを返し（deps.view）、許可を切れば止まる。
 // 端末の AI が呼べる道具からは answer・view を作れない（端末側の守りと、口の種類の分離。docs/remote.md §4.5）。
@@ -234,6 +234,12 @@ export function createAgentPort({ allowed = () => false, hostName = () => '', in
       broadcast(deviceId, { t: 'relay', relay: publicRelay(entry) });
       return {
         id,
+        // Chrome の操作待ちの中継（payload.chromeWait）の状態が変わったとき、端末のカードの中身を差し替える（つなぎ直しの relays にも最新が載る）。決着した中継には送らない
+        update: chromeWait => {
+          if (!relays.has(id) || !chromeWait || typeof chromeWait !== 'object') return;
+          entry.payload = { ...entry.payload, chromeWait: { ...entry.payload.chromeWait, ...chromeWait } };
+          broadcast(deviceId, { t: 'relayUpdate', id, chromeWait: entry.payload.chromeWait });
+        },
         end: (by, allow) => {
           if (!relays.delete(id)) return;
           // 端末の答えが決着させたときは、settle の中から呼ばれる（answered は答えを引き受ける前に立てる）。どこで答えたかはそこで決まる

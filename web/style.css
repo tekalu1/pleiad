@@ -2043,5 +2043,19 @@ body{padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) 0 env(s
 .relay-note{margin:2px 0 0;color:var(--ink-weak);font-size:var(--fs-s)}
 .card .res.strong{color:var(--ink-strong);font-weight:600}
 .relay-note.strong{color:var(--ink-strong);font-weight:600;padding:0 16px 6px}
+/* ---- ホストの Chrome の操作待ち（web/chrome-wait-card.mjs、docs/design-system.md §4.5、ADR 0204）。
+   最初の 1 行が「どの PC の Chrome で何をするか」。状態が変わると本文だけが入れ替わる。枠・片側の線・色地の札は使わない ---- */
+.cw-body{padding:2px 16px 0}
+.cw-lead{font-size:var(--fs-l);font-weight:600;color:var(--ink-strong);margin:2px 0 4px;overflow-wrap:anywhere}
+.cw-host{color:var(--ink-blue);font-family:var(--font-mono);font-weight:600}
+.cw-steps{list-style:none;margin:6px 0 0;padding:0;display:flex;flex-direction:column;gap:6px;font-size:var(--fs)}
+.cw-steps li{display:flex;gap:10px;align-items:flex-start}
+.cw-steps .n{display:grid;place-items:center;width:20px;height:20px;margin-top:1px;border-radius:50%;background:var(--surface-2);font-size:var(--fs-xs);font-weight:600;flex:none}
+.cw-addr{font:var(--fs-s) var(--font-mono);background:var(--surface-2);border-radius:var(--r-s);padding:1px 6px;overflow-wrap:anywhere}
+.cw-note,.cw-message{margin:4px 0 0;font-size:var(--fs-s);color:var(--ink-weak);overflow-wrap:anywhere}
+.cw-message{color:var(--ink)}
+.card-actions .res.cw-live:empty{display:none}
+.cw-card.relay-offline .cw-lead,.cw-card.relay-offline .cw-steps{opacity:.6}
+@media (max-width:480px){.cw-card .card-actions .res.cw-live{flex-basis:100%}}
 @media (max-width:480px){.card-head:has(.relay-host){flex-wrap:wrap}.card-head:has(.relay-host) .desc{flex-basis:100%;order:3;white-space:normal}.relay-host{margin-left:auto}
   .remote-origin{flex-basis:100%;order:99;white-space:normal;font-size:var(--fs-xs)}}

@@ -259,6 +259,7 @@
         "unsupportedOs": "Not available on this OS yet",
         "unsupportedEnv": "Not available in this environment yet",
         "giveUp": "Stop",
+        "waiting": "Waiting conversation: {{title}}",
         "failed": "Couldn’t do that: {{error}}",
         "off": {
           "status": "Not connected",
@@ -371,6 +372,7 @@
     "runningTool": "Running {{tool}}",
     "waitingAnswer": "Waiting for your answer",
     "waitingApproval": "Waiting for approval",
+    "waitingChrome": "Waiting for Chrome",
     "behindCount_one": "{{count}} task running in the background",
     "behindCount_other": "{{count}} tasks running in the background",
     "turnRunning": "Turn in progress",
@@ -1544,12 +1546,6 @@
       "allowedAlways": "Always allowed",
       "allowed": "Allowed",
       "denied": "Denied",
-      "chromeSkip": "Continue without Chrome",
-      "chromeSkipSending": "Telling it to continue without Chrome…",
-      "chromeSkipFailed": "Could not send · {{error}}",
-      "chromeSkipped": "Continued without Chrome",
-      "chromeWaitEnded": "Chrome wait ended",
-      "chromeWaitNote": "Waiting for Chrome on {{host}}. It continues when Chrome is operated there. Approving from here does not move it.",
       "elsewhere": "Handled elsewhere",
       "sending": "Sending “{{action}}”…",
       "sendFailedInline": "Couldn't send “{{action}}” · {{error}}"
@@ -1714,6 +1710,41 @@
       "more_one": "and {{count}} more",
       "more_other": "and {{count}} more",
       "withdrawn": "Withdrawn"
+    },
+    "chromeWait": {
+      "skip": "Continue without Chrome",
+      "skipSending": "Telling it to continue without Chrome…",
+      "skipFailed": "Could not send · {{error}}",
+      "waited": "Waiting {{minutes}} min",
+      "waitedNow": "Waiting",
+      "join": " · ",
+      "setup": {
+        "lead": "On {{host}}, turn on remote debugging in Chrome",
+        "step1": "In the address bar of Chrome on {{host}}, open {{address}}",
+        "step2": "Turn on \"Allow remote debugging for this browser instance\"",
+        "auto": "It continues by itself once it is on"
+      },
+      "permission": {
+        "lead": "Chrome is asking for confirmation on {{host}}. Press \"Allow\" there"
+      },
+      "denied": {
+        "lead": "Chrome on {{host}} refused the connection",
+        "note": "To connect, press \"Try again\" on the Pleiad card on {{host}}"
+      },
+      "asked": {
+        "lead": "Please act in Chrome on {{host}} ({{reason}})"
+      },
+      "operating": {
+        "lead": "Working in Chrome on {{host}}"
+      },
+      "offline": "{{host}} is offline. When it reconnects, this shows its current state",
+      "done": {
+        "connected": "Connected to Chrome on {{host}}",
+        "resumed": "Done on {{host}}",
+        "skipped": "Asked it to continue without Chrome",
+        "declined": "Declined on {{host}}",
+        "aborted": "The child stopped waiting"
+      }
     },
     "browserHandoff": {
       "headingMark": "Chrome needs you",
@@ -2761,6 +2792,7 @@
     "noMatch": "No matches",
     "forked": "Conversation created by a fork",
     "waiting": "Waiting for approval",
+    "waitingChrome": "Waiting for Chrome",
     "waitingCount_one": "{{count}} waiting for approval",
     "waitingCount_other": "{{count}} waiting for approval",
     "staleDays_one": "{{count}}d",
@@ -3088,6 +3120,16 @@
         "plain": {
           "open": "An agent is waiting for your answer",
           "closed": "An agent was waiting for your answer"
+        }
+      },
+      "chrome": {
+        "named": {
+          "open": "{{name}} is waiting for you in Chrome",
+          "closed": "{{name}} was waiting for you in Chrome"
+        },
+        "plain": {
+          "open": "The agent is waiting for you in Chrome",
+          "closed": "The agent was waiting for you in Chrome"
         }
       },
       "failed": {

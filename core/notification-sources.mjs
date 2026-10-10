@@ -8,7 +8,7 @@
 //     channels・bots: それぞれを返す関数（() => { get({ channelId }), getPost({ channelId, postId }) } | null・() => { get({ botId }) } | null。作る前に出来ていない物を、使うときに引く）
 //   Sources:
 //     completion({ sessionId, outcome, completedAt, uuid? })   … ターンの完了・失敗（completionKind の規則で、載せないものは載せない）
-//     permissionOpened({ id, sessionId, kind, via? })          … あなた待ちの成立。via は承認のカードが出ている会話（委譲の子の承認は依頼元）
+//     permissionOpened({ id, sessionId, kind, via?, chrome? }) … あなた待ちの成立。via は承認のカードが出ている会話（委譲の子の承認は依頼元）。chrome は Chrome の操作待ち
 //     permissionSettled({ id, answer, kind })                  … 決着
 //     observe(event)                                           … channelPost（人以外の @あなた）・channelRead・channelsChanged（アーカイブ）
 //     sessionRemoved(sessionId)
@@ -59,14 +59,14 @@ export function createNotificationSources({ inbox, store, viewing = () => false,
       });
     }),
 
-    permissionOpened: guard('permission opened', async ({ id, sessionId, kind = 'tool', via = null }) => {
+    permissionOpened: guard('permission opened', async ({ id, sessionId, kind = 'tool', via = null, chrome = false }) => {
       const target = via || sessionId;
       if (!target || !id) return null;
       const place = await sessionPlace(target);
       if (place.sb && hiddenKinds.has(place.sb.kind)) return null;
       return inbox.add({
         kind: 'wait', dedupeKey: `wait:${id}`, sessionId: target, channelId: place.channelId, viewing: viewing(target),
-        data: { ask: kind === 'question' ? 'question' : 'approval', threadId: place.threadId, actor: place.actor, title: place.title, channelName: place.channelName, home: place.home, threadTitle: place.threadTitle },
+        data: { ask: chrome ? 'chrome' : kind === 'question' ? 'question' : 'approval', threadId: place.threadId, actor: place.actor, title: place.title, channelName: place.channelName, home: place.home, threadTitle: place.threadTitle },
       });
     }),
     permissionSettled: guard('permission settled', async ({ id, answer, kind = 'tool' }) => inbox.settle(`wait:${id}`, permissionOutcome(answer, { kind }))),

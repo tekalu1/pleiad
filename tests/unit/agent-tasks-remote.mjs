@@ -98,7 +98,7 @@ export default async function (t) {
     // ---- 端末側の取り込み（橋は身代わり）
     {
       const handlers = { event: [], state: [], ready: [], hosts: [] };
-      const requests = [], answers = [], syncs = [], opened = [], closed = [];
+      const requests = [], answers = [], syncs = [], opened = [], closed = [], updated = [];
       let online = true, nowHosts;
       const bridge = {
         get hosts() { return nowHosts; },
@@ -114,7 +114,7 @@ export default async function (t) {
       const host = (over = {}) => ({ hostId: 'h2', name: 'desk2', agentUse: true, allowed: true, state: 'ready', ...over });
       nowHosts = [host()];
       let cardSeq = 0;
-      const cards = { open: c => { const id = `card-${++cardSeq}`; opened.push({ id, ...c }); return id; }, close: (id, res) => closed.push([id, res]), online: () => {} };
+      const cards = { open: c => { const id = `card-${++cardSeq}`; opened.push({ id, ...c }); return id; }, close: (id, res) => closed.push([id, res]), update: (id, patch) => updated.push([id, patch]), online: () => {} };
       let rd;
       const dir2 = await fs.mkdtemp(path.join(os.tmpdir(), 'ply-task-remote2-'));
       const hooked2 = hookedTaskStorage(dir2, {});
@@ -191,6 +191,23 @@ export default async function (t) {
         emit({ t: 'relay', relay: { id: 'rtool', taskId: ID(4), requesterSessionId: 'conv', receipt: 'rc4', kind: 'tool', toolName: 'Bash', input: {} } });
         const ccw = opened.find(c => c.relayId === 'rcw'), ctool = opened.find(c => c.relayId === 'rtool');
         t.ok('取り込み: Chrome の操作待ちの印（chromeWait）はカードへ引き継ぎ、ふつうの承認には付かない', ccw?.chromeWait?.reason === 'connect' && ctool && ctool.chromeWait === undefined, JSON.stringify([ccw?.chromeWait, ctool?.chromeWait]));
+        // Chrome の操作待ちの更新（relayUpdate）と、つなぎ直しの送り直し
+        emit({ t: 'relayUpdate', id: 'rcw', chromeWait: { reason: 'connect', state: 'permission', dialog: true, message: null, extra: 'x' } });
+        emit({ t: 'relayUpdate', id: 'rtool', chromeWait: { reason: 'connect', state: 'permission' } });
+        emit({ t: 'relayUpdate', id: 'nope', chromeWait: { reason: 'connect', state: 'permission' } });
+        t.ok('取り込み: relayUpdate は開いている Chrome の操作待ちのカードの中身だけを替える（知らない項目は落とす・ふつうの承認と知らない中継は無視）',
+          updated.length === 1 && updated[0][0] === ccw.id && updated[0][1].chromeWait.state === 'permission' && updated[0][1].chromeWait.dialog === true && updated[0][1].chromeWait.extra === undefined, JSON.stringify(updated));
+        const openedBefore = opened.length;
+        const live = [{ id: 'rq', taskId: ID(4), requesterSessionId: 'conv', receipt: 'rc', kind: 'question', questions: [{ question: 'Q?', options: [] }], toolName: 'AskUserQuestion', input: {} },
+          { id: 'rh', taskId: ID(5), requesterSessionId: 'conv', receipt: 'rc2', kind: 'hostOnly', toolName: 'set_setting', input: {} },
+          { id: 'rtool', taskId: ID(4), requesterSessionId: 'conv', receipt: 'rc4', kind: 'tool', toolName: 'Bash', input: {} }];
+        emit({ t: 'relays', relays: [...live, { id: 'rcw', taskId: ID(4), requesterSessionId: 'conv', receipt: 'rc3', kind: 'tool', toolName: 'ply_browser', input: {}, chromeWait: { reason: 'connect', state: 'denied' } }] });
+        t.ok('取り込み: つなぎ直しで送り直された Chrome の操作待ちは、カードを増やさず中身を替える', opened.slice(openedBefore).every(c => c.relayId !== 'rcw' && c.relayId !== 'rtool') && updated.at(-1)?.[0] === ccw.id && updated.at(-1)[1].chromeWait.state === 'denied', JSON.stringify([opened.slice(openedBefore).map(c => c.relayId), updated.at(-1)]));
+        t.ok('取り込み: Chrome の操作待ちのカードは、依頼の題を持たない（最初の 1 行が言う）', ccw.title === null);
+        emit({ t: 'relayEnd', id: 'rcw', by: 'abort', allow: false });
+        emit({ t: 'relayEnd', id: 'rtool', by: 'abort', allow: false });
+        const endCw = closed.find(([id]) => id === ccw.id), endTool = closed.find(([id]) => id === ctool.id);
+        t.ok('取り込み: 子が待つのをやめた（abort）は、Chrome の操作待ちだけ残し、ふつうの承認は誰が答えたか分からない決着にする', endCw?.[1].by === 'abort' && endTool?.[1].by === null, JSON.stringify([endCw, endTool]));
         t.ok('取り込み: 承認待ちの行を AI に見せるとき、ホストの画面で答える旨（hostOnlyApproval）が付く', Boolean(rd.presentList({ tasks: [m2.get(ID(5))] }).tasks[0].hostOnlyApproval));
         // 任せる設定を切る・ホストを消す
         await add2(6);

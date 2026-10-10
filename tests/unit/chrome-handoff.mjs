@@ -332,7 +332,9 @@ export default async function (t) {
   // ---- 配線（server.mjs）
   {
     const server = readFileSync(new URL('../../core/server.mjs', import.meta.url), 'utf8');
-    t.ok('server: 端末へ中継する Chrome の操作待ちの便りに chromeWait の印を載せる', /\.\.\.\(browserHandoff \? \{ chromeWait: \{ reason: browserHandoff\.reason \?\? null \} \} : \{\}\)/.test(server));
+    t.ok('server: 端末へ中継する Chrome の操作待ちの便りに chromeWait の印を載せる', /\.\.\.\(browserHandoff \? \{ chromeWait: chromeWaitOf\(cards\[0\]\.payload\.browserHandoff \?\? browserHandoff\) \} : \{\}\)/.test(server));
+    t.ok('server: 手元のカードが変わるたびに、端末へ中継したカードも更新する（relayUpdate）', /remoteRelay\?\.update\(chromeWaitOf\(cards\[0\]\.payload\.browserHandoff\)\)/.test(server));
+    t.ok('server: 受信箱の行は Chrome の操作待ちを chrome として開く', /chrome: Boolean\(payload\.browserHandoff \|\| payload\.chromeWait\)/.test(server));
     t.ok('server: 端末の人の答え（relay の answer）も、Chrome の操作待ちへの「許可」は HANDOFF_ONLY で断る', /if \(browserHandoff && allow === true\) return 'HANDOFF_ONLY';/.test(server));
     t.ok('server: 端末の「断る」は chromeSkipped の印で子へ返る', /!allow && browserHandoff \? \{ messageKey: 'chromeSkipped' \}/.test(server));
     t.ok('server: 端末のカード（remoteCards.open）へ chromeWait を渡す', /\.\.\.\(c\.chromeWait \? \{ chromeWait: c\.chromeWait \} : \{\}\)/.test(server));

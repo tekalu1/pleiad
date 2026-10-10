@@ -5,7 +5,7 @@
 //   answer({ id, receipt, allow }) 承認の中継への人の答え（端末の画面の resolvePermission からだけ呼ばれる。remote.md §4.5）
 //   view(taskId, cursor)           任せた子の会話の経過の読み出し（端末の画面の人の操作からだけ。端末の AI の道具には無い。ホストが対応しているときだけ）
 //   sync(taskIds)                  つなぎ直したとき、持っているタスクの今の状態を求める
-// ホストの便り（task・relays・relay・relayEnd・allowed）は 'event' で出す。状態（state）は
+// ホストの便り（task・relays・relay・relayUpdate・relayEnd・allowed）は 'event' で出す。状態（state）は
 //   'offline'      チャネルが無い・口が閉じた（張り直しは DeviceLink が受け持ち、チャネルが戻れば口も開き直す）
 //   'connecting'   口を開いて ready を待っている
 //   'ready'        使える（allowed はホストが端末の AI からの依頼を受けているか）
@@ -165,7 +165,7 @@ export class AgentLink extends EventEmitter {
         else p.reject(Object.assign(new AgentError(typeof msg.code === 'string' ? msg.code : 'ERROR', String(msg.error ?? 'error'))));
         return;
       }
-      case 'task': case 'relays': case 'relay': case 'relayEnd': case 'answered': case 'pong': case 'synced':
+      case 'task': case 'relays': case 'relay': case 'relayUpdate': case 'relayEnd': case 'answered': case 'pong': case 'synced':
         this.emit('event', msg);
         return;
       default: return;

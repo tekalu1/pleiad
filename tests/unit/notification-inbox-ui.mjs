@@ -17,6 +17,10 @@ export default async function (tt) {
     tt.ok('あなた待ち（bot でない）は「エージェントが承認を待っています」', d.line === 'エージェントが承認を待っています');
     d = describeNotification({ ...wait, ask: 'question' }, t);
     tt.ok('質問は「…が質問への答えを待っています」', d.line === 'Owl が質問への答えを待っています');
+    d = describeNotification({ ...wait, ask: 'chrome' }, t);
+    tt.ok('Chrome の操作待ちは「…が Chrome の操作を待っています」（承認と言わない）', d.line === 'Owl が Chrome の操作を待っています' && d.open === true);
+    d = describeNotification({ ...wait, ask: 'chrome', resolvedAt: 5, outcome: 'allowed', unread: false }, t);
+    tt.ok('済んだ Chrome の操作待ちは過去形で、「承認済み」を付けない', d.line === 'Owl が Chrome の操作を待っていました' && d.icon === 'closed' && d.outcome === '', JSON.stringify(d));
     d = describeNotification({ ...wait, resolvedAt: 5, outcome: 'allowed', unread: false }, t);
     tt.ok('決着したあなた待ちは過去形・◇・「承認済み」（弱く出す）', d.line === 'Owl が承認を待っていました' && d.icon === 'closed' && d.outcome === '承認済み' && d.open === false);
     tt.ok('決着の言葉: 回答済み・却下・取り消し', ['answered', 'denied', 'cancelled'].map((o) => describeNotification({ ...wait, resolvedAt: 5, outcome: o }, t).outcome).join() === '回答済み,却下,取り消し');

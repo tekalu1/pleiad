@@ -193,7 +193,7 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
   let drawnOrder = null;                        // 前に描いた並べ方（切り替えたときだけ行を滑らせる）
   const decided = new Set();                    // 人が開閉を決めた家族。決めるまで、今いる会話の器は開いたまま
   const made = new Set();                       // この画面で作った（まだ誰も付いていない）仮の状態
-  let last = { sessions: [], statuses: [], currentId: null, runningIds: new Set(), waitingIds: new Set(), unreadIds: new Set(), interrupted: new Map(), schedules: new Map(), draft: null, backendLabels: null, pendingRows: new Map(), pendingStatuses: new Map(), pendingNew: null, threads: [], order: "status" };
+  let last = { sessions: [], statuses: [], currentId: null, runningIds: new Set(), waitingIds: new Set(), chromeWaitIds: new Set(), unreadIds: new Set(), interrupted: new Map(), schedules: new Map(), draft: null, backendLabels: null, pendingRows: new Map(), pendingStatuses: new Map(), pendingNew: null, threads: [], order: "status" };
   // Channels（web/channels/sidebar.mjs）から借りるもの。bot の会話の行の印（アイコン・#チャンネル）と、検索の横断
   let directory = { channels: new Map(), bots: new Map() };   // id → Channel / Bot
   let channelsLink = null;                      // connectChannels() の口。無ければ Chats だけを探す
@@ -493,10 +493,13 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
 
   const CHANNEL_RECENT = 3;   // 見出しの下に出す最近のスレッドの数（開いているものは数えずに足す）
 
+  /** ◆ の字。待っているものが Chrome の操作だけなら、承認ではないのでそう言う */
+  const waitingLabel = (id) => last.chromeWaitIds.has(id) ? t("sidebar.waitingChrome") : t("sidebar.waiting");
+
   /** 1 行の行（チャンネルの並べ方）: 印（弧・◆・青い丸）・題・時刻 */
   function oneRow(s, level) {
     const key = `one:${s.id ?? ''}`;
-    const signature = JSON.stringify([s.id, s.title, s.lastModified, level, s.id === last.currentId, last.runningIds.has(s.id), last.waitingIds.has(s.id),
+    const signature = JSON.stringify([s.id, s.title, s.lastModified, level, s.id === last.currentId, last.runningIds.has(s.id), last.waitingIds.has(s.id), last.chromeWaitIds.has(s.id),
       last.unreadIds.has(s.id), last.bgWaiting.get(s.id), document.documentElement.lang, Math.floor(Date.now() / 60000), s.bot?.botId ? directory.bots.get(s.bot.botId)?.icon : null]);
     const cached = renderedRows.get(key);
     if (cached?.signature === signature && cached.node.isConnected) {
@@ -518,7 +521,7 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
     if (s.thread) r.dataset.thread = `${s.thread.channelId}:${s.thread.threadId}`;
     const glyph = el("span", "one-mark");
     const behind = last.bgWaiting.get(s.id);
-    if (last.waitingIds.has(s.id)) { const m = el("span", "wait only", ""); m.setAttribute("role", "img"); m.setAttribute("aria-label", t("sidebar.waiting")); glyph.append(m); }
+    if (last.waitingIds.has(s.id)) { const m = el("span", "wait only", ""); m.setAttribute("role", "img"); m.setAttribute("aria-label", waitingLabel(s.id)); glyph.append(m); }
     else if (last.runningIds.has(s.id)) glyph.append(behind ? satMark(behind, t("activity.behindCount", { count: behind })) : runMark(t("activity.turnRunning")));
     else if (last.unreadIds.has(s.id)) glyph.append(unreadMark());
     const title = el("span", "row-t", titleOf(s) || t("session.untitled"));
@@ -942,7 +945,7 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
    */
   function row(s, level) {
     const key = `session:${level}:${s.id ?? ''}`;
-    const signature = JSON.stringify([s, level, s.id === last.currentId, last.runningIds.has(s.id), last.waitingIds.has(s.id),
+    const signature = JSON.stringify([s, level, s.id === last.currentId, last.runningIds.has(s.id), last.waitingIds.has(s.id), last.chromeWaitIds.has(s.id),
       last.bgWaiting.get(s.id), last.unreadIds.has(s.id), last.interrupted.get(s.id), last.schedules.get(s.id),
       last.pendingRows.get(s.id), last.backendLabels, document.documentElement.lang, Math.floor(Date.now() / 60000),
       s.bot ? [directory.bots.get(s.bot.botId), s.bot.channelId ? directory.channels.get(s.bot.channelId) : null] : null]);
@@ -1004,7 +1007,7 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
     if (s.bot) { r.classList.add("botwait"); meta.append(botChannelMark(s)); }
     // 端末の AI から任された会話の出どころ（⇄ 端末の AI。リモートのバッジと同じ差しの青。docs/remote.md §4.5）
     if (s.delegation?.remote) meta.append(el("span", "row-remote", t("session.remoteOrigin.badge", { device: s.delegation.remote.deviceName || "" })));
-    if (last.waitingIds.has(s.id)) meta.append(el("span", "wait", t("sidebar.waiting")));
+    if (last.waitingIds.has(s.id)) meta.append(el("span", "wait", waitingLabel(s.id)));
     if (pendingRow?.visible) meta.append(pendingLabel(pendingRow.text));
     else if (isStale(s)) meta.append(el("span", "stale", t("sidebar.staleDays", { count: staleDays(s.statusChangedAt) })));
     else if (!sendAt && !missed) meta.append(el("span", "row-when", s.id == null ? fmt.justNow() : relTime(s.lastModified)));
@@ -1681,6 +1684,7 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
      * @param {string|null} o.currentId
      * @param {Set<string>} o.runningIds
      * @param {Set<string>} o.waitingIds
+     * @param {Set<string>} [o.chromeWaitIds]  waitingIds のうち、待っているものが Chrome の操作だけの会話（「Chrome の操作待ち」と言う）
      * @param {Map<string,number>} o.bgWaiting  main は返答済みで裏を待っているセッション -> 待っている本数
      * @param {Set<string>} o.unreadIds
      * @param {Map<string,{at:number,reason:string,unread:boolean}>} [o.interrupted]  中断した会話（web/interrupt.mjs）
@@ -1694,6 +1698,7 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
         currentId: o.currentId ?? null,
         runningIds: o.runningIds ?? new Set(),
         waitingIds: o.waitingIds ?? new Set(),
+        chromeWaitIds: o.chromeWaitIds ?? new Set(),
         bgWaiting: o.bgWaiting ?? new Map(),
         unreadIds: o.unreadIds ?? new Set(),
         interrupted: o.interrupted ?? new Map(),
