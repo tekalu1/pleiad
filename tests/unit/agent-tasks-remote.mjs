@@ -187,6 +187,10 @@ export default async function (t) {
         t.ok('取り込み: 質問への答え（選んだ項目）は受領証つきでホストへ送る', aq.ok === true && answers.at(-1)?.id === 'rq' && answers.at(-1).receipt === 'rc' && answers.at(-1).answers?.['Q?'] === 'A');
         const ah = await rd.answerCard(ch.id, { allow: true });
         t.ok('取り込み: 「ホストの画面で答える」知らせへは答えを送らない（HOST_ONLY）', ah.ok === false && ah.code === 'HOST_ONLY' && !answers.some(a => a.id === 'rh'));
+        emit({ t: 'relay', relay: { id: 'rcw', taskId: ID(4), requesterSessionId: 'conv', receipt: 'rc3', kind: 'tool', toolName: 'ply_browser', input: {}, chromeWait: { reason: 'connect' } } });
+        emit({ t: 'relay', relay: { id: 'rtool', taskId: ID(4), requesterSessionId: 'conv', receipt: 'rc4', kind: 'tool', toolName: 'Bash', input: {} } });
+        const ccw = opened.find(c => c.relayId === 'rcw'), ctool = opened.find(c => c.relayId === 'rtool');
+        t.ok('取り込み: Chrome の操作待ちの印（chromeWait）はカードへ引き継ぎ、ふつうの承認には付かない', ccw?.chromeWait?.reason === 'connect' && ctool && ctool.chromeWait === undefined, JSON.stringify([ccw?.chromeWait, ctool?.chromeWait]));
         t.ok('取り込み: 承認待ちの行を AI に見せるとき、ホストの画面で答える旨（hostOnlyApproval）が付く', Boolean(rd.presentList({ tasks: [m2.get(ID(5))] }).tasks[0].hostOnlyApproval));
         // 任せる設定を切る・ホストを消す
         await add2(6);

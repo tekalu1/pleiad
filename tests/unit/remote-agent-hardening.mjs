@@ -96,6 +96,27 @@ export default async function (t) {
     t.ok('sync の答えに、ホストが知らない ID（unknown）が載る', synced?.unknown?.join() === 'gone1,gone2' && s.out.some(m => m.t === 'task' && m.task.taskId === 'known'));
   }
 
+  // ---- 口だけ: Chrome の操作待ちの中継（答えの口が code を返したら、決着させずにその code で断る。押し直せる）
+  {
+    const { port, s } = mk({ allowed: () => true, invoke: async () => ({}) }, 'dev-chrome-wait');
+    await sleep(5);
+    const answered = [];
+    port.relayOpen({ deviceId: 'dev-chrome-wait', taskId: 'task-cw', requesterSessionId: 's1',
+      payload: { kind: 'tool', toolName: 'ply_browser', input: {}, title: null, childTitle: '子', canAlways: false, chromeWait: { reason: 'connect' } },
+      answer: ({ allow }) => { answered.push(allow); return allow === true ? 'HANDOFF_ONLY' : true; } });
+    const relay = s.out.find(m => m.t === 'relay')?.relay;
+    t.ok('Chrome の操作待ちの印（chromeWait）が、端末へ中継する便りにそのまま載る', relay?.chromeWait?.reason === 'connect', JSON.stringify(relay));
+    s.push({ t: 'answer', id: relay.id, receipt: relay.receipt, allow: true });
+    await sleep(30);
+    const refused = s.out.find(m => m.t === 'answered' && m.id === relay.id);
+    t.ok('Chrome の操作待ちへの「許可」は、答えの口が返した code（HANDOFF_ONLY）で断る（ALREADY_RESOLVED ではない）', refused?.ok === false && refused.code === 'HANDOFF_ONLY' && answered.length === 1, JSON.stringify(refused));
+    s.out.length = 0;
+    s.push({ t: 'answer', id: relay.id, receipt: relay.receipt, allow: false });
+    await sleep(30);
+    const skipped = s.out.find(m => m.t === 'answered' && m.id === relay.id);
+    t.ok('断られても決着していないので、同じカードから「Chrome を使わずに続ける」（allow:false）を押し直せる', skipped?.ok === true && answered.length === 2 && answered[1] === false, JSON.stringify(skipped));
+  }
+
   // ---- サーバー越し
   const scratch = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'agent-host-remote-hardening-')));
   const dataDir = path.join(scratch, 'data');

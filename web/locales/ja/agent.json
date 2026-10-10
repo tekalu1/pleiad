@@ -22,6 +22,7 @@
       "connected": "Chrome につながりました。もう一度 agent-browser を実行してください。",
       "waiting": "まだ待っています。もう一度 hand_to_user を呼んで待ってください。",
       "declined": "人が断りました。ブラウザーの操作を続けず、理由を説明して次の方法を相談してください。",
+      "skipped": "人が Chrome を使わずに続けるよう選びました。agent-browser は使わず、Chrome を使わない方法で進めてください。Chrome が要る部分は、できないことを説明して次の方法を相談してください。",
       "aborted": "待つのをやめました（会話が止められました）。",
       "none": "待っている依頼がありません。もう一度 hand_to_user を呼んでください。",
       "noTurn": "この呼び出しがどの会話のターンにも結び付きません。"
@@ -341,6 +342,7 @@
     "aborted": "中断された",
     "turnEnded": "ターンが終わった",
     "userDenied": "ユーザーが拒否した",
+    "chromeSkipped": "人が Chrome を使わずに続けるよう選んだ",
     "noHandler": "{{tool}} は承認先が無いので実行できない",
     "failed": "承認を取れなかった: {{error}}",
     "notAllowed": "ユーザーが許可しなかった",

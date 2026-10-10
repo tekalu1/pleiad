@@ -1509,6 +1509,12 @@
       "allowedAlways": "常に許可した",
       "allowed": "許可した",
       "denied": "拒否した",
+      "chromeSkip": "Chrome を使わずに続けてもらう",
+      "chromeSkipSending": "Chrome を使わずに続けるよう伝えています…",
+      "chromeSkipFailed": "伝えられませんでした · {{error}}",
+      "chromeSkipped": "Chrome を使わずに続けた",
+      "chromeWaitEnded": "Chrome の待ちを終えた",
+      "chromeWaitNote": "{{host}} の Chrome の操作待ちです。{{host}} で Chrome を操作すると進みます。ここから許可しても進みません。",
       "elsewhere": "別の場所で処理されました",
       "sending": "{{action}}を送っています…",
       "sendFailedInline": "{{action}}を送れませんでした · {{error}}"

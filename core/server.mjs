@@ -4919,14 +4919,19 @@ const askPermission = async ({ toolName, input, sessionId, toolUseID, title, sig
         deviceId: remoteRoot.deviceId, taskId: remoteRoot.taskId, requesterSessionId: remoteRoot.sessionId,
         // childSessionId: 承認を求めている子（根か子孫）のホストでの会話。端末が、その子の詳細にだけカードを出すために使う
         payload: hostOnly ? { kind: 'hostOnly', toolName, title: title ?? null, childTitle, childSessionId: sessionId ?? null, canAlways: false }
-          : { kind: asked, toolName, input, ...(asked === 'question' ? { questions } : {}), title: title ?? null, childTitle, childSessionId: sessionId ?? null, canAlways: false },
+          : { kind: asked, toolName, input, ...(asked === 'question' ? { questions } : {}), title: title ?? null, childTitle, childSessionId: sessionId ?? null, canAlways: false,
+              // Chrome の操作待ち（core/chrome/handoff.mjs）。端末のカードは「許可」を出さず、「Chrome を使わずに続けてもらう」だけにする
+              ...(browserHandoff ? { chromeWait: { reason: browserHandoff.reason ?? null } } : {}) },
         // 端末の人の答え（remote.md §4.5）。ホストが中継した今待っている承認の ID・受領証・1 回だけを照合した後にだけ来る。常に許可は受けない
         answer: hostOnly ? null : ({ allow, message, answers, annotations, response }) => {
           if (!runtime.waiting.has(cards[0].id)) return false;
+          // Chrome の操作待ちは「許可」では進まない（ホストの画面と同じ。resolvePermission の HANDOFF_ONLY）。端末の人が答えられるのは「Chrome を使わずに続ける」だけ
+          if (browserHandoff && allow === true) return 'HANDOFF_ONLY';
           store.recordChange(sessionId, { by: 'human', via: 'remote-device', byDevice: remoteRoot.deviceId, field: 'op', to: 'permission.answer', reason: null }).catch(() => {});
           // ホストの画面の子のカードを、端末で答えられた 1 行に畳む（permissionRelayEnd。remoteOrigin のカードだけが畳む）
           emitGlobal({ type: 'permissionRelayEnd', id: cards[0].id, sessionId, by: 'device', allow, peer: remoteRoot.deviceName || '', at: new Date().toISOString() });
-          settle({ allow, always: false, scope: 'once', message: message ?? null, ...(!allow && !message && asked === 'tool' ? { messageKey: 'userDenied' } : {}),
+          settle({ allow, always: false, scope: 'once', message: message ?? null,
+            ...(!allow && browserHandoff ? { messageKey: 'chromeSkipped' } : !allow && !message && asked === 'tool' ? { messageKey: 'userDenied' } : {}),
             answers: answers ?? null, annotations: annotations ?? null, response: response ?? null });
           return true;
         },
@@ -5342,7 +5347,7 @@ const remoteCards = {
       ...(c.childSessionId ? { childSessionId: c.childSessionId } : {}) };
     const payload = { type: 'permission', kind: c.kind === 'question' ? 'question' : 'tool', toolName: c.toolName, input: c.input, sessionId: c.sessionId, toolUseID: undefined,
       title: c.title ? t('permission.relayTitleWith', { child, title: c.title }) : t('permission.relayTitle', { child }), conversationTitle: '',
-      canAlways: false, remote, ...(c.kind === 'question' ? { questions: c.questions } : {}) };
+      canAlways: false, remote, ...(c.kind === 'question' ? { questions: c.questions } : {}), ...(c.chromeWait ? { chromeWait: c.chromeWait } : {}) };
     // settle は使わない（決着はホストの便りか、画面の人の答え。remoteDelegation が closeRelay で消す）
     runtime.waiting.set(id, { settle: () => {}, payload, askedAt: c.askedAt ?? new Date().toISOString(), relay: true, notified: false, detached: false, remote });
     sendTo({ kind: P.EVENT, event: { ...payload, id } });
@@ -7866,7 +7871,7 @@ wss.on("connection", (ws, req) => {
           if (w.remote) {
             const r = await remoteDelegation.answerCard(id, { allow: allow === true, message: typeof message === 'string' ? message : null, answers, annotations, response });
             if (r.ok) return reply(true, 'ok');
-            return reply(false, r.code === 'OFFLINE' ? t('approval.remoteOffline', { host: w.remote.hostName }) : t('approval.alreadyResolved'), r.code);
+            return reply(false, r.code === 'OFFLINE' ? t('approval.remoteOffline', { host: w.remote.hostName }) : r.code === 'HANDOFF_ONLY' ? t('approval.browserHandoffAllow') : t('approval.alreadyResolved'), r.code);
           }
           // Chrome の操作待ち（core/chrome/handoff.mjs）の「戻した・つながった」は、専用のボタン（browser.chromeResume ほか）からしか決まらない。
           // 一般の「許可」を受けると、人が戻していないのに「Chrome を戻しました」になる（botやスマホの通知の許可ボタンなど）。断る・止めるは通す

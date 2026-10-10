@@ -245,6 +245,7 @@ export function createRemoteDelegation({ bridge, tasks, agentT, titleOf = async 
       toolName: relay.toolName, input: relay.input, questions: kind === 'question' ? relay.questions : undefined, title: relay.title ?? null, childTitle: row.title || relay.childTitle || '',
       askedAt: relay.askedAt, online: usable(host),
       ...(typeof relay.childSessionId === 'string' && relay.childSessionId.length <= 200 ? { childSessionId: relay.childSessionId } : {}),
+      ...(relay.chromeWait && typeof relay.chromeWait === 'object' ? { chromeWait: { reason: typeof relay.chromeWait.reason === 'string' ? relay.chromeWait.reason.slice(0, 40) : null } } : {}),
     });
     const entry = { cardId, hostId, relayId: relay.id, taskId: relay.taskId, receipt: relay.receipt, hostOnly: kind === 'hostOnly' };
     open.set(key, entry);

@@ -5,6 +5,7 @@
 //   - ターンの外で戻した・つながった → 「続けてください」が 1 回だけ。busy・断った・中断のときは送らない
 import { readFileSync } from 'node:fs';
 import { createChromeHandoffs, continuationMessageId, HANDOFF_REASONS } from '../../core/chrome/handoff.mjs';
+import { handToUserResult } from '../../core/browser-bridge.mjs';
 
 export const name = 'chrome-handoff';
 export const title = 'Chrome の操作待ち: 1 会話 1 枚・状態の差し替え・つながったら決着・wait の区切りと中断・ターンの外で戻したら続ける（偽の askPermission / 接続 / control）';
@@ -285,9 +286,56 @@ export default async function (t) {
     busy.handoffs.close(); no.handoffs.close(); ab.handoffs.close();
   }
 
+  // ---- 偽の「つながった」を返さない: つながっていないのに外から allow:true が来ても（端末の中継の「許可」）、子へ connected を返さない
+  {
+    const r = rig({ connection: 'setup' });
+    r.handoffs.connect('s1');
+    t.ok('接続の案内が開いている間、ask・connect を重ねてもカードは増えない', r.handoffs.ask('s1', { reason: 'login', message: 'x' }) === r.handoffs.connect('s1') && r.cards.length === 1);
+    const waiting = r.handoffs.wait('s1', { sliceMs: 1000 });
+    r.cards[0].settle({ allow: true, always: false, scope: 'once', message: null, response: null });
+    const got = await waiting;
+    t.ok('つながっていない接続の案内への allow:true（端末の中継の許可）は「つながった」にならない（子に connected を返さない）', got.kind !== 'connected' && got.kind === 'aborted', JSON.stringify(got));
+    t.ok('そのとき「続けてください」も送らない', r.env.sent.length === 0);
+    const text = handToUserResult('ja', got).text;
+    t.ok('子に返る文に「Chrome につながりました」は出ない', !/つながりました/.test(text), text);
+    r.handoffs.close();
+    const late = rig({ connection: 'permission' });
+    late.handoffs.connect('s1');
+    late.env.live = false;
+    late.cards[0].settle({ allow: true, always: false, scope: 'once', message: null, response: null });
+    await tick();
+    t.ok('ターンが終わった後でも、偽の許可では「続けてください」を送らない', late.env.sent.length === 0 && late.handoffs.current('s1') === null);
+    late.handoffs.close();
+  }
+  // ---- 端末の人が「Chrome を使わずに続けてもらう」を選んだ（messageKey: chromeSkipped）: 子には、断られたのではなく Chrome 抜きで進めてよいと返す
+  {
+    const r = rig({ connection: 'setup' });
+    r.handoffs.connect('s1');
+    const waiting = r.handoffs.wait('s1', { sliceMs: 1000 });
+    r.cards[0].settle({ allow: false, messageKey: 'chromeSkipped' });
+    const got = await waiting;
+    t.ok('chromeSkipped は declined に skipped が付いて返る（続けるメッセージは送らない）', got.kind === 'declined' && got.skipped === true && r.env.sent.length === 0, JSON.stringify(got));
+    const skipped = handToUserResult('ja', got);
+    const declined = handToUserResult('ja', { kind: 'declined' });
+    t.ok('skipped の文は「Chrome を使わずに進めて」と伝え、エラーにしない。人が断ったときの文とは別', skipped.isError === false && /Chrome を使わずに/.test(skipped.text) && declined.isError === true && skipped.text !== declined.text, skipped.text);
+    t.ok('英語の文もある（辞書の欠け落ちが無い）', /without Chrome/i.test(handToUserResult('en', got).text), handToUserResult('en', got).text);
+    r.handoffs.close();
+    const d = rig({ connection: 'setup' });
+    d.handoffs.connect('s1');
+    const w2 = d.handoffs.wait('s1', { sliceMs: 1000 });
+    d.cards[0].settle({ allow: false, messageKey: 'userDenied' });
+    const plain = await w2;
+    t.ok('ホストの画面の「断る」（userDenied）は従来どおり skipped の無い declined', plain.kind === 'declined' && plain.skipped === undefined, JSON.stringify(plain));
+    d.handoffs.close();
+  }
+
   // ---- 配線（server.mjs）
   {
     const server = readFileSync(new URL('../../core/server.mjs', import.meta.url), 'utf8');
+    t.ok('server: 端末へ中継する Chrome の操作待ちの便りに chromeWait の印を載せる', /\.\.\.\(browserHandoff \? \{ chromeWait: \{ reason: browserHandoff\.reason \?\? null \} \} : \{\}\)/.test(server));
+    t.ok('server: 端末の人の答え（relay の answer）も、Chrome の操作待ちへの「許可」は HANDOFF_ONLY で断る', /if \(browserHandoff && allow === true\) return 'HANDOFF_ONLY';/.test(server));
+    t.ok('server: 端末の「断る」は chromeSkipped の印で子へ返る', /!allow && browserHandoff \? \{ messageKey: 'chromeSkipped' \}/.test(server));
+    t.ok('server: 端末のカード（remoteCards.open）へ chromeWait を渡す', /\.\.\.\(c\.chromeWait \? \{ chromeWait: c\.chromeWait \} : \{\}\)/.test(server));
     t.ok('server: 一般の「許可」では Chrome の操作待ちを進めない（allow:true は HANDOFF_ONLY で断る）', /browserHandoff && allow === true\) return reply\(false, t\('approval\.browserHandoffAllow'\), 'HANDOFF_ONLY'\)/.test(server));
     t.ok('server: ターンの始まり・終わりで turnChanged、会話の削除で forget', /chromeHandoffs\?\.turnChanged\([^)]*true\)/.test(server) && /chromeHandoffs\?\.turnChanged\([^)]*false\)/.test(server) && /chromeHandoffs\?\.forget\(/.test(server));
   }
