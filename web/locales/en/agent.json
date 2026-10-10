@@ -22,6 +22,7 @@
       "connected": "Chrome is connected. Run agent-browser again.",
       "waiting": "Still waiting. Call hand_to_user again to keep waiting.",
       "declined": "The user declined. Do not continue operating the browser; explain why and discuss the next step.",
+      "skipped": "The user chose to continue without Chrome. Do not use agent-browser; proceed another way. For anything that needs Chrome, explain what you cannot do and discuss the next step.",
       "aborted": "Stopped waiting (the conversation was stopped).",
       "none": "No request is waiting. Call hand_to_user again.",
       "noTurn": "This call is not tied to any conversation turn."
@@ -342,6 +343,7 @@
     "aborted": "Interrupted",
     "turnEnded": "The turn ended",
     "userDenied": "The user denied it",
+    "chromeSkipped": "The user chose to continue without Chrome",
     "noHandler": "{{tool}} cannot run because there is nowhere to ask for approval",
     "failed": "Could not get approval: {{error}}",
     "notAllowed": "The user did not allow it",

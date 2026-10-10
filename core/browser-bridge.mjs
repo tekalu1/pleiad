@@ -58,7 +58,7 @@ export function handToUserResult(locale, answer) {
     case 'resumed': return { isError: false, text: agentT(locale, 'browserBridge.handToUser.resumed', { detail: [clock(answer.at), answer.url, answer.title].filter(Boolean).join(' / ') || '-' }) };
     case 'connected': return { isError: false, text: text('connected') };
     case 'waiting': return { isError: false, text: text('waiting') };
-    case 'declined': return { isError: true, text: text('declined') };
+    case 'declined': return answer.skipped ? { isError: false, text: text('skipped') } : { isError: true, text: text('declined') };
     case 'aborted': return { isError: true, text: text('aborted') };
     default: return { isError: true, text: text('none') };
   }

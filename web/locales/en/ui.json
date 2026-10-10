@@ -1544,6 +1544,12 @@
       "allowedAlways": "Always allowed",
       "allowed": "Allowed",
       "denied": "Denied",
+      "chromeSkip": "Continue without Chrome",
+      "chromeSkipSending": "Telling it to continue without Chrome…",
+      "chromeSkipFailed": "Could not send · {{error}}",
+      "chromeSkipped": "Continued without Chrome",
+      "chromeWaitEnded": "Chrome wait ended",
+      "chromeWaitNote": "Waiting for Chrome on {{host}}. It continues when Chrome is operated there. Approving from here does not move it.",
       "elsewhere": "Handled elsewhere",
       "sending": "Sending “{{action}}”…",
       "sendFailedInline": "Couldn't send “{{action}}” · {{error}}"

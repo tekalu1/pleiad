@@ -2286,6 +2286,8 @@ function permissionCard(ev, into = null) {
   if (ev.remote) head.append(el("span", "relay-host", t("chat.approval.relay.host", { host: ev.remote.hostName })));
   card.append(head);
   if (ev.remoteOrigin) card.append(el("p", "relay-note", t("chat.approval.relay.hostCanAnswer", { device: ev.remoteOrigin.deviceName })));
+  // 端末の会話に出るホストの Chrome の操作待ち。ここから「許可」しても進まない（戻す・つなぐのはホストの Chrome）ので、選べるのは「Chrome を使わずに続けてもらう」だけ
+  if (ev.chromeWait && ev.remote) card.append(el("p", "relay-note strong", t("chat.approval.chromeWaitNote", { host: ev.remote.hostName })));
 
   const input = JSON.stringify(ev.input ?? {}, null, 2);
   const short = input.length > 1200 ? input.slice(0, 1200) + NL + "…" : input;
@@ -2298,14 +2300,16 @@ function permissionCard(ev, into = null) {
   // Browser grants are owned by Pleiad, independent of backend tool permissions.
   const canAlways = ev.canAlways && (ev.browserSite || capsOf(activeBackendId()).alwaysAllow !== false);
   const actions = el("div", "card-actions");
-  actions.append(el("span", "res", ev.browserSite ? '' : t("chat.approval.blocking")));
+  actions.append(el("span", "res", ev.browserSite || ev.chromeWait ? '' : t("chat.approval.blocking")));
   const always = el("button", "btn", ev.browserSite ? t('settings.browser.confirm.alwaysSite') : t("chat.approval.always"));
   always.type = "button";
-  const deny = el("button", "btn btn-quiet", ev.browserSite ? t('settings.browser.confirm.deny') : t("chat.approval.deny"));
+  const chromeWait = Boolean(ev.chromeWait);
+  const deny = el("button", chromeWait ? "btn btn-primary" : "btn btn-quiet", ev.browserSite ? t('settings.browser.confirm.deny') : chromeWait ? t("chat.approval.chromeSkip") : t("chat.approval.deny"));
   deny.type = "button";
   const allow = el("button", "btn btn-primary", ev.browserSite ? t('settings.browser.confirm.once') : t("chat.approval.allow"));
   allow.type = "button";
   if (ev.browserSite) { actions.append(allow); if (canAlways) actions.append(always); actions.append(deny); }
+  else if (chromeWait) actions.append(deny);
   else { if (canAlways) actions.append(always); actions.append(deny, allow); }
   card.append(actions);
 
@@ -2314,13 +2318,13 @@ function permissionCard(ev, into = null) {
   // （docs/design-system.md §4.5。自動で送り直さない。承認は判断なので、つながった後に利用者がもう一度押す）
   const res = actions.querySelector(".res");
   const buttons = [always, deny, allow];
-  const verb = (ok, forever) => (ok ? (forever ? t("chat.approval.always") : t("chat.approval.allow")) : t("chat.approval.deny"));
+  const verb = (ok, forever) => (ok ? (forever ? t("chat.approval.always") : t("chat.approval.allow")) : chromeWait ? t("chat.approval.chromeSkip") : t("chat.approval.deny"));
   const settle = async (ok, forever = false) => {
     if (card.dataset.sending) return;
     card.dataset.sending = "1";
     for (const b of buttons) b.disabled = true;
     res.className = "res";
-    res.replaceChildren(el("span", null, t("chat.approval.sending", { action: verb(ok, forever) })));
+    res.replaceChildren(el("span", null, chromeWait ? t("chat.approval.chromeSkipSending") : t("chat.approval.sending", { action: verb(ok, forever) })));
     const arc = setTimeout(() => res.prepend(runMark()), 150);
     try {
       // 拒否の理由はエージェントに返る。画面の言語ではなく会話の言語で返すよう、文ではなく印を送る（サーバーが会話の言語で訳す）
@@ -2333,7 +2337,7 @@ function permissionCard(ev, into = null) {
       for (const b of buttons) b.disabled = false;
       res.className = "res fail";
       res.setAttribute("role", "alert");
-      res.replaceChildren(`✕ ${t("chat.approval.sendFailedInline", { action: verb(ok, forever), error: e.message })}`);
+      res.replaceChildren(`✕ ${chromeWait ? t("chat.approval.chromeSkipFailed", { error: e.message }) : t("chat.approval.sendFailedInline", { action: verb(ok, forever), error: e.message })}`);
       return;
     }
     clearTimeout(arc);
@@ -2344,7 +2348,7 @@ function permissionCard(ev, into = null) {
     card.classList.add("done");
     for (const rest of head.querySelectorAll(".card-kind-rest")) rest.remove();
     head.querySelector(".card-kind").textContent = t("chat.approval.done");
-    head.append(el("span", "res", `${ok ? (forever ? t("chat.approval.allowedAlways") : t("chat.approval.allowed")) : t("chat.approval.denied")} · ${hhmm(new Date())}`));
+    head.append(el("span", "res", `${ok ? (forever ? t("chat.approval.allowedAlways") : t("chat.approval.allowed")) : chromeWait ? t("chat.approval.chromeSkipped") : t("chat.approval.denied")} · ${hhmm(new Date())}`));
     actions.remove();
     // 決着後は一行に畳み、押せば承認したときの入力をその場で開ける（何を許可・拒否したかを後からたどれる）
     if (!ev.browserSite) foldSettledCard(card, head, code, approvalTarget(ev.input));
@@ -2455,7 +2459,7 @@ function registerRelayCard(ev, parts) {
     if (card.classList.contains("done")) return;
     // 誰がどこで答えたか分からない決着（つなぎ直しで消えた・タスクが止まった）は、カードごと下げる
     if (!by) { m.remove(); state.pendingPerms.delete(ev.id); return; }
-    const what = question ? t("chat.approval.relay.answered") : allow ? t("chat.approval.allowed") : t("chat.approval.denied");
+    const what = question ? t("chat.approval.relay.answered") : ev.chromeWait ? (allow ? t("chat.approval.chromeWaitEnded") : t("chat.approval.chromeSkipped")) : allow ? t("chat.approval.allowed") : t("chat.approval.denied");
     // この端末（の別の窓）で答えた決着は、ふつうの承認と同じ「許可した · 時刻」。ホストで先に答えられたら「ホスト名で…」、ホストの子のカードは「端末名で…」。
     // 別の場所（別の窓・子の会話の側・ターンの終わりや中断）で片付いたものは、どう答えたかを問わず「別の場所で処理されました · 時刻」
     const line = by === "handoff" && settled ? `${settled(settledEv)} · ${hhmm(new Date())}` : by === "elsewhere" ? `${t("chat.approval.elsewhere")} · ${hhmm(new Date())}`

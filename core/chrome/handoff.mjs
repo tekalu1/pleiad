@@ -83,7 +83,9 @@ export function createChromeHandoffs({ askPermission, connection, control: initi
     if (open.get(h.sessionId) === h) open.delete(h.sessionId);
     h.ac.abort();
     let result;
-    if (raw?.allow === true) {
+    // 接続の案内は、本当につながったときだけ「つながった」を返す。外から来た allow:true（端末の中継など）では決着させない（偽の「つながりました」を子に返さない）
+    const forged = raw?.allow === true && h.reason === 'connect' && connection.state().state !== 'connected';
+    if (raw?.allow === true && !forged) {
       const response = raw.response ?? {};
       result = { kind: response.kind ?? (h.reason === 'connect' ? 'connected' : 'resumed'), at: response.at ?? now().toISOString(), url: response.url ?? h.window.url, title: response.title ?? h.window.title, continued: false };
       if (!h.waiters.size) {
@@ -96,8 +98,9 @@ export function createChromeHandoffs({ askPermission, connection, control: initi
       }
     } else {
       // 人の「断る」だけが declined。中断（止める・子の取り消し・host が離れた）は aborted（何も送らない）
-      const declined = Boolean(raw) && !['aborted', 'hostAway', 'turnEnded', 'hiddenConversation'].includes(raw.messageKey);
-      result = { kind: declined ? 'declined' : 'aborted' };
+      const declined = Boolean(raw) && !forged && !['aborted', 'hostAway', 'turnEnded', 'hiddenConversation'].includes(raw.messageKey);
+      // 依頼元の端末の人が「Chrome を使わずに続けてもらう」を選んだ（子には、断られたのではなく Chrome 抜きで進めてよいと返す）
+      result = { kind: declined ? 'declined' : 'aborted', ...(declined && raw.messageKey === 'chromeSkipped' ? { skipped: true } : {}) };
     }
     const waiters = [...h.waiters];
     h.waiters.clear();

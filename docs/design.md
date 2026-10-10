@@ -527,6 +527,10 @@ v1 は `canUseTool` から host に問い、**会話の流れの中にカード�
 - **Chrome の操作待ち（`browserHandoff`。`core/chrome/handoff.mjs`、ADR 0148・0168）**: Chrome につながらない案内（`reason: connect`）と、
   エージェントが `hand_to_user` で人に渡した依頼（ログイン・CAPTCHA 等）は、`outlivesTurn` の承認カードで出す。
   許可・拒否の承認ではないので、`resolvePermission` の `allow: true` は断る（`HANDOFF_ONLY`）。
+  依頼元の端末へ中継するカードも同じ（`remote` の `answer` も `allow: true` は `HANDOFF_ONLY` で断り、決着させない）。
+  中継の payload に `chromeWait` の印を載せ、端末のカードは「許可」を出さず「Chrome を使わずに続けてもらう」だけにする。
+  それを押すと拒否（`messageKey: chromeSkipped`）で決着し、子には「人が Chrome を使わずに続けるよう選んだ」と返す（エラーではない）。
+  `handoff.finish` は、つながっていない接続の案内への `allow: true` を「つながった」にしない（`aborted`）
   戻すのは Chrome の操作側（`chromeResume`）の決着、断るのはカードの「できない」。1 会話に開いた依頼は 1 件
 - ターンが終わっても依頼は残る。人が戻したとき、ターンが生きていなければ決まった id で続きの発言を 1 回だけ送る（「Claude に戻して続ける」）
 

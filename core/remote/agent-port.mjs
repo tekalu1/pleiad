@@ -115,6 +115,8 @@ export function createAgentPort({ allowed = () => false, hostName = () => '', in
     let ok = false;
     try { ok = await entry.answer({ allow: msg.allow === true, message: typeof msg.message === 'string' ? msg.message.slice(0, 2000) : null, ...normalizeAnswerExtras(msg) }); }
     catch (e) { log(`remote agent: answer failed: ${e?.message ?? e}`); }
+    // 答えの口が文字を返したら、その code で断る（Chrome の操作待ちへの「許可」など。決着はしていないので、押し直せる）
+    if (typeof ok === 'string') { entry.answered = false; return fail(ok); }
     if (!ok) { entry.answered = false; return fail('ALREADY_RESOLVED'); }
     audit({ by: 'human', via: 'remote-device', deviceId, op: 'answer', allow: msg.allow === true, taskId: entry.taskId });
     sendTo(conn, { t: 'answered', id: msg.id, ok: true });
