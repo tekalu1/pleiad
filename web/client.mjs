@@ -66,7 +66,7 @@ import { runMark, satMark, stillMark } from "./arc.mjs";
 import { approvalTarget } from "./approval-summary.mjs";
 import { isComputerTool, approvalApps, approvalBody, approvalHeading, approvalSaid, lockWaitBox, relayLabel } from "./computer-use.mjs";
 import { approvalChange, changeBody, changeHeading, changeWord } from "./setting-change.mjs";
-import { backgroundTitle, taskTree, backgroundTotals, groupByOwner, visibleRows } from './background-model.mjs';
+import { backgroundTitle, taskTree, nativeChildren, backgroundTotals, groupByOwner, visibleRows } from './background-model.mjs';
 import { hostViewCursor, joinHostView, hostTreeRows, mergeHostTree, hostRowStale, hostRowRunning, HOST_ROW_STALE_MS } from './host-view.mjs';
 import { createCardRoll } from './card-roll.mjs';
 import { mergeTasks, tasksToFetch, staleTasks, treeSessions } from './task-cards.mjs';
@@ -3440,6 +3440,7 @@ function applyRunning(work) {
   // バックグラウンドはこの会話の分だけ稼働表示に出す。他所の分は一覧の行に付く
   syncWorkEntry();
   restorePastSubagents(state.current);
+  restoreChildSubagents();
   // 開いているダイアログは一覧を描き直し、選んでいる子が動いていれば続きを読み直す（読んでいる位置は保つ）
   if ($("workDialog").open) renderBackground();
   // 会話の中の委譲カード（振り分けの記録・やり直しの行）
@@ -4895,6 +4896,7 @@ function watchSessions(ids, { force = false } = {}) {
 function repaintTasks() {
   paintDelegateCards();
   syncWorkEntry();
+  restoreChildSubagents();
   if ($('workDialog').open) renderBackground();
 }
 /** 子の会話を親として辿り、この会話からの委譲とその子孫を集める。 */
@@ -4959,7 +4961,7 @@ function backgroundHere() {
 const timeOf = (v) => (v ? new Date(v).getTime() || 0 : 0);
 
 /** history は過去のツールカードから findSubagent で引き直した子。 */
-const bg = { scope: null, selected: null, extra: new Map(), history: new Map(), finding: new Set(), notFound: new Set(), view: null, narrowDetail: false, shownEnded: 10 };
+const bg = { scope: null, selected: null, extra: new Map(), history: new Map(), childHistory: new Map(), childNames: new Map(), childFinding: new Set(), finding: new Set(), notFound: new Set(), view: null, narrowDetail: false, shownEnded: 10 };
 
 /**
  * Past native subagents no longer appear in runningWork; resolve their tool IDs from the loaded history.
@@ -4990,18 +4992,72 @@ function restorePastSubagents(sessionId) {
  * 一覧の項目。種類ごとの違いはここで吸収し、描く側は同じ形だけを見る。
  * group: agent（サブエージェント。ネイティブと Pleiad タスクを区別しない）| command（裏のコマンド・端末）
  */
+function nativeItem(a, extra = {}) {
+  return {
+    key: `a:${a.sessionId}:${a.id}`, group: 'agent', source: 'native', title: a.description || a.saying || a.id,
+    backend: a.backend ?? activeBackendId(), model: a.model ?? null, effort: null, status: a.status ?? null,
+    live: subagentLive(a), startedAt: a.startedAt ?? null, endedAt: a.endedAt ?? null, messages: a.messages,
+    origin: a.origin ?? null, parentId: a.sessionId, agentId: a.id, ...extra,
+  };
+}
+
+/** 終わった子の会話のサブエージェント（孫）を一度に読む上限。見つかった分を全部出すが、読み出しは 1 回 */
+const CHILD_SUBS_MAX = 100;
+/** 委譲した子の会話のネイティブのサブエージェント（孫）。走っている分は配信（work.subagents）、終わった分は読み出し済みの分（bg.childHistory） */
+const childNatives = (task) => {
+  if (task.host) return [];
+  const rows = nativeChildren(task.sessionId, state.work.subagents, bg.childHistory.get(task.sessionId)?.rows);
+  // 走っている間に見た題（委譲ツールの description）を、終わって読み出した行にも使う（題が途中で替わらないように）
+  return rows.map((a) => {
+    if (!a.origin) return a;
+    const key = `${a.sessionId}:${a.origin}`;
+    if (state.work.subagents?.includes(a)) { if (a.description) bg.childNames.set(key, a.description); return a; }
+    const name = bg.childNames.get(key);
+    return name ? { ...a, description: name } : a;
+  });
+};
+
+/**
+ * 終わった委譲の子の会話が生んだサブエージェントを、子の会話ごとに 1 回だけ読む（ターンが終わると配信から外れるため）。
+ * 子の履歴のメッセージを読まず、サーバーの sessions.subagents（listSubagents・origin・状態・見出し）だけで済ませる。
+ * 読み直すのは、子が次のターンで更新された（updatedAt が変わった）とき・走っている孫が残っていそうなときだけ。
+ * 一覧を開いていない間は、直近 1 日に更新された子だけ（古い委譲の数だけ読み出しが増えない）。同時に 4 つまで
+ */
+function restoreChildSubagents() {
+  const open = $('workDialog').open, now = Date.now();
+  const trees = [...plyTasksHere(), ...(bg.scope ? [...bg.scope.sessions()].flatMap(id => taskTree(allTasks(), id)) : [])];
+  for (const { task } of trees) {
+    const id = task.sessionId;
+    if (!id || task.host || TASK_LIVE.has(task.status) || bg.childFinding.has(id)) continue;
+    const held = bg.childHistory.get(id);
+    if (held && held.updatedAt === (task.updatedAt ?? null)
+      && !(held.failed && now - held.at > 30000) && !(held.rows.some(subagentLive) && now - held.at > 15000)) continue;
+    if (!held && !open && now - timeOf(task.updatedAt) > 86400000) continue;
+    if (bg.childFinding.size >= 4) break;
+    bg.childFinding.add(id);
+    cmd('invoke', { op: 'sessions.subagents', args: { sessionId: id, limit: CHILD_SUBS_MAX } }).then((r) => {
+      const rows = (r?.subagents ?? []).filter(s => s?.agentId).map(s => ({ id: s.agentId, sessionId: id, backend: task.backend, origin: s.origin ?? null,
+        description: s.description || s.agentId, status: s.status ?? 'completed', startedAt: s.startedAt ?? null, endedAt: s.endedAt ?? null }));
+      bg.childHistory.set(id, { updatedAt: task.updatedAt ?? null, at: Date.now(), rows, failed: false });
+    }).catch(() => {
+      bg.childHistory.set(id, { updatedAt: task.updatedAt ?? null, at: Date.now(), rows: bg.childHistory.get(id)?.rows ?? [], failed: true });
+    }).finally(() => {
+      bg.childFinding.delete(id);
+      syncWorkEntry();
+      if ($('workDialog').open) renderBackground();
+      restoreChildSubagents();
+    });
+  }
+}
+
 function backgroundItems(scope = null) {
   const items = [];
   // scope: Channels のスレッドの一覧。そのスレッドの bot の会話から委譲した子だけ（裏のコマンド・過去のネイティブの子は含めない）
   const here = scope ? new Set(scope.sessions()) : null;
   const natives = here ? (state.work.subagents ?? []).filter(a => here.has(a.sessionId))
     : [...subagentsHere(), ...bg.history.values()].filter(a => a.sessionId === state.current);
-  for (const a of natives) items.push({
-    key: `a:${a.sessionId}:${a.id}`, group: 'agent', source: 'native', title: a.description || a.saying || a.id,
-    backend: a.backend ?? activeBackendId(), model: a.model ?? null, effort: null, status: a.status ?? null,
-    live: subagentLive(a), startedAt: a.startedAt ?? null, endedAt: a.endedAt ?? null, messages: a.messages,
-    origin: a.origin ?? null, parentId: a.sessionId, agentId: a.id,
-  });
+  for (const a of natives) items.push(nativeItem(a));
+  const nativeKeys = new Set(items.map(i => i.key));
   const trees = here ? [...here].flatMap(id => taskTree(allTasks(), id)) : plyTasksHere();
   for (const { task, depth, rootLive, childCount } of trees) {
     const live = TASK_LIVE.has(task.status);
@@ -5020,6 +5076,14 @@ function backgroundItems(scope = null) {
         hostOffline, hostUntil: hostOffline ? hostUntil(task.host.hostId, task.taskId, task.updatedAt) : null } : {}),
     };
     items.push(item);
+    // 委譲した子の会話が生んだネイティブのサブエージェント（孫）も、手元の孫と同じ字下げの行で出す。親の行の「委譲 N」にも数える
+    for (const a of childNatives(task)) {
+      const sub = nativeItem(a, { depth: depth + 1, rootLive, parentSessionId: task.sessionId });
+      if (nativeKeys.has(sub.key)) continue;
+      nativeKeys.add(sub.key);
+      items.push(sub);
+      item.childCount++;
+    }
     // ホストで孫に任せた分は、詳細を読んだ後、手元と同じ字下げの行で出す（端末の台帳には無い。読み出しの答えの子孫の要約）
     if (task.host && hostTree.has(task.taskId)) {
       const subs = hostTreeRows(task.taskId, task.remoteSessionId, hostTree.get(task.taskId), hostChildKey);
@@ -5289,6 +5353,7 @@ function openWork(key, scope = null) {
   // 先に開く。詳細の読み込みは開いているときだけ走る
   if (!$('workDialog').open) $('workDialog').showModal();
   renderBackground();
+  restoreChildSubagents();
   // 配信の間に始まって終わった子孫の委譲も一覧に出すため、会話の分を読み直す
   if (scope) watchSessions([...scope.sessions()], { force: true });
   else loadTaskCards(state.current).then(repaintTasks).catch(() => {});

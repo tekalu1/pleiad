@@ -1,5 +1,5 @@
 import { taskTitle } from '../../core/task-title.mjs';
-import { backgroundTitle, taskTree, backgroundTotals, backgroundKind, backgroundSummary, groupByOwner, visibleRows } from '../../web/background-model.mjs';
+import { backgroundTitle, taskTree, nativeChildren, backgroundTotals, backgroundKind, backgroundSummary, groupByOwner, visibleRows } from '../../web/background-model.mjs';
 
 export const name = 'background-model';
 export const title = 'バックグラウンドのタイトル・集計・子孫の順序・入口の種類のまとめ';
@@ -18,6 +18,14 @@ export default async function(t) {
   const tree = taskTree(tasks, 'top');
   t.ok('新しい根を先にし、孫を親の直後に深さ付きで並べる', tree.map(x => `${x.task.taskId}:${x.depth}`).join() === 'root-new:0,root-old:0,child:1,grandchild:2');
   t.ok('直下の委譲数と根の状態を子孫へ渡す', tree[1].childCount === 1 && tree[2].childCount === 1 && tree[3].rootLive === false);
+  // ---- 委譲した子の会話のネイティブの孫（走っている分は配信・終わった分は読み出し済み）
+  const subs = [{ id: 'g1', sessionId: 'kid', origin: 'tool-1', startedAt: 1000, status: 'running' }, { id: 'x', sessionId: 'someone-else', origin: 'tool-9' }];
+  const past = [{ id: 'g1-old', sessionId: 'kid', origin: 'tool-1', startedAt: 1000, status: 'completed' }, { id: 'g0', sessionId: 'kid', origin: 'tool-0', startedAt: 500, status: 'completed' },
+    { id: 'g2', sessionId: 'kid', origin: 'tool-2', startedAt: 2000, status: 'completed' }];
+  t.ok('子の会話の孫は、配信の分と読み出し済みの分を合わせ、同じ呼び出し（origin）は配信を取り、新しい順に並べる',
+    nativeChildren('kid', subs, past).map(a => a.id).join() === 'g2,g1,g0');
+  t.ok('別の会話の子・会話の無いタスク・配信の無い状態は孫に入れない', nativeChildren('kid', [{ id: 'x', sessionId: 'other' }]).length === 0
+    && nativeChildren(null, subs, past).length === 0 && nativeChildren('kid', undefined, undefined).length === 0);
   const totals = backgroundTotals([{ group: 'agent', live: true }, { group: 'agent', live: false }, { group: 'agent', live: false }, { group: 'command', live: true }]);
   t.ok('稼働中は全種、完了はサブエージェントと Pleiad タスクを数える', totals.live === 2 && totals.ended === 2);
   const stale = backgroundTotals([{ group: 'agent', live: true }, { group: 'agent', live: false, hostStale: true }, { group: 'agent', live: false }]);

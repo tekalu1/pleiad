@@ -95,6 +95,11 @@ export default async function (t) {
     t.ok("終わったターンの子を委譲ツールの id から引ける", found.every((x, i) => x.agentId === first[i].id), JSON.stringify(found));
     t.ok("引き直した子の最新状態と開始・終了時刻も返す", found.every(x => x.status === 'completed' && x.startedAt && x.endedAt && Date.parse(x.endedAt) >= Date.parse(x.startedAt)));
     t.ok("知らないツールの id なら null", (await c.cmd("findSubagent", { sessionId, toolId: "no-such-call" })).agentId === null);
+    // 画面は、委譲した子の会話が生んだ孫を、ターンが終わった後もこの一覧（sessions.subagents）で引き直す。見出し・生んだ呼び出し・状態を 1 回で返す
+    const listed = (await c.cmd("invoke", { op: "sessions.subagents", args: { sessionId, limit: 100 } })).subagents ?? [];
+    t.ok("sessions.subagents は孫の一覧に、見出し（description）・origin・状態を付けて返す",
+      first.every((a) => { const row = listed.find((x) => x.agentId === a.id); return row && row.origin === a.origin && row.description === `${a.description} を始めた` && row.status === "completed"; }),
+      JSON.stringify(listed));
 
     const from2 = c.mark();
     await c.cmd("sendMessage", { sessionId, messageId: "bg-second-0001", prompt: "bg 3 1" });
