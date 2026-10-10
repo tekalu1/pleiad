@@ -60,8 +60,11 @@ export const LOCKING = new Set(['screenshot', 'zoom', 'switch_display', 'mouse_m
 const batchItem = () => {
   const props = { action: { type: 'string', enum: BATCHABLE } };
   for (const n of BATCHABLE) Object.assign(props, SPECS[n].props);
-  return { type: 'object', properties: props, required: ['action'] };
+  // 全部のツールが title を求めるので、動作ごとに付けてくる呼び出しを失敗にしない（中身は使わない）
+  return { type: 'object', properties: { ...props, title: str }, required: ['action'], additionalProperties: false };
 };
+const batchActions = { type: 'array', items: { type: 'object' }, minItems: 1, maxItems: MAX_BATCH };
+const BATCH_SPEC = { props: { actions: batchActions }, required: ['actions'] };
 
 export const COMPUTER_TOOL_NAMES = [...Object.keys(SPECS), 'computer_batch'];
 
@@ -74,9 +77,90 @@ export function computerTools(locale, platform = process.platform) {
   // i18n-dynamic: agent:computer.toolsMac.
   const title = { type: 'string', description: agentT(locale, 'computer.title') };
   const one = (name, spec) => ({ name, description: agentT(locale, platform === 'darwin' && MAC_DESCRIPTIONS.has(name) ? `computer.toolsMac.${name}` : `computer.tools.${name}`),
-    inputSchema: { type: 'object', properties: { title, ...spec.props }, required: ['title', ...spec.required] } });
+    inputSchema: { type: 'object', properties: { title, ...spec.props }, required: ['title', ...spec.required], additionalProperties: false } });
   return [
     ...Object.entries(SPECS).map(([name, spec]) => one(name, spec)),
-    one('computer_batch', { props: { actions: { type: 'array', items: batchItem(), minItems: 1, maxItems: MAX_BATCH } }, required: ['actions'] }),
+    one('computer_batch', { props: { actions: { ...batchActions, items: batchItem() } }, required: ['actions'] }),
   ];
+}
+
+/** 値が schema の形か。違えば、期待する形の名前（computer.invalidArgs.expected.<名前>）を返す。合えば null */
+function expectedOf(schema, value, key) {
+  if (schema.enum) return schema.enum.includes(value) ? null : 'enum';
+  switch (schema.type) {
+    case 'string': return typeof value === 'string' ? null : 'string';
+    case 'integer': return Number.isInteger(value) ? null : 'integer';
+    case 'number': return typeof value === 'number' && Number.isFinite(value) ? null : 'number';
+    case 'array': {
+      const name = key === 'actions' ? 'actions' : schema.items === num ? (schema.maxItems === 4 ? 'region' : 'pair') : 'strings';
+      if (!Array.isArray(value)) return name;
+      if (schema.minItems !== undefined && value.length < schema.minItems) return name;
+      if (schema.maxItems !== undefined && value.length > schema.maxItems) return name;
+      const item = schema.items;
+      const ok = v => (item.type === 'object' ? Boolean(v) && typeof v === 'object' && !Array.isArray(v) : !expectedOf(item, v, ''));
+      return value.every(ok) ? null : name;
+    }
+    default: return null;
+  }
+}
+
+/**
+ * ツールの引数の検査（呼ぶ側のモデルが MCP のスキーマで弾かれるとは限らないので、サーバーで必ずする）。
+ * 知らない引数・足りない必須の引数・型の違い（数を文字列で渡す等。黙って直さない）を { kind, … } の一覧で返す。無ければ空。
+ * null は渡さなかったのと同じ。batchItem は computer_batch の 1 要素（action を許す）
+ */
+export function argProblems(name, args, { batchItem: inBatch = false } = {}) {
+  const spec = name === 'computer_batch' ? BATCH_SPEC : SPECS[name];
+  if (!spec || !args || typeof args !== 'object' || Array.isArray(args)) return [];
+  const known = new Set(['title', ...Object.keys(spec.props), ...(inBatch ? ['action'] : [])]);
+  const problems = [];
+  const unknown = Object.keys(args).filter(k => !known.has(k));
+  if (unknown.length) problems.push({ kind: 'unknown', args: unknown, allowed: Object.keys(spec.props) });
+  for (const key of spec.required) if (args[key] === undefined || args[key] === null) problems.push({ kind: 'missing', arg: key });
+  for (const [key, schema] of Object.entries(spec.props)) {
+    const value = args[key];
+    if (value === undefined || value === null) continue;
+    const expected = expectedOf(schema, value, key);
+    if (expected) problems.push({ kind: 'type', arg: key, expected, value, ...(schema.enum ? { values: schema.enum } : {}) });
+  }
+  return problems;
+}
+
+/** 正しい呼び方の例（title を除く引数。誤りの文に付けて、スキーマを見ていない呼び出しも 1 回で直せるようにする。argProblems を通る形に保つ） */
+const CLICK_EXAMPLE = { coordinate: [412, 238] };
+const EXAMPLES = {
+  request_access: { apps: ['Notepad'], reason: 'Edit a document' },
+  list_granted_applications: {},
+  screenshot: { display: 1 },
+  zoom: { region: [0, 0, 400, 300] },
+  switch_display: { display: 1 },
+  cursor_position: {},
+  mouse_move: CLICK_EXAMPLE,
+  left_click: CLICK_EXAMPLE,
+  right_click: CLICK_EXAMPLE,
+  middle_click: CLICK_EXAMPLE,
+  double_click: CLICK_EXAMPLE,
+  triple_click: CLICK_EXAMPLE,
+  left_click_drag: { start_coordinate: [100, 100], coordinate: [300, 200] },
+  left_mouse_down: CLICK_EXAMPLE,
+  left_mouse_up: CLICK_EXAMPLE,
+  scroll: { coordinate: [700, 400], scroll_direction: 'down', scroll_amount: 3 },
+  type: { text: 'hello' },
+  key: { text: 'ctrl+s' },
+  hold_key: { text: 'shift', duration: 2 },
+  wait: { duration: 2 },
+  wait_until: { until: 'The page has finished loading', timeout: 15 },
+  open_application: { app: 'notepad' },
+  computer_batch: { actions: [{ action: 'left_click', coordinate: [412, 238] }, { action: 'key', text: 'Return' }] },
+};
+export const argExample = name => EXAMPLES[name] ?? null;
+
+/** 別の引数名で座標・範囲を渡してきたときに、正しい形を教える（computer.invalidArgs.hint.<名前>） */
+const COORDINATE_ALIASES = new Set(['x', 'y', 'pos', 'position', 'point', 'xy', 'coords', 'coordinates', 'start_x', 'start_y', 'from', 'to', 'end_x', 'end_y']);
+const REGION_ALIASES = new Set(['x', 'y', 'x1', 'y1', 'x2', 'y2', 'x0', 'y0', 'left', 'top', 'right', 'bottom', 'width', 'height', 'rect', 'box', 'bbox', 'area', 'coordinate', 'coordinates']);
+export function argHint(name, unknown) {
+  const has = set => unknown.some(k => set.has(String(k).toLowerCase()));
+  if (name === 'zoom') return has(REGION_ALIASES) ? 'region' : null;
+  const spec = SPECS[name];
+  return spec && 'coordinate' in spec.props && has(COORDINATE_ALIASES) ? 'coordinate' : null;
 }

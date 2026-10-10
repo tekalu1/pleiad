@@ -133,6 +133,8 @@ const FAKE_DISPLAYS = [
  * 点の下のアプリ（appAt）は物理座標で決める: y ≥ 1000 は Windows Terminal（禁止）、y ≥ 900 はエクスプローラー（高リスク）、
  * x ≥ 3000 は管理者権限のアプリ（uipi）、x ≥ 1920 は電卓、それ以外はメモ帳。前面（foreground）は既定でメモ帳（setForeground で替える）。
  * 失敗の注入: fail(op, code) で次の 1 回を失敗にする。setLocked(true) で撮影と入力が locked になる。pressEscape(owner) で main の Esc を真似る。
+ * 入力の結果の注入: driftCursor({ x, y }) は次の 1 回の入力の後のカーソルを、狙いでなくその位置にする（別の窓が入力を受けた・カーソルが飛んだ）。
+ * coverBeforeInput(app) は、押す動作を送る直前の点の下をそのアプリにする（core が appAt で判定した後に別の窓が上に出た）。expect と違えば target_changed。null で戻す。
  * wait_until の灰色のコマ（screenshot の gray）は setFrames(fn) で決める。fn(n) は n 回目（0 から）のコマの明るさ（0〜255 の数か、画素の Uint8Array）。既定はずっと同じ明るさ（静止）。
  * log は、呼ばれた操作と core から main への便り（arm・overlay・stop・turnEnded）を 1 件ずつ受ける関数（サーバー越しのテストが別プロセスの記録を読む）。
  */
@@ -146,6 +148,7 @@ export function fakeComputerDriver({ supported = true, reason, displays = FAKE_D
   let foreground = FAKE_APPS.notepad;
   let cursor = { x: 100, y: 100 };
   let frames = () => 128, frameCount = 0;
+  let drift = null, cover = null;
   const running = new Set([FAKE_APPS.notepad.id]);
   const note = entry => { try { log?.(entry); } catch { /* 記録は確認用 */ } };
   const self = {
@@ -161,6 +164,8 @@ export function fakeComputerDriver({ supported = true, reason, displays = FAKE_D
     setLocked(v) { locked = Boolean(v); },
     setForeground(a) { foreground = a; },
     setFrames(fn) { frames = fn; frameCount = 0; },
+    driftCursor(p) { drift = p ? { x: p.x, y: p.y } : null; },
+    coverBeforeInput(a) { cover = a ?? null; },
     setSupported(v, why) { ready = { ...ready, supported: Boolean(v), ...(why ? { reason: why } : {}) }; fire(listeners.ready, ready); },
     /** ディスプレイの構成が変わったことにする（displaysVersion が 1 進む） */
     changeDisplays(next) { ready = { ...ready, displays: next ?? ready.displays, displaysVersion: ready.displaysVersion + 1 }; fire(listeners.displays, ready); },
@@ -221,11 +226,13 @@ export function fakeComputerDriver({ supported = true, reason, displays = FAKE_D
               if (!ready.displays.some(d => at.x >= d.bounds.x && at.y >= d.bounds.y && at.x < d.bounds.x + d.bounds.width && at.y < d.bounds.y + d.bounds.height)) throw new ComputerError('outside', 'fake: outside');
               cursor = { x: at.x, y: at.y };
             }
+            if (cover && args.expect && (a.type === 'click' || a.type === 'down' || a.type === 'drag') && cover.pid !== args.expect.pid && cover.path !== args.expect.path) throw new ComputerError('target_changed', 'fake: the window under the pointer changed');
             if (a.type === 'key' || a.type === 'keyDown') {
               if (/(^|\+)(super|win|meta)(\+|$)/i.test(String(a.combo ?? ''))) throw new ComputerError('windows_key', 'fake: windows key');
             }
           }
-          return { done: actions.length, cursor };
+          if (drift) { cursor = drift; drift = null; }
+          return { done: actions.length, cursor: { ...cursor } };
         }
         case 'cursor': return { ...cursor };
         case 'launch': {

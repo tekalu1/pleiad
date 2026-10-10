@@ -4,7 +4,7 @@ import { agentT } from '../i18n.mjs';
 import { SHOT_LIMITS, toPhysical, toImage, inShot, regionToPhysical, displayAt } from './coords.mjs';
 import { decideApp, autoGrantKind, normalizeComputerUse, isUnattendedMode } from './policy.mjs';
 import { ComputerError } from './driver.mjs';
-import { BATCHABLE, MAX_BATCH, MAX_SECONDS, untilSeconds } from './tools.mjs';
+import { BATCHABLE, MAX_BATCH, MAX_SECONDS, untilSeconds, argProblems, argHint, argExample } from './tools.mjs';
 import { isForbiddenApp } from './apps.mjs';
 import { settle, SETTLE } from './settle.mjs';
 import { askDecider, DECIDER_SHOT, UNTIL_MAX } from './decider.mjs';
@@ -17,6 +17,10 @@ export class ToolFail extends Error {
   constructor(reason, params = {}) { super(reason); this.reason = reason; this.params = params; this.state = stateOfReason(reason); }
 }
 const fail = (reason, params) => { throw new ToolFail(reason, params); };
+/** 入力の後のカーソルが狙いからこれより離れていたら、届かなかったことにする（物理画素。SendInput の丸めと DPI の誤差より大きく取る） */
+const LANDING_TOLERANCE = 4;
+/** main の input に渡す expect（判定して通したアプリの pid とパス）。どちらも無ければ確かめさせない */
+const expectOf = app => (app?.pid || app?.path ? { ...(app.pid ? { pid: app.pid } : {}), ...(app.path ? { path: app.path } : {}) } : undefined);
 
 const MODIFIERS = new Set(['ctrl', 'shift', 'alt']);
 // macOS は ⌘ を使う（ADR 0173 §4）。OS の機能を呼ぶ組み合わせ（Spotlight など）は main が system_key で拒む
@@ -24,7 +28,7 @@ const MAC_MODIFIERS = new Set([...MODIFIERS, 'cmd', 'command']);
 const WINDOWS_KEY = /(^|[+\s,])(super|win|windows|meta|cmd|command)([+\s,]|$)/i;
 const num = v => typeof v === 'number' && Number.isFinite(v);
 // main が返す契約の code のうち、そのまま reason にするもの（permission・secure_input・system_key は macOS だけが返す）
-const PASS_CODES = new Set(['locked', 'uipi', 'self', 'windows_key', 'outside', 'not_found', 'timeout', 'unsupported', 'permission', 'secure_input', 'system_key']);
+const PASS_CODES = new Set(['locked', 'uipi', 'self', 'windows_key', 'outside', 'not_found', 'timeout', 'unsupported', 'permission', 'secure_input', 'system_key', 'target_changed']);
 
 /** text の修飾キー（ctrl / shift / alt。macOS は cmd も。"ctrl+shift" の形も受ける）。不正なら invalid */
 function modifiers(text, allowed = MODIFIERS) {
@@ -164,14 +168,14 @@ export function createActions({ driver, shots, access, askPermission, translate,
    * アプリを操作してよいか決め、必要なら聞く。通れば { grant? } を返し、通らなければ ToolFail。
    * grant は、確認なし・すべて許可で承認を飛ばしたとき、そのアプリのターンで最初の呼び出しにだけ付ける
    */
-  async function authorize(ctx, app) {
+  async function authorize(ctx, app, where) {
     if (!app) return {};
     remember(ctx, app);
     const prefs = await access.getPrefs();
     const apps = await sessionApps(ctx);
     const args = { app, prefs, sessionApps: apps, deniedThisTurn: ctx.t.denied, mode: ctx.info.mode, agent: ctx.agent.id };
     const decision = decideApp(args);
-    if (decision === 'forbidden') fail('forbidden', { app: nameOf(app) });
+    if (decision === 'forbidden') fail('forbidden', { app: nameOf(app), ...(where ? { where } : {}) });
     if (decision === 'denied') fail('denied', { app: nameOf(app) });
     if (decision === 'allow') {
       const kind = autoGrantKind(args);
@@ -182,23 +186,33 @@ export function createActions({ driver, shots, access, askPermission, translate,
     return {};
   }
 
-  /** 点の下のアプリを聞いて判定する。通ればそのアプリ（と grant） */
-  async function authorizeAt(ctx, p) {
+  /** 物理の点を、直前の screenshot の座標の文字列にする。撮影が使えない・撮影の外なら画面全体の座標（そう断る） */
+  function placeText(ctx, p) {
+    const shot = ctx.binding.shot;
+    if (shot && shot.turnId === ctx.turnId && shot.displaysVersion === driver.state()?.displaysVersion) {
+      const i = toImage(shot, p.x, p.y);
+      if (inShot(shot, i.x, i.y)) return L(ctx, 'place', { x: i.x, y: i.y });
+    }
+    return L(ctx, 'placeScreen', { x: p.x, y: p.y });
+  }
+
+  /** 点の下のアプリを聞いて判定する。通ればそのアプリ（と grant）。cursor は、点が「座標なし = 今のカーソルの位置」だったこと（禁止の文に判定した位置を入れる） */
+  async function authorizeAt(ctx, p, { cursor = false } = {}) {
     const { app } = await call(ctx, 'appAt', { x: p.x, y: p.y });
-    const { grant } = await authorize(ctx, app);
+    const { grant } = await authorize(ctx, app, L(ctx, cursor ? 'whereCursor' : 'wherePoint', { place: placeText(ctx, p) }));
     return { app, grant };
   }
   async function authorizeForeground(ctx) {
     const { app } = await call(ctx, 'foreground', {});
-    const { grant } = await authorize(ctx, app);
+    const { grant } = await authorize(ctx, app, L(ctx, 'whereForeground'));
     return { app, grant };
   }
 
-  /** 複数の点を判定する（ドラッグの始点と終点）。同じアプリは 1 回だけ。grant はどれかにあれば付ける */
+  /** 複数の点を判定する（ドラッグの始点と終点。{ p, cursor } の並び）。grant はどれかにあれば付ける。app は始点のアプリ */
   async function authorizePoints(ctx, points) {
     let first = null, grant;
-    for (const p of points) {
-      const r = await authorizeAt(ctx, p);
+    for (const { p, cursor } of points) {
+      const r = await authorizeAt(ctx, p, { cursor });
       first ??= r.app;
       grant ??= r.grant;
     }
@@ -315,12 +329,15 @@ export function createActions({ driver, shots, access, askPermission, translate,
 
     async left_click_drag(ctx, args) {
       const to = physicalOf(ctx, args.coordinate);
-      const from = physicalOf(ctx, args.start_coordinate, { optional: true }) ?? await cursorPoint(ctx);
-      const { app, grant } = await authorizePoints(ctx, [from, to]);
-      const r = await call(ctx, 'input', { actions: [{ type: 'drag', from: { x: from.x, y: from.y }, to: { x: to.x, y: to.y } }] });
+      const given = physicalOf(ctx, args.start_coordinate, { optional: true });
+      const from = given ?? await cursorPoint(ctx);
+      const { app, grant } = await authorizePoints(ctx, [{ p: from, cursor: !given }, { p: to }]);
+      const r = await sendPointer(ctx, { type: 'drag', from: { x: from.x, y: from.y }, to: { x: to.x, y: to.y } }, app);
       ctx.binding.pressed = false;
       activity(ctx, { cursor: r.cursor });
-      return { text: done(ctx, 'dragged', app), app: nameOf(app) || undefined, grant };
+      checkLanding(ctx, { target: to, cursor: r.cursor });
+      const route = { from: placeText(ctx, from), to: placeText(ctx, to) };
+      return { text: done(ctx, 'dragged', app) + L(ctx, given ? 'pointAtDrag' : 'pointAtDragCursor', route), app: nameOf(app) || undefined, grant };
     },
 
     async scroll(ctx, args) {
@@ -450,18 +467,40 @@ export function createActions({ driver, shots, access, askPermission, translate,
     },
   };
 
-  /** マウスの動作。coordinate を省くと今のカーソルの位置 */
+  /** マウスの動作。coordinate を省くと今のカーソルの位置（その旨と位置を結果の文に書く） */
   async function pointer(ctx, args, action, doneKey, { required = false } = {}) {
     const p = physicalOf(ctx, args.coordinate, { optional: !required });
     const mods = action.type === 'click' ? modifiers(args.text, mac ? MAC_MODIFIERS : MODIFIERS) : undefined;
     const at = p ?? await cursorPoint(ctx);
-    const { app, grant } = await authorizeAt(ctx, at);
+    const { app, grant } = await authorizeAt(ctx, at, { cursor: !p });
     const send = { ...action, ...(p ? { x: p.x, y: p.y } : {}), ...(mods ? { modifiers: mods } : {}) };
-    const r = await call(ctx, 'input', { actions: [send] });
+    const r = await sendPointer(ctx, send, app);
     if (action.type === 'down') ctx.binding.pressed = true;
     else if (action.type === 'up' || action.type === 'click') ctx.binding.pressed = false;
     activity(ctx, { cursor: r.cursor });
-    return { text: done(ctx, doneKey, app), app: nameOf(app) || undefined, grant };
+    checkLanding(ctx, { target: p, cursor: r.cursor });
+    return { text: done(ctx, doneKey, app) + L(ctx, p ? 'pointAt' : 'pointAtCursor', { place: placeText(ctx, at) }), app: nameOf(app) || undefined, grant };
+  }
+
+  /**
+   * マウスの入力を送る。判定して通したアプリ（app）を expect で渡し、main は送る直前に点の下の窓がそのアプリのままかを確かめる
+   * （core の判定の後に別の窓が重なった・動いたなら、何も送らずに target_changed。ここで point_changed にして文を分ける）
+   */
+  async function sendPointer(ctx, action, app) {
+    try { return await call(ctx, 'input', { actions: [action], expect: expectOf(app) }); }
+    catch (e) {
+      if (e instanceof ToolFail && e.reason === 'target_changed') fail('point_changed', { app: nameOf(app) });
+      throw e;
+    }
+  }
+
+  /**
+   * 入力を送った後の確かめ（main が返す「送った後のカーソルの位置」を使う）。
+   * 狙い（target。座標なしの操作は null）から離れていれば失敗（入力は送った後なので、画面を確かめさせる文）
+   */
+  function checkLanding(ctx, { target, cursor }) {
+    if (!target || !cursor || !num(cursor.x) || !num(cursor.y)) return;
+    if (Math.hypot(cursor.x - target.x, cursor.y - target.y) > LANDING_TOLERANCE) fail('missed', { target: placeText(ctx, target), actual: placeText(ctx, cursor) });
   }
 
   function keyCombo(text) {
@@ -506,11 +545,46 @@ export function createActions({ driver, shots, access, askPermission, translate,
     }
   }
 
-  /** 失敗の文（agent 名前空間 computer.errors.<reason>）。f.text があればそれを優先する（request_access の一覧） */
-  // i18n-dynamic: agent:computer.errors.
-  const failText = (ctx, e) => e.text ?? agentT(ctx.locale, `computer.errors.${e.reason === 'outside' && e.params?.w === undefined ? 'outsideScreen' : e.reason}`, e.params);
+  /**
+   * 引数の誤りの文。どの引数が悪いかと、正しい形（別の名前で座標・範囲を渡してきたときはその書き方）。
+   * item は computer_batch の何番目の動作か（1 から。トップレベルなら 0）
+   */
+  function problemText(ctx, name, problems, item = 0) {
+    const shown = v => { try { return JSON.stringify(v)?.slice(0, 60) ?? String(v); } catch { return String(v); } };
+    const lines = problems.map(p => {
+      if (p.kind === 'unknown') {
+        const hint = argHint(name, p.args);
+        return L(ctx, 'invalidArgs.unknown', { args: p.args.join('・'), allowed: p.allowed.join(', ') || L(ctx, 'invalidArgs.none') }) + (hint ? ' ' + L(ctx, `invalidArgs.hint.${hint}`) : '');
+      }
+      if (p.kind === 'missing') return L(ctx, 'invalidArgs.missing', { arg: p.arg });
+      return L(ctx, 'invalidArgs.type', { arg: p.arg, expected: L(ctx, `invalidArgs.expected.${p.expected}`, { values: (p.values ?? []).join(' / '), max: MAX_BATCH }), value: shown(p.value) });
+    });
+    const example = argExample(name);
+    return L(ctx, item ? 'invalidArgs.headItem' : 'invalidArgs.head', { tool: name, n: item }) + ' ' + lines.join(' ')
+      + (example ? ' ' + L(ctx, 'invalidArgs.example', { tool: name, json: JSON.stringify({ ...example, title: L(ctx, 'invalidArgs.exampleTitle') }) }) : '');
+  }
 
-  return { perform: (ctx, name, args) => ACTIONS[name](ctx, args), failText, has: name => Object.hasOwn(ACTIONS, name) };
+  /**
+   * 呼ぶ前の引数の検査（ロックを取る前に橋が呼ぶ）。知らない引数・足りない必須・型の違いは、何も送らずに invalid（文に悪い引数と正しい形を書く）。
+   * computer_batch は、動作の引数も先に全部検査する（途中まで実行して打ち切らない）。動作名が batch に入れられないものは、実行の時に invalid
+   */
+  function validate(ctx, name, args) {
+    const bad = text => { const f = new ToolFail('invalid'); f.text = text; throw f; };
+    const problems = argProblems(name, args);
+    if (problems.length) bad(problemText(ctx, name, problems));
+    if (name !== 'computer_batch') return;
+    for (const [i, item] of args.actions.entries()) {
+      if (!BATCHABLE.includes(item?.action)) continue;
+      const inner = argProblems(item.action, item, { batchItem: true });
+      if (inner.length) bad(problemText(ctx, item.action, inner, i + 1));
+    }
+  }
+
+  /** 失敗の文（agent 名前空間 computer.errors.<reason>）。f.text があればそれを優先する（request_access の一覧・引数の誤り）。forbidden には判定に使った位置を足す */
+  // i18n-dynamic: agent:computer.errors.
+  const failText = (ctx, e) => e.text ?? agentT(ctx.locale, `computer.errors.${e.reason === 'outside' && e.params?.w === undefined ? 'outsideScreen' : e.reason}`, e.params) + (e.reason === 'forbidden' && e.params?.where ? ' ' + e.params.where : '');
+
+  return { perform: (ctx, name, args) => ACTIONS[name](ctx, args), validate, failText, has: name => Object.hasOwn(ACTIONS, name) };
 }
 
 /** id から作る名前（exe のファイル名・AUMID）。名前が分からないとき（list_granted_applications）のため */
